@@ -47,12 +47,8 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 ## Roadmap — état courant
 
-Voir GDD §13 pour le détail. **Phase actuelle : Veillée, étape 1-2** — scaffold fait, noyau `/sim` commencé (tick, entités, déplacement, PRNG, replay).
+Le plan d'implémentation complet est dans **`docs/roadmap.md`** (jalons V0-V10 → LAN → Vallée → Saison 0, avec critères de sortie et gates). Le cadre vient du GDD §13.
 
-Prochaines étapes de la Phase Veillée :
-1. ~~Scaffold monorepo + garde-fous + CLAUDE.md~~ ✅ (2026-07-05)
-2. Noyau `/sim` : grille de collision AABB, boucle de tick pilotée ← **en cours**
-3. Déplacement + récolte + un PNJ qui exécute une tâche, headless
-4. `/client` Phaser : afficher la sim tournant dans un Web Worker (réutiliser le capital Manif : lighting normal-mapped, Tiled, Aseprite)
+**Jalon courant : V1 — Le monde** (grille de collision AABB, temps de jeu paramétrable, format de carte + importeur Tiled). Commencer par écrire `docs/specs/monde.md`. V0 (fondations) fait le 2026-07-05.
 
-MVP gouvernance (phases 1-2) : rang unique + Chef + propriété individuelle. MVP alignement : deux axes + Foyer/Meute seulement.
+MVP gouvernance (Veillée/LAN) : rang unique + Chef + propriété individuelle. MVP alignement : deux axes + Foyer/Meute seulement.
