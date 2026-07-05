@@ -9,7 +9,16 @@
  * une action validée émet son événement de domaine.
  */
 import { isOutsider, recordAct, recordHostility, seasonActFactor } from './alignment'
-import { ALIGNMENT, BALANCE, FOOD_VALUES, STRUCTURE_COSTS, STRUCTURE_HP, TERRAINS, WORLD_EVENTS } from './balance'
+import {
+  ALIGNMENT,
+  BALANCE,
+  FOOD_VALUES,
+  STRUCTURE_COSTS,
+  STRUCTURE_HP,
+  TERRAINS,
+  VILLAGE_NAMES,
+  WORLD_EVENTS,
+} from './balance'
 import { emitEvent } from './events'
 import {
   addItems,
@@ -53,6 +62,8 @@ export interface VillageTask {
 
 export interface Village {
   id: number
+  /** Une chronique exige des noms (spec saison R5). */
+  name: string
   chiefId: number
   memberIds: number[]
   fireTx: number
@@ -191,6 +202,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       state.nextVillageId += 1
       state.villages.push({
         id: villageId,
+        name: VILLAGE_NAMES[(villageId - 1) % VILLAGE_NAMES.length]!,
         chiefId: actorId,
         memberIds: [actorId],
         fireTx: tx,

@@ -44,6 +44,8 @@ export {
   harvestFactor,
 } from './alignment'
 export type { Archetype, Aggression } from './alignment'
+export { SEASON, LOOT_VALUES, VILLAGE_NAMES } from './balance'
+export { chronicleFromEvents } from './chronicle'
 export type { TaskKind, VillageTask } from './village'
 export { findPath } from './pathfinding'
 export { isBlockedAt } from './collision'

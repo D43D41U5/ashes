@@ -8,7 +8,8 @@
     "test": "pnpm -r run test",
     "lint": "eslint .",
     "dev": "pnpm --filter @braises/client dev",
-    "build": "pnpm --filter @braises/client build"
+    "build": "pnpm --filter @braises/client build",
+    "scenario": "pnpm --filter @braises/sim exec vitest run src/scenario.test.ts"
   },
   "devDependencies": {
     "eslint": "^9.30.0",

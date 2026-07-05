@@ -10,8 +10,10 @@ import {
   BALANCE,
   COMBAT,
   STRUCTURE_HP,
+  chronicleFromEvents,
   moveAvatar,
   zoneAt,
+  type SimEvent,
   type AccessLevel,
   type Corpse,
   type Entity,
@@ -90,6 +92,8 @@ export class WorldScene extends Phaser.Scene {
   private corpseSprites = new Map<number, Phaser.GameObjects.Image>()
   private myVillageId: number | null = null
   private myHunger = 100
+  private eventLog: SimEvent[] = []
+  private evacMarker: Phaser.GameObjects.Arc | null = null
   private myWoundedLeg = false
   private sprintKeys: Phaser.Input.Keyboard.Key[] = []
   private blockKey!: Phaser.Input.Keyboard.Key
@@ -145,6 +149,9 @@ export class WorldScene extends Phaser.Scene {
       this.sendAction({ type: 'attack', dx, dy })
     })
     kb.addKey(K.X, false).on('down', () => this.sendAction({ type: 'bandage' }))
+    kb.addKey(K.J, false).on('down', () => {
+      this.registry.set('journalOpen', !this.registry.get('journalOpen'))
+    })
     // T : donner 3 baies à l'entité la plus proche (l'acte chaud fondamental).
     kb.addKey(K.T, false).on('down', () => {
       const nearest = [...this.others.entries()]
@@ -286,12 +293,40 @@ export class WorldScene extends Phaser.Scene {
     this.registry.set('tasks', myVillage?.tasks ?? [])
     this.registry.set('archetype', myVillage?.archetype ?? null)
     this.registry.set('villageWarmth', myVillage?.warmth ?? 0)
+    const CHRONICLE_TYPES = new Set([
+      'village_founded',
+      'act_started',
+      'village_archetype_changed',
+      'horde_spawned',
+      'convoy_spawned',
+      'gift_given',
+      'entity_died',
+      'evacuation_opened',
+      'season_ended',
+    ])
+    let chronicleDirty = false
     for (const event of msg.events) {
       if (event.type === 'action_rejected' && event.entityId === this.playerId) {
         this.registry.set('error', { reason: event.reason, at: this.time.now })
       } else if (event.type === 'alarm_raised' && event.villageId === this.myVillageId) {
         this.registry.set('alarm', { at: this.time.now })
       }
+      if (CHRONICLE_TYPES.has(event.type)) {
+        this.eventLog.push(event)
+        chronicleDirty = true
+        if (event.type === 'evacuation_opened') {
+          this.evacMarker?.destroy()
+          this.evacMarker = this.add
+            .circle(event.tx * TILE_PX + 8, event.ty * TILE_PX + 8, 10, 0xffd94a, 0.6)
+            .setStrokeStyle(2, 0xfff2b0)
+            .setDepth(7)
+        }
+        if (event.type === 'season_ended') this.registry.set('seasonEnded', true)
+      }
+    }
+    if (chronicleDirty) {
+      const names = Object.fromEntries(msg.villages.map((v) => [v.id, v.name]))
+      this.registry.set('chronicle', chronicleFromEvents(this.eventLog, 720, names))
     }
     const now = this.time.now
     const seen = new Set<number>()

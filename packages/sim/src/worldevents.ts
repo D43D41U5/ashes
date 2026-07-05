@@ -6,7 +6,7 @@
  * calendrier — la pression monte avec les actes (GDD §2).
  */
 import { isThreatTo } from './alignment'
-import { COMBAT, CONVOY_LOOT, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
+import { BALANCE, COMBAT, CONVOY_LOOT, LOOT_VALUES, SEASON, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
 import { isBlockedAt } from './collision'
 import { rngRoll } from './rng'
 import { spawnMonster } from './monsters'
@@ -101,9 +101,13 @@ export function advanceWorldEvents(state: SimState): void {
   const cycleTick = state.tick % TICKS_PER_CYCLE
   const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
 
-  // La nuit tombe : peut-être une horde (spec R5).
+  // La nuit tombe : peut-être une horde (spec R5) — et la Cendre déferle
+  // au premier crépuscule de l'acte III (spec saison R2).
   if (cycleTick === DAY_TICKS_PER_CYCLE && state.villages.length > 0) {
-    if (roll(state) < WORLD_EVENTS.HORDE_CHANCE_PER_NIGHT[act - 1]!) {
+    if (act === 3 && !state.megaHordeSpawned) {
+      state.megaHordeSpawned = true
+      spawnHorde(state, SEASON.MEGA_HORDE_SIZE)
+    } else if (roll(state) < WORLD_EVENTS.HORDE_CHANCE_PER_NIGHT[act - 1]!) {
       spawnHorde(state, WORLD_EVENTS.HORDE_SIZE[act - 1]!)
     }
   }
@@ -151,4 +155,83 @@ export function advanceWorldEvents(state: SimState): void {
   state.hordes = state.hordes.filter((h) =>
     h.memberEntityIds.some((id) => state.entities.some((e) => e.id === id)),
   )
+
+  // L'évacuation s'ouvre (spec saison R3).
+  if (state.evacuation === null && day >= SEASON.EVAC_DAY) {
+    const roadTiles: number[] = []
+    for (let i = 0; i < state.map.terrain.length; i++) {
+      if (state.map.terrain[i] === TERRAIN_ROAD) roadTiles.push(i)
+    }
+    const key = roadTiles.length > 0 ? roadTiles[Math.floor(roll(state) * roadTiles.length)]! : 0
+    const tx = roadTiles.length > 0 ? key % state.map.width : Math.floor(state.map.width / 2)
+    const ty = roadTiles.length > 0 ? Math.floor(key / state.map.width) : Math.floor(state.map.height / 2)
+    state.evacuation = { tx, ty }
+    emitEvent(state, { type: 'evacuation_opened', tick: state.tick, tx, ty })
+  }
+
+  // La fin de saison : les verdicts (spec saison R4).
+  if (!state.seasonEnded && day > BALANCE.SEASON_DAYS) {
+    state.seasonEnded = true
+    emitEvent(state, { type: 'season_ended', tick: state.tick, verdicts: computeVerdicts(state) })
+  }
+}
+
+/** Le verdict de chaque village selon son archétype (GDD §2). */
+function computeVerdicts(state: SimState): {
+  villageId: number
+  name: string
+  archetype: 'foyer' | 'meute' | 'neutre'
+  score: number
+  outcome: string
+}[] {
+  const evac = state.evacuation
+  return state.villages.map((village) => {
+    const members = state.entities.filter((e) => village.memberIds.includes(e.id) && e.hp > 0)
+    const evacuated = evac
+      ? members.filter((m) => {
+          const dx = m.x - (evac.tx + 0.5)
+          const dy = m.y - (evac.ty + 0.5)
+          return dx * dx + dy * dy <= SEASON.EVAC_RADIUS * SEASON.EVAC_RADIUS
+        }).length
+      : 0
+    const lootValue = (inv: Record<string, number | undefined>): number => {
+      let total = 0
+      for (const item of Object.keys(inv)) {
+        total += (inv[item] ?? 0) * ((LOOT_VALUES as Record<string, number>)[item] ?? 1)
+      }
+      return total
+    }
+    let granaryValue = 0
+    for (const s of state.structures) {
+      if (s.villageId === village.id && s.inventory) granaryValue += lootValue(s.inventory)
+    }
+    for (const m of members) granaryValue += lootValue(m.inventory)
+
+    if (village.archetype === 'foyer') {
+      const score = members.length + evacuated
+      return {
+        villageId: village.id,
+        name: village.name,
+        archetype: village.archetype,
+        score,
+        outcome: `a sauvé ${members.length} vie${members.length > 1 ? 's' : ''}${evacuated > 0 ? ` dont ${evacuated} évacuée${evacuated > 1 ? 's' : ''}` : ''}`,
+      }
+    }
+    if (village.archetype === 'meute') {
+      return {
+        villageId: village.id,
+        name: village.name,
+        archetype: village.archetype,
+        score: granaryValue,
+        outcome: `est partie les bras pleins (valeur ${granaryValue})`,
+      }
+    }
+    return {
+      villageId: village.id,
+      name: village.name,
+      archetype: village.archetype,
+      score: members.length,
+      outcome: members.length > 0 ? `a tenu jusqu'à la Cendre (${members.length} debout)` : 's’est éteint',
+    }
+  })
 }

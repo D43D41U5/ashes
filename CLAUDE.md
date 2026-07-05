@@ -53,6 +53,6 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 Le plan d'implémentation complet est dans **`docs/roadmap.md`** (jalons V0-V10 → LAN → Vallée → Saison 0, avec critères de sortie et gates). Le cadre vient du GDD §13.
 
-**Jalon courant : V9 — La saison** (3 actes avec courbe de pression, Grand Froid, Cendre + objectif final v1, Mémoires + chronique v1 consommant le bus d'événements ; écrire `docs/specs/saison.md` d'abord). V0-V8 faits le 2026-07-05 (specs `monde`, `client`, `village`, `economie`, `pnj`, `combat`, `evenements`, `alignement`). Reste de V2 : brancher le déploiement Cloudflare Pages (action Alexis).
+**La Phase Veillée (V0-V10) est complète** (2026-07-05, 9 specs dans `docs/specs/`). En attente d'actions humaines : brancher Cloudflare Pages (`pnpm build` → `packages/client/dist`) et jouer le **GATE 1** (la boucle solo est-elle fun 5 sessions d'affilée ?). **Prochaine phase : LAN** (voir roadmap — `packages/server` + Colyseus, une zone, 3 joueurs ; le protocole `packages/client/src/protocol.ts` est déjà le protocole réseau, seul le transport change). Le calibrage continue via `pnpm scenario`.
 
 MVP gouvernance (Veillée/LAN) : rang unique + Chef + propriété individuelle. MVP alignement : deux axes + Foyer/Meute seulement.

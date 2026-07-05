@@ -66,6 +66,10 @@ export class UIScene extends Phaser.Scene {
   private hpBar!: Phaser.GameObjects.Rectangle
   private staminaBar!: Phaser.GameObjects.Rectangle
   private woundsText!: Phaser.GameObjects.Text
+  private journalPanel!: Phaser.GameObjects.Container
+  private journalText!: Phaser.GameObjects.Text
+  private welcome!: Phaser.GameObjects.Container
+  private startedAt = 0
 
   constructor() {
     super('ui')
@@ -94,6 +98,37 @@ export class UIScene extends Phaser.Scene {
     this.woundsText = this.add
       .text(this.scale.width - 214, 48, '', { ...style, color: '#ff9a7a', fontSize: '14px' })
       .setOrigin(0, 0)
+
+    // Le journal (J) : la chronique de la saison, la Mémoire v1.
+    const panelBg = this.add.rectangle(0, 0, 720, 480, 0x14141a, 0.92).setOrigin(0.5).setStrokeStyle(2, 0x6b5a3a)
+    const panelTitle = this.add
+      .text(0, -215, 'LA CHRONIQUE', { ...style, fontSize: '20px', color: '#e8c66a' })
+      .setOrigin(0.5, 0)
+    this.journalText = this.add
+      .text(-330, -180, '', { ...style, fontSize: '14px', strokeThickness: 0, wordWrap: { width: 660 } })
+      .setOrigin(0, 0)
+    this.journalPanel = this.add
+      .container(this.scale.width / 2, this.scale.height / 2, [panelBg, panelTitle, this.journalText])
+      .setVisible(false)
+
+    // L'accueil (V10) : le temps d'un regard, les touches.
+    const wBg = this.add.rectangle(0, 0, 760, 300, 0x14141a, 0.92).setOrigin(0.5).setStrokeStyle(2, 0x8a4a2e)
+    const wTitle = this.add
+      .text(0, -120, 'BRAISES — la Veillée', { ...style, fontSize: '26px', color: '#e8842c' })
+      .setOrigin(0.5, 0)
+    const wText = this.add
+      .text(
+        0,
+        -70,
+        'Ton village est ton personnage. Récolte, bâtis, nourris les tiens —\net survis aux nuits. Le monde meurt au jour 60 ; la chronique retiendra le reste.\n\n' +
+          'ZQSD bouger · clic récolter/bâtir · F allumer ton Feu · ESPACE attaquer\nC bloquer · SHIFT sprinter · T donner · J la chronique',
+        { ...style, fontSize: '15px', strokeThickness: 0, align: 'center' },
+      )
+      .setOrigin(0.5, 0)
+    this.welcome = this.add.container(this.scale.width / 2, this.scale.height / 2, [wBg, wTitle, wText])
+    this.startedAt = this.time.now
+    this.input.keyboard?.once('keydown', () => this.welcome.setVisible(false))
+
     this.errorText = this.add
       .text(this.scale.width / 2, this.scale.height - 110, '', { ...style, color: '#ff7a6b' })
       .setOrigin(0.5, 0)
@@ -163,6 +198,17 @@ export class UIScene extends Phaser.Scene {
       this.errorText.setText(error.reason).setAlpha(1 - (this.time.now - error.at) / 2500)
     } else {
       this.errorText.setText('')
+    }
+
+    // L'accueil s'efface tout seul.
+    if (this.welcome.visible && this.time.now - this.startedAt > 15000) this.welcome.setVisible(false)
+
+    // Le journal : ouvert à la demande (J), ou de force à la fin de saison.
+    const chronicle = (this.registry.get('chronicle') as string[] | undefined) ?? []
+    const open = Boolean(this.registry.get('journalOpen')) || Boolean(this.registry.get('seasonEnded'))
+    this.journalPanel.setVisible(open)
+    if (open) {
+      this.journalText.setText(chronicle.slice(-26).join('\n') || '(rien encore — le monde est jeune)')
     }
 
     // L'alarme (spec événements R4) : flash rouge pulsé pendant 3 s.

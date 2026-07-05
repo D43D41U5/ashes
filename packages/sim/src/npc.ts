@@ -8,7 +8,8 @@
  * Tout est déterministe : égalités départagées par id, aucun aléa.
  */
 import { isThreatTo } from './alignment'
-import { ALIGNMENT, BALANCE, COMBAT, STRUCTURE_HP, WORLD_EVENTS, type NodeType } from './balance'
+import { emitEvent } from './events'
+import { ALIGNMENT, BALANCE, COMBAT, STRUCTURE_HP, VILLAGE_NAMES, WORLD_EVENTS, type NodeType } from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { applyCombatAction, startAttack } from './combat'
 
@@ -444,6 +445,8 @@ function assignErrands(state: SimState): void {
   if (cycleTick === DAY_TICKS_PER_CYCLE) {
     for (const village of state.villages) {
       if (village.archetype !== 'meute') continue
+      // On ne raide pas quand la meute est exsangue (< 3 vivants).
+      if (state.npcs.filter((n) => n.villageId === village.id).length < 3) continue
       const target = nearestOtherVillage(state, village)
       if (!target) continue
       const raiders = state.npcs.filter((n) => n.villageId === village.id && !n.errand).slice(0, 2)
@@ -466,7 +469,7 @@ function assignErrands(state: SimState): void {
       }
       if (village.archetype !== 'foyer') continue
       const granary = granaries(state, village.id)[0]
-      if (!granary || countOf(granary.inventory ?? {}, 'berries') <= 20) continue
+      if (!granary || countOf(granary.inventory ?? {}, 'berries') <= 8) continue
       const target = nearestOtherVillage(state, village)
       if (!target) continue
       const giver = state.npcs.find((n) => n.villageId === village.id && !n.errand)
@@ -538,7 +541,12 @@ function handleErrand(state: SimState, village: Village, npc: Npc, entity: Entit
     return true
   }
 
-  // Le raid (spec R13). En chemin : on frappe qui n'est pas des nôtres.
+  // Le raid (spec R13). Blessé : on décroche (le combat de coût, GDD §7).
+  if (entity.hp < 40 && errand.stage !== 'home') {
+    errand.stage = 'home'
+    npc.path = []
+  }
+  // En chemin : on frappe qui n'est pas des nôtres.
   const foe = state.entities.find(
     (e) =>
       e.id !== entity.id &&
@@ -812,6 +820,7 @@ export function foundNpcVillage(
   state.nextVillageId += 1
   const village: Village = {
     id: villageId,
+    name: VILLAGE_NAMES[(villageId - 1) % VILLAGE_NAMES.length]!,
     chiefId: 0, // pas de chef humain — le village s'appartient
     memberIds: [],
     fireTx: tx,
@@ -825,6 +834,7 @@ export function foundNpcVillage(
     archetype: 'neutre',
   }
   state.villages.push(village)
+  emitEvent(state, { type: 'village_founded', tick: state.tick, villageId, chiefId: 0, tx, ty })
 
   const addStructure = (type: Structure['type'], sx: number, sy: number, inventory?: Structure['inventory']): Structure => {
     const s: Structure = {

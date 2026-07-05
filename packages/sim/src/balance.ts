@@ -304,6 +304,40 @@ export const CONVOY_LOOT: import('./items').Inventory = {
   coal: 4,
 }
 
+/** La saison (GDD §2, spec saison) : la pression, la Cendre, la fin. */
+export const SEASON = {
+  /** Les sources se contractent : repousse des nœuds ralentie par acte. */
+  REGROW_ACT_FACTOR: [1, 1.5, 2],
+  /** La méga-horde du premier crépuscule de la Cendre. */
+  MEGA_HORDE_SIZE: 16,
+  /** Le jour où l'évacuation s'ouvre, et son rayon de « sauvetage ». */
+  EVAC_DAY: 55,
+  EVAC_RADIUS: 6,
+} as const
+
+/** Valeur de butin pour le verdict de la Meute (spec saison R4). */
+export const LOOT_VALUES: Partial<Record<import('./items').ItemId, number>> = {
+  components: 10,
+  iron_ingot: 5,
+  iron_axe: 3,
+  iron_pickaxe: 3,
+  spear: 3,
+  axe: 2,
+  pickaxe: 2,
+}
+
+/** Noms de villages, attribués par id (une chronique exige des noms). */
+export const VILLAGE_NAMES = [
+  'le Feu du Gué',
+  'le Clan du Levant',
+  'les Braises Hautes',
+  'le Foyer des Saules',
+  'la Bande du Ravin',
+  'le Feu Dormant',
+  'les Cendres Douces',
+  'le Camp du Vieux Pont',
+] as const
+
 /** L'alignement émergent (GDD §3, spec alignement). */
 export const ALIGNMENT = {
   /** Chaleur par point de faim utile donné (spec R2). */
@@ -319,6 +353,8 @@ export const ALIGNMENT = {
   ONGOING_HIT_WARMTH: -2,
   RIPOSTE_WARMTH: -2,
   KILL_WARMTH: -40,
+  /** Tuer un agresseur en défense « ne coûte presque rien » (GDD §3). */
+  RIPOSTE_KILL_WARMTH: -4,
   DESTROY_STRUCTURE_WARMTH: -15,
   ENGAGEMENT_PER_ACT: 8,
   /** Décroissance linéaire vers 0, en points par jour de saison (le paquebot). */

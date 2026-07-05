@@ -84,6 +84,10 @@ export interface SimState {
   lastConvoyDay: number
   /** Mémoire d'agression entre villages (premier sang, spec alignement R4). */
   aggressions: Aggression[]
+  /** La saison (spec saison) : méga-horde tirée, évacuation ouverte, fin émise. */
+  megaHordeSpawned: boolean
+  evacuation: { tx: number; ty: number } | null
+  seasonEnded: boolean
   nextVillageId: number
   nextStructureId: number
   /** Buffer d'événements de domaine, drainé par l'hôte (voir events.ts). */
@@ -131,6 +135,9 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     nextHordeId: 1,
     lastConvoyDay: 0,
     aggressions: [],
+    megaHordeSpawned: false,
+    evacuation: null,
+    seasonEnded: false,
     nextVillageId: 1,
     nextStructureId: 1,
     events: [],

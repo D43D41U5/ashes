@@ -10,6 +10,7 @@ import {
   FOOD_VALUES,
   NODE_DEFS,
   RECIPES,
+  SEASON,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
   TERRAINS,
@@ -110,7 +111,9 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       addItems(actor.inventory, { [def.item]: yielded })
       node.stock -= yielded
       if (node.stock <= 0) {
-        node.regrowAt = state.tick + BALANCE.NODE_REGROW_TICKS
+        // Les sources se contractent avec la saison (spec saison R1).
+        const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
+        node.regrowAt = state.tick + Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR[act - 1]!)
         emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id })
       }
 

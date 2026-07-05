@@ -52,14 +52,14 @@ Monorepo, garde-fous de pureté et de déterminisme, noyau tick/entités/PRNG, r
 - Deux axes par avatar (actes envers l'extérieur seulement, pondérés par la faim utile ×besoin ×acte), premier sang par mémoire d'agression (riposte presque gratuite), inertie linéaire (paquebot), agrégation au Feu plafonnée par tête, archétypes Foyer/Meute avec effets (régén ×chaleur, Foyer retenu/solide, Meute mordante/anémique). Le don existe (`give` + dépôts ouverts à tous — la boîte aux dons). Villages PNJ à disposition : la Meute raide la nuit (casse le grenier, un coffre détruit répand son contenu, butin rapporté), le Foyer porte des baies au voisin. Alarme et milice réagissent aussi aux raiders.
 - Sortie vérifiée : nourrir ses voisins vire le Feu au bleu ; le raid Meute complet (alarme, grenier cassé, butin, chaleur en baisse) ; replay exact.
 
-### V9 — La saison (~3-4 sem)
-- **Spec** : `specs/saison.md`. Trois actes avec courbe de pression (robinets/éviers par acte), Grand Froid (consommation ×2), Cendre + objectif final v1 (simple : un point d'évacuation, condition de victoire par archétype), Mémoires + **chronique v1** (consommateur du bus d'événements : les 10 grands moments de la saison en texte).
-- **Sortie** : une saison accélérée complète (60 jours en ~2 h réelles) se joue de bout en bout, se termine, et produit une chronique.
+### V9 — La saison ✅ (fait, 2026-07-05 — voir `specs/saison.md`)
+- Courbe de pression complète (faim ×acte V4 ✓, hordes ×acte V7 ✓, + repousse des nœuds ralentie ×1/1.5/2), méga-horde de 16 au premier crépuscule de la Cendre, point d'évacuation au jour 55 sur la route, verdicts par archétype au jour 61 (le Foyer en vies sauvées, la Meute en valeur de butin, le neutre en survie), villages nommés, **chronique v1** : fonction pure transformant le bus d'événements (posé en V0 pour cela) en récit daté.
+- Sortie vérifiée : saisons accélérées de bout en bout, verdicts émis une fois, chronique datée croissante nommant les villages, déterminisme au bit près.
 
-### V10 — Veillée jouable : polish & calibrage (~4-6 sem)
-- Harnais de **bots headless** (`pnpm sim:scenario`) : jouer N saisons en batch, sortir des stats (économie, morts, alignements) — l'outil de calibrage de `balance.ts`.
-- Onboarding minimal, UI/UX de la boucle 45 min, équilibrage, **démo publique** sur Cloudflare.
-- **🚧 GATE 1 : la boucle solo est-elle fun 5 sessions d'affilée ?** On ne construit pas le multi au-dessus d'un solo ennuyeux. C'est ici qu'on itère tant que non.
+### V10 — Veillée jouable : polish & calibrage ✅ (fait, 2026-07-05)
+- **Le banc de test** : `pnpm scenario` (et `SCENARIO_DAYS=60` pour une saison) joue des mondes à 3 villages et imprime le rapport (populations, greniers, morts, chronique) — il a déjà payé : le meurtre défensif coûtait comme un meurtre gratuit (les défenseurs viraient Meute !), les raiders se battaient à mort (villages exterminés en 6 jours). Corrigés : riposte létale à −4, décrochage des raiders blessés, don du Foyer déclenché plus tôt.
+- Onboarding : écran d'accueil (pitch + touches), journal de chronique (J), README.
+- **⚠ Reste humain** : brancher Cloudflare Pages (`pnpm build` → `packages/client/dist`) pour la démo publique, et surtout **le GATE 1 — la boucle solo est-elle fun 5 sessions d'affilée ?** — se joue à la main, pas en test. La Phase LAN ne commence qu'après un GATE 1 positif.
 
 ---
 

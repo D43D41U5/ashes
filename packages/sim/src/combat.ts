@@ -6,7 +6,7 @@
  * porte. Le même pipeline résout les coups des joueurs, des PNJ et des
  * monstres — personne ne triche.
  */
-import { damageModifier, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
+import { damageModifier, hasAggressionBetween, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
 import { ALIGNMENT, COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
 import { emitEvent } from './events'
 import { addItems, countOf, removeItems, type ItemId } from './items'
@@ -212,9 +212,17 @@ export function applyDamage(state: SimState, target: Entity, damage: number, byE
   // L'alignement (spec alignement R2, R4) : frapper l'extérieur est un acte.
   if (!targetMonster && byEntityId !== 0 && isOutsider(state, byEntityId, target.id)) {
     const targetVillage = getVillageOf(state, target.id)
+    const killerVillage = getVillageOf(state, byEntityId)
     const cost = recordHostility(state, byEntityId, targetVillage?.id ?? null)
     recordAct(state, byEntityId, cost)
-    if (target.hp <= 0 && before > 0) recordAct(state, byEntityId, ALIGNMENT.KILL_WARMTH)
+    if (target.hp <= 0 && before > 0) {
+      // Tuer l'agresseur en défense ne coûte presque rien (GDD : la riposte).
+      const defensive =
+        targetVillage !== undefined &&
+        killerVillage !== undefined &&
+        hasAggressionBetween(state, targetVillage.id, killerVillage.id)
+      recordAct(state, byEntityId, defensive ? ALIGNMENT.RIPOSTE_KILL_WARMTH : ALIGNMENT.KILL_WARMTH)
+    }
   }
   emitEvent(state, {
     type: 'entity_damaged',
@@ -242,9 +250,14 @@ export function applyDamage(state: SimState, target: Entity, damage: number, byE
 }
 
 function die(state: SimState, entity: Entity, byEntityId: number): void {
-  emitEvent(state, { type: 'entity_died', tick: state.tick, entityId: entity.id, byEntityId })
-
   const monster = state.monsters.find((m) => m.entityId === entity.id)
+  emitEvent(state, {
+    type: 'entity_died',
+    tick: state.tick,
+    entityId: entity.id,
+    byEntityId,
+    wasMonster: monster !== undefined,
+  })
   const npc = state.npcs.find((n) => n.entityId === entity.id)
 
   // Le cadavre reçoit tout ce qui était porté (spec R9) — ou la table de

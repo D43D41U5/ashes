@@ -47,7 +47,7 @@ export type SimEvent =
   | { type: 'skill_level_up'; tick: number; entityId: number; skill: SkillId; level: number }
   | { type: 'entity_damaged'; tick: number; entityId: number; byEntityId: number; amount: number }
   | { type: 'wound_inflicted'; tick: number; entityId: number; wound: 'leg' | 'arm' | 'bleeding' }
-  | { type: 'entity_died'; tick: number; entityId: number; byEntityId: number }
+  | { type: 'entity_died'; tick: number; entityId: number; byEntityId: number; wasMonster: boolean }
   | { type: 'entity_respawned'; tick: number; entityId: number }
   | { type: 'entity_bandaged'; tick: number; entityId: number; byEntityId: number }
   | { type: 'monster_slain'; tick: number; monsterType: import('./balance').MonsterType; byEntityId: number }
@@ -60,6 +60,18 @@ export type SimEvent =
   | { type: 'convoy_spawned'; tick: number; tx: number; ty: number }
   | { type: 'gift_given'; tick: number; byEntityId: number; toVillageId: number; item: ItemId; count: number }
   | { type: 'village_archetype_changed'; tick: number; villageId: number; archetype: 'foyer' | 'meute' | 'neutre' }
+  | { type: 'evacuation_opened'; tick: number; tx: number; ty: number }
+  | {
+      type: 'season_ended'
+      tick: number
+      verdicts: {
+        villageId: number
+        name: string
+        archetype: 'foyer' | 'meute' | 'neutre'
+        score: number
+        outcome: string
+      }[]
+    }
 // À venir avec les systèmes : pact_signed, cicatrices, …
 
 /** Émet un événement dans le buffer de l'état. Usage interne à /sim. */
