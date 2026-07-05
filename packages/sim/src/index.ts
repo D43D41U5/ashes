@@ -1,6 +1,8 @@
 export { BALANCE, TICK_DT_S } from './balance'
 export { rngNext, rngFloat, rngRoll } from './rng'
 export { createSim, spawnEntity, step, snapshot } from './sim'
+export { drainEvents } from './events'
+export type { SimEvent } from './events'
 export type { SimState, Entity, MoveInput } from './sim'
 export { createReplayLog, recordAndStep, runReplay } from './replay'
 export type { ReplayLog } from './replay'

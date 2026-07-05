@@ -1,0 +1,40 @@
+/**
+ * Événements de domaine — les faits discrets et signifiants de la simulation.
+ *
+ * Quatre systèmes du GDD consomment le même flux : l'alignement (§3 — « on ne
+ * mesure que des événements discrets, vérifiables côté serveur »), la
+ * chronique de saison (§2), le tableau du village et la réputation locale
+ * (§5), et le replay-tribunal (§11). Ils se construisent tous comme des
+ * consommateurs de ce flux — jamais en instrumentant la logique après coup.
+ *
+ * Règles :
+ * - Un événement est un fait accompli, pas une intention. Il est émis à
+ *   l'endroit où la logique l'exécute, dans le même tick.
+ * - Le flux est déterministe : même seed + mêmes inputs = mêmes événements
+ *   (contrat testé dans events.test.ts).
+ * - Haute fréquence ≠ domaine : un déplacement n'est pas un événement (le
+ *   replay log des inputs couvre ça) ; un premier sang, un don, un spawn, oui.
+ */
+import type { SimState } from './sim'
+
+export type SimEvent =
+  | { type: 'entity_spawned'; tick: number; entityId: number; x: number; y: number }
+// À venir avec les systèmes : resource_harvested, first_blood, gift_given,
+// pact_signed, member_banished, captive_released, …
+
+/** Émet un événement dans le buffer de l'état. Usage interne à /sim. */
+export function emitEvent(state: SimState, event: SimEvent): void {
+  state.events.push(event)
+}
+
+/**
+ * Vide et retourne le buffer d'événements. Appelé par l'hôte (Worker, serveur)
+ * après chaque tick pour alimenter les consommateurs (alignement, chronique,
+ * UI). Le buffer fait partie du SimState : deux runs comparés par snapshot
+ * doivent être drainés au même rythme.
+ */
+export function drainEvents(state: SimState): SimEvent[] {
+  const events = state.events
+  state.events = []
+  return events
+}

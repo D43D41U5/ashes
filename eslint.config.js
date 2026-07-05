@@ -36,7 +36,6 @@ export default tseslint.config(
                 'crypto',
                 'child_process',
                 'worker_threads',
-                'events',
                 'stream',
                 'util',
               ],
@@ -74,6 +73,29 @@ export default tseslint.config(
           object: 'Math',
           property: 'random',
           message: '/sim est déterministe : utiliser le PRNG seedé (rng.ts).',
+        },
+        // La spec ECMAScript ne garantit PAS le même résultat d'un moteur JS
+        // à l'autre pour les fonctions Math approximées — or un replay
+        // enregistré dans un navigateur (Veillée) doit rejouer au bit près
+        // sur Node (multi). Autorisés car exacts IEEE 754 : + - * /,
+        // Math.sqrt, abs, floor, ceil, round, trunc, sign, min, max, imul,
+        // fround, et les constantes (Math.PI, Math.SQRT1_2…).
+        ...[
+          'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2',
+          'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh',
+          'exp', 'expm1', 'log', 'log2', 'log10', 'log1p',
+          'pow', 'hypot', 'cbrt',
+        ].map((property) => ({
+          object: 'Math',
+          property,
+          message: `/sim doit rejouer au bit près navigateur/Node : Math.${property} n'est pas déterministe entre moteurs JS. Utiliser une approximation maison ou une table (voir eslint.config.js pour la liste des opérations exactes).`,
+        })),
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "BinaryExpression[operator='**']",
+          message: '/sim doit rejouer au bit près navigateur/Node : `**` (comme Math.pow) n’est pas déterministe entre moteurs JS. Pour un exposant entier, multiplier explicitement.',
         },
       ],
     },

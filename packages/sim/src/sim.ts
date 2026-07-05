@@ -11,6 +11,7 @@
  * trivial.
  */
 import { BALANCE, TICK_DT_S } from './balance'
+import { emitEvent, type SimEvent } from './events'
 import { rngNext } from './rng'
 
 export interface Entity {
@@ -29,6 +30,8 @@ export interface SimState {
   rngState: number
   nextEntityId: number
   entities: Entity[]
+  /** Buffer d'événements de domaine, drainé par l'hôte (voir events.ts). */
+  events: SimEvent[]
 }
 
 /** Intention de déplacement d'un avatar pour un tick donné. */
@@ -45,6 +48,7 @@ export function createSim(seed: number): SimState {
     rngState: seed >>> 0,
     nextEntityId: 1,
     entities: [],
+    events: [],
   }
 }
 
@@ -54,6 +58,7 @@ export function spawnEntity(state: SimState, x: number, y: number): number {
   state.entities.push({ id, x, y })
   // Consomme un pas de PRNG : le spawn fait partie de l'histoire déterministe.
   state.rngState = rngNext(state.rngState)
+  emitEvent(state, { type: 'entity_spawned', tick: state.tick, entityId: id, x, y })
   return id
 }
 

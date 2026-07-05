@@ -16,7 +16,8 @@ describe('sim', () => {
     const sim = createSim(1)
     const id = spawnEntity(sim, 0, 0)
     step(sim, [{ entityId: id, dx: 1, dy: 1 }])
-    const distance = Math.hypot(sim.entities[0]!.x, sim.entities[0]!.y)
+    const { x, y } = sim.entities[0]!
+    const distance = Math.sqrt(x * x + y * y)
     expect(distance).toBeCloseTo(BALANCE.WALK_SPEED_TILES_PER_S * TICK_DT_S)
   })
 

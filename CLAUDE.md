@@ -28,7 +28,7 @@ docs/decisions.md ← journal des décisions (ADR léger) — à tenir à jour
 Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir en session ; si l'un d'eux doit vraiment changer, c'est une décision utilisateur à consigner dans `docs/decisions.md`.
 
 1. **`/sim` est pur.** Zéro import de Phaser, Colyseus, ou API Node. Il doit tourner à l'identique dans un Web Worker (mode Veillée solo) et sur Node (multi). Un lint ESLint fait respecter cette règle — ne jamais la contourner ni désactiver.
-2. **`/sim` est déterministe.** Pas de `Math.random` (PRNG seedé dans `rng.ts`, état dans le `SimState`), pas de `Date`/`performance`/timers — le temps est le numéro de tick. Même seed + mêmes inputs = même état au bit près : c'est le contrat testé par `sim.test.ts` et `replay.test.ts`, et le fondement du replay log, du multi et des bots headless.
+2. **`/sim` est déterministe — au bit près, entre moteurs JS.** Pas de `Math.random` (PRNG seedé dans `rng.ts`, état dans le `SimState`), pas de `Date`/`performance`/timers — le temps est le numéro de tick. Et pas de fonctions Math approximées (`sin`, `cos`, `pow`, `hypot`, `exp`, `log`, `**`…) : la spec ECMAScript ne garantit pas leur résultat d'un moteur à l'autre, or un replay enregistré dans un navigateur doit rejouer exactement sur Node. Opérations autorisées : `+ - * /`, `Math.sqrt`, `abs`, `floor`, `ceil`, `round`, `trunc`, `sign`, `min`, `max`, `imul`, `fround`, les constantes. Même seed + mêmes inputs = même état ET même flux d'événements : contrats testés par `sim.test.ts`, `replay.test.ts` et `events.test.ts`.
 3. **Serveur autoritatif, client bête.** Le client envoie des inputs et interpole des snapshots. Seule prédiction locale : le déplacement de son propre avatar.
 4. **Pas de moteur physique** (ni Arcade ni Matter) : grille + AABB maison. Pathfinding : grille + flow fields pour les hordes.
 5. **Tick fixe 10-15 Hz** (`BALANCE.TICK_RATE_HZ`), wind-ups de combat 300-500 ms, interpolation client ~100 ms.
@@ -38,6 +38,7 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 ## Règles de travail
 
 - **Équilibrage** : tout nombre d'équilibrage vit dans `packages/sim/src/balance.ts`, jamais en dur dans la logique. Les valeurs sont des ordres de grandeur (GDD §15), calibrées en playtest.
+- **Événements de domaine** : tout fait de jeu discret et signifiant (spawn, récolte, don, premier sang, pacte…) est émis comme `SimEvent` (`events.ts`) au moment où la logique l'exécute. L'alignement, la chronique de saison, le tableau du village et la réputation sont des *consommateurs* de ce flux — on n'instrumente jamais la logique après coup. Haute fréquence ≠ domaine : un déplacement n'est pas un événement.
 - **État de sim JSON-sérialisable** : pas de classes, pas de `Map`/`Set` dans `SimState` — snapshot, transport Worker et persistance en dépendent.
 - **Specs avant systèmes** : avant d'implémenter un système de jeu (combat, alignement, économie…), extraire/compléter sa spec dans `docs/specs/` avec des critères d'acceptation testables, puis implémenter contre ces critères.
 - **Décisions** : toute décision de design ou d'architecture prise en session s'ajoute en une ligne dans `docs/decisions.md`. Les 14 décisions fondatrices sont dans le GDD §14.
