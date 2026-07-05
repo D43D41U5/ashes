@@ -10,9 +10,10 @@ import {
   BALANCE,
   createSim,
   drainEvents,
+  generateNodes,
   getGameTime,
-  grantItems,
   isBlockingTile,
+  nodeAt,
   rngRoll,
   spawnEntity,
   step,
@@ -59,7 +60,7 @@ function spawnWanderers(state: SimState, count: number): void {
   while (placed < count) {
     const x = 4 + Math.floor(roll() * (state.map.width - 8))
     const y = 4 + Math.floor(roll() * (state.map.height - 8))
-    if (isBlockingTile(state.map, x, y)) continue
+    if (isBlockingTile(state.map, x, y) || nodeAt(state.nodes, x, y)) continue
     wanderers.push({ id: spawnEntity(state, x + 0.5, y + 0.5), dx: 0, dy: 0, ticksLeft: 0 })
     placed += 1
   }
@@ -88,6 +89,7 @@ function tick(): void {
     entities: sim.entities,
     structures: sim.structures,
     villages: sim.villages,
+    nodes: sim.nodes,
     events: drainEvents(sim),
   })
 }
@@ -95,11 +97,12 @@ function tick(): void {
 self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
   const msg = event.data
   if (msg.type === 'init') {
-    sim = createSim(msg.seed, { map: msg.map, calendarScale: msg.calendarScale })
+    // La « chair » : les nœuds de ressources sont générés depuis la seed.
+    const nodes = generateNodes(msg.map, msg.seed)
+    sim = createSim(msg.seed, { map: msg.map, calendarScale: msg.calendarScale, nodes })
     hostRng = msg.seed ^ 0x9e3779b9
     playerId = spawnEntity(sim, msg.playerSpawn.x, msg.playerSpawn.y)
-    // Kit de départ dev (spec village R3) — remplacé par la récolte en V4.
-    grantItems(sim, playerId, { wood: 80, stone: 30 })
+    // Plus de kit de départ : la boucle commence les mains vides (spec économie).
     spawnWanderers(sim, 6)
     post({ type: 'ready', playerId })
     setInterval(tick, 1000 / BALANCE.TICK_RATE_HZ)

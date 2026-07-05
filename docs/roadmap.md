@@ -32,9 +32,9 @@ Monorepo, garde-fous de pureté et de déterminisme, noyau tick/entités/PRNG, r
 - Actions validées côté sim (protocole `move + action`), inventaire + coûts réels (acquisition stubbée jusqu'à V4), Feu/fondation semi-libre, structures 1×1 avec collision conditionnelle (portes = serrures par membership), accès privé/village/public, Chef invite/bannit, démolition remboursée. Maison reportée à V5 (avec les PNJ). Client : mode construction (F/1-4/clic), toasts d'erreur.
 - Sortie vérifiée : 11 tests headless (A1-A5) + replay avec actions (A6) + smoke test navigateur (fondation, enceinte, porte, coffre, rejets).
 
-### V4 — Survie & économie T1/T2 (~3-4 sem)
-- **Spec** : `specs/economie.md`. Récolte (bois, pierre, fibres, gibier, puis métal/charbon en zone contestée), faim simple, chaînes courtes (minerai → lingot → outil) avec stations distinctes, usure des outils, spécialisation émergente par la pratique (courbe simple).
-- **Sortie** : la boucle « récolter → crafter → s'équiper → user → refaire » tient 2 h de jeu ; un bot headless la joue en test.
+### V4 — Survie & économie T1/T2 ✅ (fait, 2026-07-05 — voir `specs/economie.md`)
+- Nœuds épuisables/repoussants générés procéduralement (la « chair », T2 dans les zones `gisement`), récolte à coups avec outils multiplicateurs et usure agrégée, faim simple modulée par l'acte (le Grand Froid mord), chaînes Feu/four/atelier, spécialisation émergente (4 métiers, XP freinée par la dispersion). `grantItems` retiré du gameplay — on commence les mains vides. Gibier reporté à V6 (chasse = combat).
+- Sortie vérifiée : bot headless jouant la boucle complète en pur /sim (A7), rejouable au bit près ; récolte au clic vérifiée en navigateur. Bonus : le contrat de replay a attrapé un vrai bug (options de sim partagées par référence).
 
 ### V5 — Les PNJ (~4-5 sem, le cœur du mode Veillée)
 - **Spec** : `specs/pnj.md`. Villageois simulés RimWorld-light : besoins, file de tâches, métiers ; le **tableau du village** (tâches système : grenier bas, mur endommagé) ; les PNJ y répondent.

@@ -71,6 +71,8 @@ export function createDemoMap(): WorldMap {
   map.zones = [
     { name: 'le Pont', x: 38, y: 30, w: 7, h: 6 },
     { name: 'la Clairière', x: 7, y: 29, w: 8, h: 8 },
+    // Le gisement T2, de l'autre côté de la rivière : y aller coûte (spec économie R3).
+    { name: 'la Mine du Levant', kind: 'gisement', x: 48, y: 10, w: 12, h: 10 },
   ]
   return map
 }

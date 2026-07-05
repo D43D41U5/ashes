@@ -28,6 +28,9 @@ interface TiledObject {
   y: number
   width: number
   height: number
+  /** Champ « type » (Tiled ≤ 1.8) ou « class » (≥ 1.9) → Zone.kind. */
+  type?: string
+  class?: string
 }
 
 interface TiledObjectLayer {
@@ -90,13 +93,17 @@ export function importTiledMap(file: TiledMapFile): TiledImportResult {
     }
   }
 
-  const zones: Zone[] = (zonesLayer?.objects ?? []).map((o) => ({
-    name: o.name,
-    x: o.x / file.tilewidth,
-    y: o.y / file.tileheight,
-    w: o.width / file.tilewidth,
-    h: o.height / file.tileheight,
-  }))
+  const zones: Zone[] = (zonesLayer?.objects ?? []).map((o) => {
+    const kind = o.class ?? o.type
+    return {
+      name: o.name,
+      x: o.x / file.tilewidth,
+      y: o.y / file.tileheight,
+      w: o.width / file.tilewidth,
+      h: o.height / file.tileheight,
+      ...(kind ? { kind } : {}),
+    }
+  })
 
   return {
     map: { width: file.width, height: file.height, terrain, zones },

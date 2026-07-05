@@ -42,6 +42,40 @@ export const BALANCE = {
 
   /** Part des matériaux remboursée à la démolition. */
   DEMOLISH_REFUND: 0.5,
+
+  /** Ticks avant qu'un nœud épuisé repousse à plein (~5 min réelles). */
+  NODE_REGROW_TICKS: 3600,
+
+  /** Rythme minimal entre deux récoltes/crafts (1 s) — borne de vraisemblance. */
+  GATHER_COOLDOWN_TICKS: 12,
+
+  /** Coups outillés avant qu'un outil soit consommé. */
+  TOOL_DURABILITY: 100,
+
+  /** Usure minimale par coup, quel que soit le niveau d'artisan. */
+  TOOL_WEAR_MIN: 0.25,
+
+  /** Perte de faim par heure de cycle (jauge 0-100 ; ~3 cycles pour la vider). */
+  HUNGER_PER_CYCLE_HOUR: 1.4,
+
+  /** Multiplicateur de faim par acte — le Grand Froid mord (GDD §2). */
+  ACT_HUNGER_FACTOR: [1, 2, 3],
+
+  /** Facteur de vitesse le ventre vide (faim à 0). */
+  HUNGER_SPEED_MALUS: 0.5,
+
+  /** XP par action. */
+  XP_PER_GATHER: 1,
+  XP_PER_CRAFT: 5,
+
+  /** Bonus de rendement par niveau de métier (continu, décision actée #3). */
+  SKILL_YIELD_BONUS: 0.04,
+
+  /** Réduction d'usure infligée par niveau d'artisan. */
+  SKILL_WEAR_REDUCTION: 0.03,
+
+  /** Freinage d'XP par la somme des niveaux des AUTRES métiers (spec R14). */
+  SKILL_SPREAD_PENALTY: 0.5,
 } as const
 
 export interface TerrainDef {
@@ -68,6 +102,8 @@ export const TERRAIN_GRASS = 1
 export const TERRAIN_ROAD = 2
 export const TERRAIN_ROCK = 5
 
+export const TERRAIN_FOREST = 3
+
 /** Coûts de construction (spec village R3 : réels dès V3). */
 export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./items').Inventory> = {
   fire: { wood: 10 },
@@ -75,6 +111,60 @@ export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./
   door: { wood: 3 },
   chest: { wood: 4 },
   workshop: { wood: 6, stone: 4 },
+  furnace: { stone: 8 },
+}
+
+export type NodeType = 'tree' | 'rock' | 'fiber_plant' | 'berry_bush' | 'iron_vein' | 'coal_seam'
+
+export interface NodeDef {
+  item: import('./items').ItemId
+  stock: number
+  /** Arbres, affleurements et filons sont des obstacles (spec économie R1). */
+  blocks: boolean
+  skill: import('./items').SkillId
+  /** Famille d'outil qui multiplie le rendement. */
+  tool: 'axe' | 'pickaxe' | null
+  /** Le T2 exige l'outil (spec R5) : rien à mains nues. */
+  requiresTool: boolean
+}
+
+export const NODE_DEFS: Record<NodeType, NodeDef> = {
+  tree: { item: 'wood', stock: 10, blocks: true, skill: 'woodcutting', tool: 'axe', requiresTool: false },
+  rock: { item: 'stone', stock: 12, blocks: true, skill: 'mining', tool: 'pickaxe', requiresTool: false },
+  fiber_plant: { item: 'fiber', stock: 6, blocks: false, skill: 'foraging', tool: null, requiresTool: false },
+  berry_bush: { item: 'berries', stock: 8, blocks: false, skill: 'foraging', tool: null, requiresTool: false },
+  iron_vein: { item: 'iron_ore', stock: 8, blocks: true, skill: 'mining', tool: 'pickaxe', requiresTool: true },
+  coal_seam: { item: 'coal', stock: 8, blocks: true, skill: 'mining', tool: 'pickaxe', requiresTool: true },
+}
+
+/** Rendement par famille d'outil : mains nues 1, outil 2, outil de fer 3. */
+export const TOOL_TIERS: Record<'axe' | 'pickaxe', { basic: import('./items').ItemId; iron: import('./items').ItemId }> = {
+  axe: { basic: 'axe', iron: 'iron_axe' },
+  pickaxe: { basic: 'pickaxe', iron: 'iron_pickaxe' },
+}
+
+/** Valeur nutritive des consommables (spec R9). */
+export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
+  berries: 15,
+  stew: 50,
+}
+
+export type RecipeId = 'stew' | 'axe' | 'pickaxe' | 'iron_ingot' | 'iron_axe' | 'iron_pickaxe'
+
+export interface Recipe {
+  station: 'fire' | 'workshop' | 'furnace'
+  inputs: import('./items').Inventory
+  output: import('./items').ItemId
+}
+
+/** Chaînes ≤ 3 étapes, stations distinctes (GDD §8, spec R10-R11). */
+export const RECIPES: Record<RecipeId, Recipe> = {
+  stew: { station: 'fire', inputs: { berries: 4, fiber: 1 }, output: 'stew' },
+  axe: { station: 'workshop', inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'axe' },
+  pickaxe: { station: 'workshop', inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'pickaxe' },
+  iron_ingot: { station: 'furnace', inputs: { iron_ore: 2, coal: 1 }, output: 'iron_ingot' },
+  iron_axe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_axe' },
+  iron_pickaxe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_pickaxe' },
 }
 
 /** Durée d'un tick en secondes — le seul dt qui existe dans /sim. */

@@ -44,7 +44,7 @@ export interface Village {
   fireTy: number
 }
 
-export type PlayerAction =
+export type VillageAction =
   | { type: 'light_fire' }
   | { type: 'build'; structure: Exclude<StructureType, 'fire'>; tx: number; ty: number }
   | { type: 'demolish'; structureId: number }
@@ -61,6 +61,7 @@ const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = {
   door: 'village',
   chest: 'private',
   workshop: 'village',
+  furnace: 'village',
 }
 
 export function structureAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
@@ -101,7 +102,7 @@ function distSq(ax: number, ay: number, bx: number, by: number): number {
   return dx * dx + dy * dy
 }
 
-export function applyAction(state: SimState, actorId: number, action: PlayerAction): void {
+export function applyVillageAction(state: SimState, actorId: number, action: VillageAction): void {
   const actor = state.entities.find((e) => e.id === actorId)
   if (!actor) return
   const reject = (reason: string): void => {

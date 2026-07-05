@@ -1,6 +1,6 @@
 # L'économie — récolte, faim, artisanat, spécialisation
 
-*Source : GDD §8 (économie de flux, 3 tiers, chaînes courtes), §6 (spécialisation émergente, survie facile / prospérité collective), §2 (pression par acte). Statut : **brouillon — proposition à valider**. Jalon : V4.*
+*Source : GDD §8 (économie de flux, 3 tiers, chaînes courtes), §6 (spécialisation émergente, survie facile / prospérité collective), §2 (pression par acte). Statut : **implémenté** (2026-07-05, A1-A7 verts — dont le bot headless — + smoke test navigateur). Jalon : V4.*
 
 ## Objectif de design
 

@@ -4,7 +4,7 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import type { GameTime, Inventory } from '@braises/sim'
+import { skillLevel, type GameTime, type Inventory, type SkillId } from '@braises/sim'
 import Phaser from 'phaser'
 
 const STRUCTURE_LABELS: Record<string, string> = {
@@ -12,7 +12,30 @@ const STRUCTURE_LABELS: Record<string, string> = {
   door: 'porte',
   chest: 'coffre',
   workshop: 'atelier',
+  furnace: 'four',
 }
+
+const SKILL_LABELS: Record<SkillId, string> = {
+  woodcutting: 'Bûcheron',
+  mining: 'Mineur',
+  foraging: 'Cueilleur',
+  crafting: 'Artisan',
+}
+
+const ITEM_LABELS: [keyof Inventory, string][] = [
+  ['wood', 'Bois'],
+  ['stone', 'Pierre'],
+  ['fiber', 'Fibre'],
+  ['berries', 'Baies'],
+  ['stew', 'Ragoût'],
+  ['iron_ore', 'Minerai'],
+  ['coal', 'Charbon'],
+  ['iron_ingot', 'Lingot'],
+  ['axe', 'Hache'],
+  ['pickaxe', 'Pioche'],
+  ['iron_axe', 'Hache fer'],
+  ['iron_pickaxe', 'Pioche fer'],
+]
 
 /** Alpha de l'obscurité selon l'heure du cycle (jour [0,15), nuit [15,24)). */
 function nightAlpha(hourOfCycle: number): number {
@@ -46,9 +69,9 @@ export class UIScene extends Phaser.Scene {
       strokeThickness: 3,
     }
     this.hud = this.add.text(10, 8, '', style)
-    this.bottomBar = this.add.text(10, this.scale.height - 52, '', style)
+    this.bottomBar = this.add.text(10, this.scale.height - 72, '', style)
     this.errorText = this.add
-      .text(this.scale.width / 2, this.scale.height - 90, '', { ...style, color: '#ff7a6b' })
+      .text(this.scale.width / 2, this.scale.height - 110, '', { ...style, color: '#ff7a6b' })
       .setOrigin(0.5, 0)
   }
 
@@ -68,9 +91,24 @@ export class UIScene extends Phaser.Scene {
 
     const inv = (this.registry.get('inv') as Inventory | undefined) ?? {}
     const selected = (this.registry.get('selected') as string | undefined) ?? 'wall'
+    const hunger = (this.registry.get('hunger') as number | undefined) ?? 100
+    const skills = (this.registry.get('skills') as Partial<Record<SkillId, number>> | undefined) ?? {}
+
+    const invText = ITEM_LABELS.filter(([item]) => (inv[item] ?? 0) > 0)
+      .map(([item, label]) => `${label} ${inv[item]}`)
+      .join(' · ')
+    const skillsText = (Object.keys(skills) as SkillId[])
+      .map((s) => ({ s, level: skillLevel(skills[s] ?? 0) }))
+      .filter(({ level }) => level > 0)
+      .map(({ s, level }) => `${SKILL_LABELS[s]} ${level}`)
+      .join(' · ')
+
     this.bottomBar.setText(
-      `Bois ${inv.wood ?? 0} · Pierre ${inv.stone ?? 0} — [${STRUCTURE_LABELS[selected]}]\n` +
-        `F : allumer un Feu · 1-4 : mur/porte/coffre/atelier · clic : bâtir · clic droit : démolir`,
+      `Faim ${Math.ceil(hunger)}/100${hunger <= 0 ? ' ⚠ affamé' : ''}` +
+        (skillsText ? ` — ${skillsText}` : '') +
+        `\n${invText || '(mains vides — clique un arbre)'} — [${STRUCTURE_LABELS[selected]}]\n` +
+        `F Feu · 1-5 bâtir (mur/porte/coffre/atelier/four) · clic récolter/bâtir · clic droit démolir\n` +
+        `E baies · R ragoût · 6 cuire ragoût · 7 hache · 8 pioche · 9 lingot · 0 hache de fer`,
     )
 
     const error = this.registry.get('error') as { reason: string; at: number } | undefined

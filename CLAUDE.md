@@ -53,6 +53,6 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 Le plan d'implémentation complet est dans **`docs/roadmap.md`** (jalons V0-V10 → LAN → Vallée → Saison 0, avec critères de sortie et gates). Le cadre vient du GDD §13.
 
-**Jalon courant : V4 — Survie & économie T1/T2** (récolte — qui remplace `grantItems` —, faim simple, chaînes de craft, stations, usure ; écrire `docs/specs/economie.md` d'abord). V0-V3 faits le 2026-07-05 (`specs/monde.md`, `specs/client.md`, `specs/village.md`). Reste de V2 : brancher le déploiement Cloudflare Pages (action Alexis).
+**Jalon courant : V5 — Les PNJ** (villageois simulés RimWorld-light : besoins, tâches, métiers ; tableau du village ; écrire `docs/specs/pnj.md` d'abord — critère de sortie : un village 100 % PNJ survit 10 jours simulés sans intervention). V0-V4 faits le 2026-07-05 (specs `monde`, `client`, `village`, `economie`). Reste de V2 : brancher le déploiement Cloudflare Pages (action Alexis).
 
 MVP gouvernance (Veillée/LAN) : rang unique + Chef + propriété individuelle. MVP alignement : deux axes + Foyer/Meute seulement.

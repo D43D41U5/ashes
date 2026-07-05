@@ -3,8 +3,8 @@ import { BALANCE, TERRAIN_GRASS } from './balance'
 import { drainEvents } from './events'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
-import { createSim, spawnEntity, step, type SimState } from './sim'
-import { getVillageOf, grantItems, structureAt, type PlayerAction } from './village'
+import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
+import { getVillageOf, grantItems, structureAt } from './village'
 
 /** Carte 96×96 (assez grande pour FIRE_MIN_DISTANCE) avec un landmark. */
 function makeSim(): SimState {

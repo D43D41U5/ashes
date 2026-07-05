@@ -3,7 +3,8 @@ import { TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
 import { createEmptyMap } from './map'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, type MoveInput, type SimOptions, type SimState } from './sim'
-import { grantItems, type PlayerAction } from './village'
+import { type PlayerAction } from './sim'
+import { grantItems } from './village'
 
 describe('replay', () => {
   it('CONTRAT (A6) : rejouer le log reconstruit exactement la partie — carte, temps et actions compris', () => {

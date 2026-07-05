@@ -4,14 +4,29 @@
  * pose seulement les stacks et leurs opérations, canoniques et sérialisables.
  */
 
-export type ItemId = 'wood' | 'stone'
+export type ItemId =
+  | 'wood'
+  | 'stone'
+  | 'fiber'
+  | 'berries'
+  | 'stew'
+  | 'iron_ore'
+  | 'coal'
+  | 'iron_ingot'
+  | 'axe'
+  | 'pickaxe'
+  | 'iron_axe'
+  | 'iron_pickaxe'
 
 /** Stacks d'items. Invariant : jamais de clé à 0 (snapshot canonique). */
 export type Inventory = Partial<Record<ItemId, number>>
 
-export type StructureType = 'fire' | 'wall' | 'door' | 'chest' | 'workshop'
+export type StructureType = 'fire' | 'wall' | 'door' | 'chest' | 'workshop' | 'furnace'
 
 export type AccessLevel = 'private' | 'village' | 'public'
+
+/** Les quatre métiers V4 (spec économie R12). */
+export type SkillId = 'woodcutting' | 'mining' | 'foraging' | 'crafting'
 
 export function countOf(inv: Inventory, item: ItemId): number {
   return inv[item] ?? 0

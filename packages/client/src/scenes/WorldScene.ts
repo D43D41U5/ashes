@@ -12,6 +12,8 @@ import {
   zoneAt,
   type Entity,
   type PlayerAction,
+  type RecipeId,
+  type ResourceNode,
   type Structure,
   type WorldMap,
 } from '@braises/sim'
@@ -19,8 +21,8 @@ import Phaser from 'phaser'
 import { createDemoMap, DEMO_MAP_SIZE, PLAYER_SPAWN } from '../demo-map'
 import type { ClientToHost, HostToClient } from '../protocol'
 
-type Buildable = 'wall' | 'door' | 'chest' | 'workshop'
-const BUILD_KEYS: Buildable[] = ['wall', 'door', 'chest', 'workshop']
+type Buildable = 'wall' | 'door' | 'chest' | 'workshop' | 'furnace'
+const BUILD_KEYS: Buildable[] = ['wall', 'door', 'chest', 'workshop', 'furnace']
 
 const TILE_PX = 16
 const INTERP_MS = 1000 / BALANCE.TICK_RATE_HZ
@@ -73,7 +75,10 @@ export class WorldScene extends Phaser.Scene {
   private keys!: Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key[]>
   private structures: Structure[] = []
   private structureSprites = new Map<number, Phaser.GameObjects.Image>()
+  private nodes: ResourceNode[] = []
+  private nodeSprites = new Map<number, Phaser.GameObjects.Image>()
   private myVillageId: number | null = null
+  private myHunger = 100
   private selected: Buildable = 'wall'
   private ghost!: Phaser.GameObjects.Rectangle
 
@@ -106,15 +111,29 @@ export class WorldScene extends Phaser.Scene {
       right: grab([K.D, K.RIGHT]),
     }
 
-    // Mode construction : F fonde, 1-4 choisit, clic bâtit, clic droit démolit.
+    // Mode construction : F fonde, 1-5 choisit, clic bâtit, clic droit démolit.
     kb.addKey(K.F, false).on('down', () => this.sendAction({ type: 'light_fire' }))
-    ;[K.ONE, K.TWO, K.THREE, K.FOUR].forEach((code, i) => {
+    ;[K.ONE, K.TWO, K.THREE, K.FOUR, K.FIVE].forEach((code, i) => {
       kb.addKey(code, false).on('down', () => {
         this.selected = BUILD_KEYS[i]!
         this.registry.set('selected', this.selected)
       })
     })
     this.registry.set('selected', this.selected)
+
+    // Manger et crafter.
+    kb.addKey(K.E, false).on('down', () => this.sendAction({ type: 'eat', item: 'berries' }))
+    kb.addKey(K.R, false).on('down', () => this.sendAction({ type: 'eat', item: 'stew' }))
+    const craftKeys: [number, RecipeId][] = [
+      [K.SIX, 'stew'],
+      [K.SEVEN, 'axe'],
+      [K.EIGHT, 'pickaxe'],
+      [K.NINE, 'iron_ingot'],
+      [K.ZERO, 'iron_axe'],
+    ]
+    for (const [code, recipeId] of craftKeys) {
+      kb.addKey(code, false).on('down', () => this.sendAction({ type: 'craft', recipeId }))
+    }
 
     this.ghost = this.add
       .rectangle(0, 0, TILE_PX, TILE_PX, 0xffffff, 0.22)
@@ -131,9 +150,15 @@ export class WorldScene extends Phaser.Scene {
         const target = this.structures.find((s) => s.tx === tx && s.ty === ty)
         if (target) this.sendAction({ type: 'demolish', structureId: target.id })
       } else {
-        this.sendAction({ type: 'build', structure: this.selected, tx, ty })
+        // Un nœud vivant sous le clic → récolter ; sinon → bâtir.
+        const node = this.nodes.find((n) => n.tx === tx && n.ty === ty && n.stock > 0)
+        if (node) this.sendAction({ type: 'harvest', nodeId: node.id })
+        else this.sendAction({ type: 'build', structure: this.selected, tx, ty })
       }
     })
+
+    // Hook de debug/pilotage (pattern __MANIF__) : smoke tests et futurs bots.
+    ;(window as unknown as { __BRAISES__: unknown }).__BRAISES__ = { scene: this }
 
     this.worker = new Worker(new URL('../worker/sim-worker.ts', import.meta.url), { type: 'module' })
     this.worker.addEventListener('message', (e: MessageEvent<HostToClient>) => this.onHostMessage(e.data))
@@ -156,9 +181,15 @@ export class WorldScene extends Phaser.Scene {
     }
 
     // Prédiction locale (R5) : même code que la sim, au dt de la frame —
-    // structures et appartenance comprises (les portes s'ouvrent pour moi).
-    const world = { map: this.map, structures: this.structures, moverVillageId: this.myVillageId }
-    const moved = moveAvatar(world, this.predicted.x, this.predicted.y, dx, dy, deltaMs / 1000)
+    // structures, nœuds, appartenance et faim compris.
+    const world = {
+      map: this.map,
+      structures: this.structures,
+      nodes: this.nodes,
+      moverVillageId: this.myVillageId,
+    }
+    const speedScale = this.myHunger <= 0 ? BALANCE.HUNGER_SPEED_MALUS : 1
+    const moved = moveAvatar(world, this.predicted.x, this.predicted.y, dx, dy, deltaMs / 1000, speedScale)
     this.predicted = moved
     this.syncSprite(this.playerSprite, moved.x, moved.y)
 
@@ -184,6 +215,7 @@ export class WorldScene extends Phaser.Scene {
     }
     this.registry.set('time', msg.time)
     this.syncStructures(msg.structures)
+    this.syncNodes(msg.nodes)
     this.myVillageId = msg.villages.find((v) => v.memberIds.includes(this.playerId))?.id ?? null
     this.registry.set(
       'village',
@@ -199,6 +231,9 @@ export class WorldScene extends Phaser.Scene {
     for (const entity of msg.entities) {
       if (entity.id === this.playerId) {
         this.registry.set('inv', entity.inventory)
+        this.registry.set('hunger', entity.hunger)
+        this.registry.set('skills', entity.skills)
+        this.myHunger = entity.hunger
         this.reconcile(entity)
         continue
       }
@@ -250,6 +285,19 @@ export class WorldScene extends Phaser.Scene {
         sprite.destroy()
         this.structureSprites.delete(id)
       }
+    }
+  }
+
+  /** Synchronise les sprites de nœuds : un nœud épuisé s'estompe. */
+  private syncNodes(nodes: ResourceNode[]): void {
+    this.nodes = nodes
+    for (const n of nodes) {
+      let sprite = this.nodeSprites.get(n.id)
+      if (!sprite) {
+        sprite = this.add.image(n.tx * TILE_PX, n.ty * TILE_PX, `nd-${n.type}`).setOrigin(0).setDepth(4)
+        this.nodeSprites.set(n.id, sprite)
+      }
+      sprite.setAlpha(n.stock > 0 ? 1 : 0.25)
     }
   }
 

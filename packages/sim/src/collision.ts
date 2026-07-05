@@ -9,7 +9,8 @@
  * recouvre strictement — être flush contre un mur (max = bord de tuile)
  * n'est pas un recouvrement. EPS absorbe le bruit flottant.
  */
-import { BALANCE, TERRAINS } from './balance'
+import { BALANCE, NODE_DEFS, TERRAINS } from './balance'
+import { nodeAt, type ResourceNode } from './economy'
 import { isBlockingTile, terrainAt, type WorldMap } from './map'
 import { structureAt, structureBlocks, type Structure } from './village'
 
@@ -24,14 +25,22 @@ const HALF = BALANCE.AVATAR_HITBOX_TILES / 2
 export interface MoveWorld {
   map: WorldMap
   structures?: Structure[]
+  /** Les nœuds vivants de type bloquant (arbre, roche, filon) sont des obstacles. */
+  nodes?: ResourceNode[]
   moverVillageId?: number | null
 }
 
 function blockedAt(world: MoveWorld, tx: number, ty: number): boolean {
   if (isBlockingTile(world.map, tx, ty)) return true
-  if (!world.structures) return false
-  const s = structureAt(world.structures, tx, ty)
-  return s !== undefined && structureBlocks(s, world.moverVillageId ?? null)
+  if (world.structures) {
+    const s = structureAt(world.structures, tx, ty)
+    if (s !== undefined && structureBlocks(s, world.moverVillageId ?? null)) return true
+  }
+  if (world.nodes) {
+    const n = nodeAt(world.nodes, tx, ty)
+    if (n !== undefined && n.stock > 0 && NODE_DEFS[n.type].blocks) return true
+  }
+  return false
 }
 
 /** Plage de tuiles recouvertes par l'intervalle [min, max). */
@@ -111,11 +120,13 @@ export function moveAvatar(
   dx: -1 | 0 | 1,
   dy: -1 | 0 | 1,
   dtS: number,
+  /** Modulateur externe (faim à 0 → HUNGER_SPEED_MALUS). Partagé avec la prédiction client. */
+  speedScale = 1,
 ): { x: number; y: number } {
   if (dx === 0 && dy === 0) return { x, y }
   const terrain = TERRAINS[terrainAt(world.map, Math.floor(x), Math.floor(y))]
   const factor = terrain?.walkable ? terrain.speedFactor : 1
-  const speed = BALANCE.WALK_SPEED_TILES_PER_S * dtS * factor
+  const speed = BALANCE.WALK_SPEED_TILES_PER_S * dtS * factor * speedScale
   const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1
   return resolveMove(world, x, y, dx * speed * norm, dy * speed * norm)
 }

@@ -51,6 +51,53 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0xf7c256).fillCircle(8, 7, 2)
     g.generateTexture('st-fire', 16, 16)
     g.destroy()
+
+    this.makeNodes()
+  }
+
+  /** Textures des nœuds de ressources. */
+  private makeNodes(): void {
+    const g = this.add.graphics()
+
+    g.fillStyle(0x4a3620).fillRect(6, 9, 4, 6) // arbre : tronc + houppier
+    g.fillStyle(0x1e4d22).fillCircle(8, 6, 6)
+    g.fillStyle(0x2d6b32).fillCircle(6, 5, 3)
+    g.generateTexture('nd-tree', 16, 16)
+    g.clear()
+
+    g.fillStyle(0x5a5a5e).fillCircle(8, 10, 6) // affleurement
+    g.fillStyle(0x7c7c82).fillCircle(6, 8, 3)
+    g.generateTexture('nd-rock', 16, 16)
+    g.clear()
+
+    g.fillStyle(0x6f9c3a) // fibres : touffe
+    g.fillRect(4, 8, 2, 7)
+    g.fillRect(7, 6, 2, 9)
+    g.fillRect(10, 9, 2, 6)
+    g.generateTexture('nd-fiber_plant', 16, 16)
+    g.clear()
+
+    g.fillStyle(0x2f5e33).fillCircle(8, 9, 6) // buisson à baies
+    g.fillStyle(0xc0392b)
+    g.fillCircle(5, 8, 1.5)
+    g.fillCircle(10, 7, 1.5)
+    g.fillCircle(8, 11, 1.5)
+    g.generateTexture('nd-berry_bush', 16, 16)
+    g.clear()
+
+    g.fillStyle(0x5a5a5e).fillCircle(8, 10, 6) // filon de fer : veinules rouille
+    g.fillStyle(0xb0632e)
+    g.fillRect(5, 8, 3, 2)
+    g.fillRect(9, 11, 3, 2)
+    g.generateTexture('nd-iron_vein', 16, 16)
+    g.clear()
+
+    g.fillStyle(0x5a5a5e).fillCircle(8, 10, 6) // veine de charbon
+    g.fillStyle(0x1c1c20)
+    g.fillRect(5, 8, 3, 2)
+    g.fillRect(9, 11, 3, 2)
+    g.generateTexture('nd-coal_seam', 16, 16)
+    g.destroy()
   }
 
   private makeSprite(key: string, fill: number, border: number): void {

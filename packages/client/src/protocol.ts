@@ -5,7 +5,16 @@
  * (Phase LAN) : ces messages sont la répétition générale du réseau. On ne
  * transmet jamais de position côté client, seulement des intentions.
  */
-import type { Entity, GameTime, PlayerAction, SimEvent, Structure, Village, WorldMap } from '@braises/sim'
+import type {
+  Entity,
+  GameTime,
+  PlayerAction,
+  ResourceNode,
+  SimEvent,
+  Structure,
+  Village,
+  WorldMap,
+} from '@braises/sim'
 
 export interface InitMessage {
   type: 'init'
@@ -41,6 +50,7 @@ export interface SnapshotMessage {
   entities: Entity[]
   structures: Structure[]
   villages: Village[]
+  nodes: ResourceNode[]
   events: SimEvent[]
 }
 

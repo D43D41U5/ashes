@@ -14,6 +14,8 @@ export interface Zone {
   y: number
   w: number
   h: number
+  /** Rôle mécanique optionnel (ex. 'gisement' : accueille le T2 — spec économie R3). */
+  kind?: string
 }
 
 export interface WorldMap {

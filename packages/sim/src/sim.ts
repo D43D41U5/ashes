@@ -12,12 +12,16 @@
  */
 import { BALANCE, TERRAIN_GRASS, TICK_DT_S } from './balance'
 import { moveAvatar } from './collision'
+import { advanceEconomy, applyEconomyAction, type EconomyAction, type ResourceNode } from './economy'
 import { emitEvent, type SimEvent } from './events'
-import type { Inventory } from './items'
+import type { Inventory, ItemId, SkillId } from './items'
 import { createEmptyMap, type WorldMap } from './map'
 import { rngNext } from './rng'
 import { advanceTime } from './time'
-import { applyAction, getVillageOf, type PlayerAction, type Structure, type Village } from './village'
+import { applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
+
+/** L'union des actions possibles dans un tick (village + économie). */
+export type PlayerAction = VillageAction | EconomyAction
 
 export interface Entity {
   id: number
@@ -25,6 +29,14 @@ export interface Entity {
   x: number
   y: number
   inventory: Inventory
+  /** Jauge 0-100. À 0 : vitesse ÷2 (spec économie R7-R8). */
+  hunger: number
+  /** XP par métier (niveau dérivé — voir skillLevel). */
+  skills: Partial<Record<SkillId, number>>
+  /** Usure agrégée par type d'outil (spec économie R6). */
+  wear: Partial<Record<ItemId, number>>
+  /** Tick avant lequel récolte/craft sont refusés (rythme borné). */
+  cooldownUntil: number
 }
 
 export interface SimState {
@@ -41,6 +53,7 @@ export interface SimState {
   entities: Entity[]
   villages: Village[]
   structures: Structure[]
+  nodes: ResourceNode[]
   nextVillageId: number
   nextStructureId: number
   /** Buffer d'événements de domaine, drainé par l'hôte (voir events.ts). */
@@ -50,6 +63,8 @@ export interface SimState {
 export interface SimOptions {
   map?: WorldMap
   calendarScale?: number
+  /** Nœuds de ressources — typiquement `generateNodes(map, seed)`. */
+  nodes?: ResourceNode[]
 }
 
 /** Intention d'un avatar pour un tick : déplacement + au plus une action. */
@@ -66,11 +81,16 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     seed,
     rngState: seed >>> 0,
     calendarScale: options.calendarScale ?? BALANCE.DEFAULT_CALENDAR_SCALE,
-    map: options.map ?? createEmptyMap(64, 64, TERRAIN_GRASS),
+    // Copies profondes (JSON — l'état est JSON-sérialisable par design) :
+    // les options sont des ENTRÉES immuables. Les partager par référence
+    // corromprait le replay log (bug attrapé par le test A7 — la sim live
+    // mutait les nœuds du log, le replay partait d'arbres vides).
+    map: options.map ? (JSON.parse(JSON.stringify(options.map)) as WorldMap) : createEmptyMap(64, 64, TERRAIN_GRASS),
     nextEntityId: 1,
     entities: [],
     villages: [],
     structures: [],
+    nodes: options.nodes ? (JSON.parse(JSON.stringify(options.nodes)) as ResourceNode[]) : [],
     nextVillageId: 1,
     nextStructureId: 1,
     events: [],
@@ -85,7 +105,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
 export function spawnEntity(state: SimState, x: number, y: number): number {
   const id = state.nextEntityId
   state.nextEntityId += 1
-  state.entities.push({ id, x, y, inventory: {} })
+  state.entities.push({ id, x, y, inventory: {}, hunger: 100, skills: {}, wear: {}, cooldownUntil: 0 })
   // Consomme un pas de PRNG : le spawn fait partie de l'histoire déterministe.
   state.rngState = rngNext(state.rngState)
   emitEvent(state, { type: 'entity_spawned', tick: state.tick, entityId: id, x, y })
@@ -98,17 +118,27 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     const entity = state.entities.find((e) => e.id === input.entityId)
     if (!entity) continue
     // L'action d'abord (un mur bâti ce tick bloque dès ce tick), le pas ensuite.
-    if (input.action) applyAction(state, input.entityId, input.action)
+    const action = input.action
+    if (action) {
+      if (action.type === 'harvest' || action.type === 'craft' || action.type === 'eat') {
+        applyEconomyAction(state, input.entityId, action)
+      } else {
+        applyVillageAction(state, input.entityId, action)
+      }
+    }
     const world = {
       map: state.map,
       structures: state.structures,
+      nodes: state.nodes,
       moverVillageId: getVillageOf(state, input.entityId)?.id ?? null,
     }
-    const moved = moveAvatar(world, entity.x, entity.y, input.dx, input.dy, TICK_DT_S)
+    const speedScale = entity.hunger <= 0 ? BALANCE.HUNGER_SPEED_MALUS : 1
+    const moved = moveAvatar(world, entity.x, entity.y, input.dx, input.dy, TICK_DT_S, speedScale)
     entity.x = moved.x
     entity.y = moved.y
   }
   advanceTime(state)
+  advanceEconomy(state)
 }
 
 /** Snapshot canonique — sert d'égalité d'état dans les tests et le replay. */

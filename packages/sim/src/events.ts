@@ -15,7 +15,8 @@
  * - Haute fréquence ≠ domaine : un déplacement n'est pas un événement (le
  *   replay log des inputs couvre ça) ; un premier sang, un don, un spawn, oui.
  */
-import type { StructureType } from './items'
+import type { RecipeId } from './balance'
+import type { ItemId, SkillId, StructureType } from './items'
 import type { SimState } from './sim'
 
 export type SimEvent =
@@ -39,8 +40,12 @@ export type SimEvent =
   | { type: 'member_joined'; tick: number; villageId: number; entityId: number }
   | { type: 'member_banished'; tick: number; villageId: number; entityId: number }
   | { type: 'action_rejected'; tick: number; entityId: number; reason: string }
-// À venir avec les systèmes : resource_harvested, first_blood, gift_given,
-// pact_signed, captive_released, …
+  | { type: 'resource_harvested'; tick: number; entityId: number; nodeId: number; item: ItemId; count: number }
+  | { type: 'node_depleted'; tick: number; nodeId: number }
+  | { type: 'item_crafted'; tick: number; entityId: number; recipeId: RecipeId; item: ItemId }
+  | { type: 'meal_eaten'; tick: number; entityId: number; item: ItemId }
+  | { type: 'skill_level_up'; tick: number; entityId: number; skill: SkillId; level: number }
+// À venir avec les systèmes : first_blood, gift_given, pact_signed, …
 
 /** Émet un événement dans le buffer de l'état. Usage interne à /sim. */
 export function emitEvent(state: SimState, event: SimEvent): void {
