@@ -17,6 +17,7 @@ import { emitEvent, type SimEvent } from './events'
 import type { Inventory, ItemId, SkillId } from './items'
 import { createEmptyMap, type WorldMap } from './map'
 import { rngNext } from './rng'
+import { advanceNpcs, type Npc } from './npc'
 import { advanceTime } from './time'
 import { applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
 
@@ -54,6 +55,7 @@ export interface SimState {
   villages: Village[]
   structures: Structure[]
   nodes: ResourceNode[]
+  npcs: Npc[]
   nextVillageId: number
   nextStructureId: number
   /** Buffer d'événements de domaine, drainé par l'hôte (voir events.ts). */
@@ -91,6 +93,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     villages: [],
     structures: [],
     nodes: options.nodes ? (JSON.parse(JSON.stringify(options.nodes)) as ResourceNode[]) : [],
+    npcs: [],
     nextVillageId: 1,
     nextStructureId: 1,
     events: [],
@@ -137,6 +140,8 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     entity.x = moved.x
     entity.y = moved.y
   }
+  // Les PNJ agissent après les joueurs, dans l'ordre des ids (déterminisme).
+  advanceNpcs(state)
   advanceTime(state)
   advanceEconomy(state)
 }

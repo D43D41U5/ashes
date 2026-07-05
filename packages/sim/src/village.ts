@@ -36,12 +36,27 @@ export interface Structure {
   inventory?: Inventory
 }
 
+export type TaskKind = 'gather_berries' | 'gather_wood' | 'gather_fiber' | 'cook_stew'
+
+/** Une tâche du tableau du village (spec pnj R5). */
+export interface VillageTask {
+  id: number
+  kind: TaskKind
+  priority: number
+  claimedBy: number | null
+}
+
 export interface Village {
   id: number
   chiefId: number
   memberIds: number[]
   fireTx: number
   fireTy: number
+  /** Le tableau du village — généré par seuils, consommé par les PNJ (et bientôt lu par les joueurs). */
+  tasks: VillageTask[]
+  nextTaskId: number
+  /** Les PNJ d'accueil sont-ils déjà arrivés ? (spec pnj R9) */
+  npcsArrived: boolean
 }
 
 export type VillageAction =
@@ -62,6 +77,7 @@ const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = {
   chest: 'private',
   workshop: 'village',
   furnace: 'village',
+  house: 'village',
 }
 
 export function structureAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
@@ -74,7 +90,7 @@ export function getVillageOf(state: SimState, entityId: number): Village | undef
 
 /** Une structure bloque-t-elle ce déplaceur ? (spec village R8) */
 export function structureBlocks(s: Structure, moverVillageId: number | null): boolean {
-  if (s.type === 'fire') return false
+  if (s.type === 'fire' || s.type === 'house') return false // on marche sur le seuil
   if (s.type === 'door') return s.villageId !== moverVillageId
   return true
 }
@@ -125,7 +141,16 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       removeItems(actor.inventory, STRUCTURE_COSTS.fire)
       const villageId = state.nextVillageId
       state.nextVillageId += 1
-      state.villages.push({ id: villageId, chiefId: actorId, memberIds: [actorId], fireTx: tx, fireTy: ty })
+      state.villages.push({
+        id: villageId,
+        chiefId: actorId,
+        memberIds: [actorId],
+        fireTx: tx,
+        fireTy: ty,
+        tasks: [],
+        nextTaskId: 1,
+        npcsArrived: false,
+      })
       addStructure(state, 'fire', tx, ty, villageId, 0)
       emitEvent(state, { type: 'village_founded', tick: state.tick, villageId, chiefId: actorId, tx, ty })
       return

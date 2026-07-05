@@ -30,6 +30,11 @@ export interface MoveWorld {
   moverVillageId?: number | null
 }
 
+/** Une tuile est-elle bloquante pour ce déplaceur ? (terrain + structures + nœuds) */
+export function isBlockedAt(world: MoveWorld, tx: number, ty: number): boolean {
+  return blockedAt(world, tx, ty)
+}
+
 function blockedAt(world: MoveWorld, tx: number, ty: number): boolean {
   if (isBlockingTile(world.map, tx, ty)) return true
   if (world.structures) {

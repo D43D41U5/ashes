@@ -10,7 +10,9 @@ import {
   BALANCE,
   moveAvatar,
   zoneAt,
+  type AccessLevel,
   type Entity,
+  type Npc,
   type PlayerAction,
   type RecipeId,
   type ResourceNode,
@@ -77,6 +79,7 @@ export class WorldScene extends Phaser.Scene {
   private structureSprites = new Map<number, Phaser.GameObjects.Image>()
   private nodes: ResourceNode[] = []
   private nodeSprites = new Map<number, Phaser.GameObjects.Image>()
+  private npcs: Npc[] = []
   private myVillageId: number | null = null
   private myHunger = 100
   private selected: Buildable = 'wall'
@@ -149,6 +152,13 @@ export class WorldScene extends Phaser.Scene {
       if (pointer.rightButtonDown()) {
         const target = this.structures.find((s) => s.tx === tx && s.ty === ty)
         if (target) this.sendAction({ type: 'demolish', structureId: target.id })
+      } else if (pointer.event.shiftKey) {
+        // Shift+clic : faire tourner l'accès d'une structure à soi (partage).
+        const target = this.structures.find((s) => s.tx === tx && s.ty === ty)
+        if (target) {
+          const cycle: Record<AccessLevel, AccessLevel> = { private: 'village', village: 'public', public: 'private' }
+          this.sendAction({ type: 'set_access', structureId: target.id, access: cycle[target.access] })
+        }
       } else {
         // Un nœud vivant sous le clic → récolter ; sinon → bâtir.
         const node = this.nodes.find((n) => n.tx === tx && n.ty === ty && n.stock > 0)
@@ -216,11 +226,11 @@ export class WorldScene extends Phaser.Scene {
     this.registry.set('time', msg.time)
     this.syncStructures(msg.structures)
     this.syncNodes(msg.nodes)
-    this.myVillageId = msg.villages.find((v) => v.memberIds.includes(this.playerId))?.id ?? null
-    this.registry.set(
-      'village',
-      msg.villages.find((v) => v.id === this.myVillageId)?.memberIds.length ?? 0,
-    )
+    this.npcs = msg.npcs
+    const myVillage = msg.villages.find((v) => v.memberIds.includes(this.playerId))
+    this.myVillageId = myVillage?.id ?? null
+    this.registry.set('village', myVillage?.memberIds.length ?? 0)
+    this.registry.set('tasks', myVillage?.tasks ?? [])
     for (const event of msg.events) {
       if (event.type === 'action_rejected' && event.entityId === this.playerId) {
         this.registry.set('error', { reason: event.reason, at: this.time.now })
@@ -238,25 +248,23 @@ export class WorldScene extends Phaser.Scene {
         continue
       }
       seen.add(entity.id)
-      const existing = this.others.get(entity.id)
-      if (existing) {
-        existing.fromX = existing.toX
-        existing.fromY = existing.toY
-        existing.toX = entity.x
-        existing.toY = entity.y
-        existing.startedAt = now
+      const npc = this.npcs.find((n) => n.entityId === entity.id)
+      let record = this.others.get(entity.id)
+      if (record) {
+        record.fromX = record.toX
+        record.fromY = record.toY
+        record.toX = entity.x
+        record.toY = entity.y
+        record.startedAt = now
       } else {
         const sprite = this.add.image(0, 0, 'spr-npc').setDepth(9)
         this.syncSprite(sprite, entity.x, entity.y)
-        this.others.set(entity.id, {
-          sprite,
-          fromX: entity.x,
-          fromY: entity.y,
-          toX: entity.x,
-          toY: entity.y,
-          startedAt: now,
-        })
+        record = { sprite, fromX: entity.x, fromY: entity.y, toX: entity.x, toY: entity.y, startedAt: now }
+        this.others.set(entity.id, record)
       }
+      // Les villageois se distinguent des errants ; un dormeur s'estompe.
+      record.sprite.setTint(npc ? 0xe8d9a0 : 0xffffff)
+      record.sprite.setAlpha(npc?.sleeping ? 0.45 : 1)
     }
     for (const [id, o] of this.others) {
       if (!seen.has(id)) {

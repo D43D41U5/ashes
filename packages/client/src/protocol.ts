@@ -8,6 +8,7 @@
 import type {
   Entity,
   GameTime,
+  Npc,
   PlayerAction,
   ResourceNode,
   SimEvent,
@@ -51,6 +52,7 @@ export interface SnapshotMessage {
   structures: Structure[]
   villages: Village[]
   nodes: ResourceNode[]
+  npcs: Npc[]
   events: SimEvent[]
 }
 

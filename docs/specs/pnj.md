@@ -1,6 +1,6 @@
 # Les PNJ — villageois simulés, tableau du village
 
-*Source : GDD §10 (mode Veillée, RimWorld-light), §5 (PNJ = main-d'œuvre, pas citoyens ; « plus d'humains = moins de bras »), §6 (le tableau du village). Statut : **brouillon — proposition à valider**. Jalon : V5.*
+*Source : GDD §10 (mode Veillée, RimWorld-light), §5 (PNJ = main-d'œuvre, pas citoyens ; « plus d'humains = moins de bras »), §6 (le tableau du village). Statut : **implémenté** (2026-07-05, A1-A8 verts — dont la survie 10 jours — + smoke test navigateur). Jalon : V5.*
 
 ## Objectif de design
 

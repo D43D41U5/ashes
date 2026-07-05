@@ -36,9 +36,9 @@ Monorepo, garde-fous de pureté et de déterminisme, noyau tick/entités/PRNG, r
 - Nœuds épuisables/repoussants générés procéduralement (la « chair », T2 dans les zones `gisement`), récolte à coups avec outils multiplicateurs et usure agrégée, faim simple modulée par l'acte (le Grand Froid mord), chaînes Feu/four/atelier, spécialisation émergente (4 métiers, XP freinée par la dispersion). `grantItems` retiré du gameplay — on commence les mains vides. Gibier reporté à V6 (chasse = combat).
 - Sortie vérifiée : bot headless jouant la boucle complète en pur /sim (A7), rejouable au bit près ; récolte au clic vérifiée en navigateur. Bonus : le contrat de replay a attrapé un vrai bug (options de sim partagées par référence).
 
-### V5 — Les PNJ (~4-5 sem, le cœur du mode Veillée)
-- **Spec** : `specs/pnj.md`. Villageois simulés RimWorld-light : besoins, file de tâches, métiers ; le **tableau du village** (tâches système : grenier bas, mur endommagé) ; les PNJ y répondent.
-- **Sortie** : un village 100 % PNJ *survit* 10 jours simulés sans intervention (test headless) ; le joueur voit ses villageois vivre.
+### V5 — Les PNJ ✅ (fait, 2026-07-05 — voir `specs/pnj.md`)
+- Villageois simulés jouant par le même pipeline d'actions validées que les joueurs (aucune triche PNJ), IA à deux étages (besoins → tableau), tableau du village piloté par seuils sur le grenier, maisons (sommeil ×2 vs Feu), A* déterministe, `foundNpcVillage`, 3 PNJ à la fondation joueur.
+- Sortie vérifiée : un village de 4 PNJ tient 10 cycles jour/nuit headless sans que personne tombe à 0 de faim, au bit près à chaque run ; villageois observés au travail en navigateur. Deux bugs de mouvement attrapés par les tests (orbite de waypoint, arrêt hors de portée).
 
 ### V6 — Le combat (~4-5 sem)
 - **Spec** : `specs/combat.md`. Endurance commune (attaque/blocage/sprint), télégraphes 300-500 ms, engagement directionnel, blessures localisées + saignement, mort (perte du porté, respawn au Feu avec fatigue), loot de cadavre. Cible PvE : faune + premiers zombies. L'assommement/capture attend le PvP (LAN).

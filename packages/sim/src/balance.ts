@@ -76,6 +76,33 @@ export const BALANCE = {
 
   /** Freinage d'XP par la somme des niveaux des AUTRES métiers (spec R14). */
   SKILL_SPREAD_PENALTY: 0.5,
+
+  /** PNJ qui rejoignent un village fondé par un joueur (spec pnj R9). */
+  NPC_PER_VILLAGE: 3,
+
+  /** Sous ce seuil de faim, un PNJ va manger (spec pnj R3). */
+  NPC_HUNGER_EAT_THRESHOLD: 30,
+
+  /** Sous ce seuil d'énergie, la nuit, un PNJ va dormir. */
+  NPC_ENERGY_SLEEP_THRESHOLD: 40,
+
+  /** Énergie perdue par heure de cycle, éveillé. */
+  ENERGY_AWAKE_PER_CYCLE_HOUR: 4,
+
+  /** Récupération par heure de cycle en dormant — la maison vaut double (spec R4). */
+  SLEEP_RECOVERY_HOME_PER_HOUR: 12,
+  SLEEP_RECOVERY_FIRE_PER_HOUR: 6,
+
+  /** Cadence de recalcul du tableau du village (5 s). */
+  BOARD_REFRESH_TICKS: 60,
+
+  /** Cibles du grenier (spec R5). Score nourriture = baies + 3×ragoûts. */
+  VILLAGE_FOOD_TARGET: 12,
+  VILLAGE_WOOD_TARGET: 20,
+  VILLAGE_STEW_TARGET: 3,
+
+  /** Quantités visées par sortie de récolte PNJ, par item. */
+  NPC_CARRY_TARGETS: { berries: 6, wood: 8, fiber: 3 },
 } as const
 
 export interface TerrainDef {
@@ -112,6 +139,7 @@ export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./
   chest: { wood: 4 },
   workshop: { wood: 6, stone: 4 },
   furnace: { stone: 8 },
+  house: { wood: 8 },
 }
 
 export type NodeType = 'tree' | 'rock' | 'fiber_plant' | 'berry_bush' | 'iron_vein' | 'coal_seam'

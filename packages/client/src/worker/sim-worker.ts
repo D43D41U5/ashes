@@ -10,6 +10,7 @@ import {
   BALANCE,
   createSim,
   drainEvents,
+  foundNpcVillage,
   generateNodes,
   getGameTime,
   isBlockingTile,
@@ -90,6 +91,7 @@ function tick(): void {
     structures: sim.structures,
     villages: sim.villages,
     nodes: sim.nodes,
+    npcs: sim.npcs,
     events: drainEvents(sim),
   })
 }
@@ -101,6 +103,8 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
     const nodes = generateNodes(msg.map, msg.seed)
     sim = createSim(msg.seed, { map: msg.map, calendarScale: msg.calendarScale, nodes })
     hostRng = msg.seed ^ 0x9e3779b9
+    // Un village 100 % PNJ vit déjà dans la vallée (mode Veillée, GDD §10).
+    foundNpcVillage(sim, 24, 14, 4)
     playerId = spawnEntity(sim, msg.playerSpawn.x, msg.playerSpawn.y)
     // Plus de kit de départ : la boucle commence les mains vides (spec économie).
     spawnWanderers(sim, 6)

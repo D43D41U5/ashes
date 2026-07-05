@@ -44,6 +44,20 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('st-workshop', 16, 16)
     g.clear()
 
+    tile(0x4a3220, 0x9c7448) // four : bouche ardente
+    g.fillStyle(0x2a2a2e).fillRect(4, 4, 8, 8)
+    g.fillStyle(0xe8842c).fillRect(6, 8, 4, 3)
+    g.generateTexture('st-furnace', 16, 16)
+    g.clear()
+
+    // Maison : toit pignon + porte.
+    g.fillStyle(0x7a4a2a).fillRect(1, 6, 14, 9)
+    g.fillStyle(0x9c3f2e)
+    g.fillTriangle(0, 7, 8, 0, 16, 7)
+    g.fillStyle(0x2a1e12).fillRect(6, 10, 4, 5)
+    g.generateTexture('st-house', 16, 16)
+    g.clear()
+
     // Le Feu : foyer de pierre + flamme (la couleur d'alignement viendra en V8).
     g.fillStyle(0x55504a).fillCircle(8, 8, 7)
     g.fillStyle(0x2b2723).fillCircle(8, 8, 5)

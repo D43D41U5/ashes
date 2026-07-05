@@ -21,7 +21,7 @@ export type ItemId =
 /** Stacks d'items. Invariant : jamais de clé à 0 (snapshot canonique). */
 export type Inventory = Partial<Record<ItemId, number>>
 
-export type StructureType = 'fire' | 'wall' | 'door' | 'chest' | 'workshop' | 'furnace'
+export type StructureType = 'fire' | 'wall' | 'door' | 'chest' | 'workshop' | 'furnace' | 'house'
 
 export type AccessLevel = 'private' | 'village' | 'public'
 
