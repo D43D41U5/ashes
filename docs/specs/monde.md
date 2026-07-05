@@ -1,6 +1,6 @@
 # Le monde — temps, carte, collisions
 
-*Source : GDD §2 (saison), §9 (carte), §11 (stack). Statut : **brouillon — proposition à valider**. Jalon : V1.*
+*Source : GDD §2 (saison), §9 (carte), §11 (stack). Statut : **implémenté** (2026-07-05, critères A1-A5 verts). Jalon : V1.*
 
 ## Objectif de design
 

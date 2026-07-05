@@ -19,6 +19,10 @@ import type { SimState } from './sim'
 
 export type SimEvent =
   | { type: 'entity_spawned'; tick: number; entityId: number; x: number; y: number }
+  | { type: 'day_started'; tick: number }
+  | { type: 'night_started'; tick: number }
+  | { type: 'season_day_started'; tick: number; day: number }
+  | { type: 'act_started'; tick: number; act: 1 | 2 | 3 }
 // À venir avec les systèmes : resource_harvested, first_blood, gift_given,
 // pact_signed, member_banished, captive_released, …
 

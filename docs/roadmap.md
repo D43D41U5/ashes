@@ -18,7 +18,7 @@
 ### V0 — Fondations ✅ (fait, 2026-07-05)
 Monorepo, garde-fous de pureté et de déterminisme, noyau tick/entités/PRNG, replay log, bus d'événements de domaine.
 
-### V1 — Le monde (~2-3 sem)
+### V1 — Le monde ✅ (fait, 2026-07-05)
 - **Spec à écrire** : `specs/monde.md` — inclut le **temps de jeu paramétrable** (ticks → heures → jours → actes, facteur d'accélération dans `balance.ts` ; un test doit pouvoir jouer une saison en secondes).
 - Grille de collision AABB, format de carte interne à `/sim` (indépendant de Tiled) + importeur Tiled, cycle jour/nuit, zones (préparation multi-rooms : la carte est déjà découpée logiquement, même si tout tourne dans un seul Worker).
 - **Sortie** : test headless — une entité traverse une carte Tiled importée en évitant les obstacles ; une « saison » de 60 jours simulés tourne en < 60 s.

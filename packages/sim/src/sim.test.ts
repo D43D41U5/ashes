@@ -5,19 +5,21 @@ import { createSim, snapshot, spawnEntity, step, type MoveInput } from './sim'
 describe('sim', () => {
   it('déplace une entité selon la vitesse de BALANCE', () => {
     const sim = createSim(1)
-    const id = spawnEntity(sim, 0, 0)
+    const id = spawnEntity(sim, 5, 5)
     step(sim, [{ entityId: id, dx: 1, dy: 0 }])
-    expect(sim.entities[0]?.x).toBeCloseTo(BALANCE.WALK_SPEED_TILES_PER_S * TICK_DT_S)
-    expect(sim.entities[0]?.y).toBe(0)
+    expect(sim.entities[0]?.x).toBeCloseTo(5 + BALANCE.WALK_SPEED_TILES_PER_S * TICK_DT_S)
+    expect(sim.entities[0]?.y).toBe(5)
     expect(sim.tick).toBe(1)
   })
 
   it('normalise le déplacement diagonal', () => {
     const sim = createSim(1)
-    const id = spawnEntity(sim, 0, 0)
+    const id = spawnEntity(sim, 5, 5)
     step(sim, [{ entityId: id, dx: 1, dy: 1 }])
     const { x, y } = sim.entities[0]!
-    const distance = Math.sqrt(x * x + y * y)
+    const dx = x - 5
+    const dy = y - 5
+    const distance = Math.sqrt(dx * dx + dy * dy)
     expect(distance).toBeCloseTo(BALANCE.WALK_SPEED_TILES_PER_S * TICK_DT_S)
   })
 

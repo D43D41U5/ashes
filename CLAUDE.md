@@ -49,6 +49,6 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 Le plan d'implémentation complet est dans **`docs/roadmap.md`** (jalons V0-V10 → LAN → Vallée → Saison 0, avec critères de sortie et gates). Le cadre vient du GDD §13.
 
-**Jalon courant : V1 — Le monde** (grille de collision AABB, temps de jeu paramétrable, format de carte + importeur Tiled). Commencer par écrire `docs/specs/monde.md`. V0 (fondations) fait le 2026-07-05.
+**Jalon courant : V2 — Le rendu** (client Phaser 4 + Vite, sim dans un Web Worker, protocole inputs/snapshots, build Cloudflare Pages). V0 (fondations) et V1 (monde : temps à deux échelles, collisions AABB continues, importeur Tiled — voir `docs/specs/monde.md`) faits le 2026-07-05.
 
 MVP gouvernance (Veillée/LAN) : rang unique + Chef + propriété individuelle. MVP alignement : deux axes + Foyer/Meute seulement.

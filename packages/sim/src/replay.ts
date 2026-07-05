@@ -1,21 +1,23 @@
 /**
  * Replay log — journal des inputs, jour 1 (GDD §11).
  *
- * Le serveur (ou le Worker en mode Veillée) journalise la seed et les inputs
- * de chaque tick ; rejouer le log reconstruit l'état exact. C'est l'outil de
- * debug, le banc de test de charge, et plus tard le « tribunal » de
- * modération.
+ * Le serveur (ou le Worker en mode Veillée) journalise la seed, les options
+ * de création (carte, échelle de calendrier) et les inputs de chaque tick ;
+ * rejouer le log reconstruit l'état exact. C'est l'outil de debug, le banc
+ * de test de charge, et plus tard le « tribunal » de modération.
  */
-import { createSim, step, type MoveInput, type SimState } from './sim'
+import { createSim, step, type MoveInput, type SimOptions, type SimState } from './sim'
 
 export interface ReplayLog {
   seed: number
+  /** Options de createSim de la partie originale (carte, calendarScale). */
+  options: SimOptions
   /** inputs[t] = les inputs appliqués au tick t. */
   ticks: MoveInput[][]
 }
 
-export function createReplayLog(seed: number): ReplayLog {
-  return { seed, ticks: [] }
+export function createReplayLog(seed: number, options: SimOptions = {}): ReplayLog {
+  return { seed, options, ticks: [] }
 }
 
 /** Enregistre les inputs d'un tick puis avance la simulation. */
@@ -30,7 +32,7 @@ export function recordAndStep(state: SimState, log: ReplayLog, inputs: MoveInput
  * que celui de la partie originale.
  */
 export function runReplay(log: ReplayLog, setup: (state: SimState) => void): SimState {
-  const state = createSim(log.seed)
+  const state = createSim(log.seed, log.options)
   setup(state)
   for (const inputs of log.ticks) {
     step(state, inputs)

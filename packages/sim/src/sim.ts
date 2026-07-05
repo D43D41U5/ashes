@@ -10,13 +10,16 @@
  * que snapshot = JSON.stringify et que le transport Worker/réseau soit
  * trivial.
  */
-import { BALANCE, TICK_DT_S } from './balance'
+import { BALANCE, TERRAINS, TERRAIN_GRASS, TICK_DT_S } from './balance'
+import { resolveMove } from './collision'
 import { emitEvent, type SimEvent } from './events'
+import { createEmptyMap, terrainAt, type WorldMap } from './map'
 import { rngNext } from './rng'
+import { advanceTime } from './time'
 
 export interface Entity {
   id: number
-  /** Position en tuiles (flottants — la grille de collision viendra ensuite). */
+  /** Position du centre, en tuiles (déplacement continu, spec monde R5). */
   x: number
   y: number
 }
@@ -28,10 +31,18 @@ export interface SimState {
   seed: number
   /** État courant du PRNG (avance à chaque tirage). */
   rngState: number
+  /** Jours de saison écoulés par jour réel (1 en multi, libre en Veillée/test). */
+  calendarScale: number
+  map: WorldMap
   nextEntityId: number
   entities: Entity[]
   /** Buffer d'événements de domaine, drainé par l'hôte (voir events.ts). */
   events: SimEvent[]
+}
+
+export interface SimOptions {
+  map?: WorldMap
+  calendarScale?: number
 }
 
 /** Intention de déplacement d'un avatar pour un tick donné. */
@@ -41,15 +52,22 @@ export interface MoveInput {
   dy: -1 | 0 | 1
 }
 
-export function createSim(seed: number): SimState {
-  return {
+export function createSim(seed: number, options: SimOptions = {}): SimState {
+  const state: SimState = {
     tick: 0,
     seed,
     rngState: seed >>> 0,
+    calendarScale: options.calendarScale ?? BALANCE.DEFAULT_CALENDAR_SCALE,
+    map: options.map ?? createEmptyMap(64, 64, TERRAIN_GRASS),
     nextEntityId: 1,
     entities: [],
     events: [],
   }
+  // Le tick 0 est le début du jour 1, de l'acte I et d'un cycle de jour.
+  emitEvent(state, { type: 'season_day_started', tick: 0, day: 1 })
+  emitEvent(state, { type: 'act_started', tick: 0, act: 1 })
+  emitEvent(state, { type: 'day_started', tick: 0 })
+  return state
 }
 
 export function spawnEntity(state: SimState, x: number, y: number): number {
@@ -64,16 +82,19 @@ export function spawnEntity(state: SimState, x: number, y: number): number {
 
 /** Avance la simulation d'exactement un tick. Mute `state` en place. */
 export function step(state: SimState, inputs: MoveInput[]): void {
-  const speed = BALANCE.WALK_SPEED_TILES_PER_S * TICK_DT_S
   for (const input of inputs) {
     const entity = state.entities.find((e) => e.id === input.entityId)
     if (!entity) continue
-    // Normalisation diagonale simple ; la collision AABB remplacera ceci.
+    if (input.dx === 0 && input.dy === 0) continue
+    const terrain = TERRAINS[terrainAt(state.map, Math.floor(entity.x), Math.floor(entity.y))]
+    const factor = terrain?.walkable ? terrain.speedFactor : 1
+    const speed = BALANCE.WALK_SPEED_TILES_PER_S * TICK_DT_S * factor
     const norm = input.dx !== 0 && input.dy !== 0 ? Math.SQRT1_2 : 1
-    entity.x += input.dx * speed * norm
-    entity.y += input.dy * speed * norm
+    const moved = resolveMove(state.map, entity.x, entity.y, input.dx * speed * norm, input.dy * speed * norm)
+    entity.x = moved.x
+    entity.y = moved.y
   }
-  state.tick += 1
+  advanceTime(state)
 }
 
 /** Snapshot canonique — sert d'égalité d'état dans les tests et le replay. */
