@@ -25,7 +25,7 @@ import {
 } from '@braises/sim'
 import Phaser from 'phaser'
 import { createDemoMap, DEMO_MAP_SIZE, PLAYER_SPAWN } from '../demo-map'
-import type { ClientToHost, HostToClient } from '../protocol'
+import type { ClientToHost, HostToClient, SnapshotMessage } from '../protocol'
 
 type Buildable = 'wall' | 'door' | 'chest' | 'workshop' | 'furnace'
 const BUILD_KEYS: Buildable[] = ['wall', 'door', 'chest', 'workshop', 'furnace']
@@ -84,6 +84,7 @@ export class WorldScene extends Phaser.Scene {
   private nodes: ResourceNode[] = []
   private nodeSprites = new Map<number, Phaser.GameObjects.Image>()
   private npcs: Npc[] = []
+  private villages: SnapshotMessage['villages'] = []
   private monsters: Monster[] = []
   private corpses: Corpse[] = []
   private corpseSprites = new Map<number, Phaser.GameObjects.Image>()
@@ -144,6 +145,15 @@ export class WorldScene extends Phaser.Scene {
       this.sendAction({ type: 'attack', dx, dy })
     })
     kb.addKey(K.X, false).on('down', () => this.sendAction({ type: 'bandage' }))
+    // T : donner 3 baies à l'entité la plus proche (l'acte chaud fondamental).
+    kb.addKey(K.T, false).on('down', () => {
+      const nearest = [...this.others.entries()]
+        .map(([id, r]) => ({ id, d: Math.hypot(r.toX - this.predicted.x, r.toY - this.predicted.y) }))
+        .sort((a, b) => a.d - b.d)[0]
+      if (nearest && nearest.d < 1.5) {
+        this.sendAction({ type: 'give', targetEntityId: nearest.id, item: 'berries', count: 3 })
+      }
+    })
     kb.addKey(K.G, false).on('down', () => {
       const world = this.input.activePointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
       const target = this.structures.find(
@@ -264,6 +274,7 @@ export class WorldScene extends Phaser.Scene {
       return
     }
     this.registry.set('time', msg.time)
+    this.villages = msg.villages
     this.syncStructures(msg.structures)
     this.syncNodes(msg.nodes)
     this.npcs = msg.npcs
@@ -273,6 +284,8 @@ export class WorldScene extends Phaser.Scene {
     this.myVillageId = myVillage?.id ?? null
     this.registry.set('village', myVillage?.memberIds.length ?? 0)
     this.registry.set('tasks', myVillage?.tasks ?? [])
+    this.registry.set('archetype', myVillage?.archetype ?? null)
+    this.registry.set('villageWarmth', myVillage?.warmth ?? 0)
     for (const event of msg.events) {
       if (event.type === 'action_rejected' && event.entityId === this.playerId) {
         this.registry.set('error', { reason: event.reason, at: this.time.now })
@@ -344,10 +357,20 @@ export class WorldScene extends Phaser.Scene {
           .setDepth(s.type === 'fire' ? 5 : 6)
         this.structureSprites.set(s.id, sprite)
       }
-      // Une structure endommagée s'assombrit et rougit — lisible de loin.
-      const ratio = Math.max(0, Math.min(1, s.hp / STRUCTURE_HP[s.type]))
-      const shade = Math.floor(140 + 115 * ratio)
-      sprite.setTint(Phaser.Display.Color.GetColor(255, shade, shade))
+      if (s.type === 'fire') {
+        // La couleur du Feu (spec alignement R9) : bleu ↔ blanc ↔ rouge.
+        const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
+        const t = Math.max(-1, Math.min(1, warmth / 100))
+        const r = t > 0 ? Math.floor(255 - 130 * t) : 255
+        const g = Math.floor(255 - 90 * Math.abs(t))
+        const b = t < 0 ? Math.floor(255 + 140 * t) : 255
+        sprite.setTint(Phaser.Display.Color.GetColor(r, g, b))
+      } else {
+        // Une structure endommagée s'assombrit et rougit — lisible de loin.
+        const ratio = Math.max(0, Math.min(1, s.hp / STRUCTURE_HP[s.type]))
+        const shade = Math.floor(140 + 115 * ratio)
+        sprite.setTint(Phaser.Display.Color.GetColor(255, shade, shade))
+      }
     }
     for (const [id, sprite] of this.structureSprites) {
       if (!seen.has(id)) {

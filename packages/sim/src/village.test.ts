@@ -184,12 +184,16 @@ describe('le coffre (A4)', () => {
     expect(countOf(sim.entities.find((e) => e.id === member)!.inventory, 'wood')).toBe(12)
   })
 
-  it('jamais pour un étranger, refusé hors de portée, quantités invalides', () => {
+  it('l’étranger peut déposer (le don, spec alignement R11) mais jamais retirer', () => {
     const { sim, chief, chestId } = chestSim()
     const stranger = spawnEntity(sim, 11.8, 10.5)
     grantItems(sim, stranger, { wood: 5 })
     drainEvents(sim)
+    // Déposer est ouvert : la boîte aux dons.
     act(sim, stranger, { type: 'deposit', structureId: chestId, item: 'wood', count: 1 })
+    expect(countOf(sim.structures.find((s) => s.id === chestId)!.inventory!, 'wood')).toBe(1)
+    // Retirer reste verrouillé ; portée et quantités toujours contrôlées.
+    act(sim, stranger, { type: 'withdraw', structureId: chestId, item: 'wood', count: 1 })
     sim.entities[0]!.x = 20.5 // le chef s'éloigne
     act(sim, chief, { type: 'deposit', structureId: chestId, item: 'wood', count: 1 })
     sim.entities[0]!.x = 10.5

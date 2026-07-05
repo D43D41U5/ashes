@@ -107,15 +107,20 @@ export class UIScene extends Phaser.Scene {
     const zone = this.registry.get('zone') as string | undefined
     const members = (this.registry.get('village') as number | undefined) ?? 0
     const tasks = (this.registry.get('tasks') as VillageTask[] | undefined) ?? []
+    const archetype = this.registry.get('archetype') as string | null
+    const villageWarmth = (this.registry.get('villageWarmth') as number | undefined) ?? 0
     const hour = String(Math.floor(time.hourOfCycle)).padStart(2, '0')
     const board = tasks
       .slice(0, 4)
       .map((t) => `${TASK_LABELS[t.kind]}${t.claimedBy !== null ? ' •' : ''}`)
       .join(', ')
+    // Prévisible dans le sens, flou dans la magnitude : des mots, pas la formule.
+    const feuLabel =
+      archetype === 'foyer' ? 'Foyer' : archetype === 'meute' ? 'Meute' : villageWarmth > 10 ? 'tiède' : villageWarmth < -10 ? 'sombre' : 'neutre'
     this.hud.setText(
       `Jour ${time.seasonDay} — Acte ${'I'.repeat(time.act)} — ${hour}h${time.isNight ? ' (nuit)' : ''}` +
         (zone ? `\n${zone}` : '') +
-        (members > 0 ? `\nVillage : ${members} membre${members > 1 ? 's' : ''}` : '') +
+        (members > 0 ? `\nVillage : ${members} membre${members > 1 ? 's' : ''} — Feu : ${feuLabel}` : '') +
         (board ? `\nTableau : ${board}` : ''),
     )
 
@@ -137,8 +142,8 @@ export class UIScene extends Phaser.Scene {
       `Faim ${Math.ceil(hunger)}/100${hunger <= 0 ? ' ⚠ affamé' : ''}` +
         (skillsText ? ` — ${skillsText}` : '') +
         `\n${invText || '(mains vides — clique un arbre)'} — [${STRUCTURE_LABELS[selected]}]\n` +
-        `F Feu · 1-5 bâtir · clic récolter/looter/bâtir · clic droit démolir · shift+clic partager\n` +
-        `ESPACE attaquer (vers le pointeur) · C bloquer · SHIFT sprinter · X bander · E/R manger · 6-0 crafter`,
+        `F Feu · 1-5 bâtir · clic récolter/looter/bâtir · clic droit démolir · G réparer · shift+clic partager\n` +
+        `ESPACE attaquer · C bloquer · SHIFT sprinter · X bander · T donner des baies · E/R manger · 6-0 crafter`,
     )
 
     const hp = (this.registry.get('hp') as number | undefined) ?? 100

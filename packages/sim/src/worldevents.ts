@@ -5,6 +5,7 @@
  * apporte l'opportunité. Tout est tiré au PRNG de la sim et cadencé par le
  * calendrier — la pression monte avec les actes (GDD §2).
  */
+import { isThreatTo } from './alignment'
 import { COMBAT, CONVOY_LOOT, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
 import { isBlockedAt } from './collision'
 import { rngRoll } from './rng'
@@ -130,13 +131,12 @@ export function advanceWorldEvents(state: SimState): void {
     spawnConvoy(state)
   }
 
-  // L'alarme (spec R4) : une par vague et par village.
+  // L'alarme (spec R4) : une par vague et par village — monstres ET raiders.
   for (const village of state.villages) {
     if (state.tick < village.lastAlarmAt + WORLD_EVENTS.ALARM_COOLDOWN_TICKS) continue
     const radius = COMBAT.DEFEND_RADIUS
-    const threatened = state.monsters.some((m) => {
-      const e = state.entities.find((en) => en.id === m.entityId)
-      if (!e) return false
+    const threatened = state.entities.some((e) => {
+      if (!isThreatTo(state, e.id, village)) return false
       const dx = e.x - (village.fireTx + 0.5)
       const dy = e.y - (village.fireTy + 0.5)
       return dx * dx + dy * dy <= radius * radius

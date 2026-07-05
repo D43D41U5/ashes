@@ -58,7 +58,9 @@ export type SimEvent =
   | { type: 'horde_spawned'; tick: number; hordeId: number; size: number; targetVillageId: number }
   | { type: 'horde_dispersed'; tick: number; hordeId: number }
   | { type: 'convoy_spawned'; tick: number; tx: number; ty: number }
-// À venir avec les systèmes : first_blood, gift_given, pact_signed, …
+  | { type: 'gift_given'; tick: number; byEntityId: number; toVillageId: number; item: ItemId; count: number }
+  | { type: 'village_archetype_changed'; tick: number; villageId: number; archetype: 'foyer' | 'meute' | 'neutre' }
+// À venir avec les systèmes : pact_signed, cicatrices, …
 
 /** Émet un événement dans le buffer de l'état. Usage interne à /sim. */
 export function emitEvent(state: SimState, event: SimEvent): void {

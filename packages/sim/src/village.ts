@@ -8,7 +8,8 @@
  * action refusée émet `action_rejected` (feedback client, testabilité) ;
  * une action validée émet son événement de domaine.
  */
-import { BALANCE, STRUCTURE_COSTS, STRUCTURE_HP, TERRAINS, WORLD_EVENTS } from './balance'
+import { isOutsider, recordAct, recordHostility, seasonActFactor } from './alignment'
+import { ALIGNMENT, BALANCE, FOOD_VALUES, STRUCTURE_COSTS, STRUCTURE_HP, TERRAINS, WORLD_EVENTS } from './balance'
 import { emitEvent } from './events'
 import {
   addItems,
@@ -63,11 +64,16 @@ export interface Village {
   npcsArrived: boolean
   /** Dernière alarme (spec événements R4 : une par vague). */
   lastAlarmAt: number
+  /** Le Feu : agrégat des membres, recalculé périodiquement (spec alignement R5). */
+  warmth: number
+  engagement: number
+  archetype: 'foyer' | 'meute' | 'neutre'
 }
 
 export type VillageAction =
   | { type: 'light_fire' }
   | { type: 'repair'; structureId: number }
+  | { type: 'give'; targetEntityId: number; item: ItemId; count: number }
   | { type: 'build'; structure: Exclude<StructureType, 'fire'>; tx: number; ty: number }
   | { type: 'demolish'; structureId: number }
   | { type: 'deposit'; structureId: number; item: ItemId; count: number }
@@ -111,12 +117,36 @@ export function hasAccess(state: SimState, entityId: number, s: Structure): bool
 }
 
 /** Endommage une structure ; à 0 elle disparaît (spec événements R1). */
-export function applyStructureDamage(state: SimState, structureId: number, damage: number): void {
+export function applyStructureDamage(state: SimState, structureId: number, damage: number, byEntityId = 0): void {
   const s = state.structures.find((st) => st.id === structureId)
   if (!s) return
   s.hp -= damage
+  // Saboter la structure d'autrui est une hostilité (premier sang par sabotage).
+  if (byEntityId !== 0 && !state.monsters.some((m) => m.entityId === byEntityId)) {
+    const actorVillage = getVillageOf(state, byEntityId)
+    if (actorVillage && actorVillage.id !== s.villageId) {
+      recordHostility(state, byEntityId, s.villageId)
+    }
+  }
   if (s.hp <= 0) {
     state.structures = state.structures.filter((st) => st.id !== structureId)
+    // Un conteneur détruit répand son contenu (spec alignement R13).
+    if (s.inventory && Object.keys(s.inventory).length > 0) {
+      state.corpses.push({
+        id: state.nextCorpseId,
+        x: s.tx + 0.5,
+        y: s.ty + 0.5,
+        inventory: { ...s.inventory },
+        decayAt: state.tick + 7200,
+      })
+      state.nextCorpseId += 1
+    }
+    if (byEntityId !== 0 && !state.monsters.some((m) => m.entityId === byEntityId)) {
+      const actorVillage = getVillageOf(state, byEntityId)
+      if (actorVillage && actorVillage.id !== s.villageId) {
+        recordAct(state, byEntityId, ALIGNMENT.DESTROY_STRUCTURE_WARMTH)
+      }
+    }
     emitEvent(state, { type: 'structure_destroyed', tick: state.tick, structureId })
   }
 }
@@ -169,6 +199,9 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
         nextTaskId: 1,
         npcsArrived: false,
         lastAlarmAt: -999999,
+        warmth: 0,
+        engagement: 0,
+        archetype: 'neutre',
       })
       addStructure(state, 'fire', tx, ty, villageId, 0)
       emitEvent(state, { type: 'village_founded', tick: state.tick, villageId, chiefId: actorId, tx, ty })
@@ -235,12 +268,63 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (!s || s.inventory === undefined) return reject('pas un conteneur')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
-      if (!hasAccess(state, actorId, s)) return reject('accès refusé')
+      // Le dépôt est ouvert à tous (la boîte aux dons, spec alignement R11) ;
+      // seul le RETRAIT exige l'accès.
+      if (action.type === 'withdraw' && !hasAccess(state, actorId, s)) return reject('accès refusé')
       const [from, to] =
         action.type === 'deposit' ? [actor.inventory, s.inventory] : [s.inventory, actor.inventory]
       if (countOf(from, action.item) < action.count) return reject('stock insuffisant')
       removeItems(from, { [action.item]: action.count })
       addItems(to, { [action.item]: action.count })
+      // Déposer de la nourriture au grenier d'un AUTRE village = un don.
+      if (action.type === 'deposit' && s.access === 'village') {
+        const actorVillage = getVillageOf(state, actorId)
+        const foodValue = FOOD_VALUES[action.item]
+        if (foodValue !== undefined && actorVillage?.id !== s.villageId) {
+          recordAct(
+            state,
+            actorId,
+            foodValue * action.count * ALIGNMENT.FOREIGN_DEPOSIT_WARMTH_PER_FOOD * seasonActFactor(state),
+          )
+          emitEvent(state, {
+            type: 'gift_given',
+            tick: state.tick,
+            byEntityId: actorId,
+            toVillageId: s.villageId,
+            item: action.item,
+            count: action.count,
+          })
+        }
+      }
+      return
+    }
+
+    case 'give': {
+      if (!Number.isInteger(action.count) || action.count <= 0) return reject('quantité invalide')
+      const target = state.entities.find((e) => e.id === action.targetEntityId)
+      if (!target || target.id === actorId) return reject('cible inconnue')
+      if (state.monsters.some((m) => m.entityId === target.id)) return reject('cible inconnue')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, target.x, target.y) > range * range) return reject('trop loin')
+      if (countOf(actor.inventory, action.item) < action.count) return reject('stock insuffisant')
+      removeItems(actor.inventory, { [action.item]: action.count })
+      addItems(target.inventory, { [action.item]: action.count })
+      // L'acte chaud fondamental : pondéré par la faim UTILE du receveur (spec R2).
+      const foodValue = FOOD_VALUES[action.item]
+      if (foodValue !== undefined && isOutsider(state, actorId, target.id)) {
+        const useful = Math.min(foodValue * action.count, 100 - target.hunger)
+        const need = target.hunger < 30 ? ALIGNMENT.NEED_FACTOR : 1
+        recordAct(state, actorId, useful * ALIGNMENT.GIVE_WARMTH_PER_HUNGER * need * seasonActFactor(state))
+        const toVillage = getVillageOf(state, target.id)
+        emitEvent(state, {
+          type: 'gift_given',
+          tick: state.tick,
+          byEntityId: actorId,
+          toVillageId: toVillage?.id ?? 0,
+          item: action.item,
+          count: action.count,
+        })
+      }
       return
     }
 
@@ -292,6 +376,9 @@ function addStructure(
 ): void {
   const id = state.nextStructureId
   state.nextStructureId += 1
+  // Le Foyer bâtit plus solide (spec alignement R8).
+  const village = state.villages.find((v) => v.id === villageId)
+  const hpBonus = village?.archetype === 'foyer' ? ALIGNMENT.FOYER_STRUCTURE_HP_BONUS : 1
   const structure: Structure = {
     id,
     type,
@@ -300,7 +387,7 @@ function addStructure(
     villageId,
     ownerId,
     access: DEFAULT_ACCESS[type],
-    hp: STRUCTURE_HP[type],
+    hp: Math.floor(STRUCTURE_HP[type] * hpBonus),
   }
   if (type === 'chest') structure.inventory = {}
   state.structures.push(structure)

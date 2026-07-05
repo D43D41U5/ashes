@@ -106,8 +106,10 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
     const nodes = generateNodes(msg.map, msg.seed)
     sim = createSim(msg.seed, { map: msg.map, calendarScale: msg.calendarScale, nodes })
     hostRng = msg.seed ^ 0x9e3779b9
-    // Un village 100 % PNJ vit déjà dans la vallée (mode Veillée, GDD §10).
-    foundNpcVillage(sim, 24, 14, 4)
+    // Les voisins à caractère (spec alignement R12) : un Foyer au nord qui
+    // donne, une Meute à l'est qui raide la nuit.
+    foundNpcVillage(sim, 24, 14, 4, 'foyer')
+    foundNpcVillage(sim, 52, 40, 3, 'meute')
     // La menace et le gibier : zombies au sud de la route, sangliers épars.
     spawnMonster(sim, 'zombie', 20, 46)
     spawnMonster(sim, 'zombie', 30, 50)

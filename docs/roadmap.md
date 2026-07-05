@@ -48,9 +48,9 @@ Monorepo, garde-fous de pureté et de déterminisme, noyau tick/entités/PRNG, r
 - Structures avec PV (les zombies frappent ce qui bloque — en horde via flow field ET en chasse), réparation (action + tâche de tableau PNJ), flow field BFS pur (jamais sérialisé), alarme automatique une-par-vague qui réveille la milice, hordes nocturnes (taille par acte 4/8/12, dissipation à l'aube), carcasses de convoi sur la route (composants T3, gardées). Marchand nomade reporté (le troc est un système).
 - Sortie vérifiée : horde 4 vs milice 4 → tient sans perte ; horde 10 vs 2 PNJ → le village casse en ~50 s, zombies campés au Feu — les deux issues lisibles et testées.
 
-### V8 — L'alignement (~3-4 sem)
-- **Spec** : `specs/alignement.md`. Deux axes (Chaleur × Intensité) alimentés par le bus d'événements, pondération par coût réel, premier sang, agrégation au Feu (moyenne pondérée, plafond par tête), couleur du Feu, MVP **Foyer/Meute** (stats continues + 1-2 capacités paliers chacun). **Villages PNJ alignés** : des Meutes PNJ qui raident, des Foyers PNJ qui commercent.
-- **Sortie** : test headless — un village qui nourrit ses voisins vire au bleu, un village qui pille vire au rouge, avec l'inertie « paquebot » du GDD ; en jeu, une Meute PNJ monte un raid.
+### V8 — L'alignement ✅ (fait, 2026-07-05 — voir `specs/alignement.md`)
+- Deux axes par avatar (actes envers l'extérieur seulement, pondérés par la faim utile ×besoin ×acte), premier sang par mémoire d'agression (riposte presque gratuite), inertie linéaire (paquebot), agrégation au Feu plafonnée par tête, archétypes Foyer/Meute avec effets (régén ×chaleur, Foyer retenu/solide, Meute mordante/anémique). Le don existe (`give` + dépôts ouverts à tous — la boîte aux dons). Villages PNJ à disposition : la Meute raide la nuit (casse le grenier, un coffre détruit répand son contenu, butin rapporté), le Foyer porte des baies au voisin. Alarme et milice réagissent aussi aux raiders.
+- Sortie vérifiée : nourrir ses voisins vire le Feu au bleu ; le raid Meute complet (alarme, grenier cassé, butin, chaleur en baisse) ; replay exact.
 
 ### V9 — La saison (~3-4 sem)
 - **Spec** : `specs/saison.md`. Trois actes avec courbe de pression (robinets/éviers par acte), Grand Froid (consommation ×2), Cendre + objectif final v1 (simple : un point d'évacuation, condition de victoire par archétype), Mémoires + **chronique v1** (consommateur du bus d'événements : les 10 grands moments de la saison en texte).

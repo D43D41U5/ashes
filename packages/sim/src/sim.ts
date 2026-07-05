@@ -17,6 +17,7 @@ import { advanceEconomy, applyEconomyAction, type EconomyAction, type ResourceNo
 import { emitEvent, type SimEvent } from './events'
 import type { Inventory, ItemId, SkillId } from './items'
 import { createEmptyMap, type WorldMap } from './map'
+import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde } from './worldevents'
 import { rngNext } from './rng'
@@ -54,6 +55,9 @@ export interface Entity {
   /** Point de respawn hors village (position d'apparition). */
   homeX: number
   homeY: number
+  /** Alignement personnel (GDD §3) : chaleur −100..+100, engagement 0..100. */
+  warmth: number
+  engagement: number
 }
 
 export interface SimState {
@@ -78,6 +82,8 @@ export interface SimState {
   hordes: Horde[]
   nextHordeId: number
   lastConvoyDay: number
+  /** Mémoire d'agression entre villages (premier sang, spec alignement R4). */
+  aggressions: Aggression[]
   nextVillageId: number
   nextStructureId: number
   /** Buffer d'événements de domaine, drainé par l'hôte (voir events.ts). */
@@ -124,6 +130,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     hordes: [],
     nextHordeId: 1,
     lastConvoyDay: 0,
+    aggressions: [],
     nextVillageId: 1,
     nextStructureId: 1,
     events: [],
@@ -156,6 +163,8 @@ export function spawnEntity(state: SimState, x: number, y: number): number {
     exhaustedUntil: 0,
     homeX: x,
     homeY: y,
+    warmth: 0,
+    engagement: 0,
   })
   // Consomme un pas de PRNG : le spawn fait partie de l'histoire déterministe.
   state.rngState = rngNext(state.rngState)
@@ -215,6 +224,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceNpcs(state)
   advanceMonsters(state)
   advanceCombat(state)
+  advanceAlignment(state)
   advanceTime(state)
   advanceEconomy(state)
 }

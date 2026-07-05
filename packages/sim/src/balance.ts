@@ -304,5 +304,45 @@ export const CONVOY_LOOT: import('./items').Inventory = {
   coal: 4,
 }
 
+/** L'alignement émergent (GDD §3, spec alignement). */
+export const ALIGNMENT = {
+  /** Chaleur par point de faim utile donné (spec R2). */
+  GIVE_WARMTH_PER_HUNGER: 0.2,
+  /** Multiplicateur si le receveur est affamé (< 30). */
+  NEED_FACTOR: 3,
+  /** Multiplicateur par acte de la saison (le Grand Froid vaut cher). */
+  ACT_FACTOR: [1, 2, 3],
+  /** Dépôt de nourriture au grenier d'autrui : chaleur par point de valeur. */
+  FOREIGN_DEPOSIT_WARMTH_PER_FOOD: 0.3,
+  HEAL_OUTSIDER_WARMTH: 15,
+  FIRST_BLOOD_WARMTH: -20,
+  ONGOING_HIT_WARMTH: -2,
+  RIPOSTE_WARMTH: -2,
+  KILL_WARMTH: -40,
+  DESTROY_STRUCTURE_WARMTH: -15,
+  ENGAGEMENT_PER_ACT: 8,
+  /** Décroissance linéaire vers 0, en points par jour de saison (le paquebot). */
+  DECAY_PER_DAY: 4,
+  /** Mémoire d'agression entre villages : 1 cycle. */
+  AGGRESSION_MEMORY_TICKS: 34560,
+  /** Plafond par tête à l'agrégation du Feu (GDD : un seul berserker…). */
+  WARMTH_CAP_PER_HEAD: 50,
+  /** Seuils d'archétype. */
+  ARCHETYPE_WARMTH: 40,
+  ARCHETYPE_ENGAGEMENT: 20,
+  /** Effets continus : régén PV de ×0.75 (froid) à ×2 (chaud). */
+  REGEN_MIN: 0.75,
+  REGEN_MAX: 2,
+  /** Paliers. */
+  FOYER_STRUCTURE_HP_BONUS: 1.25,
+  FOYER_OFFENSE_MALUS: 0.6,
+  MEUTE_DAMAGE_BONUS: 1.2,
+  MEUTE_HARVEST_MALUS: 0.75,
+  /** Cadence de recalcul du Feu. */
+  REFRESH_TICKS: 60,
+  /** Le don du Foyer PNJ (spec R14). */
+  GIFT_BERRIES: 5,
+} as const
+
 /** Durée d'un tick en secondes — le seul dt qui existe dans /sim. */
 export const TICK_DT_S = 1 / BALANCE.TICK_RATE_HZ

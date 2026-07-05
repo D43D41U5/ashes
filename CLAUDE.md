@@ -53,6 +53,6 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 Le plan d'implémentation complet est dans **`docs/roadmap.md`** (jalons V0-V10 → LAN → Vallée → Saison 0, avec critères de sortie et gates). Le cadre vient du GDD §13.
 
-**Jalon courant : V8 — L'alignement** (deux axes Chaleur × Intensité alimentés par le bus d'événements, agrégation au Feu, couleur du Feu, MVP Foyer/Meute, villages PNJ alignés ; écrire `docs/specs/alignement.md` d'abord). V0-V7 faits le 2026-07-05 (specs `monde`, `client`, `village`, `economie`, `pnj`, `combat`, `evenements`). Reste de V2 : brancher le déploiement Cloudflare Pages (action Alexis).
+**Jalon courant : V9 — La saison** (3 actes avec courbe de pression, Grand Froid, Cendre + objectif final v1, Mémoires + chronique v1 consommant le bus d'événements ; écrire `docs/specs/saison.md` d'abord). V0-V8 faits le 2026-07-05 (specs `monde`, `client`, `village`, `economie`, `pnj`, `combat`, `evenements`, `alignement`). Reste de V2 : brancher le déploiement Cloudflare Pages (action Alexis).
 
 MVP gouvernance (Veillée/LAN) : rang unique + Chef + propriété individuelle. MVP alignement : deux axes + Foyer/Meute seulement.

@@ -17,6 +17,7 @@ import {
   type NodeType,
   type RecipeId,
 } from './balance'
+import { harvestFactor } from './alignment'
 import { emitEvent } from './events'
 import { addItems, countOf, removeItems, type ItemId, type SkillId } from './items'
 import { terrainAt, zoneAt, type WorldMap } from './map'
@@ -101,9 +102,10 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       if (def.requiresTool && !toolItem) return reject('il faut une pioche')
 
       const level = levelOf(actor, def.skill)
+      // La Meute a une économie anémique (spec alignement R8).
       const yielded = Math.min(
         node.stock,
-        Math.floor(mult * (1 + BALANCE.SKILL_YIELD_BONUS * level)),
+        Math.floor(mult * (1 + BALANCE.SKILL_YIELD_BONUS * level) * harvestFactor(state, actorId)),
       )
       addItems(actor.inventory, { [def.item]: yielded })
       node.stock -= yielded

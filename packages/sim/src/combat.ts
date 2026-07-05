@@ -6,11 +6,12 @@
  * porte. Le même pipeline résout les coups des joueurs, des PNJ et des
  * monstres — personne ne triche.
  */
-import { COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
+import { damageModifier, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
+import { ALIGNMENT, COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
 import { emitEvent } from './events'
 import { addItems, countOf, removeItems, type ItemId } from './items'
 import type { Entity, SimState } from './sim'
-import { applyStructureDamage } from './village'
+import { applyStructureDamage, getVillageOf } from './village'
 
 export interface Corpse {
   id: number
@@ -82,6 +83,10 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
       else if (target.wounds.leg) delete target.wounds.leg
       else delete target.wounds.arm
       actor.cooldownUntil = state.tick + 12
+      // Soigner un extérieur est un acte chaud (spec alignement R2).
+      if (target.id !== actorId && isOutsider(state, actorId, target.id)) {
+        recordAct(state, actorId, ALIGNMENT.HEAL_OUTSIDER_WARMTH)
+      }
       emitEvent(state, { type: 'entity_bandaged', tick: state.tick, entityId: target.id, byEntityId: actorId })
       return
     }
@@ -149,7 +154,7 @@ function resolveStrike(state: SimState, attacker: Entity): void {
   if (windup.structureId !== undefined) {
     const s = state.structures.find((st) => st.id === windup.structureId)
     if (s && distSq(attacker.x, attacker.y, s.tx + 0.5, s.ty + 0.5) <= 2.2 * 2.2) {
-      applyStructureDamage(state, s.id, windup.damage ?? weaponDamage(attacker))
+      applyStructureDamage(state, s.id, windup.damage ?? weaponDamage(attacker), attacker.id)
     }
     delete attacker.windup
     return
@@ -170,7 +175,7 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     const cos = (tx * windup.dx + ty * windup.dy) / dist
     if (cos < COMBAT.ATTACK_ARC_COS) continue
 
-    let dealt = damage
+    let dealt = damage * damageModifier(state, attacker.id, target.id)
     // Blocage directionnel (spec R6) : réduit si l'attaque arrive de face.
     if (target.blocking && target.stamina > 0) {
       const facingCos = (-tx * target.facing.x - ty * target.facing.y) / dist
@@ -203,6 +208,14 @@ export function applyDamage(state: SimState, target: Entity, damage: number, byE
   // Un monstre frappé mémorise son agresseur (le sanglier fuit ou charge).
   const targetMonster = state.monsters.find((m) => m.entityId === target.id)
   if (targetMonster) targetMonster.lastAttackerId = byEntityId
+
+  // L'alignement (spec alignement R2, R4) : frapper l'extérieur est un acte.
+  if (!targetMonster && byEntityId !== 0 && isOutsider(state, byEntityId, target.id)) {
+    const targetVillage = getVillageOf(state, target.id)
+    const cost = recordHostility(state, byEntityId, targetVillage?.id ?? null)
+    recordAct(state, byEntityId, cost)
+    if (target.hp <= 0 && before > 0) recordAct(state, byEntityId, ALIGNMENT.KILL_WARMTH)
+  }
   emitEvent(state, {
     type: 'entity_damaged',
     tick: state.tick,
@@ -306,9 +319,9 @@ export function advanceCombat(state: SimState): void {
       if (before > 0 && entity.hp <= 0) die(state, entity, 0)
       continue
     }
-    // PV : remontent lentement si bien nourri.
+    // PV : remontent lentement si bien nourri — modulé par la chaleur du Feu.
     if (entity.hp > 0 && entity.hp < 100 && entity.hunger > 50) {
-      entity.hp = Math.min(100, entity.hp + COMBAT.HP_REGEN_PER_MIN / 720)
+      entity.hp = Math.min(100, entity.hp + (COMBAT.HP_REGEN_PER_MIN / 720) * regenFactor(state, entity))
     }
   }
 

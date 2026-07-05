@@ -32,6 +32,18 @@ export { advanceWorldEvents, spawnHorde, spawnConvoy } from './worldevents'
 export type { Horde } from './worldevents'
 export { computeFlowField } from './pathfinding'
 export { applyStructureDamage } from './village'
+export { ALIGNMENT } from './balance'
+export {
+  advanceAlignment,
+  archetypeOf,
+  recordAct,
+  recordHostility,
+  isOutsider,
+  regenFactor,
+  damageModifier,
+  harvestFactor,
+} from './alignment'
+export type { Archetype, Aggression } from './alignment'
 export type { TaskKind, VillageTask } from './village'
 export { findPath } from './pathfinding'
 export { isBlockedAt } from './collision'
