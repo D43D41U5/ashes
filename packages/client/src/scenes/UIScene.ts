@@ -12,6 +12,7 @@ const TASK_LABELS: Record<VillageTask['kind'], string> = {
   gather_wood: 'couper du bois',
   gather_fiber: 'ramasser des fibres',
   cook_stew: 'cuisiner',
+  repair: 'réparer',
 }
 
 const STRUCTURE_LABELS: Record<string, string> = {
@@ -42,6 +43,10 @@ const ITEM_LABELS: [keyof Inventory, string][] = [
   ['pickaxe', 'Pioche'],
   ['iron_axe', 'Hache fer'],
   ['iron_pickaxe', 'Pioche fer'],
+  ['spear', 'Lance'],
+  ['raw_meat', 'Viande'],
+  ['cooked_meat', 'Viande cuite'],
+  ['components', 'Composants'],
 ]
 
 /** Alpha de l'obscurité selon l'heure du cycle (jour [0,15), nuit [15,24)). */
@@ -153,6 +158,15 @@ export class UIScene extends Phaser.Scene {
       this.errorText.setText(error.reason).setAlpha(1 - (this.time.now - error.at) / 2500)
     } else {
       this.errorText.setText('')
+    }
+
+    // L'alarme (spec événements R4) : flash rouge pulsé pendant 3 s.
+    const alarm = this.registry.get('alarm') as { at: number } | undefined
+    if (alarm && this.time.now - alarm.at < 3000) {
+      const pulse = 0.25 + 0.2 * Math.sin(this.time.now / 90)
+      this.nightOverlay.setFillStyle(0x8a1a10).setAlpha(Math.max(this.nightOverlay.alpha, pulse))
+    } else {
+      this.nightOverlay.setFillStyle(0x0b1030)
     }
   }
 }

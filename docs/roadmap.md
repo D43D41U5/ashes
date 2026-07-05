@@ -44,9 +44,9 @@ Monorepo, garde-fous de pureté et de déterminisme, noyau tick/entités/PRNG, r
 - Endurance reine (attaque/blocage/sprint, régén modulée par la faim — l'économie EST une stat de combat), wind-up 5 ticks immobile, arc 90°, blocage directionnel 120°/−70 %, blessures aux paliers (jambe/bras/saignement, bandage y compris sur allié), mort = cadavre lootable + respawn au Feu épuisé (compétences gardées, PNJ morts pour de bon), zombie (école de guerre) + sanglier (la chasse : viande cuite), milice émergente (tout PNJ défend à 10 tuiles du Feu, villages PNJ armés de lances).
 - Sortie vérifiée : 3 zombies sur le village PNJ → milice victorieuse sans perte ; replay exact avec combat/blessures/monstres ; un zombie chassé et abattu au navigateur.
 
-### V7 — Hordes & événements PvE (~3-4 sem)
-- **Spec** : `specs/evenements.md`. Flow fields pour les hordes, alarme (les PNJ convergent), garnison, catalogue d'événements v1 : horde migrante, carcasse de convoi, marchand nomade PNJ.
-- **Sortie** : une horde attaque le village la nuit ; la défense architecturale + milice PNJ tient ou casse de façon compréhensible.
+### V7 — Hordes & événements PvE ✅ (fait, 2026-07-05 — voir `specs/evenements.md`)
+- Structures avec PV (les zombies frappent ce qui bloque — en horde via flow field ET en chasse), réparation (action + tâche de tableau PNJ), flow field BFS pur (jamais sérialisé), alarme automatique une-par-vague qui réveille la milice, hordes nocturnes (taille par acte 4/8/12, dissipation à l'aube), carcasses de convoi sur la route (composants T3, gardées). Marchand nomade reporté (le troc est un système).
+- Sortie vérifiée : horde 4 vs milice 4 → tient sans perte ; horde 10 vs 2 PNJ → le village casse en ~50 s, zombies campés au Feu — les deux issues lisibles et testées.
 
 ### V8 — L'alignement (~3-4 sem)
 - **Spec** : `specs/alignement.md`. Deux axes (Chaleur × Intensité) alimentés par le bus d'événements, pondération par coût réel, premier sang, agrégation au Feu (moyenne pondérée, plafond par tête), couleur du Feu, MVP **Foyer/Meute** (stats continues + 1-2 capacités paliers chacun). **Villages PNJ alignés** : des Meutes PNJ qui raident, des Foyers PNJ qui commercent.

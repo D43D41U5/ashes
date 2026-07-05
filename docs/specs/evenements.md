@@ -1,6 +1,6 @@
 # Hordes & événements PvE — flow fields, alarme, le robinet à sessions
 
-*Source : GDD §6 (le monde extérieur, source d'objectifs), §7 (le PvE : école de guerre, pression commune), §11 (flow fields), §2 (les hordes migrent au Grand Froid). Statut : **brouillon — proposition à valider**. Jalon : V7.*
+*Source : GDD §6 (le monde extérieur, source d'objectifs), §7 (le PvE : école de guerre, pression commune), §11 (flow fields), §2 (les hordes migrent au Grand Froid). Statut : **implémenté** (2026-07-05, A1-A8 verts). Jalon : V7.*
 
 ## Objectif de design
 

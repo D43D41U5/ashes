@@ -10,6 +10,8 @@ import { startAttack } from './combat'
 import { moveAvatar } from './collision'
 import { rngRoll } from './rng'
 import { spawnEntity, type Entity, type SimState } from './sim'
+import { computeFlowField } from './pathfinding'
+import { structureAt, structureBlocks } from './village'
 
 export interface Monster {
   entityId: number
@@ -93,6 +95,99 @@ function moveToward(state: SimState, monster: Monster, entity: Entity, tx: numbe
   entity.y = moved.y
 }
 
+/** Champs de flux du tick, un par horde active (dérivés purs, jamais sérialisés). */
+const flowCache = new Map<string, Int32Array>()
+
+/**
+ * Descente de gradient vers le Feu ciblé (spec événements R3). Si la
+ * meilleure tuile est bouchée par une structure, on la frappe. Retourne
+ * true si le monstre appartient à une horde (et a donc agi).
+ */
+function hordeStep(state: SimState, monster: Monster, entity: Entity): boolean {
+  const horde = state.hordes.find((h) => h.memberEntityIds.includes(monster.entityId))
+  if (!horde) return false
+  const village = state.villages.find((v) => v.id === horde.targetVillageId)
+  if (!village) return true
+
+  const cacheKey = `${state.tick}:${horde.id}`
+  let field = flowCache.get(cacheKey)
+  if (!field) {
+    flowCache.clear() // seule la génération du tick courant est utile
+    field = computeFlowField(state.map, state.nodes, village.fireTx, village.fireTy)
+    flowCache.set(cacheKey, field)
+  }
+
+  const width = state.map.width
+  const tx = Math.floor(entity.x)
+  const ty = Math.floor(entity.y)
+  let bestTx = tx
+  let bestTy = ty
+  let bestD = field[ty * width + tx] ?? -1
+  if (bestD === -1) bestD = Infinity
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+    const nx = tx + dx
+    const ny = ty + dy
+    const d = field[ny * width + nx]
+    if (d !== undefined && d !== -1 && d < bestD) {
+      bestD = d
+      bestTx = nx
+      bestTy = ny
+    }
+  }
+  if (bestTx === tx && bestTy === ty) return true // au but ou coincé hors champ
+
+  // La tuile du gradient est-elle bouchée par une structure ? On la frappe.
+  const blocker = structureAt(state.structures, bestTx, bestTy)
+  if (blocker && structureBlocks(blocker, null)) {
+    if (!entity.windup && state.tick >= entity.cooldownUntil) {
+      const def = MONSTER_DEFS[monster.type]
+      startAttack(
+        state,
+        entity,
+        bestTx + 0.5 - entity.x,
+        bestTy + 0.5 - entity.y,
+        undefined,
+        def.windupTicks,
+        def.damage,
+        blocker.id,
+      )
+      entity.cooldownUntil = state.tick + def.attackCooldownTicks
+    }
+    return true
+  }
+
+  moveToward(state, monster, entity, bestTx + 0.5, bestTy + 0.5, false)
+  return true
+}
+
+/** Frappe la structure qui bloque la direction de chasse, s'il y en a une. */
+function attackBlockingStructure(state: SimState, monster: Monster, entity: Entity, tx: number, ty: number): void {
+  const ex = Math.floor(entity.x)
+  const ey = Math.floor(entity.y)
+  const dx = tx - entity.x
+  const dy = ty - entity.y
+  // Voisines dans l'ordre de l'axe dominant.
+  const candidates: [number, number][] =
+    Math.abs(dx) >= Math.abs(dy)
+      ? [
+          [ex + Math.sign(dx), ey],
+          [ex, ey + Math.sign(dy)],
+        ]
+      : [
+          [ex, ey + Math.sign(dy)],
+          [ex + Math.sign(dx), ey],
+        ]
+  for (const [cx, cy] of candidates) {
+    const s = structureAt(state.structures, cx, cy)
+    if (s && structureBlocks(s, null)) {
+      const def = MONSTER_DEFS[monster.type]
+      startAttack(state, entity, cx + 0.5 - entity.x, cy + 0.5 - entity.y, undefined, def.windupTicks, def.damage, s.id)
+      entity.cooldownUntil = state.tick + def.attackCooldownTicks
+      return
+    }
+  }
+}
+
 export function advanceMonsters(state: SimState): void {
   for (const monster of [...state.monsters]) {
     const entity = state.entities.find((e) => e.id === monster.entityId)
@@ -118,7 +213,13 @@ export function advanceMonsters(state: SimState): void {
           entity.cooldownUntil = state.tick + def.attackCooldownTicks
         } else {
           moveToward(state, monster, entity, target.x, target.y, false)
+          // Bloqué en chasse par une structure (mur, porte) : on la frappe.
+          if (!entity.moved && !entity.windup && state.tick >= entity.cooldownUntil) {
+            attackBlockingStructure(state, monster, entity, target.x, target.y)
+          }
         }
+      } else if (hordeStep(state, monster, entity)) {
+        // membre de horde sans proie : il coule vers le Feu (flow field)
       } else if (monster.wanderDx !== 0 || monster.wanderDy !== 0) {
         moveToward(state, monster, entity, entity.x + monster.wanderDx, entity.y + monster.wanderDy, false)
       }

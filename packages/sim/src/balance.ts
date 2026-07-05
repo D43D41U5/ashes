@@ -264,5 +264,45 @@ export const COMBAT = {
   DEFEND_RADIUS: 10,
 } as const
 
+/**
+ * PV des structures (spec événements R1). Le Feu est indestructible en V7 :
+ * valeur sentinelle finie (JSON-sérialisable), et non-bloquant donc jamais
+ * ciblé par le flux.
+ */
+export const STRUCTURE_HP: Record<import('./items').StructureType, number> = {
+  fire: 999999,
+  wall: 200,
+  door: 150,
+  chest: 100,
+  workshop: 100,
+  furnace: 100,
+  house: 100,
+}
+
+/** Hordes & événements du monde (spec événements). */
+export const WORLD_EVENTS = {
+  REPAIR_WOOD_COST: 1,
+  REPAIR_HP: 50,
+  /** Sous cette fraction de PV, le tableau poste une tâche de réparation. */
+  REPAIR_TASK_THRESHOLD: 0.6,
+  /** Une alarme par vague : cooldown d'une heure de cycle. */
+  ALARM_COOLDOWN_TICKS: 1440,
+  /** Probabilité de horde par nuit, par acte (la pression du GDD §2). */
+  HORDE_CHANCE_PER_NIGHT: [0.35, 0.6, 0.9],
+  /** Taille de horde par acte. */
+  HORDE_SIZE: [4, 8, 12],
+  /** Une carcasse de convoi tous les N jours de saison. */
+  CONVOY_PERIOD_DAYS: 2,
+  CONVOY_GUARDS: 2,
+  /** Le butin dure 2 cycles avant de se dissiper. */
+  CONVOY_DECAY_TICKS: 69120,
+} as const
+
+export const CONVOY_LOOT: import('./items').Inventory = {
+  components: 2,
+  iron_ingot: 3,
+  coal: 4,
+}
+
 /** Durée d'un tick en secondes — le seul dt qui existe dans /sim. */
 export const TICK_DT_S = 1 / BALANCE.TICK_RATE_HZ

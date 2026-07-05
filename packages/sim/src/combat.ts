@@ -10,6 +10,7 @@ import { COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
 import { emitEvent } from './events'
 import { addItems, countOf, removeItems, type ItemId } from './items'
 import type { Entity, SimState } from './sim'
+import { applyStructureDamage } from './village'
 
 export interface Corpse {
   id: number
@@ -106,6 +107,7 @@ export function startAttack(
   reject?: (reason: string) => void,
   windupTicks: number = COMBAT.WINDUP_TICKS,
   damageOverride?: number,
+  targetStructureId?: number,
 ): boolean {
   if (actor.windup) {
     reject?.('déjà en train de frapper')
@@ -129,13 +131,30 @@ export function startAttack(
   const ny = dy / len
   actor.stamina -= COMBAT.ATTACK_STAMINA
   actor.facing = { x: nx, y: ny }
-  actor.windup = { dx: nx, dy: ny, ticksLeft: windupTicks, ...(damageOverride !== undefined ? { damage: damageOverride } : {}) }
+  actor.windup = {
+    dx: nx,
+    dy: ny,
+    ticksLeft: windupTicks,
+    ...(damageOverride !== undefined ? { damage: damageOverride } : {}),
+    ...(targetStructureId !== undefined ? { structureId: targetStructureId } : {}),
+  }
   return true
 }
 
 /** Résout le coup à la fin du wind-up : arc de 90°, portée 1.4 (spec R4). */
 function resolveStrike(state: SimState, attacker: Entity): void {
   const windup = attacker.windup!
+
+  // Coup porté à une structure (les hordes frappent les murs, spec événements R1).
+  if (windup.structureId !== undefined) {
+    const s = state.structures.find((st) => st.id === windup.structureId)
+    if (s && distSq(attacker.x, attacker.y, s.tx + 0.5, s.ty + 0.5) <= 2.2 * 2.2) {
+      applyStructureDamage(state, s.id, windup.damage ?? weaponDamage(attacker))
+    }
+    delete attacker.windup
+    return
+  }
+
   const baseDamage = windup.damage ?? weaponDamage(attacker)
   const damage = attacker.wounds.arm ? baseDamage * COMBAT.ARM_WOUND_DAMAGE : baseDamage
   const rangeSq = COMBAT.ATTACK_RANGE * COMBAT.ATTACK_RANGE

@@ -6,6 +6,8 @@
  * par ordre d'insertion. Arithmétique + - * / uniquement.
  */
 import { isBlockedAt, type MoveWorld } from './collision'
+import type { ResourceNode } from './economy'
+import type { WorldMap } from './map'
 
 interface HeapNode {
   f: number
@@ -122,4 +124,39 @@ export function findPath(
     }
   }
   return null
+}
+
+/**
+ * Champ de flux (spec R3) : distances BFS depuis le Feu, sur terrain + nœuds
+ * (les STRUCTURES sont ignorées : le gradient traverse les murs, et le
+ * zombie qui bute dessus les frappe — c'est le siège naturel).
+ * Recalculé à la demande, dérivé pur de l'état : rien à sérialiser.
+ */
+export function computeFlowField(map: WorldMap, nodes: ResourceNode[], targetTx: number, targetTy: number): Int32Array {
+  const { width, height } = map
+  const field = new Int32Array(width * height).fill(-1)
+  const world: MoveWorld = { map, nodes } // sans structures
+  const queue: number[] = []
+  const startKey = targetTy * width + targetTx
+  field[startKey] = 0
+  queue.push(startKey)
+  let head = 0
+  while (head < queue.length) {
+    const key = queue[head]!
+    head += 1
+    const kx = key % width
+    const ky = Math.floor(key / width)
+    const d = field[key]!
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = kx + dx
+      const ny = ky + dy
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+      const nk = ny * width + nx
+      if (field[nk] !== -1) continue
+      if (isBlockedAt(world, nx, ny)) continue
+      field[nk] = d + 1
+      queue.push(nk)
+    }
+  }
+  return field
 }

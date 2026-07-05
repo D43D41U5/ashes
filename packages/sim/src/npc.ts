@@ -7,7 +7,7 @@
  * tableau du village. Des seuils et une file — pas de GOAP.
  * Tout est déterministe : égalités départagées par id, aucun aléa.
  */
-import { BALANCE, COMBAT, type NodeType } from './balance'
+import { BALANCE, COMBAT, STRUCTURE_HP, WORLD_EVENTS, type NodeType } from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { startAttack } from './combat'
 import { applyEconomyAction, type ResourceNode } from './economy'
@@ -37,7 +37,7 @@ export interface Npc {
 }
 
 const TASK_DEFS: Record<
-  Exclude<TaskKind, 'cook_stew'>,
+  Exclude<TaskKind, 'cook_stew' | 'repair'>,
   { nodeType: NodeType; item: ItemId; carry: number }
 > = {
   gather_berries: { nodeType: 'berry_bush', item: 'berries', carry: BALANCE.NPC_CARRY_TARGETS.berries },
@@ -173,11 +173,34 @@ function refreshBoard(state: SimState, village: Village): void {
       stocks.stew < BALANCE.VILLAGE_STEW_TARGET && stocks.berries >= 5 && stocks.fiber >= 1 ? 1 : 0,
   }
   const priorities: Record<TaskKind, number> = {
+    repair: 4,
     cook_stew: 3,
     gather_berries: 2,
     gather_fiber: 2,
     gather_wood: 1,
   }
+
+  // Réparer (spec événements R2) : une tâche par structure sous le seuil.
+  for (const s of state.structures) {
+    if (s.villageId !== village.id || s.type === 'fire') continue
+    if (s.hp >= STRUCTURE_HP[s.type] * WORLD_EVENTS.REPAIR_TASK_THRESHOLD) continue
+    if (!village.tasks.some((t) => t.kind === 'repair' && t.structureId === s.id)) {
+      village.tasks.push({
+        id: village.nextTaskId,
+        kind: 'repair',
+        priority: priorities.repair,
+        claimedBy: null,
+        structureId: s.id,
+      })
+      village.nextTaskId += 1
+    }
+  }
+  // Purger les réparations dont la structure a disparu ou est remise à neuf.
+  village.tasks = village.tasks.filter((t) => {
+    if (t.kind !== 'repair') return true
+    const s = state.structures.find((st) => st.id === t.structureId)
+    return s !== undefined && s.hp < STRUCTURE_HP[s.type]
+  })
 
   for (const kind of Object.keys(wanted) as TaskKind[]) {
     const want = wanted[kind] ?? 0
@@ -206,7 +229,8 @@ function claimTask(village: Village, npc: Npc): void {
     .sort((a, b) => b.priority - a.priority || a.id - b.id)[0]
   if (!free) return
   free.claimedBy = npc.entityId
-  npc.task = { id: free.id, kind: free.kind, stage: free.kind === 'cook_stew' ? 'fetch' : 'work', nodeId: null }
+  const stage = free.kind === 'cook_stew' || free.kind === 'repair' ? 'fetch' : 'work'
+  npc.task = { id: free.id, kind: free.kind, stage, nodeId: null }
   npc.path = []
 }
 
@@ -230,7 +254,7 @@ function canAct(state: SimState, entity: Entity): boolean {
 
 function executeGather(state: SimState, village: Village, npc: Npc, entity: Entity): void {
   const task = npc.task!
-  const def = TASK_DEFS[task.kind as Exclude<TaskKind, 'cook_stew'>]
+  const def = TASK_DEFS[task.kind as Exclude<TaskKind, 'cook_stew' | 'repair'>]
 
   if (task.stage === 'work') {
     if (countOf(entity.inventory, def.item) >= def.carry) {
@@ -340,6 +364,42 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
     return
   }
   if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return dropTask(village, npc, false)
+  followPath(state, npc, entity)
+}
+
+/** Réparer : chercher du bois au grenier si besoin, puis marteler (spec événements R2). */
+function executeRepair(state: SimState, village: Village, npc: Npc, entity: Entity): void {
+  const task = npc.task!
+  const target = state.structures.find((s) => s.id === village.tasks.find((t) => t.id === task.id)?.structureId)
+  if (!target || target.hp >= STRUCTURE_HP[target.type]) return dropTask(village, npc, true)
+
+  if (task.stage === 'fetch' && countOf(entity.inventory, 'wood') === 0) {
+    const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? {}, 'wood') > 0)
+    if (!chest) return dropTask(village, npc, false) // pas de bois : on abandonne
+    if (near(entity, chest.tx, chest.ty)) {
+      applyVillageAction(state, entity.id, {
+        type: 'withdraw',
+        structureId: chest.id,
+        item: 'wood',
+        count: Math.min(4, countOf(chest.inventory ?? {}, 'wood')),
+      })
+      task.stage = 'work'
+      return
+    }
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return dropTask(village, npc, false)
+    followPath(state, npc, entity)
+    return
+  }
+  task.stage = 'work'
+
+  if (near(entity, target.tx, target.ty)) {
+    if (state.tick >= entity.cooldownUntil) {
+      applyVillageAction(state, entity.id, { type: 'repair', structureId: target.id })
+      if (countOf(entity.inventory, 'wood') === 0) task.stage = 'fetch'
+    }
+    return
+  }
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty)) return dropTask(village, npc, false)
   followPath(state, npc, entity)
 }
 
@@ -481,6 +541,7 @@ export function advanceNpcs(state: SimState): void {
       if (!npc.task) continue // rien à faire : oisif
     }
     if (npc.task.kind === 'cook_stew') executeCook(state, village, npc, entity)
+    else if (npc.task.kind === 'repair') executeRepair(state, village, npc, entity)
     else executeGather(state, village, npc, entity)
   }
 }
@@ -546,6 +607,7 @@ export function foundNpcVillage(state: SimState, tx: number, ty: number, count: 
     tasks: [],
     nextTaskId: 1,
     npcsArrived: true, // on peuple nous-mêmes
+    lastAlarmAt: -999999,
   }
   state.villages.push(village)
 
@@ -558,6 +620,7 @@ export function foundNpcVillage(state: SimState, tx: number, ty: number, count: 
       villageId,
       ownerId: 0,
       access: 'village',
+      hp: STRUCTURE_HP[type],
       ...(inventory ? { inventory } : {}),
     }
     state.nextStructureId += 1

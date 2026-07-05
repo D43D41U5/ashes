@@ -20,6 +20,7 @@ export type ItemId =
   | 'spear'
   | 'raw_meat'
   | 'cooked_meat'
+  | 'components'
 
 /** Stacks d'items. Invariant : jamais de clé à 0 (snapshot canonique). */
 export type Inventory = Partial<Record<ItemId, number>>

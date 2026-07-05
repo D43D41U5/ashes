@@ -8,7 +8,7 @@
  * action refusée émet `action_rejected` (feedback client, testabilité) ;
  * une action validée émet son événement de domaine.
  */
-import { BALANCE, STRUCTURE_COSTS, TERRAINS } from './balance'
+import { BALANCE, STRUCTURE_COSTS, STRUCTURE_HP, TERRAINS, WORLD_EVENTS } from './balance'
 import { emitEvent } from './events'
 import {
   addItems,
@@ -32,11 +32,13 @@ export interface Structure {
   /** Le bâtisseur. 0 = le village lui-même (le Feu). */
   ownerId: number
   access: AccessLevel
+  /** PV (spec événements R1) — les hordes frappent ce qui bloque. */
+  hp: number
   /** Contenu, pour les structures-conteneurs (coffre). */
   inventory?: Inventory
 }
 
-export type TaskKind = 'gather_berries' | 'gather_wood' | 'gather_fiber' | 'cook_stew'
+export type TaskKind = 'gather_berries' | 'gather_wood' | 'gather_fiber' | 'cook_stew' | 'repair'
 
 /** Une tâche du tableau du village (spec pnj R5). */
 export interface VillageTask {
@@ -44,6 +46,8 @@ export interface VillageTask {
   kind: TaskKind
   priority: number
   claimedBy: number | null
+  /** Cible, pour les tâches localisées (réparer telle structure). */
+  structureId?: number
 }
 
 export interface Village {
@@ -57,10 +61,13 @@ export interface Village {
   nextTaskId: number
   /** Les PNJ d'accueil sont-ils déjà arrivés ? (spec pnj R9) */
   npcsArrived: boolean
+  /** Dernière alarme (spec événements R4 : une par vague). */
+  lastAlarmAt: number
 }
 
 export type VillageAction =
   | { type: 'light_fire' }
+  | { type: 'repair'; structureId: number }
   | { type: 'build'; structure: Exclude<StructureType, 'fire'>; tx: number; ty: number }
   | { type: 'demolish'; structureId: number }
   | { type: 'deposit'; structureId: number; item: ItemId; count: number }
@@ -101,6 +108,17 @@ export function hasAccess(state: SimState, entityId: number, s: Structure): bool
   if (s.access === 'public') return true
   if (s.access === 'village') return getVillageOf(state, entityId)?.id === s.villageId
   return false
+}
+
+/** Endommage une structure ; à 0 elle disparaît (spec événements R1). */
+export function applyStructureDamage(state: SimState, structureId: number, damage: number): void {
+  const s = state.structures.find((st) => st.id === structureId)
+  if (!s) return
+  s.hp -= damage
+  if (s.hp <= 0) {
+    state.structures = state.structures.filter((st) => st.id !== structureId)
+    emitEvent(state, { type: 'structure_destroyed', tick: state.tick, structureId })
+  }
 }
 
 /**
@@ -150,6 +168,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
         tasks: [],
         nextTaskId: 1,
         npcsArrived: false,
+        lastAlarmAt: -999999,
       })
       addStructure(state, 'fire', tx, ty, villageId, 0)
       emitEvent(state, { type: 'village_founded', tick: state.tick, villageId, chiefId: actorId, tx, ty })
@@ -170,6 +189,22 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
         return reject('matériaux insuffisants')
       }
       addStructure(state, action.structure, tx, ty, village.id, actorId)
+      return
+    }
+
+    case 'repair': {
+      if (state.tick < actor.cooldownUntil) return reject('trop tôt')
+      const s = state.structures.find((st) => st.id === action.structureId)
+      if (!s) return reject('structure inconnue')
+      if (getVillageOf(state, actorId)?.id !== s.villageId) return reject('pas votre village')
+      const max = STRUCTURE_HP[s.type]
+      if (s.hp >= max) return reject('rien à réparer')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      if (!removeItems(actor.inventory, { wood: WORLD_EVENTS.REPAIR_WOOD_COST })) return reject('il faut du bois')
+      s.hp = Math.min(max, s.hp + WORLD_EVENTS.REPAIR_HP)
+      actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
+      emitEvent(state, { type: 'structure_repaired', tick: state.tick, structureId: s.id, byEntityId: actorId })
       return
     }
 
@@ -257,7 +292,16 @@ function addStructure(
 ): void {
   const id = state.nextStructureId
   state.nextStructureId += 1
-  const structure: Structure = { id, type, tx, ty, villageId, ownerId, access: DEFAULT_ACCESS[type] }
+  const structure: Structure = {
+    id,
+    type,
+    tx,
+    ty,
+    villageId,
+    ownerId,
+    access: DEFAULT_ACCESS[type],
+    hp: STRUCTURE_HP[type],
+  }
   if (type === 'chest') structure.inventory = {}
   state.structures.push(structure)
   emitEvent(state, {

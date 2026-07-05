@@ -9,6 +9,7 @@
 import {
   BALANCE,
   COMBAT,
+  STRUCTURE_HP,
   moveAvatar,
   zoneAt,
   type AccessLevel,
@@ -143,6 +144,13 @@ export class WorldScene extends Phaser.Scene {
       this.sendAction({ type: 'attack', dx, dy })
     })
     kb.addKey(K.X, false).on('down', () => this.sendAction({ type: 'bandage' }))
+    kb.addKey(K.G, false).on('down', () => {
+      const world = this.input.activePointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
+      const target = this.structures.find(
+        (s) => s.tx === Math.floor(world.x / TILE_PX) && s.ty === Math.floor(world.y / TILE_PX),
+      )
+      if (target) this.sendAction({ type: 'repair', structureId: target.id })
+    })
 
     // Manger et crafter.
     kb.addKey(K.E, false).on('down', () => this.sendAction({ type: 'eat', item: 'berries' }))
@@ -268,6 +276,8 @@ export class WorldScene extends Phaser.Scene {
     for (const event of msg.events) {
       if (event.type === 'action_rejected' && event.entityId === this.playerId) {
         this.registry.set('error', { reason: event.reason, at: this.time.now })
+      } else if (event.type === 'alarm_raised' && event.villageId === this.myVillageId) {
+        this.registry.set('alarm', { at: this.time.now })
       }
     }
     const now = this.time.now
@@ -326,13 +336,18 @@ export class WorldScene extends Phaser.Scene {
     const seen = new Set<number>()
     for (const s of structures) {
       seen.add(s.id)
-      if (!this.structureSprites.has(s.id)) {
-        const sprite = this.add
+      let sprite = this.structureSprites.get(s.id)
+      if (!sprite) {
+        sprite = this.add
           .image(s.tx * TILE_PX, s.ty * TILE_PX, `st-${s.type}`)
           .setOrigin(0)
           .setDepth(s.type === 'fire' ? 5 : 6)
         this.structureSprites.set(s.id, sprite)
       }
+      // Une structure endommagée s'assombrit et rougit — lisible de loin.
+      const ratio = Math.max(0, Math.min(1, s.hp / STRUCTURE_HP[s.type]))
+      const shade = Math.floor(140 + 115 * ratio)
+      sprite.setTint(Phaser.Display.Color.GetColor(255, shade, shade))
     }
     for (const [id, sprite] of this.structureSprites) {
       if (!seen.has(id)) {

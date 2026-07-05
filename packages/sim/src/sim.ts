@@ -18,6 +18,7 @@ import { emitEvent, type SimEvent } from './events'
 import type { Inventory, ItemId, SkillId } from './items'
 import { createEmptyMap, type WorldMap } from './map'
 import { advanceMonsters, type Monster } from './monsters'
+import { advanceWorldEvents, type Horde } from './worldevents'
 import { rngNext } from './rng'
 import { advanceNpcs, type Npc } from './npc'
 import { advanceTime } from './time'
@@ -49,7 +50,7 @@ export interface Entity {
   /** A bougé ce tick (module la régén d'endurance). */
   moved: boolean
   exhaustedUntil: number
-  windup?: { dx: number; dy: number; ticksLeft: number; damage?: number }
+  windup?: { dx: number; dy: number; ticksLeft: number; damage?: number; structureId?: number }
   /** Point de respawn hors village (position d'apparition). */
   homeX: number
   homeY: number
@@ -74,6 +75,9 @@ export interface SimState {
   monsters: Monster[]
   corpses: Corpse[]
   nextCorpseId: number
+  hordes: Horde[]
+  nextHordeId: number
+  lastConvoyDay: number
   nextVillageId: number
   nextStructureId: number
   /** Buffer d'événements de domaine, drainé par l'hôte (voir events.ts). */
@@ -117,6 +121,9 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     monsters: [],
     corpses: [],
     nextCorpseId: 1,
+    hordes: [],
+    nextHordeId: 1,
+    lastConvoyDay: 0,
     nextVillageId: 1,
     nextStructureId: 1,
     events: [],
@@ -203,7 +210,8 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     entity.x = moved.x
     entity.y = moved.y
   }
-  // Les PNJ agissent après les joueurs, puis les monstres, puis la résolution.
+  // Le monde d'abord (spawns/alarmes), puis PNJ, monstres, résolution.
+  advanceWorldEvents(state)
   advanceNpcs(state)
   advanceMonsters(state)
   advanceCombat(state)

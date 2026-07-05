@@ -52,6 +52,12 @@ export type SimEvent =
   | { type: 'entity_bandaged'; tick: number; entityId: number; byEntityId: number }
   | { type: 'monster_slain'; tick: number; monsterType: import('./balance').MonsterType; byEntityId: number }
   | { type: 'corpse_looted'; tick: number; corpseId: number; byEntityId: number }
+  | { type: 'structure_repaired'; tick: number; structureId: number; byEntityId: number }
+  | { type: 'structure_destroyed'; tick: number; structureId: number }
+  | { type: 'alarm_raised'; tick: number; villageId: number }
+  | { type: 'horde_spawned'; tick: number; hordeId: number; size: number; targetVillageId: number }
+  | { type: 'horde_dispersed'; tick: number; hordeId: number }
+  | { type: 'convoy_spawned'; tick: number; tx: number; ty: number }
 // À venir avec les systèmes : first_blood, gift_given, pact_signed, …
 
 /** Émet un événement dans le buffer de l'état. Usage interne à /sim. */
