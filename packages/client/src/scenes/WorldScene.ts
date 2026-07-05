@@ -1,0 +1,210 @@
+/**
+ * La scène de jeu : rendu de la vallée, avatar prédit, entités interpolées.
+ *
+ * Le client est « bête » (spec client R3-R5) : la sim tourne dans le Worker,
+ * ici on envoie des intentions et on interpole des snapshots. La seule
+ * logique partagée est `moveAvatar` de /sim, rejouée pour la prédiction
+ * locale de son propre avatar.
+ */
+import { BALANCE, moveAvatar, zoneAt, type Entity, type WorldMap } from '@braises/sim'
+import Phaser from 'phaser'
+import { createDemoMap, DEMO_MAP_SIZE, PLAYER_SPAWN } from '../demo-map'
+import type { ClientToHost, HostToClient } from '../protocol'
+
+const TILE_PX = 16
+const INTERP_MS = 1000 / BALANCE.TICK_RATE_HZ
+/** Écart prédiction/autorité au-delà duquel on snap (spec client R5). */
+const SNAP_DISTANCE_TILES = 1.5
+
+const TERRAIN_COLORS: Record<number, number> = {
+  // (les couleurs sont des placeholders R8, remplacées par de vrais tilesets en V3+)
+  0: 0x101014, // void
+  1: 0x3e7d3a, // herbe
+  2: 0xb2996a, // route
+  3: 0x2c5a2e, // forêt
+  4: 0x4a7fa8, // eau peu profonde
+  5: 0x6d6d70, // roche
+  6: 0x274a6d, // eau profonde
+  7: 0x4a4038, // mur
+}
+
+/** Assombrit/éclaircit légèrement une couleur (variation par tuile). */
+function shade(color: number, factor: number): number {
+  const r = Math.min(255, Math.floor(((color >> 16) & 0xff) * factor))
+  const g = Math.min(255, Math.floor(((color >> 8) & 0xff) * factor))
+  const b = Math.min(255, Math.floor((color & 0xff) * factor))
+  return (r << 16) | (g << 8) | b
+}
+
+function hash2(x: number, y: number): number {
+  let h = (x * 374761393 + y * 668265263) >>> 0
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
+}
+
+interface InterpolatedSprite {
+  sprite: Phaser.GameObjects.Image
+  fromX: number
+  fromY: number
+  toX: number
+  toY: number
+  startedAt: number
+}
+
+export class WorldScene extends Phaser.Scene {
+  private worker!: Worker
+  private map!: WorldMap
+  private playerId = 0
+  private playerSprite!: Phaser.GameObjects.Image
+  private predicted = { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y }
+  private others = new Map<number, InterpolatedSprite>()
+  private lastSentInput = { dx: 0, dy: 0 }
+  private keys!: Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key[]>
+
+  constructor() {
+    super('world')
+  }
+
+  create(): void {
+    this.map = createDemoMap()
+    this.bakeMapTexture()
+    this.add.image(0, 0, 'map-demo').setOrigin(0)
+
+    this.playerSprite = this.add.image(0, 0, 'spr-player').setDepth(10)
+    this.syncSprite(this.playerSprite, this.predicted.x, this.predicted.y)
+
+    const worldPx = DEMO_MAP_SIZE * TILE_PX
+    this.cameras.main.setBounds(0, 0, worldPx, worldPx)
+    this.cameras.main.startFollow(this.playerSprite, true, 0.12, 0.12).setZoom(2)
+    this.cameras.main.setBackgroundColor('#0e0e12')
+
+    this.scene.launch('ui')
+
+    const kb = this.input.keyboard!
+    const grab = (codes: number[]) => codes.map((c) => kb.addKey(c, false))
+    const K = Phaser.Input.Keyboard.KeyCodes
+    this.keys = {
+      up: grab([K.Z, K.W, K.UP]),
+      down: grab([K.S, K.DOWN]),
+      left: grab([K.Q, K.A, K.LEFT]),
+      right: grab([K.D, K.RIGHT]),
+    }
+
+    this.worker = new Worker(new URL('../worker/sim-worker.ts', import.meta.url), { type: 'module' })
+    this.worker.addEventListener('message', (e: MessageEvent<HostToClient>) => this.onHostMessage(e.data))
+    this.send({
+      type: 'init',
+      seed: 2026,
+      map: this.map,
+      calendarScale: 720, // démo : un jour de saison toutes les 2 min
+      playerSpawn: PLAYER_SPAWN,
+    })
+  }
+
+  override update(_time: number, deltaMs: number): void {
+    const dx = this.axis('right', 'left')
+    const dy = this.axis('down', 'up')
+
+    if (dx !== this.lastSentInput.dx || dy !== this.lastSentInput.dy) {
+      this.lastSentInput = { dx, dy }
+      this.send({ type: 'input', dx, dy })
+    }
+
+    // Prédiction locale (R5) : même code que la sim, au dt de la frame.
+    const moved = moveAvatar(this.map, this.predicted.x, this.predicted.y, dx, dy, deltaMs / 1000)
+    this.predicted = moved
+    this.syncSprite(this.playerSprite, moved.x, moved.y)
+
+    // Interpolation des autres entités (R4) : vers le dernier snapshot, sur un tick.
+    const now = this.time.now
+    for (const o of this.others.values()) {
+      const t = Math.min(1, (now - o.startedAt) / INTERP_MS)
+      this.syncSprite(o.sprite, o.fromX + (o.toX - o.fromX) * t, o.fromY + (o.toY - o.fromY) * t)
+    }
+
+    this.registry.set('zone', zoneAt(this.map, this.predicted.x, this.predicted.y)?.name)
+  }
+
+  private onHostMessage(msg: HostToClient): void {
+    if (msg.type === 'ready') {
+      this.playerId = msg.playerId
+      return
+    }
+    this.registry.set('time', msg.time)
+    const now = this.time.now
+    const seen = new Set<number>()
+    for (const entity of msg.entities) {
+      if (entity.id === this.playerId) {
+        this.reconcile(entity)
+        continue
+      }
+      seen.add(entity.id)
+      const existing = this.others.get(entity.id)
+      if (existing) {
+        existing.fromX = existing.toX
+        existing.fromY = existing.toY
+        existing.toX = entity.x
+        existing.toY = entity.y
+        existing.startedAt = now
+      } else {
+        const sprite = this.add.image(0, 0, 'spr-npc').setDepth(9)
+        this.syncSprite(sprite, entity.x, entity.y)
+        this.others.set(entity.id, {
+          sprite,
+          fromX: entity.x,
+          fromY: entity.y,
+          toX: entity.x,
+          toY: entity.y,
+          startedAt: now,
+        })
+      }
+    }
+    for (const [id, o] of this.others) {
+      if (!seen.has(id)) {
+        o.sprite.destroy()
+        this.others.delete(id)
+      }
+    }
+  }
+
+  /** Réconciliation douce vers la position autoritative (R5). */
+  private reconcile(authoritative: Entity): void {
+    const ex = authoritative.x - this.predicted.x
+    const ey = authoritative.y - this.predicted.y
+    const distSq = ex * ex + ey * ey
+    if (distSq > SNAP_DISTANCE_TILES * SNAP_DISTANCE_TILES) {
+      this.predicted = { x: authoritative.x, y: authoritative.y }
+    } else {
+      this.predicted = { x: this.predicted.x + ex * 0.2, y: this.predicted.y + ey * 0.2 }
+    }
+  }
+
+  private axis(plus: 'right' | 'down', minus: 'left' | 'up'): -1 | 0 | 1 {
+    const p = this.keys[plus].some((k) => k.isDown)
+    const m = this.keys[minus].some((k) => k.isDown)
+    if (p === m) return 0
+    return p ? 1 : -1
+  }
+
+  private syncSprite(sprite: Phaser.GameObjects.Image, x: number, y: number): void {
+    sprite.setPosition(x * TILE_PX, y * TILE_PX)
+  }
+
+  private send(msg: ClientToHost): void {
+    this.worker.postMessage(msg)
+  }
+
+  /** Bake la carte statique en une texture (R8) — API generateTexture éprouvée dans Manif. */
+  private bakeMapTexture(): void {
+    const g = this.add.graphics()
+    for (let ty = 0; ty < this.map.height; ty++) {
+      for (let tx = 0; tx < this.map.width; tx++) {
+        const base = TERRAIN_COLORS[this.map.terrain[ty * this.map.width + tx] ?? 0] ?? 0xff00ff
+        g.fillStyle(shade(base, 0.92 + 0.16 * hash2(tx, ty)))
+        g.fillRect(tx * TILE_PX, ty * TILE_PX, TILE_PX, TILE_PX)
+      }
+    }
+    g.generateTexture('map-demo', this.map.width * TILE_PX, this.map.height * TILE_PX)
+    g.destroy()
+  }
+}

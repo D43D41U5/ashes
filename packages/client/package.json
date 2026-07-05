@@ -4,12 +4,17 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@braises/sim": "workspace:*"
+    "@braises/sim": "workspace:*",
+    "phaser": "^4.1.0"
   },
   "devDependencies": {
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vite": "^6.2.4"
   }
 }

@@ -9,8 +9,8 @@
  * recouvre strictement — être flush contre un mur (max = bord de tuile)
  * n'est pas un recouvrement. EPS absorbe le bruit flottant.
  */
-import { BALANCE } from './balance'
-import { isBlockingTile, type WorldMap } from './map'
+import { BALANCE, TERRAINS } from './balance'
+import { isBlockingTile, terrainAt, type WorldMap } from './map'
 
 const EPS = 1e-6
 const HALF = BALANCE.AVATAR_HITBOX_TILES / 2
@@ -77,6 +77,28 @@ export function resolveMove(
   const nx = moveAxis(map, x, dx, y - HALF, y + HALF, true)
   const ny = moveAxis(map, y, dy, nx - HALF, nx + HALF, false)
   return { x: nx, y: ny }
+}
+
+/**
+ * Déplacement d'avatar complet : vitesse de BALANCE modulée par le terrain
+ * sous le centre, normalisation diagonale, collisions. Partagé entre le tick
+ * serveur (`step`, dt fixe) et la prédiction locale du client (dt de frame) —
+ * la parité prédiction/autorité est garantie par construction.
+ */
+export function moveAvatar(
+  map: WorldMap,
+  x: number,
+  y: number,
+  dx: -1 | 0 | 1,
+  dy: -1 | 0 | 1,
+  dtS: number,
+): { x: number; y: number } {
+  if (dx === 0 && dy === 0) return { x, y }
+  const terrain = TERRAINS[terrainAt(map, Math.floor(x), Math.floor(y))]
+  const factor = terrain?.walkable ? terrain.speedFactor : 1
+  const speed = BALANCE.WALK_SPEED_TILES_PER_S * dtS * factor
+  const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1
+  return resolveMove(map, x, y, dx * speed * norm, dy * speed * norm)
 }
 
 /** L'AABB d'un avatar centré en (x, y) recouvre-t-elle une tuile bloquante ? (outil de test) */

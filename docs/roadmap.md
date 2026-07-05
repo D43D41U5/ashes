@@ -23,10 +23,10 @@ Monorepo, garde-fous de pureté et de déterminisme, noyau tick/entités/PRNG, r
 - Grille de collision AABB, format de carte interne à `/sim` (indépendant de Tiled) + importeur Tiled, cycle jour/nuit, zones (préparation multi-rooms : la carte est déjà découpée logiquement, même si tout tourne dans un seul Worker).
 - **Sortie** : test headless — une entité traverse une carte Tiled importée en évitant les obstacles ; une « saison » de 60 jours simulés tourne en < 60 s.
 
-### V2 — Le rendu (~3-4 sem)
-- `/client` Phaser 4 + Vite : la sim tourne dans un **Web Worker**, le client envoie des inputs et interpole des snapshots (protocole défini une fois, réutilisé en réseau). Caméra, avatar, tilemap rendue, reprise du capital Manif (lighting, pipeline Tiled/Aseprite).
-- Première build déployée sur Cloudflare Pages — **le canal de playtest existe désormais en continu**.
-- **Sortie** : on se promène au clavier dans la vallée, dans le navigateur, à 60 fps, sim à 12 Hz dans le Worker.
+### V2 — Le rendu ✅ (fait, 2026-07-05 — voir `specs/client.md`)
+- `/client` Phaser 4 + Vite : la sim tourne dans un **Web Worker**, le client envoie des inputs et interpole des snapshots (protocole défini une fois, réutilisé en réseau). Caméra, avatar, prédiction locale via `moveAvatar` partagé, UIScene (pattern Manif). Placeholders générés par code ; le lighting normal-mapped de Manif attend les vrais tilesets (V3+).
+- ⚠️ Reste à faire par Alexis : brancher Cloudflare Pages (`pnpm build` → `packages/client/dist`) pour ouvrir le canal de playtest continu.
+- Sortie vérifiée : promenade au clavier dans la vallée de démo, collisions, caméra, PNJ interpolés, HUD jour/acte/heure — smoke test Playwright headless avec captures.
 
 ### V3 — Le village (~3-4 sem)
 - **Spec** : `specs/village.md`. Le Feu (allumage, rayon de construction, respawn), construction T1 (mur, porte, coffre, atelier, maison), propriété individuelle + liste d'accès, rangs MVP (Chef seul), stockage protégé.

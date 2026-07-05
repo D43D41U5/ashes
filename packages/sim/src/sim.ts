@@ -10,10 +10,10 @@
  * que snapshot = JSON.stringify et que le transport Worker/réseau soit
  * trivial.
  */
-import { BALANCE, TERRAINS, TERRAIN_GRASS, TICK_DT_S } from './balance'
-import { resolveMove } from './collision'
+import { BALANCE, TERRAIN_GRASS, TICK_DT_S } from './balance'
+import { moveAvatar } from './collision'
 import { emitEvent, type SimEvent } from './events'
-import { createEmptyMap, terrainAt, type WorldMap } from './map'
+import { createEmptyMap, type WorldMap } from './map'
 import { rngNext } from './rng'
 import { advanceTime } from './time'
 
@@ -85,12 +85,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   for (const input of inputs) {
     const entity = state.entities.find((e) => e.id === input.entityId)
     if (!entity) continue
-    if (input.dx === 0 && input.dy === 0) continue
-    const terrain = TERRAINS[terrainAt(state.map, Math.floor(entity.x), Math.floor(entity.y))]
-    const factor = terrain?.walkable ? terrain.speedFactor : 1
-    const speed = BALANCE.WALK_SPEED_TILES_PER_S * TICK_DT_S * factor
-    const norm = input.dx !== 0 && input.dy !== 0 ? Math.SQRT1_2 : 1
-    const moved = resolveMove(state.map, entity.x, entity.y, input.dx * speed * norm, input.dy * speed * norm)
+    const moved = moveAvatar(state.map, entity.x, entity.y, input.dx, input.dy, TICK_DT_S)
     entity.x = moved.x
     entity.y = moved.y
   }

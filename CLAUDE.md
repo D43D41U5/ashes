@@ -9,7 +9,11 @@ pnpm install      # workspace complet
 pnpm check        # tsc --noEmit sur tous les packages
 pnpm test         # vitest sur tous les packages (aujourd'hui : /sim)
 pnpm lint         # eslint, dont les garde-fous de pureté de /sim
+pnpm dev          # client Vite (jeu jouable sur http://localhost:3000)
+pnpm build        # build web statique → packages/client/dist
 ```
+
+Pour un smoke test navigateur headless : le Playwright du projet Manif est réutilisable (`/home/alexis/projects/demo/node_modules/playwright-core`), voir l'historique git de V2.
 
 Les trois dernières doivent passer avant tout commit. Elles sont rapides — les lancer souvent.
 
@@ -49,6 +53,6 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 Le plan d'implémentation complet est dans **`docs/roadmap.md`** (jalons V0-V10 → LAN → Vallée → Saison 0, avec critères de sortie et gates). Le cadre vient du GDD §13.
 
-**Jalon courant : V2 — Le rendu** (client Phaser 4 + Vite, sim dans un Web Worker, protocole inputs/snapshots, build Cloudflare Pages). V0 (fondations) et V1 (monde : temps à deux échelles, collisions AABB continues, importeur Tiled — voir `docs/specs/monde.md`) faits le 2026-07-05.
+**Jalon courant : V3 — Le village** (le Feu, construction T1, propriété + rangs MVP — écrire `docs/specs/village.md` d'abord). V0, V1 (monde — `specs/monde.md`) et V2 (rendu — `specs/client.md`) faits le 2026-07-05. Reste de V2 : brancher le déploiement Cloudflare Pages (action Alexis).
 
 MVP gouvernance (Veillée/LAN) : rang unique + Chef + propriété individuelle. MVP alignement : deux axes + Foyer/Meute seulement.

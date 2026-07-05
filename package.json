@@ -6,7 +6,9 @@
   "scripts": {
     "check": "pnpm -r run check",
     "test": "pnpm -r run test",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "dev": "pnpm --filter @braises/client dev",
+    "build": "pnpm --filter @braises/client build"
   },
   "devDependencies": {
     "eslint": "^9.30.0",
