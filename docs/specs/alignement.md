@@ -1,6 +1,6 @@
 # L'alignement — deux axes, le Feu coloré, Foyer et Meute
 
-*Source : GDD §3 (alignement émergent), §13 (MVP : deux axes + Foyer/Meute ; Ermitage/Charognard en phase Vallée). Statut : **brouillon — proposition à valider**. Jalon : V8.*
+*Source : GDD §3 (alignement émergent), §13 (MVP : deux axes + Foyer/Meute ; Ermitage/Charognard en phase Vallée). Statut : **implémenté** (2026-07-05, A1-A8 verts — le paquebot vire, la Meute raide). Jalon : V8.*
 
 ## Objectif de design
 
