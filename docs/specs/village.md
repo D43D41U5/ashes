@@ -1,6 +1,6 @@
 # Le village — Feu, construction, propriété
 
-*Source : GDD §5 (gouvernance, MVP : rang unique + Chef + propriété individuelle), §9 (fondation semi-libre), §6 (le village comme nécessité). Statut : **brouillon — proposition à valider**. Jalon : V3.*
+*Source : GDD §5 (gouvernance, MVP : rang unique + Chef + propriété individuelle), §9 (fondation semi-libre), §6 (le village comme nécessité). Statut : **implémenté** (2026-07-05, A1-A6 verts en headless + smoke test navigateur). Jalon : V3.*
 
 ## Objectif de design
 

@@ -30,6 +30,18 @@ export const BALANCE = {
 
   /** Accélération du calendrier : jours de saison écoulés par jour réel. */
   DEFAULT_CALENDAR_SCALE: 1,
+
+  /** Rayon de construction autour du Feu du village, en tuiles (spec village R6). */
+  FIRE_BUILD_RADIUS: 20,
+
+  /** Distance minimale entre deux Feux, en tuiles (spec village R5). */
+  FIRE_MIN_DISTANCE: 48,
+
+  /** Portée des interactions (coffres, invitations), en tuiles. */
+  INTERACT_RANGE: 1.5,
+
+  /** Part des matériaux remboursée à la démolition. */
+  DEMOLISH_REFUND: 0.5,
 } as const
 
 export interface TerrainDef {
@@ -55,6 +67,15 @@ export const TERRAIN_VOID = 0
 export const TERRAIN_GRASS = 1
 export const TERRAIN_ROAD = 2
 export const TERRAIN_ROCK = 5
+
+/** Coûts de construction (spec village R3 : réels dès V3). */
+export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./items').Inventory> = {
+  fire: { wood: 10 },
+  wall: { wood: 2 },
+  door: { wood: 3 },
+  chest: { wood: 4 },
+  workshop: { wood: 6, stone: 4 },
+}
 
 /** Durée d'un tick en secondes — le seul dt qui existe dans /sim. */
 export const TICK_DT_S = 1 / BALANCE.TICK_RATE_HZ

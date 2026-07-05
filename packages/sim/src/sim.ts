@@ -13,15 +13,18 @@
 import { BALANCE, TERRAIN_GRASS, TICK_DT_S } from './balance'
 import { moveAvatar } from './collision'
 import { emitEvent, type SimEvent } from './events'
+import type { Inventory } from './items'
 import { createEmptyMap, type WorldMap } from './map'
 import { rngNext } from './rng'
 import { advanceTime } from './time'
+import { applyAction, getVillageOf, type PlayerAction, type Structure, type Village } from './village'
 
 export interface Entity {
   id: number
   /** Position du centre, en tuiles (déplacement continu, spec monde R5). */
   x: number
   y: number
+  inventory: Inventory
 }
 
 export interface SimState {
@@ -36,6 +39,10 @@ export interface SimState {
   map: WorldMap
   nextEntityId: number
   entities: Entity[]
+  villages: Village[]
+  structures: Structure[]
+  nextVillageId: number
+  nextStructureId: number
   /** Buffer d'événements de domaine, drainé par l'hôte (voir events.ts). */
   events: SimEvent[]
 }
@@ -45,11 +52,12 @@ export interface SimOptions {
   calendarScale?: number
 }
 
-/** Intention de déplacement d'un avatar pour un tick donné. */
+/** Intention d'un avatar pour un tick : déplacement + au plus une action. */
 export interface MoveInput {
   entityId: number
   dx: -1 | 0 | 1
   dy: -1 | 0 | 1
+  action?: PlayerAction
 }
 
 export function createSim(seed: number, options: SimOptions = {}): SimState {
@@ -61,6 +69,10 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     map: options.map ?? createEmptyMap(64, 64, TERRAIN_GRASS),
     nextEntityId: 1,
     entities: [],
+    villages: [],
+    structures: [],
+    nextVillageId: 1,
+    nextStructureId: 1,
     events: [],
   }
   // Le tick 0 est le début du jour 1, de l'acte I et d'un cycle de jour.
@@ -73,7 +85,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
 export function spawnEntity(state: SimState, x: number, y: number): number {
   const id = state.nextEntityId
   state.nextEntityId += 1
-  state.entities.push({ id, x, y })
+  state.entities.push({ id, x, y, inventory: {} })
   // Consomme un pas de PRNG : le spawn fait partie de l'histoire déterministe.
   state.rngState = rngNext(state.rngState)
   emitEvent(state, { type: 'entity_spawned', tick: state.tick, entityId: id, x, y })
@@ -85,7 +97,14 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   for (const input of inputs) {
     const entity = state.entities.find((e) => e.id === input.entityId)
     if (!entity) continue
-    const moved = moveAvatar(state.map, entity.x, entity.y, input.dx, input.dy, TICK_DT_S)
+    // L'action d'abord (un mur bâti ce tick bloque dès ce tick), le pas ensuite.
+    if (input.action) applyAction(state, input.entityId, input.action)
+    const world = {
+      map: state.map,
+      structures: state.structures,
+      moverVillageId: getVillageOf(state, input.entityId)?.id ?? null,
+    }
+    const moved = moveAvatar(world, entity.x, entity.y, input.dx, input.dy, TICK_DT_S)
     entity.x = moved.x
     entity.y = moved.y
   }

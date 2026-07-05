@@ -75,7 +75,7 @@ describe('collisions (A3)', () => {
       const input: MoveInput = { entityId: id, dx: dir(a.value), dy: dir(b.value) }
       step(sim, [input])
       const e = sim.entities[0]!
-      if (overlapsBlocking(sim.map, e.x, e.y)) {
+      if (overlapsBlocking({ map: sim.map }, e.x, e.y)) {
         throw new Error(`entité dans un mur au tick ${t} : (${e.x}, ${e.y})`)
       }
     }

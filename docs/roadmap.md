@@ -28,9 +28,9 @@ Monorepo, garde-fous de pureté et de déterminisme, noyau tick/entités/PRNG, r
 - ⚠️ Reste à faire par Alexis : brancher Cloudflare Pages (`pnpm build` → `packages/client/dist`) pour ouvrir le canal de playtest continu.
 - Sortie vérifiée : promenade au clavier dans la vallée de démo, collisions, caméra, PNJ interpolés, HUD jour/acte/heure — smoke test Playwright headless avec captures.
 
-### V3 — Le village (~3-4 sem)
-- **Spec** : `specs/village.md`. Le Feu (allumage, rayon de construction, respawn), construction T1 (mur, porte, coffre, atelier, maison), propriété individuelle + liste d'accès, rangs MVP (Chef seul), stockage protégé.
-- **Sortie** : fonder un village, bâtir une enceinte, poser un coffre à soi — permissions vérifiées par tests headless.
+### V3 — Le village ✅ (fait, 2026-07-05 — voir `specs/village.md`)
+- Actions validées côté sim (protocole `move + action`), inventaire + coûts réels (acquisition stubbée jusqu'à V4), Feu/fondation semi-libre, structures 1×1 avec collision conditionnelle (portes = serrures par membership), accès privé/village/public, Chef invite/bannit, démolition remboursée. Maison reportée à V5 (avec les PNJ). Client : mode construction (F/1-4/clic), toasts d'erreur.
+- Sortie vérifiée : 11 tests headless (A1-A5) + replay avec actions (A6) + smoke test navigateur (fondation, enceinte, porte, coffre, rejets).
 
 ### V4 — Survie & économie T1/T2 (~3-4 sem)
 - **Spec** : `specs/economie.md`. Récolte (bois, pierre, fibres, gibier, puis métal/charbon en zone contestée), faim simple, chaînes courtes (minerai → lingot → outil) avec stations distinctes, usure des outils, spécialisation émergente par la pratique (courbe simple).

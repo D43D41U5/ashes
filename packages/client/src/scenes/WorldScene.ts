@@ -6,10 +6,21 @@
  * logique partagée est `moveAvatar` de /sim, rejouée pour la prédiction
  * locale de son propre avatar.
  */
-import { BALANCE, moveAvatar, zoneAt, type Entity, type WorldMap } from '@braises/sim'
+import {
+  BALANCE,
+  moveAvatar,
+  zoneAt,
+  type Entity,
+  type PlayerAction,
+  type Structure,
+  type WorldMap,
+} from '@braises/sim'
 import Phaser from 'phaser'
 import { createDemoMap, DEMO_MAP_SIZE, PLAYER_SPAWN } from '../demo-map'
 import type { ClientToHost, HostToClient } from '../protocol'
+
+type Buildable = 'wall' | 'door' | 'chest' | 'workshop'
+const BUILD_KEYS: Buildable[] = ['wall', 'door', 'chest', 'workshop']
 
 const TILE_PX = 16
 const INTERP_MS = 1000 / BALANCE.TICK_RATE_HZ
@@ -60,6 +71,11 @@ export class WorldScene extends Phaser.Scene {
   private others = new Map<number, InterpolatedSprite>()
   private lastSentInput = { dx: 0, dy: 0 }
   private keys!: Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key[]>
+  private structures: Structure[] = []
+  private structureSprites = new Map<number, Phaser.GameObjects.Image>()
+  private myVillageId: number | null = null
+  private selected: Buildable = 'wall'
+  private ghost!: Phaser.GameObjects.Rectangle
 
   constructor() {
     super('world')
@@ -90,6 +106,35 @@ export class WorldScene extends Phaser.Scene {
       right: grab([K.D, K.RIGHT]),
     }
 
+    // Mode construction : F fonde, 1-4 choisit, clic bâtit, clic droit démolit.
+    kb.addKey(K.F, false).on('down', () => this.sendAction({ type: 'light_fire' }))
+    ;[K.ONE, K.TWO, K.THREE, K.FOUR].forEach((code, i) => {
+      kb.addKey(code, false).on('down', () => {
+        this.selected = BUILD_KEYS[i]!
+        this.registry.set('selected', this.selected)
+      })
+    })
+    this.registry.set('selected', this.selected)
+
+    this.ghost = this.add
+      .rectangle(0, 0, TILE_PX, TILE_PX, 0xffffff, 0.22)
+      .setOrigin(0)
+      .setDepth(8)
+      .setStrokeStyle(1, 0xffffff, 0.5)
+
+    this.input.mouse?.disableContextMenu()
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      const world = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
+      const tx = Math.floor(world.x / TILE_PX)
+      const ty = Math.floor(world.y / TILE_PX)
+      if (pointer.rightButtonDown()) {
+        const target = this.structures.find((s) => s.tx === tx && s.ty === ty)
+        if (target) this.sendAction({ type: 'demolish', structureId: target.id })
+      } else {
+        this.sendAction({ type: 'build', structure: this.selected, tx, ty })
+      }
+    })
+
     this.worker = new Worker(new URL('../worker/sim-worker.ts', import.meta.url), { type: 'module' })
     this.worker.addEventListener('message', (e: MessageEvent<HostToClient>) => this.onHostMessage(e.data))
     this.send({
@@ -110,10 +155,17 @@ export class WorldScene extends Phaser.Scene {
       this.send({ type: 'input', dx, dy })
     }
 
-    // Prédiction locale (R5) : même code que la sim, au dt de la frame.
-    const moved = moveAvatar(this.map, this.predicted.x, this.predicted.y, dx, dy, deltaMs / 1000)
+    // Prédiction locale (R5) : même code que la sim, au dt de la frame —
+    // structures et appartenance comprises (les portes s'ouvrent pour moi).
+    const world = { map: this.map, structures: this.structures, moverVillageId: this.myVillageId }
+    const moved = moveAvatar(world, this.predicted.x, this.predicted.y, dx, dy, deltaMs / 1000)
     this.predicted = moved
     this.syncSprite(this.playerSprite, moved.x, moved.y)
+
+    // Le fantôme de construction suit le pointeur, aligné sur la grille.
+    const pointer = this.input.activePointer
+    const pw = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
+    this.ghost.setPosition(Math.floor(pw.x / TILE_PX) * TILE_PX, Math.floor(pw.y / TILE_PX) * TILE_PX)
 
     // Interpolation des autres entités (R4) : vers le dernier snapshot, sur un tick.
     const now = this.time.now
@@ -131,10 +183,22 @@ export class WorldScene extends Phaser.Scene {
       return
     }
     this.registry.set('time', msg.time)
+    this.syncStructures(msg.structures)
+    this.myVillageId = msg.villages.find((v) => v.memberIds.includes(this.playerId))?.id ?? null
+    this.registry.set(
+      'village',
+      msg.villages.find((v) => v.id === this.myVillageId)?.memberIds.length ?? 0,
+    )
+    for (const event of msg.events) {
+      if (event.type === 'action_rejected' && event.entityId === this.playerId) {
+        this.registry.set('error', { reason: event.reason, at: this.time.now })
+      }
+    }
     const now = this.time.now
     const seen = new Set<number>()
     for (const entity of msg.entities) {
       if (entity.id === this.playerId) {
+        this.registry.set('inv', entity.inventory)
         this.reconcile(entity)
         continue
       }
@@ -167,6 +231,28 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  /** Synchronise les sprites de structures avec le snapshot. */
+  private syncStructures(structures: Structure[]): void {
+    this.structures = structures
+    const seen = new Set<number>()
+    for (const s of structures) {
+      seen.add(s.id)
+      if (!this.structureSprites.has(s.id)) {
+        const sprite = this.add
+          .image(s.tx * TILE_PX, s.ty * TILE_PX, `st-${s.type}`)
+          .setOrigin(0)
+          .setDepth(s.type === 'fire' ? 5 : 6)
+        this.structureSprites.set(s.id, sprite)
+      }
+    }
+    for (const [id, sprite] of this.structureSprites) {
+      if (!seen.has(id)) {
+        sprite.destroy()
+        this.structureSprites.delete(id)
+      }
+    }
+  }
+
   /** Réconciliation douce vers la position autoritative (R5). */
   private reconcile(authoritative: Entity): void {
     const ex = authoritative.x - this.predicted.x
@@ -192,6 +278,10 @@ export class WorldScene extends Phaser.Scene {
 
   private send(msg: ClientToHost): void {
     this.worker.postMessage(msg)
+  }
+
+  private sendAction(action: PlayerAction): void {
+    this.send({ type: 'action', action })
   }
 
   /** Bake la carte statique en une texture (R8) — API generateTexture éprouvée dans Manif. */

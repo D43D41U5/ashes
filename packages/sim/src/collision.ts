@@ -11,9 +11,28 @@
  */
 import { BALANCE, TERRAINS } from './balance'
 import { isBlockingTile, terrainAt, type WorldMap } from './map'
+import { structureAt, structureBlocks, type Structure } from './village'
 
 const EPS = 1e-6
 const HALF = BALANCE.AVATAR_HITBOX_TILES / 2
+
+/**
+ * Le monde vu par un déplaceur donné : le décor, les structures, et QUI
+ * se déplace — une porte est passante pour les membres de son village
+ * (spec village R8), donc la collision dépend du déplaceur.
+ */
+export interface MoveWorld {
+  map: WorldMap
+  structures?: Structure[]
+  moverVillageId?: number | null
+}
+
+function blockedAt(world: MoveWorld, tx: number, ty: number): boolean {
+  if (isBlockingTile(world.map, tx, ty)) return true
+  if (!world.structures) return false
+  const s = structureAt(world.structures, tx, ty)
+  return s !== undefined && structureBlocks(s, world.moverVillageId ?? null)
+}
 
 /** Plage de tuiles recouvertes par l'intervalle [min, max). */
 function tileSpan(min: number, max: number): [number, number] {
@@ -22,7 +41,7 @@ function tileSpan(min: number, max: number): [number, number] {
 
 /** Une colonne (horizontal) ou ligne (vertical) de tuiles contient-elle un obstacle ? */
 function lineBlocked(
-  map: WorldMap,
+  world: MoveWorld,
   fixed: number,
   crossMin: number,
   crossMax: number,
@@ -30,7 +49,7 @@ function lineBlocked(
 ): boolean {
   const [c0, c1] = tileSpan(crossMin, crossMax)
   for (let c = c0; c <= c1; c++) {
-    const blocked = horizontal ? isBlockingTile(map, fixed, c) : isBlockingTile(map, c, fixed)
+    const blocked = horizontal ? blockedAt(world, fixed, c) : blockedAt(world, c, fixed)
     if (blocked) return true
   }
   return false
@@ -41,7 +60,7 @@ function lineBlocked(
  * obstacle rencontré. `crossMin/crossMax` : étendue de l'AABB sur l'autre axe.
  */
 function moveAxis(
-  map: WorldMap,
+  world: MoveWorld,
   pos: number,
   delta: number,
   crossMin: number,
@@ -54,13 +73,13 @@ function moveAxis(
     const firstNew = Math.floor(pos + HALF - EPS) + 1
     const lastNew = Math.floor(target + HALF - EPS)
     for (let t = firstNew; t <= lastNew; t++) {
-      if (lineBlocked(map, t, crossMin, crossMax, horizontal)) return t - HALF
+      if (lineBlocked(world, t, crossMin, crossMax, horizontal)) return t - HALF
     }
   } else {
     const firstNew = Math.floor(pos - HALF + EPS) - 1
     const lastNew = Math.floor(target - HALF + EPS)
     for (let t = firstNew; t >= lastNew; t--) {
-      if (lineBlocked(map, t, crossMin, crossMax, horizontal)) return t + 1 + HALF
+      if (lineBlocked(world, t, crossMin, crossMax, horizontal)) return t + 1 + HALF
     }
   }
   return target
@@ -68,14 +87,14 @@ function moveAxis(
 
 /** Déplace une position par (dx, dy) en résolvant les collisions. Retourne la position finale. */
 export function resolveMove(
-  map: WorldMap,
+  world: MoveWorld,
   x: number,
   y: number,
   dx: number,
   dy: number,
 ): { x: number; y: number } {
-  const nx = moveAxis(map, x, dx, y - HALF, y + HALF, true)
-  const ny = moveAxis(map, y, dy, nx - HALF, nx + HALF, false)
+  const nx = moveAxis(world, x, dx, y - HALF, y + HALF, true)
+  const ny = moveAxis(world, y, dy, nx - HALF, nx + HALF, false)
   return { x: nx, y: ny }
 }
 
@@ -86,7 +105,7 @@ export function resolveMove(
  * la parité prédiction/autorité est garantie par construction.
  */
 export function moveAvatar(
-  map: WorldMap,
+  world: MoveWorld,
   x: number,
   y: number,
   dx: -1 | 0 | 1,
@@ -94,20 +113,20 @@ export function moveAvatar(
   dtS: number,
 ): { x: number; y: number } {
   if (dx === 0 && dy === 0) return { x, y }
-  const terrain = TERRAINS[terrainAt(map, Math.floor(x), Math.floor(y))]
+  const terrain = TERRAINS[terrainAt(world.map, Math.floor(x), Math.floor(y))]
   const factor = terrain?.walkable ? terrain.speedFactor : 1
   const speed = BALANCE.WALK_SPEED_TILES_PER_S * dtS * factor
   const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1
-  return resolveMove(map, x, y, dx * speed * norm, dy * speed * norm)
+  return resolveMove(world, x, y, dx * speed * norm, dy * speed * norm)
 }
 
 /** L'AABB d'un avatar centré en (x, y) recouvre-t-elle une tuile bloquante ? (outil de test) */
-export function overlapsBlocking(map: WorldMap, x: number, y: number): boolean {
+export function overlapsBlocking(world: MoveWorld, x: number, y: number): boolean {
   const [tx0, tx1] = tileSpan(x - HALF, x + HALF)
   const [ty0, ty1] = tileSpan(y - HALF, y + HALF)
   for (let ty = ty0; ty <= ty1; ty++) {
     for (let tx = tx0; tx <= tx1; tx++) {
-      if (isBlockingTile(map, tx, ty)) return true
+      if (blockedAt(world, tx, ty)) return true
     }
   }
   return false

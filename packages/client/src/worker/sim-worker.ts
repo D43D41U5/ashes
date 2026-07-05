@@ -11,11 +11,13 @@ import {
   createSim,
   drainEvents,
   getGameTime,
+  grantItems,
   isBlockingTile,
   rngRoll,
   spawnEntity,
   step,
   type MoveInput,
+  type PlayerAction,
   type SimState,
 } from '@braises/sim'
 import type { ClientToHost, HostToClient } from '../protocol'
@@ -27,6 +29,8 @@ const post = (message: HostToClient): void => {
 let sim: SimState | undefined
 let playerId = 0
 let playerInput: Pick<MoveInput, 'dx' | 'dy'> = { dx: 0, dy: 0 }
+/** Une action au plus par tick (spec village R1) — la dernière reçue gagne. */
+let pendingAction: PlayerAction | undefined
 
 /**
  * PNJ de test : des marcheurs sans cervelle qui exercent l'interpolation.
@@ -63,7 +67,10 @@ function spawnWanderers(state: SimState, count: number): void {
 
 function tick(): void {
   if (!sim) return
-  const inputs: MoveInput[] = [{ entityId: playerId, ...playerInput }]
+  const inputs: MoveInput[] = [
+    { entityId: playerId, ...playerInput, ...(pendingAction ? { action: pendingAction } : {}) },
+  ]
+  pendingAction = undefined
   for (const w of wanderers) {
     if (w.ticksLeft <= 0) {
       w.dx = dir(roll())
@@ -79,6 +86,8 @@ function tick(): void {
     tick: sim.tick,
     time: getGameTime(sim),
     entities: sim.entities,
+    structures: sim.structures,
+    villages: sim.villages,
     events: drainEvents(sim),
   })
 }
@@ -89,10 +98,14 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
     sim = createSim(msg.seed, { map: msg.map, calendarScale: msg.calendarScale })
     hostRng = msg.seed ^ 0x9e3779b9
     playerId = spawnEntity(sim, msg.playerSpawn.x, msg.playerSpawn.y)
+    // Kit de départ dev (spec village R3) — remplacé par la récolte en V4.
+    grantItems(sim, playerId, { wood: 80, stone: 30 })
     spawnWanderers(sim, 6)
     post({ type: 'ready', playerId })
     setInterval(tick, 1000 / BALANCE.TICK_RATE_HZ)
   } else if (msg.type === 'input') {
     playerInput = { dx: msg.dx, dy: msg.dy }
+  } else if (msg.type === 'action') {
+    pendingAction = msg.action
   }
 })
