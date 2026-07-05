@@ -11,6 +11,7 @@ import {
   createSim,
   drainEvents,
   foundNpcVillage,
+  spawnMonster,
   generateNodes,
   getGameTime,
   isBlockingTile,
@@ -30,7 +31,7 @@ const post = (message: HostToClient): void => {
 
 let sim: SimState | undefined
 let playerId = 0
-let playerInput: Pick<MoveInput, 'dx' | 'dy'> = { dx: 0, dy: 0 }
+let playerInput: Pick<MoveInput, 'dx' | 'dy' | 'sprint' | 'block'> = { dx: 0, dy: 0 }
 /** Une action au plus par tick (spec village R1) — la dernière reçue gagne. */
 let pendingAction: PlayerAction | undefined
 
@@ -92,6 +93,8 @@ function tick(): void {
     villages: sim.villages,
     nodes: sim.nodes,
     npcs: sim.npcs,
+    monsters: sim.monsters,
+    corpses: sim.corpses,
     events: drainEvents(sim),
   })
 }
@@ -105,13 +108,19 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
     hostRng = msg.seed ^ 0x9e3779b9
     // Un village 100 % PNJ vit déjà dans la vallée (mode Veillée, GDD §10).
     foundNpcVillage(sim, 24, 14, 4)
+    // La menace et le gibier : zombies au sud de la route, sangliers épars.
+    spawnMonster(sim, 'zombie', 20, 46)
+    spawnMonster(sim, 'zombie', 30, 50)
+    spawnMonster(sim, 'zombie', 44, 44)
+    spawnMonster(sim, 'boar', 16, 22)
+    spawnMonster(sim, 'boar', 34, 24)
     playerId = spawnEntity(sim, msg.playerSpawn.x, msg.playerSpawn.y)
     // Plus de kit de départ : la boucle commence les mains vides (spec économie).
     spawnWanderers(sim, 6)
     post({ type: 'ready', playerId })
     setInterval(tick, 1000 / BALANCE.TICK_RATE_HZ)
   } else if (msg.type === 'input') {
-    playerInput = { dx: msg.dx, dy: msg.dy }
+    playerInput = { dx: msg.dx, dy: msg.dy, sprint: msg.sprint, block: msg.block }
   } else if (msg.type === 'action') {
     pendingAction = msg.action
   }

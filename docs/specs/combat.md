@@ -1,6 +1,6 @@
 # Le combat — endurance, télégraphes, blessures, mort
 
-*Source : GDD §7 (combat de coût, lent, positionnel), §6 (l'économie du village est une stat de combat). Statut : **brouillon — proposition à valider**. Jalon : V6. Cible : PvE (faune + zombies) — le PvP arrive avec de vrais joueurs (LAN).*
+*Source : GDD §7 (combat de coût, lent, positionnel), §6 (l'économie du village est une stat de combat). Statut : **implémenté** (2026-07-05, A1-A8 verts + smoke test navigateur — un zombie chassé et abattu). Jalon : V6. Cible : PvE (faune + zombies) — le PvP arrive avec de vrais joueurs (LAN).*
 
 ## Objectif de design
 

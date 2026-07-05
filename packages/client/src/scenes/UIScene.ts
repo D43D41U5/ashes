@@ -58,6 +58,9 @@ export class UIScene extends Phaser.Scene {
   private hud!: Phaser.GameObjects.Text
   private bottomBar!: Phaser.GameObjects.Text
   private errorText!: Phaser.GameObjects.Text
+  private hpBar!: Phaser.GameObjects.Rectangle
+  private staminaBar!: Phaser.GameObjects.Rectangle
+  private woundsText!: Phaser.GameObjects.Text
 
   constructor() {
     super('ui')
@@ -77,6 +80,15 @@ export class UIScene extends Phaser.Scene {
     }
     this.hud = this.add.text(10, 8, '', style)
     this.bottomBar = this.add.text(10, this.scale.height - 72, '', style)
+
+    // Barres PV / endurance (haut droite) — lisibilité avant spectacle.
+    this.add.rectangle(this.scale.width - 214, 12, 204, 14, 0x14141a).setOrigin(0)
+    this.hpBar = this.add.rectangle(this.scale.width - 212, 14, 200, 10, 0xc0503e).setOrigin(0)
+    this.add.rectangle(this.scale.width - 214, 30, 204, 14, 0x14141a).setOrigin(0)
+    this.staminaBar = this.add.rectangle(this.scale.width - 212, 32, 200, 10, 0x4e9c5a).setOrigin(0)
+    this.woundsText = this.add
+      .text(this.scale.width - 214, 48, '', { ...style, color: '#ff9a7a', fontSize: '14px' })
+      .setOrigin(0, 0)
     this.errorText = this.add
       .text(this.scale.width / 2, this.scale.height - 110, '', { ...style, color: '#ff7a6b' })
       .setOrigin(0.5, 0)
@@ -120,9 +132,21 @@ export class UIScene extends Phaser.Scene {
       `Faim ${Math.ceil(hunger)}/100${hunger <= 0 ? ' ⚠ affamé' : ''}` +
         (skillsText ? ` — ${skillsText}` : '') +
         `\n${invText || '(mains vides — clique un arbre)'} — [${STRUCTURE_LABELS[selected]}]\n` +
-        `F Feu · 1-5 bâtir (mur/porte/coffre/atelier/four) · clic récolter/bâtir · clic droit démolir · shift+clic partager\n` +
-        `E baies · R ragoût · 6 cuire ragoût · 7 hache · 8 pioche · 9 lingot · 0 hache de fer`,
+        `F Feu · 1-5 bâtir · clic récolter/looter/bâtir · clic droit démolir · shift+clic partager\n` +
+        `ESPACE attaquer (vers le pointeur) · C bloquer · SHIFT sprinter · X bander · E/R manger · 6-0 crafter`,
     )
+
+    const hp = (this.registry.get('hp') as number | undefined) ?? 100
+    const stamina = (this.registry.get('stamina') as number | undefined) ?? 100
+    const wounds = (this.registry.get('wounds') as Record<string, boolean> | undefined) ?? {}
+    this.hpBar.width = 2 * Math.max(0, hp)
+    this.staminaBar.width = 2 * Math.max(0, stamina)
+    const woundLabels = [
+      wounds.leg ? 'jambe blessée' : null,
+      wounds.arm ? 'bras blessé' : null,
+      wounds.bleeding ? 'SAIGNEMENT (X : bander)' : null,
+    ].filter(Boolean)
+    this.woundsText.setText(woundLabels.join(' · '))
 
     const error = this.registry.get('error') as { reason: string; at: number } | undefined
     if (error && this.time.now - error.at < 2500) {

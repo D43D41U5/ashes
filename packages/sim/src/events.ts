@@ -45,6 +45,13 @@ export type SimEvent =
   | { type: 'item_crafted'; tick: number; entityId: number; recipeId: RecipeId; item: ItemId }
   | { type: 'meal_eaten'; tick: number; entityId: number; item: ItemId }
   | { type: 'skill_level_up'; tick: number; entityId: number; skill: SkillId; level: number }
+  | { type: 'entity_damaged'; tick: number; entityId: number; byEntityId: number; amount: number }
+  | { type: 'wound_inflicted'; tick: number; entityId: number; wound: 'leg' | 'arm' | 'bleeding' }
+  | { type: 'entity_died'; tick: number; entityId: number; byEntityId: number }
+  | { type: 'entity_respawned'; tick: number; entityId: number }
+  | { type: 'entity_bandaged'; tick: number; entityId: number; byEntityId: number }
+  | { type: 'monster_slain'; tick: number; monsterType: import('./balance').MonsterType; byEntityId: number }
+  | { type: 'corpse_looted'; tick: number; corpseId: number; byEntityId: number }
 // À venir avec les systèmes : first_blood, gift_given, pact_signed, …
 
 /** Émet un événement dans le buffer de l'état. Usage interne à /sim. */

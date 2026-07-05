@@ -13,6 +13,17 @@ export class BootScene extends Phaser.Scene {
   create(): void {
     this.makeSprite('spr-player', 0xf0e6c8, 0x8a6f3c)
     this.makeSprite('spr-npc', 0x9aa4b5, 0x4a5364)
+    this.makeSprite('spr-zombie', 0x7fa05a, 0x3d5230)
+    this.makeSprite('spr-boar', 0x8a5a38, 0x4a2e1a)
+
+    const g = this.add.graphics()
+    g.fillStyle(0xcac2b2) // cadavre : ossements
+    g.fillRect(3, 7, 10, 2)
+    g.fillRect(5, 4, 2, 8)
+    g.fillRect(9, 4, 2, 8)
+    g.generateTexture('spr-corpse', 16, 16)
+    g.destroy()
+
     this.makeStructures()
     this.scene.start('world')
   }

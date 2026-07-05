@@ -6,8 +6,10 @@
  * transmet jamais de position côté client, seulement des intentions.
  */
 import type {
+  Corpse,
   Entity,
   GameTime,
+  Monster,
   Npc,
   PlayerAction,
   ResourceNode,
@@ -29,6 +31,8 @@ export interface InputMessage {
   type: 'input'
   dx: -1 | 0 | 1
   dy: -1 | 0 | 1
+  sprint: boolean
+  block: boolean
 }
 
 /** Une action ponctuelle (construire, fonder…) — appliquée au prochain tick. */
@@ -53,6 +57,8 @@ export interface SnapshotMessage {
   villages: Village[]
   nodes: ResourceNode[]
   npcs: Npc[]
+  monsters: Monster[]
+  corpses: Corpse[]
   events: SimEvent[]
 }
 

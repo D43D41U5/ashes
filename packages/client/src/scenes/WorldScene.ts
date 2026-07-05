@@ -8,10 +8,13 @@
  */
 import {
   BALANCE,
+  COMBAT,
   moveAvatar,
   zoneAt,
   type AccessLevel,
+  type Corpse,
   type Entity,
+  type Monster,
   type Npc,
   type PlayerAction,
   type RecipeId,
@@ -73,15 +76,21 @@ export class WorldScene extends Phaser.Scene {
   private playerSprite!: Phaser.GameObjects.Image
   private predicted = { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y }
   private others = new Map<number, InterpolatedSprite>()
-  private lastSentInput = { dx: 0, dy: 0 }
+  private lastSentInput = { dx: 0, dy: 0, sprint: false, block: false }
   private keys!: Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key[]>
   private structures: Structure[] = []
   private structureSprites = new Map<number, Phaser.GameObjects.Image>()
   private nodes: ResourceNode[] = []
   private nodeSprites = new Map<number, Phaser.GameObjects.Image>()
   private npcs: Npc[] = []
+  private monsters: Monster[] = []
+  private corpses: Corpse[] = []
+  private corpseSprites = new Map<number, Phaser.GameObjects.Image>()
   private myVillageId: number | null = null
   private myHunger = 100
+  private myWoundedLeg = false
+  private sprintKeys: Phaser.Input.Keyboard.Key[] = []
+  private blockKey!: Phaser.Input.Keyboard.Key
   private selected: Buildable = 'wall'
   private ghost!: Phaser.GameObjects.Rectangle
 
@@ -124,6 +133,17 @@ export class WorldScene extends Phaser.Scene {
     })
     this.registry.set('selected', this.selected)
 
+    // Combat : ESPACE attaque vers le pointeur, C bloque, SHIFT sprinte, X bande.
+    this.sprintKeys = grab([K.SHIFT])
+    this.blockKey = kb.addKey(K.C, false)
+    kb.addKey(K.SPACE, false).on('down', () => {
+      const world = this.input.activePointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
+      const dx = world.x / TILE_PX - this.predicted.x
+      const dy = world.y / TILE_PX - this.predicted.y
+      this.sendAction({ type: 'attack', dx, dy })
+    })
+    kb.addKey(K.X, false).on('down', () => this.sendAction({ type: 'bandage' }))
+
     // Manger et crafter.
     kb.addKey(K.E, false).on('down', () => this.sendAction({ type: 'eat', item: 'berries' }))
     kb.addKey(K.R, false).on('down', () => this.sendAction({ type: 'eat', item: 'stew' }))
@@ -160,9 +180,11 @@ export class WorldScene extends Phaser.Scene {
           this.sendAction({ type: 'set_access', structureId: target.id, access: cycle[target.access] })
         }
       } else {
-        // Un nœud vivant sous le clic → récolter ; sinon → bâtir.
+        // Priorité au clic : cadavre → nœud vivant → bâtir.
+        const corpse = this.corpses.find((c) => Math.floor(c.x) === tx && Math.floor(c.y) === ty)
         const node = this.nodes.find((n) => n.tx === tx && n.ty === ty && n.stock > 0)
-        if (node) this.sendAction({ type: 'harvest', nodeId: node.id })
+        if (corpse) this.sendAction({ type: 'loot_corpse', corpseId: corpse.id })
+        else if (node) this.sendAction({ type: 'harvest', nodeId: node.id })
         else this.sendAction({ type: 'build', structure: this.selected, tx, ty })
       }
     })
@@ -184,10 +206,17 @@ export class WorldScene extends Phaser.Scene {
   override update(_time: number, deltaMs: number): void {
     const dx = this.axis('right', 'left')
     const dy = this.axis('down', 'up')
+    const sprint = this.sprintKeys.some((k) => k.isDown)
+    const block = this.blockKey.isDown
 
-    if (dx !== this.lastSentInput.dx || dy !== this.lastSentInput.dy) {
-      this.lastSentInput = { dx, dy }
-      this.send({ type: 'input', dx, dy })
+    if (
+      dx !== this.lastSentInput.dx ||
+      dy !== this.lastSentInput.dy ||
+      sprint !== this.lastSentInput.sprint ||
+      block !== this.lastSentInput.block
+    ) {
+      this.lastSentInput = { dx, dy, sprint, block }
+      this.send({ type: 'input', dx, dy, sprint, block })
     }
 
     // Prédiction locale (R5) : même code que la sim, au dt de la frame —
@@ -198,7 +227,10 @@ export class WorldScene extends Phaser.Scene {
       nodes: this.nodes,
       moverVillageId: this.myVillageId,
     }
-    const speedScale = this.myHunger <= 0 ? BALANCE.HUNGER_SPEED_MALUS : 1
+    let speedScale = this.myHunger <= 0 ? BALANCE.HUNGER_SPEED_MALUS : 1
+    if (this.myWoundedLeg) speedScale *= COMBAT.LEG_WOUND_SPEED
+    if (block) speedScale *= COMBAT.BLOCK_MOVE_FACTOR
+    else if (sprint && (dx !== 0 || dy !== 0)) speedScale *= COMBAT.SPRINT_FACTOR
     const moved = moveAvatar(world, this.predicted.x, this.predicted.y, dx, dy, deltaMs / 1000, speedScale)
     this.predicted = moved
     this.syncSprite(this.playerSprite, moved.x, moved.y)
@@ -227,6 +259,8 @@ export class WorldScene extends Phaser.Scene {
     this.syncStructures(msg.structures)
     this.syncNodes(msg.nodes)
     this.npcs = msg.npcs
+    this.monsters = msg.monsters
+    this.syncCorpses(msg.corpses)
     const myVillage = msg.villages.find((v) => v.memberIds.includes(this.playerId))
     this.myVillageId = myVillage?.id ?? null
     this.registry.set('village', myVillage?.memberIds.length ?? 0)
@@ -243,7 +277,11 @@ export class WorldScene extends Phaser.Scene {
         this.registry.set('inv', entity.inventory)
         this.registry.set('hunger', entity.hunger)
         this.registry.set('skills', entity.skills)
+        this.registry.set('hp', entity.hp)
+        this.registry.set('stamina', entity.stamina)
+        this.registry.set('wounds', entity.wounds)
         this.myHunger = entity.hunger
+        this.myWoundedLeg = entity.wounds.leg === true
         this.reconcile(entity)
         continue
       }
@@ -262,8 +300,16 @@ export class WorldScene extends Phaser.Scene {
         record = { sprite, fromX: entity.x, fromY: entity.y, toX: entity.x, toY: entity.y, startedAt: now }
         this.others.set(entity.id, record)
       }
-      // Les villageois se distinguent des errants ; un dormeur s'estompe.
-      record.sprite.setTint(npc ? 0xe8d9a0 : 0xffffff)
+      // Les villageois se distinguent des errants et des monstres ; un
+      // dormeur s'estompe ; un wind-up flashe (lisibilité, spec R4).
+      const monster = this.monsters.find((m) => m.entityId === entity.id)
+      if (monster) {
+        record.sprite.setTexture(monster.type === 'zombie' ? 'spr-zombie' : 'spr-boar')
+        record.sprite.setTint(entity.windup ? 0xffffff : 0xdddddd)
+      } else {
+        record.sprite.setTexture('spr-npc')
+        record.sprite.setTint(entity.windup ? 0xff8866 : npc ? 0xe8d9a0 : 0xffffff)
+      }
       record.sprite.setAlpha(npc?.sleeping ? 0.45 : 1)
     }
     for (const [id, o] of this.others) {
@@ -306,6 +352,24 @@ export class WorldScene extends Phaser.Scene {
         this.nodeSprites.set(n.id, sprite)
       }
       sprite.setAlpha(n.stock > 0 ? 1 : 0.25)
+    }
+  }
+
+  private syncCorpses(corpses: Corpse[]): void {
+    this.corpses = corpses
+    const seen = new Set<number>()
+    for (const c of corpses) {
+      seen.add(c.id)
+      if (!this.corpseSprites.has(c.id)) {
+        const sprite = this.add.image(c.x * TILE_PX, c.y * TILE_PX, 'spr-corpse').setDepth(3)
+        this.corpseSprites.set(c.id, sprite)
+      }
+    }
+    for (const [id, sprite] of this.corpseSprites) {
+      if (!seen.has(id)) {
+        sprite.destroy()
+        this.corpseSprites.delete(id)
+      }
     }
   }
 

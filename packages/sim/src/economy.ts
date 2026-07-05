@@ -178,7 +178,9 @@ export function advanceEconomy(state: SimState): void {
   const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
   const perTick =
     (BALANCE.HUNGER_PER_CYCLE_HOUR / (TICKS_PER_CYCLE / 24)) * BALANCE.ACT_HUNGER_FACTOR[act - 1]!
+  const monsterIds = new Set(state.monsters.map((m) => m.entityId))
   for (const entity of state.entities) {
+    if (monsterIds.has(entity.id)) continue // les monstres n'ont pas faim
     entity.hunger = Math.max(0, entity.hunger - perTick)
   }
   for (const node of state.nodes) {

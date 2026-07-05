@@ -10,19 +10,21 @@
  * que snapshot = JSON.stringify et que le transport Worker/réseau soit
  * trivial.
  */
-import { BALANCE, TERRAIN_GRASS, TICK_DT_S } from './balance'
+import { BALANCE, COMBAT, TERRAIN_GRASS, TICK_DT_S } from './balance'
 import { moveAvatar } from './collision'
+import { advanceCombat, applyCombatAction, type CombatAction, type Corpse } from './combat'
 import { advanceEconomy, applyEconomyAction, type EconomyAction, type ResourceNode } from './economy'
 import { emitEvent, type SimEvent } from './events'
 import type { Inventory, ItemId, SkillId } from './items'
 import { createEmptyMap, type WorldMap } from './map'
+import { advanceMonsters, type Monster } from './monsters'
 import { rngNext } from './rng'
 import { advanceNpcs, type Npc } from './npc'
 import { advanceTime } from './time'
 import { applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
 
-/** L'union des actions possibles dans un tick (village + économie). */
-export type PlayerAction = VillageAction | EconomyAction
+/** L'union des actions possibles dans un tick (village + économie + combat). */
+export type PlayerAction = VillageAction | EconomyAction | CombatAction
 
 export interface Entity {
   id: number
@@ -38,6 +40,19 @@ export interface Entity {
   wear: Partial<Record<ItemId, number>>
   /** Tick avant lequel récolte/craft sont refusés (rythme borné). */
   cooldownUntil: number
+  /** Combat (spec combat R1-R7). */
+  hp: number
+  stamina: number
+  wounds: { leg?: true; arm?: true; bleeding?: true }
+  facing: { x: number; y: number }
+  blocking: boolean
+  /** A bougé ce tick (module la régén d'endurance). */
+  moved: boolean
+  exhaustedUntil: number
+  windup?: { dx: number; dy: number; ticksLeft: number; damage?: number }
+  /** Point de respawn hors village (position d'apparition). */
+  homeX: number
+  homeY: number
 }
 
 export interface SimState {
@@ -56,6 +71,9 @@ export interface SimState {
   structures: Structure[]
   nodes: ResourceNode[]
   npcs: Npc[]
+  monsters: Monster[]
+  corpses: Corpse[]
+  nextCorpseId: number
   nextVillageId: number
   nextStructureId: number
   /** Buffer d'événements de domaine, drainé par l'hôte (voir events.ts). */
@@ -69,11 +87,13 @@ export interface SimOptions {
   nodes?: ResourceNode[]
 }
 
-/** Intention d'un avatar pour un tick : déplacement + au plus une action. */
+/** Intention d'un avatar pour un tick : déplacement, postures, au plus une action. */
 export interface MoveInput {
   entityId: number
   dx: -1 | 0 | 1
   dy: -1 | 0 | 1
+  sprint?: boolean
+  block?: boolean
   action?: PlayerAction
 }
 
@@ -94,6 +114,9 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     structures: [],
     nodes: options.nodes ? (JSON.parse(JSON.stringify(options.nodes)) as ResourceNode[]) : [],
     npcs: [],
+    monsters: [],
+    corpses: [],
+    nextCorpseId: 1,
     nextVillageId: 1,
     nextStructureId: 1,
     events: [],
@@ -108,7 +131,25 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
 export function spawnEntity(state: SimState, x: number, y: number): number {
   const id = state.nextEntityId
   state.nextEntityId += 1
-  state.entities.push({ id, x, y, inventory: {}, hunger: 100, skills: {}, wear: {}, cooldownUntil: 0 })
+  state.entities.push({
+    id,
+    x,
+    y,
+    inventory: {},
+    hunger: 100,
+    skills: {},
+    wear: {},
+    cooldownUntil: 0,
+    hp: 100,
+    stamina: 100,
+    wounds: {},
+    facing: { x: 1, y: 0 },
+    blocking: false,
+    moved: false,
+    exhaustedUntil: 0,
+    homeX: x,
+    homeY: y,
+  })
   // Consomme un pas de PRNG : le spawn fait partie de l'histoire déterministe.
   state.rngState = rngNext(state.rngState)
   emitEvent(state, { type: 'entity_spawned', tick: state.tick, entityId: id, x, y })
@@ -125,9 +166,31 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     if (action) {
       if (action.type === 'harvest' || action.type === 'craft' || action.type === 'eat') {
         applyEconomyAction(state, input.entityId, action)
+      } else if (action.type === 'attack' || action.type === 'bandage' || action.type === 'loot_corpse') {
+        applyCombatAction(state, input.entityId, action)
       } else {
         applyVillageAction(state, input.entityId, action)
       }
+    }
+
+    // Postures (spec combat) : bloquer, viser, sprinter.
+    entity.blocking = (input.block ?? false) && entity.stamina > 0
+    if (input.dx !== 0 || input.dy !== 0) {
+      const len = Math.sqrt(input.dx * input.dx + input.dy * input.dy)
+      entity.facing = { x: input.dx / len, y: input.dy / len }
+    }
+
+    if (entity.windup) {
+      entity.moved = false
+      continue // le wind-up immobilise (spec R4)
+    }
+    let speedScale = 1
+    if (entity.hunger <= 0) speedScale *= BALANCE.HUNGER_SPEED_MALUS
+    if (entity.wounds.leg) speedScale *= COMBAT.LEG_WOUND_SPEED
+    if (entity.blocking) speedScale *= COMBAT.BLOCK_MOVE_FACTOR
+    else if (input.sprint && entity.stamina > 0 && (input.dx !== 0 || input.dy !== 0)) {
+      speedScale *= COMBAT.SPRINT_FACTOR
+      entity.stamina = Math.max(0, entity.stamina - COMBAT.SPRINT_STAMINA_PER_S / BALANCE.TICK_RATE_HZ)
     }
     const world = {
       map: state.map,
@@ -135,13 +198,15 @@ export function step(state: SimState, inputs: MoveInput[]): void {
       nodes: state.nodes,
       moverVillageId: getVillageOf(state, input.entityId)?.id ?? null,
     }
-    const speedScale = entity.hunger <= 0 ? BALANCE.HUNGER_SPEED_MALUS : 1
     const moved = moveAvatar(world, entity.x, entity.y, input.dx, input.dy, TICK_DT_S, speedScale)
+    entity.moved = moved.x !== entity.x || moved.y !== entity.y
     entity.x = moved.x
     entity.y = moved.y
   }
-  // Les PNJ agissent après les joueurs, dans l'ordre des ids (déterminisme).
+  // Les PNJ agissent après les joueurs, puis les monstres, puis la résolution.
   advanceNpcs(state)
+  advanceMonsters(state)
+  advanceCombat(state)
   advanceTime(state)
   advanceEconomy(state)
 }

@@ -7,8 +7,9 @@
  * tableau du village. Des seuils et une file — pas de GOAP.
  * Tout est déterministe : égalités départagées par id, aucun aléa.
  */
-import { BALANCE, type NodeType } from './balance'
+import { BALANCE, COMBAT, type NodeType } from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
+import { startAttack } from './combat'
 import { applyEconomyAction, type ResourceNode } from './economy'
 import { countOf, type ItemId } from './items'
 import { findPath } from './pathfinding'
@@ -342,6 +343,43 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
   followPath(state, npc, entity)
 }
 
+// ─── La milice émergente (spec combat R13) ────────────────────────────────
+
+/** Un monstre menace-t-il le village ? Si oui, tout PNJ le combat. */
+function handleDefense(state: SimState, village: Village, npc: Npc, entity: Entity): boolean {
+  let threat: Entity | undefined
+  let bestD = COMBAT.DEFEND_RADIUS * COMBAT.DEFEND_RADIUS
+  for (const monster of state.monsters) {
+    const m = state.entities.find((e) => e.id === monster.entityId)
+    if (!m) continue
+    const d = distSq(m.x, m.y, village.fireTx + 0.5, village.fireTy + 0.5)
+    if (d < bestD) {
+      threat = m
+      bestD = d
+    }
+  }
+  if (!threat) return false
+
+  npc.sleeping = false // l'alarme silencieuse : on se lève
+  if (entity.windup) return true
+  const d2 = distSq(entity.x, entity.y, threat.x, threat.y)
+  if (d2 <= 1.2 * 1.2) {
+    if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
+      startAttack(state, entity, threat.x - entity.x, threat.y - entity.y)
+      entity.cooldownUntil = state.tick + 12
+    }
+    return true
+  }
+  // Marche gloutonne vers la menace (le village est un terrain ouvert).
+  const sx = (threat.x - entity.x > 0.2 ? 1 : threat.x - entity.x < -0.2 ? -1 : 0) as -1 | 0 | 1
+  const sy = (threat.y - entity.y > 0.2 ? 1 : threat.y - entity.y < -0.2 ? -1 : 0) as -1 | 0 | 1
+  const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, sy, 1 / BALANCE.TICK_RATE_HZ)
+  entity.moved = moved.x !== entity.x || moved.y !== entity.y
+  entity.x = moved.x
+  entity.y = moved.y
+  return true
+}
+
 // ─── Les besoins (spec R3, étage 1) ───────────────────────────────────────
 
 /** Retourne true si le besoin a consommé le tick. */
@@ -433,6 +471,8 @@ export function advanceNpcs(state: SimState): void {
       if (home) npc.homeId = home.id
     }
 
+    // La défense du village prime sur tout (spec combat R13).
+    if (handleDefense(state, village, npc, entity)) continue
     if (handleSleep(state, npc, entity)) continue
     if (handleHunger(state, village, npc, entity)) continue
 
@@ -529,5 +569,11 @@ export function foundNpcVillage(state: SimState, tx: number, ty: number, count: 
   addStructure('chest', tx, ty - 2, { berries: 10, wood: 10, fiber: 2 })
   for (const [dx, dy] of houseSpots) addStructure('house', tx + dx, ty + dy)
   spawnNpcsAround(state, village, count)
+  // Un village PNJ naît armé : chacun sa lance (spec combat R13).
+  for (const npc of state.npcs) {
+    if (npc.villageId !== villageId) continue
+    const entity = state.entities.find((e) => e.id === npc.entityId)
+    if (entity) entity.inventory.spear = 1
+  }
   return village
 }

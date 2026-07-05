@@ -175,9 +175,19 @@ export const TOOL_TIERS: Record<'axe' | 'pickaxe', { basic: import('./items').It
 export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
   berries: 15,
   stew: 50,
+  raw_meat: 8,
+  cooked_meat: 35,
 }
 
-export type RecipeId = 'stew' | 'axe' | 'pickaxe' | 'iron_ingot' | 'iron_axe' | 'iron_pickaxe'
+export type RecipeId =
+  | 'stew'
+  | 'axe'
+  | 'pickaxe'
+  | 'iron_ingot'
+  | 'iron_axe'
+  | 'iron_pickaxe'
+  | 'spear'
+  | 'cooked_meat'
 
 export interface Recipe {
   station: 'fire' | 'workshop' | 'furnace'
@@ -193,7 +203,66 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   iron_ingot: { station: 'furnace', inputs: { iron_ore: 2, coal: 1 }, output: 'iron_ingot' },
   iron_axe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_axe' },
   iron_pickaxe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_pickaxe' },
+  spear: { station: 'workshop', inputs: { wood: 4, stone: 2, fiber: 1 }, output: 'spear' },
+  cooked_meat: { station: 'fire', inputs: { raw_meat: 1 }, output: 'cooked_meat' },
 }
+
+/** Dégâts des armes portées — mains nues : COMBAT.UNARMED_DAMAGE. */
+export const WEAPON_DAMAGE: Partial<Record<import('./items').ItemId, number>> = {
+  spear: 16,
+  iron_axe: 10,
+}
+
+export type MonsterType = 'zombie' | 'boar'
+
+export interface MonsterDef {
+  hp: number
+  damage: number
+  /** Vitesse en tuiles/s (les avatars marchent à WALK_SPEED_TILES_PER_S). */
+  speed: number
+  windupTicks: number
+  attackCooldownTicks: number
+  aggroRange: number
+  loot: import('./items').Inventory
+}
+
+export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
+  zombie: { hp: 40, damage: 12, speed: 2.4, windupTicks: 7, attackCooldownTicks: 24, aggroRange: 6, loot: {} },
+  boar: { hp: 30, damage: 8, speed: 3.6, windupTicks: 5, attackCooldownTicks: 24, aggroRange: 0, loot: { raw_meat: 3 } },
+}
+
+/** Le combat (GDD §7, spec combat) — lent, positionnel, gagné avant l'échange. */
+export const COMBAT = {
+  ATTACK_STAMINA: 15,
+  SPRINT_STAMINA_PER_S: 8,
+  BLOCK_STAMINA_BASE: 10,
+  STAMINA_REGEN_IDLE_PER_S: 10,
+  STAMINA_REGEN_MOVING_PER_S: 5,
+  /** Modulateurs de régén : bien nourri (faim > 70) / affamé (faim 0). */
+  FED_REGEN_BONUS: 1.25,
+  STARVED_REGEN_MALUS: 0.5,
+  WINDUP_TICKS: 5, // ~417 ms
+  ATTACK_RANGE: 1.4,
+  ATTACK_ARC_COS: 0.7071, // cos(45°) — arc total de 90°
+  BLOCK_ARC_COS: 0.5, // cos(60°) — arc frontal de 120°
+  BLOCK_REDUCTION: 0.7,
+  BLOCK_MOVE_FACTOR: 0.3,
+  SPRINT_FACTOR: 1.5,
+  UNARMED_DAMAGE: 6,
+  WOUND_THRESHOLDS: [66, 33],
+  LEG_WOUND_SPEED: 0.6,
+  ARM_WOUND_DAMAGE: 0.6,
+  BLEED_HP_PER_S: 1.5,
+  BANDAGE_FIBER_COST: 3,
+  HP_REGEN_PER_MIN: 2, // si faim > 50 et pas de saignement
+  RESPAWN_HP: 50,
+  RESPAWN_HUNGER: 50,
+  RESPAWN_STAMINA: 20,
+  /** Épuisement post-mort : régén d'endurance ÷2 (~5 min démo ; GDD vise ~30 min). */
+  EXHAUSTION_TICKS: 3600,
+  CORPSE_TICKS: 7200, // ~10 min
+  DEFEND_RADIUS: 10,
+} as const
 
 /** Durée d'un tick en secondes — le seul dt qui existe dans /sim. */
 export const TICK_DT_S = 1 / BALANCE.TICK_RATE_HZ

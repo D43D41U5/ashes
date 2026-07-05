@@ -40,9 +40,9 @@ Monorepo, garde-fous de pureté et de déterminisme, noyau tick/entités/PRNG, r
 - Villageois simulés jouant par le même pipeline d'actions validées que les joueurs (aucune triche PNJ), IA à deux étages (besoins → tableau), tableau du village piloté par seuils sur le grenier, maisons (sommeil ×2 vs Feu), A* déterministe, `foundNpcVillage`, 3 PNJ à la fondation joueur.
 - Sortie vérifiée : un village de 4 PNJ tient 10 cycles jour/nuit headless sans que personne tombe à 0 de faim, au bit près à chaque run ; villageois observés au travail en navigateur. Deux bugs de mouvement attrapés par les tests (orbite de waypoint, arrêt hors de portée).
 
-### V6 — Le combat (~4-5 sem)
-- **Spec** : `specs/combat.md`. Endurance commune (attaque/blocage/sprint), télégraphes 300-500 ms, engagement directionnel, blessures localisées + saignement, mort (perte du porté, respawn au Feu avec fatigue), loot de cadavre. Cible PvE : faune + premiers zombies. L'assommement/capture attend le PvP (LAN).
-- **Sortie** : un combat contre 3 zombies est lisible, tendu, gagné par le positionnement ; les PNJ miliciens tiennent une ligne.
+### V6 — Le combat ✅ (fait, 2026-07-05 — voir `specs/combat.md`)
+- Endurance reine (attaque/blocage/sprint, régén modulée par la faim — l'économie EST une stat de combat), wind-up 5 ticks immobile, arc 90°, blocage directionnel 120°/−70 %, blessures aux paliers (jambe/bras/saignement, bandage y compris sur allié), mort = cadavre lootable + respawn au Feu épuisé (compétences gardées, PNJ morts pour de bon), zombie (école de guerre) + sanglier (la chasse : viande cuite), milice émergente (tout PNJ défend à 10 tuiles du Feu, villages PNJ armés de lances).
+- Sortie vérifiée : 3 zombies sur le village PNJ → milice victorieuse sans perte ; replay exact avec combat/blessures/monstres ; un zombie chassé et abattu au navigateur.
 
 ### V7 — Hordes & événements PvE (~3-4 sem)
 - **Spec** : `specs/evenements.md`. Flow fields pour les hordes, alarme (les PNJ convergent), garnison, catalogue d'événements v1 : horde migrante, carcasse de convoi, marchand nomade PNJ.
