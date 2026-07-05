@@ -19,7 +19,7 @@ Donner à `/sim` son substrat spatial et temporel, déterministe et testé — t
 
 ### La carte
 
-- **R5 — La tuile est l'unité de distance de `/sim`.** Les positions sont des flottants en tuiles. Le rendu (16 px/tuile en pixel art, à confirmer en V2) est une affaire de `/client` ; `/sim` n'en sait rien.
+- **R5 — Le déplacement est continu, la grille ne concerne que le décor.** Les entités bougent librement dans toutes les directions (à la Binding of Isaac / Zelda), positions en flottants — *jamais* de déplacement case par case. La tuile n'est que l'unité de mesure des distances (« vitesse = 4 tuiles/s ») et la résolution de la grille de collision du décor. Le rendu (16 px/tuile en pixel art, à confirmer en V2) est une affaire de `/client` ; `/sim` n'en sait rien.
 - **R6 — `WorldMap` : grille JSON-sérialisable** dans le `SimState` : `width`, `height`, `terrain: number[]` (un id par tuile), plus une table statique `TERRAINS` (id → `{ walkable, speedFactor }`). Exemples v1 : herbe (1.0), route (1.25), forêt (0.8), eau peu profonde (0.5), roche/mur/eau profonde (bloquant).
 - **R7 — Tiled est l'outil, jamais le format runtime.** Un importeur pur (`tiled.ts`) convertit le JSON Tiled → `WorldMap`. Couches reconnues : `terrain` (calque de tuiles), `obstacles` (calque de tuiles, prime sur le terrain), `zones` (calque d'objets rectangulaires nommés). Couche inconnue = ignorée avec avertissement à l'import, jamais d'erreur silencieuse.
 - **R8 — Les zones nommées** (`{ name, x, y, w, h }`) sont la graine de trois systèmes futurs : les landmarks de la chronique (« la bataille du Pont »), les zones interdites de fondation (V3), et le découpage en rooms de la Phase Vallée. En V1 elles sont juste importées, stockées, requêtables (`zoneAt(x, y)`).
