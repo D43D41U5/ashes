@@ -95,29 +95,34 @@ function moveToward(state: SimState, monster: Monster, entity: Entity, tx: numbe
   entity.y = moved.y
 }
 
-/** Champs de flux du tick, un par horde active (dérivés purs, jamais sérialisés). */
-const flowCache = new Map<string, Int32Array>()
+/**
+ * Champs de flux du tick, un par horde active (dérivés purs, jamais
+ * sérialisés). Le cache vit le temps d'un advanceMonsters : partagé entre
+ * les monstres d'une même horde, jamais entre ticks ni entre instances de
+ * sim — un cache au niveau module servirait le champ d'une autre partie
+ * dès que deux sims cohabitent dans le même processus (rooms LAN).
+ */
+type FlowCache = Map<number, Int32Array>
 
 /**
  * Descente de gradient vers le Feu ciblé (spec événements R3). Si la
  * meilleure tuile est bouchée par une structure, on la frappe. Retourne
  * true si le monstre appartient à une horde (et a donc agi).
  */
-function hordeStep(state: SimState, monster: Monster, entity: Entity): boolean {
+function hordeStep(state: SimState, monster: Monster, entity: Entity, flows: FlowCache): boolean {
   const horde = state.hordes.find((h) => h.memberEntityIds.includes(monster.entityId))
   if (!horde) return false
   const village = state.villages.find((v) => v.id === horde.targetVillageId)
   if (!village) return true
 
-  const cacheKey = `${state.tick}:${horde.id}`
-  let field = flowCache.get(cacheKey)
+  let field = flows.get(horde.id)
   if (!field) {
-    flowCache.clear() // seule la génération du tick courant est utile
     field = computeFlowField(state.map, state.nodes, village.fireTx, village.fireTy)
-    flowCache.set(cacheKey, field)
+    flows.set(horde.id, field)
   }
 
   const width = state.map.width
+  const height = state.map.height
   const tx = Math.floor(entity.x)
   const ty = Math.floor(entity.y)
   let bestTx = tx
@@ -127,6 +132,7 @@ function hordeStep(state: SimState, monster: Monster, entity: Entity): boolean {
   for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
     const nx = tx + dx
     const ny = ty + dy
+    if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
     const d = field[ny * width + nx]
     if (d !== undefined && d !== -1 && d < bestD) {
       bestD = d
@@ -189,6 +195,7 @@ function attackBlockingStructure(state: SimState, monster: Monster, entity: Enti
 }
 
 export function advanceMonsters(state: SimState): void {
+  const flows: FlowCache = new Map()
   for (const monster of [...state.monsters]) {
     const entity = state.entities.find((e) => e.id === monster.entityId)
     if (!entity) continue
@@ -218,7 +225,7 @@ export function advanceMonsters(state: SimState): void {
             attackBlockingStructure(state, monster, entity, target.x, target.y)
           }
         }
-      } else if (hordeStep(state, monster, entity)) {
+      } else if (hordeStep(state, monster, entity, flows)) {
         // membre de horde sans proie : il coule vers le Feu (flow field)
       } else if (monster.wanderDx !== 0 || monster.wanderDy !== 0) {
         moveToward(state, monster, entity, entity.x + monster.wanderDx, entity.y + monster.wanderDy, false)

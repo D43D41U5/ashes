@@ -10,6 +10,7 @@ import { damageModifier, hasAggressionBetween, isOutsider, recordAct, recordHost
 import { ALIGNMENT, BALANCE, COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
 import { emitEvent } from './events'
 import { addItems, countOf, removeItems, type ItemId } from './items'
+import { rngRoll } from './rng'
 import type { Entity, SimState } from './sim'
 import { applyStructureDamage, getVillageOf } from './village'
 
@@ -235,11 +236,8 @@ export function applyDamage(state: SimState, target: Entity, damage: number, byE
   // Les paliers de blessure (spec R7) : le PRNG de la sim décide du membre.
   for (const threshold of COMBAT.WOUND_THRESHOLDS) {
     if (before > threshold && target.hp <= threshold && target.hp > 0) {
-      state.rngState = (state.rngState + 0x6d2b79f5) >>> 0
-      let t = state.rngState
-      t = Math.imul(t ^ (t >>> 15), t | 1)
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-      const roll = ((t ^ (t >>> 14)) >>> 0) / 4294967296
+      const { value: roll, next } = rngRoll(state.rngState)
+      state.rngState = next
       const wound = roll < 0.34 ? 'leg' : roll < 0.67 ? 'arm' : 'bleeding'
       target.wounds[wound] = true
       emitEvent(state, { type: 'wound_inflicted', tick: state.tick, entityId: target.id, wound })
