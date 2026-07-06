@@ -35,11 +35,18 @@ import {
 import Phaser from 'phaser'
 import { createDemoMap, DEMO_MAP_SIZE, PLAYER_SPAWN } from '../demo-map'
 import type { ClientToHost, HostToClient, SnapshotMessage } from '../protocol'
+import { lookaheadOffset, zoomForFraming } from '../render/framing'
 
 type Buildable = 'wall' | 'door' | 'chest' | 'workshop' | 'furnace'
 const BUILD_KEYS: Buildable[] = ['wall', 'door', 'chest', 'workshop', 'furnace']
 
 const TILE_PX = 16
+/** Cadrage caméra (spec client R10) : « je veux voir ~N tuiles de haut ». */
+const VISIBLE_TILES_TALL = 20
+/** Caméra « Foxhole » (R11) : force du décalage vers le curseur (px écran → px monde). */
+const LOOKAHEAD_STRENGTH = 0.18
+/** Borne radiale du décalage caméra, en tuiles. */
+const LOOKAHEAD_MAX_TILES = 6
 const INTERP_MS = 1000 / BALANCE.TICK_RATE_HZ
 /** Écart prédiction/autorité au-delà duquel on snap (spec client R5). */
 const SNAP_DISTANCE_TILES = 1.5
@@ -127,7 +134,8 @@ export class WorldScene extends Phaser.Scene {
 
     const worldPx = DEMO_MAP_SIZE * TILE_PX
     this.cameras.main.setBounds(0, 0, worldPx, worldPx)
-    this.cameras.main.startFollow(this.playerSprite, true, 0.12, 0.12).setZoom(2)
+    const zoom = zoomForFraming(VISIBLE_TILES_TALL, TILE_PX, this.scale.height)
+    this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16).setZoom(zoom)
     this.cameras.main.setBackgroundColor('#0e0e12')
 
     this.scene.launch('ui')
@@ -286,6 +294,17 @@ export class WorldScene extends Phaser.Scene {
     }
 
     this.registry.set('zone', zoneAt(this.map, this.predicted.x, this.predicted.y)?.name)
+
+    // Caméra « Foxhole » (R11) : le point suivi se décale vers le curseur pour
+    // voir plus loin là où l'on vise. Calcul en ÉCRAN-espace (écart au centre),
+    // jamais depuis la position monde du pointeur → pas de boucle caméra↔curseur.
+    const p = this.input.activePointer
+    const off = lookaheadOffset(
+      p.x, p.y, this.scale.width / 2, this.scale.height / 2,
+      LOOKAHEAD_STRENGTH, LOOKAHEAD_MAX_TILES, TILE_PX,
+    )
+    // followOffset est SOUSTRAIT du point suivi → on nie pour pencher VERS le curseur.
+    this.cameras.main.setFollowOffset(-off.x, -off.y)
   }
 
   private onHostMessage(msg: HostToClient): void {
