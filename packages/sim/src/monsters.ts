@@ -5,7 +5,7 @@
  * lire les wind-ups contre lui. Le sanglier est la chasse : neutre, fuit,
  * charge parfois blessé. IA dans /sim, aléa via le PRNG de la sim.
  */
-import { BALANCE, MONSTER_DEFS, type MonsterType } from './balance'
+import { BALANCE, COMBAT, MONSTER_DEFS, TICK_DT_S, type MonsterType } from './balance'
 import { startAttack } from './combat'
 import { moveAvatar } from './collision'
 import { rngRoll } from './rng'
@@ -80,14 +80,14 @@ function moveToward(state: SimState, monster: Monster, entity: Entity, tx: numbe
   }
   const sx = (dx > 0.15 ? 1 : dx < -0.15 ? -1 : 0) as -1 | 0 | 1
   const sy = (dy > 0.15 ? 1 : dy < -0.15 ? -1 : 0) as -1 | 0 | 1
-  const scale = (def.speed / BALANCE.WALK_SPEED_TILES_PER_S) * (entity.wounds.leg ? 0.6 : 1)
+  const scale = (def.speed / BALANCE.WALK_SPEED_TILES_PER_S) * (entity.wounds.leg ? COMBAT.LEG_WOUND_SPEED : 1)
   const moved = moveAvatar(
     { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null },
     entity.x,
     entity.y,
     sx,
     sy,
-    1 / BALANCE.TICK_RATE_HZ,
+    TICK_DT_S,
     scale,
   )
   entity.moved = moved.x !== entity.x || moved.y !== entity.y
@@ -206,10 +206,10 @@ export function advanceMonsters(state: SimState): void {
 
     if (monster.type === 'zombie') {
       if (state.tick >= monster.thinkAt) {
-        monster.thinkAt = state.tick + BALANCE.TICK_RATE_HZ / 2
+        monster.thinkAt = state.tick + def.thinkEveryTicks
         const prey = nearestPrey(state, entity, def.aggroRange)
         monster.targetId = prey?.id ?? null
-        if (!prey && roll(state) < 0.3) {
+        if (!prey && roll(state) < def.wanderChance) {
           monster.wanderDx = (Math.floor(roll(state) * 3) - 1) as -1 | 0 | 1
           monster.wanderDy = (Math.floor(roll(state) * 3) - 1) as -1 | 0 | 1
         }
@@ -217,7 +217,7 @@ export function advanceMonsters(state: SimState): void {
       const target = monster.targetId !== null ? state.entities.find((e) => e.id === monster.targetId) : undefined
       if (target) {
         const d2 = distSq(entity.x, entity.y, target.x, target.y)
-        if (d2 <= 1.2 * 1.2) {
+        if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
           if (startAttack(state, entity, target.x - entity.x, target.y - entity.y, undefined, def.windupTicks, def.damage)) {
             entity.cooldownUntil = state.tick + def.attackCooldownTicks
           }
@@ -241,12 +241,12 @@ export function advanceMonsters(state: SimState): void {
     const attackedBy = monster.lastAttackerId !== null ? state.entities.find((e) => e.id === monster.lastAttackerId) : undefined
     if (wounded && attackedBy) {
       if (state.tick >= monster.thinkAt) {
-        monster.thinkAt = state.tick + BALANCE.TICK_RATE_HZ
+        monster.thinkAt = state.tick + def.thinkEveryTicks
         // Blessé : fuit, mais charge parfois (spec R12).
-        monster.fleeing = roll(state) >= 0.25
+        monster.fleeing = roll(state) >= def.chargeChance
       }
       const d2 = distSq(entity.x, entity.y, attackedBy.x, attackedBy.y)
-      if (!monster.fleeing && d2 <= 1.2 * 1.2) {
+      if (!monster.fleeing && d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
         if (startAttack(state, entity, attackedBy.x - entity.x, attackedBy.y - entity.y, undefined, def.windupTicks, def.damage)) {
           entity.cooldownUntil = state.tick + def.attackCooldownTicks
         }

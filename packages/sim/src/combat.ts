@@ -76,14 +76,14 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
           ? state.entities.find((e) => e.id === action.targetEntityId)
           : actor
       if (!target) return reject('cible inconnue')
-      if (distSq(actor.x, actor.y, target.x, target.y) > 1.5 * 1.5) return reject('trop loin')
+      if (distSq(actor.x, actor.y, target.x, target.y) > BALANCE.INTERACT_RANGE * BALANCE.INTERACT_RANGE) return reject('trop loin')
       if (!target.wounds.bleeding && !target.wounds.leg && !target.wounds.arm) return reject('rien à soigner')
       if (!removeItems(actor.inventory, { fiber: COMBAT.BANDAGE_FIBER_COST })) return reject('il faut des fibres')
       // Une blessure par bandage : le saignement d'abord (il tue).
       if (target.wounds.bleeding) delete target.wounds.bleeding
       else if (target.wounds.leg) delete target.wounds.leg
       else delete target.wounds.arm
-      actor.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
+      actor.cooldownUntil = state.tick + COMBAT.BANDAGE_COOLDOWN_TICKS
       // Soigner un extérieur est un acte chaud (spec alignement R2).
       if (target.id !== actorId && isOutsider(state, actorId, target.id)) {
         recordAct(state, actorId, ALIGNMENT.HEAL_OUTSIDER_WARMTH)
@@ -95,7 +95,7 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
     case 'loot_corpse': {
       const corpse = state.corpses.find((c) => c.id === action.corpseId)
       if (!corpse) return reject('rien ici')
-      if (distSq(actor.x, actor.y, corpse.x, corpse.y) > 1.5 * 1.5) return reject('trop loin')
+      if (distSq(actor.x, actor.y, corpse.x, corpse.y) > BALANCE.INTERACT_RANGE * BALANCE.INTERACT_RANGE) return reject('trop loin')
       addItems(actor.inventory, corpse.inventory)
       state.corpses = state.corpses.filter((c) => c.id !== corpse.id)
       emitEvent(state, { type: 'corpse_looted', tick: state.tick, corpseId: corpse.id, byEntityId: actorId })
@@ -154,7 +154,7 @@ function resolveStrike(state: SimState, attacker: Entity): void {
   // Coup porté à une structure (les hordes frappent les murs, spec événements R1).
   if (windup.structureId !== undefined) {
     const s = state.structures.find((st) => st.id === windup.structureId)
-    if (s && distSq(attacker.x, attacker.y, s.tx + 0.5, s.ty + 0.5) <= 2.2 * 2.2) {
+    if (s && distSq(attacker.x, attacker.y, s.tx + 0.5, s.ty + 0.5) <= COMBAT.STRUCTURE_STRIKE_RANGE * COMBAT.STRUCTURE_STRIKE_RANGE) {
       applyStructureDamage(state, s.id, windup.damage ?? weaponDamage(attacker), attacker.id)
     }
     delete attacker.windup
@@ -194,7 +194,7 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     const weapon = bestWeaponItem(attacker)
     if (weapon) {
       attacker.wear[weapon] = (attacker.wear[weapon] ?? 0) + 1
-      if ((attacker.wear[weapon] ?? 0) >= 100) {
+      if ((attacker.wear[weapon] ?? 0) >= BALANCE.TOOL_DURABILITY) {
         removeItems(attacker.inventory, { [weapon]: 1 })
         delete attacker.wear[weapon]
       }
@@ -343,7 +343,7 @@ export function advanceCombat(state: SimState): void {
     if (!monsterIds.has(entity.id)) {
       if (entity.hunger > 70) perS *= COMBAT.FED_REGEN_BONUS
       else if (entity.hunger <= 0) perS *= COMBAT.STARVED_REGEN_MALUS
-      if (state.tick < entity.exhaustedUntil) perS *= 0.5
+      if (state.tick < entity.exhaustedUntil) perS *= COMBAT.EXHAUSTED_REGEN_FACTOR
     }
     entity.stamina = Math.min(100, entity.stamina + perS / BALANCE.TICK_RATE_HZ)
   }

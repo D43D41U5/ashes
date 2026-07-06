@@ -9,7 +9,7 @@
  */
 import { isThreatTo } from './alignment'
 import { emitEvent } from './events'
-import { ALIGNMENT, BALANCE, COMBAT, STRUCTURE_HP, VILLAGE_NAMES, WORLD_EVENTS, type NodeType } from './balance'
+import { ALIGNMENT, BALANCE, COMBAT, NPC_AI, STRUCTURE_HP, TICK_DT_S, VILLAGE_NAMES, WORLD_EVENTS, type NodeType } from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { applyCombatAction, startAttack } from './combat'
 
@@ -22,7 +22,7 @@ import { countOf, type ItemId } from './items'
 import { findPath } from './pathfinding'
 import { spawnEntity, type Entity, type SimState } from './sim'
 import { DAY_TICKS_PER_CYCLE, getGameTime, TICKS_PER_CYCLE } from './time'
-import { applyVillageAction, type Structure, type TaskKind, type Village } from './village'
+import { applyVillageAction, TICK_NEVER, type Structure, type TaskKind, type Village } from './village'
 
 export interface NpcTaskState {
   id: number
@@ -124,7 +124,7 @@ function followPath(state: SimState, npc: Npc, entity: Entity): boolean {
   const sx = (dx > 0.05 ? 1 : dx < -0.05 ? -1 : 0) as -1 | 0 | 1
   const sy = (dy > 0.05 ? 1 : dy < -0.05 ? -1 : 0) as -1 | 0 | 1
   const speedScale = entity.hunger <= 0 ? BALANCE.HUNGER_SPEED_MALUS : 1
-  const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, sy, 1 / BALANCE.TICK_RATE_HZ, speedScale)
+  const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, sy, TICK_DT_S, speedScale)
   if (moved.x === entity.x && moved.y === entity.y) {
     npc.stuck += 1
     if (npc.stuck > 2 * BALANCE.TICK_RATE_HZ) {
@@ -182,9 +182,9 @@ function refreshBoard(state: SimState, village: Village): void {
   const wanted: Partial<Record<TaskKind, number>> = {
     gather_berries: foodScore < BALANCE.VILLAGE_FOOD_TARGET ? 2 : 0,
     gather_wood: stocks.wood < BALANCE.VILLAGE_WOOD_TARGET ? 1 : 0,
-    gather_fiber: stocks.fiber < 2 ? 1 : 0,
+    gather_fiber: stocks.fiber < NPC_AI.VILLAGE_FIBER_TARGET ? 1 : 0,
     cook_stew:
-      stocks.stew < BALANCE.VILLAGE_STEW_TARGET && stocks.berries >= 5 && stocks.fiber >= 1 ? 1 : 0,
+      stocks.stew < BALANCE.VILLAGE_STEW_TARGET && stocks.berries >= NPC_AI.COOK_MIN_BERRIES && stocks.fiber >= NPC_AI.COOK_MIN_FIBER ? 1 : 0,
   }
   const priorities: Record<TaskKind, number> = {
     repair: 4,
@@ -307,7 +307,7 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
     return
   }
   if (near(entity, chest.tx, chest.ty)) {
-    const keep = def.item === 'berries' ? 2 : 0
+    const keep = def.item === 'berries' ? NPC_AI.FOOD_KEEP : 0
     const count = countOf(entity.inventory, def.item) - keep
     if (count > 0) {
       applyVillageAction(state, entity.id, { type: 'deposit', structureId: chest.id, item: def.item, count })
@@ -395,7 +395,7 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
         type: 'withdraw',
         structureId: chest.id,
         item: 'wood',
-        count: Math.min(4, countOf(chest.inventory ?? {}, 'wood')),
+        count: Math.min(NPC_AI.REPAIR_WOOD_WITHDRAW, countOf(chest.inventory ?? {}, 'wood')),
       })
       task.stage = 'work'
       return
@@ -447,10 +447,10 @@ function assignErrands(state: SimState): void {
     for (const village of state.villages) {
       if (village.archetype !== 'meute') continue
       // On ne raide pas quand la meute est exsangue (< 3 vivants).
-      if (state.npcs.filter((n) => n.villageId === village.id).length < 3) continue
+      if (state.npcs.filter((n) => n.villageId === village.id).length < NPC_AI.RAID_MIN_ALIVE) continue
       const target = nearestOtherVillage(state, village)
       if (!target) continue
-      const raiders = state.npcs.filter((n) => n.villageId === village.id && !n.errand).slice(0, 2)
+      const raiders = state.npcs.filter((n) => n.villageId === village.id && !n.errand).slice(0, NPC_AI.RAIDERS_PER_RAID)
       for (const raider of raiders) {
         raider.errand = { kind: 'raid', targetVillageId: target.id, stage: 'go' }
         raider.sleeping = false
@@ -545,7 +545,7 @@ function handleErrand(state: SimState, village: Village, npc: Npc, entity: Entit
   }
 
   // Le raid (spec R13). Blessé : on décroche (le combat de coût, GDD §7).
-  if (entity.hp < 40 && errand.stage !== 'home') {
+  if (entity.hp < NPC_AI.RAID_DISENGAGE_HP && errand.stage !== 'home') {
     errand.stage = 'home'
     npc.path = []
   }
@@ -556,7 +556,7 @@ function handleErrand(state: SimState, village: Village, npc: Npc, entity: Entit
       e.hp > 0 &&
       !village.memberIds.includes(e.id) &&
       !state.monsters.some((m) => m.entityId === e.id) &&
-      distSq(e.x, e.y, entity.x, entity.y) <= 1.2 * 1.2,
+      distSq(e.x, e.y, entity.x, entity.y) <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE,
   )
   if (foe && !entity.windup && state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
     if (startAttack(state, entity, foe.x - entity.x, foe.y - entity.y)) {
@@ -586,13 +586,13 @@ function handleErrand(state: SimState, village: Village, npc: Npc, entity: Entit
     }
     if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
       if (startAttack(state, entity, target.tx + 0.5 - entity.x, target.ty + 0.5 - entity.y, undefined, COMBAT.WINDUP_TICKS, undefined, target.id)) {
-        entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
+        entity.cooldownUntil = state.tick + COMBAT.ATTACK_COOLDOWN_TICKS
       }
     }
     return true
   }
   if (errand.stage === 'loot') {
-    const corpse = state.corpses.find((c) => distSq(c.x, c.y, entity.x, entity.y) <= 2 * 2)
+    const corpse = state.corpses.find((c) => distSq(c.x, c.y, entity.x, entity.y) <= NPC_AI.CORPSE_SEARCH_RANGE * NPC_AI.CORPSE_SEARCH_RANGE)
     if (corpse) {
       applyCombatLoot(state, entity.id, corpse.id)
     }
@@ -638,10 +638,10 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
   npc.sleeping = false // l'alarme silencieuse : on se lève
   if (entity.windup) return true
   const d2 = distSq(entity.x, entity.y, threat.x, threat.y)
-  if (d2 <= 1.2 * 1.2) {
+  if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
     if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
       if (startAttack(state, entity, threat.x - entity.x, threat.y - entity.y)) {
-        entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
+        entity.cooldownUntil = state.tick + COMBAT.ATTACK_COOLDOWN_TICKS
       }
     }
     return true
@@ -649,7 +649,7 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
   // Marche gloutonne vers la menace (le village est un terrain ouvert).
   const sx = (threat.x - entity.x > 0.2 ? 1 : threat.x - entity.x < -0.2 ? -1 : 0) as -1 | 0 | 1
   const sy = (threat.y - entity.y > 0.2 ? 1 : threat.y - entity.y < -0.2 ? -1 : 0) as -1 | 0 | 1
-  const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, sy, 1 / BALANCE.TICK_RATE_HZ)
+  const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, sy, TICK_DT_S)
   entity.moved = moved.x !== entity.x || moved.y !== entity.y
   entity.x = moved.x
   entity.y = moved.y
@@ -683,7 +683,7 @@ function handleHunger(state: SimState, village: Village, npc: Npc, entity: Entit
         type: 'withdraw',
         structureId: chest.id,
         item: 'berries',
-        count: Math.min(3, countOf(inv, 'berries')),
+        count: Math.min(NPC_AI.EAT_BERRIES_WITHDRAW, countOf(inv, 'berries')),
       })
     }
     return true
@@ -834,7 +834,7 @@ export function foundNpcVillage(
     tasks: [],
     nextTaskId: 1,
     npcsArrived: true, // on peuple nous-mêmes
-    lastAlarmAt: -999999,
+    lastAlarmAt: TICK_NEVER,
     warmth: 0,
     engagement: 0,
     archetype: 'neutre',

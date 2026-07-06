@@ -240,12 +240,28 @@ export interface MonsterDef {
   windupTicks: number
   attackCooldownTicks: number
   aggroRange: number
+  /** Cadence de réflexion de l'IA (elle agit à chaque tick, elle DÉCIDE ici). */
+  thinkEveryTicks: number
+  /** Zombie sans proie : probabilité de changer d'errance à chaque réflexion. */
+  wanderChance: number
+  /** Sanglier blessé : probabilité de charger (sinon il fuit) à chaque réflexion. */
+  chargeChance: number
   loot: import('./items').Inventory
 }
 
 export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
-  zombie: { hp: 40, damage: 12, speed: 2.4, windupTicks: ticksFor(0.6), attackCooldownTicks: ticksFor(2), aggroRange: 6, loot: {} },
-  boar: { hp: 30, damage: 8, speed: 3.6, windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0, loot: { raw_meat: 3 } },
+  zombie: {
+    hp: 40, damage: 12, speed: 2.4,
+    windupTicks: ticksFor(0.6), attackCooldownTicks: ticksFor(2), aggroRange: 6,
+    thinkEveryTicks: ticksFor(0.5), wanderChance: 0.3, chargeChance: 0,
+    loot: {},
+  },
+  boar: {
+    hp: 30, damage: 8, speed: 3.6,
+    windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0,
+    thinkEveryTicks: ticksFor(1), wanderChance: 0, chargeChance: 0.25,
+    loot: { raw_meat: 3 },
+  },
 }
 
 /** Le combat (GDD §7, spec combat) — lent, positionnel, gagné avant l'échange. */
@@ -260,6 +276,14 @@ export const COMBAT = {
   STARVED_REGEN_MALUS: 0.5,
   WINDUP_TICKS: ticksFor(0.4),
   ATTACK_RANGE: 1.4,
+  /** Distance à laquelle une IA (monstre, PNJ) déclenche son coup au corps à corps. */
+  MELEE_ENGAGE_RANGE: 1.2,
+  /** Portée du coup porté à une structure (murs, portes — cibles larges). */
+  STRUCTURE_STRIKE_RANGE: 2.2,
+  /** Rythme minimal entre deux attaques d'un avatar (PNJ compris). */
+  ATTACK_COOLDOWN_TICKS: ticksFor(1),
+  /** Temps d'immobilisation des mains après un bandage. */
+  BANDAGE_COOLDOWN_TICKS: ticksFor(1),
   ATTACK_ARC_COS: 0.7071, // cos(45°) — arc total de 90°
   BLOCK_ARC_COS: 0.5, // cos(60°) — arc frontal de 120°
   BLOCK_REDUCTION: 0.7,
@@ -277,6 +301,7 @@ export const COMBAT = {
   RESPAWN_STAMINA: 20,
   /** Épuisement post-mort : régén d'endurance ÷2 (~5 min démo ; GDD vise ~30 min). */
   EXHAUSTION_TICKS: ticksFor(300),
+  EXHAUSTED_REGEN_FACTOR: 0.5,
   CORPSE_TICKS: ticksFor(600),
   DEFEND_RADIUS: 10,
 } as const
@@ -400,6 +425,28 @@ export const ALIGNMENT = {
   REFRESH_TICKS: ticksFor(5),
   /** Le don du Foyer PNJ (spec R14). */
   GIFT_BERRIES: 5,
+} as const
+
+/** L'IA des PNJ (spec pnj, alignement R13-R14) — les seuils de décision. */
+export const NPC_AI = {
+  /** Réserve personnelle de baies conservée au dépôt d'une récolte (spec pnj R6). */
+  FOOD_KEEP: 2,
+  /** Bois retiré au grenier pour une sortie de réparation. */
+  REPAIR_WOOD_WITHDRAW: 4,
+  /** Baies retirées au grenier pour un repas (à défaut de ragoût). */
+  EAT_BERRIES_WITHDRAW: 3,
+  /** Cible de fibres au grenier (tableau du village). */
+  VILLAGE_FIBER_TARGET: 2,
+  /** Cuisiner exige la recette + une marge de baies, et la fibre de la recette. */
+  COOK_MIN_BERRIES: 5,
+  COOK_MIN_FIBER: 1,
+  /** Raid (spec alignement R13) : un raider décroche sous ce seuil de PV… */
+  RAID_DISENGAGE_HP: 40,
+  /** …la Meute ne raide pas exsangue, et envoie ce nombre de raiders par nuit. */
+  RAID_MIN_ALIVE: 3,
+  RAIDERS_PER_RAID: 2,
+  /** Rayon de fouille des cadavres autour d'un raider, en tuiles. */
+  CORPSE_SEARCH_RANGE: 2,
 } as const
 
 /** Durée d'un tick en secondes — le seul dt qui existe dans /sim. */

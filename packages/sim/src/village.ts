@@ -34,6 +34,9 @@ import {
 import { terrainAt, zoneAt } from './map'
 import type { SimState } from './sim'
 
+/** Sentinelle « jamais » pour les champs en ticks (finie : JSON-sérialisable). */
+export const TICK_NEVER = -999999
+
 export interface Structure {
   id: number
   type: StructureType
@@ -74,7 +77,7 @@ export interface Village {
   nextTaskId: number
   /** Les PNJ d'accueil sont-ils déjà arrivés ? (spec pnj R9) */
   npcsArrived: boolean
-  /** Dernière alarme (spec événements R4 : une par vague). */
+  /** Dernière alarme (spec événements R4 : une par vague) — TICK_NEVER si jamais. */
   lastAlarmAt: number
   /** Le Feu : agrégat des membres, recalculé périodiquement (spec alignement R5). */
   warmth: number
@@ -211,7 +214,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
         tasks: [],
         nextTaskId: 1,
         npcsArrived: false,
-        lastAlarmAt: -999999,
+        lastAlarmAt: TICK_NEVER,
         warmth: 0,
         engagement: 0,
         archetype: 'neutre',
