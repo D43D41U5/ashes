@@ -12,20 +12,37 @@ import {
 } from './time'
 
 describe('temps (A1 — fonction pure du tick)', () => {
-  it('début de partie : jour 1, acte I, heure 0, de jour', () => {
+  it('début de partie : jour 1, acte I, à l’aube (horloge murale), de jour', () => {
     const sim = createSim(1)
-    expect(getGameTime(sim)).toEqual({ tick: 0, hourOfCycle: 0, isNight: false, seasonDay: 1, act: 1 })
+    // Le cycle démarre à l'aube ; l'horloge murale la place à CYCLE_DAWN_HOUR.
+    expect(getGameTime(sim)).toEqual({
+      tick: 0,
+      hourOfCycle: BALANCE.CYCLE_DAWN_HOUR,
+      isNight: false,
+      seasonDay: 1,
+      act: 1,
+    })
   })
 
-  it('le cycle bascule en nuit à la fraction de jour, puis reboucle', () => {
+  it('le cycle bascule en nuit à la fraction de jour, puis reboucle à l’aube', () => {
     const sim = createSim(1)
     sim.tick = DAY_TICKS_PER_CYCLE - 1
     expect(getGameTime(sim).isNight).toBe(false)
     sim.tick = DAY_TICKS_PER_CYCLE
     expect(getGameTime(sim).isNight).toBe(true)
+    // La nuit tombe à 21h murales (aube 6h + 15h de jour).
+    expect(getGameTime(sim).hourOfCycle).toBe(BALANCE.CYCLE_DAWN_HOUR + 24 * BALANCE.CYCLE_DAY_FRACTION)
     sim.tick = TICKS_PER_CYCLE
     expect(getGameTime(sim).isNight).toBe(false)
+    expect(getGameTime(sim).hourOfCycle).toBe(BALANCE.CYCLE_DAWN_HOUR)
+  })
+
+  it('minuit (0h murale) tombe en pleine nuit', () => {
+    const sim = createSim(1)
+    // Minuit = 18h après l'aube de 6h → phase 0.75 du cycle, bien dans la nuit.
+    sim.tick = Math.round(TICKS_PER_CYCLE * 0.75)
     expect(getGameTime(sim).hourOfCycle).toBe(0)
+    expect(getGameTime(sim).isNight).toBe(true)
   })
 
   it('le jour de saison avance avec le calendrier, modulé par calendarScale', () => {

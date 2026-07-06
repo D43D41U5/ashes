@@ -39,6 +39,11 @@ export const BALANCE = {
   /** Part du cycle qui est de jour (0.625 → 30 min de jour, 18 min de nuit). */
   CYCLE_DAY_FRACTION: 0.625,
 
+  /** Heure murale de l'aube — le cycle démarre au lever du jour, mais l'horloge
+   * affichée est une horloge murale : minuit (0h) au cœur de la nuit, midi en plein
+   * jour. Avec DAWN=6 et DAY_FRACTION=0.625 : jour 6h→21h, nuit 21h→6h. */
+  CYCLE_DAWN_HOUR: 6,
+
   /** Derniers jours des actes I et II (GDD §2 : semaines 1-3, 4-6, 7-8+). */
   ACT_BOUNDARIES: [21, 42],
 

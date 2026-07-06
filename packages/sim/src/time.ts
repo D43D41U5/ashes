@@ -20,7 +20,11 @@ export type Act = 1 | 2 | 3
 
 export interface GameTime {
   tick: number
-  /** Heure fictive du cycle, dans [0, 24). Jour : [0, 15), nuit : [15, 24). */
+  /**
+   * Heure murale du cycle, dans [0, 24) — minuit (0h) au cœur de la nuit, midi en
+   * plein jour. Le cycle démarre à l'aube (CYCLE_DAWN_HOUR) ; avec DAWN=6 et
+   * DAY_FRACTION=0.625 : jour 6h→21h, nuit 21h→6h (bascule reflétée par `isNight`).
+   */
   hourOfCycle: number
   isNight: boolean
   /** Jour de saison, à partir de 1. Peut dépasser SEASON_DAYS (la Cendre finale). */
@@ -41,9 +45,11 @@ export function actForDay(day: number): Act {
 export function getGameTime(state: SimState): GameTime {
   const cycleTick = state.tick % TICKS_PER_CYCLE
   const seasonDay = seasonDayAtTick(state.tick, state.calendarScale)
+  // Le cycle démarre à l'aube ; on décale la phase vers une horloge murale.
+  const wallHour = (cycleTick / TICKS_PER_CYCLE) * 24 + BALANCE.CYCLE_DAWN_HOUR
   return {
     tick: state.tick,
-    hourOfCycle: (cycleTick / TICKS_PER_CYCLE) * 24,
+    hourOfCycle: wallHour % 24,
     isNight: cycleTick >= DAY_TICKS_PER_CYCLE,
     seasonDay,
     act: actForDay(seasonDay),

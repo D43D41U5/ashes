@@ -51,15 +51,17 @@ const ITEM_LABELS: [keyof Inventory, string][] = [
   ['components', 'Composants'],
 ]
 
-/** Heures affichées par cycle — convention de `getGameTime` (hourOfCycle ∈ [0,24)). */
+/** Heures affichées par cycle — horloge murale de `getGameTime` (hourOfCycle ∈ [0,24), minuit = 0h). */
 const CYCLE_HOURS = 24
-/** Frontière jour/nuit dérivée de la sim (isNight bascule à cette heure) — 15 h avec CYCLE_DAY_FRACTION = 0,625. */
-const NIGHTFALL_HOUR = CYCLE_HOURS * BALANCE.CYCLE_DAY_FRACTION
+/** Aube murale (le cycle démarre au lever du jour) — 6 h par défaut. */
+const DAWN_HOUR = BALANCE.CYCLE_DAWN_HOUR
+/** Frontière jour/nuit dérivée de la sim (isNight bascule à cette heure) — 21 h : aube 6 h + 15 h de jour. */
+const NIGHTFALL_HOUR = DAWN_HOUR + CYCLE_HOURS * BALANCE.CYCLE_DAY_FRACTION
 /** Le crépuscule est un pur habillage : fondu entamé un peu avant la nuit logique, fini un peu après. */
 const DUSK_START = NIGHTFALL_HOUR - 1.5
 const DUSK_END = NIGHTFALL_HOUR + 1
-/** L'aube visuelle : l'obscurité fond sur la dernière portion de la nuit. */
-const DAWN_START = CYCLE_HOURS - 1.5
+/** L'aube visuelle : l'obscurité fond sur la dernière portion de la nuit, jusqu'au lever du jour. */
+const DAWN_START = DAWN_HOUR - 1.5
 
 /** Maxima des jauges du joueur — valeurs posées par `spawnEntity`
  * (packages/sim/src/sim.ts) ; la sim n'exporte pas (encore) de constante. */
@@ -76,13 +78,16 @@ const MAP_ZOOM_STEP = 1.15
 /** Au-dessus de tout le HUD (et du journal, à profondeur par défaut). */
 const MAP_OVERLAY_DEPTH = 1000
 
-/** Alpha de l'obscurité selon l'heure du cycle (jour [0,NIGHTFALL), nuit [NIGHTFALL,24)). */
+/**
+ * Alpha de l'obscurité selon l'heure murale : nuit noire de part et d'autre de
+ * minuit (crépuscule 19h30→22h, cœur 22h→4h30, aube 4h30→6h), plein jour 6h→19h30.
+ */
 function nightAlpha(hourOfCycle: number): number {
   const MAX = 0.55
-  if (hourOfCycle < DUSK_START) return 0
-  if (hourOfCycle < DUSK_END) return ((hourOfCycle - DUSK_START) / (DUSK_END - DUSK_START)) * MAX // crépuscule
-  if (hourOfCycle < DAWN_START) return MAX
-  return (1 - (hourOfCycle - DAWN_START) / (CYCLE_HOURS - DAWN_START)) * MAX // aube
+  if (hourOfCycle < DAWN_START || hourOfCycle >= DUSK_END) return MAX // cœur de nuit, autour de minuit
+  if (hourOfCycle < DAWN_HOUR) return (1 - (hourOfCycle - DAWN_START) / (DAWN_HOUR - DAWN_START)) * MAX // aube
+  if (hourOfCycle < DUSK_START) return 0 // plein jour
+  return ((hourOfCycle - DUSK_START) / (DUSK_END - DUSK_START)) * MAX // crépuscule
 }
 
 export class UIScene extends Phaser.Scene {
