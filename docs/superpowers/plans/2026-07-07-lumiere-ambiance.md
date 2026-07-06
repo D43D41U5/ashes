@@ -132,13 +132,6 @@ function lerp(a: number, c: number, t: number): number {
   return a + (c - a) * t
 }
 
-function lerpColor(c1: number, c2: number, t: number): number {
-  const rr = Math.round(lerp((c1 >> 16) & 0xff, (c2 >> 16) & 0xff, t))
-  const gg = Math.round(lerp((c1 >> 8) & 0xff, (c2 >> 8) & 0xff, t))
-  const bb = Math.round(lerp(c1 & 0xff, c2 & 0xff, t))
-  return (rr << 16) | (gg << 8) | bb
-}
-
 /** Paire de keyframes encadrant `hour` (horloge murale) + facteur d'interpolation. */
 function bracket<T extends { hour: number }>(keys: T[], hour: number): { lo: T; hi: T; t: number } {
   const h = ((hour % 24) + 24) % 24
@@ -200,12 +193,12 @@ export function canopyDensity(terrain: number): number {
 export function canopyStrength(day: number): number {
   return lerp(0.4, 1, day)
 }
-
-// `lerpColor` sert dès la Task 2 (ambientTint) ; exporté indirectement via elle.
-export { lerpColor as _lerpColorForTasks }
 ```
 
-> Note d'implémentation : `_lerpColorForTasks` n'est qu'un ré-export temporaire pour éviter un warning « unused » entre tasks. Il DISPARAÎT en Task 2 quand `ambientTint` consomme `lerpColor`. Si tu implémentes Task 1 et Task 2 d'affilée, saute ce ré-export et garde `lerpColor` privé.
+> Task 1 ne définit PAS `lerpColor` : aucune de ses fonctions n'en a besoin
+> (`warmthColor` compose la couleur à la main, `daylight`/`canopyStrength`
+> n'interpolent que des scalaires via `lerp`). `lerpColor` arrive en Task 2 avec
+> `ambientTint`, son unique consommateur.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -270,7 +263,21 @@ Expected: FAIL — `ambientTint is not a function`.
 
 - [ ] **Step 3: Write minimal implementation**
 
-Dans `lighting.ts` : SUPPRIMER le ré-export temporaire `_lerpColorForTasks` (ligne finale de Task 1) et ajouter :
+Dans `lighting.ts`, ajouter :
+
+```ts
+Ajouter le helper d'interpolation de couleur (son unique consommateur est `ambientTint`) :
+
+```ts
+function lerpColor(c1: number, c2: number, t: number): number {
+  const rr = Math.round(lerp((c1 >> 16) & 0xff, (c2 >> 16) & 0xff, t))
+  const gg = Math.round(lerp((c1 >> 8) & 0xff, (c2 >> 8) & 0xff, t))
+  const bb = Math.round(lerp(c1 & 0xff, c2 & 0xff, t))
+  return (rr << 16) | (gg << 8) | bb
+}
+```
+
+puis les keyframes et la fonction :
 
 ```ts
 interface TintKey {
@@ -818,8 +825,11 @@ Si une intensité déplaît en jeu, ajuster UNIQUEMENT les constantes de `lighti
 
 - [ ] **Step 5: Commit final éventuel**
 
+> Ne stager QUE les fichiers de lumière touchés (l'utilisateur a du WIP non
+> commité dans `packages/sim` — ne jamais `git add -A`).
+
 ```bash
-git add -A
+git add packages/client/src/render/lighting.ts
 git commit -m "chore(client): calibrage d'intensité lumière & ambiance après smoke visuel"
 ```
 
