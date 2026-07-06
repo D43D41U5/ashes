@@ -153,8 +153,10 @@ Testables en unitaire (`lighting.test.ts`) sauf mention visuelle :
    croissant de la nuit vers midi.
 5. **Halo nuit > jour** : `fireGlow(w, daylight_nuit).alpha > fireGlow(w, daylight_midi).alpha`
    pour un même `warmth` ; à `daylight ≈ 1` le halo est ~nul.
-6. **Halo coloré par l'alignement** : `fireGlow(+80, …).color` est chaud/rouge,
-   `fireGlow(-80, …).color` est bleu (cohérent avec le tint de Feu existant).
+6. **Halo coloré par l'alignement** : cohérent avec le tint de Feu existant
+   (`snapshot-view.ts`) — `warmth > 0` → **bleu** (Foyer), `warmth < 0` →
+   **rouge** (Meute). Donc `fireGlow(+80, …).color` a `bleu > rouge`,
+   `fireGlow(-80, …).color` a `rouge > bleu`.
 7. **Canopée par terrain** : la densité forêt > marais > 0 = reste
    (fonction/constante testable).
 8. **(Visuel)** Captures build+preview à l'aube / midi / crépuscule / minuit et
