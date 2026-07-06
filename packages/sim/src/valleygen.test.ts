@@ -232,6 +232,39 @@ describe('réseau d’eau', () => {
   })
 })
 
+describe('mines dans la bordure', () => {
+  const mined: ValleySkeleton = {
+    ...TEST_SKELETON,
+    mines: {
+      deep: [{ x: 30, y: 10, toward: 'top' }],
+      simpleDensity: 0.02,
+    },
+  }
+
+  it('la chambre profonde est un gisement, creusée et atteignable', () => {
+    const map = generateValley(mined, 9)
+    const gisement = map.zones.find((z) => z.kind === 'gisement')
+    expect(gisement).toBeDefined()
+    // Au moins une tuile marchable dans la chambre (creusée dans la roche).
+    let walkable = 0
+    for (let ty = gisement!.y; ty < gisement!.y + gisement!.h; ty++) {
+      for (let tx = gisement!.x; tx < gisement!.x + gisement!.w; tx++) {
+        if (!isBlockingTile(map, tx, ty)) walkable++
+      }
+    }
+    expect(walkable).toBeGreaterThan(0)
+  })
+
+  it('les mines simples sont des carrières (kind carriere)', () => {
+    const map = generateValley(mined, 9)
+    expect(map.zones.some((z) => z.kind === 'carriere')).toBe(true)
+  })
+
+  it('déterministe', () => {
+    expect(generateValley(mined, 9).zones).toEqual(generateValley(mined, 9).zones)
+  })
+})
+
 describe('enceinte organique', () => {
   const map = generateValley(TEST_SKELETON, 7)
 

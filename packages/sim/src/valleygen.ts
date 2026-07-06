@@ -20,6 +20,7 @@ import {
 } from './balance'
 import { createEmptyMap, type WorldMap, type Zone } from './map'
 import { fbm2, hash2 } from './noise'
+import { carveMines } from './valleygen-mines'
 import { paintPonds, paintStreams } from './valleygen-water'
 
 export interface ValleyPoint {
@@ -58,6 +59,12 @@ export interface ValleySkeleton {
   landmarks: Zone[]
   /** Densités du réseau d'eau procédural (par tuile marchable). Optionnel. */
   water?: { streamDensity?: number; pondDensity?: number }
+  /** Mines creusées dans la bordure. `deep` = artisanales (gisement T2) ;
+   *  `simpleDensity` = carrières procédurales par unité de périmètre. */
+  mines?: {
+    deep: { x: number; y: number; toward: 'top' | 'bottom' | 'left' | 'right' }[]
+    simpleDensity?: number
+  }
 }
 
 const DEFAULT_BIOME = { forest: 0.3, rock: 0.05, marsh: 0 }
@@ -69,6 +76,7 @@ export function generateValley(skeleton: ValleySkeleton, seed: number): WorldMap
   for (const ridge of skeleton.ridges) {
     paintRidge(map, ridge.points, ridge.halfWidth, seed)
   }
+  const mineZones = carveMines(map, skeleton, seed)
   paintRiver(map, skeleton)
   paintStreams(map, skeleton, seed)
   paintPonds(map, skeleton, seed)
@@ -77,7 +85,7 @@ export function generateValley(skeleton: ValleySkeleton, seed: number): WorldMap
   paintCrossings(map, skeleton)
   for (const c of skeleton.clearings) stampDisk(map, c.x, c.y, c.r, paintClear)
   for (const r of skeleton.ruins) paintRuin(map, r.x, r.y)
-  map.zones = skeleton.landmarks.map((z) => ({ ...z }))
+  map.zones = [...mineZones, ...skeleton.landmarks.map((z) => ({ ...z }))]
   return map
 }
 
