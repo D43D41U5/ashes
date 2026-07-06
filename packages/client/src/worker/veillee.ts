@@ -7,7 +7,6 @@
  */
 import {
   createSim,
-  foundNpcVillage,
   generateNodes,
   generateValley,
   spawnEntity,
@@ -27,10 +26,9 @@ export function createVeillee(): { sim: SimState; playerId: number } {
   const map = generateValley(VEILLEE_SKELETON, VEILLEE_SEED)
   const nodes = generateNodes(map, VEILLEE_SEED)
   const sim = createSim(VEILLEE_SEED, { map, calendarScale: VEILLEE_CALENDAR_SCALE, nodes })
-  // Les voisins à caractère (spec alignement R12) : le Foyer dans la Plaine,
-  // la Meute à l'est du Pont — sur la route de la Mine, évidemment.
-  foundNpcVillage(sim, VEILLEE_SITES.foyer.x, VEILLEE_SITES.foyer.y, 4, 'foyer')
-  foundNpcVillage(sim, VEILLEE_SITES.meute.x, VEILLEE_SITES.meute.y, 3, 'meute')
+  // Pas de villages PNJ pour l'instant (décision 2026-07-06) : on finit la
+  // carte vivante d'abord — les voisins à caractère (spec alignement R12)
+  // reviendront sur les sites VEILLEE_SITES.foyer/meute une fois la map actée.
   // La menace et le gibier : sangliers aux tanières, zombies au Hameau, au
   // Marais et sur le Plateau.
   for (const p of VEILLEE_SITES.boars) spawnMonster(sim, 'boar', p.x, p.y)
