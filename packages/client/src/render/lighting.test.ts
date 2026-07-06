@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canopyDensity, canopyStrength, daylight, warmthColor } from './lighting'
+import { ambientTint, canopyDensity, canopyStrength, daylight, warmthColor, NIGHT_ALPHA_MAX } from './lighting'
 
 const r = (c: number): number => (c >> 16) & 0xff
 const b = (c: number): number => c & 0xff
@@ -48,5 +48,29 @@ describe('canopyDensity / canopyStrength', () => {
   })
   it('la canopée est plus opaque de jour que de nuit', () => {
     expect(canopyStrength(1)).toBeGreaterThan(canopyStrength(0))
+  })
+})
+
+describe('ambientTint (teinte selon l\'heure)', () => {
+  it('midi : aucune teinte (alpha ≈ 0)', () => {
+    expect(ambientTint(12).alpha).toBeCloseTo(0, 2)
+  })
+  it('nuit profonde : alpha au plafond, couleur bleue froide', () => {
+    const t = ambientTint(0)
+    expect(t.alpha).toBeCloseTo(NIGHT_ALPHA_MAX, 5)
+    expect(t.color & 0xff).toBeGreaterThan((t.color >> 16) & 0xff) // bleu > rouge
+  })
+  it('alpha ne dépasse jamais le plafond de nuit', () => {
+    for (let h = 0; h < 24; h += 0.5) {
+      expect(ambientTint(h).alpha).toBeLessThanOrEqual(NIGHT_ALPHA_MAX + 1e-9)
+    }
+  })
+  it('aube (6 h) et crépuscule (20 h) : teinte chaude, alpha intermédiaire', () => {
+    for (const h of [6, 20]) {
+      const t = ambientTint(h)
+      expect((t.color >> 16) & 0xff).toBeGreaterThan(t.color & 0xff) // rouge > bleu (chaud)
+      expect(t.alpha).toBeGreaterThan(0)
+      expect(t.alpha).toBeLessThan(NIGHT_ALPHA_MAX)
+    }
   })
 })

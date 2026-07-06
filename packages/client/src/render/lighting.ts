@@ -13,6 +13,13 @@ function lerp(a: number, c: number, t: number): number {
   return a + (c - a) * t
 }
 
+function lerpColor(c1: number, c2: number, t: number): number {
+  const rr = Math.round(lerp((c1 >> 16) & 0xff, (c2 >> 16) & 0xff, t))
+  const gg = Math.round(lerp((c1 >> 8) & 0xff, (c2 >> 8) & 0xff, t))
+  const bb = Math.round(lerp(c1 & 0xff, c2 & 0xff, t))
+  return (rr << 16) | (gg << 8) | bb
+}
+
 /** Paire de keyframes encadrant `hour` (horloge murale) + facteur d'interpolation. */
 function bracket<T extends { hour: number }>(keys: T[], hour: number): { lo: T; hi: T; t: number } {
   const h = ((hour % 24) + 24) % 24
@@ -73,4 +80,33 @@ export function canopyDensity(terrain: number): number {
 /** Opacité globale de la couche canopée : l'ombre du sous-bois se lit surtout de jour. */
 export function canopyStrength(day: number): number {
   return lerp(0.4, 1, day)
+}
+
+interface TintKey {
+  hour: number
+  color: number
+  alpha: number
+}
+
+const NIGHT_COLOR = 0x0b1030 // bleu froid
+const GOLDEN_COLOR = 0xc8702a // ambre chaud (heure dorée)
+const NEUTRAL_COLOR = 0x101018
+
+/** Keyframes de la teinte d'ambiance sur 24 h (bornes 0 h et 24 h identiques). */
+const AMBIENT_KEYS: TintKey[] = [
+  { hour: 0, color: NIGHT_COLOR, alpha: NIGHT_ALPHA_MAX },
+  { hour: 5, color: NIGHT_COLOR, alpha: 0.44 },
+  { hour: 6, color: GOLDEN_COLOR, alpha: 0.32 },
+  { hour: 8, color: GOLDEN_COLOR, alpha: 0.1 },
+  { hour: 10, color: NEUTRAL_COLOR, alpha: 0 },
+  { hour: 15, color: NEUTRAL_COLOR, alpha: 0 },
+  { hour: 18, color: GOLDEN_COLOR, alpha: 0.12 },
+  { hour: 20, color: GOLDEN_COLOR, alpha: 0.34 },
+  { hour: 21, color: NIGHT_COLOR, alpha: 0.42 },
+  { hour: 24, color: NIGHT_COLOR, alpha: NIGHT_ALPHA_MAX },
+]
+
+export function ambientTint(hour: number): { color: number; alpha: number } {
+  const { lo, hi, t } = bracket(AMBIENT_KEYS, hour)
+  return { color: lerpColor(lo.color, hi.color, t), alpha: lerp(lo.alpha, hi.alpha, t) }
 }
