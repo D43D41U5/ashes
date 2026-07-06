@@ -10,6 +10,7 @@ import {
   TERRAIN_WALL,
 } from './balance'
 import { generateValley, type ValleySkeleton } from './valleygen'
+import { generateNodes } from './economy'
 
 /** Petit squelette d'exercice — chaque primitive y est représentée. */
 export const TEST_SKELETON: ValleySkeleton = {
@@ -291,5 +292,45 @@ describe('enceinte organique', () => {
     const mean = depths.reduce((a, b) => a + b, 0) / depths.length
     const variance = depths.reduce((a, b) => a + (b - mean) * (b - mean), 0) / depths.length
     expect(variance).toBeGreaterThan(1) // pas une bande d'épaisseur constante
+  })
+})
+
+describe('R6 — scalabilité : les features suivent la taille de la carte', () => {
+  // Deux tailles, mêmes densités. Un doublement de côté ≈ ×4 surface.
+  const base = (w: number, h: number): ValleySkeleton => ({
+    width: w, height: h, borderThickness: 4, ridges: [],
+    river: { points: [{ x: (w / 2) | 0, y: 4 }, { x: (w / 2) | 0, y: h - 4 }], halfWidth: 2 },
+    lake: { x: (w / 2) | 0, y: h - 8, r: 5 }, roads: [], crossings: [], clearings: [], ruins: [],
+    regions: [{ x: 6, y: 6, w: w - 12, h: h - 12, forest: 0.2, rock: 0.15 }],
+    water: { streamDensity: 0.003, pondDensity: 0.003 },
+    mines: { deep: [], simpleDensity: 0.4 },
+    landmarks: [],
+  })
+
+  function shallowCount(map: { terrain: number[] }): number {
+    let n = 0
+    for (const t of map.terrain) if (t === 4) n++ // shallow_water
+    return n
+  }
+
+  it('plus de carrières sur un plus grand périmètre', () => {
+    const small = generateValley(base(96, 96), 1)
+    const big = generateValley(base(192, 192), 1)
+    const carr = (m: typeof small): number => m.zones.filter((z) => z.kind === 'carriere').length
+    // Périmètre ×2 → ~×2 carrières. On exige strictement plus, pas l'égalité.
+    expect(carr(big)).toBeGreaterThan(carr(small))
+  })
+
+  it("plus d'eau procédurale et plus de nœuds sur une plus grande surface", () => {
+    const small = generateValley(base(96, 96), 2)
+    const big = generateValley(base(192, 192), 2)
+    expect(shallowCount(big)).toBeGreaterThan(shallowCount(small))
+    expect(generateNodes(big, 2).length).toBeGreaterThan(generateNodes(small, 2).length)
+  })
+
+  it("aucune quantité figée : la petite carte n'est pas vide", () => {
+    const small = generateValley(base(96, 96), 3)
+    expect(small.zones.some((z) => z.kind === 'carriere')).toBe(true)
+    expect(shallowCount(small)).toBeGreaterThan(0)
   })
 })
