@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALIGNMENT, TERRAIN_GRASS } from './balance'
+import { ALIGNMENT, BALANCE, COMBAT, TERRAIN_GRASS } from './balance'
 import { archetypeOf } from './alignment'
 import { drainEvents } from './events'
 import { countOf } from './items'
@@ -80,12 +80,12 @@ describe('le premier sang (A2)', () => {
     const { a, b } = twoVillages(sim)
     // a frappe b : premier sang.
     act(sim, a, { type: 'attack', dx: 1, dy: 0 })
-    for (let t = 0; t < 6; t++) step(sim, [])
+    for (let t = 0; t < COMBAT.WINDUP_TICKS + 1; t++) step(sim, [])
     expect(entity(sim, a).warmth).toBeCloseTo(ALIGNMENT.FIRST_BLOOD_WARMTH, 0)
     // b riposte : presque gratuit.
-    for (let t = 0; t < 12; t++) step(sim, [])
+    for (let t = 0; t < BALANCE.TICK_RATE_HZ; t++) step(sim, [])
     act(sim, b, { type: 'attack', dx: -1, dy: 0 })
-    for (let t = 0; t < 6; t++) step(sim, [])
+    for (let t = 0; t < COMBAT.WINDUP_TICKS + 1; t++) step(sim, [])
     expect(entity(sim, b).warmth).toBeCloseTo(ALIGNMENT.RIPOSTE_WARMTH, 0)
   })
 })
@@ -109,13 +109,13 @@ describe('l’agrégation (A4)', () => {
     entity(sim, berserker).warmth = -100
     for (const n of sim.npcs) entity(sim, n.entityId).engagement = 30
     step(sim, []) // recalcul au tick 0 % 60
-    for (let t = 0; t < 61; t++) step(sim, [])
+    for (let t = 0; t < ALIGNMENT.REFRESH_TICKS + 1; t++) step(sim, [])
     // clamp(−100 → −50) / 3 membres ≈ −16.7 : le village ne vire pas Meute.
     expect(village.warmth).toBeCloseTo(-50 / 3, 0)
     expect(archetypeOf(village)).toBe('neutre')
 
     village.memberIds = village.memberIds.filter((id) => id !== berserker)
-    for (let t = 0; t < 61; t++) step(sim, [])
+    for (let t = 0; t < ALIGNMENT.REFRESH_TICKS + 1; t++) step(sim, [])
     expect(village.warmth).toBeCloseTo(0, 0)
   })
 })
@@ -137,7 +137,7 @@ describe('les paliers (A5)', () => {
     entity(sim, a).hp = 50
     entity(sim, b).hp = 50
     entity(sim, a).x = 30 // hors de portée l'un de l'autre
-    for (let t = 0; t < 720; t++) step(sim, []) // 1 min — mais le recalcul du Feu écrase…
+    for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) step(sim, []) // 1 min — mais le recalcul du Feu écrase…
     // (le recalcul a réécrit warmth depuis les membres : on vérifie le ratio brut)
     expect(entity(sim, a).hp).toBeGreaterThan(entity(sim, b).hp)
 
@@ -154,7 +154,7 @@ describe('les paliers (A5)', () => {
     entity(sim, a).hp = 100
     // Le Foyer initie (non provoqué) : ×0.6. 6 × 0.6 = 3.6.
     act(sim, a, { type: 'attack', dx: 1, dy: 0 })
-    for (let t = 0; t < 6; t++) step(sim, [])
+    for (let t = 0; t < COMBAT.WINDUP_TICKS + 1; t++) step(sim, [])
     expect(100 - entity(sim, b).hp).toBeCloseTo(6 * ALIGNMENT.FOYER_OFFENSE_MALUS, 0)
     // La Meute mord : ×1.2 — et c'est une riposte (a a frappé d'abord).
     va.warmth = 80
@@ -162,9 +162,9 @@ describe('les paliers (A5)', () => {
     vb.warmth = -80
     vb.engagement = 50
     entity(sim, a).hp = 100
-    for (let t = 0; t < 12; t++) step(sim, [])
+    for (let t = 0; t < BALANCE.TICK_RATE_HZ; t++) step(sim, [])
     act(sim, b, { type: 'attack', dx: -1, dy: 0 })
-    for (let t = 0; t < 6; t++) step(sim, [])
+    for (let t = 0; t < COMBAT.WINDUP_TICKS + 1; t++) step(sim, [])
     expect(100 - entity(sim, a).hp).toBeCloseTo(6 * ALIGNMENT.MEUTE_DAMAGE_BONUS, 0)
   })
 })
@@ -179,7 +179,7 @@ describe('LE test (A7) — le paquebot vire, la Meute raide', () => {
     for (let i = 0; i < 6; i++) {
       entity(sim, b).hunger = 15
       act(sim, a, { type: 'give', targetEntityId: b, item: 'berries', count: 3 })
-      for (let t = 0; t < 120; t++) step(sim, [])
+      for (let t = 0; t < 10 * BALANCE.TICK_RATE_HZ; t++) step(sim, [])
     }
     expect(entity(sim, a).warmth).toBeGreaterThan(ALIGNMENT.ARCHETYPE_WARMTH)
     expect(sim.villages[0]!.warmth).toBeGreaterThan(20) // plafonné par tête mais bien bleu
@@ -193,7 +193,7 @@ describe('LE test (A7) — le paquebot vire, la Meute raide', () => {
     foundNpcVillage(sim, 40, 40, 4, 'meute') // la Meute
     const meute = sim.villages[1]!
     // Laisser l'agrégation classer la Meute.
-    for (let t = 0; t < 61; t++) step(sim, [])
+    for (let t = 0; t < ALIGNMENT.REFRESH_TICKS + 1; t++) step(sim, [])
     expect(meute.archetype).toBe('meute')
 
     const victimChest = sim.structures.find((s) => s.type === 'chest' && s.villageId === victim.id)!
@@ -205,7 +205,9 @@ describe('LE test (A7) — le paquebot vire, la Meute raide', () => {
     drainEvents(sim)
     let alarm = false
     let chestBroken = false
-    for (let t = 0; t < 20000; t++) {
+    // Large marge en nuits, pas juste en ticks : des hordes peuvent décimer les
+    // raiders et retarder le raid de plusieurs nuits avant qu'il aboutisse.
+    for (let t = 0; t < 10 * TICKS_PER_CYCLE; t++) {
       step(sim, [])
       for (const e of drainEvents(sim)) {
         if (e.type === 'alarm_raised' && e.villageId === victim.id) alarm = true

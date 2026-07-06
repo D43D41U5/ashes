@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, SEASON, TERRAIN_GRASS, TERRAIN_ROAD } from './balance'
+import { ALIGNMENT, BALANCE, SEASON, TERRAIN_GRASS, TERRAIN_ROAD } from './balance'
 import { chronicleFromEvents } from './chronicle'
 import { drainEvents, type SimEvent } from './events'
 import { createEmptyMap } from './map'
@@ -71,11 +71,11 @@ describe('l’évacuation (A3)', () => {
 })
 
 describe('la fin de saison (A4)', () => {
-  it('verdicts par archétype au jour 61, émis une seule fois', () => {
+  it('verdicts par archétype au jour 61, émis une seule fois', { timeout: 30_000 }, () => {
     const sim = makeSim()
     foundNpcVillage(sim, 10, 10, 3, 'foyer')
     foundNpcVillage(sim, 30, 30, 2, 'meute')
-    for (let t = 0; t < 61; t++) step(sim, []) // classer les archétypes
+    for (let t = 0; t < ALIGNMENT.REFRESH_TICKS + 1; t++) step(sim, []) // classer les archétypes
     // Un grenier Meute gonflé pour le score de butin.
     const meuteChest = sim.structures.find((s) => s.type === 'chest' && s.villageId === sim.villages[1]!.id)!
     meuteChest.inventory = { components: 5, iron_ingot: 4, wood: 10 }

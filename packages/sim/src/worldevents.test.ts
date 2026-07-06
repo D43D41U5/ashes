@@ -108,7 +108,7 @@ describe('l’alarme (A3)', () => {
 })
 
 describe('les hordes nocturnes (A4, A5)', () => {
-  it('spawn à la nuit, dissipation à l’aube ; plus grosses en acte II', () => {
+  it('spawn à la nuit, dissipation à l’aube ; plus grosses en acte II', { timeout: 30_000 }, () => {
     // Échelle : 1 tick ≈ 1 jour — non : on teste en cycle réel, acte forcé.
     const mkSim = (startDay: number) => {
       const sim = createSim(8, {

@@ -17,7 +17,7 @@ export interface Monster {
   entityId: number
   type: MonsterType
   targetId: number | null
-  /** Prochain tick de décision (l'IA pense à 2 Hz, agit à 12). */
+  /** Prochain tick de décision (l'IA pense à 2 Hz, agit à BALANCE.TICK_RATE_HZ). */
   thinkAt: number
   wanderDx: -1 | 0 | 1
   wanderDy: -1 | 0 | 1
@@ -197,7 +197,7 @@ export function advanceMonsters(state: SimState): void {
 
     if (monster.type === 'zombie') {
       if (state.tick >= monster.thinkAt) {
-        monster.thinkAt = state.tick + 6
+        monster.thinkAt = state.tick + BALANCE.TICK_RATE_HZ / 2
         const prey = nearestPrey(state, entity, def.aggroRange)
         monster.targetId = prey?.id ?? null
         if (!prey && roll(state) < 0.3) {
@@ -231,7 +231,7 @@ export function advanceMonsters(state: SimState): void {
     const attackedBy = monster.lastAttackerId !== null ? state.entities.find((e) => e.id === monster.lastAttackerId) : undefined
     if (wounded && attackedBy) {
       if (state.tick >= monster.thinkAt) {
-        monster.thinkAt = state.tick + 12
+        monster.thinkAt = state.tick + BALANCE.TICK_RATE_HZ
         // Blessé : fuit, mais charge parfois (spec R12).
         monster.fleeing = roll(state) >= 0.25
       }

@@ -29,6 +29,8 @@ export interface InitMessage {
 
 export interface InputMessage {
   type: 'input'
+  /** Numéro croissant : l'hôte l'acquitte, le client rejoue les non-acquittés (spec reconciliation R1). */
+  seq: number
   dx: -1 | 0 | 1
   dy: -1 | 0 | 1
   sprint: boolean
@@ -51,6 +53,8 @@ export interface ReadyMessage {
 export interface SnapshotMessage {
   type: 'snapshot'
   tick: number
+  /** `seq` du dernier input du joueur appliqué à ce tick — ancre de réconciliation (spec R2). */
+  lastProcessedInput: number
   time: GameTime
   entities: Entity[]
   structures: Structure[]

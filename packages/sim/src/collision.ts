@@ -9,7 +9,7 @@
  * recouvre strictement — être flush contre un mur (max = bord de tuile)
  * n'est pas un recouvrement. EPS absorbe le bruit flottant.
  */
-import { BALANCE, NODE_DEFS, TERRAINS } from './balance'
+import { BALANCE, NODE_DEFS, TERRAINS, TICK_DT_S } from './balance'
 import { nodeAt, type ResourceNode } from './economy'
 import { isBlockingTile, terrainAt, type WorldMap } from './map'
 import { structureAt, structureBlocks, type Structure } from './village'
@@ -134,6 +134,46 @@ export function moveAvatar(
   const speed = BALANCE.WALK_SPEED_TILES_PER_S * dtS * factor * speedScale
   const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1
   return resolveMove(world, x, y, dx * speed * norm, dy * speed * norm)
+}
+
+/**
+ * Prédiction locale à pas fixe (parité avec l'autorité). Le serveur intègre un
+ * `moveAvatar` par tick à `TICK_DT_S` ; le client, lui, tourne au dt de la frame
+ * (variable, gros lors d'un pic). Comme la résolution par axe n'est pas
+ * invariante à la taille du pas, un gros pas diverge du serveur contre un mur et
+ * le snapshot suivant produit un rollback visible.
+ *
+ * On accumule le temps de frame et on ne consomme que des sous-pas ENTIERS de
+ * `TICK_DT_S` — chacun rejoue exactement un tick serveur (mêmes arguments), donc
+ * le résultat est identique au bit près à la suite de ticks correspondante. Le
+ * reliquat < `TICK_DT_S` est reporté dans `pendingS` pour la frame suivante.
+ * `EPS` sur le seuil absorbe le bruit d'accumulation flottante (un client calé
+ * pile sur le tick ne doit pas rater un sous-pas au hasard).
+ *
+ * `x, y` = l'ANCRE calée sur le tick (à réconcilier avec l'autorité, parité au
+ * bit près). `renderX, renderY` = où AFFICHER le sprite : l'ancre extrapolée du
+ * reliquat de frame (un pas partiel résolu par collision — donc lissé chaque
+ * frame et jamais dans un mur). On DEVANCE de < 1 tick au lieu de retarder :
+ * fluide sans latence ajoutée, contrairement à une interpolation prev→courant.
+ */
+export function moveAvatarStepped(
+  world: MoveWorld,
+  x: number,
+  y: number,
+  dx: -1 | 0 | 1,
+  dy: -1 | 0 | 1,
+  frameDtS: number,
+  pendingS: number,
+  speedScale = 1,
+): { x: number; y: number; pendingS: number; renderX: number; renderY: number } {
+  let remaining = pendingS + frameDtS
+  let pos = { x, y }
+  while (remaining >= TICK_DT_S - EPS) {
+    pos = moveAvatar(world, pos.x, pos.y, dx, dy, TICK_DT_S, speedScale)
+    remaining -= TICK_DT_S
+  }
+  const render = moveAvatar(world, pos.x, pos.y, dx, dy, remaining, speedScale)
+  return { x: pos.x, y: pos.y, pendingS: remaining, renderX: render.x, renderY: render.y }
 }
 
 /** L'AABB d'un avatar centré en (x, y) recouvre-t-elle une tuile bloquante ? (outil de test) */

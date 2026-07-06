@@ -12,6 +12,7 @@ import { isOutsider, recordAct, recordHostility, seasonActFactor } from './align
 import {
   ALIGNMENT,
   BALANCE,
+  COMBAT,
   FOOD_VALUES,
   STRUCTURE_COSTS,
   STRUCTURE_HP,
@@ -148,7 +149,7 @@ export function applyStructureDamage(state: SimState, structureId: number, damag
         x: s.tx + 0.5,
         y: s.ty + 0.5,
         inventory: { ...s.inventory },
-        decayAt: state.tick + 7200,
+        decayAt: state.tick + COMBAT.CORPSE_TICKS,
       })
       state.nextCorpseId += 1
     }

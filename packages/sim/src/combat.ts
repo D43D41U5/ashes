@@ -7,7 +7,7 @@
  * monstres — personne ne triche.
  */
 import { damageModifier, hasAggressionBetween, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
-import { ALIGNMENT, COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
+import { ALIGNMENT, BALANCE, COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
 import { emitEvent } from './events'
 import { addItems, countOf, removeItems, type ItemId } from './items'
 import type { Entity, SimState } from './sim'
@@ -82,7 +82,7 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
       if (target.wounds.bleeding) delete target.wounds.bleeding
       else if (target.wounds.leg) delete target.wounds.leg
       else delete target.wounds.arm
-      actor.cooldownUntil = state.tick + 12
+      actor.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
       // Soigner un extérieur est un acte chaud (spec alignement R2).
       if (target.id !== actorId && isOutsider(state, actorId, target.id)) {
         recordAct(state, actorId, ALIGNMENT.HEAL_OUTSIDER_WARMTH)
@@ -328,13 +328,13 @@ export function advanceCombat(state: SimState): void {
     // Saignement : draine jusqu'au bandage (spec R7) — peut tuer.
     if (entity.wounds.bleeding) {
       const before = entity.hp
-      entity.hp = Math.max(0, entity.hp - COMBAT.BLEED_HP_PER_S / 12)
+      entity.hp = Math.max(0, entity.hp - COMBAT.BLEED_HP_PER_S / BALANCE.TICK_RATE_HZ)
       if (before > 0 && entity.hp <= 0) die(state, entity, 0)
       continue
     }
     // PV : remontent lentement si bien nourri — modulé par la chaleur du Feu.
     if (entity.hp > 0 && entity.hp < 100 && entity.hunger > 50) {
-      entity.hp = Math.min(100, entity.hp + (COMBAT.HP_REGEN_PER_MIN / 720) * regenFactor(state, entity))
+      entity.hp = Math.min(100, entity.hp + (COMBAT.HP_REGEN_PER_MIN / (60 * BALANCE.TICK_RATE_HZ)) * regenFactor(state, entity))
     }
   }
 
@@ -347,7 +347,7 @@ export function advanceCombat(state: SimState): void {
       else if (entity.hunger <= 0) perS *= COMBAT.STARVED_REGEN_MALUS
       if (state.tick < entity.exhaustedUntil) perS *= 0.5
     }
-    entity.stamina = Math.min(100, entity.stamina + perS / 12)
+    entity.stamina = Math.min(100, entity.stamina + perS / BALANCE.TICK_RATE_HZ)
   }
 
   state.corpses = state.corpses.filter((c) => c.decayAt > state.tick)

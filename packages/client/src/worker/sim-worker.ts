@@ -32,6 +32,8 @@ const post = (message: HostToClient): void => {
 let sim: SimState | undefined
 let playerId = 0
 let playerInput: Pick<MoveInput, 'dx' | 'dy' | 'sprint' | 'block'> = { dx: 0, dy: 0 }
+/** `seq` du dernier input reçu — l'hôte l'applique chaque tick et l'acquitte dans le snapshot. */
+let lastProcessedInput = 0
 /** Une action au plus par tick (spec village R1) — la dernière reçue gagne. */
 let pendingAction: PlayerAction | undefined
 
@@ -87,6 +89,7 @@ function tick(): void {
   post({
     type: 'snapshot',
     tick: sim.tick,
+    lastProcessedInput,
     time: getGameTime(sim),
     entities: sim.entities,
     structures: sim.structures,
@@ -123,6 +126,7 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
     setInterval(tick, 1000 / BALANCE.TICK_RATE_HZ)
   } else if (msg.type === 'input') {
     playerInput = { dx: msg.dx, dy: msg.dy, sprint: msg.sprint, block: msg.block }
+    lastProcessedInput = msg.seq
   } else if (msg.type === 'action') {
     pendingAction = msg.action
   }

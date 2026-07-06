@@ -113,18 +113,18 @@ describe('l’artisanat (A3)', () => {
 
     // Fondre : à portée du four (le joueur est entre les deux stations).
     act(sim, id, { type: 'craft', recipeId: 'iron_ingot' })
-    for (let t = 0; t < 12; t++) step(sim, [])
+    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'craft', recipeId: 'iron_ingot' })
     expect(countOf(me(sim).inventory, 'iron_ingot')).toBe(2)
 
     // Hache de fer à l'atelier.
-    for (let t = 0; t < 12; t++) step(sim, [])
+    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'craft', recipeId: 'iron_axe' })
     expect(countOf(me(sim).inventory, 'iron_axe')).toBe(1)
 
     // Loin des stations : rejeté avec le nom de la station.
     me(sim).x = 25.5
-    for (let t = 0; t < 12; t++) step(sim, [])
+    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'craft', recipeId: 'iron_ingot' })
     expect(rejections(sim)).toEqual(['station requise hors de portée : furnace'])
   })
@@ -185,12 +185,12 @@ describe('la spécialisation (A5)', () => {
     expect(countOf(me(sim).inventory, 'wood')).toBe(3)
     me(sim).skills.woodcutting = 10000 // niveau 10 (setup de test)
     expect(skillLevel(10000)).toBe(10)
-    for (let t = 0; t < 12; t++) step(sim, [])
+    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'harvest', nodeId: tree.id })
     expect(countOf(me(sim).inventory, 'wood')).toBe(7)
 
     // Pression de spécialisation : le bûcheron de niveau 10 apprend la mine 6× plus lentement.
-    for (let t = 0; t < 12; t++) step(sim, [])
+    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     const rock = makeNode('rock', 10, 11)
     sim.nodes.push(rock)
     act(sim, id, { type: 'harvest', nodeId: rock.id })

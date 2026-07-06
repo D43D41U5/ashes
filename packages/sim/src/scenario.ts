@@ -3,7 +3,7 @@
  * entières headless et produit un rapport — l'outil de calibrage de
  * balance.ts, pour les humains comme pour les agents.
  */
-import { TERRAIN_GRASS, TERRAIN_ROAD } from './balance'
+import { BALANCE, TERRAIN_GRASS, TERRAIN_ROAD } from './balance'
 import { chronicleFromEvents } from './chronicle'
 import { generateNodes } from './economy'
 import { drainEvents, type SimEvent } from './events'
@@ -45,6 +45,9 @@ export function runScenario(seed: number, days: number): ScenarioReport {
   let deaths = 0
   let hordesSpawned = 0
   const total = days * TICKS_PER_CYCLE
+  // Cadence d'échantillonnage de la faim, en ticks — fixée en temps réel (pas
+  // en nombre de ticks brut) pour rester comparable d'un TICK_RATE_HZ à l'autre.
+  const sampleEveryTicks = Math.round(500 * (BALANCE.TICK_RATE_HZ / 12))
   for (let t = 0; t < total; t++) {
     step(sim, [])
     for (const e of drainEvents(sim)) {
@@ -52,7 +55,7 @@ export function runScenario(seed: number, days: number): ScenarioReport {
       if (e.type === 'entity_died' && !e.wasMonster) deaths += 1
       if (e.type === 'horde_spawned') hordesSpawned += 1
     }
-    if (t % 500 === 0) {
+    if (t % sampleEveryTicks === 0) {
       for (const npc of sim.npcs) {
         const entity = sim.entities.find((en) => en.id === npc.entityId)
         if (entity && entity.hunger <= 0) starvationSamples += 1

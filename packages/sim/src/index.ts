@@ -58,8 +58,16 @@ export { createReplayLog, recordAndStep, runReplay } from './replay'
 export type { ReplayLog } from './replay'
 export { createEmptyMap, terrainAt, isBlockingTile, zoneAt } from './map'
 export type { WorldMap, Zone } from './map'
-export { resolveMove, moveAvatar, overlapsBlocking } from './collision'
+export { resolveMove, moveAvatar, moveAvatarStepped, overlapsBlocking } from './collision'
 export type { MoveWorld } from './collision'
+export {
+  createPrediction,
+  predictFrame,
+  reconcile,
+  decayRenderOffset,
+  renderPosition,
+} from './prediction'
+export type { PredictionState, PredictInput, BufferedInput } from './prediction'
 export { getGameTime, seasonDayAtTick, actForDay, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
 export { importTiledMap } from './tiled'

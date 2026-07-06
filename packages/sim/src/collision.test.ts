@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_ROCK, TICK_DT_S } from './balance'
-import { overlapsBlocking } from './collision'
+import { moveAvatar, moveAvatarStepped, overlapsBlocking } from './collision'
 import { createEmptyMap, type WorldMap } from './map'
 import { rngRoll } from './rng'
 import { createSim, spawnEntity, step, type MoveInput } from './sim'
@@ -54,6 +54,93 @@ describe('collisions (A3)', () => {
     ])
     expect(sim.entities[0]!.x).toBeCloseTo(2.5 + SPEED * 1.25)
     expect(sim.entities[1]!.x).toBeCloseTo(2.5 + SPEED)
+  })
+
+  /**
+   * Parité prédiction/autorité près d'un mur (le rollback de coin).
+   *
+   * Le serveur intègre à pas fixe (`TICK_DT_S`), un `moveAvatar` par tick. Le
+   * client prédit au pas de la frame — un dt variable, gros lors d'un pic. Or
+   * la résolution par axe n'est PAS invariante à la taille du pas : contre la
+   * fin d'un mur, un gros pas résout X une fois (avec l'ancien span Y, encore
+   * bloqué) et reste collé, là où des petits pas contournent le bout du mur.
+   * L'écart se fait clamper en une tuile discrète → rollback visible au snapshot
+   * suivant. `moveAvatarStepped` redécoupe la frame en sous-pas de `TICK_DT_S`,
+   * rejouant exactement la suite de dt du serveur.
+   */
+  describe('sous-pas à pas fixe (parité prédiction/autorité)', () => {
+    // Mur vertical col 8, rangées 0..8 : il se termine, on le contourne par le bas.
+    const wallMap = (): WorldMap => {
+      const map = createEmptyMap(16, 16, TERRAIN_GRASS)
+      for (let ty = 0; ty <= 8; ty++) setTile(map, 8, ty, TERRAIN_ROCK)
+      return map
+    }
+    const START = { x: 8 - HALF, y: 4.5 }
+    const TICKS = 40
+
+    // Vérité autoritative : un moveAvatar par tick, dt fixe (comme `step`).
+    const serverPath = (world: { map: WorldMap }): { x: number; y: number } => {
+      let p = { x: START.x, y: START.y }
+      for (let t = 0; t < TICKS; t++) p = moveAvatar(world, p.x, p.y, 1, 1, TICK_DT_S)
+      return p
+    }
+
+    it('un gros pas unique diverge du serveur près du bout de mur (le bug)', () => {
+      const world = { map: wallMap() }
+      const server = serverPath(world)
+      // Ce que fait le client actuel sur une grosse frame (pic de lag) : un seul pas.
+      const bigStep = moveAvatar(world, START.x, START.y, 1, 1, TICKS * TICK_DT_S)
+      expect(bigStep).not.toEqual(server)
+    })
+
+    it('une grosse frame redécoupée en sous-pas reproduit le serveur au bit près', () => {
+      const world = { map: wallMap() }
+      const server = serverPath(world)
+      const stepped = moveAvatarStepped(world, START.x, START.y, 1, 1, TICKS * TICK_DT_S, 0)
+      expect({ x: stepped.x, y: stepped.y }).toEqual(server)
+    })
+
+    it('le découpage en demi-ticks donne le même résultat (invariance au pas de frame)', () => {
+      const world = { map: wallMap() }
+      const server = serverPath(world)
+      let p = { x: START.x, y: START.y, pendingS: 0 }
+      // 2 frames par tick → même nombre de sous-pas, mais frontières décalées.
+      for (let f = 0; f < TICKS * 2; f++) {
+        p = moveAvatarStepped(world, p.x, p.y, 1, 1, TICK_DT_S / 2, p.pendingS)
+      }
+      expect({ x: p.x, y: p.y }).toEqual(server)
+      expect(p.pendingS).toBeCloseTo(0)
+    })
+
+    // Rendu par extrapolation : l'ancre (x, y) reste calée sur le tick (parité
+    // autorité), mais la position affichée mène de la fraction de tick restante
+    // → mouvement fluide chaque frame, sans latence ajoutée (on devance, on ne
+    // retarde pas). Résolue par collision, donc jamais dans un mur.
+    it('la position de rendu extrapole le reliquat en terrain libre (fluidité, sans latence)', () => {
+      const world = { map: createEmptyMap(16, 16, TERRAIN_GRASS) }
+      const x0 = 2.5
+      // 1,5 tick de frame → 1 sous-pas entier, reliquat d'un demi-tick.
+      const s = moveAvatarStepped(world, x0, 4.5, 1, 0, TICK_DT_S * 1.5, 0)
+      expect(s.x).toBe(x0 + SPEED) // ancre : un sous-pas entier, calée sur le tick
+      expect(s.pendingS).toBeCloseTo(TICK_DT_S / 2)
+      expect(s.renderX).toBeCloseTo(x0 + SPEED * 1.5) // rendu : position continue lissée
+      expect(s.renderY).toBe(4.5)
+    })
+
+    it('à la frontière de tick, le rendu coïncide avec l’ancre (pas de reliquat)', () => {
+      const world = { map: createEmptyMap(16, 16, TERRAIN_GRASS) }
+      const s = moveAvatarStepped(world, 2.5, 4.5, 1, 0, TICK_DT_S, 0)
+      expect(s.renderX).toBe(s.x)
+      expect(s.renderY).toBe(s.y)
+    })
+
+    it('le rendu extrapolé se clampe sur le mur, jamais dans un obstacle', () => {
+      const world = { map: wallMap() }
+      // Ancre flush contre le mur, avec un reliquat qui pousserait « dans » le mur.
+      const s = moveAvatarStepped(world, 8 - HALF, 4.5, 1, 0, TICK_DT_S / 2, TICK_DT_S / 2)
+      expect(overlapsBlocking(world, s.renderX, s.renderY)).toBe(false)
+      expect(s.renderX).toBeLessThanOrEqual(8 - HALF)
+    })
   })
 
   it('marche aléatoire de 10 000 ticks dans un labyrinthe : jamais dans un mur', () => {

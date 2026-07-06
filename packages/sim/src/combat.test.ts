@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { COMBAT, MONSTER_DEFS, TERRAIN_GRASS } from './balance'
+import { BALANCE, COMBAT, MONSTER_DEFS, TERRAIN_GRASS } from './balance'
 import { drainEvents } from './events'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
@@ -24,7 +24,7 @@ function strike(sim: SimState, attackerId: number, dx: number, dy: number, targe
   tick(sim, [{ entityId: attackerId, dx: 0, dy: 0, action: { type: 'attack', dx, dy } }, ...targetInputs])
   for (let t = 0; t < COMBAT.WINDUP_TICKS; t++) tick(sim, targetInputs)
   // Cooldown avant la prochaine attaque.
-  for (let t = 0; t < 12; t++) tick(sim, [])
+  for (let t = 0; t < BALANCE.TICK_RATE_HZ; t++) tick(sim, [])
 }
 
 describe('l’endurance (A1)', () => {
@@ -141,7 +141,7 @@ describe('les blessures (A4)', () => {
     // a bande son allié : le saignement d'abord, puis la jambe.
     tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'bandage', targetEntityId: b } }])
     expect(entity(sim, b).wounds.bleeding).toBeUndefined()
-    for (let t = 0; t < 12; t++) tick(sim)
+    for (let t = 0; t < BALANCE.TICK_RATE_HZ; t++) tick(sim)
     tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'bandage', targetEntityId: b } }])
     expect(entity(sim, b).wounds.leg).toBeUndefined()
     const x1 = entity(sim, b).x
@@ -193,7 +193,7 @@ describe('les monstres (A6)', () => {
     drainEvents(sim)
 
     // Il approche et frappe : le joueur immobile finit par prendre des dégâts.
-    for (let t = 0; t < 400 && entity(sim, a).hp === 100; t++) tick(sim)
+    for (let t = 0; t < 400 * (BALANCE.TICK_RATE_HZ / 12) && entity(sim, a).hp === 100; t++) tick(sim)
     expect(entity(sim, a).hp).toBeLessThan(100)
 
     // On le tue : 3 coups de lance (40 PV / 16).
@@ -216,7 +216,7 @@ describe('les monstres (A6)', () => {
     const boar = entity(sim, b)
     expect(boar.hp).toBeLessThan(MONSTER_DEFS.boar.hp)
     const distBefore = Math.abs(boar.x - entity(sim, a).x)
-    for (let t = 0; t < 60; t++) tick(sim)
+    for (let t = 0; t < 5 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
     // Il a réagi : fui (distance accrue) ou chargé — dans les deux cas il a bougé.
     expect(Math.abs(boar.x - entity(sim, a).x)).not.toBeCloseTo(distBefore, 1)
 
@@ -235,7 +235,7 @@ describe('les monstres (A6)', () => {
     expect(countOf(entity(sim, a).inventory, 'raw_meat')).toBe(3)
     entity(sim, a).x = 10.5
     entity(sim, a).y = 10.5
-    for (let t = 0; t < 12; t++) tick(sim)
+    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) tick(sim)
     tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'craft', recipeId: 'cooked_meat' } }])
     expect(countOf(entity(sim, a).inventory, 'cooked_meat')).toBe(1)
   })
@@ -249,7 +249,7 @@ describe('la milice (A7)', () => {
     spawnMonster(sim, 'zombie', 20, 27)
     spawnMonster(sim, 'zombie', 14, 15)
 
-    for (let t = 0; t < 3600 && sim.monsters.length > 0; t++) tick(sim)
+    for (let t = 0; t < 300 * BALANCE.TICK_RATE_HZ && sim.monsters.length > 0; t++) tick(sim) // ~5 min de marge
     expect(sim.monsters).toHaveLength(0) // tous abattus
     expect(sim.npcs).toHaveLength(4) // aucun mort
   })

@@ -1,18 +1,25 @@
 /**
  * La scène de jeu : rendu de la vallée, avatar prédit, entités interpolées.
  *
- * Le client est « bête » (spec client R3-R5) : la sim tourne dans le Worker,
- * ici on envoie des intentions et on interpole des snapshots. La seule
- * logique partagée est `moveAvatar` de /sim, rejouée pour la prédiction
- * locale de son propre avatar.
+ * Le client est « bête » (spec client R3-R5, reconciliation R1-R7) : la sim
+ * tourne dans le Worker, ici on envoie des intentions numérotées et on interpole
+ * des snapshots. La prédiction locale de son propre avatar et la réconciliation
+ * par rejeu vivent dans `/sim` (`prediction.ts`, pur et testé) — on ne fait ici
+ * que câbler l'I/O réseau et le rendu.
  */
 import {
   BALANCE,
   COMBAT,
   STRUCTURE_HP,
   chronicleFromEvents,
-  moveAvatar,
+  createPrediction,
+  decayRenderOffset,
+  predictFrame,
+  reconcile as reconcilePrediction,
+  renderPosition,
   zoneAt,
+  type PredictInput,
+  type PredictionState,
   type SimEvent,
   type AccessLevel,
   type Corpse,
@@ -36,6 +43,8 @@ const TILE_PX = 16
 const INTERP_MS = 1000 / BALANCE.TICK_RATE_HZ
 /** Écart prédiction/autorité au-delà duquel on snap (spec client R5). */
 const SNAP_DISTANCE_TILES = 1.5
+/** Décroissance par frame de l'écart visuel après une correction (lissage de rendu, spec R6). */
+const RENDER_OFFSET_DECAY = 0.85
 
 const TERRAIN_COLORS: Record<number, number> = {
   // (les couleurs sont des placeholders R8, remplacées par de vrais tilesets en V3+)
@@ -77,9 +86,13 @@ export class WorldScene extends Phaser.Scene {
   private map!: WorldMap
   private playerId = 0
   private playerSprite!: Phaser.GameObjects.Image
-  private predicted = { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y }
+  /** Prédiction à pas fixe + réconciliation par rejeu (spec reconciliation). */
+  private prediction: PredictionState = createPrediction(PLAYER_SPAWN.x, PLAYER_SPAWN.y)
+  /** Position LOGIQUE du joueur (ancre autorité) — pour viser, mesurer une distance. */
+  private get predicted(): { x: number; y: number } {
+    return this.prediction.base
+  }
   private others = new Map<number, InterpolatedSprite>()
-  private lastSentInput = { dx: 0, dy: 0, sprint: false, block: false }
   private keys!: Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key[]>
   private structures: Structure[] = []
   private structureSprites = new Map<number, Phaser.GameObjects.Image>()
@@ -234,18 +247,11 @@ export class WorldScene extends Phaser.Scene {
     const sprint = this.sprintKeys.some((k) => k.isDown)
     const block = this.blockKey.isDown
 
-    if (
-      dx !== this.lastSentInput.dx ||
-      dy !== this.lastSentInput.dy ||
-      sprint !== this.lastSentInput.sprint ||
-      block !== this.lastSentInput.block
-    ) {
-      this.lastSentInput = { dx, dy, sprint, block }
-      this.send({ type: 'input', dx, dy, sprint, block })
-    }
-
-    // Prédiction locale (R5) : même code que la sim, au dt de la frame —
-    // structures, nœuds, appartenance et faim compris.
+    // Prédiction locale (spec reconciliation R1-R7). `predictFrame` consomme le
+    // dt de frame en sous-pas de tick fixes (rejeu exact de la suite de dt du
+    // serveur → pas de divergence de coin), numérote chaque input et le bufferise.
+    // On transmet à l'hôte un `input` par tick consommé ; la réconciliation par
+    // rejeu (dans `onHostMessage`) recalera l'ancre sur l'autorité.
     const world = {
       map: this.map,
       structures: this.structures,
@@ -256,9 +262,16 @@ export class WorldScene extends Phaser.Scene {
     if (this.myWoundedLeg) speedScale *= COMBAT.LEG_WOUND_SPEED
     if (block) speedScale *= COMBAT.BLOCK_MOVE_FACTOR
     else if (sprint && (dx !== 0 || dy !== 0)) speedScale *= COMBAT.SPRINT_FACTOR
-    const moved = moveAvatar(world, this.predicted.x, this.predicted.y, dx, dy, deltaMs / 1000, speedScale)
-    this.predicted = moved
-    this.syncSprite(this.playerSprite, moved.x, moved.y)
+    const input: PredictInput = { dx, dy, sprint, block }
+    for (const buffered of predictFrame(this.prediction, world, deltaMs / 1000, input, speedScale)) {
+      this.send({ type: 'input', seq: buffered.seq, dx, dy, sprint, block })
+    }
+    // Rendu (R6-R7) : l'écart de correction résiduel fond chaque frame, puis le
+    // sprite s'affiche à l'ancre extrapolée du reliquat sous-tick + cet écart —
+    // fluide, sans latence, la sim restant exacte.
+    decayRenderOffset(this.prediction, RENDER_OFFSET_DECAY)
+    const render = renderPosition(this.prediction, world, input, speedScale)
+    this.syncSprite(this.playerSprite, render.x, render.y)
 
     // Le fantôme de construction suit le pointeur, aligné sur la grille.
     const pointer = this.input.activePointer
@@ -340,7 +353,7 @@ export class WorldScene extends Phaser.Scene {
         this.registry.set('wounds', entity.wounds)
         this.myHunger = entity.hunger
         this.myWoundedLeg = entity.wounds.leg === true
-        this.reconcile(entity)
+        this.reconcile(entity, msg.lastProcessedInput)
         continue
       }
       seen.add(entity.id)
@@ -446,16 +459,26 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
-  /** Réconciliation douce vers la position autoritative (R5). */
-  private reconcile(authoritative: Entity): void {
-    const ex = authoritative.x - this.predicted.x
-    const ey = authoritative.y - this.predicted.y
-    const distSq = ex * ex + ey * ey
-    if (distSq > SNAP_DISTANCE_TILES * SNAP_DISTANCE_TILES) {
-      this.predicted = { x: authoritative.x, y: authoritative.y }
-    } else {
-      this.predicted = { x: this.predicted.x + ex * 0.2, y: this.predicted.y + ey * 0.2 }
+  /**
+   * Réconciliation par rejeu (spec reconciliation R3-R6) : purge les inputs
+   * acquittés, pose l'ancre sur l'autorité et rejoue les inputs en attente. La
+   * sim reste exacte ; l'écart de correction va dans `renderOffset` (lissé au
+   * rendu), et au-delà du seuil de snap c'est un vrai téléport (respawn au Feu).
+   */
+  private reconcile(authoritative: Entity, lastProcessedInput: number): void {
+    const world = {
+      map: this.map,
+      structures: this.structures,
+      nodes: this.nodes,
+      moverVillageId: this.myVillageId,
     }
+    reconcilePrediction(
+      this.prediction,
+      world,
+      { x: authoritative.x, y: authoritative.y },
+      lastProcessedInput,
+      SNAP_DISTANCE_TILES,
+    )
   }
 
   private axis(plus: 'right' | 'down', minus: 'left' | 'up'): -1 | 0 | 1 {

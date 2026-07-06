@@ -5,10 +5,27 @@
  * Le GDD (§15) précise que tous les chiffres sont des ordres de grandeur à
  * calibrer en playtest — les centraliser rend le tuning diffable en une
  * ligne et testable par bots headless sans toucher aux systèmes.
+ *
+ * Durées exprimées en ticks : la source de vérité est le TEMPS RÉEL (secondes,
+ * cycles), converti une seule fois via `ticksFor`/`ticksForCycles` ci-dessous.
+ * Changer TICK_RATE_HZ (ou CYCLE_REAL_MINUTES) recalcule tout automatiquement —
+ * ne jamais coller un nombre de ticks en dur ailleurs dans /sim ou les tests ;
+ * dériver de BALANCE.TICK_RATE_HZ (voir docs/decisions.md, 2026-07-05).
  */
+
+/** Fréquence de la simulation, en ticks par seconde (GDD §11 : 10-15 Hz ;
+ * dérogation actée à 20 Hz le 2026-07-05, voir docs/decisions.md). */
+const TICK_RATE_HZ = 20
+/** Durée du cycle jour/nuit diégétique, en minutes réelles (non accéléré). */
+const CYCLE_REAL_MINUTES = 48
+
+/** Convertit une durée réelle (secondes) en nombre de ticks, à la fréquence courante. */
+const ticksFor = (seconds: number): number => Math.round(seconds * TICK_RATE_HZ)
+/** Convertit un nombre de cycles jour/nuit (ex. 1/24 = une heure de cycle) en ticks. */
+const ticksForCycles = (cycles: number): number => Math.round(cycles * CYCLE_REAL_MINUTES * 60 * TICK_RATE_HZ)
+
 export const BALANCE = {
-  /** Fréquence de la simulation, en ticks par seconde (GDD §11 : 10-15 Hz). */
-  TICK_RATE_HZ: 12,
+  TICK_RATE_HZ,
 
   /** Durée d'une saison en jours réels (GDD §2). */
   SEASON_DAYS: 60,
@@ -17,7 +34,7 @@ export const BALANCE = {
   WALK_SPEED_TILES_PER_S: 4,
 
   /** Durée du cycle jour/nuit diégétique, en minutes réelles (non accéléré). */
-  CYCLE_REAL_MINUTES: 48,
+  CYCLE_REAL_MINUTES,
 
   /** Part du cycle qui est de jour (0.625 → 30 min de jour, 18 min de nuit). */
   CYCLE_DAY_FRACTION: 0.625,
@@ -44,10 +61,10 @@ export const BALANCE = {
   DEMOLISH_REFUND: 0.5,
 
   /** Ticks avant qu'un nœud épuisé repousse à plein (~5 min réelles). */
-  NODE_REGROW_TICKS: 3600,
+  NODE_REGROW_TICKS: ticksFor(300),
 
   /** Rythme minimal entre deux récoltes/crafts (1 s) — borne de vraisemblance. */
-  GATHER_COOLDOWN_TICKS: 12,
+  GATHER_COOLDOWN_TICKS: ticksFor(1),
 
   /** Coups outillés avant qu'un outil soit consommé. */
   TOOL_DURABILITY: 100,
@@ -94,7 +111,7 @@ export const BALANCE = {
   SLEEP_RECOVERY_FIRE_PER_HOUR: 6,
 
   /** Cadence de recalcul du tableau du village (5 s). */
-  BOARD_REFRESH_TICKS: 60,
+  BOARD_REFRESH_TICKS: ticksFor(5),
 
   /** Cibles du grenier (spec R5). Score nourriture = baies + 3×ragoûts. */
   VILLAGE_FOOD_TARGET: 12,
@@ -227,8 +244,8 @@ export interface MonsterDef {
 }
 
 export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
-  zombie: { hp: 40, damage: 12, speed: 2.4, windupTicks: 7, attackCooldownTicks: 24, aggroRange: 6, loot: {} },
-  boar: { hp: 30, damage: 8, speed: 3.6, windupTicks: 5, attackCooldownTicks: 24, aggroRange: 0, loot: { raw_meat: 3 } },
+  zombie: { hp: 40, damage: 12, speed: 2.4, windupTicks: ticksFor(0.6), attackCooldownTicks: ticksFor(2), aggroRange: 6, loot: {} },
+  boar: { hp: 30, damage: 8, speed: 3.6, windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0, loot: { raw_meat: 3 } },
 }
 
 /** Le combat (GDD §7, spec combat) — lent, positionnel, gagné avant l'échange. */
@@ -241,7 +258,7 @@ export const COMBAT = {
   /** Modulateurs de régén : bien nourri (faim > 70) / affamé (faim 0). */
   FED_REGEN_BONUS: 1.25,
   STARVED_REGEN_MALUS: 0.5,
-  WINDUP_TICKS: 5, // ~417 ms
+  WINDUP_TICKS: ticksFor(0.4),
   ATTACK_RANGE: 1.4,
   ATTACK_ARC_COS: 0.7071, // cos(45°) — arc total de 90°
   BLOCK_ARC_COS: 0.5, // cos(60°) — arc frontal de 120°
@@ -259,8 +276,8 @@ export const COMBAT = {
   RESPAWN_HUNGER: 50,
   RESPAWN_STAMINA: 20,
   /** Épuisement post-mort : régén d'endurance ÷2 (~5 min démo ; GDD vise ~30 min). */
-  EXHAUSTION_TICKS: 3600,
-  CORPSE_TICKS: 7200, // ~10 min
+  EXHAUSTION_TICKS: ticksFor(300),
+  CORPSE_TICKS: ticksFor(600),
   DEFEND_RADIUS: 10,
 } as const
 
@@ -286,7 +303,7 @@ export const WORLD_EVENTS = {
   /** Sous cette fraction de PV, le tableau poste une tâche de réparation. */
   REPAIR_TASK_THRESHOLD: 0.6,
   /** Une alarme par vague : cooldown d'une heure de cycle. */
-  ALARM_COOLDOWN_TICKS: 1440,
+  ALARM_COOLDOWN_TICKS: ticksForCycles(1 / 24),
   /** Probabilité de horde par nuit, par acte (la pression du GDD §2). */
   HORDE_CHANCE_PER_NIGHT: [0.35, 0.6, 0.9],
   /** Taille de horde par acte. */
@@ -295,7 +312,7 @@ export const WORLD_EVENTS = {
   CONVOY_PERIOD_DAYS: 2,
   CONVOY_GUARDS: 2,
   /** Le butin dure 2 cycles avant de se dissiper. */
-  CONVOY_DECAY_TICKS: 69120,
+  CONVOY_DECAY_TICKS: ticksForCycles(2),
 } as const
 
 export const CONVOY_LOOT: import('./items').Inventory = {
@@ -360,7 +377,7 @@ export const ALIGNMENT = {
   /** Décroissance linéaire vers 0, en points par jour de saison (le paquebot). */
   DECAY_PER_DAY: 4,
   /** Mémoire d'agression entre villages : 1 cycle. */
-  AGGRESSION_MEMORY_TICKS: 34560,
+  AGGRESSION_MEMORY_TICKS: ticksForCycles(1),
   /** Plafond par tête à l'agrégation du Feu (GDD : un seul berserker…). */
   WARMTH_CAP_PER_HEAD: 50,
   /** Seuils d'archétype. */
@@ -374,8 +391,8 @@ export const ALIGNMENT = {
   FOYER_OFFENSE_MALUS: 0.6,
   MEUTE_DAMAGE_BONUS: 1.2,
   MEUTE_HARVEST_MALUS: 0.75,
-  /** Cadence de recalcul du Feu. */
-  REFRESH_TICKS: 60,
+  /** Cadence de recalcul du Feu (5 s). */
+  REFRESH_TICKS: ticksFor(5),
   /** Le don du Foyer PNJ (spec R14). */
   GIFT_BERRIES: 5,
 } as const

@@ -127,7 +127,7 @@ function followPath(state: SimState, npc: Npc, entity: Entity): boolean {
   const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, sy, 1 / BALANCE.TICK_RATE_HZ, speedScale)
   if (moved.x === entity.x && moved.y === entity.y) {
     npc.stuck += 1
-    if (npc.stuck > 24) {
+    if (npc.stuck > 2 * BALANCE.TICK_RATE_HZ) {
       npc.path = [] // recalcul au prochain tick de décision
       npc.stuck = 0
     }
@@ -557,7 +557,7 @@ function handleErrand(state: SimState, village: Village, npc: Npc, entity: Entit
   )
   if (foe && !entity.windup && state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
     startAttack(state, entity, foe.x - entity.x, foe.y - entity.y)
-    entity.cooldownUntil = state.tick + 12
+    entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
     return true
   }
   if (entity.windup) return true
@@ -582,7 +582,7 @@ function handleErrand(state: SimState, village: Village, npc: Npc, entity: Entit
     }
     if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
       startAttack(state, entity, target.tx + 0.5 - entity.x, target.ty + 0.5 - entity.y, undefined, COMBAT.WINDUP_TICKS, undefined, target.id)
-      entity.cooldownUntil = state.tick + 12
+      entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
     }
     return true
   }
@@ -636,7 +636,7 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
   if (d2 <= 1.2 * 1.2) {
     if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
       startAttack(state, entity, threat.x - entity.x, threat.y - entity.y)
-      entity.cooldownUntil = state.tick + 12
+      entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
     }
     return true
   }
