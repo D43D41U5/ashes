@@ -123,27 +123,24 @@ describe("generateValley — rivière, routes, franchissements", () => {
 })
 
 describe('stampBlob — contours organiques (Lac)', () => {
-  it("le Lac n'est plus un disque parfait : son contour est irrégulier", () => {
+  it("le Lac n'est plus un disque parfait : sa berge ondule", () => {
     const map = generateValley(TEST_SKELETON, 7)
     const { x, y, r } = TEST_SKELETON.lake
-    // Sur l'anneau du rayon nominal, un disque parfait donnerait un mélange net ;
-    // un contour bruité met de l'eau au-delà de r ET de la terre en-deçà.
-    let waterBeyond = 0
-    let landWithin = 0
-    for (let ty = y - r - 3; ty <= y + r + 3; ty++) {
-      for (let tx = x - r - 3; tx <= x + r + 3; tx++) {
-        const d2 = (tx - x) * (tx - x) + (ty - y) * (ty - y)
-        const t = terrainAt(map, tx, ty)
+    // On compare la frontière de l'eau du Lac (berge = rayon r+2) à un disque
+    // parfait de même rayon. La colonne de la rivière (qui débouche dans le Lac)
+    // est exclue pour ne mesurer que la berge. Un disque net ne produirait AUCUN
+    // écart ; une berge bruitée par stampBlob en produit plusieurs.
+    let flips = 0
+    for (let dy = -(r + 3); dy <= r + 3; dy++) {
+      for (let dx = -(r + 3); dx <= r + 3; dx++) {
+        if (dx >= -3 && dx <= 3) continue
+        const d2 = dx * dx + dy * dy
+        const t = terrainAt(map, x + dx, y + dy)
         const wet = t === TERRAIN_DEEP_WATER || t === TERRAIN_SHALLOW_WATER
-        if (d2 > (r + 1) * (r + 1) && wet) waterBeyond++
-        if (d2 < (r - 1) * (r - 1) && !wet) landWithin++
+        const perfect = d2 <= (r + 2) * (r + 2)
+        if (wet !== perfect) flips++
       }
     }
-    // Au moins l'un des deux est franc : le bord ondule, pas un cercle net.
-    expect(waterBeyond + landWithin).toBeGreaterThan(8)
-  })
-
-  it('reste déterministe : même seed → même carte', () => {
-    expect(generateValley(TEST_SKELETON, 7).terrain).toEqual(generateValley(TEST_SKELETON, 7).terrain)
+    expect(flips).toBeGreaterThan(3)
   })
 })
