@@ -317,9 +317,8 @@ export class WorldScene extends Phaser.Scene {
     // Caméra « Foxhole » (R11) : le point suivi se décale vers le curseur pour
     // voir plus loin là où l'on vise. Calcul en ÉCRAN-espace (écart au centre),
     // jamais depuis la position monde du pointeur → pas de boucle caméra↔curseur.
-    const p = this.input.activePointer
     const off = lookaheadOffset(
-      p.x, p.y, this.scale.width / 2, this.scale.height / 2,
+      pointer.x, pointer.y, this.scale.width / 2, this.scale.height / 2,
       LOOKAHEAD_STRENGTH, LOOKAHEAD_MAX_TILES, TILE_PX,
     )
     // followOffset est SOUSTRAIT du point suivi → on nie pour pencher VERS le curseur.

@@ -40,6 +40,11 @@ describe('lookaheadOffset (R11)', () => {
     const mag = Math.sqrt(off.x * off.x + off.y * off.y)
     expect(mag).toBeCloseTo(6 * TILE, 5)
   })
+  it('sous la borne, renvoie strength × écart au centre sans clamp', () => {
+    // écart 100 px × strength 0.2 = 20 px < 6 tuiles (96 px) → passe tel quel
+    const off = lookaheadOffset(CX + 100, CY, CX, CY, 0.2, 6, TILE)
+    expect(off).toEqual({ x: 20, y: 0 })
+  })
 })
 
 describe('actorPlacement (R12 + R13)', () => {
