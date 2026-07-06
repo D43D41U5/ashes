@@ -84,6 +84,9 @@ export { spawnMonster } from './monsters'
 export { spawnHorde, spawnConvoy } from './worldevents'
 export { applyDamage } from './combat'
 export { applyStructureDamage, grantItems } from './village'
+export { generateValley } from './valleygen'
+export type { ValleySkeleton, ValleyRegion, ValleyPoint } from './valleygen'
+export { VEILLEE_SKELETON, VEILLEE_SITES } from './valley-veillee'
 
 // ─── Netcode client : prédiction locale & réconciliation ──────────────────
 export {
