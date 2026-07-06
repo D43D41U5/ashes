@@ -9,10 +9,14 @@
  * le même WorldMap — l'architecture ne bouge pas.
  */
 import {
+  TERRAIN_DEEP_WATER,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
   TERRAIN_MARSH,
+  TERRAIN_ROAD,
   TERRAIN_ROCK,
+  TERRAIN_SHALLOW_WATER,
+  TERRAIN_WALL,
 } from './balance'
 import { createEmptyMap, type WorldMap, type Zone } from './map'
 import { fbm2, hash2 } from './noise'
@@ -62,6 +66,11 @@ export function generateValley(skeleton: ValleySkeleton, seed: number): WorldMap
   for (const ridge of skeleton.ridges) {
     paintPolyline(map, ridge.points, ridge.halfWidth, () => TERRAIN_ROCK)
   }
+  paintRiver(map, skeleton)
+  paintRoads(map, skeleton)
+  paintCrossings(map, skeleton)
+  for (const c of skeleton.clearings) stampDisk(map, c.x, c.y, c.r, paintClear)
+  for (const r of skeleton.ruins) paintRuin(map, r.x, r.y)
   map.zones = skeleton.landmarks.map((z) => ({ ...z }))
   return map
 }
@@ -131,4 +140,44 @@ function paintBorder(map: WorldMap, skeleton: ValleySkeleton, seed: number): voi
       if (d < th) setTile(map, tx, ty, TERRAIN_ROCK)
     }
   }
+}
+
+const isWater = (t: number): boolean => t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER
+
+/** Nettoie en herbe — sans toucher l'eau ni la route. */
+const paintClear: Paint = (cur) => (isWater(cur) || cur === TERRAIN_ROAD ? undefined : TERRAIN_GRASS)
+
+function paintRiver(map: WorldMap, skeleton: ValleySkeleton): void {
+  const { points, halfWidth } = skeleton.river
+  paintPolyline(map, points, halfWidth + 1, () => TERRAIN_SHALLOW_WATER)
+  paintPolyline(map, points, halfWidth, () => TERRAIN_DEEP_WATER)
+  const { x, y, r } = skeleton.lake
+  stampDisk(map, x, y, r + 2, () => TERRAIN_SHALLOW_WATER)
+  stampDisk(map, x, y, r, () => TERRAIN_DEEP_WATER)
+}
+
+/** Les routes percent tout SAUF l'eau — le franchissement est une décision. */
+function paintRoads(map: WorldMap, skeleton: ValleySkeleton): void {
+  const paintRoad: Paint = (cur) => (isWater(cur) ? undefined : TERRAIN_ROAD)
+  for (const road of skeleton.roads) paintPolyline(map, road, 1, paintRoad)
+}
+
+/** Pont : la route enjambe l'eau. Gué : l'eau devient peu profonde. */
+function paintCrossings(map: WorldMap, skeleton: ValleySkeleton): void {
+  const r = skeleton.river.halfWidth + 2
+  for (const c of skeleton.crossings) {
+    stampDisk(map, c.x, c.y, r, () => (c.kind === 'bridge' ? TERRAIN_ROAD : TERRAIN_SHALLOW_WATER))
+  }
+}
+
+/** Un pan de bâtiment effondré — murs percés de brèches, sol nettoyé. */
+const RUIN_WALLS: readonly (readonly [number, number])[] = [
+  [0, 0], [1, 0], [2, 0], [4, 0],
+  [0, 1], [4, 1],
+  [0, 3], [1, 3], [3, 3], [4, 3],
+]
+
+function paintRuin(map: WorldMap, x: number, y: number): void {
+  stampDisk(map, x + 2, y + 1, 4, paintClear)
+  for (const [dx, dy] of RUIN_WALLS) setTile(map, x + dx, y + dy, TERRAIN_WALL)
 }
