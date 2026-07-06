@@ -57,6 +57,8 @@ export const VEILLEE_SKELETON: ValleySkeleton = {
     { x: 86, y: 138 },
     { x: 93, y: 143 },
   ],
+  // Réseau d'eau procédural (scalable) : ruisseaux et étangs rares.
+  water: { streamDensity: 0.0008, pondDensity: 0.0004 },
   regions: [
     { x: 8, y: 8, w: 100, h: 28, forest: 0.42, rock: 0.1 },    // le Plateau
     { x: 8, y: 40, w: 100, h: 56, forest: 0.62, rock: 0.04 },  // la Vieille Forêt

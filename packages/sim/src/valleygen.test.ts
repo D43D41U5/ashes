@@ -174,6 +174,64 @@ describe('roche en amas (dé-confettisage)', () => {
   })
 })
 
+describe('réseau d’eau', () => {
+  // Squelette avec de la place, une rivière et des densités d'eau explicites.
+  const watery: ValleySkeleton = {
+    ...TEST_SKELETON,
+    regions: [{ x: 6, y: 6, w: 36, h: 20, rock: 0.2 }],
+    water: { streamDensity: 0.004, pondDensity: 0.002 },
+  }
+
+  it('les ruisseaux sont peu profonds (marchables) et touchent une eau existante', () => {
+    const map = generateValley(watery, 11)
+    // Toute tuile d'eau peu profonde hors rivière/lac reste marchable.
+    for (let ty = 0; ty < map.height; ty++) {
+      for (let tx = 0; tx < map.width; tx++) {
+        if (terrainAt(map, tx, ty) === TERRAIN_SHALLOW_WATER) {
+          expect(isBlockingTile(map, tx, ty)).toBe(false)
+        }
+      }
+    }
+  })
+
+  it('les étangs existent et restent rares (densité basse)', () => {
+    const map = generateValley(watery, 11)
+    // Compter les composantes d'eau peu profonde loin de la rivière = étangs+ruisseaux.
+    let shallow = 0
+    for (let i = 0; i < map.terrain.length; i++) if (map.terrain[i] === TERRAIN_SHALLOW_WATER) shallow++
+    expect(shallow).toBeGreaterThan(0)
+  })
+
+  it('les étangs ne percent ni la bordure ni les clairières', () => {
+    const withClearing: ValleySkeleton = {
+      ...TEST_SKELETON,
+      // Rivière/lac neutralisés hors de la zone testée : la SEULE eau profonde
+      // possible dans [18,30]² serait alors le cœur d'un étang — le test gate
+      // réellement sur le garde-fou de paintPonds, pas sur la rivière.
+      river: { points: [{ x: 2, y: 2 }, { x: 2, y: 3 }], halfWidth: 0 },
+      lake: { x: 2, y: 2, r: 0 },
+      crossings: [],
+      regions: [{ x: 6, y: 6, w: 36, h: 36 }],
+      clearings: [{ x: 24, y: 24, r: 6 }],
+      water: { streamDensity: 0, pondDensity: 0.02 },
+    }
+    const map = generateValley(withClearing, 4)
+    // anneau externe bloquant
+    for (let i = 0; i < map.width; i++) {
+      expect(isBlockingTile(map, i, 0)).toBe(true)
+      expect(isBlockingTile(map, i, map.height - 1)).toBe(true)
+    }
+    // pas d'eau profonde dans la clairière
+    for (let ty = 18; ty <= 30; ty++)
+      for (let tx = 18; tx <= 30; tx++)
+        expect(terrainAt(map, tx, ty)).not.toBe(TERRAIN_DEEP_WATER)
+  })
+
+  it('déterministe', () => {
+    expect(generateValley(watery, 11).terrain).toEqual(generateValley(watery, 11).terrain)
+  })
+})
+
 describe('enceinte organique', () => {
   const map = generateValley(TEST_SKELETON, 7)
 

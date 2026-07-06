@@ -20,6 +20,7 @@ import {
 } from './balance'
 import { createEmptyMap, type WorldMap, type Zone } from './map'
 import { fbm2, hash2 } from './noise'
+import { paintPonds, paintStreams } from './valleygen-water'
 
 export interface ValleyPoint {
   x: number
@@ -55,6 +56,8 @@ export interface ValleySkeleton {
   regions: ValleyRegion[]
   /** Deviennent map.zones dans cet ordre — les plus spécifiques d'abord. */
   landmarks: Zone[]
+  /** Densités du réseau d'eau procédural (par tuile marchable). Optionnel. */
+  water?: { streamDensity?: number; pondDensity?: number }
 }
 
 const DEFAULT_BIOME = { forest: 0.3, rock: 0.05, marsh: 0 }
@@ -67,6 +70,9 @@ export function generateValley(skeleton: ValleySkeleton, seed: number): WorldMap
     paintRidge(map, ridge.points, ridge.halfWidth, seed)
   }
   paintRiver(map, skeleton)
+  paintStreams(map, skeleton, seed)
+  paintPonds(map, skeleton, seed)
+  sealBorderRing(map) // ni ruisseau ni étang ne perce l'anneau externe
   paintRoads(map, skeleton)
   paintCrossings(map, skeleton)
   for (const c of skeleton.clearings) stampDisk(map, c.x, c.y, c.r, paintClear)
@@ -75,13 +81,13 @@ export function generateValley(skeleton: ValleySkeleton, seed: number): WorldMap
   return map
 }
 
-function setTile(map: WorldMap, tx: number, ty: number, id: number): void {
+export function setTile(map: WorldMap, tx: number, ty: number, id: number): void {
   if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return
   map.terrain[ty * map.width + tx] = id
 }
 
 /** Décide du terrain à poser selon l'existant ; undefined = ne pas toucher. */
-type Paint = (current: number) => number | undefined
+export type Paint = (current: number) => number | undefined
 
 /** Tamponne un disque (distance euclidienne au carré — pas de trigo). */
 function stampDisk(map: WorldMap, cx: number, cy: number, r: number, paint: Paint): void {
@@ -102,7 +108,7 @@ function stampDisk(map: WorldMap, cx: number, cy: number, r: number, paint: Pain
  * organique au lieu d'un cercle net. `wobble` est une fraction du rayon.
  * N'utilise que + - * / et fbm2 (déterministe, exact) : pas de trigo.
  */
-function stampBlob(
+export function stampBlob(
   map: WorldMap, cx: number, cy: number, r: number, paint: Paint, seed: number, wobble: number,
 ): void {
   const amp = wobble * r
@@ -122,7 +128,7 @@ function stampBlob(
 }
 
 /** Trace une polyligne en tamponnant des disques le long des segments. */
-function paintPolyline(map: WorldMap, points: ValleyPoint[], halfWidth: number, paint: Paint): void {
+export function paintPolyline(map: WorldMap, points: ValleyPoint[], halfWidth: number, paint: Paint): void {
   for (let i = 0; i + 1 < points.length; i++) {
     const a = points[i]!
     const b = points[i + 1]!
@@ -196,6 +202,11 @@ function paintBorder(map: WorldMap, skeleton: ValleySkeleton, seed: number): voi
     }
   }
   // Le dernier anneau, toujours bloquant quoi qu'ait fait le bruit.
+  sealBorderRing(map)
+}
+
+/** Force l'anneau externe en roche — l'ultime garantie « on ne sort pas de la carte ». */
+export function sealBorderRing(map: WorldMap): void {
   for (let i = 0; i < map.width; i++) {
     setTile(map, i, 0, TERRAIN_ROCK)
     setTile(map, i, map.height - 1, TERRAIN_ROCK)
@@ -206,7 +217,7 @@ function paintBorder(map: WorldMap, skeleton: ValleySkeleton, seed: number): voi
   }
 }
 
-const isWater = (t: number): boolean => t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER
+export const isWater = (t: number): boolean => t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER
 
 /** Nettoie en herbe — sans toucher l'eau ni la route. */
 const paintClear: Paint = (cur) => (isWater(cur) || cur === TERRAIN_ROAD ? undefined : TERRAIN_GRASS)
