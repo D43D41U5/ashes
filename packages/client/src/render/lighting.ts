@@ -1,0 +1,76 @@
+/**
+ * Lumière & ambiance — fonctions PURES de l'heure murale et du terrain.
+ * Aucune dépendance Phaser : testé en unitaire (lighting.test.ts), comme
+ * framing.ts. Le rendu (couches, blend) vit dans les scènes ; ici, uniquement
+ * les courbes. Côté client, Math.sin/floor/round sont autorisés (l'interdit des
+ * approximations est sim-only).
+ */
+
+/** Alpha maximal de la teinte de nuit — plafonné pour que la nuit reste lisible. */
+export const NIGHT_ALPHA_MAX = 0.5
+
+function lerp(a: number, c: number, t: number): number {
+  return a + (c - a) * t
+}
+
+/** Paire de keyframes encadrant `hour` (horloge murale) + facteur d'interpolation. */
+function bracket<T extends { hour: number }>(keys: T[], hour: number): { lo: T; hi: T; t: number } {
+  const h = ((hour % 24) + 24) % 24
+  for (let i = 0; i < keys.length - 1; i++) {
+    const lo = keys[i]
+    const hi = keys[i + 1]
+    if (h >= lo.hour && h <= hi.hour) {
+      const span = hi.hour - lo.hour
+      return { lo, hi, t: span === 0 ? 0 : (h - lo.hour) / span }
+    }
+  }
+  const last = keys[keys.length - 1]
+  return { lo: last, hi: last, t: 0 }
+}
+
+/**
+ * Couleur du Feu selon l'alignement — MÊME formule que snapshot-view (DRY) :
+ * warmth > 0 → bleu (Foyer), warmth < 0 → rouge (Meute), 0 → blanc.
+ */
+export function warmthColor(warmth: number): number {
+  const t = Math.max(-1, Math.min(1, warmth / 100))
+  const red = t > 0 ? Math.floor(255 - 130 * t) : 255
+  const green = Math.floor(255 - 90 * Math.abs(t))
+  const blue = t < 0 ? Math.floor(255 + 140 * t) : 255
+  return (red << 16) | (green << 8) | blue
+}
+
+interface DayKey {
+  hour: number
+  value: number
+}
+/** Facteur de lumière du jour : 0 = nuit noire … 1 = plein midi. */
+const DAYLIGHT_KEYS: DayKey[] = [
+  { hour: 0, value: 0 },
+  { hour: 5, value: 0 },
+  { hour: 6, value: 0.15 },
+  { hour: 8, value: 0.7 },
+  { hour: 10, value: 1 },
+  { hour: 15, value: 1 },
+  { hour: 18, value: 0.7 },
+  { hour: 20, value: 0.2 },
+  { hour: 21, value: 0.05 },
+  { hour: 24, value: 0 },
+]
+
+export function daylight(hour: number): number {
+  const { lo, hi, t } = bracket(DAYLIGHT_KEYS, hour)
+  return lerp(lo.value, hi.value, t)
+}
+
+/** Densité de couvert par code terrain sim (0 = ciel ouvert). */
+export function canopyDensity(terrain: number): number {
+  if (terrain === 3) return 0.45 // forêt
+  if (terrain === 8) return 0.15 // marais
+  return 0
+}
+
+/** Opacité globale de la couche canopée : l'ombre du sous-bois se lit surtout de jour. */
+export function canopyStrength(day: number): number {
+  return lerp(0.4, 1, day)
+}
