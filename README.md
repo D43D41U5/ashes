@@ -19,7 +19,7 @@ ZQSD/flèches bouger · clic récolter/looter/bâtir · F allumer son Feu · 1-5
 
 ```bash
 pnpm check        # tsc strict sur tout le monorepo
-pnpm test         # 91 tests headless sur /sim (déterminisme, replay, systèmes)
+pnpm test         # 100+ tests headless (déterminisme, replay, systèmes, cadrage)
 pnpm lint         # dont les garde-fous : /sim pur et déterministe, imposés par ESLint
 pnpm build        # build web statique → packages/client/dist
 pnpm scenario     # le banc de test : joue des jours simulés, imprime le rapport

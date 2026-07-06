@@ -38,6 +38,9 @@ services:
     volumes:
       - .:/app
       - braises_node_modules:/app/node_modules
+      # Le store pnpm du conteneur vit sur le même device que /app (hardlinks) :
+      # sans ce volume nommé, il atterrirait en root dans le repo de l'hôte.
+      - braises_pnpm_store:/app/.pnpm-store
     expose:
       - "3000"
     # Sain dès que Vite répond sur :3000. `start_period` couvre le premier
@@ -52,3 +55,4 @@ services:
 
 volumes:
   braises_node_modules:
+  braises_pnpm_store:

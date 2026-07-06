@@ -4,3 +4,9 @@ dist/
 .env
 .env.*
 .idea
+# Store pnpm du conteneur de dev (monté sur le repo via `.:/app`) — jamais à commiter.
+.pnpm-store/
+# Outillage local de session.
+.superpowers/
+# Alternate Data Streams Windows/WSL (fichiers `:Zone.Identifier`).
+*:Zone.Identifier

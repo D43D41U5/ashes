@@ -7,7 +7,7 @@ Survival multijoueur top-down 2D persistant, saisons de 60 jours, villages de jo
 ```bash
 pnpm install      # workspace complet
 pnpm check        # tsc --noEmit sur tous les packages
-pnpm test         # vitest sur tous les packages (aujourd'hui : /sim)
+pnpm test         # vitest sur tous les packages (/sim + cadrage du client)
 pnpm lint         # eslint, dont les garde-fous de pureté de /sim
 pnpm dev          # client Vite (jeu jouable sur http://localhost:3000)
 pnpm build        # build web statique → packages/client/dist
@@ -35,7 +35,7 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 2. **`/sim` est déterministe — au bit près, entre moteurs JS.** Pas de `Math.random` (PRNG seedé dans `rng.ts`, état dans le `SimState`), pas de `Date`/`performance`/timers — le temps est le numéro de tick. Et pas de fonctions Math approximées (`sin`, `cos`, `pow`, `hypot`, `exp`, `log`, `**`…) : la spec ECMAScript ne garantit pas leur résultat d'un moteur à l'autre, or un replay enregistré dans un navigateur doit rejouer exactement sur Node. Opérations autorisées : `+ - * /`, `Math.sqrt`, `abs`, `floor`, `ceil`, `round`, `trunc`, `sign`, `min`, `max`, `imul`, `fround`, les constantes. Même seed + mêmes inputs = même état ET même flux d'événements : contrats testés par `sim.test.ts`, `replay.test.ts` et `events.test.ts`.
 3. **Serveur autoritatif, client bête.** Le client envoie des inputs et interpole des snapshots. Seule prédiction locale : le déplacement de son propre avatar.
 4. **Pas de moteur physique** (ni Arcade ni Matter) : grille + AABB maison. Pathfinding : grille + flow fields pour les hordes.
-5. **Tick fixe 10-15 Hz** (`BALANCE.TICK_RATE_HZ`), wind-ups de combat 300-500 ms, interpolation client ~100 ms.
+5. **Tick fixe à `BALANCE.TICK_RATE_HZ`** — 20 Hz par dérogation actée (docs/decisions.md 2026-07-05 ; le GDD disait 10-15 Hz). Wind-ups de combat 300-500 ms, interpolation client d'un intervalle de tick.
 6. **Persistance : PostgreSQL seul**, write-behind. Pas de Redis, pas de queue, pas de microservices. Infra : 1 VPS + Docker Compose — résister à Kubernetes.
 7. **Une simulation, pas deux jeux.** Le solo (Veillée) = `/sim` dans un Worker ; le multi = `/sim` sur Node. Toute feature se développe dans `/sim` d'abord, headless, testée — le rendu vient après.
 
