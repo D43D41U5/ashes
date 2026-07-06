@@ -35,7 +35,14 @@ import {
 import Phaser from 'phaser'
 import { createDemoMap, DEMO_MAP_SIZE, PLAYER_SPAWN } from '../demo-map'
 import type { ClientToHost, HostToClient, SnapshotMessage } from '../protocol'
-import { actorPlacement, type ActorFootprint, lookaheadOffset, zoomForFraming } from '../render/framing'
+import {
+  actorPlacement,
+  type ActorFootprint,
+  lookaheadOffset,
+  OVERLAY_DEPTH,
+  structureDepth,
+  zoomForFraming,
+} from '../render/framing'
 
 type Buildable = 'wall' | 'door' | 'chest' | 'workshop' | 'furnace'
 const BUILD_KEYS: Buildable[] = ['wall', 'door', 'chest', 'workshop', 'furnace']
@@ -140,7 +147,7 @@ export class WorldScene extends Phaser.Scene {
     this.bakeMapTexture()
     this.add.image(0, 0, 'map-demo').setOrigin(0)
 
-    this.playerSprite = this.add.image(0, 0, 'spr-player').setDepth(10)
+    this.playerSprite = this.add.image(0, 0, 'spr-player')
     this.applyFootprint(this.playerSprite, 'spr-player')
     this.syncSprite(this.playerSprite, this.predicted.x, this.predicted.y)
 
@@ -219,7 +226,7 @@ export class WorldScene extends Phaser.Scene {
     this.ghost = this.add
       .rectangle(0, 0, TILE_PX, TILE_PX, 0xffffff, 0.22)
       .setOrigin(0)
-      .setDepth(8)
+      .setDepth(OVERLAY_DEPTH)
       .setStrokeStyle(1, 0xffffff, 0.5)
 
     this.input.mouse?.disableContextMenu()
@@ -363,7 +370,7 @@ export class WorldScene extends Phaser.Scene {
           this.evacMarker = this.add
             .circle(event.tx * TILE_PX + 8, event.ty * TILE_PX + 8, 10, 0xffd94a, 0.6)
             .setStrokeStyle(2, 0xfff2b0)
-            .setDepth(7)
+            .setDepth(OVERLAY_DEPTH)
         }
         if (event.type === 'season_ended') this.registry.set('seasonEnded', true)
       }
@@ -397,7 +404,7 @@ export class WorldScene extends Phaser.Scene {
         record.toY = entity.y
         record.startedAt = now
       } else {
-        const sprite = this.add.image(0, 0, 'spr-npc').setDepth(9)
+        const sprite = this.add.image(0, 0, 'spr-npc')
         this.applyFootprint(sprite, 'spr-npc')
         this.syncSprite(sprite, entity.x, entity.y)
         record = { sprite, fromX: entity.x, fromY: entity.y, toX: entity.x, toY: entity.y, startedAt: now }
@@ -437,7 +444,7 @@ export class WorldScene extends Phaser.Scene {
         sprite = this.add
           .image(s.tx * TILE_PX, s.ty * TILE_PX, `st-${s.type}`)
           .setOrigin(0)
-          .setDepth(s.type === 'fire' ? 5 : 6)
+          .setDepth(s.type === 'fire' ? 5 : structureDepth(s.ty))
         this.structureSprites.set(s.id, sprite)
       }
       if (s.type === 'fire') {
@@ -526,6 +533,7 @@ export class WorldScene extends Phaser.Scene {
   private syncSprite(sprite: Phaser.GameObjects.Image, x: number, y: number): void {
     const p = actorPlacement(x, y, DEFAULT_FOOTPRINT, TILE_PX, BALANCE.AVATAR_HITBOX_TILES)
     sprite.setPosition(p.px, p.py)
+    sprite.setDepth(p.depth)
   }
 
   /** Applique l'emprise visuelle d'un acteur (R12) : origine PIEDS + taille
