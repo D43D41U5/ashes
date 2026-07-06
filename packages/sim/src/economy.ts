@@ -220,6 +220,8 @@ export function generateNodes(map: WorldMap, seed: number): ResourceNode[] {
       if (zone?.kind === 'gisement') {
         if (r < 0.07) push('iron_vein', tx, ty)
         else if (r < 0.13) push('coal_seam', tx, ty)
+      } else if (zone?.kind === 'carriere') {
+        if (r < 0.15) push('rock', tx, ty)
       } else if (terrain === TERRAIN_FOREST) {
         if (r < 0.22) push('tree', tx, ty)
       } else if (terrain === TERRAIN_GRASS) {

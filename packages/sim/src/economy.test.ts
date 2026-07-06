@@ -252,3 +252,15 @@ describe('la chair procédurale (A6)', () => {
     expect(berries + fibers).toBeGreaterThan(25)
   })
 })
+
+describe('les nœuds carrière (mines simples)', () => {
+  it('une zone carrière ne pose que de la pierre (spec mines 2026-07-06)', () => {
+    const map = createEmptyMap(20, 20, TERRAIN_GRASS)
+    map.zones = [{ name: 'la Carrière', kind: 'carriere', x: 4, y: 4, w: 12, h: 12 }]
+    const nodes = generateNodes(map, 5)
+    const inZone = nodes.filter((n) => n.tx >= 4 && n.tx < 16 && n.ty >= 4 && n.ty < 16)
+    expect(inZone.length).toBeGreaterThan(0)
+    expect(inZone.every((n) => n.type === 'rock')).toBe(true)
+    expect(inZone.some((n) => n.type === 'iron_vein' || n.type === 'coal_seam')).toBe(false)
+  })
+})
