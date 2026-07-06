@@ -7,6 +7,7 @@ import { VEILLEE_SITES, VEILLEE_SKELETON } from './valley-veillee'
 
 /** Flood-fill 4-voisins depuis (sx, sy) → indices de tuiles atteignables. */
 function reachable(map: WorldMap, sx: number, sy: number): Set<number> {
+  expect(isBlockingTile(map, sx, sy), 'tuile de départ du flood-fill non marchable').toBe(false)
   const seen = new Set<number>()
   const stack = [sy * map.width + sx]
   seen.add(stack[0]!)
@@ -96,5 +97,13 @@ describe("la Vallée de la Veillée — critères d'acceptation", () => {
     expect(inZone('la Plaine', 'berry_bush')).toBeGreaterThan(3)
     expect(inZone('la Plaine', 'tree')).toBeGreaterThan(3)
     expect(inZone('le Marais', 'fiber_plant')).toBeGreaterThan(5)
+  })
+
+  it('R5bis — le minerai de la Mine est atteignable depuis le spawn (pas enclavé dans la roche)', () => {
+    const nodes = generateNodes(map, 2026)
+    const reachableOf = (type: string): number =>
+      nodes.filter((n) => n.type === type && from.has(n.ty * map.width + n.tx)).length
+    expect(reachableOf('iron_vein')).toBeGreaterThan(0)
+    expect(reachableOf('coal_seam')).toBeGreaterThan(0)
   })
 })
