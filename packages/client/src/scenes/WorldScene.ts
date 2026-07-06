@@ -20,6 +20,7 @@ import {
   speedScaleFor,
   zoneAt,
   type Entity,
+  type GameTime,
   type PlayerAction,
   type PredictInput,
   type PredictionState,
@@ -31,6 +32,7 @@ import { createWorkerHost, type HostConnection } from '../host-connection'
 import { setHud } from '../hud-state'
 import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type ReadyMessage, type SnapshotMessage } from '../protocol'
 import { lookaheadOffset, OVERLAY_DEPTH, TILE_PX, zoomForFraming } from '../render/framing'
+import { ambientTint, canopyDensity, canopyStrength, daylight } from '../render/lighting'
 import {
   publishAlarm,
   publishChronicle,
@@ -62,6 +64,10 @@ const RENDER_OFFSET_DECAY = 0.85
  * persistance.
  */
 const EVENT_LOG_CAP = 500
+
+/** Profondeurs des couches de lumière (au-dessus des sprites ~1000-1200, sous le ghost à OVERLAY_DEPTH). */
+const CANOPY_DEPTH = 2000
+const AMBIENT_DEPTH = 2100
 
 /** Les événements retenus pour la chronique de saison. */
 const CHRONICLE_TYPES = new Set([
@@ -101,6 +107,9 @@ export class WorldScene extends Phaser.Scene {
   /** La frontière de transport (Worker aujourd'hui, Colyseus en LAN). */
   private host!: HostConnection
   private map!: WorldMap
+  private canopyImage: Phaser.GameObjects.Image | null = null
+  private ambientRect: Phaser.GameObjects.Rectangle | null = null
+  private lastTime: GameTime | null = null
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
   private worldReady = false
   private calendarScale = 1
@@ -201,7 +210,13 @@ export class WorldScene extends Phaser.Scene {
     this.calendarScale = msg.calendarScale
     this.bakeMapTexture()
     this.add.image(0, 0, 'map-demo').setOrigin(0).setDepth(-1)
+    this.bakeCanopyTexture()
+    this.canopyImage = this.add.image(0, 0, 'canopy').setOrigin(0).setDepth(CANOPY_DEPTH)
     const worldPx = this.map.width * TILE_PX
+    this.ambientRect = this.add
+      .rectangle(0, 0, worldPx, worldPx, 0x000000, 0)
+      .setOrigin(0)
+      .setDepth(AMBIENT_DEPTH)
     this.cameras.main.setBounds(0, 0, worldPx, worldPx)
     this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
     this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
@@ -213,6 +228,12 @@ export class WorldScene extends Phaser.Scene {
 
   override update(_time: number, deltaMs: number): void {
     if (!this.worldReady) return
+    if (this.lastTime) {
+      const hour = this.lastTime.hourOfCycle
+      const amb = ambientTint(hour)
+      this.ambientRect?.setFillStyle(amb.color).setAlpha(amb.alpha)
+      this.canopyImage?.setAlpha(canopyStrength(daylight(hour)))
+    }
     const dx = this.axis('right', 'left')
     const dy = this.axis('down', 'up')
     const sprint = this.inputs.sprintKeys.some((k) => k.isDown)
@@ -284,6 +305,7 @@ export class WorldScene extends Phaser.Scene {
     const myVillage = msg.villages.find((v) => v.memberIds.includes(this.playerId))
     this.myVillageId = myVillage?.id ?? null
     publishTimeAndVillage(this.registry, msg.time, myVillage)
+    this.lastTime = msg.time
 
     // Le monde d'abord : la réconciliation ci-dessous rejoue la prédiction
     // contre les structures/nœuds de CE snapshot, pas du précédent.
@@ -394,6 +416,22 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     g.generateTexture('map-demo', this.map.width * TILE_PX, this.map.height * TILE_PX)
+    g.destroy()
+  }
+
+  /** Cuit la pénombre de couvert en une texture monde : tuiles boisées assombries, mouchetées. */
+  private bakeCanopyTexture(): void {
+    const g = this.add.graphics()
+    for (let ty = 0; ty < this.map.height; ty++) {
+      for (let tx = 0; tx < this.map.width; tx++) {
+        const density = canopyDensity(this.map.terrain[ty * this.map.width + tx] ?? 0)
+        if (density <= 0) continue
+        const a = Math.min(1, density * (0.85 + 0.3 * hash2(tx, ty)))
+        g.fillStyle(0x040807, a)
+        g.fillRect(tx * TILE_PX, ty * TILE_PX, TILE_PX, TILE_PX)
+      }
+    }
+    g.generateTexture('canopy', this.map.width * TILE_PX, this.map.height * TILE_PX)
     g.destroy()
   }
 }
