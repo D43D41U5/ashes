@@ -35,7 +35,7 @@ import {
 import Phaser from 'phaser'
 import { createDemoMap, DEMO_MAP_SIZE, PLAYER_SPAWN } from '../demo-map'
 import type { ClientToHost, HostToClient, SnapshotMessage } from '../protocol'
-import { lookaheadOffset, zoomForFraming } from '../render/framing'
+import { actorPlacement, type ActorFootprint, lookaheadOffset, zoomForFraming } from '../render/framing'
 
 type Buildable = 'wall' | 'door' | 'chest' | 'workshop' | 'furnace'
 const BUILD_KEYS: Buildable[] = ['wall', 'door', 'chest', 'workshop', 'furnace']
@@ -52,6 +52,17 @@ const INTERP_MS = 1000 / BALANCE.TICK_RATE_HZ
 const SNAP_DISTANCE_TILES = 1.5
 /** Décroissance par frame de l'écart visuel après une correction (lissage de rendu, spec R6). */
 const RENDER_OFFSET_DECAY = 0.85
+
+/** Emprise VISUELLE par texture d'acteur (tuiles) — R12. Découplée de la
+ * résolution native de l'art : un placeholder 12×12 rend ici à ces proportions.
+ * L'emprise logique (collision/clic) reste AVATAR_HITBOX_TILES, inchangée. */
+const ACTOR_FOOTPRINTS: Record<string, ActorFootprint> = {
+  'spr-player': { widthTiles: 1, heightTiles: 1.6 },
+  'spr-npc': { widthTiles: 1, heightTiles: 1.6 },
+  'spr-zombie': { widthTiles: 1, heightTiles: 1.6 },
+  'spr-boar': { widthTiles: 1.4, heightTiles: 1 },
+}
+const DEFAULT_FOOTPRINT: ActorFootprint = { widthTiles: 1, heightTiles: 1.6 }
 
 const TERRAIN_COLORS: Record<number, number> = {
   // (les couleurs sont des placeholders R8, remplacées par de vrais tilesets en V3+)
@@ -130,6 +141,7 @@ export class WorldScene extends Phaser.Scene {
     this.add.image(0, 0, 'map-demo').setOrigin(0)
 
     this.playerSprite = this.add.image(0, 0, 'spr-player').setDepth(10)
+    this.applyFootprint(this.playerSprite, 'spr-player')
     this.syncSprite(this.playerSprite, this.predicted.x, this.predicted.y)
 
     const worldPx = DEMO_MAP_SIZE * TILE_PX
@@ -386,6 +398,7 @@ export class WorldScene extends Phaser.Scene {
         record.startedAt = now
       } else {
         const sprite = this.add.image(0, 0, 'spr-npc').setDepth(9)
+        this.applyFootprint(sprite, 'spr-npc')
         this.syncSprite(sprite, entity.x, entity.y)
         record = { sprite, fromX: entity.x, fromY: entity.y, toX: entity.x, toY: entity.y, startedAt: now }
         this.others.set(entity.id, record)
@@ -394,10 +407,13 @@ export class WorldScene extends Phaser.Scene {
       // dormeur s'estompe ; un wind-up flashe (lisibilité, spec R4).
       const monster = this.monsters.find((m) => m.entityId === entity.id)
       if (monster) {
-        record.sprite.setTexture(monster.type === 'zombie' ? 'spr-zombie' : 'spr-boar')
+        const key = monster.type === 'zombie' ? 'spr-zombie' : 'spr-boar'
+        record.sprite.setTexture(key)
+        this.applyFootprint(record.sprite, key)
         record.sprite.setTint(entity.windup ? 0xffffff : 0xdddddd)
       } else {
         record.sprite.setTexture('spr-npc')
+        this.applyFootprint(record.sprite, 'spr-npc')
         record.sprite.setTint(entity.windup ? 0xff8866 : npc ? 0xe8d9a0 : 0xffffff)
       }
       record.sprite.setAlpha(npc?.sleeping ? 0.45 : 1)
@@ -508,7 +524,17 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private syncSprite(sprite: Phaser.GameObjects.Image, x: number, y: number): void {
-    sprite.setPosition(x * TILE_PX, y * TILE_PX)
+    const p = actorPlacement(x, y, DEFAULT_FOOTPRINT, TILE_PX, BALANCE.AVATAR_HITBOX_TILES)
+    sprite.setPosition(p.px, p.py)
+  }
+
+  /** Applique l'emprise visuelle d'un acteur (R12) : origine PIEDS + taille
+   * d'affichage en tuiles. À rappeler après chaque `setTexture` (setDisplaySize
+   * dépend de la frame courante). */
+  private applyFootprint(sprite: Phaser.GameObjects.Image, textureKey: string): void {
+    const fp = ACTOR_FOOTPRINTS[textureKey] ?? DEFAULT_FOOTPRINT
+    sprite.setOrigin(0.5, 1)
+    sprite.setDisplaySize(fp.widthTiles * TILE_PX, fp.heightTiles * TILE_PX)
   }
 
   private send(msg: ClientToHost): void {
