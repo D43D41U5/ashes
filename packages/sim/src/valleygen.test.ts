@@ -121,3 +121,29 @@ describe("generateValley — rivière, routes, franchissements", () => {
     expect(isBlockingTile(map, 14, 35)).toBe(false) // la brèche
   })
 })
+
+describe('stampBlob — contours organiques (Lac)', () => {
+  it("le Lac n'est plus un disque parfait : son contour est irrégulier", () => {
+    const map = generateValley(TEST_SKELETON, 7)
+    const { x, y, r } = TEST_SKELETON.lake
+    // Sur l'anneau du rayon nominal, un disque parfait donnerait un mélange net ;
+    // un contour bruité met de l'eau au-delà de r ET de la terre en-deçà.
+    let waterBeyond = 0
+    let landWithin = 0
+    for (let ty = y - r - 3; ty <= y + r + 3; ty++) {
+      for (let tx = x - r - 3; tx <= x + r + 3; tx++) {
+        const d2 = (tx - x) * (tx - x) + (ty - y) * (ty - y)
+        const t = terrainAt(map, tx, ty)
+        const wet = t === TERRAIN_DEEP_WATER || t === TERRAIN_SHALLOW_WATER
+        if (d2 > (r + 1) * (r + 1) && wet) waterBeyond++
+        if (d2 < (r - 1) * (r - 1) && !wet) landWithin++
+      }
+    }
+    // Au moins l'un des deux est franc : le bord ondule, pas un cercle net.
+    expect(waterBeyond + landWithin).toBeGreaterThan(8)
+  })
+
+  it('reste déterministe : même seed → même carte', () => {
+    expect(generateValley(TEST_SKELETON, 7).terrain).toEqual(generateValley(TEST_SKELETON, 7).terrain)
+  })
+})

@@ -97,6 +97,30 @@ function stampDisk(map: WorldMap, cx: number, cy: number, r: number, paint: Pain
   }
 }
 
+/**
+ * Tamponne un disque à contour perturbé par le bruit fractal — une berge
+ * organique au lieu d'un cercle net. `wobble` est une fraction du rayon.
+ * N'utilise que + - * / et fbm2 (déterministe, exact) : pas de trigo.
+ */
+function stampBlob(
+  map: WorldMap, cx: number, cy: number, r: number, paint: Paint, seed: number, wobble: number,
+): void {
+  const amp = wobble * r
+  const rr = Math.ceil(r + amp) + 1
+  for (let dy = -rr; dy <= rr; dy++) {
+    for (let dx = -rr; dx <= rr; dx++) {
+      const tx = cx + dx
+      const ty = cy + dy
+      if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue
+      // Seuil bruité : rayon effectif r + amp·(fbm−½)·2, comparé au carré.
+      const noisy = r + amp * (fbm2(tx, ty, r, seed) * 2 - 1)
+      if (dx * dx + dy * dy > noisy * noisy) continue
+      const next = paint(map.terrain[ty * map.width + tx] ?? 0)
+      if (next !== undefined) setTile(map, tx, ty, next)
+    }
+  }
+}
+
 /** Trace une polyligne en tamponnant des disques le long des segments. */
 function paintPolyline(map: WorldMap, points: ValleyPoint[], halfWidth: number, paint: Paint): void {
   for (let i = 0; i + 1 < points.length; i++) {
@@ -152,8 +176,8 @@ function paintRiver(map: WorldMap, skeleton: ValleySkeleton): void {
   paintPolyline(map, points, halfWidth + 1, () => TERRAIN_SHALLOW_WATER)
   paintPolyline(map, points, halfWidth, () => TERRAIN_DEEP_WATER)
   const { x, y, r } = skeleton.lake
-  stampDisk(map, x, y, r + 2, () => TERRAIN_SHALLOW_WATER)
-  stampDisk(map, x, y, r, () => TERRAIN_DEEP_WATER)
+  stampBlob(map, x, y, r + 2, () => TERRAIN_SHALLOW_WATER, 0xa17e5 | 0, 0.18)
+  stampBlob(map, x, y, r, () => TERRAIN_DEEP_WATER, 0xa17e5 | 0, 0.18)
 }
 
 /** Les routes percent tout SAUF l'eau — le franchissement est une décision. */
