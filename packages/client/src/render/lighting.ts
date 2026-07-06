@@ -75,10 +75,15 @@ export function daylight(hour: number): number {
   return lerp(lo.value, hi.value, t)
 }
 
-/** Densité de couvert par code terrain sim (0 = ciel ouvert). */
+/**
+ * Densité de couvert par code terrain sim (0 = ciel ouvert). Les codes en dur
+ * reflètent `TERRAIN_FOREST` (3) et `TERRAIN_MARSH` (8) de sim/balance.ts — même
+ * convention que `WorldScene.TERRAIN_COLORS`. Aucun lien à la compilation : si
+ * ces codes sont renumérotés côté sim, mettre à jour ici (et TERRAIN_COLORS).
+ */
 export function canopyDensity(terrain: number): number {
-  if (terrain === 3) return 0.45 // forêt
-  if (terrain === 8) return 0.15 // marais
+  if (terrain === 3) return 0.45 // forêt (TERRAIN_FOREST)
+  if (terrain === 8) return 0.15 // marais (TERRAIN_MARSH)
   return 0
 }
 
