@@ -173,3 +173,32 @@ describe('roche en amas (dé-confettisage)', () => {
     expect(isolated / rockTiles).toBeLessThan(0.25)
   })
 })
+
+describe('enceinte organique', () => {
+  const map = generateValley(TEST_SKELETON, 7)
+
+  it('le tout dernier anneau reste bloquant (on ne sort pas de la carte)', () => {
+    const w = map.width, h = map.height
+    for (let i = 0; i < w; i++) {
+      expect(isBlockingTile(map, i, 0)).toBe(true)
+      expect(isBlockingTile(map, i, h - 1)).toBe(true)
+    }
+    for (let j = 0; j < h; j++) {
+      expect(isBlockingTile(map, 0, j)).toBe(true)
+      expect(isBlockingTile(map, w - 1, j)).toBe(true)
+    }
+  })
+
+  it("l'épaisseur de l'enceinte varie (bords non rectilignes)", () => {
+    // Profondeur de roche depuis le bord haut, échantillonnée sur plusieurs colonnes.
+    const depths: number[] = []
+    for (let tx = 5; tx < map.width - 5; tx += 3) {
+      let d = 0
+      while (d < map.height && isBlockingTile(map, tx, d)) d++
+      depths.push(d)
+    }
+    const mean = depths.reduce((a, b) => a + b, 0) / depths.length
+    const variance = depths.reduce((a, b) => a + (b - mean) * (b - mean), 0) / depths.length
+    expect(variance).toBeGreaterThan(1) // pas une bande d'épaisseur constante
+  })
+})

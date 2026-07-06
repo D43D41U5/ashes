@@ -19,7 +19,7 @@ import {
   TERRAIN_WALL,
 } from './balance'
 import { createEmptyMap, type WorldMap, type Zone } from './map'
-import { fbm2 } from './noise'
+import { fbm2, hash2 } from './noise'
 
 export interface ValleyPoint {
   x: number
@@ -64,7 +64,7 @@ export function generateValley(skeleton: ValleySkeleton, seed: number): WorldMap
   paintBiomes(map, skeleton, seed)
   paintBorder(map, skeleton, seed)
   for (const ridge of skeleton.ridges) {
-    paintPolyline(map, ridge.points, ridge.halfWidth, () => TERRAIN_ROCK)
+    paintRidge(map, ridge.points, ridge.halfWidth, seed)
   }
   paintRiver(map, skeleton)
   paintRoads(map, skeleton)
@@ -134,6 +134,22 @@ function paintPolyline(map: WorldMap, points: ValleyPoint[], halfWidth: number, 
   }
 }
 
+/** Une crête à largeur bruitée — un mur de roche irrégulier, pas un ruban net. */
+function paintRidge(map: WorldMap, points: ValleyPoint[], halfWidth: number, seed: number): void {
+  for (let i = 0; i + 1 < points.length; i++) {
+    const a = points[i]!
+    const b = points[i + 1]!
+    const steps = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y), 1) * 2
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps
+      const px = Math.round(a.x + (b.x - a.x) * t)
+      const py = Math.round(a.y + (b.y - a.y) * t)
+      const hw = halfWidth + Math.floor(halfWidth * (fbm2(px, py, 6, (seed ^ 0x1d3a) | 0) * 2 - 1))
+      stampDisk(map, px, py, Math.max(1, hw), () => TERRAIN_ROCK)
+    }
+  }
+}
+
 /** La chair : biomes par région, seuils sur bruit fractal. */
 function paintBiomes(map: WorldMap, skeleton: ValleySkeleton, seed: number): void {
   for (let ty = 0; ty < map.height; ty++) {
@@ -155,14 +171,38 @@ function paintBiomes(map: WorldMap, skeleton: ValleySkeleton, seed: number): voi
   }
 }
 
-/** L'enceinte montagneuse — épaisseur bruitée, aucun passage. */
+/**
+ * L'enceinte montagneuse — épaisseur à deux octaves (baies + crénelage) et
+ * quelques éboulis détachés vers l'intérieur. Le dernier anneau reste
+ * bloquant : on ne sort jamais de la carte. Amplitudes fractions de
+ * borderThickness → scalable.
+ */
 function paintBorder(map: WorldMap, skeleton: ValleySkeleton, seed: number): void {
+  const base = skeleton.borderThickness
+  const lowAmp = base * 1.5   // baies et avancées (basse fréquence)
+  const highAmp = base * 0.5  // crénelage (haute fréquence)
   for (let ty = 0; ty < map.height; ty++) {
     for (let tx = 0; tx < map.width; tx++) {
       const d = Math.min(tx, ty, map.width - 1 - tx, map.height - 1 - ty)
-      const th = skeleton.borderThickness + Math.floor(4 * fbm2(tx, ty, 12, (seed ^ 0xb0bd91) | 0))
-      if (d < th) setTile(map, tx, ty, TERRAIN_ROCK)
+      const low = fbm2(tx, ty, base * 6, (seed ^ 0xb0bd91) | 0)
+      const high = fbm2(tx, ty, base * 1.5, (seed ^ 0x2f1c07) | 0)
+      const th = base + Math.floor(lowAmp * low + highAmp * high)
+      if (d < th) {
+        setTile(map, tx, ty, TERRAIN_ROCK)
+      } else if (d < th + base && hash2(tx, ty, (seed ^ 0x5ee7) | 0) < 0.06) {
+        // Éboulis détaché : roche isolée juste devant l'enceinte (densité).
+        setTile(map, tx, ty, TERRAIN_ROCK)
+      }
     }
+  }
+  // Le dernier anneau, toujours bloquant quoi qu'ait fait le bruit.
+  for (let i = 0; i < map.width; i++) {
+    setTile(map, i, 0, TERRAIN_ROCK)
+    setTile(map, i, map.height - 1, TERRAIN_ROCK)
+  }
+  for (let j = 0; j < map.height; j++) {
+    setTile(map, 0, j, TERRAIN_ROCK)
+    setTile(map, map.width - 1, j, TERRAIN_ROCK)
   }
 }
 
