@@ -52,6 +52,7 @@ export const VEILLEE_SKELETON: ValleySkeleton = {
     { x: 146, y: 110, r: 7 },  // site du village Meute
     { x: 46, y: 130, r: 6 },   // site du village neutre (scénario)
     { x: 54, y: 37, r: 5 },    // le Col — toujours ouvert
+    { x: 150, y: 40, r: 6 },   // futur site de village dans les Collines dégagées
   ],
   ruins: [
     { x: 86, y: 138 },
@@ -59,10 +60,25 @@ export const VEILLEE_SKELETON: ValleySkeleton = {
   ],
   // Réseau d'eau procédural (scalable) : ruisseaux et étangs rares.
   water: { streamDensity: 0.0008, pondDensity: 0.0004 },
+  // Mines creusées dans la bordure : une profonde (gisement fer+charbon,
+  // adossée à la bordure est, près des Collines) + des carrières procédurales.
+  // simpleDensity à 0.15 (une carrière, côté ouest) — calibré au banc de
+  // scénario : à 0.3 (deux carrières), la seconde tombe côté est dans la
+  // bande de lignes du Clan du Levant (Meute) et, par ricochet du flux RNG
+  // séquentiel de generateNodes (une passe ligne par ligne sur toute la
+  // carte), y ré-attribue son écosystème vivrier — le village s'effondre en
+  // 6 jours (45 échantillons affamés, 0 survivant). À 0.15, une seule
+  // carrière (côté ouest, loin des sites) : banc de scénario propre (0
+  // échantillon affamé). La mine profonde seule (sans carrière) est neutre —
+  // testé isolément, mêmes résultats que sans mine du tout.
+  mines: {
+    deep: [{ x: 178, y: 46, toward: 'right' }],
+    simpleDensity: 0.15,
+  },
   regions: [
     { x: 8, y: 8, w: 100, h: 28, forest: 0.42, rock: 0.1 },    // le Plateau
     { x: 8, y: 40, w: 100, h: 56, forest: 0.62, rock: 0.04 },  // la Vieille Forêt
-    { x: 126, y: 8, w: 60, h: 84, forest: 0.3, rock: 0.2 },    // les Collines
+    { x: 126, y: 8, w: 60, h: 84, forest: 0.3, rock: 0.06 },   // les Collines — dégagées, habitables
     { x: 8, y: 96, w: 112, h: 52, forest: 0.35, rock: 0.03 },  // la Plaine
     { x: 56, y: 148, w: 88, h: 38, marsh: 0.55, forest: 0.1 }, // le Marais
   ],
@@ -75,7 +91,10 @@ export const VEILLEE_SKELETON: ValleySkeleton = {
     { name: 'le Gué', x: 108, y: 40, w: 11, h: 10 },
     { name: 'le Col', x: 48, y: 30, w: 12, h: 14 },
     { name: 'le Hameau abandonné', x: 84, y: 136, w: 14, h: 12 },
-    { name: 'la Mine du Levant', kind: 'gisement', x: 146, y: 36, w: 16, h: 14 },
+    // Le gisement (fer + charbon) vit désormais dans la galerie profonde
+    // creusée dans la bordure (champ `mines`) — ce landmark redevient un
+    // simple repère toponymique, sans rôle mécanique.
+    { name: 'la Mine du Levant', x: 146, y: 36, w: 16, h: 14 },
     { name: 'la Tanière des Sangliers', kind: 'taniere', x: 34, y: 64, w: 6, h: 6 },
     { name: 'la Vieille Tanière', kind: 'taniere', x: 58, y: 82, w: 6, h: 6 },
     { name: 'le Lac', x: 113, y: 139, w: 26, h: 26 },

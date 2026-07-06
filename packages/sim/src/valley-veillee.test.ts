@@ -60,7 +60,7 @@ describe("la Vallée de la Veillée — critères d'acceptation", () => {
     }
   })
 
-  it('R3 — les landmarks attendus existent ; la Mine est un gisement', () => {
+  it("R3 — les landmarks attendus existent ; une mine profonde (gisement) est creusée", () => {
     const names = map.zones.map((z) => z.name)
     for (const n of [
       'la Clairière', 'la Croisée', 'le Pont', 'le Gué', 'le Col', 'le Hameau abandonné',
@@ -69,11 +69,17 @@ describe("la Vallée de la Veillée — critères d'acceptation", () => {
     ]) {
       expect(names, `landmark « ${n} » absent`).toContain(n)
     }
-    const mine = map.zones.find((z) => z.name === 'la Mine du Levant')!
-    expect(mine.kind).toBe('gisement')
-    // zoneAt au centre de la Mine doit retourner la Mine (ordre des zones :
-    // spécifiques d'abord) — generateNodes en dépend pour poser le minerai.
-    expect(zoneAt(map, mine.x + mine.w / 2, mine.y + mine.h / 2)?.name).toBe('la Mine du Levant')
+    // Depuis Task 8, le gisement (fer + charbon) vit dans la galerie profonde
+    // creusée dans la bordure (`skeleton.mines.deep`), pas dans le landmark
+    // toponymique « la Mine du Levant » qui redevient un simple repère (sans
+    // `kind`) — la région Collines qu'il nomme est maintenant dégagée.
+    const mineLandmark = map.zones.find((z) => z.name === 'la Mine du Levant')!
+    expect(mineLandmark.kind).toBeUndefined()
+    const gisement = map.zones.find((z) => z.kind === 'gisement')
+    expect(gisement, 'aucune galerie profonde (gisement) creusée dans la bordure').toBeDefined()
+    // zoneAt au centre de la chambre doit retourner le gisement (ordre des
+    // zones : galeries d'abord) — generateNodes en dépend pour poser le minerai.
+    expect(zoneAt(map, gisement!.x + gisement!.w / 2, gisement!.y + gisement!.h / 2)?.kind).toBe('gisement')
   })
 
   it('R4 — sanité : 55-85 % de tuiles marchables, dimensions 192×192', () => {
@@ -84,19 +90,22 @@ describe("la Vallée de la Veillée — critères d'acceptation", () => {
     expect(walkable / map.terrain.length).toBeLessThan(0.85)
   })
 
-  it('R5 — la chair : minerai à la Mine, T1 en Plaine, fibres au Marais', () => {
+  it('R5 — la chair : minerai dans la galerie profonde, T1 en Plaine, fibres au Marais', () => {
     const nodes = generateNodes(map, 2026)
-    const inZone = (name: string, type: string): number => {
-      const z = map.zones.find((zz) => zz.name === name)!
-      return nodes.filter(
+    const inZone = (z: { x: number; y: number; w: number; h: number }, type: string): number =>
+      nodes.filter(
         (n) => n.type === type && n.tx >= z.x && n.tx < z.x + z.w && n.ty >= z.y && n.ty < z.y + z.h,
       ).length
-    }
-    expect(inZone('la Mine du Levant', 'iron_vein')).toBeGreaterThan(0)
-    expect(inZone('la Mine du Levant', 'coal_seam')).toBeGreaterThan(0)
-    expect(inZone('la Plaine', 'berry_bush')).toBeGreaterThan(3)
-    expect(inZone('la Plaine', 'tree')).toBeGreaterThan(3)
-    expect(inZone('le Marais', 'fiber_plant')).toBeGreaterThan(5)
+    const byName = (name: string): { x: number; y: number; w: number; h: number } =>
+      map.zones.find((zz) => zz.name === name)!
+    // Le gisement est la galerie profonde (kind: 'gisement'), pas le landmark
+    // toponymique « la Mine du Levant » (voir R3).
+    const gisement = map.zones.find((zz) => zz.kind === 'gisement')!
+    expect(inZone(gisement, 'iron_vein')).toBeGreaterThan(0)
+    expect(inZone(gisement, 'coal_seam')).toBeGreaterThan(0)
+    expect(inZone(byName('la Plaine'), 'berry_bush')).toBeGreaterThan(3)
+    expect(inZone(byName('la Plaine'), 'tree')).toBeGreaterThan(3)
+    expect(inZone(byName('le Marais'), 'fiber_plant')).toBeGreaterThan(5)
   })
 
   it('R5bis — le minerai de la Mine est atteignable depuis le spawn (pas enclavé dans la roche)', () => {
