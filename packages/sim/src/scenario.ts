@@ -3,15 +3,16 @@
  * entières headless et produit un rapport — l'outil de calibrage de
  * balance.ts, pour les humains comme pour les agents.
  */
-import { BALANCE, TERRAIN_GRASS, TERRAIN_ROAD } from './balance'
+import { BALANCE } from './balance'
 import { chronicleFromEvents } from './chronicle'
 import { generateNodes } from './economy'
 import { drainEvents, type SimEvent } from './events'
-import { createEmptyMap } from './map'
 import { foundNpcVillage } from './worldgen'
 import { createSim, step } from './sim'
 import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { countOf } from './items'
+import { generateValley } from './valleygen'
+import { VEILLEE_SITES, VEILLEE_SKELETON } from './valley-veillee'
 
 export interface ScenarioReport {
   days: number
@@ -31,14 +32,12 @@ export interface ScenarioReport {
 
 /** Joue `days` jours complets (1 cycle = 1 jour) sur un monde de référence. */
 export function runScenario(seed: number, days: number): ScenarioReport {
-  const map = createEmptyMap(48, 48, TERRAIN_GRASS)
-  for (let tx = 0; tx < 48; tx++) map.terrain[24 * 48 + tx] = TERRAIN_ROAD
-  map.zones = [{ name: 'la Mine', kind: 'gisement', x: 36, y: 6, w: 10, h: 8 }]
+  const map = generateValley(VEILLEE_SKELETON, seed)
   const nodes = generateNodes(map, seed)
   const sim = createSim(seed, { map, nodes, calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE })
-  foundNpcVillage(sim, 12, 12, 4, 'foyer')
-  foundNpcVillage(sim, 36, 36, 3, 'meute')
-  foundNpcVillage(sim, 12, 36, 3, 'neutre')
+  foundNpcVillage(sim, VEILLEE_SITES.foyer.x, VEILLEE_SITES.foyer.y, 4, 'foyer')
+  foundNpcVillage(sim, VEILLEE_SITES.meute.x, VEILLEE_SITES.meute.y, 3, 'meute')
+  foundNpcVillage(sim, VEILLEE_SITES.neutre.x, VEILLEE_SITES.neutre.y, 3, 'neutre')
 
   const events: SimEvent[] = [...drainEvents(sim)]
   let starvationSamples = 0

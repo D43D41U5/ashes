@@ -50,7 +50,7 @@ export const VEILLEE_SKELETON: ValleySkeleton = {
     { x: 22, y: 116, r: 6 },   // la Clairière (spawn)
     { x: 38, y: 108, r: 7 },   // site du village Foyer
     { x: 146, y: 110, r: 7 },  // site du village Meute
-    { x: 40, y: 132, r: 6 },   // site du village neutre (scénario)
+    { x: 46, y: 130, r: 6 },   // site du village neutre (scénario)
     { x: 54, y: 37, r: 5 },    // le Col — toujours ouvert
   ],
   ruins: [
@@ -91,7 +91,7 @@ export const VEILLEE_SITES = {
   spawn: { x: 22.5, y: 116.5 },
   foyer: { x: 38, y: 108 },
   meute: { x: 146, y: 110 },
-  neutre: { x: 40, y: 132 },
+  neutre: { x: 46, y: 130 },
   boars: [
     { x: 36, y: 66 }, { x: 60, y: 84 }, { x: 46, y: 74 },
   ],
