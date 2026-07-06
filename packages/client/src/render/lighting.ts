@@ -30,12 +30,13 @@ function bracket<T extends { hour: number }>(keys: T[], hour: number): { lo: T; 
   for (let i = 0; i < keys.length - 1; i++) {
     const lo = keys[i]
     const hi = keys[i + 1]
-    if (h >= lo.hour && h <= hi.hour) {
+    if (lo && hi && h >= lo.hour && h <= hi.hour) {
       const span = hi.hour - lo.hour
       return { lo, hi, t: span === 0 ? 0 : (h - lo.hour) / span }
     }
   }
   const last = keys[keys.length - 1]
+  if (!last) throw new Error('bracket: keys must be non-empty')
   return { lo: last, hi: last, t: 0 }
 }
 
