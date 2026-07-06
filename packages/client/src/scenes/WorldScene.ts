@@ -9,7 +9,6 @@
  */
 import {
   BALANCE,
-  COMBAT,
   STRUCTURE_HP,
   chronicleFromEvents,
   createPrediction,
@@ -17,6 +16,7 @@ import {
   predictFrame,
   reconcile as reconcilePrediction,
   renderPosition,
+  speedScaleFor,
   zoneAt,
   type PredictInput,
   type PredictionState,
@@ -33,8 +33,9 @@ import {
   type WorldMap,
 } from '@braises/sim'
 import Phaser from 'phaser'
-import { createDemoMap, DEMO_MAP_SIZE, PLAYER_SPAWN } from '../demo-map'
-import type { ClientToHost, HostToClient, SnapshotMessage } from '../protocol'
+import { hash2 } from '../demo-map'
+import { createWorkerHost, type HostConnection } from '../host-connection'
+import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type ReadyMessage, type SnapshotMessage } from '../protocol'
 import {
   actorPlacement,
   type ActorFootprint,
@@ -91,12 +92,6 @@ function shade(color: number, factor: number): number {
   return (r << 16) | (g << 8) | b
 }
 
-function hash2(x: number, y: number): number {
-  let h = (x * 374761393 + y * 668265263) >>> 0
-  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
-}
-
 interface InterpolatedSprite {
   sprite: Phaser.GameObjects.Image
   fromX: number
@@ -107,12 +102,18 @@ interface InterpolatedSprite {
 }
 
 export class WorldScene extends Phaser.Scene {
-  private worker!: Worker
+  /** La frontière de transport (Worker aujourd'hui, Colyseus en LAN). */
+  private host!: HostConnection
   private map!: WorldMap
+  /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
+  private worldReady = false
+  private calendarScale = 1
+  /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
+  private lastSnapshotTick = 0
   private playerId = 0
   private playerSprite!: Phaser.GameObjects.Image
   /** Prédiction à pas fixe + réconciliation par rejeu (spec reconciliation). */
-  private prediction: PredictionState = createPrediction(PLAYER_SPAWN.x, PLAYER_SPAWN.y)
+  private prediction: PredictionState = createPrediction(0, 0)
   /** Position LOGIQUE du joueur (ancre autorité) — pour viser, mesurer une distance. */
   private get predicted(): { x: number; y: number } {
     return this.prediction.base
@@ -132,7 +133,10 @@ export class WorldScene extends Phaser.Scene {
   private myHunger = 100
   private eventLog: SimEvent[] = []
   private evacMarker: Phaser.GameObjects.Arc | null = null
-  private myWoundedLeg = false
+  private myWounds: Entity['wounds'] = {}
+  private myStamina = 100
+  /** Mon avatar télégraphie : la sim l'immobilise — la prédiction aussi. */
+  private myWindup = false
   private sprintKeys: Phaser.Input.Keyboard.Key[] = []
   private blockKey!: Phaser.Input.Keyboard.Key
   private selected: Buildable = 'wall'
@@ -143,16 +147,9 @@ export class WorldScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.map = createDemoMap()
-    this.bakeMapTexture()
-    this.add.image(0, 0, 'map-demo').setOrigin(0)
-
     this.playerSprite = this.add.image(0, 0, 'spr-player')
     this.applyFootprint(this.playerSprite, 'spr-player')
-    this.syncSprite(this.playerSprite, this.predicted.x, this.predicted.y)
 
-    const worldPx = DEMO_MAP_SIZE * TILE_PX
-    this.cameras.main.setBounds(0, 0, worldPx, worldPx)
     const zoom = zoomForFraming(VISIBLE_TILES_TALL, TILE_PX, this.scale.height)
     this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16).setZoom(zoom)
     this.cameras.main.setBackgroundColor('#0e0e12')
@@ -257,8 +254,13 @@ export class WorldScene extends Phaser.Scene {
     // Hook de debug/pilotage (pattern __MANIF__) : smoke tests et futurs bots.
     ;(window as unknown as { __BRAISES__: unknown }).__BRAISES__ = { scene: this }
 
-    this.worker = new Worker(new URL('../worker/sim-worker.ts', import.meta.url), { type: 'module' })
-    this.worker.addEventListener('message', (e: MessageEvent<HostToClient>) => this.onHostMessage(e.data))
+    this.host = createWorkerHost()
+    this.host.onMessage((msg) => this.onHostMessage(msg))
+    this.host.onError((message) => {
+      // L'hôte est mort : plus de snapshots. On le dit au joueur plutôt que
+      // de le laisser marcher dans un monde figé.
+      this.registry.set('error', { reason: `hôte perdu : ${message}`, at: this.time.now })
+    })
 
     // Onglet caché : le rAF de Phaser s'arrête mais PAS le timer du Worker —
     // sans pause, l'hôte répéterait le dernier input (avatar sans pilote) et
@@ -267,18 +269,37 @@ export class WorldScene extends Phaser.Scene {
       this.send({ type: document.hidden ? 'pause' : 'resume' })
     }
     document.addEventListener('visibilitychange', onVisibility)
-    this.events.once('shutdown', () => document.removeEventListener('visibilitychange', onVisibility))
-
-    this.send({
-      type: 'init',
-      seed: 2026,
-      map: this.map,
-      calendarScale: 720, // démo : un jour de saison toutes les 2 min
-      playerSpawn: PLAYER_SPAWN,
+    this.events.once('shutdown', () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      this.host.terminate()
     })
+
+    this.send({ type: 'join', protocolVersion: PROTOCOL_VERSION })
+  }
+
+  /** Le monde arrive de l'hôte : carte, calendrier, spawn (décisions d'hôte). */
+  private onReady(msg: ReadyMessage): void {
+    if (msg.protocolVersion !== PROTOCOL_VERSION) {
+      this.registry.set('error', {
+        reason: `protocole hôte v${msg.protocolVersion} ≠ client v${PROTOCOL_VERSION}`,
+        at: this.time.now,
+      })
+      return
+    }
+    this.playerId = msg.playerId
+    this.map = msg.map
+    this.calendarScale = msg.calendarScale
+    this.bakeMapTexture()
+    this.add.image(0, 0, 'map-demo').setOrigin(0).setDepth(-1)
+    const worldPx = this.map.width * TILE_PX
+    this.cameras.main.setBounds(0, 0, worldPx, worldPx)
+    this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
+    this.syncSprite(this.playerSprite, this.predicted.x, this.predicted.y)
+    this.worldReady = true
   }
 
   override update(_time: number, deltaMs: number): void {
+    if (!this.worldReady) return
     const dx = this.axis('right', 'left')
     const dy = this.axis('down', 'up')
     const sprint = this.sprintKeys.some((k) => k.isDown)
@@ -295,10 +316,14 @@ export class WorldScene extends Phaser.Scene {
       nodes: this.nodes,
       moverVillageId: this.myVillageId,
     }
-    let speedScale = this.myHunger <= 0 ? BALANCE.HUNGER_SPEED_MALUS : 1
-    if (this.myWoundedLeg) speedScale *= COMBAT.LEG_WOUND_SPEED
-    if (block) speedScale *= COMBAT.BLOCK_MOVE_FACTOR
-    else if (sprint && (dx !== 0 || dy !== 0)) speedScale *= COMBAT.SPRINT_FACTOR
+    // LA formule de vitesse vient de /sim (`speedScaleFor`) : les conditions
+    // d'endurance (sprint/blocage annulés à 0) sont prédites juste. Pendant
+    // son propre wind-up, la sim immobilise — la prédiction gèle (scale 0).
+    const { scale } = speedScaleFor(
+      { hunger: this.myHunger, wounds: this.myWounds, stamina: this.myStamina },
+      { sprint, block, moving: dx !== 0 || dy !== 0 },
+    )
+    const speedScale = this.myWindup ? 0 : scale
     const input: PredictInput = { dx, dy, sprint, block }
     for (const buffered of predictFrame(this.prediction, world, deltaMs / 1000, input, speedScale)) {
       this.send({ type: 'input', seq: buffered.seq, dx, dy, sprint, block })
@@ -337,9 +362,14 @@ export class WorldScene extends Phaser.Scene {
 
   private onHostMessage(msg: HostToClient): void {
     if (msg.type === 'ready') {
-      this.playerId = msg.playerId
+      this.onReady(msg)
       return
     }
+    if (msg.type !== 'snapshot') return // type inconnu : futur protocole, on ignore
+    // Rejette les snapshots périmés ou hors ordre (garanti trivial sur Worker,
+    // vital sur un vrai réseau).
+    if (msg.tick <= this.lastSnapshotTick) return
+    this.lastSnapshotTick = msg.tick
     this.registry.set('time', msg.time)
     this.villages = msg.villages
     this.syncStructures(msg.structures)
@@ -386,7 +416,7 @@ export class WorldScene extends Phaser.Scene {
     }
     if (chronicleDirty) {
       const names = Object.fromEntries(msg.villages.map((v) => [v.id, v.name]))
-      this.registry.set('chronicle', chronicleFromEvents(this.eventLog, 720, names))
+      this.registry.set('chronicle', chronicleFromEvents(this.eventLog, this.calendarScale, names))
     }
     const now = this.time.now
     const seen = new Set<number>()
@@ -399,7 +429,9 @@ export class WorldScene extends Phaser.Scene {
         this.registry.set('stamina', entity.stamina)
         this.registry.set('wounds', entity.wounds)
         this.myHunger = entity.hunger
-        this.myWoundedLeg = entity.wounds.leg === true
+        this.myWounds = entity.wounds
+        this.myStamina = entity.stamina
+        this.myWindup = entity.windup !== undefined
         this.reconcile(entity, msg.lastProcessedInput)
         continue
       }
@@ -555,7 +587,7 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private send(msg: ClientToHost): void {
-    this.worker.postMessage(msg)
+    this.host.send(msg)
   }
 
   private sendAction(action: PlayerAction): void {

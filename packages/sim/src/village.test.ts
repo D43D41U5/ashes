@@ -202,6 +202,59 @@ describe('le coffre (A4)', () => {
   })
 })
 
+describe('la vraisemblance des actions (anti-cheat, GDD §11)', () => {
+  it('bâtir et démolir exigent d’être à portée', () => {
+    const sim = makeSim()
+    const id = founder(sim, 10.5, 10.5)
+    drainEvents(sim)
+    // Dans le rayon du Feu mais hors de portée de bras : refusé.
+    act(sim, id, { type: 'build', structure: 'wall', tx: 10 + BALANCE.BUILD_RANGE + 2, ty: 10 })
+    expect(rejections(sim)).toEqual(['trop loin'])
+    // À portée : accepté. Puis on s'éloigne : la démolition est refusée.
+    act(sim, id, { type: 'build', structure: 'wall', tx: 12, ty: 10 })
+    const wall = structureAt(sim.structures, 12, 10)!
+    sim.entities[0]!.x = 12.5 + BALANCE.BUILD_RANGE + 1
+    act(sim, id, { type: 'demolish', structureId: wall.id })
+    expect(rejections(sim)).toEqual(['trop loin'])
+    expect(structureAt(sim.structures, 12, 10)).toBeDefined()
+  })
+
+  it('le Chef qui démolit le mur d’un membre rembourse le PROPRIÉTAIRE', () => {
+    const sim = makeSim()
+    const chief = founder(sim, 10.5, 10.5)
+    const member = spawnEntity(sim, 10.8, 10.5)
+    act(sim, chief, { type: 'invite', targetEntityId: member })
+    grantItems(sim, member, { wood: 2 })
+    act(sim, member, { type: 'build', structure: 'wall', tx: 13, ty: 10 })
+    const wall = structureAt(sim.structures, 13, 10)!
+    drainEvents(sim)
+    const chiefWoodBefore = countOf(sim.entities.find((e) => e.id === chief)!.inventory, 'wood')
+    act(sim, chief, { type: 'demolish', structureId: wall.id })
+    expect(structureAt(sim.structures, 13, 10)).toBeUndefined()
+    // floor(2 × 0.5) = 1 bois — au propriétaire, pas au démolisseur.
+    expect(countOf(sim.entities.find((e) => e.id === member)!.inventory, 'wood')).toBe(1)
+    expect(countOf(sim.entities.find((e) => e.id === chief)!.inventory, 'wood')).toBe(chiefWoodBefore)
+  })
+
+  it('set_access exige la portée et émet access_changed', () => {
+    const sim = makeSim()
+    const id = founder(sim, 10.5, 10.5)
+    act(sim, id, { type: 'build', structure: 'chest', tx: 12, ty: 10 })
+    const chest = structureAt(sim.structures, 12, 10)!
+    drainEvents(sim)
+    // Trop loin de la serrure : refusé, l'accès ne change pas.
+    act(sim, id, { type: 'set_access', structureId: chest.id, access: 'public' })
+    expect(rejections(sim)).toEqual(['trop loin'])
+    expect(chest.access).toBe('private')
+    // À portée : changé, et le fait est un événement de domaine.
+    sim.entities[0]!.x = 12.0
+    act(sim, id, { type: 'set_access', structureId: chest.id, access: 'public' })
+    expect(chest.access).toBe('public')
+    const events = drainEvents(sim)
+    expect(events.some((e) => e.type === 'access_changed' && e.structureId === chest.id && e.access === 'public')).toBe(true)
+  })
+})
+
 describe('la démolition (A5)', () => {
   it('propriétaire : remboursé 50 % ; Feu : jamais ; non-propriétaire : refusé ; Chef : oui', () => {
     const sim = makeSim()

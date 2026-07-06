@@ -179,6 +179,26 @@ export function spawnEntity(state: SimState, x: number, y: number): number {
   return id
 }
 
+/**
+ * LA formule du modificateur de vitesse d'un avatar — partagée entre `step`
+ * (autorité) et la prédiction du client. Toute condition ajoutée ici est
+ * automatiquement prédite juste ; une copie divergente côté client serait
+ * une misprédiction systématique (rubber-band).
+ */
+export function speedScaleFor(
+  entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina'>,
+  input: { sprint: boolean; block: boolean; moving: boolean },
+): { scale: number; sprinting: boolean } {
+  let scale = 1
+  if (entity.hunger <= 0) scale *= BALANCE.HUNGER_SPEED_MALUS
+  if (entity.wounds.leg) scale *= COMBAT.LEG_WOUND_SPEED
+  const blocking = input.block && entity.stamina > 0
+  const sprinting = !blocking && input.sprint && entity.stamina > 0 && input.moving
+  if (blocking) scale *= COMBAT.BLOCK_MOVE_FACTOR
+  else if (sprinting) scale *= COMBAT.SPRINT_FACTOR
+  return { scale, sprinting }
+}
+
 /** Avance la simulation d'exactement un tick. Mute `state` en place. */
 export function step(state: SimState, inputs: MoveInput[]): void {
   // `moved` décrit CE tick : remis à zéro ici, levé par chaque système de
@@ -212,12 +232,12 @@ export function step(state: SimState, inputs: MoveInput[]): void {
       entity.moved = false
       continue // le wind-up immobilise (spec R4)
     }
-    let speedScale = 1
-    if (entity.hunger <= 0) speedScale *= BALANCE.HUNGER_SPEED_MALUS
-    if (entity.wounds.leg) speedScale *= COMBAT.LEG_WOUND_SPEED
-    if (entity.blocking) speedScale *= COMBAT.BLOCK_MOVE_FACTOR
-    else if (input.sprint && entity.stamina > 0 && (input.dx !== 0 || input.dy !== 0)) {
-      speedScale *= COMBAT.SPRINT_FACTOR
+    const { scale: speedScale, sprinting } = speedScaleFor(entity, {
+      sprint: input.sprint ?? false,
+      block: input.block ?? false,
+      moving: input.dx !== 0 || input.dy !== 0,
+    })
+    if (sprinting) {
       entity.stamina = Math.max(0, entity.stamina - COMBAT.SPRINT_STAMINA_PER_S / BALANCE.TICK_RATE_HZ)
     }
     const world = {

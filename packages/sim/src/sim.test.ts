@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, TICK_DT_S } from './balance'
-import { createSim, snapshot, spawnEntity, step, type MoveInput } from './sim'
+import { BALANCE, COMBAT, TICK_DT_S } from './balance'
+import { createSim, snapshot, spawnEntity, speedScaleFor, step, type MoveInput } from './sim'
 
 describe('sim', () => {
   it('déplace une entité selon la vitesse de BALANCE', () => {
@@ -38,6 +38,27 @@ describe('sim', () => {
     const sim = createSim(1)
     expect(() => step(sim, [{ entityId: 999, dx: 1, dy: 0 }])).not.toThrow()
     expect(sim.tick).toBe(1)
+  })
+
+  it('speedScaleFor est LA formule de vitesse : endurance à 0 annule sprint ET blocage', () => {
+    const base = { hunger: 100, wounds: {}, stamina: 100 }
+    const moving = { sprint: true, block: false, moving: true }
+    expect(speedScaleFor(base, moving).scale).toBe(COMBAT.SPRINT_FACTOR)
+    expect(speedScaleFor({ ...base, stamina: 0 }, moving).scale).toBe(1)
+    expect(speedScaleFor(base, { sprint: false, block: true, moving: true }).scale).toBe(COMBAT.BLOCK_MOVE_FACTOR)
+    expect(speedScaleFor({ ...base, stamina: 0 }, { sprint: false, block: true, moving: true }).scale).toBe(1)
+    expect(
+      speedScaleFor({ hunger: 0, wounds: { leg: true }, stamina: 100 }, { sprint: false, block: false, moving: false }).scale,
+    ).toBe(BALANCE.HUNGER_SPEED_MALUS * COMBAT.LEG_WOUND_SPEED)
+  })
+
+  it('step applique la même formule : sprinter essoufflé = vitesse de marche', () => {
+    const sim = createSim(1)
+    const id = spawnEntity(sim, 5, 5)
+    sim.entities[0]!.stamina = 0
+    step(sim, [{ entityId: id, dx: 1, dy: 0, sprint: true }])
+    // Pas ×1.5 : l'endurance à 0 annule le sprint (le client prédit pareil).
+    expect(sim.entities[0]!.x).toBeCloseTo(5 + BALANCE.WALK_SPEED_TILES_PER_S * TICK_DT_S)
   })
 
   it('CONTRAT : même seed + mêmes inputs = même état, au bit près', () => {

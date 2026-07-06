@@ -232,6 +232,11 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (distSq(village.fireTx, village.fireTy, tx, ty) > radius * radius) {
         return reject('hors du rayon du Feu')
       }
+      // Vraisemblance (GDD §11) : on bâtit à portée de bras, pas à l'autre
+      // bout de la carte — première pierre de l'anti-cheat LAN.
+      if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) {
+        return reject('trop loin')
+      }
       if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible')
       if (structureAt(state.structures, tx, ty)) return reject('tuile occupée')
       if (!removeItems(actor.inventory, STRUCTURE_COSTS[action.structure])) {
@@ -265,13 +270,18 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (s.ownerId !== actorId && village?.chiefId !== actorId) {
         return reject('ni propriétaire ni Chef')
       }
+      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) {
+        return reject('trop loin')
+      }
       const refund: Inventory = {}
       const cost = STRUCTURE_COSTS[s.type]
       for (const item of Object.keys(cost) as ItemId[]) {
         const back = Math.floor((cost[item] ?? 0) * BALANCE.DEMOLISH_REFUND)
         if (back > 0) refund[item] = back
       }
-      addItems(actor.inventory, refund)
+      // Le remboursement va au PROPRIÉTAIRE (le Chef peut démolir, pas spolier).
+      const owner = state.entities.find((e) => e.id === s.ownerId)
+      addItems((owner ?? actor).inventory, refund)
       state.structures = state.structures.filter((st) => st.id !== s.id)
       emitEvent(state, { type: 'structure_removed', tick: state.tick, structureId: s.id })
       return
@@ -348,7 +358,18 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const s = state.structures.find((st) => st.id === action.structureId)
       if (!s) return reject('structure inconnue')
       if (s.ownerId !== actorId) return reject('pas le propriétaire')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      if (s.access === action.access) return
       s.access = action.access
+      // Changer une serrure est un fait de gouvernance (réputation, tribunal).
+      emitEvent(state, {
+        type: 'access_changed',
+        tick: state.tick,
+        structureId: s.id,
+        access: action.access,
+        byEntityId: actorId,
+      })
       return
     }
 

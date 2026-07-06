@@ -19,12 +19,17 @@ import type {
   WorldMap,
 } from '@braises/sim'
 
-export interface InitMessage {
-  type: 'init'
-  seed: number
-  map: WorldMap
-  calendarScale: number
-  playerSpawn: { x: number; y: number }
+/** À incrémenter à tout changement incompatible — vérifié au `ready`. */
+export const PROTOCOL_VERSION = 1
+
+/**
+ * Le client demande à REJOINDRE — il ne choisit ni la seed, ni la carte, ni
+ * le rythme : ce sont des décisions d'hôte (scénario côté Worker aujourd'hui,
+ * serveur en LAN). Il reçoit tout ça dans `ready`.
+ */
+export interface JoinMessage {
+  type: 'join'
+  protocolVersion: number
 }
 
 export interface InputMessage {
@@ -56,11 +61,15 @@ export interface ResumeMessage {
   type: 'resume'
 }
 
-export type ClientToHost = InitMessage | InputMessage | ActionMessage | PauseMessage | ResumeMessage
+export type ClientToHost = JoinMessage | InputMessage | ActionMessage | PauseMessage | ResumeMessage
 
 export interface ReadyMessage {
   type: 'ready'
+  protocolVersion: number
   playerId: number
+  map: WorldMap
+  calendarScale: number
+  playerSpawn: { x: number; y: number }
 }
 
 export interface SnapshotMessage {

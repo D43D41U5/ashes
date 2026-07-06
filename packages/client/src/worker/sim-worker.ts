@@ -8,19 +8,15 @@
  */
 import {
   BALANCE,
-  createSim,
   drainEvents,
-  foundNpcVillage,
-  spawnMonster,
-  generateNodes,
   getGameTime,
-  spawnEntity,
   step,
   type MoveInput,
   type PlayerAction,
   type SimState,
 } from '@braises/sim'
-import type { ClientToHost, HostToClient } from '../protocol'
+import { PROTOCOL_VERSION, type ClientToHost, type HostToClient } from '../protocol'
+import { createVeillee, VEILLEE_CALENDAR_SCALE, VEILLEE_SPAWN } from './veillee'
 
 const post = (message: HostToClient): void => {
   ;(self as unknown as { postMessage(m: unknown): void }).postMessage(message)
@@ -73,24 +69,20 @@ function stopTicker(): void {
 
 self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
   const msg = event.data
-  if (msg.type === 'init') {
-    if (sim) return // déjà initialisé : un second init empilerait une seconde boucle
-    // La « chair » : les nœuds de ressources sont générés depuis la seed.
-    const nodes = generateNodes(msg.map, msg.seed)
-    sim = createSim(msg.seed, { map: msg.map, calendarScale: msg.calendarScale, nodes })
-    // Les voisins à caractère (spec alignement R12) : un Foyer au nord qui
-    // donne, une Meute à l'est qui raide la nuit.
-    foundNpcVillage(sim, 24, 14, 4, 'foyer')
-    foundNpcVillage(sim, 52, 40, 3, 'meute')
-    // La menace et le gibier : zombies au sud de la route, sangliers épars.
-    spawnMonster(sim, 'zombie', 20, 46)
-    spawnMonster(sim, 'zombie', 30, 50)
-    spawnMonster(sim, 'zombie', 44, 44)
-    spawnMonster(sim, 'boar', 16, 22)
-    spawnMonster(sim, 'boar', 34, 24)
-    playerId = spawnEntity(sim, msg.playerSpawn.x, msg.playerSpawn.y)
-    // Plus de kit de départ : la boucle commence les mains vides (spec économie).
-    post({ type: 'ready', playerId })
+  if (msg.type === 'join') {
+    if (sim) return // déjà en jeu : un second join empilerait une seconde boucle
+    // Le scénario appartient à l'hôte (veillee.ts) : le client ne choisit rien.
+    const world = createVeillee()
+    sim = world.sim
+    playerId = world.playerId
+    post({
+      type: 'ready',
+      protocolVersion: PROTOCOL_VERSION,
+      playerId,
+      map: sim.map,
+      calendarScale: VEILLEE_CALENDAR_SCALE,
+      playerSpawn: VEILLEE_SPAWN,
+    })
     startTicker()
   } else if (msg.type === 'input') {
     playerInput = { dx: msg.dx, dy: msg.dy, sprint: msg.sprint, block: msg.block }

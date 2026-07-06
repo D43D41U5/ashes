@@ -57,6 +57,9 @@ export const BALANCE = {
   /** Portée des interactions (coffres, invitations), en tuiles. */
   INTERACT_RANGE: 1.5,
 
+  /** Portée de bras pour bâtir/démolir, en tuiles (vraisemblance, GDD §11). */
+  BUILD_RANGE: 6,
+
   /** Part des matériaux remboursée à la démolition. */
   DEMOLISH_REFUND: 0.5,
 

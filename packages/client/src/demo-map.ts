@@ -16,7 +16,7 @@ const ROCK = 5
 const DEEP_WATER = 6
 
 /** Hash 2D → [0, 1), déterministe (même recette que le PRNG de /sim). */
-function hash2(x: number, y: number): number {
+export function hash2(x: number, y: number): number {
   let h = (x * 374761393 + y * 668265263) >>> 0
   h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296
