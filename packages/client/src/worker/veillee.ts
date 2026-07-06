@@ -9,32 +9,32 @@ import {
   createSim,
   foundNpcVillage,
   generateNodes,
+  generateValley,
   spawnEntity,
   spawnMonster,
+  VEILLEE_SITES,
+  VEILLEE_SKELETON,
   type SimState,
 } from '@braises/sim'
-import { createDemoMap, PLAYER_SPAWN } from '../demo-map'
 
 export const VEILLEE_SEED = 2026
 /** Démo : un jour de saison toutes les 2 minutes. */
 export const VEILLEE_CALENDAR_SCALE = 720
-export const VEILLEE_SPAWN = PLAYER_SPAWN
+export const VEILLEE_SPAWN = VEILLEE_SITES.spawn
 
 export function createVeillee(): { sim: SimState; playerId: number } {
-  const map = createDemoMap()
-  // La « chair » : les nœuds de ressources sont générés depuis la seed.
+  // Le squelette artisanal ; la « chair » (biomes puis ressources) vient de la seed.
+  const map = generateValley(VEILLEE_SKELETON, VEILLEE_SEED)
   const nodes = generateNodes(map, VEILLEE_SEED)
   const sim = createSim(VEILLEE_SEED, { map, calendarScale: VEILLEE_CALENDAR_SCALE, nodes })
-  // Les voisins à caractère (spec alignement R12) : un Foyer au nord qui
-  // donne, une Meute à l'est qui raide la nuit.
-  foundNpcVillage(sim, 24, 14, 4, 'foyer')
-  foundNpcVillage(sim, 52, 40, 3, 'meute')
-  // La menace et le gibier : zombies au sud de la route, sangliers épars.
-  spawnMonster(sim, 'zombie', 20, 46)
-  spawnMonster(sim, 'zombie', 30, 50)
-  spawnMonster(sim, 'zombie', 44, 44)
-  spawnMonster(sim, 'boar', 16, 22)
-  spawnMonster(sim, 'boar', 34, 24)
+  // Les voisins à caractère (spec alignement R12) : le Foyer dans la Plaine,
+  // la Meute à l'est du Pont — sur la route de la Mine, évidemment.
+  foundNpcVillage(sim, VEILLEE_SITES.foyer.x, VEILLEE_SITES.foyer.y, 4, 'foyer')
+  foundNpcVillage(sim, VEILLEE_SITES.meute.x, VEILLEE_SITES.meute.y, 3, 'meute')
+  // La menace et le gibier : sangliers aux tanières, zombies au Hameau, au
+  // Marais et sur le Plateau.
+  for (const p of VEILLEE_SITES.boars) spawnMonster(sim, 'boar', p.x, p.y)
+  for (const p of VEILLEE_SITES.zombies) spawnMonster(sim, 'zombie', p.x, p.y)
   // Le joueur commence les mains vides (spec économie) — pas de kit de départ.
   const playerId = spawnEntity(sim, VEILLEE_SPAWN.x, VEILLEE_SPAWN.y)
   return { sim, playerId }

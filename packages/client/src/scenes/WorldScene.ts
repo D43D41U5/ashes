@@ -13,6 +13,7 @@
 import {
   createPrediction,
   decayRenderOffset,
+  hash2,
   predictFrame,
   reconcile as reconcilePrediction,
   renderPosition,
@@ -26,7 +27,6 @@ import {
   type WorldMap,
 } from '@braises/sim'
 import Phaser from 'phaser'
-import { hash2 } from '../demo-map'
 import { createWorkerHost, type HostConnection } from '../host-connection'
 import { setHud } from '../hud-state'
 import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type ReadyMessage, type SnapshotMessage } from '../protocol'
@@ -86,6 +86,7 @@ const TERRAIN_COLORS: Record<number, number> = {
   5: 0x6d6d70, // roche
   6: 0x274a6d, // eau profonde
   7: 0x4a4038, // mur
+  8: 0x556b4a, // marais
 }
 
 /** Assombrit/éclaircit légèrement une couleur (variation par tuile). */
