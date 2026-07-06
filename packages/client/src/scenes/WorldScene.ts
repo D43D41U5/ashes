@@ -205,6 +205,9 @@ export class WorldScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, worldPx, worldPx)
     this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
     this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
+    // La carte plein écran (M, rendue par UIScene) a besoin de la carte : pour
+    // la mettre à l'échelle et pour nommer la zone/POI sous le curseur.
+    setHud(this.registry, 'mapData', this.map)
     this.worldReady = true
   }
 
@@ -249,6 +252,8 @@ export class WorldScene extends Phaser.Scene {
     this.view.interpolate(this.time.now)
 
     setHud(this.registry, 'zone', zoneAt(this.map, this.predicted.x, this.predicted.y)?.name)
+    // Le marqueur « tu es ici » de la carte plein écran suit l'ancre autorité.
+    setHud(this.registry, 'playerPos', { x: this.predicted.x, y: this.predicted.y })
 
     // Caméra « Foxhole » (R11) : SEULEMENT en visée (clic droit maintenu), le
     // point suivi se décale vers le curseur pour voir plus loin là où l'on vise.

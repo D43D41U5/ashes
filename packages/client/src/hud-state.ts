@@ -6,7 +6,7 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { Entity, GameTime, Inventory, SkillId, Village, VillageTask } from '@braises/sim'
+import type { Entity, GameTime, Inventory, SkillId, Village, VillageTask, WorldMap } from '@braises/sim'
 import type Phaser from 'phaser'
 
 /** Ce que le joueur peut sélectionner pour bâtir (touches 1-5). */
@@ -36,6 +36,13 @@ export interface HudState {
   selected: Buildable
   /** Journal (J) ouvert à la demande. */
   journalOpen: boolean
+  /** Carte plein écran (M) ouverte à la demande. */
+  mapOpen: boolean
+  /** La carte du monde, publiée une fois au `ready` — sert au rendu de la carte
+   * plein écran et au lookup de zone/POI sous le curseur (`zoneAt`). */
+  mapData: WorldMap
+  /** Position LOGIQUE de l'avatar (tuiles) — le marqueur « tu es ici » de la carte. */
+  playerPos: { x: number; y: number }
   /** La chronique de la saison, déjà mise en forme. */
   chronicle: string[]
   /** Dernier message d'erreur à afficher (action rejetée, hôte perdu…). */

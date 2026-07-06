@@ -1,20 +1,20 @@
 /**
- * Tous les bindings clavier/souris de la scène monde : F/1-5/ESPACE/C/X/T/G/
- * E/R/6-0/J au clavier, clic bâtir/récolter/looter, clic droit démolir,
- * shift+clic partager. Extrait de `WorldScene` : on ne fait ici que traduire
- * une frappe en `PlayerAction` — aucune logique de jeu (elle vit dans /sim).
+ * Tous les bindings clavier/souris de la scène monde : on traduit une frappe
+ * en `PlayerAction` — aucune logique de jeu (elle vit dans /sim). QUELLE touche
+ * déclenche quoi vit dans `keymap.ts` (table déclarative) ; ici on ne fait que
+ * la câbler à un handler. Clic bâtir/récolter/looter, clic droit démolir,
+ * shift+clic partager.
  *
  * Les deps sont des ACCESSEURS (closures), pas des copies : structures,
  * nœuds, cadavres, entités et position prédite changent à chaque snapshot ou
  * frame — chaque handler lit l'état AU MOMENT de la frappe.
  */
-import type { AccessLevel, Corpse, PlayerAction, RecipeId, ResourceNode, Structure } from '@braises/sim'
+import type { AccessLevel, Corpse, PlayerAction, ResourceNode, Structure } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud, setHud, type Buildable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
+import { BUILD_BINDINGS, CRAFT_BINDINGS, KEYMAP } from './keymap'
 import type { InterpolatedSprite } from './snapshot-view'
-
-const BUILD_KEYS: Buildable[] = ['wall', 'door', 'chest', 'workshop', 'furnace']
 
 export interface InputDeps {
   sendAction(action: PlayerAction): void
@@ -35,47 +35,55 @@ export interface MovementBindings {
 
 export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindings {
   const kb = scene.input.keyboard!
-  const grab = (codes: number[]): Phaser.Input.Keyboard.Key[] => codes.map((c) => kb.addKey(c, false))
-  const K = Phaser.Input.Keyboard.KeyCodes
+  const K = Phaser.Input.Keyboard.KeyCodes as Record<string, number>
+  const grab = (names: readonly string[]): Phaser.Input.Keyboard.Key[] => names.map((n) => kb.addKey(K[n]!, false))
+  /** Câble un handler `down` sur chaque alias d'une action (KEYMAP). */
+  const onDown = (names: readonly string[], fn: () => void): void => {
+    for (const n of names) kb.addKey(K[n]!, false).on('down', fn)
+  }
   const pointerToWorld = (pointer: Phaser.Input.Pointer): Phaser.Math.Vector2 =>
     pointer.positionToCamera(scene.cameras.main) as Phaser.Math.Vector2
 
   const keys = {
-    up: grab([K.Z, K.W, K.UP]),
-    down: grab([K.S, K.DOWN]),
-    left: grab([K.Q, K.A, K.LEFT]),
-    right: grab([K.D, K.RIGHT]),
+    up: grab(KEYMAP.moveUp),
+    down: grab(KEYMAP.moveDown),
+    left: grab(KEYMAP.moveLeft),
+    right: grab(KEYMAP.moveRight),
   }
-  const sprintKeys = grab([K.SHIFT])
-  const blockKey = kb.addKey(K.C, false)
+  const sprintKeys = grab(KEYMAP.sprint)
+  const blockKey = grab(KEYMAP.block)[0]!
 
   // Mode construction : F fonde, 1-5 choisit, clic bâtit, clic droit démolit.
   // La sélection vit ICI (et dans le HUD via le registry) — la scène n'en a
   // pas besoin.
-  let selected: Buildable = 'wall'
-  kb.addKey(K.F, false).on('down', () => deps.sendAction({ type: 'light_fire' }))
-  ;[K.ONE, K.TWO, K.THREE, K.FOUR, K.FIVE].forEach((code, i) => {
-    kb.addKey(code, false).on('down', () => {
-      selected = BUILD_KEYS[i]!
+  let selected: Buildable = BUILD_BINDINGS[0]![1]
+  onDown(KEYMAP.lightFire, () => deps.sendAction({ type: 'light_fire' }))
+  for (const [name, buildable] of BUILD_BINDINGS) {
+    onDown([name], () => {
+      selected = buildable
       setHud(scene.registry, 'selected', selected)
     })
-  })
+  }
   setHud(scene.registry, 'selected', selected)
 
   // Combat : ESPACE attaque vers le pointeur, C bloque, SHIFT sprinte, X bande.
-  kb.addKey(K.SPACE, false).on('down', () => {
+  onDown(KEYMAP.attack, () => {
     const world = pointerToWorld(scene.input.activePointer)
     const predicted = deps.predicted()
     const dx = world.x / TILE_PX - predicted.x
     const dy = world.y / TILE_PX - predicted.y
     deps.sendAction({ type: 'attack', dx, dy })
   })
-  kb.addKey(K.X, false).on('down', () => deps.sendAction({ type: 'bandage' }))
-  kb.addKey(K.J, false).on('down', () => {
+  onDown(KEYMAP.bandage, () => deps.sendAction({ type: 'bandage' }))
+  onDown(KEYMAP.toggleJournal, () => {
     setHud(scene.registry, 'journalOpen', !getHud(scene.registry, 'journalOpen'))
   })
+  // M : la carte plein écran (visionneuse zoom/pan, rendue par UIScene).
+  onDown(KEYMAP.toggleMap, () => {
+    setHud(scene.registry, 'mapOpen', !getHud(scene.registry, 'mapOpen'))
+  })
   // T : donner 3 baies à l'entité la plus proche (l'acte chaud fondamental).
-  kb.addKey(K.T, false).on('down', () => {
+  onDown(KEYMAP.give, () => {
     const predicted = deps.predicted()
     const nearest = [...deps.others().entries()]
       .map(([id, r]) => ({ id, d: Math.hypot(r.toX - predicted.x, r.toY - predicted.y) }))
@@ -84,7 +92,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       deps.sendAction({ type: 'give', targetEntityId: nearest.id, item: 'berries', count: 3 })
     }
   })
-  kb.addKey(K.G, false).on('down', () => {
+  onDown(KEYMAP.repair, () => {
     const world = pointerToWorld(scene.input.activePointer)
     const target = deps
       .structures()
@@ -93,21 +101,17 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   })
 
   // Manger et crafter.
-  kb.addKey(K.E, false).on('down', () => deps.sendAction({ type: 'eat', item: 'berries' }))
-  kb.addKey(K.R, false).on('down', () => deps.sendAction({ type: 'eat', item: 'stew' }))
-  const craftKeys: [number, RecipeId][] = [
-    [K.SIX, 'stew'],
-    [K.SEVEN, 'axe'],
-    [K.EIGHT, 'pickaxe'],
-    [K.NINE, 'iron_ingot'],
-    [K.ZERO, 'iron_axe'],
-  ]
-  for (const [code, recipeId] of craftKeys) {
-    kb.addKey(code, false).on('down', () => deps.sendAction({ type: 'craft', recipeId }))
+  onDown(KEYMAP.eatBerries, () => deps.sendAction({ type: 'eat', item: 'berries' }))
+  onDown(KEYMAP.eatStew, () => deps.sendAction({ type: 'eat', item: 'stew' }))
+  for (const [name, recipeId] of CRAFT_BINDINGS) {
+    onDown([name], () => deps.sendAction({ type: 'craft', recipeId }))
   }
 
   scene.input.mouse?.disableContextMenu()
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+    // Carte ouverte : le clic pilote la visionneuse (pan/zoom, dans UIScene),
+    // il ne doit pas bâtir/récolter dans le monde en dessous.
+    if (getHud(scene.registry, 'mapOpen')) return
     const world = pointerToWorld(pointer)
     const tx = Math.floor(world.x / TILE_PX)
     const ty = Math.floor(world.y / TILE_PX)
