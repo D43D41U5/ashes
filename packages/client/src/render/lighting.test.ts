@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ambientTint, canopyDensity, canopyStrength, daylight, warmthColor, NIGHT_ALPHA_MAX } from './lighting'
+import { ambientTint, canopyDensity, canopyStrength, daylight, fireGlow, warmthColor, NIGHT_ALPHA_MAX } from './lighting'
 
 const r = (c: number): number => (c >> 16) & 0xff
 const b = (c: number): number => c & 0xff
@@ -72,5 +72,23 @@ describe('ambientTint (teinte selon l\'heure)', () => {
       expect(t.alpha).toBeGreaterThan(0)
       expect(t.alpha).toBeLessThan(NIGHT_ALPHA_MAX)
     }
+  })
+})
+
+describe('fireGlow (halo des Feux)', () => {
+  it("brille la nuit, s'éteint à midi", () => {
+    const night = fireGlow(0, daylight(0))
+    const noon = fireGlow(0, daylight(12))
+    expect(night.alpha).toBeGreaterThan(noon.alpha)
+    expect(noon.alpha).toBeCloseTo(0, 5)
+  })
+  it('couleur = alignement (Foyer bleu, Meute rouge)', () => {
+    const foyer = fireGlow(80, daylight(0)).color
+    const meute = fireGlow(-80, daylight(0)).color
+    expect(foyer & 0xff).toBeGreaterThan((foyer >> 16) & 0xff) // bleu > rouge
+    expect((meute >> 16) & 0xff).toBeGreaterThan(meute & 0xff) // rouge > bleu
+  })
+  it('un Feu plus engagé rayonne plus loin', () => {
+    expect(fireGlow(90, daylight(0)).radius).toBeGreaterThan(fireGlow(10, daylight(0)).radius)
   })
 })

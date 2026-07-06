@@ -9,6 +9,10 @@
 /** Alpha maximal de la teinte de nuit — plafonné pour que la nuit reste lisible. */
 export const NIGHT_ALPHA_MAX = 0.5
 
+const GLOW_MAX_ALPHA = 0.9
+const GLOW_MIN_RADIUS_TILES = 3
+const GLOW_SPAN_TILES = 5
+
 function lerp(a: number, c: number, t: number): number {
   return a + (c - a) * t
 }
@@ -109,4 +113,16 @@ const AMBIENT_KEYS: TintKey[] = [
 export function ambientTint(hour: number): { color: number; alpha: number } {
   const { lo, hi, t } = bracket(AMBIENT_KEYS, hour)
   return { color: lerpColor(lo.color, hi.color, t), alpha: lerp(lo.alpha, hi.alpha, t) }
+}
+
+/**
+ * Halo d'un Feu : couleur d'alignement, plus fort la nuit (∝ 1 - day) et pour un
+ * village plus engagé (∝ |warmth|). `radius` en tuiles, `alpha` pour blend ADD.
+ */
+export function fireGlow(warmth: number, day: number): { color: number; radius: number; alpha: number } {
+  const engage = Math.min(1, Math.abs(warmth) / 100)
+  const dark = 1 - day
+  const alpha = Math.min(GLOW_MAX_ALPHA, GLOW_MAX_ALPHA * dark * (0.6 + 0.4 * engage))
+  const radius = GLOW_MIN_RADIUS_TILES + GLOW_SPAN_TILES * engage
+  return { color: warmthColor(warmth), radius, alpha }
 }
