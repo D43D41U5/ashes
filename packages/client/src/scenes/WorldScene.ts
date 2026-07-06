@@ -250,13 +250,17 @@ export class WorldScene extends Phaser.Scene {
 
     setHud(this.registry, 'zone', zoneAt(this.map, this.predicted.x, this.predicted.y)?.name)
 
-    // Caméra « Foxhole » (R11) : le point suivi se décale vers le curseur pour
-    // voir plus loin là où l'on vise. Calcul en ÉCRAN-espace (écart au centre),
-    // jamais depuis la position monde du pointeur → pas de boucle caméra↔curseur.
-    const off = lookaheadOffset(
-      pointer.x, pointer.y, this.scale.width / 2, this.scale.height / 2,
-      LOOKAHEAD_STRENGTH, LOOKAHEAD_MAX_TILES, TILE_PX,
-    )
+    // Caméra « Foxhole » (R11) : SEULEMENT en visée (clic droit maintenu), le
+    // point suivi se décale vers le curseur pour voir plus loin là où l'on vise.
+    // Calcul en ÉCRAN-espace (écart au centre), jamais depuis la position monde
+    // du pointeur → pas de boucle caméra↔curseur. Au relâchement, le lerp du
+    // startFollow ramène la caméra en douceur (offset cible à zéro).
+    const off = pointer.rightButtonDown()
+      ? lookaheadOffset(
+          pointer.x, pointer.y, this.scale.width / 2, this.scale.height / 2,
+          LOOKAHEAD_STRENGTH, LOOKAHEAD_MAX_TILES, TILE_PX,
+        )
+      : { x: 0, y: 0 }
     // followOffset est SOUSTRAIT du point suivi → on nie pour pencher VERS le curseur.
     this.cameras.main.setFollowOffset(-off.x, -off.y)
   }
