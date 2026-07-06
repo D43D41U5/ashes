@@ -35,7 +35,7 @@ Afficher la simulation sans jamais la posséder. La sim tourne dans un **Web Wor
 
 ## Cadrage & proportions (façon V Rising) — cadre découplé
 
-*Statut : **spec, non implémenté** (2026-07-06). Incrément client, zéro impact sur `/sim` (identité top-down orthogonale du GDD préservée — pas de perspective ¾, pas de hauteur 3D). Objectif : des proportions à l'écran proches d'un V Rising (avatar présent, cadrage resserré) **et** ne plus être prisonnier de l'art 16×16 le jour où l'on peaufine les sprites.*
+*Statut : **implémenté** (2026-07-06 — R10-R13). Incrément client, zéro impact sur `/sim` (identité top-down orthogonale du GDD préservée — pas de perspective ¾, pas de hauteur 3D). Objectif : des proportions à l'écran proches d'un V Rising (avatar présent, cadrage resserré) **et** ne plus être prisonnier de l'art 16×16 le jour où l'on peaufine les sprites. Math pure isolée et testée dans `packages/client/src/render/framing.ts` (`framing.test.ts`, vitest ajouté au package client), câblée dans `WorldScene`. Vérification : A5/A9 par tests unitaires ; A6/A7/A8 en jeu (smoke Chromium piloté — zoom 2,25 mesuré, avatar ancré aux pieds 16×25,6 px issu d'un art natif 12×12, lookahead qui décale le scroll de ~90 px vers le curseur et se clampe aux bords, `playerDepth` ≈ 1000+feetY vivant) ; A8 (occlusion) vrai par construction du schéma de profondeur + tests d'ordre nord/sud.*
 
 Le nœud : aujourd'hui `TILE_PX = 16` cumule **deux rôles** — l'échelle grille↔pixels (le pont entre l'espace-tuile de `/sim` et l'écran) *et* la résolution d'autoring de l'art. `/sim` ne connaît que des tuiles abstraites ; la résolution de l'art est donc un choix 100 % client. On sépare les deux rôles pour que l'art puisse monter en résolution sans refonte.
 
