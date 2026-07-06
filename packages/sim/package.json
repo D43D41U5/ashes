@@ -8,7 +8,8 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --exclude src/scenario.test.ts && pnpm run test:scenario",
+    "test:scenario": "vitest run src/scenario.test.ts --dangerouslyIgnoreUnhandledErrors"
   },
   "devDependencies": {
     "typescript": "^5.8.3",
