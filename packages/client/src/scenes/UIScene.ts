@@ -4,8 +4,9 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import { skillLevel, type GameTime, type Inventory, type SkillId, type VillageTask } from '@braises/sim'
+import { BALANCE, skillLevel, type Inventory, type SkillId, type VillageTask } from '@braises/sim'
 import Phaser from 'phaser'
+import { getHud } from '../hud-state'
 
 const TASK_LABELS: Record<VillageTask['kind'], string> = {
   gather_berries: 'récolter des baies',
@@ -49,13 +50,31 @@ const ITEM_LABELS: [keyof Inventory, string][] = [
   ['components', 'Composants'],
 ]
 
-/** Alpha de l'obscurité selon l'heure du cycle (jour [0,15), nuit [15,24)). */
+/** Heures affichées par cycle — convention de `getGameTime` (hourOfCycle ∈ [0,24)). */
+const CYCLE_HOURS = 24
+/** Frontière jour/nuit dérivée de la sim (isNight bascule à cette heure) — 15 h avec CYCLE_DAY_FRACTION = 0,625. */
+const NIGHTFALL_HOUR = CYCLE_HOURS * BALANCE.CYCLE_DAY_FRACTION
+/** Le crépuscule est un pur habillage : fondu entamé un peu avant la nuit logique, fini un peu après. */
+const DUSK_START = NIGHTFALL_HOUR - 1.5
+const DUSK_END = NIGHTFALL_HOUR + 1
+/** L'aube visuelle : l'obscurité fond sur la dernière portion de la nuit. */
+const DAWN_START = CYCLE_HOURS - 1.5
+
+/** Maxima des jauges du joueur — valeurs posées par `spawnEntity`
+ * (packages/sim/src/sim.ts) ; la sim n'exporte pas (encore) de constante. */
+const HP_MAX = 100
+const STAMINA_MAX = 100
+const HUNGER_MAX = 100
+/** Largeur pleine des barres PV/endurance, en px écran. */
+const BAR_WIDTH_PX = 200
+
+/** Alpha de l'obscurité selon l'heure du cycle (jour [0,NIGHTFALL), nuit [NIGHTFALL,24)). */
 function nightAlpha(hourOfCycle: number): number {
   const MAX = 0.55
-  if (hourOfCycle < 13.5) return 0
-  if (hourOfCycle < 16) return ((hourOfCycle - 13.5) / 2.5) * MAX // crépuscule
-  if (hourOfCycle < 22.5) return MAX
-  return (1 - (hourOfCycle - 22.5) / 1.5) * MAX // aube
+  if (hourOfCycle < DUSK_START) return 0
+  if (hourOfCycle < DUSK_END) return ((hourOfCycle - DUSK_START) / (DUSK_END - DUSK_START)) * MAX // crépuscule
+  if (hourOfCycle < DAWN_START) return MAX
+  return (1 - (hourOfCycle - DAWN_START) / (CYCLE_HOURS - DAWN_START)) * MAX // aube
 }
 
 export class UIScene extends Phaser.Scene {
@@ -92,9 +111,9 @@ export class UIScene extends Phaser.Scene {
 
     // Barres PV / endurance (haut droite) — lisibilité avant spectacle.
     this.add.rectangle(this.scale.width - 214, 12, 204, 14, 0x14141a).setOrigin(0)
-    this.hpBar = this.add.rectangle(this.scale.width - 212, 14, 200, 10, 0xc0503e).setOrigin(0)
+    this.hpBar = this.add.rectangle(this.scale.width - 212, 14, BAR_WIDTH_PX, 10, 0xc0503e).setOrigin(0)
     this.add.rectangle(this.scale.width - 214, 30, 204, 14, 0x14141a).setOrigin(0)
-    this.staminaBar = this.add.rectangle(this.scale.width - 212, 32, 200, 10, 0x4e9c5a).setOrigin(0)
+    this.staminaBar = this.add.rectangle(this.scale.width - 212, 32, BAR_WIDTH_PX, 10, 0x4e9c5a).setOrigin(0)
     this.woundsText = this.add
       .text(this.scale.width - 214, 48, '', { ...style, color: '#ff9a7a', fontSize: '14px' })
       .setOrigin(0, 0)
@@ -135,15 +154,15 @@ export class UIScene extends Phaser.Scene {
   }
 
   override update(): void {
-    const time = this.registry.get('time') as GameTime | undefined
+    const time = getHud(this.registry, 'time')
     if (!time) return
     this.nightOverlay.setAlpha(nightAlpha(time.hourOfCycle))
 
-    const zone = this.registry.get('zone') as string | undefined
-    const members = (this.registry.get('village') as number | undefined) ?? 0
-    const tasks = (this.registry.get('tasks') as VillageTask[] | undefined) ?? []
-    const archetype = this.registry.get('archetype') as string | null
-    const villageWarmth = (this.registry.get('villageWarmth') as number | undefined) ?? 0
+    const zone = getHud(this.registry, 'zone')
+    const members = getHud(this.registry, 'village') ?? 0
+    const tasks = getHud(this.registry, 'tasks') ?? []
+    const archetype = getHud(this.registry, 'archetype') ?? null
+    const villageWarmth = getHud(this.registry, 'villageWarmth') ?? 0
     const hour = String(Math.floor(time.hourOfCycle)).padStart(2, '0')
     const board = tasks
       .slice(0, 4)
@@ -159,10 +178,10 @@ export class UIScene extends Phaser.Scene {
         (board ? `\nTableau : ${board}` : ''),
     )
 
-    const inv = (this.registry.get('inv') as Inventory | undefined) ?? {}
-    const selected = (this.registry.get('selected') as string | undefined) ?? 'wall'
-    const hunger = (this.registry.get('hunger') as number | undefined) ?? 100
-    const skills = (this.registry.get('skills') as Partial<Record<SkillId, number>> | undefined) ?? {}
+    const inv = getHud(this.registry, 'inv') ?? {}
+    const selected = getHud(this.registry, 'selected') ?? 'wall'
+    const hunger = getHud(this.registry, 'hunger') ?? 100
+    const skills = getHud(this.registry, 'skills') ?? {}
 
     const invText = ITEM_LABELS.filter(([item]) => (inv[item] ?? 0) > 0)
       .map(([item, label]) => `${label} ${inv[item]}`)
@@ -174,18 +193,18 @@ export class UIScene extends Phaser.Scene {
       .join(' · ')
 
     this.bottomBar.setText(
-      `Faim ${Math.ceil(hunger)}/100${hunger <= 0 ? ' ⚠ affamé' : ''}` +
+      `Faim ${Math.ceil(hunger)}/${HUNGER_MAX}${hunger <= 0 ? ' ⚠ affamé' : ''}` +
         (skillsText ? ` — ${skillsText}` : '') +
         `\n${invText || '(mains vides — clique un arbre)'} — [${STRUCTURE_LABELS[selected]}]\n` +
         `F Feu · 1-5 bâtir · clic récolter/looter/bâtir · clic droit démolir · G réparer · shift+clic partager\n` +
         `ESPACE attaquer · C bloquer · SHIFT sprinter · X bander · T donner des baies · E/R manger · 6-0 crafter`,
     )
 
-    const hp = (this.registry.get('hp') as number | undefined) ?? 100
-    const stamina = (this.registry.get('stamina') as number | undefined) ?? 100
-    const wounds = (this.registry.get('wounds') as Record<string, boolean> | undefined) ?? {}
-    this.hpBar.width = 2 * Math.max(0, hp)
-    this.staminaBar.width = 2 * Math.max(0, stamina)
+    const hp = getHud(this.registry, 'hp') ?? 100
+    const stamina = getHud(this.registry, 'stamina') ?? 100
+    const wounds = getHud(this.registry, 'wounds') ?? {}
+    this.hpBar.width = (BAR_WIDTH_PX * Math.max(0, hp)) / HP_MAX
+    this.staminaBar.width = (BAR_WIDTH_PX * Math.max(0, stamina)) / STAMINA_MAX
     const woundLabels = [
       wounds.leg ? 'jambe blessée' : null,
       wounds.arm ? 'bras blessé' : null,
@@ -193,7 +212,7 @@ export class UIScene extends Phaser.Scene {
     ].filter(Boolean)
     this.woundsText.setText(woundLabels.join(' · '))
 
-    const error = this.registry.get('error') as { reason: string; at: number } | undefined
+    const error = getHud(this.registry, 'error')
     if (error && this.time.now - error.at < 2500) {
       this.errorText.setText(error.reason).setAlpha(1 - (this.time.now - error.at) / 2500)
     } else {
@@ -204,15 +223,15 @@ export class UIScene extends Phaser.Scene {
     if (this.welcome.visible && this.time.now - this.startedAt > 15000) this.welcome.setVisible(false)
 
     // Le journal : ouvert à la demande (J), ou de force à la fin de saison.
-    const chronicle = (this.registry.get('chronicle') as string[] | undefined) ?? []
-    const open = Boolean(this.registry.get('journalOpen')) || Boolean(this.registry.get('seasonEnded'))
+    const chronicle = getHud(this.registry, 'chronicle') ?? []
+    const open = Boolean(getHud(this.registry, 'journalOpen')) || Boolean(getHud(this.registry, 'seasonEnded'))
     this.journalPanel.setVisible(open)
     if (open) {
       this.journalText.setText(chronicle.slice(-26).join('\n') || '(rien encore — le monde est jeune)')
     }
 
     // L'alarme (spec événements R4) : flash rouge pulsé pendant 3 s.
-    const alarm = this.registry.get('alarm') as { at: number } | undefined
+    const alarm = getHud(this.registry, 'alarm')
     if (alarm && this.time.now - alarm.at < 3000) {
       const pulse = 0.25 + 0.2 * Math.sin(this.time.now / 90)
       this.nightOverlay.setFillStyle(0x8a1a10).setAlpha(Math.max(this.nightOverlay.alpha, pulse))

@@ -4,7 +4,7 @@ import { drainEvents } from './events'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
 import { spawnMonster } from './monsters'
-import { foundNpcVillage } from './npc'
+import { foundNpcVillage } from './worldgen'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type MoveInput, type SimState } from './sim'
 import { grantItems } from './village'
@@ -103,10 +103,8 @@ describe('le blocage directionnel (A3)', () => {
     expect(blocked).toBeCloseTo(COMBAT.UNARMED_DAMAGE * (1 - COMBAT.BLOCK_REDUCTION), 1)
     expect(entity(sim, b).stamina).toBeLessThan(staminaBefore)
 
-    // Même coup dans le dos (b regarde à l'est, a frappe depuis l'ouest).
-    entity(sim, b).hp = 100
-    strike(sim, a, 1, 0, [{ entityId: b, dx: 0, dy: 0, block: true }])
-    // (le facing de b a été écrasé ? non : b ne bouge pas, on le force)
+    // Même coup dans le dos (b regarde à l'est, a frappe depuis l'ouest) :
+    // hors de l'arc frontal, le blocage ne protège pas — dégâts pleins.
     entity(sim, b).hp = 100
     entity(sim, b).facing = { x: 1, y: 0 }
     strike(sim, a, 1, 0, [{ entityId: b, dx: 0, dy: 0, block: true }])

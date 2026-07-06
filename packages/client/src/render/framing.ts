@@ -7,6 +7,11 @@
  * Spec : docs/specs/client.md §« Cadrage & proportions » (R10-R13).
  */
 
+/** Taille CANONIQUE d'une tuile à l'écran, en px (art placeholder 16×16).
+ * Les fonctions de ce module la prennent en paramètre (testabilité) ; le
+ * reste du client importe cette constante plutôt que de la redéclarer. */
+export const TILE_PX = 16
+
 /** Toutes les entités « hautes » (acteurs + structures verticales) trient leur
  * profondeur au-dessus de cette base, laissant le sol/les nœuds/les cadavres
  * dessous. La valeur exacte importe peu : elle doit juste dominer les depths

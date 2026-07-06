@@ -8,6 +8,7 @@
 import { BALANCE, COMBAT, MONSTER_DEFS, TICK_DT_S, type MonsterType } from './balance'
 import { startAttack } from './combat'
 import { moveAvatar } from './collision'
+import { distSq } from './geometry'
 import { rngRoll } from './rng'
 import { spawnEntity, type Entity, type SimState } from './sim'
 import { computeFlowField } from './pathfinding'
@@ -46,12 +47,6 @@ function roll(state: SimState): number {
   const { value, next } = rngRoll(state.rngState)
   state.rngState = next
   return value
-}
-
-function distSq(ax: number, ay: number, bx: number, by: number): number {
-  const dx = ax - bx
-  const dy = ay - by
-  return dx * dx + dy * dy
 }
 
 /** Les proies : avatars (joueurs et PNJ), pas les autres monstres. */
@@ -147,16 +142,11 @@ function hordeStep(state: SimState, monster: Monster, entity: Entity, flows: Flo
   if (blocker && structureBlocks(blocker, null)) {
     if (!entity.windup && state.tick >= entity.cooldownUntil) {
       const def = MONSTER_DEFS[monster.type]
-      const started = startAttack(
-        state,
-        entity,
-        bestTx + 0.5 - entity.x,
-        bestTy + 0.5 - entity.y,
-        undefined,
-        def.windupTicks,
-        def.damage,
-        blocker.id,
-      )
+      const started = startAttack(state, entity, bestTx + 0.5 - entity.x, bestTy + 0.5 - entity.y, {
+        windupTicks: def.windupTicks,
+        damage: def.damage,
+        structureId: blocker.id,
+      })
       // Un coup refusé (endurance…) ne consomme pas le cooldown.
       if (started) entity.cooldownUntil = state.tick + def.attackCooldownTicks
     }
@@ -188,7 +178,7 @@ function attackBlockingStructure(state: SimState, monster: Monster, entity: Enti
     const s = structureAt(state.structures, cx, cy)
     if (s && structureBlocks(s, null)) {
       const def = MONSTER_DEFS[monster.type]
-      if (startAttack(state, entity, cx + 0.5 - entity.x, cy + 0.5 - entity.y, undefined, def.windupTicks, def.damage, s.id)) {
+      if (startAttack(state, entity, cx + 0.5 - entity.x, cy + 0.5 - entity.y, { windupTicks: def.windupTicks, damage: def.damage, structureId: s.id })) {
         entity.cooldownUntil = state.tick + def.attackCooldownTicks
       }
       return
@@ -218,7 +208,7 @@ export function advanceMonsters(state: SimState): void {
       if (target) {
         const d2 = distSq(entity.x, entity.y, target.x, target.y)
         if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
-          if (startAttack(state, entity, target.x - entity.x, target.y - entity.y, undefined, def.windupTicks, def.damage)) {
+          if (startAttack(state, entity, target.x - entity.x, target.y - entity.y, { windupTicks: def.windupTicks, damage: def.damage })) {
             entity.cooldownUntil = state.tick + def.attackCooldownTicks
           }
         } else {
@@ -247,7 +237,7 @@ export function advanceMonsters(state: SimState): void {
       }
       const d2 = distSq(entity.x, entity.y, attackedBy.x, attackedBy.y)
       if (!monster.fleeing && d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
-        if (startAttack(state, entity, attackedBy.x - entity.x, attackedBy.y - entity.y, undefined, def.windupTicks, def.damage)) {
+        if (startAttack(state, entity, attackedBy.x - entity.x, attackedBy.y - entity.y, { windupTicks: def.windupTicks, damage: def.damage })) {
           entity.cooldownUntil = state.tick + def.attackCooldownTicks
         }
       } else {

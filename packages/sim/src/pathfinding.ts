@@ -5,7 +5,7 @@
  * Déterministe : coûts entiers, heuristique Manhattan, départage des égalités
  * par ordre d'insertion. Arithmétique + - * / uniquement.
  */
-import { isBlockedAt, type MoveWorld } from './collision'
+import { makeIndexedIsBlockedAt, type MoveWorld } from './collision'
 import type { ResourceNode } from './economy'
 import type { WorldMap } from './map'
 
@@ -78,7 +78,9 @@ export function findPath(
   maxExplored = 4096,
 ): { tx: number; ty: number }[] | null {
   if (from.tx === to.tx && from.ty === to.ty) return []
-  if (isBlockedAt(world, to.tx, to.ty)) return null
+  // Index d'occupation bâti une fois : l'A* interroge des milliers de tuiles.
+  const isBlocked = makeIndexedIsBlockedAt(world)
+  if (isBlocked(to.tx, to.ty)) return null
   const width = world.map.width
   const height = world.map.height
   const inBounds = (tx: number, ty: number): boolean => tx >= 0 && ty >= 0 && tx < width && ty < height
@@ -113,7 +115,7 @@ export function findPath(
     for (const [dx, dy] of DIRS) {
       const nx = current.tx + dx
       const ny = current.ty + dy
-      if (!inBounds(nx, ny) || isBlockedAt(world, nx, ny)) continue
+      if (!inBounds(nx, ny) || isBlocked(nx, ny)) continue
       const nk = key(nx, ny)
       const ng = g + 1
       const known = gScore.get(nk)
@@ -136,6 +138,8 @@ export function computeFlowField(map: WorldMap, nodes: ResourceNode[], targetTx:
   const { width, height } = map
   const field = new Int32Array(width * height).fill(-1)
   const world: MoveWorld = { map, nodes } // sans structures
+  // Index d'occupation bâti une fois : le BFS balaie toute la carte.
+  const isBlocked = makeIndexedIsBlockedAt(world)
   const queue: number[] = []
   const startKey = targetTy * width + targetTx
   field[startKey] = 0
@@ -153,7 +157,7 @@ export function computeFlowField(map: WorldMap, nodes: ResourceNode[], targetTx:
       if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
       const nk = ny * width + nx
       if (field[nk] !== -1) continue
-      if (isBlockedAt(world, nx, ny)) continue
+      if (isBlocked(nx, ny)) continue
       field[nk] = d + 1
       queue.push(nk)
     }

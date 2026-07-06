@@ -48,6 +48,55 @@ function blockedAt(world: MoveWorld, tx: number, ty: number): boolean {
   return false
 }
 
+/**
+ * Version indexée de `isBlockedAt` pour les gros consommateurs (A*, flow
+ * fields) : `structureAt` et `nodeAt` sont des `find` O(S)/O(N) PAR TUILE,
+ * or un `findPath` ou un `computeFlowField` interroge des milliers de
+ * tuiles. On matérialise UNE FOIS l'occupation par tuile (clé ty*width+tx,
+ * premier occupant du tableau — même sémantique que `find`), puis chaque
+ * requête est O(1) avec strictement les mêmes règles que `blockedAt`.
+ * Dérivé local pur, même statut que le flow cache des hordes : construit et
+ * jeté dans l'appel, jamais dans SimState. Hors bornes de la carte, on
+ * retombe sur `blockedAt` (pas d'aliasing de clé possible).
+ */
+export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: number) => boolean {
+  const { width, height } = world.map
+  const occupancy = new Map<number, { structure?: Structure; node?: ResourceNode }>()
+  const entryAt = (tx: number, ty: number): { structure?: Structure; node?: ResourceNode } => {
+    const key = ty * width + tx
+    let entry = occupancy.get(key)
+    if (!entry) {
+      entry = {}
+      occupancy.set(key, entry)
+    }
+    return entry
+  }
+  if (world.structures) {
+    for (const s of world.structures) {
+      if (s.tx < 0 || s.ty < 0 || s.tx >= width || s.ty >= height) continue
+      const entry = entryAt(s.tx, s.ty)
+      if (entry.structure === undefined) entry.structure = s
+    }
+  }
+  if (world.nodes) {
+    for (const n of world.nodes) {
+      if (n.tx < 0 || n.ty < 0 || n.tx >= width || n.ty >= height) continue
+      const entry = entryAt(n.tx, n.ty)
+      if (entry.node === undefined) entry.node = n
+    }
+  }
+  const moverVillageId = world.moverVillageId ?? null
+  return (tx: number, ty: number): boolean => {
+    if (tx < 0 || ty < 0 || tx >= width || ty >= height) return blockedAt(world, tx, ty)
+    if (isBlockingTile(world.map, tx, ty)) return true
+    const entry = occupancy.get(ty * width + tx)
+    if (entry === undefined) return false
+    if (entry.structure !== undefined && structureBlocks(entry.structure, moverVillageId)) return true
+    if (entry.node !== undefined && entry.node.stock > 0 && NODE_DEFS[entry.node.type].blocks) return true
+    return false
+  }
+}
+
 /** Plage de tuiles recouvertes par l'intervalle [min, max). */
 function tileSpan(min: number, max: number): [number, number] {
   return [Math.floor(min + EPS), Math.floor(max - EPS)]

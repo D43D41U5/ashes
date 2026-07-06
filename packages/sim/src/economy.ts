@@ -20,6 +20,7 @@ import {
 } from './balance'
 import { harvestFactor } from './alignment'
 import { emitEvent } from './events'
+import { distSq } from './geometry'
 import { addItems, countOf, removeItems, type ItemId, type SkillId } from './items'
 import { terrainAt, zoneAt, type WorldMap } from './map'
 import { rngFloat, rngNext } from './rng'
@@ -76,12 +77,6 @@ function toolMultiplier(entity: Entity, family: 'axe' | 'pickaxe' | null): { mul
   if (countOf(entity.inventory, tier.iron) > 0) return { mult: 3, toolItem: tier.iron }
   if (countOf(entity.inventory, tier.basic) > 0) return { mult: 2, toolItem: tier.basic }
   return { mult: 1, toolItem: null }
-}
-
-function distSq(ax: number, ay: number, bx: number, by: number): number {
-  const dx = ax - bx
-  const dy = ay - by
-  return dx * dx + dy * dy
 }
 
 export function applyEconomyAction(state: SimState, actorId: number, action: EconomyAction): void {

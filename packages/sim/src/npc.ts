@@ -3,26 +3,30 @@
  *
  * Principe fondateur (R1) : un PNJ agit par le MÊME pipeline d'actions
  * validées qu'un joueur — son IA émet des intentions, jamais des résultats.
- * IA à deux étages (R3) : besoins critiques (manger, dormir), sinon le
- * tableau du village. Des seuils et une file — pas de GOAP.
+ * IA à deux étages (R3) : besoins critiques (npc-needs.ts), sinon le
+ * tableau du village (village-board.ts). Des seuils et une file — pas de GOAP.
  * Tout est déterministe : égalités départagées par id, aucun aléa.
+ *
+ * Ce module garde l'orchestration (advanceNpcs), l'exécution des tâches
+ * (récolter, cuisiner, réparer), la navigation (followPath/setPathTo), la
+ * milice (handleDefense) et le peuplement (spawnNpcsAround). Les besoins,
+ * les expéditions et le tableau vivent dans leurs modules.
  */
 import { isThreatTo } from './alignment'
-import { emitEvent } from './events'
-import { ALIGNMENT, BALANCE, COMBAT, NPC_AI, STRUCTURE_HP, TICK_DT_S, VILLAGE_NAMES, WORLD_EVENTS, type NodeType } from './balance'
+import { BALANCE, COMBAT, NPC_AI, STRUCTURE_HP, TICK_DT_S, type NodeType } from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
-import { applyCombatAction, startAttack } from './combat'
-
-/** Looter un cadavre par le pipeline standard (raid, spec alignement R13). */
-function applyCombatLoot(state: SimState, entityId: number, corpseId: number): void {
-  applyCombatAction(state, entityId, { type: 'loot_corpse', corpseId })
-}
+import { startAttack } from './combat'
 import { applyEconomyAction, type ResourceNode } from './economy'
+import { emitEvent } from './events'
+import { distSq } from './geometry'
 import { countOf, type ItemId } from './items'
+import { handleHunger, handleSleep } from './npc-needs'
+import { assignErrands, handleErrand } from './npc-errands'
 import { findPath } from './pathfinding'
 import { spawnEntity, type Entity, type SimState } from './sim'
-import { DAY_TICKS_PER_CYCLE, getGameTime, TICKS_PER_CYCLE } from './time'
-import { applyVillageAction, TICK_NEVER, type Structure, type TaskKind, type Village } from './village'
+import { TICKS_PER_CYCLE } from './time'
+import { applyVillageAction, type TaskKind, type Village } from './village'
+import { granaries, refreshBoard } from './village-board'
 
 export interface NpcTaskState {
   id: number
@@ -59,36 +63,12 @@ const TASK_DEFS: Record<
 }
 
 const RANGE = BALANCE.INTERACT_RANGE - 0.2 // marge : on agit un peu en dedans de la portée
-const TICKS_PER_HOUR = TICKS_PER_CYCLE / 24
+export const TICKS_PER_HOUR = TICKS_PER_CYCLE / 24
 
 // ─── Aides ────────────────────────────────────────────────────────────────
 
-function distSq(ax: number, ay: number, bx: number, by: number): number {
-  const dx = ax - bx
-  const dy = ay - by
-  return dx * dx + dy * dy
-}
-
 function moveWorldFor(state: SimState, villageId: number): MoveWorld {
   return { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: villageId }
-}
-
-/** Les coffres-greniers du village : accès `village`, dans l'ordre des ids (spec R5-R6). */
-function granaries(state: SimState, villageId: number): Structure[] {
-  return state.structures.filter(
-    (s) => s.type === 'chest' && s.villageId === villageId && s.access === 'village',
-  )
-}
-
-function granaryStocks(state: SimState, villageId: number): Record<'berries' | 'stew' | 'wood' | 'fiber', number> {
-  const stocks = { berries: 0, stew: 0, wood: 0, fiber: 0 }
-  for (const chest of granaries(state, villageId)) {
-    stocks.berries += countOf(chest.inventory ?? {}, 'berries')
-    stocks.stew += countOf(chest.inventory ?? {}, 'stew')
-    stocks.wood += countOf(chest.inventory ?? {}, 'wood')
-    stocks.fiber += countOf(chest.inventory ?? {}, 'fiber')
-  }
-  return stocks
 }
 
 function nearestAliveNode(state: SimState, entity: Entity, type: NodeType): ResourceNode | undefined {
@@ -106,7 +86,7 @@ function nearestAliveNode(state: SimState, entity: Entity, type: NodeType): Reso
 }
 
 /** Fait suivre le chemin au PNJ. Retourne true s'il marche encore. */
-function followPath(state: SimState, npc: Npc, entity: Entity): boolean {
+export function followPath(state: SimState, npc: Npc, entity: Entity): boolean {
   const waypoint = npc.path[0]
   if (!waypoint) return false
   const wx = waypoint.tx + 0.5
@@ -141,7 +121,7 @@ function followPath(state: SimState, npc: Npc, entity: Entity): boolean {
 }
 
 /** Calcule un chemin vers une tuile (ou une voisine marchable si elle bloque). */
-function setPathTo(state: SimState, npc: Npc, entity: Entity, tx: number, ty: number): boolean {
+export function setPathTo(state: SimState, npc: Npc, entity: Entity, tx: number, ty: number): boolean {
   const world = moveWorldFor(state, npc.villageId)
   const from = { tx: Math.floor(entity.x), ty: Math.floor(entity.y) }
   const targets = isBlockedAt(world, tx, ty)
@@ -165,77 +145,11 @@ function setPathTo(state: SimState, npc: Npc, entity: Entity, tx: number, ty: nu
   return false
 }
 
-function near(entity: Entity, tx: number, ty: number, r = RANGE): boolean {
+export function near(entity: Entity, tx: number, ty: number, r = RANGE): boolean {
   return distSq(entity.x, entity.y, tx + 0.5, ty + 0.5) <= r * r
 }
 
-// ─── Le tableau du village (spec R5) ─────────────────────────────────────
-
-function refreshBoard(state: SimState, village: Village): void {
-  if (granaries(state, village.id).length === 0) {
-    village.tasks = village.tasks.filter((t) => t.claimedBy !== null)
-    return
-  }
-  const stocks = granaryStocks(state, village.id)
-  const foodScore = stocks.berries + stocks.stew * 3
-
-  const wanted: Partial<Record<TaskKind, number>> = {
-    gather_berries: foodScore < BALANCE.VILLAGE_FOOD_TARGET ? 2 : 0,
-    gather_wood: stocks.wood < BALANCE.VILLAGE_WOOD_TARGET ? 1 : 0,
-    gather_fiber: stocks.fiber < NPC_AI.VILLAGE_FIBER_TARGET ? 1 : 0,
-    cook_stew:
-      stocks.stew < BALANCE.VILLAGE_STEW_TARGET && stocks.berries >= NPC_AI.COOK_MIN_BERRIES && stocks.fiber >= NPC_AI.COOK_MIN_FIBER ? 1 : 0,
-  }
-  const priorities: Record<TaskKind, number> = {
-    repair: 4,
-    cook_stew: 3,
-    gather_berries: 2,
-    gather_fiber: 2,
-    gather_wood: 1,
-  }
-
-  // Réparer (spec événements R2) : une tâche par structure sous le seuil.
-  for (const s of state.structures) {
-    if (s.villageId !== village.id || s.type === 'fire') continue
-    if (s.hp >= STRUCTURE_HP[s.type] * WORLD_EVENTS.REPAIR_TASK_THRESHOLD) continue
-    if (!village.tasks.some((t) => t.kind === 'repair' && t.structureId === s.id)) {
-      village.tasks.push({
-        id: village.nextTaskId,
-        kind: 'repair',
-        priority: priorities.repair,
-        claimedBy: null,
-        structureId: s.id,
-      })
-      village.nextTaskId += 1
-    }
-  }
-  // Purger les réparations dont la structure a disparu ou est remise à neuf.
-  village.tasks = village.tasks.filter((t) => {
-    if (t.kind !== 'repair') return true
-    const s = state.structures.find((st) => st.id === t.structureId)
-    return s !== undefined && s.hp < STRUCTURE_HP[s.type]
-  })
-
-  for (const kind of Object.keys(wanted) as TaskKind[]) {
-    const want = wanted[kind] ?? 0
-    const existing = village.tasks.filter((t) => t.kind === kind)
-    for (let i = existing.length; i < want; i++) {
-      village.tasks.push({ id: village.nextTaskId, kind, priority: priorities[kind], claimedBy: null })
-      village.nextTaskId += 1
-    }
-    // On retire l'excédent NON réclamé (celui qui travaille finit son geste).
-    let excess = existing.length - want
-    if (excess > 0) {
-      village.tasks = village.tasks.filter((t) => {
-        if (t.kind === kind && t.claimedBy === null && excess > 0) {
-          excess -= 1
-          return false
-        }
-        return true
-      })
-    }
-  }
-}
+// ─── Réclamer/rendre les tâches du tableau (spec R5) ─────────────────────
 
 function claimTask(village: Village, npc: Npc): void {
   const free = village.tasks
@@ -248,7 +162,7 @@ function claimTask(village: Village, npc: Npc): void {
   npc.path = []
 }
 
-function dropTask(village: Village, npc: Npc, completed: boolean): void {
+export function dropTask(village: Village, npc: Npc, completed: boolean): void {
   if (npc.task) {
     if (completed) village.tasks = village.tasks.filter((t) => t.id !== npc.task!.id)
     else {
@@ -417,208 +331,6 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
   followPath(state, npc, entity)
 }
 
-// ─── Les expéditions (spec alignement R13-R14) ────────────────────────────
-
-/** Le grenier d'un AUTRE village (cible de raid ou de don). */
-function foreignGranary(state: SimState, targetVillageId: number): Structure | undefined {
-  return state.structures.find(
-    (s) => s.type === 'chest' && s.villageId === targetVillageId && s.access === 'village',
-  )
-}
-
-function nearestOtherVillage(state: SimState, village: Village): Village | undefined {
-  let best: Village | undefined
-  let bestD = Infinity
-  for (const v of state.villages) {
-    if (v.id === village.id || !foreignGranary(state, v.id)) continue
-    const d = distSq(v.fireTx, v.fireTy, village.fireTx, village.fireTy)
-    if (d < bestD) {
-      best = v
-      bestD = d
-    }
-  }
-  return best
-}
-
-/** Assigne les expéditions : raids de Meute à la nuit, dons de Foyer au matin. */
-function assignErrands(state: SimState): void {
-  const cycleTick = state.tick % TICKS_PER_CYCLE
-  if (cycleTick === DAY_TICKS_PER_CYCLE) {
-    for (const village of state.villages) {
-      if (village.archetype !== 'meute') continue
-      // On ne raide pas quand la meute est exsangue (< 3 vivants).
-      if (state.npcs.filter((n) => n.villageId === village.id).length < NPC_AI.RAID_MIN_ALIVE) continue
-      const target = nearestOtherVillage(state, village)
-      if (!target) continue
-      const raiders = state.npcs.filter((n) => n.villageId === village.id && !n.errand).slice(0, NPC_AI.RAIDERS_PER_RAID)
-      for (const raider of raiders) {
-        raider.errand = { kind: 'raid', targetVillageId: target.id, stage: 'go' }
-        raider.sleeping = false
-        raider.path = []
-        if (raider.task) dropTask(village, raider, false)
-      }
-    }
-  }
-  if (cycleTick === 0 && state.tick > 0) {
-    for (const village of state.villages) {
-      // À l'aube, les raiders décrochent.
-      for (const npc of state.npcs) {
-        if (npc.villageId === village.id && npc.errand?.kind === 'raid' && npc.errand.stage !== 'home') {
-          npc.errand.stage = 'home'
-          npc.path = []
-        }
-      }
-      if (village.archetype !== 'foyer') continue
-      const granary = granaries(state, village.id)[0]
-      // Un Foyer donne dès que le grenier couvre DEUX dons : un pour le
-      // voisin, un de réserve pour les siens — généreux, pas suicidaire.
-      if (!granary || countOf(granary.inventory ?? {}, 'berries') < 2 * ALIGNMENT.GIFT_BERRIES) continue
-      const target = nearestOtherVillage(state, village)
-      if (!target) continue
-      const giver = state.npcs.find((n) => n.villageId === village.id && !n.errand)
-      if (giver) {
-        giver.errand = { kind: 'gift', targetVillageId: target.id, stage: 'fetch' }
-        giver.path = []
-        if (giver.task) dropTask(village, giver, false)
-      }
-    }
-  }
-}
-
-/** Exécute l'expédition du PNJ. Retourne true si elle a consommé le tick. */
-function handleErrand(state: SimState, village: Village, npc: Npc, entity: Entity): boolean {
-  const errand = npc.errand
-  if (!errand) return false
-  const done = (): boolean => {
-    npc.errand = null
-    npc.path = []
-    return true
-  }
-
-  if (errand.kind === 'gift') {
-    if (errand.stage === 'fetch') {
-      const own = granaries(state, village.id)[0]
-      if (!own) return done()
-      if (countOf(entity.inventory, 'berries') >= ALIGNMENT.GIFT_BERRIES) {
-        errand.stage = 'go'
-        npc.path = []
-        return true
-      }
-      if (near(entity, own.tx, own.ty)) {
-        applyVillageAction(state, entity.id, {
-          type: 'withdraw',
-          structureId: own.id,
-          item: 'berries',
-          count: ALIGNMENT.GIFT_BERRIES,
-        })
-        errand.stage = 'go'
-        return true
-      }
-      if (npc.path.length === 0 && !setPathTo(state, npc, entity, own.tx, own.ty)) return done()
-      followPath(state, npc, entity)
-      return true
-    }
-    if (errand.stage === 'go') {
-      const target = foreignGranary(state, errand.targetVillageId)
-      if (!target) return done()
-      if (near(entity, target.tx, target.ty)) {
-        // Le dépôt est ouvert (spec R11) : le don du Foyer.
-        applyVillageAction(state, entity.id, {
-          type: 'deposit',
-          structureId: target.id,
-          item: 'berries',
-          count: countOf(entity.inventory, 'berries'),
-        })
-        errand.stage = 'home'
-        npc.path = []
-        return true
-      }
-      if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty)) return done()
-      followPath(state, npc, entity)
-      return true
-    }
-    // home
-    if (near(entity, village.fireTx, village.fireTy, 2)) return done()
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, village.fireTx, village.fireTy)) return done()
-    followPath(state, npc, entity)
-    return true
-  }
-
-  // Le raid (spec R13). Blessé : on décroche (le combat de coût, GDD §7).
-  if (entity.hp < NPC_AI.RAID_DISENGAGE_HP && errand.stage !== 'home') {
-    errand.stage = 'home'
-    npc.path = []
-  }
-  // En chemin : on frappe qui n'est pas des nôtres.
-  const foe = state.entities.find(
-    (e) =>
-      e.id !== entity.id &&
-      e.hp > 0 &&
-      !village.memberIds.includes(e.id) &&
-      !state.monsters.some((m) => m.entityId === e.id) &&
-      distSq(e.x, e.y, entity.x, entity.y) <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE,
-  )
-  if (foe && !entity.windup && state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
-    if (startAttack(state, entity, foe.x - entity.x, foe.y - entity.y)) {
-      entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
-    }
-    return true
-  }
-  if (entity.windup) return true
-
-  if (errand.stage === 'go') {
-    const target = foreignGranary(state, errand.targetVillageId)
-    if (!target) return done()
-    if (near(entity, target.tx, target.ty)) {
-      errand.stage = 'smash'
-      npc.path = []
-      return true
-    }
-    if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty)) return done()
-    followPath(state, npc, entity)
-    return true
-  }
-  if (errand.stage === 'smash') {
-    const target = foreignGranary(state, errand.targetVillageId)
-    if (!target) {
-      errand.stage = 'loot'
-      return true
-    }
-    if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
-      if (startAttack(state, entity, target.tx + 0.5 - entity.x, target.ty + 0.5 - entity.y, undefined, COMBAT.WINDUP_TICKS, undefined, target.id)) {
-        entity.cooldownUntil = state.tick + COMBAT.ATTACK_COOLDOWN_TICKS
-      }
-    }
-    return true
-  }
-  if (errand.stage === 'loot') {
-    const corpse = state.corpses.find((c) => distSq(c.x, c.y, entity.x, entity.y) <= NPC_AI.CORPSE_SEARCH_RANGE * NPC_AI.CORPSE_SEARCH_RANGE)
-    if (corpse) {
-      applyCombatLoot(state, entity.id, corpse.id)
-    }
-    errand.stage = 'home'
-    npc.path = []
-    return true
-  }
-  // home : rentrer et déposer le butin au grenier.
-  const own = granaries(state, village.id)[0]
-  if (own && near(entity, own.tx, own.ty)) {
-    for (const item of Object.keys(entity.inventory) as (keyof typeof entity.inventory)[]) {
-      if (item === 'spear') continue
-      const count = countOf(entity.inventory, item)
-      if (count > 0) {
-        applyVillageAction(state, entity.id, { type: 'deposit', structureId: own.id, item, count })
-        return true // un dépôt par tick
-      }
-    }
-    return done()
-  }
-  const homeTarget = own ?? { tx: village.fireTx, ty: village.fireTy }
-  if (npc.path.length === 0 && !setPathTo(state, npc, entity, homeTarget.tx, homeTarget.ty)) return done()
-  followPath(state, npc, entity)
-  return true
-}
-
 // ─── La milice émergente (spec combat R13) ────────────────────────────────
 
 /** Une menace (monstre ou raider agresseur) près du Feu ? Tout PNJ la combat. */
@@ -654,70 +366,6 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
   entity.x = moved.x
   entity.y = moved.y
   return true
-}
-
-// ─── Les besoins (spec R3, étage 1) ───────────────────────────────────────
-
-/** Retourne true si le besoin a consommé le tick. */
-function handleHunger(state: SimState, village: Village, npc: Npc, entity: Entity): boolean {
-  if (entity.hunger >= BALANCE.NPC_HUNGER_EAT_THRESHOLD) return false
-  if (countOf(entity.inventory, 'stew') > 0) {
-    applyEconomyAction(state, entity.id, { type: 'eat', item: 'stew' })
-    return true
-  }
-  if (countOf(entity.inventory, 'berries') > 0) {
-    applyEconomyAction(state, entity.id, { type: 'eat', item: 'berries' })
-    return true
-  }
-  // Aller retirer au grenier.
-  const chest = granaries(state, village.id).find(
-    (c) => countOf(c.inventory ?? {}, 'stew') > 0 || countOf(c.inventory ?? {}, 'berries') > 0,
-  )
-  if (!chest) return false // rien à manger : on continue à travailler (pas de deadlock)
-  if (near(entity, chest.tx, chest.ty)) {
-    const inv = chest.inventory ?? {}
-    if (countOf(inv, 'stew') > 0) {
-      applyVillageAction(state, entity.id, { type: 'withdraw', structureId: chest.id, item: 'stew', count: 1 })
-    } else {
-      applyVillageAction(state, entity.id, {
-        type: 'withdraw',
-        structureId: chest.id,
-        item: 'berries',
-        count: Math.min(NPC_AI.EAT_BERRIES_WITHDRAW, countOf(inv, 'berries')),
-      })
-    }
-    return true
-  }
-  if (npc.path.length === 0) setPathTo(state, npc, entity, chest.tx, chest.ty)
-  followPath(state, npc, entity)
-  return true
-}
-
-function handleSleep(state: SimState, npc: Npc, entity: Entity): boolean {
-  const night = getGameTime(state).isNight
-  if (npc.sleeping) {
-    const home = npc.homeId !== null ? state.structures.find((s) => s.id === npc.homeId) : undefined
-    const atHome = home !== undefined && near(entity, home.tx, home.ty, 1.0)
-    const perHour = atHome ? BALANCE.SLEEP_RECOVERY_HOME_PER_HOUR : BALANCE.SLEEP_RECOVERY_FIRE_PER_HOUR
-    npc.energy = Math.min(100, npc.energy + perHour / TICKS_PER_HOUR)
-    if (!night) npc.sleeping = false
-    else return true
-  }
-  if (night && npc.energy < BALANCE.NPC_ENERGY_SLEEP_THRESHOLD) {
-    const home = npc.homeId !== null ? state.structures.find((s) => s.id === npc.homeId) : undefined
-    const village = state.villages.find((v) => v.id === npc.villageId)
-    const target = home ?? state.structures.find((s) => s.type === 'fire' && s.villageId === village?.id)
-    if (!target) return false
-    if (near(entity, target.tx, target.ty, 1.0)) {
-      npc.sleeping = true
-      npc.path = []
-      return true
-    }
-    if (npc.path.length === 0) setPathTo(state, npc, entity, target.tx, target.ty)
-    followPath(state, npc, entity)
-    return true
-  }
-  return false
 }
 
 // ─── La passe PNJ du tick ─────────────────────────────────────────────────
@@ -767,7 +415,8 @@ export function advanceNpcs(state: SimState): void {
 
 // ─── Peuplement ───────────────────────────────────────────────────────────
 
-const RING_OFFSETS = [
+/** Anneau de tuiles autour du Feu où poser les PNJ d'accueil (spec R9). */
+export const RING_OFFSETS = [
   [1, 1],
   [-1, 1],
   [1, -1],
@@ -780,7 +429,7 @@ const RING_OFFSETS = [
   [-2, -2],
 ] as const
 
-function spawnNpcsAround(state: SimState, village: Village, count: number): void {
+export function spawnNpcsAround(state: SimState, village: Village, count: number): void {
   const world = moveWorldFor(state, village.id)
   let spawned = 0
   for (const [dx, dy] of RING_OFFSETS) {
@@ -790,6 +439,7 @@ function spawnNpcsAround(state: SimState, village: Village, count: number): void
     if (isBlockedAt(world, tx, ty)) continue
     const id = spawnEntity(state, tx + 0.5, ty + 0.5)
     village.memberIds.push(id)
+    emitEvent(state, { type: 'member_joined', tick: state.tick, villageId: village.id, entityId: id })
     state.npcs.push({
       entityId: id,
       villageId: village.id,
@@ -803,79 +453,4 @@ function spawnNpcsAround(state: SimState, village: Village, count: number): void
     })
     spawned += 1
   }
-}
-
-/**
- * Crée un village 100 % PNJ complet (spec R10) : Feu, grenier approvisionné,
- * maisons et villageois. L'outil du mode Veillée, des tests et du peuplement.
- */
-export function foundNpcVillage(
-  state: SimState,
-  tx: number,
-  ty: number,
-  count: number,
-  disposition: 'foyer' | 'meute' | 'neutre' = 'neutre',
-): Village {
-  // Le monde-gen a le droit de faire place nette.
-  const reserved = [[0, 0], [0, -2], ...RING_OFFSETS.slice(0, count + 2)].map(([dx, dy]) => [tx + dx, ty + dy])
-  const houseSpots = ([[-3, 0], [3, 0], [-3, 2], [3, 2], [0, 3], [0, -3]] as const).slice(0, count)
-  reserved.push(...houseSpots.map(([dx, dy]) => [tx + dx, ty + dy]))
-  state.nodes = state.nodes.filter((n) => !reserved.some(([rx, ry]) => n.tx === rx && n.ty === ry))
-
-  const villageId = state.nextVillageId
-  state.nextVillageId += 1
-  const village: Village = {
-    id: villageId,
-    name: VILLAGE_NAMES[(villageId - 1) % VILLAGE_NAMES.length]!,
-    chiefId: 0, // pas de chef humain — le village s'appartient
-    memberIds: [],
-    fireTx: tx,
-    fireTy: ty,
-    tasks: [],
-    nextTaskId: 1,
-    npcsArrived: true, // on peuple nous-mêmes
-    lastAlarmAt: TICK_NEVER,
-    warmth: 0,
-    engagement: 0,
-    archetype: 'neutre',
-  }
-  state.villages.push(village)
-  emitEvent(state, { type: 'village_founded', tick: state.tick, villageId, chiefId: 0, tx, ty })
-
-  const addStructure = (type: Structure['type'], sx: number, sy: number, inventory?: Structure['inventory']): Structure => {
-    const s: Structure = {
-      id: state.nextStructureId,
-      type,
-      tx: sx,
-      ty: sy,
-      villageId,
-      ownerId: 0,
-      access: 'village',
-      hp: STRUCTURE_HP[type],
-      ...(inventory ? { inventory } : {}),
-    }
-    state.nextStructureId += 1
-    state.structures.push(s)
-    return s
-  }
-
-  addStructure('fire', tx, ty)
-  addStructure('chest', tx, ty - 2, { berries: 10, wood: 10, fiber: 2 })
-  for (const [dx, dy] of houseSpots) addStructure('house', tx + dx, ty + dy)
-  spawnNpcsAround(state, village, count)
-  // Un village PNJ naît armé (spec combat R13) et avec son caractère
-  // ensemencé (spec alignement R12) — l'archétype ÉMERGE ensuite des actes.
-  const seedWarmth = disposition === 'foyer' ? 60 : disposition === 'meute' ? -60 : 0
-  for (const npc of state.npcs) {
-    if (npc.villageId !== villageId) continue
-    const entity = state.entities.find((e) => e.id === npc.entityId)
-    if (entity) {
-      entity.inventory.spear = 1
-      entity.warmth = seedWarmth
-      // 60 : assez d'inertie pour que le caractère survive à la décroissance
-      // (DECAY_PER_DAY) le temps que les actes (dons, raids) prennent le relais.
-      entity.engagement = disposition === 'neutre' ? 0 : 60
-    }
-  }
-  return village
 }

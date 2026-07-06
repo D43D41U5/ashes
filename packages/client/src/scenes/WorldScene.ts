@@ -1,5 +1,8 @@
 /**
- * La scène de jeu : rendu de la vallée, avatar prédit, entités interpolées.
+ * La scène de jeu : du CÂBLAGE. Le rendu du snapshot vit dans
+ * `world/snapshot-view.ts`, les bindings dans `world/input-bindings.ts`, la
+ * publication HUD dans `world/hud-bridge.ts` — ici restent la caméra, la
+ * prédiction locale et la frontière de transport.
  *
  * Le client est « bête » (spec client R3-R5, reconciliation R1-R7) : la sim
  * tourne dans le Worker, ici on envoie des intentions numérotées et on interpole
@@ -8,9 +11,6 @@
  * que câbler l'I/O réseau et le rendu.
  */
 import {
-  BALANCE,
-  STRUCTURE_HP,
-  chronicleFromEvents,
   createPrediction,
   decayRenderOffset,
   predictFrame,
@@ -18,59 +18,63 @@ import {
   renderPosition,
   speedScaleFor,
   zoneAt,
+  type Entity,
+  type PlayerAction,
   type PredictInput,
   type PredictionState,
   type SimEvent,
-  type AccessLevel,
-  type Corpse,
-  type Entity,
-  type Monster,
-  type Npc,
-  type PlayerAction,
-  type RecipeId,
-  type ResourceNode,
-  type Structure,
   type WorldMap,
 } from '@braises/sim'
 import Phaser from 'phaser'
 import { hash2 } from '../demo-map'
 import { createWorkerHost, type HostConnection } from '../host-connection'
+import { setHud } from '../hud-state'
 import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type ReadyMessage, type SnapshotMessage } from '../protocol'
+import { lookaheadOffset, OVERLAY_DEPTH, TILE_PX, zoomForFraming } from '../render/framing'
 import {
-  actorPlacement,
-  type ActorFootprint,
-  lookaheadOffset,
-  OVERLAY_DEPTH,
-  structureDepth,
-  zoomForFraming,
-} from '../render/framing'
+  publishAlarm,
+  publishChronicle,
+  publishError,
+  publishPlayerVitals,
+  publishSeasonEnded,
+  publishTimeAndVillage,
+} from './world/hud-bridge'
+import { bindInputs, type MovementBindings } from './world/input-bindings'
+import { SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 
-type Buildable = 'wall' | 'door' | 'chest' | 'workshop' | 'furnace'
-const BUILD_KEYS: Buildable[] = ['wall', 'door', 'chest', 'workshop', 'furnace']
-
-const TILE_PX = 16
 /** Cadrage caméra (spec client R10) : « je veux voir ~N tuiles de haut ». */
 const VISIBLE_TILES_TALL = 20
 /** Caméra « Foxhole » (R11) : force du décalage vers le curseur (px écran → px monde). */
 const LOOKAHEAD_STRENGTH = 0.18
 /** Borne radiale du décalage caméra, en tuiles. */
 const LOOKAHEAD_MAX_TILES = 6
-const INTERP_MS = 1000 / BALANCE.TICK_RATE_HZ
 /** Écart prédiction/autorité au-delà duquel on snap (spec client R5). */
 const SNAP_DISTANCE_TILES = 1.5
 /** Décroissance par frame de l'écart visuel après une correction (lissage de rendu, spec R6). */
 const RENDER_OFFSET_DECAY = 0.85
+/**
+ * Borne du journal d'événements de chronique gardé en mémoire (les plus
+ * récents gagnent). Compromis assumé : la chronique d'une Veillée reste
+ * courte (quelques dizaines d'événements filtrés sur 60 jours), donc 500
+ * suffit largement et évite au log de croître sans borne — et à
+ * `chronicleFromEvents` de reparcourir un log arbitrairement long à chaque
+ * événement. Le vrai fix (chronique incrémentale) viendra avec la
+ * persistance.
+ */
+const EVENT_LOG_CAP = 500
 
-/** Emprise VISUELLE par texture d'acteur (tuiles) — R12. Découplée de la
- * résolution native de l'art : un placeholder 12×12 rend ici à ces proportions.
- * L'emprise logique (collision/clic) reste AVATAR_HITBOX_TILES, inchangée. */
-const ACTOR_FOOTPRINTS: Record<string, ActorFootprint> = {
-  'spr-player': { widthTiles: 1, heightTiles: 1.6 },
-  'spr-npc': { widthTiles: 1, heightTiles: 1.6 },
-  'spr-zombie': { widthTiles: 1, heightTiles: 1.6 },
-  'spr-boar': { widthTiles: 1.4, heightTiles: 1 },
-}
-const DEFAULT_FOOTPRINT: ActorFootprint = { widthTiles: 1, heightTiles: 1.6 }
+/** Les événements retenus pour la chronique de saison. */
+const CHRONICLE_TYPES = new Set([
+  'village_founded',
+  'act_started',
+  'village_archetype_changed',
+  'horde_spawned',
+  'convoy_spawned',
+  'gift_given',
+  'entity_died',
+  'evacuation_opened',
+  'season_ended',
+])
 
 const TERRAIN_COLORS: Record<number, number> = {
   // (les couleurs sont des placeholders R8, remplacées par de vrais tilesets en V3+)
@@ -92,15 +96,6 @@ function shade(color: number, factor: number): number {
   return (r << 16) | (g << 8) | b
 }
 
-interface InterpolatedSprite {
-  sprite: Phaser.GameObjects.Image
-  fromX: number
-  fromY: number
-  toX: number
-  toY: number
-  startedAt: number
-}
-
 export class WorldScene extends Phaser.Scene {
   /** La frontière de transport (Worker aujourd'hui, Colyseus en LAN). */
   private host!: HostConnection
@@ -118,17 +113,13 @@ export class WorldScene extends Phaser.Scene {
   private get predicted(): { x: number; y: number } {
     return this.prediction.base
   }
-  private others = new Map<number, InterpolatedSprite>()
-  private keys!: Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key[]>
-  private structures: Structure[] = []
-  private structureSprites = new Map<number, Phaser.GameObjects.Image>()
-  private nodes: ResourceNode[] = []
-  private nodeSprites = new Map<number, Phaser.GameObjects.Image>()
-  private npcs: Npc[] = []
-  private villages: SnapshotMessage['villages'] = []
-  private monsters: Monster[] = []
-  private corpses: Corpse[] = []
-  private corpseSprites = new Map<number, Phaser.GameObjects.Image>()
+  /** Les sprites-miroirs du snapshot (structures, nœuds, cadavres, autres entités). */
+  private view!: SnapshotView
+  /** Exposé pour le hook `__BRAISES__` (les smoke tests lisent `others.size`). */
+  private get others(): ReadonlyMap<number, InterpolatedSprite> {
+    return this.view.others
+  }
+  private inputs!: MovementBindings
   private myVillageId: number | null = null
   private myHunger = 100
   private eventLog: SimEvent[] = []
@@ -137,9 +128,6 @@ export class WorldScene extends Phaser.Scene {
   private myStamina = 100
   /** Mon avatar télégraphie : la sim l'immobilise — la prédiction aussi. */
   private myWindup = false
-  private sprintKeys: Phaser.Input.Keyboard.Key[] = []
-  private blockKey!: Phaser.Input.Keyboard.Key
-  private selected: Buildable = 'wall'
   private ghost!: Phaser.GameObjects.Rectangle
 
   constructor() {
@@ -147,8 +135,10 @@ export class WorldScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.playerSprite = this.add.image(0, 0, 'spr-player')
-    this.applyFootprint(this.playerSprite, 'spr-player')
+    // Origine PIEDS (R12) — indépendante de la texture, posée une fois ;
+    // position/taille/depth viennent de `syncActor` à chaque frame.
+    this.playerSprite = this.add.image(0, 0, 'spr-player').setOrigin(0.5, 1)
+    this.view = new SnapshotView(this)
 
     const zoom = zoomForFraming(VISIBLE_TILES_TALL, TILE_PX, this.scale.height)
     this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16).setZoom(zoom)
@@ -156,100 +146,22 @@ export class WorldScene extends Phaser.Scene {
 
     this.scene.launch('ui')
 
-    const kb = this.input.keyboard!
-    const grab = (codes: number[]) => codes.map((c) => kb.addKey(c, false))
-    const K = Phaser.Input.Keyboard.KeyCodes
-    this.keys = {
-      up: grab([K.Z, K.W, K.UP]),
-      down: grab([K.S, K.DOWN]),
-      left: grab([K.Q, K.A, K.LEFT]),
-      right: grab([K.D, K.RIGHT]),
-    }
-
-    // Mode construction : F fonde, 1-5 choisit, clic bâtit, clic droit démolit.
-    kb.addKey(K.F, false).on('down', () => this.sendAction({ type: 'light_fire' }))
-    ;[K.ONE, K.TWO, K.THREE, K.FOUR, K.FIVE].forEach((code, i) => {
-      kb.addKey(code, false).on('down', () => {
-        this.selected = BUILD_KEYS[i]!
-        this.registry.set('selected', this.selected)
-      })
-    })
-    this.registry.set('selected', this.selected)
-
-    // Combat : ESPACE attaque vers le pointeur, C bloque, SHIFT sprinte, X bande.
-    this.sprintKeys = grab([K.SHIFT])
-    this.blockKey = kb.addKey(K.C, false)
-    kb.addKey(K.SPACE, false).on('down', () => {
-      const world = this.input.activePointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
-      const dx = world.x / TILE_PX - this.predicted.x
-      const dy = world.y / TILE_PX - this.predicted.y
-      this.sendAction({ type: 'attack', dx, dy })
-    })
-    kb.addKey(K.X, false).on('down', () => this.sendAction({ type: 'bandage' }))
-    kb.addKey(K.J, false).on('down', () => {
-      this.registry.set('journalOpen', !this.registry.get('journalOpen'))
-    })
-    // T : donner 3 baies à l'entité la plus proche (l'acte chaud fondamental).
-    kb.addKey(K.T, false).on('down', () => {
-      const nearest = [...this.others.entries()]
-        .map(([id, r]) => ({ id, d: Math.hypot(r.toX - this.predicted.x, r.toY - this.predicted.y) }))
-        .sort((a, b) => a.d - b.d)[0]
-      if (nearest && nearest.d < 1.5) {
-        this.sendAction({ type: 'give', targetEntityId: nearest.id, item: 'berries', count: 3 })
-      }
-    })
-    kb.addKey(K.G, false).on('down', () => {
-      const world = this.input.activePointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
-      const target = this.structures.find(
-        (s) => s.tx === Math.floor(world.x / TILE_PX) && s.ty === Math.floor(world.y / TILE_PX),
-      )
-      if (target) this.sendAction({ type: 'repair', structureId: target.id })
+    // Les handlers lisent l'état à la frappe : on passe des ACCESSEURS.
+    this.inputs = bindInputs(this, {
+      sendAction: (action) => this.sendAction(action),
+      predicted: () => this.predicted,
+      structures: () => this.view.structures,
+      nodes: () => this.view.nodes,
+      corpses: () => this.view.corpses,
+      others: () => this.view.others,
     })
 
-    // Manger et crafter.
-    kb.addKey(K.E, false).on('down', () => this.sendAction({ type: 'eat', item: 'berries' }))
-    kb.addKey(K.R, false).on('down', () => this.sendAction({ type: 'eat', item: 'stew' }))
-    const craftKeys: [number, RecipeId][] = [
-      [K.SIX, 'stew'],
-      [K.SEVEN, 'axe'],
-      [K.EIGHT, 'pickaxe'],
-      [K.NINE, 'iron_ingot'],
-      [K.ZERO, 'iron_axe'],
-    ]
-    for (const [code, recipeId] of craftKeys) {
-      kb.addKey(code, false).on('down', () => this.sendAction({ type: 'craft', recipeId }))
-    }
-
+    // Le fantôme de construction, aligné sur la grille (suit le pointeur en update).
     this.ghost = this.add
       .rectangle(0, 0, TILE_PX, TILE_PX, 0xffffff, 0.22)
       .setOrigin(0)
       .setDepth(OVERLAY_DEPTH)
       .setStrokeStyle(1, 0xffffff, 0.5)
-
-    this.input.mouse?.disableContextMenu()
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      const world = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
-      const tx = Math.floor(world.x / TILE_PX)
-      const ty = Math.floor(world.y / TILE_PX)
-      if (pointer.rightButtonDown()) {
-        const target = this.structures.find((s) => s.tx === tx && s.ty === ty)
-        if (target) this.sendAction({ type: 'demolish', structureId: target.id })
-      } else if (pointer.event.shiftKey) {
-        // Shift+clic : faire tourner l'accès d'une structure à soi (partage).
-        const target = this.structures.find((s) => s.tx === tx && s.ty === ty)
-        if (target) {
-          const cycle: Record<AccessLevel, AccessLevel> = { private: 'village', village: 'public', public: 'private' }
-          this.sendAction({ type: 'set_access', structureId: target.id, access: cycle[target.access] })
-        }
-      } else {
-        // Priorité au clic : cadavre → nœud vivant → bâtir.
-        const corpse = this.corpses.find((c) => Math.floor(c.x) === tx && Math.floor(c.y) === ty)
-        const node = this.nodes.find((n) => n.tx === tx && n.ty === ty && n.stock > 0)
-        if (corpse) this.sendAction({ type: 'loot_corpse', corpseId: corpse.id })
-        else if (node) this.sendAction({ type: 'harvest', nodeId: node.id })
-        else this.sendAction({ type: 'build', structure: this.selected, tx, ty })
-      }
-    })
 
     // Hook de debug/pilotage (pattern __MANIF__) : smoke tests et futurs bots.
     ;(window as unknown as { __BRAISES__: unknown }).__BRAISES__ = { scene: this }
@@ -259,7 +171,7 @@ export class WorldScene extends Phaser.Scene {
     this.host.onError((message) => {
       // L'hôte est mort : plus de snapshots. On le dit au joueur plutôt que
       // de le laisser marcher dans un monde figé.
-      this.registry.set('error', { reason: `hôte perdu : ${message}`, at: this.time.now })
+      publishError(this.registry, `hôte perdu : ${message}`, this.time.now)
     })
 
     // Onglet caché : le rAF de Phaser s'arrête mais PAS le timer du Worker —
@@ -280,10 +192,7 @@ export class WorldScene extends Phaser.Scene {
   /** Le monde arrive de l'hôte : carte, calendrier, spawn (décisions d'hôte). */
   private onReady(msg: ReadyMessage): void {
     if (msg.protocolVersion !== PROTOCOL_VERSION) {
-      this.registry.set('error', {
-        reason: `protocole hôte v${msg.protocolVersion} ≠ client v${PROTOCOL_VERSION}`,
-        at: this.time.now,
-      })
+      publishError(this.registry, `protocole hôte v${msg.protocolVersion} ≠ client v${PROTOCOL_VERSION}`, this.time.now)
       return
     }
     this.playerId = msg.playerId
@@ -294,7 +203,7 @@ export class WorldScene extends Phaser.Scene {
     const worldPx = this.map.width * TILE_PX
     this.cameras.main.setBounds(0, 0, worldPx, worldPx)
     this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
-    this.syncSprite(this.playerSprite, this.predicted.x, this.predicted.y)
+    this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
     this.worldReady = true
   }
 
@@ -302,20 +211,15 @@ export class WorldScene extends Phaser.Scene {
     if (!this.worldReady) return
     const dx = this.axis('right', 'left')
     const dy = this.axis('down', 'up')
-    const sprint = this.sprintKeys.some((k) => k.isDown)
-    const block = this.blockKey.isDown
+    const sprint = this.inputs.sprintKeys.some((k) => k.isDown)
+    const block = this.inputs.blockKey.isDown
 
     // Prédiction locale (spec reconciliation R1-R7). `predictFrame` consomme le
     // dt de frame en sous-pas de tick fixes (rejeu exact de la suite de dt du
     // serveur → pas de divergence de coin), numérote chaque input et le bufferise.
     // On transmet à l'hôte un `input` par tick consommé ; la réconciliation par
     // rejeu (dans `onHostMessage`) recalera l'ancre sur l'autorité.
-    const world = {
-      map: this.map,
-      structures: this.structures,
-      nodes: this.nodes,
-      moverVillageId: this.myVillageId,
-    }
+    const world = this.predictionWorld()
     // LA formule de vitesse vient de /sim (`speedScaleFor`) : les conditions
     // d'endurance (sprint/blocage annulés à 0) sont prédites juste. Pendant
     // son propre wind-up, la sim immobilise — la prédiction gèle (scale 0).
@@ -333,7 +237,7 @@ export class WorldScene extends Phaser.Scene {
     // fluide, sans latence, la sim restant exacte.
     decayRenderOffset(this.prediction, RENDER_OFFSET_DECAY)
     const render = renderPosition(this.prediction, world, input, speedScale)
-    this.syncSprite(this.playerSprite, render.x, render.y)
+    this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player')
 
     // Le fantôme de construction suit le pointeur, aligné sur la grille.
     const pointer = this.input.activePointer
@@ -341,13 +245,9 @@ export class WorldScene extends Phaser.Scene {
     this.ghost.setPosition(Math.floor(pw.x / TILE_PX) * TILE_PX, Math.floor(pw.y / TILE_PX) * TILE_PX)
 
     // Interpolation des autres entités (R4) : vers le dernier snapshot, sur un tick.
-    const now = this.time.now
-    for (const o of this.others.values()) {
-      const t = Math.min(1, (now - o.startedAt) / INTERP_MS)
-      this.syncSprite(o.sprite, o.fromX + (o.toX - o.fromX) * t, o.fromY + (o.toY - o.fromY) * t)
-    }
+    this.view.interpolate(this.time.now)
 
-    this.registry.set('zone', zoneAt(this.map, this.predicted.x, this.predicted.y)?.name)
+    setHud(this.registry, 'zone', zoneAt(this.map, this.predicted.x, this.predicted.y)?.name)
 
     // Caméra « Foxhole » (R11) : le point suivi se décale vers le curseur pour
     // voir plus loin là où l'on vise. Calcul en ÉCRAN-espace (écart au centre),
@@ -370,39 +270,42 @@ export class WorldScene extends Phaser.Scene {
     // vital sur un vrai réseau).
     if (msg.tick <= this.lastSnapshotTick) return
     this.lastSnapshotTick = msg.tick
-    this.registry.set('time', msg.time)
-    this.villages = msg.villages
-    this.syncStructures(msg.structures)
-    this.syncNodes(msg.nodes)
-    this.npcs = msg.npcs
-    this.monsters = msg.monsters
-    this.syncCorpses(msg.corpses)
+
     const myVillage = msg.villages.find((v) => v.memberIds.includes(this.playerId))
     this.myVillageId = myVillage?.id ?? null
-    this.registry.set('village', myVillage?.memberIds.length ?? 0)
-    this.registry.set('tasks', myVillage?.tasks ?? [])
-    this.registry.set('archetype', myVillage?.archetype ?? null)
-    this.registry.set('villageWarmth', myVillage?.warmth ?? 0)
-    const CHRONICLE_TYPES = new Set([
-      'village_founded',
-      'act_started',
-      'village_archetype_changed',
-      'horde_spawned',
-      'convoy_spawned',
-      'gift_given',
-      'entity_died',
-      'evacuation_opened',
-      'season_ended',
-    ])
+    publishTimeAndVillage(this.registry, msg.time, myVillage)
+
+    // Le monde d'abord : la réconciliation ci-dessous rejoue la prédiction
+    // contre les structures/nœuds de CE snapshot, pas du précédent.
+    this.view.apply(msg, this.playerId, this.time.now)
+    this.processEvents(msg)
+
+    // Mon entité autoritative : jauges HUD + réconciliation de la prédiction.
+    const me = msg.entities.find((e) => e.id === this.playerId)
+    if (me) {
+      publishPlayerVitals(this.registry, me)
+      this.myHunger = me.hunger
+      this.myWounds = me.wounds
+      this.myStamina = me.stamina
+      this.myWindup = me.windup !== undefined
+      this.reconcile(me, msg.lastProcessedInput)
+    }
+  }
+
+  /** Événements du snapshot : erreurs/alarme pour MOI, chronique, marqueurs. */
+  private processEvents(msg: SnapshotMessage): void {
     let chronicleDirty = false
     for (const event of msg.events) {
       if (event.type === 'action_rejected' && event.entityId === this.playerId) {
-        this.registry.set('error', { reason: event.reason, at: this.time.now })
+        publishError(this.registry, event.reason, this.time.now)
       } else if (event.type === 'alarm_raised' && event.villageId === this.myVillageId) {
-        this.registry.set('alarm', { at: this.time.now })
+        publishAlarm(this.registry, this.time.now)
       }
       if (CHRONICLE_TYPES.has(event.type)) {
         this.eventLog.push(event)
+        if (this.eventLog.length > EVENT_LOG_CAP) {
+          this.eventLog.splice(0, this.eventLog.length - EVENT_LOG_CAP)
+        }
         chronicleDirty = true
         if (event.type === 'evacuation_opened') {
           this.evacMarker?.destroy()
@@ -411,134 +314,31 @@ export class WorldScene extends Phaser.Scene {
             .setStrokeStyle(2, 0xfff2b0)
             .setDepth(OVERLAY_DEPTH)
         }
-        if (event.type === 'season_ended') this.registry.set('seasonEnded', true)
+        if (event.type === 'season_ended') {
+          publishSeasonEnded(this.registry)
+          // La saison est finie : l'objectif d'évacuation n'a plus de sens.
+          this.evacMarker?.destroy()
+          this.evacMarker = null
+        }
       }
     }
     if (chronicleDirty) {
-      const names = Object.fromEntries(msg.villages.map((v) => [v.id, v.name]))
-      this.registry.set('chronicle', chronicleFromEvents(this.eventLog, this.calendarScale, names))
-    }
-    const now = this.time.now
-    const seen = new Set<number>()
-    for (const entity of msg.entities) {
-      if (entity.id === this.playerId) {
-        this.registry.set('inv', entity.inventory)
-        this.registry.set('hunger', entity.hunger)
-        this.registry.set('skills', entity.skills)
-        this.registry.set('hp', entity.hp)
-        this.registry.set('stamina', entity.stamina)
-        this.registry.set('wounds', entity.wounds)
-        this.myHunger = entity.hunger
-        this.myWounds = entity.wounds
-        this.myStamina = entity.stamina
-        this.myWindup = entity.windup !== undefined
-        this.reconcile(entity, msg.lastProcessedInput)
-        continue
-      }
-      seen.add(entity.id)
-      const npc = this.npcs.find((n) => n.entityId === entity.id)
-      let record = this.others.get(entity.id)
-      if (record) {
-        record.fromX = record.toX
-        record.fromY = record.toY
-        record.toX = entity.x
-        record.toY = entity.y
-        record.startedAt = now
-      } else {
-        const sprite = this.add.image(0, 0, 'spr-npc')
-        this.applyFootprint(sprite, 'spr-npc')
-        this.syncSprite(sprite, entity.x, entity.y)
-        record = { sprite, fromX: entity.x, fromY: entity.y, toX: entity.x, toY: entity.y, startedAt: now }
-        this.others.set(entity.id, record)
-      }
-      // Les villageois se distinguent des errants et des monstres ; un
-      // dormeur s'estompe ; un wind-up flashe (lisibilité, spec R4).
-      const monster = this.monsters.find((m) => m.entityId === entity.id)
-      if (monster) {
-        const key = monster.type === 'zombie' ? 'spr-zombie' : 'spr-boar'
-        record.sprite.setTexture(key)
-        this.applyFootprint(record.sprite, key)
-        record.sprite.setTint(entity.windup ? 0xffffff : 0xdddddd)
-      } else {
-        record.sprite.setTexture('spr-npc')
-        this.applyFootprint(record.sprite, 'spr-npc')
-        record.sprite.setTint(entity.windup ? 0xff8866 : npc ? 0xe8d9a0 : 0xffffff)
-      }
-      record.sprite.setAlpha(npc?.sleeping ? 0.45 : 1)
-    }
-    for (const [id, o] of this.others) {
-      if (!seen.has(id)) {
-        o.sprite.destroy()
-        this.others.delete(id)
-      }
+      publishChronicle(this.registry, this.eventLog, this.calendarScale, msg.villages)
     }
   }
 
-  /** Synchronise les sprites de structures avec le snapshot. */
-  private syncStructures(structures: Structure[]): void {
-    this.structures = structures
-    const seen = new Set<number>()
-    for (const s of structures) {
-      seen.add(s.id)
-      let sprite = this.structureSprites.get(s.id)
-      if (!sprite) {
-        sprite = this.add
-          .image(s.tx * TILE_PX, s.ty * TILE_PX, `st-${s.type}`)
-          .setOrigin(0)
-          .setDepth(s.type === 'fire' ? 5 : structureDepth(s.ty))
-        this.structureSprites.set(s.id, sprite)
-      }
-      if (s.type === 'fire') {
-        // La couleur du Feu (spec alignement R9) : bleu ↔ blanc ↔ rouge.
-        const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
-        const t = Math.max(-1, Math.min(1, warmth / 100))
-        const r = t > 0 ? Math.floor(255 - 130 * t) : 255
-        const g = Math.floor(255 - 90 * Math.abs(t))
-        const b = t < 0 ? Math.floor(255 + 140 * t) : 255
-        sprite.setTint(Phaser.Display.Color.GetColor(r, g, b))
-      } else {
-        // Une structure endommagée s'assombrit et rougit — lisible de loin.
-        const ratio = Math.max(0, Math.min(1, s.hp / STRUCTURE_HP[s.type]))
-        const shade = Math.floor(140 + 115 * ratio)
-        sprite.setTint(Phaser.Display.Color.GetColor(255, shade, shade))
-      }
-    }
-    for (const [id, sprite] of this.structureSprites) {
-      if (!seen.has(id)) {
-        sprite.destroy()
-        this.structureSprites.delete(id)
-      }
-    }
-  }
-
-  /** Synchronise les sprites de nœuds : un nœud épuisé s'estompe. */
-  private syncNodes(nodes: ResourceNode[]): void {
-    this.nodes = nodes
-    for (const n of nodes) {
-      let sprite = this.nodeSprites.get(n.id)
-      if (!sprite) {
-        sprite = this.add.image(n.tx * TILE_PX, n.ty * TILE_PX, `nd-${n.type}`).setOrigin(0).setDepth(4)
-        this.nodeSprites.set(n.id, sprite)
-      }
-      sprite.setAlpha(n.stock > 0 ? 1 : 0.25)
-    }
-  }
-
-  private syncCorpses(corpses: Corpse[]): void {
-    this.corpses = corpses
-    const seen = new Set<number>()
-    for (const c of corpses) {
-      seen.add(c.id)
-      if (!this.corpseSprites.has(c.id)) {
-        const sprite = this.add.image(c.x * TILE_PX, c.y * TILE_PX, 'spr-corpse').setDepth(3)
-        this.corpseSprites.set(c.id, sprite)
-      }
-    }
-    for (const [id, sprite] of this.corpseSprites) {
-      if (!seen.has(id)) {
-        sprite.destroy()
-        this.corpseSprites.delete(id)
-      }
+  /** Le monde vu par la prédiction locale (collisions, vitesses). */
+  private predictionWorld(): {
+    map: WorldMap
+    structures: SnapshotMessage['structures']
+    nodes: SnapshotMessage['nodes']
+    moverVillageId: number | null
+  } {
+    return {
+      map: this.map,
+      structures: this.view.structures,
+      nodes: this.view.nodes,
+      moverVillageId: this.myVillageId,
     }
   }
 
@@ -549,15 +349,9 @@ export class WorldScene extends Phaser.Scene {
    * rendu), et au-delà du seuil de snap c'est un vrai téléport (respawn au Feu).
    */
   private reconcile(authoritative: Entity, lastProcessedInput: number): void {
-    const world = {
-      map: this.map,
-      structures: this.structures,
-      nodes: this.nodes,
-      moverVillageId: this.myVillageId,
-    }
     reconcilePrediction(
       this.prediction,
-      world,
+      this.predictionWorld(),
       { x: authoritative.x, y: authoritative.y },
       lastProcessedInput,
       SNAP_DISTANCE_TILES,
@@ -565,25 +359,10 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private axis(plus: 'right' | 'down', minus: 'left' | 'up'): -1 | 0 | 1 {
-    const p = this.keys[plus].some((k) => k.isDown)
-    const m = this.keys[minus].some((k) => k.isDown)
+    const p = this.inputs.keys[plus].some((k) => k.isDown)
+    const m = this.inputs.keys[minus].some((k) => k.isDown)
     if (p === m) return 0
     return p ? 1 : -1
-  }
-
-  private syncSprite(sprite: Phaser.GameObjects.Image, x: number, y: number): void {
-    const p = actorPlacement(x, y, DEFAULT_FOOTPRINT, TILE_PX, BALANCE.AVATAR_HITBOX_TILES)
-    sprite.setPosition(p.px, p.py)
-    sprite.setDepth(p.depth)
-  }
-
-  /** Applique l'emprise visuelle d'un acteur (R12) : origine PIEDS + taille
-   * d'affichage en tuiles. À rappeler après chaque `setTexture` (setDisplaySize
-   * dépend de la frame courante). */
-  private applyFootprint(sprite: Phaser.GameObjects.Image, textureKey: string): void {
-    const fp = ACTOR_FOOTPRINTS[textureKey] ?? DEFAULT_FOOTPRINT
-    sprite.setOrigin(0.5, 1)
-    sprite.setDisplaySize(fp.widthTiles * TILE_PX, fp.heightTiles * TILE_PX)
   }
 
   private send(msg: ClientToHost): void {

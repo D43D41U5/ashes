@@ -3,7 +3,7 @@ import { ALIGNMENT, BALANCE, SEASON, TERRAIN_GRASS, TERRAIN_ROAD } from './balan
 import { chronicleFromEvents } from './chronicle'
 import { drainEvents, type SimEvent } from './events'
 import { createEmptyMap } from './map'
-import { foundNpcVillage } from './npc'
+import { foundNpcVillage } from './worldgen'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
 import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import type { ResourceNode } from './economy'

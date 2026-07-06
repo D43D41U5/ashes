@@ -21,6 +21,7 @@ import {
   WORLD_EVENTS,
 } from './balance'
 import { emitEvent } from './events'
+import { distSq } from './geometry'
 import {
   addItems,
   countOf,
@@ -175,10 +176,48 @@ export function grantItems(state: SimState, entityId: number, items: Inventory):
   if (entity) addItems(entity.inventory, items)
 }
 
-function distSq(ax: number, ay: number, bx: number, by: number): number {
-  const dx = ax - bx
-  const dy = ay - by
-  return dx * dx + dy * dy
+/** Options de `createVillage` — le seul littéral `Village` de la sim. */
+export interface CreateVillageOptions {
+  /** 0 = pas de chef humain : le village s'appartient (villages PNJ). */
+  chiefId: number
+  tx: number
+  ty: number
+  /** true si l'appelant peuple lui-même — sinon les PNJ d'accueil arrivent (spec pnj R9). */
+  npcsArrived: boolean
+}
+
+/**
+ * Fonde un village : le pousse dans l'état et émet `village_founded`.
+ * Partagé entre `light_fire` (Feu humain) et `foundNpcVillage` (peuplement).
+ */
+export function createVillage(state: SimState, opts: CreateVillageOptions): Village {
+  const villageId = state.nextVillageId
+  state.nextVillageId += 1
+  const village: Village = {
+    id: villageId,
+    name: VILLAGE_NAMES[(villageId - 1) % VILLAGE_NAMES.length]!,
+    chiefId: opts.chiefId,
+    memberIds: opts.chiefId === 0 ? [] : [opts.chiefId],
+    fireTx: opts.tx,
+    fireTy: opts.ty,
+    tasks: [],
+    nextTaskId: 1,
+    npcsArrived: opts.npcsArrived,
+    lastAlarmAt: TICK_NEVER,
+    warmth: 0,
+    engagement: 0,
+    archetype: 'neutre',
+  }
+  state.villages.push(village)
+  emitEvent(state, {
+    type: 'village_founded',
+    tick: state.tick,
+    villageId,
+    chiefId: opts.chiefId,
+    tx: opts.tx,
+    ty: opts.ty,
+  })
+  return village
 }
 
 export function applyVillageAction(state: SimState, actorId: number, action: VillageAction): void {
@@ -202,25 +241,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
         return reject('trop proche d’un autre Feu')
       }
       removeItems(actor.inventory, STRUCTURE_COSTS.fire)
-      const villageId = state.nextVillageId
-      state.nextVillageId += 1
-      state.villages.push({
-        id: villageId,
-        name: VILLAGE_NAMES[(villageId - 1) % VILLAGE_NAMES.length]!,
-        chiefId: actorId,
-        memberIds: [actorId],
-        fireTx: tx,
-        fireTy: ty,
-        tasks: [],
-        nextTaskId: 1,
-        npcsArrived: false,
-        lastAlarmAt: TICK_NEVER,
-        warmth: 0,
-        engagement: 0,
-        archetype: 'neutre',
-      })
-      addStructure(state, 'fire', tx, ty, villageId, 0)
-      emitEvent(state, { type: 'village_founded', tick: state.tick, villageId, chiefId: actorId, tx, ty })
+      const village = createVillage(state, { chiefId: actorId, tx, ty, npcsArrived: false })
+      addStructure(state, 'fire', tx, ty, village.id, 0)
       return
     }
 
@@ -403,14 +425,20 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
   }
 }
 
-function addStructure(
+/**
+ * Bâtit une structure : la pousse dans l'état et émet `structure_built`.
+ * `access` permet aux villages PNJ d'ouvrir leur grenier (`village` au lieu
+ * du défaut `private` du coffre) — sinon DEFAULT_ACCESS (spec R10).
+ */
+export function addStructure(
   state: SimState,
   type: StructureType,
   tx: number,
   ty: number,
   villageId: number,
   ownerId: number,
-): void {
+  access: AccessLevel = DEFAULT_ACCESS[type],
+): Structure {
   const id = state.nextStructureId
   state.nextStructureId += 1
   // Le Foyer bâtit plus solide (spec alignement R8).
@@ -423,7 +451,7 @@ function addStructure(
     ty,
     villageId,
     ownerId,
-    access: DEFAULT_ACCESS[type],
+    access,
     hp: Math.floor(STRUCTURE_HP[type] * hpBonus),
   }
   if (type === 'chest') structure.inventory = {}
@@ -438,4 +466,5 @@ function addStructure(
     tx,
     ty,
   })
+  return structure
 }

@@ -9,6 +9,7 @@
 import { damageModifier, hasAggressionBetween, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
 import { ALIGNMENT, BALANCE, COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
 import { emitEvent } from './events'
+import { distSq } from './geometry'
 import { addItems, countOf, removeItems, type ItemId } from './items'
 import { rngRoll } from './rng'
 import type { Entity, SimState } from './sim'
@@ -26,12 +27,6 @@ export type CombatAction =
   | { type: 'attack'; dx: number; dy: number }
   | { type: 'bandage'; targetEntityId?: number }
   | { type: 'loot_corpse'; corpseId: number }
-
-function distSq(ax: number, ay: number, bx: number, by: number): number {
-  const dx = ax - bx
-  const dy = ay - by
-  return dx * dx + dy * dy
-}
 
 /** L'arme portée la plus dangereuse — l'outil n'est pas une arme (spec R5). */
 export function weaponDamage(entity: Entity): number {
@@ -65,7 +60,7 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
 
   switch (action.type) {
     case 'attack': {
-      startAttack(state, actor, action.dx, action.dy, reject)
+      startAttack(state, actor, action.dx, action.dy, { reject })
       return
     }
 
@@ -104,17 +99,27 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
   }
 }
 
+/** Options de `startAttack` — les défauts sont ceux du coup de joueur nu. */
+export interface StartAttackOptions {
+  /** Rapporte la raison d'un refus (émission d'`action_rejected` côté joueur). */
+  reject?: (reason: string) => void
+  /** Durée du télégraphe (défaut : COMBAT.WINDUP_TICKS). */
+  windupTicks?: number
+  /** Dégâts imposés (monstres) — défaut : l'arme portée au moment du coup. */
+  damage?: number
+  /** Cible structure (siège) au lieu de l'arc contre les entités. */
+  structureId?: number
+}
+
 /** Démarre un wind-up d'attaque (utilisé par joueurs, PNJ et monstres). */
 export function startAttack(
   state: SimState,
   actor: Entity,
   dx: number,
   dy: number,
-  reject?: (reason: string) => void,
-  windupTicks: number = COMBAT.WINDUP_TICKS,
-  damageOverride?: number,
-  targetStructureId?: number,
+  opts: StartAttackOptions = {},
 ): boolean {
+  const { reject, windupTicks = COMBAT.WINDUP_TICKS, damage, structureId } = opts
   if (actor.windup) {
     reject?.('déjà en train de frapper')
     return false
@@ -141,8 +146,8 @@ export function startAttack(
     dx: nx,
     dy: ny,
     ticksLeft: windupTicks,
-    ...(damageOverride !== undefined ? { damage: damageOverride } : {}),
-    ...(targetStructureId !== undefined ? { structureId: targetStructureId } : {}),
+    ...(damage !== undefined ? { damage } : {}),
+    ...(structureId !== undefined ? { structureId } : {}),
   }
   return true
 }

@@ -8,6 +8,7 @@
 import { isThreatTo } from './alignment'
 import { BALANCE, COMBAT, CONVOY_LOOT, LOOT_VALUES, SEASON, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
 import { isBlockedAt } from './collision'
+import { distSq } from './geometry'
 import { rngRoll } from './rng'
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
@@ -45,7 +46,7 @@ export function spawnHorde(state: SimState, size: number): Horde | null {
   let target = state.villages[0]!
   let bestD = Infinity
   for (const v of state.villages) {
-    const d = (v.fireTx - ex) * (v.fireTx - ex) + (v.fireTy - ey) * (v.fireTy - ey)
+    const d = distSq(v.fireTx, v.fireTy, ex, ey)
     if (d < bestD) {
       target = v
       bestD = d
