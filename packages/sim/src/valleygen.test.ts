@@ -5,6 +5,7 @@ import {
   TERRAIN_FOREST,
   TERRAIN_GRASS,
   TERRAIN_ROAD,
+  TERRAIN_ROCK,
   TERRAIN_SHALLOW_WATER,
   TERRAIN_WALL,
 } from './balance'
@@ -142,5 +143,33 @@ describe('stampBlob — contours organiques (Lac)', () => {
       }
     }
     expect(flips).toBeGreaterThan(3)
+  })
+})
+
+describe('roche en amas (dé-confettisage)', () => {
+  it('la roche de biome forme des blocs, pas des tuiles isolées', () => {
+    // Squelette d'exercice : une seule grande région rocheuse, pas d'eau/route.
+    const rocky: ValleySkeleton = {
+      ...TEST_SKELETON,
+      ridges: [], river: { points: [{ x: 2, y: 2 }, { x: 2, y: 3 }], halfWidth: 0 },
+      lake: { x: 2, y: 2, r: 0 }, roads: [], crossings: [], clearings: [], ruins: [],
+      regions: [{ x: 6, y: 6, w: 36, h: 36, rock: 0.25 }],
+    }
+    const map = generateValley(rocky, 3)
+    const isRock = (tx: number, ty: number): boolean => terrainAt(map, tx, ty) === TERRAIN_ROCK
+    let rockTiles = 0
+    let isolated = 0
+    for (let ty = 8; ty < 40; ty++) {
+      for (let tx = 8; tx < 40; tx++) {
+        if (!isRock(tx, ty)) continue
+        rockTiles++
+        const neighbours = (isRock(tx + 1, ty) ? 1 : 0) + (isRock(tx - 1, ty) ? 1 : 0)
+          + (isRock(tx, ty + 1) ? 1 : 0) + (isRock(tx, ty - 1) ? 1 : 0)
+        if (neighbours === 0) isolated++
+      }
+    }
+    expect(rockTiles).toBeGreaterThan(20) // la région est bien rocheuse
+    // En amas : la vaste majorité des tuiles de roche touchent une autre roche.
+    expect(isolated / rockTiles).toBeLessThan(0.25)
   })
 })

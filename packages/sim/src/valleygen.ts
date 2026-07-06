@@ -19,7 +19,7 @@ import {
   TERRAIN_WALL,
 } from './balance'
 import { createEmptyMap, type WorldMap, type Zone } from './map'
-import { fbm2, hash2 } from './noise'
+import { fbm2 } from './noise'
 
 export interface ValleyPoint {
   x: number
@@ -148,7 +148,7 @@ function paintBiomes(map: WorldMap, skeleton: ValleySkeleton, seed: number): voi
         setTile(map, tx, ty, TERRAIN_MARSH)
       } else if (fbm2(tx, ty, 24, seed) < forest) {
         setTile(map, tx, ty, TERRAIN_FOREST)
-      } else if (hash2(tx, ty, (seed ^ 0x7f4a21) | 0) < rock) {
+      } else if (rock > 0 && fbm2(tx, ty, 4, (seed ^ 0x7f4a21) | 0) > 1 - rock) {
         setTile(map, tx, ty, TERRAIN_ROCK)
       }
     }
