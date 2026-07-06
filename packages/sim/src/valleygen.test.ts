@@ -237,7 +237,7 @@ describe('mines dans la bordure', () => {
     ...TEST_SKELETON,
     mines: {
       deep: [{ x: 30, y: 10, toward: 'top' }],
-      simpleDensity: 0.02,
+      simpleDensity: 2,
     },
   }
 

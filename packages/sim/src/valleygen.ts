@@ -60,7 +60,7 @@ export interface ValleySkeleton {
   /** Densités du réseau d'eau procédural (par tuile marchable). Optionnel. */
   water?: { streamDensity?: number; pondDensity?: number }
   /** Mines creusées dans la bordure. `deep` = artisanales (gisement T2) ;
-   *  `simpleDensity` = carrières procédurales par unité de périmètre. */
+   *  `simpleDensity` = carrières procédurales, en carrières par 100 tuiles de périmètre. */
   mines?: {
     deep: { x: number; y: number; toward: 'top' | 'bottom' | 'left' | 'right' }[]
     simpleDensity?: number

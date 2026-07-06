@@ -70,7 +70,8 @@ export function carveMines(map: WorldMap, skeleton: ValleySkeleton, seed: number
   const density = spec.simpleDensity ?? 0
   if (density > 0) {
     const perimeter = 2 * (map.width + map.height)
-    const count = Math.round(density * perimeter) // scalable : aucune quantité en dur
+    // scalable : densité = mines par 100 tuiles de périmètre
+    const count = Math.round((density * perimeter) / 100)
     for (let k = 0; k < count; k++) {
       // Position seedée sur l'un des quatre bords.
       const side = Math.floor(hash2(k * 53, seed, 0x88) * 4)
