@@ -1,0 +1,16 @@
+# Configuration dynamique de Traefik — mode DÉVELOPPEMENT.
+# Route http://ashes.localhost vers le serveur de dev Vite (HMR inclus).
+http:
+  routers:
+    ashes:
+      rule: "Host(`ashes.localhost`)"
+      entryPoints:
+        - web
+      service: ashes
+
+  services:
+    ashes:
+      loadBalancer:
+        servers:
+          # Serveur de dev Vite dans le conteneur `client`.
+          - url: "http://client:3000"
