@@ -13,6 +13,7 @@ import {
   SEASON,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
+  TERRAIN_MARSH,
   TERRAINS,
   TOOL_TIERS,
   type NodeType,
@@ -226,6 +227,10 @@ export function generateNodes(map: WorldMap, seed: number): ResourceNode[] {
         else if (r < 0.028) push('rock', tx, ty)
         else if (r < 0.042) push('berry_bush', tx, ty)
         else if (r < 0.056) push('fiber_plant', tx, ty)
+      } else if (terrain === TERRAIN_MARSH) {
+        // Le Marais : récolte riche parce qu'on y est lent et vulnérable.
+        if (r < 0.05) push('berry_bush', tx, ty)
+        else if (r < 0.13) push('fiber_plant', tx, ty)
       }
     }
   }

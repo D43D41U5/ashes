@@ -142,6 +142,7 @@ export const TERRAINS: Record<number, TerrainDef> = {
   5: { name: 'rock', walkable: false, speedFactor: 0 },
   6: { name: 'deep_water', walkable: false, speedFactor: 0 },
   7: { name: 'wall', walkable: false, speedFactor: 0 },
+  8: { name: 'marsh', walkable: true, speedFactor: 0.6 },
 }
 
 export const TERRAIN_VOID = 0
@@ -150,6 +151,10 @@ export const TERRAIN_ROAD = 2
 export const TERRAIN_ROCK = 5
 
 export const TERRAIN_FOREST = 3
+export const TERRAIN_SHALLOW_WATER = 4
+export const TERRAIN_DEEP_WATER = 6
+export const TERRAIN_WALL = 7
+export const TERRAIN_MARSH = 8
 
 /** Coûts de construction (spec village R3 : réels dès V3). */
 export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./items').Inventory> = {

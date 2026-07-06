@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALIGNMENT, BALANCE, TERRAIN_GRASS } from './balance'
+import { ALIGNMENT, BALANCE, TERRAIN_GRASS, TERRAIN_MARSH } from './balance'
 import { generateNodes, nodeAt, skillLevel, type ResourceNode } from './economy'
 import { drainEvents } from './events'
 import { countOf } from './items'
@@ -239,5 +239,16 @@ describe('la chair procédurale (A6)', () => {
     }
     expect(a.some((n) => n.type === 'iron_vein')).toBe(true)
     expect(nodeAt(a, a[0]!.tx, a[0]!.ty)).toBe(a[0])
+  })
+
+  it('le marais est riche en baies et fibres (spec vallée 2026-07-06)', () => {
+    const map = createEmptyMap(20, 20, TERRAIN_MARSH)
+    const nodes = generateNodes(map, 7)
+    const berries = nodes.filter((n) => n.type === 'berry_bush').length
+    const fibers = nodes.filter((n) => n.type === 'fiber_plant').length
+    expect(berries).toBeGreaterThan(0)
+    expect(fibers).toBeGreaterThan(0)
+    // ~3× plus dense que l'herbe : 400 tuiles → attendre nettement plus que ~11
+    expect(berries + fibers).toBeGreaterThan(25)
   })
 })
