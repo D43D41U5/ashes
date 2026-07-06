@@ -25,7 +25,24 @@ export class BootScene extends Phaser.Scene {
     g.destroy()
 
     this.makeStructures()
+    this.makeGlowTexture()
     this.scene.start('world')
+  }
+
+  /** Halo radial doux (blanc centre → transparent) pour l'éclairage additif des Feux. */
+  private makeGlowTexture(): void {
+    const size = 256
+    const tex = this.textures.createCanvas('glow', size, size)
+    if (!tex) return
+    const ctx = tex.getContext()
+    const c = size / 2
+    const grad = ctx.createRadialGradient(c, c, 0, c, c, c)
+    grad.addColorStop(0, 'rgba(255,255,255,1)')
+    grad.addColorStop(0.5, 'rgba(255,255,255,0.55)')
+    grad.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = grad
+    ctx.fillRect(0, 0, size, size)
+    tex.refresh()
   }
 
   /** Textures 16×16 des structures — placeholders générés (spec client R8). */
