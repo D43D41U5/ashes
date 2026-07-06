@@ -1,18 +1,25 @@
 /**
  * Les mines en galeries (design 2026-07-06, volet C). Une mine = un couloir de
- * sol marchable qui mord dans la bordure rocheuse, terminé par une chambre ;
- * les filons y seront posés par generateNodes via le `kind` de la chambre.
- * Les profondes (gisement fer+charbon) sont artisanales ; les simples
- * (carrière/pierre) sont procédurales par densité de périmètre (scalable).
+ * sol marchable creusé depuis un point d'ancrage côté bordure, terminé par une
+ * chambre ; les filons y seront posés par generateNodes via le `kind` de la
+ * chambre. Les profondes (gisement fer+charbon) sont artisanales ; les
+ * simples (carrière/pierre) sont procédurales par densité de périmètre
+ * (scalable).
+ *
+ * TODO (suivi mine): la galerie ne creuse PAS réellement dans la roche de la
+ * bordure aujourd'hui — c'est un sentier à ciel ouvert qui part d'un point
+ * proche de la bordure et progresse vers l'intérieur (voir carveGallery). À
+ * corriger : creuser réellement dans la roche + longueur de galerie ∝
+ * borderThickness (déferré, hors de ce lot).
  */
 import { TERRAIN_GRASS } from './balance'
 import type { WorldMap, Zone } from './map'
 import { hash2 } from './noise'
-import { paintPolyline, stampBlob, type ValleySkeleton } from './valleygen'
+import { paintPolyline, stampBlob, type ValleySkeleton } from './valleygen-primitives'
 
 type Dir = 'top' | 'bottom' | 'left' | 'right'
 
-const paintFloor = (): number => TERRAIN_GRASS // creuse : sol marchable dans la roche
+const paintFloor = (): number => TERRAIN_GRASS // sol marchable du couloir/chambre
 
 /** Vecteur intérieur d'une bordure (vers le centre de la carte). */
 function inward(dir: Dir): { dx: number; dy: number } {
@@ -23,8 +30,11 @@ function inward(dir: Dir): { dx: number; dy: number } {
 }
 
 /**
- * Creuse une galerie depuis la bouche (près de la bordure) vers l'intérieur,
- * finissant par une chambre. Retourne la zone nommée de la chambre.
+ * Creuse une galerie depuis un point d'ancrage côté bordure vers l'intérieur,
+ * finissant par une chambre qui loge le gisement. Actuellement un sentier de
+ * sol marchable à ciel ouvert (adjacent à la roche, pas percé dedans) —
+ * TODO (suivi mine): creuser réellement dans la roche + longueur de galerie
+ * ∝ borderThickness. Retourne la zone nommée de la chambre.
  */
 function carveGallery(
   map: WorldMap, x: number, y: number, dir: Dir, length: number, chamberR: number,
@@ -33,7 +43,7 @@ function carveGallery(
   const { dx, dy } = inward(dir)
   const ex = x + dx * length
   const ey = y + dy * length
-  // Le couloir (sol marchable percé dans la roche).
+  // Le couloir (sol marchable, à ciel ouvert — pas encore percé dans la roche).
   paintPolyline(map, [{ x, y }, { x: ex, y: ey }], 1, paintFloor)
   if (branch) {
     // Une ramification perpendiculaire à mi-galerie (mine « complexe »).

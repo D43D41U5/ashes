@@ -4,17 +4,16 @@
  * et FRANCHISSABLES : décor, jamais obstacle ; un seul vrai franchissement
  * politique reste (la rivière). Tout est déterministe (noise.ts + hash).
  */
-import {
-  TERRAIN_DEEP_WATER,
-  TERRAIN_FOREST,
-  TERRAIN_GRASS,
-  TERRAIN_MARSH,
-  TERRAIN_ROAD,
-  TERRAIN_SHALLOW_WATER,
-} from './balance'
+import { TERRAIN_DEEP_WATER, TERRAIN_ROAD, TERRAIN_SHALLOW_WATER, TERRAINS } from './balance'
 import type { WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
-import { isWater, type Paint, paintPolyline, stampBlob, type ValleySkeleton } from './valleygen'
+import {
+  isWater,
+  type Paint,
+  paintPolyline,
+  stampBlob,
+  type ValleySkeleton,
+} from './valleygen-primitives'
 
 const paintShallow: Paint = (cur) => (cur === TERRAIN_DEEP_WATER ? undefined : TERRAIN_SHALLOW_WATER)
 
@@ -23,10 +22,7 @@ function walkableCount(map: WorldMap): number {
   let n = 0
   for (let i = 0; i < map.terrain.length; i++) {
     const t = map.terrain[i] ?? 0
-    if (
-      t === TERRAIN_GRASS || t === TERRAIN_ROAD || t === TERRAIN_FOREST
-      || t === TERRAIN_SHALLOW_WATER || t === TERRAIN_MARSH
-    ) n++
+    if (TERRAINS[t]?.walkable) n++
   }
   return n
 }
@@ -83,6 +79,8 @@ export function paintPonds(map: WorldMap, skeleton: ValleySkeleton, seed: number
     const cx = 6 + Math.floor(hash2(k * 977, seed, 0x1b7) * (map.width - 12))
     const cy = 6 + Math.floor(hash2(seed, k * 977, 0x2c9) * (map.height - 12))
     const cur = map.terrain[cy * map.width + cx] ?? 0
+    // roads peints après (dans generateValley) : cur === TERRAIN_ROAD est inerte ici,
+    // garde conservée pour clarté si l'ordre des passes change un jour.
     if (cur === TERRAIN_ROAD || isWater(cur)) continue // pas sur une route ni dans l'eau
     const r = 2 + Math.floor(hash2(k, seed, 0x3f1) * 3) // 2..4
     // Rejeter un candidat dont le footprint mord la bordure ou touche une clairière :

@@ -60,8 +60,11 @@ export const VEILLEE_SKELETON: ValleySkeleton = {
   ],
   // Réseau d'eau procédural (scalable) : ruisseaux et étangs rares.
   water: { streamDensity: 0.0008, pondDensity: 0.0004 },
-  // Mines creusées dans la bordure : une profonde (gisement fer+charbon,
-  // adossée à la bordure est, près des Collines) + des carrières procédurales.
+  // Mines ancrées côté bordure : une profonde (gisement fer+charbon, ancrée
+  // côté est, près des Collines) + des carrières procédurales.
+  // TODO (suivi mine): creuser réellement dans la roche + longueur de galerie
+  // ∝ borderThickness — aujourd'hui la galerie est un sentier à ciel ouvert
+  // adjacent à la roche, pas un tunnel creusé dedans (voir valleygen-mines.ts).
   // simpleDensity à 0.15 (une carrière, côté ouest) — calibré au banc de
   // scénario : à 0.3 (deux carrières), la seconde tombe côté est dans la
   // bande de lignes du Clan du Levant (Meute) et, par ricochet du flux RNG
@@ -92,8 +95,8 @@ export const VEILLEE_SKELETON: ValleySkeleton = {
     { name: 'le Col', x: 48, y: 30, w: 12, h: 14 },
     { name: 'le Hameau abandonné', x: 84, y: 136, w: 14, h: 12 },
     // Le gisement (fer + charbon) vit désormais dans la galerie profonde
-    // creusée dans la bordure (champ `mines`) — ce landmark redevient un
-    // simple repère toponymique, sans rôle mécanique.
+    // ancrée côté bordure (champ `mines`) — ce landmark redevient un simple
+    // repère toponymique, sans rôle mécanique.
     { name: 'la Mine du Levant', x: 146, y: 36, w: 16, h: 14 },
     { name: 'la Tanière des Sangliers', kind: 'taniere', x: 34, y: 64, w: 6, h: 6 },
     { name: 'la Vieille Tanière', kind: 'taniere', x: 58, y: 82, w: 6, h: 6 },

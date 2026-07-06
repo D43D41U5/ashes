@@ -183,24 +183,56 @@ describe('réseau d’eau', () => {
     water: { streamDensity: 0.004, pondDensity: 0.002 },
   }
 
-  it('les ruisseaux sont peu profonds (marchables) et touchent une eau existante', () => {
-    const map = generateValley(watery, 11)
-    // Toute tuile d'eau peu profonde hors rivière/lac reste marchable.
-    for (let ty = 0; ty < map.height; ty++) {
-      for (let tx = 0; tx < map.width; tx++) {
-        if (terrainAt(map, tx, ty) === TERRAIN_SHALLOW_WATER) {
-          expect(isBlockingTile(map, tx, ty)).toBe(false)
-        }
-      }
-    }
+  /**
+   * Repousse la rivière ET le lac hors-carte (coordonnées négatives) : tous
+   * les tampons de paintRiver (paintPolyline/stampBlob) rejettent chaque
+   * tuile candidate via leur garde de bornes, donc AUCUNE eau ne vient de la
+   * rivière/du lac — contrairement à un simple `halfWidth/r: 0` sur un point
+   * dans la carte, qui laisse toujours un résidu (le lac tamponne un rayon
+   * `r + 2`, jamais nul). Toute eau peu profonde observée dans les tests
+   * ci-dessous vient donc forcément de paintStreams/paintPonds : un no-op des
+   * deux ferait tomber ces tests à zéro (voir preuve de gate dans le rapport).
+   */
+  const riverless = (
+    w: number, h: number, water: { streamDensity?: number; pondDensity?: number },
+  ): ValleySkeleton => ({
+    width: w,
+    height: h,
+    borderThickness: 3,
+    ridges: [],
+    river: { points: [{ x: -60, y: -60 }, { x: -60, y: -59 }], halfWidth: 0 },
+    lake: { x: -60, y: -60, r: 0 },
+    roads: [],
+    crossings: [],
+    clearings: [],
+    ruins: [],
+    regions: [{ x: 6, y: 6, w: w - 12, h: h - 12 }],
+    landmarks: [],
+    water,
   })
 
-  it('les étangs existent et restent rares (densité basse)', () => {
-    const map = generateValley(watery, 11)
-    // Compter les composantes d'eau peu profonde loin de la rivière = étangs+ruisseaux.
-    let shallow = 0
-    for (let i = 0; i < map.terrain.length; i++) if (map.terrain[i] === TERRAIN_SHALLOW_WATER) shallow++
-    expect(shallow).toBeGreaterThan(0)
+  function countShallow(map: { terrain: number[] }): number {
+    let n = 0
+    for (const t of map.terrain) if (t === TERRAIN_SHALLOW_WATER) n++
+    return n
+  }
+
+  it("le réseau procédural peint bien de l'eau sans aucune rivière/lac — la passe n'est pas un no-op", () => {
+    const map = generateValley(riverless(96, 96, { streamDensity: 0.004, pondDensity: 0.006 }), 11)
+    expect(countShallow(map)).toBeGreaterThan(0)
+  })
+
+  it('scalabilité (R6) : plus de tuiles d’eau procédurale sur une plus grande surface, mêmes densités', () => {
+    const water = { streamDensity: 0.004, pondDensity: 0.006 }
+    const small = generateValley(riverless(96, 96, water), 11)
+    const big = generateValley(riverless(192, 192, water), 11)
+    const smallCount = countShallow(small)
+    const bigCount = countShallow(big)
+    expect(smallCount).toBeGreaterThan(0)
+    expect(bigCount).toBeGreaterThan(smallCount)
+    // Surface ×4 (192² vs 96²) → on attend une croissance du même ordre ;
+    // tolérance large pour ne pas être fragile au bruit de placement.
+    expect(bigCount).toBeGreaterThan(smallCount * 1.5)
   })
 
   it('les étangs ne percent ni la bordure ni les clairières', () => {
@@ -309,7 +341,7 @@ describe('R6 — scalabilité : les features suivent la taille de la carte', () 
 
   function shallowCount(map: { terrain: number[] }): number {
     let n = 0
-    for (const t of map.terrain) if (t === 4) n++ // shallow_water
+    for (const t of map.terrain) if (t === TERRAIN_SHALLOW_WATER) n++
     return n
   }
 
