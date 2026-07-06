@@ -23,6 +23,17 @@ describe('sim', () => {
     expect(distance).toBeCloseTo(BALANCE.WALK_SPEED_TILES_PER_S * TICK_DT_S)
   })
 
+  it('moved retombe à false dès qu’une entité ne bouge plus', () => {
+    const sim = createSim(1)
+    const id = spawnEntity(sim, 5, 5)
+    step(sim, [{ entityId: id, dx: 1, dy: 0 }])
+    expect(sim.entities[0]!.moved).toBe(true)
+    // Plus d'input du tout (joueur silencieux) : moved ne doit pas rester
+    // figé sur sa dernière valeur — la régén d'endurance en dépend.
+    step(sim, [])
+    expect(sim.entities[0]!.moved).toBe(false)
+  })
+
   it('ignore les inputs visant une entité inconnue', () => {
     const sim = createSim(1)
     expect(() => step(sim, [{ entityId: 999, dx: 1, dy: 0 }])).not.toThrow()

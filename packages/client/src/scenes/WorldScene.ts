@@ -259,6 +259,16 @@ export class WorldScene extends Phaser.Scene {
 
     this.worker = new Worker(new URL('../worker/sim-worker.ts', import.meta.url), { type: 'module' })
     this.worker.addEventListener('message', (e: MessageEvent<HostToClient>) => this.onHostMessage(e.data))
+
+    // Onglet caché : le rAF de Phaser s'arrête mais PAS le timer du Worker —
+    // sans pause, l'hôte répéterait le dernier input (avatar sans pilote) et
+    // empilerait des snapshots. Veillée = solo : on fige le monde.
+    const onVisibility = (): void => {
+      this.send({ type: document.hidden ? 'pause' : 'resume' })
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    this.events.once('shutdown', () => document.removeEventListener('visibilitychange', onVisibility))
+
     this.send({
       type: 'init',
       seed: 2026,

@@ -147,7 +147,7 @@ function hordeStep(state: SimState, monster: Monster, entity: Entity, flows: Flo
   if (blocker && structureBlocks(blocker, null)) {
     if (!entity.windup && state.tick >= entity.cooldownUntil) {
       const def = MONSTER_DEFS[monster.type]
-      startAttack(
+      const started = startAttack(
         state,
         entity,
         bestTx + 0.5 - entity.x,
@@ -157,7 +157,8 @@ function hordeStep(state: SimState, monster: Monster, entity: Entity, flows: Flo
         def.damage,
         blocker.id,
       )
-      entity.cooldownUntil = state.tick + def.attackCooldownTicks
+      // Un coup refusé (endurance…) ne consomme pas le cooldown.
+      if (started) entity.cooldownUntil = state.tick + def.attackCooldownTicks
     }
     return true
   }
@@ -187,8 +188,9 @@ function attackBlockingStructure(state: SimState, monster: Monster, entity: Enti
     const s = structureAt(state.structures, cx, cy)
     if (s && structureBlocks(s, null)) {
       const def = MONSTER_DEFS[monster.type]
-      startAttack(state, entity, cx + 0.5 - entity.x, cy + 0.5 - entity.y, undefined, def.windupTicks, def.damage, s.id)
-      entity.cooldownUntil = state.tick + def.attackCooldownTicks
+      if (startAttack(state, entity, cx + 0.5 - entity.x, cy + 0.5 - entity.y, undefined, def.windupTicks, def.damage, s.id)) {
+        entity.cooldownUntil = state.tick + def.attackCooldownTicks
+      }
       return
     }
   }
@@ -216,8 +218,9 @@ export function advanceMonsters(state: SimState): void {
       if (target) {
         const d2 = distSq(entity.x, entity.y, target.x, target.y)
         if (d2 <= 1.2 * 1.2) {
-          startAttack(state, entity, target.x - entity.x, target.y - entity.y, undefined, def.windupTicks, def.damage)
-          entity.cooldownUntil = state.tick + def.attackCooldownTicks
+          if (startAttack(state, entity, target.x - entity.x, target.y - entity.y, undefined, def.windupTicks, def.damage)) {
+            entity.cooldownUntil = state.tick + def.attackCooldownTicks
+          }
         } else {
           moveToward(state, monster, entity, target.x, target.y, false)
           // Bloqué en chasse par une structure (mur, porte) : on la frappe.
@@ -244,8 +247,9 @@ export function advanceMonsters(state: SimState): void {
       }
       const d2 = distSq(entity.x, entity.y, attackedBy.x, attackedBy.y)
       if (!monster.fleeing && d2 <= 1.2 * 1.2) {
-        startAttack(state, entity, attackedBy.x - entity.x, attackedBy.y - entity.y, undefined, def.windupTicks, def.damage)
-        entity.cooldownUntil = state.tick + def.attackCooldownTicks
+        if (startAttack(state, entity, attackedBy.x - entity.x, attackedBy.y - entity.y, undefined, def.windupTicks, def.damage)) {
+          entity.cooldownUntil = state.tick + def.attackCooldownTicks
+        }
       } else {
         moveToward(state, monster, entity, attackedBy.x, attackedBy.y, monster.fleeing)
       }

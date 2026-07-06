@@ -181,6 +181,11 @@ export function spawnEntity(state: SimState, x: number, y: number): number {
 
 /** Avance la simulation d'exactement un tick. Mute `state` en place. */
 export function step(state: SimState, inputs: MoveInput[]): void {
+  // `moved` décrit CE tick : remis à zéro ici, levé par chaque système de
+  // déplacement (inputs, PNJ, monstres). Sans ce reset, une entité sans
+  // input garderait la valeur d'un tick passé — et la régén d'endurance
+  // (qui en dépend) mentirait.
+  for (const entity of state.entities) entity.moved = false
   for (const input of inputs) {
     const entity = state.entities.find((e) => e.id === input.entityId)
     if (!entity) continue

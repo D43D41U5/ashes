@@ -205,6 +205,19 @@ describe('les monstres (A6)', () => {
     expect(drainEvents(sim).some((e) => e.type === 'monster_slain' && e.monsterType === 'zombie')).toBe(true)
   })
 
+  it('une attaque refusée (à bout de souffle) ne consomme pas le cooldown', () => {
+    const sim = makeSim()
+    spawnEntity(sim, 10.5, 10.5) // la proie, adjacente
+    const z = spawnMonster(sim, 'zombie', 11.5, 10.5)
+    const zombie = entity(sim, z)
+    zombie.stamina = 0 // startAttack refusera (ATTACK_STAMINA)
+    tick(sim)
+    // Le coup n'est pas parti : pas de wind-up — et le cooldown ne doit pas
+    // être posé pour un coup qui n'a jamais eu lieu.
+    expect(zombie.windup).toBeUndefined()
+    expect(zombie.cooldownUntil).toBe(0)
+  })
+
   it('le sanglier fuit quand on le frappe, et sa viande se cuit', () => {
     const sim = makeSim()
     const a = spawnEntity(sim, 10, 10)

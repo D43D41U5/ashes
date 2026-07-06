@@ -43,7 +43,20 @@ export interface ActionMessage {
   action: PlayerAction
 }
 
-export type ClientToHost = InitMessage | InputMessage | ActionMessage
+/**
+ * Pause/reprise de l'hôte — SOLO uniquement (onglet caché : le rAF du rendu
+ * est suspendu mais pas le timer du Worker ; sans pause, l'avatar répéterait
+ * son dernier input sans pilote). Un serveur LAN ignorera ces messages :
+ * le monde des autres ne s'arrête pas.
+ */
+export interface PauseMessage {
+  type: 'pause'
+}
+export interface ResumeMessage {
+  type: 'resume'
+}
+
+export type ClientToHost = InitMessage | InputMessage | ActionMessage | PauseMessage | ResumeMessage
 
 export interface ReadyMessage {
   type: 'ready'

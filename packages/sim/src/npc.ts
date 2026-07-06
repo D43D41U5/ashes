@@ -134,6 +134,7 @@ function followPath(state: SimState, npc: Npc, entity: Entity): boolean {
   } else {
     npc.stuck = 0
   }
+  entity.moved = moved.x !== entity.x || moved.y !== entity.y
   entity.x = moved.x
   entity.y = moved.y
   return true
@@ -469,7 +470,9 @@ function assignErrands(state: SimState): void {
       }
       if (village.archetype !== 'foyer') continue
       const granary = granaries(state, village.id)[0]
-      if (!granary || countOf(granary.inventory ?? {}, 'berries') <= 8) continue
+      // Un Foyer donne dès que le grenier couvre DEUX dons : un pour le
+      // voisin, un de réserve pour les siens — généreux, pas suicidaire.
+      if (!granary || countOf(granary.inventory ?? {}, 'berries') < 2 * ALIGNMENT.GIFT_BERRIES) continue
       const target = nearestOtherVillage(state, village)
       if (!target) continue
       const giver = state.npcs.find((n) => n.villageId === village.id && !n.errand)
@@ -556,8 +559,9 @@ function handleErrand(state: SimState, village: Village, npc: Npc, entity: Entit
       distSq(e.x, e.y, entity.x, entity.y) <= 1.2 * 1.2,
   )
   if (foe && !entity.windup && state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
-    startAttack(state, entity, foe.x - entity.x, foe.y - entity.y)
-    entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
+    if (startAttack(state, entity, foe.x - entity.x, foe.y - entity.y)) {
+      entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
+    }
     return true
   }
   if (entity.windup) return true
@@ -581,8 +585,9 @@ function handleErrand(state: SimState, village: Village, npc: Npc, entity: Entit
       return true
     }
     if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
-      startAttack(state, entity, target.tx + 0.5 - entity.x, target.ty + 0.5 - entity.y, undefined, COMBAT.WINDUP_TICKS, undefined, target.id)
-      entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
+      if (startAttack(state, entity, target.tx + 0.5 - entity.x, target.ty + 0.5 - entity.y, undefined, COMBAT.WINDUP_TICKS, undefined, target.id)) {
+        entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
+      }
     }
     return true
   }
@@ -635,8 +640,9 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
   const d2 = distSq(entity.x, entity.y, threat.x, threat.y)
   if (d2 <= 1.2 * 1.2) {
     if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
-      startAttack(state, entity, threat.x - entity.x, threat.y - entity.y)
-      entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
+      if (startAttack(state, entity, threat.x - entity.x, threat.y - entity.y)) {
+        entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
+      }
     }
     return true
   }
@@ -866,7 +872,9 @@ export function foundNpcVillage(
     if (entity) {
       entity.inventory.spear = 1
       entity.warmth = seedWarmth
-      entity.engagement = disposition === 'neutre' ? 0 : 40
+      // 60 : assez d'inertie pour que le caractère survive à la décroissance
+      // (DECAY_PER_DAY) le temps que les actes (dons, raids) prennent le relais.
+      entity.engagement = disposition === 'neutre' ? 0 : 60
     }
   }
   return village

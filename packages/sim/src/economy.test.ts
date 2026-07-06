@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, TERRAIN_GRASS } from './balance'
+import { ALIGNMENT, BALANCE, TERRAIN_GRASS } from './balance'
 import { generateNodes, nodeAt, skillLevel, type ResourceNode } from './economy'
 import { drainEvents } from './events'
 import { countOf } from './items'
@@ -66,6 +66,30 @@ describe('la récolte (A1)', () => {
     const regrowAt = simTree().regrowAt
     while (sim.tick <= regrowAt) step(sim, [])
     expect(simTree().stock).toBe(10)
+  })
+})
+
+describe('la récolte sous archétype Meute (économie anémique, spec alignement R8)', () => {
+  it('à mains nues, un membre de Meute récolte au moins 1 — anémique, pas nulle', () => {
+    const bush = makeNode('berry_bush', 11, 10)
+    const sim = makeSim([bush])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    grantItems(sim, id, { wood: 10 })
+    act(sim, id, { type: 'light_fire' })
+    // Fige l'archétype Meute (harvestFactor lit warmth/engagement du village).
+    const village = sim.villages[0]!
+    village.engagement = ALIGNMENT.ARCHETYPE_ENGAGEMENT + 10
+    village.warmth = -(ALIGNMENT.ARCHETYPE_WARMTH + 10)
+    drainEvents(sim)
+
+    act(sim, id, { type: 'harvest', nodeId: bush.id })
+    // floor(1 × 1 × MEUTE_HARVEST_MALUS) vaudrait 0 : le coup paierait le
+    // cooldown et l'XP sans rien rapporter (et un PNJ Meute en cueillette
+    // bouclerait sans jamais remplir son quota).
+    expect(countOf(me(sim).inventory, 'berries')).toBeGreaterThanOrEqual(1)
+    const harvested = drainEvents(sim).find((e) => e.type === 'resource_harvested')
+    expect(harvested).toBeDefined()
+    expect(harvested!.type === 'resource_harvested' && harvested!.count).toBeGreaterThanOrEqual(1)
   })
 })
 

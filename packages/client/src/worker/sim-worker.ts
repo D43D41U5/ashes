@@ -57,9 +57,24 @@ function tick(): void {
   })
 }
 
+/** Handle de la boucle de tick — pause/reprise (et garde anti-double-init). */
+let ticker: ReturnType<typeof setInterval> | undefined
+
+function startTicker(): void {
+  if (ticker === undefined) ticker = setInterval(tick, 1000 / BALANCE.TICK_RATE_HZ)
+}
+
+function stopTicker(): void {
+  if (ticker !== undefined) {
+    clearInterval(ticker)
+    ticker = undefined
+  }
+}
+
 self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
   const msg = event.data
   if (msg.type === 'init') {
+    if (sim) return // déjà initialisé : un second init empilerait une seconde boucle
     // La « chair » : les nœuds de ressources sont générés depuis la seed.
     const nodes = generateNodes(msg.map, msg.seed)
     sim = createSim(msg.seed, { map: msg.map, calendarScale: msg.calendarScale, nodes })
@@ -76,11 +91,15 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
     playerId = spawnEntity(sim, msg.playerSpawn.x, msg.playerSpawn.y)
     // Plus de kit de départ : la boucle commence les mains vides (spec économie).
     post({ type: 'ready', playerId })
-    setInterval(tick, 1000 / BALANCE.TICK_RATE_HZ)
+    startTicker()
   } else if (msg.type === 'input') {
     playerInput = { dx: msg.dx, dy: msg.dy, sprint: msg.sprint, block: msg.block }
     lastProcessedInput = msg.seq
   } else if (msg.type === 'action') {
     pendingAction = msg.action
+  } else if (msg.type === 'pause') {
+    stopTicker()
+  } else if (msg.type === 'resume') {
+    if (sim) startTicker()
   }
 })

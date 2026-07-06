@@ -103,10 +103,11 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       if (def.requiresTool && !toolItem) return reject('il faut une pioche')
 
       const level = levelOf(actor, def.skill)
-      // La Meute a une économie anémique (spec alignement R8).
+      // La Meute a une économie anémique (spec alignement R8) — mais jamais
+      // nulle : plancher à 1, sinon le coup paie cooldown et XP pour rien.
       const yielded = Math.min(
         node.stock,
-        Math.floor(mult * (1 + BALANCE.SKILL_YIELD_BONUS * level) * harvestFactor(state, actorId)),
+        Math.max(1, Math.floor(mult * (1 + BALANCE.SKILL_YIELD_BONUS * level) * harvestFactor(state, actorId))),
       )
       addItems(actor.inventory, { [def.item]: yielded })
       node.stock -= yielded

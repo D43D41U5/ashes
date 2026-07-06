@@ -374,8 +374,13 @@ export const ALIGNMENT = {
   RIPOSTE_KILL_WARMTH: -4,
   DESTROY_STRUCTURE_WARMTH: -15,
   ENGAGEMENT_PER_ACT: 8,
-  /** Décroissance linéaire vers 0, en points par jour de saison (le paquebot). */
-  DECAY_PER_DAY: 4,
+  /**
+   * Décroissance linéaire vers 0, en points par jour de saison (le paquebot).
+   * Calibrage 2026-07-06 : 4 → 2. À 4/jour, une chaleur ensemencée à 60
+   * passait sous le seuil d'archétype (40) en 5 jours — aucun rythme d'actes
+   * réaliste ne pouvait entretenir un caractère (banc de scénario, 6 jours).
+   */
+  DECAY_PER_DAY: 2,
   /** Mémoire d'agression entre villages : 1 cycle. */
   AGGRESSION_MEMORY_TICKS: ticksForCycles(1),
   /** Plafond par tête à l'agrégation du Feu (GDD : un seul berserker…). */

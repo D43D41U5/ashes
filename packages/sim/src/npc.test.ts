@@ -124,6 +124,25 @@ describe('la navigation (A4)', () => {
   })
 })
 
+describe('la locomotion des PNJ', () => {
+  it('un PNJ qui marche (A*) est marqué moved — sa régén d’endurance est celle du mouvement', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = {} // tout manque → il part récolter
+    const e = npcEntity(sim)
+    let movedWhileWalking: boolean | undefined
+    for (let t = 0; t < 600; t++) {
+      const bx = e.x
+      const by = e.y
+      step(sim, [])
+      if (e.x !== bx || e.y !== by) {
+        movedWhileWalking = e.moved
+        break
+      }
+    }
+    expect(movedWhileWalking).toBe(true)
+  })
+})
+
 describe('le travail (A5)', () => {
   it('récolter baies : le PNJ y va, récolte, dépose — le grenier monte', () => {
     const sim = npcVillageSim(1)
