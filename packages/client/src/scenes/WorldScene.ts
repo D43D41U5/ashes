@@ -41,6 +41,7 @@ import {
   publishSeasonEnded,
   publishTimeAndVillage,
 } from './world/hud-bridge'
+import { FireGlow } from './world/fire-glow'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 
@@ -109,6 +110,7 @@ export class WorldScene extends Phaser.Scene {
   private map!: WorldMap
   private canopyImage: Phaser.GameObjects.Image | null = null
   private ambientRect: Phaser.GameObjects.Rectangle | null = null
+  private fireGlow: FireGlow | null = null
   private lastTime: GameTime | null = null
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
   private worldReady = false
@@ -217,6 +219,7 @@ export class WorldScene extends Phaser.Scene {
       .rectangle(0, 0, worldPx, worldPx, 0x000000, 0)
       .setOrigin(0)
       .setDepth(AMBIENT_DEPTH)
+    this.fireGlow = new FireGlow(this)
     this.cameras.main.setBounds(0, 0, worldPx, worldPx)
     this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
     this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
@@ -233,6 +236,7 @@ export class WorldScene extends Phaser.Scene {
       const amb = ambientTint(hour)
       this.ambientRect?.setFillStyle(amb.color).setAlpha(amb.alpha)
       this.canopyImage?.setAlpha(canopyStrength(daylight(hour)))
+      this.fireGlow?.update(this.view.structures, this.view.villages, daylight(hour))
     }
     const dx = this.axis('right', 'left')
     const dy = this.axis('down', 'up')
