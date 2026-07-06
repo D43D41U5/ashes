@@ -4,7 +4,7 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import { BALANCE, skillLevel, zoneAt, type Inventory, type SkillId, type VillageTask, type WorldMap } from '@braises/sim'
+import { skillLevel, zoneAt, type Inventory, type SkillId, type VillageTask, type WorldMap } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud } from '../hud-state'
 import { TILE_PX } from '../render/framing'
@@ -51,18 +51,6 @@ const ITEM_LABELS: [keyof Inventory, string][] = [
   ['components', 'Composants'],
 ]
 
-/** Heures affichées par cycle — horloge murale de `getGameTime` (hourOfCycle ∈ [0,24), minuit = 0h). */
-const CYCLE_HOURS = 24
-/** Aube murale (le cycle démarre au lever du jour) — 6 h par défaut. */
-const DAWN_HOUR = BALANCE.CYCLE_DAWN_HOUR
-/** Frontière jour/nuit dérivée de la sim (isNight bascule à cette heure) — 21 h : aube 6 h + 15 h de jour. */
-const NIGHTFALL_HOUR = DAWN_HOUR + CYCLE_HOURS * BALANCE.CYCLE_DAY_FRACTION
-/** Le crépuscule est un pur habillage : fondu entamé un peu avant la nuit logique, fini un peu après. */
-const DUSK_START = NIGHTFALL_HOUR - 1.5
-const DUSK_END = NIGHTFALL_HOUR + 1
-/** L'aube visuelle : l'obscurité fond sur la dernière portion de la nuit, jusqu'au lever du jour. */
-const DAWN_START = DAWN_HOUR - 1.5
-
 /** Maxima des jauges du joueur — valeurs posées par `spawnEntity`
  * (packages/sim/src/sim.ts) ; la sim n'exporte pas (encore) de constante. */
 const HP_MAX = 100
@@ -78,20 +66,8 @@ const MAP_ZOOM_STEP = 1.15
 /** Au-dessus de tout le HUD (et du journal, à profondeur par défaut). */
 const MAP_OVERLAY_DEPTH = 1000
 
-/**
- * Alpha de l'obscurité selon l'heure murale : nuit noire de part et d'autre de
- * minuit (crépuscule 19h30→22h, cœur 22h→4h30, aube 4h30→6h), plein jour 6h→19h30.
- */
-function nightAlpha(hourOfCycle: number): number {
-  const MAX = 0.55
-  if (hourOfCycle < DAWN_START || hourOfCycle >= DUSK_END) return MAX // cœur de nuit, autour de minuit
-  if (hourOfCycle < DAWN_HOUR) return (1 - (hourOfCycle - DAWN_START) / (DAWN_HOUR - DAWN_START)) * MAX // aube
-  if (hourOfCycle < DUSK_START) return 0 // plein jour
-  return ((hourOfCycle - DUSK_START) / (DUSK_END - DUSK_START)) * MAX // crépuscule
-}
-
 export class UIScene extends Phaser.Scene {
-  private nightOverlay!: Phaser.GameObjects.Rectangle
+  private alarmOverlay!: Phaser.GameObjects.Rectangle
   private hud!: Phaser.GameObjects.Text
   private bottomBar!: Phaser.GameObjects.Text
   private errorText!: Phaser.GameObjects.Text
@@ -125,8 +101,8 @@ export class UIScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.nightOverlay = this.add
-      .rectangle(0, 0, this.scale.width, this.scale.height, 0x0b1030, 0)
+    this.alarmOverlay = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x8a1a10, 0)
       .setOrigin(0)
 
     const style = {
@@ -315,7 +291,6 @@ export class UIScene extends Phaser.Scene {
   override update(): void {
     const time = getHud(this.registry, 'time')
     if (!time) return
-    this.nightOverlay.setAlpha(nightAlpha(time.hourOfCycle))
 
     const zone = getHud(this.registry, 'zone')
     const members = getHud(this.registry, 'village') ?? 0
@@ -406,9 +381,9 @@ export class UIScene extends Phaser.Scene {
     const alarm = getHud(this.registry, 'alarm')
     if (alarm && this.time.now - alarm.at < 3000) {
       const pulse = 0.25 + 0.2 * Math.sin(this.time.now / 90)
-      this.nightOverlay.setFillStyle(0x8a1a10).setAlpha(Math.max(this.nightOverlay.alpha, pulse))
+      this.alarmOverlay.setAlpha(pulse)
     } else {
-      this.nightOverlay.setFillStyle(0x0b1030)
+      this.alarmOverlay.setAlpha(0)
     }
   }
 }

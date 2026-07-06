@@ -18,6 +18,7 @@ import {
 import Phaser from 'phaser'
 import type { SnapshotMessage } from '../../protocol'
 import { actorPlacement, structureDepth, TILE_PX, type ActorFootprint } from '../../render/framing'
+import { warmthColor } from '../../render/lighting'
 
 /** Interpolation des autres entités : vers le dernier snapshot, sur un tick (R4). */
 const INTERP_MS = 1000 / BALANCE.TICK_RATE_HZ
@@ -162,13 +163,10 @@ export class SnapshotView {
         this.structureSprites.set(s.id, sprite)
       }
       if (s.type === 'fire') {
-        // La couleur du Feu (spec alignement R9) : bleu ↔ blanc ↔ rouge.
+        // La couleur du Feu (spec alignement R9) : bleu ↔ blanc ↔ rouge. Même
+        // formule que les halos de lumière (module pur `lighting`).
         const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
-        const t = Math.max(-1, Math.min(1, warmth / 100))
-        const r = t > 0 ? Math.floor(255 - 130 * t) : 255
-        const g = Math.floor(255 - 90 * Math.abs(t))
-        const b = t < 0 ? Math.floor(255 + 140 * t) : 255
-        sprite.setTint(Phaser.Display.Color.GetColor(r, g, b))
+        sprite.setTint(warmthColor(warmth))
       } else {
         // Une structure endommagée s'assombrit et rougit — lisible de loin.
         const ratio = Math.max(0, Math.min(1, s.hp / STRUCTURE_HP[s.type]))
