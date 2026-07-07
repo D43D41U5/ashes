@@ -17,11 +17,39 @@
  */
 import { TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_SHALLOW_WATER } from './balance'
 import { elevationAt, type WorldMap } from './map'
-import { hash2 } from './noise'
-import { isWater, type Paint, paintPolyline, stampBlob, type ValleyPoint } from './valleygen-primitives'
+import { fbm2, hash2 } from './noise'
+import { isWater, type Paint, paintPolyline, type ValleyPoint } from './valleygen-primitives'
 
 const paintShallow: Paint = (cur) => (cur === TERRAIN_DEEP_WATER ? undefined : TERRAIN_SHALLOW_WATER)
 const paintDeep: Paint = () => TERRAIN_DEEP_WATER
+
+/**
+ * Plan d'eau à contour IRRÉGULIER — on DÉFORME la position d'échantillonnage par
+ * un bruit basse fréquence (domain warping) avant le test de disque : le contour
+ * gagne des lobes et de l'allongement au lieu de rester un rond (les vrais plans
+ * d'eau ne sont jamais circulaires). Deux appels concentriques (même seed) →
+ * cœur profond bien à l'intérieur de la berge. `warpAmp` = fraction du rayon.
+ */
+function stampWaterBody(
+  map: WorldMap, cx: number, cy: number, r: number, paint: Paint, seed: number, warpAmp: number,
+): void {
+  const W = map.width
+  const H = map.height
+  const rr = Math.ceil(r * (1 + warpAmp)) + 1
+  const scale = Math.max(3, r)
+  for (let dy = -rr; dy <= rr; dy++) {
+    for (let dx = -rr; dx <= rr; dx++) {
+      const tx = cx + dx
+      const ty = cy + dy
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue
+      const wx = dx + warpAmp * r * (fbm2(tx, ty, scale, seed) * 2 - 1)
+      const wy = dy + warpAmp * r * (fbm2(tx, ty, scale, (seed ^ 0x9e3779b9) | 0) * 2 - 1)
+      if (wx * wx + wy * wy > r * r) continue
+      const next = paint(map.terrain[ty * W + tx] ?? 0)
+      if (next !== undefined) map.terrain[ty * W + tx] = next
+    }
+  }
+}
 
 /** Constantes d'hydrologie — contenu de carte, réglées à la vignette. */
 export const HYDRO = {
@@ -75,8 +103,8 @@ function carveLake(map: WorldMap, flow: number[], seed: number): ValleyPoint {
   const margin = Math.max(3, Math.round(D * 0.05))
   const c = lowestInterior(flow, map.width, map.height, margin)
   const r = Math.max(4, Math.round(D * HYDRO.LAKE_R_FRAC))
-  stampBlob(map, c.x, c.y, r + 2, paintShallow, (seed ^ 0x1ac1) | 0, 0.22)
-  stampBlob(map, c.x, c.y, r, paintDeep, (seed ^ 0x1ac1) | 0, 0.22)
+  stampWaterBody(map, c.x, c.y, r + 2, paintShallow, (seed ^ 0x1ac1) | 0, 0.55)
+  stampWaterBody(map, c.x, c.y, r, paintDeep, (seed ^ 0x1ac1) | 0, 0.55)
   return c
 }
 
@@ -194,8 +222,8 @@ function carveIceStreams(map: WorldMap, dir: number[], seed: number): void {
       // Mare de fonte au pied de la pente : le ruisseau finit dans un vrai point
       // d'eau, et le fond de vallée se pique de mares (au lieu d'être sec).
       const pr = Math.max(2, Math.round(D * HYDRO.POOL_R_FRAC))
-      stampBlob(map, poolX, poolY, pr + 1, paintShallow, (seed ^ (k * 71)) | 0, 0.35)
-      if (pr >= 3) stampBlob(map, poolX, poolY, pr, paintDeep, (seed ^ (k * 71)) | 0, 0.35)
+      stampWaterBody(map, poolX, poolY, pr + 1, paintShallow, (seed ^ (k * 71)) | 0, 0.5)
+      if (pr >= 3) stampWaterBody(map, poolX, poolY, pr, paintDeep, (seed ^ (k * 71)) | 0, 0.5)
     }
   }
 }
@@ -222,8 +250,8 @@ function carveTarns(map: WorldMap, seed: number): void {
       }
     }
     if (!isBasin) continue
-    stampBlob(map, x, y, r + 1, paintShallow, (seed ^ (k * 53)) | 0, 0.3)
-    stampBlob(map, x, y, r, paintDeep, (seed ^ (k * 53)) | 0, 0.3)
+    stampWaterBody(map, x, y, r + 1, paintShallow, (seed ^ (k * 53)) | 0, 0.5)
+    stampWaterBody(map, x, y, r, paintDeep, (seed ^ (k * 53)) | 0, 0.5)
     placed += 1
   }
 }
