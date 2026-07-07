@@ -25,9 +25,13 @@ const GRAD2: readonly (readonly [number, number])[] = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
   [1, 1], [-1, 1], [1, -1], [-1, -1],
 ]
-// Étalement du produit scalaire brut (~[-0.7, 0.7]) vers [0, 1). Clampé pour
-// garantir l'intervalle quelle que soit la seed. Constante de contenu.
-const GRAD_SCALE = 0.7
+// Étalement du produit scalaire brut vers [0, 1), clampé pour garantir
+// l'intervalle quelle que soit la seed. Calibré à 1.0 : donne à fbm2 un
+// contraste comparable à l'ancien value noise (écart-type ≈ 0.17), condition
+// pour préserver l'organicité du sous-projet 1 (ondulation des berges,
+// dé-confettisage de la roche) — à 0.7 la cloche gradient était trop serrée.
+// ~6 % des valeurs sont clampées (plateaux bénins). Constante de contenu.
+const GRAD_SCALE = 1.0
 
 function gradAt(ix: number, iy: number, seed: number): readonly [number, number] {
   const idx = Math.min(7, Math.floor(hash2(ix, iy, seed) * 8))
