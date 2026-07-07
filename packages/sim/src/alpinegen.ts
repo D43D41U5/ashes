@@ -141,7 +141,7 @@ export function paintAlpineBands(map: WorldMap, moisture: number[]): void {
 /** Bosquets du fond de vallée — pour distribuer le bois hors des pentes.
  *  Contenu de carte, réglé à la vignette. */
 export const GROVE = {
-  DENSITY: 0.00009,   // bosquets par tuile intérieure
+  DENSITY: 0.00018,   // bosquets par tuile intérieure (densité doublée)
   R_MIN_FRAC: 0.012,  // petit copse
   R_MAX_FRAC: 0.06,   // grand bois
   WARP: 0.5,          // irrégularité du contour (comme les plans d'eau)
