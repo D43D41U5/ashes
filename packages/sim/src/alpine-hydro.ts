@@ -35,6 +35,7 @@ export const HYDRO = {
   ABSORB_AT: 0.34,        // altitude à laquelle un ruisseau atteint le FOND et est
                           //  absorbé (meadow/marais) — l'empêche de traverser le
                           //  fond plat vers un lac lointain (mirroir de BANDS.FLOOR)
+  POOL_R_FRAC: 0.013,     // rayon d'une mare de fonte au pied de pente (fond de vallée)
   TARN_DENSITY: 0.00007,  // tarns par tuile intérieure
   TARN_MIN_FRAC: 0.4,     // altitude min d'un tarn
   TARN_MAX_FRAC: 0.68,    // altitude max d'un tarn
@@ -177,14 +178,24 @@ function carveIceStreams(map: WorldMap, dir: number[], seed: number): void {
     if (sx < 0) continue
     let c = sy * W + sx
     let steps = 0
+    let poolX = -1
+    let poolY = -1
     while (c >= 0 && steps < maxSteps) {
       const t = map.terrain[c]!
       if (t === TERRAIN_DEEP_WATER || t === TERRAIN_SHALLOW_WATER) break // se jette dans l'eau → toile
       if (t === TERRAIN_MARSH) break // absorbé par le marais
-      if (elevationAt(map, c % W, (c / W) | 0) < HYDRO.ABSORB_AT) break // atteint le fond → absorbé (pas de traversée du fond plat)
+      const cx = c % W; const cy = (c / W) | 0
+      if (elevationAt(map, cx, cy) < HYDRO.ABSORB_AT) { poolX = cx; poolY = cy; break } // atteint le fond → forme une mare
       map.terrain[c] = TERRAIN_SHALLOW_WATER // filet de fonte franchissable
       c = dir[c]!
       steps++
+    }
+    if (poolX >= 0) {
+      // Mare de fonte au pied de la pente : le ruisseau finit dans un vrai point
+      // d'eau, et le fond de vallée se pique de mares (au lieu d'être sec).
+      const pr = Math.max(2, Math.round(D * HYDRO.POOL_R_FRAC))
+      stampBlob(map, poolX, poolY, pr + 1, paintShallow, (seed ^ (k * 71)) | 0, 0.35)
+      if (pr >= 3) stampBlob(map, poolX, poolY, pr, paintDeep, (seed ^ (k * 71)) | 0, 0.35)
     }
   }
 }
