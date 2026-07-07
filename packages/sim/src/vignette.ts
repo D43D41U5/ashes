@@ -20,6 +20,14 @@ const BIOME_RGB: Record<string, [number, number, number]> = {
   alpine_meadow: [178, 194, 120], // alpage d'altitude : vert-jaune clair
   pine: [80, 116, 56],           // forêt claire de pins : vert olive (entre forêt dense et prairie)
   larch: [156, 150, 78],         // mélèzes de la limite des arbres : vert-doré
+  glacier: [206, 226, 238],      // glacier / névé : glace bleu-blanc
+  boulders: [124, 116, 104],     // chaos de blocs / moraine : gris-brun
+  flower_meadow: [156, 178, 92], // pré fleuri : vert vif
+  peat_bog: [72, 76, 58],        // tourbière : brun-vert sombre
+  reed_marsh: [112, 122, 80],    // roselière : olive-tan
+  alpine_flowers: [190, 190, 148], // alpage fleuri : pâle fleuri
+  burnt_forest: [74, 62, 56],    // forêt brûlée : charbon-brun
+  old_growth: [28, 58, 40],      // vieille forêt : vert très sombre
   shallow_water: [120, 170, 190],
   deep_water: [58, 110, 140],
   road: [178, 156, 120],

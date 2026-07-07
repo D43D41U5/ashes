@@ -154,6 +154,14 @@ export const TERRAINS: Record<number, TerrainDef> = {
   12: { name: 'alpine_meadow', walkable: true, speedFactor: 1 },
   13: { name: 'pine', walkable: true, speedFactor: 0.85 },
   14: { name: 'larch', walkable: true, speedFactor: 0.85 },
+  15: { name: 'glacier', walkable: false, speedFactor: 0 },
+  16: { name: 'boulders', walkable: true, speedFactor: 0.6 },
+  17: { name: 'flower_meadow', walkable: true, speedFactor: 1 },
+  18: { name: 'peat_bog', walkable: true, speedFactor: 0.45 },
+  19: { name: 'reed_marsh', walkable: true, speedFactor: 0.55 },
+  20: { name: 'alpine_flowers', walkable: true, speedFactor: 1 },
+  21: { name: 'burnt_forest', walkable: true, speedFactor: 0.9 },
+  22: { name: 'old_growth', walkable: true, speedFactor: 0.7 },
 }
 
 export const TERRAIN_VOID = 0
@@ -172,6 +180,14 @@ export const TERRAIN_HEATH = 11
 export const TERRAIN_ALPINE_MEADOW = 12
 export const TERRAIN_PINE = 13
 export const TERRAIN_LARCH = 14
+export const TERRAIN_GLACIER = 15
+export const TERRAIN_BOULDERS = 16
+export const TERRAIN_FLOWER_MEADOW = 17
+export const TERRAIN_PEAT_BOG = 18
+export const TERRAIN_REED_MARSH = 19
+export const TERRAIN_ALPINE_FLOWERS = 20
+export const TERRAIN_BURNT_FOREST = 21
+export const TERRAIN_OLD_GROWTH = 22
 
 /** Coûts de construction (spec village R3 : réels dès V3). */
 export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./items').Inventory> = {

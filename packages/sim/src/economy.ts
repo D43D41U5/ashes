@@ -14,10 +14,17 @@ import {
   TERRAIN_ALPINE_MEADOW,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
+  TERRAIN_ALPINE_FLOWERS,
+  TERRAIN_BOULDERS,
+  TERRAIN_BURNT_FOREST,
+  TERRAIN_FLOWER_MEADOW,
   TERRAIN_HEATH,
   TERRAIN_LARCH,
   TERRAIN_MARSH,
+  TERRAIN_OLD_GROWTH,
+  TERRAIN_PEAT_BOG,
   TERRAIN_PINE,
+  TERRAIN_REED_MARSH,
   TERRAIN_SCREE,
   TERRAINS,
   TOOL_TIERS,
@@ -253,9 +260,24 @@ export function generateNodes(map: WorldMap, seed: number): ResourceNode[] {
         // L'alpage d'altitude : herbes/FIBRES en abondance, baies rares.
         if (r < 0.02) push('berry_bush', tx, ty)
         else if (r < 0.12) push('fiber_plant', tx, ty)
-      } else if (terrain === TERRAIN_SCREE) {
-        // Les éboulis : de la PIERRE à ramasser.
-        if (r < 0.1) push('rock', tx, ty)
+      } else if (terrain === TERRAIN_SCREE || terrain === TERRAIN_BOULDERS) {
+        // Éboulis / chaos de blocs : de la PIERRE à ramasser (plus dense dans les blocs).
+        if (r < (terrain === TERRAIN_BOULDERS ? 0.2 : 0.1)) push('rock', tx, ty)
+      } else if (terrain === TERRAIN_OLD_GROWTH) {
+        // Vieille forêt : BOIS abondant (gros arbres).
+        if (r < 0.3) push('tree', tx, ty)
+      } else if (terrain === TERRAIN_BURNT_FOREST) {
+        // Forêt brûlée : bois mort épars + repousse de BAIES.
+        if (r < 0.06) push('tree', tx, ty)
+        else if (r < 0.14) push('berry_bush', tx, ty)
+      } else if (terrain === TERRAIN_FLOWER_MEADOW || terrain === TERRAIN_ALPINE_FLOWERS) {
+        // Prés/pelouses fleuris : FIBRES (herbes) en abondance, quelques baies.
+        if (r < 0.03) push('berry_bush', tx, ty)
+        else if (r < 0.15) push('fiber_plant', tx, ty)
+      } else if (terrain === TERRAIN_PEAT_BOG || terrain === TERRAIN_REED_MARSH) {
+        // Tourbière / roselière : FIBRES riches (roseaux, sphaigne).
+        if (r < 0.04) push('berry_bush', tx, ty)
+        else if (r < 0.18) push('fiber_plant', tx, ty)
       }
     }
   }
