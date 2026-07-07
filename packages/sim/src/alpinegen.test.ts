@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeElevation } from './alpinegen'
+import { computeElevation, computeMoisture } from './alpinegen'
 
 describe('computeElevation — le relief alpin', () => {
   const W = 120, H = 180
@@ -35,5 +35,22 @@ describe('computeElevation — le relief alpin', () => {
       const v = el[y * W + x]!; min = Math.min(min, v); max = Math.max(max, v)
     }
     expect(max - min).toBeGreaterThan(0.5)
+  })
+})
+
+describe('computeMoisture', () => {
+  const W = 100, H = 100
+  it('déterministe, dans [0,1], et corrélé négativement à altitude', () => {
+    const el = computeElevation(W, H, 3)
+    const m = computeMoisture(W, H, el, 3)
+    expect(m).toEqual(computeMoisture(W, H, el, 3))
+    for (const v of m) { expect(v).toBeGreaterThanOrEqual(0); expect(v).toBeLessThanOrEqual(1) }
+    // moyenne d'humidité des tuiles basses > celle des tuiles hautes
+    let loSum = 0, loN = 0, hiSum = 0, hiN = 0
+    for (let i = 0; i < el.length; i++) {
+      if (el[i]! < 0.3) { loSum += m[i]!; loN++ }
+      else if (el[i]! > 0.7) { hiSum += m[i]!; hiN++ }
+    }
+    expect(loSum / loN).toBeGreaterThan(hiSum / hiN)
   })
 })

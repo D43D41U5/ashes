@@ -41,3 +41,19 @@ export function computeElevation(width: number, height: number, seed: number): n
   }
   return el
 }
+
+export function computeMoisture(width: number, height: number, elevation: number[], seed: number): number[] {
+  const D = Math.min(width, height)
+  const scale = D * 0.3
+  const warp = Math.max(1, Math.round(D * ALPINE.WARP_FRAC))
+  const m = new Array<number>(width * height)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      const noise = fbmWarp2(x, y, scale, (seed ^ 0x2fed01) | 0, warp)
+      // Plus bas = plus humide (l'eau descend). 0.6 bruit + 0.4 (1 − altitude).
+      m[i] = clamp01(0.6 * noise + 0.4 * (1 - elevation[i]!))
+    }
+  }
+  return m
+}
