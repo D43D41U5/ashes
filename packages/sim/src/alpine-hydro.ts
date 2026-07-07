@@ -256,6 +256,58 @@ function carveTarns(map: WorldMap, seed: number): void {
   }
 }
 
+/**
+ * Fusionne les plans d'eau TRÈS PROCHES : fermeture morphologique du masque d'eau
+ * (dilatation de rayon R puis érosion de rayon R). Ne comble que les petits
+ * interstices (≤ 2R tuiles) entre deux eaux voisines — deux mares côte à côte
+ * deviennent un seul plan d'eau, les fins liserés de terre disparaissent — sans
+ * jamais rétrécir une vraie eau ni relier des eaux éloignées. Le comblement est
+ * peu profond (un col d'eau franchissable entre les deux). Pur, déterministe.
+ */
+function mergeNearbyWater(map: WorldMap, r: number): void {
+  const W = map.width
+  const H = map.height
+  const N = W * H
+  const isW = (i: number): boolean => {
+    const t = map.terrain[i]
+    return t === TERRAIN_DEEP_WATER || t === TERRAIN_SHALLOW_WATER
+  }
+  // Dilatation : marque toute tuile à ≤ r (Chebyshev) d'une eau.
+  const dil = new Uint8Array(N)
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let any = 0
+      for (let dy = -r; dy <= r && any === 0; dy++) {
+        const ny = y + dy
+        if (ny < 0 || ny >= H) continue
+        for (let dx = -r; dx <= r; dx++) {
+          const nx = x + dx
+          if (nx < 0 || nx >= W) continue
+          if (isW(ny * W + nx)) { any = 1; break }
+        }
+      }
+      dil[y * W + x] = any
+    }
+  }
+  // Érosion de la dilatation → « fermeture » ; les tuiles de terre entièrement
+  // enveloppées par la dilatation (donc dans un interstice ≤ 2r) sont comblées.
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x
+      if (isW(i)) continue
+      let all = 1
+      for (let dy = -r; dy <= r && all === 1; dy++) {
+        const ny = y + dy
+        for (let dx = -r; dx <= r; dx++) {
+          const nx = x + dx
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H || dil[ny * W + nx] === 0) { all = 0; break }
+        }
+      }
+      if (all === 1) map.terrain[i] = TERRAIN_SHALLOW_WATER
+    }
+  }
+}
+
 /** Grave tout le réseau d'eau dans une carte alpine (après les bandes de terrain).
  *  `flow` = computeFlowField (macro lisse) pour situer lac & tête de vallée. */
 export function carveHydrology(map: WorldMap, flow: number[], seed: number): void {
@@ -264,4 +316,5 @@ export function carveHydrology(map: WorldMap, flow: number[], seed: number): voi
   const dir = computeDrainageDir(map, seed, lake.x, lake.y)
   carveIceStreams(map, dir, seed)                        // ruisseaux de fonte → rivière/lac/marais
   carveTarns(map, seed)
+  mergeNearbyWater(map, 2)                               // fusionne les plans d'eau très proches
 }
