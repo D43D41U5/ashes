@@ -10,6 +10,8 @@ import {
   TERRAIN_WALL,
 } from './balance'
 import { generateValley, type ValleySkeleton } from './valleygen'
+import { paintStreams } from './valleygen-water'
+import { createEmptyMap } from './map'
 import { generateNodes } from './economy'
 
 /** Petit squelette d'exercice — chaque primitive y est représentée. */
@@ -297,6 +299,50 @@ describe('réseau d’eau', () => {
   it("le réseau procédural peint bien de l'eau sans aucune rivière/lac — la passe n'est pas un no-op", () => {
     const map = generateValley(riverless(96, 96, { streamDensity: 0.004, pondDensity: 0.006 }), 11)
     expect(countShallow(map)).toBeGreaterThan(0)
+  })
+
+  it('les ruisseaux serpentent — pas des segments droits (méandre)', () => {
+    // Carte contrôlée : une seule tuile d'eau cible dans un coin, exactement un
+    // ruisseau (densité = 1/surface). paintStreams appelé directement — ni
+    // rivière ni lac ni route ne viennent brouiller les tuiles d'eau.
+    const W = 48
+    const H = 48
+    const map = createEmptyMap(W, H, TERRAIN_GRASS)
+    const target = { x: 38, y: 38 }
+    map.terrain[target.y * W + target.x] = TERRAIN_SHALLOW_WATER
+    const skel: ValleySkeleton = { ...TEST_SKELETON, water: { streamDensity: 1 / (W * H), pondDensity: 0 } }
+    paintStreams(map, skel, 7)
+
+    const stream: { x: number; y: number }[] = []
+    for (let ty = 0; ty < H; ty++) {
+      for (let tx = 0; tx < W; tx++) {
+        if (map.terrain[ty * W + tx] === TERRAIN_SHALLOW_WATER && !(tx === target.x && ty === target.y)) {
+          stream.push({ x: tx, y: ty })
+        }
+      }
+    }
+    expect(stream.length).toBeGreaterThan(3) // un ruisseau a bien été tracé
+
+    // Source = la tuile de ruisseau la plus loin de la cible. On mesure la
+    // déviation perpendiculaire max à la droite source→cible : un tracé DROIT
+    // reste sur la droite (perp ≈ 0, au bruit d'escalier près < 1) ; un tracé
+    // qui SERPENTE s'en écarte nettement (> 1 tuile).
+    let src = stream[0]!
+    let far = -1
+    for (const p of stream) {
+      const d = (p.x - target.x) * (p.x - target.x) + (p.y - target.y) * (p.y - target.y)
+      if (d > far) { far = d; src = p }
+    }
+    const ax = target.x - src.x
+    const ay = target.y - src.y
+    const len2 = Math.max(1, ax * ax + ay * ay)
+    let maxPerp2 = 0
+    for (const p of stream) {
+      const cross = ax * (p.y - src.y) - ay * (p.x - src.x)
+      const perp2 = (cross * cross) / len2
+      if (perp2 > maxPerp2) maxPerp2 = perp2
+    }
+    expect(maxPerp2).toBeGreaterThan(1)
   })
 
   it('scalabilité (R6) : plus de tuiles d’eau procédurale sur une plus grande surface, mêmes densités', () => {

@@ -17,6 +17,12 @@ import {
 
 const paintShallow: Paint = (cur) => (cur === TERRAIN_DEEP_WATER ? undefined : TERRAIN_SHALLOW_WATER)
 
+// Méandre des ruisseaux (tuiles) : amplitude franche relative à leur portée,
+// longueur d'onde courte → plusieurs ondulations sur un ruisseau. Contenu de
+// carte (comme le méandre de la rivière), pas d'équilibrage.
+const STREAM_MEANDER_AMP = 2
+const STREAM_MEANDER_SCALE = 8
+
 /** Surface marchable actuelle (mesure de densité). */
 function walkableCount(map: WorldMap): number {
   let n = 0
@@ -63,7 +69,13 @@ export function paintStreams(map: WorldMap, skeleton: ValleySkeleton, seed: numb
     if (!best) continue
     const target = nearestWater(map, best.x, best.y, maxReach)
     if (!target) continue // pas d'eau atteinte → pas de mare pendante
-    paintPolyline(map, [{ x: best.x, y: best.y }, target], 0, paintShallow)
+    // Méandre : le ruisseau serpente au lieu de filer tout droit vers l'eau.
+    // Fondu à 0 aux bouts (paintPolyline) → la source et la jonction à l'eau ne
+    // bougent pas, seul le milieu ondule. Seed varié par ruisseau (k) pour que
+    // deux ruisseaux ne serpentent pas à l'identique. Amplitude franche, en
+    // fraction de portée typique → scalable (contenu de carte, pas d'équilibrage).
+    const meander = { amp: STREAM_MEANDER_AMP, scale: STREAM_MEANDER_SCALE, seed: (seed ^ (k * 0x2777)) | 0 }
+    paintPolyline(map, [{ x: best.x, y: best.y }, target], 0, paintShallow, meander)
   }
 }
 
