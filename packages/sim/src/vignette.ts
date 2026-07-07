@@ -18,6 +18,7 @@ const BIOME_RGB: Record<string, [number, number, number]> = {
   snow: [238, 242, 248],
   heath: [138, 112, 120],       // lande : bruyère mauve-brun
   alpine_meadow: [178, 194, 120], // alpage d'altitude : vert-jaune clair
+  pine: [80, 116, 56],           // forêt claire de pins/mélèzes : vert olive (entre forêt dense et prairie)
   shallow_water: [120, 170, 190],
   deep_water: [58, 110, 140],
   road: [178, 156, 120],

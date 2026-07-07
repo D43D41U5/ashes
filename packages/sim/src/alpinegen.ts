@@ -10,7 +10,7 @@ import { sealBorderRing } from './valleygen'
 import { carveHydrology } from './alpine-hydro'
 import {
   TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_MARSH, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW,
-  TERRAIN_HEATH, TERRAIN_ALPINE_MEADOW,
+  TERRAIN_HEATH, TERRAIN_ALPINE_MEADOW, TERRAIN_PINE,
 } from './balance'
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
@@ -140,9 +140,11 @@ function bandFor(elevation: number, wet: number, tx: number, ty: number, seed: n
   }
   if (elevation < BANDS.FOREST) {
     if (wet > BANDS.FOREST_WET) {
-      return fbm2(tx, ty, 6, seed) < 0.92 ? TERRAIN_FOREST : TERRAIN_GRASS // forêt dense, rares trouées
+      // Ubac humide : forêt DENSE de conifères (épicéas/sapins), rares trouées.
+      return fbm2(tx, ty, 6, seed) < 0.92 ? TERRAIN_FOREST : TERRAIN_GRASS
     }
-    return fbm2(tx, ty, 6, (seed ^ 0x515f) | 0) < 0.45 ? TERRAIN_FOREST : TERRAIN_HEATH // adret : arbres épars sur lande
+    // Adret sec : forêt CLAIRE de pins/mélèzes, ouverte, sur fond de lande.
+    return fbm2(tx, ty, 6, (seed ^ 0x515f) | 0) < 0.5 ? TERRAIN_PINE : TERRAIN_HEATH
   }
   if (elevation < BANDS.ALPINE) return TERRAIN_ALPINE_MEADOW // pelouse d'altitude
   if (elevation < BANDS.SCREE) return TERRAIN_SCREE

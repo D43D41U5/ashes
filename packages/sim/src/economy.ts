@@ -16,6 +16,7 @@ import {
   TERRAIN_GRASS,
   TERRAIN_HEATH,
   TERRAIN_MARSH,
+  TERRAIN_PINE,
   TERRAIN_SCREE,
   TERRAINS,
   TOOL_TIERS,
@@ -223,7 +224,12 @@ export function generateNodes(map: WorldMap, seed: number): ResourceNode[] {
       } else if (zone?.kind === 'carriere') {
         if (r < 0.15) push('rock', tx, ty)
       } else if (terrain === TERRAIN_FOREST) {
+        // Forêt dense (ubac) : la meilleure source de BOIS.
         if (r < 0.22) push('tree', tx, ty)
+      } else if (terrain === TERRAIN_PINE) {
+        // Forêt claire (adret, pins/mélèzes) : moins de bois, mais des BAIES dessous.
+        if (r < 0.13) push('tree', tx, ty)
+        else if (r < 0.2) push('berry_bush', tx, ty)
       } else if (terrain === TERRAIN_GRASS) {
         if (r < 0.015) push('tree', tx, ty)
         else if (r < 0.028) push('rock', tx, ty)
