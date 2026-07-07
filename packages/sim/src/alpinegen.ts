@@ -68,8 +68,10 @@ export function computeMoisture(width: number, height: number, elevation: number
     for (let x = 0; x < width; x++) {
       const i = y * width + x
       const noise = fbmWarp2(x, y, scale, (seed ^ 0x2fed01) | 0, warp)
-      // Plus bas = plus humide (l'eau descend). 0.6 bruit + 0.4 (1 − altitude).
-      m[i] = clamp01(0.6 * noise + 0.4 * (1 - elevation[i]!))
+      // Surtout piloté par le bruit (poches humides localisées) + un léger biais
+      // basse altitude — sinon TOUT le fond devient marais. Le fond reste de
+      // l'alpage, le marais ne prend que les vraies cuvettes détrempées.
+      m[i] = clamp01(0.8 * noise + 0.2 * (1 - elevation[i]!))
     }
   }
   return m
@@ -81,7 +83,7 @@ export const BANDS = {
   FOREST: 0.56,  // < FOREST : pentes boisées (conifères)
   SCREE: 0.68,   // < SCREE : éboulis
   SNOW: 0.76,    // ≥ SNOW : neige ; entre SCREE et SNOW : roche (sommets enneigés)
-  MARSH_MOIST: 0.60,   // fond très humide → marsh
+  MARSH_MOIST: 0.80,   // seuil haut → marais rare, seulement les vraies cuvettes
 }
 
 /** Terrain d'une tuile selon altitude × humidité. Chaque terrain occupe UNE
