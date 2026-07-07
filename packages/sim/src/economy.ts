@@ -24,7 +24,7 @@ import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { addItems, countOf, removeItems, type ItemId, type SkillId } from './items'
 import { terrainAt, zoneAt, type WorldMap } from './map'
-import { rngFloat, rngNext } from './rng'
+import { hash2 } from './noise'
 import type { Entity, SimState } from './sim'
 import { actForDay, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
 import { hasAccess, type Structure } from './village'
@@ -199,23 +199,20 @@ export function advanceEconomy(state: SimState): void {
  * `kind: 'gisement'` — la carte est l'économie.
  */
 export function generateNodes(map: WorldMap, seed: number): ResourceNode[] {
-  let rng = (seed ^ 0x51ab3f77) >>> 0
-  const roll = (): number => {
-    rng = rngNext(rng)
-    return rngFloat(rng)
-  }
   const nodes: ResourceNode[] = []
   let id = 1
   const push = (type: NodeType, tx: number, ty: number): void => {
     nodes.push({ id, type, tx, ty, stock: NODE_DEFS[type].stock, regrowAt: 0 })
     id += 1
   }
-
+  const nodeSeed = (seed ^ 0x51ab3f77) | 0
   for (let ty = 0; ty < map.height; ty++) {
     for (let tx = 0; tx < map.width; tx++) {
       const terrain = terrainAt(map, tx, ty)
       if (!TERRAINS[terrain]?.walkable) continue
-      const r = roll() // un tirage par tuile marchable : ordre déterministe
+      // Tirage POSITIONNEL : fonction pure de (tx, ty) → déplacer une tuile
+      // ailleurs ne redistribue plus les nœuds (fin de la fragilité row-band).
+      const r = hash2(tx, ty, nodeSeed)
       const zone = zoneAt(map, tx + 0.5, ty + 0.5)
       if (zone?.kind === 'gisement') {
         if (r < 0.07) push('iron_vein', tx, ty)
