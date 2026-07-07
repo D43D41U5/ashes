@@ -75,18 +75,20 @@ describe('generateAlpineTerrain — bandes & assemblage', () => {
     for (let y = 0; y < H; y++) { expect(isBlockingTile(map, 0, y)).toBe(true); expect(isBlockingTile(map, W - 1, y)).toBe(true) }
   })
 
-  it('bandes ordonnées : la neige est en moyenne plus haute que la roche > éboulis > forêt > prairie', () => {
-    const map = generateAlpineTerrain(W, H, 5)
-    const avgEl: Record<number, { s: number; n: number }> = {}
-    for (let ty = 0; ty < H; ty++) for (let tx = 0; tx < W; tx++) {
-      const t = terrainAt(map, tx, ty); const e = map.elevation![ty * W + tx]!
-      ;(avgEl[t] ??= { s: 0, n: 0 }); avgEl[t]!.s += e; avgEl[t]!.n += 1
+  it('bandes ordonnées sur plusieurs seeds : neige > roche > éboulis > forêt > prairie (en altitude moyenne)', () => {
+    for (const seed of [1, 5, 42, 100, 2026]) {
+      const map = generateAlpineTerrain(W, H, seed)
+      const acc: Record<number, { s: number; n: number }> = {}
+      for (let ty = 0; ty < H; ty++) for (let tx = 0; tx < W; tx++) {
+        const t = terrainAt(map, tx, ty); const e = map.elevation![ty * W + tx]!
+        ;(acc[t] ??= { s: 0, n: 0 }); acc[t]!.s += e; acc[t]!.n += 1
+      }
+      const mean = (t: number): number => (acc[t] && acc[t]!.n > 0 ? acc[t]!.s / acc[t]!.n : 0)
+      expect(mean(TERRAIN_SNOW), `seed ${seed}`).toBeGreaterThan(mean(TERRAIN_ROCK))
+      expect(mean(TERRAIN_ROCK), `seed ${seed}`).toBeGreaterThan(mean(TERRAIN_SCREE))
+      expect(mean(TERRAIN_SCREE), `seed ${seed}`).toBeGreaterThan(mean(TERRAIN_FOREST))
+      expect(mean(TERRAIN_FOREST), `seed ${seed}`).toBeGreaterThan(mean(TERRAIN_GRASS))
     }
-    const mean = (t: number): number => (avgEl[t] ? avgEl[t]!.s / avgEl[t]!.n : 0)
-    expect(mean(TERRAIN_SNOW)).toBeGreaterThan(mean(TERRAIN_ROCK))
-    expect(mean(TERRAIN_ROCK)).toBeGreaterThan(mean(TERRAIN_SCREE))
-    expect(mean(TERRAIN_SCREE)).toBeGreaterThan(mean(TERRAIN_FOREST))
-    expect(mean(TERRAIN_FOREST)).toBeGreaterThan(mean(TERRAIN_GRASS))
   })
 
   it('variété : au moins 5 terrains distincts présents au-dessus d\'un seuil de surface', () => {
