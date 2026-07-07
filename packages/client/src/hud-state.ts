@@ -43,6 +43,8 @@ export interface HudState {
   mapData: WorldMap
   /** Position LOGIQUE de l'avatar (tuiles) — le marqueur « tu es ici » de la carte. */
   playerPos: { x: number; y: number }
+  /** Couvert de canopée lissé autour de l'avatar (0 = ciel ouvert) — pilote le voile de sous-bois. */
+  canopyCoverage: number
   /** La chronique de la saison, déjà mise en forme. */
   chronicle: string[]
   /** Dernier message d'erreur à afficher (action rejetée, hôte perdu…). */
