@@ -4,7 +4,7 @@
  * d'hydrologie ni de features ici (SP1b). Toutes les échelles/amplitudes sont des
  * fractions de min(width,height) → scalable à toute taille.
  */
-import { fbmWarp2, ridgedFbm2 } from './noise'
+import { fbm2, fbmWarp2, hash2, ridgedFbm2 } from './noise'
 import { createEmptyMap, type WorldMap } from './map'
 import { sealBorderRing } from './valleygen'
 import { carveHydrology } from './alpine-hydro'
@@ -138,6 +138,60 @@ export function paintAlpineBands(map: WorldMap, moisture: number[]): void {
   }
 }
 
+/** Bosquets du fond de vallée — pour distribuer le bois hors des pentes.
+ *  Contenu de carte, réglé à la vignette. */
+export const GROVE = {
+  DENSITY: 0.00009,   // bosquets par tuile intérieure
+  R_MIN_FRAC: 0.012,  // petit copse
+  R_MAX_FRAC: 0.06,   // grand bois
+  WARP: 0.5,          // irrégularité du contour (comme les plans d'eau)
+  FILL: 0.82,         // densité interne (< 1 → clairières : forêt ÉPARSE)
+}
+
+/** Pose un bosquet organique (contour warpé) sur la PRAIRIE uniquement, avec des
+ *  clairières internes → un bouquet d'arbres épars, jamais un pavé rond. */
+function paintGrove(map: WorldMap, cx: number, cy: number, r: number, seed: number): void {
+  const W = map.width
+  const H = map.height
+  const rr = Math.ceil(r * (1 + GROVE.WARP)) + 1
+  const scale = Math.max(3, r)
+  const fine = Math.max(3, Math.round(r * 0.5))
+  for (let dy = -rr; dy <= rr; dy++) {
+    for (let dx = -rr; dx <= rr; dx++) {
+      const tx = cx + dx
+      const ty = cy + dy
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue
+      const i = ty * W + tx
+      if (map.terrain[i] !== TERRAIN_GRASS) continue // seulement l'alpage (pas d'eau/roche/route)
+      const wx = dx + GROVE.WARP * r * (fbm2(tx, ty, scale, seed) * 2 - 1)
+      const wy = dy + GROVE.WARP * r * (fbm2(tx, ty, scale, (seed ^ 0x9e3779b9) | 0) * 2 - 1)
+      if (wx * wx + wy * wy > r * r) continue
+      if (fbm2(tx, ty, fine, (seed ^ 0x2b7f) | 0) > GROVE.FILL) continue // clairière interne
+      map.terrain[i] = TERRAIN_FOREST
+    }
+  }
+}
+
+/** Sème des bosquets de tailles DIVERSES dans le fond de vallée (prairie) → le
+ *  bois n'est plus qu'au bord de carte. Densité → scalable. */
+function paintForestGroves(map: WorldMap, seed: number): void {
+  const W = map.width
+  const H = map.height
+  const D = Math.min(W, H)
+  const margin = Math.max(4, Math.round(D * 0.06))
+  const interior = (W - 2 * margin) * (H - 2 * margin)
+  const count = Math.round(GROVE.DENSITY * interior)
+  const rMin = Math.max(2, Math.round(D * GROVE.R_MIN_FRAC))
+  const rMax = Math.max(rMin + 1, Math.round(D * GROVE.R_MAX_FRAC))
+  for (let k = 0; k < count; k++) {
+    const x = margin + Math.floor(hash2(k * 613 + 1, seed, 0x1d1) * (W - 2 * margin))
+    const y = margin + Math.floor(hash2(seed, k * 613 + 1, 0x2e3) * (H - 2 * margin))
+    if (map.terrain[y * W + x] !== TERRAIN_GRASS) continue // source dans l'alpage
+    const r = rMin + Math.floor(hash2(k, seed, 0x4f7) * (rMax - rMin + 1)) // taille diverse
+    paintGrove(map, x, y, r, (seed ^ (k * 0x2777)) | 0)
+  }
+}
+
 export function generateAlpineTerrain(width: number, height: number, seed: number): WorldMap {
   const map = createEmptyMap(width, height, TERRAIN_GRASS)
   map.elevation = computeElevation(width, height, seed)
@@ -145,6 +199,7 @@ export function generateAlpineTerrain(width: number, height: number, seed: numbe
   paintAlpineBands(map, moisture)
   const flow = computeFlowField(width, height, seed)
   carveHydrology(map, flow, seed) // lac, rivière (thalweg), ruisseaux, tarns — l'eau suit l'écoulement
+  paintForestGroves(map, seed) // bosquets épars dans le fond → bois distribué (après l'eau : n'écrase pas l'eau)
   sealBorderRing(map) // l'anneau externe reste bloquant quoi qu'ait creusé l'eau
   return map
 }
