@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { computeElevation, computeMoisture } from './alpinegen'
+import { computeElevation, computeMoisture, generateAlpineTerrain } from './alpinegen'
+import { isBlockingTile, terrainAt } from './map'
+import {
+  TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_MARSH, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW,
+} from './balance'
 
 describe('computeElevation — le relief alpin', () => {
   const W = 120, H = 180
@@ -52,5 +56,53 @@ describe('computeMoisture', () => {
       else if (el[i]! > 0.7) { hiSum += m[i]!; hiN++ }
     }
     expect(loSum / loN).toBeGreaterThan(hiSum / hiN)
+  })
+})
+
+describe('generateAlpineTerrain — bandes & assemblage', () => {
+  const W = 160, H = 240
+
+  it('déterministe (terrain + elevation)', () => {
+    const a = generateAlpineTerrain(W, H, 5)
+    const b = generateAlpineTerrain(W, H, 5)
+    expect(a.terrain).toEqual(b.terrain)
+    expect(a.elevation).toEqual(b.elevation)
+  })
+
+  it('enceinte scellée : tout le bord est bloquant', () => {
+    const map = generateAlpineTerrain(W, H, 5)
+    for (let x = 0; x < W; x++) { expect(isBlockingTile(map, x, 0)).toBe(true); expect(isBlockingTile(map, x, H - 1)).toBe(true) }
+    for (let y = 0; y < H; y++) { expect(isBlockingTile(map, 0, y)).toBe(true); expect(isBlockingTile(map, W - 1, y)).toBe(true) }
+  })
+
+  it('bandes ordonnées : la neige est en moyenne plus haute que la roche > éboulis > forêt > prairie', () => {
+    const map = generateAlpineTerrain(W, H, 5)
+    const avgEl: Record<number, { s: number; n: number }> = {}
+    for (let ty = 0; ty < H; ty++) for (let tx = 0; tx < W; tx++) {
+      const t = terrainAt(map, tx, ty); const e = map.elevation![ty * W + tx]!
+      ;(avgEl[t] ??= { s: 0, n: 0 }); avgEl[t]!.s += e; avgEl[t]!.n += 1
+    }
+    const mean = (t: number): number => (avgEl[t] ? avgEl[t]!.s / avgEl[t]!.n : 0)
+    expect(mean(TERRAIN_SNOW)).toBeGreaterThan(mean(TERRAIN_ROCK))
+    expect(mean(TERRAIN_ROCK)).toBeGreaterThan(mean(TERRAIN_SCREE))
+    expect(mean(TERRAIN_SCREE)).toBeGreaterThan(mean(TERRAIN_FOREST))
+    expect(mean(TERRAIN_FOREST)).toBeGreaterThan(mean(TERRAIN_GRASS))
+  })
+
+  it('variété : au moins 5 terrains distincts présents au-dessus d\'un seuil de surface', () => {
+    const map = generateAlpineTerrain(W, H, 5)
+    const count: Record<number, number> = {}
+    for (const t of map.terrain) count[t] = (count[t] ?? 0) + 1
+    const present = [TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW, TERRAIN_MARSH]
+      .filter((t) => (count[t] ?? 0) > W * H * 0.01)
+    expect(present.length).toBeGreaterThanOrEqual(5)
+  })
+
+  it('scalabilité : proportions de bandes stables entre deux tailles (mêmes seuils)', () => {
+    const small = generateAlpineTerrain(120, 180, 5)
+    const big = generateAlpineTerrain(240, 360, 5)
+    const frac = (m: typeof small, t: number): number => m.terrain.filter((x) => x === t).length / m.terrain.length
+    // la part de neige varie peu avec la taille (même modèle, mêmes seuils)
+    expect(Math.abs(frac(small, TERRAIN_SNOW) - frac(big, TERRAIN_SNOW))).toBeLessThan(0.08)
   })
 })

@@ -4,7 +4,12 @@
  * d'hydrologie ni de features ici (SP1b). Toutes les échelles/amplitudes sont des
  * fractions de min(width,height) → scalable à toute taille.
  */
-import { fbmWarp2, ridgedFbm2 } from './noise'
+import { fbmWarp2, ridgedFbm2, fbm2 } from './noise'
+import { createEmptyMap, type WorldMap } from './map'
+import { sealBorderRing } from './valleygen'
+import {
+  TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_MARSH, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW,
+} from './balance'
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 
@@ -56,4 +61,51 @@ export function computeMoisture(width: number, height: number, elevation: number
     }
   }
   return m
+}
+
+/** Seuils de bande sur l'altitude — contenu de carte, réglés à la vignette. */
+export const BANDS = {
+  FLOOR: 0.30,   // < FLOOR : fond (prairie / marsh)
+  FOREST: 0.55,  // < FOREST : pentes boisées
+  SCREE: 0.72,   // < SCREE : éboulis
+  SNOW: 0.85,    // ≥ SNOW : neige ; entre SCREE et SNOW : roche
+  MARSH_MOIST: 0.62,   // fond très humide → marsh
+  FOREST_MOIST: 0.36,  // pente assez humide → forêt (sinon prairie clairsemée)
+}
+
+function bandFor(elevation: number, moisture: number, tx: number, ty: number, seed: number): number {
+  if (elevation < BANDS.FLOOR) {
+    return moisture > BANDS.MARSH_MOIST ? TERRAIN_MARSH : TERRAIN_GRASS
+  }
+  if (elevation < BANDS.FOREST) {
+    // Limite des arbres : plus on approche de FOREST, plus la forêt se clairsème
+    // (mélange forêt/prairie via un bruit fin), et l'humidité conditionne la densité.
+    const treeline = (BANDS.FOREST - elevation) / (BANDS.FOREST - BANDS.FLOOR) // 1 en bas, 0 en haut
+    const dense = fbm2(tx, ty, 6, (seed ^ 0x515f) | 0)
+    if (moisture > BANDS.FOREST_MOIST && dense < 0.78 + 0.22 * treeline) return TERRAIN_FOREST
+    return TERRAIN_GRASS
+  }
+  if (elevation < BANDS.SCREE) return TERRAIN_SCREE
+  if (elevation < BANDS.SNOW) return TERRAIN_ROCK
+  return TERRAIN_SNOW
+}
+
+export function paintAlpineBands(map: WorldMap, moisture: number[], seed: number): void {
+  const { width, height } = map
+  const el = map.elevation!
+  for (let ty = 0; ty < height; ty++) {
+    for (let tx = 0; tx < width; tx++) {
+      const i = ty * width + tx
+      map.terrain[i] = bandFor(el[i]!, moisture[i]!, tx, ty, seed)
+    }
+  }
+}
+
+export function generateAlpineTerrain(width: number, height: number, seed: number): WorldMap {
+  const map = createEmptyMap(width, height, TERRAIN_GRASS)
+  map.elevation = computeElevation(width, height, seed)
+  const moisture = computeMoisture(width, height, map.elevation, seed)
+  paintAlpineBands(map, moisture, seed)
+  sealBorderRing(map) // l'anneau externe reste bloquant quoi qu'ait fait le bruit
+  return map
 }
