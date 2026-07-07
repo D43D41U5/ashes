@@ -177,7 +177,7 @@ function paintRoads(map: WorldMap, skeleton: ValleySkeleton): void {
 /** Pont : la route enjambe l'eau. Gué : l'eau devient peu profonde.
  *  Rayon élargi du méandre de la rivière → le croisement retombe sur l'eau. */
 function paintCrossings(map: WorldMap, skeleton: ValleySkeleton): void {
-  const r = skeleton.river.halfWidth + 2
+  const r = skeleton.river.halfWidth + 2 + Math.ceil(RIVER_MEANDER_AMP)
   for (const c of skeleton.crossings) {
     stampDisk(map, c.x, c.y, r, () => (c.kind === 'bridge' ? TERRAIN_ROAD : TERRAIN_SHALLOW_WATER))
   }

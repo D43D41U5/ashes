@@ -101,11 +101,13 @@ describe('generateValley — le socle', () => {
   it('le Pont retombe sur de l\'eau malgré le méandre de la rivière', () => {
     // crossing bridge en (30,30) → route ; sous le disque, la rivière est là.
     const map = generateValley(TEST_SKELETON, 7)
-    // Le disque de pont écrase en route ; on vérifie qu'il borde bien l'eau
-    // (au moins une tuile d'eau dans un rayon proche du croisement).
+    // Le disque de pont (rayon élargi par l'amplitude du méandre, cf.
+    // paintCrossings) écrase en route une zone large autour du croisement ;
+    // on vérifie qu'elle borde bien l'eau (au moins une tuile d'eau dans un
+    // périmètre plus large que ce disque, pour ne pas chercher DANS la route).
     let waterNearBridge = 0
-    for (let ty = 26; ty <= 34; ty++) {
-      for (let tx = 26; tx <= 34; tx++) {
+    for (let ty = 20; ty <= 40; ty++) {
+      for (let tx = 20; tx <= 40; tx++) {
         const t = terrainAt(map, tx, ty)
         if (t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER) waterNearBridge += 1
       }
@@ -129,8 +131,21 @@ describe("generateValley — rivière, routes, franchissements", () => {
   const map = generateValley(TEST_SKELETON, 7)
 
   it("la rivière coule : eau profonde au centre, berges en eau peu profonde", () => {
-    expect(terrainAt(map, 30, 20)).toBe(TERRAIN_DEEP_WATER)
-    expect(terrainAt(map, 33, 20)).toBe(TERRAIN_SHALLOW_WATER)
+    // La rivière méandre (Task 4) : son cœur profond n'est plus sur une colonne
+    // fixe. On le cherche sur la ligne y = 20, et on vérifie qu'une berge peu
+    // profonde le borde.
+    const y = 20
+    const deepXs: number[] = []
+    for (let x = 24; x <= 36; x++) {
+      if (terrainAt(map, x, y) === TERRAIN_DEEP_WATER) deepXs.push(x)
+    }
+    expect(deepXs.length).toBeGreaterThan(0)
+    const minX = Math.min(...deepXs)
+    const maxX = Math.max(...deepXs)
+    expect(
+      terrainAt(map, minX - 1, y) === TERRAIN_SHALLOW_WATER ||
+        terrainAt(map, maxX + 1, y) === TERRAIN_SHALLOW_WATER,
+    ).toBe(true)
   })
 
   it("le lac est en eau, bordé de berges", () => {
