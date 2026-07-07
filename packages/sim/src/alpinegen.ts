@@ -13,35 +13,47 @@ import {
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 
-/** Constantes de forme du relief — contenu de carte, réglées à la vignette. */
+/** Constantes de forme du relief — contenu de carte, réglées à la vignette.
+ *  Le principe : une FORME DE VALLÉE macro (fond bas → murs hauts, dérivée de la
+ *  distance au bord) donne la composition ; le bruit/les crêtes n'ajoutent que du
+ *  détail organique par-dessus. Sans ça, l'intérieur est un bruit isotrope sans
+ *  vallée (leçon vignette #1). */
 export const ALPINE = {
-  RIM_FRAC: 0.06,     // épaisseur de l'anneau de pics (fraction de min(W,H))
-  MACRO_FRAC: 0.55,   // grande structure de vallée
-  MID_FRAC: 0.18,     // reliefs secondaires
-  RIDGE_FRAC: 0.26,   // arêtes ridged
-  WARP_FRAC: 0.05,    // amplitude de domain warping
-  BASE_WEIGHT: 0.6,   // part du relief doux vs ridged
-  RIDGE_WEIGHT: 0.4,
+  RIM_FRAC: 0.05,      // épaisseur de l'anneau de pics (fraction de min(W,H))
+  RISE_FRAC: 0.62,     // à quelle fraction du demi-min les murs atteignent le sommet
+                       //  (petit = fond large ; ~0.6 = « entre les deux »)
+  ORGANIC_FRAC: 0.42,  // échelle du bruit macro qui brise le bol en vallée organique
+  ORGANIC_AMP: 0.42,   // amplitude de cette déformation (spurs, combes, cols)
+  DETAIL_FRAC: 0.14,   // échelle du détail de pente
+  DETAIL_AMP: 0.16,    // amplitude du détail
+  RIDGE_FRAC: 0.24,    // échelle des arêtes ridged
+  RIDGE_AMP: 0.30,     // amplitude des crêtes (sur les pentes)
+  WARP_FRAC: 0.06,     // amplitude de domain warping
 }
 
 export function computeElevation(width: number, height: number, seed: number): number[] {
   const D = Math.min(width, height)
   const rimDepth = Math.max(2, Math.round(D * ALPINE.RIM_FRAC))
-  const macro = D * ALPINE.MACRO_FRAC
-  const mid = D * ALPINE.MID_FRAC
+  const rise = D * 0.5 * ALPINE.RISE_FRAC
+  const organic = D * ALPINE.ORGANIC_FRAC
+  const detailScale = D * ALPINE.DETAIL_FRAC
   const ridge = D * ALPINE.RIDGE_FRAC
   const warp = Math.max(1, Math.round(D * ALPINE.WARP_FRAC))
   const el = new Array<number>(width * height)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const edge = Math.min(x, y, width - 1 - x, height - 1 - y)
-      const rim = clamp01((rimDepth - edge) / rimDepth) // 1 au bord → pics
-      const base =
-        0.7 * fbmWarp2(x, y, macro, (seed ^ 0x1a2b3c) | 0, warp) +
-        0.3 * fbmWarp2(x, y, mid, (seed ^ 0x4d5e6f) | 0, warp)
-      const ridged = ridgedFbm2(x, y, ridge, (seed ^ 0x7a8b9c) | 0)
-      const interior = ALPINE.BASE_WEIGHT * base + ALPINE.RIDGE_WEIGHT * ridged
-      el[y * width + x] = clamp01(Math.max(rim, interior))
+      // Forme de vallée macro : 1 au bord (murs/pics) → 0 au fond (edge ≥ rise).
+      const valley = 1 - Math.min(1, edge / rise)
+      // Brise le bol concentrique → vallée organique (éperons, combes, cols).
+      const org = ALPINE.ORGANIC_AMP * (fbmWarp2(x, y, organic, (seed ^ 0x1a2b3c) | 0, warp) - 0.5)
+      // Détail de pente + arêtes ridged (petite amplitude, texture sur les murs).
+      const detail = ALPINE.DETAIL_AMP * (fbmWarp2(x, y, detailScale, (seed ^ 0x4d5e6f) | 0, warp) - 0.5)
+      const crest = ALPINE.RIDGE_AMP * (ridgedFbm2(x, y, ridge, (seed ^ 0x7a8b9c) | 0) - 0.4)
+      let h = valley + org + detail + crest
+      const rim = clamp01((rimDepth - edge) / rimDepth) // enceinte : bord toujours haut
+      h = Math.max(rim, h)
+      el[y * width + x] = clamp01(h)
     }
   }
   return el
@@ -65,11 +77,11 @@ export function computeMoisture(width: number, height: number, elevation: number
 
 /** Seuils de bande sur l'altitude — contenu de carte, réglés à la vignette. */
 export const BANDS = {
-  FLOOR: 0.30,   // < FLOOR : fond (prairie / marsh)
-  FOREST: 0.55,  // < FOREST : pentes boisées
-  SCREE: 0.72,   // < SCREE : éboulis
-  SNOW: 0.85,    // ≥ SNOW : neige ; entre SCREE et SNOW : roche
-  MARSH_MOIST: 0.62,   // fond très humide → marsh
+  FLOOR: 0.32,   // < FLOOR : fond (prairie / marsh) — fond de vallée généreux
+  FOREST: 0.56,  // < FOREST : pentes boisées (conifères)
+  SCREE: 0.68,   // < SCREE : éboulis
+  SNOW: 0.76,    // ≥ SNOW : neige ; entre SCREE et SNOW : roche (sommets enneigés)
+  MARSH_MOIST: 0.60,   // fond très humide → marsh
 }
 
 /** Terrain d'une tuile selon altitude × humidité. Chaque terrain occupe UNE
