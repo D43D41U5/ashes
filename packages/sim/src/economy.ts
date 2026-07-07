@@ -11,9 +11,21 @@ import {
   NODE_DEFS,
   RECIPES,
   SEASON,
+  TERRAIN_ALPINE_MEADOW,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
+  TERRAIN_ALPINE_FLOWERS,
+  TERRAIN_BOULDERS,
+  TERRAIN_BURNT_FOREST,
+  TERRAIN_FLOWER_MEADOW,
+  TERRAIN_HEATH,
+  TERRAIN_LARCH,
   TERRAIN_MARSH,
+  TERRAIN_OLD_GROWTH,
+  TERRAIN_PEAT_BOG,
+  TERRAIN_PINE,
+  TERRAIN_REED_MARSH,
+  TERRAIN_SCREE,
   TERRAINS,
   TOOL_TIERS,
   type NodeType,
@@ -24,7 +36,7 @@ import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { addItems, countOf, removeItems, type ItemId, type SkillId } from './items'
 import { terrainAt, zoneAt, type WorldMap } from './map'
-import { rngFloat, rngNext } from './rng'
+import { hash2 } from './noise'
 import type { Entity, SimState } from './sim'
 import { actForDay, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
 import { hasAccess, type Structure } from './village'
@@ -199,23 +211,20 @@ export function advanceEconomy(state: SimState): void {
  * `kind: 'gisement'` — la carte est l'économie.
  */
 export function generateNodes(map: WorldMap, seed: number): ResourceNode[] {
-  let rng = (seed ^ 0x51ab3f77) >>> 0
-  const roll = (): number => {
-    rng = rngNext(rng)
-    return rngFloat(rng)
-  }
   const nodes: ResourceNode[] = []
   let id = 1
   const push = (type: NodeType, tx: number, ty: number): void => {
     nodes.push({ id, type, tx, ty, stock: NODE_DEFS[type].stock, regrowAt: 0 })
     id += 1
   }
-
+  const nodeSeed = (seed ^ 0x51ab3f77) | 0
   for (let ty = 0; ty < map.height; ty++) {
     for (let tx = 0; tx < map.width; tx++) {
       const terrain = terrainAt(map, tx, ty)
       if (!TERRAINS[terrain]?.walkable) continue
-      const r = roll() // un tirage par tuile marchable : ordre déterministe
+      // Tirage POSITIONNEL : fonction pure de (tx, ty) → déplacer une tuile
+      // ailleurs ne redistribue plus les nœuds (fin de la fragilité row-band).
+      const r = hash2(tx, ty, nodeSeed)
       const zone = zoneAt(map, tx + 0.5, ty + 0.5)
       if (zone?.kind === 'gisement') {
         if (r < 0.07) push('iron_vein', tx, ty)
@@ -223,7 +232,16 @@ export function generateNodes(map: WorldMap, seed: number): ResourceNode[] {
       } else if (zone?.kind === 'carriere') {
         if (r < 0.15) push('rock', tx, ty)
       } else if (terrain === TERRAIN_FOREST) {
+        // Forêt dense (ubac) : la meilleure source de BOIS.
         if (r < 0.22) push('tree', tx, ty)
+      } else if (terrain === TERRAIN_PINE) {
+        // Forêt claire (adret, pins) : moins de bois, mais des BAIES dessous.
+        if (r < 0.13) push('tree', tx, ty)
+        else if (r < 0.2) push('berry_bush', tx, ty)
+      } else if (terrain === TERRAIN_LARCH) {
+        // Mélèzes de la limite des arbres : bois clairsemé + FIBRES (herbes d'altitude).
+        if (r < 0.1) push('tree', tx, ty)
+        else if (r < 0.17) push('fiber_plant', tx, ty)
       } else if (terrain === TERRAIN_GRASS) {
         if (r < 0.015) push('tree', tx, ty)
         else if (r < 0.028) push('rock', tx, ty)
@@ -233,6 +251,33 @@ export function generateNodes(map: WorldMap, seed: number): ResourceNode[] {
         // Le Marais : récolte riche parce qu'on y est lent et vulnérable.
         if (r < 0.05) push('berry_bush', tx, ty)
         else if (r < 0.13) push('fiber_plant', tx, ty)
+      } else if (terrain === TERRAIN_HEATH) {
+        // La lande : riche en BAIES (bruyère, myrtilles) + quelques fibres — la
+        // récompense d'aller fouiller les quartiers secs.
+        if (r < 0.06) push('berry_bush', tx, ty)
+        else if (r < 0.12) push('fiber_plant', tx, ty)
+      } else if (terrain === TERRAIN_ALPINE_MEADOW) {
+        // L'alpage d'altitude : herbes/FIBRES en abondance, baies rares.
+        if (r < 0.02) push('berry_bush', tx, ty)
+        else if (r < 0.12) push('fiber_plant', tx, ty)
+      } else if (terrain === TERRAIN_SCREE || terrain === TERRAIN_BOULDERS) {
+        // Éboulis / chaos de blocs : de la PIERRE à ramasser (plus dense dans les blocs).
+        if (r < (terrain === TERRAIN_BOULDERS ? 0.2 : 0.1)) push('rock', tx, ty)
+      } else if (terrain === TERRAIN_OLD_GROWTH) {
+        // Vieille forêt : BOIS abondant (gros arbres).
+        if (r < 0.3) push('tree', tx, ty)
+      } else if (terrain === TERRAIN_BURNT_FOREST) {
+        // Forêt brûlée : bois mort épars + repousse de BAIES.
+        if (r < 0.06) push('tree', tx, ty)
+        else if (r < 0.14) push('berry_bush', tx, ty)
+      } else if (terrain === TERRAIN_FLOWER_MEADOW || terrain === TERRAIN_ALPINE_FLOWERS) {
+        // Prés/pelouses fleuris : FIBRES (herbes) en abondance, quelques baies.
+        if (r < 0.03) push('berry_bush', tx, ty)
+        else if (r < 0.15) push('fiber_plant', tx, ty)
+      } else if (terrain === TERRAIN_PEAT_BOG || terrain === TERRAIN_REED_MARSH) {
+        // Tourbière / roselière : FIBRES riches (roseaux, sphaigne).
+        if (r < 0.04) push('berry_bush', tx, ty)
+        else if (r < 0.18) push('fiber_plant', tx, ty)
       }
     }
   }

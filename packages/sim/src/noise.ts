@@ -14,28 +14,91 @@ export function hash2(x: number, y: number, seed = 0): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296
 }
 
-/** Bruit de valeur lissé — interpolation bilinéaire du hash aux quatre coins. */
-export function valueNoise2(x: number, y: number, seed = 0): number {
+/**
+ * Bruit gradient (Perlin) 2D → [0, 1). Vaut 0.5 aux nœuds entiers (le fade
+ * quintique y annule les coins voisins) : les features naissent ENTRE les
+ * nœuds, pas calées sur la grille des entiers — remède à l'artefact « patates
+ * alignées » du value noise. N'utilise que + - * / floor min max et hash2 :
+ * exact au bit près entre moteurs JS (invariant n°2).
+ */
+const GRAD2: readonly (readonly [number, number])[] = [
+  [1, 0], [-1, 0], [0, 1], [0, -1],
+  [1, 1], [-1, 1], [1, -1], [-1, -1],
+]
+// Étalement du produit scalaire brut vers [0, 1), clampé pour garantir
+// l'intervalle quelle que soit la seed. Calibré à 1.0 : donne à fbm2 un
+// contraste comparable à l'ancien value noise (écart-type ≈ 0.17), condition
+// pour préserver l'organicité du sous-projet 1 (ondulation des berges,
+// dé-confettisage de la roche) — à 0.7 la cloche gradient était trop serrée.
+// ~6 % des valeurs sont clampées (plateaux bénins). Constante de contenu.
+const GRAD_SCALE = 1.0
+
+function gradAt(ix: number, iy: number, seed: number): readonly [number, number] {
+  const idx = Math.min(7, Math.floor(hash2(ix, iy, seed) * 8))
+  return GRAD2[idx]!
+}
+
+export function gradientNoise2(x: number, y: number, seed = 0): number {
   const x0 = Math.floor(x)
   const y0 = Math.floor(y)
   const fx = x - x0
   const fy = y - y0
-  // smoothstep — un polynôme, donc exact
-  const sx = fx * fx * (3 - 2 * fx)
-  const sy = fy * fy * (3 - 2 * fy)
-  const n00 = hash2(x0, y0, seed)
-  const n10 = hash2(x0 + 1, y0, seed)
-  const n01 = hash2(x0, y0 + 1, seed)
-  const n11 = hash2(x0 + 1, y0 + 1, seed)
-  const nx0 = n00 + (n10 - n00) * sx
-  const nx1 = n01 + (n11 - n01) * sx
-  return nx0 + (nx1 - nx0) * sy
+  const g00 = gradAt(x0, y0, seed)
+  const g10 = gradAt(x0 + 1, y0, seed)
+  const g01 = gradAt(x0, y0 + 1, seed)
+  const g11 = gradAt(x0 + 1, y0 + 1, seed)
+  const d00 = g00[0] * fx + g00[1] * fy
+  const d10 = g10[0] * (fx - 1) + g10[1] * fy
+  const d01 = g01[0] * fx + g01[1] * (fy - 1)
+  const d11 = g11[0] * (fx - 1) + g11[1] * (fy - 1)
+  // fade quintique 6t⁵−15t⁴+10t³ (polynôme → exact, C² continu)
+  const u = fx * fx * fx * (fx * (fx * 6 - 15) + 10)
+  const v = fy * fy * fy * (fy * (fy * 6 - 15) + 10)
+  const nx0 = d00 + (d10 - d00) * u
+  const nx1 = d01 + (d11 - d01) * u
+  const n = nx0 + (nx1 - nx0) * v
+  return Math.min(0.9999999, Math.max(0, n * GRAD_SCALE + 0.5))
 }
 
 /** Bruit fractal (3 octaves) à l'échelle `scale` (en tuiles) → [0, 1). */
 export function fbm2(x: number, y: number, scale: number, seed = 0): number {
-  const a = valueNoise2(x / scale, y / scale, seed)
-  const b = valueNoise2((x * 2) / scale, (y * 2) / scale, (seed ^ 0x9e3779b9) | 0)
-  const c = valueNoise2((x * 4) / scale, (y * 4) / scale, (seed ^ 0x51ab3f77) | 0)
+  const a = gradientNoise2(x / scale, y / scale, seed)
+  const b = gradientNoise2((x * 2) / scale, (y * 2) / scale, (seed ^ 0x9e3779b9) | 0)
+  const c = gradientNoise2((x * 4) / scale, (y * 4) / scale, (seed ^ 0x51ab3f77) | 0)
   return (a * 4 + b * 2 + c) / 7
+}
+
+/**
+ * Domain warping — décale les coordonnées d'échantillonnage par un champ de
+ * bruit basse fréquence avant d'évaluer fbm2. C'est le multiplicateur
+ * d'organicité : il tord toute frontière qu'il touche (biomes) sans changer
+ * la quantité échantillonnée. `warpAmp` en tuiles ; 0 ⇒ pas de warp.
+ * N'utilise que + - * et fbm2 → exact.
+ */
+export function fbmWarp2(x: number, y: number, scale: number, seed: number, warpAmp: number): number {
+  const qx = fbm2(x, y, scale * 2, (seed ^ 0x1b56c4f9) | 0)
+  const qy = fbm2(x, y, scale * 2, (seed ^ 0x7d2ac03b) | 0)
+  return fbm2(x + warpAmp * (qx * 2 - 1), y + warpAmp * (qy * 2 - 1), scale, seed | 0)
+}
+
+/**
+ * Bruit fractal « ridged » — crêtes vives pour des arêtes alpines. Chaque
+ * octave : r = 1 − |2·grad − 1| (pic quand grad ≈ 0.5) élevé au carré (arêtes
+ * plus nettes), sommé sur 4 octaves normalisées. N'utilise que abs + − × / :
+ * exact au bit près, pas de trigo.
+ */
+export function ridgedFbm2(x: number, y: number, scale: number, seed = 0): number {
+  let sum = 0
+  let amp = 0.5
+  let freq = 1
+  let norm = 0
+  for (let o = 0; o < 4; o++) {
+    const g = gradientNoise2((x * freq) / scale, (y * freq) / scale, (seed ^ (o * 0x68e31da)) | 0)
+    const r = 1 - Math.abs(2 * g - 1)
+    sum += r * r * amp
+    norm += amp
+    amp *= 0.5
+    freq *= 2
+  }
+  return sum / norm
 }

@@ -10,6 +10,8 @@ import {
   TERRAIN_WALL,
 } from './balance'
 import { generateValley, type ValleySkeleton } from './valleygen'
+import { paintStreams } from './valleygen-water'
+import { createEmptyMap } from './map'
 import { generateNodes } from './economy'
 
 /** Petit squelette d'exercice — chaque primitive y est représentée. */
@@ -61,6 +63,70 @@ describe('generateValley — le socle', () => {
     expect(forest / total).toBeGreaterThan(0.6)
   })
 
+  it('la frontière de biome n\'est pas une couture rectangulaire droite', () => {
+    // Squelette à deux régions accolées de densité forêt très différente :
+    // sans warp, TOUTE la forêt tomberait exactement à gauche de x = 24.
+    const skel: ValleySkeleton = {
+      ...TEST_SKELETON,
+      regions: [
+        { x: 4, y: 4, w: 20, h: 40, forest: 0.85 }, // ouest : dense
+        { x: 24, y: 4, w: 20, h: 40, forest: 0.05 }, // est : quasi nu
+      ],
+    }
+    const map = generateValley(skel, 7)
+    // À cause du warp, des tuiles de forêt débordent à l'EST de la frontière
+    // x = 24 (le bord droit devient irrégulier, pas une ligne verticale).
+    let forestEastOfSeam = 0
+    for (let ty = 10; ty < 38; ty++) {
+      for (let tx = 24; tx < 30; tx++) {
+        if (terrainAt(map, tx, ty) === TERRAIN_FOREST) forestEastOfSeam += 1
+      }
+    }
+    expect(forestEastOfSeam).toBeGreaterThan(0)
+  })
+
+  it('la rivière méandre (n\'est plus une ligne droite) mais atteint le Lac', () => {
+    // TEST_SKELETON : rivière verticale x = 30 de y = 4 à y = 40, Lac en (30,40).
+    const map = generateValley(TEST_SKELETON, 7)
+    const xsWithDeep = new Set<number>()
+    for (let ty = 8; ty < 36; ty++) {
+      for (let tx = 24; tx < 36; tx++) {
+        if (terrainAt(map, tx, ty) === TERRAIN_DEEP_WATER) xsWithDeep.add(tx)
+      }
+    }
+    // Sans méandre, l'eau profonde serait sur une seule colonne (x = 30).
+    expect(xsWithDeep.size).toBeGreaterThan(1)
+    // Le Lac reste de l'eau (la jonction rivière→Lac n'a pas bougé — taper).
+    expect(terrainAt(map, 30, 40)).toBe(TERRAIN_DEEP_WATER)
+  })
+
+  it("le Pont retombe sur de l'eau : le disque élargi recouvre une vraie zone d'eau (pas seulement le centre)", () => {
+    // NB : la version initialement proposée pour cette garde (compter les
+    // tuiles ROUTE touchant de l'eau dans une fenêtre 20..40) s'est révélée
+    // vacante à la vérification : paintRoads (hors paintCrossings) arrête
+    // déjà la route pile au bord de l'eau — `isWater(cur) ? undefined : ROAD`
+    // — donc la dernière tuile de route touche systématiquement l'eau
+    // qu'elle borde, MÊME SANS croisement. Preuve : en commentant l'appel à
+    // paintCrossings(map, skeleton) dans generateValley, ce test passait
+    // toujours. Remplacé par un différentiel : même seed et même squelette,
+    // avec vs. sans le franchissement, pour isoler l'effet du disque de pont
+    // sur une zone (pas un seul pixel — le centre (30,30) est toujours peint
+    // en route quel que soit le rayon, donc un flip unique ne prouverait pas
+    // que le rayon élargi (méandre) est réellement exercé).
+    const sansCroisement: ValleySkeleton = { ...TEST_SKELETON, crossings: [] }
+    const nu = generateValley(sansCroisement, 7)
+    const map = generateValley(TEST_SKELETON, 7)
+    let flips = 0
+    for (let ty = 24; ty <= 36; ty++) {
+      for (let tx = 24; tx <= 36; tx++) {
+        const eauNue =
+          terrainAt(nu, tx, ty) === TERRAIN_SHALLOW_WATER || terrainAt(nu, tx, ty) === TERRAIN_DEEP_WATER
+        if (eauNue && terrainAt(map, tx, ty) === TERRAIN_ROAD) flips += 1
+      }
+    }
+    expect(flips).toBeGreaterThan(5)
+  })
+
   it('la crête est un mur de roche', () => {
     const map = generateValley(TEST_SKELETON, 7)
     for (let tx = 6; tx <= 18; tx++) expect(isBlockingTile(map, tx, 20)).toBe(true)
@@ -77,8 +143,21 @@ describe("generateValley — rivière, routes, franchissements", () => {
   const map = generateValley(TEST_SKELETON, 7)
 
   it("la rivière coule : eau profonde au centre, berges en eau peu profonde", () => {
-    expect(terrainAt(map, 30, 20)).toBe(TERRAIN_DEEP_WATER)
-    expect(terrainAt(map, 33, 20)).toBe(TERRAIN_SHALLOW_WATER)
+    // La rivière méandre (Task 4) : son cœur profond n'est plus sur une colonne
+    // fixe. On le cherche sur la ligne y = 20, et on vérifie qu'une berge peu
+    // profonde le borde.
+    const y = 20
+    const deepXs: number[] = []
+    for (let x = 24; x <= 36; x++) {
+      if (terrainAt(map, x, y) === TERRAIN_DEEP_WATER) deepXs.push(x)
+    }
+    expect(deepXs.length).toBeGreaterThan(0)
+    const minX = Math.min(...deepXs)
+    const maxX = Math.max(...deepXs)
+    expect(
+      terrainAt(map, minX - 1, y) === TERRAIN_SHALLOW_WATER ||
+        terrainAt(map, maxX + 1, y) === TERRAIN_SHALLOW_WATER,
+    ).toBe(true)
   })
 
   it("le lac est en eau, bordé de berges", () => {
@@ -220,6 +299,50 @@ describe('réseau d’eau', () => {
   it("le réseau procédural peint bien de l'eau sans aucune rivière/lac — la passe n'est pas un no-op", () => {
     const map = generateValley(riverless(96, 96, { streamDensity: 0.004, pondDensity: 0.006 }), 11)
     expect(countShallow(map)).toBeGreaterThan(0)
+  })
+
+  it('les ruisseaux serpentent — pas des segments droits (méandre)', () => {
+    // Carte contrôlée : une seule tuile d'eau cible dans un coin, exactement un
+    // ruisseau (densité = 1/surface). paintStreams appelé directement — ni
+    // rivière ni lac ni route ne viennent brouiller les tuiles d'eau.
+    const W = 48
+    const H = 48
+    const map = createEmptyMap(W, H, TERRAIN_GRASS)
+    const target = { x: 38, y: 38 }
+    map.terrain[target.y * W + target.x] = TERRAIN_SHALLOW_WATER
+    const skel: ValleySkeleton = { ...TEST_SKELETON, water: { streamDensity: 1 / (W * H), pondDensity: 0 } }
+    paintStreams(map, skel, 7)
+
+    const stream: { x: number; y: number }[] = []
+    for (let ty = 0; ty < H; ty++) {
+      for (let tx = 0; tx < W; tx++) {
+        if (map.terrain[ty * W + tx] === TERRAIN_SHALLOW_WATER && !(tx === target.x && ty === target.y)) {
+          stream.push({ x: tx, y: ty })
+        }
+      }
+    }
+    expect(stream.length).toBeGreaterThan(3) // un ruisseau a bien été tracé
+
+    // Source = la tuile de ruisseau la plus loin de la cible. On mesure la
+    // déviation perpendiculaire max à la droite source→cible : un tracé DROIT
+    // reste sur la droite (perp ≈ 0, au bruit d'escalier près < 1) ; un tracé
+    // qui SERPENTE s'en écarte nettement (> 1 tuile).
+    let src = stream[0]!
+    let far = -1
+    for (const p of stream) {
+      const d = (p.x - target.x) * (p.x - target.x) + (p.y - target.y) * (p.y - target.y)
+      if (d > far) { far = d; src = p }
+    }
+    const ax = target.x - src.x
+    const ay = target.y - src.y
+    const len2 = Math.max(1, ax * ax + ay * ay)
+    let maxPerp2 = 0
+    for (const p of stream) {
+      const cross = ax * (p.y - src.y) - ay * (p.x - src.x)
+      const perp2 = (cross * cross) / len2
+      if (perp2 > maxPerp2) maxPerp2 = perp2
+    }
+    expect(maxPerp2).toBeGreaterThan(1)
   })
 
   it('scalabilité (R6) : plus de tuiles d’eau procédurale sur une plus grande surface, mêmes densités', () => {

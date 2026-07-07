@@ -65,15 +65,14 @@ export const VEILLEE_SKELETON: ValleySkeleton = {
   // TODO (suivi mine): creuser réellement dans la roche + longueur de galerie
   // ∝ borderThickness — aujourd'hui la galerie est un sentier à ciel ouvert
   // adjacent à la roche, pas un tunnel creusé dedans (voir valleygen-mines.ts).
-  // simpleDensity à 0.15 (une carrière, côté ouest) — calibré au banc de
-  // scénario : à 0.3 (deux carrières), la seconde tombe côté est dans la
-  // bande de lignes du Clan du Levant (Meute) et, par ricochet du flux RNG
-  // séquentiel de generateNodes (une passe ligne par ligne sur toute la
-  // carte), y ré-attribue son écosystème vivrier — le village s'effondre en
-  // 6 jours (45 échantillons affamés, 0 survivant). À 0.15, une seule
-  // carrière (côté ouest, loin des sites) : banc de scénario propre (0
-  // échantillon affamé). La mine profonde seule (sans carrière) est neutre —
-  // testé isolément, mêmes résultats que sans mine du tout.
+  // simpleDensity à 0.15 (une carrière, côté ouest). HISTORIQUE : cette valeur
+  // datait d'un temps où generateNodes tirait un RNG SÉQUENTIEL ligne par ligne
+  // — une 2e carrière (0.3) côté est ré-attribuait alors, par ricochet, tout
+  // l'écosystème vivrier de la Meute et l'effondrait. Ce ricochet N'EXISTE PLUS
+  // depuis que generateNodes est POSITIONNEL (hash2 par tuile) : un changement
+  // de terrain ne redistribue plus les nœuds distants. 0.15 est donc conservé
+  // par simple prudence, pas par nécessité — 0.3 est re-testable au banc si l'on
+  // veut deux carrières (suivi : voir la mémoire mine-follow-up).
   mines: {
     deep: [{ x: 178, y: 46, toward: 'right' }],
     simpleDensity: 0.15,

@@ -32,7 +32,7 @@ import { createWorkerHost, type HostConnection } from '../host-connection'
 import { setHud } from '../hud-state'
 import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type ReadyMessage, type SnapshotMessage } from '../protocol'
 import { lookaheadOffset, OVERLAY_DEPTH, TILE_PX, zoomForFraming } from '../render/framing'
-import { ambientTint, canopyDensity, canopyStrength, daylight } from '../render/lighting'
+import { ambientTint, canopyDensity, canopyStrength, daylight, sampleCanopyCoverage } from '../render/lighting'
 import {
   publishAlarm,
   publishChronicle,
@@ -69,6 +69,15 @@ const EVENT_LOG_CAP = 500
 /** Profondeurs des couches de lumière (au-dessus des sprites ~1000-1200, sous le ghost à OVERLAY_DEPTH). */
 const CANOPY_DEPTH = 2000
 const AMBIENT_DEPTH = 2100
+
+/**
+ * Atténuation de la canopée MONDE : l'immersion du sous-bois est portée par le
+ * voile écran (UIScene), la texture monde ne garde qu'un repère discret « c'est
+ * de la forêt » lisible de l'extérieur. Calé en playtest.
+ */
+const WORLD_CANOPY_HINT = 0.45
+/** Constante de lissage du couvert (ms) : entrer/sortir du sous-bois fond le voile en douceur. */
+const CANOPY_EASE_MS = 350
 
 /** Les événements retenus pour la chronique de saison. */
 const CHRONICLE_TYPES = new Set([
@@ -112,6 +121,8 @@ export class WorldScene extends Phaser.Scene {
   private ambientRect: Phaser.GameObjects.Rectangle | null = null
   private fireGlow: FireGlow | null = null
   private lastTime: GameTime | null = null
+  /** Couvert de canopée lissé autour de l'avatar — piloté vers la valeur échantillonnée. */
+  private canopyCoverage = 0
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
   private worldReady = false
   private calendarScale = 1
@@ -238,6 +249,13 @@ export class WorldScene extends Phaser.Scene {
       this.canopyImage?.setAlpha(canopyStrength(daylight(hour)))
       this.fireGlow?.update(this.view.structures, this.view.villages, daylight(hour))
     }
+
+    // Voile de sous-bois : on échantillonne le couvert autour de l'avatar et on
+    // le lisse dans le temps (pas de saut en franchissant une bordure). UIScene
+    // en fait la vignette écran ; ici on ne publie que le couvert lissé.
+    const targetCoverage = sampleCanopyCoverage(this.map, this.predicted.x, this.predicted.y)
+    this.canopyCoverage += (targetCoverage - this.canopyCoverage) * Math.min(1, deltaMs / CANOPY_EASE_MS)
+    setHud(this.registry, 'canopyCoverage', this.canopyCoverage)
     const dx = this.axis('right', 'left')
     const dy = this.axis('down', 'up')
     const sprint = this.inputs.sprintKeys.some((k) => k.isDown)
@@ -430,7 +448,7 @@ export class WorldScene extends Phaser.Scene {
       for (let tx = 0; tx < this.map.width; tx++) {
         const density = canopyDensity(this.map.terrain[ty * this.map.width + tx] ?? 0)
         if (density <= 0) continue
-        const a = Math.min(1, density * (0.85 + 0.3 * hash2(tx, ty)))
+        const a = Math.min(1, density * WORLD_CANOPY_HINT * (0.85 + 0.3 * hash2(tx, ty)))
         g.fillStyle(0x040807, a)
         g.fillRect(tx * TILE_PX, ty * TILE_PX, TILE_PX, TILE_PX)
       }

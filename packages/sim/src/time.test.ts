@@ -4,6 +4,7 @@ import { drainEvents, type SimEvent } from './events'
 import { createSim, step } from './sim'
 import {
   actForDay,
+  cycleOffsetForStartHour,
   DAY_TICKS_PER_CYCLE,
   getGameTime,
   seasonDayAtTick,
@@ -35,6 +36,24 @@ describe('temps (A1 — fonction pure du tick)', () => {
     sim.tick = TICKS_PER_CYCLE
     expect(getGameTime(sim).isNight).toBe(false)
     expect(getGameTime(sim).hourOfCycle).toBe(BALANCE.CYCLE_DAWN_HOUR)
+  })
+
+  it('cycleOffsetForStartHour : démarrer à minuit met le cycle en nuit, calendrier intact', () => {
+    const sim = createSim(1, { cycleOffset: cycleOffsetForStartHour(0) })
+    const t = getGameTime(sim)
+    expect(t.hourOfCycle).toBe(0)
+    expect(t.isNight).toBe(true)
+    expect(t.seasonDay).toBe(1) // le décalage ne touche QUE le cycle, pas le calendrier
+    // createSim émet night_started (pas day_started) quand on démarre de nuit.
+    const types = drainEvents(sim).map((e) => e.type)
+    expect(types).toContain('night_started')
+    expect(types).not.toContain('day_started')
+  })
+
+  it('cycleOffsetForStartHour(6) = 0 : l’aube est le départ par défaut', () => {
+    expect(cycleOffsetForStartHour(BALANCE.CYCLE_DAWN_HOUR)).toBe(0)
+    expect(createSim(1).cycleOffset).toBe(0)
+    expect(getGameTime(createSim(1)).hourOfCycle).toBe(BALANCE.CYCLE_DAWN_HOUR)
   })
 
   it('minuit (0h murale) tombe en pleine nuit', () => {

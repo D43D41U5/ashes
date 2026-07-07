@@ -5,9 +5,10 @@
  * les courbes. Côté client, Math.sin/floor/round sont autorisés (l'interdit des
  * approximations est sim-only).
  */
+import { terrainAt, type WorldMap } from '@braises/sim'
 
-/** Alpha maximal de la teinte de nuit — plafonné pour que la nuit reste lisible. */
-export const NIGHT_ALPHA_MAX = 0.5
+/** Alpha maximal de la teinte de nuit — plafonné pour que la nuit reste tout juste lisible. */
+export const NIGHT_ALPHA_MAX = 0.72
 
 const GLOW_MAX_ALPHA = 0.9
 const GLOW_MIN_RADIUS_TILES = 3
@@ -92,6 +93,54 @@ export function canopyStrength(day: number): number {
   return lerp(0.4, 1, day)
 }
 
+/**
+ * Couverture de couvert continue au point (x, y) EN TUILES — interpolation
+ * bilinéaire de `canopyDensity` sur les 4 tuiles voisines (centres à tx+0.5).
+ * Continue par construction : le voile écran monte/descend sans à-coup quand
+ * l'avatar franchit une bordure de forêt, au lieu de sauter tuile par tuile.
+ * 0 = ciel ouvert.
+ */
+export function sampleCanopyCoverage(map: WorldMap, x: number, y: number): number {
+  const gx = x - 0.5
+  const gy = y - 0.5
+  const x0 = Math.floor(gx)
+  const y0 = Math.floor(gy)
+  const fx = gx - x0
+  const fy = gy - y0
+  const d00 = canopyDensity(terrainAt(map, x0, y0))
+  const d10 = canopyDensity(terrainAt(map, x0 + 1, y0))
+  const d01 = canopyDensity(terrainAt(map, x0, y0 + 1))
+  const d11 = canopyDensity(terrainAt(map, x0 + 1, y0 + 1))
+  return lerp(lerp(d00, d10, fx), lerp(d01, d11, fx), fy)
+}
+
+/** Couvert le plus dense (= `canopyDensity(3)`, la forêt) — ancre de normalisation du voile. */
+const MAX_CANOPY_DENSITY = 0.45
+/** Opacité maxi du voile de sous-bois (plein couvert, plein jour) — calé en playtest. */
+const VIGNETTE_MAX_ALPHA = 0.55
+/**
+ * Part du voile qui subsiste la nuit. La nuit, `ambientTint` pose déjà un voile
+ * bleu uniforme ; on veut que le sous-bois reste NETTEMENT plus sombre que la
+ * clairière (l'enfermement se sent aussi de nuit — choix d'Alexis 2026-07-07),
+ * donc le plancher est haut : le voile s'atténue à peine la nuit. Un peu moins
+ * qu'en plein jour tout de même, pour garder un souffle diurne.
+ */
+const VIGNETTE_NIGHT_FLOOR = 0.8
+
+/**
+ * Voile écran de sous-bois (rendu en vignette radiale, centrée sur l'avatar).
+ * `coverage` = couvert brut autour du joueur (cf. `sampleCanopyCoverage`,
+ * 0..densité forêt), `day` = facteur de lumière du jour. Le couvert est
+ * normalisé sur la forêt (plein couvert forêt → voile plein), pour découpler la
+ * force du voile des densités brutes (calées, elles, pour la teinte monde).
+ * Retourne l'opacité du voile et `tightness` (0 = halo large, 1 = resserré).
+ */
+export function canopyVignette(coverage: number, day: number): { alpha: number; tightness: number } {
+  const cov = Math.max(0, Math.min(1, coverage / MAX_CANOPY_DENSITY))
+  const dayScale = lerp(VIGNETTE_NIGHT_FLOOR, 1, Math.max(0, Math.min(1, day)))
+  return { alpha: VIGNETTE_MAX_ALPHA * cov * dayScale, tightness: cov }
+}
+
 interface TintKey {
   hour: number
   color: number
@@ -105,14 +154,14 @@ const NEUTRAL_COLOR = 0x101018
 /** Keyframes de la teinte d'ambiance sur 24 h (bornes 0 h et 24 h identiques). */
 const AMBIENT_KEYS: TintKey[] = [
   { hour: 0, color: NIGHT_COLOR, alpha: NIGHT_ALPHA_MAX },
-  { hour: 5, color: NIGHT_COLOR, alpha: 0.44 },
+  { hour: 5, color: NIGHT_COLOR, alpha: 0.62 },
   { hour: 6, color: GOLDEN_COLOR, alpha: 0.32 },
   { hour: 8, color: GOLDEN_COLOR, alpha: 0.1 },
   { hour: 10, color: NEUTRAL_COLOR, alpha: 0 },
   { hour: 15, color: NEUTRAL_COLOR, alpha: 0 },
   { hour: 18, color: GOLDEN_COLOR, alpha: 0.12 },
   { hour: 20, color: GOLDEN_COLOR, alpha: 0.34 },
-  { hour: 21, color: NIGHT_COLOR, alpha: 0.42 },
+  { hour: 21, color: NIGHT_COLOR, alpha: 0.6 },
   { hour: 24, color: NIGHT_COLOR, alpha: NIGHT_ALPHA_MAX },
 ]
 

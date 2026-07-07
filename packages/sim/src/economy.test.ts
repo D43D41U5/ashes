@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALIGNMENT, BALANCE, TERRAIN_GRASS, TERRAIN_MARSH } from './balance'
+import { ALIGNMENT, BALANCE, TERRAIN_DEEP_WATER, TERRAIN_GRASS, TERRAIN_MARSH } from './balance'
 import { generateNodes, nodeAt, skillLevel, type ResourceNode } from './economy'
 import { drainEvents } from './events'
 import { countOf } from './items'
@@ -239,6 +239,19 @@ describe('la chair procédurale (A6)', () => {
     }
     expect(a.some((n) => n.type === 'iron_vein')).toBe(true)
     expect(nodeAt(a, a[0]!.tx, a[0]!.ty)).toBe(a[0])
+  })
+
+  it('placement positionnel : rendre une tuile lointaine non-marchable ne redistribue pas les nœuds ailleurs', () => {
+    const a = generateNodes(createEmptyMap(40, 40, TERRAIN_GRASS), 7)
+    const mod = createEmptyMap(40, 40, TERRAIN_GRASS)
+    mod.terrain[2 * 40 + 2] = TERRAIN_DEEP_WATER // UNE tuile lointaine non-marchable
+    const b = generateNodes(mod, 7)
+    // Les id sont réassignés en row-major (la tuile (2,2) disparaît → décalage d'id),
+    // donc on compare par (tx,ty,type) en excluant la tuile modifiée : tout le RESTE
+    // doit être identique — preuve que le placement est LOCAL, pas rippling.
+    const key = (n: ResourceNode): string => `${n.tx},${n.ty},${n.type}`
+    const notAt22 = (n: ResourceNode): boolean => !(n.tx === 2 && n.ty === 2)
+    expect(b.filter(notAt22).map(key).sort()).toEqual(a.filter(notAt22).map(key).sort())
   })
 
   it('le marais est riche en baies et fibres (spec vallée 2026-07-06)', () => {

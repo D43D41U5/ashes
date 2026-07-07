@@ -102,16 +102,60 @@ export function stampBlob(
   }
 }
 
-/** Trace une polyligne en tamponnant des disques le long des segments. */
-export function paintPolyline(map: WorldMap, points: ValleyPoint[], halfWidth: number, paint: Paint): void {
+/** Décalage perpendiculaire bruité d'une polyligne — la rivière serpente. */
+export interface Meander {
+  amp: number
+  scale: number
+  seed: number
+}
+
+/**
+ * Trace une polyligne en tamponnant des disques le long des segments. Avec
+ * `meander`, chaque disque est décalé perpendiculairement au segment d'une
+ * valeur bruitée le long de l'abscisse curviligne, fondue à 0 aux deux bouts
+ * (les jonctions du squelette ne bougent pas). Sans `meander` : tracé
+ * identique à l'origine (bit à bit). Que + - * / sqrt fbm2 → exact.
+ */
+export function paintPolyline(
+  map: WorldMap, points: ValleyPoint[], halfWidth: number, paint: Paint, meander?: Meander,
+): void {
+  // Longueur totale (euclidienne) pour l'abscisse curviligne globale du taper.
+  let total = 0
+  const segLen: number[] = []
+  for (let i = 0; i + 1 < points.length; i++) {
+    const dx = points[i + 1]!.x - points[i]!.x
+    const dy = points[i + 1]!.y - points[i]!.y
+    const len = Math.sqrt(dx * dx + dy * dy)
+    segLen.push(len)
+    total += len
+  }
+  if (total <= 0) total = 1
+  let arcBefore = 0
   for (let i = 0; i + 1 < points.length; i++) {
     const a = points[i]!
     const b = points[i + 1]!
-    const steps = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y), 1) * 2
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const len = segLen[i]!
+    const inv = len > 0 ? 1 / len : 0
+    const nx = -dy * inv // normale unitaire au segment
+    const ny = dx * inv
+    const steps = Math.max(Math.abs(dx), Math.abs(dy), 1) * 2
     for (let s = 0; s <= steps; s++) {
       const t = s / steps
-      stampDisk(map, Math.round(a.x + (b.x - a.x) * t), Math.round(a.y + (b.y - a.y) * t), halfWidth, paint)
+      let ox = 0
+      let oy = 0
+      if (meander) {
+        const arc = arcBefore + len * t
+        const u = arc / total
+        const taper = Math.min(1, 4 * u * (1 - u)) // 0 aux bouts, 1 au milieu
+        const m = meander.amp * taper * (fbm2(arc, 0, meander.scale, meander.seed) * 2 - 1)
+        ox = nx * m
+        oy = ny * m
+      }
+      stampDisk(map, Math.round(a.x + dx * t + ox), Math.round(a.y + dy * t + oy), halfWidth, paint)
     }
+    arcBefore += len
   }
 }
 

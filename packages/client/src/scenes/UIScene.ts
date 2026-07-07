@@ -8,6 +8,7 @@ import { skillLevel, zoneAt, type Inventory, type SkillId, type VillageTask, typ
 import Phaser from 'phaser'
 import { getHud } from '../hud-state'
 import { TILE_PX } from '../render/framing'
+import { CanopyVignette } from './canopy-vignette'
 
 const TASK_LABELS: Record<VillageTask['kind'], string> = {
   gather_berries: 'récolter des baies',
@@ -68,6 +69,7 @@ const MAP_OVERLAY_DEPTH = 1000
 
 export class UIScene extends Phaser.Scene {
   private alarmOverlay!: Phaser.GameObjects.Rectangle
+  private canopyVeil!: CanopyVignette
   private hud!: Phaser.GameObjects.Text
   private bottomBar!: Phaser.GameObjects.Text
   private errorText!: Phaser.GameObjects.Text
@@ -104,6 +106,9 @@ export class UIScene extends Phaser.Scene {
     this.alarmOverlay = this.add
       .rectangle(0, 0, this.scale.width, this.scale.height, 0x8a1a10, 0)
       .setOrigin(0)
+
+    // Le voile de sous-bois — sous tout le HUD (depth négatif). Piloté en update.
+    this.canopyVeil = new CanopyVignette(this)
 
     const style = {
       fontFamily: 'monospace',
@@ -291,6 +296,9 @@ export class UIScene extends Phaser.Scene {
   override update(): void {
     const time = getHud(this.registry, 'time')
     if (!time) return
+
+    // Voile de sous-bois : couvert lissé (WorldScene) × heure → vignette écran.
+    this.canopyVeil.update(getHud(this.registry, 'canopyCoverage') ?? 0, time.hourOfCycle)
 
     const zone = getHud(this.registry, 'zone')
     const members = getHud(this.registry, 'village') ?? 0

@@ -19,10 +19,11 @@ import {
   TERRAIN_WALL,
 } from './balance'
 import { createEmptyMap, type WorldMap } from './map'
-import { fbm2, hash2 } from './noise'
+import { fbm2, fbmWarp2, hash2 } from './noise'
 import { carveMines } from './valleygen-mines'
 import {
   isWater,
+  type Meander,
   type Paint,
   paintPolyline,
   setTile,
@@ -36,6 +37,23 @@ import { paintPonds, paintStreams } from './valleygen-water'
 export type { ValleyPoint, ValleyRegion, ValleySkeleton } from './valleygen-primitives'
 
 const DEFAULT_BIOME = { forest: 0.3, rock: 0.05, marsh: 0 }
+
+// Amplitude du warp des biomes (tuiles) : fraction de la plus petite dimension
+// de carte → scalable. À 192×192 ≈ 8 tuiles (modéré : crédible sans chaos).
+// Contenu de carte, pas d'équilibrage. Seeds décorrélés du warp de lookup.
+const BIOME_WARP_FRAC = 0.04
+const BIOME_WARP_SCALE = 40
+const BIOME_WARP_SEED_X = 0x2c1a9f
+const BIOME_WARP_SEED_Y = 0x5f3e7b
+
+// Méandre (tuiles) : fraction de la largeur de la feature → scalable. Amplitudes
+// franches (choix de session : la rivière serpente nettement, les routes sont
+// visiblement sinueuses) — la rivière était encore « trop droite » à 3.
+// Le rayon des croisements suit ceil(RIVER_MEANDER_AMP) → il s'élargit avec le
+// méandre pour rester sur l'eau (robuste à tout seed).
+const RIVER_MEANDER_AMP = 5
+const RIVER_MEANDER = { amp: RIVER_MEANDER_AMP, scale: 24, seed: 0x9a12c7 }
+const ROAD_MEANDER: Meander = { amp: 2, scale: 20, seed: 0x3d81f5 }
 
 export function generateValley(skeleton: ValleySkeleton, seed: number): WorldMap {
   const map = createEmptyMap(skeleton.width, skeleton.height, TERRAIN_GRASS)
@@ -73,21 +91,29 @@ function paintRidge(map: WorldMap, points: ValleyPoint[], halfWidth: number, see
   }
 }
 
-/** La chair : biomes par région, seuils sur bruit fractal. */
+/** La chair : biomes par région, seuils sur bruit fractal WARPÉ (frontières
+ *  organiques au lieu de coutures rectangulaires). Même warp pour le lookup de
+ *  région et pour le seuil → frontière et texture bougent ensemble. */
 function paintBiomes(map: WorldMap, skeleton: ValleySkeleton, seed: number): void {
+  const warpAmp = Math.max(2, Math.round(Math.min(map.width, map.height) * BIOME_WARP_FRAC))
   for (let ty = 0; ty < map.height; ty++) {
     for (let tx = 0; tx < map.width; tx++) {
+      // Coordonnée de lookup warpée : la frontière de région devient irrégulière.
+      const wx = fbm2(tx, ty, BIOME_WARP_SCALE, (seed ^ BIOME_WARP_SEED_X) | 0)
+      const wy = fbm2(tx, ty, BIOME_WARP_SCALE, (seed ^ BIOME_WARP_SEED_Y) | 0)
+      const lx = tx + warpAmp * (wx * 2 - 1)
+      const ly = ty + warpAmp * (wy * 2 - 1)
       const region = skeleton.regions.find(
-        (r) => tx >= r.x && tx < r.x + r.w && ty >= r.y && ty < r.y + r.h,
+        (r) => lx >= r.x && lx < r.x + r.w && ly >= r.y && ly < r.y + r.h,
       )
       const marsh = region?.marsh ?? DEFAULT_BIOME.marsh
       const forest = region?.forest ?? DEFAULT_BIOME.forest
       const rock = region?.rock ?? DEFAULT_BIOME.rock
-      if (marsh > 0 && fbm2(tx, ty, 16, (seed ^ 0x33aa17) | 0) < marsh) {
+      if (marsh > 0 && fbmWarp2(tx, ty, 16, (seed ^ 0x33aa17) | 0, warpAmp) < marsh) {
         setTile(map, tx, ty, TERRAIN_MARSH)
-      } else if (fbm2(tx, ty, 24, seed) < forest) {
+      } else if (fbmWarp2(tx, ty, 24, seed, warpAmp) < forest) {
         setTile(map, tx, ty, TERRAIN_FOREST)
-      } else if (rock > 0 && fbm2(tx, ty, 4, (seed ^ 0x7f4a21) | 0) > 1 - rock) {
+      } else if (rock > 0 && fbmWarp2(tx, ty, 4, (seed ^ 0x7f4a21) | 0, warpAmp) > 1 - rock) {
         setTile(map, tx, ty, TERRAIN_ROCK)
       }
     }
@@ -139,8 +165,8 @@ const paintClear: Paint = (cur) => (isWater(cur) || cur === TERRAIN_ROAD ? undef
 
 function paintRiver(map: WorldMap, skeleton: ValleySkeleton): void {
   const { points, halfWidth } = skeleton.river
-  paintPolyline(map, points, halfWidth + 1, () => TERRAIN_SHALLOW_WATER)
-  paintPolyline(map, points, halfWidth, () => TERRAIN_DEEP_WATER)
+  paintPolyline(map, points, halfWidth + 1, () => TERRAIN_SHALLOW_WATER, RIVER_MEANDER)
+  paintPolyline(map, points, halfWidth, () => TERRAIN_DEEP_WATER, RIVER_MEANDER)
   const { x, y, r } = skeleton.lake
   stampBlob(map, x, y, r + 2, () => TERRAIN_SHALLOW_WATER, 0xa17e5 | 0, 0.18)
   stampBlob(map, x, y, r, () => TERRAIN_DEEP_WATER, 0xa17e5 | 0, 0.18)
@@ -149,12 +175,13 @@ function paintRiver(map: WorldMap, skeleton: ValleySkeleton): void {
 /** Les routes percent tout SAUF l'eau — le franchissement est une décision. */
 function paintRoads(map: WorldMap, skeleton: ValleySkeleton): void {
   const paintRoad: Paint = (cur) => (isWater(cur) ? undefined : TERRAIN_ROAD)
-  for (const road of skeleton.roads) paintPolyline(map, road, 1, paintRoad)
+  for (const road of skeleton.roads) paintPolyline(map, road, 1, paintRoad, ROAD_MEANDER)
 }
 
-/** Pont : la route enjambe l'eau. Gué : l'eau devient peu profonde. */
+/** Pont : la route enjambe l'eau. Gué : l'eau devient peu profonde.
+ *  Rayon élargi du méandre de la rivière → le croisement retombe sur l'eau. */
 function paintCrossings(map: WorldMap, skeleton: ValleySkeleton): void {
-  const r = skeleton.river.halfWidth + 2
+  const r = skeleton.river.halfWidth + 2 + Math.ceil(RIVER_MEANDER_AMP)
   for (const c of skeleton.crossings) {
     stampDisk(map, c.x, c.y, r, () => (c.kind === 'bridge' ? TERRAIN_ROAD : TERRAIN_SHALLOW_WATER))
   }
