@@ -98,21 +98,31 @@ describe('generateValley — le socle', () => {
     expect(terrainAt(map, 30, 40)).toBe(TERRAIN_DEEP_WATER)
   })
 
-  it('le Pont retombe sur de l\'eau malgré le méandre de la rivière', () => {
-    // crossing bridge en (30,30) → route ; sous le disque, la rivière est là.
+  it("le Pont retombe sur de l'eau : le disque élargi recouvre une vraie zone d'eau (pas seulement le centre)", () => {
+    // NB : la version initialement proposée pour cette garde (compter les
+    // tuiles ROUTE touchant de l'eau dans une fenêtre 20..40) s'est révélée
+    // vacante à la vérification : paintRoads (hors paintCrossings) arrête
+    // déjà la route pile au bord de l'eau — `isWater(cur) ? undefined : ROAD`
+    // — donc la dernière tuile de route touche systématiquement l'eau
+    // qu'elle borde, MÊME SANS croisement. Preuve : en commentant l'appel à
+    // paintCrossings(map, skeleton) dans generateValley, ce test passait
+    // toujours. Remplacé par un différentiel : même seed et même squelette,
+    // avec vs. sans le franchissement, pour isoler l'effet du disque de pont
+    // sur une zone (pas un seul pixel — le centre (30,30) est toujours peint
+    // en route quel que soit le rayon, donc un flip unique ne prouverait pas
+    // que le rayon élargi (méandre) est réellement exercé).
+    const sansCroisement: ValleySkeleton = { ...TEST_SKELETON, crossings: [] }
+    const nu = generateValley(sansCroisement, 7)
     const map = generateValley(TEST_SKELETON, 7)
-    // Le disque de pont (rayon élargi par l'amplitude du méandre, cf.
-    // paintCrossings) écrase en route une zone large autour du croisement ;
-    // on vérifie qu'elle borde bien l'eau (au moins une tuile d'eau dans un
-    // périmètre plus large que ce disque, pour ne pas chercher DANS la route).
-    let waterNearBridge = 0
-    for (let ty = 20; ty <= 40; ty++) {
-      for (let tx = 20; tx <= 40; tx++) {
-        const t = terrainAt(map, tx, ty)
-        if (t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER) waterNearBridge += 1
+    let flips = 0
+    for (let ty = 24; ty <= 36; ty++) {
+      for (let tx = 24; tx <= 36; tx++) {
+        const eauNue =
+          terrainAt(nu, tx, ty) === TERRAIN_SHALLOW_WATER || terrainAt(nu, tx, ty) === TERRAIN_DEEP_WATER
+        if (eauNue && terrainAt(map, tx, ty) === TERRAIN_ROAD) flips += 1
       }
     }
-    expect(waterNearBridge).toBeGreaterThan(0)
+    expect(flips).toBeGreaterThan(5)
   })
 
   it('la crête est un mur de roche', () => {
