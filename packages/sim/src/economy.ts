@@ -11,9 +11,12 @@ import {
   NODE_DEFS,
   RECIPES,
   SEASON,
+  TERRAIN_ALPINE_MEADOW,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
+  TERRAIN_HEATH,
   TERRAIN_MARSH,
+  TERRAIN_SCREE,
   TERRAINS,
   TOOL_TIERS,
   type NodeType,
@@ -230,6 +233,18 @@ export function generateNodes(map: WorldMap, seed: number): ResourceNode[] {
         // Le Marais : récolte riche parce qu'on y est lent et vulnérable.
         if (r < 0.05) push('berry_bush', tx, ty)
         else if (r < 0.13) push('fiber_plant', tx, ty)
+      } else if (terrain === TERRAIN_HEATH) {
+        // La lande : riche en BAIES (bruyère, myrtilles) + quelques fibres — la
+        // récompense d'aller fouiller les quartiers secs.
+        if (r < 0.06) push('berry_bush', tx, ty)
+        else if (r < 0.12) push('fiber_plant', tx, ty)
+      } else if (terrain === TERRAIN_ALPINE_MEADOW) {
+        // L'alpage d'altitude : herbes/FIBRES en abondance, baies rares.
+        if (r < 0.02) push('berry_bush', tx, ty)
+        else if (r < 0.12) push('fiber_plant', tx, ty)
+      } else if (terrain === TERRAIN_SCREE) {
+        // Les éboulis : de la PIERRE à ramasser.
+        if (r < 0.1) push('rock', tx, ty)
       }
     }
   }

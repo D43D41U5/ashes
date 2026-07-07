@@ -10,6 +10,7 @@ import { sealBorderRing } from './valleygen'
 import { carveHydrology } from './alpine-hydro'
 import {
   TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_MARSH, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW,
+  TERRAIN_HEATH, TERRAIN_ALPINE_MEADOW,
 } from './balance'
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
@@ -108,37 +109,71 @@ export function computeMoisture(width: number, height: number, elevation: number
   return m
 }
 
-/** Seuils de bande sur l'altitude — contenu de carte, réglés à la vignette. */
+/** Seuils de bande (altitude) et d'humidité — contenu de carte, réglés à la
+ *  vignette. Les terrains MINÉRAUX (scree/rock/snow) restent en bandes hautes
+ *  disjointes → l'ordre altitude↔terrain reste structurel (testé). La variété
+ *  vient du 2e axe (humidité × quartiers macro) DANS les bandes basses. */
 export const BANDS = {
-  FLOOR: 0.32,   // < FLOOR : fond (prairie / marsh) — fond de vallée généreux
-  FOREST: 0.56,  // < FOREST : pentes boisées (conifères)
-  SCREE: 0.68,   // < SCREE : éboulis
-  SNOW: 0.76,    // ≥ SNOW : neige ; entre SCREE et SNOW : roche (sommets enneigés)
-  MARSH_MOIST: 0.80,   // seuil haut → marais rare, seulement les vraies cuvettes
+  FLOOR: 0.32,    // < FLOOR : fond de vallée (prairie / marais / lande)
+  FOREST: 0.55,   // FLOOR..FOREST : pentes boisées (dense ↔ éparse selon humidité)
+  ALPINE: 0.64,   // FOREST..ALPINE : alpage d'altitude (pelouse au-dessus des arbres)
+  SCREE: 0.73,    // ALPINE..SCREE : éboulis
+  SNOW: 0.83,     // ≥ SNOW : neige ; SCREE..SNOW : roche
+  MARSH_WET: 0.70,   // fond très humide → marais
+  HEATH_WET: 0.30,   // fond sec → lande (bruyère)
+  FOREST_WET: 0.34,  // pente humide → forêt dense ; sinon adret sec (arbres épars sur lande)
 }
 
-/** Terrain d'une tuile selon altitude × humidité. Chaque terrain occupe UNE
- *  plage d'altitude (bandes disjointes) → l'ordre altitude↔terrain est
- *  structurel ; seul le fond (prairie/tourbière) est départagé par l'humidité.
- *  La variété intra-bande plus riche (forêt sèche/humide, alpage d'altitude)
- *  viendra avec des sous-terrains dédiés — hors SP1a. */
-function bandFor(elevation: number, moisture: number): number {
+/**
+ * Terrain d'une tuile selon ALTITUDE × HUMIDITÉ (`wet` = humidité locale + biais
+ * macro des quartiers). Le fond se décline en marais/prairie/lande ; les pentes
+ * en forêt dense (ubac humide) ou clairsemée sur lande (adret sec) ; puis un
+ * alpage d'altitude, puis le minéral. `tx,ty,seed` servent au grain fin
+ * (trouées de forêt / arbres épars). Encourage l'exploration : chaque quartier
+ * a un caractère.
+ */
+function bandFor(elevation: number, wet: number, tx: number, ty: number, seed: number): number {
   if (elevation < BANDS.FLOOR) {
-    return moisture > BANDS.MARSH_MOIST ? TERRAIN_MARSH : TERRAIN_GRASS
+    if (wet > BANDS.MARSH_WET) return TERRAIN_MARSH
+    if (wet < BANDS.HEATH_WET) return TERRAIN_HEATH // fond sec = lande
+    return TERRAIN_GRASS // alpage/prairie
   }
-  if (elevation < BANDS.FOREST) return TERRAIN_FOREST
+  if (elevation < BANDS.FOREST) {
+    if (wet > BANDS.FOREST_WET) {
+      return fbm2(tx, ty, 6, seed) < 0.92 ? TERRAIN_FOREST : TERRAIN_GRASS // forêt dense, rares trouées
+    }
+    return fbm2(tx, ty, 6, (seed ^ 0x515f) | 0) < 0.45 ? TERRAIN_FOREST : TERRAIN_HEATH // adret : arbres épars sur lande
+  }
+  if (elevation < BANDS.ALPINE) return TERRAIN_ALPINE_MEADOW // pelouse d'altitude
   if (elevation < BANDS.SCREE) return TERRAIN_SCREE
   if (elevation < BANDS.SNOW) return TERRAIN_ROCK
   return TERRAIN_SNOW
 }
 
-export function paintAlpineBands(map: WorldMap, moisture: number[]): void {
+/** Constantes des QUARTIERS macro — grands secteurs au tempérament distinct. */
+const MACRO = {
+  WET_FRAC: 0.7,   // échelle du champ « humide/sec » (grand → quartiers larges)
+  ROCK_FRAC: 0.6,  // échelle du champ « barren/rocheux »
+  M_WEIGHT: 0.55,  // part de l'humidité LOCALE
+  W_WEIGHT: 0.45,  // part du biais macro humide
+  R_WEIGHT: 0.22,  // le biais macro rocheux ASSÈCHE (→ landes, forêt éparse)
+}
+
+export function paintAlpineBands(map: WorldMap, moisture: number[], seed: number): void {
   const { width, height } = map
   const el = map.elevation!
+  const D = Math.min(width, height)
+  const wetScale = D * MACRO.WET_FRAC
+  const rockScale = D * MACRO.ROCK_FRAC
+  const warp = Math.max(1, Math.round(D * ALPINE.WARP_FRAC))
   for (let ty = 0; ty < height; ty++) {
     for (let tx = 0; tx < width; tx++) {
       const i = ty * width + tx
-      map.terrain[i] = bandFor(el[i]!, moisture[i]!)
+      // Quartiers macro : humidité régionale + un biais « rocheux/barren » qui assèche.
+      const macroWet = fbmWarp2(tx, ty, wetScale, (seed ^ 0x00a1c3) | 0, warp)
+      const macroRock = fbmWarp2(tx, ty, rockScale, (seed ^ 0x00b2d4) | 0, warp)
+      const wet = clamp01(MACRO.M_WEIGHT * moisture[i]! + MACRO.W_WEIGHT * macroWet - MACRO.R_WEIGHT * macroRock)
+      map.terrain[i] = bandFor(el[i]!, wet, tx, ty, seed)
     }
   }
 }
@@ -201,7 +236,7 @@ export function generateAlpineTerrain(width: number, height: number, seed: numbe
   const map = createEmptyMap(width, height, TERRAIN_GRASS)
   map.elevation = computeElevation(width, height, seed)
   const moisture = computeMoisture(width, height, map.elevation, seed)
-  paintAlpineBands(map, moisture)
+  paintAlpineBands(map, moisture, seed)
   const flow = computeFlowField(width, height, seed)
   carveHydrology(map, flow, seed) // lac, rivière (thalweg), ruisseaux, tarns — l'eau suit l'écoulement
   paintForestGroves(map, seed) // bosquets épars dans le fond → bois distribué (après l'eau : n'écrase pas l'eau)
