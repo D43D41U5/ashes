@@ -61,6 +61,28 @@ describe('generateValley — le socle', () => {
     expect(forest / total).toBeGreaterThan(0.6)
   })
 
+  it('la frontière de biome n\'est pas une couture rectangulaire droite', () => {
+    // Squelette à deux régions accolées de densité forêt très différente :
+    // sans warp, TOUTE la forêt tomberait exactement à gauche de x = 24.
+    const skel: ValleySkeleton = {
+      ...TEST_SKELETON,
+      regions: [
+        { x: 4, y: 4, w: 20, h: 40, forest: 0.85 }, // ouest : dense
+        { x: 24, y: 4, w: 20, h: 40, forest: 0.05 }, // est : quasi nu
+      ],
+    }
+    const map = generateValley(skel, 7)
+    // À cause du warp, des tuiles de forêt débordent à l'EST de la frontière
+    // x = 24 (le bord droit devient irrégulier, pas une ligne verticale).
+    let forestEastOfSeam = 0
+    for (let ty = 10; ty < 38; ty++) {
+      for (let tx = 24; tx < 30; tx++) {
+        if (terrainAt(map, tx, ty) === TERRAIN_FOREST) forestEastOfSeam += 1
+      }
+    }
+    expect(forestEastOfSeam).toBeGreaterThan(0)
+  })
+
   it('la crête est un mur de roche', () => {
     const map = generateValley(TEST_SKELETON, 7)
     for (let tx = 6; tx <= 18; tx++) expect(isBlockingTile(map, tx, 20)).toBe(true)
