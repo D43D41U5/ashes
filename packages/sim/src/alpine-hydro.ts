@@ -1,16 +1,17 @@
 /**
- * L'hydrologie alpine (SP1b) — l'eau DÉCOULE du relief : un lac au point le plus
- * bas, une rivière tracée en descente le long du thalweg, des ruisseaux depuis
- * des sources de pente, et des tarns dans les cuvettes hautes. Le tracé se fait
- * sur le CHAMP D'ÉCOULEMENT (macro lisse, computeFlowField) pour ne pas se piéger
- * dans les micro-pits du relief fin ; les tarns, eux, épousent les vraies
- * cuvettes de l'élévation détaillée. Pur et déterministe (hash2, arithmétique
- * autorisée, pas de trigo). Réutilise stampBlob/paintPolyline.
+ * L'hydrologie alpine (SP1b) — l'eau DÉCOULE du relief par ACCUMULATION DE FLUX,
+ * la vraie méthode : (1) on comble les cuvettes du relief détaillé pour que tout
+ * s'écoule vers le lac (priority-flood, Barnes 2014) ; (2) chaque tuile pointe
+ * vers son voisin le plus bas ; (3) on accumule l'aire drainée en aval ; (4) on
+ * grave les chenaux selon le flux — d'où une RIVIÈRE PRINCIPALE (le tronc, plus
+ * gros flux) et des affluents qui MÉANDRENT le long du terrain réel (organique).
+ * Les tarns épousent les vraies cuvettes hautes. Pur et déterministe (hash2, tri
+ * à ordre total, arithmétique autorisée — pas de trigo).
  */
 import { TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER } from './balance'
 import { elevationAt, type WorldMap } from './map'
 import { hash2 } from './noise'
-import { isWater, type Paint, paintPolyline, stampBlob, type ValleyPoint } from './valleygen-primitives'
+import { isWater, type Paint, stampBlob, stampDisk, type ValleyPoint } from './valleygen-primitives'
 
 const paintShallow: Paint = (cur) => (cur === TERRAIN_DEEP_WATER ? undefined : TERRAIN_SHALLOW_WATER)
 const paintDeep: Paint = () => TERRAIN_DEEP_WATER
@@ -18,123 +19,142 @@ const paintDeep: Paint = () => TERRAIN_DEEP_WATER
 /** Constantes d'hydrologie — contenu de carte, réglées à la vignette. */
 export const HYDRO = {
   LAKE_R_FRAC: 0.055,     // rayon du lac (fraction de min(W,H))
-  RIVER_HALFWIDTH: 3,     // demi-largeur du cœur profond de la rivière (bien lisible)
-  STREAM_DENSITY: 0.00028,// sources de ruisseau par tuile intérieure (désencombré)
-  STREAM_SOURCE_FRAC: 0.5,// altitude d'écoulement min d'une source de ruisseau
+  ACC_STREAM: 0.0002,     // aire drainée min (fraction de N) → ruisseau franchissable
+  ACC_RIVER: 0.0018,      // → rivière (cœur profond + berges)
+  ACC_DEEP: 0.01,         // → tronc large (la rivière principale)
+  RIVER_HW: 2,            // demi-largeur du cœur du tronc
   TARN_DENSITY: 0.00008,  // tarns par tuile intérieure
-  TARN_MIN_FRAC: 0.4,     // altitude min d'un tarn (au-dessus du fond)
-  TARN_MAX_FRAC: 0.68,    // altitude max d'un tarn (sous l'éboulis/roche)
+  TARN_MIN_FRAC: 0.4,     // altitude min d'un tarn
+  TARN_MAX_FRAC: 0.68,    // altitude max d'un tarn
   TARN_R_FRAC: 0.014,     // rayon d'un tarn
 }
 
-const at = (field: number[], W: number, x: number, y: number): number => field[y * W + x]!
+const NX = [-1, 0, 1, -1, 1, -1, 0, 1]
+const NY = [-1, -1, -1, 0, 0, 1, 1, 1]
 
 /** La tuile intérieure au plus bas écoulement (loin du bord) — le bassin du lac. */
 function lowestInterior(flow: number[], W: number, H: number, margin: number): ValleyPoint {
   let bx = margin, by = margin, be = 2
   for (let y = margin; y < H - margin; y++) {
     for (let x = margin; x < W - margin; x++) {
-      const e = at(flow, W, x, y)
+      const e = flow[y * W + x]!
       if (e < be) { be = e; bx = x; by = y }
     }
   }
   return { x: bx, y: by }
 }
 
-/**
- * Descente (steepest-descent D8) sur le champ d'écoulement `flow` : à chaque pas,
- * va au voisin strictement le plus bas ; s'arrête sur une tuile d'eau du terrain,
- * un minimum local, ou après maxSteps. Départage déterministe par hash2.
- */
-function traceDownhill(map: WorldMap, flow: number[], sx: number, sy: number, maxSteps: number, seed: number): ValleyPoint[] {
-  const W = map.width
-  const H = map.height
-  const pts: ValleyPoint[] = [{ x: sx, y: sy }]
-  let x = sx
-  let y = sy
-  for (let step = 0; step < maxSteps; step++) {
-    let bestX = -1
-    let bestY = -1
-    let bestE = at(flow, W, x, y)
-    let bestTie = -1
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (dx === 0 && dy === 0) continue
-        const nx = x + dx
-        const ny = y + dy
-        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
-        const e = at(flow, W, nx, ny)
-        const tie = hash2(nx, ny, seed)
-        if (e < bestE || (e === bestE && bestX >= 0 && tie > bestTie)) {
-          bestE = e
-          bestX = nx
-          bestY = ny
-          bestTie = tie
-        }
-      }
-    }
-    if (bestX < 0) break // minimum local (cuvette)
-    x = bestX
-    y = bestY
-    pts.push({ x, y })
-    if (isWater(map.terrain[y * W + x] ?? 0)) break // atteint l'eau existante
-  }
-  return pts
-}
-
 /** Le lac au point d'écoulement le plus bas : cœur profond, berges bruitées. */
-function carveLake(map: WorldMap, flow: number[], seed: number): void {
+function carveLake(map: WorldMap, flow: number[], seed: number): ValleyPoint {
   const D = Math.min(map.width, map.height)
   const margin = Math.max(3, Math.round(D * 0.05))
   const c = lowestInterior(flow, map.width, map.height, margin)
   const r = Math.max(4, Math.round(D * HYDRO.LAKE_R_FRAC))
   stampBlob(map, c.x, c.y, r + 2, paintShallow, (seed ^ 0x1ac1) | 0, 0.22)
   stampBlob(map, c.x, c.y, r, paintDeep, (seed ^ 0x1ac1) | 0, 0.22)
+  return c
 }
 
-/** La rivière : d'une source haute au lac, en suivant l'écoulement. Cœur profond + berges. */
-function carveRiver(map: WorldMap, flow: number[], seed: number): void {
-  const D = Math.min(map.width, map.height)
-  const margin = Math.max(3, Math.round(D * 0.06))
-  // Source : le point d'écoulement le PLUS HAUT parmi des candidats intérieurs
-  // (mais pas le pic scellé) — la rivière descend de là jusqu'au lac.
-  let sx = margin
-  let sy = margin
-  let se = -1
-  for (let s = 0; s < 96; s++) {
-    const x = margin + Math.floor(hash2(s * 91 + 1, seed, 0x5c1) * (map.width - 2 * margin))
-    const y = margin + Math.floor(hash2(seed, s * 91 + 1, 0x9d3) * (map.height - 2 * margin))
-    const e = at(flow, map.width, x, y)
-    if (e > se && e < 0.9) { se = e; sx = x; sy = y }
+/**
+ * Réseau hydrographique par accumulation de flux, sur le relief DÉTAILLÉ, drainé
+ * vers le lac (sink). Comble les cuvettes, calcule les directions d'écoulement,
+ * accumule l'aire drainée, puis grave selon le flux.
+ */
+function carveDrainage(map: WorldMap, seed: number, sinkX: number, sinkY: number): void {
+  const W = map.width
+  const H = map.height
+  const N = W * H
+  const el = map.elevation!
+  const INF = 2
+
+  // (1) Priority-flood depuis le lac : filled[c] = altitude relevée pour qu'un
+  //     chemin descendant vers le lac existe partout (cuvettes comblées).
+  const filled = new Array<number>(N).fill(INF)
+  const heap = new Array<number>(N)
+  let hn = 0
+  const lower = (a: number, b: number): boolean =>
+    filled[a]! < filled[b]! || (filled[a]! === filled[b]! && a < b)
+  const swap = (i: number, j: number): void => { const t = heap[i]!; heap[i] = heap[j]!; heap[j] = t }
+  const push = (i: number): void => {
+    heap[hn] = i; let c = hn; hn++
+    while (c > 0) { const p = (c - 1) >> 1; if (lower(heap[c]!, heap[p]!)) { swap(c, p); c = p } else break }
   }
-  const path = traceDownhill(map, flow, sx, sy, map.width + map.height, (seed ^ 0x71fe) | 0)
-  if (path.length < 4) return
-  const hw = HYDRO.RIVER_HALFWIDTH
-  paintPolyline(map, path, hw + 1, paintShallow)
-  paintPolyline(map, path, hw, paintDeep)
-}
-
-/** Ruisseaux : des sources de pente dévalent vers l'eau (peu profond, franchissable). */
-function carveStreams(map: WorldMap, flow: number[], seed: number): void {
-  const D = Math.min(map.width, map.height)
-  const margin = Math.max(3, Math.round(D * 0.05))
-  const interior = (map.width - 2 * margin) * (map.height - 2 * margin)
-  const count = Math.round(HYDRO.STREAM_DENSITY * interior)
-  for (let k = 0; k < count; k++) {
-    // meilleure source parmi quelques candidats hauts (en écoulement)
-    let sx = margin
-    let sy = margin
-    let se = -1
-    for (let s = 0; s < 8; s++) {
-      const x = margin + Math.floor(hash2(k * 131 + s, seed, 0x2b7) * (map.width - 2 * margin))
-      const y = margin + Math.floor(hash2(seed, k * 131 + s, 0x4e9) * (map.height - 2 * margin))
-      const e = at(flow, map.width, x, y)
-      if (e > se) { se = e; sx = x; sy = y }
+  const pop = (): number => {
+    const top = heap[0]!; hn--; heap[0] = heap[hn]!
+    let c = 0
+    for (;;) {
+      const l = 2 * c + 1; const r = l + 1; let m = c
+      if (l < hn && lower(heap[l]!, heap[m]!)) m = l
+      if (r < hn && lower(heap[r]!, heap[m]!)) m = r
+      if (m === c) break
+      swap(c, m); c = m
     }
-    if (se < HYDRO.STREAM_SOURCE_FRAC || se >= 0.9) continue
-    const path = traceDownhill(map, flow, sx, sy, map.width, (seed ^ (k * 0x2777)) | 0)
-    if (path.length < 3) continue
-    paintPolyline(map, path, 0, paintShallow) // filet franchissable, jamais de cœur profond
+    return top
+  }
+  const sink = sinkY * W + sinkX
+  filled[sink] = el[sink]!
+  push(sink)
+  while (hn > 0) {
+    const c = pop()
+    const cx = c % W; const cy = (c / W) | 0
+    for (let d = 0; d < 8; d++) {
+      const nx = cx + NX[d]!; const ny = cy + NY[d]!
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
+      const ni = ny * W + nx
+      if (filled[ni]! !== INF) continue
+      filled[ni] = el[ni]! > filled[c]! ? el[ni]! : filled[c]!
+      push(ni)
+    }
+  }
+
+  // (2+3) Directions d'écoulement (steepest-descent sur filled) et accumulation,
+  //       en traitant les tuiles de la plus haute à la plus basse.
+  const order = new Array<number>(N)
+  for (let i = 0; i < N; i++) order[i] = i
+  order.sort((a, b) => (filled[b]! - filled[a]!) || (a - b))
+  const accum = new Array<number>(N).fill(1)
+  for (let k = 0; k < N; k++) {
+    const c = order[k]!
+    const cx = c % W; const cy = (c / W) | 0
+    const fc = filled[c]!
+    const dc = (cx - sinkX) * (cx - sinkX) + (cy - sinkY) * (cy - sinkY)
+    // Voisin d'écoulement : jamais plus haut ; on préfère plus BAS, puis (à
+    // égalité — fond plat comblé) plus PROCHE DU LAC, puis hash. Le critère
+    // « proche du lac » fait qu'un fond plat draine vers le lac en un tronc
+    // cohérent (la rivière principale) au lieu de s'étaler ; il décroît en
+    // distance donc pas de cycle.
+    let bi = -1; let be = 2; let bd = dc; let bt = -1
+    for (let d = 0; d < 8; d++) {
+      const nx = cx + NX[d]!; const ny = cy + NY[d]!
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
+      const ni = ny * W + nx
+      const e = filled[ni]!
+      if (e > fc) continue // jamais vers le haut
+      const nd = (nx - sinkX) * (nx - sinkX) + (ny - sinkY) * (ny - sinkY)
+      if (e === fc && nd >= dc) continue // sur le plat, exiger un vrai rapprochement du lac
+      const tie = hash2(nx, ny, seed)
+      if (e < be || (e === be && nd < bd) || (e === be && nd === bd && tie > bt)) {
+        be = e; bd = nd; bt = tie; bi = ni
+      }
+    }
+    if (bi >= 0) accum[bi]! += accum[c]!
+  }
+
+  // (4) Gravure selon l'aire drainée : ruisseau → rivière → tronc large.
+  const tStream = N * HYDRO.ACC_STREAM
+  const tRiver = N * HYDRO.ACC_RIVER
+  const tDeep = N * HYDRO.ACC_DEEP
+  for (let i = 0; i < N; i++) {
+    const a = accum[i]!
+    if (a < tStream) continue
+    const x = i % W; const y = (i / W) | 0
+    if (a >= tRiver) {
+      const hw = a >= tDeep ? HYDRO.RIVER_HW : 1
+      stampDisk(map, x, y, hw + 1, paintShallow)
+      stampDisk(map, x, y, hw, paintDeep)
+    } else if (map.terrain[i] !== TERRAIN_DEEP_WATER) {
+      map.terrain[i] = TERRAIN_SHALLOW_WATER // filet franchissable
+    }
   }
 }
 
@@ -152,7 +172,6 @@ function carveTarns(map: WorldMap, seed: number): void {
     const e = elevationAt(map, x, y)
     if (e < HYDRO.TARN_MIN_FRAC || e > HYDRO.TARN_MAX_FRAC) continue
     if (isWater(map.terrain[y * map.width + x] ?? 0)) continue
-    // cuvette : plus bas que ses voisins à 2 tuiles (relief détaillé)
     let isBasin = true
     for (let dy = -2; dy <= 2 && isBasin; dy += 2) {
       for (let dx = -2; dx <= 2; dx += 2) {
@@ -168,10 +187,9 @@ function carveTarns(map: WorldMap, seed: number): void {
 }
 
 /** Grave tout le réseau d'eau dans une carte alpine (après les bandes de terrain).
- *  `flow` = computeFlowField (macro lisse) pour lac/rivière/ruisseaux. */
+ *  `flow` = computeFlowField (macro lisse) pour situer le lac. */
 export function carveHydrology(map: WorldMap, flow: number[], seed: number): void {
-  carveLake(map, flow, seed)
-  carveRiver(map, flow, seed)
-  carveStreams(map, flow, seed)
+  const lake = carveLake(map, flow, seed)
+  carveDrainage(map, seed, lake.x, lake.y)
   carveTarns(map, seed)
 }
