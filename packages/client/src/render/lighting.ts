@@ -6,8 +6,8 @@
  * approximations est sim-only).
  */
 
-/** Alpha maximal de la teinte de nuit — plafonné pour que la nuit reste lisible. */
-export const NIGHT_ALPHA_MAX = 0.5
+/** Alpha maximal de la teinte de nuit — plafonné pour que la nuit reste tout juste lisible. */
+export const NIGHT_ALPHA_MAX = 0.72
 
 const GLOW_MAX_ALPHA = 0.9
 const GLOW_MIN_RADIUS_TILES = 3
@@ -105,14 +105,14 @@ const NEUTRAL_COLOR = 0x101018
 /** Keyframes de la teinte d'ambiance sur 24 h (bornes 0 h et 24 h identiques). */
 const AMBIENT_KEYS: TintKey[] = [
   { hour: 0, color: NIGHT_COLOR, alpha: NIGHT_ALPHA_MAX },
-  { hour: 5, color: NIGHT_COLOR, alpha: 0.44 },
+  { hour: 5, color: NIGHT_COLOR, alpha: 0.62 },
   { hour: 6, color: GOLDEN_COLOR, alpha: 0.32 },
   { hour: 8, color: GOLDEN_COLOR, alpha: 0.1 },
   { hour: 10, color: NEUTRAL_COLOR, alpha: 0 },
   { hour: 15, color: NEUTRAL_COLOR, alpha: 0 },
   { hour: 18, color: GOLDEN_COLOR, alpha: 0.12 },
   { hour: 20, color: GOLDEN_COLOR, alpha: 0.34 },
-  { hour: 21, color: NIGHT_COLOR, alpha: 0.42 },
+  { hour: 21, color: NIGHT_COLOR, alpha: 0.6 },
   { hour: 24, color: NIGHT_COLOR, alpha: NIGHT_ALPHA_MAX },
 ]
 
