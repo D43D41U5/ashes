@@ -80,3 +80,25 @@ export function fbmWarp2(x: number, y: number, scale: number, seed: number, warp
   const qy = fbm2(x, y, scale * 2, (seed ^ 0x7d2ac03b) | 0)
   return fbm2(x + warpAmp * (qx * 2 - 1), y + warpAmp * (qy * 2 - 1), scale, seed | 0)
 }
+
+/**
+ * Bruit fractal « ridged » — crêtes vives pour des arêtes alpines. Chaque
+ * octave : r = 1 − |2·grad − 1| (pic quand grad ≈ 0.5) élevé au carré (arêtes
+ * plus nettes), sommé sur 4 octaves normalisées. N'utilise que abs + − × / :
+ * exact au bit près, pas de trigo.
+ */
+export function ridgedFbm2(x: number, y: number, scale: number, seed = 0): number {
+  let sum = 0
+  let amp = 0.5
+  let freq = 1
+  let norm = 0
+  for (let o = 0; o < 4; o++) {
+    const g = gradientNoise2((x * freq) / scale, (y * freq) / scale, (seed ^ (o * 0x68e31da)) | 0)
+    const r = 1 - Math.abs(2 * g - 1)
+    sum += r * r * amp
+    norm += amp
+    amp *= 0.5
+    freq *= 2
+  }
+  return sum / norm
+}

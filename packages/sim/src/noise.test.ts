@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fbm2, fbmWarp2, gradientNoise2, hash2 } from './noise'
+import { fbm2, fbmWarp2, gradientNoise2, hash2, ridgedFbm2 } from './noise'
 
 describe('le bruit déterministe', () => {
   it('hash2 est stable, seedé, et dans [0, 1)', () => {
@@ -83,5 +83,18 @@ describe('le bruit déterministe', () => {
       expect(v).toBeGreaterThanOrEqual(0)
       expect(v).toBeLessThan(1)
     }
+  })
+
+  it('ridgedFbm2 est stable, dans [0,1], et « crêté » (variance haute)', () => {
+    expect(ridgedFbm2(12, 34, 20, 7)).toBe(ridgedFbm2(12, 34, 20, 7))
+    let min = 1, max = 0
+    for (let i = 0; i < 800; i++) {
+      const v = ridgedFbm2(i * 1.3, i * 0.7, 20, 5)
+      expect(v).toBeGreaterThanOrEqual(0)
+      expect(v).toBeLessThanOrEqual(1)
+      min = Math.min(min, v); max = Math.max(max, v)
+    }
+    // Un bruit ridged doit couvrir une large plage (crêtes ↔ creux).
+    expect(max - min).toBeGreaterThan(0.6)
   })
 })
