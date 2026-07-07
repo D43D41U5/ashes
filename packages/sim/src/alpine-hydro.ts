@@ -32,6 +32,9 @@ export const HYDRO = {
   MELT_DENSITY: 0.00015,  // sources de fonte par tuile intérieure (modéré)
   MELT_LO: 0.6,           // altitude min d'une source de fonte (limite des neiges basse)
   MELT_HI: 0.86,          // altitude max (sous le pic scellé)
+  ABSORB_AT: 0.34,        // altitude à laquelle un ruisseau atteint le FOND et est
+                          //  absorbé (meadow/marais) — l'empêche de traverser le
+                          //  fond plat vers un lac lointain (mirroir de BANDS.FLOOR)
   TARN_DENSITY: 0.00007,  // tarns par tuile intérieure
   TARN_MIN_FRAC: 0.4,     // altitude min d'un tarn
   TARN_MAX_FRAC: 0.68,    // altitude max d'un tarn
@@ -178,6 +181,7 @@ function carveIceStreams(map: WorldMap, dir: number[], seed: number): void {
       const t = map.terrain[c]!
       if (t === TERRAIN_DEEP_WATER || t === TERRAIN_SHALLOW_WATER) break // se jette dans l'eau → toile
       if (t === TERRAIN_MARSH) break // absorbé par le marais
+      if (elevationAt(map, c % W, (c / W) | 0) < HYDRO.ABSORB_AT) break // atteint le fond → absorbé (pas de traversée du fond plat)
       map.terrain[c] = TERRAIN_SHALLOW_WATER // filet de fonte franchissable
       c = dir[c]!
       steps++
