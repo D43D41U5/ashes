@@ -15,6 +15,7 @@ import {
   TERRAIN_FOREST,
   TERRAIN_GRASS,
   TERRAIN_HEATH,
+  TERRAIN_LARCH,
   TERRAIN_MARSH,
   TERRAIN_PINE,
   TERRAIN_SCREE,
@@ -227,9 +228,13 @@ export function generateNodes(map: WorldMap, seed: number): ResourceNode[] {
         // Forêt dense (ubac) : la meilleure source de BOIS.
         if (r < 0.22) push('tree', tx, ty)
       } else if (terrain === TERRAIN_PINE) {
-        // Forêt claire (adret, pins/mélèzes) : moins de bois, mais des BAIES dessous.
+        // Forêt claire (adret, pins) : moins de bois, mais des BAIES dessous.
         if (r < 0.13) push('tree', tx, ty)
         else if (r < 0.2) push('berry_bush', tx, ty)
+      } else if (terrain === TERRAIN_LARCH) {
+        // Mélèzes de la limite des arbres : bois clairsemé + FIBRES (herbes d'altitude).
+        if (r < 0.1) push('tree', tx, ty)
+        else if (r < 0.17) push('fiber_plant', tx, ty)
       } else if (terrain === TERRAIN_GRASS) {
         if (r < 0.015) push('tree', tx, ty)
         else if (r < 0.028) push('rock', tx, ty)

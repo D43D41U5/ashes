@@ -10,7 +10,7 @@ import { sealBorderRing } from './valleygen'
 import { carveHydrology } from './alpine-hydro'
 import {
   TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_MARSH, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW,
-  TERRAIN_HEATH, TERRAIN_ALPINE_MEADOW, TERRAIN_PINE,
+  TERRAIN_HEATH, TERRAIN_ALPINE_MEADOW, TERRAIN_PINE, TERRAIN_LARCH,
 } from './balance'
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
@@ -115,6 +115,7 @@ export function computeMoisture(width: number, height: number, elevation: number
  *  vient du 2e axe (humidité × quartiers macro) DANS les bandes basses. */
 export const BANDS = {
   FLOOR: 0.32,    // < FLOOR : fond de vallée (prairie / marais / lande)
+  LARCH: 0.48,    // LARCH..FOREST : haut de la forêt = mélèzes épars (limite des arbres)
   FOREST: 0.55,   // FLOOR..FOREST : pentes boisées (dense ↔ éparse selon humidité)
   ALPINE: 0.64,   // FOREST..ALPINE : alpage d'altitude (pelouse au-dessus des arbres)
   SCREE: 0.73,    // ALPINE..SCREE : éboulis
@@ -139,11 +140,15 @@ function bandFor(elevation: number, wet: number, tx: number, ty: number, seed: n
     return TERRAIN_GRASS // alpage/prairie
   }
   if (elevation < BANDS.FOREST) {
+    if (elevation > BANDS.LARCH) {
+      // Limite des arbres : MÉLÈZES épars (clairs, dorés) mêlés de pelouse d'altitude.
+      return fbm2(tx, ty, 7, (seed ^ 0x9a3d) | 0) < 0.55 ? TERRAIN_LARCH : TERRAIN_ALPINE_MEADOW
+    }
     if (wet > BANDS.FOREST_WET) {
       // Ubac humide : forêt DENSE de conifères (épicéas/sapins), rares trouées.
       return fbm2(tx, ty, 6, seed) < 0.92 ? TERRAIN_FOREST : TERRAIN_GRASS
     }
-    // Adret sec : forêt CLAIRE de pins/mélèzes, ouverte, sur fond de lande.
+    // Adret sec : forêt CLAIRE de pins, ouverte, sur fond de lande.
     return fbm2(tx, ty, 6, (seed ^ 0x515f) | 0) < 0.5 ? TERRAIN_PINE : TERRAIN_HEATH
   }
   if (elevation < BANDS.ALPINE) return TERRAIN_ALPINE_MEADOW // pelouse d'altitude
