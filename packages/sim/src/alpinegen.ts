@@ -79,7 +79,12 @@ export function computeFlowField(width: number, height: number, seed: number): n
       const valley = 1 - Math.min(1, edge / rise)
       const org = ALPINE.ORGANIC_AMP * (fbmWarp2(x, y, organic, (seed ^ 0x1a2b3c) | 0, warp) - 0.5)
       const rim = clamp01((rimDepth - edge) / rimDepth)
-      f[y * width + x] = clamp01(Math.max(rim, valley + org))
+      // PAS de clamp/max ici : ce champ ne sert qu'à LOCALISER (lac = min, tête de
+      // vallée = max). Clamper le fond à 0 créait une vaste zone plate d'où le min
+      // sortait toujours au même endroit (nord). `valley+org+rim` a un vrai minimum
+      // unique (org le plus négatif dans le fond) qui varie avec la seed ; le rim
+      // ne fait que rehausser le bord.
+      f[y * width + x] = valley + org + rim
     }
   }
   return f

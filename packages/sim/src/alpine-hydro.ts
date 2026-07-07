@@ -87,11 +87,11 @@ function lowestInterior(flow: number[], W: number, H: number, margin: number): V
 
 /** Le point d'écoulement le plus HAUT à l'intérieur (pas le pic scellé) — la tête de vallée. */
 function highestInterior(flow: number[], W: number, H: number, margin: number): ValleyPoint {
-  let bx = margin, by = margin, be = -1
+  let bx = margin, by = margin, be = -2
   for (let y = margin; y < H - margin; y++) {
     for (let x = margin; x < W - margin; x++) {
       const e = flow[y * W + x]!
-      if (e > be && e < 0.85) { be = e; bx = x; by = y }
+      if (e > be) { be = e; bx = x; by = y } // le plus haut de l'intérieur (marge exclut déjà les pics)
     }
   }
   return { x: bx, y: by }
@@ -102,7 +102,10 @@ function carveLake(map: WorldMap, flow: number[], seed: number): ValleyPoint {
   const D = Math.min(map.width, map.height)
   const margin = Math.max(3, Math.round(D * 0.05))
   const c = lowestInterior(flow, map.width, map.height, margin)
-  const r = Math.max(4, Math.round(D * HYDRO.LAKE_R_FRAC))
+  // Taille variable selon la seed : 0.55×..1.6× le rayon nominal (petit tarn de
+  // fond ↔ grand lac), pour que toutes les vallées n'aient pas le même lac.
+  const sizeFactor = 0.55 + hash2(seed, 0x1a4e, 0x77) * 1.05
+  const r = Math.max(4, Math.round(D * HYDRO.LAKE_R_FRAC * sizeFactor))
   stampWaterBody(map, c.x, c.y, r + 2, paintShallow, (seed ^ 0x1ac1) | 0, 0.55)
   stampWaterBody(map, c.x, c.y, r, paintDeep, (seed ^ 0x1ac1) | 0, 0.55)
   return c
