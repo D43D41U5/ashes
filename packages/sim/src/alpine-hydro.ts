@@ -31,20 +31,23 @@ const paintDeep: Paint = () => TERRAIN_DEEP_WATER
  * cœur profond bien à l'intérieur de la berge. `warpAmp` = fraction du rayon.
  */
 function stampWaterBody(
-  map: WorldMap, cx: number, cy: number, r: number, paint: Paint, seed: number, warpAmp: number,
+  map: WorldMap, cx: number, cy: number, rx: number, ry: number, paint: Paint, seed: number, warpAmp: number,
 ): void {
   const W = map.width
   const H = map.height
-  const rr = Math.ceil(r * (1 + warpAmp)) + 1
-  const scale = Math.max(3, r)
+  const rmax = Math.max(rx, ry)
+  const rr = Math.ceil(rmax * (1 + warpAmp)) + 1
+  const scale = Math.max(3, rmax)
   for (let dy = -rr; dy <= rr; dy++) {
     for (let dx = -rr; dx <= rr; dx++) {
       const tx = cx + dx
       const ty = cy + dy
       if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue
-      const wx = dx + warpAmp * r * (fbm2(tx, ty, scale, seed) * 2 - 1)
-      const wy = dy + warpAmp * r * (fbm2(tx, ty, scale, (seed ^ 0x9e3779b9) | 0) * 2 - 1)
-      if (wx * wx + wy * wy > r * r) continue
+      const wx = dx + warpAmp * rmax * (fbm2(tx, ty, scale, seed) * 2 - 1)
+      const wy = dy + warpAmp * rmax * (fbm2(tx, ty, scale, (seed ^ 0x9e3779b9) | 0) * 2 - 1)
+      const ex = wx / rx // ellipse : rx ≠ ry → forme allongée (sans trigo)
+      const ey = wy / ry
+      if (ex * ex + ey * ey > 1) continue
       const next = paint(map.terrain[ty * W + tx] ?? 0)
       if (next !== undefined) map.terrain[ty * W + tx] = next
     }
@@ -97,18 +100,49 @@ function highestInterior(flow: number[], W: number, H: number, margin: number): 
   return { x: bx, y: by }
 }
 
-/** Le lac au point d'écoulement le plus bas : cœur profond, berges bruitées. */
-function carveLake(map: WorldMap, flow: number[], seed: number): ValleyPoint {
-  const D = Math.min(map.width, map.height)
+/**
+ * Place 1 à 4 lacs (nombre aléatoire selon la seed) dans les bassins d'écoulement
+ * les plus bas, ESPACÉS, chacun de taille et de FORME diverses (ellipse allongée
+ * + domain-warp → ronds, oblongs, lobés). Renvoie le lac PRINCIPAL (le plus bas,
+ * exutoire de la rivière et du drainage).
+ */
+function carveLakes(map: WorldMap, flow: number[], seed: number): ValleyPoint {
+  const W = map.width
+  const H = map.height
+  const D = Math.min(W, H)
   const margin = Math.max(3, Math.round(D * 0.05))
-  const c = lowestInterior(flow, map.width, map.height, margin)
-  // Taille variable selon la seed : 0.55×..1.6× le rayon nominal (petit tarn de
-  // fond ↔ grand lac), pour que toutes les vallées n'aient pas le même lac.
-  const sizeFactor = 0.55 + hash2(seed, 0x1a4e, 0x77) * 1.05
-  const r = Math.max(4, Math.round(D * HYDRO.LAKE_R_FRAC * sizeFactor))
-  stampWaterBody(map, c.x, c.y, r + 2, paintShallow, (seed ^ 0x1ac1) | 0, 0.55)
-  stampWaterBody(map, c.x, c.y, r, paintDeep, (seed ^ 0x1ac1) | 0, 0.55)
-  return c
+  const count = 1 + Math.floor(hash2(seed, 0x3c1a, 0x9) * 3.999) // 1..4
+  const excludeR = Math.round(D * 0.14)
+  const base = D * HYDRO.LAKE_R_FRAC
+  const placed: ValleyPoint[] = []
+  for (let i = 0; i < count; i++) {
+    // Le point le plus bas pas déjà proche d'un lac placé.
+    let bx = -1, by = -1, be = 1e9
+    for (let y = margin; y < H - margin; y++) {
+      for (let x = margin; x < W - margin; x++) {
+        const e = flow[y * W + x]!
+        if (e >= be) continue
+        let ok = true
+        for (const p of placed) {
+          const ddx = x - p.x; const ddy = y - p.y
+          if (ddx * ddx + ddy * ddy < excludeR * excludeR) { ok = false; break }
+        }
+        if (ok) { be = e; bx = x; by = y }
+      }
+    }
+    if (bx < 0) break
+    const ks = (seed ^ (i * 0x51ed)) | 0
+    const size = 0.5 + hash2(ks, 1, 0x11) * 1.3          // 0.5×..1.8×
+    const aspect = 0.65 + hash2(ks, 2, 0x22) * 0.85      // 0.65..1.5 (allongement)
+    const warpAmp = 0.4 + hash2(ks, 3, 0x33) * 0.35      // 0.4..0.75 (irrégularité)
+    const r = Math.max(4, Math.round(base * size))
+    const rx = Math.max(3, Math.round(r * aspect))
+    const ry = Math.max(3, Math.round(r / aspect))
+    stampWaterBody(map, bx, by, rx + 2, ry + 2, paintShallow, ks, warpAmp)
+    stampWaterBody(map, bx, by, rx, ry, paintDeep, ks, warpAmp)
+    placed.push({ x: bx, y: by })
+  }
+  return placed[0] ?? lowestInterior(flow, W, H, margin)
 }
 
 /** Le tronc central méandré, tête de vallée → lac (le fond est trop plat pour
@@ -225,8 +259,8 @@ function carveIceStreams(map: WorldMap, dir: number[], seed: number): void {
       // Mare de fonte au pied de la pente : le ruisseau finit dans un vrai point
       // d'eau, et le fond de vallée se pique de mares (au lieu d'être sec).
       const pr = Math.max(2, Math.round(D * HYDRO.POOL_R_FRAC))
-      stampWaterBody(map, poolX, poolY, pr + 1, paintShallow, (seed ^ (k * 71)) | 0, 0.5)
-      if (pr >= 3) stampWaterBody(map, poolX, poolY, pr, paintDeep, (seed ^ (k * 71)) | 0, 0.5)
+      stampWaterBody(map, poolX, poolY, pr + 1, pr + 1, paintShallow, (seed ^ (k * 71)) | 0, 0.5)
+      if (pr >= 3) stampWaterBody(map, poolX, poolY, pr, pr, paintDeep, (seed ^ (k * 71)) | 0, 0.5)
     }
   }
 }
@@ -253,8 +287,8 @@ function carveTarns(map: WorldMap, seed: number): void {
       }
     }
     if (!isBasin) continue
-    stampWaterBody(map, x, y, r + 1, paintShallow, (seed ^ (k * 53)) | 0, 0.5)
-    stampWaterBody(map, x, y, r, paintDeep, (seed ^ (k * 53)) | 0, 0.5)
+    stampWaterBody(map, x, y, r + 1, r + 1, paintShallow, (seed ^ (k * 53)) | 0, 0.5)
+    stampWaterBody(map, x, y, r, r, paintDeep, (seed ^ (k * 53)) | 0, 0.5)
     placed += 1
   }
 }
@@ -314,7 +348,7 @@ function mergeNearbyWater(map: WorldMap, r: number): void {
 /** Grave tout le réseau d'eau dans une carte alpine (après les bandes de terrain).
  *  `flow` = computeFlowField (macro lisse) pour situer lac & tête de vallée. */
 export function carveHydrology(map: WorldMap, flow: number[], seed: number): void {
-  const lake = carveLake(map, flow, seed)
+  const lake = carveLakes(map, flow, seed)               // 1..4 lacs, formes diverses ; principal renvoyé
   carveMainRiver(map, flow, seed, lake)                  // le tronc (les affluents s'y jettent)
   const dir = computeDrainageDir(map, seed, lake.x, lake.y)
   carveIceStreams(map, dir, seed)                        // ruisseaux de fonte → rivière/lac/marais
