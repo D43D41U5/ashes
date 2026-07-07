@@ -23,6 +23,7 @@ import { fbm2, fbmWarp2, hash2 } from './noise'
 import { carveMines } from './valleygen-mines'
 import {
   isWater,
+  type Meander,
   type Paint,
   paintPolyline,
   setTile,
@@ -44,6 +45,11 @@ const BIOME_WARP_FRAC = 0.04
 const BIOME_WARP_SCALE = 40
 const BIOME_WARP_SEED_X = 0x2c1a9f
 const BIOME_WARP_SEED_Y = 0x5f3e7b
+
+// Méandre (tuiles) : fraction de la largeur de la feature → scalable. Modéré.
+const RIVER_MEANDER_AMP = 3
+const RIVER_MEANDER = { amp: RIVER_MEANDER_AMP, scale: 24, seed: 0x9a12c7 }
+const ROAD_MEANDER: Meander = { amp: 1, scale: 20, seed: 0x3d81f5 }
 
 export function generateValley(skeleton: ValleySkeleton, seed: number): WorldMap {
   const map = createEmptyMap(skeleton.width, skeleton.height, TERRAIN_GRASS)
@@ -155,8 +161,8 @@ const paintClear: Paint = (cur) => (isWater(cur) || cur === TERRAIN_ROAD ? undef
 
 function paintRiver(map: WorldMap, skeleton: ValleySkeleton): void {
   const { points, halfWidth } = skeleton.river
-  paintPolyline(map, points, halfWidth + 1, () => TERRAIN_SHALLOW_WATER)
-  paintPolyline(map, points, halfWidth, () => TERRAIN_DEEP_WATER)
+  paintPolyline(map, points, halfWidth + 1, () => TERRAIN_SHALLOW_WATER, RIVER_MEANDER)
+  paintPolyline(map, points, halfWidth, () => TERRAIN_DEEP_WATER, RIVER_MEANDER)
   const { x, y, r } = skeleton.lake
   stampBlob(map, x, y, r + 2, () => TERRAIN_SHALLOW_WATER, 0xa17e5 | 0, 0.18)
   stampBlob(map, x, y, r, () => TERRAIN_DEEP_WATER, 0xa17e5 | 0, 0.18)
@@ -165,10 +171,11 @@ function paintRiver(map: WorldMap, skeleton: ValleySkeleton): void {
 /** Les routes percent tout SAUF l'eau — le franchissement est une décision. */
 function paintRoads(map: WorldMap, skeleton: ValleySkeleton): void {
   const paintRoad: Paint = (cur) => (isWater(cur) ? undefined : TERRAIN_ROAD)
-  for (const road of skeleton.roads) paintPolyline(map, road, 1, paintRoad)
+  for (const road of skeleton.roads) paintPolyline(map, road, 1, paintRoad, ROAD_MEANDER)
 }
 
-/** Pont : la route enjambe l'eau. Gué : l'eau devient peu profonde. */
+/** Pont : la route enjambe l'eau. Gué : l'eau devient peu profonde.
+ *  Rayon élargi du méandre de la rivière → le croisement retombe sur l'eau. */
 function paintCrossings(map: WorldMap, skeleton: ValleySkeleton): void {
   const r = skeleton.river.halfWidth + 2
   for (const c of skeleton.crossings) {

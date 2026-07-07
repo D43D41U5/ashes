@@ -83,6 +83,36 @@ describe('generateValley — le socle', () => {
     expect(forestEastOfSeam).toBeGreaterThan(0)
   })
 
+  it('la rivière méandre (n\'est plus une ligne droite) mais atteint le Lac', () => {
+    // TEST_SKELETON : rivière verticale x = 30 de y = 4 à y = 40, Lac en (30,40).
+    const map = generateValley(TEST_SKELETON, 7)
+    const xsWithDeep = new Set<number>()
+    for (let ty = 8; ty < 36; ty++) {
+      for (let tx = 24; tx < 36; tx++) {
+        if (terrainAt(map, tx, ty) === TERRAIN_DEEP_WATER) xsWithDeep.add(tx)
+      }
+    }
+    // Sans méandre, l'eau profonde serait sur une seule colonne (x = 30).
+    expect(xsWithDeep.size).toBeGreaterThan(1)
+    // Le Lac reste de l'eau (la jonction rivière→Lac n'a pas bougé — taper).
+    expect(terrainAt(map, 30, 40)).toBe(TERRAIN_DEEP_WATER)
+  })
+
+  it('le Pont retombe sur de l\'eau malgré le méandre de la rivière', () => {
+    // crossing bridge en (30,30) → route ; sous le disque, la rivière est là.
+    const map = generateValley(TEST_SKELETON, 7)
+    // Le disque de pont écrase en route ; on vérifie qu'il borde bien l'eau
+    // (au moins une tuile d'eau dans un rayon proche du croisement).
+    let waterNearBridge = 0
+    for (let ty = 26; ty <= 34; ty++) {
+      for (let tx = 26; tx <= 34; tx++) {
+        const t = terrainAt(map, tx, ty)
+        if (t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER) waterNearBridge += 1
+      }
+    }
+    expect(waterNearBridge).toBeGreaterThan(0)
+  })
+
   it('la crête est un mur de roche', () => {
     const map = generateValley(TEST_SKELETON, 7)
     for (let tx = 6; tx <= 18; tx++) expect(isBlockingTile(map, tx, 20)).toBe(true)
