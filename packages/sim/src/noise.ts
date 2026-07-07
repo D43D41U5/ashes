@@ -67,3 +67,16 @@ export function fbm2(x: number, y: number, scale: number, seed = 0): number {
   const c = gradientNoise2((x * 4) / scale, (y * 4) / scale, (seed ^ 0x51ab3f77) | 0)
   return (a * 4 + b * 2 + c) / 7
 }
+
+/**
+ * Domain warping — décale les coordonnées d'échantillonnage par un champ de
+ * bruit basse fréquence avant d'évaluer fbm2. C'est le multiplicateur
+ * d'organicité : il tord toute frontière qu'il touche (biomes) sans changer
+ * la quantité échantillonnée. `warpAmp` en tuiles ; 0 ⇒ pas de warp.
+ * N'utilise que + - * et fbm2 → exact.
+ */
+export function fbmWarp2(x: number, y: number, scale: number, seed: number, warpAmp: number): number {
+  const qx = fbm2(x, y, scale * 2, (seed ^ 0x1b56c4f9) | 0)
+  const qy = fbm2(x, y, scale * 2, (seed ^ 0x7d2ac03b) | 0)
+  return fbm2(x + warpAmp * (qx * 2 - 1), y + warpAmp * (qy * 2 - 1), scale, seed | 0)
+}

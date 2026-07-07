@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fbm2, gradientNoise2, hash2 } from './noise'
+import { fbm2, fbmWarp2, gradientNoise2, hash2 } from './noise'
 
 describe('le bruit déterministe', () => {
   it('hash2 est stable, seedé, et dans [0, 1)', () => {
@@ -53,6 +53,33 @@ describe('le bruit déterministe', () => {
     expect(fbm2(40, 60, 24, 2026)).toBe(fbm2(40, 60, 24, 2026))
     for (let i = 0; i < 500; i++) {
       const v = fbm2(i * 1.7, i * 0.9, 24, 99)
+      expect(v).toBeGreaterThanOrEqual(0)
+      expect(v).toBeLessThan(1)
+    }
+  })
+
+  it('fbmWarp2 à amplitude 0 est identique à fbm2 (bit à bit)', () => {
+    for (let i = 0; i < 200; i++) {
+      const x = i * 1.9 + 0.3
+      const y = i * 0.8 + 0.7
+      expect(fbmWarp2(x, y, 24, 2026, 0)).toBe(fbm2(x, y, 24, 2026))
+    }
+  })
+
+  it('fbmWarp2 à amplitude > 0 déplace l\'échantillonnage (diffère de fbm2)', () => {
+    let differ = 0
+    for (let i = 0; i < 200; i++) {
+      const x = i * 1.9 + 0.3
+      const y = i * 0.8 + 0.7
+      if (fbmWarp2(x, y, 24, 2026, 8) !== fbm2(x, y, 24, 2026)) differ += 1
+    }
+    expect(differ).toBeGreaterThan(150) // la grande majorité des points bougent
+  })
+
+  it('fbmWarp2 est stable et dans [0, 1)', () => {
+    expect(fbmWarp2(40, 60, 24, 7, 8)).toBe(fbmWarp2(40, 60, 24, 7, 8))
+    for (let i = 0; i < 400; i++) {
+      const v = fbmWarp2(i * 1.3, i * 0.7, 16, 5, 8)
       expect(v).toBeGreaterThanOrEqual(0)
       expect(v).toBeLessThan(1)
     }
