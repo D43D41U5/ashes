@@ -46,10 +46,14 @@ const BIOME_WARP_SCALE = 40
 const BIOME_WARP_SEED_X = 0x2c1a9f
 const BIOME_WARP_SEED_Y = 0x5f3e7b
 
-// Méandre (tuiles) : fraction de la largeur de la feature → scalable. Modéré.
-const RIVER_MEANDER_AMP = 3
+// Méandre (tuiles) : fraction de la largeur de la feature → scalable. Amplitudes
+// franches (choix de session : la rivière serpente nettement, les routes sont
+// visiblement sinueuses) — la rivière était encore « trop droite » à 3.
+// Le rayon des croisements suit ceil(RIVER_MEANDER_AMP) → il s'élargit avec le
+// méandre pour rester sur l'eau (robuste à tout seed).
+const RIVER_MEANDER_AMP = 5
 const RIVER_MEANDER = { amp: RIVER_MEANDER_AMP, scale: 24, seed: 0x9a12c7 }
-const ROAD_MEANDER: Meander = { amp: 1, scale: 20, seed: 0x3d81f5 }
+const ROAD_MEANDER: Meander = { amp: 2, scale: 20, seed: 0x3d81f5 }
 
 export function generateValley(skeleton: ValleySkeleton, seed: number): WorldMap {
   const map = createEmptyMap(skeleton.width, skeleton.height, TERRAIN_GRASS)
