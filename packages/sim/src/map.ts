@@ -24,6 +24,9 @@ export interface WorldMap {
   /** Id de terrain par tuile, row-major (index = y * width + x). */
   terrain: number[]
   zones: Zone[]
+  /** Altitude par tuile [0,1] (substrat alpin). Optionnel — absent sur les
+   *  cartes qui n'en produisent pas. NE PAS confondre avec `height` (dimension). */
+  elevation?: number[]
 }
 
 export function createEmptyMap(width: number, height: number, fillTerrainId: number): WorldMap {
@@ -39,6 +42,12 @@ export function createEmptyMap(width: number, height: number, fillTerrainId: num
 export function terrainAt(map: WorldMap, tx: number, ty: number): number {
   if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return 0
   return map.terrain[ty * map.width + tx] ?? 0
+}
+
+/** Altitude à une tuile [0,1]. Hors carte ou absent = 0. */
+export function elevationAt(map: WorldMap, tx: number, ty: number): number {
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return 0
+  return map.elevation?.[ty * map.width + tx] ?? 0
 }
 
 /** Une tuile bloque-t-elle le déplacement ? Hors carte et terrain inconnu bloquent. */
