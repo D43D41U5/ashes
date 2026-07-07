@@ -7,6 +7,7 @@
  */
 import {
   createSim,
+  cycleOffsetForStartHour,
   generateNodes,
   generateValley,
   spawnEntity,
@@ -19,13 +20,20 @@ import {
 export const VEILLEE_SEED = 2026
 /** Démo : un jour de saison toutes les 2 minutes. */
 export const VEILLEE_CALENDAR_SCALE = 720
+/** Heure murale de départ (test d'ambiance) : 0 = minuit, en pleine nuit. Mettre 6 pour l'aube. */
+export const VEILLEE_START_HOUR = 0
 export const VEILLEE_SPAWN = VEILLEE_SITES.spawn
 
 export function createVeillee(): { sim: SimState; playerId: number } {
   // Le squelette artisanal ; la « chair » (biomes puis ressources) vient de la seed.
   const map = generateValley(VEILLEE_SKELETON, VEILLEE_SEED)
   const nodes = generateNodes(map, VEILLEE_SEED)
-  const sim = createSim(VEILLEE_SEED, { map, calendarScale: VEILLEE_CALENDAR_SCALE, nodes })
+  const sim = createSim(VEILLEE_SEED, {
+    map,
+    calendarScale: VEILLEE_CALENDAR_SCALE,
+    nodes,
+    cycleOffset: cycleOffsetForStartHour(VEILLEE_START_HOUR),
+  })
   // Pas de villages PNJ pour l'instant (décision 2026-07-06) : on finit la
   // carte vivante d'abord — les voisins à caractère (spec alignement R12)
   // reviendront sur les sites VEILLEE_SITES.foyer/meute une fois la map actée.

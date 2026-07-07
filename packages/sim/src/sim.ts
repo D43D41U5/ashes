@@ -22,7 +22,7 @@ import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde } from './worldevents'
 import { rngNext } from './rng'
 import { advanceNpcs, type Npc } from './npc'
-import { advanceTime } from './time'
+import { advanceTime, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
 import { applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
 
 /** L'union des actions possibles dans un tick (village + économie + combat). */
@@ -69,6 +69,13 @@ export interface SimState {
   rngState: number
   /** Jours de saison écoulés par jour réel (1 en multi, libre en Veillée/test). */
   calendarScale: number
+  /**
+   * Décalage de PHASE du cycle jour/nuit, en ticks (0 = le cycle démarre à
+   * l'aube). N'affecte QUE le cycle diégétique, jamais le calendrier de saison —
+   * permet de commencer une partie à une heure donnée (ex. minuit pour tester la
+   * nuit). Voir `cycleOffsetForStartHour` (time.ts).
+   */
+  cycleOffset: number
   map: WorldMap
   nextEntityId: number
   entities: Entity[]
@@ -99,6 +106,8 @@ export interface SimOptions {
   calendarScale?: number
   /** Nœuds de ressources — typiquement `generateNodes(map, seed)`. */
   nodes?: ResourceNode[]
+  /** Décalage de phase du cycle (ticks) — voir `cycleOffsetForStartHour`. */
+  cycleOffset?: number
 }
 
 /** Intention d'un avatar pour un tick : déplacement, postures, au plus une action. */
@@ -117,6 +126,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     seed,
     rngState: seed >>> 0,
     calendarScale: options.calendarScale ?? BALANCE.DEFAULT_CALENDAR_SCALE,
+    cycleOffset: ((options.cycleOffset ?? 0) % TICKS_PER_CYCLE + TICKS_PER_CYCLE) % TICKS_PER_CYCLE,
     // Copies profondes (JSON — l'état est JSON-sérialisable par design) :
     // les options sont des ENTRÉES immuables. Les partager par référence
     // corromprait le replay log (bug attrapé par le test A7 — la sim live
@@ -142,10 +152,12 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     nextStructureId: 1,
     events: [],
   }
-  // Le tick 0 est le début du jour 1, de l'acte I et d'un cycle de jour.
+  // Le tick 0 débute le jour 1 et l'acte I ; la phase du cycle dépend de
+  // cycleOffset (0 = aube), donc on émet le bon franchissement jour/nuit.
+  const startsAtNight = state.cycleOffset >= DAY_TICKS_PER_CYCLE
   emitEvent(state, { type: 'season_day_started', tick: 0, day: 1 })
   emitEvent(state, { type: 'act_started', tick: 0, act: 1 })
-  emitEvent(state, { type: 'day_started', tick: 0 })
+  emitEvent(state, startsAtNight ? { type: 'night_started', tick: 0 } : { type: 'day_started', tick: 0 })
   return state
 }
 

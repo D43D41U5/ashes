@@ -42,8 +42,18 @@ export function actForDay(day: number): Act {
   return 3
 }
 
+/**
+ * Décalage de phase (ticks) pour qu'une partie DÉMARRE à `startHour` (horloge
+ * murale, 0-24). N'affecte que le cycle jour/nuit, jamais le calendrier de
+ * saison. Ex. `cycleOffsetForStartHour(0)` → commencer à minuit (en pleine nuit).
+ */
+export function cycleOffsetForStartHour(startHour: number): number {
+  const fromDawn = (((startHour - BALANCE.CYCLE_DAWN_HOUR) % 24) + 24) % 24
+  return Math.round((fromDawn / 24) * TICKS_PER_CYCLE)
+}
+
 export function getGameTime(state: SimState): GameTime {
-  const cycleTick = state.tick % TICKS_PER_CYCLE
+  const cycleTick = (state.tick + state.cycleOffset) % TICKS_PER_CYCLE
   const seasonDay = seasonDayAtTick(state.tick, state.calendarScale)
   // Le cycle démarre à l'aube ; on décale la phase vers une horloge murale.
   const wallHour = (cycleTick / TICKS_PER_CYCLE) * 24 + BALANCE.CYCLE_DAWN_HOUR
@@ -64,7 +74,7 @@ export function advanceTime(state: SimState): void {
   const dayBefore = seasonDayAtTick(state.tick, state.calendarScale)
   state.tick += 1
 
-  const cycleTick = state.tick % TICKS_PER_CYCLE
+  const cycleTick = (state.tick + state.cycleOffset) % TICKS_PER_CYCLE
   if (cycleTick === 0) emitEvent(state, { type: 'day_started', tick: state.tick })
   if (cycleTick === DAY_TICKS_PER_CYCLE) emitEvent(state, { type: 'night_started', tick: state.tick })
 

@@ -48,7 +48,7 @@ export type { MonsterDef, MonsterType, NodeDef, NodeType, Recipe, RecipeId, Terr
 // ─── Monde : carte, temps, collision, navigation ──────────────────────────
 export { createEmptyMap, terrainAt, isBlockingTile, zoneAt } from './map'
 export type { WorldMap, Zone } from './map'
-export { getGameTime, seasonDayAtTick, actForDay, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
 export { resolveMove, moveAvatar, moveAvatarStepped, overlapsBlocking, isBlockedAt } from './collision'
 export type { MoveWorld } from './collision'
