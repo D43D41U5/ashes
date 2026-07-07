@@ -7,6 +7,7 @@
 import { fbmWarp2, ridgedFbm2 } from './noise'
 import { createEmptyMap, type WorldMap } from './map'
 import { sealBorderRing } from './valleygen'
+import { carveHydrology } from './alpine-hydro'
 import {
   TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_MARSH, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW,
 } from './balance'
@@ -57,6 +58,31 @@ export function computeElevation(width: number, height: number, seed: number): n
     }
   }
   return el
+}
+
+/**
+ * Champ d'ÉCOULEMENT — la forme de vallée macro (enceinte + fond + organique)
+ * SANS le détail ni les crêtes. L'eau le suit sans se piéger dans les micro-pits
+ * du relief fin ; l'hydrologie (SP1b) trace dessus, puis creuse dans le terrain
+ * réel. Même valley/org/rim que computeElevation → cohérent avec le relief.
+ */
+export function computeFlowField(width: number, height: number, seed: number): number[] {
+  const D = Math.min(width, height)
+  const rimDepth = Math.max(2, Math.round(D * ALPINE.RIM_FRAC))
+  const rise = D * 0.5 * ALPINE.RISE_FRAC
+  const organic = D * ALPINE.ORGANIC_FRAC
+  const warp = Math.max(1, Math.round(D * ALPINE.WARP_FRAC))
+  const f = new Array<number>(width * height)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const edge = Math.min(x, y, width - 1 - x, height - 1 - y)
+      const valley = 1 - Math.min(1, edge / rise)
+      const org = ALPINE.ORGANIC_AMP * (fbmWarp2(x, y, organic, (seed ^ 0x1a2b3c) | 0, warp) - 0.5)
+      const rim = clamp01((rimDepth - edge) / rimDepth)
+      f[y * width + x] = clamp01(Math.max(rim, valley + org))
+    }
+  }
+  return f
 }
 
 export function computeMoisture(width: number, height: number, elevation: number[], seed: number): number[] {
@@ -117,6 +143,8 @@ export function generateAlpineTerrain(width: number, height: number, seed: numbe
   map.elevation = computeElevation(width, height, seed)
   const moisture = computeMoisture(width, height, map.elevation, seed)
   paintAlpineBands(map, moisture)
-  sealBorderRing(map) // l'anneau externe reste bloquant quoi qu'ait fait le bruit
+  const flow = computeFlowField(width, height, seed)
+  carveHydrology(map, flow, seed) // lac, rivière (thalweg), ruisseaux, tarns — l'eau suit l'écoulement
+  sealBorderRing(map) // l'anneau externe reste bloquant quoi qu'ait creusé l'eau
   return map
 }
