@@ -16,7 +16,7 @@ export type { SimEvent } from './events'
 export { createReplayLog, recordAndStep, runReplay } from './replay'
 export type { ReplayLog } from './replay'
 export { rngNext, rngFloat, rngRoll } from './rng'
-export { hash2, valueNoise2, fbm2 } from './noise'
+export { hash2, gradientNoise2, fbm2 } from './noise'
 
 // ─── Équilibrage & définitions (balance.ts — la seule source des nombres) ─
 export {
