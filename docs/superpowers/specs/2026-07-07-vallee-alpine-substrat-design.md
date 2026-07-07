@@ -56,10 +56,32 @@ que SP2 existe).
   constantes, et les primitives de bruit (`fbm2`/`fbmWarp2`/`hash2`, déjà exactes). **Aucune**
   trigonométrie ni `pow/exp/log/**`. Lint de pureté vert.
 - **Pas de 3D** : `height` ne sert qu'à (a) typer le terrain et (b) l'ombrage 2D (SP3). Le
-  déplacement/collision restent plats (AABB grille). Aucune perspective ni géométrie 3D.
+  déplacement/collision restent plats (AABB grille). Aucune perspective ni géométrie 3D. La
+  verticalité *simulée* en couches discrètes (2.5D) reste ouverte et distincte de `height` —
+  voir §Extensibilité.
 - **État JSON-sérialisable** : `WorldMap` reste des tableaux/objets simples (pas de Map/Set).
 - **`generateNodes` positionnel** (acquis) : la refonte du terrain ne peut plus affamer un
   village par ricochet RNG → le recalibrage du banc est robuste.
+
+## Extensibilité — verticalité « en couches » (2.5D, sans rouvrir le 2D)
+
+Le top-down 2D est gardé, mais l'architecture **ne doit pas se fermer** aux tricks de verticalité
+simulée (décision Alexis 2026-07-07). Tous ces cas — plateaux en hauteur atteints par une rampe,
+mines souterraines, passer *sous* un pont, une tour avec escalier et effet d'élévation — sont
+**une seule primitive** : une **couche de traversée discrète** (`layer`, entier) qu'une entité
+occupe (sol = 0 ; tablier de pont, souterrain, étage de tour, replat de plateau = autres
+couches), avec des **connecteurs** (rampes, escaliers, gueules de tunnel, extrémités de pont)
+pour passer d'une couche à l'autre. Collision / interaction / pathfinding **par couche** ; le
+snapshot porte la couche ; le client rend la profondeur + un **décalage d'élévation** visuel.
+C'est du **2.5D** (Zelda, Don't Starve, Factorio) — pas un moteur 3D, invariant top-down intact.
+Le **pont à deux niveaux** (sous-projet différé) en est la première instance.
+
+**Distinction à tenir dans SP1** : le `height` ci-dessous est un **scalaire continu** (relief du
+terrain → ombrage + bandes de biome) ; la **`layer` est un entier discret** (plan de traversée).
+On les garde **séparés**. SP1 ne fait **que** `height` ; la couche est une capacité future. SP1
+doit seulement **ne pas l'empêcher**, et **peut marquer les affordances** (bords de falaise d'un
+plateau, candidats-rampes, gueules de mine, extrémités de pont) comme données du monde pour que
+le futur travail de couches ait des accroches — sans implémenter la couche elle-même ici.
 
 ## Le champ de hauteur `H(x, y) ∈ [0, 1]`
 
