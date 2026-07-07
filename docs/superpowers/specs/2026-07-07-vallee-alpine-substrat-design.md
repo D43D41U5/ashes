@@ -22,6 +22,31 @@ transfert/mémoire par tableaux typés (SP2). SP1 se valide **headless** : tests
 PNG hors-ligne** générées par un script de dev (je les regarde pour juger la composition avant
 que SP2 existe).
 
+## Exigence de qualité — génération « state of the art », AAA-grade (non négociable)
+
+La barre est **haute et assumée** (Alexis, 2026-07-07) : cette génération doit être de **classe
+état-de-l'art**, pas « correcte ». **On ne lésine pas sur les moyens.** L'engagement est concret :
+
+- **Techniques réelles**, pas de raccourci « bandes plates + semis » : bruit multi-octave à
+  **domain warping** ; **hydrologie par accumulation de flux + creusement** (et si utile une passe
+  d'**érosion** hydraulique/thermique simplifiée) — les vallées sont *creusées par l'eau*, pas
+  dessinées ; **biome façon Whittaker** (altitude × humidité × pente/exposition) ; reliefs
+  **ridged multifractal** (cirques, balcons, tarns) ; placement de POI en **bruit bleu /
+  Poisson-disk** (espacement naturel, jamais de grappes).
+- **Déterminisme au bit près, sans trigo ni `pow/exp/log`** (contrainte projet) : réimplémenter
+  ces techniques exactement est plus dur qu'appeler une lib — c'est aussi ce qui fait la
+  différence, et c'est non négociable.
+- **Validation en boucle et à l'œil** : vignettes PNG hors-ligne (teinte **hypsométrique** +
+  **hillshade**) + **métriques quantitatives** (variété de biomes, connectivité, temps de
+  traversée). On règle les constantes jusqu'à ce que ça *lise* juste ; on ne déclare jamais
+  « bon » un rendu « bof ». Chaque vignette est montrée et jugée honnêtement (« on y est / pas
+  encore »).
+- **Honnêteté de périmètre** : le rendu final convaincant = génération × rendu (SP2) ×
+  palette+relief (SP3) × **direction artistique**. SP1 livre une génération de classe + les
+  données pour un relief ombré bluffant ; le dernier cran de polish *visuel* AAA dépend aussi de
+  vrais assets de tuiles et de la direction artistique d'Alexis — on le dit droit plutôt que de
+  faire semblant.
+
 ## Décisions de design actées (brainstorming 2026-07-07)
 
 1. **Ambiance « entre les deux »** : fond de vallée généreux mais nettement encaissé, conifères
