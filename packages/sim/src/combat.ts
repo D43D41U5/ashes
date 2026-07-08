@@ -354,7 +354,12 @@ export function advanceCombat(state: SimState): void {
       continue
     }
     // PV : remontent lentement si bien nourri — modulé par la chaleur du Feu.
-    if (entity.hp > 0 && entity.hp < 100 && entity.hunger > 50) {
+    // Réservé aux avatars (joueurs/PNJ) : les monstres n'ont ni Foyer ni
+    // nourriture (leur `hunger` reste à 100, jamais drainé) et le plafond 100
+    // ci-dessous dépasse le PV max propre de la plupart des types
+    // (MONSTER_DEFS[type].hp) — sans cette garde un monstre entamé regrimpe
+    // passivement au-delà de son max.
+    if (!monsterIds.has(entity.id) && entity.hp > 0 && entity.hp < 100 && entity.hunger > 50) {
       entity.hp = Math.min(100, entity.hp + (COMBAT.HP_REGEN_PER_MIN / (60 * BALANCE.TICK_RATE_HZ)) * regenFactor(state, entity))
     }
   }

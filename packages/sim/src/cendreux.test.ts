@@ -1,11 +1,23 @@
 import { describe, it, expect } from 'vitest'
-import { COMBAT, MONSTER_DEFS, CENDREUX } from './balance'
-import { createSim, spawnEntity, type SimState } from './sim'
-import { applyDamage, die } from './combat'
+import { BALANCE, COMBAT, MONSTER_DEFS, CENDREUX } from './balance'
+import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
+import { die } from './combat'
 import { advanceCendreux } from './cendreux'
 import { spawnMonster, advanceMonsters } from './monsters'
 import { DAY_TICKS_PER_CYCLE } from './time'
+import { grantItems } from './village'
 import { foundNpcVillage } from './worldgen'
+
+function tick(state: SimState, inputs: MoveInput[] = []): void {
+  step(state, inputs)
+}
+
+/** Attaque et laisse le wind-up se résoudre — même montage que combat.test.ts. */
+function strike(state: SimState, attackerId: number, dx: number, dy: number): void {
+  tick(state, [{ entityId: attackerId, dx: 0, dy: 0, action: { type: 'attack', dx, dy } }])
+  for (let t = 0; t < COMBAT.WINDUP_TICKS; t++) tick(state)
+  for (let t = 0; t < BALANCE.TICK_RATE_HZ; t++) tick(state)
+}
 
 describe('type cendreux (fondation)', () => {
   it('MONSTER_DEFS.cendreux : PV bas, dégâts hauts, très lent', () => {
@@ -193,8 +205,12 @@ describe('le critère « joueur » (A7) — respawn au Feu ET cadavre marqué au
 describe('tuer un Cendreux : 2 coups d\'arme basique, cadavre + loot redéposé (critères 6, 8)', () => {
   it('un Cendreux levé (loot hérité) survit à 1 coup de hache, meurt au 2e, redépose le loot', () => {
     const state = createSim(1)
-    const humanId = spawnEntity(state, 5, 5)
-    const human = state.entities.find((e) => e.id === humanId)!
+    // Un PNJ (pas un joueur) : à sa mort il est retiré pour de bon (spec R10),
+    // donc pas de respawn qui viendrait traîner près du site et fausser le
+    // pipeline de coups réel plus bas (qui frappe toute entité à portée/arc).
+    foundNpcVillage(state, 12, 12, 1) // Feu en (12,12), ward 12
+    const human = state.entities.find((e) => e.id === state.npcs[0]!.entityId)!
+    human.x = 200; human.y = 200 // loin de tout feu et de tout témoin (spec levée « seul »)
     human.inventory = { berries: 3 }
     die(state, human, 0, 'cold')
     const originalCorpse = state.corpses.find((c) => c.risesAt !== undefined)!
@@ -203,21 +219,25 @@ describe('tuer un Cendreux : 2 coups d\'arme basique, cadavre + loot redéposé 
     const risen = state.monsters.find((m) => m.type === 'cendreux')!
     const cendreuxEnt = state.entities.find((en) => en.id === risen.entityId)!
     expect(cendreuxEnt.inventory.berries).toBe(3) // loot hérité (déjà couvert, ici en contexte)
+    expect(cendreuxEnt.hp).toBe(MONSTER_DEFS.cendreux.hp) // 20
 
-    // Deux coups d'arme basique (hache, 10 dégâts) via le vrai pipeline de
-    // mort (`applyDamage` → `die`), pas de l'arithmétique sur constantes.
-    // NB : un passage par le pipeline de wind-up réel (`startAttack` +
-    // `advanceCombat`) laisse ce Cendreux survivre à ~0,03 PV au lieu de
-    // mourir — la régén de PV (`advanceCombat`, PV : remontent lentement...)
-    // s'applique à tort aux monstres avec un plafond fixe de 100 au lieu de
-    // leur PV max propre (20 ici), et grignote juste assez pendant les deux
-    // wind-ups pour empêcher le KO exact. Bug latent pré-existant du combat,
-    // pas spécifique aux Cendreux — signalé, hors périmètre de ce ticket.
-    applyDamage(state, cendreuxEnt, 10, 999)
+    // Un attaquant armé d'une hache (iron_axe, 10 dégâts) à portée de corps-à-
+    // corps (1 tuile) : le Cendreux est déjà dans son propre MELEE_ENGAGE_RANGE
+    // donc il ne se déplace pas — la position reste stable pour les deux coups.
+    const attackerId = spawnEntity(state, cendreuxEnt.x + 1, cendreuxEnt.y)
+    grantItems(state, attackerId, { iron_axe: 1 })
+
+    // Deux coups via le vrai pipeline de wind-up (`startAttack` + `advanceCombat`
+    // résolu dans `step`), pas de l'arithmétique sur constantes. Avant le fix
+    // (combat.ts) la régén de PV s'appliquait à tort aux monstres avec un
+    // plafond fixe de 100 au lieu de leur PV max propre (20 ici) et grignotait
+    // juste assez pendant les deux wind-ups pour empêcher le KO exact.
+    const attacker = () => state.entities.find((e) => e.id === attackerId)!
+    strike(state, attackerId, cendreuxEnt.x - attacker().x, cendreuxEnt.y - attacker().y)
     expect(state.monsters.find((m) => m.type === 'cendreux')).toBeDefined() // 1 coup : encore en vie
     expect(cendreuxEnt.hp).toBe(10)
 
-    applyDamage(state, cendreuxEnt, 10, 999)
+    strike(state, attackerId, cendreuxEnt.x - attacker().x, cendreuxEnt.y - attacker().y)
     expect(state.monsters.find((m) => m.type === 'cendreux')).toBeUndefined() // 2e coup : mort
     expect(state.entities.find((en) => en.id === cendreuxEnt.id)).toBeUndefined()
 
