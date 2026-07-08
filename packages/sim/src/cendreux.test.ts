@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { MONSTER_DEFS, CENDREUX } from './balance'
 import { createSim, spawnEntity, type SimState } from './sim'
 import { die } from './combat'
+import { advanceCendreux } from './cendreux'
 
 describe('type cendreux (fondation)', () => {
   it('MONSTER_DEFS.cendreux : PV bas, dégâts hauts, très lent', () => {
@@ -45,5 +46,35 @@ describe('la levée — critère à la mort', () => {
     const e = humanAt(state, 5, 5)
     die(state, e, 0) // combat
     expect(state.corpses.find((c) => c.risesAt !== undefined)).toBeUndefined()
+  })
+})
+
+describe('le réveil', () => {
+  it('à risesAt : un cendreux naît, porte le loot, le cadavre disparaît, event émis', () => {
+    const state = createSim(1)
+    const e = humanAt(state, 5, 5)
+    e.inventory = { berries: 3 }
+    die(state, e, 0, 'cold')
+    const corpse = state.corpses.find((c) => c.risesAt !== undefined)!
+    state.tick = corpse.risesAt!
+    state.events.length = 0
+    advanceCendreux(state)
+    const risen = state.monsters.find((m) => m.type === 'cendreux')
+    expect(risen).toBeDefined()
+    const ent = state.entities.find((en) => en.id === risen!.entityId)!
+    expect(ent.inventory.berries).toBe(3) // loot hérité
+    expect(state.corpses.find((c) => c.id === corpse.id)).toBeUndefined()
+    expect(state.events.some((ev) => ev.type === 'cendreux_risen')).toBe(true)
+  })
+  it('annulation : un feu à portée au réveil → pas de cendreux', () => {
+    const state = createSim(1)
+    const e = humanAt(state, 5, 5)
+    die(state, e, 0, 'cold')
+    const corpse = state.corpses.find((c) => c.risesAt !== undefined)!
+    state.structures.push({ type: 'fire', tx: 5, ty: 5, villageId: 0 } as never) // veillé
+    state.tick = corpse.risesAt!
+    advanceCendreux(state)
+    expect(state.monsters.find((m) => m.type === 'cendreux')).toBeUndefined()
+    expect(state.corpses.find((c) => c.id === corpse.id)?.risesAt).toBeUndefined()
   })
 })

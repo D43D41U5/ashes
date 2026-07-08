@@ -269,7 +269,7 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
 
   // Le cadavre reçoit tout ce qui était porté (spec R9) — ou la table de
   // loot du monstre (le sanglier donne sa viande).
-  const loot = monster ? { ...MONSTER_DEFS[monster.type].loot } : { ...entity.inventory }
+  const loot = monster ? { ...MONSTER_DEFS[monster.type].loot, ...entity.inventory } : { ...entity.inventory }
   // La levée des Cendreux (spec 2026-07-08) : mort de froid, seul, loin d'un
   // feu → le cadavre est marqué et ne décante pas avant la levée.
   const willRise = !monster && cause === 'cold' && willRiseAsCendreux(state, entity)

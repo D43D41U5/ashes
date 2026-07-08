@@ -13,6 +13,7 @@
 import { BALANCE, COMBAT, TERRAIN_GRASS, TICK_DT_S } from './balance'
 import { moveAvatar } from './collision'
 import { advanceCombat, applyCombatAction, type CombatAction, type Corpse } from './combat'
+import { advanceCendreux } from './cendreux'
 import { advanceEconomy, applyEconomyAction, type EconomyAction, type ResourceNode } from './economy'
 import { emitEvent, type SimEvent } from './events'
 import type { Inventory, ItemId, SkillId } from './items'
@@ -272,6 +273,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceWorldEvents(state)
   advanceNpcs(state)
   advanceMonsters(state)
+  advanceCendreux(state)
   advanceCombat(state)
   advanceAlignment(state)
   advanceTime(state)

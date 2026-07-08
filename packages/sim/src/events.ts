@@ -68,6 +68,7 @@ export type SimEvent =
   | { type: 'gift_given'; tick: number; byEntityId: number; toVillageId: number; item: ItemId; count: number }
   | { type: 'village_archetype_changed'; tick: number; villageId: number; archetype: 'foyer' | 'meute' | 'neutre' }
   | { type: 'evacuation_opened'; tick: number; tx: number; ty: number }
+  | { type: 'cendreux_risen'; tick: number; entityId: number; x: number; y: number }
   | {
       type: 'season_ended'
       tick: number
