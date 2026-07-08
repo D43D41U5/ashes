@@ -6,6 +6,8 @@
 import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
 import { elevationAt, terrainAt, type WorldMap } from './map'
+import { spawnMonster } from './monsters'
+import type { SimState } from './sim'
 
 // ids terrain (balance.ts) — repris localement pour lisibilité de la table.
 const SCREE = 9, ROCK = 5, BOULDERS = 16, GLACIER = 15, BURNT = 21, PEAT = 18, REED = 19,
@@ -110,3 +112,17 @@ export function placePois(map: WorldMap, seed: number): void {
 
 const ROMANS = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV']
 function roman(n: number): string { return ROMANS[n] ?? String(n) }
+
+/** Spawn runtime des monstres de POI (tanière → sanglier, repaire → cendreux). Déterministe. */
+export function spawnPoiMonsters(state: SimState, seed: number): void {
+  for (const z of state.map.zones) {
+    const t = POI_TYPES.find((p) => p.slug === z.kind)
+    if (!t?.monster) continue
+    // Position déterministe dans l'empreinte de la zone.
+    const jx = hash2(z.x, z.y, seed ^ 0x4d4f4e) // 'MON'
+    const jy = hash2(z.y, z.x, seed ^ 0x4d4f4e)
+    const x = z.x + Math.min(z.w - 1, Math.floor(jx * z.w)) + 0.5
+    const y = z.y + Math.min(z.h - 1, Math.floor(jy * z.h)) + 0.5
+    spawnMonster(state, t.monster, x, y)
+  }
+}

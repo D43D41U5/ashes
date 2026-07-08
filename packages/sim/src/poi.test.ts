@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { generateAlpineTerrain } from './alpinegen'
-import { POI_TYPES, POI_PLACEMENT } from './poi'
+import { POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
 import { terrainAt } from './map'
+import { createSim } from './sim'
 
 describe('placePois', () => {
   // generateAlpineTerrain appelle désormais placePois en interne (Task 3) : ne
@@ -64,5 +65,22 @@ describe('POIs dans la carte alpine', () => {
       const dx = c[i]!.x - c[j]!.x, dy = c[i]!.y - c[j]!.y
       expect(Math.sqrt(dx * dx + dy * dy)).toBeGreaterThanOrEqual(radius - 1.5) // ±1 tuile (floor)
     }
+  })
+})
+
+describe('spawnPoiMonsters (runtime)', () => {
+  it('pose un sanglier par tanière et un cendreux par repaire', () => {
+    const map = generateAlpineTerrain(360, 540, 5) // zones POI incluses
+    const state = createSim(5, { map })
+    const tanieres = state.map.zones.filter((z) => z.kind === 'taniere').length
+    const repaires = state.map.zones.filter((z) => z.kind === 'repaire').length
+    spawnPoiMonsters(state, 5)
+    expect(state.monsters.filter((m) => m.type === 'boar').length).toBe(tanieres)
+    expect(state.monsters.filter((m) => m.type === 'cendreux').length).toBe(repaires)
+  })
+  it('déterministe : mêmes positions de monstres', () => {
+    const m1 = generateAlpineTerrain(360, 540, 5); const s1 = createSim(5, { map: m1 }); spawnPoiMonsters(s1, 5)
+    const m2 = generateAlpineTerrain(360, 540, 5); const s2 = createSim(5, { map: m2 }); spawnPoiMonsters(s2, 5)
+    expect(s1.entities.map((e) => [e.x, e.y])).toEqual(s2.entities.map((e) => [e.x, e.y]))
   })
 })
