@@ -103,6 +103,21 @@ const TERRAIN_COLORS: Record<number, number> = {
   6: 0x274a6d, // eau profonde
   7: 0x4a4038, // mur
   8: 0x556b4a, // marais
+  // Biomes alpins (SP3) — portés depuis BIOME_RGB (sim/vignette.ts) en 0xRRGGBB.
+  9: 0x96928a, // éboulis (scree)
+  10: 0xeef2f8, // neige (snow)
+  11: 0x8a7078, // lande (heath)
+  12: 0xb2c278, // alpage (alpine_meadow)
+  13: 0x507438, // forêt claire de pins (pine)
+  14: 0x9c964e, // mélèzes (larch)
+  15: 0xcee2ee, // glacier
+  16: 0x7c7468, // chaos de blocs (boulders)
+  17: 0x9cb25c, // pré fleuri (flower_meadow)
+  18: 0x484c3a, // tourbière (peat_bog)
+  19: 0x707a50, // roselière (reed_marsh)
+  20: 0xbebe94, // alpage fleuri (alpine_flowers)
+  21: 0x4a3e38, // forêt brûlée (burnt_forest)
+  22: 0x1c3a28, // vieille forêt (old_growth)
 }
 
 /** Assombrit/éclaircit légèrement une couleur (variation par tuile). */

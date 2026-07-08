@@ -8,13 +8,14 @@
 import {
   createSim,
   cycleOffsetForStartHour,
+  generateAlpineTerrain,
   generateNodes,
-  generateValley,
   spawnEntity,
-  spawnMonster,
-  VEILLEE_SITES,
-  VEILLEE_SKELETON,
+  spawnPoiMonsters,
+  terrainAt,
+  TERRAINS,
   type SimState,
+  type WorldMap,
 } from '@braises/sim'
 
 export const VEILLEE_SEED = 2026
@@ -22,11 +23,34 @@ export const VEILLEE_SEED = 2026
 export const VEILLEE_CALENDAR_SCALE = 720
 /** Heure murale de départ (test d'ambiance) : 0 = minuit, en pleine nuit. Mettre 6 pour l'aube. */
 export const VEILLEE_START_HOUR = 0
-export const VEILLEE_SPAWN = VEILLEE_SITES.spawn
 
-export function createVeillee(): { sim: SimState; playerId: number } {
-  // Le squelette artisanal ; la « chair » (biomes puis ressources) vient de la seed.
-  const map = generateValley(VEILLEE_SKELETON, VEILLEE_SEED)
+/**
+ * Cherche la 1re tuile marchable en s'éloignant du centre en anneaux carrés
+ * croissants : la carte alpine procédurale n'a pas de site de spawn artisanal,
+ * on scanne donc plutôt que de risquer un spawn sur du bloquant (glacier/neige).
+ */
+function walkableSpawn(map: WorldMap): { x: number; y: number } {
+  const cx = Math.floor(map.width / 2)
+  const cy = Math.floor(map.height / 2)
+  for (let r = 0; r < Math.max(map.width, map.height); r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const tx = cx + dx
+        const ty = cy + dy
+        if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue
+        if (TERRAINS[terrainAt(map, tx, ty)]?.walkable) return { x: tx + 0.5, y: ty + 0.5 }
+      }
+    }
+  }
+  return { x: cx + 0.5, y: cy + 0.5 }
+}
+
+export function createVeillee(): { sim: SimState; playerId: number; spawn: { x: number; y: number } } {
+  // La carte alpine procédurale est la carte par défaut du client (roadmap :
+  // substrat alpin → POIs). Taille 160×240 : le client bake une SEULE texture
+  // (limite WebGL ~4096px = 256 tuiles) ; l'alpin pleine taille (2400×3600)
+  // attend le rendu chunké (SP2).
+  const map = generateAlpineTerrain(160, 240, VEILLEE_SEED)
   const nodes = generateNodes(map, VEILLEE_SEED)
   const sim = createSim(VEILLEE_SEED, {
     map,
@@ -34,14 +58,12 @@ export function createVeillee(): { sim: SimState; playerId: number } {
     nodes,
     cycleOffset: cycleOffsetForStartHour(VEILLEE_START_HOUR),
   })
-  // Pas de villages PNJ pour l'instant (décision 2026-07-06) : on finit la
-  // carte vivante d'abord — les voisins à caractère (spec alignement R12)
-  // reviendront sur les sites VEILLEE_SITES.foyer/meute une fois la map actée.
-  // La menace et le gibier : sangliers aux tanières, zombies au Hameau, au
-  // Marais et sur le Plateau.
-  for (const p of VEILLEE_SITES.boars) spawnMonster(sim, 'boar', p.x, p.y)
-  for (const p of VEILLEE_SITES.zombies) spawnMonster(sim, 'zombie', p.x, p.y)
+  // La menace et le gibier viennent des POIs : sangliers aux tanières, Cendrés
+  // aux repaires (spawnPoiMonsters lit map.zones). Villages PNJ toujours différés
+  // (décision 2026-07-06) — on finit la carte vivante d'abord.
+  spawnPoiMonsters(sim, VEILLEE_SEED)
   // Le joueur commence les mains vides (spec économie) — pas de kit de départ.
-  const playerId = spawnEntity(sim, VEILLEE_SPAWN.x, VEILLEE_SPAWN.y)
-  return { sim, playerId }
+  const spawn = walkableSpawn(map)
+  const playerId = spawnEntity(sim, spawn.x, spawn.y)
+  return { sim, playerId, spawn }
 }

@@ -16,7 +16,7 @@ import {
   type SimState,
 } from '@braises/sim'
 import { PROTOCOL_VERSION, type ClientToHost, type HostToClient } from '../protocol'
-import { createVeillee, VEILLEE_CALENDAR_SCALE, VEILLEE_SPAWN } from './veillee'
+import { createVeillee, VEILLEE_CALENDAR_SCALE } from './veillee'
 
 const post = (message: HostToClient): void => {
   ;(self as unknown as { postMessage(m: unknown): void }).postMessage(message)
@@ -81,7 +81,7 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
       playerId,
       map: sim.map,
       calendarScale: VEILLEE_CALENDAR_SCALE,
-      playerSpawn: VEILLEE_SPAWN,
+      playerSpawn: world.spawn,
     })
     startTicker()
   } else if (msg.type === 'input') {
