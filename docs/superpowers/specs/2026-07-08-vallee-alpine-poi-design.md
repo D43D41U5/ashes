@@ -1,8 +1,8 @@
 # Design / handoff — POIs de la Vallée alpine (prochaine session)
 
-**Date** : 2026-07-08 · **Statut** : cadré en brainstorming, à implémenter la prochaine session.
-Fait suite au substrat alpin (branche `feat/vallee-alpine`, poussée). **Villages & cols mis de
-côté** volontairement (Alexis) — cette session-là = **les POIs uniquement**.
+**Date** : 2026-07-08 · **Statut** : **liste figée (26 types), à implémenter** (plan → subagents).
+Fait suite au substrat alpin + Température/Cendreux (branche `feat/vallee-alpine`). **Villages & cols
+mis de côté** volontairement (Alexis) — ici = **les POIs uniquement**.
 
 ## Objectif
 Peupler la carte de **points d'intérêt denses mais bien espacés**, **variés**, avec **plusieurs
@@ -34,32 +34,57 @@ sans saturer.
 - **Sortie** : les POIs deviennent des `Zone` nommées (`map.zones`, mécanisme `zoneAt` existant),
   lisibles par le HUD/chronique et par `generateNodes` (kinds comme `gisement`/`carriere`).
 
-## Catalogue (ordres de grandeur pour ~90 total, densité « rare/précieux »)
+## Catalogue — 26 types figés (reprise 2026-07-08)
 
-**Économie / ressources**
-- Gisements (fer+charbon, cirques minéralisés) ~2-3 · Carrières de pierre (éboulis/blocs) ~3-4 ·
-  Salines (le gibier s'y rassemble) ~2-3 · Sources glaciaires (eau pure, près des glaciers) ~2-4
+**Règles de la reprise (Alexis)** :
+- **Zéro nouvelle ressource** : tout POI qui aurait ajouté un item à l'économie est **coupé** —
+  carrière d'argile, coupe de tourbe, ruche sauvage, source glaciaire (eau : pas de soif dans le jeu).
+  On ne complexifie pas l'économie pour l'instant.
+- **Zéro nouvelle créature** : seuls `boar` (sanglier) et `cendreux` (prêt) sont posés. L'**ours** devient
+  une **variante d'abri sous roche** (hook « tanière », peuplé quand la faune s'enrichira) ; le **loup**
+  est différé (nouveau type). Les tanières v1 = sanglier seul.
+- Contenus autorisés = **Zones nommées + effet terrain léger + loot d'items existants** + branchement
+  `generateNodes` **uniquement** sur gisement/carrière (kinds existants).
 
-**Abris / structures**
-- Ruines / hameaux abandonnés (loot, histoire) ~3-4 · Cabanes de berger (refuges d'alpage) ~3-5 ·
-  Abris sous roche (falaises) ~4-6
+Poids **indicatifs** (le semis génère ~90 points, la table les distribue ; plafonds durs sur les types
+rares). 26 familles à ~90 → certains types à **1-2 exemplaires** (rareté assumée).
 
-**Danger / faune**
-- Tanières (sanglier/loup/ours, par biome) ~5-8 · Repaires de monstres (spawns de nuit) ~3-5
+**Économie (4)** — items existants uniquement
+- Gisement (fer+charbon) · cirque minéralisé — Carrière de pierre · éboulis/blocs —
+  Saline = **spot de chasse** (le gibier s'y rassemble ; viande existante, *pas de sel-item*) · alpage —
+  Verger / bosquet à baies (baies existantes) · prés/lisières
 
-**Récompense / paysage**
-- Belvédères (révèlent la carte) ~3-4 · Grottes (petit loot ; **futures entrées de souterrain
-  2.5D** — voir mémoire verticalite-couches-2-5d) ~3-5 · Cascades (torrent qui saute une falaise)
-  ~2-4 · Blocs erratiques géants (repères) ~3-5 · Arbres remarquables (vieux mélèze, en
-  old-growth) ~2-3 · Cairns / bornes (navigation + petite cache) ~8-12 (les plus fréquents) ·
-  Sanctuaires / vieux autels (rare, loot rare + histoire) ~1-2
+**Abris (6)**
+- Ruines / hameau abandonné (loot, histoire, réhabilitable) · fond/vieille forêt —
+  Cabane de berger · alpage — **Abri sous roche** *(variantes : vide · tanière[hook ours])* · falaises/blocs —
+  Mine abandonnée / galerie (loot + **hook souterrain 2.5D**) · cirque/falaise —
+  Oratoire / chapelle de col (refuge + histoire) · cols — Vieux bivouac (trace + cache) · partout
+
+**Danger (5)**
+- Tanière de sanglier (`boar`) · forêt basse — **Repaire de Cendreux** (nid pré-placé, `cendreux` prêt) ·
+  brûlis/grottes/hautes zones — Épave d'avalanche gelée (butin figé + **un mort qui peut se lever** →
+  boucle Cendreux) · couloirs d'avalanche — Fondrière / marais traître (**piège du terrain**, pas de
+  créature) · tourbière/roselière — Champ de crevasses (piège du glacier) · glacier
+
+**Récompense / paysage (11)**
+- Belvédère (révèle la carte) · sommets/crêtes — Grotte (loot + **hook 2.5D**) · falaises/cirque —
+  Cascade (paysage + cache derrière) · falaise+eau — Bloc erratique géant (repère) · moraines/prés —
+  Arbre remarquable (vieux mélèze) · old-growth — Cairn / borne (navigation + cache) · partout —
+  Sanctuaire / vieil autel (rare, loot + histoire) · reculé — Source chaude / mare thermale (oasis de
+  chaleur : **réutilise le warming de la jauge Température**, pas d'item) · haute altitude —
+  Arche / pont naturel (spectacle + franchir) · falaise — Tarn / lac suspendu nommé (terrain eau,
+  pas d'item) · cirque/alpage — Pétroglyphes / pierre gravée (lore muet, très rare) · reculé
+
+Types différés (hors v1) : ours (variante d'abri à peupler), loup (nouveau type), et tout POI-ressource ci-dessus.
 
 ## Plan de la session
 1. **Fondation** : `poissonPoints(width, height, seed, minSpacing, density)` (bruit bleu, pur,
    déterministe) + une **table de POI pondérée par prédicat de biome**.
-2. **Types** : implémenter les POIs des quatre familles ci-dessus, chacun posant sa `Zone` nommée
-   (+ effet terrain léger si pertinent : entrée de grotte, tas de blocs, structure de ruine…),
-   et branchant `generateNodes` là où il faut (gisements, carrières, salines).
+2. **Types** : implémenter les 26 POIs, chacun posant sa `Zone` nommée (+ effet terrain léger si
+   pertinent : entrée de grotte, tas de blocs, structure de ruine…), branchant `generateNodes`
+   **uniquement** sur gisement/carrière (kinds existants), et posant les monstres existants
+   (sanglier en tanière, `cendreux` en repaire) + le loot d'items existants. La saline ne fait que
+   densifier la faune (spot de chasse), sans ressource.
 3. **Réglage à la vignette** : afficher les POIs **en pastilles colorées par famille** sur la
    vignette PNG → on cale la densité/espacement **à l'œil ensemble** (workflow habituel, 4 images).
 
