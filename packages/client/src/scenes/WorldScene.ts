@@ -241,13 +241,14 @@ export class WorldScene extends Phaser.Scene {
     this.add.image(0, 0, 'map-demo').setOrigin(0).setDepth(-1)
     this.bakeCanopyTexture()
     this.canopyImage = this.add.image(0, 0, 'canopy').setOrigin(0).setDepth(CANOPY_DEPTH)
-    const worldPx = this.map.width * TILE_PX
+    const worldW = this.map.width * TILE_PX
+    const worldH = this.map.height * TILE_PX
     this.ambientRect = this.add
-      .rectangle(0, 0, worldPx, worldPx, 0x000000, 0)
+      .rectangle(0, 0, worldW, worldH, 0x000000, 0)
       .setOrigin(0)
       .setDepth(AMBIENT_DEPTH)
     this.fireGlow = new FireGlow(this)
-    this.cameras.main.setBounds(0, 0, worldPx, worldPx)
+    this.cameras.main.setBounds(0, 0, worldW, worldH)
     this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
     this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
     // La carte plein écran (M, rendue par UIScene) a besoin de la carte : pour
