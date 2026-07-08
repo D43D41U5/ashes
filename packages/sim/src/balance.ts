@@ -44,7 +44,6 @@ export const TEMPERATURE = {
 
 export const BALANCE = {
   TICK_RATE_HZ,
-  TEMPERATURE,
 
   /** Durée d'une saison en jours réels (GDD §2). */
   SEASON_DAYS: 60,

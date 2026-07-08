@@ -3,12 +3,12 @@
  * La cible = BASE − altitude − acte + (nuit+biome amortis par l'abri), plancherée
  * par la bulle d'un feu. Aucune fonction transcendante (seul `sqrt`, autorisé).
  */
-import { BALANCE } from './balance'
+import { TEMPERATURE } from './balance'
 import { elevationAt, terrainAt } from './map'
 import { getGameTime } from './time'
 import type { SimState } from './sim'
 
-const T = BALANCE.TEMPERATURE
+const T = TEMPERATURE
 
 function clampTemp(v: number): number {
   return Math.max(0, Math.min(100, v))

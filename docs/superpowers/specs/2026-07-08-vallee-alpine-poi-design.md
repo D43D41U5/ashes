@@ -10,9 +10,16 @@ exemplaires de chaque type** (« une seule mine, c'est trop peu »). L'explorati
 sans saturer.
 
 ## Décisions actées (Alexis)
-- **Densité : « rare et précieux »** — ≈ un POI toutes les **40-60 s de marche**, **espacement
-  minimal ~120 tuiles**, soit **~55-90 POIs** sur le monde cible (~2400×3600). L'entre-deux reste
+- **Densité : « rare et précieux »** — cible **~90 POIs** sur le monde de **2400×3600 tuiles**
+  (= 10 min de marche en X, 15 min en Y à `WALK_SPEED_TILES_PER_S = 4`). Ça donne un espacement
+  typique voisin-à-voisin **~310 tuiles**, soit une trouvaille toutes les **~90 s de marche
+  (~1 min 48 ressenti**, terrain lent + détours). **Espacement minimal ~120 tuiles** (plancher
+  non contraignant : le max théorique à ce min-spacing est ~480 POIs). L'entre-deux reste
   sauvage/contemplatif ; chaque trouvaille compte.
+  - *Validation (2026-07-08)* : l'ancienne cible « 40-60 s / 55-90 POIs » se contredisait d'un
+    facteur ~2 — 40-60 s exigerait ~150-340 POIs, ce qui tuerait le contemplatif. Le compte est
+    resté « rare/précieux », c'est la cadence affichée qui est corrigée. Barème complet dans le
+    fil de session ; à ~90, traverser toute la carte E-O (10 min) ne croise que ~2-3 POIs à vue.
 - **Les quatre familles** sont incluses dès la première fournée.
 
 ## Le mécanisme de placement (la clé)
@@ -27,7 +34,7 @@ sans saturer.
 - **Sortie** : les POIs deviennent des `Zone` nommées (`map.zones`, mécanisme `zoneAt` existant),
   lisibles par le HUD/chronique et par `generateNodes` (kinds comme `gisement`/`carriere`).
 
-## Catalogue (ordres de grandeur pour ~55-90 total, densité « rare/précieux »)
+## Catalogue (ordres de grandeur pour ~90 total, densité « rare/précieux »)
 
 **Économie / ressources**
 - Gisements (fer+charbon, cirques minéralisés) ~2-3 · Carrières de pierre (éboulis/blocs) ~3-4 ·
@@ -62,7 +69,7 @@ sans saturer.
 - **Biome-cohérence** : chaque POI est sur un biome autorisé pour son type (pas de gisement dans
   le lac, pas de cabane dans la neige).
 - **Densité** : le nombre suit la surface (scalable, deux tailles) et tombe dans la fourchette
-  « rare/précieux » visée.
+  « rare/précieux » visée — ~90 sur 2400×3600 (espacement typique ~310 t, cadence ~90 s de marche).
 - **Connectivité** (léger) : les POIs sont majoritairement atteignables (flood-fill) — les rares
   enclavés sont assumés (récompense de crapahut) mais bornés.
 - **Pureté** : `pnpm lint` vert.
