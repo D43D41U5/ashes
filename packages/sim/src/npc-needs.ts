@@ -10,6 +10,7 @@ import { applyEconomyAction } from './economy'
 import { countOf } from './items'
 import { followPath, near, setPathTo, TICKS_PER_HOUR, type Npc } from './npc'
 import type { Entity, SimState } from './sim'
+import { fireBubble, isSheltered } from './temperature'
 import { getGameTime } from './time'
 import { applyVillageAction, type Village } from './village'
 import { granaries } from './village-board'
@@ -74,4 +75,34 @@ export function handleSleep(state: SimState, npc: Npc, entity: Entity): boolean 
     return true
   }
   return false
+}
+
+/**
+ * Le froid (spec IA chaleur). Sous NPC_COLD_SEEK, un PNJ à découvert rentre à SON feu.
+ * Rend la main dès qu'il se réchauffe (bulle de feu / abri) → il mange et travaille au coin
+ * du feu (le village se blottit autour du Foyer). Anti-livelock : si le feu est inatteignable,
+ * on rend la main plutôt que de figer le PNJ (mort de froid légitime, pas un yo-yo).
+ */
+export function handleCold(state: SimState, village: Village, npc: Npc, entity: Entity): boolean {
+  // Assez chaud ? (hystérésis : une fois en recherche, on continue jusqu'au confort)
+  if (!npc.seekingWarmth && entity.temperature >= BALANCE.NPC_COLD_SEEK) return false
+  if (entity.temperature >= BALANCE.NPC_COLD_RESUME) {
+    npc.seekingWarmth = false
+    return false
+  }
+  // Déjà en train de se réchauffer ? → on laisse manger/travailler au coin du feu.
+  if (fireBubble(state, entity.x, entity.y) > 0 || isSheltered(state, Math.floor(entity.x), Math.floor(entity.y))) {
+    npc.seekingWarmth = false
+    return false
+  }
+  // Froid et à découvert → repli vers son propre feu.
+  npc.seekingWarmth = true
+  const home = npc.homeId !== null ? state.structures.find((s) => s.id === npc.homeId) : undefined
+  const target = home ?? state.structures.find((s) => s.type === 'fire' && s.villageId === village.id)
+  if (!target) return false
+  if (npc.path.length === 0) {
+    if (!setPathTo(state, npc, entity, target.tx, target.ty)) return false // ANTI-LIVELOCK
+  }
+  followPath(state, npc, entity)
+  return true
 }

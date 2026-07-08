@@ -4,6 +4,7 @@ import { drainEvents } from './events'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
 import { foundNpcVillage } from './worldgen'
+import { handleCold } from './npc-needs'
 import { findPath } from './pathfinding'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
@@ -237,5 +238,60 @@ describe('le déterminisme avec IA (A8)', () => {
     }
     const replayed = runReplay(log, setup)
     expect(snapshot(replayed)).toBe(snapshot(live))
+  })
+})
+
+describe('recherche de chaleur (handleCold)', () => {
+  const setup = () => {
+    const sim = npcVillageSim(1)
+    const npc = sim.npcs[0]!
+    const entity = sim.entities.find((e) => e.id === npc.entityId)!
+    const village = sim.villages[0]!
+    return { sim, npc, entity, village }
+  }
+
+  it('un PNJ froid à découvert file vers son Foyer (et prend le tick)', () => {
+    const { sim, npc, entity, village } = setup()
+    entity.x = 3; entity.y = 3; entity.temperature = 30; npc.path = []
+    expect(handleCold(sim, village, npc, entity)).toBe(true)
+    expect(npc.path.length).toBeGreaterThan(0)
+    expect(npc.seekingWarmth).toBe(true)
+  })
+
+  it('un PNJ froid déjà dans la bulle du feu rend la main', () => {
+    const { sim, npc, entity, village } = setup()
+    const fire = sim.structures.find((s) => s.type === 'fire' && s.villageId === village.id)!
+    entity.x = fire.tx; entity.y = fire.ty; entity.temperature = 30; npc.path = []
+    expect(handleCold(sim, village, npc, entity)).toBe(false)
+    expect(npc.path.length).toBe(0)
+  })
+
+  it('anti-livelock : froid mais aucun chemin vers un feu → rend la main, pas de figeage', () => {
+    const { sim, npc, entity, village } = setup()
+    entity.x = 3; entity.y = 3; entity.temperature = 30; npc.path = []
+    // Piéger le PNJ dans un anneau de roche (aucun chemin vers le Feu à (12,12)).
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue
+        sim.map.terrain[(3 + dy) * sim.map.width + (3 + dx)] = TERRAIN_ROCK
+      }
+    expect(handleCold(sim, village, npc, entity)).toBe(false)
+    expect(npc.path.length).toBe(0)
+  })
+
+  it('hystérésis : reste en recherche entre 40 et 60, s\'arrête à 60', () => {
+    const { sim, npc, entity, village } = setup()
+    entity.x = 3; entity.y = 3; npc.path = []; npc.seekingWarmth = true
+    entity.temperature = 50
+    expect(handleCold(sim, village, npc, entity)).toBe(true) // continue à chercher
+    entity.temperature = 60
+    expect(handleCold(sim, village, npc, entity)).toBe(false)
+    expect(npc.seekingWarmth).toBe(false)
+  })
+
+  it('pas de déclenchement au chaud (≥40, jamais en recherche)', () => {
+    const { sim, npc, entity, village } = setup()
+    entity.x = 3; entity.y = 3; entity.temperature = 45; npc.path = []
+    expect(handleCold(sim, village, npc, entity)).toBe(false)
   })
 })

@@ -20,7 +20,7 @@ import { applyEconomyAction, type ResourceNode } from './economy'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { countOf, type ItemId } from './items'
-import { handleHunger, handleSleep } from './npc-needs'
+import { handleCold, handleHunger, handleSleep } from './npc-needs'
 import { assignErrands, handleErrand } from './npc-errands'
 import { findPath } from './pathfinding'
 import { spawnEntity, type Entity, type SimState } from './sim'
@@ -42,6 +42,8 @@ export interface Npc {
   /** 0-100 — besoin de sommeil (spec R4). Sur le PNJ, pas sur l'Entity. */
   energy: number
   sleeping: boolean
+  /** En cours de repli vers un feu à cause du froid (hystérésis, spec IA chaleur). */
+  seekingWarmth: boolean
   task: NpcTaskState | null
   path: { tx: number; ty: number }[]
   stuck: number
@@ -401,6 +403,7 @@ export function advanceNpcs(state: SimState): void {
     // Puis l'expédition en cours (raid ou don, spec alignement R13-R14).
     if (handleErrand(state, village, npc, entity)) continue
     if (handleSleep(state, npc, entity)) continue
+    if (handleCold(state, village, npc, entity)) continue
     if (handleHunger(state, village, npc, entity)) continue
 
     if (!npc.task) {
@@ -446,6 +449,7 @@ export function spawnNpcsAround(state: SimState, village: Village, count: number
       homeId: null,
       energy: 100,
       sleeping: false,
+      seekingWarmth: false,
       task: null,
       path: [],
       stuck: 0,

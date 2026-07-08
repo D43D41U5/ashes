@@ -139,6 +139,13 @@ export const BALANCE = {
   /** Sous ce seuil d'énergie, la nuit, un PNJ va dormir. */
   NPC_ENERGY_SLEEP_THRESHOLD: 40,
 
+  /** Sous ce seuil de température, un PNJ lâche sa tâche et rentre au feu (spec IA chaleur).
+   *  Sous l'ambiant vallée acte III (50) → la vie normale ne le déclenche pas ; au-dessus de
+   *  l'hypothermie (20) avec marge (dérive lente). */
+  NPC_COLD_SEEK: 40,
+  /** Hystérésis : arrêt de la recherche au retour au confort. */
+  NPC_COLD_RESUME: 60,
+
   /** Énergie perdue par heure de cycle, éveillé. */
   ENERGY_AWAKE_PER_CYCLE_HOUR: 4,
 
