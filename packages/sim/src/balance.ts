@@ -368,6 +368,7 @@ export const COMBAT = {
   RESPAWN_HP: 50,
   RESPAWN_HUNGER: 50,
   RESPAWN_STAMINA: 20,
+  RESPAWN_TEMPERATURE: 100,
   /** Épuisement post-mort : régén d'endurance ÷2 (~5 min démo ; GDD vise ~30 min). */
   EXHAUSTION_TICKS: ticksFor(300),
   EXHAUSTED_REGEN_FACTOR: 0.5,

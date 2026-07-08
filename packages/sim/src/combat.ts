@@ -306,6 +306,7 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
   entity.hp = COMBAT.RESPAWN_HP
   entity.hunger = COMBAT.RESPAWN_HUNGER
   entity.stamina = COMBAT.RESPAWN_STAMINA
+  entity.temperature = COMBAT.RESPAWN_TEMPERATURE
   entity.exhaustedUntil = state.tick + COMBAT.EXHAUSTION_TICKS
   if (village) {
     entity.x = village.fireTx + 0.5

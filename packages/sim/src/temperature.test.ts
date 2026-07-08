@@ -123,6 +123,34 @@ describe('hypothermie', () => {
     // il ne reste pas figé à 0.
     expect(e.hp).toBe(COMBAT.RESPAWN_HP)
   })
+
+  it('un humain nu sur glacier de nuit atteint l\'hypothermie par la seule dérive, puis perd des PV (critère #3)', () => {
+    const state = createSim(1)
+    flatMap(state, 15 /* glacier */, 0.85)
+    const e = spawn(state, 5, 5)
+
+    let ticks = 0
+    const maxTicks = 20000
+    while (e.temperature >= 20 && ticks < maxTicks) {
+      advanceTemperature(state)
+      ticks += 1
+    }
+    expect(ticks).toBeLessThan(maxTicks) // l'hypothermie doit être atteinte avant la borne
+
+    const hpAtHypothermia = e.hp
+    for (let i = 0; i < 50; i++) advanceTemperature(state)
+    expect(e.hp).toBeLessThan(hpAtHypothermia)
+    expect(e.hp).toBeLessThan(100)
+  })
+
+  it('le respawn au Feu dégèle la température (fix #1)', () => {
+    const state = createSim(1)
+    const e = spawn(state, 5, 5)
+    e.temperature = 0
+    e.hp = 0.2
+    advanceTemperature(state)
+    expect(e.temperature).toBe(COMBAT.RESPAWN_TEMPERATURE)
+  })
 })
 
 describe("tyrannie de l'acte", () => {
