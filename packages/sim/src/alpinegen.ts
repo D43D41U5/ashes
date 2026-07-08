@@ -8,6 +8,7 @@ import { fbm2, fbmWarp2, hash2, ridgedFbm2 } from './noise'
 import { createEmptyMap, type WorldMap } from './map'
 import { sealBorderRing } from './valleygen'
 import { carveHydrology } from './alpine-hydro'
+import { placePois } from './poi'
 import {
   TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW,
   TERRAIN_HEATH, TERRAIN_ALPINE_MEADOW, TERRAIN_PINE, TERRAIN_LARCH,
@@ -334,6 +335,7 @@ export function generateAlpineTerrain(width: number, height: number, seed: numbe
   carveHydrology(map, flow, seed) // lac, rivière (thalweg), ruisseaux, tarns — l'eau suit l'écoulement
   paintScatterBiomes(map, seed) // bosquets, prés fleuris, blocs, vieille forêt, brûlis (après l'eau)
   paintAvalanches(map, seed) // couloirs d'avalanche (blocs qui dévalent)
+  placePois(map, seed) // POIs (zones nommées) — après le terrain final, avant le scellage
   sealBorderRing(map) // l'anneau externe reste bloquant quoi qu'ait creusé l'eau
   return map
 }
