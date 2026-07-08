@@ -10,7 +10,7 @@ import {
   coldStaminaRegenFactor,
   driftStep,
 } from './temperature'
-import { DAY_TICKS_PER_CYCLE } from './time'
+import { DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 
 /** spawnEntity retourne un id → on récupère l'objet entité. */
 function spawn(state: SimState, x: number, y: number): Entity {
@@ -122,6 +122,22 @@ describe('hypothermie', () => {
     // L'avatar meurt puis respawn au Feu de son village (R10) : hp remonte à RESPAWN_HP,
     // il ne reste pas figé à 0.
     expect(e.hp).toBe(COMBAT.RESPAWN_HP)
+  })
+})
+
+describe("tyrannie de l'acte", () => {
+  it('même lieu/heure : ambiant strictement décroissant I → II → III', () => {
+    const ambientAtDay = (day: number): number => {
+      const state = createSim(1, { calendarScale: 1 })
+      flatMap(state, 9 /* scree, offset biome 0 */, 0.4)
+      state.tick = (day - 1) * TICKS_PER_SEASON_DAY
+      return ambientTemperature(state, 5, 5)
+    }
+    const a1 = ambientAtDay(10) // acte I  (≤ 21)
+    const a2 = ambientAtDay(30) // acte II (Grand Froid, 22-42)
+    const a3 = ambientAtDay(50) // acte III (Cendre, > 42)
+    expect(a2).toBeLessThan(a1)
+    expect(a3).toBeLessThan(a2)
   })
 })
 
