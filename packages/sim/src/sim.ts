@@ -36,6 +36,8 @@ export interface Entity {
   inventory: Inventory
   /** Jauge 0-100. À 0 : vitesse ÷2 (spec économie R7-R8). */
   hunger: number
+  /** Jauge 0-100 (spec température). 100 = au chaud, 0 = gelé (hypothermie). */
+  temperature: number
   /** XP par métier (niveau dérivé — voir skillLevel). */
   skills: Partial<Record<SkillId, number>>
   /** Usure agrégée par type d'outil (spec économie R6). */
@@ -170,6 +172,7 @@ export function spawnEntity(state: SimState, x: number, y: number): number {
     y,
     inventory: {},
     hunger: 100,
+    temperature: 100,
     skills: {},
     wear: {},
     cooldownUntil: 0,
