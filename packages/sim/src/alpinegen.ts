@@ -335,7 +335,8 @@ export function generateAlpineTerrain(width: number, height: number, seed: numbe
   carveHydrology(map, flow, seed) // lac, rivière (thalweg), ruisseaux, tarns — l'eau suit l'écoulement
   paintScatterBiomes(map, seed) // bosquets, prés fleuris, blocs, vieille forêt, brûlis (après l'eau)
   paintAvalanches(map, seed) // couloirs d'avalanche (blocs qui dévalent)
-  placePois(map, seed) // POIs (zones nommées) — après le terrain final, avant le scellage
   sealBorderRing(map) // l'anneau externe reste bloquant quoi qu'ait creusé l'eau
+  placePois(map, seed) // POIs APRÈS le scellage : le biome sous le centre d'un POI est le terrain FINAL
+  //                      (sinon un POI validé sur du bord verrait son terrain réécrit en roche par le scellage → incohérence)
   return map
 }
