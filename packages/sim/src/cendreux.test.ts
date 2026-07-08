@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { MONSTER_DEFS, CENDREUX } from './balance'
+import { createSim, spawnEntity, type SimState } from './sim'
+import { die } from './combat'
 
 describe('type cendreux (fondation)', () => {
   it('MONSTER_DEFS.cendreux : PV bas, dégâts hauts, très lent', () => {
@@ -13,5 +15,35 @@ describe('type cendreux (fondation)', () => {
     expect(CENDREUX.HEARTH_WARD_RADIUS).toBeGreaterThan(0)
     expect(CENDREUX.RISE_DELAY).toBeGreaterThan(0)
     expect(CENDREUX.WARMTH_SEEK_RANGE).toBeGreaterThan(0)
+  })
+})
+
+function humanAt(state: SimState, x: number, y: number) {
+  const id = spawnEntity(state, x, y)
+  const e = state.entities.find((en) => en.id === id)!
+  return e
+}
+
+describe('la levée — critère à la mort', () => {
+  it('mort cold, seul, loin d\'un feu → cadavre marqué risesAt', () => {
+    const state = createSim(1)
+    const e = humanAt(state, 5, 5)
+    die(state, e, 0, 'cold')
+    const corpse = state.corpses.find((c) => Math.abs(c.x - 5) < 1 && Math.abs(c.y - 5) < 1)
+    expect(corpse?.risesAt).toBe(state.tick + CENDREUX.RISE_DELAY)
+  })
+  it('mort cold mais un feu à portée → pas de marquage', () => {
+    const state = createSim(1)
+    state.structures.push({ type: 'fire', tx: 5, ty: 5, villageId: 0 } as never)
+    const e = humanAt(state, 6, 5)
+    die(state, e, 0, 'cold')
+    const corpse = state.corpses.find((c) => c.risesAt !== undefined)
+    expect(corpse).toBeUndefined()
+  })
+  it('mort non-cold → pas de marquage', () => {
+    const state = createSim(1)
+    const e = humanAt(state, 5, 5)
+    die(state, e, 0) // combat
+    expect(state.corpses.find((c) => c.risesAt !== undefined)).toBeUndefined()
   })
 })

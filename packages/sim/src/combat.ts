@@ -7,7 +7,8 @@
  * monstres — personne ne triche.
  */
 import { damageModifier, hasAggressionBetween, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
-import { ALIGNMENT, BALANCE, COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
+import { ALIGNMENT, BALANCE, CENDREUX, COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
+import { willRiseAsCendreux } from './cendreux'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { addItems, countOf, removeItems, type ItemId } from './items'
@@ -269,7 +270,20 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
   // Le cadavre reçoit tout ce qui était porté (spec R9) — ou la table de
   // loot du monstre (le sanglier donne sa viande).
   const loot = monster ? { ...MONSTER_DEFS[monster.type].loot } : { ...entity.inventory }
-  if (Object.keys(loot).length > 0) {
+  // La levée des Cendreux (spec 2026-07-08) : mort de froid, seul, loin d'un
+  // feu → le cadavre est marqué et ne décante pas avant la levée.
+  const willRise = !monster && cause === 'cold' && willRiseAsCendreux(state, entity)
+  if (willRise) {
+    state.corpses.push({
+      id: state.nextCorpseId,
+      x: entity.x,
+      y: entity.y,
+      inventory: loot,
+      decayAt: state.tick + COMBAT.CORPSE_TICKS,
+      risesAt: state.tick + CENDREUX.RISE_DELAY,
+    })
+    state.nextCorpseId += 1
+  } else if (Object.keys(loot).length > 0) {
     state.corpses.push({
       id: state.nextCorpseId,
       x: entity.x,
@@ -358,5 +372,6 @@ export function advanceCombat(state: SimState): void {
     entity.stamina = Math.min(100, entity.stamina + perS / BALANCE.TICK_RATE_HZ)
   }
 
-  state.corpses = state.corpses.filter((c) => c.decayAt > state.tick)
+  // Un cadavre marqué (levée à venir) ne décante pas avant sa levée.
+  state.corpses = state.corpses.filter((c) => c.risesAt !== undefined || c.decayAt > state.tick)
 }
