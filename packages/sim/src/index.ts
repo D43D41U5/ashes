@@ -17,6 +17,7 @@ export { createReplayLog, recordAndStep, runReplay } from './replay'
 export type { ReplayLog } from './replay'
 export { rngNext, rngFloat, rngRoll } from './rng'
 export { hash2, gradientNoise2, fbm2, fbmWarp2, ridgedFbm2 } from './noise'
+export { poissonPoints } from './poisson'
 
 // ─── Équilibrage & définitions (balance.ts — la seule source des nombres) ─
 export {
