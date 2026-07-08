@@ -81,6 +81,21 @@ describe('le réveil', () => {
   })
 })
 
+describe('intégration Cendreux', () => {
+  it('stats : meurt en 2 coups de hache (10), tue un avatar 100 PV en 3 coups', () => {
+    expect(Math.ceil(MONSTER_DEFS.cendreux.hp / 10)).toBe(2) // 2 coups d'arme basique (hache 10)
+    expect(Math.ceil(100 / MONSTER_DEFS.cendreux.damage)).toBe(3) // 3 coups sur 100 PV
+  })
+  it('zombie inchangé (aggro + errance)', () => {
+    const state = createSim(1)
+    const id = spawnMonster(state, 'zombie', 5, 5)
+    const monster = state.monsters.find((m) => m.entityId === id)!
+    humanAt(state, 7, 5)
+    advanceMonsters(state)
+    expect(monster.targetId).not.toBeNull() // aggro comme avant
+  })
+})
+
 describe('IA cendreux (jour/nuit)', () => {
   it('jour, sans proie → immobile', () => {
     const state = createSim(1) // tick 0 = jour
