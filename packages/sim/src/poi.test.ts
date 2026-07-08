@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { generateAlpineTerrain } from './alpinegen'
 import { POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
-import { terrainAt } from './map'
+import { terrainAt, createEmptyMap } from './map'
+import { TERRAINS } from './balance'
 import { createSim } from './sim'
+
+const ROCK_ID = 5 // TERRAINS[5].name === 'rock', walkable: false
+const GRASS_ID = 1 // TERRAINS[1].name === 'grass', walkable: true
 
 describe('placePois', () => {
   // generateAlpineTerrain appelle désormais placePois en interne (Task 3) : ne
@@ -69,14 +73,52 @@ describe('POIs dans la carte alpine', () => {
 })
 
 describe('spawnPoiMonsters (runtime)', () => {
-  it('pose un sanglier par tanière et un cendreux par repaire', () => {
+  it('pose au plus un sanglier par tanière et un cendreux par repaire (zones sans tuile marchable = pas de spawn)', () => {
     const map = generateAlpineTerrain(360, 540, 5) // zones POI incluses
     const state = createSim(5, { map })
     const tanieres = state.map.zones.filter((z) => z.kind === 'taniere').length
     const repaires = state.map.zones.filter((z) => z.kind === 'repaire').length
     spawnPoiMonsters(state, 5)
-    expect(state.monsters.filter((m) => m.type === 'boar').length).toBe(tanieres)
-    expect(state.monsters.filter((m) => m.type === 'cendreux').length).toBe(repaires)
+    expect(state.monsters.filter((m) => m.type === 'boar').length).toBeLessThanOrEqual(tanieres)
+    expect(state.monsters.filter((m) => m.type === 'cendreux').length).toBeLessThanOrEqual(repaires)
+  })
+  it('chaque monstre de POI spawne sur une tuile marchable', () => {
+    const map = generateAlpineTerrain(360, 540, 5) // zones POI incluses, dont repaire (ROCK/SCREE/BURNT)
+    const state = createSim(5, { map })
+    spawnPoiMonsters(state, 5)
+    expect(state.monsters.length).toBeGreaterThan(0)
+    for (const m of state.monsters) {
+      const e = state.entities.find((ent) => ent.id === m.entityId)!
+      const terr = terrainAt(state.map, Math.floor(e.x), Math.floor(e.y))
+      expect(TERRAINS[terr]?.walkable).toBe(true)
+    }
+  })
+  it('un repaire posé entièrement sur du rock (empreinte 3×3 impraticable) retombe sur la seule tuile marchable de l’anneau, sans bloquer le cendreux', () => {
+    // Empreinte reproduisant le bug de revue : le tirage naïf dans
+    // [z.x, z.x+z.w) × [z.y, z.y+z.h) ne vérifiait pas la marchabilité, or
+    // rock (id 5) est walkable:false. Ici l'empreinte entière est du rock —
+    // sur l'ancienne version, le cendreux atterrit TOUJOURS sur une tuile
+    // bloquante, quelle que soit la seed.
+    const map = createEmptyMap(10, 10, ROCK_ID)
+    // Unique tuile marchable de toute la carte, dans l'anneau +1 autour de
+    // l'empreinte [3,6)×[3,6) (donc hors empreinte) : (4,2).
+    map.terrain[2 * map.width + 4] = GRASS_ID
+    map.zones.push({ name: 'repaire test', x: 3, y: 3, w: 3, h: 3, kind: 'repaire' })
+    const state = createSim(1, { map })
+    spawnPoiMonsters(state, 1)
+    expect(state.monsters.length).toBe(1)
+    expect(state.monsters[0]!.type).toBe('cendreux')
+    const e = state.entities.find((ent) => ent.id === state.monsters[0]!.entityId)!
+    const terr = terrainAt(state.map, Math.floor(e.x), Math.floor(e.y))
+    expect(TERRAINS[terr]?.walkable).toBe(true)
+    expect([e.x, e.y]).toEqual([4.5, 2.5]) // seule candidate → tirage déterministe forcé
+  })
+  it('un repaire sans AUCUNE tuile marchable (empreinte + anneau tout rock) ne spawne pas de monstre', () => {
+    const map = createEmptyMap(10, 10, ROCK_ID) // pas de tuile marchable du tout
+    map.zones.push({ name: 'repaire test', x: 3, y: 3, w: 3, h: 3, kind: 'repaire' })
+    const state = createSim(1, { map })
+    spawnPoiMonsters(state, 1)
+    expect(state.monsters.length).toBe(0)
   })
   it('déterministe : mêmes positions de monstres', () => {
     const m1 = generateAlpineTerrain(360, 540, 5); const s1 = createSim(5, { map: m1 }); spawnPoiMonsters(s1, 5)

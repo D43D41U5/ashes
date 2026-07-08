@@ -5,7 +5,7 @@
  */
 import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
-import { elevationAt, terrainAt, type WorldMap } from './map'
+import { elevationAt, terrainAt, isBlockingTile, type WorldMap, type Zone } from './map'
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
 
@@ -113,16 +113,49 @@ export function placePois(map: WorldMap, seed: number): void {
 const ROMANS = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV']
 function roman(n: number): string { return ROMANS[n] ?? String(n) }
 
-/** Spawn runtime des monstres de POI (tanière → sanglier, repaire → cendreux). Déterministe. */
+/**
+ * Tuiles marchables de l'empreinte de la zone [z.x, z.x+z.w) × [z.y, z.y+z.h).
+ * Si aucune (repaire/tanière posé sur du rock, glacier…), retombe sur l'anneau
+ * de tuiles à +1 autour de l'empreinte. Ordre de construction déjà stable
+ * (balayage row-major) : un index dans cette liste est donc un tirage
+ * déterministe reproductible d'un run à l'autre.
+ */
+function walkableTilesFor(map: WorldMap, z: Zone): Array<{ tx: number; ty: number }> {
+  const inFootprint: Array<{ tx: number; ty: number }> = []
+  for (let ty = z.y; ty < z.y + z.h; ty++) {
+    for (let tx = z.x; tx < z.x + z.w; tx++) {
+      if (!isBlockingTile(map, tx, ty)) inFootprint.push({ tx, ty })
+    }
+  }
+  if (inFootprint.length > 0) return inFootprint
+  const ring: Array<{ tx: number; ty: number }> = []
+  for (let ty = z.y - 1; ty < z.y + z.h + 1; ty++) {
+    for (let tx = z.x - 1; tx < z.x + z.w + 1; tx++) {
+      const inside = tx >= z.x && tx < z.x + z.w && ty >= z.y && ty < z.y + z.h
+      if (inside) continue
+      if (!isBlockingTile(map, tx, ty)) ring.push({ tx, ty })
+    }
+  }
+  return ring
+}
+
+/**
+ * Spawn runtime des monstres de POI (tanière → sanglier, repaire → cendreux).
+ * Déterministe, et garanti sur une tuile marchable : le tirage naïf dans
+ * l'empreinte pouvait tomber sur du rock/glacier non praticable (repaire en
+ * biome ROCK, tanière en lisière FOREST/rock…) et bloquer le monstre. Si
+ * l'empreinte et son anneau +1 n'offrent aucune tuile marchable, le monstre
+ * ne spawne pas (rare — un repaire sans sol praticable ne pose rien).
+ */
 export function spawnPoiMonsters(state: SimState, seed: number): void {
   for (const z of state.map.zones) {
     const t = POI_TYPES.find((p) => p.slug === z.kind)
     if (!t?.monster) continue
-    // Position déterministe dans l'empreinte de la zone.
-    const jx = hash2(z.x, z.y, seed ^ 0x4d4f4e) // 'MON'
-    const jy = hash2(z.y, z.x, seed ^ 0x4d4f4e)
-    const x = z.x + Math.min(z.w - 1, Math.floor(jx * z.w)) + 0.5
-    const y = z.y + Math.min(z.h - 1, Math.floor(jy * z.h)) + 0.5
-    spawnMonster(state, t.monster, x, y)
+    const candidates = walkableTilesFor(state.map, z)
+    if (candidates.length === 0) continue // aucune tuile praticable dans/autour de l'empreinte
+    const r = hash2(z.x, z.y, seed ^ 0x4d4f4e) // 'MON'
+    const idx = Math.min(candidates.length - 1, Math.floor(r * candidates.length))
+    const tile = candidates[idx]!
+    spawnMonster(state, t.monster, tile.tx + 0.5, tile.ty + 0.5)
   }
 }
