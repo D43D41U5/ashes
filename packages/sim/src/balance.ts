@@ -45,6 +45,9 @@ export const TEMPERATURE = {
   K_DRIFT: 0.0002,
   /** Isolation du corps nu (stub ; la Couture la fera monter plus tard). */
   INSULATION_BODY: 1,
+  COMFORT: 60, // au-dessus : aucun effet
+  HYPOTHERMIA: 20, // en dessous : dégâts
+  HYPOTHERMIA_DAMAGE_MAX: 0.3, // PV/tick à température 0
 }
 
 export const BALANCE = {

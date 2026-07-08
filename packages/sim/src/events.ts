@@ -47,7 +47,7 @@ export type SimEvent =
   | { type: 'skill_level_up'; tick: number; entityId: number; skill: SkillId; level: number }
   | { type: 'entity_damaged'; tick: number; entityId: number; byEntityId: number; amount: number }
   | { type: 'wound_inflicted'; tick: number; entityId: number; wound: 'leg' | 'arm' | 'bleeding' }
-  | { type: 'entity_died'; tick: number; entityId: number; byEntityId: number; wasMonster: boolean }
+  | { type: 'entity_died'; tick: number; entityId: number; byEntityId: number; wasMonster: boolean; cause?: 'cold' }
   | { type: 'entity_respawned'; tick: number; entityId: number }
   | { type: 'entity_bandaged'; tick: number; entityId: number; byEntityId: number }
   | { type: 'monster_slain'; tick: number; monsterType: import('./balance').MonsterType; byEntityId: number }

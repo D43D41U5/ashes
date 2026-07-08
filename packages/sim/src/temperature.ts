@@ -4,6 +4,7 @@
  * par la bulle d'un feu. Aucune fonction transcendante (seul `sqrt`, autorisé).
  */
 import { TEMPERATURE } from './balance'
+import { die } from './combat'
 import { elevationAt, terrainAt } from './map'
 import { getGameTime } from './time'
 import type { SimState } from './sim'
@@ -55,6 +56,12 @@ export function driftStep(current: number, ambient: number, insulation: number):
   return current + ((ambient - current) * T.K_DRIFT) / insulation
 }
 
+/** Dégâts PV/tick dus au froid : 0 au-dessus de HYPOTHERMIA, linéaire jusqu'à 0. */
+export function coldDamagePerTick(temp: number): number {
+  if (temp >= T.HYPOTHERMIA) return 0
+  return ((T.HYPOTHERMIA - temp) / T.HYPOTHERMIA) * T.HYPOTHERMIA_DAMAGE_MAX
+}
+
 /** Fait dériver chaque humain vers son ambiant. Une étape de tick. */
 export function advanceTemperature(state: SimState): void {
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
@@ -62,5 +69,12 @@ export function advanceTemperature(state: SimState): void {
     if (monsterIds.has(entity.id)) continue // pas de température pour les monstres
     const ambient = ambientTemperature(state, entity.x, entity.y)
     entity.temperature = clampTemp(driftStep(entity.temperature, ambient, T.INSULATION_BODY))
+
+    const dmg = coldDamagePerTick(entity.temperature)
+    if (dmg > 0) {
+      const before = entity.hp
+      entity.hp = Math.max(0, entity.hp - dmg)
+      if (before > 0 && entity.hp <= 0) die(state, entity, 0, 'cold')
+    }
   }
 }

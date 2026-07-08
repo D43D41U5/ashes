@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import { COMBAT } from './balance'
 import { createSim, spawnEntity, type Entity, type SimState } from './sim'
-import { advanceTemperature, ambientTemperature, driftStep } from './temperature'
+import { advanceTemperature, ambientTemperature, coldDamagePerTick, driftStep } from './temperature'
 import { DAY_TICKS_PER_CYCLE } from './time'
 
 /** spawnEntity retourne un id → on récupère l'objet entité. */
@@ -87,5 +88,31 @@ describe('dérive thermostat', () => {
     const before = e.temperature
     advanceTemperature(state)
     expect(e.temperature).toBe(before)
+  })
+})
+
+describe('hypothermie', () => {
+  it('aucun dégât au-dessus du seuil, dégât croissant en dessous', () => {
+    expect(coldDamagePerTick(60)).toBe(0)
+    expect(coldDamagePerTick(20)).toBe(0)
+    expect(coldDamagePerTick(10)).toBeGreaterThan(0)
+    expect(coldDamagePerTick(0)).toBeGreaterThan(coldDamagePerTick(10))
+  })
+
+  it('mourir de froid émet entity_died cause=cold', () => {
+    const state = createSim(1)
+    flatMap(state, 15, 0.85)
+    const e = spawn(state, 5, 5)
+    e.temperature = 0
+    // hp sous le dégât max d'un tick (HYPOTHERMIA_DAMAGE_MAX ≈ 0.3) pour mourir dès ce tick.
+    e.hp = 0.2
+    state.events.length = 0
+    advanceTemperature(state)
+    const died = state.events.find((ev) => ev.type === 'entity_died')
+    expect(died).toBeDefined()
+    expect((died as { cause?: string }).cause).toBe('cold')
+    // L'avatar meurt puis respawn au Feu de son village (R10) : hp remonte à RESPAWN_HP,
+    // il ne reste pas figé à 0.
+    expect(e.hp).toBe(COMBAT.RESPAWN_HP)
   })
 })

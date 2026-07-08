@@ -252,7 +252,7 @@ export function applyDamage(state: SimState, target: Entity, damage: number, byE
   if (target.hp <= 0) die(state, target, byEntityId)
 }
 
-function die(state: SimState, entity: Entity, byEntityId: number): void {
+export function die(state: SimState, entity: Entity, byEntityId: number, cause?: 'cold'): void {
   const monster = state.monsters.find((m) => m.entityId === entity.id)
   emitEvent(state, {
     type: 'entity_died',
@@ -260,6 +260,7 @@ function die(state: SimState, entity: Entity, byEntityId: number): void {
     entityId: entity.id,
     byEntityId,
     wasMonster: monster !== undefined,
+    ...(cause ? { cause } : {}),
   })
   const npc = state.npcs.find((n) => n.entityId === entity.id)
 
