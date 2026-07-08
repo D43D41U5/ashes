@@ -21,8 +21,8 @@ import {
 export const VEILLEE_SEED = 2026
 /** Démo : un jour de saison toutes les 2 minutes. */
 export const VEILLEE_CALENDAR_SCALE = 720
-/** Heure murale de départ (test d'ambiance) : 0 = minuit, en pleine nuit. Mettre 6 pour l'aube. */
-export const VEILLEE_START_HOUR = 0
+/** Heure murale de départ : 9 = matinée (bonne lumière pour découvrir l'alpin ; 0 = minuit). */
+export const VEILLEE_START_HOUR = 9
 
 /**
  * Cherche la 1re tuile marchable en s'éloignant du centre en anneaux carrés
