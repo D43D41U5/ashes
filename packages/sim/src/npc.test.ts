@@ -298,10 +298,15 @@ describe('recherche de chaleur (handleCold)', () => {
 
   it('priorité : le sommeil prime sur le froid (un PNJ endormi et froid reste endormi)', () => {
     const { sim, npc, entity } = setup()
+    entity.x = 3
+    entity.y = 3 // hors bulle du Feu : réellement exposé au froid
     sim.cycleOffset = DAY_TICKS_PER_CYCLE // nuit dès le tick 0
     npc.sleeping = true
     entity.temperature = 30 // froid
+    npc.path = []
     advanceNpcs(sim)
     expect(npc.sleeping).toBe(true) // handleSleep a consommé le tick avant handleCold
+    expect(npc.seekingWarmth).toBe(false) // handleCold n'a jamais tourné
+    expect(npc.path.length).toBe(0) // aucun chemin posé vers le Feu
   })
 })
