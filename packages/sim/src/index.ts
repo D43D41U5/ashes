@@ -88,6 +88,7 @@ export { spawnHorde, spawnConvoy } from './worldevents'
 export { applyDamage } from './combat'
 export { applyStructureDamage, grantItems } from './village'
 export { generateValley } from './valleygen'
+export { placePois, POI_TYPES, POI_PLACEMENT } from './poi'
 export type { ValleySkeleton, ValleyRegion, ValleyPoint } from './valleygen'
 export { VEILLEE_SKELETON, VEILLEE_SITES } from './valley-veillee'
 
