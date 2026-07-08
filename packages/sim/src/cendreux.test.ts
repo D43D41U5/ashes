@@ -3,6 +3,8 @@ import { MONSTER_DEFS, CENDREUX } from './balance'
 import { createSim, spawnEntity, type SimState } from './sim'
 import { die } from './combat'
 import { advanceCendreux } from './cendreux'
+import { spawnMonster, advanceMonsters } from './monsters'
+import { DAY_TICKS_PER_CYCLE } from './time'
 
 describe('type cendreux (fondation)', () => {
   it('MONSTER_DEFS.cendreux : PV bas, dégâts hauts, très lent', () => {
@@ -76,5 +78,32 @@ describe('le réveil', () => {
     advanceCendreux(state)
     expect(state.monsters.find((m) => m.type === 'cendreux')).toBeUndefined()
     expect(state.corpses.find((c) => c.id === corpse.id)?.risesAt).toBeUndefined()
+  })
+})
+
+describe('IA cendreux (jour/nuit)', () => {
+  it('jour, sans proie → immobile', () => {
+    const state = createSim(1) // tick 0 = jour
+    const id = spawnMonster(state, 'cendreux', 5, 5)
+    const ent = state.entities.find((e) => e.id === id)!
+    const x0 = ent.x, y0 = ent.y
+    for (let i = 0; i < 40; i++) advanceMonsters(state)
+    expect(ent.x).toBe(x0); expect(ent.y).toBe(y0) // dormant
+  })
+  it('jour, une proie en vue → se rapproche (chemin posé)', () => {
+    const state = createSim(1)
+    const id = spawnMonster(state, 'cendreux', 5, 5)
+    const monster = state.monsters.find((m) => m.entityId === id)!
+    humanAt(state, 8, 5) // proie dans aggroRange 5
+    advanceMonsters(state)
+    expect((monster.path?.length ?? 0)).toBeGreaterThan(0)
+  })
+  it('nuit → dérive vers une source de chaleur (feu) dans le rayon', () => {
+    const state = createSim(1, { cycleOffset: DAY_TICKS_PER_CYCLE }) // nuit
+    const id = spawnMonster(state, 'cendreux', 5, 5)
+    const monster = state.monsters.find((m) => m.entityId === id)!
+    state.structures.push({ type: 'fire', tx: 15, ty: 5, villageId: 0 } as never) // dans WARMTH_SEEK_RANGE 20
+    advanceMonsters(state)
+    expect((monster.path?.length ?? 0)).toBeGreaterThan(0)
   })
 })

@@ -13,6 +13,7 @@ import { rngRoll } from './rng'
 import { spawnEntity, type Entity, type SimState } from './sim'
 import { computeFlowField } from './pathfinding'
 import { structureAt, structureBlocks } from './village'
+import { cendreuxStep } from './cendreux'
 
 export interface Monster {
   entityId: number
@@ -51,7 +52,7 @@ function roll(state: SimState): number {
 }
 
 /** Les proies : avatars (joueurs et PNJ), pas les autres monstres. */
-function nearestPrey(state: SimState, entity: Entity, range: number): Entity | undefined {
+export function nearestPrey(state: SimState, entity: Entity, range: number): Entity | undefined {
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
   let best: Entity | undefined
   let bestD = range * range
@@ -66,7 +67,7 @@ function nearestPrey(state: SimState, entity: Entity, range: number): Entity | u
   return best
 }
 
-function moveToward(state: SimState, monster: Monster, entity: Entity, tx: number, ty: number, flee: boolean): void {
+export function moveToward(state: SimState, monster: Monster, entity: Entity, tx: number, ty: number, flee: boolean): void {
   const def = MONSTER_DEFS[monster.type]
   let dx = tx - entity.x
   let dy = ty - entity.y
@@ -194,6 +195,11 @@ export function advanceMonsters(state: SimState): void {
     if (!entity) continue
     const def = MONSTER_DEFS[monster.type]
     if (entity.windup) continue // en train de frapper : immobile
+
+    if (monster.type === 'cendreux') {
+      cendreuxStep(state, monster, entity)
+      continue
+    }
 
     if (monster.type === 'zombie') {
       if (state.tick >= monster.thinkAt) {
