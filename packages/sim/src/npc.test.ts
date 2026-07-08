@@ -4,6 +4,7 @@ import { drainEvents } from './events'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
 import { foundNpcVillage } from './worldgen'
+import { advanceNpcs } from './npc'
 import { handleCold } from './npc-needs'
 import { findPath } from './pathfinding'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
@@ -293,5 +294,14 @@ describe('recherche de chaleur (handleCold)', () => {
     const { sim, npc, entity, village } = setup()
     entity.x = 3; entity.y = 3; entity.temperature = 45; npc.path = []
     expect(handleCold(sim, village, npc, entity)).toBe(false)
+  })
+
+  it('priorité : le sommeil prime sur le froid (un PNJ endormi et froid reste endormi)', () => {
+    const { sim, npc, entity } = setup()
+    sim.cycleOffset = DAY_TICKS_PER_CYCLE // nuit dès le tick 0
+    npc.sleeping = true
+    entity.temperature = 30 // froid
+    advanceNpcs(sim)
+    expect(npc.sleeping).toBe(true) // handleSleep a consommé le tick avant handleCold
   })
 })
