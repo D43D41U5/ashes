@@ -23,6 +23,7 @@ import { advanceWorldEvents, type Horde } from './worldevents'
 import { rngNext } from './rng'
 import { advanceNpcs, type Npc } from './npc'
 import { advanceTime, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
+import { advanceTemperature } from './temperature'
 import { applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
 
 /** L'union des actions possibles dans un tick (village + économie + combat). */
@@ -274,6 +275,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceAlignment(state)
   advanceTime(state)
   advanceEconomy(state)
+  advanceTemperature(state)
 }
 
 /** Snapshot canonique — sert d'égalité d'état dans les tests et le replay. */

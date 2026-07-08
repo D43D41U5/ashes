@@ -49,3 +49,18 @@ export function ambientTemperature(state: SimState, x: number, y: number): numbe
 
   return Math.max(ambient, fireBubble(state, x, y)) // le feu ne peut que réchauffer
 }
+
+/** Un pas de dérive vers l'ambiant, freiné par l'isolation. Pur. */
+export function driftStep(current: number, ambient: number, insulation: number): number {
+  return current + ((ambient - current) * T.K_DRIFT) / insulation
+}
+
+/** Fait dériver chaque humain vers son ambiant. Une étape de tick. */
+export function advanceTemperature(state: SimState): void {
+  const monsterIds = new Set(state.monsters.map((m) => m.entityId))
+  for (const entity of state.entities) {
+    if (monsterIds.has(entity.id)) continue // pas de température pour les monstres
+    const ambient = ambientTemperature(state, entity.x, entity.y)
+    entity.temperature = clampTemp(driftStep(entity.temperature, ambient, T.INSULATION_BODY))
+  }
+}

@@ -40,6 +40,11 @@ export const TEMPERATURE = {
   FIRE_WARMTH: 80, // cible au contact d'un feu
   FIRE_RANGE: 6, // tuiles
   SHELTER_FACTOR: 0.5, // sous toit : nuit+biome × 0.5
+  /** Fraction de l'écart à l'ambiant comblée par tick (÷ isolation). Calibrage :
+   *  ~2 min réelles vers l'engourdissement, ~6 min vers l'hypothermie à ambiant 0. */
+  K_DRIFT: 0.0002,
+  /** Isolation du corps nu (stub ; la Couture la fera monter plus tard). */
+  INSULATION_BODY: 1,
 }
 
 export const BALANCE = {

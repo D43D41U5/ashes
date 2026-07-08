@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { createSim, spawnEntity, type Entity, type SimState } from './sim'
-import { ambientTemperature } from './temperature'
+import { advanceTemperature, ambientTemperature, driftStep } from './temperature'
 import { DAY_TICKS_PER_CYCLE } from './time'
 
 /** spawnEntity retourne un id → on récupère l'objet entité. */
@@ -51,5 +51,41 @@ describe('ambientTemperature', () => {
     const sheltered = ambientTemperature(state, 5, 5)
     expect(sheltered).toBeGreaterThan(exposed)
     expect(sheltered - exposed).toBeCloseTo(10, 5) // pénalité nocturne 20 → 10
+  })
+})
+
+describe('dérive thermostat', () => {
+  it("driftStep rapproche de l'ambiant ; une meilleure isolation ralentit", () => {
+    const d1 = driftStep(100, 0, 1)
+    const d2 = driftStep(100, 0, 2)
+    expect(d1).toBeLessThan(100) // refroidit vers 0
+    expect(100 - d2).toBeLessThan(100 - d1) // isolation 2 → moins de perte
+  })
+
+  it('un humain sur glacier refroidit strictement', () => {
+    const state = createSim(1)
+    flatMap(state, 15, 0.85)
+    const e = spawn(state, 5, 5)
+    const before = e.temperature
+    advanceTemperature(state)
+    expect(e.temperature).toBeLessThan(before)
+  })
+
+  it('reste au confort (≥60) sur un ambiant doux, indéfiniment', () => {
+    const state = createSim(1, { calendarScale: 1 }) // reste en acte I
+    flatMap(state, 1, 0)
+    const e = spawn(state, 5, 5)
+    for (let i = 0; i < 5000; i++) advanceTemperature(state)
+    expect(e.temperature).toBeGreaterThanOrEqual(60)
+  })
+
+  it('les monstres sont ignorés (pas de température)', () => {
+    const state = createSim(1)
+    flatMap(state, 15, 0.85)
+    const e = spawn(state, 5, 5)
+    state.monsters.push({ entityId: e.id, type: 'zombie' } as never)
+    const before = e.temperature
+    advanceTemperature(state)
+    expect(e.temperature).toBe(before)
   })
 })
