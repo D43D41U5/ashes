@@ -48,6 +48,8 @@ export const TEMPERATURE = {
   COMFORT: 60, // au-dessus : aucun effet
   HYPOTHERMIA: 20, // en dessous : dégâts
   HYPOTHERMIA_DAMAGE_MAX: 0.3, // PV/tick à température 0
+  SPEED_FLOOR: 0.6, // vitesse au plus froid
+  STAMINA_FLOOR: 0.5, // régén d'endurance au plus froid
 }
 
 export const BALANCE = {

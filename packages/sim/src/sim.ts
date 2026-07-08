@@ -23,7 +23,7 @@ import { advanceWorldEvents, type Horde } from './worldevents'
 import { rngNext } from './rng'
 import { advanceNpcs, type Npc } from './npc'
 import { advanceTime, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
-import { advanceTemperature } from './temperature'
+import { advanceTemperature, coldSpeedFactor } from './temperature'
 import { applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
 
 /** L'union des actions possibles dans un tick (village + économie + combat). */
@@ -202,11 +202,12 @@ export function spawnEntity(state: SimState, x: number, y: number): number {
  * une misprédiction systématique (rubber-band).
  */
 export function speedScaleFor(
-  entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina'>,
+  entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina' | 'temperature'>,
   input: { sprint: boolean; block: boolean; moving: boolean },
 ): { scale: number; sprinting: boolean } {
   let scale = 1
   if (entity.hunger <= 0) scale *= BALANCE.HUNGER_SPEED_MALUS
+  scale *= coldSpeedFactor(entity.temperature)
   if (entity.wounds.leg) scale *= COMBAT.LEG_WOUND_SPEED
   const blocking = input.block && entity.stamina > 0
   const sprinting = !blocking && input.sprint && entity.stamina > 0 && input.moving

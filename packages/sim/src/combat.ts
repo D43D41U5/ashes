@@ -13,6 +13,7 @@ import { distSq } from './geometry'
 import { addItems, countOf, removeItems, type ItemId } from './items'
 import { rngRoll } from './rng'
 import type { Entity, SimState } from './sim'
+import { coldStaminaRegenFactor } from './temperature'
 import { applyStructureDamage, getVillageOf } from './village'
 
 export interface Corpse {
@@ -346,6 +347,7 @@ export function advanceCombat(state: SimState): void {
   for (const entity of state.entities) {
     if (entity.windup || entity.blocking) continue
     let perS = entity.moved ? COMBAT.STAMINA_REGEN_MOVING_PER_S : COMBAT.STAMINA_REGEN_IDLE_PER_S
+    perS *= coldStaminaRegenFactor(entity.temperature)
     if (!monsterIds.has(entity.id)) {
       if (entity.hunger > 70) perS *= COMBAT.FED_REGEN_BONUS
       else if (entity.hunger <= 0) perS *= COMBAT.STARVED_REGEN_MALUS

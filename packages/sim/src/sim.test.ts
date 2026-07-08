@@ -41,14 +41,17 @@ describe('sim', () => {
   })
 
   it('speedScaleFor est LA formule de vitesse : endurance à 0 annule sprint ET blocage', () => {
-    const base = { hunger: 100, wounds: {}, stamina: 100 }
+    const base = { hunger: 100, wounds: {}, stamina: 100, temperature: 100 }
     const moving = { sprint: true, block: false, moving: true }
     expect(speedScaleFor(base, moving).scale).toBe(COMBAT.SPRINT_FACTOR)
     expect(speedScaleFor({ ...base, stamina: 0 }, moving).scale).toBe(1)
     expect(speedScaleFor(base, { sprint: false, block: true, moving: true }).scale).toBe(COMBAT.BLOCK_MOVE_FACTOR)
     expect(speedScaleFor({ ...base, stamina: 0 }, { sprint: false, block: true, moving: true }).scale).toBe(1)
     expect(
-      speedScaleFor({ hunger: 0, wounds: { leg: true }, stamina: 100 }, { sprint: false, block: false, moving: false }).scale,
+      speedScaleFor(
+        { hunger: 0, wounds: { leg: true }, stamina: 100, temperature: 100 },
+        { sprint: false, block: false, moving: false },
+      ).scale,
     ).toBe(BALANCE.HUNGER_SPEED_MALUS * COMBAT.LEG_WOUND_SPEED)
   })
 

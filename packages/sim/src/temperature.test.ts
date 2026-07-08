@@ -1,7 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { COMBAT } from './balance'
 import { createSim, spawnEntity, type Entity, type SimState } from './sim'
-import { advanceTemperature, ambientTemperature, coldDamagePerTick, driftStep } from './temperature'
+import {
+  advanceTemperature,
+  ambientTemperature,
+  coldDamagePerTick,
+  coldEffectRamp,
+  coldSpeedFactor,
+  coldStaminaRegenFactor,
+  driftStep,
+} from './temperature'
 import { DAY_TICKS_PER_CYCLE } from './time'
 
 /** spawnEntity retourne un id → on récupère l'objet entité. */
@@ -114,5 +122,19 @@ describe('hypothermie', () => {
     // L'avatar meurt puis respawn au Feu de son village (R10) : hp remonte à RESPAWN_HP,
     // il ne reste pas figé à 0.
     expect(e.hp).toBe(COMBAT.RESPAWN_HP)
+  })
+})
+
+describe('engourdissement (malus)', () => {
+  it("rampe : 0 au confort, 1 à l'hypothermie, linéaire", () => {
+    expect(coldEffectRamp(60)).toBe(0)
+    expect(coldEffectRamp(20)).toBe(1)
+    expect(coldEffectRamp(40)).toBeCloseTo(0.5, 5)
+  })
+  it("facteurs = 1 au confort, < 1 dès l'engourdissement", () => {
+    expect(coldSpeedFactor(70)).toBe(1)
+    expect(coldStaminaRegenFactor(70)).toBe(1)
+    expect(coldSpeedFactor(20)).toBeLessThan(1)
+    expect(coldStaminaRegenFactor(20)).toBeLessThan(1)
   })
 })

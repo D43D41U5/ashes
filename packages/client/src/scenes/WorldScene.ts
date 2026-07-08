@@ -149,6 +149,7 @@ export class WorldScene extends Phaser.Scene {
   private evacMarker: Phaser.GameObjects.Arc | null = null
   private myWounds: Entity['wounds'] = {}
   private myStamina = 100
+  private myTemperature = 100
   /** Mon avatar télégraphie : la sim l'immobilise — la prédiction aussi. */
   private myWindup = false
   private ghost!: Phaser.GameObjects.Rectangle
@@ -271,7 +272,7 @@ export class WorldScene extends Phaser.Scene {
     // d'endurance (sprint/blocage annulés à 0) sont prédites juste. Pendant
     // son propre wind-up, la sim immobilise — la prédiction gèle (scale 0).
     const { scale } = speedScaleFor(
-      { hunger: this.myHunger, wounds: this.myWounds, stamina: this.myStamina },
+      { hunger: this.myHunger, wounds: this.myWounds, stamina: this.myStamina, temperature: this.myTemperature },
       { sprint, block, moving: dx !== 0 || dy !== 0 },
     )
     const speedScale = this.myWindup ? 0 : scale
@@ -341,6 +342,7 @@ export class WorldScene extends Phaser.Scene {
       this.myHunger = me.hunger
       this.myWounds = me.wounds
       this.myStamina = me.stamina
+      this.myTemperature = me.temperature
       this.myWindup = me.windup !== undefined
       this.reconcile(me, msg.lastProcessedInput)
     }

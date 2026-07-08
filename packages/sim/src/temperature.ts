@@ -62,6 +62,23 @@ export function coldDamagePerTick(temp: number): number {
   return ((T.HYPOTHERMIA - temp) / T.HYPOTHERMIA) * T.HYPOTHERMIA_DAMAGE_MAX
 }
 
+/** 0 au confort (≥60), 1 à l'hypothermie (≤20), linéaire entre les deux. */
+export function coldEffectRamp(temp: number): number {
+  if (temp >= T.COMFORT) return 0
+  if (temp <= T.HYPOTHERMIA) return 1
+  return (T.COMFORT - temp) / (T.COMFORT - T.HYPOTHERMIA)
+}
+
+/** Malus de vitesse dû à l'engourdissement : 1 au confort, plancher SPEED_FLOOR à l'hypothermie. */
+export function coldSpeedFactor(temp: number): number {
+  return 1 - coldEffectRamp(temp) * (1 - T.SPEED_FLOOR)
+}
+
+/** Malus de régén d'endurance dû à l'engourdissement : 1 au confort, plancher STAMINA_FLOOR à l'hypothermie. */
+export function coldStaminaRegenFactor(temp: number): number {
+  return 1 - coldEffectRamp(temp) * (1 - T.STAMINA_FLOOR)
+}
+
 /** Fait dériver chaque humain vers son ambiant. Une étape de tick. */
 export function advanceTemperature(state: SimState): void {
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
