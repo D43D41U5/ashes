@@ -7,6 +7,7 @@
  */
 import { TERRAINS } from './balance'
 import { elevationAt, type WorldMap } from './map'
+import { POI_TYPES } from './poi'
 
 /** Couleur de base par nom de terrain (placeholder alpin — la vraie palette = SP3). */
 const BIOME_RGB: Record<string, [number, number, number]> = {
@@ -34,6 +35,14 @@ const BIOME_RGB: Record<string, [number, number, number]> = {
   void: [20, 20, 20],
 }
 
+/** Couleur de pastille par famille de POI (réglage visuel, cf. poi.ts:PoiType.family). */
+export const POI_FAMILY_RGB: Record<string, [number, number, number]> = {
+  eco: [230, 200, 60], // or/jaune
+  shelter: [90, 160, 230], // bleu
+  danger: [220, 70, 60], // rouge
+  reward: [150, 220, 120], // vert
+}
+
 export function renderVignette(map: WorldMap, maxDim = 512): { w: number; h: number; rgb: Uint8Array } {
   const step = Math.max(1, Math.ceil(Math.max(map.width, map.height) / maxDim))
   const w = Math.floor(map.width / step)
@@ -54,6 +63,27 @@ export function renderVignette(map: WorldMap, maxDim = 512): { w: number; h: num
       rgb[o] = clampByte(base[0] * shade)
       rgb[o + 1] = clampByte(base[1] * shade)
       rgb[o + 2] = clampByte(base[2] * shade)
+    }
+  }
+  // Pastilles POI par famille — écrasent les pixels de terrain sous-jacents,
+  // un carré 3×3 par POI (centré, clampé aux bords de la vignette).
+  const familyOf = new Map(POI_TYPES.map((t) => [t.slug, t.family]))
+  for (const z of map.zones) {
+    const fam = familyOf.get(z.kind ?? '')
+    if (!fam) continue
+    const col = POI_FAMILY_RGB[fam]!
+    const px = Math.floor((z.x + z.w / 2) / step)
+    const py = Math.floor((z.y + z.h / 2) / step)
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const x = px + dx
+        const y = py + dy
+        if (x < 0 || y < 0 || x >= w || y >= h) continue
+        const o = (y * w + x) * 3
+        rgb[o] = col[0]
+        rgb[o + 1] = col[1]
+        rgb[o + 2] = col[2]
+      }
     }
   }
   return { w, h, rgb }

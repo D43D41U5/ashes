@@ -4,6 +4,7 @@ import { POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
 import { terrainAt, createEmptyMap } from './map'
 import { TERRAINS } from './balance'
 import { createSim } from './sim'
+import { POI_FAMILY_RGB } from './vignette'
 
 const ROCK_ID = 5 // TERRAINS[5].name === 'rock', walkable: false
 const GRASS_ID = 1 // TERRAINS[1].name === 'grass', walkable: true
@@ -69,6 +70,13 @@ describe('POIs dans la carte alpine', () => {
       const dx = c[i]!.x - c[j]!.x, dy = c[i]!.y - c[j]!.y
       expect(Math.sqrt(dx * dx + dy * dy)).toBeGreaterThanOrEqual(radius - 1.5) // ±1 tuile (floor)
     }
+  })
+})
+
+describe('vignette POI', () => {
+  it('expose une couleur par famille de POI', () => {
+    expect(POI_FAMILY_RGB.eco).toHaveLength(3)
+    expect(POI_FAMILY_RGB.danger).toHaveLength(3)
   })
 })
 
