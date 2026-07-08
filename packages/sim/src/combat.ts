@@ -22,6 +22,7 @@ export interface Corpse {
   y: number
   inventory: Entity['inventory']
   decayAt: number
+  risesAt?: number
 }
 
 export type CombatAction =

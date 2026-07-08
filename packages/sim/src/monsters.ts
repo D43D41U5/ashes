@@ -24,6 +24,7 @@ export interface Monster {
   wanderDy: -1 | 0 | 1
   fleeing: boolean
   lastAttackerId: number | null
+  path?: { tx: number; ty: number }[]
 }
 
 export function spawnMonster(state: SimState, type: MonsterType, x: number, y: number): number {

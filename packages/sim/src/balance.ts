@@ -306,7 +306,7 @@ export const WEAPON_DAMAGE: Partial<Record<import('./items').ItemId, number>> = 
   iron_axe: 10,
 }
 
-export type MonsterType = 'zombie' | 'boar'
+export type MonsterType = 'zombie' | 'boar' | 'cendreux'
 
 export interface MonsterDef {
   hp: number
@@ -338,6 +338,20 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     thinkEveryTicks: ticksFor(1), wanderChance: 0, chargeChance: 0.25,
     loot: { raw_meat: 3 },
   },
+  cendreux: {
+    hp: 20, damage: 34, speed: 1.3,
+    windupTicks: ticksFor(0.7), attackCooldownTicks: ticksFor(2.5), aggroRange: 5,
+    thinkEveryTicks: ticksFor(0.5), wanderChance: 0, chargeChance: 0,
+    loot: {}, // il porte celui du cadavre (voir levée)
+  },
+}
+
+/** La levée des Cendreux (spec 2026-07-08). Ordres de grandeur, calibrage playtest. */
+export const CENDREUX = {
+  WITNESS_RADIUS: 8, // « seul » : aucun allié vivant dans ce rayon à la mort
+  HEARTH_WARD_RADIUS: 12, // « loin d'un feu » : aucune structure feu (mort ET réveil)
+  RISE_DELAY: ticksFor(300), // délai mort→levée (~5 min ; le cadavre marqué ne décante pas d'ici là)
+  WARMTH_SEEK_RANGE: 20, // rayon de recherche de chaleur la nuit
 }
 
 /** Le combat (GDD §7, spec combat) — lent, positionnel, gagné avant l'échange. */
