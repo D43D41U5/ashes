@@ -140,6 +140,7 @@ export class WorldScene extends Phaser.Scene {
   private canopyCoverage = 0
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
   private worldReady = false
+  private loadingText: Phaser.GameObjects.Text | null = null
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
   private lastSnapshotTick = 0
@@ -226,6 +227,16 @@ export class WorldScene extends Phaser.Scene {
     })
 
     this.send({ type: 'join', protocolVersion: PROTOCOL_VERSION })
+    // La génération de la grande carte alpine prend quelques secondes côté worker.
+    this.loadingText = this.add
+      .text(this.scale.width / 2, this.scale.height / 2, 'Génération de la vallée alpine…', {
+        fontFamily: 'monospace',
+        fontSize: '20px',
+        color: '#e8c66a',
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(10000)
   }
 
   /** Le monde arrive de l'hôte : carte, calendrier, spawn (décisions d'hôte). */
@@ -237,12 +248,15 @@ export class WorldScene extends Phaser.Scene {
     this.playerId = msg.playerId
     this.map = msg.map
     this.calendarScale = msg.calendarScale
-    this.bakeMapTexture()
-    this.add.image(0, 0, 'map-demo').setOrigin(0).setDepth(-1)
-    this.bakeCanopyTexture()
-    this.canopyImage = this.add.image(0, 0, 'canopy').setOrigin(0).setDepth(CANOPY_DEPTH)
     const worldW = this.map.width * TILE_PX
     const worldH = this.map.height * TILE_PX
+    // Terrain baké à 1 px/tuile (texture = map.width×map.height px, sous la limite
+    // WebGL même pour une grande carte) puis étiré à la taille monde : les tuiles
+    // étant des aplats, l'étirement NEAREST est pixel-identique au bake 16 px/tuile.
+    this.bakeMapTexture()
+    this.add.image(0, 0, 'map-demo').setOrigin(0).setDepth(-1).setDisplaySize(worldW, worldH)
+    this.bakeCanopyTexture()
+    this.canopyImage = this.add.image(0, 0, 'canopy').setOrigin(0).setDepth(CANOPY_DEPTH).setDisplaySize(worldW, worldH)
     this.ambientRect = this.add
       .rectangle(0, 0, worldW, worldH, 0x000000, 0)
       .setOrigin(0)
@@ -254,6 +268,8 @@ export class WorldScene extends Phaser.Scene {
     // La carte plein écran (M, rendue par UIScene) a besoin de la carte : pour
     // la mettre à l'échelle et pour nommer la zone/POI sous le curseur.
     setHud(this.registry, 'mapData', this.map)
+    this.loadingText?.destroy()
+    this.loadingText = null
     this.worldReady = true
   }
 
@@ -452,10 +468,10 @@ export class WorldScene extends Phaser.Scene {
       for (let tx = 0; tx < this.map.width; tx++) {
         const base = TERRAIN_COLORS[this.map.terrain[ty * this.map.width + tx] ?? 0] ?? 0xff00ff
         g.fillStyle(shade(base, 0.92 + 0.16 * hash2(tx, ty)))
-        g.fillRect(tx * TILE_PX, ty * TILE_PX, TILE_PX, TILE_PX)
+        g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
       }
     }
-    g.generateTexture('map-demo', this.map.width * TILE_PX, this.map.height * TILE_PX)
+    g.generateTexture('map-demo', this.map.width, this.map.height)
     g.destroy()
   }
 
@@ -468,10 +484,10 @@ export class WorldScene extends Phaser.Scene {
         if (density <= 0) continue
         const a = Math.min(1, density * WORLD_CANOPY_HINT * (0.85 + 0.3 * hash2(tx, ty)))
         g.fillStyle(0x040807, a)
-        g.fillRect(tx * TILE_PX, ty * TILE_PX, TILE_PX, TILE_PX)
+        g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
       }
     }
-    g.generateTexture('canopy', this.map.width * TILE_PX, this.map.height * TILE_PX)
+    g.generateTexture('canopy', this.map.width, this.map.height)
     g.destroy()
   }
 }

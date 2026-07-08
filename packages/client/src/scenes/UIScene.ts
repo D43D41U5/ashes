@@ -206,9 +206,11 @@ export class UIScene extends Phaser.Scene {
     // Le lieu sous le curseur — en haut à gauche de la carte.
     this.mapHover = this.add.text(16, 16, '', { ...style, fontSize: '16px', color: '#e8c66a' }).setOrigin(0, 0)
 
-    this.mapImage = this.add.image(0, 0, 'map-demo').setOrigin(0.5)
     const texW = map.width * TILE_PX
     const texH = map.height * TILE_PX
+    // `map-demo` est bakée à 1 px/tuile (grande carte) → on l'étire à la taille monde
+    // (texW×texH) pour que le fit et le mapping curseur→tuile ci-dessous restent justes.
+    this.mapImage = this.add.image(0, 0, 'map-demo').setOrigin(0.5).setDisplaySize(texW, texH)
     this.mapTexW = texW
     this.mapTexH = texH
     // Ajuste la carte entière dans ~90 % × 82 % de l'écran (titre + aide gardent leur place).

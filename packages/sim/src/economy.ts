@@ -210,7 +210,12 @@ export function advanceEconomy(state: SimState): void {
  * déterministe par seed. Le T2 (fer, charbon) n'apparaît que dans les zones
  * `kind: 'gisement'` — la carte est l'économie.
  */
-export function generateNodes(map: WorldMap, seed: number): ResourceNode[] {
+/**
+ * `density` (0..1) sous-échantillonne les tuiles candidates de façon POSITIONNELLE
+ * (déterministe) — pour borner le nombre de nœuds sur les très grandes cartes
+ * (le SimState/snapshot transporte les nœuds à chaque tick). Défaut 1 = inchangé.
+ */
+export function generateNodes(map: WorldMap, seed: number, density = 1): ResourceNode[] {
   const nodes: ResourceNode[] = []
   let id = 1
   const push = (type: NodeType, tx: number, ty: number): void => {
@@ -218,10 +223,12 @@ export function generateNodes(map: WorldMap, seed: number): ResourceNode[] {
     id += 1
   }
   const nodeSeed = (seed ^ 0x51ab3f77) | 0
+  const keepSeed = (seed ^ 0x2f9e37a1) | 0
   for (let ty = 0; ty < map.height; ty++) {
     for (let tx = 0; tx < map.width; tx++) {
       const terrain = terrainAt(map, tx, ty)
       if (!TERRAINS[terrain]?.walkable) continue
+      if (density < 1 && hash2(tx, ty, keepSeed) >= density) continue // sous-échantillonnage grande carte
       // Tirage POSITIONNEL : fonction pure de (tx, ty) → déplacer une tuile
       // ailleurs ne redistribue plus les nœuds (fin de la fragilité row-band).
       const r = hash2(tx, ty, nodeSeed)

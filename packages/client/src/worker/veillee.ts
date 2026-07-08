@@ -47,11 +47,14 @@ function walkableSpawn(map: WorldMap): { x: number; y: number } {
 
 export function createVeillee(): { sim: SimState; playerId: number; spawn: { x: number; y: number } } {
   // La carte alpine procédurale est la carte par défaut du client (roadmap :
-  // substrat alpin → POIs). Taille 160×240 : le client bake une SEULE texture
-  // (limite WebGL ~4096px = 256 tuiles) ; l'alpin pleine taille (2400×3600)
-  // attend le rendu chunké (SP2).
-  const map = generateAlpineTerrain(160, 240, VEILLEE_SEED)
-  const nodes = generateNodes(map, VEILLEE_SEED)
+  // substrat alpin → POIs). 1200×1800 : le terrain est baké à 1 px/tuile puis
+  // étiré (WorldScene) → plus de limite de texture. Le vrai plafond restant est
+  // le temps de génération (~7 s) et le transfert ; l'alpin PLEINE taille
+  // (2400×3600, ~27 s de gen) attend une optimisation de la génération.
+  const map = generateAlpineTerrain(1200, 1800, VEILLEE_SEED)
+  // Densité de nœuds bornée : le SimState/snapshot transporte les nœuds à chaque
+  // tick — sans cette borne, une grande carte en produirait des centaines de milliers.
+  const nodes = generateNodes(map, VEILLEE_SEED, 0.025)
   const sim = createSim(VEILLEE_SEED, {
     map,
     calendarScale: VEILLEE_CALENDAR_SCALE,
