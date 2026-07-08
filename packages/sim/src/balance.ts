@@ -24,8 +24,27 @@ const ticksFor = (seconds: number): number => Math.round(seconds * TICK_RATE_HZ)
 /** Convertit un nombre de cycles jour/nuit (ex. 1/24 = une heure de cycle) en ticks. */
 const ticksForCycles = (cycles: number): number => Math.round(cycles * CYCLE_REAL_MINUTES * 60 * TICK_RATE_HZ)
 
+/** Jauge Température (spec 2026-07-08). Ordres de grandeur, à calibrer en playtest. */
+export const TEMPERATURE = {
+  BASE: 90, // cible d'un bas de vallée, jour, acte I
+  ALT_COLD: 70, // refroidissement max au sommet (elevation 1)
+  NIGHT_COLD: 20,
+  ACT_COLD: [0, 25, 40] as const, // par acte (I, Grand Froid, Cendre), soustrait
+  /** Décalage signé par terrain (id de TERRAINS). Absent = 0. */
+  BIOME_OFFSET: {
+    3: 5, 13: 5, 14: 5, 22: 5, // forêts (couvert)
+    8: -5, 18: -5, 19: -5, // marais/tourbière/roselière (mouillé)
+    10: -10, // neige
+    15: -15, // glacier
+  } as Record<number, number>,
+  FIRE_WARMTH: 80, // cible au contact d'un feu
+  FIRE_RANGE: 6, // tuiles
+  SHELTER_FACTOR: 0.5, // sous toit : nuit+biome × 0.5
+}
+
 export const BALANCE = {
   TICK_RATE_HZ,
+  TEMPERATURE,
 
   /** Durée d'une saison en jours réels (GDD §2). */
   SEASON_DAYS: 60,
