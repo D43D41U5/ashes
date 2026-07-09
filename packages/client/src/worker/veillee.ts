@@ -22,7 +22,7 @@ export const VEILLEE_SEED = 2026
 /** Densité de nœuds : forêts réellement récoltables (~60k nœuds). Rendu client
  * culled à la vue + transport par deltas → ce nombre est découplé du coût par
  * tick. Réglable : monter pour des forêts plus denses encore. */
-export const NODE_DENSITY = 0.3
+export const NODE_DENSITY = 0.5
 /** Démo : un jour de saison toutes les 2 minutes. */
 export const VEILLEE_CALENDAR_SCALE = 720
 /** Heure murale de départ : 9 = matinée (bonne lumière pour découvrir l'alpin ; 0 = minuit). */
