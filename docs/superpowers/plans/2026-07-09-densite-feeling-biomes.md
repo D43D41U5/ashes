@@ -291,16 +291,14 @@ describe('distToWater (affinité réaliste, INV-6)', () => {
   })
 
   it('les roseaux sont plus denses au bord de l\'eau qu\'au loin', () => {
-    const near = clutterAt(1, 20, TERRAIN_REED_MARSH, SEED, grid).length
+    // Colonne au contact (tx=1, distToWater=1) vs colonne au loin (tx=12, plafond).
+    let near = 0
     let far = 0
-    for (let ty = 0; ty < 60; ty++) far += clutterAt(12, ty, TERRAIN_REED_MARSH, SEED, grid).length
-    const nearTotal = (() => {
-      let s = 0
-      for (let ty = 0; ty < 60; ty++) s += clutterAt(1, ty, TERRAIN_REED_MARSH, SEED, grid).length
-      return s
-    })()
-    expect(nearTotal).toBeGreaterThan(far)
-    expect(near).toBeGreaterThanOrEqual(0)
+    for (let ty = 0; ty < 60; ty++) {
+      near += clutterAt(1, ty, TERRAIN_REED_MARSH, SEED, grid).length
+      far += clutterAt(12, ty, TERRAIN_REED_MARSH, SEED, grid).length
+    }
+    expect(near).toBeGreaterThan(far)
   })
 })
 ```
