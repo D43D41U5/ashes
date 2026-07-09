@@ -59,7 +59,7 @@ export type EconomyAction =
 // Index tuile→nœud MÉMOÏSÉ par référence de tableau. Les nœuds ne bougent ni
 // n'apparaissent/disparaissent au runtime (seul `stock` change) : l'index est
 // construit une fois (O(N)) puis réutilisé — `nodeAt` devient O(1), condition
-// des cartes denses (~60k nœuds) où collision et récolte l'appellent souvent.
+// des cartes denses (~140k nœuds) où collision et récolte l'appellent souvent.
 // Dérivé EXTERNE (WeakMap, jamais dans SimState → invariant d'état sérialisable
 // préservé, GC avec le tableau). Même sémantique que l'ancien `find` : ≤1 nœud
 // par tuile (generateNodes ne pousse qu'une fois par tuile), premier gagnant.

@@ -33,6 +33,9 @@ const ACTOR_FOOTPRINTS: Record<string, ActorFootprint> = {
   'spr-boar': { widthTiles: 1.4, heightTiles: 1 },
 }
 const DEFAULT_FOOTPRINT: ActorFootprint = { widthTiles: 1, heightTiles: 1.6 }
+/** Clé d'index tuile→nœud : `tx * STRIDE + ty`. STRIDE > toute coordonnée de
+ * tuile (carte alpine pleine ≤ 3600) → injectif, pas de collision de clé. */
+const NODE_TILE_STRIDE = 1_000_000
 
 export interface InterpolatedSprite {
   sprite: Phaser.GameObjects.Image
@@ -62,6 +65,9 @@ export class SnapshotView {
   private nodePool: Phaser.GameObjects.Image[] = []
   /** Index id→nœud pour appliquer les deltas de stock en O(1). */
   private nodeById = new Map<number, ResourceNode>()
+  /** Index tuile→nœud (≤1 nœud/tuile) : le rendu n'itère que la fenêtre caméra,
+   * pas les ~140k nœuds — coût par frame borné à la vue, comme le décor. */
+  private nodeByTile = new Map<number, ResourceNode>()
   private corpseSprites = new Map<number, Phaser.GameObjects.Image>()
 
   constructor(private scene: Phaser.Scene) {}
@@ -186,12 +192,13 @@ export class SnapshotView {
     }
   }
 
-  /** Reçoit la liste COMPLÈTE des nœuds (message `ready`, une fois) et indexe
-   * par id pour appliquer les deltas en O(1). Le rendu est séparé
-   * (`renderNodes`), culled à la vue — la carte en porte ~60k. */
+  /** Reçoit la liste COMPLÈTE des nœuds (message `ready`, une fois) et l'indexe
+   * par id (deltas O(1)) ET par tuile (rendu culled O(1)/tuile visible). La
+   * carte en porte ~140k ; positions figées au runtime. */
   setNodes(nodes: ResourceNode[]): void {
     this.nodes = nodes
     this.nodeById = new Map(nodes.map((n) => [n.id, n]))
+    this.nodeByTile = new Map(nodes.map((n) => [n.tx * NODE_TILE_STRIDE + n.ty, n]))
   }
 
   /** Applique les changements de stock reçus par tick (récolte/repousse). Le jeu
@@ -203,29 +210,31 @@ export class SnapshotView {
     }
   }
 
-  /** Dessine les nœuds visibles (pool réutilisé, culling caméra). Appelé chaque
-   * frame par la scène — un nœud épuisé s'estompe. */
+  /** Dessine les nœuds visibles (pool réutilisé). N'itère que la FENÊTRE de
+   * tuiles caméra (≤1 nœud/tuile via l'index) — coût borné à la vue, jamais
+   * O(nombre total de nœuds). Appelé chaque frame ; un nœud épuisé s'estompe. */
   renderNodes(camera: Phaser.Cameras.Scene2D.Camera): void {
     const v = camera.worldView
-    const x0 = v.x - TILE_PX
-    const y0 = v.y - TILE_PX
-    const x1 = v.x + v.width + TILE_PX
-    const y1 = v.y + v.height + TILE_PX
+    const tx0 = Math.floor(v.x / TILE_PX) - 1
+    const ty0 = Math.floor(v.y / TILE_PX) - 1
+    const tx1 = Math.ceil((v.x + v.width) / TILE_PX) + 1
+    const ty1 = Math.ceil((v.y + v.height) / TILE_PX) + 1
     let used = 0
-    for (const n of this.nodes) {
-      const px = n.tx * TILE_PX
-      const py = n.ty * TILE_PX
-      if (px < x0 || px > x1 || py < y0 || py > y1) continue
-      let sprite = this.nodePool[used]
-      if (!sprite) {
-        sprite = this.scene.add.image(0, 0, `nd-${n.type}`).setOrigin(0).setDepth(4)
-        this.nodePool[used] = sprite
+    for (let ty = ty0; ty <= ty1; ty++) {
+      for (let tx = tx0; tx <= tx1; tx++) {
+        const n = this.nodeByTile.get(tx * NODE_TILE_STRIDE + ty)
+        if (n === undefined) continue
+        let sprite = this.nodePool[used]
+        if (!sprite) {
+          sprite = this.scene.add.image(0, 0, `nd-${n.type}`).setOrigin(0).setDepth(4)
+          this.nodePool[used] = sprite
+        }
+        sprite.setPosition(tx * TILE_PX, ty * TILE_PX)
+        sprite.setTexture(`nd-${n.type}`)
+        sprite.setAlpha(n.stock > 0 ? 1 : 0.25)
+        sprite.setVisible(true)
+        used++
       }
-      sprite.setPosition(px, py)
-      sprite.setTexture(`nd-${n.type}`)
-      sprite.setAlpha(n.stock > 0 ? 1 : 0.25)
-      sprite.setVisible(true)
-      used++
     }
     for (let i = used; i < this.nodePool.length; i++) this.nodePool[i]!.setVisible(false)
   }

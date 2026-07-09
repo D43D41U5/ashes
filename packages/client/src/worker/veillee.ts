@@ -19,9 +19,9 @@ import {
 } from '@braises/sim'
 
 export const VEILLEE_SEED = 2026
-/** Densité de nœuds : forêts réellement récoltables (~60k nœuds). Rendu client
- * culled à la vue + transport par deltas → ce nombre est découplé du coût par
- * tick. Réglable : monter pour des forêts plus denses encore. */
+/** Densité de nœuds : forêts réellement récoltables (~140k nœuds à 0.7). Rendu
+ * client culled à la vue + transport par deltas → ce nombre est découplé du
+ * coût par tick. Réglable : seul bouton à monter/descendre. */
 export const NODE_DENSITY = 0.7
 /** Démo : un jour de saison toutes les 2 minutes. */
 export const VEILLEE_CALENDAR_SCALE = 720
