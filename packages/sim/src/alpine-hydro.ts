@@ -222,7 +222,9 @@ function computeDrainageDir(map: WorldMap, seed: number, sinkX: number, sinkY: n
  * lac, ou un autre ruisseau déjà tracé → fusion en TOILE) ou jusqu'au marais qui
  * l'absorbe. Ils partent donc de la glace et se jettent toujours quelque part.
  */
-function carveIceStreams(map: WorldMap, dir: number[], seed: number): void {
+function carveIceStreams(
+  map: WorldMap, dir: number[], seed: number,
+): Array<{ source: ValleyPoint; outlet: ValleyPoint }> {
   const W = map.width
   const H = map.height
   const D = Math.min(W, H)
@@ -230,6 +232,7 @@ function carveIceStreams(map: WorldMap, dir: number[], seed: number): void {
   const interior = (W - 2 * margin) * (H - 2 * margin)
   const count = Math.round(HYDRO.MELT_DENSITY * interior)
   const maxSteps = W + H
+  const streams: Array<{ source: ValleyPoint; outlet: ValleyPoint }> = []
   for (let k = 0; k < count; k++) {
     // Source de fonte : la plus haute parmi quelques candidats, dans la tranche
     // d'altitude de la limite des neiges (au-dessus de la forêt, sous le pic).
@@ -245,6 +248,8 @@ function carveIceStreams(map: WorldMap, dir: number[], seed: number): void {
     let steps = 0
     let poolX = -1
     let poolY = -1
+    let lastX = -1
+    let lastY = -1
     while (c >= 0 && steps < maxSteps) {
       const t = map.terrain[c]!
       if (t === TERRAIN_DEEP_WATER || t === TERRAIN_SHALLOW_WATER) break // se jette dans l'eau → toile
@@ -252,9 +257,30 @@ function carveIceStreams(map: WorldMap, dir: number[], seed: number): void {
       const cx = c % W; const cy = (c / W) | 0
       if (elevationAt(map, cx, cy) < HYDRO.ABSORB_AT) { poolX = cx; poolY = cy; break } // atteint le fond → forme une mare
       map.terrain[c] = TERRAIN_SHALLOW_WATER // filet de fonte franchissable
-      c = dir[c]!
+      lastX = cx; lastY = cy // dernière tuile d'eau posée = exutoire du ruisseau
+      const next = dir[c]!
+      if (next >= 0) {
+        // Pas vers l'aval diagonal ? les deux tuiles ne se touchent que par le
+        // coin → le filet paraît « cassé ». On pose une tuile-pont orthogonale
+        // (la plus basse des deux : l'eau va vers le bas), ce qui rend le
+        // ruisseau 4-connexe sans l'épaissir sur les segments droits.
+        const nx = next % W; const ny = (next / W) | 0
+        const ddx = nx - cx; const ddy = ny - cy
+        if (ddx !== 0 && ddy !== 0) {
+          const ea = elevationAt(map, nx, cy) // candidate horizontale
+          const eb = elevationAt(map, cx, ny) // candidate verticale
+          const useH = ea < eb || (ea === eb && hash2(cx, cy, 0x6d) < 0.5)
+          const pi = useH ? cy * W + nx : ny * W + cx
+          const pt = map.terrain[pi]
+          if (pt !== TERRAIN_DEEP_WATER && pt !== TERRAIN_SHALLOW_WATER && pt !== TERRAIN_MARSH) {
+            map.terrain[pi] = TERRAIN_SHALLOW_WATER
+          }
+        }
+      }
+      c = next
       steps++
     }
+    if (lastX >= 0) streams.push({ source: { x: sx, y: sy }, outlet: { x: lastX, y: lastY } })
     if (poolX >= 0) {
       // Mare de fonte au pied de la pente : le ruisseau finit dans un vrai point
       // d'eau, et le fond de vallée se pique de mares (au lieu d'être sec).
@@ -263,6 +289,7 @@ function carveIceStreams(map: WorldMap, dir: number[], seed: number): void {
       if (pr >= 3) stampWaterBody(map, poolX, poolY, pr, pr, paintDeep, (seed ^ (k * 71)) | 0, 0.5)
     }
   }
+  return streams
 }
 
 /** Tarns : petites cuvettes d'altitude (minima locaux du relief RÉEL) → poches d'eau. */
@@ -347,11 +374,14 @@ function mergeNearbyWater(map: WorldMap, r: number): void {
 
 /** Grave tout le réseau d'eau dans une carte alpine (après les bandes de terrain).
  *  `flow` = computeFlowField (macro lisse) pour situer lac & tête de vallée. */
-export function carveHydrology(map: WorldMap, flow: number[], seed: number): void {
+export function carveHydrology(
+  map: WorldMap, flow: number[], seed: number,
+): Array<{ source: ValleyPoint; outlet: ValleyPoint }> {
   const lake = carveLakes(map, flow, seed)               // 1..4 lacs, formes diverses ; principal renvoyé
   carveMainRiver(map, flow, seed, lake)                  // le tronc (les affluents s'y jettent)
   const dir = computeDrainageDir(map, seed, lake.x, lake.y)
-  carveIceStreams(map, dir, seed)                        // ruisseaux de fonte → rivière/lac/marais
+  const streams = carveIceStreams(map, dir, seed)        // ruisseaux de fonte → rivière/lac/marais
   carveTarns(map, seed)
   mergeNearbyWater(map, 2)                               // fusionne les plans d'eau très proches
+  return streams                                         // (source, exutoire) par ruisseau — pour tests de continuité
 }
