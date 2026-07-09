@@ -185,8 +185,10 @@ export class WorldScene extends Phaser.Scene {
     this.view = new SnapshotView(this)
 
     const zoom = zoomForFraming(VISIBLE_TILES_TALL, TILE_PX, this.scale.height)
-    this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16).setZoom(zoom)
+    this.cameras.main.setZoom(zoom)
     this.cameras.main.setBackgroundColor('#0e0e12')
+    // Le suivi ne démarre qu'une fois l'avatar posé au spawn (onReady) : `startFollow`
+    // ancre la caméra sur la position COURANTE de la cible, et ici elle vaut (0, 0).
 
     this.scene.launch('ui')
 
@@ -272,6 +274,8 @@ export class WorldScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, worldW, worldH)
     this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
     this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
+    // Bornes posées et avatar au spawn : le suivi peut s'ancrer sans panoramique.
+    this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16)
     // La carte plein écran (M, rendue par UIScene) a besoin de la carte : pour
     // la mettre à l'échelle et pour nommer la zone/POI sous le curseur.
     setHud(this.registry, 'mapData', this.map)
