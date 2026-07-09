@@ -95,6 +95,7 @@ export class BootScene extends Phaser.Scene {
     g.destroy()
 
     this.makeNodes()
+    this.makeClutter()
   }
 
   /** Textures des nœuds de ressources. */
@@ -139,6 +140,72 @@ export class BootScene extends Phaser.Scene {
     g.fillRect(5, 8, 3, 2)
     g.fillRect(9, 11, 3, 2)
     g.generateTexture('nd-coal_seam', 16, 16)
+    g.destroy()
+  }
+
+  /** Textures placeholder du décor cosmétique (cl-*). Ternies pour ne jamais
+   * être confondues avec les nœuds récoltables (INV-2). */
+  private makeClutter(): void {
+    const g = this.add.graphics()
+    const tex = (key: string): void => {
+      g.generateTexture(key, 16, 16)
+      g.clear()
+    }
+
+    g.fillStyle(0x24401f).fillTriangle(8, 1, 2, 13, 14, 13) // conifère (sombre, terne)
+    tex('cl-conifer')
+
+    g.fillStyle(0x3a2c1a).fillRect(6, 4, 4, 11) // gros tronc
+    g.fillStyle(0x24401f).fillCircle(8, 4, 5)
+    tex('cl-big_trunk')
+
+    g.fillStyle(0x4a3826).fillRect(6, 9, 4, 5) // souche
+    tex('cl-stump')
+
+    g.fillStyle(0x3f6238) // fougère (touffe basse)
+    g.fillRect(5, 10, 2, 5).fillRect(8, 9, 2, 6).fillRect(11, 11, 2, 4)
+    tex('cl-fern')
+
+    g.fillStyle(0x2f5030).fillTriangle(8, 3, 4, 13, 12, 13) // pin clair
+    tex('cl-pine')
+
+    g.fillStyle(0x6f7a3a).fillTriangle(8, 3, 5, 12, 11, 12) // mélèze doré terne
+    tex('cl-larch')
+
+    g.fillStyle(0x2b2b2f).fillRect(7, 4, 2, 10) // tronc calciné
+    tex('cl-burnt_trunk')
+
+    g.fillStyle(0x5a6e33) // touffe d'herbe
+    g.fillRect(5, 9, 2, 5).fillRect(8, 8, 2, 6).fillRect(11, 10, 2, 4)
+    tex('cl-grass_tuft')
+
+    g.fillStyle(0x50662f).fillCircle(8, 11, 3) // fleur (tige + corolle discrète)
+    g.fillStyle(0x9a7bb0).fillCircle(8, 6, 2)
+    tex('cl-flower')
+
+    g.fillStyle(0x6a6a6e).fillCircle(6, 11, 2).fillCircle(10, 12, 2).fillCircle(8, 10, 1.5) // cailloux
+    tex('cl-pebbles')
+
+    g.fillStyle(0x5f5f64).fillCircle(8, 10, 5) // gros bloc
+    g.fillStyle(0x6f6f75).fillCircle(6, 9, 2)
+    tex('cl-boulder')
+
+    g.fillStyle(0x4b4a2e).fillCircle(7, 11, 3).fillCircle(10, 11, 2) // buisson bas (lande)
+    tex('cl-low_bush')
+
+    g.fillStyle(0x6d7a40) // roseau
+    g.fillRect(6, 4, 1, 11).fillRect(9, 3, 1, 12).fillRect(11, 6, 1, 9)
+    tex('cl-reed')
+
+    g.fillStyle(0x6a6a3a).fillCircle(8, 11, 4) // sphaigne (coussin)
+    tex('cl-sphagnum')
+
+    g.fillStyle(0x777c50).fillCircle(6, 10, 2).fillCircle(9, 11, 2) // lichen
+    tex('cl-lichen')
+
+    g.fillStyle(0xd8dde6).fillCircle(8, 12, 4) // congère
+    tex('cl-snowdrift')
+
     g.destroy()
   }
 
