@@ -66,6 +66,10 @@ const MAP_ZOOM_MAX = 8
 const MAP_ZOOM_STEP = 1.15
 /** Au-dessus de tout le HUD (et du journal, à profondeur par défaut). */
 const MAP_OVERLAY_DEPTH = 1000
+/** Pastille de POI sur la carte : plus petite et plus froide que le marqueur joueur, qui doit primer. */
+const MAP_POI_RADIUS = 3
+const MAP_POI_FILL = 0xe8e0c8
+const MAP_POI_STROKE = 0x14141a
 
 export class UIScene extends Phaser.Scene {
   private alarmOverlay!: Phaser.GameObjects.Rectangle
@@ -87,6 +91,10 @@ export class UIScene extends Phaser.Scene {
   private mapLayer!: Phaser.GameObjects.Container
   private mapImage!: Phaser.GameObjects.Image
   private mapMarker!: Phaser.GameObjects.Arc
+  /** Une pastille par POI (zone avec un `kind`) — taille écran constante, comme le marqueur. */
+  private mapPoiDots: Phaser.GameObjects.Arc[] = []
+  /** Dernière échelle appliquée aux pastilles — évite de les reparcourir à chaque frame. */
+  private mapPoiScale = 0
   private mapHover!: Phaser.GameObjects.Text
   /** Échelle « carte entière ajustée à l'écran » — l'ancre du zoom (facteur ×). */
   private mapFit = 1
@@ -215,8 +223,19 @@ export class UIScene extends Phaser.Scene {
     this.mapTexH = texH
     // Ajuste la carte entière dans ~90 % × 82 % de l'écran (titre + aide gardent leur place).
     this.mapFit = Math.min((W * 0.9) / texW, (H * 0.82) / texH)
+    // Une pastille par POI (zone porteuse d'un `kind` ; les zones sans `kind` sont de simples
+    // toponymes). Statiques : les zones sont publiées une fois au `ready`.
+    this.mapPoiDots = map.zones
+      .filter((z) => z.kind !== undefined)
+      .map((z) =>
+        this.add
+          .circle(this.mapLocalX(map, z.x + z.w / 2), this.mapLocalY(map, z.y + z.h / 2), MAP_POI_RADIUS, MAP_POI_FILL)
+          .setStrokeStyle(1, MAP_POI_STROKE),
+      )
+
     this.mapMarker = this.add.circle(0, 0, 5, 0xffd94a).setStrokeStyle(2, 0x14141a)
-    this.mapLayer = this.add.container(W / 2, H / 2, [this.mapImage, this.mapMarker])
+    // Le marqueur joueur passe APRÈS les pastilles : il doit rester lisible par-dessus.
+    this.mapLayer = this.add.container(W / 2, H / 2, [this.mapImage, ...this.mapPoiDots, this.mapMarker])
 
     this.mapRoot = this.add
       .container(0, 0, [bg, this.mapLayer, title, hint, this.mapHover])
@@ -281,18 +300,37 @@ export class UIScene extends Phaser.Scene {
     this.mapLayer.setPosition(this.scale.width / 2, this.scale.height / 2)
   }
 
+  /** Tuile → coordonnée locale du `mapLayer` (pixels-monde, origine au centre de la carte). */
+  private mapLocalX(map: WorldMap, tx: number): number {
+    return tx * TILE_PX - (map.width * TILE_PX) / 2
+  }
+
+  private mapLocalY(map: WorldMap, ty: number): number {
+    return ty * TILE_PX - (map.height * TILE_PX) / 2
+  }
+
   /** Place le marqueur « tu es ici » et le tient à taille écran constante. */
   private updateMapMarker(map: WorldMap): void {
     const pos = getHud(this.registry, 'playerPos')
     const scale = this.mapFit * this.mapZoom
     if (pos) {
-      this.mapMarker
-        .setPosition(pos.x * TILE_PX - (map.width * TILE_PX) / 2, pos.y * TILE_PX - (map.height * TILE_PX) / 2)
-        .setVisible(true)
+      this.mapMarker.setPosition(this.mapLocalX(map, pos.x), this.mapLocalY(map, pos.y)).setVisible(true)
     } else {
       this.mapMarker.setVisible(false)
     }
     this.mapMarker.setScale(1 / scale)
+  }
+
+  /**
+   * Tient les pastilles POI à taille écran constante. Elles sont fixes sur la carte : seul le zoom
+   * les concerne, d'où le mémo — la boucle resterait sinon proportionnelle au nombre de POIs à
+   * chaque frame (aujourd'hui ~90, mais le rayon Poisson des POIs est une dette connue).
+   */
+  private updateMapPoiDots(): void {
+    const scale = this.mapFit * this.mapZoom
+    if (scale === this.mapPoiScale) return
+    this.mapPoiScale = scale
+    for (const dot of this.mapPoiDots) dot.setScale(1 / scale)
   }
 
   override update(): void {
@@ -383,6 +421,7 @@ export class UIScene extends Phaser.Scene {
       if (mapOpen && mapData) {
         if (!this.mapWasOpen) this.resetMapView() // vue neuve à chaque ouverture
         this.updateMapMarker(mapData)
+        this.updateMapPoiDots()
       }
       this.mapWasOpen = mapOpen
     }
