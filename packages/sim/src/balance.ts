@@ -542,3 +542,18 @@ export const NPC_AI = {
 
 /** Durée d'un tick en secondes — le seul dt qui existe dans /sim. */
 export const TICK_DT_S = 1 / BALANCE.TICK_RATE_HZ
+
+/**
+ * Terrassement du relief (spec 2026-07-09-relief-terrasses).
+ * Calibré à l'œil sur captures en jeu, jamais sur une théorie.
+ */
+export const TERRACE = {
+  /** Nombre de paliers sur l'amplitude d'altitude [0,1]. */
+  LEVELS: 8,
+  /** Rayon (en tuiles) de la moyenne locale. Décide de tout : quantifier le
+   *  champ brut, qui porte crêtes et bruit de détail, donnerait des
+   *  micro-terrasses déchiquetées sur chaque bosse. */
+  SMOOTH_RADIUS: 6,
+  /** Nombre de passes de lissage (deux passes ≈ une gaussienne). */
+  SMOOTH_PASSES: 2,
+} as const
