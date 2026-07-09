@@ -161,6 +161,10 @@ déjà positionnelles.
 > Le **streaming devient GO** seulement si le design bascule vers un monde **non borné / infini** —
 > ce que le GDD ne demande pas.
 
+Noter ce que la formule **ne** contient **pas** : le **nombre de joueurs**. C'est délibéré — en résident,
+N joueurs partagent **un seul** monde en RAM. Le coût par joueur ne vit pas dans le stockage mais sur le
+**fil** (snapshot) et au **join** : voir la section suivante.
+
 Ce qui casserait en premier si l'on poussait quand même, **dans l'ordre** :
 1. **CPU par tick** (balayages O(entités) : `economy.ts:223`, filtres de cadavres) — réglé par la
    résolution paresseuse + index spatial. **Pas** par le streaming.
@@ -170,6 +174,65 @@ Ce qui casserait en premier si l'on poussait quand même, **dans l'ordre** :
 
 Aucun de ces quatre n'est résolu par le stockage chunké. Trois sur quatre sont aggravés par lui
 (complexité).
+
+## Multijoueur & taille de carte — ni l'un ni l'autre ne flippe le verdict
+
+*(Section ajoutée après coup : la première version du doc raisonnait sur l'état du monde, pas sur le
+coût par joueur. C'était un angle mort.)*
+
+### Le multijoueur **renforce** le NO-GO
+
+Contre-intuitif mais mécanique : en résident, **N joueurs partagent UN monde** de ~150 Mo. En streamé,
+chacun traîne son anneau de chunks. Dix joueurs dispersés, anneau de 3 chunks de 64 tuiles ≈ 147k tuiles
+chacun → ~1,5 M tuiles chargées sur 8,6 M. On économiserait **~120 Mo** au prix de ré-architecturer
+`SimState`, le snapshot, le pathfinding et la persistance. Et **plus les joueurs se dispersent, plus
+l'union des anneaux tend vers la carte entière** : le streaming est à son pire précisément dans le cas
+d'usage qui le motivait.
+
+### Ce que le multi coûte vraiment : le fil, pas le stockage
+
+Le coût par joueur est **réseau**, et le code actuel ne le porte pas :
+
+```
+SnapshotMessage { entities: Entity[]; monsters: Monster[]; corpses: Corpse[] }   // protocol.ts:87-99
+sim-worker.ts:62 → entities: sim.entities        // la liste ENTIÈRE, chaque tick
+```
+
+Le snapshot envoie **tout le monde à tout le monde, 20 fois par seconde**. Parfait à 12 entités (la
+Veillée). À ~20k mobs de repaire (une fois la dette #2 corrigée) × 10 joueurs × 20 Hz : des centaines de
+Mo/s. **L'interest management sur le fil devient donc obligatoire en multi** — c'est l'option C, du
+**protocole**, pas du stockage. Le streaming ne l'offrirait pas gratuitement : il faudrait le faire pareil.
+
+L'idiome existe déjà : `ReadyMessage` possède un `NodeDelta` (`protocol.ts:82`) — les nœuds sont déjà
+diffusés en deltas après le join. Il reste à l'étendre aux entités, filtré par voisinage du joueur.
+
+### Le join : par la seed, jamais par transfert
+
+`ReadyMessage` porte aujourd'hui `nodes: ResourceNode[]` (`protocol.ts:76`) — la liste complète. À 560k
+nœuds plus le terrain, cela ferait **~100 Mo par joueur** qui se connecte. Absurde… et inutile : terrain
+et nœuds sont **dérivables de la seed** (`generateAlpineTerrain(w,h,seed)`, `generateNodes` positionnel),
+et l'**invariant #2** garantit un résultat **bit-identique entre navigateur et Node** — c'est sa raison
+d'être explicite (« un replay enregistré dans un navigateur doit rejouer exactement sur Node »).
+
+> **payload de join = seed + dimensions + deltas.** Le client régénère le reste lui-même.
+
+Cela ne viole pas « client bête » (invariant #3) : le client ne simule rien, il **dérive de la donnée
+statique** — exactement ce que fait déjà le worker solo. Conséquence : la **Voie 1** (gen 27 s → 10-15 s)
+change de statut — ces secondes deviennent le **temps de connexion de chaque joueur**.
+
+### La taille de carte : elle ne flippe rien, elle **promeut**
+
+| Axe | Effet à 8,6 M tuiles | Flippe le verdict ? |
+|---|---|---|
+| RAM | ~150 Mo (bascule à ~1-2 Go) | Non — 10× de marge |
+| balayage des nœuds | 560k × 20 Hz, hors budget de tick | Non → rend la **résolution paresseuse obligatoire** |
+| pathfinding | `findPath` / flow fields en **O(aire)** | Non → rend le **hiérarchique obligatoire** |
+| mobs dormants | ~20k (dette #2 corrigée) | Non → rend l'**index spatial obligatoire** |
+| payload de join | ~100 Mo si transmis | Non → **seed + deltas** |
+
+Le rôle de la taille est de transformer trois **optimisations** en trois **exigences**. Elle ne déplace
+pas la frontière résident/streamé : elle est **déjà la variable** de la formule de bascule. Il faudrait
+une carte **~10× plus grande** pour rouvrir la décision.
 
 ## Le vrai chantier (ce qu'on paie de toute façon)
 
@@ -182,6 +245,13 @@ Aucun de ces quatre n'est résolu par le stockage chunké. Trois sur quatre sont
 3. **Index spatial d'activation.** Réveiller les dormants par index joueurs→région, pas par balayage.
    L'idiome existe déjà (index tuile→{structure,nœud} bâti dans `findPath`).
 4. **Décantation** du loot et des cadavres — levier de gameplay, à calibrer.
+5. **Interest management sur le fil** *(multi uniquement, obligatoire)*. Le `SnapshotMessage` diffuse
+   aujourd'hui `entities`/`monsters`/`corpses` **en entier, chaque tick** (`sim-worker.ts:62`). Filtrer
+   par voisinage du joueur, et passer les entités en deltas — l'idiome `NodeDelta` (`protocol.ts:82`)
+   existe déjà pour les nœuds.
+6. **Join par la seed.** `ReadyMessage` cesse de porter `nodes: ResourceNode[]` (`protocol.ts:76`) et le
+   terrain ; il porte `seed + dimensions + deltas`, le client régénère. Autorisé par l'invariant #2
+   (déterminisme bit-identique navigateur↔Node).
 
 ## Critères d'acceptation (pour l'implémentation à venir)
 
@@ -192,6 +262,10 @@ Aucun de ces quatre n'est résolu par le stockage chunké. Trois sur quatre sont
   que soient les régions gelées).
 - **Coût par tick** indépendant du nombre de nœuds : un banc à 560k nœuds tient le budget de tick.
 - **Persistance** : recharger `seed + deltas` reproduit l'état sauvé, bit pour bit.
+- **Coût de snapshot par joueur** borné par son voisinage, **indépendant** du nombre total d'entités :
+  un banc à 20k mobs × 10 joueurs tient la bande passante.
+- **Join** : un client qui reçoit `seed + dimensions + deltas` régénère un monde **bit-identique** à
+  celui de l'hôte (contrat déjà couvert par `replay.test.ts` — même seed ⇒ même état sur les deux moteurs).
 
 ## Réversibilité (« design-for-later »)
 
