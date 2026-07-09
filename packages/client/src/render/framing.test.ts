@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACTOR_DEPTH_BASE,
   actorPlacement,
+  AMBIENT_DEPTH,
+  CANOPY_DEPTH,
+  clutterDepth,
+  corpseDepth,
+  GROUND_FIRE_DEPTH,
   lookaheadOffset,
+  nodeDepth,
+  OVERLAY_DEPTH,
   structureDepth,
+  TIE_ACTOR,
+  Y_SORT_BASE,
+  ySortDepth,
   zoomForFraming,
 } from './framing'
 
@@ -55,7 +64,7 @@ describe('actorPlacement (R12 + R13)', () => {
     expect(p.py).toBeCloseTo(10.3 * TILE, 5) // pieds
     expect(p.displayW).toBeCloseTo(16, 5) // 1 tuile — indépendant du 12×12 natif
     expect(p.displayH).toBeCloseTo(25.6, 5) // 1,6 tuile : le sprite « monte »
-    expect(p.depth).toBeCloseTo(ACTOR_DEPTH_BASE + 10.3, 5)
+    expect(p.depth).toBeCloseTo(ySortDepth(10.3, TILE, TIE_ACTOR), 5)
   })
   it('la taille d’affichage ne dépend QUE de l’emprise et de tilePx (A9)', () => {
     const a = actorPlacement(0, 0, { widthTiles: 2, heightTiles: 2 }, 32, 0.6)
@@ -69,13 +78,62 @@ describe('actorPlacement (R12 + R13)', () => {
   })
 })
 
+const actorAt = (y: number): number => actorPlacement(0, y, { widthTiles: 1, heightTiles: 1.6 }, TILE, 0.6).depth
+
 describe('structureDepth (R13)', () => {
   it('trie une structure par son bord bas, dans la même couche que les acteurs', () => {
-    expect(structureDepth(9)).toBeCloseTo(ACTOR_DEPTH_BASE + 10, 5) // pieds = ty+1
+    expect(structureDepth(9, TILE)).toBeCloseTo(Y_SORT_BASE + 10 * TILE + 0.6, 5) // pieds = ty+1
   })
-  it('un acteur au nom d’une structure (feetY < ty+1) passe DERRIÈRE elle', () => {
-    const wallDepth = structureDepth(9) // pieds à y=10
-    const actorNord = actorPlacement(0, 9, { widthTiles: 1, heightTiles: 1.6 }, TILE, 0.6) // feetY=9.3
-    expect(actorNord.depth).toBeLessThan(wallDepth) // dessous → occulté
+  it('un acteur au nord d’une structure (feetY < ty+1) passe DERRIÈRE elle', () => {
+    const wallDepth = structureDepth(9, TILE) // pieds à y=10
+    expect(actorAt(9)).toBeLessThan(wallDepth) // feetY=9.3 → dessous → occulté
+  })
+  it('un acteur au sud d’une structure passe DEVANT elle', () => {
+    expect(actorAt(10)).toBeGreaterThan(structureDepth(9, TILE)) // feetY=10.3
+  })
+})
+
+describe('les props verticaux trient avec les acteurs', () => {
+  it('un arbre au SUD du joueur le masque (le bug : les nœuds étaient à plat)', () => {
+    // Arbre sur la tuile 10 → pieds à y=11. Joueur sur la tuile 9 → feetY=9.8.
+    expect(nodeDepth(10, TILE)).toBeGreaterThan(actorAt(9.5))
+  })
+  it('un arbre au NORD du joueur est masqué par lui', () => {
+    expect(nodeDepth(10, TILE)).toBeLessThan(actorAt(11.5))
+  })
+  it('un conifère du décor trie lui aussi avec les acteurs', () => {
+    expect(clutterDepth(12, TILE)).toBeGreaterThan(actorAt(9.5))
+    expect(clutterDepth(8, TILE)).toBeLessThan(actorAt(9.5))
+  })
+  it('le décor trie sur ses pieds RÉELS, décalage sub-tuile compris', () => {
+    // Deux props de la rangée ty=5 : celui posé plus bas dans la tuile passe devant.
+    expect(clutterDepth(6 + 0.3, TILE)).toBeGreaterThan(clutterDepth(6 - 0.3, TILE))
+  })
+})
+
+describe('départage à pieds ÉGAUX (constantes TIE_*)', () => {
+  it('décor < nœud < structure < acteur', () => {
+    const feet = 10
+    expect(clutterDepth(feet, TILE)).toBeLessThan(nodeDepth(feet - 1, TILE))
+    expect(nodeDepth(feet - 1, TILE)).toBeLessThan(structureDepth(feet - 1, TILE))
+    expect(structureDepth(feet - 1, TILE)).toBeLessThan(actorAt(feet - 0.3))
+    expect(corpseDepth(feet, TILE)).toBeLessThan(clutterDepth(feet, TILE))
+  })
+  it('un départage ne renverse JAMAIS un écart de profondeur réel (< 1 px monde)', () => {
+    // Un acteur (tie le plus fort) reste derrière un décor d'un pixel plus bas.
+    expect(actorAt(10 - 0.3)).toBeLessThan(clutterDepth(10 + 1 / TILE, TILE))
+  })
+})
+
+describe('budget des profondeurs', () => {
+  it('le sol plat reste sous la bande de tri', () => {
+    expect(GROUND_FIRE_DEPTH).toBeLessThan(Y_SORT_BASE)
+  })
+  it('la vallée canonique (3600 tuiles) ne perce pas la canopée ni la nuit', () => {
+    // Le bug latent : depth = BASE + y suffisait pour 192 tuiles, pas pour 3600.
+    const leBasDeLaCarte = actorAt(3600)
+    expect(leBasDeLaCarte).toBeLessThan(CANOPY_DEPTH)
+    expect(leBasDeLaCarte).toBeLessThan(AMBIENT_DEPTH)
+    expect(leBasDeLaCarte).toBeLessThan(OVERLAY_DEPTH)
   })
 })

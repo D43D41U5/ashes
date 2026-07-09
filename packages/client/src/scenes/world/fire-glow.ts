@@ -7,11 +7,8 @@
 import Phaser from 'phaser'
 import type { Structure } from '@braises/sim'
 import { fireGlow } from '../../render/lighting'
-import { TILE_PX } from '../../render/framing'
+import { GLOW_DEPTH, TILE_PX } from '../../render/framing'
 import type { SnapshotMessage } from '../../protocol'
-
-/** Au-dessus de la couche d'ambiance (AMBIENT_DEPTH=2100) → le halo perce la nuit. */
-const GLOW_DEPTH = 2200
 
 export class FireGlow {
   private sprites = new Map<number, Phaser.GameObjects.Image>()

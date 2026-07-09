@@ -6,11 +6,13 @@
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
-import { TILE_PX } from '../../render/framing'
-import { clutterAt, type SampleTerrain } from '../../render/clutter'
+import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
+import { clutterAt, type PropKind, type SampleTerrain } from '../../render/clutter'
 
 const CLUTTER_MIN_ZOOM = 1.2 // en-deçà, on coupe le décor (props illisibles) : le canopy prend le relais
-const CLUTTER_DEPTH_BASE = 2 // sous les cadavres (3)/nœuds (4) → les vrais nœuds ressortent (INV-2)
+/** Props RAMPANTS : des textures de sol, sans hauteur. Ils restent sous la bande
+ * de tri — un caillou ne doit pas recouvrir les pieds de qui passe au nord. */
+const FLAT_PROPS = new Set<PropKind>(['pebbles', 'lichen', 'sphagnum'])
 const CLUTTER_TINT = 0xbfc4bd // léger assombrissement/désaturation (INV-2)
 const MARGIN_TILES = 2 // marge de culling pour éviter le pop en bordure d'écran
 const MAX_SPRITES = 4000 // borne dure de perf (cap silencieux : on log si dépassé)
@@ -46,12 +48,17 @@ export class ClutterLayer {
           for (const p of props) {
             if (used >= MAX_SPRITES) break
             const sprite = this.acquire(used++)
+            const feetY = ty + 1 + p.oy
             sprite.setTexture(`cl-${p.kind}`)
-            sprite.setPosition((tx + 0.5 + p.ox) * TILE_PX, (ty + 1 + p.oy) * TILE_PX)
+            sprite.setPosition((tx + 0.5 + p.ox) * TILE_PX, feetY * TILE_PX)
             sprite.setDisplaySize(TILE_PX * p.scale, TILE_PX * p.scale)
             sprite.setFlipX(p.mirror)
-            // Y-sort interne au décor, borné à [BASE, BASE+1) → toujours sous les nœuds.
-            sprite.setDepth(CLUTTER_DEPTH_BASE + ty / this.map.height)
+            // Un conifère trie avec les acteurs — on passe derrière, puis devant.
+            // Le tri se fait sur les pieds RÉELS : deux props d'une même rangée
+            // s'ordonnent par leur décalage sub-tuile, pas par l'ordre du pool.
+            // (INV-2 : ce qui distingue le décor des nœuds est la teinte, pas la
+            // couche ; à pieds égaux le nœud passe devant.)
+            sprite.setDepth(FLAT_PROPS.has(p.kind) ? GROUND_PROP_DEPTH : clutterDepth(feetY, TILE_PX))
             sprite.setVisible(true)
           }
         }

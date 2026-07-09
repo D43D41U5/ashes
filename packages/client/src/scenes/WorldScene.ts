@@ -32,7 +32,15 @@ import Phaser from 'phaser'
 import { createWorkerHost, type HostConnection } from '../host-connection'
 import { setHud } from '../hud-state'
 import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type ReadyMessage, type SnapshotMessage } from '../protocol'
-import { lookaheadOffset, OVERLAY_DEPTH, TILE_PX, zoomForFraming } from '../render/framing'
+import {
+  AMBIENT_DEPTH,
+  CANOPY_DEPTH,
+  GROUND_MAP_DEPTH,
+  lookaheadOffset,
+  OVERLAY_DEPTH,
+  TILE_PX,
+  zoomForFraming,
+} from '../render/framing'
 import { ambientTint, canopyDensity, canopyStrength, daylight, sampleCanopyCoverage } from '../render/lighting'
 import {
   publishAlarm,
@@ -67,10 +75,6 @@ const RENDER_OFFSET_DECAY = 0.85
  * persistance.
  */
 const EVENT_LOG_CAP = 500
-
-/** Profondeurs des couches de lumière (au-dessus des sprites ~1000-1200, sous le ghost à OVERLAY_DEPTH). */
-const CANOPY_DEPTH = 2000
-const AMBIENT_DEPTH = 2100
 
 /**
  * Atténuation de la canopée MONDE : l'immersion du sous-bois est portée par le
@@ -242,7 +246,7 @@ export class WorldScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setScrollFactor(0)
-      .setDepth(10000)
+      .setDepth(OVERLAY_DEPTH)
   }
 
   /** Le monde arrive de l'hôte : carte, calendrier, spawn (décisions d'hôte). */
@@ -260,7 +264,7 @@ export class WorldScene extends Phaser.Scene {
     // WebGL même pour une grande carte) puis étiré à la taille monde : les tuiles
     // étant des aplats, l'étirement NEAREST est pixel-identique au bake 16 px/tuile.
     this.bakeMapTexture()
-    this.add.image(0, 0, 'map-demo').setOrigin(0).setDepth(-1).setDisplaySize(worldW, worldH)
+    this.add.image(0, 0, 'map-demo').setOrigin(0).setDepth(GROUND_MAP_DEPTH).setDisplaySize(worldW, worldH)
     this.bakeCanopyTexture()
     this.canopyImage = this.add.image(0, 0, 'canopy').setOrigin(0).setDepth(CANOPY_DEPTH).setDisplaySize(worldW, worldH)
     this.worldSeed = msg.seed

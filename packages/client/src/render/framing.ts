@@ -12,14 +12,57 @@
  * reste du client importe cette constante plutôt que de la redéclarer. */
 export const TILE_PX = 16
 
-/** Toutes les entités « hautes » (acteurs + structures verticales) trient leur
- * profondeur au-dessus de cette base, laissant le sol/les nœuds/les cadavres
- * dessous. La valeur exacte importe peu : elle doit juste dominer les depths
- * fixes du sol (≤ 5) et laisser de la marge pour `base + y`. */
-export const ACTOR_DEPTH_BASE = 1000
+/* ── Budget des profondeurs de la scène monde ────────────────────────────────
+ *
+ * UNE seule échelle de tri pour tout ce qui a des « pieds » : acteurs, nœuds,
+ * structures, décor, cadavres. L'unité de depth est le PIXEL MONDE — un sprite
+ * dont les pieds sont un pixel plus bas passe devant. Sans quoi une catégorie
+ * triée sur sa propre échelle (nœuds à 4, décor à [2,3)) ne peut jamais passer
+ * devant une autre, et le joueur marche sur les arbres.
+ *
+ * Seul reste hors bande ce qui n'a pas de pieds : le sol, les props rampants,
+ * le foyer d'un Feu. Et les couches qui coiffent le monde entier, placées TRÈS
+ * au-dessus : la bande monte avec la hauteur de la carte (3600 tuiles × 16 px
+ * ≈ 57 600 sur la vallée canonique), pas avec un plafond de quelques milliers.
+ */
 
-/** Au-dessus de tout : aperçu de construction, marqueurs d'objectif. */
-export const OVERLAY_DEPTH = 100000
+/** Sol plat, jamais trié. */
+export const GROUND_MAP_DEPTH = -1
+export const GROUND_PROP_DEPTH = 2
+export const GROUND_FIRE_DEPTH = 5
+
+/** Base de la bande de tri Y. */
+export const Y_SORT_BASE = 1000
+
+/** Départage à pixel de pieds ÉGAL. Dans [0,1) : jamais assez pour renverser un
+ * écart de profondeur réel, puisqu'une unité de depth vaut un pixel monde. */
+export const TIE_CORPSE = 0
+export const TIE_CLUTTER = 0.2
+export const TIE_NODE = 0.4
+export const TIE_STRUCTURE = 0.6
+export const TIE_ACTOR = 0.8
+
+/** Coiffent le monde : canopée, voile de nuit, halos des Feux. */
+export const CANOPY_DEPTH = 1_000_000
+export const AMBIENT_DEPTH = 1_100_000
+export const GLOW_DEPTH = 1_200_000
+
+/** Au-dessus de tout : aperçu de construction, marqueurs d'objectif, chargement. */
+export const OVERLAY_DEPTH = 10_000_000
+
+/**
+ * R13 — profondeur de tri d'un sprite dont les pieds sont à `feetY` (en tuiles).
+ * `tie` départage les égalités exactes (cf. constantes TIE_*).
+ */
+export function ySortDepth(feetY: number, tilePx: number, tie: number): number {
+  return Y_SORT_BASE + feetY * tilePx + tie
+}
+
+/** Ancre PIEDS d'un sprite d'une tuile (origine 0.5/1) : bas-centre de la tuile.
+ * Un art plus haut que sa tuile « monte » alors sans décaler son tri. */
+export function tileFeetAnchor(tx: number, ty: number, tilePx: number): { px: number; py: number } {
+  return { px: (tx + 0.5) * tilePx, py: (ty + 1) * tilePx }
+}
 
 /** R10 — zoom dérivé du cadrage voulu (« je veux voir N tuiles de haut »). */
 export function zoomForFraming(visibleTilesTall: number, tilePx: number, viewportHeight: number): number {
@@ -92,13 +135,29 @@ export function actorPlacement(
     py: feetY * tilePx,
     displayW: footprint.widthTiles * tilePx,
     displayH: footprint.heightTiles * tilePx,
-    depth: ACTOR_DEPTH_BASE + feetY,
+    depth: ySortDepth(feetY, tilePx, TIE_ACTOR),
   }
 }
 
-/** R13 — profondeur Y-sort d'une structure 1-tuile (origine coin haut-gauche à
- * `ty`) : ses pieds sont son bord bas `ty + 1`, dans la même couche que les
- * acteurs → un acteur au nord passe derrière, au sud devant. */
-export function structureDepth(ty: number): number {
-  return ACTOR_DEPTH_BASE + (ty + 1)
+/** R13 — une structure 1-tuile a ses pieds sur son bord bas `ty + 1` : un acteur
+ * au nord passe derrière, au sud devant. */
+export function structureDepth(ty: number, tilePx: number): number {
+  return ySortDepth(ty + 1, tilePx, TIE_STRUCTURE)
+}
+
+/** Un nœud (arbre, bloc, buisson) est un prop VERTICAL : il trie comme une
+ * structure. À pieds égaux il passe devant le décor, jamais devant un acteur. */
+export function nodeDepth(ty: number, tilePx: number): number {
+  return ySortDepth(ty + 1, tilePx, TIE_NODE)
+}
+
+/** Un cadavre est à plat : ses « pieds » sont sa propre position. */
+export function corpseDepth(y: number, tilePx: number): number {
+  return ySortDepth(y, tilePx, TIE_CORPSE)
+}
+
+/** Le décor trie sur ses pieds RÉELS (décalage sub-tuile compris), sans quoi
+ * deux props d'une même rangée s'ordonnent au hasard du pool. */
+export function clutterDepth(feetY: number, tilePx: number): number {
+  return ySortDepth(feetY, tilePx, TIE_CLUTTER)
 }

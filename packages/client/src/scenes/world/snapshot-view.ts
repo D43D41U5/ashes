@@ -17,7 +17,16 @@ import {
 } from '@braises/sim'
 import Phaser from 'phaser'
 import type { NodeDelta, SnapshotMessage } from '../../protocol'
-import { actorPlacement, structureDepth, TILE_PX, type ActorFootprint } from '../../render/framing'
+import {
+  actorPlacement,
+  corpseDepth,
+  GROUND_FIRE_DEPTH,
+  nodeDepth,
+  structureDepth,
+  tileFeetAnchor,
+  TILE_PX,
+  type ActorFootprint,
+} from '../../render/framing'
 import { warmthColor } from '../../render/lighting'
 
 /** Interpolation des autres entités : vers le dernier snapshot, sur un tick (R4). */
@@ -166,10 +175,14 @@ export class SnapshotView {
       seen.add(s.id)
       let sprite = this.structureSprites.get(s.id)
       if (!sprite) {
+        // Ancrage PIEDS : un toit de maison plus haut que sa tuile montera sans
+        // décaler son tri ni son emprise logique. Le Feu, lui, est un foyer à
+        // plat — il reste sous la bande, on marche autour, jamais derrière.
+        const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
         sprite = this.scene.add
-          .image(s.tx * TILE_PX, s.ty * TILE_PX, `st-${s.type}`)
-          .setOrigin(0)
-          .setDepth(s.type === 'fire' ? 5 : structureDepth(s.ty))
+          .image(a.px, a.py, `st-${s.type}`)
+          .setOrigin(0.5, 1)
+          .setDepth(s.type === 'fire' ? GROUND_FIRE_DEPTH : structureDepth(s.ty, TILE_PX))
         this.structureSprites.set(s.id, sprite)
       }
       if (s.type === 'fire') {
@@ -226,10 +239,14 @@ export class SnapshotView {
         if (n === undefined) continue
         let sprite = this.nodePool[used]
         if (!sprite) {
-          sprite = this.scene.add.image(0, 0, `nd-${n.type}`).setOrigin(0).setDepth(4)
+          sprite = this.scene.add.image(0, 0, `nd-${n.type}`).setOrigin(0.5, 1)
           this.nodePool[used] = sprite
         }
-        sprite.setPosition(tx * TILE_PX, ty * TILE_PX)
+        const a = tileFeetAnchor(tx, ty, TILE_PX)
+        sprite.setPosition(a.px, a.py)
+        // Le sprite est POOLÉ : sa depth suit la tuile qu'il occupe cette frame,
+        // jamais celle où il a été créé.
+        sprite.setDepth(nodeDepth(ty, TILE_PX))
         sprite.setTexture(`nd-${n.type}`)
         sprite.setAlpha(n.stock > 0 ? 1 : 0.25)
         sprite.setVisible(true)
@@ -245,7 +262,12 @@ export class SnapshotView {
     for (const c of corpses) {
       seen.add(c.id)
       if (!this.corpseSprites.has(c.id)) {
-        const sprite = this.scene.add.image(c.x * TILE_PX, c.y * TILE_PX, 'spr-corpse').setDepth(3)
+        // Ossements à plat : centrés sur la position de l'entité (pas d'ancrage
+        // pieds), mais dans la bande de tri — un buisson au sud les recouvre.
+        const sprite = this.scene.add
+          .image(c.x * TILE_PX, c.y * TILE_PX, 'spr-corpse')
+          .setOrigin(0.5, 0.5)
+          .setDepth(corpseDepth(c.y, TILE_PX))
         this.corpseSprites.set(c.id, sprite)
       }
     }
