@@ -11,7 +11,7 @@
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
-import { cliffAt, cliffPlacement, MAX_DROP, STEP_PX } from '../../render/cliffs'
+import { cliffPiecesAt, cliffPlacement, MAX_DROP, STEP_PX } from '../../render/cliffs'
 import type { SampleLevel } from '../../render/hillshade'
 import { TILE_PX } from '../../render/framing'
 
@@ -43,15 +43,17 @@ export class CliffLayer {
     const y1 = Math.min(this.map.height - 1, Math.ceil((v.y + v.height) / TILE_PX) + MARGIN_TILES)
     for (let ty = y0; ty <= y1 && used < MAX_SPRITES; ty++) {
       for (let tx = x0; tx <= x1 && used < MAX_SPRITES; tx++) {
-        const face = cliffAt(tx, ty, this.sample)
-        if (!face) continue
-        const p = cliffPlacement(face, TILE_PX)
-        const sprite = this.acquire(used++)
-        sprite.setTexture(`cliff-${p.drop}`)
-        sprite.setPosition(p.px, p.py)
-        sprite.setDisplaySize(p.displayW, p.displayH)
-        sprite.setDepth(p.depth)
-        sprite.setVisible(true)
+        // Une tuile basse peut porter jusqu'à trois pièces (coin intérieur).
+        for (const piece of cliffPiecesAt(tx, ty, this.sample)) {
+          if (used >= MAX_SPRITES) break
+          const p = cliffPlacement(piece, TILE_PX)
+          const sprite = this.acquire(used++)
+          sprite.setTexture(p.texture)
+          sprite.setPosition(p.px, p.py)
+          sprite.setDisplaySize(p.displayW, p.displayH)
+          sprite.setDepth(p.depth)
+          sprite.setVisible(true)
+        }
       }
     }
     if (used >= MAX_SPRITES && !this.warned) {
@@ -64,7 +66,7 @@ export class CliffLayer {
   private acquire(i: number): Phaser.GameObjects.Image {
     let sprite = this.pool[i]
     if (!sprite) {
-      sprite = this.scene.add.image(0, 0, 'cliff-1').setOrigin(0.5, 1)
+      sprite = this.scene.add.image(0, 0, 'cliff-face-1').setOrigin(0.5, 1)
       this.pool[i] = sprite
     }
     return sprite

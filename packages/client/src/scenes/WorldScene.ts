@@ -53,7 +53,7 @@ import {
 } from './world/hud-bridge'
 import { CliffLayer } from './world/cliff-layer'
 import { ClutterLayer } from './world/clutter-layer'
-import { faceHeightPx, MAX_DROP } from '../render/cliffs'
+import { faceHeightPx, MAX_DROP, SIDE_PX } from '../render/cliffs'
 import { FireGlow } from './world/fire-glow'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
@@ -536,17 +536,31 @@ export class WorldScene extends Phaser.Scene {
   private bakeCliffTextures(): void {
     const ROCK = 0x6e6a66
     for (let drop = 1; drop <= MAX_DROP; drop++) {
-      const key = `cliff-${drop}`
-      if (this.textures.exists(key)) continue
-      const h = faceHeightPx(drop)
+      const faceKey = `cliff-face-${drop}`
+      if (!this.textures.exists(faceKey)) {
+        const h = faceHeightPx(drop)
+        const g = this.add.graphics()
+        g.fillStyle(shade(ROCK, 0.72))
+        g.fillRect(0, 0, TILE_PX, h) // corps de la paroi
+        g.fillStyle(shade(ROCK, 1.15))
+        g.fillRect(0, 0, TILE_PX, 2) // arête claire (l'herbe du plateau accroche la lumière)
+        g.fillStyle(shade(ROCK, 0.45))
+        g.fillRect(0, h - 3, TILE_PX, 3) // base assombrie (ombre portée au pied)
+        g.generateTexture(faceKey, TILE_PX, h)
+        g.destroy()
+      }
+      // La TRANCHE : la paroi vue de profil, un liseré contre le bord amont de la
+      // tuile basse. Elle court sur toute la hauteur de tuile, sans quoi le mur se
+      // rompt à chaque marche d'un contour diagonal. Symétrique — l'est et l'ouest
+      // partagent la texture, seule la position change.
+      const sideKey = `cliff-side-${drop}`
+      if (this.textures.exists(sideKey)) continue
       const g = this.add.graphics()
-      g.fillStyle(shade(ROCK, 0.72))
-      g.fillRect(0, 0, TILE_PX, h) // corps de la paroi
-      g.fillStyle(shade(ROCK, 1.15))
-      g.fillRect(0, 0, TILE_PX, 2) // arête claire (l'herbe du plateau accroche la lumière)
-      g.fillStyle(shade(ROCK, 0.45))
-      g.fillRect(0, h - 3, TILE_PX, 3) // base assombrie (ombre portée au pied)
-      g.generateTexture(key, TILE_PX, h)
+      g.fillStyle(shade(ROCK, 0.62)) // plus sombre que la face : elle ne prend pas le jour
+      g.fillRect(0, 0, SIDE_PX, TILE_PX)
+      g.fillStyle(shade(ROCK, 1.05))
+      g.fillRect(0, 0, SIDE_PX, 1) // liseré haut : l'arête du plateau
+      g.generateTexture(sideKey, SIDE_PX, TILE_PX)
       g.destroy()
     }
   }
