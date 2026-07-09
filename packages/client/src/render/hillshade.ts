@@ -21,7 +21,7 @@ export type SampleLevel = (tx: number, ty: number) => number
 /** Écart d'échantillonnage du gradient, en tuiles. Large = lit la pente MACRO du
  *  versant plutôt que chaque bosse — un lissage du pauvre, gratuit. */
 export const HILLSHADE_STEP = 3
-export const HILLSHADE_STRENGTH = 4
+export const HILLSHADE_STRENGTH = 8
 export const HILLSHADE_MIN = 0.55
 export const HILLSHADE_MAX = 1.45
 /** Assombrissement de la tuile basse au pied d'une marche est/ouest/nord. */

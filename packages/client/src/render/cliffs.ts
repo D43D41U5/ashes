@@ -18,7 +18,7 @@ import { TIE_CLIFF, TILE_PX, ySortDepth } from './framing'
 import type { SampleLevel } from './hillshade'
 
 /** Hauteur à l'écran d'une paroi d'UN palier, en px. Réglage visuel. */
-export const STEP_PX = 10
+export const STEP_PX = 12
 /** Décrochement maximal doté d'un art cuit. Au-delà, la paroi est plafonnée. */
 export const MAX_DROP = 6
 
