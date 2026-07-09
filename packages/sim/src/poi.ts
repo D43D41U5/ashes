@@ -80,10 +80,32 @@ function candidatesFor(map: WorldMap, tx: number, ty: number, used: Map<string, 
   )
 }
 
+/**
+ * Mélange Fisher-Yates déterministe (pur : hash2, pas de Math.random).
+ *
+ * Indispensable ici : `poissonPoints` renvoie ses points dans l'ORDRE D'ACCEPTATION,
+ * c'est-à-dire une vague de croissance partant de `pts[0]`. Comme `placePois` consomme
+ * des plafonds durs au fil de l'itération, les points proches de `pts[0]` épuisaient les
+ * quotas et les points atteints tard restaient sans POI — un gradient de densité orienté
+ * vers `pts[0]` (mesuré : 54 POIs au nord contre 31 au sud sur la seed 2026). Les positions
+ * du semis, elles, n'ont jamais été biaisées ; seul leur ordre l'était.
+ */
+function shuffled<T>(items: readonly T[], seed: number): T[] {
+  const out = items.slice()
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.min(i, Math.floor(hash2(i, seed, 0x53484655) * (i + 1))) // salt 'SHFU'
+    const tmp = out[i]!
+    out[i] = out[j]!
+    out[j] = tmp
+  }
+  return out
+}
+
 /** Pose les POIs comme Zones nommées dans map.zones (pur, déterministe). */
 export function placePois(map: WorldMap, seed: number): void {
   const radius = POI_PLACEMENT.SPACING_FRAC * Math.min(map.width, map.height)
-  const pts = poissonPoints(map.width, map.height, seed, radius)
+  // Mélangé : les plafonds doivent se consommer dans un ordre SPATIALEMENT NEUTRE (cf. `shuffled`).
+  const pts = shuffled(poissonPoints(map.width, map.height, seed, radius), seed)
   const used = new Map<string, number>()
   for (const p of pts) {
     const tx = Math.floor(p.x)

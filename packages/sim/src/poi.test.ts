@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { generateAlpineTerrain } from './alpinegen'
 import { POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
 import { terrainAt, createEmptyMap } from './map'
+import { poissonPoints } from './poisson'
 import { TERRAINS } from './balance'
 import { createSim } from './sim'
 import { POI_FAMILY_RGB } from './vignette'
@@ -69,6 +70,42 @@ describe('POIs dans la carte alpine', () => {
     for (let i = 0; i < c.length; i++) for (let j = i + 1; j < c.length; j++) {
       const dx = c[i]!.x - c[j]!.x, dy = c[i]!.y - c[j]!.y
       expect(Math.sqrt(dx * dx + dy * dy)).toBeGreaterThanOrEqual(radius - 1.5) // ±1 tuile (floor)
+    }
+  })
+
+  /**
+   * Non-régression : les POIs ne doivent pas s'agglutiner autour de `pts[0]` du semis.
+   *
+   * `poissonPoints` renvoie ses points dans l'ordre d'acceptation — une vague de croissance
+   * partant de `pts[0]`. `placePois` consommant des plafonds durs au fil de l'itération, les
+   * points proches de `pts[0]` raflaient les quotas : gradient de densité (ratio près/loin
+   * mesuré à 1,31–2,50 selon la seed ; 54 POIs au nord contre 31 au sud sur la seed du jeu).
+   * Corrigé par un mélange déterministe des points avant assignation.
+   *
+   * On mesure près/loin RELATIVEMENT à `pts[0]` (et non nord/sud) : le biais pointait vers
+   * `pts[0]`, dont la position dépend de la seed — un test nord/sud ne l'aurait pas capté
+   * pour toutes les seeds. Seuil 1,30 : sous le minimum d'avant-fix (1,31), au-dessus du
+   * maximum d'après-fix (1,20).
+   */
+  it("les POIs ne se concentrent pas autour du premier point du semis", () => {
+    const W = 240, H = 360
+    for (const seed of [2026, 99, 2718, 31415]) {
+      const radius = POI_PLACEMENT.SPACING_FRAC * Math.min(W, H)
+      const pts = poissonPoints(W, H, seed, radius)
+      const p0 = pts[0]!
+      const d2 = (x: number, y: number): number => (x - p0.x) * (x - p0.x) + (y - p0.y) * (y - p0.y)
+      // Médiane des distances du SEMIS : partage les points en deux moitiés équipotentes.
+      const median = pts.map((p) => d2(p.x, p.y)).sort((a, b) => a - b)[Math.floor(pts.length / 2)]!
+
+      const pois = generateAlpineTerrain(W, H, seed).zones.filter((z) => z.kind !== undefined)
+      let near = 0, far = 0
+      for (const z of pois) {
+        if (d2(z.x + z.w / 2, z.y + z.h / 2) <= median) near++
+        else far++
+      }
+
+      expect(far).toBeGreaterThan(0)
+      expect(near / far).toBeLessThan(1.3)
     }
   })
 })
