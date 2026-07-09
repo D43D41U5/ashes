@@ -42,6 +42,7 @@ import {
   zoomForFraming,
 } from '../render/framing'
 import { ambientTint, canopyDensity, canopyStrength, daylight, sampleCanopyCoverage } from '../render/lighting'
+import { hillshadeAt, stepShadeAt, type SampleElevation, type SampleLevel } from '../render/hillshade'
 import {
   publishAlarm,
   publishChronicle,
@@ -478,17 +479,33 @@ export class WorldScene extends Phaser.Scene {
     this.send({ type: 'action', action })
   }
 
-  /** Bake la carte statique en une texture (R8) — API generateTexture éprouvée dans Manif. */
+  /** Bake la carte statique en une texture (R8) — API generateTexture éprouvée dans Manif.
+   *  La couleur d'une tuile = biome × grain (bruit par tuile) × relief (pente + marches).
+   *  Le facteur reste CONSTANT PAR TUILE : c'est ce qui autorise le bake à 1 px/tuile. */
   private bakeMapTexture(): void {
+    const { width, height } = this.map
+    // Échantillonneur d'altitude CLAMPÉ aux bords : le gradient au bord ne doit
+    // jamais lire hors carte (ça créerait un liseré sombre sur l'anneau).
+    const sampleElev: SampleElevation = (tx, ty) => {
+      const cx = tx < 0 ? 0 : tx >= width ? width - 1 : tx
+      const cy = ty < 0 ? 0 : ty >= height ? height - 1 : ty
+      return this.map.elevation?.[cy * width + cx] ?? 0
+    }
+    const sampleLevel: SampleLevel = (tx, ty) => {
+      if (tx < 0 || ty < 0 || tx >= width || ty >= height) return -1
+      return this.map.level?.[ty * width + tx] ?? -1
+    }
     const g = this.add.graphics()
-    for (let ty = 0; ty < this.map.height; ty++) {
-      for (let tx = 0; tx < this.map.width; tx++) {
-        const base = TERRAIN_COLORS[this.map.terrain[ty * this.map.width + tx] ?? 0] ?? 0xff00ff
-        g.fillStyle(shade(base, 0.92 + 0.16 * hash2(tx, ty)))
+    for (let ty = 0; ty < height; ty++) {
+      for (let tx = 0; tx < width; tx++) {
+        const base = TERRAIN_COLORS[this.map.terrain[ty * width + tx] ?? 0] ?? 0xff00ff
+        const grain = 0.92 + 0.16 * hash2(tx, ty)
+        const relief = hillshadeAt(tx, ty, sampleElev) * stepShadeAt(tx, ty, sampleLevel)
+        g.fillStyle(shade(base, grain * relief))
         g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
       }
     }
-    g.generateTexture('map-demo', this.map.width, this.map.height)
+    g.generateTexture('map-demo', width, height)
     g.destroy()
   }
 
