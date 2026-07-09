@@ -9,6 +9,7 @@ import { createEmptyMap, type WorldMap } from './map'
 import { sealBorderRing } from './valleygen'
 import { carveHydrology } from './alpine-hydro'
 import { placePois } from './poi'
+import { computeLevel } from './terrace'
 import {
   TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW,
   TERRAIN_HEATH, TERRAIN_ALPINE_MEADOW, TERRAIN_PINE, TERRAIN_LARCH,
@@ -336,6 +337,10 @@ export function generateAlpineTerrain(width: number, height: number, seed: numbe
   paintScatterBiomes(map, seed) // bosquets, prés fleuris, blocs, vieille forêt, brûlis (après l'eau)
   paintAvalanches(map, seed) // couloirs d'avalanche (blocs qui dévalent)
   sealBorderRing(map) // l'anneau externe reste bloquant quoi qu'ait creusé l'eau
+  // Terrassement APRÈS l'hydro : une rivière qui franchit une frontière de
+  // palier devient une CASCADE. Terrasser avant ferait couler l'eau sur des
+  // marches et rendrait l'hydrologie folle. (spec 2026-07-09-relief-terrasses §4.1)
+  map.level = computeLevel(map.elevation, width, height)
   placePois(map, seed) // POIs APRÈS le scellage : le biome sous le centre d'un POI est le terrain FINAL
   //                      (sinon un POI validé sur du bord verrait son terrain réécrit en roche par le scellage → incohérence)
   return map
