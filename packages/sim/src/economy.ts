@@ -36,7 +36,7 @@ import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { addItems, countOf, removeItems, type ItemId, type SkillId } from './items'
 import { terrainAt, zoneAt, type WorldMap } from './map'
-import { hash2 } from './noise'
+import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
 import { actForDay, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
 import { hasAccess, type Structure } from './village'
@@ -215,6 +215,33 @@ export function advanceEconomy(state: SimState): void {
  * (déterministe) — pour borner le nombre de nœuds sur les très grandes cartes
  * (le SimState/snapshot transporte les nœuds à chaque tick). Défaut 1 = inchangé.
  */
+// --- Clustering spatial des nœuds (INV-6, spec densité-feeling 2026-07-09) ---
+// Quand la carte est sous-échantillonnée (density < 1, grandes cartes), on ne
+// garde plus les tuiles candidates UNIFORMÉMENT : un champ de bruit basse
+// fréquence les regroupe en bosquets/gisements, à budget CONSTANT — le facteur
+// `groveBoost` est de moyenne ≈ 1 sur le domaine, donc le nombre total attendu
+// de nœuds ne change pas (INV-4). Pur, exact au bit près (fbm2 : + - * / floor).
+const GROVE_MEAN_SQ = 0.19 // ≈ E[fbm2³] — calibré pour préserver le total
+interface GroveParams { scale: number; stretch: number } // scale = taille des amas (tuiles)
+const GROVE_DEFAULT: GroveParams = { scale: 20, stretch: 1 }
+// Signature de répartition par biome : grands massifs en forêt, poches serrées
+// en lande, veines allongées (stretch) dans la pierre d'éboulis/blocs.
+const GROVE_PARAMS: Partial<Record<number, GroveParams>> = {
+  [TERRAIN_FOREST]: { scale: 28, stretch: 1 },
+  [TERRAIN_OLD_GROWTH]: { scale: 28, stretch: 1 },
+  [TERRAIN_PINE]: { scale: 24, stretch: 1 },
+  [TERRAIN_LARCH]: { scale: 22, stretch: 1 },
+  [TERRAIN_HEATH]: { scale: 14, stretch: 1 },
+  [TERRAIN_SCREE]: { scale: 18, stretch: 2.5 },
+  [TERRAIN_BOULDERS]: { scale: 16, stretch: 2.2 },
+}
+function groveBoost(tx: number, ty: number, terrain: number, seed: number): number {
+  const p = GROVE_PARAMS[terrain] ?? GROVE_DEFAULT
+  // stretch > 1 → amas allongés en X (veines de pierre). fbm2 ∈ [0,1), moyenne ≈ 0.5.
+  const g = fbm2(tx / p.stretch, ty, p.scale, (seed ^ 0x6c8e9a3b) | 0)
+  return (g * g * g) / GROVE_MEAN_SQ // (g³ normalisé) : moyenne ≈ 1, contraste amas/trouées
+}
+
 export function generateNodes(map: WorldMap, seed: number, density = 1): ResourceNode[] {
   const nodes: ResourceNode[] = []
   let id = 1
@@ -228,7 +255,12 @@ export function generateNodes(map: WorldMap, seed: number, density = 1): Resourc
     for (let tx = 0; tx < map.width; tx++) {
       const terrain = terrainAt(map, tx, ty)
       if (!TERRAINS[terrain]?.walkable) continue
-      if (density < 1 && hash2(tx, ty, keepSeed) >= density) continue // sous-échantillonnage grande carte
+      // Sous-échantillonnage CLUSTERISÉ (grande carte) : le champ groveBoost
+      // concentre les nœuds gardés en bosquets, à budget constant (INV-4/INV-6).
+      if (density < 1) {
+        const keep = Math.min(1, density * groveBoost(tx, ty, terrain, keepSeed))
+        if (hash2(tx, ty, keepSeed) >= keep) continue
+      }
       // Tirage POSITIONNEL : fonction pure de (tx, ty) → déplacer une tuile
       // ailleurs ne redistribue plus les nœuds (fin de la fragilité row-band).
       const r = hash2(tx, ty, nodeSeed)

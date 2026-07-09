@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALIGNMENT, BALANCE, TERRAIN_DEEP_WATER, TERRAIN_GRASS, TERRAIN_MARSH } from './balance'
+import { ALIGNMENT, BALANCE, TERRAIN_DEEP_WATER, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_MARSH } from './balance'
 import { generateNodes, nodeAt, skillLevel, type ResourceNode } from './economy'
 import { drainEvents } from './events'
 import { countOf } from './items'
@@ -275,5 +275,42 @@ describe('les nœuds carrière (mines simples)', () => {
     expect(inZone.length).toBeGreaterThan(0)
     expect(inZone.every((n) => n.type === 'rock')).toBe(true)
     expect(inZone.some((n) => n.type === 'iron_vein' || n.type === 'coal_seam')).toBe(false)
+  })
+})
+
+describe('clustering spatial des nœuds (densité-feeling 2026-07-09)', () => {
+  // Grille homogène de forêt : p(arbre) = 0.22, density 0.025.
+  const W = 300
+  const H = 300
+  const D = 0.025
+  const forestMap = () => createEmptyMap(W, H, TERRAIN_FOREST)
+
+  it('déterministe sous-échantillonné (INV-3)', () => {
+    const a = generateNodes(forestMap(), 99, D)
+    const b = generateNodes(forestMap(), 99, D)
+    expect(a).toEqual(b)
+  })
+
+  it('budget préservé à ±10 % (INV-4)', () => {
+    const nodes = generateNodes(forestMap(), 99, D)
+    const expected = W * H * D * 0.22 // ≈ 495
+    expect(nodes.length).toBeGreaterThan(expected * 0.9)
+    expect(nodes.length).toBeLessThan(expected * 1.1)
+  })
+
+  it('sur-dispersion : les nœuds se regroupent (INV-6)', () => {
+    const nodes = generateNodes(forestMap(), 99, D)
+    // Bucketing en cellules 20×20 → variance/moyenne >> 1 (Poisson uniforme ≈ 1).
+    const cell = 20
+    const cols = W / cell
+    const counts = new Array<number>((W / cell) * (H / cell)).fill(0)
+    for (const n of nodes) {
+      const ci = Math.floor(n.tx / cell)
+      const cj = Math.floor(n.ty / cell)
+      counts[cj * cols + ci]! += 1
+    }
+    const mean = counts.reduce((s, c) => s + c, 0) / counts.length
+    const variance = counts.reduce((s, c) => s + (c - mean) * (c - mean), 0) / counts.length
+    expect(variance / mean).toBeGreaterThan(1.5) // clustering ⇒ sur-dispersion
   })
 })
