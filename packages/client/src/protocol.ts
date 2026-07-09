@@ -68,6 +68,7 @@ export interface ReadyMessage {
   protocolVersion: number
   playerId: number
   map: WorldMap
+  seed: number
   calendarScale: number
   playerSpawn: { x: number; y: number }
 }

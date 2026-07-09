@@ -41,6 +41,7 @@ import {
   publishSeasonEnded,
   publishTimeAndVillage,
 } from './world/hud-bridge'
+import { ClutterLayer } from './world/clutter-layer'
 import { FireGlow } from './world/fire-glow'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
@@ -140,6 +141,8 @@ export class WorldScene extends Phaser.Scene {
   private canopyCoverage = 0
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
   private worldReady = false
+  private worldSeed = 0
+  private clutter?: ClutterLayer
   private loadingText: Phaser.GameObjects.Text | null = null
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
@@ -257,6 +260,8 @@ export class WorldScene extends Phaser.Scene {
     this.add.image(0, 0, 'map-demo').setOrigin(0).setDepth(-1).setDisplaySize(worldW, worldH)
     this.bakeCanopyTexture()
     this.canopyImage = this.add.image(0, 0, 'canopy').setOrigin(0).setDepth(CANOPY_DEPTH).setDisplaySize(worldW, worldH)
+    this.worldSeed = msg.seed
+    this.clutter = new ClutterLayer(this, this.map, this.worldSeed)
     this.ambientRect = this.add
       .rectangle(0, 0, worldW, worldH, 0x000000, 0)
       .setOrigin(0)
@@ -275,6 +280,7 @@ export class WorldScene extends Phaser.Scene {
 
   override update(_time: number, deltaMs: number): void {
     if (!this.worldReady) return
+    this.clutter?.update(this.cameras.main)
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
       const amb = ambientTint(hour)

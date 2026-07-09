@@ -80,6 +80,7 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
       protocolVersion: PROTOCOL_VERSION,
       playerId,
       map: sim.map,
+      seed: sim.seed,
       calendarScale: VEILLEE_CALENDAR_SCALE,
       playerSpawn: world.spawn,
     })
