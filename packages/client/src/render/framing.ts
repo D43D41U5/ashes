@@ -35,8 +35,10 @@ export const GROUND_FIRE_DEPTH = 5
 export const Y_SORT_BASE = 1000
 
 /** Départage à pixel de pieds ÉGAL. Dans [0,1) : jamais assez pour renverser un
- * écart de profondeur réel, puisqu'une unité de depth vaut un pixel monde. */
-export const TIE_CORPSE = 0
+ * écart de profondeur réel, puisqu'une unité de depth vaut un pixel monde.
+ * Une PAROI de falaise est tout en bas : à pieds égaux, tout la recouvre. */
+export const TIE_CLIFF = 0
+export const TIE_CORPSE = 0.1
 export const TIE_CLUTTER = 0.2
 export const TIE_NODE = 0.4
 export const TIE_STRUCTURE = 0.6
