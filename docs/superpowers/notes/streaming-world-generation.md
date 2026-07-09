@@ -1,5 +1,15 @@
 # Note de conception — Génération de monde en streaming (différé)
 
+> ⚠️ **SUPERSÉDÉE sur sa conclusion** par
+> [`../specs/2026-07-09-persistance-monde-decision.md`](../specs/2026-07-09-persistance-monde-decision.md)
+> — **NO-GO sur le streaming**. Cette note surestime deux coûts : on *peut* tenir 8,6 M tuiles en RAM
+> (~150 Mo) et on n'a *pas* à les snapshoter chaque tick (terrain figé + deltas). Le monde de Braises
+> étant **borné**, le stockage chunké n'est jamais forcé, et l'hydrologie globale ne bloque rien
+> (le terrain est généré une fois par saison, pas par chunks).
+>
+> Elle reste utile comme **exploration du mécanisme** de streaming (chunks, déterminisme local,
+> macro/détail) si le design basculait un jour vers un monde non borné. Ne pas la lire comme une reco.
+
 **Date** : 2026-07-09 · **Statut** : exploration, DIFFÉRÉ (chantier de fond, à cadrer brainstorm→spec→plan).
 Contexte : après avoir posé la carte alpine par défaut et débloqué le rendu grande carte
 (bake 1px/tuile étiré, commit `2583061`), la question « comment atteindre la taille prévue
@@ -83,11 +93,41 @@ Le rendu chunké est le quart facile. Le streaming impose de repenser la **simul
 - **Pathfinding** (A\*, flow fields de horde) sur carte partielle : que faire si le chemin sort du chargé ?
 - **Entités dans les chunks déchargés** (une méga-horde à 3000 tuiles) : geler ? simuler grossièrement
   (« simulation à distance ») ? despawner ? — choix de gameplay (le monde vit-il sans le joueur ?).
-- **Features à cheval sur les coutures** (POI 4 tuiles, village, rivière) : règle d'**ownership** (le
-  chunk contenant l'origine gère la feature) pour ne pas la couper ni la générer deux fois.
-- **Persistance** : un chunk **modifié** par le joueur (mur bâti, arbre récolté) n'est plus
-  « re-générable à l'identique » → sauvegarder le **delta** du chunk (PostgreSQL write-behind — colle à
-  l'invariant #6). Les chunks vierges ne coûtent rien (juste la seed).
+
+## Le pivot : persister les **modifications** de la carte (LE morceau dur)
+
+On avait relégué ça à un bullet ; c'est en réalité le cœur du chantier. Le pitch élégant « un chunk
+vierge ne coûte rien, juste la seed » ne vaut que pour un monde **en lecture seule**. Or Braises se
+**transforme durablement sur 60 jours** : autour des villages, une grosse fraction des chunks est
+modifiée — pas un cas limite, c'est le contenu principal là où les joueurs sont.
+
+Distinction clé selon l'architecture :
+- **Voie 1 / monde résident** : les modifs sont *gratuites*. Récolte = flip d'état d'un nœud **dans**
+  `SimState` ; ville = entités **dans** `SimState` ; la persistance sauve tout le `SimState` (invariant #6).
+  Ça marche **parce que le monde est borné et entièrement résident**.
+- **Streaming** : dès qu'un chunk peut être déchargé puis re-généré, il faut réappliquer par-dessus tout
+  ce que le joueur a changé. Trois exigences que la note sous-estimait :
+
+1. **Persistance à deux étages.** (a) **Delta au niveau tuile** = diff contre la re-génération
+   (« cette tuile était forêt → coupée » ; nœud récolté ; sol creusé). (b) **Entités/structures
+   first-class** (ville, coffre, objet bâti) keyées par leur **propre id**, PAS comme une somme
+   d'éditions de tuiles, avec **règle d'ownership** : le chunk d'origine possède la feature, elle se
+   charge dès qu'un de ses chunks entre dans l'anneau. Sinon on coupe la ville à la couture ou on la
+   génère deux fois.
+2. **Activation atomique du chunk.** Appliquer `base-gen + deltas` **avant** de rendre le chunk
+   actif/simulé. Sinon course : une horde entre dans un chunk pas fini de charger son delta « mur » et
+   traverse un mur qui devrait être là.
+3. **Temps dans les chunks déchargés = résolution paresseuse.** Aujourd'hui le timer de repousse d'un
+   nœud tourne toujours dans `SimState`. Déchargé, personne ne le tick → on stocke « repousse au tick
+   T » et au rechargement on calcule le temps écoulé (déterministe, temps = numéro de tick, invariant
+   #2). Vaut pour repousse, croissance des cultures, tout process lent.
+
+Ce qui reste **borné** : la mémoire (anneau autour du joueur). Ce qui **grossit** : le store de deltas
+sur disque, mais indexé par chunk et chargé seulement avec le chunk → proportionnel à l'**activité des
+joueurs**, pas à la taille de carte. L'argument mémoire du streaming survit.
+
+- **Features à cheval sur les coutures** (POI 4 tuiles, village, rivière) : voir la règle d'ownership
+  ci-dessus (§ persistance à deux étages).
 
 ## Verdict
 
@@ -96,7 +136,9 @@ Le rendu chunké est le quart facile. Le streaming impose de repenser la **simul
 - Condition = déterminisme local (`hash2` ✓ pour le détail) ; notre structure globale exige l'astuce
   **macro grossière → détail par chunk**.
 - Coût réel = **ré-architecture de la sim** (état chunké, snapshot partiel, pathfinding partiel,
-  entités lointaines, coutures, persistance des deltas), pas le rendu.
+  entités lointaines, coutures), pas le rendu — et **le morceau dur dans le morceau dur = la
+  persistance chunk-aware des modifications** (deltas de tuiles + entités first-class + activation
+  atomique + résolution paresseuse du temps). C'est le pivot qui décide si le streaming vaut le coup.
 - **≠ le « rendu chunké (SP2) » de la roadmap** : SP2 ne parlait que d'afficher une grande carte ; le
   streaming va bien plus loin (générer + simuler à la demande). À traiter comme un chantier de fond,
   son propre cycle brainstorm→spec→plan, quand on voudra dépasser ce que la voie 1 permet.
