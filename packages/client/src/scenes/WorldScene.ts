@@ -51,7 +51,9 @@ import {
   publishSeasonEnded,
   publishTimeAndVillage,
 } from './world/hud-bridge'
+import { CliffLayer } from './world/cliff-layer'
 import { ClutterLayer } from './world/clutter-layer'
+import { faceHeightPx, MAX_DROP } from '../render/cliffs'
 import { FireGlow } from './world/fire-glow'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
@@ -149,6 +151,7 @@ export class WorldScene extends Phaser.Scene {
   private worldReady = false
   private worldSeed = 0
   private clutter?: ClutterLayer
+  private cliffs?: CliffLayer
   private loadingText: Phaser.GameObjects.Text | null = null
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
@@ -271,6 +274,8 @@ export class WorldScene extends Phaser.Scene {
     this.worldSeed = msg.seed
     this.view.setNodes(msg.nodes)
     this.clutter = new ClutterLayer(this, this.map, this.worldSeed)
+    this.bakeCliffTextures()
+    this.cliffs = new CliffLayer(this, this.map)
     this.ambientRect = this.add
       .rectangle(0, 0, worldW, worldH, 0x000000, 0)
       .setOrigin(0)
@@ -292,6 +297,7 @@ export class WorldScene extends Phaser.Scene {
   override update(_time: number, deltaMs: number): void {
     if (!this.worldReady) return
     this.clutter?.update(this.cameras.main)
+    this.cliffs?.update(this.cameras.main)
     this.view.renderNodes(this.cameras.main)
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
@@ -523,5 +529,25 @@ export class WorldScene extends Phaser.Scene {
     }
     g.generateTexture('canopy', this.map.width, this.map.height)
     g.destroy()
+  }
+
+  /** Cuit une texture de paroi par décrochement (1..MAX_DROP) : corps de roche,
+   *  arête claire en haut, base assombrie. Art placeholder — calibré à l'œil. */
+  private bakeCliffTextures(): void {
+    const ROCK = 0x6e6a66
+    for (let drop = 1; drop <= MAX_DROP; drop++) {
+      const key = `cliff-${drop}`
+      if (this.textures.exists(key)) continue
+      const h = faceHeightPx(drop)
+      const g = this.add.graphics()
+      g.fillStyle(shade(ROCK, 0.72))
+      g.fillRect(0, 0, TILE_PX, h) // corps de la paroi
+      g.fillStyle(shade(ROCK, 1.15))
+      g.fillRect(0, 0, TILE_PX, 2) // arête claire (l'herbe du plateau accroche la lumière)
+      g.fillStyle(shade(ROCK, 0.45))
+      g.fillRect(0, h - 3, TILE_PX, 3) // base assombrie (ombre portée au pied)
+      g.generateTexture(key, TILE_PX, h)
+      g.destroy()
+    }
   }
 }
