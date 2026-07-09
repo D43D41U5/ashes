@@ -16,7 +16,7 @@ import {
   type Structure,
 } from '@braises/sim'
 import Phaser from 'phaser'
-import type { SnapshotMessage } from '../../protocol'
+import type { NodeDelta, SnapshotMessage } from '../../protocol'
 import { actorPlacement, structureDepth, TILE_PX, type ActorFootprint } from '../../render/framing'
 import { warmthColor } from '../../render/lighting'
 
@@ -57,7 +57,11 @@ export class SnapshotView {
   readonly others = new Map<number, InterpolatedSprite>()
 
   private structureSprites = new Map<number, Phaser.GameObjects.Image>()
-  private nodeSprites = new Map<number, Phaser.GameObjects.Image>()
+  /** Sprites de nœuds POOLÉS, culled à la vue : la carte porte ~60k nœuds, on
+   * n'en dessine que les ~centaines visibles (même trick que le décor). */
+  private nodePool: Phaser.GameObjects.Image[] = []
+  /** Index id→nœud pour appliquer les deltas de stock en O(1). */
+  private nodeById = new Map<number, ResourceNode>()
   private corpseSprites = new Map<number, Phaser.GameObjects.Image>()
 
   constructor(private scene: Phaser.Scene) {}
@@ -68,7 +72,7 @@ export class SnapshotView {
     this.npcs = msg.npcs
     this.monsters = msg.monsters
     this.syncStructures(msg.structures)
-    this.syncNodes(msg.nodes)
+    this.applyNodeDeltas(msg.nodeDeltas)
     this.syncCorpses(msg.corpses)
     this.syncEntities(msg.entities, playerId, now)
   }
@@ -182,26 +186,48 @@ export class SnapshotView {
     }
   }
 
-  /** Synchronise les sprites de nœuds : un nœud épuisé s'estompe, un nœud
-   * absent du snapshot disparaît (même contrat que structures/cadavres). */
-  private syncNodes(nodes: ResourceNode[]): void {
+  /** Reçoit la liste COMPLÈTE des nœuds (message `ready`, une fois) et indexe
+   * par id pour appliquer les deltas en O(1). Le rendu est séparé
+   * (`renderNodes`), culled à la vue — la carte en porte ~60k. */
+  setNodes(nodes: ResourceNode[]): void {
     this.nodes = nodes
-    const seen = new Set<number>()
-    for (const n of nodes) {
-      seen.add(n.id)
-      let sprite = this.nodeSprites.get(n.id)
+    this.nodeById = new Map(nodes.map((n) => [n.id, n]))
+  }
+
+  /** Applique les changements de stock reçus par tick (récolte/repousse). Le jeu
+   * de nœuds est stable au runtime : seul `stock` bouge, jamais d'ajout/retrait. */
+  private applyNodeDeltas(deltas: NodeDelta[]): void {
+    for (const d of deltas) {
+      const n = this.nodeById.get(d.id)
+      if (n) n.stock = d.stock
+    }
+  }
+
+  /** Dessine les nœuds visibles (pool réutilisé, culling caméra). Appelé chaque
+   * frame par la scène — un nœud épuisé s'estompe. */
+  renderNodes(camera: Phaser.Cameras.Scene2D.Camera): void {
+    const v = camera.worldView
+    const x0 = v.x - TILE_PX
+    const y0 = v.y - TILE_PX
+    const x1 = v.x + v.width + TILE_PX
+    const y1 = v.y + v.height + TILE_PX
+    let used = 0
+    for (const n of this.nodes) {
+      const px = n.tx * TILE_PX
+      const py = n.ty * TILE_PX
+      if (px < x0 || px > x1 || py < y0 || py > y1) continue
+      let sprite = this.nodePool[used]
       if (!sprite) {
-        sprite = this.scene.add.image(n.tx * TILE_PX, n.ty * TILE_PX, `nd-${n.type}`).setOrigin(0).setDepth(4)
-        this.nodeSprites.set(n.id, sprite)
+        sprite = this.scene.add.image(0, 0, `nd-${n.type}`).setOrigin(0).setDepth(4)
+        this.nodePool[used] = sprite
       }
+      sprite.setPosition(px, py)
+      sprite.setTexture(`nd-${n.type}`)
       sprite.setAlpha(n.stock > 0 ? 1 : 0.25)
+      sprite.setVisible(true)
+      used++
     }
-    for (const [id, sprite] of this.nodeSprites) {
-      if (!seen.has(id)) {
-        sprite.destroy()
-        this.nodeSprites.delete(id)
-      }
-    }
+    for (let i = used; i < this.nodePool.length; i++) this.nodePool[i]!.setVisible(false)
   }
 
   private syncCorpses(corpses: Corpse[]): void {

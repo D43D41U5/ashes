@@ -19,6 +19,10 @@ import {
 } from '@braises/sim'
 
 export const VEILLEE_SEED = 2026
+/** Densité de nœuds : forêts réellement récoltables (~60k nœuds). Rendu client
+ * culled à la vue + transport par deltas → ce nombre est découplé du coût par
+ * tick. Réglable : monter pour des forêts plus denses encore. */
+export const NODE_DENSITY = 0.3
 /** Démo : un jour de saison toutes les 2 minutes. */
 export const VEILLEE_CALENDAR_SCALE = 720
 /** Heure murale de départ : 9 = matinée (bonne lumière pour découvrir l'alpin ; 0 = minuit). */
@@ -52,9 +56,10 @@ export function createVeillee(): { sim: SimState; playerId: number; spawn: { x: 
   // le temps de génération (~7 s) et le transfert ; l'alpin PLEINE taille
   // (2400×3600, ~27 s de gen) attend une optimisation de la génération.
   const map = generateAlpineTerrain(1200, 1800, VEILLEE_SEED)
-  // Densité de nœuds bornée : le SimState/snapshot transporte les nœuds à chaque
-  // tick — sans cette borne, une grande carte en produirait des centaines de milliers.
-  const nodes = generateNodes(map, VEILLEE_SEED, 0.025)
+  // Densité de nœuds : forêts réellement récoltables (~60k nœuds). Le transport
+  // par deltas (nœuds au ready + stock changé par tick) découple ce nombre du
+  // coût réseau ; l'index tuile→nœud garde la collision O(1).
+  const nodes = generateNodes(map, VEILLEE_SEED, NODE_DENSITY)
   const sim = createSim(VEILLEE_SEED, {
     map,
     calendarScale: VEILLEE_CALENDAR_SCALE,

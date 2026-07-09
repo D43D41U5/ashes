@@ -56,8 +56,30 @@ export type EconomyAction =
   | { type: 'craft'; recipeId: RecipeId }
   | { type: 'eat'; item: ItemId }
 
+// Index tuile→nœud MÉMOÏSÉ par référence de tableau. Les nœuds ne bougent ni
+// n'apparaissent/disparaissent au runtime (seul `stock` change) : l'index est
+// construit une fois (O(N)) puis réutilisé — `nodeAt` devient O(1), condition
+// des cartes denses (~60k nœuds) où collision et récolte l'appellent souvent.
+// Dérivé EXTERNE (WeakMap, jamais dans SimState → invariant d'état sérialisable
+// préservé, GC avec le tableau). Même sémantique que l'ancien `find` : ≤1 nœud
+// par tuile (generateNodes ne pousse qu'une fois par tuile), premier gagnant.
+const NODE_INDEX_STRIDE = 1_000_000 // > toute coordonnée de tuile
+const nodeIndexCache = new WeakMap<ResourceNode[], Map<number, ResourceNode>>()
+function nodeIndexFor(nodes: ResourceNode[]): Map<number, ResourceNode> {
+  let idx = nodeIndexCache.get(nodes)
+  if (idx === undefined) {
+    idx = new Map()
+    for (const n of nodes) {
+      const key = n.tx * NODE_INDEX_STRIDE + n.ty
+      if (!idx.has(key)) idx.set(key, n)
+    }
+    nodeIndexCache.set(nodes, idx)
+  }
+  return idx
+}
+
 export function nodeAt(nodes: ResourceNode[], tx: number, ty: number): ResourceNode | undefined {
-  return nodes.find((n) => n.tx === tx && n.ty === ty)
+  return nodeIndexFor(nodes).get(tx * NODE_INDEX_STRIDE + ty)
 }
 
 /** Niveau d'un métier : les premières marches sont rapides, la maîtrise est longue. */

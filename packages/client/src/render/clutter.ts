@@ -53,8 +53,8 @@ export interface BiomeClutter {
 // Table de calibration — l'équivalent de balance.ts pour le feeling. Densités =
 // ordres de grandeur, à affiner en playtest.
 export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
-  [TERRAIN_FOREST]: { density: 0.62, scale: 26, understory: true, props: ['conifer', 'fern', 'stump'] },
-  [TERRAIN_OLD_GROWTH]: { density: 0.7, scale: 28, understory: true, props: ['big_trunk', 'fern'] },
+  [TERRAIN_FOREST]: { density: 0.4, scale: 26, understory: true, props: ['conifer', 'fern', 'stump'] },
+  [TERRAIN_OLD_GROWTH]: { density: 0.45, scale: 28, understory: true, props: ['big_trunk', 'fern'] },
   [TERRAIN_PINE]: { density: 0.4, scale: 22, understory: false, props: ['pine', 'grass_tuft', 'pebbles'] },
   [TERRAIN_LARCH]: { density: 0.35, scale: 20, understory: false, props: ['larch', 'grass_tuft'] },
   [TERRAIN_BURNT_FOREST]: { density: 0.4, scale: 22, understory: false, props: ['burnt_trunk', 'grass_tuft'] },

@@ -15,7 +15,7 @@ import {
   type PlayerAction,
   type SimState,
 } from '@braises/sim'
-import { PROTOCOL_VERSION, type ClientToHost, type HostToClient } from '../protocol'
+import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type NodeDelta } from '../protocol'
 import { createVeillee, VEILLEE_CALENDAR_SCALE } from './veillee'
 
 const post = (message: HostToClient): void => {
@@ -29,6 +29,23 @@ let playerInput: Pick<MoveInput, 'dx' | 'dy' | 'sprint' | 'block'> = { dx: 0, dy
 let lastProcessedInput = 0
 /** Une action au plus par tick (spec village R1) — la dernière reçue gagne. */
 let pendingAction: PlayerAction | undefined
+/** Ombre du stock par nœud (dernier envoyé) — état du TRANSPORT, pas du /sim.
+ * Permet de ne transmettre que les nœuds dont le stock a changé (deltas),
+ * sans cloner les ~60k nœuds à chaque tick. Rempli à l'envoi de la liste
+ * complète (ready). */
+const nodeStockShadow = new Map<number, number>()
+
+/** Diff local (zéro clone) : nœuds dont le stock a bougé depuis le dernier tick. */
+function collectNodeDeltas(state: SimState): NodeDelta[] {
+  const deltas: NodeDelta[] = []
+  for (const n of state.nodes) {
+    if (nodeStockShadow.get(n.id) !== n.stock) {
+      nodeStockShadow.set(n.id, n.stock)
+      deltas.push({ id: n.id, stock: n.stock })
+    }
+  }
+  return deltas
+}
 
 function tick(): void {
   if (!sim) return
@@ -45,7 +62,7 @@ function tick(): void {
     entities: sim.entities,
     structures: sim.structures,
     villages: sim.villages,
-    nodes: sim.nodes,
+    nodeDeltas: collectNodeDeltas(sim),
     npcs: sim.npcs,
     monsters: sim.monsters,
     corpses: sim.corpses,
@@ -75,12 +92,16 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
     const world = createVeillee()
     sim = world.sim
     playerId = world.playerId
+    // Liste complète des nœuds envoyée UNE fois ; on amorce l'ombre pour que le
+    // premier tick n'émette pas 60k deltas redondants.
+    for (const n of sim.nodes) nodeStockShadow.set(n.id, n.stock)
     post({
       type: 'ready',
       protocolVersion: PROTOCOL_VERSION,
       playerId,
       map: sim.map,
       seed: sim.seed,
+      nodes: sim.nodes,
       calendarScale: VEILLEE_CALENDAR_SCALE,
       playerSpawn: world.spawn,
     })

@@ -314,3 +314,31 @@ describe('clustering spatial des nœuds (densité-feeling 2026-07-09)', () => {
     expect(variance / mean).toBeGreaterThan(1.5) // clustering ⇒ sur-dispersion
   })
 })
+
+describe('nodeAt indexé O(1) (densité-nœuds 2026-07-09)', () => {
+  it('rend EXACTEMENT le même nœud que le scan linéaire (INV collision préservée)', () => {
+    const map = createEmptyMap(80, 80, TERRAIN_FOREST)
+    const nodes = generateNodes(map, 4242)
+    const linear = (tx: number, ty: number): ResourceNode | undefined =>
+      nodes.find((n) => n.tx === tx && n.ty === ty)
+    // Toutes les tuiles (occupées ET vides) doivent coïncider avec le find.
+    for (let ty = 0; ty < map.height; ty++) {
+      for (let tx = 0; tx < map.width; tx++) {
+        expect(nodeAt(nodes, tx, ty)).toBe(linear(tx, ty))
+      }
+    }
+    expect(nodes.length).toBeGreaterThan(0)
+  })
+
+  it('reflète la déplétion en direct (l’index tient une référence, pas une copie)', () => {
+    const map = createEmptyMap(20, 20, TERRAIN_FOREST)
+    const nodes = generateNodes(map, 7)
+    const first = nodes[0]!
+    const found = nodeAt(nodes, first.tx, first.ty)
+    expect(found).toBe(first)
+    found!.stock = 0
+    // La même référence est renvoyée : le stock mis à 0 est visible (la collision
+    // lit stock>0 en direct, donc un arbre épuisé cesse de bloquer).
+    expect(nodeAt(nodes, first.tx, first.ty)!.stock).toBe(0)
+  })
+})

@@ -69,8 +69,19 @@ export interface ReadyMessage {
   playerId: number
   map: WorldMap
   seed: number
+  /** Liste COMPLÈTE des nœuds, envoyée UNE fois (comme la carte). Le jeu de
+   * nœuds est stable au runtime ; le snapshot ne transporte ensuite que les
+   * changements de stock (`nodeDeltas`) — découple le nombre de nœuds du coût
+   * par tick, condition des forêts denses. */
+  nodes: ResourceNode[]
   calendarScale: number
   playerSpawn: { x: number; y: number }
+}
+
+/** Changement de stock d'un nœud (récolte/repousse) — seul état de nœud mutable. */
+export interface NodeDelta {
+  id: number
+  stock: number
 }
 
 export interface SnapshotMessage {
@@ -82,7 +93,7 @@ export interface SnapshotMessage {
   entities: Entity[]
   structures: Structure[]
   villages: Village[]
-  nodes: ResourceNode[]
+  nodeDeltas: NodeDelta[]
   npcs: Npc[]
   monsters: Monster[]
   corpses: Corpse[]

@@ -24,6 +24,7 @@ import {
   type PlayerAction,
   type PredictInput,
   type PredictionState,
+  type ResourceNode,
   type SimEvent,
   type WorldMap,
 } from '@braises/sim'
@@ -261,6 +262,7 @@ export class WorldScene extends Phaser.Scene {
     this.bakeCanopyTexture()
     this.canopyImage = this.add.image(0, 0, 'canopy').setOrigin(0).setDepth(CANOPY_DEPTH).setDisplaySize(worldW, worldH)
     this.worldSeed = msg.seed
+    this.view.setNodes(msg.nodes)
     this.clutter = new ClutterLayer(this, this.map, this.worldSeed)
     this.ambientRect = this.add
       .rectangle(0, 0, worldW, worldH, 0x000000, 0)
@@ -281,6 +283,7 @@ export class WorldScene extends Phaser.Scene {
   override update(_time: number, deltaMs: number): void {
     if (!this.worldReady) return
     this.clutter?.update(this.cameras.main)
+    this.view.renderNodes(this.cameras.main)
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
       const amb = ambientTint(hour)
@@ -425,7 +428,7 @@ export class WorldScene extends Phaser.Scene {
   private predictionWorld(): {
     map: WorldMap
     structures: SnapshotMessage['structures']
-    nodes: SnapshotMessage['nodes']
+    nodes: ResourceNode[]
     moverVillageId: number | null
   } {
     return {
