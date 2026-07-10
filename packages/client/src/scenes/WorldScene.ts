@@ -202,7 +202,10 @@ export class WorldScene extends Phaser.Scene {
       nodes: () => this.view.nodes,
       corpses: () => this.view.corpses,
       others: () => this.view.others,
-      unproject: (px, py) => this.warp.unproject(px, py),
+      // Les handlers d'input sont posés dès `create`, mais `this.warp` n'existe
+      // qu'après `onReady` (génération de carte). Avant, on renvoie le point plat :
+      // de toute façon les actions sont des no-op sur structures/nodes vides.
+      unproject: (px, py) => (this.warp ? this.warp.unproject(px, py) : { x: px, y: py }),
     })
 
     // Le fantôme de construction, aligné sur la grille (suit le pointeur en update).
@@ -340,9 +343,9 @@ export class WorldScene extends Phaser.Scene {
     // tuile réellement sous le curseur (unproject), pas la projection plate.
     const pointer = this.input.activePointer
     const pw = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
-    const ground = this.warp.unproject(pw.x, pw.y)
-    const gx = Math.floor(ground.x / TILE_PX)
-    const gy = Math.floor(ground.y / TILE_PX)
+    const groundPoint = this.warp.unproject(pw.x, pw.y)
+    const gx = Math.floor(groundPoint.x / TILE_PX)
+    const gy = Math.floor(groundPoint.y / TILE_PX)
     this.ghost.setPosition(gx * TILE_PX, gy * TILE_PX - this.warp.lift(gx + 0.5, gy + 1))
 
     // Interpolation des autres entités (R4) : vers le dernier snapshot, sur un tick.
