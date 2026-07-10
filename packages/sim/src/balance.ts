@@ -78,6 +78,14 @@ export const BALANCE = {
   /** Côté de la hitbox AABB d'un avatar, en tuiles (spec monde R9). */
   AVATAR_HITBOX_TILES: 0.6,
 
+  /** Résolution de la collision sous-tuile : sous-tuiles par côté de tuile.
+   * PUISSANCE DE DEUX obligatoire — la collision multiplie et divise par cette
+   * valeur, et seule une puissance de deux garantit `fl(8a − 8b) = 8·fl(a − b)`,
+   * donc l'exactitude au bit près face à l'ancienne collision en tuiles pleines
+   * (invariant 2). 8 permet un tronc centré de 2 sous-tuiles (0,25 tuile) qui
+   * laisse 0,75 tuile d'écart entre deux troncs voisins — l'avatar (0,6) passe. */
+  SUBTILES_PER_TILE: 8,
+
   /** Accélération du calendrier : jours de saison écoulés par jour réel. */
   DEFAULT_CALENDAR_SCALE: 1,
 
@@ -240,8 +248,12 @@ export type NodeType = 'tree' | 'rock' | 'fiber_plant' | 'berry_bush' | 'iron_ve
 export interface NodeDef {
   item: import('./items').ItemId
   stock: number
-  /** Arbres, affleurements et filons sont des obstacles (spec économie R1). */
-  blocks: boolean
+  /** Demi-côté du carré bloquant, en SOUS-TUILES depuis le centre de la tuile
+   * (spec économie R1, spec arbres hauts). La tuile `t` couvre les sous-tuiles
+   * `[8t, 8t+8)`, son centre est `8t+4`, et le carré bloquant est
+   * `[8t+4−h, 8t+4+h)`. `h = 4` → tuile entière ; `h = 0` → ne bloque pas ;
+   * `h = 1` → tronc de 0,25 tuile. */
+  blockHalfSub: number
   skill: import('./items').SkillId
   /** Famille d'outil qui multiplie le rendement. */
   tool: 'axe' | 'pickaxe' | null
@@ -250,12 +262,12 @@ export interface NodeDef {
 }
 
 export const NODE_DEFS: Record<NodeType, NodeDef> = {
-  tree: { item: 'wood', stock: 10, blocks: true, skill: 'woodcutting', tool: 'axe', requiresTool: false },
-  rock: { item: 'stone', stock: 12, blocks: true, skill: 'mining', tool: 'pickaxe', requiresTool: false },
-  fiber_plant: { item: 'fiber', stock: 6, blocks: false, skill: 'foraging', tool: null, requiresTool: false },
-  berry_bush: { item: 'berries', stock: 8, blocks: false, skill: 'foraging', tool: null, requiresTool: false },
-  iron_vein: { item: 'iron_ore', stock: 8, blocks: true, skill: 'mining', tool: 'pickaxe', requiresTool: true },
-  coal_seam: { item: 'coal', stock: 8, blocks: true, skill: 'mining', tool: 'pickaxe', requiresTool: true },
+  tree: { item: 'wood', stock: 10, blockHalfSub: 4, skill: 'woodcutting', tool: 'axe', requiresTool: false },
+  rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', requiresTool: false },
+  fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, requiresTool: false },
+  berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, requiresTool: false },
+  iron_vein: { item: 'iron_ore', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', requiresTool: true },
+  coal_seam: { item: 'coal', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', requiresTool: true },
 }
 
 /** Rendement par famille d'outil : mains nues 1, outil 2, outil de fer 3. */

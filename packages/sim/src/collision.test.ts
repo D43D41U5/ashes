@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_ROCK, TICK_DT_S } from './balance'
 import { moveAvatar, moveAvatarStepped, overlapsBlocking } from './collision'
+import type { ResourceNode } from './economy'
 import { createEmptyMap, type WorldMap } from './map'
 import { rngRoll } from './rng'
 import { createSim, spawnEntity, step, type MoveInput } from './sim'
@@ -166,5 +167,36 @@ describe('collisions (A3)', () => {
         throw new Error(`entité dans un mur au tick ${t} : (${e.x}, ${e.y})`)
       }
     }
+  })
+})
+
+describe('cœur sous-tuile (préparation des arbres hauts)', () => {
+  it('un clamp contre un nœud pleine tuile est EXACT, pas approché (bit à bit)', () => {
+    const map = createEmptyMap(16, 16, TERRAIN_GRASS)
+    const nodes: ResourceNode[] = [{ id: 1, type: 'rock', tx: 8, ty: 4, stock: 12, regrowAt: 0 }]
+    const world = { map, nodes }
+    // Marche vers l'est jusqu'au contact, puis un pas de plus : clamp flush.
+    let p = { x: 5.5, y: 4.5 }
+    for (let t = 0; t < 40; t++) p = moveAvatar(world, p.x, p.y, 1, 0, TICK_DT_S)
+    expect(p.x).toBe(8 - HALF) // `toBe`, pas `toBeCloseTo` : l'égalité est exacte
+    expect(p.y).toBe(4.5)
+  })
+
+  it('le clamp par l’ouest est exact lui aussi', () => {
+    const map = createEmptyMap(16, 16, TERRAIN_GRASS)
+    const nodes: ResourceNode[] = [{ id: 1, type: 'rock', tx: 4, ty: 4, stock: 12, regrowAt: 0 }]
+    const world = { map, nodes }
+    let p = { x: 7.5, y: 4.5 }
+    for (let t = 0; t < 40; t++) p = moveAvatar(world, p.x, p.y, -1, 0, TICK_DT_S)
+    expect(p.x).toBe(5 + HALF) // bord droit de la tuile 4, plus le demi-avatar
+  })
+
+  it('un nœud épuisé (stock 0) ne bloque pas', () => {
+    const map = createEmptyMap(16, 16, TERRAIN_GRASS)
+    const nodes: ResourceNode[] = [{ id: 1, type: 'rock', tx: 8, ty: 4, stock: 0, regrowAt: 100 }]
+    const world = { map, nodes }
+    let p = { x: 7.5, y: 4.5 }
+    for (let t = 0; t < 20; t++) p = moveAvatar(world, p.x, p.y, 1, 0, TICK_DT_S)
+    expect(p.x).toBeGreaterThan(8.5) // il l'a traversé
   })
 })
