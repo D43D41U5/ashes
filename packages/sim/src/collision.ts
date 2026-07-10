@@ -16,7 +16,7 @@
  * obstacle ? ». Un arbre bloque sa tuile pour l'A* et son seul tronc pour l'avatar.
  */
 import { BALANCE, NODE_DEFS, TERRAINS, TICK_DT_S } from './balance'
-import { nodeAt, type ResourceNode } from './economy'
+import { nodeAt, treeJitter, type ResourceNode } from './economy'
 import { isBlockingTile, terrainAt, type WorldMap } from './map'
 import { structureAt, structureBlocks, type Structure } from './village'
 
@@ -139,8 +139,16 @@ function blockedSubAt(world: MoveWorld, sx: number, sy: number): boolean {
     if (n !== undefined && n.stock > 0) {
       const h = NODE_DEFS[n.type].blockHalfSub
       if (h > 0) {
-        const cx = tx * SUB + SUB / 2
-        const cy = ty * SUB + SUB / 2
+        // Un arbre est décalé dans sa tuile (spec décalage d'origine) ; les
+        // autres nœuds restent centrés. La borne J + h/SUB ≤ 0,5 garantit que le
+        // carré décalé reste dans la tuile, donc regarder le seul nœud d'ici suffit.
+        let cx = tx * SUB + SUB / 2
+        let cy = ty * SUB + SUB / 2
+        if (n.type === 'tree') {
+          const { dx, dy } = treeJitter(tx, ty)
+          cx += dx * SUB
+          cy += dy * SUB
+        }
         if (sx >= cx - h && sx < cx + h && sy >= cy - h && sy < cy + h) return true
       }
     }
