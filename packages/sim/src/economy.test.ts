@@ -343,16 +343,16 @@ describe('nodeAt indexé O(1) (densité-nœuds 2026-07-09)', () => {
   })
 })
 
-describe('treeJitter: tree jitter offsetting', () => {
+describe('treeJitter — décalage déterministe de l’origine des arbres', () => {
   const J = BALANCE.TREE_JITTER_TILES
 
-  it('deterministic: same tile coordinates return same jitter', () => {
+  it('est déterministe : deux appels sur la même tuile rendent le même décalage', () => {
     const a = treeJitter(37, 91)
     const b = treeJitter(37, 91)
     expect(a).toEqual(b)
   })
 
-  it('bounded by ±J over large tile sample', () => {
+  it('est borné à ±J sur un large échantillon de tuiles', () => {
     for (let ty = 0; ty < 40; ty++) {
       for (let tx = 0; tx < 40; tx++) {
         const { dx, dy } = treeJitter(tx, ty)
@@ -362,7 +362,7 @@ describe('treeJitter: tree jitter offsetting', () => {
     }
   })
 
-  it('not diagonal: dx and dy are decorrelated (at least one tile with dx !== dy)', () => {
+  it('n’est pas diagonal : dx et dy sont décorrélés (au moins une tuile avec dx ≠ dy)', () => {
     let seenDifferent = false
     for (let tx = 0; tx < 20 && !seenDifferent; tx++) {
       const { dx, dy } = treeJitter(tx, 5)
@@ -371,7 +371,7 @@ describe('treeJitter: tree jitter offsetting', () => {
     expect(seenDifferent).toBe(true)
   })
 
-  it('covers negative and positive on both axes (no bias)', () => {
+  it('couvre le négatif ET le positif sur les deux axes (pas de biais d’un côté)', () => {
     let hasNegX = false, hasPosX = false, hasNegY = false, hasPosY = false
     for (let ty = 0; ty < 40; ty++) {
       for (let tx = 0; tx < 40; tx++) {

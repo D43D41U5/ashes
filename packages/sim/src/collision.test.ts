@@ -298,7 +298,7 @@ describe('décalage d’origine des arbres : la collision suit le tronc', () => 
       const g = corridor(tx, TY)
       if (g < best.gap) best = { tx, gap: g }
     }
-    // À J=0,22 des fourrés existent forcément (sinon le choix « franc » serait vide).
+    // Au J calibré, des fourrés existent forcément (sinon le choix « franc » serait vide).
     expect(best.gap).toBeLessThan(BALANCE.AVATAR_HITBOX_TILES)
     const world = treeWorld([[best.tx, TY], [best.tx + 1, TY]], best.tx + 3)
     let p = { x: corridorCenter(best.tx, TY), y: TY - 1.5 }
