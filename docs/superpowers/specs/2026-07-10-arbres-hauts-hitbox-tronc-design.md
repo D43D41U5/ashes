@@ -2,7 +2,7 @@
 
 **Date** : 2026-07-10
 **Branche** : feat/relief-terrasses
-**Statut** : design validé, en attente de plan d'implémentation
+**Statut** : **IMPLÉMENTÉ** (2026-07-10, plan `docs/superpowers/plans/2026-07-10-arbres-hauts-hitbox-tronc.md`, branche feat/relief-terrasses). Verdict en jeu : sous-bois traversable, aucun réglage retouché — artefact `bbf4c077`.
 
 ## Problème
 
