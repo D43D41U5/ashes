@@ -49,7 +49,10 @@ export function computeElevation(width: number, height: number, seed: number): n
   const el = new Array<number>(width * height)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const edge = Math.min(x, y, width - 1 - x, height - 1 - y)
+      // Sud EXCLU (grand y = bord bas = vers la caméra) : la vallée s'ouvre de ce
+      // côté, ni forme de vallée ni enceinte n'y montent → zéro repli du warp
+      // (spec relief-continu §3). Fermeture sud = bord de carte (déjà bornant).
+      const edge = Math.min(x, y, width - 1 - x)
       // Forme de vallée macro : 1 au bord (murs/pics) → 0 au fond (edge ≥ rise).
       const valley = 1 - Math.min(1, edge / rise)
       // Brise le bol concentrique → vallée organique (éperons, combes, cols).
@@ -81,7 +84,9 @@ export function computeFlowField(width: number, height: number, seed: number): n
   const f = new Array<number>(width * height)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const edge = Math.min(x, y, width - 1 - x, height - 1 - y)
+      // Sud EXCLU (mêmes raisons que computeElevation) : hydrologie cohérente
+      // avec un relief qui s'ouvre vers la caméra.
+      const edge = Math.min(x, y, width - 1 - x)
       const valley = 1 - Math.min(1, edge / rise)
       const org = ALPINE.ORGANIC_AMP * (fbmWarp2(x, y, organic, (seed ^ 0x1a2b3c) | 0, warp) - 0.5)
       const rim = clamp01((rimDepth - edge) / rimDepth)

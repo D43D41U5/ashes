@@ -19,12 +19,14 @@ describe('computeElevation — le relief alpin', () => {
     for (const v of el) { expect(v).toBeGreaterThanOrEqual(0); expect(v).toBeLessThanOrEqual(1) }
   })
 
-  it('enceinte scellée : le bord est haut (pics), le centre plus bas en moyenne', () => {
+  it('enceinte scellée sur 3 côtés : nord/est/ouest sont hauts (pics), le centre plus bas en moyenne', () => {
     const el = computeElevation(W, H, 7)
     const at = (x: number, y: number): number => el[y * W + x]!
-    // anneau de bord ≈ 1
+    // anneau de bord ≈ 1 sur nord/est/ouest — le SUD est intentionnellement
+    // ouvert (bord bas, vers la caméra) et n'entre pas dans ce minimum ; il est
+    // couvert par 'vallée ouverte au sud (relief continu)' ci-dessous.
     let borderMin = 1
-    for (let x = 0; x < W; x++) { borderMin = Math.min(borderMin, at(x, 0), at(x, H - 1)) }
+    for (let x = 0; x < W; x++) { borderMin = Math.min(borderMin, at(x, 0)) }
     for (let y = 0; y < H; y++) { borderMin = Math.min(borderMin, at(0, y), at(W - 1, y)) }
     expect(borderMin).toBeGreaterThan(0.9)
     // moyenne d'une fenêtre centrale nettement < 1
@@ -107,6 +109,28 @@ describe('generateAlpineTerrain — bandes & assemblage', () => {
     const frac = (m: typeof small, t: number): number => m.terrain.filter((x) => x === t).length / m.terrain.length
     // la part de neige varie peu avec la taille (même modèle, mêmes seuils)
     expect(Math.abs(frac(small, TERRAIN_SNOW) - frac(big, TERRAIN_SNOW))).toBeLessThan(0.08)
+  })
+})
+
+describe('vallée ouverte au sud (relief continu)', () => {
+  it('le centre-sud est BAS, le centre-nord reste HAUT', () => {
+    const W = 120, H = 180, seed = 42
+    const el = computeElevation(W, H, seed)
+    const at = (x: number, y: number) => el[y * W + x]!
+    const cx = Math.floor(W / 2)
+    const south = at(cx, H - 1) // bord bas (vers la caméra)
+    const north = at(cx, 0) // bord haut
+    expect(south).toBeLessThan(0.35) // ouvert : proche du fond
+    expect(north).toBeGreaterThan(0.7) // mur du fond conservé
+  })
+
+  it('les flancs est/ouest restent hauts', () => {
+    const W = 120, H = 180, seed = 7
+    const el = computeElevation(W, H, seed)
+    const at = (x: number, y: number) => el[y * W + x]!
+    const cy = Math.floor(H / 2)
+    expect(at(0, cy)).toBeGreaterThan(0.7)
+    expect(at(W - 1, cy)).toBeGreaterThan(0.7)
   })
 })
 
