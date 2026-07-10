@@ -262,7 +262,7 @@ export interface NodeDef {
 }
 
 export const NODE_DEFS: Record<NodeType, NodeDef> = {
-  tree: { item: 'wood', stock: 10, blockHalfSub: 4, skill: 'woodcutting', tool: 'axe', requiresTool: false },
+  tree: { item: 'wood', stock: 10, blockHalfSub: 1, skill: 'woodcutting', tool: 'axe', requiresTool: false },
   rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', requiresTool: false },
   fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, requiresTool: false },
   berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, requiresTool: false },

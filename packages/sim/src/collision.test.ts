@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_ROCK, TICK_DT_S } from './balance'
-import { moveAvatar, moveAvatarStepped, overlapsBlocking } from './collision'
+import { isBlockedAt, makeIndexedIsBlockedAt, moveAvatar, moveAvatarStepped, overlapsBlocking } from './collision'
 import type { ResourceNode } from './economy'
 import { createEmptyMap, type WorldMap } from './map'
 import { rngRoll } from './rng'
@@ -198,5 +198,80 @@ describe('cœur sous-tuile (préparation des arbres hauts)', () => {
     let p = { x: 7.5, y: 4.5 }
     for (let t = 0; t < 20; t++) p = moveAvatar(world, p.x, p.y, 1, 0, TICK_DT_S)
     expect(p.x).toBeGreaterThan(8.5) // il l'a traversé
+  })
+})
+
+describe('arbres hauts : la collision se limite au tronc', () => {
+  const forest = (trees: Array<[number, number]>): { map: WorldMap; nodes: ResourceNode[] } => ({
+    map: createEmptyMap(16, 16, TERRAIN_GRASS),
+    nodes: trees.map(([tx, ty], i) => ({ id: i + 1, type: 'tree' as const, tx, ty, stock: 10, regrowAt: 0 })),
+  })
+
+  it('A1 — l’avatar (0,6) se faufile entre deux arbres orthogonalement voisins (écart 0,75)', () => {
+    const world = forest([
+      [6, 4],
+      [7, 4],
+    ])
+    // Le couloir libre est [6,625 ; 7,375[ : son milieu est 7,0.
+    let p = { x: 7, y: 2.5 }
+    for (let t = 0; t < 60; t++) p = moveAvatar(world, p.x, p.y, 0, 1, TICK_DT_S)
+    expect(p.y).toBeGreaterThan(6) // il est passé au sud de la rangée d'arbres
+    expect(p.x).toBe(7)
+  })
+
+  it('A2 — buté frontalement sur un tronc, il se clampe à tx + 0,075', () => {
+    const world = forest([[8, 4]])
+    let p = { x: 5.5, y: 4.5 }
+    for (let t = 0; t < 40; t++) p = moveAvatar(world, p.x, p.y, 1, 0, TICK_DT_S)
+    expect(p.x).toBeCloseTo(8.075, 9)
+    expect(p.y).toBe(4.5)
+  })
+
+  it('A3 — il glisse le long d’un tronc sans s’y accrocher (résolution par axe)', () => {
+    const world = forest([[8, 4]])
+    // Flush contre le tronc par l'ouest, poussée diagonale sud-est : X bloque, Y glisse.
+    const start = { x: 8.075, y: 4.5 }
+    const p = moveAvatar(world, start.x, start.y, 1, 1, TICK_DT_S)
+    expect(p.x).toBeCloseTo(8.075, 9)
+    expect(p.y).toBeGreaterThan(4.5)
+  })
+
+  it('A4 — rock, iron_vein et coal_seam bloquent toujours leur tuile ENTIÈRE', () => {
+    for (const type of ['rock', 'iron_vein', 'coal_seam'] as const) {
+      const world = {
+        map: createEmptyMap(16, 16, TERRAIN_GRASS),
+        nodes: [{ id: 1, type, tx: 8, ty: 4, stock: 8, regrowAt: 0 }],
+      }
+      let p = { x: 5.5, y: 4.5 }
+      for (let t = 0; t < 40; t++) p = moveAvatar(world, p.x, p.y, 1, 0, TICK_DT_S)
+      expect(p.x).toBe(8 - HALF)
+    }
+  })
+
+  it('A5 — un arbre à stock 0 ne bloque plus rien', () => {
+    const world = {
+      map: createEmptyMap(16, 16, TERRAIN_GRASS),
+      nodes: [{ id: 1, type: 'tree' as const, tx: 8, ty: 4, stock: 0, regrowAt: 200 }],
+    }
+    let p = { x: 7.5, y: 4.5 }
+    for (let t = 0; t < 20; t++) p = moveAvatar(world, p.x, p.y, 1, 0, TICK_DT_S)
+    expect(p.x).toBeGreaterThan(8.5)
+  })
+
+  it('A6 — contrat TUILE : isBlockedAt reste true sur une tuile portant un arbre vivant', () => {
+    const world = forest([[8, 4]])
+    expect(isBlockedAt(world, 8, 4)).toBe(true) // le pathfinding contourne toujours
+    expect(isBlockedAt(world, 7, 4)).toBe(false)
+    const indexed = makeIndexedIsBlockedAt(world)
+    expect(indexed(8, 4)).toBe(true) // A* et flow fields voient la même chose
+  })
+
+  it('A7 — contrat SOUS-TUILE : overlapsBlocking distingue le couloir du tronc', () => {
+    const world = forest([
+      [6, 4],
+      [7, 4],
+    ])
+    expect(overlapsBlocking(world, 7, 4.5)).toBe(false) // debout dans le couloir : légal
+    expect(overlapsBlocking(world, 6.5, 4.5)).toBe(true) // à cheval sur le tronc de (6,4)
   })
 })
