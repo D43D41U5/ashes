@@ -71,6 +71,9 @@ export const HYDRO = {
   TARN_MIN_FRAC: 0.4,     // altitude min d'un tarn
   TARN_MAX_FRAC: 0.68,    // altitude max d'un tarn
   TARN_R_FRAC: 0.014,     // rayon d'un tarn
+  EROSION_DEPTH: 0.12,    // incision MAX (au lac) de l'érosion fluviale ; les
+                          //  affluents creusent ∝ √(flux). Baisse le plafond de
+                          //  RELIEF_H (berges plus raides) — calibré ensemble.
 }
 
 const NX = [-1, 0, 1, -1, 1, -1, 0, 1]
@@ -168,7 +171,9 @@ function carveMainRiver(map: WorldMap, flow: number[], seed: number, lake: Valle
  * voisin par lequel elle a été « inondée » = un pas vers le lac). Suivre `dir`
  * mène toujours au lac, sans cycle (c'est un arbre).
  */
-function computeDrainageDir(map: WorldMap, seed: number, sinkX: number, sinkY: number): number[] {
+function computeDrainageDir(
+  map: WorldMap, seed: number, sinkX: number, sinkY: number,
+): { dir: number[]; order: number[] } {
   const W = map.width
   const H = map.height
   const N = W * H
@@ -176,6 +181,7 @@ function computeDrainageDir(map: WorldMap, seed: number, sinkX: number, sinkY: n
   const INF = 2
   const filled = new Array<number>(N).fill(INF)
   const dir = new Array<number>(N).fill(-1)
+  const order: number[] = [] // séquence de pop (aval→amont) : sert à l'accumulation de flux
   const heap = new Array<number>(N)
   let hn = 0
   const lower = (a: number, b: number): boolean =>
@@ -202,6 +208,7 @@ function computeDrainageDir(map: WorldMap, seed: number, sinkX: number, sinkY: n
   push(sink)
   while (hn > 0) {
     const c = pop()
+    order.push(c) // aval d'abord (le sink), amont ensuite
     const cx = c % W; const cy = (c / W) | 0
     for (let d = 0; d < 8; d++) {
       const nx = cx + NX[d]!; const ny = cy + NY[d]!
@@ -213,7 +220,35 @@ function computeDrainageDir(map: WorldMap, seed: number, sinkX: number, sinkY: n
       push(ni)
     }
   }
-  return dir
+  return { dir, order }
+}
+
+/**
+ * ÉROSION FLUVIALE — l'eau creuse le terrain sur son passage. Accumulation de
+ * flux sur l'arbre de drainage (chaque tuile = 1 + tout ce qui s'écoule à travers
+ * elle), puis incision ∝ √(flux) (loi de stream-power simplifiée ; `sqrt` autorisé,
+ * pas de `pow`). Le tronc (flux max) creuse une vraie vallée, les affluents des
+ * ravines. Purement sur `elevation` (RENDU) — la terrain d'eau est déjà posée ;
+ * l'eau se retrouve donc au FOND de ce qu'elle a creusé. Pur & déterministe.
+ *
+ * L'incision CROÎT vers l'aval (le flux ne fait qu'augmenter) → le chemin reste
+ * descendant, aucune cuvette fermée nouvelle qui piégerait l'eau.
+ */
+function erodeChannels(map: WorldMap, dir: number[], order: number[]): void {
+  const N = map.width * map.height
+  const el = map.elevation!
+  const acc = new Array<number>(N).fill(1)
+  for (let k = order.length - 1; k >= 0; k--) {
+    const i = order[k]!
+    const d = dir[i]!
+    if (d >= 0) acc[d]! += acc[i]!
+  }
+  const norm = 1 / Math.sqrt(N) // acc au sink = N → carve max = EROSION_DEPTH
+  for (let i = 0; i < N; i++) {
+    const carve = HYDRO.EROSION_DEPTH * Math.sqrt(acc[i]!) * norm
+    const e = el[i]! - carve
+    el[i] = e < 0 ? 0 : e
+  }
 }
 
 /**
@@ -379,9 +414,10 @@ export function carveHydrology(
 ): Array<{ source: ValleyPoint; outlet: ValleyPoint }> {
   const lake = carveLakes(map, flow, seed)               // 1..4 lacs, formes diverses ; principal renvoyé
   carveMainRiver(map, flow, seed, lake)                  // le tronc (les affluents s'y jettent)
-  const dir = computeDrainageDir(map, seed, lake.x, lake.y)
+  const { dir, order } = computeDrainageDir(map, seed, lake.x, lake.y)
   const streams = carveIceStreams(map, dir, seed)        // ruisseaux de fonte → rivière/lac/marais
   carveTarns(map, seed)
   mergeNearbyWater(map, 2)                               // fusionne les plans d'eau très proches
+  erodeChannels(map, dir, order)                         // DERNIER : l'eau creuse son lit dans l'élévation (rendu)
   return streams                                         // (source, exutoire) par ruisseau — pour tests de continuité
 }
