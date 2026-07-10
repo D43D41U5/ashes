@@ -41,7 +41,6 @@ import {
   zoomForFraming,
 } from '../render/framing'
 import { ambientTint, daylight } from '../render/lighting'
-import { hillshadeAt, type SampleElevation } from '../render/hillshade'
 import { assertNoFold, createWarp, type Warp } from '../render/warp'
 import {
   publishAlarm,
@@ -53,6 +52,7 @@ import {
 } from './world/hud-bridge'
 import { ClutterLayer } from './world/clutter-layer'
 import { GroundLayer } from './world/ground-layer'
+import { ShadeLayer } from './world/shade-layer'
 import { FireGlow } from './world/fire-glow'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
@@ -141,6 +141,7 @@ export class WorldScene extends Phaser.Scene {
   private worldSeed = 0
   private clutter?: ClutterLayer
   private ground!: GroundLayer
+  private shade!: ShadeLayer
   private loadingText: Phaser.GameObjects.Text | null = null
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
@@ -270,6 +271,7 @@ export class WorldScene extends Phaser.Scene {
     // étant des aplats, l'étirement NEAREST est pixel-identique au bake 16 px/tuile.
     this.bakeMapTexture()
     this.ground = new GroundLayer(this, this.map, this.warp, 'map-demo')
+    this.shade = new ShadeLayer(this, this.map, this.warp)
     this.worldSeed = msg.seed
     this.view.setNodes(msg.nodes)
     this.clutter = new ClutterLayer(this, this.map, this.worldSeed)
@@ -298,6 +300,7 @@ export class WorldScene extends Phaser.Scene {
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y)
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
+      this.shade.render(this.cameras.main, hour) // ombre du relief selon le soleil
       const amb = ambientTint(hour)
       this.ambientRect?.setFillStyle(amb.color).setAlpha(amb.alpha)
       this.fireGlow?.update(this.view.structures, this.view.villages, daylight(hour))
@@ -488,22 +491,18 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /** Bake la carte statique en une texture (R8) — API generateTexture éprouvée dans Manif.
-   *  La couleur d'une tuile = biome × grain (bruit par tuile) × relief (hillshade).
+   *  La couleur d'une tuile = biome × grain (bruit par tuile). Le RELIEF n'est PLUS
+   *  cuit ici : l'ombre du versant est dynamique (ShadeLayer, suit le soleil).
    *  Le facteur reste CONSTANT PAR TUILE : c'est ce qui autorise le bake à 1 px/tuile.
-   *  Grain DISCRET (nearest) : gardé faible, sinon le damier par tuile masque
-   *  l'ombrage du relief. */
+   *  Grain gardé faible (nearest) sinon le damier par tuile masque l'ombre. */
   private bakeMapTexture(): void {
     const { width, height } = this.map
-    // Échantillonneur d'altitude CLAMPÉ aux bords : le gradient au bord ne doit
-    // jamais lire hors carte (ça créerait un liseré sombre sur l'anneau).
-    const sampleElev: SampleElevation = (tx, ty) => this.sampleElevation(tx, ty)
     const g = this.add.graphics()
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
         const base = TERRAIN_COLORS[this.map.terrain[ty * width + tx] ?? 0] ?? 0xff00ff
         const grain = 0.96 + 0.07 * hash2(tx, ty)
-        const relief = hillshadeAt(tx, ty, sampleElev) // plus de stepShadeAt : relief continu
-        g.fillStyle(shade(base, grain * relief))
+        g.fillStyle(shade(base, grain))
         g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
       }
     }

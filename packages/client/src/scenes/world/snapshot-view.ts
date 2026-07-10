@@ -25,6 +25,7 @@ import {
   crownDepth,
   GROUND_FIRE_DEPTH,
   nodeDepth,
+  RELIEF_H,
   structureDepth,
   tileFeetAnchor,
   TILE_PX,
@@ -248,13 +249,15 @@ export class SnapshotView {
    * caméra, sinon il glisserait avec le lookahead du pointeur. */
   renderNodes(camera: Phaser.Cameras.Scene2D.Camera, playerX: number, playerY: number): void {
     const v = camera.worldView
-    // La fenêtre s'élargit : 3 rangées vers le BAS (les cimes des arbres plantés
-    // sous le bord de l'écran montent dans la vue) et 1 colonne de chaque côté
-    // (le houppier déborde d'une demi-tuile).
+    // La fenêtre s'élargit vers le BAS : un billboard planté SOUS l'écran remonte
+    // dans la vue de son lift (jusqu'à RELIEF_H px = ⌈H/TILE⌉ tuiles) + les cimes
+    // qui débordent ; sans cette marge il serait culé trop tôt (arbres qui
+    // disparaissent en bas). Colonnes ±2 pour le débord de houppier.
+    const liftMargin = Math.ceil(RELIEF_H / TILE_PX) + 4
     const tx0 = Math.floor(v.x / TILE_PX) - 2
     const ty0 = Math.floor(v.y / TILE_PX) - 1
     const tx1 = Math.ceil((v.x + v.width) / TILE_PX) + 2
-    const ty1 = Math.ceil((v.y + v.height) / TILE_PX) + 4
+    const ty1 = Math.ceil((v.y + v.height) / TILE_PX) + liftMargin
     const feetY = playerY + BALANCE.AVATAR_HITBOX_TILES / 2
     let used = 0
     let crownsUsed = 0

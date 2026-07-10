@@ -19,10 +19,12 @@ export const TILE_PX = 16
  * (gradient sud max ≈ 0,012/tuile, mesuré) : à H grand, le DÉPLACEMENT devient
  * illisible OU désaligne les murs hauts de leur collision plate (bloqué là où
  * l'écran montre autre chose) et fait sortir les billboards du culling. Donc le
- * relief se lit à l'OMBRAGE (hillshade), pas au déplacement : H reste PETIT,
- * juste assez pour poser les billboards sur le sol de façon cohérente et garder
- * murs+collision alignés (lift ≤ 1 tuile). */
-export const RELIEF_H = 16
+ * relief passe surtout à la GÉOMÉTRIE (le sol se déforme), l'ombrage n'étant
+ * qu'un accent. COMPROMIS à doser en jeu : H grand = déformation bien visible
+ * MAIS les murs hauts s'écartent de leur collision plate (on bute un peu avant
+ * le mur dessiné) et les billboards demandent plus de marge de culling (gérée
+ * dans renderNodes). */
+export const RELIEF_H = 400
 
 /* ── Budget des profondeurs de la scène monde ────────────────────────────────
  *

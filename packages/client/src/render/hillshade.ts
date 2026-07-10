@@ -23,9 +23,35 @@ export type SampleElevation = (tx: number, ty: number) => number
  *  on lit la pente MACRO du versant (montée vers les murs) plutôt que le bruit
  *  local — sinon l'ombrage n'est que du grain. Calibré en jeu. */
 export const HILLSHADE_STEP = 8
-export const HILLSHADE_STRENGTH = 12
-export const HILLSHADE_MIN = 0.45
-export const HILLSHADE_MAX = 1.55
+export const HILLSHADE_STRENGTH = 5
+export const HILLSHADE_MIN = 0.75
+export const HILLSHADE_MAX = 1.25
+
+/* ── Ombre PORTÉE dynamique (couche shade-layer, pas le bake) ────────────────
+ * Contrairement au hillshade cuit ci-dessus, celle-ci suit le soleil de l'heure
+ * courante et n'ASSOMBRIT que (multipliée sur le sol) — c'est « l'ombre du
+ * relief », pas un rehaut. */
+export const RELIEF_SHADOW_STEP = 3
+export const RELIEF_SHADOW_STRENGTH = 10
+export const RELIEF_SHADOW_MIN = 0.4
+
+/** Facteur d'ASSOMBRISSEMENT [MIN,1] d'une tuile dont la pente tourne le dos au
+ *  soleil `(sunX,sunY)` (direction VERS le soleil). 1 = pas d'ombre (face au
+ *  soleil, ou plat, ou nuit sun=0). */
+export function reliefShadow(
+  tx: number,
+  ty: number,
+  sample: SampleElevation,
+  sunX: number,
+  sunY: number,
+): number {
+  const dzdx = sample(tx + RELIEF_SHADOW_STEP, ty) - sample(tx - RELIEF_SHADOW_STEP, ty)
+  const dzdy = sample(tx, ty + RELIEF_SHADOW_STEP) - sample(tx, ty - RELIEF_SHADOW_STEP)
+  // Face éclairée : en allant vers le soleil on DESCEND (dz·sun < 0) → s ≥ 1
+  // (pas d'ombre) ; face à l'ombre : on monte vers le soleil (dz·sun > 0) → s < 1.
+  const s = 1 - RELIEF_SHADOW_STRENGTH * (dzdx * sunX + dzdy * sunY)
+  return s < RELIEF_SHADOW_MIN ? RELIEF_SHADOW_MIN : s > 1 ? 1 : s
+}
 
 /** Facteur lumineux dû à la pente, soleil au nord-ouest. Plat → 1. */
 export function hillshadeAt(tx: number, ty: number, sample: SampleElevation): number {

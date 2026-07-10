@@ -52,6 +52,18 @@ export function warmthColor(warmth: number): number {
   return (red << 16) | (green << 8) | blue
 }
 
+/** Direction VERS le soleil en espace-tuile (x est+, y sud+), de norme = FORCE
+ *  directionnelle de l'ombre portée : 0 = soleil au zénith ou nuit (pas d'ombre),
+ *  1 = soleil rasant. Balaie est→ouest sur la journée (aube 6h → couchant 18h) :
+ *  ombres vers l'ouest le matin, vers l'est le soir, quasi nulles à midi.
+ *  Client (pas /sim) → sin/cos autorisés. */
+export function sunDirection(hour: number): { x: number; y: number } {
+  const h = ((hour % 24) + 24) % 24
+  if (h <= 6 || h >= 18) return { x: 0, y: 0 } // nuit : pas de soleil
+  const az = Math.PI * ((h - 6) / 12) // 0 = est (aube) → π = ouest (couchant)
+  return { x: Math.cos(az), y: 0 } // |cos| = force : 1 au ras, 0 à midi (zénith)
+}
+
 interface DayKey {
   hour: number
   value: number
