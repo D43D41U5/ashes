@@ -34,7 +34,6 @@ import { setHud } from '../hud-state'
 import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type ReadyMessage, type SnapshotMessage } from '../protocol'
 import {
   AMBIENT_DEPTH,
-  GROUND_MAP_DEPTH,
   lookaheadOffset,
   OVERLAY_DEPTH,
   RELIEF_H,
@@ -54,6 +53,7 @@ import {
 } from './world/hud-bridge'
 import { CliffLayer } from './world/cliff-layer'
 import { ClutterLayer } from './world/clutter-layer'
+import { GroundLayer } from './world/ground-layer'
 import { faceHeightPx, MAX_DROP, SIDE_PX } from '../render/cliffs'
 import { FireGlow } from './world/fire-glow'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
@@ -143,6 +143,7 @@ export class WorldScene extends Phaser.Scene {
   private worldSeed = 0
   private clutter?: ClutterLayer
   private cliffs?: CliffLayer
+  private ground!: GroundLayer
   private loadingText: Phaser.GameObjects.Text | null = null
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
@@ -266,7 +267,7 @@ export class WorldScene extends Phaser.Scene {
     // WebGL même pour une grande carte) puis étiré à la taille monde : les tuiles
     // étant des aplats, l'étirement NEAREST est pixel-identique au bake 16 px/tuile.
     this.bakeMapTexture()
-    this.add.image(0, 0, 'map-demo').setOrigin(0).setDepth(GROUND_MAP_DEPTH).setDisplaySize(worldW, worldH)
+    this.ground = new GroundLayer(this, this.map, this.warp, 'map-demo')
     this.worldSeed = msg.seed
     this.view.setNodes(msg.nodes)
     this.clutter = new ClutterLayer(this, this.map, this.worldSeed)
@@ -292,6 +293,7 @@ export class WorldScene extends Phaser.Scene {
 
   override update(_time: number, deltaMs: number): void {
     if (!this.worldReady) return
+    this.ground.render(this.cameras.main)
     this.clutter?.update(this.cameras.main)
     this.cliffs?.update(this.cameras.main)
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y)
