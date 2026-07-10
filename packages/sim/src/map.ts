@@ -27,10 +27,6 @@ export interface WorldMap {
   /** Altitude par tuile [0,1] (substrat alpin). Optionnel — absent sur les
    *  cartes qui n'en produisent pas. NE PAS confondre avec `height` (dimension). */
   elevation?: number[]
-  /** Palier de terrasse par tuile (ENTIER), row-major. Dérivé de `elevation`
-   *  par `computeLevel` (terrace.ts). Optionnel — absent des cartes sans
-   *  élévation (generateValley). Ne bloque rien : tranche 1 est visuelle. */
-  level?: number[]
 }
 
 export function createEmptyMap(width: number, height: number, fillTerrainId: number): WorldMap {
@@ -52,12 +48,6 @@ export function terrainAt(map: WorldMap, tx: number, ty: number): number {
 export function elevationAt(map: WorldMap, tx: number, ty: number): number {
   if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return 0
   return map.elevation?.[ty * map.width + tx] ?? 0
-}
-
-/** Palier de terrasse à une tuile. Hors carte ou absent = 0. */
-export function levelAt(map: WorldMap, tx: number, ty: number): number {
-  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return 0
-  return map.level?.[ty * map.width + tx] ?? 0
 }
 
 /** Une tuile bloque-t-elle le déplacement ? Hors carte et terrain inconnu bloquent. */

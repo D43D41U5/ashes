@@ -41,7 +41,7 @@ import {
   zoomForFraming,
 } from '../render/framing'
 import { ambientTint, daylight } from '../render/lighting'
-import { hillshadeAt, stepShadeAt, type SampleElevation, type SampleLevel } from '../render/hillshade'
+import { hillshadeAt, type SampleElevation } from '../render/hillshade'
 import { assertNoFold, createWarp, type Warp } from '../render/warp'
 import {
   publishAlarm,
@@ -51,10 +51,8 @@ import {
   publishSeasonEnded,
   publishTimeAndVillage,
 } from './world/hud-bridge'
-import { CliffLayer } from './world/cliff-layer'
 import { ClutterLayer } from './world/clutter-layer'
 import { GroundLayer } from './world/ground-layer'
-import { faceHeightPx, MAX_DROP, SIDE_PX } from '../render/cliffs'
 import { FireGlow } from './world/fire-glow'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
@@ -142,7 +140,6 @@ export class WorldScene extends Phaser.Scene {
   private worldReady = false
   private worldSeed = 0
   private clutter?: ClutterLayer
-  private cliffs?: CliffLayer
   private ground!: GroundLayer
   private loadingText: Phaser.GameObjects.Text | null = null
   private calendarScale = 1
@@ -276,8 +273,6 @@ export class WorldScene extends Phaser.Scene {
     this.worldSeed = msg.seed
     this.view.setNodes(msg.nodes)
     this.clutter = new ClutterLayer(this, this.map, this.worldSeed)
-    this.bakeCliffTextures()
-    this.cliffs = new CliffLayer(this, this.map)
     this.ambientRect = this.add
       .rectangle(0, 0, worldW, worldH, 0x000000, 0)
       .setOrigin(0)
@@ -300,7 +295,6 @@ export class WorldScene extends Phaser.Scene {
     if (!this.worldReady) return
     this.ground.render(this.cameras.main)
     this.clutter?.update(this.cameras.main)
-    this.cliffs?.update(this.cameras.main)
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y)
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
@@ -501,55 +495,17 @@ export class WorldScene extends Phaser.Scene {
     // Échantillonneur d'altitude CLAMPÉ aux bords : le gradient au bord ne doit
     // jamais lire hors carte (ça créerait un liseré sombre sur l'anneau).
     const sampleElev: SampleElevation = (tx, ty) => this.sampleElevation(tx, ty)
-    const sampleLevel: SampleLevel = (tx, ty) => {
-      if (tx < 0 || ty < 0 || tx >= width || ty >= height) return -1
-      return this.map.level?.[ty * width + tx] ?? -1
-    }
     const g = this.add.graphics()
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
         const base = TERRAIN_COLORS[this.map.terrain[ty * width + tx] ?? 0] ?? 0xff00ff
         const grain = 0.92 + 0.16 * hash2(tx, ty)
-        const relief = hillshadeAt(tx, ty, sampleElev) * stepShadeAt(tx, ty, sampleLevel)
+        const relief = hillshadeAt(tx, ty, sampleElev) // plus de stepShadeAt : relief continu
         g.fillStyle(shade(base, grain * relief))
         g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
       }
     }
     g.generateTexture('map-demo', width, height)
     g.destroy()
-  }
-
-  /** Cuit une texture de paroi par décrochement (1..MAX_DROP) : corps de roche,
-   *  arête claire en haut, base assombrie. Art placeholder — calibré à l'œil. */
-  private bakeCliffTextures(): void {
-    const ROCK = 0x6e6a66
-    for (let drop = 1; drop <= MAX_DROP; drop++) {
-      const faceKey = `cliff-face-${drop}`
-      if (!this.textures.exists(faceKey)) {
-        const h = faceHeightPx(drop)
-        const g = this.add.graphics()
-        g.fillStyle(shade(ROCK, 0.72))
-        g.fillRect(0, 0, TILE_PX, h) // corps de la paroi
-        g.fillStyle(shade(ROCK, 1.15))
-        g.fillRect(0, 0, TILE_PX, 2) // arête claire (l'herbe du plateau accroche la lumière)
-        g.fillStyle(shade(ROCK, 0.45))
-        g.fillRect(0, h - 3, TILE_PX, 3) // base assombrie (ombre portée au pied)
-        g.generateTexture(faceKey, TILE_PX, h)
-        g.destroy()
-      }
-      // La TRANCHE : la paroi vue de profil, un liseré contre le bord amont de la
-      // tuile basse. Elle court sur toute la hauteur de tuile, sans quoi le mur se
-      // rompt à chaque marche d'un contour diagonal. Symétrique — l'est et l'ouest
-      // partagent la texture, seule la position change.
-      const sideKey = `cliff-side-${drop}`
-      if (this.textures.exists(sideKey)) continue
-      const g = this.add.graphics()
-      g.fillStyle(shade(ROCK, 0.62)) // plus sombre que la face : elle ne prend pas le jour
-      g.fillRect(0, 0, SIDE_PX, TILE_PX)
-      g.fillStyle(shade(ROCK, 1.05))
-      g.fillRect(0, 0, SIDE_PX, 1) // liseré haut : l'arête du plateau
-      g.generateTexture(sideKey, SIDE_PX, TILE_PX)
-      g.destroy()
-    }
   }
 }

@@ -64,7 +64,7 @@ export {
 export type { MonsterDef, MonsterType, NodeDef, NodeType, Recipe, RecipeId, TerrainDef } from './balance'
 
 // ─── Monde : carte, temps, collision, navigation ──────────────────────────
-export { createEmptyMap, terrainAt, elevationAt, levelAt, isBlockingTile, zoneAt } from './map'
+export { createEmptyMap, terrainAt, elevationAt, isBlockingTile, zoneAt } from './map'
 export type { WorldMap, Zone } from './map'
 export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
@@ -107,7 +107,6 @@ export { applyDamage } from './combat'
 export { applyStructureDamage, grantItems } from './village'
 export { generateValley } from './valleygen'
 export { generateAlpineTerrain } from './alpinegen'
-export { computeLevel, smoothField } from './terrace'
 export { placePois, POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
 export type { ValleySkeleton, ValleyRegion, ValleyPoint } from './valleygen'
 export { VEILLEE_SKELETON, VEILLEE_SITES } from './valley-veillee'

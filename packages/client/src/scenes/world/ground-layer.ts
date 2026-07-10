@@ -11,7 +11,7 @@
  *
  * La géométrie (`gridMesh`) est PURE et vit dans `render/ground-mesh.ts` (donc
  * testable en Node) ; ce fichier importe Phaser et n'est lui-même pas testé
- * directement — même partition que `render/cliffs.ts` / `cliff-layer.ts`.
+ * directement — même partition pur/Phaser que le reste du rendu.
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'

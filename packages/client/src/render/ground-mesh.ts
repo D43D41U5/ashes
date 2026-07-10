@@ -2,8 +2,7 @@
  * Géométrie PURE du sol déformé — grille de sommets `x,y,u,v` soulevée par
  * l'élévation (spec relief-continu §4.1), fenêtrée à la vue caméra. Aucun
  * import Phaser ici (testable en Node) : le wrapper `Mesh2D` vit dans
- * `scenes/world/ground-layer.ts`, à la manière de `render/cliffs.ts` (pur) et
- * `scenes/world/cliff-layer.ts` (Phaser).
+ * `scenes/world/ground-layer.ts`.
  */
 
 /** Sommets `x,y,u,v` (step 4) + indices `a,b,c,page` (step 4) d'une fenêtre de

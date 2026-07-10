@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { computeElevation, computeMoisture, generateAlpineTerrain } from './alpinegen'
-import { isBlockingTile, levelAt, terrainAt } from './map'
+import { isBlockingTile, terrainAt } from './map'
 import {
   TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_MARSH, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW,
-  TERRACE,
 } from './balance'
 
 describe('computeElevation — le relief alpin', () => {
@@ -134,26 +133,3 @@ describe('vallée ouverte au sud (relief continu)', () => {
   })
 })
 
-describe('generateAlpineTerrain — paliers', () => {
-  it('produit un level dérivé, borné et de la bonne longueur', () => {
-    const map = generateAlpineTerrain(64, 64, 7)
-    expect(map.level).toBeDefined()
-    expect(map.level).toHaveLength(64 * 64)
-    for (const l of map.level!) {
-      expect(Number.isInteger(l)).toBe(true)
-      expect(l).toBeGreaterThanOrEqual(0)
-      expect(l).toBeLessThanOrEqual(TERRACE.LEVELS - 1)
-    }
-  })
-
-  it('le fond de vallée est d\'un palier plus BAS que le mur de bordure', () => {
-    const map = generateAlpineTerrain(96, 96, 11)
-    const centre = levelAt(map, 48, 48)
-    const bord = levelAt(map, 2, 48)
-    expect(centre).toBeLessThan(bord)
-  })
-
-  it('est déterministe : même seed → même level', () => {
-    expect(generateAlpineTerrain(48, 48, 3).level).toEqual(generateAlpineTerrain(48, 48, 3).level)
-  })
-})
