@@ -19,9 +19,12 @@ export type SampleElevation = (tx: number, ty: number) => number
 /** Écart d'échantillonnage du gradient, en tuiles. Large = lit la pente MACRO du
  *  versant plutôt que chaque bosse — un lissage du pauvre, gratuit. */
 export const HILLSHADE_STEP = 3
-export const HILLSHADE_STRENGTH = 8
-export const HILLSHADE_MIN = 0.55
-export const HILLSHADE_MAX = 1.45
+/** Le relief se lit ICI, pas au déplacement (champ d'élévation trop doux pour un
+ *  warp visible sans casser la collision) : ombrage fort pour que les versants
+ *  se lisent par la lumière. Calibré en jeu. */
+export const HILLSHADE_STRENGTH = 16
+export const HILLSHADE_MIN = 0.5
+export const HILLSHADE_MAX = 1.5
 
 /** Facteur lumineux dû à la pente, soleil au nord-ouest. Plat → 1. */
 export function hillshadeAt(tx: number, ty: number, sample: SampleElevation): number {

@@ -29,9 +29,11 @@ export class GroundLayer {
     textureKey: string,
   ) {
     this.mesh = scene.add.mesh2d(0, 0, textureKey, [], []).setDepth(GROUND_MAP_DEPTH)
-    // Linéaire : interpole les couleurs du bake sur les versants (ombrage lisse).
-    // Levier de calibration en jeu — NEAREST rend croustillant mais facetté.
-    scene.textures.get(textureKey).setFilter(Phaser.Textures.FilterMode.LINEAR)
+    // NEAREST : le bake fait 1 px/tuile — en LINÉAIRE il baverait sur toute la
+    // tuile (sol flou, biomes décalés d'un demi-texel vs la minimap). Nearest
+    // rend chaque tuile en aplat net, aligné à la grille. Le lissage viendra
+    // avec un art tuilé haute résolution, pas avec ce bake (spec §7).
+    scene.textures.get(textureKey).setFilter(Phaser.Textures.FilterMode.NEAREST)
   }
 
   /** Reconstruit la grille de la fenêtre visible, chaque frame. */
