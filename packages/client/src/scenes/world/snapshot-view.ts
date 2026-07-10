@@ -8,6 +8,7 @@
 import {
   BALANCE,
   STRUCTURE_HP,
+  treeJitter,
   type Corpse,
   type Entity,
   type Monster,
@@ -259,11 +260,18 @@ export class SnapshotView {
           sprite = this.scene.add.image(0, 0, texture).setOrigin(0.5, 1)
           this.nodePool[used] = sprite
         }
+        // Un arbre est décalé dans sa tuile (spec décalage d'origine) — MÊME
+        // fonction pure que la collision, donc sprite et hitbox coïncident au bit
+        // près. Les autres nœuds restent centrés sur leur tuile.
+        const j = isTree ? treeJitter(tx, ty) : { dx: 0, dy: 0 }
         const a = tileFeetAnchor(tx, ty, TILE_PX)
-        sprite.setPosition(a.px, a.py)
+        const px = a.px + j.dx * TILE_PX
+        const py = a.py + j.dy * TILE_PX
+        sprite.setPosition(px, py)
         // Le sprite est POOLÉ : sa depth suit la tuile qu'il occupe cette frame,
-        // jamais celle où il a été créé.
-        sprite.setDepth(nodeDepth(ty, TILE_PX))
+        // jamais celle où il a été créé. Le pied réel intègre le décalage Y, pour
+        // que deux arbres proches se trient par leur vrai pied, pas par le pool.
+        sprite.setDepth(nodeDepth(ty + j.dy, TILE_PX))
         sprite.setTexture(texture)
         // Le tronc reste OPAQUE en toutes circonstances : les troncs dessinent la
         // structure de la forêt, ce sont les houppiers qui s'ouvrent.
@@ -278,8 +286,8 @@ export class SnapshotView {
           crown = this.scene.add.image(0, 0, 'nd-tree_crown').setOrigin(0.5, 1)
           this.crownPool[crownsUsed] = crown
         }
-        crown.setPosition(a.px, a.py - 16)
-        crown.setDepth(crownDepth(ty + 1, TILE_PX))
+        crown.setPosition(px, py - 16)
+        crown.setDepth(crownDepth(ty + 1 + j.dy, TILE_PX))
         // Distance des pieds du joueur au PIED DU TRONC : l'arbre à ton contact
         // s'efface, celui dont la cime te survole de loin reste opaque.
         const dx = playerX - (tx + 0.5)
