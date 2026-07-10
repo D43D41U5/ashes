@@ -153,6 +153,46 @@ export function nodeDepth(ty: number, tilePx: number): number {
   return ySortDepth(ty + 1, tilePx, TIE_NODE)
 }
 
+/* ── Les houppiers : une bande à eux seuls ───────────────────────────────────
+ *
+ * Au-dessus de tous les acteurs (la bande de tri Y plafonne à
+ * `Y_SORT_BASE + 57 600` sur la vallée canonique de 3600 tuiles) et sous la
+ * canopée. Correct SANS cas particulier : un houppier ne déborde que vers le
+ * HAUT de l'écran, donc n'occulte que des acteurs situés au nord de son tronc —
+ * qui sont bel et bien derrière lui. Les houppiers ne se trient qu'entre eux.
+ */
+export const CROWN_BASE = 900_000
+
+/** Rayon du disque de découvert, en tuiles : en deçà, le houppier est effacé. */
+export const CROWN_R_IN = 1.5
+/** Au-delà, la forêt est un couvert opaque. */
+export const CROWN_R_OUT = 4.0
+/** Opacité résiduelle sous la cime : on devine le feuillage, on voit le sol. */
+export const CROWN_ALPHA_MIN = 0.22
+
+/** Profondeur d'un houppier, dans sa bande propre, triée par la rangée de son
+ * tronc. Même unité que la bande Y (le pixel monde) — mais jamais mêlée à elle. */
+export function crownDepth(feetY: number, tilePx: number): number {
+  return CROWN_BASE + feetY * tilePx
+}
+
+/**
+ * Le disque de découvert : les houppiers s'effacent autour du joueur, les troncs
+ * restent opaques. `distTiles` se mesure des pieds du joueur au PIED DU TRONC —
+ * l'arbre à ton contact s'efface, celui dont la cime te survole de loin reste
+ * opaque.
+ *
+ * Un alpha par sprite, fonction CONTINUE de la position du joueur : pas de
+ * masque, pas de `RenderTexture`, pas d'`erase`, et donc aucun scintillement
+ * quand on marche.
+ */
+export function crownAlpha(distTiles: number): number {
+  if (distTiles <= CROWN_R_IN) return CROWN_ALPHA_MIN
+  if (distTiles >= CROWN_R_OUT) return 1
+  const t = (distTiles - CROWN_R_IN) / (CROWN_R_OUT - CROWN_R_IN)
+  return CROWN_ALPHA_MIN + (1 - CROWN_ALPHA_MIN) * t
+}
+
 /** Un cadavre est à plat : ses « pieds » sont sa propre position. */
 export function corpseDepth(y: number, tilePx: number): number {
   return ySortDepth(y, tilePx, TIE_CORPSE)
