@@ -84,25 +84,21 @@ la vue caméra (même trick de culling que les nœuds dans `snapshot-view.ts` :
 coût borné à la vue, jamais à la carte entière). Deux saveurs, inégales en
 risque — la v1 prend la sûre :
 
-- **v1, voie de moindre risque** 🟢 : un **maillage de grille construit à la
-  main** (le GameObject `Mesh` de Phaser 4.2 ; `Plane` n'existe **pas** en 4.2 —
-  vérifié) sur la fenêtre caméra ; on écrit la position Y de ses sommets depuis
-  `projectY`, le GPU dessine le sol déformé texturé. La fenêtre fait ~20×35
-  tuiles ≈ 800 sommets : la mise à jour CPU des sommets est négligeable. C'est
-  déjà « rendu GPU ». **Le choix exact de primitive et son API de sommets sont un
-  point du plan** (un court spike de rendu tranche entre `Mesh` à sommets
-  manuels et les replis ci-dessous).
-- **optimisation différée, à dérisquer** 🟡 : un **vertex shader** custom qui
-  déplace une grille statique en échantillonnant une texture d'élévation (zéro
-  CPU par frame). Réservé à un **spike** ultérieur, à ne faire que si le profil
-  le réclame (à 800 sommets fenêtrés, improbable). Phaser 4.2 expose `Mesh`,
-  `Shader`/`ShaderQuad` (quad 4-sommets) et un système de filtres
-  (`FilterDisplacement` inclus) ; que `Mesh` accepte proprement un vertex shader
-  custom **reste à confirmer** — d'où le spike, hors v1.
-- **replis connus** si `Mesh` à sommets manuels ne convient pas : un `Shader`
-  plein-écran dont le fragment reconstruit le sol par le même `unproject` (draw
-  et picking = math identique), ou `FilterDisplacement` en approximation. Notés,
-  non retenus par défaut.
+- **v1, primitive confirmée** 🟢 : un `Phaser.GameObjects.Mesh2D` (API 4.2
+  vérifiée : `add.mesh2d(x, y, texture, vertices, indices)`, sommet = `x,y,u,v`
+  step 4). Une grille de sommets sur la fenêtre caméra, soulevés par `lift`,
+  **texturée par le bake `map-demo` EXISTANT** (UV = coin/dimension carte). En
+  filtrage linéaire, les couleurs du bake s'interpolent sur les versants →
+  ombrage **lisse** (là où des quads d'aplat seraient facettés). ~2800 sommets
+  fenêtrés reconstruits par frame : négligeable. `Plane` n'existe pas en 4.2 ;
+  `Mesh2D` est la primitive 2D texturée dédiée. **C'est aussi le chemin de l'art
+  tuilé** : de vraies tuiles Aseprite = un échange de texture, pas une
+  réécriture.
+- **optimisation différée** 🟡 : un **vertex shader** custom déplaçant une
+  grille statique depuis une texture d'élévation (zéro CPU par frame). Réservé à
+  un spike ultérieur, à ne faire que si le profil le réclame (improbable à cette
+  taille de fenêtre). `Mesh2D` n'expose pas de couleur par sommet (l'ombrage
+  vient de la texture), ce qui suffit à la v1.
 
 ### 4.2 Le rendu des acteurs — un décalage d'une ligne
 

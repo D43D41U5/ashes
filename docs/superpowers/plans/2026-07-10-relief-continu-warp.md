@@ -4,9 +4,9 @@
 
 **Goal:** Remplacer le relief en escalier (paliers + faces de falaise) par un sol qui se déforme en continu selon l'élévation (Y-shear), avec picking exact et vallée ouverte vers la caméra.
 
-**Architecture:** Un module pur `warp.ts` (client, sans Phaser) est la source de vérité : `lift` (monde→décalage écran) sert au rendu, `unproject` (écran→monde) sert au picking — les deux ne peuvent pas diverger. Le sol se dessine en quads déformés (`Graphics`, fenêtré à la vue) ; les billboards se soulèvent de `lift` ; le tri Y reste `ySortDepth(worldY)`. La gen alpine s'ouvre au sud pour garantir zéro repli.
+**Architecture:** Un module pur `warp.ts` (client, sans Phaser) est la source de vérité : `lift` (monde→décalage écran) sert au rendu, `unproject` (écran→monde) sert au picking — les deux ne peuvent pas diverger. Le sol se dessine en `Mesh2D` déformé (grille de sommets `x,y,u,v`, fenêtrée à la vue, texturée par le bake `map-demo` existant) ; les billboards se soulèvent de `lift` ; le tri Y reste `ySortDepth(worldY)`. La gen alpine s'ouvre au sud pour garantir zéro repli.
 
-**Tech Stack:** TypeScript, Vitest, Phaser 4.2 (`Graphics`), monorepo pnpm (`@braises/sim` + client).
+**Tech Stack:** TypeScript, Vitest, Phaser 4.2 (`GameObjects.Mesh2D`), monorepo pnpm (`@braises/sim` + client).
 
 ## Global Constraints
 
@@ -370,43 +370,47 @@ git commit -m "feat(client): constante RELIEF_H + warp créé au boot avec garde
 
 ---
 
-### Task 4 : Le sol se déforme — quads GPU fenêtrés
+### Task 4 : Le sol se déforme — `Mesh2D` fenêtré, texturé par le bake
 
 **Files:**
 - Create: `packages/client/src/scenes/world/ground-layer.ts`
-- Modify: `packages/client/src/scenes/WorldScene.ts` (remplacer l'image `map-demo` par la couche ; appeler son rendu par frame)
-- Test: `packages/client/src/scenes/world/ground-layer.test.ts` (géométrie pure d'un quad)
+- Modify: `packages/client/src/scenes/WorldScene.ts` (remplacer l'image `map-demo` par la couche ; garder `bakeMapTexture` comme source de texture ; appeler le rendu par frame)
+- Test: `packages/client/src/scenes/world/ground-layer.test.ts` (géométrie de grille pure)
 
 **Interfaces:**
-- Consumes : `Warp.lift` (Task 1) ; `map.terrain`/`map.elevation`/`map.width`/`map.height` ; `TERRAIN_COLORS`, `hash2`, `shade`, `hillshadeAt` (déjà importés par `WorldScene`).
+- Consumes : `Warp.lift` (Task 1) ; `map.width`/`map.height` ; la texture `map-demo` déjà cuite par `WorldScene.bakeMapTexture` (aplat 1 px/tuile).
 - Produces :
-  - `quadCorners(tx, ty, lift, tilePx): { x: number; y: number }[]` (pur, testable) — les 4 coins écran-monde d'une tuile déformée.
-  - `class GroundLayer { constructor(scene, map, warp); render(camera): void; destroy(): void }`
+  - `gridMesh(tx0, ty0, tx1, ty1, lift, tilePx, mapW, mapH): { vertices: number[]; indices: number[] }` (pur, testable) — sommets `x,y,u,v` (step 4) + indices `a,b,c,page` (step 4) d'une fenêtre de grille déformée.
+  - `class GroundLayer { constructor(scene, map, warp, textureKey); render(camera): void; destroy(): void }`
 
-**Décision :** v1 dessine des quads d'aplat par tuile (couleur = formule du bake actuel), déformés par `lift` aux coins ENTIERS (partagés entre tuiles voisines → sol continu, sans couture), fenêtrés à la vue (comme les nœuds). `Graphics` est GPU-batché et sans risque d'API. Upgrade différé (art tuilé → `Mesh` texturé / vertex-shader) hors périmètre.
+**Décision (révisée vs Graphics) :** on rend le sol en `Phaser.GameObjects.Mesh2D` — une grille de sommets `x,y,u,v` déformée par `lift`, texturée par le bake `map-demo` EXISTANT (on garde `bakeMapTexture`). Deux raisons : (1) c'est la primitive du chemin artistique — de vraies tuiles Aseprite plus tard = un **échange de texture**, pas une réécriture ; (2) le filtrage LINÉAIRE interpole les couleurs du bake sur les versants → ombrage **lisse**, pas facetté (ce que `Graphics` en aplats ne peut pas). API confirmée : `add.mesh2d(x, y, texture, vertices, indices)`, sommet = `x,y,u,v` (pas de couleur par sommet — l'ombrage vient de la texture). Vertex-shader statique = optimisation différée (spec §4.1).
 
 - [ ] **Step 1 : Écrire le test de géométrie (pur)**
 
 ```ts
 // packages/client/src/scenes/world/ground-layer.test.ts
 import { describe, expect, it } from 'vitest'
-import { quadCorners } from './ground-layer'
+import { gridMesh } from './ground-layer'
 
-describe('quadCorners', () => {
-  it('sol plat (lift=0) : un carré de tuile aligné', () => {
-    const c = quadCorners(2, 3, () => 0, 16)
-    expect(c[0]).toEqual({ x: 32, y: 48 }) // haut-gauche
-    expect(c[1]).toEqual({ x: 48, y: 48 }) // haut-droite
-    expect(c[2]).toEqual({ x: 48, y: 64 }) // bas-droite
-    expect(c[3]).toEqual({ x: 32, y: 64 }) // bas-gauche
+describe('gridMesh', () => {
+  it('fenêtre 1×1 plate : 4 sommets (x,y,u,v), 2 triangles', () => {
+    // carte 10×10, tuile 16, lift nul. Fenêtre = la seule tuile (2,3).
+    const m = gridMesh(2, 3, 2, 3, () => 0, 16, 10, 10)
+    // 4 sommets × 4 composantes = 16 nombres.
+    expect(m.vertices).toHaveLength(16)
+    // coin haut-gauche (gx=2,gy=3) : x=32, y=48, u=0.2, v=0.3
+    expect(m.vertices.slice(0, 4)).toEqual([32, 48, 0.2, 0.3])
+    // coin bas-droite (gx=3,gy=4) est le 4e sommet : x=48, y=64, u=0.3, v=0.4
+    expect(m.vertices.slice(12, 16)).toEqual([48, 64, 0.3, 0.4])
+    // 2 triangles × (a,b,c,page) = 8 indices.
+    expect(m.indices).toHaveLength(8)
   })
 
-  it('les coins remontent de lift, partagés entre tuiles voisines', () => {
-    // lift = 10 au coin (2,3), 0 ailleurs.
+  it('les sommets remontent de lift', () => {
     const lift = (x: number, y: number) => (x === 2 && y === 3 ? 10 : 0)
-    const c = quadCorners(2, 3, lift, 16)
-    expect(c[0]).toEqual({ x: 32, y: 38 }) // 48 − 10
-    expect(c[1]).toEqual({ x: 48, y: 48 })
+    const m = gridMesh(2, 3, 2, 3, lift, 16, 10, 10)
+    expect(m.vertices[1]).toBe(38) // y du coin (2,3) = 48 − 10
+    expect(m.vertices[5]).toBe(48) // y du coin (3,3) = 48 − 0
   })
 })
 ```
@@ -421,77 +425,72 @@ Expected: FAIL — module absent.
 ```ts
 // packages/client/src/scenes/world/ground-layer.ts
 /**
- * Le sol qui se DÉFORME : une grille de quads d'aplat, déformés verticalement
- * par l'élévation (spec relief-continu §4.1). Remplace l'image `map-demo` plate.
+ * Le sol qui se DÉFORME : un `Mesh2D` dont les sommets sont soulevés par
+ * l'élévation (spec relief-continu §4.1). Remplace l'image `map-demo` plate,
+ * mais RÉUTILISE sa texture (le bake 1 px/tuile) — UV-mappée sur la grille
+ * déformée. En filtrage linéaire, les couleurs du bake s'interpolent sur les
+ * versants → ombrage lisse. De vraies tuiles plus tard = un échange de texture.
  *
- * Rendu FENÊTRÉ à la vue (comme les nœuds) : coût borné à l'écran, jamais à la
- * carte. Les coins sont pris aux sommets ENTIERS (partagés entre tuiles
- * voisines) → surface continue, sans couture. `Graphics` est GPU-batché.
- *
- * Couleur par tuile = formule du bake d'origine (biome × grain × hillshade),
- * précalculée une fois. AUCUNE logique de jeu ici — rendu pur d'état reçu.
+ * Rendu FENÊTRÉ à la vue (comme les nœuds) : coût borné à l'écran. Les sommets
+ * sont aux coins ENTIERS (partagés entre tuiles voisines) → surface continue,
+ * sans couture. AUCUNE logique de jeu ici — rendu pur d'état reçu.
  */
 import Phaser from 'phaser'
-import { hash2, type WorldMap } from '@braises/sim'
-import { TERRAIN_COLORS } from '../../render/palette' // ajuster à la source réelle de TERRAIN_COLORS
-import { hillshadeAt, type SampleElevation } from '../../render/hillshade'
+import type { WorldMap } from '@braises/sim'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
-import { shade } from '../../render/color' // ajuster à la source réelle de `shade`
 import type { Warp } from '../../render/warp'
 
-/** Les 4 coins écran-monde d'une tuile déformée : HG, HD, BD, BG (sens horaire).
- *  `lift(x,y)` en px aux sommets ENTIERS ; partage → continuité. */
-export function quadCorners(
-  tx: number,
-  ty: number,
+/** Sommets `x,y,u,v` (step 4) + indices `a,b,c,page` (step 4) d'une fenêtre de
+ *  grille [tx0..tx1]×[ty0..ty1], déformée par `lift` (px) aux coins ENTIERS.
+ *  UV = coin/dimension carte → échantillonne la texture `map-demo`. */
+export function gridMesh(
+  tx0: number,
+  ty0: number,
+  tx1: number,
+  ty1: number,
   lift: (x: number, y: number) => number,
   tilePx: number,
-): { x: number; y: number }[] {
-  return [
-    { x: tx * tilePx, y: ty * tilePx - lift(tx, ty) },
-    { x: (tx + 1) * tilePx, y: ty * tilePx - lift(tx + 1, ty) },
-    { x: (tx + 1) * tilePx, y: (ty + 1) * tilePx - lift(tx + 1, ty + 1) },
-    { x: tx * tilePx, y: (ty + 1) * tilePx - lift(tx, ty + 1) },
-  ]
+  mapW: number,
+  mapH: number,
+): { vertices: number[]; indices: number[] } {
+  const cols = tx1 - tx0 + 1
+  const rows = ty1 - ty0 + 1
+  const vertsPerRow = cols + 1
+  const vertices: number[] = []
+  for (let gy = ty0; gy <= ty1 + 1; gy++) {
+    for (let gx = tx0; gx <= tx1 + 1; gx++) {
+      vertices.push(gx * tilePx, gy * tilePx - lift(gx, gy), gx / mapW, gy / mapH)
+    }
+  }
+  const indices: number[] = []
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const a = r * vertsPerRow + c
+      const b = a + 1
+      const d = a + vertsPerRow
+      const e = d + 1
+      indices.push(a, b, e, 0, a, e, d, 0) // deux triangles, page 0
+    }
+  }
+  return { vertices, indices }
 }
 
 export class GroundLayer {
-  private g: Phaser.GameObjects.Graphics
-  private color: number[] // couleur par tuile, précalculée
-  private liftAtCorner: (x: number, y: number) => number
+  private mesh: Phaser.GameObjects.Mesh2D
 
   constructor(
     scene: Phaser.Scene,
     private map: WorldMap,
-    warp: Warp,
+    private warp: Warp,
+    textureKey: string,
   ) {
-    this.g = scene.add.graphics().setDepth(GROUND_MAP_DEPTH)
-    // lift aux SOMMETS entiers de la grille (pas au centre de tuile).
-    this.liftAtCorner = (x, y) => warp.lift(x, y)
-    this.color = this.bakeColors()
+    this.mesh = scene.add.mesh2d(0, 0, textureKey, [], []).setDepth(GROUND_MAP_DEPTH)
+    // Linéaire : interpole les couleurs du bake sur les versants (ombrage lisse).
+    // Levier de calibration en jeu — NEAREST rend croustillant mais facetté.
+    scene.textures.get(textureKey).setFilter(Phaser.Textures.FilterMode.LINEAR)
   }
 
-  /** Précalcule la couleur d'aplat de chaque tuile (formule du bake d'origine). */
-  private bakeColors(): number[] {
-    const { width, height } = this.map
-    const sampleElev: SampleElevation = (tx, ty) => {
-      const cx = tx < 0 ? 0 : tx >= width ? width - 1 : tx
-      const cy = ty < 0 ? 0 : ty >= height ? height - 1 : ty
-      return this.map.elevation?.[cy * width + cx] ?? 0
-    }
-    const out = new Array<number>(width * height)
-    for (let ty = 0; ty < height; ty++) {
-      for (let tx = 0; tx < width; tx++) {
-        const base = TERRAIN_COLORS[this.map.terrain[ty * width + tx] ?? 0] ?? 0xff00ff
-        const grain = 0.92 + 0.16 * hash2(tx, ty)
-        // Plus de stepShade : le relief est continu, l'ombrage suffit.
-        out[ty * width + tx] = shade(base, grain * hillshadeAt(tx, ty, sampleElev))
-      }
-    }
-    return out
-  }
-
-  /** Redessine la fenêtre visible, chaque frame. */
+  /** Reconstruit la grille de la fenêtre visible, chaque frame. */
   render(camera: Phaser.Cameras.Scene2D.Camera): void {
     const { width, height } = this.map
     const v = camera.worldView
@@ -499,32 +498,21 @@ export class GroundLayer {
     const tx0 = Math.max(0, Math.floor(v.x / TILE_PX) - 1)
     const ty0 = Math.max(0, Math.floor(v.y / TILE_PX) - 1)
     const tx1 = Math.min(width - 1, Math.ceil((v.x + v.width) / TILE_PX) + 1)
-    const ty1 = Math.min(height - 1, Math.ceil((v.y + v.height) / TILE_PX) + Math.ceil(64))
-    const g = this.g
-    g.clear()
-    // Dessin arrière→avant (nord→sud) : le peintre respecte l'occlusion du sol.
-    for (let ty = ty0; ty <= ty1; ty++) {
-      for (let tx = tx0; tx <= tx1; tx++) {
-        const c = quadCorners(tx, ty, this.liftAtCorner, TILE_PX)
-        g.fillStyle(this.color[ty * width + tx] ?? 0xff00ff, 1)
-        g.fillPoints(c, true)
-      }
-    }
+    const ty1 = Math.min(height - 1, Math.ceil((v.y + v.height) / TILE_PX) + 64)
+    const m = gridMesh(tx0, ty0, tx1, ty1, (x, y) => this.warp.lift(x, y), TILE_PX, width, height)
+    this.mesh.vertices = m.vertices
+    this.mesh.indices = m.indices
   }
 
   destroy(): void {
-    this.g.destroy()
+    this.mesh.destroy()
   }
 }
 ```
 
-- [ ] **Step 4 : Résoudre les imports réels**
+- [ ] **Step 4 : Brancher dans `WorldScene`**
 
-`TERRAIN_COLORS` et `shade` sont déjà importés par `WorldScene.ts` — repérer leurs vrais chemins (`grep -n "TERRAIN_COLORS\|shade" packages/client/src/scenes/WorldScene.ts` et suivre les imports) et corriger les 2 lignes d'import de `ground-layer.ts`. Idem si `SampleElevation` est exporté ailleurs.
-
-- [ ] **Step 5 : Brancher dans `WorldScene`**
-
-Dans `onReady`, remplacer la ligne de l'image plate (L260) :
+Dans `onReady`, GARDER `this.bakeMapTexture()` (L259 — il produit la texture `map-demo`), et remplacer la ligne de l'image plate (L260) :
 
 ```ts
     this.add.image(0, 0, 'map-demo').setOrigin(0).setDepth(GROUND_MAP_DEPTH).setDisplaySize(worldW, worldH)
@@ -533,29 +521,33 @@ Dans `onReady`, remplacer la ligne de l'image plate (L260) :
 par :
 
 ```ts
-    this.ground = new GroundLayer(this, this.map, this.warp)
+    this.ground = new GroundLayer(this, this.map, this.warp, 'map-demo')
 ```
 
-Supprimer l'appel `this.bakeMapTexture()` (L259) — la couche fait son propre bake de couleurs. Déclarer `private ground!: GroundLayer` et importer `GroundLayer`. Dans la boucle `update` (là où `this.clutter`/`this.cliffs` sont rendus, ~L326), ajouter :
+Déclarer `private ground!: GroundLayer` et importer `GroundLayer`. Dans la boucle `update` (là où `this.clutter`/`this.cliffs` sont rendus, ~L326), ajouter :
 
 ```ts
     this.ground.render(this.cameras.main)
 ```
 
-- [ ] **Step 6 : Lancer test unitaire + check + build**
+- [ ] **Step 5 : Rafraîchissement du `Mesh2D` — à confirmer en jeu**
+
+Après `this.mesh.vertices = …` / `this.mesh.indices = …`, vérifier que `Mesh2D` re-rend bien la nouvelle géométrie. Si un cache d'indices (`indicesOrdered`/`useOrderedIndices`) l'empêche, forcer le rafraîchissement selon l'API 4.2 (le champ existe sur la classe — `grep -n "indicesOrdered\|useOrderedIndices\|dirty" node_modules/.pnpm/phaser@4.2.0/node_modules/phaser/types/phaser.d.ts`). Le mesh est petit (~2800 sommets) : à défaut, le recréer par frame reste acceptable.
+
+- [ ] **Step 6 : Test unitaire + check + build**
 
 Run: `pnpm --filter @braises/client test ground-layer && pnpm --filter @braises/client check && pnpm --filter @braises/client build`
 Expected: PASS.
 
 - [ ] **Step 7 : Vérification EN JEU (obligatoire, rendu)**
 
-Suivre la mémoire `browser-smoke-test` (build+preview, Chromium via playwright-core de demo, piloter par `window.__BRAISES__`). Capturer une vue de versant. Attendu : le sol **ondule** (les pentes se lisent), pas de couture entre tuiles, pas de repli. Le décor/nœuds/acteurs restent à plat pour l'instant (Task 5) — c'est un état WIP visuel, normal.
+Suivre la mémoire `browser-smoke-test` (build+preview, Chromium via playwright-core de demo, piloter par `window.__BRAISES__`). Capturer une vue de versant. Attendu : le sol **ondule** (les pentes se lisent), ombrage lisse, pas de couture, pas de repli. Le décor/nœuds/acteurs restent à plat pour l'instant (Task 5) — état WIP visuel normal. Comparer LINEAR vs NEAREST sur une capture ; noter le choix (calibration, spec §7).
 
 - [ ] **Step 8 : Commit**
 
 ```bash
 git add packages/client/src/scenes/world/ground-layer.ts packages/client/src/scenes/world/ground-layer.test.ts packages/client/src/scenes/WorldScene.ts
-git commit -m "feat(client): le sol se déforme — quads GPU fenêtrés par l'élévation"
+git commit -m "feat(client): le sol se déforme — Mesh2D fenêtré texturé par le bake"
 ```
 
 ---
@@ -769,6 +761,12 @@ Dans `packages/client/src/render/hillshade.ts`, supprimer `stepShadeAt`, `Sample
 
 Retirer : l'import et le champ `CliffLayer`/`cliffs`, l'appel `this.bakeCliffTextures()` (L264), `this.cliffs = new CliffLayer(...)` (L265), le rendu `this.cliffs.render(...)` dans `update`, la méthode `bakeCliffTextures` (L500-530), et les imports devenus inutiles (`faceHeightPx`, `MAX_DROP`, `STEP_PX`, `SIDE_PX`, `stepShadeAt`, `SampleLevel`).
 
+**GARDER `bakeMapTexture`** (elle produit la texture `map-demo` que le `Mesh2D` de la Task 4 échantillonne), mais la SIMPLIFIER : retirer l'échantillonneur `sampleLevel` et le facteur `stepShadeAt`, de sorte que le relief ne soit plus que l'ombrage de pente :
+
+```ts
+        const relief = hillshadeAt(tx, ty, sampleElev) // plus de stepShadeAt : relief continu
+```
+
 - [ ] **Step 5 : Nettoyer `/sim`**
 
 Dans `alpinegen.ts` `generateAlpineTerrain`, retirer la ligne qui calcule `map.level = computeLevel(...)`. Dans `map.ts`, retirer le champ `level?` de l'interface `WorldMap` (confirmé sans consommateur au Step 1). Dans `index.ts`, retirer les réexports de `terrace`/`computeLevel`.
@@ -795,14 +793,14 @@ git commit -m "refactor: retraite des falaises et des paliers — le relief est 
 
 - Spec §2 (Y-shear) → Task 1 (`lift`/`projectY` via `lift`) + Task 4 (tracé). ✅
 - Spec §3 (vallée ouverte au sud) → Task 2. ✅
-- Spec §4.1 (sol GPU fenêtré) → Task 4 (quads `Graphics`, upgrade `Mesh` différé noté). ✅
+- Spec §4.1 (sol GPU fenêtré) → Task 4 (`Mesh2D` texturé par le bake ; vertex-shader statique différé). ✅
 - Spec §4.2 (billboards soulevés) → Task 5. ✅
 - Spec §4.3 (Y-sort inchangé) → Tasks 4-5 ne touchent que `py`, jamais `depth`. ✅
 - Spec §4.4 (picking exact) → Task 1 (`unproject`) + Task 6 (bascule). ✅
 - Spec §5 (retraite) → Task 7. ✅
 - Spec §6 (garde anti-repli) → Task 1 (`assertNoFold`) + Task 3 (au boot). ✅
-- Spec §7 (art ouvert) → v1 en aplats par tuile, art-neutre ; upgrade tuilé différé (Task 4). ✅
+- Spec §7 (art ouvert) → v1 `Mesh2D` texturé par le bake, art-neutre ; de vraies tuiles = échange de texture (Task 4). Filtrage LINEAR/NEAREST = levier de calibration. ✅
 - Spec §8 (invariants) → warp client-only ; Task 2 pure/déterministe, goldens + replay/events verts. ✅
 - Spec §9 critères → tests warp (T1), gen (T2), en jeu (T4/T5/T6/T7). ✅
 
-**Correction actée vs spec :** `H` vit côté client (`framing.ts`), pas dans `BALANCE` — le sim est pur, sans px d'écran (la spec disait « BALANCE », lapsus). **Raffinement :** sol v1 en quads `Graphics` d'aplat (art actuel = aplats) plutôt que `Mesh` texturé — même intention GPU, zéro risque d'API, upgrade différé.
+**Correction actée vs spec :** `H` vit côté client (`framing.ts`), pas dans `BALANCE` — le sim est pur, sans px d'écran (la spec disait « BALANCE », lapsus). **Choix de primitive (Task 4) :** `Mesh2D` texturé par le bake `map-demo`, PAS `Graphics` en aplats — l'API 4.2 est confirmée (`add.mesh2d`, sommet `x,y,u,v`), c'est la primitive du futur art tuilé (échange de texture, pas réécriture) et le filtrage linéaire donne un ombrage lisse non facetté. On garde `bakeMapTexture` comme source de texture.
