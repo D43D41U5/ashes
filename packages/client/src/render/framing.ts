@@ -163,10 +163,12 @@ export function nodeDepth(ty: number, tilePx: number): number {
  */
 export const CROWN_BASE = 900_000
 
-/** Rayon du disque de découvert, en tuiles : en deçà, le houppier est effacé. */
-export const CROWN_R_IN = 1.5
-/** Au-delà, la forêt est un couvert opaque. */
-export const CROWN_R_OUT = 4.0
+/** Rayon du cœur clair du disque de découvert, en tuiles : en deçà, le houppier
+ * est effacé. Large, car sous une canopée on voit loin à l'horizontale — la cime
+ * est au-dessus, elle tamise la lumière du ciel, elle ne bloque pas la vue. */
+export const CROWN_R_IN = 6.0
+/** Au-delà, la forêt redevient un couvert opaque. Disque ×4 de l'origine (1,5 / 4). */
+export const CROWN_R_OUT = 16.0
 /** Opacité résiduelle sous la cime : on devine le feuillage, on voit le sol. */
 export const CROWN_ALPHA_MIN = 0.22
 

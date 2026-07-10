@@ -34,14 +34,13 @@ import { setHud } from '../hud-state'
 import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type ReadyMessage, type SnapshotMessage } from '../protocol'
 import {
   AMBIENT_DEPTH,
-  CANOPY_DEPTH,
   GROUND_MAP_DEPTH,
   lookaheadOffset,
   OVERLAY_DEPTH,
   TILE_PX,
   zoomForFraming,
 } from '../render/framing'
-import { ambientTint, canopyDensity, canopyStrength, daylight, sampleCanopyCoverage } from '../render/lighting'
+import { ambientTint, daylight } from '../render/lighting'
 import { hillshadeAt, stepShadeAt, type SampleElevation, type SampleLevel } from '../render/hillshade'
 import {
   publishAlarm,
@@ -79,14 +78,6 @@ const RENDER_OFFSET_DECAY = 0.85
  */
 const EVENT_LOG_CAP = 500
 
-/**
- * Atténuation de la canopée MONDE : l'immersion du sous-bois est portée par le
- * voile écran (UIScene), la texture monde ne garde qu'un repère discret « c'est
- * de la forêt » lisible de l'extérieur. Calé en playtest.
- */
-const WORLD_CANOPY_HINT = 0.45
-/** Constante de lissage du couvert (ms) : entrer/sortir du sous-bois fond le voile en douceur. */
-const CANOPY_EASE_MS = 350
 
 /** Les événements retenus pour la chronique de saison. */
 const CHRONICLE_TYPES = new Set([
@@ -141,12 +132,10 @@ export class WorldScene extends Phaser.Scene {
   /** La frontière de transport (Worker aujourd'hui, Colyseus en LAN). */
   private host!: HostConnection
   private map!: WorldMap
-  private canopyImage: Phaser.GameObjects.Image | null = null
   private ambientRect: Phaser.GameObjects.Rectangle | null = null
   private fireGlow: FireGlow | null = null
   private lastTime: GameTime | null = null
   /** Couvert de canopée lissé autour de l'avatar — piloté vers la valeur échantillonnée. */
-  private canopyCoverage = 0
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
   private worldReady = false
   private worldSeed = 0
@@ -269,8 +258,6 @@ export class WorldScene extends Phaser.Scene {
     // étant des aplats, l'étirement NEAREST est pixel-identique au bake 16 px/tuile.
     this.bakeMapTexture()
     this.add.image(0, 0, 'map-demo').setOrigin(0).setDepth(GROUND_MAP_DEPTH).setDisplaySize(worldW, worldH)
-    this.bakeCanopyTexture()
-    this.canopyImage = this.add.image(0, 0, 'canopy').setOrigin(0).setDepth(CANOPY_DEPTH).setDisplaySize(worldW, worldH)
     this.worldSeed = msg.seed
     this.view.setNodes(msg.nodes)
     this.clutter = new ClutterLayer(this, this.map, this.worldSeed)
@@ -303,16 +290,9 @@ export class WorldScene extends Phaser.Scene {
       const hour = this.lastTime.hourOfCycle
       const amb = ambientTint(hour)
       this.ambientRect?.setFillStyle(amb.color).setAlpha(amb.alpha)
-      this.canopyImage?.setAlpha(canopyStrength(daylight(hour)))
       this.fireGlow?.update(this.view.structures, this.view.villages, daylight(hour))
     }
 
-    // Voile de sous-bois : on échantillonne le couvert autour de l'avatar et on
-    // le lisse dans le temps (pas de saut en franchissant une bordure). UIScene
-    // en fait la vignette écran ; ici on ne publie que le couvert lissé.
-    const targetCoverage = sampleCanopyCoverage(this.map, this.predicted.x, this.predicted.y)
-    this.canopyCoverage += (targetCoverage - this.canopyCoverage) * Math.min(1, deltaMs / CANOPY_EASE_MS)
-    setHud(this.registry, 'canopyCoverage', this.canopyCoverage)
     const dx = this.axis('right', 'left')
     const dy = this.axis('down', 'up')
     const sprint = this.inputs.sprintKeys.some((k) => k.isDown)
@@ -512,22 +492,6 @@ export class WorldScene extends Phaser.Scene {
       }
     }
     g.generateTexture('map-demo', width, height)
-    g.destroy()
-  }
-
-  /** Cuit la pénombre de couvert en une texture monde : tuiles boisées assombries, mouchetées. */
-  private bakeCanopyTexture(): void {
-    const g = this.add.graphics()
-    for (let ty = 0; ty < this.map.height; ty++) {
-      for (let tx = 0; tx < this.map.width; tx++) {
-        const density = canopyDensity(this.map.terrain[ty * this.map.width + tx] ?? 0)
-        if (density <= 0) continue
-        const a = Math.min(1, density * WORLD_CANOPY_HINT * (0.85 + 0.3 * hash2(tx, ty)))
-        g.fillStyle(0x040807, a)
-        g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
-      }
-    }
-    g.generateTexture('canopy', this.map.width, this.map.height)
     g.destroy()
   }
 
