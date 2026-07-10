@@ -260,6 +260,7 @@ export class WorldScene extends Phaser.Scene {
       assertNoFold(this.map.elevation, this.map.width, this.map.height, RELIEF_H, TILE_PX)
     }
     this.warp = createWarp((tx, ty) => this.sampleElevation(tx, ty), RELIEF_H, TILE_PX)
+    this.view.setWarp(this.warp)
     this.calendarScale = msg.calendarScale
     const worldW = this.map.width * TILE_PX
     const worldH = this.map.height * TILE_PX
@@ -337,7 +338,10 @@ export class WorldScene extends Phaser.Scene {
     // Le fantôme de construction suit le pointeur, aligné sur la grille.
     const pointer = this.input.activePointer
     const pw = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
-    this.ghost.setPosition(Math.floor(pw.x / TILE_PX) * TILE_PX, Math.floor(pw.y / TILE_PX) * TILE_PX)
+    const gx = Math.floor(pw.x / TILE_PX)
+    const gy = Math.floor(pw.y / TILE_PX)
+    const glift = this.warp.lift(gx + 0.5, gy + 1)
+    this.ghost.setPosition(gx * TILE_PX, gy * TILE_PX - glift)
 
     // Interpolation des autres entités (R4) : vers le dernier snapshot, sur un tick.
     this.view.interpolate(this.time.now)

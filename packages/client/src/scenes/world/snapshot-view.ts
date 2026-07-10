@@ -84,8 +84,14 @@ export class SnapshotView {
    * pas les ~140k nœuds — coût par frame borné à la vue, comme le décor. */
   private nodeByTile = new Map<number, ResourceNode>()
   private corpseSprites = new Map<number, Phaser.GameObjects.Image>()
+  /** Relief continu (Task 3) — soulève chaque billboard du sol sous ses pieds. */
+  private warp?: import('../../render/warp').Warp
 
   constructor(private scene: Phaser.Scene) {}
+
+  setWarp(warp: import('../../render/warp').Warp): void {
+    this.warp = warp
+  }
 
   /** Applique un snapshot complet — hors avatar local (prédit par la scène). */
   apply(msg: SnapshotMessage, playerId: number, now: number): void {
@@ -113,7 +119,9 @@ export class SnapshotView {
   syncActor(sprite: Phaser.GameObjects.Image, x: number, y: number, textureKey: string): void {
     const footprint = ACTOR_FOOTPRINTS[textureKey] ?? DEFAULT_FOOTPRINT
     const p = actorPlacement(x, y, footprint, TILE_PX, BALANCE.AVATAR_HITBOX_TILES)
-    sprite.setPosition(p.px, p.py)
+    const feetY = y + BALANCE.AVATAR_HITBOX_TILES / 2
+    const lift = this.warp?.lift(x, feetY) ?? 0
+    sprite.setPosition(p.px, p.py - lift)
     sprite.setDepth(p.depth)
     sprite.setDisplaySize(p.displayW, p.displayH)
   }
@@ -185,8 +193,9 @@ export class SnapshotView {
         // décaler son tri ni son emprise logique. Le Feu, lui, est un foyer à
         // plat — il reste sous la bande, on marche autour, jamais derrière.
         const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
+        const lift = this.warp?.lift(s.tx + 0.5, s.ty + 1) ?? 0
         sprite = this.scene.add
-          .image(a.px, a.py, `st-${s.type}`)
+          .image(a.px, a.py - lift, `st-${s.type}`)
           .setOrigin(0.5, 1)
           .setDepth(s.type === 'fire' ? GROUND_FIRE_DEPTH : structureDepth(s.ty, TILE_PX))
         this.structureSprites.set(s.id, sprite)
@@ -267,7 +276,8 @@ export class SnapshotView {
         const a = tileFeetAnchor(tx, ty, TILE_PX)
         const px = a.px + j.dx * TILE_PX
         const py = a.py + j.dy * TILE_PX
-        sprite.setPosition(px, py)
+        const lift = this.warp?.lift(tx + 0.5 + j.dx, ty + 1 + j.dy) ?? 0
+        sprite.setPosition(px, py - lift)
         // Le sprite est POOLÉ : sa depth suit la tuile qu'il occupe cette frame,
         // jamais celle où il a été créé. Le pied réel intègre le décalage Y, pour
         // que deux arbres proches se trient par leur vrai pied, pas par le pool.
@@ -286,7 +296,7 @@ export class SnapshotView {
           crown = this.scene.add.image(0, 0, 'nd-tree_crown').setOrigin(0.5, 1)
           this.crownPool[crownsUsed] = crown
         }
-        crown.setPosition(px, py - 16)
+        crown.setPosition(px, py - 16 - lift)
         crown.setDepth(crownDepth(ty + 1 + j.dy, TILE_PX))
         // Distance des pieds du joueur au PIED DU TRONC : l'arbre à ton contact
         // s'efface, celui dont la cime te survole de loin reste opaque.
@@ -310,8 +320,9 @@ export class SnapshotView {
       if (!this.corpseSprites.has(c.id)) {
         // Ossements à plat : centrés sur la position de l'entité (pas d'ancrage
         // pieds), mais dans la bande de tri — un buisson au sud les recouvre.
+        const lift = this.warp?.lift(c.x, c.y) ?? 0
         const sprite = this.scene.add
-          .image(c.x * TILE_PX, c.y * TILE_PX, 'spr-corpse')
+          .image(c.x * TILE_PX, c.y * TILE_PX - lift, 'spr-corpse')
           .setOrigin(0.5, 0.5)
           .setDepth(corpseDepth(c.y, TILE_PX))
         this.corpseSprites.set(c.id, sprite)
