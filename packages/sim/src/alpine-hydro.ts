@@ -71,7 +71,7 @@ export const HYDRO = {
   TARN_MIN_FRAC: 0.4,     // altitude min d'un tarn
   TARN_MAX_FRAC: 0.68,    // altitude max d'un tarn
   TARN_R_FRAC: 0.014,     // rayon d'un tarn
-  EROSION_DEPTH: 0.12,    // incision MAX (au lac) de l'érosion fluviale ; les
+  EROSION_DEPTH: 0.2,     // incision MAX (au lac) de l'érosion fluviale ; les
                           //  affluents creusent ∝ √(flux). Baisse le plafond de
                           //  RELIEF_H (berges plus raides) — calibré ensemble.
 }
