@@ -37,11 +37,13 @@ import {
   GROUND_MAP_DEPTH,
   lookaheadOffset,
   OVERLAY_DEPTH,
+  RELIEF_H,
   TILE_PX,
   zoomForFraming,
 } from '../render/framing'
 import { ambientTint, daylight } from '../render/lighting'
 import { hillshadeAt, stepShadeAt, type SampleElevation, type SampleLevel } from '../render/hillshade'
+import { assertNoFold, createWarp, type Warp } from '../render/warp'
 import {
   publishAlarm,
   publishChronicle,
@@ -170,6 +172,8 @@ export class WorldScene extends Phaser.Scene {
   /** Mon avatar télégraphie : la sim l'immobilise — la prédiction aussi. */
   private myWindup = false
   private ghost!: Phaser.GameObjects.Rectangle
+  /** Relief continu (Y-shear vertical) — source du rendu et du picking, créé au boot. */
+  private warp!: Warp
 
   constructor() {
     super('world')
@@ -250,6 +254,11 @@ export class WorldScene extends Phaser.Scene {
     }
     this.playerId = msg.playerId
     this.map = msg.map
+    // Garde anti-repli : un H trop grand replierait le sol sur les pentes sud.
+    if (this.map.elevation) {
+      assertNoFold(this.map.elevation, this.map.width, this.map.height, RELIEF_H, TILE_PX)
+    }
+    this.warp = createWarp((tx, ty) => this.sampleElevation(tx, ty), RELIEF_H, TILE_PX)
     this.calendarScale = msg.calendarScale
     const worldW = this.map.width * TILE_PX
     const worldH = this.map.height * TILE_PX
@@ -465,6 +474,14 @@ export class WorldScene extends Phaser.Scene {
     this.send({ type: 'action', action })
   }
 
+  // Échantillonneur d'altitude clampé aux bords — partagé bake/warp/hillshade.
+  private sampleElevation(tx: number, ty: number): number {
+    const { width, height } = this.map
+    const cx = tx < 0 ? 0 : tx >= width ? width - 1 : tx
+    const cy = ty < 0 ? 0 : ty >= height ? height - 1 : ty
+    return this.map.elevation?.[cy * width + cx] ?? 0
+  }
+
   /** Bake la carte statique en une texture (R8) — API generateTexture éprouvée dans Manif.
    *  La couleur d'une tuile = biome × grain (bruit par tuile) × relief (pente + marches).
    *  Le facteur reste CONSTANT PAR TUILE : c'est ce qui autorise le bake à 1 px/tuile. */
@@ -472,11 +489,7 @@ export class WorldScene extends Phaser.Scene {
     const { width, height } = this.map
     // Échantillonneur d'altitude CLAMPÉ aux bords : le gradient au bord ne doit
     // jamais lire hors carte (ça créerait un liseré sombre sur l'anneau).
-    const sampleElev: SampleElevation = (tx, ty) => {
-      const cx = tx < 0 ? 0 : tx >= width ? width - 1 : tx
-      const cy = ty < 0 ? 0 : ty >= height ? height - 1 : ty
-      return this.map.elevation?.[cy * width + cx] ?? 0
-    }
+    const sampleElev: SampleElevation = (tx, ty) => this.sampleElevation(tx, ty)
     const sampleLevel: SampleLevel = (tx, ty) => {
       if (tx < 0 || ty < 0 || tx >= width || ty >= height) return -1
       return this.map.level?.[ty * width + tx] ?? -1

@@ -12,6 +12,12 @@
  * reste du client importe cette constante plutôt que de la redéclarer. */
 export const TILE_PX = 16
 
+/** Relief continu — hauteur ÉCRAN (px) d'une unité d'élévation [0,1] pleine.
+ * Purement visuel (jamais dans /sim). Calibré en jeu, comme TREE_JITTER_TILES :
+ * grand = relief spectaculaire mais borné par la garde anti-repli
+ * (H·pente_sud_max < TILE_PX) ; départ prudent. */
+export const RELIEF_H = 40
+
 /* ── Budget des profondeurs de la scène monde ────────────────────────────────
  *
  * UNE seule échelle de tri pour tout ce qui a des « pieds » : acteurs, nœuds,
