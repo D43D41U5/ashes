@@ -298,7 +298,7 @@ export class WorldScene extends Phaser.Scene {
     if (!this.worldReady) return
     this.clutter?.update(this.cameras.main)
     this.cliffs?.update(this.cameras.main)
-    this.view.renderNodes(this.cameras.main)
+    this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y)
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
       const amb = ambientTint(hour)

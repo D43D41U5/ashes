@@ -20,6 +20,8 @@ import type { NodeDelta, SnapshotMessage } from '../../protocol'
 import {
   actorPlacement,
   corpseDepth,
+  crownAlpha,
+  crownDepth,
   GROUND_FIRE_DEPTH,
   nodeDepth,
   structureDepth,
@@ -72,6 +74,9 @@ export class SnapshotView {
   /** Sprites de nœuds POOLÉS, culled à la vue : la carte porte ~60k nœuds, on
    * n'en dessine que les ~centaines visibles (même trick que le décor). */
   private nodePool: Phaser.GameObjects.Image[] = []
+  /** Pool SÉPARÉ : un arbre est deux sprites (tronc trié avec les acteurs,
+   * houppier dans sa bande propre). Les autres nœuds n'en consomment aucun. */
+  private crownPool: Phaser.GameObjects.Image[] = []
   /** Index id→nœud pour appliquer les deltas de stock en O(1). */
   private nodeById = new Map<number, ResourceNode>()
   /** Index tuile→nœud (≤1 nœud/tuile) : le rendu n'itère que la fenêtre caméra,
@@ -225,21 +230,33 @@ export class SnapshotView {
 
   /** Dessine les nœuds visibles (pool réutilisé). N'itère que la FENÊTRE de
    * tuiles caméra (≤1 nœud/tuile via l'index) — coût borné à la vue, jamais
-   * O(nombre total de nœuds). Appelé chaque frame ; un nœud épuisé s'estompe. */
-  renderNodes(camera: Phaser.Cameras.Scene2D.Camera): void {
+   * O(nombre total de nœuds). Appelé chaque frame ; un nœud épuisé s'estompe.
+   *
+   * Un arbre est DEUX sprites : le tronc (opaque, trié avec les acteurs) et le
+   * houppier (bande propre, alpha du disque de découvert). `playerX/playerY` sont
+   * la position LOGIQUE de l'avatar en tuiles : le disque suit l'avatar, pas la
+   * caméra, sinon il glisserait avec le lookahead du pointeur. */
+  renderNodes(camera: Phaser.Cameras.Scene2D.Camera, playerX: number, playerY: number): void {
     const v = camera.worldView
-    const tx0 = Math.floor(v.x / TILE_PX) - 1
+    // La fenêtre s'élargit : 3 rangées vers le BAS (les cimes des arbres plantés
+    // sous le bord de l'écran montent dans la vue) et 1 colonne de chaque côté
+    // (le houppier déborde d'une demi-tuile).
+    const tx0 = Math.floor(v.x / TILE_PX) - 2
     const ty0 = Math.floor(v.y / TILE_PX) - 1
-    const tx1 = Math.ceil((v.x + v.width) / TILE_PX) + 1
-    const ty1 = Math.ceil((v.y + v.height) / TILE_PX) + 1
+    const tx1 = Math.ceil((v.x + v.width) / TILE_PX) + 2
+    const ty1 = Math.ceil((v.y + v.height) / TILE_PX) + 4
+    const feetY = playerY + BALANCE.AVATAR_HITBOX_TILES / 2
     let used = 0
+    let crownsUsed = 0
     for (let ty = ty0; ty <= ty1; ty++) {
       for (let tx = tx0; tx <= tx1; tx++) {
         const n = this.nodeByTile.get(tx * NODE_TILE_STRIDE + ty)
         if (n === undefined) continue
+        const isTree = n.type === 'tree'
+        const texture = isTree ? 'nd-tree_trunk' : `nd-${n.type}`
         let sprite = this.nodePool[used]
         if (!sprite) {
-          sprite = this.scene.add.image(0, 0, `nd-${n.type}`).setOrigin(0.5, 1)
+          sprite = this.scene.add.image(0, 0, texture).setOrigin(0.5, 1)
           this.nodePool[used] = sprite
         }
         const a = tileFeetAnchor(tx, ty, TILE_PX)
@@ -247,13 +264,34 @@ export class SnapshotView {
         // Le sprite est POOLÉ : sa depth suit la tuile qu'il occupe cette frame,
         // jamais celle où il a été créé.
         sprite.setDepth(nodeDepth(ty, TILE_PX))
-        sprite.setTexture(`nd-${n.type}`)
+        sprite.setTexture(texture)
+        // Le tronc reste OPAQUE en toutes circonstances : les troncs dessinent la
+        // structure de la forêt, ce sont les houppiers qui s'ouvrent.
         sprite.setAlpha(n.stock > 0 ? 1 : 0.25)
         sprite.setVisible(true)
         used++
+        if (!isTree) continue
+
+        // Le houppier : ancré 6 px sous le sommet du tronc (22 px), donc à py−16.
+        let crown = this.crownPool[crownsUsed]
+        if (!crown) {
+          crown = this.scene.add.image(0, 0, 'nd-tree_crown').setOrigin(0.5, 1)
+          this.crownPool[crownsUsed] = crown
+        }
+        crown.setPosition(a.px, a.py - 16)
+        crown.setDepth(crownDepth(ty + 1, TILE_PX))
+        // Distance des pieds du joueur au PIED DU TRONC : l'arbre à ton contact
+        // s'efface, celui dont la cime te survole de loin reste opaque.
+        const dx = playerX - (tx + 0.5)
+        const dy = feetY - (ty + 1)
+        const d = Math.sqrt(dx * dx + dy * dy)
+        crown.setAlpha(n.stock > 0 ? crownAlpha(d) : 0.25)
+        crown.setVisible(true)
+        crownsUsed++
       }
     }
     for (let i = used; i < this.nodePool.length; i++) this.nodePool[i]!.setVisible(false)
+    for (let i = crownsUsed; i < this.crownPool.length; i++) this.crownPool[i]!.setVisible(false)
   }
 
   private syncCorpses(corpses: Corpse[]): void {
