@@ -24,7 +24,7 @@ export const TILE_PX = 16
  * MAIS les murs hauts s'écartent de leur collision plate (on bute un peu avant
  * le mur dessiné) et les billboards demandent plus de marge de culling (gérée
  * dans renderNodes). */
-export const RELIEF_H = 400
+export const RELIEF_H = 200
 
 /* ── Budget des profondeurs de la scène monde ────────────────────────────────
  *

@@ -35,6 +35,9 @@ export const ALPINE = {
   RIDGE_FRAC: 0.24,    // échelle des arêtes ridged
   RIDGE_AMP: 0.30,     // amplitude des crêtes (sur les pentes)
   WARP_FRAC: 0.06,     // amplitude de domain warping
+  HILL_FRAC: 0.02,     // vallons À L'ÉCHELLE DU JEU (~24 tuiles) : le relief qu'on
+                       //  voit en marchant (le reste est trop basse fréquence)
+  HILL_AMP: 0.1,       // amplitude des vallons (dosée : trop = biomes mouchetés + repli)
 }
 
 export function computeElevation(width: number, height: number, seed: number): number[] {
@@ -44,6 +47,7 @@ export function computeElevation(width: number, height: number, seed: number): n
   const organic = D * ALPINE.ORGANIC_FRAC
   const detailScale = D * ALPINE.DETAIL_FRAC
   const ridge = D * ALPINE.RIDGE_FRAC
+  const hill = D * ALPINE.HILL_FRAC
   const warp = Math.max(1, Math.round(D * ALPINE.WARP_FRAC))
   const el = new Array<number>(width * height)
   for (let y = 0; y < height; y++) {
@@ -59,7 +63,10 @@ export function computeElevation(width: number, height: number, seed: number): n
       // Détail de pente + arêtes ridged (petite amplitude, texture sur les murs).
       const detail = ALPINE.DETAIL_AMP * (fbmWarp2(x, y, detailScale, (seed ^ 0x4d5e6f) | 0, warp) - 0.5)
       const crest = ALPINE.RIDGE_AMP * (ridgedFbm2(x, y, ridge, (seed ^ 0x7a8b9c) | 0) - 0.4)
-      let h = valley + org + detail + crest
+      // Vallons à l'échelle du jeu : le relief que le warp/l'ombre rendent visible
+      // en se baladant (les autres octaves varient sur des centaines de tuiles).
+      const bumps = ALPINE.HILL_AMP * (fbmWarp2(x, y, hill, (seed ^ 0x2c3d4e) | 0, warp) - 0.5)
+      let h = valley + org + detail + crest + bumps
       const rim = clamp01((rimDepth - edge) / rimDepth) // enceinte : bord toujours haut
       h = Math.max(rim, h)
       el[y * width + x] = clamp01(h)
