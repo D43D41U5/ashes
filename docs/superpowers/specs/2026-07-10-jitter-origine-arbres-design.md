@@ -2,7 +2,7 @@
 
 **Date** : 2026-07-10
 **Branche** : feat/relief-terrasses
-**Statut** : design validé (brainstorming), à implémenter (TDD).
+**Statut** : **IMPLÉMENTÉ** (2026-07-10, plan `docs/superpowers/plans/2026-07-10-jitter-origine-arbres.md`). Calibré en jeu : `TREE_JITTER_TILES = 0,30` — artefact `e9b9e2d6`.
 **Suite de** : `2026-07-10-arbres-hauts-hitbox-tronc-design.md` (les troncs fins ont révélé leur alignement)
 
 ## Problème

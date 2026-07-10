@@ -93,7 +93,7 @@ export const BALANCE = {
    * carré bloquant d'un arbre décalé déborde dans la tuile voisine et échappe à
    * la collision (testé). Avec blockHalfSub 1 et SUB 8 : plafond 0,375. Calibré
    * en jeu (départ 0,22). */
-  TREE_JITTER_TILES: 0.22,
+  TREE_JITTER_TILES: 0.3,
 
   /** Accélération du calendrier : jours de saison écoulés par jour réel. */
   DEFAULT_CALENDAR_SCALE: 1,
