@@ -488,8 +488,10 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /** Bake la carte statique en une texture (R8) — API generateTexture éprouvée dans Manif.
-   *  La couleur d'une tuile = biome × grain (bruit par tuile) × relief (pente + marches).
-   *  Le facteur reste CONSTANT PAR TUILE : c'est ce qui autorise le bake à 1 px/tuile. */
+   *  La couleur d'une tuile = biome × grain (bruit par tuile) × relief (hillshade).
+   *  Le facteur reste CONSTANT PAR TUILE : c'est ce qui autorise le bake à 1 px/tuile.
+   *  Grain DISCRET (nearest) : gardé faible, sinon le damier par tuile masque
+   *  l'ombrage du relief. */
   private bakeMapTexture(): void {
     const { width, height } = this.map
     // Échantillonneur d'altitude CLAMPÉ aux bords : le gradient au bord ne doit
@@ -499,7 +501,7 @@ export class WorldScene extends Phaser.Scene {
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
         const base = TERRAIN_COLORS[this.map.terrain[ty * width + tx] ?? 0] ?? 0xff00ff
-        const grain = 0.92 + 0.16 * hash2(tx, ty)
+        const grain = 0.96 + 0.07 * hash2(tx, ty)
         const relief = hillshadeAt(tx, ty, sampleElev) // plus de stepShadeAt : relief continu
         g.fillStyle(shade(base, grain * relief))
         g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
