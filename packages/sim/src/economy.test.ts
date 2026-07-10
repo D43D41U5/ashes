@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ALIGNMENT, BALANCE, TERRAIN_DEEP_WATER, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_MARSH } from './balance'
-import { generateNodes, nodeAt, skillLevel, type ResourceNode } from './economy'
+import { generateNodes, nodeAt, skillLevel, treeJitter, type ResourceNode } from './economy'
 import { drainEvents } from './events'
 import { countOf } from './items'
 import { createEmptyMap, zoneAt } from './map'
@@ -340,5 +340,48 @@ describe('nodeAt indexé O(1) (densité-nœuds 2026-07-09)', () => {
     // La même référence est renvoyée : le stock mis à 0 est visible (la collision
     // lit stock>0 en direct, donc un arbre épuisé cesse de bloquer).
     expect(nodeAt(nodes, first.tx, first.ty)!.stock).toBe(0)
+  })
+})
+
+describe('treeJitter: tree jitter offsetting', () => {
+  const J = BALANCE.TREE_JITTER_TILES
+
+  it('deterministic: same tile coordinates return same jitter', () => {
+    const a = treeJitter(37, 91)
+    const b = treeJitter(37, 91)
+    expect(a).toEqual(b)
+  })
+
+  it('bounded by ±J over large tile sample', () => {
+    for (let ty = 0; ty < 40; ty++) {
+      for (let tx = 0; tx < 40; tx++) {
+        const { dx, dy } = treeJitter(tx, ty)
+        expect(Math.abs(dx)).toBeLessThanOrEqual(J)
+        expect(Math.abs(dy)).toBeLessThanOrEqual(J)
+      }
+    }
+  })
+
+  it('not diagonal: dx and dy are decorrelated (at least one tile with dx !== dy)', () => {
+    let seenDifferent = false
+    for (let tx = 0; tx < 20 && !seenDifferent; tx++) {
+      const { dx, dy } = treeJitter(tx, 5)
+      if (dx !== dy) seenDifferent = true
+    }
+    expect(seenDifferent).toBe(true)
+  })
+
+  it('covers negative and positive on both axes (no bias)', () => {
+    let hasNegX = false, hasPosX = false, hasNegY = false, hasPosY = false
+    for (let ty = 0; ty < 40; ty++) {
+      for (let tx = 0; tx < 40; tx++) {
+        const { dx, dy } = treeJitter(tx, ty)
+        if (dx < 0) hasNegX = true
+        if (dx > 0) hasPosX = true
+        if (dy < 0) hasNegY = true
+        if (dy > 0) hasPosY = true
+      }
+    }
+    expect(hasNegX && hasPosX && hasNegY && hasPosY).toBe(true)
   })
 })

@@ -86,6 +86,15 @@ export const BALANCE = {
    * laisse 0,75 tuile d'écart entre deux troncs voisins — l'avatar (0,6) passe. */
   SUBTILES_PER_TILE: 8,
 
+  /** Amplitude du décalage pseudo-aléatoire de l'origine d'un arbre, en tuiles
+   * (spec décalage d'origine). Chaque arbre est décalé de ±cette valeur en X et
+   * en Y pour casser l'alignement des troncs en grille. BORNE DURE :
+   * `TREE_JITTER_TILES + blockHalfSub(tree)/SUBTILES_PER_TILE ≤ 0.5`, sinon le
+   * carré bloquant d'un arbre décalé déborde dans la tuile voisine et échappe à
+   * la collision (testé). Avec blockHalfSub 1 et SUB 8 : plafond 0,375. Calibré
+   * en jeu (départ 0,22). */
+  TREE_JITTER_TILES: 0.22,
+
   /** Accélération du calendrier : jours de saison écoulés par jour réel. */
   DEFAULT_CALENDAR_SCALE: 1,
 
