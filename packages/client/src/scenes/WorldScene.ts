@@ -202,6 +202,7 @@ export class WorldScene extends Phaser.Scene {
       nodes: () => this.view.nodes,
       corpses: () => this.view.corpses,
       others: () => this.view.others,
+      unproject: (px, py) => this.warp.unproject(px, py),
     })
 
     // Le fantôme de construction, aligné sur la grille (suit le pointeur en update).
@@ -335,13 +336,14 @@ export class WorldScene extends Phaser.Scene {
     const render = renderPosition(this.prediction, world, input, speedScale)
     this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player')
 
-    // Le fantôme de construction suit le pointeur, aligné sur la grille.
+    // Le fantôme de construction suit le pointeur, aligné sur la grille — la
+    // tuile réellement sous le curseur (unproject), pas la projection plate.
     const pointer = this.input.activePointer
     const pw = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
-    const gx = Math.floor(pw.x / TILE_PX)
-    const gy = Math.floor(pw.y / TILE_PX)
-    const glift = this.warp.lift(gx + 0.5, gy + 1)
-    this.ghost.setPosition(gx * TILE_PX, gy * TILE_PX - glift)
+    const ground = this.warp.unproject(pw.x, pw.y)
+    const gx = Math.floor(ground.x / TILE_PX)
+    const gy = Math.floor(ground.y / TILE_PX)
+    this.ghost.setPosition(gx * TILE_PX, gy * TILE_PX - this.warp.lift(gx + 0.5, gy + 1))
 
     // Interpolation des autres entités (R4) : vers le dernier snapshot, sur un tick.
     this.view.interpolate(this.time.now)

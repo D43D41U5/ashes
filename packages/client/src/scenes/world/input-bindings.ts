@@ -24,6 +24,8 @@ export interface InputDeps {
   nodes(): ResourceNode[]
   corpses(): Corpse[]
   others(): ReadonlyMap<number, InterpolatedSprite>
+  /** Corrige un point monde PLAT (positionToCamera) en point monde vrai, selon le relief. */
+  unproject(px: number, py: number): { x: number; y: number }
 }
 
 /** Les touches de déplacement, lues chaque frame par `WorldScene.update`. */
@@ -41,8 +43,13 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   const onDown = (names: readonly string[], fn: () => void): void => {
     for (const n of names) kb.addKey(K[n]!, false).on('down', fn)
   }
-  const pointerToWorld = (pointer: Phaser.Input.Pointer): Phaser.Math.Vector2 =>
-    pointer.positionToCamera(scene.cameras.main) as Phaser.Math.Vector2
+  // Le pointeur en monde PLAT, puis corrigé de l'élévation : la tuile réellement
+  // SOUS le curseur, pas celle du sol non déformé (spec relief-continu §4.4).
+  const pointerToWorld = (pointer: Phaser.Input.Pointer): Phaser.Math.Vector2 => {
+    const flat = pointer.positionToCamera(scene.cameras.main) as Phaser.Math.Vector2
+    const w = deps.unproject(flat.x, flat.y)
+    return new Phaser.Math.Vector2(w.x, w.y)
+  }
 
   const keys = {
     up: grab(KEYMAP.moveUp),
