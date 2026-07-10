@@ -28,7 +28,10 @@ export class GroundLayer {
     private warp: Warp,
     textureKey: string,
   ) {
-    this.mesh = scene.add.mesh2d(0, 0, textureKey, [], []).setDepth(GROUND_MAP_DEPTH)
+    // flipV : nos UV sont top-down (v = gy/mapH, comme l'indexation du bake),
+    // or GL attend des coordonnées bottom-up → sans ce flip le sol est RETOURNÉ
+    // verticalement (le contenu ne correspond plus à la carte ni à la minimap).
+    this.mesh = scene.add.mesh2d(0, 0, textureKey, [], [], true).setDepth(GROUND_MAP_DEPTH)
     // NEAREST : le bake fait 1 px/tuile — en LINÉAIRE il baverait sur toute la
     // tuile (sol flou, biomes décalés d'un demi-texel vs la minimap). Nearest
     // rend chaque tuile en aplat net, aligné à la grille. Le lissage viendra
