@@ -60,3 +60,27 @@ export function isBlockingTile(map: WorldMap, tx: number, ty: number): boolean {
 export function zoneAt(map: WorldMap, x: number, y: number): Zone | undefined {
   return map.zones.find((z) => x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h)
 }
+
+/**
+ * Les `poiId` de TOUTES les zones-POI contenant le point (spec lieux R6).
+ * Le poiId EST l'index dans `map.zones` (spec R4) — `placePois` est déterministe,
+ * donc cet index est stable pour une seed donnée. Une zone sans `kind` est un
+ * simple toponyme, jamais un lieu.
+ *
+ * On retourne toutes les zones, pas la première (contrairement à `zoneAt`) :
+ * deux empreintes de POI peuvent se recouvrir.
+ */
+export function poisAt(map: WorldMap, x: number, y: number): number[] {
+  const out: number[] = []
+  for (let i = 0; i < map.zones.length; i += 1) {
+    const z = map.zones[i]!
+    if (z.kind === undefined) continue
+    if (x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h) out.push(i)
+  }
+  return out
+}
+
+/** Centre d'une zone, en tuiles. */
+export function poiCenter(z: Zone): { x: number; y: number } {
+  return { x: z.x + z.w / 2, y: z.y + z.h / 2 }
+}

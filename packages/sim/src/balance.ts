@@ -52,6 +52,24 @@ export const TEMPERATURE = {
   STAMINA_FLOOR: 0.5, // régén d'endurance au plus froid
 }
 
+/**
+ * Les lieux chargés (spec `docs/specs/lieux.md`). Ordres de grandeur, à
+ * calibrer en jeu — pas des vérités.
+ */
+export const POI = {
+  /** Du Belvédère, on voit loin : rayon de révélation, en tuiles. */
+  REVEAL_BELVEDERE_TILES: 40,
+  /** De l'Arche, on voit les abris de l'autre versant. */
+  REVEAL_ARCHE_TILES: 30,
+  /** La Source chaude est un feu qu'on n'a pas allumé (mêmes unités que FIRE_WARMTH/FIRE_RANGE). */
+  HOTSPRING_WARMTH: 75,
+  HOTSPRING_RANGE_TILES: 4,
+  /** Le Tarn est une halte : régén d'endurance multipliée sur son empreinte. */
+  TARN_STAMINA_FACTOR: 1.5,
+  /** Ce que les Pétroglyphes savent montrer : les lieux ANCIENS. */
+  ANCIENT_KINDS: ['ruines', 'mine', 'sanctuaire', 'oratoire'] as readonly string[],
+}
+
 export const BALANCE = {
   TICK_RATE_HZ,
 
