@@ -109,7 +109,70 @@ const SCENARIOS = {
       const n = s.pois.filter((p) => p.kind === kind).length
       console.log(`   ${kind.padEnd(15)} ${devise.padEnd(7)} ${String(n).padStart(2)}${n === 0 ? '   ← ABSENT de cette carte' : ''}`)
     }
-    return s
+
+    if (!dev) {
+      console.log(`\n(le reste exige le mode debug — relancer avec --dev)`)
+      return s
+    }
+
+    // ── Le savoir en action : fouler un lieu, puis en fouler un CHARGÉ. ──
+    /** Téléporte le joueur et laisse la sim tourner quelques ticks. */
+    const tpTo = async (p) => {
+      await page.evaluate(({ x, y }) => {
+        window.__BRAISES__.scene.registry.set('debugTeleport', { x, y, at: performance.now() })
+      }, { x: p.x, y: p.y })
+      await page.waitForTimeout(1200)
+      return page.evaluate(PROBE)
+    }
+
+    await page.keyboard.press('F1') // arme l'affichage debug (le TP passe par le registry)
+    await page.waitForTimeout(300)
+
+    console.log(`\n── La règle de base : fouler suffit à connaître ──`)
+    const banal = s.pois.find((p) => p.kind === 'gisement') ?? s.pois[0]
+    const a = await tpTo(banal)
+    console.log(`   foulé : ${banal.name} (poiId ${banal.poiId}) → connus : [${a.knownPois.join(', ')}]`)
+    console.log(a.knownPois.includes(banal.poiId) ? `   ✓ il est entré dans la carte` : `   ✗ il n'est PAS entré dans la carte`)
+
+    console.log(`\n── Une charge de savoir : la révélation à distance ──`)
+    const charge = s.pois.find((p) => ['belvedere', 'arche', 'cairn', 'petroglyphes'].includes(p.kind))
+    if (!charge) {
+      console.log('   (aucun lieu de savoir sur cette carte)')
+      return s
+    }
+    const before = a.knownPois.length
+    const b = await tpTo(charge)
+    const reveles = b.knownPois.filter((id) => !a.knownPois.includes(id) && id !== charge.poiId)
+    console.log(`   foulé : ${charge.name} (${charge.kind}) → ${b.knownPois.length - before} lieux de plus, dont ${reveles.length} révélés À DISTANCE`)
+
+    // LE contrôle qui trahirait un poiId désaligné. Attention : il DÉPEND de la charge.
+    // Le Cairn et les Pétroglyphes révèlent « le plus proche » — SANS rayon : une
+    // grande distance n'y prouve rien (le semis espace les lieux de ≥96 tuiles).
+    // Ce qu'on vérifie alors, c'est que le révélé est BIEN le plus proche des inconnus.
+    const dist = (p) => Math.sqrt((p.x - charge.x) ** 2 + (p.y - charge.y) ** 2)
+    for (const id of reveles) {
+      const p = s.pois.find((q) => q.poiId === id)
+      console.log(`      ${p.name} (poiId ${id}) — à ${dist(p).toFixed(1)} tuiles`)
+    }
+    if (reveles.length === 0) {
+      console.log(`   ✗ la charge n'a RIEN révélé — rayon trop court, ou lieu isolé ?`)
+    } else if (charge.kind === 'cairn') {
+      // Le Cairn : le révélé doit être le plus proche parmi ceux qui étaient inconnus.
+      const inconnus = s.pois.filter((p) => !a.knownPois.includes(p.poiId) && p.poiId !== charge.poiId)
+      const attendu = inconnus.reduce((best, p) => (dist(p) < dist(best) ? p : best), inconnus[0])
+      const ok = reveles.length === 1 && reveles[0] === attendu.poiId
+      console.log(ok ? `   ✓ c'est bien LE plus proche des inconnus — poiId ALIGNÉ` : `   ✗ attendu « ${attendu.name} » (poiId ${attendu.poiId}) — poiId DÉSALIGNÉ !`)
+    } else {
+      // Belvédère / Arche : rayon. Tout révélé doit tomber dedans.
+      const rayon = 300
+      const pire = Math.max(...reveles.map((id) => dist(s.pois.find((q) => q.poiId === id))))
+      console.log(pire <= rayon + 1 ? `   ✓ tous dans le rayon de ${rayon} — poiId ALIGNÉS` : `   ✗ un lieu à ${pire.toFixed(1)} tuiles (rayon ${rayon}) : poiId DÉSALIGNÉ !`)
+    }
+
+    await page.keyboard.press('m')
+    await page.waitForTimeout(700)
+    await page.screenshot({ path: `${OUT}/carte-apres-decouvertes.png` })
+    return b
   },
 }
 

@@ -57,10 +57,23 @@ export const TEMPERATURE = {
  * calibrer en jeu — pas des vérités.
  */
 export const POI = {
-  /** Du Belvédère, on voit loin : rayon de révélation, en tuiles. */
-  REVEAL_BELVEDERE_TILES: 40,
-  /** De l'Arche, on voit les abris de l'autre versant. */
-  REVEAL_ARCHE_TILES: 30,
+  /**
+   * Du Belvédère, on voit loin : rayon de révélation, en tuiles.
+   *
+   * CALIBRÉ EN JEU (2026-07-11) sur la vraie carte (1200×1800, 5 seeds). Les 40
+   * tuiles d'origine étaient MORTES : le semis Poisson espace les lieux d'au
+   * moins 96 tuiles (`POI_PLACEMENT.SPACING_FRAC × min(w,h)`), donc un Belvédère
+   * posé n'importe où ne révélait RIEN, sur 79 lieux et 5 seeds. Aucun test
+   * headless ne pouvait le voir : ils posent leurs propres zones à 10 tuiles.
+   * À 300 : ~8 lieux révélés en moyenne, jamais zéro — une grappe.
+   */
+  REVEAL_BELVEDERE_TILES: 300,
+  /**
+   * De l'Arche, on voit les abris de l'autre versant. Même portée que le
+   * Belvédère, mais filtrée aux `shelter` : ~2 abris en moyenne (ils sont plus
+   * rares). Même erreur d'origine — 30 tuiles ne révélaient jamais rien.
+   */
+  REVEAL_ARCHE_TILES: 300,
   /** La Source chaude est un feu qu'on n'a pas allumé (mêmes unités que FIRE_WARMTH/FIRE_RANGE). */
   HOTSPRING_WARMTH: 75,
   HOTSPRING_RANGE_TILES: 4,

@@ -133,16 +133,25 @@ describe('la règle de base : un lieu foulé entre dans la carte', () => {
 
 describe('le savoir — quatre lieux qui rendent la carte', () => {
   it('le Belvédère révèle tout dans son rayon, et RIEN au-delà', () => {
-    const { state, playerId } = simWith([
-      { name: 'le Belvédère I', x: 10, y: 10, w: 2, h: 2, kind: 'belvedere' }, // 0 — centre (11,11)
-      { name: 'la Grotte I', x: 20, y: 10, w: 2, h: 2, kind: 'grotte' }, //       1 — à ~10 tuiles → DEDANS
-      { name: 'le Tarn I', x: 55, y: 55, w: 2, h: 2, kind: 'tarn' }, //           2 — à ~63 tuiles → DEHORS (rayon 40)
-    ])
-    walkTo(state, playerId, 11, 11)
+    // La carte se construit RELATIVEMENT au rayon, jamais sur des distances en dur :
+    // `REVEAL_BELVEDERE_TILES` est un bouton d'équilibrage (il est passé de 40 à 300
+    // au calibrage en jeu du 2026-07-11). Un test qui casse quand on tourne un bouton
+    // teste le bouton, pas le comportement.
+    const R = POI.REVEAL_BELVEDERE_TILES
+    const dedans = Math.floor(R / 2) // sans ambiguïté à l'intérieur
+    const dehors = Math.ceil(R * 2) //  sans ambiguïté à l'extérieur
+    const map = createEmptyMap(dehors + 8, 16, TERRAIN_GRASS)
+    map.zones.push({ name: 'le Belvédère I', x: 4, y: 4, w: 2, h: 2, kind: 'belvedere' }) //     0 — centre (5,5)
+    map.zones.push({ name: 'la Grotte I', x: 4 + dedans, y: 4, w: 2, h: 2, kind: 'grotte' }) //  1 — DEDANS
+    map.zones.push({ name: 'le Tarn I', x: 4 + dehors, y: 4, w: 2, h: 2, kind: 'tarn' }) //      2 — DEHORS
+    const state = createSim(1, { map })
+    const playerId = spawnEntity(state, 0.5, 0.5)
+
+    walkTo(state, playerId, 5, 5)
     const known = state.entities.find((e) => e.id === playerId)!.knownPois
     expect(known).toContain(0) // lui-même, par la règle de base
-    expect(known).toContain(1)
-    expect(known).not.toContain(2)
+    expect(known).toContain(1) // dans le rayon
+    expect(known).not.toContain(2) // au-delà : le Belvédère ne voit pas TOUT
   })
 
   it('le Belvédère ne se déclenche qu’une fois', () => {
