@@ -9,6 +9,7 @@ Une tâche d'implémentation bien posée ressemble à : « implémente l'enduran
 | Fichier | Source GDD | Phase |
 |---|---|---|
 | `monde.md` — tick, entités, collisions, carte | §9, §11 | Veillée 2 |
+| `lieux.md` — POIs chargés : savoir, répit, récit ; la carte s'acquiert | §9, §9bis, §8bis | Veillée — chantier monde 1 |
 | `village.md` — Feu, construction, propriété, rangs MVP | §5 | Veillée 3 |
 | `pnj.md` — villageois simulés, tâches, simulation dégradée | §10, §11 | Veillée 3 |
 | `economie.md` — ressources 3 tiers, stations, usure | §8 | Veillée |
