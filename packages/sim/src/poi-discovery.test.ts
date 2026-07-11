@@ -4,6 +4,7 @@ import { POI, TERRAIN_GRASS } from './balance'
 import { chronicleFromEvents } from './chronicle'
 import { POI_CHARGES, poiFamily } from './poi-discovery'
 import { POI_TYPES } from './poi'
+import { spawnMonster } from './monsters'
 import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
 import { ambientTemperature, isSheltered, naturalWarmth } from './temperature'
 import { DAY_TICKS_PER_CYCLE } from './time'
@@ -308,6 +309,22 @@ describe('le récit — la première fois seulement', () => {
     expect(state.visitedPois).toEqual([])
     expect(state.events.filter((e) => e.type === 'poi_first_visit')).toHaveLength(0)
     expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(0)
+  })
+
+  it('un sanglier qui traverse le Sanctuaire ne vole PAS la première visite', () => {
+    // spawnPoiMonsters pose les sangliers SUR les tanières et les cendrés SUR
+    // les repaires : sans la garde `monsterIds` d'`advancePois`, chaque monstre
+    // « premier-visiterait » son propre POI au tick 0 — il volerait la première
+    // visite du joueur, DÉFINITIVEMENT (`visitedPois` est global et sans retour).
+    const map = createEmptyMap(64, 64, TERRAIN_GRASS)
+    map.zones.push({ name: 'le Sanctuaire I', x: 10, y: 10, w: 2, h: 2, kind: 'sanctuaire' })
+    const state = createSim(1, { map })
+    spawnMonster(state, 'boar', 10.5, 10.5)
+    state.events.length = 0
+    step(state, [])
+    expect(state.visitedPois).toEqual([])
+    expect(state.events.filter((e) => e.type === 'poi_first_visit')).toHaveLength(0)
+    expect(chronicleFromEvents(state.events, state.calendarScale, {}).some((l) => l.includes('Sanctuaire'))).toBe(false)
   })
 
   it('la chronique écrit une ligne pour le Sanctuaire (devise récit)', () => {
