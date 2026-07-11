@@ -9,6 +9,7 @@
 import { damageModifier, hasAggressionBetween, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
 import { ALIGNMENT, BALANCE, CENDREUX, COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
 import { willRiseAsCendreux } from './cendreux'
+import { isInvulnerable } from './debug'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { addItems, countOf, removeItems, type ItemId } from './items'
@@ -212,6 +213,9 @@ function resolveStrike(state: SimState, attacker: Entity): void {
 }
 
 export function applyDamage(state: SimState, target: Entity, damage: number, byEntityId: number): void {
+  // Invulnérabilité de DEV : le coup n'a jamais lieu (ni PV, ni blessure, ni
+  // événement) — sinon la chronique se remplirait de faits qui n'en sont pas.
+  if (isInvulnerable(state, target)) return
   const before = target.hp
   target.hp = Math.max(0, target.hp - damage)
   // Un monstre frappé mémorise son agresseur (le sanglier fuit ou charge).

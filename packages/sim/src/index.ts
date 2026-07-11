@@ -98,6 +98,9 @@ export type { ItemId, Inventory, StructureType, AccessLevel, SkillId } from './i
 // ─── Consommateurs du flux d'événements ───────────────────────────────────
 export { chronicleFromEvents } from './chronicle'
 
+// ─── Outils de DEV (inertes hors sim créée avec `debug: true`) ────────────
+export type { DebugAction } from './debug'
+
 // ─── Hôte/scénario UNIQUEMENT (setup rejoué par le replay, jamais en jeu) ─
 export { generateNodes } from './economy'
 export { foundNpcVillage } from './worldgen'

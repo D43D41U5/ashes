@@ -36,6 +36,24 @@ export const KEYMAP = {
   toggleMap: ['M'],
 } as const
 
+/**
+ * Les touches du mode DEBUG — câblées uniquement en développement
+ * (`debug-bindings.ts`, gardé par `import.meta.env.DEV`). Séparées de KEYMAP
+ * pour qu'un rebinding de jeu ne les voie même pas ; le test d'unicité, lui,
+ * les inclut (une touche de debug qui volerait une touche de jeu serait un
+ * bug silencieux en playtest).
+ */
+export const DEBUG_KEYMAP = {
+  /** Arme/désarme le mode (tout le reste est inerte tant qu'il est éteint). */
+  toggle: ['F1'],
+  /** Invulnérabilité + jauges gelées. */
+  god: ['F2'],
+  /** Bascule jour ↔ nuit (force l'heure à midi ou minuit). */
+  cycleDayNight: ['F3'],
+  /** Cadence de l'hôte : ×1 → ×2 → ×4 → ×8 → ×1. */
+  cycleSpeed: ['F4'],
+} as const
+
 /** Sélection de construction, dans l'ordre des touches 1-5 (touche → structure). */
 export const BUILD_BINDINGS: readonly [string, Buildable][] = [
   ['ONE', 'wall'],

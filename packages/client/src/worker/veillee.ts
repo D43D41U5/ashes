@@ -65,6 +65,10 @@ export function createVeillee(): { sim: SimState; playerId: number; spawn: { x: 
     calendarScale: VEILLEE_CALENDAR_SCALE,
     nodes,
     cycleOffset: cycleOffsetForStartHour(VEILLEE_START_HOUR),
+    // Les outils de dev (TP, heure, invulnérabilité) ne sont armés QUE dans un
+    // build de développement : `import.meta.env.DEV` est statiquement faux en
+    // prod, donc l'autorité y refuse ces actions même si un client les envoie.
+    debug: import.meta.env.DEV,
   })
   // La menace et le gibier viennent des POIs : sangliers aux tanières, Cendrés
   // aux repaires (spawnPoiMonsters lit map.zones). Villages PNJ toujours différés

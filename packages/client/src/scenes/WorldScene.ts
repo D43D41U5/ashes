@@ -53,7 +53,10 @@ import {
 import { ClutterLayer } from './world/clutter-layer'
 import { GroundLayer } from './world/ground-layer'
 import { ShadeLayer } from './world/shade-layer'
+import { ShoreCliff } from './world/shore-cliff'
 import { FireGlow } from './world/fire-glow'
+import { bindDebugKeys } from './world/debug-bindings'
+import { syncDebug } from './world/debug-overlay'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 
@@ -142,6 +145,7 @@ export class WorldScene extends Phaser.Scene {
   private clutter?: ClutterLayer
   private ground!: GroundLayer
   private shade!: ShadeLayer
+  private shoreCliff!: ShoreCliff
   private loadingText: Phaser.GameObjects.Text | null = null
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
@@ -171,6 +175,8 @@ export class WorldScene extends Phaser.Scene {
   /** Mon avatar télégraphie : la sim l'immobilise — la prédiction aussi. */
   private myWindup = false
   private ghost!: Phaser.GameObjects.Rectangle
+  /** DEV : dernière demande de TP consommée (horodatage de la carte) — évite de la rejouer. */
+  private lastTeleportAt = 0
   /** Relief continu (Y-shear vertical) — source du rendu et du picking, créé au boot. */
   private warp!: Warp
 
@@ -212,6 +218,16 @@ export class WorldScene extends Phaser.Scene {
       .setOrigin(0)
       .setDepth(OVERLAY_DEPTH)
       .setStrokeStyle(1, 0xffffff, 0.5)
+
+    // Le mode debug (F1) — DEV seulement : en prod la condition est statiquement
+    // fausse, le bloc et l'import sont éliminés du bundle.
+    if (import.meta.env.DEV) {
+      bindDebugKeys(this, {
+        sendAction: (action) => this.sendAction(action),
+        setSpeed: (factor) => this.send({ type: 'debug_speed', factor }),
+        isNight: () => this.lastTime?.isNight ?? false,
+      })
+    }
 
     // Hook de debug/pilotage (pattern __MANIF__) : smoke tests et futurs bots.
     ;(window as unknown as { __BRAISES__: unknown }).__BRAISES__ = { scene: this }
@@ -258,6 +274,11 @@ export class WorldScene extends Phaser.Scene {
     this.playerId = msg.playerId
     this.map = msg.map
     // Garde anti-repli : un H trop grand replierait le sol sur les pentes sud.
+    // NE JAMAIS aplatir l'eau à 0 « pour la poser à plat » : sur les flancs
+    // (élévation ~0,65) ça creuse une marche de plus de 100 px sous chaque
+    // rivière, la berge sud se dessine par-dessus le lit et la petite rivière
+    // disparaît sous sa propre texture repliée. L'eau suit le relief ; c'est la
+    // FALAISE DE BERGE qui porte le warp (voir ShoreCliff).
     if (this.map.elevation) {
       assertNoFold(this.map.elevation, this.map.width, this.map.height, RELIEF_H, TILE_PX)
     }
@@ -272,9 +293,10 @@ export class WorldScene extends Phaser.Scene {
     this.bakeMapTexture()
     this.ground = new GroundLayer(this, this.map, this.warp, 'map-demo')
     this.shade = new ShadeLayer(this, this.map, this.warp)
+    this.shoreCliff = new ShoreCliff(this, this.map, this.warp)
     this.worldSeed = msg.seed
     this.view.setNodes(msg.nodes)
-    this.clutter = new ClutterLayer(this, this.map, this.worldSeed)
+    this.clutter = new ClutterLayer(this, this.map, this.worldSeed, this.warp)
     this.ambientRect = this.add
       .rectangle(0, 0, worldW, worldH, 0x000000, 0)
       .setOrigin(0)
@@ -301,6 +323,7 @@ export class WorldScene extends Phaser.Scene {
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
       this.shade.render(this.cameras.main, hour) // ombre du relief selon le soleil
+      this.shoreCliff.render(this.cameras.main) // DÉMO falaise de berge
       const amb = ambientTint(hour)
       this.ambientRect?.setFillStyle(amb.color).setAlpha(amb.alpha)
       this.fireGlow?.update(this.view.structures, this.view.villages, daylight(hour))
@@ -344,6 +367,19 @@ export class WorldScene extends Phaser.Scene {
     const gx = Math.floor(groundPoint.x / TILE_PX)
     const gy = Math.floor(groundPoint.y / TILE_PX)
     this.ghost.setPosition(gx * TILE_PX, gy * TILE_PX - this.warp.lift(gx + 0.5, gy + 1))
+
+    // DEV : exécute un TP demandé par la carte et nourrit l'overlay. Le corps vit
+    // dans un module (pas une méthode) pour que la prod n'en garde rien — voir
+    // l'en-tête de debug-overlay.ts.
+    if (import.meta.env.DEV) {
+      this.lastTeleportAt = syncDebug(this, {
+        map: this.map,
+        hover: { gx, gy },
+        tick: this.lastSnapshotTick,
+        lastTeleportAt: this.lastTeleportAt,
+        sendAction: (action) => this.sendAction(action),
+      })
+    }
 
     // Interpolation des autres entités (R4) : vers le dernier snapshot, sur un tick.
     this.view.interpolate(this.time.now)
@@ -436,6 +472,16 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * La caméra suit l'avatar par lerp : sur un SAUT (TP de debug, respawn au Feu
+   * d'un village lointain), elle traverserait la carte en glissant pendant des
+   * secondes. Au-delà du seuil de snap, on la repose sèchement sur l'avatar.
+   */
+  private recenterCamera(): void {
+    this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
+    this.cameras.main.centerOn(this.playerSprite.x, this.playerSprite.y)
+  }
+
   /** Le monde vu par la prédiction locale (collisions, vitesses). */
   private predictionWorld(): {
     map: WorldMap
@@ -458,6 +504,11 @@ export class WorldScene extends Phaser.Scene {
    * rendu), et au-delà du seuil de snap c'est un vrai téléport (respawn au Feu).
    */
   private reconcile(authoritative: Entity, lastProcessedInput: number): void {
+    // Mesuré AVANT le rejeu : au-delà du seuil de snap, l'avatar n'a pas marché,
+    // il a sauté (TP de debug, respawn) — la caméra doit sauter avec lui.
+    const jumped =
+      Math.abs(authoritative.x - this.predicted.x) > SNAP_DISTANCE_TILES ||
+      Math.abs(authoritative.y - this.predicted.y) > SNAP_DISTANCE_TILES
     reconcilePrediction(
       this.prediction,
       this.predictionWorld(),
@@ -465,6 +516,7 @@ export class WorldScene extends Phaser.Scene {
       lastProcessedInput,
       SNAP_DISTANCE_TILES,
     )
+    if (jumped) this.recenterCamera()
   }
 
   private axis(plus: 'right' | 'down', minus: 'left' | 'up'): -1 | 0 | 1 {

@@ -8,6 +8,7 @@ import { skillLevel, zoneAt, type Inventory, type SkillId, type VillageTask, typ
 import Phaser from 'phaser'
 import { getHud } from '../hud-state'
 import { TILE_PX } from '../render/framing'
+import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
 
 const TASK_LABELS: Record<VillageTask['kind'], string> = {
   gather_berries: 'récolter des baies',
@@ -69,6 +70,8 @@ const MAP_OVERLAY_DEPTH = 1000
 const MAP_POI_RADIUS = 3
 const MAP_POI_FILL = 0xe8e0c8
 const MAP_POI_STROKE = 0x14141a
+/** Sous ce déplacement (px), un appui-relâché sur la carte est un CLIC, pas un pan. */
+const MAP_CLICK_SLOP_PX = 5
 
 export class UIScene extends Phaser.Scene {
   private alarmOverlay!: Phaser.GameObjects.Rectangle
@@ -103,6 +106,11 @@ export class UIScene extends Phaser.Scene {
   private mapDragging = false
   private mapDragStart = { px: 0, py: 0, lx: 0, ly: 0 }
   private mapWasOpen = false
+  /** Aide de la carte — sa dernière ligne change quand le mode debug est armé. */
+  private mapHint?: Phaser.GameObjects.Text
+
+  /** Overlay du mode debug (DEV, F1) — au-dessus de tout, carte comprise. */
+  private debugText?: Phaser.GameObjects.Text
 
   constructor() {
     super('ui')
@@ -166,15 +174,23 @@ export class UIScene extends Phaser.Scene {
       .text(this.scale.width / 2, this.scale.height - 110, '', { ...style, color: '#ff7a6b' })
       .setOrigin(0.5, 0)
 
+    // L'overlay de debug (F1) — DEV seulement, et hors de cette classe : voir
+    // l'en-tête de debug-overlay.ts (une méthode survivrait au build de prod).
+    if (import.meta.env.DEV) {
+      this.debugText = createDebugOverlay(this, style, MAP_OVERLAY_DEPTH + 1)
+    }
+
     // Carte plein écran : molette = zoom ancré au curseur, clic gauche maintenu
     // = pan. Les handlers ne font rien tant que la carte n'est pas ouverte.
     this.input.on('wheel', (pointer: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
       this.mapWheel(pointer, dy)
     })
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (!this.mapVisible() || !pointer.leftButtonDown()) return
-      this.mapDragging = true
+      if (!this.mapVisible()) return
+      // Le point d'appui est mémorisé pour TOUT bouton (le `pointerup` s'en sert
+      // pour distinguer clic et pan) ; seul le gauche arme le glissement.
       this.mapDragStart = { px: pointer.x, py: pointer.y, lx: this.mapLayer.x, ly: this.mapLayer.y }
+      if (pointer.leftButtonDown()) this.mapDragging = true
     })
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
       if (!this.mapVisible()) return
@@ -185,7 +201,16 @@ export class UIScene extends Phaser.Scene {
       }
       this.updateMapHover(pointer)
     })
-    this.input.on('pointerup', () => {
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      // DEV, mode debug armé (F1) : un clic SANS glisser téléporte l'avatar sur
+      // la tuile visée. Le seuil distingue le clic du relâchement d'un pan —
+      // sans lui, tout déplacement de carte finirait par un TP surprise.
+      if (import.meta.env.DEV && this.mapVisible() && getHud(this.registry, 'debugOn')) {
+        const dragged = Math.abs(pointer.x - this.mapDragStart.px) + Math.abs(pointer.y - this.mapDragStart.py)
+        const tile = dragged <= MAP_CLICK_SLOP_PX ? this.mapTileAt(pointer) : null
+        // On POSE la demande ; WorldScene la consomme (elle seule parle à l'hôte).
+        if (tile) requestTeleport(this, tile)
+      }
       this.mapDragging = false
     })
   }
@@ -206,6 +231,7 @@ export class UIScene extends Phaser.Scene {
     const hint = this.add
       .text(W / 2, H - 28, 'molette : zoom · glisser : déplacer · M : fermer', { ...style, fontSize: '13px', color: '#b8b0a0' })
       .setOrigin(0.5, 0)
+    this.mapHint = hint
     // Le lieu sous le curseur — en haut à gauche de la carte.
     this.mapHover = this.add.text(16, 16, '', { ...style, fontSize: '16px', color: '#e8c66a' }).setOrigin(0, 0)
 
@@ -272,20 +298,23 @@ export class UIScene extends Phaser.Scene {
     this.mapLayer.y = 2 * halfH <= H ? H / 2 : Phaser.Math.Clamp(this.mapLayer.y, H - halfH, halfH)
   }
 
+  /** Le point de la carte sous le curseur, en TUILES — `null` hors des bornes. */
+  private mapTileAt(pointer: Phaser.Input.Pointer): { tx: number; ty: number } | null {
+    const map = getHud(this.registry, 'mapData')
+    if (!map) return null
+    const scale = this.mapFit * this.mapZoom
+    const tx = ((pointer.x - this.mapLayer.x) / scale + (map.width * TILE_PX) / 2) / TILE_PX
+    const ty = ((pointer.y - this.mapLayer.y) / scale + (map.height * TILE_PX) / 2) / TILE_PX
+    if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return null
+    return { tx, ty }
+  }
+
   /** Nomme la zone/POI sous le curseur (haut-gauche), ou rien hors carte. */
   private updateMapHover(pointer: Phaser.Input.Pointer): void {
     const map = getHud(this.registry, 'mapData')
     if (!map) return
-    const scale = this.mapFit * this.mapZoom
-    const texW = map.width * TILE_PX
-    const texH = map.height * TILE_PX
-    const tx = ((pointer.x - this.mapLayer.x) / scale + texW / 2) / TILE_PX
-    const ty = ((pointer.y - this.mapLayer.y) / scale + texH / 2) / TILE_PX
-    if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) {
-      this.mapHover.setText('')
-      return
-    }
-    this.mapHover.setText(zoneAt(map, tx, ty)?.name ?? '')
+    const at = this.mapTileAt(pointer)
+    this.mapHover.setText(at ? (zoneAt(map, at.tx, at.ty)?.name ?? '') : '')
   }
 
   /** Réinitialise la vue à l'ouverture : carte entière, centrée, zoom 1. */
@@ -417,6 +446,8 @@ export class UIScene extends Phaser.Scene {
       }
       this.mapWasOpen = mapOpen
     }
+
+    if (import.meta.env.DEV && this.debugText) renderDebugOverlay(this, this.debugText, this.mapHint)
 
     // L'alarme (spec événements R4) : flash rouge pulsé pendant 3 s.
     const alarm = getHud(this.registry, 'alarm')

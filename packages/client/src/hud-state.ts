@@ -50,6 +50,22 @@ export interface HudState {
   /** Dernière alarme de mon village (flash rouge). */
   alarm: { at: number }
   seasonEnded: boolean
+
+  // ─── Mode debug (DEV uniquement — voir scenes/world/debug-bindings.ts) ───
+  /** F1 : le mode debug est-il armé ? (rien d'autre ne s'affiche ni ne répond sans lui) */
+  debugOn: boolean
+  /** État courant des leviers, pour l'affichage (l'autorité, elle, est dans /sim). */
+  debugGod: boolean
+  debugSpeed: number
+  /** Ce que l'overlay affiche — publié par WorldScene, seule à connaître le relief. */
+  debugInfo: {
+    tick: number
+    fps: number
+    /** Tuile sous le curseur (après correction du relief) et ce qu'on y trouve. */
+    hover: { tx: number; ty: number; terrain: string; elevation: number; zone: string } | null
+  }
+  /** Demande de TP posée par UIScene (clic sur la carte) — consommée par WorldScene. */
+  debugTeleport: { x: number; y: number; at: number }
 }
 
 type Registry = Phaser.Data.DataManager

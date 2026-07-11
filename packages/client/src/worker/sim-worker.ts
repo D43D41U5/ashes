@@ -72,9 +72,11 @@ function tick(): void {
 
 /** Handle de la boucle de tick — pause/reprise (et garde anti-double-init). */
 let ticker: ReturnType<typeof setInterval> | undefined
+/** DEV : accélération de la CADENCE (le tick reste fixe — on en joue plus par seconde). */
+let speedFactor = 1
 
 function startTicker(): void {
-  if (ticker === undefined) ticker = setInterval(tick, 1000 / BALANCE.TICK_RATE_HZ)
+  if (ticker === undefined) ticker = setInterval(tick, 1000 / (BALANCE.TICK_RATE_HZ * speedFactor))
 }
 
 function stopTicker(): void {
@@ -115,5 +117,15 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
     stopTicker()
   } else if (msg.type === 'resume') {
     if (sim) startTicker()
+  } else if (msg.type === 'debug_speed') {
+    // Hors dev, la sim n'est pas armée en debug : accélérer la cadence resterait
+    // sans effet de triche, mais on refuse quand même — l'hôte de prod n'a pas
+    // à obéir à un client sur son horloge.
+    if (!import.meta.env.DEV) return
+    speedFactor = Math.min(16, Math.max(1, msg.factor))
+    if (ticker !== undefined) {
+      stopTicker() // relancer l'intervalle : c'est sa PÉRIODE qui change
+      startTicker()
+    }
   }
 })
