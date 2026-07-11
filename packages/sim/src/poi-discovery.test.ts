@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { createEmptyMap, poisAt, poiCenter } from './map'
-import { TERRAIN_GRASS } from './balance'
+import { POI, TERRAIN_GRASS } from './balance'
 import { chronicleFromEvents } from './chronicle'
 import { POI_CHARGES, poiFamily } from './poi-discovery'
+import { POI_TYPES } from './poi'
 import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
+import { ambientTemperature, isSheltered, naturalWarmth } from './temperature'
+import { DAY_TICKS_PER_CYCLE } from './time'
 
 /** Carte de test : 3 zones, dont une SANS `kind` (un simple toponyme). */
 function mapWithZones() {
@@ -329,5 +332,92 @@ describe('le récit — la première fois seulement', () => {
     expect(firsts).toHaveLength(1) // un Gisement n'a AUCUNE charge, et pourtant il entre dans le bus
     expect(firsts[0]).toMatchObject({ poiId: 0, kind: 'gisement', name: 'le Gisement I', byEntityId: playerId })
     expect(state.visitedPois).toEqual([0])
+  })
+})
+
+/**
+ * Une sim qui démarre LA NUIT. Indispensable pour mesurer une source chaude :
+ * de jour, en Acte I, l'ambiante d'un fond de vallée vaut ~90 et la source ~75 —
+ * `ambientTemperature` prend le `max`, donc la source serait INVISIBLE et le test
+ * vert-menteur. Une source chaude ne se voit que quand il fait froid (critère A5).
+ */
+function simDeNuit(zones: { name: string; x: number; y: number; w: number; h: number; kind?: string }[]) {
+  const map = createEmptyMap(64, 64, TERRAIN_GRASS)
+  map.zones.push(...zones)
+  const state = createSim(1, { map, cycleOffset: DAY_TICKS_PER_CYCLE }) // 0 = aube ; ici : tombée de nuit
+  const playerId = spawnEntity(state, 0.5, 0.5)
+  return { state, playerId }
+}
+
+describe('le répit — la vallée comme réseau', () => {
+  it('la Source chaude réchauffe : c’est un feu qu’on n’a pas allumé', () => {
+    const { state } = simDeNuit([{ name: 'la Source chaude I', x: 10, y: 10, w: 2, h: 2, kind: 'source_chaude' }])
+    const surLaSource = ambientTemperature(state, 11, 11) // le centre de la zone
+    const aCote = ambientTemperature(state, 11 + POI.HOTSPRING_RANGE_TILES + 2, 11) // hors rayon
+
+    expect(surLaSource).toBeGreaterThan(aCote)
+    expect(surLaSource).toBeGreaterThanOrEqual(POI.HOTSPRING_WARMTH - 1) // planchée par la source
+    expect(state.structures).toHaveLength(0) // et personne n'a rien allumé
+  })
+
+  it('la chaleur de la source décroît avec la distance, et s’annule au bord du rayon', () => {
+    const { state } = simDeNuit([{ name: 'la Source chaude I', x: 10, y: 10, w: 2, h: 2, kind: 'source_chaude' }])
+    const auContact = naturalWarmth(state, 11, 11)
+    const aMiChemin = naturalWarmth(state, 11 + POI.HOTSPRING_RANGE_TILES / 2, 11)
+    const auBord = naturalWarmth(state, 11 + POI.HOTSPRING_RANGE_TILES, 11)
+
+    expect(auContact).toBeCloseTo(POI.HOTSPRING_WARMTH)
+    expect(aMiChemin).toBeCloseTo(POI.HOTSPRING_WARMTH / 2)
+    expect(auBord).toBe(0)
+  })
+
+  it('la Grotte abrite', () => {
+    const { state } = simWith([{ name: 'la Grotte I', x: 10, y: 10, w: 2, h: 2, kind: 'grotte' }])
+    expect(isSheltered(state, 10, 10)).toBe(true)
+    expect(isSheltered(state, 13, 13)).toBe(false)
+  })
+
+  it('le Tarn accélère la régén d’endurance', () => {
+    const { state, playerId } = simWith([{ name: 'le Tarn I', x: 10, y: 10, w: 2, h: 2, kind: 'tarn' }])
+    const p = state.entities.find((e) => e.id === playerId)!
+
+    p.x = 11
+    p.y = 11
+    p.stamina = 50
+    step(state, [])
+    const surLeTarn = p.stamina - 50
+
+    p.x = 30
+    p.y = 30
+    p.stamina = 50
+    step(state, [])
+    const ailleurs = p.stamina - 50
+
+    expect(surLeTarn).toBeGreaterThan(ailleurs)
+  })
+})
+
+describe('la règle qui protège l’émerveillement', () => {
+  it('AUCUN lieu de famille reward n’ajoute d’item à l’inventaire (critère A9)', () => {
+    const rewardKinds = POI_TYPES.filter((t) => t.family === 'reward').map((t) => t.slug)
+    expect(rewardKinds).toHaveLength(11) // garde-fou : si ça change, ce test doit être relu
+
+    const zones = rewardKinds.map((kind, i) => ({
+      name: `${kind} I`,
+      x: 4 + i * 5,
+      y: 10,
+      w: 2,
+      h: 2,
+      kind,
+    }))
+    const { state, playerId } = simWith(zones)
+    const p = state.entities.find((e) => e.id === playerId)!
+
+    for (const z of zones) {
+      p.x = z.x + 1
+      p.y = z.y + 1
+      step(state, [])
+    }
+    expect(p.inventory).toEqual({}) // les mains vides, après les onze
   })
 })

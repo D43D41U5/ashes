@@ -125,6 +125,16 @@ function applyKnowledge(state: SimState, entityId: number, knownPois: number[], 
   if (bestId >= 0) know(state, entityId, knownPois, bestId)
 }
 
+/** Le point est-il sur l'empreinte d'un POI de ce `kind` ? (effets continus de terrain) */
+export function isOnPoiKind(state: SimState, x: number, y: number, kind: string): boolean {
+  return poisAt(state.map, x, y).some((poiId) => state.map.zones[poiId]?.kind === kind)
+}
+
+/** Multiplicateur de régén d'endurance dû au lieu — le Tarn est une halte. 1 partout ailleurs. */
+export function staminaPoiFactor(state: SimState, x: number, y: number): number {
+  return isOnPoiKind(state, x, y, 'tarn') ? POI.TARN_STAMINA_FACTOR : 1
+}
+
 /**
  * Une étape de tick : les lieux foulés par les JOUEURS entrent dans leur carte.
  * Appelée juste après la boucle d'inputs — la découverte est la conséquence du

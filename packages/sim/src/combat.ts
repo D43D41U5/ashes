@@ -13,6 +13,7 @@ import { isInvulnerable } from './debug'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { addItems, countOf, removeItems, type ItemId } from './items'
+import { staminaPoiFactor } from './poi-discovery'
 import { rngRoll } from './rng'
 import type { Entity, SimState } from './sim'
 import { coldStaminaRegenFactor } from './temperature'
@@ -373,6 +374,7 @@ export function advanceCombat(state: SimState): void {
     if (entity.windup || entity.blocking) continue
     let perS = entity.moved ? COMBAT.STAMINA_REGEN_MOVING_PER_S : COMBAT.STAMINA_REGEN_IDLE_PER_S
     perS *= coldStaminaRegenFactor(entity.temperature)
+    perS *= staminaPoiFactor(state, entity.x, entity.y) // le Tarn est une halte
     if (!monsterIds.has(entity.id)) {
       if (entity.hunger > 70) perS *= COMBAT.FED_REGEN_BONUS
       else if (entity.hunger <= 0) perS *= COMBAT.STARVED_REGEN_MALUS
