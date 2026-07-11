@@ -41,10 +41,11 @@ export interface HudState {
   /** La carte du monde, publiée une fois au `ready` — sert au rendu de la carte
    * plein écran et au lookup de zone/POI sous le curseur (`zoneAt`). */
   mapData: WorldMap
+  /** Les lieux que MON joueur connaît (spec lieux R1) — index dans `mapData.zones`.
+   *  La carte plein écran ne montre que ceux-là : le terrain est offert, les lieux se gagnent. */
+  knownPois: number[]
   /** Position LOGIQUE de l'avatar (tuiles) — le marqueur « tu es ici » de la carte. */
   playerPos: { x: number; y: number }
-  /** Couvert de canopée lissé autour de l'avatar (0 = ciel ouvert) — pilote le voile de sous-bois. */
-  canopyCoverage: number
   /** La chronique de la saison, déjà mise en forme. */
   chronicle: string[]
   /** Dernier message d'erreur à afficher (action rejetée, hôte perdu…). */
@@ -52,6 +53,22 @@ export interface HudState {
   /** Dernière alarme de mon village (flash rouge). */
   alarm: { at: number }
   seasonEnded: boolean
+
+  // ─── Mode debug (DEV uniquement — voir scenes/world/debug-bindings.ts) ───
+  /** F1 : le mode debug est-il armé ? (rien d'autre ne s'affiche ni ne répond sans lui) */
+  debugOn: boolean
+  /** État courant des leviers, pour l'affichage (l'autorité, elle, est dans /sim). */
+  debugGod: boolean
+  debugSpeed: number
+  /** Ce que l'overlay affiche — publié par WorldScene, seule à connaître le relief. */
+  debugInfo: {
+    tick: number
+    fps: number
+    /** Tuile sous le curseur (après correction du relief) et ce qu'on y trouve. */
+    hover: { tx: number; ty: number; terrain: string; elevation: number; zone: string } | null
+  }
+  /** Demande de TP posée par UIScene (clic sur la carte) — consommée par WorldScene. */
+  debugTeleport: { x: number; y: number; at: number }
 }
 
 type Registry = Phaser.Data.DataManager

@@ -264,6 +264,28 @@ function groveBoost(tx: number, ty: number, terrain: number, seed: number): numb
   return (g * g * g) / GROVE_MEAN_SQ // (g³ normalisé) : moyenne ≈ 1, contraste amas/trouées
 }
 
+/* Sels du décalage d'origine des arbres. Deux mots de 32 bits DISTINCTS (init
+ * SHA-512, aucune structure commune) : X et Y doivent être décorrélés, sinon
+ * dx = dy et les arbres ne se décalent qu'en diagonale. Ce ne sont pas des
+ * nombres d'équilibrage — le motif de décalage est fixe, pas un réglage. */
+const JITTER_SALT_X = 0x1f83d9ab
+const JITTER_SALT_Y = 0x5be0cd19
+
+/**
+ * Décalage pseudo-aléatoire de l'origine d'un arbre, DÉTERMINISTE par tuile et
+ * borné à ±`BALANCE.TREE_JITTER_TILES` (tuiles), en X et en Y. Pure, sans état,
+ * sans seed de monde : `hash2(tx, ty, sel)` à sels constants suffit — identique
+ * sur le serveur, dans la prédiction du client et au rendu (invariant 2).
+ * `hash2 ∈ [0,1)` → `(h·2−1)·J ∈ [−J, J)`. N'utilise que `+ − * /` et `hash2`.
+ * Appelée dans la boucle chaude de la collision : la garder triviale.
+ */
+export function treeJitter(tx: number, ty: number): { dx: number; dy: number } {
+  const j = BALANCE.TREE_JITTER_TILES
+  const dx = (hash2(tx, ty, JITTER_SALT_X) * 2 - 1) * j
+  const dy = (hash2(tx, ty, JITTER_SALT_Y) * 2 - 1) * j
+  return { dx, dy }
+}
+
 export function generateNodes(map: WorldMap, seed: number, density = 1): ResourceNode[] {
   const nodes: ResourceNode[] = []
   let id = 1

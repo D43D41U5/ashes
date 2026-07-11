@@ -52,6 +52,37 @@ export const TEMPERATURE = {
   STAMINA_FLOOR: 0.5, // régén d'endurance au plus froid
 }
 
+/**
+ * Les lieux chargés (spec `docs/specs/lieux.md`). Ordres de grandeur, à
+ * calibrer en jeu — pas des vérités.
+ */
+export const POI = {
+  /**
+   * Du Belvédère, on voit loin : rayon de révélation, en tuiles.
+   *
+   * CALIBRÉ EN JEU (2026-07-11) sur la vraie carte (1200×1800, 5 seeds). Les 40
+   * tuiles d'origine étaient MORTES : le semis Poisson espace les lieux d'au
+   * moins 96 tuiles (`POI_PLACEMENT.SPACING_FRAC × min(w,h)`), donc un Belvédère
+   * posé n'importe où ne révélait RIEN, sur 79 lieux et 5 seeds. Aucun test
+   * headless ne pouvait le voir : ils posent leurs propres zones à 10 tuiles.
+   * À 300 : ~8 lieux révélés en moyenne, jamais zéro — une grappe.
+   */
+  REVEAL_BELVEDERE_TILES: 300,
+  /**
+   * De l'Arche, on voit les abris de l'autre versant. Même portée que le
+   * Belvédère, mais filtrée aux `shelter` : ~2 abris en moyenne (ils sont plus
+   * rares). Même erreur d'origine — 30 tuiles ne révélaient jamais rien.
+   */
+  REVEAL_ARCHE_TILES: 300,
+  /** La Source chaude est un feu qu'on n'a pas allumé (mêmes unités que FIRE_WARMTH/FIRE_RANGE). */
+  HOTSPRING_WARMTH: 75,
+  HOTSPRING_RANGE_TILES: 4,
+  /** Le Tarn est une halte : régén d'endurance multipliée sur son empreinte. */
+  TARN_STAMINA_FACTOR: 1.5,
+  /** Ce que les Pétroglyphes savent montrer : les lieux ANCIENS. */
+  ANCIENT_KINDS: ['ruines', 'mine', 'sanctuaire', 'oratoire'] as readonly string[],
+}
+
 export const BALANCE = {
   TICK_RATE_HZ,
 
@@ -77,6 +108,23 @@ export const BALANCE = {
 
   /** Côté de la hitbox AABB d'un avatar, en tuiles (spec monde R9). */
   AVATAR_HITBOX_TILES: 0.6,
+
+  /** Résolution de la collision sous-tuile : sous-tuiles par côté de tuile.
+   * PUISSANCE DE DEUX obligatoire — la collision multiplie et divise par cette
+   * valeur, et seule une puissance de deux garantit `fl(8a − 8b) = 8·fl(a − b)`,
+   * donc l'exactitude au bit près face à l'ancienne collision en tuiles pleines
+   * (invariant 2). 8 permet un tronc centré de 2 sous-tuiles (0,25 tuile) qui
+   * laisse 0,75 tuile d'écart entre deux troncs voisins — l'avatar (0,6) passe. */
+  SUBTILES_PER_TILE: 8,
+
+  /** Amplitude du décalage pseudo-aléatoire de l'origine d'un arbre, en tuiles
+   * (spec décalage d'origine). Chaque arbre est décalé de ±cette valeur en X et
+   * en Y pour casser l'alignement des troncs en grille. BORNE DURE :
+   * `TREE_JITTER_TILES + blockHalfSub(tree)/SUBTILES_PER_TILE ≤ 0.5`, sinon le
+   * carré bloquant d'un arbre décalé déborde dans la tuile voisine et échappe à
+   * la collision (testé). Avec blockHalfSub 1 et SUB 8 : plafond 0,375. Calibré
+   * en jeu (départ 0,22). */
+  TREE_JITTER_TILES: 0.3,
 
   /** Accélération du calendrier : jours de saison écoulés par jour réel. */
   DEFAULT_CALENDAR_SCALE: 1,
@@ -240,8 +288,12 @@ export type NodeType = 'tree' | 'rock' | 'fiber_plant' | 'berry_bush' | 'iron_ve
 export interface NodeDef {
   item: import('./items').ItemId
   stock: number
-  /** Arbres, affleurements et filons sont des obstacles (spec économie R1). */
-  blocks: boolean
+  /** Demi-côté du carré bloquant, en SOUS-TUILES depuis le centre de la tuile
+   * (spec économie R1, spec arbres hauts). La tuile `t` couvre les sous-tuiles
+   * `[8t, 8t+8)`, son centre est `8t+4`, et le carré bloquant est
+   * `[8t+4−h, 8t+4+h)`. `h = 4` → tuile entière ; `h = 0` → ne bloque pas ;
+   * `h = 1` → tronc de 0,25 tuile. */
+  blockHalfSub: number
   skill: import('./items').SkillId
   /** Famille d'outil qui multiplie le rendement. */
   tool: 'axe' | 'pickaxe' | null
@@ -250,12 +302,12 @@ export interface NodeDef {
 }
 
 export const NODE_DEFS: Record<NodeType, NodeDef> = {
-  tree: { item: 'wood', stock: 10, blocks: true, skill: 'woodcutting', tool: 'axe', requiresTool: false },
-  rock: { item: 'stone', stock: 12, blocks: true, skill: 'mining', tool: 'pickaxe', requiresTool: false },
-  fiber_plant: { item: 'fiber', stock: 6, blocks: false, skill: 'foraging', tool: null, requiresTool: false },
-  berry_bush: { item: 'berries', stock: 8, blocks: false, skill: 'foraging', tool: null, requiresTool: false },
-  iron_vein: { item: 'iron_ore', stock: 8, blocks: true, skill: 'mining', tool: 'pickaxe', requiresTool: true },
-  coal_seam: { item: 'coal', stock: 8, blocks: true, skill: 'mining', tool: 'pickaxe', requiresTool: true },
+  tree: { item: 'wood', stock: 10, blockHalfSub: 1, skill: 'woodcutting', tool: 'axe', requiresTool: false },
+  rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', requiresTool: false },
+  fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, requiresTool: false },
+  berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, requiresTool: false },
+  iron_vein: { item: 'iron_ore', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', requiresTool: true },
+  coal_seam: { item: 'coal', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', requiresTool: true },
 }
 
 /** Rendement par famille d'outil : mains nues 1, outil 2, outil de fer 3. */
@@ -542,3 +594,18 @@ export const NPC_AI = {
 
 /** Durée d'un tick en secondes — le seul dt qui existe dans /sim. */
 export const TICK_DT_S = 1 / BALANCE.TICK_RATE_HZ
+
+/**
+ * Terrassement du relief (spec 2026-07-09-relief-terrasses).
+ * Calibré à l'œil sur captures en jeu, jamais sur une théorie.
+ */
+export const TERRACE = {
+  /** Nombre de paliers sur l'amplitude d'altitude [0,1]. */
+  LEVELS: 8,
+  /** Rayon (en tuiles) de la moyenne locale. Décide de tout : quantifier le
+   *  champ brut, qui porte crêtes et bruit de détail, donnerait des
+   *  micro-terrasses déchiquetées sur chaque bosse. */
+  SMOOTH_RADIUS: 6,
+  /** Nombre de passes de lissage (deux passes ≈ une gaussienne). */
+  SMOOTH_PASSES: 2,
+} as const

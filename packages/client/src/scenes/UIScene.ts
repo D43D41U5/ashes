@@ -8,7 +8,7 @@ import { skillLevel, zoneAt, type Inventory, type SkillId, type VillageTask, typ
 import Phaser from 'phaser'
 import { getHud } from '../hud-state'
 import { TILE_PX } from '../render/framing'
-import { CanopyVignette } from './canopy-vignette'
+import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
 
 const TASK_LABELS: Record<VillageTask['kind'], string> = {
   gather_berries: 'récolter des baies',
@@ -70,10 +70,11 @@ const MAP_OVERLAY_DEPTH = 1000
 const MAP_POI_RADIUS = 3
 const MAP_POI_FILL = 0xe8e0c8
 const MAP_POI_STROKE = 0x14141a
+/** Sous ce déplacement (px), un appui-relâché sur la carte est un CLIC, pas un pan. */
+const MAP_CLICK_SLOP_PX = 5
 
 export class UIScene extends Phaser.Scene {
   private alarmOverlay!: Phaser.GameObjects.Rectangle
-  private canopyVeil!: CanopyVignette
   private hud!: Phaser.GameObjects.Text
   private bottomBar!: Phaser.GameObjects.Text
   private errorText!: Phaser.GameObjects.Text
@@ -91,8 +92,9 @@ export class UIScene extends Phaser.Scene {
   private mapLayer!: Phaser.GameObjects.Container
   private mapImage!: Phaser.GameObjects.Image
   private mapMarker!: Phaser.GameObjects.Arc
-  /** Une pastille par POI (zone avec un `kind`) — taille écran constante, comme le marqueur. */
-  private mapPoiDots: Phaser.GameObjects.Arc[] = []
+  /** Une pastille par POI (zone avec un `kind`), AVEC son poiId — l'index dans `map.zones`,
+   *  qui est l'identité d'un lieu (spec lieux R4). Le filtre `knownPois` en dépend. */
+  private mapPoiDots: { poiId: number; dot: Phaser.GameObjects.Arc }[] = []
   /** Dernière échelle appliquée aux pastilles — évite de les reparcourir à chaque frame. */
   private mapPoiScale = 0
   private mapHover!: Phaser.GameObjects.Text
@@ -105,6 +107,11 @@ export class UIScene extends Phaser.Scene {
   private mapDragging = false
   private mapDragStart = { px: 0, py: 0, lx: 0, ly: 0 }
   private mapWasOpen = false
+  /** Aide de la carte — sa dernière ligne change quand le mode debug est armé. */
+  private mapHint?: Phaser.GameObjects.Text
+
+  /** Overlay du mode debug (DEV, F1) — au-dessus de tout, carte comprise. */
+  private debugText?: Phaser.GameObjects.Text
 
   constructor() {
     super('ui')
@@ -114,9 +121,6 @@ export class UIScene extends Phaser.Scene {
     this.alarmOverlay = this.add
       .rectangle(0, 0, this.scale.width, this.scale.height, 0x8a1a10, 0)
       .setOrigin(0)
-
-    // Le voile de sous-bois — sous tout le HUD (depth négatif). Piloté en update.
-    this.canopyVeil = new CanopyVignette(this)
 
     const style = {
       fontFamily: 'monospace',
@@ -171,15 +175,23 @@ export class UIScene extends Phaser.Scene {
       .text(this.scale.width / 2, this.scale.height - 110, '', { ...style, color: '#ff7a6b' })
       .setOrigin(0.5, 0)
 
+    // L'overlay de debug (F1) — DEV seulement, et hors de cette classe : voir
+    // l'en-tête de debug-overlay.ts (une méthode survivrait au build de prod).
+    if (import.meta.env.DEV) {
+      this.debugText = createDebugOverlay(this, style, MAP_OVERLAY_DEPTH + 1)
+    }
+
     // Carte plein écran : molette = zoom ancré au curseur, clic gauche maintenu
     // = pan. Les handlers ne font rien tant que la carte n'est pas ouverte.
     this.input.on('wheel', (pointer: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
       this.mapWheel(pointer, dy)
     })
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (!this.mapVisible() || !pointer.leftButtonDown()) return
-      this.mapDragging = true
+      if (!this.mapVisible()) return
+      // Le point d'appui est mémorisé pour TOUT bouton (le `pointerup` s'en sert
+      // pour distinguer clic et pan) ; seul le gauche arme le glissement.
       this.mapDragStart = { px: pointer.x, py: pointer.y, lx: this.mapLayer.x, ly: this.mapLayer.y }
+      if (pointer.leftButtonDown()) this.mapDragging = true
     })
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
       if (!this.mapVisible()) return
@@ -190,7 +202,16 @@ export class UIScene extends Phaser.Scene {
       }
       this.updateMapHover(pointer)
     })
-    this.input.on('pointerup', () => {
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      // DEV, mode debug armé (F1) : un clic SANS glisser téléporte l'avatar sur
+      // la tuile visée. Le seuil distingue le clic du relâchement d'un pan —
+      // sans lui, tout déplacement de carte finirait par un TP surprise.
+      if (import.meta.env.DEV && this.mapVisible() && getHud(this.registry, 'debugOn')) {
+        const dragged = Math.abs(pointer.x - this.mapDragStart.px) + Math.abs(pointer.y - this.mapDragStart.py)
+        const tile = dragged <= MAP_CLICK_SLOP_PX ? this.mapTileAt(pointer) : null
+        // On POSE la demande ; WorldScene la consomme (elle seule parle à l'hôte).
+        if (tile) requestTeleport(this, tile)
+      }
       this.mapDragging = false
     })
   }
@@ -211,6 +232,7 @@ export class UIScene extends Phaser.Scene {
     const hint = this.add
       .text(W / 2, H - 28, 'molette : zoom · glisser : déplacer · M : fermer', { ...style, fontSize: '13px', color: '#b8b0a0' })
       .setOrigin(0.5, 0)
+    this.mapHint = hint
     // Le lieu sous le curseur — en haut à gauche de la carte.
     this.mapHover = this.add.text(16, 16, '', { ...style, fontSize: '16px', color: '#e8c66a' }).setOrigin(0, 0)
 
@@ -224,18 +246,21 @@ export class UIScene extends Phaser.Scene {
     // Ajuste la carte entière dans ~90 % × 82 % de l'écran (titre + aide gardent leur place).
     this.mapFit = Math.min((W * 0.9) / texW, (H * 0.82) / texH)
     // Une pastille par POI (zone porteuse d'un `kind` ; les zones sans `kind` sont de simples
-    // toponymes). Statiques : les zones sont publiées une fois au `ready`.
+    // toponymes). Créées une fois — leur VISIBILITÉ, elle, suit `knownPois` (spec lieux R1).
     this.mapPoiDots = map.zones
-      .filter((z) => z.kind !== undefined)
-      .map((z) =>
-        this.add
+      .map((z, poiId) => ({ z, poiId }))
+      .filter(({ z }) => z.kind !== undefined)
+      .map(({ z, poiId }) => ({
+        poiId,
+        dot: this.add
           .circle(this.mapLocalX(map, z.x + z.w / 2), this.mapLocalY(map, z.y + z.h / 2), MAP_POI_RADIUS, MAP_POI_FILL)
-          .setStrokeStyle(1, MAP_POI_STROKE),
-      )
+          .setStrokeStyle(1, MAP_POI_STROKE)
+          .setVisible(false), // rien n'est connu au départ
+      }))
 
     this.mapMarker = this.add.circle(0, 0, 5, 0xffd94a).setStrokeStyle(2, 0x14141a)
     // Le marqueur joueur passe APRÈS les pastilles : il doit rester lisible par-dessus.
-    this.mapLayer = this.add.container(W / 2, H / 2, [this.mapImage, ...this.mapPoiDots, this.mapMarker])
+    this.mapLayer = this.add.container(W / 2, H / 2, [this.mapImage, ...this.mapPoiDots.map((p) => p.dot), this.mapMarker])
 
     this.mapRoot = this.add
       .container(0, 0, [bg, this.mapLayer, title, hint, this.mapHover])
@@ -277,20 +302,30 @@ export class UIScene extends Phaser.Scene {
     this.mapLayer.y = 2 * halfH <= H ? H / 2 : Phaser.Math.Clamp(this.mapLayer.y, H - halfH, halfH)
   }
 
-  /** Nomme la zone/POI sous le curseur (haut-gauche), ou rien hors carte. */
+  /** Le point de la carte sous le curseur, en TUILES — `null` hors des bornes. */
+  private mapTileAt(pointer: Phaser.Input.Pointer): { tx: number; ty: number } | null {
+    const map = getHud(this.registry, 'mapData')
+    if (!map) return null
+    const scale = this.mapFit * this.mapZoom
+    const tx = ((pointer.x - this.mapLayer.x) / scale + (map.width * TILE_PX) / 2) / TILE_PX
+    const ty = ((pointer.y - this.mapLayer.y) / scale + (map.height * TILE_PX) / 2) / TILE_PX
+    if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return null
+    return { tx, ty }
+  }
+
+  /** Nomme la zone/POI sous le curseur (haut-gauche), ou rien hors carte.
+   *  Une zone inconnue ne se nomme pas : le survol ne peut pas trahir ce que
+   *  la pastille cache (sinon il suffirait de balayer la carte à la souris). Les
+   *  toponymes sans `kind` (le Pont, le Col) restent nommés — ils font partie de
+   *  la forme de la vallée, pas de son secret (spec lieux R1-R2). */
   private updateMapHover(pointer: Phaser.Input.Pointer): void {
     const map = getHud(this.registry, 'mapData')
     if (!map) return
-    const scale = this.mapFit * this.mapZoom
-    const texW = map.width * TILE_PX
-    const texH = map.height * TILE_PX
-    const tx = ((pointer.x - this.mapLayer.x) / scale + texW / 2) / TILE_PX
-    const ty = ((pointer.y - this.mapLayer.y) / scale + texH / 2) / TILE_PX
-    if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) {
-      this.mapHover.setText('')
-      return
-    }
-    this.mapHover.setText(zoneAt(map, tx, ty)?.name ?? '')
+    const at = this.mapTileAt(pointer)
+    const zone = at ? zoneAt(map, at.tx, at.ty) : undefined
+    const poiId = zone ? map.zones.indexOf(zone) : -1
+    const hidden = zone?.kind !== undefined && !(getHud(this.registry, 'knownPois') ?? []).includes(poiId)
+    this.mapHover.setText(zone && !hidden ? zone.name : '')
   }
 
   /** Réinitialise la vue à l'ouverture : carte entière, centrée, zoom 1. */
@@ -322,23 +357,26 @@ export class UIScene extends Phaser.Scene {
   }
 
   /**
-   * Tient les pastilles POI à taille écran constante. Elles sont fixes sur la carte : seul le zoom
-   * les concerne, d'où le mémo — la boucle resterait sinon proportionnelle au nombre de POIs à
-   * chaque frame (aujourd'hui ~90, mais le rayon Poisson des POIs est une dette connue).
+   * Tient les pastilles POI à taille écran constante (mémoïsé — la boucle d'échelle
+   * resterait sinon proportionnelle au nombre de POIs à chaque frame, aujourd'hui ~90,
+   * mais le rayon Poisson des POIs est une dette connue) ET fait suivre leur visibilité
+   * à `knownPois` : les lieux se gagnent, la carte ne montre que ce qu'on connaît (spec
+   * lieux R1).
    */
   private updateMapPoiDots(): void {
     const scale = this.mapFit * this.mapZoom
-    if (scale === this.mapPoiScale) return
-    this.mapPoiScale = scale
-    for (const dot of this.mapPoiDots) dot.setScale(1 / scale)
+    if (scale !== this.mapPoiScale) {
+      this.mapPoiScale = scale
+      for (const { dot } of this.mapPoiDots) dot.setScale(1 / scale)
+    }
+    // Les lieux se gagnent : on ne montre que ceux qu'on connaît (spec lieux R1).
+    const known = getHud(this.registry, 'knownPois') ?? []
+    for (const { poiId, dot } of this.mapPoiDots) dot.setVisible(known.includes(poiId))
   }
 
   override update(): void {
     const time = getHud(this.registry, 'time')
     if (!time) return
-
-    // Voile de sous-bois : couvert lissé (WorldScene) × heure → vignette écran.
-    this.canopyVeil.update(getHud(this.registry, 'canopyCoverage') ?? 0, time.hourOfCycle)
 
     const zone = getHud(this.registry, 'zone')
     const members = getHud(this.registry, 'village') ?? 0
@@ -425,6 +463,8 @@ export class UIScene extends Phaser.Scene {
       }
       this.mapWasOpen = mapOpen
     }
+
+    if (import.meta.env.DEV && this.debugText) renderDebugOverlay(this, this.debugText, this.mapHint)
 
     // L'alarme (spec événements R4) : flash rouge pulsé pendant 3 s.
     const alarm = getHud(this.registry, 'alarm')

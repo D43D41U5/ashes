@@ -14,7 +14,7 @@ import {
   TERRAIN_HEATH, TERRAIN_ALPINE_MEADOW, TERRAIN_PINE, TERRAIN_LARCH,
   TERRAIN_GLACIER, TERRAIN_BOULDERS, TERRAIN_FLOWER_MEADOW, TERRAIN_PEAT_BOG,
   TERRAIN_REED_MARSH, TERRAIN_ALPINE_FLOWERS, TERRAIN_BURNT_FOREST, TERRAIN_OLD_GROWTH,
-  TERRAIN_SHALLOW_WATER, TERRAINS,
+  TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER, TERRAINS,
 } from './balance'
 
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
@@ -35,6 +35,11 @@ export const ALPINE = {
   RIDGE_FRAC: 0.24,    // échelle des arêtes ridged
   RIDGE_AMP: 0.30,     // amplitude des crêtes (sur les pentes)
   WARP_FRAC: 0.06,     // amplitude de domain warping
+  HILL_FRAC: 0.02,     // vallons À L'ÉCHELLE DU JEU (~24 tuiles) : le relief qu'on
+                       //  voit en marchant (le reste est trop basse fréquence).
+                       //  Appliqués APRÈS la gen (addReliefBumps), sur la TERRE
+                       //  seulement — RENDU pur, invisibles à moisture/bandes/hydro.
+  HILL_AMP: 0.1,       // amplitude des vallons (dosée : trop = repli du warp)
 }
 
 export function computeElevation(width: number, height: number, seed: number): number[] {
@@ -48,7 +53,10 @@ export function computeElevation(width: number, height: number, seed: number): n
   const el = new Array<number>(width * height)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const edge = Math.min(x, y, width - 1 - x, height - 1 - y)
+      // Sud EXCLU (grand y = bord bas = vers la caméra) : la vallée s'ouvre de ce
+      // côté, ni forme de vallée ni enceinte n'y montent → zéro repli du warp
+      // (spec relief-continu §3). Fermeture sud = bord de carte (déjà bornant).
+      const edge = Math.min(x, y, width - 1 - x)
       // Forme de vallée macro : 1 au bord (murs/pics) → 0 au fond (edge ≥ rise).
       const valley = 1 - Math.min(1, edge / rise)
       // Brise le bol concentrique → vallée organique (éperons, combes, cols).
@@ -80,7 +88,9 @@ export function computeFlowField(width: number, height: number, seed: number): n
   const f = new Array<number>(width * height)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const edge = Math.min(x, y, width - 1 - x, height - 1 - y)
+      // Sud EXCLU (mêmes raisons que computeElevation) : hydrologie cohérente
+      // avec un relief qui s'ouvre vers la caméra.
+      const edge = Math.min(x, y, width - 1 - x)
       const valley = 1 - Math.min(1, edge / rise)
       const org = ALPINE.ORGANIC_AMP * (fbmWarp2(x, y, organic, (seed ^ 0x1a2b3c) | 0, warp) - 0.5)
       const rim = clamp01((rimDepth - edge) / rimDepth)
@@ -338,5 +348,34 @@ export function generateAlpineTerrain(width: number, height: number, seed: numbe
   sealBorderRing(map) // l'anneau externe reste bloquant quoi qu'ait creusé l'eau
   placePois(map, seed) // POIs APRÈS le scellage : le biome sous le centre d'un POI est le terrain FINAL
   //                      (sinon un POI validé sur du bord verrait son terrain réécrit en roche par le scellage → incohérence)
+  addReliefBumps(map, seed) // DERNIER : vallons de RENDU sur la terre (eau plate) — voir plus bas
   return map
+}
+
+/**
+ * Ajoute les VALLONS de rendu (haute fréquence) à `elevation`, sur la TERRE
+ * seulement — l'eau (plans d'eau) garde le niveau macro LISSE, donc rend plate.
+ *
+ * Appliqué EN DERNIER, exprès : moisture, bandes de biome et surtout l'hydrologie
+ * (drainage priority-flood qui « comble les cuvettes ») ont tourné sur le champ
+ * LISSE pour lequel ils sont conçus — sinon les vallons créent de fausses
+ * dépressions et parasitent rivières/tarns. Purement visuel : seul le warp/l'ombre
+ * du client lisent `elevation`. (Client → sin/cos interdits ? non, c'est du /sim
+ * PUR : fbmWarp2 n'utilise pas de transcendante.)
+ */
+export function addReliefBumps(map: WorldMap, seed: number): void {
+  const { width, height } = map
+  const D = Math.min(width, height)
+  const hill = D * ALPINE.HILL_FRAC
+  const warp = Math.max(1, Math.round(D * ALPINE.WARP_FRAC))
+  const el = map.elevation!
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      const t = map.terrain[i]
+      if (t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER) continue // eau : plate
+      const bump = ALPINE.HILL_AMP * (fbmWarp2(x, y, hill, (seed ^ 0x2c3d4e) | 0, warp) - 0.5)
+      el[i] = clamp01(el[i]! + bump)
+    }
+  }
 }

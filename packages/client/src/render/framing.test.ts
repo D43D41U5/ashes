@@ -3,6 +3,11 @@ import {
   actorPlacement,
   AMBIENT_DEPTH,
   CANOPY_DEPTH,
+  CROWN_ALPHA_MIN,
+  CROWN_R_IN,
+  CROWN_R_OUT,
+  crownAlpha,
+  crownDepth,
   clutterDepth,
   corpseDepth,
   GROUND_FIRE_DEPTH,
@@ -135,5 +140,49 @@ describe('budget des profondeurs', () => {
     expect(leBasDeLaCarte).toBeLessThan(CANOPY_DEPTH)
     expect(leBasDeLaCarte).toBeLessThan(AMBIENT_DEPTH)
     expect(leBasDeLaCarte).toBeLessThan(OVERLAY_DEPTH)
+  })
+})
+
+describe('houppiers : la bande de profondeur (A9)', () => {
+  it('un houppier coiffe TOUT acteur atteignable sur la vallée canonique (3600 tuiles)', () => {
+    const acteurLePlusAuSud = ySortDepth(3600, TILE, TIE_ACTOR)
+    expect(crownDepth(0, TILE)).toBeGreaterThan(acteurLePlusAuSud)
+  })
+
+  it('un houppier reste SOUS la canopée, la nuit et les halos', () => {
+    expect(crownDepth(3601, TILE)).toBeLessThan(CANOPY_DEPTH)
+  })
+
+  it('deux houppiers se trient entre eux par leur rangée', () => {
+    expect(crownDepth(11, TILE)).toBeGreaterThan(crownDepth(10, TILE))
+  })
+})
+
+describe('houppiers : le disque de découvert (A8)', () => {
+  it('sous la cime (d ≤ R_IN) le houppier s\'efface à A_MIN', () => {
+    expect(crownAlpha(0)).toBe(CROWN_ALPHA_MIN)
+    expect(crownAlpha(CROWN_R_IN)).toBe(CROWN_ALPHA_MIN)
+  })
+
+  it('au-delà de R_OUT la forêt est un couvert opaque', () => {
+    expect(crownAlpha(CROWN_R_OUT)).toBe(1)
+    expect(crownAlpha(50)).toBe(1)
+  })
+
+  it('entre les deux, l\'alpha croît continûment (pas de scintillement en marchant)', () => {
+    const mid = crownAlpha((CROWN_R_IN + CROWN_R_OUT) / 2)
+    expect(mid).toBeGreaterThan(CROWN_ALPHA_MIN)
+    expect(mid).toBeLessThan(1)
+    let prev = crownAlpha(0)
+    for (let d = 0; d <= 6; d += 0.05) {
+      const a = crownAlpha(d)
+      expect(a).toBeGreaterThanOrEqual(prev - 1e-9) // monotone croissante
+      prev = a
+    }
+  })
+
+  it('les jointures sont continues (R_IN et R_OUT)', () => {
+    expect(crownAlpha(CROWN_R_IN + 1e-6)).toBeCloseTo(CROWN_ALPHA_MIN, 5)
+    expect(crownAlpha(CROWN_R_OUT - 1e-6)).toBeCloseTo(1, 5)
   })
 })

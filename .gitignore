@@ -10,3 +10,6 @@ dist/
 .superpowers/
 # Alternate Data Streams Windows/WSL (fichiers `:Zone.Identifier`).
 *:Zone.Identifier
+
+# Bac à sable de session (captures de smoke test, scripts jetables)
+scratchpad/

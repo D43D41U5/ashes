@@ -8,14 +8,38 @@
  * Sémantique d'occupation : une AABB [min, max) occupe une tuile si elle la
  * recouvre strictement — être flush contre un mur (max = bord de tuile)
  * n'est pas un recouvrement. EPS absorbe le bruit flottant.
+ *
+ * Deux familles de requêtes, et la frontière est nette : les requêtes TUILE
+ * (`isBlockedAt`, `makeIndexedIsBlockedAt` — pathfinding, IA, spawns) répondent
+ * « cette tuile porte-t-elle un obstacle ? » ; les requêtes SOUS-TUILE (le
+ * déplacement, `overlapsBlocking`) répondent « ce point est-il dans un
+ * obstacle ? ». Un arbre bloque sa tuile pour l'A* et son seul tronc pour l'avatar.
  */
 import { BALANCE, NODE_DEFS, TERRAINS, TICK_DT_S } from './balance'
-import { nodeAt, type ResourceNode } from './economy'
+import { nodeAt, treeJitter, type ResourceNode } from './economy'
 import { isBlockingTile, terrainAt, type WorldMap } from './map'
 import { structureAt, structureBlocks, type Structure } from './village'
 
 const EPS = 1e-6
 const HALF = BALANCE.AVATAR_HITBOX_TILES / 2
+
+/* ── Le cœur travaille en SOUS-TUILES ───────────────────────────────────────
+ *
+ * Un obstacle n'occupe plus forcément sa tuile entière : un tronc d'arbre est un
+ * carré de 2 sous-tuiles centré dans la sienne. La géométrie se déduit de la
+ * tuile et d'un entier (`NodeDef.blockHalfSub`) — aucune AABB stockée, rien de
+ * neuf dans `SimState`.
+ *
+ * DÉTERMINISME (invariant 2). `SUB` est une puissance de deux, donc multiplier
+ * et diviser par lui est exact en binaire, et l'arrondi commute avec la mise à
+ * l'échelle : `fl(8a − 8b) = 8·fl(a − b)`. Le résultat est donc identique AU BIT
+ * PRÈS à l'ancienne collision en tuiles pleines pour tout obstacle `h = 4`.
+ * `EPS_SUB = EPS × SUB` (et non `EPS`) : c'est ce qui rend les seuils de
+ * `Math.floor` équivalents à l'échelle près, et non huit fois plus serrés.
+ */
+const SUB = BALANCE.SUBTILES_PER_TILE
+const HALF_SUB = HALF * SUB
+const EPS_SUB = EPS * SUB
 
 /**
  * Le monde vu par un déplaceur donné : le décor, les structures, et QUI
@@ -43,7 +67,7 @@ function blockedAt(world: MoveWorld, tx: number, ty: number): boolean {
   }
   if (world.nodes) {
     const n = nodeAt(world.nodes, tx, ty)
-    if (n !== undefined && n.stock > 0 && NODE_DEFS[n.type].blocks) return true
+    if (n !== undefined && n.stock > 0 && NODE_DEFS[n.type].blockHalfSub > 0) return true
   }
   return false
 }
@@ -92,35 +116,72 @@ export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: numbe
     const entry = occupancy.get(ty * width + tx)
     if (entry === undefined) return false
     if (entry.structure !== undefined && structureBlocks(entry.structure, moverVillageId)) return true
-    if (entry.node !== undefined && entry.node.stock > 0 && NODE_DEFS[entry.node.type].blocks) return true
+    if (entry.node !== undefined && entry.node.stock > 0 && NODE_DEFS[entry.node.type].blockHalfSub > 0) return true
     return false
   }
 }
 
-/** Plage de tuiles recouvertes par l'intervalle [min, max). */
-function tileSpan(min: number, max: number): [number, number] {
-  return [Math.floor(min + EPS), Math.floor(max - EPS)]
+/**
+ * Une SOUS-TUILE est-elle bloquante ? Terrain et structures bloquent leur tuile
+ * entière ; un nœud ne bloque que le carré `[c−h, c+h)` autour du centre `c` de
+ * sa tuile, où `h = blockHalfSub`. Pour `h = 4` on retrouve exactement la tuile.
+ */
+function blockedSubAt(world: MoveWorld, sx: number, sy: number): boolean {
+  const tx = Math.floor(sx / SUB)
+  const ty = Math.floor(sy / SUB)
+  if (isBlockingTile(world.map, tx, ty)) return true
+  if (world.structures) {
+    const s = structureAt(world.structures, tx, ty)
+    if (s !== undefined && structureBlocks(s, world.moverVillageId ?? null)) return true
+  }
+  if (world.nodes) {
+    const n = nodeAt(world.nodes, tx, ty)
+    if (n !== undefined && n.stock > 0) {
+      const h = NODE_DEFS[n.type].blockHalfSub
+      if (h > 0) {
+        // Un arbre est décalé dans sa tuile (spec décalage d'origine) ; les
+        // autres nœuds restent centrés. La borne J + h/SUB ≤ 0,5 garantit que le
+        // carré décalé reste dans la tuile, donc regarder le seul nœud d'ici suffit.
+        let cx = tx * SUB + SUB / 2
+        let cy = ty * SUB + SUB / 2
+        if (n.type === 'tree') {
+          const { dx, dy } = treeJitter(tx, ty)
+          cx += dx * SUB
+          cy += dy * SUB
+        }
+        if (sx >= cx - h && sx < cx + h && sy >= cy - h && sy < cy + h) return true
+      }
+    }
+  }
+  return false
 }
 
-/** Une colonne (horizontal) ou ligne (vertical) de tuiles contient-elle un obstacle ? */
-function lineBlocked(
+/** Plage de SOUS-TUILES recouvertes par l'intervalle [min, max) donné en sous-tuiles. */
+function subSpan(min: number, max: number): [number, number] {
+  return [Math.floor(min + EPS_SUB), Math.floor(max - EPS_SUB)]
+}
+
+/** Une colonne (horizontal) ou ligne (vertical) de SOUS-TUILES contient-elle un obstacle ? */
+function lineBlockedSub(
   world: MoveWorld,
-  fixed: number,
-  crossMin: number,
-  crossMax: number,
+  fixedSub: number,
+  crossMinSub: number,
+  crossMaxSub: number,
   horizontal: boolean,
 ): boolean {
-  const [c0, c1] = tileSpan(crossMin, crossMax)
+  const [c0, c1] = subSpan(crossMinSub, crossMaxSub)
   for (let c = c0; c <= c1; c++) {
-    const blocked = horizontal ? blockedAt(world, fixed, c) : blockedAt(world, c, fixed)
+    const blocked = horizontal ? blockedSubAt(world, fixedSub, c) : blockedSubAt(world, c, fixedSub)
     if (blocked) return true
   }
   return false
 }
 
 /**
- * Déplace `pos` de `delta` sur un axe, clampé flush contre le premier
- * obstacle rencontré. `crossMin/crossMax` : étendue de l'AABB sur l'autre axe.
+ * Déplace `pos` de `delta` sur un axe, clampé flush contre le premier obstacle
+ * rencontré. Tout se calcule en SOUS-TUILES ; on ne divise qu'une fois, en
+ * sortie — c'est ce qui préserve l'exactitude au bit près (cf. en-tête).
+ * `crossMin/crossMax` : étendue de l'AABB sur l'autre axe, en tuiles.
  */
 function moveAxis(
   world: MoveWorld,
@@ -132,17 +193,21 @@ function moveAxis(
 ): number {
   if (delta === 0) return pos
   const target = pos + delta
+  const posSub = pos * SUB
+  const targetSub = target * SUB
+  const crossMinSub = crossMin * SUB
+  const crossMaxSub = crossMax * SUB
   if (delta > 0) {
-    const firstNew = Math.floor(pos + HALF - EPS) + 1
-    const lastNew = Math.floor(target + HALF - EPS)
-    for (let t = firstNew; t <= lastNew; t++) {
-      if (lineBlocked(world, t, crossMin, crossMax, horizontal)) return t - HALF
+    const firstNew = Math.floor(posSub + HALF_SUB - EPS_SUB) + 1
+    const lastNew = Math.floor(targetSub + HALF_SUB - EPS_SUB)
+    for (let s = firstNew; s <= lastNew; s++) {
+      if (lineBlockedSub(world, s, crossMinSub, crossMaxSub, horizontal)) return (s - HALF_SUB) / SUB
     }
   } else {
-    const firstNew = Math.floor(pos - HALF + EPS) - 1
-    const lastNew = Math.floor(target - HALF + EPS)
-    for (let t = firstNew; t >= lastNew; t--) {
-      if (lineBlocked(world, t, crossMin, crossMax, horizontal)) return t + 1 + HALF
+    const firstNew = Math.floor(posSub - HALF_SUB + EPS_SUB) - 1
+    const lastNew = Math.floor(targetSub - HALF_SUB + EPS_SUB)
+    for (let s = firstNew; s >= lastNew; s--) {
+      if (lineBlockedSub(world, s, crossMinSub, crossMaxSub, horizontal)) return (s + 1 + HALF_SUB) / SUB
     }
   }
   return target
@@ -225,13 +290,19 @@ export function moveAvatarStepped(
   return { x: pos.x, y: pos.y, pendingS: remaining, renderX: render.x, renderY: render.y }
 }
 
-/** L'AABB d'un avatar centré en (x, y) recouvre-t-elle une tuile bloquante ? (outil de test) */
+/**
+ * L'AABB d'un avatar centré en (x, y) recouvre-t-elle un obstacle ?
+ *
+ * SOUS-TUILE-EXACT, et il le FAUT : `collision.test.ts` et `prediction.test.ts`
+ * affirment qu'un avatar n'est jamais dans un obstacle. Avec une sémantique
+ * tuile, un avatar légalement debout entre deux troncs les ferait échouer à tort.
+ */
 export function overlapsBlocking(world: MoveWorld, x: number, y: number): boolean {
-  const [tx0, tx1] = tileSpan(x - HALF, x + HALF)
-  const [ty0, ty1] = tileSpan(y - HALF, y + HALF)
-  for (let ty = ty0; ty <= ty1; ty++) {
-    for (let tx = tx0; tx <= tx1; tx++) {
-      if (blockedAt(world, tx, ty)) return true
+  const [sx0, sx1] = subSpan((x - HALF) * SUB, (x + HALF) * SUB)
+  const [sy0, sy1] = subSpan((y - HALF) * SUB, (y + HALF) * SUB)
+  for (let sy = sy0; sy <= sy1; sy++) {
+    for (let sx = sx0; sx <= sx1; sx++) {
+      if (blockedSubAt(world, sx, sy)) return true
     }
   }
   return false

@@ -102,10 +102,18 @@ export class BootScene extends Phaser.Scene {
   private makeNodes(): void {
     const g = this.add.graphics()
 
-    g.fillStyle(0x4a3620).fillRect(6, 9, 4, 6) // arbre : tronc + houppier
-    g.fillStyle(0x1e4d22).fillCircle(8, 6, 6)
-    g.fillStyle(0x2d6b32).fillCircle(6, 5, 3)
-    g.generateTexture('nd-tree', 16, 16)
+    // Un arbre est HAUT (3 tuiles) et FIN (un tronc) — spec arbres hauts. Deux
+    // sprites : le tronc, opaque et trié avec les acteurs ; le houppier, qui
+    // coiffe le monde et s'efface autour du joueur.
+    g.fillStyle(0x4a3620).fillRect(6, 0, 4, 22) // tronc : 4 px de large, 22 de haut
+    g.fillStyle(0x5c4429).fillRect(6, 0, 2, 22) // une arête claire, pour le volume
+    g.generateTexture('nd-tree_trunk', 16, 22)
+    g.clear()
+
+    g.fillStyle(0x1e4d22).fillCircle(16, 16, 15) // houppier : deux tuiles de large
+    g.fillStyle(0x2d6b32).fillCircle(12, 12, 8) // lumière au nord-ouest (cf. hillshade)
+    g.fillStyle(0x18401d).fillCircle(21, 22, 6) // ombre au sud-est
+    g.generateTexture('nd-tree_crown', 32, 32)
     g.clear()
 
     g.fillStyle(0x5a5a5e).fillCircle(8, 10, 6) // affleurement

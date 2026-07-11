@@ -9,9 +9,11 @@
 import { damageModifier, hasAggressionBetween, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
 import { ALIGNMENT, BALANCE, CENDREUX, COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
 import { willRiseAsCendreux } from './cendreux'
+import { isInvulnerable } from './debug'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { addItems, countOf, removeItems, type ItemId } from './items'
+import { staminaPoiFactor } from './poi-discovery'
 import { rngRoll } from './rng'
 import type { Entity, SimState } from './sim'
 import { coldStaminaRegenFactor } from './temperature'
@@ -212,6 +214,9 @@ function resolveStrike(state: SimState, attacker: Entity): void {
 }
 
 export function applyDamage(state: SimState, target: Entity, damage: number, byEntityId: number): void {
+  // Invulnérabilité de DEV : le coup n'a jamais lieu (ni PV, ni blessure, ni
+  // événement) — sinon la chronique se remplirait de faits qui n'en sont pas.
+  if (isInvulnerable(state, target)) return
   const before = target.hp
   target.hp = Math.max(0, target.hp - damage)
   // Un monstre frappé mémorise son agresseur (le sanglier fuit ou charge).
@@ -369,6 +374,7 @@ export function advanceCombat(state: SimState): void {
     if (entity.windup || entity.blocking) continue
     let perS = entity.moved ? COMBAT.STAMINA_REGEN_MOVING_PER_S : COMBAT.STAMINA_REGEN_IDLE_PER_S
     perS *= coldStaminaRegenFactor(entity.temperature)
+    perS *= staminaPoiFactor(state, entity.x, entity.y) // le Tarn est une halte
     if (!monsterIds.has(entity.id)) {
       if (entity.hunger > 70) perS *= COMBAT.FED_REGEN_BONUS
       else if (entity.hunger <= 0) perS *= COMBAT.STARVED_REGEN_MALUS

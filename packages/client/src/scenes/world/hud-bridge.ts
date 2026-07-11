@@ -26,6 +26,7 @@ export function publishPlayerVitals(registry: Registry, me: Entity): void {
   setHud(registry, 'hp', me.hp)
   setHud(registry, 'stamina', me.stamina)
   setHud(registry, 'wounds', me.wounds)
+  setHud(registry, 'knownPois', me.knownPois)
 }
 
 /** La chronique mise en forme depuis le log d'événements retenus. */

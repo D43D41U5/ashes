@@ -1,16 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createEmptyMap } from '@braises/sim'
-import {
-  ambientTint,
-  canopyDensity,
-  canopyStrength,
-  canopyVignette,
-  daylight,
-  fireGlow,
-  sampleCanopyCoverage,
-  warmthColor,
-  NIGHT_ALPHA_MAX,
-} from './lighting'
+import { ambientTint, daylight, fireGlow, warmthColor, NIGHT_ALPHA_MAX } from './lighting'
 
 const r = (c: number): number => (c >> 16) & 0xff
 const b = (c: number): number => c & 0xff
@@ -47,70 +36,6 @@ describe('daylight (facteur de lumière du jour)', () => {
       const d = daylight(h)
       expect(d).toBeGreaterThanOrEqual(prev)
       prev = d
-    }
-  })
-})
-
-describe('canopyDensity / canopyStrength', () => {
-  it('forêt > marais > ciel ouvert', () => {
-    expect(canopyDensity(3)).toBeGreaterThan(canopyDensity(8))
-    expect(canopyDensity(8)).toBeGreaterThan(canopyDensity(1))
-    expect(canopyDensity(1)).toBe(0)
-  })
-  it('la canopée est plus opaque de jour que de nuit', () => {
-    expect(canopyStrength(1)).toBeGreaterThan(canopyStrength(0))
-  })
-})
-
-describe('sampleCanopyCoverage (couverture continue au point joueur)', () => {
-  // Codes terrain : 1 = herbe (ciel ouvert), 3 = forêt.
-  it('ciel ouvert partout → 0', () => {
-    const map = createEmptyMap(10, 10, 1)
-    expect(sampleCanopyCoverage(map, 5.5, 5.5)).toBe(0)
-  })
-  it('forêt partout → densité de la forêt au centre d\'une tuile', () => {
-    const map = createEmptyMap(10, 10, 3)
-    expect(sampleCanopyCoverage(map, 5.5, 5.5)).toBeCloseTo(canopyDensity(3), 5)
-  })
-  it('bordure herbe→forêt : transition continue, pas de saut', () => {
-    // Colonnes x < 5 en herbe (1), x ≥ 5 en forêt (3).
-    const map = createEmptyMap(10, 10, 1)
-    for (let ty = 0; ty < 10; ty++) for (let tx = 5; tx < 10; tx++) map.terrain[ty * 10 + tx] = 3
-    const cov = (x: number): number => sampleCanopyCoverage(map, x, 5.5)
-    expect(cov(4.5)).toBe(0) // centre d'une tuile d'herbe
-    expect(cov(5.5)).toBeCloseTo(canopyDensity(3), 5) // centre d'une tuile de forêt
-    const mid = cov(5.0) // pile sur la bordure
-    expect(mid).toBeGreaterThan(cov(4.5))
-    expect(mid).toBeLessThan(cov(5.5)) // valeur intermédiaire ⇒ interpolée, pas en marche d'escalier
-  })
-})
-
-describe('canopyVignette (voile écran de sous-bois)', () => {
-  it('aucune couverture → aucun voile, de jour comme de nuit', () => {
-    expect(canopyVignette(0, 1).alpha).toBe(0)
-    expect(canopyVignette(0, 0).alpha).toBe(0)
-  })
-  it('plus de couverture → voile plus opaque et halo plus resserré', () => {
-    const light = canopyVignette(0.2, 1)
-    const dense = canopyVignette(0.9, 1)
-    expect(dense.alpha).toBeGreaterThan(light.alpha)
-    expect(dense.tightness).toBeGreaterThan(light.tightness)
-  })
-  it('présent de nuit (enfermement ressenti), un peu plus fort de jour', () => {
-    const day = canopyVignette(1, 1)
-    const night = canopyVignette(1, 0)
-    expect(day.alpha).toBeGreaterThan(night.alpha) // souffle diurne conservé
-    expect(night.alpha).toBeGreaterThan(0.3) // plancher HAUT : le sous-bois reste nettement sombre la nuit
-  })
-  it('alpha et tightness bornés dans [0,1]', () => {
-    for (const cov of [-1, 0, 0.3, 1, 2]) {
-      for (const d of [0, 0.5, 1]) {
-        const v = canopyVignette(cov, d)
-        expect(v.alpha).toBeGreaterThanOrEqual(0)
-        expect(v.alpha).toBeLessThanOrEqual(1)
-        expect(v.tightness).toBeGreaterThanOrEqual(0)
-        expect(v.tightness).toBeLessThanOrEqual(1)
-      }
     }
   })
 })

@@ -6,6 +6,7 @@
  * et appelle ce formateur — la sim ne raconte pas, elle témoigne.
  */
 import type { SimEvent } from './events'
+import { POI_CHARGES } from './poi-discovery'
 import { TICKS_PER_SEASON_DAY } from './time'
 
 const ACT_NAMES = ['l’Éclosion', 'le Grand Froid', 'la Cendre'] as const
@@ -54,6 +55,14 @@ export function chronicleFromEvents(
         break
       case 'evacuation_opened':
         lines.push(`${d} — Un point d'évacuation s'est ouvert sur la route. La fin approche.`)
+        break
+      case 'poi_first_visit':
+        // Seuls les quatre lieux de devise `recit` entrent dans la chronique.
+        // Le bus, lui, porte toutes les premières visites : c'est le FORMATEUR
+        // qui choisit, jamais la logique qui filtre.
+        if (POI_CHARGES[e.kind]?.devise === 'recit') {
+          lines.push(`${d} — ${e.name} a été atteint pour la première fois.`)
+        }
         break
       case 'season_ended':
         lines.push(`${d} — Le monde s'est éteint. Ce qu'on retiendra :`)

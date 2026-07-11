@@ -8,6 +8,7 @@ import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
 import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
 import { clutterAt, type PropKind, type SampleTerrain } from '../../render/clutter'
+import type { Warp } from '../../render/warp'
 
 const CLUTTER_MIN_ZOOM = 1.2 // en-deçà, on coupe le décor (props illisibles) : le canopy prend le relais
 /** Props RAMPANTS : des textures de sol, sans hauteur. Ils restent sous la bande
@@ -26,6 +27,7 @@ export class ClutterLayer {
     private readonly scene: Phaser.Scene,
     private readonly map: WorldMap,
     private readonly seed: number,
+    private readonly warp: Warp,
   ) {
     this.sample = (tx, ty) => {
       if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return -1
@@ -49,8 +51,13 @@ export class ClutterLayer {
             if (used >= MAX_SPRITES) break
             const sprite = this.acquire(used++)
             const feetY = ty + 1 + p.oy
+            const feetX = tx + 0.5 + p.ox
             sprite.setTexture(`cl-${p.kind}`)
-            sprite.setPosition((tx + 0.5 + p.ox) * TILE_PX, feetY * TILE_PX)
+            // Les pieds se posent sur le sol DÉFORMÉ, comme le maillage du sol et
+            // les acteurs. Sans ce lift, un prop est dessiné à sa position PLATE :
+            // sur un versant à 0,8 d'élévation il glisse de 120 px vers le bas —
+            // les touffes de la berge finissent par flotter sur l'eau.
+            sprite.setPosition(feetX * TILE_PX, feetY * TILE_PX - this.warp.lift(feetX, feetY))
             sprite.setDisplaySize(TILE_PX * p.scale, TILE_PX * p.scale)
             sprite.setFlipX(p.mirror)
             // Un conifère trie avec les acteurs — on passe derrière, puis devant.

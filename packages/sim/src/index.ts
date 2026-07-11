@@ -55,6 +55,7 @@ export {
   TERRAIN_SNOW,
   TERRAIN_SHALLOW_WATER,
   TERRAIN_DEEP_WATER,
+  TERRACE,
   TICK_DT_S,
   VILLAGE_NAMES,
   WEAPON_DAMAGE,
@@ -63,7 +64,7 @@ export {
 export type { MonsterDef, MonsterType, NodeDef, NodeType, Recipe, RecipeId, TerrainDef } from './balance'
 
 // ─── Monde : carte, temps, collision, navigation ──────────────────────────
-export { createEmptyMap, terrainAt, isBlockingTile, zoneAt } from './map'
+export { createEmptyMap, terrainAt, elevationAt, isBlockingTile, zoneAt, poisAt, poiCenter } from './map'
 export type { WorldMap, Zone } from './map'
 export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
@@ -79,6 +80,7 @@ export { applyVillageAction, structureAt, structureBlocks, getVillageOf, hasAcce
 export type { Structure, Village, VillageAction, TaskKind, VillageTask } from './village'
 export { applyEconomyAction, advanceEconomy, nodeAt, skillLevel } from './economy'
 export type { ResourceNode, EconomyAction } from './economy'
+export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame
 export { applyCombatAction, advanceCombat, weaponDamage } from './combat'
 export type { CombatAction, Corpse } from './combat'
 export { advanceNpcs } from './npc'
@@ -86,6 +88,8 @@ export type { Npc, NpcTaskState } from './npc'
 export { advanceMonsters } from './monsters'
 export type { Monster } from './monsters'
 export { advanceCendreux, willRiseAsCendreux } from './cendreux'
+export { POI_CHARGES, poiFamily, advancePois } from './poi-discovery'
+export type { PoiCharge } from './poi-discovery'
 export { advanceWorldEvents } from './worldevents'
 export type { Horde } from './worldevents'
 export { advanceAlignment, archetypeOf, isOutsider, regenFactor, damageModifier, harvestFactor } from './alignment'
@@ -95,6 +99,9 @@ export type { ItemId, Inventory, StructureType, AccessLevel, SkillId } from './i
 
 // ─── Consommateurs du flux d'événements ───────────────────────────────────
 export { chronicleFromEvents } from './chronicle'
+
+// ─── Outils de DEV (inertes hors sim créée avec `debug: true`) ────────────
+export type { DebugAction } from './debug'
 
 // ─── Hôte/scénario UNIQUEMENT (setup rejoué par le replay, jamais en jeu) ─
 export { generateNodes } from './economy'

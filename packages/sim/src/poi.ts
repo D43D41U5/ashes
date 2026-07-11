@@ -8,6 +8,8 @@ import { poissonPoints } from './poisson'
 import { elevationAt, terrainAt, isBlockingTile, type WorldMap, type Zone } from './map'
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
+import { setTile, isWater } from './valleygen-primitives'
+import { TERRAIN_SCREE } from './balance'
 
 // ids terrain (balance.ts) — repris localement pour lisibilité de la table.
 const SCREE = 9, ROCK = 5, BOULDERS = 16, GLACIER = 15, BURNT = 21, PEAT = 18, REED = 19,
@@ -19,8 +21,21 @@ export interface PoiType {
   name: string
   family: 'eco' | 'shelter' | 'danger' | 'reward'
   biomes: number[]
+  /** Chance d'être tiré quand on est ÉLIGIBLE. Ce n'est PAS la rareté — voir `cap`. */
   weight: number
+  /** La rareté vit ICI : plafond dur. Un Sanctuaire est précieux parce qu'il y en a deux. */
   cap: number
+  /**
+   * Exemplaires GARANTIS, servis avant le tirage général (spec lieux ; décision
+   * 2026-07-11). Un lieu dont une mécanique dépend ne peut pas se permettre de
+   * perdre la loterie : mesuré, le Belvédère avait 10 points de semis éligibles
+   * sur la seed du jeu — et sortait quand même **zéro fois**, écrasé par le Cairn
+   * (poids 12, éligible partout). Monter son poids ne réglait rien : le tirage
+   * est à SOMME NULLE (le semis borne le total), donc gaver l'un affame l'autre.
+   * On ne joue donc plus les lieux chargés à la loterie : **ils réservent leur
+   * point.** Absent = 0 (le type prend sa chance comme avant).
+   */
+  reserve?: number
   minElev?: number
   maxElev?: number
   footprint: number
@@ -58,26 +73,176 @@ export const POI_TYPES: PoiType[] = [
   { slug: 'fondriere', name: 'la Fondrière', family: 'danger', biomes: [PEAT, REED], weight: 3, cap: 3, footprint: 3 },
   { slug: 'crevasses', name: 'le Champ de crevasses', family: 'danger', biomes: [GLACIER], weight: 3, cap: 3, footprint: 4 },
   // Récompense / paysage
-  { slug: 'belvedere', name: 'le Belvédère', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.75, weight: 3, cap: 4, footprint: 2 },
-  { slug: 'grotte', name: 'la Grotte', family: 'reward', biomes: [ROCK, SCREE], weight: 4, cap: 5, footprint: 2 },
-  { slug: 'cascade', name: 'la Cascade', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.4, weight: 2, cap: 4, footprint: 2 },
-  { slug: 'erratique', name: 'le Bloc erratique', family: 'reward', biomes: [BOULDERS, AL_MEADOW, GRASS, FLOWER], weight: 4, cap: 5, footprint: 2 },
-  { slug: 'arbre', name: "l'Arbre remarquable", family: 'reward', biomes: [OLD_GROWTH], weight: 2, cap: 3, footprint: 2 },
-  { slug: 'cairn', name: 'le Cairn', family: 'reward', biomes: [GRASS, AL_MEADOW, HEATH, SCREE, ROCK, FLOWER, AL_FLOWERS, FOREST, PINE], weight: 12, cap: 14, footprint: 1 },
-  { slug: 'sanctuaire', name: 'le Sanctuaire', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.7, weight: 1, cap: 2, footprint: 2 },
-  { slug: 'source_chaude', name: 'la Source chaude', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 2, cap: 2, footprint: 2 },
-  { slug: 'arche', name: "l'Arche de roche", family: 'reward', biomes: [ROCK, SCREE], weight: 2, cap: 2, footprint: 2 },
-  { slug: 'tarn', name: 'le Tarn', family: 'reward', biomes: [AL_MEADOW, SCREE, AL_FLOWERS], minElev: 0.45, weight: 3, cap: 3, footprint: 3 },
-  { slug: 'petroglyphes', name: 'les Pétroglyphes', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.55, weight: 2, cap: 2, footprint: 2 },
+  { slug: 'belvedere', name: 'le Belvédère', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.75, weight: 3, cap: 4, reserve: 1, footprint: 2 },
+  { slug: 'grotte', name: 'la Grotte', family: 'reward', biomes: [ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 2 },
+  { slug: 'cascade', name: 'la Cascade', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.4, weight: 2, cap: 4, reserve: 1, footprint: 2 },
+  { slug: 'erratique', name: 'le Bloc erratique', family: 'reward', biomes: [BOULDERS, AL_MEADOW, GRASS, FLOWER], weight: 4, cap: 5, reserve: 1, footprint: 2 },
+  { slug: 'arbre', name: "l'Arbre remarquable", family: 'reward', biomes: [OLD_GROWTH], weight: 2, cap: 3, reserve: 1, footprint: 2 },
+  { slug: 'cairn', name: 'le Cairn', family: 'reward', biomes: [GRASS, AL_MEADOW, HEATH, SCREE, ROCK, FLOWER, AL_FLOWERS, FOREST, PINE], weight: 12, cap: 14, reserve: 1, footprint: 1 },
+  { slug: 'sanctuaire', name: 'le Sanctuaire', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.7, weight: 1, cap: 2, reserve: 1, footprint: 2 },
+  { slug: 'source_chaude', name: 'la Source chaude', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 2, cap: 2, reserve: 1, footprint: 2 },
+  { slug: 'arche', name: "l'Arche de roche", family: 'reward', biomes: [ROCK, SCREE], weight: 2, cap: 2, reserve: 1, footprint: 2 },
+  { slug: 'tarn', name: 'le Tarn', family: 'reward', biomes: [AL_MEADOW, SCREE, AL_FLOWERS], minElev: 0.45, weight: 3, cap: 3, reserve: 1, footprint: 3 },
+  { slug: 'petroglyphes', name: 'les Pétroglyphes', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.55, weight: 2, cap: 2, reserve: 1, footprint: 2 },
 ]
 
-/** Types valides pour la tuile (biome + altitude). */
-function candidatesFor(map: WorldMap, tx: number, ty: number, used: Map<string, number>): PoiType[] {
+/**
+ * Empreinte qu'aurait la Zone d'un type de POI centrée sur (tx,ty) — même calcul
+ * (`Math.floor(footprint / 2)`) que celui utilisé plus bas par `placePois` pour
+ * poser la Zone réellement : les deux doivent rester en accord. Clampée à la
+ * carte (revue « les lieux », Minor « clamp zones aux bords ») : un point proche
+ * d'un bord peut recevoir une empreinte qui déborde en négatif ou au-delà de
+ * `width`/`height` — une tuile hors carte n'est ni lisible (`terrainAt` la
+ * traite en void) ni creusable, et une Zone non clampée fuit dans les boucles
+ * qui balayent `[z.x, z.x+z.w)` (rendu, `poisAt`…).
+ */
+function footprintAt(map: WorldMap, t: PoiType, tx: number, ty: number): Pick<Zone, 'x' | 'y' | 'w' | 'h'> {
+  const half = Math.floor(t.footprint / 2)
+  return clampFootprint(map, { x: tx - half, y: ty - half, w: t.footprint, h: t.footprint })
+}
+
+/** Clampe un rectangle d'empreinte aux limites de la carte [0,width) × [0,height). */
+function clampFootprint(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): Pick<Zone, 'x' | 'y' | 'w' | 'h'> {
+  const x0 = Math.max(0, z.x)
+  const y0 = Math.max(0, z.y)
+  const x1 = Math.min(map.width, z.x + z.w)
+  const y1 = Math.min(map.height, z.y + z.h)
+  return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) }
+}
+
+/**
+ * Types valides pour la tuile (biome + altitude + plafond) DONT l'empreinte
+ * contient déjà une tuile marchable, OU peut en recevoir une par creusement
+ * (cf. `pickCarveTile`).
+ *
+ * Sans ce dernier filtre, un type dont les biomes autorisés couvrent surtout du
+ * rock/glacier (Grotte, Belvédère, Source chaude…) pouvait recevoir une empreinte
+ * à 100 % bloquante — un lieu qu'on ne peut jamais fouler : `poisAt` (map.ts) ne
+ * teste QUE l'empreinte, jamais un anneau de secours. Décision d'Alexis (2026-07-11,
+ * « le lieu creuse son propre sol ») : plutôt qu'écarter le type ou rouvrir ses
+ * biomes, le générateur rend marchable une tuile de l'empreinte quand il pose le
+ * lieu — `placePois` s'en charge après le tirage, `pickCarveTile` choisit LA tuile.
+ * Un type reste écarté seulement si aucune tuile de son empreinte n'est ni déjà
+ * marchable ni creusable (empreinte 100 % eau, ou 100 % hors carte/bordure).
+ */
+function isEligible(map: WorldMap, t: PoiType, tx: number, ty: number, used: Map<string, number>): boolean {
   const terr = terrainAt(map, tx, ty)
   const el = elevationAt(map, tx, ty)
-  return POI_TYPES.filter(
-    (t) => t.biomes.includes(terr) && el >= (t.minElev ?? 0) && el <= (t.maxElev ?? 1) && (used.get(t.slug) ?? 0) < t.cap,
-  )
+  if (!t.biomes.includes(terr)) return false
+  if (el < (t.minElev ?? 0) || el > (t.maxElev ?? 1)) return false
+  if ((used.get(t.slug) ?? 0) >= t.cap) return false
+  const fp = footprintAt(map, t, tx, ty)
+  return hasWalkableFootprint(map, fp) || pickCarveTile(map, fp) !== undefined
+}
+
+function candidatesFor(map: WorldMap, tx: number, ty: number, used: Map<string, number>): PoiType[] {
+  return POI_TYPES.filter((t) => isEligible(map, t, tx, ty, used))
+}
+
+/**
+ * Pose le lieu : la Zone, son nom numéroté, et le creusement de son sol si
+ * l'empreinte n'offre aucune tuile marchable. `isEligible` a déjà garanti
+ * qu'une tuile est marchable ou creusable ici — `pickCarveTile` ne peut donc
+ * rendre `undefined` qu'en théorie (défense en profondeur).
+ */
+function placeOne(map: WorldMap, t: PoiType, tx: number, ty: number, used: Map<string, number>): void {
+  const count = (used.get(t.slug) ?? 0) + 1
+  used.set(t.slug, count)
+  const z = footprintAt(map, t, tx, ty)
+  map.zones.push({ name: `${t.name} ${roman(count)}`, ...z, kind: t.slug })
+  if (!hasWalkableFootprint(map, z)) {
+    const carve = pickCarveTile(map, z)
+    if (carve) setTile(map, carve.tx, carve.ty, TERRAIN_SCREE)
+  }
+}
+
+/**
+ * LA RÉSERVATION (décision d'Alexis, 2026-07-11) — les lieux chargés ne jouent
+ * plus à la loterie.
+ *
+ * Un lieu dont une mécanique dépend ne peut pas se permettre de ne pas exister.
+ * Or le tirage pondéré est à **somme nulle** : le semis borne le nombre total de
+ * lieux (~66 points pour une somme de plafonds de ~107), donc chaque lieu tiré
+ * en prive un autre. Mesuré sur la seed du jeu : le Belvédère avait **10 points
+ * éligibles** et sortait pourtant **zéro fois**, écrasé par le Cairn (poids 12,
+ * éligible dans neuf biomes) ; et monter son poids ne faisait qu'affamer l'Arche.
+ * Un jeu de taupes.
+ *
+ * D'où : chaque type à `reserve` prend d'abord ses exemplaires garantis, AVANT
+ * que le tirage général ne consomme les points. Le reste du semis se joue comme
+ * avant — la réservation garantit l'existence, elle ne fixe pas l'abondance.
+ *
+ * Neutralité spatiale : on sert dans l'ordre de `pts`, qui est DÉJÀ mélangé
+ * (Fisher-Yates déterministe, cf. `shuffled`) — donc « le premier point éligible »
+ * n'est pas « le point le plus proche de pts[0] ». Le correctif de biais du
+ * 2026-07-09 tient, et son test le vérifie.
+ *
+ * Retourne les INDEX des points consommés, que le tirage général doit sauter.
+ */
+function reserveCharged(
+  map: WorldMap,
+  pts: readonly { x: number; y: number }[],
+  used: Map<string, number>,
+): Set<number> {
+  const taken = new Set<number>()
+  // Ordre déterministe : celui de POI_TYPES. Les premiers servis ont priorité
+  // sur les points contestés — c'est la table qui arbitre, pas le hasard.
+  for (const t of POI_TYPES) {
+    const want = Math.min(t.reserve ?? 0, t.cap)
+    let got = 0
+    for (let i = 0; i < pts.length && got < want; i++) {
+      if (taken.has(i)) continue
+      const p = pts[i]!
+      const tx = Math.floor(p.x)
+      const ty = Math.floor(p.y)
+      if (!isEligible(map, t, tx, ty, used)) continue
+      placeOne(map, t, tx, ty, used)
+      taken.add(i)
+      got += 1
+    }
+  }
+  return taken
+}
+
+/**
+ * Une tuile bloquante peut-elle devenir de l'éboulis (`TERRAIN_SCREE`) pour
+ * ouvrir l'entrée d'un lieu ? Trois refus, dans l'ordre des contraintes :
+ *   1. hors carte, ou sur l'anneau de bordure d'une tuile d'épaisseur
+ *      (`sealBorderRing`, valleygen.ts) — INTERDIT ABSOLU, jamais percé ;
+ *   2. déjà marchable — rien à creuser (règle « seulement si nécessaire ») ;
+ *   3. eau (peu importe la profondeur, `isWater`) — on ne pose pas de terre
+ *      au milieu d'un lac ou d'un ruisseau.
+ */
+function isCarvable(map: WorldMap, tx: number, ty: number): boolean {
+  if (tx <= 0 || ty <= 0 || tx >= map.width - 1 || ty >= map.height - 1) return false
+  if (!isBlockingTile(map, tx, ty)) return false
+  if (isWater(terrainAt(map, tx, ty))) return false
+  return true
+}
+
+/**
+ * Choisit LA tuile à creuser dans une empreinte (une seule suffit : il faut
+ * pouvoir entrer, pas y bâtir une place — cf. brief). Déterministe par
+ * construction géométrique (pas de hash2 : aucun aléa supplémentaire n'est
+ * nécessaire ni souhaitable ici) — la tuile carvable la plus proche du centre
+ * de l'empreinte, départagée par le balayage row-major qui construit `best`.
+ * `undefined` si l'empreinte n'offre aucune tuile carvable (100 % eau, ou
+ * entièrement hors carte/bordure).
+ */
+function pickCarveTile(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): { tx: number; ty: number } | undefined {
+  const cx = z.x + (z.w - 1) / 2
+  const cy = z.y + (z.h - 1) / 2
+  let best: { tx: number; ty: number } | undefined
+  let bestD = Infinity
+  for (let ty = z.y; ty < z.y + z.h; ty++) {
+    for (let tx = z.x; tx < z.x + z.w; tx++) {
+      if (!isCarvable(map, tx, ty)) continue
+      const dx = tx - cx, dy = ty - cy
+      const d = dx * dx + dy * dy
+      if (d < bestD) { bestD = d; best = { tx, ty } }
+    }
+  }
+  return best
 }
 
 /**
@@ -107,7 +272,14 @@ export function placePois(map: WorldMap, seed: number): void {
   // Mélangé : les plafonds doivent se consommer dans un ordre SPATIALEMENT NEUTRE (cf. `shuffled`).
   const pts = shuffled(poissonPoints(map.width, map.height, seed, radius), seed)
   const used = new Map<string, number>()
-  for (const p of pts) {
+
+  // D'ABORD les lieux chargés : ils réservent leur point (voir `reserveCharged`).
+  const taken = reserveCharged(map, pts, used)
+
+  // PUIS le tirage général, sur ce qui reste du semis.
+  for (let i = 0; i < pts.length; i++) {
+    if (taken.has(i)) continue // point déjà pris par une réservation
+    const p = pts[i]!
     const tx = Math.floor(p.x)
     const ty = Math.floor(p.y)
     const cands = candidatesFor(map, tx, ty, used)
@@ -120,15 +292,7 @@ export function placePois(map: WorldMap, seed: number): void {
       if (r < t.weight) { picked = t; break }
       r -= t.weight
     }
-    const count = (used.get(picked.slug) ?? 0) + 1
-    used.set(picked.slug, count)
-    const f = picked.footprint
-    // Centre l'empreinte sur le point échantillonné : le biome a été validé au
-    // point (tx,ty), donc le centre de la Zone doit retomber sur ce même point
-    // (et non son coin), sans quoi une empreinte >1 tuile peut déborder sur un
-    // biome voisin non autorisé.
-    const half = Math.floor(f / 2)
-    map.zones.push({ name: `${picked.name} ${roman(count)}`, x: tx - half, y: ty - half, w: f, h: f, kind: picked.slug })
+    placeOne(map, picked, tx, ty, used)
   }
 }
 
@@ -142,7 +306,7 @@ function roman(n: number): string { return ROMANS[n] ?? String(n) }
  * (balayage row-major) : un index dans cette liste est donc un tirage
  * déterministe reproductible d'un run à l'autre.
  */
-function walkableTilesFor(map: WorldMap, z: Zone): Array<{ tx: number; ty: number }> {
+function walkableTilesFor(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): Array<{ tx: number; ty: number }> {
   const inFootprint: Array<{ tx: number; ty: number }> = []
   for (let ty = z.y; ty < z.y + z.h; ty++) {
     for (let tx = z.x; tx < z.x + z.w; tx++) {
@@ -159,6 +323,19 @@ function walkableTilesFor(map: WorldMap, z: Zone): Array<{ tx: number; ty: numbe
     }
   }
   return ring
+}
+
+/**
+ * L'empreinte elle-même (hors anneau de secours) contient-elle une tuile
+ * marchable ? Réutilise `walkableTilesFor` sans dupliquer sa logique de
+ * marche : si la tuile qu'elle retourne en premier n'est PAS dans l'empreinte,
+ * c'est que la fonction est retombée sur son anneau (empreinte à 100 %
+ * bloquante) — insuffisant ici, `poisAt` ne teste jamais l'anneau.
+ */
+function hasWalkableFootprint(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): boolean {
+  const [first] = walkableTilesFor(map, z)
+  if (first === undefined) return false
+  return first.tx >= z.x && first.tx < z.x + z.w && first.ty >= z.y && first.ty < z.y + z.h
 }
 
 /**

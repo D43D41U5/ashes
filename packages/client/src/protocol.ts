@@ -61,7 +61,20 @@ export interface ResumeMessage {
   type: 'resume'
 }
 
-export type ClientToHost = JoinMessage | InputMessage | ActionMessage | PauseMessage | ResumeMessage
+/**
+ * DEV : change la CADENCE de l'hôte (×1 par défaut). C'est une affaire d'hôte,
+ * pas de simulation — le tick reste fixe, on en joue seulement plus par seconde.
+ * Les autres leviers de debug (TP, heure, invulnérabilité) passent, eux, par
+ * `action` : ce sont des mutations d'état, donc elles appartiennent à /sim.
+ * Un serveur de production ignorera ce message.
+ */
+export interface DebugSpeedMessage {
+  type: 'debug_speed'
+  /** Multiplicateur de ticks par seconde (1 = temps normal). */
+  factor: number
+}
+
+export type ClientToHost = JoinMessage | InputMessage | ActionMessage | PauseMessage | ResumeMessage | DebugSpeedMessage
 
 export interface ReadyMessage {
   type: 'ready'

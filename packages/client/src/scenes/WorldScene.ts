@@ -34,14 +34,14 @@ import { setHud } from '../hud-state'
 import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type ReadyMessage, type SnapshotMessage } from '../protocol'
 import {
   AMBIENT_DEPTH,
-  CANOPY_DEPTH,
-  GROUND_MAP_DEPTH,
   lookaheadOffset,
   OVERLAY_DEPTH,
+  RELIEF_H,
   TILE_PX,
   zoomForFraming,
 } from '../render/framing'
-import { ambientTint, canopyDensity, canopyStrength, daylight, sampleCanopyCoverage } from '../render/lighting'
+import { ambientTint, daylight } from '../render/lighting'
+import { assertNoFold, createWarp, type Warp } from '../render/warp'
 import {
   publishAlarm,
   publishChronicle,
@@ -51,7 +51,12 @@ import {
   publishTimeAndVillage,
 } from './world/hud-bridge'
 import { ClutterLayer } from './world/clutter-layer'
+import { GroundLayer } from './world/ground-layer'
+import { ShadeLayer } from './world/shade-layer'
+import { ShoreCliff } from './world/shore-cliff'
 import { FireGlow } from './world/fire-glow'
+import { bindDebugKeys } from './world/debug-bindings'
+import { syncDebug } from './world/debug-overlay'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 
@@ -76,14 +81,6 @@ const RENDER_OFFSET_DECAY = 0.85
  */
 const EVENT_LOG_CAP = 500
 
-/**
- * Atténuation de la canopée MONDE : l'immersion du sous-bois est portée par le
- * voile écran (UIScene), la texture monde ne garde qu'un repère discret « c'est
- * de la forêt » lisible de l'extérieur. Calé en playtest.
- */
-const WORLD_CANOPY_HINT = 0.45
-/** Constante de lissage du couvert (ms) : entrer/sortir du sous-bois fond le voile en douceur. */
-const CANOPY_EASE_MS = 350
 
 /** Les événements retenus pour la chronique de saison. */
 const CHRONICLE_TYPES = new Set([
@@ -138,16 +135,17 @@ export class WorldScene extends Phaser.Scene {
   /** La frontière de transport (Worker aujourd'hui, Colyseus en LAN). */
   private host!: HostConnection
   private map!: WorldMap
-  private canopyImage: Phaser.GameObjects.Image | null = null
   private ambientRect: Phaser.GameObjects.Rectangle | null = null
   private fireGlow: FireGlow | null = null
   private lastTime: GameTime | null = null
   /** Couvert de canopée lissé autour de l'avatar — piloté vers la valeur échantillonnée. */
-  private canopyCoverage = 0
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
   private worldReady = false
   private worldSeed = 0
   private clutter?: ClutterLayer
+  private ground!: GroundLayer
+  private shade!: ShadeLayer
+  private shoreCliff!: ShoreCliff
   private loadingText: Phaser.GameObjects.Text | null = null
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
@@ -177,6 +175,10 @@ export class WorldScene extends Phaser.Scene {
   /** Mon avatar télégraphie : la sim l'immobilise — la prédiction aussi. */
   private myWindup = false
   private ghost!: Phaser.GameObjects.Rectangle
+  /** DEV : dernière demande de TP consommée (horodatage de la carte) — évite de la rejouer. */
+  private lastTeleportAt = 0
+  /** Relief continu (Y-shear vertical) — source du rendu et du picking, créé au boot. */
+  private warp!: Warp
 
   constructor() {
     super('world')
@@ -204,6 +206,10 @@ export class WorldScene extends Phaser.Scene {
       nodes: () => this.view.nodes,
       corpses: () => this.view.corpses,
       others: () => this.view.others,
+      // Les handlers d'input sont posés dès `create`, mais `this.warp` n'existe
+      // qu'après `onReady` (génération de carte). Avant, on renvoie le point plat :
+      // de toute façon les actions sont des no-op sur structures/nodes vides.
+      unproject: (px, py) => (this.warp ? this.warp.unproject(px, py) : { x: px, y: py }),
     })
 
     // Le fantôme de construction, aligné sur la grille (suit le pointeur en update).
@@ -212,6 +218,16 @@ export class WorldScene extends Phaser.Scene {
       .setOrigin(0)
       .setDepth(OVERLAY_DEPTH)
       .setStrokeStyle(1, 0xffffff, 0.5)
+
+    // Le mode debug (F1) — DEV seulement : en prod la condition est statiquement
+    // fausse, le bloc et l'import sont éliminés du bundle.
+    if (import.meta.env.DEV) {
+      bindDebugKeys(this, {
+        sendAction: (action) => this.sendAction(action),
+        setSpeed: (factor) => this.send({ type: 'debug_speed', factor }),
+        isNight: () => this.lastTime?.isNight ?? false,
+      })
+    }
 
     // Hook de debug/pilotage (pattern __MANIF__) : smoke tests et futurs bots.
     ;(window as unknown as { __BRAISES__: unknown }).__BRAISES__ = { scene: this }
@@ -257,6 +273,17 @@ export class WorldScene extends Phaser.Scene {
     }
     this.playerId = msg.playerId
     this.map = msg.map
+    // Garde anti-repli : un H trop grand replierait le sol sur les pentes sud.
+    // NE JAMAIS aplatir l'eau à 0 « pour la poser à plat » : sur les flancs
+    // (élévation ~0,65) ça creuse une marche de plus de 100 px sous chaque
+    // rivière, la berge sud se dessine par-dessus le lit et la petite rivière
+    // disparaît sous sa propre texture repliée. L'eau suit le relief ; c'est la
+    // FALAISE DE BERGE qui porte le warp (voir ShoreCliff).
+    if (this.map.elevation) {
+      assertNoFold(this.map.elevation, this.map.width, this.map.height, RELIEF_H, TILE_PX)
+    }
+    this.warp = createWarp((tx, ty) => this.sampleElevation(tx, ty), RELIEF_H, TILE_PX)
+    this.view.setWarp(this.warp)
     this.calendarScale = msg.calendarScale
     const worldW = this.map.width * TILE_PX
     const worldH = this.map.height * TILE_PX
@@ -264,12 +291,12 @@ export class WorldScene extends Phaser.Scene {
     // WebGL même pour une grande carte) puis étiré à la taille monde : les tuiles
     // étant des aplats, l'étirement NEAREST est pixel-identique au bake 16 px/tuile.
     this.bakeMapTexture()
-    this.add.image(0, 0, 'map-demo').setOrigin(0).setDepth(GROUND_MAP_DEPTH).setDisplaySize(worldW, worldH)
-    this.bakeCanopyTexture()
-    this.canopyImage = this.add.image(0, 0, 'canopy').setOrigin(0).setDepth(CANOPY_DEPTH).setDisplaySize(worldW, worldH)
+    this.ground = new GroundLayer(this, this.map, this.warp, 'map-demo')
+    this.shade = new ShadeLayer(this, this.map, this.warp)
+    this.shoreCliff = new ShoreCliff(this, this.map, this.warp)
     this.worldSeed = msg.seed
     this.view.setNodes(msg.nodes)
-    this.clutter = new ClutterLayer(this, this.map, this.worldSeed)
+    this.clutter = new ClutterLayer(this, this.map, this.worldSeed, this.warp)
     this.ambientRect = this.add
       .rectangle(0, 0, worldW, worldH, 0x000000, 0)
       .setOrigin(0)
@@ -290,22 +317,18 @@ export class WorldScene extends Phaser.Scene {
 
   override update(_time: number, deltaMs: number): void {
     if (!this.worldReady) return
+    this.ground.render(this.cameras.main)
     this.clutter?.update(this.cameras.main)
-    this.view.renderNodes(this.cameras.main)
+    this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y)
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
+      this.shade.render(this.cameras.main, hour) // ombre du relief selon le soleil
+      this.shoreCliff.render(this.cameras.main) // DÉMO falaise de berge
       const amb = ambientTint(hour)
       this.ambientRect?.setFillStyle(amb.color).setAlpha(amb.alpha)
-      this.canopyImage?.setAlpha(canopyStrength(daylight(hour)))
       this.fireGlow?.update(this.view.structures, this.view.villages, daylight(hour))
     }
 
-    // Voile de sous-bois : on échantillonne le couvert autour de l'avatar et on
-    // le lisse dans le temps (pas de saut en franchissant une bordure). UIScene
-    // en fait la vignette écran ; ici on ne publie que le couvert lissé.
-    const targetCoverage = sampleCanopyCoverage(this.map, this.predicted.x, this.predicted.y)
-    this.canopyCoverage += (targetCoverage - this.canopyCoverage) * Math.min(1, deltaMs / CANOPY_EASE_MS)
-    setHud(this.registry, 'canopyCoverage', this.canopyCoverage)
     const dx = this.axis('right', 'left')
     const dy = this.axis('down', 'up')
     const sprint = this.inputs.sprintKeys.some((k) => k.isDown)
@@ -336,10 +359,27 @@ export class WorldScene extends Phaser.Scene {
     const render = renderPosition(this.prediction, world, input, speedScale)
     this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player')
 
-    // Le fantôme de construction suit le pointeur, aligné sur la grille.
+    // Le fantôme de construction suit le pointeur, aligné sur la grille — la
+    // tuile réellement sous le curseur (unproject), pas la projection plate.
     const pointer = this.input.activePointer
     const pw = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
-    this.ghost.setPosition(Math.floor(pw.x / TILE_PX) * TILE_PX, Math.floor(pw.y / TILE_PX) * TILE_PX)
+    const groundPoint = this.warp.unproject(pw.x, pw.y)
+    const gx = Math.floor(groundPoint.x / TILE_PX)
+    const gy = Math.floor(groundPoint.y / TILE_PX)
+    this.ghost.setPosition(gx * TILE_PX, gy * TILE_PX - this.warp.lift(gx + 0.5, gy + 1))
+
+    // DEV : exécute un TP demandé par la carte et nourrit l'overlay. Le corps vit
+    // dans un module (pas une méthode) pour que la prod n'en garde rien — voir
+    // l'en-tête de debug-overlay.ts.
+    if (import.meta.env.DEV) {
+      this.lastTeleportAt = syncDebug(this, {
+        map: this.map,
+        hover: { gx, gy },
+        tick: this.lastSnapshotTick,
+        lastTeleportAt: this.lastTeleportAt,
+        sendAction: (action) => this.sendAction(action),
+      })
+    }
 
     // Interpolation des autres entités (R4) : vers le dernier snapshot, sur un tick.
     this.view.interpolate(this.time.now)
@@ -432,6 +472,16 @@ export class WorldScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * La caméra suit l'avatar par lerp : sur un SAUT (TP de debug, respawn au Feu
+   * d'un village lointain), elle traverserait la carte en glissant pendant des
+   * secondes. Au-delà du seuil de snap, on la repose sèchement sur l'avatar.
+   */
+  private recenterCamera(): void {
+    this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
+    this.cameras.main.centerOn(this.playerSprite.x, this.playerSprite.y)
+  }
+
   /** Le monde vu par la prédiction locale (collisions, vitesses). */
   private predictionWorld(): {
     map: WorldMap
@@ -454,6 +504,11 @@ export class WorldScene extends Phaser.Scene {
    * rendu), et au-delà du seuil de snap c'est un vrai téléport (respawn au Feu).
    */
   private reconcile(authoritative: Entity, lastProcessedInput: number): void {
+    // Mesuré AVANT le rejeu : au-delà du seuil de snap, l'avatar n'a pas marché,
+    // il a sauté (TP de debug, respawn) — la caméra doit sauter avec lui.
+    const jumped =
+      Math.abs(authoritative.x - this.predicted.x) > SNAP_DISTANCE_TILES ||
+      Math.abs(authoritative.y - this.predicted.y) > SNAP_DISTANCE_TILES
     reconcilePrediction(
       this.prediction,
       this.predictionWorld(),
@@ -461,6 +516,7 @@ export class WorldScene extends Phaser.Scene {
       lastProcessedInput,
       SNAP_DISTANCE_TILES,
     )
+    if (jumped) this.recenterCamera()
   }
 
   private axis(plus: 'right' | 'down', minus: 'left' | 'up'): -1 | 0 | 1 {
@@ -478,33 +534,31 @@ export class WorldScene extends Phaser.Scene {
     this.send({ type: 'action', action })
   }
 
-  /** Bake la carte statique en une texture (R8) — API generateTexture éprouvée dans Manif. */
-  private bakeMapTexture(): void {
-    const g = this.add.graphics()
-    for (let ty = 0; ty < this.map.height; ty++) {
-      for (let tx = 0; tx < this.map.width; tx++) {
-        const base = TERRAIN_COLORS[this.map.terrain[ty * this.map.width + tx] ?? 0] ?? 0xff00ff
-        g.fillStyle(shade(base, 0.92 + 0.16 * hash2(tx, ty)))
-        g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
-      }
-    }
-    g.generateTexture('map-demo', this.map.width, this.map.height)
-    g.destroy()
+  // Échantillonneur d'altitude clampé aux bords — partagé bake/warp/hillshade.
+  private sampleElevation(tx: number, ty: number): number {
+    const { width, height } = this.map
+    const cx = tx < 0 ? 0 : tx >= width ? width - 1 : tx
+    const cy = ty < 0 ? 0 : ty >= height ? height - 1 : ty
+    return this.map.elevation?.[cy * width + cx] ?? 0
   }
 
-  /** Cuit la pénombre de couvert en une texture monde : tuiles boisées assombries, mouchetées. */
-  private bakeCanopyTexture(): void {
+  /** Bake la carte statique en une texture (R8) — API generateTexture éprouvée dans Manif.
+   *  La couleur d'une tuile = biome × grain (bruit par tuile). Le RELIEF n'est PLUS
+   *  cuit ici : l'ombre du versant est dynamique (ShadeLayer, suit le soleil).
+   *  Le facteur reste CONSTANT PAR TUILE : c'est ce qui autorise le bake à 1 px/tuile.
+   *  Grain gardé faible (nearest) sinon le damier par tuile masque l'ombre. */
+  private bakeMapTexture(): void {
+    const { width, height } = this.map
     const g = this.add.graphics()
-    for (let ty = 0; ty < this.map.height; ty++) {
-      for (let tx = 0; tx < this.map.width; tx++) {
-        const density = canopyDensity(this.map.terrain[ty * this.map.width + tx] ?? 0)
-        if (density <= 0) continue
-        const a = Math.min(1, density * WORLD_CANOPY_HINT * (0.85 + 0.3 * hash2(tx, ty)))
-        g.fillStyle(0x040807, a)
+    for (let ty = 0; ty < height; ty++) {
+      for (let tx = 0; tx < width; tx++) {
+        const base = TERRAIN_COLORS[this.map.terrain[ty * width + tx] ?? 0] ?? 0xff00ff
+        const grain = 0.96 + 0.07 * hash2(tx, ty)
+        g.fillStyle(shade(base, grain))
         g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
       }
     }
-    g.generateTexture('canopy', this.map.width, this.map.height)
+    g.generateTexture('map-demo', width, height)
     g.destroy()
   }
 }

@@ -14,6 +14,7 @@ import { BALANCE, COMBAT, TERRAIN_GRASS, TICK_DT_S } from './balance'
 import { moveAvatar } from './collision'
 import { advanceCombat, applyCombatAction, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
+import { applyDebugAction, isDebugAction, refreshGodMode, type DebugAction } from './debug'
 import { advanceEconomy, applyEconomyAction, type EconomyAction, type ResourceNode } from './economy'
 import { emitEvent, type SimEvent } from './events'
 import type { Inventory, ItemId, SkillId } from './items'
@@ -23,12 +24,18 @@ import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde } from './worldevents'
 import { rngNext } from './rng'
 import { advanceNpcs, type Npc } from './npc'
+import { advancePois } from './poi-discovery'
 import { advanceTime, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
 import { advanceTemperature, coldSpeedFactor } from './temperature'
 import { applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
 
-/** L'union des actions possibles dans un tick (village + économie + combat). */
-export type PlayerAction = VillageAction | EconomyAction | CombatAction
+/**
+ * L'union des actions possibles dans un tick (village + économie + combat).
+ * `DebugAction` en fait partie pour transiter par le même canal (et donc être
+ * capturée par le replay log), mais elle est INERTE hors sim de debug — voir
+ * `debug.ts`, garde `state.debug`.
+ */
+export type PlayerAction = VillageAction | EconomyAction | CombatAction | DebugAction
 
 export interface Entity {
   id: number
@@ -62,6 +69,15 @@ export interface Entity {
   /** Alignement personnel (GDD §3) : chaleur −100..+100, engagement 0..100. */
   warmth: number
   engagement: number
+  /** DEV seulement : invulnérable, jauges gelées (voir debug.ts). */
+  god?: true
+  /**
+   * Les lieux connus de ce joueur (spec lieux R3) — index dans `map.zones`.
+   * Un tableau, pas un `Set` : l'état de sim reste JSON-sérialisable.
+   * Présent sur toutes les entités (forme uniforme = snapshot stable), mais
+   * SEULS LES JOUEURS l'alimentent : les PNJ n'ont pas de carte.
+   */
+  knownPois: number[]
 }
 
 export interface SimState {
@@ -98,11 +114,16 @@ export interface SimState {
   /** La saison (spec saison) : méga-horde tirée, évacuation ouverte, fin émise. */
   megaHordeSpawned: boolean
   evacuation: { tx: number; ty: number } | null
+  /** Lieux déjà atteints par un joueur, tous joueurs confondus (spec lieux R12).
+   *  Global : il n'y a qu'un premier — en multi, c'est une course. */
+  visitedPois: number[]
   seasonEnded: boolean
   nextVillageId: number
   nextStructureId: number
   /** Buffer d'événements de domaine, drainé par l'hôte (voir events.ts). */
   events: SimEvent[]
+  /** Outils de dev armés ? Faux partout sauf hôte de développement (voir debug.ts). */
+  debug: boolean
 }
 
 export interface SimOptions {
@@ -112,6 +133,8 @@ export interface SimOptions {
   nodes?: ResourceNode[]
   /** Décalage de phase du cycle (ticks) — voir `cycleOffsetForStartHour`. */
   cycleOffset?: number
+  /** Arme les `DebugAction` (TP, heure, invulnérabilité). Jamais en production. */
+  debug?: boolean
 }
 
 /** Intention d'un avatar pour un tick : déplacement, postures, au plus une action. */
@@ -151,10 +174,12 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     aggressions: [],
     megaHordeSpawned: false,
     evacuation: null,
+    visitedPois: [],
     seasonEnded: false,
     nextVillageId: 1,
     nextStructureId: 1,
     events: [],
+    debug: options.debug ?? false,
   }
   // Le tick 0 débute le jour 1 et l'acte I ; la phase du cycle dépend de
   // cycleOffset (0 = aube), donc on émet le bon franchissement jour/nuit.
@@ -189,6 +214,7 @@ export function spawnEntity(state: SimState, x: number, y: number): number {
     homeY: y,
     warmth: 0,
     engagement: 0,
+    knownPois: [],
   })
   // Consomme un pas de PRNG : le spawn fait partie de l'histoire déterministe.
   state.rngState = rngNext(state.rngState)
@@ -230,7 +256,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     // L'action d'abord (un mur bâti ce tick bloque dès ce tick), le pas ensuite.
     const action = input.action
     if (action) {
-      if (action.type === 'harvest' || action.type === 'craft' || action.type === 'eat') {
+      if (isDebugAction(action)) {
+        applyDebugAction(state, input.entityId, action)
+      } else if (action.type === 'harvest' || action.type === 'craft' || action.type === 'eat') {
         applyEconomyAction(state, input.entityId, action)
       } else if (action.type === 'attack' || action.type === 'bandage' || action.type === 'loot_corpse') {
         applyCombatAction(state, input.entityId, action)
@@ -269,6 +297,8 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     entity.x = moved.x
     entity.y = moved.y
   }
+  // La découverte est la conséquence du pas qu'on vient de faire (spec lieux R6).
+  advancePois(state)
   // Le monde d'abord (spawns/alarmes), puis PNJ, monstres, résolution.
   advanceWorldEvents(state)
   advanceNpcs(state)
@@ -279,6 +309,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceTime(state)
   advanceEconomy(state)
   advanceTemperature(state)
+  // En DERNIER : les invulnérables retrouvent leurs jauges pleines, quoi qu'il
+  // se soit passé pendant le tick (faim, froid, saignement). No-op hors debug.
+  refreshGodMode(state)
 }
 
 /** Snapshot canonique — sert d'égalité d'état dans les tests et le replay. */

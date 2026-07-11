@@ -8,6 +8,7 @@
 import {
   BALANCE,
   STRUCTURE_HP,
+  treeJitter,
   type Corpse,
   type Entity,
   type Monster,
@@ -20,8 +21,11 @@ import type { NodeDelta, SnapshotMessage } from '../../protocol'
 import {
   actorPlacement,
   corpseDepth,
+  crownAlpha,
+  crownDepth,
   GROUND_FIRE_DEPTH,
   nodeDepth,
+  RELIEF_H,
   structureDepth,
   tileFeetAnchor,
   TILE_PX,
@@ -72,14 +76,23 @@ export class SnapshotView {
   /** Sprites de nœuds POOLÉS, culled à la vue : la carte porte ~60k nœuds, on
    * n'en dessine que les ~centaines visibles (même trick que le décor). */
   private nodePool: Phaser.GameObjects.Image[] = []
+  /** Pool SÉPARÉ : un arbre est deux sprites (tronc trié avec les acteurs,
+   * houppier dans sa bande propre). Les autres nœuds n'en consomment aucun. */
+  private crownPool: Phaser.GameObjects.Image[] = []
   /** Index id→nœud pour appliquer les deltas de stock en O(1). */
   private nodeById = new Map<number, ResourceNode>()
   /** Index tuile→nœud (≤1 nœud/tuile) : le rendu n'itère que la fenêtre caméra,
    * pas les ~140k nœuds — coût par frame borné à la vue, comme le décor. */
   private nodeByTile = new Map<number, ResourceNode>()
   private corpseSprites = new Map<number, Phaser.GameObjects.Image>()
+  /** Relief continu (Task 3) — soulève chaque billboard du sol sous ses pieds. */
+  private warp?: import('../../render/warp').Warp
 
   constructor(private scene: Phaser.Scene) {}
+
+  setWarp(warp: import('../../render/warp').Warp): void {
+    this.warp = warp
+  }
 
   /** Applique un snapshot complet — hors avatar local (prédit par la scène). */
   apply(msg: SnapshotMessage, playerId: number, now: number): void {
@@ -107,7 +120,9 @@ export class SnapshotView {
   syncActor(sprite: Phaser.GameObjects.Image, x: number, y: number, textureKey: string): void {
     const footprint = ACTOR_FOOTPRINTS[textureKey] ?? DEFAULT_FOOTPRINT
     const p = actorPlacement(x, y, footprint, TILE_PX, BALANCE.AVATAR_HITBOX_TILES)
-    sprite.setPosition(p.px, p.py)
+    const feetY = y + BALANCE.AVATAR_HITBOX_TILES / 2
+    const lift = this.warp?.lift(x, feetY) ?? 0
+    sprite.setPosition(p.px, p.py - lift)
     sprite.setDepth(p.depth)
     sprite.setDisplaySize(p.displayW, p.displayH)
   }
@@ -179,8 +194,9 @@ export class SnapshotView {
         // décaler son tri ni son emprise logique. Le Feu, lui, est un foyer à
         // plat — il reste sous la bande, on marche autour, jamais derrière.
         const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
+        const lift = this.warp?.lift(s.tx + 0.5, s.ty + 1) ?? 0
         sprite = this.scene.add
-          .image(a.px, a.py, `st-${s.type}`)
+          .image(a.px, a.py - lift, `st-${s.type}`)
           .setOrigin(0.5, 1)
           .setDepth(s.type === 'fire' ? GROUND_FIRE_DEPTH : structureDepth(s.ty, TILE_PX))
         this.structureSprites.set(s.id, sprite)
@@ -225,35 +241,78 @@ export class SnapshotView {
 
   /** Dessine les nœuds visibles (pool réutilisé). N'itère que la FENÊTRE de
    * tuiles caméra (≤1 nœud/tuile via l'index) — coût borné à la vue, jamais
-   * O(nombre total de nœuds). Appelé chaque frame ; un nœud épuisé s'estompe. */
-  renderNodes(camera: Phaser.Cameras.Scene2D.Camera): void {
+   * O(nombre total de nœuds). Appelé chaque frame ; un nœud épuisé s'estompe.
+   *
+   * Un arbre est DEUX sprites : le tronc (opaque, trié avec les acteurs) et le
+   * houppier (bande propre, alpha du disque de découvert). `playerX/playerY` sont
+   * la position LOGIQUE de l'avatar en tuiles : le disque suit l'avatar, pas la
+   * caméra, sinon il glisserait avec le lookahead du pointeur. */
+  renderNodes(camera: Phaser.Cameras.Scene2D.Camera, playerX: number, playerY: number): void {
     const v = camera.worldView
-    const tx0 = Math.floor(v.x / TILE_PX) - 1
+    // La fenêtre s'élargit vers le BAS : un billboard planté SOUS l'écran remonte
+    // dans la vue de son lift (jusqu'à RELIEF_H px = ⌈H/TILE⌉ tuiles) + les cimes
+    // qui débordent ; sans cette marge il serait culé trop tôt (arbres qui
+    // disparaissent en bas). Colonnes ±2 pour le débord de houppier.
+    const liftMargin = Math.ceil(RELIEF_H / TILE_PX) + 4
+    const tx0 = Math.floor(v.x / TILE_PX) - 2
     const ty0 = Math.floor(v.y / TILE_PX) - 1
-    const tx1 = Math.ceil((v.x + v.width) / TILE_PX) + 1
-    const ty1 = Math.ceil((v.y + v.height) / TILE_PX) + 1
+    const tx1 = Math.ceil((v.x + v.width) / TILE_PX) + 2
+    const ty1 = Math.ceil((v.y + v.height) / TILE_PX) + liftMargin
+    const feetY = playerY + BALANCE.AVATAR_HITBOX_TILES / 2
     let used = 0
+    let crownsUsed = 0
     for (let ty = ty0; ty <= ty1; ty++) {
       for (let tx = tx0; tx <= tx1; tx++) {
         const n = this.nodeByTile.get(tx * NODE_TILE_STRIDE + ty)
         if (n === undefined) continue
+        const isTree = n.type === 'tree'
+        const texture = isTree ? 'nd-tree_trunk' : `nd-${n.type}`
         let sprite = this.nodePool[used]
         if (!sprite) {
-          sprite = this.scene.add.image(0, 0, `nd-${n.type}`).setOrigin(0.5, 1)
+          sprite = this.scene.add.image(0, 0, texture).setOrigin(0.5, 1)
           this.nodePool[used] = sprite
         }
+        // Un arbre est décalé dans sa tuile (spec décalage d'origine) — MÊME
+        // fonction pure que la collision, donc sprite et hitbox coïncident au bit
+        // près. Les autres nœuds restent centrés sur leur tuile.
+        const j = isTree ? treeJitter(tx, ty) : { dx: 0, dy: 0 }
         const a = tileFeetAnchor(tx, ty, TILE_PX)
-        sprite.setPosition(a.px, a.py)
+        const px = a.px + j.dx * TILE_PX
+        const py = a.py + j.dy * TILE_PX
+        const lift = this.warp?.lift(tx + 0.5 + j.dx, ty + 1 + j.dy) ?? 0
+        sprite.setPosition(px, py - lift)
         // Le sprite est POOLÉ : sa depth suit la tuile qu'il occupe cette frame,
-        // jamais celle où il a été créé.
-        sprite.setDepth(nodeDepth(ty, TILE_PX))
-        sprite.setTexture(`nd-${n.type}`)
+        // jamais celle où il a été créé. Le pied réel intègre le décalage Y, pour
+        // que deux arbres proches se trient par leur vrai pied, pas par le pool.
+        sprite.setDepth(nodeDepth(ty + j.dy, TILE_PX))
+        sprite.setTexture(texture)
+        // Le tronc reste OPAQUE en toutes circonstances : les troncs dessinent la
+        // structure de la forêt, ce sont les houppiers qui s'ouvrent.
         sprite.setAlpha(n.stock > 0 ? 1 : 0.25)
         sprite.setVisible(true)
         used++
+        if (!isTree) continue
+
+        // Le houppier : ancré 6 px sous le sommet du tronc (22 px), donc à py−16.
+        let crown = this.crownPool[crownsUsed]
+        if (!crown) {
+          crown = this.scene.add.image(0, 0, 'nd-tree_crown').setOrigin(0.5, 1)
+          this.crownPool[crownsUsed] = crown
+        }
+        crown.setPosition(px, py - 16 - lift)
+        crown.setDepth(crownDepth(ty + 1 + j.dy, TILE_PX))
+        // Distance des pieds du joueur au PIED DU TRONC : l'arbre à ton contact
+        // s'efface, celui dont la cime te survole de loin reste opaque.
+        const dx = playerX - (tx + 0.5)
+        const dy = feetY - (ty + 1)
+        const d = Math.sqrt(dx * dx + dy * dy)
+        crown.setAlpha(n.stock > 0 ? crownAlpha(d) : 0.25)
+        crown.setVisible(true)
+        crownsUsed++
       }
     }
     for (let i = used; i < this.nodePool.length; i++) this.nodePool[i]!.setVisible(false)
+    for (let i = crownsUsed; i < this.crownPool.length; i++) this.crownPool[i]!.setVisible(false)
   }
 
   private syncCorpses(corpses: Corpse[]): void {
@@ -264,8 +323,9 @@ export class SnapshotView {
       if (!this.corpseSprites.has(c.id)) {
         // Ossements à plat : centrés sur la position de l'entité (pas d'ancrage
         // pieds), mais dans la bande de tri — un buisson au sud les recouvre.
+        const lift = this.warp?.lift(c.x, c.y) ?? 0
         const sprite = this.scene.add
-          .image(c.x * TILE_PX, c.y * TILE_PX, 'spr-corpse')
+          .image(c.x * TILE_PX, c.y * TILE_PX - lift, 'spr-corpse')
           .setOrigin(0.5, 0.5)
           .setDepth(corpseDepth(c.y, TILE_PX))
         this.corpseSprites.set(c.id, sprite)

@@ -3,9 +3,10 @@
  * La cible = BASE − altitude − acte + (nuit+biome amortis par l'abri), plancherée
  * par la bulle d'un feu. Aucune fonction transcendante (seul `sqrt`, autorisé).
  */
-import { TEMPERATURE } from './balance'
+import { POI, TEMPERATURE } from './balance'
 import { die } from './combat'
 import { elevationAt, terrainAt } from './map'
+import { isOnPoiKind } from './poi-discovery'
 import { getGameTime } from './time'
 import type { SimState } from './sim'
 
@@ -15,9 +16,10 @@ function clampTemp(v: number): number {
   return Math.max(0, Math.min(100, v))
 }
 
-/** Sur l'empreinte d'une structure à toit (maison) → abrité. */
+/** Sur l'empreinte d'une structure à toit (maison) — ou d'une Grotte → abrité. */
 export function isSheltered(state: SimState, tx: number, ty: number): boolean {
-  return state.structures.some((s) => s.tx === tx && s.ty === ty && s.type === 'house')
+  if (state.structures.some((s) => s.tx === tx && s.ty === ty && s.type === 'house')) return true
+  return isOnPoiKind(state, tx, ty, 'grotte')
 }
 
 /** Réchauffement du feu le plus proche : FIRE_WARMTH au contact, linéaire → 0 à FIRE_RANGE. */
@@ -30,6 +32,25 @@ export function fireBubble(state: SimState, x: number, y: number): number {
     const dist = Math.sqrt(dx * dx + dy * dy)
     if (dist >= T.FIRE_RANGE) continue
     const warmth = T.FIRE_WARMTH * (1 - dist / T.FIRE_RANGE)
+    if (warmth > best) best = warmth
+  }
+  return best
+}
+
+/**
+ * Réchauffement des sources chaudes — MÊME LOI que `fireBubble` (linéaire,
+ * max au contact → 0 au bord du rayon). C'est un feu qu'on n'a pas allumé :
+ * sur une carte où le Grand Froid mord, il réécrit les itinéraires.
+ */
+export function naturalWarmth(state: SimState, x: number, y: number): number {
+  let best = 0
+  for (const z of state.map.zones) {
+    if (z.kind !== 'source_chaude') continue
+    const dx = z.x + z.w / 2 - x
+    const dy = z.y + z.h / 2 - y
+    const dist = Math.sqrt(dx * dx + dy * dy) // sqrt est autorisé (invariant #2)
+    if (dist >= POI.HOTSPRING_RANGE_TILES) continue
+    const warmth = POI.HOTSPRING_WARMTH * (1 - dist / POI.HOTSPRING_RANGE_TILES)
     if (warmth > best) best = warmth
   }
   return best
@@ -48,7 +69,8 @@ export function ambientTemperature(state: SimState, x: number, y: number): numbe
   const shelter = isSheltered(state, tx, ty) ? T.SHELTER_FACTOR : 1
   const ambient = clampTemp(base + shelter * exposed)
 
-  return Math.max(ambient, fireBubble(state, x, y)) // le feu ne peut que réchauffer
+  // Ni le feu ni la source chaude ne peuvent refroidir : ils ne font que plancher.
+  return Math.max(ambient, fireBubble(state, x, y), naturalWarmth(state, x, y))
 }
 
 /** Un pas de dérive vers l'ambiant, freiné par l'isolation. Pur. */

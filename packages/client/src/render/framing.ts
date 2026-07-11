@@ -12,6 +12,20 @@
  * reste du client importe cette constante plutôt que de la redéclarer. */
 export const TILE_PX = 16
 
+/** Relief continu — hauteur ÉCRAN (px) d'une unité d'élévation [0,1] pleine.
+ * Purement visuel (jamais dans /sim). Calibré en jeu, comme TREE_JITTER_TILES :
+ * grand = relief spectaculaire mais borné par la garde anti-repli
+ * (H·pente_sud_max < TILE_PX). Le champ d'élévation de la vallée est TRÈS doux
+ * (gradient sud max ≈ 0,012/tuile, mesuré) : à H grand, le DÉPLACEMENT devient
+ * illisible OU désaligne les murs hauts de leur collision plate (bloqué là où
+ * l'écran montre autre chose) et fait sortir les billboards du culling. Donc le
+ * relief passe surtout à la GÉOMÉTRIE (le sol se déforme), l'ombrage n'étant
+ * qu'un accent. COMPROMIS à doser en jeu : H grand = déformation bien visible
+ * MAIS les murs hauts s'écartent de leur collision plate (on bute un peu avant
+ * le mur dessiné) et les billboards demandent plus de marge de culling (gérée
+ * dans renderNodes). */
+export const RELIEF_H = 150
+
 /* ── Budget des profondeurs de la scène monde ────────────────────────────────
  *
  * UNE seule échelle de tri pour tout ce qui a des « pieds » : acteurs, nœuds,
@@ -35,8 +49,10 @@ export const GROUND_FIRE_DEPTH = 5
 export const Y_SORT_BASE = 1000
 
 /** Départage à pixel de pieds ÉGAL. Dans [0,1) : jamais assez pour renverser un
- * écart de profondeur réel, puisqu'une unité de depth vaut un pixel monde. */
-export const TIE_CORPSE = 0
+ * écart de profondeur réel, puisqu'une unité de depth vaut un pixel monde.
+ * Une PAROI de falaise est tout en bas : à pieds égaux, tout la recouvre. */
+export const TIE_CLIFF = 0
+export const TIE_CORPSE = 0.1
 export const TIE_CLUTTER = 0.2
 export const TIE_NODE = 0.4
 export const TIE_STRUCTURE = 0.6
@@ -149,6 +165,48 @@ export function structureDepth(ty: number, tilePx: number): number {
  * structure. À pieds égaux il passe devant le décor, jamais devant un acteur. */
 export function nodeDepth(ty: number, tilePx: number): number {
   return ySortDepth(ty + 1, tilePx, TIE_NODE)
+}
+
+/* ── Les houppiers : une bande à eux seuls ───────────────────────────────────
+ *
+ * Au-dessus de tous les acteurs (la bande de tri Y plafonne à
+ * `Y_SORT_BASE + 57 600` sur la vallée canonique de 3600 tuiles) et sous la
+ * canopée. Correct SANS cas particulier : un houppier ne déborde que vers le
+ * HAUT de l'écran, donc n'occulte que des acteurs situés au nord de son tronc —
+ * qui sont bel et bien derrière lui. Les houppiers ne se trient qu'entre eux.
+ */
+export const CROWN_BASE = 900_000
+
+/** Rayon du cœur clair du disque de découvert, en tuiles : en deçà, le houppier
+ * est effacé. Large, car sous une canopée on voit loin à l'horizontale — la cime
+ * est au-dessus, elle tamise la lumière du ciel, elle ne bloque pas la vue. */
+export const CROWN_R_IN = 6.0
+/** Au-delà, la forêt redevient un couvert opaque. Disque ×4 de l'origine (1,5 / 4). */
+export const CROWN_R_OUT = 16.0
+/** Opacité résiduelle sous la cime : on devine le feuillage, on voit le sol. */
+export const CROWN_ALPHA_MIN = 0.22
+
+/** Profondeur d'un houppier, dans sa bande propre, triée par la rangée de son
+ * tronc. Même unité que la bande Y (le pixel monde) — mais jamais mêlée à elle. */
+export function crownDepth(feetY: number, tilePx: number): number {
+  return CROWN_BASE + feetY * tilePx
+}
+
+/**
+ * Le disque de découvert : les houppiers s'effacent autour du joueur, les troncs
+ * restent opaques. `distTiles` se mesure des pieds du joueur au PIED DU TRONC —
+ * l'arbre à ton contact s'efface, celui dont la cime te survole de loin reste
+ * opaque.
+ *
+ * Un alpha par sprite, fonction CONTINUE de la position du joueur : pas de
+ * masque, pas de `RenderTexture`, pas d'`erase`, et donc aucun scintillement
+ * quand on marche.
+ */
+export function crownAlpha(distTiles: number): number {
+  if (distTiles <= CROWN_R_IN) return CROWN_ALPHA_MIN
+  if (distTiles >= CROWN_R_OUT) return 1
+  const t = (distTiles - CROWN_R_IN) / (CROWN_R_OUT - CROWN_R_IN)
+  return CROWN_ALPHA_MIN + (1 - CROWN_ALPHA_MIN) * t
 }
 
 /** Un cadavre est à plat : ses « pieds » sont sa propre position. */

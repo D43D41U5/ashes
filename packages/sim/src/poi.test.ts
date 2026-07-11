@@ -1,9 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll } from 'vitest'
 import { generateAlpineTerrain } from './alpinegen'
-import { POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
-import { terrainAt, createEmptyMap } from './map'
+import { POI_TYPES, POI_PLACEMENT, spawnPoiMonsters, placePois } from './poi'
+import { terrainAt, createEmptyMap, isBlockingTile } from './map'
 import { poissonPoints } from './poisson'
-import { TERRAINS } from './balance'
+import { TERRAINS, TERRAIN_DEEP_WATER } from './balance'
 import { createSim } from './sim'
 import { POI_FAMILY_RGB } from './vignette'
 
@@ -39,6 +39,130 @@ describe('placePois', () => {
     const map = generateAlpineTerrain(360, 540, 5)
     // au moins un des deux kinds ressource présent sur une carte de cette taille
     expect(map.zones.some((z) => z.kind === 'gisement' || z.kind === 'carriere')).toBe(true)
+  })
+
+  // Les tests CRITICAL ci-dessous tournent sur la vraie carte alpine
+  // (1200×1800, taille de production), 5 seeds — generateAlpineTerrain y coûte
+  // ~5-6 s × 5. Générée UNE fois en `beforeAll` et partagée entre les `it` :
+  // ils vérifient des invariants différents sur le MÊME résultat, pas besoin de
+  // regénérer (évite de tripler le temps du fichier pour rien).
+  const PROD_SEEDS = [2026, 99, 2718, 31415, 7]
+  const prodMaps = new Map<number, ReturnType<typeof generateAlpineTerrain>>()
+  beforeAll(() => {
+    for (const seed of PROD_SEEDS) prodMaps.set(seed, generateAlpineTerrain(1200, 1800, seed))
+  }, 60_000)
+
+  /**
+   * CRITICAL — LA RÉSERVATION (décision d'Alexis, 2026-07-11).
+   *
+   * Onze lieux portent une CHARGE de gameplay (savoir, répit, récit — cf.
+   * `POI_CHARGES`, spec `docs/specs/lieux.md`). Un lieu dont une mécanique dépend
+   * ne peut pas se permettre de ne pas exister : sans réservation, le Belvédère
+   * sortait ZÉRO fois sur la seed du jeu (il avait pourtant 10 points de semis
+   * éligibles — il perdait simplement la loterie face au Cairn, poids 12), et la
+   * devise « savoir » se réduisait au seul Cairn.
+   *
+   * On ne peut PAS lire `POI_CHARGES` ici (cycle d'import poi ↔ poi-discovery) :
+   * on s'appuie sur `reserve`, le champ qui PORTE la garantie dans la table. Le
+   * test vérifie donc exactement ce que le champ promet.
+   */
+  it('CRITICAL — tout lieu à `reserve` existe sur CHAQUE carte (vraie carte alpine)', () => {
+    const reserves = POI_TYPES.filter((t) => (t.reserve ?? 0) > 0)
+    expect(reserves).toHaveLength(11) // les onze lieux chargés — si ça change, relire la spec
+
+    for (const seed of PROD_SEEDS) {
+      const map = prodMaps.get(seed)!
+      for (const t of reserves) {
+        const n = map.zones.filter((z) => z.kind === t.slug).length
+        expect
+          .soft(n, `${t.name} (seed ${seed}) : réservé à ${t.reserve}, posé ${n} fois`)
+          .toBeGreaterThanOrEqual(Math.min(t.reserve!, t.cap))
+      }
+    }
+  })
+
+  /**
+   * CRITICAL (revue « les lieux », constat 1) : un lieu qu'on ne peut pas fouler
+   * est une mécanique morte — `advancePois` et `isSheltered` testent tous deux
+   * `poisAt`, qui ne regarde QUE l'empreinte de la Zone (jamais un anneau de
+   * secours). `placePois` validait le biome au CENTRE du point sans jamais
+   * vérifier que l'empreinte posée contenait une tuile marchable — or plusieurs
+   * biomes de la table (ROCK, GLACIER…) sont massivement bloquants (Grotte,
+   * Belvédère, Source chaude, Sanctuaire, Arche, Pétroglyphes y sont éligibles).
+   */
+  it('CRITICAL — toute zone-POI a au moins une tuile marchable dans son empreinte (vraie carte alpine)', () => {
+    for (const seed of PROD_SEEDS) {
+      const map = prodMaps.get(seed)!
+      for (const z of map.zones) {
+        if (z.kind === undefined) continue // toponyme, pas un POI
+        let walkable = false
+        for (let ty = z.y; ty < z.y + z.h && !walkable; ty++) {
+          for (let tx = z.x; tx < z.x + z.w; tx++) {
+            if (!isBlockingTile(map, tx, ty)) { walkable = true; break }
+          }
+        }
+        expect
+          .soft(walkable, `${z.name} (seed ${seed}, [${z.x},${z.y}) ${z.w}×${z.h}) n'a AUCUNE tuile marchable`)
+          .toBe(true)
+      }
+    }
+  })
+
+  /**
+   * CRITICAL (revue « le lieu creuse son propre sol ») : l'invariant que ce
+   * correctif met le plus en danger. `sealBorderRing` (valleygen.ts) rend
+   * bloquante une tuile d'épaisseur sur tout le pourtour de la carte pour
+   * SCELLER la vallée ; `placePois` (qui peut désormais réécrire du terrain
+   * pour creuser un lieu) tourne juste après. Une seule tuile percée sur cet
+   * anneau ouvrirait le monde. `isCarvable` (poi.ts) refuse explicitement
+   * `tx<=0 || ty<=0 || tx>=width-1 || ty>=height-1` — ce test vérifie que
+   * l'anneau réel, sur la vraie carte de production, n'a JAMAIS été entamé.
+   *
+   * Discrimine : en retirant temporairement ce refus dans `isCarvable` pendant
+   * le développement, ce test passe rouge (des tuiles de bordure deviennent de
+   * l'éboulis, walkable) — restauré ensuite à l'identique. Voir le rapport.
+   */
+  it("CRITICAL — l'anneau de bordure reste intégralement bloquant après placePois (vraie carte alpine)", () => {
+    for (const seed of PROD_SEEDS) {
+      const map = prodMaps.get(seed)!
+      for (let x = 0; x < map.width; x++) {
+        expect.soft(isBlockingTile(map, x, 0), `(${x},0) seed ${seed} n'est plus bloquant`).toBe(true)
+        expect
+          .soft(isBlockingTile(map, x, map.height - 1), `(${x},${map.height - 1}) seed ${seed} n'est plus bloquant`)
+          .toBe(true)
+      }
+      for (let y = 0; y < map.height; y++) {
+        expect.soft(isBlockingTile(map, 0, y), `(0,${y}) seed ${seed} n'est plus bloquant`).toBe(true)
+        expect
+          .soft(isBlockingTile(map, map.width - 1, y), `(${map.width - 1},${y}) seed ${seed} n'est plus bloquant`)
+          .toBe(true)
+      }
+    }
+  })
+
+  /**
+   * On ne creuse jamais dans l'eau (contrainte 2 du brief). Empreinte 2×2
+   * construite en damier ROCK/eau profonde tel que les 4 cellules soient
+   * STRICTEMENT équidistantes du centre de l'empreinte : 3 des 4 sont de
+   * l'eau et scannées AVANT l'unique cellule roche (celle du point échantillonné,
+   * garantie non-aquatique par la validation de biome de `candidatesFor`). Une
+   * implémentation qui omettrait le refus `isWater` dans `isCarvable`
+   * choisirait la première tuile à égalité de distance — de l'eau — ce test
+   * est donc discriminant, pas seulement une confirmation de l'existant.
+   */
+  it('ne creuse jamais une tuile d’eau (empreinte à dominante aquatique, damier)', () => {
+    const W = 60, H = 60
+    const map = createEmptyMap(W, H, TERRAIN_DEEP_WATER)
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        if (x % 2 === 1 && y % 2 === 1) map.terrain[y * W + x] = ROCK_ID
+      }
+    }
+    const waterBefore = map.terrain.filter((t) => t === TERRAIN_DEEP_WATER).length
+    placePois(map, 5)
+    const waterAfter = map.terrain.filter((t) => t === TERRAIN_DEEP_WATER).length
+    expect(waterAfter).toBe(waterBefore) // aucune tuile d'eau n'est devenue de l'éboulis
+    expect(map.zones.length).toBeGreaterThan(0) // le test serait creux si aucun lieu n'avait été posé
   })
 })
 
@@ -86,10 +210,29 @@ describe('POIs dans la carte alpine', () => {
    * `pts[0]`, dont la position dépend de la seed — un test nord/sud ne l'aurait pas capté
    * pour toutes les seeds. Seuil 1,30 : sous le minimum d'avant-fix (1,31), au-dessus du
    * maximum d'après-fix (1,20).
+   *
+   * ATTENTION AU RÉFLEXE (revue « les lieux », 2026-07-11) : le filtre de marchabilité
+   * (`hasWalkableFootprint`, cf. poi.ts) a fait monter le ratio d'UNE des quatre seeds à
+   * 1,37 — au-dessus du seuil de 1,30. La tentation était de relever le seuil à 2,0.
+   * C'EST FAUX : la plage du bug d'origine était 1,31–2,50, donc un seuil de 2,0 laisse
+   * repasser la moitié du bug. Le test aurait survécu en ne protégeant plus rien.
+   *
+   * Le filtre ne biaise pas, il BRUITE : il dépend du terrain local à chaque point, une
+   * variance sans corrélation à `pts[0]`. La réponse juste à du bruit n'est pas de
+   * relâcher le seuil, c'est de MOYENNER. Sur 16 seeds : moyenne 1,035 (individuelles
+   * 0,76–1,46). Le biais d'origine, lui, aurait une moyenne ≥ 1,8.
+   *
+   * D'où deux assertions :
+   *   - la MOYENNE sur 16 seeds < 1,25 — mord sur le biais, insensible au bruit ;
+   *   - un garde-fou PAR SEED < 1,75 — attrape une dérive catastrophique isolée
+   *     (max mesuré : 1,46 ici, 1,696 sur 150 seeds).
    */
   it("les POIs ne se concentrent pas autour du premier point du semis", () => {
     const W = 240, H = 360
-    for (const seed of [2026, 99, 2718, 31415]) {
+    const SEEDS = [2026, 99, 2718, 31415, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    const ratios: number[] = []
+
+    for (const seed of SEEDS) {
       const radius = POI_PLACEMENT.SPACING_FRAC * Math.min(W, H)
       const pts = poissonPoints(W, H, seed, radius)
       const p0 = pts[0]!
@@ -105,8 +248,14 @@ describe('POIs dans la carte alpine', () => {
       }
 
       expect(far).toBeGreaterThan(0)
-      expect(near / far).toBeLessThan(1.3)
+      // Garde-fou : une seed catastrophiquement biaisée ne doit pas se noyer dans la moyenne.
+      expect(near / far).toBeLessThan(1.75)
+      ratios.push(near / far)
     }
+
+    // L'assertion qui MORD : le bruit se moyenne, un biais non.
+    const moyenne = ratios.reduce((a, b) => a + b, 0) / ratios.length
+    expect(moyenne).toBeLessThan(1.25)
   })
 })
 

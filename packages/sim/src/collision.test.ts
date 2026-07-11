@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_ROCK, TICK_DT_S } from './balance'
-import { moveAvatar, moveAvatarStepped, overlapsBlocking } from './collision'
+import { BALANCE, NODE_DEFS, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_ROCK, TICK_DT_S } from './balance'
+import { isBlockedAt, makeIndexedIsBlockedAt, moveAvatar, moveAvatarStepped, overlapsBlocking } from './collision'
+import { treeJitter, type ResourceNode } from './economy'
 import { createEmptyMap, type WorldMap } from './map'
 import { rngRoll } from './rng'
 import { createSim, spawnEntity, step, type MoveInput } from './sim'
@@ -166,5 +167,169 @@ describe('collisions (A3)', () => {
         throw new Error(`entité dans un mur au tick ${t} : (${e.x}, ${e.y})`)
       }
     }
+  })
+})
+
+describe('cœur sous-tuile (préparation des arbres hauts)', () => {
+  it('un clamp contre un nœud pleine tuile est EXACT, pas approché (bit à bit)', () => {
+    const map = createEmptyMap(16, 16, TERRAIN_GRASS)
+    const nodes: ResourceNode[] = [{ id: 1, type: 'rock', tx: 8, ty: 4, stock: 12, regrowAt: 0 }]
+    const world = { map, nodes }
+    // Marche vers l'est jusqu'au contact, puis un pas de plus : clamp flush.
+    let p = { x: 5.5, y: 4.5 }
+    for (let t = 0; t < 40; t++) p = moveAvatar(world, p.x, p.y, 1, 0, TICK_DT_S)
+    expect(p.x).toBe(8 - HALF) // `toBe`, pas `toBeCloseTo` : l'égalité est exacte
+    expect(p.y).toBe(4.5)
+  })
+
+  it('le clamp par l’ouest est exact lui aussi', () => {
+    const map = createEmptyMap(16, 16, TERRAIN_GRASS)
+    const nodes: ResourceNode[] = [{ id: 1, type: 'rock', tx: 4, ty: 4, stock: 12, regrowAt: 0 }]
+    const world = { map, nodes }
+    let p = { x: 7.5, y: 4.5 }
+    for (let t = 0; t < 40; t++) p = moveAvatar(world, p.x, p.y, -1, 0, TICK_DT_S)
+    expect(p.x).toBe(5 + HALF) // bord droit de la tuile 4, plus le demi-avatar
+  })
+
+  it('un nœud épuisé (stock 0) ne bloque pas', () => {
+    const map = createEmptyMap(16, 16, TERRAIN_GRASS)
+    const nodes: ResourceNode[] = [{ id: 1, type: 'rock', tx: 8, ty: 4, stock: 0, regrowAt: 100 }]
+    const world = { map, nodes }
+    let p = { x: 7.5, y: 4.5 }
+    for (let t = 0; t < 20; t++) p = moveAvatar(world, p.x, p.y, 1, 0, TICK_DT_S)
+    expect(p.x).toBeGreaterThan(8.5) // il l'a traversé
+  })
+})
+
+describe('arbres hauts : la collision se limite au tronc', () => {
+  const forest = (trees: Array<[number, number]>): { map: WorldMap; nodes: ResourceNode[] } => ({
+    map: createEmptyMap(16, 16, TERRAIN_GRASS),
+    nodes: trees.map(([tx, ty], i) => ({ id: i + 1, type: 'tree' as const, tx, ty, stock: 10, regrowAt: 0 })),
+  })
+
+  it('A4 — rock, iron_vein et coal_seam bloquent toujours leur tuile ENTIÈRE', () => {
+    for (const type of ['rock', 'iron_vein', 'coal_seam'] as const) {
+      const world = {
+        map: createEmptyMap(16, 16, TERRAIN_GRASS),
+        nodes: [{ id: 1, type, tx: 8, ty: 4, stock: 8, regrowAt: 0 }],
+      }
+      let p = { x: 5.5, y: 4.5 }
+      for (let t = 0; t < 40; t++) p = moveAvatar(world, p.x, p.y, 1, 0, TICK_DT_S)
+      expect(p.x).toBe(8 - HALF)
+    }
+  })
+
+  it('A5 — un arbre à stock 0 ne bloque plus rien', () => {
+    const world = {
+      map: createEmptyMap(16, 16, TERRAIN_GRASS),
+      nodes: [{ id: 1, type: 'tree' as const, tx: 8, ty: 4, stock: 0, regrowAt: 200 }],
+    }
+    let p = { x: 7.5, y: 4.5 }
+    for (let t = 0; t < 20; t++) p = moveAvatar(world, p.x, p.y, 1, 0, TICK_DT_S)
+    expect(p.x).toBeGreaterThan(8.5)
+  })
+
+  it('A6 — contrat TUILE : isBlockedAt reste true sur une tuile portant un arbre vivant', () => {
+    const world = forest([[8, 4]])
+    expect(isBlockedAt(world, 8, 4)).toBe(true) // le pathfinding contourne toujours
+    expect(isBlockedAt(world, 7, 4)).toBe(false)
+    const indexed = makeIndexedIsBlockedAt(world)
+    expect(indexed(8, 4)).toBe(true) // A* et flow fields voient la même chose
+  })
+})
+
+describe('décalage d’origine des arbres : la collision suit le tronc', () => {
+  const SUB = BALANCE.SUBTILES_PER_TILE
+  const J = BALANCE.TREE_JITTER_TILES
+  const H_TREE = NODE_DEFS.tree.blockHalfSub / SUB // demi-côté du tronc, en tuiles (0,125)
+  const treeWorld = (trees: Array<[number, number]>, width = 16): { map: WorldMap; nodes: ResourceNode[] } => ({
+    map: createEmptyMap(width, 16, TERRAIN_GRASS),
+    nodes: trees.map(([tx, ty], i) => ({ id: i + 1, type: 'tree' as const, tx, ty, stock: 10, regrowAt: 0 })),
+  })
+  /** Le couloir vertical (tuiles) entre les arbres (tx,ty) et (tx+1,ty). */
+  const corridor = (tx: number, ty: number): number =>
+    0.75 + treeJitter(tx + 1, ty).dx - treeJitter(tx, ty).dx
+  /** Centre X du couloir, face droite du tronc gauche → face gauche du tronc droit. */
+  const corridorCenter = (tx: number, ty: number): number => {
+    const left = tx + 0.5 + treeJitter(tx, ty).dx + H_TREE
+    const right = tx + 1.5 + treeJitter(tx + 1, ty).dx - H_TREE
+    return (left + right) / 2
+  }
+
+  it('B1 — borne de non-débordement : le carré d’un arbre décalé reste dans sa tuile', () => {
+    // Garde-fou contre un futur recalibrage de J OU de blockHalfSub : la borne DOIT tenir.
+    expect(J + H_TREE).toBeLessThanOrEqual(0.5)
+    // Et concrètement, sur un échantillon : les bords du carré ∈ [tx,tx+1[ × [ty,ty+1[.
+    for (let ty = 0; ty < 30; ty++) {
+      for (let tx = 0; tx < 30; tx++) {
+        const { dx, dy } = treeJitter(tx, ty)
+        const cx = tx + 0.5 + dx
+        const cy = ty + 0.5 + dy
+        expect(cx - H_TREE).toBeGreaterThanOrEqual(tx)
+        expect(cx + H_TREE).toBeLessThanOrEqual(tx + 1)
+        expect(cy - H_TREE).toBeGreaterThanOrEqual(ty)
+        expect(cy + H_TREE).toBeLessThanOrEqual(ty + 1)
+      }
+    }
+  })
+
+  it('B2 — un avatar bute sur le tronc DÉCALÉ, pas sur le centre de la tuile', () => {
+    const TX = 8, TY = 4
+    const { dx } = treeJitter(TX, TY)
+    const world = treeWorld([[TX, TY]])
+    const expected = TX + 0.5 + dx - H_TREE - HALF // face gauche du tronc décalé − demi-avatar
+    let p = { x: 5.5, y: TY + 0.5 }
+    for (let t = 0; t < 60; t++) p = moveAvatar(world, p.x, p.y, 1, 0, TICK_DT_S)
+    // Le cœur de collision ne repose l'avatar que sur la grille de sous-tuiles
+    // (pas = 1/SUB) ; le jitter est continu, donc `expected` (calcul continu)
+    // n'est en général pas un point de grille. Le clamp réel est le premier
+    // point de grille À L'EST de `expected` (ceil), donc p.x ∈ [expected,
+    // expected + 1/SUB) — jamais avant (jamais dans le tronc), au plus 1
+    // sous-tuile plus loin. Borne prouvée, pas un artefact de cette seed.
+    expect(p.x).toBeGreaterThanOrEqual(expected - 1e-9)
+    expect(p.x).toBeLessThan(expected + 1 / SUB)
+    expect(p.y).toBe(TY + 0.5)
+  })
+
+  it('B3 — le fourré est réel : une paire pincée bloque un avatar de 0,6 qui descend à travers', () => {
+    const TY = 4
+    let best = { tx: -1, gap: Infinity }
+    for (let tx = 0; tx < 400; tx++) {
+      const g = corridor(tx, TY)
+      if (g < best.gap) best = { tx, gap: g }
+    }
+    // Au J calibré, des fourrés existent forcément (sinon le choix « franc » serait vide).
+    expect(best.gap).toBeLessThan(BALANCE.AVATAR_HITBOX_TILES)
+    const world = treeWorld([[best.tx, TY], [best.tx + 1, TY]], best.tx + 3)
+    let p = { x: corridorCenter(best.tx, TY), y: TY - 1.5 }
+    for (let t = 0; t < 120; t++) p = moveAvatar(world, p.x, p.y, 0, 1, TICK_DT_S)
+    // Les troncs sont AUSSI décalés en Y (dy) : la bande bloquante d'un arbre
+    // peut se situer n'importe où dans [ty, ty+1), pas forcément au bord nord
+    // de la tuile. L'avatar peut donc entamer la rangée avant de buter — mais
+    // il ne la franchit jamais (gap < 0,6 sur toute la traversée en X). Le fourré
+    // bloque : « ne franchit pas », pas « s'arrête avant le bord nord ».
+    expect(p.y).toBeLessThan(TY + 1)
+  })
+
+  it('B4 — au couloir large, l’avatar (0,6) se faufile entre deux arbres voisins', () => {
+    const TY = 4
+    let best = { tx: -1, gap: -Infinity }
+    for (let tx = 0; tx < 400; tx++) {
+      const g = corridor(tx, TY)
+      if (g > best.gap) best = { tx, gap: g }
+    }
+    expect(best.gap).toBeGreaterThan(BALANCE.AVATAR_HITBOX_TILES) // des passages existent
+    const world = treeWorld([[best.tx, TY], [best.tx + 1, TY]], best.tx + 3)
+    let p = { x: corridorCenter(best.tx, TY), y: TY - 1.5 }
+    for (let t = 0; t < 60; t++) p = moveAvatar(world, p.x, p.y, 0, 1, TICK_DT_S)
+    expect(p.y).toBeGreaterThan(TY + 1) // passé au sud de la rangée
+  })
+
+  it('B5 — contrat SOUS-TUILE : overlapsBlocking suit le tronc décalé', () => {
+    const TX = 8, TY = 4
+    const { dx, dy } = treeJitter(TX, TY)
+    const world = treeWorld([[TX, TY]])
+    expect(overlapsBlocking(world, TX + 0.5 + dx, TY + 0.5 + dy)).toBe(true) // sur le tronc décalé
+    expect(overlapsBlocking(world, TX + 0.5, TY - 2)).toBe(false) // deux tuiles au nord : rien
   })
 })
