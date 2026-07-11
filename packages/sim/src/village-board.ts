@@ -21,10 +21,10 @@ export function granaries(state: SimState, villageId: number): Structure[] {
 function granaryStocks(state: SimState, villageId: number): Record<'berries' | 'stew' | 'wood' | 'fiber', number> {
   const stocks = { berries: 0, stew: 0, wood: 0, fiber: 0 }
   for (const chest of granaries(state, villageId)) {
-    stocks.berries += countOf(chest.inventory ?? {}, 'berries')
-    stocks.stew += countOf(chest.inventory ?? {}, 'stew')
-    stocks.wood += countOf(chest.inventory ?? {}, 'wood')
-    stocks.fiber += countOf(chest.inventory ?? {}, 'fiber')
+    stocks.berries += countOf(chest.inventory ?? [], 'berries')
+    stocks.stew += countOf(chest.inventory ?? [], 'stew')
+    stocks.wood += countOf(chest.inventory ?? [], 'wood')
+    stocks.fiber += countOf(chest.inventory ?? [], 'fiber')
   }
   return stocks
 }

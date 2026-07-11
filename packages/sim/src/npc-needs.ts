@@ -28,11 +28,11 @@ export function handleHunger(state: SimState, village: Village, npc: Npc, entity
   }
   // Aller retirer au grenier.
   const chest = granaries(state, village.id).find(
-    (c) => countOf(c.inventory ?? {}, 'stew') > 0 || countOf(c.inventory ?? {}, 'berries') > 0,
+    (c) => countOf(c.inventory ?? [], 'stew') > 0 || countOf(c.inventory ?? [], 'berries') > 0,
   )
   if (!chest) return false // rien à manger : on continue à travailler (pas de deadlock)
   if (near(entity, chest.tx, chest.ty)) {
-    const inv = chest.inventory ?? {}
+    const inv = chest.inventory ?? []
     if (countOf(inv, 'stew') > 0) {
       applyVillageAction(state, entity.id, { type: 'withdraw', structureId: chest.id, item: 'stew', count: 1 })
     } else {

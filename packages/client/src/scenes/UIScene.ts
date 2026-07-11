@@ -4,7 +4,7 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import { skillLevel, zoneAt, type Inventory, type SkillId, type VillageTask, type WorldMap } from '@braises/sim'
+import { skillLevel, toBag, zoneAt, type ItemId, type SkillId, type VillageTask, type WorldMap } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud } from '../hud-state'
 import { TILE_PX } from '../render/framing'
@@ -33,7 +33,7 @@ const SKILL_LABELS: Record<SkillId, string> = {
   crafting: 'Artisan',
 }
 
-const ITEM_LABELS: [keyof Inventory, string][] = [
+const ITEM_LABELS: [ItemId, string][] = [
   ['wood', 'Bois'],
   ['stone', 'Pierre'],
   ['fiber', 'Fibre'],
@@ -398,13 +398,16 @@ export class UIScene extends Phaser.Scene {
         (board ? `\nTableau : ${board}` : ''),
     )
 
-    const inv = getHud(this.registry, 'inv') ?? {}
+    const inv = getHud(this.registry, 'inv') ?? []
     const selected = getHud(this.registry, 'selected') ?? 'wall'
     const hunger = getHud(this.registry, 'hunger') ?? 100
     const skills = getHud(this.registry, 'skills') ?? {}
 
-    const invText = ITEM_LABELS.filter(([item]) => (inv[item] ?? 0) > 0)
-      .map(([item, label]) => `${label} ${inv[item]}`)
+    // Provisoire : le pavé de texte agrège les cases. La grille (hotbar, sac)
+    // arrive avec l'UI d'inventaire.
+    const bag = toBag(inv)
+    const invText = ITEM_LABELS.filter(([item]) => (bag[item] ?? 0) > 0)
+      .map(([item, label]) => `${label} ${bag[item]}`)
       .join(' · ')
     const skillsText = (Object.keys(skills) as SkillId[])
       .map((s) => ({ s, level: skillLevel(skills[s] ?? 0) }))

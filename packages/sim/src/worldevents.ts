@@ -6,9 +6,10 @@
  * calendrier — la pression monte avec les actes (GDD §2).
  */
 import { isThreatTo } from './alignment'
-import { BALANCE, COMBAT, CONVOY_LOOT, LOOT_VALUES, SEASON, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
+import { BALANCE, COMBAT, CONVOY_LOOT, LOOT_VALUES, SEASON, SLOTS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
 import { isBlockedAt } from './collision'
 import { distSq } from './geometry'
+import { inventoryOf, toBag } from './items'
 import { rngRoll } from './rng'
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
@@ -87,7 +88,7 @@ export function spawnConvoy(state: SimState): void {
     id: state.nextCorpseId,
     x: tx + 0.5,
     y: ty + 0.5,
-    inventory: { ...CONVOY_LOOT },
+    inventory: inventoryOf(SLOTS.CHEST, CONVOY_LOOT),
     decayAt: state.tick + WORLD_EVENTS.CONVOY_DECAY_TICKS,
   })
   state.nextCorpseId += 1
@@ -204,9 +205,9 @@ function computeVerdicts(state: SimState): {
     }
     let granaryValue = 0
     for (const s of state.structures) {
-      if (s.villageId === village.id && s.inventory) granaryValue += lootValue(s.inventory)
+      if (s.villageId === village.id && s.inventory) granaryValue += lootValue(toBag(s.inventory))
     }
-    for (const m of members) granaryValue += lootValue(m.inventory)
+    for (const m of members) granaryValue += lootValue(toBag(m.inventory))
 
     if (village.archetype === 'foyer') {
       const score = members.length + evacuated

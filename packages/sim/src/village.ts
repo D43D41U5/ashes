@@ -14,6 +14,7 @@ import {
   BALANCE,
   COMBAT,
   FOOD_VALUES,
+  SLOTS,
   STRUCTURE_COSTS,
   STRUCTURE_HP,
   TERRAINS,
@@ -26,9 +27,14 @@ import {
   addItems,
   countOf,
   hasItems,
+  inventoryOf,
+  isEmpty,
+  makeInventory,
   removeItems,
+  toBag,
   type AccessLevel,
   type Inventory,
+  type ItemBag,
   type ItemId,
   type StructureType,
 } from './items'
@@ -147,12 +153,14 @@ export function applyStructureDamage(state: SimState, structureId: number, damag
   if (s.hp <= 0) {
     state.structures = state.structures.filter((st) => st.id !== structureId)
     // Un conteneur détruit répand son contenu (spec alignement R13).
-    if (s.inventory && Object.keys(s.inventory).length > 0) {
+    if (s.inventory && !isEmpty(s.inventory)) {
       state.corpses.push({
         id: state.nextCorpseId,
         x: s.tx + 0.5,
         y: s.ty + 0.5,
-        inventory: { ...s.inventory },
+        // Le tas est assez grand pour tout tenir : un conteneur détruit ne fait
+        // pas disparaître son contenu, il le répand.
+        inventory: inventoryOf(SLOTS.CORPSE, toBag(s.inventory)),
         decayAt: state.tick + COMBAT.CORPSE_TICKS,
       })
       state.nextCorpseId += 1
@@ -171,7 +179,7 @@ export function applyStructureDamage(state: SimState, structureId: number, damag
  * Dev/test uniquement — remplacé par la récolte en V4 (spec R3).
  * À appeler dans la phase de setup, qui est rejouée par le replay.
  */
-export function grantItems(state: SimState, entityId: number, items: Inventory): void {
+export function grantItems(state: SimState, entityId: number, items: ItemBag): void {
   const entity = state.entities.find((e) => e.id === entityId)
   if (entity) addItems(entity.inventory, items)
 }
@@ -295,7 +303,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) {
         return reject('trop loin')
       }
-      const refund: Inventory = {}
+      const refund: ItemBag = {}
       const cost = STRUCTURE_COSTS[s.type]
       for (const item of Object.keys(cost) as ItemId[]) {
         const back = Math.floor((cost[item] ?? 0) * BALANCE.DEMOLISH_REFUND)
@@ -454,7 +462,7 @@ export function addStructure(
     access,
     hp: Math.floor(STRUCTURE_HP[type] * hpBonus),
   }
-  if (type === 'chest') structure.inventory = {}
+  if (type === 'chest') structure.inventory = makeInventory(SLOTS.CHEST)
   state.structures.push(structure)
   emitEvent(state, {
     type: 'structure_built',

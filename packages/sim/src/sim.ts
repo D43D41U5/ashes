@@ -10,14 +10,14 @@
  * que snapshot = JSON.stringify et que le transport Worker/réseau soit
  * trivial.
  */
-import { BALANCE, COMBAT, TERRAIN_GRASS, TICK_DT_S } from './balance'
+import { BALANCE, COMBAT, SLOTS, TERRAIN_GRASS, TICK_DT_S } from './balance'
 import { moveAvatar } from './collision'
 import { advanceCombat, applyCombatAction, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
 import { applyDebugAction, isDebugAction, refreshGodMode, type DebugAction } from './debug'
 import { advanceEconomy, applyEconomyAction, type EconomyAction, type ResourceNode } from './economy'
 import { emitEvent, type SimEvent } from './events'
-import type { Inventory, ItemId, SkillId } from './items'
+import { makeInventory, type Inventory, type ItemId, type SkillId } from './items'
 import { createEmptyMap, type WorldMap } from './map'
 import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
@@ -234,14 +234,19 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
   return state
 }
 
-export function spawnEntity(state: SimState, x: number, y: number): number {
+/**
+ * Fait naître une entité. `slots` = la taille de son sac : la capacité se donne
+ * À LA NAISSANCE (spec inventaire R1, R7) — les PNJ et les bêtes en reçoivent un
+ * grand (`SLOTS.NPC`), le joueur celui de sa ceinture + son sac.
+ */
+export function spawnEntity(state: SimState, x: number, y: number, slots: number = SLOTS.PLAYER): number {
   const id = state.nextEntityId
   state.nextEntityId += 1
   state.entities.push({
     id,
     x,
     y,
-    inventory: {},
+    inventory: makeInventory(slots),
     hunger: 100,
     temperature: 100,
     skills: {},

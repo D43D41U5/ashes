@@ -20,6 +20,7 @@ import { isBlockedAt } from './collision'
 import { applyDamage, startAttack } from './combat'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
+import { countOf, removeItems } from './items'
 import { terrainAt } from './map'
 import { moveToward, spawnMonster, type Monster } from './monsters'
 import { rngRoll } from './rng'
@@ -707,9 +708,11 @@ function feedStep(state: SimState, monster: Monster, entity: Entity): boolean {
     // Le repas est fini : la carcasse est entamée, et il est repu.
     const meal = state.corpses.find((c) => c.id === monster.mealCorpseId)
     if (meal) {
-      const left = (meal.inventory.raw_meat ?? 0) - 1
-      if (left > 0) meal.inventory.raw_meat = left
-      else state.corpses = state.corpses.filter((c) => c.id !== meal.id)
+      // Une bouchée de moins sur la carcasse ; la dernière l'efface du monde.
+      removeItems(meal.inventory, { raw_meat: 1 })
+      if (countOf(meal.inventory, 'raw_meat') <= 0) {
+        state.corpses = state.corpses.filter((c) => c.id !== meal.id)
+      }
     }
     delete monster.eatingUntil
     delete monster.mealCorpseId
@@ -724,7 +727,7 @@ function feedStep(state: SimState, monster: Monster, entity: Entity): boolean {
   let best: { id: number; x: number; y: number } | undefined
   let bestD = FAUNA.CARCASS_SEEK * FAUNA.CARCASS_SEEK
   for (const c of state.corpses) {
-    if ((c.inventory.raw_meat ?? 0) <= 0) continue
+    if (countOf(c.inventory, 'raw_meat') <= 0) continue
     const d = distSq(entity.x, entity.y, c.x, c.y)
     if (d < bestD || (d === bestD && best && c.id < best.id)) {
       best = { id: c.id, x: c.x, y: c.y }

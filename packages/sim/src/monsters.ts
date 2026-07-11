@@ -5,7 +5,7 @@
  * lire les wind-ups contre lui. Le sanglier est la chasse : neutre, fuit,
  * charge parfois blessé. IA dans /sim, aléa via le PRNG de la sim.
  */
-import { BALANCE, COMBAT, FAUNA, MONSTER_DEFS, TICK_DT_S, type MonsterType } from './balance'
+import { BALANCE, COMBAT, FAUNA, MONSTER_DEFS, SLOTS, TICK_DT_S, type MonsterType } from './balance'
 import { startAttack } from './combat'
 import { moveAvatar } from './collision'
 import { distSq } from './geometry'
@@ -95,7 +95,9 @@ export interface Monster {
 }
 
 export function spawnMonster(state: SimState, type: MonsterType, x: number, y: number): number {
-  const id = spawnEntity(state, x, y)
+  // Grand sac : une bête ne porte rien, mais le Cendreux levé hérite du butin
+  // d'un cadavre entier — il ne doit jamais en perdre une miette.
+  const id = spawnEntity(state, x, y, SLOTS.NPC)
   const entity = state.entities.find((e) => e.id === id)!
   entity.hp = MONSTER_DEFS[type].hp
   state.monsters.push({

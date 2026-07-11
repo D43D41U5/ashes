@@ -5,6 +5,7 @@ import { CENDREUX, COMBAT, MONSTER_DEFS } from './balance'
 import { startAttack } from './combat'
 import { distSq } from './geometry'
 import { emitEvent } from './events'
+import { addItems, toBag } from './items'
 import { moveToward, nearestPrey, spawnMonster, type Monster } from './monsters'
 import { findPath } from './pathfinding'
 import { getGameTime } from './time'
@@ -48,7 +49,7 @@ export function advanceCendreux(state: SimState): void {
     // Levée : le cadavre devient le Cendreux, portant son loot.
     const id = spawnMonster(state, 'cendreux', corpse.x, corpse.y)
     const ent = state.entities.find((e) => e.id === id)!
-    ent.inventory = { ...corpse.inventory }
+    addItems(ent.inventory, toBag(corpse.inventory))
     state.corpses = state.corpses.filter((c) => c.id !== corpse.id)
     emitEvent(state, { type: 'cendreux_risen', tick: state.tick, entityId: id, x: corpse.x, y: corpse.y })
   }

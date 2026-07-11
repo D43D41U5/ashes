@@ -7,12 +7,12 @@
  * monstres — personne ne triche.
  */
 import { damageModifier, hasAggressionBetween, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
-import { ALIGNMENT, BALANCE, CENDREUX, COMBAT, FAUNA, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
+import { ALIGNMENT, BALANCE, CENDREUX, COMBAT, FAUNA, MONSTER_DEFS, SLOTS, WEAPON_DAMAGE } from './balance'
 import { willRiseAsCendreux } from './cendreux'
 import { isInvulnerable } from './debug'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
-import { addItems, countOf, removeItems, type ItemId } from './items'
+import { addItems, countOf, isEmpty, makeInventory, removeItems, toBag, type ItemId } from './items'
 import { staminaPoiFactor } from './poi-discovery'
 import { rngRoll } from './rng'
 import type { Entity, SimState } from './sim'
@@ -96,7 +96,9 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
       const corpse = state.corpses.find((c) => c.id === action.corpseId)
       if (!corpse) return reject('rien ici')
       if (distSq(actor.x, actor.y, corpse.x, corpse.y) > BALANCE.INTERACT_RANGE * BALANCE.INTERACT_RANGE) return reject('trop loin')
-      addItems(actor.inventory, corpse.inventory)
+      // Le reliquat (sac plein) est ignoré pour l'instant : la capacité au
+      // ramassage est le sujet d'une tâche à part.
+      addItems(actor.inventory, toBag(corpse.inventory))
       state.corpses = state.corpses.filter((c) => c.id !== corpse.id)
       emitEvent(state, { type: 'corpse_looted', tick: state.tick, corpseId: corpse.id, byEntityId: actorId })
       return
@@ -285,8 +287,11 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
   const npc = state.npcs.find((n) => n.entityId === entity.id)
 
   // Le cadavre reçoit tout ce qui était porté (spec R9) — ou la table de
-  // loot du monstre (le sanglier donne sa viande).
-  const loot = monster ? { ...MONSTER_DEFS[monster.type].loot, ...entity.inventory } : { ...entity.inventory }
+  // loot du monstre (le sanglier donne sa viande). Son sac est assez grand pour
+  // que rien ne soit jamais tronqué (spec inventaire R11).
+  const loot = makeInventory(SLOTS.CORPSE)
+  if (monster) addItems(loot, MONSTER_DEFS[monster.type].loot)
+  addItems(loot, toBag(entity.inventory))
   // La levée des Cendreux (spec 2026-07-08) : mort de froid, seul, loin d'un
   // feu → le cadavre est marqué et ne décante pas avant la levée.
   const willRise = !monster && cause === 'cold' && willRiseAsCendreux(state, entity)
@@ -300,7 +305,7 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
       risesAt: state.tick + CENDREUX.RISE_DELAY,
     })
     state.nextCorpseId += 1
-  } else if (Object.keys(loot).length > 0) {
+  } else if (!isEmpty(loot)) {
     state.corpses.push({
       id: state.nextCorpseId,
       x: entity.x,
@@ -343,7 +348,7 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
 
   // Joueur : respawn au Feu de son village, épuisé, compétences intactes (R10).
   const village = state.villages.find((v) => v.memberIds.includes(entity.id))
-  entity.inventory = {}
+  entity.inventory = makeInventory(entity.inventory.length)
   entity.wear = {}
   entity.wounds = {}
   delete entity.windup

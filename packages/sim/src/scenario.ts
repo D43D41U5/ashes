@@ -75,8 +75,8 @@ export function runScenario(seed: number, days: number): ScenarioReport {
         archetype: v.archetype,
         membersAlive: sim.entities.filter((e) => v.memberIds.includes(e.id) && e.hp > 0).length,
         granaryFood:
-          countOf(granary?.inventory ?? {}, 'berries') + 3 * countOf(granary?.inventory ?? {}, 'stew'),
-        granaryWood: countOf(granary?.inventory ?? {}, 'wood'),
+          countOf(granary?.inventory ?? [], 'berries') + 3 * countOf(granary?.inventory ?? [], 'stew'),
+        granaryWood: countOf(granary?.inventory ?? [], 'wood'),
       }
     }),
     starvationSamples,

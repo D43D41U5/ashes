@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
+import { BALANCE, SLOTS, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
 import { drainEvents } from './events'
-import { countOf } from './items'
+import { countOf, inventoryOf, makeInventory } from './items'
 import { createEmptyMap } from './map'
 import { foundNpcVillage } from './worldgen'
 import { advanceNpcs } from './npc'
@@ -38,7 +38,7 @@ function run(sim: SimState, ticks: number): void {
 describe('le tableau du village (A1)', () => {
   it('les seuils génèrent les tâches ; jamais de double réclamation', () => {
     const sim = npcVillageSim(3)
-    granary(sim).inventory = {} // grenier à sec → tout manque
+    granary(sim).inventory = makeInventory(SLOTS.CHEST) // grenier à sec → tout manque
     run(sim, BALANCE.BOARD_REFRESH_TICKS + 1)
     const village = sim.villages[0]!
     const kinds = village.tasks.map((t) => t.kind)
@@ -53,7 +53,7 @@ describe('le tableau du village (A1)', () => {
 
   it('grenier plein → pas de tâches de récolte', () => {
     const sim = npcVillageSim(1)
-    granary(sim).inventory = { berries: 30, wood: 30, fiber: 5, stew: 5 }
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 })
     run(sim, BALANCE.BOARD_REFRESH_TICKS + 1)
     expect(sim.villages[0]!.tasks).toHaveLength(0)
   })
@@ -62,7 +62,7 @@ describe('le tableau du village (A1)', () => {
 describe('les besoins (A2, A3)', () => {
   it('A2 — un PNJ affamé va retirer au grenier et mange', () => {
     const sim = npcVillageSim(1)
-    granary(sim).inventory = { berries: 10, wood: 30, fiber: 5, stew: 5 } // rien d'autre à faire
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 10, wood: 30, fiber: 5, stew: 5 }) // rien d'autre à faire
     const entity = npcEntity(sim)
     entity.hunger = 20
     run(sim, 600) // largement le temps d'aller au coffre (2 tuiles) et manger
@@ -73,7 +73,7 @@ describe('les besoins (A2, A3)', () => {
 
   it('A3 — la nuit, le PNJ fatigué dort ; la maison récupère ×2 vs le Feu', () => {
     const sim = npcVillageSim(2)
-    granary(sim).inventory = { berries: 30, wood: 30, fiber: 5, stew: 5 } // oisifs
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 }) // oisifs
     run(sim, 60) // assignation des maisons
     const [a, b] = [sim.npcs[0]!, sim.npcs[1]!]
     expect(a.homeId).not.toBeNull()
@@ -129,7 +129,7 @@ describe('la navigation (A4)', () => {
 describe('la locomotion des PNJ', () => {
   it('un PNJ qui marche (A*) est marqué moved — sa régén d’endurance est celle du mouvement', () => {
     const sim = npcVillageSim(1)
-    granary(sim).inventory = {} // tout manque → il part récolter
+    granary(sim).inventory = makeInventory(SLOTS.CHEST) // tout manque → il part récolter
     const e = npcEntity(sim)
     let movedWhileWalking: boolean | undefined
     for (let t = 0; t < 600; t++) {
@@ -148,7 +148,7 @@ describe('la locomotion des PNJ', () => {
 describe('le travail (A5)', () => {
   it('récolter baies : le PNJ y va, récolte, dépose — le grenier monte', () => {
     const sim = npcVillageSim(1)
-    granary(sim).inventory = { wood: 30, fiber: 5 } // il ne manque que la nourriture
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { wood: 30, fiber: 5 }) // il ne manque que la nourriture
     const before = 0
     run(sim, 2400) // 200 s simulées
     const after = countOf(granary(sim).inventory!, 'berries')

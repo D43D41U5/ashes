@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, COMBAT, MONSTER_DEFS, TERRAIN_GRASS } from './balance'
+import { BALANCE, COMBAT, MONSTER_DEFS, SLOTS, TERRAIN_GRASS } from './balance'
 import { drainEvents } from './events'
-import { countOf } from './items'
+import { countOf, inventoryOf } from './items'
 import { createEmptyMap } from './map'
 import { spawnMonster } from './monsters'
 import { foundNpcVillage } from './worldgen'
@@ -158,7 +158,7 @@ describe('la mort (A5)', () => {
     victim.skills.woodcutting = 500
     victim.x = 20
     victim.y = 20
-    victim.inventory = { berries: 7 }
+    victim.inventory = inventoryOf(SLOTS.PLAYER, { berries: 7 })
     victim.hp = 1
     drainEvents(sim)
 

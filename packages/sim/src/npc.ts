@@ -13,7 +13,7 @@
  * les expéditions et le tableau vivent dans leurs modules.
  */
 import { isThreatTo } from './alignment'
-import { BALANCE, COMBAT, NPC_AI, STRUCTURE_HP, TICK_DT_S, type NodeType } from './balance'
+import { BALANCE, COMBAT, NPC_AI, SLOTS, STRUCTURE_HP, TICK_DT_S, type NodeType } from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { startAttack } from './combat'
 import { applyEconomyAction, type ResourceNode } from './economy'
@@ -252,7 +252,7 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
       return
     }
     if (near(entity, chest.tx, chest.ty)) {
-      const inv = chest.inventory ?? {}
+      const inv = chest.inventory ?? []
       if (needBerries > 0 && countOf(inv, 'berries') >= needBerries) {
         applyVillageAction(state, entity.id, { type: 'withdraw', structureId: chest.id, item: 'berries', count: needBerries })
       } else if (needFiber > 0 && countOf(inv, 'fiber') >= needFiber) {
@@ -304,14 +304,14 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
   if (!target || target.hp >= STRUCTURE_HP[target.type]) return dropTask(village, npc, true)
 
   if (task.stage === 'fetch' && countOf(entity.inventory, 'wood') === 0) {
-    const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? {}, 'wood') > 0)
+    const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], 'wood') > 0)
     if (!chest) return dropTask(village, npc, false) // pas de bois : on abandonne
     if (near(entity, chest.tx, chest.ty)) {
       applyVillageAction(state, entity.id, {
         type: 'withdraw',
         structureId: chest.id,
         item: 'wood',
-        count: Math.min(NPC_AI.REPAIR_WOOD_WITHDRAW, countOf(chest.inventory ?? {}, 'wood')),
+        count: Math.min(NPC_AI.REPAIR_WOOD_WITHDRAW, countOf(chest.inventory ?? [], 'wood')),
       })
       task.stage = 'work'
       return
@@ -440,7 +440,9 @@ export function spawnNpcsAround(state: SimState, village: Village, count: number
     const tx = village.fireTx + dx
     const ty = village.fireTy + dy
     if (isBlockedAt(world, tx, ty)) continue
-    const id = spawnEntity(state, tx + 0.5, ty + 0.5)
+    // Le grand sac du PNJ (spec inventaire R7) : sa boucle de corvées n'a pas
+    // de notion de « plein », et lui en apprendre une rouvrirait le livelock.
+    const id = spawnEntity(state, tx + 0.5, ty + 0.5, SLOTS.NPC)
     village.memberIds.push(id)
     emitEvent(state, { type: 'member_joined', tick: state.tick, villageId: village.id, entityId: id })
     state.npcs.push({

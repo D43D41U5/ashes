@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createEmptyMap, poisAt, poiCenter } from './map'
 import { POI, TERRAIN_GRASS } from './balance'
 import { chronicleFromEvents } from './chronicle'
+import { toBag } from './items'
 import { POI_CHARGES, poiFamily } from './poi-discovery'
 import { POI_TYPES } from './poi'
 import { spawnMonster } from './monsters'
@@ -511,6 +512,6 @@ describe('la règle qui protège l’émerveillement', () => {
       p.y = z.y + 1
       step(state, [])
     }
-    expect(p.inventory).toEqual({}) // les mains vides, après les onze
+    expect(toBag(p.inventory)).toEqual({}) // les mains vides, après les onze
   })
 })

@@ -294,7 +294,7 @@ export const TERRAIN_BURNT_FOREST = 21
 export const TERRAIN_OLD_GROWTH = 22
 
 /** Coûts de construction (spec village R3 : réels dès V3). */
-export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./items').Inventory> = {
+export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./items').ItemBag> = {
   fire: { wood: 10 },
   wall: { wood: 2 },
   door: { wood: 3 },
@@ -357,7 +357,7 @@ export type RecipeId =
 
 export interface Recipe {
   station: 'fire' | 'workshop' | 'furnace'
-  inputs: import('./items').Inventory
+  inputs: import('./items').ItemBag
   output: import('./items').ItemId
 }
 
@@ -408,7 +408,7 @@ export interface MonsterDef {
   wanderChance: number
   /** Sanglier blessé : probabilité de charger (sinon il fuit) à chaque réflexion. */
   chargeChance: number
-  loot: import('./items').Inventory
+  loot: import('./items').ItemBag
   /**
    * Le gibier (spec faune R2) : les terrains où l'espèce vit. Non vide = c'est
    * une BÊTE — elle broute, s'alerte, fuit, et le peuplement ambiant peut la
@@ -833,7 +833,7 @@ export const WORLD_EVENTS = {
   CONVOY_DECAY_TICKS: ticksForCycles(2),
 } as const
 
-export const CONVOY_LOOT: import('./items').Inventory = {
+export const CONVOY_LOOT: import('./items').ItemBag = {
   components: 2,
   iron_ingot: 3,
   coal: 4,
@@ -958,4 +958,46 @@ export const TERRACE = {
   SMOOTH_RADIUS: 6,
   /** Nombre de passes de lissage (deux passes ≈ une gaussienne). */
   SMOOTH_PASSES: 2,
+} as const
+
+/**
+ * L'INVENTAIRE À CASES (spec inventaire R5, R7). Piles COURTES, exprès : les
+ * coûts de Braises sont à un chiffre (un mur = 2 bois), donc des piles de 1000
+ * façon Rust rendraient la capacité purement décorative — et le coffre inutile.
+ * Les outils et les armes ont une pile de 1 : chaque exemplaire occupe sa case,
+ * donc chaque exemplaire porte son usure.
+ */
+export const STACK_DEFAULT = 20
+export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
+  wood: 20,
+  stone: 20,
+  fiber: 20,
+  iron_ore: 20,
+  coal: 20,
+  components: 10,
+  berries: 10,
+  stew: 5,
+  iron_ingot: 5,
+  raw_meat: 5,
+  cooked_meat: 5,
+  // Outils et armes : un par case (l'usure est portée par la case).
+  axe: 1,
+  pickaxe: 1,
+  iron_axe: 1,
+  iron_pickaxe: 1,
+  spear: 1,
+}
+
+/** Tailles de sac (spec inventaire R7). La longueur du tableau EST la capacité. */
+export const SLOTS = {
+  /** Les N premières cases du sac du joueur SONT la ceinture (la hotbar). */
+  BELT: 6,
+  PLAYER: 18,
+  /** Les PNJ ont un GRAND sac : leur boucle de corvées n'a pas de notion de « plein »
+   *  et lui en apprendre une rouvrirait le risque de livelock. Une DONNÉE, pas une
+   *  règle à part — la sim n'a qu'un seul jeu de règles. */
+  NPC: 40,
+  CHEST: 24,
+  /** Assez grand pour que le cadavre ne tronque JAMAIS le butin (spec R11). */
+  CORPSE: 48,
 } as const

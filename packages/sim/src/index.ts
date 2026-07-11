@@ -96,8 +96,21 @@ export { advanceWorldEvents } from './worldevents'
 export type { Horde } from './worldevents'
 export { advanceAlignment, archetypeOf, isOutsider, regenFactor, damageModifier, harvestFactor } from './alignment'
 export type { Archetype, Aggression } from './alignment'
-export { countOf, hasItems, addItems, removeItems } from './items'
-export type { ItemId, Inventory, StructureType, AccessLevel, SkillId } from './items'
+export {
+  countOf,
+  hasItems,
+  addItems,
+  removeItems,
+  makeInventory,
+  inventoryOf,
+  toBag,
+  itemsIn,
+  isEmpty,
+  isStackable,
+  stackSize,
+  freeRoomFor,
+} from './items'
+export type { ItemId, ItemBag, Slot, Inventory, StructureType, AccessLevel, SkillId } from './items'
 
 // ─── Consommateurs du flux d'événements ───────────────────────────────────
 export { chronicleFromEvents } from './chronicle'

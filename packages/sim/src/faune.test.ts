@@ -8,7 +8,9 @@ import {
   TERRAIN_GRASS,
   TERRAIN_ROCK,
   STRUCTURE_HP,
+  SLOTS,
 } from './balance'
+import { countOf, inventoryOf } from './items'
 import { createEmptyMap, type WorldMap } from './map'
 import { createSim, spawnEntity, snapshot, step, type Entity, type MoveInput, type SimState } from './sim'
 import { cycleOffsetForStartHour } from './time'
@@ -409,7 +411,7 @@ describe('le gibier (A8)', () => {
     expect(slain).toBeDefined()
     expect(slain && 'monsterType' in slain && slain.monsterType).toBe('rabbit')
     const corpse = sim.corpses.at(-1)!
-    expect(corpse.inventory.raw_meat).toBe(1)
+    expect(countOf(corpse.inventory, 'raw_meat')).toBe(1)
   })
 })
 
@@ -1022,7 +1024,7 @@ describe('la satiété (A16 — R15) — un prédateur mange', () => {
   it('A16 — il va à la carcasse, il mange, et il devient REPU', () => {
     const sim = makeSim(0, 2)
     const pack = meutePosee(sim, 80.5, 80.5, 1)
-    sim.corpses.push({ id: sim.nextCorpseId++, x: 86.5, y: 80.5, inventory: { raw_meat: 3 }, decayAt: 1e9 })
+    sim.corpses.push({ id: sim.nextCorpseId++, x: 86.5, y: 80.5, inventory: inventoryOf(SLOTS.CORPSE, { raw_meat: 3 }), decayAt: 1e9 })
 
     let mange = false
     for (let t = 0; t < 20 * BALANCE.TICK_RATE_HZ && !mange; t++) {
@@ -1033,7 +1035,7 @@ describe('la satiété (A16 — R15) — un prédateur mange', () => {
 
     for (let t = 0; t < FAUNA.EAT_TICKS + 2; t++) tick(sim)
     expect(pack[0]!.satedUntil).toBeDefined() // il est repu
-    expect(sim.corpses[0]!.inventory.raw_meat).toBe(2) // et il a entamé la carcasse
+    expect(countOf(sim.corpses[0]!.inventory, 'raw_meat')).toBe(2) // et il a entamé la carcasse
   })
 
   it('A16 — REPU, il ne chasse plus : on passe à côté d’une meute rassasiée', () => {

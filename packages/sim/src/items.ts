@@ -1,8 +1,24 @@
 /**
- * Items et inventaires — le strict nécessaire pour V3 (spec village R3).
- * La récolte, l'usure et les tiers arrivent avec l'économie (V4) ; ici on
- * pose seulement les stacks et leurs opérations, canoniques et sérialisables.
+ * Items, cases et inventaires (spec inventaire R1-R6).
+ *
+ * L'inventaire est POSITIONNEL et BORNÉ : un tableau de cases dont la LONGUEUR
+ * EST LA CAPACITÉ (pas de champ « capacité » à tenir cohérent). Une case vide
+ * est `null` — l'état reste JSON-sérialisable, sans classe ni Map (invariant §3).
+ *
+ * DEUX TYPES, à ne pas confondre :
+ *   - `Inventory` = ce qu'on PORTE (des cases, une capacité, des usures).
+ *   - `ItemBag`   = ce qu'on COMPTE (un coût, un butin, un transfert en gros).
+ * Les coûts (`STRUCTURE_COSTS`, `RECIPES.inputs`) et les butins sont des sacs.
+ *
+ * C'est ce qui rend la migration tenable : `countOf`/`hasItems`/`addItems`/
+ * `removeItems` gardent leurs signatures (Inventory + ItemBag), donc les ~44
+ * sites d'appel de la sim — PNJ, butin, worldgen, tableau du village — n'ont pas
+ * bougé. Seul `addItems` change de sémantique : il peut ne pas tout faire tenir,
+ * et RETOURNE ce qui n'a pas tenu (spec R4).
+ *
+ * Déterminisme : aucun tirage. Le remplissage suit l'ordre des cases, point.
  */
+import { STACK_DEFAULT, STACK_SIZES } from './balance'
 
 export type ItemId =
   | 'wood'
@@ -22,8 +38,18 @@ export type ItemId =
   | 'cooked_meat'
   | 'components'
 
-/** Stacks d'items. Invariant : jamais de clé à 0 (snapshot canonique). */
-export type Inventory = Partial<Record<ItemId, number>>
+/** Une case occupée. `wear` absent = neuf ; un empilable n'a jamais d'usure. */
+export interface Slot {
+  item: ItemId
+  count: number
+  wear?: number
+}
+
+/** Ce qu'on PORTE. La longueur EST la capacité ; `null` = case vide. */
+export type Inventory = (Slot | null)[]
+
+/** Ce qu'on COMPTE : un coût, un butin, un transfert en gros. */
+export type ItemBag = Partial<Record<ItemId, number>>
 
 export type StructureType = 'fire' | 'wall' | 'door' | 'chest' | 'workshop' | 'furnace' | 'house'
 
@@ -32,28 +58,126 @@ export type AccessLevel = 'private' | 'village' | 'public'
 /** Les quatre métiers V4 (spec économie R12). */
 export type SkillId = 'woodcutting' | 'mining' | 'foraging' | 'crafting'
 
-export function countOf(inv: Inventory, item: ItemId): number {
-  return inv[item] ?? 0
+export function makeInventory(size: number): Inventory {
+  return Array.from({ length: size }, () => null)
 }
 
-export function hasItems(inv: Inventory, cost: Inventory): boolean {
+/**
+ * Un sac de `size` cases, DÉJÀ garni. Pour les appelants qui dimensionnent
+ * eux-mêmes le sac et savent que le contenu y tient (cadavre, coffre du
+ * monde-gen, carcasse de convoi) : le reliquat n'est pas rendu.
+ */
+export function inventoryOf(size: number, items: ItemBag): Inventory {
+  const inv = makeInventory(size)
+  addItems(inv, items)
+  return inv
+}
+
+export function stackSize(item: ItemId): number {
+  return STACK_SIZES[item] ?? STACK_DEFAULT
+}
+
+/** Un item empilable ne porte pas d'usure : deux piles fusionnent, deux outils jamais. */
+export function isStackable(item: ItemId): boolean {
+  return stackSize(item) > 1
+}
+
+export function countOf(inv: Inventory, item: ItemId): number {
+  let total = 0
+  for (const slot of inv) if (slot !== null && slot.item === item) total += slot.count
+  return total
+}
+
+export function hasItems(inv: Inventory, cost: ItemBag): boolean {
   return (Object.keys(cost) as ItemId[]).every((item) => countOf(inv, item) >= (cost[item] ?? 0))
 }
 
-export function addItems(inv: Inventory, items: Inventory): void {
-  for (const item of Object.keys(items) as ItemId[]) {
-    const count = items[item] ?? 0
-    if (count > 0) inv[item] = countOf(inv, item) + count
+/** Combien d'unités de `item` tiennent encore : les piles incomplètes + les cases vides. */
+export function freeRoomFor(inv: Inventory, item: ItemId): number {
+  const max = stackSize(item)
+  let room = 0
+  for (const slot of inv) {
+    if (slot === null) room += max
+    else if (slot.item === item && slot.wear === undefined) room += max - slot.count
   }
+  return room
 }
 
-/** Retire `cost` de `inv`. Refuse tout ou rien. */
-export function removeItems(inv: Inventory, cost: Inventory): boolean {
+/**
+ * Ajoute `items`. RETOURNE ce qui n'a pas tenu (vide = tout est rentré, spec R4).
+ * Ordre déterministe : on complète d'abord les piles existantes (dans l'ordre des
+ * cases), puis on ouvre les cases vides (dans l'ordre des cases). Une case portant
+ * une usure ne se complète jamais — un outil entamé n'absorbe pas un outil neuf.
+ */
+export function addItems(inv: Inventory, items: ItemBag): ItemBag {
+  const leftover: ItemBag = {}
+  for (const item of Object.keys(items) as ItemId[]) {
+    let remaining = items[item] ?? 0
+    if (remaining <= 0) continue
+    const max = stackSize(item)
+    // 1) compléter les piles existantes
+    for (const slot of inv) {
+      if (remaining <= 0) break
+      if (slot === null || slot.item !== item || slot.wear !== undefined) continue
+      const room = max - slot.count
+      if (room <= 0) continue
+      const put = Math.min(room, remaining)
+      slot.count += put
+      remaining -= put
+    }
+    // 2) ouvrir les cases vides
+    for (let i = 0; i < inv.length; i++) {
+      if (remaining <= 0) break
+      if (inv[i] !== null) continue
+      const put = Math.min(max, remaining)
+      inv[i] = { item, count: put }
+      remaining -= put
+    }
+    if (remaining > 0) leftover[item] = remaining
+  }
+  return leftover
+}
+
+/**
+ * Retire `cost`. TOUT OU RIEN (sémantique historique préservée) : si le compte
+ * n'y est pas, l'inventaire n'est pas touché. On vide les cases dans l'ordre ; une
+ * case n'est jamais laissée à `count: 0` (elle redevient `null`).
+ */
+export function removeItems(inv: Inventory, cost: ItemBag): boolean {
   if (!hasItems(inv, cost)) return false
   for (const item of Object.keys(cost) as ItemId[]) {
-    const remaining = countOf(inv, item) - (cost[item] ?? 0)
-    if (remaining > 0) inv[item] = remaining
-    else delete inv[item]
+    let remaining = cost[item] ?? 0
+    for (let i = 0; i < inv.length && remaining > 0; i++) {
+      const slot = inv[i]
+      if (slot === null || slot === undefined || slot.item !== item) continue
+      const taken = Math.min(slot.count, remaining)
+      slot.count -= taken
+      remaining -= taken
+      if (slot.count <= 0) inv[i] = null
+    }
   }
   return true
+}
+
+/** Agrège les cases en un sac (pour les consommateurs qui comptent, pas qui portent). */
+export function toBag(inv: Inventory): ItemBag {
+  const bag: ItemBag = {}
+  for (const slot of inv) {
+    if (slot === null) continue
+    bag[slot.item] = (bag[slot.item] ?? 0) + slot.count
+  }
+  return bag
+}
+
+/** Les items présents, sans doublon, dans l'ordre des cases. */
+export function itemsIn(inv: Inventory): ItemId[] {
+  const seen: ItemId[] = []
+  for (const slot of inv) {
+    if (slot !== null && !seen.includes(slot.item)) seen.push(slot.item)
+  }
+  return seen
+}
+
+export function isEmpty(inv: Inventory): boolean {
+  return inv.every((slot) => slot === null)
 }

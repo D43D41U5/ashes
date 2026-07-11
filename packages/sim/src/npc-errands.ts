@@ -9,7 +9,7 @@
 import { ALIGNMENT, BALANCE, COMBAT, NPC_AI } from './balance'
 import { applyCombatAction, startAttack } from './combat'
 import { distSq } from './geometry'
-import { countOf } from './items'
+import { countOf, itemsIn } from './items'
 import { dropTask, followPath, near, setPathTo, type Npc } from './npc'
 import type { Entity, SimState } from './sim'
 import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
@@ -74,7 +74,7 @@ export function assignErrands(state: SimState): void {
       const granary = granaries(state, village.id)[0]
       // Un Foyer donne dès que le grenier couvre DEUX dons : un pour le
       // voisin, un de réserve pour les siens — généreux, pas suicidaire.
-      if (!granary || countOf(granary.inventory ?? {}, 'berries') < 2 * ALIGNMENT.GIFT_BERRIES) continue
+      if (!granary || countOf(granary.inventory ?? [], 'berries') < 2 * ALIGNMENT.GIFT_BERRIES) continue
       const target = nearestOtherVillage(state, village)
       if (!target) continue
       const giver = state.npcs.find((n) => n.villageId === village.id && !n.errand)
@@ -205,7 +205,7 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
   // home : rentrer et déposer le butin au grenier.
   const own = granaries(state, village.id)[0]
   if (own && near(entity, own.tx, own.ty)) {
-    for (const item of Object.keys(entity.inventory) as (keyof typeof entity.inventory)[]) {
+    for (const item of itemsIn(entity.inventory)) {
       if (item === 'spear') continue
       const count = countOf(entity.inventory, item)
       if (count > 0) {
