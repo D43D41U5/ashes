@@ -117,17 +117,28 @@ describe('POIs dans la carte alpine', () => {
    * pour toutes les seeds. Seuil 1,30 : sous le minimum d'avant-fix (1,31), au-dessus du
    * maximum d'après-fix (1,20).
    *
-   * Seuil relevé à 2,0 (revue « les lieux », constat 1) : `candidatesFor` écarte désormais
-   * les types dont l'empreinte tombe à 100 % sur du bloquant (cf. `hasWalkableFootprint`
-   * dans poi.ts). Ce filtre dépend du terrain LOCAL à chaque point, une source de variance
-   * non corrélée à `pts[0]` — il ne réintroduit AUCUN biais directionnel (moyenne mesurée
-   * ≈1,1 sur 40+ seeds, contre un biais avant-shuffle qui, lui, pointait systématiquement
-   * vers pts[0]), mais il augmente le bruit point-à-point sur cette carte de test réduite
-   * (240×360, peu de POIs). Max mesuré 1,696 sur 150 seeds ; 2,0 garde la marge.
+   * ATTENTION AU RÉFLEXE (revue « les lieux », 2026-07-11) : le filtre de marchabilité
+   * (`hasWalkableFootprint`, cf. poi.ts) a fait monter le ratio d'UNE des quatre seeds à
+   * 1,37 — au-dessus du seuil de 1,30. La tentation était de relever le seuil à 2,0.
+   * C'EST FAUX : la plage du bug d'origine était 1,31–2,50, donc un seuil de 2,0 laisse
+   * repasser la moitié du bug. Le test aurait survécu en ne protégeant plus rien.
+   *
+   * Le filtre ne biaise pas, il BRUITE : il dépend du terrain local à chaque point, une
+   * variance sans corrélation à `pts[0]`. La réponse juste à du bruit n'est pas de
+   * relâcher le seuil, c'est de MOYENNER. Sur 16 seeds : moyenne 1,035 (individuelles
+   * 0,76–1,46). Le biais d'origine, lui, aurait une moyenne ≥ 1,8.
+   *
+   * D'où deux assertions :
+   *   - la MOYENNE sur 16 seeds < 1,25 — mord sur le biais, insensible au bruit ;
+   *   - un garde-fou PAR SEED < 1,75 — attrape une dérive catastrophique isolée
+   *     (max mesuré : 1,46 ici, 1,696 sur 150 seeds).
    */
   it("les POIs ne se concentrent pas autour du premier point du semis", () => {
     const W = 240, H = 360
-    for (const seed of [2026, 99, 2718, 31415]) {
+    const SEEDS = [2026, 99, 2718, 31415, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    const ratios: number[] = []
+
+    for (const seed of SEEDS) {
       const radius = POI_PLACEMENT.SPACING_FRAC * Math.min(W, H)
       const pts = poissonPoints(W, H, seed, radius)
       const p0 = pts[0]!
@@ -143,8 +154,14 @@ describe('POIs dans la carte alpine', () => {
       }
 
       expect(far).toBeGreaterThan(0)
-      expect(near / far).toBeLessThan(2.0)
+      // Garde-fou : une seed catastrophiquement biaisée ne doit pas se noyer dans la moyenne.
+      expect(near / far).toBeLessThan(1.75)
+      ratios.push(near / far)
     }
+
+    // L'assertion qui MORD : le bruit se moyenne, un biais non.
+    const moyenne = ratios.reduce((a, b) => a + b, 0) / ratios.length
+    expect(moyenne).toBeLessThan(1.25)
   })
 })
 
