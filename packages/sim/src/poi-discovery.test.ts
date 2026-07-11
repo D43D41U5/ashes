@@ -126,3 +126,79 @@ describe('la règle de base : un lieu foulé entre dans la carte', () => {
     expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(1)
   })
 })
+
+describe('le savoir — quatre lieux qui rendent la carte', () => {
+  it('le Belvédère révèle tout dans son rayon, et RIEN au-delà', () => {
+    const { state, playerId } = simWith([
+      { name: 'le Belvédère I', x: 10, y: 10, w: 2, h: 2, kind: 'belvedere' }, // 0 — centre (11,11)
+      { name: 'la Grotte I', x: 20, y: 10, w: 2, h: 2, kind: 'grotte' }, //       1 — à ~10 tuiles → DEDANS
+      { name: 'le Tarn I', x: 55, y: 55, w: 2, h: 2, kind: 'tarn' }, //           2 — à ~63 tuiles → DEHORS (rayon 40)
+    ])
+    walkTo(state, playerId, 11, 11)
+    const known = state.entities.find((e) => e.id === playerId)!.knownPois
+    expect(known).toContain(0) // lui-même, par la règle de base
+    expect(known).toContain(1)
+    expect(known).not.toContain(2)
+  })
+
+  it('le Belvédère ne se déclenche qu’une fois', () => {
+    const { state, playerId } = simWith([
+      { name: 'le Belvédère I', x: 10, y: 10, w: 2, h: 2, kind: 'belvedere' },
+      { name: 'la Grotte I', x: 20, y: 10, w: 2, h: 2, kind: 'grotte' },
+    ])
+    walkTo(state, playerId, 11, 11)
+    walkTo(state, playerId, 11.1, 11.1)
+    expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(0)
+  })
+
+  it('le Cairn révèle exactement UN lieu — le plus proche encore inconnu', () => {
+    const { state, playerId } = simWith([
+      { name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }, //  0 — centre (10.5, 10.5)
+      { name: 'la Grotte I', x: 14, y: 10, w: 1, h: 1, kind: 'grotte' }, // 1 — proche
+      { name: 'le Tarn I', x: 30, y: 10, w: 1, h: 1, kind: 'tarn' }, //     2 — loin
+    ])
+    walkTo(state, playerId, 10.5, 10.5)
+    const known = state.entities.find((e) => e.id === playerId)!.knownPois
+    expect(known).toEqual([0, 1]) // lui-même + le plus proche. PAS le Tarn.
+  })
+
+  it('à distance exactement égale, le Cairn départage par poiId croissant', () => {
+    const { state, playerId } = simWith([
+      { name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }, //   0 — centre (10.5, 10.5)
+      { name: 'la Grotte I', x: 20, y: 10, w: 1, h: 1, kind: 'grotte' }, // 1 — centre (20.5,10.5), à +10 en x
+      { name: 'le Tarn I', x: 0, y: 10, w: 1, h: 1, kind: 'tarn' }, //      2 — centre (0.5,10.5), à −10 en x : ÉGALITÉ
+    ])
+    walkTo(state, playerId, 10.5, 10.5)
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0, 1]) // le plus petit poiId gagne
+  })
+
+  it('un Cairn dont tout le voisinage est déjà connu ne révèle rien de plus', () => {
+    const { state, playerId } = simWith([{ name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }])
+    walkTo(state, playerId, 10.5, 10.5)
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0]) // lui-même, et c'est tout
+  })
+
+  it('les Pétroglyphes ne révèlent qu’un lieu ANCIEN', () => {
+    const { state, playerId } = simWith([
+      { name: 'les Pétroglyphes I', x: 10, y: 10, w: 1, h: 1, kind: 'petroglyphes' }, // 0
+      { name: 'la Grotte I', x: 12, y: 10, w: 1, h: 1, kind: 'grotte' }, //              1 — proche mais PAS ancien
+      { name: 'les Ruines I', x: 20, y: 10, w: 1, h: 1, kind: 'ruines' }, //             2 — ancien, plus loin
+    ])
+    walkTo(state, playerId, 10.5, 10.5)
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0, 2]) // saute la Grotte
+  })
+
+  it('l’Arche ne révèle que des abris (family shelter)', () => {
+    const { state, playerId } = simWith([
+      { name: 'l’Arche I', x: 10, y: 10, w: 1, h: 1, kind: 'arche' }, //     0
+      { name: 'le Tarn I', x: 12, y: 10, w: 1, h: 1, kind: 'tarn' }, //      1 — reward, pas shelter
+      { name: 'la Cabane I', x: 14, y: 10, w: 1, h: 1, kind: 'cabane' }, //  2 — shelter ✓
+      { name: 'les Ruines I', x: 16, y: 10, w: 1, h: 1, kind: 'ruines' }, // 3 — shelter ✓
+    ])
+    walkTo(state, playerId, 10.5, 10.5)
+    const known = state.entities.find((e) => e.id === playerId)!.knownPois
+    expect(known).toContain(2)
+    expect(known).toContain(3)
+    expect(known).not.toContain(1)
+  })
+})

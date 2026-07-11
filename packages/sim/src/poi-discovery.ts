@@ -14,7 +14,7 @@
  */
 import { POI } from './balance'
 import { emitEvent } from './events'
-import { poisAt } from './map'
+import { poiCenter, poisAt } from './map'
 import { POI_TYPES, type PoiType } from './poi'
 import type { SimState } from './sim'
 
@@ -70,6 +70,61 @@ function know(state: SimState, entityId: number, knownPois: number[], poiId: num
   return true
 }
 
+/** Distance AU CARRÉ entre deux centres de zones. Jamais de sqrt : invariant #2. */
+function dist2(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = a.x - b.x
+  const dy = a.y - b.y
+  return dx * dx + dy * dy
+}
+
+/** Un candidat à la révélation : ni le lieu source, ni un lieu déjà connu, ni un toponyme. */
+function isCandidate(state: SimState, knownPois: number[], sourceId: number, poiId: number): boolean {
+  if (poiId === sourceId) return false
+  if (knownPois.includes(poiId)) return false
+  return state.map.zones[poiId]?.kind !== undefined
+}
+
+/**
+ * La charge de savoir d'un lieu qu'on vient de fouler : elle révèle D'AUTRES
+ * lieux, à distance. C'est une ACCÉLÉRATION de la règle de base (fouler suffit
+ * à connaître) — jamais un substitut.
+ */
+function applyKnowledge(state: SimState, entityId: number, knownPois: number[], sourceId: number): void {
+  const charge = POI_CHARGES[state.map.zones[sourceId]?.kind ?? '']
+  if (charge === undefined || charge.devise !== 'savoir') return
+
+  const origin = poiCenter(state.map.zones[sourceId]!)
+
+  if (charge.reveal === 'radius') {
+    const r2 = charge.radiusTiles * charge.radiusTiles
+    for (let poiId = 0; poiId < state.map.zones.length; poiId += 1) {
+      if (!isCandidate(state, knownPois, sourceId, poiId)) continue
+      const zone = state.map.zones[poiId]!
+      if (charge.family !== undefined && poiFamily(zone.kind!) !== charge.family) continue
+      if (dist2(origin, poiCenter(zone)) > r2) continue
+      know(state, entityId, knownPois, poiId)
+    }
+    return
+  }
+
+  // reveal === 'nearest' : LE plus proche, égalités départagées par poiId croissant.
+  // On itère en ordre croissant et on n'accepte qu'un `<` STRICT : le premier
+  // rencontré à distance égale gagne donc naturellement (spec R8).
+  let bestId = -1
+  let bestD2 = Infinity
+  for (let poiId = 0; poiId < state.map.zones.length; poiId += 1) {
+    if (!isCandidate(state, knownPois, sourceId, poiId)) continue
+    const zone = state.map.zones[poiId]!
+    if (charge.kinds !== undefined && !charge.kinds.includes(zone.kind!)) continue
+    const d2 = dist2(origin, poiCenter(zone))
+    if (d2 < bestD2) {
+      bestD2 = d2
+      bestId = poiId
+    }
+  }
+  if (bestId >= 0) know(state, entityId, knownPois, bestId)
+}
+
 /**
  * Une étape de tick : les lieux foulés par les JOUEURS entrent dans leur carte.
  * Appelée juste après la boucle d'inputs — la découverte est la conséquence du
@@ -84,8 +139,10 @@ export function advancePois(state: SimState): void {
 
     for (const poiId of poisAt(state.map, entity.x, entity.y)) {
       // R6.1 — la règle de base : fouler suffit à connaître (les 26 types).
-      know(state, entity.id, entity.knownPois, poiId)
-      // Les charges (savoir, récit) arrivent aux tâches 3 et 4.
+      const fresh = know(state, entity.id, entity.knownPois, poiId)
+      // R6.2 — la charge de savoir, si le lieu en porte une, ne joue qu'à la
+      // PREMIÈRE foulée : `fresh` est notre garde d'idempotence.
+      if (fresh) applyKnowledge(state, entity.id, entity.knownPois, poiId)
     }
   }
 }
