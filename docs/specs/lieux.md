@@ -65,7 +65,9 @@ Le répit n'émet aucun événement : c'est un **effet continu de terrain**, com
 
 ### Le protocole (R14)
 
-- **R14 — Le client ne reçoit que la carte de SON joueur.** `ReadyMessage` porte `knownPois` initial (vide en Veillée, non-vide sur reprise de partie) ; ensuite l'événement `poi_discovered` **est** le delta — aucun besoin de diffuser le tableau à chaque snapshot. Cohérent avec la décision d'*interest management* du 2026-07-09 : ce qui est par-joueur vit sur le fil, filtré.
+- **R14 — Aucun changement de protocole.** `SnapshotMessage.entities` transporte déjà des `Entity` **entières** : `knownPois` voyage tout seul, à chaque tick, sans qu'on touche à `protocol.ts`. C'est ce qui est **implémenté**.
+
+  *Rectification (2026-07-11, relevée en revue) : la version initiale de cette règle annonçait que `ReadyMessage` porterait un `knownPois` initial et que l'événement `poi_discovered` servirait ensuite de **delta**. C'est faux dans le code livré — le tableau est republié à chaque snapshot, parce que l'`Entity` l'est. Ce n'est pas un oubli mais un **report assumé** : diffuser des entités entières à chaque tick est une dette déjà consignée (décision 2026-07-09, « interest management sur le fil = obligatoire en multi »), qui se paiera pour **toutes** les entités à la fois, pas pour `knownPois` en particulier. En Veillée (une poignée d'entités), le coût est nul. La spec dit désormais ce que le code fait.*
 
 ## Critères d'acceptation
 
