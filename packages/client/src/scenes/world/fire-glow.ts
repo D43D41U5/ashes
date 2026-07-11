@@ -16,7 +16,7 @@ export class FireGlow {
   constructor(private scene: Phaser.Scene) {}
 
   /** Réconcilie les halos avec les Feux du snapshot, à l'heure courante (`day`). */
-  update(structures: Structure[], villages: SnapshotMessage['villages'], day: number): void {
+  update(structures: Structure[], villages: SnapshotMessage['villages'], day: number, now: number): void {
     const seen = new Set<number>()
     for (const s of structures) {
       if (s.type !== 'fire') continue
@@ -30,7 +30,9 @@ export class FireGlow {
         this.sprites.set(s.id, sprite)
       }
       const warmth = villages.find((v) => v.id === s.villageId)?.warmth ?? 0
-      const glow = fireGlow(warmth, day)
+      // L'id du Feu sert de graine de phase : deux foyers côte à côte palpitent
+      // chacun pour soi, jamais à l'unisson.
+      const glow = fireGlow(warmth, day, now, s.id * 1.7)
       const diameterPx = glow.radius * TILE_PX * 2
       sprite.setTint(glow.color)
       sprite.setAlpha(glow.alpha)

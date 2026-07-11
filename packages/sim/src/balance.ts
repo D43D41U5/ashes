@@ -379,7 +379,15 @@ export const WEAPON_DAMAGE: Partial<Record<import('./items').ItemId, number>> = 
   iron_axe: 10,
 }
 
-export type MonsterType = 'zombie' | 'boar' | 'cendreux'
+export type MonsterType = 'zombie' | 'boar' | 'cendreux' | 'rabbit' | 'deer' | 'wolf'
+
+/**
+ * Le RYTHME d'une bête (spec faune R10). C'est ce qui donne une identité à
+ * l'heure : le jour appartient aux cerfs, la nuit aux sangliers et aux loups,
+ * et les lisières du jour aux lapins. Sortir de nuit n'est alors plus une
+ * question d'éclairage — c'est une question de qui est réveillé.
+ */
+export type Activity = 'diurnal' | 'nocturnal' | 'crepuscular'
 
 export interface MonsterDef {
   hp: number
@@ -391,11 +399,36 @@ export interface MonsterDef {
   aggroRange: number
   /** Cadence de réflexion de l'IA (elle agit à chaque tick, elle DÉCIDE ici). */
   thinkEveryTicks: number
-  /** Zombie sans proie : probabilité de changer d'errance à chaque réflexion. */
+  /**
+   * Zombie sans proie : probabilité de changer d'errance à chaque réflexion.
+   * Pour le GIBIER : probabilité de CHANGER DE CAP. Le reste du temps, la bête
+   * garde sa direction (ou s'arrête, cf. FAUNA.PAUSE_CHANCE) — c'est ce qui la
+   * fait déambuler plutôt que trembler sur place.
+   */
   wanderChance: number
   /** Sanglier blessé : probabilité de charger (sinon il fuit) à chaque réflexion. */
   chargeChance: number
   loot: import('./items').Inventory
+  /**
+   * Le gibier (spec faune R2) : les terrains où l'espèce vit. Non vide = c'est
+   * une BÊTE — elle broute, s'alerte, fuit, et le peuplement ambiant peut la
+   * faire naître ici. Vide = c'est un monstre (zombie, cendreux).
+   */
+  habitat?: number[]
+  /** Un avatar à cette distance : la bête s'arrête et regarde (spec faune R5). */
+  alertRange?: number
+  /** Un avatar à cette distance : la bête détale (spec faune R6). */
+  flightRange?: number
+  /**
+   * Le GRÉGARISME (spec faune R9) : bornes de la taille d'une harde/meute à la
+   * naissance. Absent = solitaire. Un cerf seul n'existe pas ; un sanglier de
+   * tanière, si — et c'est ce qui le rend inquiétant.
+   */
+  herdSize?: [number, number]
+  /** Le rythme (spec faune R10) : quand cette bête est éveillée. */
+  activity?: Activity
+  /** Le PRÉDATEUR (spec faune R11) : il chasse, il ne broute pas. */
+  predator?: boolean
 }
 
 export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
@@ -408,8 +441,12 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
   boar: {
     hp: 30, damage: 8, speed: 3.6,
     windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0,
-    thinkEveryTicks: ticksFor(1), wanderChance: 0, chargeChance: 0.25,
+    thinkEveryTicks: ticksFor(1), wanderChance: 0.25, chargeChance: 0.25,
     loot: { raw_meat: 3 },
+    // Le sanglier tient sa forêt. Il laisse approcher — et c'est le piège.
+    habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH],
+    alertRange: 7, flightRange: 0,
+    activity: 'nocturnal', // il fouge de nuit — le vrai sanglier aussi
   },
   cendreux: {
     hp: 20, damage: 34, speed: 1.3,
@@ -417,6 +454,298 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     thinkEveryTicks: ticksFor(0.5), wanderChance: 0, chargeChance: 0,
     loot: {}, // il porte celui du cadavre (voir levée)
   },
+  // Le petit gibier (GDD §8bis) : il détale avant qu'on l'ait vu. L'école de l'approche.
+  rabbit: {
+    hp: 8, damage: 0, speed: 5,
+    windupTicks: ticksFor(0.3), attackCooldownTicks: ticksFor(2), aggroRange: 0,
+    thinkEveryTicks: ticksFor(0.6), wanderChance: 0.4, chargeChance: 0,
+    loot: { raw_meat: 1 },
+    habitat: [TERRAIN_GRASS, TERRAIN_HEATH, TERRAIN_FLOWER_MEADOW, TERRAIN_ALPINE_MEADOW, TERRAIN_ALPINE_FLOWERS],
+    alertRange: 11, flightRange: 7,
+    activity: 'crepuscular', // à l'aube et au crépuscule : les heures du lapin
+  },
+  // Le gros gibier : le vrai repas. Il voit de loin, part tôt, et court plus vite que vous.
+  deer: {
+    hp: 45, damage: 0, speed: 4.6,
+    windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0,
+    thinkEveryTicks: ticksFor(1.2), wanderChance: 0.2, chargeChance: 0,
+    loot: { raw_meat: 5 },
+    habitat: [TERRAIN_ALPINE_MEADOW, TERRAIN_HEATH, TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_LARCH],
+    alertRange: 14, flightRange: 9,
+    herdSize: [3, 5], // la harde : ils broutent ensemble et détalent ensemble
+    activity: 'diurnal', // le grand gibier du plein jour
+  },
+  /**
+   * LE LOUP (spec faune R11) — « le danger de fond des trajets » (GDD §9bis).
+   *
+   * Ce n'est pas un zombie : il ne marche pas droit sur vous jusqu'à mourir. Il
+   * chasse EN MEUTE, il préfère le gibier à l'homme, il rompt quand il saigne,
+   * et un loup seul n'ose pas. Voilà pourquoi il est dangereux et pourquoi on
+   * peut le battre : il a une psychologie, et elle s'exploite.
+   *
+   * Vitesse 4,8 : plus rapide qu'un joueur qui marche (4), plus lent qu'un
+   * joueur qui sprinte (6). On ne distance pas une meute, on lui échappe.
+   */
+  wolf: {
+    hp: 35, damage: 14, speed: 4.8,
+    windupTicks: ticksFor(0.45), attackCooldownTicks: ticksFor(1.5), aggroRange: 13,
+    thinkEveryTicks: ticksFor(0.5), wanderChance: 0.2, chargeChance: 0,
+    loot: { raw_meat: 2 },
+    habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_HEATH],
+    alertRange: 0, flightRange: 0, // il ne fuit pas parce qu'on approche : il fuit parce qu'il saigne
+    herdSize: [3, 4], // la meute
+    activity: 'nocturnal',
+    predator: true,
+  },
+}
+
+/**
+ * La faune ambiante (spec faune) — elle vit dans un ANNEAU autour des avatars,
+ * pas dans la carte. Population bornée par `CAP`, indépendante de la taille du
+ * monde : le coût par tick ne dépend donc pas de la carte, mais du nombre de
+ * gens qui la regardent.
+ *
+ * `SPAWN_RING_MIN` (28) est calé au-delà de TOUT ce que la caméra peut montrer :
+ * la demi-diagonale du champ (~20.6 tuiles à VISIBLE_TILES_TALL=20) PLUS le
+ * décalage « Foxhole » vers le curseur (LOOKAHEAD_MAX_TILES = 6). Sans ce second
+ * terme, une bête née à 22 tuiles apparaît à l'écran dès que le joueur regarde
+ * dans sa direction — un lapin qui se matérialise sous les yeux. Si le cadrage
+ * ou le lookahead du client changent, ce nombre monte avec eux.
+ */
+export const FAUNA = {
+  /**
+   * Plafond de bêtes ambiantes vivantes (hors bêtes de lieu, résidentes).
+   *
+   * CALIBRÉ EN JEU (2026-07-11) : ce qui compte n'est pas le plafond mais la
+   * DENSITÉ dans le disque utile. À 30 bêtes sur un rayon de 62 (12 000 tuiles)
+   * pour un écran de ~710 tuiles, on attend ~2 bêtes en vue — et on n'en voyait
+   * effectivement qu'une. En resserrant le disque (52) et en montant le plafond,
+   * on vise ~4 : assez pour que la forêt bruisse, trop peu pour un zoo.
+   */
+  CAP: 48,
+  SPAWN_EVERY_TICKS: ticksFor(0.4),
+  SPAWN_TRIES: 8, // tirages de tuile par tentative de peuplement
+  SPAWN_RING_MIN: 28,
+  SPAWN_RING_MAX: 42,
+  DESPAWN_RADIUS: 52,
+  SAFE_RANGE: 20, // menace au-delà : la bête se calme et se remet à brouter
+  GRAZE_SPEED: 0.35, // × la vitesse de l'espèce : brouter, c'est flâner
+  /**
+   * Chance de s'arrêter brouter à chaque réflexion. Le reste du temps la bête
+   * GARDE son cap (voir `wanderChance` = chance de CHANGER de cap) : sans cette
+   * persistance, tirer une direction neuve chaque seconde donne une marche
+   * aléatoire qui piétine sur place — la bête s'agite sans jamais aller nulle
+   * part, et le monde ne se repeuple pas autour d'un joueur immobile.
+   */
+  PAUSE_CHANCE: 0.28,
+  FLEE_SPEED: 1, // × la vitesse de l'espèce : détaler, c'est tout donner
+  BURST_RUN_TICKS: ticksFor(1.6), // le sprint burst promis par combat.md R12…
+  BURST_PAUSE_TICKS: ticksFor(0.7), // …et le souffle qui le rend chassable
+
+  /* ── La harde (spec faune R9) ───────────────────────────────────────────── */
+  /**
+   * Une bête qui voit un congénère de sa harde détaler à moins de ça détale
+   * aussi, SANS avoir rien vu elle-même. C'est le cœur du grégarisme : la harde
+   * est un organe de perception collectif, et c'est ce qui rend l'approche
+   * difficile — il suffit qu'UNE bête vous repère pour que tout parte.
+   */
+  HERD_ALARM_RADIUS: 12,
+  /** Au-delà de cet écart au centre de sa harde, la bête revient vers les siens. */
+  HERD_SPREAD: 5,
+  /** Rayon de dispersion d'une harde à la naissance (tuiles). */
+  HERD_SPAWN_SPREAD: 3,
+
+  /* ── Le rythme jour/nuit (spec faune R10) ───────────────────────────────── */
+  /**
+   * En-deçà de cette vigueur (0-1, voir `activityAt`), la bête DORT : elle ne
+   * broute plus, elle ne chasse plus. Elle reste réveillable — un dormeur qu'on
+   * approche fuit quand même. Ce n'est pas un interrupteur, c'est un seuil.
+   */
+  REST_BELOW: 0.25,
+  /**
+   * Plancher de peuplement d'une espèce hors de ses heures : elle ne disparaît
+   * jamais tout à fait. Sans ce plancher, le monde se recomposerait d'un coup à
+   * 21h — or un cerf assoupi existe encore la nuit, il est juste plus rare.
+   */
+  SPAWN_FLOOR: 0.15,
+
+  /* ── La meute (spec faune R11) ──────────────────────────────────────────── */
+  /**
+   * L'APPEL. Un loup qui n'a rien vu, mais dont un frère de meute chasse à moins
+   * de ça, converge sur la MÊME cible. La meute chasse comme un seul animal —
+   * c'est ce qui la rend mortelle.
+   */
+  PACK_CALL_RADIUS: 22,
+  /**
+   * LE COURAGE. Un loup n'engage un HOMME que s'il compte au moins autant de
+   * frères vivants autour de lui. En dessous, il rôde, il suit, il attend — mais
+   * il ne mord pas. Tuer des loups ne fait donc pas que réduire leur nombre :
+   * ça brise la meute, et une meute brisée cesse d'être un danger.
+   * (Le petit gibier, lui, se chasse seul : le courage ne vaut que face à l'homme.)
+   */
+  PACK_COURAGE: 2,
+  /** Rayon dans lequel un loup compte ses frères pour se donner du courage. */
+  PACK_COHESION_RADIUS: 14,
+  /**
+   * LA ROMPUE. Sous cette fraction de ses PV, le loup DÉCROCHE. Un loup ne meurt
+   * pas au contact comme un zombie : il calcule. C'est ce qui rend la meute
+   * battable sans en faire un mur de points de vie.
+   */
+  PACK_BREAK_HP: 0.35,
+  /**
+   * Le prédateur PRÉFÈRE le gibier à l'homme : la distance à une proie animale
+   * est divisée par ça avant comparaison. Un cerf à 12 tuiles « pèse » donc plus
+   * qu'un joueur à 8 — et un joueur qui traverse une zone de chasse peut voir la
+   * meute l'ignorer pour un cerf. Le monde ne tourne pas autour de lui.
+   */
+  PREY_PREFERENCE: 1.8,
+  /**
+   * L'ENCERCLEMENT. Rayon du cercle sur lequel les loups prennent leur poste
+   * autour de la proie — chacun sur un relèvement différent, donné par son rang
+   * dans la meute. Une meute qui fonce en ligne droite est une file indienne :
+   * on la fuit tout droit, et elle ne vaut pas mieux qu'un loup seul.
+   */
+  ENCIRCLE_RADIUS: 3.5,
+  /**
+   * En-deçà de cette distance, on ne manœuvre plus : c'est la curée. Assez large
+   * pour que les traînards aient pris leur place avant que le premier ne morde.
+   */
+  COMMIT_RANGE: 2.6,
+  /**
+   * LA TRAQUE. Allure du loup qui gagne son poste (× sa vitesse). Il RAMPE — et
+   * c'est la condition même de l'encerclement : une meute qui charge à pleine
+   * vitesse pour se placer lève le gibier avant que le cercle ne soit bouclé, et
+   * l'encerclement ne se produit jamais. La lenteur n'est pas un handicap qu'on
+   * leur inflige : c'est ce qui rend la manœuvre possible.
+   */
+  STALK_SPEED: 0.42,
+  /**
+   * LE CAMOUFLAGE. Ce qu'il reste des portées de détection d'une proie face à un
+   * loup qui traque (× alertRange et flightRange). À 0,42, un cerf qui voit un
+   * chasseur à 9 tuiles ne lève la tête sur un loup rampant qu'à 4 — le temps
+   * qu'il faut à la meute pour se placer. Dès que le loup se rue, le camouflage
+   * tombe : c'est la course, plus la traque.
+   */
+  STALK_STEALTH: 0.42,
+  /** À cette distance de son poste, un loup est « en place ». */
+  POST_TOLERANCE: 1.3,
+
+  /* ── L'ALPHA (spec faune R12) ───────────────────────────────────────────── */
+  /**
+   * LE MÂLE ALPHA. Chaque meute en a un, et un seul : le premier-né. Il est plus
+   * lourd, il frappe plus fort, ON LE RECONNAÎT à sa taille — et c'est là tout
+   * l'enjeu : il est visible, donc ciblable.
+   *
+   * Tuer l'alpha DISPERSE la meute sur-le-champ. C'est la seule chose qui
+   * transforme un combat perdu d'avance en combat gagnable : au lieu d'abattre
+   * quatre loups, on en abat UN — le bon. Une meute cesse alors d'être un mur de
+   * points de vie pour devenir une question : lequel, et comment l'atteindre.
+   */
+  ALPHA_HP: 1.9,
+  ALPHA_DAMAGE: 1.45,
+
+  /* ── La rencontre (spec faune R13) — ce doit être un moment ─────────────── */
+  /**
+   * LA POURSUITE. Une meute qui vous a choisi ne vous oublie pas à treize tuiles :
+   * elle vous suit jusqu'à CELLE-CI. Le loup court à 4,8, le joueur sprinte à 6 —
+   * il gagne 1,2 tuile par seconde, et son endurance lui offre ~12 s de sprint,
+   * soit ~15 tuiles d'avance. Ce n'est PAS assez pour semer la meute.
+   *
+   * C'est délibéré, et c'est tout le propos : on ne distance pas des loups. On
+   * leur échappe — par le Feu, ou en les faisant rompre. Sans quoi on meurt.
+   */
+  PURSUIT_RANGE: 26,
+  /* ── Le sanglier (spec faune R14) — il ne fuit pas, il décide ───────────── */
+  /**
+   * LA FOUILLE. Le sanglier fouge : groin au sol, il ne voit plus rien. C'est la
+   * FENÊTRE DU CHASSEUR — la seule façon d'approcher une bête qui, autrement, ne
+   * fuit pas et vous voit venir. Un sanglier qui fouille est un sanglier qu'on
+   * peut atteindre ; c'est le geste que le GDD §8bis appelle « l'approche ».
+   */
+  ROOT_CHANCE: 0.4, // probabilité de se mettre à fouir, à chaque réflexion
+  ROOT_TICKS: ticksFor(4),
+  ROOT_ALERTNESS: 0.4, // × ses portées de détection pendant qu'il fouge
+  /**
+   * LA MENACE. Sous cette distance, le sanglier ne fuit pas et ne charge pas
+   * encore : il se plante face à vous. Un temps. C'est un AVERTISSEMENT, et c'est
+   * la dernière seconde où l'on peut encore reculer (GDD §9bis).
+   */
+  THREAT_RANGE: 4.5,
+  THREAT_TICKS: ticksFor(1.1), // le temps qu'il vous laisse pour comprendre
+  /**
+   * LA CHARGE. Droite, engagée, plus rapide qu'un sprint (6,1 contre 6) : on ne
+   * la distance PAS. On s'en écarte. Le sanglier ne tourne pas — il passe, il
+   * dépasse, et il se retrouve essoufflé, dos à vous. C'est là qu'on frappe.
+   *
+   * Une bête qu'on esquive plutôt qu'on ne fuit : le GDD veut un combat
+   * positionnel, et le sanglier en est la première leçon.
+   */
+  CHARGE_SPEED: 1.7, // × sa vitesse (3,6 → 6,1)
+  CHARGE_TICKS: ticksFor(1.3), // il court tout droit pendant ce temps, sans dévier
+  WINDED_TICKS: ticksFor(1.7), // puis il souffle, immobile — la fenêtre pour frapper
+  /**
+   * LE FEU. Aucun loup n'approche à moins de ça d'un Feu allumé : il rompt, il
+   * s'écarte, il attend dans le noir. C'est la seule vraie issue d'une poursuite,
+   * et elle donne à la fuite une DESTINATION plutôt qu'une direction.
+   *
+   * Que le salut d'une nuit de chasse soit le Foyer n'est pas un hasard : c'est
+   * le jeu qui dit son nom.
+   */
+  FIRE_WARD: 8,
+
+  /* ── La satiété (spec faune R15) — un prédateur mange ────────────────────── */
+  /**
+   * LE REPAS. Un loup ne chasse pas pour le sport : il chasse, il tue, et IL
+   * MANGE. Tant qu'il n'a pas mangé, il traque ; une fois repu, il vous laisse
+   * passer. C'est ce qui achève de faire de la vallée un écosystème plutôt qu'un
+   * distributeur d'agression : on peut voir une meute prendre un cerf, se
+   * rassasier — et vous ignorer.
+   *
+   * C'est aussi une TACTIQUE offerte au joueur : jeter de la viande à une meute
+   * qui vous serre, c'est lui donner autre chose à faire. (Le GDD §9bis prévoyait
+   * déjà de détourner une horde « avec de la viande ou du bruit ».)
+   */
+  CARCASS_SEEK: 16, // rayon où un prédateur affamé cherche une carcasse
+  EAT_RANGE: 1.6, // il doit être dessus pour manger
+  EAT_TICKS: ticksFor(9), // le temps qu'il passe à la carcasse, immobile
+  SATED_TICKS: ticksFor(210), // ~3 min 30 de tranquillité — puis la faim revient
+
+  /* ── La pression de chasse (spec faune R16) ─────────────────────────────── */
+  /**
+   * LE PIÈGE DU FARM. Le peuplement ambiant remplit l'anneau dès qu'une place se
+   * libère : tuer une bête en fait naître une autre en une demi-seconde. Planté
+   * dans une clairière, un joueur récolterait de la viande à l'infini sans faire
+   * un pas — et la chasse, qui devait être un geste, deviendrait un robinet.
+   *
+   * LA RÈGLE : **le gibier déserte ce qu'on vient de chasser.** Une bête abattue
+   * fait taire les bois autour d'elle : aucune naissance ambiante à moins de
+   * `QUIET_RADIUS` pendant `QUIET_TICKS`. Le rayon est plus grand que l'anneau de
+   * naissance (42) — donc un chasseur qui reste sur place ne voit plus rien venir.
+   *
+   * Il faut LEVER LE CAMP. C'est ce que fait un vrai chasseur, et c'est ce qui
+   * rend la carte utile : le gibier est une ressource de TERRITOIRE, pas de temps.
+   *
+   * Et l'inverse est gardé : la zone se rouvre au bout de deux minutes, le plafond
+   * global n'est pas touché, et abattre un LOUP ne fait taire personne (tuer un
+   * prédateur n'a jamais fait fuir le gibier — au contraire).
+   */
+  QUIET_RADIUS: 46,
+  QUIET_TICKS: ticksFor(120),
+  /**
+   * LE RETOUR DES BÊTES DE LIEU. Le sanglier d'une tanière est résident : tué, il
+   * ne revenait JAMAIS, et le lieu devenait une coquille vide. Il repeuple sa
+   * tanière après ce délai — mais jamais sous les yeux d'un joueur (voir
+   * `DEN_SPAWN_CLEARANCE`) : un sanglier qui se matérialise devant vous, c'est le
+   * décor qui avoue.
+   */
+  DEN_RESPAWN_TICKS: ticksFor(240),
+  DEN_SPAWN_CLEARANCE: 24, // aucun avatar à moins de ça, sinon on attend
+  /**
+   * REPU N'EST PAS INOFFENSIF. Un loup rassasié ne chasse plus, mais il se DÉFEND :
+   * qui le frappe le trouve en face. Il ne poursuit pas, il ne rôde pas, il ne
+   * hurle pas — il rend le coup, et il rompt s'il saigne. Un prédateur repu qui se
+   * laisserait tuer sans réagir serait un décor, pas un animal.
+   */
 }
 
 /** La levée des Cendreux (spec 2026-07-08). Ordres de grandeur, calibrage playtest. */

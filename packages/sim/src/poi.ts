@@ -9,7 +9,8 @@ import { elevationAt, terrainAt, isBlockingTile, type WorldMap, type Zone } from
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
 import { setTile, isWater } from './valleygen-primitives'
-import { TERRAIN_SCREE } from './balance'
+import { FAUNA, TERRAIN_SCREE } from './balance'
+import { distSq } from './geometry'
 
 // ids terrain (balance.ts) — repris localement pour lisibilité de la table.
 const SCREE = 9, ROCK = 5, BOULDERS = 16, GLACIER = 15, BURNT = 21, PEAT = 18, REED = 19,
@@ -347,14 +348,81 @@ function hasWalkableFootprint(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'
  * ne spawne pas (rare — un repaire sans sol praticable ne pose rien).
  */
 export function spawnPoiMonsters(state: SimState, seed: number): void {
-  for (const z of state.map.zones) {
-    const t = POI_TYPES.find((p) => p.slug === z.kind)
-    if (!t?.monster) continue
-    const candidates = walkableTilesFor(state.map, z)
-    if (candidates.length === 0) continue // aucune tuile praticable dans/autour de l'empreinte
-    const r = hash2(z.x, z.y, seed ^ 0x4d4f4e) // 'MON'
-    const idx = Math.min(candidates.length - 1, Math.floor(r * candidates.length))
-    const tile = candidates[idx]!
-    spawnMonster(state, t.monster, tile.tx + 0.5, tile.ty + 0.5)
+  for (let zone = 0; zone < state.map.zones.length; zone++) {
+    // On RETIENT les lieux peuplés : eux seuls repeupleront (spec faune R16). Le
+    // peuplement appartient à l'hôte, et un monde qui n'a jamais voulu de bêtes de
+    // lieu ne doit pas en voir apparaître au bout de quatre minutes.
+    if (populateDen(state, zone, seed) && !state.dens.includes(zone)) state.dens.push(zone)
+  }
+}
+
+/** Pose la bête d'un lieu sur son empreinte. Sans effet si le lieu n'en a pas. */
+function populateDen(state: SimState, zone: number, seed: number): boolean {
+  const z = state.map.zones[zone]
+  if (!z) return false
+  const t = POI_TYPES.find((p) => p.slug === z.kind)
+  if (!t?.monster) return false
+  const candidates = walkableTilesFor(state.map, z)
+  if (candidates.length === 0) return false // aucune tuile praticable dans/autour de l'empreinte
+  const r = hash2(z.x, z.y, seed ^ 0x4d4f4e) // 'MON'
+  const idx = Math.min(candidates.length - 1, Math.floor(r * candidates.length))
+  const tile = candidates[idx]!
+  const id = spawnMonster(state, t.monster, tile.tx + 0.5, tile.ty + 0.5)
+  const born = state.monsters.find((m) => m.entityId === id)
+  if (born) born.homePoi = zone // elle appartient à ce lieu, et elle y reviendra
+  return true
+}
+
+/**
+ * LE RETOUR DES BÊTES DE LIEU (spec faune R16).
+ *
+ * La bête d'une tanière est RÉSIDENTE : elle ne se dissipe pas avec la faune
+ * ambiante. Mais tuée, elle ne revenait jamais — et le lieu devenait une coquille
+ * vide pour le reste de la saison. Un joueur qui « nettoyait » les tanières
+ * supprimait définitivement une source de viande de sa vallée.
+ *
+ * Elle repeuple donc son lieu après `DEN_RESPAWN_TICKS` — mais **jamais sous les
+ * yeux de quelqu'un** (`DEN_SPAWN_CLEARANCE`) : une bête qui se matérialise devant
+ * vous, c'est le décor qui avoue. Tant qu'un avatar campe la tanière, on attend.
+ *
+ * Ce n'est PAS un robinet : le délai est long, et un seul occupant par lieu. On ne
+ * farme pas une tanière — on y revient.
+ */
+export function advanceDens(state: SimState, seed: number): void {
+  if (state.dens.length === 0) return // aucun lieu peuplé par l'hôte : rien à repeupler
+
+  const monsterIds = new Set(state.monsters.map((m) => m.entityId))
+  const avatars = state.entities.filter((e) => !monsterIds.has(e.id) && e.hp > 0)
+  const occupied = new Set<number>()
+  for (const m of state.monsters) if (m.homePoi !== undefined) occupied.add(m.homePoi)
+
+  for (const zone of state.dens) {
+    const z = state.map.zones[zone]
+    if (!z) continue
+    if (occupied.has(zone)) continue // sa bête est là : rien à faire
+
+    const pending = state.denRespawns.find((d) => d.zone === zone)
+    if (!pending) {
+      // Elle vient de tomber : on note l'heure de son retour.
+      state.denRespawns.push({ zone, at: state.tick + FAUNA.DEN_RESPAWN_TICKS })
+      continue
+    }
+    if (state.tick < pending.at) continue
+
+    // L'heure est venue — mais pas devant témoin.
+    const cx = z.x + z.w / 2
+    const cy = z.y + z.h / 2
+    let watched = false
+    for (const a of avatars) {
+      if (distSq(a.x, a.y, cx, cy) <= FAUNA.DEN_SPAWN_CLEARANCE * FAUNA.DEN_SPAWN_CLEARANCE) {
+        watched = true
+        break
+      }
+    }
+    if (watched) continue
+
+    if (populateDen(state, zone, seed)) {
+      state.denRespawns = state.denRespawns.filter((d) => d.zone !== zone)
+    }
   }
 }

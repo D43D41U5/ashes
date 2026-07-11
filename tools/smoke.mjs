@@ -93,6 +93,92 @@ const PROBE = () => {
 }
 
 const SCENARIOS = {
+  /**
+   * LE MONDE EST-IL VIVANT ? On laisse la faune ambiante peupler l'anneau, on
+   * compte ce qui vit vraiment autour du joueur, et on regarde si ça BOUGE :
+   * deux relevés de positions à 2 s d'intervalle. Une bête immobile est un bug.
+   */
+  async faune(page) {
+    const census = () =>
+      page.evaluate(() => {
+        const scene = window.__BRAISES__.scene
+        const monsters = scene.view.monsters
+        // La position RENDUE du sprite (relief compris), pas la coordonnée logique.
+        const v = scene.cameras.main.worldView
+        const par = {}
+        const positions = {}
+        let enVue = 0
+        for (const m of monsters) {
+          par[m.type] = (par[m.type] ?? 0) + 1
+          const rec = scene.view.others.get(m.entityId)
+          if (!rec) continue
+          const s = rec.sprite
+          positions[m.entityId] = `${s.x.toFixed(1)},${s.y.toFixed(1)}`
+          if (s.x >= v.x && s.x <= v.x + v.width && s.y >= v.y && s.y <= v.y + v.height) enVue++
+        }
+        const p = scene.registry.get('playerPos')
+        // Diagnostic : le champ caméra et les 3 bêtes les plus proches du joueur.
+        const proches = monsters
+          .map((m) => {
+            const rec = scene.view.others.get(m.entityId)
+            if (!rec) return null
+            const d = Math.hypot(rec.sprite.x / 16 - p.x, rec.sprite.y / 16 - p.y)
+            return { type: m.type, d: d.toFixed(1), sx: rec.sprite.x.toFixed(0), sy: rec.sprite.y.toFixed(0) }
+          })
+          .filter(Boolean)
+          .sort((x, y) => x.d - y.d)
+          .slice(0, 3)
+        const vue = `x[${v.x.toFixed(0)}..${(v.x + v.width).toFixed(0)}] y[${v.y.toFixed(0)}..${(v.y + v.height).toFixed(0)}]`
+        // La vie ambiante (hors sim) : essaims de lucioles et oiseaux en vol.
+        const al = scene.ambientLife
+        const essaims = al ? al.swarms.length : 0
+        const oiseaux = al ? al.birds.length : 0
+        // Les hardes : combien de groupes, et de quelle taille.
+        const hardes = {}
+        for (const m of monsters) if (m.herdId !== undefined) hardes[m.herdId] = (hardes[m.herdId] ?? 0) + 1
+        const alphas = monsters.filter((m) => m.alpha).length
+        const traque = monsters.filter((m) => m.stalking).length
+        return {
+          par, positions, enVue, total: monsters.length, vue, proches,
+          joueur: `${p.x.toFixed(1)},${p.y.toFixed(1)}`,
+          essaims, oiseaux, hardes: Object.values(hardes), alphas, traque,
+        }
+      })
+
+    // On MARCHE. La faune naît hors-champ (spec faune R1) : un joueur planté ne
+    // la croise que par la dérive du broutage. C'est en avançant qu'on entre
+    // dans l'anneau — et c'est la condition réelle du jeu.
+    // `--vers-la-foret` marche vers l'ouest (le massif) : c'est là que vivent les
+    // sangliers et, la nuit, les lucioles. Sinon on part vers l'est (la prairie).
+    const touche = process.argv.includes('--vers-la-foret') ? 'KeyA' : 'KeyD'
+    const depart = await census()
+    await page.keyboard.down(touche)
+    await page.waitForTimeout(18000)
+    const a = await census()
+    console.log(`faune vivante : ${a.total} bêtes — ${JSON.stringify(a.par)}`)
+    console.log(`  joueur : ${depart.joueur} → ${a.joueur} (il a marché ?)`)
+    console.log(`  à l'écran : ${a.enVue} bêtes · champ caméra ${a.vue}`)
+    console.log(`  hardes : ${a.hardes.length ? a.hardes.join(' + ') + ' têtes' : 'aucune'}`)
+    console.log(`  ambiance : ${a.essaims} essaim(s) de lucioles · ${a.oiseaux} oiseau(x) en vol`)
+    console.log(`  meutes : ${a.alphas} alpha(s) · ${a.traque} loup(s) en traque`)
+    console.log(`  les 3 plus proches : ${a.proches.map((p) => `${p.type} à ${p.d}t (${p.sx},${p.sy})`).join(' · ')}`)
+
+    await page.waitForTimeout(2000)
+    const b = await census()
+    await page.keyboard.up(touche)
+    const communes = Object.keys(a.positions).filter((id) => id in b.positions)
+    const bougé = communes.filter((id) => a.positions[id] !== b.positions[id])
+    console.log(`  mouvement : ${bougé.length}/${communes.length} bêtes ont changé de position en 2 s`)
+    if (communes.length > 0 && bougé.length === 0) console.log('  ✗ TOUT EST FIGÉ — la faune ne bouge pas')
+
+    await page.screenshot({ path: `${OUT}/faune.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(3.2))
+    await page.waitForTimeout(600)
+    await page.screenshot({ path: `${OUT}/faune-zoom.png` })
+    console.log(`  captures : faune.png / faune-zoom.png`)
+    return b
+  },
+
   /** Le jeu démarre-t-il, rend-il, et que contient sa vallée ? */
   async default(page) {
     const s = await page.evaluate(PROBE)

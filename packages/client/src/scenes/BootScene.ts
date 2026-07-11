@@ -15,7 +15,11 @@ export class BootScene extends Phaser.Scene {
     this.makeSprite('spr-player', 0xf0e6c8, 0x8a6f3c)
     this.makeSprite('spr-npc', 0x9aa4b5, 0x4a5364)
     this.makeSprite('spr-zombie', 0x7fa05a, 0x3d5230)
-    this.makeSprite('spr-boar', 0x8a5a38, 0x4a2e1a)
+    // Le Cendreux : cendre et braise. Il était rendu comme un SANGLIER (tout ce
+    // qui n'était pas zombie tombait sur spr-boar) — une bête à 34 dégâts
+    // déguisée en gibier. Il a désormais son propre visage.
+    this.makeSprite('spr-cendreux', 0xb8b0a4, 0x6b3a20)
+    this.makeFauna()
 
     const g = this.add.graphics()
     g.fillStyle(0xcac2b2) // cadavre : ossements
@@ -24,6 +28,15 @@ export class BootScene extends Phaser.Scene {
     g.fillRect(9, 4, 2, 8)
     g.generateTexture('spr-corpse', 16, 16)
     g.destroy()
+
+    // L'oiseau vu de dessus : un chevron. À cette échelle, c'est tout ce que
+    // l'œil retient d'un vol — et ça suffit à savoir que quelque chose vit.
+    const b = this.add.graphics()
+    b.fillStyle(0x2e2a26)
+    b.fillTriangle(0, 0, 5, 3, 0, 2)
+    b.fillTriangle(10, 0, 5, 3, 10, 2)
+    b.generateTexture('fx-bird', 10, 4)
+    b.destroy()
 
     this.makeStructures()
     this.makeGlowTexture()
@@ -216,6 +229,78 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0xd8dde6).fillCircle(8, 12, 4) // congère
     tex('cl-snowdrift')
 
+    g.destroy()
+  }
+
+  /**
+   * Les trois gibiers (spec faune R8). Un carré marron ne dit pas « sanglier » :
+   * ce qui rend une bête lisible à 20 tuiles, c'est sa SILHOUETTE. Le sanglier
+   * est bas et massif, le cerf haut et sur pattes, le lapin minuscule et dressé —
+   * on doit savoir ce qui détale avant d'avoir lu la couleur.
+   */
+  private makeFauna(): void {
+    const g = this.add.graphics()
+
+    // Sanglier : une masse basse, une hure qui pique vers l'avant, une défense.
+    g.fillStyle(0x4a2e1a).fillEllipse(11, 7, 20, 11) // corps (contour sombre)
+    g.fillStyle(0x8a5a38).fillEllipse(11, 7, 17, 8) // robe
+    g.fillStyle(0x6b442a).fillTriangle(2, 5, 2, 10, 9, 8) // hure, tendue vers l'avant
+    g.fillStyle(0xe8e0cc).fillRect(1, 6, 3, 1) // la défense — le détail qui prévient
+    g.fillStyle(0x3a2416).fillRect(5, 11, 2, 3).fillRect(9, 11, 2, 3).fillRect(15, 11, 2, 3) // pattes
+    g.generateTexture('spr-boar', 22, 15)
+    g.clear()
+
+    // Cerf : haut sur pattes, encolure dressée, bois. On le voit de loin, et il
+    // vous voit de plus loin encore.
+    g.fillStyle(0x4a3524).fillEllipse(11, 13, 16, 9) // corps
+    g.fillStyle(0x9b7448).fillEllipse(11, 13, 13, 6) // robe fauve
+    g.fillStyle(0x8a6640).fillRect(14, 5, 3, 7) // encolure
+    g.fillStyle(0x9b7448).fillEllipse(16, 5, 6, 4) // tête
+    g.fillStyle(0xcfc0a4) // les bois
+    g.fillRect(14, 0, 1, 4).fillRect(18, 0, 1, 4)
+    g.fillRect(13, 1, 1, 1).fillRect(19, 1, 1, 1)
+    g.fillStyle(0x3a2a1c) // pattes fines
+    g.fillRect(5, 16, 2, 6).fillRect(9, 16, 2, 6).fillRect(14, 16, 2, 6)
+    g.generateTexture('spr-deer', 22, 22)
+    g.clear()
+
+    // Loup : bas, tendu, la tête portée dans l'axe du dos. Là où le cerf est
+    // vertical et le sanglier massif, le loup est une LIGNE — il est fait pour
+    // couvrir du terrain, et sa silhouette doit le dire avant qu'il n'arrive.
+    g.fillStyle(0x2e3238).fillEllipse(11, 9, 19, 8) // corps (contour)
+    g.fillStyle(0x6b7078).fillEllipse(11, 9, 16, 5) // robe grise
+    g.fillStyle(0x5c6168).fillTriangle(2, 6, 2, 11, 10, 9) // museau dans l'axe
+    g.fillStyle(0x3a3f46).fillTriangle(4, 3, 6, 6, 2, 6) // oreille dressée
+    g.fillStyle(0xe8e4dc).fillRect(1, 8, 2, 1) // le croc
+    g.fillStyle(0x2e3238) // pattes hautes : il court
+    g.fillRect(5, 12, 2, 5).fillRect(9, 12, 2, 5).fillRect(15, 12, 2, 5)
+    g.fillStyle(0x6b7078).fillTriangle(19, 6, 22, 3, 20, 10) // la queue basse
+    g.generateTexture('spr-wolf', 22, 17)
+    g.clear()
+
+    // L'ALPHA. Il faut le RECONNAÎTRE d'un coup d'œil, au milieu des siens et dans
+    // le noir : c'est toute la règle (le tuer disperse la meute). Donc trois
+    // signaux qui ne se ressemblent pas — il est plus GRAND (voir snapshot-view),
+    // plus SOMBRE, et il porte une échine claire que personne d'autre n'a.
+    g.fillStyle(0x1c1f24).fillEllipse(13, 10, 24, 10) // corps, plus lourd
+    g.fillStyle(0x4a4f57).fillEllipse(13, 10, 21, 7) // robe noire
+    g.fillStyle(0x8e949c).fillRect(6, 7, 13, 2) // l'échine argentée : sa marque
+    g.fillStyle(0x3a3f46).fillTriangle(2, 7, 2, 13, 11, 10) // museau
+    g.fillStyle(0x1c1f24).fillTriangle(4, 3, 7, 7, 2, 7) // oreille
+    g.fillStyle(0xf2eee6).fillRect(1, 9, 3, 1) // le croc, plus long
+    g.fillStyle(0x1c1f24)
+    g.fillRect(6, 14, 3, 6).fillRect(11, 14, 3, 6).fillRect(17, 14, 3, 6) // pattes épaisses
+    g.fillStyle(0x4a4f57).fillTriangle(22, 7, 26, 3, 23, 12) // queue
+    g.generateTexture('spr-wolf-alpha', 26, 20)
+    g.clear()
+
+    // Lapin : une boule, deux oreilles. La silhouette la plus lisible du lot.
+    g.fillStyle(0x6b5a48).fillEllipse(6, 8, 10, 8) // corps
+    g.fillStyle(0xa8927a).fillEllipse(6, 8, 8, 6) // robe
+    g.fillStyle(0xa8927a).fillCircle(9, 5, 2) // tête
+    g.fillStyle(0x6b5a48).fillRect(8, 0, 1, 4).fillRect(10, 0, 1, 4) // les oreilles
+    g.fillStyle(0xe6e0d4).fillCircle(1, 9, 1) // scut : le point blanc qui détale
+    g.generateTexture('spr-rabbit', 12, 12)
     g.destroy()
   }
 

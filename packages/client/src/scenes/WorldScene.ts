@@ -56,6 +56,7 @@ import { ShadeLayer } from './world/shade-layer'
 import { PoiLayer } from './world/poi-layer'
 import { ShoreCliff } from './world/shore-cliff'
 import { FireGlow } from './world/fire-glow'
+import { AmbientLife } from './world/ambient-life'
 import { bindDebugKeys } from './world/debug-bindings'
 import { syncDebug } from './world/debug-overlay'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
@@ -138,6 +139,8 @@ export class WorldScene extends Phaser.Scene {
   private map!: WorldMap
   private ambientRect: Phaser.GameObjects.Rectangle | null = null
   private fireGlow: FireGlow | null = null
+  /** Oiseaux et lucioles — décor pur, hors sim (voir world/ambient-life.ts). */
+  ambientLife: AmbientLife | null = null
   private lastTime: GameTime | null = null
   /** Couvert de canopée lissé autour de l'avatar — piloté vers la valeur échantillonnée. */
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
@@ -307,6 +310,9 @@ export class WorldScene extends Phaser.Scene {
       .setOrigin(0)
       .setDepth(AMBIENT_DEPTH)
     this.fireGlow = new FireGlow(this)
+    this.ambientLife = new AmbientLife(this, (tx, ty) =>
+      tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height ? -1 : (this.map.terrain[ty * this.map.width + tx] ?? -1),
+    )
     this.cameras.main.setBounds(0, 0, worldW, worldH)
     this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
     this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
@@ -320,11 +326,11 @@ export class WorldScene extends Phaser.Scene {
     this.worldReady = true
   }
 
-  override update(_time: number, deltaMs: number): void {
+  override update(time: number, deltaMs: number): void {
     if (!this.worldReady) return
     this.ground.render(this.cameras.main)
-    this.clutter?.update(this.cameras.main)
-    this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y)
+    this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
+    this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y, time)
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
       this.shade.render(this.cameras.main, hour) // ombre du relief selon le soleil
@@ -334,7 +340,10 @@ export class WorldScene extends Phaser.Scene {
       this.pois.update(this.cameras.main, this.predicted.x, this.predicted.y, this.myKnownPois)
       const amb = ambientTint(hour)
       this.ambientRect?.setFillStyle(amb.color).setAlpha(amb.alpha)
-      this.fireGlow?.update(this.view.structures, this.view.villages, daylight(hour))
+      const day = daylight(hour)
+      this.fireGlow?.update(this.view.structures, this.view.villages, day, time)
+      // La vie ambiante : les oiseaux traversent, les lucioles ne sortent qu'à la nuit.
+      this.ambientLife?.update(this.cameras.main, time / 1000, deltaMs / 1000, 1 - day)
     }
 
     const dx = this.axis('right', 'left')
@@ -454,6 +463,14 @@ export class WorldScene extends Phaser.Scene {
         publishError(this.registry, event.reason, this.time.now)
       } else if (event.type === 'alarm_raised' && event.villageId === this.myVillageId) {
         publishAlarm(this.registry, this.time.now)
+      } else if (event.type === 'wolf_howl' && event.targetEntityId === this.playerId) {
+        // LE HURLEMENT (spec faune R13). C'est le seul avertissement que le joueur
+        // recevra avant de voir la meute se placer autour de lui — et le GDD §9bis
+        // en fait une règle : « annoncés, pas surprises ». Il passe par le canal
+        // des erreurs faute d'audio (le son est acté « après GATE 1 ») : c'est un
+        // pis-aller assumé, la vraie place de cette ligne est un cor dans le noir.
+        const meute = event.packSize > 1 ? `${event.packSize} loups` : 'Un loup'
+        publishError(this.registry, `Un hurlement, tout près. ${meute} vous ont choisi.`, this.time.now)
       }
       if (CHRONICLE_TYPES.has(event.type)) {
         this.eventLog.push(event)

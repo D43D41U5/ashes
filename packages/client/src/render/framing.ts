@@ -60,8 +60,14 @@ export const TIE_ACTOR = 0.8
 
 /** Coiffent le monde : canopée, voile de nuit, halos des Feux. */
 export const CANOPY_DEPTH = 1_000_000
+/** Les oiseaux passent AU-DESSUS des houppiers mais SOUS le voile de nuit : ils
+ * s'assombrissent au crépuscule comme le reste du monde. */
+export const FLYER_DEPTH = 1_050_000
 export const AMBIENT_DEPTH = 1_100_000
 export const GLOW_DEPTH = 1_200_000
+/** Les lucioles sont au-dessus du voile de nuit — sinon la nuit éteindrait
+ * précisément ce qui n'a de sens que la nuit. */
+export const SPARK_DEPTH = 1_250_000
 
 /** Au-dessus de tout : aperçu de construction, marqueurs d'objectif, chargement. */
 export const OVERLAY_DEPTH = 10_000_000

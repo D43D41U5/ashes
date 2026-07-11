@@ -25,6 +25,7 @@ import { advanceWorldEvents, type Horde } from './worldevents'
 import { rngNext } from './rng'
 import { advanceNpcs, type Npc } from './npc'
 import { advancePois } from './poi-discovery'
+import { advanceDens } from './poi'
 import { advanceTime, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
 import { advanceTemperature, coldSpeedFactor } from './temperature'
 import { applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
@@ -131,6 +132,29 @@ export interface SimState {
   events: SimEvent[]
   /** Outils de dev armés ? Faux partout sauf hôte de développement (voir debug.ts). */
   debug: boolean
+  /** Plafond de faune ambiante de ce monde (0 = aucune ; spec faune R1). */
+  faunaCap: number
+  /** Prochaine identité de harde à distribuer (spec faune R9). */
+  nextHerdId: number
+  /**
+   * LA PRESSION DE CHASSE (spec faune R16). Les endroits où l'on vient d'abattre
+   * du gibier : le peuplement ambiant n'y sème plus rien jusqu'à `until`. C'est
+   * ce qui interdit de farmer sur place — le gibier déserte ce qu'on chasse.
+   */
+  faunaQuiet: { x: number; y: number; until: number }[]
+  /**
+   * Les LIEUX que l'hôte a peuplés d'une bête (index de `map.zones`). Le
+   * peuplement reste une décision d'hôte, exactement comme `faunaCap` : sans
+   * cette liste, `advanceDens` prendrait « ce lieu n'a pas de bête » pour « sa
+   * bête est morte » et sèmerait des sangliers dans des mondes qui n'en voulaient
+   * pas — jusque dans les bancs de test headless, dont il a tué les villageois.
+   */
+  dens: number[]
+  /**
+   * Les tanières dont la bête est tombée, et le tick où elle reviendra (spec
+   * faune R16). Sans ça, un lieu tué une fois reste vide pour la saison.
+   */
+  denRespawns: { zone: number; at: number }[]
 }
 
 export interface SimOptions {
@@ -142,6 +166,14 @@ export interface SimOptions {
   cycleOffset?: number
   /** Arme les `DebugAction` (TP, heure, invulnérabilité). Jamais en production. */
   debug?: boolean
+  /**
+   * Combien de bêtes ambiantes ce monde porte-t-il (spec faune R1) ? C'est une
+   * décision d'HÔTE, comme la densité de nœuds ou l'échelle du calendrier :
+   * une carte de jeu grouille (`FAUNA.CAP`), un banc de test est vierge (0, le
+   * défaut) — sinon chaque scénario headless traînerait trente lapins et un
+   * flux de PRNG qu'il n'a pas demandé.
+   */
+  faunaCap?: number
 }
 
 /** Intention d'un avatar pour un tick : déplacement, postures, au plus une action. */
@@ -187,6 +219,11 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     nextStructureId: 1,
     events: [],
     debug: options.debug ?? false,
+    faunaCap: options.faunaCap ?? 0,
+    nextHerdId: 1,
+    faunaQuiet: [],
+    dens: [],
+    denRespawns: [],
   }
   // Le tick 0 débute le jour 1 et l'acte I ; la phase du cycle dépend de
   // cycleOffset (0 = aube), donc on émet le bon franchissement jour/nuit.
@@ -307,6 +344,8 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   }
   // La découverte est la conséquence du pas qu'on vient de faire (spec lieux R6).
   advancePois(state)
+  // Les tanières vidées se repeuplent (spec faune R16) — hors de vue, et jamais vite.
+  advanceDens(state, state.seed)
   // Le monde d'abord (spawns/alarmes), puis PNJ, monstres, résolution.
   advanceWorldEvents(state)
   advanceNpcs(state)

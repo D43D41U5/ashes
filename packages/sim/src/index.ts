@@ -25,6 +25,7 @@ export { POI,
   BALANCE,
   COMBAT,
   CONVOY_LOOT,
+  FAUNA,
   FOOD_VALUES,
   LOOT_VALUES,
   MONSTER_DEFS,
@@ -87,6 +88,7 @@ export { advanceNpcs } from './npc'
 export type { Npc, NpcTaskState } from './npc'
 export { advanceMonsters } from './monsters'
 export type { Monster } from './monsters'
+export { isPrey, isPredator, isWild, activityAt } from './faune'
 export { advanceCendreux, willRiseAsCendreux } from './cendreux'
 export { POI_CHARGES, poiFamily, advancePois } from './poi-discovery'
 export type { PoiCharge } from './poi-discovery'

@@ -12,11 +12,13 @@ import {
   type Corpse,
   type Entity,
   type Monster,
+  type MonsterType,
   type Npc,
   type ResourceNode,
   type Structure,
 } from '@braises/sim'
 import Phaser from 'phaser'
+import { windSway } from '../../render/wind'
 import type { NodeDelta, SnapshotMessage } from '../../protocol'
 import {
   actorPlacement,
@@ -43,9 +45,59 @@ const ACTOR_FOOTPRINTS: Record<string, ActorFootprint> = {
   'spr-player': { widthTiles: 1, heightTiles: 1.6 },
   'spr-npc': { widthTiles: 1, heightTiles: 1.6 },
   'spr-zombie': { widthTiles: 1, heightTiles: 1.6 },
-  'spr-boar': { widthTiles: 1.4, heightTiles: 1 },
+  // Le gibier (spec faune) : sa TAILLE est la première information. Le lapin
+  // rase le sol, le cerf domine le joueur — on sait ce qu'on approche.
+  'spr-boar': { widthTiles: 1.5, heightTiles: 1 },
+  'spr-deer': { widthTiles: 1.4, heightTiles: 1.8 },
+  'spr-rabbit': { widthTiles: 0.6, heightTiles: 0.6 },
+  'spr-wolf': { widthTiles: 1.5, heightTiles: 1.15 },
+  // L'alpha DÉBORDE : il est visiblement plus gros que les siens. C'est le
+  // signal qui rend la règle jouable — on ne peut pas le rater dans la meute.
+  'spr-wolf-alpha': { widthTiles: 2, heightTiles: 1.55 },
 }
 const DEFAULT_FOOTPRINT: ActorFootprint = { widthTiles: 1, heightTiles: 1.6 }
+
+/** Combien la canopée prend le vent (voir render/wind.ts). Un houppier est lourd :
+ * il oscille moins qu'un roseau, mais il est large, donc ça se voit. */
+const CROWN_WIND_TAKE = 0.5
+
+/** Chaque type de monstre a sa texture — exhaustif, donc un nouveau type ne
+ * peut pas se glisser dans le monde déguisé en sanglier. */
+const MONSTER_TEXTURES: Record<MonsterType, string> = {
+  zombie: 'spr-zombie',
+  cendreux: 'spr-cendreux',
+  boar: 'spr-boar',
+  deer: 'spr-deer',
+  rabbit: 'spr-rabbit',
+  wolf: 'spr-wolf',
+}
+
+/**
+ * LA COULEUR DIT L'INTENTION. Les règles les plus intéressantes de la faune sont
+ * des ÉTATS — le sanglier qui fouge est approchable, celui qui menace est sur le
+ * point de charger, le loup qui rampe ne vous a pas encore vu. Sans un signal
+ * visible, ces règles n'existent pas pour le joueur : il se fait encorner sans
+ * comprendre, et le jeu passe pour injuste.
+ *
+ * L'art est provisoire (tout est généré au boot), donc le signal l'est aussi :
+ * une teinte. Quand la direction artistique arrivera, ce sera une posture — tête
+ * baissée, échine hérissée, ventre au sol — et cette fonction disparaîtra.
+ */
+function beastTint(monster: Monster | undefined, windup: boolean, isNpc: boolean): number {
+  if (!monster) return windup ? 0xff8866 : isNpc ? 0xe8d9a0 : 0xffffff
+
+  // Le sanglier (spec faune R14) — les trois secondes qui décident de tout.
+  if (monster.threatSince !== undefined) return 0xff6a4a // IL MENACE : reculez.
+  if (monster.windedUntil !== undefined) return 0x9aa8b4 // il souffle : frappez.
+  if (monster.rootUntil !== undefined) return 0x8a7a5a // il fouge : approchez.
+
+  // Le loup en traque (R11) : tapi, il se fond dans le sous-bois. On le distingue
+  // mal — c'est le propos, et c'est loyal : il est là, à qui sait regarder.
+  if (monster.stalking) return 0x7a8290
+
+  return windup ? 0xffffff : 0xdddddd
+}
+
 /** Clé d'index tuile→nœud : `tx * STRIDE + ty`. STRIDE > toute coordonnée de
  * tuile (carte alpine pleine ≤ 3600) → injectif, pas de collision de clé. */
 const NODE_TILE_STRIDE = 1_000_000
@@ -161,7 +213,9 @@ export class SnapshotView {
       // dormeur s'estompe ; un wind-up flashe (lisibilité, spec R4).
       const npc = npcByEntity.get(entity.id)
       const monster = monsterByEntity.get(entity.id)
-      const key = monster ? (monster.type === 'zombie' ? 'spr-zombie' : 'spr-boar') : 'spr-npc'
+      // L'alpha de meute a sa propre silhouette (spec faune R12) : le joueur doit
+      // pouvoir le désigner d'un coup d'œil, c'est LUI qu'il faut abattre.
+      const key = monster ? (monster.alpha ? 'spr-wolf-alpha' : MONSTER_TEXTURES[monster.type]) : 'spr-npc'
       if (record.textureKey !== key) {
         // setTexture réinitialise la frame : ne le rappeler que si la texture
         // change vraiment. `syncActor` re-applique aussitôt l'emprise (R12).
@@ -169,9 +223,7 @@ export class SnapshotView {
         record.textureKey = key
         this.syncActor(record.sprite, record.toX, record.toY, key)
       }
-      record.sprite.setTint(
-        monster ? (entity.windup ? 0xffffff : 0xdddddd) : entity.windup ? 0xff8866 : npc ? 0xe8d9a0 : 0xffffff,
-      )
+      record.sprite.setTint(beastTint(monster, entity.windup !== undefined, npc !== undefined))
       record.sprite.setAlpha(npc?.sleeping ? 0.45 : 1)
     }
     for (const [id, o] of this.others) {
@@ -247,7 +299,7 @@ export class SnapshotView {
    * houppier (bande propre, alpha du disque de découvert). `playerX/playerY` sont
    * la position LOGIQUE de l'avatar en tuiles : le disque suit l'avatar, pas la
    * caméra, sinon il glisserait avec le lookahead du pointeur. */
-  renderNodes(camera: Phaser.Cameras.Scene2D.Camera, playerX: number, playerY: number): void {
+  renderNodes(camera: Phaser.Cameras.Scene2D.Camera, playerX: number, playerY: number, now: number): void {
     const v = camera.worldView
     // La fenêtre s'élargit vers le BAS : un billboard planté SOUS l'écran remonte
     // dans la vue de son lift (jusqu'à RELIEF_H px = ⌈H/TILE⌉ tuiles) + les cimes
@@ -307,6 +359,10 @@ export class SnapshotView {
         const dy = feetY - (ty + 1)
         const d = Math.sqrt(dx * dx + dy * dy)
         crown.setAlpha(n.stock > 0 ? crownAlpha(d) : 0.25)
+        // La canopée prend le vent, elle aussi. Sans ça, la forêt reste une photo
+        // posée sur un sol qui remue — et c'est le contraste qui trahit le décor.
+        // Origine (0.5, 1) : le houppier bascule autour du haut du tronc.
+        crown.setRotation(windSway(tx + j.dx, ty + j.dy, now, CROWN_WIND_TAKE))
         crown.setVisible(true)
         crownsUsed++
       }

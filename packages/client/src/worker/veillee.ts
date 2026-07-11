@@ -8,6 +8,7 @@
 import {
   createSim,
   cycleOffsetForStartHour,
+  FAUNA,
   generateAlpineTerrain,
   generateNodes,
   spawnEntity,
@@ -65,6 +66,9 @@ export function createVeillee(): { sim: SimState; playerId: number; spawn: { x: 
     calendarScale: VEILLEE_CALENDAR_SCALE,
     nodes,
     cycleOffset: cycleOffsetForStartHour(VEILLEE_START_HOUR),
+    // Le monde est habité (spec faune) : la faune ambiante naît hors-champ
+    // autour du joueur et se dissipe derrière lui. Plafond, donc coût constant.
+    faunaCap: FAUNA.CAP,
     // Les outils de dev (TP, heure, invulnérabilité) ne sont armés QUE dans un
     // build de développement : `import.meta.env.DEV` est statiquement faux en
     // prod, donc l'autorité y refuse ces actions même si un client les envoie.

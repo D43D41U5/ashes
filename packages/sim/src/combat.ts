@@ -7,7 +7,7 @@
  * monstres — personne ne triche.
  */
 import { damageModifier, hasAggressionBetween, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
-import { ALIGNMENT, BALANCE, CENDREUX, COMBAT, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
+import { ALIGNMENT, BALANCE, CENDREUX, COMBAT, FAUNA, MONSTER_DEFS, WEAPON_DAMAGE } from './balance'
 import { willRiseAsCendreux } from './cendreux'
 import { isInvulnerable } from './debug'
 import { emitEvent } from './events'
@@ -175,9 +175,21 @@ function resolveStrike(state: SimState, attacker: Entity): void {
   const damage = attacker.wounds.arm ? baseDamage * COMBAT.ARM_WOUND_DAMAGE : baseDamage
   const rangeSq = COMBAT.ATTACK_RANGE * COMBAT.ATTACK_RANGE
 
+  // Une bête ne mord pas les siens. Le pipeline de résolution ne connaît pas les
+  // camps (« personne ne triche ») et frappe TOUT ce qui est dans l'arc — ce qui
+  // était sans conséquence tant que les monstres arrivaient en file. Depuis
+  // l'encerclement (spec faune R11), les loups se placent de part et d'autre de
+  // la proie : l'arc de 90° attrapait le frère d'en face, et la meute se décimait
+  // toute seule (attrapé par le test de dispersion). La harde/meute est la SEULE
+  // exception, et elle est étroite : deux zombies d'une même horde n'ont pas de
+  // `herdId`, et continuent donc de se gêner comme avant.
+  const herdOf = (id: number): number | undefined => state.monsters.find((m) => m.entityId === id)?.herdId
+  const attackerHerd = herdOf(attacker.id)
+
   let struck = false
   for (const target of state.entities) {
     if (target.id === attacker.id || target.hp <= 0) continue
+    if (attackerHerd !== undefined && herdOf(target.id) === attackerHerd) continue
     const tx = target.x - attacker.x
     const ty = target.y - attacker.y
     const d2 = tx * tx + ty * ty
@@ -303,6 +315,18 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
     state.monsters = state.monsters.filter((m) => m.entityId !== entity.id)
     state.entities = state.entities.filter((e) => e.id !== entity.id)
     emitEvent(state, { type: 'monster_slain', tick: state.tick, monsterType: monster.type, byEntityId })
+
+    // LA PRESSION DE CHASSE (spec faune R16). Le gibier déserte ce qu'on vient de
+    // chasser : plus une seule naissance ambiante autour d'ici pendant un moment.
+    // Sans cette règle, l'anneau de peuplement remplace la bête abattue en une
+    // demi-seconde, et la chasse devient un robinet qu'on ouvre sans bouger.
+    //
+    // Un LOUP ne compte pas : tuer un prédateur n'a jamais fait fuir le gibier.
+    const wild = MONSTER_DEFS[monster.type]
+    if ((wild.habitat?.length ?? 0) > 0 && !wild.predator) {
+      state.faunaQuiet = state.faunaQuiet.filter((q) => q.until > state.tick)
+      state.faunaQuiet.push({ x: entity.x, y: entity.y, until: state.tick + FAUNA.QUIET_TICKS })
+    }
     return
   }
 

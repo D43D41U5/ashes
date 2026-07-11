@@ -117,13 +117,38 @@ export function ambientTint(hour: number): { color: number; alpha: number } {
 }
 
 /**
+ * Le scintillement d'une flamme : deux ondes incommensurables (√2 : leur rapport
+ * est irrationnel, donc elles ne se rejoignent jamais) plus une troisième, rapide
+ * et faible, pour le crépitement. Une seule sinusoïde donnerait un clignotant de
+ * chantier — la flamme, elle, ne se répète pas.
+ *
+ * `seed` décale la phase par Feu : deux foyers voisins ne battent pas ensemble.
+ */
+function flicker(timeMs: number, seed: number): number {
+  const t = timeMs * 0.001 + seed
+  const slow = Math.sin(t * 2.1)
+  const fast = Math.sin(t * 3.7 * Math.SQRT2)
+  const crackle = Math.sin(t * 11.3)
+  return 1 + 0.09 * slow + 0.06 * fast + 0.025 * crackle
+}
+
+/**
  * Halo d'un Feu : couleur d'alignement, plus fort la nuit (∝ 1 - day) et pour un
  * village plus engagé (∝ |warmth|). `radius` en tuiles, `alpha` pour blend ADD.
+ *
+ * `timeMs`/`seed` font PALPITER le halo. Sans eux, la fonction est pure de
+ * l'heure — et un feu parfaitement immobile est la chose la plus morte du monde.
  */
-export function fireGlow(warmth: number, day: number): { color: number; radius: number; alpha: number } {
+export function fireGlow(
+  warmth: number,
+  day: number,
+  timeMs = 0,
+  seed = 0,
+): { color: number; radius: number; alpha: number } {
   const engage = Math.min(1, Math.abs(warmth) / 100)
   const dark = 1 - day
-  const alpha = Math.min(GLOW_MAX_ALPHA, GLOW_MAX_ALPHA * dark * (0.6 + 0.4 * engage))
-  const radius = GLOW_MIN_RADIUS_TILES + GLOW_SPAN_TILES * engage
+  const beat = flicker(timeMs, seed)
+  const alpha = Math.min(GLOW_MAX_ALPHA, GLOW_MAX_ALPHA * dark * (0.6 + 0.4 * engage) * beat)
+  const radius = (GLOW_MIN_RADIUS_TILES + GLOW_SPAN_TILES * engage) * beat
   return { color: warmthColor(warmth), radius, alpha }
 }

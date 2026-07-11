@@ -5,7 +5,7 @@
  * lire les wind-ups contre lui. Le sanglier est la chasse : neutre, fuit,
  * charge parfois blessé. IA dans /sim, aléa via le PRNG de la sim.
  */
-import { BALANCE, COMBAT, MONSTER_DEFS, TICK_DT_S, type MonsterType } from './balance'
+import { BALANCE, COMBAT, FAUNA, MONSTER_DEFS, TICK_DT_S, type MonsterType } from './balance'
 import { startAttack } from './combat'
 import { moveAvatar } from './collision'
 import { distSq } from './geometry'
@@ -14,6 +14,8 @@ import { spawnEntity, type Entity, type SimState } from './sim'
 import { computeFlowField } from './pathfinding'
 import { structureAt, structureBlocks } from './village'
 import { cendreuxStep } from './cendreux'
+import { advanceFauna, faunaStep, isPredator, isPrey, wolfStep, type Threat } from './faune'
+import { getGameTime } from './time'
 
 export interface Monster {
   entityId: number
@@ -26,6 +28,70 @@ export interface Monster {
   fleeing: boolean
   lastAttackerId: number | null
   path?: { tx: number; ty: number }[]
+  /**
+   * Bête du peuplement ambiant (spec faune R1) : elle se dissipe quand plus
+   * personne n'est là pour la voir. Les bêtes de lieu (tanière) ne le sont pas —
+   * elles appartiennent à leur lieu et restent.
+   */
+  ambient?: boolean
+  /** Tick où la fuite a commencé — cadence les à-coups (-1 = ne fuit pas). */
+  fleeSince: number
+  /** La harde à laquelle cette bête appartient (spec faune R9). Absent = solitaire. */
+  herdId?: number
+  /**
+   * Le loup RAMPE vers son poste d'encerclement (spec faune R11). Tant que c'est
+   * vrai, la proie ne le repère que de bien plus près — et le client peut le
+   * montrer tapi. Faux dès qu'il se rue : la traque et la course sont deux choses.
+   */
+  stalking?: boolean
+  /** LE MÂLE ALPHA de la meute (spec faune R12) : plus gros, plus fort, VISIBLE. */
+  alpha?: boolean
+  /**
+   * L'entité de l'alpha de MA meute. Chaque loup la porte — c'est ainsi qu'il
+   * sait, sans registre ni recherche, que son chef est tombé. Le jour où l'alpha
+   * ne répond plus, la meute se disperse.
+   */
+  alphaId?: number
+  /**
+   * EN DÉROUTE (spec faune R12) : l'alpha est mort, la meute a éclaté. Ce loup ne
+   * chasse plus, n'engage plus, ne répond plus à personne — il fuit.
+   */
+  routed?: boolean
+  /**
+   * La proie pour laquelle cette meute a déjà hurlé (spec faune R13). On ne hurle
+   * qu'UNE fois par homme choisi : un avertissement qui se répète n'avertit plus.
+   */
+  howledAt?: number
+
+  /* ── Le sanglier (spec faune R14) ───────────────────────────────────────── */
+  /** Tick jusqu'auquel il FOUGE, groin au sol — donc distrait (absent = non). */
+  rootUntil?: number
+  /** Tick où il a commencé à MENACER, planté face à l'intrus (absent = non). */
+  threatSince?: number
+  /** Tick jusqu'auquel il CHARGE, dans une direction verrouillée (absent = non). */
+  chargeUntil?: number
+  /** La direction de la charge — verrouillée au départ : il ne tourne pas. */
+  chargeDx?: number
+  chargeDy?: number
+  /** A-t-il déjà encorné quelqu'un pendant CETTE charge ? (Un coup par charge.) */
+  chargeHit?: boolean
+  /** Tick jusqu'auquel il souffle après sa charge — immobile, offert (absent = non). */
+  windedUntil?: number
+
+  /* ── La satiété du prédateur (spec faune R15) ───────────────────────────── */
+  /** Tick jusqu'auquel il est REPU : il ne chasse plus (mais il se défend). */
+  satedUntil?: number
+  /** Tick jusqu'auquel il MANGE, planté sur la carcasse. */
+  eatingUntil?: number
+  /** La carcasse qu'il est en train de manger. */
+  mealCorpseId?: number
+
+  /**
+   * Le LIEU dont cette bête est la résidente (index de `map.zones`, spec faune
+   * R16). Elle ne se dissipe pas avec la faune ambiante — et quand elle tombe,
+   * son lieu la fait revenir. Absent = bête ambiante ou posée à la main.
+   */
+  homePoi?: number
 }
 
 export function spawnMonster(state: SimState, type: MonsterType, x: number, y: number): number {
@@ -41,6 +107,7 @@ export function spawnMonster(state: SimState, type: MonsterType, x: number, y: n
     wanderDy: 0,
     fleeing: false,
     lastAttackerId: null,
+    fleeSince: -1,
   })
   return id
 }
@@ -67,7 +134,16 @@ export function nearestPrey(state: SimState, entity: Entity, range: number): Ent
   return best
 }
 
-export function moveToward(state: SimState, monster: Monster, entity: Entity, tx: number, ty: number, flee: boolean): void {
+export function moveToward(
+  state: SimState,
+  monster: Monster,
+  entity: Entity,
+  tx: number,
+  ty: number,
+  flee: boolean,
+  /** Fraction d'allure : 1 = plein régime, FAUNA.GRAZE_SPEED = en flânant. */
+  gait = 1,
+): void {
   const def = MONSTER_DEFS[monster.type]
   let dx = tx - entity.x
   let dy = ty - entity.y
@@ -77,7 +153,7 @@ export function moveToward(state: SimState, monster: Monster, entity: Entity, tx
   }
   const sx = (dx > 0.15 ? 1 : dx < -0.15 ? -1 : 0) as -1 | 0 | 1
   const sy = (dy > 0.15 ? 1 : dy < -0.15 ? -1 : 0) as -1 | 0 | 1
-  const scale = (def.speed / BALANCE.WALK_SPEED_TILES_PER_S) * (entity.wounds.leg ? COMBAT.LEG_WOUND_SPEED : 1)
+  const scale = gait * (def.speed / BALANCE.WALK_SPEED_TILES_PER_S) * (entity.wounds.leg ? COMBAT.LEG_WOUND_SPEED : 1)
   const moved = moveAvatar(
     { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null },
     entity.x,
@@ -190,14 +266,74 @@ function attackBlockingStructure(state: SimState, monster: Monster, entity: Enti
 
 export function advanceMonsters(state: SimState): void {
   const flows: FlowCache = new Map()
+
+  // Les avatars (tout ce qui n'est pas un monstre) sont la liste des menaces :
+  // la faune n'a peur que d'eux, et ils sont peu nombreux.
+  const monsterIds = new Set(state.monsters.map((m) => m.entityId))
+  const avatars = state.entities.filter((e) => !monsterIds.has(e.id) && e.hp > 0)
+
+  // Index du tick. Sans lui, chaque monstre résolvait son entité par un `find`
+  // sur toute la liste — O(n²), tenable à 10 monstres, plus du tout avec une faune.
+  let byId = new Map<number, Entity>()
+  for (const e of state.entities) byId.set(e.id, e)
+
+  // Le peuplement d'abord : les bêtes nées ce tick jouent dès ce tick, celles que
+  // plus personne ne regarde ne coûtent pas un pas de plus, et une meute dont
+  // l'alpha est tombé se disperse avant d'avoir pu mordre une fois de plus.
+  advanceFauna(state, avatars, byId)
+
+  // Le peuplement a pu créer et retirer des entités : on réindexe.
+  byId = new Map<number, Entity>()
+  for (const e of state.entities) byId.set(e.id, e)
+
+  // Les hardes et les meutes du tick (spec faune R9/R11) — dérivé pur,
+  // reconstruit chaque tick, jamais sérialisé : seul `herdId` vit dans l'état.
+  const herds = new Map<number, Monster[]>()
+  for (const m of state.monsters) {
+    if (m.herdId === undefined) continue
+    const members = herds.get(m.herdId)
+    if (members) members.push(m)
+    else herds.set(m.herdId, [m])
+  }
+
+  // L'ÉCOSYSTÈME (spec faune R11). Deux listes, et elles se croisent :
+  //  — ce que le gibier CRAINT : les hommes ET les loups. Un cerf fuit le loup
+  //    exactement comme il fuit le chasseur. Chaque menace porte sa FURTIVITÉ :
+  //    un loup qui rampe vers son poste ne se repère que de tout près.
+  //  — ce que le loup CHASSE : les hommes ET le gibier. La vallée n'a pas deux
+  //    étages, elle en a un seul, et le joueur y est une pièce parmi d'autres.
+  const hour = getGameTime(state).hourOfCycle
+  const isAvatar = (id: number): boolean => !monsterIds.has(id)
+  const monsterByEntity = new Map<number, Monster>()
+  for (const m of state.monsters) monsterByEntity.set(m.entityId, m)
+
+  const threats: Threat[] = avatars.map((e) => ({ e, stealth: 1 }))
+  const quarry: Entity[] = [...avatars]
+  for (const m of state.monsters) {
+    const e = byId.get(m.entityId)
+    if (!e || e.hp <= 0) continue
+    if (isPredator(m.type)) threats.push({ e, stealth: m.stalking ? FAUNA.STALK_STEALTH : 1 })
+    else if (isPrey(m.type)) quarry.push(e)
+  }
+
   for (const monster of [...state.monsters]) {
-    const entity = state.entities.find((e) => e.id === monster.entityId)
+    const entity = byId.get(monster.entityId)
     if (!entity) continue
     const def = MONSTER_DEFS[monster.type]
     if (entity.windup) continue // en train de frapper : immobile
 
     if (monster.type === 'cendreux') {
       cendreuxStep(state, monster, entity)
+      continue
+    }
+
+    if (isPredator(monster.type)) {
+      wolfStep(state, monster, entity, quarry, byId, monsterByEntity, herds, hour, isAvatar)
+      continue
+    }
+
+    if (isPrey(monster.type)) {
+      faunaStep(state, monster, entity, threats, byId, herds, hour)
       continue
     }
 
@@ -231,25 +367,6 @@ export function advanceMonsters(state: SimState): void {
         moveToward(state, monster, entity, entity.x + monster.wanderDx, entity.y + monster.wanderDy, false)
       }
       continue
-    }
-
-    // Le sanglier : paisible tant qu'on ne le touche pas.
-    const wounded = entity.hp < def.hp
-    const attackedBy = monster.lastAttackerId !== null ? state.entities.find((e) => e.id === monster.lastAttackerId) : undefined
-    if (wounded && attackedBy) {
-      if (state.tick >= monster.thinkAt) {
-        monster.thinkAt = state.tick + def.thinkEveryTicks
-        // Blessé : fuit, mais charge parfois (spec R12).
-        monster.fleeing = roll(state) >= def.chargeChance
-      }
-      const d2 = distSq(entity.x, entity.y, attackedBy.x, attackedBy.y)
-      if (!monster.fleeing && d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
-        if (startAttack(state, entity, attackedBy.x - entity.x, attackedBy.y - entity.y, { windupTicks: def.windupTicks, damage: def.damage })) {
-          entity.cooldownUntil = state.tick + def.attackCooldownTicks
-        }
-      } else {
-        moveToward(state, monster, entity, attackedBy.x, attackedBy.y, monster.fleeing)
-      }
     }
   }
 }

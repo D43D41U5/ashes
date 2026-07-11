@@ -8,6 +8,7 @@ import Phaser from 'phaser'
 import { poiClearings, type WorldMap } from '@braises/sim'
 import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
 import { clutterAt, type PropKind, type SampleTerrain } from '../../render/clutter'
+import { windSway, WIND_TAKE } from '../../render/wind'
 import type { Warp } from '../../render/warp'
 
 const CLUTTER_MIN_ZOOM = 1.2 // en-deçà, on coupe le décor (props illisibles) : le canopy prend le relais
@@ -40,7 +41,7 @@ export class ClutterLayer {
     this.cleared = poiClearings(map)
   }
 
-  update(camera: Phaser.Cameras.Scene2D.Camera): void {
+  update(camera: Phaser.Cameras.Scene2D.Camera, now: number): void {
     let used = 0
     if (camera.zoom >= CLUTTER_MIN_ZOOM) {
       const v = camera.worldView
@@ -66,6 +67,10 @@ export class ClutterLayer {
             sprite.setPosition(feetX * TILE_PX, feetY * TILE_PX - this.warp.lift(feetX, feetY))
             sprite.setDisplaySize(TILE_PX * p.scale, TILE_PX * p.scale)
             sprite.setFlipX(p.mirror)
+            // Le vent. L'origine est aux PIEDS (0.5, 1) : une rotation fait donc
+            // plier le brin depuis sa base, comme une tige — et non tourner comme
+            // une aiguille d'horloge. Le rocher a un `take` de 0 : il ne bouge pas.
+            sprite.setRotation(windSway(feetX, feetY, now, WIND_TAKE[p.kind] ?? 0))
             // Un conifère trie avec les acteurs — on passe derrière, puis devant.
             // Le tri se fait sur les pieds RÉELS : deux props d'une même rangée
             // s'ordonnent par leur décalage sub-tuile, pas par l'ordre du pool.

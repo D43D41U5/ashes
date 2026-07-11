@@ -51,6 +51,14 @@ export type SimEvent =
   | { type: 'entity_respawned'; tick: number; entityId: number }
   | { type: 'entity_bandaged'; tick: number; entityId: number; byEntityId: number }
   | { type: 'monster_slain'; tick: number; monsterType: import('./balance').MonsterType; byEntityId: number }
+  /**
+   * LE HURLEMENT (spec faune R13). Une meute vient de choisir un homme. C'est un
+   * FAIT de jeu, pas un effet sonore : le GDD §9bis exige que tout événement se
+   * signale (« annoncés, pas surprises »), et c'est le seul avertissement que le
+   * joueur recevra avant de voir les loups se placer autour de lui. Émis une
+   * seule fois par meute et par proie.
+   */
+  | { type: 'wolf_howl'; tick: number; targetEntityId: number; packSize: number; x: number; y: number }
   | { type: 'corpse_looted'; tick: number; corpseId: number; byEntityId: number }
   | { type: 'structure_repaired'; tick: number; structureId: number; byEntityId: number }
   | {
