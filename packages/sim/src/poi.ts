@@ -71,12 +71,37 @@ export const POI_TYPES: PoiType[] = [
   { slug: 'petroglyphes', name: 'les Pétroglyphes', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.55, weight: 2, cap: 2, footprint: 2 },
 ]
 
-/** Types valides pour la tuile (biome + altitude). */
+/**
+ * Empreinte qu'aurait la Zone d'un type de POI centrée sur (tx,ty) — même calcul
+ * (`Math.floor(footprint / 2)`) que celui utilisé plus bas par `placePois` pour
+ * poser la Zone réellement : les deux doivent rester en accord.
+ */
+function footprintAt(t: PoiType, tx: number, ty: number): Pick<Zone, 'x' | 'y' | 'w' | 'h'> {
+  const half = Math.floor(t.footprint / 2)
+  return { x: tx - half, y: ty - half, w: t.footprint, h: t.footprint }
+}
+
+/**
+ * Types valides pour la tuile (biome + altitude + plafond) DONT l'empreinte
+ * contient au moins une tuile marchable.
+ *
+ * Sans ce dernier filtre, un type dont les biomes autorisés couvrent surtout du
+ * rock/glacier (Grotte, Belvédère, Source chaude…) pouvait recevoir une empreinte
+ * à 100 % bloquante — un lieu qu'on ne peut jamais fouler : `poisAt` (map.ts) ne
+ * teste QUE l'empreinte, jamais un anneau de secours. Option (a) de la revue :
+ * on écarte le TYPE inatteignable pour ce point, pas le point lui-même — un
+ * autre type, dont l'empreinte tombe sur du praticable, peut encore y naître.
+ */
 function candidatesFor(map: WorldMap, tx: number, ty: number, used: Map<string, number>): PoiType[] {
   const terr = terrainAt(map, tx, ty)
   const el = elevationAt(map, tx, ty)
   return POI_TYPES.filter(
-    (t) => t.biomes.includes(terr) && el >= (t.minElev ?? 0) && el <= (t.maxElev ?? 1) && (used.get(t.slug) ?? 0) < t.cap,
+    (t) =>
+      t.biomes.includes(terr) &&
+      el >= (t.minElev ?? 0) &&
+      el <= (t.maxElev ?? 1) &&
+      (used.get(t.slug) ?? 0) < t.cap &&
+      hasWalkableFootprint(map, footprintAt(t, tx, ty)),
   )
 }
 
@@ -142,7 +167,7 @@ function roman(n: number): string { return ROMANS[n] ?? String(n) }
  * (balayage row-major) : un index dans cette liste est donc un tirage
  * déterministe reproductible d'un run à l'autre.
  */
-function walkableTilesFor(map: WorldMap, z: Zone): Array<{ tx: number; ty: number }> {
+function walkableTilesFor(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): Array<{ tx: number; ty: number }> {
   const inFootprint: Array<{ tx: number; ty: number }> = []
   for (let ty = z.y; ty < z.y + z.h; ty++) {
     for (let tx = z.x; tx < z.x + z.w; tx++) {
@@ -159,6 +184,19 @@ function walkableTilesFor(map: WorldMap, z: Zone): Array<{ tx: number; ty: numbe
     }
   }
   return ring
+}
+
+/**
+ * L'empreinte elle-même (hors anneau de secours) contient-elle une tuile
+ * marchable ? Réutilise `walkableTilesFor` sans dupliquer sa logique de
+ * marche : si la tuile qu'elle retourne en premier n'est PAS dans l'empreinte,
+ * c'est que la fonction est retombée sur son anneau (empreinte à 100 %
+ * bloquante) — insuffisant ici, `poisAt` ne teste jamais l'anneau.
+ */
+function hasWalkableFootprint(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): boolean {
+  const [first] = walkableTilesFor(map, z)
+  if (first === undefined) return false
+  return first.tx >= z.x && first.tx < z.x + z.w && first.ty >= z.y && first.ty < z.y + z.h
 }
 
 /**
