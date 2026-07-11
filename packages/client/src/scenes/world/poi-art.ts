@@ -17,8 +17,10 @@
  *    Chaque volume a sa face claire en haut-à-gauche et son ombre en bas-à-droite,
  *    plus une ombre portée au sol qui l'ancre. Sans ça, un sprite flotte.
  *
- * La largeur est l'EMPREINTE RÉELLE (`footprint × 16`), celle que `poisAt` teste
- * quand on foule le lieu. On ne ment pas sur la taille de ce qu'on touche.
+ * L'EMPREINTE (`footprint × 16`) est ce qu'on FOULE — c'est elle que `poisAt`
+ * teste. Le SPRITE peut la déborder, exactement comme le houppier d'un arbre
+ * ordinaire (2 tuiles) déborde son tronc (0,25 tuile) : ce qu'on voit n'est pas
+ * ce qu'on touche, et c'est très bien ainsi. On ne ment que dans un sens.
  */
 import type Phaser from 'phaser'
 
@@ -28,7 +30,13 @@ export const TREE_PX = 44
 
 export interface PoiArt {
   slug: string
-  /** Largeur = empreinte réelle, en px. */
+  /**
+   * Largeur du SPRITE, en px. Par défaut l'empreinte réelle (`footprint × 16`),
+   * mais un lieu peut DÉBORDER — comme un arbre ordinaire, dont le houppier
+   * (2 tuiles) déborde largement son tronc (0,25 tuile). L'empreinte reste ce
+   * qu'on FOULE ; le sprite est ce qu'on VOIT. Sans ce découplage, l'Arbre
+   * remarquable (116 px de haut pour 32 de large) était un poteau.
+   */
   w: number
   /** Hauteur totale du sprite, en px. */
   h: number
@@ -41,8 +49,12 @@ export interface PoiArt {
   crown?: number
 }
 
-/** fp = empreinte (tuiles) · h = hauteur (px) · crown = part au-dessus des acteurs. */
-const ART: Record<string, { fp: number; h: number; crown?: number }> = {
+/**
+ * fp = empreinte (tuiles, ce qu'on FOULE) · h = hauteur (px) · crown = part
+ * dessinée au-dessus des acteurs · w = largeur du sprite SI elle déborde
+ * l'empreinte (ce qu'on VOIT).
+ */
+const ART: Record<string, { fp: number; h: number; crown?: number; w?: number }> = {
   // ── ÉCONOMIE ──
   gisement: { fp: 4, h: 40 },
   carriere: { fp: 4, h: 54 },
@@ -66,7 +78,9 @@ const ART: Record<string, { fp: number; h: number; crown?: number }> = {
   grotte: { fp: 2, h: 50, crown: 10 },
   cascade: { fp: 2, h: 92, crown: 52 }, //    une chute d'eau se voit de très loin
   erratique: { fp: 2, h: 40 },
-  arbre: { fp: 2, h: 116, crown: 76 }, //     2,6× un arbre normal — il DOIT écraser la forêt
+  // Il DÉBORDE : 2 tuiles d'empreinte (ce qu'on foule), 5 tuiles de houppier
+  // (ce qu'on voit). Un arbre majestueux est LARGE — sans ça, c'était un poteau.
+  arbre: { fp: 2, w: 80, h: 100, crown: 62 },
   cairn: { fp: 1, h: 28 }, //                 le plus petit, et le plus fréquent
   sanctuaire: { fp: 2, h: 72, crown: 32 },
   source_chaude: { fp: 2, h: 30 },
@@ -77,7 +91,7 @@ const ART: Record<string, { fp: number; h: number; crown?: number }> = {
 
 export const POI_ART: PoiArt[] = Object.entries(ART).map(([slug, a]) => ({
   slug,
-  w: a.fp * TILE,
+  w: a.w ?? a.fp * TILE, // par défaut l'empreinte ; `w` la déborde quand le lieu l'exige
   h: a.h,
   ...(a.crown !== undefined ? { crown: a.crown } : {}),
 }))
@@ -363,20 +377,40 @@ export function makePoiTextures(scene: Phaser.Scene): void {
     g.fillStyle(STONE.mid).fillRect(9, b - 24, 8, 2) // une veine de quartz
   })
   tex('arbre', (w, h, d) => {
-    ground(w, h + d, 0.7)
+    ground(w, h + d, 0.55)
     const b = h + d
-    // 116 px contre 44 pour un arbre de forêt. Il ne doit pas « faire partie »
-    // de la forêt : il doit la DOMINER, et se voir depuis l'autre versant.
-    g.fillStyle(WOOD.deep).fillRect(w / 2 - 6, b - 52, 12, 52) // un tronc massif
-    g.fillStyle(WOOD.dark).fillRect(w / 2 - 6, b - 52, 5, 52)
-    g.fillStyle(WOOD.mid).fillRect(w / 2 - 6, b - 52, 2, 52) // arête NO
-    g.fillStyle(WOOD.deep).fillRect(w / 2 - 12, b - 8, 24, 8) // les contreforts des racines
-    g.fillStyle(LEAF.dark).fillCircle(w / 2, b - 78, 26) // la couronne, immense
-    g.fillStyle(LEAF.mid).fillCircle(w / 2 - 4, b - 88, 20)
-    g.fillStyle(LEAF.lit).fillCircle(w / 2 - 10, b - 94, 12) // la lumière prend au NO
-    g.fillStyle(LEAF.deep).fillCircle(w / 2 + 14, b - 68, 12) // l'ombre au SE
-    g.fillStyle(LEAF.dark).fillCircle(w / 2 - 18, b - 66, 11) // deux branches basses
-    g.fillStyle(LEAF.dark).fillCircle(w / 2 + 17, b - 84, 10)
+    const cx = w / 2
+    // 100 px de haut, 80 de large, contre 44×32 pour un arbre de forêt. Ce qui
+    // le rend REMARQUABLE, ce n'est pas la hauteur seule — c'est l'ENVERGURE :
+    // un vieil arbre s'étale, ses branches basses pendent, ses racines affleurent.
+    // Un tronc fin sous une boule haute, c'est une sucette. Il fallait l'étaler.
+
+    // les contreforts des racines, qui débordent au sol
+    g.fillStyle(WOOD.deep).fillEllipse(cx, b - 4, 34, 10)
+    g.fillStyle(WOOD.dark).fillEllipse(cx - 9, b - 6, 12, 6)
+    g.fillStyle(WOOD.dark).fillEllipse(cx + 10, b - 5, 11, 5)
+
+    // le tronc : massif, et qui s'évase vers le bas
+    g.fillStyle(WOOD.dark).fillTriangle(cx - 13, b - 4, cx - 6, b - 44, cx + 6, b - 44)
+    g.fillStyle(WOOD.dark).fillTriangle(cx + 13, b - 4, cx + 6, b - 44, cx - 6, b - 44)
+    g.fillStyle(WOOD.dark).fillRect(cx - 7, b - 46, 14, 44)
+    g.fillStyle(WOOD.mid).fillRect(cx - 7, b - 46, 5, 44) // arête NO éclairée
+    g.fillStyle(WOOD.deep).fillRect(cx + 3, b - 46, 4, 44) // ombre SE
+
+    // deux branches maîtresses qui s'écartent — c'est elles qui donnent l'envergure
+    g.fillStyle(WOOD.dark).fillTriangle(cx - 5, b - 40, cx - 26, b - 56, cx - 5, b - 50)
+    g.fillStyle(WOOD.dark).fillTriangle(cx + 5, b - 42, cx + 27, b - 54, cx + 5, b - 52)
+
+    // LA COURONNE : large, basse, en plusieurs masses — un dôme, pas une boule.
+    g.fillStyle(LEAF.dark).fillEllipse(cx, b - 66, 76, 46) // la masse d'ensemble
+    g.fillStyle(LEAF.dark).fillEllipse(cx - 28, b - 56, 26, 22) // les branches basses, qui pendent
+    g.fillStyle(LEAF.dark).fillEllipse(cx + 29, b - 54, 24, 20)
+    g.fillStyle(LEAF.mid).fillEllipse(cx - 8, b - 74, 50, 34) // le volume éclairé
+    g.fillStyle(LEAF.mid).fillEllipse(cx - 26, b - 62, 22, 18)
+    g.fillStyle(LEAF.lit).fillEllipse(cx - 16, b - 82, 28, 18) // la lumière prend au NO
+    g.fillStyle(LEAF.lit).fillEllipse(cx - 4, b - 88, 16, 10)
+    g.fillStyle(LEAF.deep).fillEllipse(cx + 22, b - 62, 26, 20) // l'ombre au SE
+    g.fillStyle(LEAF.deep).fillEllipse(cx + 10, b - 50, 22, 12) // et sous le feuillage
   })
   tex('cairn', (w, h, d) => {
     const b = h + d
