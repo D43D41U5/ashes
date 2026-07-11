@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createEmptyMap, poisAt, poiCenter } from './map'
 import { TERRAIN_GRASS } from './balance'
+import { chronicleFromEvents } from './chronicle'
 import { POI_CHARGES, poiFamily } from './poi-discovery'
 import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
 
@@ -257,5 +258,76 @@ describe('le savoir — quatre lieux qui rendent la carte', () => {
     expect(known).toContain(2)
     expect(known).toContain(3)
     expect(known).not.toContain(1)
+  })
+})
+
+describe('le récit — la première fois seulement', () => {
+  it('la première arrivée au Sanctuaire émet poi_first_visit, la seconde non', () => {
+    const { state, playerId } = simWith([{ name: 'le Sanctuaire I', x: 10, y: 10, w: 2, h: 2, kind: 'sanctuaire' }])
+    walkTo(state, playerId, 10.5, 10.5)
+    expect(state.events.filter((e) => e.type === 'poi_first_visit')).toHaveLength(1)
+    expect(state.visitedPois).toEqual([0])
+
+    // Un SECOND joueur y va à son tour : c'est SA découverte, mais plus une première.
+    const other = spawnEntity(state, 0.5, 0.5)
+    walkTo(state, other, 10.5, 10.5)
+    expect(state.events.filter((e) => e.type === 'poi_first_visit')).toHaveLength(0)
+    expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(1) // lui, il découvre
+  })
+
+  it('un PNJ qui traverse le Sanctuaire ne produit RIEN — ni carte, ni découverte, ni première', () => {
+    const { state } = simWith([{ name: 'le Sanctuaire I', x: 10, y: 10, w: 2, h: 2, kind: 'sanctuaire' }])
+    const npcEntityId = spawnEntity(state, 10.5, 10.5)
+    state.npcs.push({
+      entityId: npcEntityId,
+      villageId: 1,
+      homeId: null,
+      energy: 100,
+      sleeping: false,
+      seekingWarmth: false,
+      task: null,
+      path: [],
+      stuck: 0,
+      errand: null,
+    })
+    state.events.length = 0
+    step(state, [])
+    expect(state.entities.find((e) => e.id === npcEntityId)!.knownPois).toEqual([])
+    expect(state.visitedPois).toEqual([])
+    expect(state.events.filter((e) => e.type === 'poi_first_visit')).toHaveLength(0)
+    expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(0)
+  })
+
+  it('la chronique écrit une ligne pour le Sanctuaire (devise récit)', () => {
+    const { state, playerId } = simWith([{ name: 'le Sanctuaire I', x: 10, y: 10, w: 2, h: 2, kind: 'sanctuaire' }])
+    walkTo(state, playerId, 10.5, 10.5)
+    const lines = chronicleFromEvents(state.events, state.calendarScale, {})
+    expect(lines.some((l) => l.includes('le Sanctuaire I'))).toBe(true)
+  })
+
+  it('la chronique NE parle PAS d’un Gisement (devise absente) ni d’un Cairn (devise savoir)', () => {
+    const { state, playerId } = simWith([
+      { name: 'le Gisement I', x: 10, y: 10, w: 2, h: 2, kind: 'gisement' },
+      { name: 'le Cairn I', x: 30, y: 30, w: 1, h: 1, kind: 'cairn' },
+    ])
+    walkTo(state, playerId, 10.5, 10.5)
+    const eventsA = [...state.events]
+    walkTo(state, playerId, 30.5, 30.5)
+    const lines = chronicleFromEvents([...eventsA, ...state.events], state.calendarScale, {})
+    expect(lines.some((l) => l.includes('Gisement'))).toBe(false)
+    expect(lines.some((l) => l.includes('Cairn'))).toBe(false)
+  })
+
+  it('le bus reste COMPLET : la première visite est émise pour tous les POI, pas seulement les lieux de récit', () => {
+    // Le partage des rôles (R12-R13) : la logique n'a pas le droit de filtrer par
+    // devise — c'est le formateur qui choisit. Sans ce test, un filtre `devise ===
+    // 'recit'` glissé dans `advancePois` laisserait TOUS les autres tests verts :
+    // la chronique, elle, n'écrirait de toute façon rien de plus.
+    const { state, playerId } = simWith([{ name: 'le Gisement I', x: 10, y: 10, w: 2, h: 2, kind: 'gisement' }])
+    walkTo(state, playerId, 10.5, 10.5)
+    const firsts = state.events.filter((e) => e.type === 'poi_first_visit')
+    expect(firsts).toHaveLength(1) // un Gisement n'a AUCUNE charge, et pourtant il entre dans le bus
+    expect(firsts[0]).toMatchObject({ poiId: 0, kind: 'gisement', name: 'le Gisement I', byEntityId: playerId })
+    expect(state.visitedPois).toEqual([0])
   })
 })

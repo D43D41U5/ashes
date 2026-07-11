@@ -143,6 +143,22 @@ export function advancePois(state: SimState): void {
       // R6.2 — la charge de savoir, si le lieu en porte une, ne joue qu'à la
       // PREMIÈRE foulée : `fresh` est notre garde d'idempotence.
       if (fresh) applyKnowledge(state, entity.id, entity.knownPois, poiId)
+
+      // R12 — la première visite d'un JOUEUR, tous joueurs confondus. Il n'y a
+      // qu'un premier : en multi, c'est une course. Émis pour TOUS les POI ; la
+      // chronique, elle, ne formatera que les quatre lieux de devise `recit`.
+      if (!state.visitedPois.includes(poiId)) {
+        state.visitedPois.push(poiId)
+        const zone = state.map.zones[poiId]!
+        emitEvent(state, {
+          type: 'poi_first_visit',
+          tick: state.tick,
+          poiId,
+          kind: zone.kind ?? '',
+          name: zone.name,
+          byEntityId: entity.id,
+        })
+      }
     }
   }
 }
