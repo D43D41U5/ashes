@@ -220,6 +220,49 @@ const SCENARIOS = {
     return {}
   },
 
+
+  /** Exporte chaque sprite de lieu en PNG isolé — matière du catalogue. */
+  async poiSprites(page) {
+    const all = await page.evaluate(() => {
+      const tm = window.__BRAISES__.scene.textures
+      const out = {}
+      for (const key of tm.getTextureKeys()) {
+        if (!key.startsWith('poi-') || key.endsWith('-crown')) continue
+        const src = tm.get(key).getSourceImage()
+        const SCALE = 4
+        const c = document.createElement('canvas')
+        c.width = src.width * SCALE
+        c.height = src.height * SCALE
+        const ctx = c.getContext('2d')
+        ctx.imageSmoothingEnabled = false
+        ctx.drawImage(src, 0, 0, c.width, c.height)
+        out[key.slice(4)] = { png: c.toDataURL('image/png'), w: src.width, h: src.height }
+      }
+      // et l'arbre de référence, composé comme en jeu
+      const trunk = tm.get('nd-tree_trunk').getSourceImage()
+      const crown = tm.get('nd-tree_crown').getSourceImage()
+      const c = document.createElement('canvas')
+      c.width = 32 * 4
+      c.height = 44 * 4
+      const ctx = c.getContext('2d')
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(trunk, 8 * 4, 22 * 4, 16 * 4, 22 * 4)
+      ctx.drawImage(crown, 0, 0, 32 * 4, 32 * 4)
+      out.__arbre_ref__ = { png: c.toDataURL('image/png'), w: 32, h: 44 }
+      return out
+    })
+    const { writeFileSync, mkdirSync } = await import('node:fs')
+    mkdirSync(`${OUT}/sprites`, { recursive: true })
+    const meta = {}
+    for (const [slug, v] of Object.entries(all)) {
+      writeFileSync(`${OUT}/sprites/${slug}.png`, Buffer.from(v.png.split(',')[1], 'base64'))
+      meta[slug] = { w: v.w, h: v.h }
+    }
+    writeFileSync(`${OUT}/sprites/meta.json`, JSON.stringify(meta, null, 2))
+    console.log(`✓ ${Object.keys(all).length} sprites → ${OUT}/sprites/`)
+    return {}
+  },
+
   /** En jeu : on se pose SUR quelques lieux et on regarde. Clairière ? échelle ? */
   async poiInSitu(page) {
     const s = await page.evaluate(PROBE)
