@@ -110,11 +110,17 @@ Toutes valident portée et propriété **dans la sim** (invariant §3 : serveur 
   `count` doit être entier, `0 < count < source.count`. Un item non empilable (pile 1) ne se
   scinde pas.
 - **R16 — `transfer { containerId, kind, from, to, count }`** : transfert case-à-case entre
-  le joueur et un conteneur (`kind: 'structure' | 'corpse'`). Remplace `deposit`/`withdraw`,
-  qui disparaissent. Portée : `BALANCE.INTERACT_RANGE`. Permissions **inchangées** (spec
-  village R10-R12) : déposer reste ouvert à tous (la boîte aux dons), **retirer** exige
-  `hasAccess`. Les effets d'alignement du dépôt de nourriture chez autrui (`gift_given`,
-  chaleur) sont **préservés à l'identique**.
+  le joueur et un conteneur (`kind: 'structure' | 'corpse'`). Portée :
+  `BALANCE.INTERACT_RANGE`. Permissions **inchangées** (spec village R10-R12) : déposer
+  reste ouvert à tous (la boîte aux dons), **retirer** exige `hasAccess`. Les effets
+  d'alignement du dépôt de nourriture chez autrui (`gift_given`, chaleur) sont **préservés
+  à l'identique**.
+
+  *`deposit` / `withdraw` (en gros, par item + quantité) RESTENT dans la sim.* Les PNJ s'en
+  servent (`npc.ts`, `npc-errands.ts` : leur boucle de corvées raisonne en *quantités*, pas
+  en cases) et les recâbler sur du case-à-case rouvrirait le risque de livelock connu pour
+  aucun gain. `transfer` **s'ajoute** pour le joueur ; c'est le **client** qui cesse
+  d'utiliser `deposit`/`withdraw`, pas la sim qui les perd.
 
 ### Le client
 
