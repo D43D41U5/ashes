@@ -94,6 +94,77 @@ const PROBE = () => {
 
 const SCENARIOS = {
   /**
+   * L'EAU. On marche jusqu'à la première rive et on la regarde — c'est la seule
+   * façon de juger un shader. Trois cadrages : la berge, un gros plan sur la
+   * houle, et le large.
+   */
+  async eau(page) {
+    // Où est l'eau la plus proche ? On lit la carte, on ne la devine pas.
+    const cap = await page.evaluate(() => {
+      const scene = window.__BRAISES__.scene
+      const map = scene.registry.get('mapData')
+      const p = scene.registry.get('playerPos')
+      let best = null
+      let bestD = Infinity
+      for (let ty = 0; ty < map.height; ty += 2) {
+        for (let tx = 0; tx < map.width; tx += 2) {
+          const t = map.terrain[ty * map.width + tx]
+          if (t !== 4 && t !== 6) continue
+          const d = (tx - p.x) ** 2 + (ty - p.y) ** 2
+          if (d < bestD) {
+            bestD = d
+            best = { tx, ty }
+          }
+        }
+      }
+      return { best, joueur: p, d: Math.sqrt(bestD) }
+    })
+    if (!cap.best) {
+      console.log('aucune eau sur cette carte')
+      return cap
+    }
+    console.log(`eau la plus proche : (${cap.best.tx}, ${cap.best.ty}) — à ${cap.d.toFixed(0)} tuiles`)
+
+    // On y marche, en corrigeant le cap toutes les demi-secondes.
+    const KEYS = { E: 'KeyD', O: 'KeyA', S: 'KeyS', N: 'KeyW' }
+    let held = new Set()
+    const hold = async (want) => {
+      for (const k of held) if (!want.has(k)) await page.keyboard.up(k)
+      for (const k of want) if (!held.has(k)) await page.keyboard.down(k)
+      held = want
+    }
+    for (let i = 0; i < 90; i++) {
+      const p = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      const dx = cap.best.tx - p.x
+      const dy = cap.best.ty - p.y
+      if (Math.hypot(dx, dy) < 5) break
+      const want = new Set()
+      if (dx > 1) want.add(KEYS.E)
+      else if (dx < -1) want.add(KEYS.O)
+      if (dy > 1) want.add(KEYS.S)
+      else if (dy < -1) want.add(KEYS.N)
+      await hold(want)
+      await page.waitForTimeout(500)
+    }
+    await hold(new Set())
+
+    const p = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    console.log(`  joueur : (${p.x.toFixed(1)}, ${p.y.toFixed(1)}) — sur la rive`)
+
+    await page.waitForTimeout(600)
+    await page.screenshot({ path: `${OUT}/eau-rive.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(4))
+    await page.waitForTimeout(600)
+    await page.screenshot({ path: `${OUT}/eau-houle.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(1.3))
+    await page.waitForTimeout(600)
+    await page.screenshot({ path: `${OUT}/eau-large.png` })
+    console.log('  captures : eau-rive.png / eau-houle.png / eau-large.png')
+    return p
+  },
+
+
+  /**
    * LE MONDE EST-IL VIVANT ? On laisse la faune ambiante peupler l'anneau, on
    * compte ce qui vit vraiment autour du joueur, et on regarde si ça BOUGE :
    * deux relevés de positions à 2 s d'intervalle. Une bête immobile est un bug.

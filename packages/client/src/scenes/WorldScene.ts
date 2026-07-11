@@ -56,6 +56,7 @@ import { ShadeLayer } from './world/shade-layer'
 import { PoiLayer } from './world/poi-layer'
 import { ShoreCliff } from './world/shore-cliff'
 import { FireGlow } from './world/fire-glow'
+import { WaterLayer } from './world/water-layer'
 import { AmbientLife } from './world/ambient-life'
 import { bindDebugKeys } from './world/debug-bindings'
 import { syncDebug } from './world/debug-overlay'
@@ -139,6 +140,7 @@ export class WorldScene extends Phaser.Scene {
   private map!: WorldMap
   private ambientRect: Phaser.GameObjects.Rectangle | null = null
   private fireGlow: FireGlow | null = null
+  private water: WaterLayer | null = null
   /** Oiseaux et lucioles — décor pur, hors sim (voir world/ambient-life.ts). */
   ambientLife: AmbientLife | null = null
   private lastTime: GameTime | null = null
@@ -299,6 +301,9 @@ export class WorldScene extends Phaser.Scene {
     // étant des aplats, l'étirement NEAREST est pixel-identique au bake 16 px/tuile.
     this.bakeMapTexture()
     this.ground = new GroundLayer(this, this.map, this.warp, 'map-demo')
+    // L'eau, par-dessus le sol : un shader qui défait le cisaillement du relief et
+    // réfracte le fond (le bake `map-demo` lui sert de lit).
+    this.water = new WaterLayer(this, this.map, 'map-demo')
     this.shade = new ShadeLayer(this, this.map, this.warp)
     this.pois = new PoiLayer(this, this.map, this.warp) // les lieux se voient enfin
     this.shoreCliff = new ShoreCliff(this, this.map, this.warp)
@@ -341,6 +346,7 @@ export class WorldScene extends Phaser.Scene {
       const amb = ambientTint(hour)
       this.ambientRect?.setFillStyle(amb.color).setAlpha(amb.alpha)
       const day = daylight(hour)
+      this.water?.update(time, hour, day) // la houle, et le soleil dessus
       this.fireGlow?.update(this.view.structures, this.view.villages, day, time)
       // La vie ambiante : les oiseaux traversent, les lucioles ne sortent qu'à la nuit.
       this.ambientLife?.update(this.cameras.main, time / 1000, deltaMs / 1000, 1 - day)
