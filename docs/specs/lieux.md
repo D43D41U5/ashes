@@ -1,6 +1,6 @@
 # Les lieux — savoir, répit, récit
 
-*Source : GDD §9 (la carte), §9bis (les événements), §8bis (garde-fous anti-corvée). Statut : **brouillon**. Jalon : Veillée — chantier 1 du monde (2026-07-11).*
+*Source : GDD §9 (la carte), §9bis (les événements), §8bis (garde-fous anti-corvée). Statut : **implémenté** (2026-07-11, A1-A10 verts en tests headless — A1 en outre à confirmer visuellement en jeu). Jalon : Veillée — chantier 1 du monde.*
 
 ## Objectif de design
 
