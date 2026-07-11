@@ -523,7 +523,7 @@ describe('le savoir — quatre lieux qui rendent la carte', () => {
     const { state, playerId } = simWith([
       { name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }, //   0 — centre (10.5, 10.5)
       { name: 'la Grotte I', x: 20, y: 10, w: 1, h: 1, kind: 'grotte' }, // 1 — à +9.5 en x
-      { name: 'le Tarn I', x: 1, y: 10, w: 1, h: 1, kind: 'tarn' }, //      2 — à −9.5 en x : ÉGALITÉ
+      { name: 'le Tarn I', x: 0, y: 10, w: 1, h: 1, kind: 'tarn' }, //      2 — centre 0.5 : dx = −10 : ÉGALITÉ
     ])
     walkTo(state, playerId, 10.5, 10.5)
     expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0, 1]) // le plus petit poiId gagne
