@@ -92,8 +92,9 @@ export class UIScene extends Phaser.Scene {
   private mapLayer!: Phaser.GameObjects.Container
   private mapImage!: Phaser.GameObjects.Image
   private mapMarker!: Phaser.GameObjects.Arc
-  /** Une pastille par POI (zone avec un `kind`) — taille écran constante, comme le marqueur. */
-  private mapPoiDots: Phaser.GameObjects.Arc[] = []
+  /** Une pastille par POI (zone avec un `kind`), AVEC son poiId — l'index dans `map.zones`,
+   *  qui est l'identité d'un lieu (spec lieux R4). Le filtre `knownPois` en dépend. */
+  private mapPoiDots: { poiId: number; dot: Phaser.GameObjects.Arc }[] = []
   /** Dernière échelle appliquée aux pastilles — évite de les reparcourir à chaque frame. */
   private mapPoiScale = 0
   private mapHover!: Phaser.GameObjects.Text
@@ -245,18 +246,21 @@ export class UIScene extends Phaser.Scene {
     // Ajuste la carte entière dans ~90 % × 82 % de l'écran (titre + aide gardent leur place).
     this.mapFit = Math.min((W * 0.9) / texW, (H * 0.82) / texH)
     // Une pastille par POI (zone porteuse d'un `kind` ; les zones sans `kind` sont de simples
-    // toponymes). Statiques : les zones sont publiées une fois au `ready`.
+    // toponymes). Créées une fois — leur VISIBILITÉ, elle, suit `knownPois` (spec lieux R1).
     this.mapPoiDots = map.zones
-      .filter((z) => z.kind !== undefined)
-      .map((z) =>
-        this.add
+      .map((z, poiId) => ({ z, poiId }))
+      .filter(({ z }) => z.kind !== undefined)
+      .map(({ z, poiId }) => ({
+        poiId,
+        dot: this.add
           .circle(this.mapLocalX(map, z.x + z.w / 2), this.mapLocalY(map, z.y + z.h / 2), MAP_POI_RADIUS, MAP_POI_FILL)
-          .setStrokeStyle(1, MAP_POI_STROKE),
-      )
+          .setStrokeStyle(1, MAP_POI_STROKE)
+          .setVisible(false), // rien n'est connu au départ
+      }))
 
     this.mapMarker = this.add.circle(0, 0, 5, 0xffd94a).setStrokeStyle(2, 0x14141a)
     // Le marqueur joueur passe APRÈS les pastilles : il doit rester lisible par-dessus.
-    this.mapLayer = this.add.container(W / 2, H / 2, [this.mapImage, ...this.mapPoiDots, this.mapMarker])
+    this.mapLayer = this.add.container(W / 2, H / 2, [this.mapImage, ...this.mapPoiDots.map((p) => p.dot), this.mapMarker])
 
     this.mapRoot = this.add
       .container(0, 0, [bg, this.mapLayer, title, hint, this.mapHover])
@@ -309,12 +313,19 @@ export class UIScene extends Phaser.Scene {
     return { tx, ty }
   }
 
-  /** Nomme la zone/POI sous le curseur (haut-gauche), ou rien hors carte. */
+  /** Nomme la zone/POI sous le curseur (haut-gauche), ou rien hors carte.
+   *  Une zone inconnue ne se nomme pas : le survol ne peut pas trahir ce que
+   *  la pastille cache (sinon il suffirait de balayer la carte à la souris). Les
+   *  toponymes sans `kind` (le Pont, le Col) restent nommés — ils font partie de
+   *  la forme de la vallée, pas de son secret (spec lieux R1-R2). */
   private updateMapHover(pointer: Phaser.Input.Pointer): void {
     const map = getHud(this.registry, 'mapData')
     if (!map) return
     const at = this.mapTileAt(pointer)
-    this.mapHover.setText(at ? (zoneAt(map, at.tx, at.ty)?.name ?? '') : '')
+    const zone = at ? zoneAt(map, at.tx, at.ty) : undefined
+    const poiId = zone ? map.zones.indexOf(zone) : -1
+    const hidden = zone?.kind !== undefined && !(getHud(this.registry, 'knownPois') ?? []).includes(poiId)
+    this.mapHover.setText(zone && !hidden ? zone.name : '')
   }
 
   /** Réinitialise la vue à l'ouverture : carte entière, centrée, zoom 1. */
@@ -346,15 +357,21 @@ export class UIScene extends Phaser.Scene {
   }
 
   /**
-   * Tient les pastilles POI à taille écran constante. Elles sont fixes sur la carte : seul le zoom
-   * les concerne, d'où le mémo — la boucle resterait sinon proportionnelle au nombre de POIs à
-   * chaque frame (aujourd'hui ~90, mais le rayon Poisson des POIs est une dette connue).
+   * Tient les pastilles POI à taille écran constante (mémoïsé — la boucle d'échelle
+   * resterait sinon proportionnelle au nombre de POIs à chaque frame, aujourd'hui ~90,
+   * mais le rayon Poisson des POIs est une dette connue) ET fait suivre leur visibilité
+   * à `knownPois` : les lieux se gagnent, la carte ne montre que ce qu'on connaît (spec
+   * lieux R1).
    */
   private updateMapPoiDots(): void {
     const scale = this.mapFit * this.mapZoom
-    if (scale === this.mapPoiScale) return
-    this.mapPoiScale = scale
-    for (const dot of this.mapPoiDots) dot.setScale(1 / scale)
+    if (scale !== this.mapPoiScale) {
+      this.mapPoiScale = scale
+      for (const { dot } of this.mapPoiDots) dot.setScale(1 / scale)
+    }
+    // Les lieux se gagnent : on ne montre que ceux qu'on connaît (spec lieux R1).
+    const known = getHud(this.registry, 'knownPois') ?? []
+    for (const { poiId, dot } of this.mapPoiDots) dot.setVisible(known.includes(poiId))
   }
 
   override update(): void {

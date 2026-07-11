@@ -41,6 +41,9 @@ export interface HudState {
   /** La carte du monde, publiée une fois au `ready` — sert au rendu de la carte
    * plein écran et au lookup de zone/POI sous le curseur (`zoneAt`). */
   mapData: WorldMap
+  /** Les lieux que MON joueur connaît (spec lieux R1) — index dans `mapData.zones`.
+   *  La carte plein écran ne montre que ceux-là : le terrain est offert, les lieux se gagnent. */
+  knownPois: number[]
   /** Position LOGIQUE de l'avatar (tuiles) — le marqueur « tu es ici » de la carte. */
   playerPos: { x: number; y: number }
   /** La chronique de la saison, déjà mise en forme. */
