@@ -8,6 +8,8 @@ import { poissonPoints } from './poisson'
 import { elevationAt, terrainAt, isBlockingTile, type WorldMap, type Zone } from './map'
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
+import { setTile, isWater } from './valleygen-primitives'
+import { TERRAIN_SCREE } from './balance'
 
 // ids terrain (balance.ts) — repris localement pour lisibilité de la table.
 const SCREE = 9, ROCK = 5, BOULDERS = 16, GLACIER = 15, BURNT = 21, PEAT = 18, REED = 19,
@@ -74,35 +76,93 @@ export const POI_TYPES: PoiType[] = [
 /**
  * Empreinte qu'aurait la Zone d'un type de POI centrée sur (tx,ty) — même calcul
  * (`Math.floor(footprint / 2)`) que celui utilisé plus bas par `placePois` pour
- * poser la Zone réellement : les deux doivent rester en accord.
+ * poser la Zone réellement : les deux doivent rester en accord. Clampée à la
+ * carte (revue « les lieux », Minor « clamp zones aux bords ») : un point proche
+ * d'un bord peut recevoir une empreinte qui déborde en négatif ou au-delà de
+ * `width`/`height` — une tuile hors carte n'est ni lisible (`terrainAt` la
+ * traite en void) ni creusable, et une Zone non clampée fuit dans les boucles
+ * qui balayent `[z.x, z.x+z.w)` (rendu, `poisAt`…).
  */
-function footprintAt(t: PoiType, tx: number, ty: number): Pick<Zone, 'x' | 'y' | 'w' | 'h'> {
+function footprintAt(map: WorldMap, t: PoiType, tx: number, ty: number): Pick<Zone, 'x' | 'y' | 'w' | 'h'> {
   const half = Math.floor(t.footprint / 2)
-  return { x: tx - half, y: ty - half, w: t.footprint, h: t.footprint }
+  return clampFootprint(map, { x: tx - half, y: ty - half, w: t.footprint, h: t.footprint })
+}
+
+/** Clampe un rectangle d'empreinte aux limites de la carte [0,width) × [0,height). */
+function clampFootprint(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): Pick<Zone, 'x' | 'y' | 'w' | 'h'> {
+  const x0 = Math.max(0, z.x)
+  const y0 = Math.max(0, z.y)
+  const x1 = Math.min(map.width, z.x + z.w)
+  const y1 = Math.min(map.height, z.y + z.h)
+  return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) }
 }
 
 /**
  * Types valides pour la tuile (biome + altitude + plafond) DONT l'empreinte
- * contient au moins une tuile marchable.
+ * contient déjà une tuile marchable, OU peut en recevoir une par creusement
+ * (cf. `pickCarveTile`).
  *
  * Sans ce dernier filtre, un type dont les biomes autorisés couvrent surtout du
  * rock/glacier (Grotte, Belvédère, Source chaude…) pouvait recevoir une empreinte
  * à 100 % bloquante — un lieu qu'on ne peut jamais fouler : `poisAt` (map.ts) ne
- * teste QUE l'empreinte, jamais un anneau de secours. Option (a) de la revue :
- * on écarte le TYPE inatteignable pour ce point, pas le point lui-même — un
- * autre type, dont l'empreinte tombe sur du praticable, peut encore y naître.
+ * teste QUE l'empreinte, jamais un anneau de secours. Décision d'Alexis (2026-07-11,
+ * « le lieu creuse son propre sol ») : plutôt qu'écarter le type ou rouvrir ses
+ * biomes, le générateur rend marchable une tuile de l'empreinte quand il pose le
+ * lieu — `placePois` s'en charge après le tirage, `pickCarveTile` choisit LA tuile.
+ * Un type reste écarté seulement si aucune tuile de son empreinte n'est ni déjà
+ * marchable ni creusable (empreinte 100 % eau, ou 100 % hors carte/bordure).
  */
 function candidatesFor(map: WorldMap, tx: number, ty: number, used: Map<string, number>): PoiType[] {
   const terr = terrainAt(map, tx, ty)
   const el = elevationAt(map, tx, ty)
-  return POI_TYPES.filter(
-    (t) =>
-      t.biomes.includes(terr) &&
-      el >= (t.minElev ?? 0) &&
-      el <= (t.maxElev ?? 1) &&
-      (used.get(t.slug) ?? 0) < t.cap &&
-      hasWalkableFootprint(map, footprintAt(t, tx, ty)),
-  )
+  return POI_TYPES.filter((t) => {
+    if (!t.biomes.includes(terr)) return false
+    if (el < (t.minElev ?? 0) || el > (t.maxElev ?? 1)) return false
+    if ((used.get(t.slug) ?? 0) >= t.cap) return false
+    const fp = footprintAt(map, t, tx, ty)
+    return hasWalkableFootprint(map, fp) || pickCarveTile(map, fp) !== undefined
+  })
+}
+
+/**
+ * Une tuile bloquante peut-elle devenir de l'éboulis (`TERRAIN_SCREE`) pour
+ * ouvrir l'entrée d'un lieu ? Trois refus, dans l'ordre des contraintes :
+ *   1. hors carte, ou sur l'anneau de bordure d'une tuile d'épaisseur
+ *      (`sealBorderRing`, valleygen.ts) — INTERDIT ABSOLU, jamais percé ;
+ *   2. déjà marchable — rien à creuser (règle « seulement si nécessaire ») ;
+ *   3. eau (peu importe la profondeur, `isWater`) — on ne pose pas de terre
+ *      au milieu d'un lac ou d'un ruisseau.
+ */
+function isCarvable(map: WorldMap, tx: number, ty: number): boolean {
+  if (tx <= 0 || ty <= 0 || tx >= map.width - 1 || ty >= map.height - 1) return false
+  if (!isBlockingTile(map, tx, ty)) return false
+  if (isWater(terrainAt(map, tx, ty))) return false
+  return true
+}
+
+/**
+ * Choisit LA tuile à creuser dans une empreinte (une seule suffit : il faut
+ * pouvoir entrer, pas y bâtir une place — cf. brief). Déterministe par
+ * construction géométrique (pas de hash2 : aucun aléa supplémentaire n'est
+ * nécessaire ni souhaitable ici) — la tuile carvable la plus proche du centre
+ * de l'empreinte, départagée par le balayage row-major qui construit `best`.
+ * `undefined` si l'empreinte n'offre aucune tuile carvable (100 % eau, ou
+ * entièrement hors carte/bordure).
+ */
+function pickCarveTile(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): { tx: number; ty: number } | undefined {
+  const cx = z.x + (z.w - 1) / 2
+  const cy = z.y + (z.h - 1) / 2
+  let best: { tx: number; ty: number } | undefined
+  let bestD = Infinity
+  for (let ty = z.y; ty < z.y + z.h; ty++) {
+    for (let tx = z.x; tx < z.x + z.w; tx++) {
+      if (!isCarvable(map, tx, ty)) continue
+      const dx = tx - cx, dy = ty - cy
+      const d = dx * dx + dy * dy
+      if (d < bestD) { bestD = d; best = { tx, ty } }
+    }
+  }
+  return best
 }
 
 /**
@@ -147,13 +207,20 @@ export function placePois(map: WorldMap, seed: number): void {
     }
     const count = (used.get(picked.slug) ?? 0) + 1
     used.set(picked.slug, count)
-    const f = picked.footprint
-    // Centre l'empreinte sur le point échantillonné : le biome a été validé au
-    // point (tx,ty), donc le centre de la Zone doit retomber sur ce même point
-    // (et non son coin), sans quoi une empreinte >1 tuile peut déborder sur un
-    // biome voisin non autorisé.
-    const half = Math.floor(f / 2)
-    map.zones.push({ name: `${picked.name} ${roman(count)}`, x: tx - half, y: ty - half, w: f, h: f, kind: picked.slug })
+    // Même empreinte (clampée à la carte) que celle validée par `candidatesFor` —
+    // les deux DOIVENT rester en accord, d'où le passage par `footprintAt`.
+    const z = footprintAt(map, picked, tx, ty)
+    map.zones.push({ name: `${picked.name} ${roman(count)}`, ...z, kind: picked.slug })
+    // Le lieu creuse son propre sol (décision Alexis 2026-07-11) : si l'empreinte
+    // posée n'a aucune tuile marchable, on en ouvre une — l'unique tuile la plus
+    // centrale qui soit bloquante, non aquatique et hors de l'anneau de bordure.
+    // `candidatesFor` a déjà vérifié qu'une telle tuile existe pour ce type ici ;
+    // `pickCarveTile` ne peut donc retourner `undefined` qu'en théorie (défense
+    // en profondeur, pas un cas normal).
+    if (!hasWalkableFootprint(map, z)) {
+      const carve = pickCarveTile(map, z)
+      if (carve) setTile(map, carve.tx, carve.ty, TERRAIN_SCREE)
+    }
   }
 }
 

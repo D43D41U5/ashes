@@ -1,9 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll } from 'vitest'
 import { generateAlpineTerrain } from './alpinegen'
-import { POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
+import { POI_TYPES, POI_PLACEMENT, spawnPoiMonsters, placePois } from './poi'
 import { terrainAt, createEmptyMap, isBlockingTile } from './map'
 import { poissonPoints } from './poisson'
-import { TERRAINS } from './balance'
+import { TERRAINS, TERRAIN_DEEP_WATER } from './balance'
 import { createSim } from './sim'
 import { POI_FAMILY_RGB } from './vignette'
 
@@ -41,6 +41,17 @@ describe('placePois', () => {
     expect(map.zones.some((z) => z.kind === 'gisement' || z.kind === 'carriere')).toBe(true)
   })
 
+  // Les deux tests CRITICAL ci-dessous tournent sur la vraie carte alpine
+  // (1200×1800, taille de production), 5 seeds — generateAlpineTerrain y coûte
+  // ~5-6 s × 5. Générée UNE fois en `beforeAll` et partagée entre les deux
+  // `it` : ils vérifient des invariants différents sur le MÊME résultat, pas
+  // besoin de regénérer (évite de doubler le temps du fichier pour rien).
+  const PROD_SEEDS = [2026, 99, 2718, 31415, 7]
+  const prodMaps = new Map<number, ReturnType<typeof generateAlpineTerrain>>()
+  beforeAll(() => {
+    for (const seed of PROD_SEEDS) prodMaps.set(seed, generateAlpineTerrain(1200, 1800, seed))
+  }, 60_000)
+
   /**
    * CRITICAL (revue « les lieux », constat 1) : un lieu qu'on ne peut pas fouler
    * est une mécanique morte — `advancePois` et `isSheltered` testent tous deux
@@ -49,13 +60,10 @@ describe('placePois', () => {
    * vérifier que l'empreinte posée contenait une tuile marchable — or plusieurs
    * biomes de la table (ROCK, GLACIER…) sont massivement bloquants (Grotte,
    * Belvédère, Source chaude, Sanctuaire, Arche, Pétroglyphes y sont éligibles).
-   * Sur la vraie carte alpine (1200×1800, la taille de production), 5 seeds.
    */
   it('CRITICAL — toute zone-POI a au moins une tuile marchable dans son empreinte (vraie carte alpine)', () => {
-    // generateAlpineTerrain(1200, 1800, ·) ≈ 5-6 s × 5 seeds sur la taille de
-    // production réelle — le défaut de 5 s de vitest est trop court pour ça.
-    for (const seed of [2026, 99, 2718, 31415, 7]) {
-      const map = generateAlpineTerrain(1200, 1800, seed)
+    for (const seed of PROD_SEEDS) {
+      const map = prodMaps.get(seed)!
       for (const z of map.zones) {
         if (z.kind === undefined) continue // toponyme, pas un POI
         let walkable = false
@@ -69,7 +77,64 @@ describe('placePois', () => {
           .toBe(true)
       }
     }
-  }, 60_000)
+  })
+
+  /**
+   * CRITICAL (revue « le lieu creuse son propre sol ») : l'invariant que ce
+   * correctif met le plus en danger. `sealBorderRing` (valleygen.ts) rend
+   * bloquante une tuile d'épaisseur sur tout le pourtour de la carte pour
+   * SCELLER la vallée ; `placePois` (qui peut désormais réécrire du terrain
+   * pour creuser un lieu) tourne juste après. Une seule tuile percée sur cet
+   * anneau ouvrirait le monde. `isCarvable` (poi.ts) refuse explicitement
+   * `tx<=0 || ty<=0 || tx>=width-1 || ty>=height-1` — ce test vérifie que
+   * l'anneau réel, sur la vraie carte de production, n'a JAMAIS été entamé.
+   *
+   * Discrimine : en retirant temporairement ce refus dans `isCarvable` pendant
+   * le développement, ce test passe rouge (des tuiles de bordure deviennent de
+   * l'éboulis, walkable) — restauré ensuite à l'identique. Voir le rapport.
+   */
+  it("CRITICAL — l'anneau de bordure reste intégralement bloquant après placePois (vraie carte alpine)", () => {
+    for (const seed of PROD_SEEDS) {
+      const map = prodMaps.get(seed)!
+      for (let x = 0; x < map.width; x++) {
+        expect.soft(isBlockingTile(map, x, 0), `(${x},0) seed ${seed} n'est plus bloquant`).toBe(true)
+        expect
+          .soft(isBlockingTile(map, x, map.height - 1), `(${x},${map.height - 1}) seed ${seed} n'est plus bloquant`)
+          .toBe(true)
+      }
+      for (let y = 0; y < map.height; y++) {
+        expect.soft(isBlockingTile(map, 0, y), `(0,${y}) seed ${seed} n'est plus bloquant`).toBe(true)
+        expect
+          .soft(isBlockingTile(map, map.width - 1, y), `(${map.width - 1},${y}) seed ${seed} n'est plus bloquant`)
+          .toBe(true)
+      }
+    }
+  })
+
+  /**
+   * On ne creuse jamais dans l'eau (contrainte 2 du brief). Empreinte 2×2
+   * construite en damier ROCK/eau profonde tel que les 4 cellules soient
+   * STRICTEMENT équidistantes du centre de l'empreinte : 3 des 4 sont de
+   * l'eau et scannées AVANT l'unique cellule roche (celle du point échantillonné,
+   * garantie non-aquatique par la validation de biome de `candidatesFor`). Une
+   * implémentation qui omettrait le refus `isWater` dans `isCarvable`
+   * choisirait la première tuile à égalité de distance — de l'eau — ce test
+   * est donc discriminant, pas seulement une confirmation de l'existant.
+   */
+  it('ne creuse jamais une tuile d’eau (empreinte à dominante aquatique, damier)', () => {
+    const W = 60, H = 60
+    const map = createEmptyMap(W, H, TERRAIN_DEEP_WATER)
+    for (let y = 1; y < H - 1; y++) {
+      for (let x = 1; x < W - 1; x++) {
+        if (x % 2 === 1 && y % 2 === 1) map.terrain[y * W + x] = ROCK_ID
+      }
+    }
+    const waterBefore = map.terrain.filter((t) => t === TERRAIN_DEEP_WATER).length
+    placePois(map, 5)
+    const waterAfter = map.terrain.filter((t) => t === TERRAIN_DEEP_WATER).length
+    expect(waterAfter).toBe(waterBefore) // aucune tuile d'eau n'est devenue de l'éboulis
+    expect(map.zones.length).toBeGreaterThan(0) // le test serait creux si aucun lieu n'avait été posé
+  })
 })
 
 describe('POIs dans la carte alpine', () => {
