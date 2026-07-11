@@ -101,6 +101,152 @@ const SCENARIOS = {
     return s
   },
 
+  /**
+   * LA PLANCHE D'ÉCHELLE : les 26 lieux, alignés sur le sol, à côté d'un arbre
+   * et d'un avatar. Composée à partir des VRAIES textures du jeu (lues dans le
+   * gestionnaire de textures de Phaser) — un dessin refait à côté mentirait.
+   */
+  async poiSheet(page) {
+    const dataUrl = await page.evaluate(() => {
+      const tm = window.__BRAISES__.scene.textures
+      const SCALE = 4 // ×4 : le pixel art se lit
+      const GAP = 10 * SCALE
+      const PAD = 8 * SCALE
+      const LABEL = 34
+
+      const NAMES = {
+        gisement: 'le Gisement', carriere: 'la Carrière', saline: 'la Saline', verger: 'le Verger',
+        ruines: 'les Ruines', cabane: 'la Cabane', abri: "l'Abri sous roche", mine: 'la Mine',
+        oratoire: "l'Oratoire", bivouac: 'le Bivouac', taniere: 'la Tanière', repaire: 'le Repaire',
+        epave: "l'Épave", fondriere: 'la Fondrière', crevasses: 'les Crevasses',
+        belvedere: 'le BELVÉDÈRE', grotte: 'la GROTTE', cascade: 'la CASCADE', erratique: 'le Bloc erratique',
+        arbre: "l'ARBRE remarquable", cairn: 'le CAIRN', sanctuaire: 'le SANCTUAIRE',
+        source_chaude: 'la SOURCE CHAUDE', arche: "l'ARCHE", tarn: 'le TARN', petroglyphes: 'les PÉTROGLYPHES',
+      }
+      // Les onze chargés sont en MAJUSCULES ci-dessus — on les souligne en couleur.
+      const CHARGED = new Set(['belvedere', 'grotte', 'cascade', 'erratique', 'arbre', 'cairn',
+        'sanctuaire', 'source_chaude', 'arche', 'tarn', 'petroglyphes'])
+
+      const sizeOf = (key) => {
+        if (key === '__tree__') return { w: 32, h: 44 }
+        const src = tm.get(key).getSourceImage()
+        return { w: src.width, h: src.height }
+      }
+      const draw = (ctx, key, x, groundY) => {
+        const s = sizeOf(key)
+        if (key === '__tree__') {
+          const trunk = tm.get('nd-tree_trunk').getSourceImage()
+          const crown = tm.get('nd-tree_crown').getSourceImage()
+          ctx.drawImage(trunk, x + 8 * SCALE, groundY - 22 * SCALE, 16 * SCALE, 22 * SCALE)
+          ctx.drawImage(crown, x, groundY - 44 * SCALE, 32 * SCALE, 32 * SCALE)
+        } else {
+          ctx.drawImage(tm.get(key).getSourceImage(), x, groundY - s.h * SCALE, s.w * SCALE, s.h * SCALE)
+        }
+        return s.w * SCALE
+      }
+
+      // Les 26 lieux, groupés par FAMILLE : chaque rangée = une famille, et
+      // chaque rangée REDONNE l'échelle (avatar + arbre) — sinon on la perd en
+      // descendant la planche.
+      const ROWS = [
+        { titre: 'ÉCONOMIE', slugs: ['gisement', 'carriere', 'saline', 'verger'] },
+        { titre: 'ABRIS', slugs: ['ruines', 'cabane', 'abri', 'mine', 'oratoire', 'bivouac'] },
+        { titre: 'DANGER', slugs: ['taniere', 'repaire', 'epave', 'fondriere', 'crevasses'] },
+        { titre: 'LES ONZE LIEUX CHARGÉS — savoir', slugs: ['belvedere', 'cairn', 'petroglyphes', 'arche'] },
+        { titre: 'LES ONZE — répit', slugs: ['source_chaude', 'grotte', 'tarn'] },
+        { titre: 'LES ONZE — récit', slugs: ['sanctuaire', 'arbre', 'erratique', 'cascade'] },
+      ]
+      const REF = ['spr-player', '__tree__']
+      const REF_LABEL = { 'spr-player': 'avatar (1 tuile)', __tree__: 'arbre (~2,7 tuiles)' }
+
+      const rowW = (r) =>
+        PAD * 2 + [...REF, ...r.slugs.map((s) => `poi-${s}`)].reduce((a, k) => a + sizeOf(k).w * SCALE + GAP, 0) + 40
+      const rowH = (r) =>
+        Math.max(...[...REF, ...r.slugs.map((s) => `poi-${s}`)].map((k) => sizeOf(k).h)) * SCALE + LABEL + 26
+
+      const totalW = Math.max(...ROWS.map(rowW))
+      const totalH = PAD * 2 + ROWS.reduce((a, r) => a + rowH(r), 0)
+
+      const c = document.createElement('canvas')
+      c.width = totalW
+      c.height = totalH
+      const ctx = c.getContext('2d')
+      ctx.imageSmoothingEnabled = false
+      ctx.fillStyle = '#12161b'
+      ctx.fillRect(0, 0, totalW, totalH)
+
+      let y = PAD
+      for (const r of ROWS) {
+        const hh = rowH(r)
+        const groundY = y + hh - LABEL - 12
+
+        // le sol de la rangée, gradué en TUILES (16 px × SCALE)
+        ctx.strokeStyle = '#3a4650'
+        ctx.beginPath()
+        ctx.moveTo(0, groundY + 0.5)
+        ctx.lineTo(totalW, groundY + 0.5)
+        ctx.stroke()
+        ctx.fillStyle = '#243039'
+        for (let gx = 0; gx < totalW; gx += 16 * SCALE) ctx.fillRect(gx, groundY, 1, 5)
+
+        // le titre de famille
+        ctx.fillStyle = r.titre.includes('ONZE') ? '#ffd94a' : '#5f6f7d'
+        ctx.font = 'bold 13px monospace'
+        ctx.textAlign = 'left'
+        ctx.fillText(r.titre, PAD, y + 15)
+
+        let x = PAD
+        const put = (key, label, color) => {
+          const w = draw(ctx, key, x, groundY)
+          ctx.fillStyle = color
+          ctx.font = '12px monospace'
+          ctx.textAlign = 'center'
+          ctx.fillText(label, x + w / 2, groundY + 20)
+          x += w + GAP
+        }
+        for (const k of REF) put(k, REF_LABEL[k], '#7fd0a8')
+        x += 40 // une respiration entre la référence et les lieux
+        for (const s of r.slugs) put(`poi-${s}`, NAMES[s], CHARGED.has(s) ? '#ffd94a' : '#93a1ad')
+
+        y += hh
+      }
+      return c.toDataURL('image/png')
+    })
+
+    const b64 = dataUrl.split(',')[1]
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(`${OUT}/planche-echelle.png`, Buffer.from(b64, 'base64'))
+    console.log(`✓ planche d'échelle → ${OUT}/planche-echelle.png`)
+    return {}
+  },
+
+  /** En jeu : on se pose SUR quelques lieux et on regarde. Clairière ? échelle ? */
+  async poiInSitu(page) {
+    const s = await page.evaluate(PROBE)
+    await page.keyboard.press('F1')
+    await page.waitForTimeout(300)
+
+    // On vise des lieux de familles différentes, en priorité ceux entourés d'arbres.
+    const cibles = ['sanctuaire', 'arbre', 'grotte', 'ruines', 'cairn', 'belvedere']
+    for (const kind of cibles) {
+      const p = s.pois.find((q) => q.kind === kind)
+      if (!p) {
+        console.log(`   (pas de ${kind} sur cette carte)`)
+        continue
+      }
+      await page.evaluate(({ x, y }) => {
+        window.__BRAISES__.scene.registry.set('debugTeleport', { x, y, at: performance.now() })
+      }, { x: p.x, y: p.y })
+      await page.waitForTimeout(1600)
+      // On zoome pour juger l'échelle contre les arbres.
+      await page.evaluate(() => { window.__BRAISES__.scene.cameras.main.setZoom(2.2) })
+      await page.waitForTimeout(500)
+      await page.screenshot({ path: `${OUT}/insitu-${kind}.png` })
+      console.log(`   ✓ ${p.name} → insitu-${kind}.png`)
+    }
+    return s
+  },
+
   /** Les lieux (spec docs/specs/lieux.md) : la carte est-elle bien vierge au départ ? */
   async lieux(page) {
     const s = await page.evaluate(PROBE)

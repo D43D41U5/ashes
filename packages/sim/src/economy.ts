@@ -35,7 +35,7 @@ import { harvestFactor } from './alignment'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { addItems, countOf, removeItems, type ItemId, type SkillId } from './items'
-import { terrainAt, zoneAt, type WorldMap } from './map'
+import { poiClearings, terrainAt, zoneAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
 import { actForDay, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
@@ -288,6 +288,10 @@ export function treeJitter(tx: number, ty: number): { dx: number; dy: number } {
 
 export function generateNodes(map: WorldMap, seed: number, density = 1): ResourceNode[] {
   const nodes: ResourceNode[] = []
+  // Les clairières des lieux : rien n'y pousse (voir `poiClearings`). Calculées
+  // UNE fois — un test par tuile contre ~80 zones coûterait 170 M comparaisons
+  // sur la carte de production.
+  const cleared = poiClearings(map)
   let id = 1
   const push = (type: NodeType, tx: number, ty: number): void => {
     nodes.push({ id, type, tx, ty, stock: NODE_DEFS[type].stock, regrowAt: 0 })
@@ -314,6 +318,10 @@ export function generateNodes(map: WorldMap, seed: number, density = 1): Resourc
         else if (r < 0.13) push('coal_seam', tx, ty)
       } else if (zone?.kind === 'carriere') {
         if (r < 0.15) push('rock', tx, ty)
+      } else if (cleared.has(ty * map.width + tx)) {
+        // LA CLAIRIÈRE : le lieu respire. Ni arbre, ni buisson, ni rocher — on
+        // le voit venir de loin, et on sait qu'on y est arrivé.
+        continue
       } else if (terrain === TERRAIN_FOREST) {
         // Forêt dense (ubac) : la meilleure source de BOIS.
         if (r < 0.22) push('tree', tx, ty)

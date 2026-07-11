@@ -4,6 +4,7 @@
  * code au boot — aucun asset binaire dans le repo.
  */
 import Phaser from 'phaser'
+import { makePoiTextures } from './world/poi-art'
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -96,6 +97,7 @@ export class BootScene extends Phaser.Scene {
 
     this.makeNodes()
     this.makeClutter()
+    makePoiTextures(this) // les 26 lieux — voir world/poi-art.ts
   }
 
   /** Textures des nœuds de ressources. */

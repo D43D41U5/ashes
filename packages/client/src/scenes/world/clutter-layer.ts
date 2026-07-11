@@ -5,7 +5,7 @@
  * ici on ne fait que du pooling Phaser et du placement.
  */
 import Phaser from 'phaser'
-import type { WorldMap } from '@braises/sim'
+import { poiClearings, type WorldMap } from '@braises/sim'
 import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
 import { clutterAt, type PropKind, type SampleTerrain } from '../../render/clutter'
 import type { Warp } from '../../render/warp'
@@ -21,6 +21,10 @@ const MAX_SPRITES = 4000 // borne dure de perf (cap silencieux : on log si dépa
 export class ClutterLayer {
   private readonly pool: Phaser.GameObjects.Image[] = []
   private readonly sample: SampleTerrain
+  /** Les clairières des lieux — MÊME fonction que celle qui bannit les nœuds côté
+   *  sim (`poiClearings`). Une source unique : deux calculs divergents feraient
+   *  pousser des touffes dans une clairière vide d'arbres. */
+  private readonly cleared: Set<number>
   private warned = false
 
   constructor(
@@ -33,6 +37,7 @@ export class ClutterLayer {
       if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return -1
       return map.terrain[ty * map.width + tx] ?? -1
     }
+    this.cleared = poiClearings(map)
   }
 
   update(camera: Phaser.Cameras.Scene2D.Camera): void {
@@ -45,6 +50,7 @@ export class ClutterLayer {
       const y1 = Math.min(this.map.height - 1, Math.ceil((v.y + v.height) / TILE_PX) + MARGIN_TILES)
       for (let ty = y0; ty <= y1 && used < MAX_SPRITES; ty++) {
         for (let tx = x0; tx <= x1 && used < MAX_SPRITES; tx++) {
+          if (this.cleared.has(ty * this.map.width + tx)) continue // la clairière d'un lieu : rien n'y pousse
           const terrain = this.map.terrain[ty * this.map.width + tx] ?? -1
           const props = clutterAt(tx, ty, terrain, this.seed, this.sample)
           for (const p of props) {

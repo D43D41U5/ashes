@@ -53,6 +53,7 @@ import {
 import { ClutterLayer } from './world/clutter-layer'
 import { GroundLayer } from './world/ground-layer'
 import { ShadeLayer } from './world/shade-layer'
+import { PoiLayer } from './world/poi-layer'
 import { ShoreCliff } from './world/shore-cliff'
 import { FireGlow } from './world/fire-glow'
 import { bindDebugKeys } from './world/debug-bindings'
@@ -145,6 +146,7 @@ export class WorldScene extends Phaser.Scene {
   private clutter?: ClutterLayer
   private ground!: GroundLayer
   private shade!: ShadeLayer
+  private pois!: PoiLayer
   private shoreCliff!: ShoreCliff
   private loadingText: Phaser.GameObjects.Text | null = null
   private calendarScale = 1
@@ -293,6 +295,7 @@ export class WorldScene extends Phaser.Scene {
     this.bakeMapTexture()
     this.ground = new GroundLayer(this, this.map, this.warp, 'map-demo')
     this.shade = new ShadeLayer(this, this.map, this.warp)
+    this.pois = new PoiLayer(this, this.map, this.warp) // les lieux se voient enfin
     this.shoreCliff = new ShoreCliff(this, this.map, this.warp)
     this.worldSeed = msg.seed
     this.view.setNodes(msg.nodes)
@@ -324,6 +327,7 @@ export class WorldScene extends Phaser.Scene {
       const hour = this.lastTime.hourOfCycle
       this.shade.render(this.cameras.main, hour) // ombre du relief selon le soleil
       this.shoreCliff.render(this.cameras.main) // DÉMO falaise de berge
+      this.pois.update(this.cameras.main)
       const amb = ambientTint(hour)
       this.ambientRect?.setFillStyle(amb.color).setAlpha(amb.alpha)
       this.fireGlow?.update(this.view.structures, this.view.villages, daylight(hour))

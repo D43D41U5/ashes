@@ -5,7 +5,7 @@
  * que le décor. La tuile est l'unité de distance de /sim — le rendu en pixels
  * est une affaire de /client.
  */
-import { TERRAINS } from './balance'
+import { POI, TERRAINS } from './balance'
 
 /** Rectangle nommé — landmark de chronique, future zone interdite, futur room. */
 export interface Zone {
@@ -78,6 +78,52 @@ export function poisAt(map: WorldMap, x: number, y: number): number[] {
     if (x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h) out.push(i)
   }
   return out
+}
+
+/**
+ * LA CLAIRIÈRE — les tuiles où rien ne pousse autour d'un lieu.
+ *
+ * Un lieu enseveli sous les arbres n'est pas un lieu : on ne le voit pas de
+ * loin, on ne sait pas qu'on y est arrivé. Chaque POI dégage donc un DISQUE
+ * autour de lui (son empreinte + `POI.CLEARING_MARGIN_TILES`), d'où `generateNodes`
+ * (arbres, rochers, buissons) et le décor du client sont bannis.
+ *
+ * Une seule source de vérité, partagée : si la sim et le rendu ne dégageaient
+ * pas les mêmes tuiles, on verrait des buissons pousser dans une clairière vide
+ * de nœuds — ou l'inverse.
+ *
+ * Les **gisements** et **carrières** sont EXCLUS : leur raison d'être est
+ * précisément d'être couverts de minerai (`generateNodes` les remplit). On ne
+ * dégage pas une mine.
+ *
+ * Retourne un `Set` d'index de tuile (`ty * width + tx`) — local à l'appelant,
+ * jamais dans le `SimState` (invariant : l'état de sim est JSON-sérialisable).
+ * Calculé une fois (≈ 80 zones × un petit disque), consulté en O(1).
+ */
+export function poiClearings(map: WorldMap): Set<number> {
+  const cleared = new Set<number>()
+  for (const z of map.zones) {
+    if (z.kind === undefined) continue
+    if (z.kind === 'gisement' || z.kind === 'carriere') continue // une mine ne se dégage pas
+    // Rayon = demi-empreinte + marge. Le lieu respire, quelle que soit sa taille.
+    const r = Math.max(z.w, z.h) / 2 + POI.CLEARING_MARGIN_TILES
+    const r2 = r * r
+    const cx = z.x + z.w / 2
+    const cy = z.y + z.h / 2
+    const x0 = Math.max(0, Math.floor(cx - r))
+    const x1 = Math.min(map.width - 1, Math.ceil(cx + r))
+    const y0 = Math.max(0, Math.floor(cy - r))
+    const y1 = Math.min(map.height - 1, Math.ceil(cy + r))
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        // Centre de la tuile — distance AU CARRÉ (invariant #2 : pas de sqrt inutile).
+        const dx = tx + 0.5 - cx
+        const dy = ty + 0.5 - cy
+        if (dx * dx + dy * dy <= r2) cleared.add(ty * map.width + tx)
+      }
+    }
+  }
+  return cleared
 }
 
 /** Centre d'une zone, en tuiles. */

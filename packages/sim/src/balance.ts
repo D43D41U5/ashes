@@ -79,6 +79,14 @@ export const POI = {
   HOTSPRING_RANGE_TILES: 4,
   /** Le Tarn est une halte : régén d'endurance multipliée sur son empreinte. */
   TARN_STAMINA_FACTOR: 1.5,
+  /**
+   * LA CLAIRIÈRE (2026-07-11) : marge dégagée autour de l'empreinte d'un lieu,
+   * en tuiles. Rien n'y pousse — ni arbre, ni buisson, ni rocher, ni décor.
+   * Un lieu enseveli sous la forêt n'est pas un lieu : on ne le voit pas venir,
+   * et on ne sait pas qu'on y est. Rayon total = demi-empreinte + cette marge.
+   * Ne s'applique PAS aux gisements/carrières : on ne dégage pas une mine.
+   */
+  CLEARING_MARGIN_TILES: 3,
   /** Ce que les Pétroglyphes savent montrer : les lieux ANCIENS. */
   ANCIENT_KINDS: ['ruines', 'mine', 'sanctuaire', 'oratoire'] as readonly string[],
 }
