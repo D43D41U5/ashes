@@ -25,7 +25,7 @@ import { assignErrands, handleErrand } from './npc-errands'
 import { findPath } from './pathfinding'
 import { spawnEntity, type Entity, type SimState } from './sim'
 import { TICKS_PER_CYCLE } from './time'
-import { applyVillageAction, type TaskKind, type Village } from './village'
+import { applyVillageAction, type TaskKind, type Village, type VillageAction } from './village'
 import { granaries, refreshBoard } from './village-board'
 
 export interface NpcTaskState {
@@ -151,6 +151,42 @@ export function near(entity: Entity, tx: number, ty: number, r = RANGE): boolean
   return distSq(entity.x, entity.y, tx + 0.5, ty + 0.5) <= r * r
 }
 
+// ─── Les transferts du PNJ, MESURÉS (spec inventaire R11) ─────────────────
+//
+// Sacs et greniers sont bornés : un dépôt (grenier plein) ou un retrait (sac
+// plein) peut ne déplacer AUCUNE unité. Une corvée qui ne regarde pas ce que le
+// transfert a réellement bougé se retente au tick suivant, à l'identique, pour
+// toujours : c'est le livelock. Tout appelant DOIT lire ce retour et lâcher sa
+// tâche quand il vaut 0.
+
+function measured(state: SimState, entity: Entity, action: VillageAction, item: ItemId): number {
+  const before = countOf(entity.inventory, item)
+  applyVillageAction(state, entity.id, action)
+  return Math.abs(countOf(entity.inventory, item) - before)
+}
+
+/** Dépose au conteneur ; retourne ce qui a VRAIMENT quitté le sac (0 = plein). */
+export function deposit(
+  state: SimState,
+  entity: Entity,
+  structureId: number,
+  item: ItemId,
+  count: number,
+): number {
+  return measured(state, entity, { type: 'deposit', structureId, item, count }, item)
+}
+
+/** Retire du conteneur ; retourne ce qui est VRAIMENT entré dans le sac (0 = plein). */
+export function withdraw(
+  state: SimState,
+  entity: Entity,
+  structureId: number,
+  item: ItemId,
+  count: number,
+): number {
+  return measured(state, entity, { type: 'withdraw', structureId, item, count }, item)
+}
+
 // ─── Réclamer/rendre les tâches du tableau (spec R5) ─────────────────────
 
 function claimTask(village: Village, npc: Npc): void {
@@ -225,9 +261,9 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
   if (near(entity, chest.tx, chest.ty)) {
     const keep = def.item === 'berries' ? NPC_AI.FOOD_KEEP : 0
     const count = countOf(entity.inventory, def.item) - keep
-    if (count > 0) {
-      applyVillageAction(state, entity.id, { type: 'deposit', structureId: chest.id, item: def.item, count })
-    }
+    if (count > 0) deposit(state, entity, chest.id, def.item, count)
+    // Grenier plein (dépôt à 0) : le PNJ GARDE sa récolte — rien ne se détruit —
+    // et lâche la corvée quand même. La retenir, ce serait la retenter sans fin.
     dropTask(village, npc, true)
     return
   }
@@ -253,10 +289,12 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
     }
     if (near(entity, chest.tx, chest.ty)) {
       const inv = chest.inventory ?? []
+      // Un retrait qui ne rapporte rien (sac plein) : on lâche, sinon on
+      // reviendrait au grenier à chaque tick sans jamais rien en sortir.
       if (needBerries > 0 && countOf(inv, 'berries') >= needBerries) {
-        applyVillageAction(state, entity.id, { type: 'withdraw', structureId: chest.id, item: 'berries', count: needBerries })
+        if (withdraw(state, entity, chest.id, 'berries', needBerries) === 0) dropTask(village, npc, false)
       } else if (needFiber > 0 && countOf(inv, 'fiber') >= needFiber) {
-        applyVillageAction(state, entity.id, { type: 'withdraw', structureId: chest.id, item: 'fiber', count: needFiber })
+        if (withdraw(state, entity, chest.id, 'fiber', needFiber) === 0) dropTask(village, npc, false)
       } else {
         dropTask(village, npc, false) // le grenier s'est vidé entre-temps
       }
@@ -284,12 +322,10 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
     return
   }
 
-  // stage 'store'
+  // stage 'store' — grenier plein : le PNJ garde le ragoût et lâche la corvée.
   if (near(entity, chest.tx, chest.ty)) {
     const count = countOf(entity.inventory, 'stew')
-    if (count > 0) {
-      applyVillageAction(state, entity.id, { type: 'deposit', structureId: chest.id, item: 'stew', count })
-    }
+    if (count > 0) deposit(state, entity, chest.id, 'stew', count)
     dropTask(village, npc, true)
     return
   }
@@ -307,12 +343,16 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
     const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], 'wood') > 0)
     if (!chest) return dropTask(village, npc, false) // pas de bois : on abandonne
     if (near(entity, chest.tx, chest.ty)) {
-      applyVillageAction(state, entity.id, {
-        type: 'withdraw',
-        structureId: chest.id,
-        item: 'wood',
-        count: Math.min(NPC_AI.REPAIR_WOOD_WITHDRAW, countOf(chest.inventory ?? [], 'wood')),
-      })
+      const got = withdraw(
+        state,
+        entity,
+        chest.id,
+        'wood',
+        Math.min(NPC_AI.REPAIR_WOOD_WITHDRAW, countOf(chest.inventory ?? [], 'wood')),
+      )
+      // Sac plein : sans bois, l'étape 'work' renverrait aussitôt vers 'fetch' —
+      // un aller-retour perpétuel entre le grenier et la structure. On lâche.
+      if (got === 0) return dropTask(village, npc, false)
       task.stage = 'work'
       return
     }

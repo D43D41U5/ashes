@@ -310,3 +310,46 @@ describe('recherche de chaleur (handleCold)', () => {
     expect(npc.path.length).toBe(0) // aucun chemin posé vers le Feu
   })
 })
+
+/**
+ * Le grenier est BORNÉ (spec inventaire R11) : un dépôt peut ne plus rien
+ * déplacer. Deux dangers, un par test : la récolte qui s'évapore (A21), et la
+ * corvée qu'on retente à chaque tick — le livelock connu du projet.
+ */
+describe('le grenier plein (A21 + livelock)', () => {
+  /** Un coffre SANS un interstice : ni case libre, ni pile incomplète. */
+  const saturated = () => inventoryOf(SLOTS.CHEST, { stone: 20 * SLOTS.CHEST })
+
+  it('dépôt impossible : le PNJ ne détruit pas sa récolte et relâche sa tâche', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = saturated()
+    const e = npcEntity(sim)
+    e.hunger = 100 // qu'il ne mange pas ses baies : on compte les items
+    grantItems(sim, e.id, { berries: 20 }) // déjà au-delà de sa cible de portage
+    const stages: (string | null)[] = []
+    for (let t = 0; t < 300; t++) {
+      step(sim, [])
+      stages.push(sim.npcs[0]!.task?.stage ?? null)
+    }
+    // Aucun item ne se détruit : les 20 baies sont toujours quelque part.
+    expect(countOf(e.inventory, 'berries') + countOf(granary(sim).inventory!, 'berries')).toBe(20)
+    // Et le PNJ n'est pas resté collé au stade `store` : il a lâché la corvée.
+    expect(stages).toContain(null)
+    expect(stages.filter((s) => s === 'store').length).toBeLessThan(stages.length)
+  })
+
+  it('butin de raid + grenier plein : le raider ne rentre pas pour l’éternité', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = saturated()
+    const e = npcEntity(sim)
+    grantItems(sim, e.id, { stone: 10 }) // le butin — rien dans le village n'en veut
+    sim.npcs[0]!.errand = { kind: 'raid', targetVillageId: sim.villages[0]!.id, stage: 'home' }
+
+    for (let t = 0; t < 300; t++) step(sim, [])
+
+    // Le grenier ne prend rien : l'expédition s'achève quand même (elle se
+    // retentait à chaque tick, et le PNJ ne faisait plus JAMAIS rien d'autre).
+    expect(sim.npcs[0]!.errand).toBeNull()
+    expect(countOf(e.inventory, 'stone')).toBe(10) // il garde son butin, rien ne s'évapore
+  })
+})

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, TERRAIN_GRASS } from './balance'
+import { seasonActFactor } from './alignment'
+import { ALIGNMENT, BALANCE, COMBAT, FOOD_VALUES, SLOTS, TERRAIN_GRASS } from './balance'
 import { drainEvents } from './events'
-import { countOf } from './items'
+import { countOf, inventoryOf } from './items'
 import { createEmptyMap } from './map'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { getVillageOf, grantItems, structureAt } from './village'
@@ -286,5 +287,152 @@ describe('la démolition (A5)', () => {
     expect(rejections(sim)).toEqual(['ni propriétaire ni Chef'])
     act(sim, chief, { type: 'demolish', structureId: wall2 })
     expect(structureAt(sim.structures, 13, 11)).toBeUndefined()
+  })
+})
+
+/**
+ * Le sac est BORNÉ (spec inventaire) : tout transfert peut désormais ne pas
+ * tenir. Le critère A21 est absolu — « aucun item ne se crée ni ne se détruit ».
+ * Ces tests tiennent les quatre transferts du village contre cette règle.
+ */
+describe('la conservation des items (A21)', () => {
+  const entity = (sim: SimState, id: number) => sim.entities.find((e) => e.id === id)!
+  /** Un sac de joueur SANS un seul interstice : ni case libre, ni pile incomplète. */
+  const fullBag = () => inventoryOf(SLOTS.PLAYER, { wood: 20 * SLOTS.PLAYER })
+
+  function chestSim() {
+    const sim = makeSim()
+    const chief = founder(sim, 10.5, 10.5)
+    act(sim, chief, { type: 'build', structure: 'chest', tx: 11, ty: 10 })
+    const chestId = structureAt(sim.structures, 11, 10)!.id
+    drainEvents(sim)
+    return { sim, chief, chestId }
+  }
+
+  it('démolir avec un sac plein : le remboursement se RÉPAND au sol, il ne s’évapore pas', () => {
+    const sim = makeSim()
+    const chief = founder(sim, 10.5, 10.5)
+    act(sim, chief, { type: 'build', structure: 'wall', tx: 12, ty: 10 })
+    const wall = structureAt(sim.structures, 12, 10)!.id
+    entity(sim, chief).inventory = fullBag() // plus une case
+    drainEvents(sim)
+    const t0 = sim.tick
+
+    act(sim, chief, { type: 'demolish', structureId: wall })
+
+    expect(structureAt(sim.structures, 12, 10)).toBeUndefined()
+    expect(countOf(entity(sim, chief).inventory, 'wood')).toBe(20 * SLOTS.PLAYER) // rien n'est rentré
+    // …donc le bois du remboursement (floor(2 × 0.5) = 1) gît sur la tuile démolie.
+    const corpse = sim.corpses.find((c) => c.x === 12.5 && c.y === 10.5)
+    expect(corpse).toBeDefined()
+    expect(countOf(corpse!.inventory, 'wood')).toBe(1)
+    expect(corpse!.decayAt).toBe(t0 + COMBAT.CORPSE_TICKS)
+  })
+
+  it('déposer dans un coffre plein : refus, et le stock reste à la source', () => {
+    const { sim, chief, chestId } = chestSim()
+    const chest = sim.structures.find((s) => s.id === chestId)!
+    chest.inventory = inventoryOf(SLOTS.CHEST, { stone: 20 * SLOTS.CHEST })
+    grantItems(sim, chief, { berries: 10 })
+    drainEvents(sim)
+
+    act(sim, chief, { type: 'deposit', structureId: chestId, item: 'berries', count: 10 })
+
+    expect(rejections(sim)).toEqual(['destination pleine'])
+    expect(countOf(entity(sim, chief).inventory, 'berries')).toBe(10)
+    expect(countOf(chest.inventory!, 'berries')).toBe(0)
+  })
+
+  it('déposer plus que la place : on ne transfère que ce qui rentre, le reste RESTE', () => {
+    const { sim, chief, chestId } = chestSim()
+    const chest = sim.structures.find((s) => s.id === chestId)!
+    // 23 cases de pierre + une pile de baies à 7/10 → place réelle : 3 baies.
+    chest.inventory = inventoryOf(SLOTS.CHEST, { stone: 20 * (SLOTS.CHEST - 1), berries: 7 })
+    grantItems(sim, chief, { berries: 10 })
+    drainEvents(sim)
+
+    act(sim, chief, { type: 'deposit', structureId: chestId, item: 'berries', count: 10 })
+
+    expect(countOf(chest.inventory!, 'berries')).toBe(10) // 7 + 3
+    expect(countOf(entity(sim, chief).inventory, 'berries')).toBe(7) // 10 − 3 : rien ne s'évapore
+  })
+
+  it('retirer d’un coffre avec un sac plein : refus, le coffre garde tout', () => {
+    const { sim, chief, chestId } = chestSim()
+    const chest = sim.structures.find((s) => s.id === chestId)!
+    act(sim, chief, { type: 'deposit', structureId: chestId, item: 'wood', count: 5 })
+    entity(sim, chief).inventory = fullBag()
+    // Le sac est plein de bois… mais en piles PLEINES : pas un interstice.
+    drainEvents(sim)
+
+    act(sim, chief, { type: 'withdraw', structureId: chestId, item: 'wood', count: 5 })
+
+    expect(rejections(sim)).toEqual(['destination pleine'])
+    expect(countOf(chest.inventory!, 'wood')).toBe(5)
+    expect(countOf(entity(sim, chief).inventory, 'wood')).toBe(20 * SLOTS.PLAYER)
+  })
+
+  it('le don au grenier d’un autre village est crédité sur ce qui est VRAIMENT déposé', () => {
+    const sim = makeSim()
+    const donneur = founder(sim, 10.5, 10.5)
+    const chief2 = founder(sim, 70.5, 70.5) // au-delà de FIRE_MIN_DISTANCE
+    act(sim, chief2, { type: 'build', structure: 'chest', tx: 71, ty: 70 })
+    const granary = structureAt(sim.structures, 71, 70)!
+    act(sim, chief2, { type: 'set_access', structureId: granary.id, access: 'village' })
+    // Le grenier étranger ne peut plus prendre que 3 baies.
+    granary.inventory = inventoryOf(SLOTS.CHEST, { stone: 20 * (SLOTS.CHEST - 1), berries: 7 })
+
+    const moi = entity(sim, donneur)
+    moi.x = 71.5
+    moi.y = 71.4 // à portée du grenier étranger
+    moi.warmth = 0
+    grantItems(sim, donneur, { berries: 10 })
+    drainEvents(sim)
+
+    act(sim, donneur, { type: 'deposit', structureId: granary.id, item: 'berries', count: 10 })
+
+    const gifts = drainEvents(sim).flatMap((e) => (e.type === 'gift_given' ? [e] : []))
+    expect(gifts).toHaveLength(1)
+    expect(gifts[0]!.count).toBe(3) // pas 10 : on ne se fait pas créditer d'un don qui n'a pas eu lieu
+    // 3 baies créditées, pas 10 (la chaleur du tick suivant a déjà un peu décanté).
+    const attendu =
+      FOOD_VALUES.berries! * 3 * ALIGNMENT.FOREIGN_DEPOSIT_WARMTH_PER_FOOD * seasonActFactor(sim)
+    expect(moi.warmth).toBeCloseTo(attendu, 3)
+  })
+
+  it('donner à quelqu’un dont le sac est plein : refus, aucun item ne change de mains', () => {
+    const sim = makeSim()
+    const chief = founder(sim, 10.5, 10.5)
+    const cible = spawnEntity(sim, 10.8, 10.5)
+    entity(sim, cible).inventory = fullBag()
+    grantItems(sim, chief, { berries: 10 })
+    drainEvents(sim)
+
+    act(sim, chief, { type: 'give', targetEntityId: cible, item: 'berries', count: 10 })
+
+    expect(rejections(sim)).toEqual(['le sac de la cible est plein'])
+    expect(countOf(entity(sim, chief).inventory, 'berries')).toBe(10)
+    expect(countOf(entity(sim, cible).inventory, 'berries')).toBe(0)
+  })
+
+  it('donner plus que la place : on ne donne que ce qui rentre, et la chaleur suit', () => {
+    const sim = makeSim()
+    const chief = founder(sim, 10.5, 10.5)
+    const cible = spawnEntity(sim, 10.8, 10.5)
+    // 17 cases pleines + une pile de baies à 7/10 → place réelle : 3 baies.
+    entity(sim, cible).inventory = inventoryOf(SLOTS.PLAYER, {
+      wood: 20 * (SLOTS.PLAYER - 1),
+      berries: 7,
+    })
+    entity(sim, cible).hunger = 100 // faim rassasiée : la chaleur utile est nulle…
+    grantItems(sim, chief, { berries: 10 })
+    drainEvents(sim)
+
+    act(sim, chief, { type: 'give', targetEntityId: cible, item: 'berries', count: 10 })
+
+    expect(countOf(entity(sim, cible).inventory, 'berries')).toBe(10) // 7 + 3
+    expect(countOf(entity(sim, chief).inventory, 'berries')).toBe(7)
+    const gifts = drainEvents(sim).flatMap((e) => (e.type === 'gift_given' ? [e] : []))
+    expect(gifts[0]?.count).toBe(3) // …mais l'événement dit la vérité : 3 baies
   })
 })

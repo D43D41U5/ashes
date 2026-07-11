@@ -10,7 +10,7 @@ import { ALIGNMENT, BALANCE, COMBAT, NPC_AI } from './balance'
 import { applyCombatAction, startAttack } from './combat'
 import { distSq } from './geometry'
 import { countOf, itemsIn } from './items'
-import { dropTask, followPath, near, setPathTo, type Npc } from './npc'
+import { deposit, dropTask, followPath, near, setPathTo, type Npc } from './npc'
 import type { Entity, SimState } from './sim'
 import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
 import { applyVillageAction, type Structure, type Village } from './village'
@@ -209,7 +209,11 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
       if (item === 'spear') continue
       const count = countOf(entity.inventory, item)
       if (count > 0) {
-        applyVillageAction(state, entity.id, { type: 'deposit', structureId: own.id, item, count })
+        // Le grenier est borné : un dépôt peut ne RIEN déplacer. Reprendre la
+        // boucle telle quelle, c'est retenter ce dépôt à chaque tick jusqu'à la
+        // fin des temps — le raider ne rentrerait jamais. Il garde son butin et
+        // décroche : l'expédition est finie.
+        if (deposit(state, entity, own.id, item, count) === 0) return done()
         return true // un dépôt par tick
       }
     }
