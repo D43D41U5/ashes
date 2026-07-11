@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { addItems, countOf, freeRoomFor, hasItems, isEmpty, itemsIn, makeInventory, removeItems, toBag } from './items'
+import {
+  addItems,
+  countOf,
+  freeRoomFor,
+  hasItems,
+  isEmpty,
+  itemsIn,
+  makeInventory,
+  removeItems,
+  toBag,
+  type Inventory,
+} from './items'
 
 describe('le socle à cases', () => {
   // A1 — remplissage : on ouvre les cases dans l'ordre, on respecte la taille de pile.
@@ -75,6 +86,36 @@ describe('le socle à cases', () => {
     expect(countOf(inv, 'stone')).toBe(0)
     expect(hasItems(inv, { wood: 12 })).toBe(true)
     expect(hasItems(inv, { wood: 13 })).toBe(false)
+  })
+
+  // R6 — la garde qui tue le bug de conception : une case ENTAMÉE n'avale pas
+  // du neuf. Aucun code de production n'écrit encore `wear` dans une case (c'est
+  // la tâche 3) : sans ces deux tests la garde a l'air morte, et quelqu'un la
+  // « simplifiera ».
+  it('R6 : une case usée n’absorbe jamais un ajout — addItems ouvre une case neuve', () => {
+    const outils = makeInventory(2)
+    outils[0] = { item: 'axe', count: 1, wear: 3 } // hache entamée
+    expect(addItems(outils, { axe: 1 })).toEqual({})
+    expect(outils).toEqual([
+      { item: 'axe', count: 1, wear: 3 }, // l'usure reste sur SA case
+      { item: 'axe', count: 1 }, // la neuve prend la sienne
+    ])
+    // Même sur un EMPILABLE : une pile usée ne se complète pas (la case usée est
+    // hors du jeu de l'empilement, quelle que soit la taille de pile).
+    const piles = makeInventory(2)
+    piles[0] = { item: 'wood', count: 5, wear: 2 }
+    expect(addItems(piles, { wood: 3 })).toEqual({})
+    expect(piles).toEqual([
+      { item: 'wood', count: 5, wear: 2 },
+      { item: 'wood', count: 3 },
+    ])
+  })
+
+  it('R6 : freeRoomFor ignore la place d’une case usée', () => {
+    const inv: Inventory = [{ item: 'wood', count: 5, wear: 2 }]
+    // 15 unités « tiendraient » dans la pile — mais elle est usée : place réelle 0.
+    expect(freeRoomFor(inv, 'wood')).toBe(0)
+    expect(addItems(inv, { wood: 1 })).toEqual({ wood: 1 })
   })
 
   it('toBag / itemsIn / isEmpty / freeRoomFor', () => {
