@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createEmptyMap, poisAt, poiCenter } from './map'
 import { TERRAIN_GRASS } from './balance'
 import { POI_CHARGES, poiFamily } from './poi-discovery'
-import { createSim, spawnEntity, step, type SimState } from './sim'
+import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
 
 /** Carte de test : 3 zones, dont une SANS `kind` (un simple toponyme). */
 function mapWithZones() {
@@ -104,5 +104,25 @@ describe('la règle de base : un lieu foulé entre dans la carte', () => {
     const { state, playerId } = simWith([{ name: 'le Pont', x: 10, y: 10, w: 2, h: 2 }])
     walkTo(state, playerId, 10.5, 10.5)
     expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([])
+  })
+
+  it('entrer dans un lieu par un vrai pas (input) le fait connaître DÈS ce tick — pas au suivant', () => {
+    // Le joueur est posé juste avant la frontière de la zone [10,12)×[10,12) :
+    // à vitesse de marche (4 tuiles/s à 20 Hz = 0,2 tuile/tick), un seul pas
+    // vers l'est le fait franchir la frontière (9,85 → 10,05) dans le tick.
+    const { state, playerId } = simWith([{ name: 'le Gisement I', x: 10, y: 10, w: 2, h: 2, kind: 'gisement' }])
+    const p = state.entities.find((e) => e.id === playerId)!
+    p.x = 9.85
+    p.y = 10.5
+    state.events.length = 0
+
+    const input: MoveInput = { entityId: playerId, dx: 1, dy: 0 }
+    step(state, [input])
+
+    const after = state.entities.find((e) => e.id === playerId)!
+    // Le pas a bien franchi la frontière — sinon le test ne discrimine rien.
+    expect(after.x).toBeGreaterThanOrEqual(10)
+    expect(after.knownPois).toEqual([0])
+    expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(1)
   })
 })
