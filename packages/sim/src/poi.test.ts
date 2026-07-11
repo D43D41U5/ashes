@@ -41,16 +41,45 @@ describe('placePois', () => {
     expect(map.zones.some((z) => z.kind === 'gisement' || z.kind === 'carriere')).toBe(true)
   })
 
-  // Les deux tests CRITICAL ci-dessous tournent sur la vraie carte alpine
+  // Les tests CRITICAL ci-dessous tournent sur la vraie carte alpine
   // (1200×1800, taille de production), 5 seeds — generateAlpineTerrain y coûte
-  // ~5-6 s × 5. Générée UNE fois en `beforeAll` et partagée entre les deux
-  // `it` : ils vérifient des invariants différents sur le MÊME résultat, pas
-  // besoin de regénérer (évite de doubler le temps du fichier pour rien).
+  // ~5-6 s × 5. Générée UNE fois en `beforeAll` et partagée entre les `it` :
+  // ils vérifient des invariants différents sur le MÊME résultat, pas besoin de
+  // regénérer (évite de tripler le temps du fichier pour rien).
   const PROD_SEEDS = [2026, 99, 2718, 31415, 7]
   const prodMaps = new Map<number, ReturnType<typeof generateAlpineTerrain>>()
   beforeAll(() => {
     for (const seed of PROD_SEEDS) prodMaps.set(seed, generateAlpineTerrain(1200, 1800, seed))
   }, 60_000)
+
+  /**
+   * CRITICAL — LA RÉSERVATION (décision d'Alexis, 2026-07-11).
+   *
+   * Onze lieux portent une CHARGE de gameplay (savoir, répit, récit — cf.
+   * `POI_CHARGES`, spec `docs/specs/lieux.md`). Un lieu dont une mécanique dépend
+   * ne peut pas se permettre de ne pas exister : sans réservation, le Belvédère
+   * sortait ZÉRO fois sur la seed du jeu (il avait pourtant 10 points de semis
+   * éligibles — il perdait simplement la loterie face au Cairn, poids 12), et la
+   * devise « savoir » se réduisait au seul Cairn.
+   *
+   * On ne peut PAS lire `POI_CHARGES` ici (cycle d'import poi ↔ poi-discovery) :
+   * on s'appuie sur `reserve`, le champ qui PORTE la garantie dans la table. Le
+   * test vérifie donc exactement ce que le champ promet.
+   */
+  it('CRITICAL — tout lieu à `reserve` existe sur CHAQUE carte (vraie carte alpine)', () => {
+    const reserves = POI_TYPES.filter((t) => (t.reserve ?? 0) > 0)
+    expect(reserves).toHaveLength(11) // les onze lieux chargés — si ça change, relire la spec
+
+    for (const seed of PROD_SEEDS) {
+      const map = prodMaps.get(seed)!
+      for (const t of reserves) {
+        const n = map.zones.filter((z) => z.kind === t.slug).length
+        expect
+          .soft(n, `${t.name} (seed ${seed}) : réservé à ${t.reserve}, posé ${n} fois`)
+          .toBeGreaterThanOrEqual(Math.min(t.reserve!, t.cap))
+      }
+    }
+  })
 
   /**
    * CRITICAL (revue « les lieux », constat 1) : un lieu qu'on ne peut pas fouler
