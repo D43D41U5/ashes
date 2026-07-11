@@ -9,10 +9,21 @@
  *   pnpm smoke                      # build + preview + scénario par défaut
  *   pnpm smoke --scenario lieux     # un scénario nommé (voir SCENARIOS)
  *   pnpm smoke --headed             # à l'œil, fenêtre ouverte
- *   pnpm smoke --dev                # contre `pnpm dev` (le mode debug y est armé)
+ *   pnpm smoke --dev                # contre le serveur de dev DOCKER (debug armé)
  *
- * Le script bâtit, sert et éteint son propre serveur : rien à lancer à côté,
- * rien à tuer après.
+ * Sans `--dev`, le script bâtit, sert et éteint son propre serveur : rien à
+ * lancer à côté, rien à tuer après.
+ *
+ * Avec `--dev`, il vise le serveur de dev du projet — celui du conteneur, sur
+ * http://ashes.localhost (docker compose : service `client` derrière Traefik).
+ * On ne lance PAS un `pnpm dev` local : le conteneur tourne en root et son
+ * cache `.vite` (bind-monté) devient root-owned, ce qui fait échouer un `vite`
+ * lancé côté hôte avec EACCES. Le conteneur doit donc être up :
+ *     docker compose up -d client
+ * Et si son HMR se corrompt (SyntaxError « does not provide an export named X »
+ * alors que `pnpm check` passe — ce n'est PAS un bug de code) :
+ *     docker compose exec -T client sh -c "rm -rf /app/node_modules/.vite" \
+ *       && docker compose restart client
  *
  * Le jeu s'expose via `window.__BRAISES__.scene` (posé par WorldScene) : c'est
  * la seule porte d'entrée, et elle est volontairement étroite — le smoke test
@@ -37,22 +48,26 @@ const args = process.argv.slice(2)
 const headed = args.includes('--headed')
 const dev = args.includes('--dev')
 const scenario = args[args.indexOf('--scenario') + 1] ?? 'default'
-const URL = `http://localhost:${dev ? 3000 : PORT}/`
+const URL = process.env.SMOKE_URL ?? (dev ? 'http://ashes.localhost/' : `http://localhost:${PORT}/`)
 
 mkdirSync(OUT, { recursive: true })
 
-/** Bâtit puis sert le jeu, et rend de quoi l'éteindre. En `--dev`, sert les sources (debug armé). */
+/**
+ * Bâtit puis sert le jeu, et rend de quoi l'éteindre.
+ * En `--dev`, on ne sert rien : le serveur de dev est celui du conteneur (cf. l'en-tête).
+ */
 async function serve() {
-  if (!dev) {
-    await new Promise((ok, ko) => {
-      const b = spawn('pnpm', ['build'], { cwd: ROOT, stdio: 'ignore' })
-      b.on('exit', (c) => (c === 0 ? ok() : ko(new Error(`pnpm build a échoué (${c})`))))
-    })
-  }
-  const cmd = dev
-    ? ['--filter', '@braises/client', 'dev', '--port', '3000', '--strictPort']
-    : ['--filter', '@braises/client', 'exec', 'vite', 'preview', '--port', String(PORT), '--strictPort']
-  const srv = spawn('pnpm', cmd, { cwd: ROOT, stdio: 'ignore', detached: true })
+  if (dev) return () => {}
+
+  await new Promise((ok, ko) => {
+    const b = spawn('pnpm', ['build'], { cwd: ROOT, stdio: 'ignore' })
+    b.on('exit', (c) => (c === 0 ? ok() : ko(new Error(`pnpm build a échoué (${c})`))))
+  })
+  const srv = spawn(
+    'pnpm',
+    ['--filter', '@braises/client', 'exec', 'vite', 'preview', '--port', String(PORT), '--strictPort'],
+    { cwd: ROOT, stdio: 'ignore', detached: true },
+  )
   return () => {
     try {
       process.kill(-srv.pid) // le groupe entier : vite essaime
@@ -135,7 +150,10 @@ const SCENARIOS = {
     console.log(a.knownPois.includes(banal.poiId) ? `   ✓ il est entré dans la carte` : `   ✗ il n'est PAS entré dans la carte`)
 
     console.log(`\n── Une charge de savoir : la révélation à distance ──`)
-    const charge = s.pois.find((p) => ['belvedere', 'arche', 'cairn', 'petroglyphes'].includes(p.kind))
+    // Le Belvédère d'abord : c'est LUI la pièce maîtresse (il révèle une grappe).
+    const charge = ['belvedere', 'arche', 'petroglyphes', 'cairn']
+      .map((k) => s.pois.find((p) => p.kind === k))
+      .find(Boolean)
     if (!charge) {
       console.log('   (aucun lieu de savoir sur cette carte)')
       return s
