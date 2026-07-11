@@ -24,6 +24,7 @@ import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde } from './worldevents'
 import { rngNext } from './rng'
 import { advanceNpcs, type Npc } from './npc'
+import { advancePois } from './poi-discovery'
 import { advanceTime, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
 import { advanceTemperature, coldSpeedFactor } from './temperature'
 import { applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
@@ -70,6 +71,13 @@ export interface Entity {
   engagement: number
   /** DEV seulement : invulnérable, jauges gelées (voir debug.ts). */
   god?: true
+  /**
+   * Les lieux connus de ce joueur (spec lieux R3) — index dans `map.zones`.
+   * Un tableau, pas un `Set` : l'état de sim reste JSON-sérialisable.
+   * Présent sur toutes les entités (forme uniforme = snapshot stable), mais
+   * SEULS LES JOUEURS l'alimentent : les PNJ n'ont pas de carte.
+   */
+  knownPois: number[]
 }
 
 export interface SimState {
@@ -106,6 +114,9 @@ export interface SimState {
   /** La saison (spec saison) : méga-horde tirée, évacuation ouverte, fin émise. */
   megaHordeSpawned: boolean
   evacuation: { tx: number; ty: number } | null
+  /** Lieux déjà atteints par un joueur, tous joueurs confondus (spec lieux R12).
+   *  Global : il n'y a qu'un premier — en multi, c'est une course. */
+  visitedPois: number[]
   seasonEnded: boolean
   nextVillageId: number
   nextStructureId: number
@@ -163,6 +174,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     aggressions: [],
     megaHordeSpawned: false,
     evacuation: null,
+    visitedPois: [],
     seasonEnded: false,
     nextVillageId: 1,
     nextStructureId: 1,
@@ -202,6 +214,7 @@ export function spawnEntity(state: SimState, x: number, y: number): number {
     homeY: y,
     warmth: 0,
     engagement: 0,
+    knownPois: [],
   })
   // Consomme un pas de PRNG : le spawn fait partie de l'histoire déterministe.
   state.rngState = rngNext(state.rngState)
@@ -284,6 +297,8 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     entity.x = moved.x
     entity.y = moved.y
   }
+  // La découverte est la conséquence du pas qu'on vient de faire (spec lieux R6).
+  advancePois(state)
   // Le monde d'abord (spawns/alarmes), puis PNJ, monstres, résolution.
   advanceWorldEvents(state)
   advanceNpcs(state)

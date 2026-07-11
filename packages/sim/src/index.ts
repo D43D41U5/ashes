@@ -64,7 +64,7 @@ export {
 export type { MonsterDef, MonsterType, NodeDef, NodeType, Recipe, RecipeId, TerrainDef } from './balance'
 
 // ─── Monde : carte, temps, collision, navigation ──────────────────────────
-export { createEmptyMap, terrainAt, elevationAt, isBlockingTile, zoneAt } from './map'
+export { createEmptyMap, terrainAt, elevationAt, isBlockingTile, zoneAt, poisAt, poiCenter } from './map'
 export type { WorldMap, Zone } from './map'
 export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
@@ -88,6 +88,8 @@ export type { Npc, NpcTaskState } from './npc'
 export { advanceMonsters } from './monsters'
 export type { Monster } from './monsters'
 export { advanceCendreux, willRiseAsCendreux } from './cendreux'
+export { POI_CHARGES, poiFamily, advancePois } from './poi-discovery'
+export type { PoiCharge } from './poi-discovery'
 export { advanceWorldEvents } from './worldevents'
 export type { Horde } from './worldevents'
 export { advanceAlignment, archetypeOf, isOutsider, regenFactor, damageModifier, harvestFactor } from './alignment'

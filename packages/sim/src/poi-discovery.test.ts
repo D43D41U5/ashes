@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createEmptyMap, poisAt, poiCenter } from './map'
 import { TERRAIN_GRASS } from './balance'
 import { POI_CHARGES, poiFamily } from './poi-discovery'
+import { createSim, spawnEntity, step, type SimState } from './sim'
 
 /** Carte de test : 3 zones, dont une SANS `kind` (un simple toponyme). */
 function mapWithZones() {
@@ -57,5 +58,51 @@ describe('POI_CHARGES', () => {
     expect(count('savoir')).toBe(4)
     expect(count('repit')).toBe(3)
     expect(count('recit')).toBe(4)
+  })
+})
+
+/** Une sim de test avec une carte à zones et un joueur posé où on veut. */
+function simWith(zones: { name: string; x: number; y: number; w: number; h: number; kind?: string }[]) {
+  const map = createEmptyMap(64, 64, TERRAIN_GRASS)
+  map.zones.push(...zones)
+  const state = createSim(1, { map })
+  const playerId = spawnEntity(state, 0.5, 0.5)
+  return { state, playerId }
+}
+
+/** Téléporte le joueur et joue un tick sans input (le pas est déjà fait). */
+function walkTo(state: SimState, playerId: number, x: number, y: number) {
+  const p = state.entities.find((e) => e.id === playerId)!
+  p.x = x
+  p.y = y
+  state.events.length = 0
+  step(state, [])
+}
+
+describe('la règle de base : un lieu foulé entre dans la carte', () => {
+  it('au tick 0, le joueur ne connaît AUCUN lieu', () => {
+    const { state, playerId } = simWith([{ name: 'le Gisement I', x: 10, y: 10, w: 2, h: 2, kind: 'gisement' }])
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([])
+  })
+
+  it('fouler un Gisement (aucune charge) suffit à le connaître, et émet poi_discovered', () => {
+    const { state, playerId } = simWith([{ name: 'le Gisement I', x: 10, y: 10, w: 2, h: 2, kind: 'gisement' }])
+    walkTo(state, playerId, 10.5, 10.5)
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0])
+    expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(1)
+  })
+
+  it('le retraverser n’émet plus rien (idempotent)', () => {
+    const { state, playerId } = simWith([{ name: 'le Gisement I', x: 10, y: 10, w: 2, h: 2, kind: 'gisement' }])
+    walkTo(state, playerId, 10.5, 10.5)
+    walkTo(state, playerId, 10.6, 10.6) // toujours dedans, tick suivant
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0])
+    expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(0)
+  })
+
+  it('une zone SANS kind (un toponyme) n’entre jamais dans la carte', () => {
+    const { state, playerId } = simWith([{ name: 'le Pont', x: 10, y: 10, w: 2, h: 2 }])
+    walkTo(state, playerId, 10.5, 10.5)
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([])
   })
 })

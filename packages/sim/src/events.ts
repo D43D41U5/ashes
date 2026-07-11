@@ -80,6 +80,7 @@ export type SimEvent =
         outcome: string
       }[]
     }
+  | { type: 'poi_discovered'; tick: number; poiId: number; kind: string; byEntityId: number }
 // À venir avec les systèmes : pact_signed, cicatrices, …
 
 /** Émet un événement dans le buffer de l'état. Usage interne à /sim. */
