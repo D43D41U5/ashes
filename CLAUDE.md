@@ -11,9 +11,16 @@ pnpm test         # vitest sur tous les packages (/sim + cadrage du client)
 pnpm lint         # eslint, dont les garde-fous de pureté de /sim
 pnpm dev          # client Vite (jeu jouable sur http://localhost:3000)
 pnpm build        # build web statique → packages/client/dist
+pnpm smoke        # pilote le VRAI jeu dans Chromium et rapporte ce qu'il voit
 ```
 
-Pour un smoke test navigateur headless : le Playwright du projet Manif est réutilisable (`/home/alexis/projects/demo/node_modules/playwright-core`), voir l'historique git de V2.
+**Smoke test navigateur** — `tools/smoke.mjs`. Il bâtit, sert et éteint son propre serveur : rien à lancer à côté. Playwright est une devDependency du workspace et le navigateur vit **sous `node_modules`** (`pnpm smoke:install`, une fois) — aucune dépendance vers un cache partagé ni vers un autre dépôt.
+
+- `pnpm smoke --scenario lieux` — un scénario nommé (voir `SCENARIOS` dans le fichier).
+- `pnpm smoke --headed` — à l'œil, fenêtre ouverte.
+- `pnpm smoke --dev` — contre `pnpm dev`, **le seul mode où le debug est armé** : `veillee.ts` arme `debug` sur `import.meta.env.DEV`, donc TP/heure/invulnérabilité sont **inertes dans un build de production**. Un scénario qui se téléporte doit passer par là.
+
+Le jeu s'expose via `window.__BRAISES__.scene` : le smoke test **lit** l'état, il ne le fabrique pas.
 
 Les trois dernières doivent passer avant tout commit. Elles sont rapides — les lancer souvent.
 

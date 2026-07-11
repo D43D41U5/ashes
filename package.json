@@ -12,10 +12,13 @@
     "lint": "eslint .",
     "dev": "pnpm --filter @braises/client dev",
     "build": "pnpm --filter @braises/client build",
-    "scenario": "pnpm --filter @braises/sim run test:scenario"
+    "scenario": "pnpm --filter @braises/sim run test:scenario",
+    "smoke:install": "PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium",
+    "smoke": "PLAYWRIGHT_BROWSERS_PATH=0 node tools/smoke.mjs"
   },
   "devDependencies": {
     "eslint": "^9.30.0",
+    "playwright": "^1.61.1",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.35.0"
   }
