@@ -80,6 +80,19 @@ export const POI = {
   /** Le Tarn est une halte : régén d'endurance multipliée sur son empreinte. */
   TARN_STAMINA_FACTOR: 1.5,
   /**
+   * LA PORTÉE DE VUE (2026-07-11), en tuiles. On ne se plante pas sur un
+   * Sanctuaire pour savoir qu'il existe : on l'APERÇOIT, et il entre dans la
+   * carte. Calé sur ce qui tient à l'écran (viewport 1280×720, tuile 16 px,
+   * zoom ~2,25 → ~35 tuiles de large) : 14 tuiles = un lieu bien dans le cadre,
+   * pas un coin d'écran. C'est aussi la raison d'être de la passe d'art : un
+   * monument qui dépasse la canopée SE VOIT VENIR, donc s'apprend de loin.
+   *
+   * ATTENTION — voir ne donne PAS la charge. Le Belvédère ne révèle sa grappe
+   * que si l'on MONTE dessus (sinon il ne ferait plus grimper), et « le premier
+   * à ATTEINDRE le Sanctuaire » ne peut pas être quelqu'un qui l'a vu de loin.
+   */
+  SIGHT_TILES: 14,
+  /**
    * LA CLAIRIÈRE (2026-07-11) : marge dégagée autour de l'empreinte d'un lieu,
    * en tuiles. Rien n'y pousse — ni arbre, ni buisson, ni rocher, ni décor.
    * Un lieu enseveli sous la forêt n'est pas un lieu : on ne le voit pas venir,

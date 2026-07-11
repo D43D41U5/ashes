@@ -153,6 +153,8 @@ export class WorldScene extends Phaser.Scene {
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
   private lastSnapshotTick = 0
   private playerId = 0
+  /** Les lieux que MON joueur connaît — lu du snapshot, jamais décidé ici (client bête). */
+  private myKnownPois: readonly number[] = []
   private playerSprite!: Phaser.GameObjects.Image
   /** Prédiction à pas fixe + réconciliation par rejeu (spec reconciliation). */
   private prediction: PredictionState = createPrediction(0, 0)
@@ -327,7 +329,9 @@ export class WorldScene extends Phaser.Scene {
       const hour = this.lastTime.hourOfCycle
       this.shade.render(this.cameras.main, hour) // ombre du relief selon le soleil
       this.shoreCliff.render(this.cameras.main) // DÉMO falaise de berge
-      this.pois.update(this.cameras.main)
+      // Les lieux ont besoin de savoir OÙ est le joueur (le nom grossit quand on
+      // approche) et CE QU'IL CONNAÎT (on ne nomme pas un lieu qu'on n'a pas vu).
+      this.pois.update(this.cameras.main, this.predicted.x, this.predicted.y, this.myKnownPois)
       const amb = ambientTint(hour)
       this.ambientRect?.setFillStyle(amb.color).setAlpha(amb.alpha)
       this.fireGlow?.update(this.view.structures, this.view.villages, daylight(hour))
@@ -432,6 +436,7 @@ export class WorldScene extends Phaser.Scene {
     const me = msg.entities.find((e) => e.id === this.playerId)
     if (me) {
       publishPlayerVitals(this.registry, me)
+      this.myKnownPois = me.knownPois
       this.myHunger = me.hunger
       this.myWounds = me.wounds
       this.myStamina = me.stamina

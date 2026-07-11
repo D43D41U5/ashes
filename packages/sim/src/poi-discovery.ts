@@ -136,23 +136,51 @@ export function staminaPoiFactor(state: SimState, x: number, y: number): number 
 }
 
 /**
- * Une étape de tick : les lieux foulés par les JOUEURS entrent dans leur carte.
+ * Une étape de tick. DEUX seuils, et leur différence est le cœur du système :
+ *
+ *   - **VOIR** un lieu (`POI.SIGHT_TILES`) le fait entrer dans ta carte. On ne
+ *     se plante pas sur un Sanctuaire pour savoir qu'il existe : on l'aperçoit,
+ *     et on le note. C'est aussi pourquoi les monuments dépassent la canopée.
+ *
+ *   - **L'ATTEINDRE** (fouler son empreinte) donne sa CHARGE et compte comme
+ *     PREMIÈRE VISITE. Le Belvédère ne révèle sa grappe que si l'on MONTE — il
+ *     ne servirait à rien qu'il fasse grimper si l'apercevoir suffisait. Et « le
+ *     premier à *atteindre* le Sanctuaire » ne peut pas être quelqu'un qui l'a
+ *     vu de loin.
+ *
  * Appelée juste après la boucle d'inputs — la découverte est la conséquence du
  * pas qu'on vient de faire.
  */
 export function advancePois(state: SimState): void {
   const npcIds = new Set(state.npcs.map((n) => n.entityId))
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
+  const sight2 = POI.SIGHT_TILES * POI.SIGHT_TILES
 
   for (const entity of state.entities) {
     if (npcIds.has(entity.id) || monsterIds.has(entity.id)) continue // les PNJ n'ont pas de carte
 
+    // ── VOIR : tout lieu à portée de vue entre dans la carte ──
+    for (let poiId = 0; poiId < state.map.zones.length; poiId += 1) {
+      const zone = state.map.zones[poiId]!
+      if (zone.kind === undefined) continue // un toponyme n'est pas un lieu
+      if (entity.knownPois.includes(poiId)) continue
+      // Distance AU CARRÉ au bord le plus proche de l'empreinte : un grand lieu
+      // se voit dès qu'on approche de son flanc, pas de son centre.
+      const dx = Math.max(zone.x - entity.x, 0, entity.x - (zone.x + zone.w))
+      const dy = Math.max(zone.y - entity.y, 0, entity.y - (zone.y + zone.h))
+      if (dx * dx + dy * dy > sight2) continue
+      know(state, entity.id, entity.knownPois, poiId)
+    }
+
+    // ── ATTEINDRE : la charge, et la première visite ──
     for (const poiId of poisAt(state.map, entity.x, entity.y)) {
-      // R6.1 — la règle de base : fouler suffit à connaître (les 26 types).
-      const fresh = know(state, entity.id, entity.knownPois, poiId)
-      // R6.2 — la charge de savoir, si le lieu en porte une, ne joue qu'à la
-      // PREMIÈRE foulée : `fresh` est notre garde d'idempotence.
-      if (fresh) applyKnowledge(state, entity.id, entity.knownPois, poiId)
+      // La charge ne joue qu'une fois. `reachedPois` la garde — `knownPois` ne
+      // peut plus servir de garde, puisqu'on connaît désormais le lieu AVANT de
+      // l'atteindre (on l'a vu venir).
+      if (!entity.reachedPois.includes(poiId)) {
+        entity.reachedPois.push(poiId)
+        applyKnowledge(state, entity.id, entity.knownPois, poiId)
+      }
 
       // R12 — la première visite d'un JOUEUR, tous joueurs confondus. Il n'y a
       // qu'un premier : en multi, c'est une course. Émis pour TOUS les POI ; la

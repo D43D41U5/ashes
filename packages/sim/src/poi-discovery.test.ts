@@ -66,14 +66,23 @@ describe('POI_CHARGES', () => {
   })
 })
 
-/** Une sim de test avec une carte à zones et un joueur posé où on veut. */
+/**
+ * Une sim de test. LE JOUEUR EST POSÉ LOIN DE TOUT (coin nord-ouest, hors de
+ * `POI.SIGHT_TILES` de toute zone) : depuis que la découverte se fait À VUE, un
+ * joueur planté à dix tuiles d'un lieu le connaîtrait déjà, et la moitié des
+ * tests ne testeraient plus rien. Les zones se posent donc TRÈS au large — le
+ * helper `far()` sert à ça.
+ */
 function simWith(zones: { name: string; x: number; y: number; w: number; h: number; kind?: string }[]) {
-  const map = createEmptyMap(64, 64, TERRAIN_GRASS)
+  const map = createEmptyMap(400, 400, TERRAIN_GRASS)
   map.zones.push(...zones)
   const state = createSim(1, { map })
-  const playerId = spawnEntity(state, 0.5, 0.5)
+  const playerId = spawnEntity(state, 0.5, 0.5) // très loin de tout ce qui suit
   return { state, playerId }
 }
+
+/** Une distance sans ambiguïté HORS de portée de vue. */
+const OUT = POI.SIGHT_TILES * 3
 
 /** Téléporte le joueur et joue un tick sans input (le pas est déjà fait). */
 function walkTo(state: SimState, playerId: number, x: number, y: number) {
@@ -132,6 +141,62 @@ describe('la règle de base : un lieu foulé entre dans la carte', () => {
   })
 })
 
+describe('VOIR un lieu suffit à le connaître — mais pas à en tirer quoi que ce soit', () => {
+  it('un lieu à portée de vue entre dans la carte SANS qu\'on le foule', () => {
+    const { state, playerId } = simWith([{ name: 'le Sanctuaire I', x: 100, y: 100, w: 2, h: 2, kind: 'sanctuaire' }])
+    // On s'approche à moins de POI.SIGHT_TILES du BORD de l'empreinte, sans jamais entrer dedans.
+    walkTo(state, playerId, 100 - (POI.SIGHT_TILES - 2), 101)
+    const p = state.entities.find((e) => e.id === playerId)!
+    expect(p.knownPois).toEqual([0]) // vu, donc connu
+    expect(p.reachedPois).toEqual([]) // mais PAS atteint
+    expect(state.visitedPois).toEqual([]) // et donc pas de première visite
+    expect(state.events.filter((e) => e.type === 'poi_first_visit')).toHaveLength(0)
+  })
+
+  it('juste au-delà de la portée de vue, on ne le connaît PAS', () => {
+    const { state, playerId } = simWith([{ name: 'le Sanctuaire I', x: 100, y: 100, w: 2, h: 2, kind: 'sanctuaire' }])
+    walkTo(state, playerId, 100 - (POI.SIGHT_TILES + 2), 101)
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([])
+  })
+
+  it('VOIR un Belvédère ne révèle RIEN — il faut monter dessus', () => {
+    // LE test du contrat. Le Belvédère fait grimper : s'il suffisait de
+    // l'apercevoir pour qu'il livre sa grappe, il ne ferait plus rien grimper.
+    const { state, playerId } = simWith([
+      { name: 'le Belvédère I', x: 100, y: 100, w: 2, h: 2, kind: 'belvedere' }, // 0
+      { name: 'la Grotte I', x: 100 + OUT * 2, y: 100, w: 2, h: 2, kind: 'grotte' }, // 1 — dans le rayon du Belvédère (300), hors de vue (14)
+    ])
+    // On le VOIT, on ne le foule pas.
+    walkTo(state, playerId, 100 - (POI.SIGHT_TILES - 2), 101)
+    const p = state.entities.find((e) => e.id === playerId)!
+    expect(p.knownPois).toEqual([0]) // le Belvédère, oui — vu
+    expect(p.knownPois).not.toContain(1) // la Grotte, NON : la charge n'a pas joué
+
+    // On MONTE.
+    walkTo(state, playerId, 101, 101)
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toContain(1) // maintenant, oui
+  })
+
+  it('la charge ne joue qu\'une fois même si on a d\'abord vu le lieu de loin', () => {
+    // Piège : `knownPois` ne peut plus garder la charge (on connaît le lieu AVANT
+    // de l'atteindre). C'est `reachedPois` qui la garde. Sans lui, un Cairn foulé
+    // après avoir été aperçu re-scannerait son voisinage à chaque tick.
+    const { state, playerId } = simWith([
+      { name: 'le Cairn I', x: 100, y: 100, w: 1, h: 1, kind: 'cairn' }, //          0
+      { name: 'la Grotte I', x: 100 + OUT, y: 100, w: 1, h: 1, kind: 'grotte' }, //  1
+      { name: 'le Tarn I', x: 100 + OUT * 2, y: 100, w: 1, h: 1, kind: 'tarn' }, //  2
+    ])
+    walkTo(state, playerId, 100 - (POI.SIGHT_TILES - 2), 100.5) // on le voit
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0])
+
+    walkTo(state, playerId, 100.5, 100.5) // on l'atteint → la charge joue UNE fois
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0, 1])
+
+    walkTo(state, playerId, 100.5, 100.5) // on y reste → elle ne rejoue pas
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0, 1]) // le Tarn ne tombe PAS
+  })
+})
+
 describe('le savoir — quatre lieux qui rendent la carte', () => {
   it('le Belvédère révèle tout dans son rayon, et RIEN au-delà', () => {
     // La carte se construit RELATIVEMENT au rayon, jamais sur des distances en dur :
@@ -172,14 +237,14 @@ describe('le savoir — quatre lieux qui rendent la carte', () => {
     // différentes : si la charge du Cairn rejouait au 2e tick, le candidat moyen
     // (le Tarn) tomberait puisqu'il devient alors LE plus proche encore inconnu.
     const { state, playerId } = simWith([
-      { name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }, //   0 — centre (10.5,10.5)
-      { name: 'la Grotte I', x: 12, y: 10, w: 1, h: 1, kind: 'grotte' }, // 1 — proche
-      { name: 'le Tarn I', x: 20, y: 10, w: 1, h: 1, kind: 'tarn' }, //     2 — moyen
+      { name: 'le Cairn I', x: 100, y: 100, w: 1, h: 1, kind: 'cairn' }, //             0
+      { name: 'la Grotte I', x: 100 + OUT, y: 100, w: 1, h: 1, kind: 'grotte' }, //     1 — proche, HORS DE VUE
+      { name: 'le Tarn I', x: 100 + OUT * 2, y: 100, w: 1, h: 1, kind: 'tarn' }, //     2 — moyen, HORS DE VUE
     ])
-    walkTo(state, playerId, 10.5, 10.5) // 1er tick : foule le Cairn → révèle la Grotte (la plus proche)
+    walkTo(state, playerId, 100.5, 100.5) // 1er tick : foule le Cairn → révèle la Grotte (la plus proche)
     expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0, 1])
 
-    walkTo(state, playerId, 10.5, 10.5) // 2e tick : toujours dans l'emprise du Cairn, sans avoir bougé
+    walkTo(state, playerId, 100.5, 100.5) // 2e tick : toujours dans l'emprise du Cairn, sans avoir bougé
     const known = state.entities.find((e) => e.id === playerId)!.knownPois
     expect(known).toEqual([0, 1]) // le Tarn ne doit PAS apparaître au 2e tick
     expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(0)
@@ -187,22 +252,22 @@ describe('le savoir — quatre lieux qui rendent la carte', () => {
 
   it('le Cairn révèle exactement UN lieu — le plus proche encore inconnu', () => {
     const { state, playerId } = simWith([
-      { name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }, //  0 — centre (10.5, 10.5)
-      { name: 'la Grotte I', x: 14, y: 10, w: 1, h: 1, kind: 'grotte' }, // 1 — proche
-      { name: 'le Tarn I', x: 30, y: 10, w: 1, h: 1, kind: 'tarn' }, //     2 — loin
+      { name: 'le Cairn I', x: 100, y: 100, w: 1, h: 1, kind: 'cairn' }, //          0
+      { name: 'la Grotte I', x: 100 + OUT, y: 100, w: 1, h: 1, kind: 'grotte' }, //  1 — le plus proche des hors-de-vue
+      { name: 'le Tarn I', x: 100 + OUT * 2, y: 100, w: 1, h: 1, kind: 'tarn' }, //  2 — plus loin
     ])
-    walkTo(state, playerId, 10.5, 10.5)
+    walkTo(state, playerId, 100.5, 100.5)
     const known = state.entities.find((e) => e.id === playerId)!.knownPois
     expect(known).toEqual([0, 1]) // lui-même + le plus proche. PAS le Tarn.
   })
 
   it('à distance exactement égale, le Cairn départage par poiId croissant', () => {
     const { state, playerId } = simWith([
-      { name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }, //   0 — centre (10.5, 10.5)
-      { name: 'la Grotte I', x: 20, y: 10, w: 1, h: 1, kind: 'grotte' }, // 1 — centre (20.5,10.5), à +10 en x
-      { name: 'le Tarn I', x: 0, y: 10, w: 1, h: 1, kind: 'tarn' }, //      2 — centre (0.5,10.5), à −10 en x : ÉGALITÉ
+      { name: 'le Cairn I', x: 100, y: 100, w: 1, h: 1, kind: 'cairn' }, //          0 — centre (100.5, 100.5)
+      { name: 'la Grotte I', x: 100 + OUT, y: 100, w: 1, h: 1, kind: 'grotte' }, //  1 — à +OUT
+      { name: 'le Tarn I', x: 100 - OUT, y: 100, w: 1, h: 1, kind: 'tarn' }, //      2 — à −OUT : ÉGALITÉ
     ])
-    walkTo(state, playerId, 10.5, 10.5)
+    walkTo(state, playerId, 100.5, 100.5)
     expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0, 1]) // le plus petit poiId gagne
   })
 
@@ -221,14 +286,14 @@ describe('le savoir — quatre lieux qui rendent la carte', () => {
     // comme `know()` la refuserait silencieusement (déjà dans `knownPois`), le
     // Tarn ne serait JAMAIS atteint : le Cairn ne révélerait plus rien du tout.
     const { state, playerId } = simWith([
-      { name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }, //   0 — centre (10.5,10.5)
-      { name: 'la Grotte I', x: 12, y: 10, w: 1, h: 1, kind: 'grotte' }, // 1 — proche, DÉJÀ CONNUE du joueur
-      { name: 'le Tarn I', x: 20, y: 10, w: 1, h: 1, kind: 'tarn' }, //     2 — plus loin, encore inconnu
+      { name: 'le Cairn I', x: 100, y: 100, w: 1, h: 1, kind: 'cairn' }, //          0
+      { name: 'la Grotte I', x: 100 + OUT, y: 100, w: 1, h: 1, kind: 'grotte' }, //  1 — proche, DÉJÀ CONNUE du joueur
+      { name: 'le Tarn I', x: 100 + OUT * 2, y: 100, w: 1, h: 1, kind: 'tarn' }, //  2 — plus loin, encore inconnu
     ])
     const player = state.entities.find((e) => e.id === playerId)!
     player.knownPois.push(1) // le joueur connaît déjà la Grotte avant même de fouler le Cairn
 
-    walkTo(state, playerId, 10.5, 10.5)
+    walkTo(state, playerId, 100.5, 100.5)
 
     expect(player.knownPois.sort((a, b) => a - b)).toEqual([0, 1, 2]) // le Cairn ET le Tarn, pas de re-révélation de la Grotte
     expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(2) // le Cairn (règle de base) + le Tarn (charge)
@@ -236,14 +301,14 @@ describe('le savoir — quatre lieux qui rendent la carte', () => {
 
   it('un Cairn dont tout le voisinage réel est déjà connu ne révèle rien de plus', () => {
     const { state, playerId } = simWith([
-      { name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }, //   0 — centre (10.5,10.5)
-      { name: 'la Grotte I', x: 12, y: 10, w: 1, h: 1, kind: 'grotte' }, // 1 — voisine, déjà connue
-      { name: 'le Tarn I', x: 20, y: 10, w: 1, h: 1, kind: 'tarn' }, //     2 — voisin, déjà connu
+      { name: 'le Cairn I', x: 100, y: 100, w: 1, h: 1, kind: 'cairn' }, //          0
+      { name: 'la Grotte I', x: 100 + OUT, y: 100, w: 1, h: 1, kind: 'grotte' }, //  1 — voisine, déjà connue
+      { name: 'le Tarn I', x: 100 + OUT * 2, y: 100, w: 1, h: 1, kind: 'tarn' }, //  2 — voisin, déjà connu
     ])
     const player = state.entities.find((e) => e.id === playerId)!
     player.knownPois.push(1, 2) // tout le voisinage est déjà connu, seul le Cairn ne l'est pas encore
 
-    walkTo(state, playerId, 10.5, 10.5)
+    walkTo(state, playerId, 100.5, 100.5)
 
     expect(player.knownPois.sort((a, b) => a - b)).toEqual([0, 1, 2]) // juste le Cairn lui-même
     expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(1) // seulement le Cairn
@@ -251,22 +316,22 @@ describe('le savoir — quatre lieux qui rendent la carte', () => {
 
   it('les Pétroglyphes ne révèlent qu’un lieu ANCIEN', () => {
     const { state, playerId } = simWith([
-      { name: 'les Pétroglyphes I', x: 10, y: 10, w: 1, h: 1, kind: 'petroglyphes' }, // 0
-      { name: 'la Grotte I', x: 12, y: 10, w: 1, h: 1, kind: 'grotte' }, //              1 — proche mais PAS ancien
-      { name: 'les Ruines I', x: 20, y: 10, w: 1, h: 1, kind: 'ruines' }, //             2 — ancien, plus loin
+      { name: 'les Pétroglyphes I', x: 100, y: 100, w: 1, h: 1, kind: 'petroglyphes' }, // 0
+      { name: 'la Grotte I', x: 100 + OUT, y: 100, w: 1, h: 1, kind: 'grotte' }, //         1 — plus proche mais PAS ancien
+      { name: 'les Ruines I', x: 100 + OUT * 2, y: 100, w: 1, h: 1, kind: 'ruines' }, //    2 — ancien, plus loin
     ])
-    walkTo(state, playerId, 10.5, 10.5)
+    walkTo(state, playerId, 100.5, 100.5)
     expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0, 2]) // saute la Grotte
   })
 
   it('l’Arche ne révèle que des abris (family shelter)', () => {
     const { state, playerId } = simWith([
-      { name: 'l’Arche I', x: 10, y: 10, w: 1, h: 1, kind: 'arche' }, //     0
-      { name: 'le Tarn I', x: 12, y: 10, w: 1, h: 1, kind: 'tarn' }, //      1 — reward, pas shelter
-      { name: 'la Cabane I', x: 14, y: 10, w: 1, h: 1, kind: 'cabane' }, //  2 — shelter ✓
-      { name: 'les Ruines I', x: 16, y: 10, w: 1, h: 1, kind: 'ruines' }, // 3 — shelter ✓
+      { name: 'l’Arche I', x: 100, y: 100, w: 1, h: 1, kind: 'arche' }, //                 0
+      { name: 'le Tarn I', x: 100 + OUT, y: 100, w: 1, h: 1, kind: 'tarn' }, //             1 — reward, pas shelter
+      { name: 'la Cabane I', x: 100 + OUT + 2, y: 100, w: 1, h: 1, kind: 'cabane' }, //     2 — shelter ✓
+      { name: 'les Ruines I', x: 100 + OUT + 4, y: 100, w: 1, h: 1, kind: 'ruines' }, //    3 — shelter ✓
     ])
-    walkTo(state, playerId, 10.5, 10.5)
+    walkTo(state, playerId, 100.5, 100.5)
     const known = state.entities.find((e) => e.id === playerId)!.knownPois
     expect(known).toContain(2)
     expect(known).toContain(3)
@@ -289,8 +354,10 @@ describe('le récit — la première fois seulement', () => {
   })
 
   it('un PNJ qui traverse le Sanctuaire ne produit RIEN — ni carte, ni découverte, ni première', () => {
-    const { state } = simWith([{ name: 'le Sanctuaire I', x: 10, y: 10, w: 2, h: 2, kind: 'sanctuaire' }])
-    const npcEntityId = spawnEntity(state, 10.5, 10.5)
+    // Le Sanctuaire est HORS DE VUE du joueur (resté au coin) : sinon c'est LUI
+    // qui le découvrirait à vue, et le test ne dirait plus rien du PNJ.
+    const { state } = simWith([{ name: 'le Sanctuaire I', x: 100, y: 100, w: 2, h: 2, kind: 'sanctuaire' }])
+    const npcEntityId = spawnEntity(state, 100.5, 100.5)
     state.npcs.push({
       entityId: npcEntityId,
       villageId: 1,

@@ -78,6 +78,13 @@ export interface Entity {
    * SEULS LES JOUEURS l'alimentent : les PNJ n'ont pas de carte.
    */
   knownPois: number[]
+  /**
+   * Les lieux ATTEINTS (foulés) par ce joueur. Distinct de `knownPois` : depuis
+   * que la découverte se fait à VUE, on connaît un lieu avant d'y avoir mis les
+   * pieds — `knownPois` ne peut donc plus servir de garde à la charge. Ce qu'on
+   * a vu ≠ ce qu'on a atteint, et seul l'atteindre paye.
+   */
+  reachedPois: number[]
 }
 
 export interface SimState {
@@ -215,6 +222,7 @@ export function spawnEntity(state: SimState, x: number, y: number): number {
     warmth: 0,
     engagement: 0,
     knownPois: [],
+    reachedPois: [],
   })
   // Consomme un pas de PRNG : le spawn fait partie de l'histoire déterministe.
   state.rngState = rngNext(state.rngState)

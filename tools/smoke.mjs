@@ -221,6 +221,44 @@ const SCENARIOS = {
   },
 
 
+
+  /** La découverte À VUE : on s'approche d'un lieu SANS le toucher, et on regarde. */
+  async poiSight(page) {
+    const s0 = await page.evaluate(PROBE)
+    await page.keyboard.press('F1')
+    await page.waitForTimeout(300)
+
+    const cible = s0.pois.find((p) => p.kind === 'sanctuaire') ?? s0.pois.find((p) => p.kind === 'ruines') ?? s0.pois[0]
+    console.log(`\ncible : ${cible.name} en (${cible.x}, ${cible.y})`)
+
+    // On se pose à 10 tuiles à l'ouest — dans la vue, hors de l'empreinte.
+    const tp = async (x, y) => {
+      await page.evaluate(({ x, y }) => {
+        window.__BRAISES__.scene.registry.set('debugTeleport', { x, y, at: performance.now() })
+      }, { x, y })
+      await page.waitForTimeout(1500)
+      return page.evaluate(PROBE)
+    }
+
+    const loin = await tp(cible.x - 25, cible.y)
+    console.log(`  à 25 tuiles  → ${loin.knownPois.includes(cible.poiId) ? '✗ déjà connu ?!' : '✓ inconnu — hors de vue'}`)
+
+    const proche = await tp(cible.x - 10, cible.y)
+    const vu = proche.knownPois.includes(cible.poiId)
+    console.log(`  à 10 tuiles  → ${vu ? '✓ CONNU sans l\'avoir touché — la vue suffit' : '✗ toujours inconnu'}`)
+
+    await page.evaluate(() => { window.__BRAISES__.scene.cameras.main.setZoom(1.6) })
+    await page.waitForTimeout(400)
+    await page.screenshot({ path: `${OUT}/vue-de-loin.png` })
+
+    await tp(cible.x, cible.y)
+    await page.evaluate(() => { window.__BRAISES__.scene.cameras.main.setZoom(2.4) })
+    await page.waitForTimeout(500)
+    await page.screenshot({ path: `${OUT}/vue-de-pres.png` })
+    console.log(`  sur le lieu  → captures : vue-de-loin.png / vue-de-pres.png`)
+    return s0
+  },
+
   /** Exporte chaque sprite de lieu en PNG isolé — matière du catalogue. */
   async poiSprites(page) {
     const all = await page.evaluate(() => {

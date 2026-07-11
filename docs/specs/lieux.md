@@ -38,6 +38,12 @@ Corollaire non négociable : **aucun lieu `reward` ne donne de butin.** Le butin
 
 ### Le savoir — quatre lieux qui rendent la carte (R6-R8)
 
+- **R6bis — VOIR, puis ATTEINDRE (2026-07-11, amendement).** On ne se plante pas sur un Sanctuaire pour savoir qu'il existe : on l'**aperçoit**. Deux seuils, et leur différence est le cœur du système :
+  - **Voir** un lieu (dans `POI.SIGHT_TILES`, mesuré au bord le plus proche de son empreinte) le fait entrer dans `knownPois`. C'est aussi la raison d'être de la passe d'art : un monument qui dépasse la canopée **se voit venir**, donc s'apprend de loin.
+  - **L'atteindre** (fouler son empreinte) donne sa **charge** et compte comme **première visite**. Le Belvédère ne révèle sa grappe que si l'on *monte* — il ne ferait plus grimper si l'apercevoir suffisait ; et « le premier à *atteindre* le Sanctuaire » ne peut pas être quelqu'un qui l'a vu de loin.
+  - Conséquence : `knownPois` ne peut plus garder la charge (on connaît le lieu **avant** d'y avoir mis les pieds). C'est **`Entity.reachedPois`** qui la garde.
+  - Le client lève le **nom** du lieu au-dessus de lui, à peine lisible à la limite de la vue, franc quand on y est — et seulement pour les lieux **connus**.
+
 - **R6 — Le déclenchement est un contact, idempotent.** À chaque tick, pour chaque entité **joueur**, on collecte les zones-POI contenant sa position (toutes, pas seulement la première : deux empreintes peuvent se recouvrir). Deux effets, dans cet ordre :
   1. **Règle de base, valable pour les 26 types** : *un lieu foulé entre dans `knownPois`*. On marche sur un Gisement, il est désormais sur sa carte. C'est le socle — la marche est la source primaire du savoir, et les quatre charges de R7 ne sont qu'une **accélération** de ce socle.
   2. **Charge de savoir** (R7), si le lieu en porte une : elle révèle *d'autres* lieux, à distance.

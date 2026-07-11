@@ -20,7 +20,7 @@ export { hash2, gradientNoise2, fbm2, fbmWarp2, ridgedFbm2 } from './noise'
 export { poissonPoints } from './poisson'
 
 // ─── Équilibrage & définitions (balance.ts — la seule source des nombres) ─
-export {
+export { POI,
   ALIGNMENT,
   BALANCE,
   COMBAT,
