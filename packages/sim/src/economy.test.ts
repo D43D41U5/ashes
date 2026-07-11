@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { ALIGNMENT, BALANCE, TERRAIN_DEEP_WATER, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_MARSH } from './balance'
+import {
+  ALIGNMENT,
+  BALANCE,
+  SLOTS,
+  TERRAIN_DEEP_WATER,
+  TERRAIN_FOREST,
+  TERRAIN_GRASS,
+  TERRAIN_MARSH,
+} from './balance'
 import { generateNodes, nodeAt, skillLevel, treeJitter, type ResourceNode } from './economy'
 import { drainEvents } from './events'
-import { countOf } from './items'
+import { countOf, inventoryOf } from './items'
 import { createEmptyMap, zoneAt } from './map'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { TICKS_PER_SEASON_DAY } from './time'
@@ -151,6 +159,31 @@ describe('l’artisanat (A3)', () => {
     for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'craft', recipeId: 'iron_ingot' })
     expect(rejections(sim)).toEqual(['station requise hors de portée : furnace'])
+  })
+
+  // Le sac est BORNÉ : consommer les matériaux SANS place pour la sortie détruirait
+  // l'objet fabriqué — et `item_crafted` mentirait à la chronique. On teste la place
+  // AVANT de consommer (symétrique de R10 : « le coup n'a pas eu lieu »).
+  it('sac plein : le craft est refusé AVANT de consommer — ni matériaux, ni cooldown, ni XP, ni événement', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 10 })
+    act(sim, id, { type: 'light_fire' }) // le Feu est la station de `cooked_meat`
+    // Sac SANS un interstice : une pile pleine de viande crue (5) + 17 piles de bois.
+    // Retirer 1 viande crue ne LIBÈRE aucune case : la case 0 reste occupée.
+    me(sim).inventory = inventoryOf(SLOTS.PLAYER, { raw_meat: 5, wood: 20 * (SLOTS.PLAYER - 1) })
+    me(sim).cooldownUntil = 0
+    drainEvents(sim)
+
+    act(sim, id, { type: 'craft', recipeId: 'cooked_meat' })
+
+    expect(countOf(me(sim).inventory, 'raw_meat')).toBe(5) // les matériaux sont intacts
+    expect(countOf(me(sim).inventory, 'cooked_meat')).toBe(0)
+    expect(me(sim).cooldownUntil).toBeLessThanOrEqual(sim.tick) // le coup n'a pas eu lieu
+    expect(me(sim).skills.crafting ?? 0).toBe(0)
+    const events = drainEvents(sim)
+    expect(events.some((e) => e.type === 'item_crafted')).toBe(false)
+    expect(events.flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))).toEqual(['sac plein'])
   })
 })
 

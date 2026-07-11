@@ -34,7 +34,7 @@ import {
 import { harvestFactor } from './alignment'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
-import { addItems, countOf, removeItems, type ItemId, type SkillId } from './items'
+import { addItems, countOf, freeRoomFor, removeItems, type ItemId, type SkillId } from './items'
 import { poiClearings, terrainAt, zoneAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
@@ -184,6 +184,10 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
           hasAccess(state, actorId, s),
       )
       if (!station) return reject(`station requise hors de portée : ${recipe.station}`)
+      // La place AVANT les matériaux : consommer d'abord, c'est fabriquer un objet
+      // qui n'a nulle part où aller — il serait détruit, et `item_crafted` mentirait
+      // à la chronique. Même règle que la récolte (spec R10) : le coup n'a pas eu lieu.
+      if (freeRoomFor(actor.inventory, recipe.output) < 1) return reject('sac plein')
       if (!removeItems(actor.inventory, recipe.inputs)) return reject('matériaux insuffisants')
       addItems(actor.inventory, { [recipe.output]: 1 })
       gainXp(state, actor, 'crafting', BALANCE.XP_PER_CRAFT)
