@@ -151,6 +151,26 @@ describe('le savoir — quatre lieux qui rendent la carte', () => {
     expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(0)
   })
 
+  it('la garde de fraîcheur : un Cairn foulé plusieurs ticks de suite ne re-scanne pas son voisinage', () => {
+    // Ce test doit discriminer la garde `if (fresh)` d'`advancePois` — contrairement
+    // au test du Belvédère ci-dessus, où `isCandidate` exclurait de toute façon la
+    // Grotte (déjà connue) même sans la garde. Ici, deux candidats à des distances
+    // différentes : si la charge du Cairn rejouait au 2e tick, le candidat moyen
+    // (le Tarn) tomberait puisqu'il devient alors LE plus proche encore inconnu.
+    const { state, playerId } = simWith([
+      { name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }, //   0 — centre (10.5,10.5)
+      { name: 'la Grotte I', x: 12, y: 10, w: 1, h: 1, kind: 'grotte' }, // 1 — proche
+      { name: 'le Tarn I', x: 20, y: 10, w: 1, h: 1, kind: 'tarn' }, //     2 — moyen
+    ])
+    walkTo(state, playerId, 10.5, 10.5) // 1er tick : foule le Cairn → révèle la Grotte (la plus proche)
+    expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0, 1])
+
+    walkTo(state, playerId, 10.5, 10.5) // 2e tick : toujours dans l'emprise du Cairn, sans avoir bougé
+    const known = state.entities.find((e) => e.id === playerId)!.knownPois
+    expect(known).toEqual([0, 1]) // le Tarn ne doit PAS apparaître au 2e tick
+    expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(0)
+  })
+
   it('le Cairn révèle exactement UN lieu — le plus proche encore inconnu', () => {
     const { state, playerId } = simWith([
       { name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }, //  0 — centre (10.5, 10.5)
@@ -172,10 +192,47 @@ describe('le savoir — quatre lieux qui rendent la carte', () => {
     expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0, 1]) // le plus petit poiId gagne
   })
 
-  it('un Cairn dont tout le voisinage est déjà connu ne révèle rien de plus', () => {
+  it('un Cairn sans aucun autre lieu sur la carte ne révèle rien de plus', () => {
     const { state, playerId } = simWith([{ name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }])
     walkTo(state, playerId, 10.5, 10.5)
     expect(state.entities.find((e) => e.id === playerId)!.knownPois).toEqual([0]) // lui-même, et c'est tout
+  })
+
+  it('un voisin déjà connu est exclu des candidats — le Cairn saute au suivant, pas au silence', () => {
+    // Un simple « le voisinage est vide » ne teste pas l'exclusion par `knownPois`
+    // (bestId === -1 dans les deux cas, avec ou sans la garde). Ici, deux candidats
+    // réels sur la carte : la Grotte (proche) est déjà connue, le Tarn (plus loin)
+    // ne l'est pas. Si `isCandidate` n'excluait plus les lieux déjà connus, la
+    // Grotte redeviendrait « la plus proche » au sens de la boucle 'nearest', et
+    // comme `know()` la refuserait silencieusement (déjà dans `knownPois`), le
+    // Tarn ne serait JAMAIS atteint : le Cairn ne révélerait plus rien du tout.
+    const { state, playerId } = simWith([
+      { name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }, //   0 — centre (10.5,10.5)
+      { name: 'la Grotte I', x: 12, y: 10, w: 1, h: 1, kind: 'grotte' }, // 1 — proche, DÉJÀ CONNUE du joueur
+      { name: 'le Tarn I', x: 20, y: 10, w: 1, h: 1, kind: 'tarn' }, //     2 — plus loin, encore inconnu
+    ])
+    const player = state.entities.find((e) => e.id === playerId)!
+    player.knownPois.push(1) // le joueur connaît déjà la Grotte avant même de fouler le Cairn
+
+    walkTo(state, playerId, 10.5, 10.5)
+
+    expect(player.knownPois.sort((a, b) => a - b)).toEqual([0, 1, 2]) // le Cairn ET le Tarn, pas de re-révélation de la Grotte
+    expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(2) // le Cairn (règle de base) + le Tarn (charge)
+  })
+
+  it('un Cairn dont tout le voisinage réel est déjà connu ne révèle rien de plus', () => {
+    const { state, playerId } = simWith([
+      { name: 'le Cairn I', x: 10, y: 10, w: 1, h: 1, kind: 'cairn' }, //   0 — centre (10.5,10.5)
+      { name: 'la Grotte I', x: 12, y: 10, w: 1, h: 1, kind: 'grotte' }, // 1 — voisine, déjà connue
+      { name: 'le Tarn I', x: 20, y: 10, w: 1, h: 1, kind: 'tarn' }, //     2 — voisin, déjà connu
+    ])
+    const player = state.entities.find((e) => e.id === playerId)!
+    player.knownPois.push(1, 2) // tout le voisinage est déjà connu, seul le Cairn ne l'est pas encore
+
+    walkTo(state, playerId, 10.5, 10.5)
+
+    expect(player.knownPois.sort((a, b) => a - b)).toEqual([0, 1, 2]) // juste le Cairn lui-même
+    expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(1) // seulement le Cairn
   })
 
   it('les Pétroglyphes ne révèlent qu’un lieu ANCIEN', () => {
