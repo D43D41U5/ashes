@@ -28,8 +28,8 @@ services:
     restart: unless-stopped
 
   # Serveur de dev Vite. Le code source est monté en volume : les changements
-  # sur l'hôte sont vus dans le conteneur. node_modules dans un volume nommé
-  # (binaires Linux/musl propres au conteneur, sans écraser celui de l'hôte).
+  # sur l'hôte sont vus dans le conteneur. node_modules dans des volumes nommés
+  # (binaires Linux/musl propres au conteneur, sans écraser ceux de l'hôte).
   client:
     image: node:22-alpine
     container_name: braises-client-dev
@@ -37,7 +37,17 @@ services:
     command: sh -c "corepack enable && pnpm install && pnpm --filter @braises/client dev"
     volumes:
       - .:/app
+      # UN VOLUME PAR node_modules DU WORKSPACE — pas seulement celui de la racine.
+      # pnpm en crée un par paquet (packages/*/node_modules) : sans ces montages,
+      # ils tombaient dans le bind mount `.:/app` et le `pnpm install` du conteneur
+      # les écrivait EN ROOT dans le dépôt de l'hôte, avec des binaires musl et des
+      # liens vers /app/node_modules/.pnpm — un chemin qui n'existe pas sur l'hôte.
+      # Conséquences vécues : `pnpm install` de l'hôte refusé (EACCES), et un Vite
+      # qui résolvait ses modules à travers deux arbres contradictoires.
       - braises_node_modules:/app/node_modules
+      - braises_client_modules:/app/packages/client/node_modules
+      - braises_sim_modules:/app/packages/sim/node_modules
+      - braises_server_modules:/app/packages/server/node_modules
       # Le store pnpm du conteneur vit sur le même device que /app (hardlinks) :
       # sans ce volume nommé, il atterrirait en root dans le repo de l'hôte.
       - braises_pnpm_store:/app/.pnpm-store
@@ -55,4 +65,7 @@ services:
 
 volumes:
   braises_node_modules:
+  braises_client_modules:
+  braises_sim_modules:
+  braises_server_modules:
   braises_pnpm_store:
