@@ -1,21 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { BELT_BINDINGS, CRAFT_BINDINGS, DEBUG_KEYMAP, KEYMAP } from './keymap'
+import { BELT_BINDINGS, DEBUG_KEYMAP, KEYMAP } from './keymap'
 
 /**
- * L'invariant qui compte quand on rebinde : deux actions ne partagent jamais
- * une même touche NON MODIFIÉE (sinon la seconde vole la première, en silence).
- * On rassemble les touches de la table + de la ceinture + du debug et on vérifie
- * l'unicité — une touche de debug qui volerait une touche de jeu ne se verrait
- * qu'en playtest, et seulement en dev.
+ * L'invariant qui compte quand on rebinde : deux actions ne partagent jamais une
+ * même touche (sinon la seconde vole la première, en silence). On rassemble les
+ * touches de la table + de la ceinture + du debug et on vérifie l'unicité — une
+ * touche de debug qui volerait une touche de jeu ne se verrait qu'en playtest, et
+ * seulement en dev.
  *
- * `CRAFT_BINDINGS` est volontairement EXCLU : c'est une béquille sur SHIFT+chiffre
- * (jusqu'au panneau de craft). Elle partage les touches 1-6 avec la ceinture par
- * design — le modificateur SHIFT les distingue au runtime (input-bindings.ts).
+ * Depuis le débranchement du 2026-07-12, l'invariant a repris toute sa force : il
+ * n'y a PLUS de touche modifiée nulle part. Le craft sur SHIFT+chiffre était
+ * précisément l'exception qui l'affaiblissait — et le bug qu'elle cachait : SHIFT
+ * sprintant AUSSI, changer de case de ceinture en courant lançait une recette.
  */
-const DIGITS = ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE', 'ZERO']
-
 describe('keymap', () => {
-  it('aucune touche non modifiée n’est liée à deux actions', () => {
+  it('aucune touche n’est liée à deux actions', () => {
     const all = [
       ...Object.values(KEYMAP).flat(),
       ...Object.values(DEBUG_KEYMAP).flat(),
@@ -27,17 +26,14 @@ describe('keymap', () => {
   })
 
   /*
-   * L'invariant du craft de dépannage : il ne vit QUE sur des chiffres. C'est ce
-   * qui garantit que SHIFT suffit à le départager de la ceinture (1-6) et que les
-   * chiffres libres (7-0) ne volent aucune action de jeu — les touches de KEYMAP
-   * et de DEBUG_KEYMAP sont des lettres et des F-touches.
+   * La garde de fond du débranchement : le clavier ne porte plus AUCUN verbe de
+   * jeu. S'en tenir à une liste blanche (déplacement, sprint, les trois écrans)
+   * fait échouer le test le jour où quelqu'un recâble une action à la va-vite —
+   * ce qui est exactement la discussion qu'on veut avoir à ce moment-là.
    */
-  it('le craft de dépannage ne vit que sur des chiffres (SHIFT+1…0)', () => {
-    for (const [key] of CRAFT_BINDINGS) expect(DIGITS).toContain(key)
-  })
-
-  it('une touche ne lance jamais deux recettes', () => {
-    const keys = CRAFT_BINDINGS.map(([key]) => key)
-    expect(new Set(keys).size).toBe(keys.length)
+  it('le clavier ne porte que le déplacement, le sprint et les trois écrans', () => {
+    expect(Object.keys(KEYMAP).sort()).toEqual(
+      ['moveDown', 'moveLeft', 'moveRight', 'moveUp', 'sprint', 'toggleInventory', 'toggleJournal', 'toggleMap'].sort(),
+    )
   })
 })

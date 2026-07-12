@@ -8,7 +8,6 @@
  * Un test (`keymap.test.ts`) garde l'invariant utile au rebinding : deux
  * actions ne partagent jamais une même touche.
  */
-import type { RecipeId } from '@braises/sim'
 import type { Buildable } from '../../hud-state'
 
 /**
@@ -23,22 +22,31 @@ export const KEYMAP = {
   moveLeft: ['Q', 'A', 'LEFT'],
   moveRight: ['D', 'RIGHT'],
   sprint: ['SHIFT'],
-  block: ['C'],
-  // Actions ponctuelles (au down)
-  lightFire: ['F'],
-  attack: ['SPACE'],
-  bandage: ['X'],
-  give: ['T'],
-  repair: ['G'],
-  eatBerries: ['E'],
-  eatStew: ['R'],
+  // Les ÉCRANS, et eux seuls (décision utilisateur, 2026-07-12).
   toggleJournal: ['J'],
   toggleMap: ['M'],
   toggleInventory: ['TAB'],
-  /** Fait défiler la structure à bâtir (mur → porte → coffre → atelier → four).
-   *  Béquille : les touches 1-6 tiennent désormais la ceinture (spec inventaire R17). */
-  cycleBuildable: ['B'],
 } as const
+
+/*
+ * CE QUI A ÉTÉ DÉBRANCHÉ, ET POURQUOI (2026-07-12, décision utilisateur).
+ *
+ * Le clavier ne porte plus AUCUN verbe de jeu : ni attaquer (ESPACE), ni parer
+ * (C), ni bander (X), ni allumer le Feu (F), ni bâtir (B), ni réparer (G), ni
+ * donner (T), ni manger (E/R) — et plus une seule recette (SHIFT+chiffre). Le
+ * clic droit (démolir / désarmer) et le SHIFT+clic (partager) tombent avec eux.
+ *
+ * Ce n'est pas un élagage cosmétique : c'est le préalable à une interaction qui
+ * passera par CE QU'ON TIENT (la ceinture) et le clic — le bandage se sélectionne
+ * puis s'emploie au clic maintenu, et le craft ne vivra plus sur un raccourci.
+ * Une touche par verbe ne tient pas l'échelle du jeu, et SHIFT était déjà chargé
+ * trois fois (sprinter, crafter, partager) : sprinter en changeant de case de
+ * ceinture LANÇAIT un craft.
+ *
+ * RIEN N'EST PERDU DANS /sim : `attack`, `bandage`, `build`, `craft`, `eat`,
+ * `give`, `repair`, `demolish`, `set_access` existent toujours et sont testées.
+ * Seul le câblage clavier a disparu — il se rebranche en une ligne, ici.
+ */
 
 /**
  * Les touches du mode DEBUG — câblées uniquement en développement
@@ -68,38 +76,11 @@ export const BELT_BINDINGS: readonly [string, number][] = [
   ['SIX', 5],
 ]
 
-/** L'ordre dans lequel `B` fait défiler les structures à bâtir (spec inventaire R17). */
 /**
- * Le défilement de `B`. `null` EST un cran du cycle — l'état DÉSARMÉ, et l'état
- * de départ : bâtir est un mode qu'on arme, pas le comportement par défaut du
- * clic (spec recolte.md G2). Le type porte le mode ; pas de booléen à tenir en
- * cohérence à côté.
+ * Les structures bâtissables, dans leur ordre d'origine. La table SURVIT au
+ * débranchement de `B` : le mode construction (`selected`, le fantôme, le
+ * résolveur de clic) est intact dans le code — simplement plus ARMABLE tant que
+ * la nouvelle interaction n'est pas posée. Le jour où bâtir passera par le
+ * marteau en main, c'est cette table qu'on rebranchera.
  */
 export const BUILDABLE_CYCLE: readonly (Buildable | null)[] = [null, 'wall', 'door', 'chest', 'workshop', 'furnace']
-
-/**
- * Recettes de craft — BÉQUILLE jusqu'au chantier « panneau de craft ». Le craft
- * vit sur SHIFT + un chiffre : sans lui, il serait inaccessible et le jeu
- * injouable entre deux chantiers. Le handler lit `event.shiftKey` pour trancher.
- *
- * 1-6 portent AUSSI la ceinture (SHIFT départage). 7-0 ne portent rien d'autre :
- * ils accueillent la couche 1 (le craft à la main), qui est ce qu'on fait EN
- * PREMIER — la reléguer au fond d'une béquille saturée l'aurait rendue invisible.
- *
- * La béquille est désormais pleine à craquer (10 touches, 13 recettes : `spear`,
- * `iron_pickaxe` et `cooked_meat` ne sont déjà atteignables par AUCUNE touche).
- * C'est le signal que le panneau de craft est dû.
- */
-export const CRAFT_BINDINGS: readonly [string, RecipeId][] = [
-  ['ONE', 'stew'],
-  ['TWO', 'axe'],
-  ['THREE', 'pickaxe'],
-  ['FOUR', 'iron_ingot'],
-  ['FIVE', 'iron_axe'],
-  ['SIX', 'hammer'],
-  // La couche 1, à la main, sans poste (spec craft-fortune).
-  ['SEVEN', 'rope'],
-  ['EIGHT', 'crude_axe'],
-  ['NINE', 'crude_pickaxe'],
-  ['ZERO', 'crude_spear'],
-]

@@ -251,7 +251,6 @@ export class WorldScene extends Phaser.Scene {
       structures: () => this.view.structures,
       nodes: () => this.view.nodes,
       corpses: () => this.view.corpses,
-      others: () => this.view.others,
       // Les handlers d'input sont posés dès `create`, mais `this.warp` n'existe
       // qu'après `onReady` (génération de carte). Avant, on renvoie le point plat :
       // de toute façon les actions sont des no-op sur structures/nodes vides.
@@ -472,7 +471,11 @@ export class WorldScene extends Phaser.Scene {
     const dx = this.axis('right', 'left')
     const dy = this.axis('down', 'up')
     const sprint = this.inputs.sprintKeys.some((k) => k.isDown)
-    const block = this.inputs.blockKey.isDown
+    // La PARADE est débranchée du clavier (2026-07-12) : plus personne ne peut
+    // l'armer. On continue de la transmettre — la sim, la prédiction et
+    // `speedScaleFor` la connaissent — mais elle vaut désormais toujours `false`.
+    // Le jour où parer revient, c'est cette ligne qu'on rebranche.
+    const block = false
 
     // Prédiction locale (spec reconciliation R1-R7). `predictFrame` consomme le
     // dt de frame en sous-pas de tick fixes (rejeu exact de la suite de dt du
