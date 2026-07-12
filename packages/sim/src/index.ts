@@ -101,6 +101,7 @@ export {
   hasItems,
   addItems,
   addSlot,
+  pourInto,
   removeItems,
   makeInventory,
   inventoryOf,

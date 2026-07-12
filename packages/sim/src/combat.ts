@@ -13,7 +13,7 @@ import { isInvulnerable } from './debug'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { heldSlot, wearHeld } from './inventory-actions'
-import { addItems, addSlot, isEmpty, makeInventory, removeItems } from './items'
+import { addItems, addSlot, isEmpty, makeInventory, pourInto, removeItems } from './items'
 import { staminaPoiFactor } from './poi-discovery'
 import { rngRoll } from './rng'
 import type { Entity, SimState } from './sim'
@@ -87,13 +87,19 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
       const corpse = state.corpses.find((c) => c.id === action.corpseId)
       if (!corpse) return reject('rien ici')
       if (distSq(actor.x, actor.y, corpse.x, corpse.y) > BALANCE.INTERACT_RANGE * BALANCE.INTERACT_RANGE) return reject('trop loin')
-      // Case à case : ce qu'on ramasse garde son usure (spec inventaire R6) —
-      // une hache usée trouvée sur un cadavre reste une hache usée.
-      // Le reliquat (sac plein) est ignoré pour l'instant : la capacité au
-      // ramassage est le sujet d'une tâche à part.
-      for (const slot of corpse.inventory) if (slot !== null) addSlot(actor.inventory, slot)
-      state.corpses = state.corpses.filter((c) => c.id !== corpse.id)
-      emitEvent(state, { type: 'corpse_looted', tick: state.tick, corpseId: corpse.id, byEntityId: actorId })
+      // Sac BORNÉ (spec inventaire R11, critère A21) : on prend ce qui rentre,
+      // case à case — l'usure voyage avec la case (R6), une hache usée trouvée
+      // sur un cadavre reste une hache usée. Le cadavre GARDE le reste : rien ne
+      // s'évapore. Et il ne disparaît QUE vidé — sans quoi looter avec un sac
+      // plein effacerait le butin qu'on n'a pas pu emporter.
+      const moved = pourInto(corpse.inventory, actor.inventory)
+      if (isEmpty(corpse.inventory)) {
+        state.corpses = state.corpses.filter((c) => c.id !== corpse.id)
+        emitEvent(state, { type: 'corpse_looted', tick: state.tick, corpseId: corpse.id, byEntityId: actorId })
+        return
+      }
+      // Rien n'a bougé : l'action n'a pas eu lieu, et elle le dit.
+      if (moved === 0) return reject('sac plein')
       return
     }
   }

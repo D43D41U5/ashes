@@ -7,6 +7,7 @@ import {
   isEmpty,
   itemsIn,
   makeInventory,
+  pourInto,
   removeItems,
   toBag,
   type Inventory,
@@ -128,5 +129,47 @@ describe('le socle à cases', () => {
     // 3 cases : [wood 20][wood 5][stone 1] → il reste 15 de place dans la pile de bois.
     expect(freeRoomFor(inv, 'wood')).toBe(15)
     expect(freeRoomFor(inv, 'berries')).toBe(0) // aucune case libre
+  })
+})
+
+/**
+ * `pourInto` — la règle des conteneurs bornés (A21) : on verse ce qui rentre, la
+ * SOURCE garde le reste. C'est la primitive qui interdit à un transfert de
+ * « réussir » en détruisant ce qui dépasse.
+ */
+describe('pourInto : verser sans rien perdre (A21)', () => {
+  it('destination saturée : rien ne bouge, rien ne disparaît', () => {
+    const from: Inventory = [{ item: 'wood', count: 12 }]
+    const to: Inventory = [{ item: 'stone', count: 20 }] // une case, pleine
+    expect(pourInto(from, to)).toBe(0)
+    expect(from).toEqual([{ item: 'wood', count: 12 }])
+    expect(to).toEqual([{ item: 'stone', count: 20 }])
+  })
+
+  it('destination presque pleine : on verse ce qui rentre, la source garde le reste', () => {
+    const from: Inventory = [{ item: 'wood', count: 12 }]
+    const to: Inventory = [{ item: 'wood', count: 18 }] // 2 places (pile 20)
+    expect(pourInto(from, to)).toBe(2)
+    expect(to).toEqual([{ item: 'wood', count: 20 }])
+    expect(from).toEqual([{ item: 'wood', count: 10 }]) // conservation : 12 = 2 + 10
+  })
+
+  it('une case USÉE part entière, ou reste chez elle — jamais blanchie', () => {
+    const from: Inventory = [
+      { item: 'axe', count: 1, wear: 60 },
+      { item: 'pickaxe', count: 1, wear: 10 },
+    ]
+    const to: Inventory = [null] // une seule case libre
+    expect(pourInto(from, to)).toBe(1)
+    expect(to).toEqual([{ item: 'axe', count: 1, wear: 60 }]) // l'usure a voyagé
+    expect(from).toEqual([null, { item: 'pickaxe', count: 1, wear: 10 }]) // le reliquat aussi
+  })
+
+  it('tout rentre : la source finit vide', () => {
+    const from: Inventory = [{ item: 'wood', count: 5 }, null, { item: 'berries', count: 3 }]
+    const to = makeInventory(4)
+    expect(pourInto(from, to)).toBe(8)
+    expect(isEmpty(from)).toBe(true)
+    expect(toBag(to)).toEqual({ wood: 5, berries: 3 })
   })
 })

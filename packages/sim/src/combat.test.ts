@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, COMBAT, MONSTER_DEFS, SLOTS, TERRAIN_GRASS, WEAPON_DAMAGE } from './balance'
 import { drainEvents } from './events'
-import { countOf, inventoryOf, type ItemBag, type ItemId } from './items'
+import { countOf, inventoryOf, makeInventory, stackSize, type Inventory, type ItemBag, type ItemId } from './items'
 import { weaponDamage } from './combat'
 import { createEmptyMap } from './map'
 import { spawnMonster } from './monsters'
@@ -287,6 +287,111 @@ describe('la mort n’est pas un atelier de réparation (A12, spec inventaire R6
     looter.y = corpse.y
     tick(sim, [{ entityId: killer, dx: 0, dy: 0, action: { type: 'loot_corpse', corpseId: corpse.id } }])
     expect(looter.inventory.find((s) => s?.item === 'axe')).toEqual({ item: 'axe', count: 1, wear: 60 })
+  })
+
+  it('A12bis : le butin du monstre S’AJOUTE à ce qu’il portait — le cadavre ne tronque JAMAIS', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    grantHeld(sim, a, 'spear')
+    const b = spawnMonster(sim, 'boar', 11, 10)
+    const boar = entity(sim, b)
+    // Le pire cas : la bête porte DÉJÀ un sac saturé (un Cendreux levé d'un
+    // cadavre chargé). Sa table de loot doit s'ajouter par-dessus, sans rien
+    // perdre — d'où SLOTS.CORPSE > SLOTS.NPC.
+    boar.inventory = inventoryOf(SLOTS.NPC, { stone: 20 * SLOTS.NPC })
+    boar.hp = 1
+
+    strike(sim, a, 1, 0)
+
+    const corpse = sim.corpses[0]!
+    expect(countOf(corpse.inventory, 'stone')).toBe(20 * SLOTS.NPC)
+    for (const [item, count] of Object.entries(MONSTER_DEFS.boar.loot)) {
+      expect(countOf(corpse.inventory, item as ItemId)).toBe(count)
+    }
+  })
+})
+
+/**
+ * Le cadavre est un conteneur BORNÉ face à un sac BORNÉ (spec inventaire R11).
+ * Tant que `loot_corpse` jetait le reliquat, looter avec un sac plein DÉTRUISAIT
+ * le butin — et effaçait le cadavre par-dessus. On prend ce qui rentre, le
+ * cadavre garde le reste, et il ne disparaît QUE vidé.
+ */
+describe('looter ne fait rien s’évaporer (A21, spec inventaire R11)', () => {
+  /** Un cadavre planté sur place, chargé, qui ne décante pas de sitôt. */
+  function dropCorpse(sim: SimState, x: number, y: number, inv: Inventory): number {
+    const id = sim.nextCorpseId
+    sim.corpses.push({ id, x, y, inventory: inv, decayAt: sim.tick + 100_000 })
+    sim.nextCorpseId += 1
+    return id
+  }
+
+  const rejects = (sim: SimState): string[] =>
+    drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))
+
+  it('sac plein : le cadavre GARDE tout, ne disparaît pas, et le refus est dit', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    const looter = entity(sim, a)
+    looter.inventory = [{ item: 'stone', count: stackSize('stone') }] // une case, pleine
+    const corpseId = dropCorpse(sim, 10, 10, inventoryOf(SLOTS.CORPSE, { wood: 40 }))
+    drainEvents(sim)
+
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'loot_corpse', corpseId } }])
+
+    const corpse = sim.corpses.find((c) => c.id === corpseId)
+    expect(corpse).toBeDefined() // il reste du butin : le cadavre reste
+    expect(countOf(looter.inventory, 'wood') + countOf(corpse!.inventory, 'wood')).toBe(40)
+    expect(countOf(looter.inventory, 'stone')).toBe(stackSize('stone')) // son sac est intact
+    expect(rejects(sim)).toContain('sac plein')
+  })
+
+  it('sac presque plein : on prend ce qui rentre, le cadavre garde le reste', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    const looter = entity(sim, a)
+    looter.inventory = [{ item: 'wood', count: stackSize('wood') - 2 }] // 2 places, pas plus
+    const corpseId = dropCorpse(sim, 10, 10, inventoryOf(SLOTS.CORPSE, { wood: 40 }))
+    drainEvents(sim)
+
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'loot_corpse', corpseId } }])
+
+    const corpse = sim.corpses.find((c) => c.id === corpseId)
+    expect(corpse).toBeDefined()
+    expect(countOf(looter.inventory, 'wood')).toBe(stackSize('wood'))
+    expect(countOf(corpse!.inventory, 'wood')).toBe(40 - 2)
+    expect(rejects(sim)).not.toContain('sac plein') // quelque chose a bougé : ce n'est pas un refus
+  })
+
+  it('le reliquat garde son USURE : le cadavre n’est pas une lessiveuse', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    const looter = entity(sim, a)
+    // Une seule case libre : la première hache passe, la seconde reste.
+    looter.inventory = [{ item: 'stone', count: stackSize('stone') }, null]
+    const corpseInv: Inventory = makeInventory(SLOTS.CORPSE)
+    corpseInv[0] = { item: 'axe', count: 1, wear: 60 }
+    corpseInv[1] = { item: 'pickaxe', count: 1, wear: 10 }
+    const corpseId = dropCorpse(sim, 10, 10, corpseInv)
+
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'loot_corpse', corpseId } }])
+
+    expect(looter.inventory[1]).toEqual({ item: 'axe', count: 1, wear: 60 })
+    const corpse = sim.corpses.find((c) => c.id === corpseId)!
+    expect(corpse.inventory.filter((s) => s !== null)).toEqual([{ item: 'pickaxe', count: 1, wear: 10 }])
+  })
+
+  it('cadavre vidé : il disparaît, et l’événement le dit', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    const corpseId = dropCorpse(sim, 10, 10, inventoryOf(SLOTS.CORPSE, { wood: 5 }))
+    drainEvents(sim)
+
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'loot_corpse', corpseId } }])
+
+    expect(sim.corpses.find((c) => c.id === corpseId)).toBeUndefined()
+    expect(drainEvents(sim).some((e) => e.type === 'corpse_looted' && e.corpseId === corpseId)).toBe(true)
+    expect(countOf(entity(sim, a).inventory, 'wood')).toBe(5)
   })
 })
 

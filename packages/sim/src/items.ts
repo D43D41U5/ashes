@@ -160,6 +160,31 @@ export function addSlot(inv: Inventory, slot: Slot): number {
 }
 
 /**
+ * Verse dans `to` TOUT ce qui rentre de `from`, case par case, USURE COMPRISE.
+ * `from` GARDE ce qui n'a pas tenu. Retourne le nombre d'unités réellement
+ * déplacées (0 = rien n'est passé, la destination est saturée).
+ *
+ * C'est LA règle des conteneurs bornés (spec inventaire R10-R11, critère A21) :
+ * un transfert qui « réussit » en jetant le reliquat détruit des items — et une
+ * boucle de PNJ qui comptait sur cette destruction pour terminer se met à tourner
+ * à vide. On prend ce qui rentre, la source garde le reste, personne ne ment.
+ */
+export function pourInto(from: Inventory, to: Inventory): number {
+  let moved = 0
+  for (let i = 0; i < from.length; i++) {
+    const slot = from[i]
+    if (slot === null || slot === undefined) continue
+    const left = addSlot(to, slot) // une case usée part ENTIÈRE, ou pas du tout
+    const put = slot.count - left
+    if (put <= 0) continue
+    moved += put
+    if (left <= 0) from[i] = null
+    else slot.count = left
+  }
+  return moved
+}
+
+/**
  * Retire `cost`. TOUT OU RIEN (sémantique historique préservée) : si le compte
  * n'y est pas, l'inventaire n'est pas touché. On vide les cases dans l'ordre ; une
  * case n'est jamais laissée à `count: 0` (elle redevient `null`).
