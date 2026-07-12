@@ -127,6 +127,14 @@ export function applyInventoryAction(state: SimState, actorId: number, action: I
       if (!Number.isInteger(count) || count <= 0) return reject('quantité invalide')
       if (!Number.isInteger(from.slot) || !Number.isInteger(to.slot)) return reject('case invalide')
       if (from.side === to.side) return reject('transfert sur place')
+      // `side` vient d'un client HOSTILE : le TYPE ne le borne qu'à la compilation.
+      // Un `side` qui ment (ni 'player' ni 'container') échappe à toute comparaison
+      // d'égalité — il SAUTE la garde de retrait `from.side === 'container'` (donc
+      // `hasAccess` n'est jamais consulté) et se fait traiter comme le conteneur.
+      // On borne chaque champ à ses valeurs légales : comparer des champs entre eux
+      // ne suffit pas (leçon de la faille rouverte).
+      if (from.side !== 'player' && from.side !== 'container') return reject('case invalide')
+      if (to.side !== 'player' && to.side !== 'container') return reject('case invalide')
 
       // Le conteneur : un coffre (structure) ou une dépouille.
       const structure = kind === 'structure' ? findStructure(state, containerId) : undefined

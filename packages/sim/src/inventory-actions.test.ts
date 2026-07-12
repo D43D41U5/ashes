@@ -51,6 +51,15 @@ function chestSim(): { sim: SimState; chief: number; stranger: number; chest: St
   return { sim, chief, stranger, chest }
 }
 
+/**
+ * Forge une action à partir d'un littéral que TypeScript refuserait : le client
+ * est HOSTILE (invariant §3), il envoie ce qu'il veut sur le fil. Un test de
+ * sécurité doit pouvoir mentir sur un champ que le type interdit à la compilation.
+ */
+function forge(action: unknown): PlayerAction {
+  return action as PlayerAction
+}
+
 /** A21 : la somme des `count` par item sur (joueur + conteneur). Doit être INVARIANTE. */
 function census(...invs: Inventory[]): Partial<Record<ItemId, number>> {
   const bag: Partial<Record<ItemId, number>> = {}
@@ -593,5 +602,109 @@ describe('transfer — joueur ⇄ conteneur (R16)', () => {
     expect(chest.inventory![0]).toEqual({ item: 'berries', count: 5 }) // le dépôt a bien eu lieu…
     expect(drainEvents(sim).filter((e) => e.type === 'gift_given')).toEqual([]) // …mais ce n'est pas un don
     expect(entity(sim, chief).warmth).toBe(0)
+  })
+})
+
+/**
+ * `SlotRef.side` n'est qu'un type à la COMPILATION. À l'exécution, seule la sim
+ * fait autorité (client hostile, invariant §3) : un `side` qui ment doit être
+ * REFUSÉ, pas seulement comparé à l'autre. Sinon il saute `hasAccess` et se fait
+ * traiter comme le conteneur — deux failles rouvertes par la même porte.
+ */
+describe('transfer — un `side` hors des valeurs légales (anti-cheat)', () => {
+  it('un `side` bidon ne VOLE pas un coffre privé (hasAccess reste consulté)', () => {
+    const { sim, chief, stranger, chest } = chestSim()
+    grantItems(sim, chief, { stone: 3 })
+    act(sim, chief, { type: 'deposit', structureId: chest.id, item: 'stone', count: 3 })
+    const sac = entity(sim, stranger).inventory
+    drainEvents(sim)
+
+    // `from.side` ment : ni 'player' ni 'container'. Il échappe à `from.side === to.side`
+    // (≠ tout), SAUTE la garde de retrait `from.side === 'container'` (donc hasAccess
+    // n'est jamais consulté), et se fait traiter comme le CONTENEUR par `srcInv`.
+    act(
+      sim,
+      stranger,
+      forge({
+        type: 'transfer',
+        kind: 'structure',
+        containerId: chest.id,
+        from: { side: 'voleur', slot: 0 },
+        to: { side: 'player', slot: 0 },
+        count: 3,
+      }),
+    )
+
+    expect(rejections(sim)).toEqual(['case invalide'])
+    expect(chest.inventory![0]).toEqual({ item: 'stone', count: 3 }) // rien n'a été volé
+    expect(countOf(sac, 'stone')).toBe(0)
+  })
+
+  it('un `side` bidon versant sur la MÊME case ne crédite pas un don FANTÔME', () => {
+    // Un grenier étranger (accès village) avec des baies : `creditForeignDeposit`
+    // s'y armerait sur un vrai dépôt.
+    const sim = makeSim()
+    const donor = founder(sim, 10.5, 10.5)
+    const chief2 = founder(sim, 70.5, 70.5)
+    act(sim, chief2, { type: 'build', structure: 'chest', tx: 71, ty: 70 })
+    const granary = structureAt(sim.structures, 71, 70)!
+    act(sim, chief2, { type: 'set_access', structureId: granary.id, access: 'village' })
+    granary.inventory![0] = { item: 'berries', count: 5 } // stackSize('berries') = 10, il reste de la place
+    const me = entity(sim, donor)
+    me.x = 71.5
+    me.y = 71.4
+    me.warmth = 0
+    drainEvents(sim)
+
+    // `from.side` ment ET vise la MÊME case que `to.side='container'` : `srcInv` et
+    // `dstInv` deviennent tous deux le grenier, `pourOntoSlot` verse une pile sur
+    // elle-même (put > 0, rien de NET ne bouge), et `moved > 0` déclenche un don.
+    act(
+      sim,
+      donor,
+      forge({
+        type: 'transfer',
+        kind: 'structure',
+        containerId: granary.id,
+        from: { side: 'voleur', slot: 0 },
+        to: { side: 'container', slot: 0 },
+        count: 5,
+      }),
+    )
+
+    const events = drainEvents(sim)
+    expect(events.filter((e) => e.type === 'gift_given')).toEqual([]) // aucun don n'a eu lieu
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'action_rejected', reason: 'case invalide' }),
+    )
+    expect(me.warmth).toBe(0) // aucune chaleur créditée
+    expect(granary.inventory![0]).toEqual({ item: 'berries', count: 5 }) // le grenier n'a pas bougé
+  })
+
+  it('un `to.side` bidon est refusé AVANT tout versement (pas de dépôt silencieux)', () => {
+    // `from.side` LÉGAL, `to.side` qui ment : sans borne, `dstInv` retomberait sur le
+    // conteneur (`to.side === 'player' ? … : box`) et l'objet filerait dans le coffre
+    // — un versement fantôme, hors de toute case visée. Doit être un REFUS net.
+    const { sim, chief, chest } = chestSim()
+    grantItems(sim, chief, { wood: 5 })
+    const sac = entity(sim, chief).inventory
+    drainEvents(sim)
+
+    act(
+      sim,
+      chief,
+      forge({
+        type: 'transfer',
+        kind: 'structure',
+        containerId: chest.id,
+        from: { side: 'player', slot: 0 },
+        to: { side: 'voleur', slot: 0 },
+        count: 5,
+      }),
+    )
+
+    expect(rejections(sim)).toEqual(['case invalide'])
+    expect(countOf(sac, 'wood')).toBe(5) // le bois est resté au sac
+    expect(chest.inventory!.every((s) => s === null)).toBe(true) // rien n'est tombé dans le coffre
   })
 })
