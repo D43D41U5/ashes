@@ -31,7 +31,10 @@ function fullReloadOnSimChange(): Plugin {
 
 export default defineConfig({
   plugins: [fullReloadOnSimChange()],
-  server: { port: 3000, host: true, allowedHosts: ['ashes.localhost'] },
+  // `allowedHosts: true` : le serveur de dev est derrière Traefik, qui lui
+  // transmet le Host demandé par le navigateur (ashes.test, l'IP nue du VPS…).
+  // Les lister ici reviendrait à figer l'adresse de la machine dans le dépôt.
+  server: { port: 3000, host: true, allowedHosts: true },
   build: {
     outDir: 'dist',
     rollupOptions: {

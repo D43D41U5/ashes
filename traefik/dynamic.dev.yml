@@ -1,9 +1,20 @@
 # Configuration dynamique de Traefik — mode DÉVELOPPEMENT.
-# Route http://ashes.localhost vers le serveur de dev Vite (HMR inclus).
+# Route le serveur de dev Vite (HMR inclus), quel que soit le nom d'hôte demandé.
+#
+# Le routeur est un attrape-tout : la stack de dev n'expose qu'un service, et
+# c'est ce qui permet d'atteindre le jeu aussi bien par http://ashes.test (VPS,
+# via le fichier hosts du poste client) que par http://<ip-du-vps>/ sans rien
+# configurer. À NE PAS reprendre tel quel en production, où chaque service doit
+# être routé par un Host() explicite.
+#
+# Surtout, ne pas nommer l'hôte de dev en « .localhost » : Chrome, Edge et
+# Firefox résolvent tout *.localhost vers 127.0.0.1 en dur (RFC 6761), sans
+# jamais consulter le resolver de l'OS — un fichier hosts qui pointe
+# ashes.localhost vers une machine distante est donc ignoré en silence.
 http:
   routers:
     ashes:
-      rule: "Host(`ashes.localhost`)"
+      rule: "PathPrefix(`/`)"
       entryPoints:
         - web
       service: ashes
