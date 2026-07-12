@@ -1,14 +1,22 @@
 /**
- * Les vitales (bas-gauche) : PV, endurance, faim, température — en jauges — et,
- * sous elles, la ligne des blessures. Remplace le pavé de texte du bas
- * (spec inventaire R18). Purement de l'affichage : les valeurs viennent du
- * snapshot, aucune logique de jeu ici.
+ * Les vitales (bas-gauche) : PV, endurance, faim, température — en jauges —,
+ * sous elles la ligne des blessures, puis les métiers appris. Remplace le pavé
+ * de texte du bas (spec inventaire R18). Purement de l'affichage : les valeurs
+ * viennent du snapshot, aucune logique de jeu ici (le niveau de métier est
+ * calculé par `skillLevel`, de la sim).
  */
-import type { Entity } from '@braises/sim'
+import { TEMPERATURE, skillLevel, type Entity, type SkillId } from '@braises/sim'
 import type Phaser from 'phaser'
 
 export interface Vitals {
-  update(s: { hp: number; stamina: number; hunger: number; temperature: number; wounds: Entity['wounds'] }): void
+  update(s: {
+    hp: number
+    stamina: number
+    hunger: number
+    temperature: number
+    wounds: Entity['wounds']
+    skills: Partial<Record<SkillId, number>>
+  }): void
 }
 
 /** Maxima des jauges — posés par `spawnEntity` (packages/sim/src/sim.ts). */
@@ -16,8 +24,14 @@ const HP_MAX = 100
 const STAMINA_MAX = 100
 const HUNGER_MAX = 100
 const TEMP_MAX = 100
-/** Sous ce seuil, le froid mord (BALANCE TEMPERATURE.HYPOTHERMIA) : la jauge vire au rouge. */
-const HYPOTHERMIA = 20
+
+/** Les métiers, dans l'ordre où on veut les lire — nom français pour l'affichage. */
+const SKILL_LABELS: Record<SkillId, string> = {
+  woodcutting: 'Bûcheron',
+  mining: 'Mineur',
+  foraging: 'Cueilleur',
+  crafting: 'Artisan',
+}
 
 const BAR_W = 140
 const BAR_H = 10
@@ -36,7 +50,8 @@ export function createVitals(scene: Phaser.Scene): Vitals {
   const iconX = x
   const barX = x + ICON + 6
   const valueX = barX + BAR_W + 8
-  const baseY = scene.scale.height - 12 - 5 * ROW_H
+  // Six rangées : 4 jauges, la ligne des blessures, la ligne des métiers.
+  const baseY = scene.scale.height - 12 - 6 * ROW_H
 
   const style = {
     fontFamily: 'monospace',
@@ -64,6 +79,12 @@ export function createVitals(scene: Phaser.Scene): Vitals {
     .text(x, baseY + 4 * ROW_H, '', { ...style, color: '#ff9a7a' })
     .setOrigin(0, 0)
 
+  // Les métiers appris — la progression émergente, discrète mais visible :
+  // on ne montre que les niveaux atteints (level > 0), sinon rien.
+  const skills = scene.add
+    .text(x, baseY + 5 * ROW_H, '', { ...style, color: '#c8b88a' })
+    .setOrigin(0, 0)
+
   const setGauge = (g: Gauge, cur: number, max: number, warn?: number): void => {
     g.bar.width = (BAR_W * Math.max(0, cur)) / max
     // La faim et la température qui plongent virent au rouge : un signal, pas un chiffre.
@@ -76,13 +97,20 @@ export function createVitals(scene: Phaser.Scene): Vitals {
       setGauge(hp, s.hp, HP_MAX)
       setGauge(stamina, s.stamina, STAMINA_MAX)
       setGauge(hunger, s.hunger, HUNGER_MAX, 0)
-      setGauge(temperature, s.temperature, TEMP_MAX, HYPOTHERMIA)
+      // Sous TEMPERATURE.HYPOTHERMIA le froid mord : la jauge vire au rouge.
+      setGauge(temperature, s.temperature, TEMP_MAX, TEMPERATURE.HYPOTHERMIA)
       const labels = [
         s.wounds.leg ? 'jambe blessée' : null,
         s.wounds.arm ? 'bras blessé' : null,
         s.wounds.bleeding ? 'SAIGNEMENT (X : bander)' : null,
       ].filter(Boolean)
       wounds.setText(labels.join(' · '))
+      const skillsText = (Object.keys(SKILL_LABELS) as SkillId[])
+        .map((id) => ({ id, level: skillLevel(s.skills[id] ?? 0) }))
+        .filter(({ level }) => level > 0)
+        .map(({ id, level }) => `${SKILL_LABELS[id]} ${level}`)
+        .join(' · ')
+      skills.setText(skillsText)
     },
   }
 }

@@ -377,6 +377,7 @@ export class UIScene extends Phaser.Scene {
       hunger: getHud(this.registry, 'hunger') ?? 100,
       temperature: getHud(this.registry, 'temperature') ?? 100,
       wounds: getHud(this.registry, 'wounds') ?? {},
+      skills: getHud(this.registry, 'skills') ?? {},
     })
 
     // La ligne d'aide : la structure au clic (B) + les béquilles de touches.
