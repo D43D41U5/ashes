@@ -1064,6 +1064,50 @@ describe('la satiété (A16 — R15) — un prédateur mange', () => {
     expect(pack[0]!.targetId).toBe(a) // il a pris son agresseur pour cible
     expect(entity(sim, a).hp).toBeLessThan(100) // et il a rendu le coup
   })
+
+  it('CONSERVATION — une carcasse MIXTE mangée jusqu’à l’os garde son bois et sa hache', () => {
+    const sim = makeSim(0, 2)
+    const pack = meutePosee(sim, 80.5, 80.5, 1)
+    // Un mort qui portait de la viande ET du bois ET une hache : la carcasse est
+    // un conteneur, pas un simple steak. Le prédateur ne mange que la viande.
+    sim.corpses.push({
+      id: sim.nextCorpseId++,
+      x: 82.5,
+      y: 80.5,
+      inventory: inventoryOf(SLOTS.CORPSE, { raw_meat: 1, wood: 5, axe: 1 }),
+      decayAt: 1e9,
+    })
+    const corpseId = sim.corpses[0]!.id
+
+    for (let t = 0; t < 20 * BALANCE.TICK_RATE_HZ && pack[0]!.satedUntil === undefined; t++) tick(sim)
+    expect(pack[0]!.satedUntil).toBeDefined() // il a mangé la bouchée et il est repu
+
+    const meal = sim.corpses.find((c) => c.id === corpseId)
+    expect(meal).toBeDefined() // la carcasse n’a PAS disparu : elle n’est pas vide
+    expect(countOf(meal!.inventory, 'raw_meat')).toBe(0) // la viande est mangée…
+    expect(countOf(meal!.inventory, 'wood')).toBe(5) // …mais le bois est INTACT
+    expect(countOf(meal!.inventory, 'axe')).toBe(1) // …et la hache aussi
+  })
+
+  it('ANTI-LIVELOCK — la carcasse vidée de sa viande n’aimante plus le loup', () => {
+    const sim = makeSim(0, 2)
+    const pack = meutePosee(sim, 80.5, 80.5, 1)
+    sim.corpses.push({
+      id: sim.nextCorpseId++,
+      x: 82.5,
+      y: 80.5,
+      inventory: inventoryOf(SLOTS.CORPSE, { raw_meat: 1, wood: 5 }),
+      decayAt: 1e9,
+    })
+
+    for (let t = 0; t < 20 * BALANCE.TICK_RATE_HZ && pack[0]!.satedUntil === undefined; t++) tick(sim)
+    // On le rend AFFAMÉ de nouveau : la carcasse ne porte plus que du bois.
+    pack[0]!.satedUntil = 0
+    delete pack[0]!.mealCorpseId
+    for (let t = 0; t < 10 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+
+    expect(pack[0]!.eatingUntil).toBeUndefined() // il ne se remet JAMAIS à ronger du bois
+  })
 })
 
 describe('la pression de chasse (A17 — R16) — ni farm, ni désert', () => {

@@ -97,6 +97,26 @@ describe('le réveil', () => {
     expect(axe).toBeDefined()
     expect(axe!.wear).toBe(99)
   })
+  it('CONSERVATION — un cadavre gavé au-delà de 40 déverse l’excédent au sol, rien n’est détruit', () => {
+    const state = createSim(1)
+    const e = humanAt(state, 5, 5)
+    die(state, e, 0, 'cold')
+    const corpse = state.corpses.find((c) => c.risesAt !== undefined)!
+    // Le vecteur : un dépôt (transfer) a gavé le cadavre AVANT sa levée, au-delà
+    // des 40 cases d’un Cendreux. 41 haches (non empilables → 41 cases distinctes).
+    corpse.inventory = inventoryOf(SLOTS.CORPSE, { axe: 41 })
+    state.tick = corpse.risesAt!
+    advanceCendreux(state)
+
+    const risen = state.monsters.find((m) => m.type === 'cendreux')!
+    const ent = state.entities.find((en) => en.id === risen.entityId)!
+    const inCendreux = countOf(ent.inventory, 'axe')
+    const spilled = state.corpses.reduce((n, c) => n + countOf(c.inventory, 'axe'), 0)
+    expect(inCendreux).toBe(SLOTS.NPC) // le Cendreux est plein (40 cases)
+    expect(spilled).toBe(1) // l’excédent est tombé au sol, en un tas lootable
+    expect(inCendreux + spilled).toBe(41) // CONSERVATION : rien n’est détruit
+  })
+
   it('annulation : un feu à portée au réveil → pas de cendreux', () => {
     const state = createSim(1)
     const e = humanAt(state, 5, 5)

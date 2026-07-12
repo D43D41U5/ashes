@@ -144,7 +144,7 @@ export function hasAccess(state: SimState, entityId: number, s: Structure): bool
  * (un `Corpse`, le seul conteneur volatil du jeu) sur la tuile. Le sac du tas est
  * assez grand pour tout tenir (spec inventaire R11).
  */
-function spillOnGround(state: SimState, x: number, y: number, items: ItemBag, slots: Inventory = []): void {
+export function spillOnGround(state: SimState, x: number, y: number, items: ItemBag, slots: Inventory = []): void {
   const pile = inventoryOf(SLOTS.CORPSE, items)
   // Les CASES tombent entières : une hache usée qui roule d'un coffre détruit ne
   // se relève pas neuve (l'usure vit dans la case, spec inventaire R6).
