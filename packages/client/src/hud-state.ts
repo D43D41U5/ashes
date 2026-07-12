@@ -6,11 +6,21 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { Entity, GameTime, Inventory, SkillId, Village, VillageTask, WorldMap } from '@braises/sim'
+import type { Entity, GameTime, Inventory, PlayerAction, SkillId, Village, VillageTask, WorldMap } from '@braises/sim'
 import type Phaser from 'phaser'
 
 /** Ce que le joueur peut sélectionner pour bâtir (touches 1-5). */
 export type Buildable = 'wall' | 'door' | 'chest' | 'workshop' | 'furnace'
+
+/** Le conteneur ouvert, RÉSOLU depuis le snapshot (WorldScene) pour que UIScene
+ *  n'ait pas à fouiller structures/cadavres. `null` dès qu'il disparaît (dépouille
+ *  vidée → effacée) : c'est le signal qui referme proprement le panneau de loot. */
+export interface OpenContainerView {
+  kind: 'structure' | 'corpse'
+  id: number
+  inv: Inventory
+  title: string
+}
 
 /** Une propriété par clé du registry — la seule source de vérité des clés. */
 export interface HudState {
@@ -27,13 +37,27 @@ export interface HudState {
   /** Chaleur du Feu de mon village. */
   villageWarmth: number
   inv: Inventory
+  /** Case tenue en main (`-1` = mains nues) — surligne la ceinture (spec inventaire R8). */
+  activeSlot: number
   hunger: number
+  /** Température du corps de l'avatar (0-100 ; sous 20, le froid mord). */
+  temperature: number
   skills: Partial<Record<SkillId, number>>
   hp: number
   stamina: number
   wounds: Entity['wounds']
   /** Structure sélectionnée pour le mode construction. */
   selected: Buildable
+  /** L'écran d'inventaire (TAB) est-il ouvert ? (l'UI arrive au chantier 7). */
+  inventoryOpen: boolean
+  /** Le conteneur ouvert à côté du sac (coffre/cadavre), ou null. Posé par
+   *  input-bindings à l'ouverture de TAB (le plus proche à portée). */
+  openContainer: { kind: 'structure' | 'corpse'; id: number } | null
+  /** Son contenu, résolu chaque snapshot par WorldScene (null s'il a disparu). */
+  openContainerView: OpenContainerView | null
+  /** File d'actions posées par UIScene (l'écran d'inventaire) — WorldScene la
+   *  draine et parle seule à l'hôte (l'UI ne connaît pas le transport). */
+  pendingActions: PlayerAction[]
   /** Journal (J) ouvert à la demande. */
   journalOpen: boolean
   /** Carte plein écran (M) ouverte à la demande. */

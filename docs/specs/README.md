@@ -13,6 +13,7 @@ Une tâche d'implémentation bien posée ressemble à : « implémente l'enduran
 | `village.md` — Feu, construction, propriété, rangs MVP | §5 | Veillée 3 |
 | `pnj.md` — villageois simulés, tâches, simulation dégradée | §10, §11 | Veillée 3 |
 | `economie.md` — ressources 3 tiers, stations, usure | §8 | Veillée |
+| `inventaire.md` — sac à cases, ceinture, objet en main (chantier 1/3 « façon Rust ») | §7, §8 | Veillée — chantier UX 1 |
 | `combat.md` — endurance, télégraphes, blessures, mort | §7 | Veillée |
 | `alignement.md` — deux axes, agrégation, MVP Foyer/Meute | §3 | Veillée |
 | `saison.md` — 3 actes, pression par acte, saisons accélérées | §2 | Veillée |

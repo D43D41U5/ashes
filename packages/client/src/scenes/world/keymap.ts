@@ -34,6 +34,10 @@ export const KEYMAP = {
   eatStew: ['R'],
   toggleJournal: ['J'],
   toggleMap: ['M'],
+  toggleInventory: ['TAB'],
+  /** Fait défiler la structure à bâtir (mur → porte → coffre → atelier → four).
+   *  Béquille : les touches 1-6 tiennent désormais la ceinture (spec inventaire R17). */
+  cycleBuildable: ['B'],
 } as const
 
 /**
@@ -54,20 +58,30 @@ export const DEBUG_KEYMAP = {
   cycleSpeed: ['F4'],
 } as const
 
-/** Sélection de construction, dans l'ordre des touches 1-5 (touche → structure). */
-export const BUILD_BINDINGS: readonly [string, Buildable][] = [
-  ['ONE', 'wall'],
-  ['TWO', 'door'],
-  ['THREE', 'chest'],
-  ['FOUR', 'workshop'],
-  ['FIVE', 'furnace'],
+/** La CEINTURE : touches 1-6 → case active 0-5 (spec inventaire R17). */
+export const BELT_BINDINGS: readonly [string, number][] = [
+  ['ONE', 0],
+  ['TWO', 1],
+  ['THREE', 2],
+  ['FOUR', 3],
+  ['FIVE', 4],
+  ['SIX', 5],
 ]
 
-/** Recettes de craft, dans l'ordre des touches 6-0 (touche → recette). */
+/** L'ordre dans lequel `B` fait défiler les structures à bâtir (spec inventaire R17). */
+export const BUILDABLE_CYCLE: readonly Buildable[] = ['wall', 'door', 'chest', 'workshop', 'furnace']
+
+/**
+ * Recettes de craft — BÉQUILLE jusqu'au chantier 2 (le panneau de craft). Les
+ * touches 1-6 tenant la ceinture, le craft se replie sur SHIFT+1…5 (même ordre
+ * qu'avant) : sans lui, le craft serait inaccessible et le jeu injouable entre
+ * deux chantiers. Le handler lit `event.shiftKey` pour trancher. À supprimer au
+ * chantier 2.
+ */
 export const CRAFT_BINDINGS: readonly [string, RecipeId][] = [
-  ['SIX', 'stew'],
-  ['SEVEN', 'axe'],
-  ['EIGHT', 'pickaxe'],
-  ['NINE', 'iron_ingot'],
-  ['ZERO', 'iron_axe'],
+  ['ONE', 'stew'],
+  ['TWO', 'axe'],
+  ['THREE', 'pickaxe'],
+  ['FOUR', 'iron_ingot'],
+  ['FIVE', 'iron_axe'],
 ]

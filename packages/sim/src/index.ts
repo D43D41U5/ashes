@@ -32,8 +32,10 @@ export { POI,
   NODE_DEFS,
   RECIPES,
   SEASON,
+  SLOTS,
   STRUCTURE_COSTS,
   STRUCTURE_HP,
+  TEMPERATURE,
   TERRAINS,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
@@ -96,8 +98,27 @@ export { advanceWorldEvents } from './worldevents'
 export type { Horde } from './worldevents'
 export { advanceAlignment, archetypeOf, isOutsider, regenFactor, damageModifier, harvestFactor } from './alignment'
 export type { Archetype, Aggression } from './alignment'
-export { countOf, hasItems, addItems, removeItems } from './items'
-export type { ItemId, Inventory, StructureType, AccessLevel, SkillId } from './items'
+export {
+  countOf,
+  hasItems,
+  addItems,
+  addSlot,
+  pourInto,
+  removeItems,
+  makeInventory,
+  inventoryOf,
+  toBag,
+  itemsIn,
+  isEmpty,
+  isStackable,
+  stackSize,
+  freeRoomFor,
+} from './items'
+export type { ItemId, ItemBag, Slot, Inventory, StructureType, AccessLevel, SkillId } from './items'
+
+// ─── L'inventaire : la case active, ce qu'on tient VRAIMENT en main (R8-R9) ─
+export { applyInventoryAction, heldSlot, wearHeld, isInventoryAction } from './inventory-actions'
+export type { InventoryAction, SlotRef } from './inventory-actions'
 
 // ─── Consommateurs du flux d'événements ───────────────────────────────────
 export { chronicleFromEvents } from './chronicle'

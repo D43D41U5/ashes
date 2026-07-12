@@ -7,12 +7,12 @@
  */
 import { BALANCE, NPC_AI } from './balance'
 import { applyEconomyAction } from './economy'
-import { countOf } from './items'
-import { followPath, near, setPathTo, TICKS_PER_HOUR, type Npc } from './npc'
+import { countOf, freeRoomFor, type ItemId } from './items'
+import { followPath, near, setPathTo, TICKS_PER_HOUR, withdraw, type Npc } from './npc'
 import type { Entity, SimState } from './sim'
 import { fireBubble, isSheltered } from './temperature'
 import { getGameTime } from './time'
-import { applyVillageAction, type Village } from './village'
+import type { Structure, Village } from './village'
 import { granaries } from './village-board'
 
 /** Retourne true si le besoin a consommé le tick. */
@@ -26,26 +26,33 @@ export function handleHunger(state: SimState, village: Village, npc: Npc, entity
     applyEconomyAction(state, entity.id, { type: 'eat', item: 'berries' })
     return true
   }
-  // Aller retirer au grenier.
-  const chest = granaries(state, village.id).find(
-    (c) => countOf(c.inventory ?? {}, 'stew') > 0 || countOf(c.inventory ?? {}, 'berries') > 0,
-  )
-  if (!chest) return false // rien à manger : on continue à travailler (pas de deadlock)
-  if (near(entity, chest.tx, chest.ty)) {
-    const inv = chest.inventory ?? {}
-    if (countOf(inv, 'stew') > 0) {
-      applyVillageAction(state, entity.id, { type: 'withdraw', structureId: chest.id, item: 'stew', count: 1 })
-    } else {
-      applyVillageAction(state, entity.id, {
-        type: 'withdraw',
-        structureId: chest.id,
-        item: 'berries',
-        count: Math.min(NPC_AI.EAT_BERRIES_WITHDRAW, countOf(inv, 'berries')),
-      })
-    }
-    return true
+  // Aller retirer au grenier. ANTI-LIVELOCK (comme handleCold) : un sac plein ne
+  // peut RIEN retirer. Un grenier qui a de quoi manger mais qu'on ne peut pas
+  // porter n'est pas un grenier : on ne s'y rend pas, on n'y tente pas un retrait
+  // à 20 Hz — on ne mange pas, mais on retourne travailler. La faim ne tue pas ;
+  // le figeage, si (le PNJ ne ferait plus jamais rien d'autre).
+  const canCarry = (item: ItemId): boolean => freeRoomFor(entity.inventory, item) > 0
+  const eatable = (c: Structure): ItemId | null => {
+    const inv = c.inventory ?? []
+    if (countOf(inv, 'stew') > 0 && canCarry('stew')) return 'stew'
+    if (countOf(inv, 'berries') > 0 && canCarry('berries')) return 'berries'
+    return null
   }
-  if (npc.path.length === 0) setPathTo(state, npc, entity, chest.tx, chest.ty)
+  const chest = granaries(state, village.id).find((c) => eatable(c) !== null)
+  if (!chest) return false // rien à manger (ou plus une case pour le porter) : on travaille
+  if (near(entity, chest.tx, chest.ty)) {
+    const item = eatable(chest)
+    if (item === null) return false
+    const count = item === 'stew' ? 1 : Math.min(NPC_AI.EAT_BERRIES_WITHDRAW, countOf(chest.inventory ?? [], 'berries'))
+    // Le retrait est MESURÉ : s'il ne rapporte rien, on rend la main plutôt que
+    // de se figer devant le coffre (spec inventaire R11).
+    return withdraw(state, entity, chest.id, item, count) > 0
+  }
+  // ANTI-LIVELOCK (comme handleCold) : un grenier INATTEIGNABLE (emmuré, une coulée
+  // de roche) laisse `path` vide — `followPath` ne ferait rien et le tick serait
+  // consommé quand même, à l'identique, pour toujours. On rend la main : il ne
+  // mangera pas, mais il travaillera, dormira, se défendra. La faim ne tue pas.
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return false
   followPath(state, npc, entity)
   return true
 }
@@ -70,7 +77,9 @@ export function handleSleep(state: SimState, npc: Npc, entity: Entity): boolean 
       npc.path = []
       return true
     }
-    if (npc.path.length === 0) setPathTo(state, npc, entity, target.tx, target.ty)
+    // ANTI-LIVELOCK (même garde que handleCold et handleHunger) : un lit inatteignable
+    // ne doit pas consommer le tick à vide jusqu'au matin.
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty)) return false
     followPath(state, npc, entity)
     return true
   }

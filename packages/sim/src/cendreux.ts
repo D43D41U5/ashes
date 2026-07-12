@@ -5,10 +5,12 @@ import { CENDREUX, COMBAT, MONSTER_DEFS } from './balance'
 import { startAttack } from './combat'
 import { distSq } from './geometry'
 import { emitEvent } from './events'
+import { isEmpty, pourInto } from './items'
 import { moveToward, nearestPrey, spawnMonster, type Monster } from './monsters'
 import { findPath } from './pathfinding'
 import { getGameTime } from './time'
 import type { Entity, SimState } from './sim'
+import { spillOnGround } from './village'
 
 /** Vrai si cette mort (déjà connue `cold`) donnera un Cendreux : seul ET loin d'un feu. */
 export function willRiseAsCendreux(state: SimState, entity: Entity): boolean {
@@ -48,8 +50,15 @@ export function advanceCendreux(state: SimState): void {
     // Levée : le cadavre devient le Cendreux, portant son loot.
     const id = spawnMonster(state, 'cendreux', corpse.x, corpse.y)
     const ent = state.entities.find((e) => e.id === id)!
-    ent.inventory = { ...corpse.inventory }
+    // Les CASES passent au Cendreux (spec inventaire R6) : la levée n'est pas un
+    // atelier de réparation — une hache usée se relève usée. `pourInto` conserve
+    // l'usure (il ne reconstruit pas de case neuve), sinon mourir de froid
+    // réparerait tout l'outillage porté et le Cendreux serait une lessiveuse.
+    // Ce qui NE TIENT PAS dans les 40 cases du Cendreux (un cadavre gavé au-delà
+    // pendant la fenêtre de levée) ne s'évapore pas : il tombe au sol (A21).
+    pourInto(corpse.inventory, ent.inventory)
     state.corpses = state.corpses.filter((c) => c.id !== corpse.id)
+    if (!isEmpty(corpse.inventory)) spillOnGround(state, corpse.x, corpse.y, {}, corpse.inventory)
     emitEvent(state, { type: 'cendreux_risen', tick: state.tick, entityId: id, x: corpse.x, y: corpse.y })
   }
 }

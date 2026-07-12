@@ -198,7 +198,7 @@ describe('LE test (A7) — le paquebot vire, la Meute raide', () => {
 
     const victimChest = sim.structures.find((s) => s.type === 'chest' && s.villageId === victim.id)!
     const meuteChest = sim.structures.find((s) => s.type === 'chest' && s.villageId === meute.id)!
-    const meuteWoodBefore = countOf(meuteChest.inventory ?? {}, 'wood')
+    const meuteWoodBefore = countOf(meuteChest.inventory ?? [], 'wood')
 
     // Avancer à la nuit et laisser le raid se jouer.
     sim.tick = DAY_TICKS_PER_CYCLE - 10
@@ -223,10 +223,10 @@ describe('LE test (A7) — le paquebot vire, la Meute raide', () => {
       .map((n) => entity(sim, n.entityId)?.warmth ?? -60)
     expect(Math.min(...raiderWarmths)).toBeLessThan(-60)
     // Et du butin est rentré (ou au pire porté) : le grenier Meute a gagné du stock.
-    const meuteWoodAfter = countOf(meuteChest.inventory ?? {}, 'wood')
+    const meuteWoodAfter = countOf(meuteChest.inventory ?? [], 'wood')
     const carried = sim.npcs
       .filter((n) => n.villageId === meute.id)
-      .reduce((sum, n) => sum + countOf(entity(sim, n.entityId)?.inventory ?? {}, 'wood'), 0)
+      .reduce((sum, n) => sum + countOf(entity(sim, n.entityId)?.inventory ?? [], 'wood'), 0)
     expect(meuteWoodAfter + carried).toBeGreaterThan(meuteWoodBefore - 1)
   })
 })

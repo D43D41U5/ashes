@@ -4,6 +4,7 @@
  * code au boot — aucun asset binaire dans le repo.
  */
 import Phaser from 'phaser'
+import { generateItemIcons } from '../render/item-art'
 import { makePoiTextures } from './world/poi-art'
 
 export class BootScene extends Phaser.Scene {
@@ -40,6 +41,7 @@ export class BootScene extends Phaser.Scene {
 
     this.makeStructures()
     this.makeGlowTexture()
+    generateItemIcons(this) // les 16 icônes d'items — voir render/item-art.ts
     this.scene.start('world')
   }
 

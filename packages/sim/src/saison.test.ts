@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { ALIGNMENT, BALANCE, SEASON, TERRAIN_GRASS, TERRAIN_ROAD } from './balance'
+import { ALIGNMENT, BALANCE, SEASON, SLOTS, TERRAIN_GRASS, TERRAIN_ROAD } from './balance'
 import { chronicleFromEvents } from './chronicle'
 import { drainEvents, type SimEvent } from './events'
+import { inventoryOf } from './items'
 import { createEmptyMap } from './map'
 import { foundNpcVillage } from './worldgen'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
@@ -78,7 +79,7 @@ describe('la fin de saison (A4)', () => {
     for (let t = 0; t < ALIGNMENT.REFRESH_TICKS + 1; t++) step(sim, []) // classer les archétypes
     // Un grenier Meute gonflé pour le score de butin.
     const meuteChest = sim.structures.find((s) => s.type === 'chest' && s.villageId === sim.villages[1]!.id)!
-    meuteChest.inventory = { components: 5, iron_ingot: 4, wood: 10 }
+    meuteChest.inventory = inventoryOf(SLOTS.CHEST, { components: 5, iron_ingot: 4, wood: 10 })
 
     sim.tick = BALANCE.SEASON_DAYS * TICKS_PER_CYCLE - 5
     const events: SimEvent[] = []

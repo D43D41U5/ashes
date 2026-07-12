@@ -14,6 +14,7 @@ import {
   BALANCE,
   COMBAT,
   FOOD_VALUES,
+  SLOTS,
   STRUCTURE_COSTS,
   STRUCTURE_HP,
   TERRAINS,
@@ -24,11 +25,17 @@ import { emitEvent } from './events'
 import { distSq } from './geometry'
 import {
   addItems,
+  addSlot,
   countOf,
   hasItems,
+  inventoryOf,
+  isEmpty,
+  makeInventory,
+  pourSlot,
   removeItems,
   type AccessLevel,
   type Inventory,
+  type ItemBag,
   type ItemId,
   type StructureType,
 } from './items'
@@ -132,6 +139,88 @@ export function hasAccess(state: SimState, entityId: number, s: Structure): bool
   return false
 }
 
+/**
+ * Ce qu'aucun sac ne peut absorber ne s'évapore pas : ça tombe au sol, en un tas
+ * (un `Corpse`, le seul conteneur volatil du jeu) sur la tuile. Le sac du tas est
+ * assez grand pour tout tenir (spec inventaire R11).
+ */
+export function spillOnGround(state: SimState, x: number, y: number, items: ItemBag, slots: Inventory = []): void {
+  const pile = inventoryOf(SLOTS.CORPSE, items)
+  // Les CASES tombent entières : une hache usée qui roule d'un coffre détruit ne
+  // se relève pas neuve (l'usure vit dans la case, spec inventaire R6).
+  for (const slot of slots) if (slot !== null) addSlot(pile, slot)
+  state.corpses.push({
+    id: state.nextCorpseId,
+    x,
+    y,
+    inventory: pile,
+    decayAt: state.tick + COMBAT.CORPSE_TICKS,
+  })
+  state.nextCorpseId += 1
+}
+
+/**
+ * Transfère au plus `count` unités de `item`, et SEULEMENT ce qui tient à
+ * destination. Retourne ce qui a réellement bougé (0 = rien ne rentre).
+ *
+ * CASE PAR CASE, dans l'ordre : la règle du versement (pousser d'abord, ne retirer
+ * que ce qui a atterri, l'usure voyageant avec la case) vit dans `pourSlot`, et
+ * NULLE PART AILLEURS. Ici on ne fait qu'ajouter le filtre « cet item-là, cette
+ * quantité-là » dont `deposit`/`withdraw`/`give` ont besoin.
+ */
+function transferItems(from: Inventory, to: Inventory, item: ItemId, count: number): number {
+  let remaining = Math.min(count, countOf(from, item))
+  let moved = 0
+  for (let i = 0; i < from.length && remaining > 0; i++) {
+    const slot = from[i]
+    if (!slot || slot.item !== item) continue
+    const put = pourSlot(from, i, to, remaining)
+    if (put <= 0) {
+      // Une case usée qui ne trouve pas de case vide reste chez elle : on passe à
+      // la suivante. Un empilable qui ne passe plus, lui, ne passera plus du tout.
+      if (slot.wear !== undefined) continue
+      break
+    }
+    moved += put
+    remaining -= put
+  }
+  return moved
+}
+
+/**
+ * Déposer de la nourriture au grenier d'un AUTRE village est un don (spec
+ * alignement R11). La règle vit ICI, en un seul endroit : `deposit` s'en sert, et
+ * le `transfer` case-à-case (inventory-actions.ts, spec inventaire R16) aussi.
+ *
+ * `count` est ce qui a RÉELLEMENT été déposé : on ne se fait pas créditer d'un
+ * don qui n'a pas eu lieu, et `gift_given` (chronique, réputation) dit vrai.
+ */
+export function creditForeignDeposit(
+  state: SimState,
+  actorId: number,
+  s: Structure,
+  item: ItemId,
+  count: number,
+): void {
+  if (count <= 0 || s.access !== 'village') return
+  const foodValue = FOOD_VALUES[item]
+  if (foodValue === undefined) return
+  if (getVillageOf(state, actorId)?.id === s.villageId) return
+  recordAct(
+    state,
+    actorId,
+    foodValue * count * ALIGNMENT.FOREIGN_DEPOSIT_WARMTH_PER_FOOD * seasonActFactor(state),
+  )
+  emitEvent(state, {
+    type: 'gift_given',
+    tick: state.tick,
+    byEntityId: actorId,
+    toVillageId: s.villageId,
+    item,
+    count,
+  })
+}
+
 /** Endommage une structure ; à 0 elle disparaît (spec événements R1). */
 export function applyStructureDamage(state: SimState, structureId: number, damage: number, byEntityId = 0): void {
   const s = state.structures.find((st) => st.id === structureId)
@@ -147,15 +236,8 @@ export function applyStructureDamage(state: SimState, structureId: number, damag
   if (s.hp <= 0) {
     state.structures = state.structures.filter((st) => st.id !== structureId)
     // Un conteneur détruit répand son contenu (spec alignement R13).
-    if (s.inventory && Object.keys(s.inventory).length > 0) {
-      state.corpses.push({
-        id: state.nextCorpseId,
-        x: s.tx + 0.5,
-        y: s.ty + 0.5,
-        inventory: { ...s.inventory },
-        decayAt: state.tick + COMBAT.CORPSE_TICKS,
-      })
-      state.nextCorpseId += 1
+    if (s.inventory && !isEmpty(s.inventory)) {
+      spillOnGround(state, s.tx + 0.5, s.ty + 0.5, {}, s.inventory)
     }
     if (byEntityId !== 0 && !state.monsters.some((m) => m.entityId === byEntityId)) {
       const actorVillage = getVillageOf(state, byEntityId)
@@ -171,7 +253,7 @@ export function applyStructureDamage(state: SimState, structureId: number, damag
  * Dev/test uniquement — remplacé par la récolte en V4 (spec R3).
  * À appeler dans la phase de setup, qui est rejouée par le replay.
  */
-export function grantItems(state: SimState, entityId: number, items: Inventory): void {
+export function grantItems(state: SimState, entityId: number, items: ItemBag): void {
   const entity = state.entities.find((e) => e.id === entityId)
   if (entity) addItems(entity.inventory, items)
 }
@@ -295,15 +377,25 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) {
         return reject('trop loin')
       }
-      const refund: Inventory = {}
+      const refund: ItemBag = {}
       const cost = STRUCTURE_COSTS[s.type]
       for (const item of Object.keys(cost) as ItemId[]) {
         const back = Math.floor((cost[item] ?? 0) * BALANCE.DEMOLISH_REFUND)
         if (back > 0) refund[item] = back
       }
       // Le remboursement va au PROPRIÉTAIRE (le Chef peut démolir, pas spolier).
+      // Son sac est borné, et il peut même n'être pas là : ce qu'il ne prend pas
+      // se répand sur la tuile démolie, comme le contenu d'un conteneur détruit.
       const owner = state.entities.find((e) => e.id === s.ownerId)
-      addItems((owner ?? actor).inventory, refund)
+      const spill = addItems((owner ?? actor).inventory, refund)
+      // Un conteneur DÉMOLI répand son contenu, exactement comme un conteneur
+      // DÉTRUIT par les dégâts (applyStructureDamage) : c'est le même fait de jeu
+      // — la structure s'en va — donc c'est la même règle. Le même tas au sol
+      // reçoit le reliquat du remboursement et le contenu du coffre.
+      const content = s.inventory ?? []
+      if (Object.keys(spill).length > 0 || !isEmpty(content)) {
+        spillOnGround(state, s.tx + 0.5, s.ty + 0.5, spill, content)
+      }
       state.structures = state.structures.filter((st) => st.id !== s.id)
       emitEvent(state, { type: 'structure_removed', tick: state.tick, structureId: s.id })
       return
@@ -322,28 +414,12 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const [from, to] =
         action.type === 'deposit' ? [actor.inventory, s.inventory] : [s.inventory, actor.inventory]
       if (countOf(from, action.item) < action.count) return reject('stock insuffisant')
-      removeItems(from, { [action.item]: action.count })
-      addItems(to, { [action.item]: action.count })
-      // Déposer de la nourriture au grenier d'un AUTRE village = un don.
-      if (action.type === 'deposit' && s.access === 'village') {
-        const actorVillage = getVillageOf(state, actorId)
-        const foodValue = FOOD_VALUES[action.item]
-        if (foodValue !== undefined && actorVillage?.id !== s.villageId) {
-          recordAct(
-            state,
-            actorId,
-            foodValue * action.count * ALIGNMENT.FOREIGN_DEPOSIT_WARMTH_PER_FOOD * seasonActFactor(state),
-          )
-          emitEvent(state, {
-            type: 'gift_given',
-            tick: state.tick,
-            byEntityId: actorId,
-            toVillageId: s.villageId,
-            item: action.item,
-            count: action.count,
-          })
-        }
-      }
+      // La destination est BORNÉE : on ne transfère que ce qui rentre, le reste
+      // reste à la source. Si rien ne rentre, l'action n'a pas lieu — et le PNJ
+      // qui la tentait doit le voir (sinon il la retenterait à chaque tick).
+      const moved = transferItems(from, to, action.item, action.count)
+      if (moved === 0) return reject('destination pleine')
+      if (action.type === 'deposit') creditForeignDeposit(state, actorId, s, action.item, moved)
       return
     }
 
@@ -355,12 +431,14 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, target.x, target.y) > range * range) return reject('trop loin')
       if (countOf(actor.inventory, action.item) < action.count) return reject('stock insuffisant')
-      removeItems(actor.inventory, { [action.item]: action.count })
-      addItems(target.inventory, { [action.item]: action.count })
-      // L'acte chaud fondamental : pondéré par la faim UTILE du receveur (spec R2).
+      // Le sac de la cible est borné : on ne donne que ce qui rentre.
+      const given = transferItems(actor.inventory, target.inventory, action.item, action.count)
+      if (given === 0) return reject('le sac de la cible est plein')
+      // L'acte chaud fondamental : pondéré par la faim UTILE du receveur (spec R2)
+      // et par ce qui a VRAIMENT changé de mains.
       const foodValue = FOOD_VALUES[action.item]
       if (foodValue !== undefined && isOutsider(state, actorId, target.id)) {
-        const useful = Math.min(foodValue * action.count, 100 - target.hunger)
+        const useful = Math.min(foodValue * given, 100 - target.hunger)
         const need = target.hunger < 30 ? ALIGNMENT.NEED_FACTOR : 1
         recordAct(state, actorId, useful * ALIGNMENT.GIVE_WARMTH_PER_HUNGER * need * seasonActFactor(state))
         const toVillage = getVillageOf(state, target.id)
@@ -370,7 +448,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
           byEntityId: actorId,
           toVillageId: toVillage?.id ?? 0,
           item: action.item,
-          count: action.count,
+          count: given,
         })
       }
       return
@@ -454,7 +532,7 @@ export function addStructure(
     access,
     hp: Math.floor(STRUCTURE_HP[type] * hpBonus),
   }
-  if (type === 'chest') structure.inventory = {}
+  if (type === 'chest') structure.inventory = makeInventory(SLOTS.CHEST)
   state.structures.push(structure)
   emitEvent(state, {
     type: 'structure_built',

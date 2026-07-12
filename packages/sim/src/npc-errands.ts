@@ -9,11 +9,11 @@
 import { ALIGNMENT, BALANCE, COMBAT, NPC_AI } from './balance'
 import { applyCombatAction, startAttack } from './combat'
 import { distSq } from './geometry'
-import { countOf } from './items'
-import { dropTask, followPath, near, setPathTo, type Npc } from './npc'
+import { countOf, itemsIn } from './items'
+import { deposit, dropTask, equipBestWeapon, followPath, near, setPathTo, withdraw, type Npc } from './npc'
 import type { Entity, SimState } from './sim'
 import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
-import { applyVillageAction, type Structure, type Village } from './village'
+import type { Structure, Village } from './village'
 import { granaries } from './village-board'
 
 /** Looter un cadavre par le pipeline standard (raid, spec alignement R13). */
@@ -74,7 +74,7 @@ export function assignErrands(state: SimState): void {
       const granary = granaries(state, village.id)[0]
       // Un Foyer donne dès que le grenier couvre DEUX dons : un pour le
       // voisin, un de réserve pour les siens — généreux, pas suicidaire.
-      if (!granary || countOf(granary.inventory ?? {}, 'berries') < 2 * ALIGNMENT.GIFT_BERRIES) continue
+      if (!granary || countOf(granary.inventory ?? [], 'berries') < 2 * ALIGNMENT.GIFT_BERRIES) continue
       const target = nearestOtherVillage(state, village)
       if (!target) continue
       const giver = state.npcs.find((n) => n.villageId === village.id && !n.errand)
@@ -107,12 +107,10 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
         return true
       }
       if (near(entity, own.tx, own.ty)) {
-        applyVillageAction(state, entity.id, {
-          type: 'withdraw',
-          structureId: own.id,
-          item: 'berries',
-          count: ALIGNMENT.GIFT_BERRIES,
-        })
+        // Retrait MESURÉ : sac plein (ou grenier vidé entre-temps) → rien ne sort.
+        // Partir « donner » les mains vides, c'est une expédition à vide qui se
+        // fera refuser son dépôt à l'arrivée. On décroche ici.
+        if (withdraw(state, entity, own.id, 'berries', ALIGNMENT.GIFT_BERRIES) === 0) return done()
         errand.stage = 'go'
         return true
       }
@@ -124,13 +122,11 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
       const target = foreignGranary(state, errand.targetVillageId)
       if (!target) return done()
       if (near(entity, target.tx, target.ty)) {
-        // Le dépôt est ouvert (spec R11) : le don du Foyer.
-        applyVillageAction(state, entity.id, {
-          type: 'deposit',
-          structureId: target.id,
-          item: 'berries',
-          count: countOf(entity.inventory, 'berries'),
-        })
+        // Le dépôt est ouvert (spec R11) : le don du Foyer. Mesuré, et jamais à
+        // vide : un `count: 0` ne serait qu'un `action_rejected` de plus.
+        const count = countOf(entity.inventory, 'berries')
+        if (count === 0) return done()
+        deposit(state, entity, target.id, 'berries', count) // grenier plein : il garde et rentre
         errand.stage = 'home'
         npc.path = []
         return true
@@ -161,6 +157,7 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
       distSq(e.x, e.y, entity.x, entity.y) <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE,
   )
   if (foe && !entity.windup && state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
+    equipBestWeapon(entity) // l'arme TENUE fait foi (spec inventaire R9)
     if (startAttack(state, entity, foe.x - entity.x, foe.y - entity.y)) {
       entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
     }
@@ -187,6 +184,7 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
       return true
     }
     if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
+      equipBestWeapon(entity) // le siège aussi frappe avec l'arme TENUE (R9)
       if (startAttack(state, entity, target.tx + 0.5 - entity.x, target.ty + 0.5 - entity.y, { structureId: target.id })) {
         entity.cooldownUntil = state.tick + COMBAT.ATTACK_COOLDOWN_TICKS
       }
@@ -205,11 +203,15 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
   // home : rentrer et déposer le butin au grenier.
   const own = granaries(state, village.id)[0]
   if (own && near(entity, own.tx, own.ty)) {
-    for (const item of Object.keys(entity.inventory) as (keyof typeof entity.inventory)[]) {
+    for (const item of itemsIn(entity.inventory)) {
       if (item === 'spear') continue
       const count = countOf(entity.inventory, item)
       if (count > 0) {
-        applyVillageAction(state, entity.id, { type: 'deposit', structureId: own.id, item, count })
+        // Le grenier est borné : un dépôt peut ne RIEN déplacer. Reprendre la
+        // boucle telle quelle, c'est retenter ce dépôt à chaque tick jusqu'à la
+        // fin des temps — le raider ne rentrerait jamais. Il garde son butin et
+        // décroche : l'expédition est finie.
+        if (deposit(state, entity, own.id, item, count) === 0) return done()
         return true // un dépôt par tick
       }
     }

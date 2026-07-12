@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
+import { BALANCE, SLOTS, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
 import { drainEvents } from './events'
-import { countOf } from './items'
+import { countOf, freeRoomFor, inventoryOf, makeInventory } from './items'
 import { createEmptyMap } from './map'
+import { spawnMonster } from './monsters'
+import { weaponDamage } from './combat'
+import { WEAPON_DAMAGE } from './balance'
 import { foundNpcVillage } from './worldgen'
 import { advanceNpcs } from './npc'
-import { handleCold } from './npc-needs'
+import { handleCold, handleHunger, handleSleep } from './npc-needs'
 import { findPath } from './pathfinding'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
@@ -38,7 +41,7 @@ function run(sim: SimState, ticks: number): void {
 describe('le tableau du village (A1)', () => {
   it('les seuils génèrent les tâches ; jamais de double réclamation', () => {
     const sim = npcVillageSim(3)
-    granary(sim).inventory = {} // grenier à sec → tout manque
+    granary(sim).inventory = makeInventory(SLOTS.CHEST) // grenier à sec → tout manque
     run(sim, BALANCE.BOARD_REFRESH_TICKS + 1)
     const village = sim.villages[0]!
     const kinds = village.tasks.map((t) => t.kind)
@@ -53,7 +56,7 @@ describe('le tableau du village (A1)', () => {
 
   it('grenier plein → pas de tâches de récolte', () => {
     const sim = npcVillageSim(1)
-    granary(sim).inventory = { berries: 30, wood: 30, fiber: 5, stew: 5 }
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 })
     run(sim, BALANCE.BOARD_REFRESH_TICKS + 1)
     expect(sim.villages[0]!.tasks).toHaveLength(0)
   })
@@ -62,7 +65,7 @@ describe('le tableau du village (A1)', () => {
 describe('les besoins (A2, A3)', () => {
   it('A2 — un PNJ affamé va retirer au grenier et mange', () => {
     const sim = npcVillageSim(1)
-    granary(sim).inventory = { berries: 10, wood: 30, fiber: 5, stew: 5 } // rien d'autre à faire
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 10, wood: 30, fiber: 5, stew: 5 }) // rien d'autre à faire
     const entity = npcEntity(sim)
     entity.hunger = 20
     run(sim, 600) // largement le temps d'aller au coffre (2 tuiles) et manger
@@ -73,7 +76,7 @@ describe('les besoins (A2, A3)', () => {
 
   it('A3 — la nuit, le PNJ fatigué dort ; la maison récupère ×2 vs le Feu', () => {
     const sim = npcVillageSim(2)
-    granary(sim).inventory = { berries: 30, wood: 30, fiber: 5, stew: 5 } // oisifs
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 }) // oisifs
     run(sim, 60) // assignation des maisons
     const [a, b] = [sim.npcs[0]!, sim.npcs[1]!]
     expect(a.homeId).not.toBeNull()
@@ -129,7 +132,7 @@ describe('la navigation (A4)', () => {
 describe('la locomotion des PNJ', () => {
   it('un PNJ qui marche (A*) est marqué moved — sa régén d’endurance est celle du mouvement', () => {
     const sim = npcVillageSim(1)
-    granary(sim).inventory = {} // tout manque → il part récolter
+    granary(sim).inventory = makeInventory(SLOTS.CHEST) // tout manque → il part récolter
     const e = npcEntity(sim)
     let movedWhileWalking: boolean | undefined
     for (let t = 0; t < 600; t++) {
@@ -148,7 +151,7 @@ describe('la locomotion des PNJ', () => {
 describe('le travail (A5)', () => {
   it('récolter baies : le PNJ y va, récolte, dépose — le grenier monte', () => {
     const sim = npcVillageSim(1)
-    granary(sim).inventory = { wood: 30, fiber: 5 } // il ne manque que la nourriture
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { wood: 30, fiber: 5 }) // il ne manque que la nourriture
     const before = 0
     run(sim, 2400) // 200 s simulées
     const after = countOf(granary(sim).inventory!, 'berries')
@@ -308,5 +311,441 @@ describe('recherche de chaleur (handleCold)', () => {
     expect(npc.sleeping).toBe(true) // handleSleep a consommé le tick avant handleCold
     expect(npc.seekingWarmth).toBe(false) // handleCold n'a jamais tourné
     expect(npc.path.length).toBe(0) // aucun chemin posé vers le Feu
+  })
+})
+
+/**
+ * Le grenier est BORNÉ (spec inventaire R11) : un dépôt peut ne plus rien
+ * déplacer. Deux dangers, un par test : la récolte qui s'évapore (A21), et la
+ * corvée qu'on retente à chaque tick — le livelock connu du projet.
+ */
+describe('le grenier plein (A21 + livelock)', () => {
+  /** Un coffre SANS un interstice : ni case libre, ni pile incomplète. */
+  const saturated = () => inventoryOf(SLOTS.CHEST, { stone: 20 * SLOTS.CHEST })
+
+  it('dépôt impossible : le PNJ ne détruit pas sa récolte et relâche sa tâche', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = saturated()
+    const e = npcEntity(sim)
+    e.hunger = 100 // qu'il ne mange pas ses baies : on compte les items
+    grantItems(sim, e.id, { berries: 20 }) // déjà au-delà de sa cible de portage
+    const stages: (string | null)[] = []
+    for (let t = 0; t < 300; t++) {
+      step(sim, [])
+      stages.push(sim.npcs[0]!.task?.stage ?? null)
+    }
+    // Aucun item ne se détruit : les 20 baies sont toujours quelque part.
+    expect(countOf(e.inventory, 'berries') + countOf(granary(sim).inventory!, 'berries')).toBe(20)
+    // Et le PNJ n'est pas resté collé au stade `store` : il a lâché la corvée.
+    expect(stages).toContain(null)
+    expect(stages.filter((s) => s === 'store').length).toBeLessThan(stages.length)
+  })
+
+  it('butin de raid + grenier plein : le raider ne rentre pas pour l’éternité', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = saturated()
+    const e = npcEntity(sim)
+    grantItems(sim, e.id, { stone: 10 }) // le butin — rien dans le village n'en veut
+    sim.npcs[0]!.errand = { kind: 'raid', targetVillageId: sim.villages[0]!.id, stage: 'home' }
+
+    for (let t = 0; t < 300; t++) step(sim, [])
+
+    // Le grenier ne prend rien : l'expédition s'achève quand même (elle se
+    // retentait à chaque tick, et le PNJ ne faisait plus JAMAIS rien d'autre).
+    expect(sim.npcs[0]!.errand).toBeNull()
+    expect(countOf(e.inventory, 'stone')).toBe(10) // il garde son butin, rien ne s'évapore
+  })
+})
+
+/**
+ * Le raid finit par un LOOT de cadavre (spec alignement R13) — et le sac du
+ * raider peut être plein. Depuis que `loot_corpse` est honnête (spec inventaire
+ * R11), ce loot peut ne RIEN déplacer et ne PLUS effacer le cadavre : un stade
+ * `loot` qui attendrait la disparition du cadavre tournerait à 20 Hz pour
+ * l'éternité. On assert la PROGRESSION (le stade avance) et la CONSERVATION
+ * (rien ne s'évapore).
+ */
+describe('le raid, sac plein, sur un cadavre (livelock du loot)', () => {
+  it('le raider ne détruit pas le butin qu’il ne peut pas prendre, et l’expédition avance', () => {
+    const sim = npcVillageSim(1)
+    const e = npcEntity(sim)
+    e.inventory = inventoryOf(SLOTS.NPC, { stone: 20 * SLOTS.NPC }) // pas un interstice
+    e.hunger = 100
+    const corpseId = sim.nextCorpseId
+    sim.corpses.push({
+      id: corpseId,
+      x: e.x,
+      y: e.y,
+      inventory: inventoryOf(SLOTS.CORPSE, { wood: 40 }),
+      decayAt: sim.tick + 100_000,
+    })
+    sim.nextCorpseId += 1
+    sim.npcs[0]!.errand = { kind: 'raid', targetVillageId: sim.villages[0]!.id, stage: 'loot' }
+
+    const stages: (string | null)[] = []
+    for (let t = 0; t < 300; t++) {
+      step(sim, [])
+      stages.push(sim.npcs[0]!.errand?.stage ?? null)
+    }
+
+    // PROGRESSION : il n'est pas resté collé au stade `loot`.
+    expect(stages.filter((s) => s === 'loot')).toHaveLength(0)
+    // CONSERVATION : les 40 bois sont toujours quelque part.
+    const corpse = sim.corpses.find((c) => c.id === corpseId)
+    expect(countOf(e.inventory, 'wood') + countOf(corpse?.inventory ?? [], 'wood')).toBe(40)
+  })
+})
+
+/**
+ * Le sac du PNJ est BORNÉ (spec inventaire R11) : un RETRAIT peut ne rien
+ * déplacer. Une boucle de corvée qui ne le voit pas se retente à l'identique au
+ * tick suivant — pour toujours. Ces tests sont TEMPORELS (300 ticks) : un
+ * livelock est strictement invisible sur un tick.
+ */
+describe('le sac plein du PNJ (livelock du retrait)', () => {
+  /** Un sac SANS un interstice : ni case libre, ni pile incomplète. */
+  const saturated = () => inventoryOf(SLOTS.NPC, { stone: 20 * SLOTS.NPC })
+
+  const rejects = (sim: SimState, entityId: number): string[] =>
+    drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' && e.entityId === entityId ? [e.reason] : []))
+
+  it('affamé, sac plein : il ne reste pas collé au grenier pour l’éternité', () => {
+    const sim = npcVillageSim(1)
+    // Grenier sans bois → le tableau veut du bois (une corvée qu'il PEUT faire).
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, fiber: 5, stew: 5 })
+    const e = npcEntity(sim)
+    // Sac plein SAUF une case de bois entamée : plus une case pour des baies
+    // (donc il ne peut pas manger), mais il peut encore bûcheronner.
+    e.inventory = inventoryOf(SLOTS.NPC, { stone: 20 * (SLOTS.NPC - 1), wood: 19 })
+    e.hunger = 20 // sous NPC_HUNGER_EAT_THRESHOLD
+    drainEvents(sim)
+
+    const kinds: (string | null)[] = []
+    for (let t = 0; t < 300; t++) {
+      step(sim, [])
+      kinds.push(sim.npcs[0]!.task?.kind ?? null)
+    }
+
+    // Il n'a pas tenté un retrait impossible — encore moins 20 fois par seconde.
+    expect(rejects(sim, e.id)).toEqual([])
+    // Et il n'est pas figé au grenier : il est retourné au tableau du village.
+    expect(kinds.some((k) => k !== null)).toBe(true)
+    expect(countOf(granary(sim).inventory!, 'berries')).toBe(30) // rien n'a bougé du grenier
+  })
+
+  it('réparer, sac plein : il ne re-réclame pas la même tâche à chaque tick', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 })
+    const house = sim.structures.find((s) => s.type === 'house')!
+    house.hp = 1 // sous REPAIR_TASK_THRESHOLD → le tableau veut une réparation
+    const e = npcEntity(sim)
+    e.inventory = saturated()
+    e.hunger = 100
+    drainEvents(sim)
+
+    for (let t = 0; t < 300; t++) step(sim, [])
+
+    expect(rejects(sim, e.id)).toEqual([]) // pas un refus par tick
+    expect(countOf(granary(sim).inventory!, 'wood')).toBe(30) // le grenier n'a rien perdu
+  })
+
+  // Ce test-ci mesure la garde du TABLEAU (TASK_INTAKE) : le sac est saturé AVANT
+  // la réclamation, donc le PNJ n'est même pas éligible à la corvée. La garde du
+  // stade `craft`, elle, ne se voit que si le sac se remplit APRÈS la réclamation —
+  // c'est le test « la traversée » plus bas.
+  it('cuisiner, sac déjà saturé au tableau : TASK_INTAKE l’écarte, il ne réclame pas', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5 })
+    const e = npcEntity(sim)
+    // 40/40 cases : 38 de pierre, 1 de baies (6 ≥ la recette), 1 de fibre (19 ≥ 1).
+    // Il a de quoi cuisiner — mais retirer 4 baies et 1 fibre ne VIDE aucune case.
+    e.inventory = inventoryOf(SLOTS.NPC, { stone: 20 * (SLOTS.NPC - 2), berries: 6, fiber: 19 })
+    e.hunger = 100
+    drainEvents(sim)
+
+    for (let t = 0; t < 300; t++) step(sim, [])
+
+    expect(rejects(sim, e.id)).toEqual([])
+    expect(countOf(e.inventory, 'berries')).toBe(6) // ses ingrédients sont intacts
+    expect(countOf(e.inventory, 'fiber')).toBe(19)
+  })
+
+  it('cuisiner, sac plein : pas de boucle sèche sur le stade « fetch »', () => {
+    const sim = npcVillageSim(1)
+    // stew 0 → le tableau veut du ragoût ; tout le reste est au-dessus des cibles.
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5 })
+    const e = npcEntity(sim)
+    e.inventory = saturated()
+    e.hunger = 100
+    drainEvents(sim)
+
+    for (let t = 0; t < 300; t++) step(sim, [])
+
+    expect(rejects(sim, e.id)).toEqual([])
+    expect(countOf(granary(sim).inventory!, 'berries')).toBe(30)
+  })
+})
+
+/**
+ * LA TRAVERSÉE — le trou que les gardes précédentes ne bouchaient pas.
+ *
+ * TASK_INTAKE ne s'évalue qu'à la RÉCLAMATION ; les gardes des transferts ne
+ * voient que le transfert. Entre les deux, le sac peut se remplir : la faim vole
+ * la dernière case au grenier, un joueur gave le PNJ. La corvée, elle, continue.
+ *
+ * Ces tests n'assertent PAS « zéro refus » — les deux livelocks qu'ils décrivent
+ * n'émettaient AUCUN refus (l'un détruisait en silence, l'autre ne faisait rien).
+ * Ils assertent CONSERVATION (rien ne s'évapore) et PROGRESSION (le PNJ change
+ * d'état) : les deux seules propriétés qu'un livelock viole toujours.
+ */
+describe('le sac qui se remplit PENDANT la corvée (la traversée)', () => {
+  const rejects = (sim: SimState, entityId: number): string[] =>
+    drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' && e.entityId === entityId ? [e.reason] : []))
+
+  it('récolter : la faim prend la dernière case en route → il lâche, et ne rase pas le nœud', () => {
+    const sim = npcVillageSim(1)
+    // Le tableau ne veut QUE de la fibre (nourriture et bois au-dessus des cibles,
+    // et pas de ragoût possible sans fibre au grenier).
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30 })
+    const e = npcEntity(sim)
+    // 39 cases pleines, UNE libre : le PNJ est éligible à gather_fiber.
+    e.inventory = inventoryOf(SLOTS.NPC, { stone: 20 * (SLOTS.NPC - 1) })
+    e.hunger = 100
+    const node = sim.nodes.find((n) => n.type === 'fiber_plant')!
+    const stock0 = node.stock
+
+    step(sim, []) // le tableau publie, le PNJ réclame : TASK_INTAKE passe (il a une case)
+    expect(sim.npcs[0]!.task?.kind).toBe('gather_fiber')
+
+    // EN ROUTE, la faim tombe sous le seuil : handleHunger retire 3 baies au grenier
+    // (la dernière case libre) et n'en mange qu'UNE — la case ne se libère jamais.
+    e.hunger = 20
+    drainEvents(sim)
+
+    const stages: (string | null)[] = []
+    for (let t = 0; t < 2000; t++) {
+      step(sim, [])
+      stages.push(sim.npcs[0]!.task?.stage ?? null)
+    }
+    const events = drainEvents(sim)
+
+    expect(freeRoomFor(e.inventory, 'fiber')).toBe(0) // le sac s'est bien fermé en route
+    // CONSERVATION : ce qui a quitté le nœud est dans le sac ou au grenier — nulle part ailleurs.
+    expect(stock0 - node.stock).toBe(
+      countOf(e.inventory, 'fiber') + countOf(granary(sim).inventory!, 'fiber'),
+    )
+    expect(node.stock).toBe(stock0) // sac fermé : il n'a rien pu prendre, donc il n'a rien rasé
+    // …et aucune récolte MENSONGÈRE n'est partie vers la chronique.
+    expect(events.some((ev) => ev.type === 'resource_harvested' && ev.entityId === e.id)).toBe(false)
+    // PROGRESSION : il a relâché la corvée au lieu de la tenir à vide pour l'éternité.
+    expect(stages).toContain(null)
+    expect(stages.slice(-200).every((s) => s === null)).toBe(true)
+  })
+
+  it('cuisiner : le sac se ferme APRÈS la réclamation → il ne refuse pas le craft 20 fois par seconde', () => {
+    const sim = npcVillageSim(1)
+    // stew 0 (et de quoi cuisiner) → le tableau ne veut QUE du ragoût.
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5 })
+    const e = npcEntity(sim)
+    // 37 cases de pierre + baies 6 + fibre 19 = 39 cases, UNE libre : il a de quoi
+    // cuisiner sans passer par le grenier, et TASK_INTAKE le laisse réclamer.
+    e.inventory = inventoryOf(SLOTS.NPC, { stone: 20 * (SLOTS.NPC - 3), berries: 6, fiber: 19 })
+    e.hunger = 100
+
+    step(sim, []) // réclamation : le stade `fetch` voit les ingrédients en poche → `craft`
+    expect(sim.npcs[0]!.task?.kind).toBe('cook_stew')
+    expect(sim.npcs[0]!.task?.stage).toBe('craft')
+
+    // Le sac se ferme MAINTENANT (un joueur le gave). Consommer les intrants ne
+    // libérera aucune case (il reste 2 baies et 18 fibres) : le ragoût n'a nulle
+    // part où aller, et un refus ne pose AUCUN cooldown.
+    grantItems(sim, e.id, { stone: 20 })
+    expect(freeRoomFor(e.inventory, 'stew')).toBe(0)
+    drainEvents(sim)
+
+    const stages: (string | null)[] = []
+    for (let t = 0; t < 300; t++) {
+      step(sim, [])
+      stages.push(sim.npcs[0]!.task?.stage ?? null)
+    }
+
+    // CONSERVATION : ses ingrédients sont intacts (le craft rejeté rend ses intrants).
+    expect(countOf(e.inventory, 'berries')).toBe(6)
+    expect(countOf(e.inventory, 'fiber')).toBe(19)
+    expect(countOf(granary(sim).inventory!, 'berries')).toBe(30)
+    // PROGRESSION : il a lâché la corvée. Un SEUL refus « sac plein » — pas 300.
+    expect(stages).toContain(null)
+    expect(stages.slice(-200).every((s) => s === null)).toBe(true)
+    expect(rejects(sim, e.id)).toEqual(['sac plein'])
+  })
+})
+
+/**
+ * Un chemin INTROUVABLE fige le PNJ à vie si le besoin consomme le tick quand même :
+ * `path = []` → `followPath` ne fait rien → `return true` → même état au tick suivant,
+ * pour toujours. `handleCold` a sa garde depuis toujours ; ses deux voisins ne
+ * l'avaient pas. La faim ne tue pas — le figeage, si.
+ */
+describe('anti-livelock des besoins : la cible est inatteignable', () => {
+  /** Emmure une structure : plus AUCUN chemin (ni droit, ni diagonal) vers elle. */
+  const wallIn = (sim: SimState, tx: number, ty: number): void => {
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++) {
+        if (dx === 0 && dy === 0) continue
+        sim.map.terrain[(ty + dy) * sim.map.width + (tx + dx)] = TERRAIN_ROCK
+      }
+  }
+
+  it('affamé mais aucun chemin vers le grenier → rend la main (et repart travailler)', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30 })
+    const chest = granary(sim)
+    const npc = sim.npcs[0]!
+    const e = npcEntity(sim)
+    e.x = 6.5
+    e.y = 6.5 // loin du grenier emmuré, et sur une case libre
+    e.hunger = 20
+    npc.path = []
+    wallIn(sim, chest.tx, chest.ty)
+
+    // Le tick n'est PAS consommé : pas de chemin, donc pas d'attente éternelle.
+    expect(handleHunger(sim, sim.villages[0]!, npc, e)).toBe(false)
+    expect(npc.path.length).toBe(0)
+
+    // Et dans le vrai tick : il ne reste pas planté — le tableau reprend la main.
+    const x0 = e.x
+    const y0 = e.y
+    const kinds: (string | null)[] = []
+    for (let t = 0; t < 600; t++) {
+      step(sim, [])
+      kinds.push(sim.npcs[0]!.task?.kind ?? null)
+    }
+    expect(e.x !== x0 || e.y !== y0).toBe(true) // il a bougé
+    expect(kinds.some((k) => k !== null)).toBe(true) // il a travaillé
+  })
+
+  it('épuisé la nuit mais aucun chemin vers son lit → rend la main', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 })
+    run(sim, 2) // assignation de la maison
+    const npc = sim.npcs[0]!
+    const e = npcEntity(sim)
+    const home = sim.structures.find((s) => s.id === npc.homeId)!
+    sim.cycleOffset = DAY_TICKS_PER_CYCLE // nuit
+    npc.energy = 20 // sous NPC_ENERGY_SLEEP_THRESHOLD
+    e.x = 6.5
+    e.y = 6.5
+    npc.path = []
+    wallIn(sim, home.tx, home.ty)
+
+    expect(handleSleep(sim, npc, e)).toBe(false)
+    expect(npc.path.length).toBe(0)
+    expect(npc.sleeping).toBe(false)
+  })
+})
+
+/**
+ * L'OBJET EN MAIN FAIT FOI (spec inventaire R9) — et les PNJ n'ont pas d'UI.
+ *
+ * Sans `equipBestTool`/`equipBestWeapon`, la règle les laisserait à MAINS NUES :
+ * ils récolteraient ×1 avec une hache dans le sac et frapperaient les zombies à
+ * COMBAT.UNARMED_DAMAGE avec leur lance de naissance (worldgen). L'économie et la
+ * milice des villages PNJ s'effondreraient EN SILENCE — aucun refus, aucun
+ * `action_rejected` : juste des chiffres qui baissent. D'où ces gardes.
+ */
+describe('le PNJ arme sa main tout seul (A6/A9 côté PNJ)', () => {
+  /** Un village qui ne veut QUE du bois : grenier plein de tout, sauf de bois. */
+  function woodOnlyVillage(): SimState {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 40, fiber: 10, stew: 5 })
+    return sim
+  }
+
+  /** Les récoltes de bois VUES par la chronique, coup par coup. */
+  function woodSwings(sim: SimState, ticks: number): number[] {
+    const counts: number[] = []
+    for (let t = 0; t < ticks; t++) {
+      step(sim, [])
+      for (const e of drainEvents(sim)) {
+        if (e.type === 'resource_harvested' && e.item === 'wood') counts.push(e.count)
+      }
+    }
+    return counts
+  }
+
+  it('un PNJ bûcheron récolte au rythme d’un OUTIL (×2), pas à mains nues', () => {
+    const sim = woodOnlyVillage()
+    const e = npcEntity(sim)
+    grantItems(sim, e.id, { axe: 1 }) // dans le sac : personne ne la lui met en main
+    expect(e.activeSlot).toBe(-1) // …et il naît mains nues
+
+    const swings = woodSwings(sim, 60 * BALANCE.TICK_RATE_HZ)
+
+    expect(swings.length).toBeGreaterThan(0) // il a bel et bien bûcheronné
+    expect(swings.every((c) => c === 2)).toBe(true) // ×2 : la hache était EN MAIN
+    // …et elle s'est usée DANS SA CASE (preuve que c'est bien elle qui a servi).
+    const axe = e.inventory.find((s) => s?.item === 'axe')!
+    expect(axe.wear).toBeCloseTo(swings.length, 5)
+  })
+
+  it('témoin : le MÊME PNJ sans hache récolte à ×1 (le test ci-dessus ne passe pas pour rien)', () => {
+    const sim = woodOnlyVillage()
+    const swings = woodSwings(sim, 60 * BALANCE.TICK_RATE_HZ)
+    expect(swings.length).toBeGreaterThan(0)
+    expect(swings.every((c) => c === 1)).toBe(true)
+  })
+
+  it('une hache AU-DELÀ de la ceinture est ramenée dans la ceinture (sinon elle ne servirait jamais)', () => {
+    const sim = woodOnlyVillage()
+    const e = npcEntity(sim)
+    // Le grand sac du PNJ (40 cases) : sa hache est en case 20, hors ceinture. La
+    // règle dit que seule la CEINTURE se tient — il doit donc la ranger d'abord.
+    e.inventory[20] = { item: 'axe', count: 1 }
+    for (let i = 0; i < SLOTS.BELT; i++) e.inventory[i] = { item: 'stone', count: 1 } // ceinture pleine
+    const stones = countOf(e.inventory, 'stone')
+
+    const swings = woodSwings(sim, 60 * BALANCE.TICK_RATE_HZ)
+
+    expect(swings.length).toBeGreaterThan(0)
+    expect(swings.every((c) => c === 2)).toBe(true) // ×2 : il a su l'empoigner
+    expect(e.activeSlot).toBeLessThan(SLOTS.BELT) // …depuis la ceinture
+    expect(e.activeSlot).toBeGreaterThanOrEqual(0)
+    // CONSERVATION : l'échange de cases n'a rien créé, rien détruit.
+    expect(countOf(e.inventory, 'axe')).toBe(1)
+    expect(countOf(e.inventory, 'stone')).toBe(stones)
+  })
+
+  it('la milice frappe avec sa LANCE (le PNJ naît armé — worldgen), pas au poing', () => {
+    const sim = npcVillageSim(2)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 })
+    spawnMonster(sim, 'zombie', 15, 12) // dans le DEFEND_RADIUS du Feu (12,12)
+    run(sim, 5)
+
+    const e = npcEntity(sim)
+    expect(weaponDamage(e)).toBe(WEAPON_DAMAGE.spear) // et non COMBAT.UNARMED_DAMAGE
+  })
+
+  /**
+   * LE STADE QUI PEUT SE FERMER : la hache casse EN PLEIN COUP (`wearHeld` vide la
+   * case). Au tick suivant, `equipBestTool` ne trouve plus rien et le PNJ passe à
+   * mains nues — il doit CONTINUER (l'arbre n'exige pas d'outil), pas se figer sur
+   * une case active devenue vide.
+   */
+  it('la hache casse au milieu de la corvée : le PNJ continue à mains nues (aucun livelock)', () => {
+    const sim = woodOnlyVillage()
+    const e = npcEntity(sim)
+    e.inventory[1] = { item: 'axe', count: 1, wear: BALANCE.TOOL_DURABILITY - 1 } // un dernier coup
+    const before = countOf(granary(sim).inventory!, 'wood') + countOf(e.inventory, 'wood')
+
+    const swings = woodSwings(sim, 120 * BALANCE.TICK_RATE_HZ)
+
+    expect(countOf(e.inventory, 'axe')).toBe(0) // elle a cassé
+    expect(swings[0]).toBe(2) // le dernier coup outillé
+    expect(swings.slice(1).some((c) => c === 1)).toBe(true) // PROGRESSION : il continue, à mains nues
+    // CONSERVATION : tout le bois récolté est quelque part (sac ou grenier), rien
+    // ne s'est évaporé dans la case vide de la hache cassée.
+    const after = countOf(granary(sim).inventory!, 'wood') + countOf(e.inventory, 'wood')
+    expect(after - before).toBe(swings.reduce((a, b) => a + b, 0))
+    expect(e.activeSlot === -1 || e.inventory[e.activeSlot]?.item !== 'axe').toBe(true)
   })
 })

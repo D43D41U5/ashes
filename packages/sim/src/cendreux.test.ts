@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { BALANCE, COMBAT, MONSTER_DEFS, CENDREUX } from './balance'
+import { BALANCE, COMBAT, MONSTER_DEFS, CENDREUX, SLOTS } from './balance'
 import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
+import { countOf, inventoryOf } from './items'
 import { die } from './combat'
 import { advanceCendreux } from './cendreux'
 import { spawnMonster, advanceMonsters } from './monsters'
@@ -68,7 +69,7 @@ describe('le réveil', () => {
   it('à risesAt : un cendreux naît, porte le loot, le cadavre disparaît, event émis', () => {
     const state = createSim(1)
     const e = humanAt(state, 5, 5)
-    e.inventory = { berries: 3 }
+    e.inventory = inventoryOf(SLOTS.PLAYER, { berries: 3 })
     die(state, e, 0, 'cold')
     const corpse = state.corpses.find((c) => c.risesAt !== undefined)!
     state.tick = corpse.risesAt!
@@ -77,10 +78,45 @@ describe('le réveil', () => {
     const risen = state.monsters.find((m) => m.type === 'cendreux')
     expect(risen).toBeDefined()
     const ent = state.entities.find((en) => en.id === risen!.entityId)!
-    expect(ent.inventory.berries).toBe(3) // loot hérité
+    expect(countOf(ent.inventory, 'berries')).toBe(3) // loot hérité
     expect(state.corpses.find((c) => c.id === corpse.id)).toBeUndefined()
     expect(state.events.some((ev) => ev.type === 'cendreux_risen')).toBe(true)
   })
+  it('R6 : la levée n’est PAS un atelier de réparation — une hache usée se relève usée', () => {
+    const state = createSim(1)
+    const e = humanAt(state, 5, 5)
+    e.inventory[0] = { item: 'iron_axe', count: 1, wear: 99 } // un coup avant la casse
+    die(state, e, 0, 'cold')
+    const corpse = state.corpses.find((c) => c.risesAt !== undefined)!
+    state.tick = corpse.risesAt!
+    advanceCendreux(state)
+    const risen = state.monsters.find((m) => m.type === 'cendreux')!
+    const ent = state.entities.find((en) => en.id === risen.entityId)!
+    // Mourir de froid ne doit rien réparer : sinon le gel est une forge gratuite.
+    const axe = ent.inventory.find((s) => s?.item === 'iron_axe')
+    expect(axe).toBeDefined()
+    expect(axe!.wear).toBe(99)
+  })
+  it('CONSERVATION — un cadavre gavé au-delà de 40 déverse l’excédent au sol, rien n’est détruit', () => {
+    const state = createSim(1)
+    const e = humanAt(state, 5, 5)
+    die(state, e, 0, 'cold')
+    const corpse = state.corpses.find((c) => c.risesAt !== undefined)!
+    // Le vecteur : un dépôt (transfer) a gavé le cadavre AVANT sa levée, au-delà
+    // des 40 cases d’un Cendreux. 41 haches (non empilables → 41 cases distinctes).
+    corpse.inventory = inventoryOf(SLOTS.CORPSE, { axe: 41 })
+    state.tick = corpse.risesAt!
+    advanceCendreux(state)
+
+    const risen = state.monsters.find((m) => m.type === 'cendreux')!
+    const ent = state.entities.find((en) => en.id === risen.entityId)!
+    const inCendreux = countOf(ent.inventory, 'axe')
+    const spilled = state.corpses.reduce((n, c) => n + countOf(c.inventory, 'axe'), 0)
+    expect(inCendreux).toBe(SLOTS.NPC) // le Cendreux est plein (40 cases)
+    expect(spilled).toBe(1) // l’excédent est tombé au sol, en un tas lootable
+    expect(inCendreux + spilled).toBe(41) // CONSERVATION : rien n’est détruit
+  })
+
   it('annulation : un feu à portée au réveil → pas de cendreux', () => {
     const state = createSim(1)
     const e = humanAt(state, 5, 5)
@@ -211,14 +247,14 @@ describe('tuer un Cendreux : 2 coups d\'arme basique, cadavre + loot redéposé 
     foundNpcVillage(state, 12, 12, 1) // Feu en (12,12), ward 12
     const human = state.entities.find((e) => e.id === state.npcs[0]!.entityId)!
     human.x = 200; human.y = 200 // loin de tout feu et de tout témoin (spec levée « seul »)
-    human.inventory = { berries: 3 }
+    human.inventory = inventoryOf(SLOTS.NPC, { berries: 3 })
     die(state, human, 0, 'cold')
     const originalCorpse = state.corpses.find((c) => c.risesAt !== undefined)!
     state.tick = originalCorpse.risesAt!
     advanceCendreux(state)
     const risen = state.monsters.find((m) => m.type === 'cendreux')!
     const cendreuxEnt = state.entities.find((en) => en.id === risen.entityId)!
-    expect(cendreuxEnt.inventory.berries).toBe(3) // loot hérité (déjà couvert, ici en contexte)
+    expect(countOf(cendreuxEnt.inventory, 'berries')).toBe(3) // loot hérité (déjà couvert, ici en contexte)
     expect(cendreuxEnt.hp).toBe(MONSTER_DEFS.cendreux.hp) // 20
 
     // Un attaquant armé d'une hache (iron_axe, 10 dégâts) à portée de corps-à-
@@ -226,6 +262,9 @@ describe('tuer un Cendreux : 2 coups d\'arme basique, cadavre + loot redéposé 
     // donc il ne se déplace pas — la position reste stable pour les deux coups.
     const attackerId = spawnEntity(state, cendreuxEnt.x + 1, cendreuxEnt.y)
     grantItems(state, attackerId, { iron_axe: 1 })
+    // …et il la TIENT : depuis la spec inventaire R9, une hache au fond du sac
+    // frappe comme un poing (COMBAT.UNARMED_DAMAGE), pas à 10.
+    state.entities.find((e) => e.id === attackerId)!.activeSlot = 0
 
     // Deux coups via le vrai pipeline de wind-up (`startAttack` + `advanceCombat`
     // résolu dans `step`), pas de l'arithmétique sur constantes. Avant le fix
@@ -242,7 +281,7 @@ describe('tuer un Cendreux : 2 coups d\'arme basique, cadavre + loot redéposé 
     expect(state.entities.find((en) => en.id === cendreuxEnt.id)).toBeUndefined()
 
     // Le loot hérité du cadavre d'origine est redéposé dans un nouveau cadavre.
-    const lootCorpse = state.corpses.find((c) => c.id !== originalCorpse.id && c.inventory.berries === 3)
+    const lootCorpse = state.corpses.find((c) => c.id !== originalCorpse.id && countOf(c.inventory, 'berries') === 3)
     expect(lootCorpse).toBeDefined()
   })
 })

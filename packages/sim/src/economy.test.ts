@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { ALIGNMENT, BALANCE, TERRAIN_DEEP_WATER, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_MARSH } from './balance'
+import {
+  ALIGNMENT,
+  BALANCE,
+  SLOTS,
+  TERRAIN_DEEP_WATER,
+  TERRAIN_FOREST,
+  TERRAIN_GRASS,
+  TERRAIN_MARSH,
+} from './balance'
 import { generateNodes, nodeAt, skillLevel, treeJitter, type ResourceNode } from './economy'
 import { drainEvents } from './events'
-import { countOf } from './items'
+import { countOf, freeRoomFor, inventoryOf, makeInventory, stackSize, type ItemId } from './items'
 import { createEmptyMap, zoneAt } from './map'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { TICKS_PER_SEASON_DAY } from './time'
@@ -36,6 +44,17 @@ function rejections(sim: SimState): string[] {
 }
 
 const me = (sim: SimState) => sim.entities[0]!
+
+/**
+ * Donne l'objet ET LE MET EN MAIN. Depuis que l'objet tenu fait foi (spec
+ * inventaire R9), `grantItems` seul ne suffit plus : un outil dans le sac ne
+ * récolte pas. C'est LE geste que le joueur fait à la hotbar.
+ */
+function grantHeld(sim: SimState, entityId: number, item: ItemId): void {
+  grantItems(sim, entityId, { [item]: 1 })
+  const entity = sim.entities.find((e) => e.id === entityId)!
+  entity.activeSlot = entity.inventory.findIndex((s) => s !== null && s.item === item)
+}
 
 describe('la récolte (A1)', () => {
   it('récolte, cooldown, portée, épuisement et repousse', () => {
@@ -93,35 +112,196 @@ describe('la récolte sous archétype Meute (économie anémique, spec alignemen
   })
 })
 
+/**
+ * Le sac est BORNÉ (spec inventaire R10) : le nœud garde ce qui ne rentre pas.
+ * Rien ne tombe au sol, rien ne s'évapore — et si RIEN ne rentre, le coup n'a
+ * pas eu lieu (ni stock, ni cooldown, ni XP).
+ */
+describe('la capacité à la récolte (A10, A11)', () => {
+  /** Bûcheron de niveau 25 (skillLevel = √(xp/100)) : ×3 (fer) × 2 (niveau) = 6 bois par coup. */
+  const MASTER_XP = 62500
+
+  it('A10 : le nœud garde ce qui ne rentre pas dans le sac', () => {
+    // Contrôle : le MÊME coup, sac vide, rend bien 6 bois — c'est ce rendement-là
+    // qu'on va écrêter (sinon le test passerait pour une mauvaise raison).
+    const refTree = makeNode('tree', 11, 10)
+    const ref = makeSim([refTree])
+    const refId = spawnEntity(ref, 10.3, 10.5)
+    ref.entities[0]!.skills.woodcutting = MASTER_XP
+    grantHeld(ref, refId, 'iron_axe')
+    act(ref, refId, { type: 'harvest', nodeId: refTree.id })
+    expect(countOf(me(ref).inventory, 'wood')).toBe(6)
+
+    const tree = makeNode('tree', 11, 10)
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    me(sim).skills.woodcutting = MASTER_XP
+    // Trois cases : une pile de bois à 18/20 (2 places), une pile de pierre PLEINE
+    // (la case est bloquée), la hache. Il ne reste QUE 2 places de bois.
+    me(sim).inventory = makeInventory(3)
+    me(sim).inventory[0] = { item: 'wood', count: stackSize('wood') - 2 }
+    me(sim).inventory[1] = { item: 'stone', count: stackSize('stone') }
+    me(sim).inventory[2] = { item: 'iron_axe', count: 1 }
+    me(sim).activeSlot = 2 // la hache est EN MAIN (spec inventaire R9)
+    expect(freeRoomFor(me(sim).inventory, 'wood')).toBe(2)
+    const stock0 = sim.nodes[0]!.stock
+    drainEvents(sim)
+
+    act(sim, id, { type: 'harvest', nodeId: tree.id })
+
+    expect(countOf(me(sim).inventory, 'wood')).toBe(stackSize('wood')) // 18 + 2
+    expect(stock0 - sim.nodes[0]!.stock).toBe(2) // les 4 autres restent DANS l'arbre
+    // …et l'événement ne ment pas à la chronique : 2 bois, pas 6.
+    const harvested = drainEvents(sim).find((e) => e.type === 'resource_harvested')
+    expect(harvested!.type === 'resource_harvested' && harvested!.count).toBe(2)
+  })
+
+  // LE POINT DE CONCEPTION : on ÉCRÊTE, on ne refuse pas tant qu'il reste UNE place.
+  // Un refus ne pose AUCUN cooldown : un `harvest` qui refuserait un coup à 6 bois
+  // parce qu'il ne reste qu'une place se ferait retenter à 20 Hz, pour toujours
+  // (la garde de `npc.ts` ne libère la corvée qu'à ZÉRO place — les deux se complètent).
+  it('une seule place pour un coup qui en rendrait 6 : on écrête, on ne refuse pas', () => {
+    const tree = makeNode('tree', 11, 10)
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    me(sim).skills.woodcutting = MASTER_XP
+    me(sim).inventory = makeInventory(2)
+    me(sim).inventory[0] = { item: 'wood', count: stackSize('wood') - 1 }
+    me(sim).inventory[1] = { item: 'iron_axe', count: 1 }
+    me(sim).activeSlot = 1 // la hache est EN MAIN (spec inventaire R9)
+    expect(freeRoomFor(me(sim).inventory, 'wood')).toBe(1)
+    const stock0 = sim.nodes[0]!.stock
+    drainEvents(sim)
+
+    act(sim, id, { type: 'harvest', nodeId: tree.id })
+
+    expect(countOf(me(sim).inventory, 'wood')).toBe(stackSize('wood'))
+    expect(stock0 - sim.nodes[0]!.stock).toBe(1)
+    expect(rejections(sim)).toEqual([]) // aucun refus : le coup a bien eu lieu
+    expect(me(sim).cooldownUntil).toBeGreaterThan(sim.tick) // …et il coûte son cooldown (un refus, lui, n'en pose aucun)
+  })
+
+  it('A11 : sac plein → refus « sac plein », rien ne bouge : ni stock, ni cooldown, ni XP', () => {
+    const tree = makeNode('tree', 11, 10)
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    me(sim).inventory = makeInventory(1)
+    me(sim).inventory[0] = { item: 'stone', count: stackSize('stone') } // aucune place
+    me(sim).cooldownUntil = 0
+    const stock0 = sim.nodes[0]!.stock
+    drainEvents(sim)
+
+    act(sim, id, { type: 'harvest', nodeId: tree.id })
+
+    expect(sim.nodes[0]!.stock).toBe(stock0) // le coup n'a pas eu lieu
+    expect(countOf(me(sim).inventory, 'wood')).toBe(0)
+    expect(me(sim).cooldownUntil).toBe(0) // pas de cooldown armé
+    expect(me(sim).skills.woodcutting ?? 0).toBe(0) // pas d'XP
+    const events = drainEvents(sim)
+    expect(events.some((e) => e.type === 'resource_harvested')).toBe(false)
+    expect(events.flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))).toEqual(['sac plein'])
+  })
+})
+
 describe('les outils (A2)', () => {
-  it('la hache double, s’use, et casse au bout de la durabilité', () => {
+  it('A6 : la hache EN MAIN double, s’use DANS SA CASE, et casse au bout de la durabilité', () => {
     // Un seul très gros arbre : on teste l'usure, pas la repousse.
     const tree = makeNode('tree', 11, 10)
     tree.stock = 100000
     const sim = makeSim([tree])
     const id = spawnEntity(sim, 10.3, 10.5)
-    grantItems(sim, id, { axe: 1 })
+    grantHeld(sim, id, 'axe')
+    const held = () => me(sim).inventory[me(sim).activeSlot]
 
     act(sim, id, { type: 'harvest', nodeId: tree.id })
-    expect(countOf(me(sim).inventory, 'wood')).toBe(2) // ×2 avec la hache
-    expect(me(sim).wear.axe).toBe(1)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(2) // ×2 avec la hache EN MAIN
+    expect(held()).toEqual({ item: 'axe', count: 1, wear: 1 }) // l'usure vit dans la case
 
     for (let t = 1; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     swing(sim, id, tree.id, BALANCE.TOOL_DURABILITY - 1)
     expect(countOf(me(sim).inventory, 'axe')).toBe(0) // consommée au 100e coup
-    expect(me(sim).wear.axe).toBeUndefined()
+    expect(held()).toBeNull() // la case s'est vidée
   })
 
-  it('le filon ne cède rien sans pioche', () => {
+  it('A7 : hache DANS LE SAC mais pas en main → ×1, aucune usure (la sim ne choisit plus)', () => {
+    const tree = makeNode('tree', 11, 10)
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    grantItems(sim, id, { axe: 1 }) // portée, pas tenue
+    me(sim).activeSlot = -1
+    drainEvents(sim)
+
+    act(sim, id, { type: 'harvest', nodeId: tree.id })
+
+    expect(countOf(me(sim).inventory, 'wood')).toBe(1) // ×1 : mains nues
+    expect(me(sim).inventory[0]).toEqual({ item: 'axe', count: 1 }) // pas d'usure
+    expect(rejections(sim)).toEqual([]) // l'arbre cède quand même : il n'exige pas d'outil
+  })
+
+  it('A7 bis : une case active VIDE vaut mains nues, même avec la hache juste à côté', () => {
+    const tree = makeNode('tree', 11, 10)
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    me(sim).inventory[1] = { item: 'axe', count: 1 }
+    me(sim).activeSlot = 0 // une case VIDE
+
+    act(sim, id, { type: 'harvest', nodeId: tree.id })
+
+    expect(countOf(me(sim).inventory, 'wood')).toBe(1)
+    expect(me(sim).inventory[1]).toEqual({ item: 'axe', count: 1 })
+  })
+
+  it('tenir AUTRE CHOSE qu’un outil de la famille ne sert à rien (×1, aucune usure)', () => {
+    const tree = makeNode('tree', 11, 10)
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    grantHeld(sim, id, 'pickaxe') // une pioche… devant un arbre
+
+    act(sim, id, { type: 'harvest', nodeId: tree.id })
+
+    expect(countOf(me(sim).inventory, 'wood')).toBe(1) // ×1
+    expect(me(sim).inventory[0]).toEqual({ item: 'pickaxe', count: 1 }) // intacte
+  })
+
+  it('A8 : le filon ne cède rien sans pioche EN MAIN — même si elle est dans le sac', () => {
     const vein = makeNode('iron_vein', 11, 10)
     const sim = makeSim([vein])
     const id = spawnEntity(sim, 10.3, 10.5)
     drainEvents(sim)
     act(sim, id, { type: 'harvest', nodeId: vein.id })
-    expect(rejections(sim)).toEqual(['il faut une pioche'])
+    expect(rejections(sim)).toEqual(['il faut une pioche en main'])
+
+    // La pioche est là — DANS LE SAC. C'est toujours non : stock intact, aucun XP.
     grantItems(sim, id, { pickaxe: 1 })
+    me(sim).activeSlot = -1
+    const stock0 = sim.nodes[0]!.stock
+    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
+    act(sim, id, { type: 'harvest', nodeId: vein.id })
+    expect(rejections(sim)).toEqual(['il faut une pioche en main'])
+    expect(sim.nodes[0]!.stock).toBe(stock0)
+    expect(countOf(me(sim).inventory, 'iron_ore')).toBe(0)
+    expect(me(sim).skills.mining ?? 0).toBe(0)
+
+    // En main : le filon cède.
+    me(sim).activeSlot = me(sim).inventory.findIndex((s) => s !== null && s.item === 'pickaxe')
+    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'harvest', nodeId: vein.id })
     expect(countOf(me(sim).inventory, 'iron_ore')).toBe(2)
+  })
+
+  it('A5 : deux haches, deux usures indépendantes — celle qu’on TIENT casse seule', () => {
+    const tree = makeNode('tree', 11, 10)
+    tree.stock = 100000
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    me(sim).inventory[0] = { item: 'axe', count: 1, wear: BALANCE.TOOL_DURABILITY - 1 }
+    me(sim).inventory[1] = { item: 'axe', count: 1 }
+    me(sim).activeSlot = 0
+
+    act(sim, id, { type: 'harvest', nodeId: tree.id })
+
+    expect(me(sim).inventory[0]).toBeNull() // la hache TENUE a cassé
+    expect(me(sim).inventory[1]).toEqual({ item: 'axe', count: 1 }) // l'autre est intacte
   })
 })
 
@@ -151,6 +331,78 @@ describe('l’artisanat (A3)', () => {
     for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'craft', recipeId: 'iron_ingot' })
     expect(rejections(sim)).toEqual(['station requise hors de portée : furnace'])
+  })
+
+  // Le sac est BORNÉ : consommer les matériaux SANS place pour la sortie détruirait
+  // l'objet fabriqué — et `item_crafted` mentirait à la chronique. On teste la place
+  // AVANT de consommer (symétrique de R10 : « le coup n'a pas eu lieu »).
+  it('sac plein : le craft est refusé AVANT de consommer — ni matériaux, ni cooldown, ni XP, ni événement', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 10 })
+    act(sim, id, { type: 'light_fire' }) // le Feu est la station de `cooked_meat`
+    // Sac SANS un interstice : une pile pleine de viande crue (5) + 17 piles de bois.
+    // Retirer 1 viande crue ne LIBÈRE aucune case : la case 0 reste occupée.
+    me(sim).inventory = inventoryOf(SLOTS.PLAYER, { raw_meat: 5, wood: 20 * (SLOTS.PLAYER - 1) })
+    me(sim).cooldownUntil = 0
+    drainEvents(sim)
+
+    act(sim, id, { type: 'craft', recipeId: 'cooked_meat' })
+
+    expect(countOf(me(sim).inventory, 'raw_meat')).toBe(5) // les matériaux sont intacts
+    expect(countOf(me(sim).inventory, 'cooked_meat')).toBe(0)
+    expect(me(sim).cooldownUntil).toBeLessThanOrEqual(sim.tick) // le coup n'a pas eu lieu
+    expect(me(sim).skills.crafting ?? 0).toBe(0)
+    const events = drainEvents(sim)
+    expect(events.some((e) => e.type === 'item_crafted')).toBe(false)
+    expect(events.flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))).toEqual(['sac plein'])
+  })
+
+  // …mais un sac plein n'est pas forcément un sac SANS place pour la sortie : les
+  // intrants, en partant, LIBÈRENT des cases. Mesurer la place avant de les
+  // consommer refuse à tort un craft parfaitement légal.
+  it('sac 18/18 dont les intrants libèrent une case : la hache est bel et bien forgée', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 16, stone: 4 }) // le Feu (10 bois) + l'atelier (6 bois, 4 pierres)
+    act(sim, id, { type: 'light_fire' })
+    act(sim, id, { type: 'build', structure: 'workshop', tx: 11, ty: 10 })
+    // 18 cases pleines : 16 de pierre (303), 1 de bois (5), 1 de fibre (2).
+    // La recette (wood 5, stone 3, fiber 2) VIDE les cases de bois et de fibre.
+    me(sim).inventory = inventoryOf(SLOTS.PLAYER, { stone: 303, wood: 5, fiber: 2 })
+    me(sim).cooldownUntil = 0
+    drainEvents(sim)
+
+    act(sim, id, { type: 'craft', recipeId: 'axe' })
+
+    expect(countOf(me(sim).inventory, 'axe')).toBe(1)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(0)
+    expect(countOf(me(sim).inventory, 'fiber')).toBe(0)
+    expect(countOf(me(sim).inventory, 'stone')).toBe(300)
+    expect(rejections(sim)).toEqual([])
+  })
+
+  it('sac 18/18 dont les intrants ne libèrent RIEN : refus — et les intrants sont rendus', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 16, stone: 4 }) // le Feu (10 bois) + l'atelier (6 bois, 4 pierres)
+    act(sim, id, { type: 'light_fire' })
+    act(sim, id, { type: 'build', structure: 'workshop', tx: 11, ty: 10 })
+    // 18 cases pleines dont AUCUNE ne se vide : 5 de bois (100), 2 de fibre (40),
+    // 11 de pierre (220) — la recette entame des piles, elle n'en clôt aucune.
+    me(sim).inventory = inventoryOf(SLOTS.PLAYER, { wood: 100, fiber: 40, stone: 220 })
+    me(sim).cooldownUntil = 0
+    drainEvents(sim)
+
+    act(sim, id, { type: 'craft', recipeId: 'axe' })
+
+    expect(countOf(me(sim).inventory, 'axe')).toBe(0)
+    // Rien ne se détruit : le coup n'a pas eu lieu (spec R10).
+    expect(countOf(me(sim).inventory, 'wood')).toBe(100)
+    expect(countOf(me(sim).inventory, 'fiber')).toBe(40)
+    expect(countOf(me(sim).inventory, 'stone')).toBe(220)
+    expect(me(sim).cooldownUntil).toBeLessThanOrEqual(sim.tick)
+    expect(rejections(sim)).toEqual(['sac plein'])
   })
 })
 
@@ -202,7 +454,7 @@ describe('la spécialisation (A5)', () => {
     tree.stock = 1000
     const sim = makeSim([tree])
     const id = spawnEntity(sim, 10.3, 10.5)
-    grantItems(sim, id, { iron_axe: 1 })
+    grantHeld(sim, id, 'iron_axe')
 
     // Niveau 0 : ×3 (fer). Niveau 10 : floor(3 × 1.4) = 4.
     act(sim, id, { type: 'harvest', nodeId: tree.id })

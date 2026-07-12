@@ -28,13 +28,15 @@ import {
   TERRAIN_SCREE,
   TERRAINS,
   TOOL_TIERS,
+  TOOL_YIELD,
   type NodeType,
   type RecipeId,
 } from './balance'
 import { harvestFactor } from './alignment'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
-import { addItems, countOf, removeItems, type ItemId, type SkillId } from './items'
+import { heldSlot, wearHeld } from './inventory-actions'
+import { addItems, freeRoomFor, removeItems, type ItemId, type SkillId } from './items'
 import { poiClearings, terrainAt, zoneAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
@@ -105,13 +107,30 @@ function gainXp(state: SimState, entity: Entity, skill: SkillId, base: number): 
   }
 }
 
-/** Meilleur outil de la famille dans l'inventaire : fer ×3, basique ×2, mains nues ×1. */
-function toolMultiplier(entity: Entity, family: 'axe' | 'pickaxe' | null): { mult: number; toolItem: ItemId | null } {
-  if (!family) return { mult: 1, toolItem: null }
+/**
+ * Ce que vaut UN objet pour une famille d'outil : fer ×3, basique ×2, rien ×1.
+ *
+ * LA règle de rendement, en un seul endroit — `toolMultiplier` la lit pour la
+ * case tenue, et les PNJ la lisent pour choisir quoi empoigner (`npc.ts`). Deux
+ * copies divergeraient.
+ */
+export function toolYield(item: ItemId | null, family: 'axe' | 'pickaxe' | null): number {
+  if (!family || item === null) return TOOL_YIELD.none
   const tier = TOOL_TIERS[family]
-  if (countOf(entity.inventory, tier.iron) > 0) return { mult: 3, toolItem: tier.iron }
-  if (countOf(entity.inventory, tier.basic) > 0) return { mult: 2, toolItem: tier.basic }
-  return { mult: 1, toolItem: null }
+  if (item === tier.iron) return TOOL_YIELD.iron
+  if (item === tier.basic) return TOOL_YIELD.basic
+  return TOOL_YIELD.none // on tient autre chose : ça ne sert à rien ici
+}
+
+/**
+ * Le rendement vient de l'objet TENU (spec inventaire R9). La sim NE FOUILLE
+ * PLUS LE SAC : oublier sa hache a un coût, et c'est ce coût qui donne son poids
+ * à la ceinture. `held` = on tient bien un outil de la famille (donc il s'use, et
+ * il ouvre les nœuds qui l'exigent).
+ */
+function toolMultiplier(entity: Entity, family: 'axe' | 'pickaxe' | null): { mult: number; held: boolean } {
+  const mult = toolYield(heldSlot(entity)?.item ?? null, family)
+  return { mult, held: mult > 1 }
 }
 
 export function applyEconomyAction(state: SimState, actorId: number, action: EconomyAction): void {
@@ -129,16 +148,29 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       if (!node || node.stock <= 0) return reject('rien à récolter')
       if (distSq(actor.x, actor.y, node.tx + 0.5, node.ty + 0.5) > range * range) return reject('trop loin')
       const def = NODE_DEFS[node.type]
-      const { mult, toolItem } = toolMultiplier(actor, def.tool)
-      if (def.requiresTool && !toolItem) return reject('il faut une pioche')
+      const { mult, held } = toolMultiplier(actor, def.tool)
+      // Le filon exige la pioche EN MAIN (spec inventaire R9) : l'avoir dans le
+      // sac ne suffit plus. Miner du fer en ayant laissé sa pioche au fond du
+      // sac est désormais un refus, pas un coup gratuit.
+      if (def.requiresTool && !held) return reject('il faut une pioche en main')
 
       const level = levelOf(actor, def.skill)
       // La Meute a une économie anémique (spec alignement R8) — mais jamais
       // nulle : plancher à 1, sinon le coup paie cooldown et XP pour rien.
-      const yielded = Math.min(
+      const wanted = Math.min(
         node.stock,
         Math.max(1, Math.floor(mult * (1 + BALANCE.SKILL_YIELD_BONUS * level) * harvestFactor(state, actorId))),
       )
+      // LE SAC EST BORNÉ (spec inventaire R10) : le nœud GARDE ce qui ne rentre
+      // pas — rien ne tombe au sol, rien ne s'évapore. On ÉCRÊTE tant qu'il reste
+      // une place, et on ne refuse QU'À zéro : un refus ne pose aucun cooldown,
+      // donc refuser un coup à 6 bois pour une seule place libre ferait retenter
+      // le PNJ à 20 Hz, pour toujours. À zéro place, le coup n'a pas eu lieu du
+      // tout (ni stock, ni usure, ni cooldown, ni XP) — et la garde de `npc.ts`
+      // (executeGather) libère la corvée sur ce même « zéro ».
+      const room = freeRoomFor(actor.inventory, def.item)
+      if (room <= 0) return reject('sac plein')
+      const yielded = Math.min(wanted, room)
       addItems(actor.inventory, { [def.item]: yielded })
       node.stock -= yielded
       if (node.stock <= 0) {
@@ -148,16 +180,14 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
         emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id })
       }
 
-      if (toolItem) {
+      // L'usure frappe la case TENUE (spec inventaire R6) : deux haches ne
+      // partagent plus un compteur — celle qu'on tient casse seule.
+      if (held) {
         const wear = Math.max(
           BALANCE.TOOL_WEAR_MIN,
           1 - BALANCE.SKILL_WEAR_REDUCTION * levelOf(actor, 'crafting'),
         )
-        actor.wear[toolItem] = (actor.wear[toolItem] ?? 0) + wear
-        if ((actor.wear[toolItem] ?? 0) >= BALANCE.TOOL_DURABILITY) {
-          removeItems(actor.inventory, { [toolItem]: 1 })
-          delete actor.wear[toolItem]
-        }
+        wearHeld(actor, wear)
       }
 
       gainXp(state, actor, def.skill, BALANCE.XP_PER_GATHER)
@@ -185,7 +215,16 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       )
       if (!station) return reject(`station requise hors de portée : ${recipe.station}`)
       if (!removeItems(actor.inventory, recipe.inputs)) return reject('matériaux insuffisants')
-      addItems(actor.inventory, { [recipe.output]: 1 })
+      // La place se mesure APRÈS les intrants, car les consommer LIBÈRE des cases :
+      // un sac 18/18 dont une case vaut exactement les 2 fibres de la recette a bel
+      // et bien de quoi ranger la hache. Si la sortie ne tient TOUJOURS pas, on rend
+      // les intrants — ils reviennent forcément, ils occupaient au moins autant de
+      // place — et le coup n'a pas eu lieu (spec R10) : ni objet détruit, ni
+      // `item_crafted` menteur, ni cooldown, ni XP.
+      if (Object.keys(addItems(actor.inventory, { [recipe.output]: 1 })).length > 0) {
+        addItems(actor.inventory, recipe.inputs)
+        return reject('sac plein')
+      }
       gainXp(state, actor, 'crafting', BALANCE.XP_PER_CRAFT)
       actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
       emitEvent(state, {

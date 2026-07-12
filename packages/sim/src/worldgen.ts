@@ -6,6 +6,7 @@
  * mêmes briques que le jeu (createVillage, addStructure, spawnNpcsAround) —
  * son seul privilège de monde-gen est de faire place nette dans les nœuds.
  */
+import { addItems } from './items'
 import { RING_OFFSETS, spawnNpcsAround } from './npc'
 import type { SimState } from './sim'
 import { addStructure, createVillage, type Village } from './village'
@@ -32,7 +33,7 @@ export function foundNpcVillage(
   // Le grenier d'un village PNJ est ouvert aux siens (accès `village`, pas le
   // défaut `private` du coffre) et naît approvisionné.
   const chest = addStructure(state, 'chest', tx, ty - 2, village.id, 0, 'village')
-  chest.inventory = { berries: 10, wood: 10, fiber: 2 }
+  addItems(chest.inventory!, { berries: 10, wood: 10, fiber: 2 })
   for (const [dx, dy] of houseSpots) addStructure(state, 'house', tx + dx, ty + dy, village.id, 0)
   spawnNpcsAround(state, village, count)
   // Un village PNJ naît armé (spec combat R13) et avec son caractère
@@ -42,7 +43,7 @@ export function foundNpcVillage(
     if (npc.villageId !== village.id) continue
     const entity = state.entities.find((e) => e.id === npc.entityId)
     if (entity) {
-      entity.inventory.spear = 1
+      addItems(entity.inventory, { spear: 1 })
       entity.warmth = seedWarmth
       // 60 : assez d'inertie pour que le caractère survive à la décroissance
       // (DECAY_PER_DAY) le temps que les actes (dons, raids) prennent le relais.
