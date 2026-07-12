@@ -356,6 +356,7 @@ export type RecipeId =
   | 'iron_axe'
   | 'iron_pickaxe'
   | 'spear'
+  | 'hammer'
   | 'cooked_meat'
 
 export interface Recipe {
@@ -373,6 +374,11 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   iron_axe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_axe' },
   iron_pickaxe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_pickaxe' },
   spear: { station: 'workshop', inputs: { wood: 4, stone: 2, fiber: 1 }, output: 'spear' },
+  // LE MARTEAU SE FORGE AU FEU, PAS À L'ATELIER — et ce n'est pas un détail : bâtir
+  // exige déjà un village, donc un Feu allumé. Le mettre à l'atelier créerait un
+  // blocage circulaire (il faudrait bâtir l'atelier pour pouvoir bâtir). Au Feu, il
+  // n'ajoute AUCUNE porte : qui peut bâtir peut le forger.
+  hammer: { station: 'fire', inputs: { wood: 4, stone: 2, fiber: 2 }, output: 'hammer' },
   cooked_meat: { station: 'fire', inputs: { raw_meat: 1 }, output: 'cooked_meat' },
 }
 
@@ -989,6 +995,7 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   iron_axe: 1,
   iron_pickaxe: 1,
   spear: 1,
+  hammer: 1,
 }
 
 /** Tailles de sac (spec inventaire R7). La longueur du tableau EST la capacité. */

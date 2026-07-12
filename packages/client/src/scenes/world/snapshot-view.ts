@@ -26,14 +26,19 @@ import {
   crownAlpha,
   crownDepth,
   GROUND_FIRE_DEPTH,
+  LIFT_MARGIN_TILES,
   nodeDepth,
-  RELIEF_H,
   structureDepth,
   tileFeetAnchor,
   TILE_PX,
   type ActorFootprint,
 } from '../../render/framing'
 import { warmthColor } from '../../render/lighting'
+import { shakeOffset, type HitFx } from './hit-fx'
+
+/** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
+const AIM_TINT = 0xffe9a8
+const AIM_TINT_FAR = 0x8a8a92
 
 /** Interpolation des autres entités : vers le dernier snapshot, sur un tick (R4). */
 const INTERP_MS = 1000 / BALANCE.TICK_RATE_HZ
@@ -116,6 +121,22 @@ export interface InterpolatedSprite {
 export class SnapshotView {
   /** Dernier état reçu — lu par la prédiction (collisions) et les inputs. */
   structures: Structure[] = []
+
+  /** Le nœud sous le curseur (spec recolte.md G4), et s'il est à portée de bras. */
+  private aimedNodeId: number | null = null
+  private aimedInRange = false
+  /** La mémoire des coups reçus — pour le tressaillement. Posée par WorldScene. */
+  private hitFx?: HitFx
+
+  /** Ce que le curseur vise MAINTENANT. Purement de l'affichage : la sim revalide. */
+  setAim(nodeId: number | null, inRange: boolean): void {
+    this.aimedNodeId = nodeId
+    this.aimedInRange = inRange
+  }
+
+  setHitFx(fx: HitFx): void {
+    this.hitFx = fx
+  }
   nodes: ResourceNode[] = []
   corpses: Corpse[] = []
   npcs: Npc[] = []
@@ -305,7 +326,7 @@ export class SnapshotView {
     // dans la vue de son lift (jusqu'à RELIEF_H px = ⌈H/TILE⌉ tuiles) + les cimes
     // qui débordent ; sans cette marge il serait culé trop tôt (arbres qui
     // disparaissent en bas). Colonnes ±2 pour le débord de houppier.
-    const liftMargin = Math.ceil(RELIEF_H / TILE_PX) + 4
+    const liftMargin = LIFT_MARGIN_TILES + 4
     const tx0 = Math.floor(v.x / TILE_PX) - 2
     const ty0 = Math.floor(v.y / TILE_PX) - 1
     const tx1 = Math.ceil((v.x + v.width) / TILE_PX) + 2
@@ -329,7 +350,12 @@ export class SnapshotView {
         // près. Les autres nœuds restent centrés sur leur tuile.
         const j = isTree ? treeJitter(tx, ty) : { dx: 0, dy: 0 }
         const a = tileFeetAnchor(tx, ty, TILE_PX)
-        const px = a.px + j.dx * TILE_PX
+        // Le coup qui porte fait TRESSAILLIR le nœud (spec recolte.md G10). Le
+        // décalage est purement visuel et transitoire : il s'ajoute au dessin, il
+        // ne touche ni la tuile, ni la profondeur, ni l'emprise logique.
+        const hitAt = this.hitFx?.hitAt(n.id)
+        const shake = hitAt === undefined ? 0 : shakeOffset(now, hitAt)
+        const px = a.px + j.dx * TILE_PX + shake
         const py = a.py + j.dy * TILE_PX
         const lift = this.warp?.lift(tx + 0.5 + j.dx, ty + 1 + j.dy) ?? 0
         sprite.setPosition(px, py - lift)
@@ -338,6 +364,13 @@ export class SnapshotView {
         // que deux arbres proches se trient par leur vrai pied, pas par le pool.
         sprite.setDepth(nodeDepth(ty + j.dy, TILE_PX))
         sprite.setTexture(texture)
+        // LA SURBRILLANCE DIT CE QUI VA SE PASSER (spec recolte.md G4) : le nœud
+        // visé s'éclaire s'il est à portée, et se GRISE s'il ne l'est pas. On
+        // teinte le sprite plutôt que de dessiner un cadre au sol : la teinte suit
+        // le billboard, donc elle reste juste quel que soit le relief. Les sprites
+        // sont POOLÉS — d'où le `clearTint` systématique sur les autres.
+        if (n.id === this.aimedNodeId) sprite.setTint(this.aimedInRange ? AIM_TINT : AIM_TINT_FAR)
+        else sprite.clearTint()
         // Le tronc reste OPAQUE en toutes circonstances : les troncs dessinent la
         // structure de la forêt, ce sont les houppiers qui s'ouvrent.
         sprite.setAlpha(n.stock > 0 ? 1 : 0.25)
@@ -351,8 +384,12 @@ export class SnapshotView {
           crown = this.scene.add.image(0, 0, 'nd-tree_crown').setOrigin(0.5, 1)
           this.crownPool[crownsUsed] = crown
         }
-        crown.setPosition(px, py - 16 - lift)
+        crown.setPosition(px, py - 16 - lift) // `px` porte déjà le tressaillement
         crown.setDepth(crownDepth(ty + 1 + j.dy, TILE_PX))
+        // Un arbre visé s'éclaire ENTIER : teinter le tronc seul donnerait un
+        // houppier flottant, détaché de ce qu'on vise.
+        if (n.id === this.aimedNodeId) crown.setTint(this.aimedInRange ? AIM_TINT : AIM_TINT_FAR)
+        else crown.clearTint()
         // Distance des pieds du joueur au PIED DU TRONC : l'arbre à ton contact
         // s'efface, celui dont la cime te survole de loin reste opaque.
         const dx = playerX - (tx + 0.5)

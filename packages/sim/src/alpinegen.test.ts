@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeElevation, computeMoisture, generateAlpineTerrain } from './alpinegen'
+import { computeElevation, computeMoisture, generateAlpineTerrain, WORLDGEN_PHASES, type WorldgenPhase } from './alpinegen'
 import { isBlockingTile, terrainAt } from './map'
 import {
   TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_MARSH, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW,
@@ -63,6 +63,23 @@ describe('computeMoisture', () => {
 
 describe('generateAlpineTerrain — bandes & assemblage', () => {
   const W = 160, H = 240
+
+  // Le rapporteur de passes n'est pas un détail d'affichage : la barre de chargement du
+  // client N'EST QUE le compte de ces passes (`done / total`). Si une passe cessait de
+  // s'annoncer, ou s'annonçait deux fois, la barre mentirait — en silence, car aucun type
+  // ne l'attraperait (le rapporteur ne rend rien).
+  it('annonce EXACTEMENT WORLDGEN_PHASES, chacune une fois, dans l’ordre', () => {
+    const vues: WorldgenPhase[] = []
+    generateAlpineTerrain(W, H, 5, (p) => vues.push(p))
+    expect(vues).toEqual([...WORLDGEN_PHASES])
+  })
+
+  it('le rapporteur ne CHANGE rien : même carte avec et sans lui (déterminisme)', () => {
+    const muet = generateAlpineTerrain(W, H, 5)
+    const bavard = generateAlpineTerrain(W, H, 5, () => {})
+    expect(bavard.terrain).toEqual(muet.terrain)
+    expect(bavard.elevation).toEqual(muet.elevation)
+  })
 
   it('déterministe (terrain + elevation)', () => {
     const a = generateAlpineTerrain(W, H, 5)

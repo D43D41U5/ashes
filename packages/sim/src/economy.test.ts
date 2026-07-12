@@ -305,12 +305,20 @@ describe('les outils (A2)', () => {
   })
 })
 
+/** Marteau en main — sans lui, `build` est refusé (spec recolte.md G12). */
+function equipHammer(sim: SimState, id: number): void {
+  grantItems(sim, id, { hammer: 1 })
+  const slot = sim.entities.find((e) => e.id === id)!.inventory.findIndex((s) => s?.item === 'hammer')
+  act(sim, id, { type: 'set_active_slot', slot })
+}
+
 describe('l’artisanat (A3)', () => {
   it('la chaîne T2 : lingot au four seulement, hache de fer à l’atelier seulement', () => {
     const sim = makeSim([])
     const id = spawnEntity(sim, 10.5, 10.5)
     grantItems(sim, id, { wood: 30, stone: 20, iron_ore: 4, coal: 2 })
     act(sim, id, { type: 'light_fire' })
+    equipHammer(sim, id)
     act(sim, id, { type: 'build', structure: 'furnace', tx: 11, ty: 10 })
     act(sim, id, { type: 'build', structure: 'workshop', tx: 9, ty: 10 })
     drainEvents(sim)
@@ -366,6 +374,7 @@ describe('l’artisanat (A3)', () => {
     const id = spawnEntity(sim, 10.5, 10.5)
     grantItems(sim, id, { wood: 16, stone: 4 }) // le Feu (10 bois) + l'atelier (6 bois, 4 pierres)
     act(sim, id, { type: 'light_fire' })
+    equipHammer(sim, id)
     act(sim, id, { type: 'build', structure: 'workshop', tx: 11, ty: 10 })
     // 18 cases pleines : 16 de pierre (303), 1 de bois (5), 1 de fibre (2).
     // La recette (wood 5, stone 3, fiber 2) VIDE les cases de bois et de fibre.
@@ -387,6 +396,7 @@ describe('l’artisanat (A3)', () => {
     const id = spawnEntity(sim, 10.5, 10.5)
     grantItems(sim, id, { wood: 16, stone: 4 }) // le Feu (10 bois) + l'atelier (6 bois, 4 pierres)
     act(sim, id, { type: 'light_fire' })
+    equipHammer(sim, id)
     act(sim, id, { type: 'build', structure: 'workshop', tx: 11, ty: 10 })
     // 18 cases pleines dont AUCUNE ne se vide : 5 de bois (100), 2 de fibre (40),
     // 11 de pierre (220) — la recette entame des piles, elle n'en clôt aucune.

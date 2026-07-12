@@ -12,7 +12,9 @@
 import { BALANCE, SLOTS, type AccessLevel, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud, setHud, type Buildable } from '../../hud-state'
+import { publishError } from './hud-bridge'
 import { TILE_PX } from '../../render/framing'
+import { aimAt, clickToAction, holdHarvest, type AimTarget } from './aim'
 import { BELT_BINDINGS, BUILDABLE_CYCLE, CRAFT_BINDINGS, KEYMAP } from './keymap'
 import type { InterpolatedSprite } from './snapshot-view'
 
@@ -33,7 +35,17 @@ export interface MovementBindings {
   keys: Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key[]>
   sprintKeys: Phaser.Input.Keyboard.Key[]
   blockKey: Phaser.Input.Keyboard.Key
+  /** Entretient le clic MAINTENU (récolte en boucle) — à appeler chaque frame. */
+  tickHold(): void
+  /** Ce que vise le curseur MAINTENANT — pour le surlignage et le fantôme. */
+  aim(pointer: Phaser.Input.Pointer): AimTarget
+  /** La structure armée, ou `null` (mode construction désarmé). */
+  selected(): Buildable | null
 }
+
+/** Le rechargement de récolte, en millisecondes — le client cadence ses envois
+ *  dessus (spec recolte.md G7). Dérivé de la sim : une seule source. */
+const GATHER_COOLDOWN_MS = (BALANCE.GATHER_COOLDOWN_TICKS / BALANCE.TICK_RATE_HZ) * 1000
 
 /**
  * Le conteneur à looter à l'ouverture de TAB : le plus proche à `INTERACT_RANGE`
@@ -93,13 +105,33 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   const sprintKeys = grab(KEYMAP.sprint)
   const blockKey = grab(KEYMAP.block)[0]!
 
-  // Mode construction : F fonde, clic bâtit, clic droit démolit. Les touches
-  // 1-6 tenant désormais la ceinture (spec inventaire R17), la sélection de
-  // structure se fait au clavier B (défilement) — béquille jusqu'au chantier 3.
-  // La sélection vit ICI (et dans le HUD via le registry).
-  let selected: Buildable = BUILDABLE_CYCLE[0]!
+  // BÂTIR EST UN MODE, PAS LE DÉFAUT DU CLIC (spec recolte.md G1-G2). `B` fait
+  // défiler `rien → mur → … → four → rien` ; `null` (désarmé) est l'état de
+  // départ. Tant qu'on est désarmé, le clic ne peut que récolter ou looter — il
+  // ne peut plus poser un mur parce qu'on a visé une tuile à côté de l'arbre.
+  let selected: Buildable | null = BUILDABLE_CYCLE[0]!
+
+  /** LE MARTEAU FAIT LE BÂTISSEUR (G12) : la sim refuse `build` sans lui EN MAIN.
+   *  Le client ne fait que MIROIR — il n'invente pas la règle, il évite juste au
+   *  joueur d'armer un mode qui ne pourrait rien poser. */
+  const hammerHeld = (): boolean => {
+    const inv = getHud(scene.registry, 'inv') ?? []
+    const slot = getHud(scene.registry, 'activeSlot') ?? -1
+    return slot >= 0 && inv[slot]?.item === 'hammer'
+  }
+  const disarm = (): void => {
+    selected = null
+    setHud(scene.registry, 'selected', null)
+  }
+
   onDown(KEYMAP.lightFire, () => deps.sendAction({ type: 'light_fire' }))
   onDown(KEYMAP.cycleBuildable, () => {
+    if (!hammerHeld()) {
+      // On ne s'arme pas les mains vides : on le DIT, plutôt que de laisser le
+      // joueur cliquer dans le vide et se faire refuser par la sim.
+      publishError(scene.registry, 'il faut le marteau de construction en main', scene.time.now)
+      return
+    }
     const i = BUILDABLE_CYCLE.indexOf(selected)
     selected = BUILDABLE_CYCLE[(i + 1) % BUILDABLE_CYCLE.length]!
     setHud(scene.registry, 'selected', selected)
@@ -185,33 +217,81 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   onDown(KEYMAP.eatBerries, () => deps.sendAction({ type: 'eat', item: 'berries' }))
   onDown(KEYMAP.eatStew, () => deps.sendAction({ type: 'eat', item: 'stew' }))
 
+  /** La tuile sous le curseur, et ce qu'elle porte. Recalculée à la demande : le
+   *  curseur bouge, le nœud s'épuise, et la caméra GLISSE ENCORE après la course
+   *  — une visée mémorisée au `pointerdown` viserait déjà ailleurs (recolte.md G8). */
+  const aimNow = (pointer: Phaser.Input.Pointer): AimTarget => {
+    const world = pointerToWorld(pointer)
+    return aimAt(
+      Math.floor(world.x / TILE_PX),
+      Math.floor(world.y / TILE_PX),
+      deps.predicted(),
+      deps.nodes(),
+      deps.corpses(),
+      BALANCE.INTERACT_RANGE,
+    )
+  }
+  /** L'overlay (carte, sac) mange le clic : il ne doit pas agir dans le monde en dessous. */
+  const overlayOpen = (): boolean =>
+    Boolean(getHud(scene.registry, 'mapOpen')) || Boolean(getHud(scene.registry, 'inventoryOpen'))
+
+  // Le clic MAINTENU récolte en boucle, cadencé par le rechargement (G6-G7).
+  let holding = false
+  let lastHarvestAt = -Infinity
+
   scene.input.mouse?.disableContextMenu()
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-    // Carte ou inventaire ouvert : le clic pilote l'overlay (visionneuse,
-    // glisser-déposer), il ne doit pas bâtir/récolter dans le monde en dessous.
-    if (getHud(scene.registry, 'mapOpen') || getHud(scene.registry, 'inventoryOpen')) return
-    const world = pointerToWorld(pointer)
-    const tx = Math.floor(world.x / TILE_PX)
-    const ty = Math.floor(world.y / TILE_PX)
+    if (overlayOpen()) return
+    const target = aimNow(pointer)
     if (pointer.rightButtonDown()) {
-      const target = deps.structures().find((s) => s.tx === tx && s.ty === ty)
-      if (target) deps.sendAction({ type: 'demolish', structureId: target.id })
-    } else if (pointer.event.shiftKey) {
-      // Shift+clic : faire tourner l'accès d'une structure à soi (partage).
-      const target = deps.structures().find((s) => s.tx === tx && s.ty === ty)
-      if (target) {
-        const cycle: Record<AccessLevel, AccessLevel> = { private: 'village', village: 'public', public: 'private' }
-        deps.sendAction({ type: 'set_access', structureId: target.id, access: cycle[target.access] })
+      // Clic droit : désarmer le mode construction s'il l'est — sinon, démolir.
+      if (selected !== null) {
+        selected = null
+        setHud(scene.registry, 'selected', null)
+        return
       }
-    } else {
-      // Priorité au clic : cadavre → nœud vivant → bâtir.
-      const corpse = deps.corpses().find((c) => Math.floor(c.x) === tx && Math.floor(c.y) === ty)
-      const node = deps.nodes().find((n) => n.tx === tx && n.ty === ty && n.stock > 0)
-      if (corpse) deps.sendAction({ type: 'loot_corpse', corpseId: corpse.id })
-      else if (node) deps.sendAction({ type: 'harvest', nodeId: node.id })
-      else deps.sendAction({ type: 'build', structure: selected, tx, ty })
+      const s = deps.structures().find((s) => s.tx === target.tx && s.ty === target.ty)
+      if (s) deps.sendAction({ type: 'demolish', structureId: s.id })
+      return
     }
+    if (pointer.event.shiftKey) {
+      // Shift+clic : faire tourner l'accès d'une structure à soi (partage).
+      const s = deps.structures().find((s) => s.tx === target.tx && s.ty === target.ty)
+      if (s) {
+        const cycle: Record<AccessLevel, AccessLevel> = { private: 'village', village: 'public', public: 'private' }
+        deps.sendAction({ type: 'set_access', structureId: s.id, access: cycle[s.access] })
+      }
+      return
+    }
+    // Le résolveur PUR tranche (aim.ts) : récolter, looter, bâtir — ou RIEN.
+    const action = clickToAction(target, selected)
+    if (action) {
+      deps.sendAction(action)
+      if (action.type === 'harvest') lastHarvestAt = scene.time.now
+    }
+    holding = true
+  })
+  scene.input.on('pointerup', () => {
+    holding = false
   })
 
-  return { keys, sprintKeys, blockKey }
+  /** Appelée à chaque frame par WorldScene : entretient le clic maintenu. */
+  const tickHold = (): void => {
+    // Ranger le marteau DÉSARME : le mode ne peut pas survivre à l'outil qui le
+    // porte (sinon le fantôme mentirait, et le clic partirait se faire refuser).
+    if (selected !== null && !hammerHeld()) disarm()
+    if (!holding) return
+    const pointer = scene.input.activePointer
+    if (overlayOpen() || !pointer.leftButtonDown()) {
+      holding = false
+      return
+    }
+    const action = holdHarvest(aimNow(pointer), selected, scene.time.now, lastHarvestAt, GATHER_COOLDOWN_MS)
+    if (action) {
+      deps.sendAction(action)
+      lastHarvestAt = scene.time.now
+    }
+  }
+
+  return { keys, sprintKeys, blockKey, tickHold, aim: aimNow, selected: () => selected }
 }

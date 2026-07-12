@@ -69,7 +69,13 @@ export const BELT_BINDINGS: readonly [string, number][] = [
 ]
 
 /** L'ordre dans lequel `B` fait défiler les structures à bâtir (spec inventaire R17). */
-export const BUILDABLE_CYCLE: readonly Buildable[] = ['wall', 'door', 'chest', 'workshop', 'furnace']
+/**
+ * Le défilement de `B`. `null` EST un cran du cycle — l'état DÉSARMÉ, et l'état
+ * de départ : bâtir est un mode qu'on arme, pas le comportement par défaut du
+ * clic (spec recolte.md G2). Le type porte le mode ; pas de booléen à tenir en
+ * cohérence à côté.
+ */
+export const BUILDABLE_CYCLE: readonly (Buildable | null)[] = [null, 'wall', 'door', 'chest', 'workshop', 'furnace']
 
 /**
  * Recettes de craft — BÉQUILLE jusqu'au chantier 2 (le panneau de craft). Les
@@ -84,4 +90,5 @@ export const CRAFT_BINDINGS: readonly [string, RecipeId][] = [
   ['THREE', 'pickaxe'],
   ['FOUR', 'iron_ingot'],
   ['FIVE', 'iron_axe'],
+  ['SIX', 'hammer'],
 ]

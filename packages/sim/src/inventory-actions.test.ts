@@ -33,8 +33,12 @@ function rejections(sim: SimState): string[] {
 
 function founder(sim: SimState, x: number, y: number): number {
   const id = spawnEntity(sim, x, y)
+  // Le marteau EN PREMIER (case 0 = ceinture : `set_active_slot` n'accepte qu'elle),
+  // et EN MAIN : sans lui on ne bâtit plus rien (spec recolte.md G12).
+  grantItems(sim, id, { hammer: 1 })
   grantItems(sim, id, { wood: 100, stone: 20 })
   act(sim, id, { type: 'light_fire' })
+  act(sim, id, { type: 'set_active_slot', slot: 0 })
   return id
 }
 
@@ -45,7 +49,9 @@ function chestSim(): { sim: SimState; chief: number; stranger: number; chest: St
   act(sim, chief, { type: 'build', structure: 'chest', tx: 11, ty: 10 })
   const chest = structureAt(sim.structures, 11, 10)!
   const stranger = spawnEntity(sim, 11.8, 10.5)
-  // Sac NET : le reliquat de matériaux du fondateur brouillerait les index de case.
+  // Sac NET : le reliquat de matériaux du fondateur brouillerait les index de case
+  // (ces tests raisonnent sur des INDEX). Le marteau part avec — le seul test qui
+  // bâtit encore après coup se le redonne lui-même (G12).
   entity(sim, chief).inventory = makeInventory(SLOTS.PLAYER)
   drainEvents(sim)
   return { sim, chief, stranger, chest }
@@ -493,6 +499,9 @@ describe('transfer — joueur ⇄ conteneur (R16)', () => {
 
   it('refuse un conteneur inconnu, une structure sans coffre, un transfert sur place, une quantité invalide', () => {
     const { sim, chief, chest } = chestSim()
+    // Marteau EN MAIN : bâtir l'exige (G12). Donné AVANT le bois pour tomber en case 0.
+    grantItems(sim, chief, { hammer: 1 })
+    act(sim, chief, { type: 'set_active_slot', slot: 0 })
     grantItems(sim, chief, { wood: 20 })
     act(sim, chief, { type: 'build', structure: 'wall', tx: 10, ty: 11 }) // une structure SANS coffre
     const wall = structureAt(sim.structures, 10, 11)!

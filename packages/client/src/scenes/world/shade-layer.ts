@@ -10,7 +10,7 @@
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
-import { GROUND_MAP_DEPTH, RELIEF_H, TILE_PX } from '../../render/framing'
+import { GROUND_MAP_DEPTH, LIFT_MARGIN_TILES, TILE_PX } from '../../render/framing'
 import { reliefShadow, type SampleElevation } from '../../render/hillshade'
 import { sunDirection } from '../../render/lighting'
 import type { Warp } from '../../render/warp'
@@ -43,10 +43,10 @@ export class ShadeLayer {
     if (sun.x === 0 && sun.y === 0) return // nuit / zénith : pas d'ombre portée
     const { width, height } = this.map
     const v = camera.worldView
-    // Marge basse = lift max (⌈H/tuile⌉) : une tuile du sud soulevée dans le bas
-    // de l'écran doit rester ombrée, sinon l'ombre se coupe trop tôt (comme les
-    // billboards dans renderNodes). Idem +64 côté sol (ground-layer).
-    const liftMargin = Math.ceil(RELIEF_H / TILE_PX) + 2
+    // Marge basse = le lift max (voir LIFT_MARGIN_TILES) : une tuile du sud soulevée
+    // dans le bas de l'écran doit rester ombrée, sinon l'ombre se coupe trop tôt
+    // (comme les billboards dans renderNodes). Idem +64 côté sol (ground-layer).
+    const liftMargin = LIFT_MARGIN_TILES + 2
     const tx0 = Math.max(0, Math.floor(v.x / TILE_PX) - 1)
     const ty0 = Math.max(0, Math.floor(v.y / TILE_PX) - 1)
     const tx1 = Math.min(width - 1, Math.ceil((v.x + v.width) / TILE_PX) + 1)

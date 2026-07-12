@@ -34,6 +34,8 @@ export type ItemId =
   | 'iron_axe'
   | 'iron_pickaxe'
   | 'spear'
+  /** Le MARTEAU DE CONSTRUCTION : sans lui EN MAIN, on ne bâtit rien (spec recolte.md G12). */
+  | 'hammer'
   | 'raw_meat'
   | 'cooked_meat'
   | 'components'

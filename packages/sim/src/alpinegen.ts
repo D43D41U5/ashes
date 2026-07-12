@@ -336,18 +336,59 @@ function paintAvalanches(map: WorldMap, seed: number): void {
 const NX8 = [-1, 0, 1, -1, 1, -1, 0, 1]
 const NY8 = [-1, -1, -1, 0, 0, 1, 1, 1]
 
-export function generateAlpineTerrain(width: number, height: number, seed: number): WorldMap {
+/**
+ * Les passes de la génération, dans l'ordre où elles tournent. Elles sont
+ * PUBLIQUES parce que la vallée met plusieurs secondes à naître : l'hôte les
+ * annonce une à une, et l'écran de chargement du client COMPTE ce qui est fait —
+ * sa barre n'est rien d'autre. Ce sont des identifiants de travail, pas des
+ * libellés : le client ne les affiche pas (il raconte autre chose).
+ */
+export const WORLDGEN_PHASES = [
+  'elevation',
+  'moisture',
+  'bands',
+  'flow',
+  'hydrology',
+  'biomes',
+  'avalanches',
+  'border',
+  'pois',
+  'bumps',
+] as const
+export type WorldgenPhase = (typeof WORLDGEN_PHASES)[number]
+
+/**
+ * `onPhase` est un RAPPORTEUR, pas un levier : il reçoit le nom de la passe qui
+ * commence et ne rend rien. La génération reste donc pure et déterministe — même
+ * seed, même carte, et la même suite de passes dans le même ordre.
+ */
+export function generateAlpineTerrain(
+  width: number,
+  height: number,
+  seed: number,
+  onPhase: (phase: WorldgenPhase) => void = () => {},
+): WorldMap {
   const map = createEmptyMap(width, height, TERRAIN_GRASS)
+  onPhase('elevation')
   map.elevation = computeElevation(width, height, seed)
+  onPhase('moisture')
   const moisture = computeMoisture(width, height, map.elevation, seed)
+  onPhase('bands')
   paintAlpineBands(map, moisture, seed)
+  onPhase('flow')
   const flow = computeFlowField(width, height, seed)
+  onPhase('hydrology')
   carveHydrology(map, flow, seed) // lac, rivière (thalweg), ruisseaux, tarns — l'eau suit l'écoulement
+  onPhase('biomes')
   paintScatterBiomes(map, seed) // bosquets, prés fleuris, blocs, vieille forêt, brûlis (après l'eau)
+  onPhase('avalanches')
   paintAvalanches(map, seed) // couloirs d'avalanche (blocs qui dévalent)
+  onPhase('border')
   sealBorderRing(map) // l'anneau externe reste bloquant quoi qu'ait creusé l'eau
+  onPhase('pois')
   placePois(map, seed) // POIs APRÈS le scellage : le biome sous le centre d'un POI est le terrain FINAL
   //                      (sinon un POI validé sur du bord verrait son terrain réécrit en roche par le scellage → incohérence)
+  onPhase('bumps')
   addReliefBumps(map, seed) // DERNIER : vallons de RENDU sur la terre (eau plate) — voir plus bas
   return map
 }

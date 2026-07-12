@@ -4,14 +4,13 @@
  * Le sol est un maillage dont les sommets sont SOULEVÉS par l'élévation
  * (`screenY = worldY·TILE − elev·H`, voir render/warp.ts). Un shader, lui, part
  * d'un pixel écran et doit retrouver la tuile dont il parle : il DÉFAIT donc le
- * cisaillement, par point fixe sur `ty = (screenY + elev(tx, ty)·H) / TILE`.
+ * cisaillement, par BISECTION sur `screenY(ty)` — qui est strictement croissant
+ * (`assertNoFold`), donc toujours inversible ainsi. Exactement la méthode de
+ * `warp.unproject`, celle du picking : le rendu et le picking ne divergent pas.
  *
- * Cette itération CONVERGE, et pas par chance : le warp garantit déjà qu'il ne se
- * replie pas (`assertNoFold`), c'est-à-dire que `screenY` est strictement
- * croissant en `ty` — ce qui revient exactement à dire que la dérivée de
- * l'itération est < 1. La garde qui protégeait le rendu du sol paie ici une
- * seconde fois. Près de l'eau, l'élévation est plate : deux tours suffiraient, on
- * en fait cinq.
+ * (La première version itérait un point fixe et affirmait qu'il convergeait. C'était
+ * FAUX sur les versants : voir la démonstration dans `main()`. L'eau se décollait de
+ * ses berges dès qu'on quittait le plat.)
  *
  * Le quad couvre le MONDE ENTIER (pas la vue) : plus rien à repositionner par
  * frame, et le GPU ne colorie de toute façon que les pixels à l'écran. Hors de
@@ -63,8 +62,24 @@ uniform float uDay;          // 0 nuit · 1 plein jour
 const float YSQUASH = 2.0;
 const vec2 PLANE = vec2(1.0, YSQUASH);
 
-float maskAt(vec2 tile) { return texture2D(uField, tile / uMapTiles).r; }
-float elevAt(vec2 tile) { return texture2D(uField, tile / uMapTiles).g; }
+/**
+ * LE MONDE À L'ENDROIT. Le quad reçoit des coordonnées de texture GL, dont l'axe V
+ * MONTE (bottom-up), alors que le monde, lui, DESCEND (ty croît vers le sud). Et les
+ * textures uploadées par Phaser sont retournées de la même façon — c'est pour ça que
+ * le maillage du sol passe flipV (voir GroundLayer).
+ *
+ * Ces deux retournements s'ANNULENT tant qu'on ne fait que lire un texel : le shader
+ * pouvait donc travailler dans un monde à l'envers sans que ça se voie... sauf pour le
+ * CISAILLEMENT, qui, lui, est antisymétrique : soulever vers le haut dans un monde
+ * retourné, c'est enfoncer vers le bas dans le vrai. L'eau se retrouvait décalée de
+ * DEUX fois le lift sur les versants (exact à élévation 0, à 13 tuiles de sa berge à
+ * 0,73). On remet donc le monde à l'endroit UNE fois, ici, et on retourne le V au
+ * moment de lire la texture — plus jamais deux conventions dans la même formule.
+ */
+vec2 texUv(vec2 tile) { return vec2(tile.x / uMapTiles.x, 1.0 - tile.y / uMapTiles.y); }
+
+float maskAt(vec2 tile) { return texture2D(uField, texUv(tile)).r; }
+float elevAt(vec2 tile) { return texture2D(uField, texUv(tile)).g; }
 
 /**
  * LE LARGE. Le masque est binaire : sondé sur un anneau de quelques tuiles, sa
@@ -113,20 +128,35 @@ float chop(vec2 p, float t) {
 }
 
 void main() {
-  // Pixel écran → position monde PLATE (le quad couvre le monde entier).
-  vec2 flatPx = outTexCoord * uWorldPx;
+  // Pixel du quad → position monde PLATE. On REMET LE MONDE À L'ENDROIT ici (V est
+  // bottom-up, cf. texUv) : c'est le seul endroit où le retournement se paie.
+  vec2 flatPx = vec2(outTexCoord.x, 1.0 - outTexCoord.y) * uWorldPx;
   float tx = flatPx.x / uTilePx; // X n'est jamais cisaillé : exact.
 
-  // On DÉFAIT le cisaillement du relief pour retrouver la tuile réelle.
-  float ty = flatPx.y / uTilePx;
-  for (int i = 0; i < 5; i++) {
-    ty = (flatPx.y + elevAt(vec2(tx, ty)) * uReliefH) / uTilePx;
+  // On DÉFAIT le cisaillement du relief pour retrouver la tuile réelle — PAR BISECTION.
+  //
+  // screenY(ty) = ty·TILE − elev(tx, ty)·H est strictement CROISSANT (c'est exactement ce
+  // que garantit assertNoFold), donc l'encadrement [py/TILE, py/TILE + H/TILE] contient la
+  // solution et se coupe en deux, toujours. 12 tours ramènent l'incertitude à 9,4/4096 de
+  // tuile, soit un vingtième de pixel. C'est la MÊME méthode que warp.unproject, celle du
+  // picking : le rendu et le picking ne peuvent donc pas se contredire.
+  //
+  // (Avant, un point fixe. Il tenait, mais il affirmait converger toujours — ce qui n'est
+  // vrai que si |d elev / d ty|·H/TILE < 1, et assertNoFold ne borne le gradient que vers
+  // le SUD. La bissection, elle, ne demande que la monotonie, qui est GARANTIE.)
+  float lo = flatPx.y / uTilePx;
+  float hi = lo + uReliefH / uTilePx;
+  for (int i = 0; i < 12; i++) {
+    float mid = 0.5 * (lo + hi);
+    float screenY = mid * uTilePx - elevAt(vec2(tx, mid)) * uReliefH;
+    if (screenY < flatPx.y) lo = mid; else hi = mid;
   }
+  float ty = 0.5 * (lo + hi);
   vec2 tile = vec2(tx, ty);
   vec2 uv = tile / uMapTiles;
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
 
-  vec4 field = texture2D(uField, uv);
+  vec4 field = texture2D(uField, texUv(tile));
   float mask = field.r;
 
   // LE TRAIT DE RIVE. Le masque est binaire : en filtrage linéaire il croise 0,5
@@ -155,7 +185,7 @@ void main() {
   // normale : le fond ondule sous la surface. Le décalage s'annule contre la
   // berge — sinon il irait chercher l'herbe d'à côté et la peindrait dans l'eau.
   vec2 refr = tile + (n.xy / PLANE) * 0.55 * (1.0 - deep) * smoothstep(0.0, 0.4, open);
-  vec3 bed = texture2D(uSeabed, refr / uMapTiles).rgb;
+  vec3 bed = texture2D(uSeabed, texUv(refr)).rgb; // le bake est retourné comme le champ
 
   vec3 shallowCol = vec3(0.17, 0.46, 0.53);
   vec3 deepCol = vec3(0.03, 0.12, 0.26);

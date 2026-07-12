@@ -17,12 +17,15 @@ describe('replay', () => {
     const setup = (state: SimState) => {
       spawnEntity(state, 5, 5)
       spawnEntity(state, 20, 20)
+      // Marteau en case 0 et EN MAIN (via l'action au tick 20) : bâtir l'exige (G12).
+      grantItems(state, 1, { hammer: 1 })
       grantItems(state, 1, { wood: 40, stone: 10 })
     }
 
     // Actions planifiées à des ticks précis (le joueur 1 fonde et construit).
     const actionAt = (t: number): PlayerAction | undefined => {
       if (t === 10) return { type: 'light_fire' }
+      if (t === 20) return { type: 'set_active_slot', slot: 0 }
       if (t === 50) return { type: 'build', structure: 'chest', tx: 6, ty: 5 }
       if (t === 60) return { type: 'deposit', structureId: 2, item: 'wood', count: 7 }
       if (t === 90) return { type: 'build', structure: 'wall', tx: 4, ty: 4 }

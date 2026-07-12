@@ -6,7 +6,7 @@
  */
 import Phaser from 'phaser'
 import { poiClearings, type WorldMap } from '@braises/sim'
-import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
+import { clutterDepth, GROUND_PROP_DEPTH, LIFT_MARGIN_TILES, TILE_PX } from '../../render/framing'
 import { clutterAt, type PropKind, type SampleTerrain } from '../../render/clutter'
 import { windSway, WIND_TAKE } from '../../render/wind'
 import type { Warp } from '../../render/warp'
@@ -48,7 +48,14 @@ export class ClutterLayer {
       const x0 = Math.max(0, Math.floor(v.x / TILE_PX) - MARGIN_TILES)
       const y0 = Math.max(0, Math.floor(v.y / TILE_PX) - MARGIN_TILES)
       const x1 = Math.min(this.map.width - 1, Math.ceil((v.x + v.width) / TILE_PX) + MARGIN_TILES)
-      const y1 = Math.min(this.map.height - 1, Math.ceil((v.y + v.height) / TILE_PX) + MARGIN_TILES)
+      // Vers le BAS, la marge est celle du RELIEF, pas celle du pop : une touffe plantée
+      // sous l'écran y remonte de son lift (jusqu'à 10 tuiles). Avec les 2 tuiles d'avant,
+      // le décor s'évaporait du tiers bas de l'écran dès qu'on montait au nord — d'autant
+      // plus haut qu'on montait. Même marge que l'ombre et les nœuds (LIFT_MARGIN_TILES).
+      const y1 = Math.min(
+        this.map.height - 1,
+        Math.ceil((v.y + v.height) / TILE_PX) + LIFT_MARGIN_TILES + MARGIN_TILES,
+      )
       for (let ty = y0; ty <= y1 && used < MAX_SPRITES; ty++) {
         for (let tx = x0; tx <= x1 && used < MAX_SPRITES; tx++) {
           if (this.cleared.has(ty * this.map.width + tx)) continue // la clairière d'un lieu : rien n'y pousse

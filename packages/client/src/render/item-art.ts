@@ -24,6 +24,7 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   iron_axe: 'Hache de fer',
   iron_pickaxe: 'Pioche de fer',
   spear: 'Lance',
+  hammer: 'Marteau de construction',
   raw_meat: 'Viande crue',
   cooked_meat: 'Viande cuite',
   components: 'Composants',
@@ -144,6 +145,17 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x8d6b40).fillRect(6, 5, 1, 10)
     g.fillStyle(0x8a8a92).fillTriangle(3, 5, 10, 5, 7, 0) // pointe
     g.fillStyle(0xb4b4bc).fillTriangle(3, 5, 6, 5, 6, 1) // arête claire NO
+  },
+
+  // Marteau de construction : manche bois, tête de fer massive en travers.
+  // Silhouette volontairement TRAPUE — on doit le distinguer de la hache d'un
+  // coup d'œil dans la ceinture (même famille de couleurs, tout autre masse).
+  hammer: (g) => {
+    g.fillStyle(0x6a4c2c).fillRect(7, 6, 2, 9) // manche
+    g.fillStyle(0x8d6b40).fillRect(7, 6, 1, 9)
+    g.fillStyle(0x6c6c76).fillRect(3, 2, 10, 5) // la tête, en travers
+    g.fillStyle(0x8996a2).fillRect(3, 2, 10, 2) // dessus éclairé (lumière au NO)
+    g.fillStyle(0x53616e).fillRect(11, 2, 2, 5) // la panne, plus sombre
   },
 
   // Viande crue : pièce rouge avec os clair.

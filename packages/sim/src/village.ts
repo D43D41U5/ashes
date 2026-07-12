@@ -39,6 +39,7 @@ import {
   type ItemId,
   type StructureType,
 } from './items'
+import { heldSlot } from './inventory-actions'
 import { terrainAt, zoneAt } from './map'
 import type { SimState } from './sim'
 
@@ -331,6 +332,11 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
     case 'build': {
       const village = getVillageOf(state, actorId)
       if (!village) return reject('sans village — allumer un Feu d’abord')
+      // LE MARTEAU FAIT LE BÂTISSEUR (spec recolte.md G12). Même règle que le filon
+      // qui exige la pioche : l'outil doit être EN MAIN, pas au fond du sac. Bâtir
+      // cesse d'être le geste par défaut du clic pour devenir un métier qu'on
+      // s'équipe — et le clic nu ne peut plus poser un mur par accident.
+      if (heldSlot(actor)?.item !== 'hammer') return reject('il faut le marteau de construction en main')
       const { tx, ty } = action
       const radius = BALANCE.FIRE_BUILD_RADIUS
       if (distSq(village.fireTx, village.fireTy, tx, ty) > radius * radius) {

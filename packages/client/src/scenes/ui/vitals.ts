@@ -25,6 +25,9 @@ import { VITAL_ICON_PX, vitalIconKey, type VitalId } from '../../render/vital-ar
 import { hotbarBottom } from './hotbar'
 
 export interface Vitals {
+  /** Cachées tant que la vallée n'est pas générée : une jauge vide sur un écran
+   *  noir n'informe de rien (voir UIScene, `reveal`). */
+  setVisible(v: boolean): void
   update(s: {
     hp: number
     stamina: number
@@ -186,6 +189,9 @@ export function createVitals(scene: Phaser.Scene): Vitals {
   }
 
   return {
+    setVisible(v) {
+      root.setVisible(v)
+    },
     update(s) {
       root.setAlpha(s.inventoryOpen ? ALPHA_OPEN : ALPHA_WORLD)
 

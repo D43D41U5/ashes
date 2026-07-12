@@ -7,10 +7,13 @@
 import { zoneAt, type VillageTask, type WorldMap } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud } from '../hud-state'
-import { queueAction } from './world/hud-bridge'
+import { drainPickups, queueAction } from './world/hud-bridge'
 import { TILE_PX } from '../render/framing'
 import { createHotbar, type Hotbar } from './ui/hotbar'
+import { createFatalPanel, type FatalPanel } from './ui/fatal'
 import { createInventoryPanel, type InventoryPanel } from './ui/inventory-panel'
+import { createLoadingScreen, type LoadingScreen } from './ui/loading'
+import { createPickupToasts, type PickupToasts } from './ui/pickup-toasts'
 import { createVitals, type Vitals } from './ui/vitals'
 import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
 
@@ -28,6 +31,13 @@ const MAP_ZOOM_MAX = 8
 const MAP_ZOOM_STEP = 1.15
 /** Au-dessus de tout le HUD (et du journal, à profondeur par défaut). */
 const MAP_OVERLAY_DEPTH = 1000
+/** L'écran de chargement couvre TOUT (carte comprise) — il est seul au monde. */
+const LOADING_DEPTH = MAP_OVERLAY_DEPTH + 1
+/** L'écran de RUPTURE passe même devant le chargement : l'hôte peut mourir en pleine
+ *  génération, et il ne faut surtout pas laisser tourner une barre qui ne montera plus. */
+const FATAL_DEPTH = LOADING_DEPTH + 2
+/** L'overlay de debug (F1, DEV) reste au-dessus de tout. */
+const DEBUG_DEPTH = FATAL_DEPTH + 1
 /** Pastille de POI sur la carte : plus petite et plus froide que le marqueur joueur, qui doit primer. */
 const MAP_POI_RADIUS = 3
 const MAP_POI_FILL = 0xe8e0c8
@@ -42,10 +52,19 @@ export class UIScene extends Phaser.Scene {
   private hotbar!: Hotbar
   private vitals!: Vitals
   private inventoryPanel!: InventoryPanel
+  /** Les toasts « +2 BOIS (14) » — le butin s'inscrit à une place FIXE du HUD. */
+  private pickups!: PickupToasts
   private journalPanel!: Phaser.GameObjects.Container
   private journalText!: Phaser.GameObjects.Text
-  private welcome!: Phaser.GameObjects.Container
-  private startedAt = 0
+
+  // ─── L'attente ───
+  /** L'écran de chargement : seul à l'écran tant que la vallée n'est pas générée.
+   *  Vit encore le temps du fondu, puis se détruit — d'où le `undefined`. */
+  private loading: LoadingScreen | undefined
+  /** L'écran de rupture (hôte perdu) — il ne s'efface jamais et propose de recharger. */
+  private fatal!: FatalPanel
+  /** Le HUD a-t-il été découvert ? Bascule une seule fois, au premier instant jouable. */
+  private revealed = false
 
   // Carte plein écran (M) — visionneuse zoom/pan. Montée paresseusement (la
   // texture `map-demo` n'existe qu'après le `ready` de WorldScene).
@@ -79,9 +98,14 @@ export class UIScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Le flash d'alarme. `setAlpha(0)` en plus du remplissage transparent : c'est
+    // l'alpha de l'OBJET que l'alarme pilote (plus bas), et le laisser à 1 faisait
+    // d'un rectangle plein écran un objet « peint » aux yeux de qui inspecte la scène
+    // — alors qu'il ne peint rien. On dit ce qu'on fait : cet objet est éteint.
     this.alarmOverlay = this.add
       .rectangle(0, 0, this.scale.width, this.scale.height, 0x8a1a10, 0)
       .setOrigin(0)
+      .setAlpha(0)
 
     const style = {
       fontFamily: 'monospace',
@@ -90,15 +114,23 @@ export class UIScene extends Phaser.Scene {
       stroke: '#14141a',
       strokeThickness: 3,
     }
-    this.hud = this.add.text(10, 8, '', style)
+    // TOUT le HUD naît CACHÉ. Il ne paraîtra qu'au premier instant jouable (voir
+    // `reveal`) : la vallée met quelques secondes à se générer, et des jauges vides
+    // posées sur un écran noir ne racontent rien — elles ne font qu'annoncer un jeu
+    // qui n'est pas encore là.
+    this.hud = this.add.text(10, 8, '', style).setVisible(false)
 
     // Les vitales (bas-gauche) et la ceinture (bas-centre) — le HUD parle
     // désormais en cases et en jauges, plus en pavé de texte (spec inv R17-R18).
     this.vitals = createVitals(this)
+    this.vitals.setVisible(false)
     this.hotbar = createHotbar(this)
+    this.hotbar.setVisible(false)
     // L'écran d'inventaire (TAB) : la grille complète + le panneau de loot. Il ne
     // parle pas à l'hôte — il POSE ses actions, WorldScene les draine (spec R22).
     this.inventoryPanel = createInventoryPanel(this, (action) => queueAction(this.registry, action))
+    // Les toasts de récolte : ils s'empilent juste au-dessus des vitales.
+    this.pickups = createPickupToasts(this)
     // Le journal (J) : la chronique de la saison, la Mémoire v1.
     const panelBg = this.add.rectangle(0, 0, 720, 480, 0x14141a, 0.92).setOrigin(0.5).setStrokeStyle(2, 0x6b5a3a)
     const panelTitle = this.add
@@ -111,32 +143,30 @@ export class UIScene extends Phaser.Scene {
       .container(this.scale.width / 2, this.scale.height / 2, [panelBg, panelTitle, this.journalText])
       .setVisible(false)
 
-    // L'accueil (V10) : le temps d'un regard, les touches.
-    const wBg = this.add.rectangle(0, 0, 760, 300, 0x14141a, 0.92).setOrigin(0.5).setStrokeStyle(2, 0x8a4a2e)
-    const wTitle = this.add
-      .text(0, -120, 'BRAISES — la Veillée', { ...style, fontSize: '26px', color: '#e8842c' })
-      .setOrigin(0.5, 0)
-    const wText = this.add
-      .text(
-        0,
-        -70,
-        'Ton village est ton personnage. Récolte, bâtis, nourris les tiens —\net survis aux nuits. Le monde meurt au jour 60 ; la chronique retiendra le reste.\n\n' +
-          'ZQSD bouger · clic récolter/bâtir · F allumer ton Feu · ESPACE attaquer\nC bloquer · SHIFT sprinter · T donner · J la chronique · M la carte',
-        { ...style, fontSize: '15px', strokeThickness: 0, align: 'center' },
-      )
-      .setOrigin(0.5, 0)
-    this.welcome = this.add.container(this.scale.width / 2, this.scale.height / 2, [wBg, wTitle, wText])
-    this.startedAt = this.time.now
-    this.input.keyboard?.once('keydown', () => this.welcome.setVisible(false))
-
+    // Les erreurs de JEU (« trop tôt », « hors de portée ») : une bulle de 2,5 s, sous
+    // l'écran de chargement — pendant l'attente, rien ne peut d'ailleurs en produire
+    // (l'input est coupé, les snapshots ne tournent pas). Les erreurs qui TUENT la
+    // partie, elles, ne passent pas par ici : voir l'écran de rupture, juste en dessous.
     this.errorText = this.add
       .text(this.scale.width / 2, this.scale.height - 110, '', { ...style, color: '#ff7a6b' })
       .setOrigin(0.5, 0)
+      .setVisible(false) // un texte vide « visible » reste un objet du HUD à l'écran
+
+    // L'écran de RUPTURE (hôte mort) : caché, et prêt. Il peut s'ouvrir à N'IMPORTE
+    // quel moment — y compris pendant la génération, où il recouvre la barre.
+    this.fatal = createFatalPanel(this, FATAL_DEPTH, () => window.location.reload())
+
+    // L'écran de chargement — seul à l'écran jusqu'au premier instant jouable. Il porte
+    // la barre (le compte réel des passes de l'hôte) et rien d'autre : la popup d'accueil
+    // a été SUPPRIMÉE, touches comprises (voir ui/loading.ts). Il vit ICI et non dans
+    // WorldScene, dont la caméra est zoomée — un objet à scrollFactor 0 n'y serait cadré
+    // que par hasard.
+    this.loading = createLoadingScreen(this, LOADING_DEPTH)
 
     // L'overlay de debug (F1) — DEV seulement, et hors de cette classe : voir
     // l'en-tête de debug-overlay.ts (une méthode survivrait au build de prod).
     if (import.meta.env.DEV) {
-      this.debugText = createDebugOverlay(this, style, MAP_OVERLAY_DEPTH + 1)
+      this.debugText = createDebugOverlay(this, style, DEBUG_DEPTH)
     }
 
     // Carte plein écran : molette = zoom ancré au curseur, clic gauche maintenu
@@ -332,9 +362,57 @@ export class UIScene extends Phaser.Scene {
     for (const { poiId, dot } of this.mapPoiDots) dot.setVisible(known.includes(poiId))
   }
 
+  /**
+   * Le premier instant JOUABLE : la vallée est générée (`worldReady`) ET un premier
+   * snapshot a donné ses valeurs (`time`). Alors seulement l'écran de chargement
+   * tombe (en fondu) et le HUD paraît. Le joueur tombe directement dans le monde : plus
+   * aucune popup ne s'ouvre par-dessus lui.
+   */
+  private reveal(): void {
+    this.revealed = true
+    // Le HUD paraît DERRIÈRE le voile encore opaque : il apparaîtra avec le monde,
+    // dans le même fondu, au lieu de se poser dessus après coup.
+    this.hud.setVisible(true)
+    this.vitals.setVisible(true)
+    this.loading?.fadeOut(this.time.now)
+  }
+
+  /** L'erreur de jeu : une bulle qui s'efface d'elle-même en 2,5 s. */
+  private renderError(): void {
+    const error = getHud(this.registry, 'error')
+    if (error && this.time.now - error.at < 2500) {
+      this.errorText
+        .setText(error.reason)
+        .setAlpha(1 - (this.time.now - error.at) / 2500)
+        .setVisible(true)
+    } else {
+      this.errorText.setText('').setVisible(false)
+    }
+  }
+
   override update(): void {
+    // LA RUPTURE D'ABORD. Elle peut tomber à n'importe quel instant — y compris avant
+    // que le monde existe — et elle prime sur tout le reste : plus rien n'avancera.
+    const fatal = getHud(this.registry, 'fatal')
+    if (fatal) this.fatal.show(fatal.reason)
+
+    this.renderError()
+
     const time = getHud(this.registry, 'time')
+    if (!this.revealed) {
+      if (!getHud(this.registry, 'worldReady') || !time) {
+        // L'attente : la barre suit le compte de passes de l'hôte (et rien d'autre) ;
+        // le texte, lui, raconte — voir ui/loading.ts.
+        this.loading?.update(getHud(this.registry, 'loadProgress'), this.time.now)
+        return
+      }
+      this.reveal()
+    }
     if (!time) return
+
+    // Le fondu du voile sur le monde. Il s'éteint tout seul ; on lâche la référence
+    // quand il ne reste plus rien (l'écran s'est détruit).
+    if (this.loading?.fadeStep(this.time.now)) this.loading = undefined
 
     const zone = getHud(this.registry, 'zone')
     const members = getHud(this.registry, 'village') ?? 0
@@ -362,6 +440,10 @@ export class UIScene extends Phaser.Scene {
     const activeSlot = getHud(this.registry, 'activeSlot') ?? -1
     this.hotbar.update(inv, activeSlot)
 
+    // Le butin récolté : WorldScene POSE, on draine et on empile (fusion par item).
+    for (const p of drainPickups(this.registry)) this.pickups.push(p.item, p.count, this.time.now)
+    this.pickups.update(inv, this.time.now)
+
     // L'écran d'inventaire (TAB) : la grille complète, le glisser, le loot. Le
     // conteneur ouvert est déjà résolu par WorldScene (null s'il a disparu).
     const inventoryOpen = Boolean(getHud(this.registry, 'inventoryOpen'))
@@ -381,17 +463,6 @@ export class UIScene extends Phaser.Scene {
       skills: getHud(this.registry, 'skills') ?? {},
       inventoryOpen, // sac ouvert → les vitales redeviennent opaques
     })
-
-
-    const error = getHud(this.registry, 'error')
-    if (error && this.time.now - error.at < 2500) {
-      this.errorText.setText(error.reason).setAlpha(1 - (this.time.now - error.at) / 2500)
-    } else {
-      this.errorText.setText('')
-    }
-
-    // L'accueil s'efface tout seul.
-    if (this.welcome.visible && this.time.now - this.startedAt > 15000) this.welcome.setVisible(false)
 
     // Le journal : ouvert à la demande (J), ou de force à la fin de saison.
     const chronicle = getHud(this.registry, 'chronicle') ?? []

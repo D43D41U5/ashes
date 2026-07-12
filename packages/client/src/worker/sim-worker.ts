@@ -16,7 +16,7 @@ import {
   type SimState,
 } from '@braises/sim'
 import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type NodeDelta } from '../protocol'
-import { createVeillee, VEILLEE_CALENDAR_SCALE } from './veillee'
+import { createVeillee, LOAD_PHASES, VEILLEE_CALENDAR_SCALE } from './veillee'
 
 const post = (message: HostToClient): void => {
   ;(self as unknown as { postMessage(m: unknown): void }).postMessage(message)
@@ -91,7 +91,13 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
   if (msg.type === 'join') {
     if (sim) return // déjà en jeu : un second join empilerait une seconde boucle
     // Le scénario appartient à l'hôte (veillee.ts) : le client ne choisit rien.
-    const world = createVeillee()
+    // Chaque passe est annoncée AU FIL de la génération : le worker calcule sans
+    // relâche, mais ses `postMessage` sont livrés au fil de l'eau au thread
+    // principal — qui, lui, est libre de peindre sa barre. C'est tout l'intérêt de
+    // générer dans un Worker : l'attente n'est pas un écran figé.
+    const world = createVeillee((phase) => {
+      post({ type: 'progress', phase, done: LOAD_PHASES.indexOf(phase), total: LOAD_PHASES.length })
+    })
     sim = world.sim
     playerId = world.playerId
     // Liste complète des nœuds envoyée UNE fois ; on amorce l'ombre pour que le
@@ -107,7 +113,14 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
       calendarScale: VEILLEE_CALENDAR_SCALE,
       playerSpawn: world.spawn,
     })
-    startTicker()
+    // ON NE TIQUE PAS ENCORE. Le client a encore ~3 s de montage devant lui (bake du
+    // terrain, maillages, décor) : tiquer pendant ce temps, c'est faire vivre le monde
+    // sans personne pour le voir — et surtout, les snapshots de ces 60 ticks tomberaient
+    // dans le vide alors qu'ils emportent des flux À USAGE UNIQUE (`drainEvents` vide la
+    // file d'événements, `collectNodeDeltas` avance son ombre) : la chronique y perdrait
+    // ses premiers faits, dont « Acte I ». Le client dit `resume` quand il est debout.
+    // (Un serveur LAN, lui, ignorera ce silence : son monde n'attend personne — le client
+    // a de toute façon une garde qui jette les snapshots reçus avant d'être monté.)
   } else if (msg.type === 'input') {
     playerInput = { dx: msg.dx, dy: msg.dy, sprint: msg.sprint, block: msg.block }
     lastProcessedInput = msg.seq

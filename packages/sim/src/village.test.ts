@@ -23,10 +23,29 @@ function rejections(sim: SimState): string[] {
   return drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))
 }
 
+/** Donne un marteau et le MET EN MAIN — sans ça, l'entité ne bâtit rien (G12).
+ *  Il part en case 0 (la ceinture) : `set_active_slot` n'accepte qu'elle. */
+function equipHammer(sim: SimState, id: number): void {
+  grantItems(sim, id, { hammer: 1 })
+  const slot = sim.entities.find((e) => e.id === id)!.inventory.findIndex((s) => s?.item === 'hammer')
+  act(sim, id, { type: 'set_active_slot', slot })
+}
+
+/**
+ * Un fondateur ÉQUIPÉ : Feu allumé, matériaux, et LE MARTEAU EN MAIN — sans lui
+ * on ne bâtit plus rien (spec recolte.md G12). Il est posé en case 0 et tenu :
+ * les tests de construction supposent tous un bâtisseur en état de bâtir.
+ */
 function founder(sim: SimState, x: number, y: number): number {
   const id = spawnEntity(sim, x, y)
+  // Le marteau EN PREMIER : `grantItems` remplit les cases dans l'ordre, et
+  // `set_active_slot` n'accepte qu'une case de CEINTURE (les SLOTS.BELT premières).
+  // Donné après 100 bois, il atterrirait en case 6 — hors ceinture, donc intenable.
+  grantItems(sim, id, { hammer: 1 })
   grantItems(sim, id, { wood: 100, stone: 20 })
   act(sim, id, { type: 'light_fire' })
+  const slot = sim.entities.find((e) => e.id === id)!.inventory.findIndex((s) => s?.item === 'hammer')
+  act(sim, id, { type: 'set_active_slot', slot })
   return id
 }
 
@@ -83,6 +102,52 @@ describe('le Feu (A1)', () => {
     drainEvents(sim)
     act(sim, id, { type: 'light_fire' })
     expect(rejections(sim)).toEqual(['déjà membre d’un village'])
+  })
+})
+
+describe('le marteau de construction (G12)', () => {
+  it('SANS marteau en main, on ne bâtit RIEN — même avec le village et les matériaux', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 100, stone: 20 })
+    act(sim, id, { type: 'light_fire' }) // village fondé : le Feu, lui, ne demande pas de marteau
+    drainEvents(sim)
+    act(sim, id, { type: 'build', structure: 'wall', tx: 12, ty: 10 })
+    expect(rejections(sim)).toContain('il faut le marteau de construction en main')
+    expect(structureAt(sim.structures, 12, 10)).toBeUndefined()
+  })
+
+  it('le marteau AU FOND DU SAC ne suffit pas : il doit être EN MAIN', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 100, stone: 20, hammer: 1 })
+    act(sim, id, { type: 'light_fire' })
+    // On tient les MAINS NUES (-1), le marteau dort dans le sac.
+    act(sim, id, { type: 'set_active_slot', slot: -1 })
+    drainEvents(sim)
+    act(sim, id, { type: 'build', structure: 'wall', tx: 12, ty: 10 })
+    expect(rejections(sim)).toContain('il faut le marteau de construction en main')
+    expect(structureAt(sim.structures, 12, 10)).toBeUndefined()
+  })
+
+  it('il se forge AU FEU — donc aucun blocage circulaire : qui peut bâtir peut le forger', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 100, stone: 20, fiber: 10 })
+    act(sim, id, { type: 'light_fire' }) // le Feu est la station, et il ne coûte pas de marteau
+    drainEvents(sim)
+    act(sim, id, { type: 'craft', recipeId: 'hammer' })
+    expect(rejections(sim)).toEqual([])
+    expect(countOf(sim.entities[0]!.inventory, 'hammer')).toBe(1)
+  })
+
+  it('marteau en main : on bâtit', () => {
+    const sim = makeSim()
+    const id = founder(sim, 10.5, 10.5) // il l'a en main
+    drainEvents(sim)
+    act(sim, id, { type: 'build', structure: 'wall', tx: 12, ty: 10 })
+    expect(rejections(sim)).toEqual([])
+    expect(structureAt(sim.structures, 12, 10)?.type).toBe('wall')
   })
 })
 
@@ -290,6 +355,7 @@ describe('la vraisemblance des actions (anti-cheat, GDD §11)', () => {
     const chief = founder(sim, 10.5, 10.5)
     const member = spawnEntity(sim, 10.8, 10.5)
     act(sim, chief, { type: 'invite', targetEntityId: member })
+    equipHammer(sim, member) // un membre sans marteau ne bâtit rien (G12)
     grantItems(sim, member, { wood: 2 })
     act(sim, member, { type: 'build', structure: 'wall', tx: 13, ty: 10 })
     const wall = structureAt(sim.structures, 13, 10)!
@@ -348,6 +414,7 @@ describe('la démolition (A5)', () => {
     const chief = founder(sim, 10.5, 10.5)
     const member = spawnEntity(sim, 10.8, 10.5)
     act(sim, chief, { type: 'invite', targetEntityId: member })
+    equipHammer(sim, member) // un membre sans marteau ne bâtit rien (G12)
     grantItems(sim, member, { wood: 10 })
 
     // Le membre bâtit deux murs (2 bois chacun).

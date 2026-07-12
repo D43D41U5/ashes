@@ -30,7 +30,7 @@ import {
 } from '@braises/sim'
 import Phaser from 'phaser'
 import { createWorkerHost, type HostConnection } from '../host-connection'
-import { setHud } from '../hud-state'
+import { getHud, setHud } from '../hud-state'
 import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type ReadyMessage, type SnapshotMessage } from '../protocol'
 import {
   AMBIENT_DEPTH,
@@ -48,6 +48,7 @@ import {
   publishChronicle,
   publishError,
   publishOpenContainer,
+  publishPickup,
   publishPlayerVitals,
   publishSeasonEnded,
   publishTimeAndVillage,
@@ -62,6 +63,8 @@ import { WaterLayer } from './world/water-layer'
 import { AmbientLife } from './world/ambient-life'
 import { bindDebugKeys } from './world/debug-bindings'
 import { syncDebug } from './world/debug-overlay'
+import { BuildGhost } from './world/build-ghost'
+import { HitFx } from './world/hit-fx'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 
@@ -85,6 +88,16 @@ const RENDER_OFFSET_DECAY = 0.85
  * persistance.
  */
 const EVENT_LOG_CAP = 500
+
+/**
+ * Nos étapes de montage du monde, dans l'ordre (voir `onReady`) — la barre de chargement
+ * les compte après les passes de l'hôte. La liste est la SEULE source de vérité : `onReady`
+ * doit fournir une fonction pour chacune (c'est un `Record` typé, donc le compilateur refuse
+ * d'en oublier une ou d'en inventer une), et le total de la barre s'en déduit.
+ */
+const BUILD_PHASES = ['relief', 'bake', 'ground', 'water', 'pois', 'clutter', 'world'] as const
+type BuildPhase = (typeof BUILD_PHASES)[number]
+const BUILD_STEPS = BUILD_PHASES.length
 
 
 /** Les événements retenus pour la chronique de saison. */
@@ -149,13 +162,18 @@ export class WorldScene extends Phaser.Scene {
   /** Couvert de canopée lissé autour de l'avatar — piloté vers la valeur échantillonnée. */
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
   private worldReady = false
+  /** Les étapes de montage du monde qui restent à jouer — une par frame (voir `onReady`).
+   *  Non vide ⇒ le monde est en train de naître : `update` ne fait QUE le monter. */
+  private buildQueue: [phase: string, run: () => void][] = []
+  /** Combien de passes l'hôte s'est-il annoncé ? (lu de ses `progress`) — la barre est
+   *  la somme des siennes et des nôtres, sinon elle reculerait à la passation. */
+  private hostPhases = 0
   private worldSeed = 0
   private clutter?: ClutterLayer
   private ground!: GroundLayer
   private shade!: ShadeLayer
   private pois!: PoiLayer
   private shoreCliff!: ShoreCliff
-  private loadingText: Phaser.GameObjects.Text | null = null
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
   private lastSnapshotTick = 0
@@ -171,6 +189,10 @@ export class WorldScene extends Phaser.Scene {
   }
   /** Les sprites-miroirs du snapshot (structures, nœuds, cadavres, autres entités). */
   private view!: SnapshotView
+  /** Le retour de frappe (tressaillement + butin qui monte) — spec recolte.md G9. */
+  private hitFx!: HitFx
+  /** La silhouette de ce qu'on va poser, quand le mode construction est armé. */
+  private buildGhost!: BuildGhost
   /** Exposé pour le hook `__BRAISES__` (les smoke tests lisent `others.size`). */
   private get others(): ReadonlyMap<number, InterpolatedSprite> {
     return this.view.others
@@ -185,7 +207,6 @@ export class WorldScene extends Phaser.Scene {
   private myTemperature = 100
   /** Mon avatar télégraphie : la sim l'immobilise — la prédiction aussi. */
   private myWindup = false
-  private ghost!: Phaser.GameObjects.Rectangle
   /** DEV : dernière demande de TP consommée (horodatage de la carte) — évite de la rejouer. */
   private lastTeleportAt = 0
   /** Relief continu (Y-shear vertical) — source du rendu et du picking, créé au boot. */
@@ -200,6 +221,9 @@ export class WorldScene extends Phaser.Scene {
     // position/taille/depth viennent de `syncActor` à chaque frame.
     this.playerSprite = this.add.image(0, 0, 'spr-player').setOrigin(0.5, 1)
     this.view = new SnapshotView(this)
+    this.hitFx = new HitFx()
+    this.view.setHitFx(this.hitFx) // elle seule dessine les nœuds : à elle le tressaillement
+    this.buildGhost = new BuildGhost(this)
 
     const zoom = zoomForFraming(VISIBLE_TILES_TALL, TILE_PX, this.scale.height)
     this.cameras.main.setZoom(zoom)
@@ -207,6 +231,17 @@ export class WorldScene extends Phaser.Scene {
     // Le suivi ne démarre qu'une fois l'avatar posé au spawn (onReady) : `startFollow`
     // ancre la caméra sur la position COURANTE de la cible, et ici elle vaut (0, 0).
 
+    // La vallée n'existe pas encore : UIScene ne montrera que son écran de
+    // chargement tant que ce drapeau est faux (posé AVANT le lancement — un
+    // rechargement à chaud pourrait sinon lui laisser un `true` périmé du monde
+    // précédent, et le HUD paraîtrait sur du vide).
+    setHud(this.registry, 'worldReady', false)
+    // ET LE JOUEUR N'A PAS LA MAIN. Les bindings sont posés dès maintenant, mais devant
+    // un écran de chargement une touche n'a aucun sens : elle partirait quand même à
+    // l'hôte (qui, lui, obéit), ouvrirait le sac derrière le voile, ou peindrait un
+    // message par-dessus la barre. On rend l'input à la dernière étape du montage.
+    this.input.enabled = false
+    if (this.input.keyboard) this.input.keyboard.enabled = false
     this.scene.launch('ui')
 
     // Les handlers lisent l'état à la frappe : on passe des ACCESSEURS.
@@ -222,13 +257,6 @@ export class WorldScene extends Phaser.Scene {
       // de toute façon les actions sont des no-op sur structures/nodes vides.
       unproject: (px, py) => (this.warp ? this.warp.unproject(px, py) : { x: px, y: py }),
     })
-
-    // Le fantôme de construction, aligné sur la grille (suit le pointeur en update).
-    this.ghost = this.add
-      .rectangle(0, 0, TILE_PX, TILE_PX, 0xffffff, 0.22)
-      .setOrigin(0)
-      .setDepth(OVERLAY_DEPTH)
-      .setStrokeStyle(1, 0xffffff, 0.5)
 
     // Le mode debug (F1) — DEV seulement : en prod la condition est statiquement
     // fausse, le bloc et l'import sont éliminés du bundle.
@@ -246,16 +274,20 @@ export class WorldScene extends Phaser.Scene {
     this.host = createWorkerHost()
     this.host.onMessage((msg) => this.onHostMessage(msg))
     this.host.onError((message) => {
-      // L'hôte est mort : plus de snapshots. On le dit au joueur plutôt que
-      // de le laisser marcher dans un monde figé.
-      publishError(this.registry, `hôte perdu : ${message}`, this.time.now)
+      // L'hôte est mort : plus AUCUN snapshot n'arrivera. Ce n'est pas une erreur de
+      // jeu qu'on chasse au bout de trois secondes — c'est la fin de la partie. Elle
+      // va sur le canal de RUPTURE, qui reste à l'écran et propose de recharger.
+      setHud(this.registry, 'fatal', { reason: `hôte perdu : ${message}` })
     })
 
     // Onglet caché : le rAF de Phaser s'arrête mais PAS le timer du Worker —
     // sans pause, l'hôte répéterait le dernier input (avatar sans pilote) et
     // empilerait des snapshots. Veillée = solo : on fige le monde.
     const onVisibility = (): void => {
-      this.send({ type: document.hidden ? 'pause' : 'resume' })
+      if (document.hidden) this.send({ type: 'pause' })
+      // On ne « reprend » pas un monde qui n'a pas encore commencé : tant que les couches
+      // se montent, l'hôte doit rester à l'arrêt (c'est la dernière étape qui le lance).
+      else if (this.worldReady) this.send({ type: 'resume' })
     }
     document.addEventListener('visibilitychange', onVisibility)
     this.events.once('shutdown', () => {
@@ -263,80 +295,161 @@ export class WorldScene extends Phaser.Scene {
       this.host.terminate()
     })
 
-    this.send({ type: 'join', protocolVersion: PROTOCOL_VERSION })
     // La génération de la grande carte alpine prend quelques secondes côté worker.
-    this.loadingText = this.add
-      .text(this.scale.width / 2, this.scale.height / 2, 'Génération de la vallée alpine…', {
-        fontFamily: 'monospace',
-        fontSize: '20px',
-        color: '#e8c66a',
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(OVERLAY_DEPTH)
+    // L'attente est TENUE PAR UIScene (caméra neutre) : un texte à scrollFactor 0
+    // dans la caméra zoomée d'ici ne serait cadré que par chance.
+    this.send({ type: 'join', protocolVersion: PROTOCOL_VERSION })
   }
 
-  /** Le monde arrive de l'hôte : carte, calendrier, spawn (décisions d'hôte). */
+  /**
+   * Le monde arrive de l'hôte (carte, calendrier, spawn) — mais on ne le MONTE pas
+   * ici : on ne fait qu'aligner les étapes. Les monter d'un trait bloquait le thread
+   * principal ~3 secondes (mesuré : bake de la texture de terrain, maillages du sol,
+   * décor procédural…), et pendant ces 3 secondes l'écran de chargement était FIGÉ,
+   * barre coincée. Découpées, elles se jouent une par frame (voir `pumpBuild`) : le
+   * navigateur reprend la main entre chaque, la barre monte, le texte tourne.
+   */
   private onReady(msg: ReadyMessage): void {
     if (msg.protocolVersion !== PROTOCOL_VERSION) {
-      publishError(this.registry, `protocole hôte v${msg.protocolVersion} ≠ client v${PROTOCOL_VERSION}`, this.time.now)
+      // Rien ne sera jouable : on ne sait pas lire ce que cet hôte enverra. Rupture.
+      setHud(this.registry, 'fatal', {
+        reason: `protocole hôte v${msg.protocolVersion} ≠ client v${PROTOCOL_VERSION}`,
+      })
       return
     }
     this.playerId = msg.playerId
-    this.map = msg.map
-    // Garde anti-repli : un H trop grand replierait le sol sur les pentes sud.
-    // NE JAMAIS aplatir l'eau à 0 « pour la poser à plat » : sur les flancs
-    // (élévation ~0,65) ça creuse une marche de plus de 100 px sous chaque
-    // rivière, la berge sud se dessine par-dessus le lit et la petite rivière
-    // disparaît sous sa propre texture repliée. L'eau suit le relief ; c'est la
-    // FALAISE DE BERGE qui porte le warp (voir ShoreCliff).
-    if (this.map.elevation) {
-      assertNoFold(this.map.elevation, this.map.width, this.map.height, RELIEF_H, TILE_PX)
-    }
-    this.warp = createWarp((tx, ty) => this.sampleElevation(tx, ty), RELIEF_H, TILE_PX)
-    this.view.setWarp(this.warp)
+    this.worldSeed = msg.seed
     this.calendarScale = msg.calendarScale
+    this.map = msg.map
     const worldW = this.map.width * TILE_PX
     const worldH = this.map.height * TILE_PX
-    // Terrain baké à 1 px/tuile (texture = map.width×map.height px, sous la limite
-    // WebGL même pour une grande carte) puis étiré à la taille monde : les tuiles
-    // étant des aplats, l'étirement NEAREST est pixel-identique au bake 16 px/tuile.
-    this.bakeMapTexture()
-    this.ground = new GroundLayer(this, this.map, this.warp, 'map-demo')
-    // L'eau, par-dessus le sol : un shader qui défait le cisaillement du relief et
-    // réfracte le fond (le bake `map-demo` lui sert de lit).
-    this.water = new WaterLayer(this, this.map, 'map-demo')
-    this.shade = new ShadeLayer(this, this.map, this.warp)
-    this.pois = new PoiLayer(this, this.map, this.warp) // les lieux se voient enfin
-    this.shoreCliff = new ShoreCliff(this, this.map, this.warp)
-    this.worldSeed = msg.seed
-    this.view.setNodes(msg.nodes)
-    this.clutter = new ClutterLayer(this, this.map, this.worldSeed, this.warp)
-    this.ambientRect = this.add
-      .rectangle(0, 0, worldW, worldH, 0x000000, 0)
-      .setOrigin(0)
-      .setDepth(AMBIENT_DEPTH)
-    this.fireGlow = new FireGlow(this)
-    this.ambientLife = new AmbientLife(this, (tx, ty) =>
-      tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height ? -1 : (this.map.terrain[ty * this.map.width + tx] ?? -1),
-    )
-    this.cameras.main.setBounds(0, 0, worldW, worldH)
-    this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
-    this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
-    // Bornes posées et avatar au spawn : le suivi peut s'ancrer sans panoramique.
-    this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16)
-    // La carte plein écran (M, rendue par UIScene) a besoin de la carte : pour
-    // la mettre à l'échelle et pour nommer la zone/POI sous le curseur.
-    setHud(this.registry, 'mapData', this.map)
-    this.loadingText?.destroy()
-    this.loadingText = null
-    this.worldReady = true
+
+    // L'ORDRE EST CELUI D'AVANT, à la ligne près : découper n'est pas réordonner.
+    // Le `Record` typé par BUILD_PHASES est le garde-fou : ajouter une étape sans
+    // l'annoncer (ou l'inverse) ne compile pas — la barre ne peut donc pas se
+    // désaccorder en silence de ce qu'elle compte.
+    const steps: Record<BuildPhase, () => void> = {
+      relief: () => {
+        // Garde anti-repli : un H trop grand replierait le sol sur les pentes sud.
+        // NE JAMAIS aplatir l'eau à 0 « pour la poser à plat » : sur les flancs
+        // (élévation ~0,65) ça creuse une marche de plus de 100 px sous chaque
+        // rivière, la berge sud se dessine par-dessus le lit et la petite rivière
+        // disparaît sous sa propre texture repliée. L'eau suit le relief ; c'est la
+        // FALAISE DE BERGE qui porte le warp (voir ShoreCliff).
+        if (this.map.elevation) {
+          assertNoFold(this.map.elevation, this.map.width, this.map.height, RELIEF_H, TILE_PX)
+        }
+        this.warp = createWarp((tx, ty) => this.sampleElevation(tx, ty), RELIEF_H, TILE_PX)
+        this.view.setWarp(this.warp)
+      },
+      // Terrain baké à 1 px/tuile (texture = map.width×map.height px, sous la limite
+      // WebGL même pour une grande carte) puis étiré à la taille monde : les tuiles
+      // étant des aplats, l'étirement NEAREST est pixel-identique au bake 16 px/tuile.
+      bake: () => this.bakeMapTexture(),
+      ground: () => {
+        this.ground = new GroundLayer(this, this.map, this.warp, 'map-demo')
+      },
+      water: () => {
+        // L'eau, par-dessus le sol : un shader qui défait le cisaillement du relief et
+        // réfracte le fond (le bake `map-demo` lui sert de lit).
+        this.water = new WaterLayer(this, this.map, 'map-demo')
+        this.shade = new ShadeLayer(this, this.map, this.warp)
+      },
+      pois: () => {
+        this.pois = new PoiLayer(this, this.map, this.warp) // les lieux se voient enfin
+        this.shoreCliff = new ShoreCliff(this, this.map, this.warp)
+        this.view.setNodes(msg.nodes)
+      },
+      clutter: () => {
+        this.clutter = new ClutterLayer(this, this.map, this.worldSeed, this.warp)
+      },
+      world: () => {
+        this.ambientRect = this.add
+          .rectangle(0, 0, worldW, worldH, 0x000000, 0)
+          .setOrigin(0)
+          .setDepth(AMBIENT_DEPTH)
+        this.fireGlow = new FireGlow(this)
+        this.ambientLife = new AmbientLife(this, (tx, ty) =>
+          tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height ? -1 : (this.map.terrain[ty * this.map.width + tx] ?? -1),
+        )
+        this.cameras.main.setBounds(0, 0, worldW, worldH)
+        this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
+        this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
+        // Bornes posées et avatar au spawn : le suivi peut s'ancrer sans panoramique.
+        this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16)
+        // La carte plein écran (M, rendue par UIScene) a besoin de la carte : pour
+        // la mettre à l'échelle et pour nommer la zone/POI sous le curseur.
+        setHud(this.registry, 'mapData', this.map)
+        this.worldReady = true
+        // Le monde est debout (carte bakée, couches montées, avatar au spawn) : UIScene
+        // peut lever son écran de chargement et découvrir le HUD. On le dit EN DERNIER —
+        // le drapeau ne doit pas devancer ce qu'il annonce.
+        setHud(this.registry, 'worldReady', true)
+        // Le joueur reprend la main (elle lui était retirée pendant le montage), et
+        // l'hôte peut ENFIN faire tourner le monde : il nous attendait (sim-worker).
+        this.input.enabled = true
+        if (this.input.keyboard) this.input.keyboard.enabled = true
+        this.send({ type: 'resume' })
+      },
+    }
+    this.buildQueue = BUILD_PHASES.map((p) => [p, steps[p]])
+    this.publishBuildProgress() // la barre passe la main à l'étage client
+  }
+
+  /**
+   * Une étape de montage par frame. Entre deux, le navigateur peint : c'est tout
+   * l'objet du découpage. On ne pompe qu'une seule étape — deux d'affilée, et on
+   * aurait re-fabriqué le gel qu'on vient de défaire.
+   */
+  private pumpBuild(): void {
+    const step = this.buildQueue.shift()
+    if (!step) return
+    step[1]()
+    this.publishBuildProgress()
+  }
+
+  /**
+   * La barre, vue du client : les passes de l'hôte SUIVIES de nos étapes de montage.
+   * On ne connaît pas le détail du ladder de l'hôte — juste son total (`hostPhases`,
+   * lu de ses `progress`) : on ajoute le nôtre derrière. Le compte ne recule donc
+   * jamais, et 100 % veut vraiment dire « le monde est debout ».
+   */
+  private publishBuildProgress(): void {
+    const total = this.hostPhases + BUILD_STEPS
+    setHud(this.registry, 'loadProgress', {
+      phase: this.buildQueue[0]?.[0] ?? 'world',
+      done: total - this.buildQueue.length,
+      total,
+    })
   }
 
   override update(time: number, deltaMs: number): void {
+    // Le monde se monte encore : UNE étape, et on rend la main au navigateur (il a
+    // un écran de chargement à peindre). Deux étapes d'affilée refabriqueraient le
+    // gel qu'on cherche à défaire.
+    if (this.buildQueue.length > 0) {
+      this.pumpBuild()
+      return
+    }
     if (!this.worldReady) return
     // Les gestes d'inventaire posés par UIScene (elle ne parle pas à l'hôte).
     for (const action of drainQueuedActions(this.registry)) this.sendAction(action)
+    // Le clic MAINTENU : il récolte en boucle, à la cadence du rechargement.
+    this.inputs.tickHold()
+    // CE QU'ON VISE, à chaque frame — le curseur bouge, le nœud s'épuise, et la
+    // caméra glisse encore après la course : une visée figée mentirait aussitôt.
+    const aim = this.inputs.aim(this.input.activePointer)
+    const overlay = Boolean(getHud(this.registry, 'mapOpen')) || Boolean(getHud(this.registry, 'inventoryOpen'))
+    this.view.setAim(overlay ? null : aim.nodeId, aim.inRange)
+    this.buildGhost.update(
+      overlay ? null : this.inputs.selected(),
+      aim.tx,
+      aim.ty,
+      aim.inRange,
+      this.view.structures,
+      this.warp,
+    )
+    this.hitFx.update(time)
     this.ground.render(this.cameras.main)
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y, time)
@@ -386,14 +499,13 @@ export class WorldScene extends Phaser.Scene {
     const render = renderPosition(this.prediction, world, input, speedScale)
     this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player')
 
-    // Le fantôme de construction suit le pointeur, aligné sur la grille — la
-    // tuile réellement sous le curseur (unproject), pas la projection plate.
+    // La tuile réellement sous le curseur (unproject), pas la projection plate —
+    // elle nourrit la visée (`aim`, plus haut), la caméra de visée et le debug.
     const pointer = this.input.activePointer
     const pw = pointer.positionToCamera(this.cameras.main) as Phaser.Math.Vector2
     const groundPoint = this.warp.unproject(pw.x, pw.y)
     const gx = Math.floor(groundPoint.x / TILE_PX)
     const gy = Math.floor(groundPoint.y / TILE_PX)
-    this.ghost.setPosition(gx * TILE_PX, gy * TILE_PX - this.warp.lift(gx + 0.5, gy + 1))
 
     // DEV : exécute un TP demandé par la carte et nourrit l'overlay. Le corps vit
     // dans un module (pas une méthode) pour que la prod n'en garde rien — voir
@@ -435,7 +547,19 @@ export class WorldScene extends Phaser.Scene {
       this.onReady(msg)
       return
     }
+    if (msg.type === 'progress') {
+      // L'hôte bâtit. On relaie son compte, mais SUR NOTRE TOTAL : ses passes, puis nos
+      // étapes de montage. Sans ça, la barre atteindrait 100 % à la fin de sa besogne à
+      // lui, et se figerait là pendant qu'on monte les couches (~3 s mesurées).
+      this.hostPhases = msg.total
+      setHud(this.registry, 'loadProgress', { phase: msg.phase, done: msg.done, total: msg.total + BUILD_STEPS })
+      return
+    }
     if (msg.type !== 'snapshot') return // type inconnu : futur protocole, on ignore
+    // L'hôte tique déjà (il a envoyé son `ready`) alors que les couches se montent
+    // encore, une par frame : ce snapshot n'a nulle part où s'afficher — le warp, les
+    // nœuds, les sprites n'existent pas tous. On le JETTE ; le suivant est à 50 ms.
+    if (!this.worldReady) return
     // Rejette les snapshots périmés ou hors ordre (garanti trivial sur Worker,
     // vital sur un vrai réseau).
     if (msg.tick <= this.lastSnapshotTick) return
@@ -475,6 +599,12 @@ export class WorldScene extends Phaser.Scene {
     for (const event of msg.events) {
       if (event.type === 'action_rejected' && event.entityId === this.playerId) {
         publishError(this.registry, event.reason, this.time.now)
+      } else if (event.type === 'resource_harvested' && event.entityId === this.playerId) {
+        // LE COUP A PORTÉ — et on ne le sait QUE parce que la sim le dit (G9). Rien
+        // n'est affiché au clic : un « +1 bois » qui monte avant le refus de la sim
+        // serait un mensonge, et le client n'a pas le droit de mentir (invariant §3).
+        this.hitFx.hit(event.nodeId, this.time.now) // le nœud tressaille
+        publishPickup(this.registry, event.item, event.count) // et le butin s'inscrit au HUD
       } else if (event.type === 'alarm_raised' && event.villageId === this.myVillageId) {
         publishAlarm(this.registry, this.time.now)
       } else if (event.type === 'wolf_howl' && event.targetEntityId === this.playerId) {

@@ -57,6 +57,9 @@ describe('les murs face à la horde (A2)', () => {
     // mais le gradient passe par lui : le zombie frappe ce qui le bloque).
     const owner = spawnEntity(sim, 10.5, 6.5)
     sim.villages[0]!.memberIds.push(owner)
+    // Marteau EN MAIN : bâtir l'exige désormais (spec recolte.md G12).
+    grantItems(sim, owner, { hammer: 1 })
+    step(sim, [{ entityId: owner, dx: 0, dy: 0, action: { type: 'set_active_slot', slot: 0 } }])
     grantItems(sim, owner, { wood: 50 })
     for (let tx = 8; tx <= 12; tx++) {
       step(sim, [{ entityId: owner, dx: 0, dy: 0, action: { type: 'build', structure: 'wall', tx, ty: 8 } }])

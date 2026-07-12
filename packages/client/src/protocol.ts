@@ -91,6 +91,24 @@ export interface ReadyMessage {
   playerSpawn: { x: number; y: number }
 }
 
+/**
+ * L'hôte BÂTIT le monde (plusieurs secondes) et dit où il en est : une passe
+ * vient de commencer. Purement informatif — l'écran de chargement du client en
+ * fait sa barre, aucune décision de jeu n'en dépend, et un hôte qui n'en enverrait
+ * aucun resterait jouable (la barre attendrait simplement le `ready`). C'est
+ * pourquoi ce message N'INCRÉMENTE PAS `PROTOCOL_VERSION` : il est additif.
+ */
+export interface ProgressMessage {
+  type: 'progress'
+  /** Identifiant STABLE de la passe qui commence (`hydrology`, `nodes`…). L'écran de
+   *  chargement ne l'AFFICHE pas — il raconte autre chose (voir ui/loading.ts) : c'est
+   *  le rapport honnête de l'hôte, que lisent le smoke test et le debug. */
+  phase: string
+  /** Passes ACHEVÉES sur le total : `done / total` est la barre, telle quelle. */
+  done: number
+  total: number
+}
+
 /** Changement de stock d'un nœud (récolte/repousse) — seul état de nœud mutable. */
 export interface NodeDelta {
   id: number
@@ -113,4 +131,4 @@ export interface SnapshotMessage {
   events: SimEvent[]
 }
 
-export type HostToClient = ReadyMessage | SnapshotMessage
+export type HostToClient = ReadyMessage | SnapshotMessage | ProgressMessage

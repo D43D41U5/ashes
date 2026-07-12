@@ -26,6 +26,21 @@ export const TILE_PX = 16
  * dans renderNodes). */
 export const RELIEF_H = 150
 
+/**
+ * LA MARGE DE CULLING VERS LE BAS, en tuiles — et elle n'est PAS négociable.
+ *
+ * Le relief soulève tout vers le haut de l'écran (`screenY = worldY·TILE − elev·H`).
+ * Une tuile plantée SOUS le bord bas de la vue peut donc remonter DANS la vue, jusqu'à
+ * `RELIEF_H` px — soit ⌈150/16⌉ = 10 tuiles. Toute couche qui fenêtre son rendu à
+ * `camera.worldView` (sol, ombre, nœuds, décor, lieux…) doit élargir sa borne BASSE
+ * d'autant, sinon elle coupe ce qu'on voit encore : une bande vide en bas de l'écran,
+ * qui grandit avec l'altitude — le bug qu'a connu le décor, culé à 2 tuiles alors que
+ * le nord se soulève de 9.
+ *
+ * (Vers le HAUT, rien à faire : le lift ne fait que sortir davantage de la vue.)
+ */
+export const LIFT_MARGIN_TILES = Math.ceil(RELIEF_H / TILE_PX)
+
 /* ── Budget des profondeurs de la scène monde ────────────────────────────────
  *
  * UNE seule échelle de tri pour tout ce qui a des « pieds » : acteurs, nœuds,

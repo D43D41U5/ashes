@@ -94,6 +94,232 @@ const PROBE = () => {
 
 const SCENARIOS = {
   /**
+   * LE CHARGEMENT. Deux promesses à tenir : rien du HUD ne doit paraître avant que
+   * la vallée existe, et la barre doit dire la VÉRITÉ (le compte de passes de l'hôte,
+   * pas une animation). On RECHARGE la page pour assister à la naissance du monde —
+   * le harnais, lui, a déjà attendu `mapData` : à ce moment-là tout est fini.
+   *
+   * Le HUD vit SOUS l'écran de chargement (profondeur < LOADING_DEPTH) : ce qu'on
+   * compte ici, c'est donc ce que l'UI peindrait par-dessous. Pendant l'attente, la
+   * réponse doit être ZÉRO.
+   */
+  async chargement(page) {
+    const sonde = () => {
+      const scene = window.__BRAISES__.scene
+      const ui = scene.scene.get('ui')
+      const reg = scene.registry
+      const p = reg.get('loadProgress')
+      const peints = ui ? ui.children.list.filter((o) => o.visible && o.alpha > 0 && o.depth < 1001) : []
+      return {
+        pret: Boolean(reg.get('worldReady')),
+        passe: p ? `${p.done}/${p.total} ${p.phase}` : null,
+        frac: p ? p.done / p.total : 0,
+        hud: peints.length,
+        // Ce qui est peint, NOMMÉ : un compte tout seul n'aide personne à corriger.
+        qui: peints.map((o) => `${o.type}${o.text ? `("${String(o.text).slice(0, 24)}")` : ''}@${o.depth}`),
+        // L'écran de chargement lui-même (LOADING_DEPTH = 1001) : présent ou levé ?
+        ecran: ui ? ui.children.list.some((o) => o.depth === 1001) : false,
+      }
+    }
+
+    await page.goto(URL)
+    // Le hook est posé dès le `create` de WorldScene — donc AVANT la fin de la génération.
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry), { timeout: 30000 })
+
+    const passes = []
+    let hudPendant = 0
+    let quiPendant = []
+    let capture = false
+    let derniereAt = Date.now()
+    const t0 = Date.now()
+    for (;;) {
+      const s = await page.evaluate(sonde)
+      if (s.passe && passes.at(-1) !== s.passe) {
+        passes.push(s.passe)
+        derniereAt = Date.now()
+      }
+      if (s.hud > hudPendant) {
+        hudPendant = s.hud // le PIRE vu pendant l'attente
+        quiPendant = s.qui
+      }
+      // Un cliché à mi-chemin : la barre en plein travail.
+      if (!capture && !s.pret && s.frac >= 0.4) {
+        await page.screenshot({ path: `${OUT}/chargement.png` })
+        capture = true
+      }
+      if (s.pret) break
+      if (Date.now() - t0 > 90000) throw new Error('la vallée ne naît pas')
+      await page.waitForTimeout(100)
+    }
+    // Ce que la barre NE COUVRE PAS : dernier `progress` → monde debout (transfert de
+    // la carte + montage des couches côté client). Si ce trou grossit, il faudra le dire.
+    const assemblage = Date.now() - derniereAt
+
+    console.log(`génération : ${((Date.now() - t0) / 1000).toFixed(1)} s, ${passes.length} passes annoncées`)
+    for (const p of passes) console.log(`   · ${p}`)
+    console.log(hudPendant === 0
+      ? `   ✓ pendant l'attente, RIEN du HUD n'est peint (0 objet sous l'écran de chargement)`
+      : `   ✗ ${hudPendant} objet(s) du HUD peints pendant le chargement : ${quiPendant.join(', ')}`)
+    console.log(`   assemblage après la dernière passe : ~${assemblage} ms (ce que la barre ne couvre pas)`)
+
+    await page.waitForTimeout(1500) // le premier snapshot peuple le HUD
+    const apres = await page.evaluate(sonde)
+    await page.screenshot({ path: `${OUT}/chargement-fini.png` })
+    console.log(!apres.ecran
+      ? `   ✓ l'écran de chargement est levé`
+      : `   ✗ l'écran de chargement colle à la vitre`)
+    console.log(apres.hud >= 3
+      ? `   ✓ le HUD est là (${apres.hud} objets peints : jauges, ceinture, bandeau)`
+      : `   ✗ le HUD ne paraît pas (${apres.hud} objets peints)`)
+
+    return { passes: passes.length, hudPendant, assemblage, hudApres: apres.hud }
+  },
+
+  /**
+   * LA RUPTURE. L'hôte meurt : le message doit RESTER à l'écran (ce n'est pas une
+   * erreur de jeu qu'on chasse en trois secondes) et le bouton RECHARGER doit
+   * vraiment relancer une partie.
+   *
+   * On ne fabrique rien : on AVORTE la requête du worker au niveau réseau. Le
+   * navigateur émet alors un `error` sur l'objet Worker — exactement l'événement
+   * qu'il émettrait si le worker jetait une exception. C'est le vrai chemin.
+   */
+  async rupture(page) {
+    await page.route('**/sim-worker*', (route) => route.abort())
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry), { timeout: 30000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__.scene.registry.get('fatal')), { timeout: 20000 })
+
+    const motif = await page.evaluate(() => window.__BRAISES__.scene.registry.get('fatal').reason)
+    console.log(`rupture : « ${motif} »`)
+    await page.waitForTimeout(500)
+    await page.screenshot({ path: `${OUT}/rupture.png` })
+
+    // Elle PERSISTE : une erreur de jeu se serait effacée en 2,5 s.
+    await page.waitForTimeout(4000)
+    const tientEncore = await page.evaluate(() => {
+      const ui = window.__BRAISES__.scene.scene.get('ui')
+      return ui.children.list.some((o) => o.visible && o.depth === 1003) // FATAL_DEPTH
+    })
+    console.log(tientEncore
+      ? `   ✓ l'écran de rupture tient (toujours là après 4,5 s)`
+      : `   ✗ l'écran de rupture s'est effacé — le joueur reste devant un monde mort`)
+
+    // Le bouton RECHARGER, cliqué comme un joueur le cliquerait (pixels d'écran) —
+    // le worker, lui, est de nouveau servi : le rechargement doit VRAIMENT rejouer.
+    await page.unroute('**/sim-worker*')
+    const bouton = await page.evaluate(() => {
+      const canvas = window.__BRAISES__.scene.scale.canvas.getBoundingClientRect()
+      const gx = 1280 / 2
+      const gy = 720 / 2 + 105 // centre du bouton (voir ui/fatal.ts)
+      return { x: canvas.left + gx * (canvas.width / 1280), y: canvas.top + gy * (canvas.height / 720) }
+    })
+    await page.mouse.click(bouton.x, bouton.y)
+
+    const rejoue = await page
+      .waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('mapData')), { timeout: 90000 })
+      .then(() => true)
+      .catch(() => false)
+    console.log(rejoue
+      ? `   ✓ RECHARGER relance vraiment une partie (la vallée est de retour)`
+      : `   ✗ RECHARGER ne relance rien`)
+    await page.screenshot({ path: `${OUT}/rupture-recharge.png` })
+    return { motif, tientEncore, rejoue }
+  },
+
+  /**
+   * L'EAU RESTE-T-ELLE DANS SON LIT ? (garde-fou — `--dev`, il se téléporte)
+   *
+   * Le sol est CISAILLÉ par le relief (screenY = ty·TILE − élévation·H) et l'eau est un
+   * shader qui doit défaire ce cisaillement pour savoir de quelle tuile il parle. Une
+   * erreur de signe là-dedans ne se voit PAS au fond de la vallée (élévation nulle → pas
+   * de cisaillement) et devient monstrueuse sur un versant : l'eau se peint à des tuiles
+   * de sa berge, sur la roche. C'est exactement le bug qu'on a eu (le monde du shader
+   * était retourné : V est bottom-up en GL). Il ne doit pas revenir sans qu'on le sache.
+   *
+   * On ne juge pas à l'œil : on compte. Pour chaque pixel peint en eau, la tuile RÉELLE
+   * dessous (`warp.unproject` — le calcul même du picking) est-elle de l'eau ? On mesure
+   * la JUSTESSE de l'eau peinte, et non un « taux d'accord » global : sur un versant, la
+   * terre écrase tout (95 % de l'écran), si bien qu'une eau totalement à côté de ses
+   * berges décrochait encore 93 % d'accord. Ce qui trahit le bug, c'est l'eau peinte SUR
+   * LA ROCHE : 29 pixels quand le shader est juste, 1 490 quand il est retourné.
+   * On mesure sur le torrent le plus HAUT de la carte, là où le cisaillement est maximal.
+   */
+  async eauBerges(page) {
+    const site = await page.evaluate(() => {
+      const map = window.__BRAISES__.scene.registry.get('mapData')
+      let best = null
+      let bestE = -1
+      for (let ty = 6; ty < map.height - 6; ty += 3) {
+        for (let tx = 6; tx < map.width - 6; tx += 3) {
+          const i = ty * map.width + tx
+          const t = map.terrain[i]
+          if (t !== 4 && t !== 6) continue
+          const e = map.elevation[i]
+          if (e > bestE) {
+            bestE = e
+            best = { x: tx, y: ty }
+          }
+        }
+      }
+      return { ...best, elev: bestE }
+    })
+    console.log(`torrent le plus haut : (${site.x}, ${site.y}), élévation ${site.elev.toFixed(2)}`)
+
+    await page.evaluate(({ x, y }) => {
+      window.__BRAISES__.scene.registry.set('debugTeleport', { x, y, at: performance.now() })
+    }, { x: site.x, y: site.y })
+    await page.waitForTimeout(1700)
+    await page.screenshot({ path: `${OUT}/eau-berges.png` })
+
+    const r = await page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      const map = s.registry.get('mapData')
+      const cam = s.cameras.main
+      const W = map.width
+      const H = map.height
+      const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+      const c = document.createElement('canvas')
+      c.width = img.width
+      c.height = img.height
+      c.getContext('2d').drawImage(img, 0, 0)
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+      // « Peint en eau » : le bleu domine franchement (l'eau du shader ET le lit baké).
+      const bleu = (sx, sy) => {
+        const i = (sy * c.width + sx) * 4
+        return d[i + 2] > 70 && d[i + 2] > d[i] + 30
+      }
+      let peints = 0
+      let peintSurTerre = 0
+      let eauRatee = 0
+      for (let sy = 60; sy < c.height - 90; sy += 5) {
+        for (let sx = 20; sx < c.width - 20; sx += 5) {
+          const w = cam.getWorldPoint(sx, sy)
+          const p = s.warp.unproject(w.x, w.y) // LA vérité : la tuile sous ce pixel
+          const tx = Math.floor(p.x / 16)
+          const ty = Math.floor(p.y / 16)
+          if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue
+          const t = map.terrain[ty * W + tx]
+          const vraie = t === 4 || t === 6
+          const peinte = bleu(sx, sy)
+          if (peinte) peints++
+          if (peinte && !vraie) peintSurTerre++
+          if (vraie && !peinte) eauRatee++
+        }
+      }
+      return { peints, peintSurTerre, eauRatee }
+    })
+
+    const justesse = r.peints > 0 ? 1 - r.peintSurTerre / r.peints : 0
+    const pct = justesse * 100
+    console.log(`eau peinte : ${r.peints} pixels, dont ${r.peintSurTerre} SUR DE LA TERRE → justesse ${pct.toFixed(1)} %`)
+    console.log(pct >= 90
+      ? `   ✓ l'eau tient dans son lit, même sur le versant`
+      : `   ✗ l'eau a QUITTÉ ses berges (${pct.toFixed(1)} % de justesse — le cisaillement du shader est faux)`)
+    return { justesse, elev: site.elev }
+  },
+
+  /**
    * L'EAU. On marche jusqu'à la première rive et on la regarde — c'est la seule
    * façon de juger un shader. Trois cadrages : la berge, un gros plan sur la
    * houle, et le large.

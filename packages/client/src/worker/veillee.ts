@@ -15,6 +15,7 @@ import {
   spawnPoiMonsters,
   terrainAt,
   TERRAINS,
+  WORLDGEN_PHASES,
   type SimState,
   type WorldMap,
 } from '@braises/sim'
@@ -50,16 +51,34 @@ function walkableSpawn(map: WorldMap): { x: number; y: number } {
   return { x: cx + 0.5, y: cy + 0.5 }
 }
 
-export function createVeillee(): { sim: SimState; playerId: number; spawn: { x: number; y: number } } {
+/**
+ * Les passes de la naissance du monde, dans l'ordre — celles du terrain, puis
+ * celles de l'hôte (peuplement). L'écran de chargement les compte : `done/total`
+ * EST la barre, et rien d'autre. On n'invente pas une progression.
+ */
+export const LOAD_PHASES = [...WORLDGEN_PHASES, 'nodes', 'monsters'] as const
+export type LoadPhase = (typeof LOAD_PHASES)[number]
+
+/**
+ * `onPhase` est annoncé AVANT la passe qu'il nomme : quand il dit « hydrology »,
+ * les rivières se creusent à cet instant. Le compte de passes achevées est donc
+ * son index — la barre ne devance jamais le travail.
+ */
+export function createVeillee(onPhase: (phase: LoadPhase) => void = () => {}): {
+  sim: SimState
+  playerId: number
+  spawn: { x: number; y: number }
+} {
   // La carte alpine procédurale est la carte par défaut du client (roadmap :
   // substrat alpin → POIs). 1200×1800 : le terrain est baké à 1 px/tuile puis
   // étiré (WorldScene) → plus de limite de texture. Le vrai plafond restant est
   // le temps de génération (~7 s) et le transfert ; l'alpin PLEINE taille
   // (2400×3600, ~27 s de gen) attend une optimisation de la génération.
-  const map = generateAlpineTerrain(1200, 1800, VEILLEE_SEED)
+  const map = generateAlpineTerrain(1200, 1800, VEILLEE_SEED, onPhase)
   // Densité de nœuds : forêts réellement récoltables (~60k nœuds). Le transport
   // par deltas (nœuds au ready + stock changé par tick) découple ce nombre du
   // coût réseau ; l'index tuile→nœud garde la collision O(1).
+  onPhase('nodes')
   const nodes = generateNodes(map, VEILLEE_SEED, NODE_DENSITY)
   const sim = createSim(VEILLEE_SEED, {
     map,
@@ -77,6 +96,7 @@ export function createVeillee(): { sim: SimState; playerId: number; spawn: { x: 
   // La menace et le gibier viennent des POIs : sangliers aux tanières, Cendrés
   // aux repaires (spawnPoiMonsters lit map.zones). Villages PNJ toujours différés
   // (décision 2026-07-06) — on finit la carte vivante d'abord.
+  onPhase('monsters')
   spawnPoiMonsters(sim, VEILLEE_SEED)
   // Le joueur commence les mains vides (spec économie) — pas de kit de départ.
   const spawn = walkableSpawn(map)

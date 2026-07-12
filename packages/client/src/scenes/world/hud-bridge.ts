@@ -9,6 +9,7 @@ import {
   type Corpse,
   type Entity,
   type GameTime,
+  type ItemId,
   type PlayerAction,
   type SimEvent,
   type Structure,
@@ -95,6 +96,23 @@ export function queueAction(registry: Registry, action: PlayerAction): void {
   const queue = getHud(registry, 'pendingActions') ?? []
   queue.push(action)
   setHud(registry, 'pendingActions', queue)
+}
+
+/** WorldScene POSE une récolte reçue de la sim ; UIScene la draine et l'affiche
+ *  (les toasts « +2 BOIS »). Le sens est l'inverse de `queueAction` : ici c'est
+ *  le monde qui informe le HUD. Une FILE, pas une valeur : deux récoltes peuvent
+ *  tomber dans le même snapshot, et aucune ne doit être écrasée. */
+export function publishPickup(registry: Registry, item: ItemId, count: number): void {
+  const queue = getHud(registry, 'pickups') ?? []
+  queue.push({ item, count })
+  setHud(registry, 'pickups', queue)
+}
+
+/** Côté UIScene : récupère et vide la file des récoltes. */
+export function drainPickups(registry: Registry): { item: ItemId; count: number }[] {
+  const queue = getHud(registry, 'pickups') ?? []
+  if (queue.length > 0) setHud(registry, 'pickups', [])
+  return queue
 }
 
 /** Côté WorldScene : récupère et vide la file d'actions de l'UI. */

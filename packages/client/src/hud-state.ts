@@ -6,7 +6,7 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { Entity, GameTime, Inventory, PlayerAction, SkillId, Village, VillageTask, WorldMap } from '@braises/sim'
+import type { Entity, GameTime, Inventory, ItemId, PlayerAction, SkillId, Village, VillageTask, WorldMap } from '@braises/sim'
 import type Phaser from 'phaser'
 
 /** Ce que le joueur peut sélectionner pour bâtir (touches 1-5). */
@@ -24,6 +24,16 @@ export interface OpenContainerView {
 
 /** Une propriété par clé du registry — la seule source de vérité des clés. */
 export interface HudState {
+  /** La vallée est-elle générée ? Posé à `false` au boot de WorldScene, à `true`
+   *  quand l'hôte a livré son `ready` (carte, spawn, calendrier) et que les couches
+   *  de rendu sont montées. C'est le drapeau qui garde le HUD : tant qu'il est faux,
+   *  UIScene ne montre QUE son écran de chargement. */
+  worldReady: boolean
+  /** Où en est la naissance du monde — `done` passes achevées sur `total`, et le nom
+   *  de celle qui commence. `done/total` EST la barre de l'écran de chargement (on ne
+   *  la brode pas) ; `phase`, elle, ne s'affiche jamais — l'écran raconte autre chose
+   *  (ui/loading.ts). Absent tant que l'hôte n'a rien dit. */
+  loadProgress: { phase: string; done: number; total: number }
   /** Heure de jeu du dernier snapshot. */
   time: GameTime
   /** Nom de la zone où se trouve l'avatar (undefined hors zone nommée). */
@@ -46,8 +56,9 @@ export interface HudState {
   hp: number
   stamina: number
   wounds: Entity['wounds']
-  /** Structure sélectionnée pour le mode construction. */
-  selected: Buildable
+  /** Structure armée pour le mode construction — `null` = DÉSARMÉ, et c'est
+   *  l'état de départ : le clic nu ne bâtit jamais (spec recolte.md G1-G2). */
+  selected: Buildable | null
   /** L'écran d'inventaire (TAB) est-il ouvert ? (l'UI arrive au chantier 7). */
   inventoryOpen: boolean
   /** Le conteneur ouvert à côté du sac (coffre/cadavre), ou null. Posé par
@@ -55,6 +66,10 @@ export interface HudState {
   openContainer: { kind: 'structure' | 'corpse'; id: number } | null
   /** Son contenu, résolu chaque snapshot par WorldScene (null s'il a disparu). */
   openContainerView: OpenContainerView | null
+  /** File des récoltes reçues de la sim (WorldScene POSE, UIScene draine) : les
+   *  toasts « +2 BOIS (14) ». Une file, pas une valeur — deux récoltes peuvent
+   *  tomber dans le même snapshot. */
+  pickups: { item: ItemId; count: number }[]
   /** File d'actions posées par UIScene (l'écran d'inventaire) — WorldScene la
    *  draine et parle seule à l'hôte (l'UI ne connaît pas le transport). */
   pendingActions: PlayerAction[]
@@ -72,8 +87,13 @@ export interface HudState {
   playerPos: { x: number; y: number }
   /** La chronique de la saison, déjà mise en forme. */
   chronicle: string[]
-  /** Dernier message d'erreur à afficher (action rejetée, hôte perdu…). */
+  /** Dernier message d'erreur à afficher (action rejetée, avertissement…). Il s'efface
+   *  tout seul au bout de quelques secondes : c'est du bruit de partie. */
   error: { reason: string; at: number }
+  /** LA RUPTURE : l'hôte est mort (exception du Worker, transport rompu, protocole
+   *  désaccordé). Plus aucun snapshot n'arrivera — ce message-là ne s'efface JAMAIS et
+   *  ouvre l'écran de rupture (ui/fatal.ts), avec son bouton de rechargement. */
+  fatal: { reason: string }
   /** Dernière alarme de mon village (flash rouge). */
   alarm: { at: number }
   seasonEnded: boolean
