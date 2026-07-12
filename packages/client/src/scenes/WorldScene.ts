@@ -450,8 +450,9 @@ export class WorldScene extends Phaser.Scene {
     // contre les structures/nœuds de CE snapshot, pas du précédent.
     this.view.apply(msg, this.playerId, this.time.now)
     // Le conteneur ouvert (loot) résolu contre CE snapshot : une dépouille vidée
-    // s'efface (spec R16) → le panneau se referme au lieu de planter sur un id mort.
-    publishOpenContainer(this.registry, this.view.structures, this.view.corpses)
+    // s'efface (spec R16), ou le joueur s'en est éloigné hors de portée → le
+    // panneau se referme au lieu de planter sur un id mort ou de rester fantôme.
+    publishOpenContainer(this.registry, this.view.structures, this.view.corpses, this.predicted)
     this.processEvents(msg)
 
     // Mon entité autoritative : jauges HUD + réconciliation de la prédiction.

@@ -5,9 +5,9 @@
  * On ne teste JAMAIS le RÉSULTAT d'un geste (ça, c'est la sim, seule source de
  * vérité — invariant §3) : on teste seulement quelle ACTION le client envoie.
  */
-import type { Inventory } from '@braises/sim'
+import type { Inventory, Slot } from '@braises/sim'
 import { describe, expect, it } from 'vitest'
-import { dragToAction, firstFitSlot, quickMoveToAction } from './inventory-panel'
+import { dragIntentFrom, dragToAction, firstFitSlot, quickMoveToAction } from './inventory-panel'
 
 describe('dragToAction', () => {
   it('glisser d’une case du sac à une autre → move_slot', () => {
@@ -91,6 +91,64 @@ describe('dragToAction', () => {
       to: { side: 'container', slot: 0 },
       count: 6,
     })
+  })
+
+  it('glisser conteneur → conteneur (même côté, cases ≠) → aucune action', () => {
+    // Réarranger un conteneur en interne n'est pas supporté (transfer = cross-
+    // inventaire) : la sim refuserait « transfert sur place ». On n'envoie rien.
+    expect(
+      dragToAction({
+        from: { side: 'container', slot: 0 },
+        to: { side: 'container', slot: 1 },
+        split: false,
+        count: 5,
+        container: { kind: 'structure', id: 3 },
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('dragIntentFrom (décision split/move d’un glisser)', () => {
+  const stack = (n: number): Slot => ({ item: 'wood', count: n })
+  const P = (slot: number): { side: 'player'; slot: number } => ({ side: 'player', slot })
+  const C = (slot: number): { side: 'container'; slot: number } => ({ side: 'container', slot })
+
+  it('SHIFT + même côté joueur + case cible VIDE + pile de 10 → split, moitié', () => {
+    const intent = dragIntentFrom(P(0), P(4), true, stack(10), null, null)
+    expect(intent).toEqual({ from: P(0), to: P(4), split: true, count: 5, container: null })
+  })
+
+  it('SHIFT mais case cible OCCUPÉE → pas de split (pile entière)', () => {
+    // On ne scinde que vers du vide — la sim rejette sinon.
+    const intent = dragIntentFrom(P(0), P(4), true, stack(10), stack(2), null)
+    expect(intent).toEqual({ from: P(0), to: P(4), split: false, count: 10, container: null })
+  })
+
+  it('SHIFT mais source non scindable (pile de 1, moitié < 1) → pas de split', () => {
+    const intent = dragIntentFrom(P(0), P(4), true, { item: 'axe', count: 1 }, null, null)
+    expect(intent.split).toBe(false)
+    expect(intent.count).toBe(1)
+  })
+
+  it('SHIFT mais un côté touche le conteneur → pas de split (le split est intra-joueur)', () => {
+    const intent = dragIntentFrom(P(0), C(0), true, stack(10), null, { kind: 'structure', id: 1 })
+    expect(intent.split).toBe(false)
+    expect(intent.count).toBe(10)
+  })
+
+  it('pas de SHIFT → pas de split, la pile entière', () => {
+    const intent = dragIntentFrom(P(0), P(4), false, stack(10), null, null)
+    expect(intent).toEqual({ from: P(0), to: P(4), split: false, count: 10, container: null })
+  })
+
+  it('composition dragIntentFrom → dragToAction : un SHIFT-glisser vers du vide sort un split_slot de la moitié', () => {
+    const intent = dragIntentFrom(P(0), P(4), true, stack(10), null, null)
+    expect(dragToAction(intent)).toEqual({ type: 'split_slot', from: 0, to: 4, count: 5 })
+  })
+
+  it('composition : sans SHIFT vers une case occupée, c’est un move_slot de la pile entière', () => {
+    const intent = dragIntentFrom(P(0), P(4), false, stack(10), stack(2), null)
+    expect(dragToAction(intent)).toEqual({ type: 'move_slot', from: 0, to: 4 })
   })
 })
 

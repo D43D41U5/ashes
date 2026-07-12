@@ -10,7 +10,7 @@
  * Réimplémenter `moveWithin`/`pourInto` ici signerait leur divergence : on ne
  * le fait pas.
  */
-import { BALANCE, SLOTS, isStackable, stackSize, type Inventory, type ItemId, type PlayerAction, type SlotRef } from '@braises/sim'
+import { BALANCE, SLOTS, isStackable, stackSize, type Inventory, type ItemId, type PlayerAction, type Slot, type SlotRef } from '@braises/sim'
 import type Phaser from 'phaser'
 import type { OpenContainerView } from '../../hud-state'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
@@ -32,12 +32,39 @@ export interface DragIntent {
 }
 
 /**
+ * La décision « ce glisser est-il un split ou un simple déplacement ? » et la
+ * quantité concernée — la logique la plus fragile du geste, extraite du closure
+ * Phaser pour être prouvée ici. `sourceSlot` est la pile tirée (jamais vide, une
+ * case vide ne se glisse pas) ; `targetSlot` est ce qu'il y a sous le curseur au
+ * lâcher (null = case vide). On ne décide QUE l'intention ; `dragToAction` en
+ * tire l'action, la sim tranche le résultat.
+ */
+export function dragIntentFrom(
+  from: SlotRef,
+  to: SlotRef,
+  shiftKey: boolean,
+  sourceSlot: Slot,
+  targetSlot: Slot | null,
+  container: DragIntent['container'],
+): DragIntent {
+  const half = Math.floor(sourceSlot.count / 2)
+  // On ne scinde QUE dans le même sac, vers une case vide, et s'il y a de quoi
+  // couper (une pile de 1 ne se scinde pas) — sinon c'est un simple déplacement.
+  const split = shiftKey && from.side === 'player' && to.side === 'player' && targetSlot == null && half >= 1
+  return { from, to, split, count: split ? half : sourceSlot.count, container }
+}
+
+/**
  * Quelle ACTION un glisser produit-il ? Pur, donc c'est ici qu'on prouve la
  * logique. On ne décide jamais du RÉSULTAT — la sim le fera et fera foi.
  */
 export function dragToAction(d: DragIntent): PlayerAction | null {
   // Une case sur elle-même : rien.
   if (d.from.side === d.to.side && d.from.slot === d.to.slot) return null
+  // Réarranger un conteneur en interne (deux cases du même conteneur) n'est pas
+  // supporté : `transfer` est cross-inventaire, la sim rejette « transfert sur
+  // place ». On n'envoie rien plutôt qu'une action refusée.
+  if (d.from.side === 'container' && d.to.side === 'container') return null
   // Un côté touche au conteneur mais aucun n'est ouvert : impossible.
   if ((d.from.side === 'container' || d.to.side === 'container') && d.container === null) return null
   // Dès qu'un conteneur est en jeu, c'est un transfert case-à-case (jamais un
@@ -286,21 +313,18 @@ export function createInventoryPanel(scene: Phaser.Scene, send: (a: PlayerAction
     if (!dst) return
     const src = dragSource
     const srcSlot = invOf(src.side)[src.slot]
-    if (!srcSlot) return
-    const half = Math.floor(srcSlot.count / 2)
-    // On ne scinde QUE dans le même sac, vers une case vide, et s'il y a de quoi
-    // couper (une pile de 1 ne se scinde pas) — sinon c'est un simple déplacement.
-    const targetEmpty = invOf(dst.side)[dst.slot] == null
-    const split = Boolean(shiftKey?.isDown) && src.side === 'player' && dst.side === 'player' && targetEmpty && half >= 1
-    dispatch(
-      dragToAction({
-        from: { side: src.side, slot: src.slot },
-        to: { side: dst.side, slot: dst.slot },
-        split,
-        count: split ? half : srcSlot.count,
-        container,
-      }),
+    if (!srcSlot) return // rien à glisser d'une case vide
+    // La décision split/move est PURE (`dragIntentFrom`, testée) — le closure ne
+    // fait que lui donner l'état du geste (source, cible, SHIFT) et poster l'action.
+    const intent = dragIntentFrom(
+      { side: src.side, slot: src.slot },
+      { side: dst.side, slot: dst.slot },
+      Boolean(shiftKey?.isDown),
+      srcSlot,
+      invOf(dst.side)[dst.slot] ?? null,
+      container,
     )
+    dispatch(dragToAction(intent))
   })
   scene.input.on('dragend', () => {
     dragSource = null
