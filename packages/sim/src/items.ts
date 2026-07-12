@@ -139,6 +139,27 @@ export function addItems(inv: Inventory, items: ItemBag): ItemBag {
 }
 
 /**
+ * Verse UNE case dans un inventaire, USURE COMPRISE. Retourne ce qui n'a pas tenu
+ * (0 = tout est rentré).
+ *
+ * C'est la SEULE façon de faire voyager un objet usé. Passer par
+ * `addItems(toBag(…))` reconstruirait une case NEUVE : déposer une hache usée
+ * dans un coffre la réparerait gratuitement — une lessiveuse à outils. Une case
+ * usée ne se fond donc dans rien : elle part ENTIÈRE vers une case vide, ou pas
+ * du tout (l'appelant, lui, garde la sienne — rien ne se détruit).
+ */
+export function addSlot(inv: Inventory, slot: Slot): number {
+  if (slot.wear === undefined) {
+    const leftover = addItems(inv, { [slot.item]: slot.count })
+    return leftover[slot.item] ?? 0
+  }
+  const empty = inv.indexOf(null)
+  if (empty < 0) return slot.count
+  inv[empty] = { item: slot.item, count: slot.count, wear: slot.wear }
+  return 0
+}
+
+/**
  * Retire `cost`. TOUT OU RIEN (sémantique historique préservée) : si le compte
  * n'y est pas, l'inventaire n'est pas touché. On vide les cases dans l'ordre ; une
  * case n'est jamais laissée à `count: 0` (elle redevient `null`).

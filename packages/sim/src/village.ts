@@ -25,14 +25,13 @@ import { emitEvent } from './events'
 import { distSq } from './geometry'
 import {
   addItems,
+  addSlot,
   countOf,
-  freeRoomFor,
   hasItems,
   inventoryOf,
   isEmpty,
   makeInventory,
   removeItems,
-  toBag,
   type AccessLevel,
   type Inventory,
   type ItemBag,
@@ -144,12 +143,16 @@ export function hasAccess(state: SimState, entityId: number, s: Structure): bool
  * (un `Corpse`, le seul conteneur volatil du jeu) sur la tuile. Le sac du tas est
  * assez grand pour tout tenir (spec inventaire R11).
  */
-function spillOnGround(state: SimState, x: number, y: number, items: ItemBag): void {
+function spillOnGround(state: SimState, x: number, y: number, items: ItemBag, slots: Inventory = []): void {
+  const pile = inventoryOf(SLOTS.CORPSE, items)
+  // Les CASES tombent entières : une hache usée qui roule d'un coffre détruit ne
+  // se relève pas neuve (l'usure vit dans la case, spec inventaire R6).
+  for (const slot of slots) if (slot !== null) addSlot(pile, slot)
   state.corpses.push({
     id: state.nextCorpseId,
     x,
     y,
-    inventory: inventoryOf(SLOTS.CORPSE, items),
+    inventory: pile,
     decayAt: state.tick + COMBAT.CORPSE_TICKS,
   })
   state.nextCorpseId += 1
@@ -159,15 +162,36 @@ function spillOnGround(state: SimState, x: number, y: number, items: ItemBag): v
  * Transfère au plus `count` unités de `item`, et SEULEMENT ce qui tient à
  * destination. Retourne ce qui a réellement bougé (0 = rien ne rentre).
  *
- * L'ordre est la règle : on mesure la place AVANT de retirer de la source.
- * L'inverse (retirer puis pousser) DUPLIQUERAIT dans le vide ce qui déborde —
- * c'est exactement le bug que l'inventaire borné a rendu possible (critère A21).
+ * CASE PAR CASE, dans l'ordre. Ce n'est pas un détail d'implémentation : depuis
+ * que l'usure vit dans la case (spec inventaire R6), un transfert « en gros »
+ * (`removeItems` puis `addItems`) reconstruirait une case NEUVE à l'arrivée —
+ * déposer une hache usée dans un coffre la RÉPARERAIT. Une lessiveuse à outils.
+ * L'objet voyage donc AVEC sa case, et une case usée qui ne trouve pas de case
+ * vide à destination reste simplement chez elle (rien ne se crée, rien ne se
+ * perd — critère A21).
  */
 function transferItems(from: Inventory, to: Inventory, item: ItemId, count: number): number {
-  const moved = Math.min(count, countOf(from, item), freeRoomFor(to, item))
-  if (moved <= 0) return 0
-  removeItems(from, { [item]: moved })
-  addItems(to, { [item]: moved })
+  let remaining = Math.min(count, countOf(from, item))
+  let moved = 0
+  for (let i = 0; i < from.length && remaining > 0; i++) {
+    const slot = from[i]
+    if (!slot || slot.item !== item) continue
+    if (slot.wear !== undefined) {
+      // Une case usée ne se scinde pas et ne fusionne avec rien : tout ou rien.
+      if (slot.count > remaining || addSlot(to, slot) > 0) continue
+      from[i] = null
+      moved += slot.count
+      remaining -= slot.count
+      continue
+    }
+    const take = Math.min(slot.count, remaining)
+    const put = take - addSlot(to, { item, count: take })
+    if (put <= 0) break // la destination ne prend plus rien de cet item
+    slot.count -= put
+    if (slot.count <= 0) from[i] = null
+    moved += put
+    remaining -= put
+  }
   return moved
 }
 
@@ -221,7 +245,7 @@ export function applyStructureDamage(state: SimState, structureId: number, damag
     state.structures = state.structures.filter((st) => st.id !== structureId)
     // Un conteneur détruit répand son contenu (spec alignement R13).
     if (s.inventory && !isEmpty(s.inventory)) {
-      spillOnGround(state, s.tx + 0.5, s.ty + 0.5, toBag(s.inventory))
+      spillOnGround(state, s.tx + 0.5, s.ty + 0.5, {}, s.inventory)
     }
     if (byEntityId !== 0 && !state.monsters.some((m) => m.entityId === byEntityId)) {
       const actorVillage = getVillageOf(state, byEntityId)
@@ -376,13 +400,10 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // DÉTRUIT par les dégâts (applyStructureDamage) : c'est le même fait de jeu
       // — la structure s'en va — donc c'est la même règle. Le même tas au sol
       // reçoit le reliquat du remboursement et le contenu du coffre.
-      if (s.inventory && !isEmpty(s.inventory)) {
-        const content = toBag(s.inventory)
-        for (const item of Object.keys(content) as ItemId[]) {
-          spill[item] = (spill[item] ?? 0) + (content[item] ?? 0)
-        }
+      const content = s.inventory ?? []
+      if (Object.keys(spill).length > 0 || !isEmpty(content)) {
+        spillOnGround(state, s.tx + 0.5, s.ty + 0.5, spill, content)
       }
-      if (Object.keys(spill).length > 0) spillOnGround(state, s.tx + 0.5, s.ty + 0.5, spill)
       state.structures = state.structures.filter((st) => st.id !== s.id)
       emitEvent(state, { type: 'structure_removed', tick: state.tick, structureId: s.id })
       return

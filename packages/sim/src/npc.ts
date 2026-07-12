@@ -13,10 +13,21 @@
  * les expéditions et le tableau vivent dans leurs modules.
  */
 import { isThreatTo } from './alignment'
-import { BALANCE, COMBAT, NPC_AI, SLOTS, STRUCTURE_HP, TICK_DT_S, WORLD_EVENTS, type NodeType } from './balance'
+import {
+  BALANCE,
+  COMBAT,
+  NODE_DEFS,
+  NPC_AI,
+  SLOTS,
+  STRUCTURE_HP,
+  TICK_DT_S,
+  WEAPON_DAMAGE,
+  WORLD_EVENTS,
+  type NodeType,
+} from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { startAttack } from './combat'
-import { applyEconomyAction, type ResourceNode } from './economy'
+import { applyEconomyAction, toolYield, type ResourceNode } from './economy'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { countOf, freeRoomFor, type ItemId } from './items'
@@ -149,6 +160,64 @@ export function setPathTo(state: SimState, npc: Npc, entity: Entity, tx: number,
 
 export function near(entity: Entity, tx: number, ty: number, r = RANGE): boolean {
   return distSq(entity.x, entity.y, tx + 0.5, ty + 0.5) <= r * r
+}
+
+// ─── La main du PNJ (spec inventaire R8-R9) ───────────────────────────────
+//
+// L'objet TENU fait foi — pour tout le monde, PNJ compris : la sim ne fouille
+// plus le sac. Mais un PNJ n'a pas de hotbar pour s'armer la main. Sans ces deux
+// gardes il récolterait à mains nues sa hache dans le dos, et la milice
+// affronterait les hordes au poing, sa lance de naissance (worldgen) au fond du
+// sac : une économie et une défense qui s'effondrent EN SILENCE — aucun refus,
+// aucun événement, juste des chiffres qui baissent. On ne change PAS la règle,
+// on fait pour eux le geste que le joueur fait à la ceinture.
+
+/**
+ * Ramène une case dans la CEINTURE (seule région qui se tient en main, R7-R8) et
+ * retourne son nouvel index. Un simple ÉCHANGE de cases : rien ne se crée, rien
+ * ne se perd. Sans ça, une hache tombée en case 20 du grand sac d'un PNJ (40
+ * cases) ne servirait jamais — il la porterait toute la saison sans pouvoir s'en
+ * servir.
+ */
+function liftIntoBelt(entity: Entity, index: number): number {
+  if (index < SLOTS.BELT) return index
+  let dest = 0 // ceinture pleine : on troque, la case délogée part au sac
+  for (let i = 0; i < SLOTS.BELT && i < entity.inventory.length; i++) {
+    if (entity.inventory[i] === null) {
+      dest = i
+      break
+    }
+  }
+  const displaced = entity.inventory[dest] ?? null
+  entity.inventory[dest] = entity.inventory[index]!
+  entity.inventory[index] = displaced
+  return dest
+}
+
+/** Empoigne la meilleure case selon `score` (0 = inutile ici), sinon mains nues. */
+function equipBest(entity: Entity, score: (item: ItemId) => number): void {
+  let bestIndex = -1
+  let bestScore = 0
+  for (let i = 0; i < entity.inventory.length; i++) {
+    const slot = entity.inventory[i]
+    if (slot === null || slot === undefined) continue
+    const s = score(slot.item)
+    if (s > bestScore) {
+      bestScore = s
+      bestIndex = i // égalité : la première case gagne (déterminisme)
+    }
+  }
+  entity.activeSlot = bestIndex < 0 ? -1 : liftIntoBelt(entity, bestIndex)
+}
+
+/** Le meilleur outil PORTÉ pour cette famille (le barème vient de `toolYield`). */
+export function equipBestTool(entity: Entity, family: 'axe' | 'pickaxe' | null): void {
+  equipBest(entity, (item) => toolYield(item, family) - 1) // 0 = ce n'est pas un outil d'ici
+}
+
+/** L'arme la plus dangereuse PORTÉE (le barème vient de `WEAPON_DAMAGE`). */
+export function equipBestWeapon(entity: Entity): void {
+  equipBest(entity, (item) => WEAPON_DAMAGE[item] ?? 0)
 }
 
 // ─── Les transferts du PNJ, MESURÉS (spec inventaire R11) ─────────────────
@@ -294,7 +363,11 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
       npc.path = []
     }
     if (near(entity, node.tx, node.ty)) {
-      if (canAct(state, entity)) applyEconomyAction(state, entity.id, { type: 'harvest', nodeId: node.id })
+      if (canAct(state, entity)) {
+        // La main d'abord : sans outil EN MAIN, la récolte tombe à ×1 (R9).
+        equipBestTool(entity, NODE_DEFS[node.type].tool)
+        applyEconomyAction(state, entity.id, { type: 'harvest', nodeId: node.id })
+      }
       return
     }
     if (npc.path.length === 0 && !setPathTo(state, npc, entity, node.tx, node.ty)) {
@@ -463,6 +536,8 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
   const d2 = distSq(entity.x, entity.y, threat.x, threat.y)
   if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
     if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
+      // La lance en main, pas dans le dos : les dégâts viennent de l'arme TENUE (R9).
+      equipBestWeapon(entity)
       if (startAttack(state, entity, threat.x - entity.x, threat.y - entity.y)) {
         entity.cooldownUntil = state.tick + COMBAT.ATTACK_COOLDOWN_TICKS
       }

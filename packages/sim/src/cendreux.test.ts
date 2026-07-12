@@ -227,6 +227,9 @@ describe('tuer un Cendreux : 2 coups d\'arme basique, cadavre + loot redéposé 
     // donc il ne se déplace pas — la position reste stable pour les deux coups.
     const attackerId = spawnEntity(state, cendreuxEnt.x + 1, cendreuxEnt.y)
     grantItems(state, attackerId, { iron_axe: 1 })
+    // …et il la TIENT : depuis la spec inventaire R9, une hache au fond du sac
+    // frappe comme un poing (COMBAT.UNARMED_DAMAGE), pas à 10.
+    state.entities.find((e) => e.id === attackerId)!.activeSlot = 0
 
     // Deux coups via le vrai pipeline de wind-up (`startAttack` + `advanceCombat`
     // résolu dans `step`), pas de l'arithmétique sur constantes. Avant le fix

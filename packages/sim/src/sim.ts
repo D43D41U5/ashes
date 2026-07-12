@@ -17,7 +17,8 @@ import { advanceCendreux } from './cendreux'
 import { applyDebugAction, isDebugAction, refreshGodMode, type DebugAction } from './debug'
 import { advanceEconomy, applyEconomyAction, type EconomyAction, type ResourceNode } from './economy'
 import { emitEvent, type SimEvent } from './events'
-import { makeInventory, type Inventory, type ItemId, type SkillId } from './items'
+import { applyInventoryAction, isInventoryAction, type InventoryAction } from './inventory-actions'
+import { makeInventory, type Inventory, type SkillId } from './items'
 import { createEmptyMap, type WorldMap } from './map'
 import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
@@ -31,12 +32,13 @@ import { advanceTemperature, coldSpeedFactor } from './temperature'
 import { applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
 
 /**
- * L'union des actions possibles dans un tick (village + économie + combat).
+ * L'union des actions possibles dans un tick (village + économie + combat +
+ * inventaire).
  * `DebugAction` en fait partie pour transiter par le même canal (et donc être
  * capturée par le replay log), mais elle est INERTE hors sim de debug — voir
  * `debug.ts`, garde `state.debug`.
  */
-export type PlayerAction = VillageAction | EconomyAction | CombatAction | DebugAction
+export type PlayerAction = VillageAction | EconomyAction | CombatAction | InventoryAction | DebugAction
 
 export interface Entity {
   id: number
@@ -50,8 +52,14 @@ export interface Entity {
   temperature: number
   /** XP par métier (niveau dérivé — voir skillLevel). */
   skills: Partial<Record<SkillId, number>>
-  /** Usure agrégée par type d'outil (spec économie R6). */
-  wear: Partial<Record<ItemId, number>>
+  /**
+   * La case de CEINTURE tenue en main (spec inventaire R8). `-1` = mains nues.
+   * C'est elle, et elle seule, qui décide de l'outil et de l'arme : la sim ne
+   * fouille plus le sac à la place du joueur (R9). Une case active vide vaut
+   * mains nues. L'usure, elle, vit dans la case (`Slot.wear`) — `Entity.wear`,
+   * qui agrégeait par TYPE d'item (deux haches, un seul compteur), a disparu.
+   */
+  activeSlot: number
   /** Tick avant lequel récolte/craft sont refusés (rythme borné). */
   cooldownUntil: number
   /** Combat (spec combat R1-R7). */
@@ -250,7 +258,7 @@ export function spawnEntity(state: SimState, x: number, y: number, slots: number
     hunger: 100,
     temperature: 100,
     skills: {},
-    wear: {},
+    activeSlot: -1,
     cooldownUntil: 0,
     hp: 100,
     stamina: 100,
@@ -308,6 +316,8 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     if (action) {
       if (isDebugAction(action)) {
         applyDebugAction(state, input.entityId, action)
+      } else if (isInventoryAction(action)) {
+        applyInventoryAction(state, input.entityId, action)
       } else if (action.type === 'harvest' || action.type === 'craft' || action.type === 'eat') {
         applyEconomyAction(state, input.entityId, action)
       } else if (action.type === 'attack' || action.type === 'bandage' || action.type === 'loot_corpse') {

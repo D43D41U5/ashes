@@ -3,6 +3,9 @@ import { BALANCE, SLOTS, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
 import { drainEvents } from './events'
 import { countOf, freeRoomFor, inventoryOf, makeInventory } from './items'
 import { createEmptyMap } from './map'
+import { spawnMonster } from './monsters'
+import { weaponDamage } from './combat'
+import { WEAPON_DAMAGE } from './balance'
 import { foundNpcVillage } from './worldgen'
 import { advanceNpcs } from './npc'
 import { handleCold, handleHunger, handleSleep } from './npc-needs'
@@ -599,5 +602,111 @@ describe('anti-livelock des besoins : la cible est inatteignable', () => {
     expect(handleSleep(sim, npc, e)).toBe(false)
     expect(npc.path.length).toBe(0)
     expect(npc.sleeping).toBe(false)
+  })
+})
+
+/**
+ * L'OBJET EN MAIN FAIT FOI (spec inventaire R9) — et les PNJ n'ont pas d'UI.
+ *
+ * Sans `equipBestTool`/`equipBestWeapon`, la règle les laisserait à MAINS NUES :
+ * ils récolteraient ×1 avec une hache dans le sac et frapperaient les zombies à
+ * COMBAT.UNARMED_DAMAGE avec leur lance de naissance (worldgen). L'économie et la
+ * milice des villages PNJ s'effondreraient EN SILENCE — aucun refus, aucun
+ * `action_rejected` : juste des chiffres qui baissent. D'où ces gardes.
+ */
+describe('le PNJ arme sa main tout seul (A6/A9 côté PNJ)', () => {
+  /** Un village qui ne veut QUE du bois : grenier plein de tout, sauf de bois. */
+  function woodOnlyVillage(): SimState {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 40, fiber: 10, stew: 5 })
+    return sim
+  }
+
+  /** Les récoltes de bois VUES par la chronique, coup par coup. */
+  function woodSwings(sim: SimState, ticks: number): number[] {
+    const counts: number[] = []
+    for (let t = 0; t < ticks; t++) {
+      step(sim, [])
+      for (const e of drainEvents(sim)) {
+        if (e.type === 'resource_harvested' && e.item === 'wood') counts.push(e.count)
+      }
+    }
+    return counts
+  }
+
+  it('un PNJ bûcheron récolte au rythme d’un OUTIL (×2), pas à mains nues', () => {
+    const sim = woodOnlyVillage()
+    const e = npcEntity(sim)
+    grantItems(sim, e.id, { axe: 1 }) // dans le sac : personne ne la lui met en main
+    expect(e.activeSlot).toBe(-1) // …et il naît mains nues
+
+    const swings = woodSwings(sim, 60 * BALANCE.TICK_RATE_HZ)
+
+    expect(swings.length).toBeGreaterThan(0) // il a bel et bien bûcheronné
+    expect(swings.every((c) => c === 2)).toBe(true) // ×2 : la hache était EN MAIN
+    // …et elle s'est usée DANS SA CASE (preuve que c'est bien elle qui a servi).
+    const axe = e.inventory.find((s) => s?.item === 'axe')!
+    expect(axe.wear).toBeCloseTo(swings.length, 5)
+  })
+
+  it('témoin : le MÊME PNJ sans hache récolte à ×1 (le test ci-dessus ne passe pas pour rien)', () => {
+    const sim = woodOnlyVillage()
+    const swings = woodSwings(sim, 60 * BALANCE.TICK_RATE_HZ)
+    expect(swings.length).toBeGreaterThan(0)
+    expect(swings.every((c) => c === 1)).toBe(true)
+  })
+
+  it('une hache AU-DELÀ de la ceinture est ramenée dans la ceinture (sinon elle ne servirait jamais)', () => {
+    const sim = woodOnlyVillage()
+    const e = npcEntity(sim)
+    // Le grand sac du PNJ (40 cases) : sa hache est en case 20, hors ceinture. La
+    // règle dit que seule la CEINTURE se tient — il doit donc la ranger d'abord.
+    e.inventory[20] = { item: 'axe', count: 1 }
+    for (let i = 0; i < SLOTS.BELT; i++) e.inventory[i] = { item: 'stone', count: 1 } // ceinture pleine
+    const stones = countOf(e.inventory, 'stone')
+
+    const swings = woodSwings(sim, 60 * BALANCE.TICK_RATE_HZ)
+
+    expect(swings.length).toBeGreaterThan(0)
+    expect(swings.every((c) => c === 2)).toBe(true) // ×2 : il a su l'empoigner
+    expect(e.activeSlot).toBeLessThan(SLOTS.BELT) // …depuis la ceinture
+    expect(e.activeSlot).toBeGreaterThanOrEqual(0)
+    // CONSERVATION : l'échange de cases n'a rien créé, rien détruit.
+    expect(countOf(e.inventory, 'axe')).toBe(1)
+    expect(countOf(e.inventory, 'stone')).toBe(stones)
+  })
+
+  it('la milice frappe avec sa LANCE (le PNJ naît armé — worldgen), pas au poing', () => {
+    const sim = npcVillageSim(2)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 })
+    spawnMonster(sim, 'zombie', 15, 12) // dans le DEFEND_RADIUS du Feu (12,12)
+    run(sim, 5)
+
+    const e = npcEntity(sim)
+    expect(weaponDamage(e)).toBe(WEAPON_DAMAGE.spear) // et non COMBAT.UNARMED_DAMAGE
+  })
+
+  /**
+   * LE STADE QUI PEUT SE FERMER : la hache casse EN PLEIN COUP (`wearHeld` vide la
+   * case). Au tick suivant, `equipBestTool` ne trouve plus rien et le PNJ passe à
+   * mains nues — il doit CONTINUER (l'arbre n'exige pas d'outil), pas se figer sur
+   * une case active devenue vide.
+   */
+  it('la hache casse au milieu de la corvée : le PNJ continue à mains nues (aucun livelock)', () => {
+    const sim = woodOnlyVillage()
+    const e = npcEntity(sim)
+    e.inventory[1] = { item: 'axe', count: 1, wear: BALANCE.TOOL_DURABILITY - 1 } // un dernier coup
+    const before = countOf(granary(sim).inventory!, 'wood') + countOf(e.inventory, 'wood')
+
+    const swings = woodSwings(sim, 120 * BALANCE.TICK_RATE_HZ)
+
+    expect(countOf(e.inventory, 'axe')).toBe(0) // elle a cassé
+    expect(swings[0]).toBe(2) // le dernier coup outillé
+    expect(swings.slice(1).some((c) => c === 1)).toBe(true) // PROGRESSION : il continue, à mains nues
+    // CONSERVATION : tout le bois récolté est quelque part (sac ou grenier), rien
+    // ne s'est évaporé dans la case vide de la hache cassée.
+    const after = countOf(granary(sim).inventory!, 'wood') + countOf(e.inventory, 'wood')
+    expect(after - before).toBe(swings.reduce((a, b) => a + b, 0))
+    expect(e.activeSlot === -1 || e.inventory[e.activeSlot]?.item !== 'axe').toBe(true)
   })
 })

@@ -34,7 +34,8 @@ import {
 import { harvestFactor } from './alignment'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
-import { addItems, countOf, freeRoomFor, removeItems, type ItemId, type SkillId } from './items'
+import { heldSlot, wearHeld } from './inventory-actions'
+import { addItems, freeRoomFor, removeItems, type ItemId, type SkillId } from './items'
 import { poiClearings, terrainAt, zoneAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
@@ -105,13 +106,30 @@ function gainXp(state: SimState, entity: Entity, skill: SkillId, base: number): 
   }
 }
 
-/** Meilleur outil de la famille dans l'inventaire : fer ×3, basique ×2, mains nues ×1. */
-function toolMultiplier(entity: Entity, family: 'axe' | 'pickaxe' | null): { mult: number; toolItem: ItemId | null } {
-  if (!family) return { mult: 1, toolItem: null }
+/**
+ * Ce que vaut UN objet pour une famille d'outil : fer ×3, basique ×2, rien ×1.
+ *
+ * LA règle de rendement, en un seul endroit — `toolMultiplier` la lit pour la
+ * case tenue, et les PNJ la lisent pour choisir quoi empoigner (`npc.ts`). Deux
+ * copies divergeraient.
+ */
+export function toolYield(item: ItemId | null, family: 'axe' | 'pickaxe' | null): number {
+  if (!family || item === null) return 1
   const tier = TOOL_TIERS[family]
-  if (countOf(entity.inventory, tier.iron) > 0) return { mult: 3, toolItem: tier.iron }
-  if (countOf(entity.inventory, tier.basic) > 0) return { mult: 2, toolItem: tier.basic }
-  return { mult: 1, toolItem: null }
+  if (item === tier.iron) return 3
+  if (item === tier.basic) return 2
+  return 1 // on tient autre chose : ça ne sert à rien ici
+}
+
+/**
+ * Le rendement vient de l'objet TENU (spec inventaire R9). La sim NE FOUILLE
+ * PLUS LE SAC : oublier sa hache a un coût, et c'est ce coût qui donne son poids
+ * à la ceinture. `held` = on tient bien un outil de la famille (donc il s'use, et
+ * il ouvre les nœuds qui l'exigent).
+ */
+function toolMultiplier(entity: Entity, family: 'axe' | 'pickaxe' | null): { mult: number; held: boolean } {
+  const mult = toolYield(heldSlot(entity)?.item ?? null, family)
+  return { mult, held: mult > 1 }
 }
 
 export function applyEconomyAction(state: SimState, actorId: number, action: EconomyAction): void {
@@ -129,8 +147,11 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       if (!node || node.stock <= 0) return reject('rien à récolter')
       if (distSq(actor.x, actor.y, node.tx + 0.5, node.ty + 0.5) > range * range) return reject('trop loin')
       const def = NODE_DEFS[node.type]
-      const { mult, toolItem } = toolMultiplier(actor, def.tool)
-      if (def.requiresTool && !toolItem) return reject('il faut une pioche')
+      const { mult, held } = toolMultiplier(actor, def.tool)
+      // Le filon exige la pioche EN MAIN (spec inventaire R9) : l'avoir dans le
+      // sac ne suffit plus. Miner du fer en ayant laissé sa pioche au fond du
+      // sac est désormais un refus, pas un coup gratuit.
+      if (def.requiresTool && !held) return reject('il faut une pioche en main')
 
       const level = levelOf(actor, def.skill)
       // La Meute a une économie anémique (spec alignement R8) — mais jamais
@@ -158,16 +179,14 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
         emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id })
       }
 
-      if (toolItem) {
+      // L'usure frappe la case TENUE (spec inventaire R6) : deux haches ne
+      // partagent plus un compteur — celle qu'on tient casse seule.
+      if (held) {
         const wear = Math.max(
           BALANCE.TOOL_WEAR_MIN,
           1 - BALANCE.SKILL_WEAR_REDUCTION * levelOf(actor, 'crafting'),
         )
-        actor.wear[toolItem] = (actor.wear[toolItem] ?? 0) + wear
-        if ((actor.wear[toolItem] ?? 0) >= BALANCE.TOOL_DURABILITY) {
-          removeItems(actor.inventory, { [toolItem]: 1 })
-          delete actor.wear[toolItem]
-        }
+        wearHeld(actor, wear)
       }
 
       gainXp(state, actor, def.skill, BALANCE.XP_PER_GATHER)

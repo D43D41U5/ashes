@@ -10,7 +10,7 @@ import { ALIGNMENT, BALANCE, COMBAT, NPC_AI } from './balance'
 import { applyCombatAction, startAttack } from './combat'
 import { distSq } from './geometry'
 import { countOf, itemsIn } from './items'
-import { deposit, dropTask, followPath, near, setPathTo, withdraw, type Npc } from './npc'
+import { deposit, dropTask, equipBestWeapon, followPath, near, setPathTo, withdraw, type Npc } from './npc'
 import type { Entity, SimState } from './sim'
 import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
 import type { Structure, Village } from './village'
@@ -157,6 +157,7 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
       distSq(e.x, e.y, entity.x, entity.y) <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE,
   )
   if (foe && !entity.windup && state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
+    equipBestWeapon(entity) // l'arme TENUE fait foi (spec inventaire R9)
     if (startAttack(state, entity, foe.x - entity.x, foe.y - entity.y)) {
       entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
     }
@@ -183,6 +184,7 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
       return true
     }
     if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
+      equipBestWeapon(entity) // le siège aussi frappe avec l'arme TENUE (R9)
       if (startAttack(state, entity, target.tx + 0.5 - entity.x, target.ty + 0.5 - entity.y, { structureId: target.id })) {
         entity.cooldownUntil = state.tick + COMBAT.ATTACK_COOLDOWN_TICKS
       }

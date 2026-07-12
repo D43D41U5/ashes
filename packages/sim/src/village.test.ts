@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { seasonActFactor } from './alignment'
 import { ALIGNMENT, BALANCE, COMBAT, FOOD_VALUES, SLOTS, TERRAIN_GRASS } from './balance'
 import { drainEvents } from './events'
-import { countOf, inventoryOf } from './items'
+import { countOf, inventoryOf, makeInventory } from './items'
 import { createEmptyMap } from './map'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { getVillageOf, grantItems, structureAt } from './village'
@@ -200,6 +200,71 @@ describe('le coffre (A4)', () => {
     sim.entities[0]!.x = 10.5
     act(sim, chief, { type: 'deposit', structureId: chestId, item: 'wood', count: -3 })
     expect(rejections(sim)).toEqual(['accès refusé', 'trop loin', 'quantité invalide'])
+  })
+
+  /**
+   * LA LESSIVEUSE À OUTILS. Depuis que l'usure vit dans la CASE (spec inventaire
+   * R6), un transfert qui retire par quantité puis ré-ajoute reconstruit une case
+   * NEUVE : déposer une hache usée dans un coffre la RÉPARERAIT gratuitement.
+   * L'objet doit voyager AVEC sa case — dans les deux sens.
+   */
+  it('une hache usée déposée puis retirée reste usée (l’usure voyage avec la case)', () => {
+    const { sim, chief, chestId } = chestSim()
+    const owner = sim.entities.find((e) => e.id === chief)!
+    owner.inventory[0] = { item: 'axe', count: 1, wear: 5 }
+    const chest = sim.structures.find((s) => s.id === chestId)!
+
+    act(sim, chief, { type: 'deposit', structureId: chestId, item: 'axe', count: 1 })
+    expect(countOf(owner.inventory, 'axe')).toBe(0)
+    expect(chest.inventory!.find((s) => s?.item === 'axe')).toEqual({ item: 'axe', count: 1, wear: 5 })
+
+    act(sim, chief, { type: 'withdraw', structureId: chestId, item: 'axe', count: 1 })
+    expect(countOf(chest.inventory!, 'axe')).toBe(0)
+    expect(owner.inventory.find((s) => s?.item === 'axe')).toEqual({ item: 'axe', count: 1, wear: 5 })
+  })
+
+  /**
+   * `removeItems` pioche dans les cases DANS L'ORDRE : c'est la hache usée qui
+   * part la première. Le coffre doit recevoir CETTE usure-là, pas une moyenne, et
+   * la hache neuve doit rester au sac.
+   */
+  it('deux haches, une usée : celle qui part emporte SON usure, l’autre reste neuve', () => {
+    const { sim, chief, chestId } = chestSim()
+    const owner = sim.entities.find((e) => e.id === chief)!
+    owner.inventory[0] = { item: 'axe', count: 1, wear: 42 }
+    owner.inventory[1] = { item: 'axe', count: 1 }
+    const chest = sim.structures.find((s) => s.id === chestId)!
+
+    act(sim, chief, { type: 'deposit', structureId: chestId, item: 'axe', count: 1 })
+
+    expect(chest.inventory!.find((s) => s?.item === 'axe')).toEqual({ item: 'axe', count: 1, wear: 42 })
+    expect(owner.inventory.filter((s) => s?.item === 'axe')).toEqual([{ item: 'axe', count: 1 }])
+  })
+
+  it('un coffre DÉMOLI répand une hache usée, pas une hache neuve', () => {
+    const { sim, chief, chestId } = chestSim()
+    const owner = sim.entities.find((e) => e.id === chief)!
+    owner.inventory[0] = { item: 'axe', count: 1, wear: 33 }
+    act(sim, chief, { type: 'deposit', structureId: chestId, item: 'axe', count: 1 })
+    owner.inventory = makeInventory(1) // sac plein d'une case… vide : le remboursement la prendra
+    owner.inventory[0] = { item: 'stone', count: 20 }
+
+    act(sim, chief, { type: 'demolish', structureId: chestId })
+
+    const pile = sim.corpses[0]!
+    expect(pile.inventory.find((s) => s?.item === 'axe')).toEqual({ item: 'axe', count: 1, wear: 33 })
+  })
+
+  it('donner une hache usée n’en fait pas une hache neuve', () => {
+    const { sim, chief, member } = chestSim()
+    const giver = sim.entities.find((e) => e.id === chief)!
+    giver.inventory[0] = { item: 'axe', count: 1, wear: 7 }
+
+    act(sim, chief, { type: 'give', targetEntityId: member, item: 'axe', count: 1 })
+
+    const receiver = sim.entities.find((e) => e.id === member)!
+    expect(receiver.inventory.find((s) => s?.item === 'axe')).toEqual({ item: 'axe', count: 1, wear: 7 })
+    expect(countOf(giver.inventory, 'axe')).toBe(0)
   })
 })
 
