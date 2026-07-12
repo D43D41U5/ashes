@@ -10,7 +10,7 @@ import {
 } from './balance'
 import { generateNodes, nodeAt, skillLevel, treeJitter, type ResourceNode } from './economy'
 import { drainEvents } from './events'
-import { countOf, inventoryOf } from './items'
+import { countOf, freeRoomFor, inventoryOf, makeInventory, stackSize } from './items'
 import { createEmptyMap, zoneAt } from './map'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { TICKS_PER_SEASON_DAY } from './time'
@@ -98,6 +98,95 @@ describe('la récolte sous archétype Meute (économie anémique, spec alignemen
     const harvested = drainEvents(sim).find((e) => e.type === 'resource_harvested')
     expect(harvested).toBeDefined()
     expect(harvested!.type === 'resource_harvested' && harvested!.count).toBeGreaterThanOrEqual(1)
+  })
+})
+
+/**
+ * Le sac est BORNÉ (spec inventaire R10) : le nœud garde ce qui ne rentre pas.
+ * Rien ne tombe au sol, rien ne s'évapore — et si RIEN ne rentre, le coup n'a
+ * pas eu lieu (ni stock, ni cooldown, ni XP).
+ */
+describe('la capacité à la récolte (A10, A11)', () => {
+  /** Bûcheron de niveau 25 (skillLevel = √(xp/100)) : ×3 (fer) × 2 (niveau) = 6 bois par coup. */
+  const MASTER_XP = 62500
+
+  it('A10 : le nœud garde ce qui ne rentre pas dans le sac', () => {
+    // Contrôle : le MÊME coup, sac vide, rend bien 6 bois — c'est ce rendement-là
+    // qu'on va écrêter (sinon le test passerait pour une mauvaise raison).
+    const refTree = makeNode('tree', 11, 10)
+    const ref = makeSim([refTree])
+    const refId = spawnEntity(ref, 10.3, 10.5)
+    ref.entities[0]!.skills.woodcutting = MASTER_XP
+    grantItems(ref, refId, { iron_axe: 1 })
+    act(ref, refId, { type: 'harvest', nodeId: refTree.id })
+    expect(countOf(me(ref).inventory, 'wood')).toBe(6)
+
+    const tree = makeNode('tree', 11, 10)
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    me(sim).skills.woodcutting = MASTER_XP
+    // Trois cases : une pile de bois à 18/20 (2 places), une pile de pierre PLEINE
+    // (la case est bloquée), la hache. Il ne reste QUE 2 places de bois.
+    me(sim).inventory = makeInventory(3)
+    me(sim).inventory[0] = { item: 'wood', count: stackSize('wood') - 2 }
+    me(sim).inventory[1] = { item: 'stone', count: stackSize('stone') }
+    me(sim).inventory[2] = { item: 'iron_axe', count: 1 }
+    expect(freeRoomFor(me(sim).inventory, 'wood')).toBe(2)
+    const stock0 = sim.nodes[0]!.stock
+    drainEvents(sim)
+
+    act(sim, id, { type: 'harvest', nodeId: tree.id })
+
+    expect(countOf(me(sim).inventory, 'wood')).toBe(stackSize('wood')) // 18 + 2
+    expect(stock0 - sim.nodes[0]!.stock).toBe(2) // les 4 autres restent DANS l'arbre
+    // …et l'événement ne ment pas à la chronique : 2 bois, pas 6.
+    const harvested = drainEvents(sim).find((e) => e.type === 'resource_harvested')
+    expect(harvested!.type === 'resource_harvested' && harvested!.count).toBe(2)
+  })
+
+  // LE POINT DE CONCEPTION : on ÉCRÊTE, on ne refuse pas tant qu'il reste UNE place.
+  // Un refus ne pose AUCUN cooldown : un `harvest` qui refuserait un coup à 6 bois
+  // parce qu'il ne reste qu'une place se ferait retenter à 20 Hz, pour toujours
+  // (la garde de `npc.ts` ne libère la corvée qu'à ZÉRO place — les deux se complètent).
+  it('une seule place pour un coup qui en rendrait 6 : on écrête, on ne refuse pas', () => {
+    const tree = makeNode('tree', 11, 10)
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    me(sim).skills.woodcutting = MASTER_XP
+    me(sim).inventory = makeInventory(2)
+    me(sim).inventory[0] = { item: 'wood', count: stackSize('wood') - 1 }
+    me(sim).inventory[1] = { item: 'iron_axe', count: 1 }
+    expect(freeRoomFor(me(sim).inventory, 'wood')).toBe(1)
+    const stock0 = sim.nodes[0]!.stock
+    drainEvents(sim)
+
+    act(sim, id, { type: 'harvest', nodeId: tree.id })
+
+    expect(countOf(me(sim).inventory, 'wood')).toBe(stackSize('wood'))
+    expect(stock0 - sim.nodes[0]!.stock).toBe(1)
+    expect(rejections(sim)).toEqual([]) // aucun refus : le coup a bien eu lieu
+    expect(me(sim).cooldownUntil).toBeGreaterThan(sim.tick) // …et il coûte son cooldown (un refus, lui, n'en pose aucun)
+  })
+
+  it('A11 : sac plein → refus « sac plein », rien ne bouge : ni stock, ni cooldown, ni XP', () => {
+    const tree = makeNode('tree', 11, 10)
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    me(sim).inventory = makeInventory(1)
+    me(sim).inventory[0] = { item: 'stone', count: stackSize('stone') } // aucune place
+    me(sim).cooldownUntil = 0
+    const stock0 = sim.nodes[0]!.stock
+    drainEvents(sim)
+
+    act(sim, id, { type: 'harvest', nodeId: tree.id })
+
+    expect(sim.nodes[0]!.stock).toBe(stock0) // le coup n'a pas eu lieu
+    expect(countOf(me(sim).inventory, 'wood')).toBe(0)
+    expect(me(sim).cooldownUntil).toBe(0) // pas de cooldown armé
+    expect(me(sim).skills.woodcutting ?? 0).toBe(0) // pas d'XP
+    const events = drainEvents(sim)
+    expect(events.some((e) => e.type === 'resource_harvested')).toBe(false)
+    expect(events.flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))).toEqual(['sac plein'])
   })
 })
 

@@ -34,7 +34,7 @@ import {
 import { harvestFactor } from './alignment'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
-import { addItems, countOf, removeItems, type ItemId, type SkillId } from './items'
+import { addItems, countOf, freeRoomFor, removeItems, type ItemId, type SkillId } from './items'
 import { poiClearings, terrainAt, zoneAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
@@ -135,10 +135,20 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       const level = levelOf(actor, def.skill)
       // La Meute a une économie anémique (spec alignement R8) — mais jamais
       // nulle : plancher à 1, sinon le coup paie cooldown et XP pour rien.
-      const yielded = Math.min(
+      const wanted = Math.min(
         node.stock,
         Math.max(1, Math.floor(mult * (1 + BALANCE.SKILL_YIELD_BONUS * level) * harvestFactor(state, actorId))),
       )
+      // LE SAC EST BORNÉ (spec inventaire R10) : le nœud GARDE ce qui ne rentre
+      // pas — rien ne tombe au sol, rien ne s'évapore. On ÉCRÊTE tant qu'il reste
+      // une place, et on ne refuse QU'À zéro : un refus ne pose aucun cooldown,
+      // donc refuser un coup à 6 bois pour une seule place libre ferait retenter
+      // le PNJ à 20 Hz, pour toujours. À zéro place, le coup n'a pas eu lieu du
+      // tout (ni stock, ni usure, ni cooldown, ni XP) — et la garde de `npc.ts`
+      // (executeGather) libère la corvée sur ce même « zéro ».
+      const room = freeRoomFor(actor.inventory, def.item)
+      if (room <= 0) return reject('sac plein')
+      const yielded = Math.min(wanted, room)
       addItems(actor.inventory, { [def.item]: yielded })
       node.stock -= yielded
       if (node.stock <= 0) {
