@@ -993,9 +993,10 @@ export const SLOTS = {
   /** Les N premières cases du sac du joueur SONT la ceinture (la hotbar). */
   BELT: 6,
   PLAYER: 18,
-  /** Les PNJ ont un GRAND sac : leur boucle de corvées n'a pas de notion de « plein »
-   *  et lui en apprendre une rouvrirait le risque de livelock. Une DONNÉE, pas une
-   *  règle à part — la sim n'a qu'un seul jeu de règles. */
+  /** Les PNJ ont un GRAND sac : ils portent une journée de corvées sans buter sur
+   *  leur borne. Ils la voient quand même (npc.ts TASK_INTAKE, handleHunger) —
+   *  sinon un sac plein les figerait. Une DONNÉE, pas une règle à part : la sim
+   *  n'a qu'un seul jeu de règles. */
   NPC: 40,
   CHEST: 24,
   /** Assez grand pour que le cadavre ne tronque JAMAIS le butin (spec R11). */

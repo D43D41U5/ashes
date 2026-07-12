@@ -34,7 +34,7 @@ import {
 import { harvestFactor } from './alignment'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
-import { addItems, countOf, freeRoomFor, removeItems, type ItemId, type SkillId } from './items'
+import { addItems, countOf, removeItems, type ItemId, type SkillId } from './items'
 import { poiClearings, terrainAt, zoneAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
@@ -184,12 +184,17 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
           hasAccess(state, actorId, s),
       )
       if (!station) return reject(`station requise hors de portée : ${recipe.station}`)
-      // La place AVANT les matériaux : consommer d'abord, c'est fabriquer un objet
-      // qui n'a nulle part où aller — il serait détruit, et `item_crafted` mentirait
-      // à la chronique. Même règle que la récolte (spec R10) : le coup n'a pas eu lieu.
-      if (freeRoomFor(actor.inventory, recipe.output) < 1) return reject('sac plein')
       if (!removeItems(actor.inventory, recipe.inputs)) return reject('matériaux insuffisants')
-      addItems(actor.inventory, { [recipe.output]: 1 })
+      // La place se mesure APRÈS les intrants, car les consommer LIBÈRE des cases :
+      // un sac 18/18 dont une case vaut exactement les 2 fibres de la recette a bel
+      // et bien de quoi ranger la hache. Si la sortie ne tient TOUJOURS pas, on rend
+      // les intrants — ils reviennent forcément, ils occupaient au moins autant de
+      // place — et le coup n'a pas eu lieu (spec R10) : ni objet détruit, ni
+      // `item_crafted` menteur, ni cooldown, ni XP.
+      if (Object.keys(addItems(actor.inventory, { [recipe.output]: 1 })).length > 0) {
+        addItems(actor.inventory, recipe.inputs)
+        return reject('sac plein')
+      }
       gainXp(state, actor, 'crafting', BALANCE.XP_PER_CRAFT)
       actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
       emitEvent(state, {

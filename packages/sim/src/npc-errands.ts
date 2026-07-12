@@ -10,10 +10,10 @@ import { ALIGNMENT, BALANCE, COMBAT, NPC_AI } from './balance'
 import { applyCombatAction, startAttack } from './combat'
 import { distSq } from './geometry'
 import { countOf, itemsIn } from './items'
-import { deposit, dropTask, followPath, near, setPathTo, type Npc } from './npc'
+import { deposit, dropTask, followPath, near, setPathTo, withdraw, type Npc } from './npc'
 import type { Entity, SimState } from './sim'
 import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
-import { applyVillageAction, type Structure, type Village } from './village'
+import type { Structure, Village } from './village'
 import { granaries } from './village-board'
 
 /** Looter un cadavre par le pipeline standard (raid, spec alignement R13). */
@@ -107,12 +107,10 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
         return true
       }
       if (near(entity, own.tx, own.ty)) {
-        applyVillageAction(state, entity.id, {
-          type: 'withdraw',
-          structureId: own.id,
-          item: 'berries',
-          count: ALIGNMENT.GIFT_BERRIES,
-        })
+        // Retrait MESURÉ : sac plein (ou grenier vidé entre-temps) → rien ne sort.
+        // Partir « donner » les mains vides, c'est une expédition à vide qui se
+        // fera refuser son dépôt à l'arrivée. On décroche ici.
+        if (withdraw(state, entity, own.id, 'berries', ALIGNMENT.GIFT_BERRIES) === 0) return done()
         errand.stage = 'go'
         return true
       }
@@ -124,13 +122,11 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
       const target = foreignGranary(state, errand.targetVillageId)
       if (!target) return done()
       if (near(entity, target.tx, target.ty)) {
-        // Le dépôt est ouvert (spec R11) : le don du Foyer.
-        applyVillageAction(state, entity.id, {
-          type: 'deposit',
-          structureId: target.id,
-          item: 'berries',
-          count: countOf(entity.inventory, 'berries'),
-        })
+        // Le dépôt est ouvert (spec R11) : le don du Foyer. Mesuré, et jamais à
+        // vide : un `count: 0` ne serait qu'un `action_rejected` de plus.
+        const count = countOf(entity.inventory, 'berries')
+        if (count === 0) return done()
+        deposit(state, entity, target.id, 'berries', count) // grenier plein : il garde et rentre
         errand.stage = 'home'
         npc.path = []
         return true

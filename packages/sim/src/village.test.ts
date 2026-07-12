@@ -237,6 +237,27 @@ describe('la vraisemblance des actions (anti-cheat, GDD §11)', () => {
     expect(countOf(sim.entities.find((e) => e.id === chief)!.inventory, 'wood')).toBe(chiefWoodBefore)
   })
 
+  // Démolir un conteneur et le DÉTRUIRE aux dégâts sont le même fait de jeu : la
+  // structure s'en va. Son contenu, lui, ne s'évapore pas — il tombe au sol.
+  it('démolir un coffre plein répand son contenu au sol (comme un coffre détruit)', () => {
+    const sim = makeSim()
+    const id = founder(sim, 10.5, 10.5) // wood 100 → 90 après le Feu
+    act(sim, id, { type: 'build', structure: 'chest', tx: 11, ty: 10 })
+    const chest = structureAt(sim.structures, 11, 10)!
+    act(sim, id, { type: 'deposit', structureId: chest.id, item: 'wood', count: 80 })
+    const carried = countOf(sim.entities[0]!.inventory, 'wood')
+    drainEvents(sim)
+
+    act(sim, id, { type: 'demolish', structureId: chest.id })
+
+    expect(structureAt(sim.structures, 11, 10)).toBeUndefined()
+    const tas = sim.corpses.find((c) => c.x === 11.5 && c.y === 10.5)
+    expect(tas).toBeDefined()
+    expect(countOf(tas!.inventory, 'wood')).toBe(80) // les 80 bois sont au sol, pas dans le néant
+    // Le remboursement (floor(4 × 0.5) = 2) va au propriétaire, comme toujours.
+    expect(countOf(sim.entities[0]!.inventory, 'wood')).toBe(carried + 2)
+  })
+
   it('set_access exige la portée et émet access_changed', () => {
     const sim = makeSim()
     const id = founder(sim, 10.5, 10.5)

@@ -179,7 +179,7 @@ function transferItems(from: Inventory, to: Inventory, item: ItemId, count: numb
  * `count` est ce qui a RÉELLEMENT été déposé : on ne se fait pas créditer d'un
  * don qui n'a pas eu lieu, et `gift_given` (chronique, réputation) dit vrai.
  */
-export function creditForeignDeposit(
+function creditForeignDeposit(
   state: SimState,
   actorId: number,
   s: Structure,
@@ -371,8 +371,18 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // Son sac est borné, et il peut même n'être pas là : ce qu'il ne prend pas
       // se répand sur la tuile démolie, comme le contenu d'un conteneur détruit.
       const owner = state.entities.find((e) => e.id === s.ownerId)
-      const leftover = addItems((owner ?? actor).inventory, refund)
-      if (Object.keys(leftover).length > 0) spillOnGround(state, s.tx + 0.5, s.ty + 0.5, leftover)
+      const spill = addItems((owner ?? actor).inventory, refund)
+      // Un conteneur DÉMOLI répand son contenu, exactement comme un conteneur
+      // DÉTRUIT par les dégâts (applyStructureDamage) : c'est le même fait de jeu
+      // — la structure s'en va — donc c'est la même règle. Le même tas au sol
+      // reçoit le reliquat du remboursement et le contenu du coffre.
+      if (s.inventory && !isEmpty(s.inventory)) {
+        const content = toBag(s.inventory)
+        for (const item of Object.keys(content) as ItemId[]) {
+          spill[item] = (spill[item] ?? 0) + (content[item] ?? 0)
+        }
+      }
+      if (Object.keys(spill).length > 0) spillOnGround(state, s.tx + 0.5, s.ty + 0.5, spill)
       state.structures = state.structures.filter((st) => st.id !== s.id)
       emitEvent(state, { type: 'structure_removed', tick: state.tick, structureId: s.id })
       return

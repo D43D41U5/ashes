@@ -13,13 +13,13 @@
  * les expéditions et le tableau vivent dans leurs modules.
  */
 import { isThreatTo } from './alignment'
-import { BALANCE, COMBAT, NPC_AI, SLOTS, STRUCTURE_HP, TICK_DT_S, type NodeType } from './balance'
+import { BALANCE, COMBAT, NPC_AI, SLOTS, STRUCTURE_HP, TICK_DT_S, WORLD_EVENTS, type NodeType } from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { startAttack } from './combat'
 import { applyEconomyAction, type ResourceNode } from './economy'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
-import { countOf, type ItemId } from './items'
+import { countOf, freeRoomFor, type ItemId } from './items'
 import { handleCold, handleHunger, handleSleep } from './npc-needs'
 import { assignErrands, handleErrand } from './npc-errands'
 import { findPath } from './pathfinding'
@@ -189,9 +189,36 @@ export function withdraw(
 
 // ─── Réclamer/rendre les tâches du tableau (spec R5) ─────────────────────
 
-function claimTask(village: Village, npc: Npc): void {
+/**
+ * Ce que la corvée doit pouvoir FAIRE ENTRER dans le sac : la récolte y met sa
+ * récolte, la cuisine y met ses ingrédients ET son ragoût, la réparation son bois.
+ *
+ * Sans place pour ça, la corvée est impossible — et un PNJ qui la réclame quand
+ * même la rendrait au premier transfert à vide… pour la re-réclamer au tick suivant
+ * (même priorité, même id, rien n'a bougé dans le monde) : une boucle sèche à
+ * 20 Hz. Les gardes des exécutants libèrent la tâche POUR LES AUTRES ; celle-ci
+ * empêche CE PNJ de la reprendre. Il faut les deux.
+ *
+ * `stew` est dans la liste parce que le piège ne se ferme pas qu'au `fetch` : un
+ * PNJ peut atteindre le feu ses ingrédients en poche et n'avoir aucune case pour
+ * le ragoût — le craft refuse alors à chaque tick, sans jamais poser de cooldown.
+ */
+const TASK_INTAKE: Record<TaskKind, ItemId[]> = {
+  gather_berries: ['berries'],
+  gather_wood: ['wood'],
+  gather_fiber: ['fiber'],
+  cook_stew: ['berries', 'fiber', 'stew'],
+  repair: ['wood'],
+}
+
+/** Le sac peut-il recevoir ce que cette corvée va y mettre ? (conservateur : tout ou rien) */
+function canTakeInFor(entity: Entity, kind: TaskKind): boolean {
+  return TASK_INTAKE[kind].every((item) => freeRoomFor(entity.inventory, item) > 0)
+}
+
+function claimTask(village: Village, npc: Npc, entity: Entity): void {
   const free = village.tasks
-    .filter((t) => t.claimedBy === null)
+    .filter((t) => t.claimedBy === null && canTakeInFor(entity, t.kind))
     .sort((a, b) => b.priority - a.priority || a.id - b.id)[0]
   if (!free) return
   free.claimedBy = npc.entityId
@@ -289,8 +316,9 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
     }
     if (near(entity, chest.tx, chest.ty)) {
       const inv = chest.inventory ?? []
-      // Un retrait qui ne rapporte rien (sac plein) : on lâche, sinon on
-      // reviendrait au grenier à chaque tick sans jamais rien en sortir.
+      // Un retrait qui ne rapporte rien (sac plein) : on lâche la tâche — elle
+      // retourne au tableau, pour un PNJ qui a de la place. Celui-ci ne la
+      // reprendra pas : TASK_INTAKE le rend inéligible tant que son sac est plein.
       if (needBerries > 0 && countOf(inv, 'berries') >= needBerries) {
         if (withdraw(state, entity, chest.id, 'berries', needBerries) === 0) dropTask(village, npc, false)
       } else if (needFiber > 0 && countOf(inv, 'fiber') >= needFiber) {
@@ -314,7 +342,13 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
     const fire = state.structures.find((s) => s.type === 'fire' && s.villageId === village.id)
     if (!fire) return dropTask(village, npc, false)
     if (near(entity, fire.tx, fire.ty)) {
-      if (canAct(state, entity)) applyEconomyAction(state, entity.id, { type: 'craft', recipeId: 'stew' })
+      if (canAct(state, entity)) {
+        applyEconomyAction(state, entity.id, { type: 'craft', recipeId: 'stew' })
+        // Le craft a refusé (le ragoût n'a nulle part où aller — un refus ne pose
+        // aucun cooldown, donc on le retenterait 20 fois par seconde). On lâche :
+        // TASK_INTAKE interdit de re-réclamer tant qu'il n'y a pas de case.
+        if (countOf(entity.inventory, 'stew') === 0) return dropTask(village, npc, false)
+      }
       return
     }
     if (npc.path.length === 0 && !setPathTo(state, npc, entity, fire.tx, fire.ty)) return dropTask(village, npc, false)
@@ -339,7 +373,12 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
   const target = state.structures.find((s) => s.id === village.tasks.find((t) => t.id === task.id)?.structureId)
   if (!target || target.hp >= STRUCTURE_HP[target.type]) return dropTask(village, npc, true)
 
-  if (task.stage === 'fetch' && countOf(entity.inventory, 'wood') === 0) {
+  // « Assez de bois pour UN coup de marteau », pas « du bois » : avec un seul bois
+  // et un coût à 2, `repair` refuserait à chaque tick (un refus ne pose pas de
+  // cooldown) sans jamais renvoyer au grenier. On lit le coût, on ne le redit pas.
+  const enoughWood = (): boolean => countOf(entity.inventory, 'wood') >= WORLD_EVENTS.REPAIR_WOOD_COST
+
+  if (task.stage === 'fetch' && !enoughWood()) {
     const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], 'wood') > 0)
     if (!chest) return dropTask(village, npc, false) // pas de bois : on abandonne
     if (near(entity, chest.tx, chest.ty)) {
@@ -351,7 +390,9 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
         Math.min(NPC_AI.REPAIR_WOOD_WITHDRAW, countOf(chest.inventory ?? [], 'wood')),
       )
       // Sac plein : sans bois, l'étape 'work' renverrait aussitôt vers 'fetch' —
-      // un aller-retour perpétuel entre le grenier et la structure. On lâche.
+      // un aller-retour perpétuel entre le grenier et la structure. On lâche : la
+      // tâche retourne au tableau (un autre PNJ la prendra), et TASK_INTAKE
+      // interdit à CELUI-CI de la re-réclamer au tick suivant.
       if (got === 0) return dropTask(village, npc, false)
       task.stage = 'work'
       return
@@ -365,7 +406,7 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
   if (near(entity, target.tx, target.ty)) {
     if (state.tick >= entity.cooldownUntil) {
       applyVillageAction(state, entity.id, { type: 'repair', structureId: target.id })
-      if (countOf(entity.inventory, 'wood') === 0) task.stage = 'fetch'
+      if (!enoughWood()) task.stage = 'fetch'
     }
     return
   }
@@ -447,8 +488,8 @@ export function advanceNpcs(state: SimState): void {
     if (handleHunger(state, village, npc, entity)) continue
 
     if (!npc.task) {
-      claimTask(village, npc)
-      if (!npc.task) continue // rien à faire : oisif
+      claimTask(village, npc, entity)
+      if (!npc.task) continue // rien à faire (ou plus une case pour le faire) : oisif
     }
     if (npc.task.kind === 'cook_stew') executeCook(state, village, npc, entity)
     else if (npc.task.kind === 'repair') executeRepair(state, village, npc, entity)
@@ -480,8 +521,10 @@ export function spawnNpcsAround(state: SimState, village: Village, count: number
     const tx = village.fireTx + dx
     const ty = village.fireTy + dy
     if (isBlockedAt(world, tx, ty)) continue
-    // Le grand sac du PNJ (spec inventaire R7) : sa boucle de corvées n'a pas
-    // de notion de « plein », et lui en apprendre une rouvrirait le livelock.
+    // Le grand sac du PNJ (spec inventaire R7) : il porte une journée de corvées
+    // sans jamais buter sur sa borne. Quand il bute quand même (un raider chargé
+    // de butin, un joueur qui le gave), les corvées le VOIENT — TASK_INTAKE — et
+    // il devient oisif, pas figé.
     const id = spawnEntity(state, tx + 0.5, ty + 0.5, SLOTS.NPC)
     village.memberIds.push(id)
     emitEvent(state, { type: 'member_joined', tick: state.tick, villageId: village.id, entityId: id })

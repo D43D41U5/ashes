@@ -353,3 +353,93 @@ describe('le grenier plein (A21 + livelock)', () => {
     expect(countOf(e.inventory, 'stone')).toBe(10) // il garde son butin, rien ne s'évapore
   })
 })
+
+/**
+ * Le sac du PNJ est BORNÉ (spec inventaire R11) : un RETRAIT peut ne rien
+ * déplacer. Une boucle de corvée qui ne le voit pas se retente à l'identique au
+ * tick suivant — pour toujours. Ces tests sont TEMPORELS (300 ticks) : un
+ * livelock est strictement invisible sur un tick.
+ */
+describe('le sac plein du PNJ (livelock du retrait)', () => {
+  /** Un sac SANS un interstice : ni case libre, ni pile incomplète. */
+  const saturated = () => inventoryOf(SLOTS.NPC, { stone: 20 * SLOTS.NPC })
+
+  const rejects = (sim: SimState, entityId: number): string[] =>
+    drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' && e.entityId === entityId ? [e.reason] : []))
+
+  it('affamé, sac plein : il ne reste pas collé au grenier pour l’éternité', () => {
+    const sim = npcVillageSim(1)
+    // Grenier sans bois → le tableau veut du bois (une corvée qu'il PEUT faire).
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, fiber: 5, stew: 5 })
+    const e = npcEntity(sim)
+    // Sac plein SAUF une case de bois entamée : plus une case pour des baies
+    // (donc il ne peut pas manger), mais il peut encore bûcheronner.
+    e.inventory = inventoryOf(SLOTS.NPC, { stone: 20 * (SLOTS.NPC - 1), wood: 19 })
+    e.hunger = 20 // sous NPC_HUNGER_EAT_THRESHOLD
+    drainEvents(sim)
+
+    const kinds: (string | null)[] = []
+    for (let t = 0; t < 300; t++) {
+      step(sim, [])
+      kinds.push(sim.npcs[0]!.task?.kind ?? null)
+    }
+
+    // Il n'a pas tenté un retrait impossible — encore moins 20 fois par seconde.
+    expect(rejects(sim, e.id)).toEqual([])
+    // Et il n'est pas figé au grenier : il est retourné au tableau du village.
+    expect(kinds.some((k) => k !== null)).toBe(true)
+    expect(countOf(granary(sim).inventory!, 'berries')).toBe(30) // rien n'a bougé du grenier
+  })
+
+  it('réparer, sac plein : il ne re-réclame pas la même tâche à chaque tick', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 })
+    const house = sim.structures.find((s) => s.type === 'house')!
+    house.hp = 1 // sous REPAIR_TASK_THRESHOLD → le tableau veut une réparation
+    const e = npcEntity(sim)
+    e.inventory = saturated()
+    e.hunger = 100
+    drainEvents(sim)
+
+    for (let t = 0; t < 300; t++) step(sim, [])
+
+    expect(rejects(sim, e.id)).toEqual([]) // pas un refus par tick
+    expect(countOf(granary(sim).inventory!, 'wood')).toBe(30) // le grenier n'a rien perdu
+  })
+
+  // Le stade `fetch` n'est pas le seul piège de la cuisine : un PNJ peut arriver au
+  // feu avec ses ingrédients ET un sac sans une case pour le ragoût. Le craft refuse
+  // alors à chaque tick (un refus ne pose aucun cooldown) et il reste planté là. Le
+  // tableau doit le voir AVANT de lui confier la corvée.
+  it('cuisiner, ingrédients en poche mais plus une case pour le ragoût : il ne se plante pas au feu', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5 })
+    const e = npcEntity(sim)
+    // 40/40 cases : 38 de pierre, 1 de baies (6 ≥ la recette), 1 de fibre (19 ≥ 1).
+    // Il a de quoi cuisiner — mais retirer 4 baies et 1 fibre ne VIDE aucune case.
+    e.inventory = inventoryOf(SLOTS.NPC, { stone: 20 * (SLOTS.NPC - 2), berries: 6, fiber: 19 })
+    e.hunger = 100
+    drainEvents(sim)
+
+    for (let t = 0; t < 300; t++) step(sim, [])
+
+    expect(rejects(sim, e.id)).toEqual([])
+    expect(countOf(e.inventory, 'berries')).toBe(6) // ses ingrédients sont intacts
+    expect(countOf(e.inventory, 'fiber')).toBe(19)
+  })
+
+  it('cuisiner, sac plein : pas de boucle sèche sur le stade « fetch »', () => {
+    const sim = npcVillageSim(1)
+    // stew 0 → le tableau veut du ragoût ; tout le reste est au-dessus des cibles.
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5 })
+    const e = npcEntity(sim)
+    e.inventory = saturated()
+    e.hunger = 100
+    drainEvents(sim)
+
+    for (let t = 0; t < 300; t++) step(sim, [])
+
+    expect(rejects(sim, e.id)).toEqual([])
+    expect(countOf(granary(sim).inventory!, 'berries')).toBe(30)
+  })
+})

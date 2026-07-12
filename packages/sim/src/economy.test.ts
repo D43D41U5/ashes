@@ -185,6 +185,53 @@ describe('l’artisanat (A3)', () => {
     expect(events.some((e) => e.type === 'item_crafted')).toBe(false)
     expect(events.flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))).toEqual(['sac plein'])
   })
+
+  // …mais un sac plein n'est pas forcément un sac SANS place pour la sortie : les
+  // intrants, en partant, LIBÈRENT des cases. Mesurer la place avant de les
+  // consommer refuse à tort un craft parfaitement légal.
+  it('sac 18/18 dont les intrants libèrent une case : la hache est bel et bien forgée', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 16, stone: 4 }) // le Feu (10 bois) + l'atelier (6 bois, 4 pierres)
+    act(sim, id, { type: 'light_fire' })
+    act(sim, id, { type: 'build', structure: 'workshop', tx: 11, ty: 10 })
+    // 18 cases pleines : 16 de pierre (303), 1 de bois (5), 1 de fibre (2).
+    // La recette (wood 5, stone 3, fiber 2) VIDE les cases de bois et de fibre.
+    me(sim).inventory = inventoryOf(SLOTS.PLAYER, { stone: 303, wood: 5, fiber: 2 })
+    me(sim).cooldownUntil = 0
+    drainEvents(sim)
+
+    act(sim, id, { type: 'craft', recipeId: 'axe' })
+
+    expect(countOf(me(sim).inventory, 'axe')).toBe(1)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(0)
+    expect(countOf(me(sim).inventory, 'fiber')).toBe(0)
+    expect(countOf(me(sim).inventory, 'stone')).toBe(300)
+    expect(rejections(sim)).toEqual([])
+  })
+
+  it('sac 18/18 dont les intrants ne libèrent RIEN : refus — et les intrants sont rendus', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 16, stone: 4 }) // le Feu (10 bois) + l'atelier (6 bois, 4 pierres)
+    act(sim, id, { type: 'light_fire' })
+    act(sim, id, { type: 'build', structure: 'workshop', tx: 11, ty: 10 })
+    // 18 cases pleines dont AUCUNE ne se vide : 5 de bois (100), 2 de fibre (40),
+    // 11 de pierre (220) — la recette entame des piles, elle n'en clôt aucune.
+    me(sim).inventory = inventoryOf(SLOTS.PLAYER, { wood: 100, fiber: 40, stone: 220 })
+    me(sim).cooldownUntil = 0
+    drainEvents(sim)
+
+    act(sim, id, { type: 'craft', recipeId: 'axe' })
+
+    expect(countOf(me(sim).inventory, 'axe')).toBe(0)
+    // Rien ne se détruit : le coup n'a pas eu lieu (spec R10).
+    expect(countOf(me(sim).inventory, 'wood')).toBe(100)
+    expect(countOf(me(sim).inventory, 'fiber')).toBe(40)
+    expect(countOf(me(sim).inventory, 'stone')).toBe(220)
+    expect(me(sim).cooldownUntil).toBeLessThanOrEqual(sim.tick)
+    expect(rejections(sim)).toEqual(['sac plein'])
+  })
 })
 
 describe('la faim (A4)', () => {
