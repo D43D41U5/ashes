@@ -118,7 +118,7 @@ export type { ItemId, ItemBag, Slot, Inventory, StructureType, AccessLevel, Skil
 
 // ─── L'inventaire : la case active, ce qu'on tient VRAIMENT en main (R8-R9) ─
 export { applyInventoryAction, heldSlot, wearHeld, isInventoryAction } from './inventory-actions'
-export type { InventoryAction } from './inventory-actions'
+export type { InventoryAction, SlotRef } from './inventory-actions'
 
 // ─── Consommateurs du flux d'événements ───────────────────────────────────
 export { chronicleFromEvents } from './chronicle'

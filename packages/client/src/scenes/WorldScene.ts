@@ -43,9 +43,11 @@ import {
 import { ambientTint, daylight } from '../render/lighting'
 import { assertNoFold, createWarp, type Warp } from '../render/warp'
 import {
+  drainQueuedActions,
   publishAlarm,
   publishChronicle,
   publishError,
+  publishOpenContainer,
   publishPlayerVitals,
   publishSeasonEnded,
   publishTimeAndVillage,
@@ -333,6 +335,8 @@ export class WorldScene extends Phaser.Scene {
 
   override update(time: number, deltaMs: number): void {
     if (!this.worldReady) return
+    // Les gestes d'inventaire posés par UIScene (elle ne parle pas à l'hôte).
+    for (const action of drainQueuedActions(this.registry)) this.sendAction(action)
     this.ground.render(this.cameras.main)
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y, time)
@@ -445,6 +449,9 @@ export class WorldScene extends Phaser.Scene {
     // Le monde d'abord : la réconciliation ci-dessous rejoue la prédiction
     // contre les structures/nœuds de CE snapshot, pas du précédent.
     this.view.apply(msg, this.playerId, this.time.now)
+    // Le conteneur ouvert (loot) résolu contre CE snapshot : une dépouille vidée
+    // s'efface (spec R16) → le panneau se referme au lieu de planter sur un id mort.
+    publishOpenContainer(this.registry, this.view.structures, this.view.corpses)
     this.processEvents(msg)
 
     // Mon entité autoritative : jauges HUD + réconciliation de la prédiction.

@@ -9,7 +9,7 @@
  * nœuds, cadavres, entités et position prédite changent à chaque snapshot ou
  * frame — chaque handler lit l'état AU MOMENT de la frappe.
  */
-import { SLOTS, type AccessLevel, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@braises/sim'
+import { BALANCE, SLOTS, type AccessLevel, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud, setHud, type Buildable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
@@ -33,6 +33,35 @@ export interface MovementBindings {
   keys: Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key[]>
   sprintKeys: Phaser.Input.Keyboard.Key[]
   blockKey: Phaser.Input.Keyboard.Key
+}
+
+/**
+ * Le conteneur à looter à l'ouverture de TAB : le plus proche à `INTERACT_RANGE`
+ * de la position prédite, un CADAVRE primant sur un coffre à égalité d'intention
+ * (on ouvre ce qu'on vient de tuer). `null` si rien n'est à portée. Aucune règle
+ * de jeu ici — juste la cible ; la sim revalide la portée à chaque `transfer`.
+ */
+function nearestContainer(deps: InputDeps): { kind: 'structure' | 'corpse'; id: number } | null {
+  const p = deps.predicted()
+  const range = BALANCE.INTERACT_RANGE
+  const withinSq = range * range
+
+  const corpse = deps
+    .corpses()
+    .map((c) => ({ id: c.id, d: (c.x - p.x) ** 2 + (c.y - p.y) ** 2 }))
+    .filter((c) => c.d <= withinSq)
+    .sort((a, b) => a.d - b.d)[0]
+  if (corpse) return { kind: 'corpse', id: corpse.id }
+
+  const chest = deps
+    .structures()
+    .filter((s) => s.inventory !== undefined) // seuls les conteneurs (coffres)
+    .map((s) => ({ id: s.id, d: (s.tx + 0.5 - p.x) ** 2 + (s.ty + 0.5 - p.y) ** 2 }))
+    .filter((s) => s.d <= withinSq)
+    .sort((a, b) => a.d - b.d)[0]
+  if (chest) return { kind: 'structure', id: chest.id }
+
+  return null
 }
 
 export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindings {
@@ -94,11 +123,15 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     })
   }
 
-  // TAB : ouvre/ferme l'écran d'inventaire (la grille arrive au chantier 7).
-  // On capture la touche : sinon le navigateur déplace le focus hors du canvas.
+  // TAB : ouvre/ferme l'écran d'inventaire. On capture la touche : sinon le
+  // navigateur déplace le focus hors du canvas. À l'OUVERTURE, on choisit le
+  // conteneur à looter — le plus proche à portée, un cadavre primant sur un
+  // coffre (on loote ce qu'on vient de tuer) ; à la FERMETURE on l'oublie.
   kb.addCapture(KEYMAP.toggleInventory[0])
   onDown(KEYMAP.toggleInventory, () => {
-    setHud(scene.registry, 'inventoryOpen', !getHud(scene.registry, 'inventoryOpen'))
+    const opening = !getHud(scene.registry, 'inventoryOpen')
+    setHud(scene.registry, 'inventoryOpen', opening)
+    setHud(scene.registry, 'openContainer', opening ? nearestContainer(deps) : null)
   })
 
   // La molette fait défiler la case tenue, bornée à la ceinture — sauf quand
@@ -154,9 +187,9 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
 
   scene.input.mouse?.disableContextMenu()
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-    // Carte ouverte : le clic pilote la visionneuse (pan/zoom, dans UIScene),
-    // il ne doit pas bâtir/récolter dans le monde en dessous.
-    if (getHud(scene.registry, 'mapOpen')) return
+    // Carte ou inventaire ouvert : le clic pilote l'overlay (visionneuse,
+    // glisser-déposer), il ne doit pas bâtir/récolter dans le monde en dessous.
+    if (getHud(scene.registry, 'mapOpen') || getHud(scene.registry, 'inventoryOpen')) return
     const world = pointerToWorld(pointer)
     const tx = Math.floor(world.x / TILE_PX)
     const ty = Math.floor(world.y / TILE_PX)

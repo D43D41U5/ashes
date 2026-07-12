@@ -7,8 +7,10 @@
 import { zoneAt, type VillageTask, type WorldMap } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud } from '../hud-state'
+import { queueAction } from './world/hud-bridge'
 import { TILE_PX } from '../render/framing'
 import { createHotbar, type Hotbar } from './ui/hotbar'
+import { createInventoryPanel, type InventoryPanel } from './ui/inventory-panel'
 import { createVitals, type Vitals } from './ui/vitals'
 import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
 
@@ -47,6 +49,7 @@ export class UIScene extends Phaser.Scene {
   private errorText!: Phaser.GameObjects.Text
   private hotbar!: Hotbar
   private vitals!: Vitals
+  private inventoryPanel!: InventoryPanel
   /** La ligne d'aide sous la ceinture — structure à bâtir (B) + béquilles de touches. */
   private hint!: Phaser.GameObjects.Text
   private journalPanel!: Phaser.GameObjects.Container
@@ -103,6 +106,9 @@ export class UIScene extends Phaser.Scene {
     // désormais en cases et en jauges, plus en pavé de texte (spec inv R17-R18).
     this.vitals = createVitals(this)
     this.hotbar = createHotbar(this)
+    // L'écran d'inventaire (TAB) : la grille complète + le panneau de loot. Il ne
+    // parle pas à l'hôte — il POSE ses actions, WorldScene les draine (spec R22).
+    this.inventoryPanel = createInventoryPanel(this, (action) => queueAction(this.registry, action))
     // Sous la ceinture : ce qu'on bâtira au clic (B fait défiler) + les béquilles
     // de touches jusqu'aux chantiers 2-3 (craft sur SHIFT+1…5, sac sur TAB).
     this.hint = this.add
@@ -371,6 +377,14 @@ export class UIScene extends Phaser.Scene {
     const inv = getHud(this.registry, 'inv') ?? []
     const activeSlot = getHud(this.registry, 'activeSlot') ?? -1
     this.hotbar.update(inv, activeSlot)
+
+    // L'écran d'inventaire (TAB) : la grille complète, le glisser, le loot. Le
+    // conteneur ouvert est déjà résolu par WorldScene (null s'il a disparu).
+    const inventoryOpen = Boolean(getHud(this.registry, 'inventoryOpen'))
+    this.inventoryPanel.setVisible(inventoryOpen)
+    if (inventoryOpen) {
+      this.inventoryPanel.update(inv, activeSlot, getHud(this.registry, 'openContainerView') ?? null)
+    }
     this.vitals.update({
       hp: getHud(this.registry, 'hp') ?? 100,
       stamina: getHud(this.registry, 'stamina') ?? 100,
