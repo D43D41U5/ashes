@@ -331,11 +331,14 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   coal_seam: { item: 'coal', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', requiresTool: true },
 }
 
-/** Rendement par famille d'outil : mains nues 1, outil 2, outil de fer 3. */
+/** Les deux paliers de chaque famille d'outil. Le barème, lui, est `TOOL_YIELD`. */
 export const TOOL_TIERS: Record<'axe' | 'pickaxe', { basic: import('./items').ItemId; iron: import('./items').ItemId }> = {
   axe: { basic: 'axe', iron: 'iron_axe' },
   pickaxe: { basic: 'pickaxe', iron: 'iron_pickaxe' },
 }
+
+/** Rendement par palier : mains nues ×1, outil ×2, outil de fer ×3 (`toolYield`). */
+export const TOOL_YIELD = { iron: 3, basic: 2, none: 1 } as const
 
 /** Valeur nutritive des consommables (spec R9). */
 export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {

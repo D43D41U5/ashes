@@ -82,6 +82,21 @@ describe('le réveil', () => {
     expect(state.corpses.find((c) => c.id === corpse.id)).toBeUndefined()
     expect(state.events.some((ev) => ev.type === 'cendreux_risen')).toBe(true)
   })
+  it('R6 : la levée n’est PAS un atelier de réparation — une hache usée se relève usée', () => {
+    const state = createSim(1)
+    const e = humanAt(state, 5, 5)
+    e.inventory[0] = { item: 'iron_axe', count: 1, wear: 99 } // un coup avant la casse
+    die(state, e, 0, 'cold')
+    const corpse = state.corpses.find((c) => c.risesAt !== undefined)!
+    state.tick = corpse.risesAt!
+    advanceCendreux(state)
+    const risen = state.monsters.find((m) => m.type === 'cendreux')!
+    const ent = state.entities.find((en) => en.id === risen.entityId)!
+    // Mourir de froid ne doit rien réparer : sinon le gel est une forge gratuite.
+    const axe = ent.inventory.find((s) => s?.item === 'iron_axe')
+    expect(axe).toBeDefined()
+    expect(axe!.wear).toBe(99)
+  })
   it('annulation : un feu à portée au réveil → pas de cendreux', () => {
     const state = createSim(1)
     const e = humanAt(state, 5, 5)

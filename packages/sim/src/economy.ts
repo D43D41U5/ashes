@@ -28,6 +28,7 @@ import {
   TERRAIN_SCREE,
   TERRAINS,
   TOOL_TIERS,
+  TOOL_YIELD,
   type NodeType,
   type RecipeId,
 } from './balance'
@@ -114,11 +115,11 @@ function gainXp(state: SimState, entity: Entity, skill: SkillId, base: number): 
  * copies divergeraient.
  */
 export function toolYield(item: ItemId | null, family: 'axe' | 'pickaxe' | null): number {
-  if (!family || item === null) return 1
+  if (!family || item === null) return TOOL_YIELD.none
   const tier = TOOL_TIERS[family]
-  if (item === tier.iron) return 3
-  if (item === tier.basic) return 2
-  return 1 // on tient autre chose : ça ne sert à rien ici
+  if (item === tier.iron) return TOOL_YIELD.iron
+  if (item === tier.basic) return TOOL_YIELD.basic
+  return TOOL_YIELD.none // on tient autre chose : ça ne sert à rien ici
 }
 
 /**

@@ -5,7 +5,7 @@ import { CENDREUX, COMBAT, MONSTER_DEFS } from './balance'
 import { startAttack } from './combat'
 import { distSq } from './geometry'
 import { emitEvent } from './events'
-import { addItems, toBag } from './items'
+import { addSlot } from './items'
 import { moveToward, nearestPrey, spawnMonster, type Monster } from './monsters'
 import { findPath } from './pathfinding'
 import { getGameTime } from './time'
@@ -49,7 +49,11 @@ export function advanceCendreux(state: SimState): void {
     // Levée : le cadavre devient le Cendreux, portant son loot.
     const id = spawnMonster(state, 'cendreux', corpse.x, corpse.y)
     const ent = state.entities.find((e) => e.id === id)!
-    addItems(ent.inventory, toBag(corpse.inventory))
+    // Les CASES passent au Cendreux (spec inventaire R6) : la levée n'est pas un
+    // atelier de réparation — une hache usée se relève usée. Un `addItems(toBag(…))`
+    // reconstruirait des cases NEUVES : mourir de froid réparerait tout l'outillage
+    // porté, et le Cendreux serait une lessiveuse à outils sur pattes.
+    for (const slot of corpse.inventory) if (slot !== null) addSlot(ent.inventory, slot)
     state.corpses = state.corpses.filter((c) => c.id !== corpse.id)
     emitEvent(state, { type: 'cendreux_risen', tick: state.tick, entityId: id, x: corpse.x, y: corpse.y })
   }

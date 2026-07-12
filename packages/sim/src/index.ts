@@ -100,6 +100,7 @@ export {
   countOf,
   hasItems,
   addItems,
+  addSlot,
   removeItems,
   makeInventory,
   inventoryOf,
@@ -111,9 +112,6 @@ export {
   freeRoomFor,
 } from './items'
 export type { ItemId, ItemBag, Slot, Inventory, StructureType, AccessLevel, SkillId } from './items'
-export {
-  addSlot,
-} from './items'
 
 // ─── L'inventaire : la case active, ce qu'on tient VRAIMENT en main (R8-R9) ─
 export { applyInventoryAction, heldSlot, wearHeld, isInventoryAction } from './inventory-actions'

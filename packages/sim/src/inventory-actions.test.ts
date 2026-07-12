@@ -59,6 +59,16 @@ describe('la case active', () => {
     expect(entity.activeSlot).toBe(0)
     expect(heldSlot(entity)).toBeNull() // la case 0 est vide
   })
+
+  it('R8 : un activeSlot hors ceinture n’arme AUCUNE main, même posé de force', () => {
+    const { entity } = playerSim()
+    // On court-circuite `set_active_slot` : c'est précisément le cas que la garde
+    // de LECTURE doit tenir, quand un futur site d'écriture (déplacer/scinder une
+    // case) laisserait traîner un index hors ceinture. R8 doit être infalsifiable.
+    entity.inventory[SLOTS.BELT] = { item: 'iron_axe', count: 1 }
+    entity.activeSlot = SLOTS.BELT
+    expect(heldSlot(entity)).toBeNull() // le sac se fouille, il ne s'empoigne pas
+  })
 })
 
 describe('wearHeld (A5 : l’usure vit dans la case)', () => {

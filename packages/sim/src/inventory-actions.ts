@@ -23,9 +23,17 @@ export function isInventoryAction(action: { type: string }): action is Inventory
   return action.type === 'set_active_slot'
 }
 
-/** La case tenue en main — `null` si mains nues OU si la case active est vide. */
+/**
+ * La case tenue en main — `null` si mains nues OU si la case active est vide.
+ *
+ * La borne de ceinture se REVALIDE ici, à la LECTURE : R8 (« seule une case de la
+ * ceinture se tient en main ») cesse ainsi de dépendre de la vigilance de chaque
+ * site d'écriture — il n'y a plus d'`activeSlot` hors ceinture qui puisse armer
+ * une main, quel que soit le chemin qui l'a posé. C'est LA définition de R8, pas
+ * une seconde copie de la règle.
+ */
 export function heldSlot(entity: Entity): Slot | null {
-  if (entity.activeSlot < 0) return null
+  if (entity.activeSlot < 0 || entity.activeSlot >= SLOTS.BELT) return null
   return entity.inventory[entity.activeSlot] ?? null
 }
 
