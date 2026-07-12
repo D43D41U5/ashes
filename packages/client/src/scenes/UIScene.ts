@@ -22,14 +22,6 @@ const TASK_LABELS: Record<VillageTask['kind'], string> = {
   repair: 'réparer',
 }
 
-const STRUCTURE_LABELS: Record<string, string> = {
-  wall: 'mur',
-  door: 'porte',
-  chest: 'coffre',
-  workshop: 'atelier',
-  furnace: 'four',
-}
-
 /** Carte plein écran : bornes et pas du zoom (1 = carte ajustée, 8 = gros plan). */
 const MAP_ZOOM_MIN = 1
 const MAP_ZOOM_MAX = 8
@@ -50,8 +42,6 @@ export class UIScene extends Phaser.Scene {
   private hotbar!: Hotbar
   private vitals!: Vitals
   private inventoryPanel!: InventoryPanel
-  /** La ligne d'aide sous la ceinture — structure à bâtir (B) + béquilles de touches. */
-  private hint!: Phaser.GameObjects.Text
   private journalPanel!: Phaser.GameObjects.Container
   private journalText!: Phaser.GameObjects.Text
   private welcome!: Phaser.GameObjects.Container
@@ -109,12 +99,6 @@ export class UIScene extends Phaser.Scene {
     // L'écran d'inventaire (TAB) : la grille complète + le panneau de loot. Il ne
     // parle pas à l'hôte — il POSE ses actions, WorldScene les draine (spec R22).
     this.inventoryPanel = createInventoryPanel(this, (action) => queueAction(this.registry, action))
-    // Sous la ceinture : ce qu'on bâtira au clic (B fait défiler) + les béquilles
-    // de touches jusqu'aux chantiers 2-3 (craft sur SHIFT+1…5, sac sur TAB).
-    this.hint = this.add
-      .text(this.scale.width / 2, this.scale.height - 74, '', { ...style, fontSize: '12px', color: '#b8b0a0' })
-      .setOrigin(0.5, 1)
-
     // Le journal (J) : la chronique de la saison, la Mémoire v1.
     const panelBg = this.add.rectangle(0, 0, 720, 480, 0x14141a, 0.92).setOrigin(0.5).setStrokeStyle(2, 0x6b5a3a)
     const panelTitle = this.add
@@ -381,6 +365,9 @@ export class UIScene extends Phaser.Scene {
     // L'écran d'inventaire (TAB) : la grille complète, le glisser, le loot. Le
     // conteneur ouvert est déjà résolu par WorldScene (null s'il a disparu).
     const inventoryOpen = Boolean(getHud(this.registry, 'inventoryOpen'))
+    // La ceinture du bas s'efface quand la grille est ouverte : sa rangée y est
+    // déjà (spec Rust). Sinon la même ceinture s'affiche deux fois à l'écran.
+    this.hotbar.setVisible(!inventoryOpen)
     this.inventoryPanel.setVisible(inventoryOpen)
     if (inventoryOpen) {
       this.inventoryPanel.update(inv, activeSlot, getHud(this.registry, 'openContainerView') ?? null)
@@ -392,13 +379,9 @@ export class UIScene extends Phaser.Scene {
       temperature: getHud(this.registry, 'temperature') ?? 100,
       wounds: getHud(this.registry, 'wounds') ?? {},
       skills: getHud(this.registry, 'skills') ?? {},
+      inventoryOpen, // sac ouvert → les vitales redeviennent opaques
     })
 
-    // La ligne d'aide : la structure au clic (B) + les béquilles de touches.
-    const selected = getHud(this.registry, 'selected') ?? 'wall'
-    this.hint.setText(
-      `B : bâtir [${STRUCTURE_LABELS[selected]}] · 1-6 ceinture · molette : changer · TAB sac · SHIFT+1-5 crafter`,
-    )
 
     const error = getHud(this.registry, 'error')
     if (error && this.time.now - error.at < 2500) {

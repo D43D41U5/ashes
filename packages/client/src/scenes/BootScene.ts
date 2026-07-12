@@ -5,6 +5,7 @@
  */
 import Phaser from 'phaser'
 import { generateItemIcons } from '../render/item-art'
+import { generateVitalIcons } from '../render/vital-art'
 import { makePoiTextures } from './world/poi-art'
 
 export class BootScene extends Phaser.Scene {
@@ -42,6 +43,7 @@ export class BootScene extends Phaser.Scene {
     this.makeStructures()
     this.makeGlowTexture()
     generateItemIcons(this) // les 16 icônes d'items — voir render/item-art.ts
+    generateVitalIcons(this) // les 4 icônes des jauges du HUD — voir render/vital-art.ts
     this.scene.start('world')
   }
 

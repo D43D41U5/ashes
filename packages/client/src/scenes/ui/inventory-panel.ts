@@ -14,6 +14,7 @@ import { BALANCE, SLOTS, isStackable, stackSize, type Inventory, type ItemId, ty
 import type Phaser from 'phaser'
 import type { OpenContainerView } from '../../hud-state'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
+import { CELL, GAP, hotbarBottom } from './hotbar'
 import { createSlotView, type SlotView } from './slot-view'
 
 /** Le conteneur ouvert, tel que le panneau en a besoin (kind+id pour construire
@@ -157,13 +158,20 @@ export interface InventoryPanel {
   setVisible(v: boolean): void
 }
 
-const CELL = 44
-const GAP = 4
+/** Case et gouttière viennent de la CEINTURE : c'est la même case, au même
+ *  format, partout — c'est tout le point du style Rust. */
 const COLS = 6
 const PANEL_DEPTH = 900 // sous la carte (1000), au-dessus du HUD
+/** Le vide qui décolle la ceinture du sac. Chez Rust il n'y a ni filet ni
+ *  étiquette : juste un cran, et la rangée du bas EST la ceinture. */
+const BELT_GAP = 12
+/** Combien de rangées de sac au-dessus de la ceinture. */
+const BAG_ROWS = (SLOTS.PLAYER - SLOTS.BELT) / COLS
 
 /** Style de texte partagé du panneau (repris du journal). */
 const TEXT = { fontFamily: 'monospace', fontSize: '14px', color: '#e8e0c8', stroke: '#14141a', strokeThickness: 3 } as const
+/** Le titre : capitales, blanc, calé à GAUCHE au-dessus de la grille (Rust). */
+const TITLE = { ...TEXT, fontSize: '15px', fontStyle: 'bold', color: '#ffffff' } as const
 
 /** Une case à l'écran + son adresse logique (côté, index). */
 interface Cell {
@@ -174,51 +182,58 @@ interface Cell {
 
 /** Largeur d'une grille de `COLS` colonnes. */
 const gridWidth = (): number => COLS * CELL + (COLS - 1) * GAP
+/** L'icône dans une case — multiple entier de sa taille native (`pixelArt`). */
+const ICON_IN_CELL = Math.max(1, Math.floor((CELL - 14) / ITEM_ICON_PX)) * ITEM_ICON_PX
 
 export function createInventoryPanel(scene: Phaser.Scene, send: (a: PlayerAction) => void): InventoryPanel {
   const W = scene.scale.width
   const H = scene.scale.height
-  const topY = -H / 2 + 90 // marge sous le bord haut du fond
+  // Les grilles se construisent avec leur bord HAUT à y = 0 ; c'est le conteneur
+  // du groupe qui les place. Coordonnées LOCALES au `root`, centré à l'écran.
+  const gx = (col: number): number => -gridWidth() / 2 + CELL / 2 + col * (CELL + GAP)
+  const gy = (row: number): number => CELL / 2 + row * (CELL + GAP)
 
-  const bg = scene.add.rectangle(0, 0, 760, 560, 0x14141a, 0.94).setStrokeStyle(2, 0x6b5a3a)
+  /** La ligne du bas de tout le dispositif : le bord bas des cases de ceinture. */
+  const BOTTOM_Y = hotbarBottom(scene) - H / 2
 
-  // ── Groupe JOUEUR (ceinture + sac) ──
+  /**
+   * LA CEINTURE NE BOUGE PAS. Son rang dans la grille du sac tombe EXACTEMENT
+   * là où la barre de ceinture vit déjà à l'écran (même x, même y, même taille) :
+   * ouvrir le sac ne fait donc rien sauter — la grille pousse vers le HAUT depuis
+   * la ceinture, et la vraie barre s'efface derrière (cf. `hotbar.setVisible`).
+   * D'où ce calage par le bas, et un groupe joueur qui ne se déplace JAMAIS.
+   */
+  const PLAYER_Y = BOTTOM_Y - CELL / 2 - gy(BAG_ROWS) - BELT_GAP
+
+  // Rust n'a PAS de panneau encadré : les cases flottent sur le monde, qui reste
+  // visible et seulement assombri. On remplace donc le cadre brun par un voile.
+  const bg = scene.add.rectangle(0, 0, W, H, 0x0a0a0e, 0.6)
+
+  // ── Groupe JOUEUR (sac + ceinture) ──
   const playerCells: Cell[] = []
   const playerNodes: Phaser.GameObjects.GameObject[] = []
-  const playerTitle = scene.add.text(0, topY - 26, 'SAC', { ...TEXT, fontSize: '16px', color: '#e8c66a' }).setOrigin(0.5, 0)
+  const playerTitle = scene.add.text(-gridWidth() / 2, -26, 'INVENTAIRE', TITLE).setOrigin(0, 0)
   playerNodes.push(playerTitle)
   for (let i = 0; i < SLOTS.PLAYER; i++) {
-    const col = i % COLS
-    const row = Math.floor(i / COLS)
-    // La ceinture (row 0) est décollée du sac par un cran vertical : on VOIT la
-    // séparation sans avoir à lire l'étiquette.
-    const rowGap = row === 0 ? 0 : 16
-    const x = -gridWidth() / 2 + CELL / 2 + col * (CELL + GAP)
-    const y = topY + CELL / 2 + row * (CELL + GAP) + rowGap
-    const view = createSlotView(scene, x, y, CELL)
+    // LA CEINTURE EST LA RANGÉE DU BAS. Les cases 0-5 restent la ceinture pour la
+    // sim ; seul leur DESSIN descend sous le sac, comme chez Rust. Un cran de vide
+    // l'en sépare — ni filet, ni étiquette : la place suffit à le dire.
+    const beltSlot = i < SLOTS.BELT
+    const col = beltSlot ? i : (i - SLOTS.BELT) % COLS
+    const row = beltSlot ? BAG_ROWS : Math.floor((i - SLOTS.BELT) / COLS)
+    const view = createSlotView(scene, gx(col), gy(row) + (beltSlot ? BELT_GAP : 0), CELL)
     playerNodes.push(view.root)
     playerCells.push({ view, side: 'player', slot: i })
   }
-  // Le filet sous la ceinture + son étiquette : la première ligne EST la ceinture.
-  const beltY = topY + CELL + GAP / 2 + 6
-  const beltRule = scene.add.rectangle(0, beltY, gridWidth(), 2, 0x6b5a3a).setOrigin(0.5)
-  const beltLabel = scene.add
-    .text(-gridWidth() / 2 - 8, topY + CELL / 2, 'ceinture', { ...TEXT, fontSize: '11px', color: '#b8b0a0' })
-    .setOrigin(1, 0.5)
-  playerNodes.push(beltRule, beltLabel)
-  const playerGroup = scene.add.container(0, 0, playerNodes)
+  const playerGroup = scene.add.container(0, PLAYER_Y, playerNodes)
 
   // ── Groupe LOOT (créé au max = CORPSE ; on n'affiche que ce qu'il faut) ──
   const lootCells: Cell[] = []
   const lootNodes: Phaser.GameObjects.GameObject[] = []
-  const lootTitle = scene.add.text(0, topY - 26, '', { ...TEXT, fontSize: '16px', color: '#e8c66a' }).setOrigin(0.5, 0)
+  const lootTitle = scene.add.text(-gridWidth() / 2, -26, '', TITLE).setOrigin(0, 0)
   lootNodes.push(lootTitle)
   for (let i = 0; i < SLOTS.CORPSE; i++) {
-    const col = i % COLS
-    const row = Math.floor(i / COLS)
-    const x = -gridWidth() / 2 + CELL / 2 + col * (CELL + GAP)
-    const y = topY + CELL / 2 + row * (CELL + GAP)
-    const view = createSlotView(scene, x, y, CELL)
+    const view = createSlotView(scene, gx(i % COLS), gy(Math.floor(i / COLS)), CELL)
     lootNodes.push(view.root)
     lootCells.push({ view, side: 'container', slot: i })
   }
@@ -226,7 +241,7 @@ export function createInventoryPanel(scene: Phaser.Scene, send: (a: PlayerAction
 
   // ── Fantôme de glisser + infobulle (au-dessus de tout, dernier ajout) ──
   const ghost = scene.add.image(0, 0, itemIconKey('wood')).setVisible(false).setAlpha(0.85)
-  ghost.setScale((CELL - 8) / ITEM_ICON_PX)
+  ghost.setDisplaySize(ICON_IN_CELL, ICON_IN_CELL)
   const tip = scene.add
     .text(0, 0, '', { ...TEXT, fontSize: '12px', backgroundColor: '#14141aee', padding: { x: 6, y: 3 } })
     .setOrigin(0, 1)
@@ -353,19 +368,20 @@ export function createInventoryPanel(scene: Phaser.Scene, send: (a: PlayerAction
         lastContainerRef = containerRef
       }
 
-      // Groupe joueur : centré si pas de loot, décalé à droite sinon.
-      const offset = gridWidth() / 2 + 40
-      playerGroup.setX(open ? offset : 0)
       for (const cell of playerCells) {
         cell.view.update(inv[cell.slot] ?? null, cell.slot === activeSlot)
         cell.view.root.setAlpha(pending.has(key(cell)) ? 0.6 : 1)
       }
 
-      // Groupe loot : visible et titré seulement si un conteneur est ouvert.
+      // Groupe loot : visible et titré seulement si un conteneur est ouvert. Il
+      // se pose À GAUCHE du sac, dont il ne déplace RIEN (cf. `PLAYER_Y`), et se
+      // cale sur la même ligne du BAS — une dépouille fait huit rangées, un coffre
+      // quatre : les aligner par le haut les ferait pendre dans le vide.
       lootGroup.setVisible(open !== null)
       if (open) {
-        lootGroup.setX(-offset)
-        lootTitle.setText(open.title)
+        const rows = Math.ceil(open.inv.length / COLS)
+        lootGroup.setPosition(-(gridWidth() + 40), BOTTOM_Y - (rows * (CELL + GAP) - GAP))
+        lootTitle.setText(open.title.toUpperCase())
         for (const cell of lootCells) {
           const shown = cell.slot < open.inv.length
           cell.view.root.setVisible(shown)
