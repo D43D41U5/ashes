@@ -21,7 +21,9 @@ export function publishTimeAndVillage(registry: Registry, time: GameTime, myVill
 /** Les jauges et l'inventaire de MON avatar (l'entité autoritative du snapshot). */
 export function publishPlayerVitals(registry: Registry, me: Entity): void {
   setHud(registry, 'inv', me.inventory)
+  setHud(registry, 'activeSlot', me.activeSlot)
   setHud(registry, 'hunger', me.hunger)
+  setHud(registry, 'temperature', me.temperature)
   setHud(registry, 'skills', me.skills)
   setHud(registry, 'hp', me.hp)
   setHud(registry, 'stamina', me.stamina)

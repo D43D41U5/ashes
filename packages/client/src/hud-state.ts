@@ -27,13 +27,21 @@ export interface HudState {
   /** Chaleur du Feu de mon village. */
   villageWarmth: number
   inv: Inventory
+  /** Case tenue en main (`-1` = mains nues) — surligne la ceinture (spec inventaire R8). */
+  activeSlot: number
   hunger: number
+  /** Température du corps de l'avatar (0-100 ; sous 20, le froid mord). */
+  temperature: number
   skills: Partial<Record<SkillId, number>>
   hp: number
   stamina: number
   wounds: Entity['wounds']
   /** Structure sélectionnée pour le mode construction. */
   selected: Buildable
+  /** L'écran d'inventaire (TAB) est-il ouvert ? (l'UI arrive au chantier 7). */
+  inventoryOpen: boolean
+  /** Le conteneur ouvert à côté du sac (coffre/cadavre), ou null. */
+  openContainer: { kind: 'structure' | 'corpse'; id: number } | null
   /** Journal (J) ouvert à la demande. */
   journalOpen: boolean
   /** Carte plein écran (M) ouverte à la demande. */

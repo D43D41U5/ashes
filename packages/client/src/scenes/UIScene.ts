@@ -4,10 +4,12 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import { skillLevel, toBag, zoneAt, type ItemId, type SkillId, type VillageTask, type WorldMap } from '@braises/sim'
+import { zoneAt, type VillageTask, type WorldMap } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud } from '../hud-state'
 import { TILE_PX } from '../render/framing'
+import { createHotbar, type Hotbar } from './ui/hotbar'
+import { createVitals, type Vitals } from './ui/vitals'
 import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
 
 const TASK_LABELS: Record<VillageTask['kind'], string> = {
@@ -26,40 +28,6 @@ const STRUCTURE_LABELS: Record<string, string> = {
   furnace: 'four',
 }
 
-const SKILL_LABELS: Record<SkillId, string> = {
-  woodcutting: 'Bûcheron',
-  mining: 'Mineur',
-  foraging: 'Cueilleur',
-  crafting: 'Artisan',
-}
-
-const ITEM_LABELS: [ItemId, string][] = [
-  ['wood', 'Bois'],
-  ['stone', 'Pierre'],
-  ['fiber', 'Fibre'],
-  ['berries', 'Baies'],
-  ['stew', 'Ragoût'],
-  ['iron_ore', 'Minerai'],
-  ['coal', 'Charbon'],
-  ['iron_ingot', 'Lingot'],
-  ['axe', 'Hache'],
-  ['pickaxe', 'Pioche'],
-  ['iron_axe', 'Hache fer'],
-  ['iron_pickaxe', 'Pioche fer'],
-  ['spear', 'Lance'],
-  ['raw_meat', 'Viande'],
-  ['cooked_meat', 'Viande cuite'],
-  ['components', 'Composants'],
-]
-
-/** Maxima des jauges du joueur — valeurs posées par `spawnEntity`
- * (packages/sim/src/sim.ts) ; la sim n'exporte pas (encore) de constante. */
-const HP_MAX = 100
-const STAMINA_MAX = 100
-const HUNGER_MAX = 100
-/** Largeur pleine des barres PV/endurance, en px écran. */
-const BAR_WIDTH_PX = 200
-
 /** Carte plein écran : bornes et pas du zoom (1 = carte ajustée, 8 = gros plan). */
 const MAP_ZOOM_MIN = 1
 const MAP_ZOOM_MAX = 8
@@ -76,11 +44,11 @@ const MAP_CLICK_SLOP_PX = 5
 export class UIScene extends Phaser.Scene {
   private alarmOverlay!: Phaser.GameObjects.Rectangle
   private hud!: Phaser.GameObjects.Text
-  private bottomBar!: Phaser.GameObjects.Text
   private errorText!: Phaser.GameObjects.Text
-  private hpBar!: Phaser.GameObjects.Rectangle
-  private staminaBar!: Phaser.GameObjects.Rectangle
-  private woundsText!: Phaser.GameObjects.Text
+  private hotbar!: Hotbar
+  private vitals!: Vitals
+  /** La ligne d'aide sous la ceinture — structure à bâtir (B) + béquilles de touches. */
+  private hint!: Phaser.GameObjects.Text
   private journalPanel!: Phaser.GameObjects.Container
   private journalText!: Phaser.GameObjects.Text
   private welcome!: Phaser.GameObjects.Container
@@ -130,16 +98,16 @@ export class UIScene extends Phaser.Scene {
       strokeThickness: 3,
     }
     this.hud = this.add.text(10, 8, '', style)
-    this.bottomBar = this.add.text(10, this.scale.height - 72, '', style)
 
-    // Barres PV / endurance (haut droite) — lisibilité avant spectacle.
-    this.add.rectangle(this.scale.width - 214, 12, 204, 14, 0x14141a).setOrigin(0)
-    this.hpBar = this.add.rectangle(this.scale.width - 212, 14, BAR_WIDTH_PX, 10, 0xc0503e).setOrigin(0)
-    this.add.rectangle(this.scale.width - 214, 30, 204, 14, 0x14141a).setOrigin(0)
-    this.staminaBar = this.add.rectangle(this.scale.width - 212, 32, BAR_WIDTH_PX, 10, 0x4e9c5a).setOrigin(0)
-    this.woundsText = this.add
-      .text(this.scale.width - 214, 48, '', { ...style, color: '#ff9a7a', fontSize: '14px' })
-      .setOrigin(0, 0)
+    // Les vitales (bas-gauche) et la ceinture (bas-centre) — le HUD parle
+    // désormais en cases et en jauges, plus en pavé de texte (spec inv R17-R18).
+    this.vitals = createVitals(this)
+    this.hotbar = createHotbar(this)
+    // Sous la ceinture : ce qu'on bâtira au clic (B fait défiler) + les béquilles
+    // de touches jusqu'aux chantiers 2-3 (craft sur SHIFT+1…5, sac sur TAB).
+    this.hint = this.add
+      .text(this.scale.width / 2, this.scale.height - 74, '', { ...style, fontSize: '12px', color: '#b8b0a0' })
+      .setOrigin(0.5, 1)
 
     // Le journal (J) : la chronique de la saison, la Mémoire v1.
     const panelBg = this.add.rectangle(0, 0, 720, 480, 0x14141a, 0.92).setOrigin(0.5).setStrokeStyle(2, 0x6b5a3a)
@@ -398,42 +366,24 @@ export class UIScene extends Phaser.Scene {
         (board ? `\nTableau : ${board}` : ''),
     )
 
+    // La ceinture et les vitales : on ne fait que RELAYER le snapshot vers les
+    // modules d'affichage (aucune règle d'inventaire côté client — spec R22).
     const inv = getHud(this.registry, 'inv') ?? []
+    const activeSlot = getHud(this.registry, 'activeSlot') ?? -1
+    this.hotbar.update(inv, activeSlot)
+    this.vitals.update({
+      hp: getHud(this.registry, 'hp') ?? 100,
+      stamina: getHud(this.registry, 'stamina') ?? 100,
+      hunger: getHud(this.registry, 'hunger') ?? 100,
+      temperature: getHud(this.registry, 'temperature') ?? 100,
+      wounds: getHud(this.registry, 'wounds') ?? {},
+    })
+
+    // La ligne d'aide : la structure au clic (B) + les béquilles de touches.
     const selected = getHud(this.registry, 'selected') ?? 'wall'
-    const hunger = getHud(this.registry, 'hunger') ?? 100
-    const skills = getHud(this.registry, 'skills') ?? {}
-
-    // Provisoire : le pavé de texte agrège les cases. La grille (hotbar, sac)
-    // arrive avec l'UI d'inventaire.
-    const bag = toBag(inv)
-    const invText = ITEM_LABELS.filter(([item]) => (bag[item] ?? 0) > 0)
-      .map(([item, label]) => `${label} ${bag[item]}`)
-      .join(' · ')
-    const skillsText = (Object.keys(skills) as SkillId[])
-      .map((s) => ({ s, level: skillLevel(skills[s] ?? 0) }))
-      .filter(({ level }) => level > 0)
-      .map(({ s, level }) => `${SKILL_LABELS[s]} ${level}`)
-      .join(' · ')
-
-    this.bottomBar.setText(
-      `Faim ${Math.ceil(hunger)}/${HUNGER_MAX}${hunger <= 0 ? ' ⚠ affamé' : ''}` +
-        (skillsText ? ` — ${skillsText}` : '') +
-        `\n${invText || '(mains vides — clique un arbre)'} — [${STRUCTURE_LABELS[selected]}]\n` +
-        `F Feu · 1-5 bâtir · clic récolter/looter/bâtir · clic droit démolir · G réparer · shift+clic partager\n` +
-        `ESPACE attaquer · C bloquer · SHIFT sprinter · X bander · T donner des baies · E/R manger · 6-0 crafter · M carte`,
+    this.hint.setText(
+      `B : bâtir [${STRUCTURE_LABELS[selected]}] · 1-6 ceinture · molette : changer · TAB sac · SHIFT+1-5 crafter`,
     )
-
-    const hp = getHud(this.registry, 'hp') ?? 100
-    const stamina = getHud(this.registry, 'stamina') ?? 100
-    const wounds = getHud(this.registry, 'wounds') ?? {}
-    this.hpBar.width = (BAR_WIDTH_PX * Math.max(0, hp)) / HP_MAX
-    this.staminaBar.width = (BAR_WIDTH_PX * Math.max(0, stamina)) / STAMINA_MAX
-    const woundLabels = [
-      wounds.leg ? 'jambe blessée' : null,
-      wounds.arm ? 'bras blessé' : null,
-      wounds.bleeding ? 'SAIGNEMENT (X : bander)' : null,
-    ].filter(Boolean)
-    this.woundsText.setText(woundLabels.join(' · '))
 
     const error = getHud(this.registry, 'error')
     if (error && this.time.now - error.at < 2500) {

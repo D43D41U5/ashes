@@ -9,11 +9,11 @@
  * nœuds, cadavres, entités et position prédite changent à chaque snapshot ou
  * frame — chaque handler lit l'état AU MOMENT de la frappe.
  */
-import type { AccessLevel, Corpse, PlayerAction, ResourceNode, Structure } from '@braises/sim'
+import { SLOTS, type AccessLevel, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud, setHud, type Buildable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
-import { BUILD_BINDINGS, CRAFT_BINDINGS, KEYMAP } from './keymap'
+import { BELT_BINDINGS, BUILDABLE_CYCLE, CRAFT_BINDINGS, KEYMAP } from './keymap'
 import type { InterpolatedSprite } from './snapshot-view'
 
 export interface InputDeps {
@@ -43,6 +43,10 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   const onDown = (names: readonly string[], fn: () => void): void => {
     for (const n of names) kb.addKey(K[n]!, false).on('down', fn)
   }
+  /** Idem, mais le handler reçoit l'événement clavier (pour lire les modificateurs). */
+  const onDownE = (names: readonly string[], fn: (event: KeyboardEvent) => void): void => {
+    for (const n of names) kb.addKey(K[n]!, false).on('down', (_key: Phaser.Input.Keyboard.Key, event: KeyboardEvent) => fn(event))
+  }
   // Le pointeur en monde PLAT, puis corrigé de l'élévation : la tuile réellement
   // SOUS le curseur, pas celle du sol non déformé (spec relief-continu §4.4).
   const pointerToWorld = (pointer: Phaser.Input.Pointer): Phaser.Math.Vector2 => {
@@ -60,18 +64,55 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   const sprintKeys = grab(KEYMAP.sprint)
   const blockKey = grab(KEYMAP.block)[0]!
 
-  // Mode construction : F fonde, 1-5 choisit, clic bâtit, clic droit démolit.
-  // La sélection vit ICI (et dans le HUD via le registry) — la scène n'en a
-  // pas besoin.
-  let selected: Buildable = BUILD_BINDINGS[0]![1]
+  // Mode construction : F fonde, clic bâtit, clic droit démolit. Les touches
+  // 1-6 tenant désormais la ceinture (spec inventaire R17), la sélection de
+  // structure se fait au clavier B (défilement) — béquille jusqu'au chantier 3.
+  // La sélection vit ICI (et dans le HUD via le registry).
+  let selected: Buildable = BUILDABLE_CYCLE[0]!
   onDown(KEYMAP.lightFire, () => deps.sendAction({ type: 'light_fire' }))
-  for (const [name, buildable] of BUILD_BINDINGS) {
-    onDown([name], () => {
-      selected = buildable
-      setHud(scene.registry, 'selected', selected)
+  onDown(KEYMAP.cycleBuildable, () => {
+    const i = BUILDABLE_CYCLE.indexOf(selected)
+    selected = BUILDABLE_CYCLE[(i + 1) % BUILDABLE_CYCLE.length]!
+    setHud(scene.registry, 'selected', selected)
+  })
+  setHud(scene.registry, 'selected', selected)
+
+  // La CEINTURE : 1-6 tiennent une case (spec inventaire R17). Affichage
+  // optimiste (R22) — on surligne tout de suite, le prochain snapshot fait foi.
+  // SHIFT+1…5 restent le craft de dépannage (béquille jusqu'au chantier 2) :
+  // le modificateur tranche entre tenir une case et lancer une recette.
+  const craftFor = new Map(CRAFT_BINDINGS.map(([name, recipeId]) => [name, recipeId]))
+  for (const [name, slot] of BELT_BINDINGS) {
+    onDownE([name], (event) => {
+      const recipeId = craftFor.get(name)
+      if (event.shiftKey && recipeId) {
+        deps.sendAction({ type: 'craft', recipeId })
+        return
+      }
+      deps.sendAction({ type: 'set_active_slot', slot })
+      setHud(scene.registry, 'activeSlot', slot)
     })
   }
-  setHud(scene.registry, 'selected', selected)
+
+  // TAB : ouvre/ferme l'écran d'inventaire (la grille arrive au chantier 7).
+  // On capture la touche : sinon le navigateur déplace le focus hors du canvas.
+  kb.addCapture(KEYMAP.toggleInventory[0])
+  onDown(KEYMAP.toggleInventory, () => {
+    setHud(scene.registry, 'inventoryOpen', !getHud(scene.registry, 'inventoryOpen'))
+  })
+
+  // La molette fait défiler la case tenue, bornée à la ceinture — sauf quand
+  // l'inventaire ou la carte est ouvert (la molette y sert au zoom).
+  scene.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
+    if (getHud(scene.registry, 'mapOpen') || getHud(scene.registry, 'inventoryOpen')) return
+    const belt = SLOTS.BELT
+    const current = getHud(scene.registry, 'activeSlot') ?? -1
+    // Depuis les mains nues (-1), molette avant → case 0 ; arrière → dernière case.
+    const base = current < 0 ? (dy < 0 ? -1 : 0) : current
+    const next = (((base + (dy < 0 ? 1 : -1)) % belt) + belt) % belt
+    deps.sendAction({ type: 'set_active_slot', slot: next })
+    setHud(scene.registry, 'activeSlot', next)
+  })
 
   // Combat : ESPACE attaque vers le pointeur, C bloque, SHIFT sprinte, X bande.
   onDown(KEYMAP.attack, () => {
@@ -107,12 +148,9 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     if (target) deps.sendAction({ type: 'repair', structureId: target.id })
   })
 
-  // Manger et crafter.
+  // Manger (le craft est câblé plus haut, sur SHIFT+1…5, avec la ceinture).
   onDown(KEYMAP.eatBerries, () => deps.sendAction({ type: 'eat', item: 'berries' }))
   onDown(KEYMAP.eatStew, () => deps.sendAction({ type: 'eat', item: 'stew' }))
-  for (const [name, recipeId] of CRAFT_BINDINGS) {
-    onDown([name], () => deps.sendAction({ type: 'craft', recipeId }))
-  }
 
   scene.input.mouse?.disableContextMenu()
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
