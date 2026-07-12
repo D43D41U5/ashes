@@ -48,7 +48,11 @@ export function handleHunger(state: SimState, village: Village, npc: Npc, entity
     // de se figer devant le coffre (spec inventaire R11).
     return withdraw(state, entity, chest.id, item, count) > 0
   }
-  if (npc.path.length === 0) setPathTo(state, npc, entity, chest.tx, chest.ty)
+  // ANTI-LIVELOCK (comme handleCold) : un grenier INATTEIGNABLE (emmuré, une coulée
+  // de roche) laisse `path` vide — `followPath` ne ferait rien et le tick serait
+  // consommé quand même, à l'identique, pour toujours. On rend la main : il ne
+  // mangera pas, mais il travaillera, dormira, se défendra. La faim ne tue pas.
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return false
   followPath(state, npc, entity)
   return true
 }
@@ -73,7 +77,9 @@ export function handleSleep(state: SimState, npc: Npc, entity: Entity): boolean 
       npc.path = []
       return true
     }
-    if (npc.path.length === 0) setPathTo(state, npc, entity, target.tx, target.ty)
+    // ANTI-LIVELOCK (même garde que handleCold et handleHunger) : un lit inatteignable
+    // ne doit pas consommer le tick à vide jusqu'au matin.
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty)) return false
     followPath(state, npc, entity)
     return true
   }

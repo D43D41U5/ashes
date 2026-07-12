@@ -227,9 +227,21 @@ function claimTask(village: Village, npc: Npc, entity: Entity): void {
   npc.path = []
 }
 
-export function dropTask(village: Village, npc: Npc, completed: boolean): void {
+/**
+ * Le PNJ rend sa corvée. `clearFromBoard` dit ce qu'il advient de la TÂCHE, pas si
+ * le travail a été fait :
+ *   - `false` → elle retourne au tableau, libre. Pour un empêchement PROPRE À CE
+ *     PNJ (sac fermé, cible inatteignable) : un autre la prendra, et TASK_INTAKE
+ *     interdit à celui-ci de la re-réclamer au tick suivant.
+ *   - `true`  → elle QUITTE le tableau. Pour un empêchement qui vaudrait pour
+ *     n'importe qui (grenier plein) : la relâcher, ce serait la voir re-réclamée au
+ *     tick suivant par le même PNJ, à l'identique, à 20 Hz. La retirer est le SEUL
+ *     temps mort dont on dispose — `refreshBoard` la reposte au prochain
+ *     rafraîchissement si le besoin du village tient toujours.
+ */
+export function dropTask(village: Village, npc: Npc, clearFromBoard: boolean): void {
   if (npc.task) {
-    if (completed) village.tasks = village.tasks.filter((t) => t.id !== npc.task!.id)
+    if (clearFromBoard) village.tasks = village.tasks.filter((t) => t.id !== npc.task!.id)
     else {
       const t = village.tasks.find((task) => task.id === npc.task!.id)
       if (t) t.claimedBy = null
@@ -254,6 +266,20 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
       task.stage = 'store'
       npc.path = []
       return
+    }
+    // LA TRAVERSÉE : le sac s'est fermé PENDANT la corvée. TASK_INTAKE ne s'évalue
+    // qu'à la réclamation — entre elle et le nœud, la faim a pu voler la dernière
+    // case au grenier, ou un joueur gaver le PNJ. Sans cette garde il récolte quand
+    // même : la récolte n'a nulle part où aller, le nœud se vide dans le vide, et
+    // la chronique reçoit des `resource_harvested` qui mentent (demain, quand la
+    // récolte refusera honnêtement, ce sera un livelock sec à 20 Hz).
+    if (freeRoomFor(entity.inventory, def.item) === 0) {
+      if (countOf(entity.inventory, def.item) > 0) {
+        task.stage = 'store' // ce qu'il porte déjà part au grenier : ça libère des cases
+        npc.path = []
+        return
+      }
+      return dropTask(village, npc, false) // TASK_INTAKE l'empêchera de la reprendre
     }
     let node = task.nodeId !== null ? state.nodes.find((n) => n.id === task.nodeId) : undefined
     if (!node || node.stock <= 0) {
@@ -290,7 +316,9 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
     const count = countOf(entity.inventory, def.item) - keep
     if (count > 0) deposit(state, entity, chest.id, def.item, count)
     // Grenier plein (dépôt à 0) : le PNJ GARDE sa récolte — rien ne se détruit —
-    // et lâche la corvée quand même. La retenir, ce serait la retenter sans fin.
+    // et la corvée quitte le tableau quand même. Ce n'est pas « accompli » : c'est
+    // le seul temps mort disponible (cf. dropTask). La relâcher libre, ce serait
+    // la re-réclamer au tick suivant, ici même, pour l'éternité.
     dropTask(village, npc, true)
     return
   }
