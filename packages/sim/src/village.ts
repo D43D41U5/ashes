@@ -31,6 +31,7 @@ import {
   inventoryOf,
   isEmpty,
   makeInventory,
+  pourSlot,
   removeItems,
   type AccessLevel,
   type Inventory,
@@ -162,13 +163,10 @@ function spillOnGround(state: SimState, x: number, y: number, items: ItemBag, sl
  * Transfère au plus `count` unités de `item`, et SEULEMENT ce qui tient à
  * destination. Retourne ce qui a réellement bougé (0 = rien ne rentre).
  *
- * CASE PAR CASE, dans l'ordre. Ce n'est pas un détail d'implémentation : depuis
- * que l'usure vit dans la case (spec inventaire R6), un transfert « en gros »
- * (`removeItems` puis `addItems`) reconstruirait une case NEUVE à l'arrivée —
- * déposer une hache usée dans un coffre la RÉPARERAIT. Une lessiveuse à outils.
- * L'objet voyage donc AVEC sa case, et une case usée qui ne trouve pas de case
- * vide à destination reste simplement chez elle (rien ne se crée, rien ne se
- * perd — critère A21).
+ * CASE PAR CASE, dans l'ordre : la règle du versement (pousser d'abord, ne retirer
+ * que ce qui a atterri, l'usure voyageant avec la case) vit dans `pourSlot`, et
+ * NULLE PART AILLEURS. Ici on ne fait qu'ajouter le filtre « cet item-là, cette
+ * quantité-là » dont `deposit`/`withdraw`/`give` ont besoin.
  */
 function transferItems(from: Inventory, to: Inventory, item: ItemId, count: number): number {
   let remaining = Math.min(count, countOf(from, item))
@@ -176,19 +174,13 @@ function transferItems(from: Inventory, to: Inventory, item: ItemId, count: numb
   for (let i = 0; i < from.length && remaining > 0; i++) {
     const slot = from[i]
     if (!slot || slot.item !== item) continue
-    if (slot.wear !== undefined) {
-      // Une case usée ne se scinde pas et ne fusionne avec rien : tout ou rien.
-      if (slot.count > remaining || addSlot(to, slot) > 0) continue
-      from[i] = null
-      moved += slot.count
-      remaining -= slot.count
-      continue
+    const put = pourSlot(from, i, to, remaining)
+    if (put <= 0) {
+      // Une case usée qui ne trouve pas de case vide reste chez elle : on passe à
+      // la suivante. Un empilable qui ne passe plus, lui, ne passera plus du tout.
+      if (slot.wear !== undefined) continue
+      break
     }
-    const take = Math.min(slot.count, remaining)
-    const put = take - addSlot(to, { item, count: take })
-    if (put <= 0) break // la destination ne prend plus rien de cet item
-    slot.count -= put
-    if (slot.count <= 0) from[i] = null
     moved += put
     remaining -= put
   }
@@ -198,12 +190,12 @@ function transferItems(from: Inventory, to: Inventory, item: ItemId, count: numb
 /**
  * Déposer de la nourriture au grenier d'un AUTRE village est un don (spec
  * alignement R11). La règle vit ICI, en un seul endroit : `deposit` s'en sert, et
- * le futur `transfer` case-à-case (spec inventaire R16) s'en servira aussi.
+ * le `transfer` case-à-case (inventory-actions.ts, spec inventaire R16) aussi.
  *
  * `count` est ce qui a RÉELLEMENT été déposé : on ne se fait pas créditer d'un
  * don qui n'a pas eu lieu, et `gift_given` (chronique, réputation) dit vrai.
  */
-function creditForeignDeposit(
+export function creditForeignDeposit(
   state: SimState,
   actorId: number,
   s: Structure,

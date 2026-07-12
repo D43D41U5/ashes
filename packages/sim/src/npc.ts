@@ -30,7 +30,7 @@ import { startAttack } from './combat'
 import { applyEconomyAction, toolYield, type ResourceNode } from './economy'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
-import { countOf, freeRoomFor, type ItemId } from './items'
+import { countOf, freeRoomFor, moveSlotWithin, type ItemId } from './items'
 import { handleCold, handleHunger, handleSleep } from './npc-needs'
 import { assignErrands, handleErrand } from './npc-errands'
 import { findPath } from './pathfinding'
@@ -174,10 +174,14 @@ export function near(entity: Entity, tx: number, ty: number, r = RANGE): boolean
 
 /**
  * Ramène une case dans la CEINTURE (seule région qui se tient en main, R7-R8) et
- * retourne son nouvel index. Un simple ÉCHANGE de cases : rien ne se crée, rien
- * ne se perd. Sans ça, une hache tombée en case 20 du grand sac d'un PNJ (40
- * cases) ne servirait jamais — il la porterait toute la saison sans pouvoir s'en
- * servir.
+ * retourne son nouvel index. Sans ça, une hache tombée en case 20 du grand sac d'un
+ * PNJ (40 cases) ne servirait jamais — il la porterait toute la saison sans pouvoir
+ * s'en servir.
+ *
+ * C'est EXACTEMENT le geste que le joueur fait à la ceinture (`move_slot`, R14) :
+ * on appelle donc sa primitive. Une deuxième copie de la règle d'échange finirait
+ * par diverger de la première — et les outils sont des cases usées : la moindre
+ * divergence les reconstruit NEUFS.
  */
 function liftIntoBelt(entity: Entity, index: number): number {
   if (index < SLOTS.BELT) return index
@@ -188,9 +192,7 @@ function liftIntoBelt(entity: Entity, index: number): number {
       break
     }
   }
-  const displaced = entity.inventory[dest] ?? null
-  entity.inventory[dest] = entity.inventory[index]!
-  entity.inventory[index] = displaced
+  moveSlotWithin(entity.inventory, index, dest)
   return dest
 }
 

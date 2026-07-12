@@ -160,28 +160,125 @@ export function addSlot(inv: Inventory, slot: Slot): number {
 }
 
 /**
- * Verse dans `to` TOUT ce qui rentre de `from`, case par case, USURE COMPRISE.
- * `from` GARDE ce qui n'a pas tenu. Retourne le nombre d'unités réellement
- * déplacées (0 = rien n'est passé, la destination est saturée).
+ * Verse au plus `count` unités de la case `i` de `from` DANS LE SAC `to` (n'importe
+ * quelle case, selon l'ordre de `addItems`), USURE COMPRISE. La source garde ce qui
+ * n'a pas tenu. Retourne ce qui a RÉELLEMENT bougé (0 = rien n'est passé).
  *
- * C'est LA règle des conteneurs bornés (spec inventaire R10-R11, critère A21) :
- * un transfert qui « réussit » en jetant le reliquat détruit des items — et une
- * boucle de PNJ qui comptait sur cette destruction pour terminer se met à tourner
- * à vide. On prend ce qui rentre, la source garde le reste, personne ne ment.
+ * LE NOYAU des transferts en vrac : `pourInto` (tout un sac) et `transferItems`
+ * (par item + quantité, village.ts) n'en sont plus que des boucles. Ils encodaient
+ * la MÊME règle deux fois — un correctif appliqué à l'un n'aurait jamais migré vers
+ * l'autre, et deux copies d'une règle finissent toujours par diverger.
+ *
+ * La règle, justement (spec inventaire R10-R11, critère A21) : on POUSSE d'abord,
+ * on ne retire de la source QUE ce qui a atterri. L'ordre inverse DUPLIQUE (si la
+ * destination refuse) ou DÉTRUIT (si on vide la source pour rien) — et un transfert
+ * qui « réussit » en jetant le reliquat fait tourner à vide la boucle de PNJ qui
+ * comptait dessus. On prend ce qui rentre, la source garde le reste, personne ne ment.
+ */
+export function pourSlot(from: Inventory, i: number, to: Inventory, count: number): number {
+  const slot = from[i]
+  if (slot === null || slot === undefined) return 0
+  const take = Math.min(count, slot.count)
+  if (take <= 0) return 0
+  if (slot.wear !== undefined) {
+    // Une case usée ne se scinde pas et ne fusionne avec rien : elle part ENTIÈRE
+    // vers une case vide, ou pas du tout. Reconstruire l'objet à l'arrivée le
+    // rendrait NEUF — le coffre serait une lessiveuse à outils (spec R6).
+    if (take < slot.count || addSlot(to, slot) > 0) return 0
+    from[i] = null
+    return slot.count
+  }
+  const put = take - addSlot(to, { item: slot.item, count: take })
+  if (put <= 0) return 0
+  slot.count -= put
+  if (slot.count <= 0) from[i] = null
+  return put
+}
+
+/**
+ * Verse dans `to` TOUT ce qui rentre de `from`, case par case, USURE COMPRISE.
+ * `from` GARDE ce qui n'a pas tenu. Retourne le nombre d'unités réellement déplacées.
  */
 export function pourInto(from: Inventory, to: Inventory): number {
   let moved = 0
   for (let i = 0; i < from.length; i++) {
     const slot = from[i]
     if (slot === null || slot === undefined) continue
-    const left = addSlot(to, slot) // une case usée part ENTIÈRE, ou pas du tout
-    const put = slot.count - left
-    if (put <= 0) continue
-    moved += put
-    if (left <= 0) from[i] = null
-    else slot.count = left
+    moved += pourSlot(from, i, to, slot.count)
   }
   return moved
+}
+
+/**
+ * Verse au plus `count` unités de la case `i` de `from` SUR LA CASE `j` de `to` —
+ * le geste du joueur, qui vise UNE case (glisser-déposer, spec R14-R16). Retourne
+ * ce qui a bougé ; 0 = la case visée ne peut rien recevoir (rien n'a été détruit).
+ *
+ * La case visée doit être VIDE, ou porter une pile du MÊME item empilable : on y
+ * fond alors ce qui rentre, et le DÉBORD RESTE À LA SOURCE (A13). Un outil (pile de
+ * 1) et toute case usée voyagent ENTIERS, vers une case vide seulement — jamais
+ * reconstruits, donc jamais réparés au passage (A21 + R6).
+ *
+ * La case posée est toujours un objet NEUF : jamais la référence de la case source,
+ * qui serait alors présente dans DEUX inventaires à la fois.
+ *
+ * NB : distinct de `pourSlot`, qui vise un SAC (« range ça où tu peux »). Deux
+ * destinations, deux règles — l'une n'est pas une copie de l'autre.
+ */
+export function pourOntoSlot(
+  from: Inventory,
+  i: number,
+  to: Inventory,
+  j: number,
+  count: number,
+): number {
+  const src = from[i]
+  if (src === null || src === undefined) return 0
+  if (j < 0 || j >= to.length) return 0
+  const take = Math.min(count, src.count)
+  if (take <= 0) return 0
+  const dst = to[j] ?? null
+
+  if (src.wear !== undefined || !isStackable(src.item)) {
+    if (dst !== null || take < src.count) return 0
+    const carried: Slot = { item: src.item, count: src.count }
+    if (src.wear !== undefined) carried.wear = src.wear
+    to[j] = carried
+    from[i] = null
+    return carried.count
+  }
+
+  const max = stackSize(src.item)
+  const room = dst === null ? max : dst.item === src.item && dst.wear === undefined ? max - dst.count : 0
+  const put = Math.min(take, room)
+  if (put <= 0) return 0
+  if (dst === null) to[j] = { item: src.item, count: put }
+  else dst.count += put
+  src.count -= put
+  if (src.count <= 0) from[i] = null
+  return put
+}
+
+/**
+ * Le geste R14 : glisser la case `from` sur la case `to` du MÊME sac. Deux piles du
+ * même item empilable fusionnent (débord à la source) ; sinon les deux cases
+ * S'ÉCHANGENT. `false` = geste impossible (case vide, hors bornes, sur elle-même).
+ *
+ * Un ÉCHANGE, pas une reconstruction : l'usure vit dans la case, donc elle suit
+ * l'objet sans qu'on ait à la recopier. C'est aussi le geste dont `liftIntoBelt`
+ * (npc.ts) a besoin pour armer la main d'un PNJ — la règle n'existe qu'ici.
+ */
+export function moveSlotWithin(inv: Inventory, from: number, to: number): boolean {
+  if (from === to) return false
+  if (from < 0 || to < 0 || from >= inv.length || to >= inv.length) return false
+  const src = inv[from]
+  if (src === null || src === undefined) return false
+  if (pourOntoSlot(inv, from, inv, to, src.count) > 0) return true
+  // Rien n'a pu se fondre (items différents, outil, ou pile déjà pleine) : on échange.
+  const dst = inv[to] ?? null
+  inv[to] = src
+  inv[from] = dst
+  return true
 }
 
 /**
