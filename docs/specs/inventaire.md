@@ -1,6 +1,6 @@
 # Inventaire — le sac, la ceinture, l'objet en main
 
-*Source : GDD §7 (« ce qu'on porte », la mort lâche l'inventaire), §8 (économie de flux, usure). Statut : actif.*
+*Source : GDD §7 (« ce qu'on porte », la mort lâche l'inventaire), §8 (économie de flux, usure). Statut : implémenté (2026-07-12, branche `feat/inventaire-slots`).*
 
 *Chantier 1 de trois. Chantier 2 « l'établi » (file de craft) et chantier 3 « le marteau »
 (plan de construction, ghost, tiers de matériaux) ont leurs propres specs — ce document ne

@@ -576,6 +576,58 @@ const SCENARIOS = {
     await page.screenshot({ path: `${OUT}/carte-apres-decouvertes.png` })
     return b
   },
+
+  /**
+   * LE SAC (chantier inventaire façon Rust). On ne rejoue pas ici la sim — les
+   * tests headless prouvent déjà la récolte, l'usure et la capacité (A5-A11).
+   * Ce que le navigateur, LUI SEUL, peut confirmer : le CÂBLAGE client — la
+   * ceinture et les vitales rendues, l'inventaire vraiment devenu un tableau de
+   * CASES, une touche de ceinture qui change réellement l'objet en main, et TAB
+   * qui ouvre l'écran d'inventaire. On lit l'état, on ne le fabrique pas.
+   */
+  async inventaire(page) {
+    await page.waitForTimeout(1500) // le premier snapshot peuple le HUD
+    await page.screenshot({ path: `${OUT}/sac-hud.png` })
+
+    // 1. L'inventaire est-il un TABLEAU DE CASES (Slot[] | null), et l'objet en
+    //    main existe-t-il ? C'est la bascule du socle, vue depuis le client.
+    const socle = await page.evaluate(() => {
+      const r = window.__BRAISES__.scene.registry
+      const inv = r.get('inv')
+      return {
+        estTableau: Array.isArray(inv),
+        cases: Array.isArray(inv) ? inv.length : null,
+        activeSlot: r.get('activeSlot'),
+        aVitales: r.get('hp') !== undefined && r.get('stamina') !== undefined && r.get('temperature') !== undefined,
+      }
+    })
+    console.log(`socle : inv est un tableau=${socle.estTableau}, ${socle.cases} cases, activeSlot=${socle.activeSlot}`)
+    console.log(socle.estTableau && socle.cases > 0
+      ? `   ✓ l'inventaire est bien un tableau de cases (fini le dictionnaire infini)`
+      : `   ✗ l'inventaire n'est PAS un tableau de cases !`)
+    console.log(socle.aVitales ? `   ✓ les vitales sont publiées (PV/endurance/température)` : `   ✗ vitales manquantes`)
+
+    // 2. La CEINTURE fait foi : appuyer sur « 2 » doit changer l'objet en main
+    //    (câblage touche → set_active_slot → autorité → snapshot → registry).
+    await page.keyboard.press('Digit2')
+    await page.waitForTimeout(400)
+    const apres2 = await page.evaluate(() => window.__BRAISES__.scene.registry.get('activeSlot'))
+    console.log(`après appui sur « 2 » : activeSlot=${apres2}`)
+    console.log(apres2 === 1
+      ? `   ✓ la touche 2 tient bien la case 1 — l'objet en main répond`
+      : `   ✗ activeSlot attendu 1, obtenu ${apres2} : la ceinture ne répond pas`)
+
+    // 3. TAB ouvre l'écran d'inventaire (la grille + le glisser-déposer).
+    await page.keyboard.press('Tab')
+    await page.waitForTimeout(400)
+    const ouvert = await page.evaluate(() => window.__BRAISES__.scene.registry.get('inventoryOpen'))
+    console.log(ouvert ? `   ✓ TAB ouvre l'écran d'inventaire` : `   ✗ TAB n'ouvre rien`)
+    await page.screenshot({ path: `${OUT}/sac-inventaire-ouvert.png` })
+
+    await page.keyboard.press('Tab')
+    await page.waitForTimeout(300)
+    return socle
+  },
 }
 
 const run = SCENARIOS[scenario]
