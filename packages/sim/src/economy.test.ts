@@ -10,8 +10,10 @@ import {
 } from './balance'
 import { generateNodes, nodeAt, skillLevel, treeJitter, type ResourceNode } from './economy'
 import { drainEvents } from './events'
-import { countOf, freeRoomFor, inventoryOf, makeInventory, stackSize, type ItemId } from './items'
+import { heldSlot } from './inventory-actions'
+import { countOf, durabilityOf, freeRoomFor, inventoryOf, makeInventory, stackSize, type ItemId } from './items'
 import { createEmptyMap, zoneAt } from './map'
+import { equipBestTool } from './npc'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { TICKS_PER_SEASON_DAY } from './time'
 import { grantItems } from './village'
@@ -413,6 +415,106 @@ describe('l’artisanat (A3)', () => {
     expect(countOf(me(sim).inventory, 'stone')).toBe(220)
     expect(me(sim).cooldownUntil).toBeLessThanOrEqual(sim.tick)
     expect(rejections(sim)).toEqual(['sac plein'])
+  })
+})
+
+/**
+ * La COUCHE 1 — le craft de fortune (spec `craft-fortune.md`). Ce qu'un survivant
+ * nu peut faire à la minute 0 : tresser, tailler, ficeler. Le fil rouge tenu par
+ * ces tests : **la fortune accélère, elle n'ouvre rien** — le fer et le charbon
+ * restent derrière un outil FORGÉ, donc derrière un bâtiment (GDD §8).
+ */
+describe('l’artisanat de fortune (craft-fortune A1-A5)', () => {
+  it('A1-A2 : la corde se tresse À LA MAIN, sans structure — mais la hache exige toujours son atelier', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { fiber: 3, wood: 5, stone: 3 })
+    drainEvents(sim)
+
+    // Aucun village, aucun Feu, aucune station — et pourtant la corde sort.
+    act(sim, id, { type: 'craft', recipeId: 'rope' })
+    expect(sim.structures).toHaveLength(0)
+    expect(countOf(me(sim).inventory, 'rope')).toBe(1)
+    expect(countOf(me(sim).inventory, 'fiber')).toBe(0)
+    expect(rejections(sim)).toEqual([])
+    expect(me(sim).skills.crafting ?? 0).toBeGreaterThan(0) // l'XP d'artisan tombe comme ailleurs
+
+    // La nullabilité n'ouvre QUE les recettes qui la déclarent : la hache, elle,
+    // veut toujours son atelier. Sinon la couche 1 aurait dissous tout l'établi.
+    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
+    act(sim, id, { type: 'craft', recipeId: 'axe' })
+    expect(countOf(me(sim).inventory, 'axe')).toBe(0)
+    expect(rejections(sim)).toEqual(['station requise hors de portée : workshop'])
+  })
+
+  it('A3 : le pic de fortune N’OUVRE PAS le filon — seul l’outil forgé entame le fer', () => {
+    const vein = makeNode('iron_vein', 11, 10)
+    const sim = makeSim([vein])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    grantHeld(sim, id, 'crude_pickaxe')
+    drainEvents(sim)
+
+    act(sim, id, { type: 'harvest', nodeId: vein.id })
+    expect(rejections(sim)).toEqual(['il faut un outil forgé en main'])
+    expect(countOf(me(sim).inventory, 'iron_ore')).toBe(0)
+    expect(sim.nodes[0]!.stock).toBe(8) // le filon n'a rien lâché
+    expect(me(sim).inventory[0]).toEqual({ item: 'crude_pickaxe', count: 1 }) // pas même usé
+
+    // La pioche d'atelier, elle, ouvre : trois pierres ne valent pas une forge.
+    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
+    grantHeld(sim, id, 'pickaxe')
+    act(sim, id, { type: 'harvest', nodeId: vein.id })
+    expect(countOf(me(sim).inventory, 'iron_ore')).toBe(2)
+  })
+
+  it('A3bis : mais la PIERRE ne se refuse à personne — la fortune est faite de pierre', () => {
+    const rock = makeNode('rock', 11, 10)
+    const sim = makeSim([rock])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    drainEvents(sim)
+
+    // Mains nues, sans rien : le caillou vient. C'est ce qui interdit le blocage
+    // circulaire (spec C3) — tout outil de fortune est fait de pierre.
+    act(sim, id, { type: 'harvest', nodeId: rock.id })
+    expect(countOf(me(sim).inventory, 'stone')).toBe(1)
+    expect(rejections(sim)).toEqual([])
+  })
+
+  it('A4 : le hachereau rend AUTANT que la hache (×2) — et casse cinq fois plus vite', () => {
+    const tree = makeNode('tree', 11, 10)
+    tree.stock = 100_000
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    grantHeld(sim, id, 'crude_axe')
+
+    // Le rendement : ×2, comme l'outil d'atelier.
+    swing(sim, id, tree.id, 1)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(2)
+
+    // La vie : 20 coups (durabilityOf), là où la hache d'atelier en tient 100.
+    // Au 20e, il ne reste plus rien en main.
+    expect(durabilityOf('crude_axe')).toBe(20)
+    expect(durabilityOf('axe')).toBe(BALANCE.TOOL_DURABILITY)
+    swing(sim, id, tree.id, 19)
+    expect(countOf(me(sim).inventory, 'crude_axe')).toBe(0)
+    expect(heldSlot(me(sim))).toBeNull()
+
+    // Sans outil, le coup suivant retombe à ×1 : la fortune ne laisse rien derrière.
+    const before = countOf(me(sim).inventory, 'wood')
+    swing(sim, id, tree.id, 1)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(before + 1)
+  })
+
+  it('A5 : le PNJ empoigne la hache d’atelier, pas le hachereau — on classe au rang', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    // Le hachereau EN PREMIER dans le sac : au rendement (×2 = ×2), la première
+    // case aurait gagné. C'est le rang qui départage.
+    grantItems(sim, id, { crude_axe: 1, axe: 1 })
+
+    equipBestTool(me(sim), 'axe')
+
+    expect(heldSlot(me(sim))?.item).toBe('axe')
   })
 })
 

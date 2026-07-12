@@ -27,7 +27,7 @@ import {
 } from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { startAttack } from './combat'
-import { applyEconomyAction, toolYield, type ResourceNode } from './economy'
+import { applyEconomyAction, toolRank, type ResourceNode } from './economy'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { countOf, freeRoomFor, moveSlotWithin, type ItemId } from './items'
@@ -212,9 +212,14 @@ function equipBest(entity: Entity, score: (item: ItemId) => number): void {
   entity.activeSlot = bestIndex < 0 ? -1 : liftIntoBelt(entity, bestIndex)
 }
 
-/** Le meilleur outil PORTÉ pour cette famille (le barème vient de `toolYield`). */
+/**
+ * Le meilleur outil PORTÉ pour cette famille — classé au RANG, pas au rendement
+ * (spec craft-fortune C7). Le hachereau de fortune et la hache d'atelier rendent
+ * tous deux ×2 : au rendement, le PNJ aurait pu empoigner le caillou ficelé et
+ * laisser la vraie hache au sac — pour la casser cinq fois plus vite.
+ */
 export function equipBestTool(entity: Entity, family: 'axe' | 'pickaxe' | null): void {
-  equipBest(entity, (item) => toolYield(item, family) - 1) // 0 = ce n'est pas un outil d'ici
+  equipBest(entity, (item) => toolRank(item, family)) // 0 = ce n'est pas un outil d'ici
 }
 
 /** L'arme la plus dangereuse PORTÉE (le barème vient de `WEAPON_DAMAGE`). */

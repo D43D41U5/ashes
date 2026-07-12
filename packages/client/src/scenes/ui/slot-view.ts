@@ -13,7 +13,7 @@
  *    VERTICAL collé au bord GAUCHE de la case, qui se vide vers le bas ;
  *  - la case tenue en main n'est pas cerclée d'or : elle est TEINTÉE DE BLEU.
  */
-import { BALANCE, type Slot } from '@braises/sim'
+import { durabilityOf, type Slot } from '@braises/sim'
 import type Phaser from 'phaser'
 import { ITEM_ICON_PX, itemIconKey } from '../../render/item-art'
 
@@ -99,7 +99,10 @@ export function createSlotView(scene: Phaser.Scene, x: number, y: number, size: 
       wearBg.setVisible(worn)
       wearBar.setVisible(worn)
       if (worn) {
-        const left = Math.max(0, 1 - (slot.wear ?? 0) / BALANCE.TOOL_DURABILITY)
+        // La durabilité vient de l'OBJET, pas d'une constante : un hachereau de
+        // fortune meurt en 20 coups. Une barre calée sur les 100 de la hache
+        // d'atelier le montrerait encore aux trois quarts plein en tombant.
+        const left = Math.max(0, 1 - (slot.wear ?? 0) / durabilityOf(slot.item))
         wearBar.height = wearH * left
         wearBar.fillColor = left > 0.5 ? WEAR_GREEN : left > 0.2 ? WEAR_AMBER : WEAR_RED
       }

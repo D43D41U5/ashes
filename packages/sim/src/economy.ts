@@ -27,10 +27,12 @@ import {
   TERRAIN_REED_MARSH,
   TERRAIN_SCREE,
   TERRAINS,
+  TOOL_RANK,
   TOOL_TIERS,
   TOOL_YIELD,
   type NodeType,
   type RecipeId,
+  type ToolTier,
 } from './balance'
 import { harvestFactor } from './alignment'
 import { emitEvent } from './events'
@@ -108,29 +110,44 @@ function gainXp(state: SimState, entity: Entity, skill: SkillId, base: number): 
 }
 
 /**
- * Ce que vaut UN objet pour une famille d'outil : fer ×3, basique ×2, rien ×1.
+ * À quel PALIER un objet joue, pour une famille d'outil (spec craft-fortune C4).
  *
- * LA règle de rendement, en un seul endroit — `toolMultiplier` la lit pour la
- * case tenue, et les PNJ la lisent pour choisir quoi empoigner (`npc.ts`). Deux
- * copies divergeraient.
+ * LA règle, en un seul endroit — le rendement (`TOOL_YIELD`) et le rang
+ * (`TOOL_RANK`) en dérivent tous les deux, et ils ne disent PAS la même chose :
+ * un pic de fortune RAMÈNE autant qu'une pioche d'atelier (×2) mais n'OUVRE pas
+ * les filons (rang 1 < 2). Confondre les deux, c'était offrir la mine contre
+ * trois pierres.
  */
-export function toolYield(item: ItemId | null, family: 'axe' | 'pickaxe' | null): number {
-  if (!family || item === null) return TOOL_YIELD.none
-  const tier = TOOL_TIERS[family]
-  if (item === tier.iron) return TOOL_YIELD.iron
-  if (item === tier.basic) return TOOL_YIELD.basic
-  return TOOL_YIELD.none // on tient autre chose : ça ne sert à rien ici
+export function toolTier(item: ItemId | null, family: 'axe' | 'pickaxe' | null): ToolTier {
+  if (!family || item === null) return 'none'
+  const tiers = TOOL_TIERS[family]
+  if (item === tiers.iron) return 'iron'
+  if (item === tiers.basic) return 'basic'
+  if (item === tiers.crude) return 'crude'
+  return 'none' // on tient autre chose : ça ne sert à rien ici
+}
+
+/**
+ * Ce que l'objet OUVRE, et l'ordre dans lequel un PNJ les préfère (0 = pas un
+ * outil d'ici). Distinct du rendement : à ×2 tous les deux, le hachereau et la
+ * hache d'atelier départagent ICI — sinon un PNJ empoignerait le caillou ficelé
+ * et laisserait la vraie hache au sac (spec C7).
+ */
+export function toolRank(item: ItemId | null, family: 'axe' | 'pickaxe' | null): number {
+  return TOOL_RANK[toolTier(item, family)]
 }
 
 /**
  * Le rendement vient de l'objet TENU (spec inventaire R9). La sim NE FOUILLE
  * PLUS LE SAC : oublier sa hache a un coût, et c'est ce coût qui donne son poids
- * à la ceinture. `held` = on tient bien un outil de la famille (donc il s'use, et
- * il ouvre les nœuds qui l'exigent).
+ * à la ceinture. `held` = on tient bien un outil de la famille (donc il s'use).
  */
-function toolMultiplier(entity: Entity, family: 'axe' | 'pickaxe' | null): { mult: number; held: boolean } {
-  const mult = toolYield(heldSlot(entity)?.item ?? null, family)
-  return { mult, held: mult > 1 }
+function toolMultiplier(
+  entity: Entity,
+  family: 'axe' | 'pickaxe' | null,
+): { mult: number; held: boolean; tier: ToolTier } {
+  const tier = toolTier(heldSlot(entity)?.item ?? null, family)
+  return { mult: TOOL_YIELD[tier], held: tier !== 'none', tier }
 }
 
 export function applyEconomyAction(state: SimState, actorId: number, action: EconomyAction): void {
@@ -148,11 +165,15 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       if (!node || node.stock <= 0) return reject('rien à récolter')
       if (distSq(actor.x, actor.y, node.tx + 0.5, node.ty + 0.5) > range * range) return reject('trop loin')
       const def = NODE_DEFS[node.type]
-      const { mult, held } = toolMultiplier(actor, def.tool)
+      const { mult, held, tier } = toolMultiplier(actor, def.tool)
       // Le filon exige la pioche EN MAIN (spec inventaire R9) : l'avoir dans le
       // sac ne suffit plus. Miner du fer en ayant laissé sa pioche au fond du
-      // sac est désormais un refus, pas un coup gratuit.
-      if (def.requiresTool && !held) return reject('il faut une pioche en main')
+      // sac est un refus, pas un coup gratuit. Et depuis la couche 1, ce n'est
+      // plus « un outil » mais un PALIER : le pic de fortune rend ×2 comme la
+      // pioche d'atelier, mais il n'entame pas un filon (spec craft-fortune C5).
+      if (TOOL_RANK[tier] < TOOL_RANK[def.minTool]) {
+        return reject(tier === 'none' ? 'il faut une pioche en main' : 'il faut un outil forgé en main')
+      }
 
       const level = levelOf(actor, def.skill)
       // La Meute a une économie anémique (spec alignement R8) — mais jamais
@@ -207,13 +228,18 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       if (state.tick < actor.cooldownUntil) return reject('trop tôt')
       const recipe = RECIPES[action.recipeId]
       if (!recipe) return reject('recette inconnue')
-      const station = state.structures.find(
-        (s: Structure) =>
-          s.type === recipe.station &&
-          distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) <= range * range &&
-          hasAccess(state, actorId, s),
-      )
-      if (!station) return reject(`station requise hors de portée : ${recipe.station}`)
+      // `station: null` = À LA MAIN (spec craft-fortune C1) : nulle part, donc
+      // partout — sans structure, sans village, sans Feu. C'est la rampe du
+      // survivant nu : elle n'ajoute AUCUNE autre porte (C2).
+      if (recipe.station !== null) {
+        const station = state.structures.find(
+          (s: Structure) =>
+            s.type === recipe.station &&
+            distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) <= range * range &&
+            hasAccess(state, actorId, s),
+        )
+        if (!station) return reject(`station requise hors de portée : ${recipe.station}`)
+      }
       if (!removeItems(actor.inventory, recipe.inputs)) return reject('matériaux insuffisants')
       // La place se mesure APRÈS les intrants, car les consommer LIBÈRE des cases :
       // un sac 18/18 dont une case vaut exactement les 2 fibres de la recette a bel

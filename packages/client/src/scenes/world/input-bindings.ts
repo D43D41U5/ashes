@@ -140,9 +140,10 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
 
   // La CEINTURE : 1-6 tiennent une case (spec inventaire R17). Affichage
   // optimiste (R22) — on surligne tout de suite, le prochain snapshot fait foi.
-  // SHIFT+1…5 restent le craft de dépannage (béquille jusqu'au chantier 2) :
+  // SHIFT+1…6 restent le craft de dépannage (béquille jusqu'au panneau de craft) :
   // le modificateur tranche entre tenir une case et lancer une recette.
   const craftFor = new Map(CRAFT_BINDINGS.map(([name, recipeId]) => [name, recipeId]))
+  const beltKeys = new Set(BELT_BINDINGS.map(([name]) => name))
   for (const [name, slot] of BELT_BINDINGS) {
     onDownE([name], (event) => {
       const recipeId = craftFor.get(name)
@@ -152,6 +153,14 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       }
       deps.sendAction({ type: 'set_active_slot', slot })
       setHud(scene.registry, 'activeSlot', slot)
+    })
+  }
+  // Les recettes qui débordent de la ceinture (SHIFT+7…0, la couche 1) : mêmes
+  // règles, mais aucune case à tenir dessous — la touche nue ne fait rien.
+  for (const [name, recipeId] of CRAFT_BINDINGS) {
+    if (beltKeys.has(name)) continue
+    onDownE([name], (event) => {
+      if (event.shiftKey) deps.sendAction({ type: 'craft', recipeId })
     })
   }
 

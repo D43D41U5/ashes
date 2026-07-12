@@ -18,7 +18,15 @@
 import { BALANCE, SLOTS } from './balance'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
-import { isEmpty, isStackable, moveSlotWithin, pourOntoSlot, type Inventory, type Slot } from './items'
+import {
+  durabilityOf,
+  isEmpty,
+  isStackable,
+  moveSlotWithin,
+  pourOntoSlot,
+  type Inventory,
+  type Slot,
+} from './items'
 import type { Entity, SimState } from './sim'
 import { creditForeignDeposit, hasAccess, type Structure } from './village'
 
@@ -62,17 +70,19 @@ export function heldSlot(entity: Entity): Slot | null {
 }
 
 /**
- * Use l'objet TENU de `amount`, et le casse à `TOOL_DURABILITY` (spec R6).
+ * Use l'objet TENU de `amount`, et le casse à SA durabilité (spec R6, C6).
  *
  * L'usure vit dans la CASE : deux haches ne partagent plus un compteur (c'était
  * un bug de conception qui dormait — `Entity.wear` agrégeait par type d'item).
- * Mains nues : rien à user, rien à casser.
+ * Le SEUIL, lui, vit dans l'OBJET (`durabilityOf`) : un hachereau de fortune
+ * casse au 20ᵉ coup là où une hache d'atelier en tient 100 — c'est tout ce que
+ * paie la couche 1, qui rend pourtant autant. Mains nues : rien à user.
  */
 export function wearHeld(entity: Entity, amount: number): void {
   const slot = heldSlot(entity)
   if (slot === null) return
   slot.wear = (slot.wear ?? 0) + amount
-  if (slot.wear >= BALANCE.TOOL_DURABILITY) entity.inventory[entity.activeSlot] = null
+  if (slot.wear >= durabilityOf(slot.item)) entity.inventory[entity.activeSlot] = null
 }
 
 export function applyInventoryAction(state: SimState, actorId: number, action: InventoryAction): void {

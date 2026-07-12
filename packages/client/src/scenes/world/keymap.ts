@@ -78,11 +78,17 @@ export const BELT_BINDINGS: readonly [string, number][] = [
 export const BUILDABLE_CYCLE: readonly (Buildable | null)[] = [null, 'wall', 'door', 'chest', 'workshop', 'furnace']
 
 /**
- * Recettes de craft — BÉQUILLE jusqu'au chantier 2 (le panneau de craft). Les
- * touches 1-6 tenant la ceinture, le craft se replie sur SHIFT+1…5 (même ordre
- * qu'avant) : sans lui, le craft serait inaccessible et le jeu injouable entre
- * deux chantiers. Le handler lit `event.shiftKey` pour trancher. À supprimer au
- * chantier 2.
+ * Recettes de craft — BÉQUILLE jusqu'au chantier « panneau de craft ». Le craft
+ * vit sur SHIFT + un chiffre : sans lui, il serait inaccessible et le jeu
+ * injouable entre deux chantiers. Le handler lit `event.shiftKey` pour trancher.
+ *
+ * 1-6 portent AUSSI la ceinture (SHIFT départage). 7-0 ne portent rien d'autre :
+ * ils accueillent la couche 1 (le craft à la main), qui est ce qu'on fait EN
+ * PREMIER — la reléguer au fond d'une béquille saturée l'aurait rendue invisible.
+ *
+ * La béquille est désormais pleine à craquer (10 touches, 13 recettes : `spear`,
+ * `iron_pickaxe` et `cooked_meat` ne sont déjà atteignables par AUCUNE touche).
+ * C'est le signal que le panneau de craft est dû.
  */
 export const CRAFT_BINDINGS: readonly [string, RecipeId][] = [
   ['ONE', 'stew'],
@@ -91,4 +97,9 @@ export const CRAFT_BINDINGS: readonly [string, RecipeId][] = [
   ['FOUR', 'iron_ingot'],
   ['FIVE', 'iron_axe'],
   ['SIX', 'hammer'],
+  // La couche 1, à la main, sans poste (spec craft-fortune).
+  ['SEVEN', 'rope'],
+  ['EIGHT', 'crude_axe'],
+  ['NINE', 'crude_pickaxe'],
+  ['ZERO', 'crude_spear'],
 ]

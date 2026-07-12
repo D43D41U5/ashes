@@ -306,6 +306,15 @@ export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./
 
 export type NodeType = 'tree' | 'rock' | 'fiber_plant' | 'berry_bush' | 'iron_vein' | 'coal_seam'
 
+/**
+ * Les quatre paliers d'outil, ORDONNÉS (spec craft-fortune C4). Le rang décide
+ * de ce qu'on OUVRE (les filons), le rendement de ce qu'on RAMÈNE — ce sont deux
+ * questions distinctes, et les confondre était le bug latent : `crude` rend
+ * autant que `basic` (×2), mais il ne doit ouvrir NI le fer NI le charbon.
+ */
+export type ToolTier = 'none' | 'crude' | 'basic' | 'iron'
+export const TOOL_RANK: Record<ToolTier, number> = { none: 0, crude: 1, basic: 2, iron: 3 }
+
 export interface NodeDef {
   item: import('./items').ItemId
   stock: number
@@ -318,27 +327,59 @@ export interface NodeDef {
   skill: import('./items').SkillId
   /** Famille d'outil qui multiplie le rendement. */
   tool: 'axe' | 'pickaxe' | null
-  /** Le T2 exige l'outil (spec R5) : rien à mains nues. */
-  requiresTool: boolean
+  /**
+   * Le palier MINIMAL pour entamer le nœud (spec craft-fortune C5).
+   *
+   * C'était un booléen « il faut un outil », testé par « rendement > 1 ». Le pic
+   * de fortune rendant ×2, il aurait ouvert le fer et le charbon — trois pierres
+   * et une corde court-circuitant l'atelier, la forge, et toute la géopolitique
+   * de la mine (GDD §8 : la puissance T2 passe OBLIGATOIREMENT par un bâtiment).
+   * Les filons exigent donc un outil FORGÉ, pas un caillou ficelé.
+   *
+   * La PIERRE, elle, reste à `none` pour toujours (C3) : tout outil de fortune
+   * est fait de pierre — la gater derrière un outil serait le blocage circulaire
+   * que `recolte.md` G13 a déjà refusé pour le marteau.
+   */
+  minTool: ToolTier
 }
 
 export const NODE_DEFS: Record<NodeType, NodeDef> = {
-  tree: { item: 'wood', stock: 10, blockHalfSub: 1, skill: 'woodcutting', tool: 'axe', requiresTool: false },
-  rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', requiresTool: false },
-  fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, requiresTool: false },
-  berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, requiresTool: false },
-  iron_vein: { item: 'iron_ore', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', requiresTool: true },
-  coal_seam: { item: 'coal', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', requiresTool: true },
+  tree: { item: 'wood', stock: 10, blockHalfSub: 1, skill: 'woodcutting', tool: 'axe', minTool: 'none' },
+  rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'none' },
+  fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
+  berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
+  iron_vein: { item: 'iron_ore', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
+  coal_seam: { item: 'coal', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
 }
 
-/** Les deux paliers de chaque famille d'outil. Le barème, lui, est `TOOL_YIELD`. */
-export const TOOL_TIERS: Record<'axe' | 'pickaxe', { basic: import('./items').ItemId; iron: import('./items').ItemId }> = {
-  axe: { basic: 'axe', iron: 'iron_axe' },
-  pickaxe: { basic: 'pickaxe', iron: 'iron_pickaxe' },
+/** Les trois paliers outillés de chaque famille. Le barème, lui, est `TOOL_YIELD`. */
+export const TOOL_TIERS: Record<
+  'axe' | 'pickaxe',
+  { crude: import('./items').ItemId; basic: import('./items').ItemId; iron: import('./items').ItemId }
+> = {
+  axe: { crude: 'crude_axe', basic: 'axe', iron: 'iron_axe' },
+  pickaxe: { crude: 'crude_pickaxe', basic: 'pickaxe', iron: 'iron_pickaxe' },
 }
 
-/** Rendement par palier : mains nues ×1, outil ×2, outil de fer ×3 (`toolYield`). */
-export const TOOL_YIELD = { iron: 3, basic: 2, none: 1 } as const
+/**
+ * Rendement par palier : mains nues ×1, fortune ×2, atelier ×2, fer ×3.
+ *
+ * `crude` et `basic` à égalité, sciemment (spec craft-fortune C4-C6) : la fortune
+ * ne se paie pas en rendement mais en VIE (20 coups contre 100, `TOOL_DURABILITIES`)
+ * et en portes fermées (elle n'ouvre pas les filons). L'outil d'atelier n'est donc
+ * pas « le même en mieux » — il est durable, et il ouvre la mine.
+ */
+export const TOOL_YIELD: Record<ToolTier, number> = { none: 1, crude: 2, basic: 2, iron: 3 }
+
+/**
+ * Durabilité par objet — défaut : `BALANCE.TOOL_DURABILITY` (100 coups). Seuls
+ * les objets de fortune dérogent : 20 coups. C'est le prix de la couche 1 (C6).
+ */
+export const TOOL_DURABILITIES: Partial<Record<import('./items').ItemId, number>> = {
+  crude_axe: 20,
+  crude_pickaxe: 20,
+  crude_spear: 20,
+}
 
 /** Valeur nutritive des consommables (spec R9). */
 export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
@@ -349,6 +390,10 @@ export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
 }
 
 export type RecipeId =
+  | 'rope'
+  | 'crude_axe'
+  | 'crude_pickaxe'
+  | 'crude_spear'
   | 'stew'
   | 'axe'
   | 'pickaxe'
@@ -360,13 +405,22 @@ export type RecipeId =
   | 'cooked_meat'
 
 export interface Recipe {
-  station: 'fire' | 'workshop' | 'furnace'
+  /** `null` = À LA MAIN : nulle part, donc partout (spec craft-fortune C1). */
+  station: 'fire' | 'workshop' | 'furnace' | null
   inputs: import('./items').ItemBag
   output: import('./items').ItemId
 }
 
 /** Chaînes ≤ 3 étapes, stations distinctes (GDD §8, spec R10-R11). */
 export const RECIPES: Record<RecipeId, Recipe> = {
+  // ── La couche 1 : à mains nues, sans poste, dès la minute 0 (spec craft-fortune).
+  // Tout y passe par la CORDE : le goulot est volontaire (C8) — la fibre cesse
+  // d'être ce qu'on ramasse sans y penser, et le cueilleur a un client tout de suite.
+  rope: { station: null, inputs: { fiber: 3 }, output: 'rope' },
+  crude_axe: { station: null, inputs: { wood: 2, stone: 3, rope: 1 }, output: 'crude_axe' },
+  crude_pickaxe: { station: null, inputs: { wood: 3, stone: 2, rope: 1 }, output: 'crude_pickaxe' },
+  crude_spear: { station: null, inputs: { wood: 3, stone: 1, rope: 1 }, output: 'crude_spear' },
+
   stew: { station: 'fire', inputs: { berries: 4, fiber: 1 }, output: 'stew' },
   axe: { station: 'workshop', inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'axe' },
   pickaxe: { station: 'workshop', inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'pickaxe' },
@@ -386,6 +440,10 @@ export const RECIPES: Record<RecipeId, Recipe> = {
 export const WEAPON_DAMAGE: Partial<Record<import('./items').ItemId, number>> = {
   spear: 16,
   iron_axe: 10,
+  // L'épieu taillé se glisse entre les mains nues (6) et la lance (16), à 10 : une
+  // réponse au loup et au sanglier dès la première nuit, sans rendre la lance
+  // inutile — elle frappe 60 % plus fort et tient cinq fois plus (spec C9).
+  crude_spear: 10,
 }
 
 export type MonsterType = 'zombie' | 'boar' | 'cendreux' | 'rabbit' | 'deer' | 'wolf'
@@ -868,6 +926,11 @@ export const LOOT_VALUES: Partial<Record<import('./items').ItemId, number>> = {
   spear: 3,
   axe: 2,
   pickaxe: 2,
+  // La fortune ne vaut presque rien : piller un camp qui n'a que des cailloux
+  // ficelés ne doit pas nourrir le verdict de la Meute.
+  crude_axe: 1,
+  crude_pickaxe: 1,
+  crude_spear: 1,
 }
 
 /** Noms de villages, attribués par id (une chronique exige des noms). */
@@ -985,11 +1048,15 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   coal: 20,
   components: 10,
   berries: 10,
+  rope: 10,
   stew: 5,
   iron_ingot: 5,
   raw_meat: 5,
   cooked_meat: 5,
   // Outils et armes : un par case (l'usure est portée par la case).
+  crude_axe: 1,
+  crude_pickaxe: 1,
+  crude_spear: 1,
   axe: 1,
   pickaxe: 1,
   iron_axe: 1,

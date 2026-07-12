@@ -10,7 +10,7 @@
  * Réimplémenter `moveWithin`/`pourInto` ici signerait leur divergence : on ne
  * le fait pas.
  */
-import { BALANCE, SLOTS, isStackable, stackSize, type Inventory, type ItemId, type PlayerAction, type Slot, type SlotRef } from '@braises/sim'
+import { SLOTS, durabilityOf, isStackable, stackSize, type Inventory, type ItemId, type PlayerAction, type Slot, type SlotRef } from '@braises/sim'
 import type Phaser from 'phaser'
 import type { OpenContainerView } from '../../hud-state'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
@@ -300,7 +300,8 @@ export function createInventoryPanel(scene: Phaser.Scene, send: (a: PlayerAction
       if (!visible) return
       const slot = invOf(cell.side)[cell.slot]
       if (!slot) return
-      const wear = slot.wear && slot.wear > 0 ? ` — usure ${Math.round((slot.wear / BALANCE.TOOL_DURABILITY) * 100)}%` : ''
+      const wear =
+        slot.wear && slot.wear > 0 ? ` — usure ${Math.round((slot.wear / durabilityOf(slot.item)) * 100)}%` : ''
       tip.setText(`${ITEM_LABELS[slot.item]}${wear}`)
         .setPosition(pointer.x - root.x + 12, pointer.y - root.y - 8)
         .setVisible(true)

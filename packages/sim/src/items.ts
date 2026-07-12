@@ -18,7 +18,7 @@
  *
  * Déterminisme : aucun tirage. Le remplissage suit l'ordre des cases, point.
  */
-import { STACK_DEFAULT, STACK_SIZES } from './balance'
+import { BALANCE, STACK_DEFAULT, STACK_SIZES, TOOL_DURABILITIES } from './balance'
 
 export type ItemId =
   | 'wood'
@@ -29,6 +29,11 @@ export type ItemId =
   | 'iron_ore'
   | 'coal'
   | 'iron_ingot'
+  /** La CORDE : le liant de la couche 1 — tout objet de fortune y passe (spec craft-fortune C8). */
+  | 'rope'
+  | 'crude_axe'
+  | 'crude_pickaxe'
+  | 'crude_spear'
   | 'axe'
   | 'pickaxe'
   | 'iron_axe'
@@ -82,6 +87,18 @@ export function stackSize(item: ItemId): number {
 /** Un item empilable ne porte pas d'usure : deux piles fusionnent, deux outils jamais. */
 export function isStackable(item: ItemId): boolean {
   return stackSize(item) > 1
+}
+
+/**
+ * Combien de coups un objet encaisse avant de se consommer (spec craft-fortune C6).
+ *
+ * La durabilité vit dans l'OBJET, plus dans une constante unique : c'est tout le
+ * prix de la fortune. Un hachereau ficelé récolte aussi bien qu'une hache
+ * d'atelier (×2) — il tient cinq fois moins longtemps. Sans ce barème par objet,
+ * l'outil d'atelier ne serait « le même, mais bâti » : rien.
+ */
+export function durabilityOf(item: ItemId): number {
+  return TOOL_DURABILITIES[item] ?? BALANCE.TOOL_DURABILITY
 }
 
 export function countOf(inv: Inventory, item: ItemId): number {

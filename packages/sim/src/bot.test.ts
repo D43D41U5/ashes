@@ -126,4 +126,63 @@ describe('le bot headless (A7)', () => {
     const replayed = runReplay(log, setup)
     expect(snapshot(replayed)).toBe(snapshot(sim))
   })
+
+  /**
+   * A6 (spec craft-fortune) — LA RAMPE, avant le village. Le bot est nu : pas de
+   * Feu, pas d'atelier, pas de marteau. Il tresse, il taille, et il coupe deux
+   * fois plus vite — sans qu'aucune structure n'existe dans la sim. C'est tout
+   * l'objet de la couche 1 : donner quelque chose à faire de ses mains à la
+   * minute 0, sans court-circuiter l'établi.
+   */
+  it('la couche 1 : le bot NU tresse une corde, taille un hachereau, et coupe ×2 — sans une seule structure', () => {
+    const map = createEmptyMap(32, 32, TERRAIN_GRASS)
+    const nodes: ResourceNode[] = [
+      { id: 1, type: 'tree', tx: 14, ty: 10, stock: 10, regrowAt: 0 },
+      { id: 2, type: 'rock', tx: 6, ty: 10, stock: 12, regrowAt: 0 },
+      { id: 3, type: 'fiber_plant', tx: 10, ty: 14, stock: 6, regrowAt: 0 },
+    ]
+    const options: SimOptions = { map, nodes }
+    const setup = (state: SimState) => {
+      spawnEntity(state, 10.5, 10.5)
+    }
+    const sim = createSim(11, options)
+    const log = createReplayLog(11, options)
+    setup(sim)
+    const bot: Bot = { sim, log, id: 1 }
+
+    const wait = () => {
+      for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) tick(bot, 0, 0)
+    }
+
+    // 1. À MAINS NUES, ×1 par coup : 3 fibres (la corde), 2 bois + 3 pierres (le
+    //    hachereau). La pierre ne demande rien — sans quoi rien ne démarrerait.
+    harvestUntil(bot, sim.nodes[2]!, 'fiber', 3)
+    harvestUntil(bot, sim.nodes[0]!, 'wood', 2)
+    harvestUntil(bot, sim.nodes[1]!, 'stone', 3)
+
+    // 2. Tresser, puis tailler — LÀ OÙ IL SE TIENT. Aucune station, aucun village.
+    wait()
+    tick(bot, 0, 0, { type: 'craft', recipeId: 'rope' })
+    expect(countOf(me(bot).inventory, 'rope')).toBe(1)
+    wait()
+    tick(bot, 0, 0, { type: 'craft', recipeId: 'crude_axe' })
+    expect(countOf(me(bot).inventory, 'crude_axe')).toBe(1)
+    expect(sim.structures).toHaveLength(0) // la preuve : rien n'a été bâti
+    expect(sim.villages).toHaveLength(0)
+
+    // 3. L'empoigner — la sim ne choisit pas pour le joueur (spec inventaire R9).
+    const slot = me(bot).inventory.findIndex((s) => s?.item === 'crude_axe')
+    expect(slot).toBeGreaterThanOrEqual(0)
+    tick(bot, 0, 0, { type: 'set_active_slot', slot })
+
+    // 4. Le même arbre, le même geste : deux fois plus de bois par coup.
+    const before = countOf(me(bot).inventory, 'wood')
+    wait()
+    harvestUntil(bot, sim.nodes[0]!, 'wood', before + 2)
+    expect(countOf(me(bot).inventory, 'wood')).toBe(before + 2) // un seul coup a suffi
+
+    // 5. Et tout rejoue au bit près.
+    const replayed = runReplay(log, setup)
+    expect(snapshot(replayed)).toBe(snapshot(sim))
+  })
 })

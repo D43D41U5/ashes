@@ -112,6 +112,7 @@ export {
   isEmpty,
   isStackable,
   stackSize,
+  durabilityOf,
   freeRoomFor,
 } from './items'
 export type { ItemId, ItemBag, Slot, Inventory, StructureType, AccessLevel, SkillId } from './items'

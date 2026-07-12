@@ -19,6 +19,10 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   iron_ore: 'Minerai de fer',
   coal: 'Charbon',
   iron_ingot: 'Lingot de fer',
+  rope: 'Corde',
+  crude_axe: 'Hachereau de fortune',
+  crude_pickaxe: 'Pic de fortune',
+  crude_spear: 'Épieu taillé',
   axe: 'Hache',
   pickaxe: 'Pioche',
   iron_axe: 'Hache de fer',
@@ -103,6 +107,48 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillRect(4, 6, 8, 6)
     g.fillStyle(0x53616e).fillTriangle(12, 12, 12, 6, 14, 12)
     g.fillStyle(0x8996a2).fillRect(4, 6, 8, 2) // dessus éclairé
+  },
+
+  // Corde : un rouleau — trois anneaux de fibre tressée, brin qui dépasse.
+  rope: (g) => {
+    g.lineStyle(2, 0xb89a52).strokeCircle(8, 8, 6)
+    g.lineStyle(2, 0x9c8244).strokeCircle(8, 8, 3)
+    g.fillStyle(0xd0b468).fillRect(3, 3, 3, 2) // reflet NO sur le tour extérieur
+    g.fillStyle(0xb89a52).fillRect(12, 9, 4, 2) // le brin libre
+  },
+
+  /*
+   * Les trois objets de FORTUNE partagent une grammaire : tête de PIERRE (jamais
+   * de métal), et un LIEN de fibre ocre bien visible au raccord. À 16 px c'est ce
+   * lien qui les distingue de leurs versions forgées — on doit voir en ombre
+   * chinoise qu'on tient un caillou ficelé, pas une lame.
+   */
+
+  // Hachereau : manche + éclat de pierre ligaturé, plus trapu qu'une hache.
+  crude_axe: (g) => {
+    g.fillStyle(0x6a4c2c).fillRect(9, 3, 2, 11) // manche
+    g.fillStyle(0x8d6b40).fillRect(9, 3, 1, 11)
+    g.fillStyle(0x7c7c86).fillTriangle(5, 2, 11, 3, 10, 8) // éclat de pierre (irrégulier)
+    g.fillStyle(0x9a9aa4).fillTriangle(5, 2, 8, 2, 7, 4) // arête claire NO
+    g.fillStyle(0xb89a52).fillRect(8, 5, 4, 2) // la ligature
+  },
+
+  // Pic de fortune : une seule pointe de pierre, en biais, ligaturée.
+  crude_pickaxe: (g) => {
+    g.fillStyle(0x6a4c2c).fillRect(7, 4, 2, 11) // manche
+    g.fillStyle(0x8d6b40).fillRect(7, 4, 1, 11)
+    g.fillStyle(0x7c7c86).fillTriangle(1, 6, 8, 2, 9, 5) // la pointe, oblique
+    g.fillStyle(0x9a9aa4).fillTriangle(1, 6, 5, 4, 5, 5) // arête claire NO
+    g.fillStyle(0xb89a52).fillRect(6, 4, 4, 2) // la ligature
+  },
+
+  // Épieu taillé : hampe + petit éclat pointu, ligaturé.
+  crude_spear: (g) => {
+    g.fillStyle(0x6a4c2c).fillRect(6, 5, 2, 10) // hampe
+    g.fillStyle(0x8d6b40).fillRect(6, 5, 1, 10)
+    g.fillStyle(0x7c7c86).fillTriangle(4, 5, 10, 5, 7, 0) // pointe de pierre
+    g.fillStyle(0x9a9aa4).fillTriangle(4, 5, 6, 5, 6, 2) // arête claire NO
+    g.fillStyle(0xb89a52).fillRect(5, 5, 4, 2) // la ligature
   },
 
   // Hache : manche bois + fer triangulaire.
