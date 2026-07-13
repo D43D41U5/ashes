@@ -7,6 +7,7 @@
 import { SLOTS, type Inventory } from '@braises/sim'
 import type Phaser from 'phaser'
 import { createSlotView, type SlotView } from './slot-view'
+import { FONT } from './typography'
 
 export interface Hotbar {
   update(inv: Inventory, activeSlot: number): void
@@ -44,7 +45,7 @@ export function createHotbar(scene: Phaser.Scene): Hotbar {
     // pris par le filet d'usure, le bas-droit par le compte de pile.
     const num = scene.add
       .text(x - CELL / 2 + 5, y - CELL / 2 + 3, String(i + 1), {
-        fontFamily: 'monospace',
+        fontFamily: FONT,
         fontSize: '12px',
         color: '#d8d4cc',
         stroke: '#14141a',

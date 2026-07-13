@@ -920,7 +920,7 @@ const SCENARIOS = {
     // 3. TAB ouvre l'écran d'inventaire (la grille + le glisser-déposer).
     await page.keyboard.press('Tab')
     await page.waitForTimeout(400)
-    const ouvert = await page.evaluate(() => window.__BRAISES__.scene.registry.get('inventoryOpen'))
+    const ouvert = await page.evaluate(() => window.__BRAISES__.scene.registry.get('characterMenuOpen'))
     console.log(ouvert ? `   ✓ TAB ouvre l'écran d'inventaire` : `   ✗ TAB n'ouvre rien`)
     await page.screenshot({ path: `${OUT}/sac-inventaire-ouvert.png` })
 

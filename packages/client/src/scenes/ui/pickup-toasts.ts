@@ -20,6 +20,7 @@ import { countOf, type Inventory, type ItemId } from '@braises/sim'
 import type Phaser from 'phaser'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { hotbarBottom } from './hotbar'
+import { FONT } from './typography'
 
 export interface PickupToasts {
   /** Un `resource_harvested` reçu POUR MOI (jamais un clic — spec recolte.md G9). */
@@ -68,7 +69,7 @@ export function createPickupToasts(scene: Phaser.Scene): PickupToasts {
     icon.setDisplaySize(ITEM_ICON_PX, ITEM_ICON_PX)
     const label = scene.add
       .text(ICON_PAD + 8, ROW_H / 2, '', {
-        fontFamily: 'monospace',
+        fontFamily: FONT,
         fontSize: '14px',
         fontStyle: 'bold',
         color: '#ffffff',
@@ -78,7 +79,7 @@ export function createPickupToasts(scene: Phaser.Scene): PickupToasts {
       .setOrigin(0, 0.5)
     const amount = scene.add
       .text(ROW_W - 8, ROW_H / 2, '', {
-        fontFamily: 'monospace',
+        fontFamily: FONT,
         fontSize: '14px',
         fontStyle: 'bold',
         color: '#ffffff',

@@ -18,6 +18,7 @@
  * et son contenu n'a pas été recyclé ici. Une salle d'attente n'est pas un manuel.
  */
 import type Phaser from 'phaser'
+import { FONT } from './typography'
 
 export interface LoadingScreen {
   /** Le compte de l'hôte (`undefined` tant qu'il n'a rien dit) et l'horloge de la scène. */
@@ -99,7 +100,7 @@ export function createLoadingScreen(scene: Phaser.Scene, depth: number): Loading
   const barY = H / 2 + 30
 
   const style = {
-    fontFamily: 'monospace',
+    fontFamily: FONT,
     fontSize: '16px',
     color: '#e8e0c8',
     stroke: '#14141a',

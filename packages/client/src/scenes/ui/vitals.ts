@@ -23,6 +23,7 @@ import { TEMPERATURE, skillLevel, type Entity, type SkillId } from '@braises/sim
 import type Phaser from 'phaser'
 import { VITAL_ICON_PX, vitalIconKey, type VitalId } from '../../render/vital-art'
 import { hotbarBottom } from './hotbar'
+import { FONT } from './typography'
 
 export interface Vitals {
   /** Cachées tant que la vallée n'est pas générée : une jauge vide sur un écran
@@ -36,7 +37,7 @@ export interface Vitals {
     wounds: Entity['wounds']
     skills: Partial<Record<SkillId, number>>
     /** Inventaire ouvert → le bloc devient opaque. */
-    inventoryOpen: boolean
+    characterMenuOpen: boolean
   }): void
 }
 
@@ -94,7 +95,7 @@ export function createVitals(scene: Phaser.Scene): Vitals {
   const badgeTop = cy - R
 
   const style = {
-    fontFamily: 'monospace',
+    fontFamily: FONT,
     fontSize: '13px',
     color: '#e8e0c8',
     stroke: '#14141a',
@@ -129,7 +130,7 @@ export function createVitals(scene: Phaser.Scene): Vitals {
   // masque) : superposés, les deux se mangeraient.
   const hover = scene.add
     .text(0, 0, '', {
-      fontFamily: 'monospace',
+      fontFamily: FONT,
       fontSize: '22px',
       fontStyle: 'bold',
       color: '#ffffff',
@@ -193,7 +194,7 @@ export function createVitals(scene: Phaser.Scene): Vitals {
       root.setVisible(v)
     },
     update(s) {
-      root.setAlpha(s.inventoryOpen ? ALPHA_OPEN : ALPHA_WORLD)
+      root.setAlpha(s.characterMenuOpen ? ALPHA_OPEN : ALPHA_WORLD)
 
       const values: Record<VitalId, number> = {
         hp: s.hp,

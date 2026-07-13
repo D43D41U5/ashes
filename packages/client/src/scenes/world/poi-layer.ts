@@ -21,6 +21,7 @@ import { POI, type WorldMap } from '@braises/sim'
 import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import { poiCrownKey, poiTextureKey, POI_ART } from './poi-art'
 import type { Warp } from '../../render/warp'
+import { FONT } from '../ui/typography'
 
 /** Un lieu haut (l'Arbre remarquable : 100 px) pend loin au-dessus de ses pieds. */
 const MARGIN_TILES = 10
@@ -124,7 +125,7 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v)
 function makeLabel(scene: Phaser.Scene, name: string, x: number, topY: number): Phaser.GameObjects.Text {
   return scene.add
     .text(x, topY - 6, name, {
-      fontFamily: 'monospace',
+      fontFamily: FONT,
       fontSize: '11px',
       color: '#f0ead8',
       stroke: '#14100c', // un liseré sombre : lisible sur la neige comme sous les arbres

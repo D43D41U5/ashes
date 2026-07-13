@@ -22,6 +22,7 @@ import { RECIPES, hasItems, type Inventory, type PlayerAction, type RecipeId } f
 import type Phaser from 'phaser'
 import type { StationId } from '../../hud-state'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
+import { INK, SECTION_TITLE, textStyle } from './typography'
 
 // ─── La logique (pure, testée — craft-panel.test.ts) ─────────────────────────
 
@@ -120,11 +121,14 @@ const HEADER_H = 26
 const SEARCH_H = 30
 const PANEL_DEPTH = 900 // même plan que l'inventaire
 
-const TITLE = { fontFamily: 'Georgia, serif', fontSize: '15px', color: '#c9b892' } as const
-const HEADER = { fontFamily: 'Georgia, serif', fontSize: '12px', color: '#8a7f68' } as const
-const NAME = { fontFamily: 'Georgia, serif', fontSize: '14px', color: '#e8e0cc' } as const
-const COST = { fontFamily: 'Georgia, serif', fontSize: '11px', color: '#9a8f78' } as const
-const SEARCH = { fontFamily: 'Georgia, serif', fontSize: '13px', color: '#e8e0cc' } as const
+// La voix du jeu, pas la mienne : tout vient de `typography.ts` (voir son en-tête —
+// ce panneau est précisément celui qui avait parlé serif au milieu d'un HUD en
+// chasse fixe). Les lignes de liste vivent sur un fond plein : pas de contour.
+const TITLE = SECTION_TITLE
+const HEADER = textStyle('label', 'dim')
+const NAME = textStyle('body', 'body', false)
+const COST = textStyle('small', 'dim', false)
+const SEARCH = textStyle('label', 'body', false)
 
 const STATION_LABEL: Record<StationId, string> = { fire: 'au Feu', workshop: "à l'atelier", furnace: 'au four' }
 
@@ -172,7 +176,7 @@ export function createCraftPanel(
 
   const drawSearch = (): void => {
     searchText.setText(query === '' ? (typing ? '|' : 'rechercher…') : query + (typing ? '|' : ''))
-    searchText.setColor(query === '' && !typing ? '#6f6a60' : '#e8e0cc')
+    searchText.setColor(query === '' && !typing ? INK.faint : INK.body)
     searchBg.setStrokeStyle(1, typing ? 0x6b5a3a : 0x3a3a44)
   }
   searchBg.on('pointerdown', () => {
@@ -239,12 +243,12 @@ export function createCraftPanel(
         slot.bg.setVisible(true).setY(y + h / 2).setData('recipe', row.id).setData('ready', ready)
         slot.bg.setStrokeStyle(1, ready ? 0x6b5a3a : 0x3a3a44)
         slot.icon.setVisible(true).setTexture(itemIconKey(recipe.output)).setY(y + h / 2).setAlpha(ready ? 1 : 0.35)
-        slot.name.setVisible(true).setText(ITEM_LABELS[recipe.output]).setY(y + 8).setColor(ready ? '#e8e0cc' : '#7a7268')
+        slot.name.setVisible(true).setText(ITEM_LABELS[recipe.output]).setY(y + 8).setColor(ready ? INK.body : INK.faint)
         slot.cost
           .setVisible(true)
           .setText(`${costLine(row.id)}  —  ${station === null ? 'à la main' : STATION_LABEL[station]}`)
           .setY(y + 26)
-          .setColor(ready ? '#9a8f78' : '#5f5a50')
+          .setColor(ready ? INK.dim : INK.faint)
       }
       y += h
     })

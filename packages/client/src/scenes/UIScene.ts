@@ -18,6 +18,7 @@ import { createLoadingScreen, type LoadingScreen } from './ui/loading'
 import { createPickupToasts, type PickupToasts } from './ui/pickup-toasts'
 import { createVitals, type Vitals } from './ui/vitals'
 import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
+import { FONT } from './ui/typography'
 
 const TASK_LABELS: Record<VillageTask['kind'], string> = {
   gather_berries: 'récolter des baies',
@@ -113,7 +114,7 @@ export class UIScene extends Phaser.Scene {
       .setAlpha(0)
 
     const style = {
-      fontFamily: 'monospace',
+      fontFamily: FONT,
       fontSize: '16px',
       color: '#e8e0c8',
       stroke: '#14141a',
@@ -248,7 +249,7 @@ export class UIScene extends Phaser.Scene {
     if (this.mapRoot) return
     const W = this.scale.width
     const H = this.scale.height
-    const style = { fontFamily: 'monospace', fontSize: '16px', color: '#e8e0c8', stroke: '#14141a', strokeThickness: 3 }
+    const style = { fontFamily: FONT, fontSize: '16px', color: '#e8e0c8', stroke: '#14141a', strokeThickness: 3 }
     const bg = this.add.rectangle(0, 0, W, H, 0x0a0a0e, 0.9).setOrigin(0)
     const title = this.add.text(W / 2, 16, 'LA CARTE', { ...style, fontSize: '20px', color: '#e8c66a' }).setOrigin(0.5, 0)
     const hint = this.add
@@ -480,14 +481,14 @@ export class UIScene extends Phaser.Scene {
 
     // L'écran d'inventaire (TAB) : la grille complète, le glisser, le loot. Le
     // conteneur ouvert est déjà résolu par WorldScene (null s'il a disparu).
-    const inventoryOpen = Boolean(getHud(this.registry, 'inventoryOpen'))
+    const characterMenuOpen = Boolean(getHud(this.registry, 'characterMenuOpen'))
     // La ceinture du bas s'efface quand la grille est ouverte : sa rangée y est
     // déjà (spec Rust). Sinon la même ceinture s'affiche deux fois à l'écran.
-    this.hotbar.setVisible(!inventoryOpen)
-    this.inventoryPanel.setVisible(inventoryOpen)
-    this.craftPanel.setVisible(inventoryOpen)
-    if (!inventoryOpen) setHud(this.registry, 'uiTyping', false)
-    if (inventoryOpen) {
+    this.hotbar.setVisible(!characterMenuOpen)
+    this.inventoryPanel.setVisible(characterMenuOpen)
+    this.craftPanel.setVisible(characterMenuOpen)
+    if (!characterMenuOpen) setHud(this.registry, 'uiTyping', false)
+    if (characterMenuOpen) {
       this.inventoryPanel.update(inv, activeSlot, getHud(this.registry, 'openContainerView') ?? null)
       this.craftPanel.update(inv, getHud(this.registry, 'stationsInRange') ?? [])
       setHud(this.registry, 'uiTyping', this.craftPanel.isTyping())
@@ -503,7 +504,7 @@ export class UIScene extends Phaser.Scene {
       temperature: getHud(this.registry, 'temperature') ?? 100,
       wounds: getHud(this.registry, 'wounds') ?? {},
       skills: getHud(this.registry, 'skills') ?? {},
-      inventoryOpen, // sac ouvert → les vitales redeviennent opaques
+      characterMenuOpen, // sac ouvert → les vitales redeviennent opaques
     })
 
     // Le journal : ouvert à la demande (J), ou de force à la fin de saison.

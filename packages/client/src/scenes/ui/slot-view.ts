@@ -16,6 +16,7 @@
 import { durabilityOf, type Slot } from '@braises/sim'
 import type Phaser from 'phaser'
 import { ITEM_ICON_PX, itemIconKey } from '../../render/item-art'
+import { FONT } from './typography'
 
 export interface SlotView {
   root: Phaser.GameObjects.Container
@@ -56,7 +57,7 @@ export function createSlotView(scene: Phaser.Scene, x: number, y: number, size: 
 
   const count = scene.add
     .text(size / 2 - 4, size / 2 - 3, '', {
-      fontFamily: 'monospace',
+      fontFamily: FONT,
       fontSize: '13px',
       fontStyle: 'bold',
       color: '#ffffff',

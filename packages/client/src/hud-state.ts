@@ -71,8 +71,11 @@ export interface HudState {
   /** Structure armée pour le mode construction — `null` = DÉSARMÉ, et c'est
    *  l'état de départ : le clic nu ne bâtit jamais (spec recolte.md G1-G2). */
   selected: Buildable | null
-  /** L'écran d'inventaire (TAB) est-il ouvert ? (l'UI arrive au chantier 7). */
-  inventoryOpen: boolean
+  /** LE MENU PERSONNAGE (TAB) est-il ouvert ? C'est l'écran qui rassemble ce que le
+   *  personnage EST et ce qu'il PEUT : son sac, sa ceinture, son artisanat — et
+   *  demain ses vêtements et ses maîtrises. Il s'appelait « inventaire » quand il
+   *  n'y avait qu'une grille dedans (décision utilisateur, 2026-07-13). */
+  characterMenuOpen: boolean
   /** LE CHAMP DE RECHERCHE DU CRAFT A LE CLAVIER. Tant qu'il l'a, plus une touche
    *  ne part au jeu : taper « hache » ferait sinon MARCHER le personnage (Z, Q, S,
    *  D sont des lettres) et « journal » ouvrirait le journal. Un champ de saisie

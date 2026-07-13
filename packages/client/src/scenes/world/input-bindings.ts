@@ -147,15 +147,15 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   // coffre (on loote ce qu'on vient de tuer) ; à la FERMETURE on l'oublie.
   kb.addCapture(KEYMAP.toggleInventory[0])
   onDownAlways(KEYMAP.toggleInventory, () => {
-    const opening = !getHud(scene.registry, 'inventoryOpen')
-    setHud(scene.registry, 'inventoryOpen', opening)
+    const opening = !getHud(scene.registry, 'characterMenuOpen')
+    setHud(scene.registry, 'characterMenuOpen', opening)
     setHud(scene.registry, 'openContainer', opening ? nearestContainer(deps) : null)
   })
 
   // La molette fait défiler la case tenue, bornée à la ceinture — sauf quand
   // l'inventaire ou la carte est ouvert (la molette y sert au zoom).
   scene.input.on('wheel', (_p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
-    if (getHud(scene.registry, 'mapOpen') || getHud(scene.registry, 'inventoryOpen')) return
+    if (getHud(scene.registry, 'mapOpen') || getHud(scene.registry, 'characterMenuOpen')) return
     const belt = SLOTS.BELT
     const current = getHud(scene.registry, 'activeSlot') ?? -1
     // Depuis les mains nues (-1), molette avant → case 0 ; arrière → dernière case.
@@ -189,7 +189,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   }
   /** L'overlay (carte, sac) mange le clic : il ne doit pas agir dans le monde en dessous. */
   const overlayOpen = (): boolean =>
-    Boolean(getHud(scene.registry, 'mapOpen')) || Boolean(getHud(scene.registry, 'inventoryOpen'))
+    Boolean(getHud(scene.registry, 'mapOpen')) || Boolean(getHud(scene.registry, 'characterMenuOpen'))
 
   // Le clic MAINTENU récolte en boucle, cadencé par le rechargement (G6-G7).
   let holding = false

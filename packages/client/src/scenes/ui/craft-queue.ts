@@ -18,14 +18,15 @@
 import { RECIPES, type CraftOrder, type PlayerAction } from '@braises/sim'
 import type Phaser from 'phaser'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
+import { INK, textStyle } from './typography'
 
 const ROW_H = 34
 const ROW_W = 190
 const BAR_H = 4
 const HUD_DEPTH = 800
 
-const LABEL = { fontFamily: 'Georgia, serif', fontSize: '12px', color: '#e8e0cc' } as const
-const STATE = { fontFamily: 'Georgia, serif', fontSize: '10px', color: '#c98b3a' } as const
+const LABEL = textStyle('label', 'body')
+const STATE = textStyle('small', 'warm')
 
 const BAR_BG = 0x2a2a32
 const BAR_FILL = 0xc9a227
@@ -59,11 +60,11 @@ export function createCraftQueueView(
     // Le bouton d'annulation vit SUR la ligne — annuler, c'est annuler CETTE
     // recette-là, pas « la dernière » (spec F12).
     const cancel = scene.add
-      .text(ROW_W - 16, ry + ROW_H / 2, '✕', { fontFamily: 'Georgia, serif', fontSize: '14px', color: '#9a8f78' })
+      .text(ROW_W - 16, ry + ROW_H / 2, '✕', textStyle('body', 'dim'))
       .setOrigin(0.5)
       .setInteractive({ useHandCursor: true })
-    cancel.on('pointerover', () => cancel.setColor('#e05a4a'))
-    cancel.on('pointerout', () => cancel.setColor('#9a8f78'))
+    cancel.on('pointerover', () => cancel.setColor(INK.alert))
+    cancel.on('pointerout', () => cancel.setColor(INK.dim))
     cancel.on('pointerdown', () => send({ type: 'cancel_craft', index: i }))
     return { bg, icon, label, state, barBg, bar, cancel }
   })
@@ -105,7 +106,7 @@ export function createCraftQueueView(
         r.bar.width = Math.max(0, Math.min(1, done)) * (ROW_W - 76)
         r.bar.fillColor = blocked ? BAR_BLOCKED : order.paused ? BAR_PAUSED : BAR_FILL
         r.state.setText(blocked ? 'sac plein — en attente' : order.paused ? 'station quittée — en pause' : '')
-        r.state.setColor(blocked ? '#e05a4a' : '#c98b3a')
+        r.state.setColor(blocked ? INK.alert : INK.warm)
       })
     },
   }

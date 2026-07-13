@@ -439,7 +439,7 @@ export class WorldScene extends Phaser.Scene {
     // CE QU'ON VISE, à chaque frame — le curseur bouge, le nœud s'épuise, et la
     // caméra glisse encore après la course : une visée figée mentirait aussitôt.
     const aim = this.inputs.aim(this.input.activePointer)
-    const overlay = Boolean(getHud(this.registry, 'mapOpen')) || Boolean(getHud(this.registry, 'inventoryOpen'))
+    const overlay = Boolean(getHud(this.registry, 'mapOpen')) || Boolean(getHud(this.registry, 'characterMenuOpen'))
     this.view.setAim(overlay ? null : aim.nodeId, aim.inRange)
     this.buildGhost.update(
       overlay ? null : this.inputs.selected(),

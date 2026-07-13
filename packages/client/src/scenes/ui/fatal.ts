@@ -16,6 +16,7 @@
  * session en cours (la persistance viendra avec la Phase LAN).
  */
 import type Phaser from 'phaser'
+import { FONT } from './typography'
 
 /** Cendre chaude sur fond de suie : c'est grave, mais on reste dans le monde du jeu. */
 const BACKDROP = 0x0a0a0e
@@ -37,7 +38,7 @@ export function createFatalPanel(scene: Phaser.Scene, depth: number, onReload: (
   const cy = H / 2
 
   const style = {
-    fontFamily: 'monospace',
+    fontFamily: FONT,
     fontSize: '16px',
     color: '#e8e0c8',
     stroke: '#14141a',

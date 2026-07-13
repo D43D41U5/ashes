@@ -16,6 +16,7 @@ import type { OpenContainerView } from '../../hud-state'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { CELL, GAP, hotbarBottom } from './hotbar'
 import { createSlotView, type SlotView } from './slot-view'
+import { SECTION_TITLE, textStyle } from './typography'
 
 /** Le conteneur ouvert, tel que le panneau en a besoin (kind+id pour construire
  *  le `transfer`, inv+title pour dessiner). C'est `OpenContainerView`. */
@@ -168,10 +169,10 @@ const BELT_GAP = 12
 /** Combien de rangées de sac au-dessus de la ceinture. */
 const BAG_ROWS = (SLOTS.PLAYER - SLOTS.BELT) / COLS
 
-/** Style de texte partagé du panneau (repris du journal). */
-const TEXT = { fontFamily: 'monospace', fontSize: '14px', color: '#e8e0c8', stroke: '#14141a', strokeThickness: 3 } as const
+/** Styles du panneau — tirés de la source unique (`typography.ts`). */
+const TEXT = textStyle('body')
 /** Le titre : capitales, blanc, calé à GAUCHE au-dessus de la grille (Rust). */
-const TITLE = { ...TEXT, fontSize: '15px', fontStyle: 'bold', color: '#ffffff' } as const
+const TITLE = SECTION_TITLE
 
 /** Une case à l'écran + son adresse logique (côté, index). */
 interface Cell {
