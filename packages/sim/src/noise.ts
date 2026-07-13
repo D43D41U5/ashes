@@ -20,11 +20,15 @@ export function hash2(x: number, y: number, seed = 0): number {
  * nœuds, pas calées sur la grille des entiers — remède à l'artefact « patates
  * alignées » du value noise. N'utilise que + - * / floor min max et hash2 :
  * exact au bit près entre moteurs JS (invariant n°2).
+ *
+ * Les huit gradients sont stockés À PLAT (deux Int8Array) plutôt qu'en tableau
+ * de paires : `gradientNoise2` en lit trente-deux par tuile, et le double
+ * déréférencement d'un tableau de tableaux coûtait plus cher que le hash
+ * lui-même. À plat, la génération entière gagne 15 % — au bit près (mesuré :
+ * zéro écart sur 2,16 M de valeurs).
  */
-const GRAD2: readonly (readonly [number, number])[] = [
-  [1, 0], [-1, 0], [0, 1], [0, -1],
-  [1, 1], [-1, 1], [1, -1], [-1, -1],
-]
+const GRAD_X = new Int8Array([1, -1, 0, 0, 1, -1, 1, -1])
+const GRAD_Y = new Int8Array([0, 0, 1, -1, 1, 1, -1, -1])
 // Étalement du produit scalaire brut vers [0, 1), clampé pour garantir
 // l'intervalle quelle que soit la seed. Calibré à 1.0 : donne à fbm2 un
 // contraste comparable à l'ancien value noise (écart-type ≈ 0.17), condition
@@ -33,9 +37,25 @@ const GRAD2: readonly (readonly [number, number])[] = [
 // ~6 % des valeurs sont clampées (plateaux bénins). Constante de contenu.
 const GRAD_SCALE = 1.0
 
-function gradAt(ix: number, iy: number, seed: number): readonly [number, number] {
-  const idx = Math.min(7, Math.floor(hash2(ix, iy, seed) * 8))
-  return GRAD2[idx]!
+/**
+ * L'indice du gradient au nœud (ix, iy) — le corps de `hash2`, mais la seed
+ * arrive DÉJÀ mélangée (`Math.imul(seed, 974634749)`) : elle est constante sur
+ * les quatre coins d'une même cellule, et l'imul sortait donc quatre fois pour
+ * rien. Le résultat est identique à `hash2(ix, iy, seed)` au bit près.
+ *
+ * MESURE À CONSIGNER (elle contredit l'intuition) : le treillis est appelé
+ * 433 fois par point distinct (604 M appels pour 1,4 M nœuds) — une redondance
+ * qui hurle « mémoïse ». On l'a fait : un cache direct-mapped atteint 99,7 % de
+ * hits… et tourne 1,75× plus LENTEMENT, à toutes les tailles de table (de 3 Ko
+ * à 13 Mo). `hash2` est une poignée d'opérations d'ALU ; toute table assez
+ * grande pour porter le treillis sort du cache du processeur, et un défaut de
+ * cache coûte vingt fois le hash. **Recalculer coûte moins cher que se
+ * souvenir.** Ne pas retenter.
+ */
+function gradIndex(ix: number, iy: number, mixedSeed: number): number {
+  let h = (ix * 374761393 + iy * 668265263 + mixedSeed) >>> 0
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0
+  return Math.min(7, Math.floor((((h ^ (h >>> 16)) >>> 0) / 4294967296) * 8))
 }
 
 export function gradientNoise2(x: number, y: number, seed = 0): number {
@@ -43,14 +63,15 @@ export function gradientNoise2(x: number, y: number, seed = 0): number {
   const y0 = Math.floor(y)
   const fx = x - x0
   const fy = y - y0
-  const g00 = gradAt(x0, y0, seed)
-  const g10 = gradAt(x0 + 1, y0, seed)
-  const g01 = gradAt(x0, y0 + 1, seed)
-  const g11 = gradAt(x0 + 1, y0 + 1, seed)
-  const d00 = g00[0] * fx + g00[1] * fy
-  const d10 = g10[0] * (fx - 1) + g10[1] * fy
-  const d01 = g01[0] * fx + g01[1] * (fy - 1)
-  const d11 = g11[0] * (fx - 1) + g11[1] * (fy - 1)
+  const s = Math.imul(seed | 0, 974634749)
+  const i00 = gradIndex(x0, y0, s)
+  const i10 = gradIndex(x0 + 1, y0, s)
+  const i01 = gradIndex(x0, y0 + 1, s)
+  const i11 = gradIndex(x0 + 1, y0 + 1, s)
+  const d00 = GRAD_X[i00]! * fx + GRAD_Y[i00]! * fy
+  const d10 = GRAD_X[i10]! * (fx - 1) + GRAD_Y[i10]! * fy
+  const d01 = GRAD_X[i01]! * fx + GRAD_Y[i01]! * (fy - 1)
+  const d11 = GRAD_X[i11]! * (fx - 1) + GRAD_Y[i11]! * (fy - 1)
   // fade quintique 6t⁵−15t⁴+10t³ (polynôme → exact, C² continu)
   const u = fx * fx * fx * (fx * (fx * 6 - 15) + 10)
   const v = fy * fy * fy * (fy * (fy * 6 - 15) + 10)

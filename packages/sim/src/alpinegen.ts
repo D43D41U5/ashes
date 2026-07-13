@@ -42,7 +42,30 @@ export const ALPINE = {
   HILL_AMP: 0.1,       // amplitude des vallons (dosée : trop = repli du warp)
 }
 
-export function computeElevation(width: number, height: number, seed: number): number[] {
+/**
+ * Le relief et l'écoulement, calculés ENSEMBLE — ils partagent le champ
+ * `org` (la déformation organique de la vallée), et le calculer deux fois
+ * coûtait une passe de bruit entière pour rien : `fbmWarp2` est le poste de
+ * dépense n°1 de la génération, et `org` en est un appel complet par tuile.
+ * La fusion supprime la passe `flow` telle quelle (~10 % du temps total), au
+ * bit près par construction — c'est littéralement la même expression.
+ */
+export interface AlpineRelief {
+  /** Le relief RÉEL : forme de vallée + détail + crêtes, enceinte scellée. */
+  elevation: number[]
+  /**
+   * Le champ d'ÉCOULEMENT — la même forme de vallée macro (enceinte + fond +
+   * organique) SANS le détail ni les crêtes. L'eau le suit sans se piéger dans
+   * les micro-cuvettes du relief fin ; l'hydrologie trace dessus, puis creuse
+   * dans le terrain réel.
+   *
+   * (À ne pas confondre avec le `computeFlowField` de `pathfinding.ts`, qui est
+   * le champ de distance des hordes — même mot, deux métiers.)
+   */
+  flow: number[]
+}
+
+export function computeRelief(width: number, height: number, seed: number): AlpineRelief {
   const D = Math.min(width, height)
   const rimDepth = Math.max(2, Math.round(D * ALPINE.RIM_FRAC))
   const rise = D * 0.5 * ALPINE.RISE_FRAC
@@ -51,6 +74,7 @@ export function computeElevation(width: number, height: number, seed: number): n
   const ridge = D * ALPINE.RIDGE_FRAC
   const warp = Math.max(1, Math.round(D * ALPINE.WARP_FRAC))
   const el = new Array<number>(width * height)
+  const flow = new Array<number>(width * height)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       // Sud EXCLU (grand y = bord bas = vers la caméra) : la vallée s'ouvre de ce
@@ -61,48 +85,28 @@ export function computeElevation(width: number, height: number, seed: number): n
       const valley = 1 - Math.min(1, edge / rise)
       // Brise le bol concentrique → vallée organique (éperons, combes, cols).
       const org = ALPINE.ORGANIC_AMP * (fbmWarp2(x, y, organic, (seed ^ 0x1a2b3c) | 0, warp) - 0.5)
+      const rim = clamp01((rimDepth - edge) / rimDepth) // enceinte : bord toujours haut
+      const i = y * width + x
+
       // Détail de pente + arêtes ridged (petite amplitude, texture sur les murs).
       const detail = ALPINE.DETAIL_AMP * (fbmWarp2(x, y, detailScale, (seed ^ 0x4d5e6f) | 0, warp) - 0.5)
       const crest = ALPINE.RIDGE_AMP * (ridgedFbm2(x, y, ridge, (seed ^ 0x7a8b9c) | 0) - 0.4)
-      let h = valley + org + detail + crest
-      const rim = clamp01((rimDepth - edge) / rimDepth) // enceinte : bord toujours haut
-      h = Math.max(rim, h)
-      el[y * width + x] = clamp01(h)
+      el[i] = clamp01(Math.max(rim, valley + org + detail + crest))
+
+      // PAS de clamp/max sur l'écoulement : ce champ ne sert qu'à LOCALISER (lac =
+      // min, tête de vallée = max). Clamper le fond à 0 créait une vaste zone plate
+      // d'où le min sortait toujours au même endroit (nord). `valley+org+rim` a un
+      // vrai minimum unique (org le plus négatif dans le fond) qui varie avec la
+      // seed ; le rim ne fait que rehausser le bord.
+      flow[i] = valley + org + rim
     }
   }
-  return el
+  return { elevation: el, flow }
 }
 
-/**
- * Champ d'ÉCOULEMENT — la forme de vallée macro (enceinte + fond + organique)
- * SANS le détail ni les crêtes. L'eau le suit sans se piéger dans les micro-pits
- * du relief fin ; l'hydrologie (SP1b) trace dessus, puis creuse dans le terrain
- * réel. Même valley/org/rim que computeElevation → cohérent avec le relief.
- */
-export function computeFlowField(width: number, height: number, seed: number): number[] {
-  const D = Math.min(width, height)
-  const rimDepth = Math.max(2, Math.round(D * ALPINE.RIM_FRAC))
-  const rise = D * 0.5 * ALPINE.RISE_FRAC
-  const organic = D * ALPINE.ORGANIC_FRAC
-  const warp = Math.max(1, Math.round(D * ALPINE.WARP_FRAC))
-  const f = new Array<number>(width * height)
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      // Sud EXCLU (mêmes raisons que computeElevation) : hydrologie cohérente
-      // avec un relief qui s'ouvre vers la caméra.
-      const edge = Math.min(x, y, width - 1 - x)
-      const valley = 1 - Math.min(1, edge / rise)
-      const org = ALPINE.ORGANIC_AMP * (fbmWarp2(x, y, organic, (seed ^ 0x1a2b3c) | 0, warp) - 0.5)
-      const rim = clamp01((rimDepth - edge) / rimDepth)
-      // PAS de clamp/max ici : ce champ ne sert qu'à LOCALISER (lac = min, tête de
-      // vallée = max). Clamper le fond à 0 créait une vaste zone plate d'où le min
-      // sortait toujours au même endroit (nord). `valley+org+rim` a un vrai minimum
-      // unique (org le plus négatif dans le fond) qui varie avec la seed ; le rim
-      // ne fait que rehausser le bord.
-      f[y * width + x] = valley + org + rim
-    }
-  }
-  return f
+/** Le seul relief, pour qui n'a pas besoin de l'écoulement (tests, outils). */
+export function computeElevation(width: number, height: number, seed: number): number[] {
+  return computeRelief(width, height, seed).elevation
 }
 
 export function computeMoisture(width: number, height: number, elevation: number[], seed: number): number[] {
@@ -347,7 +351,6 @@ export const WORLDGEN_PHASES = [
   'elevation',
   'moisture',
   'bands',
-  'flow',
   'hydrology',
   'biomes',
   'avalanches',
@@ -370,13 +373,15 @@ export function generateAlpineTerrain(
 ): WorldMap {
   const map = createEmptyMap(width, height, TERRAIN_GRASS)
   onPhase('elevation')
-  map.elevation = computeElevation(width, height, seed)
+  // Relief et écoulement naissent du MÊME passage (ils partagent `org`) — voir
+  // `computeRelief`. L'écoulement n'a donc plus de passe à lui.
+  const relief = computeRelief(width, height, seed)
+  map.elevation = relief.elevation
+  const flow = relief.flow
   onPhase('moisture')
   const moisture = computeMoisture(width, height, map.elevation, seed)
   onPhase('bands')
   paintAlpineBands(map, moisture, seed)
-  onPhase('flow')
-  const flow = computeFlowField(width, height, seed)
   onPhase('hydrology')
   carveHydrology(map, flow, seed) // lac, rivière (thalweg), ruisseaux, tarns — l'eau suit l'écoulement
   onPhase('biomes')

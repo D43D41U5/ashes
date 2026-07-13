@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  computeElevation, computeFlowField, computeMoisture, paintAlpineBands,
-} from './alpinegen'
+import { computeMoisture, computeRelief, paintAlpineBands } from './alpinegen'
 import { carveHydrology } from './alpine-hydro'
 import { TERRAIN_DEEP_WATER, TERRAIN_GRASS, TERRAIN_SHALLOW_WATER } from './balance'
 import { createEmptyMap, type WorldMap } from './map'
@@ -13,11 +11,11 @@ function buildHydro(W: number, H: number, seed: number): {
   map: WorldMap; streams: Array<{ source: { x: number; y: number }; outlet: { x: number; y: number } }>
 } {
   const map = createEmptyMap(W, H, TERRAIN_GRASS)
-  map.elevation = computeElevation(W, H, seed)
+  const relief = computeRelief(W, H, seed)
+  map.elevation = relief.elevation
   const moisture = computeMoisture(W, H, map.elevation, seed)
   paintAlpineBands(map, moisture, seed)
-  const flow = computeFlowField(W, H, seed)
-  const streams = carveHydrology(map, flow, seed)
+  const streams = carveHydrology(map, relief.flow, seed)
   return { map, streams }
 }
 

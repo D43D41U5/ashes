@@ -98,3 +98,71 @@ describe('le bruit déterministe', () => {
     expect(max - min).toBeGreaterThan(0.6)
   })
 })
+
+/**
+ * LES TÉMOINS DE BIT-EXACTITUDE — la garde qui manquait à l'invariant n°2.
+ *
+ * Tous les autres tests de ce fichier vérifient des PROPRIÉTÉS (bornes,
+ * continuité, moyenne, stabilité intra-run). Aucun ne mord si le bruit change
+ * de valeurs : une réécriture qui décale tout de 1e-16 les passe TOUS, et
+ * pourtant elle casse le contrat « même seed → même carte » — silencieusement,
+ * puisque la carte reste plausible.
+ *
+ * Ces valeurs sont donc figées ici EN DUR, relevées sur l'implémentation
+ * d'origine (commit 6613b36) avant l'optimisation des gradients à plat. Elles
+ * ne « testent » rien de sémantique : elles ancrent le bruit. Un échec ici
+ * n'est jamais un test à mettre à jour à la légère — c'est la carte de tous
+ * les joueurs, tous les replays et tous les scénarios enregistrés qui viennent
+ * de changer. Si le changement est VOULU, il se décide et se consigne
+ * (docs/decisions.md) ; sinon, c'est une régression.
+ *
+ * `toBe` (égalité stricte), jamais `toBeCloseTo` : la précision approchée est
+ * précisément ce que l'invariant interdit.
+ */
+describe('bit-exactitude du bruit (invariant n°2)', () => {
+  const PTS: readonly (readonly [number, number])[] = [
+    [0, 0], [1, 1], [3.25, 7.75], [40, 60], [123.5, 456.25], [-7.5, 12.125], [1199, 1799],
+  ]
+  const SEED = 2026 // la seed du jeu
+
+  it('hash2 rend exactement les valeurs d’origine', () => {
+    const golden = [
+      0.7262400619219989, 0.32611275278031826, 0.6127055876422673, 0.708349711727351,
+      0.16241328208707273, 0.6032342112157494, 0.5408256405498832,
+    ]
+    PTS.forEach(([x, y], i) => {
+      expect(hash2(Math.floor(x), Math.floor(y), SEED)).toBe(golden[i])
+    })
+  })
+
+  it('gradientNoise2 rend exactement les valeurs d’origine', () => {
+    const golden = [
+      0.5, 0.5, 0.42311573028564453, 0.5, 0.612060546875, 0.8719902038574219, 0.5,
+    ]
+    PTS.forEach(([x, y], i) => expect(gradientNoise2(x, y, SEED)).toBe(golden[i]))
+  })
+
+  it('fbm2 rend exactement les valeurs d’origine', () => {
+    const golden = [
+      0.5, 0.5439038023884537, 0.5298622892255099, 0.4623750734861846,
+      0.6222123649057745, 0.5470947381605876, 0.5494005324931976,
+    ]
+    PTS.forEach(([x, y], i) => expect(fbm2(x, y, 24, SEED)).toBe(golden[i]))
+  })
+
+  it('fbmWarp2 rend exactement les valeurs d’origine', () => {
+    const golden = [
+      0.5, 0.5273517754396571, 0.5555557907415977, 0.35218242010439427,
+      0.647045087735606, 0.5591176324206643, 0.704201161498206,
+    ]
+    PTS.forEach(([x, y], i) => expect(fbmWarp2(x, y, 24, SEED, 8)).toBe(golden[i]))
+  })
+
+  it('ridgedFbm2 rend exactement les valeurs d’origine', () => {
+    const golden = [
+      1, 0.7733166401053091, 0.6259217899047418, 1,
+      0.329831567535295, 0.6342778699729029, 0.754069765983466,
+    ]
+    PTS.forEach(([x, y], i) => expect(ridgedFbm2(x, y, 20, SEED)).toBe(golden[i]))
+  })
+})

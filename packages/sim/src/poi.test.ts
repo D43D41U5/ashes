@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { generateAlpineTerrain } from './alpinegen'
 import { POI_TYPES, POI_PLACEMENT, spawnPoiMonsters, placePois } from './poi'
-import { terrainAt, createEmptyMap, isBlockingTile } from './map'
+import { terrainAt, createEmptyMap } from './map'
 import { poissonPoints } from './poisson'
 import { TERRAINS, TERRAIN_DEEP_WATER } from './balance'
 import { createSim } from './sim'
@@ -41,104 +41,18 @@ describe('placePois', () => {
     expect(map.zones.some((z) => z.kind === 'gisement' || z.kind === 'carriere')).toBe(true)
   })
 
-  // Les tests CRITICAL ci-dessous tournent sur la vraie carte alpine
-  // (1200×1800, taille de production), 5 seeds — generateAlpineTerrain y coûte
-  // ~5-6 s × 5. Générée UNE fois en `beforeAll` et partagée entre les `it` :
-  // ils vérifient des invariants différents sur le MÊME résultat, pas besoin de
-  // regénérer (évite de tripler le temps du fichier pour rien).
-  const PROD_SEEDS = [2026, 99, 2718, 31415, 7]
-  const prodMaps = new Map<number, ReturnType<typeof generateAlpineTerrain>>()
-  beforeAll(() => {
-    for (const seed of PROD_SEEDS) prodMaps.set(seed, generateAlpineTerrain(1200, 1800, seed))
-  }, 60_000)
-
   /**
-   * CRITICAL — LA RÉSERVATION (décision d'Alexis, 2026-07-11).
+   * LES GARDES « VRAIE CARTE » ONT DÉMÉNAGÉ → `worldgen.test.ts`.
    *
-   * Onze lieux portent une CHARGE de gameplay (savoir, répit, récit — cf.
-   * `POI_CHARGES`, spec `docs/specs/lieux.md`). Un lieu dont une mécanique dépend
-   * ne peut pas se permettre de ne pas exister : sans réservation, le Belvédère
-   * sortait ZÉRO fois sur la seed du jeu (il avait pourtant 10 points de semis
-   * éligibles — il perdait simplement la loterie face au Cairn, poids 12), et la
-   * devise « savoir » se réduisait au seul Cairn.
+   * Elles vivaient ici, avec un `beforeAll` de 60 s qui générait cinq cartes de
+   * production (1200×1800, ~8,5 s pièce). Le hook expirait, vitest skippait les
+   * tests, et la suite affichait « 1 failed » sans que personne relie les deux :
+   * ces gardes CRITICAL n'ont jamais tourné une seule fois depuis leur écriture.
    *
-   * On ne peut PAS lire `POI_CHARGES` ici (cycle d'import poi ↔ poi-discovery) :
-   * on s'appuie sur `reserve`, le champ qui PORTE la garantie dans la table. Le
-   * test vérifie donc exactement ce que le champ promet.
+   * Elles sont désormais regroupées avec toutes les autres gardes qui exigent la
+   * vraie carte, au-dessus d'UNE fixture partagée — au lieu de payer les cartes
+   * une fois par fichier de test (vitest isole les fichiers : rien ne se partage).
    */
-  it('CRITICAL — tout lieu à `reserve` existe sur CHAQUE carte (vraie carte alpine)', () => {
-    const reserves = POI_TYPES.filter((t) => (t.reserve ?? 0) > 0)
-    expect(reserves).toHaveLength(11) // les onze lieux chargés — si ça change, relire la spec
-
-    for (const seed of PROD_SEEDS) {
-      const map = prodMaps.get(seed)!
-      for (const t of reserves) {
-        const n = map.zones.filter((z) => z.kind === t.slug).length
-        expect
-          .soft(n, `${t.name} (seed ${seed}) : réservé à ${t.reserve}, posé ${n} fois`)
-          .toBeGreaterThanOrEqual(Math.min(t.reserve!, t.cap))
-      }
-    }
-  })
-
-  /**
-   * CRITICAL (revue « les lieux », constat 1) : un lieu qu'on ne peut pas fouler
-   * est une mécanique morte — `advancePois` et `isSheltered` testent tous deux
-   * `poisAt`, qui ne regarde QUE l'empreinte de la Zone (jamais un anneau de
-   * secours). `placePois` validait le biome au CENTRE du point sans jamais
-   * vérifier que l'empreinte posée contenait une tuile marchable — or plusieurs
-   * biomes de la table (ROCK, GLACIER…) sont massivement bloquants (Grotte,
-   * Belvédère, Source chaude, Sanctuaire, Arche, Pétroglyphes y sont éligibles).
-   */
-  it('CRITICAL — toute zone-POI a au moins une tuile marchable dans son empreinte (vraie carte alpine)', () => {
-    for (const seed of PROD_SEEDS) {
-      const map = prodMaps.get(seed)!
-      for (const z of map.zones) {
-        if (z.kind === undefined) continue // toponyme, pas un POI
-        let walkable = false
-        for (let ty = z.y; ty < z.y + z.h && !walkable; ty++) {
-          for (let tx = z.x; tx < z.x + z.w; tx++) {
-            if (!isBlockingTile(map, tx, ty)) { walkable = true; break }
-          }
-        }
-        expect
-          .soft(walkable, `${z.name} (seed ${seed}, [${z.x},${z.y}) ${z.w}×${z.h}) n'a AUCUNE tuile marchable`)
-          .toBe(true)
-      }
-    }
-  })
-
-  /**
-   * CRITICAL (revue « le lieu creuse son propre sol ») : l'invariant que ce
-   * correctif met le plus en danger. `sealBorderRing` (valleygen.ts) rend
-   * bloquante une tuile d'épaisseur sur tout le pourtour de la carte pour
-   * SCELLER la vallée ; `placePois` (qui peut désormais réécrire du terrain
-   * pour creuser un lieu) tourne juste après. Une seule tuile percée sur cet
-   * anneau ouvrirait le monde. `isCarvable` (poi.ts) refuse explicitement
-   * `tx<=0 || ty<=0 || tx>=width-1 || ty>=height-1` — ce test vérifie que
-   * l'anneau réel, sur la vraie carte de production, n'a JAMAIS été entamé.
-   *
-   * Discrimine : en retirant temporairement ce refus dans `isCarvable` pendant
-   * le développement, ce test passe rouge (des tuiles de bordure deviennent de
-   * l'éboulis, walkable) — restauré ensuite à l'identique. Voir le rapport.
-   */
-  it("CRITICAL — l'anneau de bordure reste intégralement bloquant après placePois (vraie carte alpine)", () => {
-    for (const seed of PROD_SEEDS) {
-      const map = prodMaps.get(seed)!
-      for (let x = 0; x < map.width; x++) {
-        expect.soft(isBlockingTile(map, x, 0), `(${x},0) seed ${seed} n'est plus bloquant`).toBe(true)
-        expect
-          .soft(isBlockingTile(map, x, map.height - 1), `(${x},${map.height - 1}) seed ${seed} n'est plus bloquant`)
-          .toBe(true)
-      }
-      for (let y = 0; y < map.height; y++) {
-        expect.soft(isBlockingTile(map, 0, y), `(0,${y}) seed ${seed} n'est plus bloquant`).toBe(true)
-        expect
-          .soft(isBlockingTile(map, map.width - 1, y), `(${map.width - 1},${y}) seed ${seed} n'est plus bloquant`)
-          .toBe(true)
-      }
-    }
-  })
 
   /**
    * On ne creuse jamais dans l'eau (contrainte 2 du brief). Empreinte 2×2
@@ -227,6 +141,10 @@ describe('POIs dans la carte alpine', () => {
    *   - un garde-fou PAR SEED < 1,75 — attrape une dérive catastrophique isolée
    *     (max mesuré : 1,46 ici, 1,696 sur 150 seeds).
    */
+  // 16 seeds × une carte 240×360 (~0,5 s pièce) : ~8 s de génération. Le budget
+  // par défaut de vitest (5 s) ne pouvait pas le tenir — le test expirait, donc
+  // il ne protégeait rien. Le coût est réel : il s'assume, il ne se rogne pas
+  // (moyenner sur 16 seeds EST l'assertion, cf. le commentaire ci-dessus).
   it("les POIs ne se concentrent pas autour du premier point du semis", () => {
     const W = 240, H = 360
     const SEEDS = [2026, 99, 2718, 31415, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
@@ -256,7 +174,7 @@ describe('POIs dans la carte alpine', () => {
     // L'assertion qui MORD : le bruit se moyenne, un biais non.
     const moyenne = ratios.reduce((a, b) => a + b, 0) / ratios.length
     expect(moyenne).toBeLessThan(1.25)
-  })
+  }, 60_000)
 })
 
 describe('vignette POI', () => {
