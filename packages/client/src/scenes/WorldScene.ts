@@ -216,6 +216,8 @@ export class WorldScene extends Phaser.Scene {
    *  celui d'en face. Il vient du snapshot, jamais du clic (invariant §3). */
   private windups: { id: number; dx: number; dy: number; ticksLeft: number }[] = []
   private attackFx!: AttackFx
+  /** Qui armait un coup à la frame précédente, et vers où — pour savoir quand il PART. */
+  private armes = new Map<number, { x: number; y: number; dx: number; dy: number }>()
   /** DEV : dernière demande de TP consommée (horodatage de la carte) — évite de la rejouer. */
   private lastTeleportAt = 0
   /** Relief continu (Y-shear vertical) — source du rendu et du picking, créé au boot. */
@@ -469,12 +471,25 @@ export class WorldScene extends Phaser.Scene {
     // LE COMBAT SE VOIT. Le télégraphe se redessine à chaque frame, à partir du
     // wind-up du snapshot : la lame se déplie à mesure que le coup arrive.
     this.attackFx.beginFrame()
+    // L'ARC RÉEL de la sim (±45°, ATTACK_RANGE) — pas un trait décoratif : le
+    // télégraphe montre CE QUI VA ÊTRE FRAPPÉ, ou il apprend une règle qui n'existe pas.
+    const portee = COMBAT.ATTACK_RANGE * TILE_PX
+    const encore = new Set<number>()
     for (const w of this.windups) {
       const sprite =
         w.id === this.playerId ? this.playerSprite : (this.view.others.get(w.id)?.sprite ?? null)
       if (!sprite) continue
+      encore.add(w.id)
       const progress = Math.max(0, Math.min(1, 1 - w.ticksLeft / COMBAT.WINDUP_TICKS))
-      this.attackFx.telegraph(sprite.x, sprite.y, w.dx, w.dy, progress)
+      this.attackFx.telegraph(sprite.x, sprite.y, w.dx, w.dy, progress, portee, w.id === this.playerId)
+      this.armes.set(w.id, { x: sprite.x, y: sprite.y, dx: w.dx, dy: w.dy })
+    }
+    // UN WIND-UP QUI DISPARAÎT = LE COUP EST PARTI. L'arc claque — y compris dans le
+    // vide : un coup manqué coûte de l'endurance, le joueur doit le SENTIR.
+    for (const [id, a] of this.armes) {
+      if (encore.has(id)) continue
+      this.attackFx.slash(a.x, a.y, a.dx, a.dy, portee, time)
+      this.armes.delete(id)
     }
     this.attackFx.update(time)
 
