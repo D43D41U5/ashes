@@ -73,9 +73,24 @@ services:
       - braises_client_modules:/app/packages/client/node_modules
       - braises_sim_modules:/app/packages/sim/node_modules
       - braises_server_modules:/app/packages/server/node_modules
-      # Le store pnpm du conteneur vit sur le même device que /app (hardlinks) :
-      # sans ce volume nommé, il atterrirait en root dans le repo de l'hôte.
-      - braises_pnpm_store:/app/.pnpm-store
+      # LE STORE PNPM VIT HORS DU DÉPÔT — et c'est une correction, pas une préférence.
+      #
+      # Il était monté en `/app/.pnpm-store`, donc SOUS le bind `:ro`. Docker doit créer
+      # le point de montage avant de poser le volume par-dessus : il lui fallait un
+      # dossier `.pnpm-store/` DÉJÀ PRÉSENT dans le dépôt de l'hôte. Or ce dossier est
+      # dans `.gitignore`. Conséquence vécue (2026-07-13) : le jour où il a disparu, le
+      # conteneur a refusé de démarrer sur un « read-only file system » qui ne parlait
+      # de rien — et un clone frais du dépôt ne démarrait pas non plus.
+      #
+      # Hors de `/app`, Docker crée le point de montage dans le rootfs du conteneur
+      # (inscriptible) : plus aucune dépendance à un dossier ignoré par git. Les
+      # hardlinks du store restent valides — les `node_modules` sont eux aussi des
+      # volumes nommés, donc sur le MÊME device que celui-ci.
+      - braises_pnpm_store:/pnpm-store
+    environment:
+      # pnpm lit les `npm_config_*` : c'est ce qui envoie le store dans le volume
+      # ci-dessus sans toucher au `.npmrc` du dépôt (qui, lui, vaut aussi pour l'hôte).
+      NPM_CONFIG_STORE_DIR: /pnpm-store
     expose:
       - "3000"
     # Sain dès que Vite répond sur :3000. `start_period` couvre le premier
