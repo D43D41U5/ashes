@@ -25,7 +25,7 @@ import {
 } from './economy'
 import { emitEvent, type SimEvent } from './events'
 import { applyInventoryAction, isInventoryAction, type InventoryAction } from './inventory-actions'
-import { carryRatio, makeInventory, type Inventory, type SkillId } from './items'
+import { carryRatio, carryTier, makeInventory, type Inventory, type SkillId } from './items'
 import { createEmptyMap, type WorldMap } from './map'
 import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
@@ -328,8 +328,14 @@ export function spawnEntity(state: SimState, x: number, y: number, slots: number
  * (invariant §2).
  */
 export function carrySpeedFactor(ratio: number): number {
-  const over = Math.max(0, ratio - CARRY.COMFORT)
-  return Math.max(CARRY.SPEED_FLOOR, 1 - CARRY.MALUS_PER_RATIO * over)
+  const tier = carryTier(ratio)
+  if (tier === 'light') return CARRY.SPEED_LIGHT
+  if (tier === 'medium') return CARRY.SPEED_MEDIUM
+  if (tier === 'heavy') return CARRY.SPEED_HEAVY
+  // SURCHARGÉ, et là SEULEMENT : la peine grandit à chaque objet de plus. On part
+  // du palier lourd et on descend, jusqu'au plancher (on rampe, mais on avance).
+  const over = ratio - CARRY.HEAVY_MAX
+  return Math.max(CARRY.SPEED_FLOOR, CARRY.SPEED_HEAVY - CARRY.OVERLOAD_MALUS_PER_RATIO * over)
 }
 
 /**
@@ -351,10 +357,12 @@ export function speedScaleFor(
   scale *= coldSpeedFactor(entity.temperature)
   if (entity.wounds.leg) scale *= COMBAT.LEG_WOUND_SPEED
   const ratio = carryRatio(entity.inventory)
+  const tier = carryTier(ratio)
   scale *= carrySpeedFactor(ratio)
+  // On ne sprinte plus dès le palier LOURD (spec P6) : refusé, pas ralenti.
+  const canSprint = tier === 'light' || tier === 'medium'
   const blocking = input.block && entity.stamina > 0
-  const sprinting =
-    !blocking && input.sprint && entity.stamina > 0 && input.moving && ratio <= CARRY.SPRINT_MAX
+  const sprinting = !blocking && input.sprint && entity.stamina > 0 && input.moving && canSprint
   if (blocking) scale *= COMBAT.BLOCK_MOVE_FACTOR
   else if (sprinting) scale *= COMBAT.SPRINT_FACTOR
   return { scale, sprinting }

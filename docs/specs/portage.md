@@ -37,8 +37,8 @@ Un **seul** système, et quatre tensions naissent d'un coup :
 ### La surcharge : on rampe, on n'est pas bloqué (décision utilisateur)
 
 - **P4 — ON PEUT TOUJOURS RAMASSER.** Aucun refus « trop lourd » : la récolte, le craft et le loot ne regardent pas le poids. C'est un **choix**, pas un mur — « je laisse la moitié du minerai, ou je rentre à 20 % de vitesse avec des loups dehors ? ». Un blocage dur ne fait que refuser un clic ; c'est ici qu'est le drame.
-- **P5 — La vitesse fond avec la charge**, continûment : libre jusqu'à `COMFORT` (la moitié de la capacité), puis décroissance linéaire, plancher à `SPEED_FLOOR`. À pleine capacité on marche encore ; au-delà, on rampe.
-- **P6 — On ne SPRINTE PAS chargé** : au-dessus de `SPRINT_MAX`, le sprint est refusé — pas ralenti, refusé. C'est la première chose que le joueur sent.
+- **P5 — QUATRE PALIERS : léger, moyen, lourd, surchargé** (décision utilisateur). Les trois premiers sont **bornés**, et leur effet est **UNIFORME** — pas de pente. C'est un choix de *lisibilité* : une pente, on la subit sans jamais savoir où l'on est ; un palier, on le **franchit** — on sent le cran, on peut décider de rester en dessous, et on sait ce qu'une baie de plus va coûter (rien, jusqu'au prochain cran). **La SURCHARGE, elle, est proportionnelle** : c'est le seul endroit où la peine doit grandir à chaque objet ramassé, et c'est là qu'est le drame. Plancher à `SPEED_FLOOR` : on rampe, mais on avance — un joueur figé n'a plus de choix du tout, ce qui est l'inverse du but.
+- **P6 — On ne SPRINTE PAS au palier LOURD** : le sprint est refusé — pas ralenti, refusé. C'est le cran qu'on sent en premier, avant même de regarder une jauge.
 - **P7 — SURCHARGÉ, ON NE FUIT PAS** : au-dessus de la capacité, la régénération d'endurance s'effondre (`OVERLOAD_STAMINA_REGEN`). Un porteur surchargé est une **proie** — et c'est exactement le PvP léger que le GDD veut sur les routes.
 
 ### Les conséquences qu'on NE code pas (elles viennent seules)
@@ -49,13 +49,13 @@ Un **seul** système, et quatre tensions naissent d'un coup :
 ### Le client
 
 - **P10 — La vitesse vient de `/sim`, et d'elle seule.** `speedScaleFor` est DÉJÀ partagée par la sim et la prédiction locale du client : le poids entre là, et nulle part ailleurs. Une formule recopiée côté client divergerait au premier ajustement — et une divergence de vitesse, c'est un avatar qui se téléporte à chaque réconciliation.
-- **P11 — La charge SE VOIT** dans le menu personnage : le poids porté, la capacité, et l'état (`libre` / `chargé` / `SURCHARGÉ`). Un malus qu'on subit sans le voir est un bug, pas une règle.
+- **P11 — La charge SE VOIT, en deux endroits.** Un **médaillon de poids** à côté des vitales (un poids de fonte, qui **change de couleur au palier** : gris acier → or → orange → rouge) — c'est la lecture de tous les instants, sans ouvrir un écran. Et le détail dans le menu personnage : « 12.4 / 30 kg — lourd (pas de sprint) », avec sa barre. **Les seuils viennent de `carryTier` (/sim), jamais recopiés côté client** : deux jeux de seuils divergeraient, et le joueur verrait « lourd » en sprintant encore. Un malus qu'on subit sans le voir est un bug, pas une règle.
 
 ## Critères d'acceptation
 
 - **A1** — `carryWeight` : sac vide = 0 ; le poids suit les quantités (une pile de 20 bois pèse 20 × le bois) ; pur, sans Phaser ni tirage.
-- **A2** — **La courbe** : à ≤ 50 % de la capacité → vitesse ×1 ; à 100 % → le malus mord (strictement < 1) ; au-delà de 150 % → plancher, et il ne descend plus.
-- **A3** — **Le sprint est REFUSÉ** au-dessus de `SPRINT_MAX` (pas ralenti : `sprinting: false`), même avec de l'endurance à revendre.
+- **A2** — **Les paliers sont PLATS** : deux charges du même cran vont EXACTEMENT à la même vitesse (`carrySpeedFactor(0.4) === carrySpeedFactor(MEDIUM_MAX)`), et chaque cran coûte quelque chose. **En surcharge SEULEMENT**, la vitesse décroît continûment avec le dépassement, jusqu'au plancher.
+- **A3** — **Le sprint est REFUSÉ au palier LOURD** (pas ralenti : `sprinting: false`), même avec 100 d'endurance — et il part encore au palier MOYEN.
 - **A4** — **Surchargé, l'endurance ne revient plus** (régén ×`OVERLOAD_STAMINA_REGEN`) : on ne se bat pas, on ne fuit pas, on rentre.
 - **A5** — **On peut TOUJOURS ramasser** : à 300 % de la capacité, une récolte réussit encore (seules les cases refusent). Aucun événement « trop lourd » n'existe.
 - **A6** — **Le client prédit la MÊME vitesse** : `speedScaleFor` reçoit l'inventaire, et le replay d'une partie chargée est identique au bit près.
@@ -64,7 +64,7 @@ Un **seul** système, et quatre tensions naissent d'un coup :
 
 ## Nombres (ordres de grandeur, à calibrer en playtest)
 
-`CARRY.CAPACITY = 30`. `COMFORT = 0.5` · `SPRINT_MAX = 0.75` · `MALUS_PER_RATIO = 0.8` · `SPEED_FLOOR = 0.2` · `OVERLOAD_STAMINA_REGEN = 0.25`.
+`CARRY.CAPACITY = 30`. Paliers : `LIGHT_MAX = 0.33` · `MEDIUM_MAX = 0.66` · `HEAVY_MAX = 1`. Effets (plats) : `SPEED_LIGHT = 1` · `SPEED_MEDIUM = 0.85` · `SPEED_HEAVY = 0.7` (et plus de sprint). Surcharge (proportionnelle) : `OVERLOAD_MALUS_PER_RATIO = 0.5` · `SPEED_FLOOR = 0.2` · `OVERLOAD_STAMINA_REGEN = 0.25`.
 
 `ITEM_WEIGHT` : bois 1 · pierre **2** · minerai **3** · lingot **4** · charbon 2 · fibre 0,2 · baies 0,2 · corde 0,4 · ragoût 0,5 · viande 1 · outils 2 à 4.
 

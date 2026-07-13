@@ -19,7 +19,7 @@
  * l'écran lit comme une seule bande. Il est SEMI-TRANSPARENT en jeu et redevient
  * OPAQUE quand l'inventaire est ouvert — là, on ne regarde plus le monde.
  */
-import { TEMPERATURE, skillLevel, type Entity, type SkillId } from '@braises/sim'
+import { CARRY, TEMPERATURE, carryTier, skillLevel, type CarryTier, type Entity, type SkillId } from '@braises/sim'
 import type Phaser from 'phaser'
 import { VITAL_ICON_PX, vitalIconKey, type VitalId } from '../../render/vital-art'
 import { hotbarBottom } from './hotbar'
@@ -36,13 +36,31 @@ export interface Vitals {
     temperature: number
     wounds: Entity['wounds']
     skills: Partial<Record<SkillId, number>>
+    /** Le POIDS porté (spec portage.md P11) — en unités, pas en fraction : le
+     *  survol montre le vrai chiffre, et la fraction se déduit de la capacité. */
+    carry: number
     /** Inventaire ouvert → le bloc devient opaque. */
     characterMenuOpen: boolean
   }): void
 }
 
 /** Maxima des jauges — posés par `spawnEntity` (packages/sim/src/sim.ts). */
-const MAXIMA: Record<VitalId, number> = { hp: 100, stamina: 100, hunger: 100, temperature: 100 }
+// La charge se remplit sur la CAPACITÉ, pas sur 100 : son médaillon est plein quand
+// le sac l'est. Au-delà (surcharge), le disque reste plein — et vire au rouge.
+const MAXIMA: Record<VitalId, number> = { hp: 100, stamina: 100, hunger: 100, temperature: 100, carry: CARRY.CAPACITY }
+
+/**
+ * LA COULEUR DU POIDS — une par palier (spec portage.md P11). Les seuils, eux, ne
+ * sont PAS ici : ils viennent de `carryTier` (/sim). Le HUD ne redéfinit pas les
+ * règles du jeu, il les montre — deux jeux de seuils divergeraient au premier
+ * ajustement, et le joueur verrait « lourd » en sprintant encore.
+ */
+const CARRY_COLOR: Record<CarryTier, number> = {
+  light: 0x7e8a94, // gris acier : on ne sent rien, et l'icône ne doit pas crier
+  medium: 0xc9a227, // or : le premier cran, on le voit
+  heavy: 0xd07a2a, // orange : plus de sprint
+  overloaded: 0xc0503e, // rouge : on rampe, et l'endurance ne revient plus
+}
 
 /** Les métiers, dans l'ordre où on veut les lire — nom français pour l'affichage. */
 const SKILL_LABELS: Record<SkillId, string> = {
@@ -102,12 +120,12 @@ export function createVitals(scene: Phaser.Scene): Vitals {
     strokeThickness: 3,
   } as const
 
-  const badges: Badge[] = (['hp', 'stamina', 'hunger', 'temperature'] as VitalId[]).map((id, i) => ({
+  const badges: Badge[] = (['hp', 'stamina', 'hunger', 'temperature', 'carry'] as VitalId[]).map((id, i) => ({
     id,
     cx: X0 + R + i * (D + GAP),
     cy,
-    full: { hp: 0xc0503e, stamina: 0x4e9c5a, hunger: 0xd9a441, temperature: 0x6aa8d9 }[id],
-    warn: { hp: undefined, stamina: undefined, hunger: 0, temperature: TEMPERATURE.HYPOTHERMIA }[id],
+    full: { hp: 0xc0503e, stamina: 0x4e9c5a, hunger: 0xd9a441, temperature: 0x6aa8d9, carry: CARRY_COLOR.light }[id],
+    warn: { hp: undefined, stamina: undefined, hunger: 0, temperature: TEMPERATURE.HYPOTHERMIA, carry: undefined }[id],
     frac: -1, // rien n'est encore dessiné
     color: 0,
   }))
@@ -201,7 +219,10 @@ export function createVitals(scene: Phaser.Scene): Vitals {
         stamina: s.stamina,
         hunger: s.hunger,
         temperature: s.temperature,
+        carry: s.carry,
       }
+      // Le palier vient de /sim : le HUD ne connaît pas les seuils, il les LIT.
+      const tier = carryTier(s.carry / CARRY.CAPACITY)
 
       // On ne redessine QUE si une jauge a bougé d'assez pour se voir : sinon
       // c'est une retessellation de quatre disques à chaque frame, pour rien.
@@ -210,7 +231,9 @@ export function createVitals(scene: Phaser.Scene): Vitals {
         const cur = values[b.id]
         const frac = Math.min(1, Math.max(0, cur / MAXIMA[b.id]))
         // La faim et la température qui plongent virent au rouge : un signal, pas un chiffre.
-        const color = b.warn !== undefined && cur <= b.warn ? 0xc0503e : b.full
+        // Le POIDS, lui, change de couleur à chaque PALIER — c'est sa seule lecture.
+        const color =
+          b.id === 'carry' ? CARRY_COLOR[tier] : b.warn !== undefined && cur <= b.warn ? 0xc0503e : b.full
         if (Math.round(frac * 200) !== Math.round(b.frac * 200) || color !== b.color) {
           b.frac = frac
           b.color = color

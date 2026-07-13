@@ -18,7 +18,7 @@
  *
  * Déterminisme : aucun tirage. Le remplissage suit l'ordre des cases, point.
  */
-import { BALANCE, CARRY, ITEM_WEIGHT, STACK_DEFAULT, STACK_SIZES, TOOL_DURABILITIES } from './balance'
+import { BALANCE, CARRY, ITEM_WEIGHT, STACK_DEFAULT, STACK_SIZES, TOOL_DURABILITIES, type CarryTier } from './balance'
 
 export type ItemId =
   | 'wood'
@@ -122,6 +122,22 @@ export function carryWeight(inv: Inventory): number {
  */
 export function carryRatio(inv: Inventory): number {
   return carryWeight(inv) / CARRY.CAPACITY
+}
+
+/**
+ * LE PALIER de charge (spec portage.md P5). Quatre crans : léger, moyen, lourd,
+ * surchargé. Les trois premiers sont des marches — on les FRANCHIT, on ne les
+ * subit pas : entre deux crans, une baie de plus ne coûte rien, et c'est ce qui
+ * rend la décision de charger LISIBLE.
+ *
+ * C'est aussi la seule règle de couleur du HUD : le médaillon de poids en dérive
+ * (le client ne redéfinit pas ses propres seuils — ils divergeraient).
+ */
+export function carryTier(ratio: number): CarryTier {
+  if (ratio <= CARRY.LIGHT_MAX) return 'light'
+  if (ratio <= CARRY.MEDIUM_MAX) return 'medium'
+  if (ratio <= CARRY.HEAVY_MAX) return 'heavy'
+  return 'overloaded'
 }
 
 export function countOf(inv: Inventory, item: ItemId): number {

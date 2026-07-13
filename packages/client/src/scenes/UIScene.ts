@@ -4,7 +4,7 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import { BALANCE, zoneAt, type VillageTask, type WorldMap } from '@braises/sim'
+import { BALANCE, carryWeight, zoneAt, type VillageTask, type WorldMap } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud, setHud } from '../hud-state'
 import { drainPickups, queueAction } from './world/hud-bridge'
@@ -498,6 +498,8 @@ export class UIScene extends Phaser.Scene {
     this.craftQueueView.setVisible(true)
     this.craftQueueView.update(getHud(this.registry, 'craftQueue') ?? [])
     this.vitals.update({
+      // Le poids vient du sac, par la fonction de /sim : le HUD ne recompte rien.
+      carry: carryWeight(inv),
       hp: getHud(this.registry, 'hp') ?? 100,
       stamina: getHud(this.registry, 'stamina') ?? 100,
       hunger: getHud(this.registry, 'hunger') ?? 100,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, CARRY, COMBAT, ITEM_WEIGHT, SLOTS, TERRAIN_GRASS } from './balance'
 import { drainEvents } from './events'
-import { carryRatio, carryWeight, countOf, inventoryOf, makeInventory } from './items'
+import { carryRatio, carryTier, carryWeight, countOf, inventoryOf, makeInventory } from './items'
 import { createEmptyMap } from './map'
 import { carrySpeedFactor, createSim, spawnEntity, speedScaleFor, step, type SimState } from './sim'
 import type { ResourceNode } from './economy'
@@ -33,8 +33,8 @@ describe('le poids porté (A1)', () => {
   })
 
   it('la cueillette est LÉGÈRE, la mine est LOURDE — c’est là que doit être la peine', () => {
-    // Une pile pleine de fibres (20 × 0,2 = 4) ne se sent pas…
-    expect(carryWeight(inventoryOf(SLOTS.PLAYER, { fiber: 20 }))).toBeLessThan(CARRY.CAPACITY * CARRY.COMFORT)
+    // Une pile pleine de fibres (20 × 0,2 = 4) ne se sent pas : palier LÉGER.
+    expect(carryTier(carryRatio(inventoryOf(SLOTS.PLAYER, { fiber: 20 })))).toBe('light')
     // …dix minerais (30), si : c'est déjà la charge PLEINE. Ce sont les « hottes de
     // minerai » du GDD — la mine fait transpirer, la promenade en forêt non.
     expect(carryWeight(inventoryOf(SLOTS.PLAYER, { iron_ore: 10 }))).toBe(CARRY.CAPACITY)
@@ -42,16 +42,32 @@ describe('le poids porté (A1)', () => {
 })
 
 describe('le prix de la charge (A2, A3, A4)', () => {
-  it('A2 : la courbe — libre sous le confort, mordante à plein, plancher au-delà', () => {
-    expect(carrySpeedFactor(0)).toBe(1)
-    expect(carrySpeedFactor(CARRY.COMFORT)).toBe(1) // jusqu'au confort, on ne sent RIEN
+  it('A2 : QUATRE PALIERS — trois marches PLATES, puis une pente en surcharge', () => {
+    // Les paliers sont des MARCHES : dans un palier, l'effet est UNIFORME. Entre
+    // deux crans, une baie de plus ne coûte RIEN — c'est ce qui rend la décision de
+    // charger lisible, là où une pente continue se subit sans qu'on sache où l'on est.
+    expect(carryTier(0)).toBe('light')
+    expect(carryTier(CARRY.LIGHT_MAX)).toBe('light')
+    expect(carryTier(CARRY.LIGHT_MAX + 0.01)).toBe('medium')
+    expect(carryTier(CARRY.MEDIUM_MAX)).toBe('medium')
+    expect(carryTier(CARRY.MEDIUM_MAX + 0.01)).toBe('heavy')
+    expect(carryTier(1)).toBe('heavy')
+    expect(carryTier(1.01)).toBe('overloaded')
 
-    const plein = carrySpeedFactor(1)
-    expect(plein).toBeLessThan(1) // à pleine charge, ça mord…
-    expect(plein).toBeGreaterThan(CARRY.SPEED_FLOOR) // …mais on marche encore
+    // PLAT dans le palier : deux charges du même cran vont EXACTEMENT à la même vitesse.
+    expect(carrySpeedFactor(0.01)).toBe(carrySpeedFactor(CARRY.LIGHT_MAX))
+    expect(carrySpeedFactor(0.4)).toBe(carrySpeedFactor(CARRY.MEDIUM_MAX))
+    expect(carrySpeedFactor(0.7)).toBe(carrySpeedFactor(1))
+    // …et chaque cran coûte quelque chose.
+    expect(carrySpeedFactor(CARRY.LIGHT_MAX)).toBe(CARRY.SPEED_LIGHT)
+    expect(carrySpeedFactor(CARRY.MEDIUM_MAX)).toBe(CARRY.SPEED_MEDIUM)
+    expect(carrySpeedFactor(1)).toBe(CARRY.SPEED_HEAVY)
 
-    // Au-delà, on rampe — et le plancher tient : un joueur figé n'a plus de choix
-    // du tout, ce qui est l'inverse du but.
+    // EN SURCHARGE, et là SEULEMENT : la peine grandit à chaque objet de plus.
+    expect(carrySpeedFactor(1.2)).toBeLessThan(CARRY.SPEED_HEAVY)
+    expect(carrySpeedFactor(1.5)).toBeLessThan(carrySpeedFactor(1.2))
+    // …jusqu'au plancher : on rampe, mais on avance. Un joueur figé n'a plus de
+    // choix du tout, ce qui est l'inverse du but.
     expect(carrySpeedFactor(3)).toBe(CARRY.SPEED_FLOOR)
     expect(carrySpeedFactor(50)).toBe(CARRY.SPEED_FLOOR)
   })
@@ -64,9 +80,16 @@ describe('le prix de la charge (A2, A3, A4)', () => {
     const leger = speedScaleFor({ ...corps, inventory: inventoryOf(SLOTS.PLAYER, { fiber: 5 }) }, sprint)
     expect(leger.sprinting).toBe(true)
 
-    // Au-dessus de SPRINT_MAX : refusé, malgré 100 d'endurance.
-    const lourd = speedScaleFor({ ...corps, inventory: inventoryOf(SLOTS.PLAYER, { stone: 20 }) }, sprint)
-    expect(carryRatio(inventoryOf(SLOTS.PLAYER, { stone: 20 }))).toBeGreaterThan(CARRY.SPRINT_MAX)
+    // Palier MOYEN : on sprinte encore (le cran coûte de la vitesse, pas le souffle).
+    const moyen = inventoryOf(SLOTS.PLAYER, { wood: 15 }) // 15 / 30 = 0,5 → moyen
+    expect(carryTier(carryRatio(moyen))).toBe('medium')
+    expect(speedScaleFor({ ...corps, inventory: moyen }, sprint).sprinting).toBe(true)
+
+    // Palier LOURD : le sprint est REFUSÉ, malgré 100 d'endurance. C'est le cran
+    // qu'on sent en premier, avant même de regarder une jauge.
+    const lourdInv = inventoryOf(SLOTS.PLAYER, { stone: 13 }) // 26 / 30 = 0,87 → lourd
+    expect(carryTier(carryRatio(lourdInv))).toBe('heavy')
+    const lourd = speedScaleFor({ ...corps, inventory: lourdInv }, sprint)
     expect(lourd.sprinting).toBe(false)
     expect(lourd.scale).toBeLessThan(COMBAT.SPRINT_FACTOR)
   })

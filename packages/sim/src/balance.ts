@@ -1103,20 +1103,50 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
 export const CARRY = {
   /** Capacité de base. La besace de peau (couche 1 ter) la fera monter. */
   CAPACITY: 30,
-  /** En dessous de cette fraction : on ne sent rien. La cueillette reste libre. */
-  COMFORT: 0.5,
-  /** Au-dessus : le sprint est REFUSÉ (pas ralenti — refusé). C'est ce qu'on sent en premier. */
-  SPRINT_MAX: 0.75,
-  /** Pente du malus, par unité de ratio au-delà du confort. */
-  MALUS_PER_RATIO: 0.8,
+
+  /*
+   * QUATRE PALIERS (décision utilisateur, 2026-07-13) : léger, moyen, lourd,
+   * surchargé. Les trois premiers sont BORNÉS et leur effet est UNIFORME — pas de
+   * pente continue.
+   *
+   * C'est un choix de LISIBILITÉ, et il vaut mieux que la pente que j'avais posée :
+   * une pente, on la subit sans jamais savoir où l'on est ; un palier, on le
+   * FRANCHIT — on sent le cran, on peut décider de rester en dessous, et on sait ce
+   * qu'une baie de plus va coûter (rien, jusqu'au prochain cran).
+   *
+   * La SURCHARGE, elle, est proportionnelle : c'est le seul endroit où l'on veut
+   * que la peine grandisse à chaque objet ramassé — c'est là qu'est le drame.
+   */
+
+  /** Bornes HAUTES des paliers, en fraction de la capacité. */
+  LIGHT_MAX: 0.33,
+  MEDIUM_MAX: 0.66,
+  HEAVY_MAX: 1,
+
+  /** L'effet sur la vitesse, UNIFORME dans le palier. */
+  SPEED_LIGHT: 1,
+  SPEED_MEDIUM: 0.85,
+  SPEED_HEAVY: 0.7,
+
+  /** SURCHARGÉ : la peine devient PROPORTIONNELLE — par unité de capacité au-delà
+   *  du plein. À 200 % de la capacité, on touche déjà le plancher. */
+  OVERLOAD_MALUS_PER_RATIO: 0.5,
   /** On rampe, mais on avance : sans plancher, une surcharge extrême fige le joueur
    *  — et un joueur figé n'a plus de choix du tout, ce qui est l'inverse du but. */
   SPEED_FLOOR: 0.2,
-  /** SURCHARGÉ (> 100 %), l'endurance ne revient presque plus : on ne se bat pas,
-   *  on ne fuit pas, on rentre. Le porteur est une PROIE — c'est le PvP léger des
-   *  routes que veut le GDD §8bis. */
+
+  /** Le sprint tombe au palier LOURD : il est REFUSÉ (pas ralenti). C'est le cran
+   *  qu'on sent en premier, avant même de regarder une jauge. */
+  SPRINT_MAX_TIER: 'medium',
+
+  /** SURCHARGÉ, l'endurance ne revient presque plus : on ne se bat pas, on ne fuit
+   *  pas, on rentre. Le porteur est une PROIE — c'est le PvP léger des routes que
+   *  veut le GDD §8bis. */
   OVERLOAD_STAMINA_REGEN: 0.25,
 } as const
+
+/** Les quatre paliers de charge (spec portage.md P5). */
+export type CarryTier = 'light' | 'medium' | 'heavy' | 'overloaded'
 
 /** Durée d'un tick en secondes — le seul dt qui existe dans /sim. */
 export const TICK_DT_S = 1 / BALANCE.TICK_RATE_HZ

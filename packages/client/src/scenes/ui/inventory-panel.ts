@@ -10,7 +10,7 @@
  * Réimplémenter `moveWithin`/`pourInto` ici signerait leur divergence : on ne
  * le fait pas.
  */
-import { CARRY, SLOTS, carryRatio, carryWeight, durabilityOf, isStackable, stackSize, type Inventory, type ItemId, type PlayerAction, type Slot, type SlotRef } from '@braises/sim'
+import { CARRY, SLOTS, carryRatio, carryTier, carryWeight, durabilityOf, isStackable, stackSize, type CarryTier, type Inventory, type ItemId, type PlayerAction, type Slot, type SlotRef } from '@braises/sim'
 import type Phaser from 'phaser'
 import type { OpenContainerView } from '../../hud-state'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
@@ -169,11 +169,22 @@ const BELT_GAP = 12
 /** Combien de rangées de sac au-dessus de la ceinture. */
 const BAG_ROWS = (SLOTS.PLAYER - SLOTS.BELT) / COLS
 
-/** La barre de charge, à droite du titre du sac. */
+/** La barre de charge, à droite du titre du sac. Quatre paliers, quatre couleurs —
+ *  les mêmes que le médaillon de poids (vitals.ts) : le joueur ne doit pas avoir à
+ *  traduire d'un écran à l'autre. Les SEUILS, eux, viennent de /sim (`carryTier`). */
 const LOAD_BAR_W = 120
-const LOAD_FREE = 0x8cc63e
-const LOAD_HEAVY = 0xe8c66a
-const LOAD_OVER = 0xc0503e
+const TIER_COLOR: Record<CarryTier, number> = {
+  light: 0x7e8a94,
+  medium: 0xc9a227,
+  heavy: 0xd07a2a,
+  overloaded: 0xc0503e,
+}
+const TIER_LABEL: Record<CarryTier, string> = {
+  light: 'léger',
+  medium: 'moyen',
+  heavy: 'lourd (pas de sprint)',
+  overloaded: 'SURCHARGÉ',
+}
 
 /** Styles du panneau — tirés de la source unique (`typography.ts`). */
 const TEXT = textStyle('body')
@@ -249,7 +260,7 @@ export function createInventoryPanel(scene: Phaser.Scene, send: (a: PlayerAction
    */
   const loadText = scene.add.text(gridWidth() / 2, -26, '', textStyle('label', 'dim')).setOrigin(1, 0)
   const loadBg = scene.add.rectangle(gridWidth() / 2, -6, LOAD_BAR_W, 3, 0x2a2a32).setOrigin(1, 0.5)
-  const loadBar = scene.add.rectangle(gridWidth() / 2 - LOAD_BAR_W, -6, 0, 3, LOAD_FREE).setOrigin(0, 0.5)
+  const loadBar = scene.add.rectangle(gridWidth() / 2 - LOAD_BAR_W, -6, 0, 3, TIER_COLOR.light).setOrigin(0, 0.5)
   playerNodes.push(playerTitle, loadText, loadBg, loadBar)
   for (let i = 0; i < SLOTS.PLAYER; i++) {
     // LA CEINTURE EST LA RANGÉE DU BAS. Les cases 0-5 restent la ceinture pour la
@@ -403,14 +414,11 @@ export function createInventoryPanel(scene: Phaser.Scene, send: (a: PlayerAction
       // besace de peau fera monter la capacité, cette barre suivra toute seule.
       const poids = carryWeight(inv)
       const ratio = carryRatio(inv)
-      const surcharge = ratio > 1
-      const lourd = ratio > CARRY.SPRINT_MAX
-      loadText.setText(
-        `${poids.toFixed(1)} / ${CARRY.CAPACITY} kg${surcharge ? '  SURCHARGÉ' : lourd ? '  chargé' : ''}`,
-      )
-      loadText.setColor(surcharge ? INK.alert : lourd ? INK.warm : INK.dim)
+      const tier = carryTier(ratio) // les seuils viennent de /sim, jamais recopiés
+      loadText.setText(`${poids.toFixed(1)} / ${CARRY.CAPACITY} kg — ${TIER_LABEL[tier]}`)
+      loadText.setColor(tier === 'overloaded' ? INK.alert : tier === 'heavy' ? INK.warm : INK.dim)
       loadBar.width = Math.min(1, ratio) * LOAD_BAR_W
-      loadBar.fillColor = surcharge ? LOAD_OVER : lourd ? LOAD_HEAVY : LOAD_FREE
+      loadBar.fillColor = TIER_COLOR[tier]
       // Un nouveau snapshot (référence d'inventaire neuve) fait foi : il efface
       // l'optimisme (R22). Sinon les cases « en attente » restent grisées jusque-là.
       const containerRef = open?.inv ?? null

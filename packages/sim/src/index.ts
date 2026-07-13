@@ -66,7 +66,7 @@ export { POI,
   WEAPON_DAMAGE,
   WORLD_EVENTS,
 } from './balance'
-export type { MonsterDef, MonsterType, NodeDef, NodeType, Recipe, RecipeId, TerrainDef } from './balance'
+export type { CarryTier, MonsterDef, MonsterType, NodeDef, NodeType, Recipe, RecipeId, TerrainDef } from './balance'
 
 // ─── Monde : carte, temps, collision, navigation ──────────────────────────
 export { createEmptyMap, terrainAt, elevationAt, isBlockingTile, zoneAt, poisAt, poiCenter, poiClearings } from './map'
@@ -117,6 +117,7 @@ export {
   durabilityOf,
   carryWeight,
   carryRatio,
+  carryTier,
   freeRoomFor,
 } from './items'
 export type { ItemId, ItemBag, Slot, Inventory, StructureType, AccessLevel, SkillId } from './items'

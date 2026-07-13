@@ -17,7 +17,7 @@ import type Phaser from 'phaser'
 
 export const VITAL_ICON_PX = 32
 
-export type VitalId = 'hp' | 'stamina' | 'hunger' | 'temperature'
+export type VitalId = 'hp' | 'stamina' | 'hunger' | 'temperature' | 'carry'
 
 export function vitalIconKey(id: VitalId): string {
   return `vt-${id}`
@@ -31,6 +31,19 @@ type VitalPaint = (g: Phaser.GameObjects.Graphics) => void
  * sinon silencieux). `generateVitalIcons` boucle là-dessus.
  */
 export const VITAL_PAINTS: Record<VitalId, VitalPaint> = {
+  /*
+   * CHARGE : un POIDS de fonte — le bloc trapézoïdal à anse, celui des balances de
+   * marché. Une masse franche et basse : en ombre chinoise, c'est *lourd*, et ça se
+   * lit avant qu'on ait pensé au mot. Une hotte ou un sac auraient été plus
+   * littéraux, et illisibles — deux courbes molles qui ressemblent à tout.
+   */
+  carry: (g) => {
+    g.fillStyle(0x6c6c76).fillTriangle(4, 30, 28, 30, 24, 12).fillTriangle(4, 30, 24, 12, 8, 12)
+    g.fillRect(8, 12, 16, 18)
+    g.lineStyle(3, 0x6c6c76).strokeCircle(16, 9, 5) // l'anse
+    g.fillStyle(0x9aa0aa).fillRect(8, 12, 16, 3) // dessus éclairé (lumière au NO)
+  },
+
   // Vie : un cœur plein — deux lobes ronds et une pointe basse franche.
   hp: (g) => {
     g.fillStyle(0xc0503e).fillCircle(10, 11, 7).fillCircle(22, 11, 7).fillTriangle(3, 12, 29, 12, 16, 30)
