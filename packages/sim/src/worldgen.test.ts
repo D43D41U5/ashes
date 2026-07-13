@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { generateAlpineTerrain } from './alpinegen'
+import { TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER } from './balance'
 import {
   carveDistanceToMain, inMainComponent, walkableComponents, walkableSpawn,
   type CarveField, type WalkableComponents,
@@ -245,6 +246,71 @@ describe('la vraie carte — la connexité', () => {
             `(${comp.sizes.length} composantes, la plus grosse ${monde}/${total})`,
         )
         .toBeGreaterThanOrEqual(0.99)
+    })
+  })
+})
+
+describe('la vraie carte — le fleuve', () => {
+  /**
+   * CRITICAL — LE FLEUVE SÉPARE, ET LES GUÉS RECOUSENT.
+   *
+   * L'invariant TOPOLOGIQUE de la vallée, et le seul qui donne un sens au reste :
+   * la rivière n'est pas un motif bleu, c'est une FRONTIÈRE. Cinq tuiles d'eau
+   * profonde, et l'eau profonde bloque. On ne passe qu'aux gués — « le
+   * franchissement est une décision », comme du temps du squelette artisanal.
+   *
+   * Cette garde a été écrite APRÈS coup, parce qu'il a fallu TROIS tentatives pour
+   * que ce soit vrai, et qu'aucune des deux premières ne se voyait :
+   *   1. le tronc mourait au milieu de la carte (on le contournait par le bout) ;
+   *   2. sa source était un point INTÉRIEUR, à 96 tuiles du bord : il restait un
+   *      couloir entre elle et la montagne (on le contournait par le haut) ;
+   *   3. le lissage du cours par moyenne glissante tirait ses EXTRÉMITÉS vers
+   *      l'intérieur — la bouche s'arrêtait sept tuiles trop haut, et il restait
+   *      un couloir en bas de carte (on le contournait par le sud).
+   *
+   * À chaque fois, la carte était superbe, la rivière traversait à l'œil, et les
+   * six gués étaient posés. Seule la MESURE l'a dit : on rebouche les gués, et on
+   * regarde si la vallée se scinde. Si elle reste d'un seul tenant, le fleuve
+   * n'est un obstacle pour personne et les gués sont de la décoration.
+   *
+   * (La moitié « les gués recousent » est déjà tenue par la garde des 99 % plus
+   * haut : avec eux, la vallée est un seul monde.)
+   */
+  it('CRITICAL — gués rebouchés, la vallée se SCINDE en deux rives', () => {
+    eachMap((map, seed) => {
+      const gues = map.zones.filter((z) => z.kind === undefined && z.name.startsWith('le Gué'))
+      // 6 ou 7 sur les 12 seeds mesurées — l'espacement est proportionnel au cours,
+      // et le cours est long par construction (`farthestSource`). 4 laisse la marge.
+      expect.soft(gues.length, `seed ${seed} : trop peu de gués (${gues.length})`).toBeGreaterThanOrEqual(4)
+
+      // On reboue les gués — l'eau y redevient profonde, donc infranchissable.
+      const barre: WorldMap = { ...map, terrain: map.terrain.slice() }
+      for (const z of gues) {
+        for (let ty = Math.max(0, z.y); ty < Math.min(map.height, z.y + z.h); ty++) {
+          for (let tx = Math.max(0, z.x); tx < Math.min(map.width, z.x + z.w); tx++) {
+            const i = ty * map.width + tx
+            if (barre.terrain[i] === TERRAIN_SHALLOW_WATER) barre.terrain[i] = TERRAIN_DEEP_WATER
+          }
+        }
+      }
+
+      const c = walkableComponents(barre)
+      const total = c.sizes.reduce((a, b) => a + b, 0)
+      const rives = [...c.sizes].sort((a, b) => b - a)
+      const seconde = (rives[1] ?? 0) / total
+
+      // DEUX VRAIES RIVES, pas un coin détaché. Mesuré sur 12 seeds : la petite rive
+      // pèse de 29,6 % à 48,4 % du marchable (typique : 45 %). Le seuil à 20 % laisse
+      // la marge du hasard sans rien concéder sur l'intention — si un jour le fleuve
+      // ne détache plus qu'un bout de 10 %, il aura cessé de structurer la vallée.
+      expect
+        .soft(
+          seconde,
+          `seed ${seed} : gués rebouchés, la vallée ne se scinde pas vraiment ` +
+            `(rives : ${rives.slice(0, 3).map((s) => ((100 * s) / total).toFixed(1) + '%').join(' / ')}). ` +
+            `Le fleuve ne sépare rien de conséquent — il se contourne, et les ${gues.length} gués ne servent à rien.`,
+        )
+        .toBeGreaterThan(0.2)
     })
   })
 })

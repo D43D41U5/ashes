@@ -129,10 +129,17 @@ describe('POIs dans la carte alpine', () => {
     const big = generateAlpineTerrain(240, 1440, 5).zones.length // même D=240, 4× la surface
     expect(big).toBeGreaterThan(small * 1.15)
   })
+  // `map.zones` ne contient pas QUE des lieux : depuis que le fleuve traverse la
+  // vallée, ses GUÉS y figurent en toponymes (zones sans `kind`, comme le Pont ou
+  // le Col — spec lieux : on cache les lieux, jamais le terrain). Ils ne sortent
+  // pas du semis de Poisson et n'ont donc aucune raison d'en respecter
+  // l'espacement. On ne mesure ici que ce que le semis a posé.
   it('espacement mini respecté (centres de zones POI)', () => {
     const map = generateAlpineTerrain(240, 360, 5)
     const radius = POI_PLACEMENT.SPACING_FRAC * Math.min(240, 360)
-    const c = map.zones.map((z) => ({ x: z.x + z.w / 2, y: z.y + z.h / 2 }))
+    const c = map.zones
+      .filter((z) => z.kind !== undefined)
+      .map((z) => ({ x: z.x + z.w / 2, y: z.y + z.h / 2 }))
     for (let i = 0; i < c.length; i++) for (let j = i + 1; j < c.length; j++) {
       const dx = c[i]!.x - c[j]!.x, dy = c[i]!.y - c[j]!.y
       expect(Math.sqrt(dx * dx + dy * dy)).toBeGreaterThanOrEqual(radius - 1.5) // ±1 tuile (floor)
