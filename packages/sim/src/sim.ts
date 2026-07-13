@@ -15,7 +15,14 @@ import { moveAvatar } from './collision'
 import { advanceCombat, applyCombatAction, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
 import { applyDebugAction, isDebugAction, refreshGodMode, type DebugAction } from './debug'
-import { advanceEconomy, applyEconomyAction, type EconomyAction, type ResourceNode } from './economy'
+import {
+  advanceCraft,
+  advanceEconomy,
+  applyEconomyAction,
+  type CraftOrder,
+  type EconomyAction,
+  type ResourceNode,
+} from './economy'
 import { emitEvent, type SimEvent } from './events'
 import { applyInventoryAction, isInventoryAction, type InventoryAction } from './inventory-actions'
 import { makeInventory, type Inventory, type SkillId } from './items'
@@ -60,8 +67,15 @@ export interface Entity {
    * qui agrégeait par TYPE d'item (deux haches, un seul compteur), a disparu.
    */
   activeSlot: number
-  /** Tick avant lequel récolte/craft sont refusés (rythme borné). */
+  /** Tick avant lequel une récolte est refusée (rythme borné). Le craft, lui, n'a
+   *  plus de cooldown : il a une DURÉE, et une file (spec craft-file F2). */
   cooldownUntil: number
+  /**
+   * LA FILE DE CRAFT (spec craft-file F1) : le travail en cours, dans l'état de
+   * sim. C'est ici que vit le temps de craft — jamais dans un timer du client,
+   * qui divergerait. Seule la TÊTE travaille : un artisan fait une chose à la fois.
+   */
+  craftQueue: CraftOrder[]
   /** Combat (spec combat R1-R7). */
   hp: number
   stamina: number
@@ -142,6 +156,8 @@ export interface SimState {
   debug: boolean
   /** Plafond de faune ambiante de ce monde (0 = aucune ; spec faune R1). */
   faunaCap: number
+  /** Hordes et convois armés ? (voir SimOptions.worldEvents) */
+  worldEvents: boolean
   /** Prochaine identité de harde à distribuer (spec faune R9). */
   nextHerdId: number
   /**
@@ -182,6 +198,19 @@ export interface SimOptions {
    * flux de PRNG qu'il n'a pas demandé.
    */
   faunaCap?: number
+  /**
+   * Ce monde connaît-il les ÉVÉNEMENTS DU MONDE (hordes, convois) ? Vrai par
+   * défaut : une partie en a, évidemment. Un banc de test PNJ, lui, mesure une
+   * ÉCONOMIE — il ne devrait pas voir son verdict décidé par une guerre qu'il n'a
+   * pas demandée. Même raison que `faunaCap` ci-dessus, et même précédent.
+   *
+   * Trouvé en le mesurant (2026-07-12) : les hordes tombent sur un `roll` par
+   * nuit, donc sur le FLUX du PRNG. Toute modification de comportement — le craft
+   * qui prend du temps, par exemple — décale ce flux et rebat le tirage. Or à
+   * ≥ 5 hordes un village PNJ est RASÉ, à ≤ 4 il tient : le critère « il survit
+   * 10 jours » n'était pas une propriété du village, c'était le tirage du seed 11.
+   */
+  worldEvents?: boolean
 }
 
 /** Intention d'un avatar pour un tick : déplacement, postures, au plus une action. */
@@ -228,6 +257,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     events: [],
     debug: options.debug ?? false,
     faunaCap: options.faunaCap ?? 0,
+    worldEvents: options.worldEvents ?? true,
     nextHerdId: 1,
     faunaQuiet: [],
     dens: [],
@@ -260,6 +290,7 @@ export function spawnEntity(state: SimState, x: number, y: number, slots: number
     skills: {},
     activeSlot: -1,
     cooldownUntil: 0,
+    craftQueue: [],
     hp: 100,
     stamina: 100,
     wounds: {},
@@ -318,7 +349,12 @@ export function step(state: SimState, inputs: MoveInput[]): void {
         applyDebugAction(state, input.entityId, action)
       } else if (isInventoryAction(action)) {
         applyInventoryAction(state, input.entityId, action)
-      } else if (action.type === 'harvest' || action.type === 'craft' || action.type === 'eat') {
+      } else if (
+        action.type === 'harvest' ||
+        action.type === 'craft' ||
+        action.type === 'cancel_craft' ||
+        action.type === 'eat'
+      ) {
         applyEconomyAction(state, input.entityId, action)
       } else if (action.type === 'attack' || action.type === 'bandage' || action.type === 'loot_corpse') {
         applyCombatAction(state, input.entityId, action)
@@ -362,13 +398,14 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // Les tanières vidées se repeuplent (spec faune R16) — hors de vue, et jamais vite.
   advanceDens(state, state.seed)
   // Le monde d'abord (spawns/alarmes), puis PNJ, monstres, résolution.
-  advanceWorldEvents(state)
+  if (state.worldEvents) advanceWorldEvents(state)
   advanceNpcs(state)
   advanceMonsters(state)
   advanceCendreux(state)
   advanceCombat(state)
   advanceAlignment(state)
   advanceTime(state)
+  advanceCraft(state)
   advanceEconomy(state)
   advanceTemperature(state)
   // En DERNIER : les invulnérables retrouvent leurs jauges pleines, quoi qu'il

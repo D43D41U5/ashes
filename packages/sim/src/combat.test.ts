@@ -259,6 +259,8 @@ describe('les monstres (A6)', () => {
     entity(sim, a).y = 10.5
     for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) tick(sim)
     tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'craft', recipeId: 'cooked_meat' } }])
+    // La viande MIJOTE (spec craft-file) : on reste au Feu, et on attend.
+    while (entity(sim, a).craftQueue.length > 0) tick(sim)
     expect(countOf(entity(sim, a).inventory, 'cooked_meat')).toBe(1)
   })
 })

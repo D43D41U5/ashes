@@ -81,8 +81,8 @@ export type { TiledMapFile, TiledImportResult } from './tiled'
 // ─── Actions & systèmes (l'hôte les applique, les requêtes sont pures) ────
 export { applyVillageAction, structureAt, structureBlocks, getVillageOf, hasAccess } from './village'
 export type { Structure, Village, VillageAction, TaskKind, VillageTask } from './village'
-export { applyEconomyAction, advanceEconomy, nodeAt, skillLevel } from './economy'
-export type { ResourceNode, EconomyAction } from './economy'
+export { applyEconomyAction, advanceEconomy, advanceCraft, nodeAt, skillLevel } from './economy'
+export type { ResourceNode, EconomyAction, CraftOrder } from './economy'
 export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame
 export { applyCombatAction, advanceCombat, weaponDamage } from './combat'
 export type { CombatAction, Corpse } from './combat'

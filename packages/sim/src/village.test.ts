@@ -138,6 +138,8 @@ describe('le marteau de construction (G12)', () => {
     drainEvents(sim)
     act(sim, id, { type: 'craft', recipeId: 'hammer' })
     expect(rejections(sim)).toEqual([])
+    // Le craft prend du TEMPS (spec craft-file) : on reste au Feu, et on attend.
+    while (sim.entities[0]!.craftQueue.length > 0) step(sim, [])
     expect(countOf(sim.entities[0]!.inventory, 'hammer')).toBe(1)
   })
 

@@ -16,7 +16,7 @@ import {
   type Village,
 } from '@braises/sim'
 import type Phaser from 'phaser'
-import { getHud, setHud } from '../../hud-state'
+import { getHud, setHud, type StationId } from '../../hud-state'
 
 type Registry = Phaser.Data.DataManager
 
@@ -40,6 +40,35 @@ export function publishPlayerVitals(registry: Registry, me: Entity): void {
   setHud(registry, 'stamina', me.stamina)
   setHud(registry, 'wounds', me.wounds)
   setHud(registry, 'knownPois', me.knownPois)
+  setHud(registry, 'craftQueue', me.craftQueue)
+}
+
+/**
+ * Les stations d'artisanat à PORTÉE (spec craft-file F14). Pur miroir : même
+ * mesure que la sim (`INTERACT_RANGE`, importé, jamais recopié), au centre de la
+ * tuile. Il sert à GRISER les vignettes — la sim, elle, revalide à l'enfilage ET
+ * à chaque tick (une station qu'on quitte met la file en pause, F7).
+ */
+export function publishStationsInRange(
+  registry: Registry,
+  me: { x: number; y: number },
+  structures: Structure[],
+): void {
+  const r = BALANCE.INTERACT_RANGE
+  const near = new Set<StationId>()
+  for (const s of structures) {
+    if (s.type !== 'fire' && s.type !== 'workshop' && s.type !== 'furnace') continue
+    const dx = s.tx + 0.5 - me.x
+    const dy = s.ty + 0.5 - me.y
+    if (dx * dx + dy * dy <= r * r) near.add(s.type)
+  }
+  const stations = [...near]
+  // On ne republie QUE si ça change : `setHud` réveille les lecteurs du registry,
+  // et cette fonction tourne à chaque frame (la position bouge en continu).
+  const before = getHud(registry, 'stationsInRange') ?? []
+  if (before.length !== stations.length || stations.some((s) => !before.includes(s))) {
+    setHud(registry, 'stationsInRange', stations)
+  }
 }
 
 /**

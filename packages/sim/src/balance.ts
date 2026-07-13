@@ -190,6 +190,16 @@ export const BALANCE = {
   XP_PER_GATHER: 1,
   XP_PER_CRAFT: 5,
 
+  /**
+   * L'ARTISAN ÉCONOMISE LE TEMPS DES AUTRES (GDD §8bis, spec craft-file F6) :
+   * `durée = max(1, floor(base / (1 + CRAFT_SPEED_BONUS × niveau)))`. C'est ici,
+   * et pas dans un bonus de rendement, que la spécialisation prend son sens — le
+   * spécialiste fait en 20 min ce que le novice fait en 45.
+   */
+  CRAFT_SPEED_BONUS: 0.15,
+  /** Lignes maximum dans la file : l'écran doit pouvoir la montrer ENTIÈRE (F4). */
+  CRAFT_QUEUE_MAX: 6,
+
   /** Bonus de rendement par niveau de métier (continu, décision actée #3). */
   SKILL_YIELD_BONUS: 0.04,
 
@@ -409,6 +419,13 @@ export interface Recipe {
   station: 'fire' | 'workshop' | 'furnace' | null
   inputs: import('./items').ItemBag
   output: import('./items').ItemId
+  /**
+   * Le TEMPS DE TRAVAIL d'une unité, en secondes (spec craft-file F5). Le craft
+   * n'est plus instantané : il entre dans une file, et le tick la fait descendre.
+   * En secondes et non en ticks — comme tout le reste de ce fichier, la conversion
+   * passe par `ticksFor` : changer TICK_RATE_HZ ne doit rien recalibrer à la main.
+   */
+  seconds: number
 }
 
 /** Chaînes ≤ 3 étapes, stations distinctes (GDD §8, spec R10-R11). */
@@ -416,24 +433,24 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   // ── La couche 1 : à mains nues, sans poste, dès la minute 0 (spec craft-fortune).
   // Tout y passe par la CORDE : le goulot est volontaire (C8) — la fibre cesse
   // d'être ce qu'on ramasse sans y penser, et le cueilleur a un client tout de suite.
-  rope: { station: null, inputs: { fiber: 3 }, output: 'rope' },
-  crude_axe: { station: null, inputs: { wood: 2, stone: 3, rope: 1 }, output: 'crude_axe' },
-  crude_pickaxe: { station: null, inputs: { wood: 3, stone: 2, rope: 1 }, output: 'crude_pickaxe' },
-  crude_spear: { station: null, inputs: { wood: 3, stone: 1, rope: 1 }, output: 'crude_spear' },
+  rope: { station: null, inputs: { fiber: 3 }, output: 'rope', seconds: 3 },
+  crude_axe: { station: null, inputs: { wood: 2, stone: 3, rope: 1 }, output: 'crude_axe', seconds: 5 },
+  crude_pickaxe: { station: null, inputs: { wood: 3, stone: 2, rope: 1 }, output: 'crude_pickaxe', seconds: 5 },
+  crude_spear: { station: null, inputs: { wood: 3, stone: 1, rope: 1 }, output: 'crude_spear', seconds: 5 },
 
-  stew: { station: 'fire', inputs: { berries: 4, fiber: 1 }, output: 'stew' },
-  axe: { station: 'workshop', inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'axe' },
-  pickaxe: { station: 'workshop', inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'pickaxe' },
-  iron_ingot: { station: 'furnace', inputs: { iron_ore: 2, coal: 1 }, output: 'iron_ingot' },
-  iron_axe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_axe' },
-  iron_pickaxe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_pickaxe' },
-  spear: { station: 'workshop', inputs: { wood: 4, stone: 2, fiber: 1 }, output: 'spear' },
+  stew: { station: 'fire', inputs: { berries: 4, fiber: 1 }, output: 'stew', seconds: 8 },
+  axe: { station: 'workshop', inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'axe', seconds: 8 },
+  pickaxe: { station: 'workshop', inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'pickaxe', seconds: 8 },
+  iron_ingot: { station: 'furnace', inputs: { iron_ore: 2, coal: 1 }, output: 'iron_ingot', seconds: 10 },
+  iron_axe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_axe', seconds: 12 },
+  iron_pickaxe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_pickaxe', seconds: 12 },
+  spear: { station: 'workshop', inputs: { wood: 4, stone: 2, fiber: 1 }, output: 'spear', seconds: 8 },
   // LE MARTEAU SE FORGE AU FEU, PAS À L'ATELIER — et ce n'est pas un détail : bâtir
   // exige déjà un village, donc un Feu allumé. Le mettre à l'atelier créerait un
   // blocage circulaire (il faudrait bâtir l'atelier pour pouvoir bâtir). Au Feu, il
   // n'ajoute AUCUNE porte : qui peut bâtir peut le forger.
-  hammer: { station: 'fire', inputs: { wood: 4, stone: 2, fiber: 2 }, output: 'hammer' },
-  cooked_meat: { station: 'fire', inputs: { raw_meat: 1 }, output: 'cooked_meat' },
+  hammer: { station: 'fire', inputs: { wood: 4, stone: 2, fiber: 2 }, output: 'hammer', seconds: 8 },
+  cooked_meat: { station: 'fire', inputs: { raw_meat: 1 }, output: 'cooked_meat', seconds: 5 },
 }
 
 /** Dégâts des armes portées — mains nues : COMBAT.UNARMED_DAMAGE. */
@@ -1012,6 +1029,29 @@ export const NPC_AI = {
   RAIDERS_PER_RAID: 2,
   /** Rayon de fouille des cadavres autour d'un raider, en tuiles. */
   CORPSE_SEARCH_RANGE: 2,
+
+  /* ── LA DÉFENSE NE DOIT PAS TUER SON DÉFENSEUR (correctif 2026-07-12) ────────
+   * `handleDefense` prime sur TOUT (sommeil, froid, faim) et ne renonçait jamais.
+   * Or il marche GLOUTONNEMENT vers la menace — sans pathfinding, « le village est
+   * un terrain ouvert », disait le commentaire. La vallée, elle, ne l'est pas : le
+   * PNJ bute sur un rocher, n'atteint jamais le zombie… et rend `true` à chaque
+   * tick, pour toujours. Il ne mange plus (deux baies dans sa poche, dix au
+   * grenier), ne dort plus, et meurt de faim en montant la garde.
+   *
+   * C'est le livelock exact que les trois AUTRES besoins gardent explicitement
+   * (« la faim ne tue pas ; le figeage, si »). Le seul handler prioritaire était
+   * le seul sans garde. */
+
+  /** Sous ce seuil de faim, MANGER passe avant la défense. Un défenseur mort de
+   *  faim ne défend rien — et manger prend UN tick : le village n'est pas désarmé. */
+  DEFENSE_YIELD_HUNGER: 15,
+  /** Ticks sans le moindre PROGRÈS vers la menace (jamais plus près qu'avant) au
+   *  bout desquels on LÂCHE la garde : on ne fige pas une vie devant un rocher. */
+  DEFENSE_GIVE_UP_TICKS: ticksFor(3),
+  /** …et on l'IGNORE ce temps-là avant de retenter. Sans ce répit, le PNJ
+   *  repartirait à la charge au tick suivant : trois secondes de course, une de
+   *  renoncement, pour toujours — il n'aurait toujours jamais le temps de manger. */
+  DEFENSE_IGNORE_TICKS: ticksFor(30),
 } as const
 
 /** Durée d'un tick en secondes — le seul dt qui existe dans /sim. */

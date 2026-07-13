@@ -4,14 +4,16 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import { zoneAt, type VillageTask, type WorldMap } from '@braises/sim'
+import { BALANCE, zoneAt, type VillageTask, type WorldMap } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud } from '../hud-state'
 import { drainPickups, queueAction } from './world/hud-bridge'
 import { TILE_PX } from '../render/framing'
-import { createHotbar, type Hotbar } from './ui/hotbar'
+import { createHotbar, hotbarBottom, type Hotbar } from './ui/hotbar'
 import { createFatalPanel, type FatalPanel } from './ui/fatal'
 import { createInventoryPanel, type InventoryPanel } from './ui/inventory-panel'
+import { createCraftPanel, type CraftPanel } from './ui/craft-panel'
+import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
 import { createLoadingScreen, type LoadingScreen } from './ui/loading'
 import { createPickupToasts, type PickupToasts } from './ui/pickup-toasts'
 import { createVitals, type Vitals } from './ui/vitals'
@@ -52,6 +54,9 @@ export class UIScene extends Phaser.Scene {
   private hotbar!: Hotbar
   private vitals!: Vitals
   private inventoryPanel!: InventoryPanel
+  /** Le panneau de craft (à droite du sac) et la file (toujours à l'écran). */
+  private craftPanel!: CraftPanel
+  private craftQueueView!: CraftQueueView
   /** Les toasts « +2 BOIS (14) » — le butin s'inscrit à une place FIXE du HUD. */
   private pickups!: PickupToasts
   private journalPanel!: Phaser.GameObjects.Container
@@ -129,6 +134,24 @@ export class UIScene extends Phaser.Scene {
     // L'écran d'inventaire (TAB) : la grille complète + le panneau de loot. Il ne
     // parle pas à l'hôte — il POSE ses actions, WorldScene les draine (spec R22).
     this.inventoryPanel = createInventoryPanel(this, (action) => queueAction(this.registry, action))
+    // LE CRAFT : le panneau (à droite du sac, ouvert avec TAB) et la FILE (toujours
+    // visible — le travail en cours est un état du personnage, pas un détail de menu).
+    this.craftPanel = createCraftPanel(
+      this,
+      (action) => queueAction(this.registry, action),
+      this.scale.width / 2 + 40,
+      hotbarBottom(this),
+    )
+    this.craftQueueView = createCraftQueueView(
+      this,
+      (action) => queueAction(this.registry, action),
+      20,
+      120,
+      BALANCE.CRAFT_QUEUE_MAX,
+    )
+    // Cachée jusqu'au premier instant jouable : rien du HUD ne doit s'afficher
+    // par-dessus l'écran de chargement (même règle que la ceinture, ci-dessus).
+    this.craftQueueView.setVisible(false)
     // Les toasts de récolte : ils s'empilent juste au-dessus des vitales.
     this.pickups = createPickupToasts(this)
     // Le journal (J) : la chronique de la saison, la Mémoire v1.
@@ -451,9 +474,15 @@ export class UIScene extends Phaser.Scene {
     // déjà (spec Rust). Sinon la même ceinture s'affiche deux fois à l'écran.
     this.hotbar.setVisible(!inventoryOpen)
     this.inventoryPanel.setVisible(inventoryOpen)
+    this.craftPanel.setVisible(inventoryOpen)
     if (inventoryOpen) {
       this.inventoryPanel.update(inv, activeSlot, getHud(this.registry, 'openContainerView') ?? null)
+      this.craftPanel.update(inv, getHud(this.registry, 'stationsInRange') ?? [])
     }
+    // La file, elle, se voit TOUJOURS : une file bouchée (sac plein) ou en pause
+    // (station quittée) doit se remarquer sans aller ouvrir un menu (spec F15).
+    this.craftQueueView.setVisible(true)
+    this.craftQueueView.update(getHud(this.registry, 'craftQueue') ?? [])
     this.vitals.update({
       hp: getHud(this.registry, 'hp') ?? 100,
       stamina: getHud(this.registry, 'stamina') ?? 100,

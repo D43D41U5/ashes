@@ -31,6 +31,7 @@ import {
   TOOL_TIERS,
   TOOL_YIELD,
   type NodeType,
+  type Recipe,
   type RecipeId,
   type ToolTier,
 } from './balance'
@@ -38,7 +39,7 @@ import { harvestFactor } from './alignment'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { heldSlot, wearHeld } from './inventory-actions'
-import { addItems, freeRoomFor, removeItems, type ItemId, type SkillId } from './items'
+import { addItems, freeRoomFor, removeItems, type ItemBag, type ItemId, type SkillId } from './items'
 import { poiClearings, terrainAt, zoneAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
@@ -55,9 +56,32 @@ export interface ResourceNode {
   regrowAt: number
 }
 
+/**
+ * UNE LIGNE DE LA FILE DE CRAFT (spec craft-file F1). JSON-sérialisable, sans
+ * classe ni `Map` : elle voyage dans le snapshot, comme tout `SimState`.
+ *
+ * Le temps de craft vit ICI, jamais dans un timer du client — deux horloges
+ * divergeraient, et le multi deviendrait indébogable (invariant §3).
+ *
+ * `remainingTicks === 0` sur la tête = l'unité est FAITE et n'attend qu'une case
+ * libre (F10) : c'est ce que le client montre comme « file bouchée ». `totalTicks`
+ * est le dénominateur de la barre de progression — sans lui, le client devrait
+ * recalculer la durée, donc connaître le niveau d'Artisan et la formule.
+ */
+export interface CraftOrder {
+  recipeId: RecipeId
+  /** Le lot : cliquer 5 fois donne UNE ligne à 5, pas cinq lignes (F3). */
+  count: number
+  remainingTicks: number
+  totalTicks: number
+  /** Station hors de portée : le compteur est gelé, l'ordre est intact (F7, F9). */
+  paused: boolean
+}
+
 export type EconomyAction =
   | { type: 'harvest'; nodeId: number }
   | { type: 'craft'; recipeId: RecipeId }
+  | { type: 'cancel_craft'; index: number }
   | { type: 'eat'; item: ItemId }
 
 // Index tuile→nœud MÉMOÏSÉ par référence de tableau. Les nœuds ne bougent ni
@@ -150,6 +174,36 @@ function toolMultiplier(
   return { mult: TOOL_YIELD[tier], held: tier !== 'none', tier }
 }
 
+/**
+ * La station de cette recette, à portée ET accessible — ou `undefined`.
+ *
+ * UN SEUL endroit pour cette question, parce qu'elle est posée DEUX fois et que
+ * les deux réponses doivent coïncider : à l'enfilage (peut-on lancer ?) et à
+ * chaque tick (doit-on mettre en pause ? spec craft-file F7). Deux copies
+ * divergeraient — et la file se figerait sur une station qui avait accepté l'ordre.
+ */
+function stationFor(state: SimState, actor: Entity, recipe: Recipe): Structure | undefined {
+  if (recipe.station === null) return undefined
+  const range = BALANCE.INTERACT_RANGE
+  return state.structures.find(
+    (s: Structure) =>
+      s.type === recipe.station &&
+      distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) <= range * range &&
+      hasAccess(state, actor.id, s),
+  )
+}
+
+/**
+ * La durée d'UNE unité, en ticks : `max(1, floor(base / (1 + bonus × niveau)))`
+ * (spec craft-file F6). Déterministe — que des `+ - * /` et un `floor`, aucun
+ * tirage, aucune fonction Math approximée (invariant §2).
+ */
+function craftTicks(actor: Entity, recipe: Recipe): number {
+  const base = Math.round(recipe.seconds * BALANCE.TICK_RATE_HZ)
+  const level = levelOf(actor, 'crafting')
+  return Math.max(1, Math.floor(base / (1 + BALANCE.CRAFT_SPEED_BONUS * level)))
+}
+
 export function applyEconomyAction(state: SimState, actorId: number, action: EconomyAction): void {
   const actor = state.entities.find((e) => e.id === actorId)
   if (!actor) return
@@ -224,41 +278,68 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       return
     }
 
+    /**
+     * ENFILER, pas produire (spec craft-file F2). Le craft n'est plus instantané :
+     * les intrants partent TOUT DE SUITE, l'objet vient à l'échéance. Plus de
+     * cooldown non plus — la durée le remplace.
+     */
     case 'craft': {
-      if (state.tick < actor.cooldownUntil) return reject('trop tôt')
       const recipe = RECIPES[action.recipeId]
       if (!recipe) return reject('recette inconnue')
       // `station: null` = À LA MAIN (spec craft-fortune C1) : nulle part, donc
       // partout — sans structure, sans village, sans Feu. C'est la rampe du
       // survivant nu : elle n'ajoute AUCUNE autre porte (C2).
-      if (recipe.station !== null) {
-        const station = state.structures.find(
-          (s: Structure) =>
-            s.type === recipe.station &&
-            distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) <= range * range &&
-            hasAccess(state, actorId, s),
-        )
-        if (!station) return reject(`station requise hors de portée : ${recipe.station}`)
+      if (recipe.station !== null && stationFor(state, actor, recipe) === undefined) {
+        return reject(`station requise hors de portée : ${recipe.station}`)
       }
+      // Les clics répétés se GROUPENT (F3) : cinq cordes = une ligne « ×5 ». Sinon
+      // la file déborde de l'écran au premier lot, et son bouton d'annulation
+      // devient inutilisable.
+      const line = actor.craftQueue.find((o) => o.recipeId === action.recipeId)
+      if (!line && actor.craftQueue.length >= BALANCE.CRAFT_QUEUE_MAX) return reject('file pleine')
       if (!removeItems(actor.inventory, recipe.inputs)) return reject('matériaux insuffisants')
-      // La place se mesure APRÈS les intrants, car les consommer LIBÈRE des cases :
-      // un sac 18/18 dont une case vaut exactement les 2 fibres de la recette a bel
-      // et bien de quoi ranger la hache. Si la sortie ne tient TOUJOURS pas, on rend
-      // les intrants — ils reviennent forcément, ils occupaient au moins autant de
-      // place — et le coup n'a pas eu lieu (spec R10) : ni objet détruit, ni
-      // `item_crafted` menteur, ni cooldown, ni XP.
-      if (Object.keys(addItems(actor.inventory, { [recipe.output]: 1 })).length > 0) {
-        addItems(actor.inventory, recipe.inputs)
-        return reject('sac plein')
+
+      if (line) line.count += 1
+      else {
+        const ticks = craftTicks(actor, recipe)
+        actor.craftQueue.push({
+          recipeId: action.recipeId,
+          count: 1,
+          remainingTicks: ticks,
+          totalTicks: ticks,
+          paused: false,
+        })
       }
-      gainXp(state, actor, 'crafting', BALANCE.XP_PER_CRAFT)
-      actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
+      emitEvent(state, { type: 'craft_queued', tick: state.tick, entityId: actorId, recipeId: action.recipeId })
+      return
+    }
+
+    /**
+     * ANNULER une ligne entière, et rembourser TOUT — unité en cours comprise
+     * (spec craft-file F12). Aucune perte de progression : c'est le modèle Rust,
+     * et c'est cohérent avec F10 (rien ne se perd, il n'y a pas de sol où jeter).
+     */
+    case 'cancel_craft': {
+      const order = actor.craftQueue[action.index]
+      if (!order) return reject('rien à annuler')
+      const recipe = RECIPES[order.recipeId]
+      const refund: ItemBag = {}
+      for (const item of Object.keys(recipe.inputs) as ItemId[]) {
+        refund[item] = (recipe.inputs[item] ?? 0) * order.count
+      }
+      // TOUT OU RIEN (F13) : on essaie le remboursement sur une COPIE du sac. En
+      // rembourser la moitié en détruirait la moitié — le joueur fait de la place,
+      // puis annule. Une copie de 18 cases est gratuite ; un objet détruit, non.
+      const trial = actor.inventory.map((s) => (s === null ? null : { ...s }))
+      if (Object.keys(addItems(trial, refund)).length > 0) return reject('sac plein')
+      addItems(actor.inventory, refund)
+      actor.craftQueue.splice(action.index, 1)
       emitEvent(state, {
-        type: 'item_crafted',
+        type: 'craft_cancelled',
         tick: state.tick,
         entityId: actorId,
-        recipeId: action.recipeId,
-        item: recipe.output,
+        recipeId: order.recipeId,
+        count: order.count,
       })
       return
     }
@@ -270,6 +351,66 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       actor.hunger = Math.min(100, actor.hunger + value)
       emitEvent(state, { type: 'meal_eaten', tick: state.tick, entityId: actorId, item: action.item })
       return
+    }
+  }
+}
+
+/**
+ * LA FILE DE CRAFT, un tick (spec craft-file F5-F11). Seule la TÊTE travaille :
+ * un artisan fait une chose à la fois.
+ *
+ * Trois états qu'il faut savoir distinguer, et qui expliquent la forme du code :
+ *   - EN PAUSE : la station a été quittée (F7). Le compteur GÈLE — l'ordre n'est
+ *     ni perdu ni annulé, il reprend au retour. La couche 1 (`station: null`) ne
+ *     peut jamais s'y trouver : on la fait n'importe où (F8).
+ *   - EN COURS : le compteur descend.
+ *   - FAITE MAIS BLOQUÉE (`remainingTicks === 0`) : l'objet est prêt, le sac est
+ *     plein, LA FILE ATTEND (F10). On retente à chaque tick. Rien ne se détruit —
+ *     il n'y a pas de sol où jeter dans Braises, et perdre le travail punirait une
+ *     inattention. Une file bouchée SE VOIT : c'est le signal.
+ */
+export function advanceCraft(state: SimState): void {
+  for (const entity of state.entities) {
+    const order = entity.craftQueue[0]
+    if (order === undefined) continue
+    const recipe = RECIPES[order.recipeId]
+
+    order.paused = recipe.station !== null && stationFor(state, entity, recipe) === undefined
+    if (order.paused) continue
+
+    if (order.remainingTicks > 0) {
+      // La durée se fige au DÉMARRAGE de l'unité, pas à l'enfilage du lot (F6) :
+      // tant qu'elle n'a pas été entamée, on la recalcule au niveau COURANT — un
+      // Artisan qui monte pendant sa file en profite dès l'unité suivante.
+      if (order.remainingTicks === order.totalTicks) {
+        const ticks = craftTicks(entity, recipe)
+        order.totalTicks = ticks
+        order.remainingTicks = ticks
+      }
+      order.remainingTicks -= 1
+      if (order.remainingTicks > 0) continue
+    }
+
+    // Échéance : on livre — ou on attend une case (F10). Tant qu'on attend, RIEN
+    // n'est crédité : ni XP, ni `item_crafted`. L'événement suivrait l'objet, or
+    // l'objet n'est pas encore là — la chronique ne doit pas mentir.
+    if (freeRoomFor(entity.inventory, recipe.output) <= 0) continue
+    addItems(entity.inventory, { [recipe.output]: 1 })
+    gainXp(state, entity, 'crafting', BALANCE.XP_PER_CRAFT)
+    emitEvent(state, {
+      type: 'item_crafted',
+      tick: state.tick,
+      entityId: entity.id,
+      recipeId: order.recipeId,
+      item: recipe.output,
+    })
+
+    order.count -= 1
+    if (order.count <= 0) entity.craftQueue.shift()
+    else {
+      const ticks = craftTicks(entity, recipe)
+      order.totalTicks = ticks
+      order.remainingTicks = ticks
     }
   }
 }

@@ -43,6 +43,16 @@ function goTo(bot: Bot, tx: number, ty: number, stopDist = 1.2): void {
   throw new Error(`bot bloqué en route vers (${tx}, ${ty})`)
 }
 
+/**
+ * LAISSE MIJOTER : le craft prend du temps (spec craft-file). Le bot reste OÙ IL
+ * EST — s'éloigner de la station mettrait sa file en pause (F7). Borné : une file
+ * qui ne se vide pas doit faire échouer le test, pas le figer.
+ */
+function waitCraft(bot: Bot): void {
+  for (let t = 0; t < 2000 && me(bot).craftQueue.length > 0; t++) tick(bot, 0, 0)
+  expect(me(bot).craftQueue).toHaveLength(0)
+}
+
 /** Récolte un nœud jusqu'à posséder `want` de l'item (ou épuisement). */
 function harvestUntil(bot: Bot, node: ResourceNode, item: ItemId, want: number): void {
   goTo(bot, node.tx, node.ty)
@@ -99,8 +109,8 @@ describe('le bot headless (A7)', () => {
 
     // 3. FORGER LE MARTEAU AU FEU, ET LE PRENDRE EN MAIN — sans lui, on ne bâtit
     //    rien (spec recolte.md G12). C'est la nouvelle première marche du jeu.
-    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) tick(bot, 0, 0)
     tick(bot, 0, 0, { type: 'craft', recipeId: 'hammer' })
+    waitCraft(bot) // il forge AU FEU, et il y reste le temps que ça se fasse
     expect(countOf(me(bot).inventory, 'hammer')).toBe(1)
     equip('hammer')
 
@@ -111,8 +121,8 @@ describe('le bot headless (A7)', () => {
 
     // 5. Crafter la hache (l'atelier est à portée), et la prendre en main : le
     //    marteau ne coupe pas de bois.
-    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) tick(bot, 0, 0)
     tick(bot, 0, 0, { type: 'craft', recipeId: 'axe' })
+    waitCraft(bot) // à l'atelier, sans le quitter
     expect(countOf(me(bot).inventory, 'axe')).toBe(1)
     equip('axe')
 
@@ -161,11 +171,11 @@ describe('le bot headless (A7)', () => {
     harvestUntil(bot, sim.nodes[1]!, 'stone', 3)
 
     // 2. Tresser, puis tailler — LÀ OÙ IL SE TIENT. Aucune station, aucun village.
-    wait()
     tick(bot, 0, 0, { type: 'craft', recipeId: 'rope' })
+    waitCraft(bot)
     expect(countOf(me(bot).inventory, 'rope')).toBe(1)
-    wait()
     tick(bot, 0, 0, { type: 'craft', recipeId: 'crude_axe' })
+    waitCraft(bot)
     expect(countOf(me(bot).inventory, 'crude_axe')).toBe(1)
     expect(sim.structures).toHaveLength(0) // la preuve : rien n'a été bâti
     expect(sim.villages).toHaveLength(0)

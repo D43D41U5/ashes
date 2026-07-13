@@ -51,6 +51,7 @@ import {
   publishPickup,
   publishPlayerVitals,
   publishSeasonEnded,
+  publishStationsInRange,
   publishTimeAndVillage,
 } from './world/hud-bridge'
 import { ClutterLayer } from './world/clutter-layer'
@@ -448,6 +449,10 @@ export class WorldScene extends Phaser.Scene {
       this.view.structures,
       this.warp,
     )
+    // Les stations à portée : elles grisent (ou non) les vignettes du panneau de
+    // craft. Miroir pur du client — la sim revalide tout, à l'enfilage et à chaque
+    // tick (spec craft-file F7, F14).
+    publishStationsInRange(this.registry, this.predicted, this.view.structures)
     this.hitFx.update(time)
     this.ground.render(this.cameras.main)
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie

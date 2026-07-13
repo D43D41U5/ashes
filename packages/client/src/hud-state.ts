@@ -6,11 +6,14 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { Entity, GameTime, Inventory, ItemId, PlayerAction, SkillId, Village, VillageTask, WorldMap } from '@braises/sim'
+import type { CraftOrder, Entity, GameTime, Inventory, ItemId, PlayerAction, SkillId, Village, VillageTask, WorldMap } from '@braises/sim'
 import type Phaser from 'phaser'
 
-/** Ce que le joueur peut sélectionner pour bâtir (touches 1-5). */
+/** Ce que le joueur peut sélectionner pour bâtir. */
 export type Buildable = 'wall' | 'door' | 'chest' | 'workshop' | 'furnace'
+
+/** Les stations d'artisanat (les recettes `station: null` n'en demandent aucune). */
+export type StationId = 'fire' | 'workshop' | 'furnace'
 
 /** Le conteneur ouvert, RÉSOLU depuis le snapshot (WorldScene) pour que UIScene
  *  n'ait pas à fouiller structures/cadavres. `null` dès qu'il disparaît (dépouille
@@ -49,6 +52,15 @@ export interface HudState {
   inv: Inventory
   /** Case tenue en main (`-1` = mains nues) — surligne la ceinture (spec inventaire R8). */
   activeSlot: number
+  /** LA FILE DE CRAFT de mon avatar (spec craft-file F15-F16). Elle vient du
+   *  snapshot, TELLE QUELLE : le client n'a aucun décompte local — un timer client
+   *  divergerait de la sim, et c'est exactement ce que la file dans `SimState`
+   *  est là pour empêcher. */
+  craftQueue: CraftOrder[]
+  /** Les stations à portée d'interaction. MIROIR du client (comme le surlignage de
+   *  visée) : il grise les recettes qu'on ne peut pas lancer ici. La sim reste seule
+   *  juge — si elle refuse malgré le miroir, c'est elle qui a raison. */
+  stationsInRange: StationId[]
   hunger: number
   /** Température du corps de l'avatar (0-100 ; sous 20, le froid mord). */
   temperature: number

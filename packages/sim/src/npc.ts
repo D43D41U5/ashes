@@ -58,6 +58,18 @@ export interface Npc {
   task: NpcTaskState | null
   path: { tx: number; ty: number }[]
   stuck: number
+  /** Ticks passés à ne PAS progresser vers une menace (bloqué contre un obstacle).
+   *  Au-delà de `DEFENSE_GIVE_UP_TICKS`, on lâche la garde — sinon le PNJ monte
+   *  la garde devant un rocher jusqu'à en mourir de faim (voir `handleDefense`). */
+  defendStuck: number
+  /** La plus courte distance (au carré) jamais atteinte vers la menace en cours.
+   *  `-1` = pas d'engagement. C'est CE repère qui mesure le progrès : autour d'un
+   *  obstacle, le PNJ ORBITE — sa distance monte et redescend, un simple « me
+   *  suis-je rapproché ce tick ? » se remettrait à zéro sans fin. */
+  defendBest: number
+  /** Tick jusqu'auquel on IGNORE toute menace, après avoir renoncé. Sans ce répit,
+   *  il repartirait à la charge au tick suivant, pour l'éternité. */
+  defendIgnoreUntil: number
   /** Expédition en cours (spec alignement R13-R14) : raid de Meute ou don de Foyer. */
   errand: {
     kind: 'raid' | 'gift'
@@ -450,12 +462,24 @@ function executeCook(state: SimState, village: Village, npc: Npc, entity: Entity
     const fire = state.structures.find((s) => s.type === 'fire' && s.villageId === village.id)
     if (!fire) return dropTask(village, npc, false)
     if (near(entity, fire.tx, fire.ty)) {
+      // LE RAGOÛT MIJOTE (spec craft-file F17) : depuis la file, le craft n'est
+      // plus instantané. Le PNJ ATTEND au Feu — et il y reste, car s'en éloigner
+      // METTRAIT LA FILE EN PAUSE (F7). Sans cette garde, il réenfilerait une
+      // marmite par tick : 20 ragoûts par seconde, et le grenier vidé.
+      if (entity.craftQueue.some((o) => o.recipeId === 'stew')) return
+      // ON N'ENFILE PAS CE QU'ON NE POURRA PAS RANGER. La file ATTEND quand le sac
+      // est plein (F10) : c'est bon pour un joueur, qui voit sa file bouchée et
+      // fait de la place — c'est un LIVELOCK pour un PNJ, qui resterait planté au
+      // Feu avec sa marmite prête, sa corvée sur le dos, pour l'éternité. Il lâche
+      // la corvée (elle retourne au tableau, pour un PNJ qui a de la place) — et
+      // ses ingrédients ne sont même pas consommés.
+      if (freeRoomFor(entity.inventory, 'stew') <= 0) return dropTask(village, npc, false)
       if (canAct(state, entity)) {
         applyEconomyAction(state, entity.id, { type: 'craft', recipeId: 'stew' })
-        // Le craft a refusé (le ragoût n'a nulle part où aller — un refus ne pose
-        // aucun cooldown, donc on le retenterait 20 fois par seconde). On lâche :
-        // TASK_INTAKE interdit de re-réclamer tant qu'il n'y a pas de case.
-        if (countOf(entity.inventory, 'stew') === 0) return dropTask(village, npc, false)
+        // L'enfilage a échoué (ingrédients manquants, file pleine) : on lâche la
+        // corvée plutôt que de la retenter 20 fois par seconde — un refus ne pose
+        // aucun cooldown. TASK_INTAKE interdit de la re-réclamer sans place.
+        if (!entity.craftQueue.some((o) => o.recipeId === 'stew')) return dropTask(village, npc, false)
       }
       return
     }
@@ -536,12 +560,21 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
       bestD = d
     }
   }
-  if (!threat) return false
+  if (!threat) {
+    npc.defendStuck = 0
+    npc.defendBest = -1
+    return false
+  }
+  // On a renoncé à cette menace il y a peu : on la laisse tranquille (elle est
+  // inatteignable) et on vit — manger, dormir, travailler.
+  if (state.tick < npc.defendIgnoreUntil) return false
 
   npc.sleeping = false // l'alarme silencieuse : on se lève
   if (entity.windup) return true
   const d2 = distSq(entity.x, entity.y, threat.x, threat.y)
   if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
+    npc.defendStuck = 0 // au contact : on se bat (la faim critique, elle, décroche)
+    npc.defendBest = -1
     if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
       // La lance en main, pas dans le dos : les dégâts viennent de l'arme TENUE (R9).
       equipBestWeapon(entity)
@@ -551,14 +584,41 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
     }
     return true
   }
-  // Marche gloutonne vers la menace (le village est un terrain ouvert).
+  // Marche GLOUTONNE vers la menace — sans pathfinding. Le commentaire d'origine
+  // disait « le village est un terrain ouvert » : la vallée, elle, ne l'est pas.
   const sx = (threat.x - entity.x > 0.2 ? 1 : threat.x - entity.x < -0.2 ? -1 : 0) as -1 | 0 | 1
   const sy = (threat.y - entity.y > 0.2 ? 1 : threat.y - entity.y < -0.2 ? -1 : 0) as -1 | 0 | 1
   const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, sy, TICK_DT_S)
   entity.moved = moved.x !== entity.x || moved.y !== entity.y
   entity.x = moved.x
   entity.y = moved.y
-  return true
+
+  /*
+   * ANTI-LIVELOCK (même doctrine que handleCold/handleHunger/handleSleep) : une
+   * menace qu'on n'ATTEINT PAS ne doit pas manger toutes les décisions de ce PNJ
+   * jusqu'à sa mort de faim.
+   *
+   * On mesure le PROGRÈS, pas le mouvement — et la nuance est tout le correctif :
+   * contre un rocher, `moveAvatar` fait GLISSER le long de l'obstacle. Le PNJ
+   * bouge donc à chaque tick, sans jamais se rapprocher d'un pouce. Un compteur
+   * de « je n'ai pas bougé » ne se déclenchait jamais. Un compteur de « je ne me
+   * rapproche pas » attrape le rocher — et, en prime, la bête qui fuit plus vite
+   * qu'on ne court : on ne poursuit pas un cerf jusqu'à en mourir.
+   */
+  const after = distSq(entity.x, entity.y, threat.x, threat.y)
+  if (npc.defendBest < 0 || after < npc.defendBest) {
+    npc.defendBest = after // un vrai progrès : on n'a jamais été aussi près
+    npc.defendStuck = 0
+  } else {
+    npc.defendStuck += 1
+  }
+  if (npc.defendStuck < NPC_AI.DEFENSE_GIVE_UP_TICKS) return true
+
+  // On renonce, et on l'oublie un moment : la menace est hors d'atteinte.
+  npc.defendIgnoreUntil = state.tick + NPC_AI.DEFENSE_IGNORE_TICKS
+  npc.defendStuck = 0
+  npc.defendBest = -1
+  return false
 }
 
 // ─── La passe PNJ du tick ─────────────────────────────────────────────────
@@ -589,8 +649,13 @@ export function advanceNpcs(state: SimState): void {
       if (home) npc.homeId = home.id
     }
 
-    // La défense du village prime sur tout (spec combat R13).
-    if (handleDefense(state, village, npc, entity)) continue
+    // La défense du village prime sur tout (spec combat R13) — SAUF sur la survie
+    // de celui qui défend : sous `DEFENSE_YIELD_HUNGER`, manger passe devant. Un
+    // défenseur mort de faim ne défend rien, et manger prend UN tick (il a des
+    // baies en poche, ou le grenier à trois pas). Sans cette porte, un zombie
+    // posté hors d'atteinte affamait tout le village, grenier plein.
+    const starving = entity.hunger <= NPC_AI.DEFENSE_YIELD_HUNGER
+    if (!starving && handleDefense(state, village, npc, entity)) continue
     // Puis l'expédition en cours (raid ou don, spec alignement R13-R14).
     if (handleErrand(state, village, npc, entity)) continue
     if (handleSleep(state, npc, entity)) continue
@@ -648,6 +713,9 @@ export function spawnNpcsAround(state: SimState, village: Village, count: number
       task: null,
       path: [],
       stuck: 0,
+      defendStuck: 0,
+      defendBest: -1,
+      defendIgnoreUntil: 0,
       errand: null,
     })
     spawned += 1

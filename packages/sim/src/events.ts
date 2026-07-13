@@ -42,6 +42,12 @@ export type SimEvent =
   | { type: 'action_rejected'; tick: number; entityId: number; reason: string }
   | { type: 'resource_harvested'; tick: number; entityId: number; nodeId: number; item: ItemId; count: number }
   | { type: 'node_depleted'; tick: number; nodeId: number }
+  // Le craft a un DÉBUT et une FIN distincts depuis la file (spec craft-file) :
+  // `craft_queued` est l'intention (les intrants partent), `item_crafted` reste
+  // l'objet qui SORT — et il ne s'émet qu'à la livraison réelle, jamais quand la
+  // file est bouchée par un sac plein (F10). L'événement suit l'objet, pas le clic.
+  | { type: 'craft_queued'; tick: number; entityId: number; recipeId: RecipeId }
+  | { type: 'craft_cancelled'; tick: number; entityId: number; recipeId: RecipeId; count: number }
   | { type: 'item_crafted'; tick: number; entityId: number; recipeId: RecipeId; item: ItemId }
   | { type: 'meal_eaten'; tick: number; entityId: number; item: ItemId }
   | { type: 'skill_level_up'; tick: number; entityId: number; skill: SkillId; level: number }

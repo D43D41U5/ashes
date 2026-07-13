@@ -16,7 +16,21 @@ import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
 import { grantItems, structureAt } from './village'
 import type { ResourceNode } from './economy'
 
-/** Village PNJ de test : Feu en (12,12), grenier, maisons, ressources autour. */
+/**
+ * Village PNJ de test : Feu en (12,12), grenier, maisons, ressources autour.
+ *
+ * `worldEvents: false` — le banc mesure une ÉCONOMIE (le village se nourrit-il ?),
+ * pas une guerre. Mesuré le 2026-07-12 : les hordes tombent sur un `roll` par nuit,
+ * donc sur le FLUX du PRNG ; à ≥ 5 hordes le village est RASÉ, à ≤ 4 il tient. Le
+ * verdict de ces tests dépendait donc du nombre de hordes que le seed 11 voulait
+ * bien tirer — et TOUTE modification de comportement (le craft qui prend du temps,
+ * par exemple) décale ce flux et rebat le tirage. Même raison que `faunaCap = 0` :
+ * un banc de test ne traîne pas un système qu'il n'a pas demandé.
+ *
+ * Corollaire à ne pas perdre de vue : PLUS AUCUN test n'affirme qu'un village PNJ
+ * résiste aux hordes 10 jours — parce que c'est FAUX aujourd'hui (déjà sur HEAD,
+ * seeds 14 et 15 : village rasé). Voir docs/decisions.md.
+ */
 function npcVillageSim(count = 2, extraNodes: ResourceNode[] = []): SimState {
   const map = createEmptyMap(28, 28, TERRAIN_GRASS)
   const nodes: ResourceNode[] = [
@@ -26,7 +40,7 @@ function npcVillageSim(count = 2, extraNodes: ResourceNode[] = []): SimState {
     { id: 4, type: 'fiber_plant', tx: 12, ty: 19, stock: 6, regrowAt: 0 },
     ...extraNodes,
   ]
-  const sim = createSim(11, { map, nodes })
+  const sim = createSim(11, { map, nodes, worldEvents: false })
   foundNpcVillage(sim, 12, 12, count)
   return sim
 }
@@ -542,7 +556,7 @@ describe('le sac qui se remplit PENDANT la corvée (la traversée)', () => {
     expect(stages.slice(-200).every((s) => s === null)).toBe(true)
   })
 
-  it('cuisiner : le sac se ferme APRÈS la réclamation → il ne refuse pas le craft 20 fois par seconde', () => {
+  it('cuisiner : le sac se ferme APRÈS la réclamation → il n’enfile RIEN, et lâche la corvée', () => {
     const sim = npcVillageSim(1)
     // stew 0 (et de quoi cuisiner) → le tableau ne veut QUE du ragoût.
     granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5 })
@@ -557,8 +571,8 @@ describe('le sac qui se remplit PENDANT la corvée (la traversée)', () => {
     expect(sim.npcs[0]!.task?.stage).toBe('craft')
 
     // Le sac se ferme MAINTENANT (un joueur le gave). Consommer les intrants ne
-    // libérera aucune case (il reste 2 baies et 18 fibres) : le ragoût n'a nulle
-    // part où aller, et un refus ne pose AUCUN cooldown.
+    // libérera aucune case (il reste 2 baies et 18 fibres) : le ragoût n'aura
+    // NULLE PART où aller à l'échéance.
     grantItems(sim, e.id, { stone: 20 })
     expect(freeRoomFor(e.inventory, 'stew')).toBe(0)
     drainEvents(sim)
@@ -569,14 +583,21 @@ describe('le sac qui se remplit PENDANT la corvée (la traversée)', () => {
       stages.push(sim.npcs[0]!.task?.stage ?? null)
     }
 
-    // CONSERVATION : ses ingrédients sont intacts (le craft rejeté rend ses intrants).
+    // LE PIÈGE DE LA FILE (spec craft-file F10, F17) : enfiler aurait consommé les
+    // intrants, mijoté 8 s, puis ATTENDU une case — pour l'éternité, le PNJ planté
+    // au Feu avec sa corvée sur le dos. Ce qui est le bon comportement pour un
+    // joueur (il voit sa file bouchée, il fait de la place) est un LIVELOCK pour
+    // une IA. Le PNJ n'enfile donc RIEN : il lâche la corvée, elle retourne au
+    // tableau pour un PNJ qui a de la place.
+    expect(e.craftQueue).toHaveLength(0) // aucun ordre lancé
+    // CONSERVATION : ses ingrédients n'ont même pas été touchés.
     expect(countOf(e.inventory, 'berries')).toBe(6)
     expect(countOf(e.inventory, 'fiber')).toBe(19)
     expect(countOf(granary(sim).inventory!, 'berries')).toBe(30)
-    // PROGRESSION : il a lâché la corvée. Un SEUL refus « sac plein » — pas 300.
+    // PROGRESSION : il a lâché la corvée, et il ne la reprend pas en boucle.
     expect(stages).toContain(null)
     expect(stages.slice(-200).every((s) => s === null)).toBe(true)
-    expect(rejects(sim, e.id)).toEqual(['sac plein'])
+    expect(rejects(sim, e.id)).toEqual([]) // et pas un seul refus : il n'a rien tenté
   })
 })
 
@@ -622,6 +643,53 @@ describe('anti-livelock des besoins : la cible est inatteignable', () => {
     }
     expect(e.x !== x0 || e.y !== y0).toBe(true) // il a bougé
     expect(kinds.some((k) => k !== null)).toBe(true) // il a travaillé
+  })
+
+  /**
+   * LE HANDLER QUI N'AVAIT PAS DE GARDE (correctif du 2026-07-12).
+   *
+   * `handleDefense` prime sur TOUT — sommeil, froid, faim — et il marchait
+   * gloutonnement vers la menace, sans pathfinding ni renoncement. Une menace
+   * qu'on n'atteint pas (un rocher entre elle et nous) mangeait donc TOUTES les
+   * décisions du PNJ : il montait la garde devant son obstacle, sans manger (deux
+   * baies dans sa poche, le grenier plein à trois pas), sans dormir, jusqu'à
+   * mourir de faim.
+   *
+   * Trouvé en mesurant le banc de scénario : un zombie garé à 6 tuiles du Feu des
+   * « Braises Hautes », deux villageois à faim 0 et énergie 0, un grenier à 10
+   * baies. Le bug est ANTÉRIEUR à la file de craft — celle-ci n'a fait que
+   * déplacer le flux du PRNG, donc garer le zombie là.
+   */
+  it('LA DÉFENSE NE TUE PLUS SON DÉFENSEUR : un zombie indestructible n’affame plus le village', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30 })
+    const e = npcEntity(sim)
+    e.hunger = 25 // il a faim (sous le seuil de repas), et le grenier est plein
+
+    // Un zombie EMMURÉ à 5 tuiles du Feu (12,12) : DANS le rayon de défense (10),
+    // donc vu comme une menace — mais INATTEIGNABLE. La ceinture de roche le met
+    // aussi hors de portée de mêlée (1,2 tuile) : le PNJ ne peut ni le frapper ni
+    // être frappé. C'est le livelock à l'état pur : une menace éternelle, stérile.
+    const zx = 17
+    const zy = 12
+    wallIn(sim, zx, zy)
+    spawnMonster(sim, 'zombie', zx + 0.5, zy + 0.5)
+    drainEvents(sim)
+
+    let famine = 0
+    let repas = 0
+    for (let t = 0; t < 8000; t++) {
+      step(sim, [])
+      if (npcEntity(sim).hunger <= 0) famine += 1
+      for (const ev of drainEvents(sim)) if (ev.type === 'meal_eaten') repas += 1
+    }
+
+    // AVANT : il montait la garde jusqu'à la mort — faim 0, énergie 0, deux baies
+    // dans la poche et le grenier plein. MAINTENANT : sous le seuil critique, il
+    // décroche, il mange, et il revient. La défense ne prime plus sur la survie.
+    expect(repas).toBeGreaterThan(0) // il a mangé
+    expect(famine).toBe(0) // il n'a jamais touché le fond
+    expect(sim.npcs).toHaveLength(1) // il est vivant
   })
 
   it('épuisé la nuit mais aucun chemin vers son lit → rend la main', () => {

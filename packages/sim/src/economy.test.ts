@@ -14,7 +14,7 @@ import { heldSlot } from './inventory-actions'
 import { countOf, durabilityOf, freeRoomFor, inventoryOf, makeInventory, stackSize, type ItemId } from './items'
 import { createEmptyMap, zoneAt } from './map'
 import { equipBestTool } from './npc'
-import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
+import { createSim, spawnEntity, step, type Entity, type PlayerAction, type SimState } from './sim'
 import { TICKS_PER_SEASON_DAY } from './time'
 import { grantItems } from './village'
 
@@ -43,6 +43,18 @@ function swing(sim: SimState, entityId: number, nodeId: number, times: number): 
 
 function rejections(sim: SimState): string[] {
   return drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))
+}
+
+/**
+ * LAISSE MIJOTER : avance le temps jusqu'à ce que la file de l'entité se vide
+ * (spec craft-file). Le craft n'est plus instantané — un test qui enfile et
+ * regarde son sac dans la foulée ne verra rien. Borné : une file qui ne se vide
+ * pas (station quittée, sac plein) doit faire ÉCHOUER le test, pas le figer.
+ */
+function drain(sim: SimState, entityId: number, maxTicks = 2000): void {
+  const who = (): Entity => sim.entities.find((e) => e.id === entityId)!
+  for (let t = 0; t < maxTicks && who().craftQueue.length > 0; t++) step(sim, [])
+  expect(who().craftQueue).toHaveLength(0)
 }
 
 const me = (sim: SimState) => sim.entities[0]!
@@ -325,52 +337,29 @@ describe('l’artisanat (A3)', () => {
     act(sim, id, { type: 'build', structure: 'workshop', tx: 9, ty: 10 })
     drainEvents(sim)
 
-    // Fondre : à portée du four (le joueur est entre les deux stations).
+    // Fondre : à portée du four (le joueur est entre les deux stations). Deux
+    // clics = UNE ligne « ×2 » (spec craft-file F3), et il faut laisser mijoter.
     act(sim, id, { type: 'craft', recipeId: 'iron_ingot' })
-    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'craft', recipeId: 'iron_ingot' })
+    expect(me(sim).craftQueue).toHaveLength(1)
+    expect(me(sim).craftQueue[0]!.count).toBe(2)
+    drain(sim, id)
     expect(countOf(me(sim).inventory, 'iron_ingot')).toBe(2)
 
     // Hache de fer à l'atelier.
-    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'craft', recipeId: 'iron_axe' })
+    drain(sim, id)
     expect(countOf(me(sim).inventory, 'iron_axe')).toBe(1)
 
     // Loin des stations : rejeté avec le nom de la station.
     me(sim).x = 25.5
-    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'craft', recipeId: 'iron_ingot' })
     expect(rejections(sim)).toEqual(['station requise hors de portée : furnace'])
   })
 
-  // Le sac est BORNÉ : consommer les matériaux SANS place pour la sortie détruirait
-  // l'objet fabriqué — et `item_crafted` mentirait à la chronique. On teste la place
-  // AVANT de consommer (symétrique de R10 : « le coup n'a pas eu lieu »).
-  it('sac plein : le craft est refusé AVANT de consommer — ni matériaux, ni cooldown, ni XP, ni événement', () => {
-    const sim = makeSim([])
-    const id = spawnEntity(sim, 10.5, 10.5)
-    grantItems(sim, id, { wood: 10 })
-    act(sim, id, { type: 'light_fire' }) // le Feu est la station de `cooked_meat`
-    // Sac SANS un interstice : une pile pleine de viande crue (5) + 17 piles de bois.
-    // Retirer 1 viande crue ne LIBÈRE aucune case : la case 0 reste occupée.
-    me(sim).inventory = inventoryOf(SLOTS.PLAYER, { raw_meat: 5, wood: 20 * (SLOTS.PLAYER - 1) })
-    me(sim).cooldownUntil = 0
-    drainEvents(sim)
-
-    act(sim, id, { type: 'craft', recipeId: 'cooked_meat' })
-
-    expect(countOf(me(sim).inventory, 'raw_meat')).toBe(5) // les matériaux sont intacts
-    expect(countOf(me(sim).inventory, 'cooked_meat')).toBe(0)
-    expect(me(sim).cooldownUntil).toBeLessThanOrEqual(sim.tick) // le coup n'a pas eu lieu
-    expect(me(sim).skills.crafting ?? 0).toBe(0)
-    const events = drainEvents(sim)
-    expect(events.some((e) => e.type === 'item_crafted')).toBe(false)
-    expect(events.flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))).toEqual(['sac plein'])
-  })
-
-  // …mais un sac plein n'est pas forcément un sac SANS place pour la sortie : les
-  // intrants, en partant, LIBÈRENT des cases. Mesurer la place avant de les
-  // consommer refuse à tort un craft parfaitement légal.
+  // Un sac plein n'est pas forcément un sac SANS place pour la sortie : les
+  // intrants, en partant, LIBÈRENT des cases. Refuser d'après la place AVANT de
+  // les consommer refuserait à tort un craft parfaitement légal.
   it('sac 18/18 dont les intrants libèrent une case : la hache est bel et bien forgée', () => {
     const sim = makeSim([])
     const id = spawnEntity(sim, 10.5, 10.5)
@@ -385,36 +374,13 @@ describe('l’artisanat (A3)', () => {
     drainEvents(sim)
 
     act(sim, id, { type: 'craft', recipeId: 'axe' })
+    drain(sim, id)
 
     expect(countOf(me(sim).inventory, 'axe')).toBe(1)
     expect(countOf(me(sim).inventory, 'wood')).toBe(0)
     expect(countOf(me(sim).inventory, 'fiber')).toBe(0)
     expect(countOf(me(sim).inventory, 'stone')).toBe(300)
     expect(rejections(sim)).toEqual([])
-  })
-
-  it('sac 18/18 dont les intrants ne libèrent RIEN : refus — et les intrants sont rendus', () => {
-    const sim = makeSim([])
-    const id = spawnEntity(sim, 10.5, 10.5)
-    grantItems(sim, id, { wood: 16, stone: 4 }) // le Feu (10 bois) + l'atelier (6 bois, 4 pierres)
-    act(sim, id, { type: 'light_fire' })
-    equipHammer(sim, id)
-    act(sim, id, { type: 'build', structure: 'workshop', tx: 11, ty: 10 })
-    // 18 cases pleines dont AUCUNE ne se vide : 5 de bois (100), 2 de fibre (40),
-    // 11 de pierre (220) — la recette entame des piles, elle n'en clôt aucune.
-    me(sim).inventory = inventoryOf(SLOTS.PLAYER, { wood: 100, fiber: 40, stone: 220 })
-    me(sim).cooldownUntil = 0
-    drainEvents(sim)
-
-    act(sim, id, { type: 'craft', recipeId: 'axe' })
-
-    expect(countOf(me(sim).inventory, 'axe')).toBe(0)
-    // Rien ne se détruit : le coup n'a pas eu lieu (spec R10).
-    expect(countOf(me(sim).inventory, 'wood')).toBe(100)
-    expect(countOf(me(sim).inventory, 'fiber')).toBe(40)
-    expect(countOf(me(sim).inventory, 'stone')).toBe(220)
-    expect(me(sim).cooldownUntil).toBeLessThanOrEqual(sim.tick)
-    expect(rejections(sim)).toEqual(['sac plein'])
   })
 })
 
@@ -433,6 +399,7 @@ describe('l’artisanat de fortune (craft-fortune A1-A5)', () => {
 
     // Aucun village, aucun Feu, aucune station — et pourtant la corde sort.
     act(sim, id, { type: 'craft', recipeId: 'rope' })
+    drain(sim, id) // le craft prend du TEMPS désormais (spec craft-file)
     expect(sim.structures).toHaveLength(0)
     expect(countOf(me(sim).inventory, 'rope')).toBe(1)
     expect(countOf(me(sim).inventory, 'fiber')).toBe(0)
@@ -441,7 +408,6 @@ describe('l’artisanat de fortune (craft-fortune A1-A5)', () => {
 
     // La nullabilité n'ouvre QUE les recettes qui la déclarent : la hache, elle,
     // veut toujours son atelier. Sinon la couche 1 aurait dissous tout l'établi.
-    for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'craft', recipeId: 'axe' })
     expect(countOf(me(sim).inventory, 'axe')).toBe(0)
     expect(rejections(sim)).toEqual(['station requise hors de portée : workshop'])
@@ -515,6 +481,158 @@ describe('l’artisanat de fortune (craft-fortune A1-A5)', () => {
     equipBestTool(me(sim), 'axe')
 
     expect(heldSlot(me(sim))?.item).toBe('axe')
+  })
+})
+
+/**
+ * LA FILE DE CRAFT (spec `craft-file.md`). Le craft est entré dans le TEMPS : on
+ * enfile, les intrants partent, l'objet vient. Ce que ces tests tiennent, c'est
+ * qu'entre les deux **rien ne se perd** — ni quand on s'éloigne de la station, ni
+ * quand le sac est plein, ni quand on annule.
+ */
+describe('la file de craft (craft-file A1-A6)', () => {
+  const ticksOf = (seconds: number) => Math.round(seconds * BALANCE.TICK_RATE_HZ)
+
+  it('A1 : enfiler débite les intrants TOUT DE SUITE — et ne rend rien avant l’échéance', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { fiber: 3 })
+    drainEvents(sim)
+
+    act(sim, id, { type: 'craft', recipeId: 'rope' })
+    expect(countOf(me(sim).inventory, 'fiber')).toBe(0) // débité au clic
+    expect(countOf(me(sim).inventory, 'rope')).toBe(0) // et rien en retour
+    // `act` EST un tick : l'action passe, puis le monde tourne — la file a déjà
+    // descendu d'un cran. C'est l'ordre de `step`, et il n'y a pas de raison de
+    // faire une exception pour le craft.
+    expect(me(sim).craftQueue).toEqual([
+      { recipeId: 'rope', count: 1, remainingTicks: ticksOf(3) - 1, totalTicks: ticksOf(3), paused: false },
+    ])
+
+    // Jusqu'au dernier tick : toujours rien.
+    for (let t = 0; t < ticksOf(3) - 2; t++) step(sim, [])
+    expect(countOf(me(sim).inventory, 'rope')).toBe(0)
+    expect(me(sim).craftQueue[0]!.remainingTicks).toBe(1)
+
+    step(sim, []) // le dernier tick : la corde sort
+    expect(countOf(me(sim).inventory, 'rope')).toBe(1)
+    expect(me(sim).craftQueue).toHaveLength(0)
+    expect(me(sim).skills.crafting ?? 0).toBeGreaterThan(0) // l'XP tombe à la LIVRAISON
+  })
+
+  it('A2 : cinq clics = UNE ligne « ×5 », et quinze fibres débitées', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { fiber: 15 })
+
+    for (let i = 0; i < 5; i++) act(sim, id, { type: 'craft', recipeId: 'rope' })
+
+    expect(me(sim).craftQueue).toHaveLength(1)
+    expect(me(sim).craftQueue[0]!.count).toBe(5)
+    expect(countOf(me(sim).inventory, 'fiber')).toBe(0)
+
+    drain(sim, id)
+    expect(countOf(me(sim).inventory, 'rope')).toBe(5)
+  })
+
+  it('A3 : quitter la station MET EN PAUSE (et ne perd rien) — la couche 1, elle, continue', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 10, stone: 8, iron_ore: 2, coal: 1, fiber: 3 })
+    act(sim, id, { type: 'light_fire' })
+    equipHammer(sim, id)
+    act(sim, id, { type: 'build', structure: 'furnace', tx: 11, ty: 10 })
+    act(sim, id, { type: 'craft', recipeId: 'iron_ingot' })
+    act(sim, id, { type: 'craft', recipeId: 'rope' }) // à la main : rien à quitter (F8)
+
+    for (let t = 0; t < 20; t++) step(sim, [])
+    const advanced = me(sim).craftQueue[0]!.remainingTicks
+    expect(advanced).toBeLessThan(me(sim).craftQueue[0]!.totalTicks) // ça descend
+
+    // ON S'ÉLOIGNE DU FOUR. Le compteur GÈLE : l'ordre n'est ni perdu, ni annulé.
+    me(sim).x = 25.5
+    for (let t = 0; t < 60; t++) step(sim, [])
+    expect(me(sim).craftQueue[0]!.paused).toBe(true)
+    expect(me(sim).craftQueue[0]!.remainingTicks).toBe(advanced) // pas un tick de plus
+    expect(countOf(me(sim).inventory, 'iron_ingot')).toBe(0)
+
+    // ON REVIENT : il repart d'où il en était, et sort.
+    me(sim).x = 10.5
+    drain(sim, id)
+    expect(countOf(me(sim).inventory, 'iron_ingot')).toBe(1)
+    expect(countOf(me(sim).inventory, 'rope')).toBe(1) // la corde, elle, n'a jamais calé
+  })
+
+  it('A4 : sac plein à l’échéance → LA FILE ATTEND ; rien n’est détruit, rien n’est crédité', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 10 })
+    act(sim, id, { type: 'light_fire' }) // la station de `cooked_meat`
+    // Sac SANS interstice : une pile PLEINE de viande crue (5) + 17 piles de bois.
+    // Retirer 1 viande crue ne libère aucune case — la viande cuite n'aura nulle
+    // part où aller.
+    me(sim).inventory = inventoryOf(SLOTS.PLAYER, { raw_meat: 5, wood: 20 * (SLOTS.PLAYER - 1) })
+    drainEvents(sim)
+
+    act(sim, id, { type: 'craft', recipeId: 'cooked_meat' })
+    for (let t = 0; t < ticksOf(5) + 40; t++) step(sim, [])
+
+    // L'unité est FAITE (compteur à zéro) mais BLOQUÉE : elle attend une case.
+    expect(me(sim).craftQueue[0]!.remainingTicks).toBe(0)
+    expect(countOf(me(sim).inventory, 'cooked_meat')).toBe(0)
+    // Rien n'est crédité tant que rien n'est livré : la chronique ne ment pas.
+    expect(drainEvents(sim).some((e) => e.type === 'item_crafted')).toBe(false)
+    expect(me(sim).skills.crafting ?? 0).toBe(0)
+
+    // On vide une case : l'objet tombe au tick suivant. Rien n'a été perdu.
+    me(sim).inventory[1] = null
+    step(sim, [])
+    expect(countOf(me(sim).inventory, 'cooked_meat')).toBe(1)
+    expect(me(sim).craftQueue).toHaveLength(0)
+  })
+
+  it('A5 : annuler rembourse TOUT (unité en cours comprise) — et un sac trop plein refuse l’annulation', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { fiber: 9 })
+    act(sim, id, { type: 'craft', recipeId: 'rope' })
+    act(sim, id, { type: 'craft', recipeId: 'rope' })
+    act(sim, id, { type: 'craft', recipeId: 'rope' })
+    for (let t = 0; t < 30; t++) step(sim, []) // la 1re unité est bien entamée
+    drainEvents(sim)
+
+    // Sac saturé : le remboursement (9 fibres) ne tient pas → REFUS, la ligne reste.
+    me(sim).inventory = inventoryOf(SLOTS.PLAYER, { stone: 20 * SLOTS.PLAYER })
+    act(sim, id, { type: 'cancel_craft', index: 0 })
+    expect(rejections(sim)).toEqual(['sac plein'])
+    expect(me(sim).craftQueue).toHaveLength(1)
+
+    // On fait de la place : l'annulation rend les NEUF fibres — la progression de
+    // l'unité en cours ne coûte rien (modèle Rust).
+    me(sim).inventory = makeInventory(SLOTS.PLAYER)
+    act(sim, id, { type: 'cancel_craft', index: 0 })
+    expect(me(sim).craftQueue).toHaveLength(0)
+    expect(countOf(me(sim).inventory, 'fiber')).toBe(9)
+    expect(countOf(me(sim).inventory, 'rope')).toBe(0)
+  })
+
+  it('A6 : l’Artisan ÉCONOMISE LE TEMPS — plus il monte, plus la corde va vite', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { fiber: 3 })
+
+    act(sim, id, { type: 'craft', recipeId: 'rope' })
+    const novice = me(sim).craftQueue[0]!.totalTicks
+    expect(novice).toBe(ticksOf(3)) // niveau 0 : la durée de base
+
+    me(sim).craftQueue = []
+    me(sim).skills.crafting = 2500 // niveau 5
+    grantItems(sim, id, { fiber: 3 })
+    act(sim, id, { type: 'craft', recipeId: 'rope' })
+    const maitre = me(sim).craftQueue[0]!.totalTicks
+
+    expect(maitre).toBeLessThan(novice)
+    expect(maitre).toBeGreaterThanOrEqual(1) // jamais moins d'un tick
   })
 })
 
