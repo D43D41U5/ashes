@@ -1,0 +1,153 @@
+import { describe, expect, it } from 'vitest'
+import { BALANCE, CARRY, COMBAT, ITEM_WEIGHT, SLOTS, TERRAIN_GRASS } from './balance'
+import { drainEvents } from './events'
+import { carryRatio, carryWeight, countOf, inventoryOf, makeInventory } from './items'
+import { createEmptyMap } from './map'
+import { carrySpeedFactor, createSim, spawnEntity, speedScaleFor, step, type SimState } from './sim'
+import type { ResourceNode } from './economy'
+import { grantItems } from './village'
+
+/**
+ * LE PORTAGE (spec `portage.md`) — « collecter est facile, rapporter est le jeu ».
+ *
+ * Ce que ces tests tiennent : la charge se PAIE (vitesse, sprint, endurance) mais
+ * ne BLOQUE JAMAIS. On peut toujours ramasser, et se surcharger : c'est un choix
+ * cornélien, pas un mur (décision utilisateur). Un blocage dur ne ferait que
+ * refuser un clic — le drame est dans le retour, pas dans le refus.
+ */
+const me = (sim: SimState) => sim.entities[0]!
+const vide = { sprint: false, block: false, moving: true }
+
+function simAvec(nodes: ResourceNode[] = []): SimState {
+  return createSim(1, { map: createEmptyMap(32, 32, TERRAIN_GRASS), nodes })
+}
+
+describe('le poids porté (A1)', () => {
+  it('un sac vide ne pèse rien ; une pile pèse son compte', () => {
+    expect(carryWeight(makeInventory(SLOTS.PLAYER))).toBe(0)
+
+    // 20 bois (1 chacun) + 10 pierres (2 chacune) = 20 + 20 = 40.
+    const inv = inventoryOf(SLOTS.PLAYER, { wood: 20, stone: 10 })
+    expect(carryWeight(inv)).toBe(20 * ITEM_WEIGHT.wood + 10 * ITEM_WEIGHT.stone)
+    expect(carryRatio(inv)).toBe(carryWeight(inv) / CARRY.CAPACITY)
+  })
+
+  it('la cueillette est LÉGÈRE, la mine est LOURDE — c’est là que doit être la peine', () => {
+    // Une pile pleine de fibres (20 × 0,2 = 4) ne se sent pas…
+    expect(carryWeight(inventoryOf(SLOTS.PLAYER, { fiber: 20 }))).toBeLessThan(CARRY.CAPACITY * CARRY.COMFORT)
+    // …dix minerais (30), si : c'est déjà la charge PLEINE. Ce sont les « hottes de
+    // minerai » du GDD — la mine fait transpirer, la promenade en forêt non.
+    expect(carryWeight(inventoryOf(SLOTS.PLAYER, { iron_ore: 10 }))).toBe(CARRY.CAPACITY)
+  })
+})
+
+describe('le prix de la charge (A2, A3, A4)', () => {
+  it('A2 : la courbe — libre sous le confort, mordante à plein, plancher au-delà', () => {
+    expect(carrySpeedFactor(0)).toBe(1)
+    expect(carrySpeedFactor(CARRY.COMFORT)).toBe(1) // jusqu'au confort, on ne sent RIEN
+
+    const plein = carrySpeedFactor(1)
+    expect(plein).toBeLessThan(1) // à pleine charge, ça mord…
+    expect(plein).toBeGreaterThan(CARRY.SPEED_FLOOR) // …mais on marche encore
+
+    // Au-delà, on rampe — et le plancher tient : un joueur figé n'a plus de choix
+    // du tout, ce qui est l'inverse du but.
+    expect(carrySpeedFactor(3)).toBe(CARRY.SPEED_FLOOR)
+    expect(carrySpeedFactor(50)).toBe(CARRY.SPEED_FLOOR)
+  })
+
+  it('A3 : ON NE SPRINTE PAS CHARGÉ — le sprint est REFUSÉ, pas ralenti', () => {
+    const corps = { hunger: 100, wounds: {}, stamina: 100, temperature: 100 }
+    const sprint = { sprint: true, block: false, moving: true }
+
+    // Sac léger : le sprint part.
+    const leger = speedScaleFor({ ...corps, inventory: inventoryOf(SLOTS.PLAYER, { fiber: 5 }) }, sprint)
+    expect(leger.sprinting).toBe(true)
+
+    // Au-dessus de SPRINT_MAX : refusé, malgré 100 d'endurance.
+    const lourd = speedScaleFor({ ...corps, inventory: inventoryOf(SLOTS.PLAYER, { stone: 20 }) }, sprint)
+    expect(carryRatio(inventoryOf(SLOTS.PLAYER, { stone: 20 }))).toBeGreaterThan(CARRY.SPRINT_MAX)
+    expect(lourd.sprinting).toBe(false)
+    expect(lourd.scale).toBeLessThan(COMBAT.SPRINT_FACTOR)
+  })
+
+  it('A4 : SURCHARGÉ, l’endurance ne revient plus — on ne fuit pas, on rentre', () => {
+    const sim = simAvec()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    me(sim).stamina = 10
+    grantItems(sim, id, { stone: 20, wood: 20 }) // 40 + 20 = 60 = 200 % de la capacité
+    expect(carryRatio(me(sim).inventory)).toBeGreaterThan(1)
+
+    for (let t = 0; t < 100; t++) step(sim, [])
+    const charge = me(sim).stamina - 10
+
+    // Le MÊME temps, le MÊME corps, sac vide : l'endurance remonte bien plus vite.
+    const temoin = simAvec()
+    spawnEntity(temoin, 10.5, 10.5)
+    me(temoin).stamina = 10
+    for (let t = 0; t < 100; t++) step(temoin, [])
+    const libre = me(temoin).stamina - 10
+
+    expect(charge).toBeGreaterThan(0) // elle revient, mais…
+    expect(charge).toBeLessThan(libre * 0.5) // …bien moins vite (×0,25 par la règle)
+  })
+})
+
+describe('on n’est JAMAIS bloqué (A5)', () => {
+  it('à 300 % de la capacité, on ramasse ENCORE : c’est un choix, pas un mur', () => {
+    const arbre: ResourceNode = { id: 1, type: 'tree', tx: 11, ty: 10, stock: 100, regrowAt: 0 }
+    const sim = simAvec([arbre])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    grantItems(sim, id, { stone: 50 }) // 100 de charge = 333 %
+    expect(carryRatio(me(sim).inventory)).toBeGreaterThan(3)
+    const avant = countOf(me(sim).inventory, 'wood')
+    drainEvents(sim)
+
+    step(sim, [{ entityId: id, dx: 0, dy: 0, action: { type: 'harvest', nodeId: arbre.id } }])
+
+    // Le coup PORTE : la sim n'a aucun refus « trop lourd », et n'en aura jamais.
+    expect(countOf(me(sim).inventory, 'wood')).toBe(avant + 1)
+    const refus = drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))
+    expect(refus).toEqual([])
+  })
+
+  it('…mais il rampe : la charge le paie en VITESSE, pas en refus', () => {
+    const corps = { hunger: 100, wounds: {}, stamina: 100, temperature: 100 }
+    const croulant = speedScaleFor({ ...corps, inventory: inventoryOf(SLOTS.PLAYER, { stone: 50 }) }, vide)
+    expect(croulant.scale).toBe(CARRY.SPEED_FLOOR)
+  })
+})
+
+describe('le déterminisme (A8)', () => {
+  it('la vitesse chargée n’utilise que des opérations exactes — même seed, même état', () => {
+    const jouer = (): string => {
+      const sim = simAvec()
+      const id = spawnEntity(sim, 10.5, 10.5)
+      grantItems(sim, id, { stone: 12, wood: 7, iron_ore: 3 })
+      for (let t = 0; t < 200; t++) step(sim, [{ entityId: id, dx: 1, dy: t % 3 === 0 ? 1 : 0, sprint: true }])
+      const e = me(sim)
+      return `${e.x.toFixed(12)}|${e.y.toFixed(12)}|${e.stamina.toFixed(12)}`
+    }
+    expect(jouer()).toBe(jouer())
+  })
+})
+
+describe('la calibration, en clair (elle doit se LIRE, pas se deviner)', () => {
+  it('une charge pleine = 30 bois — contre 360 avant le portage', () => {
+    expect(CARRY.CAPACITY / ITEM_WEIGHT.wood).toBe(30)
+    // Le sac tient toujours 360 unités en VOLUME (18 cases × 20) : les cases
+    // bornent le volume, le poids borne la peine (spec P3). Porter 360 bois reste
+    // possible — à 20 % de vitesse, sans sprint et sans endurance.
+    expect(SLOTS.PLAYER * 20).toBe(360)
+    expect(carrySpeedFactor(360 / CARRY.CAPACITY)).toBe(CARRY.SPEED_FLOOR)
+  })
+
+  it('fonder un village demande DEUX voyages (et c’est le but)', () => {
+    // Feu (10 bois) + marteau (4 bois, 2 pierre, 2 fibre) + atelier (6 bois, 4 pierre)
+    // + hache (5 bois, 3 pierre, 2 fibre) = 25 bois, 9 pierre, 4 fibre.
+    const note = carryWeight(inventoryOf(SLOTS.PLAYER, { wood: 25, stone: 9, fiber: 4 }))
+    expect(note).toBeGreaterThan(CARRY.CAPACITY) // une charge n'y suffit pas…
+    expect(note).toBeLessThan(2 * CARRY.CAPACITY) // …deux, oui.
+    expect(BALANCE.TICK_RATE_HZ).toBe(20) // (témoin : on n'a pas bougé le tick)
+  })
+})

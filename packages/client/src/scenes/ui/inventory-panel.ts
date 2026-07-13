@@ -10,13 +10,13 @@
  * Réimplémenter `moveWithin`/`pourInto` ici signerait leur divergence : on ne
  * le fait pas.
  */
-import { SLOTS, durabilityOf, isStackable, stackSize, type Inventory, type ItemId, type PlayerAction, type Slot, type SlotRef } from '@braises/sim'
+import { CARRY, SLOTS, carryRatio, carryWeight, durabilityOf, isStackable, stackSize, type Inventory, type ItemId, type PlayerAction, type Slot, type SlotRef } from '@braises/sim'
 import type Phaser from 'phaser'
 import type { OpenContainerView } from '../../hud-state'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { CELL, GAP, hotbarBottom } from './hotbar'
 import { createSlotView, type SlotView } from './slot-view'
-import { SECTION_TITLE, textStyle } from './typography'
+import { INK, SECTION_TITLE, textStyle } from './typography'
 
 /** Le conteneur ouvert, tel que le panneau en a besoin (kind+id pour construire
  *  le `transfer`, inv+title pour dessiner). C'est `OpenContainerView`. */
@@ -169,6 +169,12 @@ const BELT_GAP = 12
 /** Combien de rangées de sac au-dessus de la ceinture. */
 const BAG_ROWS = (SLOTS.PLAYER - SLOTS.BELT) / COLS
 
+/** La barre de charge, à droite du titre du sac. */
+const LOAD_BAR_W = 120
+const LOAD_FREE = 0x8cc63e
+const LOAD_HEAVY = 0xe8c66a
+const LOAD_OVER = 0xc0503e
+
 /** Styles du panneau — tirés de la source unique (`typography.ts`). */
 const TEXT = textStyle('body')
 /** Le titre : capitales, blanc, calé à GAUCHE au-dessus de la grille (Rust). */
@@ -232,7 +238,19 @@ export function createInventoryPanel(scene: Phaser.Scene, send: (a: PlayerAction
   const playerCells: Cell[] = []
   const playerNodes: Phaser.GameObjects.GameObject[] = []
   const playerTitle = scene.add.text(-gridWidth() / 2, -26, 'INVENTAIRE', TITLE).setOrigin(0, 0)
-  playerNodes.push(playerTitle)
+
+  /*
+   * LA CHARGE (spec portage.md P11). Elle se lit à DROITE du titre, sur la même
+   * ligne : « 12.4 / 30 kg », et une barre dessous. Un malus qu'on subit sans le
+   * voir est un bug, pas une règle — et celui-là est violent : au-dessus des trois
+   * quarts on ne sprinte plus, au-dessus de la capacité on rampe et l'endurance ne
+   * revient plus. Le joueur doit pouvoir décider AVANT de charger, pas comprendre
+   * après coup pourquoi il ne court plus.
+   */
+  const loadText = scene.add.text(gridWidth() / 2, -26, '', textStyle('label', 'dim')).setOrigin(1, 0)
+  const loadBg = scene.add.rectangle(gridWidth() / 2, -6, LOAD_BAR_W, 3, 0x2a2a32).setOrigin(1, 0.5)
+  const loadBar = scene.add.rectangle(gridWidth() / 2 - LOAD_BAR_W, -6, 0, 3, LOAD_FREE).setOrigin(0, 0.5)
+  playerNodes.push(playerTitle, loadText, loadBg, loadBar)
   for (let i = 0; i < SLOTS.PLAYER; i++) {
     // LA CEINTURE EST LA RANGÉE DU BAS. Les cases 0-5 restent la ceinture pour la
     // sim ; seul leur DESSIN descend sous le sac, comme chez Rust. Un cran de vide
@@ -379,6 +397,20 @@ export function createInventoryPanel(scene: Phaser.Scene, send: (a: PlayerAction
     update(inv: Inventory, activeSlot: number, open: OpenContainer | null): void {
       playerInv = inv
       container = open
+
+      // LA CHARGE : le poids, la capacité, et l'état — libre, chargé, SURCHARGÉ.
+      // Les seuils viennent de /sim (`CARRY`), jamais recopiés : le jour où la
+      // besace de peau fera monter la capacité, cette barre suivra toute seule.
+      const poids = carryWeight(inv)
+      const ratio = carryRatio(inv)
+      const surcharge = ratio > 1
+      const lourd = ratio > CARRY.SPRINT_MAX
+      loadText.setText(
+        `${poids.toFixed(1)} / ${CARRY.CAPACITY} kg${surcharge ? '  SURCHARGÉ' : lourd ? '  chargé' : ''}`,
+      )
+      loadText.setColor(surcharge ? INK.alert : lourd ? INK.warm : INK.dim)
+      loadBar.width = Math.min(1, ratio) * LOAD_BAR_W
+      loadBar.fillColor = surcharge ? LOAD_OVER : lourd ? LOAD_HEAVY : LOAD_FREE
       // Un nouveau snapshot (référence d'inventaire neuve) fait foi : il efface
       // l'optimisme (R22). Sinon les cases « en attente » restent grisées jusque-là.
       const containerRef = open?.inv ?? null

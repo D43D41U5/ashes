@@ -161,8 +161,11 @@ describe('la construction (A2)', () => {
     act(sim, id, { type: 'build', structure: 'wall', tx: 12, ty: 10 })
     expect(countOf(sim.entities[0]!.inventory, 'wood')).toBe(before - 2)
     expect(structureAt(sim.structures, 12, 10)?.type).toBe('wall')
-    // Le mur bloque : marcher vers l'est clampe flush contre lui.
-    for (let t = 0; t < 30; t++) step(sim, [{ entityId: id, dx: 1, dy: 0 }])
+    // Le mur bloque : marcher vers l'est clampe flush contre lui. On marche LONGTEMPS,
+    // parce que le fondateur est chargé comme un mulet (100 bois + 20 pierres) et que
+    // le PORTAGE le fait ramper depuis la spec `portage.md` : ce test-ci parle de
+    // COLLISION, pas de vitesse — il doit lui laisser le temps d'arriver au mur.
+    for (let t = 0; t < 300; t++) step(sim, [{ entityId: id, dx: 1, dy: 0 }])
     expect(sim.entities[0]!.x).toBe(12 - BALANCE.AVATAR_HITBOX_TILES / 2)
   })
 
@@ -197,7 +200,9 @@ describe('la porte (A3)', () => {
     const e = sim.entities.find((en) => en.id === id)!
     e.x = 13.2
     e.y = 12.5
-    for (let t = 0; t < 40; t++) step(sim, [{ entityId: id, dx: 1, dy: 0 }])
+    // 400 ticks, pas 40 : le Chef est chargé (le fondateur porte 100 bois) et le
+    // portage le fait ramper. Ce qu'on teste ici, c'est la PORTE — pas la vitesse.
+    for (let t = 0; t < 400; t++) step(sim, [{ entityId: id, dx: 1, dy: 0 }])
     return e.x
   }
 

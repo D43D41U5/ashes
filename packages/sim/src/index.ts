@@ -9,7 +9,7 @@
  */
 
 // ─── Noyau : état, tick, événements ───────────────────────────────────────
-export { createSim, spawnEntity, speedScaleFor, step, snapshot } from './sim'
+export { createSim, spawnEntity, speedScaleFor, carrySpeedFactor, step, snapshot } from './sim'
 export type { SimState, SimOptions, Entity, MoveInput, PlayerAction } from './sim'
 export { drainEvents } from './events'
 export type { SimEvent } from './events'
@@ -24,7 +24,9 @@ export { POI,
   ALIGNMENT,
   BALANCE,
   COMBAT,
+  CARRY,
   CONVOY_LOOT,
+  ITEM_WEIGHT,
   FAUNA,
   FOOD_VALUES,
   LOOT_VALUES,
@@ -113,6 +115,8 @@ export {
   isStackable,
   stackSize,
   durabilityOf,
+  carryWeight,
+  carryRatio,
   freeRoomFor,
 } from './items'
 export type { ItemId, ItemBag, Slot, Inventory, StructureType, AccessLevel, SkillId } from './items'

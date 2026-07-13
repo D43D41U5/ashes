@@ -495,8 +495,19 @@ export class WorldScene extends Phaser.Scene {
     // LA formule de vitesse vient de /sim (`speedScaleFor`) : les conditions
     // d'endurance (sprint/blocage annulés à 0) sont prédites juste. Pendant
     // son propre wind-up, la sim immobilise — la prédiction gèle (scale 0).
+    // LE POIDS ENTRE DANS LA VITESSE — et par la MÊME formule que la sim
+    // (`speedScaleFor`, spec portage.md P10). Le client ne recopie rien : une
+    // seconde formule divergerait au premier ajustement, et une divergence de
+    // vitesse fait se téléporter l'avatar à chaque réconciliation.
+    const carried = getHud(this.registry, 'inv') ?? []
     const { scale } = speedScaleFor(
-      { hunger: this.myHunger, wounds: this.myWounds, stamina: this.myStamina, temperature: this.myTemperature },
+      {
+        hunger: this.myHunger,
+        wounds: this.myWounds,
+        stamina: this.myStamina,
+        temperature: this.myTemperature,
+        inventory: carried,
+      },
       { sprint, block, moving: dx !== 0 || dy !== 0 },
     )
     const speedScale = this.myWindup ? 0 : scale

@@ -18,7 +18,7 @@
  *
  * Déterminisme : aucun tirage. Le remplissage suit l'ordre des cases, point.
  */
-import { BALANCE, STACK_DEFAULT, STACK_SIZES, TOOL_DURABILITIES } from './balance'
+import { BALANCE, CARRY, ITEM_WEIGHT, STACK_DEFAULT, STACK_SIZES, TOOL_DURABILITIES } from './balance'
 
 export type ItemId =
   | 'wood'
@@ -99,6 +99,29 @@ export function isStackable(item: ItemId): boolean {
  */
 export function durabilityOf(item: ItemId): number {
   return TOOL_DURABILITIES[item] ?? BALANCE.TOOL_DURABILITY
+}
+
+/**
+ * LE POIDS PORTÉ (spec portage.md P1). Pur, exact, sans tirage — il entre dans la
+ * vitesse, donc dans la prédiction du client : la moindre approximation ferait
+ * diverger l'avatar de son autorité, et le ferait se téléporter à chaque
+ * réconciliation.
+ */
+export function carryWeight(inv: Inventory): number {
+  let total = 0
+  for (const slot of inv) {
+    if (slot !== null) total += ITEM_WEIGHT[slot.item] * slot.count
+  }
+  return total
+}
+
+/**
+ * La charge, en FRACTION de la capacité. `1` = plein ; au-delà, on est SURCHARGÉ
+ * (on rampe, on ne sprinte plus, l'endurance ne revient plus — mais on n'est
+ * jamais bloqué : ramasser reste possible, spec P4).
+ */
+export function carryRatio(inv: Inventory): number {
+  return carryWeight(inv) / CARRY.CAPACITY
 }
 
 export function countOf(inv: Inventory, item: ItemId): number {

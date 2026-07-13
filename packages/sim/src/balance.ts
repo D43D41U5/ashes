@@ -1054,6 +1054,70 @@ export const NPC_AI = {
   DEFENSE_IGNORE_TICKS: ticksFor(30),
 } as const
 
+/**
+ * LE PORTAGE (spec `portage.md`) — « collecter est facile, rapporter est le jeu »
+ * (GDD §8bis). Le poids de chaque objet, et le prix de la charge.
+ *
+ * Mesuré avant d'écrire la règle : le sac tenait 18 cases × 20 = **360 unités**,
+ * soit 180 murs, portés EN SPRINTANT. La distance ne coûtait rien, le sac n'était
+ * pas un choix, la route n'était pas un risque, et mourir chargé ne coûtait rien.
+ *
+ * `Record<ItemId, number>` : exhaustif par construction — un objet ajouté à la sim
+ * sans poids ne compile plus. Un objet sans poids serait un objet gratuit à porter,
+ * et le trou passerait inaperçu jusqu'au playtest.
+ *
+ * La cueillette est LÉGÈRE (fibre, baies : 0,2) ; la PIERRE et le MINERAI font mal
+ * (2 et 3). Ce sont les « hottes de minerai » du GDD — c'est la mine qui doit faire
+ * transpirer, pas la promenade en forêt.
+ */
+export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
+  wood: 1,
+  stone: 2,
+  fiber: 0.2,
+  berries: 0.2,
+  stew: 0.5,
+  raw_meat: 1,
+  cooked_meat: 0.8,
+  rope: 0.4,
+  iron_ore: 3,
+  coal: 2,
+  iron_ingot: 4,
+  components: 1.5,
+  crude_axe: 2,
+  crude_pickaxe: 2.5,
+  crude_spear: 1.5,
+  axe: 2,
+  pickaxe: 3,
+  iron_axe: 3.5,
+  iron_pickaxe: 4,
+  spear: 2,
+  hammer: 3,
+}
+
+/**
+ * Le prix de la charge (spec portage.md P4-P7). ON N'EST JAMAIS BLOQUÉ : on peut
+ * toujours ramasser, et se surcharger (décision utilisateur) — « je laisse la
+ * moitié du minerai, ou je rentre à 20 % de vitesse avec des loups dehors ? ».
+ * C'est un CHOIX ; un blocage dur ne ferait que refuser un clic.
+ */
+export const CARRY = {
+  /** Capacité de base. La besace de peau (couche 1 ter) la fera monter. */
+  CAPACITY: 30,
+  /** En dessous de cette fraction : on ne sent rien. La cueillette reste libre. */
+  COMFORT: 0.5,
+  /** Au-dessus : le sprint est REFUSÉ (pas ralenti — refusé). C'est ce qu'on sent en premier. */
+  SPRINT_MAX: 0.75,
+  /** Pente du malus, par unité de ratio au-delà du confort. */
+  MALUS_PER_RATIO: 0.8,
+  /** On rampe, mais on avance : sans plancher, une surcharge extrême fige le joueur
+   *  — et un joueur figé n'a plus de choix du tout, ce qui est l'inverse du but. */
+  SPEED_FLOOR: 0.2,
+  /** SURCHARGÉ (> 100 %), l'endurance ne revient presque plus : on ne se bat pas,
+   *  on ne fuit pas, on rentre. Le porteur est une PROIE — c'est le PvP léger des
+   *  routes que veut le GDD §8bis. */
+  OVERLOAD_STAMINA_REGEN: 0.25,
+} as const
+
 /** Durée d'un tick en secondes — le seul dt qui existe dans /sim. */
 export const TICK_DT_S = 1 / BALANCE.TICK_RATE_HZ
 

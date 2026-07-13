@@ -7,13 +7,13 @@
  * monstres — personne ne triche.
  */
 import { damageModifier, hasAggressionBetween, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
-import { ALIGNMENT, BALANCE, CENDREUX, COMBAT, FAUNA, MONSTER_DEFS, SLOTS, WEAPON_DAMAGE } from './balance'
+import { ALIGNMENT, BALANCE, CARRY, CENDREUX, COMBAT, FAUNA, MONSTER_DEFS, SLOTS, WEAPON_DAMAGE } from './balance'
 import { willRiseAsCendreux } from './cendreux'
 import { isInvulnerable } from './debug'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { heldSlot, wearHeld } from './inventory-actions'
-import { addItems, addSlot, isEmpty, makeInventory, pourInto, removeItems } from './items'
+import { addItems, addSlot, isEmpty, makeInventory, pourInto, removeItems, carryRatio } from './items'
 import { staminaPoiFactor } from './poi-discovery'
 import { rngRoll } from './rng'
 import type { Entity, SimState } from './sim'
@@ -397,6 +397,10 @@ export function advanceCombat(state: SimState): void {
   for (const entity of state.entities) {
     if (entity.windup || entity.blocking) continue
     let perS = entity.moved ? COMBAT.STAMINA_REGEN_MOVING_PER_S : COMBAT.STAMINA_REGEN_IDLE_PER_S
+    // SURCHARGÉ, ON NE FUIT PAS (spec portage.md P7) : l'endurance ne revient
+    // presque plus. Un porteur surchargé est une PROIE — il ne se bat pas, il ne
+    // fuit pas, il rentre. C'est le PvP léger des routes que veut le GDD §8bis.
+    if (carryRatio(entity.inventory) > 1) perS *= CARRY.OVERLOAD_STAMINA_REGEN
     perS *= coldStaminaRegenFactor(entity.temperature)
     perS *= staminaPoiFactor(state, entity.x, entity.y) // le Tarn est une halte
     if (!monsterIds.has(entity.id)) {

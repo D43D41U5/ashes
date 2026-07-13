@@ -10,7 +10,7 @@
  * que snapshot = JSON.stringify et que le transport Worker/réseau soit
  * trivial.
  */
-import { BALANCE, COMBAT, SLOTS, TERRAIN_GRASS, TICK_DT_S } from './balance'
+import { BALANCE, CARRY, COMBAT, SLOTS, TERRAIN_GRASS, TICK_DT_S } from './balance'
 import { moveAvatar } from './collision'
 import { advanceCombat, applyCombatAction, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
@@ -25,7 +25,7 @@ import {
 } from './economy'
 import { emitEvent, type SimEvent } from './events'
 import { applyInventoryAction, isInventoryAction, type InventoryAction } from './inventory-actions'
-import { makeInventory, type Inventory, type SkillId } from './items'
+import { carryRatio, makeInventory, type Inventory, type SkillId } from './items'
 import { createEmptyMap, type WorldMap } from './map'
 import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
@@ -317,16 +317,44 @@ export function spawnEntity(state: SimState, x: number, y: number, slots: number
  * automatiquement prédite juste ; une copie divergente côté client serait
  * une misprédiction systématique (rubber-band).
  */
+/**
+ * LE PRIX DE LA CHARGE (spec portage.md P5) : 1 tant qu'on est sous le confort,
+ * puis décroissance linéaire, plancher à `SPEED_FLOOR`.
+ *
+ * `+ − × ÷`, `min`, `max` : rien d'autre. Cette fonction entre dans la vitesse,
+ * donc dans le replay ET dans la prédiction du client — une fonction Math
+ * approximée (`pow`, `exp`) donnerait un résultat différent d'un moteur JS à
+ * l'autre, et un replay enregistré au navigateur ne rejouerait pas sur Node
+ * (invariant §2).
+ */
+export function carrySpeedFactor(ratio: number): number {
+  const over = Math.max(0, ratio - CARRY.COMFORT)
+  return Math.max(CARRY.SPEED_FLOOR, 1 - CARRY.MALUS_PER_RATIO * over)
+}
+
+/**
+ * La vitesse, TOUT COMPRIS — et c'est la SEULE formule : la sim l'applique, et la
+ * prédiction locale du client l'appelle littéralement (spec portage.md P10). Une
+ * copie côté client divergerait au premier ajustement, et une divergence de vitesse
+ * fait se téléporter l'avatar à chaque réconciliation.
+ *
+ * Le poids entre ICI, pas ailleurs. On ne SPRINTE PAS chargé (P6) : au-dessus de
+ * `SPRINT_MAX`, le sprint n'est pas ralenti — il est REFUSÉ. C'est la première
+ * chose que le joueur sent, avant même de regarder une jauge.
+ */
 export function speedScaleFor(
-  entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina' | 'temperature'>,
+  entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina' | 'temperature' | 'inventory'>,
   input: { sprint: boolean; block: boolean; moving: boolean },
 ): { scale: number; sprinting: boolean } {
   let scale = 1
   if (entity.hunger <= 0) scale *= BALANCE.HUNGER_SPEED_MALUS
   scale *= coldSpeedFactor(entity.temperature)
   if (entity.wounds.leg) scale *= COMBAT.LEG_WOUND_SPEED
+  const ratio = carryRatio(entity.inventory)
+  scale *= carrySpeedFactor(ratio)
   const blocking = input.block && entity.stamina > 0
-  const sprinting = !blocking && input.sprint && entity.stamina > 0 && input.moving
+  const sprinting =
+    !blocking && input.sprint && entity.stamina > 0 && input.moving && ratio <= CARRY.SPRINT_MAX
   if (blocking) scale *= COMBAT.BLOCK_MOVE_FACTOR
   else if (sprinting) scale *= COMBAT.SPRINT_FACTOR
   return { scale, sprinting }

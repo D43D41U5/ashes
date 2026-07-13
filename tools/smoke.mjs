@@ -554,8 +554,24 @@ const SCENARIOS = {
       ? `   ✓ le panneau d'artisanat est À CÔTÉ du sac, pas dessus`
       : `   ✗ le panneau d'artisanat chevauche la grille d'inventaire`)
     console.log(`   ce que le panneau montre : ${vue.lignes.filter(Boolean).join(' · ')}`)
+
+    // LA CHARGE (spec portage.md P11) : elle doit se LIRE. On charge le sac depuis
+    // le registry ? Non — on lit ce que l'écran AFFICHE, c'est tout l'objet du smoke.
+    const charge = await page.evaluate(() => {
+      const ui = window.__BRAISES__.scene.scene.get('ui')
+      const textes = []
+      const descendre = (o) => {
+        if (!o.visible) return
+        if (o.type === 'Container') return (o.list ?? []).forEach(descendre)
+        if (o.type === 'Text' && o.text) textes.push(String(o.text))
+      }
+      ui.children.list.forEach(descendre)
+      return textes.find((t) => t.includes('kg')) ?? null
+    })
+    console.log(charge ? `   ✓ la charge s'affiche : « ${charge} »` : `   ✗ la charge ne s'affiche NULLE PART`)
+
     await page.screenshot({ path: `${OUT}/craft.png` })
-    return vue
+    return { ...vue, charge }
   },
 
   /**
