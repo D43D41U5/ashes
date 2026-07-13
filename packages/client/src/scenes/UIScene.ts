@@ -6,12 +6,12 @@
  */
 import { BALANCE, zoneAt, type VillageTask, type WorldMap } from '@braises/sim'
 import Phaser from 'phaser'
-import { getHud } from '../hud-state'
+import { getHud, setHud } from '../hud-state'
 import { drainPickups, queueAction } from './world/hud-bridge'
 import { TILE_PX } from '../render/framing'
-import { createHotbar, hotbarBottom, type Hotbar } from './ui/hotbar'
+import { createHotbar, type Hotbar } from './ui/hotbar'
 import { createFatalPanel, type FatalPanel } from './ui/fatal'
-import { createInventoryPanel, type InventoryPanel } from './ui/inventory-panel'
+import { createInventoryPanel, inventoryGeometry, type InventoryPanel } from './ui/inventory-panel'
 import { createCraftPanel, type CraftPanel } from './ui/craft-panel'
 import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
 import { createLoadingScreen, type LoadingScreen } from './ui/loading'
@@ -136,12 +136,20 @@ export class UIScene extends Phaser.Scene {
     this.inventoryPanel = createInventoryPanel(this, (action) => queueAction(this.registry, action))
     // LE CRAFT : le panneau (à droite du sac, ouvert avec TAB) et la FILE (toujours
     // visible — le travail en cours est un état du personnage, pas un détail de menu).
-    this.craftPanel = createCraftPanel(
-      this,
-      (action) => queueAction(this.registry, action),
-      this.scale.width / 2 + 40,
-      hotbarBottom(this),
-    )
+    // À CÔTÉ de la grille d'inventaire, jamais dessus : on lit sa géométrie, on ne
+    // la redevine pas (c'était le bug — le panneau tombait en plein milieu du sac).
+    const inv = inventoryGeometry(this)
+    this.craftPanel = createCraftPanel(this, (action) => queueAction(this.registry, action), {
+      left: Math.min(inv.right + 40, this.scale.width - 316),
+      top: inv.top,
+      bottom: inv.bottom,
+    })
+    // LE CLAVIER DU CHAMP DE RECHERCHE. Tant qu'il tape, le jeu ne reçoit plus
+    // rien (`uiTyping`) : sans ça, taper « hache » ferait marcher le personnage.
+    this.input.keyboard?.on('keydown', (ev: KeyboardEvent) => {
+      if (this.craftPanel.handleKey(ev.key)) ev.preventDefault()
+      setHud(this.registry, 'uiTyping', this.craftPanel.isTyping())
+    })
     this.craftQueueView = createCraftQueueView(
       this,
       (action) => queueAction(this.registry, action),
@@ -475,9 +483,11 @@ export class UIScene extends Phaser.Scene {
     this.hotbar.setVisible(!inventoryOpen)
     this.inventoryPanel.setVisible(inventoryOpen)
     this.craftPanel.setVisible(inventoryOpen)
+    if (!inventoryOpen) setHud(this.registry, 'uiTyping', false)
     if (inventoryOpen) {
       this.inventoryPanel.update(inv, activeSlot, getHud(this.registry, 'openContainerView') ?? null)
       this.craftPanel.update(inv, getHud(this.registry, 'stationsInRange') ?? [])
+      setHud(this.registry, 'uiTyping', this.craftPanel.isTyping())
     }
     // La file, elle, se voit TOUJOURS : une file bouchée (sac plein) ou en pause
     // (station quittée) doit se remarquer sans aller ouvrir un menu (spec F15).

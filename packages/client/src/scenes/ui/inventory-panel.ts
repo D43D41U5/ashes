@@ -182,6 +182,24 @@ interface Cell {
 
 /** Largeur d'une grille de `COLS` colonnes. */
 const gridWidth = (): number => COLS * CELL + (COLS - 1) * GAP
+
+/**
+ * LA GÉOMÉTRIE DE L'ÉCRAN D'INVENTAIRE, en coordonnées ÉCRAN — la seule source.
+ *
+ * Le panneau d'artisanat se pose À CÔTÉ de cette grille : sans repère partagé, il
+ * se peignait PAR-DESSUS (posé à `largeur/2 + 40`, il tombait en plein milieu
+ * d'une grille qui s'étend de `largeur/2 − 191` à `largeur/2 + 191`). La formule
+ * de calage vit donc ICI, une fois, et `createInventoryPanel` la lit comme les
+ * autres — deux copies auraient divergé au premier ajustement de case.
+ */
+export function inventoryGeometry(scene: Phaser.Scene): { left: number; right: number; top: number; bottom: number } {
+  const W = scene.scale.width
+  const bottom = hotbarBottom(scene)
+  // Rangées du sac + gouttière + rangée de ceinture (qui reste EXACTEMENT là où
+  // la vraie barre de ceinture vit déjà à l'écran).
+  const height = BAG_ROWS * (CELL + GAP) + BELT_GAP + CELL
+  return { left: W / 2 - gridWidth() / 2, right: W / 2 + gridWidth() / 2, top: bottom - height, bottom }
+}
 /** L'icône dans une case — multiple entier de sa taille native (`pixelArt`). */
 const ICON_IN_CELL = Math.max(1, Math.floor((CELL - 14) / ITEM_ICON_PX)) * ITEM_ICON_PX
 
@@ -203,7 +221,7 @@ export function createInventoryPanel(scene: Phaser.Scene, send: (a: PlayerAction
    * la ceinture, et la vraie barre s'efface derrière (cf. `hotbar.setVisible`).
    * D'où ce calage par le bas, et un groupe joueur qui ne se déplace JAMAIS.
    */
-  const PLAYER_Y = BOTTOM_Y - CELL / 2 - gy(BAG_ROWS) - BELT_GAP
+  const PLAYER_Y = inventoryGeometry(scene).top - H / 2
 
   // Rust n'a PAS de panneau encadré : les cases flottent sur le monde, qui reste
   // visible et seulement assombri. On remplace donc le cadre brun par un voile.

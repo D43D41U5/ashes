@@ -485,6 +485,43 @@ const SCENARIOS = {
   },
 
   /**
+   * L'ÉCRAN D'ARTISANAT (spec craft-file F14-F15). On OUVRE le sac dans le vrai
+   * jeu et on regarde : le panneau doit tenir dans l'écran, ne pas chevaucher la
+   * grille d'inventaire, et ne montrer que ce qu'on peut faire ICI.
+   *
+   * On ne se contente pas d'une capture : on relit les objets peints par la scène
+   * UI et on VÉRIFIE leurs bornes. Une capture qu'un humain doit regarder n'est
+   * pas un garde-fou — elle ne casse jamais.
+   */
+  async craft(page) {
+    await page.keyboard.press('Tab')
+    await page.waitForTimeout(500)
+
+    const vue = await page.evaluate(() => {
+      const scene = window.__BRAISES__.scene
+      const ui = scene.scene.get('ui')
+      const W = scene.scale.width
+      const H = scene.scale.height
+      // Tout ce que l'UI peint et qui déborde de l'écran : c'est ça, « ça s'affiche mal ».
+      const deborde = []
+      for (const o of ui.children.list) {
+        if (!o.visible || !o.getBounds) continue
+        const b = o.getBounds()
+        if (b.width === 0 || b.height === 0) continue
+        if (b.left < -2 || b.right > W + 2 || b.top < -2 || b.bottom > H + 2) {
+          deborde.push(`${o.type}@(${Math.round(b.left)},${Math.round(b.top)}) ${Math.round(b.width)}×${Math.round(b.height)}`)
+        }
+      }
+      return { W, H, deborde: deborde.slice(0, 12), total: deborde.length }
+    })
+
+    console.log(`écran ${vue.W}×${vue.H} — objets d'UI qui DÉBORDENT : ${vue.total}`)
+    for (const d of vue.deborde) console.log(`   ✗ ${d}`)
+    await page.screenshot({ path: `${OUT}/craft.png` })
+    return vue
+  },
+
+  /**
    * LA PLANCHE D'ÉCHELLE : les 26 lieux, alignés sur le sol, à côté d'un arbre
    * et d'un avatar. Composée à partir des VRAIES textures du jeu (lues dans le
    * gestionnaire de textures de Phaser) — un dessin refait à côté mentirait.

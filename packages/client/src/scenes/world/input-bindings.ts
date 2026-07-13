@@ -86,8 +86,25 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   const kb = scene.input.keyboard!
   const K = Phaser.Input.Keyboard.KeyCodes as Record<string, number>
   const grab = (names: readonly string[]): Phaser.Input.Keyboard.Key[] => names.map((n) => kb.addKey(K[n]!, false))
-  /** Câble un handler `down` sur chaque alias d'une action (KEYMAP). */
+  /**
+   * LE CHAMP DE RECHERCHE A-T-IL LE CLAVIER ? Si oui, plus AUCUNE touche ne part
+   * au jeu : taper « hache » dans le panneau de craft ferait sinon marcher le
+   * personnage (Z, Q, S, D sont des lettres) et « journal » ouvrirait le journal.
+   */
+  const typing = (): boolean => Boolean(getHud(scene.registry, 'uiTyping'))
+
+  /** Câble un handler `down` sur chaque alias d'une action (KEYMAP). MUET tant que
+   *  le champ de recherche a le clavier. */
   const onDown = (names: readonly string[], fn: () => void): void => {
+    for (const n of names) kb.addKey(K[n]!, false).on('down', () => {
+      if (typing()) return
+      fn()
+    })
+  }
+  /** …sauf TAB, qui doit TOUJOURS pouvoir refermer l'écran. Une touche de sortie
+   *  qu'on peut se retrouver à ne plus pouvoir presser est un piège : on tape dans
+   *  la recherche, on veut fermer le sac, et plus rien ne répond. */
+  const onDownAlways = (names: readonly string[], fn: () => void): void => {
     for (const n of names) kb.addKey(K[n]!, false).on('down', fn)
   }
   // Le pointeur en monde PLAT, puis corrigé de l'élévation : la tuile réellement
@@ -129,7 +146,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   // conteneur à looter — le plus proche à portée, un cadavre primant sur un
   // coffre (on loote ce qu'on vient de tuer) ; à la FERMETURE on l'oublie.
   kb.addCapture(KEYMAP.toggleInventory[0])
-  onDown(KEYMAP.toggleInventory, () => {
+  onDownAlways(KEYMAP.toggleInventory, () => {
     const opening = !getHud(scene.registry, 'inventoryOpen')
     setHud(scene.registry, 'inventoryOpen', opening)
     setHud(scene.registry, 'openContainer', opening ? nearestContainer(deps) : null)

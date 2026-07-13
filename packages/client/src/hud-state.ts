@@ -73,6 +73,11 @@ export interface HudState {
   selected: Buildable | null
   /** L'écran d'inventaire (TAB) est-il ouvert ? (l'UI arrive au chantier 7). */
   inventoryOpen: boolean
+  /** LE CHAMP DE RECHERCHE DU CRAFT A LE CLAVIER. Tant qu'il l'a, plus une touche
+   *  ne part au jeu : taper « hache » ferait sinon MARCHER le personnage (Z, Q, S,
+   *  D sont des lettres) et « journal » ouvrirait le journal. Un champ de saisie
+   *  qui ne prend pas le clavier n'est pas un champ de saisie. */
+  uiTyping: boolean
   /** Le conteneur ouvert à côté du sac (coffre/cadavre), ou null. Posé par
    *  input-bindings à l'ouverture de TAB (le plus proche à portée). */
   openContainer: { kind: 'structure' | 'corpse'; id: number } | null

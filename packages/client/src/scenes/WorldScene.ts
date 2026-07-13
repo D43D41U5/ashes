@@ -473,9 +473,13 @@ export class WorldScene extends Phaser.Scene {
       this.ambientLife?.update(this.cameras.main, time / 1000, deltaMs / 1000, 1 - day)
     }
 
-    const dx = this.axis('right', 'left')
-    const dy = this.axis('down', 'up')
-    const sprint = this.inputs.sprintKeys.some((k) => k.isDown)
+    // ON NE MARCHE PAS EN TAPANT. Le champ de recherche du panneau de craft prend
+    // le clavier ; sans cette garde, écrire « hache » enverrait Z-A-H-E au
+    // déplacement — le personnage partirait en courant pendant qu'on cherche.
+    const typing = Boolean(getHud(this.registry, 'uiTyping'))
+    const dx = typing ? 0 : this.axis('right', 'left')
+    const dy = typing ? 0 : this.axis('down', 'up')
+    const sprint = !typing && this.inputs.sprintKeys.some((k) => k.isDown)
     // La PARADE est débranchée du clavier (2026-07-12) : plus personne ne peut
     // l'armer. On continue de la transmettre — la sim, la prédiction et
     // `speedScaleFor` la connaissent — mais elle vaut désormais toujours `false`.
