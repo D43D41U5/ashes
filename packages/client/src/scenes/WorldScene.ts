@@ -634,8 +634,34 @@ export class WorldScene extends Phaser.Scene {
     publishError(this.registry, message, now)
   }
 
+  /**
+   * LES TROIS PHRASES DU DÉBUT. Un jeu exigeant DOIT dire ses règles — sinon il
+   * n'est pas exigeant, il est obscur, et le joueur meurt sans savoir pourquoi.
+   *
+   * Trois, pas trente : le strict nécessaire pour ne pas mourir la première nuit.
+   * Elles ne se répètent jamais (ce serait du bruit), et elles arrivent au moment
+   * où elles servent — pas dans un mur de texte qu'on ferme sans lire.
+   */
+  private hintsDone = 0
+
+  private checkHints(): void {
+    const now = this.time.now
+    if (this.hintsDone === 0 && now > 2000) {
+      this.hintsDone = 1
+      publishError(this.registry, 'Clic gauche : récolter. TAB : votre sac et l’artisanat.', now)
+    } else if (this.hintsDone === 1 && now > 12000) {
+      this.hintsDone = 2
+      publishError(this.registry, 'Ramassez du bois : il vous faut un FEU avant la nuit.', now)
+    } else if (this.hintsDone === 2 && now > 24000) {
+      this.hintsDone = 3
+      // LA règle du jeu, dite une fois, en clair. Le cru ne nourrit plus un homme.
+      publishError(this.registry, 'Le feu cuit, réchauffe, et tient les loups à distance.', now)
+    }
+  }
+
   private checkVitals(): void {
     if (!getHud(this.registry, 'worldReady')) return
+    this.checkHints()
     // LA FAIM TUE désormais : à 0, les PV fondent. On le dit, fort.
     if (this.myHunger <= 0) this.warn('famine', 'VOUS MOUREZ DE FAIM.', 6000)
     else if (this.myHunger < 25) this.warn('faim', 'La faim vous tenaille — il faut manger.', 45000)

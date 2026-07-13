@@ -490,9 +490,16 @@ export class UIScene extends Phaser.Scene {
     if (!characterMenuOpen) setHud(this.registry, 'uiTyping', false)
     if (characterMenuOpen) {
       this.inventoryPanel.update(inv, activeSlot, getHud(this.registry, 'openContainerView') ?? null)
-      this.craftPanel.update(inv, getHud(this.registry, 'stationsInRange') ?? [])
+      // LE MARTEAU FAIT LE BÂTISSEUR : le rayon CONSTRUCTION n'existe que s'il est
+      // EN MAIN (la sim refuserait sinon — le panneau ne ment pas).
+      const slot = getHud(this.registry, 'activeSlot') ?? -1
+      const marteau = slot >= 0 && inv[slot]?.item === 'hammer'
+      this.craftPanel.update(inv, getHud(this.registry, 'stationsInRange') ?? [], marteau)
       setHud(this.registry, 'uiTyping', this.craftPanel.isTyping())
     }
+    // La construction ARMÉE part au monde : c'est WorldScene qui peint le fantôme
+    // et qui pose au clic. L'UI décide, la scène du monde exécute.
+    setHud(this.registry, 'selected', this.craftPanel.armed())
     // La file, elle, se voit TOUJOURS : une file bouchée (sac plein) ou en pause
     // (station quittée) doit se remarquer sans aller ouvrir un menu (spec F15).
     this.craftQueueView.setVisible(true)

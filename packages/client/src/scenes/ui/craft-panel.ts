@@ -29,13 +29,31 @@ import {
   type RecipeId,
 } from '@braises/sim'
 import type Phaser from 'phaser'
-import type { StationId } from '../../hud-state'
+import type { Buildable, StationId } from '../../hud-state'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { INK, SECTION_TITLE, textStyle } from './typography'
 
 // ─── La logique (pure, testée — craft-panel.test.ts) ─────────────────────────
 
-export type CraftCategory = 'campement' | 'outils' | 'armes' | 'survie' | 'materiaux'
+export type CraftCategory = 'campement' | 'construction' | 'outils' | 'armes' | 'survie' | 'materiaux'
+
+/**
+ * LES CONSTRUCTIONS. Elles n'apparaissent QUE le marteau en main — c'est la règle
+ * de la sim (`recolte.md` G12 : bâtir exige le marteau TENU), et le panneau ne fait
+ * que la refléter : montrer des murs qu'on ne peut pas poser serait un mensonge.
+ *
+ * Cliquer une construction ARME le fantôme (on la pose ensuite d'un clic dans le
+ * monde) ; recliquer la même DÉSARME. C'est la seule bascule du jeu, et elle est
+ * là où le joueur regarde — pas sur une touche qu'on aurait débranchée.
+ */
+export const BUILDABLES = ['wall', 'door', 'chest', 'workshop', 'furnace'] as const
+export const BUILDABLE_LABEL: Record<(typeof BUILDABLES)[number], string> = {
+  wall: 'Mur',
+  door: 'Porte',
+  chest: 'Coffre',
+  workshop: 'Atelier',
+  furnace: 'Four',
+}
 
 /**
  * LE FEU N'EST PAS UNE RECETTE — c'est une STRUCTURE, et pourtant sa place est ici.
@@ -56,6 +74,7 @@ export const FEU = {
 
 export const CATEGORY_LABEL: Record<CraftCategory, string> = {
   campement: 'CAMPEMENT',
+  construction: 'CONSTRUCTION',
   outils: 'OUTILS',
   armes: 'ARMES',
   survie: 'SURVIE',
@@ -102,6 +121,7 @@ export type CraftRow =
   | { kind: 'header'; label: string }
   | { kind: 'recipe'; id: RecipeId }
   | { kind: 'fire' }
+  | { kind: 'build'; structure: (typeof BUILDABLES)[number] }
 
 /** Sans accents ni casse : taper « epieu » doit trouver « Épieu taillé ». */
 function fold(s: string): string {
@@ -119,7 +139,12 @@ function fold(s: string): string {
  * Une catégorie vide ne pose pas d'en-tête : un rayon sans article n'est pas un
  * rayon, c'est du bruit.
  */
-export function craftRows(stations: readonly StationId[], query: string): CraftRow[] {
+export function craftRows(
+  stations: readonly StationId[],
+  query: string,
+  /** Le marteau est-il EN MAIN ? Sans lui, pas de constructions (la sim refuserait). */
+  hammer = false,
+): CraftRow[] {
   const q = fold(query.trim())
   const visible = (Object.keys(RECIPES) as RecipeId[]).filter((id) => {
     const station = RECIPES[id].station
@@ -137,6 +162,16 @@ export function craftRows(stations: readonly StationId[], query: string): CraftR
         rows.push({ kind: 'header', label: CATEGORY_LABEL.campement })
         rows.push({ kind: 'fire' })
       }
+      continue
+    }
+    if (cat === 'construction') {
+      // LE MARTEAU FAIT LE BÂTISSEUR (recolte.md G12) : sans lui en main, ce rayon
+      // n'existe pas. Le panneau ne montre jamais ce que la sim refuserait.
+      if (!hammer) continue
+      const batir = BUILDABLES.filter((b) => q === '' || fold(BUILDABLE_LABEL[b]).includes(q))
+      if (batir.length === 0) continue
+      rows.push({ kind: 'header', label: CATEGORY_LABEL.construction })
+      for (const structure of batir) rows.push({ kind: 'build', structure })
       continue
     }
     const ids = visible.filter((id) => RECIPE_CATEGORY[id] === cat)
@@ -185,7 +220,9 @@ const SEARCH = textStyle('label', 'body', false)
 const STATION_LABEL: Record<StationId, string> = { fire: 'au Feu', workshop: "à l'atelier", furnace: 'au four' }
 
 export interface CraftPanel {
-  update(inv: Inventory, stations: StationId[]): void
+  update(inv: Inventory, stations: StationId[], hammer: boolean): void
+  /** La construction ARMÉE (le fantôme la suit), ou `null`. */
+  armed(): Buildable | null
   setVisible(v: boolean): void
   /** Le champ de recherche a-t-il le clavier ? (le déplacement se coupe alors) */
   isTyping(): boolean
@@ -198,6 +235,8 @@ export function createCraftPanel(
   send: (a: PlayerAction) => void,
   bounds: { left: number; top: number; bottom: number },
 ): CraftPanel {
+  /** La construction armée : le fantôme la suit, un clic dans le monde la pose. */
+  let armed: Buildable | null = null
   const x = bounds.left
   const top = bounds.top
   const height = bounds.bottom - bounds.top
@@ -210,6 +249,7 @@ export function createCraftPanel(
   let rows: CraftRow[] = []
   let inv: Inventory = []
   let stations: StationId[] = []
+  let hammer = false
 
   const title = scene.add.text(x, top - 26, 'ARTISANAT', TITLE).setOrigin(0, 0).setScrollFactor(0).setDepth(PANEL_DEPTH)
 
@@ -263,6 +303,15 @@ export function createCraftPanel(
       // Un clic qui part se faire refuser pollue le flux d'événements : la sim
       // n'est pas une poubelle (recolte.md G7). Sans les matériaux, on ne tire pas.
       if (bg.getData('ready') !== true) return
+      const structure = bg.getData('build') as Buildable | undefined
+      if (structure) {
+        // On ARME (ou on DÉSARME en recliquant) : le fantôme suit le curseur, et
+        // c'est le clic dans le MONDE qui pose. Une bascule, là où le joueur
+        // regarde — pas sur une touche qu'on a débranchée.
+        armed = armed === structure ? null : structure
+        draw()
+        return
+      }
       if (bg.getData('fire') === true) return send(FEU.action)
       const id = bg.getData('recipe') as RecipeId | undefined
       if (id) send({ type: 'craft', recipeId: id })
@@ -283,7 +332,33 @@ export function createCraftPanel(
       const slot = pool[i]
       if (!slot) return // la liste dépasse le banc : voir la garde plus bas
       const h = row.kind === 'header' ? HEADER_H : ROW_H
-      if (row.kind === 'fire') {
+      if (row.kind === 'build') {
+        const cout = STRUCTURE_COSTS[row.structure]
+        const ready = hasItems(inv, cout)
+        const arme = armed === row.structure
+        slot.header.setVisible(false)
+        slot.bg
+          .setVisible(true)
+          .setY(y + h / 2)
+          .setData('build', row.structure)
+          .setData('recipe', undefined)
+          .setData('fire', false)
+          .setData('ready', ready)
+        // L'ARMÉ se VOIT : sinon le joueur clique dans le monde sans savoir pourquoi
+        // il pose un mur — ou pourquoi il n'en pose pas.
+        slot.bg.setStrokeStyle(arme ? 2 : 1, arme ? 0xe8c66a : ready ? 0x6b5a3a : 0x3a3a44)
+        slot.icon.setVisible(true).setTexture(itemIconKey('stone')).setY(y + h / 2).setAlpha(ready ? 1 : 0.35)
+        slot.name
+          .setVisible(true)
+          .setText(arme ? `${BUILDABLE_LABEL[row.structure]} — ARMÉ` : BUILDABLE_LABEL[row.structure])
+          .setY(y + 8)
+          .setColor(ready ? INK.body : INK.faint)
+        slot.cost
+          .setVisible(true)
+          .setText(`${bagLine(cout)}  —  cliquez au sol`)
+          .setY(y + 26)
+          .setColor(ready ? INK.dim : INK.faint)
+      } else if (row.kind === 'fire') {
         const ready = hasItems(inv, FEU.inputs)
         slot.header.setVisible(false)
         slot.bg.setVisible(true).setY(y + h / 2).setData('fire', true).setData('recipe', undefined).setData('ready', ready)
@@ -351,14 +426,20 @@ export function createCraftPanel(
       else return false
       drawSearch()
       scroll = 0
-      rows = craftRows(stations, query)
+      rows = craftRows(stations, query, hammer)
       draw()
       return true
     },
-    update(nextInv, nextStations) {
+    armed: () => armed,
+    update(nextInv, nextStations, nextHammer) {
       inv = nextInv
       stations = nextStations
-      rows = craftRows(stations, query)
+      // Ranger le marteau DÉSARME (recolte.md G14) : le mode ne survit pas à l'outil
+      // qui le porte — sinon le fantôme mentirait, et le clic partirait se faire
+      // refuser par la sim.
+      if (!nextHammer && armed !== null) armed = null
+      hammer = nextHammer
+      rows = craftRows(stations, query, hammer)
       draw()
     },
     setVisible(v) {

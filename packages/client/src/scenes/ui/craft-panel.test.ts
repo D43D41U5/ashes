@@ -116,3 +116,29 @@ describe('le panneau d’artisanat : ce qu’il montre', () => {
 function CATEGORY_LABELS_OF(id: RecipeId): string {
   return CATEGORY_LABEL[RECIPE_CATEGORY[id]]
 }
+
+/**
+ * LE RAYON CONSTRUCTION. La sim exige le marteau EN MAIN pour bâtir (recolte.md
+ * G12) : le panneau ne doit donc JAMAIS montrer des murs qu'on ne peut pas poser.
+ * Un menu qui propose ce que le jeu refuse est un menu qui ment.
+ */
+describe('le panneau : bâtir', () => {
+  const stations: readonly ('fire' | 'workshop' | 'furnace')[] = []
+
+  it('SANS marteau : pas de rayon CONSTRUCTION du tout', () => {
+    const rows = craftRows(stations, '', false)
+    expect(rows.some((r) => r.kind === 'build')).toBe(false)
+    expect(rows.flatMap((r) => (r.kind === 'header' ? [r.label] : []))).not.toContain('CONSTRUCTION')
+  })
+
+  it('LE MARTEAU EN MAIN : le rayon s’ouvre — mur, porte, coffre, atelier, four', () => {
+    const rows = craftRows(stations, '', true)
+    const batir = rows.flatMap((r) => (r.kind === 'build' ? [r.structure] : []))
+    expect(batir).toEqual(['wall', 'door', 'chest', 'workshop', 'furnace'])
+  })
+
+  it('la recherche filtre AUSSI les constructions', () => {
+    const rows = craftRows(stations, 'coffre', true)
+    expect(rows.flatMap((r) => (r.kind === 'build' ? [r.structure] : []))).toEqual(['chest'])
+  })
+})
