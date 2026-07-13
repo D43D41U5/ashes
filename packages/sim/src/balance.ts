@@ -1122,8 +1122,19 @@ export const ALIGNMENT = {
  * et toujours savoir ce qu'il aurait dû faire.
  */
 export const NIGHT_HUNT = {
-  /** Probabilité par minute réelle, par acte. Le Grand Froid affame les loups. */
-  CHANCE_PER_MIN: [0.3, 0.5, 0.8],
+  /**
+   * Probabilité par minute réelle, par acte. Le Grand Froid affame les loups.
+   *
+   * CALIBRÉ SUR LE COMBAT RÉEL, pas au doigt mouillé. Un loup : 35 PV, 14 dégâts,
+   * et il court PLUS VITE que nous — on ne le distance pas, on le combat ou on
+   * rejoint un feu. À mains nues (6 dégâts, un coup/seconde) on en tue UN, de
+   * justesse, à ~30 PV près. DEUX, jamais.
+   *
+   * L'acte I est donc doux (~2 rôdeurs sur une nuit de 18 minutes) : la première
+   * nuit doit être un DANGER, pas une exécution. Le Grand Froid, lui, serre la vis —
+   * mais à ce moment-là le joueur a un épieu, un feu, et il sait pourquoi.
+   */
+  CHANCE_PER_MIN: [0.12, 0.3, 0.55],
   /** Rôdeurs simultanés sur une même proie. On peut perdre ; on ne doit pas être noyé. */
   MAX_ALIVE: 2,
   /** Ils naissent à cette distance : hors de vue, mais on les voit VENIR. */
