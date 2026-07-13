@@ -369,7 +369,11 @@ export class WorldScene extends Phaser.Scene {
    * barre coincée. Découpées, elles se jouent une par frame (voir `pumpBuild`) : le
    * navigateur reprend la main entre chaque, la barre monte, le texte tourne.
    */
+  /** LES COINS DE CHASSE (spec faune R17) — donnée de monde, reçue une fois. */
+  grounds: { x: number; y: number }[] = []
+
   private onReady(msg: ReadyMessage): void {
+    this.grounds = msg.grounds ?? []
     if (msg.protocolVersion !== PROTOCOL_VERSION) {
       // Rien ne sera jouable : on ne sait pas lire ce que cet hôte enverra. Rupture.
       setHud(this.registry, 'fatal', {
@@ -572,8 +576,20 @@ export class WorldScene extends Phaser.Scene {
 
     this.hitFx.update(time)
     this.ground.render(this.cameras.main)
+    // LE VENT DE LA SIM (spec chasse C17) : le décor plie DANS SON SENS. C'est
+    // la seule affordance de l'odorat — et elle doit exister, sans quoi la règle
+    // « approcher sous le vent » serait une injustice invisible (C19).
+    if (this.clutter) this.clutter.wind = this.view.wind
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y, time)
+    // LE SANG AU SOL (spec chasse C9) : la piste, et son horloge — les gouttes
+    // fraîches sont vives, les vieilles pâlissent. C'est tout ce que le chasseur
+    // a pour savoir s'il suit une bête ou un souvenir.
+    this.view.renderBlood()
+    // LES TERRIERS (spec chasse C16) : le trou EXISTE à l'écran, sans quoi le
+    // lapin qui s'y engouffre s'évapore — et la géométrie de la chasse au lapin
+    // (couper la ligne du terrier) resterait une règle invisible.
+    this.view.renderBurrows(time)
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
       this.shade.render(this.cameras.main, hour) // ombre du relief selon le soleil
@@ -597,6 +613,9 @@ export class WorldScene extends Phaser.Scene {
     const dx = typing ? 0 : this.axis('right', 'left')
     const dy = typing ? 0 : this.axis('down', 'up')
     const sprint = !typing && this.inputs.sprintKeys.some((k) => k.isDown)
+    // LE PAS LENT (spec chasse C2) : il prime sur le sprint dans la sim — on
+    // transmet les deux tels quels, c'est `speedScaleFor` qui arbitre.
+    const sneak = !typing && this.inputs.sneakKeys.some((k) => k.isDown)
     // La PARADE est débranchée du clavier (2026-07-12) : plus personne ne peut
     // l'armer. On continue de la transmettre — la sim, la prédiction et
     // `speedScaleFor` la connaissent — mais elle vaut désormais toujours `false`.
@@ -625,19 +644,24 @@ export class WorldScene extends Phaser.Scene {
         temperature: this.myTemperature,
         inventory: carried,
       },
-      { sprint, block, moving: dx !== 0 || dy !== 0, charging: this.myCharging },
+      { sprint, block, moving: dx !== 0 || dy !== 0, charging: this.myCharging, sneak },
     )
     const speedScale = this.myWindup ? 0 : scale
+    // `sneak` n'entre pas dans PredictInput : la prédiction rejoue le
+    // `speedScale` bufferisé, qui le contient déjà — mais l'HÔTE, lui, doit
+    // savoir (l'allure décide du bruit, et la sim pose `Entity.gait`).
     const input: PredictInput = { dx, dy, sprint, block }
     for (const buffered of predictFrame(this.prediction, world, deltaMs / 1000, input, speedScale)) {
-      this.send({ type: 'input', seq: buffered.seq, dx, dy, sprint, block })
+      this.send({ type: 'input', seq: buffered.seq, dx, dy, sprint, sneak, block })
     }
     // Rendu (R6-R7) : l'écart de correction résiduel fond chaque frame, puis le
     // sprite s'affiche à l'ancre extrapolée du reliquat sous-tick + cet écart —
     // fluide, sans latence, la sim restant exacte.
     decayRenderOffset(this.prediction, RENDER_OFFSET_DECAY)
     const render = renderPosition(this.prediction, world, input, speedScale)
-    this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player')
+    // La silhouette du rampeur se TASSE (spec chasse C19) — la sienne aussi :
+    // le joueur doit SENTIR sa posture sans regarder une jauge.
+    this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player', sneak)
 
     // La tuile réellement sous le curseur (unproject), pas la projection plate —
     // elle nourrit la visée (`aim`, plus haut), la caméra de visée et le debug.
@@ -891,6 +915,12 @@ export class WorldScene extends Phaser.Scene {
         // pis-aller assumé, la vraie place de cette ligne est un cor dans le noir.
         const meute = event.packSize > 1 ? `${event.packSize} loups` : 'Un loup'
         publishError(this.registry, `Un hurlement, tout près. ${meute} vous ont choisi.`, this.time.now)
+      } else if (event.type === 'prey_escaped') {
+        // LE LAPIN RENTRE CHEZ LUI (spec chasse C16). Il disparaît — mais le TROU,
+        // lui, reste un moment : sans ça, la bête s'évaporerait et ce serait le
+        // décor qui avoue. Le joueur doit VOIR où elle est passée, et comprendre
+        // qu'il fallait couper la ligne. Purement visuel : la sim n'en sait rien.
+        this.view.markEscape(event.x, event.y, this.time.now)
       }
       if (CHRONICLE_TYPES.has(event.type)) {
         this.eventLog.push(event)

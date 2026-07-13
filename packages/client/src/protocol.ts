@@ -39,6 +39,8 @@ export interface InputMessage {
   dx: -1 | 0 | 1
   dy: -1 | 0 | 1
   sprint: boolean
+  /** Le PAS LENT (spec chasse C2) : la sim en dérive `Entity.gait` — le bruit. */
+  sneak: boolean
   block: boolean
 }
 
@@ -87,6 +89,13 @@ export interface ReadyMessage {
    * changements de stock (`nodeDeltas`) — découple le nombre de nœuds du coût
    * par tick, condition des forêts denses. */
   nodes: ResourceNode[]
+  /**
+   * LES COINS DE CHASSE (spec faune R17) — les lieux fixes où le gibier vit.
+   * Envoyés UNE fois, comme la carte et les nœuds : c'est une donnée de MONDE,
+   * pas d'état. (Le client connaît déjà chaque buisson de baies de la vallée ;
+   * le modèle de confiance ne change pas.)
+   */
+  grounds: { x: number; y: number }[]
   calendarScale: number
   playerSpawn: { x: number; y: number }
 }
@@ -128,6 +137,12 @@ export interface SnapshotMessage {
   npcs: Npc[]
   monsters: Monster[]
   corpses: Corpse[]
+  /** LE SANG AU SOL (spec chasse C9) : les gouttes que le client dessine et efface. */
+  blood: { x: number; y: number; tick: number }[]
+  /** LE VENT (C17) : il doit SE VOIR — une règle invisible est une injustice. */
+  wind: { x: number; y: number }
+  /** LES PILES AU SOL (C18) : l'appât posé, la viande jetée, la charge larguée. */
+  groundItems: { id: number; x: number; y: number; item: string; count: number; expiresAt: number }[]
   events: SimEvent[]
 }
 

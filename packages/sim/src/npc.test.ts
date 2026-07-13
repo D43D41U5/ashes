@@ -413,6 +413,7 @@ describe('le raid, sac plein, sur un cadavre (livelock du loot)', () => {
       y: e.y,
       inventory: inventoryOf(SLOTS.CORPSE, { wood: 40 }),
       decayAt: sim.tick + 100_000,
+      diedAt: 0,
     })
     sim.nextCorpseId += 1
     sim.npcs[0]!.errand = { kind: 'raid', targetVillageId: sim.villages[0]!.id, stage: 'loot' }

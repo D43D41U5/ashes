@@ -22,6 +22,15 @@ export const KEYMAP = {
   moveLeft: ['Q', 'A', 'LEFT'],
   moveRight: ['D', 'RIGHT'],
   sprint: ['SHIFT'],
+  /** LE PAS LENT (spec chasse C2) : discret pour la faune, moitié de la vitesse. */
+  sneak: ['C'],
+  /**
+   * JETER CE QU'ON TIENT (spec chasse C18). Zéro UI : la case active tombe au
+   * sol, une unité à la fois. C'est le geste de l'APPÂT (poser des baies et
+   * attendre), du JET DE VIANDE à une meute qui vous serre (faune R15, promis par
+   * le GDD §9bis et jamais tenu), et de l'allègement d'un porteur en fuite.
+   */
+  dropHeld: ['G'],
   // Les ÉCRANS, et eux seuls (décision utilisateur, 2026-07-12).
   toggleJournal: ['J'],
   toggleMap: ['M'],

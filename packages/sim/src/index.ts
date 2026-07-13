@@ -29,6 +29,7 @@ export { POI,
   ITEM_WEIGHT,
   FAUNA,
   FOOD_VALUES,
+  HUNT,
   LOOT_VALUES,
   MONSTER_DEFS,
   NIGHT_HUNT,
@@ -108,7 +109,8 @@ export { advanceNpcs } from './npc'
 export type { Npc, NpcTaskState } from './npc'
 export { advanceMonsters } from './monsters'
 export type { Monster } from './monsters'
-export { isPrey, isPredator, isWild, activityAt, predatorBias } from './faune'
+export { isPrey, isPredator, isWild, activityAt, predatorBias, sentinelOf, wolfVigor } from './faune'
+export { placeHuntingGrounds } from './faune' // hôte/scénario : le semis des coins de chasse
 export { advanceCendreux, willRiseAsCendreux } from './cendreux'
 export { POI_CHARGES, poiFamily, advancePois } from './poi-discovery'
 export type { PoiCharge } from './poi-discovery'

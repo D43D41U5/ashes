@@ -46,13 +46,40 @@ export const WIND_TAKE: Record<string, number> = {
 }
 
 /**
- * L'inclinaison, en radians, d'un prop planté en (tx, ty) à l'instant `timeMs`.
- * `take` module l'amplitude (voir WIND_TAKE) ; 0 rend exactement 0.
+ * LE VENT DIT LA VÉRITÉ (spec chasse C17/C19). Il n'est plus décoratif : la sim
+ * a un vent, l'odeur le descend, et approcher SOUS LE VENT est la moitié d'une
+ * chasse. Une règle qu'on ne voit pas est une injustice — alors les herbes se
+ * couchent dans SON sens, et la rafale traverse la carte DANS son sens.
+ *
+ * Deux termes, et le premier est le nouveau :
+ *   — L'INCLINAISON DE FOND. Le brin penche là où le vent pousse (signe de
+ *     `wind.x`). C'est ce qu'on lit en un dixième de seconde, sans y penser :
+ *     « ça souffle vers l'est, donc j'approche par l'est ».
+ *   — L'OSCILLATION, comme avant — mais l'onde se propage désormais LE LONG du
+ *     vent, et non plus toujours vers le sud-est.
  */
-export function windSway(tx: number, ty: number, timeMs: number, take: number): number {
+const BASE_LEAN = 0.09 // l'inclinaison permanente, ~5° : le vent est une direction
+
+export function windSway(
+  tx: number,
+  ty: number,
+  timeMs: number,
+  take: number,
+  wind: { x: number; y: number } = { x: 1, y: 0 },
+): number {
   if (take === 0) return 0
-  // L'onde se propage vers le sud-est : la rafale arrive de la crête.
-  const phase = timeMs * WAVE_SPEED - (tx * 0.75 + ty * 0.45) * WAVE_TIGHTNESS
-  const gust = 0.45 + 0.55 * Math.sin(timeMs * GUST_SPEED - (tx + ty) * GUST_TIGHTNESS)
-  return MAX_SWAY * take * Math.sin(phase) * gust
+  // Calme plat (le vecteur nul) : rien ne penche, rien n'oscille. C'est un monde
+  // qui n'a pas de vent — et l'odorat n'y trahit personne (voir /sim, C17).
+  const wl = Math.sqrt(wind.x * wind.x + wind.y * wind.y)
+  if (wl < 0.001) return 0
+  const wx = wind.x / wl
+  const wy = wind.y / wl
+
+  // L'onde remonte le vent : la rafale se voit VENIR de l'amont.
+  const phase = timeMs * WAVE_SPEED - (tx * wx + ty * wy) * WAVE_TIGHTNESS * 1.6
+  const gust = 0.45 + 0.55 * Math.sin(timeMs * GUST_SPEED - (tx * wx + ty * wy) * GUST_TIGHTNESS * 1.6)
+  const oscillation = MAX_SWAY * take * Math.sin(phase) * gust
+  // Le brin PENCHE dans le sens du vent (sa composante horizontale : c'est elle
+  // qu'un billboard 2D peut montrer), et il oscille autour de cette inclinaison.
+  return BASE_LEAN * take * wx + oscillation
 }

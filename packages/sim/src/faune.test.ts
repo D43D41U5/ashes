@@ -3,10 +3,13 @@ import {
   BALANCE,
   COMBAT,
   FAUNA,
+  HUNT,
   MONSTER_DEFS,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
+  TERRAIN_MARSH,
   TERRAIN_ROCK,
+  TERRAIN_SHALLOW_WATER,
   STRUCTURE_HP,
   SLOTS,
 } from './balance'
@@ -15,9 +18,9 @@ import { createEmptyMap, type WorldMap } from './map'
 import { createSim, spawnEntity, snapshot, step, type Entity, type MoveInput, type SimState } from './sim'
 import { cycleOffsetForStartHour } from './time'
 import { spawnMonster, type Monster } from './monsters'
-import { activityAt, isPredator, isPrey } from './faune'
+import { activityAt, isPredator, isPrey, placeHuntingGrounds, sentinelOf, wolfVigor } from './faune'
 import { drainEvents } from './events'
-import { die } from './combat'
+import { applyDamage, die } from './combat'
 import { spawnPoiMonsters } from './poi'
 import { distSq } from './geometry'
 
@@ -40,12 +43,18 @@ function makeSim(faunaCap = FAUNA.CAP, hour = 12): SimState {
   // (chantier tension) sème ses propres loups autour du joueur — elle fausserait
   // chaque comptage de meute. Même raison que les hordes : un banc ne traîne pas un
   // système qu'il n'a pas demandé.
-  return createSim(1234, {
+  const sim = createSim(1234, {
     map: makeMap(),
     faunaCap,
     worldEvents: false,
     cycleOffset: cycleOffsetForStartHour(hour),
   })
+  // CALME PLAT (spec chasse C17). L'odorat est un canal à PART : il ignore le
+  // couvert, l'allure et le dos tourné — il rendrait donc chaque banc de ce
+  // fichier dépendant de la direction d'approche. On le coupe ici (le vecteur
+  // nul = pas de vent, jamais), et on le mesure dans SON banc à lui (chasse.test).
+  sim.wind = { x: 0, y: 0 }
+  return sim
 }
 
 function tick(state: SimState, inputs: MoveInput[] = []): void {
@@ -231,37 +240,69 @@ describe('le comportement (A4-A7)', () => {
     expect(covered).toBeLessThan(MONSTER_DEFS.boar.speed * FAUNA.GRAZE_SPEED * seconds)
   })
 
-  it('A5 — un avatar dans alertRange fige la bête ; dans flightRange, elle détale', () => {
-    // Le cerf : alerte à 14, fuite à 9.
-    const { sim, id } = loneBeast('deer', 80.5, 80.5)
-    const a = spawnEntity(sim, 80.5, 92.5) // à 12 tuiles : vu, pas encore fui
-    for (let t = 0; t < 3 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+  it('A5 — un avatar qui approche fige la bête (méfiance) ; trop près, elle détale', () => {
+    // Depuis la spec chasse (C1), l'alerte n'est plus un MUR mais une JAUGE : la
+    // bête se fige quand sa méfiance franchit SUSPICION_CURIOUS — ce qui prend
+    // quelques secondes à distance d'alerte, et le regard (C4) module la montée.
+    // Le cerf : alerte à 14, fuite à 9, plafond de perception 17,5.
+    const { sim, id, m } = loneBeast('deer', 80.5, 80.5)
+    const a = spawnEntity(sim, 80.5, 90) // à 9,5 tuiles : entendu, pas encore fui
+    // On laisse la jauge monter jusqu'au figement (borne large : 8 s — le cerf
+    // broute, son regard tourne, la montée n'est pas une rampe régulière).
+    let settled = -1
+    for (let t = 0; t < 8 * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim)
+      if (m.suspicion >= HUNT.SUSPICION_CURIOUS) {
+        settled = t
+        break
+      }
+    }
+    expect(settled).toBeGreaterThanOrEqual(0) // elle a fini par le percevoir
+    expect(m.fleeSince).toBe(-1) // …mais elle n'a PAS fui : elle regarde
+    // Figée : plus un pas tant que la menace reste plantée là.
     const frozen = { x: entity(sim, id).x, y: entity(sim, id).y }
-    expect(frozen.x).toBe(80.5) // figé, au demi-pixel près
-    expect(frozen.y).toBe(80.5)
+    for (let t = 0; t < BALANCE.TICK_RATE_HZ; t++) tick(sim)
+    expect(entity(sim, id).x).toBe(frozen.x)
+    expect(entity(sim, id).y).toBe(frozen.y)
+    // Et elle REGARDE la menace (chasse C1) : le regard pointe vers l'avatar.
+    const e = entity(sim, id)
+    const av = entity(sim, a)
+    const d0 = dist(e, av)
+    const dot = (e.facing.x * (av.x - e.x) + e.facing.y * (av.y - e.y)) / d0
+    expect(dot).toBeGreaterThan(0.9)
 
-    // L'avatar entre dans la zone de fuite : la distance doit CROÎTRE.
-    entity(sim, a).y = 86.5 // à 6 tuiles < flightRange 9
-    const before = dist(entity(sim, id), entity(sim, a))
+    // L'avatar entre dans la zone de fuite : la jauge sature, la distance CROÎT.
+    av.x = e.x
+    av.y = e.y + 6 // à 6 tuiles < flightRange 9, plein regard
+    const before = dist(entity(sim, id), av)
     for (let t = 0; t < 2 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
     expect(dist(entity(sim, id), entity(sim, a))).toBeGreaterThan(before)
   })
 
   it('A6 — la fuite est en à-coups : elle court, puis elle souffle', () => {
-    const { sim, id } = loneBeast('deer', 80.5, 80.5)
-    spawnEntity(sim, 80.5, 84.5) // dans flightRange : la fuite s'enclenche
+    const { sim, id, m } = loneBeast('deer', 80.5, 80.5)
+    spawnEntity(sim, 80.5, 84.5) // dans flightRange : la jauge va saturer
 
-    // On mesure le terrain couvert tick par tick sur un cycle complet de burst.
+    // Depuis la spec chasse (C1), la fuite ne part plus au premier tick : la
+    // méfiance doit SATURER (~1 s à bout portant). On attend le départ…
+    for (let t = 0; t < 8 * BALANCE.TICK_RATE_HZ && m.fleeSince < 0; t++) tick(sim)
+    expect(m.fleeSince).toBeGreaterThanOrEqual(0)
+
+    // …et on mesure le PREMIER cycle : le tick qui a levé la bête a déjà couru
+    // la phase 0, on lit donc les phases 1..fin. (Plus tard, elle aurait déjà
+    // SEMÉ un marcheur immobile — la peur d'une menace qu'on n'entend plus
+    // retombe avant le second cycle, et c'est voulu : elle est LOIN.)
+    const cycle = FAUNA.BURST_RUN_TICKS + FAUNA.BURST_PAUSE_TICKS
     const perTick: number[] = []
     let prev = { x: entity(sim, id).x, y: entity(sim, id).y }
-    for (let t = 0; t < FAUNA.BURST_RUN_TICKS + FAUNA.BURST_PAUSE_TICKS; t++) {
+    for (let t = 1; t < cycle; t++) {
       tick(sim)
       const e = entity(sim, id)
       perTick.push(dist(e, prev))
       prev = { x: e.x, y: e.y }
     }
-    const running = perTick.slice(0, FAUNA.BURST_RUN_TICKS)
-    const blowing = perTick.slice(FAUNA.BURST_RUN_TICKS)
+    const running = perTick.slice(0, FAUNA.BURST_RUN_TICKS - 1)
+    const blowing = perTick.slice(FAUNA.BURST_RUN_TICKS - 1)
     expect(Math.min(...running)).toBeGreaterThan(0) // elle court
     expect(Math.max(...blowing)).toBe(0) // puis elle s'arrête net
   })
@@ -1038,7 +1079,7 @@ describe('la satiété (A16 — R15) — un prédateur mange', () => {
   it('A16 — il va à la carcasse, il mange, et il devient REPU', () => {
     const sim = makeSim(0, 2)
     const pack = meutePosee(sim, 80.5, 80.5, 1)
-    sim.corpses.push({ id: sim.nextCorpseId++, x: 86.5, y: 80.5, inventory: inventoryOf(SLOTS.CORPSE, { raw_meat: 3 }), decayAt: 1e9 })
+    sim.corpses.push({ id: sim.nextCorpseId++, x: 86.5, y: 80.5, inventory: inventoryOf(SLOTS.CORPSE, { raw_meat: 3 }), decayAt: 1e9, diedAt: sim.tick })
 
     let mange = false
     for (let t = 0; t < 20 * BALANCE.TICK_RATE_HZ && !mange; t++) {
@@ -1090,6 +1131,7 @@ describe('la satiété (A16 — R15) — un prédateur mange', () => {
       y: 80.5,
       inventory: inventoryOf(SLOTS.CORPSE, { raw_meat: 1, wood: 5, axe: 1 }),
       decayAt: 1e9,
+      diedAt: 0,
     })
     const corpseId = sim.corpses[0]!.id
 
@@ -1112,6 +1154,7 @@ describe('la satiété (A16 — R15) — un prédateur mange', () => {
       y: 80.5,
       inventory: inventoryOf(SLOTS.CORPSE, { raw_meat: 1, wood: 5 }),
       decayAt: 1e9,
+      diedAt: 0,
     })
 
     for (let t = 0; t < 20 * BALANCE.TICK_RATE_HZ && pack[0]!.satedUntil === undefined; t++) tick(sim)
@@ -1173,11 +1216,14 @@ describe('la pression de chasse (A17 — R16) — ni farm, ni désert', () => {
     expect(ambientCount(sim)).toBeGreaterThan(bloque)
 
     // Et la zone chassée se rouvre d'elle-même, le temps passé : ce n'est pas une
-    // terre brûlée, c'est une bête qui a eu peur.
-    const q = sim.faunaQuiet[0]
-    if (q) expect(distSq(q.x, q.y, chasse.x, chasse.y)).toBeLessThan(1)
+    // terre brûlée, c'est une bête qui a eu peur. On ne regarde que LA zone du
+    // chasseur : l'écosystème vit (un loup peut tuer ailleurs pendant ce temps,
+    // et poser SA zone de silence — c'est le monde qui marche, pas le test qui rate).
+    const auCamp = (): number =>
+      sim.faunaQuiet.filter((z) => distSq(z.x, z.y, chasse.x, chasse.y) < 1).length
+    expect(auCamp()).toBe(1)
     for (let t = 0; t < FAUNA.QUIET_TICKS; t++) tick(sim)
-    expect(sim.faunaQuiet).toHaveLength(0) // le calme est revenu
+    expect(auCamp()).toBe(0) // le calme est revenu là où l'on a chassé
   })
 
   it('A17 — tuer un LOUP ne fait taire personne (un prédateur mort ne chasse plus)', () => {
@@ -1272,6 +1318,600 @@ describe('la carte bloquante ne piège pas le peuplement', () => {
       const e = entity(sim, m.entityId)
       const terrain = sim.map.terrain[Math.floor(e.y) * sim.map.width + Math.floor(e.x)]!
       expect(terrain).not.toBe(TERRAIN_ROCK)
+    }
+  })
+})
+
+describe('la fuite engagée (A18 — R6) et l’espace vital (A19 — R6bis)', () => {
+  /** Une harde posée à la main : n cerfs alignés, même identité. */
+  function makeHerdOf(sim: SimState, n: number, cx: number, cy: number, spread = 2.5): Monster[] {
+    const herdId = sim.nextHerdId
+    sim.nextHerdId += 1
+    const members: Monster[] = []
+    for (let i = 0; i < n; i++) {
+      const id = spawnMonster(sim, 'deer', cx + i * spread, cy)
+      const m = sim.monsters.find((mm) => mm.entityId === id)!
+      m.herdId = herdId
+      members.push(m)
+    }
+    return members
+  }
+
+  /** Un pas de POURSUITE : l'avatar sprinte droit sur la bête, cap recalculé. */
+  function chaseTick(sim: SimState, aId: number, preyId: number): void {
+    const a = entity(sim, aId)
+    const p = entity(sim, preyId)
+    const dx = (p.x - a.x > 0.3 ? 1 : p.x - a.x < -0.3 ? -1 : 0) as -1 | 0 | 1
+    const dy = (p.y - a.y > 0.3 ? 1 : p.y - a.y < -0.3 ? -1 : 0) as -1 | 0 | 1
+    tick(sim, [{ entityId: aId, dx, dy, sprint: true }])
+  }
+
+  it('A18 — ON NE RATTRAPE PAS UN CERF : dix secondes de sprint, la distance CROÎT', () => {
+    const sim = makeSim(0)
+    // Au sud de la carte : un cerf en surrégime couvre ~70 tuiles en 10 s — il
+    // lui faut de la piste (le premier banc l'acculait au bord du monde).
+    const id = spawnMonster(sim, 'deer', 80.5, 110.5)
+    const a = spawnEntity(sim, 80.5, 115) // à 4,5 tuiles : la poursuite commence tout de suite
+    const d0 = dist(entity(sim, id), entity(sim, a))
+    let closest = Infinity
+    for (let t = 0; t < 10 * BALANCE.TICK_RATE_HZ; t++) {
+      chaseTick(sim, a, id)
+      closest = Math.min(closest, dist(entity(sim, id), entity(sim, a)))
+    }
+    const d1 = dist(entity(sim, id), entity(sim, a))
+    expect(closest).toBeGreaterThan(1.2) // jamais au contact
+    expect(d1).toBeGreaterThan(d0 + 3) // et l'écart se CREUSE : le surrégime paie
+  })
+
+  it('A18 — la fuite est ENGAGÉE : la menace disparue, il court jusqu’à FLEE_GOAL du point de peur', () => {
+    const sim = makeSim(0)
+    const id = spawnMonster(sim, 'deer', 80.5, 60.5)
+    const m = sim.monsters.find((mm) => mm.entityId === id)!
+    const a = spawnEntity(sim, 80.5, 65) // gait `walk` par défaut : il sera levé vite
+    for (let t = 0; t < 8 * BALANCE.TICK_RATE_HZ && m.fleeSince < 0; t++) tick(sim)
+    expect(m.fleeSince).toBeGreaterThanOrEqual(0)
+    const from = { x: m.fleeFromX!, y: m.fleeFromY! }
+    expect(dist(from, entity(sim, a))).toBeLessThan(2) // la peur vient bien de l'avatar
+
+    // La menace S'ÉVAPORE (téléportée à l'autre bout) : il continue quand même.
+    entity(sim, a).x = 20.5
+    entity(sim, a).y = 140.5
+    for (let t = 0; t < 15 * BALANCE.TICK_RATE_HZ && m.fleeSince >= 0; t++) tick(sim)
+    expect(m.fleeSince).toBe(-1) // l'engagement s'est conclu…
+    expect(dist(entity(sim, id), from)).toBeGreaterThanOrEqual(FAUNA.FLEE_GOAL - 2) // …LOIN du point de peur
+    // Et la retombée n'est pas le calme : alerté, nerveux au plafond.
+    expect(m.suspicion).toBe(HUNT.SUSPICION_ALERT)
+    expect(m.nervous).toBe(HUNT.NERVOUS_MAX)
+  })
+
+  it('A18 — le souffle est un luxe de la marge : serré de près, AUCUNE pause', () => {
+    const sim = makeSim(0)
+    const id = spawnMonster(sim, 'deer', 80.5, 60.5)
+    const m = sim.monsters.find((mm) => mm.entityId === id)!
+    const a = spawnEntity(sim, 80.5, 64.5)
+    for (let t = 0; t < 8 * BALANCE.TICK_RATE_HZ && m.fleeSince < 0; t++) tick(sim)
+    expect(m.fleeSince).toBeGreaterThanOrEqual(0)
+
+    // PHASE 1 — la menace COLLE (re-téléportée à 8 tuiles derrière, chaque tick) :
+    // on traverse une fenêtre de souffle entière sans qu'il s'arrête une seule fois.
+    const cycle = FAUNA.BURST_RUN_TICKS + FAUNA.BURST_PAUSE_TICKS
+    while ((sim.tick - m.fleeSince) % cycle !== FAUNA.BURST_RUN_TICKS) {
+      entity(sim, a).x = entity(sim, id).x
+      entity(sim, a).y = entity(sim, id).y + 8
+      tick(sim)
+    }
+    let prev = { x: entity(sim, id).x, y: entity(sim, id).y }
+    for (let t = 0; t < 6; t++) {
+      entity(sim, a).x = entity(sim, id).x
+      entity(sim, a).y = entity(sim, id).y + 8
+      tick(sim)
+      const e = entity(sim, id)
+      expect(dist(e, prev)).toBeGreaterThan(0) // il court PENDANT sa fenêtre de souffle
+      prev = { x: e.x, y: e.y }
+    }
+
+    // PHASE 2 — la menace décroche (repart au loin) : au prochain souffle, il souffle.
+    entity(sim, a).x = 20.5
+    entity(sim, a).y = 140.5
+    while ((sim.tick - m.fleeSince) % cycle !== FAUNA.BURST_RUN_TICKS && m.fleeSince >= 0) tick(sim)
+    expect(m.fleeSince).toBeGreaterThanOrEqual(0) // l'engagement court toujours (borne : FLEE_GOAL)
+    prev = { x: entity(sim, id).x, y: entity(sim, id).y }
+    tick(sim)
+    expect(dist(entity(sim, id), prev)).toBe(0) // le souffle est revenu
+  })
+
+  it("A19 — L'ESPACE VITAL : repérée une silhouette immobile à bout portant, la bête détale", () => {
+    const sim = makeSim(0)
+    const id = spawnMonster(sim, 'deer', 80.5, 60.5)
+    const m = sim.monsters.find((mm) => mm.entityId === id)!
+    const a = spawnEntity(sim, 80.5, 63.5) // à 3 tuiles < PERSONAL_SPACE
+    m.suspicion = HUNT.SUSPICION_ALERT + 0.05 // elle l'a REPÉRÉ (le cas du joueur AFK)
+    for (let t = 0; t < 2 * BALANCE.TICK_RATE_HZ && m.fleeSince < 0; t++) {
+      tick(sim, [{ entityId: a, dx: 0, dy: 0 }]) // l'avatar ne bouge PAS d'un pouce
+    }
+    expect(m.fleeSince).toBeGreaterThanOrEqual(0) // levée quand même : trop près, c'est trop près
+  })
+
+  it("A19 — contre-test : JAMAIS repérée, elle broute à la même distance sans broncher", () => {
+    const sim = makeSim(0)
+    const id = spawnMonster(sim, 'deer', 80.5, 60.5)
+    const m = sim.monsters.find((mm) => mm.entityId === id)!
+    spawnEntity(sim, 80.5, 63.5) // même distance… mais la jauge reste sous le seuil
+    const still = (aId: number): MoveInput => ({ entityId: aId, dx: 0, dy: 0 })
+    for (let t = 0; t < 3 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [still(sim.entities[1]!.id)])
+    expect(m.fleeSince).toBe(-1)
+    expect(m.suspicion).toBeLessThan(HUNT.SUSPICION_ALERT)
+  })
+
+  it("A19 — L'IMPATIENCE : alertée trop longtemps, elle s'écarte au trot (sans fuir)", () => {
+    const sim = makeSim(0)
+    const id = spawnMonster(sim, 'deer', 80.5, 60.5)
+    const m = sim.monsters.find((mm) => mm.entityId === id)!
+    const a = spawnEntity(sim, 80.5, 68.5) // à 8 tuiles, gait `walk` : bien perçu, hors espace vital
+    // La jauge monte et se cale sous 1 (menace plantée) : elle FIXE.
+    for (let t = 0; t < 6 * BALANCE.TICK_RATE_HZ && (m.alertSince === undefined); t++) tick(sim)
+    expect(m.alertSince).toBeDefined()
+    const dAlert = dist(entity(sim, id), entity(sim, a))
+    // L'impatience passée, elle s'écarte — la distance CROÎT, sans état de fuite.
+    for (let t = 0; t < FAUNA.IMPATIENCE_TICKS + 3 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+    expect(dist(entity(sim, id), entity(sim, a))).toBeGreaterThan(dAlert + 1.5)
+    expect(m.fleeSince).toBe(-1)
+  })
+
+  it('A20 — LA DÉRIVE : sans menace, le troupeau TRAVERSE le paysage — groupé', () => {
+    const sim = makeSim(0)
+    const herd = makeHerdOf(sim, 4, 76.5, 80.5)
+    const center = (): { x: number; y: number } => {
+      let sx = 0
+      let sy = 0
+      for (const m of herd) {
+        sx += entity(sim, m.entityId).x
+        sy += entity(sim, m.entityId).y
+      }
+      return { x: sx / herd.length, y: sy / herd.length }
+    }
+    const c0 = center()
+    for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+    const c1 = center()
+    expect(dist(c0, c1)).toBeGreaterThan(5) // le CENTRE a bougé : ce n'est plus un tremblement
+    for (const m of herd) {
+      expect(dist(entity(sim, m.entityId), c1)).toBeLessThan(FAUNA.HERD_SPREAD + 2) // et il est resté GROUPÉ
+    }
+  })
+
+  it('A20 — LA SÉPARATION : deux cerfs l’un sur l’autre s’écartent', () => {
+    const sim = makeSim(0)
+    const herd = makeHerdOf(sim, 2, 80.5, 80.5, 0.4) // posés à 0,4 tuile
+    for (let t = 0; t < 4 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+    const a = entity(sim, herd[0]!.entityId)
+    const b = entity(sim, herd[1]!.entityId)
+    expect(dist(a, b)).toBeGreaterThanOrEqual(FAUNA.HERD_SEPARATION - 0.1)
+  })
+
+  it('A20 — LA FUITE GROUPÉE : le cri de mort donne à toute la harde le MÊME point de peur', () => {
+    const sim = makeSim(0)
+    const herd = makeHerdOf(sim, 3, 78.5, 60.5)
+    const hunter = spawnEntity(sim, 78.5, 62.5)
+    const victim = entity(sim, herd[0]!.entityId)
+    const vx = victim.x
+    const vy = victim.y
+    applyDamage(sim, victim, 999, hunter)
+    // Les survivants portent le point de peur du frère tombé — le même pour tous.
+    for (const m of [herd[1]!, herd[2]!]) {
+      expect(m.fleeFromX).toBe(vx)
+      expect(m.fleeFromY).toBe(vy)
+    }
+    // Et ils fuient — le même lieu, tous les deux, et LOIN.
+    for (let t = 0; t < 3 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+    const s1 = entity(sim, herd[1]!.entityId)
+    const s2 = entity(sim, herd[2]!.entityId)
+    expect(herd[1]!.fleeSince).toBeGreaterThanOrEqual(0)
+    expect(herd[2]!.fleeSince).toBeGreaterThanOrEqual(0)
+    expect(dist(s1, { x: vx, y: vy })).toBeGreaterThan(8)
+    expect(dist(s2, { x: vx, y: vy })).toBeGreaterThan(8)
+  })
+
+  it('A20/C14 — LA SCISSION : la harde levée éclate en DEUX groupes, et chaque moitié TIENT', () => {
+    // Quatre cerfs : rangs 0-3, donc deux moitiés de deux (pairs / impairs).
+    const sim = makeSim(0)
+    const herd = makeHerdOf(sim, 4, 78.5, 60.5, 1.5)
+    const hunter = spawnEntity(sim, 78.5 + 2.25, 66.5) // plein sud du centre : ils fuient au nord
+    void hunter
+    for (let t = 0; t < 8 * BALANCE.TICK_RATE_HZ && herd.some((m) => m.fleeSince < 0); t++) tick(sim)
+    expect(herd.every((m) => m.fleeSince >= 0)).toBe(true)
+    for (let t = 0; t < 4 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+
+    // Les deux moitiés, par rang (l'ordre des entityId — le même que la sim).
+    const ranked = [...herd].sort((a, b) => a.entityId - b.entityId)
+    const pairs = [ranked[0]!, ranked[2]!].map((m) => entity(sim, m.entityId))
+    const impairs = [ranked[1]!, ranked[3]!].map((m) => entity(sim, m.entityId))
+    const centre = (g: { x: number; y: number }[]): { x: number; y: number } => ({
+      x: (g[0]!.x + g[1]!.x) / 2,
+      y: (g[0]!.y + g[1]!.y) / 2,
+    })
+
+    // CHAQUE MOITIÉ TIENT (la cohésion joue DANS la moitié, pas dans la harde).
+    expect(dist(pairs[0]!, pairs[1]!)).toBeLessThan(FAUNA.HERD_SPREAD + 3)
+    expect(dist(impairs[0]!, impairs[1]!)).toBeLessThan(FAUNA.HERD_SPREAD + 3)
+    // ET LES DEUX MOITIÉS DIVERGENT : on ne peut pas courir après « la harde ».
+    expect(dist(centre(pairs), centre(impairs))).toBeGreaterThan(FAUNA.HERD_SPREAD + 3)
+  })
+
+  it('A20 — LE REPOS GROUPÉ : à l’heure du sommeil, la harde éparpillée se resserre puis dort', () => {
+    const sim = makeSim(0, 2) // 2 h du matin : le cerf dort
+    const herd = makeHerdOf(sim, 3, 74.5, 80.5, 6) // éparpillés sur 12 tuiles
+    for (let t = 0; t < 25 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+    let sx = 0
+    let sy = 0
+    for (const m of herd) {
+      sx += entity(sim, m.entityId).x
+      sy += entity(sim, m.entityId).y
+    }
+    const c = { x: sx / herd.length, y: sy / herd.length }
+    for (const m of herd) expect(dist(entity(sim, m.entityId), c)).toBeLessThan(FAUNA.REST_SPREAD + 1)
+    // Et une fois resserrée, elle DORT : plus un pas en une seconde.
+    const before = herd.map((m) => ({ x: entity(sim, m.entityId).x, y: entity(sim, m.entityId).y }))
+    for (let t = 0; t < BALANCE.TICK_RATE_HZ; t++) tick(sim)
+    herd.forEach((m, i) => {
+      expect(entity(sim, m.entityId).x).toBe(before[i]!.x)
+      expect(entity(sim, m.entityId).y).toBe(before[i]!.y)
+    })
+  })
+
+  it('A21 — LA SENTINELLE : une seule, elle tourne, elle veille pendant que les autres broutent', () => {
+    const sim = makeSim(0)
+    const herd = makeHerdOf(sim, 4, 76.5, 80.5)
+    // Exactement UNE sentinelle, membre de la harde.
+    const s0 = sentinelOf(herd, sim.tick)
+    expect(herd.map((m) => m.entityId)).toContain(s0)
+    // Le rôle TOURNE : sur quatre relèves, au moins deux gardes différentes.
+    const seen = new Set<number>()
+    for (let shift = 0; shift < 4; shift++) seen.add(sentinelOf(herd, sim.tick + shift * FAUNA.SENTINEL_SHIFT))
+    expect(seen.size).toBeGreaterThanOrEqual(2)
+    // Une meute de LOUPS n'a pas de sentinelle.
+    const wolves = [spawnMonster(sim, 'wolf', 120.5, 120.5), spawnMonster(sim, 'wolf', 122.5, 120.5), spawnMonster(sim, 'wolf', 124.5, 120.5)]
+    const pack = wolves.map((id) => sim.monsters.find((m) => m.entityId === id)!)
+    pack.forEach((m) => (m.herdId = 999))
+    expect(sentinelOf(pack, sim.tick)).toBe(-1)
+
+    // La garde VEILLE : plantée sur place, son regard balaie.
+    // (On se cale en début de relève pour observer UNE garde stable.)
+    while (sim.tick % FAUNA.SENTINEL_SHIFT !== 0) tick(sim)
+    const guardId = sentinelOf(herd, sim.tick)
+    const g = entity(sim, guardId)
+    const at = { x: g.x, y: g.y }
+    const facing0 = { x: g.facing.x, y: g.facing.y }
+    for (let t = 0; t < FAUNA.SENTINEL_SWEEP_TICKS + 2; t++) tick(sim)
+    expect(entity(sim, guardId).x).toBe(at.x) // elle n'a pas brouté d'un pas
+    expect(entity(sim, guardId).y).toBe(at.y)
+    const facing1 = entity(sim, guardId).facing
+    expect(facing1.x !== facing0.x || facing1.y !== facing0.y).toBe(true) // et son regard a TOURNÉ
+  })
+
+  it('A21 — la sentinelle voit plus loin que les brouteuses relâchées', () => {
+    const sim = makeSim(0)
+    const herd = makeHerdOf(sim, 3, 78.5, 80.5, 2)
+    while (sim.tick % FAUNA.SENTINEL_SHIFT !== 0) tick(sim) // début de relève : garde stable 20 s
+    const guardId = sentinelOf(herd, sim.tick)
+    const guard = herd.find((m) => m.entityId === guardId)!
+    // Un marcheur plein nord, à 16 tuiles du groupe : dans le champ ACCRU de la
+    // garde (24,5 = 17,5 × 1,4), hors du champ RELÂCHÉ des brouteuses (~18,6).
+    spawnEntity(sim, entity(sim, guardId).x, entity(sim, guardId).y - 16)
+    for (let t = 0; t < 10 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+    expect(guard.suspicion).toBeGreaterThanOrEqual(HUNT.SUSPICION_CURIOUS) // la garde l'a vu
+    for (const m of herd) {
+      if (m.entityId === guardId) continue
+      expect(m.suspicion).toBeLessThan(HUNT.SUSPICION_CURIOUS) // les brouteuses, non
+    }
+  })
+})
+
+describe("l'heure du loup (A22 — R10bis) et le retour au pays (A23 — bug du gel)", () => {
+  it('A22 — la vigueur du loup : maximale la nuit, minimale à midi, jamais nulle', () => {
+    const nuit = wolfVigor(2)
+    const midi = wolfVigor(12)
+    expect(nuit).toBeGreaterThan(midi)
+    expect(nuit).toBeCloseTo(1, 5)
+    expect(midi).toBeGreaterThan(0) // le plancher tient : on incline le monde, on ne l'éteint pas
+    expect(midi).toBeLessThan(0.6)
+  })
+
+  it('A22 — à MIDI il ne prend pas la cible qu’il aurait prise la NUIT', () => {
+    // Même géométrie, deux heures : un homme à 10 tuiles d'un loup solitaire.
+    const poser = (hour: number): Monster => {
+      const sim = makeSim(0, hour)
+      const id = spawnMonster(sim, 'wolf', 30.5, 30.5) // en forêt : chez lui
+      const m = sim.monsters.find((mm) => mm.entityId === id)!
+      spawnEntity(sim, 30.5, 40.5) // à 10 tuiles : sous l'aggro de nuit (13), au-delà de celle de midi (~6)
+      for (let t = 0; t < 2 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+      return m
+    }
+    expect(poser(2).targetId).not.toBeNull() // la nuit : il l'a choisi
+    expect(poser(12).targetId).toBeNull() // à midi : il dort à moitié, l'homme passe
+  })
+
+  it('A22 — mais le plancher TIENT : collé à une meute de jour, on est mordu quand même', () => {
+    const sim = makeSim(0, 12) // plein midi
+    const ids = [spawnMonster(sim, 'wolf', 30.5, 30.5), spawnMonster(sim, 'wolf', 31.5, 30.5), spawnMonster(sim, 'wolf', 32.5, 30.5)]
+    const pack = ids.map((id) => sim.monsters.find((m) => m.entityId === id)!)
+    pack.forEach((m) => (m.herdId = 42)) // une vraie meute : le courage est là
+    const a = spawnEntity(sim, 31.5, 32.5) // à DEUX tuiles : on leur marche dessus
+    const hp0 = entity(sim, a).hp
+    for (let t = 0; t < 6 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+    expect(entity(sim, a).hp).toBeLessThan(hp0) // ils mordent : une meute de jour reste mortelle
+  })
+
+  it('A23 — LE GEL : une bête jetée hors de son habitat RENTRE CHEZ ELLE (et ne se fige plus)', () => {
+    // Le lapin vit en prairie. On le pose en pleine forêt (hors habitat), là où
+    // la fuite engagée peut désormais l'expédier — et il y restait planté à jamais.
+    const sim = makeSim(0)
+    const id = spawnMonster(sim, 'rabbit', 30.5, 30.5) // au cœur du carré de forêt (10..50)
+    const start = { x: entity(sim, id).x, y: entity(sim, id).y }
+    const inHabitat = (): boolean => {
+      const e = entity(sim, id)
+      const t = sim.map.terrain[Math.floor(e.y) * sim.map.width + Math.floor(e.x)]!
+      return t === TERRAIN_GRASS
+    }
+    expect(inHabitat()).toBe(false) // il est bien dehors au départ
+
+    // Il MARCHE (contre-test de la régression : 0,000 tuile en 10 s, avant le correctif).
+    let travelled = 0
+    let prev = start
+    for (let t = 0; t < 40 * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim)
+      const e = entity(sim, id)
+      travelled += dist(e, prev)
+      prev = { x: e.x, y: e.y }
+    }
+    expect(travelled).toBeGreaterThan(1)
+    expect(inHabitat()).toBe(true) // et il est RENTRÉ : la prairie, chez lui
+  })
+})
+
+describe('le tremblement de la harde (R9 — le rappel est COLLANT)', () => {
+  /**
+   * PLAYTEST : « j'ai vu des cerfs TREMBLER en pâturant aux abords d'une forêt ».
+   *
+   * Ce n'était pas la forêt : c'était la COHÉSION. La bête broutait vers
+   * l'extérieur ; à `HERD_SPREAD` la cohésion la rappelait d'un pas ; sous le
+   * seuil, la cohésion lâchait — mais son CAP d'errance pointait toujours dehors,
+   * donc elle ressortait aussitôt. Deux à trois allers-retours par SECONDE.
+   *
+   * Le seuil n'avait aucune hystérésis, contrairement à la peur (qui se déclenche
+   * à `flightRange` et ne retombe qu'à `SAFE_RANGE`). Ce banc mesure le nombre de
+   * changements de sens vertical : 254 en 30 s avant le correctif, ~20 après.
+   */
+  it('une harde qui broute ne TREMBLE pas : peu de changements de sens', () => {
+    const sim = makeSim(0)
+    const herdId = sim.nextHerdId++
+    const herd: Monster[] = []
+    for (const [x, y] of [[78.5, 78.5], [80.5, 79.5], [82.5, 81.5], [79.5, 82.5]] as const) {
+      const id = spawnMonster(sim, 'deer', x, y)
+      const m = sim.monsters.find((mm) => mm.entityId === id)!
+      m.herdId = herdId
+      herd.push(m)
+    }
+    spawnEntity(sim, 80.5, 200.5) // très loin : aucune menace, elles BROUTENT
+
+    let flips = 0
+    const lastSign = herd.map(() => 0)
+    const prev = herd.map((m) => ({ x: entity(sim, m.entityId).x, y: entity(sim, m.entityId).y }))
+    for (let t = 0; t < 30 * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim)
+      herd.forEach((m, i) => {
+        const e = entity(sim, m.entityId)
+        const dy = e.y - prev[i]!.y
+        const sign = dy > 0.001 ? 1 : dy < -0.001 ? -1 : 0
+        if (sign !== 0 && lastSign[i] !== 0 && sign !== lastSign[i]) flips++
+        if (sign !== 0) lastSign[i] = sign
+        prev[i] = { x: e.x, y: e.y }
+      })
+    }
+    // Une bête qui broute change de cap à sa cadence de réflexion (~1,2 s), donc
+    // au plus ~25 fois par bête en 30 s dans le pire cas — et bien moins en
+    // pratique (la persistance du cap). Le TREMBLEMENT, lui, en faisait 254.
+    expect(flips).toBeLessThan(60)
+
+    // Et la harde tient toujours : le correctif ne l'a pas dispersée.
+    let sx = 0
+    let sy = 0
+    for (const m of herd) {
+      sx += entity(sim, m.entityId).x
+      sy += entity(sim, m.entityId).y
+    }
+    const c = { x: sx / herd.length, y: sy / herd.length }
+    for (const m of herd) {
+      expect(dist(entity(sim, m.entityId), c)).toBeLessThan(FAUNA.HERD_SPREAD + 2)
+    }
+  })
+})
+
+describe('les seuils qui commandent un mouvement veulent leur hystérésis (R9/R9bis)', () => {
+  /** Compte les changements de sens vertical — la mesure du frémissement. */
+  function flipsOf(sim: SimState, herd: Monster[], secondes: number): number {
+    let flips = 0
+    const lastSign = herd.map(() => 0)
+    const prev = herd.map((m) => ({ y: entity(sim, m.entityId).y }))
+    for (let t = 0; t < secondes * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim)
+      herd.forEach((m, i) => {
+        const y = entity(sim, m.entityId).y
+        const dy = y - prev[i]!.y
+        const sign = dy > 0.001 ? 1 : dy < -0.001 ? -1 : 0
+        if (sign !== 0 && lastSign[i] !== 0 && sign !== lastSign[i]) flips++
+        if (sign !== 0) lastSign[i] = sign
+        prev[i] = { y }
+      })
+    }
+    return flips
+  }
+
+  function poserHarde(sim: SimState, points: readonly (readonly [number, number])[]): Monster[] {
+    const herdId = sim.nextHerdId++
+    const herd: Monster[] = []
+    for (const [x, y] of points) {
+      const id = spawnMonster(sim, 'deer', x, y)
+      const m = sim.monsters.find((mm) => mm.entityId === id)!
+      m.herdId = herdId
+      herd.push(m)
+    }
+    spawnEntity(sim, 80.5, 150.5) // très loin : aucune menace, elles broutent
+    return herd
+  }
+
+  /**
+   * LA SÉPARATION. Repousser seulement la voisine LA PLUS PROCHE donnait un
+   * billard : en s'écartant de B, la bête se rapproche de C ; au tick suivant
+   * elle s'écarte de C et revient sur B. Cinq bêtes entassées frémissaient à
+   * 2,5× le rythme de l'errance normale (128 contre 51 en 30 s). La SOMME des
+   * répulsions pointe vers l'extérieur du groupe : une direction stable.
+   */
+  it('cinq cerfs ENTASSÉS ne frémissent pas plus qu’une harde au large', () => {
+    const serres = makeSim(0)
+    const a = poserHarde(serres, [[80.0, 80.0], [80.6, 80.2], [80.3, 80.7], [80.9, 80.8], [80.2, 80.4]])
+    const entasses = flipsOf(serres, a, 30)
+
+    const large = makeSim(0)
+    const b = poserHarde(large, [[78.0, 80.0], [80.5, 80.0], [83.0, 80.0], [79.2, 82.4], [81.8, 82.4]])
+    const temoin = flipsOf(large, b, 30)
+
+    // Entassées, elles ne doivent pas s'agiter davantage qu'au large : la
+    // séparation résout le voisinage d'un coup, elle ne le ping-pong pas.
+    expect(entasses).toBeLessThan(temoin * 2)
+
+    // Et elles se sont bien ÉCARTÉES : plus personne sous le seuil de contact.
+    for (let i = 0; i < a.length; i++) {
+      for (let j = i + 1; j < a.length; j++) {
+        const p = entity(serres, a[i]!.entityId)
+        const q = entity(serres, a[j]!.entityId)
+        expect(dist(p, q)).toBeGreaterThan(FAUNA.HERD_SEPARATION - 0.1)
+      }
+    }
+  })
+
+  /**
+   * LE RETOUR AU PAYS. Rendre la main dès que `floor()` dit « habitat », c'est
+   * lâcher la bête PILE SUR LA LISIÈRE — où le moindre pas de cohésion ou de
+   * séparation (qui ne connaissent pas les biomes) la rejette dehors, et où
+   * `goHome` la rappelle aussitôt. Elle rentre donc jusqu'au CŒUR de sa tuile.
+   */
+  it('une harde jetée hors de son habitat rentre — et NE DANSE PAS sur la lisière', () => {
+    // La carte du banc : forêt au nord-ouest (10..50), prairie ailleurs. Le cerf
+    // vit dans les deux — on le pose donc sur du ROC… non : on le pose en prairie
+    // au sud d'un mur de roche, et on mesure au retour. Plus simple : une harde
+    // posée dans la forêt À CHEVAL sur la lisière est déjà chez elle. On force
+    // donc le cas HORS habitat par le seul terrain qui n'est le sien nulle part.
+    const sim = makeSim(0)
+    for (let ty = 88; ty < 96; ty++) {
+      for (let tx = 70; tx < 92; tx++) sim.map.terrain[ty * sim.map.width + tx] = TERRAIN_MARSH
+    }
+    const herd = poserHarde(sim, [[79.5, 90.5], [80.5, 90.9], [81.5, 91.2], [80.0, 91.5]])
+    expect(herd.every((m) => sim.map.terrain[Math.floor(entity(sim, m.entityId).y) * sim.map.width + Math.floor(entity(sim, m.entityId).x)] === TERRAIN_MARSH)).toBe(true)
+
+    const flips = flipsOf(sim, herd, 30)
+
+    // Toutes rentrées — et AUCUNE n'est restée plantée sur la frontière.
+    for (const m of herd) {
+      const e = entity(sim, m.entityId)
+      const terr = sim.map.terrain[Math.floor(e.y) * sim.map.width + Math.floor(e.x)]!
+      expect(terr).not.toBe(TERRAIN_MARSH)
+    }
+    // Et elles ne frémissent pas : ~0,4 changement de sens par bête et par seconde
+    // au pire (le trajet de retour lui-même en compte quelques-uns).
+    expect(flips).toBeLessThan(30 * herd.length)
+  })
+})
+
+describe('les coins de chasse (A24 — R17)', () => {
+  /**
+   * LE GIBIER A DES ADRESSES. La faune était un brouillard uniforme : elle
+   * naissait autour du joueur où qu'il aille, donc la carte ne s'apprenait pas.
+   * Elle vit maintenant dans des COINS DE CHASSE fixes — des prés à portée
+   * d'eau — et la vallée, entre eux, est VIDE.
+   */
+  it('A24 — le semis pose les coins dans des BIOMES OUVERTS, À PORTÉE D’EAU, et espacés', () => {
+    // Une carte franche : un grand pré, un lac au milieu, de la roche autour.
+    const map = createEmptyMap(400, 400, TERRAIN_ROCK)
+    for (let ty = 40; ty < 360; ty++) {
+      for (let tx = 40; tx < 360; tx++) map.terrain[ty * map.width + tx] = TERRAIN_GRASS
+    }
+    for (let ty = 190; ty < 210; ty++) {
+      for (let tx = 190; tx < 210; tx++) map.terrain[ty * map.width + tx] = TERRAIN_SHALLOW_WATER
+    }
+    const grounds = placeHuntingGrounds(map, 7)
+    expect(grounds.length).toBeGreaterThan(0)
+
+    for (const g of grounds) {
+      const terrain = map.terrain[Math.floor(g.y) * map.width + Math.floor(g.x)]!
+      // …DANS un biome OUVERT (jamais sur la roche, jamais dans l'eau).
+      expect(terrain).toBe(TERRAIN_GRASS)
+      // …et À PORTÉE D'EAU : le lac est au centre, donc tous les coins sont près.
+      const dEau = dist(g, { x: 200, y: 200 }) // pas `**` : interdit dans /sim (invariant §2)
+      expect(dEau).toBeLessThan(FAUNA.GROUND_WATER_NEAR + 30)
+    }
+    // …et ESPACÉS : deux coins ne se touchent jamais.
+    for (let i = 0; i < grounds.length; i++) {
+      for (let j = i + 1; j < grounds.length; j++) {
+        const d = dist(grounds[i]!, grounds[j]!)
+        expect(d).toBeGreaterThanOrEqual(FAUNA.GROUND_SPACING - 1)
+      }
+    }
+  })
+
+  it('A24 — RIEN ne naît hors d’un coin : la vallée entre les coins est VIDE', () => {
+    const sim = createSim(1234, {
+      map: makeMap(),
+      faunaCap: FAUNA.CAP,
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(12),
+      grounds: [{ x: 20.5, y: 20.5 }], // UN seul coin, tout au nord-ouest
+    })
+    sim.wind = { x: 0, y: 0 }
+    // Le joueur est à l'autre bout, très loin du coin.
+    const a = spawnEntity(sim, 140.5, 140.5)
+    for (let t = 0; t < 90 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+    expect(ambientCount(sim)).toBe(0) // le désert
+
+    // …et DANS le coin, ça vit.
+    const dedans = createSim(1234, {
+      map: makeMap(),
+      faunaCap: FAUNA.CAP,
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(12),
+      grounds: [{ x: 80.5, y: 80.5 }],
+    })
+    dedans.wind = { x: 0, y: 0 }
+    const b = spawnEntity(dedans, 80.5, 80.5)
+    for (let t = 0; t < 90 * BALANCE.TICK_RATE_HZ; t++) tick(dedans, [{ entityId: b, dx: 0, dy: 0 }])
+    expect(ambientCount(dedans)).toBeGreaterThan(5)
+  })
+
+  it('A24 — la bête EST D’ICI : jetée hors de son coin, elle y revient', () => {
+    const sim = createSim(1234, {
+      map: makeMap(),
+      faunaCap: FAUNA.CAP,
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(12),
+      grounds: [{ x: 80.5, y: 80.5 }],
+    })
+    sim.wind = { x: 0, y: 0 }
+    const a = spawnEntity(sim, 80.5, 80.5)
+    for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ && ambientCount(sim) === 0; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+    const bete = sim.monsters.find((m) => m.ambient)!
+    expect(bete.groundX).toBe(80.5) // elle sait d'où elle est
+    expect(bete.groundY).toBe(80.5)
+
+    // On la jette LOIN, hors de son territoire — comme le ferait une fuite engagée.
+    const e = entity(sim, bete.entityId)
+    e.x = 80.5
+    e.y = 140.5 // à 60 tuiles : bien au-delà de GROUND_RADIUS
+    const avant = dist(e, { x: 80.5, y: 80.5 })
+    for (let t = 0; t < 25 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+    const encoreLa = sim.monsters.find((m) => m.entityId === bete.entityId)
+    if (encoreLa) {
+      // Elle est REVENUE vers son coin (ou elle s'est dissipée en route : la
+      // dissipation est une autre règle, et elle ne prouve rien contre celle-ci).
+      expect(dist(entity(sim, bete.entityId), { x: 80.5, y: 80.5 })).toBeLessThan(avant - 5)
     }
   })
 })

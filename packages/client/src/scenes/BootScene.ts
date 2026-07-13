@@ -305,6 +305,129 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0x6b5a48).fillRect(8, 0, 1, 4).fillRect(10, 0, 1, 4) // les oreilles
     g.fillStyle(0xe6e0d4).fillCircle(1, 9, 1) // scut : le point blanc qui détale
     g.generateTexture('spr-rabbit', 12, 12)
+    g.clear()
+
+    // ── LES POSTURES (spec faune R9bis / chasse C19). L'ÉTAT d'une bête se lit à
+    // sa SILHOUETTE avant sa teinte : tête au sol = elle broute (approchez), tête
+    // dressée = elle a vu quelque chose (figez-vous), corps tendu = elle fuit.
+    // Le sprite de base (tête haute) devient LA posture d'alerte et de sentinelle.
+
+    // Cerf qui BROUTE : l'encolure plonge, le mufle au sol. La fenêtre du chasseur.
+    g.fillStyle(0x4a3524).fillEllipse(10, 9, 16, 9) // corps
+    g.fillStyle(0x9b7448).fillEllipse(10, 9, 13, 6) // robe fauve
+    g.fillStyle(0x8a6640).fillTriangle(15, 8, 20, 15, 16, 16) // encolure plongeante
+    g.fillStyle(0x9b7448).fillEllipse(19, 15, 5, 3) // le mufle, dans l'herbe
+    g.fillStyle(0xcfc0a4).fillRect(16, 6, 1, 3).fillRect(19, 7, 1, 3) // bois couchés
+    g.fillStyle(0x3a2a1c) // pattes
+    g.fillRect(4, 12, 2, 6).fillRect(8, 12, 2, 6).fillRect(13, 12, 2, 6)
+    g.generateTexture('spr-deer-graze', 22, 18)
+    g.clear()
+
+    // Cerf en FUITE : tout à l'horizontale — encolure tendue, bois couchés,
+    // pattes en extension. On doit lire la vitesse dans l'arrêt sur image.
+    g.fillStyle(0x4a3524).fillEllipse(12, 8, 20, 7) // corps étiré
+    g.fillStyle(0x9b7448).fillEllipse(12, 8, 17, 5)
+    g.fillStyle(0x8a6640).fillRect(18, 5, 6, 3) // encolure à plat
+    g.fillStyle(0x9b7448).fillEllipse(24, 6, 5, 3) // tête portée en avant
+    g.fillStyle(0xcfc0a4).fillRect(19, 2, 4, 1).fillRect(21, 3, 3, 1) // bois couchés en arrière
+    g.fillStyle(0x3a2a1c) // pattes en extension, avant et arrière
+    g.fillTriangle(3, 10, 0, 17, 5, 11).fillTriangle(8, 11, 6, 17, 10, 11)
+    g.fillTriangle(17, 11, 21, 17, 19, 10).fillTriangle(13, 11, 15, 17, 15, 10)
+    g.generateTexture('spr-deer-flee', 26, 18)
+    g.clear()
+
+    // Cerf COUCHÉ : la masse au sol, pattes pliées dessous, la tête encore levée
+    // (il dort d'une oreille : R10, réveillable).
+    g.fillStyle(0x4a3524).fillEllipse(10, 8, 18, 8) // corps posé
+    g.fillStyle(0x9b7448).fillEllipse(10, 8, 15, 6)
+    g.fillStyle(0x3a2a1c).fillRect(3, 10, 13, 2) // les pattes repliées, une ligne d'ombre
+    g.fillStyle(0x8a6640).fillRect(15, 3, 3, 6) // encolure relevée
+    g.fillStyle(0x9b7448).fillEllipse(17, 3, 5, 3) // tête
+    g.fillStyle(0xcfc0a4).fillRect(15, 0, 1, 3).fillRect(19, 0, 1, 3) // bois
+    g.generateTexture('spr-deer-bed', 22, 12)
+    g.clear()
+
+    // Lapin qui BROUTE : aplati, oreilles couchées en arrière, nez dans l'herbe.
+    g.fillStyle(0x6b5a48).fillEllipse(6, 6, 11, 6) // corps tassé
+    g.fillStyle(0xa8927a).fillEllipse(6, 6, 9, 4)
+    g.fillStyle(0xa8927a).fillCircle(10, 7, 2) // tête au sol
+    g.fillStyle(0x6b5a48).fillRect(6, 2, 3, 1).fillRect(5, 3, 3, 1) // oreilles couchées
+    g.fillStyle(0xe6e0d4).fillCircle(1, 6, 1) // scut
+    g.generateTexture('spr-rabbit-graze', 12, 9)
+    g.clear()
+
+    // Lapin en FUITE : une flèche — corps allongé, oreilles plaquées.
+    g.fillStyle(0x6b5a48).fillEllipse(7, 5, 13, 5) // corps étiré
+    g.fillStyle(0xa8927a).fillEllipse(7, 5, 11, 3)
+    g.fillStyle(0xa8927a).fillCircle(12, 4, 2) // tête tendue
+    g.fillStyle(0x6b5a48).fillRect(8, 2, 4, 1) // oreilles plaquées
+    g.fillStyle(0x3a2a1c).fillTriangle(2, 6, 0, 9, 4, 6).fillTriangle(11, 6, 14, 9, 13, 5) // détente
+    g.fillStyle(0xe6e0d4).fillCircle(1, 4, 1)
+    g.generateTexture('spr-rabbit-flee', 14, 9)
+    g.clear()
+
+    // Sanglier qui FOUGE : la hure PIQUE dans la terre — c'est l'approche offerte
+    // (R14). La terre retournée le dit mieux qu'une teinte.
+    g.fillStyle(0x4a2e1a).fillEllipse(12, 6, 20, 11) // corps, cul relevé
+    g.fillStyle(0x8a5a38).fillEllipse(12, 6, 17, 8)
+    g.fillStyle(0x6b442a).fillTriangle(3, 13, 9, 4, 10, 10) // hure plantée au sol
+    g.fillStyle(0xe8e0cc).fillRect(2, 11, 3, 1) // la défense, dans la terre
+    g.fillStyle(0x3a2416).fillRect(7, 11, 2, 3).fillRect(11, 11, 2, 3).fillRect(16, 10, 2, 4) // pattes
+    g.fillStyle(0x5a4630).fillCircle(3, 14, 1).fillCircle(6, 14, 1) // la terre fouie
+    g.generateTexture('spr-boar-root', 22, 15)
+    g.clear()
+
+    // Sanglier qui CHARGE : bas, long, la hure en bélier. À l'écran une demi-seconde —
+    // la silhouette doit HURLER la direction.
+    g.fillStyle(0x4a2e1a).fillEllipse(13, 6, 22, 9) // corps couché sur l'élan
+    g.fillStyle(0x8a5a38).fillEllipse(13, 6, 19, 6)
+    g.fillStyle(0x6b442a).fillTriangle(0, 6, 6, 2, 6, 10) // la hure-bélier
+    g.fillStyle(0xe8e0cc).fillRect(0, 7, 3, 1) // la défense en avant
+    g.fillStyle(0x3a2416).fillTriangle(6, 9, 3, 13, 8, 9).fillTriangle(17, 9, 21, 13, 19, 8) // pattes en extension
+    g.generateTexture('spr-boar-charge', 24, 13)
+    g.clear()
+
+    // Loup TAPI (la traque, R11) : ventre au sol, oreilles couchées, la ligne du
+    // dos aplatie. La teinte le fond déjà dans le sous-bois ; la posture le dit.
+    g.fillStyle(0x2e3238).fillEllipse(11, 8, 19, 6) // corps aplati
+    g.fillStyle(0x6b7078).fillEllipse(11, 8, 16, 4)
+    g.fillStyle(0x5c6168).fillTriangle(2, 7, 2, 10, 9, 9) // museau au ras
+    g.fillStyle(0x3a3f46).fillRect(4, 5, 2, 2) // oreilles couchées
+    g.fillStyle(0x2e3238).fillRect(5, 10, 2, 2).fillRect(9, 10, 2, 2).fillRect(15, 10, 2, 2) // pattes pliées
+    g.fillStyle(0x6b7078).fillRect(19, 7, 3, 2) // queue droite, basse
+    g.generateTexture('spr-wolf-stalk', 22, 12)
+    g.clear()
+
+    // LE TERRIER (spec chasse C16). Le lapin naît avec le sien, il y court quand
+    // on le lève, et il y DISPARAÎT. Sans le trou dessiné, le lapin s'évapore —
+    // et c'est le décor qui avoue. Avec lui, la règle devient une GÉOMÉTRIE : on
+    // voit le trou, on voit le lapin, on sait qu'il faut couper la ligne.
+    // Un tertre de terre retournée, et un trou noir dedans : ça se lit de loin.
+    g.fillStyle(0x5a4630).fillEllipse(7, 7, 14, 9) // le tertre (terre fraîche)
+    g.fillStyle(0x4a3826).fillEllipse(7, 7, 11, 7)
+    g.fillStyle(0x1a1410).fillEllipse(7, 7, 7, 5) // LE TROU — noir, franc
+    g.fillStyle(0x6b5540).fillCircle(2, 10, 1).fillCircle(12, 10, 1) // deux mottes
+    g.generateTexture('fx-burrow', 15, 13)
+    g.clear()
+
+    // LA GOUTTE DE SANG (spec chasse C9). La piste que le chasseur suit — et que
+    // les loups suivent aussi. Une éclaboussure, pas un rond : elle a un SENS, et
+    // c'est ce qui permet de lire la direction de la course d'un coup d'œil.
+    g.fillStyle(0x8e2318).fillEllipse(5, 5, 7, 5) // la flaque (contour sombre)
+    g.fillStyle(0xc4372a).fillEllipse(5, 5, 5, 3) // le cœur, plus vif
+    g.fillStyle(0x8e2318).fillCircle(9, 3, 1).fillCircle(1, 7, 1) // deux éclats
+    g.generateTexture('fx-blood', 11, 10)
+    g.clear()
+
+    // Loup qui MANGE : tête dans la carcasse, garde baissée (R15) — la fenêtre
+    // que la mise à mort propre (C6) rend précieuse.
+    g.fillStyle(0x2e3238).fillEllipse(12, 7, 17, 8) // corps
+    g.fillStyle(0x6b7078).fillEllipse(12, 7, 14, 5)
+    g.fillStyle(0x5c6168).fillTriangle(3, 12, 8, 5, 9, 11) // encolure plongée
+    g.fillStyle(0x3a3f46).fillCircle(4, 11, 2) // tête au sol
+    g.fillStyle(0x2e3238).fillRect(8, 11, 2, 4).fillRect(12, 11, 2, 4).fillRect(16, 10, 2, 4) // pattes
+    g.fillStyle(0x6b7078).fillTriangle(19, 5, 22, 2, 20, 8) // queue
+    g.generateTexture('spr-wolf-eat', 22, 15)
     g.destroy()
   }
 

@@ -5,7 +5,7 @@
  * lire les wind-ups contre lui. Le sanglier est la chasse : neutre, fuit,
  * charge parfois blessé. IA dans /sim, aléa via le PRNG de la sim.
  */
-import { BALANCE, COMBAT, FAUNA, MONSTER_DEFS, SLOTS, TICK_DT_S, type MonsterType } from './balance'
+import { BALANCE, COMBAT, FAUNA, HUNT, MONSTER_DEFS, SLOTS, TICK_DT_S, type MonsterType } from './balance'
 import { startAttack } from './combat'
 import { moveAvatar } from './collision'
 import { distSq } from './geometry'
@@ -14,7 +14,7 @@ import { spawnEntity, type Entity, type SimState } from './sim'
 import { computeFlowField } from './pathfinding'
 import { structureAt, structureBlocks } from './village'
 import { cendreuxStep } from './cendreux'
-import { advanceFauna, faunaStep, isPredator, isPrey, wolfStep, type Threat } from './faune'
+import { advanceFauna, avatarDetectability, avatarThreat, coverAt, faunaStep, isPredator, isPrey, wolfStep, type Threat } from './faune'
 import { getGameTime } from './time'
 
 export interface Monster {
@@ -36,8 +36,99 @@ export interface Monster {
   ambient?: boolean
   /** Tick où la fuite a commencé — cadence les à-coups (-1 = ne fuit pas). */
   fleeSince: number
+  /**
+   * LE POINT DE PEUR (spec faune R6) : d'où est venue l'alerte — la menace vue,
+   * le lieu du cri de mort, ou celui transmis par la contagion. La bête fuit
+   * jusqu'à en être à FLEE_GOAL, et toute la harde partage le même : c'est ce
+   * qui la fait fuir ENSEMBLE, dans le même cône (R9bis).
+   */
+  fleeFromX?: number
+  fleeFromY?: number
+
+  /* ── LE SANG (spec chasse C8-C11) ───────────────────────────────────────── */
+  /**
+   * LA PLAIE MORTELLE : le coup l'a fait passer sous `MORTAL_BELOW` de ses PV.
+   * Elle saigne JUSQU'À LA MORT — elle est à vous, si vous la retrouvez.
+   * Une plaie LÉGÈRE (au-dessus du seuil), elle, se referme à `bleedUntil`.
+   */
+  bleedMortal?: true
+  /** Tick où le saignement s'arrête (plaie légère). Absent = pas de saignement. */
+  bleedUntil?: number
+  /** Prochain tick où une goutte tombe (cadence bornée : `BLOOD_EVERY_TICKS`). */
+  bleedDropAt?: number
+  /** À bout, non pressée : elle s'est TAPIE dans un couvert (C11) — on la retrouve au sang. */
+  bedded?: true
+  /** Tick depuis lequel plus aucune menace n'est perçue — décide du couché (C11). */
+  calmSince?: number
+
+  /* ── Le terrier du lapin (spec chasse C16) ──────────────────────────────── */
+  /** Sa tuile de naissance : levé, il fuit VERS elle — et il y disparaît. */
+  burrowX?: number
+  burrowY?: number
+
+  /* ── L'appât (spec chasse C18) ──────────────────────────────────────────── */
+  /** Tick jusqu'auquel elle MANGE la pile posée par le chasseur — tête baissée. */
+  baitUntil?: number
+  /** La pile qu'elle mange (`state.groundItems`). */
+  baitId?: number
+
+  /** LE CROCHET (spec chasse C15) : le cap tiré pour ce burst — il tient jusqu'au suivant. */
+  jinkDx?: number
+  jinkDy?: number
+
+  /* ── Le coin de chasse (spec faune R17) ─────────────────────────────────── */
+  /**
+   * SON TERRITOIRE : le coin de chasse dont cette bête est. Elle y est née, elle
+   * y broute, et sa dérive vise un but À L'INTÉRIEUR — elle traverse sa
+   * clairière, elle ne quitte pas le canton. Absent = bête sans géographie (banc
+   * de test, bête de tanière).
+   */
+  groundX?: number
+  groundY?: number
+
+  /* ── La méfiance (spec chasse C1) ───────────────────────────────────────── */
+  /**
+   * LA JAUGE, 0-1. Elle POURSUIT le stimulus (distance perçue) : vite en montée,
+   * lentement en descente. Trois seuils lisibles : CURIEUSE (elle regarde),
+   * ALERTÉE (tendue — un coup n'est plus propre), 1 (levée : machine de fuite).
+   * La bête EST la jauge : le client en dérive sa posture, rien d'autre à ajouter
+   * au protocole. Les prédateurs ne s'en servent pas (ils ne fuient pas l'homme) —
+   * leur état « alerté » vit dans `alertSince` seul.
+   */
+  suspicion: number
+  /**
+   * LA NERVOSITÉ : multiplie la LENTEUR de la décrue (absent = 1, plafonné). Une
+   * bête qui a déjà donné l'alerte ne se rassure plus aussi vite — on ne refait
+   * pas indéfiniment la même approche ratée sur la même bête.
+   */
+  nervous?: number
+  /**
+   * Tick du DERNIER franchissement du seuil d'alerte (absent = sous le seuil).
+   * C'est LUI que la mise à mort propre interroge (C6) : un coup est propre si la
+   * bête n'était pas alertée AU DÉPART du wind-up — pas à l'arrivée. Pour un
+   * prédateur : posé quand il prend une cible ou décroche, effacé au retour à la
+   * patrouille.
+   */
+  alertSince?: number
+  /**
+   * Le dernier coup reçu était PROPRE (C6) — drapeau transitoire lu par `die()`
+   * pour `monster_slain.clean`. Posé/effacé à chaque coup ; sans conséquence sur
+   * une bête qui survit.
+   */
+  slainClean?: true
   /** La harde à laquelle cette bête appartient (spec faune R9). Absent = solitaire. */
   herdId?: number
+  /**
+   * ELLE RECOLLE AU GROUPE (spec faune R9). Le rappel est COLLANT : levé à
+   * `HERD_SPREAD`, il ne lâche qu'à `HERD_COMFORT`. Sans cette hystérésis, la
+   * bête oscillait autour du seuil — deux à trois fois par seconde. Elle
+   * TREMBLAIT (playtest).
+   */
+  regrouping?: true
+  /** ELLE S'ÉCARTE d'une voisine (R9bis) — collant, comme le rappel. */
+  separating?: true
+  /** ELLE RENTRE CHEZ ELLE (hors habitat) — et elle s'engage jusqu'au cœur de sa tuile. */
+  homing?: true
   /**
    * Le loup RAMPE vers son poste d'encerclement (spec faune R11). Tant que c'est
    * vrai, la proie ne le repère que de bien plus près — et le client peut le
@@ -110,6 +201,7 @@ export function spawnMonster(state: SimState, type: MonsterType, x: number, y: n
     fleeing: false,
     lastAttackerId: null,
     fleeSince: -1,
+    suspicion: 0,
   })
   return id
 }
@@ -155,6 +247,13 @@ export function moveToward(
   }
   const sx = (dx > 0.15 ? 1 : dx < -0.15 ? -1 : 0) as -1 | 0 | 1
   const sy = (dy > 0.15 ? 1 : dy < -0.15 ? -1 : 0) as -1 | 0 | 1
+  // Le pas ORIENTE la bête (spec chasse C4) : sa perception est directionnelle,
+  // il faut donc que son regard suive sa marche — sans quoi « dans le dos » ne
+  // voudrait rien dire pour une bête née face à l'est et jamais tournée.
+  if (sx !== 0 || sy !== 0) {
+    const len = Math.sqrt(sx * sx + sy * sy)
+    entity.facing = { x: sx / len, y: sy / len }
+  }
   const scale = gait * (def.speed / BALANCE.WALK_SPEED_TILES_PER_S) * (entity.wounds.leg ? COMBAT.LEG_WOUND_SPEED : 1)
   const moved = moveAvatar(
     { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null },
@@ -309,13 +408,25 @@ export function advanceMonsters(state: SimState): void {
   const monsterByEntity = new Map<number, Monster>()
   for (const m of state.monsters) monsterByEntity.set(m.entityId, m)
 
-  const threats: Threat[] = avatars.map((e) => ({ e, stealth: 1 }))
+  // LA FURTIVITÉ, entrée UNE fois (spec chasse C5) : deux canaux par menace —
+  // la VUE (allure × couvert, que le regard de chaque bête modulera encore) et
+  // l'OUÏE (le bruit, omnidirectionnel). L'angle (C4) dépend du REGARD de chaque
+  // percepteur : il s'applique dans `nearestThreat`, pas ici.
+  const detectById = new Map<number, number>()
+  for (const a of avatars) detectById.set(a.id, avatarDetectability(state, a))
+  const stealthOf = (e: Entity): number => detectById.get(e.id) ?? 1
+
+  const threats: Threat[] = avatars.map((e) => avatarThreat(state, e))
   const quarry: Entity[] = [...avatars]
   for (const m of state.monsters) {
     const e = byId.get(m.entityId)
     if (!e || e.hp <= 0) continue
-    if (isPredator(m.type)) threats.push({ e, stealth: m.stalking ? FAUNA.STALK_STEALTH : 1 })
-    else if (isPrey(m.type)) quarry.push(e)
+    // Le couvert cache le loup comme il cache l'homme (C3) : mêmes règles pour
+    // tous. Et un loup est quasi silencieux — c'est tout le sens de sa traque.
+    if (isPredator(m.type)) {
+      const vision = (m.stalking ? FAUNA.STALK_STEALTH : 1) * coverAt(state, e.x, e.y)
+      threats.push({ e, vision, noise: vision * HUNT.PREDATOR_NOISE })
+    } else if (isPrey(m.type)) quarry.push(e)
   }
 
   for (const monster of [...state.monsters]) {
@@ -330,7 +441,7 @@ export function advanceMonsters(state: SimState): void {
     }
 
     if (isPredator(monster.type)) {
-      wolfStep(state, monster, entity, quarry, byId, monsterByEntity, herds, hour, isAvatar)
+      wolfStep(state, monster, entity, quarry, byId, monsterByEntity, herds, hour, isAvatar, stealthOf)
       continue
     }
 

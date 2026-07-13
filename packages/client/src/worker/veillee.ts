@@ -11,6 +11,7 @@ import {
   FAUNA,
   generateAlpineTerrain,
   generateNodes,
+  placeHuntingGrounds,
   spawnEntity,
   spawnPoiMonsters,
   terrainAt,
@@ -93,6 +94,10 @@ export function createVeillee(onPhase: (phase: LoadPhase) => void = () => {}): {
     // Le monde est habité (spec faune) : la faune ambiante naît hors-champ
     // autour du joueur et se dissipe derrière lui. Plafond, donc coût constant.
     faunaCap: FAUNA.CAP,
+    // LES COINS DE CHASSE (spec faune R17) : le gibier a des ADRESSES — des prés
+    // à portée d'eau, semés une fois pour la saison. Entre eux, la vallée est
+    // vide, et c'est ce vide qui rend la carte apprenable.
+    grounds: placeHuntingGrounds(map, VEILLEE_SEED),
     // LE FOYER dessine les trois cercles (GDD §8bis) : la récolte est médiocre
     // autour, et les PRÉDATEURS y sont rares — aux marges, le monde leur appartient.
     home: spawn,

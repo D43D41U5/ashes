@@ -63,7 +63,12 @@ export type SimEvent =
     }
   | { type: 'entity_respawned'; tick: number; entityId: number }
   | { type: 'entity_bandaged'; tick: number; entityId: number; byEntityId: number }
-  | { type: 'monster_slain'; tick: number; monsterType: import('./balance').MonsterType; byEntityId: number }
+  /** `clean` (spec chasse C6) : abattue d'un coup PROPRE — non alertée au départ du wind-up. */
+  | { type: 'monster_slain'; tick: number; monsterType: import('./balance').MonsterType; byEntityId: number; clean: boolean }
+  /** LA PROIE S'EN TIRE (spec chasse C16) : le lapin a regagné son terrier. La chasse est perdue. */
+  | { type: 'prey_escaped'; tick: number; monsterType: import('./balance').MonsterType; x: number; y: number }
+  /** JETÉ AU SOL (spec chasse C18) : l'appât posé, la viande lâchée à la meute, la charge larguée. */
+  | { type: 'item_dropped'; tick: number; entityId: number; item: ItemId; x: number; y: number }
   /**
    * LE HURLEMENT (spec faune R13). Une meute vient de choisir un homme. C'est un
    * FAIT de jeu, pas un effet sonore : le GDD §9bis exige que tout événement se

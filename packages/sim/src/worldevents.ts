@@ -90,6 +90,7 @@ export function spawnConvoy(state: SimState): void {
     y: ty + 0.5,
     inventory: inventoryOf(SLOTS.CHEST, CONVOY_LOOT),
     decayAt: state.tick + WORLD_EVENTS.CONVOY_DECAY_TICKS,
+    diedAt: state.tick,
   })
   state.nextCorpseId += 1
   for (let i = 0; i < WORLD_EVENTS.CONVOY_GUARDS; i++) {

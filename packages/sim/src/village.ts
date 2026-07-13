@@ -156,6 +156,7 @@ export function spillOnGround(state: SimState, x: number, y: number, items: Item
     y,
     inventory: pile,
     decayAt: state.tick + COMBAT.CORPSE_TICKS,
+    diedAt: state.tick,
   })
   state.nextCorpseId += 1
 }

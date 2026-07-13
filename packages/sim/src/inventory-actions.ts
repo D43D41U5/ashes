@@ -15,10 +15,11 @@
  * autre » — et `creditForeignDeposit` (village.ts) — l'effet d'alignement du don.
  * Recopier l'une ou l'autre ici, ce serait signer leur divergence.
  */
-import { BALANCE, SLOTS } from './balance'
+import { BALANCE, HUNT, SLOTS } from './balance'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import {
+  addItems,
   durabilityOf,
   isEmpty,
   isStackable,
@@ -48,8 +49,19 @@ export type InventoryAction =
       to: SlotRef
       count: number
     }
+  /**
+   * JE JETTE CE QUE JE TIENS (spec chasse C18, décision utilisateur n°4). Une
+   * unité de la case active tombe au sol, dans une PILE (`state.groundItems`) —
+   * ramassable à l'unité, périssable. C'est le geste qui rend exécutables :
+   * l'APPÂT (poser des baies, et attendre), le JET DE VIANDE à une meute qui
+   * vous serre (faune R15, promis par le GDD §9bis et jamais tenu), et
+   * l'allègement d'un porteur en fuite — une case à la fois.
+   */
+  | { type: 'drop_held' }
+  /** JE RAMASSE une pile au sol (portée de bras). */
+  | { type: 'pick_up'; pileId: number }
 
-const INVENTORY_ACTION_TYPES: string[] = ['set_active_slot', 'move_slot', 'split_slot', 'transfer']
+const INVENTORY_ACTION_TYPES: string[] = ['set_active_slot', 'move_slot', 'split_slot', 'transfer', 'drop_held', 'pick_up']
 
 export function isInventoryAction(action: { type: string }): action is InventoryAction {
   return INVENTORY_ACTION_TYPES.includes(action.type)
@@ -202,6 +214,62 @@ export function applyInventoryAction(state: SimState, actorId: number, action: I
           byEntityId: actorId,
         })
       }
+      return
+    }
+
+    /**
+     * JE JETTE CE QUE JE TIENS (spec chasse C18). Une unité de la case active
+     * tombe au sol. Ce geste, et lui seul, rend exécutables l'appât, le jet de
+     * viande à une meute et l'allègement du porteur en fuite.
+     *
+     * Les piles FUSIONNENT si l'on jette deux fois le même item au même endroit :
+     * sans ça, dix baies posées feraient dix piles superposées — et dix bêtes
+     * convergeraient sur dix appâts qui n'en sont qu'un.
+     */
+    case 'drop_held': {
+      const held = heldSlot(actor)
+      if (held === null) return reject('rien en main')
+      const item = held.item
+
+      const near = state.groundItems.find(
+        (p) => p.item === item && distSq(actor.x, actor.y, p.x, p.y) <= 0.5 * 0.5,
+      )
+      if (near) {
+        near.count += 1
+        near.expiresAt = state.tick + HUNT.GROUND_TTL // le tas se renouvelle
+      } else {
+        state.groundItems.push({
+          id: state.nextGroundItemId,
+          x: actor.x,
+          y: actor.y,
+          item,
+          count: 1,
+          expiresAt: state.tick + HUNT.GROUND_TTL,
+        })
+        state.nextGroundItemId += 1
+      }
+
+      held.count -= 1
+      if (held.count <= 0) actor.inventory[actor.activeSlot] = null
+      emitEvent(state, { type: 'item_dropped', tick: state.tick, entityId: actorId, item, x: actor.x, y: actor.y })
+      return
+    }
+
+    /** JE RAMASSE une pile au sol — à l'unité, comme on l'a jetée. */
+    case 'pick_up': {
+      const pile = state.groundItems.find((p) => p.id === action.pileId)
+      if (!pile) return reject('rien à ramasser')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, pile.x, pile.y) > range * range) return reject('trop loin')
+
+      // `addItems` rend ce qui N'A PAS tenu (le reste), pas ce qui est entré :
+      // ce qui rentre est donc la différence. Un sac plein ne fait pas
+      // disparaître la pile — elle reste au sol, entière.
+      const leftover = addItems(actor.inventory, { [pile.item]: pile.count })
+      const taken = pile.count - (leftover[pile.item] ?? 0)
+      if (taken <= 0) return reject('sac plein')
+      pile.count -= taken
+      if (pile.count <= 0) state.groundItems = state.groundItems.filter((p) => p.id !== pile.id)
       return
     }
   }

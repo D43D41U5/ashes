@@ -10,7 +10,7 @@
  * que snapshot = JSON.stringify et que le transport Worker/réseau soit
  * trivial.
  */
-import { BALANCE, CARRY, COMBAT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type Strike } from './balance'
+import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type Strike } from './balance'
 import { moveAvatar } from './collision'
 import { advanceCombat, applyCombatAction, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
@@ -26,7 +26,7 @@ import {
 } from './economy'
 import { emitEvent, type SimEvent } from './events'
 import { applyInventoryAction, isInventoryAction, type InventoryAction } from './inventory-actions'
-import { carryRatio, carryTier, makeInventory, type Inventory, type SkillId } from './items'
+import { carryRatio, carryTier, makeInventory, type Inventory, type ItemId, type SkillId } from './items'
 import { createEmptyMap, type WorldMap } from './map'
 import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
@@ -86,6 +86,14 @@ export interface Entity {
   blocking: boolean
   /** A bougé ce tick (module la régén d'endurance). */
   moved: boolean
+  /**
+   * L'ALLURE du tick (spec chasse C2) : c'est elle qui décide du BRUIT — ce que
+   * la faune perçoit (immobile ≪ pas lent ≪ marche ≪ sprint, voir HUNT.NOISE_*).
+   * Dans le snapshot exprès : en multi comme en Veillée, on doit VOIR l'autre
+   * ramper — la posture est un télégraphe pour les joueurs autant qu'une entrée
+   * pour les bêtes. Posée par le pas d'input ; les PNJ restent à `walk` (bruit 1).
+   */
+  gait: 'still' | 'sneak' | 'walk' | 'sprint'
   exhaustedUntil: number
   /**
    * LE COUP QUI S'ARME. Il porte SA FORME (`strike`) : c'est ce qui permet au
@@ -187,6 +195,36 @@ export interface SimState {
    */
   faunaQuiet: { x: number; y: number; until: number }[]
   /**
+   * LES COINS DE CHASSE (spec faune R17) : les lieux FIXES où le gibier vit —
+   * un biome ouvert à portée d'eau, semé une fois pour la saison. Entre eux, la
+   * vallée est vide. C'est une décision d'HÔTE, comme `faunaCap` et `dens` : une
+   * liste VIDE rend l'ancien peuplement uniforme (les bancs de test n'ont pas
+   * demandé de géographie).
+   */
+  grounds: { x: number; y: number }[]
+  /**
+   * LE SANG AU SOL (spec chasse C9). Les gouttes semées par ce qui saigne — bête
+   * blessée comme avatar (le sang est le sang). C'est de l'ÉTAT, pas des
+   * événements : haute fréquence ≠ domaine. Le client les dessine et les efface,
+   * personne d'autre ne les consomme. Borné des deux côtés (TTL + plafond FIFO) :
+   * le snapshot reste petit.
+   */
+  blood: { x: number; y: number; tick: number }[]
+  /**
+   * LE VENT (spec chasse C17), un des huit relèvements — il tourne lentement, au
+   * PRNG de l'état. L'odeur DESCEND le vent : une menace au vent d'une bête la
+   * trahit, quels que soient son allure, son couvert et le dos tourné. La parade
+   * n'est pas un facteur de plus : c'est un CÔTÉ.
+   */
+  wind: { x: number; y: number }
+  /**
+   * LES PILES D'ITEMS AU SOL (spec chasse C18, décision utilisateur n°4). Ce
+   * qu'on JETTE : appât pour le gibier, viande pour détourner une meute, charge
+   * larguée en fuite. Périssables — le monde ne se jonche pas.
+   */
+  groundItems: { id: number; x: number; y: number; item: ItemId; count: number; expiresAt: number }[]
+  nextGroundItemId: number
+  /**
    * Les LIEUX que l'hôte a peuplés d'une bête (index de `map.zones`). Le
    * peuplement reste une décision d'hôte, exactement comme `faunaCap` : sans
    * cette liste, `advanceDens` prendrait « ce lieu n'a pas de bête » pour « sa
@@ -219,6 +257,12 @@ export interface SimOptions {
    */
   faunaCap?: number
   /**
+   * LES COINS DE CHASSE (spec faune R17) — typiquement `placeHuntingGrounds(map, seed)`.
+   * Sans eux, le peuplement redevient uniforme : un banc de test n'a pas demandé
+   * de géographie, et il ne doit pas en payer une.
+   */
+  grounds?: { x: number; y: number }[]
+  /**
    * Ce monde connaît-il les ÉVÉNEMENTS DU MONDE (hordes, convois) ? Vrai par
    * défaut : une partie en a, évidemment. Un banc de test PNJ, lui, mesure une
    * ÉCONOMIE — il ne devrait pas voir son verdict décidé par une guerre qu'il n'a
@@ -246,6 +290,8 @@ export interface MoveInput {
   dx: -1 | 0 | 1
   dy: -1 | 0 | 1
   sprint?: boolean
+  /** LE PAS LENT (spec chasse C2) : discret pour la faune, et lent — c'est le prix. */
+  sneak?: boolean
   block?: boolean
   action?: PlayerAction
 }
@@ -288,8 +334,14 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     home: options.home ?? null,
     nextHerdId: 1,
     faunaQuiet: [],
+    grounds: options.grounds ? options.grounds.map((g) => ({ x: g.x, y: g.y })) : [],
     dens: [],
     denRespawns: [],
+    blood: [],
+    // Le vent de départ : le premier des huit relèvements. Il tournera (C17).
+    wind: { x: 1, y: 0 },
+    groundItems: [],
+    nextGroundItemId: 1,
   }
   // Le tick 0 débute le jour 1 et l'acte I ; la phase du cycle dépend de
   // cycleOffset (0 = aube), donc on émet le bon franchissement jour/nuit.
@@ -325,6 +377,9 @@ export function spawnEntity(state: SimState, x: number, y: number, slots: number
     facing: { x: 1, y: 0 },
     blocking: false,
     moved: false,
+    // `walk` par défaut : les PNJ (qui ne passent pas par les inputs) sonnent
+    // comme des marcheurs (spec chasse C2) ; l'avatar joué est re-posé chaque tick.
+    gait: 'walk',
     exhaustedUntil: 0,
     swingSide: 1,
     homeX: x,
@@ -379,8 +434,8 @@ export function carrySpeedFactor(ratio: number): number {
  */
 export function speedScaleFor(
   entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina' | 'temperature' | 'inventory'>,
-  input: { sprint: boolean; block: boolean; moving: boolean; charging?: boolean },
-): { scale: number; sprinting: boolean } {
+  input: { sprint: boolean; block: boolean; moving: boolean; charging?: boolean; sneak?: boolean },
+): { scale: number; sprinting: boolean; sneaking: boolean } {
   let scale = 1
   if (entity.hunger <= 0) scale *= BALANCE.HUNGER_SPEED_MALUS
   scale *= coldSpeedFactor(entity.temperature)
@@ -395,11 +450,17 @@ export function speedScaleFor(
   // sur ses appuis. Le sprint est refusé, pas seulement ralenti — sans quoi la charge
   // serait une posture de fuite, et l'engagement qu'elle est censée coûter n'existerait pas.
   const charging = input.charging ?? false
-  const sprinting = !blocking && !charging && input.sprint && entity.stamina > 0 && input.moving && canSprint
+  // LE PAS LENT (spec chasse C2). Il PRIME sur le sprint : on ne court pas
+  // accroupi, et des deux touches tenues, c'est l'intention délibérée qui gagne.
+  // Il se COMBINE à la charge (× les deux facteurs) : ramper lance armée est
+  // exactement l'approche que la mise à mort propre récompense (C6).
+  const sneaking = (input.sneak ?? false) && !blocking
+  const sprinting = !blocking && !charging && !sneaking && input.sprint && entity.stamina > 0 && input.moving && canSprint
   if (blocking) scale *= COMBAT.BLOCK_MOVE_FACTOR
   else if (sprinting) scale *= COMBAT.SPRINT_FACTOR
+  else if (sneaking) scale *= HUNT.SNEAK_SPEED_FACTOR
   if (charging) scale *= COMBAT.CHARGE_MOVE_FACTOR
-  return { scale, sprinting }
+  return { scale, sprinting, sneaking }
 }
 
 /** Avance la simulation d'exactement un tick. Mute `state` en place. */
@@ -448,14 +509,19 @@ export function step(state: SimState, inputs: MoveInput[]): void {
 
     if (entity.windup) {
       entity.moved = false
+      entity.gait = 'still' // le wind-up immobilise : on frappe, on ne marche pas
       continue // le wind-up immobilise (spec R4)
     }
-    const { scale: speedScale, sprinting } = speedScaleFor(entity, {
+    const { scale: speedScale, sprinting, sneaking } = speedScaleFor(entity, {
       sprint: input.sprint ?? false,
       block: input.block ?? false,
       moving: input.dx !== 0 || input.dy !== 0,
       charging: entity.charge !== undefined,
+      sneak: input.sneak ?? false,
     })
+    // L'ALLURE du tick (spec chasse C2) — ce que la faune entendra de ce pas.
+    const moving = input.dx !== 0 || input.dy !== 0
+    entity.gait = !moving ? 'still' : sprinting ? 'sprint' : sneaking ? 'sneak' : 'walk'
     if (sprinting) {
       entity.stamina = Math.max(0, entity.stamina - COMBAT.SPRINT_STAMINA_PER_S / BALANCE.TICK_RATE_HZ)
     }

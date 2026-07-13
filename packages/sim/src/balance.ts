@@ -291,33 +291,40 @@ export interface TerrainDef {
   walkable: boolean
   /** Multiplicateur de vitesse de déplacement — de l'équilibrage. */
   speedFactor: number
+  /**
+   * LE COUVERT (spec chasse C3) : ce qui RESTE de la visibilité d'une menace qui
+   * se tient sur cette tuile. 1 = à découvert (prairie rase, neige), 0.5 = on n'y
+   * existe presque plus (vieille forêt, roselière). Multiplie la furtivité de
+   * TOUTE menace — le chasseur comme le loup qui traque : mêmes règles pour tous.
+   */
+  cover: number
 }
 
 /** Table des terrains. L'id est la valeur stockée dans WorldMap.terrain. */
 export const TERRAINS: Record<number, TerrainDef> = {
-  0: { name: 'void', walkable: false, speedFactor: 0 },
-  1: { name: 'grass', walkable: true, speedFactor: 1 },
-  2: { name: 'road', walkable: true, speedFactor: 1.25 },
-  3: { name: 'forest', walkable: true, speedFactor: 0.8 },
-  4: { name: 'shallow_water', walkable: true, speedFactor: 0.5 },
-  5: { name: 'rock', walkable: false, speedFactor: 0 },
-  6: { name: 'deep_water', walkable: false, speedFactor: 0 },
-  7: { name: 'wall', walkable: false, speedFactor: 0 },
-  8: { name: 'marsh', walkable: true, speedFactor: 0.6 },
-  9: { name: 'scree', walkable: true, speedFactor: 0.7 },
-  10: { name: 'snow', walkable: false, speedFactor: 0 },
-  11: { name: 'heath', walkable: true, speedFactor: 0.9 },
-  12: { name: 'alpine_meadow', walkable: true, speedFactor: 1 },
-  13: { name: 'pine', walkable: true, speedFactor: 0.85 },
-  14: { name: 'larch', walkable: true, speedFactor: 0.85 },
-  15: { name: 'glacier', walkable: false, speedFactor: 0 },
-  16: { name: 'boulders', walkable: true, speedFactor: 0.6 },
-  17: { name: 'flower_meadow', walkable: true, speedFactor: 1 },
-  18: { name: 'peat_bog', walkable: true, speedFactor: 0.45 },
-  19: { name: 'reed_marsh', walkable: true, speedFactor: 0.55 },
-  20: { name: 'alpine_flowers', walkable: true, speedFactor: 1 },
-  21: { name: 'burnt_forest', walkable: true, speedFactor: 0.9 },
-  22: { name: 'old_growth', walkable: true, speedFactor: 0.7 },
+  0: { name: 'void', walkable: false, speedFactor: 0, cover: 1 },
+  1: { name: 'grass', walkable: true, speedFactor: 1, cover: 1 },
+  2: { name: 'road', walkable: true, speedFactor: 1.25, cover: 1 },
+  3: { name: 'forest', walkable: true, speedFactor: 0.8, cover: 0.6 },
+  4: { name: 'shallow_water', walkable: true, speedFactor: 0.5, cover: 1 },
+  5: { name: 'rock', walkable: false, speedFactor: 0, cover: 1 },
+  6: { name: 'deep_water', walkable: false, speedFactor: 0, cover: 1 },
+  7: { name: 'wall', walkable: false, speedFactor: 0, cover: 1 },
+  8: { name: 'marsh', walkable: true, speedFactor: 0.6, cover: 0.85 },
+  9: { name: 'scree', walkable: true, speedFactor: 0.7, cover: 1 },
+  10: { name: 'snow', walkable: false, speedFactor: 0, cover: 1 },
+  11: { name: 'heath', walkable: true, speedFactor: 0.9, cover: 0.75 },
+  12: { name: 'alpine_meadow', walkable: true, speedFactor: 1, cover: 0.9 },
+  13: { name: 'pine', walkable: true, speedFactor: 0.85, cover: 0.65 },
+  14: { name: 'larch', walkable: true, speedFactor: 0.85, cover: 0.7 },
+  15: { name: 'glacier', walkable: false, speedFactor: 0, cover: 1 },
+  16: { name: 'boulders', walkable: true, speedFactor: 0.6, cover: 0.8 },
+  17: { name: 'flower_meadow', walkable: true, speedFactor: 1, cover: 0.8 },
+  18: { name: 'peat_bog', walkable: true, speedFactor: 0.45, cover: 0.9 },
+  19: { name: 'reed_marsh', walkable: true, speedFactor: 0.55, cover: 0.5 },
+  20: { name: 'alpine_flowers', walkable: true, speedFactor: 1, cover: 0.85 },
+  21: { name: 'burnt_forest', walkable: true, speedFactor: 0.9, cover: 0.9 },
+  22: { name: 'old_growth', walkable: true, speedFactor: 0.7, cover: 0.5 },
 }
 
 export const TERRAIN_VOID = 0
@@ -833,6 +840,12 @@ export interface MonsterDef {
   activity?: Activity
   /** Le PRÉDATEUR (spec faune R11) : il chasse, il ne broute pas. */
   predator?: boolean
+  /**
+   * LE CROCHET (spec chasse C15), dans [0, 1] : combien cette bête zigzague en
+   * fuite, à découvert. Le lapin crochète à fond (1), le cerf à moitié (0,5), le
+   * sanglier jamais (absent) — lui ne zigzague pas, il se retourne.
+   */
+  jink?: number
 }
 
 export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
@@ -867,6 +880,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     habitat: [TERRAIN_GRASS, TERRAIN_HEATH, TERRAIN_FLOWER_MEADOW, TERRAIN_ALPINE_MEADOW, TERRAIN_ALPINE_FLOWERS],
     alertRange: 11, flightRange: 7,
     activity: 'crepuscular', // à l'aube et au crépuscule : les heures du lapin
+    jink: 1, // il crochète À FOND : on ne l'attrape pas en courant droit (chasse C15)
   },
   // Le gros gibier : le vrai repas. Il voit de loin, part tôt, et court plus vite que vous.
   deer: {
@@ -878,6 +892,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     alertRange: 14, flightRange: 9,
     herdSize: [3, 5], // la harde : ils broutent ensemble et détalent ensemble
     activity: 'diurnal', // le grand gibier du plein jour
+    jink: 0.5, // il crochète, mais moins sec que le lapin (chasse C15)
   },
   /**
    * LE LOUP (spec faune R11) — « le danger de fond des trajets » (GDD §9bis).
@@ -935,7 +950,37 @@ export const FAUNA = {
    * effectivement qu'une. En resserrant le disque (52) et en montant le plafond,
    * on vise ~4 : assez pour que la forêt bruisse, trop peu pour un zoo.
    */
-  CAP: 48,
+  CAP: 30,
+  /* ── LES COINS DE CHASSE (spec faune R17) ───────────────────────────────── */
+  /**
+   * LE GIBIER A DES ADRESSES (décision utilisateur, 2026-07-13).
+   *
+   * La faune était un BROUILLARD UNIFORME : elle naissait autour du joueur, où
+   * qu'il aille. Marcher dix minutes dans n'importe quelle direction donnait
+   * exactement la même chose — donc la carte ne s'apprenait pas, et « le gibier
+   * est une ressource de TERRITOIRE, pas de temps » (R16) n'était qu'une phrase.
+   *
+   * Le monde porte maintenant des COINS DE CHASSE : des lieux FIXES, semés une
+   * fois pour la saison, où le gibier vit. Entre eux, la vallée est VIDE — et
+   * c'est ce vide qui donne leur valeur aux coins.
+   *
+   * Ils sont posés à des endroits LOGIQUES (retour utilisateur) : un biome OUVERT
+   * (on y broute) À PORTÉE D'EAU (on y boit). Un semis de Poisson donne
+   * l'espacement, ces deux conditions donnent l'adresse — le gibier ne vit pas
+   * sur un éboulis.
+   */
+  GROUND_SPACING: 200, // deux coins ne se touchent jamais (semis de Poisson)
+  GROUND_RADIUS: 46, // le territoire : hors de ce disque, rien ne naît
+  GROUND_SNAP: 30, // depuis le point tiré, on cherche la bonne tuile dans ce rayon
+  GROUND_WATER_NEAR: 40, // « à portée d'eau » : le gibier boit tous les jours
+  GROUND_WATER_CELL: 8, // maille de la grille d'eau (précalcul du worldgen)
+  /**
+   * LA MIGRATION DANS SON COIN. Une bête d'un coin de chasse ne dérive pas
+   * n'importe où : elle se donne un BUT à l'intérieur de son territoire, et elle
+   * y va. Le troupeau traverse sa clairière ; il ne quitte pas le canton.
+   */
+  MIGRATE_SLICE_TICKS: ticksFor(45),
+  MIGRATE_REACH: 0.7, // …dans les 70 % intérieurs du disque : elle ne rase pas la frontière
   SPAWN_EVERY_TICKS: ticksFor(0.4),
   SPAWN_TRIES: 8, // tirages de tuile par tentative de peuplement
   SPAWN_RING_MIN: 28,
@@ -951,9 +996,74 @@ export const FAUNA = {
    * part, et le monde ne se repeuple pas autour d'un joueur immobile.
    */
   PAUSE_CHANCE: 0.28,
-  FLEE_SPEED: 1, // × la vitesse de l'espèce : détaler, c'est tout donner
+  FLEE_SPEED: 1, // × la vitesse de l'espèce : l'allure de rompue des prédateurs
   BURST_RUN_TICKS: ticksFor(1.6), // le sprint burst promis par combat.md R12…
-  BURST_PAUSE_TICKS: ticksFor(0.7), // …et le souffle qui le rend chassable
+  BURST_PAUSE_TICKS: ticksFor(0.7), // …et le souffle qui le rend LISIBLE (plus « chassable » : voir R6)
+
+  /* ── La fuite ENGAGÉE (R6, refondue 2026-07-13) ─────────────────────────── */
+  /**
+   * LE SURRÉGIME. En fuite, le gibier court à ça × sa vitesse : cerf ~6,9 t/s,
+   * lapin ~7,5 — plus vite qu'un sprint de joueur (6), TOUJOURS. Le playtest
+   * était sans appel : à-coups inconditionnels + peur courte = un cerf rattrapé
+   * à la course, ce qu'aucun cerf du monde n'accorde. La chasse à course droite
+   * est morte ; restent l'approche (spec chasse) et le tir à venir. Conséquence
+   * actée : le loup (4,8) ne rattrape plus un cerf SAIN — c'est CHASSE II (le
+   * sang) qui lui rendra ses proies : la ruée blesse, le sang ralentit.
+   */
+  FLEE_SPRINT: 1.5,
+  /**
+   * LE SOUFFLE EST UN LUXE DE LA MARGE. La bête ne marque la pause de burst que
+   * si la menace PERÇUE est plus loin que ça — serrée de près, elle court plein
+   * pot. (Et un chasseur qui se fige pendant qu'elle souffle redevient presque
+   * imperceptible : le stop-and-go vaut aussi en poursuite.)
+   */
+  BREATHE_GAP: 12,
+  /**
+   * LE POINT DE PEUR. Une bête levée mémorise D'OÙ est venue la peur et fuit
+   * jusqu'à en être à cette distance — menace visible ou pas. C'est ce qui fait
+   * « partir loin avant de reprendre une vie normale », au lieu de s'arrêter à
+   * quatorze tuiles et de rebrouter sous le nez du chasseur.
+   */
+  FLEE_GOAL: 30,
+  /** La borne dure de l'engagement — pour la bête ACCULÉE contre une falaise. */
+  FLEE_MAX_TICKS: ticksFor(15),
+
+  /* ── L'espace vital et l'impatience (R6bis) ─────────────────────────────── */
+  /**
+   * L'ESPACE VITAL. Une menace repérée (jauge ≥ alerte) à moins de ça : LEVÉE,
+   * immobile ou pas. Sans lui, un joueur AFK finissait ENCERCLÉ de cerfs
+   * statufiés — la jauge d'un immobile converge sous 1, et le gel n'avait pas
+   * d'issue. Un cerf ne broute pas à trois mètres d'une silhouette identifiée.
+   * (Le sanglier est exempté : son trop-près à lui, c'est la MENACE, R14.)
+   *
+   * 3,5 et pas plus : il ne mord que sur la jauge ≥ ALERTE — le chasseur du
+   * stop-and-go, qui approche SOUS le seuil, ne le rencontre jamais (le coup
+   * propre exige déjà d'être sous l'alerte). L'espace vital punit l'approche
+   * RATÉE, pas l'approche.
+   */
+  PERSONAL_SPACE: 3.5,
+  /**
+   * L'IMPATIENCE. Alertée depuis plus de ça sans résolution, la bête ne reste
+   * pas statue : elle s'éloigne au trot jusqu'à retomber sous le seuil — le
+   * cerf tape du sabot, fixe, puis s'écarte.
+   */
+  IMPATIENCE_TICKS: ticksFor(6),
+  /** Le trot du méfiant : s'écarter, se regrouper, rentrer chez soi — plus vite que brouter. */
+  WARY_SPEED: 0.7,
+  /**
+   * LE RETOUR AU PAYS. Rayon de sondage d'une bête qui se réveille HORS de son
+   * habitat (la fuite engagée l'y a jetée) : elle cherche sa tuile de biome la
+   * plus proche et y rentre. Sans ça elle se figeait à jamais — `stepStaysHome`
+   * refuse tous les caps de qui est déjà dehors (bug attrapé au banc).
+   */
+  HOMING_SEEK: 24,
+  /**
+   * ET ELLE RENTRE JUSQU'AU CŒUR DE SA TUILE. Rendre la main dès que la bête a
+   * franchi la lisière, c'est la lâcher PILE SUR LE BORD — où le moindre pas de
+   * cohésion ou de séparation (qui ne connaissent pas les biomes) la rejette
+   * dehors, et où `goHome` la rappelle aussitôt : elle danserait sur la frontière.
+   */
+  HOMING_ARRIVE: 0.35,
 
   /* ── La harde (spec faune R9) ───────────────────────────────────────────── */
   /**
@@ -965,8 +1075,50 @@ export const FAUNA = {
   HERD_ALARM_RADIUS: 12,
   /** Au-delà de cet écart au centre de sa harde, la bête revient vers les siens. */
   HERD_SPREAD: 5,
+  /**
+   * …ET ELLE NE LÂCHE QU'ICI. Le rappel est COLLANT (hystérésis), comme la peur :
+   * elle se déclenche à `flightRange` et ne retombe qu'à `SAFE_RANGE`.
+   *
+   * Sans ce second seuil, la bête franchissait HERD_SPREAD, se faisait rappeler
+   * d'un pas, repassait sous le seuil — et RESSORTAIT aussitôt (son cap d'errance
+   * pointait toujours dehors). Deux à trois allers-retours par seconde : les
+   * cerfs TREMBLAIENT en pâturant, et c'est ce que le playtest a vu.
+   */
+  HERD_COMFORT: 2.5,
   /** Rayon de dispersion d'une harde à la naissance (tuiles). */
   HERD_SPAWN_SPREAD: 3,
+
+  /* ── Le troupeau qui vit (R9bis, 2026-07-13) ────────────────────────────── */
+  /** LA SÉPARATION (boids-lite) : deux bêtes plus proches que ça s'écartent d'un pas. */
+  HERD_SEPARATION: 1.2,
+  /**
+   * …et elle ne lâche qu'ICI (hystérésis, comme la cohésion et la peur). Un seuil
+   * unique relâchait la bête à un cheveu du contact : son cap d'errance la
+   * ramenait sur sa voisine au tick suivant, elles se repoussaient encore, et ça
+   * frémissait. TOUT SEUIL QUI COMMANDE UN MOUVEMENT VEUT SON HYSTÉRÉSIS.
+   */
+  HERD_SEPARATION_COMFORT: 1.9,
+  /**
+   * LA DÉRIVE DE PÂTURE. La harde a un cap de broutage partagé qui tourne à
+   * cette cadence (dérivé de `herdId` + tranche de temps par `hash2` — pur,
+   * zéro état, zéro tirage) : le troupeau TRAVERSE le paysage en broutant au
+   * lieu de trembler sur place.
+   */
+  DRIFT_SLICE_TICKS: ticksFor(20),
+  /** La part des re-décisions de cap qui suivent la dérive plutôt que le hasard. */
+  DRIFT_BIAS: 0.6,
+  /** LE REPOS GROUPÉ : hors de ses heures, la harde se couche resserrée sous ça. */
+  REST_SPREAD: 2.5,
+  /**
+   * LA SENTINELLE (spec chasse C13, livrée ici — R9bis). Dans une harde de
+   * gibier ≥ 3, UNE bête à la fois est de garde : tête haute, immobile, regard
+   * qui balaie, perception accrue — pendant que les brouteuses relâchent.
+   * Le tour se DÉRIVE (rang + tick ÷ SHIFT) : zéro état, déterminisme gratuit.
+   */
+  SENTINEL_SHIFT: ticksFor(20),
+  SENTINEL_SWEEP_TICKS: ticksFor(2.5), // son regard passe d'un relèvement au suivant
+  SENTINEL_ACUITY: 1.4,
+  HERD_RELAX: 0.85,
 
   /* ── Le rythme jour/nuit (spec faune R10) ───────────────────────────────── */
   /**
@@ -1068,6 +1220,21 @@ export const FAUNA = {
    * leur échappe — par le Feu, ou en les faisant rompre. Sans quoi on meurt.
    */
   PURSUIT_RANGE: 26,
+  /**
+   * L'HEURE DU LOUP (spec faune R10bis, 2026-07-13). Sa VIGUEUR (`activityAt`,
+   * nocturne) pondère ce qu'il ose : ses portées d'acquisition ET de poursuite
+   * sont multipliées par `WOLF_DAY_FLOOR + (1 − FLOOR) × vigueur`.
+   *
+   * R10 couchait le gibier hors de ses heures, mais le loup, lui, chassait à
+   * PLEINE portée à midi comme à 3 h : la nuit ne tenait pas sa promesse, et
+   * traverser la forêt de jour n'était pas plus sûr. Désormais un loup diurne
+   * est somnolent — on passe au large d'une meute assoupie (elle est VISIBLE,
+   * c'est un choix, pas une loterie) — et la nuit lui rend ses treize tuiles.
+   *
+   * Le plancher n'est pas zéro : une meute de plein jour reste dangereuse à qui
+   * lui marche dessus. On ne fabrique pas un interrupteur, on incline le monde.
+   */
+  WOLF_DAY_FLOOR: 0.45,
   /* ── Le sanglier (spec faune R14) — il ne fuit pas, il décide ───────────── */
   /**
    * LA FOUILLE. Le sanglier fouge : groin au sol, il ne voit plus rien. C'est la
@@ -1160,6 +1327,222 @@ export const FAUNA = {
    * laisserait tuer sans réagir serait un décor, pas un animal.
    */
 }
+
+/**
+ * LA CHASSE (spec chasse, CHASSE I) — l'approche, la mise à mort, le sang.
+ *
+ * Le cœur en une phrase : LA MÉFIANCE remplace les murs. Une bête ne compare
+ * plus une distance à deux rayons — elle porte une jauge (0-1) qui POURSUIT un
+ * stimulus continu, vite en montée, lentement en descente. C'est ce qui achète
+ * le stop-and-go du chasseur : elle lève la tête, on se fige, elle se rassure,
+ * on regagne trois mètres. Être vu n'est plus perdre — c'est un événement à gérer.
+ *
+ * Tous les nombres sont des ordres de grandeur (GDD §15) : les vitesses de
+ * montée/descente de la jauge feront ou déferont le stop-and-go, et ça se
+ * calibre À L'ÉCRAN (`pnpm smoke --scenario chasse`), pas au raisonnement.
+ */
+export const HUNT = {
+  /* ── La méfiance (chasse C1) ─────────────────────────────────────────────── */
+  /** Plafond de perception : au-delà d'`alertRange × ça` (perçu), rien ne monte. */
+  PERCEIVE_FACTOR: 1.25,
+  /** CURIEUSE : elle s'arrête et REGARDE. Le joueur sait qu'il a été vu (R5). */
+  SUSPICION_CURIOUS: 0.35,
+  /** ALERTÉE : fixée, tendue, prête à partir — et un coup n'est plus PROPRE (C6). */
+  SUSPICION_ALERT: 0.7,
+  /** À stimulus plein, la jauge sature en ce temps (secondes). Près = bien plus vite. */
+  RISE_S: 1.2,
+  /** Sans stimulus, la jauge retombe en ce temps (secondes) — c'est la fenêtre du figé. */
+  DECAY_S: 8,
+  /**
+   * LA NERVOSITÉ. Chaque franchissement du seuil d'alerte ralentit la décrue
+   * (facteur cumulé, plafonné) : on ne refait pas indéfiniment la même approche
+   * ratée sur la même bête.
+   */
+  NERVOUS_FACTOR: 1.6,
+  NERVOUS_MAX: 3,
+  /**
+   * LA PANIQUE : une menace à cette distance BRUTE lève la bête, quelle que soit
+   * la furtivité — on ne marche pas SUR un cerf. Sous la portée de la lance (2,3) :
+   * la mise à mort propre au contact reste possible, la caresse non. Ne vaut que
+   * pour les bêtes qui fuient (`flightRange > 0`) : le sanglier, lui, MENACE.
+   */
+  PANIC_RANGE: 1.8,
+
+  /* ── Les deux sens (chasse C2-C5) : la VUE et l'OUÏE ─────────────────────── */
+  /**
+   * La bête perçoit par DEUX canaux, et retient le plus fort :
+   *   — la VUE : visibilité de l'allure × couvert du terrain × REGARD (l'angle).
+   *     C'est elle qu'on bat en se cachant, en se figeant, en passant derrière.
+   *   — l'OUÏE : le bruit de l'allure, OMNIDIRECTIONNEL — ni le fourré ni le dos
+   *     tourné n'y peuvent rien. C'est elle qui interdit d'arriver au CONTACT en
+   *     marchant, même de dos : le pas s'entend.
+   * Un seul produit aurait menti deux fois (attrapé par les tests A5/A6) : un
+   * marcheur dans le dos devenait inaudible, et une bête en fuite devenait
+   * aveugle à ce qu'elle fuit — l'angle multipliait aussi le bruit.
+   */
+  /** La VISIBILITÉ par allure : un corps immobile se voit mal, un sprint saute aux yeux. */
+  /**
+   * L'immobile disparaît presque (0,25) : c'est LA condition du stop-and-go.
+   * À 0,4, une bête curieuse qui vous FIXAIT maintenait la jauge à flot même
+   * figé — se geler ne servait à rien, mesuré au banc A2. L'œil du gibier
+   * accroche le MOUVEMENT ; une silhouette plantée redevient un rocher.
+   */
+  VIS_STILL: 0.25,
+  VIS_SNEAK: 0.55, // plié en deux : mesuré au banc, il gagne ~2 tuiles sur le marcheur
+  VIS_WALK: 1,
+  VIS_SPRINT: 1.4,
+  /**
+   * Le BRUIT par allure : immobile ≪ pas lent ≪ marche ≪ sprint. Le pas lent est
+   * VRAIMENT feutré (0,4) — mesuré au banc : à 0,55, la distance de levée d'un
+   * approcheur lent ne gagnait que 0,8 tuile sur un marcheur, et le verbe
+   * « approcher » ne valait pas son coût en vitesse.
+   */
+  NOISE_STILL: 0.25,
+  NOISE_SNEAK: 0.4,
+  NOISE_WALK: 1,
+  NOISE_SPRINT: 1.6,
+  /** L'ouïe porte un peu moins loin que la vue (× les portées de l'espèce). */
+  HEARING_FACTOR: 0.8,
+  /** Le pas lent (input `sneak`) : discret, et lent — c'est le prix. */
+  SNEAK_SPEED_FACTOR: 0.5,
+
+  /* ── Le regard (chasse C4) — le canal de la VUE seulement ───────────────── */
+  /**
+   * La vue d'une bête est DIRECTIONNELLE : pleine devant, réduite de flanc,
+   * faible dans le dos. Trois secteurs par produit scalaire (littéraux — pas de
+   * trigo, invariant §2) : approcher devient un problème de POSITION.
+   */
+  ANGLE_FRONT_COS: 0.5, // dot ≥ : devant (±60°)
+  ANGLE_BACK_COS: -0.3, // dot ≤ : dans le dos
+  ANGLE_FRONT: 1,
+  ANGLE_SIDE: 0.75,
+  ANGLE_BACK: 0.45,
+  /** Le loup est quasi silencieux : son « bruit » est une fraction de sa furtivité visuelle. */
+  PREDATOR_NOISE: 0.5,
+
+  /* ── La mise à mort propre (chasse C6) ───────────────────────────────────── */
+  /**
+   * Un coup dont le wind-up DÉMARRE sur une bête sauvage non alertée frappe ça
+   * fois plus fort. La lance (16) couche un cerf (45) d'un seul coup propre ;
+   * l'épieu (10) prend le sanglier ; les poings, le lapin. L'approche parfaite a
+   * enfin un payoff décisif — c'est la règle du loup rendue au joueur.
+   */
+  CLEAN_KILL_FACTOR: 3,
+
+  /* ── CHASSE II — LE SANG (C8-C12) ───────────────────────────────────────── */
+  /**
+   * LA PLAIE. L'échec devient FÉCOND : une bête touchée mais pas tuée saigne, et
+   * la GRAVITÉ décide de tout. Sous cette fraction de ses PV max, la plaie est
+   * MORTELLE : elle saigne jusqu'à mourir — elle est à vous, si vous la
+   * retrouvez. Au-dessus, la plaie est LÉGÈRE : elle se referme, la piste
+   * s'éteint, la bête survit (décision utilisateur n°3 — sans quoi « toucher une
+   * fois et attendre » deviendrait la stratégie dominante et la traque perdrait
+   * son horloge).
+   *
+   * Le choix du chasseur devient réel : FRAPPER FORT — chargé, de près, propre —
+   * OU PERDRE LA BÊTE. L'éraflure de loin ne « réserve » pas un cerf.
+   */
+  MORTAL_BELOW: 0.5,
+  BLEED_HP_PER_S: 0.5,
+  LIGHT_BLEED_TICKS: ticksFor(25),
+  /**
+   * LE SANG AU SOL. Une goutte à cette cadence, pour tout ce qui saigne — bête
+   * blessée ET avatar (combat R7 : le sang est le sang). De l'ÉTAT, pas des
+   * événements (haute fréquence ≠ domaine). Borné : TTL + plafond FIFO.
+   *
+   * La piste est LISIBLE PAR TOUS : suivre du sang frais ne demande aucune
+   * maîtrise. Les empreintes, l'âge des traces, le sens de la course — ça, c'est
+   * l'arbre Chasse, plus tard, par-dessus.
+   */
+  BLOOD_EVERY_TICKS: ticksFor(0.8),
+  BLOOD_TTL: ticksFor(180),
+  BLOOD_CAP: 256,
+  /**
+   * LA BÊTE DIMINUÉE. Sa vitesse suit ses PV : `FLOOR + (1 − FLOOR) × hp/hpMax`.
+   * L'écart se referme à mesure qu'elle saigne — PRESSER une bête mortellement
+   * atteinte devient une stratégie, au prix de l'endurance. (L'autre stratégie,
+   * c'est d'ATTENDRE qu'elle se couche… mais le sang appelle d'autres nez.)
+   */
+  WOUNDED_SLOW_FLOOR: 0.55,
+  /**
+   * LE COUCHÉ. Une bête à plaie mortelle qui ne perçoit plus rien pendant ce
+   * temps gagne le meilleur couvert à portée et s'y TAPIT : immobile, perception
+   * effondrée. On la retrouve PAR LE SANG, pas en battant la carte.
+   */
+  BED_AFTER: ticksFor(10),
+  BED_SEEK: 8,
+  BED_ALERTNESS: 0.4,
+  /**
+   * LE SANG APPELLE LES LOUPS (C12). Une carcasse FRAÎCHE porte loin : le
+   * prédateur affamé la sent à `CARCASS_SEEK_FRESH` au lieu de `CARCASS_SEEK`.
+   * Mis bout à bout avec le portage (qui interdit le silence, C2) : TUER ARME UN
+   * MINUTEUR. On tue, on charge la viande — et on entend le hurlement.
+   */
+  CARCASS_FRESH_TICKS: ticksFor(240),
+  CARCASS_SEEK_FRESH: 40,
+  /** Le poids de spawn des prédateurs près d'une carcasse fraîche ou d'un blessé. */
+  BLOOD_PREDATOR_BIAS: 2,
+  BLOOD_SCENT_RADIUS: 30,
+  /**
+   * LE PRÉDATEUR PRÉFÈRE LE SANG. Une cible qui saigne « pèse » ça de plus au
+   * choix de proie (même mécanique que PREY_PREFERENCE). La meute cueille les
+   * diminués — y compris VOTRE cerf blessé, et y compris VOUS (décision
+   * utilisateur n°2 : le sang du joueur appelle les loups ; le bandage devient
+   * un geste de survie en territoire à loups).
+   */
+  WOUNDED_PREFERENCE: 1.5,
+
+  /* ── CHASSE III — la ruse (C14-C18) ─────────────────────────────────────── */
+  /**
+   * LA SCISSION (C14). Une harde levée éclate en DEUX : les rangs pairs
+   * infléchissent leur fuite d'un côté, les impairs de l'autre (rotation ±45°,
+   * matrice à coefficients littéraux). Le chasseur qui charge « la harde » court
+   * entre deux moitiés et n'a rien : ON CHOISIT SA BÊTE AVANT DE LEVER LE GROUPE.
+   */
+  SPLIT_COS: 0.7071,
+  SPLIT_SIN: 0.7071,
+  /**
+   * LE CROCHET (C15). En terrain DÉCOUVERT, la bête jinke : à chaque nouveau
+   * burst, son vecteur de fuite tourne de ±40° (au PRNG). Courir droit derrière
+   * ne marche plus ; anticiper le crochet et COUPER, si. En couvert, elle file :
+   * le terrain décide du geste.
+   */
+  JINK_COS: 0.766,
+  JINK_SIN: 0.6428,
+  JINK_OPEN_COVER: 0.85, // au-dessus de ce couvert, le terrain est « découvert »
+  /**
+   * LE TERRIER (C16). Le lapin naît avec le sien (sa tuile de naissance, hors
+   * champ par construction). Levé, il fuit VERS lui — sauf à devoir traverser la
+   * menace — et il y DISPARAÎT. La chasse au lapin devient une géométrie :
+   * couper la ligne du terrier, ou le perdre.
+   */
+  BURROW_RANGE: 1.2, // il y entre à cette distance
+  /**
+   * LE VENT (C17). Il tourne lentement, au PRNG de l'état. L'ODEUR DESCEND LE
+   * VENT : une menace au vent d'une bête (alignement > SCENT_COS, dans
+   * SCENT_RANGE_FACTOR × sa portée) fait monter sa méfiance QUELS QUE SOIENT
+   * l'allure, le couvert et le dos tourné. Le nez se moque des précautions — et
+   * c'est le seul sens qui s'en moque. La parade n'est pas un facteur de plus :
+   * c'est UN CÔTÉ. Approcher sous le vent.
+   */
+  WIND_SHIFT_TICKS: ticksFor(300),
+  SCENT_RANGE_FACTOR: 1.2,
+  SCENT_COS: 0.8,
+  /** Ce que « sentir » vaut comme perception (× la portée) : le nez porte fort. */
+  SCENT_STRENGTH: 1,
+  /**
+   * L'APPÂT (C18). Le gibier est attiré par la nourriture au sol, s'y plante et
+   * mange — la fenêtre du chasseur, POSÉE PAR LE CHASSEUR. Et un prédateur mange
+   * une pile de viande comme une carcasse : jeter de la viande à une meute qui
+   * vous serre (faune R15, GDD §9bis) devient enfin un geste exécutable.
+   */
+  BAIT_SEEK: 12,
+  BAIT_RANGE: 1.2,
+  BAIT_TICKS: ticksFor(6),
+  BAIT_ALERTNESS: 0.4, // tête dans l'appât : ses portées s'effondrent
+  /** Une pile au sol périt : le monde ne se jonche pas (~10 min). */
+  GROUND_TTL: ticksFor(600),
+} as const
 
 /** La levée des Cendreux (spec 2026-07-08). Ordres de grandeur, calibrage playtest. */
 export const CENDREUX = {

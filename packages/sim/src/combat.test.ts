@@ -570,7 +570,7 @@ describe('looter ne fait rien s’évaporer (A21, spec inventaire R11)', () => {
   /** Un cadavre planté sur place, chargé, qui ne décante pas de sitôt. */
   function dropCorpse(sim: SimState, x: number, y: number, inv: Inventory): number {
     const id = sim.nextCorpseId
-    sim.corpses.push({ id, x, y, inventory: inv, decayAt: sim.tick + 100_000 })
+    sim.corpses.push({ id, x, y, inventory: inv, decayAt: sim.tick + 100_000, diedAt: sim.tick })
     sim.nextCorpseId += 1
     return id
   }

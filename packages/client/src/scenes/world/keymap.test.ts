@@ -31,9 +31,9 @@ describe('keymap', () => {
    * fait échouer le test le jour où quelqu'un recâble une action à la va-vite —
    * ce qui est exactement la discussion qu'on veut avoir à ce moment-là.
    */
-  it('le clavier ne porte que le déplacement, le sprint et les trois écrans', () => {
+  it('le clavier ne porte que le déplacement, les allures, JETER, et les trois écrans', () => {
     expect(Object.keys(KEYMAP).sort()).toEqual(
-      ['moveDown', 'moveLeft', 'moveRight', 'moveUp', 'sprint', 'toggleInventory', 'toggleJournal', 'toggleMap'].sort(),
+      ['dropHeld', 'moveDown', 'moveLeft', 'moveRight', 'moveUp', 'sneak', 'sprint', 'toggleInventory', 'toggleJournal', 'toggleMap'].sort(),
     )
   })
 })

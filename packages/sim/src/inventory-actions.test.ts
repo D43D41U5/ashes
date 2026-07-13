@@ -469,6 +469,7 @@ describe('transfer — joueur ⇄ conteneur (R16)', () => {
       y: 20.5,
       inventory: inventoryOf(SLOTS.CORPSE, { cooked_meat: 2 }),
       decayAt: sim.tick + COMBAT.CORPSE_TICKS,
+      diedAt: 0,
     })
     sim.nextCorpseId = 2
     drainEvents(sim)

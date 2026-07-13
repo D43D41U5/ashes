@@ -39,6 +39,8 @@ export interface InputDeps {
 export interface MovementBindings {
   keys: Record<'up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key[]>
   sprintKeys: Phaser.Input.Keyboard.Key[]
+  /** Le PAS LENT (spec chasse C2), maintenu comme le sprint. */
+  sneakKeys: Phaser.Input.Keyboard.Key[]
   /** Entretient le clic MAINTENU (récolte en boucle) — à appeler chaque frame. */
   tickHold(): void
   /** Ce que vise le curseur MAINTENANT — pour le surlignage et le fantôme. */
@@ -122,6 +124,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     right: grab(KEYMAP.moveRight),
   }
   const sprintKeys = grab(KEYMAP.sprint)
+  const sneakKeys = grab(KEYMAP.sneak)
 
   // LE MODE CONSTRUCTION S'ARME AU PANNEAU (menu personnage, rayon CONSTRUCTION —
   // marteau en main). Il ne vit plus sur une touche : il vit là où le joueur
@@ -138,6 +141,18 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       setHud(scene.registry, 'activeSlot', slot)
     })
   }
+
+  /**
+   * G : JE JETTE CE QUE JE TIENS (spec chasse C18). Une unité de la case active
+   * tombe au sol — zéro UI, zéro menu. C'est le geste de l'APPÂT (poser des
+   * baies et attendre à couvert), du JET DE VIANDE à une meute qui vous serre
+   * (faune R15, promis par le GDD §9bis et enfin exécutable), et de
+   * l'allègement d'un porteur en fuite. La sim valide : rien en main, rien ne
+   * tombe. Un clic gauche sur une pile la RAMASSE (voir `clickToAction`).
+   */
+  onDown(KEYMAP.dropHeld, () => {
+    deps.sendAction({ type: 'drop_held' })
+  })
 
   // TAB : ouvre/ferme l'écran d'inventaire. On capture la touche : sinon le
   // navigateur déplace le focus hors du canvas. À l'OUVERTURE, on choisit le
@@ -302,5 +317,5 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     }
   }
 
-  return { keys, sprintKeys, tickHold, aim: aimNow, selected }
+  return { keys, sprintKeys, sneakKeys, tickHold, aim: aimNow, selected }
 }

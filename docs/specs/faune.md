@@ -1,6 +1,6 @@
 # La faune — le monde est habité
 
-*Source : GDD §8bis (catalogue des ressources : petit gibier, gros gibier ; « le geste » : pistage/approche), §9bis (« annoncés, pas surprises » ; « meutes de prédateurs, le danger de fond des trajets »), §7 (la faune est le tutorial de combat permanent). Complète `combat.md` R12, promis et jamais tenu. Statut : **implémenté** (2026-07-11 — R1-R16, 56 tests headless + smoke navigateur). Jalon : post-V10 (chantier ambiance).*
+*Source : GDD §8bis (catalogue des ressources : petit gibier, gros gibier ; « le geste » : pistage/approche), §9bis (« annoncés, pas surprises » ; « meutes de prédateurs, le danger de fond des trajets »), §7 (la faune est le tutorial de combat permanent). Complète `combat.md` R12, promis et jamais tenu. Statut : **implémenté** (2026-07-11 — R1-R16, 56 tests headless + smoke navigateur ; **2026-07-13 — R6 refondu, R6bis, R9bis, R10bis** : fuite engagée, espace vital, troupeau vivant, sentinelle, l'heure du loup — bancs A18-A23, postures client). Jalon : post-V10 (chantier ambiance).*
 
 ## Objectif de design
 
@@ -30,16 +30,31 @@ Les sangliers de tanière (`spawnPoiMonsters`) restent **résidents** : ils appa
 
 - **R4 — Brouter.** Sans menace : la bête erre lentement (`GRAZE_SPEED` × sa vitesse), par à-coups — quelques pas, un arrêt. Elle ne quitte pas son habitat : une direction qui la mènerait hors de ses terrains est refusée.
 - **R5 — L'alerte.** Un avatar à moins de `alertRange` : la bête **s'arrête net** et le regarde. C'est le signal lisible — le joueur voit qu'il a été vu, et sait qu'un pas de plus la fera partir. (« Annoncés, pas surprises », GDD §9bis.)
-- **R6 — La fuite en à-coups.** Un avatar à moins de `flightRange`, **ou** un coup encaissé : la bête détale à l'opposé, à `FLEE_SPEED` × sa vitesse, par **bursts** — `BURST_RUN_TICKS` de course, `BURST_PAUSE_TICKS` de souffle, tant que la menace est à moins de `SAFE_RANGE`. C'est le sprint burst promis par `combat.md` R12 : c'est ce qui rend la chasse un geste (couper la fuite, l'épuiser) et pas un clic.
+- **R6 — La fuite ENGAGÉE** *(refondue 2026-07-13 — playtest : « je rattrape un cerf à la course », et c'était vrai : à-coups inconditionnels + peur qui retombe à 14 tuiles = vitesse moyenne 3,2 t/s contre un sprint à 6)*. Une bête levée part **loin**, et on ne la rattrape pas à pied :
+  - **Le surrégime.** En fuite, le gibier court à `FLEE_SPRINT` × sa vitesse (~×1,5 : cerf ~6,9 t/s, lapin ~7,5) — **plus vite qu'un sprint de joueur (6), toujours**. La chasse à course droite est morte ; restent l'approche (spec chasse) et le tir à venir. *(Conséquence actée par l'utilisateur : le loup (4,8) ne rattrape plus un cerf sain en ligne droite — c'est CHASSE II, le sang, qui lui rendra ses proies : la ruée blesse, le sang ralentit.)*
+  - **Le souffle est un luxe de la marge.** Les bursts (`BURST_RUN_TICKS` course / `BURST_PAUSE_TICKS` souffle) ne marquent la pause que si la menace **perçue** est à plus de `BREATHE_GAP` — serrée de près, elle court plein pot, sans pause. (Et un chasseur qui se fige pendant qu'elle souffle redevient presque imperceptible : le stop-and-go vaut aussi en poursuite.)
+  - **Le point de peur.** À la levée, la bête mémorise **d'où** est venue la peur (`fleeFrom` — la menace vue, ou le lieu du cri de mort, ou celui transmis par la contagion) et fuit **jusqu'à en être à `FLEE_GOAL`** (~30 tuiles), menace visible ou pas (borne dure : `FLEE_MAX_TICKS`, pour la bête acculée). Plus de « je m'arrête à 14 tuiles et je rebroute ».
+  - **La retombée n'est pas le calme.** Fin d'engagement : jauge posée au seuil d'alerte, nervosité au plafond — elle trotte, rejoint les siens, surveille. Le retour au broutage se gagne par la décrue, ralentie par la nervosité.
+- **R6bis — L'espace vital et l'impatience** *(playtest : AFK, on finit encerclé de cerfs statufiés)*. Une bête n'accepte **jamais** une menace identifiée trop près, et ne reste jamais statue :
+  - **L'espace vital.** Menace repérée (jauge ≥ `SUSPICION_ALERT`) à moins de `PERSONAL_SPACE` (~3,5 tuiles) → **levée immédiate**, immobile ou pas. (Sous le seuil de la jauge : c'est la panique de contact, `PANIC_RANGE`, qui garde la porte. Et le chasseur du stop-and-go, qui approche *sous* l'alerte, ne rencontre jamais cette règle — elle punit l'approche ratée, pas l'approche.)
+  - **L'impatience.** Alertée depuis plus de `IMPATIENCE_TICKS` (~6 s) sans résolution, elle ne se fige plus : elle **s'éloigne au trot** (`WARY_SPEED`) jusqu'à retomber sous le seuil — le cerf tape du sabot, fixe, puis s'écarte.
 - **R7 — La charge du sanglier.** Blessé et acculé, le sanglier **retourne la chasse** : à chaque réflexion, `chargeChance` de charger au lieu de fuir (règle existante, conservée). Le lapin et le cerf ne chargent jamais. Le sanglier est la bête qui punit l'approche paresseuse.
 
 ### La harde (R9) — le grégarisme
 
 - **R9 — Le cerf ne naît jamais seul.** Une espèce grégaire (`herdSize`) arrive par **hardes** de 3 à 5, posées ensemble, partageant une identité (`herdId`). Deux conséquences, et la seconde est la seule qui compte :
-  - **La cohésion.** Une bête à plus de `HERD_SPREAD` du centre de sa harde cesse de tirer sa direction au sort et **revient vers les siens**. Sans ça, une harde qui broute chacun dans son coin se dissout en une minute.
+  - **La cohésion, et elle est COLLANTE.** Une bête à plus de `HERD_SPREAD` du centre de sa harde cesse de tirer sa direction au sort et **revient vers les siens** — jusqu'à `HERD_COMFORT`, pas jusqu'au seuil. Sans ça, une harde qui broute chacun dans son coin se dissout en une minute ; et **sans l'hystérésis, elle TREMBLE** *(playtest 2026-07-13 : « des cerfs qui tremblent en pâturant »)* — la bête franchissait le seuil, se faisait rappeler d'un pas, repassait dessous, et **ressortait aussitôt** parce que son cap d'errance pointait toujours dehors. Deux à trois allers-retours par seconde. Le rappel lâche donc le cap et ne relâche la bête qu'une fois **vraiment** revenue — exactement comme la peur, qui se déclenche à `flightRange` et ne retombe qu'à `SAFE_RANGE`.
   - **La contagion d'alarme.** Une bête qui voit un congénère détaler à moins de `HERD_ALARM_RADIUS` **détale aussi — sans avoir rien vu elle-même**. C'est le cœur de la règle : une harde a autant d'yeux que de têtes. On ne s'approche pas d'un groupe comme d'une bête seule, et rater son approche ne coûte pas un cerf : ça coûte les cinq.
 
   Le lapin et le sanglier restent **solitaires**. Le sanglier de tanière l'est par nature — c'est ce qui le rend inquiétant.
+
+- **R9bis — LE TROUPEAU QUI VIT** *(2026-07-13, demande utilisateur : « un comportement vraiment complet et léché »)*. La harde n'est pas cinq bêtes posées côte à côte — c'est un organisme, et il a un cycle : *broute en dérivant → lève → fuit groupé → se rassemble → rebroute ailleurs*.
+  - **La dérive de pâture.** La harde a un cap de broutage partagé qui tourne lentement (`DRIFT_SLICE_TICKS`, dérivé de `herdId` + tranche de temps par `hash2` — pur, zéro état, zéro tirage) : au lieu de trembler sur place, le troupeau **traverse le paysage** en broutant. Chaque bête mélange ce cap à son errance (`DRIFT_BIAS`).
+  - **La fuite en troupeau.** Le point de peur (`fleeFrom`, R6) se **propage** par la contagion et le cri de mort : toute la harde fuit le même lieu, dans le même cône — et la cohésion continue de tirer vers le centre pendant la course. Ils partent *ensemble*, ils ne s'effilochent pas.
+  - **Le regroupement.** Fin d'engagement (R6) : encore méfiants, ils convergent au trot, se resserrent, puis la dérive reprend.
+  - **La séparation, et elle SOMME les répulsions.** Deux bêtes à moins de `HERD_SEPARATION` (~1,2 tuile) s'écartent — fini les cerfs superposés (boids-lite : séparation + cohésion + cap partagé). Elle repousse **tous** les voisins trop proches à la fois, jamais la seule plus proche : repousser la plus proche donne un **billard** (en s'écartant de B, la bête se rapproche de C, puis revient sur B), et cinq bêtes entassées frémissaient à 2,5× le rythme de l'errance normale *(mesuré, playtest 2026-07-13)*. Elle est **collante** elle aussi : levée à `HERD_SEPARATION`, relâchée à `HERD_SEPARATION_COMFORT`.
+  - **Le repos groupé.** Hors de ses heures (R10), la harde se couche **resserrée** (`REST_SPREAD`) : une bête qui dort loin des siens revient d'abord, puis se couche. Un tableau, pas des pions.
+  - **La sentinelle** *(avancée depuis la spec chasse C13, même règle)*. Dans une harde de gibier de 3 têtes ou plus, **une bête à la fois** est de garde : tête haute, elle ne broute pas, sa perception vaut `SENTINEL_ACUITY`, son regard balaie les relèvements ; les brouteuses relâchent (`HERD_RELAX`). Le tour de garde se **dérive** (rang dans la harde + tick ÷ `SENTINEL_SHIFT`) — zéro état. Approcher une harde, c'est lire le rythme des relèves.
 
 ### Le rythme (R10) — l'heure a une identité
 
@@ -48,6 +63,11 @@ Les sangliers de tanière (`spawnPoiMonsters`) restent **résidents** : ils appa
   - **Hors de ses heures, la bête se couche.** Elle ne broute plus, ne chasse plus. Elle reste **réveillable** : un dormeur qu'on approche détale quand même. Ce n'est pas un interrupteur, c'est un seuil.
 
   Conséquence recherchée : **sortir de nuit cesse d'être une question d'éclairage pour devenir une question de qui est réveillé.**
+
+- **R10bis — L'HEURE DU LOUP** *(2026-07-13)*. R10 couchait le **gibier** hors de ses heures, mais le prédateur, lui, chassait à **pleine portée à midi comme à 3 h** : la nuit ne tenait pas sa promesse, et traverser la forêt de jour n'était pas plus sûr que de nuit. Désormais la **vigueur** du loup (`activityAt`, nocturne) pondère ses portées d'**acquisition** (`aggroRange`), de **poursuite** (`PURSUIT_RANGE`) et d'**appel** — `WOLF_DAY_FLOOR + (1 − FLOOR) × vigueur`.
+  - **À midi, il est assoupi** : il ne voit venir qu'à ~6 tuiles, et lâche prise plus tôt. On passe **au large** d'une meute de plein jour — elle est visible, c'est un **choix**, pas une loterie.
+  - **La nuit lui rend ses treize tuiles** — et la « nuit qui chasse » (spec tension) cesse d'être une simple couleur.
+  - **Le plancher n'est pas zéro** : une meute de jour reste mortelle à qui lui marche dessus. On **incline le monde**, on ne pose pas un interrupteur.
 
 ### La meute (R11) — le danger de fond des trajets
 
@@ -88,6 +108,17 @@ Les sangliers de tanière (`spawnPoiMonsters`) restent **résidents** : ils appa
 
   Corollaire offert au joueur : **jeter de la viande à une meute qui vous serre lui donne autre chose à faire.** (Le GDD §9bis prévoyait déjà de détourner une horde « avec de la viande ou du bruit ».)
 
+### LES COINS DE CHASSE (R17) — le gibier a des ADRESSES
+
+*(Décision utilisateur, 2026-07-13, après playtest : « il y a trop de bêtes » — et c'étaient 43 cerfs sur 48.)*
+
+- **R17 — Le gibier ne vit pas partout : il vit QUELQUE PART.** La faune ambiante était un **brouillard uniforme** — elle naissait dans un anneau autour du joueur, où qu'il aille. Marcher dix minutes dans n'importe quelle direction donnait exactement la même chose : la carte ne s'apprenait pas, et « le gibier est une ressource de **territoire**, pas de temps » (R16) n'était qu'une phrase.
+  - **Des lieux FIXES, semés une fois pour la saison.** Un semis de Poisson (le même que les lieux — déterministe, sans PRNG d'état) donne l'**espacement** (`GROUND_SPACING`, jamais deux coins à moins de ~180 tuiles). **Rien ne naît hors d'un coin** (`GROUND_RADIUS`) : entre eux, la vallée est **vide**, et c'est ce vide qui donne leur valeur aux coins.
+  - **À des endroits LOGIQUES** *(retour utilisateur : « pas loin de l'eau et dans les biomes types prairies »)*. Un coin de chasse est un **biome ouvert** (prairie, alpage, pré fleuri, lande — on y broute, on y voit venir) **à portée d'eau** (`GROUND_WATER_NEAR` — on boit tous les jours). Le point tiré n'est qu'une graine : on cherche autour de lui la bonne tuile, et s'il n'y en a pas, **ce point ne devient pas un coin**. Le gibier ne vit pas sur un éboulis. *(Mesuré sur la vallée : 19 coins, tous en prairie/alpage/pré fleuri, ~6 % de la carte, le premier à 74 tuiles du point de départ.)*
+  - **La bête est D'ICI.** Elle retient son coin à la naissance ; sa **dérive de pâture** (R9bis) ne vise plus une direction en l'air mais un **but à l'intérieur de son territoire**, qui change par tranches de temps (`MIGRATE_SLICE_TICKS`). Le troupeau **traverse sa clairière**, il ne quitte pas le canton — et si la fuite engagée (R6) l'a jeté dehors, **il y revient au trot**. C'est ce qui fait qu'on **retrouve les cerfs au même endroit demain**.
+  - **Le prix d'une harde** *(défaut de conception, corrigé au passage)*. Le plafond (`CAP`) était censé être un budget de **population** ; il n'était qu'un budget de **tirages** : un tirage « cerf » coûtait quatre places (il naît par 3 à 5), un tirage « lapin » une seule. À pondération horaire égale, la harde raflait le monde en quatre fois moins de tirages — d'où les 43 cerfs. Le tirage d'espèce divise désormais par ce que l'espèce **coûte**.
+  - **Conséquence recherchée** : on apprend la clairière aux cerfs. On y retourne. On l'épuise (R16 — la pression de chasse), et il faut alors **aller plus loin** — vers un coin qu'on ne connaît pas encore.
+
 ### La pression de chasse (R16) — ni farm, ni désert
 
 - **R16 — Le gibier déserte ce qu'on vient de chasser.** Le peuplement ambiant remplit l'anneau dès qu'une place se libère : sans règle, tuer une bête en fait naître une autre en une demi-seconde, et un joueur planté dans une clairière récolte de la viande **à l'infini sans faire un pas**. La chasse, qui devait être un geste, devient un robinet.
@@ -122,8 +153,17 @@ Les sangliers de tanière (`spawnPoiMonsters`) restent **résidents** : ils appa
 - **A16 (R15)** — Un loup affamé rejoint la carcasse, mange, en **entame** l'inventaire, et devient repu. **Repu**, il ne prend aucune cible, ne mord pas, ne hurle pas — un joueur à 6 tuiles est ignoré. **Frappé**, il prend son agresseur pour cible et rend le coup.
 - **A17 (R16)** — Après une mise à mort, **aucune naissance ambiante nouvelle** autour du chasseur, même après 40 s. **Lever le camp** rétablit le peuplement — ailleurs — et la zone chassée se rouvre au bout de `QUIET_TICKS`. Tuer un **loup** ne pose aucun silence. **La tanière** : sa bête abattue ne revient pas tout de suite, mais elle revient — et **jamais** tant qu'un joueur campe le lieu.
 
+- **A18 (R6)** — **On ne rattrape pas un cerf.** Un avatar qui SPRINTE droit sur un cerf levé voit la distance **croître** sur 10 s — jamais de contact. **La fuite engagée** : la menace disparue (téléportée au loin) sitôt la levée, le cerf **continue** de fuir jusqu'à ~`FLEE_GOAL` de son point de peur ; à l'arrivée, jauge au seuil d'alerte et nervosité au plafond. **Le souffle conditionnel** : serré à moins de `BREATHE_GAP` perçu, il court sans pause ; avec de la marge, il souffle (les à-coups d'A6).
+- **A19 (R6bis)** — **L'espace vital** : une bête alertée par une silhouette immobile à moins de `PERSONAL_SPACE` **détale** ; le contre-test : jamais repérée (jauge sous le seuil), elle broute à la même distance sans broncher. **L'impatience** : alertée au-delà d'`IMPATIENCE_TICKS` face à une menace plantée hors espace vital, elle **s'éloigne** (la distance croît) sans entrer en fuite (`fleeSince` reste −1).
+- **A20 (R9bis)** — **La dérive** : sans menace, le **centre** d'une harde se déplace nettement en 60 s, et chaque bête reste à moins de `HERD_SPREAD` du centre. **La séparation** : deux cerfs posés l'un sur l'autre s'écartent à ≥ `HERD_SEPARATION`. **La fuite groupée** : le cri de mort transmet le point de peur — toute la harde a le **même** `fleeFrom`, et 3 s après la levée la dispersion du groupe reste bornée. **Le repos groupé** : à l'heure du repos, une harde éparpillée converge sous `REST_SPREAD` du centre puis s'immobilise.
+- **A22 (R10bis)** — `wolfVigor` est **maximale la nuit**, minimale à midi, et jamais nulle. **À midi** un loup ne prend pas une cible qu'il aurait prise **la nuit** à la même distance (10 tuiles) ; et il la lâche plus tôt en poursuite. Un homme **collé** à une meute de jour est mordu quand même (le plancher tient).
+- **A23 (bug du gel)** — Une bête **hors de son habitat** (jetée là par la fuite engagée) **rentre chez elle** : sa distance à son biome décroît, elle y revient, et elle se remet à brouter. Le **contre-test** de la régression : sur 10 s de calme hors habitat, elle parcourt **plus de zéro tuile** — un lapin poussé en forêt ne se fige plus jamais.
+- **A24 (R17)** — Le semis pose les coins **dans des biomes ouverts, à portée d'eau**, et **jamais deux à moins de `GROUND_SPACING`**. **Rien ne naît hors d'un coin** : un avatar planté au point le plus reculé de la vallée ne voit **aucune** bête ambiante, même après deux minutes. Une bête née dans un coin **retient** ce coin ; jetée dehors par la fuite, elle y **revient**. Et la **composition** cesse d'être une monoculture : le tirage divisé par le coût de harde ramène les cerfs d'une écrasante majorité à une part comparable aux autres espèces.
+- **A21 (R9bis, sentinelle)** — À tout tick, une harde de gibier ≥ 3 a **exactement une** sentinelle ; le rôle **tourne** à `SENTINEL_SHIFT` ; la sentinelle ne broute pas (immobile hors menace) et son regard **balaie** ; sa perception est accrue (`SENTINEL_ACUITY`) et celle des brouteuses relâchée (`HERD_RELAX`) — vérifié sur les portées effectives. Une meute de loups n'a **pas** de sentinelle.
+
 ## Hors périmètre (et où ça revient)
 
+- **La boucle de chasse** (méfiance, allure, mise à mort propre, sang, vent) : spec `chasse.md` (2026-07-13). Elle **amende R5-R6** — les seuils binaires `alertRange`/`flightRange` deviennent une jauge de méfiance graduelle — sans toucher au reste de cette spec.
 - **Peaux et cuir** (GDD §8bis) : c'est un item et une chaîne d'artisanat, pas de la faune. Plus tard, avec le tannage.
 - **Migrations de gibier** (GDD §9bis, opportunité mondiale) : c'est un **événement de monde** (`worldevents.ts`), pas un comportement — il déplacera la densité, pas les règles.
 - **Pistage, pièges, dépeçage sur place, Traque** (Annexe A) : l'arbre de maîtrise Chasse, hors sujet ici.
@@ -131,7 +171,7 @@ Les sangliers de tanière (`spawnPoiMonsters`) restent **résidents** : ils appa
 
 ## Ajouts à `balance.ts`
 
-`FAUNA` : plafond ambiant, `SPAWN_EVERY_TICKS`, anneau `[SPAWN_RING_MIN, SPAWN_RING_MAX]`, `DESPAWN_RADIUS`, `SAFE_RANGE`, `GRAZE_SPEED`, `FLEE_SPEED`, `PAUSE_CHANCE`, `BURST_RUN_TICKS`, `BURST_PAUSE_TICKS`, `HERD_ALARM_RADIUS`, `HERD_SPREAD`, `HERD_SPAWN_SPREAD`.
+`FAUNA` : plafond ambiant, `SPAWN_EVERY_TICKS`, anneau `[SPAWN_RING_MIN, SPAWN_RING_MAX]`, `DESPAWN_RADIUS`, `SAFE_RANGE`, `GRAZE_SPEED`, `FLEE_SPEED`, `PAUSE_CHANCE`, `BURST_RUN_TICKS`, `BURST_PAUSE_TICKS`, `HERD_ALARM_RADIUS`, `HERD_SPREAD`, `HERD_SPAWN_SPREAD`. Depuis R6/R6bis/R9bis (2026-07-13) : `FLEE_SPRINT` ~1,5 · `BREATHE_GAP` ~12 · `FLEE_GOAL` ~30 · `FLEE_MAX_TICKS` ~15 s · `PERSONAL_SPACE` ~3,5 · `IMPATIENCE_TICKS` ~6 s · `WARY_SPEED` ~0,7 · `HERD_SEPARATION` ~1,2 · `DRIFT_SLICE_TICKS` ~20 s · `DRIFT_BIAS` ~0,6 · `REST_SPREAD` ~2,5 · `SENTINEL_SHIFT` ~20 s · `SENTINEL_ACUITY` ~1,4 · `HERD_RELAX` ~0,85. `Monster` : `fleeFromX?/fleeFromY?` (le point de peur).
 `MONSTER_DEFS` : `rabbit`, `deer` ; le sanglier gagne un `wanderChance` non nul. Nouveaux champs de `MonsterDef` : `habitat` (terrains), `alertRange`, `flightRange`, `herdSize`.
 `SimState` : `faunaCap` (décision d'hôte) et `nextHerdId`. `Monster` : `ambient`, `fleeSince`, `herdId`.
 

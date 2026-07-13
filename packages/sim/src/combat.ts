@@ -14,6 +14,7 @@ import {
   CENDREUX,
   COMBAT,
   FAUNA,
+  HUNT,
   MONSTER_DEFS,
   SLOTS,
   WEAPON_DAMAGE,
@@ -42,6 +43,13 @@ export interface Corpse {
   inventory: Entity['inventory']
   decayAt: number
   risesAt?: number
+  /**
+   * LA FRAÎCHEUR (spec chasse C12). Une carcasse fraîche PORTE LOIN : le
+   * prédateur affamé la sent à `CARCASS_SEEK_FRESH` (40) au lieu de 16. C'est ce
+   * qui fait que tuer ARME UN MINUTEUR — on tue, on charge la viande (le portage
+   * est lent, exprès), et on entend le hurlement.
+   */
+  diedAt: number
 }
 
 export type CombatAction =
@@ -413,6 +421,30 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     const dist = Math.sqrt(tx * tx + ty * ty)
 
     let dealt = damage * damageModifier(state, attacker.id, target.id)
+
+    // LA MISE À MORT PROPRE (spec chasse C6). Un coup sur une bête sauvage qui
+    // n'était pas alertée AU DÉPART du wind-up frappe CLEAN_KILL_FACTOR fois plus
+    // fort — le payoff décisif de l'approche, et la règle du loup rendue au
+    // joueur (sa ruée aussi s'achève sur une proie qui n'a rien vu ; le pipeline
+    // est le même pour tous, « personne ne triche »). Jugé au DÉPART : la bête
+    // qui frémit PENDANT le wind-up ne rend pas sale un coup déjà lancé — et,
+    // symétriquement, l'alerte gagnée pendant qu'on TENAIT la charge (avant le
+    // relâchement) compte, elle, comme un raté d'approche.
+    const wildTarget = state.monsters.find((m) => m.entityId === target.id)
+    if (wildTarget && (MONSTER_DEFS[wildTarget.type].habitat?.length ?? 0) > 0) {
+      // Le wind-up naît au tick T avec `ticksLeft = windupTicks` et se décrémente
+      // DÈS ce tick (advanceCombat court après les actions) : il se résout donc à
+      // T + windupTicks − 1 — d'où le +1, payé d'un test (un coup porté sur une
+      // bête alertée juste avant redevenait propre).
+      const windupStart = state.tick - strike.windupTicks + 1
+      if (wildTarget.alertSince === undefined || wildTarget.alertSince >= windupStart) {
+        dealt *= HUNT.CLEAN_KILL_FACTOR
+        wildTarget.slainClean = true // lu par die() pour monster_slain.clean
+      } else {
+        delete wildTarget.slainClean
+      }
+    }
+
     // Blocage directionnel (spec R6) : réduit si l'attaque arrive de face.
     if (target.blocking && target.stamina > 0 && dist > 0) {
       const facingCos = (-tx * target.facing.x - ty * target.facing.y) / dist
@@ -453,9 +485,62 @@ export function applyDamage(state: SimState, target: Entity, damage: number, byE
   if (isInvulnerable(state, target)) return
   const before = target.hp
   target.hp = Math.max(0, target.hp - damage)
-  // Un monstre frappé mémorise son agresseur (le sanglier fuit ou charge).
+  // Un monstre frappé mémorise son agresseur (le sanglier fuit ou charge) — et
+  // un coup reçu SATURE la méfiance (spec chasse C1) : plus rien de propre sur lui.
   const targetMonster = state.monsters.find((m) => m.entityId === target.id)
-  if (targetMonster) targetMonster.lastAttackerId = byEntityId
+  if (targetMonster) {
+    targetMonster.lastAttackerId = byEntityId
+    targetMonster.suspicion = 1
+    if (targetMonster.alertSince === undefined) targetMonster.alertSince = state.tick
+
+    // LA PLAIE (spec chasse C8) — L'ÉCHEC DEVIENT FÉCOND. Une bête sauvage
+    // touchée mais pas tuée SAIGNE, et la gravité décide de tout : sous
+    // MORTAL_BELOW de ses PV, elle saigne jusqu'à mourir (elle est à vous, si
+    // vous la retrouvez) ; au-dessus, la plaie se referme et la bête survit —
+    // sans quoi « toucher une fois et attendre » serait la stratégie dominante
+    // (décision utilisateur n°3). Le choix du chasseur devient réel : frapper
+    // fort, ou perdre la bête.
+    //
+    // `isWild` et `maxHpOf` sont INLINÉS à dessein : `faune.ts` importe déjà
+    // `combat.ts` (applyDamage, startAttack), et l'importer en retour ferait un
+    // cycle de modules. Le cri de mort, plus bas, fait le même choix.
+    const wildDef = MONSTER_DEFS[targetMonster.type]
+    if (target.hp > 0 && (wildDef.habitat?.length ?? 0) > 0) {
+      const hpMax = wildDef.hp * (targetMonster.alpha ? FAUNA.ALPHA_HP : 1)
+      if (target.hp < hpMax * HUNT.MORTAL_BELOW) {
+        targetMonster.bleedMortal = true
+        delete targetMonster.bleedUntil // la mortelle ne se referme pas
+      } else if (targetMonster.bleedMortal !== true) {
+        targetMonster.bleedUntil = state.tick + HUNT.LIGHT_BLEED_TICKS
+      }
+      // Une bête relancée n'est plus tapie : le sang la remet debout.
+      delete targetMonster.bedded
+    }
+
+    // LE CRI DE MORT (spec chasse C7). Une bête sauvage qui encaisse — ou meurt —
+    // alarme instantanément ses congénères de harde/meute, même endormis, même
+    // dos tourné. Sans lui, la mise à mort propre (C6) permettrait d'égrener une
+    // harde entière en silence : la contagion R9 ne se déclenche qu'à la VUE d'un
+    // fuyard, or une bête tuée net ne fuit jamais. Conséquence voulue : UNE seule
+    // mise à mort propre par approche de groupe.
+    if (targetMonster.herdId !== undefined && (MONSTER_DEFS[targetMonster.type].habitat?.length ?? 0) > 0) {
+      const r = FAUNA.HERD_ALARM_RADIUS
+      for (const other of state.monsters) {
+        if (other.herdId !== targetMonster.herdId || other.entityId === targetMonster.entityId) continue
+        const oe = state.entities.find((e) => e.id === other.entityId)
+        if (!oe || oe.hp <= 0) continue
+        if (distSq(target.x, target.y, oe.x, oe.y) > r * r) continue
+        other.suspicion = 1
+        if (other.alertSince === undefined) other.alertSince = state.tick
+        // LE POINT DE PEUR se transmet (faune R9bis) : toute la harde fuira CE
+        // lieu — celui où le frère est tombé — ensemble, dans le même cône.
+        if (other.fleeFromX === undefined) {
+          other.fleeFromX = target.x
+          other.fleeFromY = target.y
+        }
+      }
+    }
+  }
 
   // L'alignement (spec alignement R2, R4) : frapper l'extérieur est un acte.
   if (!targetMonster && byEntityId !== 0 && isOutsider(state, byEntityId, target.id)) {
@@ -481,11 +566,21 @@ export function applyDamage(state: SimState, target: Entity, damage: number, byE
   })
 
   // Les paliers de blessure (spec R7) : le PRNG de la sim décide du membre.
+  //
+  // UNE SEULE PLAIE PAR BÊTE (spec chasse C8). Le SAIGNEMENT de combat (1,5 PV/s)
+  // ne s'applique PAS au gibier : sa plaie à lui est celle de la chasse (mortelle
+  // ou légère, 0,5 PV/s), et cumuler les deux le vidait quatre fois trop vite —
+  // un cerf mortellement atteint mourait en dix secondes, donc ne se COUCHAIT
+  // jamais (C11), donc la traque n'existait pas. Deux systèmes qui saignent le
+  // même animal, c'est un système de trop. La jambe et le bras, eux, restent :
+  // ils disent autre chose (une bête boiteuse se rattrape).
+  const wildTarget2 = targetMonster && (MONSTER_DEFS[targetMonster.type].habitat?.length ?? 0) > 0
   for (const threshold of COMBAT.WOUND_THRESHOLDS) {
     if (before > threshold && target.hp <= threshold && target.hp > 0) {
       const { value: roll, next } = rngRoll(state.rngState)
       state.rngState = next
       const wound = roll < 0.34 ? 'leg' : roll < 0.67 ? 'arm' : 'bleeding'
+      if (wound === 'bleeding' && wildTarget2) continue // sa plaie est celle de la chasse
       target.wounds[wound] = true
       emitEvent(state, { type: 'wound_inflicted', tick: state.tick, entityId: target.id, wound })
     }
@@ -524,6 +619,7 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
       y: entity.y,
       inventory: loot,
       decayAt: state.tick + COMBAT.CORPSE_TICKS,
+      diedAt: state.tick,
       risesAt: state.tick + CENDREUX.RISE_DELAY,
     })
     state.nextCorpseId += 1
@@ -534,6 +630,7 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
       y: entity.y,
       inventory: loot,
       decayAt: state.tick + COMBAT.CORPSE_TICKS,
+      diedAt: state.tick,
     })
     state.nextCorpseId += 1
   }
@@ -541,7 +638,9 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
   if (monster) {
     state.monsters = state.monsters.filter((m) => m.entityId !== entity.id)
     state.entities = state.entities.filter((e) => e.id !== entity.id)
-    emitEvent(state, { type: 'monster_slain', tick: state.tick, monsterType: monster.type, byEntityId })
+    // `clean` (spec chasse C6) : la chronique saura dire « d'un seul coup, sans
+    // un bruit », et la future chaîne du cuir (peaux intactes) a son ancrage.
+    emitEvent(state, { type: 'monster_slain', tick: state.tick, monsterType: monster.type, byEntityId, clean: monster.slainClean === true })
 
     // LA PRESSION DE CHASSE (spec faune R16). Le gibier déserte ce qu'on vient de
     // chasser : plus une seule naissance ambiante autour d'ici pendant un moment.

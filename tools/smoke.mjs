@@ -475,8 +475,410 @@ const SCENARIOS = {
     await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(3.2))
     await page.waitForTimeout(600)
     await page.screenshot({ path: `${OUT}/faune-zoom.png` })
-    console.log(`  captures : faune.png / faune-zoom.png`)
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(1.3))
+
+    /* ── LES COINS DE CHASSE (spec faune R17) ────────────────────────────── */
+    //
+    // La vallée est maintenant VIDE entre les coins : compter les bêtes « à
+    // l'écran » depuis un point quelconque ne prouve donc plus rien. Ce qu'il
+    // faut mesurer, c'est le CONTRASTE — le désert, puis le coin.
+    console.log(`\n── Les COINS DE CHASSE (R17) : le gibier a des adresses ──`)
+    const coins = await page.evaluate(() => {
+      const scene = window.__BRAISES__.scene
+      const p = scene.registry.get('playerPos')
+      const g = scene.grounds ?? []
+      let best = null
+      let bestD = Infinity
+      for (const c of g) {
+        const d = Math.hypot(c.x - p.x, c.y - p.y)
+        if (d < bestD) {
+          bestD = d
+          best = c
+        }
+      }
+      return { total: g.length, best, d: bestD, joueur: p }
+    })
+    if (!coins.best) {
+      console.log(`   ✗ aucun coin de chasse dans ce monde — le gibier n'a pas d'adresse`)
+    } else {
+      console.log(`   ${coins.total} coins sur la carte · le plus proche à ${coins.d.toFixed(0)} tuiles`)
+      if (!dev) {
+        console.log(`   (s'y rendre exige le TP : relancer avec --dev)`)
+      } else {
+        await page.keyboard.press('F1')
+        await page.waitForTimeout(300)
+        await page.evaluate(({ x, y }) => {
+          window.__BRAISES__.scene.registry.set('debugTeleport', { x, y, at: performance.now() })
+        }, coins.best)
+        await page.waitForTimeout(6000) // le temps que l'anneau se peuple autour de nous
+        const dedans = await census()
+        console.log(`   AU COIN DE CHASSE : ${dedans.total} bêtes vivantes — ${JSON.stringify(dedans.par)}`)
+        console.log(`      à l'écran : ${dedans.enVue} · hardes : ${dedans.hardes.join(' + ') || 'aucune'}`)
+        console.log(dedans.enVue > 0
+          ? `   ✓ le coin de chasse est HABITÉ — et la vallée, entre les coins, est vide`
+          : `   ✗ le coin de chasse est vide, lui aussi : le gibier n'a plus d'adresse du tout`)
+        await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(2))
+        await page.waitForTimeout(500)
+        await page.screenshot({ path: `${OUT}/faune-coin.png` })
+        console.log(`   capture : faune-coin.png`)
+      }
+    }
+
+    console.log(`\n  captures : faune.png / faune-zoom.png`)
     return b
+  },
+
+  /**
+   * LA CHASSE (spec chasse, palier I — C19). La sim est prouvée headless
+   * (chasse.test.ts, A1-A9) ; ce que le NAVIGATEUR seul peut confirmer, c'est le
+   * CÂBLAGE : la touche C qui ralentit et TASSE la silhouette, la jauge de
+   * méfiance qui se LIT sur la bête (les teintes de BEAST_TINTS), et l'écart réel
+   * entre approcher en marchant et en rampant — mesuré dans le vrai jeu, relief,
+   * broutage et hardes compris. C'est aussi LE scénario du calibrage à l'œil
+   * (`--headed`) : les seuils de la jauge se règlent ici, pas au raisonnement.
+   *
+   * Exige `--dev` : on se téléporte près du gibier (le TP passe par le registry).
+   */
+  async chasse(page) {
+    if (!dev) {
+      console.log('\n(la chasse exige le mode debug pour se téléporter — relancer avec --dev)')
+      return {}
+    }
+
+    // Les seuils et les teintes, RECOPIÉS à dessein : le smoke est un témoin
+    // extérieur — si la sim (HUNT.SUSPICION_*) ou la vue (BEAST_TINTS) divergent
+    // un jour de ces valeurs, c'est précisément lui qui doit le dire.
+    const CURIOUS = 0.35
+    const TINT_CURIOUS = 0xffe9a0
+    const TINT_ALERT = 0xff9d54
+
+    await page.keyboard.press('F1') // arme le debug (le TP passe par le registry)
+    await page.waitForTimeout(300)
+
+    /** Tout ce que la chasse a besoin de lire : le joueur, sa silhouette, le gibier. */
+    const probe = () =>
+      page.evaluate(() => {
+        const scene = window.__BRAISES__.scene
+        const p = scene.registry.get('playerPos')
+        const prey = []
+        for (const m of scene.view.monsters) {
+          if (m.type !== 'deer' && m.type !== 'rabbit') continue
+          const rec = scene.view.others.get(m.entityId)
+          if (!rec) continue
+          prey.push({
+            id: m.entityId, type: m.type,
+            suspicion: m.suspicion, flee: m.fleeSince, herd: m.herdId ?? null,
+            x: rec.toX, y: rec.toY,
+            tint: rec.sprite.tintTopLeft, h: rec.sprite.displayHeight, crouch: rec.crouch,
+          })
+        }
+        return { p, prey, joueurH: window.__BRAISES__.scene.playerSprite.displayHeight }
+      })
+
+    const tp = (x, y) =>
+      page.evaluate(({ x, y }) => {
+        window.__BRAISES__.scene.registry.set('debugTeleport', { x, y, at: performance.now() })
+      }, { x, y })
+
+    // Le clavier, cap corrigé à chaque relevé (même mécanique que le scénario eau).
+    let held = new Set()
+    const hold = async (want) => {
+      for (const k of held) if (!want.has(k)) await page.keyboard.up(k)
+      for (const k of want) if (!held.has(k)) await page.keyboard.down(k)
+      held = want
+    }
+
+    // La faune naît hors-champ : on marche vers la prairie jusqu'à voir du gibier.
+    let s = await probe()
+    if (s.prey.length === 0) {
+      await hold(new Set(['KeyD']))
+      const t0 = Date.now()
+      while (s.prey.length === 0 && Date.now() - t0 < 30000) {
+        await page.waitForTimeout(1000)
+        s = await probe()
+      }
+      await hold(new Set())
+    }
+    if (s.prey.length === 0) {
+      console.log('✗ aucun gibier en 30 s de marche — rien à chasser, rien à mesurer')
+      return {}
+    }
+
+    // LA HARDE AU REPOS (faune R9bis) : on se pose à dix tuiles, immobile, et on
+    // photographie les POSTURES — têtes au sol qui broutent, la sentinelle
+    // dressée qui balaie. C'est la capture qui juge les sprites d'état à l'œil.
+    const herded = s.prey.find((m) => m.herd !== null) ?? s.prey[0]
+    await tp(herded.x, herded.y + 10)
+    await page.waitForTimeout(1500)
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(2.4))
+    await page.waitForTimeout(400)
+    await page.screenshot({ path: `${OUT}/chasse-harde.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(1.3))
+    const atRest = await probe()
+    const calm = atRest.prey.filter((m) => m.flee < 0).length
+    console.log(`la harde au repos : ${atRest.prey.length} bêtes de gibier en jeu, ${calm} paisibles (chasse-harde.png)`)
+
+    /**
+     * UNE APPROCHE : on se téléporte à 13 tuiles au sud d'une proie CALME, puis
+     * on marche droit sur elle (en rampant ou non) en notant la distance au
+     * moment où elle devient CURIEUSE, ALERTÉE, puis LEVÉE. C'est la mesure du
+     * banc headless (A1), refaite dans le vrai jeu.
+     */
+    const approach = async (label, sneak) => {
+      // La proie calme la plus proche (une bête déjà nerveuse fausserait tout).
+      let st = await probe()
+      let target = null
+      const t0 = Date.now()
+      while (!target && Date.now() - t0 < 20000) {
+        const calm = st.prey.filter((m) => m.suspicion < 0.1 && m.flee < 0)
+        if (calm.length > 0) {
+          calm.sort((a, b) => Math.hypot(a.x - st.p.x, a.y - st.p.y) - Math.hypot(b.x - st.p.x, b.y - st.p.y))
+          target = calm[0]
+          break
+        }
+        await page.waitForTimeout(1500)
+        st = await probe()
+      }
+      if (!target) {
+        console.log(`  ✗ ${label} : aucune proie calme à portée`)
+        return null
+      }
+
+      await tp(target.x, target.y + 13)
+      await page.waitForTimeout(900) // le TP s'applique, la sim respire, on est planté
+      const baseline = (await probe()).joueurH // silhouette DEBOUT, mesurée sur place
+
+      const marks = { curieuse: null, alertee: null, levee: null, tintCurieuse: null, tintAlertee: null }
+      let squatted = null // la silhouette pendant la marche — comparée à `baseline`
+      const start = Date.now()
+      while (Date.now() - start < 45000) {
+        st = await probe()
+        const m = st.prey.find((q) => q.id === target.id)
+        if (!m) {
+          console.log(`  (la proie s'est dissipée — approche ${label} abandonnée)`)
+          break
+        }
+        const d = Math.hypot(m.x - st.p.x, m.y - st.p.y)
+        if (marks.curieuse === null && m.suspicion >= CURIOUS) {
+          marks.curieuse = d
+          marks.tintCurieuse = m.tint
+          // L'INSTANT DU FACE-À-FACE (rampe seulement) : on se fige — la bête
+          // reste plantée à nous fixer, tête dressée — et on photographie. C'est
+          // la capture du stop-and-go : le chasseur tassé, la proie qui regarde.
+          if (sneak) {
+            await hold(new Set())
+            await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(2.6))
+            await page.waitForTimeout(350)
+            await page.screenshot({ path: `${OUT}/chasse-curieuse.png` })
+            await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(1.3))
+          }
+        }
+        if (marks.alertee === null && m.tint === TINT_ALERT) marks.alertee = d
+        if (m.flee >= 0) {
+          marks.levee = d
+          break
+        }
+        if (d <= 2) break // au contact sans l'avoir levée : l'approche est GAGNÉE
+        // Cap sur la proie, allure choisie.
+        const want = new Set()
+        if (m.x - st.p.x > 0.7) want.add('KeyD')
+        else if (m.x - st.p.x < -0.7) want.add('KeyA')
+        if (m.y - st.p.y > 0.7) want.add('KeyS')
+        else if (m.y - st.p.y < -0.7) want.add('KeyW')
+        if (sneak) want.add('KeyC')
+        await hold(want)
+        if (squatted === null && held.size > (sneak ? 1 : 0)) {
+          await page.waitForTimeout(250) // le temps d'une frame d'allure
+          squatted = (await probe()).joueurH
+        }
+        await page.waitForTimeout(220)
+      }
+      await hold(new Set())
+      return { ...marks, baseline, squatted, type: target.type }
+    }
+
+    console.log(`\n── L'approche en MARCHANT (la naïve) ──`)
+    const walk = await approach('marche', false)
+    if (walk) {
+      console.log(`   proie : un ${walk.type} · curieuse à ${walk.curieuse?.toFixed(1) ?? '—'} t · levée à ${walk.levee?.toFixed(1) ?? 'JAMAIS'} t`)
+      console.log(walk.squatted !== null && Math.abs(walk.squatted - walk.baseline) < 1
+        ? `   ✓ en marchant, la silhouette reste DEBOUT (${walk.squatted?.toFixed(0)} px)`
+        : `   ✗ la silhouette a bougé sans raison (${walk.baseline?.toFixed(0)} → ${walk.squatted?.toFixed(0)} px)`)
+    }
+    await page.screenshot({ path: `${OUT}/chasse-marche.png` })
+
+    console.log(`\n── L'approche en RAMPANT (la touche C) ──`)
+    const sneak = await approach('rampe', true)
+    if (sneak) {
+      console.log(`   proie : un ${sneak.type} · curieuse à ${sneak.curieuse?.toFixed(1) ?? '—'} t · alertée à ${sneak.alertee?.toFixed(1) ?? '—'} t · levée à ${sneak.levee?.toFixed(1) ?? 'JAMAIS (contact !)'} t`)
+      console.log(sneak.squatted !== null && sneak.squatted < sneak.baseline * 0.85
+        ? `   ✓ la silhouette du rampeur se TASSE (${sneak.baseline.toFixed(0)} → ${sneak.squatted.toFixed(0)} px)`
+        : `   ✗ la silhouette ne se tasse PAS (${sneak.baseline?.toFixed(0)} → ${sneak.squatted?.toFixed(0)} px)`)
+      console.log(sneak.tintCurieuse === TINT_CURIOUS
+        ? `   ✓ la bête curieuse porte SA teinte (0x${TINT_CURIOUS.toString(16)}) — la jauge se lit sur elle`
+        : `   ✗ teinte inattendue au seuil curieux : 0x${sneak.tintCurieuse?.toString(16)}`)
+    }
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(2.6))
+    await page.waitForTimeout(400)
+    await page.screenshot({ path: `${OUT}/chasse-rampe.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(1.3))
+
+    // LE VERDICT : le pas lent doit amener NETTEMENT plus près (spec chasse A1).
+    if (walk?.levee != null && sneak != null) {
+      const sneakBest = sneak.levee ?? 2 // arrivé au contact : mieux que toute levée
+      console.log(`\n── Le verdict des allures ──`)
+      console.log(sneakBest < walk.levee - 1
+        ? `   ✓ ramper approche NETTEMENT plus près que marcher (${sneakBest.toFixed(1)} contre ${walk.levee.toFixed(1)} t)`
+        : `   ✗ ramper ne paie pas (${sneakBest.toFixed(1)} contre ${walk.levee.toFixed(1)} t) — recalibrer HUNT`)
+    }
+    /* ── CHASSE II & III : le sang, le vent, l'appât ────────────────────── */
+
+    console.log(`\n── Le SANG (C8-C9) : on blesse, et la piste existe ──`)
+    // On lit l'état de la sim par la vue du client : le snapshot porte désormais
+    // le sang, le vent et les piles. Rien n'est fabriqué — on regarde.
+    const sang = await page.evaluate(() => {
+      const v = window.__BRAISES__.scene.view
+      return {
+        gouttes: v.blood.length,
+        vent: v.wind,
+        piles: v.groundItems.length,
+        blessees: v.monsters.filter((m) => m.bleedMortal || m.bleedUntil !== undefined).length,
+      }
+    })
+    console.log(`   vent : (${sang.vent.x}, ${sang.vent.y}) — le décor doit plier dans ce sens`)
+    console.log(sang.vent.x !== 0 || sang.vent.y !== 0
+      ? `   ✓ le monde a un vent : approcher SOUS LE VENT veut dire quelque chose`
+      : `   ✗ calme plat — l'odorat ne trahit personne (est-ce voulu ?)`)
+
+    // On RÉCOLTE de vraies baies, puis on les JETTE (touche G) : la pile doit
+    // exister dans le monde. Rien n'est fabriqué — on joue le vrai geste.
+    console.log(`\n── L'APPÂT (C18) : récolter, puis jeter ce qu'on tient ──`)
+
+    // Le buisson de baies le plus proche, lu dans les nœuds du client.
+    const buisson = await page.evaluate(() => {
+      const scene = window.__BRAISES__.scene
+      const p = scene.registry.get('playerPos')
+      let best = null
+      let bestD = Infinity
+      for (const n of scene.view.nodes) {
+        if (n.type !== 'berry_bush' || n.stock <= 0) continue
+        const d = (n.tx + 0.5 - p.x) ** 2 + (n.ty + 0.5 - p.y) ** 2
+        if (d < bestD) {
+          bestD = d
+          best = { tx: n.tx, ty: n.ty }
+        }
+      }
+      return best
+    })
+
+    if (!buisson) {
+      console.log(`   (aucun buisson de baies en vue — l'appât se testera au banc headless, A19)`)
+    } else {
+      await tp(buisson.tx + 0.5, buisson.ty + 1.4) // juste en dessous : à portée de bras
+      await page.waitForTimeout(900)
+      // On vise le buisson et on MAINTIENT le clic : c'est la récolte (recolte G7).
+      //
+      // La conversion monde → ÉCRAN passe par le canvas RÉEL : Phaser rend en
+      // 1280×720 mais le canvas est mis à l'échelle par le CSS, et `page.mouse`
+      // parle en pixels de page. Sans ce facteur (et sans l'offset du canvas), on
+      // clique à côté — et le smoke conclut « la récolte ne marche pas » alors
+      // qu'il visait le vide. (Même correction que le bouton de `rupture`.)
+      const cible = await page.evaluate(({ tx, ty }) => {
+        const scene = window.__BRAISES__.scene
+        const cam = scene.cameras.main
+        const wx = (tx + 0.5) * 16
+        const wy = (ty + 0.5) * 16
+        const gx = (wx - cam.worldView.x) * cam.zoom
+        const gy = (wy - cam.worldView.y) * cam.zoom
+        const c = scene.scale.canvas.getBoundingClientRect()
+        return {
+          x: c.left + gx * (c.width / scene.scale.width),
+          y: c.top + gy * (c.height / scene.scale.height),
+        }
+      }, buisson)
+      await page.mouse.move(cible.x, cible.y)
+      await page.mouse.down()
+      await page.waitForTimeout(2500) // le temps de quelques cueillettes
+      await page.mouse.up()
+
+      const sac = await page.evaluate(() => {
+        const inv = window.__BRAISES__.scene.registry.get('inv') ?? []
+        const i = inv.findIndex((s) => s && s.item === 'berries')
+        return { slot: i, count: i >= 0 ? inv[i].count : 0 }
+      })
+      console.log(sac.count > 0
+        ? `   ✓ récolté : ${sac.count} baies (case ${sac.slot})`
+        : `   ✗ rien récolté — le clic maintenu n'a pas cueilli`)
+
+      if (sac.count > 0 && sac.slot >= 0 && sac.slot < 6) {
+        const avant = await page.evaluate(() => window.__BRAISES__.scene.view.groundItems.length)
+        await page.keyboard.press(`Digit${sac.slot + 1}`) // les baies EN MAIN
+        await page.waitForTimeout(300)
+        await page.keyboard.press('g') // ON JETTE
+        await page.waitForTimeout(700)
+        const apres = await page.evaluate(() => window.__BRAISES__.scene.view.groundItems.length)
+        console.log(apres > avant
+          ? `   ✓ la pile est au sol (${avant} → ${apres}) — l'appât, la viande jetée, la charge larguée`
+          : `   ✗ rien n'est tombé (${avant} → ${apres}) : la touche G ne jette pas`)
+        await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(3))
+        await page.waitForTimeout(400)
+        await page.screenshot({ path: `${OUT}/chasse-appat.png` })
+        await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(1.3))
+      }
+    }
+
+    await page.screenshot({ path: `${OUT}/chasse-sol.png` })
+    /* ── LE TERRIER (C16) : le trou EXISTE, et il se voit ─────────────────── */
+
+    console.log(`\n── LE TERRIER (C16) : on doit VOIR le trou ──`)
+    // Sans le trou dessiné, le lapin s'évapore — et c'est le décor qui avoue.
+    // On cherche un lapin (ils sont rares), on se pose à côté, et on regarde.
+    const lapin = await page.evaluate(() => {
+      const scene = window.__BRAISES__.scene
+      const m = scene.view.monsters.find((x) => x.type === 'rabbit' && x.burrowX !== undefined)
+      if (!m) return null
+      const rec = scene.view.others.get(m.entityId)
+      return { x: rec ? rec.toX : m.burrowX, y: rec ? rec.toY : m.burrowY, bx: m.burrowX, by: m.burrowY }
+    })
+
+    if (!lapin) {
+      console.log(`   (aucun lapin en vue — le terrier se prouve au banc headless, A17)`)
+    } else {
+      await tp(lapin.bx, lapin.by + 2) // JUSTE À CÔTÉ du trou : il doit crever l'écran
+      await page.waitForTimeout(1200)
+      const trou = await page.evaluate(() => {
+        const scene = window.__BRAISES__.scene
+        const cam = scene.cameras.main.worldView
+        // Les terriers sont dessinés par `renderBurrows` : on compte ceux qui sont
+        // à la fois VISIBLES et DANS le champ de la caméra. On lit ce qui est peint.
+        const peints = scene.children.list.filter(
+          (o) => o.texture && o.texture.key === 'fx-burrow' && o.visible &&
+            o.x >= cam.x && o.x <= cam.x + cam.width && o.y >= cam.y && o.y <= cam.y + cam.height,
+        )
+        return peints.map((o) => ({
+          // Position à l'ÉCRAN, en fraction : (0,0) coin haut-gauche, (1,1) bas-droite.
+          fx: ((o.x - cam.x) / cam.width).toFixed(2),
+          fy: ((o.y - cam.y) / cam.height).toFixed(2),
+          w: o.displayWidth.toFixed(0),
+          h: o.displayHeight.toFixed(0),
+          depth: o.depth.toFixed(0),
+          alpha: o.alpha.toFixed(2),
+        }))
+      })
+      console.log(trou.length > 0
+        ? `   ✓ le trou est PEINT à l'écran (${trou.length}) — on voit où le lapin va rentrer`
+        : `   ✗ aucun terrier peint : le lapin s'évaporerait sans qu'on comprenne`)
+      for (const t of trou) {
+        console.log(`      · écran (${t.fx}, ${t.fy}) · ${t.w}×${t.h} px monde · depth ${t.depth} · alpha ${t.alpha}`)
+      }
+      await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(3.2))
+      await page.waitForTimeout(400)
+      await page.screenshot({ path: `${OUT}/chasse-terrier.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(1.3))
+    }
+
+    console.log(`   captures : chasse-harde.png / chasse-curieuse.png / chasse-marche.png / chasse-rampe.png / chasse-appat.png / chasse-terrier.png`)
+    return { walk, sneak, sang }
   },
 
   /** Le jeu démarre-t-il, rend-il, et que contient sa vallée ? */

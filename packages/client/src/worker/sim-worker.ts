@@ -24,7 +24,7 @@ const post = (message: HostToClient): void => {
 
 let sim: SimState | undefined
 let playerId = 0
-let playerInput: Pick<MoveInput, 'dx' | 'dy' | 'sprint' | 'block'> = { dx: 0, dy: 0 }
+let playerInput: Pick<MoveInput, 'dx' | 'dy' | 'sprint' | 'sneak' | 'block'> = { dx: 0, dy: 0 }
 /** `seq` du dernier input reçu — l'hôte l'applique chaque tick et l'acquitte dans le snapshot. */
 let lastProcessedInput = 0
 /** Une action au plus par tick (spec village R1) — la dernière reçue gagne. */
@@ -66,6 +66,11 @@ function tick(): void {
     npcs: sim.npcs,
     monsters: sim.monsters,
     corpses: sim.corpses,
+    // LE SANG, LE VENT, LES PILES (spec chasse C9/C17/C18). Trois listes bornées
+    // (BLOOD_CAP, un vecteur, des piles qui périssent) : le snapshot ne grossit pas.
+    blood: sim.blood,
+    wind: sim.wind,
+    groundItems: sim.groundItems,
     events: drainEvents(sim),
   })
 }
@@ -110,6 +115,7 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
       map: sim.map,
       seed: sim.seed,
       nodes: sim.nodes,
+      grounds: sim.grounds,
       calendarScale: VEILLEE_CALENDAR_SCALE,
       playerSpawn: world.spawn,
     })
@@ -122,7 +128,7 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
     // (Un serveur LAN, lui, ignorera ce silence : son monde n'attend personne — le client
     // a de toute façon une garde qui jette les snapshots reçus avant d'être monté.)
   } else if (msg.type === 'input') {
-    playerInput = { dx: msg.dx, dy: msg.dy, sprint: msg.sprint, block: msg.block }
+    playerInput = { dx: msg.dx, dy: msg.dy, sprint: msg.sprint, sneak: msg.sneak, block: msg.block }
     lastProcessedInput = msg.seq
   } else if (msg.type === 'action') {
     pendingAction = msg.action

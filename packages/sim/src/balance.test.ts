@@ -43,7 +43,8 @@ describe('les tailles de sac (spec inventaire R11)', () => {
 describe('terrains d\'altitude alpins', () => {
   it('scree est marchable et lent (éboulis)', () => {
     expect(TERRAIN_SCREE).toBe(9)
-    expect(TERRAINS[TERRAIN_SCREE]).toEqual({ name: 'scree', walkable: true, speedFactor: 0.7 })
+    // `cover: 1` : l'éboulis n'abrite personne (spec chasse C3).
+    expect(TERRAINS[TERRAIN_SCREE]).toEqual({ name: 'scree', walkable: true, speedFactor: 0.7, cover: 1 })
   })
   it('snow est bloquant (pics)', () => {
     expect(TERRAIN_SNOW).toBe(10)

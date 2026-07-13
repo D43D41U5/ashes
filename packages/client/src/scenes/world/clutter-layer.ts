@@ -41,6 +41,10 @@ export class ClutterLayer {
     this.cleared = poiClearings(map)
   }
 
+  /** LE VENT DE LA SIM (spec chasse C17) : les herbes se couchent dans SON sens —
+   *  c'est ce qui rend la règle de l'odorat lisible sans une seule ligne d'UI. */
+  wind: { x: number; y: number } = { x: 1, y: 0 }
+
   update(camera: Phaser.Cameras.Scene2D.Camera, now: number): void {
     let used = 0
     if (camera.zoom >= CLUTTER_MIN_ZOOM) {
@@ -77,7 +81,7 @@ export class ClutterLayer {
             // Le vent. L'origine est aux PIEDS (0.5, 1) : une rotation fait donc
             // plier le brin depuis sa base, comme une tige — et non tourner comme
             // une aiguille d'horloge. Le rocher a un `take` de 0 : il ne bouge pas.
-            sprite.setRotation(windSway(feetX, feetY, now, WIND_TAKE[p.kind] ?? 0))
+            sprite.setRotation(windSway(feetX, feetY, now, WIND_TAKE[p.kind] ?? 0, this.wind))
             // Un conifère trie avec les acteurs — on passe derrière, puis devant.
             // Le tri se fait sur les pieds RÉELS : deux props d'une même rangée
             // s'ordonnent par leur décalage sub-tuile, pas par l'ordre du pool.
