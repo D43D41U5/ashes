@@ -18,7 +18,16 @@
  * qu'on ne peut pas encore payer doit rester une invitation — c'est ce qui donne
  * envie d'aller chercher les trois fibres qui manquent.
  */
-import { RECIPES, hasItems, type Inventory, type PlayerAction, type RecipeId } from '@braises/sim'
+import {
+  RECIPES,
+  STRUCTURE_COSTS,
+  hasItems,
+  type Inventory,
+  type ItemBag,
+  type ItemId,
+  type PlayerAction,
+  type RecipeId,
+} from '@braises/sim'
 import type Phaser from 'phaser'
 import type { StationId } from '../../hud-state'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
@@ -26,9 +35,27 @@ import { INK, SECTION_TITLE, textStyle } from './typography'
 
 // ─── La logique (pure, testée — craft-panel.test.ts) ─────────────────────────
 
-export type CraftCategory = 'outils' | 'armes' | 'survie' | 'materiaux'
+export type CraftCategory = 'campement' | 'outils' | 'armes' | 'survie' | 'materiaux'
+
+/**
+ * LE FEU N'EST PAS UNE RECETTE — c'est une STRUCTURE, et pourtant sa place est ici.
+ *
+ * Sans lui : pas de cuisine (or le cru ne nourrit plus un homme), pas de chaleur
+ * (or la nuit mord), pas de parade contre les loups (or la nuit chasse), et pas de
+ * point de renaissance. C'est LA première chose que fait un joueur — elle ne peut
+ * pas vivre dans un raccourci clavier qu'on a débranché, ni dans un menu qu'il
+ * faudrait deviner. Elle vit là où il regarde déjà : « ce que je peux faire ICI ».
+ */
+export const FEU = {
+  id: 'fire' as const,
+  label: 'Feu de camp',
+  inputs: STRUCTURE_COSTS.fire,
+  /** Il ne se BÂTIT pas (pas de marteau requis) : sinon rien ne pourrait commencer. */
+  action: { type: 'light_fire' } as const,
+}
 
 export const CATEGORY_LABEL: Record<CraftCategory, string> = {
+  campement: 'CAMPEMENT',
   outils: 'OUTILS',
   armes: 'ARMES',
   survie: 'SURVIE',
@@ -70,8 +97,11 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   iron_ingot: 'materiaux',
 }
 
-/** Une ligne de la liste : un intitulé de rayon, ou une recette. */
-export type CraftRow = { kind: 'header'; label: string } | { kind: 'recipe'; id: RecipeId }
+/** Une ligne de la liste : un rayon, une recette, ou LE FEU (qui n'en est pas une). */
+export type CraftRow =
+  | { kind: 'header'; label: string }
+  | { kind: 'recipe'; id: RecipeId }
+  | { kind: 'fire' }
 
 /** Sans accents ni casse : taper « epieu » doit trouver « Épieu taillé ». */
 function fold(s: string): string {
@@ -100,6 +130,15 @@ export function craftRows(stations: readonly StationId[], query: string): CraftR
 
   const rows: CraftRow[] = []
   for (const cat of CATEGORY_ORDER) {
+    // LE CAMPEMENT : le Feu. Toujours là (on l'allume n'importe où), sauf si la
+    // recherche l'exclut. C'est le premier geste du jeu : il ne se cache pas.
+    if (cat === 'campement') {
+      if (q === '' || fold(FEU.label).includes(q)) {
+        rows.push({ kind: 'header', label: CATEGORY_LABEL.campement })
+        rows.push({ kind: 'fire' })
+      }
+      continue
+    }
     const ids = visible.filter((id) => RECIPE_CATEGORY[id] === cat)
     if (ids.length === 0) continue
     rows.push({ kind: 'header', label: CATEGORY_LABEL[cat] })
@@ -110,8 +149,11 @@ export function craftRows(stations: readonly StationId[], query: string): CraftR
 
 /** Le coût, en une ligne : « bois 2 · pierre 3 · corde 1 ». */
 export function costLine(id: RecipeId): string {
-  const inputs = RECIPES[id].inputs
-  return (Object.keys(inputs) as (keyof typeof inputs)[])
+  return bagLine(RECIPES[id].inputs)
+}
+
+export function bagLine(inputs: ItemBag): string {
+  return (Object.keys(inputs) as ItemId[])
     .map((item) => `${ITEM_LABELS[item].toLowerCase()} ${inputs[item]}`)
     .join(' · ')
 }
@@ -218,10 +260,12 @@ export function createCraftPanel(
     })
     bg.on('pointerout', () => bg.setFillStyle(0x1b1b22, 0.9))
     bg.on('pointerdown', () => {
-      const id = bg.getData('recipe') as RecipeId | undefined
       // Un clic qui part se faire refuser pollue le flux d'événements : la sim
       // n'est pas une poubelle (recolte.md G7). Sans les matériaux, on ne tire pas.
-      if (id && bg.getData('ready') === true) send({ type: 'craft', recipeId: id })
+      if (bg.getData('ready') !== true) return
+      if (bg.getData('fire') === true) return send(FEU.action)
+      const id = bg.getData('recipe') as RecipeId | undefined
+      if (id) send({ type: 'craft', recipeId: id })
     })
     listRoot.add([bg, icon, name, cost, header])
     return { bg, icon, name, cost, header }
@@ -239,8 +283,20 @@ export function createCraftPanel(
       const slot = pool[i]
       if (!slot) return // la liste dépasse le banc : voir la garde plus bas
       const h = row.kind === 'header' ? HEADER_H : ROW_H
-      if (row.kind === 'header') {
-        slot.bg.setVisible(false).setData('recipe', undefined)
+      if (row.kind === 'fire') {
+        const ready = hasItems(inv, FEU.inputs)
+        slot.header.setVisible(false)
+        slot.bg.setVisible(true).setY(y + h / 2).setData('fire', true).setData('recipe', undefined).setData('ready', ready)
+        slot.bg.setStrokeStyle(1, ready ? 0x6b5a3a : 0x3a3a44)
+        slot.icon.setVisible(true).setTexture(itemIconKey('wood')).setY(y + h / 2).setAlpha(ready ? 1 : 0.35)
+        slot.name.setVisible(true).setText(FEU.label).setY(y + 8).setColor(ready ? INK.body : INK.faint)
+        slot.cost
+          .setVisible(true)
+          .setText(`${bagLine(FEU.inputs)}  —  ici même`)
+          .setY(y + 26)
+          .setColor(ready ? INK.dim : INK.faint)
+      } else if (row.kind === 'header') {
+        slot.bg.setVisible(false).setData('recipe', undefined).setData('fire', false)
         slot.icon.setVisible(false)
         slot.name.setVisible(false)
         slot.cost.setVisible(false)
@@ -250,7 +306,7 @@ export function createCraftPanel(
         const ready = hasItems(inv, recipe.inputs)
         const station = recipe.station
         slot.header.setVisible(false)
-        slot.bg.setVisible(true).setY(y + h / 2).setData('recipe', row.id).setData('ready', ready)
+        slot.bg.setVisible(true).setY(y + h / 2).setData('recipe', row.id).setData('fire', false).setData('ready', ready)
         slot.bg.setStrokeStyle(1, ready ? 0x6b5a3a : 0x3a3a44)
         slot.icon.setVisible(true).setTexture(itemIconKey(recipe.output)).setY(y + h / 2).setAlpha(ready ? 1 : 0.35)
         slot.name.setVisible(true).setText(ITEM_LABELS[recipe.output]).setY(y + 8).setColor(ready ? INK.body : INK.faint)

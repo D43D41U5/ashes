@@ -19,6 +19,7 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
+import { FOOD_VALUES, WEAPON_DAMAGE, type ItemId } from '@braises/sim'
 import type { Buildable } from '../../hud-state'
 import type { Corpse, PlayerAction, ResourceNode } from '@braises/sim'
 
@@ -65,13 +66,63 @@ export function aimAt(
  * pas « en passant » avec un marteau en main : le mode dit ce que le clic fait,
  * et c'est ce qui le rend prévisible.
  */
-export function clickToAction(target: AimTarget, selected: Buildable | null): PlayerAction | null {
+/**
+ * L'OBJET EN MAIN DÉCIDE DU CLIC (décision utilisateur, 2026-07-13). C'est la règle
+ * qui remplace les quinze touches de verbes qu'on a débranchées — et c'est la seule
+ * qu'il y ait à apprendre :
+ *
+ *   · de la NOURRITURE en main  → on mange (au clic maintenu) ;
+ *   · une ARME en main          → on frappe, vers le curseur ;
+ *   · un nœud / un cadavre visé → on récolte, on fouille ;
+ *   · sinon                     → on frappe quand même (mains nues, ou le manche).
+ *
+ * Le dernier cran est vital : sans lui, un joueur sans arme serait SANS DÉFENSE la
+ * nuit — et la nuit chasse. Une punition sans parade est un impôt.
+ *
+ * Pur : c'est ici que la règle se prouve, pas dans un closure Phaser.
+ */
+export interface HandContext {
+  /** Ce qu'on TIENT (spec inventaire R9). `null` = mains nues. */
+  held: ItemId | null
+  /** Direction vers le curseur, depuis l'avatar (non normalisée : la sim le fait). */
+  dx: number
+  dy: number
+}
+
+export function isFood(item: ItemId | null): boolean {
+  return item !== null && FOOD_VALUES[item] !== undefined
+}
+
+export function isWeapon(item: ItemId | null): boolean {
+  return item !== null && WEAPON_DAMAGE[item] !== undefined
+}
+
+export function clickToAction(
+  target: AimTarget,
+  selected: Buildable | null,
+  hand?: HandContext,
+): PlayerAction | null {
   if (selected !== null) return { type: 'build', structure: selected, tx: target.tx, ty: target.ty }
+
+  // MANGER : on tient de quoi, on croque. (Le clic maintenu répète — voir holdHarvest.)
+  if (hand && isFood(hand.held)) return { type: 'eat', item: hand.held! }
+
+  // FRAPPER : une arme en main frappe TOUJOURS — on ne coupe pas du bois avec une
+  // lance, et surtout on ne veut pas qu'un clic de panique parte récolter un buisson
+  // pendant qu'un loup arrive.
+  if (hand && isWeapon(hand.held)) return { type: 'attack', dx: hand.dx, dy: hand.dy }
+
   // Hors portée, on n'émet rien : la sim refuserait, et un refus n'est pas
   // gratuit (c'est un SimEvent que la chronique consomme — spec recolte.md G7).
-  if (!target.inRange) return null
-  if (target.corpseId !== null) return { type: 'loot_corpse', corpseId: target.corpseId }
-  if (target.nodeId !== null) return { type: 'harvest', nodeId: target.nodeId }
+  if (target.inRange) {
+    if (target.corpseId !== null) return { type: 'loot_corpse', corpseId: target.corpseId }
+    if (target.nodeId !== null) return { type: 'harvest', nodeId: target.nodeId }
+  }
+
+  // RIEN À RÉCOLTER, RIEN EN MAIN : on frappe. C'est la défense du pauvre, et elle
+  // doit exister — sinon la nuit qui chasse n'a pas de parade pour qui n'a pas
+  // encore d'arme, et une punition sans parade n'est pas une punition.
+  if (hand) return { type: 'attack', dx: hand.dx, dy: hand.dy }
   return null
 }
 
@@ -92,9 +143,15 @@ export function holdHarvest(
   now: number,
   lastSentAt: number,
   cooldownMs: number,
+  hand?: HandContext,
 ): PlayerAction | null {
   if (selected !== null) return null // en mode construction, le maintien ne martèle rien
   if (now - lastSentAt < cooldownMs) return null
+  // Le MAINTIEN nourrit et frappe aussi : c'est le geste que l'utilisateur a
+  // demandé pour le bandage (« sélectionner dans la ceinture, maintenir le clic »),
+  // et il vaut pour tout ce qu'on tient.
+  if (hand && isFood(hand.held)) return { type: 'eat', item: hand.held! }
+  if (hand && isWeapon(hand.held)) return { type: 'attack', dx: hand.dx, dy: hand.dy }
   if (!target.inRange || target.nodeId === null) return null
   return { type: 'harvest', nodeId: target.nodeId }
 }

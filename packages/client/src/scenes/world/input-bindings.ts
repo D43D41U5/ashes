@@ -21,7 +21,7 @@ import { BALANCE, SLOTS, type Corpse, type PlayerAction, type ResourceNode, type
 import Phaser from 'phaser'
 import { getHud, setHud, type Buildable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
-import { aimAt, clickToAction, holdHarvest, type AimTarget } from './aim'
+import { aimAt, clickToAction, holdHarvest, type AimTarget, type HandContext } from './aim'
 import { BELT_BINDINGS, KEYMAP } from './keymap'
 
 export interface InputDeps {
@@ -191,6 +191,20 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   const overlayOpen = (): boolean =>
     Boolean(getHud(scene.registry, 'mapOpen')) || Boolean(getHud(scene.registry, 'characterMenuOpen'))
 
+  /**
+   * CE QU'ON TIENT, ET VERS OÙ ON VISE. C'est tout ce dont le résolveur pur a
+   * besoin pour décider du clic (aim.ts) : manger, frapper, récolter, fouiller.
+   * Le client ne décide de RIEN d'autre — la sim tranche, comme toujours.
+   */
+  const handAt = (pointer: Phaser.Input.Pointer): HandContext => {
+    const inv = getHud(scene.registry, 'inv') ?? []
+    const slot = getHud(scene.registry, 'activeSlot') ?? -1
+    const held = slot >= 0 ? (inv[slot]?.item ?? null) : null
+    const world = pointerToWorld(pointer)
+    const p = deps.predicted()
+    return { held, dx: world.x / TILE_PX - p.x, dy: world.y / TILE_PX - p.y }
+  }
+
   // Le clic MAINTENU récolte en boucle, cadencé par le rechargement (G6-G7).
   let holding = false
   let lastHarvestAt = -Infinity
@@ -203,11 +217,14 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     // gauche et se mettrait à récolter. Un bouton qu'on retire doit devenir muet,
     // pas hériter du comportement du voisin.
     if (pointer.rightButtonDown()) return
-    // Le résolveur PUR tranche (aim.ts) : récolter, looter — ou RIEN.
-    const action = clickToAction(aimNow(pointer), selected)
+    // Le résolveur PUR tranche (aim.ts) : MANGER, FRAPPER, récolter, fouiller —
+    // selon CE QU'ON TIENT. C'est la seule règle d'interaction du jeu.
+    const action = clickToAction(aimNow(pointer), selected, handAt(pointer))
     if (action) {
       deps.sendAction(action)
-      if (action.type === 'harvest') lastHarvestAt = scene.time.now
+      if (action.type === 'harvest' || action.type === 'attack' || action.type === 'eat') {
+        lastHarvestAt = scene.time.now
+      }
     }
     holding = true
   })
@@ -223,7 +240,14 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       holding = false
       return
     }
-    const action = holdHarvest(aimNow(pointer), selected, scene.time.now, lastHarvestAt, GATHER_COOLDOWN_MS)
+    const action = holdHarvest(
+      aimNow(pointer),
+      selected,
+      scene.time.now,
+      lastHarvestAt,
+      GATHER_COOLDOWN_MS,
+      handAt(pointer),
+    )
     if (action) {
       deps.sendAction(action)
       lastHarvestAt = scene.time.now

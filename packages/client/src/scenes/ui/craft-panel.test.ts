@@ -1,6 +1,6 @@
 import { RECIPES, type RecipeId } from '@braises/sim'
 import { describe, expect, it } from 'vitest'
-import { CATEGORY_ORDER, RECIPE_CATEGORY, craftRows, costLine } from './craft-panel'
+import { CATEGORY_LABEL, CATEGORY_ORDER, RECIPE_CATEGORY, craftRows, costLine } from './craft-panel'
 
 /**
  * CE QUE LE PANNEAU MONTRE est une décision, pas un dessin : elle se prouve ici.
@@ -48,19 +48,23 @@ describe('le panneau d’artisanat : ce qu’il montre', () => {
     const rows = craftRows(['fire', 'workshop', 'furnace'], '')
     const hs = headers(rows)
 
-    // ALPHABÉTIQUE (l'accent de MATÉRIAUX se range sous le E, pas après le Z).
-    expect(hs).toEqual(['ARMES', 'MATÉRIAUX', 'OUTILS', 'SURVIE'])
+    // ALPHABÉTIQUE (l'accent de MATÉRIAUX se range sous le E, pas après le Z), et
+    // CAMPEMENT (le Feu) en fait partie — c'est le premier geste du jeu.
+    expect(hs).toEqual(['ARMES', 'CAMPEMENT', 'MATÉRIAUX', 'OUTILS', 'SURVIE'])
     expect(hs).toEqual([...hs].sort((a, b) => a.localeCompare(b, 'fr')))
     // L'ordre des en-têtes suit CATEGORY_ORDER, et chaque en-tête est SUIVI d'au
     // moins une recette (un rayon sans article n'est pas un rayon, c'est du bruit).
+    // Chaque en-tête est SUIVI d'au moins un article (un rayon sans article n'est
+    // pas un rayon, c'est du bruit) — une recette, ou le Feu.
     rows.forEach((row, i) => {
-      if (row.kind === 'header') expect(rows[i + 1]?.kind).toBe('recipe')
+      if (row.kind === 'header') expect(['recipe', 'fire']).toContain(rows[i + 1]?.kind)
     })
     // Les recettes d'un rayon appartiennent bien à ce rayon.
     let current = ''
     for (const row of rows) {
       if (row.kind === 'header') current = row.label
-      else expect(CATEGORY_LABELS_OF(row.id)).toBe(current)
+      else if (row.kind === 'recipe') expect(CATEGORY_LABELS_OF(row.id)).toBe(current)
+      else expect(current).toBe('CAMPEMENT') // le FEU, qui n'est pas une recette
     }
   })
 
@@ -68,7 +72,7 @@ describe('le panneau d’artisanat : ce qu’il montre', () => {
     // À mains nues : armes (épieu), matériaux (corde), outils (hachereau, pic).
     // Pas de rayon SURVIE — le ragoût et la viande cuite veulent un Feu. Et les
     // rayons qui RESTENT sont toujours dans l'ordre alphabétique.
-    expect(headers(craftRows([], ''))).toEqual(['ARMES', 'MATÉRIAUX', 'OUTILS'])
+    expect(headers(craftRows([], ''))).toEqual(['ARMES', 'CAMPEMENT', 'MATÉRIAUX', 'OUTILS'])
   })
 
   it('LA RECHERCHE : filtre sur le nom, sans accents ni casse', () => {
@@ -79,7 +83,8 @@ describe('le panneau d’artisanat : ce qu’il montre', () => {
     expect(ids(craftRows(all, 'epieu'))).toEqual(['crude_spear']) // « Épieu taillé » sans accent
     expect(ids(craftRows(all, 'pioche')).length).toBeGreaterThan(1) // pioche, pioche de fer, pic ?
 
-    // Une recherche qui ne trouve rien ne laisse AUCUN en-tête orphelin.
+    // Une recherche qui ne trouve rien ne laisse AUCUN en-tête orphelin — pas même
+    // celui du Feu.
     const vide = craftRows(all, 'zzz')
     expect(vide).toEqual([])
   })
@@ -109,6 +114,5 @@ describe('le panneau d’artisanat : ce qu’il montre', () => {
 
 /** Le libellé du rayon d'une recette (pour l'assertion de cohérence ci-dessus). */
 function CATEGORY_LABELS_OF(id: RecipeId): string {
-  const cat = RECIPE_CATEGORY[id]
-  return { outils: 'OUTILS', armes: 'ARMES', survie: 'SURVIE', materiaux: 'MATÉRIAUX' }[cat]
+  return CATEGORY_LABEL[RECIPE_CATEGORY[id]]
 }

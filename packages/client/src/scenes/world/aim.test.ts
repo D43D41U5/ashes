@@ -100,3 +100,47 @@ describe('holdHarvest — le maintien n’inonde pas la sim (A4, A6)', () => {
     expect(holdHarvest(t(), 'wall', 5000, 0, COOLDOWN)).toBeNull()
   })
 })
+
+/**
+ * L'OBJET EN MAIN DÉCIDE DU CLIC (décision utilisateur, 2026-07-13).
+ *
+ * C'est LA règle d'interaction du jeu — celle qui remplace les quinze touches de
+ * verbes qu'on a débranchées. Elle doit tenir : sans elle, un joueur ne peut ni
+ * manger, ni se défendre, et la nuit qui chasse devient une exécution.
+ */
+describe('la main décide du clic', () => {
+  const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, inRange: true }
+  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, inRange: true }
+  const versLest = { dx: 1, dy: 0 }
+
+  it('DE LA NOURRITURE EN MAIN → on mange (et le maintien répète)', () => {
+    const main = { held: 'berries' as const, ...versLest }
+    expect(clickToAction(surUnArbre, null, main)).toEqual({ type: 'eat', item: 'berries' })
+    // Même sur un arbre : ce qu'on tient prime. On ne coupe pas du bois avec une baie.
+    expect(holdHarvest(surUnArbre, null, 1000, 0, 100, main)).toEqual({ type: 'eat', item: 'berries' })
+  })
+
+  it('UNE ARME EN MAIN → on frappe, vers le curseur — même face à un buisson', () => {
+    const main = { held: 'spear' as const, ...versLest }
+    expect(clickToAction(surUnArbre, null, main)).toEqual({ type: 'attack', dx: 1, dy: 0 })
+    // C'est vital : un clic de panique ne doit PAS partir récolter un buisson
+    // pendant qu'un loup arrive.
+  })
+
+  it('MAINS NUES SUR UN ARBRE → on récolte (c’est la minute 0 du jeu)', () => {
+    const main = { held: null, ...versLest }
+    expect(clickToAction(surUnArbre, null, main)).toEqual({ type: 'harvest', nodeId: 42 })
+  })
+
+  it('MAINS NUES DANS LE VIDE → ON FRAPPE. La défense du pauvre doit exister', () => {
+    const main = { held: null, ...versLest }
+    // Sans ce cran, un joueur sans arme serait SANS DÉFENSE la nuit — or la nuit
+    // chasse. Une punition sans parade n'est pas une punition, c'est un impôt.
+    expect(clickToAction(vide, null, main)).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+
+  it('un OUTIL en main ne frappe pas : il récolte (la hache n’est pas une arme)', () => {
+    const main = { held: 'crude_axe' as const, ...versLest }
+    expect(clickToAction(surUnArbre, null, main)).toEqual({ type: 'harvest', nodeId: 42 })
+  })
+})
