@@ -8,12 +8,13 @@ import { poissonPoints } from './poisson'
 import { elevationAt, terrainAt, isBlockingTile, type WorldMap, type Zone } from './map'
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
-import { setTile, isWater } from './valleygen-primitives'
+import { setTile } from './valleygen-primitives'
 import { FAUNA, TERRAIN_SCREE } from './balance'
 import { distSq } from './geometry'
+import { type CarveField, carveDistanceToMain, walkableComponents } from './connectivity'
 
 // ids terrain (balance.ts) — repris localement pour lisibilité de la table.
-const SCREE = 9, ROCK = 5, BOULDERS = 16, GLACIER = 15, BURNT = 21, PEAT = 18, REED = 19,
+const SCREE = 9, ROCK = 5, SNOW = 10, BOULDERS = 16, GLACIER = 15, BURNT = 21, PEAT = 18, REED = 19,
   AL_MEADOW = 12, AL_FLOWERS = 20, OLD_GROWTH = 22, HEATH = 11, PINE = 13, FLOWER = 17,
   FOREST = 3, GRASS = 1
 
@@ -52,6 +53,33 @@ export const POI_PLACEMENT = {
   // pratique tout en restant proche de la cible ~90 POIs sur 2400×3600.
   SPACING_FRAC: 0.08,
   CANONICAL: { width: 2400, height: 3600 },
+
+  /**
+   * LE SEUIL, PAS LE TUNNEL — combien de tuiles de roche un lieu a-t-il le droit
+   * de percer pour s'ouvrir sur le monde ?
+   *
+   * Le correctif du 2026-07-11 (« le lieu creuse son propre sol ») garantissait
+   * au lieu une tuile MARCHABLE dans son empreinte. Il ne lui garantissait pas
+   * d'être ATTEIGNABLE : mesuré sur la vraie carte, 16 lieux sur 81 (seed du jeu)
+   * étaient des poches parfaitement marchables au cœur d'un massif, où nul ne
+   * mettra jamais les pieds. La Grotte, la Source chaude et le Belvédère étaient
+   * morts à 100 % — les trois devises de la spec `lieux.md`.
+   *
+   * La distribution mesurée tranche : **10 lieux murés ne sont séparés du monde
+   * que par UNE tuile** (une porte), et **29 en sont à plus de vingt-quatre**
+   * (ensevelis, sans espoir). Il n'y a donc rien à gagner à creuser loin : au-delà
+   * du seuil, le lieu n'est pas mal fermé, il est mal PLACÉ.
+   *
+   * D'où la règle : la connexité entre dans l'ÉLIGIBILITÉ. Un type qui ne peut
+   * pas s'ouvrir ici n'est pas creusé de force — il est écarté DE CE POINT, et
+   * `candidatesFor` en propose un autre (ou le point reste sauvage). La Grotte
+   * naît alors au BORD du massif, ce qui est précisément l'endroit où se trouve
+   * la bouche d'une grotte. Le mécanisme existait déjà ; on lui donne juste les
+   * yeux qui lui manquaient.
+   *
+   * 3 : une porte, une vire, une margelle. Jamais un tunnel.
+   */
+  MAX_CARVE_TILES: 3,
 }
 
 export const POI_TYPES: PoiType[] = [
@@ -72,9 +100,38 @@ export const POI_TYPES: PoiType[] = [
   { slug: 'repaire', name: 'le Repaire de Cendrés', family: 'danger', biomes: [BURNT, ROCK, SCREE], weight: 4, cap: 5, footprint: 3, monster: 'cendreux' },
   { slug: 'epave', name: "l'Épave d'avalanche", family: 'danger', biomes: [SCREE, BOULDERS], minElev: 0.55, weight: 3, cap: 3, footprint: 2 },
   { slug: 'fondriere', name: 'la Fondrière', family: 'danger', biomes: [PEAT, REED], weight: 3, cap: 3, footprint: 3 },
-  { slug: 'crevasses', name: 'le Champ de crevasses', family: 'danger', biomes: [GLACIER], weight: 3, cap: 3, footprint: 4 },
+  /**
+   * LE CHAMP DE CREVASSES — était une LIGNE MORTE (mesuré 2026-07-13) : biome
+   * `GLACIER` seul, or le glacier est `walkable: false` et se cache derrière la
+   * neige et la roche, elles aussi bloquantes. Sur la vraie carte, 176 000 tuiles
+   * de glacier existaient et **pas une seule** n'était à moins de trois tuiles du
+   * monde. Le lieu ne pouvait donc naître nulle part — problème déjà noté au
+   * journal le 2026-07-09 (« disparaît des 5 seeds testées ») et laissé en suspens.
+   *
+   * On lui rend l'accès sans lui retirer son sujet : il naît désormais sur le haut
+   * pierrier (le sol brisé sous la glace), et son empreinte de 4 mord dans le
+   * minéral au-dessus. Les biomes de glace et de neige RESTENT dans sa liste : le
+   * jour où la neige deviendra praticable (question ouverte, cf. la note de session
+   * sur les 24 % de carte-mur), il remontera de lui-même vers la vraie marge du
+   * glacier, sans qu'on retouche cette ligne.
+   */
+  { slug: 'crevasses', name: 'le Champ de crevasses', family: 'danger', biomes: [GLACIER, SNOW, SCREE, BOULDERS], minElev: 0.66, weight: 3, cap: 3, footprint: 4 },
   // Récompense / paysage
-  { slug: 'belvedere', name: 'le Belvédère', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.75, weight: 3, cap: 4, reserve: 1, footprint: 2 },
+  /**
+   * LE BELVÉDÈRE — `minElev` était à 0,75, **au-dessus du plafond du marchable**
+   * (`BANDS.SCREE = 0,73` : tout ce qui monte plus haut est roche, neige ou glace,
+   * et tout cela bloque). Il ne pouvait donc naître QUE sur du bloquant, et
+   * n'existait que par la grâce d'un percement — 16 000 tuiles ouvrables sur 2,16
+   * millions, soit 0,7 % de la carte. Il a fini par perdre : sur la seed 31415, il
+   * ne sortait pas (garde de réservation au rouge).
+   *
+   * Un point de vue où l'on ne peut pas se tenir n'est pas un point de vue. Il se
+   * pose désormais sur le HAUT PIERRIER (0,66-0,73) — l'endroit le plus élevé où
+   * l'on puisse poser le pied, ce qui est très exactement la définition d'un
+   * belvédère. `AL_MEADOW` sort de sa liste : cette bande s'arrête à 0,64, elle
+   * était inatteignable sous ce `minElev` — une ligne qui mentait.
+   */
+  { slug: 'belvedere', name: 'le Belvédère', family: 'reward', biomes: [SCREE, ROCK], minElev: 0.66, weight: 3, cap: 4, reserve: 1, footprint: 2 },
   { slug: 'grotte', name: 'la Grotte', family: 'reward', biomes: [ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 2 },
   { slug: 'cascade', name: 'la Cascade', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.4, weight: 2, cap: 4, reserve: 1, footprint: 2 },
   { slug: 'erratique', name: 'le Bloc erratique', family: 'reward', biomes: [BOULDERS, AL_MEADOW, GRASS, FLOWER], weight: 4, cap: 5, reserve: 1, footprint: 2 },
@@ -112,48 +169,104 @@ function clampFootprint(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): Pi
 }
 
 /**
- * Types valides pour la tuile (biome + altitude + plafond) DONT l'empreinte
- * contient déjà une tuile marchable, OU peut en recevoir une par creusement
- * (cf. `pickCarveTile`).
- *
- * Sans ce dernier filtre, un type dont les biomes autorisés couvrent surtout du
- * rock/glacier (Grotte, Belvédère, Source chaude…) pouvait recevoir une empreinte
- * à 100 % bloquante — un lieu qu'on ne peut jamais fouler : `poisAt` (map.ts) ne
- * teste QUE l'empreinte, jamais un anneau de secours. Décision d'Alexis (2026-07-11,
- * « le lieu creuse son propre sol ») : plutôt qu'écarter le type ou rouvrir ses
- * biomes, le générateur rend marchable une tuile de l'empreinte quand il pose le
- * lieu — `placePois` s'en charge après le tirage, `pickCarveTile` choisit LA tuile.
- * Un type reste écarté seulement si aucune tuile de son empreinte n'est ni déjà
- * marchable ni creusable (empreinte 100 % eau, ou 100 % hors carte/bordure).
+ * L'empreinte TOUCHE-T-ELLE l'anneau de bordure ? Alors le lieu n'a rien à faire
+ * là : `footprintAt` clampe à la carte, donc un point de semis tiré près du bord
+ * reçoit une empreinte rognée qui mord sur le mur scellé. Mesuré : sept lieux sur
+ * cinq seeds (dont deux Mines et un Repaire) naissaient à cheval sur l'enceinte —
+ * moitié dans le monde, moitié dans un mur qu'on ne perce jamais. On les écarte,
+ * on ne les rafistole pas.
  */
-function isEligible(map: WorldMap, t: PoiType, tx: number, ty: number, used: Map<string, number>): boolean {
+function touchesBorderRing(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): boolean {
+  return z.x <= 0 || z.y <= 0 || z.x + z.w >= map.width || z.y + z.h >= map.height
+}
+
+/**
+ * LA TUILE D'ENTRÉE — celle de l'empreinte qui coûte le moins cher à relier au
+ * monde, et `undefined` si aucune ne tient dans le budget (cf.
+ * `POI_PLACEMENT.MAX_CARVE_TILES`). Départage par balayage row-major : le premier
+ * minimum rencontré gagne — déterministe, aucun aléa requis.
+ */
+function entryTile(
+  map: WorldMap, field: CarveField, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>,
+): { index: number; cost: number } | undefined {
+  let best: { index: number; cost: number } | undefined
+  for (let ty = z.y; ty < z.y + z.h; ty++) {
+    for (let tx = z.x; tx < z.x + z.w; tx++) {
+      const i = ty * map.width + tx
+      const d = field.dist[i]!
+      if (d > field.limit) continue // hors d'atteinte, ou séparé par de l'eau
+      if (best === undefined || d < best.cost) best = { index: i, cost: d }
+    }
+  }
+  return best
+}
+
+/**
+ * Types valides pour la tuile : biome, altitude, plafond — ET **le lieu s'ouvre
+ * sur le monde**.
+ *
+ * Ce dernier critère est le correctif du 2026-07-13. Il remplace l'ancien
+ * (« l'empreinte contient une tuile marchable, ou peut en recevoir une »), qui
+ * était vrai et insuffisant : une tuile marchable au cœur d'un massif de roche
+ * reste une tuile où nul ne va. On ne demande donc plus au lieu d'avoir un SOL,
+ * on lui demande d'avoir un SEUIL — cf. `POI_PLACEMENT.MAX_CARVE_TILES` pour la
+ * mesure qui a fixé la règle.
+ */
+function isEligible(
+  map: WorldMap, field: CarveField, t: PoiType, tx: number, ty: number, used: Map<string, number>,
+): boolean {
   const terr = terrainAt(map, tx, ty)
   const el = elevationAt(map, tx, ty)
   if (!t.biomes.includes(terr)) return false
   if (el < (t.minElev ?? 0) || el > (t.maxElev ?? 1)) return false
   if ((used.get(t.slug) ?? 0) >= t.cap) return false
   const fp = footprintAt(map, t, tx, ty)
-  return hasWalkableFootprint(map, fp) || pickCarveTile(map, fp) !== undefined
+  if (touchesBorderRing(map, fp)) return false
+  return entryTile(map, field, fp) !== undefined
 }
 
-function candidatesFor(map: WorldMap, tx: number, ty: number, used: Map<string, number>): PoiType[] {
-  return POI_TYPES.filter((t) => isEligible(map, t, tx, ty, used))
+function candidatesFor(
+  map: WorldMap, field: CarveField, tx: number, ty: number, used: Map<string, number>,
+): PoiType[] {
+  return POI_TYPES.filter((t) => isEligible(map, field, t, tx, ty, used))
 }
 
 /**
- * Pose le lieu : la Zone, son nom numéroté, et le creusement de son sol si
- * l'empreinte n'offre aucune tuile marchable. `isEligible` a déjà garanti
- * qu'une tuile est marchable ou creusable ici — `pickCarveTile` ne peut donc
- * rendre `undefined` qu'en théorie (défense en profondeur).
+ * Pose le lieu : la Zone, son nom numéroté, et **le percement de son seuil** —
+ * la file des tuiles bloquantes qui le séparent encore du monde, remontée par
+ * `field.parent` depuis sa tuile d'entrée. Chacune devient de l'éboulis : la
+ * Grotte perce sa porte, le Belvédère sa vire, la Source chaude sa margelle.
+ *
+ * `isEligible` a déjà garanti que ce seuil tient dans le budget — `entryTile` ne
+ * peut donc rendre `undefined` qu'en théorie (défense en profondeur).
+ *
+ * NOTE D'ORDRE : le champ de creusement est calculé UNE fois, avant toute pose.
+ * Percer un seuil ne le met pas à jour — et c'est voulu : les lieux sont espacés
+ * d'au moins 96 tuiles, la porte de l'un n'ouvre jamais le seuil de l'autre. Un
+ * champ figé est donc exact ici, et il épargne au générateur de tout recalculer
+ * quatre-vingts fois.
  */
-function placeOne(map: WorldMap, t: PoiType, tx: number, ty: number, used: Map<string, number>): void {
+function placeOne(
+  map: WorldMap, field: CarveField, t: PoiType, tx: number, ty: number, used: Map<string, number>,
+): void {
   const count = (used.get(t.slug) ?? 0) + 1
   used.set(t.slug, count)
   const z = footprintAt(map, t, tx, ty)
   map.zones.push({ name: `${t.name} ${roman(count)}`, ...z, kind: t.slug })
-  if (!hasWalkableFootprint(map, z)) {
-    const carve = pickCarveTile(map, z)
-    if (carve) setTile(map, carve.tx, carve.ty, TERRAIN_SCREE)
+
+  const entry = entryTile(map, field, z)
+  if (entry === undefined || entry.cost === 0) return // déjà de plain-pied sur le monde
+
+  // Du seuil vers le monde, en suivant le chemin que le champ a mémorisé. On
+  // s'arrête à `dist === 0` — c'est-à-dire au monde — et NON à la première tuile
+  // marchable rencontrée : le chemin peut très bien traverser une POCHE (des
+  // tuiles marchables, mais murées elles aussi) avant de retomber sur la roche
+  // qui la sépare encore du monde. S'arrêter là rouvrirait le lieu sur la poche,
+  // et la poche sur rien.
+  for (let i = entry.index; i !== -1 && field.dist[i]! > 0; i = field.parent[i]!) {
+    const ex = i % map.width
+    const ey = (i / map.width) | 0
+    if (isBlockingTile(map, ex, ey)) setTile(map, ex, ey, TERRAIN_SCREE)
   }
 }
 
@@ -182,6 +295,7 @@ function placeOne(map: WorldMap, t: PoiType, tx: number, ty: number, used: Map<s
  */
 function reserveCharged(
   map: WorldMap,
+  field: CarveField,
   pts: readonly { x: number; y: number }[],
   used: Map<string, number>,
 ): Set<number> {
@@ -196,54 +310,13 @@ function reserveCharged(
       const p = pts[i]!
       const tx = Math.floor(p.x)
       const ty = Math.floor(p.y)
-      if (!isEligible(map, t, tx, ty, used)) continue
-      placeOne(map, t, tx, ty, used)
+      if (!isEligible(map, field, t, tx, ty, used)) continue
+      placeOne(map, field, t, tx, ty, used)
       taken.add(i)
       got += 1
     }
   }
   return taken
-}
-
-/**
- * Une tuile bloquante peut-elle devenir de l'éboulis (`TERRAIN_SCREE`) pour
- * ouvrir l'entrée d'un lieu ? Trois refus, dans l'ordre des contraintes :
- *   1. hors carte, ou sur l'anneau de bordure d'une tuile d'épaisseur
- *      (`sealBorderRing`, valleygen.ts) — INTERDIT ABSOLU, jamais percé ;
- *   2. déjà marchable — rien à creuser (règle « seulement si nécessaire ») ;
- *   3. eau (peu importe la profondeur, `isWater`) — on ne pose pas de terre
- *      au milieu d'un lac ou d'un ruisseau.
- */
-function isCarvable(map: WorldMap, tx: number, ty: number): boolean {
-  if (tx <= 0 || ty <= 0 || tx >= map.width - 1 || ty >= map.height - 1) return false
-  if (!isBlockingTile(map, tx, ty)) return false
-  if (isWater(terrainAt(map, tx, ty))) return false
-  return true
-}
-
-/**
- * Choisit LA tuile à creuser dans une empreinte (une seule suffit : il faut
- * pouvoir entrer, pas y bâtir une place — cf. brief). Déterministe par
- * construction géométrique (pas de hash2 : aucun aléa supplémentaire n'est
- * nécessaire ni souhaitable ici) — la tuile carvable la plus proche du centre
- * de l'empreinte, départagée par le balayage row-major qui construit `best`.
- * `undefined` si l'empreinte n'offre aucune tuile carvable (100 % eau, ou
- * entièrement hors carte/bordure).
- */
-function pickCarveTile(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): { tx: number; ty: number } | undefined {
-  const cx = z.x + (z.w - 1) / 2
-  const cy = z.y + (z.h - 1) / 2
-  let best: { tx: number; ty: number } | undefined
-  let bestD = Infinity
-  for (let ty = z.y; ty < z.y + z.h; ty++) {
-    for (let tx = z.x; tx < z.x + z.w; tx++) {
-      if (!isCarvable(map, tx, ty)) continue
-      const dx = tx - cx, dy = ty - cy
-      const d = dx * dx + dy * dy
-      if (d < bestD) { bestD = d; best = { tx, ty } }
-    }
-  }
-  return best
 }
 
 /**
@@ -274,8 +347,14 @@ export function placePois(map: WorldMap, seed: number): void {
   const pts = shuffled(poissonPoints(map.width, map.height, seed, radius), seed)
   const used = new Map<string, number>()
 
+  // CE QUI COMMUNIQUE AVEC QUOI — calculé une fois, pour toute la carte. Sans ce
+  // champ, un lieu peut naître dans une poche marchable au cœur d'un massif : des
+  // tuiles parfaitement praticables où nul n'ira jamais. Voir
+  // `POI_PLACEMENT.MAX_CARVE_TILES`.
+  const field = carveDistanceToMain(map, walkableComponents(map), POI_PLACEMENT.MAX_CARVE_TILES)
+
   // D'ABORD les lieux chargés : ils réservent leur point (voir `reserveCharged`).
-  const taken = reserveCharged(map, pts, used)
+  const taken = reserveCharged(map, field, pts, used)
 
   // PUIS le tirage général, sur ce qui reste du semis.
   for (let i = 0; i < pts.length; i++) {
@@ -283,7 +362,7 @@ export function placePois(map: WorldMap, seed: number): void {
     const p = pts[i]!
     const tx = Math.floor(p.x)
     const ty = Math.floor(p.y)
-    const cands = candidatesFor(map, tx, ty, used)
+    const cands = candidatesFor(map, field, tx, ty, used)
     if (cands.length === 0) continue // biome sans POI valide → point sauvage (l'entre-deux)
     // Tirage pondéré déterministe.
     const total = cands.reduce((s, t) => s + t.weight, 0)
@@ -293,7 +372,7 @@ export function placePois(map: WorldMap, seed: number): void {
       if (r < t.weight) { picked = t; break }
       r -= t.weight
     }
-    placeOne(map, picked, tx, ty, used)
+    placeOne(map, field, picked, tx, ty, used)
   }
 }
 
@@ -324,19 +403,6 @@ function walkableTilesFor(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): 
     }
   }
   return ring
-}
-
-/**
- * L'empreinte elle-même (hors anneau de secours) contient-elle une tuile
- * marchable ? Réutilise `walkableTilesFor` sans dupliquer sa logique de
- * marche : si la tuile qu'elle retourne en premier n'est PAS dans l'empreinte,
- * c'est que la fonction est retombée sur son anneau (empreinte à 100 %
- * bloquante) — insuffisant ici, `poisAt` ne teste jamais l'anneau.
- */
-function hasWalkableFootprint(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): boolean {
-  const [first] = walkableTilesFor(map, z)
-  if (first === undefined) return false
-  return first.tx >= z.x && first.tx < z.x + z.w && first.ty >= z.y && first.ty < z.y + z.h
 }
 
 /**

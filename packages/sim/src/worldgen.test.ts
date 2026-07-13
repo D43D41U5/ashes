@@ -1,7 +1,11 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { generateAlpineTerrain } from './alpinegen'
+import {
+  carveDistanceToMain, inMainComponent, walkableComponents, walkableSpawn,
+  type CarveField, type WalkableComponents,
+} from './connectivity'
 import { isBlockingTile, type WorldMap } from './map'
-import { POI_TYPES } from './poi'
+import { POI_PLACEMENT, POI_TYPES } from './poi'
 
 /**
  * LES GARDES SUR LA VRAIE CARTE — celles qui n'ont de sens qu'à la taille de
@@ -34,13 +38,21 @@ const PROD = { width: 1200, height: 1800 } // les dimensions que boote le worker
 const PROD_SEEDS = [2026, 99, 2718, 31415, 7] // 2026 = la seed du jeu
 
 const maps = new Map<number, WorldMap>()
+const comps = new Map<number, WalkableComponents>()
+const fields = new Map<number, CarveField>()
 beforeAll(() => {
-  for (const seed of PROD_SEEDS) maps.set(seed, generateAlpineTerrain(PROD.width, PROD.height, seed))
+  for (const seed of PROD_SEEDS) {
+    const map = generateAlpineTerrain(PROD.width, PROD.height, seed)
+    const comp = walkableComponents(map)
+    maps.set(seed, map)
+    comps.set(seed, comp)
+    fields.set(seed, carveDistanceToMain(map, comp, POI_PLACEMENT.MAX_CARVE_TILES))
+  }
 }, 300_000)
 
 /** Itère les gardes sur chaque seed, avec un libellé qui dit laquelle a cassé. */
-function eachMap(fn: (map: WorldMap, seed: number) => void): void {
-  for (const seed of PROD_SEEDS) fn(maps.get(seed)!, seed)
+function eachMap(fn: (map: WorldMap, seed: number, comp: WalkableComponents) => void): void {
+  for (const seed of PROD_SEEDS) fn(maps.get(seed)!, seed, comps.get(seed)!)
 }
 
 describe('la vraie carte — les lieux', () => {
@@ -97,6 +109,142 @@ describe('la vraie carte — les lieux', () => {
           .soft(walkable, `${z.name} (seed ${seed}, [${z.x},${z.y}) ${z.w}×${z.h}) n'a AUCUNE tuile marchable`)
           .toBe(true)
       }
+    })
+  })
+})
+
+describe('la vraie carte — la table des lieux ne ment pas', () => {
+  /**
+   * CRITICAL — AUCUNE LIGNE MORTE DANS LA TABLE.
+   *
+   * La garde la plus rentable du fichier : elle attrape une CLASSE entière de
+   * bugs, pas un cas. Un type de lieu dont aucune tuile de la vraie carte ne
+   * satisfait (biome ∧ altitude ∧ accessible) ne naîtra JAMAIS, sur aucune seed.
+   * Il reste pourtant dans la table, nommé, pondéré, plafonné — une promesse que
+   * rien ne tient, et que rien ne signalait.
+   *
+   * Trois lignes étaient mortes quand cette garde a été écrite (2026-07-13), et
+   * chacune pour une raison différente — d'où l'intérêt de tester la propriété,
+   * pas les cas :
+   *   • la FONDRIÈRE : ses biomes (tourbière, roselière) n'existaient nulle part —
+   *     `BANDS.MARSH_WET` était calé au-dessus du maximum de la distribution ;
+   *   • le CHAMP DE CREVASSES : 176 000 tuiles de glacier, pas une à moins de trois
+   *     tuiles du monde (le glacier est muré derrière la neige et la roche) ;
+   *   • le BELVÉDÈRE : `minElev` au-dessus du plafond du marchable — il ne pouvait
+   *     naître que sur du bloquant.
+   *
+   * Le seuil est bas exprès (une tuile suffit à prouver que la ligne peut vivre) :
+   * cette garde dit « ce type est POSSIBLE », pas « ce type est fréquent ». La
+   * fréquence, c'est l'affaire des plafonds ; l'existence garantie, celle de
+   * `reserve` — et chacune a sa propre garde.
+   */
+  it('CRITICAL — chaque type de lieu a des tuiles éligibles sur la vraie carte', () => {
+    // Les types INDEXÉS PAR BIOME : sans ça, la garde teste 26 types sur chacune
+    // des 2,16 M tuiles de chacune des 5 cartes (280 M tours — elle expirait).
+    // Ici chaque tuile ne réveille que les types qui pourraient l'habiter.
+    const byTerrain = new Map<number, typeof POI_TYPES>()
+    for (const t of POI_TYPES) {
+      for (const b of t.biomes) {
+        const list = byTerrain.get(b) ?? []
+        list.push(t)
+        byTerrain.set(b, list)
+      }
+    }
+
+    for (const seed of PROD_SEEDS) {
+      const map = maps.get(seed)!
+      const field = fields.get(seed)!
+      const vivants = new Set<string>()
+      for (let i = 0; i < map.terrain.length && vivants.size < POI_TYPES.length; i++) {
+        if (field.dist[i]! > field.limit) continue // hors d'atteinte : ne compte pas
+        const cands = byTerrain.get(map.terrain[i]!)
+        if (cands === undefined) continue
+        const el = map.elevation![i]!
+        for (const t of cands) {
+          if (vivants.has(t.slug)) continue // déjà prouvé possible : inutile de recompter
+          if (el < (t.minElev ?? 0) || el > (t.maxElev ?? 1)) continue
+          vivants.add(t.slug)
+        }
+      }
+      for (const t of POI_TYPES) {
+        expect
+          .soft(
+            vivants.has(t.slug),
+            `${t.name} (seed ${seed}) : AUCUNE tuile de la carte ne satisfait ` +
+              `biome ∈ [${t.biomes.join(',')}] ∧ altitude ∈ [${t.minElev ?? 0}, ${t.maxElev ?? 1}] ∧ accessible. ` +
+              `Ce type ne naîtra jamais : la table promet un lieu que la carte ne peut pas porter.`,
+          )
+          .toBe(true)
+      }
+    }
+  }, 60_000)
+})
+
+describe('la vraie carte — la connexité', () => {
+  /**
+   * CRITICAL — ON PEUT Y ALLER.
+   *
+   * La garde qui manquait, et la plus importante de ce fichier. « Marchable » et
+   * « atteignable » ne sont pas le même mot : une clairière au cœur d'un massif
+   * est faite de tuiles parfaitement praticables où nul ne mettra jamais les
+   * pieds. La garde d'empreinte ci-dessus vérifie la première propriété et
+   * passait au vert pendant que **16 lieux sur 81** (seed du jeu) étaient murés —
+   * dont les 3 Grottes, l'unique Source chaude et l'unique Belvédère, c'est-à-dire
+   * les trois devises de la spec `lieux.md`, mortes à 100 %.
+   *
+   * On mesure ce que le joueur peut faire : partir du spawn, et marcher.
+   */
+  it('CRITICAL — TOUT lieu est atteignable à pied depuis le point de départ', () => {
+    eachMap((map, seed, comp) => {
+      for (const z of map.zones) {
+        if (z.kind === undefined) continue // toponyme, pas un lieu
+        let joignable = false
+        for (let ty = z.y; ty < z.y + z.h && !joignable; ty++) {
+          for (let tx = z.x; tx < z.x + z.w; tx++) {
+            if (inMainComponent(comp, map, tx, ty)) { joignable = true; break }
+          }
+        }
+        expect
+          .soft(joignable, `${z.name} (seed ${seed}, [${z.x},${z.y}) ${z.w}×${z.h}) est INATTEIGNABLE`)
+          .toBe(true)
+      }
+    })
+  })
+
+  /**
+   * Le point de départ EST dans le monde. Évident ? Il ne l'était pas : le spawn
+   * se prenait « la tuile marchable la plus proche du centre », sans regarder si
+   * elle communiquait avec quoi que ce soit. Une carte dont le centre tombe dans
+   * un massif à poche aurait fait naître le joueur muré dans un placard.
+   */
+  it('CRITICAL — le point de départ appartient au monde', () => {
+    eachMap((map, seed, comp) => {
+      const s = walkableSpawn(map, comp)
+      expect
+        .soft(inMainComponent(comp, map, Math.floor(s.x), Math.floor(s.y)), `seed ${seed} : spawn hors du monde`)
+        .toBe(true)
+    })
+  })
+
+  /**
+   * LA VALLÉE EST UN SEUL MONDE. Les poches murées existent (le bruit en fabrique
+   * toujours), mais elles doivent rester une poussière : si une carte se scindait
+   * en deux moitiés de taille comparable, la moitié d'un monde deviendrait
+   * inaccessible en silence — les lieux qu'elle contient, sa faune, ses
+   * ressources. Seuil à 99 % : mesuré à 99,99 % sur les 5 seeds (la plus grosse
+   * poche fait 54 tuiles sur 1,6 million).
+   */
+  it('CRITICAL — au moins 99 % du marchable est d’un seul tenant', () => {
+    eachMap((map, seed, comp) => {
+      const total = comp.sizes.reduce((a, b) => a + b, 0)
+      const monde = comp.main === -1 ? 0 : comp.sizes[comp.main]!
+      expect
+        .soft(
+          monde / total,
+          `seed ${seed} : le monde ne fait que ${((100 * monde) / total).toFixed(1)} % du marchable ` +
+            `(${comp.sizes.length} composantes, la plus grosse ${monde}/${total})`,
+        )
+        .toBeGreaterThanOrEqual(0.99)
     })
   })
 })

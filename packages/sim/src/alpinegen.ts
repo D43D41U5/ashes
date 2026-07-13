@@ -139,7 +139,27 @@ export const BANDS = {
   SCREE: 0.73,    // ALPINE..SCREE : éboulis
   SNOW: 0.83,     // SCREE..SNOW : roche
   GLACIER: 0.95,  // SNOW..GLACIER : neige ; ≥ GLACIER : glace (glacier rare, plus hauts sommets)
-  MARSH_WET: 0.70,   // fond très humide → marais
+  /**
+   * Fond très humide → zone humide (tourbière / roselière).
+   *
+   * ÉTAIT À 0,70, ET NE SE DÉCLENCHAIT JAMAIS. Mesuré sur la vraie carte : sur le
+   * fond de vallée (`el < FLOOR`), `wet` a pour médiane 0,41-0,48 et pour **maximum
+   * 0,65 à 0,72** selon la seed — le seuil était donc AU NIVEAU DU MAXIMUM. Résultat :
+   * `peat_bog` et `reed_marsh` étaient **absents de la carte** (0,00 % sur les seeds
+   * 2026 et 42 ; 0,06 % sur la 7), et avec eux mouraient les deux terrains les plus
+   * lents du jeu (0,45 et 0,55) et le seul lieu qui les habite (la Fondrière, dont
+   * ZÉRO tuile de la carte satisfaisait le biome).
+   *
+   * Ce n'était pas une intention, c'était un chiffre qui a raté : le commentaire
+   * d'origine (2026-07-07) dit « le fond reste de l'alpage, le marais ne prend que
+   * les vraies cuvettes détrempées » — le marais devait exister, en poches.
+   *
+   * 0,58 = le p90 du fond, à peu près : **le dixième le plus détrempé de la vallée**
+   * devient zone humide. Mesuré : 11,6 % / 15,4 % / 1,7 % du fond selon la seed —
+   * l'écart est VOULU (une vallée a le droit d'être plus sèche qu'une autre), et
+   * aucune n'est à zéro.
+   */
+  MARSH_WET: 0.58,
   HEATH_WET: 0.30,   // fond sec → lande (bruyère)
   FOREST_WET: 0.34,  // pente humide → forêt dense ; sinon adret sec (arbres épars sur lande)
 }

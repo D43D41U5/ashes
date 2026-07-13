@@ -164,6 +164,16 @@ export { applyStructureDamage, grantItems } from './village'
 export { generateValley } from './valleygen'
 export { generateAlpineTerrain, WORLDGEN_PHASES, type WorldgenPhase } from './alpinegen'
 export { placePois, POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
+// Où le monde commence, et ce qui communique avec quoi — le client LIT le spawn,
+// il ne le recalcule pas (il le faisait, et sans vérifier la connexité).
+export {
+  carveDistanceToMain,
+  inMainComponent,
+  walkableComponents,
+  walkableSpawn,
+  type CarveField,
+  type WalkableComponents,
+} from './connectivity'
 export type { ValleySkeleton, ValleyRegion, ValleyPoint } from './valleygen'
 export { VEILLEE_SKELETON, VEILLEE_SITES } from './valley-veillee'
 

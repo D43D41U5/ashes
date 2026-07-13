@@ -55,28 +55,56 @@ describe('placePois', () => {
    */
 
   /**
-   * On ne creuse jamais dans l'eau (contrainte 2 du brief). Empreinte 2×2
-   * construite en damier ROCK/eau profonde tel que les 4 cellules soient
-   * STRICTEMENT équidistantes du centre de l'empreinte : 3 des 4 sont de
-   * l'eau et scannées AVANT l'unique cellule roche (celle du point échantillonné,
-   * garantie non-aquatique par la validation de biome de `candidatesFor`). Une
-   * implémentation qui omettrait le refus `isWater` dans `isCarvable`
-   * choisirait la première tuile à égalité de distance — de l'eau — ce test
-   * est donc discriminant, pas seulement une confirmation de l'existant.
+   * ON NE COMBLE PAS UN LAC POUR ENTRER DANS UNE GROTTE.
+   *
+   * L'ÎLE TENTANTE : une prairie (le monde), un lac carré, et au milieu du lac
+   * une île de roche. La roche appelle plusieurs types de lieu (l'Abri, la Grotte,
+   * l'Arche) et le semis y pose forcément des points. Mais l'île est séparée du
+   * monde par **deux tuiles d'eau** — c'est-à-dire moins que le budget de
+   * percement (`MAX_CARVE_TILES = 3`).
+   *
+   * DISCRIMINANT, et c'est tout l'intérêt : si `carveDistanceToMain` cessait de
+   * refuser l'eau (`sealed`, connectivity.ts), l'eau profonde est bloquante donc
+   * elle coûterait 1 comme la roche — l'île tomberait à deux tuiles du monde, un
+   * lieu y naîtrait, et le générateur se creuserait un GUÉ dans le lac. Le test
+   * verrait alors des tuiles d'eau disparaître et un lieu apparaître sur l'île.
+   *
+   * (L'ancienne version de ce test posait un damier roche/eau SANS AUCUNE tuile
+   * marchable : sous la règle d'atteignabilité, plus rien n'y est éligible et le
+   * test ne prouvait plus rien — il passait au vert sur une carte vide de lieux.
+   * Sa prémisse avait cassé, pas son intention.)
    */
-  it('ne creuse jamais une tuile d’eau (empreinte à dominante aquatique, damier)', () => {
+  it('ne creuse jamais une tuile d’eau (l’île de roche au milieu du lac reste inaccessible)', () => {
     const W = 60, H = 60
-    const map = createEmptyMap(W, H, TERRAIN_DEEP_WATER)
-    for (let y = 1; y < H - 1; y++) {
-      for (let x = 1; x < W - 1; x++) {
-        if (x % 2 === 1 && y % 2 === 1) map.terrain[y * W + x] = ROCK_ID
-      }
+    const map = createEmptyMap(W, H, GRASS_ID) // le monde : une prairie
+    const lac = { x0: 26, y0: 26, x1: 38, y1: 38 } // 12×12 d'eau profonde
+    const ile = { x0: 28, y0: 28, x1: 36, y1: 36 } //  8×8 de roche au centre
+    // → l'anneau d'eau fait exactement DEUX tuiles. C'est le chiffre qui rend le
+    //   test discriminant : sans la garde, la roche de l'île tomberait à trois
+    //   tuiles du monde (2 d'eau + 1 de roche) — pile dans le budget de percement.
+    //   Un anneau de quatre tuiles aurait dépassé le budget et le test serait passé
+    //   au vert même avec le bug, sans rien prouver.
+    for (let y = lac.y0; y < lac.y1; y++) {
+      for (let x = lac.x0; x < lac.x1; x++) map.terrain[y * W + x] = TERRAIN_DEEP_WATER
     }
-    const waterBefore = map.terrain.filter((t) => t === TERRAIN_DEEP_WATER).length
+    for (let y = ile.y0; y < ile.y1; y++) {
+      for (let x = ile.x0; x < ile.x1; x++) map.terrain[y * W + x] = ROCK_ID
+    }
+
+    const eauAvant = map.terrain.filter((t) => t === TERRAIN_DEEP_WATER).length
     placePois(map, 5)
-    const waterAfter = map.terrain.filter((t) => t === TERRAIN_DEEP_WATER).length
-    expect(waterAfter).toBe(waterBefore) // aucune tuile d'eau n'est devenue de l'éboulis
-    expect(map.zones.length).toBeGreaterThan(0) // le test serait creux si aucun lieu n'avait été posé
+    const eauApres = map.terrain.filter((t) => t === TERRAIN_DEEP_WATER).length
+
+    expect(eauApres).toBe(eauAvant) // pas une tuile d'eau n'est devenue de l'éboulis
+    expect(map.zones.length).toBeGreaterThan(0) // le test serait creux sans lieu posé du tout
+
+    // Et surtout : aucun lieu n'a poussé sur l'île.
+    const surLIle = map.zones.filter((z) => {
+      const cx = z.x + z.w / 2
+      const cy = z.y + z.h / 2
+      return cx >= ile.x0 && cx < ile.x1 && cy >= ile.y0 && cy < ile.y1
+    })
+    expect(surLIle, `des lieux ont poussé sur l'île : ${surLIle.map((z) => z.name).join(', ')}`).toHaveLength(0)
   })
 })
 

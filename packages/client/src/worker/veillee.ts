@@ -14,11 +14,9 @@ import {
   placeHuntingGrounds,
   spawnEntity,
   spawnPoiMonsters,
-  terrainAt,
-  TERRAINS,
+  walkableSpawn,
   WORLDGEN_PHASES,
   type SimState,
-  type WorldMap,
 } from '@braises/sim'
 
 export const VEILLEE_SEED = 2026
@@ -31,26 +29,11 @@ export const VEILLEE_CALENDAR_SCALE = 720
 /** Heure murale de départ : 9 = matinée (bonne lumière pour découvrir l'alpin ; 0 = minuit). */
 export const VEILLEE_START_HOUR = 9
 
-/**
- * Cherche la 1re tuile marchable en s'éloignant du centre en anneaux carrés
- * croissants : la carte alpine procédurale n'a pas de site de spawn artisanal,
- * on scanne donc plutôt que de risquer un spawn sur du bloquant (glacier/neige).
- */
-function walkableSpawn(map: WorldMap): { x: number; y: number } {
-  const cx = Math.floor(map.width / 2)
-  const cy = Math.floor(map.height / 2)
-  for (let r = 0; r < Math.max(map.width, map.height); r++) {
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        const tx = cx + dx
-        const ty = cy + dy
-        if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue
-        if (TERRAINS[terrainAt(map, tx, ty)]?.walkable) return { x: tx + 0.5, y: ty + 0.5 }
-      }
-    }
-  }
-  return { x: cx + 0.5, y: cy + 0.5 }
-}
+// `walkableSpawn` a émigré dans `/sim` (connectivity.ts) : où le monde commence
+// est une propriété de la CARTE, pas une décision de rendu. La version qui vivait
+// ici prenait « la tuile marchable la plus proche du centre » sans vérifier
+// qu'elle communiquait avec quoi que ce soit — un centre tombant dans un massif
+// à poche aurait fait naître le joueur muré dans un placard.
 
 /**
  * Les passes de la naissance du monde, dans l'ordre — celles du terrain, puis
@@ -93,6 +76,8 @@ export function createVeillee(onPhase: (phase: LoadPhase) => void = () => {}): {
     cycleOffset: cycleOffsetForStartHour(VEILLEE_START_HOUR),
     // Le monde est habité (spec faune) : la faune ambiante naît hors-champ
     // autour du joueur et se dissipe derrière lui. Plafond, donc coût constant.
+    // Le plafond du MONDE est un garde-fou de serveur (240) — ce qu'on RESSENT est
+    // réglé par `GROUND_CAP`, la population d'un coin de chasse (spec faune R17).
     faunaCap: FAUNA.CAP,
     // LES COINS DE CHASSE (spec faune R17) : le gibier a des ADRESSES — des prés
     // à portée d'eau, semés une fois pour la saison. Entre eux, la vallée est
