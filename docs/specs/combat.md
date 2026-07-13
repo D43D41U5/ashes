@@ -16,8 +16,20 @@ Un combat **gagné avant l'échange** : nombre, terrain, équipement, préparati
 
 ### L'attaque télégraphiée et directionnelle (R4-R6)
 
-- **R4 — Wind-up de 5 ticks (~417 ms**, dans la fourchette 300-500 ms du GDD, tolérante à la latence). Pendant le wind-up : immobile, lisible (le client l'affiche). Le coup se résout ensuite dans un **arc de 90°** face à la direction visée, portée 1.4 tuile. Si la cible est sortie de l'arc pendant le wind-up, le coup fend l'air — l'esquive est du positionnement, pas un i-frame.
-- **R5 — L'action `attack { dx, dy }`** vise une direction (renormalisée côté sim — vraisemblance). L'arme = le meilleur outil d'arme porté : mains nues 6 dégâts, **lance** 16 (nouvelle recette atelier : bois 4, pierre 2, fibre 1 ; usure comme les outils). La hache de fer dépanne (10) — l'outil n'est pas une arme.
+- **R4 — Wind-up, puis résolution dans une ZONE.** Pendant le wind-up : lisible (le client dessine la zone au sol). Le coup se résout ensuite dans la zone du `Strike` porté par le wind-up. Si la cible en est sortie, le coup fend l'air — l'esquive est du positionnement, pas un i-frame. Les BÊTES gardent l'arc historique (90°, portée 1,4, ~400 ms) ; les AVATARS suivent le profil de leur arme (R4bis).
+- **R4bis — CHAQUE ARME A SA GÉOMÉTRIE** (décision utilisateur, 2026-07-13). L'identité d'une arme est sa **forme**, pas son chiffre de dégâts. `WEAPON_PROFILES` (balance.ts) donne à chacune : forme, portée, arc, armement, coût d'endurance, récupération, et **pas en avant**. Deux primitives suffisent — un **cône** (demi-angle par `arcCos` ; `-1` = 360°) et un **disque posé devant**. Le wind-up TRANSPORTE sa zone dans le snapshot : le télégraphe du client dessine la zone réelle, jamais un arc supposé.
+  - **Les poings** — rapides, courts (1,1), et ils **avancent** : chaque coup fait un pas, en zigzag (gauche/droite/gauche : `swingSide`, alterné par la sim, donc identique chez tous les clients).
+  - **La lance** — l'**allonge** (2,3) : un pic étroit. On tient le loup à distance.
+  - **La hache** — le gros coup lent qui **balaie** (±60°, portée 1,5) : elle prend plusieurs corps serrés d'un coup. C'est sa réponse à la horde.
+  - La portée se mesure **centre à centre**, comme la sim : deux corps qui se touchent ont leurs centres à `AVATAR_HITBOX_TILES` (0,6). Tout s'ancre là.
+- **R4ter — DEUX COUPS PAR ARME : le clic bref, et le clic MAINTENU** (décision utilisateur, 2026-07-13). Maintenir **charge** ; relâcher frappe. La sim compte le maintien (`Entity.charge`, dans le snapshot : en multi, on doit VOIR l'autre armer son tourbillon) et décide seule, au relâchement, si le coup sort simple ou lourd. Le coup chargé fait bien plus mal, coûte bien plus d'endurance, et **change de forme** :
+  - poings → **overhead à deux mains** sur un disque au sol devant soi ;
+  - lance → **une VRAIE CHARGE en avant** : le corps parcourt 3,2 tuiles (8 tuiles/s, le double de la marche). C'est un engagement, pas un pas. Elle **traverse** ce qui est trop proche — le coup se résout à l'arrivée, donc une cible collée finit dans le dos et le pic fend l'air (décision utilisateur : « la lance passe au travers, tant pis »). La charge est une arme de DISTANCE ; mal jugée, elle cloue sur place 1,5 s.
+  - hache → **tourbillon 360°** (un cône d'`arcCos: -1`), et une zone **LARGE** : 2,6 tuiles tout autour du corps. Il ne doit pas se confondre avec le disque des poings — ce qui sépare deux coups, c'est ce qu'on VOIT au sol, pas leur nom.
+  - Tenir une charge **ne régénère pas** l'endurance, ralentit la marche (`CHARGE_MOVE_FACTOR`) et **interdit le sprint** : on ne charge pas un coup lourd en courant. Une charge qu'on ne peut pas payer retombe sur le coup simple — jamais un bouton mort.
+- **R4quater — LA RÉCUPÉRATION PUNIT LE RATÉ, JAMAIS L'ENGAGEMENT.** Chaque `Strike` a deux récupérations : `recoveryHit` (court — toucher rend la main) et `recoveryWhiff` (long — fendre l'air laisse à découvert). C'est ce qui interdit de charger à l'aveugle, et c'est là que le loup trouve sa fenêtre. Elle ne fait que **repousser** le `cooldownUntil` (`max`), jamais l'avancer : les bêtes et les PNJ posent leur propre cadence au début du coup, et une récupération plus courte la raccourcirait.
+- **R5 — Les actions `attack_charge`/`attack_release` `{ dx, dy }`** visent une direction (renormalisée côté sim — vraisemblance) ; la visée se rafraîchit pendant la charge. (`attack { dx, dy }` reste le coup simple immédiat : bots, PNJ, tests.) L'arme est celle **tenue** (spec inventaire R9) : mains nues 6 dégâts, **épieu** 10, **hache de fer** 14, **lance** 16. Un outil n'est pas une arme — ce qui n'a pas de profil frappe à mains nues, manche compris.
+- **R5bis — L'IA ENGAGE À LA PORTÉE DE SON ARME** (`engageRange` = portée × `ENGAGE_MARGIN`), pas à une constante globale. `MELEE_ENGAGE_RANGE` ne vaut plus que pour les bêtes, qui ne tiennent rien.
 - **R6 — Le blocage est une posture directionnelle** (input `block` tenu) : les coups arrivant dans l'arc frontal de 120° sont réduits de 70 % ; de flanc ou de dos, plein pot. Bloquer immobilise (marche ×0.3) et coûte de l'endurance par coup encaissé.
 
 ### Les blessures plutôt que les PV secs (R7-R8)
@@ -49,6 +61,8 @@ Un combat **gagné avant l'échange** : nombre, terrain, équipement, préparati
 - **A6** — Un zombie aggro, poursuit, télégraphe et frappe ; on peut l'esquiver en reculant pendant son wind-up ; on le tue à la lance. Un sanglier fuit, se chasse, sa viande se cuit.
 - **A7** — Trois zombies marchent sur un village PNJ : la milice les engage et le village survit (aucun PNJ mort dans le scénario de référence).
 - **A8** — Déterminisme et replay tiennent avec combat, blessures (PRNG) et monstres actifs.
+- **A13 (géométrie, R4bis)** — L'ALLONGE : la lance touche une cible à 2 tuiles, le poing non. LE BALAYAGE : la hache prend deux corps écartés de part et d'autre de la visée, la lance passe entre les deux. LE TOURBILLON : la hache chargée frappe une cible **dans le dos**, et sa zone est **plus large que le disque des poings** (elle ne s'y confond pas). LE PAS : deux coups de poing d'affilée dévient de côtés opposés, et le corps avance. LA CHARGE : le pic chargé de la lance déplace le corps de plusieurs tuiles, **plus vite que la marche**.
+- **A14 (charge, R4ter-R4quater)** — Un clic bref donne le coup simple ; un maintien mûr donne le coup lourd (dégâts et coût du profil chargé). Tenir la charge ne régénère pas l'endurance. Une charge impayable retombe sur le coup simple. Un coup qui **rate** impose une récupération plus longue qu'un coup qui touche (`recoveryWhiff > recoveryHit`).
 
 ## Hors périmètre (et où ça revient)
 
@@ -61,4 +75,8 @@ Un combat **gagné avant l'échange** : nombre, terrain, équipement, préparati
 
 ## Ajouts à `balance.ts`
 
-`COMBAT` : coûts d'endurance (attaque 15, sprint 8/s, base blocage 10), régén (10/5/0 ×faim), wind-ups (joueur 5, zombie 7), arc 90°/portée 1.4, blocage 120°/−70 %, dégâts (mains nues 6, lance 16, hache de fer 10), paliers de blessure [66, 33], effets (jambe ×0.6, bras ×0.6, saignement 1.5/s), PV regen 2/min si faim > 50, mort (PV/faim 50, `EXHAUSTION_TICKS`, cadavre ~10 min), monstres (zombie 40/12/2.4, sanglier 30/8, aggro 6, `DEFEND_RADIUS` 10), recettes lance/viande cuite.
+`COMBAT` : coûts d'endurance (sprint 8/s, base blocage 10), régén (10/5/0 ×faim), arc et portée **des bêtes** (90°, 1.4, wind-up ~400 ms), blocage 120°/−70 %, paliers de blessure [66, 33], effets (jambe ×0.6, bras ×0.6, saignement 1.5/s), PV regen 2/min si faim > 50, mort (PV/faim 50, `EXHAUSTION_TICKS`, cadavre ~10 min), monstres (zombie 40/12/2.4, sanglier 30/8, aggro 6, `DEFEND_RADIUS` 10), recettes lance/viande cuite. Depuis R4bis : `WEAVE_COS`/`WEAVE_SIN` (le zigzag du pas), `CHARGE_MOVE_FACTOR`, `ENGAGE_MARGIN`.
+
+`WEAPON_PROFILES` : **la seule source des nombres du combat d'avatar**. Pour chaque arme (`unarmed`, `crude_spear`, `spear`, `iron_axe`) : un `Strike` simple, un `Strike` chargé, et le `chargeTicks` qui bascule de l'un à l'autre. `WEAPON_DAMAGE` en **dérive** (une seule source de vérité) et sert de registre : ce qui y figure est une arme.
+
+Un `Strike` : `shape` (`cone` | `disc`), `range`, `arcCos`, `radius`, `damage`, `stamina`, `windupTicks`, `recoveryHit`, `recoveryWhiff`, `lunge`, `weave`.

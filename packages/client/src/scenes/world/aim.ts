@@ -136,6 +136,13 @@ export function clickToAction(
  *
  * La cible est RÉ-ÉVALUÉE à chaque coup (le nœud s'épuise, le curseur bouge, la
  * caméra glisse encore après la course) : on récolte ce qu'on vise MAINTENANT.
+ *
+ * IL NE FRAPPE PLUS (spec combat R4ter). Le maintien MARTELAIT : une attaque par
+ * seconde, tant que le doigt restait sur le bouton. Ce geste appartient désormais à
+ * la CHARGE — maintenir arme un coup lourd, il ne répète plus le léger. Un même
+ * bouton ne peut pas vouloir dire « refrappe » et « charge » : il fallait choisir,
+ * et l'utilisateur a choisi la charge. Le martèlement, lui, reste pour la récolte et
+ * la nourriture, où il ne coûte rien à personne.
  */
 export function holdHarvest(
   target: AimTarget,
@@ -147,11 +154,11 @@ export function holdHarvest(
 ): PlayerAction | null {
   if (selected !== null) return null // en mode construction, le maintien ne martèle rien
   if (now - lastSentAt < cooldownMs) return null
-  // Le MAINTIEN nourrit et frappe aussi : c'est le geste que l'utilisateur a
-  // demandé pour le bandage (« sélectionner dans la ceinture, maintenir le clic »),
-  // et il vaut pour tout ce qu'on tient.
+  // Le MAINTIEN nourrit : c'est le geste que l'utilisateur a demandé pour le bandage
+  // (« sélectionner dans la ceinture, maintenir le clic »), et il vaut pour ce qui se
+  // mange. Une ARME en main, elle, ne passe jamais par ici : `input-bindings` a vu
+  // partir la charge à l'appui, et n'appelle plus ce résolveur tant qu'elle dure.
   if (hand && isFood(hand.held)) return { type: 'eat', item: hand.held! }
-  if (hand && isWeapon(hand.held)) return { type: 'attack', dx: hand.dx, dy: hand.dy }
   if (!target.inRange || target.nodeId === null) return null
   return { type: 'harvest', nodeId: target.nodeId }
 }

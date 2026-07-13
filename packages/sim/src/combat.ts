@@ -7,8 +7,23 @@
  * monstres — personne ne triche.
  */
 import { damageModifier, hasAggressionBetween, isOutsider, recordAct, recordHostility, regenFactor } from './alignment'
-import { ALIGNMENT, BALANCE, CARRY, CENDREUX, COMBAT, FAUNA, MONSTER_DEFS, SLOTS, WEAPON_DAMAGE } from './balance'
+import {
+  ALIGNMENT,
+  BALANCE,
+  CARRY,
+  CENDREUX,
+  COMBAT,
+  FAUNA,
+  MONSTER_DEFS,
+  SLOTS,
+  WEAPON_DAMAGE,
+  WEAPON_PROFILES,
+  type Strike,
+  type WeaponKind,
+  type WeaponProfile,
+} from './balance'
 import { willRiseAsCendreux } from './cendreux'
+import { resolveMove } from './collision'
 import { isInvulnerable } from './debug'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
@@ -31,20 +46,119 @@ export interface Corpse {
 
 export type CombatAction =
   | { type: 'attack'; dx: number; dy: number }
+  /**
+   * J'APPUIE : la charge commence (et se re-vise, tant que le clic tient).
+   * `hold` : ce n'est pas l'appui, c'est le MAINTIEN — le client en émet un toutes les
+   * 100 ms pour rafraîchir la visée. Il est donc SILENCIEUX quand il échoue : sans
+   * ça, garder le doigt appuyé pendant une récupération punitive (jusqu'à 1,5 s)
+   * cracherait quinze « trop tôt » dans le flux d'événements que l'alignement et la
+   * chronique consomment. Le flux n'est pas une poubelle (recolte.md G6). Et c'est
+   * aussi ce qui rend le maintien FORGIVING : la charge démarre d'elle-même à la
+   * seconde où la récupération s'achève, sans relâcher ni recliquer.
+   */
+  | { type: 'attack_charge'; dx: number; dy: number; hold?: boolean }
+  /** JE RELÂCHE : le coup part — simple ou chargé, selon ce que la sim a compté. */
+  | { type: 'attack_release'; dx: number; dy: number }
   | { type: 'bandage'; targetEntityId?: number }
   | { type: 'loot_corpse'; corpseId: number }
 
 /**
- * Les dégâts viennent de l'arme TENUE (spec inventaire R9), pas de la meilleure
- * du sac : une lance au fond du sac ne frappe pas plus fort qu'un poing. Un outil
- * n'est pas une arme (spec combat R5) — seul ce qui figure dans WEAPON_DAMAGE
- * frappe fort.
+ * L'ARME TENUE décide de TOUT (spec inventaire R9) : pas la meilleure du sac. Une
+ * lance au fond du sac ne frappe pas plus fort qu'un poing. Un outil n'est pas une
+ * arme (spec combat R5) — ce qui n'a pas de profil frappe à mains nues, manche compris.
  */
-export function weaponDamage(entity: Entity): number {
+export function weaponKind(entity: Entity): WeaponKind {
   const slot = heldSlot(entity)
-  if (slot === null) return COMBAT.UNARMED_DAMAGE
-  const dmg = WEAPON_DAMAGE[slot.item]
-  return dmg !== undefined && dmg > COMBAT.UNARMED_DAMAGE ? dmg : COMBAT.UNARMED_DAMAGE
+  if (slot === null) return 'unarmed'
+  const kind = slot.item as WeaponKind
+  return WEAPON_PROFILES[kind] !== undefined && kind !== 'unarmed' ? kind : 'unarmed'
+}
+
+/** Les deux coups de ce qu'on tient — c'est la seule règle d'arme du jeu. */
+export function weaponProfile(entity: Entity): WeaponProfile {
+  return WEAPON_PROFILES[weaponKind(entity)]
+}
+
+/** Dégâts du coup SIMPLE de l'arme tenue (le coup chargé, lui, fait bien plus mal). */
+export function weaponDamage(entity: Entity): number {
+  return weaponProfile(entity).light.damage
+}
+
+/**
+ * Le coup que ce corps porterait s'il RELÂCHAIT MAINTENANT. C'est la fonction que le
+ * télégraphe interroge : la zone dessinée à l'écran est celle-ci, toujours — jamais
+ * une approximation décorative (voir `attack-fx.ts`).
+ */
+export function pendingStrike(entity: Entity): Strike {
+  const profile = weaponProfile(entity)
+  return isChargeFull(entity, profile) ? profile.charged : profile.light
+}
+
+/**
+ * À QUELLE DISTANCE UNE IA DÉCLENCHE SON COUP. Ce n'était qu'une constante
+ * (`MELEE_ENGAGE_RANGE`) tant que tout le monde frappait à 1,4 — et cette constante
+ * est devenue un MENSONGE le jour où l'arme a décidé de la portée : un PNJ à mains
+ * nues (1,1) déclenchait à 1,2, donc frappait TOUJOURS dans le vide, donc mangeait la
+ * récupération punitive à chaque coup. La milice est devenue un sac de frappe en une
+ * ligne de balance. Une IA engage à la portée de CE QU'ELLE TIENT, avec une marge :
+ * on entre dans sa zone, on ne s'arrête pas pile sur son bord.
+ *
+ * Les BÊTES gardent `MELEE_ENGAGE_RANGE` : elles ne tiennent rien, et leur morsure a
+ * sa portée à elle (`beastStrike`, 1,4).
+ */
+export function engageRange(entity: Entity): number {
+  return weaponProfile(entity).light.range * COMBAT.ENGAGE_MARGIN
+}
+
+/** La charge est-elle mûre — assez longue ET payable ? */
+function isChargeFull(entity: Entity, profile: WeaponProfile): boolean {
+  return (
+    entity.charge !== undefined &&
+    entity.charge.ticks >= profile.chargeTicks &&
+    entity.stamina >= profile.charged.stamina
+  )
+}
+
+/**
+ * Le coup des BÊTES : l'arc historique (1,4 tuile, 90°), leurs dégâts, leur cadence.
+ * Elles gardent leur rythme de `MONSTER_DEFS` — d'où `recovery: 0`, « je n'impose
+ * rien ». Une bête ne tient pas d'arme : lui faire suivre WEAPON_PROFILES lui
+ * donnerait la portée d'un poing, et la nuit qu'on vient de calibrer s'effondrerait.
+ */
+function beastStrike(damage: number, windupTicks: number): Strike {
+  return {
+    shape: 'cone',
+    range: COMBAT.ATTACK_RANGE,
+    arcCos: COMBAT.ATTACK_ARC_COS,
+    radius: 0,
+    damage,
+    stamina: COMBAT.ATTACK_STAMINA,
+    windupTicks,
+    recoveryHit: 0,
+    recoveryWhiff: 0,
+    lunge: 0,
+    weave: false,
+  }
+}
+
+/**
+ * LA ZONE, TESTÉE. Deux primitives, et le cas 360° tombe tout seul (`arcCos = -1` :
+ * tout cosinus lui est supérieur, donc tout ce qui est à portée est touché).
+ */
+function inStrikeZone(strike: Strike, ax: number, ay: number, dx: number, dy: number, tx: number, ty: number): boolean {
+  if (strike.shape === 'disc') {
+    // Le disque est posé DEVANT le corps, à `range` : l'overhead s'écrase au sol.
+    const ox = tx - (ax + dx * strike.range)
+    const oy = ty - (ay + dy * strike.range)
+    return ox * ox + oy * oy <= strike.radius * strike.radius
+  }
+  const rx = tx - ax
+  const ry = ty - ay
+  const d2 = rx * rx + ry * ry
+  if (d2 > strike.range * strike.range || d2 === 0) return false
+  if (strike.arcCos <= -1) return true // le tourbillon : tout le tour
+  const dist = Math.sqrt(d2)
+  return (rx * dx + ry * dy) / dist >= strike.arcCos
 }
 
 export function applyCombatAction(state: SimState, actorId: number, action: CombatAction): void {
@@ -57,6 +171,51 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
   switch (action.type) {
     case 'attack': {
       startAttack(state, actor, action.dx, action.dy, { reject })
+      return
+    }
+
+    /**
+     * LE CLIC S'ENFONCE. On ne frappe pas encore : on ARME. La sim compte les ticks
+     * de maintien (`advanceCombat`), et c'est elle seule qui décide, au relâchement,
+     * si le coup part simple ou chargé — le client ne fait que dire « je maintiens,
+     * et je vise par là ». Tant que le clic tient, la visée se RAFRAÎCHIT : on charge
+     * un tourbillon en pivotant vers le loup qui contourne.
+     */
+    case 'attack_charge': {
+      // Le MAINTIEN ne se plaint pas (voir `CombatAction`) : seul l'APPUI a droit à
+      // un refus. Un doigt posé sur le bouton n'est pas une demande répétée.
+      const plainte = action.hold === true ? (): void => {} : reject
+      if (actor.windup) return plainte('déjà en train de frapper')
+      if (state.tick < actor.cooldownUntil) return plainte('trop tôt')
+      const len = Math.sqrt(action.dx * action.dx + action.dy * action.dy)
+      if (len < 0.0001) return plainte('direction invalide')
+      if (actor.charge) {
+        actor.charge.dx = action.dx / len
+        actor.charge.dy = action.dy / len
+        return
+      }
+      // Le coup SIMPLE doit être payable pour seulement commencer à armer : sans
+      // cette garde, un joueur à bout de souffle chargerait dans le vide et ne
+      // comprendrait le refus qu'au relâchement — un demi-tour trop tard.
+      if (actor.stamina < weaponProfile(actor).light.stamina) return plainte('à bout de souffle')
+      actor.charge = { dx: action.dx / len, dy: action.dy / len, ticks: 0 }
+      actor.facing = { x: action.dx / len, y: action.dy / len }
+      return
+    }
+
+    /** LE CLIC SE LÈVE : le coup part. Chargé s'il a mûri ET qu'on peut le payer. */
+    case 'attack_release': {
+      const charge = actor.charge
+      delete actor.charge
+      if (!charge) return // rien d'armé : le relâchement est muet, ce n'est pas un refus
+      const profile = weaponProfile(actor)
+      // La charge se juge AVANT de dépenser (isChargeFull lit `stamina`) ; on vise
+      // là où le curseur est MAINTENANT, pas là où il était à l'appui.
+      const charged = charge.ticks >= profile.chargeTicks && actor.stamina >= profile.charged.stamina
+      const len = Math.sqrt(action.dx * action.dx + action.dy * action.dy)
+      const dx = len < 0.0001 ? charge.dx : action.dx
+      const dy = len < 0.0001 ? charge.dy : action.dy
+      startAttack(state, actor, dx, dy, { reject, strike: charged ? profile.charged : profile.light, charged })
       return
     }
 
@@ -105,16 +264,20 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
   }
 }
 
-/** Options de `startAttack` — les défauts sont ceux du coup de joueur nu. */
+/** Options de `startAttack` — les défauts sont ceux du coup simple de l'arme tenue. */
 export interface StartAttackOptions {
   /** Rapporte la raison d'un refus (émission d'`action_rejected` côté joueur). */
   reject?: (reason: string) => void
-  /** Durée du télégraphe (défaut : COMBAT.WINDUP_TICKS). */
+  /** Durée du télégraphe (bêtes) — défaut : celui du coup. */
   windupTicks?: number
-  /** Dégâts imposés (monstres) — défaut : l'arme portée au moment du coup. */
+  /** Dégâts imposés (bêtes) — elles frappent avec l'arc historique, pas une arme. */
   damage?: number
-  /** Cible structure (siège) au lieu de l'arc contre les entités. */
+  /** Cible structure (siège) au lieu de la zone contre les entités. */
   structureId?: number
+  /** La FORME du coup — défaut : le coup simple de ce qu'on tient. */
+  strike?: Strike
+  /** Le coup est CHARGÉ (le client le peint autrement ; la sim le transporte). */
+  charged?: boolean
 }
 
 /** Démarre un wind-up d'attaque (utilisé par joueurs, PNJ et monstres). */
@@ -125,7 +288,7 @@ export function startAttack(
   dy: number,
   opts: StartAttackOptions = {},
 ): boolean {
-  const { reject, windupTicks = COMBAT.WINDUP_TICKS, damage, structureId } = opts
+  const { reject, windupTicks, damage, structureId, charged } = opts
   if (actor.windup) {
     reject?.('déjà en train de frapper')
     return false
@@ -134,7 +297,14 @@ export function startAttack(
     reject?.('trop tôt')
     return false
   }
-  if (actor.stamina < COMBAT.ATTACK_STAMINA) {
+  // La FORME du coup, dans l'ordre : imposée (relâchement d'une charge) > bête
+  // (dégâts imposés) > l'arme tenue. Une bête garde l'arc historique : elle ne
+  // tient rien, et lui donner le profil des poings lui volerait sa portée.
+  const base =
+    opts.strike ?? (damage !== undefined ? beastStrike(damage, windupTicks ?? COMBAT.WINDUP_TICKS) : weaponProfile(actor).light)
+  const strike: Strike = windupTicks !== undefined && opts.strike === undefined ? { ...base, windupTicks } : base
+
+  if (actor.stamina < strike.stamina) {
     reject?.('à bout de souffle')
     return false
   }
@@ -146,38 +316,84 @@ export function startAttack(
   // Renormalisation côté sim : vraisemblance (GDD §11).
   const nx = dx / len
   const ny = dy / len
-  actor.stamina -= COMBAT.ATTACK_STAMINA
+  actor.stamina -= strike.stamina
   actor.facing = { x: nx, y: ny }
+  // LE PIED CHANGE À CHAQUE COUP : gauche, droite, gauche… La sim tient le compte —
+  // sans quoi, en multi, chacun verrait l'autre danser sur un rythme différent.
+  const side: 1 | -1 = actor.swingSide === 1 ? 1 : -1
+  actor.swingSide = side === 1 ? -1 : 1
   actor.windup = {
     dx: nx,
     dy: ny,
-    ticksLeft: windupTicks,
-    ...(damage !== undefined ? { damage } : {}),
+    ticksLeft: strike.windupTicks,
+    strike,
+    side,
+    ...(charged ? { charged: true as const } : {}),
     ...(structureId !== undefined ? { structureId } : {}),
   }
   return true
 }
 
-/** Résout le coup à la fin du wind-up : arc de 90°, portée 1.4 (spec R4). */
+/**
+ * LE PAS DU COUP. On avance EN frappant : la sim déplace le corps (la position est
+ * autoritative — jamais Phaser, invariant §3), collision comprise. Le pas des poings
+ * DÉVIE d'un côté puis de l'autre, mais la VISÉE, elle, ne bouge pas : on frappe où
+ * l'on regarde, seul le pied change de bord.
+ *
+ * LA CHARGE TRAVERSE, ET C'EST ASSUMÉ (décision utilisateur, 2026-07-13). Le coup se
+ * résout à la FIN du wind-up, depuis la position d'ARRIVÉE : un bond de trois tuiles
+ * DÉPASSE le loup qui n'en est qu'à deux, et le laisse dans le dos — le cône, lui,
+ * pointe devant. La charge devient donc une arme de DISTANCE : on la lance sur ce qui
+ * est loin, pas sur ce qui est collé. Mal jugée, elle fend l'air et cloue sur place
+ * (`recoveryWhiff` : 1,5 s). C'est le prix, et il est lisible.
+ *
+ * (J'avais d'abord fait s'ARRÊTER la charge sur la chair. C'était une mécanique de plus
+ * pour sauver le joueur de sa propre visée — et une charge qui s'arrête toute seule
+ * n'est plus une décision, c'est une assistance.)
+ */
+function advanceLunge(state: SimState, entity: Entity): void {
+  const windup = entity.windup!
+  const strike = windup.strike
+  if (strike.lunge <= 0 || strike.windupTicks <= 0) return
+  let dx = windup.dx
+  let dy = windup.dy
+  if (strike.weave) {
+    const s = (windup.side ?? 1) * COMBAT.WEAVE_SIN
+    const c = COMBAT.WEAVE_COS
+    dx = windup.dx * c - windup.dy * s
+    dy = windup.dx * s + windup.dy * c
+  }
+  const step = strike.lunge / strike.windupTicks
+  const world = {
+    map: state.map,
+    structures: state.structures,
+    nodes: state.nodes,
+    moverVillageId: getVillageOf(state, entity.id)?.id ?? null,
+  }
+  const moved = resolveMove(world, entity.x, entity.y, dx * step, dy * step)
+  entity.x = moved.x
+  entity.y = moved.y
+}
+
+/** Résout le coup à la fin du wind-up : la ZONE du `strike` porté (spec R4). */
 function resolveStrike(state: SimState, attacker: Entity): void {
   const windup = attacker.windup!
+  const strike = windup.strike
 
   // Coup porté à une structure (les hordes frappent les murs, spec événements R1).
   if (windup.structureId !== undefined) {
     const s = state.structures.find((st) => st.id === windup.structureId)
     if (s && distSq(attacker.x, attacker.y, s.tx + 0.5, s.ty + 0.5) <= COMBAT.STRUCTURE_STRIKE_RANGE * COMBAT.STRUCTURE_STRIKE_RANGE) {
-      applyStructureDamage(state, s.id, windup.damage ?? weaponDamage(attacker), attacker.id)
+      applyStructureDamage(state, s.id, strike.damage, attacker.id)
     }
     delete attacker.windup
     return
   }
 
-  const baseDamage = windup.damage ?? weaponDamage(attacker)
-  const damage = attacker.wounds.arm ? baseDamage * COMBAT.ARM_WOUND_DAMAGE : baseDamage
-  const rangeSq = COMBAT.ATTACK_RANGE * COMBAT.ATTACK_RANGE
+  const damage = attacker.wounds.arm ? strike.damage * COMBAT.ARM_WOUND_DAMAGE : strike.damage
 
   // Une bête ne mord pas les siens. Le pipeline de résolution ne connaît pas les
-  // camps (« personne ne triche ») et frappe TOUT ce qui est dans l'arc — ce qui
+  // camps (« personne ne triche ») et frappe TOUT ce qui est dans la zone — ce qui
   // était sans conséquence tant que les monstres arrivaient en file. Depuis
   // l'encerclement (spec faune R11), les loups se placent de part et d'autre de
   // la proie : l'arc de 90° attrapait le frère d'en face, et la meute se décimait
@@ -191,17 +407,14 @@ function resolveStrike(state: SimState, attacker: Entity): void {
   for (const target of state.entities) {
     if (target.id === attacker.id || target.hp <= 0) continue
     if (attackerHerd !== undefined && herdOf(target.id) === attackerHerd) continue
+    if (!inStrikeZone(strike, attacker.x, attacker.y, windup.dx, windup.dy, target.x, target.y)) continue
     const tx = target.x - attacker.x
     const ty = target.y - attacker.y
-    const d2 = tx * tx + ty * ty
-    if (d2 > rangeSq || d2 === 0) continue
-    const dist = Math.sqrt(d2)
-    const cos = (tx * windup.dx + ty * windup.dy) / dist
-    if (cos < COMBAT.ATTACK_ARC_COS) continue
+    const dist = Math.sqrt(tx * tx + ty * ty)
 
     let dealt = damage * damageModifier(state, attacker.id, target.id)
     // Blocage directionnel (spec R6) : réduit si l'attaque arrive de face.
-    if (target.blocking && target.stamina > 0) {
+    if (target.blocking && target.stamina > 0 && dist > 0) {
       const facingCos = (-tx * target.facing.x - ty * target.facing.y) / dist
       if (facingCos >= COMBAT.BLOCK_ARC_COS) {
         dealt = damage * (1 - COMBAT.BLOCK_REDUCTION)
@@ -212,11 +425,25 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     struck = true
   }
 
-  // L'arme s'use au contact — dans SA case (spec inventaire R6).
-  if (struck && windup.damage === undefined) {
+  // L'arme s'use au contact — dans SA case (spec inventaire R6). Une bête ne tient
+  // rien : la garde `heldSlot` suffit, inutile de tester d'où venaient les dégâts.
+  if (struck) {
     const held = heldSlot(attacker)
     if (held !== null && WEAPON_DAMAGE[held.item] !== undefined) wearHeld(attacker, 1)
   }
+
+  // LA RÉCUPÉRATION — et c'est le WHIFF qui punit. Toucher rend la main ; fendre
+  // l'air laisse planté, arme lourde en avant, à découvert. C'est ce qui interdit de
+  // charger à l'aveugle, et c'est là que le loup trouve sa fenêtre.
+  //
+  // Elle ne fait que REPOUSSER : `max`, jamais une affectation sèche. La leçon a
+  // coûté un test — les PNJ et les bêtes posent LEUR cadence au DÉBUT du coup
+  // (`cooldownUntil = tick + attackCooldownTicks`, monsters.ts/npc.ts) ; une
+  // récupération plus courte que ce qu'ils s'étaient imposé la RACCOURCISSAIT, et la
+  // milice s'est mise à frapper deux fois plus vite. Une récupération est un plancher
+  // de temps mort, pas une autorisation de frapper plus tôt.
+  const recovery = struck ? strike.recoveryHit : strike.recoveryWhiff
+  if (recovery > 0) attacker.cooldownUntil = Math.max(attacker.cooldownUntil, state.tick + recovery)
   delete attacker.windup
 }
 
@@ -347,6 +574,7 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
   entity.activeSlot = -1 // la mort lâche tout, et rengaine (spec inventaire R12)
   entity.wounds = {}
   delete entity.windup
+  delete entity.charge
   entity.hp = COMBAT.RESPAWN_HP
   entity.hunger = COMBAT.RESPAWN_HUNGER
   entity.stamina = COMBAT.RESPAWN_STAMINA
@@ -366,9 +594,24 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
 export function advanceCombat(state: SimState): void {
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
 
+  // LA CHARGE MONTE. On ne la laisse pas croître au-delà de sa maturité : la barre
+  // du client lit `ticks / chargeTicks`, et une charge qui déborderait mentirait sur
+  // ce qui va sortir. Maintenir plus longtemps ne rend pas le coup plus fort — ça
+  // coûte seulement l'endurance qu'on ne régénère pas (voir plus bas).
+  for (const entity of state.entities) {
+    if (!entity.charge) continue
+    if (entity.windup) {
+      delete entity.charge // on ne charge pas pendant qu'on frappe
+      continue
+    }
+    const max = weaponProfile(entity).chargeTicks
+    if (entity.charge.ticks < max) entity.charge.ticks += 1
+  }
+
   // Wind-ups (copie : resolveStrike peut tuer et retirer des entités).
   for (const entity of [...state.entities]) {
     if (entity.windup) {
+      advanceLunge(state, entity) // on AVANCE en frappant (le pas, le pic, l'élan)
       entity.windup.ticksLeft -= 1
       if (entity.windup.ticksLeft <= 0) resolveStrike(state, entity)
     }
@@ -394,8 +637,11 @@ export function advanceCombat(state: SimState): void {
   }
 
   // Endurance : régén contextuelle (spec R1-R2). Les monstres régénèrent plein.
+  // TENIR UNE CHARGE COÛTE : le souffle ne revient pas tant que le clic est enfoncé.
+  // C'est le seul frein à se promener indéfiniment « prêt à frapper fort » — sans
+  // lui, la charge serait gratuite dès qu'on ne se bat pas.
   for (const entity of state.entities) {
-    if (entity.windup || entity.blocking) continue
+    if (entity.windup || entity.blocking || entity.charge) continue
     let perS = entity.moved ? COMBAT.STAMINA_REGEN_MOVING_PER_S : COMBAT.STAMINA_REGEN_IDLE_PER_S
     // SURCHARGÉ, ON NE FUIT PAS (spec portage.md P7) : l'endurance ne revient
     // presque plus. Un porteur surchargé est une PROIE — il ne se bat pas, il ne

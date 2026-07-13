@@ -206,6 +206,27 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   // Le clic MAINTENU récolte en boucle, cadencé par le rechargement (G6-G7).
   let holding = false
   let lastHarvestAt = -Infinity
+  /**
+   * LE CLIC MAINTENU SUR UNE ATTAQUE NE MARTÈLE PLUS : IL CHARGE (spec combat R4ter).
+   * On n'envoie donc pas d'`attack` à l'appui — on envoie `attack_charge`, et le coup
+   * ne part qu'au `attack_release`. La sim COMPTE le maintien et décide seule si le
+   * coup sort simple ou lourd : le client ne dit que « j'appuie, et je vise par là ».
+   *
+   * La visée se RAFRAÎCHIT pendant la charge (le curseur bouge, le loup contourne) —
+   * cadencée, pas à chaque frame : à 60 fps, une action par frame noierait le flux
+   * d'événements que l'alignement et la chronique consomment (recolte.md G6).
+   */
+  let charging = false
+  let lastAimAt = -Infinity
+  const CHARGE_AIM_MS = 100
+
+  /** Le coup part (ou la charge s'annule si le curseur a fini sur un overlay). */
+  const releaseCharge = (pointer: Phaser.Input.Pointer): void => {
+    if (!charging) return
+    charging = false
+    const hand = handAt(pointer)
+    deps.sendAction({ type: 'attack_release', dx: hand.dx, dy: hand.dy })
+  }
 
   scene.input.mouse?.disableContextMenu()
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
@@ -218,22 +239,51 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     // Le résolveur PUR tranche (aim.ts) : MANGER, FRAPPER, récolter, fouiller —
     // selon CE QU'ON TIENT. C'est la seule règle d'interaction du jeu.
     const action = clickToAction(aimNow(pointer), selected(), handAt(pointer))
+    holding = true
+    if (action?.type === 'attack') {
+      // FRAPPER, c'est ARMER. Le clic bref donne le coup simple (la charge n'aura pas
+      // eu le temps de mûrir), le clic tenu donne le coup lourd — un seul bouton,
+      // deux gestes, et c'est la sim qui tranche entre les deux.
+      charging = true
+      lastAimAt = scene.time.now
+      deps.sendAction({ type: 'attack_charge', dx: action.dx, dy: action.dy })
+      return
+    }
     if (action) {
       deps.sendAction(action)
-      if (action.type === 'harvest' || action.type === 'attack' || action.type === 'eat') {
-        lastHarvestAt = scene.time.now
-      }
+      if (action.type === 'harvest' || action.type === 'eat') lastHarvestAt = scene.time.now
     }
-    holding = true
   })
-  scene.input.on('pointerup', () => {
+  scene.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
     holding = false
+    releaseCharge(pointer)
   })
 
   /** Appelée à chaque frame par WorldScene : entretient le clic maintenu. */
   const tickHold = (): void => {
-    if (!holding) return
     const pointer = scene.input.activePointer
+    // L'overlay s'ouvre pendant qu'on charge (le sac, la carte) : on RELÂCHE. Sans ça,
+    // la sim garderait une charge éternelle — endurance gelée, avatar au ralenti, et
+    // aucun moyen de comprendre pourquoi.
+    if (charging && (overlayOpen() || !pointer.leftButtonDown())) {
+      releaseCharge(pointer)
+      holding = false
+      return
+    }
+    if (charging) {
+      // On RE-VISE : la sim rafraîchit la direction de la charge sans la remettre à
+      // zéro. `hold: true` — c'est le MAINTIEN, pas un nouvel appui : la sim ne s'en
+      // plaint donc pas s'il tombe pendant une récupération (sinon un doigt posé sur
+      // le bouton cracherait quinze « trop tôt » par seconde dans le flux). Bonus :
+      // la charge démarre TOUTE SEULE dès que la récupération s'achève.
+      if (scene.time.now - lastAimAt >= CHARGE_AIM_MS) {
+        lastAimAt = scene.time.now
+        const hand = handAt(pointer)
+        deps.sendAction({ type: 'attack_charge', dx: hand.dx, dy: hand.dy, hold: true })
+      }
+      return
+    }
+    if (!holding) return
     if (overlayOpen() || !pointer.leftButtonDown()) {
       holding = false
       return

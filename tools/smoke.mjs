@@ -495,64 +495,164 @@ const SCENARIOS = {
    * PENDANT le wind-up (400 ms). Ce qu'on vérifie n'est pas « une image existe »,
    * c'est que la LAME EST PEINTE : le calque de combat doit avoir des traits dedans.
    */
+  /**
+   * LE COMBAT, DANS LE VRAI JEU (spec combat R4bis-R4quater).
+   *
+   * Ce scénario ne compte plus des « tracés ». Il l'a fait, et ça n'a rien prouvé : un
+   * compteur de commandes de dessin dit qu'IL SE PASSE quelque chose, jamais QUOI — on
+   * peut peindre une obscénité et le compteur sera content (leçon inscrite dans
+   * decisions.md, 2026-07-13). Ici on lit L'ÉTAT : le snapshot que le client a reçu, et
+   * la zone qu'il s'apprête à PEINDRE. Puis on REGARDE les captures.
+   *
+   * DEUX PIÈGES DU HARNAIS, payés cher, à ne pas refaire :
+   *
+   *   1. NE JAMAIS PAUSER PHASER AVEC LE BOUTON DE SOURIS ENFONCÉ. `scene.pause()`
+   *      pendant un `mouse.down()` ne rend jamais la main : la page se fige, et le
+   *      scénario avec. On capture donc SANS pauser — et c'est possible parce que la
+   *      CHARGE dure tant qu'on tient le clic. Il n'y a aucune course contre la frame
+   *      (la pause n'existait que pour attraper le wind-up, qui ne dure que 300 ms).
+   *   2. UNE CAPTURE HEADLESS PREND ~1 SECONDE — donc elle ALLONGE le maintien. Un
+   *      « clic bref » suivi d'une capture avant le relâchement n'est plus bref du
+   *      tout : il sort CHARGÉ. Le coup simple se mesure sans capture au milieu.
+   *
+   * Et on prouve que le coup PART par L'ENDURANCE DÉPENSÉE, pas en guettant le wind-up :
+   * un wind-up dure 300-500 ms, et le poll d'un navigateur headless le rate une fois sur
+   * deux (ça m'a fait conclure « la lance ne frappe pas » — elle frappait). L'endurance,
+   * elle, ne s'efface pas.
+   */
   async combat(page) {
-    const tracés = () =>
+    if (!dev) {
+      console.log('\n(le combat exige le mode debug pour s’armer — relancer avec --dev)')
+      return {}
+    }
+    const box = page.viewportSize()
+    const CIBLE = { x: box.width / 2 + 130, y: box.height / 2 - 10 }
+
+    /** Mon corps selon la SIM, et la zone que le client s'apprête à PEINDRE. */
+    const moi = () =>
       page.evaluate(() => {
         const s = window.__BRAISES__.scene
-        return s.children.list
-          .filter((o) => o.type === 'Graphics')
-          .reduce((n, o) => n + (o.commandBuffer?.length ?? 0), 0)
+        const e = s.lastEntities?.find((x) => x.id === s.playerId)
+        if (!e) return null
+        const held = e.activeSlot >= 0 ? (e.inventory[e.activeSlot]?.item ?? null) : null
+        // `charges` = ce que le client PEINT au sol : la zone qui partirait MAINTENANT
+        // (c'est la sim qui tranche — `pendingStrike`). C'est la seule chose à vérifier :
+        // si elle est juste, le télégraphe ne ment pas.
+        const c = s.charges?.find((x) => x.id === s.playerId)
+        return {
+          held,
+          stam: e.stamina,
+          charge: e.charge?.ticks ?? null,
+          zone: c ? { shape: c.strike.shape, range: c.strike.range, arcCos: c.strike.arcCos, mur: c.ratio >= 1 } : null,
+        }
       })
 
-    const repos = await tracés()
-
-    // On frappe — clic gauche MAINTENU, mains nues, dans le vide : la sim tranche
-    // (rien à récolter sous le curseur → on attaque). Le maintien répète le coup.
-    const box = page.viewportSize()
-    await page.mouse.move(box.width / 2 + 120, box.height / 2 - 40)
-    await page.mouse.down()
-
-    // ON TRAQUE LA LAME. Le wind-up dure 400 ms mais le navigateur headless ne rend
-    // que quelques images par seconde : capturer « 180 ms après le clic » tombait
-    // ENTRE deux frames et ne prouvait rien. On poll jusqu'à voir le calque peint.
-    let vu = 0
-    for (let i = 0; i < 60 && vu <= repos; i += 1) {
-      vu = await tracés()
-      if (vu > repos) break
-      await page.waitForTimeout(50)
+    /** S'armer : action de DEBUG (inerte en prod) — le joueur naît les mains vides. */
+    const armer = async (item) => {
+      await page.evaluate((it) => {
+        const reg = window.__BRAISES__.scene.registry
+        const q = reg.get('pendingActions') ?? []
+        q.push({ type: 'debug_grant', item: it })
+        reg.set('pendingActions', q)
+      }, item)
+      await page.waitForTimeout(800)
     }
-    // ON GÈLE LA SCÈNE À L'INSTANT DU COUP. Sans ça, la capture arrive TOUJOURS
-    // trop tard : entre la détection et le screenshot, une frame passe, `beginFrame`
-    // efface l'ardoise, et on photographie l'après. Pauser fige le dernier rendu.
-    if (vu > repos) {
-      await page.evaluate(() => window.__BRAISES__.scene.scene.pause())
-      await page.screenshot({ path: `${OUT}/combat.png` })
-      await page.evaluate(() => window.__BRAISES__.scene.scene.resume())
-    }
-    await page.mouse.up()
 
+    /**
+     * LE COUP SIMPLE, par l'action directe (`attack`) — PAS par un clic bref.
+     *
+     * On ne peut pas mesurer un « clic bref » à la souris dans un navigateur headless :
+     * Phaser ne traite les événements de pointeur qu'à SA frame, et une frame headless
+     * peut durer une demi-seconde. Le `mouse.up()` arrive donc parfois DEUX frames après
+     * le `down` — la charge a mûri entre-temps, et le « clic bref » sort chargé. On a
+     * mesuré, en toute confiance, exactement le contraire de ce qu'on croyait tenir.
+     *
+     * L'action `attack` est le MÊME chemin de sim (le coup simple de l'arme tenue), sans
+     * la loterie du framerate. Le clic bref reste couvert — mais par le test unitaire
+     * (combat.test.ts A14), où le tick est maîtrisé au ticket près.
+     */
+    const coupSimple = async () => {
+      const avant = await moi()
+      await page.evaluate((c) => {
+        const s = window.__BRAISES__.scene
+        const q = s.registry.get('pendingActions') ?? []
+        q.push({ type: 'attack', dx: c.dx, dy: c.dy })
+        s.registry.set('pendingActions', q)
+      }, { dx: 1, dy: -0.1 })
+      // ON LIT VITE. L'endurance est déduite au DÉBUT du coup, et elle ne régénère PAS
+      // pendant le wind-up : à 250 ms, la dépense est nette et entière. Attendre une
+      // seconde la laissait remonter (12,5/s, plafonnée à 100) et effaçait un coup de
+      // poing à 8 — le scénario concluait « rien n'est parti » d'un coup bel et bien parti.
+      await page.waitForTimeout(250)
+      const apres = await moi()
+      return (avant?.stam ?? 0) - (apres?.stam ?? 0)
+    }
+
+    /** LE COUP TENU : on maintient, on CAPTURE la zone mûre, on relâche, on compte. */
+    const coupTenu = async (ms, nom) => {
+      await page.mouse.move(CIBLE.x, CIBLE.y)
+      const avant = await moi()
+      await page.mouse.down()
+      await page.waitForTimeout(ms)
+      const pendant = await moi()
+      await page.screenshot({ path: `${OUT}/combat-${nom}.png` })
+      await page.mouse.up()
+      await page.waitForTimeout(250) // vite : la régén d'endurance efface la dépense
+      const apres = await moi()
+      return {
+        zone: pendant?.zone ?? null,
+        charge: pendant?.charge ?? 0,
+        cout: (avant?.stam ?? 0) - (apres?.stam ?? 0),
+      }
+    }
+
+    const out = {}
+    for (const [item, nom] of [
+      [null, 'poing'],
+      ['spear', 'lance'],
+      ['iron_axe', 'hache'],
+    ]) {
+      if (item) await armer(item)
+      const main = (await moi())?.held ?? 'rien'
+      console.log(`\n── ${nom.toUpperCase()} (en main : ${main}) ──`)
+
+      const cout = await coupSimple()
+      await page.waitForTimeout(3500) // le temps de récupérer, et de reprendre son souffle
+      const tenu = await coupTenu(1500, nom) // capture À MATURITÉ : c'est LA zone qui compte
+      await page.waitForTimeout(3500)
+
+      const z = tenu.zone
+      console.log(`   coup simple : ${cout > 0 ? `parti (${cout.toFixed(0)} d’endurance)` : '✗ RIEN N’EST PARTI'}`)
+      console.log(`   coup tenu   : charge ${tenu.charge} ticks${z?.mur ? ' (MÛRE)' : ''}, ${tenu.cout.toFixed(0)} d’endurance`)
+      console.log(z ? `   sa zone     : ${z.shape} portée ${z.range} arcCos ${z.arcCos}` : '   ✗ AUCUNE zone peinte : le joueur ne VOIT pas ce qu’il arme')
+      console.log(
+        tenu.cout > cout
+          ? `   ✓ le coup lourd coûte plus cher (${tenu.cout.toFixed(0)} > ${cout.toFixed(0)})`
+          : `   ✗ le coup lourd ne coûte pas plus que le simple`,
+      )
+      out[nom] = { main, zone: z, coutSimple: cout, coutLourd: tenu.cout, charge: tenu.charge }
+    }
+
+    console.log(`\n── CE QUI SÉPARE LES TROIS ARMES (et rend le choix RÉEL) ──`)
+    // L'OVERHEAD : les poings chargés frappent un DISQUE posé devant — pas un arc.
+    const overhead = out.poing?.zone?.shape === 'disc'
+    console.log(overhead ? `   ✓ POINGS : un DISQUE au sol, devant soi (l’overhead à deux mains)` : `   ✗ les poings chargés ne posent aucun disque`)
+    // L'ALLONGE : LE fait qui rend le choix d'arme réel. S'il tombe, une arme n'est
+    // plus qu'un chiffre de dégâts, et le combat n'est plus qu'une échelle à monter.
+    const allonge = out.lance?.zone && out.poing?.zone && out.lance.zone.range > out.poing.zone.range * 1.8
     console.log(
-      vu > repos
-        ? `   ✓ LA LAME SE PEINT pendant le wind-up (${repos} → ${vu} tracés)`
-        : `   ✗ rien ne se peint : le coup part, l'écran ne dit rien (${repos})`,
+      allonge
+        ? `   ✓ LANCE : l’allonge est RÉELLE (${out.lance.zone.range} contre ${out.poing.zone.range})`
+        : `   ✗ la lance ne porte pas plus loin qu’un poing`,
+    )
+    // LE TOURBILLON : un cône de 360° (arcCos −1). Rien d'autre dans le jeu n'en a un.
+    const tourbillon = out.hache?.zone?.arcCos <= -1
+    console.log(
+      tourbillon ? `   ✓ HACHE : le tourbillon fait le TOUR COMPLET (arcCos ${out.hache.zone.arcCos})` : `   ✗ la hache chargée ne fait pas le tour`,
     )
 
-    // …et une fois le coup parti, l'ardoise se nettoie. On POLL là aussi : en
-    // headless le jeu ne rend que quelques images par seconde, et le tampon de la
-    // dernière frame persiste — conclure sur un instant précis ne prouverait rien.
-    let apres = vu
-    for (let i = 0; i < 40 && apres > repos; i += 1) {
-      await page.waitForTimeout(100)
-      apres = await tracés()
-    }
-    console.log(
-      apres <= repos
-        ? `   ✓ la lame s'efface après le coup (aucune traînée)`
-        : `   ✗ la lame reste peinte (${apres} > ${repos})`,
-    )
-    return { repos, vu, apres }
+    return out
   },
-
   /**
    * L'ÉCRAN D'ARTISANAT (spec craft-file F14-F15). On OUVRE le sac dans le vrai
    * jeu et on regarde : le panneau doit tenir dans l'écran, ne pas chevaucher la

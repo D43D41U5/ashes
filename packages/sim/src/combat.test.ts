@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, COMBAT, MONSTER_DEFS, SLOTS, TERRAIN_GRASS, WEAPON_DAMAGE } from './balance'
+import { BALANCE, COMBAT, MONSTER_DEFS, SLOTS, TERRAIN_GRASS, WEAPON_DAMAGE, WEAPON_PROFILES } from './balance'
 import { drainEvents } from './events'
 import { countOf, inventoryOf, makeInventory, stackSize, type Inventory, type ItemBag, type ItemId } from './items'
 import { weaponDamage } from './combat'
@@ -38,13 +38,27 @@ function strike(sim: SimState, attackerId: number, dx: number, dy: number, targe
   for (let t = 0; t < BALANCE.TICK_RATE_HZ; t++) tick(sim, [])
 }
 
+/**
+ * MAINTIENT LE CLIC `holdTicks` ticks, puis relâche — et laisse le coup se résoudre.
+ * C'est le VRAI geste du joueur (`attack_charge` … `attack_release`) : la sim compte
+ * le maintien, et c'est elle seule qui décide si le coup sort simple ou lourd.
+ */
+function chargedStrike(sim: SimState, attackerId: number, dx: number, dy: number, holdTicks: number): void {
+  tick(sim, [{ entityId: attackerId, dx: 0, dy: 0, action: { type: 'attack_charge', dx, dy } }])
+  for (let t = 0; t < holdTicks; t++) tick(sim)
+  tick(sim, [{ entityId: attackerId, dx: 0, dy: 0, action: { type: 'attack_release', dx, dy } }])
+  for (let t = 0; t < 2 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+}
+
 describe('l’endurance (A1)', () => {
   it('attaquer coûte, à 0 c’est refusé ; la régén dépend de la faim', () => {
     const sim = makeSim()
     const a = spawnEntity(sim, 10, 10)
     drainEvents(sim)
     tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
-    expect(entity(sim, a).stamina).toBeLessThanOrEqual(100 - COMBAT.ATTACK_STAMINA)
+    // Le coût est celui de L'ARME TENUE (WEAPON_PROFILES), pas d'une constante globale :
+    // un poing (8) ne coûte pas ce que coûte un coup de hache (18).
+    expect(entity(sim, a).stamina).toBeLessThanOrEqual(100 - WEAPON_PROFILES.unarmed.light.stamina)
 
     entity(sim, a).stamina = 5
     delete entity(sim, a).windup
@@ -91,13 +105,229 @@ describe('le télégraphe (A2)', () => {
     entity(sim, b).hp = 100
     entity(sim, b).x = 11
     entity(sim, b).y = 10
+    const avantX = entity(sim, a).x
     tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
     for (let t = 0; t < COMBAT.WINDUP_TICKS; t++) {
       tick(sim, [{ entityId: b, dx: 0, dy: 1, sprint: true }]) // fuit vers le sud
     }
     expect(entity(sim, b).hp).toBe(100)
-    // Et l'attaquant était immobile pendant son wind-up.
-    expect(entity(sim, a).x).toBe(10)
+    // ON AVANCE EN FRAPPANT (spec R4bis) : le coup de poing porte le corps d'un pas —
+    // c'est le déplacement de la SIM (la position est autoritative), pas une animation.
+    // Le pas est BORNÉ par le `lunge` du profil : frapper n'est pas une téléportation.
+    const pas = entity(sim, a).x - avantX
+    expect(pas).toBeGreaterThan(0)
+    expect(pas).toBeLessThanOrEqual(WEAPON_PROFILES.unarmed.light.lunge + 0.001)
+  })
+
+  it('le pas des poings ZIGZAGUE : gauche, droite, gauche (spec R4bis)', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    const me = entity(sim, a)
+
+    // Deux coups de poing d'affilée, vers l'est. La visée est la MÊME ; le PIED, non.
+    strike(sim, a, 1, 0)
+    const apres1 = me.y
+    strike(sim, a, 1, 0)
+    const apres2 = me.y
+
+    // Le premier pas dévie d'un côté, le second de l'autre : les écarts sont de signes
+    // opposés. Sans ça, les coups successifs traceraient une ligne droite — et le
+    // combat à mains nues n'aurait aucun corps.
+    expect(apres1 - 10).not.toBeCloseTo(0, 2)
+    expect((apres1 - 10) * (apres2 - apres1)).toBeLessThan(0)
+    // Et on a bien AVANCÉ, malgré le zigzag.
+    expect(me.x).toBeGreaterThan(10 + WEAPON_PROFILES.unarmed.light.lunge)
+  })
+})
+
+/**
+ * CHAQUE ARME A SA GÉOMÉTRIE (spec combat R4bis, décision 2026-07-13). C'est ELLE qui
+ * porte l'identité d'une arme — pas son chiffre de dégâts. Ces tests prouvent les
+ * trois vérités qui rendent le choix d'arme réel ; s'ils tombent, le joueur n'a plus
+ * qu'une échelle de puissance à monter, et le combat n'est plus un choix.
+ */
+describe('la géométrie des armes (A13)', () => {
+  it('L’ALLONGE : la lance touche à 2 tuiles, le poing n’y arrive pas', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    const b = spawnEntity(sim, 12, 10) // 2 tuiles : hors de portée d'un bras
+
+    // Mains nues (portée 1,1 + le pas) : on frappe dans le vide.
+    strike(sim, a, 1, 0)
+    expect(entity(sim, b).hp).toBe(100)
+
+    // La lance en main : elle atteint. C'est TOUTE sa raison d'être — tenir le loup
+    // à distance, frapper avant d'être mordu.
+    entity(sim, a).x = 10
+    entity(sim, a).y = 10
+    grantHeld(sim, a, 'spear')
+    strike(sim, a, 1, 0)
+    expect(entity(sim, b).hp).toBeLessThan(100)
+  })
+
+  it('LE BALAYAGE : la hache prend DEUX corps d’un coup, la lance un seul', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    // Deux cibles écartées de part et d'autre de la visée (est), à ±40° environ.
+    const gauche = spawnEntity(sim, 10.9, 9.3)
+    const droite = spawnEntity(sim, 10.9, 10.7)
+
+    grantHeld(sim, a, 'spear')
+    strike(sim, a, 1, 0)
+    const touchesLance = [gauche, droite].filter((id) => entity(sim, id).hp < 100).length
+    expect(touchesLance).toBe(0) // le pic passe ENTRE les deux
+
+    grantHeld(sim, a, 'iron_axe')
+    entity(sim, a).x = 10
+    entity(sim, a).y = 10
+    strike(sim, a, 1, 0)
+    // L'arc large de la hache attrape les DEUX. C'est sa réponse à la horde — et le
+    // prix, c'est la portée courte et le coup lent.
+    expect(entity(sim, gauche).hp).toBeLessThan(100)
+    expect(entity(sim, droite).hp).toBeLessThan(100)
+  })
+
+  it('LE TOURBILLON : la hache chargée frappe DERRIÈRE soi (cône de 360°)', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    const devant = spawnEntity(sim, 11.2, 10)
+    const derriere = spawnEntity(sim, 8.8, 10) // dans le DOS : aucun coup normal ne l'atteint
+    grantHeld(sim, a, 'iron_axe')
+
+    // Coup simple vers l'est : celui de derrière est intact.
+    strike(sim, a, 1, 0)
+    expect(entity(sim, devant).hp).toBeLessThan(100)
+    expect(entity(sim, derriere).hp).toBe(100)
+
+    // Chargé (maintien mûr) : le tour complet. Personne n'est à l'abri.
+    const avant = entity(sim, derriere).hp
+    chargedStrike(sim, a, 1, 0, WEAPON_PROFILES.iron_axe.chargeTicks + 2)
+    expect(entity(sim, derriere).hp).toBeLessThan(avant)
+  })
+
+  it('LE TOURBILLON est LARGE — et ne se confond pas avec le disque des poings', () => {
+    // Deux coups chargés, deux lectures au sol. S'ils couvrent la même surface au même
+    // endroit, le joueur ne les distingue plus : ce qui sépare deux coups, c'est ce
+    // qu'on VOIT, pas leur nom (décision utilisateur 2026-07-13).
+    const poing = WEAPON_PROFILES.unarmed.charged
+    const hache = WEAPON_PROFILES.iron_axe.charged
+
+    // Le poing : un DISQUE posé DEVANT (il ne touche rien dans le dos).
+    expect(poing.shape).toBe('disc')
+    // La hache : un cône de 360° — donc centré sur le CORPS, et bien plus large que le
+    // disque du poing. C'est ça, « une zone assez large autour du joueur ».
+    expect(hache.shape).toBe('cone')
+    expect(hache.arcCos).toBeLessThanOrEqual(-1)
+    expect(hache.range).toBeGreaterThan(poing.radius * 2)
+  })
+
+  it('LA CHARGE : le pic chargé emmène le CORPS — une vraie course en avant', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    grantHeld(sim, a, 'spear')
+    const me = entity(sim, a)
+
+    // Coup SIMPLE : à peine un pas.
+    strike(sim, a, 1, 0)
+    const pasSimple = me.x - 10
+
+    // Coup CHARGÉ : le corps traverse le terrain. C'est un ENGAGEMENT, pas un pas —
+    // on ferme la distance sur ce qui est LOIN. (Et il TRAVERSE ce qui est trop
+    // proche : le coup se résout à l'arrivée, donc une cible collée finit dans le dos.
+    // Décision utilisateur : « la lance passe au travers, tant pis ».)
+    const depart = me.x
+    chargedStrike(sim, a, 1, 0, WEAPON_PROFILES.spear.chargeTicks + 2)
+    const bond = me.x - depart
+
+    expect(bond).toBeCloseTo(WEAPON_PROFILES.spear.charged.lunge, 1)
+    expect(bond).toBeGreaterThan(pasSimple * 5)
+    // Plus vite que la marche : c'est ce qui en fait une charge et non un déplacement.
+    const tuilesParSeconde = bond / (WEAPON_PROFILES.spear.charged.windupTicks / BALANCE.TICK_RATE_HZ)
+    expect(tuilesParSeconde).toBeGreaterThan(BALANCE.WALK_SPEED_TILES_PER_S)
+  })
+})
+
+/**
+ * LES DEUX COUPS DE CHAQUE ARME (décision utilisateur 2026-07-13) : un clic bref, un
+ * clic MAINTENU. La sim compte le maintien — le client ne fait que dire « j'appuie ».
+ */
+describe('la charge (A14)', () => {
+  it('bref = coup simple ; MAINTENU = coup lourd, qui coûte plus cher', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    const b = spawnEntity(sim, 11, 10)
+
+    // Relâché AVANT maturité : c'est le coup simple, au prix du coup simple.
+    let staminaAvant = entity(sim, a).stamina
+    chargedStrike(sim, a, 1, 0, 2)
+    // Précision à l'unité : les PV REMONTENT lentement (HP_REGEN_PER_MIN) pendant les
+    // deux secondes de résolution — exiger le dixième testerait la régén, pas le coup.
+    const degatsLegers = 100 - entity(sim, b).hp
+    expect(degatsLegers).toBeCloseTo(WEAPON_PROFILES.unarmed.light.damage, 0)
+
+    // Relâché À MATURITÉ : l'overhead à deux mains. Il fait bien plus mal, et il se paie.
+    entity(sim, b).hp = 100
+    entity(sim, a).x = 10
+    entity(sim, a).y = 10
+    entity(sim, a).stamina = 100
+    staminaAvant = entity(sim, a).stamina
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack_charge', dx: 1, dy: 0 } }])
+    for (let t = 0; t < WEAPON_PROFILES.unarmed.chargeTicks + 2; t++) tick(sim)
+    // Tenir la charge NE REGÉNÈRE PAS : c'est le seul frein à se promener « prêt à frapper ».
+    expect(entity(sim, a).stamina).toBeLessThanOrEqual(staminaAvant)
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack_release', dx: 1, dy: 0 } }])
+    for (let t = 0; t < 2 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+
+    expect(100 - entity(sim, b).hp).toBeCloseTo(WEAPON_PROFILES.unarmed.charged.damage, 0)
+    expect(100 - entity(sim, b).hp).toBeGreaterThan(degatsLegers)
+  })
+
+  it('LE WHIFF PUNIT, jamais la charge : rater cloue sur place, toucher rend la main', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    const cible = spawnEntity(sim, 11, 10)
+    const me = entity(sim, a)
+
+    // (1) Le coup qui TOUCHE : récupération courte.
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
+    for (let t = 0; t < WEAPON_PROFILES.unarmed.light.windupTicks; t++) tick(sim)
+    expect(entity(sim, cible).hp).toBeLessThan(100) // il a bien mordu
+    const apresTouche = me.cooldownUntil - sim.tick
+
+    // (2) Le même coup DANS LE VIDE : récupération longue. Le corps reste à découvert.
+    entity(sim, cible).x = 30 // plus personne à portée
+    me.cooldownUntil = 0
+    me.stamina = 100
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
+    for (let t = 0; t < WEAPON_PROFILES.unarmed.light.windupTicks; t++) tick(sim)
+    const apresVide = me.cooldownUntil - sim.tick
+
+    // C'est là que le loup trouve sa fenêtre — et c'est ce qui interdit de frapper à
+    // l'aveugle. La punition tombe sur le RATÉ, pas sur l'engagement.
+    //
+    // On compare l'ÉCART, pas les valeurs absolues : les deux coups sont mesurés au
+    // même nombre de ticks après l'action, donc leur différence EST exactement celle
+    // des deux récupérations du profil. Figer la valeur absolue testerait ma façon de
+    // compter les ticks du test, pas la règle.
+    expect(apresVide).toBeGreaterThan(apresTouche)
+    expect(apresVide - apresTouche).toBe(
+      WEAPON_PROFILES.unarmed.light.recoveryWhiff - WEAPON_PROFILES.unarmed.light.recoveryHit,
+    )
+  })
+
+  it('une charge qu’on ne peut pas payer retombe sur le coup simple (elle ne bloque pas)', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10, 10)
+    const b = spawnEntity(sim, 11, 10)
+    const me = entity(sim, a)
+    // Assez pour un poing (8), pas pour l'overhead (26). On maintient quand même.
+    me.stamina = WEAPON_PROFILES.unarmed.light.stamina + 1
+    me.hunger = 0 // la régén d'endurance au plancher : elle ne remontera pas d'ici là
+
+    chargedStrike(sim, a, 1, 0, WEAPON_PROFILES.unarmed.chargeTicks + 2)
+    // Le coup PART quand même — simple. Un joueur à bout de souffle qui maintient son
+    // clic ne doit pas se retrouver avec un bouton mort dans les mains.
+    expect(100 - entity(sim, b).hp).toBeCloseTo(WEAPON_PROFILES.unarmed.light.damage, 0)
   })
 })
 
@@ -237,10 +467,27 @@ describe('les monstres (A6)', () => {
     strike(sim, a, 1, 0)
     const boar = entity(sim, b)
     expect(boar.hp).toBeLessThan(MONSTER_DEFS.boar.hp)
-    const distBefore = Math.abs(boar.x - entity(sim, a).x)
-    for (let t = 0; t < 5 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
-    // Il a réagi : fui (distance accrue) ou chargé — dans les deux cas il a bougé.
-    expect(Math.abs(boar.x - entity(sim, a).x)).not.toBeCloseTo(distBefore, 1)
+    const oux = boar.x
+    const ouy = boar.y
+    drainEvents(sim)
+    let mordu = false
+    for (let t = 0; t < 5 * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim)
+      if (drainEvents(sim).some((e) => e.type === 'entity_damaged' && e.byEntityId === b)) mordu = true
+    }
+
+    // IL A RÉAGI — et la réaction a DEUX visages (spec faune R7 : le sanglier blessé
+    // FUIT ou CHARGE). On teste la disjonction : il a DÉTALÉ, ou il a MORDU (et c'est
+    // le flux d'événements qui le dit, pas sa position — un sanglier qui charge et se
+    // colle à sa cible ne bouge plus une fois au contact).
+    //
+    // Le déplacement se mesure sur LES DEUX AXES. Il ne l'était que sur X, et c'était
+    // un faux positif qui dormait : ce sanglier-ci détale plein SUD (neuf tuiles), son
+    // X ne bouge pas d'un cheveu, et le test n'y voyait qu'une bête immobile.
+    const dx = boar.x - oux
+    const dy = boar.y - ouy
+    const detale = dx * dx + dy * dy > 1
+    expect(detale || mordu).toBe(true)
 
     // L'achever, looter, cuire, manger.
     while (sim.entities.some((e) => e.id === b)) {

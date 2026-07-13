@@ -67,9 +67,22 @@ export { POI,
   TICK_DT_S,
   VILLAGE_NAMES,
   WEAPON_DAMAGE,
+  WEAPON_PROFILES,
   WORLD_EVENTS,
 } from './balance'
-export type { CarryTier, MonsterDef, MonsterType, NodeDef, NodeType, Recipe, RecipeId, TerrainDef } from './balance'
+export type {
+  CarryTier,
+  MonsterDef,
+  MonsterType,
+  NodeDef,
+  NodeType,
+  Recipe,
+  RecipeId,
+  Strike,
+  TerrainDef,
+  WeaponKind,
+  WeaponProfile,
+} from './balance'
 
 // ─── Monde : carte, temps, collision, navigation ──────────────────────────
 export { createEmptyMap, terrainAt, elevationAt, isBlockingTile, zoneAt, poisAt, poiCenter, poiClearings } from './map'
@@ -89,7 +102,7 @@ export type { Structure, Village, VillageAction, TaskKind, VillageTask } from '.
 export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel } from './economy'
 export type { ResourceNode, EconomyAction, CraftOrder } from './economy'
 export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame
-export { applyCombatAction, advanceCombat, weaponDamage } from './combat'
+export { applyCombatAction, advanceCombat, weaponDamage, weaponKind, weaponProfile, pendingStrike } from './combat'
 export type { CombatAction, Corpse } from './combat'
 export { advanceNpcs } from './npc'
 export type { Npc, NpcTaskState } from './npc'

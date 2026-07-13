@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { BALANCE, COMBAT, MONSTER_DEFS, CENDREUX, SLOTS } from './balance'
+import { BALANCE, COMBAT, MONSTER_DEFS, CENDREUX, SLOTS, WEAPON_PROFILES } from './balance'
 import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
 import { countOf, inventoryOf } from './items'
 import { die } from './combat'
@@ -257,13 +257,13 @@ describe('tuer un Cendreux : 2 coups d\'arme basique, cadavre + loot redéposé 
     expect(countOf(cendreuxEnt.inventory, 'berries')).toBe(3) // loot hérité (déjà couvert, ici en contexte)
     expect(cendreuxEnt.hp).toBe(MONSTER_DEFS.cendreux.hp) // 20
 
-    // Un attaquant armé d'une hache (iron_axe, 10 dégâts) à portée de corps-à-
-    // corps (1 tuile) : le Cendreux est déjà dans son propre MELEE_ENGAGE_RANGE
-    // donc il ne se déplace pas — la position reste stable pour les deux coups.
+    // Un attaquant armé d'une hache (iron_axe) à portée de corps-à-corps (1 tuile) :
+    // le Cendreux est déjà dans son propre MELEE_ENGAGE_RANGE donc il ne se déplace
+    // pas — la position reste stable pour les deux coups.
     const attackerId = spawnEntity(state, cendreuxEnt.x + 1, cendreuxEnt.y)
     grantItems(state, attackerId, { iron_axe: 1 })
     // …et il la TIENT : depuis la spec inventaire R9, une hache au fond du sac
-    // frappe comme un poing (COMBAT.UNARMED_DAMAGE), pas à 10.
+    // frappe comme un poing (COMBAT.UNARMED_DAMAGE), pas au profil de la hache.
     state.entities.find((e) => e.id === attackerId)!.activeSlot = 0
 
     // Deux coups via le vrai pipeline de wind-up (`startAttack` + `advanceCombat`
@@ -274,7 +274,9 @@ describe('tuer un Cendreux : 2 coups d\'arme basique, cadavre + loot redéposé 
     const attacker = () => state.entities.find((e) => e.id === attackerId)!
     strike(state, attackerId, cendreuxEnt.x - attacker().x, cendreuxEnt.y - attacker().y)
     expect(state.monsters.find((m) => m.type === 'cendreux')).toBeDefined() // 1 coup : encore en vie
-    expect(cendreuxEnt.hp).toBe(10)
+    // Les PV restants se DÉDUISENT du profil de l'arme (WEAPON_PROFILES), jamais d'un
+    // nombre écrit ici : le jour où la hache est réglée, ce test suit sans mentir.
+    expect(cendreuxEnt.hp).toBe(MONSTER_DEFS.cendreux.hp - WEAPON_PROFILES.iron_axe.light.damage)
 
     strike(state, attackerId, cendreuxEnt.x - attacker().x, cendreuxEnt.y - attacker().y)
     expect(state.monsters.find((m) => m.type === 'cendreux')).toBeUndefined() // 2e coup : mort

@@ -10,7 +10,7 @@
  * que snapshot = JSON.stringify et que le transport Worker/réseau soit
  * trivial.
  */
-import { BALANCE, CARRY, COMBAT, SLOTS, TERRAIN_GRASS, TICK_DT_S } from './balance'
+import { BALANCE, CARRY, COMBAT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type Strike } from './balance'
 import { moveAvatar } from './collision'
 import { advanceCombat, applyCombatAction, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
@@ -87,7 +87,23 @@ export interface Entity {
   /** A bougé ce tick (module la régén d'endurance). */
   moved: boolean
   exhaustedUntil: number
-  windup?: { dx: number; dy: number; ticksLeft: number; damage?: number; structureId?: number }
+  /**
+   * LE COUP QUI S'ARME. Il porte SA FORME (`strike`) : c'est ce qui permet au
+   * télégraphe de dessiner la zone RÉELLEMENT frappée — un pic de lance ne se lit
+   * pas comme un tourbillon de hache, et un télégraphe qui montrerait le même arc
+   * pour les deux apprendrait une règle qui n'existe pas (voir `attack-fx.ts`).
+   * `side` : le pied qui part (les poings alternent). `charged` : le coup est lourd.
+   */
+  windup?: { dx: number; dy: number; ticksLeft: number; strike: Strike; side?: 1 | -1; charged?: true; structureId?: number }
+  /**
+   * LE CLIC MAINTENU (spec combat R4ter). La sim COMPTE — le client ne fait que
+   * dire « j'appuie, et je vise par là ». À maturité (`WeaponProfile.chargeTicks`),
+   * le relâchement sort le coup lourd. Dans le snapshot : en multi, on doit VOIR
+   * l'autre armer son tourbillon, sinon la charge n'est un télégraphe pour personne.
+   */
+  charge?: { dx: number; dy: number; ticks: number }
+  /** Le pied du prochain coup : +1 / −1 / +1… (les poings dansent, spec R4bis). */
+  swingSide: 1 | -1
   /** Point de respawn hors village (position d'apparition). */
   homeX: number
   homeY: number
@@ -310,6 +326,7 @@ export function spawnEntity(state: SimState, x: number, y: number, slots: number
     blocking: false,
     moved: false,
     exhaustedUntil: 0,
+    swingSide: 1,
     homeX: x,
     homeY: y,
     warmth: 0,
@@ -362,7 +379,7 @@ export function carrySpeedFactor(ratio: number): number {
  */
 export function speedScaleFor(
   entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina' | 'temperature' | 'inventory'>,
-  input: { sprint: boolean; block: boolean; moving: boolean },
+  input: { sprint: boolean; block: boolean; moving: boolean; charging?: boolean },
 ): { scale: number; sprinting: boolean } {
   let scale = 1
   if (entity.hunger <= 0) scale *= BALANCE.HUNGER_SPEED_MALUS
@@ -374,9 +391,14 @@ export function speedScaleFor(
   // On ne sprinte plus dès le palier LOURD (spec P6) : refusé, pas ralenti.
   const canSprint = tier === 'light' || tier === 'medium'
   const blocking = input.block && entity.stamina > 0
-  const sprinting = !blocking && input.sprint && entity.stamina > 0 && input.moving && canSprint
+  // ON NE CHARGE PAS EN COURANT (spec R4ter) : armer un coup lourd, c'est se planter
+  // sur ses appuis. Le sprint est refusé, pas seulement ralenti — sans quoi la charge
+  // serait une posture de fuite, et l'engagement qu'elle est censée coûter n'existerait pas.
+  const charging = input.charging ?? false
+  const sprinting = !blocking && !charging && input.sprint && entity.stamina > 0 && input.moving && canSprint
   if (blocking) scale *= COMBAT.BLOCK_MOVE_FACTOR
   else if (sprinting) scale *= COMBAT.SPRINT_FACTOR
+  if (charging) scale *= COMBAT.CHARGE_MOVE_FACTOR
   return { scale, sprinting }
 }
 
@@ -404,7 +426,13 @@ export function step(state: SimState, inputs: MoveInput[]): void {
         action.type === 'eat'
       ) {
         applyEconomyAction(state, input.entityId, action)
-      } else if (action.type === 'attack' || action.type === 'bandage' || action.type === 'loot_corpse') {
+      } else if (
+        action.type === 'attack' ||
+        action.type === 'attack_charge' ||
+        action.type === 'attack_release' ||
+        action.type === 'bandage' ||
+        action.type === 'loot_corpse'
+      ) {
         applyCombatAction(state, input.entityId, action)
       } else {
         applyVillageAction(state, input.entityId, action)
@@ -426,6 +454,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
       sprint: input.sprint ?? false,
       block: input.block ?? false,
       moving: input.dx !== 0 || input.dy !== 0,
+      charging: entity.charge !== undefined,
     })
     if (sprinting) {
       entity.stamina = Math.max(0, entity.stamina - COMBAT.SPRINT_STAMINA_PER_S / BALANCE.TICK_RATE_HZ)

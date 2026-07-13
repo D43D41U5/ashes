@@ -7,7 +7,7 @@
  * raid casse le grenier par startAttack, le don dépose par applyVillageAction.
  */
 import { ALIGNMENT, BALANCE, COMBAT, NPC_AI } from './balance'
-import { applyCombatAction, startAttack } from './combat'
+import { applyCombatAction, engageRange, startAttack, weaponProfile } from './combat'
 import { distSq } from './geometry'
 import { countOf, itemsIn } from './items'
 import { deposit, dropTask, equipBestWeapon, followPath, near, setPathTo, withdraw, type Npc } from './npc'
@@ -147,17 +147,20 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
     errand.stage = 'home'
     npc.path = []
   }
-  // En chemin : on frappe qui n'est pas des nôtres.
+  // En chemin : on frappe qui n'est pas des nôtres. On marche ARMÉ (un raid n'entre
+  // pas chez le voisin les mains dans les poches) — et il le faut : la distance
+  // d'engagement DÉCOULE de l'arme tenue (`engageRange`, spec inventaire R9).
+  equipBestWeapon(entity)
+  const reach = engageRange(entity)
   const foe = state.entities.find(
     (e) =>
       e.id !== entity.id &&
       e.hp > 0 &&
       !village.memberIds.includes(e.id) &&
       !state.monsters.some((m) => m.entityId === e.id) &&
-      distSq(e.x, e.y, entity.x, entity.y) <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE,
+      distSq(e.x, e.y, entity.x, entity.y) <= reach * reach,
   )
-  if (foe && !entity.windup && state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
-    equipBestWeapon(entity) // l'arme TENUE fait foi (spec inventaire R9)
+  if (foe && !entity.windup && state.tick >= entity.cooldownUntil && entity.stamina >= weaponProfile(entity).light.stamina) {
     if (startAttack(state, entity, foe.x - entity.x, foe.y - entity.y)) {
       entity.cooldownUntil = state.tick + BALANCE.TICK_RATE_HZ
     }
@@ -183,8 +186,9 @@ export function handleErrand(state: SimState, village: Village, npc: Npc, entity
       errand.stage = 'loot'
       return true
     }
-    if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
-      equipBestWeapon(entity) // le siège aussi frappe avec l'arme TENUE (R9)
+    if (state.tick >= entity.cooldownUntil && entity.stamina >= weaponProfile(entity).light.stamina) {
+      // Le siège aussi frappe avec l'arme TENUE (R9) — et son coût est celui de CETTE
+      // arme : un poing (8) ne se refuse pas au prétexte qu'une lance coûterait 15.
       if (startAttack(state, entity, target.tx + 0.5 - entity.x, target.ty + 0.5 - entity.y, { structureId: target.id })) {
         entity.cooldownUntil = state.tick + COMBAT.ATTACK_COOLDOWN_TICKS
       }

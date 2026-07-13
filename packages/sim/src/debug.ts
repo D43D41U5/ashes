@@ -1,10 +1,10 @@
 /**
  * Outils de DÉVELOPPEMENT — pas du jeu.
  *
- * Trois leviers pour arpenter le monde sans le jouer : se téléporter, forcer
- * l'heure, devenir invulnérable. Ils vivent dans /sim (et pas dans le client)
- * parce que la sim est autoritative : un client qui déplacerait son avatar
- * tout seul serait recalé au snapshot suivant.
+ * Quatre leviers pour arpenter le monde sans le jouer : se téléporter, forcer
+ * l'heure, devenir invulnérable, se donner un objet. Ils vivent dans /sim (et pas
+ * dans le client) parce que la sim est autoritative : un client qui déplacerait son
+ * avatar tout seul serait recalé au snapshot suivant.
  *
  * Deux gardes rendent la chose sûre :
  * - Elles ne s'appliquent QUE si la sim a été créée avec `debug: true`. L'hôte
@@ -14,6 +14,7 @@
  *   sont capturées par le replay log : une partie où l'on a triché se rejoue
  *   quand même à l'identique.
  */
+import { addItems, type ItemId } from './items'
 import type { Entity, SimState } from './sim'
 import { cycleOffsetForStartHour, TICKS_PER_CYCLE } from './time'
 
@@ -24,6 +25,14 @@ export type DebugAction =
   | { type: 'debug_set_hour'; hour: number }
   /** Invulnérabilité + jauges gelées (voir `refreshGodMode`). */
   | { type: 'debug_god'; on: boolean }
+  /**
+   * Se donner un objet ET LE METTRE EN MAIN. Sans lui, le combat est INVÉRIFIABLE
+   * dans le vrai jeu : le joueur démarre les mains vides (spec économie — pas de kit
+   * de départ), et il faudrait donc récolter, câbler une corde et forger avant de
+   * pouvoir seulement REGARDER un coup de lance à l'écran. Un garde-fou qu'on ne peut
+   * pas atteindre ne garde rien.
+   */
+  | { type: 'debug_grant'; item: ItemId }
 
 export function isDebugAction(action: { type: string }): action is DebugAction {
   return action.type.startsWith('debug_')
@@ -48,6 +57,12 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     // on ne bouge que la phase.
     const target = cycleOffsetForStartHour(clamp(action.hour, 0, 24))
     state.cycleOffset = (((target - state.tick) % TICKS_PER_CYCLE) + TICKS_PER_CYCLE) % TICKS_PER_CYCLE
+  } else if (action.type === 'debug_grant') {
+    // On le met EN MAIN, pas juste dans le sac : c'est la main qui décide de tout
+    // (spec inventaire R9), et un objet au fond du sac ne prouve rien à l'écran.
+    if (!addItems(entity.inventory, { [action.item]: 1 })) return
+    const slot = entity.inventory.findIndex((s) => s !== null && s.item === action.item)
+    if (slot >= 0) entity.activeSlot = slot
   } else {
     if (action.on) entity.god = true
     else delete entity.god

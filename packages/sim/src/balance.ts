@@ -557,14 +557,230 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   cooked_meat: { station: 'fire', inputs: { raw_meat: 1 }, output: 'cooked_meat', seconds: 5 },
 }
 
-/** Dégâts des armes portées — mains nues : COMBAT.UNARMED_DAMAGE. */
+/**
+ * LA FORME D'UN COUP — ce que la sim frappe VRAIMENT.
+ *
+ * Avant, tout le monde frappait pareil : un arc de 90° à 1,4 tuile, 0,4 s d'armement,
+ * et l'arme ne changeait QUE les dégâts. Une lance touchait donc à la même distance
+ * qu'un poing, et un télégraphe honnête n'avait qu'une chose à dire de chaque arme :
+ * rien. C'est la géométrie qui porte l'identité d'une arme, pas son chiffre.
+ *
+ * Deux primitives suffisent à tout ce que le combat demande :
+ *   · `cone` — un secteur depuis le corps. `arcCos = 1` → une ligne (le pic de la
+ *     lance) ; `0` → ±90° ; `-1` → 360° (le tourbillon de hache). Un seul test.
+ *   · `disc` — un disque posé DEVANT, à `range` du corps (l'overhead à deux poings
+ *     qui s'écrase au sol).
+ *
+ * La portée est mesurée CENTRE À CENTRE, comme la sim : deux corps qui se touchent
+ * ont leurs centres à `AVATAR_HITBOX_TILES` (0,6) l'un de l'autre. Tout s'ancre là —
+ * un poing porte à un bras (1,1), une lance à deux mètres de bois (2,3).
+ */
+export interface Strike {
+  shape: 'cone' | 'disc'
+  /** Cône : portée depuis le centre du corps. Disque : distance de son CENTRE. */
+  range: number
+  /** Cône : cosinus du DEMI-angle (1 = une ligne, 0 = ±90°, −1 = tout le tour). */
+  arcCos: number
+  /** Disque : son rayon. Ignoré par le cône. */
+  radius: number
+  damage: number
+  stamina: number
+  windupTicks: number
+  /**
+   * LA RÉCUPÉRATION, ET ELLE EST À DEUX VALEURS. Le coup qui MORD rend la main ;
+   * celui qui fend l'air laisse à découvert. C'est le whiff qui punit — jamais le
+   * fait d'avoir chargé. Un coup chargé qui touche est un investissement qui paie ;
+   * raté, c'est une seconde de trop, immobile, devant un loup.
+   * `0` = « je n'impose rien » (les monstres tiennent leur cadence de MONSTER_DEFS).
+   */
+  recoveryHit: number
+  recoveryWhiff: number
+  /** LE PAS : distance parcourue pendant l'armement, en tuiles. On avance en frappant. */
+  lunge: number
+  /** Le pas DÉVIE, gauche/droite/gauche… (les poings dansent). `false` = tout droit. */
+  weave: boolean
+}
+
+/** Les deux coups d'une arme, et le temps de maintien qui bascule de l'un à l'autre. */
+export interface WeaponProfile {
+  light: Strike
+  charged: Strike
+  /** Ticks de maintien du clic à partir desquels le coup part CHARGÉ. */
+  chargeTicks: number
+}
+
+export type WeaponKind = 'unarmed' | 'crude_spear' | 'spear' | 'iron_axe'
+
+/** Cosinus tabulés — `Math.cos` est interdit dans /sim (invariant §2, moteurs JS). */
+const COS_10 = 0.9848
+const COS_22 = 0.9272
+const COS_24 = 0.9135
+const COS_50 = 0.6428
+const COS_60 = 0.5
+
+/**
+ * LES TROIS ARMES, ET LEUR VÉRITÉ (décision utilisateur 2026-07-13).
+ *
+ *   · LES POINGS — rapides, courts, et ils AVANCENT : chaque coup fait un pas, en
+ *     zigzag. On ne rate pas de beaucoup, mais on ne fait mal à personne. Chargés :
+ *     un overhead à deux mains qui s'abat sur un disque au sol — le geste du
+ *     désespoir, quand deux zombies vous collent et qu'on n'a rien en main.
+ *   · LA LANCE — l'ALLONGE. Un pic étroit : on tient le loup à distance, on frappe
+ *     avant d'être mordu. Mais un raté est un VRAI raté (l'arc est fin), et le pic
+ *     chargé emmène le corps en avant : s'il ne trouve pas de chair, on reste planté.
+ *   · LA HACHE — le gros coup lent qui BALAIE. Arc large : elle prend deux corps
+ *     serrés là où la lance n'en sort qu'un. Chargée, elle fait le tour complet.
+ *
+ * La lance garde sa raison d'être face à la hache (l'allonge), la hache garde la
+ * sienne (la horde). Ce n'est pas une échelle de puissance, c'est un choix.
+ *
+ * SUR LES DEUX CÔNES DE LA LANCE (±22° simple, ±10° chargé) : le pic chargé DOIT être
+ * fin — c'est lui qui punit le raté, et un engagement qu'on ne peut pas rater n'en est
+ * pas un. Mais le coup SIMPLE, lui, est l'outil du quotidien : à ±14° (premier jet),
+ * il ratait un sanglier qui bronchait à un mètre. Une arme dont le coup de base est
+ * une loterie n'est pas « exigeante », elle est cassée.
+ */
+export const WEAPON_PROFILES: Record<WeaponKind, WeaponProfile> = {
+  unarmed: {
+    light: {
+      shape: 'cone',
+      range: 1.1,
+      arcCos: COS_50,
+      radius: 0,
+      damage: 6,
+      stamina: 8,
+      windupTicks: ticksFor(0.2),
+      recoveryHit: ticksFor(0.25),
+      recoveryWhiff: ticksFor(0.45),
+      lunge: 0.35,
+      weave: true,
+    },
+    charged: {
+      shape: 'disc',
+      range: 1.2,
+      arcCos: 0,
+      radius: 0.9,
+      damage: 18,
+      stamina: 26,
+      windupTicks: ticksFor(0.4),
+      recoveryHit: ticksFor(0.5),
+      recoveryWhiff: ticksFor(1.2),
+      lunge: 0.5,
+      weave: false,
+    },
+    chargeTicks: ticksFor(0.55),
+  },
+  crude_spear: {
+    light: {
+      shape: 'cone',
+      range: 1.9,
+      arcCos: COS_24,
+      radius: 0,
+      damage: 10,
+      stamina: 13,
+      windupTicks: ticksFor(0.4),
+      recoveryHit: ticksFor(0.35),
+      recoveryWhiff: ticksFor(0.65),
+      lunge: 0.2,
+      weave: false,
+    },
+    charged: {
+      shape: 'cone',
+      range: 2.5,
+      arcCos: COS_10,
+      radius: 0,
+      damage: 20,
+      stamina: 28,
+      windupTicks: ticksFor(0.4),
+      recoveryHit: ticksFor(0.5),
+      recoveryWhiff: ticksFor(1.3),
+      lunge: 2.2,
+      weave: false,
+    },
+    chargeTicks: ticksFor(0.65),
+  },
+  spear: {
+    light: {
+      shape: 'cone',
+      range: 2.3,
+      arcCos: COS_22,
+      radius: 0,
+      damage: 16,
+      stamina: 15,
+      windupTicks: ticksFor(0.45),
+      recoveryHit: ticksFor(0.4),
+      recoveryWhiff: ticksFor(0.7),
+      lunge: 0.2,
+      weave: false,
+    },
+    charged: {
+      shape: 'cone',
+      range: 3.1,
+      arcCos: COS_10,
+      radius: 0,
+      damage: 32,
+      stamina: 32,
+      windupTicks: ticksFor(0.4),
+      recoveryHit: ticksFor(0.55),
+      recoveryWhiff: ticksFor(1.5),
+      // LA CHARGE : le corps parcourt TROIS TUILES ET DEMIE — 8 tuiles/s, le double de
+      // la marche. Ce n'est plus un pas, c'est un ENGAGEMENT : on ferme la distance et
+      // on embroche. Elle TRAVERSE ce qui est trop proche (décision utilisateur) : le
+      // coup se résout à l'arrivée, donc une cible collée finit dans le dos et le pic
+      // fend l'air. La charge est une arme de DISTANCE — mal jugée, elle cloue sur place
+      // (`recoveryWhiff`, 1,5 s). C'est le prix, et il se voit.
+      lunge: 3.2,
+      weave: false,
+    },
+    chargeTicks: ticksFor(0.7),
+  },
+  iron_axe: {
+    light: {
+      shape: 'cone',
+      range: 1.5,
+      arcCos: COS_60,
+      radius: 0,
+      damage: 14,
+      stamina: 18,
+      windupTicks: ticksFor(0.55),
+      recoveryHit: ticksFor(0.45),
+      recoveryWhiff: ticksFor(0.8),
+      lunge: 0.25,
+      weave: false,
+    },
+    charged: {
+      // LE TOURBILLON : un cône de 360°, donc pas une troisième géométrie. Et une zone
+      // LARGE — 2,6 tuiles tout autour du corps. À 1,8 (premier jet) il ne se distinguait
+      // pas du disque des poings : deux ellipses de même taille, et le joueur ne lisait
+      // plus rien. Ce qui sépare deux coups, c'est ce qu'on VOIT au sol, pas leur nom.
+      shape: 'cone',
+      range: 2.6,
+      arcCos: -1,
+      radius: 0,
+      damage: 24,
+      stamina: 34,
+      windupTicks: ticksFor(0.5),
+      recoveryHit: ticksFor(0.6),
+      recoveryWhiff: ticksFor(1.6),
+      lunge: 0,
+      weave: false,
+    },
+    chargeTicks: ticksFor(0.8),
+  },
+}
+
+/**
+ * Dégâts des armes portées — mains nues : COMBAT.UNARMED_DAMAGE. DÉRIVÉ des profils :
+ * une seule source de vérité, sinon les deux tables divergent au premier réglage.
+ * Sert aussi de REGISTRE : ce qui figure ici est une arme (un outil ne l'est pas).
+ */
 export const WEAPON_DAMAGE: Partial<Record<import('./items').ItemId, number>> = {
-  spear: 16,
-  iron_axe: 10,
+  spear: WEAPON_PROFILES.spear.light.damage,
+  iron_axe: WEAPON_PROFILES.iron_axe.light.damage,
   // L'épieu taillé se glisse entre les mains nues (6) et la lance (16), à 10 : une
   // réponse au loup et au sanglier dès la première nuit, sans rendre la lance
   // inutile — elle frappe 60 % plus fort et tient cinq fois plus (spec C9).
-  crude_spear: 10,
+  crude_spear: WEAPON_PROFILES.crude_spear.light.damage,
 }
 
 export type MonsterType = 'zombie' | 'boar' | 'cendreux' | 'rabbit' | 'deer' | 'wolf'
@@ -963,10 +1179,25 @@ export const COMBAT = {
   /** Modulateurs de régén : bien nourri (faim > 70) / affamé (faim 0). */
   FED_REGEN_BONUS: 1.25,
   STARVED_REGEN_MALUS: 0.5,
+  /** Armement par DÉFAUT — celui des BÊTES (les avatars suivent WEAPON_PROFILES). */
   WINDUP_TICKS: ticksFor(0.4),
+  /** Portée par DÉFAUT — celle des BÊTES. Un avatar frappe à la portée de son arme. */
   ATTACK_RANGE: 1.4,
-  /** Distance à laquelle une IA (monstre, PNJ) déclenche son coup au corps à corps. */
+  /**
+   * LE PAS QUI DANSE (spec combat R4bis). Les coups de poing successifs portent le
+   * corps en avant, mais en zigzag : gauche, droite, gauche… Le pas dévie de 25° de
+   * la visée — on frappe TOUJOURS là où l'on vise, seul le PIED change de côté.
+   * Tabulés : `Math.cos`/`Math.sin` sont interdits dans /sim (invariant §2).
+   */
+  WEAVE_COS: 0.9063,
+  WEAVE_SIN: 0.4226,
+  /** On ne charge pas un coup en courant : maintenir le clic ralentit (spec R4ter). */
+  CHARGE_MOVE_FACTOR: 0.55,
+  /** Distance à laquelle une BÊTE déclenche sa morsure (sa portée est ATTACK_RANGE).
+   *  Un AVATAR, lui, engage à la portée de son arme × ENGAGE_MARGIN (`engageRange`). */
   MELEE_ENGAGE_RANGE: 1.2,
+  /** On entre DANS sa zone, on ne s'arrête pas pile sur son bord : la cible bouge. */
+  ENGAGE_MARGIN: 0.85,
   /** Portée du coup porté à une structure (murs, portes — cibles larges). */
   STRUCTURE_STRIKE_RANGE: 2.2,
   /** Rythme minimal entre deux attaques d'un avatar (PNJ compris). */

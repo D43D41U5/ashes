@@ -26,7 +26,7 @@ import {
   type NodeType,
 } from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
-import { startAttack } from './combat'
+import { engageRange, startAttack, weaponProfile } from './combat'
 import { applyEconomyAction, toolRank, type ResourceNode } from './economy'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
@@ -571,13 +571,17 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
 
   npc.sleeping = false // l'alarme silencieuse : on se lève
   if (entity.windup) return true
+  // ON TIRE SON ARME AVANT DE MESURER SA PORTÉE. La lance en main, pas dans le dos
+  // (spec inventaire R9) — et c'est un préalable, pas une coquetterie : la distance
+  // d'engagement DÉCOULE de ce qu'on tient (`engageRange`). Un milicien qui n'aurait
+  // pas encore dégainé s'approcherait à distance de poing pour frapper à la lance.
+  equipBestWeapon(entity)
+  const reach = engageRange(entity)
   const d2 = distSq(entity.x, entity.y, threat.x, threat.y)
-  if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
+  if (d2 <= reach * reach) {
     npc.defendStuck = 0 // au contact : on se bat (la faim critique, elle, décroche)
     npc.defendBest = -1
-    if (state.tick >= entity.cooldownUntil && entity.stamina >= COMBAT.ATTACK_STAMINA) {
-      // La lance en main, pas dans le dos : les dégâts viennent de l'arme TENUE (R9).
-      equipBestWeapon(entity)
+    if (state.tick >= entity.cooldownUntil && entity.stamina >= weaponProfile(entity).light.stamina) {
       if (startAttack(state, entity, threat.x - entity.x, threat.y - entity.y)) {
         entity.cooldownUntil = state.tick + COMBAT.ATTACK_COOLDOWN_TICKS
       }
