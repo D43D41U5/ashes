@@ -48,7 +48,9 @@ describe('le panneau d’artisanat : ce qu’il montre', () => {
     const rows = craftRows(['fire', 'workshop', 'furnace'], '')
     const hs = headers(rows)
 
-    expect(hs).toEqual(['OUTILS', 'ARMES', 'SURVIE', 'MATÉRIAUX'])
+    // ALPHABÉTIQUE (l'accent de MATÉRIAUX se range sous le E, pas après le Z).
+    expect(hs).toEqual(['ARMES', 'MATÉRIAUX', 'OUTILS', 'SURVIE'])
+    expect(hs).toEqual([...hs].sort((a, b) => a.localeCompare(b, 'fr')))
     // L'ordre des en-têtes suit CATEGORY_ORDER, et chaque en-tête est SUIVI d'au
     // moins une recette (un rayon sans article n'est pas un rayon, c'est du bruit).
     rows.forEach((row, i) => {
@@ -63,9 +65,10 @@ describe('le panneau d’artisanat : ce qu’il montre', () => {
   })
 
   it('LES CATÉGORIES : sans station, il ne reste que les rayons qui ont de quoi', () => {
-    // À mains nues : outils (hachereau, pic), armes (épieu), matériaux (corde).
-    // Pas de rayon SURVIE — le ragoût et la viande cuite veulent un Feu.
-    expect(headers(craftRows([], ''))).toEqual(['OUTILS', 'ARMES', 'MATÉRIAUX'])
+    // À mains nues : armes (épieu), matériaux (corde), outils (hachereau, pic).
+    // Pas de rayon SURVIE — le ragoût et la viande cuite veulent un Feu. Et les
+    // rayons qui RESTENT sont toujours dans l'ordre alphabétique.
+    expect(headers(craftRows([], ''))).toEqual(['ARMES', 'MATÉRIAUX', 'OUTILS'])
   })
 
   it('LA RECHERCHE : filtre sur le nom, sans accents ni casse', () => {

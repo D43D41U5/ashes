@@ -28,16 +28,26 @@ import { INK, SECTION_TITLE, textStyle } from './typography'
 
 export type CraftCategory = 'outils' | 'armes' | 'survie' | 'materiaux'
 
-/** L'ordre des sections à l'écran. Les OUTILS d'abord : c'est ce qu'on vient
- *  chercher neuf fois sur dix, et le hachereau de fortune est la première marche. */
-export const CATEGORY_ORDER: readonly CraftCategory[] = ['outils', 'armes', 'survie', 'materiaux']
-
 export const CATEGORY_LABEL: Record<CraftCategory, string> = {
   outils: 'OUTILS',
   armes: 'ARMES',
   survie: 'SURVIE',
   materiaux: 'MATÉRIAUX',
 }
+
+/**
+ * L'ordre des rayons à l'écran : ALPHABÉTIQUE (décision utilisateur, 2026-07-13).
+ * Un ordre qu'on peut PRÉDIRE se cherche moins qu'un ordre qu'on a jugé « logique » :
+ * l'œil sait où descendre avant même de lire.
+ *
+ * DÉRIVÉ, jamais recopié : un nouveau rayon prend sa place tout seul, sans qu'on
+ * pense à le glisser dans une liste à côté — c'est exactement le genre de liste
+ * parallèle qui finit par diverger de la table qu'elle est censée ordonner.
+ * `localeCompare('fr')` pour que MATÉRIAUX se range sous son E, pas après le Z.
+ */
+export const CATEGORY_ORDER: readonly CraftCategory[] = (Object.keys(CATEGORY_LABEL) as CraftCategory[]).sort((a, b) =>
+  CATEGORY_LABEL[a].localeCompare(CATEGORY_LABEL[b], 'fr'),
+)
 
 /**
  * La catégorie de chaque recette. `Record<RecipeId, …>` est le garde-fou : ajouter
