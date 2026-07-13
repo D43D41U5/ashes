@@ -18,6 +18,7 @@ import { applyDebugAction, isDebugAction, refreshGodMode, type DebugAction } fro
 import {
   advanceCraft,
   advanceEconomy,
+  advanceSpoilage,
   applyEconomyAction,
   type CraftOrder,
   type EconomyAction,
@@ -31,6 +32,7 @@ import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde } from './worldevents'
 import { rngNext } from './rng'
+import { advanceNightHunt } from './nighthunt'
 import { advanceNpcs, type Npc } from './npc'
 import { advancePois } from './poi-discovery'
 import { advanceDens } from './poi'
@@ -434,7 +436,13 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // Les tanières vidées se repeuplent (spec faune R16) — hors de vue, et jamais vite.
   advanceDens(state, state.seed)
   // Le monde d'abord (spawns/alarmes), puis PNJ, monstres, résolution.
-  if (state.worldEvents) advanceWorldEvents(state)
+  if (state.worldEvents) {
+    advanceWorldEvents(state)
+    // LA NUIT QUI CHASSE : c'est un ÉVÉNEMENT DU MONDE, il suit donc le même
+    // interrupteur — un banc de test qui n'a pas demandé de guerre n'a pas non plus
+    // demandé de loups.
+    advanceNightHunt(state)
+  }
   advanceNpcs(state)
   advanceMonsters(state)
   advanceCendreux(state)
@@ -442,6 +450,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceAlignment(state)
   advanceTime(state)
   advanceCraft(state)
+  advanceSpoilage(state)
   advanceEconomy(state)
   advanceTemperature(state)
   // En DERNIER : les invulnérables retrouvent leurs jauges pleines, quoi qu'il

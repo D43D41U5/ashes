@@ -36,7 +36,16 @@ function makeMap(): WorldMap {
  * cerfs, et l'heure où le monde est le plus lisible.
  */
 function makeSim(faunaCap = FAUNA.CAP, hour = 12): SimState {
-  return createSim(1234, { map: makeMap(), faunaCap, cycleOffset: cycleOffsetForStartHour(hour) })
+  // `worldEvents: false` : le banc de FAUNE mesure la faune. La NUIT QUI CHASSE
+  // (chantier tension) sème ses propres loups autour du joueur — elle fausserait
+  // chaque comptage de meute. Même raison que les hordes : un banc ne traîne pas un
+  // système qu'il n'a pas demandé.
+  return createSim(1234, {
+    map: makeMap(),
+    faunaCap,
+    worldEvents: false,
+    cycleOffset: cycleOffsetForStartHour(hour),
+  })
 }
 
 function tick(state: SimState, inputs: MoveInput[] = []): void {
@@ -443,7 +452,12 @@ describe('le rythme jour/nuit (A11 — R10)', () => {
       // biome où les quatre espèces peuvent naître, sinon on ne mesure que la
       // géographie. (Le premier montage l'a fait, et ne trouvait aucun loup.)
       const map = createEmptyMap(160, 160, TERRAIN_FOREST)
-      const sim = createSim(1234, { map, faunaCap: FAUNA.CAP, cycleOffset: cycleOffsetForStartHour(hour) })
+      const sim = createSim(1234, {
+        map,
+        faunaCap: FAUNA.CAP,
+        worldEvents: false, // (voir plus haut : la nuit qui chasse fausserait le comptage)
+        cycleOffset: cycleOffsetForStartHour(hour),
+      })
       spawnEntity(sim, 80.5, 80.5)
       for (let t = 0; t < 90 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
       const par: Record<string, number> = {}

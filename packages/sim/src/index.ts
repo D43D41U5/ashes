@@ -31,10 +31,13 @@ export { POI,
   FOOD_VALUES,
   LOOT_VALUES,
   MONSTER_DEFS,
+  NIGHT_HUNT,
   NODE_DEFS,
   RECIPES,
   SEASON,
   SLOTS,
+  SPOIL,
+  SPOIL_CYCLES,
   STRUCTURE_COSTS,
   STRUCTURE_HP,
   TEMPERATURE,
@@ -83,7 +86,7 @@ export type { TiledMapFile, TiledImportResult } from './tiled'
 // ─── Actions & systèmes (l'hôte les applique, les requêtes sont pures) ────
 export { applyVillageAction, structureAt, structureBlocks, getVillageOf, hasAccess } from './village'
 export type { Structure, Village, VillageAction, TaskKind, VillageTask } from './village'
-export { applyEconomyAction, advanceEconomy, advanceCraft, nodeAt, skillLevel } from './economy'
+export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel } from './economy'
 export type { ResourceNode, EconomyAction, CraftOrder } from './economy'
 export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame
 export { applyCombatAction, advanceCombat, weaponDamage } from './combat'
@@ -97,6 +100,7 @@ export { advanceCendreux, willRiseAsCendreux } from './cendreux'
 export { POI_CHARGES, poiFamily, advancePois } from './poi-discovery'
 export type { PoiCharge } from './poi-discovery'
 export { advanceWorldEvents } from './worldevents'
+export { advanceNightHunt } from './nighthunt'
 export type { Horde } from './worldevents'
 export { advanceAlignment, archetypeOf, isOutsider, regenFactor, damageModifier, harvestFactor } from './alignment'
 export type { Archetype, Aggression } from './alignment'
@@ -113,6 +117,9 @@ export {
   itemsIn,
   isEmpty,
   isStackable,
+  isPerishable,
+  spoilTier,
+  nutritionFactor,
   stackSize,
   durabilityOf,
   carryWeight,
@@ -120,7 +127,7 @@ export {
   carryTier,
   freeRoomFor,
 } from './items'
-export type { ItemId, ItemBag, Slot, Inventory, StructureType, AccessLevel, SkillId } from './items'
+export type { ItemId, ItemBag, Slot, Inventory, SpoilTier, StructureType, AccessLevel, SkillId } from './items'
 
 // ─── L'inventaire : la case active, ce qu'on tient VRAIMENT en main (R8-R9) ─
 export { applyInventoryAction, heldSlot, wearHeld, isInventoryAction } from './inventory-actions'

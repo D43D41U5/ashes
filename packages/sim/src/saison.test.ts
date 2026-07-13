@@ -37,6 +37,11 @@ describe('la pression (A1)', () => {
     sim.tick = 25 * TICKS_PER_CYCLE // acte II
     sim.nodes[0]!.stock = 1
     sim.nodes[0]!.regrowAt = 0
+    // L'ÉPUISEMENT LOCAL (chantier tension) rallonge la repousse à chaque fois qu'on
+    // rase le MÊME nœud. Ce test-ci mesure le facteur d'ACTE : on remet donc le
+    // compteur d'usure à zéro, sinon on mesurerait les deux règles en même temps.
+    delete sim.nodes[0]!.depletions
+    delete sim.nodes[0]!.forgetAt
     sim.entities[0]!.cooldownUntil = 0
     step(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'harvest', nodeId: 1 } }])
     const regrowAct2 = sim.nodes[0]!.regrowAt - sim.tick + 1

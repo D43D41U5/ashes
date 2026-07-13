@@ -52,7 +52,9 @@ describe('les actes (A1)', () => {
     entity(sim, b).hunger = 20 // affamé (< 30)
     act(sim, a, { type: 'give', targetEntityId: b, item: 'berries', count: 2 })
     // utile = min(30, 80) = 30 → 30 × 0.2 × 3 (besoin) × 1 (acte I) = 18.
-    expect(entity(sim, a).warmth).toBeCloseTo(18, 0)
+    // Une baie vaut 6 depuis le chantier tension (contre 15) : la chaleur d'un don
+    // suit la faim RÉELLEMENT comblée — c'est tout l'objet de la règle.
+    expect(entity(sim, a).warmth).toBeCloseTo(7.2, 0)
     expect(entity(sim, a).engagement).toBeGreaterThan(0)
     expect(countOf(entity(sim, b).inventory, 'berries')).toBe(2)
 
@@ -70,7 +72,7 @@ describe('les actes (A1)', () => {
     sim.tick = 25 * TICKS_PER_CYCLE // jour 26 : acte II
     entity(sim, b).hunger = 20
     act(sim, a, { type: 'give', targetEntityId: b, item: 'berries', count: 2 })
-    expect(entity(sim, a).warmth).toBeCloseTo(36, 0) // 18 × 2
+    expect(entity(sim, a).warmth).toBeCloseTo(14.4, 0) // 7,2 × 2
   })
 })
 

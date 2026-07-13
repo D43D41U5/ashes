@@ -28,7 +28,10 @@ const ticksForCycles = (cycles: number): number => Math.round(cycles * CYCLE_REA
 export const TEMPERATURE = {
   BASE: 90, // cible d'un bas de vallée, jour, acte I
   ALT_COLD: 70, // refroidissement max au sommet (elevation 1)
-  NIGHT_COLD: 20,
+  // LA NUIT MORD, DÈS L'ACTE I (était 20). Sans elle, le Feu n'était qu'un
+  // établi : on pouvait passer la nuit dehors sans y penser. Rentrer avant la
+  // nuit — ou emporter de quoi faire du feu — devient une décision.
+  NIGHT_COLD: 30,
   ACT_COLD: [0, 25, 40] as const, // par acte (I, Grand Froid, Cendre), soustrait
   /** Décalage signé par terrain (id de TERRAINS). Absent = 0. */
   BIOME_OFFSET: {
@@ -165,8 +168,31 @@ export const BALANCE = {
   /** Part des matériaux remboursée à la démolition. */
   DEMOLISH_REFUND: 0.5,
 
-  /** Ticks avant qu'un nœud épuisé repousse à plein (~5 min réelles). */
-  NODE_REGROW_TICKS: ticksFor(300),
+  /**
+   * Ticks avant qu'un nœud épuisé repousse à plein.
+   *
+   * ÉTAIT 5 MINUTES. Un seul buisson de baies nourrissait alors 34 joueurs en
+   * continu : le monde se remplissait plus vite qu'on ne le vidait. À 45 minutes
+   * (≈ un cycle), une clairière qu'on rase reste vide pour la journée — on va donc
+   * VOIR AILLEURS, et c'est là que tout commence (GDD §8bis : la collecte est le
+   * tissu conjonctif ; elle met les joueurs sur les routes, donc dans les
+   * rencontres). Modulé par l'acte (SEASON.REGROW_ACT_FACTOR) : le Grand Froid
+   * contracte les sources.
+   */
+  NODE_REGROW_TICKS: ticksFor(45 * 60),
+
+  /**
+   * L'ÉPUISEMENT LOCAL (GDD §8bis : « les filons s'épuisent localement et rouvrent
+   * ailleurs — les points de friction se DÉPLACENT »). Chaque passage à vide
+   * rallonge la repousse suivante : on rase un coin, il met de plus en plus de
+   * temps à revenir. On ne peut donc pas camper une clairière : on tourne.
+   */
+  DEPLETION_REGROW_PENALTY: 0.5,
+  /** …borné, sinon un coin très fréquenté ne reviendrait JAMAIS (et un monde mort
+   *  n'est pas un monde tendu, c'est un monde fini). */
+  DEPLETION_MAX: 4,
+  /** Le compteur d'épuisement s'oublie : un cycle sans y toucher efface une marche. */
+  DEPLETION_FORGET_TICKS: ticksForCycles(1),
 
   /** Rythme minimal entre deux récoltes/crafts (1 s) — borne de vraisemblance. */
   GATHER_COOLDOWN_TICKS: ticksFor(1),
@@ -177,8 +203,24 @@ export const BALANCE = {
   /** Usure minimale par coup, quel que soit le niveau d'artisan. */
   TOOL_WEAR_MIN: 0.25,
 
-  /** Perte de faim par heure de cycle (jauge 0-100 ; ~3 cycles pour la vider). */
-  HUNGER_PER_CYCLE_HOUR: 1.4,
+  /**
+   * Perte de faim par heure de cycle (jauge 0-100).
+   *
+   * ÉTAIT 1,4 — soit 0,7 point par minute RÉELLE : on pouvait ignorer la faim
+   * **2h23**. À 4, la jauge pleine dure ~50 minutes réelles, soit un cycle : on
+   * mange une à deux fois par jour, comme dans tout jeu de survie qui tient debout
+   * (Don't Starve vide sa jauge en deux jours de jeu, et elle TUE).
+   */
+  HUNGER_PER_CYCLE_HOUR: 4,
+
+  /**
+   * LA FAIM TUE (nouveau — elle ne faisait que ralentir, ce qui n'est pas une
+   * punition, c'est une remarque). À 0, les PV fondent : ~17 minutes réelles pour
+   * mourir d'une jauge pleine de vie. Assez pour comprendre et réagir ; pas assez
+   * pour l'ignorer. Don't Starve draine 1,25 PV/s — nous sommes bien plus doux,
+   * parce que nos cycles sont six fois plus longs.
+   */
+  STARVE_HP_PER_MIN: 6,
 
   /** Multiplicateur de faim par acte — le Grand Froid mord (GDD §2). */
   ACT_HUNGER_FACTOR: [1, 2, 3],
@@ -314,6 +356,28 @@ export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./
   house: { wood: 8 },
 }
 
+/**
+ * LES TROIS CERCLES (GDD §8bis). Le cercle DOMESTIQUE — le rayon du camp — est
+ * « sûr, renouvelable vite, MÉDIOCRE : un village y survit, n'y prospère jamais ».
+ * Le cercle sauvage est riche et dangereux.
+ *
+ * C'était la promesse du GDD, et elle n'était pas codée : les nœuds étaient
+ * UNIFORMES partout, donc le meilleur bois était à dix pas du Feu et il n'y avait
+ * aucune raison de sortir. C'est ce qui rendait le poids inutile — et c'est
+ * pourquoi la géographie vient APRÈS lui : maintenant que s'éloigner coûte, il faut
+ * que ça rapporte.
+ */
+export const CIRCLES = {
+  /** Rayon du cercle domestique, en tuiles, autour du point de départ. */
+  DOMESTIC_RADIUS: 28,
+  /** Au-delà de ce rayon : le cercle sauvage. */
+  WILD_RADIUS: 70,
+  /** Ce qu'un nœud rend, par cercle. Le domestique nourrit ; il n'enrichit pas. */
+  DOMESTIC_STOCK: 0.5,
+  CONTESTED_STOCK: 1,
+  WILD_STOCK: 1.6,
+} as const
+
 export type NodeType = 'tree' | 'rock' | 'fiber_plant' | 'berry_bush' | 'iron_vein' | 'coal_seam'
 
 /**
@@ -391,13 +455,53 @@ export const TOOL_DURABILITIES: Partial<Record<import('./items').ItemId, number>
   crude_spear: 20,
 }
 
-/** Valeur nutritive des consommables (spec R9). */
+/**
+ * Valeur nutritive des consommables (spec R9).
+ *
+ * LE CRU NE NOURRIT PAS UN HOMME. Les baies passent de 15 à 6 : un buisson entier
+ * (8 baies) vaut désormais 48 points, soit ~24 minutes de survie — contre 171
+ * minutes avant. On ne vit plus de cueillette : on cuisine, donc on a besoin d'un
+ * FEU, donc on a besoin de bois, donc on rentre. C'est la boucle qui manquait.
+ */
 export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
-  berries: 15,
-  stew: 50,
+  berries: 6,
   raw_meat: 8,
-  cooked_meat: 35,
+  cooked_meat: 40,
+  stew: 60,
 }
+
+/**
+ * LA PÉREMPTION (spec `evier.md`) — l'évier qui manquait.
+ *
+ * Rien ne se consommait dans Braises hors l'usure des outils : le grenier était un
+ * TAS, pas un flux. Le GDD §8 dit pourtant « une économie de flux, pas de stock —
+ * un serveur où tout le monde a plafonné en semaine 2 est mort en semaine 3 ».
+ *
+ * Modèle repris de Don't Starve, parce qu'il est éprouvé et LISIBLE : frais →
+ * rassis → avarié → pourri (l'objet disparaît). Chaque cran divise la valeur
+ * nutritive. On ne demande AUCUNE microgestion au joueur : pas de date par objet,
+ * pas de tri permanent — une pile a une fraîcheur, elle se voit dans sa case, et
+ * elle décide toute seule.
+ *
+ * La durée est en CYCLES (jours). Un objet absent de cette table ne pourrit pas.
+ */
+export const SPOIL_CYCLES: Partial<Record<import('./items').ItemId, number>> = {
+  berries: 2,
+  raw_meat: 1.5, // la viande crue est une bombe à retardement : on la cuit, ou on la perd
+  cooked_meat: 4,
+  stew: 5,
+}
+
+/** Les crans de fraîcheur, et ce qu'ils font à la valeur nutritive. */
+export const SPOIL = {
+  /** Au-dessus : FRAIS (pleine valeur). */
+  STALE_AT: 0.5,
+  /** Au-dessus : RASSIS. En dessous : AVARIÉ. À 0 : POURRI — la pile disparaît. */
+  SPOILED_AT: 0.2,
+  /** Ce que rend un aliment selon son cran (Don't Starve : ⅓ puis ⅙). */
+  NUTRITION_STALE: 0.5,
+  NUTRITION_SPOILED: 0.2,
+} as const
 
 export type RecipeId =
   | 'rope'
@@ -1007,6 +1111,23 @@ export const ALIGNMENT = {
   REFRESH_TICKS: ticksFor(5),
   /** Le don du Foyer PNJ (spec R14). */
   GIFT_BERRIES: 5,
+} as const
+
+/**
+ * LA NUIT QUI CHASSE (spec `tension.md`). « La nuit, loin d'un feu, on est chassé. »
+ *
+ * Une règle, une parade (un Feu, ou rentrer), une annonce (le hurlement), une
+ * borne (jamais plus de MAX_ALIVE). C'est ce quatuor qui fait la différence entre
+ * une tension et une brimade : le joueur doit pouvoir PERDRE, jamais être submergé,
+ * et toujours savoir ce qu'il aurait dû faire.
+ */
+export const NIGHT_HUNT = {
+  /** Probabilité par minute réelle, par acte. Le Grand Froid affame les loups. */
+  CHANCE_PER_MIN: [0.3, 0.5, 0.8],
+  /** Rôdeurs simultanés sur une même proie. On peut perdre ; on ne doit pas être noyé. */
+  MAX_ALIVE: 2,
+  /** Ils naissent à cette distance : hors de vue, mais on les voit VENIR. */
+  SPAWN_DIST: 15,
 } as const
 
 /** L'IA des PNJ (spec pnj, alignement R13-R14) — les seuils de décision. */

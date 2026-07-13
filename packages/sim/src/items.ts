@@ -18,7 +18,17 @@
  *
  * Déterminisme : aucun tirage. Le remplissage suit l'ordre des cases, point.
  */
-import { BALANCE, CARRY, ITEM_WEIGHT, STACK_DEFAULT, STACK_SIZES, TOOL_DURABILITIES, type CarryTier } from './balance'
+import {
+  BALANCE,
+  CARRY,
+  ITEM_WEIGHT,
+  SPOIL,
+  SPOIL_CYCLES,
+  STACK_DEFAULT,
+  STACK_SIZES,
+  TOOL_DURABILITIES,
+  type CarryTier,
+} from './balance'
 
 export type ItemId =
   | 'wood'
@@ -50,6 +60,16 @@ export interface Slot {
   item: ItemId
   count: number
   wear?: number
+  /**
+   * LA FRAÎCHEUR (1 = frais, 0 = pourri). Absente = l'objet ne pourrit pas.
+   *
+   * Elle ne BLOQUE PAS l'empilement, contrairement à l'usure : deux piles de baies
+   * fusionnent, et leur fraîcheur se MOYENNE (pondérée par les quantités) — c'est
+   * la règle de Don't Starve, et c'est la seule qui évite l'enfer : sans elle, un
+   * sac finirait avec quinze cases d'une baie chacune, toutes à une fraîcheur
+   * différente. On ne demande aucune microgestion au joueur.
+   */
+  fresh?: number
 }
 
 /** Ce qu'on PORTE. La longueur EST la capacité ; `null` = case vide. */
@@ -87,6 +107,44 @@ export function stackSize(item: ItemId): number {
 /** Un item empilable ne porte pas d'usure : deux piles fusionnent, deux outils jamais. */
 export function isStackable(item: ItemId): boolean {
   return stackSize(item) > 1
+}
+
+/** Cet objet pourrit-il ? (absent de la table = non : le bois ne moisit pas). */
+export function isPerishable(item: ItemId): boolean {
+  return SPOIL_CYCLES[item] !== undefined
+}
+
+/** Les trois crans de fraîcheur — c'est ce que le joueur LIT dans sa case. */
+export type SpoilTier = 'fresh' | 'stale' | 'spoiled'
+
+export function spoilTier(fresh: number): SpoilTier {
+  if (fresh > SPOIL.STALE_AT) return 'fresh'
+  if (fresh > SPOIL.SPOILED_AT) return 'stale'
+  return 'spoiled'
+}
+
+/**
+ * Ce que rend VRAIMENT un aliment, selon son état. Le rassis nourrit moitié moins,
+ * l'avarié presque rien : une réserve qu'on laisse traîner n'est pas une réserve,
+ * c'est un souvenir. (Don't Starve : ⅓ puis ⅙ — on est un cran plus doux.)
+ */
+export function nutritionFactor(fresh: number | undefined): number {
+  if (fresh === undefined) return 1
+  const tier = spoilTier(fresh)
+  if (tier === 'fresh') return 1
+  return tier === 'stale' ? SPOIL.NUTRITION_STALE : SPOIL.NUTRITION_SPOILED
+}
+
+/**
+ * Fusionne la fraîcheur de deux piles : MOYENNE PONDÉRÉE par les quantités. Verser
+ * dix baies fraîches sur deux baies rassies donne une pile presque fraîche — et
+ * non douze baies rassies (qui puniraient le rangement) ni douze fraîches (qui
+ * feraient du coffre une machine à remonter le temps).
+ */
+function mergedFresh(dstFresh: number, dstCount: number, srcFresh: number, srcCount: number): number {
+  const total = dstCount + srcCount
+  if (total <= 0) return dstFresh
+  return (dstFresh * dstCount + srcFresh * srcCount) / total
 }
 
 /**
@@ -180,6 +238,9 @@ export function addItems(inv: Inventory, items: ItemBag): ItemBag {
       const room = max - slot.count
       if (room <= 0) continue
       const put = Math.min(room, remaining)
+      // Ce qui ARRIVE est frais (récolté, cuisiné, versé d'un coffre à l'instant) :
+      // la pile se moyenne, elle ne se réinitialise pas.
+      if (slot.fresh !== undefined) slot.fresh = mergedFresh(slot.fresh, slot.count, 1, put)
       slot.count += put
       remaining -= put
     }
@@ -188,7 +249,7 @@ export function addItems(inv: Inventory, items: ItemBag): ItemBag {
       if (remaining <= 0) break
       if (inv[i] !== null) continue
       const put = Math.min(max, remaining)
-      inv[i] = { item, count: put }
+      inv[i] = isPerishable(item) ? { item, count: put, fresh: 1 } : { item, count: put }
       remaining -= put
     }
     if (remaining > 0) leftover[item] = remaining
@@ -208,6 +269,10 @@ export function addItems(inv: Inventory, items: ItemBag): ItemBag {
  */
 export function addSlot(inv: Inventory, slot: Slot): number {
   if (slot.wear === undefined) {
+    // LA FRAÎCHEUR VOYAGE AVEC L'OBJET. Passer par `addItems` la remettrait à 1 :
+    // sortir des baies rassies d'un coffre les rendrait fraîches — le coffre
+    // serait une machine à remonter le temps, et la péremption ne coûterait rien.
+    if (slot.fresh !== undefined) return addPerishable(inv, slot.item, slot.count, slot.fresh)
     const leftover = addItems(inv, { [slot.item]: slot.count })
     return leftover[slot.item] ?? 0
   }
@@ -215,6 +280,33 @@ export function addSlot(inv: Inventory, slot: Slot): number {
   if (empty < 0) return slot.count
   inv[empty] = { item: slot.item, count: slot.count, wear: slot.wear }
   return 0
+}
+
+/**
+ * Verse `count` unités d'un périssable, EN GARDANT sa fraîcheur (moyennée à la
+ * fusion). Retourne ce qui n'a pas tenu. C'est le jumeau d'`addItems` pour ce qui
+ * pourrit — et la seule porte par laquelle une fraîcheur entre dans un sac.
+ */
+function addPerishable(inv: Inventory, item: ItemId, count: number, fresh: number): number {
+  const max = stackSize(item)
+  let remaining = count
+  for (const slot of inv) {
+    if (remaining <= 0) break
+    if (slot === null || slot.item !== item || slot.wear !== undefined) continue
+    const room = max - slot.count
+    if (room <= 0) continue
+    const put = Math.min(room, remaining)
+    slot.fresh = mergedFresh(slot.fresh ?? 1, slot.count, fresh, put)
+    slot.count += put
+    remaining -= put
+  }
+  for (let i = 0; i < inv.length && remaining > 0; i++) {
+    if (inv[i] !== null) continue
+    const put = Math.min(max, remaining)
+    inv[i] = { item, count: put, fresh }
+    remaining -= put
+  }
+  return remaining
 }
 
 /**
@@ -246,7 +338,9 @@ export function pourSlot(from: Inventory, i: number, to: Inventory, count: numbe
     from[i] = null
     return slot.count
   }
-  const put = take - addSlot(to, { item: slot.item, count: take })
+  const carried: Slot = { item: slot.item, count: take }
+  if (slot.fresh !== undefined) carried.fresh = slot.fresh // la fraîcheur suit l'objet
+  const put = take - addSlot(to, carried)
   if (put <= 0) return 0
   slot.count -= put
   if (slot.count <= 0) from[i] = null
@@ -310,8 +404,18 @@ export function pourOntoSlot(
   const room = dst === null ? max : dst.item === src.item && dst.wear === undefined ? max - dst.count : 0
   const put = Math.min(take, room)
   if (put <= 0) return 0
-  if (dst === null) to[j] = { item: src.item, count: put }
-  else dst.count += put
+  if (dst === null) {
+    const posee: Slot = { item: src.item, count: put }
+    if (src.fresh !== undefined) posee.fresh = src.fresh
+    to[j] = posee
+  } else {
+    // Deux piles qui fusionnent MOYENNENT leur fraîcheur (jamais la meilleure des
+    // deux : ranger ses vieilles baies sous les neuves les rajeunirait).
+    if (dst.fresh !== undefined || src.fresh !== undefined) {
+      dst.fresh = mergedFresh(dst.fresh ?? 1, dst.count, src.fresh ?? 1, put)
+    }
+    dst.count += put
+  }
   src.count -= put
   if (src.count <= 0) from[i] = null
   return put

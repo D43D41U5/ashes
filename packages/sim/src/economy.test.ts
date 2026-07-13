@@ -653,12 +653,14 @@ describe('la faim (A4)', () => {
     const decayAct2 = (h1 - me(sim).hunger) / 10
     expect(decayAct2 / decayAct1).toBeCloseTo(2, 5)
 
+    // LE CRU NE NOURRIT PAS UN HOMME (chantier tension) : une baie vaut 6, un
+    // ragoût 60. On ne vit plus de cueillette — on cuisine.
     grantItems(sim, id, { berries: 2, stew: 1 })
     me(sim).hunger = 20
     act(sim, id, { type: 'eat', item: 'berries' })
-    expect(me(sim).hunger).toBeCloseTo(35, 1)
+    expect(me(sim).hunger).toBeCloseTo(26, 1)
     act(sim, id, { type: 'eat', item: 'stew' })
-    expect(me(sim).hunger).toBeCloseTo(85, 1)
+    expect(me(sim).hunger).toBeCloseTo(86, 1)
   })
 
   it('à 0 : vitesse divisée par 2, restaurée après un repas', () => {

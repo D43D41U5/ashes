@@ -11,6 +11,7 @@ import {
   NODE_DEFS,
   RECIPES,
   SEASON,
+  SPOIL_CYCLES,
   TERRAIN_ALPINE_MEADOW,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
@@ -26,6 +27,7 @@ import {
   TERRAIN_PINE,
   TERRAIN_REED_MARSH,
   TERRAIN_SCREE,
+  CIRCLES,
   TERRAINS,
   TOOL_RANK,
   TOOL_TIERS,
@@ -36,10 +38,20 @@ import {
   type ToolTier,
 } from './balance'
 import { harvestFactor } from './alignment'
+import { die } from './combat'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { heldSlot, wearHeld } from './inventory-actions'
-import { addItems, freeRoomFor, removeItems, type ItemBag, type ItemId, type SkillId } from './items'
+import {
+  addItems,
+  freeRoomFor,
+  nutritionFactor,
+  removeItems,
+  type Inventory,
+  type ItemBag,
+  type ItemId,
+  type SkillId,
+} from './items'
 import { poiClearings, terrainAt, zoneAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
@@ -54,6 +66,15 @@ export interface ResourceNode {
   stock: number
   /** Tick auquel un nœud épuisé repousse à plein (0 = jamais épuisé). */
   regrowAt: number
+  /**
+   * Combien de fois ce nœud a été RASÉ récemment. Chaque passage à vide rallonge
+   * la repousse suivante (GDD §8bis : « les filons s'épuisent localement et
+   * rouvrent ailleurs »). C'est ce qui interdit de camper une clairière : on la
+   * use, elle se ferme, on tourne. S'oublie tout seul (DEPLETION_FORGET_TICKS).
+   */
+  depletions?: number
+  /** Tick auquel le compteur d'épuisement perdra une marche. */
+  forgetAt?: number
 }
 
 /**
@@ -249,9 +270,16 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       addItems(actor.inventory, { [def.item]: yielded })
       node.stock -= yielded
       if (node.stock <= 0) {
-        // Les sources se contractent avec la saison (spec saison R1).
+        // Les sources se contractent avec la saison (spec saison R1)… ET AVEC
+        // L'USAGE : un coin qu'on rase encore et encore met de plus en plus de
+        // temps à revenir. C'est la rotation des filons du GDD §8bis — les points
+        // de friction se DÉPLACENT, et le joueur avec eux.
         const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
-        node.regrowAt = state.tick + Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR[act - 1]!)
+        node.depletions = Math.min(BALANCE.DEPLETION_MAX, (node.depletions ?? 0) + 1)
+        node.forgetAt = state.tick + BALANCE.DEPLETION_FORGET_TICKS
+        const usure = 1 + BALANCE.DEPLETION_REGROW_PENALTY * (node.depletions - 1)
+        node.regrowAt =
+          state.tick + Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR[act - 1]! * usure)
         emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id })
       }
 
@@ -347,8 +375,22 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
     case 'eat': {
       const value = FOOD_VALUES[action.item]
       if (value === undefined) return reject('immangeable')
-      if (!removeItems(actor.inventory, { [action.item]: 1 })) return reject('stock insuffisant')
-      actor.hunger = Math.min(100, actor.hunger + value)
+      // On mange la pile la MOINS FRAÎCHE d'abord — c'est ce que ferait n'importe
+      // qui, et ça évite au joueur un tri qu'on ne veut pas lui imposer.
+      let pire = -1
+      for (let i = 0; i < actor.inventory.length; i++) {
+        const s = actor.inventory[i]
+        if (s === null || s === undefined || s.item !== action.item) continue
+        if (pire < 0 || (s.fresh ?? 1) < (actor.inventory[pire]!.fresh ?? 1)) pire = i
+      }
+      if (pire < 0) return reject('stock insuffisant')
+      const slot = actor.inventory[pire]!
+      const facteur = nutritionFactor(slot.fresh)
+      slot.count -= 1
+      if (slot.count <= 0) actor.inventory[pire] = null
+      // RASSIS = MOITIÉ MOINS. Une réserve qu'on laisse traîner n'est pas une
+      // réserve, c'est un souvenir : c'est ça, l'économie de FLUX du GDD §8.
+      actor.hunger = Math.min(100, actor.hunger + value * facteur)
       emitEvent(state, { type: 'meal_eaten', tick: state.tick, entityId: actorId, item: action.item })
       return
     }
@@ -415,20 +457,68 @@ export function advanceCraft(state: SimState): void {
   }
 }
 
+/**
+ * LA PÉREMPTION, un tick (spec `evier.md`). Tout ce qui pourrit pourrit — dans les
+ * sacs, dans les coffres, sur les cadavres. Pas d'exception, sinon le coffre
+ * deviendrait un congélateur gratuit et l'évier se viderait de son sens.
+ *
+ * Une pile à 0 DISPARAÎT. C'est brutal, et c'est le but : on ne stocke pas de la
+ * nourriture, on la fait TOURNER. Le joueur n'a rien à gérer — il voit la couleur
+ * de sa case changer, et il décide.
+ */
+export function advanceSpoilage(state: SimState): void {
+  const pourrir = (inv: Inventory): void => {
+    for (let i = 0; i < inv.length; i++) {
+      const slot = inv[i]
+      if (slot === null || slot === undefined || slot.fresh === undefined) continue
+      const cycles = SPOIL_CYCLES[slot.item]
+      if (cycles === undefined) continue
+      slot.fresh -= 1 / (cycles * TICKS_PER_CYCLE)
+      if (slot.fresh <= 0) inv[i] = null // POURRI : la pile s'en va
+    }
+  }
+  for (const entity of state.entities) pourrir(entity.inventory)
+  for (const structure of state.structures) if (structure.inventory) pourrir(structure.inventory)
+  for (const corpse of state.corpses) pourrir(corpse.inventory)
+}
+
 /** Passe économique du tick : faim (modulée par l'acte) et repousse des nœuds. */
 export function advanceEconomy(state: SimState): void {
   const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
   const perTick =
     (BALANCE.HUNGER_PER_CYCLE_HOUR / (TICKS_PER_CYCLE / 24)) * BALANCE.ACT_HUNGER_FACTOR[act - 1]!
+  const starvePerTick = BALANCE.STARVE_HP_PER_MIN / (60 * BALANCE.TICK_RATE_HZ)
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
-  for (const entity of state.entities) {
+  for (const entity of [...state.entities]) {
     if (monsterIds.has(entity.id)) continue // les monstres n'ont pas faim
     entity.hunger = Math.max(0, entity.hunger - perTick)
+
+    // LA FAIM TUE. Elle ne faisait que ralentir : ce n'est pas une punition, c'est
+    // une remarque. Un joueur qui ignore sa jauge doit MOURIR — sinon la nourriture
+    // n'est pas une ressource, c'est un décor. Même chemin que le froid (die avec
+    // sa cause) : la chronique doit pouvoir dire de QUOI on est mort.
+    if (entity.hunger <= 0 && entity.hp > 0) {
+      const before = entity.hp
+      entity.hp = Math.max(0, entity.hp - starvePerTick)
+      if (before > 0 && entity.hp <= 0) die(state, entity, 0, 'hunger')
+    }
   }
   for (const node of state.nodes) {
     if (node.stock <= 0 && state.tick >= node.regrowAt) {
       node.stock = NODE_DEFS[node.type].stock
       node.regrowAt = 0
+    }
+    // Le monde OUBLIE : un coin qu'on laisse tranquille se refait une santé. Sans
+    // ça, une carte finirait par se fermer partout — et un monde mort n'est pas un
+    // monde tendu, c'est un monde fini.
+    if (node.depletions !== undefined && node.forgetAt !== undefined && state.tick >= node.forgetAt) {
+      node.depletions -= 1
+      if (node.depletions <= 0) {
+        delete node.depletions
+        delete node.forgetAt
+      } else {
+        node.forgetAt = state.tick + BALANCE.DEPLETION_FORGET_TICKS
+      }
     }
   }
 }
@@ -492,7 +582,25 @@ export function treeJitter(tx: number, ty: number): { dx: number; dy: number } {
   return { dx, dy }
 }
 
-export function generateNodes(map: WorldMap, seed: number, density = 1): ResourceNode[] {
+/**
+ * LA RICHESSE D'UN NŒUD, selon le cercle où il tombe (GDD §8bis, `CIRCLES`).
+ * Pure et déterministe : `+ − × ÷` et `sqrt`. `home` absent = monde uniforme (les
+ * bancs de test ne veulent pas d'une géographie qu'ils n'ont pas demandée).
+ */
+function circleFactor(tx: number, ty: number, home: { x: number; y: number } | undefined): number {
+  if (!home) return 1
+  const d = Math.sqrt((tx - home.x) * (tx - home.x) + (ty - home.y) * (ty - home.y))
+  if (d <= CIRCLES.DOMESTIC_RADIUS) return CIRCLES.DOMESTIC_STOCK
+  if (d >= CIRCLES.WILD_RADIUS) return CIRCLES.WILD_STOCK
+  return CIRCLES.CONTESTED_STOCK
+}
+
+export function generateNodes(
+  map: WorldMap,
+  seed: number,
+  density = 1,
+  home?: { x: number; y: number },
+): ResourceNode[] {
   const nodes: ResourceNode[] = []
   // Les clairières des lieux : rien n'y pousse (voir `poiClearings`). Calculées
   // UNE fois — un test par tuile contre ~80 zones coûterait 170 M comparaisons
@@ -500,7 +608,9 @@ export function generateNodes(map: WorldMap, seed: number, density = 1): Resourc
   const cleared = poiClearings(map)
   let id = 1
   const push = (type: NodeType, tx: number, ty: number): void => {
-    nodes.push({ id, type, tx, ty, stock: NODE_DEFS[type].stock, regrowAt: 0 })
+    // Le CERCLE décide de ce que le nœud porte : médiocre au camp, riche au loin.
+    const stock = Math.max(1, Math.floor(NODE_DEFS[type].stock * circleFactor(tx, ty, home)))
+    nodes.push({ id, type, tx, ty, stock, regrowAt: 0 })
     id += 1
   }
   const nodeSeed = (seed ^ 0x51ab3f77) | 0

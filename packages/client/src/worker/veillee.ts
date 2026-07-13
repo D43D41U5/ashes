@@ -79,7 +79,12 @@ export function createVeillee(onPhase: (phase: LoadPhase) => void = () => {}): {
   // par deltas (nœuds au ready + stock changé par tick) découple ce nombre du
   // coût réseau ; l'index tuile→nœud garde la collision O(1).
   onPhase('nodes')
-  const nodes = generateNodes(map, VEILLEE_SEED, NODE_DENSITY)
+  // LE SPAWN D'ABORD : c'est LUI qui décide des trois cercles (GDD §8bis). Autour
+  // du point de départ, la récolte est MÉDIOCRE — « un village y survit, n'y
+  // prospère jamais » ; la richesse est au loin, avec ce qui y vit. C'est ce qui
+  // donne un sens au poids : s'éloigner coûte, donc il faut que ça rapporte.
+  const spawn = walkableSpawn(map)
+  const nodes = generateNodes(map, VEILLEE_SEED, NODE_DENSITY, spawn)
   const sim = createSim(VEILLEE_SEED, {
     map,
     calendarScale: VEILLEE_CALENDAR_SCALE,
@@ -99,7 +104,6 @@ export function createVeillee(onPhase: (phase: LoadPhase) => void = () => {}): {
   onPhase('monsters')
   spawnPoiMonsters(sim, VEILLEE_SEED)
   // Le joueur commence les mains vides (spec économie) — pas de kit de départ.
-  const spawn = walkableSpawn(map)
   const playerId = spawnEntity(sim, spawn.x, spawn.y)
   return { sim, playerId, spawn }
 }

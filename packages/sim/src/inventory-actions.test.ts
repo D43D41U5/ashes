@@ -481,7 +481,7 @@ describe('transfer — joueur ⇄ conteneur (R16)', () => {
       to: { side: 'player', slot: 0 },
       count: 1,
     })
-    expect(entity(sim, id).inventory[0]).toEqual({ item: 'cooked_meat', count: 1 })
+    expect(entity(sim, id).inventory[0]).toMatchObject({ item: 'cooked_meat', count: 1 })
     expect(sim.corpses).toHaveLength(1) // il reste de la viande : le tas demeure
 
     act(sim, id, {
@@ -608,7 +608,7 @@ describe('transfer — joueur ⇄ conteneur (R16)', () => {
       count: 5,
     })
 
-    expect(chest.inventory![0]).toEqual({ item: 'berries', count: 5 }) // le dépôt a bien eu lieu…
+    expect(chest.inventory![0]).toMatchObject({ item: 'berries', count: 5 }) // le dépôt a bien eu lieu…
     expect(drainEvents(sim).filter((e) => e.type === 'gift_given')).toEqual([]) // …mais ce n'est pas un don
     expect(entity(sim, chief).warmth).toBe(0)
   })
@@ -687,7 +687,7 @@ describe('transfer — un `side` hors des valeurs légales (anti-cheat)', () => 
       expect.objectContaining({ type: 'action_rejected', reason: 'case invalide' }),
     )
     expect(me.warmth).toBe(0) // aucune chaleur créditée
-    expect(granary.inventory![0]).toEqual({ item: 'berries', count: 5 }) // le grenier n'a pas bougé
+    expect(granary.inventory![0]).toMatchObject({ item: 'berries', count: 5 }) // le grenier n'a pas bougé
   })
 
   it('un `to.side` bidon est refusé AVANT tout versement (pas de dépôt silencieux)', () => {

@@ -59,7 +59,9 @@ describe('ambientTemperature', () => {
     state.structures.push({ type: 'house', tx: 5, ty: 5 } as never)
     const sheltered = ambientTemperature(state, 5, 5)
     expect(sheltered).toBeGreaterThan(exposed)
-    expect(sheltered - exposed).toBeCloseTo(10, 5) // pénalité nocturne 20 → 10
+    // La nuit MORD depuis le chantier tension (NIGHT_COLD 20 → 30) : sous abri,
+    // elle est amortie de moitié — 30 → 15.
+    expect(sheltered - exposed).toBeCloseTo(15, 5)
   })
 })
 

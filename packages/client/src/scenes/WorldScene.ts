@@ -11,6 +11,7 @@
  * que câbler l'I/O réseau et le rendu.
  */
 import {
+  TEMPERATURE,
   createPrediction,
   decayRenderOffset,
   hash2,
@@ -453,6 +454,7 @@ export class WorldScene extends Phaser.Scene {
     // craft. Miroir pur du client — la sim revalide tout, à l'enfilage et à chaque
     // tick (spec craft-file F7, F14).
     publishStationsInRange(this.registry, this.predicted, this.view.structures)
+    this.checkVitals()
     this.hitFx.update(time)
     this.ground.render(this.cameras.main)
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
@@ -617,6 +619,31 @@ export class WorldScene extends Phaser.Scene {
   }
 
   /** Événements du snapshot : erreurs/alarme pour MOI, chronique, marqueurs. */
+  /**
+   * LES AVERTISSEMENTS DU CORPS. Le jeu punit — il doit donc PRÉVENIR, et assez tôt
+   * pour qu'on puisse encore agir. Deux crans par danger : un rappel discret quand
+   * ça commence à mordre, une alerte quand ça tue. Chacun a son propre répit : une
+   * alerte qui se répète à chaque frame n'est plus une alerte, c'est un décor.
+   */
+  private warnedAt: Record<string, number> = {}
+
+  private warn(key: string, message: string, repitMs: number): void {
+    const now = this.time.now
+    if ((this.warnedAt[key] ?? -1e9) + repitMs > now) return
+    this.warnedAt[key] = now
+    publishError(this.registry, message, now)
+  }
+
+  private checkVitals(): void {
+    if (!getHud(this.registry, 'worldReady')) return
+    // LA FAIM TUE désormais : à 0, les PV fondent. On le dit, fort.
+    if (this.myHunger <= 0) this.warn('famine', 'VOUS MOUREZ DE FAIM.', 6000)
+    else if (this.myHunger < 25) this.warn('faim', 'La faim vous tenaille — il faut manger.', 45000)
+    // Le froid tue aussi, et il tue plus vite qu'on ne le croit.
+    if (this.myTemperature <= TEMPERATURE.HYPOTHERMIA) this.warn('gel', 'VOUS GELEZ. Trouvez un feu.', 6000)
+    else if (this.myTemperature < 45) this.warn('froid', 'Le froid vous prend.', 45000)
+  }
+
   private processEvents(msg: SnapshotMessage): void {
     let chronicleDirty = false
     for (const event of msg.events) {
@@ -628,6 +655,11 @@ export class WorldScene extends Phaser.Scene {
         // serait un mensonge, et le client n'a pas le droit de mentir (invariant §3).
         this.hitFx.hit(event.nodeId, this.time.now) // le nœud tressaille
         publishPickup(this.registry, event.item, event.count) // et le butin s'inscrit au HUD
+      } else if (event.type === 'night_started') {
+        // LA NUIT S'ANNONCE. C'est la règle la plus dure du jeu (loin d'un feu, on
+        // est chassé) : elle doit être DITE, une fois, chaque soir. Une punition
+        // qu'on n'a pas vue venir n'est pas une règle, c'est une injustice.
+        publishError(this.registry, 'La nuit tombe. Loin d’un feu, on est chassé.', this.time.now)
       } else if (event.type === 'alarm_raised' && event.villageId === this.myVillageId) {
         publishAlarm(this.registry, this.time.now)
       } else if (event.type === 'wolf_howl' && event.targetEntityId === this.playerId) {

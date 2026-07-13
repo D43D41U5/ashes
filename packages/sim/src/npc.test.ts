@@ -197,7 +197,28 @@ describe('le peuplement (A6)', () => {
   })
 })
 
-describe('LE critère (A7) — un village 100 % PNJ survit 10 jours', () => {
+/*
+ * ⚠️ EN PAUSE — CHANTIER VILLAGE (décision utilisateur, 2026-07-13).
+ *
+ * Le chantier TENSION a rendu le monde exigeant : la faim est TROIS FOIS plus
+ * rapide et TUE, une baie vaut 6 au lieu de 15, la repousse est passée de 5 à 45
+ * minutes, et la récolte est MÉDIOCRE près du camp (les trois cercles). L'IA des
+ * PNJ, elle, est calibrée sur l'ancien monde généreux : ses seuils (quand manger,
+ * combien porter, quand cuisiner) datent d'un temps où un buisson nourrissait 34
+ * joueurs. Elle ne tient plus, et c'est ATTENDU.
+ *
+ * On ne bricole PAS ces seuils au chausse-pied pour faire passer le test : le
+ * village et les PNJ sont un chantier à part entière, à reprendre avec leurs specs
+ * (tableau des corvées, cibles de portage, cuisine, réserves). Les remettre au vert
+ * en douce masquerait ce qu'il y a vraiment à faire.
+ *
+ * Ce qu'il faudra reprendre, noté ici pour ne pas le redécouvrir :
+ *   - `NPC_HUNGER_EAT_THRESHOLD` et les réserves : ils mangeaient des baies, or les
+ *     baies ne nourrissent plus — il leur faut de la CUISINE (le ragoût, le Feu) ;
+ *   - `NPC_CARRY_TARGETS` : le portage borne désormais ce qu'ils peuvent rapporter ;
+ *   - la récolte médiocre du cercle domestique : leurs corvées doivent SORTIR du camp.
+ */
+describe.skip('LE critère (A7) — un village 100 % PNJ survit 10 jours [EN PAUSE — chantier village]', () => {
   it('4 PNJ, 10 cycles jour/nuit : personne à 0 de faim, le grenier respire', { timeout: 60_000 }, () => {
     const sim = npcVillageSim(4, [
       { id: 10, type: 'berry_bush', tx: 5, ty: 5, stock: 8, regrowAt: 0 },
@@ -516,7 +537,9 @@ describe('le sac qui se remplit PENDANT la corvée (la traversée)', () => {
   const rejects = (sim: SimState, entityId: number): string[] =>
     drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' && e.entityId === entityId ? [e.reason] : []))
 
-  it('récolter : la faim prend la dernière case en route → il lâche, et ne rase pas le nœud', () => {
+  // ⚠️ EN PAUSE — chantier village (voir le bloc ci-dessus) : ce test suppose une
+  // faim assez LENTE pour qu'un PNJ traverse la carte sans manger. Elle ne l'est plus.
+  it.skip('récolter : la faim prend la dernière case en route → il lâche, et ne rase pas le nœud', () => {
     const sim = npcVillageSim(1)
     // Le tableau ne veut QUE de la fibre (nourriture et bois au-dessus des cibles,
     // et pas de ragoût possible sans fibre au grenier).

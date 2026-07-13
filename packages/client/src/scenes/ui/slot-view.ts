@@ -13,7 +13,7 @@
  *    VERTICAL collé au bord GAUCHE de la case, qui se vide vers le bas ;
  *  - la case tenue en main n'est pas cerclée d'or : elle est TEINTÉE DE BLEU.
  */
-import { durabilityOf, type Slot } from '@braises/sim'
+import { durabilityOf, spoilTier, type Slot } from '@braises/sim'
 import type Phaser from 'phaser'
 import { ITEM_ICON_PX, itemIconKey } from '../../render/item-art'
 import { FONT } from './typography'
@@ -38,6 +38,20 @@ const WEAR_INSET = 4
 const WEAR_GREEN = 0x8cc63e
 const WEAR_AMBER = 0xe8c66a
 const WEAR_RED = 0xc0503e
+
+/**
+ * LA FRAÎCHEUR — un bandeau en BAS de la case, quand la nourriture n'est plus
+ * fraîche. Vert : on ne l'affiche pas (le frais est l'état normal, et un HUD qui
+ * décore l'état normal ne dit plus rien). Jaune : RASSIS (moitié moins nourrissant).
+ * Rouge : AVARIÉ (presque plus rien) — et il va bientôt POURRIR, c'est-à-dire
+ * DISPARAÎTRE. Le joueur n'a rien à gérer : il voit, il décide.
+ *
+ * Même grammaire que l'usure (un filet coloré collé au bord) : on n'apprend pas
+ * deux langages pour deux compteurs.
+ */
+const FRESH_STALE = 0xe8c66a
+const FRESH_SPOILED = 0xc0503e
+const FRESH_H = 4
 
 /**
  * L'icône, en multiple ENTIER de sa taille native : le jeu tourne en `pixelArt`,
@@ -80,7 +94,13 @@ export function createSlotView(scene: Phaser.Scene, x: number, y: number, size: 
     .setOrigin(0, 1)
     .setVisible(false)
 
-  const root = scene.add.container(x, y, [bg, icon, wearBg, wearBar, count])
+  // Le bandeau de fraîcheur : en bas, sur toute la largeur — impossible à confondre
+  // avec le filet d'usure (vertical, à gauche).
+  const spoilBar = scene.add
+    .rectangle(0, size / 2 - FRESH_H / 2, size - 8, FRESH_H, FRESH_STALE)
+    .setVisible(false)
+
+  const root = scene.add.container(x, y, [bg, icon, wearBg, wearBar, spoilBar, count])
 
   return {
     root,
@@ -92,10 +112,18 @@ export function createSlotView(scene: Phaser.Scene, x: number, y: number, size: 
         count.setText('')
         wearBg.setVisible(false)
         wearBar.setVisible(false)
+        spoilBar.setVisible(false)
         return
       }
       icon.setTexture(itemIconKey(slot.item)).setVisible(true)
       count.setText(slot.count > 1 ? `x${slot.count}` : '')
+
+      // La fraîcheur : le cran vient de /sim (`spoilTier`), jamais d'un seuil
+      // recopié ici — la case doit dire EXACTEMENT ce que l'assiette rendra.
+      const tier = slot.fresh === undefined ? null : spoilTier(slot.fresh)
+      spoilBar.setVisible(tier === 'stale' || tier === 'spoiled')
+      if (tier === 'stale') spoilBar.fillColor = FRESH_STALE
+      if (tier === 'spoiled') spoilBar.fillColor = FRESH_SPOILED
       const worn = slot.wear !== undefined && slot.wear > 0
       wearBg.setVisible(worn)
       wearBar.setVisible(worn)
