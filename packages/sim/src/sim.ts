@@ -160,6 +160,8 @@ export interface SimState {
   faunaCap: number
   /** Hordes et convois armés ? (voir SimOptions.worldEvents) */
   worldEvents: boolean
+  /** Le foyer, qui dessine les trois cercles (voir SimOptions.home). `null` = monde uniforme. */
+  home: { x: number; y: number } | null
   /** Prochaine identité de harde à distribuer (spec faune R9). */
   nextHerdId: number
   /**
@@ -213,6 +215,13 @@ export interface SimOptions {
    * 10 jours » n'était pas une propriété du village, c'était le tirage du seed 11.
    */
   worldEvents?: boolean
+  /**
+   * LE FOYER : le point de départ du joueur. Décision d'HÔTE (comme `faunaCap` ou
+   * la densité de nœuds) : c'est lui qui dessine LES TROIS CERCLES du GDD §8bis —
+   * médiocre et sûr autour, riche et dangereux au loin. Absent = monde uniforme
+   * (un banc de test ne veut pas d'une géographie qu'il n'a pas demandée).
+   */
+  home?: { x: number; y: number }
 }
 
 /** Intention d'un avatar pour un tick : déplacement, postures, au plus une action. */
@@ -260,6 +269,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     debug: options.debug ?? false,
     faunaCap: options.faunaCap ?? 0,
     worldEvents: options.worldEvents ?? true,
+    home: options.home ?? null,
     nextHerdId: 1,
     faunaQuiet: [],
     dens: [],

@@ -4,6 +4,7 @@ import { generateNodes, type ResourceNode } from './economy'
 import { drainEvents } from './events'
 import { countOf, inventoryOf, nutritionFactor, spoilTier } from './items'
 import { createEmptyMap } from './map'
+import { predatorBias } from './faune'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { TICKS_PER_CYCLE, cycleOffsetForStartHour } from './time'
 import { grantItems } from './village'
@@ -179,6 +180,24 @@ describe('3. LE MONDE NE SE REMPLIT PLUS TOUT SEUL', () => {
     // « Un village y survit, n'y prospère jamais. » La richesse se mérite — et
     // maintenant que le POIDS rend la distance coûteuse, c'est un vrai arbitrage.
     expect(domestique).toBeLessThan(sauvage)
+  })
+
+  it('LE LOIN EST RICHE… ET DANGEREUX : les prédateurs appartiennent aux marges', () => {
+    const sim = createSim(9, {
+      map: createEmptyMap(200, 200, TERRAIN_GRASS),
+      home: { x: 100, y: 100 },
+    })
+
+    // Sans ce gradient, le cercle sauvage était riche SANS être dangereux :
+    // s'éloigner rapportait sans faire peur, et le POIDS (qui rend la distance
+    // coûteuse) n'achetait aucune tension. Les deux règles se tiennent la main.
+    expect(predatorBias(sim, 100, 100)).toBeLessThan(1) // au camp : les loups sont rares
+    expect(predatorBias(sim, 180, 100)).toBeGreaterThan(1) // aux marges : c'est chez eux
+
+    // Un banc de test qui n'a pas déclaré de foyer garde un monde UNIFORME : on
+    // n'impose pas une géographie à qui ne l'a pas demandée.
+    const neutre = createSim(9, { map: createEmptyMap(50, 50, TERRAIN_GRASS) })
+    expect(predatorBias(neutre, 10, 10)).toBe(1)
   })
 })
 

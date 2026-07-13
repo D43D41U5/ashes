@@ -702,6 +702,15 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
  */
 export const FAUNA = {
   /**
+   * LE GRADIENT DE DANGER (spec tension.md, GDD §8bis). Près du foyer, les
+   * prédateurs sont RARES ; aux marges, le monde leur appartient. Sans lui, le
+   * cercle sauvage était riche sans être dangereux : s'éloigner rapportait sans
+   * faire peur, et le PORTAGE — qui rend la distance coûteuse — n'achetait aucune
+   * tension. Les deux règles se tiennent la main.
+   */
+  PREDATOR_BIAS_DOMESTIC: 0.2,
+  PREDATOR_BIAS_WILD: 2.5,
+  /**
    * Plafond de bêtes ambiantes vivantes (hors bêtes de lieu, résidentes).
    *
    * CALIBRÉ EN JEU (2026-07-11) : ce qui compte n'est pas le plafond mais la

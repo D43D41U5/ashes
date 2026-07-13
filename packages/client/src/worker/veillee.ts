@@ -93,6 +93,9 @@ export function createVeillee(onPhase: (phase: LoadPhase) => void = () => {}): {
     // Le monde est habité (spec faune) : la faune ambiante naît hors-champ
     // autour du joueur et se dissipe derrière lui. Plafond, donc coût constant.
     faunaCap: FAUNA.CAP,
+    // LE FOYER dessine les trois cercles (GDD §8bis) : la récolte est médiocre
+    // autour, et les PRÉDATEURS y sont rares — aux marges, le monde leur appartient.
+    home: spawn,
     // Les outils de dev (TP, heure, invulnérabilité) ne sont armés QUE dans un
     // build de développement : `import.meta.env.DEV` est statiquement faux en
     // prod, donc l'autorité y refuse ces actions même si un client les envoie.

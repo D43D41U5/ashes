@@ -15,7 +15,7 @@
  * trigonométrie — l'anneau est échantillonné par rejet dans un carré, ce qui
  * n'emploie que `+ - * /` et des comparaisons (invariant 2).
  */
-import { BALANCE, COMBAT, FAUNA, MONSTER_DEFS, TERRAINS, type MonsterType } from './balance'
+import { BALANCE, CIRCLES, COMBAT, FAUNA, MONSTER_DEFS, TERRAINS, type MonsterType } from './balance'
 import { isBlockedAt } from './collision'
 import { applyDamage, startAttack } from './combat'
 import { emitEvent } from './events'
@@ -26,6 +26,24 @@ import { moveToward, spawnMonster, type Monster } from './monsters'
 import { rngRoll } from './rng'
 import { getGameTime } from './time'
 import type { Entity, SimState } from './sim'
+
+/**
+ * COMBIEN LE COIN AIME-T-IL LES PRÉDATEURS ? (spec tension.md, GDD §8bis)
+ *
+ * Pur, déterministe (`sqrt` seulement) : rare près du foyer, courant au loin. Sans
+ * foyer déclaré (bancs de test), le monde reste uniforme — on n'impose pas une
+ * géographie à qui ne l'a pas demandée.
+ */
+export function predatorBias(state: SimState, tx: number, ty: number): number {
+  const home = state.home
+  if (!home) return 1
+  const dx = tx - home.x
+  const dy = ty - home.y
+  const d = Math.sqrt(dx * dx + dy * dy)
+  if (d <= CIRCLES.DOMESTIC_RADIUS) return FAUNA.PREDATOR_BIAS_DOMESTIC
+  if (d >= CIRCLES.WILD_RADIUS) return FAUNA.PREDATOR_BIAS_WILD
+  return 1
+}
 
 /** Les espèces sauvages : celles qui ont un habitat (spec faune R2). */
 const WILD_TYPES = (Object.keys(MONSTER_DEFS) as MonsterType[]).filter((t) => (MONSTER_DEFS[t].habitat?.length ?? 0) > 0)
@@ -206,7 +224,19 @@ function trySpawn(state: SimState, avatars: Entity[]): void {
     const candidates = WILD_TYPES.filter((t) => inHabitat(state, t, tx, ty))
     if (candidates.length === 0) continue
 
-    const weights = candidates.map((t) => FAUNA.SPAWN_FLOOR + (1 - FAUNA.SPAWN_FLOOR) * activityAt(t, hour))
+    // LE GRADIENT DE DANGER (GDD §8bis, cercle sauvage). Le biome choisit l'espèce,
+    // l'HEURE la pondère (R10)… et la DISTANCE AU FOYER décide de qui rôde : près
+    // du camp, les prédateurs sont rares ; aux marges, le monde leur appartient.
+    //
+    // Sans lui, le cercle sauvage était riche SANS être dangereux : s'éloigner
+    // rapportait sans faire peur, et le PORTAGE (qui rend la distance coûteuse)
+    // n'achetait aucune tension. Les deux règles se tiennent la main.
+    const danger = predatorBias(state, tx, ty)
+    const weights = candidates.map(
+      (t) =>
+        (FAUNA.SPAWN_FLOOR + (1 - FAUNA.SPAWN_FLOOR) * activityAt(t, hour)) *
+        (isPredator(t) ? danger : 1),
+    )
     let total = 0
     for (const w of weights) total += w
     let pick = roll(state) * total
