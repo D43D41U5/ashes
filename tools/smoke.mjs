@@ -41,7 +41,10 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const OUT = resolve(ROOT, 'scratchpad/smoke')
+// Où atterrissent les captures. Paramétrable (SMOKE_OUT) : le dossier par défaut
+// peut être verrouillé — le nôtre l'a été, écrit en ROOT par le conteneur de dev —
+// et un outil de diagnostic qui ne peut plus rien écrire ne diagnostique rien.
+const OUT = process.env.SMOKE_OUT ? resolve(process.env.SMOKE_OUT) : resolve(ROOT, 'scratchpad/smoke')
 const PORT = 4173
 
 const args = process.argv.slice(2)
@@ -502,21 +505,55 @@ const SCENARIOS = {
       const ui = scene.scene.get('ui')
       const W = scene.scale.width
       const H = scene.scale.height
-      // Tout ce que l'UI peint et qui déborde de l'écran : c'est ça, « ça s'affiche mal ».
-      const deborde = []
-      for (const o of ui.children.list) {
-        if (!o.visible || !o.getBounds) continue
-        const b = o.getBounds()
-        if (b.width === 0 || b.height === 0) continue
-        if (b.left < -2 || b.right > W + 2 || b.top < -2 || b.bottom > H + 2) {
-          deborde.push(`${o.type}@(${Math.round(b.left)},${Math.round(b.top)}) ${Math.round(b.width)}×${Math.round(b.height)}`)
+
+      /*
+       * On ne mesure que ce qui est RÉELLEMENT PEINT : les feuilles (textes,
+       * images, rectangles) VISIBLES. Pas les conteneurs — leurs bornes englobent
+       * les enfants invisibles (le panneau de loot rangé, le banc de lignes au
+       * repos) et le voile plein écran : ils crieraient au loup à chaque frame, et
+       * un garde-fou qui crie pour rien est un garde-fou qu'on finit par éteindre.
+       */
+      const feuilles = []
+      const descendre = (o) => {
+        if (!o.visible) return
+        if (o.type === 'Container') {
+          for (const c of o.list ?? []) descendre(c)
+          return
         }
+        if (!o.getBounds) return
+        const b = o.getBounds()
+        if (b.width === 0 || b.height === 0) return
+        feuilles.push({ type: o.type, texte: String(o.text ?? '').slice(0, 20), b })
       }
-      return { W, H, deborde: deborde.slice(0, 12), total: deborde.length }
+      for (const o of ui.children.list) descendre(o)
+
+      const nom = (f) => `${f.type}${f.texte ? `("${f.texte}")` : ''}@(${Math.round(f.b.left)},${Math.round(f.b.top)}) ${Math.round(f.b.width)}×${Math.round(f.b.height)}`
+      // 1. Rien ne doit sortir de l'écran (le voile, lui, le remplit pile).
+      const deborde = feuilles
+        .filter((f) => f.b.left < -2 || f.b.right > W + 2 || f.b.top < -2 || f.b.bottom > H + 2)
+        .map(nom)
+
+      // 2. Le panneau d'artisanat ne doit pas CHEVAUCHER la grille d'inventaire —
+      //    c'était le bug : il se peignait en plein milieu du sac.
+      const titre = (t) => feuilles.find((f) => f.texte.startsWith(t))
+      const craft = titre('ARTISANAT')
+      const sac = titre('INVENTAIRE')
+      const chevauche = craft && sac ? craft.b.left < sac.b.right + 191 : null
+
+      // 3. Ce que le panneau MONTRE ici (aucune station à portée) : la couche 1.
+      const lignes = feuilles.filter((f) => f.type === 'Text' && f.b.left > W / 2).map((f) => f.texte)
+
+      return { W, H, deborde, chevauche, lignes }
     })
 
-    console.log(`écran ${vue.W}×${vue.H} — objets d'UI qui DÉBORDENT : ${vue.total}`)
-    for (const d of vue.deborde) console.log(`   ✗ ${d}`)
+    console.log(`écran ${vue.W}×${vue.H}`)
+    console.log(vue.deborde.length === 0
+      ? `   ✓ rien ne déborde de l'écran`
+      : `   ✗ ${vue.deborde.length} objet(s) hors écran : ${vue.deborde.join(' | ')}`)
+    console.log(vue.chevauche === false
+      ? `   ✓ le panneau d'artisanat est À CÔTÉ du sac, pas dessus`
+      : `   ✗ le panneau d'artisanat chevauche la grille d'inventaire`)
+    console.log(`   ce que le panneau montre : ${vue.lignes.filter(Boolean).join(' · ')}`)
     await page.screenshot({ path: `${OUT}/craft.png` })
     return vue
   },

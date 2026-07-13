@@ -36,7 +36,32 @@ services:
     working_dir: /app
     command: sh -c "corepack enable && pnpm install && pnpm --filter @braises/client dev"
     volumes:
-      - .:/app
+      #
+      # LES SOURCES SONT MONTÉES EN LECTURE SEULE — et c'est LA garde définitive.
+      #
+      # Le conteneur tourne en root. Tant qu'il pouvait ÉCRIRE dans le dépôt monté,
+      # tout ce qu'il y déposait appartenait à root sur l'hôte : `dist/` (un `vite
+      # build` lancé dedans), `scratchpad/` (les captures du smoke), `.pnpm-store/`,
+      # et les `node_modules` de chaque paquet. Résultat vécu : `pnpm install`,
+      # `pnpm build` et `pnpm smoke` de l'HÔTE tous refusés (EACCES), et un
+      # `sudo rm -rf` à repasser après chaque incursion dans le conteneur.
+      #
+      # Deux fausses pistes, essayées et écartées :
+      #   · un volume nommé par dossier écrit — ça bouche les fuites CONNUES ; la
+      #     prochaine commande qu'on lance dedans en ouvre une autre ;
+      #   · faire tomber le processus principal sur l'uid de l'hôte (su-exec) — ça
+      #     règle le serveur de dev, mais PAS `docker compose exec`, qui repart en
+      #     root. Or c'est précisément par là que les fichiers root sont arrivés.
+      #
+      # `:ro` ferme la porte pour de bon : le conteneur ne PEUT PLUS écrire dans le
+      # dépôt, quoi qu'on lance dedans et sous quelque identité que ce soit. Ce qu'il
+      # a le droit d'écrire (les node_modules, le store pnpm) vit dans des volumes
+      # nommés, montés par-dessus — un montage plus profond l'emporte sur `:ro`.
+      #
+      # Corollaire assumé : on ne BÂTIT plus dans le conteneur. Le build et le smoke
+      # se lancent sur l'hôte (`pnpm build`, `pnpm smoke`) — ce qui est de toute façon
+      # leur place : ils produisent des artefacts qu'on veut voir et versionner.
+      - .:/app:ro
       # UN VOLUME PAR node_modules DU WORKSPACE — pas seulement celui de la racine.
       # pnpm en crée un par paquet (packages/*/node_modules) : sans ces montages,
       # ils tombaient dans le bind mount `.:/app` et le `pnpm install` du conteneur
