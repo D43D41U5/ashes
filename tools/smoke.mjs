@@ -488,6 +488,72 @@ const SCENARIOS = {
   },
 
   /**
+   * LE COMBAT SE VOIT-IL ? (spec tension.md — le télégraphe du GDD §7.)
+   *
+   * On FRAPPE pour de vrai — clic gauche dans le vide, mains nues (la sim tranche :
+   * rien à récolter sous le curseur, donc on attaque) — et on regarde l'écran
+   * PENDANT le wind-up (400 ms). Ce qu'on vérifie n'est pas « une image existe »,
+   * c'est que la LAME EST PEINTE : le calque de combat doit avoir des traits dedans.
+   */
+  async combat(page) {
+    const tracés = () =>
+      page.evaluate(() => {
+        const s = window.__BRAISES__.scene
+        return s.children.list
+          .filter((o) => o.type === 'Graphics')
+          .reduce((n, o) => n + (o.commandBuffer?.length ?? 0), 0)
+      })
+
+    const repos = await tracés()
+
+    // On frappe — clic gauche MAINTENU, mains nues, dans le vide : la sim tranche
+    // (rien à récolter sous le curseur → on attaque). Le maintien répète le coup.
+    const box = page.viewportSize()
+    await page.mouse.move(box.width / 2 + 120, box.height / 2 - 40)
+    await page.mouse.down()
+
+    // ON TRAQUE LA LAME. Le wind-up dure 400 ms mais le navigateur headless ne rend
+    // que quelques images par seconde : capturer « 180 ms après le clic » tombait
+    // ENTRE deux frames et ne prouvait rien. On poll jusqu'à voir le calque peint.
+    let vu = 0
+    for (let i = 0; i < 60 && vu <= repos; i += 1) {
+      vu = await tracés()
+      if (vu > repos) break
+      await page.waitForTimeout(50)
+    }
+    // ON GÈLE LA SCÈNE À L'INSTANT DU COUP. Sans ça, la capture arrive TOUJOURS
+    // trop tard : entre la détection et le screenshot, une frame passe, `beginFrame`
+    // efface l'ardoise, et on photographie l'après. Pauser fige le dernier rendu.
+    if (vu > repos) {
+      await page.evaluate(() => window.__BRAISES__.scene.scene.pause())
+      await page.screenshot({ path: `${OUT}/combat.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.scene.resume())
+    }
+    await page.mouse.up()
+
+    console.log(
+      vu > repos
+        ? `   ✓ LA LAME SE PEINT pendant le wind-up (${repos} → ${vu} tracés)`
+        : `   ✗ rien ne se peint : le coup part, l'écran ne dit rien (${repos})`,
+    )
+
+    // …et une fois le coup parti, l'ardoise se nettoie. On POLL là aussi : en
+    // headless le jeu ne rend que quelques images par seconde, et le tampon de la
+    // dernière frame persiste — conclure sur un instant précis ne prouverait rien.
+    let apres = vu
+    for (let i = 0; i < 40 && apres > repos; i += 1) {
+      await page.waitForTimeout(100)
+      apres = await tracés()
+    }
+    console.log(
+      apres <= repos
+        ? `   ✓ la lame s'efface après le coup (aucune traînée)`
+        : `   ✗ la lame reste peinte (${apres} > ${repos})`,
+    )
+    return { repos, vu, apres }
+  },
+
+  /**
    * L'ÉCRAN D'ARTISANAT (spec craft-file F14-F15). On OUVRE le sac dans le vrai
    * jeu et on regarde : le panneau doit tenir dans l'écran, ne pas chevaucher la
    * grille d'inventaire, et ne montrer que ce qu'on peut faire ICI.

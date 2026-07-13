@@ -11,6 +11,7 @@
  * que câbler l'I/O réseau et le rendu.
  */
 import {
+  COMBAT,
   TEMPERATURE,
   createPrediction,
   decayRenderOffset,
@@ -67,6 +68,7 @@ import { bindDebugKeys } from './world/debug-bindings'
 import { syncDebug } from './world/debug-overlay'
 import { BuildGhost } from './world/build-ghost'
 import { HitFx } from './world/hit-fx'
+import { createAttackFx, type AttackFx } from './world/attack-fx'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 
@@ -209,6 +211,11 @@ export class WorldScene extends Phaser.Scene {
   private myTemperature = 100
   /** Mon avatar télégraphie : la sim l'immobilise — la prédiction aussi. */
   private myWindup = false
+  /** Les WIND-UPS du dernier snapshot : qui arme un coup, vers où, et à quel point.
+   *  C'est le TÉLÉGRAPHE du GDD §7 — on doit voir venir le coup, le sien comme
+   *  celui d'en face. Il vient du snapshot, jamais du clic (invariant §3). */
+  private windups: { id: number; dx: number; dy: number; ticksLeft: number }[] = []
+  private attackFx!: AttackFx
   /** DEV : dernière demande de TP consommée (horodatage de la carte) — évite de la rejouer. */
   private lastTeleportAt = 0
   /** Relief continu (Y-shear vertical) — source du rendu et du picking, créé au boot. */
@@ -224,6 +231,9 @@ export class WorldScene extends Phaser.Scene {
     this.playerSprite = this.add.image(0, 0, 'spr-player').setOrigin(0.5, 1)
     this.view = new SnapshotView(this)
     this.hitFx = new HitFx()
+    // Le combat se voit : la lame qui s'arme, l'impact, et l'écran qui saigne.
+    // Juste sous les overlays — au-dessus du monde, sous le HUD.
+    this.attackFx = createAttackFx(this, OVERLAY_DEPTH - 10)
     this.view.setHitFx(this.hitFx) // elle seule dessine les nœuds : à elle le tressaillement
     this.buildGhost = new BuildGhost(this)
 
@@ -455,6 +465,19 @@ export class WorldScene extends Phaser.Scene {
     // tick (spec craft-file F7, F14).
     publishStationsInRange(this.registry, this.predicted, this.view.structures)
     this.checkVitals()
+
+    // LE COMBAT SE VOIT. Le télégraphe se redessine à chaque frame, à partir du
+    // wind-up du snapshot : la lame se déplie à mesure que le coup arrive.
+    this.attackFx.beginFrame()
+    for (const w of this.windups) {
+      const sprite =
+        w.id === this.playerId ? this.playerSprite : (this.view.others.get(w.id)?.sprite ?? null)
+      if (!sprite) continue
+      const progress = Math.max(0, Math.min(1, 1 - w.ticksLeft / COMBAT.WINDUP_TICKS))
+      this.attackFx.telegraph(sprite.x, sprite.y, w.dx, w.dy, progress)
+    }
+    this.attackFx.update(time)
+
     this.hitFx.update(time)
     this.ground.render(this.cameras.main)
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
@@ -604,6 +627,11 @@ export class WorldScene extends Phaser.Scene {
     publishOpenContainer(this.registry, this.view.structures, this.view.corpses, this.predicted)
     this.processEvents(msg)
 
+    // QUI ARME UN COUP, cette frame — moi comme les bêtes. Lu du snapshot.
+    this.windups = msg.entities.flatMap((e) =>
+      e.windup ? [{ id: e.id, dx: e.windup.dx, dy: e.windup.dy, ticksLeft: e.windup.ticksLeft }] : [],
+    )
+
     // Mon entité autoritative : jauges HUD + réconciliation de la prédiction.
     const me = msg.entities.find((e) => e.id === this.playerId)
     if (me) {
@@ -681,6 +709,29 @@ export class WorldScene extends Phaser.Scene {
         // serait un mensonge, et le client n'a pas le droit de mentir (invariant §3).
         this.hitFx.hit(event.nodeId, this.time.now) // le nœud tressaille
         publishPickup(this.registry, event.item, event.count) // et le butin s'inscrit au HUD
+      } else if (event.type === 'entity_damaged') {
+        // LE COUP A PORTÉ — et on ne le sait QUE parce que la sim le dit. Un coup
+        // qui « part » à l'écran mais que la sim refuse serait un mensonge (G9) —
+        // et EN MULTI, le jus des autres joueurs ne peut venir que de là : d'eux, on
+        // ne reçoit que des événements.
+        const now = this.time.now
+        const onMe = event.entityId === this.playerId
+        const cible = onMe ? this.playerSprite : (this.view.others.get(event.entityId)?.sprite ?? null)
+        if (cible) {
+          this.attackFx.impact(cible, now)
+          this.attackFx.spark(cible.x, cible.y, event.amount, onMe, now)
+        }
+        if (onMe) {
+          this.attackFx.hurt(now) // l'écran saigne…
+          // …et la caméra encaisse. PUREMENT visuel : la position reste autoritative,
+          // rien de ce qui suit ne touche la simulation (multi).
+          this.cameras.main.shake(90, 0.006)
+        }
+      } else if (event.type === 'monster_slain') {
+        // LA MISE À MORT claque : deux étincelles là où la bête est tombée. C'est le
+        // seul retour qui dit « c'est fini » — sans lui, le loup disparaît, point.
+        const tueur = this.view.others.get(event.byEntityId)?.sprite ?? this.playerSprite
+        this.attackFx.spark(tueur.x, tueur.y - 6, 0, false, this.time.now)
       } else if (event.type === 'night_started') {
         // LA NUIT S'ANNONCE. C'est la règle la plus dure du jeu (loin d'un feu, on
         // est chassé) : elle doit être DITE, une fois, chaque soir. Une punition
