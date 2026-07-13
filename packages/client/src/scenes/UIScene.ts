@@ -12,7 +12,7 @@ import { TILE_PX } from '../render/framing'
 import { createHotbar, type Hotbar } from './ui/hotbar'
 import { createFatalPanel, type FatalPanel } from './ui/fatal'
 import { createInventoryPanel, inventoryGeometry, type InventoryPanel } from './ui/inventory-panel'
-import { createCraftPanel, type CraftPanel } from './ui/craft-panel'
+import { CRAFT_PANEL_MARGIN_Y, CRAFT_PANEL_W, createCraftPanel, type CraftPanel } from './ui/craft-panel'
 import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
 import { createLoadingScreen, type LoadingScreen } from './ui/loading'
 import { createPickupToasts, type PickupToasts } from './ui/pickup-toasts'
@@ -138,11 +138,14 @@ export class UIScene extends Phaser.Scene {
     // visible — le travail en cours est un état du personnage, pas un détail de menu).
     // À CÔTÉ de la grille d'inventaire, jamais dessus : on lit sa géométrie, on ne
     // la redevine pas (c'était le bug — le panneau tombait en plein milieu du sac).
+    // En HAUTEUR, en revanche, il prend tout l'écran (moins ses marges) : la liste
+    // des recettes n'a aucune raison d'être bornée par la taille du sac.
     const inv = inventoryGeometry(this)
+    const TITRE = 26 // le mot ARTISANAT vit au-dessus du cadre
     this.craftPanel = createCraftPanel(this, (action) => queueAction(this.registry, action), {
-      left: Math.min(inv.right + 40, this.scale.width - 316),
-      top: inv.top,
-      bottom: inv.bottom,
+      left: Math.min(inv.right + 40, this.scale.width - CRAFT_PANEL_W - CRAFT_PANEL_MARGIN_Y),
+      top: CRAFT_PANEL_MARGIN_Y + TITRE,
+      bottom: this.scale.height - CRAFT_PANEL_MARGIN_Y,
     })
     // LE CLAVIER DU CHAMP DE RECHERCHE. Tant qu'il tape, le jeu ne reçoit plus
     // rien (`uiTyping`) : sans ça, taper « hache » ferait marcher le personnage.

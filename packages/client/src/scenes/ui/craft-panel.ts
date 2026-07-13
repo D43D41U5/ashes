@@ -107,7 +107,14 @@ export function costLine(id: RecipeId): string {
 
 // ─── Le rendu Phaser (placement seulement) ───────────────────────────────────
 
-const PANEL_W = 300
+/** Largeur du panneau, et les marges qui le décollent des bords de l'écran. La
+ *  largeur est EXPORTÉE : celui qui le place (UIScene) doit pouvoir le garder dans
+ *  l'écran sans redeviner sa taille — c'est exactement le genre de nombre recopié
+ *  qui a déjà fait peindre ce panneau par-dessus l'inventaire. */
+export const CRAFT_PANEL_W = 300
+/** Marge haute/basse : le panneau prend TOUTE la hauteur, mais ne touche pas les bords. */
+export const CRAFT_PANEL_MARGIN_Y = 28
+const PANEL_W = CRAFT_PANEL_W
 const ROW_H = 46
 const HEADER_H = 26
 const SEARCH_H = 30
