@@ -128,7 +128,23 @@ export interface Caractere {
  */
 export const CARACTERES: readonly Caractere[] = [
   // ── LE FOND (< 0,32) — c'est là que la vie se joue ──
-  { slug: 'tourbiere', nom: 'la Tourbière', wet: 0.22, elev: -0.02, minElev: 0, maxElev: 0.32 },
+  /**
+   * LA TOURBIÈRE — À EXEMPLAIRE UNIQUE, et son biais est fort exprès.
+   *
+   * Elle ne se tire PAS au sort comme les autres : elle naît dans **la cuvette la
+   * plus profonde de la vallée** (cf. `derivePays`), et il n'y en a qu'une. Mesuré
+   * avant ce changement : deux à SIX Tourbières par carte, et 13 % de la vallée
+   * noyée (24 % au pire). Une vallée n'a pas six marais ; elle a UN marais, et on
+   * sait où il est.
+   *
+   * Son biais d'humidité passe de 0,22 à **0,35**, et c'est ce chiffre qui rend le
+   * marais IMPOSSIBLE ailleurs — par construction, pas par chance. Hors d'elle,
+   * `wet = 0,55 × humidité + 0,115`, et l'humidité est bornée à 1 : donc
+   * `wet ≤ 0,665`, toujours. Avec `BANDS.MARSH_WET = 0,67`, aucun pays sans biais
+   * ne peut atteindre le marais — pas sur une seed malchanceuse : JAMAIS. Et
+   * dedans, +0,35 en fait un vrai marais (≈ 95 % de son fond).
+   */
+  { slug: 'tourbiere', nom: 'la Tourbière', wet: 0.35, elev: -0.02, minElev: 0, maxElev: 0.32 },
   { slug: 'prairie', nom: 'la Prairie', wet: 0, elev: -0.03, minElev: 0, maxElev: 0.34, flowers: 2.2 },
   { slug: 'lande', nom: 'la Lande', wet: -0.2, elev: 0.02, minElev: 0, maxElev: 0.34, boulders: 1.6 },
   // ── LES PENTES BOISÉES (0,32 – 0,55) ──
@@ -167,6 +183,9 @@ export interface Contree {
   cellH: number
   seed: number
   pays: Pays[]
+  /** L'`id` de l'UNIQUE Tourbière — la cuvette la plus profonde. `-1` si la carte
+   *  n'a aucun site hors des remparts (carte dégénérée). */
+  marais: number
 }
 
 /**
@@ -184,8 +203,9 @@ export function derivePays(
   const rows = Math.max(2, Math.round(height / PAYS.CELL_TILES))
   const cellW = width / cols
   const cellH = height / rows
-  const pays: Pays[] = []
 
+  // ── Les sites, et l'altitude de base de chacun ──
+  const sites: { id: number; x: number; y: number; el: number }[] = []
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
       const id = j * cols + i
@@ -196,20 +216,50 @@ export function derivePays(
       const jy = (hash2(j, i, (seed ^ 0x5942) | 0) * 2 - 1) * PAYS.JITTER
       const x = (i + 0.5 + jx) * cellW
       const y = (j + 0.5 + jy) * cellH
-
-      const el = baseElevation(Math.round(x), Math.round(y))
-      if (el >= REMPART) {
-        pays.push({ id, x, y, nom: 'les Remparts' }) // la montagne : pas de caractère
-        continue
-      }
-      const eligibles = CARACTERES.filter((c) => el >= c.minElev && el <= c.maxElev)
-      // Toujours non vide : les tranches se recouvrent et couvrent [0, REMPART).
-      const pick = eligibles[Math.min(eligibles.length - 1, Math.floor(hash2(id, seed, 0x43) * eligibles.length))]!
-      const q = QUALIFIANTS[Math.min(QUALIFIANTS.length - 1, Math.floor(hash2(seed, id, 0x51) * QUALIFIANTS.length))]!
-      pays.push({ id, x, y, caractere: pick, nom: `${pick.nom} ${q}` })
+      sites.push({ id, x, y, el: baseElevation(Math.round(x), Math.round(y)) })
     }
   }
-  return { cols, rows, cellW, cellH, seed, pays }
+
+  /**
+   * LA TOURBIÈRE NAÎT DANS LA CUVETTE LA PLUS PROFONDE — une seule, toujours.
+   *
+   * On ne la tire pas au sort : elle est une DESTINATION (elle portera la tourbe,
+   * et elle sera close). Une vallée n'a pas six marais ; elle a UN marais, et on
+   * sait où il est. Le site le plus bas de la vallée est à la fois le plus juste
+   * géologiquement (l'eau s'y accumule) et le plus stable (aucun tirage, donc
+   * aucune seed malchanceuse où elle n'existerait pas).
+   *
+   * Départage par `id` croissant à égalité d'altitude — déterministe.
+   */
+  let marais = -1
+  let plusBas = 2
+  for (const s of sites) {
+    if (s.el >= REMPART) continue // la montagne ne fait pas un marais
+    if (s.el < plusBas) { plusBas = s.el; marais = s.id }
+  }
+
+  const pays: Pays[] = []
+  for (const s of sites) {
+    if (s.el >= REMPART) {
+      pays.push({ id: s.id, x: s.x, y: s.y, nom: 'les Remparts' }) // la montagne : pas de caractère
+      continue
+    }
+    const q = QUALIFIANTS[Math.min(QUALIFIANTS.length - 1, Math.floor(hash2(seed, s.id, 0x51) * QUALIFIANTS.length))]!
+    if (s.id === marais) {
+      const t = CARACTERES.find((c) => c.slug === 'tourbiere')!
+      pays.push({ id: s.id, x: s.x, y: s.y, caractere: t, nom: `${t.nom} ${q}` })
+      continue
+    }
+    // Tous les autres tirent parmi les caractères que leur altitude autorise —
+    // la Tourbière EXCLUE : elle est déjà attribuée, et il n'y en a qu'une.
+    const eligibles = CARACTERES.filter(
+      (c) => c.slug !== 'tourbiere' && s.el >= c.minElev && s.el <= c.maxElev,
+    )
+    // Toujours non vide : les tranches se recouvrent et couvrent [0, REMPART).
+    const pick = eligibles[Math.min(eligibles.length - 1, Math.floor(hash2(s.id, seed, 0x43) * eligibles.length))]!
+    pays.push({ id: s.id, x: s.x, y: s.y, caractere: pick, nom: `${pick.nom} ${q}` })
+  }
+  return { cols, rows, cellW, cellH, seed, pays, marais }
 }
 
 /**
@@ -230,6 +280,8 @@ export interface Echantillon {
   voisin: Pays
   /** Poids du pays propre, dans [0,5 ; 1]. */
   poids: number
+  /** Distance à la frontière la plus proche, en tuiles (0 dessus). */
+  marge: number
 }
 
 export function paysAt(c: Contree, x: number, y: number): Echantillon {
@@ -261,8 +313,69 @@ export function paysAt(c: Contree, x: number, y: number): Echantillon {
   const db = Math.sqrt(secondD === Infinity ? bestD : secondD)
   // (db − da) = 0 exactement sur la frontière, et croît vers le cœur.
   const t = Math.min(1, (db - da) / PAYS.BLEND_TILES)
-  return { pays: p, voisin: v, poids: 0.5 + 0.5 * t }
+  return { pays: p, voisin: v, poids: 0.5 + 0.5 * t, marge: (db - da) / 2 }
 }
+
+/**
+ * LE CHAMP DES PAYS, CALCULÉ UNE FOIS — qui possède quoi, et à quelle distance de
+ * la frontière.
+ *
+ * `paysAt` coûte deux `fbm2` (six appels de bruit) par interrogation, et trois
+ * passes de la génération l'interrogent : les bandes de biome (par tuile), les
+ * bosquets (par graine), et désormais les ENCEINTES (qui ont besoin de la distance
+ * à la frontière pour y lever une crête). Le payer trois fois serait absurde.
+ *
+ * LA MARGE EST LA CLÉ DES ENCEINTES. `db − da` (l'écart entre les distances aux
+ * deux sites les plus proches) vaut exactement 0 sur la frontière et croît de 2 par
+ * tuile quand on s'en éloigne le long de la ligne des sites — donc `(db − da) / 2`
+ * EST la distance à la frontière, en tuiles. C'est ce champ qu'on sculpte pour
+ * lever un mur de roche là où deux pays se touchent.
+ */
+export interface ChampPays {
+  width: number
+  height: number
+  /** `id` du pays propriétaire de la tuile. */
+  owner: Int32Array
+  /** `id` du pays voisin le plus proche (celui d'en face, par-delà la frontière). */
+  voisin: Int32Array
+  /** Distance à la frontière la plus proche, en tuiles. 0 dessus, croît vers le cœur. */
+  marge: Float64Array
+}
+
+export function computeChampPays(c: Contree, width: number, height: number): ChampPays {
+  const N = width * height
+  const owner = new Int32Array(N)
+  const voisin = new Int32Array(N)
+  const marge = new Float64Array(N)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const e = paysAt(c, x, y)
+      const i = y * width + x
+      owner[i] = e.pays.id
+      voisin[i] = e.voisin.id
+      marge[i] = e.marge
+    }
+  }
+  return { width, height, owner, voisin, marge }
+}
+
+/** L'échantillon d'une tuile, lu dans le champ — O(1), zéro bruit. */
+export function echantillonAt(c: Contree, f: ChampPays, x: number, y: number): Echantillon {
+  const i = y * f.width + x
+  const m = marginAt(f, x, y)
+  // `poids` se redérive exactement de la marge : × 2 puis ÷ 2 sont exacts en
+  // flottant, donc le résultat est identique au bit près à celui de `paysAt`.
+  const t = Math.min(1, (2 * m) / PAYS.BLEND_TILES)
+  return {
+    pays: c.pays[owner(f, x, y)]!,
+    voisin: c.pays[f.voisin[i]!]!,
+    poids: 0.5 + 0.5 * t,
+    marge: m,
+  }
+}
+
+export const owner = (f: ChampPays, x: number, y: number): number => f.owner[y * f.width + x]!
+export const marginAt = (f: ChampPays, x: number, y: number): number => f.marge[y * f.width + x]!
 
 /**
  * Le décalage d'humidité en une tuile — le caractère du pays, fondu avec celui de

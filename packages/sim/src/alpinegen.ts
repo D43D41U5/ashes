@@ -10,8 +10,8 @@ import { createEmptyMap, type WorldMap } from './map'
 import { sealBorderRing } from './valleygen'
 import { carveHydrology } from './alpine-hydro'
 import {
-  CARACTERES, derivePays, elevBiasAt, paysAt, paysToponymes, wetBiasAt,
-  type Caractere, type Contree,
+  CARACTERES, computeChampPays, derivePays, echantillonAt, elevBiasAt, owner, paysToponymes, wetBiasAt,
+  type Caractere, type ChampPays, type Contree,
 } from './pays'
 import { placePois, POI_TYPES } from './poi'
 import { paintSentiers } from './sentiers'
@@ -148,24 +148,23 @@ export const BANDS = {
   /**
    * Fond très humide → zone humide (tourbière / roselière).
    *
-   * ÉTAIT À 0,70, ET NE SE DÉCLENCHAIT JAMAIS. Mesuré sur la vraie carte : sur le
-   * fond de vallée (`el < FLOOR`), `wet` a pour médiane 0,41-0,48 et pour **maximum
-   * 0,65 à 0,72** selon la seed — le seuil était donc AU NIVEAU DU MAXIMUM. Résultat :
-   * `peat_bog` et `reed_marsh` étaient **absents de la carte** (0,00 % sur les seeds
-   * 2026 et 42 ; 0,06 % sur la 7), et avec eux mouraient les deux terrains les plus
-   * lents du jeu (0,45 et 0,55) et le seul lieu qui les habite (la Fondrière, dont
-   * ZÉRO tuile de la carte satisfaisait le biome).
+   * 0,67 N'EST PAS UN SEUIL CALÉ SUR DES SEEDS : c'est une PREUVE. Hors d'une
+   * Tourbière, `wet = 0,55 × humidité + 0,115` (le biais des autres caractères est
+   * nul ou négatif), et l'humidité est bornée à 1 par construction — donc
+   * `wet ≤ 0,665`, TOUJOURS, sur toute seed. Un seuil à 0,67 rend le marais
+   * **mathématiquement impossible** hors de la Tourbière. (Mesuré pour confirmer :
+   * le maximum réel sur 8 seeds est 0,6465.)
    *
-   * Ce n'était pas une intention, c'était un chiffre qui a raté : le commentaire
-   * d'origine (2026-07-07) dit « le fond reste de l'alpage, le marais ne prend que
-   * les vraies cuvettes détrempées » — le marais devait exister, en poches.
+   * Dedans, le biais de +0,35 le porte à ~0,95 de son fond : un vrai marais, d'un
+   * bord à l'autre.
    *
-   * 0,58 = le p90 du fond, à peu près : **le dixième le plus détrempé de la vallée**
-   * devient zone humide. Mesuré : 11,6 % / 15,4 % / 1,7 % du fond selon la seed —
-   * l'écart est VOULU (une vallée a le droit d'être plus sèche qu'une autre), et
-   * aucune n'est à zéro.
+   * HISTORIQUE. Le seuil valait 0,70 et ne se déclenchait JAMAIS (il était calé
+   * au-dessus du maximum de la distribution : les zones humides n'existaient pas).
+   * Recalé à 0,58 le 2026-07-13, il les a fait naître — mais partout, et en six
+   * pays à la fois : 13 % de la vallée noyée en moyenne, 24 % au pire. Le marais
+   * n'est pas un climat, c'est un LIEU.
    */
-  MARSH_WET: 0.58,
+  MARSH_WET: 0.67,
   HEATH_WET: 0.30,   // fond sec → lande (bruyère)
   FOREST_WET: 0.34,  // pente humide → forêt dense ; sinon adret sec (arbres épars sur lande)
 }
@@ -178,9 +177,22 @@ export const BANDS = {
  * (trouées de forêt / arbres épars). Encourage l'exploration : chaque quartier
  * a un caractère.
  */
-function bandFor(elevation: number, wet: number, tx: number, ty: number, seed: number): number {
+function bandFor(
+  elevation: number, wet: number, marais: boolean, tx: number, ty: number, seed: number,
+): number {
   if (elevation < BANDS.FLOOR) {
-    if (wet > BANDS.MARSH_WET) {
+    // LE MARAIS N'EXISTE QUE DANS LA TOURBIÈRE — et c'est un DRAPEAU, pas un seuil.
+    //
+    // Un seuil d'humidité ne peut pas le garantir : la Vieille Sylve porte un biais
+    // de +0,18, donc son `wet` peut monter à 0,845 — bien au-dessus de n'importe
+    // quel seuil qui laisse encore du marais dans la Tourbière. Et un pays de Sylve
+    // DÉBORDE sur le fond de vallée. Mesuré : un second marais naissait à 850 tuiles
+    // de la Tourbière, sur trois seeds. Un « seuil qui garantit » ne garantissait rien.
+    //
+    // Le marais est un LIEU, pas un climat. On le dit donc explicitement : seule la
+    // Tourbière peut en porter. Le seuil ne sert plus qu'à SCULPTER l'intérieur —
+    // des îlots d'herbe et de lande au milieu du bourbier.
+    if (marais && wet > BANDS.MARSH_WET) {
       // Zone humide : tourbière (le plus détrempé) ou roselière.
       return fbm2(tx, ty, 10, (seed ^ 0x0b06) | 0) < 0.5 ? TERRAIN_PEAT_BOG : TERRAIN_REED_MARSH
     }
@@ -252,13 +264,15 @@ function bandFor(elevation: number, wet: number, tx: number, ty: number, seed: n
 const MOISTURE_WEIGHT = 0.55
 const WET_BASE = 0.115 // = 0,45×0,5 − 0,22×0,5 : la moyenne des anciens champs macro
 
-export function paintAlpineBands(map: WorldMap, moisture: number[], contree: Contree, seed: number): void {
+export function paintAlpineBands(
+  map: WorldMap, moisture: number[], contree: Contree, champ: ChampPays, seed: number,
+): void {
   const { width, height } = map
   const el = map.elevation!
   for (let ty = 0; ty < height; ty++) {
     for (let tx = 0; tx < width; tx++) {
       const i = ty * width + tx
-      const e = paysAt(contree, tx, ty)
+      const e = echantillonAt(contree, champ, tx, ty) // lu dans le champ : zéro bruit
       // L'humidité locale (les poches), décalée par le CARACTÈRE du pays (le tempérament).
       const wet = clamp01(MOISTURE_WEIGHT * moisture[i]! + WET_BASE + wetBiasAt(e))
       // L'altitude APPARENTE — le seul levier du pays au-dessus de 0,55, où `bandFor`
@@ -266,7 +280,8 @@ export function paintAlpineBands(map: WorldMap, moisture: number[], contree: Con
       // relief, l'eau, le froid et le rendu la lisent telle quelle. Seul le tapis
       // végétal se laisse tromper.
       const vu = clamp01(el[i]! + elevBiasAt(e))
-      map.terrain[i] = bandFor(vu, wet, tx, ty, seed)
+      // Le marais est une propriété du PAYS : seule la Tourbière peut en porter.
+      map.terrain[i] = bandFor(vu, wet, e.pays.id === contree.marais, tx, ty, seed)
     }
   }
 }
@@ -300,7 +315,7 @@ interface Scatter {
   paysMult?: (c: Caractere | undefined) => number
 }
 
-function scatterPatches(map: WorldMap, contree: Contree, seed: number, cfg: Scatter): void {
+function scatterPatches(map: WorldMap, contree: Contree, champ: ChampPays, seed: number, cfg: Scatter): void {
   const W = map.width
   const H = map.height
   const D = Math.min(W, H)
@@ -319,7 +334,7 @@ function scatterPatches(map: WorldMap, contree: Contree, seed: number, cfg: Scat
     const y = margin + Math.floor(hash2(seed, k * 613 + cfg.salt, 0x2e3) * (H - 2 * margin))
     if (!cfg.isSource(map.terrain[y * W + x]!)) continue
     if (cfg.paysMult && maxMult > 0) {
-      const m = cfg.paysMult(paysAt(contree, x, y).pays.caractere)
+      const m = cfg.paysMult(contree.pays[owner(champ, x, y)]!.caractere)
       if (hash2(x, y, (seed ^ cfg.salt ^ 0x7a1e) | 0) > m / maxMult) continue // ce pays n'en veut pas
     }
     const r = rMin + Math.floor(hash2(k, (seed ^ cfg.salt) | 0, 0x4f7) * (rMax - rMin + 1))
@@ -363,9 +378,9 @@ const isAnyForest = (t: number): boolean =>
  * moyenne et le Versant Brûlé SEPT fois plus de cendres : on sait où l'on est en
  * regardant ses pieds.
  */
-function paintScatterBiomes(map: WorldMap, contree: Contree, seed: number): void {
+function paintScatterBiomes(map: WorldMap, contree: Contree, champ: ChampPays, seed: number): void {
   // Bosquets — bois distribué dans le fond. Neutre : tous les pays en ont.
-  scatterPatches(map, contree, seed, { density: 0.00018, rMinFrac: 0.012, rMaxFrac: 0.06, warp: 0.5, fill: 0.82, isSource: isGrass, to: TERRAIN_FOREST, salt: 0x2777 })
+  scatterPatches(map, contree, champ, seed, { density: 0.00018, rMinFrac: 0.012, rMaxFrac: 0.06, warp: 0.5, fill: 0.82, isSource: isGrass, to: TERRAIN_FOREST, salt: 0x2777 })
   // La VIEILLE FORÊT — le gros bois. C'est la Sylve, et presque rien ailleurs.
   //
   // DENSITÉ TRIPLÉE (2026-07-14), et pour une raison de JEU, pas d'esthétique :
@@ -375,13 +390,13 @@ function paintScatterBiomes(map: WorldMap, contree: Contree, seed: number): void
   // concentrée dans les Sylves : le semis de Poisson n'y posait plus aucun point
   // sur deux seeds testées, et la garde de réservation passait au rouge. Une
   // Vieille Sylve doit être VRAIMENT pleine de gros bois — c'est ce qui la nomme.
-  scatterPatches(map, contree, seed, { density: 0.00004, rMinFrac: 0.02, rMaxFrac: 0.05, warp: 0.45, fill: 0.95, isSource: isDenseForest, to: TERRAIN_OLD_GROWTH, salt: 0x51a3, paysMult: (c) => c?.oldGrowth ?? 0.3 })
+  scatterPatches(map, contree, champ, seed, { density: 0.00004, rMinFrac: 0.02, rMaxFrac: 0.05, warp: 0.45, fill: 0.95, isSource: isDenseForest, to: TERRAIN_OLD_GROWTH, salt: 0x51a3, paysMult: (c) => c?.oldGrowth ?? 0.3 })
   // LE BRÛLIS — la cendre. C'est le Versant Brûlé, et presque rien ailleurs.
-  scatterPatches(map, contree, seed, { density: 0.00002, rMinFrac: 0.015, rMaxFrac: 0.045, warp: 0.55, fill: 0.9, isSource: isAnyForest, to: TERRAIN_BURNT_FOREST, salt: 0x71c9, paysMult: (c) => c?.burnt ?? 0.3 })
+  scatterPatches(map, contree, champ, seed, { density: 0.00002, rMinFrac: 0.015, rMaxFrac: 0.045, warp: 0.55, fill: 0.9, isSource: isAnyForest, to: TERRAIN_BURNT_FOREST, salt: 0x71c9, paysMult: (c) => c?.burnt ?? 0.3 })
   // Les PRÉS FLEURIS — la Prairie et les Hauts Alpages.
-  scatterPatches(map, contree, seed, { density: 0.00006, rMinFrac: 0.015, rMaxFrac: 0.04, warp: 0.5, fill: 0.72, isSource: isGrass, to: TERRAIN_FLOWER_MEADOW, salt: 0x3b1d, paysMult: (c) => c?.flowers ?? 0.6 })
+  scatterPatches(map, contree, champ, seed, { density: 0.00006, rMinFrac: 0.015, rMaxFrac: 0.04, warp: 0.5, fill: 0.72, isSource: isGrass, to: TERRAIN_FLOWER_MEADOW, salt: 0x3b1d, paysMult: (c) => c?.flowers ?? 0.6 })
   // LE CHAOS DE BLOCS — le Pierrier, et la Lande qui l'annonce.
-  scatterPatches(map, contree, seed, { density: 0.00009, rMinFrac: 0.01, rMaxFrac: 0.03, warp: 0.55, fill: 0.4, isSource: isMeadowish, to: TERRAIN_BOULDERS, salt: 0x6e2f, paysMult: (c) => c?.boulders ?? 0.5 })
+  scatterPatches(map, contree, champ, seed, { density: 0.00009, rMinFrac: 0.01, rMaxFrac: 0.03, warp: 0.55, fill: 0.4, isSource: isMeadowish, to: TERRAIN_BOULDERS, salt: 0x6e2f, paysMult: (c) => c?.boulders ?? 0.5 })
 }
 
 /**
@@ -487,6 +502,9 @@ export function generateAlpineTerrain(
   // tire sur l'altitude de BASE (celle d'avant l'érosion) — un caractère de fond
   // ne naît pas sur un pic.
   const contree = derivePays(width, height, seed, (x, y) => map.elevation![y * width + x] ?? 0)
+  // Le champ des pays, calculé UNE fois : les bandes, les bosquets et les enceintes
+  // le liront tous les trois (chaque interrogation de `paysAt` coûte six appels de bruit).
+  const champ = computeChampPays(contree, width, height)
   // Les noms se posent en toponymes AVANT tout le reste : ils sont les premières
   // zones de la carte, et le survol les lit (spec lieux : on cache les lieux,
   // jamais la forme du pays).
@@ -495,11 +513,11 @@ export function generateAlpineTerrain(
   onPhase('moisture')
   const moisture = computeMoisture(width, height, map.elevation, seed)
   onPhase('bands')
-  paintAlpineBands(map, moisture, contree, seed)
+  paintAlpineBands(map, moisture, contree, champ, seed)
   onPhase('hydrology')
   carveHydrology(map, flow, seed) // lac, fleuve (thalweg), gués, ruisseaux, tarns
   onPhase('biomes')
-  paintScatterBiomes(map, contree, seed) // bosquets, prés, blocs, vieille forêt, brûlis — SELON LE PAYS
+  paintScatterBiomes(map, contree, champ, seed) // bosquets, prés, blocs, vieille forêt, brûlis — SELON LE PAYS
   onPhase('avalanches')
   paintAvalanches(map, seed) // couloirs d'avalanche (blocs qui dévalent)
   onPhase('border')

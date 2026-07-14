@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { generateAlpineTerrain } from './alpinegen'
-import { TERRAIN_DEEP_WATER, TERRAIN_ROAD, TERRAIN_SHALLOW_WATER } from './balance'
+import {
+  TERRAIN_DEEP_WATER, TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH, TERRAIN_ROAD, TERRAIN_SHALLOW_WATER,
+} from './balance'
 import {
   carveDistanceToMain, inMainComponent, walkableComponents, walkableSpawn,
   type CarveField, type WalkableComponents,
@@ -206,6 +208,72 @@ describe('la vraie carte — la table des lieux ne ment pas', () => {
     }
   }, 60_000)
 })
+
+describe('la vraie carte — le marais est un LIEU, pas un climat', () => {
+  /**
+   * CRITICAL — UNE SEULE TOURBIÈRE, ET LE MARAIS N'EXISTE QUE LÀ.
+   *
+   * Retour d'Alexis (2026-07-14) : « il y a trop de marais sur la carte 2026 ».
+   * Mesuré : **13 % de la vallée noyée en moyenne** (24 % au pire), parce que deux
+   * à SIX sites tiraient le caractère « tourbière ». Une vallée n'a pas six marais.
+   *
+   * Elle en a UN, et on sait où il est : la cuvette la plus profonde (aucun tirage
+   * — donc aucune seed où il manquerait). Le marais y est confiné par un DRAPEAU,
+   * pas par un seuil d'humidité : un seuil ne peut rien garantir, puisque la
+   * Vieille Sylve porte un biais de +0,18 et déborde sur le fond de vallée — un
+   * second marais naissait ainsi à 850 tuiles du premier, sur trois seeds.
+   *
+   * Cette garde tient les trois promesses : il y en a un, il est groupé, et il est
+   * de taille humaine.
+   */
+  it('CRITICAL — exactement UNE Tourbière, et tout le marais est dedans', () => {
+    eachMap((map, seed) => {
+      const tourbieres = map.zones.filter((z) => z.kind === undefined && z.name.startsWith('la Tourbière'))
+      expect
+        .soft(tourbieres.length, `seed ${seed} : ${tourbieres.length} Tourbière(s) — il en faut exactement UNE`)
+        .toBe(1)
+      const t = tourbieres[0]
+      if (t === undefined) return
+
+      const cx = t.x + t.w / 2
+      const cy = t.y + t.h / 2
+      let humide = 0
+      let loin = 0
+      let plusLoin = 0
+      for (let ty = 0; ty < map.height; ty++) {
+        for (let tx = 0; tx < map.width; tx++) {
+          const terr = map.terrain[ty * map.width + tx]!
+          if (terr !== TERRAIN_PEAT_BOG && terr !== TERRAIN_REED_MARSH) continue
+          humide += 1
+          const d = Math.sqrt((tx - cx) * (tx - cx) + (ty - cy) * (ty - cy))
+          if (d > plusLoin) plusLoin = d
+          if (d > RAYON_DU_MARAIS) loin += 1
+        }
+      }
+
+      // Il existe (sinon la tourbe n'existe pas, et la Fondrière non plus).
+      expect.soft(humide, `seed ${seed} : aucune zone humide sur la carte`).toBeGreaterThan(5000)
+      // Il ne noie pas la vallée. Mesuré sur 8 seeds : 2,0 % à 5,0 %.
+      const part = humide / (map.width * map.height)
+      expect
+        .soft(part, `seed ${seed} : ${(100 * part).toFixed(1)} % de la carte en marais — la vallée se noie`)
+        .toBeLessThan(0.08)
+      // Il est D'UN SEUL TENANT, autour de sa Tourbière. Mesuré : le plus lointain
+      // est à 274 tuiles. Un marais qui déborde au-delà de la maille du pays (300)
+      // est un second marais qui s'ignore.
+      expect
+        .soft(
+          loin,
+          `seed ${seed} : ${loin} tuiles de marais à plus de ${RAYON_DU_MARAIS} tuiles de la Tourbière ` +
+            `(la plus lointaine à ${Math.round(plusLoin)}). Il y a un second marais quelque part.`,
+        )
+        .toBe(0)
+    })
+  })
+})
+
+/** La maille d'un pays fait 300 tuiles ; son territoire s'étend un peu au-delà. */
+const RAYON_DU_MARAIS = 340
 
 describe('la vraie carte — la connexité', () => {
   /**
