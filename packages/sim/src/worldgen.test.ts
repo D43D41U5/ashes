@@ -54,8 +54,17 @@ const fields = new Map<number, CarveField>()
  *
  * Une micro-attente entre deux cartes suffit : le worker vide sa file de messages,
  * répond, et repart. Elle ne coûte rien (le travail, lui, reste synchrone).
+ *
+ * `setTimeout` EST DÉCLARÉ ICI, ET PAS IMPORTÉ. `/sim` est pur (invariant n°1) :
+ * son `tsconfig` ne charge ni les types du DOM ni ceux de Node, précisément pour
+ * qu'aucune API d'hôte ne s'y glisse par inadvertance. Ce fichier est un TEST — il
+ * tourne dans un worker Node et a le droit d'y toucher — mais on ne va pas ouvrir
+ * la porte de la sim entière pour une ligne. On déclare donc ce dont on a besoin,
+ * localement, et la porte reste fermée.
  */
-const respire = (): Promise<void> => new Promise((r) => { setTimeout(r, 0) })
+declare const setTimeout: (fn: () => void, ms: number) => unknown
+
+const respire = (): Promise<void> => new Promise((r) => { setTimeout(() => { r() }, 0) })
 
 beforeAll(async () => {
   for (const seed of PROD_SEEDS) {
