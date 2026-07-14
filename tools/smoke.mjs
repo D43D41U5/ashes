@@ -151,6 +151,56 @@ const SCENARIOS = {
   },
 
   /**
+   * LA PAROI SE VOIT-ELLE, ET FAIT-ELLE LA BONNE HAUTEUR ?
+   *
+   * La spec promet qu'« on monte d'un niveau pour chaque entier de niveau » (R34) : une falaise de
+   * quatre paliers doit être QUATRE FOIS plus haute qu'un ressaut d'un. Aucune propriété testable ne
+   * dira jamais si ça se VOIT. Alors on va se planter au pied du plus grand dénivelé de la carte, et
+   * au pied d'un ressaut d'une marche, et on REGARDE.
+   *
+   * C'est le même geste que le scénario `zones` : le seul test qui vaille sur un rendu est l'œil.
+   *
+   * Exige `--dev` (le TP n'est armé que là).
+   */
+  async paroi(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+
+    // On cherche, pour chaque dénivelé, un endroit où le regarder DEPUIS LE BAS — c'est de là qu'on
+    // le voit se dresser. Le point visé est donc quelques tuiles au sud du pied du mur.
+    const sites = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const pal = (x, y) => (x < 0 || y < 0 || x >= m.width || y >= m.height ? 0 : m.palier[y * m.width + x])
+      const walk = (x, y) => m.terrain[y * m.width + x] !== 23 && m.terrain[y * m.width + x] !== 0
+      const best = new Map() // dénivelé → le premier site trouvé
+      for (let y = 20; y < m.height - 24; y += 3) {
+        for (let x = 20; x < m.width - 20; x += 3) {
+          const d = pal(x, y) - pal(x, y + 1)
+          if (d <= 0) continue
+          // On se pose 6 tuiles plus au sud, sur du sol praticable : le mur est alors PLEIN ÉCRAN.
+          if (!walk(x, y + 6)) continue
+          if (!best.has(d)) best.set(d, { d, x, y: y + 6 })
+        }
+      }
+      return [...best.values()].sort((a, b) => b.d - a.d)
+    })
+
+    if (sites.length === 0) {
+      console.log('AUCUNE PAROI SUR LA CARTE — le relief est plat, ce qui est une faute en soi.')
+      return
+    }
+
+    for (const s of sites) {
+      await page.evaluate(({ x, y }) => {
+        window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
+      }, s)
+      await page.waitForTimeout(1400)
+      await page.screenshot({ path: `${OUT}/paroi-${s.d}.png` })
+      console.log(`dénivelé de ${s.d} palier(s) → ${s.d * 12} px de contremarche, vu depuis (${s.x}, ${s.y})`)
+    }
+  },
+
+  /**
    * LA CENDRE AVANCE — et la vallée recule.
    *
    * On saute au dernier jour de la saison et on regarde. Sans cet outil, personne ne verrait

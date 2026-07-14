@@ -20,7 +20,7 @@
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
-import { GROUND_MAP_DEPTH, RELIEF_H, TILE_PX } from '../../render/framing'
+import { GROUND_MAP_DEPTH, STEP_PX, TILE_PX } from '../../render/framing'
 import { buildWaterField } from '../../render/water-field'
 
 /** Juste au-dessus du sol (−1), sous l'ombre du relief (−0,5) : le versant qui
@@ -257,7 +257,7 @@ export class WaterLayer {
 
   constructor(
     private readonly scene: Phaser.Scene,
-    map: WorldMap,
+    private readonly map: WorldMap,
     /** La texture du terrain baké (1 px/tuile) — elle sert de FOND réfracté. */
     seabedKey: string,
   ) {
@@ -294,7 +294,13 @@ export class WaterLayer {
             setUniform('uWorldPx', [worldW, worldH])
             setUniform('uMapTiles', [width, height])
             setUniform('uTilePx', TILE_PX)
-            setUniform('uReliefH', RELIEF_H)
+            // LE CISAILLEMENT, EN MARCHES — et la formule du shader n'a pas bougé d'une ligne.
+            //
+            // Il défait `screenY = ty·TILE − elev·H` par bissection. Or `elev = palier / palierMax`
+            // (c'est une DÉRIVÉE du palier, spec R36) : en lui donnant `H = STEP_PX × palierMax`, le
+            // terme `elev·H` vaut exactement `palier × STEP_PX` — le lift en marches, au pixel près.
+            // Le shader croit toujours faire du relief continu ; il fait des marches.
+            setUniform('uReliefH', STEP_PX * (this.map.palierMax ?? 0))
             setUniform('uTime', this.timeS)
             setUniform('uSun', [this.sun.x, this.sun.y, this.sun.z])
             setUniform('uDay', this.day)

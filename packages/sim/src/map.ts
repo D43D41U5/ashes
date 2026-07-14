@@ -24,8 +24,30 @@ export interface WorldMap {
   /** Id de terrain par tuile, row-major (index = y * width + x). */
   terrain: number[]
   zones: Zone[]
-  /** Altitude par tuile [0,1] (substrat alpin). Optionnel — absent sur les
-   *  cartes qui n'en produisent pas. NE PAS confondre avec `height` (dimension). */
+  /**
+   * ═══ LE PALIER — L'ALTITUDE, ET ELLE EST UN ENTIER (spec R1, R36) ═══
+   *
+   * La donnée de premier ordre du relief, et la seule qui décide de quoi que ce soit : le rendu
+   * soulève la tuile de `palier × STEP_PX` (une MARCHE par palier — spec R34), la garde A9 la lit
+   * pour vérifier qu'on ne monte que par une rampe, et la falaise n'est rien d'autre que l'endroit
+   * où deux paliers voisins se touchent.
+   *
+   * Il a longtemps vécu caché dans `CarteZonee`, et la carte n'exposait que son ombre — un flottant
+   * `[0,1]`. C'était le mauvais sens : on dérivait le VRAI (l'entier) vers l'APPROCHÉ (le flottant),
+   * puis le client rebâtissait péniblement des marches à partir du flottant. Désormais la carte
+   * porte l'entier, et `elevation` n'est plus qu'une commodité pour qui pense encore en continu.
+   *
+   * Optionnel : les cartes de l'ancien générateur (`valleygen`) n'en produisent pas.
+   */
+  palier?: number[]
+  /** Le palier le plus haut que la carte puisse porter — le diviseur d'`elevation`. */
+  palierMax?: number
+  /**
+   * Altitude par tuile [0,1] — **une DÉRIVÉE du palier** (`palier / palierMax`), pas une vérité.
+   * Elle survit pour ce qui pense en continu : la température (il fait froid en altitude), les
+   * filtres d'éligibilité des lieux. Rien qui décide de la forme du monde. NE PAS confondre avec
+   * `height` (dimension).
+   */
   elevation?: number[]
   /**
    * LE CHAMP DE CENDRE — distance de chaque tuile à la frontière de la Cendrière, en tuiles.
@@ -66,10 +88,16 @@ export interface WorldMap {
 }
 
 /**
- * LA ZONE D'UNE TUILE, lue dans la grille grossière. `undefined` sur une carte sans zones.
+ * LA ZONE D'UNE TUILE, lue dans la grille de blocs. `undefined` sur une carte sans zones.
  *
- * L'arrondi vers le plus proche échantillon fait une erreur d'au plus `zonePas / 2` tuiles — et
- * elle tombe dans la falaise, qu'on ne voit pas. Voir `WorldMap.zoneGrid`.
+ * ELLE EST EXACTE, et elle ne l'a pas toujours été. La grille était échantillonnée au pas de 4 et
+ * lue par ARRONDI : une erreur de deux tuiles au bord d'une zone, réputée « invisible — elle tombe
+ * dans la bande de falaise de 44 tuiles ». Cet argument est mort avec la bande (spec R33) : une
+ * erreur de deux tuiles sur une arête d'UNE tuile se verrait comme le nez au milieu de la figure.
+ *
+ * Le rectiligne la rend exacte gratuitement : la zone est **constante par bloc** (spec R32), et la
+ * grille est au pas du bloc. Une lecture au PLANCHER rend donc la vérité, exactement — il n'y a
+ * plus d'erreur à cacher.
  */
 export function zoneSlugAt(map: WorldMap, tx: number, ty: number): string | undefined {
   const grid = map.zoneGrid
@@ -77,9 +105,15 @@ export function zoneSlugAt(map: WorldMap, tx: number, ty: number): string | unde
   const defs = map.zoneDefs
   if (!grid || !pas || !defs) return undefined
   const cols = Math.ceil(map.width / pas)
-  const i = Math.min(cols - 1, Math.max(0, Math.round(tx / pas)))
-  const j = Math.min(Math.ceil(map.height / pas) - 1, Math.max(0, Math.round(ty / pas)))
+  const i = Math.min(cols - 1, Math.max(0, Math.floor(tx / pas)))
+  const j = Math.min(Math.ceil(map.height / pas) - 1, Math.max(0, Math.floor(ty / pas)))
   return defs[grid[j * cols + i] ?? 0]?.slug
+}
+
+/** Le PALIER d'une tuile (entier). Hors carte ou carte sans relief = 0. */
+export function palierAt(map: WorldMap, tx: number, ty: number): number {
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return 0
+  return map.palier?.[ty * map.width + tx] ?? 0
 }
 
 export function createEmptyMap(width: number, height: number, fillTerrainId: number): WorldMap {

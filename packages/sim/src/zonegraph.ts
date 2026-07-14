@@ -281,6 +281,11 @@ export interface GrapheZones {
   /** Adjacence géométrique brute (qui touche qui), avant le choix des seuils. */
   voisins: number[][]
   /**
+   * LE PALIER DE CHAQUE ZONE (entier), indexé par id — et **deux zones voisines n'ont JAMAIS le
+   * même** (voir `colorerLesPaliers`). C'est ce qui fait qu'une frontière se VOIT.
+   */
+  paliers: number[]
+  /**
    * LES IMPASSES — les culs-de-sac. Des zones T2 terminales : une seule voisine, rien derrière.
    * On y va pour le prix, et on en revient par où l'on est entré. Le reste de la carte (le CŒUR)
    * n'en dépend jamais.
@@ -548,6 +553,7 @@ export function deriveGrapheZones(seed: number, joueurs = MONDE.JOUEURS_CIBLE): 
       const zones = identifierZones(sites, tiers, seed, sel, poidsRacine)
       const cand: GrapheZones = {
         seed, width, height, zones, racine, seuils: [], voisins: [], impasses: [], gardiennes: [],
+        paliers: [], // colorié tout à la fin, quand l'adjacence est arrêtée — voir `colorerLesPaliers`
       }
       const catalogues = catalogueFrontieres(cand)
       cand.voisins = adjacenceReelle(zones.length, catalogues)
@@ -577,8 +583,83 @@ export function deriveGrapheZones(seed: number, joueurs = MONDE.JOUEURS_CIBLE): 
         `Une saison = une carte : on préfère un échec bruyant à une carte muette.`,
     )
   }
+  g.paliers = colorerLesPaliers(g)
   return g
 }
+
+/**
+ * ═══ DEUX ZONES VOISINES N'ONT JAMAIS LE MÊME PALIER ═══
+ *
+ * Et il a fallu REGARDER la carte pour le comprendre — encore une fois (R25).
+ *
+ * Le palier de chaque zone était un simple tirage dans la fourchette de son tier. Deux T1 voisines
+ * pouvaient donc sortir toutes les deux au palier 1. Leur frontière devenait alors un mur **SANS
+ * HAUTEUR** : la règle d'arête la murait bien (il le faut, sinon le seuil n'est plus le seul
+ * passage et le test destructif A5 devient un mensonge), mais il n'y avait **rien à voir** — une
+ * ligne de roche d'une tuile posée sur un sol plat. Sur la capture, ça ne ressemblait pas à une
+ * falaise : ça ressemblait à une **CLÔTURE**, et son seuil à un trou dans un grillage.
+ *
+ * C'est le contraire de tout ce que la spec promet. R8 : *« une zone a une frontière FRANCHE ; on la
+ * FRANCHIT, on ne s'y fond pas. »* R34 : *« on monte d'un niveau pour chaque entier de niveau. »* Une
+ * frontière sans dénivelé ne franchit rien et ne monte nulle part.
+ *
+ * On COLORIE donc le graphe : chaque zone prend, dans la fourchette de son tier, un palier que
+ * n'ont pas ses voisines déjà servies. Les fourchettes ont été élargies exprès pour que ça tienne
+ * (T1 : trois crans ; T2 : trois crans) — un coloriage glouton à trois couleurs sur un graphe
+ * planaire de six sommets aboutit presque toujours, et l'ordre de passage (les plus contraintes
+ * d'abord) le rend robuste.
+ *
+ * Si malgré tout un conflit reste (le graphe exigeait quatre couleurs), on l'accepte : une
+ * frontière plate est laide, elle n'est pas cassée. Mieux vaut une carte moins belle qu'une saison
+ * qui ne démarre pas (R26).
+ */
+function colorerLesPaliers(g: GrapheZones): number[] {
+  const n = g.zones.length
+  const paliers = new Array<number>(n).fill(-1)
+
+  // Les plus CONTRAINTES d'abord — le plus fort degré. C'est ce qui fait tenir un glouton : on
+  // sert celle qui a le moins de choix pendant qu'elle en a encore.
+  const ordre = g.zones
+    .map((z) => ({ id: z.id, deg: g.voisins[z.id]!.length }))
+    .sort((a, b) => b.deg - a.deg || a.id - b.id)
+    .map((z) => z.id)
+
+  for (const id of ordre) {
+    const t = g.zones[id]!.def.tier
+    const base = PALIER_BASE[t]
+    const etendue = PALIER_ETENDUE[t]
+    const pris = new Set(g.voisins[id]!.map((v) => paliers[v]!).filter((p) => p >= 0))
+    // On parcourt la fourchette à partir d'un décalage tiré au sort : sans lui, toutes les zones
+    // d'un même tier convergeraient vers le bas de leur fourchette, et la carte n'aurait plus de
+    // variété d'altitude d'une seed à l'autre.
+    const depart = Math.floor(hash2(id, g.seed, 0xa17) * etendue)
+    let choisi = base + depart
+    for (let k = 0; k < etendue; k++) {
+      const p = base + ((depart + k) % etendue)
+      if (!pris.has(p)) { choisi = p; break }
+    }
+    paliers[id] = choisi
+  }
+  return paliers
+}
+
+/**
+ * Les fourchettes de palier, par tier — et elles sont LARGES pour que le coloriage tienne.
+ *
+ * La racine est au fond (0) ; la ceinture T1 domine le jardin de un à trois crans ; les marges T2
+ * dominent tout (4 à 6). Une zone T2 collée à la racine ouvre donc un seuil qui grimpe **jusqu'à
+ * six paliers d'un coup** — soit, à l'écran, un mur de 72 px. En voyant cette gorge s'élever en
+ * escalier au-dessus de son jardin, le joueur SAIT que ce n'est pas pour aujourd'hui. Aucune UI ne
+ * le lui dit ; la géographie le fait.
+ *
+ * Les fourchettes ne se CHEVAUCHENT pas d'un tier à l'autre : une T1 ne peut donc jamais tirer le
+ * palier d'une T2 voisine, et le coloriage n'a à résoudre les conflits qu'À L'INTÉRIEUR d'un tier.
+ */
+const PALIER_BASE: Record<0 | 1 | 2, number> = { 0: 0, 1: 1, 2: 4 }
+const PALIER_ETENDUE: Record<0 | 1 | 2, number> = { 0: 1, 1: 3, 2: 3 }
+
+/** Le palier le plus haut que la table puisse produire — le diviseur de l'altitude dérivée. */
+export const PALIER_MAX = PALIER_BASE[2] + PALIER_ETENDUE[2] - 1 // 4 + 3 − 1 = 6
 
 /**
  * Les poids de racine essayés, du plus ambitieux au plus modeste. Le premier qui tient gagne.

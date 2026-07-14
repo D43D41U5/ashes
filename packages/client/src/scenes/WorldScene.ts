@@ -44,12 +44,12 @@ import {
   AMBIENT_DEPTH,
   lookaheadOffset,
   OVERLAY_DEPTH,
-  RELIEF_H,
+  STEP_PX,
   TILE_PX,
   zoomForFraming,
 } from '../render/framing'
 import { ambientTint, daylight, lerpColor } from '../render/lighting'
-import { assertNoFold, createWarp, type Warp } from '../render/warp'
+import { createWarp, type Warp } from '../render/warp'
 import {
   drainQueuedActions,
   publishAlarm,
@@ -67,7 +67,6 @@ import { GroundLayer } from './world/ground-layer'
 import { ambianceDe, moduler } from '../render/zone-ambiance'
 import { CendreLayer } from './world/cendre-layer'
 import { CliffLayer } from './world/cliff-layer'
-import { ShadeLayer } from './world/shade-layer'
 import { PoiLayer } from './world/poi-layer'
 import { ShoreCliff } from './world/shore-cliff'
 import { FireGlow } from './world/fire-glow'
@@ -213,7 +212,6 @@ export class WorldScene extends Phaser.Scene {
   private worldSeed = 0
   private clutter?: ClutterLayer
   private ground!: GroundLayer
-  private shade!: ShadeLayer
   private cendre!: CendreLayer
   private cliffs!: CliffLayer
   private pois!: PoiLayer
@@ -415,16 +413,10 @@ export class WorldScene extends Phaser.Scene {
     // désaccorder en silence de ce qu'elle compte.
     const steps: Record<BuildPhase, () => void> = {
       relief: () => {
-        // Garde anti-repli : un H trop grand replierait le sol sur les pentes sud.
-        // NE JAMAIS aplatir l'eau à 0 « pour la poser à plat » : sur les flancs
-        // (élévation ~0,65) ça creuse une marche de plus de 100 px sous chaque
-        // rivière, la berge sud se dessine par-dessus le lit et la petite rivière
-        // disparaît sous sa propre texture repliée. L'eau suit le relief ; c'est la
-        // FALAISE DE BERGE qui porte le warp (voir ShoreCliff).
-        if (this.map.elevation) {
-          assertNoFold(this.map.elevation, this.map.width, this.map.height, RELIEF_H, TILE_PX)
-        }
-        this.warp = createWarp((tx, ty) => this.sampleElevation(tx, ty), RELIEF_H, TILE_PX)
+        // LES MARCHES. Plus de garde anti-repli : avec un lift constant par tuile et
+        // `STEP_PX < TILE_PX`, l'image ne PEUT pas se replier (spec R34). Toute une classe de
+        // crashs disparaît avec — `assertNoFold` faisait planter une seed sur quatre.
+        this.warp = createWarp(this.map, STEP_PX, TILE_PX)
         this.view.setWarp(this.warp)
       },
       // Terrain baké à 1 px/tuile (texture = map.width×map.height px, sous la limite
@@ -438,7 +430,6 @@ export class WorldScene extends Phaser.Scene {
         // L'eau, par-dessus le sol : un shader qui défait le cisaillement du relief et
         // réfracte le fond (le bake `map-demo` lui sert de lit).
         this.water = new WaterLayer(this, this.map, 'map-demo')
-        this.shade = new ShadeLayer(this, this.map, this.warp)
         this.cendre = new CendreLayer(this, this.map, String(this.map.width))
         this.cliffs = new CliffLayer(this, this.map)
       },
@@ -622,7 +613,6 @@ export class WorldScene extends Phaser.Scene {
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
       this.cliffs.render(this.cameras.main) // les parois, auto-raccordées à la vue
-      this.shade.render(this.cameras.main, hour) // ombre du relief selon le soleil
       // LA CENDRE. Le client la RECALCULE du jour de saison — on ne lui transmet aucune tuile,
       // aucun état. Elle ne se recuit que quand le front a bougé, c'est-à-dire une fois par jour.
       //
@@ -1064,7 +1054,8 @@ export class WorldScene extends Phaser.Scene {
     this.send({ type: 'action', action })
   }
 
-  // Échantillonneur d'altitude clampé aux bords — partagé bake/warp/hillshade.
+  // Échantillonneur d'altitude clampé aux bords. Le warp ne s'en sert PLUS (il lit le palier
+  // entier) : il ne reste qu'un service de commodité.
   private sampleElevation(tx: number, ty: number): number {
     const { width, height } = this.map
     const cx = tx < 0 ? 0 : tx >= width ? width - 1 : tx

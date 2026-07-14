@@ -172,6 +172,36 @@ export function carveDistanceToMain(map: WorldMap, c: WalkableComponents, limit:
     tx <= 0 || ty <= 0 || tx >= W - 1 || ty >= H - 1 || isWater(map.terrain[ty * W + tx] ?? 0)
 
   /**
+   * ═══ ON NE PERCE JAMAIS UNE MARCHE — et ça a failli coûter toute la topologie ═══
+   *
+   * Le tunnel d'accès d'un lieu ne franchit pas un changement de PALIER. Voilà la règle, et voilà
+   * pourquoi elle n'a pas toujours existé :
+   *
+   * Tant que la falaise était une BANDE de 44 tuiles, ce tunnel était inoffensif — le budget de
+   * percement (`MAX_CARVE_TILES`) ne suffisait jamais à traverser quarante-quatre tuiles de roche,
+   * et une frontière de zone était donc *incidemment* étanche. Elle ne l'était pas par principe :
+   * elle l'était par épaisseur.
+   *
+   * L'arête fine (spec R33) a supprimé l'épaisseur. Une frontière ne fait plus qu'UNE tuile — et le
+   * tunnel d'un lieu, qui perce volontiers une tuile pour se relier au monde, s'est mis à traverser
+   * les frontières comme du papier. Mesuré : **le Gouffre restait joint alors qu'on avait rebouché
+   * tous ses seuils** (garde A5) — un lieu, quelque part sur son pourtour, lui avait creusé une
+   * porte dérobée. Le seuil n'était plus le seul passage ; la carte n'avait plus de gates.
+   *
+   * *Une protection qui reposait sur une épaisseur n'était pas une protection : c'était une chance.*
+   *
+   * La règle la remplace, et elle est exacte : deux zones voisines ont TOUJOURS des paliers
+   * différents (`colorerLesPaliers`), et une butte domine toujours sa plaine. Interdire au tunnel
+   * de changer de palier, c'est donc lui interdire, d'un seul geste, de percer une frontière de
+   * zone ET la paroi d'une butte — sans qu'il ait à savoir ce qu'est l'une ou l'autre. Il ne lui
+   * reste que ce pour quoi il existe : dégager les quelques cailloux entre un lieu et son pays.
+   *
+   * Une carte sans palier (l'ancien générateur) rend 0 partout : la règle est alors sans effet, et
+   * le comportement d'avant est préservé à l'identique.
+   */
+  const pal = (i: number): number => map.palier?.[i] ?? 0
+
+  /**
    * FILE À SEAUX plutôt que deque : les coûts d'arête ne valent que 0 ou 1, donc
    * les distances sont des entiers de 0 à `limit` — un seau par valeur, traités
    * dans l'ordre croissant, et Dijkstra devient un simple balayage. C'est exact
@@ -206,6 +236,7 @@ export function carveDistanceToMain(map: WorldMap, c: WalkableComponents, limit:
         if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
         const ni = ny * W + nx
         if (sealed(nx, ny)) continue
+        if (pal(ni) !== pal(cur)) continue // ON NE PERCE PAS UNE MARCHE (voir `pal`)
         // Entrer sur une tuile bloquante, c'est la percer : +1. Sinon : gratuit.
         const w = isBlockingTile(map, nx, ny) ? 1 : 0
         const nd = d + w

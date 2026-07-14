@@ -173,65 +173,22 @@ describe('le terrain, à la taille de production', () => {
   })
 
   /**
-   * A26 — UNE PAROI EST TOUJOURS À PORTÉE DE VUE. **La garde qui manquait.**
+   * ═══ A26 EST RETIRÉE — et il faut dire pourquoi, sinon elle reviendra hanter le projet ═══
    *
-   * TROUVÉ PAR ALEXIS, EN JOUANT : *« il n'y a aucune falaise alors que c'était prévu — wtf ? »*
-   * Et les falaises EXISTAIENT : 16 % de la carte. Toutes les gardes étaient vertes. Mais je ne
-   * les avais posées qu'aux FRONTIÈRES des zones — or une zone fait six cents tuiles de côté.
-   * Mesuré depuis le point de départ : **la falaise la plus proche était à 280 tuiles**, soit
-   * soixante-dix secondes de marche et HUIT ÉCRANS. Le joueur ne pouvait littéralement pas en
-   * voir une, et toute la conception (« on ne trouve pas une porte, on suit un mur ») restait
-   * lettre morte à l'écran.
+   * Elle exigeait qu'« une paroi soit à moins de quatre écrans, depuis n'importe quel point
+   * marchable ». Elle était née d'un grief d'Alexis sur la carte rendue (*« il n'y a aucune falaise
+   * alors que c'était prévu — wtf ? »*), et elle n'a JAMAIS été tenue par les frontières : une zone
+   * fait six cents tuiles de côté, la première frontière est à huit écrans. **Elle n'était tenue que
+   * par les BUTTES**, le relief intrazone.
    *
-   * LEÇON, la troisième de la même famille : **une propriété GLOBALE (« 16 % de falaise ») ne dit
-   * rien de l'EXPÉRIENCE LOCALE (« en vois-je une ? »).** Une carte se juge d'où le joueur se
-   * tient, pas d'avion.
+   * Les buttes sont retirées (décision d'Alexis, 2026-07-14 : *« ne garde que les frontières en
+   * falaises, on gérera l'élévation intrazone plus tard »*). La garde tombe donc avec elles — on ne
+   * garde pas un critère que le design ne vise plus : il ne mesurerait rien, il ne ferait
+   * qu'échouer.
    *
-   * On teste donc ce qu'il VOIT : depuis n'importe quel point marchable, la paroi la plus proche
-   * est à moins de quelques écrans.
+   * **ELLE REVIENDRA AVEC L'ÉLÉVATION INTRAZONE**, et c'est elle qui dira si celle-ci est
+   * suffisante. C'est le bon ordre : le critère d'abord, le système ensuite.
    */
-  it('A26 — depuis N\'IMPORTE OÙ, une paroi est à quelques écrans — pas à huit', () => {
-    const ECRAN = 35 // la caméra montre 35 tuiles de large
-    const MAX_ECRANS = 4
-    for (const c of cartes) {
-      const { width, height, terrain } = c.map
-      // Distance à la falaise la plus proche, par vagues (BFS multi-source sur la grille) — la
-      // seule façon honnête de répondre « et depuis là ? » pour DEUX MILLIONS de tuiles.
-      const dist = new Int32Array(width * height).fill(-1)
-      const file: number[] = []
-      for (let i = 0; i < terrain.length; i++) {
-        if (terrain[i] === TERRAIN_CLIFF) { dist[i] = 0; file.push(i) }
-      }
-      for (let h = 0; h < file.length; h++) {
-        const i = file[h]!
-        const x = i % width
-        const y = (i - x) / width
-        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-          const nx = x + dx
-          const ny = y + dy
-          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
-          const j = ny * width + nx
-          if (dist[j] !== -1) continue
-          dist[j] = dist[i]! + 1
-          file.push(j)
-        }
-      }
-
-      let pire = 0
-      let ou = 0
-      for (let i = 0; i < terrain.length; i++) {
-        if (!marchable(c, i)) continue
-        if (dist[i]! > pire) { pire = dist[i]!; ou = i }
-      }
-      const x = ou % width
-      const y = (ou - x) / width
-      expect(
-        pire,
-        `seed ${c.graphe.seed} : en (${x}, ${y}), la paroi la plus proche est à ${pire} tuiles — ` +
-          `soit ${(pire / ECRAN).toFixed(1)} écrans. Le joueur y est dans un désert plat.`,
-      ).toBeLessThan(ECRAN * MAX_ECRANS)
-    }
-  }, 120_000)
 
   it('la falaise SÉPARE sans dévorer la carte', () => {
     for (const c of cartes) {
@@ -240,10 +197,19 @@ describe('le terrain, à la taille de production', () => {
       const walk = c.map.terrain.filter((t) => TERRAINS[t]?.walkable === true).length
       const pctF = (falaise / n) * 100
       const pctW = (walk / n) * 100
-      // Assez de mur pour que la topologie EXISTE, assez de sol pour qu'on ait où vivre.
-      expect(pctF, `seed ${c.graphe.seed} : ${pctF.toFixed(1)} % de falaise`).toBeGreaterThan(4)
-      expect(pctF, `seed ${c.graphe.seed} : ${pctF.toFixed(1)} % de falaise`).toBeLessThan(22)
-      expect(pctW, `seed ${c.graphe.seed} : ${pctW.toFixed(1)} % de marchable`).toBeGreaterThan(70)
+      // ═══ LES BORNES ONT CHANGÉ, ET C'EST LE SUJET ═══
+      //
+      // Elles disaient « entre 4 % et 22 % de falaise ». C'était la mesure d'une carte où chaque
+      // frontière était une BANDE de 44 tuiles — un no man's land rocheux qui dévorait 16 % du
+      // monde. L'arête fine (spec R33) l'a supprimée : la falaise n'est plus qu'une LIGNE d'une
+      // tuile au bord des plateaux, plus l'anneau de bordure. **Elle pèse désormais ~3 %, et les
+      // treize points qu'elle rendait sont du sol qu'on joue.**
+      //
+      // La borne basse reste une vraie garde : à zéro falaise, il n'y a plus de topologie du tout
+      // (plus de gates, plus de seuils, A5 s'effondrerait). Elle vérifie que le squelette EXISTE.
+      expect(pctF, `seed ${c.graphe.seed} : ${pctF.toFixed(1)} % de falaise`).toBeGreaterThan(1.5)
+      expect(pctF, `seed ${c.graphe.seed} : ${pctF.toFixed(1)} % de falaise`).toBeLessThan(12)
+      expect(pctW, `seed ${c.graphe.seed} : ${pctW.toFixed(1)} % de marchable`).toBeGreaterThan(80)
     }
   })
 

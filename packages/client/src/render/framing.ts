@@ -12,52 +12,43 @@
  * reste du client importe cette constante plutôt que de la redéclarer. */
 export const TILE_PX = 16
 
-/** Relief continu — hauteur ÉCRAN (px) d'une unité d'élévation [0,1] pleine.
- * Purement visuel (jamais dans /sim). Calibré en jeu, comme TREE_JITTER_TILES :
- * grand = relief spectaculaire mais borné par la garde anti-repli
- * (H·pente_sud_max < TILE_PX). Le champ d'élévation de la vallée est TRÈS doux
- * (gradient sud max ≈ 0,012/tuile, mesuré) : à H grand, le DÉPLACEMENT devient
- * illisible OU désaligne les murs hauts de leur collision plate (bloqué là où
- * l'écran montre autre chose) et fait sortir les billboards du culling. Donc le
- * relief passe surtout à la GÉOMÉTRIE (le sol se déforme), l'ombrage n'étant
- * qu'un accent. COMPROMIS à doser en jeu : H grand = déformation bien visible
- * MAIS les murs hauts s'écartent de leur collision plate (on bute un peu avant
- * le mur dessiné) et les billboards demandent plus de marge de culling (gérée
- * dans renderNodes). */
-export const RELIEF_H = 0
-
-/*
- * LE FAUX-RELIEF EST ABROGÉ — décision d'Alexis, 2026-07-14 (spec `worldgen.md` §2).
+/**
+ * ═══ LA MARCHE — hauteur ÉCRAN (px) d'UN palier (spec R34) ═══
  *
- * `RELIEF_H` valait 150 : chaque tuile était soulevée de `elevation × 150` pixels pour simuler du
- * relief. C'était illisible (Alexis : « Phaser ne nous permet pas d'avoir un terrain avec assez de
- * profondeur pour parler de vrai relief »), et si fragile qu'**une seed sur quatre faisait planter
- * le jeu** (`assertNoFold` : quand le sol descend vers le sud plus vite que `TILE_PX / RELIEF_H`,
- * l'image se replie sur elle-même).
+ * `screenY = worldY × TILE_PX − palier × STEP_PX`. Le palier est un ENTIER, donc le lift est
+ * constant par tuile, donc la marche est FRANCHE. « Tu montes d'un niveau pour chaque entier de
+ * niveau » (Alexis) : c'est cette constante, et rien d'autre, qui le dit.
  *
- * La verticalité passe désormais par les **TERRASSES et les FALAISES** : l'altitude est un ENTIER,
- * et entre deux paliers il y a une PAROI bloquante, dessinée. Une falaise ne se replie pas — c'est
- * un mur. Et elle a un BORD, qu'on peut longer : *on ne trouve pas une porte, on suit un mur.*
+ * 12 px pour une tuile de 16 : le dénivelé se voit d'un coup d'œil (les trois quarts d'une tuile),
+ * et une frontière de zone qui saute quatre paliers dresse un mur de 48 px — un demi-écran de haut.
+ * **La géographie s'annonce sans une ligne d'UI.**
  *
- * À 0, tout le mécanisme devient inerte SANS être supprimé : le warp est l'identité, `assertNoFold`
- * ne peut plus lever (son plafond devient infini), et les marges de culling tombent à zéro. Le code
- * mort part avec la démolition de l'ancienne carte — on ne fait pas deux chantiers à la fois.
+ * Elle DOIT rester `< TILE_PX`, et c'est la seule contrainte du système : une rampe qui descend
+ * d'une marche vers le sud avance encore de `TILE_PX − STEP_PX` px à l'écran. L'image ne peut donc
+ * pas se replier — ce qu'aucun réglage de l'ancien relief continu ne pouvait garantir, et qui lui
+ * coûtait une garde (`assertNoFold`) que **quatre seeds sur seize** faisaient lever au démarrage.
+ *
+ * Ce qui remplace `RELIEF_H = 150`, puis `0`, puis plus rien.
  */
+export const STEP_PX = 12
 
 /**
  * LA MARGE DE CULLING VERS LE BAS, en tuiles — et elle n'est PAS négociable.
  *
- * Le relief soulève tout vers le haut de l'écran (`screenY = worldY·TILE − elev·H`).
- * Une tuile plantée SOUS le bord bas de la vue peut donc remonter DANS la vue, jusqu'à
- * `RELIEF_H` px — soit ⌈150/16⌉ = 10 tuiles. Toute couche qui fenêtre son rendu à
- * `camera.worldView` (sol, ombre, nœuds, décor, lieux…) doit élargir sa borne BASSE
- * d'autant, sinon elle coupe ce qu'on voit encore : une bande vide en bas de l'écran,
- * qui grandit avec l'altitude — le bug qu'a connu le décor, culé à 2 tuiles alors que
- * le nord se soulève de 9.
+ * Les marches soulèvent tout vers le haut de l'écran. Une tuile plantée SOUS le bord bas de la vue
+ * peut donc remonter DANS la vue, jusqu'à `palierMax × STEP_PX` px. Toute couche qui fenêtre son
+ * rendu à `camera.worldView` (sol, parois, nœuds, décor, lieux…) doit élargir sa borne BASSE
+ * d'autant, sinon elle coupe ce qu'on voit encore : une bande vide en bas de l'écran, qui grandit
+ * avec l'altitude — le bug qu'a connu le décor, culé à 2 tuiles alors que le nord se soulevait de 9.
  *
  * (Vers le HAUT, rien à faire : le lift ne fait que sortir davantage de la vue.)
+ *
+ * Calculée sur le palier le plus haut que la table de `/sim` puisse produire (5, plus un cran de
+ * marge) : une CONSTANTE, pas une lecture de carte — les couches en ont besoin avant qu'une carte
+ * n'arrive.
  */
-export const LIFT_MARGIN_TILES = Math.ceil(RELIEF_H / TILE_PX)
+export const PALIER_MAX_RENDU = 6
+export const LIFT_MARGIN_TILES = Math.ceil((PALIER_MAX_RENDU * STEP_PX) / TILE_PX)
 
 /* ── Budget des profondeurs de la scène monde ────────────────────────────────
  *

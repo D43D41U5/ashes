@@ -88,7 +88,7 @@ export type {
 
 // ─── Monde : carte, temps, collision, navigation ──────────────────────────
 export {
-  createEmptyMap, terrainAt, elevationAt, isBlockingTile, zoneAt, poisAt, poiCenter, poiClearings,
+  createEmptyMap, terrainAt, elevationAt, palierAt, isBlockingTile, zoneAt, poisAt, poiCenter, poiClearings,
   // Le contrat que /sim doit au rendu : un champ d'élévation qui ne replie pas
   // l'image. Le client le CONSTATE (assertNoFold) ; la sim le GARANTIT.
   maxSouthGradient,
