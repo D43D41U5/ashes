@@ -91,6 +91,13 @@ services:
       # pnpm lit les `npm_config_*` : c'est ce qui envoie le store dans le volume
       # ci-dessus sans toucher au `.npmrc` du dépôt (qui, lui, vaut aussi pour l'hôte).
       NPM_CONFIG_STORE_DIR: /pnpm-store
+      # LE WATCHER SCRUTE — sans quoi le conteneur ne voit RIEN bouger.
+      # Les événements inotify de l'hôte ne traversent pas le bind mount ci-dessus :
+      # sans scrutin, Vite sert un graphe de modules figé au démarrage et le
+      # rechargement auto promis en tête de ce fichier est un mensonge (vécu le
+      # 2026-07-14 : un fichier SUPPRIMÉ sur l'hôte encore servi une heure durant).
+      # Le détail est dans `packages/client/vite.config.ts`.
+      BRAISES_POLL: "1"
     expose:
       - "3000"
     # Sain dès que Vite répond sur :3000. `start_period` couvre le premier
