@@ -13,7 +13,8 @@ import {
   CARACTERES, derivePays, elevBiasAt, paysAt, paysToponymes, wetBiasAt,
   type Caractere, type Contree,
 } from './pays'
-import { placePois } from './poi'
+import { placePois, POI_TYPES } from './poi'
+import { paintSentiers } from './sentiers'
 import {
   TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW,
   TERRAIN_HEATH, TERRAIN_ALPINE_MEADOW, TERRAIN_PINE, TERRAIN_LARCH,
@@ -456,6 +457,7 @@ export const WORLDGEN_PHASES = [
   'avalanches',
   'border',
   'pois',
+  'sentiers',
   'bumps',
 ] as const
 export type WorldgenPhase = (typeof WORLDGEN_PHASES)[number]
@@ -505,6 +507,11 @@ export function generateAlpineTerrain(
   onPhase('pois')
   placePois(map, seed) // POIs APRÈS le scellage : le biome sous le centre d'un POI est le terrain FINAL
   //                      (sinon un POI validé sur du bord verrait son terrain réécrit en roche par le scellage → incohérence)
+  onPhase('sentiers')
+  // LES SENTIERS EN DERNIER (du terrain) : ils ont besoin de savoir où sont les gués
+  // et les lieux pour y mener. Ils trouvent les gués TOUT SEULS — le fleuve n'est
+  // franchissable que là, donc tout chemin d'une rive à l'autre y passe.
+  paintSentiers(map, new Set(POI_TYPES.filter((t) => (t.reserve ?? 0) > 0).map((t) => t.slug)))
   onPhase('bumps')
   addReliefBumps(map, seed) // DERNIER : vallons de RENDU sur la terre (eau plate) — voir plus bas
   return map

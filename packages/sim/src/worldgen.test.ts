@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { generateAlpineTerrain } from './alpinegen'
-import { TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER } from './balance'
+import { TERRAIN_DEEP_WATER, TERRAIN_ROAD, TERRAIN_SHALLOW_WATER } from './balance'
 import {
   carveDistanceToMain, inMainComponent, walkableComponents, walkableSpawn,
   type CarveField, type WalkableComponents,
@@ -311,6 +311,68 @@ describe('la vraie carte — le fleuve', () => {
             `Le fleuve ne sépare rien de conséquent — il se contourne, et les ${gues.length} gués ne servent à rien.`,
         )
         .toBeGreaterThan(0.2)
+    })
+  })
+})
+
+describe('la vraie carte — les sentiers', () => {
+  /**
+   * CRITICAL — LE SENTIER MÈNE AU GUÉ.
+   *
+   * C'est la garde qui donne un sens à la précédente. Le fleuve sépare la vallée en
+   * deux rives et ne se franchit qu'aux gués : bonne topologie — et pure punition,
+   * tant que rien ne dit OÙ SONT LES GUÉS. Le joueur voit 35×20 tuiles ; une vallée
+   * de 1200×1800 fait vingt-cinq écrans de large.
+   *
+   * Le réseau sort d'un Dijkstra qui part du point de départ, et le fleuve n'étant
+   * franchissable qu'aux gués, tout chemin d'une rive à l'autre y passe
+   * NÉCESSAIREMENT. On ne code rien pour ça : la géographie s'en charge. Cette garde
+   * vérifie que la géographie a bien fait son travail — qu'aucun gué n'est resté
+   * orphelin, et qu'aucun lieu chargé n'est au bout d'aucun chemin.
+   *
+   * (Un chemin peint SEULEMENT au franchissement serait un auto-but : on ne
+   * trouverait le panneau qu'une fois déjà arrivé à la porte. Ce qui compte, c'est
+   * que le sentier VIENNE DE LOIN.)
+   */
+  /**
+   * Le sentier s'arrête au SEUIL : il ne pave pas un lieu, et il ne bâtit pas de
+   * pont — au gué, on patauge. On cherche donc la route au BORD de la zone, pas en
+   * son centre : à un gué, le centre est au milieu du courant, et l'eau ne porte
+   * jamais de route (c'est la règle qui garde au fleuve son pouvoir de séparer).
+   */
+  const MARGE = 8 // tuiles au-delà du bord de la zone
+
+  function sentierProche(map: WorldMap, z: WorldMap['zones'][number]): boolean {
+    const x0 = Math.max(0, z.x - MARGE)
+    const y0 = Math.max(0, z.y - MARGE)
+    const x1 = Math.min(map.width - 1, z.x + z.w + MARGE)
+    const y1 = Math.min(map.height - 1, z.y + z.h + MARGE)
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        if (map.terrain[ty * map.width + tx] === TERRAIN_ROAD) return true
+      }
+    }
+    return false
+  }
+
+  it('CRITICAL — un sentier mène à CHAQUE gué et à CHAQUE lieu chargé', () => {
+    const charges = new Set(POI_TYPES.filter((t) => (t.reserve ?? 0) > 0).map((t) => t.slug))
+    eachMap((map, seed) => {
+      const routes = map.terrain.filter((t) => t === TERRAIN_ROAD).length
+      expect.soft(routes, `seed ${seed} : aucun sentier sur la carte`).toBeGreaterThan(1000)
+
+      for (const z of map.zones) {
+        const estGue = z.kind === undefined && z.name.startsWith('le Gué')
+        const estCharge = z.kind !== undefined && charges.has(z.kind)
+        if (!estGue && !estCharge) continue
+        expect
+          .soft(
+            sentierProche(map, z),
+            `${z.name} (seed ${seed}, [${z.x},${z.y}]) : AUCUN sentier n'y mène. ` +
+              `Le joueur devra le trouver au hasard, sur vingt-cinq écrans de vallée.`,
+          )
+          .toBe(true)
+      }
     })
   })
 })

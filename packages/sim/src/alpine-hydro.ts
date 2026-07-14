@@ -17,7 +17,7 @@
  */
 import { TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_SHALLOW_WATER } from './balance'
 import { boxBlur } from './geometry'
-import { elevationAt, type WorldMap } from './map'
+import { elevationAt, isBlockingTile, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
 import { isWater, type Paint, type ValleyPoint } from './valleygen-primitives'
 
@@ -413,11 +413,56 @@ function placeFords(map: WorldMap, path: readonly ValleyPoint[], seed: number): 
     const p = path[k]!
     const cx = Math.round(p.x)
     const cy = Math.round(p.y)
+    if (!relieDeuxRives(map, path, k, rz)) continue // un gué qui ne relie rien n'est pas un gué
     // Le gué s'élargit un peu (contour bruité léger : une plage de galets, pas un pont).
     stampWaterBody(map, cx, cy, r, r, paintFord, (seed ^ (k * 0x9d7)) | 0, FORD_WARP)
     n += 1
     map.zones.push({ name: `le Gué ${roman(n)}`, x: cx - rz, y: cy - rz, w: 2 * rz + 1, h: 2 * rz + 1 })
   }
+}
+
+/**
+ * UN GUÉ DOIT RELIER DEUX RIVES — sinon ce n'est pas un gué, c'est un mensonge sur
+ * la carte.
+ *
+ * L'espacement régulier posait des franchissements n'importe où le long du cours, et
+ * la mesure a montré à quoi ça mène : sur la seed 99, un « Gué » naissait dans une
+ * GORGE — 81 % de roche autour, pas une tuile de terre ferme, aucune des deux rives
+ * accessible (le fleuve sort de la montagne, à cet endroit il coule entre deux
+ * murs). Sur la seed 2718, un autre naissait **au milieu d'un lac** : 96 % d'eau.
+ * Deux toponymes posés sur la carte du joueur, promettant un passage vers rien.
+ *
+ * On sonde donc les deux côtés. La direction locale du cours se lit sur le chemin
+ * lui-même ; sa perpendiculaire donne les deux rives ; et l'on exige, de chaque
+ * côté, de la TERRE FERME — ni eau, ni roche — à portée de la berge. Un seul côté
+ * muet, et le gué n'est pas posé.
+ */
+function relieDeuxRives(map: WorldMap, path: readonly ValleyPoint[], k: number, rz: number): boolean {
+  const a = path[Math.max(0, k - 3)]!
+  const b = path[Math.min(path.length - 1, k + 3)]!
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  const len = Math.sqrt(dx * dx + dy * dy)
+  if (len < 0.5) return false // cours dégénéré : on ne sait pas de quel côté sont les rives
+  const nx = -dy / len // la perpendiculaire au cours
+  const ny = dx / len
+  const p = path[k]!
+  // On sonde de la berge jusqu'à un peu au-delà : la terre ferme peut être à
+  // quelques tuiles de l'eau (une plage, un replat).
+  for (const cote of [1, -1]) {
+    let trouve = false
+    for (let d = rz; d <= rz + 10 && !trouve; d++) {
+      const tx = Math.round(p.x + cote * nx * d)
+      const ty = Math.round(p.y + cote * ny * d)
+      if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) break
+      const t = map.terrain[ty * map.width + tx] ?? 0
+      if (isWater(t)) continue // encore dans l'eau : on s'éloigne encore
+      trouve = !isBlockingTile(map, tx, ty) // de la terre ferme, enfin ?
+      if (!trouve) break // de la roche : cette rive est un mur, inutile d'insister
+    }
+    if (!trouve) return false // une rive muette suffit à condamner le gué
+  }
+  return true
 }
 
 /** Irrégularité du contour du gué — une plage de galets, pas un pont de pierre. */
