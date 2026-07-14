@@ -57,7 +57,6 @@ const GESTES = [
   'Laisser une tanière entrouverte, au cas où…',
   'Écarter les mélèzes pour laisser passer l’avalanche…',
   'Aiguiser ce qui doit mordre…',
-  'Oublier volontairement un sentier…',
   'Semer des baies loin des chemins…',
   'Apprendre au froid à trouver les portes mal jointes…',
   'Attiser le Feu du village d’à côté…',

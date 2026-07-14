@@ -54,16 +54,9 @@ Le journal du projet porte trois occurrences d'une même faute (2026-07-11 : « 
 - **R13 — La maille est ABSOLUE.** 300 tuiles, pas une fraction de la carte. C'est le seul geste qui fasse payer l'échelle : une carte deux fois plus grande a **quatre fois plus de pays**, au lieu des mêmes en plus gros.
 - **R14 — L'identité n'est pas une couleur de sol.** Le caractère décale l'humidité (donc la bande de biome) et l'altitude APPARENTE (le seul levier au-dessus de 0,55, où `bandFor` ne lit plus l'humidité — l'altitude RÉELLE n'est jamais touchée : ni le relief, ni l'eau, ni le froid, ni le rendu). Et les bosquets suivent le pays : la Vieille Sylve porte six fois plus de gros bois, le Versant Brûlé sept fois plus de cendres. Ce qui change la végétation change la vitesse sous les pieds, le couvert, la température, **les lieux qui peuvent y naître** (la table des POI est indexée par biome) et le gibier qui y vit.
 
-### Les sentiers — la carte se lit
-
-- **R15 — On ne dessine pas des routes, on trace ce que les gens ont emprunté.** Un Dijkstra part du point de départ et rejoint ce qui structure : les gués, les lieux chargés, les gisements. Le coût est l'inverse de la vitesse, **plus le prix de la pente** — un vrai sentier évite de grimper (sans quoi tous les chemins monotones coûtent pareil en 4-connexité, et le réseau devient un plan de ville).
-- **R16 — Le sentier trouve le gué TOUT SEUL.** Le fleuve n'étant franchissable qu'aux gués, tout chemin d'une rive à l'autre y passe nécessairement. On ne code rien pour ça. Et comme le sentier VIENT DE LOIN, il ne marque pas la porte : il y **mène**. (Un chemin peint seulement au franchissement serait un auto-but : on ne trouverait le panneau qu'une fois déjà arrivé.)
-- **R17 — On franchit un ruisseau, on ne ponte pas un fleuve.** La route se pose dans une eau basse — et elle le doit (un Sanctuaire mesuré siège au fond d'une gorge où l'on n'accède qu'en remontant le torrent) — mais jamais dans le fleuve. La distinction se lit sur le terrain : le fleuve a un cœur d'eau PROFONDE, un ruisseau n'en a pas.
-- **R18 — Le sentier s'arrête au seuil.** On ne pave pas un lieu, on y mène.
-
 ### Le relief doit être RENDABLE
 
-- **R19 — `/sim` doit au client un champ d'élévation qui ne replie pas l'image.** Le client soulève chaque tuile de `elevation × RELIEF_H` ; si le sol descend vers le sud plus vite que `TILE_PX / RELIEF_H`, l'image se replie et le client **lève une exception** (écran blanc, pas artefact). Le garde-fou vivait côté client : le mauvais côté de la frontière. Il vit désormais dans `/sim`, qui produit le champ, et il est testé sur la vraie carte.
+- **R15 — `/sim` doit au client un champ d'élévation qui ne replie pas l'image.** Le client soulève chaque tuile de `elevation × RELIEF_H` ; si le sol descend vers le sud plus vite que `TILE_PX / RELIEF_H`, l'image se replie et le client **lève une exception** (écran blanc, pas artefact). Le garde-fou vivait côté client : le mauvais côté de la frontière. Il vit désormais dans `/sim`, qui produit le champ, et il est testé sur la vraie carte.
 
 ---
 
@@ -82,9 +75,8 @@ Tous dans `worldgen.test.ts`, **à 1200×1800 et sur 5 seeds**.
 | **A7** | L'anneau de bordure reste intégralement bloquant après toutes les passes. | ✅ |
 | **A8** | **Gués rebouchés, la vallée se SCINDE** : la seconde rive pèse ≥ 20 % du marchable, et il y a ≥ 4 gués. *(Mesuré sur 12 seeds : 29,6 % à 48,4 %.)* | ✅ |
 | **A9** | Le bruit est **exact au bit près** : témoins figés (`noise.test.ts`). Un échec n'est pas un test à mettre à jour — c'est la carte de tous les joueurs et tous les replays qui vient de changer. | ✅ |
-| **A10** | **Un sentier mène à CHAQUE gué et à CHAQUE lieu chargé.** | ✅ |
-| **A11** | **Le relief ne REPLIE pas le rendu** (le client refuserait de démarrer). | ✅ |
-| **A12** | La densité de lieux suit la SURFACE (×1 → 71, ×2 → 138, ×4 → 265). | ✅ |
+| **A10** | **Le relief ne REPLIE pas le rendu** (le client refuserait de démarrer). | ✅ |
+| **A11** | La densité de lieux suit la SURFACE (×1 → 71, ×2 → 138, ×4 → 265). | ✅ |
 
 ---
 
@@ -123,7 +115,9 @@ Le chantier initial prévoyait des crêtes intérieures percées de cols. Un pan
 - **Le pathfinding tombe.** `findPath` est un A* 4-connexe borné à `maxExplored = 4096` — un rayon utile de ~45 tuiles. Un détour de plusieurs centaines de tuiles le fait échouer.
 - **Le joueur paie le mur et ne touche pas la récompense** (cf. point 2).
 
-**Ce qui a été construit à la place** : le FLEUVE (qui sépare vraiment, se voit de loin — l'eau est lisible à 20 tuiles — et se franchit à sept endroits), et les SENTIERS (qui mènent aux gués, donc qui signalent les portes). La topologie est là ; elle est simplement portée par de l'eau plutôt que par de la roche.
+**Ce qui a été construit à la place** : le FLEUVE (qui sépare vraiment, se voit de loin — l'eau est lisible à 20 tuiles — et se franchit à sept endroits). La topologie est là ; elle est simplement portée par de l'eau plutôt que par de la roche.
+
+**Et le signalement des portes reste OUVERT.** Les sentiers qui menaient aux gués ont été retirés (décision d'Alexis, 2026-07-14). Les gués, eux, restent — creusés par l'hydrologie, nommés en toponymes, donc lisibles SUR LA CARTE. Mais plus rien ne les signale AU SOL : le grief même qu'on opposait aux cols (« la porte est introuvable quand on marche ») pèse désormais sur le fleuve, à ceci près que l'eau, elle, se voit de loin.
 
 Si les cols doivent revenir, il leur faut d'abord : un pathfinding qui tienne le détour, une récompense qui le paie, et un signalement au sol.
 
