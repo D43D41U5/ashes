@@ -36,7 +36,8 @@ import { advanceNightHunt } from './nighthunt'
 import { advanceNpcs, type Npc } from './npc'
 import { advancePois } from './poi-discovery'
 import { advanceDens } from './poi'
-import { advanceTime, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
+import { avancerLaCendre } from './cendre'
+import { advanceTime, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
 import { advanceTemperature, coldSpeedFactor } from './temperature'
 import { applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
 
@@ -554,6 +555,11 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceCombat(state)
   advanceAlignment(state)
   advanceTime(state)
+  // LA CENDRE AVANCE — après le temps, puisque c'est le temps qui la pousse. Elle ne fait quelque
+  // chose qu'au BASCULEMENT d'un jour de saison : le reste des ticks, elle ne coûte qu'un test.
+  if (seasonDayAtTick(state.tick, state.calendarScale) !== seasonDayAtTick(state.tick - 1, state.calendarScale)) {
+    avancerLaCendre(state)
+  }
   advanceCraft(state)
   advanceSpoilage(state)
   advanceEconomy(state)

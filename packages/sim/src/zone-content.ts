@@ -25,6 +25,7 @@
  * Pur et déterministe : `hash2`/`fbm2`, `+ - * / sqrt` (invariant n°2).
  */
 import { NODE_DEFS, TERRAINS, type NodeType } from './balance'
+import { estCendre } from './cendre'
 import type { ResourceNode } from './economy'
 import { distSq } from './geometry'
 import { fbm2, hash2 } from './noise'
@@ -308,8 +309,25 @@ function degage(c: CarteZonee, tx: number, ty: number): boolean {
  * disperse sur les emplacements viables de la racine, les plus écartés qu'on trouve — un semis
  * glouton max-min, déterministe.
  */
-export function pointsDeSpawn(c: CarteZonee, emplacements: Emplacement[], combien: number): Emplacement[] {
-  const dans = emplacements.filter((e) => e.zone === c.graphe.racine)
+export function pointsDeSpawn(
+  c: CarteZonee,
+  emplacements: Emplacement[],
+  combien: number,
+  front = 0,
+): Emplacement[] {
+  /**
+   * LE SPAWN SUIT LE FRONT (spec R30, décision d'Alexis).
+   *
+   * Le serveur tourne des semaines. Si les Prés Bas sont sous la cendre au jour 30, celui qui
+   * rejoint au jour 31 naîtrait **dans le feu** — il ne jouerait pas au même jeu que les autres.
+   * On ne fait donc naître personne dans ce qui a brûlé.
+   *
+   * Et ça RACONTE quelque chose, ce qui ne gâche rien : les nouveaux arrivent par la bouche de la
+   * vallée, en fuyant déjà.
+   */
+  const dans = emplacements.filter(
+    (e) => e.zone === c.graphe.racine && !estCendre(c.map, e.tx, e.ty, front),
+  )
   if (dans.length === 0) return []
 
   const r = c.graphe.zones[c.graphe.racine]!

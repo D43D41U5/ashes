@@ -16,13 +16,28 @@
  */
 import { addItems, type ItemId } from './items'
 import type { Entity, SimState } from './sim'
-import { cycleOffsetForStartHour, TICKS_PER_CYCLE } from './time'
+import { cycleOffsetForStartHour, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 
 export type DebugAction =
   /** Poser l'avatar sur une tuile, sans se soucier des obstacles ni de la distance. */
   | { type: 'debug_teleport'; x: number; y: number }
   /** Forcer l'heure murale du cycle (0-24) — décale la PHASE, jamais le calendrier. */
   | { type: 'debug_set_hour'; hour: number }
+  /**
+   * SAUTER AU JOUR DE SAISON — l'outil sans lequel la SAISON est intestable.
+   *
+   * En Veillée (`calendarScale = 720`), un jour de saison prend deux minutes réelles : atteindre
+   * l'acte III (jour 43) demande **une heure et demie de jeu**. Personne ne verra donc jamais le
+   * front de cendre avancer — ni un playtesteur, ni un smoke test. Une mécanique qu'on ne peut
+   * pas ATTEINDRE est une mécanique morte, et ce projet en a déjà enterré cinq.
+   *
+   * On saute donc le TICK, ce qui est la seule façon honnête : le tick EST le calendrier. Tout
+   * ce qui en dérive (l'acte, la faim, le froid, le front) suit sans qu'on ait à le forcer — et
+   * la cendre rattrape son retard au premier tick, puisqu'elle voit le jour basculer.
+   *
+   * Armée uniquement en DEV (`state.debug`), comme les autres.
+   */
+  | { type: 'debug_set_season_day'; day: number }
   /** Invulnérabilité + jauges gelées (voir `refreshGodMode`). */
   | { type: 'debug_god'; on: boolean }
   /**
@@ -57,6 +72,21 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     // on ne bouge que la phase.
     const target = cycleOffsetForStartHour(clamp(action.hour, 0, 24))
     state.cycleOffset = (((target - state.tick) % TICKS_PER_CYCLE) + TICKS_PER_CYCLE) % TICKS_PER_CYCLE
+  } else if (action.type === 'debug_set_season_day') {
+    // ON ATTERRIT JUSTE AVANT LE JOUR VISÉ, PAS DESSUS — et ce détail est tout le correctif.
+    //
+    // Poser le tick PILE sur le premier tick du jour 60 ne franchit aucune bascule : `advanceTime`
+    // compare le jour d'avant et le jour d'après, les trouve égaux, et **rien ne se déclenche**.
+    // Ni `season_day_started`, ni `act_started`, ni le front de cendre. Le monde se retrouvait au
+    // jour 60 avec la vallée intacte — un mensonge, et exactement le genre d'outil de debug qui
+    // fait perdre une journée à celui qui lui fait confiance.
+    //
+    // On se pose donc UN TICK AVANT. La sim franchit la bascule d'elle-même, au tick suivant, par
+    // sa machinerie normale : les événements sortent, la cendre avance, l'acte change. **Le debug
+    // ne simule pas le temps — il le laisse passer.**
+    const jour = Math.max(1, Math.round(action.day))
+    const premierTick = Math.round(((jour - 1) * TICKS_PER_SEASON_DAY) / state.calendarScale)
+    state.tick = Math.max(0, premierTick - 1)
   } else if (action.type === 'debug_grant') {
     // On le met EN MAIN, pas juste dans le sac : c'est la main qui décide de tout
     // (spec inventaire R9), et un objet au fond du sac ne prouve rien à l'écran.

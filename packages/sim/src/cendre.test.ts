@@ -9,6 +9,10 @@ import { describe, expect, it } from 'vitest'
 import { BALANCE } from './balance'
 import { avanceeDuFront, CENDRE, estCendre, partSousLaCendre } from './cendre'
 import { generateZonedTerrain } from './zonegen'
+import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
+import { MONDE } from './zonegraph'
+import { createSim, spawnEntity, step } from './sim'
+import { drainEvents } from './events'
 
 const carte = generateZonedTerrain(2026)
 const racine = carte.graphe.racine
@@ -108,3 +112,74 @@ describe('le front de cendre', () => {
     }
   })
 }, 120_000)
+
+describe('ce que la cendre DÉTRUIT', () => {
+  it('R30 — le SPAWN RECULE devant le feu : personne ne naît dans la cendre', () => {
+    const nodes = placeZoneNodes(carte)
+    const emplacements = emplacementsDeVillage(carte, nodes)
+    const combien = Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE)
+
+    const auJour1 = pointsDeSpawn(carte, emplacements, combien, frontAu(1))
+    const auDernier = pointsDeSpawn(carte, emplacements, combien, frontAu(BALANCE.SEASON_DAYS))
+
+    // Le serveur tourne des semaines. Si les Prés Bas brûlent au jour 30, celui qui rejoint au
+    // jour 31 ne doit PAS naître dans le feu — il ne jouerait pas au même jeu que les autres.
+    expect(auDernier.length, 'plus un seul point de spawn au dernier jour').toBeGreaterThan(0)
+    for (const s of auDernier) {
+      expect(
+        estCendre(carte.map, s.tx, s.ty, frontAu(BALANCE.SEASON_DAYS)),
+        `on naît dans la cendre en (${s.tx}, ${s.ty})`,
+      ).toBe(false)
+    }
+    // Et le refuge s'est DÉPLACÉ : la vallée a reculé, le point de naissance avec elle.
+    expect(auDernier.length).toBeLessThan(auJour1.length)
+  }, 120_000)
+
+  it('la cendre BRÛLE LES NŒUDS — et le village s\'appauvrit avant de mourir', () => {
+    // C'est ce qui fait que la migration n'est pas une consigne mais une FUITE : le village qui
+    // reste ne meurt pas d'un coup, il s'appauvrit jour après jour, jusqu'à ce que rester coûte
+    // plus cher que partir. Le mécanisme le plus doux qu'on puisse infliger, et le plus cruel.
+    const front = frontAu(BALANCE.SEASON_DAYS)
+    const nodes = placeZoneNodes(carte)
+    const width = carte.map.width
+    const survivants = nodes.filter((n) => !estCendre(carte.map, n.tx, n.ty, front))
+    const brules = nodes.length - survivants.length
+    expect(brules, 'la cendre ne brûle aucun nœud').toBeGreaterThan(1000)
+    // …mais elle n'efface pas la vallée : il reste de quoi vivre ailleurs.
+    expect(survivants.length).toBeGreaterThan(nodes.length * 0.5)
+    // Et aucun survivant n'est dans le feu.
+    for (const n of survivants.slice(0, 500)) {
+      expect(carte.map.cendre![n.ty * width + n.tx]!).toBeGreaterThanOrEqual(front)
+    }
+  }, 120_000)
+})
+
+describe('le front, dans la BOUCLE (et non plus sur le papier)', () => {
+  it('sauter à l\'acte III fait AVANCER la cendre et BRÛLER les nœuds', () => {
+    // Sans le saut de jour, personne ne verrait jamais ce mécanisme : en Veillée, l'acte III
+    // arrive au bout d'une heure et demie de jeu. Une mécanique qu'on ne peut pas ATTEINDRE est
+    // une mécanique morte, et ce projet en a déjà enterré cinq.
+    const nodes = placeZoneNodes(carte)
+    const sim = createSim(2026, { map: carte.map, nodes, calendarScale: 720, debug: true })
+    const joueur = spawnEntity(sim, 100, 100)
+    const avant = sim.nodes.length
+
+    // Jour 10 (acte I) : le front dort, rien ne brûle.
+    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 10 } }])
+    step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
+    expect(sim.nodes.length, 'la cendre a mangé pendant l\'acte I').toBe(avant)
+
+    // Jour 60 (le dernier) : la vallée a reculé.
+    drainEvents(sim)
+    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 60 } }])
+    step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
+    expect(sim.nodes.length, 'aucun nœud n\'a brûlé au dernier jour').toBeLessThan(avant)
+
+    // Et le monde l'a DIT : un événement de domaine par jour, pas un par buisson.
+    const events = drainEvents(sim)
+    const avances = events.filter((e) => e.type === 'cendre_avance')
+    expect(avances.length, 'la cendre a avancé en silence').toBeGreaterThanOrEqual(1)
+    expect(avances[0]).toMatchObject({ type: 'cendre_avance' })
+    expect((avances[0] as { noeudsBrules: number }).noeudsBrules).toBeGreaterThan(0)
+  }, 120_000)
+})

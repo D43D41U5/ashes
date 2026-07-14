@@ -25,6 +25,13 @@ export type SimEvent =
   | { type: 'night_started'; tick: number }
   | { type: 'season_day_started'; tick: number; day: number }
   | { type: 'act_started'; tick: number; act: 1 | 2 | 3 }
+  /**
+   * LA CENDRE A AVANCÉ — et la vallée a reculé d'autant.
+   *
+   * UN par jour de saison, jamais un par nœud brûlé : la chronique veut savoir que le monde a
+   * mangé un morceau de la vallée, pas qu'un buisson a grillé. Haute fréquence n'est pas domaine.
+   */
+  | { type: 'cendre_avance'; tick: number; jour: number; front: number; noeudsBrules: number }
   | { type: 'village_founded'; tick: number; villageId: number; chiefId: number; tx: number; ty: number }
   | {
       type: 'structure_built'

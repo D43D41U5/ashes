@@ -33,6 +33,7 @@ import {
   type Strike,
   type WeaponKind,
   type WorldMap,
+  avanceeDuFront,
 } from '@braises/sim'
 import Phaser from 'phaser'
 import { createWorkerHost, type HostConnection } from '../host-connection'
@@ -62,6 +63,7 @@ import {
 } from './world/hud-bridge'
 import { ClutterLayer } from './world/clutter-layer'
 import { GroundLayer } from './world/ground-layer'
+import { CendreLayer } from './world/cendre-layer'
 import { ShadeLayer } from './world/shade-layer'
 import { PoiLayer } from './world/poi-layer'
 import { ShoreCliff } from './world/shore-cliff'
@@ -204,6 +206,7 @@ export class WorldScene extends Phaser.Scene {
   private clutter?: ClutterLayer
   private ground!: GroundLayer
   private shade!: ShadeLayer
+  private cendre!: CendreLayer
   private pois!: PoiLayer
   private shoreCliff!: ShoreCliff
   private calendarScale = 1
@@ -427,6 +430,7 @@ export class WorldScene extends Phaser.Scene {
         // réfracte le fond (le bake `map-demo` lui sert de lit).
         this.water = new WaterLayer(this, this.map, 'map-demo')
         this.shade = new ShadeLayer(this, this.map, this.warp)
+        this.cendre = new CendreLayer(this, this.map, String(this.map.width))
       },
       pois: () => {
         this.pois = new PoiLayer(this, this.map, this.warp) // les lieux se voient enfin
@@ -602,6 +606,15 @@ export class WorldScene extends Phaser.Scene {
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
       this.shade.render(this.cameras.main, hour) // ombre du relief selon le soleil
+      // LA CENDRE. Le client la RECALCULE du jour de saison — on ne lui transmet aucune tuile,
+      // aucun état. Elle ne se recuit que quand le front a bougé, c'est-à-dire une fois par jour.
+      //
+      // Et elle mange les NŒUDS : sans cette ligne, le client dessinerait des arbres dans un pré
+      // carbonisé, et le joueur s'y cognerait. Le protocole n'envoie jamais la disparition d'un
+      // nœud (il ne transmet que les stocks) — mais il n'a pas à le faire : le client DÉRIVE.
+      const front = avanceeDuFront(this.lastTime.seasonDay, this.map.cendreMax ?? 0)
+      this.cendre.update(front)
+      this.view.majCendre(this.map.cendre, this.map.width, front)
       this.shoreCliff.render(this.cameras.main) // DÉMO falaise de berge
       // Les lieux ont besoin de savoir OÙ est le joueur (le nom grossit quand on
       // approche) et CE QU'IL CONNAÎT (on ne nomme pas un lieu qu'on n'a pas vu).

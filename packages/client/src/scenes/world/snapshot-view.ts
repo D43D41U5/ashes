@@ -552,15 +552,45 @@ export class SnapshotView {
 
   /** Reçoit la liste COMPLÈTE des nœuds (message `ready`, une fois) et l'indexe
    * par id (deltas O(1)) ET par tuile (rendu culled O(1)/tuile visible). La
-   * carte en porte ~140k ; positions figées au runtime. */
+   * carte en porte ~330k ; positions figées au runtime. */
   setNodes(nodes: ResourceNode[]): void {
+    this.tousLesNoeuds = nodes
+    this.reindexer(nodes)
+  }
+
+  private reindexer(nodes: ResourceNode[]): void {
     this.nodes = nodes
     this.nodeById = new Map(nodes.map((n) => [n.id, n]))
     this.nodeByTile = new Map(nodes.map((n) => [n.tx * NODE_TILE_STRIDE + n.ty, n]))
   }
 
-  /** Applique les changements de stock reçus par tick (récolte/repousse). Le jeu
-   * de nœuds est stable au runtime : seul `stock` bouge, jamais d'ajout/retrait. */
+  /**
+   * LES NŒUDS QUE LA CENDRE A MANGÉS — et le client le DÉCOUVRE, on ne le lui dit pas.
+   *
+   * LE TROU QU'ON BOUCHE, et il était béant. Le protocole envoie les nœuds UNE fois, au `ready`,
+   * puis ne transmet que des changements de STOCK. Son commentaire l'assumait : *« le jeu de nœuds
+   * est stable au runtime : seul `stock` bouge, jamais d'ajout/retrait »*. Le front de cendre a
+   * rendu cette phrase FAUSSE — `/sim` détruisait 335 902 nœuds et **le client n'en savait rien**.
+   * Il continuait à dessiner des arbres dans un pré carbonisé, et à s'y cogner. Mesuré au smoke
+   * test : « jour 1 → 58, nœuds 335 902 → 335 902 ». La mécanique était morte à l'écran.
+   *
+   * ON NE TRANSMET RIEN. Le client a `map.cendre` (statique) et le tick : il RECALCULE le front,
+   * exactement comme la sim, et laisse tomber ce qui a brûlé. Zéro octet sur le fil, zéro version
+   * de protocole, zéro état à synchroniser — c'est toute la vertu du modèle, et il fallait juste
+   * s'en souvenir jusqu'ici.
+   */
+  private tousLesNoeuds: ResourceNode[] = []
+  private dernierFront = -Infinity
+
+  majCendre(champ: readonly number[] | undefined, width: number, front: number): void {
+    if (!champ || front <= this.dernierFront) return
+    this.dernierFront = front
+    const vivants = this.tousLesNoeuds.filter((n) => (champ[n.ty * width + n.tx] ?? Infinity) >= front)
+    if (vivants.length === this.nodes.length) return
+    this.reindexer(vivants)
+  }
+
+  /** Applique les changements de stock reçus par tick (récolte/repousse). */
   private applyNodeDeltas(deltas: NodeDelta[]): void {
     for (const d of deltas) {
       const n = this.nodeById.get(d.id)

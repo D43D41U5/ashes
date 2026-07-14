@@ -15,22 +15,33 @@
  * mais ce n'était qu'un multiplicateur de faim, un nombre qui monte. Désormais il a une
  * géographie. Personne ne dit au joueur de migrer : **le sol brûle derrière lui.**
  *
- * ═══ UN SEUL NOMBRE DANS L'ÉTAT ═══
+ * ═══ ZÉRO OCTET DANS L'ÉTAT ═══
  *
- * On ne MUTE pas la carte, et c'est ce qui rend le mécanisme bon marché. `SimState` ne gagne
- * qu'un **scalaire** : l'avancée du front, en tuiles. Tout le reste se DÉRIVE d'un champ statique
- * calculé une fois à la génération (`map.cendre[i]` : la distance de chaque tuile à la frontière
- * de la Cendrière, négative dedans).
+ * On ne MUTE pas la carte. Et on ne stocke même pas le front : **il ne coûte RIEN au `SimState`.**
  *
- *     une tuile brûle  ⟺  map.cendre[i] < front
+ * On avait prévu d'y ranger un scalaire (l'avancée du front, en tuiles) — c'était déjà bon marché.
+ * Mais un scalaire dérivable du tick est de **l'état REDONDANT**, et l'invariant du monde l'interdit
+ * en toutes lettres : *« le tick est la seule horloge ; toute notion dérivée est une fonction pure
+ * du numéro de tick »* (spec `monde.md` R1). L'état redondant finit toujours par diverger de sa
+ * source. Le front est donc **calculé, jamais rangé**.
  *
- * L'état reste petit et JSON-sérialisable (invariant d'archi) ; les replays tiennent au bit près ;
- * le client peint la cendre à partir du même nombre, sans qu'on lui transmette une seule tuile.
+ * Tout se dérive de deux choses statiques, posées à la génération :
+ *
+ *     map.cendre[i]   la distance de la tuile à la frontière de la Cendrière (négative dedans)
+ *     map.cendreMax   l'avancée finale du front, CALIBRÉE pour cette carte
+ *
+ *     une tuile brûle  ⟺  map.cendre[i] < front(tick)
+ *
+ * Les replays retrouvent le front exactement sans qu'on l'ait sérialisé ; le client le recalcule
+ * du tick, sans qu'on lui transmette une seule tuile.
  *
  * Pur et déterministe : `+ - * /` et `sqrt` (invariant n°2).
  */
 import { BALANCE } from './balance'
+import { emitEvent } from './events'
 import type { WorldMap } from './map'
+import type { SimState } from './sim'
+import { seasonDayAtTick } from './time'
 
 export const CENDRE = {
   /**
@@ -151,6 +162,25 @@ export function calibreLeFront(champ: readonly number[], estRacine: (i: number) 
   return (lo + hi) / 2
 }
 
+/**
+ * LE FRONT, À CET INSTANT — et il n'est PAS dans l'état.
+ *
+ * C'est la meilleure trouvaille du chantier, et elle vient d'un invariant plutôt que d'une idée :
+ * *« le tick est la seule horloge ; toute notion dérivée est une fonction pure du numéro de tick.
+ * Aucun état temporel redondant »* (spec `monde.md` R1).
+ *
+ * On avait prévu de stocker l'avancée du front dans le `SimState` — un scalaire, c'était déjà
+ * bon marché. Mais un scalaire dérivable du tick est **de l'état redondant**, et l'état redondant
+ * finit toujours par diverger de sa source. Le front est donc calculé, jamais rangé : **zéro
+ * octet ajouté au `SimState`**, zéro risque de désynchronisation, et les replays le retrouvent
+ * exactement sans qu'on ait à le sérialiser.
+ */
+export function frontActuel(state: { tick: number; calendarScale: number; map: WorldMap }): number {
+  const max = state.map.cendreMax
+  if (max === undefined) return 0 // une carte sans Cendrière : rien ne brûle
+  return avanceeDuFront(seasonDayAtTick(state.tick, state.calendarScale), max)
+}
+
 /** Cette tuile brûle-t-elle ? Une comparaison, rien de plus — c'est tout l'intérêt du modèle. */
 export function estCendre(map: WorldMap, tx: number, ty: number, front: number): boolean {
   if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return false
@@ -174,4 +204,46 @@ export function partSousLaCendre(map: WorldMap, front: number, filtre?: (i: numb
     if (champ[i]! < front) dedans += 1
   }
   return total === 0 ? 0 : dedans / total
+}
+
+/**
+ * LA CENDRE AVANCE, ET CE QU'ELLE ATTEINT MEURT.
+ *
+ * Appelé au BASCULEMENT d'un jour de saison, jamais à chaque tick : le front ne bouge qu'une fois
+ * par jour, et balayer les nœuds vingt fois par seconde pour rien serait une faute de goût autant
+ * que de perf.
+ *
+ * CE QUI MEURT : les nœuds de récolte. Un pré brûlé n'a plus de baies, une forêt cendrée n'a plus
+ * de bois. C'est ce qui fait que la migration n'est pas une consigne mais une **fuite** — le
+ * village qui reste ne meurt pas d'un coup, il s'appauvrit, jour après jour, jusqu'à ce que rester
+ * coûte plus que partir. C'est le mécanisme le plus doux qu'on puisse infliger, et le plus cruel.
+ *
+ * (Ce que la cendre fait à la FAUNE — les Cendreux y naissent-ils ? de jour ? — reste une décision
+ * de design, non prise. Elle n'est pas ici.)
+ *
+ * Émet UN événement par jour (`cendre_avance`), pas un par nœud : la chronique veut savoir que la
+ * vallée a reculé, pas qu'un buisson a grillé. Haute fréquence n'est pas domaine.
+ */
+export function avancerLaCendre(state: SimState): void {
+  const champ = state.map.cendre
+  if (!champ) return
+  const front = frontActuel(state)
+  if (front <= 0) return // l'acte I : la Cendrière reste chez elle
+
+  const width = state.map.width
+  const avant = state.nodes.length
+  state.nodes = state.nodes.filter((n) => {
+    const d = champ[n.ty * width + n.tx]
+    return d === undefined || d >= front
+  })
+  const brules = avant - state.nodes.length
+  if (brules === 0) return
+
+  emitEvent(state, {
+    type: 'cendre_avance',
+    tick: state.tick,
+    jour: seasonDayAtTick(state.tick, state.calendarScale),
+    front: Math.round(front),
+    noeudsBrules: brules,
+  })
 }

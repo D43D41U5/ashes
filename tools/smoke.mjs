@@ -97,6 +97,47 @@ const PROBE = () => {
 
 const SCENARIOS = {
   /**
+   * LA CENDRE AVANCE — et la vallée recule.
+   *
+   * On saute au dernier jour de la saison et on regarde. Sans cet outil, personne ne verrait
+   * jamais ce mécanisme : en Veillée, l'acte III arrive au bout d'une heure et demie de jeu. Une
+   * mécanique qu'on ne peut pas ATTEINDRE est une mécanique morte — ce projet en a déjà enterré
+   * cinq, toutes trouvées EN PILOTANT LE JEU.
+   *
+   * Exige `--dev` : le debug n'est armé que là (inerte en build de production).
+   */
+  async cendre(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+
+    // Le client ne TIENT pas la sim : il tient la vue du dernier snapshot. C'est elle qu'on lit —
+    // le smoke lit l'état du jeu, il ne le fabrique pas.
+    const lire = () => {
+      const s = window.__BRAISES__.scene
+      const n = s.view?.nodes
+      return {
+        jour: s.lastTime?.seasonDay ?? null,
+        noeuds: n ? (n.size ?? n.length ?? null) : null,
+      }
+    }
+
+    const avant = await page.evaluate(lire)
+
+    // On saute au jour 58 — l'acte III, la Cendre. Le debug n'est armé qu'en `--dev`.
+    await page.evaluate(() => {
+      window.__BRAISES__.scene.sendAction({ type: 'debug_set_season_day', day: 58 })
+    })
+    await page.waitForTimeout(4000)
+    const apres = await page.evaluate(lire)
+
+    console.log(`jour ${avant.jour} → ${apres.jour} · nœuds ${avant.noeuds} → ${apres.noeuds}`)
+    if (apres.noeuds !== null && avant.noeuds !== null && apres.noeuds >= avant.noeuds) {
+      console.log('⚠ la cendre n\'a rien brûlé — le front n\'avance pas')
+    }
+    await page.screenshot({ path: `${OUT}/cendre.png` })
+  },
+
+  /**
    * LE CHARGEMENT. Deux promesses à tenir : rien du HUD ne doit paraître avant que
    * la vallée existe, et la barre doit dire la VÉRITÉ (le compte de passes de l'hôte,
    * pas une animation). On RECHARGE la page pour assister à la naissance du monde —
