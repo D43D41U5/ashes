@@ -36,7 +36,13 @@ describe('le front de cendre', () => {
   it('R27 — la CENDRIÈRE brûle depuis le premier jour, et elle seule', () => {
     // Une tuile de la Cendrière a une distance NÉGATIVE : elle est dedans. Le front à zéro la
     // brûle donc déjà — c'est chez elle que la cendre tombe, c'est le sens du nom.
-    const dedans = partSousLaCendre(carte.map, 0, (i) => carte.zone[i] === cendriere.id)
+    // On ne compte QUE le sol : les marges de VIDE se rattachent à la région la plus proche (il faut
+    // bien qu'un échantillon réponde), mais une crevasse n'a rien à brûler.
+    const dedans = partSousLaCendre(
+      carte.map,
+      0,
+      (i) => carte.zone[i] === cendriere.id && carte.map.terrain[i] !== 0,
+    )
     expect(dedans, 'la Cendrière ne brûle pas').toBeGreaterThan(0.9)
     // Et les Prés Bas, eux, sont INTACTS au jour 1. On y meurt de faim, pas de cendre.
     expect(partDeLaRacine(1), 'les Prés Bas brûlent déjà au jour 1').toBe(0)

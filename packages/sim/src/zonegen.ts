@@ -48,6 +48,7 @@ import {
   TERRAIN_SCREE,
   TERRAIN_SHALLOW_WATER,
   TERRAIN_SNOW,
+  TERRAIN_VOID,
 } from './balance'
 import type { WorldMap, Zone as ZoneRect } from './map'
 import { calibreLeFront, computeCendreField } from './cendre'
@@ -55,11 +56,11 @@ import { distSq } from './geometry'
 import { placePois } from './poi'
 import { fbm2, hash2 } from './noise'
 import {
-  catalogueFrontieres,
   deriveGrapheZones,
   echantillonAt,
   MONDE,
   PALIER_MAX,
+  PALIER_VIDE,
   type GrapheZones,
 } from './zonegraph'
 
@@ -186,11 +187,12 @@ export const RELIEF = {
 export interface Blocs {
   cols: number
   rows: number
-  /** L'id de zone du bloc — le verdict du diagramme de puissance en son centre. */
+  /** L'id de RÉGION du bloc — ou la plus proche, si le bloc est dans le vide. */
   zone: Int32Array
-  /** La marge (distance à la frontière, en tuiles) au centre du bloc. Sert aux buttes et à la
-   *  cendre : plus jamais à peindre une falaise. */
+  /** La marge au centre du bloc (distance au bord de sa région). */
   marge: Float64Array
+  /** LE BLOC EST-IL DANS LA CREVASSE ? 1 = oui. C'est la question neuve du non-pavage. */
+  vide: Uint8Array
 }
 
 export function decouperEnBlocs(g: GrapheZones): Blocs {
@@ -199,15 +201,17 @@ export function decouperEnBlocs(g: GrapheZones): Blocs {
   const rows = Math.ceil(g.height / B)
   const zone = new Int32Array(cols * rows)
   const marge = new Float64Array(cols * rows)
+  const vide = new Uint8Array(cols * rows)
   for (let by = 0; by < rows; by++) {
     for (let bx = 0; bx < cols; bx++) {
       const e = echantillonAt(g, bx * B + B / 2, by * B + B / 2)
       const k = by * cols + bx
       zone[k] = e.zone
       marge[k] = e.marge
+      vide[k] = e.vide ? 1 : 0
     }
   }
-  return { cols, rows, zone, marge }
+  return { cols, rows, zone, marge, vide }
 }
 
 /** L'index du bloc qui contient la tuile (x, y). Clampé : hors carte, on rend le bloc du bord. */
@@ -277,6 +281,18 @@ const PALETTES: Record<string, Palette> = {
   // ── T2 : les marges. ──
   cendriere: { sol: TERRAIN_BURNT_FOREST, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.16, seuilTaches: 0.62 },
   glacier: { sol: TERRAIN_SNOW, taches: TERRAIN_SCREE, accent: TERRAIN_ROCK, rarete: 0.12, seuilTaches: 0.68 },
+
+  // ── LE NÉVÉ BLANC — un SEUIL, pas une zone. Il ne nourrit rien (spec R10.3) ──
+  //
+  // De la neige, et RIEN d'autre. Pas un accent (`rarete: 0` : jamais), presque pas de taches. C'est
+  // délibérément le sol le plus PAUVRE de la carte — et c'est ce qui fait de lui une porte plutôt
+  // qu'un pays : *on ne campe pas dans un seuil.* Aucune règle n'interdit d'y bâtir ; il n'y a
+  // simplement rien à y prendre, et l'on y meurt de froid. **Zéro code de restriction, zéro
+  // frustration** (spec R17).
+  //
+  // On y court à demi-vitesse (`snow`, speedFactor 0,5) : la traversée se PAIE, en temps et en
+  // chaleur. C'est le seul gardien dont il ait besoin.
+  neve: { sol: TERRAIN_SNOW, taches: TERRAIN_SNOW, accent: TERRAIN_SNOW, rarete: 0, seuilTaches: 0.99 },
   aiguilles: { sol: TERRAIN_SCREE, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.2, seuilTaches: 0.52 },
   gouffre: { sol: TERRAIN_BOULDERS, taches: TERRAIN_SCREE, accent: TERRAIN_ROCK, rarete: 0.18, seuilTaches: 0.5 },
   // Le Lac Mort : une eau trop claire. Le cœur est PROFOND (donc un mur — l'eau profonde ne se
@@ -323,12 +339,26 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   //    carte devient rectiligne : une frontière ne peut plus être qu'une union d'arêtes de blocs.
   const blocs = decouperEnBlocs(g)
 
-  // ── PASSE 1 : les zones, les paliers, le sol de chacune. Pas une falaise. ─
+  // ── PASSE 1 : LES TERRASSES ET LE VIDE ────────────────────────────────────
+  //
+  // La carte n'est PAS un pavage (spec R39) : ce qui n'est pas une région est une CREVASSE. On ne
+  // peint donc plus une zone partout — on peint des ÎLES, et le reste tombe.
+  //
+  // Le vide est un PALIER, très bas (`PALIER_VIDE`), et c'est tout ce qu'il faut : le rendu en
+  // marches (R34) fait le reste, sans une ligne de code de plus. Chaque bord de terrasse ouvre vers
+  // le sud une contremarche de `palier − PALIER_VIDE` — soit trois marches depuis le jardin, neuf
+  // depuis la Cendrière. **Le gouffre est d'autant plus profond que la terrasse est haute.**
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x
-      const z = blocs.zone[blocDe(blocs, x, y)]!
-      zone[i] = z
+      const k = blocDe(blocs, x, y)
+      const z = blocs.zone[k]!
+      zone[i] = z // même dans le vide : la cendre et l'ambiance ont besoin d'une région de rattachement
+      if (blocs.vide[k]) {
+        palier[i] = PALIER_VIDE
+        terrain[i] = TERRAIN_VOID
+        continue
+      }
       palier[i] = paliers[z]!
       terrain[i] = solDe(g, z, x, y)
     }
@@ -374,7 +404,10 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
    * indépendant qui pourrait diverger du terrain.
    */
   const elevation = new Array<number>(N)
-  for (let i = 0; i < N; i++) elevation[i] = palier[i]! / PALIER_MAX
+  // Le VIDE a un palier NÉGATIF (`PALIER_VIDE`) : c'est ce qui le fait tomber à l'écran. Mais
+  // `elevation` est un [0,1] que la température et les filtres de lieux consomment — on la borne
+  // donc à zéro. Un gouffre n'est pas « moins que le niveau de la mer », il est INACCESSIBLE.
+  for (let i = 0; i < N; i++) elevation[i] = Math.max(0, palier[i]!) / PALIER_MAX
 
   /**
    * LE CHAMP DE CENDRE — la distance de chaque tuile à la frontière de la Cendrière.
@@ -390,6 +423,11 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
     const k = blocDe(blocs, x, y)
     const zid = blocs.zone[k]!
     const m = blocs.marge[k]!
+    // LE VIDE NE BRÛLE PAS. Un bloc de crevasse se rattache à sa région la plus proche (il faut bien
+    // qu'un échantillon réponde) — mais il n'est DANS aucune zone, et une crevasse n'a rien à brûler.
+    // Sans cette ligne, un quart de la Cendrière « ne brûlait pas au jour 1 » : c'étaient ses marges
+    // de vide, comptées comme siennes.
+    if (blocs.vide[k]) return Math.abs(m) + 1
     if (zid === cendriere.id) return -m // DEDANS : elle brûle depuis le premier jour
     // Dehors : la distance à la frontière de la Cendrière. Si le bloc ne la touche pas, on prend la
     // distance au site — une borne honnête, et le front s'arrête de toute façon bien avant.
@@ -467,32 +505,31 @@ function solDe(g: GrapheZones, id: number, x: number, y: number): number {
 }
 
 /**
- * PERCER UN SEUIL — un couloir DROIT, et il MONTE marche à marche.
+ * ═══ PERCER UN SEUIL — c'est un ISTHME, et il MONTE ═══
  *
- * ═══ CE QUI A CHANGÉ, ET POURQUOI C'EST PLUS SIMPLE ═══
+ * La carte n'est plus un pavage : entre deux régions, il y a un GOUFFRE (spec R39). Un seuil n'est
+ * donc plus une brèche dans un mur — c'est un **pont de terre jeté au-dessus du vide**, le seul
+ * endroit où l'on passe d'une terrasse à l'autre.
  *
- * L'ancien couloir cherchait le sol de part et d'autre d'une bande de roche de 44 tuiles, creusait
- * en biais dans une direction théorique, serpentait au bruit, et se trompait — deux zones sont
- * devenues injoignables avant qu'il ne tienne. Toute cette complication venait d'une seule cause :
- * **il fallait traverser une ÉPAISSEUR**, et la frontière n'avait pas d'orientation connue.
+ * Et ça rachète, enfin, l'objection qui avait tué les cols : *« la porte est introuvable au sol. »*
+ * Un gouffre a une LÈVRE, et une lèvre se longe. **On ne cherche pas la porte : on longe le vide
+ * jusqu'à l'isthme.** C'est R4, tenue par la géométrie et non par une promesse.
  *
- * Avec l'arête fine et les blocs, la frontière a une orientation : c'est celle d'une **arête de
- * bloc**, donc un axe. On la lit (`axeDeTraversee`), on creuse un RECTANGLE dans cet axe, et on a
- * fini. Pas de méandre, pas de biais, pas de recherche de sol : un couloir droit qui traverse.
+ * Le couloir est DROIT — deux rectangles se font face selon un axe, il n'y a rien à chercher. C'est
+ * ce qui avait coûté deux réécritures à l'ancienne version, qui creusait en biais dans une direction
+ * théorique et mourait DANS le mur ; le rectiligne supprime la question au lieu d'y répondre.
  *
- * ET C'EST UN ESCALIER. Le palier passe de celui de la zone `a` à celui de la zone `b`, une marche
- * à la fois, chacune sur son palier de repos de `LONGUEUR_MARCHE` tuiles. L'invariant « une rampe
- * ne relie que deux paliers consécutifs » (R3) est vrai *par construction*. Un seuil qui grimpe
- * quatre paliers ANNONCE, rien qu'en se montrant, ce qui l'attend derrière.
+ * Et c'est un ESCALIER : le palier passe de celui de `a` à celui de `b`, une marche à la fois. Un
+ * isthme qui grimpe six paliers depuis le jardin ANNONCE, rien qu'en se montrant, ce qui l'attend.
  *
- * Toutes les tuiles du couloir sont marquées `rampe` — ce qui les exempte de la règle « une arête
- * est un mur », qu'elles violent par métier. Leurs FLANCS, eux, ne sont pas exemptés : `murerLesAretes`
- * les mure partout où le couloir longe une plaine d'un autre palier. **La gorge se creuse seule.**
+ * Toutes ses tuiles sont marquées `rampe` — ce qui les exempte de « une arête est un mur », qu'elles
+ * violent par métier. Leurs FLANCS, eux, ne le sont pas : le vide les borde de part et d'autre.
+ * **La passerelle se taille toute seule.**
  */
 function percerSeuil(
   g: GrapheZones,
-  blocs: Blocs,
-  s: { a: number; b: number; x: number; y: number },
+  _blocs: Blocs,
+  s: { a: number; b: number; x: number; y: number; ax: number; ay: number },
   terrain: number[],
   zone: Int32Array,
   palier: Int32Array,
@@ -501,10 +538,11 @@ function percerSeuil(
   width: number,
   height: number,
 ): void {
-  const axe = axeDeTraversee(blocs, s, width, height)
-  if (!axe) return
-  const { ax, ay, versA, versB } = axe
-  // La perpendiculaire — la largeur du couloir. En rectiligne, c'est l'autre axe, point final.
+  // L'AXE DE TRAVERSÉE vient du SEUIL, et c'est une leçon. Les régions se chevauchent (spec R40) :
+  // leurs formes sont des polygones en L, et la normale à la frontière ne se déduit plus de quatre
+  // nombres. On l'a donc CONSTATÉE au balayage (`catalogueDesPortes`), et on la transporte.
+  const ax = s.ax
+  const ay = s.ay
   const px = -ay
   const py = ax
 
@@ -513,24 +551,21 @@ function percerSeuil(
   const marches = Math.abs(pb - pa)
   const sens = pb > pa ? 1 : -1
 
-  // LA LONGUEUR SE PAIE EN MARCHES. Chaque palier de repos fait `LONGUEUR_MARCHE` tuiles ; le
-  // couloir déborde ensuite dans chaque pays — et il déborde depuis SON SOL, pas depuis le point du
-  // seuil : `versA`/`versB` disent où chaque pays commence vraiment. Sans ça, un seuil posé de
-  // travers sur une marche d'escalier de la frontière mourrait dans le mur.
+  // Le seuil est posé SUR la frontière : la rampe déborde donc à parts égales de chaque côté, de la
+  // moitié de son escalier plus le débord qui la fait déboucher dans le pays.
   const demi = Math.round((marches * RELIEF.LONGUEUR_MARCHE) / 2)
-  const dos = versA + demi + RELIEF.DEBORD_SEUIL
-  const face = versB + demi + RELIEF.DEBORD_SEUIL
+  const dos = demi + RELIEF.DEBORD_SEUIL
+  const face = demi + RELIEF.DEBORD_SEUIL
   const L = RELIEF.DEMI_LARGEUR_SEUIL
 
   for (let t = -dos; t <= face; t++) {
-    // L'ESCALIER : on répartit les marches sur la longueur, et les deux bouts raccordent EXACTEMENT
-    // les paliers des deux zones — donc aucune marche ne traîne au bord, donc le couloir débouche
-    // de plain-pied dans chaque pays (c'est ce qui l'empêche d'être muré par sa propre règle).
+    // L'ESCALIER. Les deux bouts raccordent EXACTEMENT les paliers des deux régions — donc aucune
+    // marche ne traîne au bord, donc l'isthme débouche de plain-pied et ne se mure pas lui-même.
     const u = (t + dos) / (dos + face)
     const marche = marches === 0 ? 0 : Math.min(marches, Math.floor(u * (marches + 1)))
     const pal = pa + sens * marche
-    // Le sol du couloir est celui de la zone vers laquelle on va : **la porte a déjà la couleur de
-    // ce qu'elle garde.** On voit ce qui attend avant d'y être (spec R10.2).
+    // Le sol du pont est celui de la région vers laquelle on va : **la porte a déjà la couleur de ce
+    // qu'elle garde.** On voit ce qui attend avant d'y être (spec R10.2).
     const vers = u < 0.5 ? s.a : s.b
 
     for (let w = -L; w <= L; w++) {
@@ -540,8 +575,7 @@ function percerSeuil(
         continue
       }
       const i = y * width + x
-      // ON DÉGAGE TOUT CE QUI BLOQUE — pas seulement la falaise. Un rocher (l'accent bloquant d'une
-      // zone) tombé au milieu du passage boucherait la porte. **Une porte est une porte.**
+      // ON DÉGAGE TOUT CE QUI BLOQUE — le vide comme le rocher. **Une porte est une porte.**
       if (TERRAINS[terrain[i]!]?.walkable !== true) {
         terrain[i] = solMarchableDe(g, vers, x, y)
         zone[i] = vers
@@ -550,72 +584,6 @@ function percerSeuil(
       rampe[i] = 1
     }
   }
-}
-
-/**
- * ═══ L'AXE QUI TRAVERSE VRAIMENT LA FRONTIÈRE — et la faute qu'il a fallu deux gardes pour voir ═══
- *
- * Un couloir rectiligne n'a qu'une question à poser : *dans quel sens est l'autre zone ?* La
- * première réponse était naïve — « la direction où je trouve la zone `b` le plus vite ». Elle a un
- * angle mort, et il est fatal :
- *
- * **Le point d'un seuil est POSÉ SUR la frontière.** Le bloc qui le contient appartient donc à `a`
- * ou à `b`, et c'est un coup de dé. S'il tombe côté `b`, on trouve `b` à une tuile dans les QUATRE
- * directions — et l'on choisit la première venue, c'est-à-dire l'est. Le couloir se creuse alors
- * **le long du mur**, entièrement dans `b`, et il ne relie rien du tout.
- *
- * Ça n'a pas fait tomber la garde de connexité, et c'est le plus inquiétant : **le tunnel d'accès
- * d'un lieu rebouchait le trou par accident** (il perçait la frontière d'une tuile — voir
- * `carveDistanceToMain`). La carte tenait par un bug. En interdisant ce tunnel, le Gouffre est
- * devenu injoignable — et la vraie faute, tapie dessous depuis le début, est enfin apparue.
- * *Une garde verte pour la mauvaise raison est pire qu'une garde rouge.*
- *
- * On cherche donc l'axe qui SÉPARE : celui où l'on trouve `a` d'un côté et `b` de l'autre, au plus
- * court. Le vecteur rendu pointe de `a` VERS `b`, et il porte les distances aux deux pays — de quoi
- * garantir que le couloir débouche pour de bon des deux bouts, quelle que soit la marche
- * d'escalier que la frontière dessine à cet endroit.
- */
-interface Traversee {
-  ax: number
-  ay: number
-  /** Distance (tuiles) au sol de `a`, en reculant. */
-  versA: number
-  /** Distance (tuiles) au sol de `b`, en avançant. */
-  versB: number
-}
-
-function axeDeTraversee(
-  blocs: Blocs,
-  s: { a: number; b: number; x: number; y: number },
-  width: number,
-  height: number,
-): Traversee | null {
-  const PORTEE = 24 * RELIEF.BLOC
-  // La distance au premier bloc de la zone `z`, en partant du seuil dans la direction (dx, dy).
-  const distA = (dx: number, dy: number, z: number): number => {
-    for (let d = 0; d <= PORTEE; d++) {
-      const x = s.x + dx * d
-      const y = s.y + dy * d
-      if (x < 0 || y < 0 || x >= width || y >= height) break
-      if (blocs.zone[blocDe(blocs, x, y)] === z) return d
-    }
-    return Infinity
-  }
-
-  let best: Traversee | null = null
-  let bestCout = Infinity
-  for (const [ax, ay] of [[1, 0], [0, 1]] as const) {
-    // Les deux orientations de l'axe : `b` devant et `a` derrière, ou l'inverse.
-    for (const sens of [1, -1] as const) {
-      const dx = ax * sens
-      const dy = ay * sens
-      const versB = distA(dx, dy, s.b)
-      const versA = distA(-dx, -dy, s.a)
-      const cout = versA + versB
-      if (cout < bestCout) { bestCout = cout; best = { ax: dx, ay: dy, versA, versB } }
-    }
-  }
-  return best && Number.isFinite(bestCout) ? best : null
 }
 
 /** Le sol d'une zone, mais GARANTI marchable : dans un couloir de seuil, l'accent bloquant
@@ -662,7 +630,7 @@ function toponymes(g: GrapheZones): ZoneRect[] {
 
 /** Le catalogue des frontières, réexporté : les tests destructifs en ont besoin pour reboucher
  *  les seuils et vérifier qu'une zone devient bien une île (A5). */
-export { catalogueFrontieres, deriveGrapheZones, PALIER_MAX }
+export { deriveGrapheZones, PALIER_MAX, PALIER_VIDE }
 
 /**
  * ═══ MURER LES ARÊTES — LA FALAISE, DÉDUITE ═══

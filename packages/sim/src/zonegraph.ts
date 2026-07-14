@@ -32,7 +32,7 @@
  * le warp ; `+ - * /` et `sqrt` uniquement (invariant n°2). Aucune trigonométrie.
  */
 import { distSq } from './geometry'
-import { fbm2, hash2 } from './noise'
+import { hash2 } from './noise'
 
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -61,13 +61,44 @@ export const MONDE = {
    * onze zones et la roche) ; donc ~2,1 M, plus une marge de manœuvre. Il se **mesure** en
    * test (A17), il ne se devine pas.
    */
-  TUILES_PAR_JOUEUR: 50_000,
+  TUILES_PAR_JOUEUR: 75_000,
 
   /** Vallée alpine : portrait, la bouche au sud. 2 de large pour 3 de haut. */
   RATIO_LARGEUR: 2,
   RATIO_HAUTEUR: 3,
 
-  /** Le treillis du semis : 3 colonnes × 4 rangées = les 12 zones. */
+  /**
+   * LE BLOC — la maille de TOUT ce qui est rectiligne, en tuiles (spec R32). Les rectangles de
+   * régions sont alignés dessus : un bord de zone tombe donc TOUJOURS pile sur une arête de bloc.
+   */
+  BLOC: 16,
+
+  /**
+   * ═══ LA CARTE N'EST PAS UN PAVAGE — décision d'Alexis, 2026-07-14 (sur croquis) ═══
+   *
+   * *« Les invariants sont : la position de cendre et T0, la forme approximative des zones, le
+   * passage par la zone de neige pour accéder à plusieurs zones endgame, le fait que tout ne soit
+   * pas un pavage de la map. »*
+   *
+   * Les zones ne se touchent plus bord à bord. Ce sont des **TERRASSES SUSPENDUES**, séparées par
+   * des **CREVASSES** — *« au pire le noir ce sont de grosses crevasses tellement profondes qu'elles
+   * tirent vers le noir »*. Le vide est donc un PALIER, très bas, peint en noir : le rendu en
+   * marches le donne gratuitement (spec R34), et chaque bord de zone y tombe par une contremarche.
+   *
+   * ET C'EST CE QUI SAUVE R4. Une falaise d'une tuile courant nord-sud se lisait comme une clôture
+   * (constaté à l'écran au commit précédent). Une terrasse au bord d'un gouffre, non : **le vide a
+   * une masse.** *On ne trouve pas une porte : on longe le gouffre jusqu'à l'ISTHME.*
+   */
+
+  /** Deux régions sont VOISINES si la crevasse qui les sépare ne fait pas plus que ça (tuiles).
+   *  Au-delà, elles se tournent le dos : le gouffre est trop large, il n'y a pas d'isthme. */
+  MUR_MAX: 80,
+
+  /** Et il faut qu'elles se FASSENT FACE sur au moins cette longueur : en deçà, c'est un contact
+   *  de coin, et un seuil dans un coin n'est pas un seuil. */
+  FACE_MIN: 48,
+
+  /** Le treillis du semis — SEULEMENT pour le repli en diagramme de puissance (voir `geometries`). */
   COLS: 3,
   ROWS: 4,
   /** Décalage du site dans sa cellule. < 0,5 → il n'en sort jamais. */
@@ -166,7 +197,19 @@ export const MONDE = {
    * 55 tuiles : plus d'un écran et demi de marge autour de la porte, où l'on n'est que dans les
    * deux zones qu'elle relie. La falaise y a sa pleine épaisseur.
    */
-  PURETE_MIN: 55,
+  /**
+   * LA PURETÉ MINIMALE d'une porte, en tuiles — sa distance à une TROISIÈME région.
+   *
+   * Une porte percée dans un coin triple n'est pas une porte : elle tombe visuellement dans une zone
+   * qui n'est pas la sienne, et sa falaise y est trop mince pour se longer.
+   *
+   * RECALIBRÉE de 55 à 40 le 2026-07-14, et il faut dire pourquoi : depuis que les rectangles se
+   * CHEVAUCHENT (spec R40), la pureté se mesure contre le rectangle NOMINAL d'une région, pas contre
+   * sa forme visible — qui peut être bien plus petite (une voisine lui a mangé un morceau). Le
+   * chiffre sur-estime donc la proximité d'une tierce. 40 tuiles restent deux blocs et demi : une
+   * porte n'est jamais dans un coin.
+   */
+  PURETE_MIN: 40,
 }
 
 /** La taille de la carte, DÉDUITE du nombre de joueurs. Jamais réglée à la main. */
@@ -198,6 +241,24 @@ export interface ZoneDef {
   slug: string
   nom: string
   tier: Tier
+  /**
+   * ═══ LE NÉVÉ BLANC — une RÉGION, mais PAS UNE ZONE (spec §3) ═══
+   *
+   * *« On ne le visite pas, on le TRAVERSE. »* Blizzard perpétuel, aucun bois, aucune eau liquide,
+   * aucun gibier : c'est un **SEUIL GÉANT**, et il commande l'accès aux trois T2 endgame du nord
+   * (invariant du croquis d'Alexis : *« le passage par la zone de neige pour accéder à plusieurs
+   * zones endgame »*).
+   *
+   * LA CONSÉQUENCE EST CE QUI REND LE GOULOT ADMISSIBLE, et elle vaut d'être écrite : R11bis
+   * interdit qu'une ZONE soit un goulot, parce qu'**un village peut la tenir**. On ne peut pas
+   * tenir un Névé — on n'y vit pas, il ne nourrit rien (R10.3). Un goulot qu'on ne peut pas tenir
+   * n'est pas un goulot : c'est une PORTE. Les gardes qui parlent de zones (A21, A4) l'excluent
+   * donc explicitement, et c'est la seule exception du modèle.
+   *
+   * Il garde le nord ; mais il n'y monte pas seul : **deux zones du cœur y donnent** (décision
+   * d'Alexis, 2026-07-14). Sans quoi celle qui y mènerait serait, elle, un vrai goulot tenable.
+   */
+  traverse?: true
   /**
    * La ressource STRUCTURANTE : elle n'existe NULLE PART ailleurs (spec R9). C'est elle qui
    * remplace la récompense de distance, qui était arithmétiquement morte (`circleFactor`
@@ -233,7 +294,13 @@ export const ZONES: readonly ZoneDef[] = [
   { slug: 'aiguilles', nom: 'les Aiguilles', tier: 2 },
   { slug: 'gouffre', nom: 'le Gouffre', tier: 2 },
   { slug: 'lac_mort', nom: 'le Lac Mort', tier: 2 },
+
+  // ── LE SEUIL GÉANT — une région, pas une zone (voir `ZoneDef.traverse`) ──
+  { slug: 'neve', nom: 'le Névé Blanc', tier: 2, traverse: true },
 ]
+
+/** Les 12 vraies ZONES — celles qu'on habite, qu'on tient, qu'un village peut bloquer. */
+export const VRAIES_ZONES = ZONES.filter((z) => !z.traverse)
 
 /** Le compte par palier — la table EST la contrainte : 1 + 6 + 5 = 12 = COLS × ROWS. */
 export const RACINE_SLUG = 'pres_bas'
@@ -242,14 +309,35 @@ export const RACINE_SLUG = 'pres_bas'
 // LE GRAPHE
 // ────────────────────────────────────────────────────────────────────────────
 
+/** Un rectangle de carte, en tuiles. Aligné sur `MONDE.BLOC`, toujours. */
+export interface Rect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 export interface Zone {
   id: number
   def: ZoneDef
   /** Le site, en tuiles — le centre de la zone, là où son nom se pose. */
   x: number
   y: number
-  /** Le poids du diagramme de puissance (dérivé du palier). */
+  /** Le poids du diagramme de puissance (dérivé du palier). Inutilisé sur un pavage. */
   poids: number
+  /**
+   * ═══ LA ZONE EST UN RECTANGLE — et c'est le cas NORMAL (décision d'Alexis, 2026-07-14) ═══
+   *
+   * *« J'aimerais plus insister sur la partie carré/rectangle des zones. On essaye de les faire
+   * correspondre à ces formes, on fallback vers un polygone plus complexe QUE si on n'a pas le
+   * choix. »*
+   *
+   * Quand ce champ est présent, la zone EST ce rectangle — exactement, au bloc près. Quand il est
+   * absent, la carte est retombée sur le **repli** : le diagramme de puissance, qui rend des
+   * polygones rectilignes en escalier (voir `geometries`). Le repli existe parce qu'une saison est
+   * une carte : mieux vaut une zone en escalier qu'une seed mort-née (R26).
+   */
+  rect?: Rect
 }
 
 /** Un SEUIL — une porte entre deux zones. Un LIEU, pas un mur (spec R10). */
@@ -261,6 +349,10 @@ export interface Seuil {
   /** Le point de passage, en tuiles : sur la frontière des deux zones. */
   x: number
   y: number
+  /** La direction qui va de `a` vers `b` — l'axe que l'isthme traverse. Les formes étant des
+   *  polygones en L (voir `Case.p`), la normale à la frontière ne se devine pas : on la CONSTATE. */
+  ax: number
+  ay: number
   /**
    * `false` pour le premier seuil d'une paire, `true` pour le second.
    * **Le second est TOUJOURS pire** (plus long, plus froid, plus gardé) : ce n'est pas un
@@ -302,289 +394,504 @@ export interface GrapheZones {
 }
 
 /**
- * À qui appartient ce point ? Le diagramme de PUISSANCE : `distance² − poids`. La position
- * d'interrogation est déformée par un bruit (domain warp) — d'où des frontières qui
- * serpentent au lieu de polygones.
+ * ═══ LE SQUELETTE — la carte est DESSINÉE, pas tirée au sort ═══
  *
- * On balaie TOUS les sites (douze) : c'est douze distances au carré, moins cher que n'importe
- * quelle indexation spatiale, et ça supprime toute une classe de bugs de voisinage (le warp
- * déplace le point de 90 tuiles ; un balayage local raterait parfois le vrai plus proche —
- * c'est le genre de faute qui ne se voit que sur une seed sur vingt, c'est-à-dire *en
- * production*).
+ * *« Voici le design de map ciblé ; les proportions ne sont pas forcément respectées mais la forme
+ * et l'emboîtement général est là. »* (Alexis, 2026-07-14, croquis à l'appui.)
+ *
+ * On cesse de générer une partition et on POSE une carte. Treize rectangles, écrits ici, en
+ * fractions de carte — la seed ne fait plus que les jitterer et permuter les identités dans chaque
+ * palier. C'est le modèle de Valheim jusqu'au bout : *les biomes sont fixes, la carte ne l'est pas.*
+ *
+ * CE QUE LE CROQUIS IMPOSE, et qui ne se négocie pas :
+ *
+ *   1. **LA CENDRE EST AU SUD, SOUS LE T0.** Le front remonte donc vers le nord, à travers le
+ *      jardin. La saison n'est pas un compteur : c'est une vallée qu'on perd, et elle se perd par
+ *      le bas (spec R27-R30).
+ *   2. **LA NEIGE COMMANDE LE NORD.** Les trois T2 endgame ne se rejoignent qu'en traversant le
+ *      Névé. Mais **deux zones du cœur y donnent** — sans quoi celle qui y mènerait serait un
+ *      goulot tenable, ce que R11bis interdit.
+ *   3. **LA CARTE N'EST PAS UN PAVAGE.** Tout ce qui n'est pas une région est une CREVASSE.
+ *
+ * Les fractions ci-dessous sont en [0,1] : `x` vers l'est, `y` vers le SUD (0 = le nord de la
+ * carte, 1 = son sud). On lit donc le tableau du nord au sud, comme le croquis.
  */
-function warp(g: { seed: number }, x: number, y: number): { wx: number; wy: number } {
-  const wx = x + MONDE.WARP_AMP * (fbm2(x, y, MONDE.WARP_SCALE, (g.seed ^ 0x1b56c4f9) | 0) * 2 - 1)
-  const wy = y + MONDE.WARP_AMP * (fbm2(x, y, MONDE.WARP_SCALE, (g.seed ^ 0x7d2ac03b) | 0) * 2 - 1)
-  return { wx, wy }
+interface Case {
+  /** Le rôle dans le squelette — sert au débogage et aux gardes. */
+  role: string
+  tier: Tier
+  /** Identité IMPOSÉE (la Cendrière est au sud, le Névé est la bande) ; sinon tirée dans le tier. */
+  fixe?: string
+  /**
+   * ═══ LA PRIORITÉ — ce qui fait qu'une terrasse SE POSE SUR une autre ═══
+   *
+   * Les rectangles du squelette **SE CHEVAUCHENT**, largement, et c'est tout le sujet. Alexis, trois
+   * fois : *« certaines zones mordaient sur d'autres et c'est ça qui donnait l'impression de
+   * terrasses avec des rampes »*, puis *« n'hésite pas à mordre un peu plus »*, puis — en
+   * capitales — *« JE PERSISTE, LES ZONES NE MORDENT QUASIMENT PAS LES UNES DANS LES AUTRES »*.
+   *
+   * Il avait raison, et je regardais mal. Des rectangles qui s'ALIGNENT bord à bord font un mur de
+   * briques ; des rectangles qui SE RECOUVRENT font des terrasses. Dans le croquis, le T1 étroit
+   * monte franchement DANS la bande de neige ; le grand T1 mord DANS les T1 du bas.
+   *
+   * Une tuile appartient donc à la région de plus haute priorité qui la contient. La zone haute
+   * **se pose sur** la basse et lui mange un morceau — dont la forme visible devient un POLYGONE
+   * RECTILIGNE (un L, un rectangle échancré). C'est très exactement le repli qu'Alexis avait
+   * autorisé d'emblée : *« on fallback vers un polygone plus complexe QUE si on n'a pas le choix. »*
+   * On n'avait pas le choix : c'est le chevauchement qui fabrique le relief.
+   */
+  p: number
+  x0: number
+  y0: number
+  x1: number
+  y1: number
 }
+
+const SQUELETTE: readonly Case[] = [
+  // Les `y` se CHEVAUCHENT d'une région à l'autre — c'est délibéré, et c'est ce qui fait le relief.
+  // `p` tranche : la plus haute priorité se pose SUR l'autre et lui mange un morceau.
+
+  // ── LE FEU — la Cendrière, plein sud. Tout le monde mord dedans ; elle ne mord sur personne. ──
+  { role: 'cendre', tier: 2, fixe: 'cendriere', p: 0, x0: 0.02, y0: 0.895, x1: 0.98, y1: 0.985 },
+
+  // ── LE JARDIN — la racine. Elle déborde SUR la Cendrière ; la ceinture débordera sur elle. ────
+  { role: 'racine', tier: 0, fixe: RACINE_SLUG, p: 1, x0: 0.05, y0: 0.665, x1: 0.95, y1: 0.915 },
+
+  // ── LA CEINTURE — trois T1 POSÉES SUR le jardin : elles lui mangent le haut, et son bord devient
+  //    une dentelle de terrasses. Elles ne se touchent PAS entre elles — pour passer de l'une à
+  //    l'autre, il faut redescendre au jardin ou monter par le milieu. La carte a des BOUCLES.
+  { role: 'ceinture-ouest', tier: 1, p: 2, x0: 0.02, y0: 0.490, x1: 0.42, y1: 0.720 },
+  { role: 'ceinture-centre', tier: 1, p: 2, x0: 0.46, y0: 0.525, x1: 0.70, y1: 0.720 },
+  { role: 'ceinture-est', tier: 1, p: 2, x0: 0.74, y0: 0.455, x1: 0.98, y1: 0.720 },
+
+  // ── LE MILIEU — `milieu-ouest` se pose SUR deux T1 de la ceinture à la fois, et mord de sept
+  //    points de carte dans chacune. C'est le geste central du croquis : un surplomb, pas un contact.
+  { role: 'milieu-ouest', tier: 1, p: 3, x0: 0.10, y0: 0.310, x1: 0.62, y1: 0.560 },
+  { role: 'milieu-est', tier: 1, p: 3, x0: 0.70, y0: 0.270, x1: 0.98, y1: 0.520 },
+
+  // ── LES DEUX APPROCHES DU NÉVÉ — ce qui empêche un village de verrouiller l'endgame. ──────────
+  { role: 'approche-ouest', tier: 1, p: 4, x0: 0.22, y0: 0.190, x1: 0.48, y1: 0.390 },
+  { role: 'approche-est', tier: 2, p: 4, x0: 0.64, y0: 0.190, x1: 0.98, y1: 0.330 },
+
+  // ── LE NORD — trois T2, de hauteurs différentes, qui montent dans la neige. ───────────────────
+  { role: 'nord-ouest', tier: 2, p: 5, x0: 0.02, y0: 0.015, x1: 0.40, y1: 0.195 },
+  { role: 'nord-centre', tier: 2, p: 5, x0: 0.38, y0: 0.008, x1: 0.66, y1: 0.195 },
+  { role: 'nord-est', tier: 2, p: 5, x0: 0.64, y0: 0.045, x1: 0.98, y1: 0.195 },
+
+  // ── LE NÉVÉ — LA PRIORITÉ LA PLUS HAUTE, et c'est ce qui le sauve. Tout le monde monte dedans ;
+  //    lui reste une BANDE CONTINUE, pleine largeur, qu'on ne peut pas contourner. Un seuil géant
+  //    échancré ne serait plus un seuil : ce serait un trou dans le mur.
+  { role: 'neve', tier: 2, fixe: 'neve', p: 9, x0: 0.02, y0: 0.150, x1: 0.98, y1: 0.245 },
+]
+
+/**
+ * ═══ LES LIENS — l'adjacence se DÉCLARE, elle ne se déduit pas ═══
+ *
+ * Seize liens, écrits. Deux régions liées PARTAGENT une arête (leurs rectangles se touchent, et
+ * mordent souvent l'un sur l'autre) ; le seuil est une RAMPE percée dans cette arête. Deux régions
+ * non liées ne se touchent pas : entre elles, la crevasse.
+ *
+ * POURQUOI ON LES ÉCRIT AU LIEU DE LES MESURER. La première version déduisait l'adjacence de la
+ * géométrie — voisines si la crevasse faisait moins de 80 tuiles. C'est juste, et c'est fragile : le
+ * jitter de la seed déplace les bords, une crevasse de 59 tuiles s'ouvre à 97, et **la frontière
+ * disparaît**. Mesuré : six régions sur treize injoignables sur la seed 1. On ne pouvait ni
+ * resserrer le jitter (il devenait inutile) ni élargir le seuil (des frontières apparaissaient là où
+ * le croquis veut du vide). Les deux réglages étaient pris en tenaille.
+ *
+ * **Sur une carte DESSINÉE, la topologie est un fait, pas une mesure.** On l'écrit ; la géométrie
+ * n'a plus qu'à dire OÙ passe la rampe — jamais SI la frontière existe.
+ */
+const LIENS: readonly (readonly [string, string])[] = [
+  ['cendre', 'racine'], // l'impasse du sud : le feu, et il n'a qu'une porte sur le jardin
+
+  // Le jardin ouvre sur trois T1 — la première décision du joueur est un CHOIX (R14).
+  ['racine', 'ceinture-ouest'],
+  ['racine', 'ceinture-centre'],
+  ['racine', 'ceinture-est'],
+
+  // On remonte. `milieu-ouest` MORD sur deux T1 de la ceinture : c'est le débord qui fait la
+  // terrasse. Les trois T1 de la ceinture, elles, ne se touchent PAS entre elles — pour passer de
+  // l'une à l'autre, il faut redescendre au jardin ou monter par le milieu. La carte a des BOUCLES.
+  ['ceinture-ouest', 'milieu-ouest'],
+  ['ceinture-centre', 'milieu-ouest'],
+  ['ceinture-est', 'milieu-est'],
+
+  // LES DEUX APPROCHES DU NÉVÉ — l'invariant qui empêche un village de verrouiller l'endgame :
+  // retirer l'une laisse l'autre.
+  ['milieu-ouest', 'approche-ouest'],
+  ['milieu-est', 'approche-est'],
+  ['approche-ouest', 'neve'],
+  ['approche-est', 'neve'],
+
+  // LE NORD — on n'y entre QUE par la neige.
+  ['neve', 'nord-ouest'],
+  ['neve', 'nord-centre'],
+  ['neve', 'nord-est'],
+  ['nord-ouest', 'nord-centre'],
+  ['nord-centre', 'nord-est'],
+]
+
+/**
+ * ═══ LE VIDE — un palier, très bas, et c'est tout ce qu'il faut ═══
+ *
+ * *« Au pire le noir ce sont de grosses crevasses tellement profondes qu'elles tirent vers le
+ * noir. »* (Alexis.) Le vide n'est donc pas de la roche posée SUR la carte : c'est un fond, très
+ * en dessous. Une terrasse au palier 6 qui donne dessus ouvre une paroi de NEUF marches.
+ *
+ * ET IL N'EST PAS ENTRE LES ZONES VOISINES. C'est la faute qu'il a fallu montrer pour la voir : la
+ * première écriture séparait TOUTES les régions par une crevasse, et les seuils devenaient de longs
+ * couloirs étroits jetés au-dessus — *« là on a des petits couloirs pas ouf »* (Alexis). Le croquis
+ * dit le contraire, et il faut le lire de près : **les zones voisines SE TOUCHENT**, elles se
+ * chevauchent même partiellement (« certaines zones mordaient sur d'autres »). C'est ce partage
+ * d'arête, entre deux paliers différents, qui fabrique la TERRASSE — et la rampe qui y monte.
+ *
+ * Le vide n'est donc que là où il n'y a **aucune** région : les marges, et les trous entre les
+ * colonnes qui ne se touchent pas. Il donne la masse ; il ne fait pas les frontières.
+ */
+export const PALIER_VIDE = -3
 
 export interface Echantillon {
-  /** L'id de la zone propriétaire. */
+  /** L'id de la RÉGION propriétaire — ou la plus proche, si le point est dans le vide. */
   zone: number
-  /** L'id de la zone d'en face — celle qui se dispute la frontière la plus proche. */
+  /** L'id de la région d'en face — celle qui se dispute la crevasse la plus proche. */
   voisin: number
-  /**
-   * Distance à la frontière la plus proche, en tuiles. 0 dessus, croît vers le cœur.
-   *
-   * C'EST LE CHAMP QU'ON SCULPTE. La falaise, c'est `marge < ÉPAISSEUR` ; le seuil, c'est une
-   * brèche qu'on y perce. Toute la topologie du jeu sort de cette seule valeur.
-   */
+  /** Distance au bord de sa région, en tuiles. Croît vers le cœur. */
   marge: number
-  /**
-   * LA PURETÉ — à quelle distance est la TROISIÈME zone la plus proche.
-   *
-   * ELLE A ÉTÉ AJOUTÉE PARCE QU'ELLE MANQUAIT, ET LE DÉFAUT SE VOYAIT À L'ŒIL (Alexis, sur la
-   * carte rendue : *« les portes semblent souvent à l'intersection de plusieurs zones, et
-   * certains points blancs semblent en dehors de leur zone »*).
-   *
-   * LA CAUSE ÉTAIT MÉCANIQUE, et c'est mon optimiseur qui la produisait : il ÉCARTE les portes
-   * les unes des autres au maximum. Or, sur une frontière, les points les plus éloignés des
-   * autres portes sont **ses deux extrémités** — c'est-à-dire les **COINS TRIPLES**, là où trois
-   * zones se rejoignent. L'optimiseur poussait donc systématiquement les portes dans les coins.
-   *
-   * Et une porte dans un coin triple est une MAUVAISE porte : la falaise y est mince (trois
-   * frontières se croisent, aucune n'a d'épaisseur), le seuil y est donc court, et le point tombe
-   * visuellement dans une troisième zone. On exige désormais qu'une porte soit **PURE** : loin de
-   * toute zone tierce. C'est une contrainte de FORME, et elle valait bien d'être vue.
-   */
+  /** Distance à la TROISIÈME région — ce qui interdit de percer une porte dans un coin. */
   purete: number
+  /** LE POINT EST-IL DANS LA CREVASSE ? C'est la question que le pavage ne posait pas. */
+  vide: boolean
 }
 
 /**
- * L'échantillon en un point — la primitive de tout le reste.
+ * L'ÉCHANTILLON — treize rectangles, treize tests d'appartenance, et une réponse EXACTE.
  *
- * La marge se dérive des deux meilleures « puissances » (d² − w). Sur la frontière exacte,
- * `pa === pb` : leur écart vaut donc 0 dessus et croît quand on s'éloigne. La conversion en
- * TUILES divise par `2 × d(site_a, site_b)`, qui est le gradient de `pb − pa` le long de la
- * ligne des sites — un simple développement : `pb − pa = |X−B|² − |X−A|²`, dont la dérivée
- * vaut `2 × |A−B|`.
- *
- * `sqrt` est autorisé (invariant n°2) et nécessaire ici : on compare un écart à une largeur
- * en tuiles, pas deux distances entre elles.
+ * Pas de bruit, pas de warp, pas de dichotomie. Ce que le diagramme de puissance approchait par une
+ * arithmétique de gradients, la géométrie le donne ici de plain-pied — coins compris, qui sont des
+ * coins de rectangles et non plus des lieux flous où trois cellules s'égalisent.
  */
 export function echantillonAt(g: GrapheZones, x: number, y: number): Echantillon {
-  const { wx, wy } = warp(g, x, y)
-  let best = 0
-  let bestP = Infinity
-  let second = 0
-  let secondP = Infinity
-  let third = 0
-  let thirdP = Infinity
-  for (const z of g.zones) {
-    const p = distSq(wx, wy, z.x, z.y) - z.poids
-    if (p < bestP) {
-      thirdP = secondP
-      third = second
-      secondP = bestP
-      second = best
-      bestP = p
-      best = z.id
-    } else if (p < secondP) {
-      thirdP = secondP
-      third = second
-      secondP = p
-      second = z.id
-    } else if (p < thirdP) {
-      thirdP = p
-      third = z.id
-    }
+  const n = g.zones.length
+  // LA PLUS HAUTE PRIORITÉ GAGNE. Les rectangles se recouvrent (voir `Case.p`) : c'est ce
+  // chevauchement qui fabrique les terrasses, et c'est ici qu'il se tranche.
+  let zone = -1
+  let best = -1
+  for (let i = 0; i < n; i++) {
+    const r = g.zones[i]!.rect!
+    if (x < r.x || x >= r.x + r.w || y < r.y || y >= r.y + r.h) continue
+    const p = SQUELETTE[i]!.p
+    if (p > best) { best = p; zone = i }
   }
-  const a = g.zones[best]!
-  const b = g.zones[second]!
-  const c = g.zones[third]!
-  const dab = Math.sqrt(distSq(a.x, a.y, b.x, b.y))
-  // dab > 0 : deux sites ne coïncident jamais (treillis + jitter < 0,5 cellule).
-  const marge = (secondP - bestP) / (2 * dab)
-  // La PURETÉ : la même arithmétique, mais contre la TROISIÈME zone. Sur un coin triple, les
-  // trois puissances s'égalisent et la pureté tombe à zéro — c'est exactement le lieu qu'on veut
-  // fuir quand on perce une porte.
-  const dac = Math.sqrt(distSq(a.x, a.y, c.x, c.y))
-  const purete = dac > 0 ? (thirdP - bestP) / (2 * dac) : Infinity
-  return { zone: best, voisin: second, marge, purete }
+
+  // LA CREVASSE. On rend tout de même la région la plus proche : la cendre en fait une distance, le
+  // client en tire une teinte d'air, et un échantillon doit toujours répondre.
+  if (zone < 0) {
+    let best = 0
+    let bestD = Infinity
+    let second = 0
+    let secondD = Infinity
+    for (let i = 0; i < n; i++) {
+      const d = distAuRect(x, y, g.zones[i]!.rect!)
+      if (d < bestD) { secondD = bestD; second = best; bestD = d; best = i }
+      else if (d < secondD) { secondD = d; second = i }
+    }
+    return { zone: best, voisin: second, marge: -bestD, purete: secondD, vide: true }
+  }
+
+  const r = g.zones[zone]!.rect!
+  // La distance à chacun des quatre bords, et la région d'en face au droit du point.
+  const bords: readonly (readonly [number, number, number])[] = [
+    [x - r.x, r.x - 1, y],
+    [r.x + r.w - 1 - x, r.x + r.w, y],
+    [y - r.y, x, r.y - 1],
+    [r.y + r.h - 1 - y, x, r.y + r.h],
+  ]
+  let marge = Infinity
+  let voisin = zone
+  for (const [d, px, py] of bords) if (d < marge) { marge = d; voisin = regionLaPlusProche(g, px, py, zone) }
+  if (!Number.isFinite(marge)) marge = g.width + g.height
+
+  let purete = Infinity
+  for (let i = 0; i < n; i++) {
+    if (i === zone || i === voisin) continue
+    const d = distAuRect(x, y, g.zones[i]!.rect!)
+    if (d < purete) purete = d
+  }
+  if (!Number.isFinite(purete)) purete = g.width + g.height
+
+  return { zone, voisin, marge, purete, vide: false }
+}
+
+/** La région la plus proche d'un point, en excluant `sauf`. Le vide n'appartient à personne. */
+function regionLaPlusProche(g: GrapheZones, x: number, y: number, sauf: number): number {
+  let best = sauf
+  let bestD = Infinity
+  for (let i = 0; i < g.zones.length; i++) {
+    if (i === sauf) continue
+    const d = distAuRect(x, y, g.zones[i]!.rect!)
+    if (d < bestD) { bestD = d; best = i }
+  }
+  return best
+}
+
+/** Distance d'un point à un rectangle (0 s'il est dedans). `sqrt` est autorisé (invariant n°2). */
+export function distAuRect(x: number, y: number, r: Rect): number {
+  const dx = Math.max(r.x - x, 0, x - (r.x + r.w - 1))
+  const dy = Math.max(r.y - y, 0, y - (r.y + r.h - 1))
+  if (dx === 0) return dy
+  if (dy === 0) return dx
+  return Math.sqrt(dx * dx + dy * dy)
 }
 
 /**
- * LE SEMIS, LES PALIERS, LES SEUILS. O(sites²) — négligeable, et appelé une fois.
+ * ═══ LES MURS — où deux régions SE FONT FACE par-dessus la crevasse ═══
+ *
+ * C'est ce qui remplace le « catalogue des frontières ». Deux régions ne partagent plus une arête :
+ * elles se REGARDENT, séparées par un gouffre. S'il est assez étroit (`MUR_MAX`) et qu'elles se font
+ * face sur une longueur suffisante (`FACE_MIN`), un isthme peut le franchir — et c'est un seuil.
+ */
+/**
+ * ═══ LE CATALOGUE DES PORTES — on SCANNE la frontière, on ne la calcule pas ═══
+ *
+ * Depuis que les rectangles se chevauchent (`Case.p`), une région n'est plus un rectangle : c'est un
+ * POLYGONE RECTILIGNE, un rectangle échancré par ses voisines. La frontière entre deux régions n'est
+ * donc plus une arête qu'on déduit de quatre nombres — elle serpente en marches d'escalier.
+ *
+ * On la CONSTATE : un balayage de la carte au pas du bloc, et l'on relève tout endroit où une région
+ * touche une région LIÉE. C'est bête, c'est robuste, et ça donne la frontière entière — échancrures
+ * comprises. C'est exactement la leçon que l'ancien générateur avait payée deux fois : *la frontière
+ * réelle EST l'adjacence ; rien d'autre ne fait foi.*
+ */
+export interface Porte {
+  a: number
+  b: number
+  x: number
+  y: number
+  /** La direction de `a` vers `b`. */
+  ax: number
+  ay: number
+}
+
+function catalogueDesPortes(g: GrapheZones): Map<string, Porte[]> {
+  const B = MONDE.BLOC
+  const lies = new Set<string>()
+  for (const [ra, rb] of LIENS) {
+    const a = SQUELETTE.findIndex((c) => c.role === ra)
+    const b = SQUELETTE.findIndex((c) => c.role === rb)
+    lies.add(`${Math.min(a, b)}:${Math.max(a, b)}`)
+  }
+
+  const cols = Math.ceil(g.width / B)
+  const rows = Math.ceil(g.height / B)
+  const owner = new Int32Array(cols * rows)
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const e = echantillonAt(g, i * B + B / 2, j * B + B / 2)
+      owner[j * cols + i] = e.vide ? -1 : e.zone
+    }
+  }
+
+  const out = new Map<string, Porte[]>()
+  const BORD = 40 // une porte ne se colle jamais au bord de la carte : l'anneau y est bloquant
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const me = owner[j * cols + i]!
+      if (me < 0) continue
+      for (const [di, dj] of [[1, 0], [0, 1]] as const) {
+        const ii = i + di
+        const jj = j + dj
+        if (ii >= cols || jj >= rows) continue
+        const lui = owner[jj * cols + ii]!
+        if (lui < 0 || lui === me) continue
+        const k = `${Math.min(me, lui)}:${Math.max(me, lui)}`
+        if (!lies.has(k)) continue
+        const x = i * B + B / 2 + (di * B) / 2
+        const y = j * B + B / 2 + (dj * B) / 2
+        if (x < BORD || y < BORD || x >= g.width - BORD || y >= g.height - BORD) continue
+        const [a, b] = k.split(':').map(Number) as [number, number]
+        // La direction va toujours de `a` vers `b` (la paire est canonique).
+        const versB = me === a ? 1 : -1
+        const p: Porte = { a, b, x, y, ax: di * versB, ay: dj * versB }
+        const l = out.get(k)
+        if (l) l.push(p)
+        else out.set(k, [p])
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * ═══ LA DÉRIVATION — on POSE le squelette, on le jittere, on perce les isthmes ═══
+ *
+ * Plus de tirage vérifié, plus de poids dégressif, plus de repli : la carte est DESSINÉE, donc elle
+ * tient par construction. Toute la machinerie qui existait pour survivre à une géométrie tirée au
+ * sort — le diagramme de puissance, le graphe de Gabriel, l'assignation des paliers par profondeur,
+ * la réparation des contraintes, les seize essais — **disparaît avec la cause qui la justifiait.**
+ *
+ * Ce qui SURVIT, et qui a été payé cher : le coloriage des paliers (deux voisines n'ont jamais le
+ * même — sans quoi une frontière est une clôture), l'écartement des portes (250 tuiles : aucun
+ * village n'en tient deux), et la garde de bi-connexité (aucune zone tenable n'est un goulot).
  */
 export function deriveGrapheZones(seed: number, joueurs = MONDE.JOUEURS_CIBLE): GrapheZones {
   const { width, height } = tailleCarte(joueurs)
-  const cellW = width / MONDE.COLS
-  const cellH = height / MONDE.ROWS
+  const B = MONDE.BLOC
+  const q = (t: number): number => Math.round(t / B) * B
 
-  // ── 1. Le semis : un site par cellule du treillis, jitteré ────────────────
-  const sites: { id: number; x: number; y: number }[] = []
-  for (let j = 0; j < MONDE.ROWS; j++) {
-    for (let i = 0; i < MONDE.COLS; i++) {
-      const id = j * MONDE.COLS + i
-      const jx = (hash2(i, j, (seed ^ 0x5a01) | 0) * 2 - 1) * MONDE.JITTER
-      const jy = (hash2(j, i, (seed ^ 0x5a02) | 0) * 2 - 1) * MONDE.JITTER
-      sites.push({ id, x: (i + 0.5 + jx) * cellW, y: (j + 0.5 + jy) * cellH })
-    }
+  /**
+   * ═══ LE JITTER SE FAIT PAR RAIL, PAS PAR RECTANGLE ═══
+   *
+   * Et c'est la seule façon de le faire. Deux régions voisines PARTAGENT une arête : elles écrivent
+   * la même fraction (`y1: 0.535` chez l'une, `y0: 0.535` chez l'autre). Si l'on jitterait chaque
+   * rectangle indépendamment, les deux bords se DÉCOLLERAIENT — la terrasse deviendrait un couloir,
+   * et toute la topologie du croquis avec elle.
+   *
+   * On jittere donc la VALEUR, pas le rectangle : la même fraction reçoit toujours le même
+   * déplacement, où qu'elle apparaisse. Les arêtes partagées le restent, exactement ; les bords
+   * libres bougent. ±0,8 % de la carte, soit une vingtaine de tuiles : assez pour que deux seeds ne
+   * se superposent jamais, trop peu pour changer un emboîtement. **Le croquis est un invariant.**
+   */
+  const rail = (v: number, axe: number): number =>
+    v + (hash2(Math.round(v * 1000), axe, (seed ^ 0x51a1) | 0) * 2 - 1) * 0.008
+
+  const rects: Rect[] = SQUELETTE.map((c) => {
+    const x0 = q(Math.max(0, rail(c.x0, 0)) * width)
+    const y0 = q(Math.max(0, rail(c.y0, 1)) * height)
+    const x1 = q(Math.min(1, rail(c.x1, 0)) * width)
+    const y1 = q(Math.min(1, rail(c.y1, 1)) * height)
+    return { x: x0, y: y0, w: Math.max(4 * B, x1 - x0), h: Math.max(4 * B, y1 - y0) }
+  })
+
+  // LES IDENTITÉS : imposées là où le croquis l'exige (la racine, la Cendrière, le Névé), tirées
+  // dans le palier partout ailleurs. C'est là, et là seulement, que deux seeds divergent vraiment.
+  const libres: Record<Tier, ZoneDef[]> = {
+    0: melange(ZONES.filter((z) => z.tier === 0 && !estFixe(z.slug)), seed ^ 0xd10),
+    1: melange(ZONES.filter((z) => z.tier === 1 && !estFixe(z.slug)), seed ^ 0xd11),
+    2: melange(ZONES.filter((z) => z.tier === 2 && !estFixe(z.slug)), seed ^ 0xd12),
+  }
+  const zones: Zone[] = SQUELETTE.map((c, id) => {
+    const def = c.fixe ? ZONES.find((z) => z.slug === c.fixe)! : libres[c.tier].pop()!
+    const r = rects[id]!
+    return { id, def, x: r.x + r.w / 2, y: r.y + r.h / 2, poids: 0, rect: r }
+  })
+
+  const racine = SQUELETTE.findIndex((c) => c.fixe === RACINE_SLUG)
+  const g: GrapheZones = {
+    seed, width, height, zones, racine, seuils: [], voisins: [], impasses: [], gardiennes: [],
+    paliers: [],
   }
 
-  // ── 2. L'adjacence géométrique, AVANT les poids ───────────────────────────
-  // Deux sites sont voisins si aucun troisième ne se glisse dans le disque dont ils sont un
-  // diamètre (le graphe de GABRIEL). C'est un sous-graphe de Delaunay, il est PLANAIRE et
-  // connexe, et il ne produit pas les longues arêtes rasantes qui donneraient des frontières
-  // de quelques tuiles — donc des seuils impossibles à placer.
-  const voisins: number[][] = sites.map(() => [])
-  for (let a = 0; a < sites.length; a++) {
-    for (let b = a + 1; b < sites.length; b++) {
-      const sa = sites[a]!
-      const sb = sites[b]!
-      const mx = (sa.x + sb.x) / 2
-      const my = (sa.y + sb.y) / 2
-      const r2 = distSq(sa.x, sa.y, sb.x, sb.y) / 4
-      let gabriel = true
-      for (const sc of sites) {
-        if (sc.id === a || sc.id === b) continue
-        if (distSq(sc.x, sc.y, mx, my) < r2) { gabriel = false; break }
-      }
-      if (gabriel) { voisins[a]!.push(b); voisins[b]!.push(a) }
-    }
+  // L'ADJACENCE EST DÉCLARÉE (voir `LIENS`) — mais on ne la croit que si la frontière EXISTE
+  // vraiment sur la carte. Le chevauchement peut avaler un contact ; on ne perce pas une porte dans
+  // un mur imaginaire.
+  const catalogue = catalogueDesPortes(g)
+  g.voisins = zones.map(() => [] as number[])
+  for (const [k, pts] of catalogue) {
+    if (pts.length < 3) continue // trois blocs de contact : en deçà, c'est un coin, pas une frontière
+    const [a, b] = k.split(':').map(Number) as [number, number]
+    g.voisins[a]!.push(b)
+    g.voisins[b]!.push(a)
+  }
+  for (const l of g.voisins) l.sort((p, q2) => p - q2)
+
+  // LES IMPASSES — les vrais culs-de-sac : une seule voisine, rien derrière. Le croquis en donne
+  // exactement une, et c'est la Cendrière (gardée par le jardin). On les CONSTATE, on ne les choisit
+  // plus : la géométrie est écrite, elle sait déjà où sont ses fonds de vallée.
+  for (let i = 0; i < zones.length; i++) {
+    if (zones[i]!.def.traverse) continue
+    if (g.voisins[i]!.length === 1) { g.impasses.push(i); g.gardiennes.push(g.voisins[i]![0]!) }
   }
 
-  // GABRIEL PEUT LAISSER UN SITE À UN SEUL VOISIN (un coin du treillis) — et une zone à un
-  // seul voisin ne peut PAS recevoir deux portes sur deux frontières différentes. Elle se
-  // bloquerait alors avec un seul village, ce qui est très exactement ce que le directeur de
-  // jeu a demandé d'éviter (« mitiger le grief d'une zone complète »). On augmente donc
-  // l'adjacence jusqu'au degré 2, par le site non-voisin le plus proche.
-  // (Mesuré : sans ceci, le Glacier de la seed 1234 n'avait qu'un seul seuil.)
-  for (let a = 0; a < sites.length; a++) {
-    while (voisins[a]!.length < 2) {
-      const sa = sites[a]!
-      let best = -1
-      let bestD = Infinity
-      for (const sc of sites) {
-        if (sc.id === a || voisins[a]!.includes(sc.id)) continue
-        const d = distSq(sa.x, sa.y, sc.x, sc.y)
-        if (d < bestD) { bestD = d; best = sc.id }
-      }
-      if (best < 0) break
-      voisins[a]!.push(best)
-      voisins[best]!.push(a)
-    }
-  }
-
-  // ── 3. LA RACINE — la bouche de la vallée, au sud ─────────────────────────
-  // On arrive par la bouche : c'est le côté ouvert du relief, et c'est la seule direction
-  // d'où l'on peut entrer dans une vallée alpine sans être déjà un alpiniste.
-  //
-  // Elle doit avoir au moins TROIS voisins : il lui en faut deux en T1 (spec R14 — la
-  // première décision du joueur doit être un CHOIX) et un en T2 (spec R13 — de ton pas de
-  // porte, tu vois l'enfer). Un site de coin n'y suffit pas toujours.
-  let racine = -1
-  let meilleur = Infinity
-  for (const s of sites) {
-    if (voisins[s.id]!.length < 3) continue
-    // Distance au milieu du bord sud. Départage par id croissant : déterministe.
-    const d = distSq(s.x, s.y, width / 2, height)
-    if (d < meilleur) { meilleur = d; racine = s.id }
-  }
-  // Filet : si aucun site n'a trois voisins (treillis dégénéré), on prend le plus au sud.
-  if (racine < 0) {
-    meilleur = Infinity
-    for (const s of sites) {
-      const d = distSq(s.x, s.y, width / 2, height)
-      if (d < meilleur) { meilleur = d; racine = s.id }
-    }
-  }
-
-  // ── 4. LES PALIERS, puis L'ADJACENCE RÉELLE — et on RE-TIRE si ça ne tient pas
-  //
-  // LA CIRCULARITÉ, ET COMMENT ON EN SORT. Le poids d'une zone dépend de son palier ; la forme
-  // des cellules dépend des poids ; l'adjacence dépend de la forme. Assigner les paliers
-  // D'APRÈS l'adjacence serait donc circulaire.
-  //
-  // On tranche par un TIRAGE VÉRIFIÉ : on assigne les paliers d'après une adjacence
-  // approchée (les sites nus, graphe de Gabriel — elle suffit à dire qui est « loin » de la
-  // racine), on construit la vraie carte, puis on VÉRIFIE les contraintes sur l'adjacence
-  // RÉELLE. Si elles ne tiennent pas, on re-tire avec un autre sel. Déterministe (le sel est
-  // le numéro d'essai), et ça converge en un ou deux essais.
-  //
-  // C'est ce qui supprime toute une classe de bugs que les rustines n'atteignaient pas : une
-  // arête d'adjacence SANS frontière réelle, un seuil qui atterrit dans une troisième zone.
-  // **La frontière réelle EST l'adjacence.** Rien d'autre ne fait foi.
-  const prof = bfs(voisins, racine)
-
-  // ── 5. LA RACINE EST AUSSI GROSSE QUE LA GÉOMÉTRIE L'AUTORISE ─────────────
-  //
-  // MESURE QUI A TOUT CHANGÉ : au poids fixe de 165 000, **7 seeds sur 60 ne généraient
-  // PAS DU TOUT** — la racine gonflée écrasait une voisine au point qu'il ne lui restait plus
-  // deux frontières, donc plus deux portes, et aucun tirage ne convergeait. Douze seeds de
-  // garde ne l'avaient pas vu : elles avaient eu de la chance. Sur un jeu où **une saison =
-  // une seed**, 12 % de cartes mort-nées, c'est un serveur ruiné une fois sur huit.
-  //
-  // ET LE RÉESSAI NE RÉESSAYAIT RIEN D'UTILE : il re-tirait les PALIERS, alors que le défaut
-  // était GÉOMÉTRIQUE. Si le site racine n'a que deux frontières réelles, aucun tirage de
-  // paliers ne lui donnera jamais deux T1 **et** une T2. On tournait seize fois pour rien.
-  //
-  // Le poids de la racine DESCEND donc jusqu'à ce que la carte tienne. La racine est aussi
-  // grosse que la géométrie de CETTE seed le permet, jamais plus — et à poids nul, on retombe
-  // sur un Voronoï ordinaire, qui se comporte toujours bien. La terminaison est garantie.
-  //
-  // LE NOMBRE D'IMPASSES EST DÉGRESSIF — deux si la géométrie le permet, une sinon, zéro au pire.
-  //
-  // POURQUOI IL LE FAUT, et c'est la géométrie qui l'impose, pas un caprice : une gardienne a
-  // **structurellement au moins QUATRE portes** — deux pour son impasse (sans quoi un village la
-  // bloquerait), et deux au minimum vers le cœur (sans quoi le cœur cesse d'être 2-connexe, et le
-  // goulot revient par la fenêtre). Or quatre portes toutes distantes de 250 tuiles, sur le
-  // périmètre d'une seule cellule, **n'est pas toujours possible**.
-  //
-  // **On ne relâche pas la règle : on renonce à un cul-de-sac.** Zéro impasse tient toujours
-  // (c'est la carte d'avant les impasses) — la génération termine, quoi qu'il arrive.
-  //
-  // L'ORDRE DES BOUCLES EST LE SUJET, et la première écriture le prenait à l'envers : elle
-  // essayait 2, puis 1, puis 0 **sur le premier tirage venu** — et comme 0 réussit toujours, elle
-  // s'en contentait sans jamais aller voir si un AUTRE tirage aurait porté deux culs-de-sac.
-  // Mesuré : 8 cartes sur 40 se retrouvaient sans la moindre impasse. On épuise donc TOUS les
-  // tirages à 2 impasses avant d'en concéder une, et tous ceux à 1 avant de n'en concéder aucune.
-  // (Le poids de la racine reste la boucle EXTERNE : sa taille est une exigence dure — elle doit
-  // porter dix-sept villages —, pas une préférence.)
-  let g: GrapheZones | null = null
-  for (const poidsRacine of POIDS_RACINE_DEGRESSIFS) {
-    // LE CATALOGUE DES FRONTIÈRES SE CALCULE UNE FOIS PAR TIRAGE, pas une fois par combinaison.
-    // Il coûte 160 k échantillons (un balayage de la carte au pas de 4) ; le recalculer pour
-    // chaque nombre d'impasses essayé faisait exploser le temps de génération — la garde de
-    // déterminisme, qui génère chaque carte deux fois, expirait.
-    const essais = []
-    for (let sel = 0; sel < 6; sel++) {
-      const tiers = assignerPaliers(sites, voisins, prof, racine, seed, sel)
-      const zones = identifierZones(sites, tiers, seed, sel, poidsRacine)
-      const cand: GrapheZones = {
-        seed, width, height, zones, racine, seuils: [], voisins: [], impasses: [], gardiennes: [],
-        paliers: [], // colorié tout à la fin, quand l'adjacence est arrêtée — voir `colorerLesPaliers`
-      }
-      const catalogues = catalogueFrontieres(cand)
-      cand.voisins = adjacenceReelle(zones.length, catalogues)
-      placerLaCendriere(cand)
-      essais.push({ cand, catalogues })
-    }
-
-    for (const combien of [MONDE.MAX_IMPASSES, 1, 0]) {
-      for (const { cand, catalogues } of essais) {
-        const imp = choisirImpasses(cand, catalogues, combien)
-        if (imp.impasses.length !== combien) continue
-        cand.impasses = imp.impasses
-        cand.gardiennes = imp.gardiennes
-        if (!contraintesTenues(cand)) continue
-        cand.seuils = choisirSeuils(cand, catalogues)
-        if (!portesTenues(cand)) continue
-        g = cand
-        break
-      }
-      if (g) break
-    }
-    if (g) break
-  }
-  if (!g) {
-    throw new Error(
-      `zonegraph: seed ${seed} — aucune forme ne tient les contraintes, même à poids de racine nul. ` +
-        `Une saison = une carte : on préfère un échec bruyant à une carte muette.`,
-    )
-  }
   g.paliers = colorerLesPaliers(g)
+  g.seuils = percerLesIsthmes(g, catalogue)
+  marquerLesSecours(g, g.seuils)
   return g
+}
+
+function estFixe(slug: string): boolean {
+  return SQUELETTE.some((c) => c.fixe === slug)
+}
+
+/**
+ * ═══ LES ISTHMES — un par mur, DEUX quand la région n'a qu'un mur ═══
+ *
+ * R11 : au moins deux seuils par zone, écartés d'au moins 250 tuiles — *sept écrans : aucun village
+ * ne peut tenir les deux.* Une région à plusieurs murs l'obtient d'elle-même (une porte par mur, et
+ * les murs sont sur des faces différentes). Une région à mur UNIQUE (la Cendrière) reçoit ses deux
+ * portes sur le même mur, aux deux tiers de sa longueur — le mur du jardin fait mille tuiles, il y
+ * a la place.
+ *
+ * LE NÉVÉ EST EXEMPTÉ DE L'ÉCARTEMENT, et c'est la seule exception du modèle : la règle des 250
+ * tuiles existe pour qu'aucun village ne tienne deux portes. **On ne bâtit pas dans un Névé.** Une
+ * bande de cent cinquante tuiles de haut ne peut pas écarter de 250 une porte nord d'une porte sud ;
+ * exiger qu'elle le fasse serait appliquer une règle contre sa propre raison d'être.
+ */
+function percerLesIsthmes(g: GrapheZones, catalogue: Map<string, Porte[]>): Seuil[] {
+  const seul = new Set(g.zones.filter((z) => g.voisins[z.id]!.length === 1).map((z) => z.id))
+  const compte = (z: number): boolean => !g.zones[z]!.def.traverse
+
+  // Les candidates de chaque frontière, triées : le balayage est déjà déterministe, on le fige.
+  const choix: { pts: Porte[]; k: number }[] = []
+  for (const [key, pts] of [...catalogue.entries()].sort((p, q) => (p[0] < q[0] ? -1 : 1))) {
+    if (pts.length < 3) continue
+    const [a, b] = key.split(':').map(Number) as [number, number]
+    const combien = seul.has(a) || seul.has(b) ? 2 : 1
+    for (let n = 0; n < combien; n++) {
+      // Une porte au milieu ; deux, aux quarts — le maximum d'écartement qu'un segment offre.
+      const f = combien === 1 ? 0.5 : n === 0 ? 0.2 : 0.8
+      choix.push({ pts, k: Math.min(pts.length - 1, Math.round(f * (pts.length - 1))) })
+    }
+  }
+
+  /**
+   * ═══ ON ÉCARTE LES PORTES — en les faisant GLISSER le long de leur frontière ═══
+   *
+   * R11 : deux seuils d'une même zone sont à ≥ 250 tuiles. *Sept écrans : aucun village ne peut
+   * tenir les deux.* Poser chaque porte au milieu de sa frontière ne suffit pas — deux frontières
+   * qui se rejoignent à un coin donnent deux portes voisines. Mesuré : le Lac Mort de la seed 42
+   * avait ses deux portes à 248 tuiles, deux de trop.
+   *
+   * On les fait donc glisser, chacune à son tour, vers la position qui maximise sa distance aux
+   * autres portes de ses DEUX régions. Quatre passes (la troisième ne bouge déjà plus rien).
+   *
+   * LE NÉVÉ EST EXEMPTÉ, seule exception du modèle : la règle des 250 tuiles existe pour qu'aucun
+   * village ne tienne deux portes. **On ne bâtit pas dans un Névé** — il ne nourrit rien (R10.3).
+   * Une bande de cent cinquante tuiles de haut ne peut pas écarter de 250 sa porte nord de sa porte
+   * sud ; l'exiger serait appliquer la règle contre sa propre raison d'être.
+   */
+  for (let passe = 0; passe < 4; passe++) {
+    for (let i = 0; i < choix.length; i++) {
+      const c = choix[i]!
+      const moi = c.pts[c.k]!
+      const gene = choix.filter((q, n) => {
+        if (n === i) return false
+        const o = q.pts[q.k]!
+        return (compte(moi.a) && (o.a === moi.a || o.b === moi.a))
+          || (compte(moi.b) && (o.a === moi.b || o.b === moi.b))
+      })
+      if (gene.length === 0) continue
+      let best = c.k
+      let bestScore = -1
+      // On échantillonne neuf positions le long de la frontière, en évitant ses deux bouts (une
+      // porte de coin n'est pas une porte : la falaise y est mince, et elle tombe dans une tierce).
+      for (let s2 = 0; s2 < 9; s2++) {
+        const k = Math.round((0.1 + (s2 / 8) * 0.8) * (c.pts.length - 1))
+        const p = c.pts[k]!
+        let score = Infinity
+        for (const q of gene) {
+          const o = q.pts[q.k]!
+          score = Math.min(score, distSq(p.x, p.y, o.x, o.y))
+        }
+        if (score > bestScore) { bestScore = score; best = k }
+      }
+      c.k = best
+    }
+  }
+
+  return choix.map((c, id) => {
+    const p = c.pts[c.k]!
+    return { id, a: p.a, b: p.b, x: p.x, y: p.y, ax: p.ax, ay: p.ay, secours: false }
+  })
 }
 
 /**
@@ -662,272 +969,6 @@ const PALIER_ETENDUE: Record<0 | 1 | 2, number> = { 0: 1, 1: 3, 2: 3 }
 export const PALIER_MAX = PALIER_BASE[2] + PALIER_ETENDUE[2] - 1 // 4 + 3 − 1 = 6
 
 /**
- * Les poids de racine essayés, du plus ambitieux au plus modeste. Le premier qui tient gagne.
- * Le dernier (0) est un Voronoï ordinaire : il tient toujours, donc la génération termine.
- */
-const POIDS_RACINE_DEGRESSIFS = [165_000, 140_000, 115_000, 90_000, 60_000, 30_000, 0]
-
-/**
- * LES PORTES TIENNENT-ELLES ? Deux portes d'une même zone doivent être à ≥ ECART_SEUILS.
- *
- * C'est la SECONDE moitié de la leçon des 60 seeds : même quand la carte se génère, une seed
- * pouvait sortir deux portes à **141 tuiles** l'une de l'autre — un seul village les tenait
- * toutes les deux, et toute la règle du chemin alternatif tombait. La recherche locale fait ce
- * qu'elle peut ; quand la géométrie ne le permet pas, ce n'est pas à la règle de plier, c'est
- * à la FORME de changer. On rejette, et on essaie une autre forme.
- */
-function portesTenues(g: GrapheZones): boolean {
-  const min = MONDE.ECART_SEUILS * MONDE.ECART_SEUILS
-  for (const z of g.zones) {
-    const m = g.seuils.filter((s) => s.a === z.id || s.b === z.id)
-    if (m.length < 2) return false
-    for (let i = 0; i < m.length; i++) {
-      for (let j = i + 1; j < m.length; j++) {
-        if (distSq(m[i]!.x, m[i]!.y, m[j]!.x, m[j]!.y) < min) return false
-      }
-    }
-  }
-  return true
-}
-
-/**
- * LES CONTRAINTES DURES, vérifiées sur l'adjacence RÉELLE (spec R13/R14).
- *
- * 1. La racine touche **≥ 2 zones T1** — la première décision du joueur doit être un CHOIX.
- * 2. La racine touche **≥ 1 zone T2** — *de ton pas de porte, tu vois l'enfer.*
- * 3. Toute zone a **≥ 2 voisines** — sans quoi elle ne pourra jamais avoir deux portes, et un
- *    seul village la bloquerait.
- */
-function contraintesTenues(g: GrapheZones): boolean {
-  const vois = g.voisins[g.racine]!
-  if (vois.filter((v) => g.zones[v]!.def.tier === 1).length < 2) return false
-  if (!vois.some((v) => g.zones[v]!.def.tier === 2)) return false
-  if (!g.voisins.every((l) => l.length >= 2)) return false
-
-  // 4. AUCUN GOULOT POUR NAVIGUER — le CŒUR doit être 2-connexe.
-  //
-  // Le cœur = toutes les zones SAUF les impasses. Les impasses, elles, sont des culs-de-sac
-  // assumés : leur gardienne EST un point d'articulation, c'est la définition même d'un
-  // cul-de-sac, et c'est le prix qu'Alexis a accepté pour ravoir un fond de vallée. Mais ce
-  // qu'elle coupe, c'est UN trophée — jamais une route.
-  //
-  // On le vérifie ICI, sur le graphe complet des frontières : **si le cœur complet n'est pas
-  // 2-connexe, aucun de ses sous-graphes ne peut l'être.** La seed est perdue d'avance, et il
-  // faut la re-tirer tout de suite au lieu d'élaguer pour rien.
-  const impasses = new Set(g.impasses)
-  const coeur = g.zones.map((z) => z.id).filter((id) => !impasses.has(id))
-  if (!estBiconnexeSur(coeur, g.voisins)) return false
-
-  // 5. Chaque impasse a sa gardienne DANS LE CŒUR, et **les gardiennes sont distinctes** :
-  //    personne ne coupe deux trophées d'un coup.
-  if (g.gardiennes.length !== g.impasses.length) return false
-  const vues = new Set<number>()
-  for (const gd of g.gardiennes) {
-    if (impasses.has(gd) || vues.has(gd)) return false
-    vues.add(gd)
-  }
-  return true
-}
-
-/**
- * LES IMPASSES — jusqu'à deux zones T2 qui sont de vrais culs-de-sac.
- *
- * On prend les T2 **les plus profondes** (les plus éloignées de la racine dans le graphe) : c'est
- * là qu'un fond de vallée a un sens. On EXCLUT la T2 collée à la racine (R13) — celle-là est un
- * passage, pas un trophée : elle existe pour qu'on VOIE l'enfer depuis son pas de porte, pas pour
- * qu'on s'y enferme.
- *
- * On exclut aussi les zones dont le retrait de leurs autres arêtes casserait le cœur : la
- * vérification est faite par `contraintesTenues`, qui rejette le tirage. On ne bricole pas.
- */
-function choisirImpasses(
-  g: GrapheZones,
-  catalogues: Map<string, { x: number; y: number }[]>,
-  combien: number,
-): { impasses: number[]; gardiennes: number[] } {
-  const prof = bfs(g.voisins, g.racine)
-  const candidates = g.zones
-    .filter((z) => z.def.tier === 2)
-    .filter((z) => !g.voisins[g.racine]!.includes(z.id)) // jamais la T2 du pas de la porte
-    .map((z) => ({ id: z.id, prof: prof[z.id]! }))
-    // Les plus PROFONDES d'abord. Départage par id : déterministe.
-    .sort((a, b) => b.prof - a.prof || a.id - b.id)
-
-  /**
-   * L'ÉCARTEMENT MAXIMAL QUE PORTE UNE FRONTIÈRE — deux points d'elle, les plus éloignés.
-   *
-   * C'EST LA CONTRAINTE QUI MANQUAIT, et elle faisait échouer TOUS les tirages. Une impasse porte
-   * ses deux portes sur son **unique** frontière : si cette frontière est courte, les deux portes
-   * ne peuvent pas s'écarter de 250 tuiles, et un seul village les tiendrait toutes les deux —
-   * ce qui est précisément ce qu'on refuse. (Mesuré avant correctif : les deux portes d'une
-   * impasse se retrouvaient à **134 tuiles**.)
-   *
-   * On ne relâche donc pas la règle : **on exige une frontière assez longue.** Une zone dont
-   * aucune frontière ne porte deux portes écartées n'a pas le droit d'être une impasse — elle
-   * restera un passage, et c'est très bien.
-   */
-  const ecartement = (a: number, b: number): number => {
-    const pts = catalogues.get(`${Math.min(a, b)}:${Math.max(a, b)}`)
-    if (!pts || pts.length < 2) return 0
-    let max = 0
-    for (let i = 0; i < pts.length; i++) {
-      for (let j = i + 1; j < pts.length; j++) {
-        max = Math.max(max, distSq(pts[i]!.x, pts[i]!.y, pts[j]!.x, pts[j]!.y))
-      }
-    }
-    return Math.sqrt(max)
-  }
-
-  const impasses: number[] = []
-  const gardiennes: number[] = []
-  for (const c of candidates) {
-    if (impasses.length >= combien) break
-    // Retirer cette zone du cœur ne doit pas casser la 2-connexité de ce qui reste.
-    const coeur = g.zones.map((z) => z.id).filter((id) => id !== c.id && !impasses.includes(id))
-    if (!estBiconnexeSur(coeur, g.voisins)) continue
-
-    // LA GARDIENNE : celle dont la frontière avec l'impasse est **la plus longue**, et elle doit
-    // porter deux portes à ECART_VISE (on vise plus haut que la barre : l'optimiseur satisfait,
-    // il ne maximise pas — cf. ECART_VISE). Gardiennes DISTINCTES : personne ne coupe deux
-    // trophées d'un coup.
-    const libres = g.voisins[c.id]!
-      .filter((v) => !impasses.includes(v) && !gardiennes.includes(v))
-      .map((v) => ({ v, e: ecartement(c.id, v) }))
-      .sort((p, q) => q.e - p.e || p.v - q.v)
-    const meilleure = libres[0]
-    if (!meilleure || meilleure.e < MONDE.ECART_VISE) continue
-
-    impasses.push(c.id)
-    gardiennes.push(meilleure.v)
-  }
-  return { impasses, gardiennes }
-}
-
-/**
- * LES PALIERS — biaisés par la distance, pas dictés par elle (« go Valheim kind »).
- * La profondeur dans le graphe BIAISE le palier ; un jitter le brouille.
- */
-function assignerPaliers(
-  sites: { id: number }[],
-  voisins: number[][],
-  prof: number[],
-  racine: number,
-  seed: number,
-  sel: number,
-): Tier[] {
-  const tiers = new Array<Tier>(sites.length).fill(1)
-  tiers[racine] = 0
-  const autres = sites
-    .filter((s) => s.id !== racine)
-    .map((s) => ({
-      id: s.id,
-      // Le jitter (±0,45) est INFÉRIEUR à un pas de profondeur : il permute des zones de
-      // profondeurs voisines, il ne téléporte pas une T2 au fond du jardin. Les contraintes
-      // dures s'en chargent, elles, et volontairement.
-      score: prof[s.id]! + (hash2(s.id, seed ^ (sel * 0x9e37), 0x7e1) - 0.5) * 0.9,
-    }))
-  autres.sort((p, q) => p.score - q.score || p.id - q.id) // départage par id : déterministe
-  for (let k = 0; k < autres.length; k++) tiers[autres[k]!.id] = k < 6 ? 1 : 2
-  reparerPaliers(tiers, voisins, racine, seed)
-  return tiers
-}
-
-/** Les identités : une permutation À L'INTÉRIEUR de chaque palier. Les zones sont ÉCRITES
- *  (Valheim : les biomes sont fixes) ; seules leurs positions et adjacences changent. */
-function identifierZones(
-  sites: { id: number; x: number; y: number }[],
-  tiers: Tier[],
-  seed: number,
-  sel: number,
-  poidsRacine: number,
-): Zone[] {
-  const zones: Zone[] = []
-  for (const tier of [0, 1, 2] as const) {
-    const cases = sites.filter((s) => tiers[s.id] === tier).map((s) => s.id)
-    const defs = melange(ZONES.filter((d) => d.tier === tier), (seed ^ (0xd1 + tier)) + sel * 31)
-    if (defs.length !== cases.length) {
-      throw new Error(
-        `zonegraph: ${cases.length} sites de palier ${tier} pour ${defs.length} zones déclarées. ` +
-          `La table ZONES et le treillis (${MONDE.COLS}×${MONDE.ROWS}) doivent se correspondre exactement.`,
-      )
-    }
-    for (let k = 0; k < cases.length; k++) {
-      const id = cases[k]!
-      const s = sites[id]!
-      // Le poids de la RACINE est celui qu'on essaie ; les autres viennent de la table.
-      const poids = tier === 0 ? poidsRacine : MONDE.POIDS[tier]
-      zones.push({ id, def: defs[k]!, x: s.x, y: s.y, poids })
-    }
-  }
-  zones.sort((p, q) => p.id - q.id)
-  return zones
-}
-
-/** Profondeur de chaque nœud depuis la racine (BFS ; voisins visités par id croissant). */
-function bfs(voisins: number[][], racine: number): number[] {
-  const prof = new Array<number>(voisins.length).fill(Infinity)
-  prof[racine] = 0
-  const file = [racine]
-  for (let head = 0; head < file.length; head++) {
-    const v = file[head]!
-    for (const w of [...voisins[v]!].sort((a, b) => a - b)) {
-      if (prof[w] !== Infinity) continue
-      prof[w] = prof[v]! + 1
-      file.push(w)
-    }
-  }
-  return prof
-}
-
-/**
- * LES DEUX CONTRAINTES DURES, réparées après le tirage (spec R13/R14).
- *
- * 1. La racine touche **≥ 2 zones T1** — la première décision du joueur doit être un CHOIX,
- *    jamais un goulot unique.
- * 2. La racine touche **≥ 1 zone T2** — *de ton pas de porte, tu vois l'enfer.* C'est le
- *    frisson de Valheim, et on le rend OBLIGATOIRE : le critère mou d'origine (« une T2
- *    adjacente à une zone de palier ≤ 1 ») est vrai dans n'importe quel graphe connexe, donc
- *    il ne testait rien.
- *
- * On répare par ÉCHANGE (une T1 contre une T2), ce qui préserve les comptes 6/5 par
- * construction — un swap ne crée ni ne détruit de palier.
- */
-function reparerPaliers(tiers: Tier[], voisins: number[][], racine: number, seed: number): void {
-  const vois = [...voisins[racine]!].sort((a, b) => a - b)
-  const loin = (t: Tier) =>
-    // La zone de palier `t` la PLUS éloignée de la racine — celle qu'on peut sacrifier sans
-    // remords. Départage par id : déterministe.
-    tiers
-      .map((tt, id) => ({ id, tt }))
-      .filter((z) => z.tt === t && z.id !== racine && !vois.includes(z.id))
-      .sort((p, q) => (hash2(p.id, seed, 0xbe) - hash2(q.id, seed, 0xbe)) || (p.id - q.id))[0]?.id
-
-  // (1) Au moins deux T1 chez les voisins de la racine.
-  for (let garde = 0; garde < 4; garde++) {
-    if (vois.filter((v) => tiers[v] === 1).length >= 2) break
-    const promu = vois.find((v) => tiers[v] === 2)
-    const sacrifie = loin(1)
-    if (promu === undefined || sacrifie === undefined) break
-    tiers[promu] = 1
-    tiers[sacrifie] = 2
-  }
-
-  // (2) Au moins une T2 chez les voisins de la racine — SANS casser (1).
-  if (!vois.some((v) => tiers[v] === 2)) {
-    // On ne dégrade que si la racine garde ≥ 2 voisines T1 après coup : d'où le `> 2`.
-    const t1Vois = vois.filter((v) => tiers[v] === 1)
-    if (t1Vois.length > 2) {
-      const sacrifie = t1Vois[t1Vois.length - 1]!
-      const promu = loin(2)
-      if (promu !== undefined) {
-        tiers[sacrifie] = 2
-        tiers[promu] = 1
-      }
-    }
-  }
-}
-
-/**
  * LE GRAPHE EST-IL 2-CONNEXE ? — connexe, ET sans aucun point d'articulation.
  *
  * Un **point d'articulation** est une zone dont le retrait déconnecte la carte : c'est un GOULOT
@@ -968,65 +1009,6 @@ export function estBiconnexeSur(membres: readonly number[], voisins: readonly nu
   return true
 }
 
-/** La 2-connexité d'un jeu d'arêtes OUVERTES, sur le cœur (les impasses exclues). */
-function coeurBiconnexe(g: GrapheZones, ouvertes: ReadonlySet<string>): boolean {
-  const n = g.zones.length
-  const vo: number[][] = Array.from({ length: n }, () => [])
-  for (const k of ouvertes) {
-    const [a, b] = k.split(':').map(Number) as [number, number]
-    vo[a]!.push(b)
-    vo[b]!.push(a)
-  }
-  const impasses = new Set(g.impasses)
-  const coeur = g.zones.map((z) => z.id).filter((id) => !impasses.has(id))
-  if (!estBiconnexeSur(coeur, vo)) return false
-  // Et chaque impasse reste rattachée au cœur (elle a sa gardienne).
-  for (const z of g.impasses) {
-    if (!vo[z]!.some((v) => !impasses.has(v))) return false
-  }
-  return true
-}
-
-/**
- * LA CENDRIÈRE EST LA T2 DU PAS DE LA PORTE — et c'est la clef de voûte de la saison.
- *
- * *Décision d'Alexis, 2026-07-14 : « on a une zone T2 à côté de la zone de départ — est-ce qu'on
- * n'en ferait pas notre zone de propagation de la difficulté ? »*
- *
- * CE QUE ÇA REQUALIFIE. R13 posait une T2 au pas de la porte pour le FRISSON (« de chez toi, tu
- * vois l'enfer »). Elle devient un **MOTEUR** : l'enfer que tu vois est celui qui viendra te
- * chercher. Ce n'est plus une curiosité, c'est un compte à rebours planté dans ton jardin.
- *
- * ET ÇA DONNE UN LIEU AUX TROIS ACTES. Le GDD promet trois actes de saison, et le troisième
- * **s'appelle déjà « Cendre »** — mais ce n'est aujourd'hui qu'un multiplicateur de faim, un
- * nombre qui monte. La saison cesse d'être un compteur qui durcit : elle devient **une vallée
- * qu'on perd**. Personne ne dit au joueur de monter ; le sol brûle derrière lui.
- *
- * LE PRIX, payé sciemment : l'identité de la T2 voisine de la racine n'est plus tirée au sort.
- * On y perd un peu de rejouabilité — on y gagne une **cosmologie stable**, et c'est un bon
- * échange : le monde a désormais un centre, et il est en train de brûler.
- *
- * Techniquement, c'est un ÉCHANGE d'identités entre deux sites de MÊME palier. Les poids du
- * diagramme ne dépendent que du palier — pas de l'identité — donc la géométrie ne bouge pas d'un
- * bit. On peut le faire APRÈS avoir calculé les frontières, et c'est ce qui sort de la
- * circularité.
- */
-function placerLaCendriere(g: GrapheZones): void {
-  const CENDRE = 'cendriere'
-  const actuelle = g.zones.find((z) => z.def.slug === CENDRE)
-  if (!actuelle) return
-  const voisinesT2 = g.voisins[g.racine]!.filter((v) => g.zones[v]!.def.tier === 2)
-  if (voisinesT2.length === 0) return // pas de T2 au pas de la porte : `contraintesTenues` rejettera
-  if (voisinesT2.includes(actuelle.id)) return // elle y est déjà
-
-  // Elle n'y est pas : on l'ÉCHANGE avec la T2 qui s'y trouve. Deux sites de même palier, donc
-  // de même poids : la carte est identique au bit près, seuls les NOMS bougent.
-  const cible = g.zones[voisinesT2[0]!]!
-  const def = actuelle.def
-  actuelle.def = cible.def
-  cible.def = def
-}
-
 /** Fisher-Yates seedé — déterministe, et le seul mélange autorisé dans /sim. */
 function melange<T>(items: readonly T[], seed: number): T[] {
   const out = [...items]
@@ -1037,195 +1019,6 @@ function melange<T>(items: readonly T[], seed: number): T[] {
     out[j] = tmp
   }
   return out
-}
-
-/**
- * LE CHOIX DES SEUILS — on part de TOUTES les frontières, et on en FERME.
- *
- * LA FAUTE DES DEUX PREMIÈRES ÉCRITURES, et elle vaut d'être gravée. Elles construisaient un
- * arbre couvrant sur l'adjacence des SITES (graphe de Gabriel), puis perçaient une porte dans
- * chaque arête. Mais l'adjacence des sites et les frontières RÉELLES ne coïncident pas : la
- * frontière naît du diagramme de puissance — avec ses poids — puis se tord sous le warp. Deux
- * sites « voisins » peuvent finir séparés par un troisième. On perçait donc des portes dans des
- * murs imaginaires, et des zones se retrouvaient avec une seule sortie.
- *
- * **La frontière réelle EST l'adjacence.** Rien d'autre ne fait foi. On part donc du réel :
- * les frontières existent, on décide seulement lesquelles deviennent des PORTES et lesquelles
- * restent des falaises pleines. On ferme tant qu'on peut, sous deux invariants — et c'est
- * l'ordre de fermeture qui fait la forme :
- *
- *   • le graphe reste **2-CONNEXE** (voir ci-dessous) ;
- *   • aucune zone ne dépasse MAX_PORTES (une pièce à cinq portes est un carrefour, pas une
- *     pièce — et c'est là que l'écart de 250 tuiles devenait géométriquement impossible).
- *
- * ═══ 2-CONNEXE, ET POURQUOI ÇA ABROGE « L'ARBRE DE ZONES » ═══
- *
- * Retour d'Alexis SUR LA CARTE RENDUE (2026-07-14) : *« sur la seed 909, il faut passer par une
- * seule zone pour accéder au T2 — il ne faut pas de goulot d'étranglement pour naviguer sur
- * l'ensemble de la map. »* Il a raison, et ma garantie ne couvrait pas ça : je garantissais que
- * chaque zone a **≥ 2 portes**, ce qui empêche de bloquer une *porte*. Mais rien n'empêchait une
- * **ZONE ENTIÈRE** d'être le seul chemin vers tout un pan de la carte — un **point
- * d'articulation** au sens des graphes. Un village qui tient cette zone-là tient tout ce qui est
- * derrière : c'est exactement le grief qu'on voulait mitiger, un cran plus haut.
- *
- * On exige donc la **2-connexité par les sommets** : toute zone est atteignable par deux chemins
- * qui ne partagent **aucune zone**. Retirer n'importe quelle zone laisse le reste connexe.
- *
- * ═══ MAIS LE CUL-DE-SAC REVIENT — LES IMPASSES (2e décision d'Alexis) ═══
- *
- * La 2-connexité TOTALE interdit tout cul-de-sac : le Glacier ne pouvait plus être un fond de
- * vallée dont on ne ressort que par où l'on est entré. Or c'est une forme qu'on veut — un prix,
- * au bout d'un chemin, avec rien derrière. Alexis a demandé le compromis, et le voici, avec son
- * coût dit exactement :
- *
- *   • **Le CŒUR (les dix zones non terminales) reste 2-connexe.** Aucun goulot pour NAVIGUER :
- *     la demande d'origine est tenue, intégralement.
- *   • **Deux IMPASSES au plus** — des T2 profondes, jamais celle du pas de la porte. Leur
- *     gardienne EST un point d'articulation : c'est **inévitable**, c'est la définition même d'un
- *     cul-de-sac. Mais ce qu'elle coupe, c'est UN TROPHÉE, jamais une route.
- *   • **Une impasse a DEUX PORTES sur son unique frontière**, à ≥ 250 tuiles l'une de l'autre :
- *     **aucun village ne la bloque.** Il faudrait tenir toute une zone de 430×484 tuiles, pas un
- *     couloir — et ça, aucun village ne le peut.
- *   • **Gardiennes DISTINCTES** : personne ne coupe deux trophées d'un coup.
- *
- * L'invariant est maintenu À CHAQUE FERMETURE, jamais réparé après coup : on part du graphe
- * complet des frontières et on ne ferme une frontière que si la 2-connexité du CŒUR SURVIT.
- * C'est ce qui rend la propriété vraie par construction — et non par un rattrapage qui
- * laisserait des cas.
- */
-function choisirSeuils(g: GrapheZones, catalogues: Map<string, { x: number; y: number }[]>): Seuil[] {
-  const n = g.zones.length
-  const cle = (a: number, b: number) => `${Math.min(a, b)}:${Math.max(a, b)}`
-  const degre = new Array<number>(n).fill(0)
-  const ouvertes = new Set<string>()
-  for (let a = 0; a < n; a++) {
-    for (const b of g.voisins[a]!) {
-      if (b <= a) continue
-      ouvertes.add(cle(a, b))
-      degre[a]!++
-      degre[b]!++
-    }
-  }
-
-  // ── LES IMPASSES : on les MURE, sauf d'un côté ────────────────────────────
-  // Une impasse est un cul-de-sac : UNE seule voisine, sa gardienne. On ferme donc toutes ses
-  // autres frontières — et c'est la seule fermeture qu'on s'autorise sans passer par le test de
-  // 2-connexité, parce qu'elle est le BUT, pas un effet de bord. (Le cœur, lui, ne perd rien :
-  // une impasse n'a jamais été une route pour personne.)
-  const impasses = new Set(g.impasses)
-  const gardienneDe = new Map<number, number>()
-  for (let k = 0; k < g.impasses.length; k++) {
-    const z = g.impasses[k]!
-    const gardienne = g.gardiennes[k]
-    if (gardienne === undefined) continue
-    gardienneDe.set(z, gardienne)
-    for (const v of g.voisins[z]!) {
-      if (v === gardienne) continue
-      const k = cle(z, v)
-      if (!ouvertes.delete(k)) continue
-      degre[z]!--
-      degre[v]!--
-    }
-    // ON PROVISIONNE LA SECONDE PORTE DE L'IMPASSE dans le budget de sa gardienne. Sans ça,
-    // l'élagage croit la gardienne à trois portes, la laisse tranquille, puis on lui en ajoute
-    // une quatrième — et ses portes ne peuvent plus toutes s'écarter de 250 tuiles. (C'est ce
-    // qui faisait échouer TOUS les tirages : la contrainte était contradictoire sans que rien ne
-    // le dise.) L'impasse, elle, garde son unique frontière — qui portera ses deux portes.
-    degre[gardienne]! += 1
-    degre[z]! += 1
-  }
-
-  for (let passe = 0; passe < 6; passe++) {
-    // Les candidates à la fermeture, triées par CHARGE du couple (on dégonfle les moyeux
-    // d'abord), puis par clé — déterministe de bout en bout.
-    const cands = [...ouvertes].sort((p, q) => {
-      const [pa, pb] = p.split(':').map(Number) as [number, number]
-      const [qa, qb] = q.split(':').map(Number) as [number, number]
-      const chargeQ = degre[qa]! + degre[qb]!
-      const chargeP = degre[pa]! + degre[pb]!
-      return chargeQ - chargeP || (p < q ? -1 : 1)
-    })
-    let ferme = false
-    for (const k of cands) {
-      const [a, b] = k.split(':').map(Number) as [number, number]
-      // On ne ferme que si l'une des deux zones est encore en SURCHARGE. Sans cette condition,
-      // on fermerait jusqu'à l'anneau nu — et la carte perdrait toute sa richesse de routes.
-      if (degre[a]! <= MONDE.MAX_PORTES && degre[b]! <= MONDE.MAX_PORTES) continue
-      // Une frontière d'impasse ne se touche pas : c'est sa SEULE, et elle est sacrée.
-      if (impasses.has(a) || impasses.has(b)) continue
-      // ET SEULEMENT SI LA 2-CONNEXITÉ DU CŒUR SURVIT : c'est l'invariant, et il est maintenu à
-      // chaque fermeture. (Elle implique degré ≥ 2 dans le cœur : inutile de le vérifier à part.)
-      ouvertes.delete(k)
-      if (!coeurBiconnexe(g, ouvertes)) { ouvertes.add(k); continue }
-      degre[a]!--
-      degre[b]!--
-      ferme = true
-    }
-    if (!ferme) break
-  }
-
-  // ── Les portes, posées une par une, chacune fuyant les précédentes ────────
-  // Glouton max-min : chaque porte se place AUSSI LOIN QUE POSSIBLE de celles déjà posées sur
-  // les deux zones qu'elle touche.
-  const seuils: Seuil[] = []
-  for (const k of [...ouvertes].sort()) {
-    const [a, b] = k.split(':').map(Number) as [number, number]
-    const cands = catalogues.get(k)
-    if (!cands || cands.length === 0) continue
-    const poses = seuils.filter((s) => s.a === a || s.b === a || s.a === b || s.b === b)
-    let best: { x: number; y: number }
-    if (poses.length > 0) {
-      best = cands[0]!
-      let bestScore = -1
-      for (const c of cands) {
-        let score = Infinity
-        for (const s of poses) score = Math.min(score, distSq(c.x, c.y, s.x, s.y))
-        if (score > bestScore) { bestScore = score; best = c }
-      }
-    } else {
-      // Aucune contrainte : le MILIEU de la frontière. La falaise y est la plus épaisse (on est
-      // loin des coins triples), donc le seuil y est le plus LONG — et un seuil doit avoir une
-      // longueur (spec R10.4).
-      best = cands[Math.floor(cands.length / 2)]!
-    }
-    seuils.push({ id: seuils.length, a, b, x: best.x, y: best.y, secours: false })
-  }
-
-  // ── LA SECONDE PORTE D'UNE IMPASSE — sur sa SEULE frontière ───────────────
-  //
-  // C'est ce qui rend le cul-de-sac ACCEPTABLE. Une impasse n'a qu'une voisine ; sa gardienne
-  // est donc un point d'articulation, et rien n'y peut rien. Mais **un village ne bloque pas une
-  // ZONE — il bloque une PORTE.** En perçant deux portes sur cette unique frontière, à 250 tuiles
-  // l'une de l'autre (sept écrans), on rend le blocage impossible en pratique : il faudrait tenir
-  // une zone de 430×484 tuiles, ce qu'aucun village ne peut faire.
-  //
-  // La distance est garantie par `ecarterLesPortes`, juste en dessous : les deux portes bordent
-  // les MÊMES deux zones, donc elles se repoussent l'une l'autre au maximum de ce que la
-  // frontière permet — et `portesTenues` rejette le tirage si 250 est hors d'atteinte.
-  for (const [z, gardienne] of gardienneDe) {
-    const k = cle(z, gardienne)
-    const cands = catalogues.get(k)
-    if (!cands || cands.length < 2) continue
-    const premiere = seuils.find((s) => s.a === Math.min(z, gardienne) && s.b === Math.max(z, gardienne))
-    let best = cands[0]!
-    let bestScore = -1
-    for (const c of cands) {
-      const score = premiere ? distSq(c.x, c.y, premiere.x, premiere.y) : 0
-      if (score > bestScore) { bestScore = score; best = c }
-    }
-    seuils.push({
-      id: seuils.length,
-      a: Math.min(z, gardienne),
-      b: Math.max(z, gardienne),
-      x: best.x,
-      y: best.y,
-      secours: true,
-    })
-  }
-
-  ecarterLesPortes(seuils, catalogues)
-  marquerLesSecours(g, seuils)
-  return seuils
 }
 
 /**
@@ -1265,160 +1058,4 @@ function marquerLesSecours(g: GrapheZones, seuils: Seuil[]): void {
     }
   }
   for (const s of seuils) s.secours = !naturelles.has(s.id)
-}
-
-/**
- * LES PORTES D'UNE MÊME ZONE S'ÉCARTENT — recherche locale, après coup.
- *
- * Le glouton pose les portes dans un ordre figé et ne revient jamais sur son choix : la
- * première porte d'une zone est posée sans savoir où tombera la seconde. D'où des paires trop
- * serrées (mesuré : deux seuils du Glacier à 234 tuiles, pour un minimum de 250).
- *
- * On repasse donc : tant qu'une paire viole l'écart, on essaie de DÉPLACER l'une des deux sur
- * sa propre frontière, vers le candidat qui maximise sa distance minimale aux autres portes de
- * ses zones. On n'accepte que si le minimum GLOBAL s'améliore — donc ça converge, et ça ne
- * casse jamais ce qui allait bien.
- *
- * Déterministe : ordre d'itération fixe, aucun tirage.
- */
-function ecarterLesPortes(seuils: Seuil[], catalogues: Map<string, { x: number; y: number }[]>): void {
-  /**
-   * LE COÛT — la SOMME des violations, en tuiles. Zéro quand tout va bien.
-   *
-   * Et ce choix est LA correction : la première écriture maximisait le minimum GLOBAL, et
-   * restait bloquée dans un optimum local — écarter les portes de la Vieille Sylve resserrait
-   * (un peu) celles d'une autre zone, le minimum global ne montait pas, le déplacement était
-   * refusé, et on s'immobilisait à 238 tuiles pour un minimum de 250. Une somme, elle, DESCEND
-   * : elle voit qu'on échange une grosse violation contre une petite. On ne mesure pas le pire,
-   * on mesure la DETTE.
-   */
-  const cout = (): number => {
-    let total = 0
-    for (let i = 0; i < seuils.length; i++) {
-      for (let j = i + 1; j < seuils.length; j++) {
-        const p = seuils[i]!
-        const q = seuils[j]!
-        // Deux portes ne se gênent que si elles bordent une MÊME zone : c'est là, et là
-        // seulement, qu'un village pourrait les tenir toutes les deux.
-        if (p.a !== q.a && p.a !== q.b && p.b !== q.a && p.b !== q.b) continue
-        const d = Math.sqrt(distSq(p.x, p.y, q.x, q.y))
-        // On vise ECART_VISE (300), pas ECART_SEUILS (250) : l'optimiseur SATISFAIT, il ne
-        // maximise pas — il se pose pile sur sa cible et s'arrête. En visant la barre, on
-        // atterrissait dessus (médiane mesurée : 252), et la moindre seed serrée passait
-        // dessous. En visant plus haut, on garde de la marge sans changer la règle.
-        if (d < MONDE.ECART_VISE) total += MONDE.ECART_VISE - d
-      }
-    }
-    return total
-  }
-
-  for (let passe = 0; passe < 40; passe++) {
-    if (cout() === 0) return
-    let ameliore = false
-    for (const s of seuils) {
-      const cands = catalogues.get(`${s.a}:${s.b}`)
-      if (!cands || cands.length < 2) continue
-      const ox = s.x
-      const oy = s.y
-      let meilleur = cout()
-      let bx = ox
-      let by = oy
-      for (const c of cands) {
-        s.x = c.x
-        s.y = c.y
-        const apres = cout()
-        // `<` strict : on n'accepte que ce qui améliore VRAIMENT — sans quoi deux candidats
-        // équivalents se relaieraient à l'infini.
-        if (apres < meilleur) { meilleur = apres; bx = c.x; by = c.y }
-      }
-      s.x = bx
-      s.y = by
-      if (bx !== ox || by !== oy) ameliore = true
-    }
-    if (!ameliore) return // plus rien à gagner : la géométrie ne le permet pas
-  }
-}
-
-/**
- * LES CATALOGUES DE FRONTIÈRE — on ÉNUMÈRE les vraies frontières, on ne les devine pas.
- *
- * DEUX ÉCRITURES RATÉES AVANT CELLE-CI, et la leçon vaut d'être écrite. La première cherchait
- * le point de frontière par DICHOTOMIE le long du segment qui joint les deux sites, décalé
- * perpendiculairement. C'est géométriquement séduisant et pratiquement faux : dès qu'on
- * s'éloigne du milieu, le segment décalé traverse une TROISIÈME zone, la dichotomie est
- * jetée, et le catalogue se réduit à une poignée de points **tous groupés au même endroit**.
- * Le placement glouton n'avait alors plus rien à choisir — il a même rendu le résultat PIRE
- * (deux seuils de la Cendrière à 146 tuiles, contre 249 avant).
- *
- * On balaie donc la carte, une fois, au pas de `PAS_FRONTIERE`, et on relève toutes les tuiles
- * dont un voisin appartient à une autre zone. C'est bête, c'est robuste, et ça donne la
- * frontière ENTIÈRE — coins triples compris, courbes du warp comprises. Coût : ~160 k
- * échantillons pour la carte du jeu, soit une fraction de seconde, une seule fois.
- */
-const PAS_FRONTIERE = 4
-
-export function catalogueFrontieres(g: GrapheZones): Map<string, { x: number; y: number }[]> {
-  const out = new Map<string, { x: number; y: number }[]>()
-  const p = PAS_FRONTIERE
-  // Le champ grossier : qui possède quoi, au pas de 4 tuiles.
-  const cols = Math.floor(g.width / p)
-  const rows = Math.floor(g.height / p)
-  const owner = new Int32Array(cols * rows)
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      owner[j * cols + i] = echantillonAt(g, i * p, j * p).zone
-    }
-  }
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const me = owner[j * cols + i]!
-      for (const [di, dj] of [[1, 0], [0, 1]] as const) {
-        const ii = i + di
-        const jj = j + dj
-        if (ii >= cols || jj >= rows) continue
-        const lui = owner[jj * cols + ii]!
-        if (lui === me) continue
-        const x = Math.round(((i + ii) * p) / 2)
-        const y = Math.round(((j + jj) * p) / 2)
-        // On écarte les frontières qui rasent le bord de carte : un seuil doit avoir de la
-        // terre des deux côtés, et l'anneau de bordure est bloquant de toute façon.
-        if (x < 30 || y < 30 || x >= g.width - 30 || y >= g.height - 30) continue
-        // ON VALIDE LE POINT À LA TUILE PRÈS, et ce n'est pas du zèle : le champ grossier est
-        // échantillonné au pas de 4, et le MILIEU de deux échantillons voisins peut tomber
-        // dans une TROISIÈME zone (un coin triple). Mesuré : un « seuil » entre les zones 8
-        // et 11 atterrissait dans la zone 10. Un seuil doit séparer les deux zones qu'il
-        // prétend relier — sinon ce n'est pas une porte, c'est une erreur de carte.
-        const e = echantillonAt(g, x, y)
-        const a = Math.min(me, lui)
-        const b = Math.max(me, lui)
-        if ((e.zone !== a || e.voisin !== b) && (e.zone !== b || e.voisin !== a)) continue
-        // ET LE POINT DOIT ÊTRE PUR — loin de toute TROISIÈME zone (voir `Echantillon.purete`).
-        // Sans cette borne, l'optimiseur qui écarte les portes les pousse vers les extrémités des
-        // frontières, c'est-à-dire dans les COINS TRIPLES : la falaise y est mince, le seuil y est
-        // court, et la porte tombe visuellement dans une zone qui n'est pas la sienne.
-        if (e.purete < MONDE.PURETE_MIN) continue
-        const k = `${a}:${b}`
-        const liste = out.get(k)
-        if (liste) liste.push({ x, y })
-        else out.set(k, [{ x, y }])
-      }
-    }
-  }
-  return out
-}
-
-/** L'adjacence RÉELLE — celle des frontières qui existent, pas celle des sites qui se
- *  regardent. C'est la seule qui compte : on ne perce pas une porte dans un mur imaginaire. */
-function adjacenceReelle(n: number, catalogues: Map<string, { x: number; y: number }[]>): number[][] {
-  const adj: number[][] = Array.from({ length: n }, () => [])
-  for (const [k, pts] of catalogues) {
-    // Une frontière de moins de 5 points (20 tuiles) est un contact, pas une frontière : on
-    // n'y percerait qu'une porte coincée dans un coin.
-    if (pts.length < 5) continue
-    const [a, b] = k.split(':').map(Number) as [number, number]
-    adj[a]!.push(b)
-    adj[b]!.push(a)
-  }
-  for (const l of adj) l.sort((x, y) => x - y)
-  return adj
 }

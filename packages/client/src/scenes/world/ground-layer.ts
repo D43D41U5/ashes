@@ -15,7 +15,7 @@
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
-import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
+import { CHUTE_MARGIN_TILES, GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { gridMesh } from '../../render/ground-mesh'
 import type { Warp } from '../../render/warp'
 
@@ -43,9 +43,12 @@ export class GroundLayer {
   render(camera: Phaser.Cameras.Scene2D.Camera): void {
     const { width, height } = this.map
     const v = camera.worldView
-    // Marge basse généreuse : les tuiles hautes du fond montent dans la vue.
+    // DEUX marges, et elles vont dans les DEUX sens. Une terrasse haute plantée sous la vue y
+    // REMONTE (lift positif) ; une CREVASSE plantée au-dessus de la vue y DESCEND (palier négatif,
+    // spec R39). Culer d'un seul côté laisserait une bande vide en haut de l'écran au bord d'un
+    // gouffre — c'est-à-dire précisément là où l'on regarde.
     const tx0 = Math.max(0, Math.floor(v.x / TILE_PX) - 1)
-    const ty0 = Math.max(0, Math.floor(v.y / TILE_PX) - 1)
+    const ty0 = Math.max(0, Math.floor(v.y / TILE_PX) - 1 - CHUTE_MARGIN_TILES)
     const tx1 = Math.min(width - 1, Math.ceil((v.x + v.width) / TILE_PX) + 1)
     const ty1 = Math.min(height - 1, Math.ceil((v.y + v.height) / TILE_PX) + 64)
     const m = gridMesh(tx0, ty0, tx1, ty1, (x, y) => this.warp.lift(x, y), TILE_PX, width, height)

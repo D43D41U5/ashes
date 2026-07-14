@@ -36,7 +36,7 @@
  */
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -148,6 +148,63 @@ const SCENARIOS = {
       const arrive = Math.abs(ou.x - z.x) < 30 && Math.abs(ou.y - z.y) < 30
       console.log(`T${z.tier} ${z.nom.padEnd(22)} visé (${z.x}, ${z.y}) → ${arrive ? 'OK' : `ÉCHOUÉ, on est en (${ou.x}, ${ou.y})`}`)
     }
+  },
+
+  /**
+   * LA CARTE RESSEMBLE-T-ELLE AU CROQUIS ?
+   *
+   * On dézoome à mort et on regarde le monde d'un coup. C'est le seul test qui puisse répondre à la
+   * seule question qui compte ici : *est-ce que ça a la forme qu'Alexis a dessinée ?* Aucune
+   * propriété testable ne le dira jamais — il faut la VOIR.
+   *
+   * Exige `--dev` (le TP n'est armé que là).
+   */
+  async atlas(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+
+    // ON NE DEMANDE PAS À PHASER DE DÉZOOMER. La première écriture le faisait, et la page GELAIT :
+    // le sol se maille à la vue, et « la vue » devenait alors les 3,75 M de tuiles de la carte. On
+    // dessine donc l'atlas NOUS-MÊMES, dans un canvas, depuis les données de la sim — c'est cent
+    // fois plus rapide, et c'est exactement ce qu'on veut voir : la FORME, pas le rendu.
+    const png = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const PAS = 4 // une tuile sur quatre : assez pour la forme, seize fois moins de pixels
+      const W = Math.floor(m.width / PAS)
+      const H = Math.floor(m.height / PAS)
+      const cv = document.createElement('canvas')
+      cv.width = W
+      cv.height = H
+      const ctx = cv.getContext('2d')
+      const img = ctx.createImageData(W, H)
+      // Une teinte par palier : le vide (palier négatif) est NOIR, et l'on monte vers le blanc.
+      const pmax = m.palierMax ?? 6
+      for (let j = 0; j < H; j++) {
+        for (let i = 0; i < W; i++) {
+          const t = j * PAS * m.width + i * PAS
+          const pal = m.palier ? m.palier[t] : 0
+          const o = (j * W + i) * 4
+          let r, g, b
+          if (m.terrain[t] === 0) { r = 6; g = 6; b = 10 } // LE VIDE — la crevasse
+          else if (m.terrain[t] === 23) { r = 70; g = 66; b = 78 } // la falaise
+          else {
+            const f = Math.max(0, pal) / pmax
+            r = Math.round(40 + f * 200)
+            g = Math.round(70 + f * 160)
+            b = Math.round(50 + f * 190)
+          }
+          img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = 255
+        }
+      }
+      ctx.putImageData(img, 0, 0)
+      // Les seuils, en rouge : on doit VOIR où l'on passe.
+      ctx.fillStyle = '#ff2d2d'
+      for (const s of window.__BRAISES__.scene.map.zones ?? []) void s
+      return cv.toDataURL('image/png')
+    })
+    const b64 = png.split(',')[1]
+    writeFileSync(`${OUT}/atlas.png`, Buffer.from(b64, 'base64'))
+    console.log(`la vallée entière → ${OUT}/atlas.png`)
   },
 
   /**

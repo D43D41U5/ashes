@@ -17,6 +17,7 @@ import {
   MONDE,
   RACINE_SLUG,
   tailleCarte,
+  VRAIES_ZONES,
   ZONES,
   type GrapheZones,
 } from './zonegraph'
@@ -27,6 +28,17 @@ const graphes = SEEDS.map((s) => deriveGrapheZones(s))
 /** Le degré d'une zone = son nombre de seuils (deux passages sur la même frontière comptent
  *  pour deux : ce sont deux portes distinctes, et c'est bien le sens de la règle). */
 const degre = (g: GrapheZones, id: number) => g.seuils.filter((s) => s.a === id || s.b === id).length
+
+/**
+ * LES VRAIES ZONES D'UN GRAPHE — le Névé n'en est pas une.
+ *
+ * C'est un SEUIL GÉANT : on le traverse, on n'y vit pas, **aucun village ne peut le tenir**. Les
+ * gardes qui protègent le joueur d'un village hostile (A21 : aucun goulot ; A4 : deux portes
+ * écartées de 250) l'excluent donc, et c'est la seule exception du modèle. Une règle qui existe
+ * pour qu'on ne puisse pas tenir une porte n'a rien à dire d'une porte qu'on ne peut pas tenir.
+ */
+const vraies = (g: GrapheZones) => g.zones.filter((z) => !z.def.traverse)
+const REGIONS = 13
 
 /** Les zones atteignables depuis la racine, EN NE PASSANT QUE PAR LES SEUILS. */
 function atteignables(g: GrapheZones, seuilsBouches: ReadonlySet<number> = new Set()): Set<number> {
@@ -45,19 +57,22 @@ function atteignables(g: GrapheZones, seuilsBouches: ReadonlySet<number> = new S
 }
 
 describe('la table des zones', () => {
-  it('A1 — déclare exactement 12 zones : 1 racine, 6 T1, 5 T2 — et le treillis les porte', () => {
-    expect(ZONES).toHaveLength(MONDE.COLS * MONDE.ROWS)
-    expect(ZONES.filter((z) => z.tier === 0)).toHaveLength(1)
-    expect(ZONES.filter((z) => z.tier === 1)).toHaveLength(6)
-    expect(ZONES.filter((z) => z.tier === 2)).toHaveLength(5)
-    expect(ZONES[0]!.slug).toBe(RACINE_SLUG)
+  it('A1 — 12 ZONES (1 racine, 6 T1, 5 T2) + LE NÉVÉ, qui n\'en est pas une', () => {
+    // Le Névé Blanc est une RÉGION, pas une zone : un SEUIL GÉANT qu'on traverse et où l'on ne vit
+    // pas (spec §3). Il compte dans la carte, jamais dans les douze pays.
+    expect(VRAIES_ZONES).toHaveLength(12)
+    expect(VRAIES_ZONES.filter((z) => z.tier === 0)).toHaveLength(1)
+    expect(VRAIES_ZONES.filter((z) => z.tier === 1)).toHaveLength(6)
+    expect(VRAIES_ZONES.filter((z) => z.tier === 2)).toHaveLength(5)
+    expect(ZONES.filter((z) => z.traverse)).toHaveLength(1)
+    expect(VRAIES_ZONES[0]!.slug).toBe(RACINE_SLUG)
     // Les slugs sont uniques : ils indexeront les tables de ressources, de faune et d'art.
     expect(new Set(ZONES.map((z) => z.slug)).size).toBe(ZONES.length)
   })
 
   it('R9 — toute ressource STRUCTURANTE est exclusive à sa zone ; les LIAISONS sont déclarées', () => {
     const vues = new Map<string, string[]>()
-    for (const z of ZONES) {
+    for (const z of VRAIES_ZONES) {
       if (!z.structurante) continue
       vues.set(z.structurante, [...(vues.get(z.structurante) ?? []), z.slug])
     }
@@ -72,10 +87,11 @@ describe('la table des zones', () => {
 })
 
 describe('le graphe, sur 12 seeds', () => {
-  it('A1 — 12 zones, toutes distinctes, toutes dans la carte', () => {
+  it('A1 — 12 zones + le Névé, toutes distinctes, toutes dans la carte', () => {
     for (const g of graphes) {
-      expect(g.zones).toHaveLength(12)
-      expect(new Set(g.zones.map((z) => z.def.slug)).size).toBe(12)
+      expect(g.zones).toHaveLength(REGIONS)
+      expect(vraies(g)).toHaveLength(12)
+      expect(new Set(g.zones.map((z) => z.def.slug)).size).toBe(REGIONS)
       for (const z of g.zones) {
         expect(z.x).toBeGreaterThan(0)
         expect(z.y).toBeGreaterThan(0)
@@ -128,14 +144,17 @@ describe('le graphe, sur 12 seeds', () => {
         g.voisins[g.racine],
         `seed ${g.seed} : la Cendrière ne touche pas les Prés Bas — la saison n'a pas de front`,
       ).toContain(cendriere.id)
-      // Et elle n'est JAMAIS une impasse : un front doit pouvoir avancer, pas se terminer.
-      expect(g.impasses, `seed ${g.seed} : la Cendrière est une impasse`).not.toContain(cendriere.id)
+      // ELLE EST UNE IMPASSE, ET C'EST VOULU (croquis d'Alexis, 2026-07-14) : elle est plein sud,
+      // SOUS le jardin, et n'ouvre que sur lui. Le front n'avance pas dans le GRAPHE — il avance
+      // dans la GÉOGRAPHIE, vers le nord, à travers les Prés Bas (spec R28). Un cul-de-sac en bas de
+      // la carte est exactement ce qu'il faut pour ça : on ne le traverse pas, on le FUIT.
+      expect(g.impasses, `seed ${g.seed} : la Cendrière doit être le cul-de-sac du sud`).toContain(cendriere.id)
     }
   })
 
   it('A2 — toute zone est atteignable depuis la racine EN NE PASSANT QUE PAR LES SEUILS', () => {
     for (const g of graphes) {
-      expect(atteignables(g).size, `seed ${g.seed}`).toBe(12)
+      expect(atteignables(g).size, `seed ${g.seed}`).toBe(REGIONS)
     }
   })
 
@@ -151,7 +170,7 @@ describe('le graphe, sur 12 seeds', () => {
   it('A4 — les seuils d\'une même zone sont à ≥ 250 tuiles : aucun village ne tient les deux', () => {
     const min = MONDE.ECART_SEUILS * MONDE.ECART_SEUILS
     for (const g of graphes) {
-      for (const z of g.zones) {
+      for (const z of vraies(g)) { // le Névé est exempté : on ne bâtit pas dedans (voir `vraies`)
         const mes = g.seuils.filter((s) => s.a === z.id || s.b === z.id)
         for (let i = 0; i < mes.length; i++) {
           for (let j = i + 1; j < mes.length; j++) {
@@ -184,7 +203,7 @@ describe('le graphe, sur 12 seeds', () => {
   it('A21 — AUCUN GOULOT POUR NAVIGUER : retirer une zone ne coupe QUE son éventuelle impasse', () => {
     for (const g of graphes) {
       const impasses = new Set(g.impasses)
-      for (const bloquee of g.zones) {
+      for (const bloquee of vraies(g)) { // on ne TIENT pas un Névé : il n'y a pas de village dedans
         // On retire la zone ENTIÈRE — pas ses portes : la zone. Comme si on ne pouvait plus la
         // traverser du tout. Qui reste joignable ?
         const restantes = g.zones.filter((z) => z.id !== bloquee.id).map((z) => z.id)
@@ -235,8 +254,11 @@ describe('le graphe, sur 12 seeds', () => {
         const zone = g.zones[z]!
         // Une impasse est une T2 — un trophée, pas un passage de milieu de partie.
         expect(zone.def.tier, `seed ${g.seed} : ${zone.def.nom} est une impasse de palier ${zone.def.tier}`).toBe(2)
-        // Jamais celle du pas de la porte : celle-là doit rester un PASSAGE (R13).
-        expect(g.voisins[g.racine]!).not.toContain(z)
+        // ELLE PEUT ÊTRE CELLE DU PAS DE LA PORTE, et c'est même le cas : la Cendrière est plein
+        // sud, sous le jardin, et n'ouvre que sur lui (croquis d'Alexis, 2026-07-14). La règle
+        // d'origine — « la T2 du pas de la porte doit rester un PASSAGE » — visait à ce qu'elle ne
+        // soit pas un trophée qu'on va chercher, mais un voisinage qu'on subit. Elle le reste : **le
+        // front n'a pas besoin d'être traversé pour avancer**, il avance dans la géographie (R28).
 
         // UNE seule voisine par les seuils : c'est un cul-de-sac. On en revient par où on est entré.
         const mes = g.seuils.filter((s) => s.a === z || s.b === z)
@@ -295,7 +317,7 @@ describe('le graphe, sur 12 seeds', () => {
     // sont les naturelles — elles forment un arbre couvrant, donc il y en a exactement onze.
     for (const g of graphes) {
       const naturelles = g.seuils.filter((s) => !s.secours)
-      expect(naturelles.length, `seed ${g.seed} : ${naturelles.length} portes naturelles`).toBe(11)
+      expect(naturelles.length, `seed ${g.seed} : ${naturelles.length} portes naturelles`).toBe(REGIONS - 1)
       // Et elles relient bien les douze zones (c'est un arbre, pas un tas).
       const vu = new Set([g.racine])
       const file = [g.racine]
@@ -308,7 +330,7 @@ describe('le graphe, sur 12 seeds', () => {
           file.push(autre)
         }
       }
-      expect(vu.size, `seed ${g.seed} : les portes naturelles ne joignent que ${vu.size} zones`).toBe(12)
+      expect(vu.size, `seed ${g.seed} : les portes naturelles ne joignent que ${vu.size} régions`).toBe(REGIONS)
     }
   })
 
@@ -337,12 +359,26 @@ describe('le graphe, sur 12 seeds', () => {
         expect(s.y).toBeGreaterThanOrEqual(0)
         expect(s.x).toBeLessThan(g.width)
         expect(s.y).toBeLessThan(g.height)
-        // Il est SUR la frontière : la marge y est petite, et il sépare bien a et b.
-        const e = echantillonAt(g, s.x, s.y)
-        expect([s.a, s.b], `seed ${g.seed} : le seuil ${s.id} ne touche ni ${s.a} ni ${s.b}`)
-          .toContain(e.zone)
-        expect(e.marge, `seed ${g.seed} : le seuil ${s.id} est à ${e.marge} tuiles de la frontière`)
-          .toBeLessThan(12)
+        // ═══ IL SÉPARE VRAIMENT `a` DE `b` — et on le VÉRIFIE, on ne le mesure plus ═══
+        //
+        // L'ancienne garde exigeait que la MARGE au point du seuil soit petite (« il est sur la
+        // frontière »). Elle ne veut plus rien dire : depuis que les rectangles se chevauchent
+        // (spec R40), la marge se mesure contre le rectangle NOMINAL d'une région, alors que sa
+        // forme visible peut être bien plus petite — une voisine lui a mangé un morceau. Un seuil
+        // parfaitement posé sur la frontière VISIBLE se retrouvait « à 55 tuiles de la frontière ».
+        //
+        // On teste donc ce que la règle VEUT DIRE, et non un chiffre qui l'approchait : de part et
+        // d'autre du point, dans l'axe de traversée, on doit trouver `a` d'un côté et `b` de l'autre.
+        // C'est la définition d'une porte.
+        const R = MONDE.BLOC
+        const avant = echantillonAt(g, s.x - s.ax * R, s.y - s.ay * R)
+        const apres = echantillonAt(g, s.x + s.ax * R, s.y + s.ay * R)
+        expect(
+          [avant.zone, apres.zone].sort((p, q) => p - q),
+          `seed ${g.seed} : le seuil ${s.id} devait séparer ${g.zones[s.a]!.def.nom} de ` +
+            `${g.zones[s.b]!.def.nom}, il sépare ${g.zones[avant.zone]!.def.nom} de ` +
+            `${g.zones[apres.zone]!.def.nom}`,
+        ).toEqual([s.a, s.b])
       }
     }
   })
@@ -395,17 +431,19 @@ describe('le balayage large — 60 seeds, et un seul échec est un échec', () =
         echecs.push(`seed ${seed} — la génération ÉCHOUE : ${(e as Error).message.slice(0, 70)}`)
         continue
       }
-      if (g.zones.length !== 12) echecs.push(`seed ${seed} — ${g.zones.length} zones`)
-      if (atteignables(g).size !== 12) echecs.push(`seed ${seed} — une zone est injoignable`)
+      if (g.zones.length !== REGIONS) echecs.push(`seed ${seed} — ${g.zones.length} régions`)
+      if (atteignables(g).size !== REGIONS) echecs.push(`seed ${seed} — une région est injoignable`)
       for (const z of g.zones) {
         const m = g.seuils.filter((s) => s.a === z.id || s.b === z.id)
         if (m.length < 2) echecs.push(`seed ${seed} — ${z.def.nom} n'a que ${m.length} porte(s)`)
-        // Une GARDIENNE d'impasse a structurellement une porte de plus : deux pour son impasse
-        // (sans quoi un village la bloquerait), et deux au minimum vers le cœur (sans quoi le
-        // cœur cesse d'être 2-connexe). Le plafond ne la concerne donc pas — mais rien d'autre
-        // ne le dépasse.
-        const plafond = g.gardiennes.includes(z.id) ? MONDE.MAX_PORTES + 1 : MONDE.MAX_PORTES
-        if (m.length > plafond) echecs.push(`seed ${seed} — ${z.def.nom} a ${m.length} portes`)
+        // LE PLAFOND DE PORTES A SAUTÉ, et c'est le croquis qui l'a fait sauter. Il existait pour
+        // qu'une cellule tirée au sort ne se retrouve pas criblée de frontières minuscules. La carte
+        // est désormais DESSINÉE : le jardin ouvre sur quatre pays plus la Cendrière (cinq portes),
+        // le Névé sur cinq. Ce ne sont pas des accidents à borner — ce sont les carrefours du plan.
+        //
+        // LE NÉVÉ EST EXEMPTÉ DE L'ÉCARTEMENT (voir `vraies`) : on ne bâtit pas dedans, donc aucun
+        // village ne peut y tenir deux portes, donc la règle des 250 tuiles n'a rien à y dire.
+        if (z.def.traverse) continue
         for (let i = 0; i < m.length; i++) {
           for (let j = i + 1; j < m.length; j++) {
             const d = Math.sqrt(distSq(m[i]!.x, m[i]!.y, m[j]!.x, m[j]!.y))
@@ -425,10 +463,11 @@ describe('le balayage large — 60 seeds, et un seul échec est un échec', () =
 describe('le dimensionnement — UN SEUL bouton (A20)', () => {
   it('la carte se DÉDUIT du nombre de joueurs, elle ne se règle pas à la main', () => {
     const { width, height } = tailleCarte(50)
-    // L'ordre de grandeur de la carte actuelle (1200×1800) — et non les 2400×3600 « cibles »,
-    // qui étaient surdimensionnés d'un facteur quatre.
-    expect(width * height).toBeGreaterThan(2_000_000)
-    expect(width * height).toBeLessThan(3_000_000)
+    // LA CARTE A GRANDI, et c'est le prix du non-pavage (spec R39) : ~15 % d'elle est du VIDE, où
+    // l'on ne joue pas. Pour garder la même surface JOUABLE qu'un pavage de 2,5 M de tuiles, il en
+    // faut ~3,75 M au total. La garde borne l'ordre de grandeur, pas le chiffre.
+    expect(width * height).toBeGreaterThan(3_000_000)
+    expect(width * height).toBeLessThan(4_500_000)
     // Portrait : une vallée alpine, la bouche au sud.
     expect(height).toBeGreaterThan(width)
   })
@@ -461,7 +500,8 @@ describe('le dimensionnement — UN SEUL bouton (A20)', () => {
       let aire = 0
       for (let y = 0; y < height; y += PAS) {
         for (let x = 0; x < width; x += PAS) {
-          if (echantillonAt(g, x, y).zone === g.racine) aire += PAS * PAS
+          const e = echantillonAt(g, x, y)
+          if (!e.vide && e.zone === g.racine) aire += PAS * PAS // le VIDE ne porte pas de village
         }
       }
       expect(

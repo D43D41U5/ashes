@@ -26,7 +26,7 @@
 import type Phaser from 'phaser'
 import { hash2, palierAt, TERRAIN_CLIFF, type WorldMap } from '@braises/sim'
 import { CLIFF_SHADOW_KEY, cliffKey, RISER_MAX, riserKey } from '../../render/cliff-art'
-import { GROUND_MAP_DEPTH, LIFT_MARGIN_TILES, STEP_PX, TILE_PX } from '../../render/framing'
+import { CHUTE_MARGIN_TILES, GROUND_MAP_DEPTH, LIFT_MARGIN_TILES, STEP_PX, TILE_PX } from '../../render/framing'
 
 /** Au-dessus du sol et de la cendre (+0,25), sous l'ombre solaire (+0,5) et tout ce qui a des
  *  pieds (≥ 2). L'ombre portée se glisse juste sous les parois. */
@@ -63,9 +63,9 @@ export class CliffLayer {
     const v = camera.worldView
     const { width, height } = this.map
     const tx0 = Math.max(0, Math.floor(v.x / TILE_PX) - 1)
-    // Vers le HAUT : une tuile très haute, plantée sous la vue, remonte dedans. Vers le BAS : rien
-    // (le lift ne fait que sortir de la vue), mais une contremarche pend SOUS sa tuile.
-    const ty0 = Math.max(0, Math.floor(v.y / TILE_PX) - 1)
+    // Une terrasse haute plantée SOUS la vue y remonte ; une CREVASSE plantée AU-DESSUS y descend
+    // (palier négatif, spec R39). On cule des deux côtés.
+    const ty0 = Math.max(0, Math.floor(v.y / TILE_PX) - 1 - CHUTE_MARGIN_TILES)
     const tx1 = Math.min(width - 1, Math.ceil((v.x + v.width) / TILE_PX) + 1)
     const ty1 = Math.min(height - 1, Math.ceil((v.y + v.height) / TILE_PX) + LIFT_MARGIN_TILES)
 

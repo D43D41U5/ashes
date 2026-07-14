@@ -10,7 +10,7 @@ import { NODE_DEFS, TERRAINS } from './balance'
 import { distSq } from './geometry'
 import { CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
 import { generateZonedTerrain, type CarteZonee } from './zonegen'
-import { MONDE, ZONES } from './zonegraph'
+import { MONDE, VRAIES_ZONES, ZONES } from './zonegraph'
 
 const SEEDS = [2026, 7, 42]
 const mondes = SEEDS.map((s) => {
@@ -23,11 +23,20 @@ const mondes = SEEDS.map((s) => {
 const slugDe = (c: CarteZonee, id: number) => c.graphe.zones[id]!.def.slug
 
 describe('la table du contenu', () => {
-  it('toute zone déclarée a un contenu, et réciproquement', () => {
+  it('toute zone déclarée a un contenu — et un SEUIL n\'en a AUCUN (R10.3)', () => {
     for (const z of ZONES) {
+      if (z.traverse) {
+        // LE NÉVÉ NE NOURRIT RIEN, et c'est ce qui en fait une porte plutôt qu'un pays : *on ne campe
+        // pas dans un seuil.* Aucune règle n'interdit d'y bâtir — il n'y a simplement rien à y
+        // prendre (spec R17 : zéro code de restriction, zéro frustration). L'absence de contenu est
+        // donc une EXIGENCE, pas un oubli, et c'est à ce titre qu'on la teste.
+        expect(CONTENUS[z.slug], `${z.nom} est un SEUIL : il ne doit rien nourrir`).toBeUndefined()
+        continue
+      }
       expect(CONTENUS[z.slug], `${z.nom} n'a pas de contenu déclaré`).toBeDefined()
     }
-    expect(Object.keys(CONTENUS).sort()).toEqual(ZONES.map((z) => z.slug).sort())
+    // La réciproque : pas une ligne de contenu qui ne corresponde à une VRAIE zone.
+    expect(Object.keys(CONTENUS).sort()).toEqual(VRAIES_ZONES.map((z) => z.slug).sort())
   })
 
   it('la table PROMET ce que la spec déclare : chaque structurante chez elle, et une seule fois', () => {

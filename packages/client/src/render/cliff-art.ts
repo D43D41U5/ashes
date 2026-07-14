@@ -59,9 +59,15 @@ const FOOT = 0x17151d // l'assise, au ras du sol
 
 export const CLIFF_TILE_PX = 16
 
-/** Le dénivelé le plus haut qu'une contremarche sache dessiner, en paliers. La table de `/sim`
- *  plafonne à 5 ; on garde un cran de marge pour ne jamais manquer une texture. */
-export const RISER_MAX = 6
+/**
+ * Le dénivelé le plus haut qu'une contremarche sache dessiner, en paliers.
+ *
+ * DIX, et le compte se fait : les zones vont du palier 0 (le jardin) au palier 6 (la Cendrière), et
+ * le VIDE est à −3 (spec R39 — les crevasses). Une terrasse haute qui donne sur le gouffre ouvre
+ * donc une paroi de **neuf marches, soit 108 pixels** : un demi-écran de mur. C'est très exactement
+ * ce qu'on veut voir en arrivant au bord.
+ */
+export const RISER_MAX = 10
 
 /** Clé d'une tuile de DESSUS de plateau. `mask` encode les bords ouverts (N/E/O). */
 export function cliffKey(family: 'top', mask: number, variant: number): string {

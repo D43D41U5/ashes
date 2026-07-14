@@ -48,7 +48,11 @@ export const STEP_PX = 12
  * n'arrive.
  */
 export const PALIER_MAX_RENDU = 6
+/** Le VIDE (spec R39) est à −3 : il se dessine donc PLUS BAS que sa position plate, et une tuile
+ *  posée au-dessus du bord haut de la vue peut descendre DEDANS. On élargit des deux côtés. */
+export const PALIER_MIN_RENDU = -3
 export const LIFT_MARGIN_TILES = Math.ceil((PALIER_MAX_RENDU * STEP_PX) / TILE_PX)
+export const CHUTE_MARGIN_TILES = Math.ceil((-PALIER_MIN_RENDU * STEP_PX) / TILE_PX)
 
 /* ── Budget des profondeurs de la scène monde ────────────────────────────────
  *
