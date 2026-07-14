@@ -66,6 +66,7 @@ import { ClutterLayer } from './world/clutter-layer'
 import { GroundLayer } from './world/ground-layer'
 import { ambianceDe, moduler } from '../render/zone-ambiance'
 import { CendreLayer } from './world/cendre-layer'
+import { CliffLayer } from './world/cliff-layer'
 import { ShadeLayer } from './world/shade-layer'
 import { PoiLayer } from './world/poi-layer'
 import { ShoreCliff } from './world/shore-cliff'
@@ -174,7 +175,7 @@ const TERRAIN_COLORS: Record<number, number> = {
    * palette : presque noire, très froide, sans le moindre parent visuel dans la roche (0x6d6d70)
    * ni le mur (0x4a4038). À l'écran, on ne doit pas pouvoir hésiter une seconde.
    */
-  23: 0x22242c, // falaise (cliff)
+  23: 0x4b4852, // falaise — le 1 px cuit SOUS les sprites de paroi : la teinte du dessus d'ardoise
 }
 
 /** Assombrit/éclaircit légèrement une couleur (variation par tuile). */
@@ -214,6 +215,7 @@ export class WorldScene extends Phaser.Scene {
   private ground!: GroundLayer
   private shade!: ShadeLayer
   private cendre!: CendreLayer
+  private cliffs!: CliffLayer
   private pois!: PoiLayer
   private shoreCliff!: ShoreCliff
   private calendarScale = 1
@@ -438,6 +440,7 @@ export class WorldScene extends Phaser.Scene {
         this.water = new WaterLayer(this, this.map, 'map-demo')
         this.shade = new ShadeLayer(this, this.map, this.warp)
         this.cendre = new CendreLayer(this, this.map, String(this.map.width))
+        this.cliffs = new CliffLayer(this, this.map)
       },
       pois: () => {
         this.pois = new PoiLayer(this, this.map, this.warp) // les lieux se voient enfin
@@ -618,6 +621,7 @@ export class WorldScene extends Phaser.Scene {
     this.view.renderBurrows(time)
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
+      this.cliffs.render(this.cameras.main) // les parois, auto-raccordées à la vue
       this.shade.render(this.cameras.main, hour) // ombre du relief selon le soleil
       // LA CENDRE. Le client la RECALCULE du jour de saison — on ne lui transmet aucune tuile,
       // aucun état. Elle ne se recuit que quand le front a bougé, c'est-à-dire une fois par jour.

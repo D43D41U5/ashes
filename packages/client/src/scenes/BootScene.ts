@@ -6,6 +6,7 @@
 import Phaser from 'phaser'
 import { generateItemIcons } from '../render/item-art'
 import { generateVitalIcons } from '../render/vital-art'
+import { makeCliffTextures } from '../render/cliff-art'
 import { makePoiTextures } from './world/poi-art'
 
 export class BootScene extends Phaser.Scene {
@@ -115,6 +116,7 @@ export class BootScene extends Phaser.Scene {
     this.makeNodes()
     this.makeClutter()
     makePoiTextures(this) // les 26 lieux — voir world/poi-art.ts
+    makeCliffTextures(this) // les parois auto-raccordées — voir render/cliff-art.ts
   }
 
   /** Textures des nœuds de ressources. */

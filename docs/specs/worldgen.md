@@ -2,7 +2,7 @@
 
 > *Le titre disait « un ARBRE de zones » — la forme initialement demandée. Il a été corrigé le 2026-07-14 : exiger qu'aucune zone ne soit un goulot d'étranglement (R11bis) rend l'arbre **mathématiquement impossible**, puisqu'un arbre a toujours des points d'articulation. Le monde est un réseau à boucles. On ne laisse pas un titre mentir sur ce qu'il décrit.*
 
-*Source : brainstorm de direction du 2026-07-14 (Alexis), GDD §8bis (les trois cercles), §9 (carte), §13 (roadmap). Statut : **spécifié, non implémenté**. Remplace intégralement la spec worldgen du 2026-07-14 (« la vallée qui pousse à l'exploration »), dont les leçons — et seulement les leçons — sont reportées ici.*
+*Source : brainstorm de direction du 2026-07-14 (Alexis), GDD §8bis (les trois cercles), §9 (carte), §13 (roadmap). Statut : **structure implémentée et jouée** (2026-07-14 — graphe, terrasses, buttes, seuils, contenu, cendre, ambiance ; gardes A1-A26 vertes sur la taille de production). **Restent non implémentés** : le brouillard de guerre (R19-R20), les seuils qui s'annoncent (R21), les gardiens par zone (§9 — faune/monstres lisent encore le terrain, pas la zone), le froid létal (§9), et le Névé Blanc. *(R2 — la paroi dessinée avec son ombre portée — est tenue depuis le 2026-07-14 : `cliff-art.ts` / `cliff-layer.ts`.)* *La carte est structurée ; elle n'est pas encore DÉFENDUE.* Remplace intégralement la spec worldgen du 2026-07-14 (« la vallée qui pousse à l'exploration »), dont les leçons — et seulement les leçons — sont reportées ici.*
 
 ---
 
