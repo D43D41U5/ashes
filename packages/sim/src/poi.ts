@@ -298,6 +298,8 @@ function reserveCharged(
   field: CarveField,
   pts: readonly { x: number; y: number }[],
   used: Map<string, number>,
+  seed: number,
+  radius: number,
 ): Set<number> {
   const taken = new Set<number>()
   // Ordre déterministe : celui de POI_TYPES. Les premiers servis ont priorité
@@ -315,8 +317,62 @@ function reserveCharged(
       taken.add(i)
       got += 1
     }
+    // LE FILET — si le SEMIS n'avait aucun point pour lui, on lui en trouve un.
+    while (got < want && placeReserveAnywhere(map, field, t, used, seed, radius)) got += 1
   }
   return taken
+}
+
+/**
+ * LE FILET DE LA RÉSERVATION — le dernier trou de la promesse, bouché.
+ *
+ * `reserve` dit : « ce lieu porte une mécanique, il ne peut pas se permettre de ne
+ * pas exister » (décision d'Alexis, 2026-07-11). Mais la réservation ne cherchait
+ * son point que **dans le semis de Poisson** — soixante-six points sur toute la
+ * carte. Un lieu dont le biome est rare pouvait donc perdre une DEUXIÈME loterie :
+ * non plus celle du tirage pondéré (celle-là était réglée), mais celle du semis.
+ * Vu en direct : l'Arbre remarquable (seul biome possible : la vieille forêt) ne
+ * sortait sur aucune carte de la seed 7 — pas faute de vieille forêt, mais faute
+ * qu'un des soixante-six points y tombe.
+ *
+ * On balaie donc la carte à gros pas, on récolte toutes les tuiles où ce lieu
+ * pourrait naître **en respectant l'espacement du semis** (sinon il s'agglutinerait
+ * contre un voisin), et on en tire une au sort. Déterministe (hash2), spatialement
+ * neutre (le tirage porte sur la liste entière, pas sur le premier trouvé — un
+ * balayage row-major aurait toujours choisi le coin nord-ouest).
+ *
+ * Ce n'est PAS un chemin dégradé : c'est ce que « réserver » veut dire. Le semis
+ * décide de l'abondance ; la réservation décide de l'existence.
+ */
+function placeReserveAnywhere(
+  map: WorldMap,
+  field: CarveField,
+  t: PoiType,
+  used: Map<string, number>,
+  seed: number,
+  radius: number,
+): boolean {
+  const step = Math.max(4, Math.round(radius / 4)) // assez fin pour trouver, assez gros pour rester bon marché
+  const r2 = radius * radius
+  const libres: number[] = []
+  for (let ty = step; ty < map.height - step; ty += step) {
+    for (let tx = step; tx < map.width - step; tx += step) {
+      if (!isEligible(map, field, t, tx, ty, used)) continue
+      // L'espacement du semis vaut aussi pour lui : un lieu réservé n'a pas le
+      // droit de se coller à un autre (une garde le vérifie).
+      let libre = true
+      for (const z of map.zones) {
+        if (z.kind === undefined) continue
+        if (distSq(tx, ty, z.x + z.w / 2, z.y + z.h / 2) < r2) { libre = false; break }
+      }
+      if (libre) libres.push(ty * map.width + tx)
+    }
+  }
+  if (libres.length === 0) return false // la carte ne peut vraiment pas le porter
+  const k = Math.min(libres.length - 1, Math.floor(hash2(t.cap, seed ^ 0x52535620, 0x9f) * libres.length))
+  const i = libres[k]!
+  placeOne(map, field, t, i % map.width, (i / map.width) | 0, used)
+  return true
 }
 
 /**
@@ -354,7 +410,7 @@ export function placePois(map: WorldMap, seed: number): void {
   const field = carveDistanceToMain(map, walkableComponents(map), POI_PLACEMENT.MAX_CARVE_TILES)
 
   // D'ABORD les lieux chargés : ils réservent leur point (voir `reserveCharged`).
-  const taken = reserveCharged(map, field, pts, used)
+  const taken = reserveCharged(map, field, pts, used, seed, radius)
 
   // PUIS le tirage général, sur ce qui reste du semis.
   for (let i = 0; i < pts.length; i++) {

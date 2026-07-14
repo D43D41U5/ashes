@@ -9,6 +9,10 @@ import { boxBlur } from './geometry'
 import { createEmptyMap, type WorldMap } from './map'
 import { sealBorderRing } from './valleygen'
 import { carveHydrology } from './alpine-hydro'
+import {
+  CARACTERES, derivePays, elevBiasAt, paysAt, paysToponymes, wetBiasAt,
+  type Caractere, type Contree,
+} from './pays'
 import { placePois } from './poi'
 import {
   TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_SCREE, TERRAIN_ROCK, TERRAIN_SNOW,
@@ -204,30 +208,64 @@ function bandFor(elevation: number, wet: number, tx: number, ty: number, seed: n
   return TERRAIN_GLACIER // les plus hauts sommets = glace
 }
 
-/** Constantes des QUARTIERS macro — grands secteurs au tempérament distinct. */
-const MACRO = {
-  WET_FRAC: 0.7,   // échelle du champ « humide/sec » (grand → quartiers larges)
-  ROCK_FRAC: 0.6,  // échelle du champ « barren/rocheux »
-  M_WEIGHT: 0.55,  // part de l'humidité LOCALE
-  W_WEIGHT: 0.45,  // part du biais macro humide
-  R_WEIGHT: 0.22,  // le biais macro rocheux ASSÈCHE (→ landes, forêt éparse)
-}
+/**
+ * LES QUARTIERS MACRO ONT LAISSÉ LA PLACE AUX PAYS (2026-07-14).
+ *
+ * `paintAlpineBands` mélangeait ici deux champs de bruit basse fréquence
+ * (`macroWet`, `macroRock`) appelés « quartiers macro ». L'intention était juste —
+ * donner des tempéraments régionaux — mais l'outil ne pouvait pas la porter : un
+ * bruit continu ne fabrique pas de LIEUX, il fabrique un dégradé. Pas de
+ * frontière, donc pas de dedans ni de dehors ; pas de centre, donc pas de nom. On
+ * ne va pas « à la Tourbière » quand la tourbière est un champ scalaire.
+ *
+ * Mesuré : le rapport de distinction entre blocs lointains et blocs voisins valait
+ * **1,58** — la carte avait bien une structure, mais c'était le GRADIENT
+ * concentrique du relief (le bord monte, le fond descend), pas des quartiers.
+ *
+ * `pays.ts` les remplace par un semis de sites nommés, à maille absolue. Et ça
+ * coûte MOINS CHER : les deux `fbmWarp2` valaient 18 `gradientNoise2` par tuile ;
+ * le warp des pays en vaut 6.
+ */
+/**
+ * La loi de `wet` est CONSERVÉE, seule sa VARIATION change — et ce choix mérite
+ * son paragraphe, parce que le rater casse tous les biomes en silence.
+ *
+ * L'ancienne formule valait `0,55·humidité + 0,45·macroWet − 0,22·macroRock`. Les
+ * deux champs macro sont des bruits de moyenne 0,5 : leur contribution MOYENNE
+ * était donc `0,45×0,5 − 0,22×0,5 = 0,115`, constante. En les remplaçant par le
+ * biais du pays (de moyenne ≈ 0 par construction de la table), on garde le même
+ * poids sur l'humidité locale et on rend cette constante EXPLICITE. La moyenne de
+ * `wet` ne bouge pas d'un cheveu, et les seuils de `BANDS` — calibrés dessus,
+ * chèrement (cf. `MARSH_WET`) — restent valides.
+ *
+ * Ce qui change, c'est l'écart-type de la part régionale : les bruits macro le
+ * portaient à ~0,09, le biais des pays le porte à ~0,15. Les contrées se
+ * distinguent donc PLUS — c'est exactement ce qu'on cherchait — sans que la
+ * vallée dans son ensemble ne s'assèche ni ne se noie.
+ *
+ * (Première version, non recalée : poids 0,7 et base 0,15 → la moyenne passait de
+ * 0,44 à 0,52 et la vallée se couvrait de **26 % de tourbières** contre 5 %, la
+ * lande tombant à 1 %. Un déplacement de moyenne de huit centièmes suffit à
+ * renverser la végétation d'un pays.)
+ */
+const MOISTURE_WEIGHT = 0.55
+const WET_BASE = 0.115 // = 0,45×0,5 − 0,22×0,5 : la moyenne des anciens champs macro
 
-export function paintAlpineBands(map: WorldMap, moisture: number[], seed: number): void {
+export function paintAlpineBands(map: WorldMap, moisture: number[], contree: Contree, seed: number): void {
   const { width, height } = map
   const el = map.elevation!
-  const D = Math.min(width, height)
-  const wetScale = D * MACRO.WET_FRAC
-  const rockScale = D * MACRO.ROCK_FRAC
-  const warp = Math.max(1, Math.round(D * ALPINE.WARP_FRAC))
   for (let ty = 0; ty < height; ty++) {
     for (let tx = 0; tx < width; tx++) {
       const i = ty * width + tx
-      // Quartiers macro : humidité régionale + un biais « rocheux/barren » qui assèche.
-      const macroWet = fbmWarp2(tx, ty, wetScale, (seed ^ 0x00a1c3) | 0, warp)
-      const macroRock = fbmWarp2(tx, ty, rockScale, (seed ^ 0x00b2d4) | 0, warp)
-      const wet = clamp01(MACRO.M_WEIGHT * moisture[i]! + MACRO.W_WEIGHT * macroWet - MACRO.R_WEIGHT * macroRock)
-      map.terrain[i] = bandFor(el[i]!, wet, tx, ty, seed)
+      const e = paysAt(contree, tx, ty)
+      // L'humidité locale (les poches), décalée par le CARACTÈRE du pays (le tempérament).
+      const wet = clamp01(MOISTURE_WEIGHT * moisture[i]! + WET_BASE + wetBiasAt(e))
+      // L'altitude APPARENTE — le seul levier du pays au-dessus de 0,55, où `bandFor`
+      // ne lit plus l'humidité. L'altitude RÉELLE (`el`) n'est jamais touchée : le
+      // relief, l'eau, le froid et le rendu la lisent telle quelle. Seul le tapis
+      // végétal se laisse tromper.
+      const vu = clamp01(el[i]! + elevBiasAt(e))
+      map.terrain[i] = bandFor(vu, wet, tx, ty, seed)
     }
   }
 }
@@ -247,21 +285,42 @@ interface Scatter {
   isSource: (t: number) => boolean
   to: number
   salt: number
+  /**
+   * LE PAYS DÉCIDE. Multiplicateur de densité selon le caractère du pays où tombe
+   * la graine (1 = neutre, 0 = jamais). C'est ce qui donne à la Vieille Sylve ses
+   * gros bois et au Versant Brûlé ses cendres — sans quoi le « caractère » d'un
+   * pays ne serait qu'un mot sur une carte, et les bosquets rares tomberaient
+   * n'importe où, uniformément.
+   *
+   * Mise en œuvre : on sème `densité × MAX(multiplicateurs)` graines, et chacune
+   * est REJETÉE avec probabilité `1 − mult/max`. La densité finale vaut donc bien
+   * `densité × mult` dans chaque pays, et le tirage reste déterministe (hash2).
+   */
+  paysMult?: (c: Caractere | undefined) => number
 }
 
-function scatterPatches(map: WorldMap, seed: number, cfg: Scatter): void {
+function scatterPatches(map: WorldMap, contree: Contree, seed: number, cfg: Scatter): void {
   const W = map.width
   const H = map.height
   const D = Math.min(W, H)
   const margin = Math.max(4, Math.round(D * 0.06))
   const interior = (W - 2 * margin) * (H - 2 * margin)
-  const count = Math.round(cfg.density * interior)
+  // Le semis est dimensionné sur le pays le PLUS généreux ; le rejet ramène chaque
+  // pays à sa juste densité.
+  const maxMult = cfg.paysMult
+    ? Math.max(cfg.paysMult(undefined), ...CARACTERES.map((c) => cfg.paysMult!(c)))
+    : 1
+  const count = Math.round(cfg.density * interior * maxMult)
   const rMin = Math.max(2, Math.round(D * cfg.rMinFrac))
   const rMax = Math.max(rMin + 1, Math.round(D * cfg.rMaxFrac))
   for (let k = 0; k < count; k++) {
     const x = margin + Math.floor(hash2(k * 613 + cfg.salt, seed, 0x1d1) * (W - 2 * margin))
     const y = margin + Math.floor(hash2(seed, k * 613 + cfg.salt, 0x2e3) * (H - 2 * margin))
     if (!cfg.isSource(map.terrain[y * W + x]!)) continue
+    if (cfg.paysMult && maxMult > 0) {
+      const m = cfg.paysMult(paysAt(contree, x, y).pays.caractere)
+      if (hash2(x, y, (seed ^ cfg.salt ^ 0x7a1e) | 0) > m / maxMult) continue // ce pays n'en veut pas
+    }
     const r = rMin + Math.floor(hash2(k, (seed ^ cfg.salt) | 0, 0x4f7) * (rMax - rMin + 1))
     const s = (seed ^ (k * cfg.salt)) | 0
     const rr = Math.ceil(r * (1 + cfg.warp)) + 1
@@ -291,18 +350,37 @@ const isDenseForest = (t: number): boolean => t === TERRAIN_FOREST
 const isAnyForest = (t: number): boolean =>
   t === TERRAIN_FOREST || t === TERRAIN_PINE || t === TERRAIN_LARCH
 
-/** Tous les biomes-patches, dans l'ordre (les bosquets créent la forêt réutilisée
- *  par la vieille forêt / le brûlis). */
-function paintScatterBiomes(map: WorldMap, seed: number): void {
-  // Bosquets — bois distribué dans le fond.
-  scatterPatches(map, seed, { density: 0.00018, rMinFrac: 0.012, rMaxFrac: 0.06, warp: 0.5, fill: 0.82, isSource: isGrass, to: TERRAIN_FOREST, salt: 0x2777 })
-  // Vieille forêt (rare, gros bois) et forêt brûlée (rare, set-piece narratif).
-  scatterPatches(map, seed, { density: 0.000014, rMinFrac: 0.02, rMaxFrac: 0.05, warp: 0.45, fill: 0.95, isSource: isDenseForest, to: TERRAIN_OLD_GROWTH, salt: 0x51a3 })
-  scatterPatches(map, seed, { density: 0.00002, rMinFrac: 0.015, rMaxFrac: 0.045, warp: 0.55, fill: 0.9, isSource: isAnyForest, to: TERRAIN_BURNT_FOREST, salt: 0x71c9 })
-  // Prés fleuris dans la prairie.
-  scatterPatches(map, seed, { density: 0.00006, rMinFrac: 0.015, rMaxFrac: 0.04, warp: 0.5, fill: 0.72, isSource: isGrass, to: TERRAIN_FLOWER_MEADOW, salt: 0x3b1d })
-  // Chaos de blocs / moraine, épars dans prairie + alpage (fill bas → blocs isolés).
-  scatterPatches(map, seed, { density: 0.00009, rMinFrac: 0.01, rMaxFrac: 0.03, warp: 0.55, fill: 0.4, isSource: isMeadowish, to: TERRAIN_BOULDERS, salt: 0x6e2f })
+/**
+ * Tous les biomes-patches, dans l'ordre (les bosquets créent la forêt réutilisée
+ * par la vieille forêt / le brûlis).
+ *
+ * LES QUATRE DERNIERS SUIVENT LE PAYS. Sans `paysMult`, la vieille forêt et le
+ * brûlis tombaient uniformément sur toute la carte : deux bosquets rares posés au
+ * hasard, sans rapport avec l'endroit. C'est précisément ce que reprochait l'audit
+ * (« l'identité d'une région est de la texture ») — un nom sur une carte ne fait
+ * pas un pays. Désormais, la Vieille Sylve porte SIX fois plus de gros bois que la
+ * moyenne et le Versant Brûlé SEPT fois plus de cendres : on sait où l'on est en
+ * regardant ses pieds.
+ */
+function paintScatterBiomes(map: WorldMap, contree: Contree, seed: number): void {
+  // Bosquets — bois distribué dans le fond. Neutre : tous les pays en ont.
+  scatterPatches(map, contree, seed, { density: 0.00018, rMinFrac: 0.012, rMaxFrac: 0.06, warp: 0.5, fill: 0.82, isSource: isGrass, to: TERRAIN_FOREST, salt: 0x2777 })
+  // La VIEILLE FORÊT — le gros bois. C'est la Sylve, et presque rien ailleurs.
+  //
+  // DENSITÉ TRIPLÉE (2026-07-14), et pour une raison de JEU, pas d'esthétique :
+  // l'Arbre remarquable n'a qu'un seul biome possible, la vieille forêt, et c'est
+  // un lieu CHARGÉ (récit — il doit exister sur chaque carte, spec `lieux.md`).
+  // À l'ancienne densité, la vieille forêt tombait à 0,6 % de la carte une fois
+  // concentrée dans les Sylves : le semis de Poisson n'y posait plus aucun point
+  // sur deux seeds testées, et la garde de réservation passait au rouge. Une
+  // Vieille Sylve doit être VRAIMENT pleine de gros bois — c'est ce qui la nomme.
+  scatterPatches(map, contree, seed, { density: 0.00004, rMinFrac: 0.02, rMaxFrac: 0.05, warp: 0.45, fill: 0.95, isSource: isDenseForest, to: TERRAIN_OLD_GROWTH, salt: 0x51a3, paysMult: (c) => c?.oldGrowth ?? 0.3 })
+  // LE BRÛLIS — la cendre. C'est le Versant Brûlé, et presque rien ailleurs.
+  scatterPatches(map, contree, seed, { density: 0.00002, rMinFrac: 0.015, rMaxFrac: 0.045, warp: 0.55, fill: 0.9, isSource: isAnyForest, to: TERRAIN_BURNT_FOREST, salt: 0x71c9, paysMult: (c) => c?.burnt ?? 0.3 })
+  // Les PRÉS FLEURIS — la Prairie et les Hauts Alpages.
+  scatterPatches(map, contree, seed, { density: 0.00006, rMinFrac: 0.015, rMaxFrac: 0.04, warp: 0.5, fill: 0.72, isSource: isGrass, to: TERRAIN_FLOWER_MEADOW, salt: 0x3b1d, paysMult: (c) => c?.flowers ?? 0.6 })
+  // LE CHAOS DE BLOCS — le Pierrier, et la Lande qui l'annonce.
+  scatterPatches(map, contree, seed, { density: 0.00009, rMinFrac: 0.01, rMaxFrac: 0.03, warp: 0.55, fill: 0.4, isSource: isMeadowish, to: TERRAIN_BOULDERS, salt: 0x6e2f, paysMult: (c) => c?.boulders ?? 0.5 })
 }
 
 /**
@@ -370,6 +448,7 @@ const NY8 = [-1, -1, -1, 0, 0, 1, 1, 1]
  */
 export const WORLDGEN_PHASES = [
   'elevation',
+  'pays',
   'moisture',
   'bands',
   'hydrology',
@@ -399,14 +478,26 @@ export function generateAlpineTerrain(
   const relief = computeRelief(width, height, seed)
   map.elevation = relief.elevation
   const flow = relief.flow
+
+  onPhase('pays')
+  // LES PAYS, avant les biomes : ils décident du tempérament de chaque contrée, et
+  // ce tempérament décale l'humidité, donc la bande de biome. Leur caractère se
+  // tire sur l'altitude de BASE (celle d'avant l'érosion) — un caractère de fond
+  // ne naît pas sur un pic.
+  const contree = derivePays(width, height, seed, (x, y) => map.elevation![y * width + x] ?? 0)
+  // Les noms se posent en toponymes AVANT tout le reste : ils sont les premières
+  // zones de la carte, et le survol les lit (spec lieux : on cache les lieux,
+  // jamais la forme du pays).
+  map.zones.push(...paysToponymes(contree, map))
+
   onPhase('moisture')
   const moisture = computeMoisture(width, height, map.elevation, seed)
   onPhase('bands')
-  paintAlpineBands(map, moisture, seed)
+  paintAlpineBands(map, moisture, contree, seed)
   onPhase('hydrology')
-  carveHydrology(map, flow, seed) // lac, rivière (thalweg), ruisseaux, tarns — l'eau suit l'écoulement
+  carveHydrology(map, flow, seed) // lac, fleuve (thalweg), gués, ruisseaux, tarns
   onPhase('biomes')
-  paintScatterBiomes(map, seed) // bosquets, prés fleuris, blocs, vieille forêt, brûlis (après l'eau)
+  paintScatterBiomes(map, contree, seed) // bosquets, prés, blocs, vieille forêt, brûlis — SELON LE PAYS
   onPhase('avalanches')
   paintAvalanches(map, seed) // couloirs d'avalanche (blocs qui dévalent)
   onPhase('border')
