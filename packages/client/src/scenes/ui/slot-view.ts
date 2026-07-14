@@ -132,7 +132,11 @@ export function createSlotView(scene: Phaser.Scene, x: number, y: number, size: 
         // fortune meurt en 20 coups. Une barre calée sur les 100 de la hache
         // d'atelier le montrerait encore aux trois quarts plein en tombant.
         const left = Math.max(0, 1 - (slot.wear ?? 0) / durabilityOf(slot.item))
-        wearBar.height = wearH * left
+        // `setSize` et PAS `.height =` : le rendu d'un Rectangle part de son
+        // `_displayOriginY`, que seul `setSize` recalcule. Écrire `.height`
+        // laissait l'origine figée sur la hauteur PLEINE — le filet restait collé
+        // en haut du rail et se vidait vers le HAUT. Il se vide vers le bas.
+        wearBar.setSize(WEAR_W, wearH * left)
         wearBar.fillColor = left > 0.5 ? WEAR_GREEN : left > 0.2 ? WEAR_AMBER : WEAR_RED
       }
     },

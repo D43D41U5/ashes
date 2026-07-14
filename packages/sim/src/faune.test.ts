@@ -38,7 +38,15 @@ function makeMap(): WorldMap {
  * elle décide qui est éveillé et qui naît. Midi par défaut — c'est l'heure des
  * cerfs, et l'heure où le monde est le plus lisible.
  */
-function makeSim(faunaCap = FAUNA.CAP, hour = 12): SimState {
+/**
+ * LE PLAFOND DU BANC. `FAUNA.CAP` (240) est devenu un GARDE-FOU DE SERVEUR le
+ * jour où le budget est passé au COIN DE CHASSE (R17) : ce n'est plus une valeur
+ * de jeu. Ce qu'un joueur ressent, c'est `GROUND_CAP` — et un banc sans coins
+ * peuple un monde uniforme de cette taille-là.
+ */
+const BENCH_CAP = FAUNA.GROUND_CAP
+
+function makeSim(faunaCap = BENCH_CAP, hour = 12): SimState {
   // `worldEvents: false` : le banc de FAUNE mesure la faune. La NUIT QUI CHASSE
   // (chantier tension) sème ses propres loups autour du joueur — elle fausserait
   // chaque comptage de meute. Même raison que les hordes : un banc ne traîne pas un
@@ -495,7 +503,7 @@ describe('le rythme jour/nuit (A11 — R10)', () => {
       const map = createEmptyMap(160, 160, TERRAIN_FOREST)
       const sim = createSim(1234, {
         map,
-        faunaCap: FAUNA.CAP,
+        faunaCap: BENCH_CAP,
         worldEvents: false, // (voir plus haut : la nuit qui chasse fausserait le comptage)
         cycleOffset: cycleOffsetForStartHour(hour),
       })
@@ -706,7 +714,7 @@ describe('le mâle alpha (A13 — R12)', () => {
    */
   function packSauvage(): { sim: SimState; alpha: Monster; meute: Monster[] } {
     const map = createEmptyMap(160, 160, TERRAIN_FOREST)
-    const sim = createSim(99, { map, faunaCap: FAUNA.CAP, cycleOffset: cycleOffsetForStartHour(2) })
+    const sim = createSim(99, { map, faunaCap: BENCH_CAP, cycleOffset: cycleOffsetForStartHour(2) })
     spawnEntity(sim, 80.5, 80.5)
     let alpha: Monster | undefined
     for (let t = 0; t < 90 * BALANCE.TICK_RATE_HZ && !alpha; t++) {
@@ -1169,10 +1177,10 @@ describe('la satiété (A16 — R15) — un prédateur mange', () => {
 
 describe('la pression de chasse (A17 — R16) — ni farm, ni désert', () => {
   it('A17 — LE FARM EST FERMÉ : plus une seule naissance autour d’une mise à mort', () => {
-    const sim = makeSim(FAUNA.CAP, 12)
+    const sim = makeSim(BENCH_CAP, 12)
     const a = spawnEntity(sim, 80.5, 80.5)
     for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
-    expect(ambientCount(sim)).toBe(FAUNA.CAP)
+    expect(ambientCount(sim)).toBe(BENCH_CAP)
 
     // Le chasseur REJOINT sa proie et l'abat — c'est la situation réelle : on ne
     // tue pas du gibier à trente tuiles, on va le chercher. Le silence se pose
@@ -1191,11 +1199,11 @@ describe('la pression de chasse (A17 — R16) — ni farm, ni désert', () => {
     for (let t = 0; t < 40 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
     const nouveaux = sim.monsters.filter((m) => m.ambient && !avant.has(m.entityId))
     expect(nouveaux).toHaveLength(0)
-    expect(ambientCount(sim)).toBeLessThan(FAUNA.CAP)
+    expect(ambientCount(sim)).toBeLessThan(BENCH_CAP)
   })
 
   it('A17 — mais ce n’est PAS un désert : lever le camp suffit, et le calme revient', () => {
-    const sim = makeSim(FAUNA.CAP, 12)
+    const sim = makeSim(BENCH_CAP, 12)
     const a = spawnEntity(sim, 80.5, 80.5)
     for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
 
@@ -1227,7 +1235,7 @@ describe('la pression de chasse (A17 — R16) — ni farm, ni désert', () => {
   })
 
   it('A17 — tuer un LOUP ne fait taire personne (un prédateur mort ne chasse plus)', () => {
-    const sim = makeSim(FAUNA.CAP, 2)
+    const sim = makeSim(BENCH_CAP, 2)
     const a = spawnEntity(sim, 80.5, 80.5)
     const loupId = spawnMonster(sim, 'wolf', 82.5, 80.5)
     die(sim, entity(sim, loupId), a)
@@ -1311,7 +1319,7 @@ describe('la carte bloquante ne piège pas le peuplement', () => {
         if ((tx + ty) % 2 === 0) map.terrain[ty * map.width + tx] = TERRAIN_ROCK
       }
     }
-    const sim = createSim(7, { map, faunaCap: FAUNA.CAP })
+    const sim = createSim(7, { map, faunaCap: BENCH_CAP })
     spawnEntity(sim, 80.5, 80.5)
     for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
     for (const m of sim.monsters) {
@@ -1861,7 +1869,7 @@ describe('les coins de chasse (A24 — R17)', () => {
   it('A24 — RIEN ne naît hors d’un coin : la vallée entre les coins est VIDE', () => {
     const sim = createSim(1234, {
       map: makeMap(),
-      faunaCap: FAUNA.CAP,
+      faunaCap: BENCH_CAP,
       worldEvents: false,
       cycleOffset: cycleOffsetForStartHour(12),
       grounds: [{ x: 20.5, y: 20.5 }], // UN seul coin, tout au nord-ouest
@@ -1875,7 +1883,7 @@ describe('les coins de chasse (A24 — R17)', () => {
     // …et DANS le coin, ça vit.
     const dedans = createSim(1234, {
       map: makeMap(),
-      faunaCap: FAUNA.CAP,
+      faunaCap: BENCH_CAP,
       worldEvents: false,
       cycleOffset: cycleOffsetForStartHour(12),
       grounds: [{ x: 80.5, y: 80.5 }],
@@ -1889,7 +1897,7 @@ describe('les coins de chasse (A24 — R17)', () => {
   it('A24 — la bête EST D’ICI : jetée hors de son coin, elle y revient', () => {
     const sim = createSim(1234, {
       map: makeMap(),
-      faunaCap: FAUNA.CAP,
+      faunaCap: BENCH_CAP,
       worldEvents: false,
       cycleOffset: cycleOffsetForStartHour(12),
       grounds: [{ x: 80.5, y: 80.5 }],
@@ -1913,5 +1921,215 @@ describe('les coins de chasse (A24 — R17)', () => {
       // dissipation est une autre règle, et elle ne prouve rien contre celle-ci).
       expect(dist(entity(sim, bete.entityId), { x: 80.5, y: 80.5 })).toBeLessThan(avant - 5)
     }
+  })
+})
+
+describe('le moteur tient le MULTI (A25 — R17)', () => {
+  /**
+   * LE BUDGET APPARTIENT AU COIN, PLUS AU MONDE.
+   *
+   * Un plafond global ne survit pas au multijoueur : trente bêtes pour TOUT le
+   * monde, c'est trois bêtes par joueur à dix joueurs — un monde mort. Pire, le
+   * peuplement tirait UN SEUL avatar au sort par tick : à dix joueurs, chacun
+   * attendait quatre secondes entre deux naissances.
+   *
+   * Chaque coin de chasse porte donc SA population. Ce banc le prouve sur la
+   * VRAIE vallée — c'est le seul endroit où les coins existent.
+   */
+  /** Une prairie franche, et QUATRE coins de chasse posés loin les uns des autres. */
+  function makeMulti(): { map: WorldMap; grounds: { x: number; y: number }[] } {
+    const map = createEmptyMap(500, 500, TERRAIN_GRASS)
+    const grounds = [
+      { x: 120.5, y: 120.5 },
+      { x: 380.5, y: 120.5 },
+      { x: 120.5, y: 380.5 },
+      { x: 380.5, y: 380.5 },
+    ]
+    return { map, grounds }
+  }
+
+  it('A25 — quatre joueurs dans quatre coins : CHACUN a sa clairière pleine', () => {
+    const { map, grounds } = makeMulti()
+    const N = grounds.length
+    const sim = createSim(2026, {
+      map,
+      faunaCap: FAUNA.CAP,
+      grounds,
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(12),
+    })
+    const ids = []
+    for (let i = 0; i < N; i++) ids.push(spawnEntity(sim, grounds[i]!.x, grounds[i]!.y))
+    const inputs: MoveInput[] = ids.map((id) => ({ entityId: id, dx: 0, dy: 0 }))
+    for (let t = 0; t < 120 * BALANCE.TICK_RATE_HZ; t++) tick(sim, inputs)
+
+    // Chacun a SA clairière — pas un N-ième d'un plafond partagé.
+    for (const id of ids) {
+      const e = entity(sim, id)
+      const autour = sim.monsters.filter((m) => {
+        if (!m.ambient) return false
+        const me = entity(sim, m.entityId)
+        return distSq(me.x, me.y, e.x, e.y) <= FAUNA.DESPAWN_RADIUS * FAUNA.DESPAWN_RADIUS
+      }).length
+      expect(autour).toBeGreaterThan(FAUNA.GROUND_CAP / 2)
+    }
+    // …et le monde n'a pas explosé pour autant : le garde-fou tient.
+    expect(sim.monsters.filter((m) => m.ambient).length).toBeLessThanOrEqual(FAUNA.CAP)
+  })
+
+  it('A25 — mais deux joueurs dans le MÊME coin le PARTAGENT (c’est le même pré)', () => {
+    const { map, grounds } = makeMulti()
+    const g = grounds[0]!
+    const sim = createSim(2026, {
+      map,
+      faunaCap: FAUNA.CAP,
+      grounds,
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(12),
+    })
+    const a = spawnEntity(sim, g.x - 8, g.y)
+    const b = spawnEntity(sim, g.x + 8, g.y)
+    const inputs: MoveInput[] = [
+      { entityId: a, dx: 0, dy: 0 },
+      { entityId: b, dx: 0, dy: 0 },
+    ]
+    for (let t = 0; t < 120 * BALANCE.TICK_RATE_HZ; t++) tick(sim, inputs)
+    // Un seul coin peuplé : sa population, et pas le double.
+    const dansLeCoin = sim.monsters.filter(
+      (m) => m.ambient && m.groundX === g.x && m.groundY === g.y,
+    ).length
+    expect(dansLeCoin).toBeLessThanOrEqual(FAUNA.GROUND_CAP)
+    expect(dansLeCoin).toBeGreaterThan(FAUNA.GROUND_CAP / 2)
+  })
+})
+
+describe('le quota de prédateurs (A26 — R18)', () => {
+  /**
+   * LA NUIT ÉTAIT UN MUR. Mesuré sur la vraie vallée : un coin de chasse se
+   * remplissait de DIX-NEUF LOUPS (cinq ou six meutes), et neuf coins sur
+   * dix-neuf en portaient dix ou plus. Le loup ne débordait pas du plafond : il
+   * le RAFLAIT — hors de leurs heures, le cerf et le lapin tombent au plancher
+   * pendant qu'il est à son maximum, et il naît par trois ou quatre.
+   *
+   * On ne l'a pas rendu plus rare (ça viderait la nuit de son sens) : on borne sa
+   * PART. Le reste du coin va au gibier — qui la nuit DORT (R10).
+   */
+  it('A26 — la nuit, les prédateurs ne dépassent JAMAIS leur part du coin', () => {
+    const map = createEmptyMap(400, 400, TERRAIN_FOREST) // la forêt : l'habitat du loup
+    const grounds = [{ x: 200.5, y: 200.5 }]
+    const sim = createSim(2026, {
+      map,
+      faunaCap: FAUNA.CAP,
+      grounds,
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(2), // 2 h du matin : l'heure du loup
+    })
+    const a = spawnEntity(sim, 200.5, 200.5)
+    for (let t = 0; t < 150 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+
+    const ambient = sim.monsters.filter((m) => m.ambient)
+    const loups = ambient.filter((m) => m.type === 'wolf').length
+    const quota = Math.floor(FAUNA.GROUND_CAP * FAUNA.PREDATOR_SHARE)
+    expect(loups).toBeLessThanOrEqual(quota) // le mur est tombé
+    // …et la clairière EST peuplée : le budget rendu par le loup va au gibier,
+    // qui dort. Une nuit habitée, pas une nuit vide.
+    expect(ambient.length).toBeGreaterThan(FAUNA.GROUND_CAP / 2)
+  })
+
+  it('A26 — mais la nuit reste À EUX : ils sont là, et en meute', () => {
+    const map = createEmptyMap(400, 400, TERRAIN_FOREST)
+    const sim = createSim(7, {
+      map,
+      faunaCap: FAUNA.CAP,
+      grounds: [{ x: 200.5, y: 200.5 }],
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(2),
+    })
+    const a = spawnEntity(sim, 200.5, 200.5)
+    for (let t = 0; t < 150 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+    const loups = sim.monsters.filter((m) => m.ambient && m.type === 'wolf')
+    expect(loups.length).toBeGreaterThanOrEqual(2) // la nuit n'est pas devenue une promenade
+    // Un loup seul n'ose pas (R11) : le quota doit laisser passer une MEUTE.
+    const meutes = new Set(loups.map((m) => m.herdId).filter((h) => h !== undefined))
+    expect(meutes.size).toBeGreaterThanOrEqual(1)
+  })
+
+  it('A26 — et le jour, le quota ne change RIEN : le loup y était déjà rare', () => {
+    const map = createEmptyMap(400, 400, TERRAIN_FOREST)
+    const sim = createSim(2026, {
+      map,
+      faunaCap: FAUNA.CAP,
+      grounds: [{ x: 200.5, y: 200.5 }],
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(12),
+    })
+    const a = spawnEntity(sim, 200.5, 200.5)
+    for (let t = 0; t < 120 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+    const loups = sim.monsters.filter((m) => m.ambient && m.type === 'wolf').length
+    expect(loups).toBeLessThanOrEqual(Math.floor(FAUNA.GROUND_CAP * FAUNA.PREDATOR_SHARE))
+  })
+})
+
+describe('la clairière et la souille (A27 — R17)', () => {
+  /**
+   * LE SANGLIER NE VIT PAS AU PRÉ (retour utilisateur).
+   *
+   * Poser TOUS les coins de chasse dans des prairies était une faute : le
+   * sanglier n'y naissait que parce que le disque du coin (46 tuiles) débordait
+   * sur les bois voisins — d'où VINGT-TROIS SANGLIERS dans une prairie à cerfs.
+   *
+   * La vallée porte donc deux natures de coin, et le terrain les distingue tout
+   * seul. La règle tient en une ligne : le gibier doit pouvoir vivre sur la tuile
+   * DU COIN, pas seulement sur celle où il tombe. Le prédateur, lui, va où va le
+   * gibier — il n'a pas de pré à lui, il suit les hardes.
+   */
+  it('A27 — dans une CLAIRIÈRE (pré), pas un seul sanglier ; dans une SOUILLE (bois), il est chez lui', () => {
+    // Un monde franc : la moitié nord en forêt, la moitié sud en prairie, un lac
+    // au milieu (les deux coins sont à portée d'eau).
+    const map = createEmptyMap(300, 300, TERRAIN_GRASS)
+    for (let ty = 0; ty < 150; ty++) {
+      for (let tx = 0; tx < 300; tx++) map.terrain[ty * map.width + tx] = TERRAIN_FOREST
+    }
+
+    const compo = (gx: number, gy: number, hour: number): Record<string, number> => {
+      const sim = createSim(2026, {
+        map,
+        faunaCap: FAUNA.CAP,
+        grounds: [{ x: gx, y: gy }],
+        worldEvents: false,
+        cycleOffset: cycleOffsetForStartHour(hour),
+      })
+      const a = spawnEntity(sim, gx, gy)
+      for (let t = 0; t < 150 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+      const par: Record<string, number> = {}
+      for (const m of sim.monsters) if (m.ambient) par[m.type] = (par[m.type] ?? 0) + 1
+      return par
+    }
+
+    // LA CLAIRIÈRE : posée en pleine prairie, mais assez près de la lisière pour
+    // que son disque déborde sur les bois — c'est LE cas qui produisait le bug.
+    const clairiere = compo(150.5, 175.5, 2) // 2 h : l'heure du sanglier
+    expect(clairiere.boar ?? 0).toBe(0) // pas un seul, et c'est tout le propos
+    expect((clairiere.deer ?? 0) + (clairiere.rabbit ?? 0)).toBeGreaterThan(5)
+
+    // LA SOUILLE : posée dans les bois. Le sanglier y est CHEZ LUI.
+    const souille = compo(150.5, 120.5, 2)
+    expect(souille.boar ?? 0).toBeGreaterThan(3)
+  })
+
+  it('A27 — le semis pose les DEUX natures : des prés ET des bois', () => {
+    const map = createEmptyMap(900, 900, TERRAIN_GRASS)
+    // Une grande forêt à l'est, de la prairie à l'ouest, et de l'eau qui traverse.
+    for (let ty = 0; ty < 900; ty++) {
+      for (let tx = 450; tx < 900; tx++) map.terrain[ty * map.width + tx] = TERRAIN_FOREST
+      for (let tx = 0; tx < 900; tx++) {
+        if (ty % 300 < 6) map.terrain[ty * map.width + tx] = TERRAIN_SHALLOW_WATER
+      }
+    }
+    const grounds = placeHuntingGrounds(map, 3)
+    const pres = grounds.filter((g) => map.terrain[Math.floor(g.y) * map.width + Math.floor(g.x)] === TERRAIN_GRASS)
+    const bois = grounds.filter((g) => map.terrain[Math.floor(g.y) * map.width + Math.floor(g.x)] === TERRAIN_FOREST)
+    expect(pres.length).toBeGreaterThan(0) // des clairières
+    expect(bois.length).toBeGreaterThan(0) // ET des souilles
   })
 })

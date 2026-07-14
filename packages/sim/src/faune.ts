@@ -27,10 +27,14 @@ import {
   TERRAIN_ALPINE_MEADOW,
   TERRAIN_DEEP_WATER,
   TERRAIN_FLOWER_MEADOW,
+  TERRAIN_FOREST,
   TERRAIN_GRASS,
   TERRAIN_HEATH,
+  TERRAIN_LARCH,
   TERRAIN_MARSH,
+  TERRAIN_OLD_GROWTH,
   TERRAIN_PEAT_BOG,
+  TERRAIN_PINE,
   TERRAIN_REED_MARSH,
   TERRAIN_SHALLOW_WATER,
   TICK_DT_S,
@@ -119,6 +123,25 @@ const OPEN_TERRAINS: readonly number[] = [
   TERRAIN_HEATH,
 ]
 
+/**
+ * …ET LES BOIS (spec faune R17). LA SOUILLE : le sanglier ne vit pas au pré — il
+ * vit sous les arbres, et il se vautre dans la boue. Poser tous les coins de
+ * chasse dans des prairies (première version) était une faute : le sanglier n'y
+ * naissait que parce que le disque du coin (46 tuiles) débordait sur les bois
+ * voisins — d'où VINGT-TROIS SANGLIERS dans une prairie à cerfs, une absurdité.
+ *
+ * La vallée porte donc DEUX natures de coin, et le terrain les distingue tout
+ * seul : la CLAIRIÈRE (on y broute, on y boit) et LA SOUILLE (on y fouge, on s'y
+ * vautre). C'est ce qui rend la carte apprenable : on va au pré pour le cerf, au
+ * bois pour le sanglier.
+ */
+const WOOD_TERRAINS: readonly number[] = [
+  TERRAIN_FOREST,
+  TERRAIN_PINE,
+  TERRAIN_LARCH,
+  TERRAIN_OLD_GROWTH,
+]
+
 /** …ET OÙ IL BOIT. Tous les jours, et c'est ce qui fixe les troupeaux. */
 const WATER_TERRAINS: readonly number[] = [
   TERRAIN_SHALLOW_WATER,
@@ -186,9 +209,28 @@ export function placeHuntingGrounds(map: WorldMap, seed: number): { x: number; y
     // tuile — un pré près d'une rive. S'il n'y en a pas dans le rayon, ce point
     // ne devient PAS un coin de chasse : la vallée a le droit d'avoir des déserts,
     // et c'est même ce qui donne leur valeur aux coins qui restent.
-    let placed = false
     const sx = Math.floor(p.x)
     const sy = Math.floor(p.y)
+
+    // LE PAYS DÉCIDE DE LA NATURE DU COIN. On compte, autour de la graine, ce qui
+    // domine : de l'herbe ou des arbres. Un semis tombé au milieu des bois devient
+    // une SOUILLE (sanglier) ; au milieu des prés, une CLAIRIÈRE (cerf, lapin).
+    // Le gibier n'a pas à s'adapter au coin : c'est le coin qui est ce qu'il est.
+    let pres = 0
+    let bois = 0
+    for (let oy = -FAUNA.GROUND_SNAP; oy <= FAUNA.GROUND_SNAP; oy += 3) {
+      for (let ox = -FAUNA.GROUND_SNAP; ox <= FAUNA.GROUND_SNAP; ox += 3) {
+        const tx = sx + ox
+        const ty = sy + oy
+        if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue
+        const t = terrainAt(map, tx, ty)
+        if (OPEN_TERRAINS.includes(t)) pres++
+        else if (WOOD_TERRAINS.includes(t)) bois++
+      }
+    }
+    const veut = bois > pres ? WOOD_TERRAINS : OPEN_TERRAINS
+
+    let placed = false
     for (let r = 0; r <= FAUNA.GROUND_SNAP && !placed; r++) {
       for (let oy = -r; oy <= r && !placed; oy++) {
         for (let ox = -r; ox <= r && !placed; ox++) {
@@ -198,8 +240,8 @@ export function placeHuntingGrounds(map: WorldMap, seed: number): { x: number; y
           if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue
           const terrain = terrainAt(map, tx, ty)
           if (!TERRAINS[terrain]?.walkable) continue
-          if (!OPEN_TERRAINS.includes(terrain)) continue // il faut de l'herbe
-          if (!nearWater(tx, ty)) continue // …et de l'eau
+          if (!veut.includes(terrain)) continue // de l'herbe, OU des arbres
+          if (!nearWater(tx, ty)) continue // …et de l'eau (on boit ; le sanglier s'y vautre)
           grounds.push({ x: tx + 0.5, y: ty + 0.5 })
           placed = true
         }
@@ -520,7 +562,24 @@ function despawnUnwatched(state: SimState, avatars: Entity[]): void {
 }
 
 /**
- * Une tentative de naissance par cadence, tant que le plafond n'est pas atteint.
+ * LE PEUPLEMENT DU TICK — et il est fait POUR LE MULTI.
+ *
+ * Deux choses ont changé le jour où le gibier a eu des adresses (R17), et elles
+ * sont toutes les deux structurelles :
+ *
+ *   1. LE BUDGET APPARTIENT AU COIN, PLUS AU MONDE. Un plafond global ne survit
+ *      pas au multijoueur : trente bêtes pour TOUT le monde, c'est trois bêtes
+ *      par joueur à dix joueurs — un monde mort. Chaque coin de chasse porte
+ *      donc SA population (`GROUND_CAP`), et deux joueurs dans deux clairières
+ *      différentes ont chacun la leur pleine. Deux joueurs dans LA MÊME clairière
+ *      la partagent — ce qui est exactement juste : c'est le même pré.
+ *      Le plafond du monde (`state.faunaCap`) demeure, mais comme GARDE-FOU de
+ *      serveur : il protège le tick, il ne règle pas le jeu.
+ *
+ *   2. TOUT LE MONDE EST SERVI, à chaque tick de peuplement. On tirait UN avatar
+ *      au sort : à dix joueurs, chacun attendait quatre secondes entre deux
+ *      naissances, et remplir une clairière prenait des minutes. On boucle
+ *      désormais sur tous les avatars, dans l'ordre de l'état (déterministe).
  *
  * L'anneau est échantillonné PAR REJET dans le carré [-MAX, MAX] : on tire une
  * tuile, on la garde si sa distance tombe dans l'anneau, si elle est marchable,
@@ -531,12 +590,71 @@ function trySpawn(state: SimState, avatars: Entity[]): void {
   if (state.tick % FAUNA.SPAWN_EVERY_TICKS !== 0) return
   if (avatars.length === 0) return
 
+  // La population de chaque coin de chasse, comptée une fois pour ce tick — et,
+  // séparément, celle de ses PRÉDATEURS : c'est elle qui borne le danger (R18).
+  const perGround = new Map<string, number>()
+  const predPerGround = new Map<string, number>()
   let ambient = 0
-  for (const m of state.monsters) if (m.ambient) ambient++
-  if (ambient >= state.faunaCap) return
+  let predators = 0
+  for (const m of state.monsters) {
+    if (!m.ambient) continue
+    ambient++
+    const pred = isPredator(m.type)
+    if (pred) predators++
+    if (m.groundX === undefined || m.groundY === undefined) continue
+    const k = `${m.groundX},${m.groundY}`
+    perGround.set(k, (perGround.get(k) ?? 0) + 1)
+    if (pred) predPerGround.set(k, (predPerGround.get(k) ?? 0) + 1)
+  }
 
   const hour = getGameTime(state).hourOfCycle
-  const host = avatars[Math.min(avatars.length - 1, Math.floor(roll(state) * avatars.length))]!
+  const budget = { world: ambient, worldPred: predators, perGround, predPerGround }
+  for (const host of avatars) {
+    if (budget.world >= state.faunaCap) return // le garde-fou du serveur, et lui seul
+    trySpawnNear(state, host, hour, budget)
+  }
+}
+
+/**
+ * COMBIEN DE PLACES RESTE-T-IL AUX PRÉDATEURS ICI (spec faune R18) ?
+ *
+ * Dans un coin de chasse : `PREDATOR_SHARE` de sa population, et pas une bête de
+ * plus. Sans coin (banc de test, monde uniforme) : la même part, mais du plafond
+ * du monde — la règle ne dépend pas de la géographie, elle dépend du DANGER.
+ */
+function predatorRoom(
+  state: SimState,
+  ground: { x: number; y: number } | null,
+  budget: { worldPred: number; predPerGround: Map<string, number> },
+): number {
+  if (ground) {
+    const have = budget.predPerGround.get(`${ground.x},${ground.y}`) ?? 0
+    return Math.floor(FAUNA.GROUND_CAP * FAUNA.PREDATOR_SHARE) - have
+  }
+  return Math.floor(state.faunaCap * FAUNA.PREDATOR_SHARE) - budget.worldPred
+}
+
+/**
+ * Une tentative de naissance autour d'UN avatar.
+ *
+ * `budget` porte les DEUX bornes, et elles ne disent pas la même chose : celle du
+ * COIN (`GROUND_CAP`) règle ce qu'on RESSENT, celle du MONDE (`state.faunaCap`)
+ * protège la machine. Sans coins de chasse (banc de test), seule la seconde vaut,
+ * et le peuplement redevient l'ancien, uniforme.
+ */
+function trySpawnNear(
+  state: SimState,
+  host: Entity,
+  hour: number,
+  budget: {
+    world: number
+    worldPred: number
+    perGround: Map<string, number>
+    predPerGround: Map<string, number>
+  },
+): void {
+  const perGround = budget.perGround
+  const predPerGround = budget.predPerGround
   const span = FAUNA.SPAWN_RING_MAX * 2 + 1
   const minSq = FAUNA.SPAWN_RING_MIN * FAUNA.SPAWN_RING_MIN
   const maxSq = FAUNA.SPAWN_RING_MAX * FAUNA.SPAWN_RING_MAX
@@ -563,16 +681,57 @@ function trySpawn(state: SimState, avatars: Entity[]): void {
     // on l'épuise (R16), et il faut alors aller plus loin. Un monde SANS coins
     // (banc de test) garde l'ancien peuplement uniforme : c'est une décision
     // d'HÔTE, exactement comme `faunaCap`.
+    //
+    // ET SON BUDGET EST LE SIEN. Le plafond appartient au COIN, pas au monde :
+    // c'est ce qui rend le moteur multijoueur. Deux joueurs dans deux clairières
+    // ont chacun la leur pleine ; deux joueurs dans la MÊME clairière la
+    // partagent — c'est le même pré, il porte les mêmes bêtes.
+    let ground: { x: number; y: number } | null = null
     if (state.grounds.length > 0) {
       const near = nearestGround(state, tx + 0.5, ty + 0.5)
       if (!near || near.d2 > FAUNA.GROUND_RADIUS * FAUNA.GROUND_RADIUS) continue
+      const key = `${near.g.x},${near.g.y}`
+      if ((perGround.get(key) ?? 0) >= FAUNA.GROUND_CAP) continue // ce coin est plein
+      ground = near.g
     }
 
     // Le biome choisit l'espèce — et L'HEURE la pondère (R10). À 3h du matin, la
     // forêt donne des loups et des sangliers ; à midi, des cerfs. Le plancher
     // (SPAWN_FLOOR) laisse subsister une chance pour les endormis : le monde ne
     // se recompose pas d'un coup au coucher du soleil.
-    const candidates = WILD_TYPES.filter((t) => inHabitat(state, t, tx, ty))
+    let candidates = WILD_TYPES.filter((t) => inHabitat(state, t, tx, ty))
+    if (candidates.length === 0) continue
+
+    // LE GIBIER APPARTIENT À SON COIN (R17). Une bête de PRÉ ne naît pas dans un
+    // bois, une bête de BOIS ne naît pas dans un pré — et la règle se dit en une
+    // ligne : le gibier doit pouvoir vivre sur la tuile DU COIN, pas seulement sur
+    // celle où il tombe.
+    //
+    // Sans elle, le disque d'un coin (46 tuiles) débordait sur les bois voisins et
+    // une CLAIRIÈRE se remplissait de VINGT-TROIS SANGLIERS — une prairie à cerfs
+    // pleine de bêtes de sous-bois. Le sanglier a maintenant SES coins : les
+    // souilles. On va au pré pour le cerf, au bois pour le sanglier.
+    //
+    // Le PRÉDATEUR, lui, va où va le gibier : il n'a pas de pré à lui, il suit les
+    // hardes. Il est admis partout — et borné, partout, par son quota (R18).
+    if (ground) {
+      const groundTerrain = terrainAt(state.map, Math.floor(ground.x), Math.floor(ground.y))
+      candidates = candidates.filter(
+        (t) => isPredator(t) || (MONSTER_DEFS[t].habitat?.includes(groundTerrain) ?? false),
+      )
+      if (candidates.length === 0) continue
+    }
+
+    // LE QUOTA DE PRÉDATEURS (spec faune R18). La nuit, le loup RAFLAIT le budget
+    // d'une clairière — jusqu'à dix-neuf loups dans un seul coin. On ne le rend
+    // pas plus rare (ça viderait la nuit de son sens) : on borne sa PART. Le reste
+    // va au gibier, qui la nuit DORT (R10) — des cerfs couchés, et quelques loups
+    // qui rôdent entre eux. C'est un écosystème, pas un mur.
+    //
+    // Il faut DEUX places libres pour ouvrir une meute : un loup seul n'ose pas
+    // (R11, le courage), et un demi-quota ne fabriquerait que des rôdeurs inutiles.
+    const predRoom = predatorRoom(state, ground, budget)
+    if (predRoom < 2) candidates = candidates.filter((t) => !isPredator(t))
     if (candidates.length === 0) continue
 
     // LE GRADIENT DE DANGER (GDD §8bis, cercle sauvage). Le biome choisit l'espèce,
@@ -616,11 +775,21 @@ function trySpawn(state: SimState, avatars: Entity[]): void {
     born.ambient = true
     // ELLE EST D'ICI (R17) : elle retient SON coin de chasse, et sa dérive y
     // reviendra toujours. Une bête sans coin (banc de test) garde l'errance libre.
-    const mine = nearestGround(state, tx + 0.5, ty + 0.5)
-    if (mine) {
-      born.groundX = mine.g.x
-      born.groundY = mine.g.y
+    // Le coin est CRÉDITÉ tout de suite : la harde qui suit se compte dedans, et
+    // le tour de peuplement du joueur suivant voit un budget à jour.
+    const key = ground ? `${ground.x},${ground.y}` : null
+    const pred = MONSTER_DEFS[type].predator === true
+    const credit = (): void => {
+      budget.world += 1
+      if (pred) budget.worldPred += 1
+      if (key) perGround.set(key, (perGround.get(key) ?? 0) + 1)
+      if (key && pred) predPerGround.set(key, (predPerGround.get(key) ?? 0) + 1)
     }
+    if (ground) {
+      born.groundX = ground.x
+      born.groundY = ground.y
+    }
+    credit()
     // LE TERRIER (chasse C16) : le lapin naît avec le sien — sa tuile de
     // naissance, hors du champ de quiconque par construction (R1). Levé, il y
     // court, et il y disparaît. Le trou existe donc AVANT qu'on le voie.
@@ -649,12 +818,21 @@ function trySpawn(state: SimState, avatars: Entity[]): void {
 
       const [lo, hi] = size
       const total = lo + Math.floor(roll(state) * (hi - lo + 1))
-      for (let n = 1; n < total && ambient + n < state.faunaCap; n++) {
+      for (let n = 1; n < total; n++) {
+        // LA HARDE SE COMPTE DANS SON COIN (R17), plus dans un compteur global :
+        // sans ça, une clairière pleine continuait de recevoir des congénères
+        // tant que le PLAFOND DU MONDE (240, un garde-fou de serveur) n'était pas
+        // atteint — c'est-à-dire toujours.
+        if (budget.world >= state.faunaCap) break // le garde-fou du monde
+        if (key && (perGround.get(key) ?? 0) >= FAUNA.GROUND_CAP) break // …et celui du coin
+        // …et le QUOTA DE PRÉDATEURS (R18) : une meute ne dépasse pas sa part.
+        if (MONSTER_DEFS[type].predator && predatorRoom(state, ground, budget) <= 0) break
         const spot = herdSpot(state, type, tx, ty, host)
         if (!spot) continue
         const mateId = spawnMonster(state, type, spot.tx + 0.5, spot.ty + 0.5)
         const mate = state.monsters.find((m) => m.entityId === mateId)!
         mate.ambient = true
+        credit()
         mate.herdId = herdId
         if (born.groundX !== undefined && born.groundY !== undefined) {
           mate.groundX = born.groundX
@@ -2113,7 +2291,7 @@ export function wolfStep(
   // chasser à pleine portée jour et nuit — la nuit n'y gagnait rien.
   const vigor = wolfVigor(hour)
   monster.targetId =
-    chooseQuarry(state, monster, entity, quarry, def.aggroRange * vigor, isAvatar, stealthOf, vigor) ??
+    chooseQuarry(state, monster, entity, quarry, def.aggroRange * vigor, isAvatar, stealthOf, monsterByEntity, vigor) ??
     packQuarry(state, pack, monster, entity, byId, isAvatar, vigor)
   const target = monster.targetId !== null ? byId.get(monster.targetId) : undefined
 
@@ -2301,6 +2479,10 @@ function chooseQuarry(
   range: number,
   isAvatar: (id: number) => boolean,
   stealthOf: (e: Entity) => number,
+  /** L'index du tick — sans lui, `bleeds` refaisait un `find` par proie, dans une
+   *  boucle qui court déjà sur toutes les proies : O(bêtes²) à chaque tick de
+   *  chaque loup. Invisible en solo, mortel à vingt joueurs. */
+  monsterByEntity: Map<number, Monster>,
   /** L'heure du loup (R10bis) : elle raccourcit aussi sa POURSUITE. */
   vigor = 1,
 ): number | null {
@@ -2332,7 +2514,7 @@ function chooseQuarry(
     // lourd : la meute cueille les diminués. Y compris VOTRE cerf blessé — la
     // piste que vous suivez, d'autres la suivent. Et y compris VOUS, si vous
     // saignez (décision utilisateur n°2 : le bandage devient un geste de survie).
-    if (bleeds(state, q)) score = score / (HUNT.WOUNDED_PREFERENCE * HUNT.WOUNDED_PREFERENCE)
+    if (bleeds(state, q, monsterByEntity)) score = score / (HUNT.WOUNDED_PREFERENCE * HUNT.WOUNDED_PREFERENCE)
     if (score < bestScore || (score === bestScore && bestId !== null && q.id < bestId)) {
       bestScore = score
       bestId = q.id
@@ -2342,9 +2524,9 @@ function chooseQuarry(
 }
 
 /** Cette entité saigne-t-elle — bête blessée ou avatar entaillé ? Le sang est le sang. */
-function bleeds(state: SimState, e: Entity): boolean {
+function bleeds(state: SimState, e: Entity, byEntity: Map<number, Monster>): boolean {
   if (e.wounds.bleeding === true) return true
-  const m = state.monsters.find((x) => x.entityId === e.id)
+  const m = byEntity.get(e.id)
   return m !== undefined && isBleeding(m, state.tick)
 }
 
