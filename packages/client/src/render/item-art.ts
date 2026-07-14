@@ -32,6 +32,12 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   raw_meat: 'Viande crue',
   cooked_meat: 'Viande cuite',
   components: 'Composants',
+  // ── Les ressources STRUCTURANTES des zones (spec worldgen R9) : chacune n'existe
+  //    QUE dans sa zone, et chacune est LOURDE. Le nom doit dire d'où elle vient.
+  hardwood: 'Gros bois',
+  peat: 'Tourbe',
+  cut_stone: 'Pierre de taille',
+  ash: 'Cendre',
 }
 
 export function itemIconKey(item: ItemId): string {
@@ -46,6 +52,46 @@ type ItemPaint = (g: Phaser.GameObjects.Graphics) => void
  * l'écran serait sinon silencieuse). `generateItemIcons` boucle là-dessus.
  */
 export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
+  // ── LES STRUCTURANTES ────────────────────────────────────────────────────
+  // Chacune doit se distinguer EN OMBRE CHINOISE de sa cousine ordinaire : le gros
+  // bois n'est pas du bois en plus foncé, c'est un FÛT (un seul, épais, avec ses
+  // cernes) ; la pierre de taille n'est pas un galet, c'est un BLOC (des arêtes).
+  // À 16 px, la silhouette est tout ce qu'on a.
+
+  // UN fût debout, épais, cerné — pas deux bûches. On voit son cœur.
+  hardwood: (g) => {
+    g.fillStyle(0x5a3d22).fillRect(4, 2, 8, 12)
+    g.fillStyle(0x6d4c2b).fillRect(4, 2, 8, 2)
+    g.fillStyle(0x8a6238).fillRect(4, 2, 3, 12) // la face au NO
+    g.fillStyle(0xc3a678).fillRect(6, 4, 4, 2) // les cernes, en bout
+    g.fillStyle(0x3f2a17).fillRect(6, 7, 4, 1)
+  },
+
+  // Un BLOC taillé : des arêtes, une face claire, une ombre franche. Pas un galet.
+  cut_stone: (g) => {
+    g.fillStyle(0x6a6a72).fillRect(3, 4, 10, 9)
+    g.fillStyle(0x86868f).fillRect(3, 4, 10, 3) // le dessus, éclairé
+    g.fillStyle(0x9a9aa3).fillRect(3, 4, 4, 9) // la face au NO
+    g.fillStyle(0x4a4a52).fillRect(3, 12, 10, 1) // l'ombre au pied
+  },
+
+  // Une brique de tourbe : sombre, fibreuse, gorgée d'eau. Elle SUINTE.
+  peat: (g) => {
+    g.fillStyle(0x3a2f22).fillRect(3, 5, 10, 8)
+    g.fillStyle(0x4c3d2b).fillRect(3, 5, 10, 2)
+    g.fillStyle(0x5e4e38).fillRect(3, 5, 3, 8)
+    g.fillStyle(0x2a2218).fillRect(5, 8, 6, 1) // la strate
+    g.fillStyle(0x2a2218).fillRect(4, 11, 8, 1)
+  },
+
+  // Un tas de cendre, gris pâle, et UNE braise dedans. C'est le jeu qui porte son nom.
+  ash: (g) => {
+    g.fillStyle(0x7e7a76).fillCircle(8, 11, 5)
+    g.fillStyle(0x9b9691).fillCircle(6, 10, 3)
+    g.fillStyle(0xb5b0aa).fillCircle(6, 9, 1)
+    g.fillStyle(0xd9541f).fillRect(9, 11, 2, 2) // la braise — elle couve encore
+  },
+
   // Deux bûches croisées, cœur clair en bout (au NO).
   wood: (g) => {
     g.fillStyle(0x6a4c2c).fillRect(2, 9, 12, 4)

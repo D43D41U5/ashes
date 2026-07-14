@@ -38,6 +38,18 @@ export type ItemId =
   | 'stew'
   | 'iron_ore'
   | 'coal'
+  /** ── LES RESSOURCES STRUCTURANTES DES ZONES (spec worldgen R9) ──
+   *  Chacune n'existe QUE dans sa zone. C'est ce qui remplace la récompense de distance, qui
+   *  était arithmétiquement morte : *loin* ne veut plus dire « plus », ça veut dire
+   *  « **le seul endroit où ça existe** ». */
+  /** LE GROS BOIS — la Vieille Sylve. La charpente, les grands bâtiments. */
+  | 'hardwood'
+  /** LA TOURBE — la Tourbière. Un combustible qui brûle longtemps et sale. */
+  | 'peat'
+  /** LA PIERRE DE TAILLE — les Hauts Alpages. Ce qui tient debout sous un siège. */
+  | 'cut_stone'
+  /** LA CENDRE — le Versant Brûlé. Pas un combustible : un composant. Et du lore. */
+  | 'ash'
   | 'iron_ingot'
   /** La CORDE : le liant de la couche 1 — tout objet de fortune y passe (spec craft-fortune C8). */
   | 'rope'

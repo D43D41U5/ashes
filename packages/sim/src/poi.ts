@@ -23,13 +23,33 @@ export interface PoiType {
   name: string
   family: 'eco' | 'shelter' | 'danger' | 'reward'
   biomes: number[]
+  /**
+   * LES ZONES OÙ CE LIEU PEUT NAÎTRE (slugs — spec `worldgen.md` R7).
+   *
+   * C'est ce qui donne enfin une ADRESSE aux lieux. Un lieu sans `zones` reste libre d'apparaître
+   * partout où son biome le porte — c'est le cas du Cairn, et c'est voulu : les cairns sont les
+   * jalons de TOUTE la vallée, et c'est leur métier de se suivre de proche en proche.
+   *
+   * Sur une carte sans zones (l'ancienne vallée), ce champ est simplement ignoré : `poi.ts` reçoit
+   * un accesseur, il ne connaît pas `zonegraph.ts`.
+   */
+  zones?: string[]
   /** Chance d'être tiré quand on est ÉLIGIBLE. Ce n'est PAS la rareté — voir `cap`. */
   weight: number
   /** La rareté vit ICI : plafond dur. Un Sanctuaire est précieux parce qu'il y en a deux. */
   cap: number
   /**
    * Exemplaires GARANTIS, servis avant le tirage général (spec lieux ; décision
-   * 2026-07-11). Un lieu dont une mécanique dépend ne peut pas se permettre de
+   * 2026-07-11).
+   *
+   * **TOUS LES TYPES RÉSERVENT DÉSORMAIS** (2026-07-14). En donnant une ADRESSE aux lieux (la
+   * Grotte au Karst, la Mine au Gouffre), on a réduit d'un ordre de grandeur le nombre de points
+   * de semis où chacun est éligible — et **le tirage est à SOMME NULLE** : neuf types se
+   * disputent les points d'une même zone, donc les perdants disparaissent. Mesuré : « la Mine
+   * abandonnée » ne naissait NULLE PART sur la seed 7. C'est exactement la faute que R6 avait
+   * nommée en juillet (« le semis décide de l'ABONDANCE ; la réservation décide de l'EXISTENCE »)
+   * — l'adressage l'a simplement généralisée à toute la table. Une ligne morte est une ligne
+   * morte : on ne joue plus AUCUN type à la loterie. Un lieu dont une mécanique dépend ne peut pas se permettre de
    * perdre la loterie : mesuré, le Belvédère avait 10 points de semis éligibles
    * sur la seed du jeu — et sortait quand même **zéro fois**, écrasé par le Cairn
    * (poids 12, éligible partout). Monter son poids ne réglait rien : le tirage
@@ -140,22 +160,22 @@ export const POI_PLACEMENT = {
 
 export const POI_TYPES: PoiType[] = [
   // Économie
-  { slug: 'gisement', name: 'le Gisement', family: 'eco', biomes: [SCREE, ROCK, BOULDERS], minElev: 0.55, weight: 2, cap: 3, footprint: 4, nodeKind: 'gisement' },
-  { slug: 'carriere', name: 'la Carrière', family: 'eco', biomes: [SCREE, BOULDERS], weight: 3, cap: 4, footprint: 4, nodeKind: 'carriere' },
-  { slug: 'saline', name: 'la Saline', family: 'eco', biomes: [AL_MEADOW, AL_FLOWERS, HEATH], weight: 2, cap: 3, footprint: 3 },
-  { slug: 'verger', name: 'le Verger sauvage', family: 'eco', biomes: [FLOWER, GRASS, AL_MEADOW], weight: 3, cap: 4, footprint: 3 },
+  { slug: 'gisement', zones: ['karst', 'aiguilles', 'gouffre'], name: 'le Gisement', family: 'eco', biomes: [SCREE, ROCK, BOULDERS], minElev: 0.55, weight: 2, cap: 3, reserve: 1, footprint: 4, nodeKind: 'gisement' },
+  { slug: 'carriere', zones: ['alpages', 'aiguilles', 'karst'], name: 'la Carrière', family: 'eco', biomes: [SCREE, BOULDERS], weight: 3, cap: 4, reserve: 1, footprint: 4, nodeKind: 'carriere' },
+  { slug: 'saline', zones: ['alpages', 'ruines'], name: 'la Saline', family: 'eco', biomes: [AL_MEADOW, AL_FLOWERS, HEATH], weight: 2, cap: 3, reserve: 1, footprint: 3 },
+  { slug: 'verger', zones: ['pres_bas', 'sylve'], name: 'le Verger sauvage', family: 'eco', biomes: [FLOWER, GRASS, AL_MEADOW], weight: 3, cap: 4, reserve: 1, footprint: 3 },
   // Abris
-  { slug: 'ruines', name: 'les Ruines', family: 'shelter', biomes: [OLD_GROWTH, FOREST, GRASS], weight: 3, cap: 4, footprint: 4 },
-  { slug: 'cabane', name: 'la Cabane de berger', family: 'shelter', biomes: [AL_MEADOW, AL_FLOWERS], weight: 4, cap: 5, footprint: 2 },
-  { slug: 'abri', name: "l'Abri sous roche", family: 'shelter', biomes: [ROCK, BOULDERS, SCREE], weight: 5, cap: 6, footprint: 2 },
-  { slug: 'mine', name: 'la Mine abandonnée', family: 'shelter', biomes: [SCREE, ROCK], minElev: 0.5, weight: 3, cap: 3, footprint: 3 },
-  { slug: 'oratoire', name: 'l’Oratoire', family: 'shelter', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 3, cap: 3, footprint: 2 },
-  { slug: 'bivouac', name: 'le Vieux bivouac', family: 'shelter', biomes: [GRASS, AL_MEADOW, HEATH, FOREST, SCREE, FLOWER, OLD_GROWTH, PINE], weight: 4, cap: 4, footprint: 2 },
+  { slug: 'ruines', zones: ['ruines'], name: 'les Ruines', family: 'shelter', biomes: [OLD_GROWTH, FOREST, GRASS], weight: 3, cap: 4, reserve: 1, footprint: 4 },
+  { slug: 'cabane', zones: ['alpages'], name: 'la Cabane de berger', family: 'shelter', biomes: [AL_MEADOW, AL_FLOWERS], weight: 4, cap: 5, reserve: 1, footprint: 2 },
+  { slug: 'abri', zones: ['karst', 'aiguilles', 'gouffre', 'ruines'], name: "l'Abri sous roche", family: 'shelter', biomes: [ROCK, BOULDERS, SCREE], weight: 5, cap: 6, reserve: 1, footprint: 2 },
+  { slug: 'mine', zones: ['karst', 'gouffre'], name: 'la Mine abandonnée', family: 'shelter', biomes: [SCREE, ROCK], minElev: 0.5, weight: 3, cap: 3, reserve: 1, footprint: 3 },
+  { slug: 'oratoire', zones: ['alpages', 'karst'], name: 'l’Oratoire', family: 'shelter', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 2 },
+  { slug: 'bivouac', name: 'le Vieux bivouac', family: 'shelter', biomes: [GRASS, AL_MEADOW, HEATH, FOREST, SCREE, FLOWER, OLD_GROWTH, PINE], weight: 4, cap: 4, reserve: 1, footprint: 2 },
   // Danger
-  { slug: 'taniere', name: 'la Tanière', family: 'danger', biomes: [FOREST, PINE, GRASS], weight: 6, cap: 8, footprint: 3, monster: 'boar' },
-  { slug: 'repaire', name: 'le Repaire de Cendrés', family: 'danger', biomes: [BURNT, ROCK, SCREE], weight: 4, cap: 5, footprint: 3, monster: 'cendreux' },
-  { slug: 'epave', name: "l'Épave d'avalanche", family: 'danger', biomes: [SCREE, BOULDERS], minElev: 0.55, weight: 3, cap: 3, footprint: 2 },
-  { slug: 'fondriere', name: 'la Fondrière', family: 'danger', biomes: [PEAT, REED], weight: 3, cap: 3, footprint: 3 },
+  { slug: 'taniere', zones: ['sylve', 'pres_bas'], name: 'la Tanière', family: 'danger', biomes: [FOREST, PINE, GRASS], weight: 6, cap: 8, reserve: 1, footprint: 3, monster: 'boar' },
+  { slug: 'repaire', zones: ['brule', 'cendriere'], name: 'le Repaire de Cendrés', family: 'danger', biomes: [BURNT, ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 3, monster: 'cendreux' },
+  { slug: 'epave', zones: ['aiguilles', 'glacier'], name: "l'Épave d'avalanche", family: 'danger', biomes: [SCREE, BOULDERS], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 2 },
+  { slug: 'fondriere', zones: ['tourbiere', 'lac_mort'], name: 'la Fondrière', family: 'danger', biomes: [PEAT, REED], weight: 3, cap: 3, reserve: 1, footprint: 3 },
   /**
    * LE CHAMP DE CREVASSES — était une LIGNE MORTE (mesuré 2026-07-13) : biome
    * `GLACIER` seul, or le glacier est `walkable: false` et se cache derrière la
@@ -171,7 +191,7 @@ export const POI_TYPES: PoiType[] = [
    * sur les 24 % de carte-mur), il remontera de lui-même vers la vraie marge du
    * glacier, sans qu'on retouche cette ligne.
    */
-  { slug: 'crevasses', name: 'le Champ de crevasses', family: 'danger', biomes: [GLACIER, SNOW, SCREE, BOULDERS], minElev: 0.66, weight: 3, cap: 3, footprint: 4 },
+  { slug: 'crevasses', zones: ['glacier'], name: 'le Champ de crevasses', family: 'danger', biomes: [GLACIER, SNOW, SCREE, BOULDERS], minElev: 0.66, weight: 3, cap: 3, reserve: 1, footprint: 4 },
   // Récompense / paysage
   /**
    * LE BELVÉDÈRE — `minElev` était à 0,75, **au-dessus du plafond du marchable**
@@ -187,17 +207,17 @@ export const POI_TYPES: PoiType[] = [
    * belvédère. `AL_MEADOW` sort de sa liste : cette bande s'arrête à 0,64, elle
    * était inatteignable sous ce `minElev` — une ligne qui mentait.
    */
-  { slug: 'belvedere', name: 'le Belvédère', family: 'reward', biomes: [SCREE, ROCK], minElev: 0.66, weight: 3, cap: 4, reserve: 1, footprint: 2 },
-  { slug: 'grotte', name: 'la Grotte', family: 'reward', biomes: [ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 2 },
-  { slug: 'cascade', name: 'la Cascade', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.4, weight: 2, cap: 4, reserve: 1, footprint: 2 },
-  { slug: 'erratique', name: 'le Bloc erratique', family: 'reward', biomes: [BOULDERS, AL_MEADOW, GRASS, FLOWER], weight: 4, cap: 5, reserve: 1, footprint: 2 },
-  { slug: 'arbre', name: "l'Arbre remarquable", family: 'reward', biomes: [OLD_GROWTH], weight: 2, cap: 3, reserve: 1, footprint: 2 },
+  { slug: 'belvedere', zones: ['alpages', 'aiguilles'], name: 'le Belvédère', family: 'reward', biomes: [SCREE, ROCK], minElev: 0.66, weight: 3, cap: 4, reserve: 1, footprint: 2 },
+  { slug: 'grotte', zones: ['karst', 'gouffre'], name: 'la Grotte', family: 'reward', biomes: [ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 2 },
+  { slug: 'cascade', zones: ['alpages', 'karst', 'aiguilles'], name: 'la Cascade', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.4, weight: 2, cap: 4, reserve: 1, footprint: 2 },
+  { slug: 'erratique', zones: ['pres_bas', 'alpages', 'ruines'], name: 'le Bloc erratique', family: 'reward', biomes: [BOULDERS, AL_MEADOW, GRASS, FLOWER], weight: 4, cap: 5, reserve: 1, footprint: 2 },
+  { slug: 'arbre', zones: ['sylve'], name: "l'Arbre remarquable", family: 'reward', biomes: [OLD_GROWTH], weight: 2, cap: 3, reserve: 1, footprint: 2 },
   { slug: 'cairn', name: 'le Cairn', family: 'reward', biomes: [GRASS, AL_MEADOW, HEATH, SCREE, ROCK, FLOWER, AL_FLOWERS, FOREST, PINE], weight: 12, cap: 14, reserve: 1, footprint: 1 },
-  { slug: 'sanctuaire', name: 'le Sanctuaire', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.7, weight: 1, cap: 2, reserve: 1, footprint: 2 },
-  { slug: 'source_chaude', name: 'la Source chaude', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 2, cap: 2, reserve: 1, footprint: 2 },
-  { slug: 'arche', name: "l'Arche de roche", family: 'reward', biomes: [ROCK, SCREE], weight: 2, cap: 2, reserve: 1, footprint: 2 },
-  { slug: 'tarn', name: 'le Tarn', family: 'reward', biomes: [AL_MEADOW, SCREE, AL_FLOWERS], minElev: 0.45, weight: 3, cap: 3, reserve: 1, footprint: 3 },
-  { slug: 'petroglyphes', name: 'les Pétroglyphes', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.55, weight: 2, cap: 2, reserve: 1, footprint: 2 },
+  { slug: 'sanctuaire', zones: ['aiguilles', 'alpages', 'karst'], name: 'le Sanctuaire', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.7, weight: 1, cap: 2, reserve: 1, footprint: 2 },
+  { slug: 'source_chaude', zones: ['alpages', 'karst'], name: 'la Source chaude', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 2, cap: 2, reserve: 1, footprint: 2 },
+  { slug: 'arche', zones: ['aiguilles', 'karst'], name: "l'Arche de roche", family: 'reward', biomes: [ROCK, SCREE], weight: 2, cap: 2, reserve: 1, footprint: 2 },
+  { slug: 'tarn', zones: ['alpages', 'glacier'], name: 'le Tarn', family: 'reward', biomes: [AL_MEADOW, SCREE, AL_FLOWERS], minElev: 0.45, weight: 3, cap: 3, reserve: 1, footprint: 3 },
+  { slug: 'petroglyphes', zones: ['karst', 'gouffre', 'aiguilles'], name: 'les Pétroglyphes', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.55, weight: 2, cap: 2, reserve: 1, footprint: 2 },
 ]
 
 /**
@@ -268,13 +288,50 @@ function entryTile(
  * on lui demande d'avoir un SEUIL — cf. `POI_PLACEMENT.MAX_CARVE_TILES` pour la
  * mesure qui a fixé la règle.
  */
+/**
+ * OÙ EST-ON ? — le slug de la zone d'une tuile, ou `undefined` sur une carte sans zones.
+ *
+ * C'est le SEUL lien entre les lieux et le graphe de zones, et il est volontairement mince : un
+ * accesseur, pas une dépendance. `poi.ts` ne connaît toujours pas `zonegraph.ts` — il reçoit une
+ * fonction, et il s'en sert si elle existe. L'ancienne carte (qui n'a pas de zones) continue donc
+ * de poser ses lieux exactement comme avant, sans une ligne de branche.
+ */
+export type ZoneLookup = (tx: number, ty: number) => string | undefined
+
 function isEligible(
-  map: WorldMap, field: CarveField, t: PoiType, tx: number, ty: number, used: Map<string, number>,
+  map: WorldMap,
+  field: CarveField,
+  t: PoiType,
+  tx: number,
+  ty: number,
+  used: Map<string, number>,
+  zoneDe?: ZoneLookup,
 ): boolean {
   const terr = terrainAt(map, tx, ty)
-  const el = elevationAt(map, tx, ty)
   if (!t.biomes.includes(terr)) return false
-  if (el < (t.minElev ?? 0) || el > (t.maxElev ?? 1)) return false
+
+  // LA ZONE, quand la carte en a une — et **elle REMPLACE le filtre d'altitude**.
+  //
+  // C'est ce qui donne enfin une ADRESSE aux lieux : la Grotte au Karst, le Champ de crevasses au
+  // Glacier, l'Arbre remarquable dans la Vieille Sylve. Et c'est plus JUSTE que `minElev` :
+  // « le Belvédère est haut » était une approximation d'« il est dans les Hauts Alpages ou les
+  // Aiguilles ». On dit maintenant la chose, au lieu de la circonscrire par un nombre.
+  //
+  // (Les `minElev` de la table ont été calibrés sur l'ANCIEN champ d'altitude continu : sur la
+  // nouvelle carte, où l'altitude se dérive d'un palier entier, ils ne veulent plus rien dire.
+  // Les garder ET la zone aurait rendu la moitié de la table stérile en silence — le genre de
+  // ligne morte que ce projet a déjà payé trois fois.)
+  //
+  // Un lieu SANS `zones` reste libre d'apparaître partout où son biome le porte, et garde son
+  // filtre d'altitude : c'est le cas du Cairn, et c'est voulu — les cairns sont les jalons de
+  // TOUTE la vallée, et c'est leur métier de se suivre de proche en proche.
+  if (t.zones && zoneDe) {
+    const z = zoneDe(tx, ty)
+    if (z === undefined || !t.zones.includes(z)) return false
+  } else {
+    const el = elevationAt(map, tx, ty)
+    if (el < (t.minElev ?? 0) || el > (t.maxElev ?? 1)) return false
+  }
   if ((used.get(t.slug) ?? 0) >= capFor(map, t)) return false // le plafond suit la SURFACE
   const fp = footprintAt(map, t, tx, ty)
   if (touchesBorderRing(map, fp)) return false
@@ -282,9 +339,9 @@ function isEligible(
 }
 
 function candidatesFor(
-  map: WorldMap, field: CarveField, tx: number, ty: number, used: Map<string, number>,
+  map: WorldMap, field: CarveField, tx: number, ty: number, used: Map<string, number>, zoneDe?: ZoneLookup,
 ): PoiType[] {
-  return POI_TYPES.filter((t) => isEligible(map, field, t, tx, ty, used))
+  return POI_TYPES.filter((t) => isEligible(map, field, t, tx, ty, used, zoneDe))
 }
 
 /**
@@ -356,6 +413,7 @@ function reserveCharged(
   used: Map<string, number>,
   seed: number,
   radius: number,
+  zoneDe?: ZoneLookup,
 ): Set<number> {
   const taken = new Set<number>()
   // Ordre déterministe : celui de POI_TYPES. Les premiers servis ont priorité
@@ -368,13 +426,13 @@ function reserveCharged(
       const p = pts[i]!
       const tx = Math.floor(p.x)
       const ty = Math.floor(p.y)
-      if (!isEligible(map, field, t, tx, ty, used)) continue
+      if (!isEligible(map, field, t, tx, ty, used, zoneDe)) continue
       placeOne(map, field, t, tx, ty, used)
       taken.add(i)
       got += 1
     }
     // LE FILET — si le SEMIS n'avait aucun point pour lui, on lui en trouve un.
-    while (got < want && placeReserveAnywhere(map, field, t, used, seed, radius)) got += 1
+    while (got < want && placeReserveAnywhere(map, field, t, used, seed, radius, zoneDe)) got += 1
   }
   return taken
 }
@@ -407,13 +465,14 @@ function placeReserveAnywhere(
   used: Map<string, number>,
   seed: number,
   radius: number,
+  zoneDe?: ZoneLookup,
 ): boolean {
   const step = Math.max(4, Math.round(radius / 4)) // assez fin pour trouver, assez gros pour rester bon marché
   const r2 = radius * radius
   const libres: number[] = []
   for (let ty = step; ty < map.height - step; ty += step) {
     for (let tx = step; tx < map.width - step; tx += step) {
-      if (!isEligible(map, field, t, tx, ty, used)) continue
+      if (!isEligible(map, field, t, tx, ty, used, zoneDe)) continue
       // L'espacement du semis vaut aussi pour lui : un lieu réservé n'a pas le
       // droit de se coller à un autre (une garde le vérifie).
       let libre = true
@@ -491,7 +550,7 @@ export function poiSemis(width: number, height: number, seed: number): { x: numb
 }
 
 /** Pose les POIs comme Zones nommées dans map.zones (pur, déterministe). */
-export function placePois(map: WorldMap, seed: number): void {
+export function placePois(map: WorldMap, seed: number, zoneDe?: ZoneLookup): void {
   const radius = poiSpacing(map.width, map.height)
   const pts = poiSemis(map.width, map.height, seed)
   const used = new Map<string, number>()
@@ -503,7 +562,7 @@ export function placePois(map: WorldMap, seed: number): void {
   const field = carveDistanceToMain(map, walkableComponents(map), POI_PLACEMENT.MAX_CARVE_TILES)
 
   // D'ABORD les lieux chargés : ils réservent leur point (voir `reserveCharged`).
-  const taken = reserveCharged(map, field, pts, used, seed, radius)
+  const taken = reserveCharged(map, field, pts, used, seed, radius, zoneDe)
 
   // PUIS le tirage général, sur ce qui reste du semis.
   for (let i = 0; i < pts.length; i++) {
@@ -511,7 +570,7 @@ export function placePois(map: WorldMap, seed: number): void {
     const p = pts[i]!
     const tx = Math.floor(p.x)
     const ty = Math.floor(p.y)
-    const cands = candidatesFor(map, field, tx, ty, used)
+    const cands = candidatesFor(map, field, tx, ty, used, zoneDe)
     if (cands.length === 0) continue // biome sans POI valide → point sauvage (l'entre-deux)
     // Tirage pondéré déterministe.
     const total = cands.reduce((s, t) => s + t.weight, 0)

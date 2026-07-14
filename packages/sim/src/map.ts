@@ -27,6 +27,23 @@ export interface WorldMap {
   /** Altitude par tuile [0,1] (substrat alpin). Optionnel — absent sur les
    *  cartes qui n'en produisent pas. NE PAS confondre avec `height` (dimension). */
   elevation?: number[]
+  /**
+   * LE CHAMP DE CENDRE — distance de chaque tuile à la frontière de la Cendrière, en tuiles.
+   * Négative DEDANS, positive dehors. **Donnée STATIQUE** : calculée une fois, jamais modifiée.
+   *
+   * Ce qui bouge est ailleurs : `SimState.cendreFront`, **un seul nombre**. Une tuile brûle quand
+   * `cendre[i] < front`. C'est ce qui rend le front de saison bon marché — on ne mute pas la
+   * carte, on déplace un seuil (spec `worldgen.md` R31).
+   */
+  cendre?: number[]
+  /**
+   * L'AVANCÉE DU FRONT au dernier jour de la saison, EN TUILES — **calibrée pour CETTE carte**.
+   *
+   * Elle n'est pas une constante : la forme des zones change tout. Mesuré, à distance fixe, la
+   * cendre couvrait 48 % des Prés Bas sur une seed et 81 % sur une autre. On vise donc une PART
+   * (`CENDRE.PART_CIBLE`) et on en déduit la distance, par dichotomie, à la génération.
+   */
+  cendreMax?: number
 }
 
 export function createEmptyMap(width: number, height: number, fillTerrainId: number): WorldMap {

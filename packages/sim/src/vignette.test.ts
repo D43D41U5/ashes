@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { generateAlpineTerrain } from './alpinegen'
+import { generateZonedTerrain } from './zonegen'
 import { renderVignette } from './vignette'
 
 describe('renderVignette', () => {
-  it('produit un buffer RGB déterministe aux bonnes dimensions', () => {
-    const map = generateAlpineTerrain(200, 300, 9)
+  it('produit un buffer RGB déterministe aux bonnes dimensions', { timeout: 60_000 }, () => {
+    const map = generateZonedTerrain(9).map
     const a = renderVignette(map, 100)
     const b = renderVignette(map, 100)
     expect(a.w).toBeGreaterThan(0)

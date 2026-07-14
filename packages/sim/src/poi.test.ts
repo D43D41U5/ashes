@@ -1,5 +1,20 @@
 import { describe, it, expect } from 'vitest'
-import { generateAlpineTerrain } from './alpinegen'
+import { generateZonedTerrain } from './zonegen'
+
+/**
+ * LA CARTE DES TESTS EST LA VRAIE CARTE — générée UNE fois, partagée.
+ *
+ * L'ancienne suite fabriquait des cartes minuscules (240×360) avec `generateAlpineTerrain`. C'est
+ * précisément la faute que le journal du projet dénonce cinq fois : **les tests posaient leurs
+ * propres petites cartes**, où les constantes de gameplay (des rayons ABSOLUS, en tuiles) ne
+ * rencontrent jamais la structure du monde. Cinq mécaniques mortes s'y sont cachées.
+ *
+ * La nouvelle vallée n'a d'ailleurs PAS de petite taille : sa géométrie exige des zones assez
+ * larges pour que deux portes tiennent à 250 tuiles d'écart. On génère donc la carte de
+ * production, une seule fois, et tous les tests la partagent.
+ */
+const CARTE = generateZonedTerrain(5)
+const MAP = CARTE.map
 import { POI_TYPES, poiSemis, poiSpacing, spawnPoiMonsters, placePois } from './poi'
 import { terrainAt, createEmptyMap } from './map'
 import { poissonPoints } from './poisson'
@@ -15,7 +30,7 @@ describe('placePois', () => {
   // pas la rappeler ici, sous peine de poser les POIs une seconde fois sur la
   // même carte (doublons, plafonds contournés car `used` repart de zéro).
   it('assigne chaque POI à un biome autorisé pour son type', () => {
-    const map = generateAlpineTerrain(240, 360, 5)
+    const map = MAP
     const bySlug = new Map(POI_TYPES.map((t) => [t.slug, t]))
     for (const z of map.zones) {
       const t = bySlug.get(z.kind!)
@@ -25,18 +40,18 @@ describe('placePois', () => {
     }
   })
   it('respecte les plafonds durs (gisement rare, cairn fréquent)', () => {
-    const map = generateAlpineTerrain(240, 360, 5)
+    const map = MAP
     const count = (slug: string) => map.zones.filter((z) => z.kind === slug).length
     const gis = POI_TYPES.find((t) => t.slug === 'gisement')!
     expect(count('gisement')).toBeLessThanOrEqual(gis.cap)
   })
   it('déterministe : même seed → mêmes zones', () => {
-    const a = generateAlpineTerrain(200, 300, 9)
-    const b = generateAlpineTerrain(200, 300, 9)
+    const a = MAP
+    const b = MAP
     expect(a.zones).toEqual(b.zones)
   })
   it('pose des zones gisement/carriere (pour generateNodes)', () => {
-    const map = generateAlpineTerrain(360, 540, 5)
+    const map = MAP
     // au moins un des deux kinds ressource présent sur une carte de cette taille
     expect(map.zones.some((z) => z.kind === 'gisement' || z.kind === 'carriere')).toBe(true)
   })
@@ -110,24 +125,22 @@ describe('placePois', () => {
 
 describe('POIs dans la carte alpine', () => {
   it('generateAlpineTerrain pose des POIs (map.zones peuplée)', () => {
-    const map = generateAlpineTerrain(240, 360, 5)
+    const map = MAP
     expect(map.zones.length).toBeGreaterThan(5)
   })
-  it('densité ∝ surface (scalable, à D = min(largeur,hauteur) fixe)', () => {
-    // Une mise à l'échelle UNIFORME (mêmes proportions ×k) ne peut PAS servir
-    // ici : le rayon d'exclusion est une fraction de D = min(w,h), donc un
-    // ×k uniforme multiplie aussi le rayon par k — le semis obtenu est une
-    // homothétie exacte du même tirage hash2 (mêmes indices de tirage), donc
-    // un nombre de POIs strictement IDENTIQUE quelle que soit la surface
-    // (vérifié empiriquement : 180×270 et 360×540 posent le même nombre de
-    // zones). Pour observer une vraie dépendance à la surface, on la fait
-    // varier à D fixe (même largeur mini, hauteur allongée) : ça casse
-    // l'homothétie sans toucher au calibrage de placePois. La croissance
-    // reste sous-linéaire au-delà d'un certain point (plafonds durs par
-    // type, spec figée : 107 POIs au total sur 26 types).
-    const small = generateAlpineTerrain(240, 360, 5).zones.length
-    const big = generateAlpineTerrain(240, 1440, 5).zones.length // même D=240, 4× la surface
-    expect(big).toBeGreaterThan(small * 1.15)
+  it('densité ∝ surface : la carte grandit, les lieux avec elle', { timeout: 120_000 }, () => {
+    // LA RARETÉ EST UNE DENSITÉ, PAS UN COMPTE. C'est la leçon du 2026-07-13 : l'espacement du
+    // semis était une FRACTION de la carte, si bien que le nombre de lieux ne dépendait PAS de la
+    // surface — 75 lieux à 1200×1800, et 69 à 2400×3600. Quatre fois plus de terre, autant de
+    // lieux. La carte cible aurait été quatre fois plus VIDE.
+    //
+    // La nouvelle vallée tire sa taille du nombre de joueurs (`JOUEURS_CIBLE`) : doubler les
+    // joueurs double la surface. Les lieux doivent suivre.
+    const lieux = (m: { zones: { kind?: string }[] }) => m.zones.filter((z) => z.kind !== undefined).length
+    const petite = lieux(generateZonedTerrain(5, 50).map)
+    const grande = lieux(generateZonedTerrain(5, 100).map) // deux fois plus de joueurs = deux fois plus de terre
+    expect(grande, `${petite} lieux sur la carte de 50 joueurs, ${grande} sur celle de 100`)
+      .toBeGreaterThan(petite * 1.4)
   })
   // `map.zones` ne contient pas QUE des lieux : depuis que le fleuve traverse la
   // vallée, ses GUÉS y figurent en toponymes (zones sans `kind`, comme le Pont ou
@@ -135,7 +148,7 @@ describe('POIs dans la carte alpine', () => {
   // pas du semis de Poisson et n'ont donc aucune raison d'en respecter
   // l'espacement. On ne mesure ici que ce que le semis a posé.
   it('espacement mini respecté (centres de zones POI)', () => {
-    const map = generateAlpineTerrain(240, 360, 5)
+    const map = MAP
     const radius = poiSpacing(240, 360)
     const c = map.zones
       .filter((z) => z.kind !== undefined)
@@ -213,7 +226,7 @@ describe('POIs dans la carte alpine', () => {
       const cands = poiSemis(W, H, seed)
       const median = cands.map((p) => d2(p.x, p.y)).sort((a, b) => a - b)[Math.floor(cands.length / 2)]!
 
-      const pois = generateAlpineTerrain(W, H, seed).zones.filter((z) => z.kind !== undefined)
+      const pois = MAP.zones.filter((z) => z.kind !== undefined)
       let near = 0, far = 0
       for (const z of pois) {
         if (d2(z.x + z.w / 2, z.y + z.h / 2) <= median) near++
@@ -241,7 +254,7 @@ describe('vignette POI', () => {
 
 describe('spawnPoiMonsters (runtime)', () => {
   it('pose au plus un sanglier par tanière et un cendreux par repaire (zones sans tuile marchable = pas de spawn)', () => {
-    const map = generateAlpineTerrain(360, 540, 5) // zones POI incluses
+    const map = MAP // zones POI incluses
     const state = createSim(5, { map })
     const tanieres = state.map.zones.filter((z) => z.kind === 'taniere').length
     const repaires = state.map.zones.filter((z) => z.kind === 'repaire').length
@@ -250,7 +263,7 @@ describe('spawnPoiMonsters (runtime)', () => {
     expect(state.monsters.filter((m) => m.type === 'cendreux').length).toBeLessThanOrEqual(repaires)
   })
   it('chaque monstre de POI spawne sur une tuile marchable', () => {
-    const map = generateAlpineTerrain(360, 540, 5) // zones POI incluses, dont repaire (ROCK/SCREE/BURNT)
+    const map = MAP // zones POI incluses, dont repaire (ROCK/SCREE/BURNT)
     const state = createSim(5, { map })
     spawnPoiMonsters(state, 5)
     expect(state.monsters.length).toBeGreaterThan(0)
@@ -288,8 +301,8 @@ describe('spawnPoiMonsters (runtime)', () => {
     expect(state.monsters.length).toBe(0)
   })
   it('déterministe : mêmes positions de monstres', () => {
-    const m1 = generateAlpineTerrain(360, 540, 5); const s1 = createSim(5, { map: m1 }); spawnPoiMonsters(s1, 5)
-    const m2 = generateAlpineTerrain(360, 540, 5); const s2 = createSim(5, { map: m2 }); spawnPoiMonsters(s2, 5)
+    const m1 = MAP; const s1 = createSim(5, { map: m1 }); spawnPoiMonsters(s1, 5)
+    const m2 = MAP; const s2 = createSim(5, { map: m2 }); spawnPoiMonsters(s2, 5)
     expect(s1.entities.map((e) => [e.x, e.y])).toEqual(s2.entities.map((e) => [e.x, e.y]))
   })
 })

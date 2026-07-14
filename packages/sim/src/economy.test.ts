@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  NODE_DEFS,
   ALIGNMENT,
   BALANCE,
   SLOTS,
@@ -21,8 +22,9 @@ import { grantItems } from './village'
 let nextNodeId = 100
 function makeNode(type: ResourceNode['type'], tx: number, ty: number): ResourceNode {
   nextNodeId += 1
-  const stocks = { tree: 10, rock: 12, fiber_plant: 6, berry_bush: 8, iron_vein: 8, coal_seam: 8 }
-  return { id: nextNodeId, type, tx, ty, stock: stocks[type], regrowAt: 0 }
+  // La table des stocks EST `NODE_DEFS` — la dupliquer ici, c'est se condamner à la voir
+  // diverger en silence (et c'est ce qui venait d'arriver : cinq nœuds neufs y manquaient).
+  return { id: nextNodeId, type, tx, ty, stock: NODE_DEFS[type].stock, regrowAt: 0 }
 }
 
 function makeSim(nodes: ResourceNode[]): SimState {

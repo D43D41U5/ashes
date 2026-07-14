@@ -8,22 +8,19 @@
 import {
   createSim,
   cycleOffsetForStartHour,
+  emplacementsDeVillage,
   FAUNA,
-  generateAlpineTerrain,
-  generateNodes,
+  generateZonedTerrain,
+  MONDE,
   placeHuntingGrounds,
+  placeZoneNodes,
+  pointsDeSpawn,
   spawnEntity,
   spawnPoiMonsters,
-  walkableSpawn,
-  WORLDGEN_PHASES,
   type SimState,
 } from '@braises/sim'
 
 export const VEILLEE_SEED = 2026
-/** Densité de nœuds : forêts réellement récoltables (~140k nœuds à 0.7). Rendu
- * client culled à la vue + transport par deltas → ce nombre est découplé du
- * coût par tick. Réglable : seul bouton à monter/descendre. */
-export const NODE_DENSITY = 0.7
 /** Démo : un jour de saison toutes les 2 minutes. */
 export const VEILLEE_CALENDAR_SCALE = 720
 /** Heure murale de départ : 9 = matinée (bonne lumière pour découvrir l'alpin ; 0 = minuit). */
@@ -40,7 +37,7 @@ export const VEILLEE_START_HOUR = 9
  * celles de l'hôte (peuplement). L'écran de chargement les compte : `done/total`
  * EST la barre, et rien d'autre. On n'invente pas une progression.
  */
-export const LOAD_PHASES = [...WORLDGEN_PHASES, 'nodes', 'monsters'] as const
+export const LOAD_PHASES = ['zones', 'terrain', 'seuils', 'lieux', 'nodes', 'monsters'] as const
 export type LoadPhase = (typeof LOAD_PHASES)[number]
 
 /**
@@ -58,42 +55,40 @@ export function createVeillee(onPhase: (phase: LoadPhase) => void = () => {}): {
   // étiré (WorldScene) → plus de limite de texture. Le vrai plafond restant est
   // le temps de génération (~7 s) et le transfert ; l'alpin PLEINE taille
   // (2400×3600, ~27 s de gen) attend une optimisation de la génération.
-  const map = generateAlpineTerrain(1200, 1800, VEILLEE_SEED, onPhase)
-  // Densité de nœuds : forêts réellement récoltables (~60k nœuds). Le transport
-  // par deltas (nœuds au ready + stock changé par tick) découple ce nombre du
-  // coût réseau ; l'index tuile→nœud garde la collision O(1).
+  // LA NOUVELLE VALLÉE (spec `worldgen.md`) : un GRAPHE DE ZONES d'abord, le terrain ensuite.
+  // La taille se déduit du nombre de joueurs cible — on ne la règle plus à la main.
+  onPhase('zones')
+  const carte = generateZonedTerrain(VEILLEE_SEED)
+  const map = carte.map
+  onPhase('terrain')
+  onPhase('seuils')
+  onPhase('lieux')
+
+  // LES NŒUDS SONT DISTRIBUÉS PAR ZONE — le gros bois SEULEMENT dans la Vieille Sylve, le fer au
+  // Karst, et un unique filon dérisoire dans les Prés Bas pour dire « ça existe, pas ici ».
+  // `circleFactor` est mort avec `generateNodes` : « loin » ne veut plus dire « plus », ça veut
+  // dire « le seul endroit où ça existe ».
   onPhase('nodes')
-  // LE SPAWN D'ABORD : c'est LUI qui décide des trois cercles (GDD §8bis). Autour
-  // du point de départ, la récolte est MÉDIOCRE — « un village y survit, n'y
-  // prospère jamais » ; la richesse est au loin, avec ce qui y vit. C'est ce qui
-  // donne un sens au poids : s'éloigner coûte, donc il faut que ça rapporte.
-  const spawn = walkableSpawn(map)
-  const nodes = generateNodes(map, VEILLEE_SEED, NODE_DENSITY, spawn)
+  const nodes = placeZoneNodes(carte)
+
+  // LE SPAWN EST ÉPARPILLÉ dans les Prés Bas (spec R18) — en solo on en prend un, mais c'est le
+  // MÊME semis qu'en multi : cinquante joueurs y naîtraient sans se marcher dessus.
+  const emplacements = emplacementsDeVillage(carte, nodes)
+  const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
+  const premier = spawns[0] ?? emplacements[0]
+  if (!premier) throw new Error('veillee: la vallée ne porte aucun emplacement viable — carte dégénérée')
+  const spawn = { x: premier.tx + 0.5, y: premier.ty + 0.5 }
+
   const sim = createSim(VEILLEE_SEED, {
     map,
     calendarScale: VEILLEE_CALENDAR_SCALE,
     nodes,
     cycleOffset: cycleOffsetForStartHour(VEILLEE_START_HOUR),
-    // Le monde est habité (spec faune) : la faune ambiante naît hors-champ
-    // autour du joueur et se dissipe derrière lui. Plafond, donc coût constant.
-    // Le plafond du MONDE est un garde-fou de serveur (240) — ce qu'on RESSENT est
-    // réglé par `GROUND_CAP`, la population d'un coin de chasse (spec faune R17).
     faunaCap: FAUNA.CAP,
-    // LES COINS DE CHASSE (spec faune R17) : le gibier a des ADRESSES — des prés
-    // à portée d'eau, semés une fois pour la saison. Entre eux, la vallée est
-    // vide, et c'est ce vide qui rend la carte apprenable.
     grounds: placeHuntingGrounds(map, VEILLEE_SEED),
-    // LE FOYER dessine les trois cercles (GDD §8bis) : la récolte est médiocre
-    // autour, et les PRÉDATEURS y sont rares — aux marges, le monde leur appartient.
     home: spawn,
-    // Les outils de dev (TP, heure, invulnérabilité) ne sont armés QUE dans un
-    // build de développement : `import.meta.env.DEV` est statiquement faux en
-    // prod, donc l'autorité y refuse ces actions même si un client les envoie.
     debug: import.meta.env.DEV,
   })
-  // La menace et le gibier viennent des POIs : sangliers aux tanières, Cendrés
-  // aux repaires (spawnPoiMonsters lit map.zones). Villages PNJ toujours différés
-  // (décision 2026-07-06) — on finit la carte vivante d'abord.
   onPhase('monsters')
   spawnPoiMonsters(sim, VEILLEE_SEED)
   // Le joueur commence les mains vides (spec économie) — pas de kit de départ.

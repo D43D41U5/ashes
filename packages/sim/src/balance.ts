@@ -312,7 +312,19 @@ export const TERRAINS: Record<number, TerrainDef> = {
   7: { name: 'wall', walkable: false, speedFactor: 0, cover: 1 },
   8: { name: 'marsh', walkable: true, speedFactor: 0.6, cover: 0.85 },
   9: { name: 'scree', walkable: true, speedFactor: 0.7, cover: 1 },
-  10: { name: 'snow', walkable: false, speedFactor: 0, cover: 1 },
+  /**
+   * LA NEIGE EST PRATICABLE — décision d'Alexis, 2026-07-14.
+   *
+   * Elle était `walkable: false`, et c'était une faute de conception qui se dénonçait
+   * elle-même : `TEMPERATURE.BIOME_OFFSET` inflige **−10 sur la neige** — un malus pour qui
+   * S'Y TIENT. Or on ne pouvait jamais s'y tenir : **cette ligne était du code mort**, et toute
+   * la conception « le froid, prix de la verticalité » était inerte. Avec la roche et le
+   * glacier, ça faisait 24 % de la carte en décor peint.
+   *
+   * Lente (0,5 — on s'enfonce) et mortellement froide : c'est ce qui rend le Névé Blanc
+   * possible, et avec lui toute la moitié haute de l'arbre de zones.
+   */
+  10: { name: 'snow', walkable: true, speedFactor: 0.5, cover: 1 },
   11: { name: 'heath', walkable: true, speedFactor: 0.9, cover: 0.75 },
   12: { name: 'alpine_meadow', walkable: true, speedFactor: 1, cover: 0.9 },
   13: { name: 'pine', walkable: true, speedFactor: 0.85, cover: 0.65 },
@@ -325,6 +337,20 @@ export const TERRAINS: Record<number, TerrainDef> = {
   20: { name: 'alpine_flowers', walkable: true, speedFactor: 1, cover: 0.85 },
   21: { name: 'burnt_forest', walkable: true, speedFactor: 0.9, cover: 0.9 },
   22: { name: 'old_growth', walkable: true, speedFactor: 0.7, cover: 0.5 },
+  /**
+   * LA FALAISE — le mur qui SÉPARE, et le squelette de toute la carte (spec worldgen R2).
+   *
+   * Elle n'est pas de la roche : la roche est un caillou qu'on contourne, la falaise est une
+   * PAROI qu'on longe. La distinction n'est pas cosmétique, elle est le cœur du modèle : une
+   * falaise a un **bord**, et un bord se suit. *On ne trouve pas une porte, on suit un mur.*
+   * C'est ce qui rachète l'objection qui avait tué les cols (« la porte est introuvable au
+   * sol ») — les anciens murs étaient des bandes de roche amorphes de soixante tuiles, sans
+   * arête lisible.
+   *
+   * Le client la dessine comme une paroi, avec son ombre portée : c'est ce qui donne enfin la
+   * VERTICALITÉ que le faux-relief (`elevation × RELIEF_H`) n'a jamais su rendre.
+   */
+  23: { name: 'cliff', walkable: false, speedFactor: 0, cover: 1 },
 }
 
 export const TERRAIN_VOID = 0
@@ -351,6 +377,7 @@ export const TERRAIN_REED_MARSH = 19
 export const TERRAIN_ALPINE_FLOWERS = 20
 export const TERRAIN_BURNT_FOREST = 21
 export const TERRAIN_OLD_GROWTH = 22
+export const TERRAIN_CLIFF = 23
 
 /** Coûts de construction (spec village R3 : réels dès V3). */
 export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./items').ItemBag> = {
@@ -385,7 +412,24 @@ export const CIRCLES = {
   WILD_STOCK: 1.6,
 } as const
 
-export type NodeType = 'tree' | 'rock' | 'fiber_plant' | 'berry_bush' | 'iron_vein' | 'coal_seam'
+export type NodeType =
+  | 'tree'
+  | 'rock'
+  | 'fiber_plant'
+  | 'berry_bush'
+  | 'iron_vein'
+  | 'coal_seam'
+  // ── LES NŒUDS STRUCTURANTS DES ZONES (spec worldgen R9) — chacun n'existe QUE chez lui ──
+  /** La Vieille Sylve : un fût de trois cents ans. Il faut une hache d'atelier pour l'abattre. */
+  | 'old_tree'
+  /** La Tourbière : la tourbe se lève à la bêche, dans l'eau noire. */
+  | 'peat_cut'
+  /** Les Hauts Alpages : la carrière. Un bloc, pas un caillou. */
+  | 'quarry'
+  /** Le Versant Brûlé : un tas de cendre, au pied d'une souche. */
+  | 'ash_heap'
+  /** La Combe aux Ruines : on FOUILLE des gravats. Ce qu'on en tire est ce que d'autres ont fait. */
+  | 'rubble'
 
 /**
  * Les quatre paliers d'outil, ORDONNÉS (spec craft-fortune C4). Le rang décide
@@ -431,6 +475,15 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
   iron_vein: { item: 'iron_ore', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
   coal_seam: { item: 'coal', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
+
+  // ── LES STRUCTURANTES. Toutes exigent l'outil d'ATELIER (`basic`) : la ressource d'une zone
+  //    T1 ne se prend pas à mains nues. L'outil est la porte du palier, pas un bonus — et la
+  //    ZONE est la porte de l'outil. Les deux verrous se répondent.
+  old_tree: { item: 'hardwood', stock: 6, blockHalfSub: 1, skill: 'woodcutting', tool: 'axe', minTool: 'basic' },
+  peat_cut: { item: 'peat', stock: 10, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
+  quarry: { item: 'cut_stone', stock: 6, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
+  ash_heap: { item: 'ash', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
+  rubble: { item: 'components', stock: 4, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
 }
 
 /** Les trois paliers outillés de chaque famille. Le barème, lui, est `TOOL_YIELD`. */
@@ -950,7 +1003,61 @@ export const FAUNA = {
    * effectivement qu'une. En resserrant le disque (52) et en montant le plafond,
    * on vise ~4 : assez pour que la forêt bruisse, trop peu pour un zoo.
    */
-  CAP: 30,
+  /**
+   * LE PLAFOND DU MONDE — un GARDE-FOU DE SERVEUR, pas un réglage de jeu.
+   *
+   * Il ne borne plus ce qu'un joueur RESSENT (c'est `GROUND_CAP` qui le fait) :
+   * il borne ce que la MACHINE doit tenir, quel que soit le nombre de joueurs
+   * éparpillés dans la vallée. On ne le sent jamais en jouant ; on le sentirait
+   * s'il n'existait pas, le jour où quarante joueurs se dispersent sur quarante
+   * coins de chasse.
+   *
+   * MESURÉ (banc multi, vallée réelle) : 16 joueurs dans 16 coins → 480 bêtes,
+   * chacun avec sa clairière PLEINE, pour 10,9 ms de tick sur un budget de 50
+   * (20 Hz). 600 laisse donc la place à vingt joueurs par salle — et le jour où
+   * la Vallée découpera le monde en rooms (une par zone), c'est le serveur qui
+   * posera ce nombre, salle par salle.
+   */
+  CAP: 600,
+  /**
+   * LE PLAFOND D'UN COIN DE CHASSE (spec faune R17) — et C'EST LUI qu'on règle.
+   *
+   * Le plafond était GLOBAL, et ça ne survivait pas au multi : trente bêtes pour
+   * TOUT le monde, c'est trois bêtes par joueur à dix joueurs — un monde mort.
+   * Pire : le peuplement tirait UN SEUL avatar au sort par tick, donc à dix
+   * joueurs chacun attendait quatre secondes entre deux naissances.
+   *
+   * Le budget appartient donc au COIN, pas au monde. Deux joueurs dans deux
+   * clairières différentes ont chacun leur clairière pleine ; deux joueurs dans
+   * LA MÊME clairière la partagent — ce qui est exactement juste : c'est le même
+   * pré, il porte les mêmes bêtes. Le coût par tick ne dépend ni de la carte, ni
+   * du nombre de coins : seulement du nombre de coins QU'ON REGARDE.
+   */
+  GROUND_CAP: 30,
+  /**
+   * LA PART DES PRÉDATEURS dans un coin de chasse — le garde-fou du DANGER.
+   *
+   * Mesuré : la nuit, un coin se remplissait de DIX-NEUF LOUPS (cinq ou six
+   * meutes), et neuf coins sur dix-neuf en portaient dix ou plus. Le loup ne
+   * débordait pas du plafond : il le RAFLAIT. Hors de leurs heures, le cerf et le
+   * lapin tombent au plancher (`SPAWN_FLOOR`) pendant que le loup est à son
+   * maximum ; il gagne six tirages sur dix, et il naît par trois ou quatre.
+   *
+   * Ce n'était plus « la nuit est dangereuse », c'était un MUR. Et c'était
+   * d'autant plus fâcheux que LA NUIT QUI CHASSE avait été bornée avec soin
+   * (`NIGHT_HUNT.MAX_ALIVE` : « on peut perdre, pas être submergé ») — le
+   * peuplement ambiant contournait cette borne par la porte de derrière.
+   *
+   * On ne rend donc PAS le loup plus rare (ça viderait la nuit de son sens) : on
+   * borne sa PART. Le reste du coin va au gibier — qui, la nuit, DORT (R10). Une
+   * clairière nocturne devient alors ce qu'elle doit être : des cerfs couchés, et
+   * quelques loups qui rôdent entre eux. C'est l'écosystème, pas un mur.
+   *
+   * 0,2 × 30 = SIX loups au plus dans une clairière : une meute pleine, plus un
+   * rôdeur. Assez pour tuer un homme sans lance (une meute de quatre inflige déjà
+   * ~37 dégâts/s) ; pas assez pour qu'il n'ait jamais eu sa chance.
+   */
+  PREDATOR_SHARE: 0.2,
   /* ── LES COINS DE CHASSE (spec faune R17) ───────────────────────────────── */
   /**
    * LE GIBIER A DES ADRESSES (décision utilisateur, 2026-07-13).
@@ -1836,6 +1943,19 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   rope: 0.4,
   iron_ore: 3,
   coal: 2,
+
+  // ── LES STRUCTURANTES : elles sont LOURDES, et c'est le second verrou de la zone.
+  //
+  //    La zone dit OÙ ; le poids dit COMBIEN. Un sac de trente unités ne ramène que **dix**
+  //    pierres de taille des Hauts Alpages, ou dix gros bois de la Vieille Sylve : la ressource
+  //    d'une zone T1 ne se rapporte pas par brassées, elle se rapporte par convois. C'est ce qui
+  //    rend le PORTAGE (et donc la route, et donc le risque) intéressant — au lieu de
+  //    `circleFactor`, qui multipliait le stock d'un nœud sans que ça change rien à ce qu'on
+  //    ramenait (« on revient avec trente bois du bout du monde comme du coin du feu »).
+  hardwood: 3, // un fût, pas une bûche
+  cut_stone: 3, // un bloc, pas un caillou
+  peat: 1, // la tourbe est légère, mais il en faut beaucoup
+  ash: 0.4, // de la cendre : ça ne pèse rien, et c'est un composant, pas un combustible
   iron_ingot: 4,
   components: 1.5,
   crude_axe: 2,

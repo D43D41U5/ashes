@@ -162,6 +162,15 @@ const TERRAIN_COLORS: Record<number, number> = {
   20: 0xbebe94, // alpage fleuri (alpine_flowers)
   21: 0x4a3e38, // forêt brûlée (burnt_forest)
   22: 0x1c3a28, // vieille forêt (old_growth)
+  /**
+   * LA FALAISE — et elle doit se lire comme un MUR, pas comme un caillou.
+   *
+   * Elle est le squelette de la carte : c'est en la LONGEANT qu'on trouve les portes (« on ne
+   * trouve pas une porte, on suit un mur »). Il lui faut donc l'arête la plus franche de toute la
+   * palette : presque noire, très froide, sans le moindre parent visuel dans la roche (0x6d6d70)
+   * ni le mur (0x4a4038). À l'écran, on ne doit pas pouvoir hésiter une seconde.
+   */
+  23: 0x22242c, // falaise (cliff)
 }
 
 /** Assombrit/éclaircit légèrement une couleur (variation par tuile). */

@@ -167,7 +167,18 @@ export { spawnHorde, spawnConvoy } from './worldevents'
 export { applyDamage } from './combat'
 export { applyStructureDamage, grantItems } from './village'
 export { generateValley } from './valleygen'
-export { generateAlpineTerrain, WORLDGEN_PHASES, type WorldgenPhase } from './alpinegen'
+
+// ── LA NOUVELLE VALLÉE — un graphe de zones, un terrain qui en découle (spec `worldgen.md`) ──
+export {
+  deriveGrapheZones, echantillonAt, MONDE, tailleCarte, ZONES,
+  type GrapheZones, type Seuil, type Tier, type Zone as ZoneDef,
+} from './zonegraph'
+export { generateZonedTerrain, palierDe, PALIER_MAX, RELIEF, type CarteZonee } from './zonegen'
+// LE FRONT DE CENDRE — la saison est une vallée qu'on perd (spec `worldgen.md` §7).
+export { avanceeDuFront, calibreLeFront, CENDRE, estCendre, partSousLaCendre } from './cendre'
+export {
+  CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, type Emplacement,
+} from './zone-content'
 export { placePois, POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
 // Où le monde commence, et ce qui communique avec quoi — le client LIT le spawn,
 // il ne le recalcule pas (il le faisait, et sans vérifier la connexité).

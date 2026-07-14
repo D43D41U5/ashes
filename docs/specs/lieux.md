@@ -19,7 +19,13 @@ Corollaire non négociable : **aucun lieu `reward` ne donne de butin.** Le butin
 ### Le préalable : la carte est un acquis, pas un dû (R1-R3)
 
 - **R1 — Les lieux ne sont plus offerts.** La carte plein écran (`M`) affiche aujourd'hui **toutes** les pastilles de POI dès le tick 0 : la vallée est intégralement divulguée avant le premier pas. Désormais elle n'affiche que les lieux **connus** du joueur.
-- **R2 — On cache les lieux, jamais le terrain.** Le relief, les biomes, la rivière, les routes restent visibles d'emblée : le personnage est d'ici, il connaît la *forme* de sa vallée. Ce qu'il ignore, c'est ce qu'elle *contient*. Partage volontaire — généreux sur l'orientation, avare sur le secret. (Contre-conception écartée : un brouillard de guerre classique sur le terrain, qui punirait l'orientation au lieu de récompenser la curiosité.)
+- **R2 — ~~On cache les lieux, jamais le terrain.~~ ABROGÉE le 2026-07-14 — voir R2bis.**
+
+  *(Texte d'origine, conservé pour l'histoire : « Le relief, les biomes, la rivière, les routes restent visibles d'emblée : le personnage est d'ici, il connaît la forme de sa vallée. Ce qu'il ignore, c'est ce qu'elle contient. Partage volontaire — généreux sur l'orientation, avare sur le secret. Contre-conception écartée : un brouillard de guerre classique sur le terrain, qui punirait l'orientation au lieu de récompenser la curiosité. »)*
+
+- **R2bis — LE BROUILLARD DE GUERRE : on cache le terrain AUSSI** (décision d'Alexis, 2026-07-14 — « la carte se découvrira selon l'exploration du joueur, pour pousser à chercher »). La contre-conception écartée en juillet est devenue la conception. Ce qui a changé entre-temps, et qui la rend jouable là où elle ne l'était pas : **les FALAISES** (spec `worldgen.md` R2-R4). L'objection d'alors — « un brouillard punirait l'orientation » — supposait un terrain sans arêtes, où l'on erre. Une falaise a un **bord** : on la longe, on tombe sur la brèche. **On ne trouve pas une porte, on suit un mur.** Les deux décisions se tiennent ou tombent ensemble : sans falaises, le brouillard n'est pas un mystère, c'est un désert.
+
+- **R2ter — Le brouillard appartient au JOUEUR, et se partage dans le VILLAGE** (décision d'Alexis). Le savoir géographique devient un **bien** : il se troque, il se vend, il se trahit. C'est le carburant exact de l'alignement émergent, et c'est le même geste que les rumeurs achetables (voir « hors périmètre »). Ce qui reste **intégralement vrai** de la conception d'origine : les trois devises (savoir, répit, récit), les charges du Belvédère et du Cairn, et le fait que **les lieux ne s'achètent qu'à la marche ou au savoir d'autrui** — le brouillard ne les remplace pas, il les *précède*.
 - **R3 — `knownPois: number[]` sur l'entité joueur** (vide à la création). Un tableau d'`poiId`, pas un `Set` — l'état de sim reste JSON-sérialisable (invariant d'archi). **Les PNJ n'ont pas de carte** : ils n'accumulent rien et ne déclenchent aucune découverte.
 
 ### L'identité d'un lieu (R4)
@@ -77,7 +83,7 @@ Le répit n'émet aucun événement : c'est un **effet continu de terrain**, com
 
 ## Critères d'acceptation
 
-- **A1** — Au tick 0, `knownPois` est vide et la carte plein écran n'affiche **aucune** pastille de lieu. Le terrain, lui, est entier (biomes, relief, routes).
+- **A1** — Au tick 0, `knownPois` est vide et la carte plein écran n'affiche **aucune** pastille de lieu. ~~Le terrain, lui, est entier (biomes, relief, routes).~~ **Amendé le 2026-07-14 (R2bis)** : au tick 0, le terrain n'est PAS entier non plus — seule est révélée l'emprise déjà parcourue. Le Belvédère, lui, dévoile du **terrain** en plus des lieux : monter, c'est voir.
 - **A2** — **La règle de base** : un joueur qui traverse un Gisement (famille `eco`, aucune charge) l'ajoute à `knownPois` et émet un `poi_discovered` — la marche seule suffit à connaître. Le retraverser n'émet rien.
 - **A3** — Un joueur qui atteint un Belvédère découvre tous les lieux dans le rayon (et **aucun** au-delà), émet un `poi_discovered` par lieu, **une seule fois** : y revenir au tick suivant n'émet rien.
 - **A4** — Un Cairn atteint révèle exactement **un** lieu, le plus proche encore inconnu ; sur deux lieux exactement équidistants, c'est celui de plus petit `poiId`. Un Cairn dont tous les voisins sont déjà connus ne révèle rien (il entre quand même dans `knownPois`, par A2).

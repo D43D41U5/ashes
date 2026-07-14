@@ -24,7 +24,25 @@ export const TILE_PX = 16
  * MAIS les murs hauts s'écartent de leur collision plate (on bute un peu avant
  * le mur dessiné) et les billboards demandent plus de marge de culling (gérée
  * dans renderNodes). */
-export const RELIEF_H = 150
+export const RELIEF_H = 0
+
+/*
+ * LE FAUX-RELIEF EST ABROGÉ — décision d'Alexis, 2026-07-14 (spec `worldgen.md` §2).
+ *
+ * `RELIEF_H` valait 150 : chaque tuile était soulevée de `elevation × 150` pixels pour simuler du
+ * relief. C'était illisible (Alexis : « Phaser ne nous permet pas d'avoir un terrain avec assez de
+ * profondeur pour parler de vrai relief »), et si fragile qu'**une seed sur quatre faisait planter
+ * le jeu** (`assertNoFold` : quand le sol descend vers le sud plus vite que `TILE_PX / RELIEF_H`,
+ * l'image se replie sur elle-même).
+ *
+ * La verticalité passe désormais par les **TERRASSES et les FALAISES** : l'altitude est un ENTIER,
+ * et entre deux paliers il y a une PAROI bloquante, dessinée. Une falaise ne se replie pas — c'est
+ * un mur. Et elle a un BORD, qu'on peut longer : *on ne trouve pas une porte, on suit un mur.*
+ *
+ * À 0, tout le mécanisme devient inerte SANS être supprimé : le warp est l'identité, `assertNoFold`
+ * ne peut plus lever (son plafond devient infini), et les marges de culling tombent à zéro. Le code
+ * mort part avec la démolition de l'ancienne carte — on ne fait pas deux chantiers à la fois.
+ */
 
 /**
  * LA MARGE DE CULLING VERS LE BAS, en tuiles — et elle n'est PAS négociable.

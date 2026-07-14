@@ -46,8 +46,20 @@ describe('terrains d\'altitude alpins', () => {
     // `cover: 1` : l'éboulis n'abrite personne (spec chasse C3).
     expect(TERRAINS[TERRAIN_SCREE]).toEqual({ name: 'scree', walkable: true, speedFactor: 0.7, cover: 1 })
   })
-  it('snow est bloquant (pics)', () => {
+  /**
+   * LA NEIGE EST PRATICABLE — décision d'Alexis, 2026-07-14. Ce test disait l'inverse.
+   *
+   * Elle bloquait, et c'était une faute qui se dénonçait elle-même : `TEMPERATURE.BIOME_OFFSET`
+   * inflige **−10 sur la neige**, un malus pour qui S'Y TIENT — or on ne pouvait jamais s'y
+   * tenir. **Cette ligne était du code mort**, et toute la conception « le froid, prix de la
+   * verticalité » était inerte. Avec la roche et le glacier, ça faisait 24 % de la carte en
+   * décor peint.
+   *
+   * Lente (0,5 : on s'enfonce) et mortellement froide — c'est ce qui rend le Névé Blanc possible.
+   */
+  it('snow est PRATICABLE — lente, et mortellement froide', () => {
     expect(TERRAIN_SNOW).toBe(10)
-    expect(TERRAINS[TERRAIN_SNOW]!.walkable).toBe(false)
+    expect(TERRAINS[TERRAIN_SNOW]!.walkable).toBe(true)
+    expect(TERRAINS[TERRAIN_SNOW]!.speedFactor).toBeLessThan(1)
   })
 })
