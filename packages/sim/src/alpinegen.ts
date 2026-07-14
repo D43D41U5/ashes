@@ -5,6 +5,7 @@
  * fractions de min(width,height) → scalable à toute taille.
  */
 import { fbm2, fbmWarp2, hash2, ridgedFbm2 } from './noise'
+import { boxBlur } from './geometry'
 import { createEmptyMap, type WorldMap } from './map'
 import { sealBorderRing } from './valleygen'
 import { carveHydrology } from './alpine-hydro'
@@ -425,23 +426,59 @@ export function generateAlpineTerrain(
  * Appliqué EN DERNIER, exprès : moisture, bandes de biome et surtout l'hydrologie
  * (drainage priority-flood qui « comble les cuvettes ») ont tourné sur le champ
  * LISSE pour lequel ils sont conçus — sinon les vallons créent de fausses
- * dépressions et parasitent rivières/tarns. Purement visuel : seul le warp/l'ombre
- * du client lisent `elevation`. (Client → sin/cos interdits ? non, c'est du /sim
- * PUR : fbmWarp2 n'utilise pas de transcendante.)
+ * dépressions et parasitent rivières/tarns. Purement visuel : seul le warp et
+ * l'ombrage du client lisent `elevation`.
+ *
+ * DEUX FAUTES CORRIGÉES ICI (2026-07-14), et elles FAISAIENT PLANTER LE JEU.
+ *
+ * Le client soulève chaque tuile de `elevation × RELIEF_H` pixels pour donner du
+ * relief. Si le sol descend vers le sud plus vite que `TILE_PX / RELIEF_H` par
+ * tuile, l'image SE REPLIE sur elle-même — et `assertNoFold` (WorldScene.ts) lève
+ * alors une exception, **sans garde de développement** : le jeu ne démarre pas.
+ * Mesuré : **4 seeds sur 16** dépassaient le plafond. Le jeu ne survivait que
+ * parce que `veillee.ts` code la seed 2026 en dur.
+ *
+ * 1. LE WARP ÉTAIT TROIS FOIS PLUS GRAND QUE LE MOTIF QU'IL DÉFORMAIT. Les
+ *    vallons ont une longueur d'onde de `HILL_FRAC × D` = **24 tuiles**, et on
+ *    leur appliquait un domain warp de `WARP_FRAC × D` = **72 tuiles**
+ *    d'amplitude. Déplacer le point d'échantillonnage de trois longueurs d'onde,
+ *    ce n'est plus tordre un motif : c'est le tirer au sort à chaque tuile. Le
+ *    champ obtenu a des pentes énormes. `fbm2` suffit — et il économise au
+ *    passage six `gradientNoise2` par tuile.
+ *
+ * 2. LE VALLON S'ARRÊTAIT NET AU BORD DE L'EAU. Le `continue` sur les tuiles
+ *    d'eau laisse l'eau plate — c'est voulu — mais il laissait aussi une MARCHE
+ *    de la hauteur du vallon (jusqu'à ±0,05) sur la berge d'en face. On fond donc
+ *    le vallon à l'approche de l'eau, par un masque terre/eau adouci (deux flous
+ *    séparables). L'eau reste EXACTEMENT plate ; c'est la terre qui vient la
+ *    rejoindre en pente douce.
  */
 export function addReliefBumps(map: WorldMap, seed: number): void {
   const { width, height } = map
   const D = Math.min(width, height)
   const hill = D * ALPINE.HILL_FRAC
-  const warp = Math.max(1, Math.round(D * ALPINE.WARP_FRAC))
   const el = map.elevation!
+  const N = width * height
+
+  // Masque de TERRE (1) / eau (0), puis adouci : il devient le fondu du vallon.
+  const fade = new Array<number>(N)
+  for (let i = 0; i < N; i++) {
+    const t = map.terrain[i]
+    fade[i] = t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER ? 0 : 1
+  }
+  boxBlur(fade, width, height, SHORE_FADE_TILES)
+
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x
       const t = map.terrain[i]
-      if (t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER) continue // eau : plate
-      const bump = ALPINE.HILL_AMP * (fbmWarp2(x, y, hill, (seed ^ 0x2c3d4e) | 0, warp) - 0.5)
-      el[i] = clamp01(el[i]! + bump)
+      if (t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER) continue // l'eau reste plate
+      // `fbm2`, PAS `fbmWarp2` : voir la faute n°1 ci-dessus.
+      const bump = ALPINE.HILL_AMP * (fbm2(x, y, hill, (seed ^ 0x2c3d4e) | 0) - 0.5)
+      el[i] = clamp01(el[i]! + fade[i]! * bump)
     }
   }
 }
+
+/** Sur combien de tuiles le vallon s'éteint en approchant de l'eau. */
+const SHORE_FADE_TILES = 4

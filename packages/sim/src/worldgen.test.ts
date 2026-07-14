@@ -5,7 +5,7 @@ import {
   carveDistanceToMain, inMainComponent, walkableComponents, walkableSpawn,
   type CarveField, type WalkableComponents,
 } from './connectivity'
-import { isBlockingTile, type WorldMap } from './map'
+import { isBlockingTile, maxSouthGradient, type WorldMap } from './map'
 import { POI_PLACEMENT, POI_TYPES } from './poi'
 
 /**
@@ -311,6 +311,54 @@ describe('la vraie carte — le fleuve', () => {
             `Le fleuve ne sépare rien de conséquent — il se contourne, et les ${gues.length} gués ne servent à rien.`,
         )
         .toBeGreaterThan(0.2)
+    })
+  })
+})
+
+describe('la vraie carte — le relief est RENDABLE', () => {
+  /**
+   * CRITICAL — LE JEU DÉMARRE, SUR TOUTE SEED.
+   *
+   * Le client donne du relief en soulevant chaque tuile de `elevation × RELIEF_H`
+   * pixels. Si le sol descend vers le SUD plus vite que `TILE_PX / RELIEF_H` par
+   * tuile, deux tuiles voisines se croisent à l'écran : l'image se replie, et le
+   * client **lève une exception** (`assertNoFold`, appelé SANS garde de
+   * développement — un écran blanc, pas un artefact).
+   *
+   * Le 2026-07-14, **quatre seeds sur seize** dépassaient ce plafond. Le jeu ne
+   * démarrait pas dessus. Personne ne le voyait : le mode Veillée code la seed
+   * 2026 en dur, et elle passait — de justesse (11,3 sur un budget de 16).
+   *
+   * Trois causes, toutes dans `/sim`, toutes corrigées :
+   *   • `erodeChannels` creusait une tranchée à PAROIS VERTICALES — l'incision
+   *     vaut `0,2·√(acc)/√N`, ce qui saute de 0,2 en UNE tuile entre le chenal et
+   *     sa berge. Elle s'étale désormais (`EROSION_BANK_TILES`) : une vallée en V
+   *     au lieu d'une entaille ;
+   *   • `addReliefBumps` appliquait un domain warp de 72 tuiles d'amplitude à un
+   *     motif de 24 tuiles de longueur d'onde — trois fois son échelle. Ce n'est
+   *     plus tordre un motif, c'est le tirer au sort ;
+   *   • le même vallon s'arrêtait NET au bord de l'eau, y laissant une marche.
+   *
+   * Résultat : pente sud maximale 0,153 → 0,051 au pire. Marge ×3.
+   *
+   * LE SEUIL EST DUPLIQUÉ ICI, ET C'EST ASSUMÉ : `/sim` ne peut pas importer les
+   * constantes de rendu du client (invariant n°1 — la pureté). Si `RELIEF_H` ou
+   * `TILE_PX` bougent, ce nombre doit bouger avec eux ; le commentaire est le lien.
+   */
+  const RELIEF_H = 150 // client : render/framing.ts
+  const TILE_PX = 16 //   idem
+  const BUDGET = TILE_PX / RELIEF_H // 0,10667
+
+  it('CRITICAL — le relief ne REPLIE pas le rendu (le client refuserait de démarrer)', () => {
+    eachMap((map, seed) => {
+      const g = maxSouthGradient(map.elevation!, map.width, map.height)
+      expect
+        .soft(
+          g,
+          `seed ${seed} : pente sud maximale ${g.toFixed(4)} ≥ ${BUDGET.toFixed(4)}. ` +
+            `Le client lèverait une exception au démarrage (assertNoFold) : ÉCRAN BLANC, pas un artefact.`,
+        )
+        .toBeLessThan(BUDGET)
     })
   })
 })

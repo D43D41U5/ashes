@@ -6,6 +6,7 @@
  *
  * Convention : `screenY = worldY·TILE − elevation·H`, X jamais cisaillé.
  */
+import { maxSouthGradient } from '@braises/sim'
 import type { SampleElevation } from './hillshade'
 
 export interface Warp {
@@ -55,20 +56,26 @@ export function createWarp(sample: SampleElevation, h: number, tilePx: number): 
   return { lift, unproject, h }
 }
 
-/** Gradient d'élévation maximal vers le SUD (ty croissant). `H·ce gradient <
- *  tilePx` garantit `screenY` monotone donc l'absence de repli. */
-export function maxSouthGradient(elevation: number[], width: number, height: number): number {
-  let max = 0
-  for (let y = 0; y < height - 1; y++) {
-    for (let x = 0; x < width; x++) {
-      const g = elevation[(y + 1) * width + x]! - elevation[y * width + x]!
-      if (g > max) max = g
-    }
-  }
-  return max
-}
+/**
+ * `maxSouthGradient` a émigré dans `/sim` (map.ts) : le client ne fait que
+ * CONSTATER le repli, il ne peut pas le commettre — le champ d'élévation est
+ * produit par la sim, et c'est donc à elle de garantir qu'il est rendable, et de
+ * le tester sur la vraie carte et plusieurs seeds. Ce garde-fou est resté ici du
+ * mauvais côté de la frontière, et pendant ce temps **4 seeds sur 16** faisaient
+ * lever cette exception au démarrage (2026-07-14).
+ */
+export { maxSouthGradient }
 
-/** Assert de dev : le `H` visé ne replie jamais le sol sur ce champ. */
+/**
+ * Le `H` visé ne replie jamais le sol sur ce champ.
+ *
+ * ATTENTION — ceci N'EST PAS un assert de développement, malgré le nom qu'il
+ * portait : il est appelé sans garde `import.meta.env.DEV` (WorldScene, étape
+ * `relief`), donc en PRODUCTION. Un champ fautif ne donne pas un artefact visuel :
+ * il donne un écran blanc. C'est volontairement dur — un sol replié est illisible,
+ * mieux vaut refuser de démarrer — mais ça fait de la garde de `/sim` une
+ * obligation, pas une politesse.
+ */
 export function assertNoFold(
   elevation: number[],
   width: number,

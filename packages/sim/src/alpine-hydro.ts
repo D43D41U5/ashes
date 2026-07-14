@@ -16,6 +16,7 @@
  * hash2 pour l'échantillonnage/départage ; arithmétique autorisée, pas de trigo.
  */
 import { TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_SHALLOW_WATER } from './balance'
+import { boxBlur } from './geometry'
 import { elevationAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
 import { isWater, type Paint, type ValleyPoint } from './valleygen-primitives'
@@ -87,9 +88,12 @@ export const HYDRO = {
   TARN_MIN_FRAC: 0.4,     // altitude min d'un tarn
   TARN_MAX_FRAC: 0.68,    // altitude max d'un tarn
   TARN_R_FRAC: 0.014,     // rayon d'un tarn
-  EROSION_DEPTH: 0.2,     // incision MAX (au lac) de l'érosion fluviale ; les
-                          //  affluents creusent ∝ √(flux). Baisse le plafond de
-                          //  RELIEF_H (berges plus raides) — calibré ensemble.
+  EROSION_DEPTH: 0.2,     // incision MAX (à la bouche) de l'érosion fluviale ; les
+                          //  affluents creusent ∝ √(flux).
+  /** Sur combien de tuiles l'incision s'étale — la largeur des BERGES.
+   *  Sans elle, la tranchée a des parois verticales et le rendu se replie
+   *  (cf. `erodeChannels` : c'est ce qui faisait planter 4 seeds sur 16). */
+  EROSION_BANK_TILES: 4,
 }
 
 const NX = [-1, 0, 1, -1, 1, -1, 0, 1]
@@ -529,10 +533,33 @@ function erodeChannels(map: WorldMap, dir: number[], order: number[]): void {
     const d = dir[i]!
     if (d >= 0) acc[d]! += acc[i]!
   }
-  const norm = 1 / Math.sqrt(N) // acc au sink = N → carve max = EROSION_DEPTH
+
+  /**
+   * L'INCISION S'ÉTALE AVANT DE S'APPLIQUER — et ce flou n'est pas cosmétique :
+   * sans lui, LE JEU PLANTE sur une seed sur quatre.
+   *
+   * L'incision vaut `EROSION_DEPTH × √(acc) / √N`. Au chenal principal, `acc` vaut
+   * N (toute la vallée s'y écoule) donc l'incision vaut 0,2 ; sur la berge, à UNE
+   * TUILE de là, `acc` vaut 1 et l'incision vaut 0,0001. **Une falaise de 0,2 en
+   * une tuile.** Le client soulève chaque tuile de `elevation × RELIEF_H` (150 px)
+   * : une marche pareille replie l'image sur elle-même, et `assertNoFold` lève une
+   * exception — sans garde de développement. Mesuré : les seeds 7, 2718, 4 et 5 ne
+   * démarraient pas.
+   *
+   * C'est un artefact de MODÈLE, pas de rendu : l'accumulation de flux est
+   * discrète (une tuile draine, ou ne draine pas), alors qu'une vraie vallée
+   * fluviale a des VERSANTS. On étale donc l'incision sur quelques tuiles avant de
+   * la soustraire — ce qui creuse une vallée en V au lieu d'une tranchée à parois
+   * verticales. Le lit reste au même endroit, à la même profondeur ; il gagne des
+   * berges.
+   */
+  const carve = new Array<number>(N)
+  const norm = 1 / Math.sqrt(N) // acc au puits = N → incision max = EROSION_DEPTH
+  for (let i = 0; i < N; i++) carve[i] = HYDRO.EROSION_DEPTH * Math.sqrt(acc[i]!) * norm
+  boxBlur(carve, map.width, map.height, HYDRO.EROSION_BANK_TILES)
+
   for (let i = 0; i < N; i++) {
-    const carve = HYDRO.EROSION_DEPTH * Math.sqrt(acc[i]!) * norm
-    const e = el[i]! - carve
+    const e = el[i]! - carve[i]!
     el[i] = e < 0 ? 0 : e
   }
 }

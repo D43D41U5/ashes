@@ -130,3 +130,33 @@ export function poiClearings(map: WorldMap): Set<number> {
 export function poiCenter(z: Zone): { x: number; y: number } {
   return { x: z.x + z.w / 2, y: z.y + z.h / 2 }
 }
+
+/**
+ * LA PENTE MAXIMALE VERS LE SUD — le contrat que `/sim` doit au rendu.
+ *
+ * Le client donne du relief en soulevant chaque tuile de `elevation × RELIEF_H`
+ * pixels vers le haut de l'écran. Si le sol descend vers le sud (`ty` croissant)
+ * plus vite que `TILE_PX / RELIEF_H` par tuile, deux tuiles voisines se croisent
+ * à l'écran : **l'image se replie sur elle-même**, la tuile du fond passe devant
+ * celle du devant, et plus rien n'est lisible. Le client refuse alors de démarrer
+ * (`assertNoFold`, WorldScene.ts — sans garde de développement : c'est une
+ * exception, pas un avertissement).
+ *
+ * CETTE FONCTION VIVAIT DANS LE CLIENT. C'était le mauvais côté de la frontière :
+ * le client ne fait que CONSTATER la faute, il ne peut pas la commettre. Le champ
+ * d'élévation est produit par `/sim`, et c'est donc `/sim` qui doit garantir qu'il
+ * est rendable — et le tester (`worldgen.test.ts`, sur la vraie carte et plusieurs
+ * seeds). Le 2026-07-14, **4 seeds sur 16 dépassaient le plafond** : le jeu ne
+ * démarrait pas. Personne ne le voyait, parce que le mode Veillée code la seed
+ * 2026 en dur — et elle passait.
+ */
+export function maxSouthGradient(elevation: readonly number[], width: number, height: number): number {
+  let max = 0
+  for (let y = 0; y < height - 1; y++) {
+    for (let x = 0; x < width; x++) {
+      const g = elevation[(y + 1) * width + x]! - elevation[y * width + x]!
+      if (g > max) max = g
+    }
+  }
+  return max
+}

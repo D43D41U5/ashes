@@ -86,7 +86,12 @@ export type {
 } from './balance'
 
 // ─── Monde : carte, temps, collision, navigation ──────────────────────────
-export { createEmptyMap, terrainAt, elevationAt, isBlockingTile, zoneAt, poisAt, poiCenter, poiClearings } from './map'
+export {
+  createEmptyMap, terrainAt, elevationAt, isBlockingTile, zoneAt, poisAt, poiCenter, poiClearings,
+  // Le contrat que /sim doit au rendu : un champ d'élévation qui ne replie pas
+  // l'image. Le client le CONSTATE (assertNoFold) ; la sim le GARANTIT.
+  maxSouthGradient,
+} from './map'
 export type { WorldMap, Zone } from './map'
 export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
