@@ -41,13 +41,30 @@ const PROD_SEEDS = [2026, 99, 2718, 31415, 7] // 2026 = la seed du jeu
 const maps = new Map<number, WorldMap>()
 const comps = new Map<number, WalkableComponents>()
 const fields = new Map<number, CarveField>()
-beforeAll(() => {
+
+/**
+ * ON REND LA MAIN ENTRE DEUX CARTES — et ce n'est pas de la coquetterie.
+ *
+ * Générer cinq cartes de production, c'est ~45 s de calcul SYNCHRONE. Le worker
+ * vitest bloque alors sa propre boucle d'événements et ne peut plus répondre au
+ * battement de cœur RPC du processus principal (`onTaskUpdate`). Vitest le compte
+ * comme une **erreur non gérée** : tous les tests passent, et la suite sort en
+ * échec quand même. Un portail qui dit « rouge » alors que tout est vert est pire
+ * qu'un portail rouge.
+ *
+ * Une micro-attente entre deux cartes suffit : le worker vide sa file de messages,
+ * répond, et repart. Elle ne coûte rien (le travail, lui, reste synchrone).
+ */
+const respire = (): Promise<void> => new Promise((r) => { setTimeout(r, 0) })
+
+beforeAll(async () => {
   for (const seed of PROD_SEEDS) {
     const map = generateAlpineTerrain(PROD.width, PROD.height, seed)
     const comp = walkableComponents(map)
     maps.set(seed, map)
     comps.set(seed, comp)
     fields.set(seed, carveDistanceToMain(map, comp, POI_PLACEMENT.MAX_CARVE_TILES))
+    await respire()
   }
 }, 300_000)
 
