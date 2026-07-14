@@ -44,6 +44,42 @@ export interface WorldMap {
    * (`CENDRE.PART_CIBLE`) et on en déduit la distance, par dichotomie, à la génération.
    */
   cendreMax?: number
+
+  /**
+   * ═══ LA ZONE, POUR LE CLIENT — et pourquoi elle est GROSSIÈRE ═══
+   *
+   * Le client ne peut pas distinguer deux zones à partir des TERRAINS : ils sont partagés (de
+   * l'herbe pousse aux Prés Bas comme à la Combe aux Ruines). Sans la zone, aucune palette ne
+   * rendra jamais le critère de lisibilité du directeur de jeu — *« d'un coup d'œil, savoir si
+   * l'on est dans une zone facile ou difficile »*.
+   *
+   * Mais on ne lui envoie pas un entier par tuile : ce serait 2,5 M de nombres (~20 Mo) pour une
+   * information qui varie **lentement**. On envoie une grille au pas de `zonePas` — et l'erreur
+   * qu'elle commet (au plus deux tuiles au bord d'une zone) tombe **toujours dans la bande de
+   * falaise**, qui fait quarante-quatre tuiles d'épaisseur et qu'on peint en noir. L'imprécision
+   * est donc, littéralement, invisible.
+   */
+  zoneGrid?: number[]
+  zonePas?: number
+  /** L'identité de chaque zone, indexée par son id : de quoi bâtir une palette. */
+  zoneDefs?: { slug: string; nom: string; tier: number }[]
+}
+
+/**
+ * LA ZONE D'UNE TUILE, lue dans la grille grossière. `undefined` sur une carte sans zones.
+ *
+ * L'arrondi vers le plus proche échantillon fait une erreur d'au plus `zonePas / 2` tuiles — et
+ * elle tombe dans la falaise, qu'on ne voit pas. Voir `WorldMap.zoneGrid`.
+ */
+export function zoneSlugAt(map: WorldMap, tx: number, ty: number): string | undefined {
+  const grid = map.zoneGrid
+  const pas = map.zonePas
+  const defs = map.zoneDefs
+  if (!grid || !pas || !defs) return undefined
+  const cols = Math.ceil(map.width / pas)
+  const i = Math.min(cols - 1, Math.max(0, Math.round(tx / pas)))
+  const j = Math.min(Math.ceil(map.height / pas) - 1, Math.max(0, Math.round(ty / pas)))
+  return defs[grid[j * cols + i] ?? 0]?.slug
 }
 
 export function createEmptyMap(width: number, height: number, fillTerrainId: number): WorldMap {

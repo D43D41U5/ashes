@@ -97,6 +97,60 @@ const PROBE = () => {
 
 const SCENARIOS = {
   /**
+   * LES ZONES SE DISTINGUENT-ELLES D'UN COUP D'ŒIL ?
+   *
+   * C'est le principe n°3 du directeur de jeu, et c'est le SEUL test qui vaille : on se pose au
+   * cœur de chaque zone, on regarde, et on répond oui ou non. Aucune propriété testable ne dira
+   * jamais si une Vieille Sylve se distingue d'un Versant Brûlé — il faut la VOIR.
+   *
+   * Exige `--dev` (le TP n'est armé que là).
+   */
+  async zones(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+
+    const zones = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      if (!m.zoneDefs) return []
+      // Le centre de chaque zone : la moyenne des tuiles qu'elle possède (grille grossière).
+      const cols = Math.ceil(m.width / m.zonePas)
+      const acc = m.zoneDefs.map(() => ({ x: 0, y: 0, n: 0 }))
+      for (let i = 0; i < m.zoneGrid.length; i++) {
+        const z = m.zoneGrid[i]
+        const gx = (i % cols) * m.zonePas
+        const gy = Math.floor(i / cols) * m.zonePas
+        acc[z].x += gx; acc[z].y += gy; acc[z].n++
+      }
+      return m.zoneDefs.map((d, i) => ({
+        slug: d.slug, nom: d.nom, tier: d.tier,
+        x: Math.round(acc[i].x / Math.max(1, acc[i].n)),
+        y: Math.round(acc[i].y / Math.max(1, acc[i].n)),
+      }))
+    })
+
+    // Plein jour, une bonne fois : on juge la ZONE, pas la nuit.
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    for (const z of zones) {
+      // UNE ACTION PAR TICK. Le protocole n'en porte qu'une par input : en envoyant le TP et
+      // l'heure dans le même souffle, la seconde ÉCRASE la première — et la caméra ne bougeait
+      // pas d'un pouce (mesuré : douze captures, douze fois le même pré).
+      await page.evaluate(({ x, y }) => {
+        window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
+      }, z)
+      await page.waitForTimeout(1600) // le TP, puis le fondu de l'air de la zone (~0,9 s)
+      const ou = await page.evaluate(() => {
+        const p = window.__BRAISES__.scene.predicted
+        return { x: Math.round(p.x), y: Math.round(p.y) }
+      })
+      await page.screenshot({ path: `${OUT}/zone-${z.slug}.png` })
+      const arrive = Math.abs(ou.x - z.x) < 30 && Math.abs(ou.y - z.y) < 30
+      console.log(`T${z.tier} ${z.nom.padEnd(22)} visé (${z.x}, ${z.y}) → ${arrive ? 'OK' : `ÉCHOUÉ, on est en (${ou.x}, ${ou.y})`}`)
+    }
+  },
+
+  /**
    * LA CENDRE AVANCE — et la vallée recule.
    *
    * On saute au dernier jour de la saison et on regarde. Sans cet outil, personne ne verrait

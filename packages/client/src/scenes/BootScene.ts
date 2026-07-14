@@ -167,6 +167,64 @@ export class BootScene extends Phaser.Scene {
     g.fillRect(5, 8, 3, 2)
     g.fillRect(9, 11, 3, 2)
     g.generateTexture('nd-coal_seam', 16, 16)
+    g.clear()
+
+    // ══ LES CINQ STRUCTURANTS — un par zone T1, et chacun n'existe QUE chez lui ═══════════════
+    //
+    // Ils étaient dans /sim depuis la veille, et le client n'en savait rien : Phaser peignait à
+    // leur place son carré vert de texture manquante. Six par écran, dans la Vieille Sylve. C'est
+    // la SEPTIÈME mécanique de ce projet trouvée en PILOTANT le jeu — et, comme les six autres,
+    // aucune garde ne la voyait.
+    //
+    // RÈGLE : chacun doit se distinguer EN OMBRE CHINOISE de son cousin ordinaire. Un gros bois
+    // n'est pas un arbre en plus foncé, c'est un FÛT. Une pierre de taille n'est pas un caillou,
+    // c'est un BLOC. À seize pixels, la silhouette est tout ce qu'on a.
+
+    // LE GROS BOIS (Vieille Sylve) — un fût ÉPAIS. Deux fois le tronc ordinaire, et ses cernes.
+    g.fillStyle(0x3f2c19).fillRect(3, 0, 10, 24)
+    g.fillStyle(0x543a22).fillRect(3, 0, 4, 24) // l'arête claire, comme l'arbre : même lumière
+    g.fillStyle(0x2a1c0f).fillRect(11, 0, 2, 24)
+    g.fillStyle(0xa8865c).fillRect(5, 3, 6, 2) // le cœur, en bout : on voit qu'il est VIEUX
+    g.generateTexture('nd-old_tree_trunk', 16, 24)
+    g.clear()
+    // Son houppier : plus large et plus SOMBRE que celui de l'arbre — il ferme le ciel.
+    g.fillStyle(0x12321a).fillCircle(20, 20, 19)
+    g.fillStyle(0x1d4a26).fillCircle(15, 15, 11)
+    g.fillStyle(0x0d2413).fillCircle(27, 28, 8)
+    g.generateTexture('nd-old_tree_crown', 40, 40)
+    g.clear()
+
+    // LA TOURBE (Tourbière) — une entaille dans l'eau noire. Pas un objet : un TROU.
+    g.fillStyle(0x2a2219).fillRect(2, 6, 12, 8)
+    g.fillStyle(0x1a150f).fillRect(4, 8, 8, 4) // l'eau au fond de la coupe
+    g.fillStyle(0x3d3226).fillRect(2, 6, 12, 1)
+    g.fillStyle(0x4a3d2c).fillRect(2, 6, 2, 8)
+    g.generateTexture('nd-peat_cut', 16, 16)
+    g.clear()
+
+    // LA CARRIÈRE (Hauts Alpages) — un BLOC taillé, avec des arêtes. Pas un galet.
+    g.fillStyle(0x6a6a72).fillRect(2, 5, 12, 9)
+    g.fillStyle(0x8e8e98).fillRect(2, 5, 12, 3) // le dessus, éclairé
+    g.fillStyle(0xa4a4ae).fillRect(2, 5, 4, 9) // la face au NO
+    g.fillStyle(0x45454c).fillRect(2, 13, 12, 1) // l'ombre au pied
+    g.generateTexture('nd-quarry', 16, 16)
+    g.clear()
+
+    // LA CENDRE (Versant Brûlé) — un tas gris, et UNE braise qui couve. Le jeu porte son nom.
+    g.fillStyle(0x6e6a66).fillCircle(8, 11, 5)
+    g.fillStyle(0x8d8884).fillCircle(6, 10, 3)
+    g.fillStyle(0xa8a29c).fillCircle(6, 9, 1)
+    g.fillStyle(0xd9541f).fillRect(9, 11, 2, 2)
+    g.generateTexture('nd-ash_heap', 16, 16)
+    g.clear()
+
+    // LES GRAVATS (Combe aux Ruines) — de la pierre TAILLÉE, cassée. On reconnaît le mur qu'elle fut.
+    g.fillStyle(0x5e5a56).fillRect(2, 9, 6, 5)
+    g.fillStyle(0x7a7570).fillRect(2, 9, 6, 1)
+    g.fillStyle(0x6a6560).fillRect(8, 7, 6, 7)
+    g.fillStyle(0x8a857f).fillRect(8, 7, 6, 1)
+    g.fillStyle(0x4a4642).fillRect(5, 5, 4, 3) // un fragment, de travers
+    g.generateTexture('nd-rubble', 16, 16)
     g.destroy()
   }
 

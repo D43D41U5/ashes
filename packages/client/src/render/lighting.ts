@@ -17,7 +17,7 @@ function lerp(a: number, c: number, t: number): number {
   return a + (c - a) * t
 }
 
-function lerpColor(c1: number, c2: number, t: number): number {
+export function lerpColor(c1: number, c2: number, t: number): number {
   const rr = Math.round(lerp((c1 >> 16) & 0xff, (c2 >> 16) & 0xff, t))
   const gg = Math.round(lerp((c1 >> 8) & 0xff, (c2 >> 8) & 0xff, t))
   const bb = Math.round(lerp(c1 & 0xff, c2 & 0xff, t))

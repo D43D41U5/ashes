@@ -624,8 +624,15 @@ export class SnapshotView {
       for (let tx = tx0; tx <= tx1; tx++) {
         const n = this.nodeByTile.get(tx * NODE_TILE_STRIDE + ty)
         if (n === undefined) continue
-        const isTree = n.type === 'tree'
-        const texture = isTree ? 'nd-tree_trunk' : `nd-${n.type}`
+        // LE GROS BOIS EST UN ARBRE : deux sprites (tronc + houppier), un décalage dans sa tuile,
+        // et le houppier s'efface autour du joueur. Sans cette ligne, il naissait sans houppier —
+        // un fût nu au milieu d'une futaie, ce qui est exactement ce qu'il n'est pas.
+        const isTree = n.type === 'tree' || n.type === 'old_tree'
+        const texture = n.type === 'tree'
+          ? 'nd-tree_trunk'
+          : n.type === 'old_tree'
+            ? 'nd-old_tree_trunk'
+            : `nd-${n.type}`
         let sprite = this.nodePool[used]
         if (!sprite) {
           sprite = this.scene.add.image(0, 0, texture).setOrigin(0.5, 1)
@@ -667,9 +674,13 @@ export class SnapshotView {
         // Le houppier : ancré 6 px sous le sommet du tronc (22 px), donc à py−16.
         let crown = this.crownPool[crownsUsed]
         if (!crown) {
-          crown = this.scene.add.image(0, 0, 'nd-tree_crown').setOrigin(0.5, 1)
+          crown = this.scene.add.image(0, 0, n.type === 'old_tree' ? 'nd-old_tree_crown' : 'nd-tree_crown').setOrigin(0.5, 1)
           this.crownPool[crownsUsed] = crown
         }
+        // LE POOL RÉUTILISE LES SPRITES : la texture doit être reposée à CHAQUE image, sinon un
+        // houppier de gros bois se retrouve sur un arbre ordinaire (et l'inverse) selon l'ordre
+        // dans lequel le pool a été servi. Le tronc le faisait déjà ; le houppier, non.
+        crown.setTexture(n.type === 'old_tree' ? 'nd-old_tree_crown' : 'nd-tree_crown')
         crown.setPosition(px, py - 16 - lift) // `px` porte déjà le tressaillement
         crown.setDepth(crownDepth(ty + 1 + j.dy, TILE_PX))
         // Un arbre visé s'éclaire ENTIER : teinter le tronc seul donnerait un

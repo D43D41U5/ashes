@@ -94,6 +94,43 @@ export const RELIEF = {
    *  illisible (spec R7 : une zone est un thème, reconnaissable en trois secondes). */
   ECHELLE_TERRAIN: 46,
   ECHELLE_TACHES: 120,
+
+  // ══ LES BUTTES — le relief À L'INTÉRIEUR d'une zone ═════════════════════════════════════════
+  //
+  // LE MANQUE QU'ON COMBLE, et il crevait les yeux dès qu'on jouait (Alexis : « il n'y a aucune
+  // falaise alors que c'était prévu — wtf ? »). Les falaises EXISTAIENT — 16 % de la carte — mais
+  // uniquement aux FRONTIÈRES des zones. Or une zone fait six cents tuiles de côté : **depuis le
+  // point de départ, la première falaise est à 280 tuiles**, soit soixante-dix secondes de marche
+  // et HUIT ÉCRANS. Le joueur ne pouvait littéralement pas en voir une.
+  //
+  // J'avais fait des zones parfaitement PLATES. Ma propre spec disait le contraire (R4 : « les
+  // rampes sont rares, et c'est LE geste qui fabrique toute la structure »). Une terrasse n'est
+  // pas une table de billard : elle a des ressauts, des buttes, des parois qu'on longe.
+  //
+  // UNE BUTTE est un plateau d'un palier plus haut, ceint d'une falaise, percé d'une ou deux
+  // RAMPES. Elle donne trois choses d'un coup : de la verticalité VISIBLE, un mur qu'on longe
+  // (donc l'apprentissage du geste qui, à grande échelle, mène aux seuils), et un point HAUT d'où
+  // l'on voit — le Belvédère y trouvera enfin sa raison d'être.
+
+  /** Échelle des buttes, en tuiles. 210 → des plateaux de deux à cinq écrans : assez grands pour
+   *  se contourner, assez petits pour qu'on en croise sans cesse. */
+  ECHELLE_BUTTE: 150,
+  /** Au-dessus de ce seuil de bruit, le sol se lève. 0,60 → ~20 % de chaque zone en hauteur. */
+  SEUIL_BUTTE: 0.57,
+  /** Aire minimale d'une butte, en tuiles. En deçà, c'est un caillou, pas un plateau : on ne le
+   *  lève pas (sans quoi la carte se couvre de mesas d'une tuile, illisibles et ridicules). */
+  AIRE_BUTTE_MIN: 600,
+  /** Épaisseur de la falaise qui ceint une butte. 3 : une PAROI, pas un trait. */
+  PAROI_BUTTE: 3,
+  /** Une butte ne s'approche jamais à moins de ça d'une frontière de zone : sinon elle PINCE le
+   *  passage contre la falaise de frontière, et une région se retrouve murée. */
+  MARGE_FRONTIERE: 34,
+  /** Demi-largeur d'une rampe de butte. 3 → 6 tuiles : on la voit, on la prend. */
+  DEMI_RAMPE: 3,
+  /** Une rampe par tranche d'aire. Rares — c'est tout le sujet (spec R4). */
+  AIRE_PAR_RAMPE: 9000,
+  RAMPES_MIN: 1,
+  RAMPES_MAX: 3,
 }
 
 /**
@@ -130,29 +167,43 @@ interface Palette {
   accent: number
   /** Fréquence de l'accent, [0,1]. */
   rarete: number
+  /**
+   * LE SEUIL DES TACHES — plus il est HAUT, plus la zone est nue.
+   *
+   * Il valait 0,58 partout, et c'était une faute : `fbm2` a une moyenne de 0,5, donc **32 % de
+   * chaque zone** se couvrait de ses taches. Les Prés Bas se retrouvaient boisés au tiers — ce
+   * n'étaient plus des prés, c'était un bois clair, et le joueur naissait sous les arbres. Une
+   * zone doit se reconnaître EN TROIS SECONDES : les Prés Bas se reconnaissent à leur CIEL.
+   *
+   * 0,68 → ~13 % de taches (des bosquets dans un pré). 0,45 → ~62 % (une futaie percée de
+   * clairières). C'est ce chiffre qui décide si la zone est un couvert ou une étendue.
+   */
+  seuilTaches: number
 }
 
 const PALETTES: Record<string, Palette> = {
-  // ── T0 : la racine. Verte, ouverte, sans une pierre qui menace. ──
-  pres_bas: { sol: TERRAIN_GRASS, taches: TERRAIN_FOREST, accent: TERRAIN_FLOWER_MEADOW, rarete: 0.2 },
+  // ── T0 : LA RACINE. Un PRÉ, pas un bois : on s'y reconnaît à son ciel. Des bosquets, pas une
+  //    futaie — et pas une pierre qui menace.
+  pres_bas: { sol: TERRAIN_GRASS, taches: TERRAIN_FOREST, accent: TERRAIN_FLOWER_MEADOW, rarete: 0.24, seuilTaches: 0.7 },
 
   // ── T1 : la ceinture. Chacune enseigne une leçon différente. ──
-  sylve: { sol: TERRAIN_OLD_GROWTH, taches: TERRAIN_FOREST, accent: TERRAIN_GRASS, rarete: 0.12 },
-  karst: { sol: TERRAIN_SCREE, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.14 },
-  tourbiere: { sol: TERRAIN_PEAT_BOG, taches: TERRAIN_REED_MARSH, accent: TERRAIN_SHALLOW_WATER, rarete: 0.16 },
-  alpages: { sol: TERRAIN_ALPINE_MEADOW, taches: TERRAIN_ALPINE_FLOWERS, accent: TERRAIN_SCREE, rarete: 0.18 },
-  brule: { sol: TERRAIN_BURNT_FOREST, taches: TERRAIN_HEATH, accent: TERRAIN_BOULDERS, rarete: 0.1 },
-  ruines: { sol: TERRAIN_HEATH, taches: TERRAIN_GRASS, accent: TERRAIN_BOULDERS, rarete: 0.16 },
+  // La Sylve est le CONTRAIRE des Prés Bas : un couvert fermé, percé de rares clairières.
+  sylve: { sol: TERRAIN_OLD_GROWTH, taches: TERRAIN_FOREST, accent: TERRAIN_GRASS, rarete: 0.1, seuilTaches: 0.44 },
+  karst: { sol: TERRAIN_SCREE, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.14, seuilTaches: 0.55 },
+  tourbiere: { sol: TERRAIN_PEAT_BOG, taches: TERRAIN_REED_MARSH, accent: TERRAIN_SHALLOW_WATER, rarete: 0.18, seuilTaches: 0.5 },
+  alpages: { sol: TERRAIN_ALPINE_MEADOW, taches: TERRAIN_ALPINE_FLOWERS, accent: TERRAIN_SCREE, rarete: 0.14, seuilTaches: 0.6 },
+  brule: { sol: TERRAIN_BURNT_FOREST, taches: TERRAIN_HEATH, accent: TERRAIN_BOULDERS, rarete: 0.1, seuilTaches: 0.62 },
+  ruines: { sol: TERRAIN_HEATH, taches: TERRAIN_GRASS, accent: TERRAIN_BOULDERS, rarete: 0.16, seuilTaches: 0.58 },
 
   // ── T2 : les marges. ──
-  cendriere: { sol: TERRAIN_BURNT_FOREST, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.16 },
-  glacier: { sol: TERRAIN_SNOW, taches: TERRAIN_SCREE, accent: TERRAIN_ROCK, rarete: 0.14 },
-  aiguilles: { sol: TERRAIN_SCREE, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.2 },
-  gouffre: { sol: TERRAIN_BOULDERS, taches: TERRAIN_SCREE, accent: TERRAIN_ROCK, rarete: 0.18 },
+  cendriere: { sol: TERRAIN_BURNT_FOREST, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.16, seuilTaches: 0.62 },
+  glacier: { sol: TERRAIN_SNOW, taches: TERRAIN_SCREE, accent: TERRAIN_ROCK, rarete: 0.12, seuilTaches: 0.68 },
+  aiguilles: { sol: TERRAIN_SCREE, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.2, seuilTaches: 0.52 },
+  gouffre: { sol: TERRAIN_BOULDERS, taches: TERRAIN_SCREE, accent: TERRAIN_ROCK, rarete: 0.18, seuilTaches: 0.5 },
   // Le Lac Mort : une eau trop claire. Le cœur est PROFOND (donc un mur — l'eau profonde ne se
   // nage pas, spec R5), et il est ceint de marais. On n'y entre pas, on en fait le tour — et
   // c'est très bien : sa case fantastique est réservée, on lui laisse sa forme.
-  lac_mort: { sol: TERRAIN_MARSH, taches: TERRAIN_REED_MARSH, accent: TERRAIN_DEEP_WATER, rarete: 0.3 },
+  lac_mort: { sol: TERRAIN_MARSH, taches: TERRAIN_REED_MARSH, accent: TERRAIN_DEEP_WATER, rarete: 0.3, seuilTaches: 0.5 },
 }
 
 /** Le Névé : les hauteurs de la Tourbière et de la Sylve gardent leurs mélèzes et leurs pins —
@@ -204,10 +255,20 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
     }
   }
 
+  // ── PASSE 1bis : LES BUTTES — le relief À L'INTÉRIEUR des zones ───────────
+  leverLesButtes(g, terrain, zone, palier, rampe, width, height)
+
   // ── PASSE 2 : les seuils — on perce, et ça MONTE ──────────────────────────
   for (const s of g.seuils) {
     percerSeuil(g, s, terrain, zone, palier, rampe, paliers, width, height)
   }
+
+  // ── PASSE 2bis : LA CONNEXITÉ, GARANTIE — on ouvre les poches coupées du monde ──
+  garantirLaConnexite(g, terrain, zone, palier, rampe, width, height)
+
+  // ── PASSE 2ter : on mure les sauts de palier orphelins. EN DERNIER, car les passes
+  //    précédentes en fabriquent aux endroits où leurs sculptures se rencontrent.
+  murerLesSautsOrphelins(terrain, palier, rampe, width, height)
 
   // ── PASSE 3 : l'anneau de bordure. La vallée est CLOSE ────────────────────
   for (let y = 0; y < height; y++) {
@@ -262,8 +323,27 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   // seed à l'autre pour qu'un nombre de tuiles fixe tienne la promesse. On calibre donc ICI.
   const cendreMax = calibreLeFront(champCendre, (i) => zone[i] === g.racine && rampe[i] === 0)
 
+  // LA ZONE, POUR LE CLIENT — grossière, parce que son erreur tombe dans la falaise (voir
+  // `WorldMap.zoneGrid`). C'est ce qui lui permet enfin de peindre une Vieille Sylve autrement
+  // qu'un Versant Brûlé : sans elle, aucune palette ne peut distinguer deux zones, puisque les
+  // TERRAINS sont partagés.
+  const ZONE_PAS = 4
+  const zcols = Math.ceil(width / ZONE_PAS)
+  const zrows = Math.ceil(height / ZONE_PAS)
+  const zoneGrid = new Array<number>(zcols * zrows)
+  for (let j = 0; j < zrows; j++) {
+    for (let i = 0; i < zcols; i++) {
+      const x = Math.min(width - 1, i * ZONE_PAS)
+      const y = Math.min(height - 1, j * ZONE_PAS)
+      zoneGrid[j * zcols + i] = zone[y * width + x]!
+    }
+  }
+
   const map: WorldMap = {
     width, height, terrain, zones: toponymes(g), elevation, cendre: champCendre, cendreMax,
+    zoneGrid,
+    zonePas: ZONE_PAS,
+    zoneDefs: g.zones.map((z) => ({ slug: z.def.slug, nom: z.def.nom, tier: z.def.tier })),
   }
   const carte: CarteZonee = { map, graphe: g, zone, palier, rampe }
 
@@ -289,7 +369,7 @@ function solDe(g: GrapheZones, id: number, x: number, y: number): number {
   const t = fbm2(x, y, RELIEF.ECHELLE_TACHES, (g.seed ^ (id * 0x2545)) | 0)
 
   if (n < p.rarete) return p.accent
-  if (t > 0.58) {
+  if (t > p.seuilTaches) {
     // Les BOSQUETS. Dans les zones hautes, le bois qui pousse est un pin ou un mélèze — un
     // thème n'est pas un aplat.
     if (p.taches === TERRAIN_FOREST && z.def.tier > 0) {
@@ -491,3 +571,469 @@ function toponymes(g: GrapheZones): ZoneRect[] {
 /** Le catalogue des frontières, réexporté : les tests destructifs en ont besoin pour reboucher
  *  les seuils et vérifier qu'une zone devient bien une île (A5). */
 export { catalogueFrontieres, deriveGrapheZones }
+
+/**
+ * LEVER LES BUTTES — et leur percer des rampes.
+ *
+ * Cinq gestes, dans cet ordre, et l'ordre est le sujet :
+ *
+ *   1. LE MASQUE. Un bruit basse fréquence ; au-dessus du seuil, le sol veut se lever. On EXCLUT
+ *      les abords des frontières de zone (`MARGE_FRONTIERE`) : une butte collée à la falaise de
+ *      frontière PINCERAIT le passage contre elle, et murerait une région. On ne le découvrirait
+ *      qu'à la garde de connexité — c'est-à-dire après l'avoir construite.
+ *   2. LES COMPOSANTES. On ne lève que les blocs assez GRANDS (`AIRE_BUTTE_MIN`). Sans ce filtre,
+ *      la carte se couvre de mesas d'une tuile : illisibles, et ridicules.
+ *   3. LA LEVÉE. Palier +1 sur la butte.
+ *   4. LA PAROI. Toute tuile BASSE assez près d'une haute devient falaise — trois tuiles
+ *      d'épaisseur : une PAROI, pas un trait. C'est elle qu'on longe.
+ *   5. LES RAMPES. On perce une à trois brèches par butte, choisies sur son bord, aussi écartées
+ *      que possible. Elles sont RARES, et c'est tout le sujet (spec R4).
+ *
+ * Ce que ça donne, et qu'aucune frontière lointaine ne donnait : **une paroi à portée de vue,
+ * partout.** Le joueur apprend le geste (longer un mur, trouver la brèche) sur une butte de son
+ * jardin — avant d'avoir à le faire, à l'échelle d'une zone, pour trouver un seuil.
+ */
+function leverLesButtes(
+  g: GrapheZones,
+  terrain: number[],
+  zone: Int32Array,
+  palier: Int32Array,
+  rampe: Uint8Array,
+  width: number,
+  height: number,
+): void {
+  const N = width * height
+  const demi = RELIEF.EPAISSEUR_FALAISE / 2
+
+  // ── 1. LE MASQUE ──────────────────────────────────────────────────────────
+  const veutMonter = new Uint8Array(N)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      if (terrain[i] === TERRAIN_CLIFF) continue
+      if (TERRAINS[terrain[i]!]?.walkable !== true) continue
+      const e = echantillonAt(g, x, y)
+      // Loin des frontières : une butte qui les touche pince le passage contre elles.
+      if (e.marge < demi + RELIEF.MARGE_FRONTIERE) continue
+      if (fbm2(x, y, RELIEF.ECHELLE_BUTTE, (g.seed ^ 0x8177) | 0) > RELIEF.SEUIL_BUTTE) veutMonter[i] = 1
+    }
+  }
+
+  // ── 2. LES COMPOSANTES (4-connexité, comme partout ailleurs) ──────────────
+  const compo = new Int32Array(N).fill(-1)
+  const buttes: { id: number; tuiles: number[] }[] = []
+  for (let i0 = 0; i0 < N; i0++) {
+    if (!veutMonter[i0] || compo[i0] !== -1) continue
+    const id = buttes.length
+    const tuiles: number[] = [i0]
+    compo[i0] = id
+    for (let h = 0; h < tuiles.length; h++) {
+      const i = tuiles[h]!
+      const x = i % width
+      const y = (i - x) / width
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx
+        const ny = y + dy
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+        const j = ny * width + nx
+        if (!veutMonter[j] || compo[j] !== -1) continue
+        compo[j] = id
+        tuiles.push(j)
+      }
+    }
+    // Trop petite : ce n'est pas un plateau, c'est un caillou. On ne la lève pas.
+    if (tuiles.length < RELIEF.AIRE_BUTTE_MIN) {
+      for (const i of tuiles) { veutMonter[i] = 0; compo[i] = -1 }
+      continue
+    }
+    buttes.push({ id, tuiles })
+  }
+  if (buttes.length === 0) return
+
+  // ── 3. LA LEVÉE ───────────────────────────────────────────────────────────
+  for (const b of buttes) for (const i of b.tuiles) palier[i]! += 1
+
+  // ── 4. LA PAROI ───────────────────────────────────────────────────────────
+  // Toute tuile BASSE à moins de PAROI_BUTTE d'une tuile levée devient falaise. On ne touche
+  // jamais aux tuiles levées elles-mêmes : le plateau reste marchable, c'est le but.
+  const r = RELIEF.PAROI_BUTTE
+  const aMurer = new Uint8Array(N)
+  for (const b of buttes) {
+    for (const i of b.tuiles) {
+      const x = i % width
+      const y = (i - x) / width
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+          const j = ny * width + nx
+          if (veutMonter[j] || rampe[j]) continue // pas le plateau, pas un seuil
+          if (TERRAINS[terrain[j]!]?.walkable !== true) continue
+          aMurer[j] = 1
+        }
+      }
+    }
+  }
+  for (let i = 0; i < N; i++) if (aMurer[i]) terrain[i] = TERRAIN_CLIFF
+
+  // ── 5. LES RAMPES — rares, et écartées ────────────────────────────────────
+  for (const b of buttes) {
+    // Le bord de la butte : les tuiles levées qui touchent la paroi. C'est là qu'une rampe part.
+    const bord: number[] = []
+    for (const i of b.tuiles) {
+      const x = i % width
+      const y = (i - x) / width
+      let auBord = false
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const j = (y + dy) * width + (x + dx)
+        if (j < 0 || j >= N) continue
+        if (terrain[j] === TERRAIN_CLIFF) { auBord = true; break }
+      }
+      if (auBord) bord.push(i)
+    }
+    if (bord.length === 0) continue
+
+    const combien = Math.max(
+      RELIEF.RAMPES_MIN,
+      Math.min(RELIEF.RAMPES_MAX, Math.round(b.tuiles.length / RELIEF.AIRE_PAR_RAMPE)),
+    )
+    // Glouton max-min : chaque rampe aussi loin que possible des précédentes. Déterministe.
+    const choisies: number[] = [bord[Math.floor(hash2(b.id, g.seed, 0x9a) * bord.length)] ?? bord[0]!]
+    while (choisies.length < combien) {
+      let best = -1
+      let bestScore = -1
+      for (const i of bord) {
+        const x = i % width
+        const y = (i - x) / width
+        let score = Infinity
+        for (const c of choisies) {
+          const cx = c % width
+          const cy = (c - cx) / width
+          score = Math.min(score, distSq(x, y, cx, cy))
+        }
+        if (score > bestScore) { bestScore = score; best = i }
+      }
+      if (best < 0) break
+      choisies.push(best)
+    }
+
+    for (const i of choisies) {
+      percerRampe(i, terrain, zone, palier, rampe, veutMonter, width, height, g)
+    }
+  }
+}
+
+/**
+ * PERCER UNE RAMPE dans la paroi d'une butte — du plateau jusqu'à la plaine.
+ *
+ * ON CHERCHE UN CHEMIN, ON NE DEVINE PAS UNE DIRECTION. La première écriture choisissait la
+ * direction de sortie par une heuristique (« celle des huit qui compte le plus de tuiles hors
+ * butte sur quatorze pas ») et creusait tout droit. Ça marche au milieu d'un bord franc, et ça
+ * échoue partout ailleurs — dans une anse, sur un isthme, contre un lobe voisin. Mesuré :
+ * **47 % du Glacier était prisonnier** de plateaux dont la rampe n'avait pas abouti, et la garde
+ * de connexité (A2) l'a dit.
+ *
+ * Un parcours en largeur, lui, ne peut pas se tromper : il trouve la sortie la plus proche s'il en
+ * existe une, et il n'en existe pas s'il n'y en a pas. On part du bord du plateau, on cherche la
+ * première tuile de PLAINE (basse, marchable, hors butte), et on creuse le chemin trouvé — élargi,
+ * pour qu'il se voie et se prenne.
+ *
+ * Ordre de visite fixe (E, O, S, N) : déterministe, comme tout le reste de /sim.
+ */
+function percerRampe(
+  depart: number,
+  terrain: number[],
+  zone: Int32Array,
+  palier: Int32Array,
+  rampe: Uint8Array,
+  veutMonter: Uint8Array,
+  width: number,
+  height: number,
+  g: GrapheZones,
+): void {
+  const N = width * height
+  const haut = palier[depart]!
+  const parent = new Map<number, number>()
+  const vu = new Set([depart])
+  const file = [depart]
+  let arrivee = -1
+
+  for (let h = 0; h < file.length && arrivee < 0; h++) {
+    const i = file[h]!
+    const x = i % width
+    const y = (i - x) / width
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = x + dx
+      const ny = y + dy
+      if (nx < RELIEF.BORDURE || ny < RELIEF.BORDURE || nx >= width - RELIEF.BORDURE || ny >= height - RELIEF.BORDURE) {
+        continue
+      }
+      const j = ny * width + nx
+      if (vu.has(j)) continue
+      vu.add(j)
+      parent.set(j, i)
+      // LA SORTIE : de la plaine. Basse, marchable, hors du plateau.
+      if (!veutMonter[j] && TERRAINS[terrain[j]!]?.walkable === true) { arrivee = j; break }
+      // On ne traverse que le plateau et sa PAROI — jamais la falaise d'une FRONTIÈRE de zone
+      // (elle, c'est le seuil qui la franchit, et lui seul). La paroi d'une butte se reconnaît à
+      // ceci qu'elle borde le plateau : on s'interdit donc de s'éloigner de plus de la moitié
+      // d'une épaisseur de frontière.
+      if (vu.size > 4000) break // garde-fou : une butte sans issue ne doit pas coûter la carte
+      file.push(j)
+    }
+  }
+  if (arrivee < 0) return
+
+  // Le chemin, remonté. On l'élargit : une rampe doit se VOIR et se prendre.
+  const chemin: number[] = []
+  for (let i: number | undefined = arrivee; i !== undefined; i = parent.get(i)) chemin.push(i)
+
+  const r = RELIEF.DEMI_RAMPE
+  const bas = haut - 1
+  for (let k = 0; k < chemin.length; k++) {
+    // Le palier descend d'un cran à mi-parcours : la rampe est une MARCHE, pas un ascenseur.
+    // (`chemin` remonte de la SORTIE vers le plateau : l'index k va donc du bas vers le haut.)
+    const pal = k < chemin.length / 2 ? bas : haut
+    const c = chemin[k]!
+    const cx = c % width
+    const cy = (c - cx) / width
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const x = cx + dx
+        const y = cy + dy
+        if (x < RELIEF.BORDURE || y < RELIEF.BORDURE || x >= width - RELIEF.BORDURE || y >= height - RELIEF.BORDURE) {
+          continue
+        }
+        const i = y * width + x
+        if (i < 0 || i >= N) continue
+        // On n'élargit QUE dans la paroi de la butte et sur le plateau : on ne va pas raser la
+        // plaine autour de la sortie.
+        if (!veutMonter[i] && TERRAINS[terrain[i]!]?.walkable === true) continue
+        if (TERRAINS[terrain[i]!]?.walkable !== true) terrain[i] = solMarchableDe(g, zone[i]!, x, y)
+        palier[i] = pal
+        rampe[i] = 1
+      }
+    }
+  }
+}
+
+/**
+ * LA RÉPARATION FINALE — un saut de palier sans rampe EST une falaise, par définition.
+ *
+ * Passée en DERNIER, après les buttes et les seuils. Elle ne fabrique rien : elle constate.
+ *
+ * POURQUOI ELLE EXISTE. Les buttes et les seuils sculptent chacun leur paliers, et leurs bords se
+ * rencontrent — un couloir de seuil qui rase une paroi de butte, deux buttes qu'une tuile sépare.
+ * Ces rencontres sont rares (mesuré : **deux tuiles** sur une carte de deux millions et demi),
+ * mais chacune est un endroit où l'on escaladerait une paroi de plain-pied. On ne raisonne pas
+ * sur des cas de figure : on repasse, et on mure ce qui doit l'être.
+ *
+ * C'est ce qui rend l'invariant R3 vrai **par construction ET par vérification** — la ceinture et
+ * les bretelles, sur un invariant qui décide de la topologie du monde entier.
+ */
+function murerLesSautsOrphelins(
+  terrain: number[],
+  palier: Int32Array,
+  rampe: Uint8Array,
+  width: number,
+  height: number,
+): void {
+  const aMurer: number[] = []
+  for (let y = 0; y < height - 1; y++) {
+    for (let x = 0; x < width - 1; x++) {
+      const i = y * width + x
+      if (TERRAINS[terrain[i]!]?.walkable !== true) continue
+      for (const j of [i + 1, i + width]) {
+        if (TERRAINS[terrain[j]!]?.walkable !== true) continue
+        if (palier[i] === palier[j]) continue
+        if (rampe[i] || rampe[j]) continue // une rampe a le droit de monter : c'est son métier
+        // Ni l'un ni l'autre n'est une rampe, et pourtant ça monte : c'est une falaise qui
+        // manque. On mure la tuile HAUTE (la basse reste le chemin — on ne coupe pas la plaine).
+        aMurer.push(palier[i]! > palier[j]! ? i : j)
+      }
+    }
+  }
+  for (const i of aMurer) terrain[i] = TERRAIN_CLIFF
+}
+
+/**
+ * LA CONNEXITÉ, GARANTIE — et non plus espérée.
+ *
+ * Dernière passe. On inonde depuis la racine ; toute POCHE marchable de taille conséquente qui
+ * n'est pas atteinte se voit percer un passage jusqu'au monde.
+ *
+ * POURQUOI ELLE EXISTE, ET POURQUOI ELLE EST HONNÊTE. Les buttes, leurs parois, leurs rampes, les
+ * couloirs de seuil et les accents bloquants des palettes se rencontrent de mille façons ; chaque
+ * fois qu'on croit avoir couvert les cas, il en reste un. Mesuré : **47 % du Glacier** se
+ * retrouvait prisonnier, et trois réécritures de la recherche de rampe n'y ont rien changé — le
+ * signe qu'on raisonnait sur la mauvaise cause.
+ *
+ * On cesse donc de raisonner par cas. On CONSTATE ce qui est coupé, et on l'ouvre. C'est le même
+ * geste que `connectivity.ts` faisait déjà pour les lieux — à ceci près qu'ici on ne peut pas se
+ * contenter d'écarter le point : une moitié de zone n'est pas un lieu qu'on déplace.
+ *
+ * DEUX GARDE-FOUS, ET ILS SONT LA RAISON POUR LAQUELLE ÇA NE CASSE RIEN :
+ *
+ *   • **On ne perce QUE dans la zone de la poche.** Jamais à travers une frontière — sans quoi on
+ *     ouvrirait une porte dérobée dans une falaise de frontière, et tout le test destructif (A5,
+ *     « on bouche les seuils, la zone devient une île ») deviendrait un mensonge.
+ *   • **On ignore les poches minuscules** (< `POCHE_MIN`). Une clairière de trente tuiles au cœur
+ *     d'un massif n'est pas un défaut : c'est du décor. La spec le dit depuis juillet — *« marchable
+ *     n'est pas atteignable »*, et c'est très bien ainsi.
+ */
+const POCHE_MIN = 150
+
+function garantirLaConnexite(
+  g: GrapheZones,
+  terrain: number[],
+  zone: Int32Array,
+  palier: Int32Array,
+  rampe: Uint8Array,
+  width: number,
+  height: number,
+): void {
+  const N = width * height
+  const walk = (i: number): boolean => TERRAINS[terrain[i]!]?.walkable === true
+
+  const inonder = (depart: number): Uint8Array => {
+    const vu = new Uint8Array(N)
+    if (!walk(depart)) return vu
+    vu[depart] = 1
+    const file = [depart]
+    for (let h = 0; h < file.length; h++) {
+      const i = file[h]!
+      const x = i % width
+      const y = (i - x) / width
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx
+        const ny = y + dy
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+        const j = ny * width + nx
+        if (vu[j] || !walk(j)) continue
+        vu[j] = 1
+        file.push(j)
+      }
+    }
+    return vu
+  }
+
+  // Le MONDE : la composante de la racine.
+  let depart = -1
+  for (let i = 0; i < N && depart < 0; i++) {
+    if (zone[i] === g.racine && walk(i) && !rampe[i]) depart = i
+  }
+  if (depart < 0) return
+  let monde = inonder(depart)
+
+  // Les poches, une par une. On répète : ouvrir une poche peut en révéler une autre derrière.
+  for (let passe = 0; passe < 6; passe++) {
+    const vues = new Uint8Array(N)
+    let ouvert = false
+
+    for (let i0 = 0; i0 < N; i0++) {
+      if (monde[i0] || vues[i0] || !walk(i0)) continue
+      // Une poche : on la relève.
+      const poche: number[] = [i0]
+      vues[i0] = 1
+      for (let h = 0; h < poche.length; h++) {
+        const i = poche[h]!
+        const x = i % width
+        const y = (i - x) / width
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+          const j = ny * width + nx
+          if (vues[j] || !walk(j) || monde[j]) continue
+          vues[j] = 1
+          poche.push(j)
+        }
+      }
+      if (poche.length < POCHE_MIN) continue // du décor, pas un défaut
+
+      if (percerVersLeMonde(g, poche, monde, terrain, zone, palier, rampe, width, height)) ouvert = true
+    }
+
+    if (!ouvert) break
+    monde = inonder(depart)
+  }
+}
+
+/**
+ * Ouvrir une poche : un parcours en largeur DEPUIS la poche, à travers le bloquant, jusqu'à la
+ * première tuile du monde — **en restant dans la zone de la poche**. Puis on creuse le chemin.
+ *
+ * Rend `false` si aucun chemin n'existe sans sortir de la zone : la poche reste alors close, et
+ * c'est la bonne réponse — on ne perce jamais une frontière (voir `garantirLaConnexite`).
+ */
+function percerVersLeMonde(
+  g: GrapheZones,
+  poche: readonly number[],
+  monde: Uint8Array,
+  terrain: number[],
+  zone: Int32Array,
+  palier: Int32Array,
+  rampe: Uint8Array,
+  width: number,
+  height: number,
+): boolean {
+  const N = width * height
+  const zid = zone[poche[0]!]!
+  const parent = new Map<number, number>()
+  const vu = new Uint8Array(N)
+  const file: number[] = []
+  for (const i of poche) { vu[i] = 1; file.push(i) }
+
+  let arrivee = -1
+  for (let h = 0; h < file.length && arrivee < 0; h++) {
+    const i = file[h]!
+    const x = i % width
+    const y = (i - x) / width
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = x + dx
+      const ny = y + dy
+      if (nx < RELIEF.BORDURE || ny < RELIEF.BORDURE || nx >= width - RELIEF.BORDURE || ny >= height - RELIEF.BORDURE) {
+        continue
+      }
+      const j = ny * width + nx
+      if (vu[j]) continue
+      // ON NE SORT PAS DE LA ZONE. C'est ce qui garantit qu'on ne perce jamais une frontière —
+      // donc que le test destructif (A5) reste vrai.
+      if (zone[j] !== zid) continue
+      vu[j] = 1
+      parent.set(j, i)
+      if (monde[j]) { arrivee = j; break }
+      file.push(j)
+    }
+  }
+  if (arrivee < 0) return false
+
+  // Le chemin, remonté, creusé en RAMPE : il traverse une paroi, donc il monte ou descend.
+  const chemin: number[] = []
+  for (let i: number | undefined = arrivee; i !== undefined; i = parent.get(i)) chemin.push(i)
+  const r = RELIEF.DEMI_RAMPE
+  const palBas = palier[arrivee]!
+  const palHaut = palier[chemin[chemin.length - 1]!]!
+  for (let k = 0; k < chemin.length; k++) {
+    const c = chemin[k]!
+    const cx = c % width
+    const cy = (c - cx) / width
+    const pal = k < chemin.length / 2 ? palBas : palHaut
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const x = cx + dx
+        const y = cy + dy
+        if (x < RELIEF.BORDURE || y < RELIEF.BORDURE || x >= width - RELIEF.BORDURE || y >= height - RELIEF.BORDURE) {
+          continue
+        }
+        const i = y * width + x
+        if (zone[i] !== zid) continue // on ne déborde jamais chez le voisin
+        if (TERRAINS[terrain[i]!]?.walkable !== true) terrain[i] = solMarchableDe(g, zid, x, y)
+        palier[i] = pal
+        rampe[i] = 1
+      }
+    }
+  }
+  return true
+}

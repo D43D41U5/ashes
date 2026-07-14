@@ -176,6 +176,7 @@ export {
 export { generateZonedTerrain, palierDe, PALIER_MAX, RELIEF, type CarteZonee } from './zonegen'
 // LE FRONT DE CENDRE — la saison est une vallée qu'on perd (spec `worldgen.md` §7).
 export { avanceeDuFront, calibreLeFront, CENDRE, estCendre, partSousLaCendre } from './cendre'
+export { zoneSlugAt } from './map'
 export {
   CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, type Emplacement,
 } from './zone-content'

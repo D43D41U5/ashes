@@ -33,8 +33,20 @@ import type { CarteZonee } from './zonegen'
 import { MONDE } from './zonegraph'
 
 export const CONTENU = {
-  /** Un nœud tous les ~N tuiles marchables, en moyenne. La densité de base du monde. */
-  PAS_SEMIS: 7,
+  /**
+   * UN NŒUD TOUS LES ~N TUILES MARCHABLES. **Et il valait 7 — c'était une moquette.**
+   *
+   * Mesuré (et jamais avant, ce qui est la vraie faute) : **335 752 nœuds**, soit un buisson
+   * toutes les **6,1 tuiles marchables**. Le sol de la vallée était pavé de baies. Alexis, en
+   * jouant : *« la densité de ressources est délirante dans la zone de départ. »*
+   *
+   * 36 → ~62 000 nœuds, un tous les ~31 pas. La récolte redevient un DÉPLACEMENT : on cherche un
+   * bosquet, on y va, on le vide. C'est le geste que le jeu veut, et il était noyé sous l'abondance.
+   *
+   * (La modulation par bosquets — `ECHELLE_BOSQUET` — les GROUPE : la densité moyenne ne dit pas
+   * ce qu'on voit. On voit des bouquets d'arbres et des prés nus, pas un tapis régulier.)
+   */
+  PAS_SEMIS: 36,
   /** Échelle des bosquets : les nœuds se GROUPENT (une forêt, un filon), ils ne se saupoudrent
    *  pas. Un tapis uniforme n'est pas un pays, c'est une moquette. */
   ECHELLE_BOSQUET: 34,
@@ -42,12 +54,33 @@ export const CONTENU = {
   /** Le teaser : UN filon, et son stock est dérisoire. Épuisé en une heure. */
   TEASER_STOCK: 3,
 
-  /** Un emplacement de village : ce qu'il lui faut sous la main, et sur quel rayon. */
-  RAYON_VILLAGE: 26,
-  BOIS_MIN: 6,
-  PIERRE_MIN: 4,
-  /** Place nette autour du foyer : on ne fonde pas un village dans un couloir. */
-  DEGAGEMENT: 7,
+  /**
+   * UN EMPLACEMENT DE VILLAGE : ce qu'il lui faut sous la main, et sur quel rayon.
+   *
+   * **CES SEUILS SONT COUPLÉS À `PAS_SEMIS`, et je l'avais oublié.** En divisant la densité de
+   * nœuds par cinq (elle était délirante), j'ai rendu ces minimums cinq fois plus durs à
+   * atteindre sans y toucher : les Prés Bas ne portaient plus que **11 emplacements pour 17
+   * villages**. La garde A17 l'a dit tout de suite — c'est exactement à ça qu'elle sert.
+   *
+   * On élargit donc le RAYON (un village regarde plus loin autour de lui, ce qui est de toute
+   * façon plus juste : quarante tuiles, c'est dix secondes de marche) et on rabaisse les
+   * minimums en proportion.
+   */
+  RAYON_VILLAGE: 40,
+  BOIS_MIN: 4,
+  PIERRE_MIN: 2,
+  /**
+   * PLACE NETTE autour du foyer : on ne fonde pas un village dans un couloir.
+   *
+   * 5 → un carré de 11×11 tout marchable. Il valait 7 (15×15), et les BUTTES l'ont rendu trop
+   * dur : leurs parois hachent la plaine, et les Prés Bas ne portaient plus que 15 emplacements
+   * pour 17 villages. Onze tuiles suffisent largement au Feu, au coffre et aux six maisons
+   * (`foundNpcVillage` les pose à ±3) — quinze était du confort, pas un besoin.
+   */
+  DEGAGEMENT: 5,
+  /** Pas du balayage des emplacements. Fin : un village fait dix tuiles de large, et chercher
+   *  tous les douze pas en manquait. */
+  PAS_BALAYAGE: 8,
 }
 
 /**
@@ -253,19 +286,25 @@ export function emplacementsDeVillage(c: CarteZonee, nodes: ResourceNode[]): Emp
   const out: Emplacement[] = []
   const ecart2 = MONDE.ESPACEMENT_VILLAGES * MONDE.ESPACEMENT_VILLAGES
 
-  // Index des nœuds par grosse maille : compter les ressources d'un rayon de 26 tuiles pour
-  // chaque tuile de la carte coûterait 2,5 M × un balayage. On compte par cases de 26.
+  // Index des nœuds par maille — ET PAR ZONE.
+  //
+  // LA ZONE EST LA CORRECTION, et elle a un sens de jeu. Une maille de quarante tuiles DÉBORDE
+  // chez la voisine : le Gouffre se mettait à compter les arbres d'à côté et devenait habitable
+  // (mesuré, seed 7). Or entre les deux il y a une FALAISE — le bois d'en face ne se ramasse pas
+  // sans faire le tour par un seuil. **On ne compte que ce qu'on peut aller chercher.**
   const maille = CONTENU.RAYON_VILLAGE
   const mw = Math.ceil(width / maille)
-  const bois = new Int32Array(mw * Math.ceil(height / maille))
-  const pierre = new Int32Array(bois.length)
+  const bois = new Map<number, number>()
+  const pierre = new Map<number, number>()
+  const cle = (tx: number, ty: number, z: number): number =>
+    (Math.floor(ty / maille) * mw + Math.floor(tx / maille)) * 32 + z
   for (const n of nodes) {
-    const k = Math.floor(n.ty / maille) * mw + Math.floor(n.tx / maille)
-    if (n.type === 'tree' || n.type === 'old_tree') bois[k]!++
-    if (n.type === 'rock' || n.type === 'quarry') pierre[k]!++
+    const k = cle(n.tx, n.ty, c.zone[n.ty * width + n.tx]!)
+    if (n.type === 'tree' || n.type === 'old_tree') bois.set(k, (bois.get(k) ?? 0) + 1)
+    if (n.type === 'rock' || n.type === 'quarry') pierre.set(k, (pierre.get(k) ?? 0) + 1)
   }
 
-  const pas = 12 // on ne teste pas chaque tuile : un village fait dix tuiles de large
+  const pas = CONTENU.PAS_BALAYAGE
   for (let ty = maille; ty < height - maille; ty += pas) {
     for (let tx = maille; tx < width - maille; tx += pas) {
       const i = ty * width + tx
@@ -274,11 +313,12 @@ export function emplacementsDeVillage(c: CarteZonee, nodes: ResourceNode[]): Emp
       // De la PLACE : un carré dégagé, tout marchable. On ne fonde pas dans un couloir.
       if (!degage(c, tx, ty)) continue
 
-      // DU BOIS et DE LA PIERRE à portée. C'est tout — et c'est ce qui, tout seul, rend le
-      // Névé, le Glacier et les Aiguilles inhabitables.
-      const k = Math.floor(ty / maille) * mw + Math.floor(tx / maille)
-      if ((bois[k] ?? 0) < CONTENU.BOIS_MIN) continue
-      if ((pierre[k] ?? 0) < CONTENU.PIERRE_MIN) continue
+      // DU BOIS et DE LA PIERRE à portée, DANS SA PROPRE ZONE. C'est tout — et c'est ce qui, tout
+      // seul, rend le Névé, le Glacier, les Aiguilles et le Gouffre inhabitables. Aucune règle ne
+      // les interdit : on n'y bâtit simplement rien.
+      const k = cle(tx, ty, c.zone[i]!)
+      if ((bois.get(k) ?? 0) < CONTENU.BOIS_MIN) continue
+      if ((pierre.get(k) ?? 0) < CONTENU.PIERRE_MIN) continue
 
       // Assez loin du village précédent : on se frotte, on ne se marche pas dessus.
       if (out.some((e) => distSq(e.tx, e.ty, tx, ty) < ecart2)) continue

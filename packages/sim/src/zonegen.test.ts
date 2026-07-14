@@ -172,6 +172,67 @@ describe('le terrain, à la taille de production', () => {
     }
   })
 
+  /**
+   * A26 — UNE PAROI EST TOUJOURS À PORTÉE DE VUE. **La garde qui manquait.**
+   *
+   * TROUVÉ PAR ALEXIS, EN JOUANT : *« il n'y a aucune falaise alors que c'était prévu — wtf ? »*
+   * Et les falaises EXISTAIENT : 16 % de la carte. Toutes les gardes étaient vertes. Mais je ne
+   * les avais posées qu'aux FRONTIÈRES des zones — or une zone fait six cents tuiles de côté.
+   * Mesuré depuis le point de départ : **la falaise la plus proche était à 280 tuiles**, soit
+   * soixante-dix secondes de marche et HUIT ÉCRANS. Le joueur ne pouvait littéralement pas en
+   * voir une, et toute la conception (« on ne trouve pas une porte, on suit un mur ») restait
+   * lettre morte à l'écran.
+   *
+   * LEÇON, la troisième de la même famille : **une propriété GLOBALE (« 16 % de falaise ») ne dit
+   * rien de l'EXPÉRIENCE LOCALE (« en vois-je une ? »).** Une carte se juge d'où le joueur se
+   * tient, pas d'avion.
+   *
+   * On teste donc ce qu'il VOIT : depuis n'importe quel point marchable, la paroi la plus proche
+   * est à moins de quelques écrans.
+   */
+  it('A26 — depuis N\'IMPORTE OÙ, une paroi est à quelques écrans — pas à huit', () => {
+    const ECRAN = 35 // la caméra montre 35 tuiles de large
+    const MAX_ECRANS = 4
+    for (const c of cartes) {
+      const { width, height, terrain } = c.map
+      // Distance à la falaise la plus proche, par vagues (BFS multi-source sur la grille) — la
+      // seule façon honnête de répondre « et depuis là ? » pour DEUX MILLIONS de tuiles.
+      const dist = new Int32Array(width * height).fill(-1)
+      const file: number[] = []
+      for (let i = 0; i < terrain.length; i++) {
+        if (terrain[i] === TERRAIN_CLIFF) { dist[i] = 0; file.push(i) }
+      }
+      for (let h = 0; h < file.length; h++) {
+        const i = file[h]!
+        const x = i % width
+        const y = (i - x) / width
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+          const j = ny * width + nx
+          if (dist[j] !== -1) continue
+          dist[j] = dist[i]! + 1
+          file.push(j)
+        }
+      }
+
+      let pire = 0
+      let ou = 0
+      for (let i = 0; i < terrain.length; i++) {
+        if (!marchable(c, i)) continue
+        if (dist[i]! > pire) { pire = dist[i]!; ou = i }
+      }
+      const x = ou % width
+      const y = (ou - x) / width
+      expect(
+        pire,
+        `seed ${c.graphe.seed} : en (${x}, ${y}), la paroi la plus proche est à ${pire} tuiles — ` +
+          `soit ${(pire / ECRAN).toFixed(1)} écrans. Le joueur y est dans un désert plat.`,
+      ).toBeLessThan(ECRAN * MAX_ECRANS)
+    }
+  }, 120_000)
+
   it('la falaise SÉPARE sans dévorer la carte', () => {
     for (const c of cartes) {
       const n = c.map.terrain.length

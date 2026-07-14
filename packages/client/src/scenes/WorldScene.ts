@@ -34,6 +34,7 @@ import {
   type WeaponKind,
   type WorldMap,
   avanceeDuFront,
+  zoneSlugAt,
 } from '@braises/sim'
 import Phaser from 'phaser'
 import { createWorkerHost, type HostConnection } from '../host-connection'
@@ -47,7 +48,7 @@ import {
   TILE_PX,
   zoomForFraming,
 } from '../render/framing'
-import { ambientTint, daylight } from '../render/lighting'
+import { ambientTint, daylight, lerpColor } from '../render/lighting'
 import { assertNoFold, createWarp, type Warp } from '../render/warp'
 import {
   drainQueuedActions,
@@ -63,6 +64,7 @@ import {
 } from './world/hud-bridge'
 import { ClutterLayer } from './world/clutter-layer'
 import { GroundLayer } from './world/ground-layer'
+import { ambianceDe, moduler } from '../render/zone-ambiance'
 import { CendreLayer } from './world/cendre-layer'
 import { ShadeLayer } from './world/shade-layer'
 import { PoiLayer } from './world/poi-layer'
@@ -188,6 +190,11 @@ export class WorldScene extends Phaser.Scene {
   private host!: HostConnection
   private map!: WorldMap
   private ambientRect: Phaser.GameObjects.Rectangle | null = null
+  /** L'AIR DE LA ZONE — un voile plein écran, fondu d'une zone à l'autre (voir `zone-ambiance`). */
+  private zoneAir: Phaser.GameObjects.Rectangle | null = null
+  private airColor = 0x000000
+  private airAlpha = 0
+  private airCible: { color: number; alpha: number } = { color: 0x000000, alpha: 0 }
   private fireGlow: FireGlow | null = null
   private water: WaterLayer | null = null
   /** Oiseaux et lucioles — décor pur, hors sim (voir world/ambient-life.ts). */
@@ -445,6 +452,12 @@ export class WorldScene extends Phaser.Scene {
           .rectangle(0, 0, worldW, worldH, 0x000000, 0)
           .setOrigin(0)
           .setDepth(AMBIENT_DEPTH)
+        // L'AIR DE LA ZONE se pose JUSTE SOUS l'ambiance de l'heure : la nuit reste la nuit, mais
+        // la nuit du Gouffre n'est pas celle des Prés Bas.
+        this.zoneAir = this.add
+          .rectangle(0, 0, worldW, worldH, 0x000000, 0)
+          .setOrigin(0)
+          .setDepth(AMBIENT_DEPTH - 0.1)
         this.fireGlow = new FireGlow(this)
         this.ambientLife = new AmbientLife(this, (tx, ty) =>
           tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height ? -1 : (this.map.terrain[ty * this.map.width + tx] ?? -1),
@@ -619,8 +632,23 @@ export class WorldScene extends Phaser.Scene {
       // Les lieux ont besoin de savoir OÙ est le joueur (le nom grossit quand on
       // approche) et CE QU'IL CONNAÎT (on ne nomme pas un lieu qu'on n'a pas vu).
       this.pois.update(this.cameras.main, this.predicted.x, this.predicted.y, this.myKnownPois)
+      // L'AIR DE LA ZONE — le second levier de la lisibilité, et le plus fort.
+      //
+      // Le monde ne change pas de couleur parce qu'on regarde ailleurs : il change parce qu'on est
+      // ENTRÉ. La bascule se produit dans le couloir du seuil — c'est-à-dire exactement au moment
+      // où le joueur doit comprendre qu'il vient de franchir une porte. C'est le geste de Valheim.
+      //
+      // L'air de la zone se pose PAR-DESSUS l'ambiance de l'heure : la nuit reste la nuit, mais la
+      // nuit du Gouffre n'est pas celle des Prés Bas. On interpole d'une zone à l'autre pour que
+      // la transition soit un fondu et non un clignotement — sur ~2 s, la durée d'un pas de seuil.
       const amb = ambientTint(hour)
       this.ambientRect?.setFillStyle(amb.color).setAlpha(amb.alpha)
+      const cible = ambianceDe(zoneSlugAt(this.map, Math.floor(this.predicted.x), Math.floor(this.predicted.y))).air
+      this.airCible = cible
+      const k = Math.min(1, deltaMs / 900) // fondu ~0,9 s : on SENT le passage, on n'est pas ébloui
+      this.airAlpha += (cible.alpha - this.airAlpha) * k
+      this.airColor = lerpColor(this.airColor, cible.color, k)
+      this.zoneAir?.setFillStyle(this.airColor).setAlpha(this.airAlpha)
       const day = daylight(hour)
       this.water?.update(time, hour, day) // la houle, et le soleil dessus
       this.fireGlow?.update(this.view.structures, this.view.villages, day, time)
@@ -1048,11 +1076,27 @@ export class WorldScene extends Phaser.Scene {
   private bakeMapTexture(): void {
     const { width, height } = this.map
     const g = this.add.graphics()
+    // LE SOL PREND LA TEINTE DE SA ZONE — et c'est ce qui rend enfin le critère de lisibilité
+    // du directeur de jeu (« d'un coup d'œil »). On ne REPEINT pas les terrains, on les MODULE :
+    // l'herbe reste de l'herbe, mais celle de la Vieille Sylve est froide et sourde, celle des
+    // Prés Bas chaude et haute. On reconnaît encore ce qu'on foule ; on sait juste où on le foule.
+    //
+    // Sans ça, aucune palette ne pouvait distinguer deux zones — les TERRAINS sont partagés (de
+    // l'herbe pousse aux Prés Bas comme à la Combe aux Ruines).
+    //
+    // On mémoïse par zone : `zoneSlugAt` fait quelques divisions, mais 2,5 M d'appels comptent.
+    const solParZone = new Map<string | undefined, readonly [number, number, number]>()
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
         const base = TERRAIN_COLORS[this.map.terrain[ty * width + tx] ?? 0] ?? 0xff00ff
+        const slug = zoneSlugAt(this.map, tx, ty)
+        let sol = solParZone.get(slug)
+        if (!sol) {
+          sol = ambianceDe(slug).sol
+          solParZone.set(slug, sol)
+        }
         const grain = 0.96 + 0.07 * hash2(tx, ty)
-        g.fillStyle(shade(base, grain))
+        g.fillStyle(shade(moduler(base, sol), grain))
         g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
       }
     }
