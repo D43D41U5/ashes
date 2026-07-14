@@ -45,14 +45,70 @@ export interface PoiType {
   monster?: 'boar' | 'cendreux'
 }
 
-/** Rayon d'exclusion du semis = fraction de min(w,h). Calibré à la vignette. */
 export const POI_PLACEMENT = {
-  // 0.11 laissait les types à faible poids (gisement, carrière) disparaître
-  // trop souvent sur les cartes de taille modeste — sous-échantillonnage.
-  // 0.08 double grossièrement la densité et garantit leur présence en
-  // pratique tout en restant proche de la cible ~90 POIs sur 2400×3600.
-  SPACING_FRAC: 0.08,
+  /**
+   * L'ESPACEMENT DU SEMIS, EN TUILES ABSOLUES — et ce mot est tout le correctif.
+   *
+   * C'était `SPACING_FRAC = 0,08`, une FRACTION de `min(w,h)`. Le rayon d'exclusion
+   * grandissait donc avec la carte, et le semis obtenu était une HOMOTHÉTIE exacte
+   * du même tirage : le nombre de points ne dépendait pas de la surface. Mesuré :
+   *
+   *     1200×1800 (le jeu)  → 75 lieux
+   *     2400×3600 (la cible, décision du 2026-07-07) → 69 lieux
+   *
+   * **Quatre fois plus de terre, autant de lieux.** À la taille cible, la vallée
+   * aurait été quatre fois plus vide — l'inverse exact de ce qu'on cherche. (Le
+   * phénomène était connu et documenté dans `poi.test.ts` ; sa conséquence à
+   * l'échelle ne l'était pas.)
+   *
+   * 96 tuiles = ce que valait `0,08 × 1200` : à la taille du jeu, **rien ne change**.
+   * Au-delà, la densité suit enfin la surface.
+   */
+  SPACING_TILES: 96,
+  /**
+   * LE GARDE-FOU DES PETITES CARTES. Un espacement absolu est la bonne règle — mais
+   * appliqué tel quel à une carte de 240×360 (les tests, les vignettes), il n'y
+   * laisserait que six points, et la vallée n'aurait plus aucun lieu. On borne donc
+   * l'espacement à une fraction du petit côté : une vallée minuscule reste une
+   * vallée peuplée, à sa mesure.
+   *
+   * À la taille du jeu (1200) les deux règles coïncident exactement — `0,08 × 1200
+   * = 96` — et rien ne bouge. Ce n'est donc un garde-fou QUE pour les petites cartes.
+   */
+  SPACING_MAX_FRAC: 0.08,
+  /**
+   * La surface de RÉFÉRENCE des plafonds — celle où toute la table a été calibrée
+   * (et où elle est jouée aujourd'hui). Les plafonds croissent proportionnellement :
+   * une vallée deux fois plus grande porte deux fois plus de Cairns, sinon
+   * l'espacement absolu ne servirait à rien — les plafonds la videraient à sa place.
+   *
+   * La RARETÉ, elle, ne change pas : elle est une DENSITÉ (« deux Sanctuaires par
+   * vallée de cette taille »), pas un compte absolu.
+   */
+  CAP_REFERENCE_AREA: 1200 * 1800,
   CANONICAL: { width: 2400, height: 3600 },
+
+  /**
+   * LE RYTHME, ESSAYÉ PUIS RETIRÉ — et la raison mérite d'être consignée, parce que
+   * l'idée est bonne et reviendra.
+   *
+   * Le bruit bleu de Poisson espace parfaitement, et c'est son défaut : il pose les
+   * lieux avec une régularité de papier peint, alors qu'on voudrait des GRAPPES
+   * (« il y a quelque chose dans ce coin ») et des VIDES (« il n'y a rien, et ce
+   * rien se traverse »). Un champ basse fréquence qui écarte les points de ses
+   * creux le donne en trois lignes, et la carte y gagne.
+   *
+   * Mais il fait aussi passer au ROUGE la garde de neutralité spatiale de
+   * `poi.test.ts` — et à juste titre : cette garde protège contre un vrai bug (les
+   * plafonds raflés par les premiers points de la vague de croissance du semis, un
+   * gradient de densité mesuré à 1,31–2,50), et un regroupement volontaire est,
+   * pour elle, exactement le même signal. Distinguer la grappe VOULUE de la grappe
+   * BUG demande un test bien plus fin que celui-ci.
+   *
+   * On ne relâche pas une garde durement gagnée pour un agrément. Le rythme
+   * reviendra quand il aura son propre critère — c'est-à-dire quand on saura DIRE
+   * ce qu'est une bonne grappe, et pas seulement la reconnaître.
+   */
 
   /**
    * LE SEUIL, PAS LE TUNNEL — combien de tuiles de roche un lieu a-t-il le droit
@@ -219,7 +275,7 @@ function isEligible(
   const el = elevationAt(map, tx, ty)
   if (!t.biomes.includes(terr)) return false
   if (el < (t.minElev ?? 0) || el > (t.maxElev ?? 1)) return false
-  if ((used.get(t.slug) ?? 0) >= t.cap) return false
+  if ((used.get(t.slug) ?? 0) >= capFor(map, t)) return false // le plafond suit la SURFACE
   const fp = footprintAt(map, t, tx, ty)
   if (touchesBorderRing(map, fp)) return false
   return entryTile(map, field, fp) !== undefined
@@ -305,7 +361,7 @@ function reserveCharged(
   // Ordre déterministe : celui de POI_TYPES. Les premiers servis ont priorité
   // sur les points contestés — c'est la table qui arbitre, pas le hasard.
   for (const t of POI_TYPES) {
-    const want = Math.min(t.reserve ?? 0, t.cap)
+    const want = Math.min(t.reserve ?? 0, capFor(map, t))
     let got = 0
     for (let i = 0; i < pts.length && got < want; i++) {
       if (taken.has(i)) continue
@@ -396,11 +452,48 @@ function shuffled<T>(items: readonly T[], seed: number): T[] {
   return out
 }
 
+/**
+ * L'ESPACEMENT DU SEMIS sur cette carte — absolu, sauf sur les petites cartes où il
+ * se borne à une fraction du petit côté (sinon elles n'auraient aucun lieu). À la
+ * taille du jeu, les deux règles donnent le même nombre : 96.
+ */
+export function poiSpacing(width: number, height: number): number {
+  return Math.min(POI_PLACEMENT.SPACING_TILES, POI_PLACEMENT.SPACING_MAX_FRAC * Math.min(width, height))
+}
+
+/**
+ * Le plafond EFFECTIF d'un type sur cette carte — le plafond de la table, mis à
+ * l'échelle de la surface. Voir `CAP_REFERENCE_AREA` : la rareté est une densité,
+ * pas un compte. Jamais moins d'un exemplaire si la table en prévoyait au moins un.
+ */
+export function capFor(map: WorldMap, t: PoiType): number {
+  const k = (map.width * map.height) / POI_PLACEMENT.CAP_REFERENCE_AREA
+  // LE PLAFOND CROÎT AVEC LA CARTE, IL NE RÉTRÉCIT JAMAIS. Une vallée deux fois plus
+  // grande porte deux fois plus de Cairns ; une vallée deux fois plus PETITE garde
+  // les siens. (Sans ce `max`, une carte de test de 240×360 — soit 4 % de la surface
+  // de référence — voyait TOUS ses plafonds tomber à 1 : vingt-six lieux au total,
+  // dont onze pris par les réservations. La carte se vidait, et les tests le disaient.)
+  return Math.max(t.cap, Math.round(t.cap * k))
+}
+
+/**
+ * LE SEMIS, ET SON RYTHME. Poisson espace les points d'au moins `SPACING_TILES` —
+ * une régularité parfaite, et c'est bien le défaut : on n'explore pas un papier
+ * peint. Un champ basse fréquence abandonne donc les points qui tombent dans ses
+ * creux : il reste des GRAPPES (« il y a quelque chose dans ce coin ») et des VIDES
+ * (« il n'y a rien, et ce rien se traverse »). L'espacement minimal est intact — on
+ * ne fait que renoncer à des points, jamais en rapprocher.
+ */
+export function poiSemis(width: number, height: number, seed: number): { x: number; y: number }[] {
+  const bruts = poissonPoints(width, height, seed, poiSpacing(width, height))
+  // Mélangé : les plafonds doivent se consommer dans un ordre SPATIALEMENT NEUTRE (cf. `shuffled`).
+  return shuffled(bruts, seed)
+}
+
 /** Pose les POIs comme Zones nommées dans map.zones (pur, déterministe). */
 export function placePois(map: WorldMap, seed: number): void {
-  const radius = POI_PLACEMENT.SPACING_FRAC * Math.min(map.width, map.height)
-  // Mélangé : les plafonds doivent se consommer dans un ordre SPATIALEMENT NEUTRE (cf. `shuffled`).
-  const pts = shuffled(poissonPoints(map.width, map.height, seed, radius), seed)
+  const radius = poiSpacing(map.width, map.height)
+  const pts = poiSemis(map.width, map.height, seed)
   const used = new Map<string, number>()
 
   // CE QUI COMMUNIQUE AVEC QUOI — calculé une fois, pour toute la carte. Sans ce

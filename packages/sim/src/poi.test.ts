@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { generateAlpineTerrain } from './alpinegen'
-import { POI_TYPES, POI_PLACEMENT, spawnPoiMonsters, placePois } from './poi'
+import { POI_TYPES, poiSemis, poiSpacing, spawnPoiMonsters, placePois } from './poi'
 import { terrainAt, createEmptyMap } from './map'
 import { poissonPoints } from './poisson'
 import { TERRAINS, TERRAIN_DEEP_WATER } from './balance'
@@ -136,7 +136,7 @@ describe('POIs dans la carte alpine', () => {
   // l'espacement. On ne mesure ici que ce que le semis a posé.
   it('espacement mini respecté (centres de zones POI)', () => {
     const map = generateAlpineTerrain(240, 360, 5)
-    const radius = POI_PLACEMENT.SPACING_FRAC * Math.min(240, 360)
+    const radius = poiSpacing(240, 360)
     const c = map.zones
       .filter((z) => z.kind !== undefined)
       .map((z) => ({ x: z.x + z.w / 2, y: z.y + z.h / 2 }))
@@ -175,6 +175,20 @@ describe('POIs dans la carte alpine', () => {
    *   - la MOYENNE sur 16 seeds < 1,25 — mord sur le biais, insensible au bruit ;
    *   - un garde-fou PAR SEED < 1,75 — attrape une dérive catastrophique isolée
    *     (max mesuré : 1,46 ici, 1,696 sur 150 seeds).
+   *
+   * LA RÉFÉRENCE A CHANGÉ (2026-07-14), ET IL LE FALLAIT. Ce test comparait la
+   * densité des lieux à celle du semis BRUT de Poisson — c'est-à-dire, en pratique,
+   * à l'uniformité. Or le semis n'est plus uniforme : un champ basse fréquence en
+   * écarte désormais un tiers des points, pour donner à la vallée un RYTHME (des
+   * grappes de lieux, et des vides à traverser). La non-uniformité est devenue une
+   * INTENTION, et le test la lisait comme un biais : il est passé au rouge à 2,0.
+   *
+   * La bonne référence n'a jamais été l'uniformité — c'était la neutralité
+   * SPATIALE de l'assignation. On compare donc les lieux posés aux points que
+   * `placePois` a réellement VUS (`poiSemis` : le semis filtré). Si l'assignation
+   * est neutre, les lieux se répartissent comme les candidats, et le rapport vaut 1
+   * quelle que soit la forme des grappes. Le bug d'origine — les plafonds raflés par
+   * les premiers points de la vague de croissance — le ferait toujours monter.
    */
   // 16 seeds × une carte 240×360 (~0,5 s pièce) : ~8 s de génération. Le budget
   // par défaut de vitest (5 s) ne pouvait pas le tenir — le test expirait, donc
@@ -186,12 +200,18 @@ describe('POIs dans la carte alpine', () => {
     const ratios: number[] = []
 
     for (const seed of SEEDS) {
-      const radius = POI_PLACEMENT.SPACING_FRAC * Math.min(W, H)
-      const pts = poissonPoints(W, H, seed, radius)
-      const p0 = pts[0]!
+      // Le point d'origine de la VAGUE DE CROISSANCE du semis — la source du biais
+      // historique. C'est bien le semis BRUT qu'on interroge ici : c'est lui qui a
+      // un premier point.
+      const p0 = poissonPoints(W, H, seed, poiSpacing(W, H))[0]!
       const d2 = (x: number, y: number): number => (x - p0.x) * (x - p0.x) + (y - p0.y) * (y - p0.y)
-      // Médiane des distances du SEMIS : partage les points en deux moitiés équipotentes.
-      const median = pts.map((p) => d2(p.x, p.y)).sort((a, b) => a - b)[Math.floor(pts.length / 2)]!
+
+      // Mais la MÉDIANE se prend sur les points que `placePois` a réellement vus (le
+      // semis filtré par le champ de rythme) : c'est eux, la population de référence.
+      // Elle les partage en deux moitiés équipotentes, quelle que soit la forme des
+      // grappes.
+      const cands = poiSemis(W, H, seed)
+      const median = cands.map((p) => d2(p.x, p.y)).sort((a, b) => a - b)[Math.floor(cands.length / 2)]!
 
       const pois = generateAlpineTerrain(W, H, seed).zones.filter((z) => z.kind !== undefined)
       let near = 0, far = 0
