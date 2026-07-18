@@ -6,20 +6,20 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { CraftOrder, Entity, GameTime, Inventory, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@braises/sim'
+import type { ComponentType, CraftOrder, Entity, GameTime, Inventory, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@braises/sim'
 import type Phaser from 'phaser'
 
 /**
  * LES PIÈCES STRUCTURELLES du MENU DU MARTEAU (spec construction R20) : barrières
  * posées librement, marteau en main. Les COMPOSANTS (enclume, four…) ne sont PAS
- * ici — ce sont des objets qu'on tient et pose (flux feu de camp), tranches 2+.
+ * ici — ce sont des objets qu'on tient et pose (flux feu de camp).
  */
 export type Buildable = 'wall' | 'door' | 'floor' | 'roof' | 'chest'
 
-/** Ce qu'un clic gauche peut POSER au sol : une PIÈCE STRUCTURELLE (marteau en main)
- *  ou le FEU DE CAMP qu'on tient (`'fire'`). Le fantôme et le résolveur de clic en
- *  dérivent tous les deux — une seule notion, deux consommateurs. */
-export type Placeable = Buildable | 'fire'
+/** Ce qu'un clic gauche peut POSER au sol : une PIÈCE STRUCTURELLE (marteau en main),
+ *  le FEU DE CAMP (`'fire'`), ou un COMPOSANT qu'on tient (enclume, four…). Le fantôme
+ *  et le résolveur de clic en dérivent tous les deux — une notion, deux consommateurs. */
+export type Placeable = Buildable | 'fire' | ComponentType
 
 /** Les stations d'artisanat (les recettes `station: null` n'en demandent aucune). */
 export type StationId = 'fire' | 'workshop' | 'furnace'

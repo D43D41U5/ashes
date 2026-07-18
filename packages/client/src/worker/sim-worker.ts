@@ -62,6 +62,7 @@ function tick(): void {
     entities: sim.entities,
     structures: sim.structures,
     villages: sim.villages,
+    functions: sim.functions,
     nodeDeltas: collectNodeDeltas(sim),
     npcs: sim.npcs,
     monsters: sim.monsters,

@@ -12,6 +12,7 @@ import type {
   Monster,
   Npc,
   PlayerAction,
+  RecognizedFunction,
   ResourceNode,
   SimEvent,
   Structure,
@@ -133,6 +134,10 @@ export interface SnapshotMessage {
   entities: Entity[]
   structures: Structure[]
   villages: Village[]
+  /** LES FONCTIONS ÉMERGENTES reconnues (spec construction R9-R22) : l'overlay les
+   *  affiche (« Forge · N2 »). Dérivé PUR des structures — le client ne les recalcule
+   *  pas, il les lit (et les PRÉDIT pour le fantôme, R22). */
+  functions: RecognizedFunction[]
   nodeDeltas: NodeDelta[]
   npcs: Npc[]
   monsters: Monster[]

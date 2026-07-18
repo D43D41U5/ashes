@@ -15,7 +15,8 @@ import { createEmptyMap } from './map'
 import { TERRAIN_GRASS, TERRAIN_DEEP_WATER } from './balance'
 import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
-import { fireRadius, getVillageOf, structureAt } from './village'
+import { recognizeFunctions, type ComponentType } from './index'
+import { addStructure, applyStructureDamage, fireRadius, getVillageOf, structureAt } from './village'
 import { grantItems } from './village'
 
 const R_MAX = BALANCE.FIRE_RADIUS_BY_TIER[BALANCE.FIRE_RADIUS_BY_TIER.length - 1]!
@@ -61,6 +62,31 @@ function foundVillage(sim: SimState, id: number, fireTx: number, fireTy: number)
 /** Met le marteau en main (préalable à toute pose de barrière, R19-R20). */
 function equipHammer(sim: SimState, id: number): void {
   act(sim, id, { type: 'set_active_slot', slot: slotOf(sim, id, 'hammer') })
+}
+
+/**
+ * Pose un COMPOSANT via l'action réelle `place_component` : on le met en case 0 de
+ * la ceinture (le sac du colon déborde de la ceinture après tous ses matériaux), on
+ * poste le colon à côté de la tuile, on pose.
+ */
+function placeComp(sim: SimState, id: number, comp: ComponentType, tx: number, ty: number): void {
+  const e = sim.entities.find((x) => x.id === id)!
+  e.inventory[0] = { item: comp, count: 1 }
+  e.activeSlot = 0
+  e.x = tx + 0.5
+  e.y = ty + 1.5 // une tuile au sud : à portée, jamais sous ses pieds
+  act(sim, id, { type: 'place_component', tx, ty })
+}
+
+/** La forge reconnue dans l'état, ou undefined. */
+function forgeOf(sim: SimState) {
+  return recognizeFunctions(sim.structures).find((f) => f.functionId === 'forge')
+}
+
+function functionEvents(sim: SimState): { tier: number; enclosed: boolean }[] {
+  return drainEvents(sim).flatMap((e) =>
+    e.type === 'function_changed' && e.functionId === 'forge' ? [{ tier: e.tier, enclosed: e.enclosed }] : [],
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -294,6 +320,108 @@ describe('les paliers de matériau des murs/portes (R8)', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('A3 — l’émergence & le palier de la Forge (R9-R10)', () => {
+  it('poser {enclume} fait Forge N1 ; +four → N2 ; démolir le four → N1', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    drainEvents(sim)
+    // {enclume} seule = Forge N1.
+    placeComp(sim, id, 'enclume', 44, 44)
+    expect(forgeOf(sim)?.tier).toBe(1)
+    expect(functionEvents(sim)).toContainEqual({ tier: 1, enclosed: false }) // formée
+
+    // + four à ≤ AMAS_RADIUS → N2.
+    placeComp(sim, id, 'furnace', 45, 44)
+    expect(forgeOf(sim)?.tier).toBe(2)
+    expect(functionEvents(sim)).toContainEqual({ tier: 2, enclosed: false })
+
+    // Démolir le four → retombe N1 (le four est un composant du même amas).
+    const four = structureAt(sim.structures, 45, 44)!
+    const e = sim.entities.find((x) => x.id === id)!
+    e.x = 45.5
+    e.y = 45.5
+    act(sim, id, { type: 'demolish', structureId: four.id })
+    expect(forgeOf(sim)?.tier).toBe(1)
+    expect(functionEvents(sim)).toContainEqual({ tier: 1, enclosed: false })
+  })
+
+  it('un four_acier hors palier du Feu est refusé (P3, R6)', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40) // palier 1
+    const e = sim.entities.find((x) => x.id === id)!
+    e.inventory[0] = { item: 'four_acier', count: 1 }
+    e.activeSlot = 0
+    e.x = 44.5
+    e.y = 45.5
+    drainEvents(sim)
+    act(sim, id, { type: 'place_component', tx: 44, ty: 44 })
+    expect(rejections(sim)).toContain('composant verrouillé (palier du Feu)')
+    expect(structureAt(sim.structures, 44, 44)).toBeUndefined()
+  })
+})
+
+describe('A4 — pas d’unicité (R11)', () => {
+  it('deux amas forge distincts = deux forges', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    // Deux enclumes séparées de plus qu'AMAS_RADIUS → deux amas → deux forges.
+    placeComp(sim, id, 'enclume', 44, 44)
+    placeComp(sim, id, 'enclume', 44, 44 + BALANCE.AMAS_RADIUS + 2)
+    const forges = recognizeFunctions(sim.structures).filter((f) => f.functionId === 'forge')
+    expect(forges).toHaveLength(2)
+    expect(forges.every((f) => f.tier === 1)).toBe(true)
+  })
+})
+
+describe('A5 — l’enceinte (R13-R14)', () => {
+  // Layout monté via `addStructure` (on teste la RECONNAISSANCE d'enceinte, pas la
+  // navigabilité) : enclume au centre d'un 3×3 toité, ceint de murs.
+  function enclosedForge(sim: SimState, v: number, owner: number, cx: number, cy: number): void {
+    addStructure(sim, 'enclume', cx, cy, v, owner)
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue // l'enclume tient sa propre couverture
+        addStructure(sim, 'roof', cx + dx, cy + dy, v, owner)
+      }
+    }
+    // Les 12 murs : les 4-voisins de l'intérieur 3×3 (les coins ne fuient pas en 4-connexité).
+    for (let d = -1; d <= 1; d++) {
+      addStructure(sim, 'wall', cx + d, cy - 2, v, owner)
+      addStructure(sim, 'wall', cx + d, cy + 2, v, owner)
+      addStructure(sim, 'wall', cx - 2, cy + d, v, owner)
+      addStructure(sim, 'wall', cx + 2, cy + d, v, owner)
+    }
+  }
+
+  it('clos + entièrement toité → bonus ; un trou de toit le retire SANS casser la fonction', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    const v = getVillageOf(sim, id)!.id
+    enclosedForge(sim, v, id, 45, 45)
+    expect(forgeOf(sim)).toMatchObject({ tier: 1, enclosed: true })
+
+    // Un trou dans la couverture (on détruit un toit) : bonus perdu, fonction intacte.
+    const roof = sim.structures.find((s) => s.type === 'roof')!
+    applyStructureDamage(sim, roof.id, 99999)
+    const forge = forgeOf(sim)
+    expect(forge?.tier).toBe(1) // la fonction SURVIT
+    expect(forge?.enclosed).toBe(false) // le bonus tombe
+  })
+
+  it('un amas ouvert (sans murs) n’est jamais clos', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    placeComp(sim, id, 'enclume', 44, 44)
+    expect(forgeOf(sim)?.enclosed).toBe(false)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 describe('A9 — déterminisme du rejeu (poses/démolitions/paliers)', () => {
   it('fonder, bâtir, monter le Feu, améliorer, démolir : rejoue au bit près', () => {
     const options = { map: createEmptyMap(96, 96, TERRAIN_GRASS) }
@@ -321,6 +449,33 @@ describe('A9 — déterminisme du rejeu (poses/démolitions/paliers)', () => {
     play({ type: 'upgrade_fire' }) // palier 2 (le Chef est à portée du Feu)
     play({ type: 'build', structure: 'door', tx: 40, ty: 41 })
     play({ type: 'demolish', structureId: wall.id })
+
+    const replayed = runReplay(log, setup)
+    expect(snapshot(replayed)).toBe(snapshot(sim))
+  })
+
+  it('poser des composants et reconnaître une Forge N2 rejoue au bit près', () => {
+    const options = { map: createEmptyMap(96, 96, TERRAIN_GRASS) }
+    const setup = (state: SimState) => {
+      const pid = spawnEntity(state, 40.5, 40.5)
+      grantItems(state, pid, { enclume: 1, furnace: 1, campfire: 1 }) // en ceinture 0,1,2
+    }
+    const sim = createSim(5, options)
+    const log = createReplayLog(5, options)
+    setup(sim)
+    const id = 1
+    const play = (a: PlayerAction): void => {
+      recordAndStep(sim, log, [{ entityId: id, dx: 0, dy: 0, action: a }])
+    }
+    play({ type: 'set_active_slot', slot: 2 }) // le feu de camp
+    play({ type: 'place_campfire', tx: 41, ty: 40 })
+    play({ type: 'found_village', structureId: structureAt(sim.structures, 41, 40)!.id })
+    play({ type: 'set_active_slot', slot: 0 }) // l'enclume
+    play({ type: 'place_component', tx: 44, ty: 40 })
+    play({ type: 'set_active_slot', slot: 1 }) // le four
+    play({ type: 'place_component', tx: 45, ty: 40 })
+    // La Forge N2 est bien reconnue et dans l'état.
+    expect(sim.functions.find((f) => f.functionId === 'forge')?.tier).toBe(2)
 
     const replayed = runReplay(log, setup)
     expect(snapshot(replayed)).toBe(snapshot(sim))

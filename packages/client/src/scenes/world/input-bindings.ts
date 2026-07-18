@@ -17,7 +17,7 @@
  * nœuds, cadavres et position prédite changent à chaque snapshot ou frame —
  * chaque handler lit l'état AU MOMENT de la frappe.
  */
-import { BALANCE, SLOTS, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@braises/sim'
+import { BALANCE, COMPONENT_TYPES, SLOTS, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
@@ -137,7 +137,10 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     const inv = getHud(scene.registry, 'inv') ?? []
     const slot = getHud(scene.registry, 'activeSlot') ?? -1
     const held = slot >= 0 ? (inv[slot]?.item ?? null) : null
-    return held === 'campfire' ? 'fire' : null
+    if (held === 'campfire') return 'fire'
+    // Un COMPOSANT tenu (enclume, four…) s'arme comme le feu de camp (spec R20).
+    if (held !== null && (COMPONENT_TYPES as readonly string[]).includes(held)) return held as Placeable
+    return null
   }
 
   /** Le contexte de POSE (spec construction R8) : le palier de matériau choisi au

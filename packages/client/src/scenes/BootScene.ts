@@ -113,6 +113,22 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('st-furnace', 16, 16)
     g.clear()
 
+    // Enclume (composant Forge) : la table et la corne, fer sombre.
+    tile(0x24242a, 0x3c3c44)
+    g.fillStyle(0x54545e).fillRect(2, 5, 12, 2) // la table éclairée
+    g.fillStyle(0x3c3c44).fillTriangle(11, 5, 16, 5, 11, 9) // la corne
+    g.fillStyle(0x24242a).fillRect(6, 10, 4, 4) // le socle
+    g.generateTexture('st-enclume', 16, 16)
+    g.clear()
+
+    // Four d'acier (composant Forge N3) : plus haut, flamme BLEUTÉE (l'acier).
+    tile(0x2a3038, 0x4a5560)
+    g.fillStyle(0x1c2228).fillRect(4, 5, 8, 8) // la gueule
+    g.fillStyle(0x7ac0ff).fillRect(6, 8, 4, 4) // la flamme d'acier
+    g.fillStyle(0xd8f0ff).fillRect(7, 9, 2, 2)
+    g.generateTexture('st-four_acier', 16, 16)
+    g.clear()
+
     // Maison : toit pignon + porte.
     g.fillStyle(0x7a4a2a).fillRect(1, 6, 14, 9)
     g.fillStyle(0x9c3f2e)

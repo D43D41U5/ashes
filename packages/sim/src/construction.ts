@@ -10,10 +10,12 @@
  * type}`, `{x,y,hp}`) plutôt que les types `Structure`/`Entity` — pour rester
  * découplé de `village.ts`/`sim.ts` (aucun cycle d'import) et directement testable.
  */
-import { TERRAINS } from './balance'
+import { BALANCE, COMPONENT_TYPES, FUNCTIONS, TERRAINS, type ComponentType, type FunctionId } from './balance'
+import { emitEvent } from './events'
 import { chebyshev } from './geometry'
 import { terrainAt, type WorldMap } from './map'
 import type { StructureType } from './items'
+import type { SimState } from './sim'
 
 /** La forme minimale d'une structure posée, pour les vérifs de navigabilité. */
 export interface PlacedStructure {
@@ -161,14 +163,211 @@ export function placementKeepsNavigable(
   return true
 }
 
-/**
- * Les types de COMPOSANTS (atomes actifs d'une fonction, spec construction R8).
- * VIDE en tranche 1 — la Forge (tranche 2) y ajoutera l'enclume, le four d'acier,
- * etc. Un `Set` local (pas dans le SimState) : simple test d'appartenance.
- */
-const COMPONENT_TYPES = new Set<StructureType>()
+/** L'ensemble des types de COMPOSANTS (dérivé de `COMPONENTS`, source unique). */
+const COMPONENT_SET = new Set<StructureType>(COMPONENT_TYPES)
 
 /** Cette structure est-elle un COMPOSANT ? (les barrières et le Feu n'en sont pas). */
 export function isComponent(type: StructureType): boolean {
-  return COMPONENT_TYPES.has(type)
+  return COMPONENT_SET.has(type)
+}
+
+// ─── LA RECONNAISSANCE D'AMAS & DE FONCTIONS (spec construction R9-R10, R14) ──
+
+/** La forme minimale d'une structure pour la reconnaissance (découplé de `Structure`). */
+export interface RecogStructure {
+  id: number
+  type: StructureType
+  tx: number
+  ty: number
+  villageId: number
+}
+
+/**
+ * UNE FONCTION RECONNUE (spec construction R9-R10). Émerge d'un AMAS ; son `tier`
+ * est la richesse de l'amas ; elle est ANCRÉE au composant primaire (identité stable
+ * quand on enrichit/appauvrit l'amas). `enclosed` = murée + toitée (R13-R14).
+ */
+export interface RecognizedFunction {
+  functionId: FunctionId
+  tier: number
+  /** Tuile du composant PRIMAIRE (ancre). */
+  tx: number
+  ty: number
+  villageId: number
+  enclosed: boolean
+}
+
+/** Ordre de tri des tuiles : par y puis x — l'ordre CANONIQUE, déterministe. */
+function tileBefore(a: { tx: number; ty: number }, b: { tx: number; ty: number }): boolean {
+  return a.ty !== b.ty ? a.ty < b.ty : a.tx < b.tx
+}
+
+/**
+ * Regroupe les composants en AMAS (spec construction R9) : deux composants à ≤
+ * `AMAS_RADIUS` (Chebyshev) sont dans le même amas (transitif — flood-fill). Ordre
+ * de parcours FIXE (composants triés par tuile d'abord) : déterministe (§7).
+ */
+function clusterComponents(components: readonly RecogStructure[]): RecogStructure[][] {
+  const sorted = [...components].sort((a, b) => (tileBefore(a, b) ? -1 : tileBefore(b, a) ? 1 : 0))
+  const amasList: RecogStructure[][] = []
+  const assigned = new Set<number>() // index dans `sorted`
+  const r = BALANCE.AMAS_RADIUS
+  for (let i = 0; i < sorted.length; i++) {
+    if (assigned.has(i)) continue
+    const amas: RecogStructure[] = []
+    const queue = [i]
+    assigned.add(i)
+    for (let head = 0; head < queue.length; head++) {
+      const cur = sorted[queue[head]!]!
+      amas.push(cur)
+      for (let k = 0; k < sorted.length; k++) {
+        if (assigned.has(k)) continue
+        const other = sorted[k]!
+        if (chebyshev(cur.tx, cur.ty, other.tx, other.ty) <= r) {
+          assigned.add(k)
+          queue.push(k)
+        }
+      }
+    }
+    amasList.push(amas)
+  }
+  return amasList
+}
+
+/**
+ * LES FONCTIONS RECONNUES dans l'état courant (spec construction R9-R10). PURE et
+ * déterministe : mêmes structures → mêmes fonctions, dans le même ordre. Chaque amas
+ * peut porter PLUSIEURS fonctions (une forge ET un atelier se touchent, R9) ; deux
+ * amas distincts = deux fonctions (pas d'unicité, R11).
+ */
+export function recognizeFunctions(structures: readonly RecogStructure[]): RecognizedFunction[] {
+  const components = structures.filter((s) => isComponent(s.type))
+  const amasList = clusterComponents(components)
+  const result: RecognizedFunction[] = []
+  const functionIds = Object.keys(FUNCTIONS) as FunctionId[]
+  for (const amas of amasList) {
+    const present = new Set<ComponentType>(amas.map((c) => c.type as ComponentType))
+    for (const functionId of functionIds) {
+      const def = FUNCTIONS[functionId]
+      // Palier = plus haut T dont la recette (cumulative) est satisfaite.
+      let tier = 0
+      for (let t = 0; t < def.recipeByTier.length; t++) {
+        if (def.recipeByTier[t]!.every((ct) => present.has(ct))) tier = t + 1
+        else break
+      }
+      if (tier === 0) continue
+      // Ancre = tuile canonique du composant PRIMAIRE (recipeByTier[0][0]).
+      const primary = def.recipeByTier[0]![0]!
+      const anchors = amas.filter((c) => c.type === primary)
+      const anchor = anchors.reduce((best, c) => (tileBefore(c, best) ? c : best))
+      result.push({
+        functionId,
+        tier,
+        tx: anchor.tx,
+        ty: anchor.ty,
+        villageId: anchor.villageId,
+        enclosed: def.enclosureBonus !== null && isEnclosed(amas, structures),
+      })
+    }
+  }
+  // Tri canonique (fonction, ancre) — un flux d'événements stable au rejeu.
+  return result.sort(
+    (a, b) =>
+      a.functionId < b.functionId ? -1 : a.functionId > b.functionId ? 1 : tileBefore(a, b) ? -1 : tileBefore(b, a) ? 1 : 0,
+  )
+}
+
+/**
+ * L'AMAS EST-IL CLOS + TOITÉ (spec construction R13-R14) ? Flood-fill de l'INTÉRIEUR
+ * depuis les composants, en traversant tout SAUF les murs et portes (la clôture) ; on
+ * plafonne à `ENCLOSURE_CAP` tuiles. Débordé (pas de clôture) → non clos. Clos, l'amas
+ * est TOITÉ si chaque tuile intérieure est COUVERTE : un toit, ou un solide (composant/
+ * coffre/Feu) qui tient lieu de couverture. Une tuile nue ou un simple sol = un trou.
+ * Déterministe (ordre de parcours fixe).
+ */
+function isEnclosed(amas: readonly RecogStructure[], structures: readonly RecogStructure[]): boolean {
+  const CAP = 400
+  const wallDoor = new Set<string>()
+  const byTile = new Map<string, RecogStructure>()
+  for (const s of structures) {
+    const k = `${s.tx},${s.ty}`
+    if (s.type === 'wall' || s.type === 'door') wallDoor.add(k)
+    // Une tuile ne porte qu'un solide (invariant 1-structure/tuile) ; on indexe le
+    // premier rencontré — suffit pour dire « couverte » (toit/composant/coffre/Feu).
+    if (!byTile.has(k)) byTile.set(k, s)
+  }
+  const interior = new Set<string>()
+  const queue: { tx: number; ty: number }[] = []
+  for (const c of amas) {
+    const k = `${c.tx},${c.ty}`
+    if (!interior.has(k)) {
+      interior.add(k)
+      queue.push({ tx: c.tx, ty: c.ty })
+    }
+  }
+  const NEI = [
+    { dx: 0, dy: -1 },
+    { dx: 0, dy: 1 },
+    { dx: -1, dy: 0 },
+    { dx: 1, dy: 0 },
+  ] as const
+  for (let head = 0; head < queue.length; head++) {
+    if (interior.size > CAP) return false // débordé : pas de clôture
+    const { tx, ty } = queue[head]!
+    for (const { dx, dy } of NEI) {
+      const nx = tx + dx
+      const ny = ty + dy
+      const k = `${nx},${ny}`
+      if (interior.has(k) || wallDoor.has(k)) continue
+      interior.add(k)
+      queue.push({ tx: nx, ty: ny })
+    }
+  }
+  // Clos (borné) : chaque tuile intérieure doit être COUVERTE.
+  for (const k of interior) {
+    const s = byTile.get(k)
+    const covered = s !== undefined && (s.type === 'roof' || isComponent(s.type) || s.type === 'chest' || s.type === 'fire')
+    if (!covered) return false
+  }
+  return true
+}
+
+/** Clé d'identité d'une fonction reconnue : (fonction, ancre). Stable tant que le
+ *  composant primaire reste en place — enrichir/appauvrir l'amas la conserve. */
+function functionKey(f: RecognizedFunction): string {
+  return `${f.functionId}@${f.tx},${f.ty}`
+}
+
+/**
+ * RECALCULE les fonctions reconnues et ÉMET les changements (spec construction R9-R10).
+ * Appelée à chaque mutation de structure (pose/démolition/destruction). Diff par
+ * identité (fonction, ancre) : une fonction NOUVELLE, montée/descendue de palier, ou
+ * dont l'enceinte bascule → `function_changed` ; une fonction DISPARUE → `tier` 0.
+ * `state.functions` est l'état canonique (dans le snapshot).
+ */
+export function refreshFunctions(state: SimState): void {
+  const next = recognizeFunctions(state.structures)
+  const prev = state.functions
+  const prevByKey = new Map(prev.map((f) => [functionKey(f), f]))
+  const nextKeys = new Set(next.map(functionKey))
+  const emit = (f: RecognizedFunction, tier: number): void => {
+    emitEvent(state, {
+      type: 'function_changed',
+      tick: state.tick,
+      functionId: f.functionId,
+      villageId: f.villageId,
+      tx: f.tx,
+      ty: f.ty,
+      tier,
+      enclosed: tier > 0 && f.enclosed,
+    })
+  }
+  for (const f of next) {
+    const p = prevByKey.get(functionKey(f))
+    if (p === undefined || p.tier !== f.tier || p.enclosed !== f.enclosed) emit(f, f.tier)
+  }
+  for (const p of prev) {
+    if (!nextKeys.has(functionKey(p))) emit(p, 0) // perdue
+  }
+  state.functions = next
 }

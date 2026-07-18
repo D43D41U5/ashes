@@ -664,6 +664,9 @@ export class WorldScene extends Phaser.Scene {
     // lapin qui s'y engouffre s'évapore — et la géométrie de la chasse au lapin
     // (couper la ligne du terrier) resterait une règle invisible.
     this.view.renderBurrows(time)
+    // L'OVERLAY DES FONCTIONS (spec construction R22) : « Forge · N2 » au-dessus de
+    // chaque amas reconnu, doré + ✦ quand l'enceinte donne son bonus.
+    this.view.renderFunctions()
     if (this.lastTime) {
       const hour = this.lastTime.hourOfCycle
       this.cliffs.render(this.cameras.main) // les parois, auto-raccordées à la vue

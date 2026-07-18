@@ -158,6 +158,12 @@ export interface SimState {
   entities: Entity[]
   villages: Village[]
   structures: Structure[]
+  /**
+   * LES FONCTIONS ÉMERGENTES reconnues (spec construction R9-R10) — dérivé PUR des
+   * structures, recalculé à chaque mutation (`refreshFunctions`). Dans le snapshot :
+   * le tableau du village et l'overlay client le lisent au lieu de re-reconnaître.
+   */
+  functions: import('./construction').RecognizedFunction[]
   nodes: ResourceNode[]
   npcs: Npc[]
   monsters: Monster[]
@@ -313,6 +319,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     entities: [],
     villages: [],
     structures: [],
+    functions: [],
     nodes: options.nodes ? (JSON.parse(JSON.stringify(options.nodes)) as ResourceNode[]) : [],
     npcs: [],
     monsters: [],

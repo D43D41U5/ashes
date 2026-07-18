@@ -16,12 +16,14 @@ import {
   type Corpse,
   type Entity,
   type Monster,
+  type FunctionId,
   type MonsterType,
   type Npc,
   type ResourceNode,
   type Structure,
 } from '@braises/sim'
 import Phaser from 'phaser'
+import { FONT } from '../ui/typography'
 import { windSway } from '../../render/wind'
 import type { NodeDelta, SnapshotMessage } from '../../protocol'
 import {
@@ -225,6 +227,12 @@ export interface InterpolatedSprite {
   startedAt: number
 }
 
+/** Le nom affiché d'une fonction émergente (spec construction R22). Étendu par tranche. */
+const FUNCTION_LABEL: Record<FunctionId, string> = { forge: 'Forge' }
+const FUNCTION_FONT = FONT
+/** L'overlay des fonctions passe au-dessus des toits et des houppiers (world-space). */
+const FUNCTION_LABEL_DEPTH = 1_400_000
+
 export class SnapshotView {
   /** Dernier état reçu — lu par la prédiction (collisions) et les inputs. */
   structures: Structure[] = []
@@ -249,10 +257,14 @@ export class SnapshotView {
   npcs: Npc[] = []
   monsters: Monster[] = []
   villages: SnapshotMessage['villages'] = []
+  /** LES FONCTIONS ÉMERGENTES reconnues (spec construction R9-R22) : l'overlay les affiche. */
+  functions: SnapshotMessage['functions'] = []
   /** Les autres entités (tout sauf l'avatar local, qui est prédit). */
   readonly others = new Map<number, InterpolatedSprite>()
 
   private structureSprites = new Map<number, Phaser.GameObjects.Image>()
+  /** Pool d'étiquettes flottantes « Forge · N2 » (spec construction R22). */
+  private functionLabels: Phaser.GameObjects.Text[] = []
   /** Sprites de nœuds POOLÉS, culled à la vue : la carte porte ~60k nœuds, on
    * n'en dessine que les ~centaines visibles (même trick que le décor). */
   private nodePool: Phaser.GameObjects.Image[] = []
@@ -293,6 +305,7 @@ export class SnapshotView {
   /** Applique un snapshot complet — hors avatar local (prédit par la scène). */
   apply(msg: SnapshotMessage, playerId: number, now: number): void {
     this.villages = msg.villages
+    this.functions = msg.functions
     this.npcs = msg.npcs
     this.monsters = msg.monsters
     this.tick = msg.tick
@@ -587,6 +600,33 @@ export class SnapshotView {
       }
     }
     return out
+  }
+
+  /**
+   * L'OVERLAY DES FONCTIONS (spec construction R22) : une étiquette flottante
+   * « Forge · N2 » au-dessus de chaque fonction reconnue ; dorée + ✦ si l'amas est
+   * clos+toité (le bonus d'enceinte). Poolée (jamais recréée) — appelée chaque frame.
+   */
+  renderFunctions(): void {
+    let used = 0
+    for (const f of this.functions) {
+      let t = this.functionLabels[used]
+      if (!t) {
+        t = this.scene.add
+          .text(0, 0, '', { fontFamily: FUNCTION_FONT, fontSize: '13px', stroke: '#14141a', strokeThickness: 3 })
+          .setOrigin(0.5, 1)
+          .setDepth(FUNCTION_LABEL_DEPTH)
+        this.functionLabels[used] = t
+      }
+      const a = tileFeetAnchor(f.tx, f.ty, TILE_PX)
+      const lift = this.warp?.lift(f.tx + 0.5, f.ty) ?? 0
+      t.setText(`${FUNCTION_LABEL[f.functionId]} · N${f.tier}${f.enclosed ? ' ✦' : ''}`)
+        .setColor(f.enclosed ? '#e8c66a' : '#cfe0d0')
+        .setPosition(a.px, a.py - lift - TILE_PX)
+        .setVisible(true)
+      used++
+    }
+    for (let i = used; i < this.functionLabels.length; i++) this.functionLabels[i]!.setVisible(false)
   }
 
   /** Reçoit la liste COMPLÈTE des nœuds (message `ready`, une fois) et l'indexe

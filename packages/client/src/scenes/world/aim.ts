@@ -19,7 +19,7 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
-import { FOOD_VALUES, WEAPON_DAMAGE, type ItemId, type StructureType, type WallMaterial } from '@braises/sim'
+import { COMPONENT_TYPES, FOOD_VALUES, WEAPON_DAMAGE, type ItemId, type StructureType, type WallMaterial } from '@braises/sim'
 import type { Placeable } from '../../hud-state'
 import type { Corpse, PlayerAction, ResourceNode } from '@braises/sim'
 
@@ -116,6 +116,10 @@ export function clickToAction(
   // le clic POSE, il ne récolte ni ne frappe « en passant ». Le mode dit ce que le
   // clic fait — c'est ce qui le rend prévisible (même règle que le fantôme).
   if (placing === 'fire') return { type: 'place_campfire', tx: target.tx, ty: target.ty }
+  // Un COMPOSANT tenu se pose (spec construction R20, flux feu de camp).
+  if (placing !== null && (COMPONENT_TYPES as readonly string[]).includes(placing)) {
+    return { type: 'place_component', tx: target.tx, ty: target.ty }
+  }
   if (placing !== null) {
     // Cliquer un MUR/PORTE existant, une pièce mur/porte armée, l'AMÉLIORE au palier
     // de matériau choisi (spec construction R8) — plutôt que de buter « tuile occupée ».

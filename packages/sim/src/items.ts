@@ -74,6 +74,16 @@ export type ItemId =
    * Fonder n'est plus le geste d'allumer : c'est une décision qui vient après.
    */
   | 'campfire'
+  /**
+   * LES COMPOSANTS EN OBJET (spec construction R20) — l'atome actif d'une fonction.
+   * On les fabrique, on les PORTE, on les POSE (action `place_component`, flux feu de
+   * camp) : ils deviennent alors la structure du même nom, qui — GROUPÉE — fait
+   * émerger une fonction (Forge = enclume + four…). Le four (`furnace`) reste aussi
+   * bâtissable à l'ancienne (héritage V3). Les tranches suivantes en ajoutent.
+   */
+  | 'enclume'
+  | 'furnace'
+  | 'four_acier'
 
 /** Une case occupée. `wear` absent = neuf ; un empilable n'a jamais d'usure. */
 export interface Slot {
@@ -107,7 +117,19 @@ export type ItemBag = Partial<Record<ItemId, number>>
  *    fonction (R9). Ils s'ajoutent au fil des tranches (Forge, Atelier, Grenier…).
  * `fire` reste l'ancre sui generis (R1). `workshop`/`furnace`/`house` : héritage V3.
  */
-export type StructureType = 'fire' | 'wall' | 'door' | 'floor' | 'roof' | 'chest' | 'workshop' | 'furnace' | 'house'
+export type StructureType =
+  | 'fire'
+  | 'wall'
+  | 'door'
+  | 'floor'
+  | 'roof'
+  | 'chest'
+  | 'workshop'
+  | 'furnace'
+  | 'house'
+  // ── LES COMPOSANTS (atomes actifs, R8). Groupés, ils font émerger une fonction. ──
+  | 'enclume'
+  | 'four_acier'
 
 export type AccessLevel = 'private' | 'village' | 'public'
 

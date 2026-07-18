@@ -38,10 +38,13 @@ import { INK, SECTION_TITLE, textStyle } from './typography'
 
 // ─── La logique (pure, testée — craft-panel.test.ts) ─────────────────────────
 
-export type CraftCategory = 'campement' | 'outils' | 'armes' | 'survie' | 'materiaux'
+export type CraftCategory = 'campement' | 'composants' | 'outils' | 'armes' | 'survie' | 'materiaux'
 
 export const CATEGORY_LABEL: Record<CraftCategory, string> = {
   campement: 'CAMPEMENT',
+  // Les COMPOSANTS (spec construction R20) : fabriqués au Feu, portés, posés — ce
+  // sont des OBJETS d'artisanat, pas des pièces du menu du marteau (les barrières).
+  composants: 'COMPOSANTS',
   outils: 'OUTILS',
   armes: 'ARMES',
   survie: 'SURVIE',
@@ -78,6 +81,10 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   cooked_meat: 'survie',
   rope: 'materiaux',
   iron_ingot: 'materiaux',
+  // Les COMPOSANTS de la Forge (spec construction §4bis) : assemblés au Feu.
+  enclume: 'composants',
+  furnace: 'composants',
+  four_acier: 'composants',
 }
 
 /** Une ligne de la liste : un en-tête de rayon, ou une recette. */

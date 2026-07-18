@@ -427,6 +427,10 @@ export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./
   workshop: { wood: 6, stone: 4 },
   furnace: { stone: 8 },
   house: { wood: 8 },
+  // COMPOSANTS : coût de remboursement à la démolition (posés via `place_component`,
+  // qui consomme l'objet fabriqué au coût `COMPONENTS[type].cost`).
+  enclume: { stone: 6, iron_ore: 2 },
+  four_acier: { cut_stone: 8, iron_ingot: 5 },
 }
 
 export type WallMaterial = 'wood' | 'stone' | 'metal'
@@ -453,6 +457,45 @@ export const WALL_TIERS: Record<WallMaterial, {
 
 /** L'ordre des paliers de matériau — on n'améliore que vers le suivant. */
 export const WALL_MATERIAL_ORDER: readonly WallMaterial[] = ['wood', 'stone', 'metal']
+
+/**
+ * LES COMPOSANTS (spec construction R8, §4bis) — l'atome ACTIF d'une fonction. Une
+ * `ComponentType` est aussi une `StructureType` (le composant EST une structure) et
+ * a un objet-jumeau du même nom (`ItemId`) qu'on fabrique et pose. Les tranches
+ * suivantes (Atelier, Grenier, Ferme) étendent ce type.
+ */
+export type ComponentType = 'enclume' | 'furnace' | 'four_acier'
+
+/** Coût (recette de l'objet à poser), palier du Feu qui débloque (R6) et PV. À calibrer. */
+export const COMPONENTS: Record<ComponentType, { cost: import('./items').ItemBag; unlockTier: number; hp: number }> = {
+  // Forge : enclume (fer de récup, dès P1) → four → four d'acier (exige P3).
+  enclume: { cost: { stone: 6, iron_ore: 2 }, unlockTier: 1, hp: 120 },
+  furnace: { cost: { stone: 10 }, unlockTier: 1, hp: 100 },
+  four_acier: { cost: { cut_stone: 8, iron_ingot: 5 }, unlockTier: 3, hp: 150 },
+}
+
+/**
+ * LES FONCTIONS ÉMERGENTES (spec construction R9-R10, §4bis). Une fonction émerge
+ * d'un AMAS de composants ; son palier = la richesse de l'amas. `recipeByTier[T−1]`
+ * = les TYPES de composants requis (cumulatif) pour atteindre le palier T ; le
+ * premier élément de `recipeByTier[0]` est le composant PRIMAIRE (il ancre la
+ * fonction — identité stable quand on enrichit/appauvrit l'amas). `enclosureBonus` =
+ * le bonus thématique quand l'amas est muré + toité (R13) ; `null` = plein air.
+ */
+export type FunctionId = 'forge'
+
+export const FUNCTIONS: Record<
+  FunctionId,
+  { recipeByTier: readonly (readonly ComponentType[])[]; enclosureBonus: string | null }
+> = {
+  forge: {
+    recipeByTier: [['enclume'], ['enclume', 'furnace'], ['enclume', 'furnace', 'four_acier']],
+    enclosureBonus: 'durabilite',
+  },
+}
+
+/** Tous les types de composants connus, dérivés de `COMPONENTS` (source unique). */
+export const COMPONENT_TYPES = Object.keys(COMPONENTS) as ComponentType[]
 
 /**
  * LES TROIS CERCLES (GDD §8bis). Le cercle DOMESTIQUE — le rayon du camp — est
@@ -642,6 +685,10 @@ export type RecipeId =
   | 'hammer'
   | 'cooked_meat'
   | 'campfire'
+  // Les COMPOSANTS EN OBJET (spec construction R20) : fabriqués au Feu, portés, posés.
+  | 'enclume'
+  | 'furnace'
+  | 'four_acier'
 
 export interface Recipe {
   /** `null` = À LA MAIN : nulle part, donc partout (spec craft-fortune C1). */
@@ -688,6 +735,12 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   // n'ajoute AUCUNE porte : qui peut bâtir peut le forger.
   hammer: { station: 'fire', inputs: { wood: 4, stone: 2, fiber: 2 }, output: 'hammer', seconds: 8 },
   cooked_meat: { station: 'fire', inputs: { raw_meat: 1 }, output: 'cooked_meat', seconds: 5 },
+  // Les COMPOSANTS EN OBJET (spec construction R20) : assemblés AU FEU, coût =
+  // `COMPONENTS[type].cost`. On les pose ensuite (`place_component`) pour faire émerger
+  // une fonction. Le four garde sa station-jumelle de fusion (`furnace`) à la pose.
+  enclume: { station: 'fire', inputs: COMPONENTS.enclume.cost, output: 'enclume', seconds: 12 },
+  furnace: { station: 'fire', inputs: COMPONENTS.furnace.cost, output: 'furnace', seconds: 12 },
+  four_acier: { station: 'fire', inputs: COMPONENTS.four_acier.cost, output: 'four_acier', seconds: 16 },
 }
 
 /**
@@ -1808,6 +1861,10 @@ export const STRUCTURE_HP: Record<import('./items').StructureType, number> = {
   workshop: 100,
   furnace: 100,
   house: 100,
+  // COMPOSANTS (spec construction R8) : ils ne se dégradent jamais (R17), mais ont
+  // des PV — ils sont une adresse RAIDABLE (R6). PV dérivés de `COMPONENTS`.
+  enclume: COMPONENTS.enclume.hp,
+  four_acier: COMPONENTS.four_acier.hp,
 }
 
 /** Hordes & événements du monde (spec événements). */
@@ -2048,6 +2105,10 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   // Le feu de camp en ballot : LOURD (un tiers de la besace). On ne trimballe pas
   // trois foyers dans son dos — le poser est un engagement, pas un réflexe.
   campfire: 8,
+  // Les COMPOSANTS en objet : LOURDS (une enclume, un four…). On les porte un par un.
+  enclume: 10,
+  furnace: 9,
+  four_acier: 12,
 }
 
 /**
@@ -2140,6 +2201,10 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   hammer: 1,
   // Un feu de camp par case : c'est un objet-structure, pas un consommable qu'on empile.
   campfire: 1,
+  // Les composants en objet : un par case (objets-structures, pas des consommables).
+  enclume: 1,
+  furnace: 1,
+  four_acier: 1,
 }
 
 /** Tailles de sac (spec inventaire R7). La longueur du tableau EST la capacité. */

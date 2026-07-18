@@ -1790,6 +1790,25 @@ const SCENARIOS = {
       })
       const berr = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '')
       console.log(`pose (R14/R23) → mur ${built.wall ? '✓' : '✗'}, toit ${built.roof ? '✓' : '✗'}${built.wall && built.roof ? '' : ` (${berr})`}`)
+
+      // LA FORGE (tranche 2) : poser enclume + four fait ÉMERGER une Forge N2 (R9-R10),
+      // et l'overlay l'affiche (R22).
+      await grant('enclume')
+      await doAction({ type: 'place_component', tx: feu.tx + 3, ty: feu.ty }, 400)
+      await grant('furnace')
+      await doAction({ type: 'place_component', tx: feu.tx + 4, ty: feu.ty }, 600)
+      const forge = await page.evaluate(() => {
+        const f = window.__BRAISES__.scene.view.functions.find((x) => x.functionId === 'forge')
+        return f ? f.tier : 0
+      })
+      const ferr = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '')
+      console.log(`Forge (R9-R10) → ${forge ? `N${forge} émergée ✓` : `ABSENTE ✗ (${ferr})`}`)
+      const overlay = await page.evaluate(() =>
+        window.__BRAISES__.scene.children.list.some(
+          (o) => o.type === 'Text' && typeof o.text === 'string' && o.text.includes('Forge'),
+        ),
+      )
+      console.log(`overlay « Forge » (R22) → ${overlay ? 'affiché ✓' : 'absent ✗'}`)
     }
     await page.screenshot({ path: `${OUT}/construction.png` })
     console.log(`capture → ${OUT}/construction.png`)

@@ -48,6 +48,21 @@ export type SimEvent =
   | { type: 'fire_upgraded'; tick: number; villageId: number; tier: number }
   /** UN MUR/PORTE PASSE AU MATÉRIAU SUIVANT (spec construction R8) : bois→pierre→métal. */
   | { type: 'structure_upgraded'; tick: number; structureId: number; material: import('./balance').WallMaterial }
+  /**
+   * UNE FONCTION ÉMERGENTE A CHANGÉ (spec construction R9-R10). Formée (nouveau
+   * `tier`≥1), montée/descendue de palier, close/ouverte, ou PERDUE (`tier` 0). Ancrée
+   * au composant primaire (tx,ty). Le tableau du village et l'overlay client en dérivent.
+   */
+  | {
+      type: 'function_changed'
+      tick: number
+      functionId: import('./balance').FunctionId
+      villageId: number
+      tx: number
+      ty: number
+      tier: number
+      enclosed: boolean
+    }
   | { type: 'member_joined'; tick: number; villageId: number; entityId: number }
   | { type: 'member_banished'; tick: number; villageId: number; entityId: number }
   | { type: 'action_rejected'; tick: number; entityId: number; reason: string }

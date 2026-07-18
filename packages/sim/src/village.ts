@@ -13,6 +13,8 @@ import {
   ALIGNMENT,
   BALANCE,
   COMBAT,
+  COMPONENTS,
+  COMPONENT_TYPES,
   FOOD_VALUES,
   SLOTS,
   STRUCTURE_COSTS,
@@ -22,9 +24,10 @@ import {
   WALL_MATERIAL_ORDER,
   WALL_TIERS,
   WORLD_EVENTS,
+  type ComponentType,
   type WallMaterial,
 } from './balance'
-import { blocksNavigation, placementKeepsNavigable } from './construction'
+import { blocksNavigation, placementKeepsNavigable, refreshFunctions } from './construction'
 import { emitEvent } from './events'
 import { chebyshev, distSq } from './geometry'
 import {
@@ -139,6 +142,12 @@ export type VillageAction =
    * carré du Feu (R2), sous réserve de l'invariant de navigabilité (R7).
    */
   | { type: 'build'; structure: Exclude<StructureType, 'fire'>; tx: number; ty: number; material?: WallMaterial }
+  /**
+   * JE POSE UN COMPOSANT TENU (enclume, four…) sur la tuile visée (spec construction
+   * R20, flux feu de camp). L'objet se consomme et DEVIENT la structure ; GROUPÉ à
+   * d'autres, il fait émerger une fonction (R9). Instantané (R15).
+   */
+  | { type: 'place_component'; tx: number; ty: number }
   /** JE MONTE LE FEU D'UN PALIER (spec construction R6) : le carré grandit, de
    *  nouveaux composants se débloquent. Coût croissant, plafonné à 3. */
   | { type: 'upgrade_fire' }
@@ -163,6 +172,8 @@ const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = {
   workshop: 'village',
   furnace: 'village',
   house: 'village',
+  enclume: 'village',
+  four_acier: 'village',
 }
 
 export function structureAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
@@ -213,6 +224,9 @@ export function structureBlocks(s: Structure, moverVillageId: number | null): bo
   // hitbox : un foyer de braises sous les pieds, ça se CONTOURNE (décision
   // utilisateur) — on cuisine et on se chauffe en se tenant à côté, pas dessus.
   if (s.type === 'house') return false
+  // Pièces MOLLES (spec construction R14) : sol et toit ne bloquent JAMAIS —
+  // seuls les murs comptent, ce qui garde l'invariant de navigabilité simple.
+  if (s.type === 'floor' || s.type === 'roof') return false
   if (s.type === 'door') return s.villageId !== moverVillageId
   return true
 }
@@ -335,6 +349,8 @@ export function applyStructureDamage(state: SimState, structureId: number, damag
       }
     }
     emitEvent(state, { type: 'structure_destroyed', tick: state.tick, structureId })
+    // Détruire un composant fait retomber sa fonction ; un mur/toit, l'enceinte (R10).
+    refreshFunctions(state)
   }
 }
 
@@ -542,6 +558,49 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
     }
 
     /**
+     * POSER LE COMPOSANT TENU (spec construction R20, flux feu de camp). L'objet en
+     * main (enclume, four…) se consomme et DEVIENT la structure ; groupé, il fait
+     * émerger une fonction (R9). Dans le carré du Feu (R2), sous le palier qui le
+     * débloque (R6), sous réserve de navigabilité (R7). Instantané (R15).
+     */
+    case 'place_component': {
+      const village = getVillageOf(state, actorId)
+      if (!village) return reject('sans village — fonder un foyer d’abord')
+      const held = heldSlot(actor)
+      if (!held || !(COMPONENT_TYPES as readonly string[]).includes(held.item)) {
+        return reject('il faut un composant en main')
+      }
+      const comp = held.item as ComponentType
+      const { tx, ty } = action
+      if (!Number.isInteger(tx) || !Number.isInteger(ty)) return reject('case invalide')
+      // LE PALIER DU FEU débloque les composants (spec construction R6).
+      if (COMPONENTS[comp].unlockTier > village.tier) return reject('composant verrouillé (palier du Feu)')
+      if (chebyshev(village.fireTx, village.fireTy, tx, ty) > fireRadius(village.tier)) return reject('hors du carré du Feu')
+      if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) return reject('trop loin')
+      // Un composant BLOQUE : pas sous ses pieds (on s'y emmurerait), comme le Feu.
+      if (Math.floor(actor.x) === tx && Math.floor(actor.y) === ty) return reject('pas sous ses pieds')
+      if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible')
+      if (structureAt(state.structures, tx, ty)) return reject('tuile occupée')
+      if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) return reject('un nœud occupe la tuile')
+      // Invariant de navigabilité (R7) : un composant bloque, comme un mur.
+      const ok = placementKeepsNavigable(
+        state.map,
+        state.structures,
+        state.entities,
+        actorId,
+        { tx: village.fireTx, ty: village.fireTy },
+        fireRadius(village.tier),
+        { tx, ty, type: comp },
+      )
+      if (!ok) return reject('cela couperait le passage')
+      // L'objet tenu se consomme (une unité) : il DEVIENT la structure.
+      held.count -= 1
+      if (held.count <= 0) actor.inventory[actor.activeSlot] = null
+      addStructure(state, comp, tx, ty, village.id, actorId)
+      return
+    }
+
+    /**
      * MONTER LE FEU D'UN PALIER (spec construction R6). Seul le Chef, à portée du
      * Feu, en payant le coût du palier visé. Le carré grandit (R2) et de nouveaux
      * types de composants se débloquent. Plafonné à 3.
@@ -647,6 +706,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       }
       state.structures = state.structures.filter((st) => st.id !== s.id)
       emitEvent(state, { type: 'structure_removed', tick: state.tick, structureId: s.id })
+      // Démolir un composant fait RETOMBER le palier de sa fonction (spec R10, R18).
+      refreshFunctions(state)
       return
     }
 
@@ -800,5 +861,8 @@ export function addStructure(
     tx,
     ty,
   })
+  // La pose peut faire ÉMERGER ou monter une fonction (composant), ou fermer une
+  // enceinte (mur/toit) : on recalcule et on émet les changements (spec R9-R10).
+  refreshFunctions(state)
   return structure
 }

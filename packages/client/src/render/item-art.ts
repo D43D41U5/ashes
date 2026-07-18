@@ -33,6 +33,11 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   cooked_meat: 'Viande cuite',
   components: 'Composants',
   campfire: 'Feu de camp',
+  // ── Les COMPOSANTS en objet (spec construction R20) : on les pose pour faire
+  //    émerger une fonction (la Forge : enclume + four…).
+  enclume: 'Enclume',
+  furnace: 'Four',
+  four_acier: "Four d'acier",
   // ── Les ressources STRUCTURANTES des zones (spec worldgen R9) : chacune n'existe
   //    QUE dans sa zone, et chacune est LOURDE. Le nom doit dire d'où elle vient.
   hardwood: 'Gros bois',
@@ -110,6 +115,30 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x5a3d22).fillRect(2, 12, 12, 2) // la bûche du dessus
     g.fillStyle(0x6a4c2c).fillRect(3, 14, 10, 1) // celle du dessous
     g.fillStyle(0xc3a678).fillRect(2, 12, 2, 2) // cœur clair au bout (NO)
+  },
+
+  // Les COMPOSANTS EN OBJET (spec construction R20) : une silhouette qui dit la
+  // fonction. L'enclume a sa corne ; le four, sa bouche ardente ; le four d'acier,
+  // la même en plus haut et bleuté (l'acier).
+  enclume: (g) => {
+    g.fillStyle(0x3c3c44).fillRect(3, 8, 10, 4) // le corps
+    g.fillStyle(0x2a2a30).fillRect(5, 12, 6, 2) // le socle
+    g.fillStyle(0x54545e).fillRect(3, 8, 10, 1) // la table éclairée
+    g.fillStyle(0x3c3c44).fillTriangle(11, 8, 15, 8, 11, 11) // la corne
+  },
+  furnace: (g) => {
+    g.fillStyle(0x6a5030).fillRect(3, 3, 10, 11) // le fût de brique
+    g.fillStyle(0x84673f).fillRect(3, 3, 10, 2)
+    g.fillStyle(0x2a2018).fillRect(5, 7, 6, 6) // la gueule
+    g.fillStyle(0xe8842c).fillRect(6, 9, 4, 3) // les braises
+    g.fillStyle(0xffd070).fillRect(7, 10, 2, 1)
+  },
+  four_acier: (g) => {
+    g.fillStyle(0x4a5560).fillRect(3, 2, 10, 12) // le fût d'acier
+    g.fillStyle(0x66727e).fillRect(3, 2, 10, 2)
+    g.fillStyle(0x1c2228).fillRect(5, 6, 6, 6) // la gueule
+    g.fillStyle(0x7ac0ff).fillRect(6, 8, 4, 3) // la flamme d'acier, bleutée
+    g.fillStyle(0xd8f0ff).fillRect(7, 9, 2, 1)
   },
 
   // Trois galets gris empilés — froids, pas de teinte chaude.

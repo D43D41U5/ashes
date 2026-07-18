@@ -50,7 +50,7 @@ describe('le panneau d’artisanat : ce qu’il montre', () => {
 
     // ALPHABÉTIQUE (l'accent de MATÉRIAUX se range sous le E, pas après le Z), et
     // CAMPEMENT (le Feu) en fait partie — c'est le premier geste du jeu.
-    expect(hs).toEqual(['ARMES', 'CAMPEMENT', 'MATÉRIAUX', 'OUTILS', 'SURVIE'])
+    expect(hs).toEqual(['ARMES', 'CAMPEMENT', 'COMPOSANTS', 'MATÉRIAUX', 'OUTILS', 'SURVIE'])
     expect(hs).toEqual([...hs].sort((a, b) => a.localeCompare(b, 'fr')))
     // L'ordre des en-têtes suit CATEGORY_ORDER, et chaque en-tête est SUIVI d'au
     // moins un article (un rayon sans article n'est pas un rayon, c'est du bruit) —
