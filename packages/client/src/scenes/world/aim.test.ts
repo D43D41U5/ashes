@@ -84,7 +84,13 @@ describe('clickToAction — armé, le clic bâtit (A2)', () => {
 
   it('le mode dit ce que le clic fait : armé, on ne récolte pas « en passant »', () => {
     const t = aimAt(10, 10, PLAYER, [node(7, 10, 10)], [], RANGE)
-    expect(clickToAction(t, 'chest')).toMatchObject({ type: 'build' })
+    // Un TOIT armé pose une pièce structurelle (le coffre, lui, se pose en objet tenu).
+    expect(clickToAction(t, 'roof')).toMatchObject({ type: 'build', structure: 'roof' })
+  })
+
+  it('le COFFRE tenu se pose comme un objet (décision d’Alexis), pas au marteau', () => {
+    const t = aimAt(11, 11, PLAYER, [], [], RANGE)
+    expect(clickToAction(t, 'chest')).toEqual({ type: 'place_component', tx: 11, ty: 11 })
   })
 })
 

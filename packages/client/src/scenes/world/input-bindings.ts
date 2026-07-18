@@ -138,8 +138,8 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     const slot = getHud(scene.registry, 'activeSlot') ?? -1
     const held = slot >= 0 ? (inv[slot]?.item ?? null) : null
     if (held === 'campfire') return 'fire'
-    // Un COMPOSANT tenu (enclume, four…) s'arme comme le feu de camp (spec R20).
-    if (held !== null && (COMPONENT_TYPES as readonly string[]).includes(held)) return held as Placeable
+    // Un COMPOSANT (enclume, four…) ou le COFFRE tenu s'arme comme le feu de camp (R20).
+    if (held !== null && ((COMPONENT_TYPES as readonly string[]).includes(held) || held === 'chest')) return held as Placeable
     return null
   }
 

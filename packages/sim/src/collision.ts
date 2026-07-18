@@ -18,7 +18,7 @@
 import { BALANCE, NODE_DEFS, TERRAINS, TICK_DT_S } from './balance'
 import { nodeAt, treeJitter, type ResourceNode } from './economy'
 import { isBlockingTile, terrainAt, type WorldMap } from './map'
-import { structureAt, structureBlocks, type Structure } from './village'
+import { solidAt, structureBlocks, type Structure } from './village'
 
 const EPS = 1e-6
 const HALF = BALANCE.AVATAR_HITBOX_TILES / 2
@@ -62,7 +62,7 @@ export function isBlockedAt(world: MoveWorld, tx: number, ty: number): boolean {
 function blockedAt(world: MoveWorld, tx: number, ty: number): boolean {
   if (isBlockingTile(world.map, tx, ty)) return true
   if (world.structures) {
-    const s = structureAt(world.structures, tx, ty)
+    const s = solidAt(world.structures, tx, ty)
     if (s !== undefined && structureBlocks(s, world.moverVillageId ?? null)) return true
   }
   if (world.nodes) {
@@ -98,6 +98,11 @@ export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: numbe
   if (world.structures) {
     for (const s of world.structures) {
       if (s.tx < 0 || s.ty < 0 || s.tx >= width || s.ty >= height) continue
+      // On n'indexe que le SOLIDE de la tuile (mur/porte/composant/Feu…), jamais une
+      // pièce molle (sol/toit) : sinon un sol posé AVANT un mur sur la même tuile
+      // masquerait le mur, et le pathfinding traverserait la paroi (décision d'Alexis :
+      // sol et toit se superposent au solide). Même sémantique que `solidAt`.
+      if (s.type === 'floor' || s.type === 'roof') continue
       const entry = entryAt(s.tx, s.ty)
       if (entry.structure === undefined) entry.structure = s
     }
@@ -131,7 +136,7 @@ function blockedSubAt(world: MoveWorld, sx: number, sy: number): boolean {
   const ty = Math.floor(sy / SUB)
   if (isBlockingTile(world.map, tx, ty)) return true
   if (world.structures) {
-    const s = structureAt(world.structures, tx, ty)
+    const s = solidAt(world.structures, tx, ty)
     if (s !== undefined && structureBlocks(s, world.moverVillageId ?? null)) return true
   }
   if (world.nodes) {

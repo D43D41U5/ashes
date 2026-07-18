@@ -12,7 +12,7 @@ import { distSq } from './geometry'
 import { rngRoll } from './rng'
 import { spawnEntity, type Entity, type SimState } from './sim'
 import { computeFlowField } from './pathfinding'
-import { structureAt, structureBlocks } from './village'
+import { solidAt, structureBlocks } from './village'
 import { cendreuxStep } from './cendreux'
 import { advanceFauna, avatarDetectability, avatarThreat, coverAt, faunaStep, isPredator, isPrey, wolfStep, type Threat } from './faune'
 import { getGameTime } from './time'
@@ -317,7 +317,7 @@ function hordeStep(state: SimState, monster: Monster, entity: Entity, flows: Flo
   if (bestTx === tx && bestTy === ty) return true // au but ou coincé hors champ
 
   // La tuile du gradient est-elle bouchée par une structure ? On la frappe.
-  const blocker = structureAt(state.structures, bestTx, bestTy)
+  const blocker = solidAt(state.structures, bestTx, bestTy)
   if (blocker && structureBlocks(blocker, null)) {
     if (!entity.windup && state.tick >= entity.cooldownUntil) {
       const def = MONSTER_DEFS[monster.type]
@@ -354,7 +354,7 @@ function attackBlockingStructure(state: SimState, monster: Monster, entity: Enti
           [ex + Math.sign(dx), ey],
         ]
   for (const [cx, cy] of candidates) {
-    const s = structureAt(state.structures, cx, cy)
+    const s = solidAt(state.structures, cx, cy)
     if (s && structureBlocks(s, null)) {
       const def = MONSTER_DEFS[monster.type]
       if (startAttack(state, entity, cx + 0.5 - entity.x, cy + 0.5 - entity.y, { windupTicks: def.windupTicks, damage: def.damage, structureId: s.id })) {

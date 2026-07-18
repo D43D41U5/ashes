@@ -87,6 +87,9 @@ export type ItemId =
   | 'workshop'
   | 'tour_meca'
   | 'atelier_lourd'
+  /** LE COFFRE EN OBJET (décision d'Alexis) : il ne se pose PLUS au marteau — on le
+   *  fabrique, on le tient, on le pose (`place_component`), comme le four et l'établi. */
+  | 'chest'
   | 'silo'
   | 'cave'
   | 'reserve'
@@ -149,6 +152,13 @@ export type StructureType =
   | 'parcelle'
   | 'serre'
   | 'terroir'
+
+/**
+ * LES PIÈCES STRUCTURELLES du marteau (spec construction R20, décision d'Alexis
+ * 2026-07-18) : les SEULES choses qu'on pose au marteau. Le coffre, le four et
+ * l'établi n'en sont PAS — ce sont des objets qu'on tient et pose (`place_component`).
+ */
+export type BarrierType = 'wall' | 'door' | 'floor' | 'roof'
 
 export type AccessLevel = 'private' | 'village' | 'public'
 

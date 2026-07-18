@@ -292,13 +292,13 @@ export function recognizeFunctions(structures: readonly RecogStructure[]): Recog
 function isEnclosed(amas: readonly RecogStructure[], structures: readonly RecogStructure[]): boolean {
   const CAP = 400
   const wallDoor = new Set<string>()
-  const byTile = new Map<string, RecogStructure>()
+  const roofTiles = new Set<string>()
   for (const s of structures) {
     const k = `${s.tx},${s.ty}`
     if (s.type === 'wall' || s.type === 'door') wallDoor.add(k)
-    // Une tuile ne porte qu'un solide (invariant 1-structure/tuile) ; on indexe le
-    // premier rencontré — suffit pour dire « couverte » (toit/composant/coffre/Feu).
-    if (!byTile.has(k)) byTile.set(k, s)
+    // Le TOIT est une couche à part (décision d'Alexis : il se superpose au reste) :
+    // une tuile est « couverte » si un toit s'y trouve, quoi qu'il y ait dessous.
+    if (s.type === 'roof') roofTiles.add(k)
   }
   const interior = new Set<string>()
   const queue: { tx: number; ty: number }[] = []
@@ -327,12 +327,8 @@ function isEnclosed(amas: readonly RecogStructure[], structures: readonly RecogS
       queue.push({ tx: nx, ty: ny })
     }
   }
-  // Clos (borné) : chaque tuile intérieure doit être COUVERTE.
-  for (const k of interior) {
-    const s = byTile.get(k)
-    const covered = s !== undefined && (s.type === 'roof' || isComponent(s.type) || s.type === 'chest' || s.type === 'fire')
-    if (!covered) return false
-  }
+  // Clos (borné) : chaque tuile intérieure doit porter un TOIT (entièrement toité, R14).
+  for (const k of interior) if (!roofTiles.has(k)) return false
   return true
 }
 

@@ -382,12 +382,9 @@ describe('A5 — l’enceinte (R13-R14)', () => {
   // navigabilité) : enclume au centre d'un 3×3 toité, ceint de murs.
   function enclosedForge(sim: SimState, v: number, owner: number, cx: number, cy: number): void {
     addStructure(sim, 'enclume', cx, cy, v, owner)
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (dx === 0 && dy === 0) continue // l'enclume tient sa propre couverture
-        addStructure(sim, 'roof', cx + dx, cy + dy, v, owner)
-      }
-    }
+    // Toit sur TOUTES les tuiles intérieures — le toit se superpose au composant
+    // (décision d'Alexis) : entièrement toité, l'enclume comprise.
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) addStructure(sim, 'roof', cx + dx, cy + dy, v, owner)
     // Les 12 murs : les 4-voisins de l'intérieur 3×3 (les coins ne fuient pas en 4-connexité).
     for (let d = -1; d <= 1; d++) {
       addStructure(sim, 'wall', cx + d, cy - 2, v, owner)
@@ -453,7 +450,7 @@ describe('L’Atelier (tranche 3 — réutilise la reconnaissance)', () => {
     // Un établi seul, muré + toité (layout monté via addStructure).
     addStructure(sim, 'workshop', 45, 45, v, id)
     for (let dy = -1; dy <= 1; dy++)
-      for (let dx = -1; dx <= 1; dx++) if (dx || dy) addStructure(sim, 'roof', 45 + dx, 45 + dy, v, id)
+      for (let dx = -1; dx <= 1; dx++) addStructure(sim, 'roof', 45 + dx, 45 + dy, v, id)
     for (let d = -1; d <= 1; d++) {
       addStructure(sim, 'wall', 45 + d, 43, v, id)
       addStructure(sim, 'wall', 45 + d, 47, v, id)
@@ -506,7 +503,7 @@ describe('Le Grenier (tranche 4 — conteneur anti-pourriture)', () => {
     const cv = getVillageOf(closSim, cid)!.id
     const closSilo = addStructure(closSim, 'silo', 45, 45, cv, cid)
     for (let dy = -1; dy <= 1; dy++)
-      for (let dx = -1; dx <= 1; dx++) if (dx || dy) addStructure(closSim, 'roof', 45 + dx, 45 + dy, cv, cid)
+      for (let dx = -1; dx <= 1; dx++) addStructure(closSim, 'roof', 45 + dx, 45 + dy, cv, cid)
     for (let d = -1; d <= 1; d++) {
       addStructure(closSim, 'wall', 45 + d, 43, cv, cid)
       addStructure(closSim, 'wall', 45 + d, 47, cv, cid)
@@ -552,7 +549,7 @@ describe('La Ferme (tranche 5 — plein air, sans enceinte)', () => {
     // Un layout parfaitement clos+toité — qui donnerait le bonus à toute AUTRE fonction.
     addStructure(sim, 'parcelle', 45, 45, v, id)
     for (let dy = -1; dy <= 1; dy++)
-      for (let dx = -1; dx <= 1; dx++) if (dx || dy) addStructure(sim, 'roof', 45 + dx, 45 + dy, v, id)
+      for (let dx = -1; dx <= 1; dx++) addStructure(sim, 'roof', 45 + dx, 45 + dy, v, id)
     for (let d = -1; d <= 1; d++) {
       addStructure(sim, 'wall', 45 + d, 43, v, id)
       addStructure(sim, 'wall', 45 + d, 47, v, id)

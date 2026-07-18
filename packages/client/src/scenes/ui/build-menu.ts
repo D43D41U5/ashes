@@ -19,14 +19,14 @@ import type { Buildable } from '../../hud-state'
 import { bagLine } from './craft-panel'
 import { INK, SECTION_TITLE, textStyle } from './typography'
 
-/** Les pièces structurelles du menu du marteau (spec construction R20). */
-export const BUILDABLES = ['wall', 'door', 'floor', 'roof', 'chest'] as const
+/** Les pièces structurelles du menu du marteau (spec construction R20, décision
+ *  d'Alexis) — le coffre n'y est PLUS (il se pose en objet tenu). */
+export const BUILDABLES = ['wall', 'door', 'floor', 'roof'] as const
 export const BUILDABLE_LABEL: Record<Buildable, string> = {
   wall: 'Mur',
   door: 'Porte',
   floor: 'Sol',
   roof: 'Toit',
-  chest: 'Coffre',
 }
 const MATERIALS: readonly WallMaterial[] = ['wood', 'stone', 'metal']
 const MATERIAL_LABEL: Record<WallMaterial, string> = { wood: 'bois', stone: 'pierre', metal: 'métal' }

@@ -10,16 +10,16 @@ import type { ComponentType, CraftOrder, Entity, GameTime, Inventory, ItemId, Pl
 import type Phaser from 'phaser'
 
 /**
- * LES PIÈCES STRUCTURELLES du MENU DU MARTEAU (spec construction R20) : barrières
- * posées librement, marteau en main. Les COMPOSANTS (enclume, four…) ne sont PAS
- * ici — ce sont des objets qu'on tient et pose (flux feu de camp).
+ * LES PIÈCES STRUCTURELLES du MENU DU MARTEAU (spec construction R20, décision
+ * d'Alexis) : les SEULES choses qu'on pose au marteau. Le coffre, le four et
+ * l'établi n'en sont PAS — ce sont des objets qu'on tient et pose (flux feu de camp).
  */
-export type Buildable = 'wall' | 'door' | 'floor' | 'roof' | 'chest'
+export type Buildable = 'wall' | 'door' | 'floor' | 'roof'
 
 /** Ce qu'un clic gauche peut POSER au sol : une PIÈCE STRUCTURELLE (marteau en main),
- *  le FEU DE CAMP (`'fire'`), ou un COMPOSANT qu'on tient (enclume, four…). Le fantôme
- *  et le résolveur de clic en dérivent tous les deux — une notion, deux consommateurs. */
-export type Placeable = Buildable | 'fire' | ComponentType
+ *  le FEU DE CAMP (`'fire'`), un COMPOSANT (enclume, four…) ou le COFFRE qu'on tient.
+ *  Le fantôme et le résolveur de clic en dérivent — une notion, deux consommateurs. */
+export type Placeable = Buildable | 'fire' | ComponentType | 'chest'
 
 /** Les stations d'artisanat (les recettes `station: null` n'en demandent aucune). */
 export type StationId = 'fire' | 'workshop' | 'furnace'

@@ -30,6 +30,9 @@ export const TILE_PX = 16
 export const GROUND_MAP_DEPTH = -1
 export const GROUND_PROP_DEPTH = 2
 export const GROUND_FIRE_DEPTH = 5
+/** LE SOL BÂTI (décision d'Alexis) : une pièce molle POSÉE AU RAS DU SOL, sous les
+ * acteurs et le décor haut — on marche DESSUS, jamais derrière. */
+export const FLOOR_DEPTH = 6
 
 /** Base de la bande de tri Y. */
 export const Y_SORT_BASE = 1000

@@ -116,8 +116,8 @@ export function clickToAction(
   // le clic POSE, il ne récolte ni ne frappe « en passant ». Le mode dit ce que le
   // clic fait — c'est ce qui le rend prévisible (même règle que le fantôme).
   if (placing === 'fire') return { type: 'place_campfire', tx: target.tx, ty: target.ty }
-  // Un COMPOSANT tenu se pose (spec construction R20, flux feu de camp).
-  if (placing !== null && (COMPONENT_TYPES as readonly string[]).includes(placing)) {
+  // Un COMPOSANT ou le COFFRE tenu se pose (spec construction R20, flux feu de camp).
+  if (placing !== null && ((COMPONENT_TYPES as readonly string[]).includes(placing) || placing === 'chest')) {
     return { type: 'place_component', tx: target.tx, ty: target.ty }
   }
   if (placing !== null) {
@@ -135,7 +135,11 @@ export function clickToAction(
     if (placing === 'wall' || placing === 'door') {
       return { type: 'build', structure: placing, tx: target.tx, ty: target.ty, material: build?.material ?? 'wood' }
     }
-    return { type: 'build', structure: placing, tx: target.tx, ty: target.ty }
+    // Il ne reste que les pièces MOLLES du marteau (sol/toit) — le reste (composants,
+    // coffre, feu) a déjà été traité au-dessus.
+    if (placing === 'floor' || placing === 'roof') {
+      return { type: 'build', structure: placing, tx: target.tx, ty: target.ty }
+    }
   }
 
   // MANGER : on tient de quoi, on croque. (Le clic maintenu répète — voir holdHarvest.)

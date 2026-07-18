@@ -41,6 +41,7 @@ import {
   pourSlot,
   removeItems,
   type AccessLevel,
+  type BarrierType,
   type Inventory,
   type ItemBag,
   type ItemId,
@@ -137,11 +138,12 @@ export type VillageAction =
   | { type: 'repair'; structureId: number }
   | { type: 'give'; targetEntityId: number; item: ItemId; count: number }
   /**
-   * JE POSE UNE BARRIÈRE (mur/porte/sol/toit/coffre), marteau en main. `material`
-   * ne vaut que pour mur/porte (défaut bois, R8). Pose INSTANTANÉE (R15), dans le
-   * carré du Feu (R2), sous réserve de l'invariant de navigabilité (R7).
+   * JE POSE UNE PIÈCE STRUCTURELLE (mur/porte/sol/toit), marteau en main — et RIEN
+   * d'autre (décision d'Alexis : le four, l'établi, le coffre se posent en objet
+   * tenu, `place_component`). `material` ne vaut que pour mur/porte (défaut bois, R8).
+   * Pose INSTANTANÉE (R15), dans le carré du Feu (R2), sous réserve de navigabilité (R7).
    */
-  | { type: 'build'; structure: Exclude<StructureType, 'fire'>; tx: number; ty: number; material?: WallMaterial }
+  | { type: 'build'; structure: BarrierType; tx: number; ty: number; material?: WallMaterial }
   /**
    * JE POSE UN COMPOSANT TENU (enclume, four…) sur la tuile visée (spec construction
    * R20, flux feu de camp). L'objet se consomme et DEVIENT la structure ; GROUPÉ à
@@ -195,6 +197,25 @@ const CONTAINER_TYPES: Partial<Record<StructureType, number>> = {
 
 export function structureAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
   return structures.find((s) => s.tx === tx && s.ty === ty)
+}
+
+/**
+ * LES TROIS COUCHES d'une tuile (décision d'Alexis 2026-07-18) : un SOL et un TOIT
+ * se superposent à ce qui est dessous. `solidAt` = la structure qui OCCUPE le sol
+ * (mur, porte, coffre, composant, Feu…) — tout SAUF les pièces molles ; c'est elle
+ * que la collision et l'occupation regardent. `floorAt`/`roofAt` = les couches
+ * molles, une de chaque au plus par tuile. Sol au ras du sol, toit au-dessus.
+ */
+export function solidAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
+  return structures.find((s) => s.tx === tx && s.ty === ty && s.type !== 'floor' && s.type !== 'roof')
+}
+
+export function floorAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
+  return structures.find((s) => s.tx === tx && s.ty === ty && s.type === 'floor')
+}
+
+export function roofAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
+  return structures.find((s) => s.tx === tx && s.ty === ty && s.type === 'roof')
 }
 
 export function getVillageOf(state: SimState, entityId: number): Village | undefined {
@@ -453,8 +474,9 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (state.villages.some((v) => chebyshev(v.fireTx, v.fireTy, tx, ty) < min)) {
         return reject('trop proche d’un autre Feu')
       }
-      // NB : `light_fire` reste le RACCOURCI de test/worldgen — il ne joue PAS le
-      // garde-fou R1 des POI-dans-le-carré (réservé au flux joueur `found_village`).
+      // Fondation R1 (décision d'Alexis) : AUCUN POI-spécifique dans le carré à taille
+      // max d'un village — light_fire fonde AUSSI un village, il joue donc le garde-fou.
+      if (poiSpecificInSquare(state, tx, ty)) return reject('un landmark tombe dans le carré')
       removeItems(actor.inventory, STRUCTURE_COSTS.fire)
       const village = createVillage(state, { chiefId: actorId, tx, ty, npcsArrived: false })
       addStructure(state, 'fire', tx, ty, village.id, 0)
@@ -484,7 +506,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // TUILE LIBRE, au sens LARGE (décision utilisateur) : ni structure, ni ressource
       // (arbre, filon, buisson…), ni personne (animal, PNJ, autre joueur) dessus. On ne
       // pose pas un foyer sur ce qui est déjà là.
-      if (structureAt(state.structures, tx, ty)) return reject('tuile occupée')
+      if (solidAt(state.structures, tx, ty)) return reject('tuile occupée')
       if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) return reject('tuile occupée')
       if (state.entities.some((e) => e.id !== actorId && e.hp > 0 && Math.floor(e.x) === tx && Math.floor(e.y) === ty)) {
         return reject('tuile occupée')
@@ -546,10 +568,21 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
         return reject('trop loin')
       }
       if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible')
-      if (structureAt(state.structures, tx, ty)) return reject('tuile occupée')
+      // OCCUPATION PAR COUCHE (décision d'Alexis) : le sol et le toit se superposent
+      // au reste ; seule une deuxième pièce de la MÊME couche est refusée.
+      const occupant =
+        action.structure === 'floor'
+          ? floorAt(state.structures, tx, ty)
+          : action.structure === 'roof'
+            ? roofAt(state.structures, tx, ty)
+            : solidAt(state.structures, tx, ty)
+      if (occupant) return reject('tuile occupée')
       // RÉCOLTER = DÉFRICHER (spec construction R5) : on ne bâtit que sur tuile
-      // ouverte ; pour bâtir où pousse un nœud, on l'abat d'abord.
-      if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) return reject('un nœud occupe la tuile')
+      // ouverte ; pour bâtir où pousse un nœud, on l'abat d'abord. (Un sol/toit MOU
+      // peut couvrir un nœud sans le déranger — il ne s'y « bâtit » pas dessus.)
+      if (action.structure !== 'floor' && action.structure !== 'roof' && state.nodes.some((n) => n.tx === tx && n.ty === ty)) {
+        return reject('un nœud occupe la tuile')
+      }
       // LE PALIER DE MATÉRIAU (R8) : mur/porte seulement, défaut bois. Le coût suit.
       const structure = action.structure
       const isWallLike = structure === 'wall' || structure === 'door'
@@ -584,22 +617,25 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const village = getVillageOf(state, actorId)
       if (!village) return reject('sans village — fonder un foyer d’abord')
       const held = heldSlot(actor)
-      if (!held || !(COMPONENT_TYPES as readonly string[]).includes(held.item)) {
-        return reject('il faut un composant en main')
-      }
-      const comp = held.item as ComponentType
+      // Les OBJETS TENUS-ET-POSÉS (décision d'Alexis) : les composants ET le coffre —
+      // le four, l'établi (des composants) et le coffre ne se posent PAS au marteau.
+      const item = held?.item
+      const isComp = item !== undefined && (COMPONENT_TYPES as readonly string[]).includes(item)
+      if (!held || !(isComp || item === 'chest')) return reject('il faut un composant ou un coffre en main')
+      const placeType = item as StructureType // 'chest' ou une ComponentType (mêmes noms)
       const { tx, ty } = action
       if (!Number.isInteger(tx) || !Number.isInteger(ty)) return reject('case invalide')
-      // LE PALIER DU FEU débloque les composants (spec construction R6).
-      if (COMPONENTS[comp].unlockTier > village.tier) return reject('composant verrouillé (palier du Feu)')
+      // LE PALIER DU FEU débloque les composants (spec construction R6) ; le coffre est libre.
+      const unlockTier = isComp ? COMPONENTS[item as ComponentType].unlockTier : 1
+      if (unlockTier > village.tier) return reject('composant verrouillé (palier du Feu)')
       if (chebyshev(village.fireTx, village.fireTy, tx, ty) > fireRadius(village.tier)) return reject('hors du carré du Feu')
       if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) return reject('trop loin')
-      // Un composant BLOQUE : pas sous ses pieds (on s'y emmurerait), comme le Feu.
+      // Un composant/coffre BLOQUE : pas sous ses pieds (on s'y emmurerait), comme le Feu.
       if (Math.floor(actor.x) === tx && Math.floor(actor.y) === ty) return reject('pas sous ses pieds')
       if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible')
-      if (structureAt(state.structures, tx, ty)) return reject('tuile occupée')
+      if (solidAt(state.structures, tx, ty)) return reject('tuile occupée')
       if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) return reject('un nœud occupe la tuile')
-      // Invariant de navigabilité (R7) : un composant bloque, comme un mur.
+      // Invariant de navigabilité (R7) : un composant/coffre bloque, comme un mur.
       const ok = placementKeepsNavigable(
         state.map,
         state.structures,
@@ -607,13 +643,13 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
         actorId,
         { tx: village.fireTx, ty: village.fireTy },
         fireRadius(village.tier),
-        { tx, ty, type: comp },
+        { tx, ty, type: placeType },
       )
       if (!ok) return reject('cela couperait le passage')
       // L'objet tenu se consomme (une unité) : il DEVIENT la structure.
       held.count -= 1
       if (held.count <= 0) actor.inventory[actor.activeSlot] = null
-      addStructure(state, comp, tx, ty, village.id, actorId)
+      addStructure(state, placeType, tx, ty, village.id, actorId)
       return
     }
 

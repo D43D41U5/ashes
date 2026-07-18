@@ -17,7 +17,7 @@ import { createEmptyMap, zoneAt } from './map'
 import { equipBestTool } from './npc'
 import { createSim, spawnEntity, step, type Entity, type PlayerAction, type SimState } from './sim'
 import { TICKS_PER_SEASON_DAY } from './time'
-import { grantItems } from './village'
+import { addStructure, getVillageOf, grantItems } from './village'
 
 let nextNodeId = 100
 function makeNode(type: ResourceNode['type'], tx: number, ty: number): ResourceNode {
@@ -335,8 +335,8 @@ describe('l’artisanat (A3)', () => {
     grantItems(sim, id, { wood: 30, stone: 20, iron_ore: 4, coal: 2 })
     act(sim, id, { type: 'light_fire' })
     equipHammer(sim, id)
-    act(sim, id, { type: 'build', structure: 'furnace', tx: 11, ty: 10 })
-    act(sim, id, { type: 'build', structure: 'workshop', tx: 9, ty: 10 })
+    addStructure(sim, 'furnace', 11, 10, getVillageOf(sim, id)!.id, id)
+    addStructure(sim, 'workshop', 9, 10, getVillageOf(sim, id)!.id, id)
     drainEvents(sim)
 
     // Fondre : à portée du four (le joueur est entre les deux stations). Deux
@@ -368,7 +368,7 @@ describe('l’artisanat (A3)', () => {
     grantItems(sim, id, { wood: 16, stone: 4 }) // le Feu (10 bois) + l'atelier (6 bois, 4 pierres)
     act(sim, id, { type: 'light_fire' })
     equipHammer(sim, id)
-    act(sim, id, { type: 'build', structure: 'workshop', tx: 11, ty: 10 })
+    addStructure(sim, 'workshop', 11, 10, getVillageOf(sim, id)!.id, id)
     // 18 cases pleines : 16 de pierre (303), 1 de bois (5), 1 de fibre (2).
     // La recette (wood 5, stone 3, fiber 2) VIDE les cases de bois et de fibre.
     me(sim).inventory = inventoryOf(SLOTS.PLAYER, { stone: 303, wood: 5, fiber: 2 })
@@ -543,7 +543,7 @@ describe('la file de craft (craft-file A1-A6)', () => {
     grantItems(sim, id, { wood: 10, stone: 8, iron_ore: 2, coal: 1, fiber: 3 })
     act(sim, id, { type: 'light_fire' })
     equipHammer(sim, id)
-    act(sim, id, { type: 'build', structure: 'furnace', tx: 11, ty: 10 })
+    addStructure(sim, 'furnace', 11, 10, getVillageOf(sim, id)!.id, id)
     act(sim, id, { type: 'craft', recipeId: 'iron_ingot' })
     act(sim, id, { type: 'craft', recipeId: 'rope' }) // à la main : rien à quitter (F8)
 

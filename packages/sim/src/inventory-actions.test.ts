@@ -6,7 +6,7 @@ import { applyInventoryAction, heldSlot, wearHeld } from './inventory-actions'
 import { countOf, inventoryOf, makeInventory, type Inventory, type ItemId } from './items'
 import { createEmptyMap } from './map'
 import { createSim, spawnEntity, step, type Entity, type PlayerAction, type SimState } from './sim'
-import { grantItems, structureAt, type Structure } from './village'
+import { addStructure, getVillageOf, grantItems, structureAt, type Structure } from './village'
 
 function playerSim(): { state: SimState; entity: Entity } {
   const state = createSim(1)
@@ -46,7 +46,7 @@ function founder(sim: SimState, x: number, y: number): number {
 function chestSim(): { sim: SimState; chief: number; stranger: number; chest: Structure } {
   const sim = makeSim()
   const chief = founder(sim, 10.5, 10.5)
-  act(sim, chief, { type: 'build', structure: 'chest', tx: 11, ty: 10 })
+  addStructure(sim, 'chest', 11, 10, getVillageOf(sim, chief)!.id, chief)
   const chest = structureAt(sim.structures, 11, 10)!
   const stranger = spawnEntity(sim, 11.8, 10.5)
   // Sac NET : le reliquat de matériaux du fondateur brouillerait les index de case
@@ -548,7 +548,7 @@ describe('transfer — joueur ⇄ conteneur (R16)', () => {
       const sim = makeSim()
       const donneur = founder(sim, 10.5, 10.5)
       const chief2 = founder(sim, 70.5, 70.5)
-      act(sim, chief2, { type: 'build', structure: 'chest', tx: 71, ty: 70 })
+      addStructure(sim, 'chest', 71, 70, getVillageOf(sim, chief2)!.id, chief2)
       const granary = structureAt(sim.structures, 71, 70)!
       act(sim, chief2, { type: 'set_access', structureId: granary.id, access: 'village' })
       // Le grenier ne peut plus prendre que 3 baies (stackSize('berries') = 10).
@@ -656,7 +656,7 @@ describe('transfer — un `side` hors des valeurs légales (anti-cheat)', () => 
     const sim = makeSim()
     const donor = founder(sim, 10.5, 10.5)
     const chief2 = founder(sim, 70.5, 70.5)
-    act(sim, chief2, { type: 'build', structure: 'chest', tx: 71, ty: 70 })
+    addStructure(sim, 'chest', 71, 70, getVillageOf(sim, chief2)!.id, chief2)
     const granary = structureAt(sim.structures, 71, 70)!
     act(sim, chief2, { type: 'set_access', structureId: granary.id, access: 'village' })
     granary.inventory![0] = { item: 'berries', count: 5 } // stackSize('berries') = 10, il reste de la place

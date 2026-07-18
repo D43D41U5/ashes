@@ -236,6 +236,26 @@ describe('arbres hauts : la collision se limite au tronc', () => {
     const indexed = makeIndexedIsBlockedAt(world)
     expect(indexed(8, 4)).toBe(true) // A* et flow fields voient la même chose
   })
+
+  it('COUCHES : un mur caché sous un sol posé AVANT lui reste bloquant pour l’A*', () => {
+    // Régression (décision d'Alexis : sol/toit se superposent au solide). Le sol est
+    // poussé AVANT le mur dans `structures` ; l'index ne doit pas retenir le sol (mou)
+    // et masquer le mur — sinon PNJ et hordes traverseraient la paroi.
+    const map = createEmptyMap(16, 16, TERRAIN_GRASS)
+    const S = (id: number, type: 'floor' | 'wall', tx: number, ty: number) =>
+      ({ id, type, tx, ty, villageId: 1, ownerId: 0, access: 'village' as const, hp: 100 })
+    const world = {
+      map,
+      structures: [S(1, 'floor', 5, 5), S(2, 'wall', 5, 5)], // le sol EN PREMIER
+      moverVillageId: null,
+    }
+    expect(isBlockedAt(world, 5, 5)).toBe(true) // via solidAt : le mur bloque
+    expect(makeIndexedIsBlockedAt(world)(5, 5)).toBe(true) // l'index voit la MÊME chose
+    // …et une tuile qui ne porte QU'un sol reste franchissable (le sol est mou).
+    const soft = { map, structures: [S(3, 'floor', 6, 6)], moverVillageId: null }
+    expect(isBlockedAt(soft, 6, 6)).toBe(false)
+    expect(makeIndexedIsBlockedAt(soft)(6, 6)).toBe(false)
+  })
 })
 
 describe('décalage d’origine des arbres : la collision suit le tronc', () => {

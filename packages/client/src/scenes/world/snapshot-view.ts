@@ -12,6 +12,7 @@ import {
   HUNT,
   sentinelOf,
   STRUCTURE_HP,
+  WALL_TIERS,
   treeJitter,
   type Corpse,
   type Entity,
@@ -21,6 +22,7 @@ import {
   type Npc,
   type ResourceNode,
   type Structure,
+  type WallMaterial,
 } from '@braises/sim'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
@@ -31,6 +33,7 @@ import {
   corpseDepth,
   crownAlpha,
   crownDepth,
+  FLOOR_DEPTH,
   GROUND_FIRE_DEPTH,
   nodeDepth,
   ROOF_DEPTH,
@@ -237,6 +240,28 @@ const FUNCTION_LABEL: Record<FunctionId, string> = {
 const FUNCTION_FONT = FONT
 /** L'overlay des fonctions passe au-dessus des toits et des houppiers (world-space). */
 const FUNCTION_LABEL_DEPTH = 1_400_000
+
+/**
+ * LE MASQUE D'AUTOTUILE d'un mur (décision d'Alexis : murs CONTINUS) : un bit par
+ * voisin (N=1, E=2, S=4, O=8) qui est un mur OU une porte. La texture `st-wall-<masque>`
+ * dessine une paroi qui se raccorde à ses voisins, sans couture — pas un carré isolé.
+ */
+function wallMask(tiles: ReadonlySet<string>, tx: number, ty: number): number {
+  let m = 0
+  if (tiles.has(`${tx},${ty - 1}`)) m |= 1
+  if (tiles.has(`${tx + 1},${ty}`)) m |= 2
+  if (tiles.has(`${tx},${ty + 1}`)) m |= 4
+  if (tiles.has(`${tx - 1},${ty}`)) m |= 8
+  return m
+}
+
+/** La teinte d'un mur selon son PALIER DE MATÉRIAU (les textures d'autotuile sont
+ *  neutres) et ses DÉGÂTS (elle s'assombrit). Bois chaud, pierre froide, métal acier. */
+function wallTint(material: WallMaterial | undefined, ratio: number): number {
+  const dim = 0.5 + 0.5 * Math.max(0, Math.min(1, ratio))
+  const rgb = material === 'stone' ? [176, 178, 192] : material === 'metal' ? [168, 192, 224] : [200, 154, 104]
+  return Phaser.Display.Color.GetColor(Math.floor(rgb[0]! * dim), Math.floor(rgb[1]! * dim), Math.floor(rgb[2]! * dim))
+}
 
 export class SnapshotView {
   /** Dernier état reçu — lu par la prédiction (collisions) et les inputs. */
@@ -532,42 +557,57 @@ export class SnapshotView {
   }
 
   /** Synchronise les sprites de structures avec le snapshot. `self` = position de
-   *  l'avatar local, pour le fade des toits à l'entrée (spec construction R24). */
+   *  l'avatar local, pour la RÉVÉLATION des toits (comme la cime des arbres, R24). */
   private syncStructures(structures: Structure[], self?: { x: number; y: number }): void {
     this.structures = structures
-    // R24 — les toits à FONDRE : ceux de l'amas de toits SOUS l'avatar (flood-fill
-    // 4-connexe de la couverture). Sous couvert, on voit l'intérieur ; dehors, le
-    // toit occulte. Set/Map côté client (l'interdit ne vise que /sim).
-    const fadeRoofs = this.coveredRoofIds(structures, self)
+    // MURS CONTINUS (décision d'Alexis) : un mur s'autotuile sur ses voisins (murs
+    // ET portes) pour former une paroi, pas des carrés juxtaposés. On indexe d'abord.
+    const wallTiles = new Set<string>()
+    for (const s of structures) if (s.type === 'wall' || s.type === 'door') wallTiles.add(`${s.tx},${s.ty}`)
+    const feetY = self ? self.y + BALANCE.AVATAR_HITBOX_TILES / 2 : 0
     const seen = new Set<number>()
     for (const s of structures) {
       seen.add(s.id)
+      const isRoof = s.type === 'roof'
       let sprite = this.structureSprites.get(s.id)
       if (!sprite) {
-        // Ancrage PIEDS : un toit de maison plus haut que sa tuile montera sans
-        // décaler son tri ni son emprise logique. Le Feu, lui, est un foyer à
-        // plat — il reste sous la bande, on marche autour, jamais derrière.
         const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
         const lift = this.warp?.lift(s.tx + 0.5, s.ty + 1) ?? 0
-        // Le TOIT couvre : il passe AU-DESSUS des acteurs (comme un houppier, R14).
+        // LES COUCHES (décision d'Alexis) : le SOL au ras du sol (sous les acteurs),
+        // le TOIT au-dessus (comme un houppier, il se révèle au loin), le reste trié.
         const depth =
-          s.type === 'fire' ? GROUND_FIRE_DEPTH : s.type === 'roof' ? ROOF_DEPTH + s.ty : structureDepth(s.ty, TILE_PX)
+          s.type === 'fire'
+            ? GROUND_FIRE_DEPTH
+            : isRoof
+              ? ROOF_DEPTH + s.ty
+              : s.type === 'floor'
+                ? FLOOR_DEPTH
+                : structureDepth(s.ty, TILE_PX)
         sprite = this.scene.add.image(a.px, a.py - lift, `st-${s.type}`).setOrigin(0.5, 1).setDepth(depth)
         this.structureSprites.set(s.id, sprite)
       }
       if (s.type === 'fire') {
-        // La couleur du Feu (spec alignement R9) : bleu ↔ blanc ↔ rouge. Même
-        // formule que les halos de lumière (module pur `lighting`).
+        // La couleur du Feu (spec alignement R9) : bleu ↔ blanc ↔ rouge.
         const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
         sprite.setTint(warmthColor(warmth))
+      } else if (s.type === 'wall') {
+        // Le mur prend la texture qui CONNECTE ses voisins, teintée par son matériau
+        // (les textures d'autotuile sont neutres) et assombrie par les dégâts.
+        sprite.setTexture(`st-wall-${wallMask(wallTiles, s.tx, s.ty)}`)
+        sprite.setTint(wallTint(s.material, s.hp / (s.material ? WALL_TIERS[s.material].wall.hp : STRUCTURE_HP.wall)))
       } else {
         // Une structure endommagée s'assombrit et rougit — lisible de loin.
-        const ratio = Math.max(0, Math.min(1, s.hp / STRUCTURE_HP[s.type]))
+        const max = (s.type === 'door' && s.material ? WALL_TIERS[s.material].door.hp : STRUCTURE_HP[s.type]) || 1
+        const ratio = Math.max(0, Math.min(1, s.hp / max))
         const shade = Math.floor(140 + 115 * ratio)
         sprite.setTint(Phaser.Display.Color.GetColor(255, shade, shade))
       }
-      // R24 : le toit sous lequel on se tient FOND (cutaway) ; sinon il couvre.
-      if (s.type === 'roof') sprite.setAlpha(fadeRoofs.has(s.id) ? 0.18 : 0.95)
+      // LE TOIT SE RÉVÈLE COMME UNE CIME (décision d'Alexis) : effacé quand on est
+      // dessous/près, opaque quand on est loin — même disque de découvert (`crownAlpha`).
+      if (isRoof) {
+        const d = self ? Math.sqrt((self.x - (s.tx + 0.5)) ** 2 + (feetY - (s.ty + 1)) ** 2) : Infinity
+        sprite.setAlpha(crownAlpha(d))
+      }
     }
     for (const [id, sprite] of this.structureSprites) {
       if (!seen.has(id)) {
@@ -575,36 +615,6 @@ export class SnapshotView {
         this.structureSprites.delete(id)
       }
     }
-  }
-
-  /**
-   * R24 — les toits à faire FONDRE : l'amas de toits connecté (4-voisinage) à la
-   * tuile de l'avatar, s'il se tient sous une couverture. Vide sinon. Flood-fill
-   * borné aux tuiles-toit — une poignée par bâtiment, recalculé par snapshot.
-   */
-  private coveredRoofIds(structures: Structure[], self?: { x: number; y: number }): Set<number> {
-    const out = new Set<number>()
-    if (!self) return out
-    const roofAt = new Map<string, Structure>()
-    for (const s of structures) if (s.type === 'roof') roofAt.set(`${s.tx},${s.ty}`, s)
-    const start = `${Math.floor(self.x)},${Math.floor(self.y)}`
-    if (!roofAt.has(start)) return out
-    const queue = [start]
-    const visited = new Set([start])
-    while (queue.length > 0) {
-      const k = queue.shift()!
-      const s = roofAt.get(k)!
-      out.add(s.id)
-      const [tx, ty] = k.split(',').map(Number) as [number, number]
-      for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
-        const nk = `${tx + dx},${ty + dy}`
-        if (roofAt.has(nk) && !visited.has(nk)) {
-          visited.add(nk)
-          queue.push(nk)
-        }
-      }
-    }
-    return out
   }
 
   /**

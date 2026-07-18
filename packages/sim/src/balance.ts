@@ -755,6 +755,7 @@ export type RecipeId =
   | 'parcelle'
   | 'serre'
   | 'terroir'
+  | 'chest'
 
 export interface Recipe {
   /** `null` = À LA MAIN : nulle part, donc partout (spec craft-fortune C1). */
@@ -779,6 +780,9 @@ export const RECIPES: Record<RecipeId, Recipe> = {
    * l'allumer-ici. `station: null` — le survivant nu doit pouvoir se chauffer.
    */
   campfire: { station: null, inputs: { wood: 10 }, output: 'campfire', seconds: 6 },
+  // LE COFFRE EN OBJET (décision d'Alexis) : fabriqué à la main, posé comme un
+  // composant — plus jamais au marteau. Coût inchangé (`STRUCTURE_COSTS.chest`).
+  chest: { station: null, inputs: { wood: 4 }, output: 'chest', seconds: 6 },
 
   // ── La couche 1 : à mains nues, sans poste, dès la minute 0 (spec craft-fortune).
   // Tout y passe par la CORDE : le goulot est volontaire (C8) — la fibre cesse
@@ -2201,6 +2205,7 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   parcelle: 6,
   serre: 9,
   terroir: 11,
+  chest: 5,
 }
 
 /**
@@ -2306,6 +2311,7 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   parcelle: 1,
   serre: 1,
   terroir: 1,
+  chest: 1,
 }
 
 /** Tailles de sac (spec inventaire R7). La longueur du tableau EST la capacité. */

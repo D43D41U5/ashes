@@ -6,7 +6,7 @@ import { countOf, inventoryOf, makeInventory } from './items'
 import { createEmptyMap } from './map'
 import { isBlockedAt } from './collision'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
-import { getVillageOf, grantItems, structureAt } from './village'
+import { addStructure, getVillageOf, grantItems, structureAt } from './village'
 
 /** Carte 96×96 (assez grande pour FIRE_MIN_DISTANCE) avec un landmark. */
 function makeSim(): SimState {
@@ -451,7 +451,7 @@ describe('le coffre (A4)', () => {
   function chestSim() {
     const sim = makeSim()
     const chief = founder(sim, 10.5, 10.5)
-    act(sim, chief, { type: 'build', structure: 'chest', tx: 11, ty: 10 })
+    addStructure(sim, 'chest', 11, 10, getVillageOf(sim, chief)!.id, chief)
     const chestId = structureAt(sim.structures, 11, 10)!.id
     const member = spawnEntity(sim, 10.8, 10.5)
     act(sim, chief, { type: 'invite', targetEntityId: member })
@@ -598,7 +598,7 @@ describe('la vraisemblance des actions (anti-cheat, GDD §11)', () => {
   it('démolir un coffre plein répand son contenu au sol (comme un coffre détruit)', () => {
     const sim = makeSim()
     const id = founder(sim, 10.5, 10.5) // wood 100 → 90 après le Feu
-    act(sim, id, { type: 'build', structure: 'chest', tx: 11, ty: 10 })
+    addStructure(sim, 'chest', 11, 10, getVillageOf(sim, id)!.id, id)
     const chest = structureAt(sim.structures, 11, 10)!
     act(sim, id, { type: 'deposit', structureId: chest.id, item: 'wood', count: 80 })
     const carried = countOf(sim.entities[0]!.inventory, 'wood')
@@ -617,7 +617,7 @@ describe('la vraisemblance des actions (anti-cheat, GDD §11)', () => {
   it('set_access exige la portée et émet access_changed', () => {
     const sim = makeSim()
     const id = founder(sim, 10.5, 10.5)
-    act(sim, id, { type: 'build', structure: 'chest', tx: 12, ty: 10 })
+    addStructure(sim, 'chest', 12, 10, getVillageOf(sim, id)!.id, id)
     const chest = structureAt(sim.structures, 12, 10)!
     drainEvents(sim)
     // Trop loin de la serrure : refusé, l'accès ne change pas.
@@ -681,7 +681,7 @@ describe('la conservation des items (A21)', () => {
   function chestSim() {
     const sim = makeSim()
     const chief = founder(sim, 10.5, 10.5)
-    act(sim, chief, { type: 'build', structure: 'chest', tx: 11, ty: 10 })
+    addStructure(sim, 'chest', 11, 10, getVillageOf(sim, chief)!.id, chief)
     const chestId = structureAt(sim.structures, 11, 10)!.id
     drainEvents(sim)
     return { sim, chief, chestId }
@@ -754,7 +754,7 @@ describe('la conservation des items (A21)', () => {
     const sim = makeSim()
     const donneur = founder(sim, 10.5, 10.5)
     const chief2 = founder(sim, 70.5, 70.5) // au-delà de FIRE_MIN_DISTANCE
-    act(sim, chief2, { type: 'build', structure: 'chest', tx: 71, ty: 70 })
+    addStructure(sim, 'chest', 71, 70, getVillageOf(sim, chief2)!.id, chief2)
     const granary = structureAt(sim.structures, 71, 70)!
     act(sim, chief2, { type: 'set_access', structureId: granary.id, access: 'village' })
     // Le grenier étranger ne peut plus prendre que 3 baies.

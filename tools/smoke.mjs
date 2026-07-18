@@ -1765,31 +1765,52 @@ const SCENARIOS = {
     })
     console.log(`R21 marteau rangé → menu ${r21 ? 'éteint ✓' : 'ENCORE là ✗'}, tenu=${held.item} (case ${held.slot}), selected=${held.selected}`)
 
-    // On FONDE au pied du joueur (light_fire : raccourci de worldgen, atteignable en dev).
-    await grant('wood', 14)
-    await doAction({ type: 'light_fire' }, 700)
-    const feu = await page.evaluate(() => {
-      const f = window.__BRAISES__.scene.view.structures.find((x) => x.type === 'fire')
-      return f ? { tx: f.tx, ty: f.ty } : null
-    })
-    const reason = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '')
-    console.log(`fondation → Feu ${feu ? `posé en (${feu.tx}, ${feu.ty}) ✓` : `ABSENT ✗ (${reason})`}`)
-
-    // On BÂTIT un mur (R23 : une action = une pose) puis un TOIT, à côté du Feu.
-    if (feu) {
-      // Le marteau EN DERNIER : `debug_grant` met en main l'objet DONNÉ ; granté après
-      // le bois, c'est lui qu'on tient (sans quoi on bâtirait « sans marteau »).
-      await grant('wood', 8)
-      await grant('hammer')
-      await doAction({ type: 'debug_teleport', x: feu.tx + 2.5, y: feu.ty + 0.5 }, 300) // à côté (le Feu bloque)
-      await doAction({ type: 'build', structure: 'wall', tx: feu.tx + 1, ty: feu.ty }, 400)
-      await doAction({ type: 'build', structure: 'roof', tx: feu.tx + 2, ty: feu.ty }, 500)
-      const built = await page.evaluate(() => {
-        const st = window.__BRAISES__.scene.view.structures
-        return { wall: st.some((x) => x.type === 'wall'), roof: st.some((x) => x.type === 'roof') }
+    // FONDER LOIN DES POI (décision d'Alexis : aucun POI dans la zone max) : on essaie
+    // quelques positions autour du spawn jusqu'à ce qu'une fondation passe (R1). Le bois
+    // est granté UNE fois (heldSlot ne tient que la CEINTURE : on la garde libre pour les
+    // composants — 30 bois tient sur 2 cases, laissant la place aux objets tenus).
+    const spawn = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    await grant('wood', 30)
+    let feu = null
+    let reason = ''
+    for (const [ox, oy] of [[0, 0], [24, 0], [-24, 0], [0, 24], [0, -24], [24, 24], [-24, -24], [48, 0], [0, 48]]) {
+      await doAction({ type: 'debug_teleport', x: Math.round(spawn.x) + ox + 0.5, y: Math.round(spawn.y) + oy + 0.5 }, 200)
+      await doAction({ type: 'light_fire' }, 450)
+      feu = await page.evaluate(() => {
+        const f = window.__BRAISES__.scene.view.structures.find((x) => x.type === 'fire')
+        return f ? { tx: f.tx, ty: f.ty } : null
       })
+      reason = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '')
+      if (feu) break
+    }
+    console.log(`fondation (R1 loin des POI) → Feu ${feu ? `posé en (${feu.tx}, ${feu.ty}) ✓` : `ABSENT ✗ (${reason})`}`)
+
+    if (feu) {
+      const T = feu // raccourci
+      await doAction({ type: 'set_active_slot', slot: 0 }, 150) // le marteau (case 0, R20)
+      await doAction({ type: 'debug_teleport', x: T.tx + 2.5, y: T.ty + 0.5 }, 300) // à côté (le Feu bloque)
+      // MURS CONTINUS (décision d'Alexis) : trois murs alignés → une paroi, pas des carrés.
+      await doAction({ type: 'build', structure: 'wall', tx: T.tx + 1, ty: T.ty - 2 }, 300)
+      await doAction({ type: 'build', structure: 'wall', tx: T.tx + 2, ty: T.ty - 2 }, 300)
+      await doAction({ type: 'build', structure: 'wall', tx: T.tx + 3, ty: T.ty - 2 }, 300)
+      // SOL + TOIT DE PAILLE sur la MÊME tuile (décision d'Alexis : ils se superposent).
+      await doAction({ type: 'build', structure: 'floor', tx: T.tx + 2, ty: T.ty - 1 }, 300)
+      await doAction({ type: 'build', structure: 'roof', tx: T.tx + 2, ty: T.ty - 1 }, 400)
+      const built = await page.evaluate(
+        ({ tx, ty }) => {
+          const st = window.__BRAISES__.scene.view.structures
+          const layered = st.filter((s) => s.tx === tx && s.ty === ty)
+          return {
+            walls: st.filter((s) => s.type === 'wall').length,
+            coexist: layered.some((s) => s.type === 'floor') && layered.some((s) => s.type === 'roof'),
+          }
+        },
+        { tx: T.tx + 2, ty: T.ty - 1 },
+      )
       const berr = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '')
-      console.log(`pose (R14/R23) → mur ${built.wall ? '✓' : '✗'}, toit ${built.roof ? '✓' : '✗'}${built.wall && built.roof ? '' : ` (${berr})`}`)
+      console.log(
+        `murs continus → ${built.walls} murs ✓ ; sol+toit superposés → ${built.coexist ? '✓' : '✗'}${built.coexist ? '' : ` (${berr})`}`,
+      )
 
       // LA FORGE (tranche 2) : poser enclume + four fait ÉMERGER une Forge N2 (R9-R10),
       // et l'overlay l'affiche (R22).
@@ -1848,8 +1869,157 @@ const SCENARIOS = {
         `Ferme (tranche 5) → ${ferme ? `N${ferme.tier} émergée ✓ (plein air : enclosed=${ferme.enclosed})` : `ABSENTE ✗ (${perr})`}`,
       )
     }
+    // Le toit de paille s'efface sous l'avatar (même disque de découvert que la cime
+    // des arbres — décision d'Alexis, R24) : la capture le montre de PRÈS.
     await page.screenshot({ path: `${OUT}/construction.png` })
-    console.log(`capture → ${OUT}/construction.png`)
+  },
+
+  /**
+   * UN VILLAGE, VU DE L'EXTÉRIEUR ET DE L'INTÉRIEUR (demande d'Alexis) : on fonde,
+   * on trouve une clairière, on bâtit une FORGE MURÉE + TOITÉE (chaume), on pose
+   * autour un Atelier / un Grenier / une Ferme, puis on capture deux vues :
+   *  · EXTÉRIEUR : l'avatar recule → le toit de paille se rabat (bâtisse close) ;
+   *  · INTÉRIEUR : l'avatar entre → le toit se lève, l'amas se découvre.
+   * Exige `--dev`.
+   */
+  async village(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    const doAction = async (action, wait = 120) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(wait)
+    }
+    const grant = async (item, n = 1) => {
+      for (let i = 0; i < n; i++) await doAction({ type: 'debug_grant', item })
+    }
+    const held = () => page.evaluate(() => {
+      const reg = window.__BRAISES__.scene.registry
+      const inv = reg.get('inv') ?? []
+      const slot = reg.get('activeSlot') ?? -1
+      return slot >= 0 ? inv[slot]?.item ?? null : null
+    })
+
+    // FONDER dans une clairière loin des POI (R1), via place_campfire + found_village :
+    // ce flux joueur ne fait arriver AUCUN PNJ (contrairement à light_fire) — donc rien
+    // ne vient se faire piéger quand on ferme les murs, et la Forge sera bien ENCLOSE.
+    const spawn = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    await grant('wood', 40)
+    let feu = null
+    for (const [ox, oy] of [[0, 0], [-24, 0], [24, 0], [0, -24], [0, 24], [-24, 24], [24, -24], [-48, 0], [48, 0]]) {
+      const bx = Math.round(spawn.x) + ox, by = Math.round(spawn.y) + oy
+      await doAction({ type: 'debug_teleport', x: bx + 0.5, y: by + 0.5 }, 180)
+      await grant('campfire')
+      const cslot = await page.evaluate(() => (window.__BRAISES__.scene.registry.get('inv') ?? []).findIndex((s) => s?.item === 'campfire'))
+      if (cslot < 0 || cslot >= 6) continue
+      await doAction({ type: 'set_active_slot', slot: cslot }, 120)
+      await doAction({ type: 'place_campfire', tx: bx + 1, ty: by }, 250)
+      const fireId = await page.evaluate(({ x, y }) => {
+        const f = window.__BRAISES__.scene.view.structures.find((s) => s.type === 'fire' && s.villageId === 0 && s.tx === x && s.ty === y)
+        return f ? f.id : null
+      }, { x: bx + 1, y: by })
+      if (fireId === null) continue
+      await doAction({ type: 'found_village', structureId: fireId }, 300)
+      const members = await page.evaluate(() => window.__BRAISES__.scene.registry.get('village') ?? 0)
+      if (members > 0) { feu = { tx: bx + 1, ty: by }; break }
+    }
+    if (!feu) {
+      console.log('fondation → ABSENTE ✗ (aucune clairière trouvée)')
+      await page.screenshot({ path: `${OUT}/village.png` })
+      return
+    }
+    console.log(`fondation → Feu en (${feu.tx}, ${feu.ty}) ✓`)
+
+    // Cherche un bloc 4×3 SANS NŒUD et sur terrain marchable + une TUILE-POSTE au sud
+    // dégagée, pour une Forge murée COMPLÈTE (donc enclose). Scan large, priorité à l'ouest.
+    const blk = await page.evaluate(({ fx, fy }) => {
+      const s = window.__BRAISES__.scene
+      const nodes = new Set(s.view.nodes.map((n) => n.tx + ',' + n.ty))
+      // walkable : on approxime par « pas un nœud » — les tuiles autour d'un feu fondable
+      // sont marchables ; le vrai garde-fou reste la sim (elle revalide chaque pose).
+      const clear = (ox, oy, w, h) => {
+        for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (nodes.has(ox + x + ',' + (oy + y))) return false
+        return true
+      }
+      const cands = []
+      for (let r = 2; r <= 9; r++)
+        for (const [dx, dy] of [[-r, -1], [-r, -2], [-r, 0], [r, -1], [0, -r], [0, r], [-r, r], [-r, -r]]) {
+          const ox = fx + dx, oy = fy + dy
+          // bloc 4×3 + la tuile-poste (ox+1, oy+4) toutes dans le carré et dégagées
+          if (Math.max(Math.abs(dx) + 3, Math.abs(dy) + 4) > 10) continue
+          if (clear(ox, oy, 4, 3) && !nodes.has(ox + 1 + ',' + (oy + 4)) && !nodes.has(ox + 2 + ',' + (oy + 4))) {
+            cands.push({ ox, oy })
+          }
+        }
+      return cands[0] ?? null
+    }, { fx: feu.tx, fy: feu.ty })
+    if (!blk) {
+      console.log('Forge murée → pas de clairière 4×3 trouvée (on capture quand même)')
+    } else {
+      const { ox, oy } = blk
+      // Poste l'avatar au sud du bloc (tuile dégagée), à portée de toutes ses tuiles.
+      await doAction({ type: 'debug_teleport', x: ox + 1.5, y: oy + 4.5 }, 250)
+      // LE MARTEAU EN MAIN (R20) : sans lui, aucune barrière ne se pose.
+      await grant('hammer')
+      const hslot = await page.evaluate(() => (window.__BRAISES__.scene.registry.get('inv') ?? []).findIndex((s) => s?.item === 'hammer'))
+      if (hslot >= 0 && hslot < 6) await doAction({ type: 'set_active_slot', slot: hslot }, 120)
+      // Périmètre de MURS (continus) d'un 4×3 — PORTE au sud (navigabilité R7).
+      const walls = []
+      for (let x = 0; x < 4; x++) { walls.push([ox + x, oy]); walls.push([ox + x, oy + 2]) }
+      walls.push([ox, oy + 1]); walls.push([ox + 3, oy + 1])
+      const door = [ox + 1, oy + 2]
+      for (const [x, y] of walls) if (!(x === door[0] && y === door[1])) await doAction({ type: 'build', structure: 'wall', tx: x, ty: y }, 190)
+      await doAction({ type: 'build', structure: 'door', tx: door[0], ty: door[1] }, 210)
+      // SOL + TOIT DE PAILLE superposés sur les 2 tuiles intérieures (enclos entièrement toité).
+      for (let x = 1; x <= 2; x++) await doAction({ type: 'build', structure: 'floor', tx: ox + x, ty: oy + 1 }, 170)
+      for (let x = 1; x <= 2; x++) await doAction({ type: 'build', structure: 'roof', tx: ox + x, ty: oy + 1 }, 170)
+      // LA FORGE À L'INTÉRIEUR : enclume + four (N2), sous le toit.
+      await grant('enclume')
+      if ((await held()) === 'enclume') await doAction({ type: 'place_component', tx: ox + 1, ty: oy + 1 }, 240)
+      await grant('furnace')
+      if ((await held()) === 'furnace') await doAction({ type: 'place_component', tx: ox + 2, ty: oy + 1 }, 240)
+      // Autour, EN PLEIN AIR : un établi (Atelier), un silo (Grenier), une parcelle (Ferme).
+      const around = [['workshop', ox - 3, oy + 1], ['silo', ox + 5, oy + 1], ['parcelle', ox + 1, oy + 6]]
+      for (const [item, x, y] of around) {
+        const st = await page.evaluate(({ x, y }) => {
+          const s = window.__BRAISES__.scene
+          return s.view.nodes.some((n) => n.tx === x && n.ty === y) ? 'noeud' : 'ok'
+        }, { x, y })
+        if (st !== 'ok') continue
+        await doAction({ type: 'debug_teleport', x: x + 0.5, y: y + 1.5 }, 200)
+        await grant(item)
+        if ((await held()) === item) await doAction({ type: 'place_component', tx: x, ty: y }, 240)
+      }
+      const fns = await page.evaluate(() => window.__BRAISES__.scene.view.functions.map((f) => `${f.functionId} N${f.tier}${f.enclosed ? '✦' : ''}`))
+      console.log(`fonctions reconnues → ${fns.join(', ')} (✦ = enceinte + bonus)`)
+      const diag = await page.evaluate(({ ox, oy }) => {
+        const st = window.__BRAISES__.scene.view.structures
+        const at = (x, y) => st.filter((s) => s.tx === x && s.ty === y).map((s) => s.type).join('+')
+        return { c1: at(ox + 1, oy + 1), c2: at(ox + 2, oy + 1), walls: st.filter((s) => s.type === 'wall').length, roofs: st.filter((s) => s.type === 'roof').length }
+      }, { ox, oy })
+      console.log(`diag → tuile forge 1: [${diag.c1}], tuile 2: [${diag.c2}], murs=${diag.walls} toits=${diag.roofs}`)
+
+      const cx = ox + 1, cy = oy + 1 // centre de la Forge
+      await page.mouse.move(640, 400) // curseur au centre : neutralise le lookahead caméra
+      // EXTÉRIEUR : l'avatar s'écarte (~14 tuiles, chaume redevenu opaque) et on DÉZOOME
+      // pour que la bâtisse close tienne à l'écran — le toit de paille rabattu sur la Forge.
+      await doAction({ type: 'debug_teleport', x: cx + 0.5, y: cy + 14.5 }, 500)
+      await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(1.35))
+      await page.mouse.move(640, 400)
+      await page.waitForTimeout(500)
+      await page.screenshot({ path: `${OUT}/village-exterieur.png` })
+      // INTÉRIEUR : même cadrage, l'avatar ENTRE dans la Forge → à moins de 6 tuiles le
+      // chaume se lève (même cercle de révélation que la cime des arbres) et l'amas se
+      // découvre. (On NE re-zoome PAS : un setZoom plus serré fait planter le renderer.)
+      await doAction({ type: 'debug_teleport', x: cx + 0.5, y: cy + 0.5 }, 750)
+      await page.mouse.move(640, 400)
+      await page.waitForTimeout(400)
+      await page.screenshot({ path: `${OUT}/village-interieur.png` })
+      console.log(`captures → ${OUT}/village-{exterieur,interieur}.png`)
+    }
+    await page.screenshot({ path: `${OUT}/village.png` })
   },
 }
 

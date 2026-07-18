@@ -109,7 +109,7 @@ export { importTiledMap } from './tiled'
 export type { TiledMapFile, TiledImportResult } from './tiled'
 
 // ─── Actions & systèmes (l'hôte les applique, les requêtes sont pures) ────
-export { applyVillageAction, structureAt, structureBlocks, getVillageOf, hasAccess, fireRadius } from './village'
+export { applyVillageAction, structureAt, solidAt, floorAt, roofAt, structureBlocks, getVillageOf, hasAccess, fireRadius } from './village'
 export type { Structure, Village, VillageAction, TaskKind, VillageTask } from './village'
 export { blocksNavigation, placementKeepsNavigable, isComponent, recognizeFunctions, refreshFunctions } from './construction'
 export type { PlacedStructure, RecogStructure, RecognizedFunction } from './construction'
@@ -155,7 +155,7 @@ export {
   carryTier,
   freeRoomFor,
 } from './items'
-export type { ItemId, ItemBag, Slot, Inventory, SpoilTier, StructureType, AccessLevel, SkillId } from './items'
+export type { ItemId, ItemBag, Slot, Inventory, SpoilTier, StructureType, BarrierType, AccessLevel, SkillId } from './items'
 
 // ─── L'inventaire : la case active, ce qu'on tient VRAIMENT en main (R8-R9) ─
 export { applyInventoryAction, heldSlot, wearHeld, isInventoryAction } from './inventory-actions'

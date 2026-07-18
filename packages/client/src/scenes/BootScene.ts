@@ -72,28 +72,49 @@ export class BootScene extends Phaser.Scene {
       g.fillStyle(fill).fillRect(1, 1, 14, 14)
     }
 
-    tile(0x3a2c1e, 0x6b4a2f) // mur : bois sombre
+    tile(0x3a2c1e, 0x6b4a2f) // mur (le FANTÔME) : bois sombre, un carré représentatif
     g.generateTexture('st-wall', 16, 16)
     g.clear()
+
+    // LES 16 MURS D'AUTOTUILE (décision d'Alexis : murs CONTINUS). Base NEUTRE (le
+    // rendu la teinte par matériau) : remplie plein cadre, avec un liseré clair en
+    // HAUT et sombre sur les côtés EXPOSÉS (sans voisin) — deux murs voisins se
+    // fondent sans couture. `mask` : N=1, E=2, S=4, O=8.
+    const WALL_BASE = 0x8a8a92
+    const WALL_HI = 0xb2b2ba
+    const WALL_SH = 0x484850
+    for (let mask = 0; mask < 16; mask++) {
+      g.fillStyle(WALL_BASE).fillRect(0, 0, 16, 16)
+      if (!(mask & 1)) g.fillStyle(WALL_HI).fillRect(0, 0, 16, 3) // pas de voisin N : arête éclairée
+      if (!(mask & 8)) g.fillStyle(WALL_SH).fillRect(0, 0, 3, 16) // pas de voisin O : arête d'ombre
+      if (!(mask & 2)) g.fillStyle(WALL_SH).fillRect(13, 0, 3, 16) // pas de voisin E
+      if (!(mask & 4)) g.fillStyle(WALL_SH).fillRect(0, 13, 16, 3) // pas de voisin S : pied d'ombre
+      g.generateTexture(`st-wall-${mask}`, 16, 16)
+      g.clear()
+    }
 
     tile(0x3a2c1e, 0x8a6234) // porte : bois clair + seuil
     g.fillStyle(0x2a1e12).fillRect(6, 2, 4, 12)
     g.generateTexture('st-door', 16, 16)
     g.clear()
 
-    // Sol : pièce MOLLE (spec construction R14) — un plancher plat, planches sombres.
+    // Sol : pièce MOLLE POSÉE AU RAS DU SOL (décision d'Alexis) — un plancher plat.
     g.fillStyle(0x4a3a28).fillRect(0, 0, 16, 16)
     g.fillStyle(0x5a4632).fillRect(1, 1, 14, 6)
     g.fillStyle(0x5a4632).fillRect(1, 9, 14, 6)
     g.generateTexture('st-floor', 16, 16)
     g.clear()
 
-    // Toit : pièce MOLLE qui COUVRE (spec construction R14, R24) — tuiles rouges,
-    // peint par-dessus l'intérieur ; il FOND quand l'avatar entre dessous.
-    g.fillStyle(0x2a1a14).fillRect(0, 0, 16, 16)
-    g.fillStyle(0x8a3f2e).fillRect(1, 1, 14, 14)
-    g.fillStyle(0x6a2f22).fillRect(1, 5, 14, 1)
-    g.fillStyle(0x6a2f22).fillRect(1, 10, 14, 1)
+    // TOIT DE PAILLE (décision d'Alexis) : un chaume doré, plein cadre (il couvre la
+    // tuile), avec des brins. Il se RÉVÈLE de loin comme la cime des arbres (R24).
+    g.fillStyle(0xa9852f).fillRect(0, 0, 16, 16)
+    g.fillStyle(0xc7a24a).fillRect(0, 0, 16, 8)
+    g.fillStyle(0x8a6a26).fillRect(0, 5, 16, 1)
+    g.fillStyle(0x8a6a26).fillRect(0, 11, 16, 1)
+    g.fillStyle(0xd8b866).fillRect(2, 1, 1, 6)
+    g.fillStyle(0xd8b866).fillRect(9, 1, 1, 6)
+    g.fillStyle(0x8a6a26).fillRect(5, 9, 1, 6)
+    g.fillStyle(0x8a6a26).fillRect(12, 9, 1, 6)
     g.generateTexture('st-roof', 16, 16)
     g.clear()
 

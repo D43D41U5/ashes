@@ -47,6 +47,7 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   parcelle: 'Parcelle',
   serre: 'Serre',
   terroir: 'Terroir',
+  chest: 'Coffre',
   // ── Les ressources STRUCTURANTES des zones (spec worldgen R9) : chacune n'existe
   //    QUE dans sa zone, et chacune est LOURDE. Le nom doit dire d'où elle vient.
   hardwood: 'Gros bois',
@@ -209,6 +210,13 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x4a3420).fillRect(2, 9, 12, 5) // la terre riche, sombre
     g.fillStyle(0xd8b24a).fillTriangle(5, 9, 8, 2, 11, 9) // la gerbe dorée
     g.fillStyle(0xe8c66a).fillRect(7, 3, 1, 6)
+  },
+  // Le coffre : une malle de bois au couvercle doré (comme sa structure `st-chest`).
+  chest: (g) => {
+    g.fillStyle(0x4a3520).fillRect(2, 6, 12, 8) // le corps
+    g.fillStyle(0x7a5a30).fillRect(3, 7, 10, 6)
+    g.fillStyle(0x8a6234).fillRect(2, 6, 12, 2) // le couvercle éclairé
+    g.fillStyle(0xc9a227).fillRect(6, 8, 4, 3) // la serrure dorée
   },
 
   // Trois galets gris empilés — froids, pas de teinte chaude.

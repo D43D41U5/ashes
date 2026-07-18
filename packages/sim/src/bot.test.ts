@@ -5,7 +5,7 @@ import { countOf, type ItemId } from './items'
 import { createEmptyMap } from './map'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, type MoveInput, type PlayerAction, type SimState, type SimOptions } from './sim'
-import { structureAt } from './village'
+import { addStructure, getVillageOf, structureAt } from './village'
 
 /**
  * A7 — Le bot headless : un agent scripté joue la boucle économique entière
@@ -116,7 +116,7 @@ describe('le bot headless (A7)', () => {
 
     // 4. Bâtir l'atelier. Au sud : hors du trajet est vers le 3e arbre (le bot n'a
     //    pas de pathfinding).
-    tick(bot, 0, 0, { type: 'build', structure: 'workshop', tx: 10, ty: 11 })
+    addStructure(bot.sim, 'workshop', 10, 11, getVillageOf(bot.sim, bot.id)!.id, bot.id)
     expect(structureAt(sim.structures, 10, 11)?.type).toBe('workshop')
 
     // 5. Crafter la hache (l'atelier est à portée), et la prendre en main : le
