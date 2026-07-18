@@ -81,10 +81,13 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   cooked_meat: 'survie',
   rope: 'materiaux',
   iron_ingot: 'materiaux',
-  // Les COMPOSANTS de la Forge (spec construction §4bis) : assemblés au Feu.
+  // Les COMPOSANTS (spec construction §4bis) : assemblés au Feu, posés pour émerger.
   enclume: 'composants',
   furnace: 'composants',
   four_acier: 'composants',
+  workshop: 'composants',
+  tour_meca: 'composants',
+  atelier_lourd: 'composants',
 }
 
 /** Une ligne de la liste : un en-tête de rayon, ou une recette. */

@@ -431,6 +431,8 @@ export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./
   // qui consomme l'objet fabriqué au coût `COMPONENTS[type].cost`).
   enclume: { stone: 6, iron_ore: 2 },
   four_acier: { cut_stone: 8, iron_ingot: 5 },
+  tour_meca: { wood: 8, iron_ingot: 3 },
+  atelier_lourd: { cut_stone: 6, iron_ingot: 6 },
 }
 
 export type WallMaterial = 'wood' | 'stone' | 'metal'
@@ -464,7 +466,13 @@ export const WALL_MATERIAL_ORDER: readonly WallMaterial[] = ['wood', 'stone', 'm
  * a un objet-jumeau du même nom (`ItemId`) qu'on fabrique et pose. Les tranches
  * suivantes (Atelier, Grenier, Ferme) étendent ce type.
  */
-export type ComponentType = 'enclume' | 'furnace' | 'four_acier'
+export type ComponentType =
+  | 'enclume'
+  | 'furnace'
+  | 'four_acier'
+  | 'workshop'
+  | 'tour_meca'
+  | 'atelier_lourd'
 
 /** Coût (recette de l'objet à poser), palier du Feu qui débloque (R6) et PV. À calibrer. */
 export const COMPONENTS: Record<ComponentType, { cost: import('./items').ItemBag; unlockTier: number; hp: number }> = {
@@ -472,6 +480,10 @@ export const COMPONENTS: Record<ComponentType, { cost: import('./items').ItemBag
   enclume: { cost: { stone: 6, iron_ore: 2 }, unlockTier: 1, hp: 120 },
   furnace: { cost: { stone: 10 }, unlockTier: 1, hp: 100 },
   four_acier: { cost: { cut_stone: 8, iron_ingot: 5 }, unlockTier: 3, hp: 150 },
+  // Atelier : établi (= `workshop`, héritage V3) → tour méca → atelier lourd (P3).
+  workshop: { cost: { wood: 6, stone: 4 }, unlockTier: 1, hp: 100 },
+  tour_meca: { cost: { wood: 8, iron_ingot: 3 }, unlockTier: 2, hp: 120 },
+  atelier_lourd: { cost: { cut_stone: 6, iron_ingot: 6 }, unlockTier: 3, hp: 150 },
 }
 
 /**
@@ -482,7 +494,7 @@ export const COMPONENTS: Record<ComponentType, { cost: import('./items').ItemBag
  * fonction — identité stable quand on enrichit/appauvrit l'amas). `enclosureBonus` =
  * le bonus thématique quand l'amas est muré + toité (R13) ; `null` = plein air.
  */
-export type FunctionId = 'forge'
+export type FunctionId = 'forge' | 'atelier'
 
 export const FUNCTIONS: Record<
   FunctionId,
@@ -491,6 +503,10 @@ export const FUNCTIONS: Record<
   forge: {
     recipeByTier: [['enclume'], ['enclume', 'furnace'], ['enclume', 'furnace', 'four_acier']],
     enclosureBonus: 'durabilite',
+  },
+  atelier: {
+    recipeByTier: [['workshop'], ['workshop', 'tour_meca'], ['workshop', 'tour_meca', 'atelier_lourd']],
+    enclosureBonus: 'vitesse',
   },
 }
 
@@ -689,6 +705,9 @@ export type RecipeId =
   | 'enclume'
   | 'furnace'
   | 'four_acier'
+  | 'workshop'
+  | 'tour_meca'
+  | 'atelier_lourd'
 
 export interface Recipe {
   /** `null` = À LA MAIN : nulle part, donc partout (spec craft-fortune C1). */
@@ -741,6 +760,9 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   enclume: { station: 'fire', inputs: COMPONENTS.enclume.cost, output: 'enclume', seconds: 12 },
   furnace: { station: 'fire', inputs: COMPONENTS.furnace.cost, output: 'furnace', seconds: 12 },
   four_acier: { station: 'fire', inputs: COMPONENTS.four_acier.cost, output: 'four_acier', seconds: 16 },
+  workshop: { station: 'fire', inputs: COMPONENTS.workshop.cost, output: 'workshop', seconds: 12 },
+  tour_meca: { station: 'fire', inputs: COMPONENTS.tour_meca.cost, output: 'tour_meca', seconds: 14 },
+  atelier_lourd: { station: 'fire', inputs: COMPONENTS.atelier_lourd.cost, output: 'atelier_lourd', seconds: 16 },
 }
 
 /**
@@ -1865,6 +1887,8 @@ export const STRUCTURE_HP: Record<import('./items').StructureType, number> = {
   // des PV — ils sont une adresse RAIDABLE (R6). PV dérivés de `COMPONENTS`.
   enclume: COMPONENTS.enclume.hp,
   four_acier: COMPONENTS.four_acier.hp,
+  tour_meca: COMPONENTS.tour_meca.hp,
+  atelier_lourd: COMPONENTS.atelier_lourd.hp,
 }
 
 /** Hordes & événements du monde (spec événements). */
@@ -2109,6 +2133,9 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   enclume: 10,
   furnace: 9,
   four_acier: 12,
+  workshop: 8,
+  tour_meca: 10,
+  atelier_lourd: 12,
 }
 
 /**
@@ -2205,6 +2232,9 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   enclume: 1,
   furnace: 1,
   four_acier: 1,
+  workshop: 1,
+  tour_meca: 1,
+  atelier_lourd: 1,
 }
 
 /** Tailles de sac (spec inventaire R7). La longueur du tableau EST la capacité. */

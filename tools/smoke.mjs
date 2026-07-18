@@ -1809,6 +1809,17 @@ const SCENARIOS = {
         ),
       )
       console.log(`overlay « Forge » (R22) → ${overlay ? 'affiché ✓' : 'absent ✗'}`)
+
+      // L'ATELIER (tranche 3) : un établi (= workshop) posé près de la forge (zone
+      // dégagée éprouvée) émerge en Atelier N1 — deux fonctions se touchent (R9).
+      await grant('workshop')
+      await doAction({ type: 'place_component', tx: feu.tx + 5, ty: feu.ty }, 600)
+      const atelier = await page.evaluate(() => {
+        const f = window.__BRAISES__.scene.view.functions.find((x) => x.functionId === 'atelier')
+        return f ? f.tier : 0
+      })
+      const aerr = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '')
+      console.log(`Atelier (tranche 3) → ${atelier ? `N${atelier} émergé ✓` : `ABSENT ✗ (${aerr})`}`)
     }
     await page.screenshot({ path: `${OUT}/construction.png` })
     console.log(`capture → ${OUT}/construction.png`)

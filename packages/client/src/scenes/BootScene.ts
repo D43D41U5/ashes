@@ -129,6 +129,20 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('st-four_acier', 16, 16)
     g.clear()
 
+    // Tour méca (composant Atelier N2) : un bâti sombre, un volant clair.
+    tile(0x2a2a30, 0x3c3c44)
+    g.fillStyle(0x8a6234).fillCircle(8, 8, 4)
+    g.fillStyle(0x2a2a30).fillCircle(8, 8, 2)
+    g.generateTexture('st-tour_meca', 16, 16)
+    g.clear()
+
+    // Atelier lourd (composant Atelier N3) : la grosse machine, un voyant chaud.
+    tile(0x1c1c22, 0x2e2e34)
+    g.fillStyle(0x44444c).fillRect(2, 2, 12, 3)
+    g.fillStyle(0xe8842c).fillRect(5, 8, 4, 3)
+    g.generateTexture('st-atelier_lourd', 16, 16)
+    g.clear()
+
     // Maison : toit pignon + porte.
     g.fillStyle(0x7a4a2a).fillRect(1, 6, 14, 9)
     g.fillStyle(0x9c3f2e)

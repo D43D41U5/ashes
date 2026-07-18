@@ -84,6 +84,9 @@ export type ItemId =
   | 'enclume'
   | 'furnace'
   | 'four_acier'
+  | 'workshop'
+  | 'tour_meca'
+  | 'atelier_lourd'
 
 /** Une case occupée. `wear` absent = neuf ; un empilable n'a jamais d'usure. */
 export interface Slot {
@@ -130,6 +133,8 @@ export type StructureType =
   // ── LES COMPOSANTS (atomes actifs, R8). Groupés, ils font émerger une fonction. ──
   | 'enclume'
   | 'four_acier'
+  | 'tour_meca'
+  | 'atelier_lourd'
 
 export type AccessLevel = 'private' | 'village' | 'public'
 

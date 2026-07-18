@@ -228,7 +228,7 @@ export interface InterpolatedSprite {
 }
 
 /** Le nom affiché d'une fonction émergente (spec construction R22). Étendu par tranche. */
-const FUNCTION_LABEL: Record<FunctionId, string> = { forge: 'Forge' }
+const FUNCTION_LABEL: Record<FunctionId, string> = { forge: 'Forge', atelier: 'Atelier' }
 const FUNCTION_FONT = FONT
 /** L'overlay des fonctions passe au-dessus des toits et des houppiers (world-space). */
 const FUNCTION_LABEL_DEPTH = 1_400_000

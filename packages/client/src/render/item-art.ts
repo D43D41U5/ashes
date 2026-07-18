@@ -38,6 +38,9 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   enclume: 'Enclume',
   furnace: 'Four',
   four_acier: "Four d'acier",
+  workshop: 'Établi',
+  tour_meca: 'Tour méca',
+  atelier_lourd: 'Atelier lourd',
   // ── Les ressources STRUCTURANTES des zones (spec worldgen R9) : chacune n'existe
   //    QUE dans sa zone, et chacune est LOURDE. Le nom doit dire d'où elle vient.
   hardwood: 'Gros bois',
@@ -139,6 +142,28 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x1c2228).fillRect(5, 6, 6, 6) // la gueule
     g.fillStyle(0x7ac0ff).fillRect(6, 8, 4, 3) // la flamme d'acier, bleutée
     g.fillStyle(0xd8f0ff).fillRect(7, 9, 2, 1)
+  },
+  // Atelier : établi (un plan de travail sur tréteaux), tour méca (un volant/roue),
+  // atelier lourd (l'établi + une masse sombre : la grosse machine).
+  workshop: (g) => {
+    g.fillStyle(0x6a4c2c).fillRect(2, 6, 12, 3) // le plateau
+    g.fillStyle(0x8a6234).fillRect(2, 6, 12, 1)
+    g.fillStyle(0x4a3520).fillRect(3, 9, 2, 5) // les pieds
+    g.fillStyle(0x4a3520).fillRect(11, 9, 2, 5)
+    g.fillStyle(0x9a9aa3).fillRect(9, 3, 3, 3) // un outil posé dessus
+  },
+  tour_meca: (g) => {
+    g.fillStyle(0x3c3c44).fillRect(3, 6, 10, 6) // le bâti
+    g.fillStyle(0x54545e).fillRect(3, 6, 10, 1)
+    g.fillStyle(0x8a6234).fillCircle(8, 9, 3) // le volant en bois
+    g.fillStyle(0x2a2a30).fillCircle(8, 9, 1)
+    g.fillStyle(0x2a2018).fillRect(2, 12, 12, 2) // le socle
+  },
+  atelier_lourd: (g) => {
+    g.fillStyle(0x2e2e34).fillRect(2, 3, 12, 9) // la masse (grosse machine)
+    g.fillStyle(0x44444c).fillRect(2, 3, 12, 2)
+    g.fillStyle(0xe8842c).fillRect(5, 7, 3, 2) // un voyant chaud
+    g.fillStyle(0x6a4c2c).fillRect(2, 12, 12, 2) // l'établi au pied
   },
 
   // Trois galets gris empilés — froids, pas de teinte chaude.

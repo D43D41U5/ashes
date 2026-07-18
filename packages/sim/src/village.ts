@@ -174,6 +174,8 @@ const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = {
   house: 'village',
   enclume: 'village',
   four_acier: 'village',
+  tour_meca: 'village',
+  atelier_lourd: 'village',
 }
 
 export function structureAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
