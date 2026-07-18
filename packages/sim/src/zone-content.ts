@@ -24,12 +24,12 @@
  *
  * Pur et déterministe : `hash2`/`fbm2`, `+ - * / sqrt` (invariant n°2).
  */
-import { NODE_DEFS, TERRAINS, type NodeType } from './balance'
+import { NODE_DEFS, TERRAIN_GRASS, TERRAINS, type NodeType } from './balance'
 import { estCendre } from './cendre'
 import type { ResourceNode } from './economy'
 import { distSq } from './geometry'
 import { fbm2, hash2 } from './noise'
-import type { CarteZonee } from './zonegen'
+import { RELIEF, type CarteZonee } from './zonegen'
 import { MONDE } from './zonegraph'
 
 export const CONTENU = {
@@ -50,6 +50,34 @@ export const CONTENU = {
   /** Échelle des bosquets : les nœuds se GROUPENT (une forêt, un filon), ils ne se saupoudrent
    *  pas. Un tapis uniforme n'est pas un pays, c'est une moquette. */
   ECHELLE_BOSQUET: 34,
+
+  /**
+   * LES ARBRES DE LA RACINE — récoltables, et posés à DEUX densités selon le sol (demande
+   * d'Alexis, 2026-07-18). Ce sont de vrais nœuds `tree`, pas du décor : on veut du bois qu'on
+   * COUPE, pas des conifères qu'on regarde.
+   *
+   *   • `FORET_PAS` — sur la forêt de la racine (ses bosquets), DENSE : une vraie futaie de bois.
+   *   • `PRE_PAS`   — sur l'herbe du pré, ÉPARS : quelques arbres qui ponctuent la plaine sans la
+   *                   boiser (le sol reste un pré ; ils n'y comptent d'ailleurs pas pour fonder un
+   *                   village, cf. `emplacementsDeVillage`).
+   *
+   * `ECHELLE` = la taille des groupes quand les arbres se rassemblent. `PAS` GRAND = rare.
+   */
+  ARBRES_FORET_PAS: 5,
+  ARBRES_PRE_PAS: 90,
+  ARBRES_ECHELLE: 22,
+
+  /**
+   * LES CLAIRIÈRES DE LA FORÊT — un couvert plein, MAIS troué de clairières RECTANGULAIRES et
+   * irrégulières (demande d'Alexis, 2026-07-18 — le grain « RimWorld » de la carte).
+   *
+   * La décision « clairière ? » se prend par BLOC (le motif de 8 tuiles, comme tout le terrain) :
+   * une clairière est donc, par construction, un rectangle ; des blocs voisins se fondent en
+   * clairières plus grandes, aux contours en marches d'escalier. `ECHELLE` règle leur taille,
+   * `SEUIL` la part de forêt qu'elles évident (plus il est BAS, plus il y a de clairières).
+   */
+  CLAIRIERE_ECHELLE: 34,
+  CLAIRIERE_SEUIL: 0.62,
 
   /** Le teaser : UN filon, et son stock est dérisoire. Épuisé en une heure. */
   TEASER_STOCK: 3,
@@ -181,6 +209,12 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
       const t = terrain[i]!
       if (!TERRAINS[t]?.walkable) continue
 
+      // Une CLAIRIÈRE de la forêt de la racine reste NUE — la trouée respire (le sol y verdit).
+      // Sans ça, le semis commun la reboiserait à moitié et la clairière ne se lirait plus.
+      if (c.zone[i] === c.graphe.racine && terrainAdmet('tree', t) && clairiereForet(c.graphe.seed, tx, ty) > 0) {
+        continue
+      }
+
       // La densité : un nœud tous les PAS_SEMIS, modulée par les bosquets. Les nœuds se
       // GROUPENT — un tapis uniforme n'est pas un pays, c'est une moquette.
       const bosquet = fbm2(tx, ty, CONTENU.ECHELLE_BOSQUET, (seed ^ 0x2f9e) | 0)
@@ -194,10 +228,101 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
     }
   }
 
+  // ── LES ARBRES DE LA RACINE — récoltables, denses en forêt, épars sur le pré ──
+  // Une seconde passe, à part : sur l'herbe, ces arbres ne sortent pas de la table de la zone
+  // (l'herbe n'admet pas le bois, `terrainAdmet`), ils s'y AJOUTENT ; en forêt, ils DENSIFIENT ce
+  // que la table donnait déjà. Dans les deux cas ce sont de vrais nœuds à couper — pas du décor.
+  const occupees = new Set(nodes.map((n) => n.ty * width + n.tx))
+  const arbres = arbresDeLaRacine(c, occupees, id)
+  for (const a of arbres) nodes.push(a)
+  id += arbres.length
+
   // ── LE TEASER — un seul filon, dans la racine, et il est dérisoire ────────
   const t = poserLeTeaser(c, id)
   if (t) nodes.push(t)
   return nodes
+}
+
+/**
+ * LES ARBRES DE LA RACINE — récoltables, à deux densités selon le sol.
+ *
+ * La racine porte ses propres arbres, posés en NŒUDS récoltables (pas en décor : on ne coupe pas
+ * un décor). Deux régimes selon le terrain de la tuile :
+ *
+ *   • sur la FORÊT (les bosquets de la racine) : DENSE — une vraie futaie de bois qu'on abat,
+ *     mais TROUÉE de clairières rectangulaires (décidées par bloc). Ils s'ajoutent au peu que la
+ *     table commune y posait déjà.
+ *   • sur l'HERBE (le pré) : ÉPARS avec un plancher — quelques arbres qui ponctuent la plaine
+ *     sans la boiser. Le sol reste un pré (`solDe` ne change pas) ; ce sont des nœuds posés sur
+ *     un terrain qui, d'ordinaire, n'en porte pas.
+ *
+ * Le semis est CLUSTERISÉ (un bruit basse fréquence groupe les arbres). On ne pose que sur une
+ * tuile LIBRE de la racine (hors seuil, hors tuile déjà occupée par un autre nœud), et rien sur
+ * un sol qui n'est ni herbe ni forêt (la fleuraie, la roche… gardent leur nature).
+ *
+ * Pur et déterministe : `hash2`/`fbm2`, `+ - * /` (invariant n°2).
+ */
+function arbresDeLaRacine(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
+  const { width, height, terrain } = c.map
+  const seed = (c.graphe.seed ^ 0x51ab3f77) | 0
+  const out: ResourceNode[] = []
+  let id = idStart
+  const stock = NODE_DEFS.tree.stock
+  for (let ty = 0; ty < height; ty++) {
+    for (let tx = 0; tx < width; tx++) {
+      const i = ty * width + tx
+      if (c.zone[i] !== c.graphe.racine) continue // rien que dans les Prés Bas
+      if (c.rampe[i]) continue // un seuil ne nourrit rien
+      if (occupees.has(i)) continue // une tuile ne porte qu'un seul nœud
+
+      const t = terrain[i]!
+      // La FORÊT est un couvert PLEIN ; l'HERBE est éparse avec un plancher (0,5..1,7× : toujours
+      // quelques arbres, parfois un petit groupe).
+      let pas: number
+      let socle: number
+      let ampli: number
+      if (t === TERRAIN_GRASS) {
+        pas = CONTENU.ARBRES_PRE_PAS; socle = 0.5; ampli = 1.2
+      } else if (terrainAdmet('tree', t)) {
+        // LES CLAIRIÈRES : décidées par BLOC (cf. `clairiereForet`) → des trouées RECTANGULAIRES.
+        // Le MÊME champ sert au rendu du sol (qui y verdit) : une source unique, sinon les
+        // clairières des arbres et celles du sol divergeraient.
+        if (clairiereForet(c.graphe.seed, tx, ty) > 0) continue // ce bloc est une clairière : nu
+        pas = CONTENU.ARBRES_FORET_PAS; socle = 0.85; ampli = 0.4
+      } else {
+        continue // ni herbe ni forêt : ce sol garde sa nature (fleuraie, accent…)
+      }
+
+      const bosquet = fbm2(tx, ty, CONTENU.ARBRES_ECHELLE, (seed ^ 0x4be1) | 0)
+      const chance = (1 / pas) * (socle + ampli * bosquet)
+      if (hash2(tx, ty, (seed ^ 0x3d7a) | 0) >= chance) continue
+
+      out.push({ id, type: 'tree', tx, ty, stock, regrowAt: 0 })
+      id += 1
+    }
+  }
+  return out
+}
+
+/**
+ * LE CHAMP DES CLAIRIÈRES DE LA FORÊT — une SOURCE UNIQUE, et c'est le point.
+ *
+ * Rend 0 sous le couvert plein, et une valeur CROISSANTE vers le CŒUR d'une clairière (la marge
+ * au-dessus du seuil : plus on est au centre, plus le bruit est haut). La décision se prend par
+ * BLOC (le motif de 8 tuiles) : une clairière est donc un rectangle, et des blocs voisins se
+ * fondent en clairières plus grandes, irrégulières.
+ *
+ * Deux consommateurs, un seul calcul (comme `poiClearings`) : le semis d'arbres l'ÉVIDE (`> 0` →
+ * bloc nu) ; le rendu du sol y VERDIT (`arbresDeLaRacine` boise, la clairière verdit — il ne faut
+ * surtout pas que les deux se contredisent). Pur et déterministe (`fbm2`, `+ - * /`).
+ */
+export function clairiereForet(seed: number, tx: number, ty: number): number {
+  const M = RELIEF.MOTIF
+  const bx = Math.floor(tx / M) * M + M / 2
+  const by = Math.floor(ty / M) * M + M / 2
+  const s = ((seed ^ 0x51ab3f77) ^ 0x6f2a) | 0
+  const v = fbm2(bx, by, CONTENU.CLAIRIERE_ECHELLE, s)
+  return v > CONTENU.CLAIRIERE_SEUIL ? v - CONTENU.CLAIRIERE_SEUIL : 0
 }
 
 /** Le type de nœud d'une tuile : la table de sa zone, filtrée par ce que le terrain admet. */
@@ -299,8 +424,15 @@ export function emplacementsDeVillage(c: CarteZonee, nodes: ResourceNode[]): Emp
   const cle = (tx: number, ty: number, z: number): number =>
     (Math.floor(ty / maille) * mw + Math.floor(tx / maille)) * 32 + z
   for (const n of nodes) {
-    const k = cle(n.tx, n.ty, c.zone[n.ty * width + n.tx]!)
-    if (n.type === 'tree' || n.type === 'old_tree') bois.set(k, (bois.get(k) ?? 0) + 1)
+    const ti = n.ty * width + n.tx
+    const k = cle(n.tx, n.ty, c.zone[ti]!)
+    // Seul le bois SUR TERRAIN BOISÉ fonde un village. Les arbres épars du pré (des nœuds posés sur
+    // l'herbe, cf. `arbresDuPre`) PONCTUENT la plaine — ils n'en font pas un chantier. Sans ce
+    // filtre, quelques arbres rendraient TOUTE la plaine constructible, et le refuge ne reculerait
+    // plus devant la cendre (R30). Pour tout arbre poussant sur son terrain naturel, c'est un no-op.
+    if ((n.type === 'tree' || n.type === 'old_tree') && terrainAdmet('tree', terrain[ti]!)) {
+      bois.set(k, (bois.get(k) ?? 0) + 1)
+    }
     if (n.type === 'rock' || n.type === 'quarry') pierre.set(k, (pierre.get(k) ?? 0) + 1)
   }
 

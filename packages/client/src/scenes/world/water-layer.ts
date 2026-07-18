@@ -20,7 +20,7 @@
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
-import { GROUND_MAP_DEPTH, STEP_PX, TILE_PX } from '../../render/framing'
+import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { buildWaterField } from '../../render/water-field'
 
 /** Juste au-dessus du sol (−1), sous l'ombre du relief (−0,5) : le versant qui
@@ -262,7 +262,8 @@ export class WaterLayer {
     seabedKey: string,
   ) {
     const { width, height } = map
-    const field = buildWaterField(map.terrain, map.elevation, width, height)
+    // Carte plate : plus de champ d'élévation (le canal G du champ d'eau reste à 0).
+    const field = buildWaterField(map.terrain, undefined, width, height)
     if (!field.hasWater) return // une carte sèche ne paie pas une couche d'eau
 
     // Le champ vit dans une texture canvas : 1 px/tuile, comme le bake du sol.
@@ -294,13 +295,9 @@ export class WaterLayer {
             setUniform('uWorldPx', [worldW, worldH])
             setUniform('uMapTiles', [width, height])
             setUniform('uTilePx', TILE_PX)
-            // LE CISAILLEMENT, EN MARCHES — et la formule du shader n'a pas bougé d'une ligne.
-            //
-            // Il défait `screenY = ty·TILE − elev·H` par bissection. Or `elev = palier / palierMax`
-            // (c'est une DÉRIVÉE du palier, spec R36) : en lui donnant `H = STEP_PX × palierMax`, le
-            // terme `elev·H` vaut exactement `palier × STEP_PX` — le lift en marches, au pixel près.
-            // Le shader croit toujours faire du relief continu ; il fait des marches.
-            setUniform('uReliefH', STEP_PX * (this.map.palierMax ?? 0))
+            // Carte PLATE : plus de cisaillement de relief. `uReliefH = 0` neutralise le terme
+            // `elev·H` du shader (l'écran EST le monde), le canal d'élévation du champ vaut 0.
+            setUniform('uReliefH', 0)
             setUniform('uTime', this.timeS)
             setUniform('uSun', [this.sun.x, this.sun.y, this.sun.z])
             setUniform('uDay', this.day)

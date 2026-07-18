@@ -7,7 +7,6 @@ import Phaser from 'phaser'
 import { generateItemIcons } from '../render/item-art'
 import { generateVitalIcons } from '../render/vital-art'
 import { makeCliffTextures } from '../render/cliff-art'
-import { STEP_PX } from '../render/framing'
 import { makePoiTextures } from './world/poi-art'
 
 export class BootScene extends Phaser.Scene {
@@ -117,7 +116,7 @@ export class BootScene extends Phaser.Scene {
     this.makeNodes()
     this.makeClutter()
     makePoiTextures(this) // les 26 lieux — voir world/poi-art.ts
-    makeCliffTextures(this, STEP_PX) // les parois et leurs contremarches — voir render/cliff-art.ts
+    makeCliffTextures(this) // les bandes de roche plate des frontières — voir render/cliff-art.ts
   }
 
   /** Textures des nœuds de ressources. */
@@ -250,8 +249,16 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0x4a3826).fillRect(6, 9, 4, 5) // souche
     tex('cl-stump')
 
-    g.fillStyle(0x3f6238) // fougère (touffe basse)
-    g.fillRect(5, 10, 2, 5).fillRect(8, 9, 2, 6).fillRect(11, 11, 2, 4)
+    // Fougère : une ROSETTE de frondes arquées en éventail — reconnaissable, pas trois brins.
+    g.fillStyle(0x2f4a24).fillRect(8, 13, 1, 3) // pied
+    g.fillStyle(0x35562a) // rachis des frondes (vert sombre)
+    g.fillRect(8, 4, 1, 9) // centrale
+    g.fillRect(7, 11, 1, 2).fillRect(6, 9, 1, 2).fillRect(5, 7, 1, 2).fillRect(4, 5, 1, 2) // gauche
+    g.fillRect(9, 11, 1, 2).fillRect(10, 9, 1, 2).fillRect(11, 7, 1, 2).fillRect(12, 5, 1, 2) // droite
+    g.fillStyle(0x4c7636) // folioles (vert clair)
+    g.fillRect(7, 6, 1, 1).fillRect(9, 6, 1, 1).fillRect(7, 9, 1, 1).fillRect(9, 9, 1, 1)
+    g.fillRect(5, 6, 1, 1).fillRect(11, 6, 1, 1).fillRect(4, 8, 1, 1).fillRect(12, 8, 1, 1)
+    g.fillRect(8, 3, 1, 1).fillRect(3, 5, 1, 1).fillRect(13, 5, 1, 1)
     tex('cl-fern')
 
     g.fillStyle(0x2f5030).fillTriangle(8, 3, 4, 13, 12, 13) // pin clair
@@ -280,6 +287,13 @@ export class BootScene extends Phaser.Scene {
 
     g.fillStyle(0x4b4a2e).fillCircle(7, 11, 3).fillCircle(10, 11, 2) // buisson bas (lande)
     tex('cl-low_bush')
+
+    // Buisson bien DODU : un dôme plein de folioles, rond et touffu (sous-bois de la racine).
+    g.fillStyle(0x24401f).fillCircle(8, 11, 6) // ombre/contour bas
+    g.fillStyle(0x2c4a24).fillCircle(8, 10, 5).fillCircle(4, 11, 3).fillCircle(12, 11, 3) // corps
+    g.fillStyle(0x375b2c).fillCircle(7, 8, 3).fillCircle(10, 9, 2) // dessus éclairé
+    g.fillStyle(0x427035).fillCircle(6, 7, 1).fillCircle(9, 7, 1) // touches de lumière
+    tex('cl-bush')
 
     g.fillStyle(0x6d7a40) // roseau
     g.fillRect(6, 4, 1, 11).fillRect(9, 3, 1, 12).fillRect(11, 6, 1, 9)

@@ -6,7 +6,7 @@
  * existe. Pas du code de gameplay : n'a pas besoin d'être bit-exact.
  */
 import { TERRAINS } from './balance'
-import { elevationAt, type WorldMap } from './map'
+import { type WorldMap } from './map'
 import { POI_TYPES } from './poi'
 
 /** Couleur de base par nom de terrain (placeholder alpin — la vraie palette = SP3). */
@@ -54,15 +54,11 @@ export function renderVignette(map: WorldMap, maxDim = 512): { w: number; h: num
       const ty = py * step
       const t = TERRAINS[map.terrain[ty * map.width + tx] ?? 0]
       const base = BIOME_RGB[t?.name ?? 'void'] ?? BIOME_RGB.void!
-      // Hillshade : pente selon le gradient d'élévation, éclairée depuis le NO.
-      const dzdx = elevationAt(map, tx + step, ty) - elevationAt(map, tx - step, ty)
-      const dzdy = elevationAt(map, tx, ty + step) - elevationAt(map, tx, ty - step)
-      // Normale (−dzdx, −dzdy, k)·soleil(1,1,1)/… → un scalaire ; k règle l'intensité.
-      const shade = clampShade(0.75 + 6 * (-dzdx - dzdy))
+      // Carte plate : plus de hillshade (le relief a disparu). La vignette est un aplat de biome.
       const o = (py * w + px) * 3
-      rgb[o] = clampByte(base[0] * shade)
-      rgb[o + 1] = clampByte(base[1] * shade)
-      rgb[o + 2] = clampByte(base[2] * shade)
+      rgb[o] = clampByte(base[0])
+      rgb[o + 1] = clampByte(base[1])
+      rgb[o + 2] = clampByte(base[2])
     }
   }
   // Pastilles POI par famille — écrasent les pixels de terrain sous-jacents,
@@ -89,7 +85,6 @@ export function renderVignette(map: WorldMap, maxDim = 512): { w: number; h: num
   return { w, h, rgb }
 }
 
-const clampShade = (s: number): number => (s < 0.35 ? 0.35 : s > 1.5 ? 1.5 : s)
 const clampByte = (v: number): number => {
   const r = Math.round(v)
   return r < 0 ? 0 : r > 255 ? 255 : r

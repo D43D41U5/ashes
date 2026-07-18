@@ -12,48 +12,6 @@
  * reste du client importe cette constante plutôt que de la redéclarer. */
 export const TILE_PX = 16
 
-/**
- * ═══ LA MARCHE — hauteur ÉCRAN (px) d'UN palier (spec R34) ═══
- *
- * `screenY = worldY × TILE_PX − palier × STEP_PX`. Le palier est un ENTIER, donc le lift est
- * constant par tuile, donc la marche est FRANCHE. « Tu montes d'un niveau pour chaque entier de
- * niveau » (Alexis) : c'est cette constante, et rien d'autre, qui le dit.
- *
- * 12 px pour une tuile de 16 : le dénivelé se voit d'un coup d'œil (les trois quarts d'une tuile),
- * et une frontière de zone qui saute quatre paliers dresse un mur de 48 px — un demi-écran de haut.
- * **La géographie s'annonce sans une ligne d'UI.**
- *
- * Elle DOIT rester `< TILE_PX`, et c'est la seule contrainte du système : une rampe qui descend
- * d'une marche vers le sud avance encore de `TILE_PX − STEP_PX` px à l'écran. L'image ne peut donc
- * pas se replier — ce qu'aucun réglage de l'ancien relief continu ne pouvait garantir, et qui lui
- * coûtait une garde (`assertNoFold`) que **quatre seeds sur seize** faisaient lever au démarrage.
- *
- * Ce qui remplace `RELIEF_H = 150`, puis `0`, puis plus rien.
- */
-export const STEP_PX = 12
-
-/**
- * LA MARGE DE CULLING VERS LE BAS, en tuiles — et elle n'est PAS négociable.
- *
- * Les marches soulèvent tout vers le haut de l'écran. Une tuile plantée SOUS le bord bas de la vue
- * peut donc remonter DANS la vue, jusqu'à `palierMax × STEP_PX` px. Toute couche qui fenêtre son
- * rendu à `camera.worldView` (sol, parois, nœuds, décor, lieux…) doit élargir sa borne BASSE
- * d'autant, sinon elle coupe ce qu'on voit encore : une bande vide en bas de l'écran, qui grandit
- * avec l'altitude — le bug qu'a connu le décor, culé à 2 tuiles alors que le nord se soulevait de 9.
- *
- * (Vers le HAUT, rien à faire : le lift ne fait que sortir davantage de la vue.)
- *
- * Calculée sur le palier le plus haut que la table de `/sim` puisse produire (5, plus un cran de
- * marge) : une CONSTANTE, pas une lecture de carte — les couches en ont besoin avant qu'une carte
- * n'arrive.
- */
-export const PALIER_MAX_RENDU = 6
-/** Le VIDE (spec R39) est à −3 : il se dessine donc PLUS BAS que sa position plate, et une tuile
- *  posée au-dessus du bord haut de la vue peut descendre DEDANS. On élargit des deux côtés. */
-export const PALIER_MIN_RENDU = -3
-export const LIFT_MARGIN_TILES = Math.ceil((PALIER_MAX_RENDU * STEP_PX) / TILE_PX)
-export const CHUTE_MARGIN_TILES = Math.ceil((-PALIER_MIN_RENDU * STEP_PX) / TILE_PX)
-
 /* ── Budget des profondeurs de la scène monde ────────────────────────────────
  *
  * UNE seule échelle de tri pour tout ce qui a des « pieds » : acteurs, nœuds,

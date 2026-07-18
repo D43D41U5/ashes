@@ -9,7 +9,7 @@
  * garde rien. La vraie garde reste côté autorité : la sim de prod n'est pas
  * créée avec `debug: true` et refuse ces actions (packages/sim/src/debug.ts).
  */
-import { elevationAt, terrainAt, TERRAINS, zoneAt, type PlayerAction, type WorldMap } from '@braises/sim'
+import { terrainAt, TERRAINS, zoneAt, type PlayerAction, type WorldMap } from '@braises/sim'
 import type Phaser from 'phaser'
 import { getHud, setHud } from '../../hud-state'
 
@@ -50,7 +50,7 @@ export function renderDebugOverlay(
       `tick ${info?.tick ?? 0} · ${Math.round(info?.fps ?? 0)} fps · cadence ×${speed}${god ? ' · INVULNÉRABLE' : ''}`,
       pos ? `avatar [${pos.x.toFixed(1)} ${pos.y.toFixed(1)}]` : '',
       hover
-        ? `curseur [${hover.tx} ${hover.ty}] ${hover.terrain} · élév ${hover.elevation.toFixed(2)} · ${hover.zone}`
+        ? `curseur [${hover.tx} ${hover.ty}] ${hover.terrain} · ${hover.zone}`
         : 'curseur hors carte',
       'carte (M) : clic pour se téléporter',
     ]
@@ -102,7 +102,6 @@ export function syncDebug(scene: Phaser.Scene, deps: DebugSyncDeps): number {
             tx: gx,
             ty: gy,
             terrain: TERRAINS[terrainAt(deps.map, gx, gy)]?.name ?? '?',
-            elevation: elevationAt(deps.map, gx, gy),
             zone: zoneAt(deps.map, gx, gy)?.name ?? '—',
           }
         : null,

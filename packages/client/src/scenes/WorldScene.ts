@@ -12,8 +12,11 @@
  */
 import {
   TEMPERATURE,
+  TERRAIN_FOREST,
+  clairiereForet,
   createPrediction,
   decayRenderOffset,
+  fbm2,
   hash2,
   predictFrame,
   reconcile as reconcilePrediction,
@@ -44,7 +47,6 @@ import {
   AMBIENT_DEPTH,
   lookaheadOffset,
   OVERLAY_DEPTH,
-  STEP_PX,
   TILE_PX,
   zoomForFraming,
 } from '../render/framing'
@@ -68,7 +70,6 @@ import { ambianceDe, moduler } from '../render/zone-ambiance'
 import { CendreLayer } from './world/cendre-layer'
 import { CliffLayer } from './world/cliff-layer'
 import { PoiLayer } from './world/poi-layer'
-import { ShoreCliff } from './world/shore-cliff'
 import { FireGlow } from './world/fire-glow'
 import { WaterLayer } from './world/water-layer'
 import { AmbientLife } from './world/ambient-life'
@@ -177,12 +178,34 @@ const TERRAIN_COLORS: Record<number, number> = {
   23: 0x4b4852, // falaise — le 1 px cuit SOUS les sprites de paroi : la teinte du dessus d'ardoise
 }
 
+/** Terrains STRUCTURELS — pas des biomes. Ils ne participent PAS au fondu inter-biome du bake
+ *  (sinon un halo gris au pied des falaises, une frange sur la berge) : void, eaux, mur, falaise.
+ *  Ils sont de toute façon recouverts par leurs propres couches (paroi, eau). */
+const BAKE_NON_BIOME = new Set<number>([0, 4, 6, 7, 23])
+
 /** Assombrit/éclaircit légèrement une couleur (variation par tuile). */
 function shade(color: number, factor: number): number {
   const r = Math.min(255, Math.floor(((color >> 16) & 0xff) * factor))
   const g = Math.min(255, Math.floor(((color >> 8) & 0xff) * factor))
   const b = Math.min(255, Math.floor((color & 0xff) * factor))
   return (r << 16) | (g << 8) | b
+}
+
+// ── LE TAPIS DE LA FORÊT DE LA RACINE (demande d'Alexis, 2026-07-18) ──────────────────────────
+// Le sol de la forêt n'est plus un aplat vert : c'est une LITIÈRE de feuilles PLUS OU MOINS MORTES
+// (brun ↔ olive, selon un bruit fin), qui VERDIT vers le CŒUR des clairières. Le vert suit le même
+// champ `clairiereForet` que le semis d'arbres ÉVIDE — sol et arbres ne peuvent donc pas se
+// contredire : là où l'arbre manque (la clairière), l'herbe reprend.
+const LITIERE_BRUN = 0x6b5730 // feuille bien morte
+const LITIERE_OLIVE = 0x5c5e38 // feuille à demi morte (il reste du vert)
+const CLAIRIERE_VERT = 0x477e3c // l'herbe qui reprend au cœur d'une trouée
+
+/** La couleur du sol forestier d'une tuile : litière variée, verdissant dans les clairières. */
+function solForet(tx: number, ty: number, seed: number): number {
+  const litter = fbm2(tx, ty, 6, (seed ^ 0x1eaf) | 0) // grain de litière, fin
+  const base = lerpColor(LITIERE_BRUN, LITIERE_OLIVE, litter)
+  const clair = clairiereForet(seed, tx, ty) // 0 sous le couvert, croît vers le cœur d'une clairière
+  return clair > 0 ? lerpColor(base, CLAIRIERE_VERT, Math.min(1, clair * 3.5)) : base
 }
 
 export class WorldScene extends Phaser.Scene {
@@ -215,7 +238,6 @@ export class WorldScene extends Phaser.Scene {
   private cendre!: CendreLayer
   private cliffs!: CliffLayer
   private pois!: PoiLayer
-  private shoreCliff!: ShoreCliff
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
   private lastSnapshotTick = 0
@@ -413,10 +435,9 @@ export class WorldScene extends Phaser.Scene {
     // désaccorder en silence de ce qu'elle compte.
     const steps: Record<BuildPhase, () => void> = {
       relief: () => {
-        // LES MARCHES. Plus de garde anti-repli : avec un lift constant par tuile et
-        // `STEP_PX < TILE_PX`, l'image ne PEUT pas se replier (spec R34). Toute une classe de
-        // crashs disparaît avec — `assertNoFold` faisait planter une seed sur quatre.
-        this.warp = createWarp(this.map, STEP_PX, TILE_PX)
+        // Carte PLATE (pivot RimWorld) : le warp est un no-op (lift ≡ 0, unproject ≡ identité). On
+        // le garde pour ne pas churner les couches qui l'appellent ; il ne soulève plus rien.
+        this.warp = createWarp()
         this.view.setWarp(this.warp)
       },
       // Terrain baké à 1 px/tuile (texture = map.width×map.height px, sous la limite
@@ -435,7 +456,6 @@ export class WorldScene extends Phaser.Scene {
       },
       pois: () => {
         this.pois = new PoiLayer(this, this.map, this.warp) // les lieux se voient enfin
-        this.shoreCliff = new ShoreCliff(this, this.map, this.warp)
         this.view.setNodes(msg.nodes)
       },
       clutter: () => {
@@ -622,7 +642,6 @@ export class WorldScene extends Phaser.Scene {
       const front = avanceeDuFront(this.lastTime.seasonDay, this.map.cendreMax ?? 0)
       this.cendre.update(front)
       this.view.majCendre(this.map.cendre, this.map.width, front)
-      this.shoreCliff.render(this.cameras.main) // DÉMO falaise de berge
       // Les lieux ont besoin de savoir OÙ est le joueur (le nom grossit quand on
       // approche) et CE QU'IL CONNAÎT (on ne nomme pas un lieu qu'on n'a pas vu).
       this.pois.update(this.cameras.main, this.predicted.x, this.predicted.y, this.myKnownPois)
@@ -1054,15 +1073,6 @@ export class WorldScene extends Phaser.Scene {
     this.send({ type: 'action', action })
   }
 
-  // Échantillonneur d'altitude clampé aux bords. Le warp ne s'en sert PLUS (il lit le palier
-  // entier) : il ne reste qu'un service de commodité.
-  private sampleElevation(tx: number, ty: number): number {
-    const { width, height } = this.map
-    const cx = tx < 0 ? 0 : tx >= width ? width - 1 : tx
-    const cy = ty < 0 ? 0 : ty >= height ? height - 1 : ty
-    return this.map.elevation?.[cy * width + cx] ?? 0
-  }
-
   /** Bake la carte statique en une texture (R8) — API generateTexture éprouvée dans Manif.
    *  La couleur d'une tuile = biome × grain (bruit par tuile). Le RELIEF n'est PLUS
    *  cuit ici : l'ombre du versant est dynamique (ShadeLayer, suit le soleil).
@@ -1070,6 +1080,7 @@ export class WorldScene extends Phaser.Scene {
    *  Grain gardé faible (nearest) sinon le damier par tuile masque l'ombre. */
   private bakeMapTexture(): void {
     const { width, height } = this.map
+    const N = width * height
     const g = this.add.graphics()
     // LE SOL PREND LA TEINTE DE SA ZONE — et c'est ce qui rend enfin le critère de lisibilité
     // du directeur de jeu (« d'un coup d'œil »). On ne REPEINT pas les terrains, on les MODULE :
@@ -1078,12 +1089,46 @@ export class WorldScene extends Phaser.Scene {
     //
     // Sans ça, aucune palette ne pouvait distinguer deux zones — les TERRAINS sont partagés (de
     // l'herbe pousse aux Prés Bas comme à la Combe aux Ruines).
-    //
-    // On mémoïse par zone : `zoneSlugAt` fait quelques divisions, mais 2,5 M d'appels comptent.
+
+    // ── PASSE 1 : la couleur de BIOME de chaque tuile (avant modulation de zone) ──
+    // La forêt de la racine a son propre sol : une litière qui verdit dans les clairières.
+    const br = new Uint8Array(N)
+    const bg = new Uint8Array(N)
+    const bb = new Uint8Array(N)
+    const bio = new Uint8Array(N) // 1 = biome (participe au fondu), 0 = structurel (falaise, eau…)
+    for (let i = 0; i < N; i++) {
+      const terr = this.map.terrain[i] ?? 0
+      const base = terr === TERRAIN_FOREST
+        ? solForet(i % width, (i - (i % width)) / width, this.worldSeed)
+        : (TERRAIN_COLORS[terr] ?? 0xff00ff)
+      br[i] = (base >> 16) & 0xff
+      bg[i] = (base >> 8) & 0xff
+      bb[i] = base & 0xff
+      bio[i] = BAKE_NON_BIOME.has(terr) ? 0 : 1
+    }
+
+    // ── PASSE 2 : on FOND les couleurs entre biomes (lerp) — un voisinage 3×3, pour qu'une
+    // frontière herbe/forêt/pré fleuri ne soit plus une arête franche mais un dégradé (demande
+    // d'Alexis, 2026-07-18). Les terrains STRUCTURELS (falaise, eau, mur) ne participent PAS : on
+    // ne veut pas d'un halo gris au pied d'une paroi, et ils sont de toute façon recouverts par
+    // leurs propres couches. Puis la modulation de zone et le grain par tuile, comme avant.
     const solParZone = new Map<string | undefined, readonly [number, number, number]>()
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
-        const base = TERRAIN_COLORS[this.map.terrain[ty * width + tx] ?? 0] ?? 0xff00ff
+        let sr = 0, sg = 0, sb = 0, n = 0
+        for (let dy = -1; dy <= 1; dy++) {
+          const y = ty + dy
+          if (y < 0 || y >= height) continue
+          for (let dx = -1; dx <= 1; dx++) {
+            const x = tx + dx
+            if (x < 0 || x >= width) continue
+            const j = y * width + x
+            if ((dx !== 0 || dy !== 0) && !bio[j]) continue // un terrain structurel ne teinte pas ses voisins
+            sr += br[j]!; sg += bg[j]!; sb += bb[j]!; n++
+          }
+        }
+        const base = ((Math.round(sr / n)) << 16) | ((Math.round(sg / n)) << 8) | Math.round(sb / n)
+
         const slug = zoneSlugAt(this.map, tx, ty)
         let sol = solParZone.get(slug)
         if (!sol) {

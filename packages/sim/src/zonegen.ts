@@ -6,23 +6,19 @@
  * terrain (un champ d'altitude concentrique, puis des bandes de biome). On dérive désormais le
  * terrain de la structure. Un plan d'abord ; des cailloux ensuite.
  *
- * ═══ LES TROIS GESTES ═══
+ * ═══ LES TROIS GESTES — et la carte est PLATE (façon RimWorld) ═══
  *
- * 1. **LA FALAISE EST LA FRONTIÈRE.** Là où deux zones se touchent, on lève un mur — pas un
- *    champ de roche amorphe, une PAROI, avec une arête. Le champ de MARGE du graphe (la
- *    distance à la frontière la plus proche) est l'outil, et `pays.ts` l'avait déjà nommé sans
- *    en tirer la conséquence : *« c'est ce champ qu'on sculpte pour lever un mur là où deux
- *    pays se touchent. »*
+ * 1. **LA FALAISE EST LA FRONTIÈRE.** Là où deux zones se touchent, on lève un mur — une bande de
+ *    ROCHE PLATE d'une tuile, infranchissable (façon montagne RimWorld). Pas de hauteur : c'est un
+ *    mur qu'on longe, pas une paroi qu'on domine. `murerLesAretes` la CONSTATE, il ne la peint pas.
  *
- * 2. **LE SEUIL EST LA RAMPE.** Le couloir percé dans la falaise MONTE — en escalier, un palier
- *    à la fois. Ça rend l'invariant « on ne monte que par une rampe » (spec R3) vrai *par
- *    construction* plutôt que par vérification, et c'est très alpin : **la porte dit qu'on
- *    monte.** Un seuil qui grimpe quatre paliers depuis les Prés Bas annonce, rien qu'en se
- *    montrant, que ce qu'il y a derrière n'est pas pour aujourd'hui.
+ * 2. **LE SEUIL EST LE GOULOT.** Le couloir percé dans la falaise est le SEUL passage d'une zone à
+ *    l'autre — un chokepoint plat, droit, parfaitement lisible : on voit ses deux parois à la fois,
+ *    on sait qu'on est dans une porte. Rien ne monte ; on entre, simplement.
  *
- * 3. **UNE ZONE EST UNE TERRASSE.** Un palier entier, plat. L'altitude cesse d'être un flottant
- *    qu'on soulève de trois pixels (illisible, et si fragile qu'une seed sur quatre repliait
- *    l'image et faisait planter le jeu). Elle devient un ENTIER, et la verticalité se voit.
+ * 3. **UNE ZONE EST UNE RÉGION PLATE.** Un pays d'un seul tenant, reconnaissable à sa PALETTE de
+ *    sol (spec R7 : un thème, pas une altitude). C'est la couleur, pas la hauteur, qui distingue la
+ *    Vieille Sylve du Versant Brûlé (`zone-ambiance.ts` la module encore côté client).
  *
  * Pur et déterministe : `hash2`/`fbm2`, et `+ - * / sqrt` uniquement (invariant n°2).
  */
@@ -48,7 +44,6 @@ import {
   TERRAIN_SCREE,
   TERRAIN_SHALLOW_WATER,
   TERRAIN_SNOW,
-  TERRAIN_VOID,
 } from './balance'
 import type { WorldMap, Zone as ZoneRect } from './map'
 import { calibreLeFront, computeCendreField } from './cendre'
@@ -59,8 +54,6 @@ import {
   deriveGrapheZones,
   echantillonAt,
   MONDE,
-  PALIER_MAX,
-  PALIER_VIDE,
   type GrapheZones,
 } from './zonegraph'
 
@@ -100,25 +93,24 @@ export const RELIEF = {
   MOTIF: 8,
 
   /**
-   * ═══ LA FALAISE EST UNE ARÊTE, ET ELLE FAIT UNE TUILE (spec R33) ═══
+   * ═══ LA FALAISE EST UNE ARÊTE, ET ELLE FAIT UNE TUILE ═══
    *
    * Le bandeau de 44 tuiles a disparu. Il coûtait 16 % de la carte, il transformait chaque
    * frontière en no man's land rocheux, et il n'était là que parce que la falaise était *dérivée
-   * d'un champ continu* (`marge < 22`) au lieu d'être ce qu'elle est : **le bord d'un plateau**.
+   * d'un champ continu* (`marge < 22`) au lieu d'être ce qu'elle est : **le mur entre deux pays**.
    *
    * La falaise ne se peint plus. Elle se CONSTATE, par `murerLesAretes` :
    *
-   *   **UNE ARÊTE EST UN MUR — SAUF ENTRE DEUX RAMPES.**
+   *   **UNE ARÊTE INTER-ZONES EST UN MUR — SAUF SUR UN SEUIL.**
    *
-   * Deux tuiles marchables voisines de paliers différents ? On mure la HAUTE : voilà le bord du
-   * plateau, une tuile d'épaisseur, qu'on longe au pixel près. Deux zones voisines au MÊME palier ?
-   * On mure aussi (un côté, déterministe) — sans quoi le seuil ne serait plus le seul passage et le
-   * test destructif A5 deviendrait un mensonge.
+   * Deux tuiles marchables voisines de zones différentes ? On en mure une (un côté, déterministe) :
+   * une ligne de ROCHE PLATE d'une tuile — sans quoi le seuil ne serait plus le seul passage et le
+   * test destructif A5 deviendrait un mensonge. Pas de hauteur : c'est un mur qu'on longe.
    *
-   * L'exemption « sauf entre deux rampes » est le pivot du système, et elle offre un cadeau : le
-   * couloir d'un seuil, dont chaque tuile est une rampe, se retrouve **muré sur ses deux flancs par
-   * la règle générale** — là où il longe une plaine d'un autre palier. *La gorge se creuse toute
-   * seule.* On n'écrit pas une ligne pour ça.
+   * L'exemption « sauf sur un seuil » est le pivot du système, et elle offre un cadeau : le couloir
+   * d'un seuil, dont chaque tuile est marquée `rampe`, reste ouvert au milieu du mur ; ses FLANCS,
+   * eux (une tuile de couloir contre une tuile d'une autre zone), se murent par la règle générale.
+   * *Le goulot se creuse tout seul.* On n'écrit pas une ligne pour ça.
    */
 
   /** Anneau bloquant au bord de la carte. La vallée est CLOSE : on n'en sort pas. */
@@ -130,14 +122,13 @@ export const RELIEF = {
   ECHELLE_TERRAIN: 46,
   ECHELLE_TACHES: 120,
 
-  // ══ LE SEUIL — un couloir DROIT, et un ESCALIER ═════════════════════════════════════════════
+  // ══ LE SEUIL — un couloir DROIT et PLAT ═════════════════════════════════════════════════════
   //
-  // Il n'a plus à traverser quarante-quatre tuiles de roche : l'arête est fine. Sa longueur ne se
-  // paie donc plus en mètres, elle se paie en MARCHES (spec R33) — un palier à la fois, chacun sur
-  // son palier de repos. Un seuil qui grimpe quatre paliers reste long ; un seuil de plain-pied est
-  // une porte, et c'est très bien.
+  // Il n'a plus à traverser quarante-quatre tuiles de roche : l'arête est fine. Et il ne MONTE plus
+  // (la carte est plate) — c'est un simple corridor percé dans le mur de frontière, de longueur
+  // FIXE, débouchant de part et d'autre dans le pays.
   //
-  // Et il est DROIT, dans l'axe qui traverse vraiment la frontière (le méandre est mort avec les
+  // Il est DROIT, dans l'axe qui traverse vraiment la frontière (le méandre est mort avec les
   // courbes) : un rectangle. Ce qui en fait un chokepoint parfaitement lisible — on voit ses deux
   // parois à la fois, on sait qu'on est dans une porte.
 
@@ -145,37 +136,20 @@ export const RELIEF = {
    *  fenêtre de 35 tuiles du jeu. */
   DEMI_LARGEUR_SEUIL: 7,
 
-  /** Longueur d'un PALIER DE REPOS dans l'escalier d'un seuil, en tuiles. Chaque marche a sa
-   *  terrasse : c'est ce qui rend le dénivelé LISIBLE (on compte les marches en montant). */
-  LONGUEUR_MARCHE: 14,
-
-  /** Le couloir déborde dans chaque zone, au-delà de la dernière marche, pour déboucher
-   *  franchement dans le pays au lieu de mourir contre son bord. */
+  /** Demi-longueur du couloir plat d'un seuil, en tuiles : il déborde d'autant de chaque côté de la
+   *  frontière pour déboucher FRANCHEMENT dans le pays au lieu de mourir contre son mur. */
   DEBORD_SEUIL: 20,
 
-  /** Demi-largeur du couloir que la garde de connexité perce pour rouvrir une poche. 3 → 7 tuiles :
-   *  on le voit, on le prend. (Seul reliquat des rampes de butte : la connexité en a encore besoin.) */
+  /** Demi-largeur du couloir plat que la garde de connexité perce pour rouvrir une poche isolée.
+   *  3 → 7 tuiles : on le voit, on le prend. */
   DEMI_RAMPE: 3,
 
-  // ══ PAS DE FALAISE À L'INTÉRIEUR D'UNE ZONE — décision d'Alexis, 2026-07-14 ═════════════════
+  // ══ UNE ZONE EST UNE RÉGION PLATE, ENTIÈREMENT ═════════════════════════════════════════════
   //
-  // Les BUTTES (des mesas rectangulaires d'un palier plus haut, semées sur un treillis dans chaque
-  // zone) ont existé une demi-journée, et elles sont retirées : *« tu peux retirer les falaises à
-  // l'intérieur d'une zone, on gérera l'élévation intrazone plus tard, ne garde que les frontières
-  // en falaises. »*
-  //
-  // **UNE ZONE EST DONC UNE TERRASSE PLATE, ENTIÈREMENT.** Toute la falaise de la carte est aux
-  // frontières, et nulle part ailleurs.
-  //
-  // CE QUE ÇA COÛTE, ET IL FAUT LE DIRE : la garde A26 — *« depuis n'importe où, une paroi est à
-  // moins de quatre écrans »* — n'était tenue QUE par les buttes. Sans elles, une zone fait six
-  // cents tuiles de côté et la première falaise peut être à huit écrans. C'est exactement le grief
-  // qui les avait fait naître (Alexis, sur la carte rendue : *« il n'y a aucune falaise alors que
-  // c'était prévu — wtf ? »*). La garde est donc RETIRÉE, pas contournée : elle reviendra avec
-  // l'élévation intrazone, et c'est elle qui dira si celle-ci est suffisante.
-  //
-  // Ce qui SURVIT du chantier : la rampe de seuil, l'arête déduite, et le fait qu'un dénivelé se
-  // rende en marches. Le relief intrazone n'aura qu'à poser des paliers ; tout le reste suivra.
+  // Pas de falaise à l'intérieur d'une zone, pas de butte, pas de terrasse : un pays d'un seul
+  // tenant, à plat. Toute la roche-mur de la carte est aux FRONTIÈRES (le seul mur qui sépare deux
+  // pays) et à l'anneau de bordure — nulle part ailleurs. Une zone se distingue de sa voisine par
+  // sa PALETTE de sol (`solDe`), pas par une hauteur.
 
 }
 
@@ -219,19 +193,6 @@ function blocDe(b: Blocs, x: number, y: number): number {
   const bx = Math.min(b.cols - 1, Math.max(0, Math.floor(x / RELIEF.BLOC)))
   const by = Math.min(b.rows - 1, Math.max(0, Math.floor(y / RELIEF.BLOC)))
   return by * b.cols + bx
-}
-
-/**
- * LE PALIER D'UNE ZONE — et il vient du GRAPHE, colorié.
- *
- * Il était tiré ici, par un hash sur l'id. C'était le mauvais endroit ET la mauvaise idée : deux
- * zones voisines pouvaient tirer le même palier, et leur frontière devenait un mur SANS HAUTEUR —
- * une clôture posée sur un sol plat (voir `colorerLesPaliers`, zonegraph.ts). Le palier n'est pas
- * une propriété d'une zone : c'est une propriété d'une zone **par rapport à ses voisines**. Il
- * appartient donc au graphe, et le terrain se contente de le lire.
- */
-export function palierDe(g: GrapheZones, id: number): number {
-  return g.paliers[id]!
 }
 
 /**
@@ -310,9 +271,7 @@ export interface CarteZonee {
   graphe: GrapheZones
   /** Id de zone par tuile. C'est L'ÉTIQUETTE : les ressources, la faune et le climat la lisent. */
   zone: Int32Array
-  /** Palier (entier) par tuile. */
-  palier: Int32Array
-  /** Cette tuile est-elle une rampe ? (le couloir d'un seuil) — l'exemption de l'invariant R3. */
+  /** Cette tuile est-elle sur un SEUIL ? (le couloir d'un goulot) — l'exemption du murage d'arête. */
   rampe: Uint8Array
 }
 
@@ -331,23 +290,17 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
 
   const terrain = new Array<number>(N).fill(TERRAIN_GRASS)
   const zone = new Int32Array(N)
-  const palier = new Int32Array(N)
   const rampe = new Uint8Array(N)
-  const paliers = g.zones.map((z) => palierDe(g, z.id))
 
   // ── LES BLOCS — une décision par bloc de 16 tuiles. C'est ici, et NULLE PART ailleurs, que la
   //    carte devient rectiligne : une frontière ne peut plus être qu'une union d'arêtes de blocs.
   const blocs = decouperEnBlocs(g)
 
-  // ── PASSE 1 : LES TERRASSES ET LE VIDE ────────────────────────────────────
+  // ── PASSE 1 : LES ZONES ET LA ROCHE ───────────────────────────────────────
   //
-  // La carte n'est PAS un pavage (spec R39) : ce qui n'est pas une région est une CREVASSE. On ne
-  // peint donc plus une zone partout — on peint des ÎLES, et le reste tombe.
-  //
-  // Le vide est un PALIER, très bas (`PALIER_VIDE`), et c'est tout ce qu'il faut : le rendu en
-  // marches (R34) fait le reste, sans une ligne de code de plus. Chaque bord de terrasse ouvre vers
-  // le sud une contremarche de `palier − PALIER_VIDE` — soit trois marches depuis le jardin, neuf
-  // depuis la Cendrière. **Le gouffre est d'autant plus profond que la terrasse est haute.**
+  // La carte n'est PAS un pavage (spec R39) : ce qui n'est pas une région est du VIDE. On ne peint
+  // donc plus une zone partout — on peint des ÎLES, et le reste devient de la ROCHE PLATE,
+  // infranchissable (façon montagne RimWorld). Pas de gouffre, pas de hauteur : un mur qu'on longe.
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x
@@ -355,31 +308,28 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
       const z = blocs.zone[k]!
       zone[i] = z // même dans le vide : la cendre et l'ambiance ont besoin d'une région de rattachement
       if (blocs.vide[k]) {
-        palier[i] = PALIER_VIDE
-        terrain[i] = TERRAIN_VOID
+        terrain[i] = TERRAIN_ROCK
         continue
       }
-      palier[i] = paliers[z]!
       terrain[i] = solDe(g, z, x, y)
     }
   }
 
-  // ── PASSE 2 : les seuils — on perce tout droit, et ça MONTE, marche à marche ──
+  // ── PASSE 2 : les seuils — on perce tout droit un couloir PLAT dans la frontière ──
   for (const s of g.seuils) {
-    percerSeuil(g, blocs, s, terrain, zone, palier, rampe, paliers, width, height)
+    percerSeuil(g, blocs, s, terrain, zone, rampe, width, height)
   }
 
   // ── PASSE 3 : LES ARÊTES — le mur, DÉDUIT. Puis on garantit qu'on circule. ─
   //
   // Les deux se répondent, d'où les deux tours : murer peut couper une poche, et l'ouvrir peut
-  // fabriquer une arête neuve là où le percement rase un plateau. Deux tours suffisent (mesuré :
+  // fabriquer une arête neuve là où le percement rase une frontière. Deux tours suffisent (mesuré :
   // le second n'ouvre plus rien), et on FINIT par la connexité — l'invariant qui ne se négocie pas
-  // est « toute zone est atteignable » (A2), pas « pas une arête ne traîne » (A9 exempte les
-  // rampes, qui sont précisément ce que le percement fabrique).
+  // est « toute zone est atteignable » (A2), pas « pas une arête ne traîne » (le seuil en fabrique).
 
   for (let tour = 0; tour < 2; tour++) {
-    murerLesAretes(terrain, zone, palier, rampe, width, height)
-    garantirLaConnexite(g, terrain, zone, palier, rampe, width, height)
+    murerLesAretes(terrain, zone, rampe, width, height)
+    garantirLaConnexite(g, terrain, zone, rampe, width, height)
   }
 
   // ── PASSE 4 : l'anneau de bordure. La vallée est CLOSE ────────────────────
@@ -393,21 +343,6 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
       rampe[i] = 0
     }
   }
-
-  /**
-   * L'ALTITUDE, DÉRIVÉE DU PALIER — et elle survit exprès.
-   *
-   * Le palier ENTIER est désormais donnée de premier ordre de la carte (spec R36) : c'est lui que
-   * le rendu soulève d'une marche, lui que la garde A9 lit. Mais « on est haut » reste une
-   * SÉMANTIQUE continue pour la température (il fait froid en altitude) et pour les filtres de
-   * lieux. On la redonne donc, dérivée : `palier / PALIER_MAX`. Une lecture, jamais un champ
-   * indépendant qui pourrait diverger du terrain.
-   */
-  const elevation = new Array<number>(N)
-  // Le VIDE a un palier NÉGATIF (`PALIER_VIDE`) : c'est ce qui le fait tomber à l'écran. Mais
-  // `elevation` est un [0,1] que la température et les filtres de lieux consomment — on la borne
-  // donc à zéro. Un gouffre n'est pas « moins que le niveau de la mer », il est INACCESSIBLE.
-  for (let i = 0; i < N; i++) elevation[i] = Math.max(0, palier[i]!) / PALIER_MAX
 
   /**
    * LE CHAMP DE CENDRE — la distance de chaque tuile à la frontière de la Cendrière.
@@ -457,14 +392,12 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   for (let k = 0; k < zoneGrid.length; k++) zoneGrid[k] = blocs.zone[k]!
 
   const map: WorldMap = {
-    width, height, terrain, zones: toponymes(g), elevation, cendre: champCendre, cendreMax,
-    palier: Array.from(palier),
-    palierMax: PALIER_MAX,
+    width, height, terrain, zones: toponymes(g), cendre: champCendre, cendreMax,
     zoneGrid,
     zonePas: ZONE_PAS,
     zoneDefs: g.zones.map((z) => ({ slug: z.def.slug, nom: z.def.nom, tier: z.def.tier })),
   }
-  const carte: CarteZonee = { map, graphe: g, zone, palier, rampe }
+  const carte: CarteZonee = { map, graphe: g, zone, rampe }
 
   // ── PASSE 5 : LES LIEUX — et ils ont désormais une ADRESSE ────────────────
   placePois(map, seed, (tx, ty) => {
@@ -505,26 +438,23 @@ function solDe(g: GrapheZones, id: number, x: number, y: number): number {
 }
 
 /**
- * ═══ PERCER UN SEUIL — c'est un ISTHME, et il MONTE ═══
+ * ═══ PERCER UN SEUIL — un COULOIR PLAT dans le mur de frontière ═══
  *
- * La carte n'est plus un pavage : entre deux régions, il y a un GOUFFRE (spec R39). Un seuil n'est
- * donc plus une brèche dans un mur — c'est un **pont de terre jeté au-dessus du vide**, le seul
- * endroit où l'on passe d'une terrasse à l'autre.
+ * Le seuil est le seul endroit où l'on passe d'une zone à l'autre : un corridor droit percé dans la
+ * roche-mur, de longueur FIXE, débouchant de part et d'autre dans le pays. La carte est plate — il
+ * ne monte pas, il TRAVERSE.
  *
- * Et ça rachète, enfin, l'objection qui avait tué les cols : *« la porte est introuvable au sol. »*
- * Un gouffre a une LÈVRE, et une lèvre se longe. **On ne cherche pas la porte : on longe le vide
- * jusqu'à l'isthme.** C'est R4, tenue par la géométrie et non par une promesse.
+ * Et ça rachète l'objection qui avait tué les cols : *« la porte est introuvable au sol. »* Un mur
+ * de roche se longe. **On ne cherche pas la porte : on longe le mur jusqu'au passage.** C'est R4,
+ * tenue par la géométrie et non par une promesse.
  *
- * Le couloir est DROIT — deux rectangles se font face selon un axe, il n'y a rien à chercher. C'est
- * ce qui avait coûté deux réécritures à l'ancienne version, qui creusait en biais dans une direction
+ * Le couloir est DROIT — deux zones se font face selon un axe, il n'y a rien à chercher. C'est ce
+ * qui avait coûté deux réécritures à l'ancienne version, qui creusait en biais dans une direction
  * théorique et mourait DANS le mur ; le rectiligne supprime la question au lieu d'y répondre.
  *
- * Et c'est un ESCALIER : le palier passe de celui de `a` à celui de `b`, une marche à la fois. Un
- * isthme qui grimpe six paliers depuis le jardin ANNONCE, rien qu'en se montrant, ce qui l'attend.
- *
- * Toutes ses tuiles sont marquées `rampe` — ce qui les exempte de « une arête est un mur », qu'elles
- * violent par métier. Leurs FLANCS, eux, ne le sont pas : le vide les borde de part et d'autre.
- * **La passerelle se taille toute seule.**
+ * Toutes ses tuiles sont marquées `rampe` — ce qui les exempte de « une arête inter-zones est un
+ * mur », qu'elles violent par métier. Leurs FLANCS, eux, ne le sont pas : la roche les borde de part
+ * et d'autre. **Le goulot se taille tout seul.**
  */
 function percerSeuil(
   g: GrapheZones,
@@ -532,9 +462,7 @@ function percerSeuil(
   s: { a: number; b: number; x: number; y: number; ax: number; ay: number },
   terrain: number[],
   zone: Int32Array,
-  palier: Int32Array,
   rampe: Uint8Array,
-  paliers: number[],
   width: number,
   height: number,
 ): void {
@@ -546,27 +474,14 @@ function percerSeuil(
   const px = -ay
   const py = ax
 
-  const pa = paliers[s.a]!
-  const pb = paliers[s.b]!
-  const marches = Math.abs(pb - pa)
-  const sens = pb > pa ? 1 : -1
-
-  // Le seuil est posé SUR la frontière : la rampe déborde donc à parts égales de chaque côté, de la
-  // moitié de son escalier plus le débord qui la fait déboucher dans le pays.
-  const demi = Math.round((marches * RELIEF.LONGUEUR_MARCHE) / 2)
-  const dos = demi + RELIEF.DEBORD_SEUIL
-  const face = demi + RELIEF.DEBORD_SEUIL
+  // Le couloir est posé SUR la frontière : il déborde d'autant de chaque côté (longueur fixe, plate).
+  const half = RELIEF.DEBORD_SEUIL
   const L = RELIEF.DEMI_LARGEUR_SEUIL
 
-  for (let t = -dos; t <= face; t++) {
-    // L'ESCALIER. Les deux bouts raccordent EXACTEMENT les paliers des deux régions — donc aucune
-    // marche ne traîne au bord, donc l'isthme débouche de plain-pied et ne se mure pas lui-même.
-    const u = (t + dos) / (dos + face)
-    const marche = marches === 0 ? 0 : Math.min(marches, Math.floor(u * (marches + 1)))
-    const pal = pa + sens * marche
-    // Le sol du pont est celui de la région vers laquelle on va : **la porte a déjà la couleur de ce
-    // qu'elle garde.** On voit ce qui attend avant d'y être (spec R10.2).
-    const vers = u < 0.5 ? s.a : s.b
+  for (let t = -half; t <= half; t++) {
+    // Le sol du couloir est celui de la région vers laquelle on va : **la porte a déjà la couleur de
+    // ce qu'elle garde.** On voit ce qui attend avant d'y être (spec R10.2).
+    const vers = t < 0 ? s.a : s.b
 
     for (let w = -L; w <= L; w++) {
       const x = s.x + ax * t + px * w
@@ -580,7 +495,6 @@ function percerSeuil(
         terrain[i] = solMarchableDe(g, vers, x, y)
         zone[i] = vers
       }
-      palier[i] = pal
       rampe[i] = 1
     }
   }
@@ -630,39 +544,32 @@ function toponymes(g: GrapheZones): ZoneRect[] {
 
 /** Le catalogue des frontières, réexporté : les tests destructifs en ont besoin pour reboucher
  *  les seuils et vérifier qu'une zone devient bien une île (A5). */
-export { deriveGrapheZones, PALIER_MAX, PALIER_VIDE }
+export { deriveGrapheZones }
 
 /**
  * ═══ MURER LES ARÊTES — LA FALAISE, DÉDUITE ═══
  *
- * **UNE ARÊTE EST UN MUR — SAUF ENTRE DEUX RAMPES.** Toute la topologie du monde tient dans cette
- * phrase, et c'est le cœur du rectiligne (spec R33).
+ * **UNE ARÊTE INTER-ZONES EST UN MUR — SAUF SUR UN SEUIL.** Toute la topologie du monde tient dans
+ * cette phrase : c'est le seul mur qui sépare deux pays sur la carte plate.
  *
  * Ce qu'on ne fait plus : peindre une bande de falaise de 44 tuiles là où un champ continu
  * descendait sous un seuil. Ça coûtait 16 % de la carte, ça noyait chaque frontière dans un no
  * man's land rocheux, et ça n'avait qu'une raison d'être — la falaise était *dérivée d'un champ*
- * au lieu d'être ce qu'elle est : **le bord d'un plateau**.
+ * au lieu d'être ce qu'elle est : **le mur entre deux pays**.
  *
- * Deux cas, et un seul geste :
+ * Un seul cas, un seul geste : **DEUX TUILES MARCHABLES VOISINES DE ZONES DIFFÉRENTES** → on en mure
+ * une, d'un côté déterministe (le plus grand id : donc une ligne d'UNE tuile, jamais deux). Sans ce
+ * mur, deux zones voisines auraient une frontière ouverte — le seuil ne serait plus le seul passage,
+ * et le test destructif A5 deviendrait un mensonge. Pas de hauteur : de la roche plate qu'on longe.
  *
- *   1. **PALIERS DIFFÉRENTS** → on mure la tuile HAUTE. La basse reste le chemin : on ne coupe pas
- *      la plaine, on pose une lèvre au bord du plateau. C'est ce qui se longe, et c'est ce que le
- *      client dessine en marche.
- *   2. **MÊME PALIER, ZONES DIFFÉRENTES** → on mure quand même, d'un côté (le plus grand id :
- *      déterministe, donc une ligne d'UNE tuile, jamais deux). Sans ce cas, deux zones de même
- *      palier auraient une frontière ouverte — le seuil ne serait plus le seul passage, et le test
- *      destructif A5 deviendrait un mensonge.
- *
- * L'EXEMPTION EST LE PIVOT, et elle rend un service qu'on n'a pas eu à écrire : les flancs d'un
- * couloir de seuil ne sont *pas* exemptés (une seule de leurs deux tuiles est une rampe), donc le
- * cas 1 les mure partout où le couloir longe une plaine plus basse. **La gorge se creuse toute
- * seule.** Idem pour la brèche d'une butte : dedans-dehors, deux rampes, elle reste ouverte ; tout
- * le reste du bord, une rampe et une plaine, se mure.
+ * L'EXEMPTION EST LE PIVOT, et elle rend un service qu'on n'a pas eu à écrire : les tuiles d'un
+ * couloir de seuil sont marquées `rampe`, donc leurs arêtes internes ne se murent pas — mais leurs
+ * FLANCS (une tuile de couloir contre une tuile d'une autre zone) se murent par la règle générale.
+ * **Le goulot se creuse tout seul.**
  */
 function murerLesAretes(
   terrain: number[],
   zone: Int32Array,
-  palier: Int32Array,
   rampe: Uint8Array,
   width: number,
   height: number,
@@ -674,11 +581,9 @@ function murerLesAretes(
       if (TERRAINS[terrain[i]!]?.walkable !== true) continue
       for (const j of [i + 1, i + width]) {
         if (TERRAINS[terrain[j]!]?.walkable !== true) continue
-        if (rampe[i] && rampe[j]) continue // un escalier a le droit de monter : c'est son métier
-        if (palier[i] !== palier[j]) {
-          aMurer.push(palier[i]! > palier[j]! ? i : j) // la LÈVRE, au bord du plateau
-        } else if (zone[i] !== zone[j]) {
-          aMurer.push(zone[i]! > zone[j]! ? i : j) // la frontière plate — sinon A5 ment
+        if (rampe[i] && rampe[j]) continue // un seuil a le droit de traverser : c'est son métier
+        if (zone[i] !== zone[j]) {
+          aMurer.push(zone[i]! > zone[j]! ? i : j) // la frontière — le seul mur, sinon A5 ment
         }
       }
     }
@@ -717,7 +622,6 @@ function garantirLaConnexite(
   g: GrapheZones,
   terrain: number[],
   zone: Int32Array,
-  palier: Int32Array,
   rampe: Uint8Array,
   width: number,
   height: number,
@@ -781,7 +685,7 @@ function garantirLaConnexite(
       }
       if (poche.length < POCHE_MIN) continue // du décor, pas un défaut
 
-      if (percerVersLeMonde(g, poche, monde, terrain, zone, palier, rampe, width, height)) ouvert = true
+      if (percerVersLeMonde(g, poche, monde, terrain, zone, rampe, width, height)) ouvert = true
     }
 
     if (!ouvert) break
@@ -802,7 +706,6 @@ function percerVersLeMonde(
   monde: Uint8Array,
   terrain: number[],
   zone: Int32Array,
-  palier: Int32Array,
   rampe: Uint8Array,
   width: number,
   height: number,
@@ -838,53 +741,17 @@ function percerVersLeMonde(
   }
   if (arrivee < 0) return false
 
-  // Le chemin, remonté, creusé en RAMPE : il traverse une paroi, donc il monte ou descend.
+  // Le chemin, remonté depuis le monde : on le creuse à plat, dans la zone de la poche.
   const chemin: number[] = []
   for (let i: number | undefined = arrivee; i !== undefined; i = parent.get(i)) chemin.push(i)
 
-  /**
-   * ═══ UNE POCHE QU'ON NE REJOINT QU'EN GRIMPANT QUATRE PALIERS N'EST PAS UNE POCHE ═══
-   *
-   * C'est un DÉBRIS — et il a fallu deux diagnostics pour le voir.
-   *
-   * Le raccord posait deux paliers d'un coup (`k < moitié ? bas : haut`) : deux tuiles de rampe
-   * voisines à deux crans d'écart, un mur qu'on escalade de plain-pied. La garde A10 l'a dit.
-   * Répartir les marches sur la longueur du chemin n'a rien réglé, et **rallonger le chemin dans la
-   * poche a TRIPLÉ la faute** — un couloir qui serpente et qu'on élargit de trois tuiles se replie
-   * sur lui-même : deux tuiles voisines à l'écran, mais à huit crans l'une de l'autre le long du
-   * chemin. On soignait un symptôme avec l'outil qui l'aggrave.
-   *
-   * LA CAUSE, elle, est géométrique : **ces poches sont des bouts de COULOIR DE SEUIL**, sectionnés
-   * par leurs propres flancs quand `murerLesAretes` les a murés. Un fragment d'escalier, donc au
-   * palier de la zone d'EN FACE (jusqu'à 5), échoué dans une plaine au palier 1. Lui bâtir un
-   * escalier de quatre marches dans cent cinquante tuiles, c'est demander l'impossible à la
-   * géométrie — et la géométrie répond en sautant des marches.
-   *
-   * On cesse donc de le demander. Un fragment à deux paliers ou plus du monde **devient de la
-   * roche**. On ne perd rien (c'était un morceau de porte que personne ne pouvait atteindre), on
-   * gagne un invariant vrai par construction, et le rendu y gagne un éperon rocheux de plus.
-   *
-   * Les vraies poches — une part de zone qu'une butte a coupée — sont, elles, à UN palier du monde :
-   * elles se rouvrent par une rampe, et c'est exactement ce qu'une rampe sait faire.
-   */
+  // On creuse un couloir PLAT (largeur `DEMI_RAMPE`) le long du chemin, sans jamais déborder chez le
+  // voisin — c'est ce qui préserve le test destructif A5 (on ne perce jamais une frontière). Les
+  // tuiles sont marquées `rampe` : ça les exempte du re-murage et les tient stériles, comme un seuil.
   const r = RELIEF.DEMI_RAMPE
-  const palBas = palier[arrivee]!
-  const palHaut = palier[chemin[chemin.length - 1]!]!
-  const marches = Math.abs(palHaut - palBas)
-  const sens = palHaut > palBas ? 1 : -1
-
-  if (marches > 1) {
-    for (const i of poche) terrain[i] = TERRAIN_CLIFF
-    return true // on a bel et bien changé la carte : la passe suivante doit rejouer l'inondation
-  }
-
-  for (let k = 0; k < chemin.length; k++) {
-    const c = chemin[k]!
+  for (const c of chemin) {
     const cx = c % width
     const cy = (c - cx) / width
-    // `chemin` remonte de l'ARRIVÉE (le monde) vers la poche : k va donc du bas vers le haut. Une
-    // seule marche à franchir (les autres cas sont devenus de la roche) : elle tombe à mi-chemin.
-    const pal = k < chemin.length / 2 ? palBas : palBas + sens * marches
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         const x = cx + dx
@@ -895,7 +762,6 @@ function percerVersLeMonde(
         const i = y * width + x
         if (zone[i] !== zid) continue // on ne déborde jamais chez le voisin
         if (TERRAINS[terrain[i]!]?.walkable !== true) terrain[i] = solMarchableDe(g, zid, x, y)
-        palier[i] = pal
         rampe[i] = 1
       }
     }

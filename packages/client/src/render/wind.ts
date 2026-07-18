@@ -36,6 +36,7 @@ export const WIND_TAKE: Record<string, number> = {
   fern: 0.85,
   flower: 0.9,
   low_bush: 0.5,
+  bush: 0.45,
   larch: 0.4,
   pine: 0.32,
   conifer: 0.3,

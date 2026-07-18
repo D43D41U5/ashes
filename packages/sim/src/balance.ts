@@ -27,18 +27,24 @@ const ticksForCycles = (cycles: number): number => Math.round(cycles * CYCLE_REA
 /** Jauge Température (spec 2026-07-08). Ordres de grandeur, à calibrer en playtest. */
 export const TEMPERATURE = {
   BASE: 90, // cible d'un bas de vallée, jour, acte I
-  ALT_COLD: 70, // refroidissement max au sommet (elevation 1)
   // LA NUIT MORD, DÈS L'ACTE I (était 20). Sans elle, le Feu n'était qu'un
   // établi : on pouvait passer la nuit dehors sans y penser. Rentrer avant la
   // nuit — ou emporter de quoi faire du feu — devient une décision.
   NIGHT_COLD: 30,
   ACT_COLD: [0, 25, 40] as const, // par acte (I, Grand Froid, Cendre), soustrait
-  /** Décalage signé par terrain (id de TERRAINS). Absent = 0. */
+  /**
+   * Décalage signé par terrain (id de TERRAINS). Absent = 0.
+   *
+   * LE FROID VIENT DU BIOME, pas de l'altitude (la carte est plate — façon RimWorld). Ce qui était
+   * autrefois « le froid, prix de la verticalité » (un terme `elevation × ALT_COLD`) est re-sourcé
+   * ici : la neige et surtout le glacier portent leur froid dans leur terrain, ce qui garde le Névé
+   * et le Glacier mortellement froids sans aucune hauteur. Ordres de grandeur, à calibrer en playtest.
+   */
   BIOME_OFFSET: {
     3: 5, 13: 5, 14: 5, 22: 5, // forêts (couvert)
     8: -5, 18: -5, 19: -5, // marais/tourbière/roselière (mouillé)
-    10: -10, // neige
-    15: -15, // glacier
+    10: -40, // neige — un seuil qu'on paie en froid (le Névé)
+    15: -75, // glacier — glacial, une gate de froid (le Glacier)
   } as Record<number, number>,
   FIRE_WARMTH: 80, // cible au contact d'un feu
   FIRE_RANGE: 6, // tuiles
@@ -305,7 +311,7 @@ export const TERRAINS: Record<number, TerrainDef> = {
   0: { name: 'void', walkable: false, speedFactor: 0, cover: 1 },
   1: { name: 'grass', walkable: true, speedFactor: 1, cover: 1 },
   2: { name: 'road', walkable: true, speedFactor: 1.25, cover: 1 },
-  3: { name: 'forest', walkable: true, speedFactor: 0.8, cover: 0.6 },
+  3: { name: 'forest', walkable: true, speedFactor: 1, cover: 0.6 }, // plein régime : pas de malus en forêt (décision Alexis 2026-07-18 ; pins/mélèzes/vieille sylve gardent le leur)
   4: { name: 'shallow_water', walkable: true, speedFactor: 0.5, cover: 1 },
   5: { name: 'rock', walkable: false, speedFactor: 0, cover: 1 },
   6: { name: 'deep_water', walkable: false, speedFactor: 0, cover: 1 },
@@ -2025,21 +2031,6 @@ export type CarryTier = 'light' | 'medium' | 'heavy' | 'overloaded'
 
 /** Durée d'un tick en secondes — le seul dt qui existe dans /sim. */
 export const TICK_DT_S = 1 / BALANCE.TICK_RATE_HZ
-
-/**
- * Terrassement du relief (spec 2026-07-09-relief-terrasses).
- * Calibré à l'œil sur captures en jeu, jamais sur une théorie.
- */
-export const TERRACE = {
-  /** Nombre de paliers sur l'amplitude d'altitude [0,1]. */
-  LEVELS: 8,
-  /** Rayon (en tuiles) de la moyenne locale. Décide de tout : quantifier le
-   *  champ brut, qui porte crêtes et bruit de détail, donnerait des
-   *  micro-terrasses déchiquetées sur chaque bosse. */
-  SMOOTH_RADIUS: 6,
-  /** Nombre de passes de lissage (deux passes ≈ une gaussienne). */
-  SMOOTH_PASSES: 2,
-} as const
 
 /**
  * L'INVENTAIRE À CASES (spec inventaire R5, R7). Piles COURTES, exprès : les

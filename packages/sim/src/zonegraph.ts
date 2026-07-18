@@ -80,14 +80,10 @@ export const MONDE = {
    * passage par la zone de neige pour accéder à plusieurs zones endgame, le fait que tout ne soit
    * pas un pavage de la map. »*
    *
-   * Les zones ne se touchent plus bord à bord. Ce sont des **TERRASSES SUSPENDUES**, séparées par
-   * des **CREVASSES** — *« au pire le noir ce sont de grosses crevasses tellement profondes qu'elles
-   * tirent vers le noir »*. Le vide est donc un PALIER, très bas, peint en noir : le rendu en
-   * marches le donne gratuitement (spec R34), et chaque bord de zone y tombe par une contremarche.
-   *
-   * ET C'EST CE QUI SAUVE R4. Une falaise d'une tuile courant nord-sud se lisait comme une clôture
-   * (constaté à l'écran au commit précédent). Une terrasse au bord d'un gouffre, non : **le vide a
-   * une masse.** *On ne trouve pas une porte : on longe le gouffre jusqu'à l'ISTHME.*
+   * Toutes les zones ne se touchent pas bord à bord. Là où deux régions ne se rejoignent pas, il
+   * reste du VIDE — sur la carte plate, une **masse de ROCHE infranchissable** (façon montagne
+   * RimWorld). Le vide a donc une masse : il ferme la vallée, et une frontière entre deux pays se
+   * longe jusqu'à son SEUIL — *on ne cherche pas une porte, on longe le mur jusqu'au passage.*
    */
 
   /** Deux régions sont VOISINES si la crevasse qui les sépare ne fait pas plus que ça (tuiles).
@@ -373,11 +369,6 @@ export interface GrapheZones {
   /** Adjacence géométrique brute (qui touche qui), avant le choix des seuils. */
   voisins: number[][]
   /**
-   * LE PALIER DE CHAQUE ZONE (entier), indexé par id — et **deux zones voisines n'ont JAMAIS le
-   * même** (voir `colorerLesPaliers`). C'est ce qui fait qu'une frontière se VOIT.
-   */
-  paliers: number[]
-  /**
    * LES IMPASSES — les culs-de-sac. Des zones T2 terminales : une seule voisine, rien derrière.
    * On y va pour le prix, et on en revient par où l'on est entré. Le reste de la carte (le CŒUR)
    * n'en dépend jamais.
@@ -532,23 +523,23 @@ const LIENS: readonly (readonly [string, string])[] = [
 ]
 
 /**
- * ═══ LE VIDE — un palier, très bas, et c'est tout ce qu'il faut ═══
+ * ═══ LE VIDE — une MASSE DE ROCHE PLATE, infranchissable (façon montagne RimWorld) ═══
  *
- * *« Au pire le noir ce sont de grosses crevasses tellement profondes qu'elles tirent vers le
- * noir. »* (Alexis.) Le vide n'est donc pas de la roche posée SUR la carte : c'est un fond, très
- * en dessous. Une terrasse au palier 6 qui donne dessus ouvre une paroi de NEUF marches.
+ * La carte n'est pas un pavage : là où aucune région ne s'étend, il y a du VIDE. Autrefois c'était
+ * un gouffre — un palier très bas peint en noir. Sur la carte plate, c'est simplement de la ROCHE :
+ * un mur qu'on longe, pas un abîme dans lequel on tombe. Il donne la masse, il ferme la vallée entre
+ * les pays éloignés ; il ne fait pas les frontières entre zones voisines.
  *
  * ET IL N'EST PAS ENTRE LES ZONES VOISINES. C'est la faute qu'il a fallu montrer pour la voir : la
  * première écriture séparait TOUTES les régions par une crevasse, et les seuils devenaient de longs
  * couloirs étroits jetés au-dessus — *« là on a des petits couloirs pas ouf »* (Alexis). Le croquis
- * dit le contraire, et il faut le lire de près : **les zones voisines SE TOUCHENT**, elles se
- * chevauchent même partiellement (« certaines zones mordaient sur d'autres »). C'est ce partage
- * d'arête, entre deux paliers différents, qui fabrique la TERRASSE — et la rampe qui y monte.
+ * dit le contraire : **les zones voisines SE TOUCHENT**, elles se chevauchent même partiellement
+ * (« certaines zones mordaient sur d'autres »). C'est ce partage d'arête qui les met bord à bord —
+ * et `murerLesAretes` y pose une simple ligne de roche, jamais une crevasse.
  *
  * Le vide n'est donc que là où il n'y a **aucune** région : les marges, et les trous entre les
- * colonnes qui ne se touchent pas. Il donne la masse ; il ne fait pas les frontières.
+ * colonnes qui ne se touchent pas.
  */
-export const PALIER_VIDE = -3
 
 export interface Echantillon {
   /** L'id de la RÉGION propriétaire — ou la plus proche, si le point est dans le vide. */
@@ -778,7 +769,6 @@ export function deriveGrapheZones(seed: number, joueurs = MONDE.JOUEURS_CIBLE): 
   const racine = SQUELETTE.findIndex((c) => c.fixe === RACINE_SLUG)
   const g: GrapheZones = {
     seed, width, height, zones, racine, seuils: [], voisins: [], impasses: [], gardiennes: [],
-    paliers: [],
   }
 
   // L'ADJACENCE EST DÉCLARÉE (voir `LIENS`) — mais on ne la croit que si la frontière EXISTE
@@ -802,7 +792,6 @@ export function deriveGrapheZones(seed: number, joueurs = MONDE.JOUEURS_CIBLE): 
     if (g.voisins[i]!.length === 1) { g.impasses.push(i); g.gardiennes.push(g.voisins[i]![0]!) }
   }
 
-  g.paliers = colorerLesPaliers(g)
   g.seuils = percerLesIsthmes(g, catalogue)
   marquerLesSecours(g, g.seuils)
   return g
@@ -893,80 +882,6 @@ function percerLesIsthmes(g: GrapheZones, catalogue: Map<string, Porte[]>): Seui
     return { id, a: p.a, b: p.b, x: p.x, y: p.y, ax: p.ax, ay: p.ay, secours: false }
   })
 }
-
-/**
- * ═══ DEUX ZONES VOISINES N'ONT JAMAIS LE MÊME PALIER ═══
- *
- * Et il a fallu REGARDER la carte pour le comprendre — encore une fois (R25).
- *
- * Le palier de chaque zone était un simple tirage dans la fourchette de son tier. Deux T1 voisines
- * pouvaient donc sortir toutes les deux au palier 1. Leur frontière devenait alors un mur **SANS
- * HAUTEUR** : la règle d'arête la murait bien (il le faut, sinon le seuil n'est plus le seul
- * passage et le test destructif A5 devient un mensonge), mais il n'y avait **rien à voir** — une
- * ligne de roche d'une tuile posée sur un sol plat. Sur la capture, ça ne ressemblait pas à une
- * falaise : ça ressemblait à une **CLÔTURE**, et son seuil à un trou dans un grillage.
- *
- * C'est le contraire de tout ce que la spec promet. R8 : *« une zone a une frontière FRANCHE ; on la
- * FRANCHIT, on ne s'y fond pas. »* R34 : *« on monte d'un niveau pour chaque entier de niveau. »* Une
- * frontière sans dénivelé ne franchit rien et ne monte nulle part.
- *
- * On COLORIE donc le graphe : chaque zone prend, dans la fourchette de son tier, un palier que
- * n'ont pas ses voisines déjà servies. Les fourchettes ont été élargies exprès pour que ça tienne
- * (T1 : trois crans ; T2 : trois crans) — un coloriage glouton à trois couleurs sur un graphe
- * planaire de six sommets aboutit presque toujours, et l'ordre de passage (les plus contraintes
- * d'abord) le rend robuste.
- *
- * Si malgré tout un conflit reste (le graphe exigeait quatre couleurs), on l'accepte : une
- * frontière plate est laide, elle n'est pas cassée. Mieux vaut une carte moins belle qu'une saison
- * qui ne démarre pas (R26).
- */
-function colorerLesPaliers(g: GrapheZones): number[] {
-  const n = g.zones.length
-  const paliers = new Array<number>(n).fill(-1)
-
-  // Les plus CONTRAINTES d'abord — le plus fort degré. C'est ce qui fait tenir un glouton : on
-  // sert celle qui a le moins de choix pendant qu'elle en a encore.
-  const ordre = g.zones
-    .map((z) => ({ id: z.id, deg: g.voisins[z.id]!.length }))
-    .sort((a, b) => b.deg - a.deg || a.id - b.id)
-    .map((z) => z.id)
-
-  for (const id of ordre) {
-    const t = g.zones[id]!.def.tier
-    const base = PALIER_BASE[t]
-    const etendue = PALIER_ETENDUE[t]
-    const pris = new Set(g.voisins[id]!.map((v) => paliers[v]!).filter((p) => p >= 0))
-    // On parcourt la fourchette à partir d'un décalage tiré au sort : sans lui, toutes les zones
-    // d'un même tier convergeraient vers le bas de leur fourchette, et la carte n'aurait plus de
-    // variété d'altitude d'une seed à l'autre.
-    const depart = Math.floor(hash2(id, g.seed, 0xa17) * etendue)
-    let choisi = base + depart
-    for (let k = 0; k < etendue; k++) {
-      const p = base + ((depart + k) % etendue)
-      if (!pris.has(p)) { choisi = p; break }
-    }
-    paliers[id] = choisi
-  }
-  return paliers
-}
-
-/**
- * Les fourchettes de palier, par tier — et elles sont LARGES pour que le coloriage tienne.
- *
- * La racine est au fond (0) ; la ceinture T1 domine le jardin de un à trois crans ; les marges T2
- * dominent tout (4 à 6). Une zone T2 collée à la racine ouvre donc un seuil qui grimpe **jusqu'à
- * six paliers d'un coup** — soit, à l'écran, un mur de 72 px. En voyant cette gorge s'élever en
- * escalier au-dessus de son jardin, le joueur SAIT que ce n'est pas pour aujourd'hui. Aucune UI ne
- * le lui dit ; la géographie le fait.
- *
- * Les fourchettes ne se CHEVAUCHENT pas d'un tier à l'autre : une T1 ne peut donc jamais tirer le
- * palier d'une T2 voisine, et le coloriage n'a à résoudre les conflits qu'À L'INTÉRIEUR d'un tier.
- */
-const PALIER_BASE: Record<0 | 1 | 2, number> = { 0: 0, 1: 1, 2: 4 }
-const PALIER_ETENDUE: Record<0 | 1 | 2, number> = { 0: 1, 1: 3, 2: 3 }
-
-/** Le palier le plus haut que la table puisse produire — le diviseur de l'altitude dérivée. */
-export const PALIER_MAX = PALIER_BASE[2] + PALIER_ETENDUE[2] - 1 // 4 + 3 − 1 = 6
 
 /**
  * LE GRAPHE EST-IL 2-CONNEXE ? — connexe, ET sans aucun point d'articulation.

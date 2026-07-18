@@ -6,7 +6,7 @@
  * un endroit où naître, et celui qui rejoint au jour 40 ne joue pas au même jeu que les autres.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE } from './balance'
+import { BALANCE, TERRAIN_ROCK } from './balance'
 import { avanceeDuFront, CENDRE, estCendre, partSousLaCendre } from './cendre'
 import { generateZonedTerrain } from './zonegen'
 import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
@@ -37,11 +37,12 @@ describe('le front de cendre', () => {
     // Une tuile de la Cendrière a une distance NÉGATIVE : elle est dedans. Le front à zéro la
     // brûle donc déjà — c'est chez elle que la cendre tombe, c'est le sens du nom.
     // On ne compte QUE le sol : les marges de VIDE se rattachent à la région la plus proche (il faut
-    // bien qu'un échantillon réponde), mais une crevasse n'a rien à brûler.
+    // bien qu'un échantillon réponde), mais une masse de roche n'a rien à brûler (le vide est devenu
+    // de la ROCHE plate sur la carte aplatie).
     const dedans = partSousLaCendre(
       carte.map,
       0,
-      (i) => carte.zone[i] === cendriere.id && carte.map.terrain[i] !== 0,
+      (i) => carte.zone[i] === cendriere.id && carte.map.terrain[i] !== TERRAIN_ROCK,
     )
     expect(dedans, 'la Cendrière ne brûle pas').toBeGreaterThan(0.9)
     // Et les Prés Bas, eux, sont INTACTS au jour 1. On y meurt de faim, pas de cendre.

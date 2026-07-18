@@ -25,31 +25,6 @@ export interface WorldMap {
   terrain: number[]
   zones: Zone[]
   /**
-   * ═══ LE PALIER — L'ALTITUDE, ET ELLE EST UN ENTIER (spec R1, R36) ═══
-   *
-   * La donnée de premier ordre du relief, et la seule qui décide de quoi que ce soit : le rendu
-   * soulève la tuile de `palier × STEP_PX` (une MARCHE par palier — spec R34), la garde A9 la lit
-   * pour vérifier qu'on ne monte que par une rampe, et la falaise n'est rien d'autre que l'endroit
-   * où deux paliers voisins se touchent.
-   *
-   * Il a longtemps vécu caché dans `CarteZonee`, et la carte n'exposait que son ombre — un flottant
-   * `[0,1]`. C'était le mauvais sens : on dérivait le VRAI (l'entier) vers l'APPROCHÉ (le flottant),
-   * puis le client rebâtissait péniblement des marches à partir du flottant. Désormais la carte
-   * porte l'entier, et `elevation` n'est plus qu'une commodité pour qui pense encore en continu.
-   *
-   * Optionnel : les cartes de l'ancien générateur (`valleygen`) n'en produisent pas.
-   */
-  palier?: number[]
-  /** Le palier le plus haut que la carte puisse porter — le diviseur d'`elevation`. */
-  palierMax?: number
-  /**
-   * Altitude par tuile [0,1] — **une DÉRIVÉE du palier** (`palier / palierMax`), pas une vérité.
-   * Elle survit pour ce qui pense en continu : la température (il fait froid en altitude), les
-   * filtres d'éligibilité des lieux. Rien qui décide de la forme du monde. NE PAS confondre avec
-   * `height` (dimension).
-   */
-  elevation?: number[]
-  /**
    * LE CHAMP DE CENDRE — distance de chaque tuile à la frontière de la Cendrière, en tuiles.
    * Négative DEDANS, positive dehors. **Donnée STATIQUE** : calculée une fois, jamais modifiée.
    *
@@ -110,10 +85,23 @@ export function zoneSlugAt(map: WorldMap, tx: number, ty: number): string | unde
   return defs[grid[j * cols + i] ?? 0]?.slug
 }
 
-/** Le PALIER d'une tuile (entier). Hors carte ou carte sans relief = 0. */
-export function palierAt(map: WorldMap, tx: number, ty: number): number {
-  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return 0
-  return map.palier?.[ty * map.width + tx] ?? 0
+/**
+ * L'ID DE ZONE d'une tuile, lu dans la grille de blocs. **-1 sur une carte sans zones.**
+ *
+ * La zone est constante par bloc (spec R32) et la grille est au pas du bloc : une lecture au
+ * plancher rend donc la vérité, exactement. C'est ce qui permet à la garde de connexité de
+ * `carveDistanceToMain` d'interdire à un tunnel de lieu de traverser une frontière de zone —
+ * l'ancien rôle du saut de palier, tenu désormais par l'égalité de zone. Sur une carte sans zones
+ * (l'ancien générateur `valleygen`), le -1 partout rend la garde inerte : comportement préservé.
+ */
+export function zoneIdAt(map: WorldMap, tx: number, ty: number): number {
+  const grid = map.zoneGrid
+  const pas = map.zonePas
+  if (!grid || !pas) return -1
+  const cols = Math.ceil(map.width / pas)
+  const i = Math.min(cols - 1, Math.max(0, Math.floor(tx / pas)))
+  const j = Math.min(Math.ceil(map.height / pas) - 1, Math.max(0, Math.floor(ty / pas)))
+  return grid[j * cols + i] ?? -1
 }
 
 export function createEmptyMap(width: number, height: number, fillTerrainId: number): WorldMap {
@@ -129,12 +117,6 @@ export function createEmptyMap(width: number, height: number, fillTerrainId: num
 export function terrainAt(map: WorldMap, tx: number, ty: number): number {
   if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return 0
   return map.terrain[ty * map.width + tx] ?? 0
-}
-
-/** Altitude à une tuile [0,1]. Hors carte ou absent = 0. */
-export function elevationAt(map: WorldMap, tx: number, ty: number): number {
-  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return 0
-  return map.elevation?.[ty * map.width + tx] ?? 0
 }
 
 /** Une tuile bloque-t-elle le déplacement ? Hors carte et terrain inconnu bloquent. */
@@ -216,34 +198,4 @@ export function poiClearings(map: WorldMap): Set<number> {
 /** Centre d'une zone, en tuiles. */
 export function poiCenter(z: Zone): { x: number; y: number } {
   return { x: z.x + z.w / 2, y: z.y + z.h / 2 }
-}
-
-/**
- * LA PENTE MAXIMALE VERS LE SUD — le contrat que `/sim` doit au rendu.
- *
- * Le client donne du relief en soulevant chaque tuile de `elevation × RELIEF_H`
- * pixels vers le haut de l'écran. Si le sol descend vers le sud (`ty` croissant)
- * plus vite que `TILE_PX / RELIEF_H` par tuile, deux tuiles voisines se croisent
- * à l'écran : **l'image se replie sur elle-même**, la tuile du fond passe devant
- * celle du devant, et plus rien n'est lisible. Le client refuse alors de démarrer
- * (`assertNoFold`, WorldScene.ts — sans garde de développement : c'est une
- * exception, pas un avertissement).
- *
- * CETTE FONCTION VIVAIT DANS LE CLIENT. C'était le mauvais côté de la frontière :
- * le client ne fait que CONSTATER la faute, il ne peut pas la commettre. Le champ
- * d'élévation est produit par `/sim`, et c'est donc `/sim` qui doit garantir qu'il
- * est rendable — et le tester (`worldgen.test.ts`, sur la vraie carte et plusieurs
- * seeds). Le 2026-07-14, **4 seeds sur 16 dépassaient le plafond** : le jeu ne
- * démarrait pas. Personne ne le voyait, parce que le mode Veillée code la seed
- * 2026 en dur — et elle passait.
- */
-export function maxSouthGradient(elevation: readonly number[], width: number, height: number): number {
-  let max = 0
-  for (let y = 0; y < height - 1; y++) {
-    for (let x = 0; x < width; x++) {
-      const g = elevation[(y + 1) * width + x]! - elevation[y * width + x]!
-      if (g > max) max = g
-    }
-  }
-  return max
 }

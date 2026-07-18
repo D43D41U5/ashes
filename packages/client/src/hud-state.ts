@@ -129,7 +129,7 @@ export interface HudState {
     tick: number
     fps: number
     /** Tuile sous le curseur (après correction du relief) et ce qu'on y trouve. */
-    hover: { tx: number; ty: number; terrain: string; elevation: number; zone: string } | null
+    hover: { tx: number; ty: number; terrain: string; zone: string } | null
   }
   /** Demande de TP posée par UIScene (clic sur la carte) — consommée par WorldScene. */
   debugTeleport: { x: number; y: number; at: number }

@@ -5,7 +5,7 @@
  */
 import { POI, TEMPERATURE } from './balance'
 import { die } from './combat'
-import { elevationAt, terrainAt } from './map'
+import { terrainAt } from './map'
 import { isOnPoiKind } from './poi-discovery'
 import { getGameTime } from './time'
 import type { SimState } from './sim'
@@ -61,10 +61,11 @@ export function ambientTemperature(state: SimState, x: number, y: number): numbe
   const tx = Math.floor(x)
   const ty = Math.floor(y)
   const time = getGameTime(state)
-  const elev = elevationAt(state.map, tx, ty)
   const biome = T.BIOME_OFFSET[terrainAt(state.map, tx, ty)] ?? 0
 
-  const base = T.BASE - elev * T.ALT_COLD - T.ACT_COLD[time.act - 1]! // non coupé par un toit
+  // La carte est plate : le froid ne vient plus de l'altitude, seulement du BIOME (la neige, le
+  // glacier) et de l'heure. Le froid des zones hautes est porté par leur terrain, pas par une hauteur.
+  const base = T.BASE - T.ACT_COLD[time.act - 1]! // non coupé par un toit
   const exposed = biome - (time.isNight ? T.NIGHT_COLD : 0) // amorti par l'abri
   const shelter = isSheltered(state, tx, ty) ? T.SHELTER_FACTOR : 1
   const ambient = clampTemp(base + shelter * exposed)

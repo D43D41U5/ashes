@@ -18,7 +18,7 @@
  *
  * Pur et déterministe : balayage row-major, pile explicite, aucun aléa.
  */
-import { isBlockingTile, type WorldMap } from './map'
+import { isBlockingTile, zoneIdAt, type WorldMap } from './map'
 import { isWater } from './valleygen-primitives'
 
 /** Voisinage à 4 — le seul qui dise la vérité sur ce monde (cf. en-tête). */
@@ -172,9 +172,9 @@ export function carveDistanceToMain(map: WorldMap, c: WalkableComponents, limit:
     tx <= 0 || ty <= 0 || tx >= W - 1 || ty >= H - 1 || isWater(map.terrain[ty * W + tx] ?? 0)
 
   /**
-   * ═══ ON NE PERCE JAMAIS UNE MARCHE — et ça a failli coûter toute la topologie ═══
+   * ═══ ON NE PERCE JAMAIS UNE FRONTIÈRE DE ZONE — et ça a failli coûter toute la topologie ═══
    *
-   * Le tunnel d'accès d'un lieu ne franchit pas un changement de PALIER. Voilà la règle, et voilà
+   * Le tunnel d'accès d'un lieu ne franchit pas une frontière de ZONE. Voilà la règle, et voilà
    * pourquoi elle n'a pas toujours existé :
    *
    * Tant que la falaise était une BANDE de 44 tuiles, ce tunnel était inoffensif — le budget de
@@ -182,7 +182,7 @@ export function carveDistanceToMain(map: WorldMap, c: WalkableComponents, limit:
    * et une frontière de zone était donc *incidemment* étanche. Elle ne l'était pas par principe :
    * elle l'était par épaisseur.
    *
-   * L'arête fine (spec R33) a supprimé l'épaisseur. Une frontière ne fait plus qu'UNE tuile — et le
+   * L'arête fine a supprimé l'épaisseur. Une frontière ne fait plus qu'UNE tuile de roche — et le
    * tunnel d'un lieu, qui perce volontiers une tuile pour se relier au monde, s'est mis à traverser
    * les frontières comme du papier. Mesuré : **le Gouffre restait joint alors qu'on avait rebouché
    * tous ses seuils** (garde A5) — un lieu, quelque part sur son pourtour, lui avait creusé une
@@ -190,16 +190,20 @@ export function carveDistanceToMain(map: WorldMap, c: WalkableComponents, limit:
    *
    * *Une protection qui reposait sur une épaisseur n'était pas une protection : c'était une chance.*
    *
-   * La règle la remplace, et elle est exacte : deux zones voisines ont TOUJOURS des paliers
-   * différents (`colorerLesPaliers`), et une butte domine toujours sa plaine. Interdire au tunnel
-   * de changer de palier, c'est donc lui interdire, d'un seul geste, de percer une frontière de
-   * zone ET la paroi d'une butte — sans qu'il ait à savoir ce qu'est l'une ou l'autre. Il ne lui
-   * reste que ce pour quoi il existe : dégager les quelques cailloux entre un lieu et son pays.
+   * La règle la remplace, et elle est exacte : interdire au tunnel de changer de zone, c'est lui
+   * interdire de percer une frontière — le seul mur qui sépare deux pays sur la carte plate. La zone
+   * est constante par bloc, donc la lecture au bloc (`zoneIdAt`) tranche à la tuile près. Il ne
+   * reste au tunnel que ce pour quoi il existe : dégager les quelques cailloux entre un lieu et son
+   * pays.
    *
-   * Une carte sans palier (l'ancien générateur) rend 0 partout : la règle est alors sans effet, et
+   * *(Ceci a longtemps été une garde sur le PALIER : deux zones voisines ayant toujours un palier
+   * différent, « ne pas changer de palier » valait « ne pas changer de zone ». La hauteur retirée,
+   * on teste directement la zone — même effet, sans altitude.)*
+   *
+   * Une carte sans zones (l'ancien générateur) rend -1 partout : la règle est alors sans effet, et
    * le comportement d'avant est préservé à l'identique.
    */
-  const pal = (i: number): number => map.palier?.[i] ?? 0
+  const zid = (tx: number, ty: number): number => zoneIdAt(map, tx, ty)
 
   /**
    * FILE À SEAUX plutôt que deque : les coûts d'arête ne valent que 0 ou 1, donc
@@ -236,7 +240,7 @@ export function carveDistanceToMain(map: WorldMap, c: WalkableComponents, limit:
         if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
         const ni = ny * W + nx
         if (sealed(nx, ny)) continue
-        if (pal(ni) !== pal(cur)) continue // ON NE PERCE PAS UNE MARCHE (voir `pal`)
+        if (zid(nx, ny) !== zid(cx, cy)) continue // ON NE PERCE PAS UNE FRONTIÈRE DE ZONE (voir `zid`)
         // Entrer sur une tuile bloquante, c'est la percer : +1. Sinon : gratuit.
         const w = isBlockingTile(map, nx, ny) ? 1 : 0
         const nd = d + w

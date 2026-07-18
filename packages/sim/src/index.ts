@@ -65,7 +65,6 @@ export { POI,
   TERRAIN_SNOW,
   TERRAIN_SHALLOW_WATER,
   TERRAIN_DEEP_WATER,
-  TERRACE,
   TICK_DT_S,
   VILLAGE_NAMES,
   WEAPON_DAMAGE,
@@ -88,10 +87,7 @@ export type {
 
 // ─── Monde : carte, temps, collision, navigation ──────────────────────────
 export {
-  createEmptyMap, terrainAt, elevationAt, palierAt, isBlockingTile, zoneAt, poisAt, poiCenter, poiClearings,
-  // Le contrat que /sim doit au rendu : un champ d'élévation qui ne replie pas
-  // l'image. Le client le CONSTATE (assertNoFold) ; la sim le GARANTIT.
-  maxSouthGradient,
+  createEmptyMap, terrainAt, isBlockingTile, zoneAt, poisAt, poiCenter, poiClearings,
 } from './map'
 export type { WorldMap, Zone } from './map'
 export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
@@ -174,12 +170,12 @@ export {
   deriveGrapheZones, echantillonAt, MONDE, tailleCarte, ZONES,
   type GrapheZones, type Seuil, type Tier, type Zone as ZoneDef,
 } from './zonegraph'
-export { generateZonedTerrain, palierDe, PALIER_MAX, RELIEF, type CarteZonee } from './zonegen'
+export { generateZonedTerrain, RELIEF, type CarteZonee } from './zonegen'
 // LE FRONT DE CENDRE — la saison est une vallée qu'on perd (spec `worldgen.md` §7).
 export { avanceeDuFront, calibreLeFront, CENDRE, estCendre, partSousLaCendre } from './cendre'
-export { zoneSlugAt } from './map'
+export { zoneSlugAt, zoneIdAt } from './map'
 export {
-  CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, type Emplacement,
+  clairiereForet, CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, type Emplacement,
 } from './zone-content'
 export { placePois, POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
 // Où le monde commence, et ce qui communique avec quoi — le client LIT le spawn,

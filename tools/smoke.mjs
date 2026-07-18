@@ -177,22 +177,23 @@ const SCENARIOS = {
       cv.height = H
       const ctx = cv.getContext('2d')
       const img = ctx.createImageData(W, H)
-      // Une teinte par palier : le vide (palier négatif) est NOIR, et l'on monte vers le blanc.
-      const pmax = m.palierMax ?? 6
+      // La carte est PLATE : une teinte par ZONE (le squelette du monde), la roche-mur en gris,
+      // le hors-carte en noir. C'est la couleur, plus la hauteur, qui distingue les pays.
+      const cols = m.zonePas ? Math.ceil(m.width / m.zonePas) : 0
       for (let j = 0; j < H; j++) {
         for (let i = 0; i < W; i++) {
           const t = j * PAS * m.width + i * PAS
-          const pal = m.palier ? m.palier[t] : 0
+          const terr = m.terrain[t]
           const o = (j * W + i) * 4
           let r, g, b
-          if (m.terrain[t] === 0) { r = 6; g = 6; b = 10 } // LE VIDE — la crevasse
-          else if (m.terrain[t] === 23) { r = 70; g = 66; b = 78 } // la falaise
-          else {
-            const f = Math.max(0, pal) / pmax
-            r = Math.round(40 + f * 200)
-            g = Math.round(70 + f * 160)
-            b = Math.round(50 + f * 190)
-          }
+          if (terr === 0) { r = 6; g = 6; b = 10 } // hors-carte
+          else if (terr === 23 || terr === 5) { r = 70; g = 66; b = 78 } // roche-mur (falaise + vide plein)
+          else if (m.zoneGrid) {
+            const z = m.zoneGrid[Math.floor((j * PAS) / m.zonePas) * cols + Math.floor((i * PAS) / m.zonePas)] ?? 0
+            r = 40 + ((z * 53) % 200)
+            g = 70 + ((z * 97) % 160)
+            b = 50 + ((z * 29) % 190)
+          } else { r = 60; g = 100; b = 70 }
           img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = 255
         }
       }
@@ -208,14 +209,11 @@ const SCENARIOS = {
   },
 
   /**
-   * LA PAROI SE VOIT-ELLE, ET FAIT-ELLE LA BONNE HAUTEUR ?
+   * LES MURS DE ROCHE DES FRONTIÈRES SE VOIENT-ILS ? (carte PLATE, pivot RimWorld)
    *
-   * La spec promet qu'« on monte d'un niveau pour chaque entier de niveau » (R34) : une falaise de
-   * quatre paliers doit être QUATRE FOIS plus haute qu'un ressaut d'un. Aucune propriété testable ne
-   * dira jamais si ça se VOIT. Alors on va se planter au pied du plus grand dénivelé de la carte, et
-   * au pied d'un ressaut d'une marche, et on REGARDE.
-   *
-   * C'est le même geste que le scénario `zones` : le seul test qui vaille sur un rendu est l'œil.
+   * Plus de hauteur : une frontière de zone est une bande de ROCHE PLATE infranchissable, qu'on
+   * longe comme une arête de montagne. Aucune propriété testable ne dira si elle se LIT à l'écran —
+   * alors on va se planter à côté de quelques-unes et on REGARDE.
    *
    * Exige `--dev` (le TP n'est armé que là).
    */
@@ -223,37 +221,35 @@ const SCENARIOS = {
     await page.goto(URL)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
 
-    // On cherche, pour chaque dénivelé, un endroit où le regarder DEPUIS LE BAS — c'est de là qu'on
-    // le voit se dresser. Le point visé est donc quelques tuiles au sud du pied du mur.
+    // On cherche des murs de roche (terrain 23) bordés de sol des deux côtés — une frontière qu'on
+    // longe — et on se plante juste à côté, au ras du mur.
     const sites = await page.evaluate(() => {
       const m = window.__BRAISES__.scene.map
-      const pal = (x, y) => (x < 0 || y < 0 || x >= m.width || y >= m.height ? 0 : m.palier[y * m.width + x])
-      const walk = (x, y) => m.terrain[y * m.width + x] !== 23 && m.terrain[y * m.width + x] !== 0
-      const best = new Map() // dénivelé → le premier site trouvé
-      for (let y = 20; y < m.height - 24; y += 3) {
-        for (let x = 20; x < m.width - 20; x += 3) {
-          const d = pal(x, y) - pal(x, y + 1)
-          if (d <= 0) continue
-          // On se pose 6 tuiles plus au sud, sur du sol praticable : le mur est alors PLEIN ÉCRAN.
-          if (!walk(x, y + 6)) continue
-          if (!best.has(d)) best.set(d, { d, x, y: y + 6 })
+      const isCliff = (x, y) => m.terrain[y * m.width + x] === 23
+      const walk = (x, y) => { const t = m.terrain[y * m.width + x]; return t !== 23 && t !== 0 && t !== 5 }
+      const out = []
+      for (let y = 30; y < m.height - 30 && out.length < 4; y += 11) {
+        for (let x = 30; x < m.width - 30 && out.length < 4; x += 11) {
+          if (isCliff(x, y) && walk(x - 2, y) && walk(x + 2, y)) out.push({ x: x - 3, y })
         }
       }
-      return [...best.values()].sort((a, b) => b.d - a.d)
+      return out
     })
 
     if (sites.length === 0) {
-      console.log('AUCUNE PAROI SUR LA CARTE — le relief est plat, ce qui est une faute en soi.')
+      console.log('AUCUN MUR DE ROCHE TROUVÉ — les zones ne seraient pas cloisonnées, ce qui est une faute.')
       return
     }
 
+    let i = 0
     for (const s of sites) {
       await page.evaluate(({ x, y }) => {
         window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
       }, s)
       await page.waitForTimeout(1400)
-      await page.screenshot({ path: `${OUT}/paroi-${s.d}.png` })
-      console.log(`dénivelé de ${s.d} palier(s) → ${s.d * 12} px de contremarche, vu depuis (${s.x}, ${s.y})`)
+      await page.screenshot({ path: `${OUT}/paroi-${i}.png` })
+      console.log(`mur de roche de frontière, vu depuis (${s.x}, ${s.y})`)
+      i += 1
     }
   },
 
@@ -448,28 +444,23 @@ const SCENARIOS = {
    * terre écrase tout (95 % de l'écran), si bien qu'une eau totalement à côté de ses
    * berges décrochait encore 93 % d'accord. Ce qui trahit le bug, c'est l'eau peinte SUR
    * LA ROCHE : 29 pixels quand le shader est juste, 1 490 quand il est retourné.
-   * On mesure sur le torrent le plus HAUT de la carte, là où le cisaillement est maximal.
+   * (La carte est PLATE désormais : plus de cisaillement de relief — mais l'eau peut toujours se
+   * peindre à côté de ses berges par une erreur de projection. On garde donc la mesure.)
    */
   async eauBerges(page) {
     const site = await page.evaluate(() => {
       const map = window.__BRAISES__.scene.registry.get('mapData')
-      let best = null
-      let bestE = -1
+      // N'importe quelle tuile d'eau fait l'affaire (plus d'altitude à départager).
       for (let ty = 6; ty < map.height - 6; ty += 3) {
         for (let tx = 6; tx < map.width - 6; tx += 3) {
-          const i = ty * map.width + tx
-          const t = map.terrain[i]
-          if (t !== 4 && t !== 6) continue
-          const e = map.elevation[i]
-          if (e > bestE) {
-            bestE = e
-            best = { x: tx, y: ty }
-          }
+          const t = map.terrain[ty * map.width + tx]
+          if (t === 4 || t === 6) return { x: tx, y: ty }
         }
       }
-      return { ...best, elev: bestE }
+      return null
     })
-    console.log(`torrent le plus haut : (${site.x}, ${site.y}), élévation ${site.elev.toFixed(2)}`)
+    if (!site) { console.log('aucune eau sur cette carte'); return }
+    console.log(`eau à (${site.x}, ${site.y})`)
 
     await page.evaluate(({ x, y }) => {
       window.__BRAISES__.scene.registry.set('debugTeleport', { x, y, at: performance.now() })
@@ -519,9 +510,9 @@ const SCENARIOS = {
     const pct = justesse * 100
     console.log(`eau peinte : ${r.peints} pixels, dont ${r.peintSurTerre} SUR DE LA TERRE → justesse ${pct.toFixed(1)} %`)
     console.log(pct >= 90
-      ? `   ✓ l'eau tient dans son lit, même sur le versant`
-      : `   ✗ l'eau a QUITTÉ ses berges (${pct.toFixed(1)} % de justesse — le cisaillement du shader est faux)`)
-    return { justesse, elev: site.elev }
+      ? `   ✓ l'eau tient dans son lit`
+      : `   ✗ l'eau a QUITTÉ ses berges (${pct.toFixed(1)} % de justesse — la projection du shader est fausse)`)
+    return { justesse }
   },
 
   /**

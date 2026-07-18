@@ -132,29 +132,27 @@ describe('le terrain, à la taille de production', () => {
     }
   }, 180_000)
 
-  it('A9/A10 — ON NE MONTE QUE PAR UNE RAMPE, et jamais deux paliers d\'un coup', () => {
+  it('DEUX ZONES VOISINES SONT TOUJOURS SÉPARÉES PAR UN MUR — sauf au seuil', () => {
+    // L'invariant plat qui a remplacé A9/A10 (le double-palier n'existe plus). Il porte la même
+    // promesse : le seuil est le SEUL passage d'une zone à l'autre. Sans lui, la frontière fuit et
+    // le test destructif A5 devient un mensonge.
     for (const c of cartes) {
       const { width, height } = c.map
-      let fautes = 0
-      let sauts = 0
+      let ouvertures = 0
       for (let y = 0; y < height - 1; y++) {
         for (let x = 0; x < width - 1; x++) {
           const i = y * width + x
           if (!marchable(c, i)) continue
           for (const j of [i + 1, i + width]) {
             if (!marchable(c, j)) continue
-            const d = Math.abs(c.palier[i]! - c.palier[j]!)
-            if (d === 0) continue
-            // Deux marchables voisines de paliers différents : l'une AU MOINS doit être une
-            // rampe. Sans cette règle, on escaladerait une falaise de plain-pied.
-            if (!c.rampe[i] && !c.rampe[j]) fautes++
-            // Et une rampe ne saute jamais deux paliers : c'est une marche, pas un ascenseur.
-            if (d > 1) sauts++
+            if (c.zone[i] === c.zone[j]) continue
+            // Deux marchables voisines de ZONES différentes : ce n'est légitime que sur un seuil
+            // (les DEUX tuiles marquées `rampe`). Partout ailleurs, la frontière doit être murée.
+            if (!c.rampe[i] || !c.rampe[j]) ouvertures++
           }
         }
       }
-      expect(fautes, `seed ${c.graphe.seed} : ${fautes} passages de palier hors rampe`).toBe(0)
-      expect(sauts, `seed ${c.graphe.seed} : ${sauts} sauts de deux paliers ou plus`).toBe(0)
+      expect(ouvertures, `seed ${c.graphe.seed} : ${ouvertures} frontières ouvertes hors seuil`).toBe(0)
     }
   }, 120_000)
 
@@ -253,7 +251,6 @@ describe('le terrain, à la taille de production', () => {
     const a = generateZonedTerrain(42)
     const b = generateZonedTerrain(42)
     expect(a.map.terrain).toEqual(b.map.terrain)
-    expect([...a.palier]).toEqual([...b.palier])
     expect([...a.zone]).toEqual([...b.zone])
   }, 60_000)
 })

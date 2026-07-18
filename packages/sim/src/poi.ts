@@ -5,7 +5,7 @@
  */
 import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
-import { elevationAt, terrainAt, isBlockingTile, type WorldMap, type Zone } from './map'
+import { terrainAt, isBlockingTile, type WorldMap, type Zone } from './map'
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
 import { setTile } from './valleygen-primitives'
@@ -310,27 +310,17 @@ function isEligible(
   const terr = terrainAt(map, tx, ty)
   if (!t.biomes.includes(terr)) return false
 
-  // LA ZONE, quand la carte en a une — et **elle REMPLACE le filtre d'altitude**.
+  // LA ZONE donne son ADRESSE au lieu : la Grotte au Karst, le Champ de crevasses au Glacier,
+  // l'Arbre remarquable dans la Vieille Sylve. La carte étant plate, il n'y a plus d'altitude à
+  // filtrer — la zone est le seul critère de placement (les `minElev`/`maxElev` de la table sont
+  // des vestiges de l'ancien champ d'altitude continu, désormais ignorés).
   //
-  // C'est ce qui donne enfin une ADRESSE aux lieux : la Grotte au Karst, le Champ de crevasses au
-  // Glacier, l'Arbre remarquable dans la Vieille Sylve. Et c'est plus JUSTE que `minElev` :
-  // « le Belvédère est haut » était une approximation d'« il est dans les Hauts Alpages ou les
-  // Aiguilles ». On dit maintenant la chose, au lieu de la circonscrire par un nombre.
-  //
-  // (Les `minElev` de la table ont été calibrés sur l'ANCIEN champ d'altitude continu : sur la
-  // nouvelle carte, où l'altitude se dérive d'un palier entier, ils ne veulent plus rien dire.
-  // Les garder ET la zone aurait rendu la moitié de la table stérile en silence — le genre de
-  // ligne morte que ce projet a déjà payé trois fois.)
-  //
-  // Un lieu SANS `zones` reste libre d'apparaître partout où son biome le porte, et garde son
-  // filtre d'altitude : c'est le cas du Cairn, et c'est voulu — les cairns sont les jalons de
-  // TOUTE la vallée, et c'est leur métier de se suivre de proche en proche.
+  // Un lieu SANS `zones` reste libre d'apparaître partout où son biome le porte : c'est le cas du
+  // Cairn, et c'est voulu — les cairns sont les jalons de TOUTE la vallée, et c'est leur métier de
+  // se suivre de proche en proche.
   if (t.zones && zoneDe) {
     const z = zoneDe(tx, ty)
     if (z === undefined || !t.zones.includes(z)) return false
-  } else {
-    const el = elevationAt(map, tx, ty)
-    if (el < (t.minElev ?? 0) || el > (t.maxElev ?? 1)) return false
   }
   if ((used.get(t.slug) ?? 0) >= capFor(map, t)) return false // le plafond suit la SURFACE
   const fp = footprintAt(map, t, tx, ty)

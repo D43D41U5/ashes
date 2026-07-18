@@ -18,11 +18,11 @@ function spawn(state: SimState, x: number, y: number): Entity {
   return state.entities.find((e) => e.id === id)!
 }
 
-/** Remplit toute la carte d'un terrain + une élévation uniformes. */
-function flatMap(state: SimState, terrain: number, elevation: number): void {
+/** Remplit toute la carte d'un terrain uniforme. (La carte est plate : le froid vient du BIOME,
+ *  plus de l'altitude.) */
+function flatMap(state: SimState, terrain: number): void {
   const n = state.map.width * state.map.height
   state.map.terrain = new Array(n).fill(terrain)
-  state.map.elevation = new Array(n).fill(elevation)
 }
 
 describe('jauge temperature', () => {
@@ -35,26 +35,26 @@ describe('jauge temperature', () => {
 describe('ambientTemperature', () => {
   it('fond de vallée, jour, acte I = confort (≥60)', () => {
     const state = createSim(1) // tick 0 = aube (jour), acte I
-    flatMap(state, 1 /* grass */, 0)
+    flatMap(state, 1 /* grass */)
     expect(ambientTemperature(state, 5, 5)).toBeGreaterThanOrEqual(60)
   })
 
-  it('glacier en altitude = glacial (≤20)', () => {
+  it('glacier = glacial (≤20) — le froid vient du BIOME, plus de l\'altitude', () => {
     const state = createSim(1)
-    flatMap(state, 15 /* glacier */, 0.85)
+    flatMap(state, 15 /* glacier */)
     expect(ambientTemperature(state, 5, 5)).toBeLessThanOrEqual(20)
   })
 
   it("près d'un feu, la cible remonte au chaud (>60)", () => {
     const state = createSim(1)
-    flatMap(state, 15, 0.85) // sinon glacial
+    flatMap(state, 15) // sinon glacial
     state.structures.push({ type: 'fire', tx: 5, ty: 5 } as never)
     expect(ambientTemperature(state, 5, 5)).toBeGreaterThan(60)
   })
 
   it('sous abri, le froid nocturne est amorti (~moitié)', () => {
     const state = createSim(1, { cycleOffset: DAY_TICKS_PER_CYCLE }) // nuit dès le tick 0
-    flatMap(state, 1 /* grass */, 0)
+    flatMap(state, 1 /* grass */)
     const exposed = ambientTemperature(state, 5, 5)
     state.structures.push({ type: 'house', tx: 5, ty: 5 } as never)
     const sheltered = ambientTemperature(state, 5, 5)
@@ -75,7 +75,7 @@ describe('dérive thermostat', () => {
 
   it('un humain sur glacier refroidit strictement', () => {
     const state = createSim(1)
-    flatMap(state, 15, 0.85)
+    flatMap(state, 15)
     const e = spawn(state, 5, 5)
     const before = e.temperature
     advanceTemperature(state)
@@ -84,7 +84,7 @@ describe('dérive thermostat', () => {
 
   it('reste au confort (≥60) sur un ambiant doux, indéfiniment', () => {
     const state = createSim(1, { calendarScale: 1 }) // reste en acte I
-    flatMap(state, 1, 0)
+    flatMap(state, 1)
     const e = spawn(state, 5, 5)
     for (let i = 0; i < 5000; i++) advanceTemperature(state)
     expect(e.temperature).toBeGreaterThanOrEqual(60)
@@ -92,7 +92,7 @@ describe('dérive thermostat', () => {
 
   it('les monstres sont ignorés (pas de température)', () => {
     const state = createSim(1)
-    flatMap(state, 15, 0.85)
+    flatMap(state, 15)
     const e = spawn(state, 5, 5)
     state.monsters.push({ entityId: e.id, type: 'zombie' } as never)
     const before = e.temperature
@@ -111,7 +111,7 @@ describe('hypothermie', () => {
 
   it('mourir de froid émet entity_died cause=cold', () => {
     const state = createSim(1)
-    flatMap(state, 15, 0.85)
+    flatMap(state, 15)
     const e = spawn(state, 5, 5)
     e.temperature = 0
     // hp sous le dégât max d'un tick (HYPOTHERMIA_DAMAGE_MAX ≈ 0.3) pour mourir dès ce tick.
@@ -128,7 +128,7 @@ describe('hypothermie', () => {
 
   it('un humain nu sur glacier de nuit atteint l\'hypothermie par la seule dérive, puis perd des PV (critère #3)', () => {
     const state = createSim(1)
-    flatMap(state, 15 /* glacier */, 0.85)
+    flatMap(state, 15 /* glacier */)
     const e = spawn(state, 5, 5)
 
     let ticks = 0
@@ -159,7 +159,7 @@ describe("tyrannie de l'acte", () => {
   it('même lieu/heure : ambiant strictement décroissant I → II → III', () => {
     const ambientAtDay = (day: number): number => {
       const state = createSim(1, { calendarScale: 1 })
-      flatMap(state, 9 /* scree, offset biome 0 */, 0.4)
+      flatMap(state, 9 /* scree, offset biome 0 */)
       state.tick = (day - 1) * TICKS_PER_SEASON_DAY
       return ambientTemperature(state, 5, 5)
     }
