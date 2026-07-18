@@ -21,7 +21,7 @@ import { BALANCE, SLOTS, type Corpse, type PlayerAction, type ResourceNode, type
 import Phaser from 'phaser'
 import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
-import { aimAt, clickToAction, holdHarvest, type AimTarget, type HandContext } from './aim'
+import { aimAt, clickToAction, holdHarvest, type AimTarget, type BuildContext, type HandContext } from './aim'
 import { BELT_BINDINGS, KEYMAP } from './keymap'
 
 export interface InputDeps {
@@ -138,6 +138,14 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     const slot = getHud(scene.registry, 'activeSlot') ?? -1
     const held = slot >= 0 ? (inv[slot]?.item ?? null) : null
     return held === 'campfire' ? 'fire' : null
+  }
+
+  /** Le contexte de POSE (spec construction R8) : le palier de matériau choisi au
+   *  menu du marteau, et la structure DÉJÀ sur la tuile visée (pour l'améliorer). */
+  const buildCtx = (aim: AimTarget): BuildContext => {
+    const material = getHud(scene.registry, 'buildMaterial') ?? 'wood'
+    const s = deps.structures().find((st) => st.tx === aim.tx && st.ty === aim.ty) ?? null
+    return { material, onTile: s ? { id: s.id, type: s.type } : null }
   }
 
   // La CEINTURE : 1-6 tiennent une case (spec inventaire R17). Affichage
@@ -260,9 +268,10 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     // gauche et se mettrait à récolter. Un bouton qu'on retire doit devenir muet,
     // pas hériter du comportement du voisin.
     if (pointer.rightButtonDown()) return
-    // Le résolveur PUR tranche (aim.ts) : MANGER, FRAPPER, récolter, fouiller —
-    // selon CE QU'ON TIENT. C'est la seule règle d'interaction du jeu.
-    const action = clickToAction(aimNow(pointer), placing(), handAt(pointer))
+    // Le résolveur PUR tranche (aim.ts) : MANGER, FRAPPER, récolter, fouiller,
+    // POSER/AMÉLIORER — selon CE QU'ON TIENT. C'est la seule règle d'interaction.
+    const aim = aimNow(pointer)
+    const action = clickToAction(aim, placing(), handAt(pointer), buildCtx(aim))
     holding = true
     if (action?.type === 'attack') {
       // FRAPPER, c'est ARMER. Le clic bref donne le coup simple (la charge n'aura pas

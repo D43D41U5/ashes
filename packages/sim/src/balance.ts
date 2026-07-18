@@ -24,6 +24,14 @@ const ticksFor = (seconds: number): number => Math.round(seconds * TICK_RATE_HZ)
 /** Convertit un nombre de cycles jour/nuit (ex. 1/24 = une heure de cycle) en ticks. */
 const ticksForCycles = (cycles: number): number => Math.round(cycles * CYCLE_REAL_MINUTES * 60 * TICK_RATE_HZ)
 
+/**
+ * LE CARRÉ ×PALIER (spec construction R2) — rayon (Chebyshev) de la zone du Feu
+ * par palier (1→3). Le carré vaut `(2R+1)×(2R+1)` tuiles ; il est RÉSERVÉ à sa
+ * taille max dès la fondation (R2, validation R1 contre `R_max`), mais ne s'ouvre
+ * à la pose qu'au fur et à mesure des paliers. Ordres de grandeur, à calibrer.
+ */
+const FIRE_RADIUS_BY_TIER = [10, 13, 16] as const
+
 /** Jauge Température (spec 2026-07-08). Ordres de grandeur, à calibrer en playtest. */
 export const TEMPERATURE = {
   BASE: 90, // cible d'un bas de vallée, jour, acte I
@@ -159,11 +167,31 @@ export const BALANCE = {
   /** Accélération du calendrier : jours de saison écoulés par jour réel. */
   DEFAULT_CALENDAR_SCALE: 1,
 
-  /** Rayon de construction autour du Feu du village, en tuiles (spec village R6). */
-  FIRE_BUILD_RADIUS: 20,
+  /** LE CARRÉ ×PALIER (spec construction R2) : rayon Chebyshev de la zone du Feu,
+   *  par palier (1→3). Remplace l'ancien `FIRE_BUILD_RADIUS` fixe. */
+  FIRE_RADIUS_BY_TIER,
 
-  /** Distance minimale entre deux Feux, en tuiles (spec village R5). */
-  FIRE_MIN_DISTANCE: 48,
+  /**
+   * Distance minimale entre deux Feux (spec construction R1) = 2 · R_max, en
+   * CHEBYSHEV. Garantit zéro chevauchement des carrés à taille max, pour toujours,
+   * et que les landmarks ne se font jamais avaler. Ne s'applique qu'à la PROMOTION
+   * d'un feu en foyer (found_village) : on pose autant de feux libres qu'on veut.
+   */
+  FIRE_MIN_DISTANCE: 2 * FIRE_RADIUS_BY_TIER[FIRE_RADIUS_BY_TIER.length - 1]!,
+
+  /**
+   * Coût pour ATTEINDRE chaque palier du Feu (spec construction R6). Index =
+   * palier−1 : [0] est la fondation (gratuite), [1] mène au palier 2, [2] au 3.
+   * Monter agrandit le carré (R2) et débloque des composants (R6). À calibrer.
+   */
+  FIRE_UPGRADE_COST: [{}, { wood: 40, stone: 30 }, { cut_stone: 30, iron_ingot: 8 }] as import('./items').ItemBag[],
+
+  /**
+   * PROXIMITÉ D'UN AMAS (spec construction R9) : deux composants séparés d'au plus
+   * AMAS_RADIUS (Chebyshev) appartiennent au même amas, dont le contenu fait
+   * émerger une fonction et fixe son palier (R10). À calibrer.
+   */
+  AMAS_RADIUS: 3,
 
   /** Portée des interactions (coffres, invitations), en tuiles. */
   INTERACT_RANGE: 1.5,
@@ -385,16 +413,46 @@ export const TERRAIN_BURNT_FOREST = 21
 export const TERRAIN_OLD_GROWTH = 22
 export const TERRAIN_CLIFF = 23
 
-/** Coûts de construction (spec village R3 : réels dès V3). */
+/** Coûts de construction (spec village R3 : réels dès V3).
+ *  Pour `wall`/`door`, c'est le coût du palier de matériau de BASE (bois) —
+ *  les paliers pierre/métal vivent dans `WALL_TIERS` (spec construction R8). */
 export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./items').ItemBag> = {
   fire: { wood: 10 },
   wall: { wood: 2 },
   door: { wood: 3 },
+  // Pièces MOLLES (spec construction R14) — pas de collision, coût léger.
+  floor: { wood: 1 },
+  roof: { wood: 1 },
   chest: { wood: 4 },
   workshop: { wood: 6, stone: 4 },
   furnace: { stone: 8 },
   house: { wood: 8 },
 }
+
+export type WallMaterial = 'wood' | 'stone' | 'metal'
+
+/**
+ * LES PALIERS DE MATÉRIAU des murs et portes (spec construction R8, §4bis) :
+ * bois → pierre maçonnée → métal. Chaque palier monte les PV et coûte plus cher ;
+ * on améliore SUR PLACE au marteau (`upgrade_structure`) en payant `upgrade` — la
+ * « différence » (R8), moins cher que rebâtir. `wall`/`door` = coût d'une pose
+ * NEUVE à ce matériau. La résistance à la dégradation (upkeep R16, différée) montera
+ * elle aussi avec le palier. Magnitudes à calibrer.
+ */
+export const WALL_TIERS: Record<WallMaterial, {
+  wall: { hp: number; cost: import('./items').ItemBag }
+  door: { hp: number; cost: import('./items').ItemBag }
+  /** La « différence » à payer pour ATTEINDRE ce palier depuis le précédent (R8). */
+  upgrade: import('./items').ItemBag
+}> = {
+  // Le palier BOIS reflète exactement `STRUCTURE_HP`/`STRUCTURE_COSTS` (héritage V3).
+  wood: { wall: { hp: 200, cost: { wood: 2 } }, door: { hp: 150, cost: { wood: 3 } }, upgrade: {} },
+  stone: { wall: { hp: 500, cost: { wood: 2, cut_stone: 3 } }, door: { hp: 375, cost: { wood: 2, cut_stone: 2 } }, upgrade: { cut_stone: 3 } },
+  metal: { wall: { hp: 1000, cost: { cut_stone: 3, iron_ingot: 3 } }, door: { hp: 750, cost: { cut_stone: 2, iron_ingot: 2 } }, upgrade: { iron_ingot: 3 } },
+}
+
+/** L'ordre des paliers de matériau — on n'améliore que vers le suivant. */
+export const WALL_MATERIAL_ORDER: readonly WallMaterial[] = ['wood', 'stone', 'metal']
 
 /**
  * LES TROIS CERCLES (GDD §8bis). Le cercle DOMESTIQUE — le rayon du camp — est
@@ -1739,8 +1797,13 @@ export const COMBAT = {
  */
 export const STRUCTURE_HP: Record<import('./items').StructureType, number> = {
   fire: 999999,
+  // `wall`/`door` : PV du palier de matériau de BASE (bois). Les paliers pierre/métal
+  // montent via `WALL_TIERS` (spec construction R8) — `addStructure` les applique.
   wall: 200,
   door: 150,
+  // Pièces MOLLES (spec construction R14) : peu de PV, jamais bloquantes.
+  floor: 60,
+  roof: 60,
   chest: 100,
   workshop: 100,
   furnace: 100,

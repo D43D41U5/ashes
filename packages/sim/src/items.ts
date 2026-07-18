@@ -98,7 +98,16 @@ export type Inventory = (Slot | null)[]
 /** Ce qu'on COMPTE : un coût, un butin, un transfert en gros. */
 export type ItemBag = Partial<Record<ItemId, number>>
 
-export type StructureType = 'fire' | 'wall' | 'door' | 'chest' | 'workshop' | 'furnace' | 'house'
+/**
+ * LES STRUCTURES (spec construction R8). Deux familles :
+ *  · BARRIÈRES — passives, statiques, posées librement en nombre : `wall`, `door`,
+ *    `floor`, `roof`, `chest`. Murs/portes BLOQUENT (ou closent) ; sols/toits sont
+ *    des pièces MOLLES (sans collision, R14).
+ *  · COMPOSANTS — les atomes actifs (enclume, four…), qui GROUPÉS font émerger une
+ *    fonction (R9). Ils s'ajoutent au fil des tranches (Forge, Atelier, Grenier…).
+ * `fire` reste l'ancre sui generis (R1). `workshop`/`furnace`/`house` : héritage V3.
+ */
+export type StructureType = 'fire' | 'wall' | 'door' | 'floor' | 'roof' | 'chest' | 'workshop' | 'furnace' | 'house'
 
 export type AccessLevel = 'private' | 'village' | 'public'
 

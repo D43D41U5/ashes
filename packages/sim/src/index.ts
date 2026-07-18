@@ -41,6 +41,8 @@ export { POI,
   SPOIL_CYCLES,
   STRUCTURE_COSTS,
   STRUCTURE_HP,
+  WALL_TIERS,
+  WALL_MATERIAL_ORDER,
   TEMPERATURE,
   TERRAINS,
   TERRAIN_FOREST,
@@ -81,6 +83,7 @@ export type {
   RecipeId,
   Strike,
   TerrainDef,
+  WallMaterial,
   WeaponKind,
   WeaponProfile,
 } from './balance'
@@ -100,8 +103,10 @@ export { importTiledMap } from './tiled'
 export type { TiledMapFile, TiledImportResult } from './tiled'
 
 // ─── Actions & systèmes (l'hôte les applique, les requêtes sont pures) ────
-export { applyVillageAction, structureAt, structureBlocks, getVillageOf, hasAccess } from './village'
+export { applyVillageAction, structureAt, structureBlocks, getVillageOf, hasAccess, fireRadius } from './village'
 export type { Structure, Village, VillageAction, TaskKind, VillageTask } from './village'
+export { blocksNavigation, placementKeepsNavigable, isComponent } from './construction'
+export type { PlacedStructure } from './construction'
 export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel } from './economy'
 export type { ResourceNode, EconomyAction, CraftOrder } from './economy'
 export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame

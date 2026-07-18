@@ -1705,6 +1705,95 @@ const SCENARIOS = {
     await page.waitForTimeout(300)
     return socle
   },
+
+  /**
+   * LA CONSTRUCTION (spec construction, tranche 1) — dans le VRAI jeu.
+   *
+   *  · R20 : le marteau EN MAIN ouvre son menu de pose « MARTEAU », séparé du craft.
+   *  · R21 : ranger le marteau referme le menu et désarme (`selected` → null).
+   *  · R14/R24 : on FONDE, on BÂTIT un mur et un toit, et ils s'affichent.
+   *  · R23 : une pose par action (clic-par-case).
+   *
+   * Exige `--dev` : `debug_grant`/`debug_teleport`/`light_fire` n'agissent qu'en debug.
+   */
+  async construction(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    // Le menu « MARTEAU » est-il visible dans la scène UI ? (on lit le graphe Phaser)
+    const marteauVisible = () =>
+      page.evaluate(() => {
+        const ui = window.__BRAISES__.scene.scene.get('ui')
+        const t = ui.children.list.find((o) => o.type === 'Text' && o.text === 'MARTEAU')
+        return Boolean(t && t.visible)
+      })
+
+    // UNE ACTION PAR TICK (le protocole n'en porte qu'une par input) : deux envois dans
+    // le même souffle et le second écrase le premier. On ESPACE donc chaque geste.
+    const doAction = async (action, wait = 90) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(wait)
+    }
+    const grant = async (item, n = 1) => {
+      for (let i = 0; i < n; i++) await doAction({ type: 'debug_grant', item })
+    }
+    // Sonde qui POLL une condition (la mise à main passe par un aller-retour de snapshot).
+    // Retourne `true` si `fn()` a atteint `want` avant le délai, `false` sinon.
+    const until = async (fn, want, ms = 2500) => {
+      for (let t = 0; t < ms; t += 100) {
+        if ((await fn()) === want) return true
+        await page.waitForTimeout(100)
+      }
+      return false
+    }
+
+    // R20 — le marteau en main OUVRE le menu de pose.
+    await grant('hammer')
+    const r20 = await until(marteauVisible, true)
+    console.log(`R20 marteau en main → menu « MARTEAU » ${r20 ? 'VISIBLE ✓' : 'ABSENT ✗'}`)
+
+    // R21 — prendre autre chose (ranger le marteau) referme le menu et désarme.
+    await grant('berries')
+    const r21 = await until(marteauVisible, false)
+    const held = await page.evaluate(() => {
+      const reg = window.__BRAISES__.scene.registry
+      const inv = reg.get('inv') ?? []
+      const slot = reg.get('activeSlot') ?? -1
+      return { slot, item: slot >= 0 ? (inv[slot]?.item ?? null) : null, selected: reg.get('selected') ?? null }
+    })
+    console.log(`R21 marteau rangé → menu ${r21 ? 'éteint ✓' : 'ENCORE là ✗'}, tenu=${held.item} (case ${held.slot}), selected=${held.selected}`)
+
+    // On FONDE au pied du joueur (light_fire : raccourci de worldgen, atteignable en dev).
+    await grant('wood', 14)
+    await doAction({ type: 'light_fire' }, 700)
+    const feu = await page.evaluate(() => {
+      const f = window.__BRAISES__.scene.view.structures.find((x) => x.type === 'fire')
+      return f ? { tx: f.tx, ty: f.ty } : null
+    })
+    const reason = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '')
+    console.log(`fondation → Feu ${feu ? `posé en (${feu.tx}, ${feu.ty}) ✓` : `ABSENT ✗ (${reason})`}`)
+
+    // On BÂTIT un mur (R23 : une action = une pose) puis un TOIT, à côté du Feu.
+    if (feu) {
+      // Le marteau EN DERNIER : `debug_grant` met en main l'objet DONNÉ ; granté après
+      // le bois, c'est lui qu'on tient (sans quoi on bâtirait « sans marteau »).
+      await grant('wood', 8)
+      await grant('hammer')
+      await doAction({ type: 'debug_teleport', x: feu.tx + 2.5, y: feu.ty + 0.5 }, 300) // à côté (le Feu bloque)
+      await doAction({ type: 'build', structure: 'wall', tx: feu.tx + 1, ty: feu.ty }, 400)
+      await doAction({ type: 'build', structure: 'roof', tx: feu.tx + 2, ty: feu.ty }, 500)
+      const built = await page.evaluate(() => {
+        const st = window.__BRAISES__.scene.view.structures
+        return { wall: st.some((x) => x.type === 'wall'), roof: st.some((x) => x.type === 'roof') }
+      })
+      const berr = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '')
+      console.log(`pose (R14/R23) → mur ${built.wall ? '✓' : '✗'}, toit ${built.roof ? '✓' : '✗'}${built.wall && built.roof ? '' : ` (${berr})`}`)
+    }
+    await page.screenshot({ path: `${OUT}/construction.png` })
+    console.log(`capture → ${OUT}/construction.png`)
+  },
 }
 
 const run = SCENARIOS[scenario]

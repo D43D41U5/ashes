@@ -19,10 +19,14 @@ import {
   STRUCTURE_HP,
   TERRAINS,
   VILLAGE_NAMES,
+  WALL_MATERIAL_ORDER,
+  WALL_TIERS,
   WORLD_EVENTS,
+  type WallMaterial,
 } from './balance'
+import { blocksNavigation, placementKeepsNavigable } from './construction'
 import { emitEvent } from './events'
-import { distSq } from './geometry'
+import { chebyshev, distSq } from './geometry'
 import {
   addItems,
   addSlot,
@@ -63,6 +67,12 @@ export interface Structure {
   access: AccessLevel
   /** PV (spec événements R1) — les hordes frappent ce qui bloque. */
   hp: number
+  /**
+   * LE PALIER DE MATÉRIAU (spec construction R8) — mur/porte seulement : bois →
+   * pierre → métal. Absent = bois (défaut) ou pièce sans palier. Améliorable sur
+   * place au marteau (`upgrade_structure`) ; chaque palier monte les PV.
+   */
+  material?: WallMaterial
   /** Contenu, pour les structures-conteneurs (coffre). */
   inventory?: Inventory
 }
@@ -87,6 +97,13 @@ export interface Village {
   memberIds: number[]
   fireTx: number
   fireTy: number
+  /**
+   * LE PALIER DU FEU (spec construction R6) : 1→3. Il fixe la taille du carré
+   * (`FIRE_RADIUS_BY_TIER[tier−1]`, R2) et débloque des types de composants (R6).
+   * Le carré est réservé à sa taille MAX dès la fondation (validation R1), mais ne
+   * s'ouvre à la pose qu'au fil des paliers.
+   */
+  tier: number
   /** Le tableau du village — généré par seuils, consommé par les PNJ (et bientôt lu par les joueurs). */
   tasks: VillageTask[]
   nextTaskId: number
@@ -116,7 +133,18 @@ export type VillageAction =
   | { type: 'found_village'; structureId: number }
   | { type: 'repair'; structureId: number }
   | { type: 'give'; targetEntityId: number; item: ItemId; count: number }
-  | { type: 'build'; structure: Exclude<StructureType, 'fire'>; tx: number; ty: number }
+  /**
+   * JE POSE UNE BARRIÈRE (mur/porte/sol/toit/coffre), marteau en main. `material`
+   * ne vaut que pour mur/porte (défaut bois, R8). Pose INSTANTANÉE (R15), dans le
+   * carré du Feu (R2), sous réserve de l'invariant de navigabilité (R7).
+   */
+  | { type: 'build'; structure: Exclude<StructureType, 'fire'>; tx: number; ty: number; material?: WallMaterial }
+  /** JE MONTE LE FEU D'UN PALIER (spec construction R6) : le carré grandit, de
+   *  nouveaux composants se débloquent. Coût croissant, plafonné à 3. */
+  | { type: 'upgrade_fire' }
+  /** J'AMÉLIORE UN MUR/PORTE SUR PLACE au marteau (spec construction R8) : palier de
+   *  matériau suivant (bois→pierre→métal), en payant la « différence ». Instantané. */
+  | { type: 'upgrade_structure'; structureId: number }
   | { type: 'demolish'; structureId: number }
   | { type: 'deposit'; structureId: number; item: ItemId; count: number }
   | { type: 'withdraw'; structureId: number; item: ItemId; count: number }
@@ -129,6 +157,8 @@ const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = {
   fire: 'village',
   wall: 'village',
   door: 'village',
+  floor: 'village',
+  roof: 'village',
   chest: 'private',
   workshop: 'village',
   furnace: 'village',
@@ -141,6 +171,40 @@ export function structureAt(structures: Structure[], tx: number, ty: number): St
 
 export function getVillageOf(state: SimState, entityId: number): Village | undefined {
   return state.villages.find((v) => v.memberIds.includes(entityId))
+}
+
+/** Le rayon (Chebyshev) du carré du Feu à ce palier (spec construction R2). */
+export function fireRadius(tier: number): number {
+  const byTier = BALANCE.FIRE_RADIUS_BY_TIER
+  return byTier[Math.min(Math.max(tier, 1), byTier.length) - 1]!
+}
+
+/** Le rayon MAX du carré (palier 3) — celui que la fondation réserve (R1-R2). */
+function fireRadiusMax(): number {
+  const byTier = BALANCE.FIRE_RADIUS_BY_TIER
+  return byTier[byTier.length - 1]!
+}
+
+/**
+ * Un POI-SPÉCIFIQUE (spec construction R1) tombe-t-il dans le carré à taille max
+ * autour de (cx, cy) ? Un POI-spécifique = une zone dotée d'un `kind` (chokepoint,
+ * gisement, eau, tanière, ruine…) ; les toponymes et zones-régions (`kind`
+ * absent) ne comptent PAS — les landmarks restent des communs contestés, on
+ * s'installe ENTRE eux. Test d'intersection de rectangles en tuiles.
+ */
+function poiSpecificInSquare(state: SimState, cx: number, cy: number): boolean {
+  const r = fireRadiusMax()
+  const sx0 = cx - r
+  const sx1 = cx + r
+  const sy0 = cy - r
+  const sy1 = cy + r
+  for (const z of state.map.zones) {
+    if (z.kind === undefined) continue // toponyme / zone-région : jamais bloquant
+    const zx1 = z.x + z.w - 1
+    const zy1 = z.y + z.h - 1
+    if (z.x <= sx1 && zx1 >= sx0 && z.y <= sy1 && zy1 >= sy0) return true
+  }
+  return false
 }
 
 /** Une structure bloque-t-elle ce déplaceur ? (spec village R8) */
@@ -307,6 +371,7 @@ export function createVillage(state: SimState, opts: CreateVillageOptions): Vill
     memberIds: opts.chiefId === 0 ? [] : [opts.chiefId],
     fireTx: opts.tx,
     fireTy: opts.ty,
+    tier: 1,
     tasks: [],
     nextTaskId: 1,
     npcsArrived: opts.npcsArrived,
@@ -352,9 +417,11 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible')
       if (structureAt(state.structures, tx, ty)) return reject('tuile occupée')
       const min = BALANCE.FIRE_MIN_DISTANCE
-      if (state.villages.some((v) => distSq(v.fireTx, v.fireTy, tx, ty) < min * min)) {
+      if (state.villages.some((v) => chebyshev(v.fireTx, v.fireTy, tx, ty) < min)) {
         return reject('trop proche d’un autre Feu')
       }
+      // NB : `light_fire` reste le RACCOURCI de test/worldgen — il ne joue PAS le
+      // garde-fou R1 des POI-dans-le-carré (réservé au flux joueur `found_village`).
       removeItems(actor.inventory, STRUCTURE_COSTS.fire)
       const village = createVillage(state, { chiefId: actorId, tx, ty, npcsArrived: false })
       addStructure(state, 'fire', tx, ty, village.id, 0)
@@ -410,10 +477,13 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (s.ownerId !== actorId) return reject('ce n’est pas votre feu')
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      // Fondation R1 : ≥ 2·R_max (Chebyshev) d'un autre Feu — zéro chevauchement des carrés.
       const min = BALANCE.FIRE_MIN_DISTANCE
-      if (state.villages.some((v) => distSq(v.fireTx, v.fireTy, s.tx, s.ty) < min * min)) {
+      if (state.villages.some((v) => chebyshev(v.fireTx, v.fireTy, s.tx, s.ty) < min)) {
         return reject('trop proche d’un autre Feu')
       }
+      // …et aucun POI-spécifique dans le carré à taille max (les landmarks restent des communs).
+      if (poiSpecificInSquare(state, s.tx, s.ty)) return reject('un landmark tombe dans le carré')
       const village = createVillage(state, { chiefId: actorId, tx: s.tx, ty: s.ty, npcsArrived: true })
       // Le feu libre DEVIENT le Feu du village : il change d'appartenance et passe
       // au village lui-même (ownerId 0 — un Feu n'a pas de maître privé, et ne se démolit pas).
@@ -426,15 +496,16 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
     case 'build': {
       const village = getVillageOf(state, actorId)
       if (!village) return reject('sans village — allumer un Feu d’abord')
-      // LE MARTEAU FAIT LE BÂTISSEUR (spec recolte.md G12). Même règle que le filon
-      // qui exige la pioche : l'outil doit être EN MAIN, pas au fond du sac. Bâtir
-      // cesse d'être le geste par défaut du clic pour devenir un métier qu'on
-      // s'équipe — et le clic nu ne peut plus poser un mur par accident.
+      // LE MARTEAU FAIT LE BÂTISSEUR (spec recolte.md G12, construction R19-R20).
+      // L'outil doit être EN MAIN : bâtir est un métier qu'on s'équipe, et le clic
+      // nu ne peut plus poser un mur par accident. (Les COMPOSANTS, eux, se posent
+      // en tenant l'objet — flux feu de camp, tranche 2.)
       if (heldSlot(actor)?.item !== 'hammer') return reject('il faut le marteau de construction en main')
       const { tx, ty } = action
-      const radius = BALANCE.FIRE_BUILD_RADIUS
-      if (distSq(village.fireTx, village.fireTy, tx, ty) > radius * radius) {
-        return reject('hors du rayon du Feu')
+      if (!Number.isInteger(tx) || !Number.isInteger(ty)) return reject('case invalide')
+      // LE CARRÉ ×PALIER (spec construction R2) : Chebyshev(tuile, Feu) ≤ R(palier).
+      if (chebyshev(village.fireTx, village.fireTy, tx, ty) > fireRadius(village.tier)) {
+        return reject('hors du carré du Feu')
       }
       // Vraisemblance (GDD §11) : on bâtit à portée de bras, pas à l'autre
       // bout de la carte — première pierre de l'anti-cheat LAN.
@@ -443,10 +514,76 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       }
       if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible')
       if (structureAt(state.structures, tx, ty)) return reject('tuile occupée')
-      if (!removeItems(actor.inventory, STRUCTURE_COSTS[action.structure])) {
-        return reject('matériaux insuffisants')
+      // RÉCOLTER = DÉFRICHER (spec construction R5) : on ne bâtit que sur tuile
+      // ouverte ; pour bâtir où pousse un nœud, on l'abat d'abord.
+      if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) return reject('un nœud occupe la tuile')
+      // LE PALIER DE MATÉRIAU (R8) : mur/porte seulement, défaut bois. Le coût suit.
+      const structure = action.structure
+      const isWallLike = structure === 'wall' || structure === 'door'
+      const material = isWallLike ? action.material : undefined
+      const cost = material && isWallLike ? WALL_TIERS[material][structure].cost : STRUCTURE_COSTS[structure]
+      // L'INVARIANT DE NAVIGABILITÉ (R7) : on refuse une pose qui muraille le Feu, isole
+      // un composant ou piège un PNJ. Vérifié AVANT de débiter (un rejet ne coûte rien).
+      if (blocksNavigation(structure)) {
+        const ok = placementKeepsNavigable(
+          state.map,
+          state.structures,
+          state.entities,
+          actorId,
+          { tx: village.fireTx, ty: village.fireTy },
+          fireRadius(village.tier),
+          { tx, ty, type: structure },
+        )
+        if (!ok) return reject('cela couperait le passage')
       }
-      addStructure(state, action.structure, tx, ty, village.id, actorId)
+      if (!removeItems(actor.inventory, cost)) return reject('matériaux insuffisants')
+      addStructure(state, structure, tx, ty, village.id, actorId, DEFAULT_ACCESS[structure], material)
+      return
+    }
+
+    /**
+     * MONTER LE FEU D'UN PALIER (spec construction R6). Seul le Chef, à portée du
+     * Feu, en payant le coût du palier visé. Le carré grandit (R2) et de nouveaux
+     * types de composants se débloquent. Plafonné à 3.
+     */
+    case 'upgrade_fire': {
+      const village = getVillageOf(state, actorId)
+      if (!village || village.chiefId !== actorId) return reject('seul le Chef monte le Feu')
+      if (village.tier >= BALANCE.FIRE_RADIUS_BY_TIER.length) return reject('palier maximal atteint')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, village.fireTx + 0.5, village.fireTy + 0.5) > range * range) return reject('trop loin du Feu')
+      const cost = BALANCE.FIRE_UPGRADE_COST[village.tier]
+      if (cost === undefined) return reject('palier maximal atteint')
+      if (!removeItems(actor.inventory, cost)) return reject('matériaux insuffisants')
+      village.tier += 1
+      emitEvent(state, { type: 'fire_upgraded', tick: state.tick, villageId: village.id, tier: village.tier })
+      return
+    }
+
+    /**
+     * AMÉLIORER UN MUR/PORTE SUR PLACE (spec construction R8) : palier de matériau
+     * suivant (bois→pierre→métal), en payant la « différence » (`WALL_TIERS.upgrade`).
+     * Instantané, marteau en main. Les PV montent au plafond du nouveau palier.
+     */
+    case 'upgrade_structure': {
+      if (heldSlot(actor)?.item !== 'hammer') return reject('il faut le marteau de construction en main')
+      const s = state.structures.find((st) => st.id === action.structureId)
+      if (!s || (s.type !== 'wall' && s.type !== 'door')) return reject('rien à améliorer ici')
+      if (s.ownerId !== actorId && getVillageOf(state, actorId)?.id !== s.villageId) return reject('pas votre village')
+      const range = BALANCE.BUILD_RANGE
+      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      const current = s.material ?? 'wood'
+      const next = WALL_MATERIAL_ORDER[WALL_MATERIAL_ORDER.indexOf(current) + 1]
+      if (next === undefined) return reject('palier de matériau maximal')
+      if (!removeItems(actor.inventory, WALL_TIERS[next].upgrade)) return reject('matériaux insuffisants')
+      const currentMax = current === 'wood' ? STRUCTURE_HP[s.type] : WALL_TIERS[current][s.type].hp
+      const wasMax = s.hp >= currentMax
+      s.material = next
+      const newMax = WALL_TIERS[next][s.type].hp
+      // Un mur intact monte à son nouveau plafond ; un mur entamé garde ses dégâts
+      // (on renforce, on ne répare pas gratuitement).
+      s.hp = wasMax ? newMax : Math.min(s.hp, newMax)
+      emitEvent(state, { type: 'structure_upgraded', tick: state.tick, structureId: s.id, material: next })
       return
     }
 
@@ -485,7 +622,12 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
         return reject('trop loin')
       }
       const refund: ItemBag = {}
-      const cost = STRUCTURE_COSTS[s.type]
+      // Un mur de pierre rembourse de la pierre, pas du bois : le coût suit le palier
+      // de matériau réellement investi (spec construction R8).
+      const cost =
+        (s.type === 'wall' || s.type === 'door') && s.material
+          ? WALL_TIERS[s.material][s.type].cost
+          : STRUCTURE_COSTS[s.type]
       for (const item of Object.keys(cost) as ItemId[]) {
         const back = Math.floor((cost[item] ?? 0) * BALANCE.DEMOLISH_REFUND)
         if (back > 0) refund[item] = back
@@ -623,12 +765,16 @@ export function addStructure(
   villageId: number,
   ownerId: number,
   access: AccessLevel = DEFAULT_ACCESS[type],
+  /** Palier de matériau (spec construction R8) — mur/porte seulement ; défaut bois. */
+  material?: WallMaterial,
 ): Structure {
   const id = state.nextStructureId
   state.nextStructureId += 1
   // Le Foyer bâtit plus solide (spec alignement R8).
   const village = state.villages.find((v) => v.id === villageId)
   const hpBonus = village?.archetype === 'foyer' ? ALIGNMENT.FOYER_STRUCTURE_HP_BONUS : 1
+  const isWallLike = type === 'wall' || type === 'door'
+  const baseHp = material && isWallLike ? WALL_TIERS[material][type].hp : STRUCTURE_HP[type]
   const structure: Structure = {
     id,
     type,
@@ -637,8 +783,11 @@ export function addStructure(
     villageId,
     ownerId,
     access,
-    hp: Math.floor(STRUCTURE_HP[type] * hpBonus),
+    hp: Math.floor(baseHp * hpBonus),
   }
+  // On ne stocke le matériau que s'il n'est pas le défaut (bois) : snapshot léger,
+  // et `s.material ?? 'wood'` fait foi partout (upgrade, démolition, PV).
+  if (material && material !== 'wood' && isWallLike) structure.material = material
   if (type === 'chest') structure.inventory = makeInventory(SLOTS.CHEST)
   state.structures.push(structure)
   emitEvent(state, {

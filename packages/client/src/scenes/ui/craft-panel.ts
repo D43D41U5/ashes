@@ -1,6 +1,12 @@
 /**
  * LE PANNEAU D'ARTISANAT — à droite de l'écran d'inventaire (spec craft-file F14).
  *
+ * Depuis LE PIVOT RUST (spec construction R20), il est REDEVENU PUR : il ne
+ * fabrique QUE des recettes (outils, armes, survie, matériaux, campement). Les
+ * PIÈCES STRUCTURELLES (mur, porte, sol, toit) ont leur propre menu — celui du
+ * MARTEAU (`ui/build-menu.ts`) ; les COMPOSANTS (enclume, four…) sont des objets
+ * qu'on tient et pose. Le panneau ne montre plus jamais de construction.
+ *
  * Quatre règles, demandées le 2026-07-13 :
  *   1. ON NE MONTRE QUE CE QU'ON PEUT FAIRE ICI. Une recette de four sans four à
  *      portée n'est pas grisée : elle n'est PAS LÀ. Le panneau dit ce que le lieu
@@ -10,17 +16,14 @@
  *   4. UN CHAMP DE RECHERCHE pour filtrer au clavier.
  *
  * La logique — QUOI afficher — est PURE et testée (`craftRows`). Le Phaser en
- * dessous n'est que du placement. C'est la même discipline que `dragToAction`
- * dans l'inventaire : ce qui décide se prouve, ce qui peint se regarde.
+ * dessous n'est que du placement.
  *
- * Ce qui reste GRISÉ, en revanche, c'est ce dont on n'a pas les MATÉRIAUX : la
- * recette est faisable ici, elle est juste hors de portée de bourse. Une recette
- * qu'on ne peut pas encore payer doit rester une invitation — c'est ce qui donne
- * envie d'aller chercher les trois fibres qui manquent.
+ * Ce qui reste GRISÉ, c'est ce dont on n'a pas les MATÉRIAUX : la recette est
+ * faisable ici, elle est juste hors de portée de bourse — une invitation à aller
+ * chercher les trois fibres qui manquent.
  */
 import {
   RECIPES,
-  STRUCTURE_COSTS,
   hasItems,
   type Inventory,
   type ItemBag,
@@ -29,35 +32,16 @@ import {
   type RecipeId,
 } from '@braises/sim'
 import type Phaser from 'phaser'
-import type { Buildable, StationId } from '../../hud-state'
+import type { StationId } from '../../hud-state'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { INK, SECTION_TITLE, textStyle } from './typography'
 
 // ─── La logique (pure, testée — craft-panel.test.ts) ─────────────────────────
 
-export type CraftCategory = 'campement' | 'construction' | 'outils' | 'armes' | 'survie' | 'materiaux'
-
-/**
- * LES CONSTRUCTIONS. Elles n'apparaissent QUE le marteau en main — c'est la règle
- * de la sim (`recolte.md` G12 : bâtir exige le marteau TENU), et le panneau ne fait
- * que la refléter : montrer des murs qu'on ne peut pas poser serait un mensonge.
- *
- * Cliquer une construction ARME le fantôme (on la pose ensuite d'un clic dans le
- * monde) ; recliquer la même DÉSARME. C'est la seule bascule du jeu, et elle est
- * là où le joueur regarde — pas sur une touche qu'on aurait débranchée.
- */
-export const BUILDABLES = ['wall', 'door', 'chest', 'workshop', 'furnace'] as const
-export const BUILDABLE_LABEL: Record<(typeof BUILDABLES)[number], string> = {
-  wall: 'Mur',
-  door: 'Porte',
-  chest: 'Coffre',
-  workshop: 'Atelier',
-  furnace: 'Four',
-}
+export type CraftCategory = 'campement' | 'outils' | 'armes' | 'survie' | 'materiaux'
 
 export const CATEGORY_LABEL: Record<CraftCategory, string> = {
   campement: 'CAMPEMENT',
-  construction: 'CONSTRUCTION',
   outils: 'OUTILS',
   armes: 'ARMES',
   survie: 'SURVIE',
@@ -66,13 +50,8 @@ export const CATEGORY_LABEL: Record<CraftCategory, string> = {
 
 /**
  * L'ordre des rayons à l'écran : ALPHABÉTIQUE (décision utilisateur, 2026-07-13).
- * Un ordre qu'on peut PRÉDIRE se cherche moins qu'un ordre qu'on a jugé « logique » :
- * l'œil sait où descendre avant même de lire.
- *
- * DÉRIVÉ, jamais recopié : un nouveau rayon prend sa place tout seul, sans qu'on
- * pense à le glisser dans une liste à côté — c'est exactement le genre de liste
- * parallèle qui finit par diverger de la table qu'elle est censée ordonner.
- * `localeCompare('fr')` pour que MATÉRIAUX se range sous son E, pas après le Z.
+ * Un ordre qu'on peut PRÉDIRE se cherche moins qu'un ordre qu'on a jugé « logique ».
+ * DÉRIVÉ, jamais recopié : un nouveau rayon prend sa place tout seul.
  */
 export const CATEGORY_ORDER: readonly CraftCategory[] = (Object.keys(CATEGORY_LABEL) as CraftCategory[]).sort((a, b) =>
   CATEGORY_LABEL[a].localeCompare(CATEGORY_LABEL[b], 'fr'),
@@ -80,13 +59,11 @@ export const CATEGORY_ORDER: readonly CraftCategory[] = (Object.keys(CATEGORY_LA
 
 /**
  * La catégorie de chaque recette. `Record<RecipeId, …>` est le garde-fou : ajouter
- * une recette à la sim sans lui donner de rayon ne compile plus — elle ne peut pas
- * disparaître en silence du panneau (même contrat que `ITEM_LABELS`).
+ * une recette à la sim sans lui donner de rayon ne compile plus.
  */
 export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
-  // LE FEU DE CAMP est une recette comme une autre désormais : elle produit un OBJET
-  // (station: null → faisable partout) qu'on pose ensuite au sol. Fini le bouton
-  // « poser ici » : on fabrique, on porte, on plante.
+  // LE FEU DE CAMP est une recette comme une autre : elle produit un OBJET
+  // (station: null → faisable partout) qu'on pose ensuite au sol.
   campfire: 'campement',
   crude_axe: 'outils',
   crude_pickaxe: 'outils',
@@ -103,11 +80,8 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   iron_ingot: 'materiaux',
 }
 
-/** Une ligne de la liste : un rayon, une recette, ou LE FEU (qui n'en est pas une). */
-export type CraftRow =
-  | { kind: 'header'; label: string }
-  | { kind: 'recipe'; id: RecipeId }
-  | { kind: 'build'; structure: (typeof BUILDABLES)[number] }
+/** Une ligne de la liste : un en-tête de rayon, ou une recette. */
+export type CraftRow = { kind: 'header'; label: string } | { kind: 'recipe'; id: RecipeId }
 
 /** Sans accents ni casse : taper « epieu » doit trouver « Épieu taillé ». */
 function fold(s: string): string {
@@ -122,15 +96,9 @@ function fold(s: string): string {
  * portée (le contexte), `query` = la recherche. Les recettes `station: null` (la
  * couche 1, à la main) sont TOUJOURS là — on les fait n'importe où.
  *
- * Une catégorie vide ne pose pas d'en-tête : un rayon sans article n'est pas un
- * rayon, c'est du bruit.
+ * Une catégorie vide ne pose pas d'en-tête : un rayon sans article n'est pas un rayon.
  */
-export function craftRows(
-  stations: readonly StationId[],
-  query: string,
-  /** Le marteau est-il EN MAIN ? Sans lui, pas de constructions (la sim refuserait). */
-  hammer = false,
-): CraftRow[] {
+export function craftRows(stations: readonly StationId[], query: string): CraftRow[] {
   const q = fold(query.trim())
   const visible = (Object.keys(RECIPES) as RecipeId[]).filter((id) => {
     const station = RECIPES[id].station
@@ -141,16 +109,6 @@ export function craftRows(
 
   const rows: CraftRow[] = []
   for (const cat of CATEGORY_ORDER) {
-    if (cat === 'construction') {
-      // LE MARTEAU FAIT LE BÂTISSEUR (recolte.md G12) : sans lui en main, ce rayon
-      // n'existe pas. Le panneau ne montre jamais ce que la sim refuserait.
-      if (!hammer) continue
-      const batir = BUILDABLES.filter((b) => q === '' || fold(BUILDABLE_LABEL[b]).includes(q))
-      if (batir.length === 0) continue
-      rows.push({ kind: 'header', label: CATEGORY_LABEL.construction })
-      for (const structure of batir) rows.push({ kind: 'build', structure })
-      continue
-    }
     const ids = visible.filter((id) => RECIPE_CATEGORY[id] === cat)
     if (ids.length === 0) continue
     rows.push({ kind: 'header', label: CATEGORY_LABEL[cat] })
@@ -172,10 +130,7 @@ export function bagLine(inputs: ItemBag): string {
 
 // ─── Le rendu Phaser (placement seulement) ───────────────────────────────────
 
-/** Largeur du panneau, et les marges qui le décollent des bords de l'écran. La
- *  largeur est EXPORTÉE : celui qui le place (UIScene) doit pouvoir le garder dans
- *  l'écran sans redeviner sa taille — c'est exactement le genre de nombre recopié
- *  qui a déjà fait peindre ce panneau par-dessus l'inventaire. */
+/** Largeur du panneau, et les marges qui le décollent des bords de l'écran. */
 export const CRAFT_PANEL_W = 300
 /** Marge haute/basse : le panneau prend TOUTE la hauteur, mais ne touche pas les bords. */
 export const CRAFT_PANEL_MARGIN_Y = 28
@@ -185,9 +140,6 @@ const HEADER_H = 26
 const SEARCH_H = 30
 const PANEL_DEPTH = 900 // même plan que l'inventaire
 
-// La voix du jeu, pas la mienne : tout vient de `typography.ts` (voir son en-tête —
-// ce panneau est précisément celui qui avait parlé serif au milieu d'un HUD en
-// chasse fixe). Les lignes de liste vivent sur un fond plein : pas de contour.
 const TITLE = SECTION_TITLE
 const HEADER = textStyle('label', 'dim')
 const NAME = textStyle('body', 'body', false)
@@ -197,9 +149,7 @@ const SEARCH = textStyle('label', 'body', false)
 const STATION_LABEL: Record<StationId, string> = { fire: 'au Feu', workshop: "à l'atelier", furnace: 'au four' }
 
 export interface CraftPanel {
-  update(inv: Inventory, stations: StationId[], hammer: boolean): void
-  /** La construction ARMÉE (le fantôme la suit), ou `null`. */
-  armed(): Buildable | null
+  update(inv: Inventory, stations: StationId[]): void
   setVisible(v: boolean): void
   /** Le champ de recherche a-t-il le clavier ? (le déplacement se coupe alors) */
   isTyping(): boolean
@@ -212,8 +162,6 @@ export function createCraftPanel(
   send: (a: PlayerAction) => void,
   bounds: { left: number; top: number; bottom: number },
 ): CraftPanel {
-  /** La construction armée : le fantôme la suit, un clic dans le monde la pose. */
-  let armed: Buildable | null = null
   const x = bounds.left
   const top = bounds.top
   const height = bounds.bottom - bounds.top
@@ -226,11 +174,9 @@ export function createCraftPanel(
   let rows: CraftRow[] = []
   let inv: Inventory = []
   let stations: StationId[] = []
-  let hammer = false
 
   const title = scene.add.text(x, top - 26, 'ARTISANAT', TITLE).setOrigin(0, 0).setScrollFactor(0).setDepth(PANEL_DEPTH)
 
-  // Le champ de recherche : un clic le prend, Échap le rend.
   const searchBg = scene.add
     .rectangle(x + PANEL_W / 2, top + SEARCH_H / 2, PANEL_W, SEARCH_H, 0x14141a, 0.9)
     .setStrokeStyle(1, 0x3a3a44)
@@ -253,17 +199,11 @@ export function createCraftPanel(
     drawSearch()
   })
 
-  // La LISTE, dans un cadre qui la coupe : un masque géométrique. Sans lui, une
-  // liste plus longue que son cadre déborderait sur le monde — c'est ce qui
-  // s'appelle « s'afficher mal ».
   const listRoot = scene.add.container(x, top + listTop).setScrollFactor(0).setDepth(PANEL_DEPTH)
   const maskShape = scene.make.graphics({}, false)
   maskShape.fillStyle(0xffffff).fillRect(x, top + listTop, PANEL_W, viewH)
   listRoot.setMask(maskShape.createGeometryMask())
 
-  /** Un banc de lignes RÉUTILISÉES (jamais recréées) : le panneau se redessine à
-   *  chaque frame, et détruire/recréer des objets Phaser 60 fois par seconde est
-   *  le chemin le plus court vers une UI qui hoquette. */
   const POOL = 24
   const pool = Array.from({ length: POOL }, () => {
     const bg = scene.add.rectangle(PANEL_W / 2, 0, PANEL_W, ROW_H - 4, 0x1b1b22, 0.9).setStrokeStyle(1, 0x3a3a44)
@@ -277,18 +217,9 @@ export function createCraftPanel(
     })
     bg.on('pointerout', () => bg.setFillStyle(0x1b1b22, 0.9))
     bg.on('pointerdown', () => {
-      // Un clic qui part se faire refuser pollue le flux d'événements : la sim
-      // n'est pas une poubelle (recolte.md G7). Sans les matériaux, on ne tire pas.
+      // Un clic qui part se faire refuser pollue le flux d'événements : sans les
+      // matériaux, on ne tire pas.
       if (bg.getData('ready') !== true) return
-      const structure = bg.getData('build') as Buildable | undefined
-      if (structure) {
-        // On ARME (ou on DÉSARME en recliquant) : le fantôme suit le curseur, et
-        // c'est le clic dans le MONDE qui pose. Une bascule, là où le joueur
-        // regarde — pas sur une touche qu'on a débranchée.
-        armed = armed === structure ? null : structure
-        draw()
-        return
-      }
       const id = bg.getData('recipe') as RecipeId | undefined
       if (id) send({ type: 'craft', recipeId: id })
     })
@@ -296,8 +227,7 @@ export function createCraftPanel(
     return { bg, icon, name, cost, header }
   })
 
-  const contentHeight = (): number =>
-    rows.reduce((h, r) => h + (r.kind === 'header' ? HEADER_H : ROW_H), 0)
+  const contentHeight = (): number => rows.reduce((h, r) => h + (r.kind === 'header' ? HEADER_H : ROW_H), 0)
 
   const draw = (): void => {
     const maxScroll = Math.max(0, contentHeight() - viewH)
@@ -306,34 +236,9 @@ export function createCraftPanel(
     let y = -scroll
     rows.forEach((row, i) => {
       const slot = pool[i]
-      if (!slot) return // la liste dépasse le banc : voir la garde plus bas
+      if (!slot) return
       const h = row.kind === 'header' ? HEADER_H : ROW_H
-      if (row.kind === 'build') {
-        const cout = STRUCTURE_COSTS[row.structure]
-        const ready = hasItems(inv, cout)
-        const arme = armed === row.structure
-        slot.header.setVisible(false)
-        slot.bg
-          .setVisible(true)
-          .setY(y + h / 2)
-          .setData('build', row.structure)
-          .setData('recipe', undefined)
-          .setData('ready', ready)
-        // L'ARMÉ se VOIT : sinon le joueur clique dans le monde sans savoir pourquoi
-        // il pose un mur — ou pourquoi il n'en pose pas.
-        slot.bg.setStrokeStyle(arme ? 2 : 1, arme ? 0xe8c66a : ready ? 0x6b5a3a : 0x3a3a44)
-        slot.icon.setVisible(true).setTexture(itemIconKey('stone')).setY(y + h / 2).setAlpha(ready ? 1 : 0.35)
-        slot.name
-          .setVisible(true)
-          .setText(arme ? `${BUILDABLE_LABEL[row.structure]} — ARMÉ` : BUILDABLE_LABEL[row.structure])
-          .setY(y + 8)
-          .setColor(ready ? INK.body : INK.faint)
-        slot.cost
-          .setVisible(true)
-          .setText(`${bagLine(cout)}  —  cliquez au sol`)
-          .setY(y + 26)
-          .setColor(ready ? INK.dim : INK.faint)
-      } else if (row.kind === 'header') {
+      if (row.kind === 'header') {
         slot.bg.setVisible(false).setData('recipe', undefined)
         slot.icon.setVisible(false)
         slot.name.setVisible(false)
@@ -356,7 +261,6 @@ export function createCraftPanel(
       }
       y += h
     })
-    // Le reste du banc se range.
     for (let i = rows.length; i < POOL; i++) {
       const slot = pool[i]!
       slot.bg.setVisible(false).setData('recipe', undefined)
@@ -367,8 +271,6 @@ export function createCraftPanel(
     }
   }
 
-  // La molette DÉFILE la liste — mais seulement quand le curseur est dessus (elle
-  // sert au zoom sur la carte, et à la ceinture dans le monde).
   scene.input.on('wheel', (p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
     if (!title.visible) return
     if (p.x < x || p.x > x + PANEL_W || p.y < top || p.y > bounds.bottom) return
@@ -389,20 +291,14 @@ export function createCraftPanel(
       else return false
       drawSearch()
       scroll = 0
-      rows = craftRows(stations, query, hammer)
+      rows = craftRows(stations, query)
       draw()
       return true
     },
-    armed: () => armed,
-    update(nextInv, nextStations, nextHammer) {
+    update(nextInv, nextStations) {
       inv = nextInv
       stations = nextStations
-      // Ranger le marteau DÉSARME (recolte.md G14) : le mode ne survit pas à l'outil
-      // qui le porte — sinon le fantôme mentirait, et le clic partirait se faire
-      // refuser par la sim.
-      if (!nextHammer && armed !== null) armed = null
-      hammer = nextHammer
-      rows = craftRows(stations, query, hammer)
+      rows = craftRows(stations, query)
       draw()
     },
     setVisible(v) {

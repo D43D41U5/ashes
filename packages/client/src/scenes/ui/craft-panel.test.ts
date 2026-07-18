@@ -54,9 +54,9 @@ describe('le panneau d’artisanat : ce qu’il montre', () => {
     expect(hs).toEqual([...hs].sort((a, b) => a.localeCompare(b, 'fr')))
     // L'ordre des en-têtes suit CATEGORY_ORDER, et chaque en-tête est SUIVI d'au
     // moins un article (un rayon sans article n'est pas un rayon, c'est du bruit) —
-    // ici une recette (le Feu de camp EST une recette désormais, plus une ligne à part).
+    // une recette (le panneau est REDEVENU PUR : plus de construction ici, R20).
     rows.forEach((row, i) => {
-      if (row.kind === 'header') expect(['recipe', 'build']).toContain(rows[i + 1]?.kind)
+      if (row.kind === 'header') expect(rows[i + 1]?.kind).toBe('recipe')
     })
     // Les recettes d'un rayon appartiennent bien à ce rayon — CAMPEMENT compris,
     // dont le seul article est maintenant la recette `campfire`.
@@ -109,35 +109,19 @@ describe('le panneau d’artisanat : ce qu’il montre', () => {
     expect(costLine('rope')).toBe('fibre 3')
     expect(costLine('crude_axe')).toBe('bois 2 · pierre 3 · corde 1')
   })
+
+  it('LE PIVOT RUST (R20) : le panneau ne montre JAMAIS de construction', () => {
+    // Les pièces structurelles ont leur propre menu (le marteau). Quelles que soient
+    // les stations, aucune ligne du panneau n'est une construction.
+    for (const st of [[], ['fire'], ['fire', 'workshop', 'furnace']] as const) {
+      const rows = craftRows(st, '')
+      expect(rows.every((r) => r.kind === 'header' || r.kind === 'recipe')).toBe(true)
+    }
+    expect(headers(craftRows(['fire', 'workshop', 'furnace'], ''))).not.toContain('CONSTRUCTION')
+  })
 })
 
 /** Le libellé du rayon d'une recette (pour l'assertion de cohérence ci-dessus). */
 function CATEGORY_LABELS_OF(id: RecipeId): string {
   return CATEGORY_LABEL[RECIPE_CATEGORY[id]]
 }
-
-/**
- * LE RAYON CONSTRUCTION. La sim exige le marteau EN MAIN pour bâtir (recolte.md
- * G12) : le panneau ne doit donc JAMAIS montrer des murs qu'on ne peut pas poser.
- * Un menu qui propose ce que le jeu refuse est un menu qui ment.
- */
-describe('le panneau : bâtir', () => {
-  const stations: readonly ('fire' | 'workshop' | 'furnace')[] = []
-
-  it('SANS marteau : pas de rayon CONSTRUCTION du tout', () => {
-    const rows = craftRows(stations, '', false)
-    expect(rows.some((r) => r.kind === 'build')).toBe(false)
-    expect(rows.flatMap((r) => (r.kind === 'header' ? [r.label] : []))).not.toContain('CONSTRUCTION')
-  })
-
-  it('LE MARTEAU EN MAIN : le rayon s’ouvre — mur, porte, coffre, atelier, four', () => {
-    const rows = craftRows(stations, '', true)
-    const batir = rows.flatMap((r) => (r.kind === 'build' ? [r.structure] : []))
-    expect(batir).toEqual(['wall', 'door', 'chest', 'workshop', 'furnace'])
-  })
-
-  it('la recherche filtre AUSSI les constructions', () => {
-    const rows = craftRows(stations, 'coffre', true)
-    expect(rows.flatMap((r) => (r.kind === 'build' ? [r.structure] : []))).toEqual(['chest'])
-  })
-})

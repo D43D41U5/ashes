@@ -13,6 +13,7 @@ import { createHotbar, type Hotbar } from './ui/hotbar'
 import { createFatalPanel, type FatalPanel } from './ui/fatal'
 import { createInventoryPanel, inventoryGeometry, type InventoryPanel } from './ui/inventory-panel'
 import { CRAFT_PANEL_MARGIN_Y, CRAFT_PANEL_W, createCraftPanel, type CraftPanel } from './ui/craft-panel'
+import { createBuildMenu, type BuildMenu } from './ui/build-menu'
 import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
 import { createFoundVillagePrompt, type FoundVillagePrompt } from './ui/found-village-prompt'
 import { createLoadingScreen, type LoadingScreen } from './ui/loading'
@@ -58,6 +59,8 @@ export class UIScene extends Phaser.Scene {
   private inventoryPanel!: InventoryPanel
   /** Le panneau de craft (à droite du sac) et la file (toujours à l'écran). */
   private craftPanel!: CraftPanel
+  /** Le MENU DU MARTEAU (spec construction R20) — pièces structurelles, séparé du craft. */
+  private buildMenu!: BuildMenu
   private craftQueueView!: CraftQueueView
   /** La fenêtre du bas « Fonder un village ici ? » — près d'un feu de camp libre. */
   private foundVillagePrompt!: FoundVillagePrompt
@@ -157,6 +160,10 @@ export class UIScene extends Phaser.Scene {
       if (this.craftPanel.handleKey(ev.key)) ev.preventDefault()
       setHud(this.registry, 'uiTyping', this.craftPanel.isTyping())
     })
+    // LE MENU DU MARTEAU (spec construction R20) : à gauche, dans le monde (hors
+    // TAB) — il ne paraît que le marteau EN MAIN, et se referme quand on le range.
+    this.buildMenu = createBuildMenu(this, 150)
+    this.buildMenu.setVisible(false)
     this.craftQueueView = createCraftQueueView(
       this,
       (action) => queueAction(this.registry, action),
@@ -496,16 +503,23 @@ export class UIScene extends Phaser.Scene {
     if (!characterMenuOpen) setHud(this.registry, 'uiTyping', false)
     if (characterMenuOpen) {
       this.inventoryPanel.update(inv, activeSlot, getHud(this.registry, 'openContainerView') ?? null)
-      // LE MARTEAU FAIT LE BÂTISSEUR : le rayon CONSTRUCTION n'existe que s'il est
-      // EN MAIN (la sim refuserait sinon — le panneau ne ment pas).
-      const slot = getHud(this.registry, 'activeSlot') ?? -1
-      const marteau = slot >= 0 && inv[slot]?.item === 'hammer'
-      this.craftPanel.update(inv, getHud(this.registry, 'stationsInRange') ?? [], marteau)
+      // Le panneau d'artisanat est REDEVENU PUR (spec construction R20) : plus de
+      // rayon construction. Les pièces structurelles vivent dans le menu du marteau.
+      this.craftPanel.update(inv, getHud(this.registry, 'stationsInRange') ?? [])
       setHud(this.registry, 'uiTyping', this.craftPanel.isTyping())
     }
-    // La construction ARMÉE part au monde : c'est WorldScene qui peint le fantôme
-    // et qui pose au clic. L'UI décide, la scène du monde exécute.
-    setHud(this.registry, 'selected', this.craftPanel.armed())
+    // LE MENU DU MARTEAU (spec construction R20-R21) : dans le monde, hors TAB/carte,
+    // et SEULEMENT le marteau en main. Le ranger le referme et DÉSARME — les fantômes
+    // structurels s'éteignent avec l'outil (R21).
+    const hammerHeld = activeSlot >= 0 && inv[activeSlot]?.item === 'hammer'
+    const building = hammerHeld && !characterMenuOpen && !Boolean(getHud(this.registry, 'mapOpen'))
+    this.buildMenu.setVisible(building)
+    if (building) this.buildMenu.update(inv)
+    else this.buildMenu.disarm()
+    // La pièce ARMÉE et son matériau partent au monde : WorldScene peint le fantôme,
+    // pose au clic. L'UI décide, la scène du monde exécute.
+    setHud(this.registry, 'selected', building ? this.buildMenu.armed() : null)
+    setHud(this.registry, 'buildMaterial', this.buildMenu.material())
     // La fenêtre du bas « Fonder un village ici ? » : WorldScene décide QUAND (près
     // d'un feu libre à soi, sans foyer encore) ; elle s'efface pendant les overlays
     // (WorldScene y pose `foundableFire` à null). L'UI ne fait que la montrer.

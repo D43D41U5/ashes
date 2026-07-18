@@ -51,9 +51,35 @@ describe('clickToAction — désarmé, le clic ne bâtit JAMAIS (A1)', () => {
 })
 
 describe('clickToAction — armé, le clic bâtit (A2)', () => {
-  it('sur une tuile vide, il pose la structure choisie', () => {
+  it('sur une tuile vide, il pose la structure choisie — mur en bois par défaut', () => {
     const t = aimAt(11, 11, PLAYER, [], [], RANGE)
-    expect(clickToAction(t, 'wall')).toEqual({ type: 'build', structure: 'wall', tx: 11, ty: 11 })
+    expect(clickToAction(t, 'wall')).toEqual({ type: 'build', structure: 'wall', tx: 11, ty: 11, material: 'wood' })
+  })
+
+  it('R8 : le matériau choisi accompagne mur/porte, jamais les pièces molles', () => {
+    const t = aimAt(11, 11, PLAYER, [], [], RANGE)
+    expect(clickToAction(t, 'wall', undefined, { material: 'stone', onTile: null })).toEqual({
+      type: 'build',
+      structure: 'wall',
+      tx: 11,
+      ty: 11,
+      material: 'stone',
+    })
+    // Le sol n'a pas de palier de matériau : pas de champ `material`.
+    expect(clickToAction(t, 'floor', undefined, { material: 'stone', onTile: null })).toEqual({
+      type: 'build',
+      structure: 'floor',
+      tx: 11,
+      ty: 11,
+    })
+  })
+
+  it('R8 : cliquer un MUR existant, mur armé, l’AMÉLIORE au lieu de buter « occupé »', () => {
+    const t = aimAt(11, 11, PLAYER, [], [], RANGE)
+    expect(clickToAction(t, 'wall', undefined, { material: 'stone', onTile: { id: 42, type: 'wall' } })).toEqual({
+      type: 'upgrade_structure',
+      structureId: 42,
+    })
   })
 
   it('le mode dit ce que le clic fait : armé, on ne récolte pas « en passant »', () => {

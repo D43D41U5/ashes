@@ -31,6 +31,7 @@ import {
   crownDepth,
   GROUND_FIRE_DEPTH,
   nodeDepth,
+  ROOF_DEPTH,
   structureDepth,
   tileFeetAnchor,
   TILE_PX,
@@ -299,7 +300,9 @@ export class SnapshotView {
     this.blood = msg.blood
     this.wind = msg.wind
     this.groundItems = msg.groundItems
-    this.syncStructures(msg.structures)
+    // La position (autoritative) de l'avatar local — le FADE des toits en dépend (R24).
+    const self = msg.entities.find((e) => e.id === playerId)
+    this.syncStructures(msg.structures, self ? { x: self.x, y: self.y } : undefined)
     this.applyNodeDeltas(msg.nodeDeltas)
     this.syncCorpses(msg.corpses)
     this.syncEntities(msg.entities, playerId, now)
@@ -510,9 +513,14 @@ export class SnapshotView {
     }
   }
 
-  /** Synchronise les sprites de structures avec le snapshot. */
-  private syncStructures(structures: Structure[]): void {
+  /** Synchronise les sprites de structures avec le snapshot. `self` = position de
+   *  l'avatar local, pour le fade des toits à l'entrée (spec construction R24). */
+  private syncStructures(structures: Structure[], self?: { x: number; y: number }): void {
     this.structures = structures
+    // R24 — les toits à FONDRE : ceux de l'amas de toits SOUS l'avatar (flood-fill
+    // 4-connexe de la couverture). Sous couvert, on voit l'intérieur ; dehors, le
+    // toit occulte. Set/Map côté client (l'interdit ne vise que /sim).
+    const fadeRoofs = this.coveredRoofIds(structures, self)
     const seen = new Set<number>()
     for (const s of structures) {
       seen.add(s.id)
@@ -523,10 +531,10 @@ export class SnapshotView {
         // plat — il reste sous la bande, on marche autour, jamais derrière.
         const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
         const lift = this.warp?.lift(s.tx + 0.5, s.ty + 1) ?? 0
-        sprite = this.scene.add
-          .image(a.px, a.py - lift, `st-${s.type}`)
-          .setOrigin(0.5, 1)
-          .setDepth(s.type === 'fire' ? GROUND_FIRE_DEPTH : structureDepth(s.ty, TILE_PX))
+        // Le TOIT couvre : il passe AU-DESSUS des acteurs (comme un houppier, R14).
+        const depth =
+          s.type === 'fire' ? GROUND_FIRE_DEPTH : s.type === 'roof' ? ROOF_DEPTH + s.ty : structureDepth(s.ty, TILE_PX)
+        sprite = this.scene.add.image(a.px, a.py - lift, `st-${s.type}`).setOrigin(0.5, 1).setDepth(depth)
         this.structureSprites.set(s.id, sprite)
       }
       if (s.type === 'fire') {
@@ -540,6 +548,8 @@ export class SnapshotView {
         const shade = Math.floor(140 + 115 * ratio)
         sprite.setTint(Phaser.Display.Color.GetColor(255, shade, shade))
       }
+      // R24 : le toit sous lequel on se tient FOND (cutaway) ; sinon il couvre.
+      if (s.type === 'roof') sprite.setAlpha(fadeRoofs.has(s.id) ? 0.18 : 0.95)
     }
     for (const [id, sprite] of this.structureSprites) {
       if (!seen.has(id)) {
@@ -547,6 +557,36 @@ export class SnapshotView {
         this.structureSprites.delete(id)
       }
     }
+  }
+
+  /**
+   * R24 — les toits à faire FONDRE : l'amas de toits connecté (4-voisinage) à la
+   * tuile de l'avatar, s'il se tient sous une couverture. Vide sinon. Flood-fill
+   * borné aux tuiles-toit — une poignée par bâtiment, recalculé par snapshot.
+   */
+  private coveredRoofIds(structures: Structure[], self?: { x: number; y: number }): Set<number> {
+    const out = new Set<number>()
+    if (!self) return out
+    const roofAt = new Map<string, Structure>()
+    for (const s of structures) if (s.type === 'roof') roofAt.set(`${s.tx},${s.ty}`, s)
+    const start = `${Math.floor(self.x)},${Math.floor(self.y)}`
+    if (!roofAt.has(start)) return out
+    const queue = [start]
+    const visited = new Set([start])
+    while (queue.length > 0) {
+      const k = queue.shift()!
+      const s = roofAt.get(k)!
+      out.add(s.id)
+      const [tx, ty] = k.split(',').map(Number) as [number, number]
+      for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
+        const nk = `${tx + dx},${ty + dy}`
+        if (roofAt.has(nk) && !visited.has(nk)) {
+          visited.add(nk)
+          queue.push(nk)
+        }
+      }
+    }
+    return out
   }
 
   /** Reçoit la liste COMPLÈTE des nœuds (message `ready`, une fois) et l'indexe

@@ -81,6 +81,22 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('st-door', 16, 16)
     g.clear()
 
+    // Sol : pièce MOLLE (spec construction R14) — un plancher plat, planches sombres.
+    g.fillStyle(0x4a3a28).fillRect(0, 0, 16, 16)
+    g.fillStyle(0x5a4632).fillRect(1, 1, 14, 6)
+    g.fillStyle(0x5a4632).fillRect(1, 9, 14, 6)
+    g.generateTexture('st-floor', 16, 16)
+    g.clear()
+
+    // Toit : pièce MOLLE qui COUVRE (spec construction R14, R24) — tuiles rouges,
+    // peint par-dessus l'intérieur ; il FOND quand l'avatar entre dessous.
+    g.fillStyle(0x2a1a14).fillRect(0, 0, 16, 16)
+    g.fillStyle(0x8a3f2e).fillRect(1, 1, 14, 14)
+    g.fillStyle(0x6a2f22).fillRect(1, 5, 14, 1)
+    g.fillStyle(0x6a2f22).fillRect(1, 10, 14, 1)
+    g.generateTexture('st-roof', 16, 16)
+    g.clear()
+
     tile(0x4a3520, 0x7a5a30) // coffre : couvercle doré
     g.fillStyle(0xc9a227).fillRect(3, 6, 10, 4)
     g.generateTexture('st-chest', 16, 16)

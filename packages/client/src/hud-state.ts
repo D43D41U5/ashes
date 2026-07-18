@@ -6,14 +6,18 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { CraftOrder, Entity, GameTime, Inventory, ItemId, PlayerAction, SkillId, Village, VillageTask, WorldMap } from '@braises/sim'
+import type { CraftOrder, Entity, GameTime, Inventory, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@braises/sim'
 import type Phaser from 'phaser'
 
-/** Ce que le joueur peut sélectionner pour bâtir. */
-export type Buildable = 'wall' | 'door' | 'chest' | 'workshop' | 'furnace'
+/**
+ * LES PIÈCES STRUCTURELLES du MENU DU MARTEAU (spec construction R20) : barrières
+ * posées librement, marteau en main. Les COMPOSANTS (enclume, four…) ne sont PAS
+ * ici — ce sont des objets qu'on tient et pose (flux feu de camp), tranches 2+.
+ */
+export type Buildable = 'wall' | 'door' | 'floor' | 'roof' | 'chest'
 
-/** Ce qu'un clic gauche peut POSER au sol : une CONSTRUCTION (marteau en main) ou
- *  le FEU DE CAMP qu'on tient (`'fire'`). Le fantôme et le résolveur de clic en
+/** Ce qu'un clic gauche peut POSER au sol : une PIÈCE STRUCTURELLE (marteau en main)
+ *  ou le FEU DE CAMP qu'on tient (`'fire'`). Le fantôme et le résolveur de clic en
  *  dérivent tous les deux — une seule notion, deux consommateurs. */
 export type Placeable = Buildable | 'fire'
 
@@ -73,9 +77,13 @@ export interface HudState {
   hp: number
   stamina: number
   wounds: Entity['wounds']
-  /** Structure armée pour le mode construction — `null` = DÉSARMÉ, et c'est
-   *  l'état de départ : le clic nu ne bâtit jamais (spec recolte.md G1-G2). */
+  /** Pièce structurelle armée dans le MENU DU MARTEAU (spec construction R20) —
+   *  `null` = DÉSARMÉ, et c'est l'état de départ : le clic nu ne bâtit jamais. Posé
+   *  à `null` dès qu'on range le marteau (R21). */
   selected: Buildable | null
+  /** Le palier de matériau choisi pour mur/porte (spec construction R8) : bois par
+   *  défaut. La pose neuve le prend ; cliquer un mur existant l'améliore vers lui. */
+  buildMaterial: WallMaterial
   /** Un feu de camp LIBRE à portée qu'on pourrait promouvoir en foyer (un `fire`
    *  villageId 0 que JE possède, et je n'ai pas encore de village), ou `null`. Posé
    *  par WorldScene chaque frame ; lu par UIScene, qui affiche alors la fenêtre du

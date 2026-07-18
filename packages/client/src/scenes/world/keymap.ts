@@ -8,7 +8,6 @@
  * Un test (`keymap.test.ts`) garde l'invariant utile au rebinding : deux
  * actions ne partagent jamais une même touche.
  */
-import type { Buildable } from '../../hud-state'
 
 /**
  * Action sémantique → une ou plusieurs touches (alias). Les listes de
@@ -85,11 +84,6 @@ export const BELT_BINDINGS: readonly [string, number][] = [
   ['SIX', 5],
 ]
 
-/**
- * Les structures bâtissables, dans leur ordre d'origine. La table SURVIT au
- * débranchement de `B` : le mode construction (`selected`, le fantôme, le
- * résolveur de clic) est intact dans le code — simplement plus ARMABLE tant que
- * la nouvelle interaction n'est pas posée. Le jour où bâtir passera par le
- * marteau en main, c'est cette table qu'on rebranchera.
- */
-export const BUILDABLE_CYCLE: readonly (Buildable | null)[] = [null, 'wall', 'door', 'chest', 'workshop', 'furnace']
+// La table `BUILDABLE_CYCLE` (l'ancien cycle du mode construction sur `B`) est
+// MORTE avec LE PIVOT RUST (spec construction R20) : les pièces structurelles
+// s'arment désormais au MENU DU MARTEAU (`ui/build-menu.ts`), pas par une touche.

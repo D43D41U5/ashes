@@ -12,6 +12,15 @@ export function distSq(ax: number, ay: number, bx: number, by: number): number {
 }
 
 /**
+ * Distance de CHEBYSHEV (« échiquier ») : `max(|dx|, |dy|)`. C'est la métrique du
+ * carré du Feu (spec construction R1-R2) — `Chebyshev(t, Feu) ≤ R` décrit exactement
+ * un carré `(2R+1)×(2R+1)`. `abs` et `max` seuls : exact au bit près (invariant n°2).
+ */
+export function chebyshev(ax: number, ay: number, bx: number, by: number): number {
+  return Math.max(Math.abs(ax - bx), Math.abs(ay - by))
+}
+
+/**
  * Flou de boîte séparable sur un champ de la carte, EN PLACE — deux passes 1D
  * (horizontale puis verticale). `+ /` uniquement : exact au bit près, pur,
  * déterministe (invariant n°2).

@@ -391,12 +391,12 @@ describe('la construction (A2)', () => {
     const sim = makeSim()
     const id = founder(sim, 10.5, 10.5)
     drainEvents(sim)
-    act(sim, id, { type: 'build', structure: 'wall', tx: 10 + BALANCE.FIRE_BUILD_RADIUS + 2, ty: 10 })
+    act(sim, id, { type: 'build', structure: 'wall', tx: 10 + BALANCE.FIRE_RADIUS_BY_TIER[0]! + 2, ty: 10 })
     act(sim, id, { type: 'build', structure: 'wall', tx: 10, ty: 10 }) // sur le Feu
     const poor = spawnEntity(sim, 12.5, 12.5)
     act(sim, poor, { type: 'build', structure: 'wall', tx: 13, ty: 13 })
     expect(rejections(sim)).toEqual([
-      'hors du rayon du Feu',
+      'hors du carré du Feu',
       'tuile occupée',
       'sans village — allumer un Feu d’abord',
     ])

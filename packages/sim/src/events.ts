@@ -44,6 +44,10 @@ export type SimEvent =
       ty: number
     }
   | { type: 'structure_removed'; tick: number; structureId: number }
+  /** LE FEU MONTE D'UN PALIER (spec construction R6) : le carré grandit, des composants se débloquent. */
+  | { type: 'fire_upgraded'; tick: number; villageId: number; tier: number }
+  /** UN MUR/PORTE PASSE AU MATÉRIAU SUIVANT (spec construction R8) : bois→pierre→métal. */
+  | { type: 'structure_upgraded'; tick: number; structureId: number; material: import('./balance').WallMaterial }
   | { type: 'member_joined'; tick: number; villageId: number; entityId: number }
   | { type: 'member_banished'; tick: number; villageId: number; entityId: number }
   | { type: 'action_rejected'; tick: number; entityId: number; reason: string }

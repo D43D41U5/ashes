@@ -51,7 +51,7 @@ const simRestrictedGlobals = [
 ]
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/node_modules/**'] },
+  { ignores: ['**/dist/**', '**/node_modules/**', 'scratchpad/**'] },
   ...tseslint.configs.recommended,
 
   // ── Garde-fou n°1 du projet : /sim est PUR (GDD §11) ──────────────────

@@ -19,9 +19,18 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
-import { FOOD_VALUES, WEAPON_DAMAGE, type ItemId } from '@braises/sim'
+import { FOOD_VALUES, WEAPON_DAMAGE, type ItemId, type StructureType, type WallMaterial } from '@braises/sim'
 import type { Placeable } from '../../hud-state'
 import type { Corpse, PlayerAction, ResourceNode } from '@braises/sim'
+
+/**
+ * Le contexte de POSE (spec construction R8) : le palier de matériau choisi pour
+ * mur/porte, et la structure DÉJÀ sur la tuile visée (pour l'améliorer d'un clic).
+ */
+export interface BuildContext {
+  material: WallMaterial
+  onTile: { id: number; type: StructureType } | null
+}
 
 /** Ce qu'il y a sous le curseur, et si c'est à portée de bras. */
 export interface AimTarget {
@@ -101,12 +110,29 @@ export function clickToAction(
   target: AimTarget,
   placing: Placeable | null,
   hand?: HandContext,
+  build?: BuildContext,
 ): PlayerAction | null {
-  // POSER prime sur tout : quand on tient un feu de camp (ou qu'une construction est
-  // armée), le clic POSE, il ne récolte ni ne frappe « en passant ». Le mode dit ce
-  // que le clic fait — c'est ce qui le rend prévisible (même règle que le fantôme).
+  // POSER prime sur tout : quand on tient un feu de camp (ou qu'une pièce est armée),
+  // le clic POSE, il ne récolte ni ne frappe « en passant ». Le mode dit ce que le
+  // clic fait — c'est ce qui le rend prévisible (même règle que le fantôme).
   if (placing === 'fire') return { type: 'place_campfire', tx: target.tx, ty: target.ty }
-  if (placing !== null) return { type: 'build', structure: placing, tx: target.tx, ty: target.ty }
+  if (placing !== null) {
+    // Cliquer un MUR/PORTE existant, une pièce mur/porte armée, l'AMÉLIORE au palier
+    // de matériau choisi (spec construction R8) — plutôt que de buter « tuile occupée ».
+    if (
+      (placing === 'wall' || placing === 'door') &&
+      build?.onTile &&
+      (build.onTile.type === 'wall' || build.onTile.type === 'door')
+    ) {
+      return { type: 'upgrade_structure', structureId: build.onTile.id }
+    }
+    // `material` n'accompagne QUE mur/porte (les pièces molles n'en ont pas) : on ne
+    // le glisse dans l'action que là — `exactOptionalPropertyTypes` refuse un `undefined`.
+    if (placing === 'wall' || placing === 'door') {
+      return { type: 'build', structure: placing, tx: target.tx, ty: target.ty, material: build?.material ?? 'wood' }
+    }
+    return { type: 'build', structure: placing, tx: target.tx, ty: target.ty }
+  }
 
   // MANGER : on tient de quoi, on croque. (Le clic maintenu répète — voir holdHarvest.)
   if (hand && isFood(hand.held)) return { type: 'eat', item: hand.held! }

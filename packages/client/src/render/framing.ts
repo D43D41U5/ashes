@@ -167,6 +167,12 @@ export function nodeDepth(ty: number, tilePx: number): number {
  * HAUT de l'écran, donc n'occulte que des acteurs situés au nord de son tronc —
  * qui sont bel et bien derrière lui. Les houppiers ne se trient qu'entre eux.
  */
+/** LES TOITS (spec construction R14, R24) : une pièce molle qui COUVRE. Au-dessus
+ * de tous les acteurs (la bande de tri Y plafonne vers `Y_SORT_BASE + 57 600`) et
+ * sous les houppiers — comme eux, un toit occulte l'intérieur puis FOND quand
+ * l'avatar entre dessous. */
+export const ROOF_DEPTH = 800_000
+
 export const CROWN_BASE = 900_000
 
 /** Rayon du cœur clair du disque de découvert, en tuiles : en deçà, le houppier
