@@ -1835,6 +1835,18 @@ const SCENARIOS = {
       console.log(
         `Grenier (tranche 4) → ${grenier.tier ? `N${grenier.tier} émergé ✓` : `ABSENT ✗ (${gerr})`}, conteneur ${grenier.container ? '✓' : '✗'}`,
       )
+
+      // LA FERME (tranche 5) : une parcelle posée émerge en Ferme N1 — PLEIN AIR (jamais enclosed).
+      await grant('parcelle')
+      await doAction({ type: 'place_component', tx: feu.tx + 3, ty: feu.ty + 2 }, 600)
+      const ferme = await page.evaluate(() => {
+        const f = window.__BRAISES__.scene.view.functions.find((x) => x.functionId === 'ferme')
+        return f ? { tier: f.tier, enclosed: f.enclosed } : null
+      })
+      const perr = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '')
+      console.log(
+        `Ferme (tranche 5) → ${ferme ? `N${ferme.tier} émergée ✓ (plein air : enclosed=${ferme.enclosed})` : `ABSENTE ✗ (${perr})`}`,
+      )
     }
     await page.screenshot({ path: `${OUT}/construction.png` })
     console.log(`capture → ${OUT}/construction.png`)

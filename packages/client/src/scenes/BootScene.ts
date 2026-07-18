@@ -164,6 +164,27 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('st-reserve', 16, 16)
     g.clear()
 
+    // Parcelle (composant Ferme N1) : la terre labourée, des sillons, une pousse.
+    tile(0x3a2a18, 0x5a4028)
+    g.fillStyle(0x3a2a18).fillRect(4, 2, 1, 12)
+    g.fillStyle(0x3a2a18).fillRect(9, 2, 1, 12)
+    g.fillStyle(0x5aa84a).fillRect(6, 5, 2, 4)
+    g.generateTexture('st-parcelle', 16, 16)
+    g.clear()
+
+    // Serre (composant Ferme N2) : le vitrage clair (cultures d'hiver).
+    tile(0x6a4c2c, 0xbfe0d8)
+    g.fillStyle(0x8ab0a8).fillRect(7, 1, 1, 14)
+    g.fillStyle(0x8ab0a8).fillRect(1, 7, 14, 1)
+    g.generateTexture('st-serre', 16, 16)
+    g.clear()
+
+    // Terroir (composant Ferme N3) : la terre riche + une gerbe dorée (l'Ermitage).
+    tile(0x2a1e12, 0x4a3420)
+    g.fillStyle(0xd8b24a).fillTriangle(4, 14, 8, 2, 12, 14)
+    g.generateTexture('st-terroir', 16, 16)
+    g.clear()
+
     // Maison : toit pignon + porte.
     g.fillStyle(0x7a4a2a).fillRect(1, 6, 14, 9)
     g.fillStyle(0x9c3f2e)

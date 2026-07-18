@@ -436,6 +436,9 @@ export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./
   silo: { wood: 8, fiber: 4 },
   cave: { stone: 8, cut_stone: 4 },
   reserve: { cut_stone: 8, iron_ingot: 3 },
+  parcelle: { wood: 4, fiber: 4 },
+  serre: { wood: 8, fiber: 6 },
+  terroir: { cut_stone: 6, hardwood: 4 },
 }
 
 export type WallMaterial = 'wood' | 'stone' | 'metal'
@@ -479,6 +482,9 @@ export type ComponentType =
   | 'silo'
   | 'cave'
   | 'reserve'
+  | 'parcelle'
+  | 'serre'
+  | 'terroir'
 
 /** Coût (recette de l'objet à poser), palier du Feu qui débloque (R6) et PV. À calibrer. */
 export const COMPONENTS: Record<ComponentType, { cost: import('./items').ItemBag; unlockTier: number; hp: number }> = {
@@ -494,6 +500,10 @@ export const COMPONENTS: Record<ComponentType, { cost: import('./items').ItemBag
   silo: { cost: { wood: 8, fiber: 4 }, unlockTier: 1, hp: 100 },
   cave: { cost: { stone: 8, cut_stone: 4 }, unlockTier: 2, hp: 130 },
   reserve: { cost: { cut_stone: 8, iron_ingot: 3 }, unlockTier: 3, hp: 160 },
+  // Ferme : parcelle (de saison) → serre (cultures d'hiver) → terroir (Ermitage). Plein air.
+  parcelle: { cost: { wood: 4, fiber: 4 }, unlockTier: 1, hp: 60 },
+  serre: { cost: { wood: 8, fiber: 6 }, unlockTier: 2, hp: 80 },
+  terroir: { cost: { cut_stone: 6, hardwood: 4 }, unlockTier: 3, hp: 100 },
 }
 
 /**
@@ -515,7 +525,7 @@ export const GRENIER = {
  * fonction — identité stable quand on enrichit/appauvrit l'amas). `enclosureBonus` =
  * le bonus thématique quand l'amas est muré + toité (R13) ; `null` = plein air.
  */
-export type FunctionId = 'forge' | 'atelier' | 'grenier'
+export type FunctionId = 'forge' | 'atelier' | 'grenier' | 'ferme'
 
 export const FUNCTIONS: Record<
   FunctionId,
@@ -532,6 +542,12 @@ export const FUNCTIONS: Record<
   grenier: {
     recipeByTier: [['silo'], ['silo', 'cave'], ['silo', 'cave', 'reserve']],
     enclosureBonus: 'conservation',
+  },
+  ferme: {
+    recipeByTier: [['parcelle'], ['parcelle', 'serre'], ['parcelle', 'serre', 'terroir']],
+    // PLEIN AIR (spec construction §4bis) : la Ferme n'a AUCUN bonus d'enceinte —
+    // `null` fait que la reconnaissance ne la déclare jamais `enclosed`.
+    enclosureBonus: null,
   },
 }
 
@@ -736,6 +752,9 @@ export type RecipeId =
   | 'silo'
   | 'cave'
   | 'reserve'
+  | 'parcelle'
+  | 'serre'
+  | 'terroir'
 
 export interface Recipe {
   /** `null` = À LA MAIN : nulle part, donc partout (spec craft-fortune C1). */
@@ -794,6 +813,9 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   silo: { station: 'fire', inputs: COMPONENTS.silo.cost, output: 'silo', seconds: 10 },
   cave: { station: 'fire', inputs: COMPONENTS.cave.cost, output: 'cave', seconds: 14 },
   reserve: { station: 'fire', inputs: COMPONENTS.reserve.cost, output: 'reserve', seconds: 16 },
+  parcelle: { station: 'fire', inputs: COMPONENTS.parcelle.cost, output: 'parcelle', seconds: 8 },
+  serre: { station: 'fire', inputs: COMPONENTS.serre.cost, output: 'serre', seconds: 12 },
+  terroir: { station: 'fire', inputs: COMPONENTS.terroir.cost, output: 'terroir', seconds: 16 },
 }
 
 /**
@@ -1923,6 +1945,9 @@ export const STRUCTURE_HP: Record<import('./items').StructureType, number> = {
   silo: COMPONENTS.silo.hp,
   cave: COMPONENTS.cave.hp,
   reserve: COMPONENTS.reserve.hp,
+  parcelle: COMPONENTS.parcelle.hp,
+  serre: COMPONENTS.serre.hp,
+  terroir: COMPONENTS.terroir.hp,
 }
 
 /** Hordes & événements du monde (spec événements). */
@@ -2173,6 +2198,9 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   silo: 8,
   cave: 10,
   reserve: 12,
+  parcelle: 6,
+  serre: 9,
+  terroir: 11,
 }
 
 /**
@@ -2275,6 +2303,9 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   silo: 1,
   cave: 1,
   reserve: 1,
+  parcelle: 1,
+  serre: 1,
+  terroir: 1,
 }
 
 /** Tailles de sac (spec inventaire R7). La longueur du tableau EST la capacité. */

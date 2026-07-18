@@ -180,6 +180,9 @@ const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = {
   silo: 'village',
   cave: 'village',
   reserve: 'village',
+  parcelle: 'village',
+  serre: 'village',
+  terroir: 'village',
 }
 
 /** Les CONTENEURS (spec construction §4bis) : coffre + les conteneurs du Grenier. */

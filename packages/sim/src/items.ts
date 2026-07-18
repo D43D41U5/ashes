@@ -90,6 +90,9 @@ export type ItemId =
   | 'silo'
   | 'cave'
   | 'reserve'
+  | 'parcelle'
+  | 'serre'
+  | 'terroir'
 
 /** Une case occupée. `wear` absent = neuf ; un empilable n'a jamais d'usure. */
 export interface Slot {
@@ -142,6 +145,10 @@ export type StructureType =
   | 'silo'
   | 'cave'
   | 'reserve'
+  // La Ferme : parcelle → serre (cultures d'hiver) → terroir. En plein air (pas d'enceinte).
+  | 'parcelle'
+  | 'serre'
+  | 'terroir'
 
 export type AccessLevel = 'private' | 'village' | 'public'
 

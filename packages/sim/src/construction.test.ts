@@ -525,6 +525,49 @@ describe('Le Grenier (tranche 4 — conteneur anti-pourriture)', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('La Ferme (tranche 5 — plein air, sans enceinte)', () => {
+  function fermeTier(sim: SimState): number | undefined {
+    return recognizeFunctions(sim.structures).find((f) => f.functionId === 'ferme')?.tier
+  }
+
+  it('parcelle = Ferme N1 ; +serre (débloquée P2) → N2', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    placeComp(sim, id, 'parcelle', 44, 44)
+    expect(fermeTier(sim)).toBe(1)
+    const e = sim.entities.find((x) => x.id === id)!
+    e.x = 41.5
+    e.y = 40.5
+    act(sim, id, { type: 'upgrade_fire' }) // P2 pour la serre
+    placeComp(sim, id, 'serre', 45, 44)
+    expect(fermeTier(sim)).toBe(2)
+  })
+
+  it('même MURÉE + TOITÉE, la Ferme reste PLEIN AIR — jamais de bonus d’enceinte', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    const v = getVillageOf(sim, id)!.id
+    // Un layout parfaitement clos+toité — qui donnerait le bonus à toute AUTRE fonction.
+    addStructure(sim, 'parcelle', 45, 45, v, id)
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) if (dx || dy) addStructure(sim, 'roof', 45 + dx, 45 + dy, v, id)
+    for (let d = -1; d <= 1; d++) {
+      addStructure(sim, 'wall', 45 + d, 43, v, id)
+      addStructure(sim, 'wall', 45 + d, 47, v, id)
+      addStructure(sim, 'wall', 43, 45 + d, v, id)
+      addStructure(sim, 'wall', 47, 45 + d, v, id)
+    }
+    // La Ferme est bien là, mais `enclosed` reste FAUX (enclosureBonus: null).
+    expect(recognizeFunctions(sim.structures).find((f) => f.functionId === 'ferme')).toMatchObject({
+      tier: 1,
+      enclosed: false,
+    })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 describe('A9 — déterminisme du rejeu (poses/démolitions/paliers)', () => {
   it('fonder, bâtir, monter le Feu, améliorer, démolir : rejoue au bit près', () => {
     const options = { map: createEmptyMap(96, 96, TERRAIN_GRASS) }

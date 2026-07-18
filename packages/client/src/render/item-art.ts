@@ -44,6 +44,9 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   silo: 'Silo',
   cave: 'Cave',
   reserve: 'Réserve stratégique',
+  parcelle: 'Parcelle',
+  serre: 'Serre',
+  terroir: 'Terroir',
   // ── Les ressources STRUCTURANTES des zones (spec worldgen R9) : chacune n'existe
   //    QUE dans sa zone, et chacune est LOURDE. Le nom doit dire d'où elle vient.
   hardwood: 'Gros bois',
@@ -186,6 +189,26 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x9a9aa3).fillRect(4, 6, 8, 1) // les cercles de fer
     g.fillStyle(0x9a9aa3).fillRect(4, 10, 8, 1)
     g.fillStyle(0x9a7a44).fillRect(4, 3, 3, 11) // la face au NO
+  },
+  // Ferme : la parcelle (des sillons de terre + une pousse verte), la serre (un
+  // cadre vitré, clair), le terroir (une terre riche + une gerbe — l'Ermitage).
+  parcelle: (g) => {
+    g.fillStyle(0x5a4028).fillRect(2, 8, 12, 6) // la terre labourée
+    g.fillStyle(0x6a4c30).fillRect(2, 8, 12, 1)
+    g.fillStyle(0x3a2a18).fillRect(4, 9, 1, 5) // les sillons
+    g.fillStyle(0x3a2a18).fillRect(8, 9, 1, 5)
+    g.fillStyle(0x5aa84a).fillRect(6, 3, 2, 5) // une pousse verte
+  },
+  serre: (g) => {
+    g.fillStyle(0x6a4c2c).fillRect(2, 12, 12, 2) // le socle
+    g.fillStyle(0xbfe0d8).fillRect(3, 3, 10, 9) // le vitrage (clair, translucide)
+    g.fillStyle(0x8ab0a8).fillRect(7, 3, 1, 9) // les montants
+    g.fillStyle(0x8ab0a8).fillRect(3, 7, 10, 1)
+  },
+  terroir: (g) => {
+    g.fillStyle(0x4a3420).fillRect(2, 9, 12, 5) // la terre riche, sombre
+    g.fillStyle(0xd8b24a).fillTriangle(5, 9, 8, 2, 11, 9) // la gerbe dorée
+    g.fillStyle(0xe8c66a).fillRect(7, 3, 1, 6)
   },
 
   // Trois galets gris empilés — froids, pas de teinte chaude.

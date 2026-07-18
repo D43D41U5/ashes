@@ -91,6 +91,9 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   silo: 'composants',
   cave: 'composants',
   reserve: 'composants',
+  parcelle: 'composants',
+  serre: 'composants',
+  terroir: 'composants',
 }
 
 /** Une ligne de la liste : un en-tête de rayon, ou une recette. */
