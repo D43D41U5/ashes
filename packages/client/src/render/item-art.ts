@@ -41,6 +41,9 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   workshop: 'Établi',
   tour_meca: 'Tour méca',
   atelier_lourd: 'Atelier lourd',
+  silo: 'Silo',
+  cave: 'Cave',
+  reserve: 'Réserve stratégique',
   // ── Les ressources STRUCTURANTES des zones (spec worldgen R9) : chacune n'existe
   //    QUE dans sa zone, et chacune est LOURDE. Le nom doit dire d'où elle vient.
   hardwood: 'Gros bois',
@@ -164,6 +167,25 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x44444c).fillRect(2, 3, 12, 2)
     g.fillStyle(0xe8842c).fillRect(5, 7, 3, 2) // un voyant chaud
     g.fillStyle(0x6a4c2c).fillRect(2, 12, 12, 2) // l'établi au pied
+  },
+  // Grenier : le silo (une jarre panse ronde), la cave (une trappe/voûte sombre),
+  // la réserve (une jarre cerclée de fer — la conservation stratégique).
+  silo: (g) => {
+    g.fillStyle(0x8a6a3a).fillRect(4, 4, 8, 10) // la panse
+    g.fillStyle(0xa8834a).fillRect(4, 4, 3, 10) // la face au NO
+    g.fillStyle(0x6a4c2c).fillRect(5, 2, 6, 2) // le col
+    g.fillStyle(0x4a3520).fillRect(4, 13, 8, 1)
+  },
+  cave: (g) => {
+    g.fillStyle(0x4a4a52).fillRect(3, 6, 10, 8) // la voûte de pierre
+    g.fillStyle(0x2a2a30).fillRect(6, 8, 4, 6) // la trappe sombre (le froid)
+    g.fillStyle(0x66666e).fillRect(3, 6, 10, 2) // le linteau éclairé
+  },
+  reserve: (g) => {
+    g.fillStyle(0x7a5a34).fillRect(4, 3, 8, 11) // la jarre
+    g.fillStyle(0x9a9aa3).fillRect(4, 6, 8, 1) // les cercles de fer
+    g.fillStyle(0x9a9aa3).fillRect(4, 10, 8, 1)
+    g.fillStyle(0x9a7a44).fillRect(4, 3, 3, 11) // la face au NO
   },
 
   // Trois galets gris empilés — froids, pas de teinte chaude.

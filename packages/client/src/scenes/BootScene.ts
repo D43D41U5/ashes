@@ -143,6 +143,27 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('st-atelier_lourd', 16, 16)
     g.clear()
 
+    // Silo (composant Grenier N1) : une jarre à grain, panse claire.
+    tile(0x4a3520, 0x8a6a3a)
+    g.fillStyle(0xa8834a).fillRect(2, 2, 5, 12)
+    g.fillStyle(0x6a4c2c).fillRect(6, 1, 4, 2)
+    g.generateTexture('st-silo', 16, 16)
+    g.clear()
+
+    // Cave (composant Grenier N2) : la voûte de pierre, la trappe sombre (le froid).
+    tile(0x2a2a30, 0x4a4a52)
+    g.fillStyle(0x1c1c22).fillRect(5, 6, 6, 8)
+    g.fillStyle(0x66666e).fillRect(1, 2, 14, 2)
+    g.generateTexture('st-cave', 16, 16)
+    g.clear()
+
+    // Réserve stratégique (composant Grenier N3) : la jarre cerclée de fer.
+    tile(0x3a2c1e, 0x7a5a34)
+    g.fillStyle(0x9a9aa3).fillRect(1, 5, 14, 1)
+    g.fillStyle(0x9a9aa3).fillRect(1, 10, 14, 1)
+    g.generateTexture('st-reserve', 16, 16)
+    g.clear()
+
     // Maison : toit pignon + porte.
     g.fillStyle(0x7a4a2a).fillRect(1, 6, 14, 9)
     g.fillStyle(0x9c3f2e)

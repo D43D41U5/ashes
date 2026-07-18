@@ -195,6 +195,9 @@ export interface RecognizedFunction {
   ty: number
   villageId: number
   enclosed: boolean
+  /** Les tuiles des composants de l'AMAS (triées) — le Grenier y branche sa
+   *  conservation, et le client y trace le liseré (R22). */
+  componentTiles: { tx: number; ty: number }[]
 }
 
 /** Ordre de tri des tuiles : par y puis x — l'ordre CANONIQUE, déterministe. */
@@ -267,6 +270,7 @@ export function recognizeFunctions(structures: readonly RecogStructure[]): Recog
         ty: anchor.ty,
         villageId: anchor.villageId,
         enclosed: def.enclosureBonus !== null && isEnclosed(amas, structures),
+        componentTiles: amas.map((c) => ({ tx: c.tx, ty: c.ty })),
       })
     }
   }

@@ -88,6 +88,9 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   workshop: 'composants',
   tour_meca: 'composants',
   atelier_lourd: 'composants',
+  silo: 'composants',
+  cave: 'composants',
+  reserve: 'composants',
 }
 
 /** Une ligne de la liste : un en-tête de rayon, ou une recette. */

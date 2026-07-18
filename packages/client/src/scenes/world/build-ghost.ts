@@ -29,7 +29,7 @@ const BAD_TINT = 0xd9614f
 const GHOST_ALPHA = 0.55
 
 /** Le nom affiché d'une fonction prédite (spec construction R22). Étendu par tranche. */
-const FUNCTION_LABEL: Record<string, string> = { forge: 'Forge', atelier: 'Atelier' }
+const FUNCTION_LABEL: Record<string, string> = { forge: 'Forge', atelier: 'Atelier', grenier: 'Grenier' }
 
 /** Les types de composants (source unique : la sim) — distingue un composant d'une barrière. */
 const COMPONENT_SET = new Set<string>(COMPONENT_TYPES)

@@ -16,6 +16,7 @@ import { TERRAIN_GRASS, TERRAIN_DEEP_WATER } from './balance'
 import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { recognizeFunctions, type ComponentType } from './index'
+import { advanceSpoilage } from './economy'
 import { addStructure, applyStructureDamage, fireRadius, getVillageOf, structureAt } from './village'
 import { grantItems } from './village'
 
@@ -463,6 +464,63 @@ describe('L’Atelier (tranche 3 — réutilise la reconnaissance)', () => {
       tier: 1,
       enclosed: true,
     })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('Le Grenier (tranche 4 — conteneur anti-pourriture)', () => {
+  /** Des baies fraîches dans le conteneur d'une structure. */
+  function stockBerries(sim: SimState, structureId: number): void {
+    const s = sim.structures.find((x) => x.id === structureId)!
+    s.inventory![0] = { item: 'berries', count: 5, fresh: 1 }
+  }
+  function freshOf(sim: SimState, structureId: number): number {
+    return sim.structures.find((x) => x.id === structureId)!.inventory![0]!.fresh!
+  }
+
+  it('un aliment dans un silo (Grenier N1) pourrit PLUS LENTEMENT qu’au coffre', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    const v = getVillageOf(sim, id)!.id
+    const silo = addStructure(sim, 'silo', 44, 44, v, id) // Grenier N1
+    const chest = addStructure(sim, 'chest', 44, 48, v, id) // témoin, hors Grenier
+    stockBerries(sim, silo.id)
+    stockBerries(sim, chest.id)
+    for (let t = 0; t < 10000; t++) advanceSpoilage(sim)
+    expect(freshOf(sim, silo.id)).toBeGreaterThan(freshOf(sim, chest.id))
+  })
+
+  it('l’enceinte (conservation renforcée) préserve ENCORE mieux ; un plus haut palier aussi', () => {
+    const openSim = makeSim()
+    const oid = settler(openSim, 40, 40)
+    foundVillage(openSim, oid, 41, 40)
+    const ov = getVillageOf(openSim, oid)!.id
+    const openSilo = addStructure(openSim, 'silo', 44, 44, ov, oid)
+    stockBerries(openSim, openSilo.id)
+
+    // Un Grenier clos+toité (même palier, layout monté via addStructure).
+    const closSim = makeSim()
+    const cid = settler(closSim, 40, 40)
+    foundVillage(closSim, cid, 41, 40)
+    const cv = getVillageOf(closSim, cid)!.id
+    const closSilo = addStructure(closSim, 'silo', 45, 45, cv, cid)
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dx = -1; dx <= 1; dx++) if (dx || dy) addStructure(closSim, 'roof', 45 + dx, 45 + dy, cv, cid)
+    for (let d = -1; d <= 1; d++) {
+      addStructure(closSim, 'wall', 45 + d, 43, cv, cid)
+      addStructure(closSim, 'wall', 45 + d, 47, cv, cid)
+      addStructure(closSim, 'wall', 43, 45 + d, cv, cid)
+      addStructure(closSim, 'wall', 47, 45 + d, cv, cid)
+    }
+    expect(recognizeFunctions(closSim.structures).find((f) => f.functionId === 'grenier')?.enclosed).toBe(true)
+    stockBerries(closSim, closSilo.id)
+
+    for (let t = 0; t < 10000; t++) {
+      advanceSpoilage(openSim)
+      advanceSpoilage(closSim)
+    }
+    expect(freshOf(closSim, closSilo.id)).toBeGreaterThan(freshOf(openSim, openSilo.id))
   })
 })
 

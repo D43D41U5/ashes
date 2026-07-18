@@ -8,6 +8,7 @@
 import {
   BALANCE,
   FOOD_VALUES,
+  GRENIER,
   NODE_DEFS,
   RECIPES,
   SEASON,
@@ -467,19 +468,35 @@ export function advanceCraft(state: SimState): void {
  * de sa case changer, et il décide.
  */
 export function advanceSpoilage(state: SimState): void {
-  const pourrir = (inv: Inventory): void => {
+  // `preservation` MULTIPLIE le temps de péremption (1 = normal ; le Grenier > 1).
+  const pourrir = (inv: Inventory, preservation: number): void => {
     for (let i = 0; i < inv.length; i++) {
       const slot = inv[i]
       if (slot === null || slot === undefined || slot.fresh === undefined) continue
       const cycles = SPOIL_CYCLES[slot.item]
       if (cycles === undefined) continue
-      slot.fresh -= 1 / (cycles * TICKS_PER_CYCLE)
+      slot.fresh -= 1 / (cycles * preservation * TICKS_PER_CYCLE)
       if (slot.fresh <= 0) inv[i] = null // POURRI : la pile s'en va
     }
   }
-  for (const entity of state.entities) pourrir(entity.inventory)
-  for (const structure of state.structures) if (structure.inventory) pourrir(structure.inventory)
-  for (const corpse of state.corpses) pourrir(corpse.inventory)
+  // LE GRENIER (spec construction §4bis) : un aliment rangé dans un conteneur d'un
+  // amas de conservation POURRIT MOINS VITE — facteur par palier, ×bonus si clos+toité.
+  const grenier = new Map<string, number>()
+  for (const f of state.functions) {
+    if (f.functionId !== 'grenier') continue
+    const byTier = GRENIER.PRESERVATION_BY_TIER
+    const base = byTier[Math.min(f.tier, byTier.length) - 1]!
+    const factor = f.enclosed ? base * GRENIER.ENCLOSED_BONUS : base
+    for (const t of f.componentTiles) {
+      const k = `${t.tx},${t.ty}`
+      grenier.set(k, Math.max(grenier.get(k) ?? 1, factor))
+    }
+  }
+  for (const entity of state.entities) pourrir(entity.inventory, 1)
+  for (const s of state.structures) {
+    if (s.inventory) pourrir(s.inventory, grenier.get(`${s.tx},${s.ty}`) ?? 1)
+  }
+  for (const corpse of state.corpses) pourrir(corpse.inventory, 1)
 }
 
 /** Passe économique du tick : faim (modulée par l'acte) et repousse des nœuds. */

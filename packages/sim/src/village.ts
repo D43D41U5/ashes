@@ -176,6 +176,18 @@ const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = {
   four_acier: 'village',
   tour_meca: 'village',
   atelier_lourd: 'village',
+  // Le Grenier est la réserve COMMUNE : dépôt ouvert à tous, retrait aux membres.
+  silo: 'village',
+  cave: 'village',
+  reserve: 'village',
+}
+
+/** Les CONTENEURS (spec construction §4bis) : coffre + les conteneurs du Grenier. */
+const CONTAINER_TYPES: Partial<Record<StructureType, number>> = {
+  chest: SLOTS.CHEST,
+  silo: SLOTS.GRENIER,
+  cave: SLOTS.GRENIER,
+  reserve: SLOTS.GRENIER,
 }
 
 export function structureAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
@@ -851,7 +863,8 @@ export function addStructure(
   // On ne stocke le matériau que s'il n'est pas le défaut (bois) : snapshot léger,
   // et `s.material ?? 'wood'` fait foi partout (upgrade, démolition, PV).
   if (material && material !== 'wood' && isWallLike) structure.material = material
-  if (type === 'chest') structure.inventory = makeInventory(SLOTS.CHEST)
+  const containerSlots = CONTAINER_TYPES[type]
+  if (containerSlots !== undefined) structure.inventory = makeInventory(containerSlots)
   state.structures.push(structure)
   emitEvent(state, {
     type: 'structure_built',

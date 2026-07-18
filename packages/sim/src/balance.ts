@@ -433,6 +433,9 @@ export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./
   four_acier: { cut_stone: 8, iron_ingot: 5 },
   tour_meca: { wood: 8, iron_ingot: 3 },
   atelier_lourd: { cut_stone: 6, iron_ingot: 6 },
+  silo: { wood: 8, fiber: 4 },
+  cave: { stone: 8, cut_stone: 4 },
+  reserve: { cut_stone: 8, iron_ingot: 3 },
 }
 
 export type WallMaterial = 'wood' | 'stone' | 'metal'
@@ -473,6 +476,9 @@ export type ComponentType =
   | 'workshop'
   | 'tour_meca'
   | 'atelier_lourd'
+  | 'silo'
+  | 'cave'
+  | 'reserve'
 
 /** Coût (recette de l'objet à poser), palier du Feu qui débloque (R6) et PV. À calibrer. */
 export const COMPONENTS: Record<ComponentType, { cost: import('./items').ItemBag; unlockTier: number; hp: number }> = {
@@ -484,7 +490,22 @@ export const COMPONENTS: Record<ComponentType, { cost: import('./items').ItemBag
   workshop: { cost: { wood: 6, stone: 4 }, unlockTier: 1, hp: 100 },
   tour_meca: { cost: { wood: 8, iron_ingot: 3 }, unlockTier: 2, hp: 120 },
   atelier_lourd: { cost: { cut_stone: 6, iron_ingot: 6 }, unlockTier: 3, hp: 150 },
+  // Grenier : des CONTENEURS anti-pourriture. Silo → cave (passe l'hiver) → réserve.
+  silo: { cost: { wood: 8, fiber: 4 }, unlockTier: 1, hp: 100 },
+  cave: { cost: { stone: 8, cut_stone: 4 }, unlockTier: 2, hp: 130 },
+  reserve: { cost: { cut_stone: 8, iron_ingot: 3 }, unlockTier: 3, hp: 160 },
 }
+
+/**
+ * LE GRENIER (spec construction §4bis) : la CONSERVATION anti-pourriture, branchée
+ * sur `SPOIL_CYCLES`. Le facteur MULTIPLIE le temps de péremption d'un aliment rangé
+ * dans un conteneur de l'amas : par palier (silo → cave → réserve), et ×`ENCLOSED`
+ * en plus si l'amas est clos+toité (bonus « conservation renforcée », R13). À calibrer.
+ */
+export const GRENIER = {
+  PRESERVATION_BY_TIER: [2, 3, 5],
+  ENCLOSED_BONUS: 1.5,
+} as const
 
 /**
  * LES FONCTIONS ÉMERGENTES (spec construction R9-R10, §4bis). Une fonction émerge
@@ -494,7 +515,7 @@ export const COMPONENTS: Record<ComponentType, { cost: import('./items').ItemBag
  * fonction — identité stable quand on enrichit/appauvrit l'amas). `enclosureBonus` =
  * le bonus thématique quand l'amas est muré + toité (R13) ; `null` = plein air.
  */
-export type FunctionId = 'forge' | 'atelier'
+export type FunctionId = 'forge' | 'atelier' | 'grenier'
 
 export const FUNCTIONS: Record<
   FunctionId,
@@ -507,6 +528,10 @@ export const FUNCTIONS: Record<
   atelier: {
     recipeByTier: [['workshop'], ['workshop', 'tour_meca'], ['workshop', 'tour_meca', 'atelier_lourd']],
     enclosureBonus: 'vitesse',
+  },
+  grenier: {
+    recipeByTier: [['silo'], ['silo', 'cave'], ['silo', 'cave', 'reserve']],
+    enclosureBonus: 'conservation',
   },
 }
 
@@ -708,6 +733,9 @@ export type RecipeId =
   | 'workshop'
   | 'tour_meca'
   | 'atelier_lourd'
+  | 'silo'
+  | 'cave'
+  | 'reserve'
 
 export interface Recipe {
   /** `null` = À LA MAIN : nulle part, donc partout (spec craft-fortune C1). */
@@ -763,6 +791,9 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   workshop: { station: 'fire', inputs: COMPONENTS.workshop.cost, output: 'workshop', seconds: 12 },
   tour_meca: { station: 'fire', inputs: COMPONENTS.tour_meca.cost, output: 'tour_meca', seconds: 14 },
   atelier_lourd: { station: 'fire', inputs: COMPONENTS.atelier_lourd.cost, output: 'atelier_lourd', seconds: 16 },
+  silo: { station: 'fire', inputs: COMPONENTS.silo.cost, output: 'silo', seconds: 10 },
+  cave: { station: 'fire', inputs: COMPONENTS.cave.cost, output: 'cave', seconds: 14 },
+  reserve: { station: 'fire', inputs: COMPONENTS.reserve.cost, output: 'reserve', seconds: 16 },
 }
 
 /**
@@ -1889,6 +1920,9 @@ export const STRUCTURE_HP: Record<import('./items').StructureType, number> = {
   four_acier: COMPONENTS.four_acier.hp,
   tour_meca: COMPONENTS.tour_meca.hp,
   atelier_lourd: COMPONENTS.atelier_lourd.hp,
+  silo: COMPONENTS.silo.hp,
+  cave: COMPONENTS.cave.hp,
+  reserve: COMPONENTS.reserve.hp,
 }
 
 /** Hordes & événements du monde (spec événements). */
@@ -2136,6 +2170,9 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   workshop: 8,
   tour_meca: 10,
   atelier_lourd: 12,
+  silo: 8,
+  cave: 10,
+  reserve: 12,
 }
 
 /**
@@ -2235,6 +2272,9 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   workshop: 1,
   tour_meca: 1,
   atelier_lourd: 1,
+  silo: 1,
+  cave: 1,
+  reserve: 1,
 }
 
 /** Tailles de sac (spec inventaire R7). La longueur du tableau EST la capacité. */
@@ -2248,6 +2288,9 @@ export const SLOTS = {
    *  n'a qu'un seul jeu de règles. */
   NPC: 40,
   CHEST: 24,
+  /** Le conteneur d'un composant de Grenier (silo/cave/réserve) : plus grand qu'un
+   *  coffre — c'est une réserve de village, pas une malle (spec construction §4bis). */
+  GRENIER: 36,
   /** Assez grand pour que le cadavre ne tronque JAMAIS le butin (spec R11). */
   CORPSE: 48,
 } as const

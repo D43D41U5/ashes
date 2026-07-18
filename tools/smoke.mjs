@@ -1820,6 +1820,21 @@ const SCENARIOS = {
       })
       const aerr = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '')
       console.log(`Atelier (tranche 3) → ${atelier ? `N${atelier} émergé ✓` : `ABSENT ✗ (${aerr})`}`)
+
+      // LE GRENIER (tranche 4) : un silo (conteneur) posé près de l'amas émerge en
+      // Grenier N1 — et c'est un CONTENEUR (il a un inventaire, on y range).
+      await grant('silo')
+      await doAction({ type: 'place_component', tx: feu.tx + 6, ty: feu.ty }, 600)
+      const grenier = await page.evaluate(() => {
+        const st = window.__BRAISES__.scene
+        const f = st.view.functions.find((x) => x.functionId === 'grenier')
+        const silo = st.view.structures.find((s) => s.type === 'silo')
+        return { tier: f ? f.tier : 0, container: silo ? silo.inventory !== undefined : false }
+      })
+      const gerr = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '')
+      console.log(
+        `Grenier (tranche 4) → ${grenier.tier ? `N${grenier.tier} émergé ✓` : `ABSENT ✗ (${gerr})`}, conteneur ${grenier.container ? '✓' : '✗'}`,
+      )
     }
     await page.screenshot({ path: `${OUT}/construction.png` })
     console.log(`capture → ${OUT}/construction.png`)

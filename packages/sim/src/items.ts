@@ -87,6 +87,9 @@ export type ItemId =
   | 'workshop'
   | 'tour_meca'
   | 'atelier_lourd'
+  | 'silo'
+  | 'cave'
+  | 'reserve'
 
 /** Une case occupée. `wear` absent = neuf ; un empilable n'a jamais d'usure. */
 export interface Slot {
@@ -135,6 +138,10 @@ export type StructureType =
   | 'four_acier'
   | 'tour_meca'
   | 'atelier_lourd'
+  // Le Grenier : des CONTENEURS anti-pourriture (silo → cave → réserve).
+  | 'silo'
+  | 'cave'
+  | 'reserve'
 
 export type AccessLevel = 'private' | 'village' | 'public'
 
