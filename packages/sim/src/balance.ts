@@ -583,6 +583,7 @@ export type RecipeId =
   | 'spear'
   | 'hammer'
   | 'cooked_meat'
+  | 'campfire'
 
 export interface Recipe {
   /** `null` = À LA MAIN : nulle part, donc partout (spec craft-fortune C1). */
@@ -600,6 +601,14 @@ export interface Recipe {
 
 /** Chaînes ≤ 3 étapes, stations distinctes (GDD §8, spec R10-R11). */
 export const RECIPES: Record<RecipeId, Recipe> = {
+  /**
+   * LE FEU DE CAMP — un OBJET qu'on fabrique à mains nues, puis qu'on pose au sol
+   * (action `place_campfire`). Même prix que l'ancien `light_fire` (10 bois) : on
+   * n'a pas rendu le feu plus cher, on a séparé le fabriquer/porter/poser de
+   * l'allumer-ici. `station: null` — le survivant nu doit pouvoir se chauffer.
+   */
+  campfire: { station: null, inputs: { wood: 10 }, output: 'campfire', seconds: 6 },
+
   // ── La couche 1 : à mains nues, sans poste, dès la minute 0 (spec craft-fortune).
   // Tout y passe par la CORDE : le goulot est volontaire (C8) — la fibre cesse
   // d'être ce qu'on ramasse sans y penser, et le cueilleur a un client tout de suite.
@@ -1973,6 +1982,9 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   iron_pickaxe: 4,
   spear: 2,
   hammer: 3,
+  // Le feu de camp en ballot : LOURD (un tiers de la besace). On ne trimballe pas
+  // trois foyers dans son dos — le poser est un engagement, pas un réflexe.
+  campfire: 8,
 }
 
 /**
@@ -2063,6 +2075,8 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   iron_pickaxe: 1,
   spear: 1,
   hammer: 1,
+  // Un feu de camp par case : c'est un objet-structure, pas un consommable qu'on empile.
+  campfire: 1,
 }
 
 /** Tailles de sac (spec inventaire R7). La longueur du tableau EST la capacité. */

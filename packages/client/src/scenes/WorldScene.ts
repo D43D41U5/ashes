@@ -11,8 +11,11 @@
  * que câbler l'I/O réseau et le rendu.
  */
 import {
+  BALANCE,
   TEMPERATURE,
   TERRAIN_FOREST,
+  TERRAINS,
+  terrainAt,
   clairiereForet,
   createPrediction,
   decayRenderOffset,
@@ -57,6 +60,7 @@ import {
   publishAlarm,
   publishChronicle,
   publishError,
+  publishFoundableFire,
   publishOpenContainer,
   publishPickup,
   publishPlayerVitals,
@@ -70,7 +74,7 @@ import { ambianceDe, moduler } from '../render/zone-ambiance'
 import { CendreLayer } from './world/cendre-layer'
 import { CliffLayer } from './world/cliff-layer'
 import { PoiLayer } from './world/poi-layer'
-import { FireGlow } from './world/fire-glow'
+import { FireFx } from './world/fire-fx'
 import { WaterLayer } from './world/water-layer'
 import { AmbientLife } from './world/ambient-life'
 import { bindDebugKeys } from './world/debug-bindings'
@@ -218,7 +222,7 @@ export class WorldScene extends Phaser.Scene {
   private airColor = 0x000000
   private airAlpha = 0
   private airCible: { color: number; alpha: number } = { color: 0x000000, alpha: 0 }
-  private fireGlow: FireGlow | null = null
+  private fireFx: FireFx | null = null
   private water: WaterLayer | null = null
   /** Oiseaux et lucioles — décor pur, hors sim (voir world/ambient-life.ts). */
   ambientLife: AmbientLife | null = null
@@ -250,6 +254,23 @@ export class WorldScene extends Phaser.Scene {
   /** Position LOGIQUE du joueur (ancre autorité) — pour viser, mesurer une distance. */
   private get predicted(): { x: number; y: number } {
     return this.prediction.base
+  }
+  /**
+   * Miroir client des règles de POSE (place_campfire / build) : à portée de BÂTI, sur
+   * terrain marchable, hors landmark. L'occupation de la tuile, elle, est vérifiée par
+   * le fantôme (il a les structures). La sim revalide tout — ceci ne fait que colorer
+   * le fantôme juste, pour ne pas afficher « perdu » là où la pose passe (et l'inverse).
+   */
+  private placeable(tx: number, ty: number): boolean {
+    const p = this.predicted
+    const r = BALANCE.BUILD_RANGE
+    if ((tx + 0.5 - p.x) ** 2 + (ty + 0.5 - p.y) ** 2 > r * r) return false
+    if (zoneAt(this.map, tx + 0.5, ty + 0.5)) return false
+    if (TERRAINS[terrainAt(this.map, tx, ty)]?.walkable !== true) return false // eau, roche…
+    // Tuile LIBRE : ni structure, ni ressource, ni personne dessus (miroir du sim).
+    if (this.view.structures.some((s) => s.tx === tx && s.ty === ty)) return false
+    if (this.view.nodes.some((n) => n.tx === tx && n.ty === ty)) return false
+    return !this.lastEntities.some((e) => e.hp > 0 && Math.floor(e.x) === tx && Math.floor(e.y) === ty)
   }
   /** Les sprites-miroirs du snapshot (structures, nœuds, cadavres, autres entités). */
   private view!: SnapshotView
@@ -472,7 +493,7 @@ export class WorldScene extends Phaser.Scene {
           .rectangle(0, 0, worldW, worldH, 0x000000, 0)
           .setOrigin(0)
           .setDepth(AMBIENT_DEPTH - 0.1)
-        this.fireGlow = new FireGlow(this)
+        this.fireFx = new FireFx(this)
         this.ambientLife = new AmbientLife(this, (tx, ty) =>
           tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height ? -1 : (this.map.terrain[ty * this.map.width + tx] ?? -1),
         )
@@ -545,11 +566,15 @@ export class WorldScene extends Phaser.Scene {
     const aim = this.inputs.aim(this.input.activePointer)
     const overlay = Boolean(getHud(this.registry, 'mapOpen')) || Boolean(getHud(this.registry, 'characterMenuOpen'))
     this.view.setAim(overlay ? null : aim.nodeId, aim.inRange)
+    // Le fantôme de pose VIRE AU VERT selon les VRAIES règles de pose (portée de
+    // BÂTI, terrain, landmark) — pas la portée de bras `aim.inRange`, qui vaut pour
+    // récolter, pas pour poser (sinon un feu posable à 3 tuiles s'affiche « perdu »).
+    const placing = overlay ? null : this.inputs.placing()
     this.buildGhost.update(
-      overlay ? null : this.inputs.selected(),
+      placing,
       aim.tx,
       aim.ty,
-      aim.inRange,
+      placing !== null && this.placeable(aim.tx, aim.ty),
       this.view.structures,
       this.warp,
     )
@@ -557,6 +582,15 @@ export class WorldScene extends Phaser.Scene {
     // craft. Miroir pur du client — la sim revalide tout, à l'enfilage et à chaque
     // tick (spec craft-file F7, F14).
     publishStationsInRange(this.registry, this.predicted, this.view.structures)
+    // Un feu de camp libre à mes pieds → la fenêtre du bas « Fonder un village ? ».
+    // Étouffé pendant un overlay (sac/carte ouverts) : la fenêtre ne s'y superpose pas.
+    publishFoundableFire(
+      this.registry,
+      this.predicted,
+      overlay ? [] : this.view.structures,
+      this.view.villages,
+      this.playerId,
+    )
     this.checkVitals()
 
     // LE COMBAT SE VOIT. Tout se redessine à chaque frame à partir du SNAPSHOT : la
@@ -664,7 +698,7 @@ export class WorldScene extends Phaser.Scene {
       this.zoneAir?.setFillStyle(this.airColor).setAlpha(this.airAlpha)
       const day = daylight(hour)
       this.water?.update(time, hour, day) // la houle, et le soleil dessus
-      this.fireGlow?.update(this.view.structures, this.view.villages, day, time)
+      this.fireFx?.update(this.view.structures, this.view.villages, day, time)
       // La vie ambiante : les oiseaux traversent, les lucioles ne sortent qu'à la nuit.
       this.ambientLife?.update(this.cameras.main, time / 1000, deltaMs / 1000, 1 - day)
     }

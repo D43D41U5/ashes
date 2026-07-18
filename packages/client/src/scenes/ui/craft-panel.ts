@@ -55,23 +55,6 @@ export const BUILDABLE_LABEL: Record<(typeof BUILDABLES)[number], string> = {
   furnace: 'Four',
 }
 
-/**
- * LE FEU N'EST PAS UNE RECETTE — c'est une STRUCTURE, et pourtant sa place est ici.
- *
- * Sans lui : pas de cuisine (or le cru ne nourrit plus un homme), pas de chaleur
- * (or la nuit mord), pas de parade contre les loups (or la nuit chasse), et pas de
- * point de renaissance. C'est LA première chose que fait un joueur — elle ne peut
- * pas vivre dans un raccourci clavier qu'on a débranché, ni dans un menu qu'il
- * faudrait deviner. Elle vit là où il regarde déjà : « ce que je peux faire ICI ».
- */
-export const FEU = {
-  id: 'fire' as const,
-  label: 'Feu de camp',
-  inputs: STRUCTURE_COSTS.fire,
-  /** Il ne se BÂTIT pas (pas de marteau requis) : sinon rien ne pourrait commencer. */
-  action: { type: 'light_fire' } as const,
-}
-
 export const CATEGORY_LABEL: Record<CraftCategory, string> = {
   campement: 'CAMPEMENT',
   construction: 'CONSTRUCTION',
@@ -101,6 +84,10 @@ export const CATEGORY_ORDER: readonly CraftCategory[] = (Object.keys(CATEGORY_LA
  * disparaître en silence du panneau (même contrat que `ITEM_LABELS`).
  */
 export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
+  // LE FEU DE CAMP est une recette comme une autre désormais : elle produit un OBJET
+  // (station: null → faisable partout) qu'on pose ensuite au sol. Fini le bouton
+  // « poser ici » : on fabrique, on porte, on plante.
+  campfire: 'campement',
   crude_axe: 'outils',
   crude_pickaxe: 'outils',
   axe: 'outils',
@@ -120,7 +107,6 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
 export type CraftRow =
   | { kind: 'header'; label: string }
   | { kind: 'recipe'; id: RecipeId }
-  | { kind: 'fire' }
   | { kind: 'build'; structure: (typeof BUILDABLES)[number] }
 
 /** Sans accents ni casse : taper « epieu » doit trouver « Épieu taillé ». */
@@ -155,15 +141,6 @@ export function craftRows(
 
   const rows: CraftRow[] = []
   for (const cat of CATEGORY_ORDER) {
-    // LE CAMPEMENT : le Feu. Toujours là (on l'allume n'importe où), sauf si la
-    // recherche l'exclut. C'est le premier geste du jeu : il ne se cache pas.
-    if (cat === 'campement') {
-      if (q === '' || fold(FEU.label).includes(q)) {
-        rows.push({ kind: 'header', label: CATEGORY_LABEL.campement })
-        rows.push({ kind: 'fire' })
-      }
-      continue
-    }
     if (cat === 'construction') {
       // LE MARTEAU FAIT LE BÂTISSEUR (recolte.md G12) : sans lui en main, ce rayon
       // n'existe pas. Le panneau ne montre jamais ce que la sim refuserait.
@@ -312,7 +289,6 @@ export function createCraftPanel(
         draw()
         return
       }
-      if (bg.getData('fire') === true) return send(FEU.action)
       const id = bg.getData('recipe') as RecipeId | undefined
       if (id) send({ type: 'craft', recipeId: id })
     })
@@ -342,7 +318,6 @@ export function createCraftPanel(
           .setY(y + h / 2)
           .setData('build', row.structure)
           .setData('recipe', undefined)
-          .setData('fire', false)
           .setData('ready', ready)
         // L'ARMÉ se VOIT : sinon le joueur clique dans le monde sans savoir pourquoi
         // il pose un mur — ou pourquoi il n'en pose pas.
@@ -358,20 +333,8 @@ export function createCraftPanel(
           .setText(`${bagLine(cout)}  —  cliquez au sol`)
           .setY(y + 26)
           .setColor(ready ? INK.dim : INK.faint)
-      } else if (row.kind === 'fire') {
-        const ready = hasItems(inv, FEU.inputs)
-        slot.header.setVisible(false)
-        slot.bg.setVisible(true).setY(y + h / 2).setData('fire', true).setData('recipe', undefined).setData('ready', ready)
-        slot.bg.setStrokeStyle(1, ready ? 0x6b5a3a : 0x3a3a44)
-        slot.icon.setVisible(true).setTexture(itemIconKey('wood')).setY(y + h / 2).setAlpha(ready ? 1 : 0.35)
-        slot.name.setVisible(true).setText(FEU.label).setY(y + 8).setColor(ready ? INK.body : INK.faint)
-        slot.cost
-          .setVisible(true)
-          .setText(`${bagLine(FEU.inputs)}  —  ici même`)
-          .setY(y + 26)
-          .setColor(ready ? INK.dim : INK.faint)
       } else if (row.kind === 'header') {
-        slot.bg.setVisible(false).setData('recipe', undefined).setData('fire', false)
+        slot.bg.setVisible(false).setData('recipe', undefined)
         slot.icon.setVisible(false)
         slot.name.setVisible(false)
         slot.cost.setVisible(false)
@@ -381,7 +344,7 @@ export function createCraftPanel(
         const ready = hasItems(inv, recipe.inputs)
         const station = recipe.station
         slot.header.setVisible(false)
-        slot.bg.setVisible(true).setY(y + h / 2).setData('recipe', row.id).setData('fire', false).setData('ready', ready)
+        slot.bg.setVisible(true).setY(y + h / 2).setData('recipe', row.id).setData('ready', ready)
         slot.bg.setStrokeStyle(1, ready ? 0x6b5a3a : 0x3a3a44)
         slot.icon.setVisible(true).setTexture(itemIconKey(recipe.output)).setY(y + h / 2).setAlpha(ready ? 1 : 0.35)
         slot.name.setVisible(true).setText(ITEM_LABELS[recipe.output]).setY(y + 8).setColor(ready ? INK.body : INK.faint)

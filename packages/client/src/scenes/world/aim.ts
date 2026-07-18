@@ -20,7 +20,7 @@
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
 import { FOOD_VALUES, WEAPON_DAMAGE, type ItemId } from '@braises/sim'
-import type { Buildable } from '../../hud-state'
+import type { Placeable } from '../../hud-state'
 import type { Corpse, PlayerAction, ResourceNode } from '@braises/sim'
 
 /** Ce qu'il y a sous le curseur, et si c'est à portée de bras. */
@@ -99,10 +99,14 @@ export function isWeapon(item: ItemId | null): boolean {
 
 export function clickToAction(
   target: AimTarget,
-  selected: Buildable | null,
+  placing: Placeable | null,
   hand?: HandContext,
 ): PlayerAction | null {
-  if (selected !== null) return { type: 'build', structure: selected, tx: target.tx, ty: target.ty }
+  // POSER prime sur tout : quand on tient un feu de camp (ou qu'une construction est
+  // armée), le clic POSE, il ne récolte ni ne frappe « en passant ». Le mode dit ce
+  // que le clic fait — c'est ce qui le rend prévisible (même règle que le fantôme).
+  if (placing === 'fire') return { type: 'place_campfire', tx: target.tx, ty: target.ty }
+  if (placing !== null) return { type: 'build', structure: placing, tx: target.tx, ty: target.ty }
 
   // MANGER : on tient de quoi, on croque. (Le clic maintenu répète — voir holdHarvest.)
   if (hand && isFood(hand.held)) return { type: 'eat', item: hand.held! }
@@ -146,13 +150,13 @@ export function clickToAction(
  */
 export function holdHarvest(
   target: AimTarget,
-  selected: Buildable | null,
+  placing: Placeable | null,
   now: number,
   lastSentAt: number,
   cooldownMs: number,
   hand?: HandContext,
 ): PlayerAction | null {
-  if (selected !== null) return null // en mode construction, le maintien ne martèle rien
+  if (placing !== null) return null // en pose (construction ou feu de camp), le maintien ne martèle rien
   if (now - lastSentAt < cooldownMs) return null
   // Le MAINTIEN nourrit : c'est le geste que l'utilisateur a demandé pour le bandage
   // (« sélectionner dans la ceinture, maintenir le clic »), et il vaut pour ce qui se

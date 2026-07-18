@@ -62,6 +62,24 @@ describe('clickToAction — armé, le clic bâtit (A2)', () => {
   })
 })
 
+describe('poser un feu de camp : la main tient un feu, le clic POSE', () => {
+  it('placing = "fire" → `place_campfire` sur la tuile visée', () => {
+    const t = aimAt(11, 11, PLAYER, [], [], RANGE)
+    expect(clickToAction(t, 'fire')).toEqual({ type: 'place_campfire', tx: 11, ty: 11 })
+  })
+
+  it('poser PRIME sur tout : même sur un nœud, on pose (on ne récolte pas « en passant »)', () => {
+    const t = aimAt(10, 10, PLAYER, [node(7, 10, 10)], [], RANGE)
+    const main = { held: 'campfire' as const, dx: 1, dy: 0 }
+    expect(clickToAction(t, 'fire', main)).toEqual({ type: 'place_campfire', tx: 10, ty: 10 })
+  })
+
+  it('en pose, le maintien ne martèle rien (pas de feux à la chaîne)', () => {
+    const t = aimAt(10, 10, PLAYER, [node(7, 10, 10)], [], RANGE)
+    expect(holdHarvest(t, 'fire', 5000, 0, 1000)).toBeNull()
+  })
+})
+
 describe('holdHarvest — le maintien n’inonde pas la sim (A4, A6)', () => {
   const t = () => aimAt(10, 10, PLAYER, [node(7, 10, 10)], [], RANGE)
   const COOLDOWN = 1000

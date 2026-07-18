@@ -51,6 +51,12 @@ export interface Structure {
   type: StructureType
   tx: number
   ty: number
+  /**
+   * Le village auquel appartient la structure. `0` = AUCUN — le cas d'un feu de
+   * camp planté au sol (`place_campfire`), qui n'est qu'une source de chaleur et
+   * une station tant qu'on ne l'a pas promu en foyer (`found_village`). Les vrais
+   * villages commencent à 1 (`nextVillageId`), donc 0 ne collisionne avec aucun.
+   */
   villageId: number
   /** Le bâtisseur. 0 = le village lui-même (le Feu). */
   ownerId: number
@@ -96,6 +102,18 @@ export interface Village {
 
 export type VillageAction =
   | { type: 'light_fire' }
+  /**
+   * JE POSE LE FEU DE CAMP QUE JE TIENS (tuile visée). Il devient une structure
+   * `fire` SANS village (villageId 0) : chaleur + cuisine, rien d'autre. Fonder un
+   * foyer est un choix séparé (`found_village`), qu'on fait en s'approchant.
+   */
+  | { type: 'place_campfire'; tx: number; ty: number }
+  /**
+   * JE FONDE UN FOYER sur un feu de camp déjà planté (le mien, à portée). Le feu
+   * cesse d'être « libre » : il devient le Feu du village, et j'en suis le Chef.
+   * Aucun PNJ n'arrive (décision utilisateur : le spawn d'accueil est retiré).
+   */
+  | { type: 'found_village'; structureId: number }
   | { type: 'repair'; structureId: number }
   | { type: 'give'; targetEntityId: number; item: ItemId; count: number }
   | { type: 'build'; structure: Exclude<StructureType, 'fire'>; tx: number; ty: number }
@@ -127,7 +145,10 @@ export function getVillageOf(state: SimState, entityId: number): Village | undef
 
 /** Une structure bloque-t-elle ce déplaceur ? (spec village R8) */
 export function structureBlocks(s: Structure, moverVillageId: number | null): boolean {
-  if (s.type === 'fire' || s.type === 'house') return false // on marche sur le seuil
+  // La MAISON, on en franchit le seuil (on y entre). Le FEU, lui, a désormais un
+  // hitbox : un foyer de braises sous les pieds, ça se CONTOURNE (décision
+  // utilisateur) — on cuisine et on se chauffe en se tenant à côté, pas dessus.
+  if (s.type === 'house') return false
   if (s.type === 'door') return s.villageId !== moverVillageId
   return true
 }
@@ -229,7 +250,9 @@ export function applyStructureDamage(state: SimState, structureId: number, damag
   if (!s) return
   s.hp -= damage
   // Saboter la structure d'autrui est une hostilité (premier sang par sabotage).
-  if (byEntityId !== 0 && !state.monsters.some((m) => m.entityId === byEntityId)) {
+  // Un feu de camp LIBRE (villageId 0) n'appartient à personne : le casser ne fait
+  // de tort à aucun village, donc n'ouvre aucune hostilité.
+  if (byEntityId !== 0 && s.villageId !== 0 && !state.monsters.some((m) => m.entityId === byEntityId)) {
     const actorVillage = getVillageOf(state, byEntityId)
     if (actorVillage && actorVillage.id !== s.villageId) {
       recordHostility(state, byEntityId, s.villageId)
@@ -241,7 +264,7 @@ export function applyStructureDamage(state: SimState, structureId: number, damag
     if (s.inventory && !isEmpty(s.inventory)) {
       spillOnGround(state, s.tx + 0.5, s.ty + 0.5, {}, s.inventory)
     }
-    if (byEntityId !== 0 && !state.monsters.some((m) => m.entityId === byEntityId)) {
+    if (byEntityId !== 0 && s.villageId !== 0 && !state.monsters.some((m) => m.entityId === byEntityId)) {
       const actorVillage = getVillageOf(state, byEntityId)
       if (actorVillage && actorVillage.id !== s.villageId) {
         recordAct(state, byEntityId, ALIGNMENT.DESTROY_STRUCTURE_WARMTH)
@@ -312,6 +335,14 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
   }
 
   switch (action.type) {
+    /**
+     * ALLUMER + FONDER d'un seul geste, à ses pieds, à partir de bois brut : le
+     * RACCOURCI de test et de worldgen — le jumeau de `foundNpcVillage` (PNJ
+     * d'accueil compris). Le JOUEUR, lui, ne passe PLUS par ici : la ceinture
+     * fabrique l'OBJET feu de camp, qu'on POSE (`place_campfire` → un feu libre)
+     * puis qu'on peut PROMOUVOIR en foyer (`found_village`, SANS PNJ). Le panneau
+     * d'artisanat n'émet plus `light_fire` — il reste hors de portée du joueur.
+     */
     case 'light_fire': {
       const tx = Math.floor(actor.x)
       const ty = Math.floor(actor.y)
@@ -327,6 +358,68 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       removeItems(actor.inventory, STRUCTURE_COSTS.fire)
       const village = createVillage(state, { chiefId: actorId, tx, ty, npcsArrived: false })
       addStructure(state, 'fire', tx, ty, village.id, 0)
+      return
+    }
+
+    /**
+     * POSER LE FEU DE CAMP TENU sur la tuile visée : une structure `fire` LIBRE
+     * (villageId 0), rien de plus — chaleur et cuisine. Pas de village, pas de PNJ.
+     * L'objet tenu se consomme et DEVIENT la structure. Fonder un foyer est un choix
+     * séparé, qu'on prend ensuite en s'approchant (`found_village`).
+     */
+    case 'place_campfire': {
+      const { tx, ty } = action
+      if (!Number.isInteger(tx) || !Number.isInteger(ty)) return reject('case invalide')
+      const held = heldSlot(actor)
+      if (held?.item !== 'campfire') return reject('il faut un feu de camp en main')
+      // À portée de bras — pas à l'autre bout de la carte (vraisemblance, GDD §11).
+      if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) {
+        return reject('trop loin')
+      }
+      // Le Feu BLOQUE : le poser SOUS SES PIEDS, ce serait s'emmurer dans les
+      // braises. On le plante devant soi, jamais dessous.
+      if (Math.floor(actor.x) === tx && Math.floor(actor.y) === ty) return reject('pas sous ses pieds')
+      if (zoneAt(state.map, tx + 0.5, ty + 0.5)) return reject('les landmarks sont inconstructibles')
+      if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible') // eau, roche…
+      // TUILE LIBRE, au sens LARGE (décision utilisateur) : ni structure, ni ressource
+      // (arbre, filon, buisson…), ni personne (animal, PNJ, autre joueur) dessus. On ne
+      // pose pas un foyer sur ce qui est déjà là.
+      if (structureAt(state.structures, tx, ty)) return reject('tuile occupée')
+      if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) return reject('tuile occupée')
+      if (state.entities.some((e) => e.id !== actorId && e.hp > 0 && Math.floor(e.x) === tx && Math.floor(e.y) === ty)) {
+        return reject('tuile occupée')
+      }
+      // L'objet tenu se consomme (une unité) : il DEVIENT la structure.
+      held.count -= 1
+      if (held.count <= 0) actor.inventory[actor.activeSlot] = null
+      // villageId 0 = feu libre ; le poseur en est propriétaire (il cuisine, il démolit).
+      addStructure(state, 'fire', tx, ty, 0, actorId)
+      return
+    }
+
+    /**
+     * PROMOUVOIR un feu de camp libre en FOYER. Le feu (le mien, à portée) cesse
+     * d'être libre : il prend le villageId du village qu'on fonde, dont je suis le
+     * Chef. AUCUN PNJ d'accueil (`npcsArrived: true`) — décision utilisateur.
+     */
+    case 'found_village': {
+      if (getVillageOf(state, actorId)) return reject('déjà un foyer')
+      const s = state.structures.find((st) => st.id === action.structureId)
+      if (!s || s.type !== 'fire') return reject('pas un feu')
+      if (s.villageId !== 0) return reject('ce feu est déjà un foyer')
+      if (s.ownerId !== actorId) return reject('ce n’est pas votre feu')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      const min = BALANCE.FIRE_MIN_DISTANCE
+      if (state.villages.some((v) => distSq(v.fireTx, v.fireTy, s.tx, s.ty) < min * min)) {
+        return reject('trop proche d’un autre Feu')
+      }
+      const village = createVillage(state, { chiefId: actorId, tx: s.tx, ty: s.ty, npcsArrived: true })
+      // Le feu libre DEVIENT le Feu du village : il change d'appartenance et passe
+      // au village lui-même (ownerId 0 — un Feu n'a pas de maître privé, et ne se démolit pas).
+      s.villageId = village.id
+      s.ownerId = 0
+      s.access = 'village'
       return
     }
 
@@ -361,7 +454,11 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (state.tick < actor.cooldownUntil) return reject('trop tôt')
       const s = state.structures.find((st) => st.id === action.structureId)
       if (!s) return reject('structure inconnue')
-      if (getVillageOf(state, actorId)?.id !== s.villageId) return reject('pas votre village')
+      // Réparer exige d'en être : membre du village de la structure, OU son
+      // PROPRIÉTAIRE — un feu de camp libre (villageId 0) n'a que son poseur.
+      if (s.ownerId !== actorId && getVillageOf(state, actorId)?.id !== s.villageId) {
+        return reject('pas votre village')
+      }
       const max = STRUCTURE_HP[s.type]
       if (s.hp >= max) return reject('rien à réparer')
       const range = BALANCE.INTERACT_RANGE
@@ -376,7 +473,10 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
     case 'demolish': {
       const s = state.structures.find((st) => st.id === action.structureId)
       if (!s) return reject('structure inconnue')
-      if (s.type === 'fire') return reject('un Feu ne s’éteint pas')
+      // Le Feu D'UN VILLAGE ne s'éteint pas (défaire un foyer est un chantier à part).
+      // Un feu de camp LIBRE (villageId 0), lui, se démonte comme le reste : son poseur
+      // le récupère (à moitié) — c'est un objet de survie, pas un foyer.
+      if (s.type === 'fire' && s.villageId !== 0) return reject('un Feu ne s’éteint pas')
       const village = state.villages.find((v) => v.id === s.villageId)
       if (s.ownerId !== actorId && village?.chiefId !== actorId) {
         return reject('ni propriétaire ni Chef')

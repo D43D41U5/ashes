@@ -72,6 +72,47 @@ export function publishStationsInRange(
 }
 
 /**
+ * Y a-t-il un feu de camp LIBRE à portée que je pourrais promouvoir en foyer ?
+ * (un `fire` villageId 0 que JE possède, à `INTERACT_RANGE`, et sans village encore).
+ * UIScene en tire la fenêtre du bas « Fonder un village ici ? ». Pur miroir : la sim
+ * revalide `found_village`. On ne republie que sur CHANGEMENT — ça tourne chaque frame.
+ */
+/**
+ * LOGIQUE PURE (testée) : quel feu LIBRE puis-je promouvoir en foyer, ici et
+ * maintenant ? Un `fire` villageId 0 que JE possède, à `INTERACT_RANGE`, et à
+ * condition de n'avoir pas déjà un village (un foyer par partie). `null` = aucun.
+ */
+export function foundableFireAt(
+  player: { x: number; y: number },
+  structures: Structure[],
+  villages: Village[],
+  playerId: number,
+): number | null {
+  if (villages.some((v) => v.memberIds.includes(playerId))) return null
+  const r = BALANCE.INTERACT_RANGE
+  for (const s of structures) {
+    if (s.type !== 'fire' || s.villageId !== 0 || s.ownerId !== playerId) continue
+    const dx = s.tx + 0.5 - player.x
+    const dy = s.ty + 0.5 - player.y
+    if (dx * dx + dy * dy <= r * r) return s.id
+  }
+  return null
+}
+
+export function publishFoundableFire(
+  registry: Registry,
+  player: { x: number; y: number },
+  structures: Structure[],
+  villages: Village[],
+  playerId: number,
+): void {
+  const id = foundableFireAt(player, structures, villages, playerId)
+  const found = id === null ? null : { structureId: id }
+  const before = getHud(registry, 'foundableFire') ?? null
+  if (before?.structureId !== found?.structureId) setHud(registry, 'foundableFire', found)
+}
+
+/**
  * Le conteneur ouvert est-il encore à portée d'interaction du joueur ? Même
  * mesure qu'à l'ouverture (`nearestContainer`) : au carré, contre
  * `INTERACT_RANGE` importé de /sim (jamais recopié). `(cx, cy)` est le point

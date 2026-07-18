@@ -53,18 +53,17 @@ describe('le panneau d’artisanat : ce qu’il montre', () => {
     expect(hs).toEqual(['ARMES', 'CAMPEMENT', 'MATÉRIAUX', 'OUTILS', 'SURVIE'])
     expect(hs).toEqual([...hs].sort((a, b) => a.localeCompare(b, 'fr')))
     // L'ordre des en-têtes suit CATEGORY_ORDER, et chaque en-tête est SUIVI d'au
-    // moins une recette (un rayon sans article n'est pas un rayon, c'est du bruit).
-    // Chaque en-tête est SUIVI d'au moins un article (un rayon sans article n'est
-    // pas un rayon, c'est du bruit) — une recette, ou le Feu.
+    // moins un article (un rayon sans article n'est pas un rayon, c'est du bruit) —
+    // ici une recette (le Feu de camp EST une recette désormais, plus une ligne à part).
     rows.forEach((row, i) => {
-      if (row.kind === 'header') expect(['recipe', 'fire']).toContain(rows[i + 1]?.kind)
+      if (row.kind === 'header') expect(['recipe', 'build']).toContain(rows[i + 1]?.kind)
     })
-    // Les recettes d'un rayon appartiennent bien à ce rayon.
+    // Les recettes d'un rayon appartiennent bien à ce rayon — CAMPEMENT compris,
+    // dont le seul article est maintenant la recette `campfire`.
     let current = ''
     for (const row of rows) {
       if (row.kind === 'header') current = row.label
       else if (row.kind === 'recipe') expect(CATEGORY_LABELS_OF(row.id)).toBe(current)
-      else expect(current).toBe('CAMPEMENT') // le FEU, qui n'est pas une recette
     }
   })
 

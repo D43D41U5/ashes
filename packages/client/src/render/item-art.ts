@@ -32,6 +32,7 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   raw_meat: 'Viande crue',
   cooked_meat: 'Viande cuite',
   components: 'Composants',
+  campfire: 'Feu de camp',
   // ── Les ressources STRUCTURANTES des zones (spec worldgen R9) : chacune n'existe
   //    QUE dans sa zone, et chacune est LOURDE. Le nom doit dire d'où elle vient.
   hardwood: 'Gros bois',
@@ -98,6 +99,17 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x7a5a34).fillRect(2, 5, 12, 4)
     g.fillStyle(0x8d6b40).fillRect(2, 5, 12, 1)
     g.fillStyle(0xc3a678).fillRect(2, 5, 2, 4) // le cœur du bois, en bout
+  },
+
+  // Le foyer en miniature : une flamme qui monte, deux bûches au pied. C'est l'objet
+  // qu'on pose ; il porte le nom du jeu, il ne peut pas être une case vide.
+  campfire: (g) => {
+    g.fillStyle(0xd9541f).fillTriangle(4, 13, 12, 13, 8, 2) // la flamme, rouge-orangé
+    g.fillStyle(0xf0a020).fillTriangle(6, 13, 10, 13, 8, 6) // son cœur orange
+    g.fillStyle(0xffe37a).fillCircle(8, 10, 1) // le point chaud
+    g.fillStyle(0x5a3d22).fillRect(2, 12, 12, 2) // la bûche du dessus
+    g.fillStyle(0x6a4c2c).fillRect(3, 14, 10, 1) // celle du dessous
+    g.fillStyle(0xc3a678).fillRect(2, 12, 2, 2) // cœur clair au bout (NO)
   },
 
   // Trois galets gris empilés — froids, pas de teinte chaude.

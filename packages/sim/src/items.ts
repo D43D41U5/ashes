@@ -66,6 +66,14 @@ export type ItemId =
   | 'raw_meat'
   | 'cooked_meat'
   | 'components'
+  /**
+   * LE FEU DE CAMP, EN OBJET. On le fabrique (10 bois), on le PORTE, on le POSE au
+   * sol : il devient alors une structure `fire` SANS village (villageId 0) — une
+   * simple source de chaleur et une station de cuisine. Ce n'est qu'en s'en
+   * APPROCHANT qu'on peut choisir d'en fonder un foyer (action `found_village`).
+   * Fonder n'est plus le geste d'allumer : c'est une décision qui vient après.
+   */
+  | 'campfire'
 
 /** Une case occupée. `wear` absent = neuf ; un empilable n'a jamais d'usure. */
 export interface Slot {

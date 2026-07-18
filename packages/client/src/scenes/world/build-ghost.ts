@@ -1,10 +1,11 @@
 /**
  * LE FANTÔME DE CONSTRUCTION — le mode armé se VOIT (spec recolte.md G3).
  *
- * Tant que `selected === null` (l'état de départ), il n'existe pas : bâtir n'est
- * plus le comportement par défaut du clic, c'est un mode qu'on arme avec `B`.
- * Armé, une silhouette translucide de la structure suit la tuile visée, et vire
- * au ROUGE là où la pose est perdue d'avance (hors portée, tuile déjà occupée).
+ * Tant que `placing === null` (l'état de départ), il n'existe pas : poser n'est
+ * pas le comportement par défaut du clic. Il s'arme de deux façons — une
+ * CONSTRUCTION choisie au panneau (marteau en main), ou un FEU DE CAMP tenu dans
+ * la ceinture. Armé, une silhouette translucide de la structure suit la tuile
+ * visée, et vire au ROUGE là où la pose est perdue d'avance (hors portée, occupée).
  *
  * Il ne DÉCIDE rien : la sim revalide la pose (village, ressources, terrain,
  * emprise — invariant §3). Il ne fait qu'éviter au joueur de cliquer dans le
@@ -16,7 +17,7 @@
  */
 import { tileFeetAnchor, structureDepth } from '../../render/framing'
 import { TILE_PX } from '../../render/framing'
-import type { Buildable } from '../../hud-state'
+import type { Placeable } from '../../hud-state'
 import type { Structure } from '@braises/sim'
 import type Phaser from 'phaser'
 import type { Warp } from '../../render/warp'
@@ -40,14 +41,14 @@ export class BuildGhost {
    * structure le sera : ce qu'on voit est ce qu'on pose.
    */
   update(
-    selected: Buildable | null,
+    placing: Placeable | null,
     tx: number,
     ty: number,
     inRange: boolean,
     structures: readonly Structure[],
     warp: Warp | undefined,
   ): void {
-    if (selected === null) {
+    if (placing === null) {
       this.sprite.setVisible(false)
       return
     }
@@ -55,7 +56,7 @@ export class BuildGhost {
     const a = tileFeetAnchor(tx, ty, TILE_PX)
     const lift = warp?.lift(tx + 0.5, ty + 1) ?? 0
     this.sprite
-      .setTexture(`st-${selected}`)
+      .setTexture(`st-${placing}`)
       .setPosition(a.px, a.py - lift)
       .setDepth(structureDepth(ty, TILE_PX))
       .setTint(inRange && !occupied ? OK_TINT : BAD_TINT)

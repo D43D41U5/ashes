@@ -12,6 +12,11 @@ import type Phaser from 'phaser'
 /** Ce que le joueur peut sélectionner pour bâtir. */
 export type Buildable = 'wall' | 'door' | 'chest' | 'workshop' | 'furnace'
 
+/** Ce qu'un clic gauche peut POSER au sol : une CONSTRUCTION (marteau en main) ou
+ *  le FEU DE CAMP qu'on tient (`'fire'`). Le fantôme et le résolveur de clic en
+ *  dérivent tous les deux — une seule notion, deux consommateurs. */
+export type Placeable = Buildable | 'fire'
+
 /** Les stations d'artisanat (les recettes `station: null` n'en demandent aucune). */
 export type StationId = 'fire' | 'workshop' | 'furnace'
 
@@ -71,6 +76,11 @@ export interface HudState {
   /** Structure armée pour le mode construction — `null` = DÉSARMÉ, et c'est
    *  l'état de départ : le clic nu ne bâtit jamais (spec recolte.md G1-G2). */
   selected: Buildable | null
+  /** Un feu de camp LIBRE à portée qu'on pourrait promouvoir en foyer (un `fire`
+   *  villageId 0 que JE possède, et je n'ai pas encore de village), ou `null`. Posé
+   *  par WorldScene chaque frame ; lu par UIScene, qui affiche alors la fenêtre du
+   *  bas « Fonder un village ici ? ». Le clic Oui envoie `found_village`. */
+  foundableFire: { structureId: number } | null
   /** LE MENU PERSONNAGE (TAB) est-il ouvert ? C'est l'écran qui rassemble ce que le
    *  personnage EST et ce qu'il PEUT : son sac, sa ceinture, son artisanat — et
    *  demain ses vêtements et ses maîtrises. Il s'appelait « inventaire » quand il

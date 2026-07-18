@@ -460,9 +460,26 @@ describe('les monstres (A6)', () => {
   it('le sanglier fuit quand on le frappe, et sa viande se cuit', () => {
     const sim = makeSim()
     const a = spawnEntity(sim, 10, 10)
-    grantHeld(sim, a, 'spear', { wood: 10 })
-    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'light_fire' } }])
+    grantHeld(sim, a, 'spear', { campfire: 1 })
+    // Un FOYER sans PNJ. On pose un feu de camp à côté (il a un hitbox : jamais sous
+    // les pieds) puis on le PROMEUT en village — `found_village` n'amène AUCUN PNJ.
+    // On veut le modificateur de dégâts du VILLAGEOIS (base 18, le sanglier encaisse
+    // et survit), mais SANS la milice de PNJ qui, le Feu bloquant, se posterait tout
+    // près et l'achèverait avant qu'on l'observe. Le feu ne sert sinon qu'à cuire.
+    const cf = entity(sim, a).inventory.findIndex((s) => s?.item === 'campfire')
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'set_active_slot', slot: cf } }])
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'place_campfire', tx: 9, ty: 10 } }])
+    const foyer = sim.structures.find((s) => s.type === 'fire')!
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'found_village', structureId: foyer.id } }])
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'set_active_slot', slot: 0 } }]) // reprend la lance
     const b = spawnMonster(sim, 'boar', 11.2, 10)
+    // Le sanglier doit être SUR SES GARDES avant le coup : sinon la « mise à mort
+    // propre » (spec chasse C6) frappe ×fort une bête surprise et l'ONE-SHOT — on
+    // n'observe alors jamais sa réaction. On le laisse donc PERCEVOIR le joueur
+    // quelques ticks (sa suspicion monte, il s'alerte, et il ne bouge pas : sa portée
+    // de fuite est nulle, « il laisse approcher ») — ce que faisait autrefois
+    // l'agitation des PNJ d'accueil, retirés d'ici avec le village.
+    for (let t = 0; t < 10; t++) tick(sim)
 
     strike(sim, a, 1, 0)
     const boar = entity(sim, b)

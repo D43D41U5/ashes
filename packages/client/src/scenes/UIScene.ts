@@ -14,6 +14,7 @@ import { createFatalPanel, type FatalPanel } from './ui/fatal'
 import { createInventoryPanel, inventoryGeometry, type InventoryPanel } from './ui/inventory-panel'
 import { CRAFT_PANEL_MARGIN_Y, CRAFT_PANEL_W, createCraftPanel, type CraftPanel } from './ui/craft-panel'
 import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
+import { createFoundVillagePrompt, type FoundVillagePrompt } from './ui/found-village-prompt'
 import { createLoadingScreen, type LoadingScreen } from './ui/loading'
 import { createPickupToasts, type PickupToasts } from './ui/pickup-toasts'
 import { createVitals, type Vitals } from './ui/vitals'
@@ -58,6 +59,8 @@ export class UIScene extends Phaser.Scene {
   /** Le panneau de craft (à droite du sac) et la file (toujours à l'écran). */
   private craftPanel!: CraftPanel
   private craftQueueView!: CraftQueueView
+  /** La fenêtre du bas « Fonder un village ici ? » — près d'un feu de camp libre. */
+  private foundVillagePrompt!: FoundVillagePrompt
   /** Les toasts « +2 BOIS (14) » — le butin s'inscrit à une place FIXE du HUD. */
   private pickups!: PickupToasts
   private journalPanel!: Phaser.GameObjects.Container
@@ -164,6 +167,9 @@ export class UIScene extends Phaser.Scene {
     // Cachée jusqu'au premier instant jouable : rien du HUD ne doit s'afficher
     // par-dessus l'écran de chargement (même règle que la ceinture, ci-dessus).
     this.craftQueueView.setVisible(false)
+    // La fenêtre « Fonder un village ici ? » : née cachée, elle ne paraît qu'auprès
+    // d'un feu de camp libre (WorldScene pose `foundableFire`).
+    this.foundVillagePrompt = createFoundVillagePrompt(this, (action) => queueAction(this.registry, action))
     // Les toasts de récolte : ils s'empilent juste au-dessus des vitales.
     this.pickups = createPickupToasts(this)
     // Le journal (J) : la chronique de la saison, la Mémoire v1.
@@ -500,6 +506,10 @@ export class UIScene extends Phaser.Scene {
     // La construction ARMÉE part au monde : c'est WorldScene qui peint le fantôme
     // et qui pose au clic. L'UI décide, la scène du monde exécute.
     setHud(this.registry, 'selected', this.craftPanel.armed())
+    // La fenêtre du bas « Fonder un village ici ? » : WorldScene décide QUAND (près
+    // d'un feu libre à soi, sans foyer encore) ; elle s'efface pendant les overlays
+    // (WorldScene y pose `foundableFire` à null). L'UI ne fait que la montrer.
+    this.foundVillagePrompt.update(getHud(this.registry, 'foundableFire') ?? null)
     // La file, elle, se voit TOUJOURS : une file bouchée (sac plein) ou en pause
     // (station quittée) doit se remarquer sans aller ouvrir un menu (spec F15).
     this.craftQueueView.setVisible(true)

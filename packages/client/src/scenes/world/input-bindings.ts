@@ -19,7 +19,7 @@
  */
 import { BALANCE, SLOTS, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@braises/sim'
 import Phaser from 'phaser'
-import { getHud, setHud, type Buildable } from '../../hud-state'
+import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
 import { aimAt, clickToAction, holdHarvest, type AimTarget, type HandContext } from './aim'
 import { BELT_BINDINGS, KEYMAP } from './keymap'
@@ -45,10 +45,10 @@ export interface MovementBindings {
   tickHold(): void
   /** Ce que vise le curseur MAINTENANT — pour le surlignage et le fantôme. */
   aim(pointer: Phaser.Input.Pointer): AimTarget
-  /** La structure armée. TOUJOURS `null` depuis le débranchement de `B` : le mode
-   *  construction n'est plus ARMABLE, mais sa plomberie (fantôme, `clickToAction`)
-   *  reste entière — elle attend la nouvelle interaction. */
-  selected(): Buildable | null
+  /** Ce que le clic gauche POSERAIT maintenant : une construction armée au panneau
+   *  (marteau en main), ou `'fire'` si l'on tient un feu de camp dans la ceinture.
+   *  `null` = rien à poser. Le fantôme et le résolveur de clic le lisent ici. */
+  placing(): Placeable | null
 }
 
 /** Le rechargement de récolte, en millisecondes — le client cadence ses envois
@@ -126,10 +126,19 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   const sprintKeys = grab(KEYMAP.sprint)
   const sneakKeys = grab(KEYMAP.sneak)
 
-  // LE MODE CONSTRUCTION S'ARME AU PANNEAU (menu personnage, rayon CONSTRUCTION —
-  // marteau en main). Il ne vit plus sur une touche : il vit là où le joueur
-  // regarde. Le fantôme et le résolveur de clic le lisent ici, dans le HUD.
-  const selected = (): Buildable | null => getHud(scene.registry, 'selected') ?? null
+  // CE QUE LE CLIC POSERAIT. Deux sources, une seule notion : une CONSTRUCTION armée
+  // au panneau (marteau en main, lue dans le HUD), OU le FEU DE CAMP qu'on tient dans
+  // la ceinture. On peut poser plusieurs feux librement — la promotion en foyer, elle,
+  // est un geste à part (fenêtre du bas → `found_village`). Le fantôme et le résolveur
+  // de clic (aim.ts) le lisent ici, jamais l'un sans l'autre.
+  const placing = (): Placeable | null => {
+    const armed = getHud(scene.registry, 'selected') ?? null
+    if (armed !== null) return armed
+    const inv = getHud(scene.registry, 'inv') ?? []
+    const slot = getHud(scene.registry, 'activeSlot') ?? -1
+    const held = slot >= 0 ? (inv[slot]?.item ?? null) : null
+    return held === 'campfire' ? 'fire' : null
+  }
 
   // La CEINTURE : 1-6 tiennent une case (spec inventaire R17). Affichage
   // optimiste (R22) — on surligne tout de suite, le prochain snapshot fait foi.
@@ -253,7 +262,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     if (pointer.rightButtonDown()) return
     // Le résolveur PUR tranche (aim.ts) : MANGER, FRAPPER, récolter, fouiller —
     // selon CE QU'ON TIENT. C'est la seule règle d'interaction du jeu.
-    const action = clickToAction(aimNow(pointer), selected(), handAt(pointer))
+    const action = clickToAction(aimNow(pointer), placing(), handAt(pointer))
     holding = true
     if (action?.type === 'attack') {
       // FRAPPER, c'est ARMER. Le clic bref donne le coup simple (la charge n'aura pas
@@ -305,7 +314,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     }
     const action = holdHarvest(
       aimNow(pointer),
-      selected(),
+      placing(),
       scene.time.now,
       lastHarvestAt,
       GATHER_COOLDOWN_MS,
@@ -317,5 +326,5 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     }
   }
 
-  return { keys, sprintKeys, sneakKeys, tickHold, aim: aimNow, selected }
+  return { keys, sprintKeys, sneakKeys, tickHold, aim: aimNow, placing }
 }

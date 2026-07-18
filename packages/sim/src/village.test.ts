@@ -4,6 +4,7 @@ import { ALIGNMENT, BALANCE, COMBAT, FOOD_VALUES, SLOTS, TERRAIN_GRASS } from '.
 import { drainEvents } from './events'
 import { countOf, inventoryOf, makeInventory } from './items'
 import { createEmptyMap } from './map'
+import { isBlockedAt } from './collision'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { getVillageOf, grantItems, structureAt } from './village'
 
@@ -105,6 +106,218 @@ describe('le Feu (A1)', () => {
   })
 })
 
+describe('le feu de camp — objet posé, foyer optionnel (décision utilisateur)', () => {
+  /** Donne UN feu de camp et le met EN MAIN (case 0 de la ceinture). */
+  function armCampfire(sim: SimState, id: number): void {
+    grantItems(sim, id, { campfire: 1 })
+    const slot = sim.entities.find((e) => e.id === id)!.inventory.findIndex((s) => s?.item === 'campfire')
+    act(sim, id, { type: 'set_active_slot', slot })
+  }
+
+  it('POSER un feu de camp : une structure `fire` LIBRE (villageId 0), sans village ni PNJ', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, id)
+    drainEvents(sim)
+    act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
+    const fire = structureAt(sim.structures, 11, 11)
+    expect(fire?.type).toBe('fire')
+    expect(fire?.villageId).toBe(0) // LIBRE : aucun foyer
+    expect(fire?.ownerId).toBe(id) // …mais à moi (je cuisine, je démolis)
+    expect(sim.villages).toHaveLength(0) // aucun village fondé
+    expect(sim.npcs).toHaveLength(0) // aucun PNJ
+    expect(countOf(sim.entities.find((e) => e.id === id)!.inventory, 'campfire')).toBe(0) // consommé
+  })
+
+  it('refuse de poser sans feu de camp en main', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    drainEvents(sim)
+    act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
+    expect(rejections(sim)).toContain('il faut un feu de camp en main')
+    expect(sim.structures).toHaveLength(0)
+  })
+
+  it('refuse de poser hors de portée de bras', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, id)
+    drainEvents(sim)
+    act(sim, id, { type: 'place_campfire', tx: 40, ty: 40 })
+    expect(rejections(sim)).toContain('trop loin')
+    expect(sim.structures).toHaveLength(0)
+  })
+
+  it('le feu posé a un HITBOX : sa tuile bloque le déplacement, pas celle d’à côté', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, id)
+    act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
+    const world = { map: sim.map, structures: sim.structures, nodes: sim.nodes }
+    expect(isBlockedAt(world, 11, 11)).toBe(true) // le foyer bloque sa tuile
+    expect(isBlockedAt(world, 10, 11)).toBe(false) // on le contourne par à côté
+  })
+
+  it('refuse de poser un feu SOUS SES PIEDS (il bloquerait le poseur)', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, id)
+    drainEvents(sim)
+    act(sim, id, { type: 'place_campfire', tx: 10, ty: 10 }) // sa propre tuile
+    expect(rejections(sim)).toContain('pas sous ses pieds')
+    expect(structureAt(sim.structures, 10, 10)).toBeUndefined()
+  })
+
+  it('plusieurs feux libres cohabitent — la distance minimale ne vaut que pour les VILLAGES', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, id)
+    act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
+    armCampfire(sim, id)
+    drainEvents(sim)
+    act(sim, id, { type: 'place_campfire', tx: 9, ty: 9 }) // tout près du premier
+    expect(rejections(sim)).toEqual([]) // aucun « trop proche » : ce sont des feux libres
+    expect(structureAt(sim.structures, 9, 9)?.type).toBe('fire')
+  })
+
+  it('S’APPROCHER d’un feu libre permet de FONDER : le feu devient le Feu du village', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, id)
+    act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
+    const fire = structureAt(sim.structures, 11, 11)!
+    drainEvents(sim)
+    act(sim, id, { type: 'found_village', structureId: fire.id })
+    const village = getVillageOf(sim, id)
+    expect(village?.chiefId).toBe(id)
+    expect(fire.villageId).toBe(village!.id) // le feu libre est DEVENU le Feu du foyer
+    expect(fire.ownerId).toBe(0) // il appartient au village, plus à moi
+    expect(sim.npcs).toHaveLength(0) // toujours aucun PNJ
+    expect(drainEvents(sim).some((e) => e.type === 'village_founded' && e.chiefId === id)).toBe(true)
+  })
+
+  it('refuse de fonder deux fois — un foyer par joueur', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, id)
+    act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
+    act(sim, id, { type: 'found_village', structureId: structureAt(sim.structures, 11, 11)!.id })
+    armCampfire(sim, id)
+    act(sim, id, { type: 'place_campfire', tx: 9, ty: 9 })
+    const second = structureAt(sim.structures, 9, 9)!
+    drainEvents(sim)
+    act(sim, id, { type: 'found_village', structureId: second.id })
+    expect(rejections(sim)).toContain('déjà un foyer')
+    expect(second.villageId).toBe(0) // resté libre
+  })
+
+  it('refuse de fonder sur le feu d’un AUTRE', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, a)
+    act(sim, a, { type: 'place_campfire', tx: 11, ty: 11 })
+    const fire = structureAt(sim.structures, 11, 11)!
+    const b = spawnEntity(sim, 10.5, 11.5) // à côté du feu de A (le feu bloque sa tuile), donc à portée
+    drainEvents(sim)
+    act(sim, b, { type: 'found_village', structureId: fire.id })
+    expect(rejections(sim)).toContain('ce n’est pas votre feu')
+    expect(sim.villages).toHaveLength(0)
+  })
+
+  it('le POSEUR démonte son feu libre et récupère du bois (l’objet se reprend)', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, id)
+    act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
+    drainEvents(sim)
+    act(sim, id, { type: 'demolish', structureId: structureAt(sim.structures, 11, 11)!.id })
+    expect(structureAt(sim.structures, 11, 11)).toBeUndefined() // démonté
+    expect(countOf(sim.entities.find((e) => e.id === id)!.inventory, 'wood')).toBeGreaterThan(0) // remboursé
+  })
+
+  it('mais le Feu D’UN VILLAGE, une fois promu, ne se démonte plus', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, id)
+    act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
+    act(sim, id, { type: 'found_village', structureId: structureAt(sim.structures, 11, 11)!.id })
+    drainEvents(sim)
+    act(sim, id, { type: 'demolish', structureId: structureAt(sim.structures, 11, 11)!.id })
+    expect(rejections(sim)).toContain('un Feu ne s’éteint pas')
+    expect(structureAt(sim.structures, 11, 11)?.type).toBe('fire')
+  })
+
+  it('refuse de poser sur un landmark, ou sur une tuile déjà occupée', () => {
+    const sim = makeSim()
+    const inLandmark = spawnEntity(sim, 62.5, 62.5) // dans « le Pont »
+    armCampfire(sim, inLandmark)
+    drainEvents(sim)
+    act(sim, inLandmark, { type: 'place_campfire', tx: 62, ty: 63 })
+    expect(rejections(sim)).toContain('les landmarks sont inconstructibles')
+
+    const id = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, id)
+    act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
+    armCampfire(sim, id)
+    drainEvents(sim)
+    act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 }) // la même tuile
+    expect(rejections(sim)).toContain('tuile occupée')
+  })
+
+  it('refuse de poser sur une RESSOURCE ou sur QUELQU’UN (tuile occupée au sens large)', () => {
+    const sim = makeSim()
+    const id = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, id)
+    // Une ressource (un arbre) sur la tuile visée.
+    sim.nodes.push({ id: 999, type: 'tree' as const, tx: 11, ty: 11, stock: 5, regrowAt: 0 })
+    drainEvents(sim)
+    act(sim, id, { type: 'place_campfire', tx: 11, ty: 11 })
+    expect(rejections(sim)).toContain('tuile occupée')
+    expect(structureAt(sim.structures, 11, 11)).toBeUndefined()
+    // Quelqu'un (un animal, une entité) sur une autre tuile visée — le feu tenu n'a
+    // pas été consommé par le refus, on peut donc réessayer directement.
+    spawnEntity(sim, 12.5, 10.5) // occupe la tuile (12,10)
+    drainEvents(sim)
+    act(sim, id, { type: 'place_campfire', tx: 12, ty: 10 })
+    expect(rejections(sim)).toContain('tuile occupée')
+    expect(structureAt(sim.structures, 12, 10)).toBeUndefined()
+  })
+
+  it('promouvoir refuse : trop loin, pas un feu, un feu déjà promu, trop près d’un village', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 10.5, 10.5)
+    armCampfire(sim, a)
+    act(sim, a, { type: 'place_campfire', tx: 12, ty: 10 })
+    const fire = structureAt(sim.structures, 12, 10)!
+    // TROP LOIN : le feu est à (12,10), le joueur reste à (10.5,10.5) — hors INTERACT_RANGE.
+    drainEvents(sim)
+    act(sim, a, { type: 'found_village', structureId: fire.id })
+    expect(rejections(sim)).toContain('trop loin')
+    // PAS UN FEU : un identifiant qui ne désigne aucune structure.
+    drainEvents(sim)
+    act(sim, a, { type: 'found_village', structureId: 99999 })
+    expect(rejections(sim)).toContain('pas un feu')
+    // A s'approche et promeut pour de bon (village de A à (12,10)).
+    sim.entities.find((e) => e.id === a)!.x = 11.5
+    act(sim, a, { type: 'found_village', structureId: fire.id })
+    expect(getVillageOf(sim, a)?.chiefId).toBe(a)
+    // FEU DÉJÀ PROMU : un autre, à portée, ne peut pas le re-fonder.
+    const b = spawnEntity(sim, 12.5, 11.5)
+    drainEvents(sim)
+    act(sim, b, { type: 'found_village', structureId: fire.id })
+    expect(rejections(sim)).toContain('ce feu est déjà un foyer')
+    // TROP PRÈS D'UN VILLAGE : B pose son propre feu à ~9 tuiles (< 48) et tente de le promouvoir.
+    sim.entities.find((e) => e.id === b)!.x = 20.5
+    sim.entities.find((e) => e.id === b)!.y = 11.5
+    armCampfire(sim, b)
+    act(sim, b, { type: 'place_campfire', tx: 21, ty: 11 })
+    drainEvents(sim)
+    act(sim, b, { type: 'found_village', structureId: structureAt(sim.structures, 21, 11)!.id })
+    expect(rejections(sim)).toContain('trop proche d’un autre Feu')
+    expect(getVillageOf(sim, b)).toBeUndefined()
+  })
+})
+
 describe('le marteau de construction (G12)', () => {
   it('SANS marteau en main, on ne bâtit RIEN — même avec le village et les matériaux', () => {
     const sim = makeSim()
@@ -161,6 +374,11 @@ describe('la construction (A2)', () => {
     act(sim, id, { type: 'build', structure: 'wall', tx: 12, ty: 10 })
     expect(countOf(sim.entities[0]!.inventory, 'wood')).toBe(before - 2)
     expect(structureAt(sim.structures, 12, 10)?.type).toBe('wall')
+    // Le Feu a un hitbox désormais, et `light_fire` l'a allumé SOUS le fondateur
+    // (à ses pieds) : il y est coincé. Ce test parle de collision CONTRE LE MUR — on
+    // écarte donc le joueur de son propre foyer, sur une tuile libre à l'ouest du mur.
+    sim.entities[0]!.x = 11.5
+    sim.entities[0]!.y = 10.5
     // Le mur bloque : marcher vers l'est clampe flush contre lui. On marche LONGTEMPS,
     // parce que le fondateur est chargé comme un mulet (100 bois + 20 pierres) et que
     // le PORTAGE le fait ramper depuis la spec `portage.md` : ce test-ci parle de
