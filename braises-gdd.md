@@ -269,7 +269,11 @@ La fiche tient sur un écran : six jauges, quinze maîtrises dont trois qui te d
 
 ---
 
-## 6ter. La construction du village — DÉCISION ACTÉE : modèle à slots
+## 6ter. La construction du village — RÉVISÉ le 2026-07-18 : builder à composition émergente
+
+> **RÉVISION MAJEURE (2026-07-18, décision d'Alexis).** Le « modèle à slots » (State of Decay) décrit plus bas est **remplacé** par un **builder à composition émergente, façon Rust**, conçu en session. En bref : le **Feu = Tool Cupboard** — on fonde librement sur sol ouvert *entre* les landmarks (qui restent des communs contestés), dans un **carré** qui grandit ×palier ; on y pose **instantanément** des **composants 1×1** (enclume, four, lit…) qui, **groupés en amas, font émerger des fonctions** (enclume+four = forge) dont le **palier = la richesse de l'amas** ; **murer + toiter** un amas donne un **bonus thématique** par fonction (optionnel) ; **pas d'unicité**, **pas de temps de chantier** (la friction = trouver les matériaux), seuls les **murs** se dégradent via l'**upkeep du Feu**. Interface façon Rust : marteau à menu de pose séparé, fantôme prédictif « → Forge N2 », clic-par-case, sols et toits. Ce que ça achète : le room-building n'est plus *critique* (l'enceinte n'est qu'un bonus), donc le scope que le modèle à slots fuyait est désamorcé. **Spec complète et actuelle : `docs/specs/construction.md`. Journal : `docs/decisions.md` (2026-07-18).**
+
+*⤵︎ Ci-dessous : le modèle initial, conservé pour la mémoire du design (le « pourquoi les slots » reste instructif) — ce n'est plus la cible.*
 
 **Pas de construction libre.** Chaque village s'installe sur un **site prédéfini** de la carte, avec un plan fixe et des **slots typés** dans lesquels on choisit quel bâtiment construire (modèle State of Decay). Le trade assumé : on échange l'expression créative individuelle contre la lisibilité stratégique et un scope divisé par deux — et dans un jeu dont le personnage principal est le *village*, l'expression migre naturellement du « comment je construis » vers « qu'est-ce qu'on construit, et où on s'installe ».
 
