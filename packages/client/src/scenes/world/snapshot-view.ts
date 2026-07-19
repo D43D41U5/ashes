@@ -23,11 +23,13 @@ import {
   type ResourceNode,
   type Structure,
   type WallMaterial,
+  type NodeDelta,
+  type SnapshotMessage,
 } from '@braises/sim'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
 import { windSway } from '../../render/wind'
-import type { NodeDelta, SnapshotMessage } from '../../protocol'
+import { pushSample, sampleAt, type Sample } from './interp'
 import {
   actorPlacement,
   corpseDepth,
@@ -53,8 +55,21 @@ const AIM_TINT_FAR = 0x8a8a92
  *  Assez pour qu'on comprenne où il est passé — pas assez pour joncher la carte. */
 const ESCAPE_LINGER_MS = 6000
 
-/** Interpolation des autres entités : vers le dernier snapshot, sur un tick (R4). */
-const INTERP_MS = 1000 / BALANCE.TICK_RATE_HZ
+/**
+ * DÉLAI d'interpolation par DÉFAUT : un tick. C'est le comportement Veillée (solo) —
+ * les snapshots arrivent à cadence fixe, ~0 latence, on rend un tick en retard et
+ * c'est fluide. En MULTI, `SnapshotView.interpDelayMs` est monté (≈100 ms) pour
+ * absorber la gigue réseau (voir `INTERP_DELAY_MULTI_MS`).
+ */
+const INTERP_DELAY_DEFAULT_MS = 1000 / BALANCE.TICK_RATE_HZ
+
+/**
+ * DÉLAI d'interpolation en MULTI (≈100 ms). Un joueur distant est rendu 100 ms dans
+ * le passé, entre deux snapshots encadrants : c'est le tampon de gigue standard
+ * (Source, Overwatch). On paie 100 ms de retard visuel sur les AUTRES contre de la
+ * fluidité — l'avatar local, lui, est prédit et ne subit aucun retard.
+ */
+export const INTERP_DELAY_MULTI_MS = 100
 
 /** Emprise VISUELLE par texture d'acteur (tuiles) — R12. Découplée de la
  * résolution native de l'art : un placeholder 12×12 rend ici à ces proportions.
@@ -223,11 +238,13 @@ export interface InterpolatedSprite {
   textureKey: string
   /** Silhouette TASSÉE ce snapshot (rampeur, tapi, fougeur) — lue par `interpolate`. */
   crouch: boolean
-  fromX: number
-  fromY: number
-  toX: number
-  toY: number
-  startedAt: number
+  /** Relevés de position datés — `interpolate` y rend à `now - interpDelayMs` (tampon de gigue). */
+  buffer: Sample[]
+}
+
+/** Le dernier relevé connu d'un tampon (position autoritative la plus récente). */
+function latest(buffer: Sample[]): Sample {
+  return buffer[buffer.length - 1]!
 }
 
 /** Le nom affiché d'une fonction émergente (spec construction R22). Étendu par tranche. */
@@ -291,6 +308,8 @@ export class SnapshotView {
   functions: SnapshotMessage['functions'] = []
   /** Les autres entités (tout sauf l'avatar local, qui est prédit). */
   readonly others = new Map<number, InterpolatedSprite>()
+  /** Délai d'interpolation des autres entités (ms). WorldScene le monte en multi. */
+  interpDelayMs = INTERP_DELAY_DEFAULT_MS
 
   private structureSprites = new Map<number, Phaser.GameObjects.Image>()
   /** Pool d'étiquettes flottantes « Forge · N2 » (spec construction R22). */
@@ -452,11 +471,14 @@ export class SnapshotView {
     }
   }
 
-  /** Fait glisser les autres entités vers leur dernière position connue (R4). */
+  /** Rend les autres entités à `now - interpDelayMs`, entre les deux relevés qui
+   *  encadrent cet instant (tampon de gigue, voir `interp.ts`). Solo : un tick de
+   *  retard (fluide, ~0 latence) ; multi : ~100 ms (absorbe la gigue réseau). */
   interpolate(now: number): void {
+    const target = now - this.interpDelayMs
     for (const o of this.others.values()) {
-      const t = Math.min(1, (now - o.startedAt) / INTERP_MS)
-      this.syncActor(o.sprite, o.fromX + (o.toX - o.fromX) * t, o.fromY + (o.toY - o.fromY) * t, o.textureKey, o.crouch)
+      const p = sampleAt(o.buffer, target) ?? latest(o.buffer)
+      this.syncActor(o.sprite, p.x, p.y, o.textureKey, o.crouch)
     }
   }
 
@@ -501,24 +523,11 @@ export class SnapshotView {
       seen.add(entity.id)
       let record = this.others.get(entity.id)
       if (record) {
-        record.fromX = record.toX
-        record.fromY = record.toY
-        record.toX = entity.x
-        record.toY = entity.y
-        record.startedAt = now
+        pushSample(record.buffer, now, entity.x, entity.y)
       } else {
         const sprite = this.scene.add.image(0, 0, 'spr-npc').setOrigin(0.5, 1)
         this.syncActor(sprite, entity.x, entity.y, 'spr-npc')
-        record = {
-          sprite,
-          textureKey: 'spr-npc',
-          crouch: false,
-          fromX: entity.x,
-          fromY: entity.y,
-          toX: entity.x,
-          toY: entity.y,
-          startedAt: now,
-        }
+        record = { sprite, textureKey: 'spr-npc', crouch: false, buffer: [{ at: now, x: entity.x, y: entity.y }] }
         this.others.set(entity.id, record)
       }
       // Les villageois se distinguent des errants et des monstres ; un
@@ -534,7 +543,8 @@ export class SnapshotView {
         // change vraiment. `syncActor` re-applique aussitôt l'emprise (R12).
         record.sprite.setTexture(key)
         record.textureKey = key
-        this.syncActor(record.sprite, record.toX, record.toY, key)
+        const l = latest(record.buffer)
+        this.syncActor(record.sprite, l.x, l.y, key)
       }
       // LE REGARD (R9bis) : le sprite se met dans le sens où la bête regarde —
       // la sim oriente déjà `facing` (marche, gel qui fixe, sentinelle qui

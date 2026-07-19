@@ -4,6 +4,7 @@
  */
 import Phaser from 'phaser'
 import { BootScene } from './scenes/BootScene'
+import { MenuScene } from './scenes/MenuScene'
 import { UIScene } from './scenes/UIScene'
 import { WorldScene } from './scenes/WorldScene'
 
@@ -20,5 +21,5 @@ new Phaser.Game({
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
   fps: { min: 30, target: 60 },
-  scene: [BootScene, WorldScene, UIScene],
+  scene: [BootScene, MenuScene, WorldScene, UIScene],
 })

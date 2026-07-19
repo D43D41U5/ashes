@@ -5,6 +5,42 @@
 #
 # Provider « fichier » (et non le provider Docker) : évite le socket Docker et les
 # soucis de négociation d'API avec Docker Engine 29+ (cf. convention du projet front).
+#
+# ─── AJOUTER UNE DÉPENDANCE npm (la seule manœuvre que le montage `:ro` complique) ───
+#
+# Les sources sont montées `:ro` (voir le service `client`) et les node_modules vivent
+# dans des volumes nommés. Conséquence : le `pnpm install` du conteneur ne peut PAS
+# écrire son fichier temporaire à la racine `/app` — il ne passe donc que quand il n'a
+# RIEN à installer. Dès qu'un package.json gagne une dépendance, le conteneur tombe en
+# BOUCLE DE CRASH sur « EROFS: read-only file system, open '/app/_tmp_…' » (vécu le
+# 2026-07-18 en ajoutant colyseus.js pour le multi).
+#
+# La marche à suivre, après avoir édité un package.json et lancé `pnpm install` SUR
+# L'HÔTE (qui met à jour pnpm-lock.yaml) — peupler les volumes du conteneur par un
+# one-off EN ÉCRITURE, `--frozen-lockfile` pour ne PAS réécrire le lockfile :
+#
+#   docker compose stop client
+#   docker run --rm \
+#     -v "$(pwd)":/app \
+#     -v ashes_braises_node_modules:/app/node_modules \
+#     -v ashes_braises_client_modules:/app/packages/client/node_modules \
+#     -v ashes_braises_sim_modules:/app/packages/sim/node_modules \
+#     -v ashes_braises_server_modules:/app/packages/server/node_modules \
+#     -v ashes_braises_pnpm_store:/pnpm-store \
+#     -e NPM_CONFIG_STORE_DIR=/pnpm-store \
+#     -w /app node:22-alpine \
+#     sh -c "corepack enable && pnpm install --frozen-lockfile"
+#   docker compose up -d client          # son install redevient un no-op → healthy
+#
+# Le one-off laisse un `.pnpm-store/` root à la racine (pnpm veut son store sur le
+# disque du PROJET, qui est le bind `/app`, pas le volume). Il est GITIGNORÉ et l'hôte
+# ne s'en sert pas (son store est global, ~/.local/share/pnpm) — à retirer d'un coup,
+# car un dossier root dans le dépôt est exactement ce que le montage `:ro` combat :
+#   docker run --rm -v "$(pwd)":/app node:22-alpine rm -rf /app/.pnpm-store
+#
+# NB — les noms de volumes sont préfixés du dossier projet (« ashes_… ») ; les vérifier
+# par `docker volume ls` si le dépôt est cloné ailleurs.
+# ────────────────────────────────────────────────────────────────────────────────────
 services:
   traefik:
     image: traefik:v3.5
@@ -108,6 +144,42 @@ services:
       timeout: 3s
       retries: 20
       start_period: 120s
+    restart: unless-stopped
+
+  # Le serveur AUTORITATIF de la Phase LAN (@braises/server, Colyseus + tsx). Il fait
+  # tourner /sim sur Node ; le client (navigateur) s'y branche par l'écran principal
+  # (mode Multi) sur ws://localhost:2567. Même patron de volumes que `client` : sources
+  # en `:ro`, node_modules en volumes nommés (voir la recette « AJOUTER UNE DÉPENDANCE »
+  # en tête de fichier — le serveur en fait partie). Pas de Traefik : le WebSocket sort
+  # en direct par le port publié, plus simple qu'une route.
+  server:
+    image: node:22-alpine
+    container_name: braises-server-dev
+    working_dir: /app/packages/server
+    # On lance tsx DIRECTEMENT depuis le volume (pas de corepack ni pnpm install) :
+    # les deps y sont déjà (recette « AJOUTER UNE DÉPENDANCE » en tête de fichier), et
+    # corepack exige un accès réseau à npmjs.org qui n'est pas garanti (hors-ligne → crash).
+    command: sh -c "exec ./node_modules/.bin/tsx src/index.ts"
+    volumes:
+      - .:/app:ro
+      - braises_node_modules:/app/node_modules
+      - braises_sim_modules:/app/packages/sim/node_modules
+      - braises_server_modules:/app/packages/server/node_modules
+      - braises_pnpm_store:/pnpm-store
+    environment:
+      NPM_CONFIG_STORE_DIR: /pnpm-store
+    ports:
+      # Publié sur l'hôte : le navigateur (sur l'hôte) atteint ws://localhost:2567.
+      - "2567:2567"
+    # Sain dès que le port accepte les connexions. Test TCP (node, sans effet de bord) :
+    # Colyseus ne sert PAS `GET /` (404/pas de route), donc un `wget /` échouerait à tort.
+    # `start_period` couvre la génération de la vallée (~10 s de CPU au démarrage).
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(2567,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 40s
     restart: unless-stopped
 
 volumes:

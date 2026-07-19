@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@braises/sim": "workspace:*",
+    "colyseus.js": "^0.16.22",
     "phaser": "^4.1.0"
   },
   "devDependencies": {

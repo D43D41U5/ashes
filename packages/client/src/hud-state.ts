@@ -27,6 +27,15 @@ export type StationId = 'fire' | 'workshop' | 'furnace'
 /** Le conteneur ouvert, RÉSOLU depuis le snapshot (WorldScene) pour que UIScene
  *  n'ait pas à fouiller structures/cadavres. `null` dès qu'il disparaît (dépouille
  *  vidée → effacée) : c'est le signal qui referme proprement le panneau de loot. */
+/** Une ligne du chat de proximité : qui a parlé (entityId), quoi, si c'est MOI, et quand. */
+export interface ChatLine {
+  from: number
+  text: string
+  self: boolean
+  /** Horloge de rendu à la réception — sert au fondu des vieux messages. */
+  at: number
+}
+
 export interface OpenContainerView {
   kind: 'structure' | 'corpse'
   id: number
@@ -99,6 +108,17 @@ export interface HudState {
    *  D sont des lettres) et « journal » ouvrirait le journal. Un champ de saisie
    *  qui ne prend pas le clavier n'est pas un champ de saisie. */
   uiTyping: boolean
+  /** LA BARRE DE CHAT A LE CLAVIER (chat de proximité). Même garde que `uiTyping`
+   *  mais posée par WorldScene (le chat vit là) : tant qu'on tape un message, plus
+   *  aucune touche ne part au jeu. Séparée d'`uiTyping` car UIScene écrase ce dernier
+   *  depuis le champ de craft — les deux drapeaux se lisent côte à côte. */
+  chatTyping: boolean
+  /** L'HISTORIQUE du chat de proximité (façon WoW) — WorldScene POSE, le panneau
+   *  d'UIScene LIT et affiche. Borné (les vieux messages tombent). */
+  chatLog: ChatLine[]
+  /** Le message EN COURS de saisie, ou `null` si la ligne de saisie est fermée.
+   *  WorldScene le tient (il a le clavier et l'hôte) ; le panneau d'UIScene l'affiche. */
+  chatDraft: string | null
   /** Le conteneur ouvert à côté du sac (coffre/cadavre), ou null. Posé par
    *  input-bindings à l'ouverture de TAB (le plus proche à portée). */
   openContainer: { kind: 'structure' | 'corpse'; id: number } | null

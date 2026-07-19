@@ -51,7 +51,10 @@ const args = process.argv.slice(2)
 const headed = args.includes('--headed')
 const dev = args.includes('--dev')
 const scenario = args[args.indexOf('--scenario') + 1] ?? 'default'
-const URL = process.env.SMOKE_URL ?? (dev ? 'http://ashes.localhost/' : `http://localhost:${PORT}/`)
+// `?solo` : le deep-link qui saute l'écran principal et démarre droit en Veillée
+// (voir MenuScene). Sans lui, tous les scénarios resteraient bloqués sur le menu.
+const BASE_URL = process.env.SMOKE_URL ?? (dev ? 'http://ashes.localhost/' : `http://localhost:${PORT}/`)
+const URL = BASE_URL.includes('?') ? BASE_URL : `${BASE_URL}?solo`
 
 mkdirSync(OUT, { recursive: true })
 
@@ -761,7 +764,7 @@ const SCENARIOS = {
           prey.push({
             id: m.entityId, type: m.type,
             suspicion: m.suspicion, flee: m.fleeSince, herd: m.herdId ?? null,
-            x: rec.toX, y: rec.toY,
+            x: rec.buffer.at(-1).x, y: rec.buffer.at(-1).y,
             tint: rec.sprite.tintTopLeft, h: rec.sprite.displayHeight, crouch: rec.crouch,
           })
         }
@@ -1031,7 +1034,7 @@ const SCENARIOS = {
       const m = scene.view.monsters.find((x) => x.type === 'rabbit' && x.burrowX !== undefined)
       if (!m) return null
       const rec = scene.view.others.get(m.entityId)
-      return { x: rec ? rec.toX : m.burrowX, y: rec ? rec.toY : m.burrowY, bx: m.burrowX, by: m.burrowY }
+      return { x: rec ? rec.buffer.at(-1).x : m.burrowX, y: rec ? rec.buffer.at(-1).y : m.burrowY, bx: m.burrowX, by: m.burrowY }
     })
 
     if (!lapin) {

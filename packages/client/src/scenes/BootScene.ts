@@ -45,7 +45,8 @@ export class BootScene extends Phaser.Scene {
     this.makeGlowTexture()
     generateItemIcons(this) // les 16 icônes d'items — voir render/item-art.ts
     generateVitalIcons(this) // les 4 icônes des jauges du HUD — voir render/vital-art.ts
-    this.scene.start('world')
+    // L'écran principal choisit solo/multi (ou un deep-link `?solo`/`?server=` le saute).
+    this.scene.start('menu')
   }
 
   /** Halo radial doux (blanc centre → transparent) pour l'éclairage additif des Feux. */
@@ -72,30 +73,58 @@ export class BootScene extends Phaser.Scene {
       g.fillStyle(fill).fillRect(1, 1, 14, 14)
     }
 
-    tile(0x3a2c1e, 0x6b4a2f) // mur (le FANTÔME) : bois sombre, un carré représentatif
-    g.generateTexture('st-wall', 16, 16)
+    // LES 16 MURS D'AUTOTUILE, EN RELIEF (décision d'Alexis : le mur se DRESSE, comme
+    // l'arbre — le sol est plat, la structure ne l'est pas). Chaque texture est un BLOC
+    // plus HAUT que sa tuile : une COIFFE éclairée (le dessus, `CAP` px au-dessus de la
+    // tuile) posée sur une FACE verticale (la tuile même, plus sombre vers le pied).
+    // Ancré aux pieds (origine 0.5,1) et trié par sa rangée, un mur au sud recouvre le
+    // pied de celui du nord — c'est l'empilement qui donne le relief, sans projection iso.
+    // Base NEUTRE (le rendu la teinte par matériau) ; liserés seulement sur les côtés
+    // EXPOSÉS pour que deux murs voisins fondent leur paroi sans couture. mask : N=1,E=2,S=4,O=8.
+    const CAP = 6 // hauteur de la coiffe, au-dessus de la tuile
+    const HT = 16 + CAP // 22 px : la face (16) + la coiffe (6)
+    const WALL_BASE = 0x8a8a92 // la face, teintée par matériau au rendu
+    const WALL_FACE = 0x6f6f79 // le bas de la face, dans son ombre portée
+    const WALL_CAP = 0xbcbcc4 // le dessus, éclairé (le plein soleil rasant)
+    const WALL_EAVE = 0x50505a // l'arête d'ombre sous la coiffe (l'avant-toit)
+    const WALL_SH = 0x484850 // l'ombre d'un flanc exposé
+    const wallBlock = (mask: number): void => {
+      // Par défaut TOUTE la hauteur est la FACE : un mur qui file (surtout N-S) est une
+      // paroi CONTINUE, pas une pile d'assises — sinon chaque tuile porte une coiffe
+      // claire et le mur vertical se raye. On assombrit juste le PIED (l'assise au sol).
+      g.fillStyle(WALL_BASE).fillRect(0, 0, 16, HT)
+      g.fillStyle(WALL_FACE).fillRect(0, HT - 5, 16, 5)
+      // Flancs E/O EXPOSÉS (sans voisin mur/porte) : une arête d'ombre sur toute la
+      // hauteur — la paroi se clôt sur ses bouts, mais deux murs alignés fondent sans couture.
+      if (!(mask & 8)) g.fillStyle(WALL_SH).fillRect(0, 0, 2, HT)
+      if (!(mask & 2)) g.fillStyle(WALL_SH).fillRect(14, 0, 2, HT)
+      // LA COIFFE éclairée — SEULEMENT au bord NORD EXPOSÉ (pas de mur au nord) : c'est
+      // le DESSUS du mur, qu'on voit de dessus. Un mur horizontal n'a jamais de voisin
+      // nord → il garde sa belle façade (coiffe + face + pied) ; un mur vertical ne la
+      // porte qu'à son extrémité nord, et file en une face nette le reste du chemin.
+      if (!(mask & 1)) {
+        g.fillStyle(WALL_CAP).fillRect(0, 0, 16, CAP)
+        if (!(mask & 8)) g.fillStyle(WALL_SH).fillRect(0, 0, 2, CAP)
+        if (!(mask & 2)) g.fillStyle(WALL_SH).fillRect(14, 0, 2, CAP)
+        g.fillStyle(WALL_EAVE).fillRect(0, CAP - 1, 16, 1) // l'arête sous la coiffe
+      }
+    }
+    // Le FANTÔME générique (build-ghost) : un bloc neutre, même relief.
+    wallBlock(10)
+    g.generateTexture('st-wall', 16, HT)
     g.clear()
-
-    // LES 16 MURS D'AUTOTUILE (décision d'Alexis : murs CONTINUS). Base NEUTRE (le
-    // rendu la teinte par matériau) : remplie plein cadre, avec un liseré clair en
-    // HAUT et sombre sur les côtés EXPOSÉS (sans voisin) — deux murs voisins se
-    // fondent sans couture. `mask` : N=1, E=2, S=4, O=8.
-    const WALL_BASE = 0x8a8a92
-    const WALL_HI = 0xb2b2ba
-    const WALL_SH = 0x484850
     for (let mask = 0; mask < 16; mask++) {
-      g.fillStyle(WALL_BASE).fillRect(0, 0, 16, 16)
-      if (!(mask & 1)) g.fillStyle(WALL_HI).fillRect(0, 0, 16, 3) // pas de voisin N : arête éclairée
-      if (!(mask & 8)) g.fillStyle(WALL_SH).fillRect(0, 0, 3, 16) // pas de voisin O : arête d'ombre
-      if (!(mask & 2)) g.fillStyle(WALL_SH).fillRect(13, 0, 3, 16) // pas de voisin E
-      if (!(mask & 4)) g.fillStyle(WALL_SH).fillRect(0, 13, 16, 3) // pas de voisin S : pied d'ombre
-      g.generateTexture(`st-wall-${mask}`, 16, 16)
+      wallBlock(mask)
+      g.generateTexture(`st-wall-${mask}`, 16, HT)
       g.clear()
     }
 
-    tile(0x3a2c1e, 0x8a6234) // porte : bois clair + seuil
-    g.fillStyle(0x2a1e12).fillRect(6, 2, 4, 12)
-    g.generateTexture('st-door', 16, 16)
+    // PORTE, en relief comme le mur : un linteau éclairé sur une huisserie percée.
+    g.fillStyle(0x6b4a2f).fillRect(0, CAP, 16, 16) // l'huisserie (bois)
+    g.fillStyle(0x2a1e12).fillRect(4, CAP + 3, 8, 13) // l'ouverture sombre
+    g.fillStyle(0x8a6234).fillRect(0, 0, 16, CAP) // le linteau, éclairé
+    g.fillStyle(0x50412a).fillRect(0, CAP - 1, 16, 1) // l'arête sous le linteau
+    g.generateTexture('st-door', 16, HT)
     g.clear()
 
     // Sol : pièce MOLLE POSÉE AU RAS DU SOL (décision d'Alexis) — un plancher plat.

@@ -14,8 +14,11 @@ import {
   type MoveInput,
   type PlayerAction,
   type SimState,
+  PROTOCOL_VERSION,
+  type ClientToHost,
+  type HostToClient,
+  type NodeDelta,
 } from '@braises/sim'
-import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type NodeDelta } from '../protocol'
 import { createVeillee, LOAD_PHASES, VEILLEE_CALENDAR_SCALE } from './veillee'
 
 const post = (message: HostToClient): void => {
@@ -133,6 +136,9 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
     lastProcessedInput = msg.seq
   } else if (msg.type === 'action') {
     pendingAction = msg.action
+  } else if (msg.type === 'chat') {
+    // SOLO : personne d'autre à portée. L'émetteur voit son propre message par ÉCHO
+    // LOCAL (WorldScene, à l'envoi) — le worker n'a donc rien à renvoyer.
   } else if (msg.type === 'pause') {
     stopTicker()
   } else if (msg.type === 'resume') {

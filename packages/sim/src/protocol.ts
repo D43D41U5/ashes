@@ -4,24 +4,35 @@
  * L'hôte est aujourd'hui un Web Worker (mode Veillée) et demain un serveur
  * (Phase LAN) : ces messages sont la répétition générale du réseau. On ne
  * transmet jamais de position côté client, seulement des intentions.
+ *
+ * Il vit dans `/sim` — et non plus dans le client — parce qu'il est le contrat
+ * PARTAGÉ entre n'importe quel hôte (Worker, serveur Colyseus) et n'importe quel
+ * client : pur (rien que des types + une constante), au même titre que le netcode
+ * `prediction.ts`. Le serveur, qui ne dépend que de `@braises/sim`, le lit d'ici.
  */
-import type {
-  Corpse,
-  Entity,
-  GameTime,
-  Monster,
-  Npc,
-  PlayerAction,
-  RecognizedFunction,
-  ResourceNode,
-  SimEvent,
-  Structure,
-  Village,
-  WorldMap,
-} from '@braises/sim'
+import type { Corpse } from './combat'
+import type { RecognizedFunction } from './construction'
+import type { ResourceNode } from './economy'
+import type { SimEvent } from './events'
+import type { WorldMap } from './map'
+import type { Monster } from './monsters'
+import type { Npc } from './npc'
+import type { Entity, PlayerAction } from './sim'
+import type { GameTime } from './time'
+import type { Structure, Village } from './village'
 
 /** À incrémenter à tout changement incompatible — vérifié au `ready`. */
 export const PROTOCOL_VERSION = 1
+
+/**
+ * LE CHAT DE PROXIMITÉ — un rayon d'audition, en tuiles. Le serveur ne relaie un
+ * message qu'aux joueurs à moins de ça de l'émetteur : on s'entend de près, pas
+ * d'un bout à l'autre de la vallée. Ce n'est PAS un nombre de /sim (le chat ne
+ * touche pas la simulation déterministe) — il vit ici, dans le protocole partagé.
+ */
+export const CHAT_RADIUS_TILES = 14
+/** Longueur max d'un message (le serveur tronque, le client borne la saisie). */
+export const CHAT_MAX_LEN = 200
 
 /**
  * Le client demande à REJOINDRE — il ne choisit ni la seed, ni la carte, ni
@@ -77,7 +88,24 @@ export interface DebugSpeedMessage {
   factor: number
 }
 
-export type ClientToHost = JoinMessage | InputMessage | ActionMessage | PauseMessage | ResumeMessage | DebugSpeedMessage
+/**
+ * LE CHAT DE PROXIMITÉ (montant) : le joueur PARLE. L'hôte le relaie aux joueurs
+ * proches (rayon `CHAT_RADIUS_TILES`), jamais à la vallée entière. Le chat ne passe
+ * PAS par /sim : il ne mute pas l'état déterministe, l'hôte le route à part.
+ */
+export interface ChatMessage {
+  type: 'chat'
+  text: string
+}
+
+export type ClientToHost =
+  | JoinMessage
+  | InputMessage
+  | ActionMessage
+  | ChatMessage
+  | PauseMessage
+  | ResumeMessage
+  | DebugSpeedMessage
 
 export interface ReadyMessage {
   type: 'ready'
@@ -151,4 +179,20 @@ export interface SnapshotMessage {
   events: SimEvent[]
 }
 
-export type HostToClient = ReadyMessage | SnapshotMessage | ProgressMessage
+/**
+ * LE CHAT DE PROXIMITÉ ENTENDU (descendant, multi) — avec la POSITION de l'émetteur.
+ * L'hôte le diffuse à tous les joueurs ; le FILTRAGE par distance se fait CÔTÉ CLIENT
+ * (chacun compare sa position à `x,y`). Il transite sur son PROPRE canal réseau
+ * (`chatmsg`, en tableau `[from, x, y, text]`) et non dans le snapshot : le chat est
+ * filtré par destinataire (proximité) et ne fait pas partie de l'état déterministe —
+ * un canal à part le garde hors du corps de snapshot partagé par tous.
+ */
+export interface ChatBroadcast {
+  type: 'chat'
+  from: number
+  x: number
+  y: number
+  text: string
+}
+
+export type HostToClient = ReadyMessage | SnapshotMessage | ProgressMessage | ChatBroadcast

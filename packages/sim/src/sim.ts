@@ -404,6 +404,28 @@ export function spawnEntity(state: SimState, x: number, y: number, slots: number
 }
 
 /**
+ * Retire un avatar joueur du monde (multi : déconnexion). Miroir PUR du chemin
+ * mort-PNJ (`combat.ts`) : l'entité disparaît et le village qui l'employait est
+ * nettoyé de sa référence. À la différence de la mort d'un joueur — qui RESPAWN
+ * l'entité au Feu sans la retirer —, ici l'entité s'en va pour de bon.
+ *
+ * Ne consomme PAS de pas de PRNG (un départ n'est pas un tirage) et n'est pas
+ * gardé par `debug` : c'est une opération d'hôte structurelle. Doit s'appliquer
+ * EN TÊTE DE TICK, avant `step` — jamais au milieu d'une itération d'inputs, où
+ * un `entities` qui rétrécit sauterait des avatars.
+ */
+export function despawnAvatar(state: SimState, id: number): void {
+  const existed = state.entities.some((e) => e.id === id)
+  if (!existed) return
+  state.entities = state.entities.filter((e) => e.id !== id)
+  for (const village of state.villages) {
+    village.memberIds = village.memberIds.filter((m) => m !== id)
+    for (const task of village.tasks) if (task.claimedBy === id) task.claimedBy = null
+  }
+  emitEvent(state, { type: 'entity_despawned', tick: state.tick, entityId: id })
+}
+
+/**
  * LA formule du modificateur de vitesse d'un avatar — partagée entre `step`
  * (autorité) et la prédiction du client. Toute condition ajoutée ici est
  * automatiquement prédite juste ; une copie divergente côté client serait

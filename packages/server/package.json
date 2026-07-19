@@ -4,12 +4,20 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "check": "tsc --noEmit"
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "check": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@braises/sim": "workspace:*"
+    "@braises/sim": "workspace:*",
+    "@colyseus/core": "^0.16.5",
+    "@colyseus/ws-transport": "^0.16.5"
   },
   "devDependencies": {
-    "typescript": "^5.8.3"
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
   }
 }

@@ -21,6 +21,13 @@ import type { SimState } from './sim'
 
 export type SimEvent =
   | { type: 'entity_spawned'; tick: number; entityId: number; x: number; y: number }
+  /**
+   * UN AVATAR QUITTE LE MONDE (multi) : le joueur s'est déconnecté, son entité est
+   * retirée. Distinct de `entity_died` (qui, pour un joueur, RESPAWN sans retirer
+   * l'entité) : ici l'entité disparaît pour de bon, comme un PNJ mort. Symétrique
+   * d'`entity_spawned` — le join mid-partie qu'il acquitte a le sien.
+   */
+  | { type: 'entity_despawned'; tick: number; entityId: number }
   | { type: 'day_started'; tick: number }
   | { type: 'night_started'; tick: number }
   | { type: 'season_day_started'; tick: number; day: number }

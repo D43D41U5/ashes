@@ -18,10 +18,9 @@
  * AUCUNE logique de jeu : pur habillage. Le `now` (ms) anime, il ne simule rien.
  */
 import Phaser from 'phaser'
-import type { Structure } from '@braises/sim'
+import type { SnapshotMessage, Structure } from '@braises/sim'
 import { fireGlow } from '../../render/lighting'
 import { GLOW_DEPTH, SPARK_DEPTH, TILE_PX } from '../../render/framing'
-import type { SnapshotMessage } from '../../protocol'
 
 /** Une petite braise ronde et douce (24 px) — le grain des flammes et des étincelles.
  *  Générée une fois ; l'énorme `glow` (256 px) saturait dès qu'on en empilait deux. */

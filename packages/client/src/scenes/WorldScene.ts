@@ -41,11 +41,17 @@ import {
   type WorldMap,
   avanceeDuFront,
   zoneSlugAt,
+  PROTOCOL_VERSION,
+  CHAT_MAX_LEN,
+  CHAT_RADIUS_TILES,
+  type ClientToHost,
+  type HostToClient,
+  type ReadyMessage,
+  type SnapshotMessage,
 } from '@braises/sim'
 import Phaser from 'phaser'
-import { createWorkerHost, type HostConnection } from '../host-connection'
+import { createColyseusHost, createWorkerHost, type HostConnection } from '../host-connection'
 import { getHud, setHud } from '../hud-state'
-import { PROTOCOL_VERSION, type ClientToHost, type HostToClient, type ReadyMessage, type SnapshotMessage } from '../protocol'
 import {
   AMBIENT_DEPTH,
   lookaheadOffset,
@@ -84,7 +90,7 @@ import { HitFx } from './world/hit-fx'
 import { createAttackFx, type AttackFx, type Zone } from './world/attack-fx'
 import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
-import { SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
+import { INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 
 /** Cadrage caméra (spec client R10) : « je veux voir ~N tuiles de haut ». */
 const VISIBLE_TILES_TALL = 20
@@ -212,6 +218,16 @@ function solForet(tx: number, ty: number, seed: number): number {
   return clair > 0 ? lerpColor(base, CLAIRIERE_VERT, Math.min(1, clair * 3.5)) : base
 }
 
+/**
+ * Le choix fait à l'écran principal, passé en `data` de scène. `solo` → Worker
+ * (Veillée) ; `multi` → serveur Colyseus à `url`. Absent (lancement direct) → on
+ * retombe sur `VITE_SERVER_URL` (rétrocompat dev/smoke).
+ */
+export interface WorldSceneData {
+  mode?: 'solo' | 'multi'
+  url?: string
+}
+
 export class WorldScene extends Phaser.Scene {
   /** La frontière de transport (Worker aujourd'hui, Colyseus en LAN). */
   private host!: HostConnection
@@ -249,6 +265,10 @@ export class WorldScene extends Phaser.Scene {
   /** Les lieux que MON joueur connaît — lu du snapshot, jamais décidé ici (client bête). */
   private myKnownPois: readonly number[] = []
   private playerSprite!: Phaser.GameObjects.Image
+  /** L'historique du chat, mirroré au registry pour le panneau d'UIScene. */
+  private chatLog: import('../hud-state').ChatLine[] = []
+  /** Le message en cours de saisie, ou `null` si la ligne est fermée. */
+  private chatDraft: string | null = null
   /** Prédiction à pas fixe + réconciliation par rejeu (spec reconciliation). */
   private prediction: PredictionState = createPrediction(0, 0)
   /** Position LOGIQUE du joueur (ancre autorité) — pour viser, mesurer une distance. */
@@ -339,6 +359,11 @@ export class WorldScene extends Phaser.Scene {
     // position/taille/depth viennent de `syncActor` à chaque frame.
     this.playerSprite = this.add.image(0, 0, 'spr-player').setOrigin(0.5, 1)
     this.view = new SnapshotView(this)
+    // LE CHAT DE PROXIMITÉ : Entrée ouvre la saisie, Entrée envoie, Échap annule. On
+    // écoute le clavier au niveau caractère (comme le champ de craft) ; `chatTyping`
+    // neutralise déplacement et raccourcis pendant qu'on tape. L'affichage (panneau +
+    // historique) vit dans l'UIScene — pas de bulle au-dessus des têtes.
+    this.input.keyboard?.on('keydown', (event: KeyboardEvent) => this.onChatKey(event))
     this.hitFx = new HitFx()
     // Le combat se voit : la lame qui s'arme, l'impact, et l'écran qui saigne.
     // Juste sous les overlays — au-dessus du monde, sous le HUD.
@@ -393,7 +418,16 @@ export class WorldScene extends Phaser.Scene {
     // Hook de debug/pilotage (pattern __MANIF__) : smoke tests et futurs bots.
     ;(window as unknown as { __BRAISES__: unknown }).__BRAISES__ = { scene: this }
 
-    this.host = createWorkerHost()
+    // L'aiguillage solo/multi vient de l'écran principal (`MenuScene`), par les `data`
+    // de scène. « Seul le transport change » : le reste de la scène ne sait pas lequel
+    // des deux parle. Lancement direct sans menu (smoke, deep-link absent) → on retombe
+    // sur `VITE_SERVER_URL` (rétrocompat).
+    const data = (this.scene.settings.data ?? {}) as WorldSceneData
+    const serverUrl = data.mode === 'multi' ? data.url : data.mode === 'solo' ? undefined : import.meta.env.VITE_SERVER_URL
+    this.host = serverUrl ? createColyseusHost(serverUrl) : createWorkerHost()
+    // MULTI : les autres entités sont rendues ~100 ms en retard (tampon de gigue,
+    // spec Tranche B) ; en solo on garde le tick de retard par défaut, ~0 latence.
+    if (serverUrl) this.view.interpDelayMs = INTERP_DELAY_MULTI_MS
     this.host.onMessage((msg) => this.onHostMessage(msg))
     this.host.onError((message) => {
       // L'hôte est mort : plus AUCUN snapshot n'arrivera. Ce n'est pas une erreur de
@@ -709,7 +743,7 @@ export class WorldScene extends Phaser.Scene {
     // ON NE MARCHE PAS EN TAPANT. Le champ de recherche du panneau de craft prend
     // le clavier ; sans cette garde, écrire « hache » enverrait Z-A-H-E au
     // déplacement — le personnage partirait en courant pendant qu'on cherche.
-    const typing = Boolean(getHud(this.registry, 'uiTyping'))
+    const typing = Boolean(getHud(this.registry, 'uiTyping')) || Boolean(getHud(this.registry, 'chatTyping'))
     const dx = typing ? 0 : this.axis('right', 'left')
     const dy = typing ? 0 : this.axis('down', 'up')
     const sprint = !typing && this.inputs.sprintKeys.some((k) => k.isDown)
@@ -806,9 +840,75 @@ export class WorldScene extends Phaser.Scene {
     this.cameras.main.setFollowOffset(-off.x, -off.y)
   }
 
+  /** Le clavier au niveau caractère, pour le chat. Entrée ouvre la ligne de saisie
+   *  (si rien d'autre ne tape) ; pendant la saisie, chaque frappe va au message,
+   *  Entrée l'envoie, Échap annule. Le PANNEAU (UIScene) affiche brouillon et historique. */
+  private onChatKey(event: KeyboardEvent): void {
+    if (this.chatDraft !== null) {
+      if (event.key === 'Enter') {
+        const text = this.chatDraft.trim()
+        this.closeChatInput()
+        if (text) {
+          this.send({ type: 'chat', text })
+          // ÉCHO LOCAL optimiste : on s'affiche tout de suite dans le panneau, sans attendre
+          // le relais de l'hôte (les autres nous reçoivent par lui). On IGNORE ensuite le
+          // renvoi de l'hôte pour soi (voir onHostMessage) — pas de doublon.
+          this.appendChat(this.playerId, text, true)
+        }
+        return
+      }
+      if (event.key === 'Escape') {
+        this.closeChatInput()
+        return
+      }
+      if (event.key === 'Backspace') {
+        this.setChatDraft(this.chatDraft.slice(0, -1))
+        return
+      }
+      // Un seul caractère imprimable (les touches spéciales font `key.length > 1`).
+      if (event.key.length === 1 && this.chatDraft.length < CHAT_MAX_LEN) {
+        this.setChatDraft(this.chatDraft + event.key)
+      }
+      return
+    }
+    if (event.key === 'Enter' && !getHud(this.registry, 'uiTyping')) {
+      this.setChatDraft('') // ouvre la ligne de saisie
+      setHud(this.registry, 'chatTyping', true)
+    }
+  }
+
+  private setChatDraft(draft: string): void {
+    this.chatDraft = draft
+    setHud(this.registry, 'chatDraft', draft)
+  }
+
+  private closeChatInput(): void {
+    this.chatDraft = null
+    setHud(this.registry, 'chatDraft', null)
+    setHud(this.registry, 'chatTyping', false)
+  }
+
+  /** Ajoute une ligne à l'historique (borné) et le mirroie au registry pour l'UIScene. */
+  private appendChat(from: number, text: string, self: boolean): void {
+    this.chatLog.push({ from, text, self, at: this.time.now })
+    if (this.chatLog.length > 60) this.chatLog.splice(0, this.chatLog.length - 60)
+    setHud(this.registry, 'chatLog', this.chatLog)
+  }
+
   private onHostMessage(msg: HostToClient): void {
     if (msg.type === 'ready') {
       this.onReady(msg)
+      return
+    }
+    if (msg.type === 'chat') {
+      // Un message ENTENDU (diffusé à tous) : on FILTRE par proximité ICI (chacun compare
+      // sa position à celle de l'émetteur), puis on l'ajoute au panneau. On saute SON propre
+      // message (déjà affiché à l'envoi par écho local) — pas de doublon.
+      if (msg.from !== this.playerId) {
+        const dx = msg.x - this.predicted.x
+        const dy = msg.y - this.predicted.y
+        if (dx * dx + dy * dy <= CHAT_RADIUS_TILES * CHAT_RADIUS_TILES) this.appendChat(msg.from, msg.text, false)
+      }
       return
     }
     if (msg.type === 'progress') {
@@ -842,6 +942,7 @@ export class WorldScene extends Phaser.Scene {
     // panneau se referme au lieu de planter sur un id mort ou de rester fantôme.
     publishOpenContainer(this.registry, this.view.structures, this.view.corpses, this.predicted)
     this.processEvents(msg)
+
 
     this.lastEntities = msg.entities
     // QUI ARME UN COUP, cette frame — moi comme les bêtes. Lu du snapshot, avec LA

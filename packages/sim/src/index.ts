@@ -9,7 +9,7 @@
  */
 
 // ─── Noyau : état, tick, événements ───────────────────────────────────────
-export { createSim, spawnEntity, speedScaleFor, carrySpeedFactor, step, snapshot } from './sim'
+export { createSim, spawnEntity, despawnAvatar, speedScaleFor, carrySpeedFactor, step, snapshot } from './sim'
 export type { SimState, SimOptions, Entity, MoveInput, PlayerAction } from './sim'
 export { drainEvents } from './events'
 export type { SimEvent } from './events'
@@ -201,6 +201,25 @@ export {
 } from './connectivity'
 export type { ValleySkeleton, ValleyRegion, ValleyPoint } from './valleygen'
 export { VEILLEE_SKELETON, VEILLEE_SITES } from './valley-veillee'
+
+// ─── Protocole hôte ⇄ client (transport-agnostique — Worker ou serveur) ───
+export { PROTOCOL_VERSION, CHAT_RADIUS_TILES, CHAT_MAX_LEN } from './protocol'
+export type {
+  ClientToHost,
+  HostToClient,
+  JoinMessage,
+  InputMessage,
+  ActionMessage,
+  ChatMessage,
+  ChatBroadcast,
+  PauseMessage,
+  ResumeMessage,
+  DebugSpeedMessage,
+  ReadyMessage,
+  ProgressMessage,
+  SnapshotMessage,
+  NodeDelta,
+} from './protocol'
 
 // ─── Netcode client : prédiction locale & réconciliation ──────────────────
 export {

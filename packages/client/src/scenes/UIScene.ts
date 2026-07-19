@@ -18,6 +18,7 @@ import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
 import { createFoundVillagePrompt, type FoundVillagePrompt } from './ui/found-village-prompt'
 import { createLoadingScreen, type LoadingScreen } from './ui/loading'
 import { createPickupToasts, type PickupToasts } from './ui/pickup-toasts'
+import { createChatPanel, type ChatPanel } from './ui/chat-panel'
 import { createVitals, type Vitals } from './ui/vitals'
 import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
 import { FONT } from './ui/typography'
@@ -66,6 +67,7 @@ export class UIScene extends Phaser.Scene {
   private foundVillagePrompt!: FoundVillagePrompt
   /** Les toasts « +2 BOIS (14) » — le butin s'inscrit à une place FIXE du HUD. */
   private pickups!: PickupToasts
+  private chatPanel!: ChatPanel
   private journalPanel!: Phaser.GameObjects.Container
   private journalText!: Phaser.GameObjects.Text
 
@@ -179,6 +181,7 @@ export class UIScene extends Phaser.Scene {
     this.foundVillagePrompt = createFoundVillagePrompt(this, (action) => queueAction(this.registry, action))
     // Les toasts de récolte : ils s'empilent juste au-dessus des vitales.
     this.pickups = createPickupToasts(this)
+    this.chatPanel = createChatPanel(this)
     // Le journal (J) : la chronique de la saison, la Mémoire v1.
     const panelBg = this.add.rectangle(0, 0, 720, 480, 0x14141a, 0.92).setOrigin(0.5).setStrokeStyle(2, 0x6b5a3a)
     const panelTitle = this.add
@@ -457,6 +460,9 @@ export class UIScene extends Phaser.Scene {
       this.reveal()
     }
     if (!time) return
+
+    // LE CHAT (façon WoW) : historique + ligne de saisie, lus au registry (WorldScene pose).
+    this.chatPanel.update(getHud(this.registry, 'chatLog') ?? [], getHud(this.registry, 'chatDraft') ?? null, this.time.now)
 
     // Le fondu du voile sur le monde. Il s'éteint tout seul ; on lâche la référence
     // quand il ne reste plus rien (l'écran s'est détruit).
