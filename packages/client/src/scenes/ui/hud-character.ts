@@ -18,11 +18,13 @@ import {
   durabilityOf,
   hasItems,
   RECIPES,
+  skillLevel,
   type CarryTier,
   type Inventory,
   type ItemId,
   type PlayerAction,
   type RecipeId,
+  type SkillId,
   type Slot,
   type SlotRef,
 } from '@braises/sim'
@@ -50,6 +52,29 @@ const TIER_LABEL: Record<CarryTier, string> = {
 }
 const STATION_LABEL: Record<StationId, string> = { fire: 'au Feu', workshop: "à l'atelier", furnace: 'au four' }
 
+/** Les 4 métiers, à gauche : emblème (une icône d'objet du métier), libellé, niveau, barre.
+ *  Le niveau vient de `skillLevel` (/sim) — l'écran montre la règle, il ne la refait pas. */
+const SKILL_META: { id: SkillId; label: string; item: ItemId }[] = [
+  { id: 'woodcutting', label: 'Bûcheron', item: 'axe' },
+  { id: 'mining', label: 'Mineur', item: 'pickaxe' },
+  { id: 'foraging', label: 'Cueilleur', item: 'berries' },
+  { id: 'crafting', label: 'Artisan', item: 'hammer' },
+]
+
+/** Le paperdoll autour de l'avatar. DÉCORATIF pour l'instant : aucun système d'équipement
+ *  n'existe encore dans /sim (le seul « equip » est l'outil en case active). Les cases sont
+ *  posées vides — le jour où l'équipement existera, elles s'y brancheront (spec à écrire). */
+const EQUIP_LEFT: { key: string; label: string }[] = [
+  { key: 'head', label: 'TÊTE' },
+  { key: 'chest', label: 'TORSE' },
+  { key: 'hands', label: 'MAINS' },
+]
+const EQUIP_RIGHT: { key: string; label: string }[] = [
+  { key: 'back', label: 'DOS' },
+  { key: 'legs', label: 'JAMBES' },
+  { key: 'feet', label: 'PIEDS' },
+]
+
 export interface HudCharacter {
   update(s: {
     open: boolean
@@ -57,6 +82,7 @@ export interface HudCharacter {
     activeSlot: number
     stations: readonly StationId[]
     container: OpenContainerView | null
+    skills: Partial<Record<SkillId, number>>
   }): void
 }
 
@@ -91,6 +117,24 @@ export function createHudCharacter(
   const listEl = $('.hch-list')
   const stationNote = $('.hch-note')
   const search = $<HTMLInputElement>('.hch-search')
+  const skillsWrap = $('.hch-skills')
+
+  // ── L'avatar : le VRAI sprite du monde (`spr-player`), à ses proportions (carré, pixel) —
+  //    la même effigie qu'en jeu, pour que le joueur se reconnaisse. ──
+  $<HTMLImageElement>('.hch-av').src = game.textures.getBase64('spr-player')
+
+  // ── Les cartes de métier (à gauche) : bâties une fois, la barre repeinte à l'update. ──
+  const skillBars: { fill: HTMLElement; lvl: HTMLElement }[] = SKILL_META.map((sk) => {
+    const el = document.createElement('div')
+    el.className = 'hch-sk'
+    el.innerHTML =
+      `<div class="hch-sk-ic"><img src="${iconUrl(sk.item)}" alt=""></div>` +
+      `<div class="hch-sk-mid">` +
+      `<div class="hch-sk-top"><span class="hch-sk-name">${sk.label}</span><span class="hch-sk-lvl">niv 0</span></div>` +
+      `<div class="hch-sk-bar"><div class="hch-sk-fill"></div></div></div>`
+    skillsWrap.appendChild(el)
+    return { fill: el.querySelector<HTMLElement>('.hch-sk-fill')!, lvl: el.querySelector<HTMLElement>('.hch-sk-lvl')! }
+  })
 
   // ── État courant (relu à chaque geste : la vérité vient du snapshot) ──
   let inv: Inventory = []
@@ -115,6 +159,7 @@ export function createHudCharacter(
     wearBg: HTMLElement
     wear: HTMLElement
     num: HTMLElement
+    belt: boolean
   }
   const makeCell = (side: SlotRef['side'], slot: number, belt: boolean): CellEl => {
     const el = document.createElement('div')
@@ -134,6 +179,7 @@ export function createHudCharacter(
       wearBg: el.querySelector<HTMLElement>('.hch-wbg')!,
       wear: el.querySelector<HTMLElement>('.hch-w')!,
       num: el.querySelector<HTMLElement>('.hch-num')!,
+      belt,
     }
   }
 
@@ -219,7 +265,8 @@ export function createHudCharacter(
     }
     c.icon.src = iconUrl(slot.item)
     c.icon.style.display = ''
-    c.count.textContent = slot.count > 1 ? String(slot.count) : ''
+    // La ceinture affiche « ×N » comme au HUD (elle ne doit pas changer d'un écran à l'autre).
+    c.count.textContent = slot.count > 1 ? (c.belt ? '×' : '') + slot.count : ''
     if (slot.wear !== undefined && slot.wear > 0) {
       const left = Math.max(0, 1 - slot.wear / durabilityOf(slot.item))
       c.wearBg.style.display = ''
@@ -305,9 +352,23 @@ export function createHudCharacter(
       weightEl.textContent = `${w.toFixed(1)} / ${CARRY_CAP} — ${TIER_LABEL[tier]}`
       weightEl.style.color = TIER_COLOR[tier]
 
+      // Les métiers (à gauche) : niveau + fraction vers le suivant. La fraction, c'est la
+      // partie décimale de √(xp/100) — les paliers de `skillLevel` tombent aux entiers.
+      for (let i = 0; i < SKILL_META.length; i++) {
+        const xp = s.skills[SKILL_META[i]!.id] ?? 0
+        const level = skillLevel(xp)
+        const frac = xp > 0 ? Math.min(1, Math.max(0, Math.sqrt(xp / 100) - level)) : 0
+        skillBars[i]!.lvl.textContent = `niv ${level}`
+        skillBars[i]!.fill.style.width = `${(frac * 100).toFixed(0)}%`
+      }
+
+      // À gauche, un seul locataire : le butin d'un conteneur ouvert PRIME sur les métiers
+      // (on loote, on ne consulte pas ses stats) ; sinon les métiers reprennent la place.
+      skillsWrap.style.display = container ? 'none' : ''
+
       // Le conteneur ouvert : sa colonne de butin (cases `side:container`).
       if (container) {
-        contWrap.style.display = ''
+        contWrap.style.display = 'block'
         contTitle.textContent = container.title.toUpperCase()
         if (contCells.length !== container.inv.length) {
           contGrid.innerHTML = ''
@@ -333,35 +394,79 @@ const CARRY_CAP = CARRY.CAPACITY
 function markup(): string {
   return `
   <style>
-    .hch{position:absolute;inset:0;background:#14100c;display:none;flex-direction:column;padding:40px 46px 160px;pointer-events:auto;
+    /* Écran façon Rust : la CEINTURE ne bouge pas (identique au HUD, bas-centre), le SAC
+       se pose juste au-dessus d'elle, l'ARTISANAT tient une colonne à droite — pas d'onglet.
+       Coordonnées dans le plan 1920×1080 (voir hud-dom.ts). */
+    .hch{position:absolute;inset:0;background:#14100c;display:none;pointer-events:auto;
       background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.012) 0 2px,transparent 2px 4px);}
-    .hch-tabs{display:flex;gap:0;border-bottom:3px solid #2a2a34;margin-bottom:26px;}
-    .hch-tab{font-size:15px;color:#9a8f78;padding:12px 24px;letter-spacing:1px;}
-    .hch-tab-on{font-weight:700;color:#14100c;background:#c98b3a;}
-    .hch-close{margin-left:auto;font-size:12px;color:#6f6a60;padding:12px 6px;letter-spacing:1px;align-self:center;}
-    .hch-tray{flex:1;min-height:0;display:flex;border:3px solid #2a2a34;background:#16120d;}
-    .hch-sac{width:640px;padding:22px;box-sizing:border-box;display:flex;flex-direction:column;}
-    .hch-sac-h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px;}
-    .hch-sac-t{font-size:15px;font-weight:700;color:#ffffff;letter-spacing:1px;}
+    .hch-close{position:absolute;top:24px;right:30px;font-size:12px;color:#6f6a60;letter-spacing:1px;}
+
+    /* SAC : bas-centre, colonnes ALIGNÉES sur la ceinture, posé JUSTE au-dessus d'elle.
+       bottom = 26 (ceinture) + 78 (sa hauteur) + 16 (interstice ≤20). */
+    .hch-sac{position:absolute;left:50%;bottom:120px;transform:translateX(-50%);display:flex;flex-direction:column;}
+    .hch-sac-h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;}
+    .hch-sac-t{font-size:13px;font-weight:700;color:#ffffff;letter-spacing:1px;}
     .hch-weight{font-size:12px;letter-spacing:1px;}
-    .hch-bag{display:grid;grid-template-columns:repeat(${COLS},84px);grid-auto-rows:84px;gap:6px;}
+    .hch-bag{display:grid;grid-template-columns:repeat(${COLS},78px);grid-auto-rows:78px;gap:5px;}
     .hch-cell{position:relative;background:#1b1b22;border:3px solid #14141a;}
-    .hch-cell-belt{width:84px;height:84px;}
     .hch-active{background:#241d14;border-color:#c98b3a;}
-    .hch-ic{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:52px;height:52px;image-rendering:pixelated;pointer-events:none;}
-    .hch-num{position:absolute;top:3px;left:5px;font-size:12px;color:#9a8f78;}
-    .hch-ct{position:absolute;bottom:3px;right:6px;font-size:13px;color:#e8e0c8;}
-    .hch-wbg{position:absolute;left:4px;right:4px;bottom:4px;height:4px;background:#3a2f22;}
+    .hch-ic{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:44px;height:44px;image-rendering:pixelated;pointer-events:none;}
+    .hch-num{position:absolute;top:3px;left:5px;font-size:11px;color:#9a8f78;}
+    .hch-ct{position:absolute;bottom:3px;right:5px;font-size:11px;color:#e8e0c8;}
+    .hch-wbg{position:absolute;left:4px;right:4px;bottom:5px;height:4px;background:#3a2f22;}
     .hch-w{height:100%;background:#c98b3a;}
-    .hch-belt-lbl{font-size:11px;color:#6f6a60;letter-spacing:1px;margin-bottom:8px;}
-    .hch-belt-wrap{margin-top:auto;padding-top:18px;}
-    .hch-belt{display:flex;gap:6px;}
-    .hch-cont{margin-top:16px;}
+
+    /* PAPERDOLL : l'avatar (effigie pixel du vrai sprite du monde) encadré, debout sur une
+       braise, flanqué de deux colonnes de slots d'équipement — DÉCORATIFS pour l'instant
+       (aucun système d'équipement en /sim). Posé JUSTE au-dessus du sac. */
+    /* Le bloc fait la LARGEUR DE L'INVENTAIRE (493 = la grille du sac, étiré par .hch-sac) :
+       les deux colonnes de slots aux bords, le portrait au centre. Haut (2×) et bien séparé
+       du sac par la marge. Les 3 slots se répartissent sur toute la hauteur (haut/milieu/bas). */
+    /* PERSONNAGE : ancré en HAUT, top aligné sur ARTISANAT (top:70), largeur de l'inventaire. */
+    .hch-perso{position:absolute;left:50%;top:70px;transform:translateX(-50%);width:493px;}
+    .hch-doll-h{font-size:17px;font-weight:700;color:#ffffff;letter-spacing:1px;margin-bottom:14px;}
+    .hch-doll{display:flex;align-items:center;justify-content:space-between;}
+    .hch-eqcol{display:flex;flex-direction:column;justify-content:space-between;height:492px;}
+    .hch-eq{position:relative;width:78px;height:78px;background:rgba(27,27,34,.5);border:3px solid #14141a;display:grid;place-items:center;}
+    .hch-eq-lbl{font-size:9px;color:#6f6a60;letter-spacing:1px;}
+    .hch-portrait{position:relative;width:300px;height:492px;border:3px solid #2a2a34;background:#16120d;
+      background-image:radial-gradient(ellipse at 50% 50%,rgba(201,139,58,.14),rgba(20,16,12,0) 60%);display:grid;place-items:center;overflow:hidden;}
+    .hch-portrait::after{content:'';position:absolute;bottom:118px;left:50%;transform:translateX(-50%);width:150px;height:18px;
+      background:radial-gradient(ellipse,rgba(201,139,58,.4),rgba(201,139,58,0) 70%);}
+    /* MÊMES PROPORTIONS QU'EN JEU : l'emprise du joueur est 1×1,6 tuile (widthTiles/heightTiles
+       de spr-player dans snapshot-view.ts) — donc un rectangle vertical, pas un carré. Centré. */
+    .hch-av{position:relative;width:150px;height:240px;image-rendering:pixelated;filter:drop-shadow(0 0 10px rgba(201,139,58,.25));}
+
+    /* MÉTIERS : colonne à GAUCHE, verticalement centrée — emblème + niveau + barre de braise
+       vers le niveau suivant. S'efface quand un conteneur ouvre (le butin reprend la gauche). */
+    .hch-skills{position:absolute;left:60px;top:50%;transform:translateY(-50%);width:250px;display:flex;flex-direction:column;gap:12px;}
+    .hch-sk-h{font-size:13px;color:#c98b3a;letter-spacing:2px;margin-bottom:2px;}
+    .hch-sk{display:flex;align-items:center;gap:12px;background:#16120d;border:3px solid #14141a;padding:10px 12px;}
+    .hch-sk-ic{width:40px;height:40px;background:#1b1b22;border:2px solid #2a2a34;display:grid;place-items:center;flex:0 0 auto;}
+    .hch-sk-ic img{width:28px;height:28px;image-rendering:pixelated;}
+    .hch-sk-mid{flex:1;min-width:0;}
+    .hch-sk-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
+    .hch-sk-name{font-size:14px;color:#e8e0c8;letter-spacing:1px;}
+    .hch-sk-lvl{font-size:12px;color:#c98b3a;letter-spacing:1px;}
+    .hch-sk-bar{height:5px;background:#2a2320;}
+    .hch-sk-fill{height:100%;background:#c98b3a;transition:width .2s ease;}
+
+    /* CEINTURE : COPIE EXACTE du HUD (hud-core .hc-belt / .hc-slot) — même taille, même
+       place, même style, pour qu'ouvrir le sac ne la fasse ni sauter ni changer. Redessinée
+       ici (et non le HUD) pour que le glisser-déposer vers la ceinture marche, comme Rust. */
+    .hch-belt{position:absolute;left:50%;transform:translateX(-50%);bottom:26px;display:flex;gap:5px;}
+    .hch-cell-belt{width:78px;height:78px;background:rgba(27,27,34,.8);box-shadow:0 3px 0 rgba(0,0,0,.5);}
+    .hch-cell-belt.hch-active{background:rgba(27,27,34,.86);box-shadow:0 0 0 1px #14141a,0 3px 0 rgba(0,0,0,.5);}
+
+    /* CONTENEUR ouvert (coffre, dépouille) : à GAUCHE, aligné bas — là où Rust met les
+       habits. Caché tant qu'aucun conteneur n'est ouvert (basculé au JS). */
+    .hch-cont{position:absolute;left:60px;bottom:120px;display:none;}
     .hch-cont-title{font-size:11px;color:#c98b3a;letter-spacing:1px;margin-bottom:8px;}
     .hch-cont-grid{display:grid;grid-template-columns:repeat(${COLS},66px);grid-auto-rows:66px;gap:6px;}
     .hch-cont-grid .hch-cell{width:66px;height:66px;}
-    .hch-div{width:3px;background:#2a2a34;}
-    .hch-art{flex:1;padding:22px;box-sizing:border-box;display:flex;flex-direction:column;min-width:0;}
+
+    /* ARTISANAT : colonne à DROITE, toujours visible (pas d'onglet), dégagée du bas-centre. */
+    .hch-art{position:absolute;top:70px;right:60px;width:600px;bottom:150px;display:flex;flex-direction:column;min-width:0;}
     .hch-art-h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;}
     .hch-art-t{font-size:17px;font-weight:700;color:#ffffff;letter-spacing:1px;}
     .hch-art-hint{font-size:12px;color:#6f6a60;letter-spacing:1px;}
@@ -392,27 +497,30 @@ function markup(): string {
     .hch-rec-state{font-size:13px;color:#8a9a4a;letter-spacing:1px;flex:0 0 auto;}
     .hch-rec-off .hch-rec-state{color:#e05a4a;}
     .hch-note{font-size:12px;color:#6f6a60;letter-spacing:1px;margin-top:12px;padding-top:12px;border-top:1px solid #2a2a34;}
-    .hch-ghost{position:fixed;width:52px;height:52px;image-rendering:pixelated;pointer-events:none;z-index:60;transform:translate(-50%,-50%);opacity:.85;}
+    .hch-ghost{position:fixed;width:44px;height:44px;image-rendering:pixelated;pointer-events:none;z-index:60;transform:translate(-50%,-50%);opacity:.85;}
   </style>
-  <div class="hch-tabs">
-    <div class="hch-tab hch-tab-on">ARTISANAT</div>
-    <div class="hch-close">TAB — FERMER</div>
+  <div class="hch-close">TAB — FERMER</div>
+  <div class="hch-art">
+    <div class="hch-art-h"><span class="hch-art-t">ARTISANAT</span><span class="hch-art-hint">MOLETTE POUR DÉFILER</span></div>
+    <input class="hch-search" type="text" placeholder="rechercher une recette…" spellcheck="false">
+    <div class="hch-list"></div>
+    <div class="hch-note"></div>
   </div>
-  <div class="hch-tray">
-    <div class="hch-sac">
-      <div class="hch-sac-h"><span class="hch-sac-t">SAC</span><span class="hch-weight"></span></div>
-      <div class="hch-bag"></div>
-      <div class="hch-cont"><div class="hch-cont-title"></div><div class="hch-cont-grid"></div></div>
-      <div class="hch-belt-wrap"><div class="hch-belt-lbl">CEINTURE</div><div class="hch-belt"></div></div>
+  <div class="hch-cont"><div class="hch-cont-title"></div><div class="hch-cont-grid"></div></div>
+  <div class="hch-skills"><div class="hch-sk-h">MÉTIERS</div></div>
+  <div class="hch-perso">
+    <div class="hch-doll-h">PERSONNAGE</div>
+    <div class="hch-doll">
+      <div class="hch-eqcol">${EQUIP_LEFT.map((e) => `<div class="hch-eq" data-eq="${e.key}"><span class="hch-eq-lbl">${e.label}</span></div>`).join('')}</div>
+      <div class="hch-portrait"><img class="hch-av" alt=""></div>
+      <div class="hch-eqcol">${EQUIP_RIGHT.map((e) => `<div class="hch-eq" data-eq="${e.key}"><span class="hch-eq-lbl">${e.label}</span></div>`).join('')}</div>
     </div>
-    <div class="hch-div"></div>
-    <div class="hch-art">
-      <div class="hch-art-h"><span class="hch-art-t">ARTISANAT</span><span class="hch-art-hint">MOLETTE POUR DÉFILER</span></div>
-      <input class="hch-search" type="text" placeholder="rechercher une recette…" spellcheck="false">
-      <div class="hch-list"></div>
-      <div class="hch-note"></div>
-    </div>
-  </div>`
+  </div>
+  <div class="hch-sac">
+    <div class="hch-sac-h"><span class="hch-sac-t">SAC</span><span class="hch-weight"></span></div>
+    <div class="hch-bag"></div>
+  </div>
+  <div class="hch-belt"></div>`
 }
 
 function moveGhost(el: HTMLElement, x: number, y: number): void {
