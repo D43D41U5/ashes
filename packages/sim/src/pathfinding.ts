@@ -5,8 +5,9 @@
  * Déterministe : coûts entiers, heuristique Manhattan, départage des égalités
  * par ordre d'insertion. Arithmétique + - * / uniquement.
  */
-import { makeIndexedIsBlockedAt, type MoveWorld } from './collision'
+import { isBlockedAt, makeIndexedIsBlockedAt, type MoveWorld } from './collision'
 import type { ResourceNode } from './economy'
+import { distSq } from './geometry'
 import type { WorldMap } from './map'
 
 interface HeapNode {
@@ -124,6 +125,39 @@ export function findPath(
       cameFrom.set(nk, key(current.tx, current.ty))
       heap.push({ f: ng + h(nx, ny), order: order++, tx: nx, ty: ny })
     }
+  }
+  return null
+}
+
+/**
+ * Chemin vers `(tx,ty)` OU, si cette tuile est bloquée (un Feu a un hitbox, un
+ * mur…), vers son voisin orthogonal LIBRE le plus proche de `(fromX,fromY)`. On
+ * se poste À CÔTÉ de l'obstacle — se chauffer au feu, pas dessus (décision du
+ * hitbox du Feu). Départage déterministe par distance au carré (arithmétique
+ * exacte). Retourne null si ni la cible ni un voisin n'est atteignable. C'est la
+ * primitive partagée du repli PNJ (`setPathTo`) et de la dérive du Cendreux.
+ */
+export function pathToward(
+  world: MoveWorld,
+  fromX: number,
+  fromY: number,
+  tx: number,
+  ty: number,
+): { tx: number; ty: number }[] | null {
+  const from = { tx: Math.floor(fromX), ty: Math.floor(fromY) }
+  const targets = isBlockedAt(world, tx, ty)
+    ? ([
+        [tx + 1, ty],
+        [tx - 1, ty],
+        [tx, ty + 1],
+        [tx, ty - 1],
+      ] as const)
+        .filter(([nx, ny]) => !isBlockedAt(world, nx, ny))
+        .sort((a, b) => distSq(a[0] + 0.5, a[1] + 0.5, fromX, fromY) - distSq(b[0] + 0.5, b[1] + 0.5, fromX, fromY))
+    : [[tx, ty] as const]
+  for (const [gx, gy] of targets) {
+    const path = findPath(world, from, { tx: gx, ty: gy })
+    if (path) return path
   }
   return null
 }

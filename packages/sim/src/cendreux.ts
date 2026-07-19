@@ -7,7 +7,7 @@ import { distSq } from './geometry'
 import { emitEvent } from './events'
 import { isEmpty, pourInto } from './items'
 import { moveToward, nearestPrey, spawnMonster, type Monster } from './monsters'
-import { findPath } from './pathfinding'
+import { pathToward } from './pathfinding'
 import { getGameTime } from './time'
 import type { Entity, SimState } from './sim'
 import { spillOnGround } from './village'
@@ -110,12 +110,9 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity):
     monster.targetId = goal?.prey?.id ?? null
     if (goal) {
       const world = { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null }
-      const path = findPath(
-        world,
-        { tx: Math.floor(entity.x), ty: Math.floor(entity.y) },
-        { tx: Math.floor(goal.x), ty: Math.floor(goal.y) },
-      )
-      monster.path = path ?? []
+      // Le Feu bloque désormais sa tuile (hitbox) : viser À CÔTÉ, pas dessus —
+      // sinon la dérive nocturne vers la chaleur ne trouve jamais de chemin.
+      monster.path = pathToward(world, entity.x, entity.y, Math.floor(goal.x), Math.floor(goal.y)) ?? []
     } else {
       monster.path = []
     }

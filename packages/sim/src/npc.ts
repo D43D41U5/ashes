@@ -33,7 +33,7 @@ import { distSq } from './geometry'
 import { countOf, freeRoomFor, moveSlotWithin, type ItemId } from './items'
 import { handleCold, handleHunger, handleSleep } from './npc-needs'
 import { assignErrands, handleErrand } from './npc-errands'
-import { findPath } from './pathfinding'
+import { pathToward } from './pathfinding'
 import { spawnEntity, type Entity, type SimState } from './sim'
 import { TICKS_PER_CYCLE } from './time'
 import { applyVillageAction, type TaskKind, type Village, type VillageAction } from './village'
@@ -148,26 +148,11 @@ export function followPath(state: SimState, npc: Npc, entity: Entity): boolean {
 /** Calcule un chemin vers une tuile (ou une voisine marchable si elle bloque). */
 export function setPathTo(state: SimState, npc: Npc, entity: Entity, tx: number, ty: number): boolean {
   const world = moveWorldFor(state, npc.villageId)
-  const from = { tx: Math.floor(entity.x), ty: Math.floor(entity.y) }
-  const targets = isBlockedAt(world, tx, ty)
-    ? ([
-        [tx + 1, ty],
-        [tx - 1, ty],
-        [tx, ty + 1],
-        [tx, ty - 1],
-      ] as const)
-        .filter(([nx, ny]) => !isBlockedAt(world, nx, ny))
-        .sort((a, b) => distSq(a[0] + 0.5, a[1] + 0.5, entity.x, entity.y) - distSq(b[0] + 0.5, b[1] + 0.5, entity.x, entity.y))
-    : [[tx, ty] as const]
-  for (const [gx, gy] of targets) {
-    const path = findPath(world, from, { tx: gx, ty: gy })
-    if (path) {
-      npc.path = path
-      return true
-    }
-  }
-  npc.path = []
-  return false
+  // Cible bloquée (Feu à hitbox, mur…) → on se poste au voisin libre le plus
+  // proche. Logique partagée avec la dérive du Cendreux (`pathToward`).
+  const path = pathToward(world, entity.x, entity.y, tx, ty)
+  npc.path = path ?? []
+  return path !== null
 }
 
 export function near(entity: Entity, tx: number, ty: number, r = RANGE): boolean {
