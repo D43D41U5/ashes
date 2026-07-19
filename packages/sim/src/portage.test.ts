@@ -35,9 +35,9 @@ describe('le poids porté (A1)', () => {
   it('la cueillette est LÉGÈRE, la mine est LOURDE — c’est là que doit être la peine', () => {
     // Une pile pleine de fibres (20 × 0,2 = 4) ne se sent pas : palier LÉGER.
     expect(carryTier(carryRatio(inventoryOf(SLOTS.PLAYER, { fiber: 20 })))).toBe('light')
-    // …dix minerais (30), si : c'est déjà la charge PLEINE. Ce sont les « hottes de
+    // …vingt minerais (60), si : c'est déjà la charge PLEINE. Ce sont les « hottes de
     // minerai » du GDD — la mine fait transpirer, la promenade en forêt non.
-    expect(carryWeight(inventoryOf(SLOTS.PLAYER, { iron_ore: 10 }))).toBe(CARRY.CAPACITY)
+    expect(carryWeight(inventoryOf(SLOTS.PLAYER, { iron_ore: 20 }))).toBe(CARRY.CAPACITY)
   })
 })
 
@@ -81,13 +81,13 @@ describe('le prix de la charge (A2, A3, A4)', () => {
     expect(leger.sprinting).toBe(true)
 
     // Palier MOYEN : on sprinte encore (le cran coûte de la vitesse, pas le souffle).
-    const moyen = inventoryOf(SLOTS.PLAYER, { wood: 15 }) // 15 / 30 = 0,5 → moyen
+    const moyen = inventoryOf(SLOTS.PLAYER, { wood: 30 }) // 30 / 60 = 0,5 → moyen
     expect(carryTier(carryRatio(moyen))).toBe('medium')
     expect(speedScaleFor({ ...corps, inventory: moyen }, sprint).sprinting).toBe(true)
 
     // Palier LOURD : le sprint est REFUSÉ, malgré 100 d'endurance. C'est le cran
     // qu'on sent en premier, avant même de regarder une jauge.
-    const lourdInv = inventoryOf(SLOTS.PLAYER, { stone: 13 }) // 26 / 30 = 0,87 → lourd
+    const lourdInv = inventoryOf(SLOTS.PLAYER, { stone: 26 }) // 52 / 60 = 0,87 → lourd
     expect(carryTier(carryRatio(lourdInv))).toBe('heavy')
     const lourd = speedScaleFor({ ...corps, inventory: lourdInv }, sprint)
     expect(lourd.sprinting).toBe(false)
@@ -98,7 +98,7 @@ describe('le prix de la charge (A2, A3, A4)', () => {
     const sim = simAvec()
     const id = spawnEntity(sim, 10.5, 10.5)
     me(sim).stamina = 10
-    grantItems(sim, id, { stone: 20, wood: 20 }) // 40 + 20 = 60 = 200 % de la capacité
+    grantItems(sim, id, { stone: 40, wood: 40 }) // 80 + 40 = 120 = 200 % de la capacité
     expect(carryRatio(me(sim).inventory)).toBeGreaterThan(1)
 
     for (let t = 0; t < 100; t++) step(sim, [])
@@ -121,7 +121,7 @@ describe('on n’est JAMAIS bloqué (A5)', () => {
     const arbre: ResourceNode = { id: 1, type: 'tree', tx: 11, ty: 10, stock: 100, regrowAt: 0 }
     const sim = simAvec([arbre])
     const id = spawnEntity(sim, 10.3, 10.5)
-    grantItems(sim, id, { stone: 50 }) // 100 de charge = 333 %
+    grantItems(sim, id, { stone: 100 }) // 200 de charge = 333 %
     expect(carryRatio(me(sim).inventory)).toBeGreaterThan(3)
     const avant = countOf(me(sim).inventory, 'wood')
     drainEvents(sim)
@@ -136,7 +136,7 @@ describe('on n’est JAMAIS bloqué (A5)', () => {
 
   it('…mais il rampe : la charge le paie en VITESSE, pas en refus', () => {
     const corps = { hunger: 100, wounds: {}, stamina: 100, temperature: 100 }
-    const croulant = speedScaleFor({ ...corps, inventory: inventoryOf(SLOTS.PLAYER, { stone: 50 }) }, vide)
+    const croulant = speedScaleFor({ ...corps, inventory: inventoryOf(SLOTS.PLAYER, { stone: 70 }) }, vide)
     expect(croulant.scale).toBe(CARRY.SPEED_FLOOR)
   })
 })
@@ -156,8 +156,8 @@ describe('le déterminisme (A8)', () => {
 })
 
 describe('la calibration, en clair (elle doit se LIRE, pas se deviner)', () => {
-  it('une charge pleine = 30 bois — contre 360 avant le portage', () => {
-    expect(CARRY.CAPACITY / ITEM_WEIGHT.wood).toBe(30)
+  it('une charge pleine = 60 bois — contre 360 avant le portage', () => {
+    expect(CARRY.CAPACITY / ITEM_WEIGHT.wood).toBe(60)
     // Le sac tient toujours 360 unités en VOLUME (18 cases × 20) : les cases
     // bornent le volume, le poids borne la peine (spec P3). Porter 360 bois reste
     // possible — à 20 % de vitesse, sans sprint et sans endurance.
@@ -165,12 +165,15 @@ describe('la calibration, en clair (elle doit se LIRE, pas se deviner)', () => {
     expect(carrySpeedFactor(360 / CARRY.CAPACITY)).toBe(CARRY.SPEED_FLOOR)
   })
 
-  it('fonder un village demande DEUX voyages (et c’est le but)', () => {
+  it('fonder un village tient en UN voyage (portage doublé, décision 2026-07-19)', () => {
     // Feu (10 bois) + marteau (4 bois, 2 pierre, 2 fibre) + atelier (6 bois, 4 pierre)
-    // + hache (5 bois, 3 pierre, 2 fibre) = 25 bois, 9 pierre, 4 fibre.
+    // + hache (5 bois, 3 pierre, 2 fibre) = 25 bois, 9 pierre, 4 fibre = 43,8.
+    // À CAPACITY 30, ce kit demandait DEUX voyages ; à 60 (Alexis, 2026-07-19), UN
+    // seul suffit — la route reste payante en vitesse/sprint, mais le gate « deux
+    // allers pour fonder » a sauté. C'est assumé, pas un oubli.
     const note = carryWeight(inventoryOf(SLOTS.PLAYER, { wood: 25, stone: 9, fiber: 4 }))
-    expect(note).toBeGreaterThan(CARRY.CAPACITY) // une charge n'y suffit pas…
-    expect(note).toBeLessThan(2 * CARRY.CAPACITY) // …deux, oui.
+    expect(note).toBeLessThan(CARRY.CAPACITY) // une seule charge y suffit désormais…
+    expect(note).toBeGreaterThan(CARRY.MEDIUM_MAX * CARRY.CAPACITY) // …mais on rentre LOURD (palier haut).
     expect(BALANCE.TICK_RATE_HZ).toBe(20) // (témoin : on n'a pas bougé le tick)
   })
 })

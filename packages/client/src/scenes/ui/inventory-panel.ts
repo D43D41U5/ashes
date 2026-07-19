@@ -252,7 +252,7 @@ export function createInventoryPanel(scene: Phaser.Scene, send: (a: PlayerAction
 
   /*
    * LA CHARGE (spec portage.md P11). Elle se lit à DROITE du titre, sur la même
-   * ligne : « poids 12.4 / 30 », et une barre dessous. Un malus qu'on subit sans le
+   * ligne : « poids 24.8 / 60 », et une barre dessous. Un malus qu'on subit sans le
    * voir est un bug, pas une règle — et celui-là est violent : au-dessus des trois
    * quarts on ne sprinte plus, au-dessus de la capacité on rampe et l'endurance ne
    * revient plus. Le joueur doit pouvoir décider AVANT de charger, pas comprendre
@@ -424,7 +424,7 @@ export function createInventoryPanel(scene: Phaser.Scene, send: (a: PlayerAction
       const ratio = carryRatio(inv)
       const tier = carryTier(ratio) // les seuils viennent de /sim, jamais recopiés
       // POIDS ABSTRAIT (décision d'Alexis 2026-07-19) : le moteur n'a pas de kg,
-      // l'échelle est une capacité abstraite (min 0.2, capacité 30). Pas de « kg ».
+      // l'échelle est une capacité abstraite (min 0.2, capacité 60). Pas de « kg ».
       loadText.setText(`poids ${poids.toFixed(1)} / ${CARRY.CAPACITY} — ${TIER_LABEL[tier]}`)
       loadText.setColor(tier === 'overloaded' ? INK.alert : tier === 'heavy' ? INK.warm : INK.dim)
       loadBar.width = Math.min(1, ratio) * LOAD_BAR_W

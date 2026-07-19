@@ -2283,7 +2283,7 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
  */
 export const CARRY = {
   /** Capacité de base. La besace de peau (couche 1 ter) la fera monter. */
-  CAPACITY: 30,
+  CAPACITY: 60,
 
   /*
    * QUATRE PALIERS (décision utilisateur, 2026-07-13) : léger, moyen, lourd,

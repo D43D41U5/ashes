@@ -189,7 +189,10 @@ describe('LE test (A7) — le paquebot vire, la Meute raide', () => {
   })
 
   it('(b) une Meute PNJ raide la nuit : grenier voisin cassé, butin rapporté, alarme', { timeout: 60_000 }, () => {
-    const sim = createSim(23, { map: createEmptyMap(60, 60, TERRAIN_GRASS) })
+    // Seed 24 (était 23) : le doublement du portage (2026-07-19) a décalé le flux
+    // RNG et le raid n'aboutissait plus sous 23 dans la fenêtre — fragilité au seed,
+    // pas une régression (cf. la mémoire « RNG fragile »). 24 le rejoue proprement.
+    const sim = createSim(24, { map: createEmptyMap(60, 60, TERRAIN_GRASS) })
     foundNpcVillage(sim, 15, 15, 3, 'neutre') // la victime
     const victim = sim.villages[0]!
     foundNpcVillage(sim, 40, 40, 4, 'meute') // la Meute

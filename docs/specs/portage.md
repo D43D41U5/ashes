@@ -64,11 +64,13 @@ Un **seul** système, et quatre tensions naissent d'un coup :
 
 ## Nombres (ordres de grandeur, à calibrer en playtest)
 
-`CARRY.CAPACITY = 30`. Paliers : `LIGHT_MAX = 0.33` · `MEDIUM_MAX = 0.66` · `HEAVY_MAX = 1`. Effets (plats) : `SPEED_LIGHT = 1` · `SPEED_MEDIUM = 0.85` · `SPEED_HEAVY = 0.7` (et plus de sprint). Surcharge (proportionnelle) : `OVERLOAD_MALUS_PER_RATIO = 0.5` · `SPEED_FLOOR = 0.2` · `OVERLOAD_STAMINA_REGEN = 0.25`.
+`CARRY.CAPACITY = 60` (doublé le 2026-07-19, décision Alexis ; voir plus bas). Paliers : `LIGHT_MAX = 0.33` · `MEDIUM_MAX = 0.66` · `HEAVY_MAX = 1`. Effets (plats) : `SPEED_LIGHT = 1` · `SPEED_MEDIUM = 0.85` · `SPEED_HEAVY = 0.7` (et plus de sprint). Surcharge (proportionnelle) : `OVERLOAD_MALUS_PER_RATIO = 0.5` · `SPEED_FLOOR = 0.2` · `OVERLOAD_STAMINA_REGEN = 0.25`.
 
 `ITEM_WEIGHT` : bois 1 · pierre **2** · minerai **3** · lingot **4** · charbon 2 · fibre 0,2 · baies 0,2 · corde 0,4 · ragoût 0,5 · viande 1 · outils 2 à 4.
 
-Ce que ça donne, concrètement : **une charge pleine = 30 bois** (contre 360 aujourd'hui), ou **10 minerais**. Fonder un village (Feu 10 bois + marteau + atelier + hache ≈ 44 de charge) demande **deux voyages**. La cueillette, elle, reste légère — c'est la **pierre et le minerai** qui font mal, exactement comme les « hottes de minerai » du GDD.
+Ce que ça donne, concrètement : **une charge pleine = 60 bois** (contre 360 aujourd'hui), ou **20 minerais**. Fonder un village (Feu 10 bois + marteau + atelier + hache ≈ 44 de charge) tient désormais en **un seul voyage** — mais on rentre au **palier lourd** (pas de sprint, vitesse ×0,7). La cueillette, elle, reste légère — c'est la **pierre et le minerai** qui font mal, exactement comme les « hottes de minerai » du GDD.
+
+> **Doublement du 2026-07-19 (décision Alexis).** `CARRY.CAPACITY` est passée de 30 à 60. Conséquence assumée : le gate « deux voyages pour fonder un village » saute — un aller suffit, chargé lourd. Le portage reste payant (vitesse, sprint refusé, endurance qui ne revient plus en surcharge) mais la **route est moins punitive** : « rapporter est le jeu » (GDD §8bis) s'adoucit d'un cran. À revisiter si le playtest montre que le retour ne pèse plus assez.
 
 ## Hors périmètre (les leviers suivants, dans l'ordre)
 
