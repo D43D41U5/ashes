@@ -1252,90 +1252,100 @@ const SCENARIOS = {
     return out
   },
   /**
-   * L'ÉCRAN D'ARTISANAT (spec craft-file F14-F15). On OUVRE le sac dans le vrai
-   * jeu et on regarde : le panneau doit tenir dans l'écran, ne pas chevaucher la
-   * grille d'inventaire, et ne montrer que ce qu'on peut faire ICI.
+   * L'ÉCRAN D'ARTISANAT/PERSONNAGE (specs craft-file F14-F15, calage Rust). Il est en
+   * DOM (un voile par-dessus le canvas), plus en Phaser : on relit donc les BORNES DES
+   * ÉLÉMENTS DU DOM (`getBoundingClientRect`), pas des GameObjects. Une capture qu'un
+   * humain doit regarder n'est pas un garde-fou — elle ne casse jamais ; ici on VÉRIFIE.
    *
-   * On ne se contente pas d'une capture : on relit les objets peints par la scène
-   * UI et on VÉRIFIE leurs bornes. Une capture qu'un humain doit regarder n'est
-   * pas un garde-fou — elle ne casse jamais.
+   * L'invariant qui compte (aspect 1 d'Alexis) : la CEINTURE ne change pas entre le HUD
+   * en jeu et l'écran ouvert. On la mesure AVANT d'ouvrir (elle est à l'écran, en jeu),
+   * puis on mesure la ceinture de l'écran, et on exige qu'elles soient AU PIXEL identiques.
    */
   async craft(page) {
+    // La ceinture du HUD, mesurée EN JEU (avant TAB) : la référence de « ne change pas ».
+    const beltHud = await page.evaluate(() => {
+      const b = document.querySelector('.hc-belt')?.getBoundingClientRect()
+      return b ? { left: b.left, top: b.top, width: b.width, height: b.height } : null
+    })
+
     await page.keyboard.press('Tab')
-    await page.waitForTimeout(500)
+    await page.waitForTimeout(400)
 
     const vue = await page.evaluate(() => {
-      const scene = window.__BRAISES__.scene
-      const ui = scene.scene.get('ui')
-      const W = scene.scale.width
-      const H = scene.scale.height
-
-      /*
-       * On ne mesure que ce qui est RÉELLEMENT PEINT : les feuilles (textes,
-       * images, rectangles) VISIBLES. Pas les conteneurs — leurs bornes englobent
-       * les enfants invisibles (le panneau de loot rangé, le banc de lignes au
-       * repos) et le voile plein écran : ils crieraient au loup à chaque frame, et
-       * un garde-fou qui crie pour rien est un garde-fou qu'on finit par éteindre.
-       */
-      const feuilles = []
-      const descendre = (o) => {
-        if (!o.visible) return
-        if (o.type === 'Container') {
-          for (const c of o.list ?? []) descendre(c)
-          return
-        }
-        if (!o.getBounds) return
-        const b = o.getBounds()
-        if (b.width === 0 || b.height === 0) return
-        feuilles.push({ type: o.type, texte: String(o.text ?? '').slice(0, 20), b })
+      const W = window.innerWidth
+      const H = window.innerHeight
+      const rect = (sel) => {
+        const el = document.querySelector(sel)
+        if (!el) return null
+        const b = el.getBoundingClientRect()
+        return { left: b.left, top: b.top, right: b.right, bottom: b.bottom, width: b.width, height: b.height, cx: b.left + b.width / 2 }
       }
-      for (const o of ui.children.list) descendre(o)
-
-      const nom = (f) => `${f.type}${f.texte ? `("${f.texte}")` : ''}@(${Math.round(f.b.left)},${Math.round(f.b.top)}) ${Math.round(f.b.width)}×${Math.round(f.b.height)}`
-      // 1. Rien ne doit sortir de l'écran (le voile, lui, le remplit pile).
-      const deborde = feuilles
-        .filter((f) => f.b.left < -2 || f.b.right > W + 2 || f.b.top < -2 || f.b.bottom > H + 2)
-        .map(nom)
-
-      // 2. Le panneau d'artisanat ne doit pas CHEVAUCHER la grille d'inventaire —
-      //    c'était le bug : il se peignait en plein milieu du sac.
-      const titre = (t) => feuilles.find((f) => f.texte.startsWith(t))
-      const craft = titre('ARTISANAT')
-      const sac = titre('INVENTAIRE')
-      const chevauche = craft && sac ? craft.b.left < sac.b.right + 191 : null
-
-      // 3. Ce que le panneau MONTRE ici (aucune station à portée) : la couche 1.
-      const lignes = feuilles.filter((f) => f.type === 'Text' && f.b.left > W / 2).map((f) => f.texte)
-
-      return { W, H, deborde, chevauche, lignes }
+      const board = document.querySelector('.hud-board')?.getBoundingClientRect()
+      const hch = document.querySelector('.hch')
+      return {
+        W, H,
+        scale: board ? board.width / 1920 : 1, // planche 1920 mise à l'échelle FIT (px écran → planche)
+        open: hch ? getComputedStyle(hch).display !== 'none' : false,
+        belt: rect('.hch-belt'),
+        bag: rect('.hch-bag'),
+        perso: rect('.hch-perso'),
+        art: rect('.hch-art'),
+        sac: rect('.hch-sac'),
+        skills: rect('.hch-skills'),
+        nSkills: document.querySelectorAll('.hch-sk').length,
+        nRecipes: document.querySelectorAll('.hch-rec, .hch-rec-off').length,
+        weight: document.querySelector('.hch-weight')?.textContent ?? '',
+      }
     })
 
-    console.log(`écran ${vue.W}×${vue.H}`)
-    console.log(vue.deborde.length === 0
-      ? `   ✓ rien ne déborde de l'écran`
-      : `   ✗ ${vue.deborde.length} objet(s) hors écran : ${vue.deborde.join(' | ')}`)
-    console.log(vue.chevauche === false
-      ? `   ✓ le panneau d'artisanat est À CÔTÉ du sac, pas dessus`
-      : `   ✗ le panneau d'artisanat chevauche la grille d'inventaire`)
-    console.log(`   ce que le panneau montre : ${vue.lignes.filter(Boolean).join(' · ')}`)
+    const { belt, bag, perso, art, sac, scale } = vue
+    const near = (a, b, tol) => Math.abs(a - b) <= tol
+    const brd = (px) => px / scale // px écran → px de planche (1920×1080)
+    const box = (r) => (r ? `${Math.round(r.width)}×${Math.round(r.height)}@${Math.round(r.left)},${Math.round(r.top)}` : 'absent')
 
-    // LA CHARGE (spec portage.md P11) : elle doit se LIRE. On charge le sac depuis
-    // le registry ? Non — on lit ce que l'écran AFFICHE, c'est tout l'objet du smoke.
-    const charge = await page.evaluate(() => {
-      const ui = window.__BRAISES__.scene.scene.get('ui')
-      const textes = []
-      const descendre = (o) => {
-        if (!o.visible) return
-        if (o.type === 'Container') return (o.list ?? []).forEach(descendre)
-        if (o.type === 'Text' && o.text) textes.push(String(o.text))
-      }
-      ui.children.list.forEach(descendre)
-      return textes.find((t) => t.includes('kg')) ?? null
-    })
-    console.log(charge ? `   ✓ la charge s'affiche : « ${charge} »` : `   ✗ la charge ne s'affiche NULLE PART`)
+    console.log(`écran ${vue.W}×${vue.H} (planche ×${scale.toFixed(3)})`)
+    console.log(vue.open ? `   ✓ l'écran est ouvert` : `   ✗ l'écran ne s'est pas ouvert`)
+
+    // 1. LA CEINTURE NE CHANGE PAS : même boîte qu'en jeu (au pixel près).
+    const beltSame = Boolean(beltHud && belt
+      && near(belt.left, beltHud.left, 1.5) && near(belt.top, beltHud.top, 1.5)
+      && near(belt.width, beltHud.width, 1.5) && near(belt.height, beltHud.height, 1.5))
+    console.log(beltSame
+      ? `   ✓ la ceinture est IDENTIQUE au HUD (${box(belt)})`
+      : `   ✗ la ceinture a CHANGÉ : HUD ${box(beltHud)} vs écran ${box(belt)}`)
+
+    // 2. Le SAC est JUSTE au-dessus de la ceinture (≤20px de planche) et aligné sur elle.
+    const gap = belt && bag ? brd(belt.top - bag.bottom) : null
+    const sacOk = gap !== null && gap >= 0 && gap <= 20 && near(bag.left, belt.left, 2) && near(bag.right, belt.right, 2)
+    console.log(sacOk
+      ? `   ✓ le sac est collé au-dessus de la ceinture (${gap.toFixed(0)}px, colonnes alignées)`
+      : `   ✗ sac mal posé : écart ${gap === null ? '?' : gap.toFixed(0)}px (≤20 ?), colonnes ${belt && bag ? `${Math.round(bag.left)}/${Math.round(belt.left)}` : '?'}`)
+
+    // 3. La ceinture (donc le pavé sac) est CENTRÉE à l'écran.
+    const centre = Boolean(belt && near(belt.cx, vue.W / 2, 2))
+    console.log(centre ? `   ✓ la ceinture est centrée` : `   ✗ ceinture décentrée (cx ${belt && Math.round(belt.cx)} vs ${vue.W / 2})`)
+
+    // 4. L'ARTISANAT est À CÔTÉ (à droite), sans chevaucher NI le sac NI le personnage.
+    const cote = Boolean(art && sac && perso && art.left >= sac.right - 1 && art.left >= perso.right - 1)
+    console.log(cote ? `   ✓ l'artisanat est à droite, sans chevaucher le pavé central` : `   ✗ l'artisanat chevauche le pavé central`)
+
+    // 5. Le volet PERSONNAGE a son HAUT aligné sur celui de l'ARTISANAT.
+    const topsAlign = Boolean(perso && art && near(perso.top, art.top, 2))
+    console.log(topsAlign ? `   ✓ PERSONNAGE et ARTISANAT alignés en haut` : `   ✗ hauts désalignés : PERSONNAGE ${perso && Math.round(perso.top)} vs ARTISANAT ${art && Math.round(art.top)}`)
+
+    // 6. Rien ne déborde de l'écran.
+    const deborde = Object.entries({ belt, bag, perso, art, sac, skills: vue.skills })
+      .filter(([, r]) => r && (r.left < -2 || r.right > vue.W + 2 || r.top < -2 || r.bottom > vue.H + 2))
+      .map(([k]) => k)
+    console.log(deborde.length === 0 ? `   ✓ rien ne déborde de l'écran` : `   ✗ hors écran : ${deborde.join(', ')}`)
+
+    // 7. Les 4 MÉTIERS, des recettes, et la CHARGE se lisent.
+    console.log(vue.nSkills === 4 ? `   ✓ les 4 métiers sont là` : `   ✗ ${vue.nSkills} métier(s) au lieu de 4`)
+    console.log(vue.nRecipes > 0 ? `   ✓ ${vue.nRecipes} recettes affichées` : `   ✗ aucune recette affichée`)
+    console.log(vue.weight.includes('/') ? `   ✓ la charge s'affiche : « ${vue.weight} »` : `   ✗ la charge ne s'affiche pas`)
 
     await page.screenshot({ path: `${OUT}/craft.png` })
-    return { ...vue, charge }
+    return { ...vue, beltHud, beltSame, gap, sacOk, centre, cote, topsAlign, deborde }
   },
 
   /**
