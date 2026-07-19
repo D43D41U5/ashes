@@ -8,7 +8,7 @@
  * Sim-first, headless : seed + inputs → état attendu.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, STRUCTURE_HP, WALL_TIERS } from './balance'
+import { BALANCE, STRUCTURE_COSTS, STRUCTURE_HP, WALL_TIERS } from './balance'
 import { drainEvents } from './events'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
@@ -17,7 +17,7 @@ import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimStat
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { recognizeFunctions, type ComponentType } from './index'
 import { advanceSpoilage } from './economy'
-import { addStructure, applyStructureDamage, fireRadius, getVillageOf, structureAt } from './village'
+import { addStructure, applyStructureDamage, buildPlacementValid, evaluateBuild, fireRadius, getVillageOf, structureAt } from './village'
 import { grantItems } from './village'
 
 const R_MAX = BALANCE.FIRE_RADIUS_BY_TIER[BALANCE.FIRE_RADIUS_BY_TIER.length - 1]!
@@ -622,5 +622,74 @@ describe('A9 — déterminisme du rejeu (poses/démolitions/paliers)', () => {
 
     const replayed = runReplay(log, setup)
     expect(snapshot(replayed)).toBe(snapshot(sim))
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `evaluateBuild` — le contrat PUR partagé avec le fantôme du client (maquette
+// Turn 4A). Le handler `build` en dépend (couvert par A1/A2 ci-dessus) ; ici on
+// éprouve la vue directe : `cost` toujours présent, `buildPlacementValid`, paliers.
+describe('evaluateBuild — verdict pur de pose (fantôme + serveur, source unique)', () => {
+  it('pose valide : ok, coût du bois par défaut, aucun matériau pour un mur bois', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    equipHammer(sim, id)
+    const ev = evaluateBuild(sim, id, 'wall', 42, 40)
+    expect(ev.ok).toBe(true)
+    expect(ev.reason).toBeUndefined()
+    expect(ev.cost).toEqual(WALL_TIERS.wood.wall.cost)
+    expect(buildPlacementValid(ev)).toBe(true)
+  })
+
+  it('le palier de matériau change le coût du mur ; le sol l’ignore', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    equipHammer(sim, id)
+    expect(evaluateBuild(sim, id, 'wall', 42, 40, 'stone').cost).toEqual(WALL_TIERS.stone.wall.cost)
+    // Sol/toit : coût fixe, `material` ignoré (jamais renvoyé).
+    const floor = evaluateBuild(sim, id, 'floor', 42, 40, 'metal')
+    expect(floor.cost).toEqual(STRUCTURE_COSTS.floor)
+    expect(floor.material).toBeUndefined()
+  })
+
+  it('hors du carré : refus « out_of_square », mais le coût reste renseigné', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    equipHammer(sim, id)
+    const far = 41 + fireRadius(1) + 1
+    const ev = evaluateBuild(sim, id, 'wall', far, 40)
+    expect(ev.ok).toBe(false)
+    expect(ev.reason).toBe('out_of_square')
+    expect(ev.cost).toEqual(WALL_TIERS.wood.wall.cost) // le panneau affiche le coût quoi qu'il arrive
+    expect(buildPlacementValid(ev)).toBe(false)
+  })
+
+  it('placement valide mais sac vide : « unaffordable » — le fantôme reste vert', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    equipHammer(sim, id)
+    // On vide le bois : le placement passe, mais on ne peut pas payer.
+    const e = sim.entities.find((x) => x.id === id)!
+    for (let i = 0; i < e.inventory.length; i++) {
+      if (e.inventory[i]?.item === 'wood') e.inventory[i] = null
+    }
+    const ev = evaluateBuild(sim, id, 'wall', 42, 40)
+    expect(ev.ok).toBe(false)
+    expect(ev.reason).toBe('unaffordable')
+    expect(buildPlacementValid(ev)).toBe(true) // géométrie OK : le « vert » du fantôme tient
+  })
+
+  it('parité handler : evaluateBuild.ok ⇒ la pose réelle place bien la pièce', () => {
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    equipHammer(sim, id)
+    expect(evaluateBuild(sim, id, 'wall', 42, 40).ok).toBe(true)
+    act(sim, id, { type: 'build', structure: 'wall', tx: 42, ty: 40 })
+    expect(structureAt(sim.structures, 42, 40)?.type).toBe('wall')
   })
 })

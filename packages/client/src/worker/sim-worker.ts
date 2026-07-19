@@ -38,13 +38,19 @@ let pendingAction: PlayerAction | undefined
  * complète (ready). */
 const nodeStockShadow = new Map<number, number>()
 
-/** Diff local (zéro clone) : nœuds dont le stock a bougé depuis le dernier tick. */
+/** Diff local (zéro clone) : nœuds dont le stock a bougé depuis le dernier tick. Un nœud
+ *  qui tombe à `stock 0` a pu DÉRIVER (spec recolte-vivante) : on joint alors sa position
+ *  (l'épuisement est le seul instant où un nœud se déplace) pour que le client le déménage. */
 function collectNodeDeltas(state: SimState): NodeDelta[] {
   const deltas: NodeDelta[] = []
   for (const n of state.nodes) {
     if (nodeStockShadow.get(n.id) !== n.stock) {
       nodeStockShadow.set(n.id, n.stock)
-      deltas.push({ id: n.id, stock: n.stock })
+      deltas.push(
+        n.stock === 0
+          ? { id: n.id, stock: 0, tx: n.tx, ty: n.ty, regrowAt: n.regrowAt }
+          : { id: n.id, stock: n.stock },
+      )
     }
   }
   return deltas

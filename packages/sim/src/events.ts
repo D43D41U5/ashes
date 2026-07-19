@@ -73,7 +73,10 @@ export type SimEvent =
   | { type: 'member_joined'; tick: number; villageId: number; entityId: number }
   | { type: 'member_banished'; tick: number; villageId: number; entityId: number }
   | { type: 'action_rejected'; tick: number; entityId: number; reason: string }
-  | { type: 'resource_harvested'; tick: number; entityId: number; nodeId: number; item: ItemId; count: number }
+  // `clean` : le coup a porté DANS LE VERT (abattage à maîtrise, spec recolte-maitrise
+  // A4) — l'événement porte l'info, la chronique et le retour de frappe la lisent
+  // sans deviner. Absent/`false` = coup baseline (toute récolte instantanée l'est).
+  | { type: 'resource_harvested'; tick: number; entityId: number; nodeId: number; item: ItemId; count: number; clean?: boolean }
   | { type: 'node_depleted'; tick: number; nodeId: number }
   // Le craft a un DÉBUT et une FIN distincts depuis la file (spec craft-file) :
   // `craft_queued` est l'intention (les intrants partent), `item_crafted` reste

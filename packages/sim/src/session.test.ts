@@ -26,11 +26,16 @@ function act(sim: SimState, id: number, action: PlayerAction): void {
   step(sim, [{ entityId: id, dx: 0, dy: 0, action }])
 }
 
-/** Récolte un nœud jusqu'à `want`, en respectant le rechargement. */
+/** Récolte un nœud jusqu'à `want`, en respectant le rechargement. On se PLANTE sur le
+ *  nœud avant chaque coup : le monde BOUGE désormais (un buisson/arbre épuisé rouvre
+ *  ailleurs, spec recolte-vivante) — « qui joue bien » SUIT la ressource, il ne reste pas
+ *  assis. Le pathing est testé ailleurs ; ici on mesure l'ÉCONOMIE, pas le déplacement. */
 function recolter(sim: SimState, id: number, nodeId: number, item: 'wood' | 'berries' | 'fiber', want: number): void {
   for (let g = 0; g < 400 && countOf(me(sim).inventory, item) < want; g++) {
     const node = sim.nodes.find((n) => n.id === nodeId)!
     if (node.stock <= 0) break
+    me(sim).x = node.tx + 0.5
+    me(sim).y = node.ty + 0.5
     act(sim, id, { type: 'harvest', nodeId })
     for (let t = 1; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
   }
@@ -59,6 +64,9 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
     recolter(sim, id, 4, 'wood', 10)
     act(sim, id, { type: 'light_fire' })
     expect(sim.villages).toHaveLength(1)
+    // LE CAMP : là où le Feu brûle. On PART récolter (les nœuds dérivent, spec
+    // recolte-vivante), on REVIENT cuisiner — le Feu est une station, elle a une portée.
+    const foyer = { x: me(sim).x, y: me(sim).y }
 
     // 2. De quoi faire un ragoût (4 baies + 1 fibre) — et de la marge.
     recolter(sim, id, 6, 'fiber', 3)
@@ -85,6 +93,10 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
         }
       }
 
+      // De retour AU FEU : cuisiner et se rassasier sont des gestes de camp (le Feu
+      // est une station à portée — la tournée a pu nous emmener loin).
+      me(sim).x = foyer.x
+      me(sim).y = foyer.y
       const faim = me(sim).hunger
       if (faim < 60 && countOf(me(sim).inventory, 'stew') > 0) {
         act(sim, id, { type: 'eat', item: 'stew' })

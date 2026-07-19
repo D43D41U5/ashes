@@ -65,11 +65,16 @@ function harvestUntil(bot: Bot, node: ResourceNode, item: ItemId, want: number):
 describe('le bot headless (A7)', () => {
   it('joue la boucle : récolter → fonder → bâtir l’atelier → crafter la hache → récolter mieux', () => {
     const map = createEmptyMap(32, 32, TERRAIN_GRASS)
-    // Nœuds espacés autour de la place (10, 10), chacun accessible en ligne.
+    // Nœuds espacés autour de la place (10, 10), chacun accessible en ligne. Stock
+    // GÉNÉREUX (20) À DESSEIN : ce bot n'a pas de pathfinding (goTo va en ligne droite),
+    // et un arbre RASÉ À SEC DÉRIVE ailleurs (spec recolte-vivante) — il pourrait rouvrir
+    // en travers du trajet du bot et le bloquer. On mesure ici le RENDEMENT et le REPLAY,
+    // pas le contournement d'obstacle : on garde donc les arbres bien pourvus, ils ne
+    // s'épuisent pas, ils ne dérivent pas. (Les vrais acteurs, eux, ont un flow-field.)
     const trees = [
-      { id: 1, type: 'tree', tx: 14, ty: 8, stock: 10, regrowAt: 0 },
-      { id: 2, type: 'tree', tx: 14, ty: 12, stock: 10, regrowAt: 0 },
-      { id: 3, type: 'tree', tx: 16, ty: 10, stock: 10, regrowAt: 0 },
+      { id: 1, type: 'tree', tx: 14, ty: 8, stock: 20, regrowAt: 0 },
+      { id: 2, type: 'tree', tx: 14, ty: 12, stock: 20, regrowAt: 0 },
+      { id: 3, type: 'tree', tx: 16, ty: 10, stock: 20, regrowAt: 0 },
     ] as const satisfies readonly ResourceNode[]
     const rock: ResourceNode = { id: 4, type: 'rock', tx: 6, ty: 10, stock: 12, regrowAt: 0 }
     const fiber: ResourceNode = { id: 5, type: 'fiber_plant', tx: 10, ty: 14, stock: 6, regrowAt: 0 }

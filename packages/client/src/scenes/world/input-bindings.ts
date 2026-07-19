@@ -17,7 +17,7 @@
  * nœuds, cadavres et position prédite changent à chaque snapshot ou frame —
  * chaque handler lit l'état AU MOMENT de la frappe.
  */
-import { BALANCE, COMPONENT_TYPES, SLOTS, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@braises/sim'
+import { BALANCE, COMPONENT_TYPES, NODE_DEFS, SLOTS, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
@@ -238,6 +238,30 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     return { held, dx: world.x / TILE_PX - p.x, dy: world.y / TILE_PX - p.y }
   }
 
+  /** Le nœud visé est-il un ARBRE (abattage à maîtrise) ? Les arbres passent par la
+   *  JAUGE de charge/relâche (spec recolte-maitrise, verbe 1) ; la pierre et les
+   *  plantes gardent le clic-maintenu instantané. Robuste aux futurs types d'arbre :
+   *  la famille se lit du métier, pas d'une liste de types codée en dur. */
+  const isFellNode = (nodeId: number): boolean => {
+    const node = deps.nodes().find((n) => n.id === nodeId)
+    return node !== undefined && NODE_DEFS[node.type].skill === 'woodcutting'
+  }
+
+  /** Le nœud visé est-il un FILON/rocher (minage à maîtrise, verbe 2) ? Ils passent par
+   *  le VERROU-nœud : on frappe le bon flanc, le curseur indiquant le côté autour du
+   *  centre du nœud — même famille lue du métier. */
+  const isMineNode = (nodeId: number): boolean => {
+    const node = deps.nodes().find((n) => n.id === nodeId)
+    return node !== undefined && NODE_DEFS[node.type].skill === 'mining'
+  }
+
+  /** La position MONDE (en tuiles) du curseur — la visée du minage. La sim en déduit le
+   *  flanc frappé (spec verbe 2). Attachée à tout `harvest` ; ignorée hors nœud de minage. */
+  const cursorAim = (pointer: Phaser.Input.Pointer): { aimX: number; aimY: number } => {
+    const w = pointerToWorld(pointer)
+    return { aimX: w.x / TILE_PX, aimY: w.y / TILE_PX }
+  }
+
   // Le clic MAINTENU récolte en boucle, cadencé par le rechargement (G6-G7).
   let holding = false
   let lastHarvestAt = -Infinity
@@ -263,6 +287,36 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     deps.sendAction({ type: 'attack_release', dx: hand.dx, dy: hand.dy })
   }
 
+  /**
+   * L'ABATTAGE À MAÎTRISE (spec recolte-maitrise, verbe 1) — MÊME grammaire que la
+   * charge de combat, appliquée au bois. Le clic maintenu sur un arbre EMPLIT une
+   * jauge (`harvest_charge_start`) ; le relâchement porte le coup (`harvest_release`),
+   * propre s'il tombe dans le vert. Le maintien RE-ARME (cadencé, `hold: true`) : la
+   * jauge se recharge toute seule après une frappe (auto ou relâchée) sans que le
+   * doigt bouge — tenir sans jamais viser hache au baseline (l'ancien G6 y survit).
+   */
+  let felling = false
+  let fellNodeId = -1
+  let lastFellAt = -Infinity
+
+  /** La frappe part (le nœud est re-validé côté sim — G8 : muet s'il n'y a plus rien). */
+  const releaseFell = (): void => {
+    if (!felling) return
+    felling = false
+    deps.sendAction({ type: 'harvest_release' })
+  }
+
+  /**
+   * LE MINAGE À MAÎTRISE (spec recolte-maitrise, verbe 2). Le clic maintenu sur un rocher
+   * le VERROUILLE : on frappe en boucle (cadence du rechargement, comme G6), le CURSEUR
+   * indiquant le côté frappé autour du centre du nœud — même hors de sa tuile, d'où des
+   * zones GROSSES (pas de pixel). La sim juge le flanc à chaque coup ; le bon flanc SAUTE,
+   * on suit la lueur. On lâche quand le bouton se lève ou que le filon est vidé.
+   */
+  let mining = false
+  let mineNodeId = -1
+  let lastMineAt = -Infinity
+
   scene.input.mouse?.disableContextMenu()
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
     if (overlayOpen()) return
@@ -285,6 +339,26 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       deps.sendAction({ type: 'attack_charge', dx: action.dx, dy: action.dy })
       return
     }
+    // ABATTRE, c'est CHARGER. Un clic sur un arbre n'émet pas `harvest` : il arme la
+    // jauge, et le coup ne part qu'au relâchement (propre s'il tombe dans le vert). La
+    // pierre et les plantes, elles, tombent dans le `if (action)` ci-dessous (instantané).
+    if (action?.type === 'harvest' && isFellNode(action.nodeId)) {
+      felling = true
+      fellNodeId = action.nodeId
+      lastFellAt = scene.time.now
+      deps.sendAction({ type: 'harvest_charge_start', nodeId: action.nodeId })
+      return
+    }
+    // MINER, c'est VERROUILLER le rocher : on frappe tout de suite (avec la visée du
+    // curseur = le flanc), puis en boucle tant qu'on tient — le curseur peut quitter la
+    // tuile pour désigner le côté, le nœud reste verrouillé.
+    if (action?.type === 'harvest' && isMineNode(action.nodeId)) {
+      mining = true
+      mineNodeId = action.nodeId
+      lastMineAt = scene.time.now
+      deps.sendAction({ type: 'harvest', nodeId: action.nodeId, ...cursorAim(pointer) })
+      return
+    }
     if (action) {
       deps.sendAction(action)
       if (action.type === 'harvest' || action.type === 'eat') lastHarvestAt = scene.time.now
@@ -292,7 +366,9 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   })
   scene.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
     holding = false
+    mining = false
     releaseCharge(pointer)
+    releaseFell()
   })
 
   /** Appelée à chaque frame par WorldScene : entretient le clic maintenu. */
@@ -316,6 +392,44 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
         lastAimAt = scene.time.now
         const hand = handAt(pointer)
         deps.sendAction({ type: 'attack_charge', dx: hand.dx, dy: hand.dy, hold: true })
+      }
+      return
+    }
+    // L'ABATTAGE en cours : on relâche si le bouton se lève ou qu'un overlay s'ouvre,
+    // sinon on RE-ARME (cadencé) pour hacher en continu — en re-ciblant l'arbre visé
+    // MAINTENANT (le curseur a pu glisser sur un autre tronc entre deux coups).
+    if (felling && (overlayOpen() || !pointer.leftButtonDown())) {
+      releaseFell()
+      holding = false
+      return
+    }
+    if (felling) {
+      if (scene.time.now - lastFellAt >= CHARGE_AIM_MS) {
+        lastFellAt = scene.time.now
+        const aim = aimNow(pointer)
+        if (aim.inRange && aim.nodeId !== null && isFellNode(aim.nodeId)) fellNodeId = aim.nodeId
+        deps.sendAction({ type: 'harvest_charge_start', nodeId: fellNodeId, hold: true })
+      }
+      return
+    }
+    // LE MINAGE en cours : on lâche si le bouton se lève, l'overlay s'ouvre, ou le filon
+    // est VIDÉ ; sinon on refrappe à la cadence du rechargement, le curseur MAINTENANT
+    // désignant le flanc. Le nœud reste verrouillé (le curseur peut sortir de sa tuile).
+    if (mining && (overlayOpen() || !pointer.leftButtonDown())) {
+      mining = false
+      holding = false
+      return
+    }
+    if (mining) {
+      if (scene.time.now - lastMineAt >= GATHER_COOLDOWN_MS) {
+        const node = deps.nodes().find((n) => n.id === mineNodeId)
+        if (!node || node.stock <= 0) {
+          mining = false
+          holding = false
+          return
+        }
+        deps.sendAction({ type: 'harvest', nodeId: mineNodeId, ...cursorAim(pointer) })
+        lastMineAt = scene.time.now
       }
       return
     }

@@ -45,6 +45,16 @@ export class BootScene extends Phaser.Scene {
     this.makeGlowTexture()
     generateItemIcons(this) // les 16 icônes d'items — voir render/item-art.ts
     generateVitalIcons(this) // les 4 icônes des jauges du HUD — voir render/vital-art.ts
+
+    // NETTETÉ DU PIXEL-ART : le rendu global est en ANTIALIAS (pour un texte/UI lisse
+    // comme la maquette), donc les textures pixel-art générées ici recevraient un
+    // filtrage LINEAR (flou). On les repasse en NEAREST une à une — le texte, lui, naît
+    // plus tard dans les autres scènes et garde le LINEAR par défaut (lisse).
+    for (const key of this.textures.getTextureKeys()) {
+      this.textures.get(key).setFilter(Phaser.Textures.FilterMode.NEAREST)
+    }
+    this.textures.get('glow').setFilter(Phaser.Textures.FilterMode.LINEAR) // le halo des Feux reste doux
+
     // L'écran principal choisit solo/multi (ou un deep-link `?solo`/`?server=` le saute).
     this.scene.start('menu')
   }
@@ -257,7 +267,12 @@ export class BootScene extends Phaser.Scene {
     makeCliffTextures(this) // les bandes de roche plate des frontières — voir render/cliff-art.ts
   }
 
-  /** Textures des nœuds de ressources. */
+  /** Textures des nœuds de ressources.
+   *
+   * STYLE (réglage d'Alexis 2026-07-19) : tout est RECTANGULAIRE/CARRÉ, pas de cercles —
+   * une silhouette blocky nette, dans l'esprit du buisson (compact, coloré, ombré en
+   * COUCHES : un liseré clair en haut/à gauche, une ombre en bas/à droite, comme le
+   * hillshade). Chaque nœud reste lisible en ombre chinoise à 16 px. */
   private makeNodes(): void {
     const g = this.add.graphics()
 
@@ -266,46 +281,89 @@ export class BootScene extends Phaser.Scene {
     // coiffe le monde et s'efface autour du joueur.
     g.fillStyle(0x4a3620).fillRect(6, 0, 4, 22) // tronc : 4 px de large, 22 de haut
     g.fillStyle(0x5c4429).fillRect(6, 0, 2, 22) // une arête claire, pour le volume
+    g.fillStyle(0x38281a).fillRect(9, 0, 1, 22) // une arête d'ombre à droite
     g.generateTexture('nd-tree_trunk', 16, 22)
     g.clear()
 
-    g.fillStyle(0x1e4d22).fillCircle(16, 16, 15) // houppier : deux tuiles de large
-    g.fillStyle(0x2d6b32).fillCircle(12, 12, 8) // lumière au nord-ouest (cf. hillshade)
-    g.fillStyle(0x18401d).fillCircle(21, 22, 6) // ombre au sud-est
+    // Houppier BLOCKY : un pavé de feuillage, coins mordus pour l'arrondir sans cercle.
+    g.fillStyle(0x18401d).fillRect(4, 6, 24, 22) // masse/ombre (base)
+    g.fillStyle(0x1e4d22).fillRect(6, 4, 20, 22) // corps
+    g.fillStyle(0x2d6b32).fillRect(8, 6, 11, 9) // lumière au nord-ouest (cf. hillshade)
+    g.fillStyle(0x347b3a).fillRect(9, 7, 5, 4) // éclat
+    g.fillStyle(0x143518).fillRect(18, 20, 8, 6) // ombre au sud-est
     g.generateTexture('nd-tree_crown', 32, 32)
     g.clear()
 
-    g.fillStyle(0x5a5a5e).fillCircle(8, 10, 6) // affleurement
-    g.fillStyle(0x7c7c82).fillCircle(6, 8, 3)
+    // POUSSE (spec recolte-vivante D2) : un arbre qui repousse — un petit fût + une touffe
+    // carrée. Le rendu la met à l'échelle sur la fenêtre de repousse (0 → adulte).
+    g.fillStyle(0x4a3620).fillRect(7, 9, 2, 6) // fût fin
+    g.fillStyle(0x18401d).fillRect(4, 3, 8, 8) // feuillage (base/ombre)
+    g.fillStyle(0x2d6b32).fillRect(5, 3, 5, 4) // lumière
+    g.fillStyle(0x347b3a).fillRect(6, 4, 2, 2) // éclat
+    g.generateTexture('nd-sapling', 16, 16)
+    g.clear()
+
+    // SOUCHE (spec recolte-vivante D1) : ce qu'un arbre laisse en dérivant. Un billot bas,
+    // dessus clair (bois frais coupé) et une ombre au pied. Pâlit et disparaît (transitoire).
+    g.fillStyle(0x3a2c1a).fillRect(5, 11, 6, 3) // corps
+    g.fillStyle(0x6b5334).fillRect(5, 9, 6, 2) // dessus : la coupe, claire
+    g.fillStyle(0x8a6a44).fillRect(7, 9, 2, 1) // cœur du billot
+    g.fillStyle(0x241a10).fillRect(5, 14, 6, 1) // ombre au sol
+    g.generateTexture('nd-stump', 16, 16)
+    g.clear()
+
+    // TRACE (spec recolte-vivante D1) : la terre remuée qu'un buisson/plante laisse en
+    // dérivant. Une plaque basse et sombre, à peine un relief — la nature reprend le coin.
+    g.fillStyle(0x3a2f22).fillRect(4, 11, 8, 3)
+    g.fillStyle(0x4a3d2c).fillRect(4, 11, 8, 1) // liseré clair du bord retourné
+    g.generateTexture('nd-scar', 16, 16)
+    g.clear()
+
+    // ROCHE : un bloc facetté, pas un galet. Dessus/gauche éclairés, pied dans l'ombre.
+    g.fillStyle(0x45454c).fillRect(3, 7, 11, 7) // ombre/base
+    g.fillStyle(0x6a6a72).fillRect(3, 6, 11, 7) // corps
+    g.fillStyle(0x8e8e98).fillRect(3, 6, 11, 2) // dessus éclairé
+    g.fillStyle(0xa4a4ae).fillRect(3, 6, 4, 6) // face NO
+    g.fillStyle(0x3a3a40).fillRect(3, 13, 11, 1) // ombre au pied
     g.generateTexture('nd-rock', 16, 16)
     g.clear()
 
-    g.fillStyle(0x6f9c3a) // fibres : touffe
+    g.fillStyle(0x6f9c3a) // fibres : touffe de brins verticaux
     g.fillRect(4, 8, 2, 7)
     g.fillRect(7, 6, 2, 9)
     g.fillRect(10, 9, 2, 6)
+    g.fillStyle(0x86b84a) // pointes éclairées
+    g.fillRect(7, 6, 2, 2).fillRect(4, 8, 2, 2).fillRect(10, 9, 2, 2)
     g.generateTexture('nd-fiber_plant', 16, 16)
     g.clear()
 
-    g.fillStyle(0x2f5e33).fillCircle(8, 9, 6) // buisson à baies
-    g.fillStyle(0xc0392b)
-    g.fillCircle(5, 8, 1.5)
-    g.fillCircle(10, 7, 1.5)
-    g.fillCircle(8, 11, 1.5)
+    // BUISSON À BAIES — la référence d'Alexis : un dôme carré, plein, ombré en couches,
+    // piqué de baies rouges. (Blocky, plus de cercle.)
+    g.fillStyle(0x24401f).fillRect(3, 7, 10, 7) // ombre/contour bas
+    g.fillStyle(0x2f5e33).fillRect(3, 6, 10, 6) // corps
+    g.fillStyle(0x3d7040).fillRect(4, 6, 7, 2) // dessus éclairé
+    g.fillStyle(0x4a8049).fillRect(5, 6, 3, 1) // éclat
+    g.fillStyle(0xc0392b) // baies (petits carrés 2 px)
+    g.fillRect(4, 8, 2, 2).fillRect(9, 7, 2, 2).fillRect(7, 10, 2, 2)
+    g.fillStyle(0xe0574a).fillRect(4, 8, 1, 1).fillRect(9, 7, 1, 1) // reflet des baies
     g.generateTexture('nd-berry_bush', 16, 16)
     g.clear()
 
-    g.fillStyle(0x5a5a5e).fillCircle(8, 10, 6) // filon de fer : veinules rouille
-    g.fillStyle(0xb0632e)
-    g.fillRect(5, 8, 3, 2)
-    g.fillRect(9, 11, 3, 2)
+    // FILON DE FER : le bloc de roche, veiné de rouille (rectangles).
+    g.fillStyle(0x45454c).fillRect(3, 7, 11, 7)
+    g.fillStyle(0x6a6a72).fillRect(3, 6, 11, 7)
+    g.fillStyle(0x8e8e98).fillRect(3, 6, 11, 2)
+    g.fillStyle(0xb0632e).fillRect(5, 9, 4, 2).fillRect(9, 11, 3, 2) // veinules rouille
+    g.fillStyle(0xc9803f).fillRect(5, 9, 2, 1) // reflet
     g.generateTexture('nd-iron_vein', 16, 16)
     g.clear()
 
-    g.fillStyle(0x5a5a5e).fillCircle(8, 10, 6) // veine de charbon
-    g.fillStyle(0x1c1c20)
-    g.fillRect(5, 8, 3, 2)
-    g.fillRect(9, 11, 3, 2)
+    // VEINE DE CHARBON : le bloc de roche, strié de noir luisant.
+    g.fillStyle(0x45454c).fillRect(3, 7, 11, 7)
+    g.fillStyle(0x6a6a72).fillRect(3, 6, 11, 7)
+    g.fillStyle(0x8e8e98).fillRect(3, 6, 11, 2)
+    g.fillStyle(0x1c1c20).fillRect(5, 9, 4, 2).fillRect(9, 11, 3, 2) // veines de charbon
+    g.fillStyle(0x3a3a42).fillRect(5, 9, 2, 1) // luisance
     g.generateTexture('nd-coal_seam', 16, 16)
     g.clear()
 
@@ -328,9 +386,12 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('nd-old_tree_trunk', 16, 24)
     g.clear()
     // Son houppier : plus large et plus SOMBRE que celui de l'arbre — il ferme le ciel.
-    g.fillStyle(0x12321a).fillCircle(20, 20, 19)
-    g.fillStyle(0x1d4a26).fillCircle(15, 15, 11)
-    g.fillStyle(0x0d2413).fillCircle(27, 28, 8)
+    // Blocky lui aussi : un grand pavé de feuillage, coins mordus.
+    g.fillStyle(0x0d2413).fillRect(4, 8, 32, 28) // masse/ombre
+    g.fillStyle(0x12321a).fillRect(6, 5, 28, 30) // corps
+    g.fillStyle(0x1d4a26).fillRect(9, 8, 14, 12) // lumière NO
+    g.fillStyle(0x245c30).fillRect(11, 10, 6, 5) // éclat
+    g.fillStyle(0x081c0e).fillRect(24, 26, 10, 8) // ombre SE
     g.generateTexture('nd-old_tree_crown', 40, 40)
     g.clear()
 
@@ -350,11 +411,14 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('nd-quarry', 16, 16)
     g.clear()
 
-    // LA CENDRE (Versant Brûlé) — un tas gris, et UNE braise qui couve. Le jeu porte son nom.
-    g.fillStyle(0x6e6a66).fillCircle(8, 11, 5)
-    g.fillStyle(0x8d8884).fillCircle(6, 10, 3)
-    g.fillStyle(0xa8a29c).fillCircle(6, 9, 1)
-    g.fillStyle(0xd9541f).fillRect(9, 11, 2, 2)
+    // LA CENDRE (Versant Brûlé) — un tas gris en gradins, et UNE braise qui couve. Le jeu
+    // porte son nom. Blocky : un monticule de rectangles, dessus clair, braise carrée.
+    g.fillStyle(0x56524e).fillRect(3, 11, 11, 3) // base/ombre
+    g.fillStyle(0x6e6a66).fillRect(4, 9, 9, 4) // corps
+    g.fillStyle(0x8d8884).fillRect(4, 8, 6, 2) // dessus éclairé
+    g.fillStyle(0xa8a29c).fillRect(4, 8, 2, 1) // pointe claire
+    g.fillStyle(0xd9541f).fillRect(9, 10, 2, 2) // la braise qui couve
+    g.fillStyle(0xf6a13a).fillRect(9, 10, 1, 1) // son cœur
     g.generateTexture('nd-ash_heap', 16, 16)
     g.clear()
 

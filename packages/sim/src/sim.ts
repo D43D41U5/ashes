@@ -111,6 +111,14 @@ export interface Entity {
    * l'autre armer son tourbillon, sinon la charge n'est un télégraphe pour personne.
    */
   charge?: { dx: number; dy: number; ticks: number }
+  /**
+   * LA JAUGE D'ABATTAGE (spec recolte-maitrise, verbe 1). Même principe que la
+   * charge de combat, mais pour le bois : le clic maintenu sur un arbre EMPLIT
+   * `ticks` (la sim compte, le client dessine `ticks / FELL_CHARGE_MAX_TICKS`) ;
+   * relâcher dans le VERT sort le coup PROPRE. Dans le snapshot : on doit voir la
+   * jauge monter. Absent hors abattage — le minage et la cueillette n'en ont pas.
+   */
+  harvestCharge?: { nodeId: number; ticks: number }
   /** Le pied du prochain coup : +1 / −1 / +1… (les poings dansent, spec R4bis). */
   swingSide: 1 | -1
   /** Point de respawn hors village (position d'apparition). */
@@ -512,6 +520,8 @@ export function step(state: SimState, inputs: MoveInput[]): void {
         applyInventoryAction(state, input.entityId, action)
       } else if (
         action.type === 'harvest' ||
+        action.type === 'harvest_charge_start' ||
+        action.type === 'harvest_release' ||
         action.type === 'craft' ||
         action.type === 'cancel_craft' ||
         action.type === 'eat'

@@ -6,7 +6,7 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { ComponentType, CraftOrder, Entity, GameTime, Inventory, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@braises/sim'
+import type { ChronicleEntry, ComponentType, CraftOrder, Entity, GameTime, Inventory, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@braises/sim'
 import type Phaser from 'phaser'
 
 /**
@@ -143,8 +143,9 @@ export interface HudState {
   knownPois: number[]
   /** Position LOGIQUE de l'avatar (tuiles) — le marqueur « tu es ici » de la carte. */
   playerPos: { x: number; y: number }
-  /** La chronique de la saison, déjà mise en forme. */
-  chronicle: string[]
+  /** La chronique de la saison — entrées structurées `{ jour, texte, poids }`
+   *  (le rendu à 3 poids s'y appuie ; voir chronicle.ts côté /sim). */
+  chronicle: ChronicleEntry[]
   /** Dernier message d'erreur à afficher (action rejetée, avertissement…). Il s'efface
    *  tout seul au bout de quelques secondes : c'est du bruit de partie. */
   error: { reason: string; at: number }

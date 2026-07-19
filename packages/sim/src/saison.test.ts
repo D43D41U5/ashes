@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ALIGNMENT, BALANCE, SEASON, SLOTS, TERRAIN_GRASS, TERRAIN_ROAD } from './balance'
-import { chronicleFromEvents } from './chronicle'
+import { chronicleFromEvents, formatChronicleLine } from './chronicle'
 import { drainEvents, type SimEvent } from './events'
 import { inventoryOf } from './items'
 import { createEmptyMap } from './map'
@@ -30,7 +30,14 @@ describe('la pression (A1)', () => {
     const node: ResourceNode = { id: 1, type: 'berry_bush', tx: 10, ty: 10, stock: 1, regrowAt: 0 }
     const sim = createSim(41, { map: createEmptyMap(40, 40, TERRAIN_GRASS), calendarScale: FAST, nodes: [node] })
     const a = spawnEntity(sim, 10.3, 10.5)
+    // Le buisson DÉRIVE à l'épuisement (spec recolte-vivante) : on se replante dessus
+    // avant chaque coup, sinon le second passe hors de portée et ne rase rien.
+    const surLeNoeud = (): void => {
+      sim.entities[0]!.x = sim.nodes[0]!.tx + 0.5
+      sim.entities[0]!.y = sim.nodes[0]!.ty + 0.5
+    }
 
+    surLeNoeud()
     step(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'harvest', nodeId: 1 } }])
     const regrowAct1 = sim.nodes[0]!.regrowAt - sim.tick + 1
 
@@ -43,6 +50,7 @@ describe('la pression (A1)', () => {
     delete sim.nodes[0]!.depletions
     delete sim.nodes[0]!.forgetAt
     sim.entities[0]!.cooldownUntil = 0
+    surLeNoeud()
     step(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'harvest', nodeId: 1 } }])
     const regrowAct2 = sim.nodes[0]!.regrowAt - sim.tick + 1
     expect(regrowAct2 / regrowAct1).toBeCloseTo(SEASON.REGROW_ACT_FACTOR[1]! / SEASON.REGROW_ACT_FACTOR[0]!, 1)
@@ -117,7 +125,7 @@ describe('la chronique (A5)', () => {
       runTo(sim, sim.tick + 40, events)
     }
     const names = Object.fromEntries(sim.villages.map((v) => [v.id, v.name]))
-    const chronicle = chronicleFromEvents(events, sim.calendarScale, names)
+    const chronicle = chronicleFromEvents(events, sim.calendarScale, names).map(formatChronicleLine)
 
     expect(chronicle.length).toBeGreaterThan(4)
     expect(chronicle.some((l) => l.includes('Feu s\'est allumé'))).toBe(true)

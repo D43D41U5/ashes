@@ -1,29 +1,25 @@
 /**
  * L'ÉCRAN DE CHARGEMENT — le seul écran du jeu tant que la vallée n'est pas née.
  *
- * LA BARRE DIT LA VÉRITÉ, LE TEXTE RACONTE. C'est un partage volontaire :
+ * RENDU ISO à la maquette « Ashes UI » Turn 8B (« la braise qui respire »), en DOM
+ * comme le menu (voir `menu-dom.ts`) : un canvas Phaser upscalé se crénelle et ne
+ * saurait égaler l'anneau en `conic-gradient`, la flamme qui pulse et la police
+ * JetBrains Mono. L'ANNEAU EST LA PROGRESSION — sa portion d'ambre est le compte réel
+ * des passes de l'hôte (`done / total`), rien n'est brodé. Une étincelle l'orbite, la
+ * braise couve au centre. Le voile est un noir opaque : s'effacer EST le fondu, et le
+ * monde (déjà monté derrière) apparaît.
  *
- * - la barre ne bouge que si un vrai travail a avancé. L'hôte annonce chacune de
- *   ses passes (`progress`), et la barre n'est QUE son compte (`done / total`) —
- *   rien n'est inventé, aucune animation de complaisance ;
- * - le texte, lui, ne dit pas ce que la machine fabrique. « les rivières creusent
- *   leur lit » pendant que le worker taille un flow field, c'est un rapport
- *   d'ingénieur déguisé en poème. On préfère l'aveu : ce sont des GESTES DU MONDE,
- *   tirés au sort, qui parlent du jeu et non de sa cuisine.
- *
- * La génération tourne dans le Worker : le thread principal reste libre de peindre,
- * donc cet écran vit vraiment (la barre monte, le texte tourne). Il ne porte RIEN
- * d'autre — pas de mode d'emploi, pas d'accueil : l'ancienne popup d'accueil (qui
- * s'ouvrait EN JEU, par-dessus le monde, et qu'il fallait congédier) est supprimée,
- * et son contenu n'a pas été recyclé ici. Une salle d'attente n'est pas un manuel.
+ * LA JAUGE DIT LA VÉRITÉ, LE TEXTE RACONTE. La ligne du bas tire au sort un GESTE DU
+ * MONDE — il ne rend AUCUN compte de la machine (« les rivières creusent leur lit »
+ * pendant qu'un flow field se taille, c'est un rapport d'ingénieur déguisé en poème).
+ * On préfère l'aveu : des gestes qui parlent du jeu, pas de sa cuisine.
  */
-import type Phaser from 'phaser'
-import { FONT } from './typography'
+import { ensureGameFont, GAME_FONT } from './game-font'
 
 export interface LoadingScreen {
   /** Le compte de l'hôte (`undefined` tant qu'il n'a rien dit) et l'horloge de la scène. */
   update(progress: { done: number; total: number } | undefined, now: number): void
-  /** Le monde est debout DERRIÈRE le voile : on remplit la barre (c'est mérité) et on
+  /** Le monde est debout DERRIÈRE le voile : on remplit l'anneau (c'est mérité) et on
    *  commence à s'effacer. Le fond étant un noir opaque, l'effacer EST le fondu. */
   fadeOut(now: number): void
   /** Une frame de fondu. Rend `true` quand il ne reste plus rien à l'écran — et
@@ -69,118 +65,91 @@ const GESTE_MS = 3000
 /** Le fondu final. Court : on veut entrer dans le monde, pas assister à une transition. */
 const FADE_MS = 420
 
-/** La barre : large et basse, comme une braise qui court sous la cendre. */
-const BAR_W = 560
-const BAR_H = 14
-/** Encre (le cerne), cendre (la barre vide), braise (le remplissage). */
-const INK = 0x14100c
-const ASH = 0x2b2723
-const EMBER = 0xe8842c
-/** Le fond : celui de la page (index.html) et de la caméra — l'écran ne « saute » pas au premier rendu. */
-const BACKDROP = 0x0e0e12
+/** La planche de la maquette 8B (16:9), mise à l'échelle pour TENIR dans la fenêtre. */
+const DESIGN_W = 1200
+const DESIGN_H = 675
 
 /**
- * Aisance de la barre : elle REJOINT la vérité en douceur, sans jamais la devancer.
- * Constante de temps en MILLISECONDES, et non « une fraction par frame » : les dernières
- * étapes du chargement (le montage des couches, côté client) consomment délibérément une
- * frame CHACUNE — au rythme d'une frame, un lissage par frame n'aurait rattrapé qu'une
- * poignée de pour-cent par étape, et la barre aurait plafonné vers 85 % avant de sauter
- * d'un coup. Le lissage suit donc le temps qui passe, pas le nombre de frames.
+ * Aisance de l'anneau : il REJOINT la vérité en douceur, sans jamais la devancer.
+ * Constante de temps en MILLISECONDES, et non « une fraction par frame » : les
+ * dernières étapes du chargement (le montage des couches, côté client) consomment
+ * délibérément une frame CHACUNE — au rythme d'une frame, un lissage par frame n'aurait
+ * rattrapé qu'une poignée de pour-cent par étape, et l'anneau aurait plafonné avant de
+ * sauter d'un coup. Le lissage suit donc le temps qui passe, pas le nombre de frames.
  */
 const EASE_MS = 140
 /** Sous ce delta, inutile de retracer : l'œil ne verrait rien bouger. */
 const REDRAW_EPS = 0.002
 
-export function createLoadingScreen(scene: Phaser.Scene, depth: number): LoadingScreen {
-  const W = scene.scale.width
-  const H = scene.scale.height
-  const cx = W / 2
-  const barX = cx - BAR_W / 2
-  const barY = H / 2 + 30
+export function createLoadingScreen(): LoadingScreen {
+  ensureGameFont()
 
-  const style = {
-    fontFamily: FONT,
-    fontSize: '16px',
-    color: '#e8e0c8',
-    stroke: '#14141a',
-    strokeThickness: 3,
-  } as const
+  const root = document.createElement('div')
+  root.className = 'bl-overlay'
+  root.innerHTML = style() + board()
+  document.body.appendChild(root)
 
-  const backdrop = scene.add.rectangle(0, 0, W, H, BACKDROP).setOrigin(0)
+  const boardEl = root.querySelector<HTMLElement>('.bl')!
+  const ringEl = root.querySelector<HTMLElement>('.bl-ring')!
+  const gesteEl = root.querySelector<HTMLElement>('.bl-geste')!
+  const pctEl = root.querySelector<HTMLElement>('.bl-pct')!
 
-  const title = scene.add
-    .text(cx, H / 2 - 120, 'BRAISES', { ...style, fontSize: '44px', color: '#e8842c' })
-    .setOrigin(0.5)
-  const subtitle = scene.add
-    .text(cx, H / 2 - 78, 'la Veillée', { ...style, fontSize: '18px', color: '#c8b88a', strokeThickness: 0 })
-    .setOrigin(0.5)
-
-  // Le geste en cours, JUSTE au-dessus de la barre — là où un autre jeu écrirait
-  // « chargement des assets ». Il ne rend AUCUN compte de la machine : c'est du décor.
-  const geste = scene.add
-    .text(cx, barY - 16, '', { ...style, fontSize: '15px', color: '#b8b0a0', strokeThickness: 0 })
-    .setOrigin(0.5, 1)
-
-  const bar = scene.add.graphics()
-
-  // Et RIEN d'autre. Un écran de chargement dit qu'il travaille et combien il en
-  // reste — c'est tout ce qu'on lui demande. Le reste s'apprend en jouant.
-  const root = scene.add.container(0, 0, [backdrop, title, subtitle, geste, bar]).setDepth(depth)
-
-  /** Ce que la barre AFFICHE (lissé) et ce qu'elle a déjà tracé. */
-  let shown = 0
-  let drawn = -1
-
-  const draw = (frac: number): void => {
-    bar.clear()
-    bar.fillStyle(ASH, 1).fillRect(barX, barY, BAR_W, BAR_H)
-    if (frac > 0) {
-      bar.fillStyle(EMBER, 1).fillRect(barX, barY, Math.max(2, Math.round(BAR_W * frac)), BAR_H)
-    }
-    bar.lineStyle(2, INK, 1).strokeRect(barX, barY, BAR_W, BAR_H)
+  // ── MISE À L'ÉCHELLE « FIT » — la planche 1200×675 tient dans la fenêtre ──
+  const fit = (): void => {
+    const k = Math.min(window.innerWidth / DESIGN_W, window.innerHeight / DESIGN_H)
+    boardEl.style.transform = `translate(-50%, -50%) scale(${k})`
   }
-  draw(0)
+  fit()
+  window.addEventListener('resize', fit)
+
+  const drawRing = (frac: number): void => {
+    // La portion d'ambre = la progression ; le reste, la piste sombre (comme la maquette).
+    ringEl.style.background = `conic-gradient(#c98b3a ${(frac * 100).toFixed(1)}%,#241a10 0)`
+    pctEl.textContent = `${Math.round(frac * 100)} % · LA BRAISE COUVE`
+  }
+  drawRing(0)
 
   // Un ordre neuf à chaque chargement (mélange de Fisher-Yates), qu'on parcourt
   // ensuite en ligne droite : on ne retombe donc jamais deux fois sur le même geste
-  // dans la même attente — ce qu'un tirage indépendant, lui, ferait sans se gêner.
-  // (`Math.random` : on est dans le CLIENT. /sim, lui, n'a pas le droit d'y toucher.)
+  // dans la même attente. (`Math.random` : on est dans le CLIENT. /sim n'y touche pas.)
   const shuffled = [...GESTES]
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
     ;[shuffled[i], shuffled[j]] = [shuffled[j]!, shuffled[i]!]
   }
+
+  /** Ce que l'anneau AFFICHE (lissé) et ce qu'il a déjà tracé. */
+  let shown = 0
+  let drawn = -1
   let geste0 = -1 // index du geste affiché ; -1 = aucun encore
   let gesteAt = 0
-  /** Instant où le fondu a commencé — `-1` tant que le monde n'est pas là. */
-  let fadeFrom = -1
-  /** Horloge du dernier `update` — le lissage suit le TEMPS, pas les frames. */
-  let lastNow = -1
+  let fadeFrom = -1 // instant où le fondu a commencé — `-1` tant que le monde n'est pas là
+  let lastNow = -1 // horloge du dernier `update` — le lissage suit le TEMPS, pas les frames
 
   return {
     update(progress, now) {
-      // `done` = passes ACHEVÉES : la barre ne compte que du travail fait.
+      // `done` = passes ACHEVÉES : l'anneau ne compte que du travail fait.
       const target = progress && progress.total > 0 ? Math.min(1, Math.max(0, progress.done / progress.total)) : 0
       // Une étape de montage peut bloquer le thread une demi-seconde : `dt` est alors
-      // énorme et la barre rattrape presque tout — c'est voulu, elle a du retard à rendre.
+      // énorme et l'anneau rattrape presque tout — c'est voulu, il a du retard à rendre.
       const dt = lastNow < 0 ? 0 : now - lastNow
       lastNow = now
       shown += (target - shown) * Math.min(1, dt / EASE_MS)
       if (Math.abs(shown - drawn) > REDRAW_EPS) {
-        draw(shown)
+        drawRing(shown)
         drawn = shown
       }
 
       if (geste0 < 0 || now - gesteAt >= GESTE_MS) {
         geste0 = (geste0 + 1) % shuffled.length
         gesteAt = now
-        geste.setText(shuffled[geste0]!)
+        gesteEl.textContent = shuffled[geste0]!
       }
     },
 
     fadeOut(now) {
       fadeFrom = now
-      draw(1) // la barre va au bout : le monde est là, ce n'est plus une promesse
+      drawRing(1) // l'anneau va au bout : le monde est là, ce n'est plus une promesse
       drawn = 1
     },
 
@@ -188,17 +157,55 @@ export function createLoadingScreen(scene: Phaser.Scene, depth: number): Loading
       if (fadeFrom < 0) return false
       const k = (now - fadeFrom) / FADE_MS
       if (k >= 1) {
-        root.destroy()
+        this.destroy()
         return true
       }
-      // L'alpha d'un conteneur se propage à ses enfants : le voile, le titre et la
-      // barre s'effacent d'un seul geste, et le monde (déjà rendu dessous) apparaît.
-      root.setAlpha(1 - k)
+      root.style.opacity = String(1 - k) // le voile s'efface, le monde (rendu dessous) apparaît
       return false
     },
 
     destroy() {
-      root.destroy() // le fond, le titre, la barre, les touches — tout part ensemble
+      window.removeEventListener('resize', fit)
+      root.remove()
     },
   }
+}
+
+/** La feuille de style du voile : échelle, images clés (flamme, étincelle). La police
+ *  vit dans `<head>` (voir `ensureGameFont`), pour survivre au menu qui précède. */
+function style(): string {
+  return `<style>
+  .bl-overlay{position:fixed;inset:0;z-index:50;background:#0f0b08;overflow:hidden;}
+  .bl{position:absolute;left:50%;top:50%;width:${DESIGN_W}px;height:${DESIGN_H}px;overflow:hidden;
+    background:#0f0b08;color:#e4ebef;transform-origin:center center;transform:translate(-50%,-50%);
+    font-family:${GAME_FONT};}
+  .bl *{box-sizing:border-box;}
+  @keyframes blFlamePulse{0%,100%{transform:translateY(0) scale(1);opacity:.9}50%{transform:translateY(-4px) scale(1.08);opacity:1}}
+  @keyframes blRingSpin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+  </style>`
+}
+
+/** La planche 8B, au pixel de la maquette. L'anneau et le %, eux, se peignent au fil
+ *  de l'update (progression réelle). */
+function board(): string {
+  return `<div class="bl">
+    <div style="position:absolute;inset:0;background:radial-gradient(60% 60% at 50% 42%,rgba(201,139,58,.12),transparent 60%);"></div>
+
+    <div style="position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);text-align:center;">
+      <div class="bl-ring" style="position:relative;width:150px;height:150px;margin:0 auto;border-radius:50%;background:conic-gradient(#c98b3a 0%,#241a10 0);">
+        <div style="position:absolute;inset:8px;border-radius:50%;background:#0f0b08;display:grid;place-items:center;">
+          <div style="font-size:52px;line-height:1;animation:blFlamePulse 1.3s ease-in-out infinite;filter:drop-shadow(0 0 16px rgba(201,139,58,.7));">🔥</div>
+        </div>
+        <div style="position:absolute;inset:0;animation:blRingSpin 3.4s linear infinite;"><div style="position:absolute;left:50%;top:-3px;transform:translateX(-50%);width:7px;height:7px;border-radius:50%;background:#e8c66a;box-shadow:0 0 10px #e8c66a;"></div></div>
+      </div>
+
+      <div style="font-size:52px;font-weight:700;color:#e8763a;letter-spacing:5px;margin-top:34px;text-shadow:0 0 30px rgba(201,139,58,.4);">BRAISES</div>
+      <div style="font-size:16px;color:#e8e0c8;letter-spacing:2px;margin-top:8px;">la Veillée</div>
+    </div>
+
+    <div style="position:absolute;left:50%;bottom:70px;transform:translateX(-50%);width:620px;text-align:center;">
+      <div class="bl-geste" style="font-size:13px;color:#9a8f78;letter-spacing:1px;min-height:1em;"></div>
+      <div class="bl-pct" style="font-size:11px;color:#6f6a60;letter-spacing:2px;margin-top:14px;">0 % · LA BRAISE COUVE</div>
+    </div>
+  </div>`
 }

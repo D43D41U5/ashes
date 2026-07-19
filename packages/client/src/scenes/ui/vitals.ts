@@ -23,6 +23,7 @@ import { CARRY, TEMPERATURE, carryTier, skillLevel, type CarryTier, type Entity,
 import type Phaser from 'phaser'
 import { VITAL_ICON_PX, vitalIconKey, type VitalId } from '../../render/vital-art'
 import { hotbarBottom } from './hotbar'
+import { COL, HEX, VITAL_COL } from './palette'
 import { FONT } from './typography'
 
 export interface Vitals {
@@ -57,9 +58,9 @@ const MAXIMA: Record<VitalId, number> = { hp: 100, stamina: 100, hunger: 100, te
  */
 const CARRY_COLOR: Record<CarryTier, number> = {
   light: 0x7e8a94, // gris acier : on ne sent rien, et l'icône ne doit pas crier
-  medium: 0xc9a227, // or : le premier cran, on le voit
-  heavy: 0xd07a2a, // orange : plus de sprint
-  overloaded: 0xc0503e, // rouge : on rampe, et l'endurance ne revient plus
+  medium: COL.ember, // braise : le premier cran, on le voit
+  heavy: COL.emberDeep, // braise profonde : plus de sprint
+  overloaded: COL.alert, // alerte : on rampe, et l'endurance ne revient plus
 }
 
 /** Les métiers, dans l'ordre où on veut les lire — nom français pour l'affichage. */
@@ -81,13 +82,13 @@ const X0 = 12
  *  aucune mise à l'échelle, donc aucun pixel doublé. */
 const ICON = VITAL_ICON_PX
 
-/** Le trait de gravure qui cerne chaque médaillon, et la silhouette de l'icône. */
-const INK = 0x14100c
-/** Teinte de l'icône : encre, mais pas noir pur — un souffle d'ombre y survit. */
-const INK_TINT = 0x2b2419
-/** Le disque VIDÉ : parchemin terni. Ni assez clair pour crier, ni assez sombre
- *  pour avaler la silhouette. */
-const EMPTY = 0x6e675b
+/** Le trait de gravure qui cerne chaque médaillon (encre de la maquette #14141a). */
+const INK = COL.ink
+/** L'icône est une SILHOUETTE NOIRE (maquette : `filter:brightness(0)`) — elle se lit
+ *  sur le remplissage coloré, et s'efface dans le sombre quand la jauge est basse. */
+const ICON_INK = 0x000000
+/** Le disque VIDÉ : le panneau sombre de la maquette (#1b1b22), pas un parchemin. */
+const EMPTY = COL.panel
 
 
 const TEXT_ROW_H = 18
@@ -101,6 +102,12 @@ interface Badge {
   cy: number
   /** La couleur pleine de la vitale — celle du disque quand tout va bien. */
   full: number
+  /** Le liseré clair au NIVEAU du liquide (maquette : `border-top` du remplissage). */
+  rim: number
+  /** Le libellé de l'infobulle au survol (maquette : « PV 82 / 100 »). */
+  label: string
+  /** Le max de la jauge, pour l'infobulle. */
+  max: number
   /** Seuil sous lequel le disque vire au rouge (faim à zéro, froid qui mord) —
    *  `undefined` pour les vitales qui n'ont pas d'alarme (PV, endurance). */
   warn: number | undefined
@@ -124,7 +131,22 @@ export function createVitals(scene: Phaser.Scene): Vitals {
     id,
     cx: X0 + R + i * (D + GAP),
     cy,
-    full: { hp: 0xc0503e, stamina: 0x4e9c5a, hunger: 0xd9a441, temperature: 0x6aa8d9, carry: CARRY_COLOR.light }[id],
+    full: {
+      hp: VITAL_COL.hp.fill,
+      stamina: VITAL_COL.stamina.fill,
+      hunger: VITAL_COL.hunger.fill,
+      temperature: VITAL_COL.temperature.fill,
+      carry: CARRY_COLOR.light,
+    }[id],
+    rim: {
+      hp: VITAL_COL.hp.rim,
+      stamina: VITAL_COL.stamina.rim,
+      hunger: VITAL_COL.hunger.rim,
+      temperature: VITAL_COL.temperature.rim,
+      carry: 0xa7b1b8,
+    }[id],
+    label: { hp: 'PV', stamina: 'ENDURANCE', hunger: 'FAIM', temperature: 'TEMP', carry: 'POIDS' }[id],
+    max: MAXIMA[id],
     warn: { hp: undefined, stamina: undefined, hunger: 0, temperature: TEMPERATURE.HYPOTHERMIA, carry: undefined }[id],
     frac: -1, // rien n'est encore dessiné
     color: 0,
@@ -140,23 +162,16 @@ export function createVitals(scene: Phaser.Scene): Vitals {
     scene.add
       .image(b.cx, b.cy, vitalIconKey(b.id))
       .setDisplaySize(ICON, ICON)
-      .setTint(INK_TINT),
+      .setTint(ICON_INK),
   )
 
-  // Le chiffre du survol — DANS la bulle, pas au-dessus : blanc cerné de noir, il
-  // se lit sur n'importe quel remplissage. Il PREND LA PLACE de l'icône (qu'on
-  // masque) : superposés, les deux se mangeraient.
-  const hover = scene.add
-    .text(0, 0, '', {
-      fontFamily: FONT,
-      fontSize: '22px',
-      fontStyle: 'bold',
-      color: '#ffffff',
-      stroke: '#000000',
-      strokeThickness: 5,
-    })
+  // L'infobulle du survol (maquette Turn 5A) : une petite boîte AU-DESSUS du médaillon
+  // — « PV 82 / 100 » sur fond chaud sombre cerné d'encre. L'icône, elle, reste en place.
+  const hoverText = scene.add
+    .text(0, 0, '', { fontFamily: FONT, fontSize: '11px', color: HEX.body })
     .setOrigin(0.5, 0.5)
-    .setVisible(false)
+  const hoverBg = scene.add.rectangle(0, 0, 10, 10, 0x14100c, 1).setStrokeStyle(2, INK).setOrigin(0.5, 0.5)
+  const hover = scene.add.container(0, 0, [hoverBg, hoverText]).setVisible(false)
 
   // Au-dessus des médaillons, ancrés par le BAS : ils poussent vers le haut sans
   // jamais déplacer les jauges. Les blessures collent aux médaillons — c'est
@@ -189,7 +204,9 @@ export function createVitals(scene: Phaser.Scene): Vitals {
   const drawDiscs = (): void => {
     discs.clear()
     for (const b of badges) {
-      discs.fillStyle(INK, 0.5).fillCircle(b.cx, b.cy + 2, R + 2) // l'assise, sous le disque
+      // L'ombre portée dure de la maquette (`box-shadow:0 3px 0 rgba(0,0,0,.5)`).
+      discs.fillStyle(0x000000, 0.5).fillCircle(b.cx, b.cy + 3, R)
+      // Le disque VIDÉ : le panneau sombre (#1b1b22).
       discs.fillStyle(EMPTY, 1).fillCircle(b.cx, b.cy, R)
       if (b.frac >= 1) {
         discs.fillStyle(b.color, 1).fillCircle(b.cx, b.cy, R)
@@ -202,8 +219,11 @@ export function createVitals(scene: Phaser.Scene): Vitals {
         discs.arc(b.cx, b.cy, R, Math.atan2(dy, half), Math.atan2(dy, -half), false)
         discs.closePath()
         discs.fillPath()
+        // Le liseré clair AU NIVEAU du liquide (maquette : `border-top` du remplissage) :
+        // une corde 2px à la teinte de rim, sur la largeur de la surface.
+        discs.lineStyle(2, b.rim, 1).lineBetween(b.cx - half, b.cy + dy, b.cx + half, b.cy + dy)
       }
-      discs.lineStyle(3, INK, 1).strokeCircle(b.cx, b.cy, R) // le trait de gravure
+      discs.lineStyle(3, INK, 1).strokeCircle(b.cx, b.cy, R) // le trait de gravure, par-dessus
     }
   }
 
@@ -233,7 +253,7 @@ export function createVitals(scene: Phaser.Scene): Vitals {
         // La faim et la température qui plongent virent au rouge : un signal, pas un chiffre.
         // Le POIDS, lui, change de couleur à chaque PALIER — c'est sa seule lecture.
         const color =
-          b.id === 'carry' ? CARRY_COLOR[tier] : b.warn !== undefined && cur <= b.warn ? 0xc0503e : b.full
+          b.id === 'carry' ? CARRY_COLOR[tier] : b.warn !== undefined && cur <= b.warn ? COL.alert : b.full
         if (Math.round(frac * 200) !== Math.round(b.frac * 200) || color !== b.color) {
           b.frac = frac
           b.color = color
@@ -242,16 +262,16 @@ export function createVitals(scene: Phaser.Scene): Vitals {
       }
       if (dirty) drawDiscs()
 
-      // Le chiffre ne se donne qu'au survol : on lit une forme, pas un nombre.
+      // Le chiffre ne se donne qu'au survol : on lit une forme, pas un nombre. La
+      // boîte apparaît AU-DESSUS du médaillon survolé ; l'icône reste en place.
       const p = scene.input.activePointer
       const under = badges.findIndex((b) => (p.x - b.cx) ** 2 + (p.y - b.cy) ** 2 <= R * R)
-      badges.forEach((b, i) => icons[i]!.setVisible(i !== under))
       if (under >= 0) {
         const b = badges[under]!
-        hover
-          .setText(String(Math.ceil(values[b.id])))
-          .setPosition(b.cx, b.cy)
-          .setVisible(true)
+        const v = values[b.id]
+        hoverText.setText(b.id === 'carry' ? `${b.label} ${v.toFixed(1)} / ${b.max}` : `${b.label} ${Math.ceil(v)} / ${b.max}`)
+        hoverBg.setSize(hoverText.width + 12, hoverText.height + 6)
+        hover.setPosition(b.cx, b.cy - R - 12).setVisible(true)
       } else {
         hover.setVisible(false)
       }

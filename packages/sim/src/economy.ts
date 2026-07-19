@@ -46,6 +46,7 @@ import { heldSlot, wearHeld } from './inventory-actions'
 import {
   addItems,
   freeRoomFor,
+  hasItems,
   nutritionFactor,
   removeItems,
   type Inventory,
@@ -57,7 +58,7 @@ import { poiClearings, terrainAt, zoneAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
 import { actForDay, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
-import { hasAccess, type Structure } from './village'
+import { hasAccess, structureAt, type Structure } from './village'
 
 export interface ResourceNode {
   id: number
@@ -101,18 +102,30 @@ export interface CraftOrder {
 }
 
 export type EconomyAction =
-  | { type: 'harvest'; nodeId: number }
+  // `aimX/aimY` (monde) : où vise le curseur, pour LE MINAGE À MAÎTRISE (spec recolte-maitrise,
+  // verbe 2) — la sim en déduit le flanc frappé et le compare au bon. Absent (PNJ, plantes,
+  // ou client muet) = coup baseline. Ignoré hors nœud de minage.
+  | { type: 'harvest'; nodeId: number; aimX?: number; aimY?: number }
+  // L'ABATTAGE À MAÎTRISE (spec recolte-maitrise, verbe 1) : le clic maintenu sur un
+  // arbre EMPLIT une jauge (`harvest_charge_start`, `hold` vrai sur les frames de
+  // maintien pour taire les refus — comme `attack_charge`), le relâchement porte le
+  // coup (`harvest_release`). Propre si la jauge est dans le vert. `harvest` reste le
+  // coup instantané au baseline (PNJ, minage, cueillette) — l'abattage à maîtrise
+  // est PUREMENT ADDITIF, il ne casse rien.
+  | { type: 'harvest_charge_start'; nodeId: number; hold?: boolean }
+  | { type: 'harvest_release' }
   | { type: 'craft'; recipeId: RecipeId }
   | { type: 'cancel_craft'; index: number }
   | { type: 'eat'; item: ItemId }
 
-// Index tuile→nœud MÉMOÏSÉ par référence de tableau. Les nœuds ne bougent ni
-// n'apparaissent/disparaissent au runtime (seul `stock` change) : l'index est
-// construit une fois (O(N)) puis réutilisé — `nodeAt` devient O(1), condition
-// des cartes denses (~140k nœuds) où collision et récolte l'appellent souvent.
-// Dérivé EXTERNE (WeakMap, jamais dans SimState → invariant d'état sérialisable
-// préservé, GC avec le tableau). Même sémantique que l'ancien `find` : ≤1 nœud
-// par tuile (generateNodes ne pousse qu'une fois par tuile), premier gagnant.
+// Index tuile→nœud MÉMOÏSÉ par référence de tableau. Le NOMBRE de nœuds ne change
+// jamais au runtime, mais un nœud de bois/plante peut se DÉPLACER à l'épuisement
+// (spec recolte-vivante, dérive du bosquet) : l'index est construit une fois (O(N))
+// puis réutilisé — `nodeAt` devient O(1), condition des cartes denses (~140k nœuds)
+// où collision et récolte l'appellent souvent — et PATCHÉ en O(1) à chaque
+// relocalisation (`relocateInIndex`), jamais reconstruit. Dérivé EXTERNE (WeakMap,
+// jamais dans SimState → invariant d'état sérialisable préservé, GC avec le tableau).
+// Même sémantique que l'ancien `find` : ≤1 nœud par tuile, premier gagnant.
 const NODE_INDEX_STRIDE = 1_000_000 // > toute coordonnée de tuile
 const nodeIndexCache = new WeakMap<ResourceNode[], Map<number, ResourceNode>>()
 function nodeIndexFor(nodes: ResourceNode[]): Map<number, ResourceNode> {
@@ -130,6 +143,72 @@ function nodeIndexFor(nodes: ResourceNode[]): Map<number, ResourceNode> {
 
 export function nodeAt(nodes: ResourceNode[], tx: number, ty: number): ResourceNode | undefined {
   return nodeIndexFor(nodes).get(tx * NODE_INDEX_STRIDE + ty)
+}
+
+/** Reflète un déménagement de nœud dans l'index mémoïsé (O(1)) : l'ancienne tuile se
+ *  libère, la nouvelle pointe le nœud. Ne fait rien si l'index n'est pas encore bâti
+ *  (il naîtra à jour). Suppose la tuile cible libre (garanti par `relocateNode`). */
+function relocateInIndex(nodes: ResourceNode[], node: ResourceNode, oldTx: number, oldTy: number): void {
+  const idx = nodeIndexCache.get(nodes)
+  if (idx === undefined) return
+  idx.delete(oldTx * NODE_INDEX_STRIDE + oldTy)
+  idx.set(node.tx * NODE_INDEX_STRIDE + node.ty, node)
+}
+
+// Tuiles des clairières de lieux, MÉMOÏSÉES par référence de carte (comme l'index
+// des nœuds) : les calculer à chaque relocalisation coûterait ~170 M comparaisons
+// (voir `generateNodes`). Une seule fois par carte, puis O(1).
+const clearedTilesCache = new WeakMap<WorldMap, Set<number>>()
+function clearedTilesFor(map: WorldMap): Set<number> {
+  let cleared = clearedTilesCache.get(map)
+  if (cleared === undefined) {
+    cleared = poiClearings(map)
+    clearedTilesCache.set(map, cleared)
+  }
+  return cleared
+}
+
+/* Sels de la dérive. Deux mots distincts (init SHA-256) pour dx et dy : décorrélés,
+ * sinon la relocalisation ne partirait qu'en diagonale (cf. `treeJitter`). */
+const RELOCATE_SALT_X = 0x3c6ef372
+const RELOCATE_SALT_Y = 0xa54ff53a
+
+/**
+ * LA DÉRIVE DU BOSQUET (spec recolte-vivante R1/R2). Déplace un nœud de bois/plante
+ * épuisé vers une tuile voisine VALIDE, seedée. **Pure fonction de `(nodeId, depletions)`
+ * via `hash2`** — positionnelle, elle ne tire RIEN dans `state.rng`, donc elle ne décale
+ * pas le flux seedé et ne casse aucun test sans rapport (invariant §2, leçon RNG connue).
+ *
+ * Valide = même terrain que l'origine (garantit walkable + un type légitime là ; le
+ * terrain est régionalement cohérent sur `RELOCATE_RADIUS`), dans la carte, hors clairière
+ * de lieu, sans autre nœud, sans structure. On sonde `RELOCATE_PROBES` candidates ; la
+ * première valide gagne. Aucune valide (coin saturé, cerné d'eau) → le nœud RESTE sur
+ * place — dégradation gracieuse, jamais de perte ni de nœud coincé hors-carte.
+ */
+function relocateNode(state: SimState, node: ResourceNode): void {
+  const map = state.map
+  const originTerrain = terrainAt(map, node.tx, node.ty)
+  const cleared = clearedTilesFor(map)
+  const depl = node.depletions ?? 0
+  const R = BALANCE.RELOCATE_RADIUS
+  for (let k = 0; k < BALANCE.RELOCATE_PROBES; k++) {
+    const hx = hash2(node.id, depl, RELOCATE_SALT_X + k)
+    const hy = hash2(node.id, depl, RELOCATE_SALT_Y + k)
+    const tx = node.tx + Math.floor((hx * 2 - 1) * R)
+    const ty = node.ty + Math.floor((hy * 2 - 1) * R)
+    if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue
+    if (terrainAt(map, tx, ty) !== originTerrain) continue
+    if (cleared.has(ty * map.width + tx)) continue
+    if (nodeAt(state.nodes, tx, ty) !== undefined) continue // couvre aussi la tuile d'origine
+    if (structureAt(state.structures, tx, ty) !== undefined) continue
+    const oldTx = node.tx
+    const oldTy = node.ty
+    node.tx = tx
+    node.ty = ty
+    relocateInIndex(state.nodes, node, oldTx, oldTy)
+    return
+  }
+  // Aucune tuile libre trouvée : on garde l'ancien comportement (repousse sur place).
 }
 
 /** Niveau d'un métier : les premières marches sont rapides, la maîtrise est longue. */
@@ -197,6 +276,29 @@ function toolMultiplier(
 }
 
 /**
+ * LE MEILLEUR PALIER QUE CE NIVEAU MAÎTRISE (spec recolte-vivante Y2, gate DOUX).
+ * `crude`/`none` toujours ; `basic` (atelier) dès `GATE_BASIC_LEVEL` ; `iron` (fer)
+ * dès `GATE_IRON_LEVEL`. Pure et déterministe — que des comparaisons, aucun tirage.
+ */
+export function maxTierByLevel(level: number): ToolTier {
+  if (level >= BALANCE.GATE_IRON_LEVEL) return 'iron'
+  if (level >= BALANCE.GATE_BASIC_LEVEL) return 'basic'
+  return 'crude'
+}
+
+/**
+ * LE PALIER EFFECTIF POUR LE RENDEMENT (Y2) : l'outil TENU, plafonné par ce que le
+ * niveau maîtrise. Une hache de fer en mains novices rend comme un atelier — jamais
+ * rien (gate DOUX, esprit « le raté rend le baseline » de `recolte-maitrise`). Ne
+ * touche PAS l'accès (`minTool`, jugé sur le palier réel dans `strikeRejection`, Y3) :
+ * sinon on ne pourrait jamais miner le fer pour monter `mining` (blocage circulaire).
+ */
+export function effectiveTier(held: ToolTier, level: number): ToolTier {
+  const cap = maxTierByLevel(level)
+  return TOOL_RANK[held] <= TOOL_RANK[cap] ? held : cap
+}
+
+/**
  * La station de cette recette, à portée ET accessible — ou `undefined`.
  *
  * UN SEUL endroit pour cette question, parce qu'elle est posée DEUX fois et que
@@ -216,6 +318,29 @@ function stationFor(state: SimState, actor: Entity, recipe: Recipe): Structure |
 }
 
 /**
+ * L'ÉTAT D'UNE RECETTE pour la liste de craft (maquette Turn 3A). Trois cas, PURE
+ * et sans mutation — le MÊME verdict que le handler `craft`, exposé pour peindre la
+ * liste sans réimplémenter la règle côté client (source unique, comme `stationFor`) :
+ *
+ *  - `no_station` : recette à station (Feu/établi/four) requise, absente ou hors de
+ *    portée. Le rayon entier se grise (les rayons = les stations, décision 2026-07-19).
+ *  - `missing`    : station là (ou recette à la main), mais ingrédients insuffisants.
+ *  - `feasible`   : lançable ici et maintenant.
+ *
+ * Note : la file pleine (`CRAFT_QUEUE_MAX`) n'est PAS un état de recette — c'est un
+ * refus transitoire au moment de l'enfilage, pas une propriété d'affichage.
+ */
+export type RecipeState = 'feasible' | 'missing' | 'no_station'
+
+export function recipeState(state: SimState, actor: Entity, recipeId: RecipeId): RecipeState {
+  const recipe = RECIPES[recipeId]
+  if (!recipe) return 'no_station'
+  if (recipe.station !== null && stationFor(state, actor, recipe) === undefined) return 'no_station'
+  if (!hasItems(actor.inventory, recipe.inputs)) return 'missing'
+  return 'feasible'
+}
+
+/**
  * La durée d'UNE unité, en ticks : `max(1, floor(base / (1 + bonus × niveau)))`
  * (spec craft-file F6). Déterministe — que des `+ - * /` et un `floor`, aucun
  * tirage, aucune fonction Math approximée (invariant §2).
@@ -224,6 +349,167 @@ function craftTicks(actor: Entity, recipe: Recipe): number {
   const base = Math.round(recipe.seconds * BALANCE.TICK_RATE_HZ)
   const level = levelOf(actor, 'crafting')
   return Math.max(1, Math.floor(base / (1 + BALANCE.CRAFT_SPEED_BONUS * level)))
+}
+
+/**
+ * LA LARGEUR DU VERT croît avec `woodcutting` (spec recolte-maitrise B3) : le novice
+ * vise serré, le vétéran a une bande si large qu'il abat en autopilote. Plafonnée —
+ * la maîtrise efface l'effort, elle ne le supprime pas. Déterministe (min/+/*).
+ */
+export function fellGreenWidth(level: number): number {
+  return Math.min(
+    BALANCE.FELL_GREEN_WIDTH_MAX_TICKS,
+    BALANCE.FELL_GREEN_WIDTH_BASE_TICKS + BALANCE.FELL_GREEN_WIDTH_PER_LEVEL * level,
+  )
+}
+
+/** Le coup est-il PROPRE ? La jauge (en ticks) tombe-t-elle dans le vert FIXE, dont
+ *  la largeur dépend du niveau. Pure fonction — le client la miroite pour peindre. */
+export function isCleanFell(ticks: number, level: number): boolean {
+  const start = BALANCE.FELL_GREEN_START_TICKS
+  return ticks >= start && ticks < start + fellGreenWidth(level)
+}
+
+/**
+ * LE MINAGE À MAÎTRISE (spec recolte-maitrise, verbe 2) — « frapper le bon flanc ».
+ * Les flancs : 0 = haut, 1 = droite, 2 = bas, 3 = gauche.
+ */
+
+/** Le flanc où le curseur vise, relatif au CENTRE du nœud : quadrant à axe dominant.
+ *  Coarse — un QUART du nœud, jamais un pixel (M1). */
+export function flankOfAim(node: ResourceNode, aimX: number, aimY: number): number {
+  const dx = aimX - (node.tx + 0.5)
+  const dy = aimY - (node.ty + 0.5)
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 1 : 3
+  return dy >= 0 ? 2 : 0
+}
+
+/** Le BON flanc du prochain coup, seedé. Fonction pure de `(nodeId, stock)` — sans tirage
+ *  RNG (pas de flux à décaler) : il SAUTE à chaque coup (le stock baisse) et ne bouge pas
+ *  pendant un coup (M4). Le client le calcule à l'identique pour peindre la lueur (C3). */
+export function mineGoodFlank(nodeId: number, stock: number): number {
+  return Math.floor(hash2(nodeId, stock) * 4) % 4
+}
+
+/** La tolérance d'acceptation croît avec `mining` (M3) : distance circulaire MAX admise
+ *  entre le flanc visé et le bon. 0 = exact ; 1 = + les deux voisins ; 2 = tous (autopilote). */
+export function mineTolerance(level: number): number {
+  return Math.min(2, Math.floor(level / BALANCE.MINE_LEVELS_PER_TOLERANCE))
+}
+
+/** Le coup de minage est-il PROPRE ? Le flanc visé tombe dans la tolérance autour du bon.
+ *  Pure — jugée AVANT le coup (le stock n'a pas encore baissé), miroir exact du client. */
+export function isCleanMine(node: ResourceNode, aimX: number, aimY: number, level: number): boolean {
+  const good = mineGoodFlank(node.id, node.stock)
+  const aimed = flankOfAim(node, aimX, aimY)
+  const d = Math.abs(aimed - good)
+  return Math.min(d, 4 - d) <= mineTolerance(level)
+}
+
+/**
+ * LA CUEILLETTE À MAÎTRISE (spec recolte-maitrise, verbe 3) — « la perception du bon coin ».
+ * La maîtrise ne vit PAS au moment de la récolte (le geste est nu) mais dans le MONDE.
+ */
+
+/** La RICHESSE seedée d'un coin de cueillette : un facteur de stock centré sur ~1 (maigre →
+ *  riche), pure fonction du nodeId (`hash2`, aucun flux RNG à décaler). Le client la recalcule
+ *  à l'identique pour peindre la lueur (C3). Le seed 7 la distingue des autres usages de hash2. */
+export function forageRichness(nodeId: number): number {
+  return BALANCE.FORAGE_RICHNESS_MIN + hash2(nodeId, 7) * (BALANCE.FORAGE_RICHNESS_MAX - BALANCE.FORAGE_RICHNESS_MIN)
+}
+
+/** Applique la richesse au stock d'un coin de cueillette ; les autres nœuds sont inchangés. */
+export function withForageRichness(type: NodeType, nodeId: number, stock: number): number {
+  if (NODE_DEFS[type].skill !== 'foraging') return stock
+  return Math.max(1, Math.floor(stock * forageRichness(nodeId)))
+}
+
+/** Le client peint-il ce coin ? Perception GATÉE par le niveau LOCAL (P3, fuite assumée) :
+ *  rien sous le seuil (le novice voit uniforme), et seuls les coins RICHES luisent. Pure —
+ *  testable, et miroir exact de ce que le rendu montre. */
+export function forageRevealed(level: number, richness: number): boolean {
+  return level >= BALANCE.FORAGE_REVEAL_LEVEL && richness >= BALANCE.FORAGE_RICH_THRESHOLD
+}
+
+/**
+ * Peut-on frapper CE nœud MAINTENANT (hors cooldown, qui se juge à part) ? Rend le
+ * motif de refus, ou `null` si le coup peut porter. Partagé par les trois chemins —
+ * `harvest`, `harvest_charge_start` (refus précoce), `harvest_release`/auto-frappe
+ * (re-vérif silencieuse, G8 : le nœud a pu se vider ou s'éloigner pendant la charge).
+ */
+function strikeRejection(actor: Entity, node: ResourceNode | undefined, range: number): string | null {
+  if (!node || node.stock <= 0) return 'rien à récolter'
+  if (distSq(actor.x, actor.y, node.tx + 0.5, node.ty + 0.5) > range * range) return 'trop loin'
+  const def = NODE_DEFS[node.type]
+  const { tier } = toolMultiplier(actor, def.tool)
+  if (TOOL_RANK[tier] < TOOL_RANK[def.minTool]) {
+    return tier === 'none' ? 'il faut une pioche en main' : 'il faut un outil forgé en main'
+  }
+  return null
+}
+
+/**
+ * LE COUP QUI PORTE (spec recolte-maitrise). Extrait du `case 'harvest'` : rendement,
+ * sac borné, épuisement, usure, XP, cooldown et événement — un seul endroit. Un coup
+ * PROPRE (`clean`, abattage dans le vert) n'est qu'un coup avec un bonus DOUX (D3) :
+ * +~50 % de rendement (plancher +1, sinon un arbre à 1 bois n'en verrait rien) et une
+ * usure atténuée. Suppose le nœud DÉJÀ validé (`strikeRejection` a rendu `null`).
+ */
+function harvestStrike(state: SimState, actor: Entity, actorId: number, node: ResourceNode, clean: boolean): void {
+  const def = NODE_DEFS[node.type]
+  const { held, tier } = toolMultiplier(actor, def.tool)
+  const level = levelOf(actor, def.skill)
+  // LE RENDEMENT EN CHAÎNE (spec recolte-vivante Y2/Y4). Le palier EFFECTIF (l'outil tenu
+  // plafonné par le niveau — gate DOUX) donne le gros du rendement ; une micro-marche
+  // additive de compétence (`+1` tous les `SKILL_YIELD_STEP` niveaux) s'y ajoute AVANT le
+  // `floor`, donc elle SURVIT à l'arrondi là où l'ancien `× (1 + 0,04·niveau)` s'écrasait.
+  const tierYield = TOOL_YIELD[effectiveTier(tier, level)]
+  const base = Math.max(
+    1,
+    Math.floor((tierYield + Math.floor(level / BALANCE.SKILL_YIELD_STEP)) * harvestFactor(state, actorId)),
+  )
+  // Le bonus propre est un PLANCHER À +1 : à base 1, +50 % arrondirait à 0 et la
+  // maîtrise ne se verrait pas. Il croît ensuite avec le rendement de base.
+  const bonus = clean ? Math.max(1, Math.round(base * BALANCE.CLEAN_YIELD_BONUS)) : 0
+  const room = freeRoomFor(actor.inventory, def.item)
+  if (room <= 0) {
+    emitEvent(state, { type: 'action_rejected', tick: state.tick, entityId: actorId, reason: 'sac plein' })
+    return
+  }
+  const yielded = Math.min(node.stock, base + bonus, room)
+  addItems(actor.inventory, { [def.item]: yielded })
+  node.stock -= yielded
+  if (node.stock <= 0) {
+    const day = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
+    node.depletions = Math.min(BALANCE.DEPLETION_MAX, (node.depletions ?? 0) + 1)
+    node.forgetAt = state.tick + BALANCE.DEPLETION_FORGET_TICKS
+    const usure = 1 + BALANCE.DEPLETION_REGROW_PENALTY * (node.depletions - 1)
+    node.regrowAt =
+      state.tick + Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR[day - 1]! * usure)
+    // LA DÉRIVE (spec recolte-vivante D1/R1) : un nœud de bois/plante meurt sur sa tuile
+    // et rouvre AILLEURS, dans le même bosquet. La pierre/le minéral reste sur place.
+    // À `stock = 0` : le client peint la souche à l'ancien coin et fait grandir la pousse
+    // au nouveau sur la durée `[tick, regrowAt]`. La pierre, elle, se reforme sur place.
+    if (def.skill !== 'mining') relocateNode(state, node)
+    emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id })
+  }
+  if (held) {
+    const wear =
+      Math.max(BALANCE.TOOL_WEAR_MIN, 1 - BALANCE.SKILL_WEAR_REDUCTION * levelOf(actor, 'crafting')) *
+      (clean ? BALANCE.CLEAN_WEAR_FACTOR : 1)
+    wearHeld(actor, wear)
+  }
+  gainXp(state, actor, def.skill, BALANCE.XP_PER_GATHER)
+  actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
+  emitEvent(state, {
+    type: 'resource_harvested',
+    tick: state.tick,
+    entityId: actorId,
+    nodeId: node.id,
+    item: def.item,
+    count: yielded,
+    ...(clean ? { clean: true } : {}),
+  })
 }
 
 export function applyEconomyAction(state: SimState, actorId: number, action: EconomyAction): void {
@@ -235,75 +521,63 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
   const range = BALANCE.INTERACT_RANGE
 
   switch (action.type) {
+    /**
+     * LE COUP INSTANTANÉ. Chemin des PNJ, des plantes ET du MINAGE À MAÎTRISE : pour un
+     * nœud de minage, si le curseur vise (`aimX/aimY`), on juge le FLANC (spec verbe 2) —
+     * bon flanc = coup propre. Sinon baseline. L'abattage, lui, passe par charge/relâche.
+     * Le sac borné, l'usure, l'épuisement, le bonus propre : tout vit dans `harvestStrike`.
+     */
     case 'harvest': {
-      if (state.tick < actor.cooldownUntil) return reject('trop tôt')
+      // PAS de refus « trop tôt » (décision d'Alexis, comme l'abattage) : le cooldown
+      // reste une cadence SILENCIEUSE — un coup trop tôt ne PORTE pas, mais ne CRACHE pas
+      // un rejet à l'écran. C'est le geste (le maintien cadencé du client, le tressaillement
+      // du nœud à chaque coup) qui donne le rythme, pas un timer invisible qui punit.
+      if (state.tick < actor.cooldownUntil) return
       const node = state.nodes.find((n) => n.id === action.nodeId)
-      if (!node || node.stock <= 0) return reject('rien à récolter')
-      if (distSq(actor.x, actor.y, node.tx + 0.5, node.ty + 0.5) > range * range) return reject('trop loin')
-      const def = NODE_DEFS[node.type]
-      const { mult, held, tier } = toolMultiplier(actor, def.tool)
-      // Le filon exige la pioche EN MAIN (spec inventaire R9) : l'avoir dans le
-      // sac ne suffit plus. Miner du fer en ayant laissé sa pioche au fond du
-      // sac est un refus, pas un coup gratuit. Et depuis la couche 1, ce n'est
-      // plus « un outil » mais un PALIER : le pic de fortune rend ×2 comme la
-      // pioche d'atelier, mais il n'entame pas un filon (spec craft-fortune C5).
-      if (TOOL_RANK[tier] < TOOL_RANK[def.minTool]) {
-        return reject(tier === 'none' ? 'il faut une pioche en main' : 'il faut un outil forgé en main')
-      }
+      const bad = strikeRejection(actor, node, range)
+      if (bad) return reject(bad)
+      const def = NODE_DEFS[node!.type]
+      const clean =
+        def.skill === 'mining' && action.aimX !== undefined && action.aimY !== undefined
+          ? isCleanMine(node!, action.aimX, action.aimY, levelOf(actor, 'mining'))
+          : false
+      harvestStrike(state, actor, actorId, node!, clean)
+      return
+    }
 
-      const level = levelOf(actor, def.skill)
-      // La Meute a une économie anémique (spec alignement R8) — mais jamais
-      // nulle : plancher à 1, sinon le coup paie cooldown et XP pour rien.
-      const wanted = Math.min(
-        node.stock,
-        Math.max(1, Math.floor(mult * (1 + BALANCE.SKILL_YIELD_BONUS * level) * harvestFactor(state, actorId))),
-      )
-      // LE SAC EST BORNÉ (spec inventaire R10) : le nœud GARDE ce qui ne rentre
-      // pas — rien ne tombe au sol, rien ne s'évapore. On ÉCRÊTE tant qu'il reste
-      // une place, et on ne refuse QU'À zéro : un refus ne pose aucun cooldown,
-      // donc refuser un coup à 6 bois pour une seule place libre ferait retenter
-      // le PNJ à 20 Hz, pour toujours. À zéro place, le coup n'a pas eu lieu du
-      // tout (ni stock, ni usure, ni cooldown, ni XP) — et la garde de `npc.ts`
-      // (executeGather) libère la corvée sur ce même « zéro ».
-      const room = freeRoomFor(actor.inventory, def.item)
-      if (room <= 0) return reject('sac plein')
-      const yielded = Math.min(wanted, room)
-      addItems(actor.inventory, { [def.item]: yielded })
-      node.stock -= yielded
-      if (node.stock <= 0) {
-        // Les sources se contractent avec la saison (spec saison R1)… ET AVEC
-        // L'USAGE : un coin qu'on rase encore et encore met de plus en plus de
-        // temps à revenir. C'est la rotation des filons du GDD §8bis — les points
-        // de friction se DÉPLACENT, et le joueur avec eux.
-        const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
-        node.depletions = Math.min(BALANCE.DEPLETION_MAX, (node.depletions ?? 0) + 1)
-        node.forgetAt = state.tick + BALANCE.DEPLETION_FORGET_TICKS
-        const usure = 1 + BALANCE.DEPLETION_REGROW_PENALTY * (node.depletions - 1)
-        node.regrowAt =
-          state.tick + Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR[act - 1]! * usure)
-        emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id })
-      }
+    /**
+     * LA JAUGE S'ARME (spec recolte-maitrise B1). PAS de garde « trop tôt » (décision
+     * d'Alexis) : c'est LE MINI-JEU qui donne la cadence, pas un cooldown — le temps
+     * d'emplir la jauge EST le rythme. La charge démarre donc à froid, sans se faire
+     * refuser. `hold` tait quand même les autres refus du maintien (hors portée…).
+     */
+    case 'harvest_charge_start': {
+      const plainte = action.hold === true ? (): void => {} : reject
+      if (actor.harvestCharge) return // déjà en charge : le maintien ne relance pas
+      const node = state.nodes.find((n) => n.id === action.nodeId)
+      const bad = strikeRejection(actor, node, range)
+      if (bad) return plainte(bad)
+      actor.harvestCharge = { nodeId: action.nodeId, ticks: 0 }
+      return
+    }
 
-      // L'usure frappe la case TENUE (spec inventaire R6) : deux haches ne
-      // partagent plus un compteur — celle qu'on tient casse seule.
-      if (held) {
-        const wear = Math.max(
-          BALANCE.TOOL_WEAR_MIN,
-          1 - BALANCE.SKILL_WEAR_REDUCTION * levelOf(actor, 'crafting'),
-        )
-        wearHeld(actor, wear)
-      }
-
-      gainXp(state, actor, def.skill, BALANCE.XP_PER_GATHER)
-      actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
-      emitEvent(state, {
-        type: 'resource_harvested',
-        tick: state.tick,
-        entityId: actorId,
-        nodeId: node.id,
-        item: def.item,
-        count: yielded,
-      })
+    /**
+     * LE COUP PART (spec recolte-maitrise B2). Le VERT est le point où la hache
+     * CONNECTE : relâcher AVANT lui n'émet RIEN — le geste est annulé, rien n'est
+     * perdu, on rejoue (et c'est la garde anti-mitraillage sans cooldown : sinon un
+     * clic-relâche à zéro cracherait des coups baseline à 20 Hz). Dans le vert = coup
+     * PROPRE ; après le vert = baseline. On RE-VALIDE le nœud (G8 : vidé/éloigné
+     * pendant la charge → muet). Relâcher sans rien d'armé est muet aussi.
+     */
+    case 'harvest_release': {
+      const charge = actor.harvestCharge
+      if (!charge) return
+      delete actor.harvestCharge
+      if (charge.ticks < BALANCE.FELL_GREEN_START_TICKS) return // relâché avant la connexion
+      const node = state.nodes.find((n) => n.id === charge.nodeId)
+      if (strikeRejection(actor, node, range)) return
+      const level = levelOf(actor, NODE_DEFS[node!.type].skill)
+      harvestStrike(state, actor, actorId, node!, isCleanFell(charge.ticks, level))
       return
     }
 
@@ -520,9 +794,28 @@ export function advanceEconomy(state: SimState): void {
       if (before > 0 && entity.hp <= 0) die(state, entity, 0, 'hunger')
     }
   }
+  // LA JAUGE D'ABATTAGE MONTE (spec recolte-maitrise B1), comme la charge de combat.
+  // À PLEIN sans relâcher, le coup PART tout seul au baseline : tenir sans jamais
+  // viser ne bloque pas, ça hache — le repli « maintien » du geste (l'ancien G6 y
+  // survit, en moins bon que le vert). On re-valide avant de frapper (G8).
+  for (const entity of state.entities) {
+    const charge = entity.harvestCharge
+    if (charge === undefined) continue
+    if (charge.ticks < BALANCE.FELL_CHARGE_MAX_TICKS) {
+      charge.ticks += 1
+      continue
+    }
+    delete entity.harvestCharge
+    const node = state.nodes.find((n) => n.id === charge.nodeId)
+    if (!strikeRejection(entity, node, BALANCE.INTERACT_RANGE)) {
+      harvestStrike(state, entity, entity.id, node!, false)
+    }
+  }
   for (const node of state.nodes) {
     if (node.stock <= 0 && state.tick >= node.regrowAt) {
-      node.stock = NODE_DEFS[node.type].stock
+      // Un bon coin de cueillette repousse RICHE (la richesse est une propriété du lieu,
+      // pas un stock ponctuel) — sans effet sur les autres nœuds (spec verbe 3).
+      node.stock = withForageRichness(node.type, node.id, NODE_DEFS[node.type].stock)
       node.regrowAt = 0
     }
     // Le monde OUBLIE : un coin qu'on laisse tranquille se refait une santé. Sans
@@ -625,8 +918,11 @@ export function generateNodes(
   const cleared = poiClearings(map)
   let id = 1
   const push = (type: NodeType, tx: number, ty: number): void => {
-    // Le CERCLE décide de ce que le nœud porte : médiocre au camp, riche au loin.
-    const stock = Math.max(1, Math.floor(NODE_DEFS[type].stock * circleFactor(tx, ty, home)))
+    // Le CERCLE décide de ce que le nœud porte : médiocre au camp, riche au loin. Et pour la
+    // cueillette, la RICHESSE seedée du coin s'y ajoute (verbe 3) — centrée sur 1, la moyenne
+    // par cercle ne bouge pas, mais les bons coins se détachent pour l'œil de l'herboriste.
+    const positional = Math.max(1, Math.floor(NODE_DEFS[type].stock * circleFactor(tx, ty, home)))
+    const stock = withForageRichness(type, id, positional)
     nodes.push({ id, type, tx, ty, stock, regrowAt: 0 })
     id += 1
   }

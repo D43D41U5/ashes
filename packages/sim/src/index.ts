@@ -109,12 +109,12 @@ export { importTiledMap } from './tiled'
 export type { TiledMapFile, TiledImportResult } from './tiled'
 
 // ─── Actions & systèmes (l'hôte les applique, les requêtes sont pures) ────
-export { applyVillageAction, structureAt, solidAt, floorAt, roofAt, structureBlocks, getVillageOf, hasAccess, fireRadius } from './village'
-export type { Structure, Village, VillageAction, TaskKind, VillageTask } from './village'
+export { applyVillageAction, structureAt, solidAt, floorAt, roofAt, structureBlocks, getVillageOf, hasAccess, fireRadius, evaluateBuild, buildPlacementValid } from './village'
+export type { Structure, Village, VillageAction, TaskKind, VillageTask, BuildEval, BuildReject } from './village'
 export { blocksNavigation, placementKeepsNavigable, isComponent, recognizeFunctions, refreshFunctions } from './construction'
 export type { PlacedStructure, RecogStructure, RecognizedFunction } from './construction'
-export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel } from './economy'
-export type { ResourceNode, EconomyAction, CraftOrder } from './economy'
+export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel, recipeState, fellGreenWidth, isCleanFell, flankOfAim, mineGoodFlank, mineTolerance, isCleanMine, forageRichness, forageRevealed } from './economy'
+export type { ResourceNode, EconomyAction, CraftOrder, RecipeState } from './economy'
 export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame
 export { applyCombatAction, advanceCombat, weaponDamage, weaponKind, weaponProfile, pendingStrike } from './combat'
 export type { CombatAction, Corpse } from './combat'
@@ -162,7 +162,11 @@ export { applyInventoryAction, heldSlot, wearHeld, isInventoryAction } from './i
 export type { InventoryAction, SlotRef } from './inventory-actions'
 
 // ─── Consommateurs du flux d'événements ───────────────────────────────────
-export { chronicleFromEvents } from './chronicle'
+export { chronicleFromEvents, formatChronicleLine } from './chronicle'
+export type { ChronicleEntry, ChronicleWeight } from './chronicle'
+
+// ─── Persistance : sérialiser/reprendre une Veillée (l'hôte écrit dans IndexedDB) ─
+export { serializeSim, deserializeSim, SAVE_FORMAT_VERSION } from './persistence'
 
 // ─── Outils de DEV (inertes hors sim créée avec `debug: true`) ────────────
 export type { DebugAction } from './debug'

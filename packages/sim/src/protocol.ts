@@ -22,7 +22,7 @@ import type { GameTime } from './time'
 import type { Structure, Village } from './village'
 
 /** À incrémenter à tout changement incompatible — vérifié au `ready`. */
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 
 /**
  * LE CHAT DE PROXIMITÉ — un rayon d'audition, en tuiles. Le serveur ne relaie un
@@ -147,10 +147,23 @@ export interface ProgressMessage {
   total: number
 }
 
-/** Changement de stock d'un nœud (récolte/repousse) — seul état de nœud mutable. */
+/**
+ * Changement d'état d'un nœud transmis par tick. Le STOCK est le cas courant (récolte,
+ * repousse). La POSITION (`tx/ty`) n'accompagne le delta QUE lorsqu'un nœud de bois/plante
+ * a DÉRIVÉ (spec recolte-vivante D1) — ce qui coïncide toujours avec `stock → 0`. Absente
+ * le reste du temps : le nœud n'a pas bougé. Le client, en recevant `tx/ty`, déménage le
+ * sprite de cet id (souche à l'ancien coin, pousse au nouveau). Serveur autoritatif : la
+ * position vient de la sim, le client ne la recalcule pas (invariant §3).
+ */
 export interface NodeDelta {
   id: number
   stock: number
+  tx?: number
+  ty?: number
+  /** Tick de repousse à plein — joint UNIQUEMENT quand `stock` tombe à 0, pour que le
+   *  client anime la repousse (la pousse grandit, le minéral se reforme) sur `[tick, regrowAt]`
+   *  au lieu de « popper ». Absent sinon : un delta de stock ordinaire ne le porte pas. */
+  regrowAt?: number
 }
 
 export interface SnapshotMessage {

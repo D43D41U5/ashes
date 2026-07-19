@@ -59,7 +59,14 @@ export function collectNodeDeltas(sim: SimState, shadow: Map<number, number>): N
   for (const n of sim.nodes) {
     if (shadow.get(n.id) !== n.stock) {
       shadow.set(n.id, n.stock)
-      deltas.push({ id: n.id, stock: n.stock })
+      // Un nœud à `stock 0` a pu DÉRIVER (spec recolte-vivante) : l'épuisement est le seul
+      // instant où un nœud bouge, donc on joint sa position (le client le déménage) ET son
+      // `regrowAt` (le client anime la repousse au lieu de popper).
+      deltas.push(
+        n.stock === 0
+          ? { id: n.id, stock: 0, tx: n.tx, ty: n.ty, regrowAt: n.regrowAt }
+          : { id: n.id, stock: n.stock },
+      )
     }
   }
   return deltas

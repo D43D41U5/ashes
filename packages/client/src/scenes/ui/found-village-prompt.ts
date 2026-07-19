@@ -8,77 +8,67 @@
  * cuisine. C'est le seul moment où « allumer un feu » et « fonder un village » se
  * rejoignent, et c'est un CHOIX, jamais un automatisme (décision utilisateur).
  *
- * Zéro règle de jeu ici : elle POSE l'action `found_village`, la sim tranche.
+ * Rendu ISO à la maquette Turn 5A, en DOM (voir `hud-dom.ts`) : fenêtre-sur-le-monde
+ * à bord-haut braise, sourcil, titre, filet, corps, bouton braise. Zéro règle de jeu
+ * ici : elle POSE l'action `found_village`, la sim tranche.
  */
-import type Phaser from 'phaser'
 import type { PlayerAction } from '@braises/sim'
-import { textStyle } from './typography'
-
-const DEPTH = 950 // au-dessus du monde, sous les overlays plein écran (carte, sac)
-const PANEL_W = 360
-const PANEL_H = 70
 
 export interface FoundVillagePrompt {
   /** `foundable` = le feu promouvable (ou `null` = rien à portée : la fenêtre s'efface). */
   update(foundable: { structureId: number } | null): void
+  destroy(): void
 }
 
-export function createFoundVillagePrompt(
-  scene: Phaser.Scene,
-  send: (a: PlayerAction) => void,
-): FoundVillagePrompt {
-  const cx = scene.scale.width / 2
-  // Au-dessus du bandeau d'erreur (height - 110) et de la ceinture, jamais dessus.
-  const cy = scene.scale.height - 178
-
-  const panel = scene.add
-    .rectangle(cx, cy, PANEL_W, PANEL_H, 0x14141a, 0.94)
-    .setStrokeStyle(2, 0x6b5a3a)
-    .setScrollFactor(0)
-    .setDepth(DEPTH)
-  const label = scene.add
-    .text(cx, cy - 16, 'Un feu de camp brûle ici.', textStyle('body', 'body'))
-    .setOrigin(0.5)
-    .setScrollFactor(0)
-    .setDepth(DEPTH)
-
-  const btn = scene.add
-    .rectangle(cx, cy + 14, 220, 26, 0x2a2a34, 0.96)
-    .setStrokeStyle(1, 0xe8c66a)
-    .setScrollFactor(0)
-    .setDepth(DEPTH)
-    .setInteractive({ useHandCursor: true })
-  const btnText = scene.add
-    .text(cx, cy + 14, 'Fonder un village ici', textStyle('label', 'body', false))
-    .setOrigin(0.5)
-    .setScrollFactor(0)
-    .setDepth(DEPTH)
-
-  btn.on('pointerover', () => btn.setFillStyle(0x3a3a46, 0.98))
-  btn.on('pointerout', () => btn.setFillStyle(0x2a2a34, 0.96))
-
-  const nodes: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = [panel, label, btn, btnText]
-  const setShown = (v: boolean): void => {
-    for (const n of nodes) n.setVisible(v)
-  }
-  setShown(false) // né caché : rien du HUD ne paraît avant le premier instant jouable
+export function createFoundVillagePrompt(board: HTMLElement, send: (a: PlayerAction) => void): FoundVillagePrompt {
+  const root = document.createElement('div')
+  root.className = 'fvp'
+  root.innerHTML = `
+  <style>
+    .fvp{position:absolute;left:50%;bottom:130px;transform:translateX(-50%);width:640px;text-align:center;display:none;}
+    .fvp-halo{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:760px;height:340px;
+      background:radial-gradient(ellipse,rgba(201,139,58,.16),transparent 70%);pointer-events:none;}
+    .fvp-panel{position:relative;background:rgba(20,16,12,.9);border:3px solid #14141a;border-top:2px solid #c98b3a;padding:34px 44px 30px;}
+    .fvp-eyebrow{font-size:12px;color:#c98b3a;letter-spacing:4px;margin-bottom:18px;}
+    .fvp-title{font-size:22px;font-weight:700;color:#ffffff;letter-spacing:1px;line-height:1.4;}
+    .fvp-div{width:80px;height:1px;background:#6b5a3a;margin:18px auto;}
+    .fvp-body{font-size:14px;color:#e8e0c8;line-height:1.7;max-width:500px;margin:0 auto;}
+    .fvp-btn{display:inline-block;margin-top:26px;background:rgba(201,139,58,.14);border:2px solid #c98b3a;color:#e8c66a;
+      font-size:15px;font-weight:700;letter-spacing:2px;padding:14px 34px;transition:background .12s ease,color .12s ease;}
+    .fvp-btn:hover{background:rgba(232,198,106,.24);color:#f2ead0;}
+    .fvp-fine{font-size:11px;color:#6f6a60;letter-spacing:1px;margin-top:16px;}
+  </style>
+  <div class="fvp-halo"></div>
+  <div class="fvp-panel">
+    <div class="fvp-eyebrow">UN FEU DE CAMP BRÛLE ICI</div>
+    <div class="fvp-title">Faire de ce feu le Feu du foyer&nbsp;?</div>
+    <div class="fvp-div"></div>
+    <div class="fvp-body">Fonder ici, c'est cesser d'être un survivant pour devenir le Chef d'un village. La flamme deviendra le Feu — le cœur qui tient les tiens en vie tant qu'il brûle.</div>
+    <div class="fvp-btn hud-click">FONDER UN VILLAGE ICI</div>
+    <div class="fvp-fine">t'éloigner referme cette invitation — le feu restera une simple source de chaleur.</div>
+  </div>`
+  board.appendChild(root)
 
   let current: { structureId: number } | null = null
-  btn.on('pointerdown', () => {
+
+  root.querySelector<HTMLElement>('.fvp-btn')!.addEventListener('click', () => {
     if (!current) return
     send({ type: 'found_village', structureId: current.structureId })
-    // On FERME tout de suite (optimiste). Le foyer n'est fondé côté sim qu'au
-    // prochain snapshot ; d'ici là, un second clic renverrait un `found_village`
-    // refusé (« déjà un foyer ») dans le flux d'événements — un bouton qui a tiré
-    // se tait. Le snapshot suivant confirmera (foundableFire repasse à null).
+    // On FERME tout de suite (optimiste). Le foyer n'est fondé côté sim qu'au prochain
+    // snapshot ; d'ici là, un second clic renverrait un `found_village` refusé (« déjà un
+    // foyer ») dans le flux d'événements — un bouton qui a tiré se tait. Le snapshot suivant
+    // confirmera (foundableFire repasse à null).
     current = null
-    setShown(false)
+    root.style.display = 'none'
   })
 
   return {
     update(foundable) {
       current = foundable
-      setShown(foundable !== null)
+      root.style.display = foundable ? 'block' : 'none'
+    },
+    destroy() {
+      root.remove()
     },
   }
 }

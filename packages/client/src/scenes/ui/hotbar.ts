@@ -7,6 +7,7 @@
 import { SLOTS, type Inventory } from '@braises/sim'
 import type Phaser from 'phaser'
 import { createSlotView, type SlotView } from './slot-view'
+import { HEX } from './palette'
 import { FONT } from './typography'
 
 export interface Hotbar {
@@ -36,22 +37,24 @@ export function createHotbar(scene: Phaser.Scene): Hotbar {
   const y = hotbarBottom(scene) - CELL / 2
 
   const cells: SlotView[] = []
+  const nums: Phaser.GameObjects.Text[] = []
   const parts: Phaser.GameObjects.GameObject[] = []
   for (let i = 0; i < belt; i++) {
     const x = startX + i * (CELL + GAP)
     const view = createSlotView(scene, x, y, CELL)
     cells.push(view)
-    // Le numéro de touche DANS la case, au coin haut-gauche — le bas-gauche est
-    // pris par le filet d'usure, le bas-droit par le compte de pile.
+    // Le numéro de touche DANS la case, au coin haut-gauche (maquette Turn 5A) — il
+    // passe en BRAISE quand la case est tenue, discret sinon.
     const num = scene.add
       .text(x - CELL / 2 + 5, y - CELL / 2 + 3, String(i + 1), {
         fontFamily: FONT,
         fontSize: '12px',
-        color: '#d8d4cc',
+        color: HEX.dim,
         stroke: '#14141a',
         strokeThickness: 3,
       })
       .setOrigin(0, 0)
+    nums.push(num)
     parts.push(view.root, num)
   }
   const root = scene.add.container(0, 0, parts)
@@ -62,7 +65,9 @@ export function createHotbar(scene: Phaser.Scene): Hotbar {
     },
     update(inv, activeSlot) {
       for (let i = 0; i < belt; i++) {
-        cells[i]!.update(inv[i] ?? null, i === activeSlot)
+        const active = i === activeSlot
+        cells[i]!.update(inv[i] ?? null, active)
+        nums[i]!.setColor(active ? HEX.ember : HEX.dim)
       }
     },
   }

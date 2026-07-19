@@ -234,6 +234,114 @@ function fireRadiusMax(): number {
   return byTier[byTier.length - 1]!
 }
 
+/** Pourquoi une pose au marteau est refusée (spec construction R2/R5/R7). */
+export type BuildReject =
+  | 'no_village'
+  | 'no_hammer'
+  | 'bad_tile'
+  | 'out_of_square'
+  | 'too_far'
+  | 'unbuildable'
+  | 'occupied'
+  | 'node'
+  | 'blocks_nav'
+  | 'unaffordable'
+
+/** Le verdict d'une pose au marteau. `cost` est TOUJOURS renseigné (palier appliqué),
+ *  même sur refus de placement — le panneau affiche le coût quoi qu'il arrive. */
+export interface BuildEval {
+  ok: boolean
+  reason?: BuildReject
+  cost: ItemBag
+  material?: WallMaterial
+}
+
+/** Le placement est-il géométriquement valide, coût mis à part ? — le « vert » du
+ *  fantôme (maquette Turn 4A) : un manque de matériaux n'éteint pas le fantôme. */
+export function buildPlacementValid(e: BuildEval): boolean {
+  return e.ok || e.reason === 'unaffordable'
+}
+
+/**
+ * PEUT-ON BÂTIR ICI ? (spec construction R2/R5/R7). Extrait PUR du handler `build`,
+ * pour que le FANTÔME de placement du client et le serveur partagent UNE SEULE vérité
+ * — au lieu de réimplémenter (et faire diverger) les gardes. `ok` couvre placement ET
+ * coût ; le handler mappe `reason` vers son message et débite. Déterministe (§7).
+ */
+export function evaluateBuild(
+  state: SimState,
+  actorId: number,
+  structure: BarrierType,
+  tx: number,
+  ty: number,
+  material?: WallMaterial,
+): BuildEval {
+  // Le coût ne dépend que de la pièce et du palier (mur/porte seulement, R8) : calculé
+  // d'emblée et renvoyé dans TOUS les cas, y compris les refus de placement.
+  const isWallLike = structure === 'wall' || structure === 'door'
+  const mat = isWallLike ? material : undefined
+  const cost = mat && isWallLike ? WALL_TIERS[mat][structure].cost : STRUCTURE_COSTS[structure]
+  // `exactOptionalPropertyTypes` : on n'AJOUTE `material` que s'il est défini (mur/porte).
+  const make = (ok: boolean, reason?: BuildReject): BuildEval => {
+    const r: BuildEval = { ok, cost }
+    if (reason !== undefined) r.reason = reason
+    if (mat !== undefined) r.material = mat
+    return r
+  }
+  const fail = (reason: BuildReject): BuildEval => make(false, reason)
+
+  const actor = state.entities.find((e) => e.id === actorId)
+  if (!actor) return fail('no_village') // sans acteur : rien à bâtir (le handler garantit sa présence)
+  const village = getVillageOf(state, actorId)
+  if (!village) return fail('no_village')
+  if (heldSlot(actor)?.item !== 'hammer') return fail('no_hammer')
+  if (!Number.isInteger(tx) || !Number.isInteger(ty)) return fail('bad_tile')
+  if (chebyshev(village.fireTx, village.fireTy, tx, ty) > fireRadius(village.tier)) return fail('out_of_square')
+  if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) return fail('too_far')
+  if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return fail('unbuildable')
+  // Occupation PAR COUCHE : seul un doublon de la MÊME couche (sol/toit/solide) refuse.
+  const occupant =
+    structure === 'floor'
+      ? floorAt(state.structures, tx, ty)
+      : structure === 'roof'
+        ? roofAt(state.structures, tx, ty)
+        : solidAt(state.structures, tx, ty)
+  if (occupant) return fail('occupied')
+  // Récolter = défricher (R5) : pas de mur/porte sur un nœud (le sol/toit mou, si).
+  if (structure !== 'floor' && structure !== 'roof' && state.nodes.some((n) => n.tx === tx && n.ty === ty)) {
+    return fail('node')
+  }
+  // Invariant de navigabilité (R7), AVANT le coût : un rejet ne débite rien.
+  if (blocksNavigation(structure)) {
+    const okNav = placementKeepsNavigable(
+      state.map,
+      state.structures,
+      state.entities,
+      actorId,
+      { tx: village.fireTx, ty: village.fireTy },
+      fireRadius(village.tier),
+      { tx, ty, type: structure },
+    )
+    if (!okNav) return fail('blocks_nav')
+  }
+  if (!hasItems(actor.inventory, cost)) return fail('unaffordable')
+  return make(true)
+}
+
+/** Le message de refus, mappé depuis le code — les chaînes exactes qu'attendent les tests. */
+const BUILD_REJECT_REASON: Record<BuildReject, string> = {
+  no_village: 'sans village — allumer un Feu d’abord',
+  no_hammer: 'il faut le marteau de construction en main',
+  bad_tile: 'case invalide',
+  out_of_square: 'hors du carré du Feu',
+  too_far: 'trop loin',
+  unbuildable: 'terrain inconstructible',
+  occupied: 'tuile occupée',
+  node: 'un nœud occupe la tuile',
+  blocks_nav: 'cela couperait le passage',
+  unaffordable: 'matériaux insuffisants',
+}
+
 /**
  * Un POI-SPÉCIFIQUE (spec construction R1) tombe-t-il dans le carré à taille max
  * autour de (cx, cy) ? Un POI-spécifique = une zone dotée d'un `kind` (chokepoint,
@@ -549,61 +657,17 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
     }
 
     case 'build': {
-      const village = getVillageOf(state, actorId)
-      if (!village) return reject('sans village — allumer un Feu d’abord')
-      // LE MARTEAU FAIT LE BÂTISSEUR (spec recolte.md G12, construction R19-R20).
-      // L'outil doit être EN MAIN : bâtir est un métier qu'on s'équipe, et le clic
-      // nu ne peut plus poser un mur par accident. (Les COMPOSANTS, eux, se posent
-      // en tenant l'objet — flux feu de camp, tranche 2.)
-      if (heldSlot(actor)?.item !== 'hammer') return reject('il faut le marteau de construction en main')
-      const { tx, ty } = action
-      if (!Number.isInteger(tx) || !Number.isInteger(ty)) return reject('case invalide')
-      // LE CARRÉ ×PALIER (spec construction R2) : Chebyshev(tuile, Feu) ≤ R(palier).
-      if (chebyshev(village.fireTx, village.fireTy, tx, ty) > fireRadius(village.tier)) {
-        return reject('hors du carré du Feu')
-      }
-      // Vraisemblance (GDD §11) : on bâtit à portée de bras, pas à l'autre
-      // bout de la carte — première pierre de l'anti-cheat LAN.
-      if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) {
-        return reject('trop loin')
-      }
-      if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible')
-      // OCCUPATION PAR COUCHE (décision d'Alexis) : le sol et le toit se superposent
-      // au reste ; seule une deuxième pièce de la MÊME couche est refusée.
-      const occupant =
-        action.structure === 'floor'
-          ? floorAt(state.structures, tx, ty)
-          : action.structure === 'roof'
-            ? roofAt(state.structures, tx, ty)
-            : solidAt(state.structures, tx, ty)
-      if (occupant) return reject('tuile occupée')
-      // RÉCOLTER = DÉFRICHER (spec construction R5) : on ne bâtit que sur tuile
-      // ouverte ; pour bâtir où pousse un nœud, on l'abat d'abord. (Un sol/toit MOU
-      // peut couvrir un nœud sans le déranger — il ne s'y « bâtit » pas dessus.)
-      if (action.structure !== 'floor' && action.structure !== 'roof' && state.nodes.some((n) => n.tx === tx && n.ty === ty)) {
-        return reject('un nœud occupe la tuile')
-      }
-      // LE PALIER DE MATÉRIAU (R8) : mur/porte seulement, défaut bois. Le coût suit.
+      // LE MARTEAU FAIT LE BÂTISSEUR (spec construction R2/R5/R7/R19-R20) : tout le
+      // gant de vérifs (village, marteau en main, carré du Feu, portée, terrain,
+      // occupation par couche, nœud, navigabilité, coût) vit dans `evaluateBuild` —
+      // PUR et partagé avec le fantôme du client (source unique, pas de divergence).
       const structure = action.structure
-      const isWallLike = structure === 'wall' || structure === 'door'
-      const material = isWallLike ? action.material : undefined
-      const cost = material && isWallLike ? WALL_TIERS[material][structure].cost : STRUCTURE_COSTS[structure]
-      // L'INVARIANT DE NAVIGABILITÉ (R7) : on refuse une pose qui muraille le Feu, isole
-      // un composant ou piège un PNJ. Vérifié AVANT de débiter (un rejet ne coûte rien).
-      if (blocksNavigation(structure)) {
-        const ok = placementKeepsNavigable(
-          state.map,
-          state.structures,
-          state.entities,
-          actorId,
-          { tx: village.fireTx, ty: village.fireTy },
-          fireRadius(village.tier),
-          { tx, ty, type: structure },
-        )
-        if (!ok) return reject('cela couperait le passage')
-      }
-      if (!removeItems(actor.inventory, cost)) return reject('matériaux insuffisants')
-      addStructure(state, structure, tx, ty, village.id, actorId, DEFAULT_ACCESS[structure], material)
+      const ev = evaluateBuild(state, actorId, structure, action.tx, action.ty, action.material)
+      if (!ev.ok) return reject(BUILD_REJECT_REASON[ev.reason!])
+      // Placement ET coût validés (evaluateBuild a fait `hasItems`) : le débit passe.
+      const village = getVillageOf(state, actorId)!
+      removeItems(actor.inventory, ev.cost)
+      addStructure(state, structure, action.tx, action.ty, village.id, actorId, DEFAULT_ACCESS[structure], ev.material)
       return
     }
 

@@ -14,6 +14,7 @@
  * L'ÉCHELLE est courte, exprès. Trois tailles de corps et deux d'accent : au-delà,
  * on ne compose plus, on bricole — et l'œil ne sait plus ce qui est important.
  */
+import { HEX } from './palette'
 
 /** La chasse fixe du jeu. Le monde est un HUD de survivant, pas un livre. */
 export const FONT = 'monospace'
@@ -25,20 +26,24 @@ export const FONT = 'monospace'
  */
 export const STROKE = { stroke: '#14141a', strokeThickness: 3 } as const
 
-/** L'encre. Du plus fort au plus discret — et deux accents, jamais plus. */
+/**
+ * L'encre. Du plus fort au plus discret — et deux accents, jamais plus. Les valeurs
+ * viennent de `palette.ts` (source unique de couleurs) : la voix et les teintes ne se
+ * redécident pas dans deux fichiers. `warm` = la braise ; `alert` = le rouge.
+ */
 export const INK = {
   /** Les titres d'écran et de section. */
-  title: '#ffffff',
+  title: HEX.title,
   /** Le texte courant : noms d'objets, valeurs. */
-  body: '#e8e0c8',
+  body: HEX.body,
   /** Le second plan : coûts, unités, intitulés de rayon. */
-  dim: '#9a8f78',
+  dim: HEX.dim,
   /** Éteint : ce qu'on ne peut pas faire (matériaux manquants), un champ vide. */
-  faint: '#6f6a60',
+  faint: HEX.faint,
   /** L'accent CHAUD : ce qui attend, ce qui chauffe (une file en pause). */
-  warm: '#c98b3a',
+  warm: HEX.ember,
   /** L'accent D'ALERTE : ce qui bloque (sac plein), ce qu'on va détruire. */
-  alert: '#e05a4a',
+  alert: HEX.alert,
 } as const
 
 type Style = { fontFamily: string; fontSize: string; color: string; stroke?: string; strokeThickness?: number }

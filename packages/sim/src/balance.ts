@@ -222,6 +222,16 @@ export const BALANCE = {
    * temps à revenir. On ne peut donc pas camper une clairière : on tourne.
    */
   DEPLETION_REGROW_PENALTY: 0.5,
+  /**
+   * LA DÉRIVE DU BOSQUET (spec recolte-vivante D1/R1). Un nœud de bois/plante épuisé
+   * ne repousse PLUS sur son pixel : il ROUVRE sur une tuile voisine seedée, dans ce
+   * rayon (tuiles). Le bosquet dérive, il ne clignote plus — le GDD §8bis « rouvrent
+   * ailleurs » enfin tenu. La pierre/le minéral, eux, restent sur place (le camp bâti
+   * contre un affleurement reste prévisible). `PROBES` = candidates sondées avant
+   * d'abandonner (et de repousser sur place — dégradation gracieuse, jamais de perte).
+   */
+  RELOCATE_RADIUS: 12,
+  RELOCATE_PROBES: 8,
   /** …borné, sinon un coin très fréquenté ne reviendrait JAMAIS (et un monde mort
    *  n'est pas un monde tendu, c'est un monde fini). */
   DEPLETION_MAX: 4,
@@ -230,6 +240,43 @@ export const BALANCE = {
 
   /** Rythme minimal entre deux récoltes/crafts (1 s) — borne de vraisemblance. */
   GATHER_COOLDOWN_TICKS: ticksFor(1),
+
+  /**
+   * L'ABATTAGE À MAÎTRISE (spec recolte-maitrise, verbe 1). Le clic maintenu EMPLIT
+   * une jauge ; relâcher dans le VERT (position FIXE, largeur croissant avec
+   * `woodcutting`) = coup PROPRE (+rendement, −usure). Ces nombres sont des ORDRES
+   * DE GRANDEUR — on mesure en playtest avant de les figer (spec G11 / D3 « doux »).
+   * Garde : `GREEN_START + GREEN_WIDTH_MAX ≤ CHARGE_MAX` (le vert tient dans la jauge).
+   */
+  FELL_CHARGE_MAX_TICKS: ticksFor(1.2), // 24 : temps pour emplir la jauge à fond
+  FELL_GREEN_START_TICKS: ticksFor(0.7), // 14 : bord bas du vert (FIXE — la maîtrise efface l'effort par la LARGEUR, pas la place)
+  FELL_GREEN_WIDTH_BASE_TICKS: ticksFor(0.15), // 3 : largeur du vert à woodcutting 0 (le novice vise serré)
+  FELL_GREEN_WIDTH_PER_LEVEL: 1, // +1 tick de vert par niveau
+  FELL_GREEN_WIDTH_MAX_TICKS: ticksFor(0.4), // 8 : plafond (au niveau haut, quasi imratable — pas infaillible)
+  // Le coup PROPRE (abattage dans le vert, minage sur le bon flanc) — bonus DOUX
+  // PARTAGÉ par les deux verbes (harvestStrike est générique).
+  CLEAN_YIELD_BONUS: 0.5, // +50 % de rendement (plancher +1, voir harvestStrike)
+  CLEAN_WEAR_FACTOR: 0.6, // usure atténuée (l'outil mord au lieu d'encaisser)
+
+  /**
+   * LE MINAGE À MAÎTRISE (spec recolte-maitrise, verbe 2). Le point faible est un des
+   * QUATRE FLANCS du nœud ; frapper le bon = coup propre. `mining` élargit l'acceptation
+   * aux flancs voisins : tous les N niveaux, la tolérance (distance circulaire admise)
+   * gagne un cran — 0 (exact) → 1 (+2 voisins) → 2 (tous, autopilote). Ordre de grandeur.
+   */
+  MINE_LEVELS_PER_TOLERANCE: 5,
+
+  /**
+   * LA CUEILLETTE À MAÎTRISE (spec recolte-maitrise, verbe 3). Chaque coin porte une
+   * RICHESSE seedée (facteur de stock, centré sur ~1 pour que les moyennes par cercle ne
+   * bougent pas) : maigre → riche. `foraging` fait LUIRE les bons coins que le novice voit
+   * uniformes — rendu GATÉ côté client (fuite assumée) : rien sous `REVEAL_LEVEL`, et seuls
+   * les coins au-dessus de `RICH_THRESHOLD` luisent. Ordres de grandeur, calibrés en playtest.
+   */
+  FORAGE_RICHNESS_MIN: 0.55,
+  FORAGE_RICHNESS_MAX: 1.45,
+  FORAGE_REVEAL_LEVEL: 1, // niveau `foraging` où la perception s'ouvre (le novice voit uniforme)
+  FORAGE_RICH_THRESHOLD: 1.1, // au-dessus = « bon coin » qui luit (~40 % du haut de la fourchette)
 
   /** Coups outillés avant qu'un outil soit consommé. */
   TOOL_DURABILITY: 100,
@@ -276,8 +323,25 @@ export const BALANCE = {
   /** Lignes maximum dans la file : l'écran doit pouvoir la montrer ENTIÈRE (F4). */
   CRAFT_QUEUE_MAX: 6,
 
-  /** Bonus de rendement par niveau de métier (continu, décision actée #3). */
-  SKILL_YIELD_BONUS: 0.04,
+  /**
+   * LE RENDEMENT EN CHAÎNE (spec recolte-vivante D3/Y2-Y4). La compétence n'est PLUS
+   * un `× (1 + 0,04·niveau)` — floté, il s'écrasait dans le `floor` : avec un outil ×2,
+   * monter le métier de 0 à 10 laissait le rendement à 2. Deux leviers désormais :
+   *
+   *  1. La compétence GATE l'usage effectif de l'outil (gate DOUX) : un outil trop bon
+   *     pour ton niveau rend comme le meilleur palier que tu maîtrises. `basic` (atelier)
+   *     dès `GATE_BASIC_LEVEL`, `iron` (fer) dès `GATE_IRON_LEVEL` ; `crude`/`none`
+   *     toujours. Le gate touche le RENDEMENT, jamais l'ACCÈS (`minTool`) — sinon on ne
+   *     pourrait jamais miner le fer pour monter `mining` (blocage circulaire).
+   *  2. Une MICRO-MARCHE additive et entière (`+1` tous les `SKILL_YIELD_STEP` niveaux),
+   *     qui SURVIT au `floor` (contrairement au bonus floté) et remplit le tunnel entre
+   *     deux déblocages — l'avantage du spécialiste, sans doubler l'outil.
+   *
+   * Ordre de grandeur, calibré en playtest (CLAUDE.md).
+   */
+  SKILL_YIELD_STEP: 8,
+  GATE_BASIC_LEVEL: 2,
+  GATE_IRON_LEVEL: 5,
 
   /** Réduction d'usure infligée par niveau d'artisan. */
   SKILL_WEAR_REDUCTION: 0.03,
@@ -660,14 +724,17 @@ export const TOOL_TIERS: Record<
 }
 
 /**
- * Rendement par palier : mains nues ×1, fortune ×2, atelier ×2, fer ×3.
+ * Rendement par palier : mains nues ×1, fortune ×2, atelier ×3, fer ×4.
  *
- * `crude` et `basic` à égalité, sciemment (spec craft-fortune C4-C6) : la fortune
- * ne se paie pas en rendement mais en VIE (20 coups contre 100, `TOOL_DURABILITIES`)
- * et en portes fermées (elle n'ouvre pas les filons). L'outil d'atelier n'est donc
- * pas « le même en mieux » — il est durable, et il ouvre la mine.
+ * QUATRE MARCHES DISTINCTES (spec recolte-vivante Y1, révise craft-fortune C4-C6) :
+ * chaque amélioration d'outil se sent AU SAC, plus seulement en accès. L'outil de
+ * fortune n'est plus l'ÉGAL de l'atelier — il DÉPANNE : il rend moins (2 < 3), il
+ * casse vite (20 coups contre 100, `TOOL_DURABILITIES`) ET il n'ouvre pas les filons.
+ * Trois handicaps qui en font ce qu'il doit être : le geste du survivant nu, pas un
+ * raccourci vers l'atelier. Le rendement lu est celui du palier EFFECTIF (gaté par la
+ * compétence, voir `effectiveTier`), pas forcément celui de l'outil tenu.
  */
-export const TOOL_YIELD: Record<ToolTier, number> = { none: 1, crude: 2, basic: 2, iron: 3 }
+export const TOOL_YIELD: Record<ToolTier, number> = { none: 1, crude: 2, basic: 3, iron: 4 }
 
 /**
  * Durabilité par objet — défaut : `BALANCE.TOOL_DURABILITY` (100 coups). Seuls

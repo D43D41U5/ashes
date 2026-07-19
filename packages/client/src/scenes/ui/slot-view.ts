@@ -4,18 +4,17 @@
  * On ne décide de rien ici — on affiche un `Slot` que la sim fait foi
  * (spec inventaire R22 : le geste est optimiste, l'autorité reste au snapshot).
  *
- * STYLE RUST (relevé sur une capture du jeu, pas de mémoire) :
- *  - la case est un carré GRIS PLAT translucide, SANS bordure — le monde
- *    transparaît au travers, et ce sont les gouttières (2 px) qui séparent ;
+ * STYLE MAQUETTE « Ashes UI » (Turn 2A/5A) :
+ *  - la case est un carré de PANNEAU sombre (#1b1b22) cerné d'ENCRE (#14141a) ;
  *  - l'icône remplit presque toute la case ;
  *  - le compte de pile s'écrit « x210 », en bas à DROITE ;
- *  - l'usure n'est PAS une barre horizontale sous l'objet : c'est un FILET
- *    VERTICAL collé au bord GAUCHE de la case, qui se vide vers le bas ;
- *  - la case tenue en main n'est pas cerclée d'or : elle est TEINTÉE DE BLEU.
+ *  - l'usure est une BARRE HORIZONTALE en bas (rail sombre, remplissage braise) ;
+ *  - la case tenue en main s'allume d'un LISERÉ BRAISE (pas d'une teinte bleue).
  */
 import { durabilityOf, spoilTier, type Slot } from '@braises/sim'
 import type Phaser from 'phaser'
 import { ITEM_ICON_PX, itemIconKey } from '../../render/item-art'
+import { COL } from './palette'
 import { FONT } from './typography'
 
 export interface SlotView {
@@ -23,21 +22,21 @@ export interface SlotView {
   update(slot: Slot | null, active: boolean): void
 }
 
-/** Le gris de la case, et le bleu de la case tenue. Assez OPAQUE pour rester
- *  neutre : à 0.55 le vert du monde traversait et la grille virait au kaki —
- *  on voyait même l'avatar au travers. Chez Rust les cases sont translucides,
- *  mais elles lisent GRIS. */
-const FILL = 0x585858
+/**
+ * LA CASE, façon maquette « Ashes UI » (Turn 2A/5A) : un carré de PANNEAU sombre
+ * (`#1b1b22`, translucide) cerné d'ENCRE, dont le bord passe en BRAISE quand l'objet
+ * est tenu en main — c'est le liseré chaud qui dit « celui-ci », pas une teinte bleue.
+ */
+const FILL = COL.panel // #1b1b22
 const FILL_ALPHA = 0.86
-const FILL_ACTIVE = 0x7ea8cc
-const FILL_ACTIVE_ALPHA = 0.85
+const BORDER = COL.ink // #14141a
+const BORDER_ACTIVE = COL.ember // #c98b3a — la case tenue s'allume en braise
 
-/** Le filet d'usure, au bord gauche. */
-const WEAR_W = 4
+/** La barre d'usure : un rail sombre en bas, rempli de braise (maquette Turn 5A). */
+const WEAR_H = 4
 const WEAR_INSET = 4
-const WEAR_GREEN = 0x8cc63e
-const WEAR_AMBER = 0xe8c66a
-const WEAR_RED = 0xc0503e
+const WEAR_RAIL = 0x3a2f22
+const WEAR_FILL = COL.ember
 
 /**
  * LA FRAÎCHEUR — un bandeau en BAS de la case, quand la nourriture n'est plus
@@ -62,7 +61,7 @@ function iconSize(cell: number): number {
 }
 
 export function createSlotView(scene: Phaser.Scene, x: number, y: number, size: number): SlotView {
-  const bg = scene.add.rectangle(0, 0, size, size, FILL, FILL_ALPHA)
+  const bg = scene.add.rectangle(0, 0, size, size, FILL, FILL_ALPHA).setStrokeStyle(2, BORDER)
   // On amorce l'icône avec une texture connue puis on la cache : `setTexture`
   // sur une clé absente laisserait le sprite figé sur la texture manquante.
   const icon = scene.add.image(0, 0, itemIconKey('wood')).setVisible(false)
@@ -80,17 +79,18 @@ export function createSlotView(scene: Phaser.Scene, x: number, y: number, size: 
     })
     .setOrigin(1, 1)
 
-  // Le filet d'usure : présent SEULEMENT quand l'objet est entamé (wear > 0).
-  // Origine (0,1) = coin bas-gauche : la jauge se vide donc vers le BAS.
-  const wearH = size - 2 * WEAR_INSET
+  // La barre d'usure : un rail HORIZONTAL en bas de la case (maquette Turn 5A),
+  // présent seulement quand l'objet est entamé. Origine (0,0.5) = bord gauche : la
+  // jauge se vide donc vers la DROITE. Le rail court d'un insert à l'autre.
+  const wearW = size - 2 * WEAR_INSET
   const wearX = -size / 2 + WEAR_INSET
   const wearY = size / 2 - WEAR_INSET
   const wearBg = scene.add
-    .rectangle(wearX, wearY, WEAR_W, wearH, 0x14141a, 0.65)
+    .rectangle(wearX, wearY, wearW, WEAR_H, WEAR_RAIL, 1)
     .setOrigin(0, 1)
     .setVisible(false)
   const wearBar = scene.add
-    .rectangle(wearX, wearY, WEAR_W, wearH, WEAR_GREEN)
+    .rectangle(wearX, wearY, wearW, WEAR_H, WEAR_FILL)
     .setOrigin(0, 1)
     .setVisible(false)
 
@@ -105,8 +105,8 @@ export function createSlotView(scene: Phaser.Scene, x: number, y: number, size: 
   return {
     root,
     update(slot, active) {
-      bg.fillColor = active ? FILL_ACTIVE : FILL
-      bg.fillAlpha = active ? FILL_ACTIVE_ALPHA : FILL_ALPHA
+      // La case tenue s'allume d'un liseré BRAISE (maquette) ; le fond reste le panneau.
+      bg.setStrokeStyle(active ? 3 : 2, active ? BORDER_ACTIVE : BORDER)
       if (slot === null) {
         icon.setVisible(false)
         count.setText('')
@@ -132,12 +132,11 @@ export function createSlotView(scene: Phaser.Scene, x: number, y: number, size: 
         // fortune meurt en 20 coups. Une barre calée sur les 100 de la hache
         // d'atelier le montrerait encore aux trois quarts plein en tombant.
         const left = Math.max(0, 1 - (slot.wear ?? 0) / durabilityOf(slot.item))
-        // `setSize` et PAS `.height =` : le rendu d'un Rectangle part de son
-        // `_displayOriginY`, que seul `setSize` recalcule. Écrire `.height`
-        // laissait l'origine figée sur la hauteur PLEINE — le filet restait collé
-        // en haut du rail et se vidait vers le HAUT. Il se vide vers le bas.
-        wearBar.setSize(WEAR_W, wearH * left)
-        wearBar.fillColor = left > 0.5 ? WEAR_GREEN : left > 0.2 ? WEAR_AMBER : WEAR_RED
+        // `setSize` (pas `.width =`) : seul lui recalcule l'origine d'affichage. La
+        // barre part du bord gauche (origine 0) et se vide vers la DROITE. Braise pleine,
+        // elle rougit quand il ne reste presque plus rien (l'objet va casser).
+        wearBar.setSize(wearW * left, WEAR_H)
+        wearBar.fillColor = left > 0.2 ? WEAR_FILL : COL.alert
       }
     },
   }

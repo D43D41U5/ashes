@@ -21,6 +21,7 @@ import {
   type MonsterType,
   type Npc,
   type ResourceNode,
+  type NodeType,
   type Structure,
   type WallMaterial,
   type NodeDelta,
@@ -232,6 +233,13 @@ function beastTexture(monster: Monster, sentinel: boolean, hour: number): string
  * tuile (carte alpine pleine ≤ 3600) → injectif, pas de collision de clé. */
 const NODE_TILE_STRIDE = 1_000_000
 
+/** REPOUSSE (spec recolte-vivante D2) : échelle plancher d'un nœud qui vient de repousser
+ *  — une pousse tout juste sortie reste visible (jamais une taille nulle). */
+const GROWTH_MIN = 0.14
+/** SOUCHE : durée (ms client) pendant laquelle la marque d'un nœud qui a dérivé pâlit
+ *  avant de disparaître. Purement cosmétique — la nature reprend le coin. */
+const STUMP_FADE_MS = 9000
+
 export interface InterpolatedSprite {
   sprite: Phaser.GameObjects.Image
   /** Clé de texture courante — évite setTexture/re-dimensionnement inutiles. */
@@ -320,11 +328,22 @@ export class SnapshotView {
   /** Pool SÉPARÉ : un arbre est deux sprites (tronc trié avec les acteurs,
    * houppier dans sa bande propre). Les autres nœuds n'en consomment aucun. */
   private crownPool: Phaser.GameObjects.Image[] = []
+  /** Pool des SOUCHES/traces laissées par la dérive (spec recolte-vivante D1). */
+  private stumpPool: Phaser.GameObjects.Image[] = []
   /** Index id→nœud pour appliquer les deltas de stock en O(1). */
   private nodeById = new Map<number, ResourceNode>()
   /** Index tuile→nœud (≤1 nœud/tuile) : le rendu n'itère que la fenêtre caméra,
    * pas les ~140k nœuds — coût par frame borné à la vue, comme le décor. */
   private nodeByTile = new Map<number, ResourceNode>()
+  /** REPOUSSE EN COURS (spec recolte-vivante D2) : un nœud épuisé, avec la fenêtre
+   * `[since, until]` en TICKS reçue au delta (`regrowAt`). Le rendu en tire la
+   * fraction de croissance (pousse qui grandit / minéral qui se reforme), au lieu du
+   * fantôme à 25 %. Purgé quand le stock revient (delta `stock > 0`). */
+  private depleted = new Map<number, { since: number; until: number }>()
+  /** SOUCHES (spec recolte-vivante D1) : la marque qu'un nœud de bois/plante a laissée
+   * en DÉRIVANT ailleurs. Transitoire CLIENT pur (aucun état de sim) — s'efface tout
+   * seul. `at` en ms client. */
+  private stumps: { tx: number; ty: number; type: NodeType; at: number }[] = []
   private corpseSprites = new Map<number, Phaser.GameObjects.Image>()
   /** Les gouttes de sang (C9), poolées : la sim les plafonne, le pool suit. */
   private bloodPool: Phaser.GameObjects.Image[] = []
@@ -365,7 +384,7 @@ export class SnapshotView {
     // La position (autoritative) de l'avatar local — le FADE des toits en dépend (R24).
     const self = msg.entities.find((e) => e.id === playerId)
     this.syncStructures(msg.structures, self ? { x: self.x, y: self.y } : undefined)
-    this.applyNodeDeltas(msg.nodeDeltas)
+    this.applyNodeDeltas(msg.nodeDeltas, now)
     this.syncCorpses(msg.corpses)
     this.syncEntities(msg.entities, playerId, now)
     this.syncGroundItems()
@@ -655,11 +674,17 @@ export class SnapshotView {
   }
 
   /** Reçoit la liste COMPLÈTE des nœuds (message `ready`, une fois) et l'indexe
-   * par id (deltas O(1)) ET par tuile (rendu culled O(1)/tuile visible). La
-   * carte en porte ~330k ; positions figées au runtime. */
+   * par id (deltas O(1)) ET par tuile (rendu culled O(1)/tuile visible). La carte
+   * en porte ~330k. Un nœud reçu DÉJÀ épuisé (save rechargée en pleine repousse)
+   * n'aura pas de delta `stock→0` à venir : on amorce sa repousse ici pour l'animer
+   * plutôt que le montrer plein à tort. */
   setNodes(nodes: ResourceNode[]): void {
     this.tousLesNoeuds = nodes
     this.reindexer(nodes)
+    this.depleted.clear()
+    for (const n of nodes) {
+      if (n.stock <= 0 && n.regrowAt > 0) this.depleted.set(n.id, { since: this.tick, until: n.regrowAt })
+    }
   }
 
   private reindexer(nodes: ResourceNode[]): void {
@@ -694,11 +719,34 @@ export class SnapshotView {
     this.reindexer(vivants)
   }
 
-  /** Applique les changements de stock reçus par tick (récolte/repousse). */
-  private applyNodeDeltas(deltas: NodeDelta[]): void {
+  /**
+   * Applique les changements de nœud reçus par tick (récolte, repousse, DÉRIVE).
+   *
+   * Le cas courant est un stock qui baisse. À `stock 0`, le delta porte la fenêtre de
+   * repousse (`regrowAt`) et la position : si celle-ci a changé, le nœud a DÉRIVÉ (spec
+   * recolte-vivante D1) — on le déménage (index tuile patché en O(1)), on laisse une SOUCHE
+   * à l'ancien coin (transitoire client), et on note la repousse en cours pour l'animer.
+   * Quand le stock revient (`> 0`), la repousse est finie : on purge l'état.
+   */
+  private applyNodeDeltas(deltas: NodeDelta[], now: number): void {
     for (const d of deltas) {
       const n = this.nodeById.get(d.id)
-      if (n) n.stock = d.stock
+      if (!n) continue
+      if (d.stock > 0) {
+        n.stock = d.stock
+        this.depleted.delete(d.id)
+        continue
+      }
+      // Épuisement. Déménagement éventuel (bois/plante qui dérive).
+      if (d.tx !== undefined && d.ty !== undefined && (d.tx !== n.tx || d.ty !== n.ty)) {
+        this.stumps.push({ tx: n.tx, ty: n.ty, type: n.type, at: now })
+        this.nodeByTile.delete(n.tx * NODE_TILE_STRIDE + n.ty)
+        n.tx = d.tx
+        n.ty = d.ty
+        this.nodeByTile.set(n.tx * NODE_TILE_STRIDE + n.ty, n)
+      }
+      n.stock = 0
+      if (d.regrowAt !== undefined) this.depleted.set(d.id, { since: this.tick, until: d.regrowAt })
     }
   }
 
@@ -730,11 +778,22 @@ export class SnapshotView {
         // et le houppier s'efface autour du joueur. Sans cette ligne, il naissait sans houppier —
         // un fût nu au milieu d'une futaie, ce qui est exactement ce qu'il n'est pas.
         const isTree = n.type === 'tree' || n.type === 'old_tree'
-        const texture = n.type === 'tree'
-          ? 'nd-tree_trunk'
-          : n.type === 'old_tree'
-            ? 'nd-old_tree_trunk'
-            : `nd-${n.type}`
+        // REPOUSSE (spec recolte-vivante D2) : un nœud épuisé GRANDIT sur sa fenêtre
+        // `[since, until]` — la fraction pilote son échelle, au lieu du fantôme à 25 %.
+        // Un arbre qui repousse est une POUSSE (petit, sans houppier) ; les autres se
+        // reforment à l'échelle (le minéral se recristallise, le buisson repart).
+        const dep = this.depleted.get(n.id)
+        const growing = dep !== undefined
+        const g = dep === undefined
+          ? 1
+          : Math.min(1, Math.max(GROWTH_MIN, (this.tick - dep.since) / Math.max(1, dep.until - dep.since)))
+        const texture = growing && isTree
+          ? 'nd-sapling'
+          : n.type === 'tree'
+            ? 'nd-tree_trunk'
+            : n.type === 'old_tree'
+              ? 'nd-old_tree_trunk'
+              : `nd-${n.type}`
         let sprite = this.nodePool[used]
         if (!sprite) {
           sprite = this.scene.add.image(0, 0, texture).setOrigin(0.5, 1)
@@ -766,12 +825,14 @@ export class SnapshotView {
         // sont POOLÉS — d'où le `clearTint` systématique sur les autres.
         if (n.id === this.aimedNodeId) sprite.setTint(this.aimedInRange ? AIM_TINT : AIM_TINT_FAR)
         else sprite.clearTint()
-        // Le tronc reste OPAQUE en toutes circonstances : les troncs dessinent la
-        // structure de la forêt, ce sont les houppiers qui s'ouvrent.
-        sprite.setAlpha(n.stock > 0 ? 1 : 0.25)
+        // Plus de fantôme à 25 % (spec recolte-vivante D2) : un nœud est TOUJOURS opaque.
+        // Épuisé, il n'est pas « à moitié là » — il REPOUSSE, et c'est son échelle qui le dit.
+        sprite.setAlpha(1)
+        sprite.setScale(g) // plein = 1 ; repousse = fraction (grandit depuis le pied, origine basse)
         sprite.setVisible(true)
         used++
-        if (!isTree) continue
+        // Une POUSSE n'a pas encore de houppier — il reviendra avec l'arbre adulte.
+        if (!isTree || growing) continue
 
         // Le houppier : ancré 6 px sous le sommet du tronc (22 px), donc à py−16.
         let crown = this.crownPool[crownsUsed]
@@ -794,7 +855,7 @@ export class SnapshotView {
         const dx = playerX - (tx + 0.5)
         const dy = feetY - (ty + 1)
         const d = Math.sqrt(dx * dx + dy * dy)
-        crown.setAlpha(n.stock > 0 ? crownAlpha(d) : 0.25)
+        crown.setAlpha(crownAlpha(d))
         // La canopée prend le vent, elle aussi. Sans ça, la forêt reste une photo
         // posée sur un sol qui remue — et c'est le contraste qui trahit le décor.
         // Origine (0.5, 1) : le houppier bascule autour du haut du tronc.
@@ -805,6 +866,30 @@ export class SnapshotView {
     }
     for (let i = used; i < this.nodePool.length; i++) this.nodePool[i]!.setVisible(false)
     for (let i = crownsUsed; i < this.crownPool.length; i++) this.crownPool[i]!.setVisible(false)
+
+    // LES SOUCHES (spec recolte-vivante D1) : ce qu'un nœud a laissé en DÉRIVANT. Elles
+    // pâlissent puis disparaissent (la nature reprend le coin) — transitoire client pur.
+    // On purge les périmées AVANT de dessiner : le pool ne garde que ce qui vit encore.
+    if (this.stumps.length > 0) this.stumps = this.stumps.filter((s) => now - s.at < STUMP_FADE_MS)
+    let stumpsUsed = 0
+    for (const s of this.stumps) {
+      if (s.tx < tx0 || s.tx > tx1 || s.ty < ty0 || s.ty > ty1) continue
+      const isTreeStump = s.type === 'tree' || s.type === 'old_tree'
+      let g = this.stumpPool[stumpsUsed]
+      if (!g) {
+        g = this.scene.add.image(0, 0, 'nd-stump').setOrigin(0.5, 1)
+        this.stumpPool[stumpsUsed] = g
+      }
+      const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
+      g.setTexture(isTreeStump ? 'nd-stump' : 'nd-scar')
+      g.setPosition(a.px, a.py)
+      g.setDepth(nodeDepth(s.ty, TILE_PX))
+      g.setScale(1)
+      g.setAlpha(1 - (now - s.at) / STUMP_FADE_MS) // pâlit sur sa durée de vie
+      g.setVisible(true)
+      stumpsUsed++
+    }
+    for (let i = stumpsUsed; i < this.stumpPool.length; i++) this.stumpPool[i]!.setVisible(false)
   }
 
   private syncCorpses(corpses: Corpse[]): void {

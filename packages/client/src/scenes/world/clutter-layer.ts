@@ -5,7 +5,7 @@
  * ici on ne fait que du pooling Phaser et du placement.
  */
 import Phaser from 'phaser'
-import { poiClearings, type WorldMap } from '@braises/sim'
+import { poiClearings, type Structure, type WorldMap } from '@braises/sim'
 import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
 import { clutterAt, type PropKind, type SampleTerrain } from '../../render/clutter'
 import { windSway, WIND_TAKE } from '../../render/wind'
@@ -15,6 +15,10 @@ const CLUTTER_MIN_ZOOM = 1.2 // en-deçà, on coupe le décor (props illisibles)
 /** Props RAMPANTS : des textures de sol, sans hauteur. Ils restent sous la bande
  * de tri — un caillou ne doit pas recouvrir les pieds de qui passe au nord. */
 const FLAT_PROPS = new Set<PropKind>(['pebbles', 'lichen', 'sphagnum'])
+/** Le BÂTI qui gomme le décor de SA tuile (décision d'Alexis) : mur, porte, sol,
+ *  toit. Un plancher est net, un mur sans fougère qui le traverse. Le feu, les
+ *  composants (four, enclume) et le coffre, eux, se posent dans l'herbe : elle reste. */
+const DECOR_CLEARING_STRUCTURES = new Set(['wall', 'door', 'floor', 'roof'])
 const CLUTTER_TINT = 0xbfc4bd // léger assombrissement/désaturation (INV-2)
 const MARGIN_TILES = 2 // marge de culling pour éviter le pop en bordure d'écran
 const MAX_SPRITES = 4000 // borne dure de perf (cap silencieux : on log si dépassé)
@@ -26,6 +30,10 @@ export class ClutterLayer {
    *  sim (`poiClearings`). Une source unique : deux calculs divergents feraient
    *  pousser des touffes dans une clairière vide d'arbres. */
   private readonly cleared: Set<number>
+  /** Les tuiles portant un mur/sol/porte/toit — le décor y est gommé (voir
+   *  `DECOR_CLEARING_STRUCTURES`). Rafraîchi par `setBarriers` à chaque snapshot,
+   *  car on bâtit et on démolit en jeu : c'est un état vivant, pas figé à la génération. */
+  private barriers: Set<number> = new Set()
   private warned = false
 
   constructor(
@@ -45,6 +53,16 @@ export class ClutterLayer {
    *  c'est ce qui rend la règle de l'odorat lisible sans une seule ligne d'UI. */
   wind: { x: number; y: number } = { x: 1, y: 0 }
 
+  /** LE BÂTI GOMME LE DÉCOR (décision d'Alexis) : mur/sol/porte/toit effacent le
+   *  décor cosmétique de leur tuile ; feu, composants et coffre le laissent. Appelé
+   *  au fil des snapshots — pose comme démolition rouvrent la tuile au décor. */
+  setBarriers(structures: readonly Structure[]): void {
+    this.barriers.clear()
+    for (const s of structures) {
+      if (DECOR_CLEARING_STRUCTURES.has(s.type)) this.barriers.add(s.ty * this.map.width + s.tx)
+    }
+  }
+
   update(camera: Phaser.Cameras.Scene2D.Camera, now: number): void {
     let used = 0
     if (camera.zoom >= CLUTTER_MIN_ZOOM) {
@@ -59,8 +77,10 @@ export class ClutterLayer {
       )
       for (let ty = y0; ty <= y1 && used < MAX_SPRITES; ty++) {
         for (let tx = x0; tx <= x1 && used < MAX_SPRITES; tx++) {
-          if (this.cleared.has(ty * this.map.width + tx)) continue // la clairière d'un lieu : rien n'y pousse
-          const terrain = this.map.terrain[ty * this.map.width + tx] ?? -1
+          const idx = ty * this.map.width + tx
+          if (this.cleared.has(idx)) continue // la clairière d'un lieu : rien n'y pousse
+          if (this.barriers.has(idx)) continue // un mur/sol posé ici : la tuile est nette
+          const terrain = this.map.terrain[idx] ?? -1
           const props = clutterAt(tx, ty, terrain, this.seed, this.sample)
           for (const p of props) {
             if (used >= MAX_SPRITES) break

@@ -9,7 +9,23 @@ import {
   TERRAIN_GRASS,
   TERRAIN_MARSH,
 } from './balance'
-import { generateNodes, nodeAt, skillLevel, treeJitter, type ResourceNode } from './economy'
+import {
+  fellGreenWidth,
+  flankOfAim,
+  forageRevealed,
+  forageRichness,
+  generateNodes,
+  isCleanFell,
+  isCleanMine,
+  mineGoodFlank,
+  mineTolerance,
+  nodeAt,
+  recipeState,
+  skillLevel,
+  treeJitter,
+  withForageRichness,
+  type ResourceNode,
+} from './economy'
 import { drainEvents } from './events'
 import { heldSlot } from './inventory-actions'
 import { countOf, durabilityOf, freeRoomFor, inventoryOf, makeInventory, stackSize, type ItemId } from './items'
@@ -83,13 +99,18 @@ describe('la récolte (A1)', () => {
     act(sim, id, { type: 'harvest', nodeId: tree.id })
     expect(countOf(me(sim).inventory, 'wood')).toBe(1)
     expect(simTree().stock).toBe(9)
+    drainEvents(sim)
 
-    // Trop tôt (cooldown), puis trop loin.
-    act(sim, id, { type: 'harvest', nodeId: tree.id })
+    // Trop tôt = SILENCIEUX (décision d'Alexis : la cadence est le geste, pas un rejet). Le
+    // cooldown gate TOUJOURS le coup, mais ne crache plus « trop tôt ». Trop loin, en
+    // revanche, reste un vrai refus.
+    act(sim, id, { type: 'harvest', nodeId: tree.id }) // dans le cooldown : aucun coup…
+    expect(countOf(me(sim).inventory, 'wood')).toBe(1)
+    expect(rejections(sim)).toEqual([]) // …et AUCUN rejet
     me(sim).x = 20
     for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'harvest', nodeId: tree.id })
-    expect(rejections(sim)).toEqual(['trop tôt', 'trop loin'])
+    expect(rejections(sim)).toEqual(['trop loin'])
     me(sim).x = 10.3
 
     // Épuiser : le nœud se vide, puis repousse à plein.
@@ -134,11 +155,13 @@ describe('la récolte sous archétype Meute (économie anémique, spec alignemen
  * pas eu lieu (ni stock, ni cooldown, ni XP).
  */
 describe('la capacité à la récolte (A10, A11)', () => {
-  /** Bûcheron de niveau 25 (skillLevel = √(xp/100)) : ×3 (fer) × 2 (niveau) = 6 bois par coup. */
+  /** Bûcheron de niveau 25 (skillLevel = √(xp/100)), hache de fer : palier effectif `iron`
+   *  (niveau ≥ GATE_IRON_LEVEL) = 4, + marche de compétence floor(25/8) = 3 → 7 bois/coup
+   *  (spec recolte-vivante Y1/Y4). */
   const MASTER_XP = 62500
 
   it('A10 : le nœud garde ce qui ne rentre pas dans le sac', () => {
-    // Contrôle : le MÊME coup, sac vide, rend bien 6 bois — c'est ce rendement-là
+    // Contrôle : le MÊME coup, sac vide, rend bien 7 bois — c'est ce rendement-là
     // qu'on va écrêter (sinon le test passerait pour une mauvaise raison).
     const refTree = makeNode('tree', 11, 10)
     const ref = makeSim([refTree])
@@ -146,7 +169,7 @@ describe('la capacité à la récolte (A10, A11)', () => {
     ref.entities[0]!.skills.woodcutting = MASTER_XP
     grantHeld(ref, refId, 'iron_axe')
     act(ref, refId, { type: 'harvest', nodeId: refTree.id })
-    expect(countOf(me(ref).inventory, 'wood')).toBe(6)
+    expect(countOf(me(ref).inventory, 'wood')).toBe(7)
 
     const tree = makeNode('tree', 11, 10)
     const sim = makeSim([tree])
@@ -327,6 +350,41 @@ function equipHammer(sim: SimState, id: number): void {
   const slot = sim.entities.find((e) => e.id === id)!.inventory.findIndex((s) => s?.item === 'hammer')
   act(sim, id, { type: 'set_active_slot', slot })
 }
+
+// `recipeState` — l'état d'une recette pour la liste de craft (maquette Turn 3A),
+// PUR : le même verdict que le handler, exposé pour peindre la liste (rayons =
+// stations, décision 2026-07-19). Trois cas : feasible / missing / no_station.
+describe('recipeState — feasible / missing / no_station', () => {
+  it('recette à la main : missing sans ingrédients, feasible avec', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    // `rope` : station null (à la main), inputs { fiber: 3 }.
+    expect(recipeState(sim, me(sim), 'rope')).toBe('missing')
+    grantItems(sim, id, { fiber: 3 })
+    expect(recipeState(sim, me(sim), 'rope')).toBe('feasible')
+  })
+
+  it('recette à station : no_station sans l’atelier, feasible à portée avec ingrédients', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 30, stone: 20, fiber: 2 }) // de quoi fonder le Feu ET payer `axe`
+    // Pas d'atelier : la station manque, quels que soient les ingrédients.
+    expect(recipeState(sim, me(sim), 'axe')).toBe('no_station')
+    // On fonde et on pose un atelier à portée : la station est là.
+    act(sim, id, { type: 'light_fire' })
+    addStructure(sim, 'workshop', 9, 10, getVillageOf(sim, id)!.id, id)
+    expect(recipeState(sim, me(sim), 'axe')).toBe('feasible')
+  })
+
+  it('station présente mais ingrédients manquants : missing (pas no_station)', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 30, stone: 20 }) // de quoi fonder, pas de fibre pour `axe`
+    act(sim, id, { type: 'light_fire' })
+    addStructure(sim, 'workshop', 9, 10, getVillageOf(sim, id)!.id, id)
+    expect(recipeState(sim, me(sim), 'axe')).toBe('missing')
+  })
+})
 
 describe('l’artisanat (A3)', () => {
   it('la chaîne T2 : lingot au four seulement, hache de fer à l’atelier seulement', () => {
@@ -690,14 +748,16 @@ describe('la spécialisation (A5)', () => {
     const id = spawnEntity(sim, 10.3, 10.5)
     grantHeld(sim, id, 'iron_axe')
 
-    // Niveau 0 : ×3 (fer). Niveau 10 : floor(3 × 1.4) = 4.
+    // Niveau 0 : la hache de fer est GATÉE au palier `crude` (spec recolte-vivante Y2) →
+    // le coup rend 2, pas 4. Niveau 10 (≥ GATE_IRON_LEVEL) : palier `iron` (4) + marche
+    // floor(10/8) = 1 → le coup rend 5. La compétence OUVRE l'outil ET ajoute sa marche.
     act(sim, id, { type: 'harvest', nodeId: tree.id })
-    expect(countOf(me(sim).inventory, 'wood')).toBe(3)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(2)
     me(sim).skills.woodcutting = 10000 // niveau 10 (setup de test)
     expect(skillLevel(10000)).toBe(10)
     for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
     act(sim, id, { type: 'harvest', nodeId: tree.id })
-    expect(countOf(me(sim).inventory, 'wood')).toBe(7)
+    expect(countOf(me(sim).inventory, 'wood')).toBe(7) // cumul : 2 (niv 0) + 5 (niv 10)
 
     // Pression de spécialisation : le bûcheron de niveau 10 apprend la mine 6× plus lentement.
     for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
@@ -869,5 +929,281 @@ describe('treeJitter — décalage déterministe de l’origine des arbres', () 
       }
     }
     expect(hasNegX && hasPosX && hasNegY && hasPosY).toBe(true)
+  })
+})
+
+/**
+ * L'ABATTAGE À MAÎTRISE (spec recolte-maitrise, verbe 1). Le clic maintenu emplit
+ * une jauge ; relâcher dans le VERT sort le coup PROPRE (+rendement, −usure). Le
+ * défi vit dans la sim (D1) : déterministe, rejouable, aucune note « jugée » par le
+ * client. `harvest` instantané reste le coup baseline — ces gestes s'y ajoutent.
+ */
+describe("l'abattage à maîtrise (spec recolte-maitrise, verbe 1)", () => {
+  /** Arme la jauge sur un arbre, avance le temps, puis relâche quand elle atteint
+   *  `atTicks` : `charge_start` amène déjà `ticks` à 1, chaque tick vide ajoute 1. */
+  function fell(sim: SimState, id: number, nodeId: number, atTicks: number): void {
+    act(sim, id, { type: 'harvest_charge_start', nodeId })
+    for (let t = 1; t < atTicks; t++) step(sim, [])
+    act(sim, id, { type: 'harvest_release' })
+  }
+
+  function freshTree(): { sim: SimState; id: number; nodeId: number } {
+    const tree = makeNode('tree', 11, 10)
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    drainEvents(sim)
+    return { sim, id, nodeId: tree.id }
+  }
+
+  it('A2/A3 — le vert paie plus, APRÈS le vert rend le baseline (jamais zéro)', () => {
+    // Après le vert (relâché trop tard) : baseline, sans drapeau `clean`.
+    const overshoot = BALANCE.FELL_GREEN_START_TICKS + BALANCE.FELL_GREEN_WIDTH_BASE_TICKS + 1 // au-delà du vert au niveau 0
+    const miss = freshTree()
+    fell(miss.sim, miss.id, miss.nodeId, overshoot)
+    const baseline = countOf(me(miss.sim).inventory, 'wood')
+    expect(baseline).toBeGreaterThanOrEqual(1) // jamais zéro (D3)
+    const missEv = drainEvents(miss.sim).find((e) => e.type === 'resource_harvested')
+    expect(missEv!.type === 'resource_harvested' && missEv!.clean).toBeFalsy()
+
+    // Dans le vert : coup propre, drapeau `clean`, rendement supérieur.
+    const clean = freshTree()
+    fell(clean.sim, clean.id, clean.nodeId, BALANCE.FELL_GREEN_START_TICKS + 1)
+    const cleanWood = countOf(me(clean.sim).inventory, 'wood')
+    const cleanEv = drainEvents(clean.sim).find((e) => e.type === 'resource_harvested')
+    expect(cleanEv!.type === 'resource_harvested' && cleanEv!.clean).toBe(true)
+    expect(cleanWood).toBeGreaterThan(baseline)
+  })
+
+  it('relâcher AVANT le vert n\'émet RIEN : le geste est annulé (anti-mitraillage, sans cooldown)', () => {
+    const { sim, id, nodeId } = freshTree()
+    fell(sim, id, nodeId, BALANCE.FELL_GREEN_START_TICKS - 2) // relâché avant la connexion
+    expect(countOf(me(sim).inventory, 'wood')).toBe(0) // aucun coup
+    expect(drainEvents(sim).some((e) => e.type === 'resource_harvested')).toBe(false)
+    expect(me(sim).harvestCharge).toBeUndefined() // la charge est bien retombée
+  })
+
+  it('rien ne récolte tant qu\'on n\'a pas relâché, et la charge ne se plaint pas', () => {
+    const { sim, id, nodeId } = freshTree()
+    act(sim, id, { type: 'harvest_charge_start', nodeId })
+    for (let t = 0; t < BALANCE.FELL_GREEN_START_TICKS; t++) {
+      expect(countOf(me(sim).inventory, 'wood')).toBe(0) // pas de coup avant le relâchement (G9)
+      step(sim, [])
+    }
+    expect(rejections(sim)).toEqual([])
+    act(sim, id, { type: 'harvest_release' }) // la jauge est entrée dans le vert
+    expect(countOf(me(sim).inventory, 'wood')).toBeGreaterThanOrEqual(1)
+  })
+
+  it('jauge pleine sans relâcher : le coup part tout seul, au baseline', () => {
+    const { sim, id, nodeId } = freshTree()
+    act(sim, id, { type: 'harvest_charge_start', nodeId })
+    for (let t = 0; t < BALANCE.FELL_CHARGE_MAX_TICKS + 2; t++) step(sim, [])
+    const ev = drainEvents(sim).find((e) => e.type === 'resource_harvested')
+    expect(ev).toBeDefined()
+    expect(ev!.type === 'resource_harvested' && ev!.clean).toBeFalsy()
+    expect(me(sim).harvestCharge).toBeUndefined()
+    expect(countOf(me(sim).inventory, 'wood')).toBeGreaterThanOrEqual(1)
+  })
+
+  it("A5 — le vert s'élargit avec woodcutting, et ne déborde jamais avant son bord", () => {
+    const edge = BALANCE.FELL_GREEN_START_TICKS + BALANCE.FELL_GREEN_WIDTH_BASE_TICKS // 1er tick HORS du vert au niveau 0
+    expect(isCleanFell(edge, 0)).toBe(false)
+    expect(isCleanFell(edge, 1)).toBe(true) // +1 tick de vert par niveau
+    expect(isCleanFell(BALANCE.FELL_GREEN_START_TICKS - 1, 5)).toBe(false) // avant le vert : jamais propre
+    expect(fellGreenWidth(1000)).toBe(BALANCE.FELL_GREEN_WIDTH_MAX_TICKS) // largeur plafonnée
+  })
+
+  it("pas de « trop tôt » : la jauge EST la cadence, on ré-arme aussitôt après un coup", () => {
+    const { sim, id, nodeId } = freshTree()
+    fell(sim, id, nodeId, BALANCE.FELL_GREEN_START_TICKS + 1) // un premier coup (pose le cooldown interne)
+    drainEvents(sim)
+    act(sim, id, { type: 'harvest_charge_start', nodeId }) // ré-armer TOUT DE SUITE
+    expect(rejections(sim)).toEqual([]) // aucun « trop tôt » : le cooldown ne garde pas l'abattage
+    expect(me(sim).harvestCharge).toBeDefined() // la jauge est bien repartie
+  })
+
+  it("G8 — si l'arbre se vide pendant la charge (déjà dans le vert), le relâchement est muet", () => {
+    const { sim, id, nodeId } = freshTree()
+    act(sim, id, { type: 'harvest_charge_start', nodeId })
+    for (let t = 0; t < BALANCE.FELL_GREEN_START_TICKS + 1; t++) step(sim, []) // jauge entrée dans le vert
+    sim.nodes[0]!.stock = 0 // quelqu'un d'autre l'a vidé pendant qu'on chargeait
+    act(sim, id, { type: 'harvest_release' })
+    expect(drainEvents(sim).some((e) => e.type === 'resource_harvested')).toBe(false)
+    expect(me(sim).harvestCharge).toBeUndefined()
+  })
+
+  it('A1 — déterminisme : même charge/relâche → même récolte et même flux', () => {
+    const run = (): { wood: number; events: string[] } => {
+      const { sim, id, nodeId } = freshTree()
+      fell(sim, id, nodeId, BALANCE.FELL_GREEN_START_TICKS + 1)
+      return { wood: countOf(me(sim).inventory, 'wood'), events: drainEvents(sim).map((e) => e.type) }
+    }
+    expect(run()).toEqual(run())
+  })
+})
+
+/**
+ * LE MINAGE À MAÎTRISE (spec recolte-maitrise, verbe 2). Le point faible est un des
+ * QUATRE FLANCS du nœud (0=haut,1=droite,2=bas,3=gauche) ; frapper le bon = coup PROPRE
+ * (+~50 %). `mining` élargit l'acceptation aux flancs voisins. Le défi vit dans la sim
+ * (D1) : le bon flanc est une pure fonction seedée de (nodeId, stock), rejouable.
+ */
+describe('le minage à maîtrise (spec recolte-maitrise, verbe 2)', () => {
+  /** Un point de curseur qui tombe DANS le flanc voulu, autour du centre du nœud. */
+  function aimForFlank(node: ResourceNode, flank: number): { aimX: number; aimY: number } {
+    const cx = node.tx + 0.5
+    const cy = node.ty + 0.5
+    if (flank === 0) return { aimX: cx, aimY: cy - 1 } // haut
+    if (flank === 1) return { aimX: cx + 1, aimY: cy } // droite
+    if (flank === 2) return { aimX: cx, aimY: cy + 1 } // bas
+    return { aimX: cx - 1, aimY: cy } // gauche
+  }
+
+  function freshRock(): { sim: SimState; id: number; rock: ResourceNode } {
+    const rock = makeNode('rock', 11, 10)
+    const sim = makeSim([rock])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    drainEvents(sim)
+    return { sim, id, rock }
+  }
+
+  it('flankOfAim — le quadrant à axe dominant, jamais un pixel', () => {
+    const rock = makeNode('rock', 11, 10)
+    expect(flankOfAim(rock, 11.5, 9.0)).toBe(0) // haut
+    expect(flankOfAim(rock, 13.0, 10.5)).toBe(1) // droite
+    expect(flankOfAim(rock, 11.5, 12.0)).toBe(2) // bas
+    expect(flankOfAim(rock, 10.0, 10.5)).toBe(3) // gauche
+    // Chaque flanc synthétisé se relit bien lui-même.
+    for (let f = 0; f < 4; f++) {
+      const a = aimForFlank(rock, f)
+      expect(flankOfAim(rock, a.aimX, a.aimY)).toBe(f)
+    }
+  })
+
+  it('mineGoodFlank — seedé, déterministe, et il SAUTE quand le stock baisse', () => {
+    const flanks = []
+    for (let s = 12; s >= 1; s--) {
+      expect(mineGoodFlank(777, s)).toBe(mineGoodFlank(777, s)) // pur
+      flanks.push(mineGoodFlank(777, s))
+    }
+    expect(flanks.every((f) => f >= 0 && f <= 3)).toBe(true)
+    expect(new Set(flanks).size).toBeGreaterThan(1) // il ne reste pas figé sur un flanc
+  })
+
+  it('M2 — frapper le BON flanc paie +50 %, un autre flanc rend le baseline', () => {
+    // Coup propre : on vise le bon flanc.
+    const good = freshRock()
+    const gf = mineGoodFlank(good.rock.id, good.rock.stock)
+    act(good.sim, good.id, { type: 'harvest', nodeId: good.rock.id, ...aimForFlank(good.rock, gf) })
+    const cleanWood = countOf(me(good.sim).inventory, 'stone')
+    const cleanEv = drainEvents(good.sim).find((e) => e.type === 'resource_harvested')
+    expect(cleanEv!.type === 'resource_harvested' && cleanEv!.clean).toBe(true)
+
+    // Baseline : on vise le flanc OPPOSÉ (distance 2, hors tolérance au niveau 0).
+    const bad = freshRock()
+    const bf = (mineGoodFlank(bad.rock.id, bad.rock.stock) + 2) % 4
+    act(bad.sim, bad.id, { type: 'harvest', nodeId: bad.rock.id, ...aimForFlank(bad.rock, bf) })
+    const baseWood = countOf(me(bad.sim).inventory, 'stone')
+    const baseEv = drainEvents(bad.sim).find((e) => e.type === 'resource_harvested')
+    expect(baseEv!.type === 'resource_harvested' && baseEv!.clean).toBeFalsy()
+    expect(baseWood).toBeGreaterThanOrEqual(1) // jamais zéro (D3)
+    expect(cleanWood).toBeGreaterThan(baseWood)
+  })
+
+  it('M3 — mining élargit la tolérance aux flancs voisins', () => {
+    expect(mineTolerance(0)).toBe(0) // novice : le bon flanc, exact
+    expect(mineTolerance(BALANCE.MINE_LEVELS_PER_TOLERANCE)).toBeGreaterThanOrEqual(1)
+    const rock = makeNode('rock', 11, 10)
+    const good = mineGoodFlank(rock.id, rock.stock)
+    const neighbour = aimForFlank(rock, (good + 1) % 4) // flanc voisin (distance 1)
+    expect(isCleanMine(rock, neighbour.aimX, neighbour.aimY, 0)).toBe(false) // raté au niveau 0
+    expect(isCleanMine(rock, neighbour.aimX, neighbour.aimY, BALANCE.MINE_LEVELS_PER_TOLERANCE)).toBe(true) // porté au niveau haut
+  })
+
+  it('le flanc ne s\'applique QU\'au minage : une plante visée reste au baseline', () => {
+    const bush = makeNode('berry_bush', 11, 10)
+    const sim = makeSim([bush])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    drainEvents(sim)
+    // Même avec aimX/aimY, une cueillette n'a pas de flanc (spec : perception, pas adresse).
+    act(sim, id, { type: 'harvest', nodeId: bush.id, ...aimForFlank(bush, mineGoodFlank(bush.id, bush.stock)) })
+    const ev = drainEvents(sim).find((e) => e.type === 'resource_harvested')
+    expect(ev!.type === 'resource_harvested' && ev!.clean).toBeFalsy()
+  })
+
+  it('M1/déterminisme — même nœud, même flanc visé → même récolte et même flux', () => {
+    const run = (): { stone: number; events: string[] } => {
+      const { sim, id, rock } = freshRock()
+      act(sim, id, { type: 'harvest', nodeId: rock.id, ...aimForFlank(rock, mineGoodFlank(rock.id, rock.stock)) })
+      return { stone: countOf(me(sim).inventory, 'stone'), events: drainEvents(sim).map((e) => e.type) }
+    }
+    expect(run()).toEqual(run())
+  })
+})
+
+/**
+ * LA CUEILLETTE À MAÎTRISE (spec recolte-maitrise, verbe 3). Le geste est NU (déjà couvert :
+ * une plante visée reste au baseline) ; la maîtrise vit DANS LE MONDE — chaque coin porte une
+ * RICHESSE seedée qui module son stock, et `foraging` fait luire les bons coins (rendu gaté
+ * client, testé ici par la fonction pure). Le défi ne juge RIEN au coup (contrat commun exempté).
+ */
+describe('la cueillette à maîtrise (spec recolte-maitrise, verbe 3)', () => {
+  it('forageRichness — seedé, déterministe, borné, centré sur ~1', () => {
+    const vals = []
+    for (let id = 1; id <= 400; id++) {
+      expect(forageRichness(id)).toBe(forageRichness(id)) // pur
+      const v = forageRichness(id)
+      expect(v).toBeGreaterThanOrEqual(BALANCE.FORAGE_RICHNESS_MIN)
+      expect(v).toBeLessThan(BALANCE.FORAGE_RICHNESS_MAX)
+      vals.push(v)
+    }
+    const moyenne = vals.reduce((s, v) => s + v, 0) / vals.length
+    // Centré : la moyenne par cercle ne doit pas bouger (sinon on casse l'économie).
+    expect(moyenne).toBeGreaterThan(0.9)
+    expect(moyenne).toBeLessThan(1.1)
+    // Il y a bien des maigres ET des riches — sinon rien à percevoir.
+    expect(vals.some((v) => v < 0.75)).toBe(true)
+    expect(vals.some((v) => v > 1.25)).toBe(true)
+  })
+
+  it('la richesse module le stock des SEULES plantes, pas les autres nœuds', () => {
+    // Une plante : le stock est mis à l'échelle de sa richesse.
+    expect(withForageRichness('berry_bush', 3, 8)).toBe(Math.max(1, Math.floor(8 * forageRichness(3))))
+    // Un rocher / un arbre : rien ne change (leur maîtrise est ailleurs).
+    expect(withForageRichness('rock', 3, 12)).toBe(12)
+    expect(withForageRichness('tree', 3, 10)).toBe(10)
+  })
+
+  it('un bon coin porte PLUS qu\'un maigre (gain de trajet, pas d\'accès exclusif)', () => {
+    // Deux buissons de base identique, ids choisis riche vs maigre.
+    let richId = -1
+    let poorId = -1
+    for (let id = 1; id <= 300 && (richId < 0 || poorId < 0); id++) {
+      if (forageRichness(id) > 1.3 && richId < 0) richId = id
+      if (forageRichness(id) < 0.7 && poorId < 0) poorId = id
+    }
+    expect(withForageRichness('berry_bush', richId, 8)).toBeGreaterThan(withForageRichness('berry_bush', poorId, 8))
+  })
+
+  it('P2/P3 — la perception est GATÉE : le novice voit uniforme, seuls les bons coins luisent', () => {
+    const rich = BALANCE.FORAGE_RICH_THRESHOLD + 0.1
+    const poor = BALANCE.FORAGE_RICH_THRESHOLD - 0.2
+    expect(forageRevealed(0, rich)).toBe(false) // novice : rien, même un bon coin
+    expect(forageRevealed(BALANCE.FORAGE_REVEAL_LEVEL, poor)).toBe(false) // au niveau : un coin maigre ne luit pas
+    expect(forageRevealed(BALANCE.FORAGE_REVEAL_LEVEL, rich)).toBe(true) // au niveau : le bon coin luit
+  })
+
+  it('la repousse d\'un coin garde sa richesse (propriété du lieu, pas stock ponctuel)', () => {
+    const bush = makeNode('berry_bush', 11, 10)
+    const sim = makeSim([bush])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    drainEvents(sim)
+    // Vider le buisson, puis le forcer à repousser.
+    swing(sim, id, bush.id, 12)
+    const node = sim.nodes[0]!
+    expect(node.stock).toBe(0)
+    node.regrowAt = sim.tick
+    step(sim, [])
+    expect(node.stock).toBe(withForageRichness('berry_bush', node.id, NODE_DEFS.berry_bush.stock))
   })
 })

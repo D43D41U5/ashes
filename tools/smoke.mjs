@@ -1339,6 +1339,222 @@ const SCENARIOS = {
   },
 
   /**
+   * L'ABATTAGE À MAÎTRISE MARCHE-T-IL ? (spec recolte-maitrise, verbe 1)
+   *
+   * On se pose contre un arbre, on ARME la charge (`harvest_charge_start`) et on vérifie
+   * DEUX faits mesurables : (1) `scene.fells` — l'entrée de rendu de la jauge, dérivée du
+   * snapshot — se peuple (le client SAIT peindre la jauge sous cet arbre) ; (2) laissée
+   * pleine, la charge auto-frappe et du BOIS rentre (la boucle marche de bout en bout).
+   *
+   * NOTE — le DESSIN de la jauge ne s'atteste pas en direct ici : la boucle de rendu de
+   * Chromium headless est trop throttlée pour saisir la frame mi-charge avant que
+   * l'auto-frappe ne vide la charge. Le rendu lui-même se vérifie à l'œil (`pnpm dev`) ou
+   * par capture figée. Exige `--dev` (le TP n'est armé que là).
+   */
+  async abattage(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(300)
+
+    // Un arbre, et on se plante juste à côté (à portée de bras — le centre à 1 tuile).
+    const tree = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const t = s.view.nodes.find((n) => n.type === 'tree' && n.stock > 0)
+      if (!t) return null
+      s.sendAction({ type: 'debug_teleport', x: t.tx - 0.5, y: t.ty + 0.5 })
+      return { id: t.id, tx: t.tx, ty: t.ty }
+    })
+    if (!tree) { console.log('   ✗ aucun arbre à portée dans cette carte'); return {} }
+    await page.waitForTimeout(500) // le TP prend effet (aller-retour de snapshot)
+
+    const wood = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const me = s.lastEntities?.find((e) => e.id === s.playerId)
+      return (me?.inventory ?? []).reduce((n, sl) => n + (sl?.item === 'wood' ? sl.count : 0), 0)
+    })
+    const woodBefore = await wood()
+
+    // ARMER. On sonde `scene.fells` — L'ENTRÉE DE RENDU de la jauge, dérivée du snapshot :
+    // si elle se peuple, le client SAIT peindre la jauge (le dessin lui-même est confirmé
+    // à part, la boucle de rendu de Chromium headless étant trop throttlée pour le saisir
+    // en direct avant que l'auto-frappe ne vide la charge — voir la note du scénario).
+    await page.evaluate((id) => window.__BRAISES__.scene.sendAction({ type: 'harvest_charge_start', nodeId: id }), tree.id)
+    let fells = []
+    for (let i = 0; i < 12 && fells.length === 0; i++) {
+      await page.waitForTimeout(40)
+      fells = await page.evaluate(() => window.__BRAISES__.scene.fells ?? [])
+    }
+    console.log(fells.length
+      ? `   ✓ la jauge a son entrée de rendu : ${JSON.stringify(fells)}`
+      : `   ✗ scene.fells reste vide — la jauge n'a rien à peindre`)
+    await page.screenshot({ path: `${OUT}/abattage-jauge.png` })
+
+    // À plein sans relâcher, le coup part TOUT SEUL au baseline (l'ancien G6) : du bois rentre.
+    await page.waitForTimeout(1400)
+    const woodAfter = await wood()
+    console.log(woodAfter > woodBefore
+      ? `   ✓ le coup a porté (auto-frappe à plein) : bois ${woodBefore} → ${woodAfter}`
+      : `   ✗ aucun bois récolté (${woodBefore} → ${woodAfter})`)
+    return { fells: fells.length, woodBefore, woodAfter }
+  },
+
+  /**
+   * LE MINAGE À MAÎTRISE MARCHE-T-IL ? (spec recolte-maitrise, verbe 2)
+   *
+   * On se pose contre un rocher et on vérifie DEUX faits : (1) la LUEUR DU BON FLANC se
+   * peint (l'objet `flankGlow` a des commandes de dessin — le client sait montrer le point
+   * faible, stable, sans course au temps) ; (2) frapper le rocher rapporte de la PIERRE.
+   * Le JUGEMENT du flanc (bon = propre) est prouvé au tick près par les tests unitaires.
+   * Exige `--dev` (le TP n'est armé que là).
+   */
+  async minage(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(300)
+
+    const rock = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const r = s.view.nodes.find((n) => n.type === 'rock' && n.stock > 0)
+      if (!r) return null
+      s.sendAction({ type: 'debug_teleport', x: r.tx - 0.5, y: r.ty + 0.5 })
+      return { id: r.id, tx: r.tx, ty: r.ty }
+    })
+    if (!rock) { console.log('   ✗ aucun rocher à portée dans cette carte'); return {} }
+    await page.waitForTimeout(500)
+
+    // La lueur du bon flanc — STABLE tant que le rocher est à portée. Au repos elle est PRÊTE
+    // (brillante) ; le TEMPO (reforme après un coup) se vérifie au probe figé, non en direct.
+    const glow = await page.evaluate(() => window.__BRAISES__.scene.flankGlow?.g?.commandBuffer?.length ?? -1)
+    console.log(glow > 0 ? `   ✓ la lueur du bon flanc se peint (cmds=${glow})` : `   ✗ aucune lueur peinte (cmds=${glow})`)
+    await page.screenshot({ path: `${OUT}/minage-flanc.png` })
+
+    // Miner à la cadence du rechargement : la pierre rentre (boucle de bout en bout).
+    const stone = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const me = s.lastEntities?.find((e) => e.id === s.playerId)
+      return (me?.inventory ?? []).reduce((n, sl) => n + (sl?.item === 'stone' ? sl.count : 0), 0)
+    })
+    const before = await stone()
+    for (let i = 0; i < 3; i++) {
+      await page.evaluate(({ id, tx, ty }) => window.__BRAISES__.scene.sendAction({ type: 'harvest', nodeId: id, aimX: tx + 1.5, aimY: ty + 0.5 }), rock)
+      await page.waitForTimeout(1100) // > GATHER_COOLDOWN
+    }
+    const after = await stone()
+    console.log(after > before ? `   ✓ le rocher rend de la pierre : ${before} → ${after}` : `   ✗ aucune pierre (${before} → ${after})`)
+    return { glow, before, after }
+  },
+
+  /**
+   * LA CUEILLETTE À MAÎTRISE MARCHE-T-ELLE ? (spec recolte-maitrise, verbe 3)
+   *
+   * La maîtrise vit DANS LE MONDE : un `foraging` haut fait luire les bons coins que le
+   * novice voit uniformes. On vérifie la BASCULE : NOVICE (foraging 0, en direct) → aucune
+   * lueur ; HERBORISTE (rendu appelé à niveau haut, figé) → des étincelles sur les coins
+   * riches. Le JUGEMENT (richesse, gate) est prouvé au tick près par les tests unitaires.
+   * Exige `--dev` (le TP n'est armé que là).
+   */
+  async cueillette(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(300)
+
+    // Se poser au milieu d'un coin de cueillette (le plus de plantes autour → des riches à voir).
+    const spot = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const forage = s.view.nodes.filter((n) => ['berry_bush', 'fiber_plant', 'peat_cut', 'ash_heap'].includes(n.type) && n.stock > 0)
+      if (forage.length === 0) return null
+      const dense = (a) => forage.filter((b) => (a.tx - b.tx) ** 2 + (a.ty - b.ty) ** 2 < 100).length
+      const best = forage.reduce((m, n) => (dense(n) > dense(m) ? n : m), forage[0])
+      s.sendAction({ type: 'debug_teleport', x: best.tx, y: best.ty })
+      return { tx: best.tx, ty: best.ty, autour: dense(best) }
+    })
+    if (!spot) { console.log('   ✗ aucun coin de cueillette dans cette carte'); return {} }
+    await page.waitForTimeout(500)
+
+    // NOVICE (foraging 0, en direct) : rien ne luit.
+    const low = await page.evaluate(() => window.__BRAISES__.scene.forageGlow?.g?.commandBuffer?.length ?? -1)
+    await page.screenshot({ path: `${OUT}/cueillette-novice.png` })
+
+    // HERBORISTE : on appelle le rendu à niveau haut, puis on FIGE pour capturer.
+    const high = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      s.forageGlow.update(s.view.nodes, s.predicted, 3, 1000, s.warp) // foraging niveau 3
+      const cmds = s.forageGlow.g.commandBuffer?.length ?? -1
+      s.scene.pause()
+      return cmds
+    })
+    await page.waitForTimeout(150)
+    await page.screenshot({ path: `${OUT}/cueillette-herboriste.png` })
+
+    console.log(`   coin de ${spot.autour} plantes autour`)
+    console.log(low === 0 ? `   ✓ NOVICE : aucune lueur (voit uniforme)` : `   ✗ le novice voit une lueur (cmds=${low})`)
+    console.log(high > 0 ? `   ✓ HERBORISTE : les bons coins luisent (cmds=${high})` : `   ✗ aucun bon coin ne luit à niveau haut (cmds=${high})`)
+    return { autour: spot.autour, low, high }
+  },
+
+  /**
+   * LE MONDE EST-IL VIVANT ? (spec recolte-vivante D1/D2)
+   *
+   * On rase un buisson jusqu'au bout et on vérifie qu'il ne CLIGNOTE plus sur place :
+   * il MEURT là (une souche/trace), et il ROUVRE ailleurs, dans le bosquet. Deux faits
+   * lisibles depuis l'état client : (1) la position du nœud a CHANGÉ (dérive, D1) ;
+   * (2) le nœud épuisé est en repousse (échelle < 1) et non un fantôme à 25 % (D2).
+   * Captures : le coin AVANT (buisson plein), APRÈS au même coin (la trace laissée),
+   * et le nœud à sa NOUVELLE place (la pousse qui repart). Exige `--dev`.
+   */
+  async recolte_vivante(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(300)
+
+    // Un buisson à baies (cueillette nue, aucun outil requis), et on se plante à côté.
+    const start = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const b = s.view.nodes.find((n) => n.type === 'berry_bush' && n.stock > 0)
+      if (!b) return null
+      s.sendAction({ type: 'debug_teleport', x: b.tx - 0.5, y: b.ty + 0.5 })
+      return { id: b.id, tx: b.tx, ty: b.ty, stock: b.stock }
+    })
+    if (!start) { console.log('   ✗ aucun buisson à portée dans cette carte'); return {} }
+    await page.waitForTimeout(500)
+    await page.screenshot({ path: `${OUT}/vivante-avant.png` })
+
+    const nodeOf = (id) => page.evaluate((i) => {
+      const n = window.__BRAISES__.scene.view.nodes.find((x) => x.id === i)
+      return n ? { tx: n.tx, ty: n.ty, stock: n.stock } : null
+    }, id)
+
+    // On le rase : une frappe, on laisse passer le cooldown, on recommence — jusqu'à 0.
+    for (let i = 0; i < 20; i++) {
+      const n = await nodeOf(start.id)
+      if (!n || n.stock <= 0) break
+      await page.evaluate((id) => window.__BRAISES__.scene.sendAction({ type: 'harvest', nodeId: id }), start.id)
+      await page.waitForTimeout(1100) // > GATHER_COOLDOWN (1 s)
+    }
+    await page.waitForTimeout(400)
+    const after = await nodeOf(start.id)
+    await page.screenshot({ path: `${OUT}/vivante-trace.png` }) // le coin d'origine : la trace
+
+    if (!after) { console.log('   ✗ le nœud a disparu de l’état client'); return {} }
+    const drift = Math.abs(after.tx - start.tx) + Math.abs(after.ty - start.ty)
+    console.log(drift > 0
+      ? `   ✓ DÉRIVE : le buisson a rouvert ailleurs — (${start.tx},${start.ty}) → (${after.tx},${after.ty}), ${drift} tuiles`
+      : `   ✗ le buisson est resté sur place (pas de dérive)`)
+    console.log(after.stock <= 0 ? `   ✓ épuisé et EN REPOUSSE (plus de fantôme à 25 %)` : `   · déjà repoussé (stock ${after.stock})`)
+
+    // On va VOIR la pousse à sa nouvelle place.
+    await page.evaluate((p) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: p.tx + 0.5, y: p.ty + 1.5 }), after)
+    await page.waitForTimeout(500)
+    await page.screenshot({ path: `${OUT}/vivante-pousse.png` })
+    console.log(`   captures : vivante-avant / vivante-trace / vivante-pousse`)
+    return { start, after, drift }
+  },
+
+  /**
    * LA PLANCHE D'ÉCHELLE : les 26 lieux, alignés sur le sol, à côté d'un arbre
    * et d'un avatar. Composée à partir des VRAIES textures du jeu (lues dans le
    * gestionnaire de textures de Phaser) — un dessin refait à côté mentirait.

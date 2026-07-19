@@ -1,6 +1,11 @@
 /**
- * Boot Phaser — configuration héritée de Manif (éprouvée en pixel art) :
- * résolution fixe 1280×720 en Scale.FIT, pixelArt + roundPixels.
+ * Boot Phaser — résolution fixe 1280×720 en Scale.FIT.
+ *
+ * ANTIALIAS ACTIVÉ (et NON `pixelArt`) : l'UI et le TEXTE doivent être LISSES comme la
+ * maquette — un `pixelArt` global upscalerait tout le canvas en gros pixels durs. Les
+ * textures pixel-art du monde (générées au boot) restent NETTES : `BootScene` leur pose
+ * un filtrage NEAREST une à une, tandis que le texte (créé plus tard) garde le LINEAR
+ * par défaut. `roundPixels` reste, pour que les sprites ne scintillent pas au sous-pixel.
  */
 import Phaser from 'phaser'
 import { BootScene } from './scenes/BootScene'
@@ -13,8 +18,8 @@ new Phaser.Game({
   width: 1280,
   height: 720,
   parent: document.body,
-  backgroundColor: '#0e0e12',
-  pixelArt: true,
+  backgroundColor: '#0f0b08', // le fond chaud de la maquette (palette bg)
+  antialias: true,
   roundPixels: true,
   scale: {
     mode: Phaser.Scale.FIT,

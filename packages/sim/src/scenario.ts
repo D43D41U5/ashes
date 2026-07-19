@@ -4,7 +4,7 @@
  * balance.ts, pour les humains comme pour les agents.
  */
 import { BALANCE } from './balance'
-import { chronicleFromEvents } from './chronicle'
+import { chronicleFromEvents, formatChronicleLine } from './chronicle'
 import { generateNodes } from './economy'
 import { drainEvents, type SimEvent } from './events'
 import { foundNpcVillage } from './worldgen'
@@ -82,6 +82,6 @@ export function runScenario(seed: number, days: number): ScenarioReport {
     starvationSamples,
     deaths,
     hordesSpawned,
-    chronicle: chronicleFromEvents(events, sim.calendarScale, names),
+    chronicle: chronicleFromEvents(events, sim.calendarScale, names).map(formatChronicleLine),
   }
 }

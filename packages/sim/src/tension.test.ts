@@ -145,6 +145,15 @@ describe('3. LE MONDE NE SE REMPLIT PLUS TOUT SEUL', () => {
     const sim = monde([buisson])
     const id = spawnEntity(sim, 10.3, 10.5)
 
+    // On se plante SUR le nœud : à l'épuisement il DÉRIVE ailleurs (spec recolte-vivante),
+    // donc pour le raser une seconde fois il faut le suivre — c'est le sens même de « on
+    // tourne ». Ici on isole ce qu'on teste : la PÉNALITÉ d'épuisement, qui s'accumule sur
+    // le nœud (même id) où qu'il aille.
+    const surLeNoeud = (): void => {
+      me(sim).x = sim.nodes[0]!.tx + 0.5
+      me(sim).y = sim.nodes[0]!.ty + 0.5
+    }
+    surLeNoeud()
     step(sim, [{ entityId: id, dx: 0, dy: 0, action: { type: 'harvest', nodeId: 1 } }])
     const premier = sim.nodes[0]!.regrowAt - sim.tick
 
@@ -154,6 +163,7 @@ describe('3. LE MONDE NE SE REMPLIT PLUS TOUT SEUL', () => {
     sim.nodes[0]!.stock = 1
     sim.nodes[0]!.regrowAt = 0
     me(sim).cooldownUntil = 0
+    surLeNoeud()
     step(sim, [{ entityId: id, dx: 0, dy: 0, action: { type: 'harvest', nodeId: 1 } }])
     const second = sim.nodes[0]!.regrowAt - sim.tick
 

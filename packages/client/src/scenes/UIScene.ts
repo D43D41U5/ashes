@@ -4,22 +4,20 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import { BALANCE, carryWeight, zoneAt, type VillageTask, type WorldMap } from '@braises/sim'
+import { formatChronicleLine, zoneAt, type VillageTask, type WorldMap } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud, setHud } from '../hud-state'
 import { drainPickups, queueAction } from './world/hud-bridge'
 import { TILE_PX } from '../render/framing'
-import { createHotbar, type Hotbar } from './ui/hotbar'
+import { createHudCore, type HudCore } from './ui/hud-core'
 import { createFatalPanel, type FatalPanel } from './ui/fatal'
-import { createInventoryPanel, inventoryGeometry, type InventoryPanel } from './ui/inventory-panel'
-import { CRAFT_PANEL_MARGIN_Y, CRAFT_PANEL_W, createCraftPanel, type CraftPanel } from './ui/craft-panel'
+import { createHudCharacter, type HudCharacter } from './ui/hud-character'
 import { createBuildMenu, type BuildMenu } from './ui/build-menu'
 import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
 import { createFoundVillagePrompt, type FoundVillagePrompt } from './ui/found-village-prompt'
+import { mountHud, type HudDom } from './ui/hud-dom'
 import { createLoadingScreen, type LoadingScreen } from './ui/loading'
-import { createPickupToasts, type PickupToasts } from './ui/pickup-toasts'
 import { createChatPanel, type ChatPanel } from './ui/chat-panel'
-import { createVitals, type Vitals } from './ui/vitals'
 import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
 import { FONT } from './ui/typography'
 
@@ -53,23 +51,24 @@ const MAP_CLICK_SLOP_PX = 5
 
 export class UIScene extends Phaser.Scene {
   private alarmOverlay!: Phaser.GameObjects.Rectangle
-  private hud!: Phaser.GameObjects.Text
   private errorText!: Phaser.GameObjects.Text
-  private hotbar!: Hotbar
-  private vitals!: Vitals
-  private inventoryPanel!: InventoryPanel
-  /** Le panneau de craft (à droite du sac) et la file (toujours à l'écran). */
-  private craftPanel!: CraftPanel
+  /** L'écran PERSONNAGE (maquette 3A) : sac + artisanat, ouvert au TAB. */
+  private hudCharacter!: HudCharacter
+  /** La file de craft (toujours à l'écran). */
   /** Le MENU DU MARTEAU (spec construction R20) — pièces structurelles, séparé du craft. */
   private buildMenu!: BuildMenu
   private craftQueueView!: CraftQueueView
   /** La fenêtre du bas « Fonder un village ici ? » — près d'un feu de camp libre. */
   private foundVillagePrompt!: FoundVillagePrompt
-  /** Les toasts « +2 BOIS (14) » — le butin s'inscrit à une place FIXE du HUD. */
-  private pickups!: PickupToasts
   private chatPanel!: ChatPanel
   private journalPanel!: Phaser.GameObjects.Container
   private journalText!: Phaser.GameObjects.Text
+
+  /** La racine DOM du HUD (voiles rendus ISO à la maquette 2A–5A, par-dessus le canvas).
+   *  Les sections DOM (bande 2A, fenêtre « fonder », …) y accrochent leur planche. */
+  private hudRoot!: HudDom
+  /** La bande toujours à l'écran (maquette 2A) : jour/lieu, toasts, vitales, ceinture. */
+  private hudCore!: HudCore
 
   // ─── L'attente ───
   /** L'écran de chargement : seul à l'écran tant que la vallée n'est pas générée.
@@ -132,55 +131,39 @@ export class UIScene extends Phaser.Scene {
     // `reveal`) : la vallée met quelques secondes à se générer, et des jauges vides
     // posées sur un écran noir ne racontent rien — elles ne font qu'annoncer un jeu
     // qui n'est pas encore là.
-    this.hud = this.add.text(10, 8, '', style).setVisible(false)
+    // LA RACINE DOM DU HUD — les sections rendues ISO à la maquette (2A–5A) y vivent,
+    // par-dessus le canvas du monde (voir ui/hud-dom.ts). Montée tôt : les sections
+    // s'y accrochent dessous.
+    this.hudRoot = mountHud()
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.hudRoot.destroy())
 
-    // Les vitales (bas-gauche) et la ceinture (bas-centre) — le HUD parle
-    // désormais en cases et en jauges, plus en pavé de texte (spec inv R17-R18).
-    this.vitals = createVitals(this)
-    this.vitals.setVisible(false)
-    this.hotbar = createHotbar(this)
-    this.hotbar.setVisible(false)
-    // L'écran d'inventaire (TAB) : la grille complète + le panneau de loot. Il ne
-    // parle pas à l'hôte — il POSE ses actions, WorldScene les draine (spec R22).
-    this.inventoryPanel = createInventoryPanel(this, (action) => queueAction(this.registry, action))
-    // LE CRAFT : le panneau (à droite du sac, ouvert avec TAB) et la FILE (toujours
-    // visible — le travail en cours est un état du personnage, pas un détail de menu).
-    // À CÔTÉ de la grille d'inventaire, jamais dessus : on lit sa géométrie, on ne
-    // la redevine pas (c'était le bug — le panneau tombait en plein milieu du sac).
-    // En HAUTEUR, en revanche, il prend tout l'écran (moins ses marges) : la liste
-    // des recettes n'a aucune raison d'être bornée par la taille du sac.
-    const inv = inventoryGeometry(this)
-    const TITRE = 26 // le mot ARTISANAT vit au-dessus du cadre
-    this.craftPanel = createCraftPanel(this, (action) => queueAction(this.registry, action), {
-      left: Math.min(inv.right + 40, this.scale.width - CRAFT_PANEL_W - CRAFT_PANEL_MARGIN_Y),
-      top: CRAFT_PANEL_MARGIN_Y + TITRE,
-      bottom: this.scale.height - CRAFT_PANEL_MARGIN_Y,
-    })
-    // LE CLAVIER DU CHAMP DE RECHERCHE. Tant qu'il tape, le jeu ne reçoit plus
-    // rien (`uiTyping`) : sans ça, taper « hache » ferait marcher le personnage.
-    this.input.keyboard?.on('keydown', (ev: KeyboardEvent) => {
-      if (this.craftPanel.handleKey(ev.key)) ev.preventDefault()
-      setHud(this.registry, 'uiTyping', this.craftPanel.isTyping())
+    // LA BANDE DU HUD (maquette 2A), en DOM : jour/lieu (haut-gauche), toasts (haut-
+    // droite), médaillons de vitale + ligne poids/blessures/métiers (bas-gauche),
+    // ceinture façon Rust (bas-centre). Née cachée jusqu'au premier instant jouable.
+    this.hudCore = createHudCore(this.hudRoot.board, this.game, (slot) =>
+      queueAction(this.registry, { type: 'set_active_slot', slot }),
+    )
+    this.hudCore.setVisible(false)
+    // L'ÉCRAN PERSONNAGE (maquette 3A), en DOM : le SAC (grille + ceinture rappelée,
+    // glisser-déposer + clic droit) et l'ARTISANAT (recherche, recettes, un clic FAIT),
+    // ouverts au TAB. Il ne parle pas à l'hôte — il POSE ses actions, WorldScene les
+    // draine (spec R22). La recherche est un vrai <input> : focalisé, il pose `uiTyping`
+    // (le déplacement se coupe), sans quoi taper « hache » ferait marcher le personnage.
+    this.hudCharacter = createHudCharacter(this.hudRoot.board, this.game, {
+      queue: (action) => queueAction(this.registry, action),
+      setTyping: (v) => setHud(this.registry, 'uiTyping', v),
     })
     // LE MENU DU MARTEAU (spec construction R20) : à gauche, dans le monde (hors
     // TAB) — il ne paraît que le marteau EN MAIN, et se referme quand on le range.
-    this.buildMenu = createBuildMenu(this, 150)
+    this.buildMenu = createBuildMenu(this.hudRoot.board)
     this.buildMenu.setVisible(false)
-    this.craftQueueView = createCraftQueueView(
-      this,
-      (action) => queueAction(this.registry, action),
-      20,
-      120,
-      BALANCE.CRAFT_QUEUE_MAX,
-    )
+    this.craftQueueView = createCraftQueueView(this.hudRoot.board, (action) => queueAction(this.registry, action))
     // Cachée jusqu'au premier instant jouable : rien du HUD ne doit s'afficher
     // par-dessus l'écran de chargement (même règle que la ceinture, ci-dessus).
     this.craftQueueView.setVisible(false)
     // La fenêtre « Fonder un village ici ? » : née cachée, elle ne paraît qu'auprès
     // d'un feu de camp libre (WorldScene pose `foundableFire`).
-    this.foundVillagePrompt = createFoundVillagePrompt(this, (action) => queueAction(this.registry, action))
-    // Les toasts de récolte : ils s'empilent juste au-dessus des vitales.
-    this.pickups = createPickupToasts(this)
+    this.foundVillagePrompt = createFoundVillagePrompt(this.hudRoot.board, (action) => queueAction(this.registry, action))
     this.chatPanel = createChatPanel(this)
     // Le journal (J) : la chronique de la saison, la Mémoire v1.
     const panelBg = this.add.rectangle(0, 0, 720, 480, 0x14141a, 0.92).setOrigin(0.5).setStrokeStyle(2, 0x6b5a3a)
@@ -212,7 +195,13 @@ export class UIScene extends Phaser.Scene {
     // a été SUPPRIMÉE, touches comprises (voir ui/loading.ts). Il vit ICI et non dans
     // WorldScene, dont la caméra est zoomée — un objet à scrollFactor 0 n'y serait cadré
     // que par hasard.
-    this.loading = createLoadingScreen(this, LOADING_DEPTH)
+    this.loading = createLoadingScreen()
+    // Le voile de chargement vit hors de Phaser (DOM) : si la scène tombe avant la fin
+    // du fondu, on le retire à la main plutôt que de le laisser collé à l'écran.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.loading?.destroy()
+      this.loading = undefined
+    })
 
     // L'overlay de debug (F1) — DEV seulement, et hors de cette classe : voir
     // l'en-tête de debug-overlay.ts (une méthode survivrait au build de prod).
@@ -423,8 +412,7 @@ export class UIScene extends Phaser.Scene {
     this.revealed = true
     // Le HUD paraît DERRIÈRE le voile encore opaque : il apparaîtra avec le monde,
     // dans le même fondu, au lieu de se poser dessus après coup.
-    this.hud.setVisible(true)
-    this.vitals.setVisible(true)
+    this.hudCore.setVisible(true)
     this.loading?.fadeOut(this.time.now)
   }
 
@@ -445,7 +433,14 @@ export class UIScene extends Phaser.Scene {
     // LA RUPTURE D'ABORD. Elle peut tomber à n'importe quel instant — y compris avant
     // que le monde existe — et elle prime sur tout le reste : plus rien n'avancera.
     const fatal = getHud(this.registry, 'fatal')
-    if (fatal) this.fatal.show(fatal.reason)
+    if (fatal) {
+      this.fatal.show(fatal.reason)
+      // La rupture (Phaser) doit primer sur le chargement ET le HUD, or ceux-ci sont des
+      // voiles DOM AU-DESSUS du canvas : on les retire/cache, sinon ils la masqueraient.
+      this.loading?.destroy()
+      this.loading = undefined
+      this.hudRoot.setVisible(false)
+    }
 
     this.renderError()
 
@@ -481,39 +476,32 @@ export class UIScene extends Phaser.Scene {
     // Prévisible dans le sens, flou dans la magnitude : des mots, pas la formule.
     const feuLabel =
       archetype === 'foyer' ? 'Foyer' : archetype === 'meute' ? 'Meute' : villageWarmth > 10 ? 'tiède' : villageWarmth < -10 ? 'sombre' : 'neutre'
-    this.hud.setText(
-      `Jour ${time.seasonDay} — Acte ${'I'.repeat(time.act)} — ${hour}h${time.isNight ? ' (nuit)' : ''}` +
-        (zone ? `\n${zone}` : '') +
-        (members > 0 ? `\nVillage : ${members} membre${members > 1 ? 's' : ''} — Feu : ${feuLabel}` : '') +
-        (board ? `\nTableau : ${board}` : ''),
-    )
+    // Les libellés de la maquette 2A — composés ici, peints par hud-core (DOM).
+    const dayLine = `JOUR ${time.seasonDay} — ACTE ${'I'.repeat(time.act)} — ${hour}H${time.isNight ? ' · NUIT' : ''}`
+    const villageLine =
+      members > 0 ? `VILLAGE : ${members} MEMBRE${members > 1 ? 'S' : ''} — FEU : ${feuLabel.toUpperCase()}` : ''
+    const boardLine = board ? `TABLEAU : ${board}` : ''
 
-    // La ceinture et les vitales : on ne fait que RELAYER le snapshot vers les
-    // modules d'affichage (aucune règle d'inventaire côté client — spec R22).
+    // La ceinture et les vitales : on ne fait que RELAYER le snapshot (aucune règle
+    // d'inventaire côté client — spec R22).
     const inv = getHud(this.registry, 'inv') ?? []
     const activeSlot = getHud(this.registry, 'activeSlot') ?? -1
-    this.hotbar.update(inv, activeSlot)
 
-    // Le butin récolté : WorldScene POSE, on draine et on empile (fusion par item).
-    for (const p of drainPickups(this.registry)) this.pickups.push(p.item, p.count, this.time.now)
-    this.pickups.update(inv, this.time.now)
+    // Le butin récolté : WorldScene POSE, on draine, hud-core empile (fusion par item).
+    for (const p of drainPickups(this.registry)) this.hudCore.pushToast(p.item, p.count)
 
-    // L'écran d'inventaire (TAB) : la grille complète, le glisser, le loot. Le
-    // conteneur ouvert est déjà résolu par WorldScene (null s'il a disparu).
+    // L'écran PERSONNAGE (TAB) : la grille, le glisser, le loot, l'artisanat. Le
+    // conteneur ouvert est déjà résolu par WorldScene (null s'il a disparu). Fermé,
+    // il rend la main au déplacement (`uiTyping` false — la recherche a lâché le clavier).
     const characterMenuOpen = Boolean(getHud(this.registry, 'characterMenuOpen'))
-    // La ceinture du bas s'efface quand la grille est ouverte : sa rangée y est
-    // déjà (spec Rust). Sinon la même ceinture s'affiche deux fois à l'écran.
-    this.hotbar.setVisible(!characterMenuOpen)
-    this.inventoryPanel.setVisible(characterMenuOpen)
-    this.craftPanel.setVisible(characterMenuOpen)
     if (!characterMenuOpen) setHud(this.registry, 'uiTyping', false)
-    if (characterMenuOpen) {
-      this.inventoryPanel.update(inv, activeSlot, getHud(this.registry, 'openContainerView') ?? null)
-      // Le panneau d'artisanat est REDEVENU PUR (spec construction R20) : plus de
-      // rayon construction. Les pièces structurelles vivent dans le menu du marteau.
-      this.craftPanel.update(inv, getHud(this.registry, 'stationsInRange') ?? [])
-      setHud(this.registry, 'uiTyping', this.craftPanel.isTyping())
-    }
+    this.hudCharacter.update({
+      open: characterMenuOpen,
+      inv,
+      activeSlot,
+      stations: getHud(this.registry, 'stationsInRange') ?? [],
+      container: getHud(this.registry, 'openContainerView') ?? null,
+    })
     // LE MENU DU MARTEAU (spec construction R20-R21) : dans le monde, hors TAB/carte,
     // et SEULEMENT le marteau en main. Le ranger le referme et DÉSARME — les fantômes
     // structurels s'éteignent avec l'outil (R21).
@@ -534,16 +522,22 @@ export class UIScene extends Phaser.Scene {
     // (station quittée) doit se remarquer sans aller ouvrir un menu (spec F15).
     this.craftQueueView.setVisible(true)
     this.craftQueueView.update(getHud(this.registry, 'craftQueue') ?? [])
-    this.vitals.update({
-      // Le poids vient du sac, par la fonction de /sim : le HUD ne recompte rien.
-      carry: carryWeight(inv),
+    // LA BANDE 2A d'un seul geste (jour/lieu, toasts déjà empilés, vitales, ceinture).
+    this.hudCore.update({
+      dayLine,
+      zone,
+      villageLine,
+      boardLine,
       hp: getHud(this.registry, 'hp') ?? 100,
       stamina: getHud(this.registry, 'stamina') ?? 100,
       hunger: getHud(this.registry, 'hunger') ?? 100,
       temperature: getHud(this.registry, 'temperature') ?? 100,
       wounds: getHud(this.registry, 'wounds') ?? {},
       skills: getHud(this.registry, 'skills') ?? {},
-      characterMenuOpen, // sac ouvert → les vitales redeviennent opaques
+      inv,
+      activeSlot,
+      characterMenuOpen, // sac ouvert → vitales opaques, ceinture cachée
+      now: this.time.now,
     })
 
     // Le journal : ouvert à la demande (J), ou de force à la fin de saison.
@@ -551,7 +545,9 @@ export class UIScene extends Phaser.Scene {
     const open = Boolean(getHud(this.registry, 'journalOpen')) || Boolean(getHud(this.registry, 'seasonEnded'))
     this.journalPanel.setVisible(open)
     if (open) {
-      this.journalText.setText(chronicle.slice(-26).join('\n') || '(rien encore — le monde est jeune)')
+      this.journalText.setText(
+        chronicle.slice(-26).map(formatChronicleLine).join('\n') || '(rien encore — le monde est jeune)',
+      )
     }
 
     // La carte plein écran (M) : montée à la première ouverture, puis basculée.

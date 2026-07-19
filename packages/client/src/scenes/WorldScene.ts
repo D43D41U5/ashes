@@ -25,6 +25,7 @@ import {
   reconcile as reconcilePrediction,
   renderPosition,
   pendingStrike,
+  skillLevel,
   speedScaleFor,
   weaponKind,
   weaponProfile,
@@ -86,6 +87,9 @@ import { AmbientLife } from './world/ambient-life'
 import { bindDebugKeys } from './world/debug-bindings'
 import { syncDebug } from './world/debug-overlay'
 import { BuildGhost } from './world/build-ghost'
+import { FellGauge, type FellCharge } from './world/fell-gauge'
+import { FlankGlow } from './world/flank-glow'
+import { ForageGlow } from './world/forage-glow'
 import { HitFx } from './world/hit-fx'
 import { createAttackFx, type AttackFx, type Zone } from './world/attack-fx'
 import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
@@ -298,6 +302,14 @@ export class WorldScene extends Phaser.Scene {
   private hitFx!: HitFx
   /** La silhouette de ce qu'on va poser, quand le mode construction est armé. */
   private buildGhost!: BuildGhost
+  /** La jauge d'abattage au-dessus de l'arbre qu'on charge (spec recolte-maitrise). */
+  private fellGauge!: FellGauge
+  /** La lueur du bon flanc sur les rochers à portée (spec recolte-maitrise, verbe 2). */
+  private flankGlow!: FlankGlow
+  /** Instant (horloge client) du dernier coup de récolte porté — le tempo que la lueur reforme. */
+  private lastStrikeAt = -Infinity
+  /** La lueur des bons coins de cueillette, révélée par `foraging` (spec recolte-maitrise, verbe 3). */
+  private forageGlow!: ForageGlow
   /** Exposé pour le hook `__BRAISES__` (les smoke tests lisent `others.size`). */
   private get others(): ReadonlyMap<number, InterpolatedSprite> {
     return this.view.others
@@ -341,6 +353,9 @@ export class WorldScene extends Phaser.Scene {
   private charges: { id: number; dx: number; dy: number; ratio: number; strike: Strike }[] = []
   /** CE QUE CHACUN TIENT, et où il regarde — l'arme dessinée dans la main. */
   private hands: { id: number; kind: WeaponKind; fx: number; fy: number }[] = []
+  /** LES JAUGES D'ABATTAGE du dernier snapshot : qui charge une frappe sur un arbre,
+   *  et où en est la jauge (spec recolte-maitrise, verbe 1). */
+  private fells: FellCharge[] = []
   private attackFx!: AttackFx
   private handWeapons!: HandWeapons
   /** Qui armait un coup à la frame précédente, et sa zone — pour savoir quand il PART. */
@@ -372,10 +387,13 @@ export class WorldScene extends Phaser.Scene {
     this.handWeapons = createHandWeapons(this, OVERLAY_DEPTH - 12)
     this.view.setHitFx(this.hitFx) // elle seule dessine les nœuds : à elle le tressaillement
     this.buildGhost = new BuildGhost(this)
+    this.fellGauge = new FellGauge(this)
+    this.flankGlow = new FlankGlow(this)
+    this.forageGlow = new ForageGlow(this)
 
     const zoom = zoomForFraming(VISIBLE_TILES_TALL, TILE_PX, this.scale.height)
     this.cameras.main.setZoom(zoom)
-    this.cameras.main.setBackgroundColor('#0e0e12')
+    this.cameras.main.setBackgroundColor('#0f0b08') // fond chaud de la maquette (palette bg)
     // Le suivi ne démarre qu'une fois l'avatar posé au spawn (onReady) : `startFollow`
     // ancre la caméra sur la position COURANTE de la cible, et ici elle vaut (0, 0).
 
@@ -612,6 +630,16 @@ export class WorldScene extends Phaser.Scene {
       this.view.structures,
       this.warp,
     )
+    // La jauge d'abattage flotte au-dessus de l'arbre qu'on charge (spec recolte-maitrise).
+    this.fellGauge.update(this.fells, this.view.nodes, this.warp)
+    // La lueur du bon flanc sur les rochers à portée — dimensionnée à MON niveau de minage,
+    // et REFORMÉE au rythme du rechargement (le tempo se voit : terne au coup, brillante prête).
+    const meNow = this.lastEntities.find((e) => e.id === this.playerId)
+    const cooldownMs = (BALANCE.GATHER_COOLDOWN_TICKS / BALANCE.TICK_RATE_HZ) * 1000
+    const readiness = (time - this.lastStrikeAt) / cooldownMs
+    this.flankGlow.update(this.view.nodes, this.predicted, skillLevel(meNow?.skills.mining ?? 0), readiness, time, this.warp)
+    // La lueur des bons coins de cueillette — révélée par MON niveau de foraging (gate client).
+    this.forageGlow.update(this.view.nodes, this.predicted, skillLevel(meNow?.skills.foraging ?? 0), time, this.warp)
     // Les stations à portée : elles grisent (ou non) les vignettes du panneau de
     // craft. Miroir pur du client — la sim revalide tout, à l'enfilage et à chaque
     // tick (spec craft-file F7, F14).
@@ -688,6 +716,9 @@ export class WorldScene extends Phaser.Scene {
     // la seule affordance de l'odorat — et elle doit exister, sans quoi la règle
     // « approcher sous le vent » serait une injustice invisible (C19).
     if (this.clutter) this.clutter.wind = this.view.wind
+    // LE BÂTI GOMME LE DÉCOR (décision d'Alexis) : mur/sol effacent le décor de leur
+    // tuile. On rafraîchit à chaque frame — pose et démolition rouvrent la tuile.
+    this.clutter?.setBarriers(this.view.structures)
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y, time)
     // LE SANG AU SOL (spec chasse C9) : la piste, et son horloge — les gouttes
@@ -979,6 +1010,13 @@ export class WorldScene extends Phaser.Scene {
         },
       ]
     })
+    // QUI CHARGE UNE FRAPPE D'ABATTAGE, cette frame (spec recolte-maitrise). Le vert
+    // se dimensionne au niveau `woodcutting` de CHACUN — lu du snapshot, comme le reste.
+    this.fells = msg.entities.flatMap((e) =>
+      e.harvestCharge
+        ? [{ nodeId: e.harvestCharge.nodeId, ticks: e.harvestCharge.ticks, level: skillLevel(e.skills.woodcutting ?? 0) }]
+        : [],
+    )
     // CE QUE CHACUN TIENT. Aucun ajout au protocole : le snapshot transporte déjà
     // l'`Entity` complète (sac + case active), donc `weaponKind` lit la main de
     // n'importe qui — la mienne comme celle du villageois d'en face.
@@ -1078,6 +1116,9 @@ export class WorldScene extends Phaser.Scene {
         // serait un mensonge, et le client n'a pas le droit de mentir (invariant §3).
         this.hitFx.hit(event.nodeId, this.time.now) // le nœud tressaille
         publishPickup(this.registry, event.item, event.count) // et le butin s'inscrit au HUD
+        // LE TEMPO du minage : le dernier coup relance le rechargement, que la lueur du
+        // bon flanc REFORME visiblement (verbe 2 — la cadence se voit, pas de timer caché).
+        this.lastStrikeAt = this.time.now
       } else if (event.type === 'entity_damaged') {
         // LE COUP A PORTÉ — et on ne le sait QUE parce que la sim le dit. Un coup
         // qui « part » à l'écran mais que la sim refuse serait un mensonge (G9) —

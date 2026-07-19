@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@braises/sim": "workspace:*",
+    "@fontsource/jetbrains-mono": "^5.2.8",
     "colyseus.js": "^0.16.22",
     "phaser": "^4.1.0"
   },
