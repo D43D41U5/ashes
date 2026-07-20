@@ -2,6 +2,8 @@
 
 *Source : GDD §11 (stack, client « bête »), roadmap V2. Statut : **implémenté** (2026-07-05 — A1-A3 vérifiés en headless Playwright, A4 vérifié en code, le cycle de 48 min n'a pas été attendu). Jalon : V2.*
 
+> **La couche UI est en DOM, pas en Phaser** (maquette « Ashes UI »). HUD, menu et chargement sont rendus en DOM par-dessus le canvas (`hud-dom.ts`, `menu-dom.ts`) — un canvas Phaser upscalé crénelle le texte et ne rejoue pas `border`/`box-shadow`/gradients. Planche 1920×1080 en FIT, alignée sur le canvas ; `pointer-events:none` sauf sur les contrôles, pour que le clic-monde traverse.
+
 ## Objectif de design
 
 Afficher la simulation sans jamais la posséder. La sim tourne dans un **Web Worker** (mode Veillée) ; le client Phaser envoie des intentions et interpole des snapshots. Le protocole défini ici est la **répétition générale du réseau** : en Phase LAN, on remplace le transport (Worker → WebSocket/Colyseus), pas les messages ni le code de rendu.
@@ -72,4 +74,4 @@ Le cadre ci-dessus est **agnostique au style**. Deux décisions dépendront du s
 - Lighting normal-mapped (capital Manif : `deriveNormalCore.mjs`, `SceneLightingManager`) → avec les vrais tilesets, V3+.
 - Boucle d'hôte à accumulateur/compensation de dérive → Phase LAN (le serveur en aura besoin, le Worker de démo non).
 - UI de jeu réelle, onboarding → V10.
-- Reconnexion, sérialisation/restauration de partie → V3 (sauvegarde Veillée).
+- Reconnexion → Phase LAN. Sérialisation/restauration de la Veillée : l'**assise pure est livrée** (`serializeSim`/`deserializeSim`, `persistence.ts`, testés) ; l'hôte (IndexedDB, 5 slots) et l'écran restent à câbler — chantier **pré-GATE 1**, spec dédiée `persistence-veillee.md` (plus « V3 »).

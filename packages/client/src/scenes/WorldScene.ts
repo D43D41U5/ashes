@@ -55,6 +55,7 @@ import { createColyseusHost, createWorkerHost, type HostConnection } from '../ho
 import { getHud, setHud } from '../hud-state'
 import {
   AMBIENT_DEPTH,
+  AMBIENT_DEPTH_LIT,
   lookaheadOffset,
   OVERLAY_DEPTH,
   TILE_PX,
@@ -82,9 +83,11 @@ import { CendreLayer } from './world/cendre-layer'
 import { CliffLayer } from './world/cliff-layer'
 import { PoiLayer } from './world/poi-layer'
 import { FireFx } from './world/fire-fx'
+import { DynamicLighting } from './world/dynamic-lighting'
 import { WaterLayer } from './world/water-layer'
 import { AmbientLife } from './world/ambient-life'
 import { bindDebugKeys } from './world/debug-bindings'
+import { createDebugPanel } from './world/debug-panel'
 import { syncDebug } from './world/debug-overlay'
 import { BuildGhost } from './world/build-ghost'
 import { FellGauge, type FellCharge } from './world/fell-gauge'
@@ -243,6 +246,9 @@ export class WorldScene extends Phaser.Scene {
   private airAlpha = 0
   private airCible: { color: number; alpha: number } = { color: 0x000000, alpha: 0 }
   private fireFx: FireFx | null = null
+  /** ESSAI éclairage dynamique (decisions.md 2026-07-20) : soleil + Feux normal-mappés,
+   *  armés par le toggle debug F5. Inerte tant que le flag est éteint. */
+  private dynLight: DynamicLighting | null = null
   private water: WaterLayer | null = null
   /** Oiseaux et lucioles — décor pur, hors sim (voir world/ambient-life.ts). */
   ambientLife: AmbientLife | null = null
@@ -423,14 +429,16 @@ export class WorldScene extends Phaser.Scene {
       unproject: (px, py) => (this.warp ? this.warp.unproject(px, py) : { x: px, y: py }),
     })
 
-    // Le mode debug (F1) — DEV seulement : en prod la condition est statiquement
+    // Le mode debug (P) — DEV seulement : en prod la condition est statiquement
     // fausse, le bloc et l'import sont éliminés du bundle.
     if (import.meta.env.DEV) {
-      bindDebugKeys(this, {
-        sendAction: (action) => this.sendAction(action),
-        setSpeed: (factor) => this.send({ type: 'debug_speed', factor }),
+      const debugDeps = {
+        sendAction: (action: PlayerAction) => this.sendAction(action),
+        setSpeed: (factor: number) => this.send({ type: 'debug_speed', factor }),
         isNight: () => this.lastTime?.isNight ?? false,
-      })
+      }
+      bindDebugKeys(this, debugDeps)
+      createDebugPanel(this, debugDeps) // les toggles cliquables (P) — remplacent F5, doublent F2-F4
     }
 
     // Hook de debug/pilotage (pattern __MANIF__) : smoke tests et futurs bots.
@@ -546,6 +554,7 @@ export class WorldScene extends Phaser.Scene {
           .setOrigin(0)
           .setDepth(AMBIENT_DEPTH - 0.1)
         this.fireFx = new FireFx(this)
+        this.dynLight = new DynamicLighting(this)
         this.ambientLife = new AmbientLife(this, (tx, ty) =>
           tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height ? -1 : (this.map.terrain[ty * this.map.width + tx] ?? -1),
         )
@@ -767,6 +776,17 @@ export class WorldScene extends Phaser.Scene {
       const day = daylight(hour)
       this.water?.update(time, hour, day) // la houle, et le soleil dessus
       this.fireFx?.update(this.view.structures, this.view.villages, day, time)
+      // ESSAI éclairage dynamique (toggle debug, panneau P) : le flag éclaire TOUS les sprites
+      // (couche 1) et pilote soleil/lune/Feux. Éteint = scène rendue comme avant.
+      const lit = Boolean(getHud(this.registry, 'debugLighting'))
+      this.view.lighting = lit
+      if (this.clutter) this.clutter.lighting = lit
+      // Le voile d'ambiance descend SOUS les sprites quand ils sont éclairés (il ne tinte plus
+      // que le fond) ; sinon il coiffe toute la scène comme avant. Empêche le double-assombrissement.
+      const ambientDepth = lit ? AMBIENT_DEPTH_LIT : AMBIENT_DEPTH
+      this.ambientRect?.setDepth(ambientDepth)
+      this.zoneAir?.setDepth(ambientDepth - 0.1)
+      this.dynLight?.update(lit, this.cameras.main, this.view.structures, this.view.villages, hour, day, time)
       // La vie ambiante : les oiseaux traversent, les lucioles ne sortent qu'à la nuit.
       this.ambientLife?.update(this.cameras.main, time / 1000, deltaMs / 1000, 1 - day)
     }
@@ -1286,27 +1306,44 @@ export class WorldScene extends Phaser.Scene {
       bio[i] = BAKE_NON_BIOME.has(terr) ? 0 : 1
     }
 
-    // ── PASSE 2 : on FOND les couleurs entre biomes (lerp) — un voisinage 3×3, pour qu'une
-    // frontière herbe/forêt/pré fleuri ne soit plus une arête franche mais un dégradé (demande
-    // d'Alexis, 2026-07-18). Les terrains STRUCTURELS (falaise, eau, mur) ne participent PAS : on
-    // ne veut pas d'un halo gris au pied d'une paroi, et ils sont de toute façon recouverts par
-    // leurs propres couches. Puis la modulation de zone et le grain par tuile, comme avant.
+    // ── PASSE 2 : une frontière de biome = UNE couleur de transition, sur UNE seule tuile de large
+    // (demande d'Alexis, resserrée le 2026-07-20 ; l'ancien flou-boîte 3×3 étalait la limite sur une
+    // bande dégradée). On ne peint la transition que d'UN côté : la tuile ne fond que vers ses
+    // voisins d'un biome à id de terrain PLUS GRAND. Sur une frontière A|B, seul le côté au plus
+    // petit id reçoit la médiane 50/50, l'autre reste pur → un trait d'une tuile, pas deux. Le grain
+    // interne d'un même biome (litière de forêt) ne déclenche RIEN — on compare l'identité de
+    // terrain, pas la couleur, sinon toute la forêt se voilerait. Les terrains STRUCTURELS (falaise,
+    // eau, mur) gardent leur couleur pure : pas de halo gris au pied d'une paroi, et ils sont
+    // recouverts par leurs propres couches. Puis modulation de zone + grain.
     const solParZone = new Map<string | undefined, readonly [number, number, number]>()
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
-        let sr = 0, sg = 0, sb = 0, n = 0
-        for (let dy = -1; dy <= 1; dy++) {
-          const y = ty + dy
-          if (y < 0 || y >= height) continue
-          for (let dx = -1; dx <= 1; dx++) {
-            const x = tx + dx
-            if (x < 0 || x >= width) continue
+        const i = ty * width + tx
+        let base: number
+        if (!bio[i]) {
+          base = (br[i]! << 16) | (bg[i]! << 8) | bb[i]! // structurel : couleur pure, aucun fondu
+        } else {
+          const terr = this.map.terrain[i] ?? 0
+          let sr = 0, sg = 0, sb = 0, n = 0
+          const near = [[tx - 1, ty], [tx + 1, ty], [tx, ty - 1], [tx, ty + 1]] as const
+          for (const [x, y] of near) {
+            if (x < 0 || y < 0 || x >= width || y >= height) continue
             const j = y * width + x
-            if ((dx !== 0 || dy !== 0) && !bio[j]) continue // un terrain structurel ne teinte pas ses voisins
+            if (!bio[j] || (this.map.terrain[j] ?? 0) <= terr) continue // seul le côté au plus petit id peint
             sr += br[j]!; sg += bg[j]!; sb += bb[j]!; n++
           }
+          if (n === 0) {
+            base = (br[i]! << 16) | (bg[i]! << 8) | bb[i]! // cœur de biome / côté « haut » : couleur pure
+          } else {
+            // Frontière : lerp vers la moyenne des biomes voisins, mais le taux ONDULE autour de
+            // 50 % via un fbm2 basse fréquence (échelle ~8 tuiles, seed 1 pour ne pas corréler au
+            // grain) → le trait serpente en larges ondulations douces plutôt qu'une couture nette.
+            // ±17,5 % : intensité faible.
+            const t = 0.5 + (fbm2(tx, ty, 8, 1) - 0.5) * 0.35
+            const lerp = (a: number, b: number): number => Math.round(a + (b - a) * t)
+            base = (lerp(br[i]!, sr / n) << 16) | (lerp(bg[i]!, sg / n) << 8) | lerp(bb[i]!, sb / n)
+          }
         }
-        const base = ((Math.round(sr / n)) << 16) | ((Math.round(sg / n)) << 8) | Math.round(sb / n)
 
         const slug = zoneSlugAt(this.map, tx, ty)
         let sol = solParZone.get(slug)

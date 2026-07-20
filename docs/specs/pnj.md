@@ -20,7 +20,7 @@ Peupler les villages. Un village 100 % PNJ doit *survivre* seul (le joueur y pro
 
 ### Le tableau du village (GDD §6)
 
-- **R5 — Le système poste, les PNJ prennent.** Des règles de seuil sur les stocks du **grenier** (= les coffres d'accès `village`) génèrent les tâches : nourriture < cible → `récolter baies` ; bois < cible → `couper du bois` ; baies ≥ 4 et ragoûts < cible → `cuisiner`. Recalcul toutes les `BOARD_REFRESH_TICKS` (5 s). Une tâche a `{ id, kind, priority, claimedBy }` — une seule réclamation à la fois.
+- **R5 — Le système poste, les PNJ prennent.** Des règles de seuil sur les stocks du **grenier** (= les coffres d'accès `village`) génèrent les tâches : nourriture < cible → `récolter baies` ; bois < cible → `couper du bois` ; baies ≥ 4 et ragoûts < cible → `cuisiner` ; structure endommagée → `réparer` (le PNJ va chercher du bois puis répare, `executeRepair`). Recalcul toutes les `BOARD_REFRESH_TICKS` (5 s). Une tâche a `{ id, kind, priority, claimedBy }` — une seule réclamation à la fois. *(Hors tableau : un PNJ peut aussi porter une **expédition** inter-villages — raid de Meute / don de Foyer selon l'alignement, cf. `alignement.md` R13-R14 ; l'expédition prime sur le tableau mais cède à la survie du porteur.)*
 - **R6 — Le fruit du travail va au grenier** : le PNJ dépose sa récolte dans un coffre `village` (il garde de quoi manger). Les joueurs voient le tableau (HUD) — en V5 ils ne postent pas encore de tâches manuelles (ça vient avec la réputation locale).
 
 ### La maison et la navigation
@@ -31,7 +31,7 @@ Peupler les villages. Un village 100 % PNJ doit *survivre* seul (le joueur y pro
 ### Le peuplement
 
 - **R9 — Fonder attire** : quand un joueur allume un Feu, `NPC_PER_VILLAGE` (3) PNJ arrivent et deviennent membres (spawn aux abords). Le régulateur « plus d'humains = moins de bras » attend le multi.
-- **R10 — `foundNpcVillage(state, tx, ty, count)`** : crée un village autonome complet (Feu, grenier, `count` maisons et PNJ) — l'outil du mode Veillée, des tests, et du peuplement de la vallée. La vallée de démo en reçoit un.
+- **R10 — `foundNpcVillage(state, tx, ty, count)`** : crée un village autonome complet (Feu, grenier, `count` maisons et PNJ) — l'outil du mode Veillée, des tests, et du peuplement de la vallée. La vallée de démo en reçoit un. *(> ⚠️ **À trancher.** La Veillée réellement jouée n'en fonde aujourd'hui aucun — seul le banc `scenario.ts` le fait, donc l'alignement ne se déclenche jamais en solo ; peupler la Veillée de voisins est le chantier R-A / tension T1, cf. `direction-design.md`.)*
 
 ## Critères d'acceptation
 
@@ -46,9 +46,9 @@ Peupler les villages. Un village 100 % PNJ doit *survivre* seul (le joueur y pro
 
 ## Hors périmètre (et où ça revient)
 
-- Milice, patrouilles, réaction aux alarmes → V7 (hordes).
+- Patrouilles (rondes proactives) → plus tard. *(La **milice réactive** et la **réaction aux alarmes** sont livrées : `npc.ts` `handleDefense`, spec combat R13 — tout PNJ combat une menace près du Feu.)*
 - Tâches postées par les joueurs, réputation locale, promotion → quand de vrais groupes jouent (LAN/Vallée).
-- PNJ bâtisseurs (construire des structures) → plus tard ; en V5 ils récoltent, cuisinent, transportent.
+- PNJ bâtisseurs (construire des structures) → plus tard ; en V5 ils récoltent, cuisinent, transportent, **réparent** et **défendent** (la construction, elle, reste au joueur).
 - Un humain prend la maison d'un PNJ → Phase LAN (il faut des humains qui rejoignent).
 - Simulation dégradée hors zone active → Phase Vallée (multi-rooms).
 - Dialogue, personnalité, humeurs → jamais en mécanique pure ; de la texture plus tard.

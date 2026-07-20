@@ -65,8 +65,9 @@ Monorepo, garde-fous de pureté et de déterminisme, noyau tick/entités/PRNG, r
 
 ## Phase LAN — le multi minimal (~2-3 mois)
 
-### L1 — Le serveur (~4-6 sem)
+### L1 — Le serveur (~4-6 sem) — 🟡 substantiellement fait (2026-07-18)
 - `/server` Node + Colyseus, une seule zone, la même `/sim`. Transport réseau derrière le protocole de V2. Prédiction locale du déplacement + réconciliation, interpolation ~100 ms. Replay log côté serveur. Validation de vraisemblance des inputs.
+- **État (2026-07-18)** : serveur Colyseus, tick-driver, validation d'inputs et replay-log (en mémoire) **livrés** ; deux navigateurs se voient, se battent, se parlent. Reste : réconciliation/interpolation éprouvées à 3 clients, persistance PostgreSQL (Vallée), puis GATE 2. Voir `docs/decisions.md`.
 - **Sortie** : 3 joueurs se voient, se suivent, se battent — combat acceptable à 80 ms de ping.
 
 ### L2 — Comptes & coexistence (~3-4 sem)

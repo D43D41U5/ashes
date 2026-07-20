@@ -1,6 +1,8 @@
 # Le combat — endurance, télégraphes, blessures, mort
 
-*Source : GDD §7 (combat de coût, lent, positionnel), §6 (l'économie du village est une stat de combat). Statut : **implémenté** (2026-07-05, A1-A8 verts + smoke test navigateur — un zombie chassé et abattu). Jalon : V6. Cible : PvE (faune + zombies) — le PvP arrive avec de vrais joueurs (LAN).*
+*Source : GDD §7 (combat de coût, lent, positionnel), §6 (l'économie du village est une stat de combat). Statut : **implémenté** (2026-07-05, A1-A8 + A13-A14 verts — les trois armes à leur géométrie, le coup chargé qui change de forme — + smoke test navigateur — un zombie chassé et abattu). Jalon : V6. Cible : PvE (faune + zombies) — le PvP arrive avec de vrais joueurs (LAN).*
+
+> **État côté client (2026-07-19).** Le cœur /sim est complet, mais deux verbes défensifs ne sont pas encore câblés à la main du joueur : la **parade** (`block` forcé à `false`, `WorldScene.ts:788`) et le **bandage** (jamais émis). Tant qu'ils ne le sont pas, la moitié défensive du combat de coût est inatteignable et un saignement est mortel sans recours — recâblage prévu (backlog Phase 2 V0-1/V0-2 ; cf. `docs/audit-gameplay-phase1.md` §4.1).
 
 ## Objectif de design
 
@@ -10,7 +12,7 @@ Un combat **gagné avant l'échange** : nombre, terrain, équipement, préparati
 
 ### L'endurance reine (R1-R3)
 
-- **R1 — Une seule barre** (`stamina` 0-100, sur l'Entity) : attaquer (−15), bloquer un coup (−10 −dégâts/2), sprinter (−8/s). Régénération 10/s à l'arrêt, 5/s en marchant, 0 pendant un wind-up ou en posture de blocage. **À 0 : on ne peut plus ni attaquer ni bloquer ni sprinter** — un combattant essoufflé est mort.
+- **R1 — Une seule barre** (`stamina` 0-100, sur l'Entity) : attaquer (−15), bloquer un coup (−10 −dégâts/2), sprinter (−8/s). Régénération 10/s à l'arrêt, 5/s en marchant, 0 pendant un wind-up ou en posture de blocage. **À 0 : on ne peut plus ni attaquer ni bloquer ni sprinter** — un combattant essoufflé ne peut plus que marcher : à la merci du premier coup. *(⚠ Écart 2026-07-19 : à 0 d'endurance la marche n'est PAS ralentie — « est mort » est aujourd'hui plus doux que promis, cf. audit §4.1.)*
 - **R2 — L'économie du village est une stat de combat** (GDD §6) : faim > 70 → régénération ×1.25 ; faim 0 → ×0.5. Le village qui nourrit bien sa milice se bat mieux, mécaniquement.
 - **R3 — Le sprint entre au jeu** (input `sprint`) : vitesse ×1.5. La poursuite et le décrochage deviennent tactiques.
 
@@ -30,12 +32,12 @@ Un combat **gagné avant l'échange** : nombre, terrain, équipement, préparati
 - **R4quater — LA RÉCUPÉRATION PUNIT LE RATÉ, JAMAIS L'ENGAGEMENT.** Chaque `Strike` a deux récupérations : `recoveryHit` (court — toucher rend la main) et `recoveryWhiff` (long — fendre l'air laisse à découvert). C'est ce qui interdit de charger à l'aveugle, et c'est là que le loup trouve sa fenêtre. Elle ne fait que **repousser** le `cooldownUntil` (`max`), jamais l'avancer : les bêtes et les PNJ posent leur propre cadence au début du coup, et une récupération plus courte la raccourcirait.
 - **R5 — Les actions `attack_charge`/`attack_release` `{ dx, dy }`** visent une direction (renormalisée côté sim — vraisemblance) ; la visée se rafraîchit pendant la charge. (`attack { dx, dy }` reste le coup simple immédiat : bots, PNJ, tests.) L'arme est celle **tenue** (spec inventaire R9) : mains nues 6 dégâts, **épieu** 10, **hache de fer** 14, **lance** 16. Un outil n'est pas une arme — ce qui n'a pas de profil frappe à mains nues, manche compris.
 - **R5bis — L'IA ENGAGE À LA PORTÉE DE SON ARME** (`engageRange` = portée × `ENGAGE_MARGIN`), pas à une constante globale. `MELEE_ENGAGE_RANGE` ne vaut plus que pour les bêtes, qui ne tiennent rien.
-- **R6 — Le blocage est une posture directionnelle** (input `block` tenu) : les coups arrivant dans l'arc frontal de 120° sont réduits de 70 % ; de flanc ou de dos, plein pot. Bloquer immobilise (marche ×0.3) et coûte de l'endurance par coup encaissé.
+- **R6 — Le blocage est une posture directionnelle** (input `block` tenu) : les coups arrivant dans l'arc frontal de 120° sont réduits de 70 % ; de flanc ou de dos, plein pot. Bloquer immobilise (marche ×0.3) et coûte de l'endurance par coup encaissé. *(⚠ Transmission 2026-07-19 : la règle est complète et testée dans /sim, mais le client force encore `block = false` (`WorldScene.ts:788`) — la parade n'atteint pas la main du joueur ; recâblage = décision V0-1.)*
 
 ### Les blessures plutôt que les PV secs (R7-R8)
 
 - **R7 — PV 0-100, mais les blessures sont le vrai coût.** Chaque coup qui fait franchir un palier (66, 33) inflige une blessure tirée au PRNG de la sim : **jambe** (vitesse ×0.6), **bras** (dégâts ×0.6), ou **saignement** (−1.5 PV/s jusqu'au soin). Cumulables. Les PV remontent lentement (2/min) si faim > 50 ; les blessures, elles, ne guérissent pas seules.
-- **R8 — Le soin est une action** : `bandage` (3 fibres, 1 s) stoppe le saignement et retire une blessure de membre. Le médecin de terrain du GDD naît ici : on peut bander un allié adjacent (`bandage { targetEntityId? }`).
+- **R8 — Le soin est une action** : `bandage` (3 fibres, 1 s) stoppe le saignement et retire une blessure de membre. Le médecin de terrain du GDD naît ici : on peut bander un allié adjacent (`bandage { targetEntityId? }`). *(⚠ Transmission 2026-07-19 : action complète dans /sim mais jamais émise par le client — le bandage est injouable, donc un saignement de combat est aujourd'hui une condamnation ; recâblage = décision V0-2.)*
 
 ### La mort : chère, pas cruelle (R9-R10)
 

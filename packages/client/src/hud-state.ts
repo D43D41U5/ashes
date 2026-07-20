@@ -158,11 +158,13 @@ export interface HudState {
   seasonEnded: boolean
 
   // ─── Mode debug (DEV uniquement — voir scenes/world/debug-bindings.ts) ───
-  /** F1 : le mode debug est-il armé ? (rien d'autre ne s'affiche ni ne répond sans lui) */
+  /** P : le mode debug est-il armé ? (rien d'autre ne s'affiche ni ne répond sans lui) */
   debugOn: boolean
   /** État courant des leviers, pour l'affichage (l'autorité, elle, est dans /sim). */
   debugGod: boolean
   debugSpeed: number
+  /** F5 : essai éclairage dynamique — arbres normal-mappés (decisions.md 2026-07-20). */
+  debugLighting: boolean
   /** Ce que l'overlay affiche — publié par WorldScene, seule à connaître le relief. */
   debugInfo: {
     tick: number

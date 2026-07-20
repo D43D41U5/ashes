@@ -162,11 +162,12 @@ void main() {
   // LE TRAIT DE RIVE. Le masque est binaire : en filtrage linéaire il croise 0,5
   // pile sur la frontière des tuiles. On y pose donc le bord de l'eau, net, et
   // l'eau ne déborde plus d'un demi-texel sur l'herbe.
-  if (mask < 0.42) discard;
-  float edge = smoothstep(0.42, 0.60, mask);
+  if (mask < 0.46) discard;
 
   float open = openness(tile);            // 0 contre la berge · 1 au large
-  float deep = field.b * smoothstep(0.05, 0.55, open);
+  // La vase du fond monte VITE en s'éloignant de la berge : une eau de pré est trouble, on ne voit
+  // pas loin. Rampe resserrée → le marron du fond couvre l'essentiel du plan d'eau, pas juste son cœur.
+  float deep = field.b * smoothstep(0.03, 0.35, open);
   float t = uTime;
 
   // Le clapot meurt sur les hauts-fonds : on ne clapote pas dans deux doigts d'eau.
@@ -187,10 +188,30 @@ void main() {
   vec2 refr = tile + (n.xy / PLANE) * 0.55 * (1.0 - deep) * smoothstep(0.0, 0.4, open);
   vec3 bed = texture2D(uSeabed, texUv(refr)).rgb; // le bake est retourné comme le champ
 
-  vec3 shallowCol = vec3(0.17, 0.46, 0.53);
-  vec3 deepCol = vec3(0.03, 0.12, 0.26);
-  vec3 col = mix(shallowCol, deepCol, deep);
-  col = mix(col, bed * 0.80, (1.0 - deep) * 0.28); // le fond transparaît, sans blanchir
+  // ═══ LE FOND MARRON SOUS LA SURFACE, LE CIEL RÉFLÉCHI DESSUS ═══
+  //
+  // Une eau de pré est trouble et terreuse — MAIS sa surface RÉFLÉCHIT LE CIEL (retour d'Alexis :
+  // sans ça le plan d'eau vire au marron sombre partout). On compose donc deux étages :
+  //   • SOUS la surface (réfraction) : la vase brune du fond sur le gué, qui cède à une eau trouble
+  //     en profondeur (au large, on ne voit plus le fond) ;
+  //   • SUR la surface (réflexion) : le ciel, d'autant plus présent que l'eau est profonde — c'est
+  //     lui qui éclaircit le large et donne sa couleur au plan d'eau.
+  float bedLum = dot(bed, vec3(0.299, 0.587, 0.114));
+  vec3 mud = vec3(0.35, 0.26, 0.14) * (0.65 + 0.7 * bedLum); // la vase du fond, brune, ondulante
+  vec3 murk = vec3(0.16, 0.22, 0.20);                        // l'eau profonde trouble (vert-de-gris)
+  vec3 bottom = mix(mud, murk, deep);                        // ce qu'on voit SOUS la surface
+
+  // Le ciel réfléchi : bleu pâle de jour, éteint la nuit (uDay), réchauffé quand le soleil rase.
+  vec3 daySky = vec3(0.52, 0.62, 0.70);
+  vec3 nightSky = vec3(0.05, 0.08, 0.13);
+  vec3 sky = mix(nightSky, daySky, uDay);
+  sky += vec3(0.12, 0.05, -0.03) * uDay * max(0.0, 1.0 - uSun.z); // chaleur au ras du matin/soir
+
+  // La part de ciel : un socle (l'eau en réfléchit toujours un peu), FORTE au large, faible sur le
+  // gué (là on regarde le fond presque à la verticale). C'est ce mélange qui remplace le marron
+  // uniforme — le fond reste brun là où on le voit, le large prend la lumière du ciel.
+  float skyMix = clamp(0.30 + 0.55 * deep, 0.0, 0.9);
+  vec3 col = mix(bottom, sky, skyMix);
 
   // Le VOLUME : une crête est plus claire qu'un creux. Presque rien, mais c'est ce
   // qui donne du relief à la surface avant même qu'on l'éclaire.
@@ -218,10 +239,25 @@ void main() {
   float band = sin(open * 26.0 - t * 2.1 + h * 1.4);
   float lap = smoothstep(0.55, 1.0, band) * (1.0 - smoothstep(0.06, 0.30, open));
   float rim = 1.0 - smoothstep(0.0, 0.10, open); // le tout dernier centimètre
-  col = mix(col, vec3(0.88, 0.93, 0.95), clamp(rim * 0.55 + lap * 0.60, 0.0, 0.8));
 
-  // Translucide sur le gué, opaque au large : on voit où l'on passe.
-  float a = mix(0.80, 0.95, deep) * edge;
+  // LA COULEUR DU RIVAGE. Plutôt qu'un beige unique, l'écume prend la couleur de la
+  // tuile de terre la plus proche (herbe, sable, roche…). Le masque croît vers l'eau,
+  // donc son gradient pointe vers le large : l'opposé mène à la berge. On y échantillonne
+  // le bake du terrain (uSeabed contient la couleur de CHAQUE tuile, terre comprise).
+  vec2 grad = vec2(maskAt(tile + vec2(0.7, 0.0)) - maskAt(tile - vec2(0.7, 0.0)),
+                   maskAt(tile + vec2(0.0, 0.7)) - maskAt(tile - vec2(0.0, 0.7)));
+  vec2 toShore = length(grad) > 1e-4 ? -normalize(grad) : vec2(0.0);
+  // La tuile de terre LA PLUS PROCHE (un cran au-delà de la rive), ASSOMBRIE : une
+  // berge mouillée est plus sombre que le sol sec — sans ça la teinte du pré clair
+  // se lit comme un liseré qui brille.
+  vec3 shoreCol = texture2D(uSeabed, texUv(tile + toShore)).rgb * 0.62;
+  col = mix(col, shoreCol, clamp(rim * 0.26 + lap * 0.28, 0.0, 0.5));
+
+  // Translucide sur le gué, opaque au large : on voit où l'on passe. PAS de fondu
+  // d'alpha au bord : sinon l'eau devient transparente pile sur la rive et laisse
+  // transparaître la tuile d'eau du SOL (bakée en cyan clair) — le liseré clair.
+  // On garde donc l'eau assez opaque jusqu'à sa ligne de coupe, bord net.
+  float a = mix(0.88, 0.96, deep);
   gl_FragColor = vec4(col, a);
 }
 `

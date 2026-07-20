@@ -235,7 +235,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     const held = slot >= 0 ? (inv[slot]?.item ?? null) : null
     const world = pointerToWorld(pointer)
     const p = deps.predicted()
-    return { held, dx: world.x / TILE_PX - p.x, dy: world.y / TILE_PX - p.y }
+    return { held, slot, dx: world.x / TILE_PX - p.x, dy: world.y / TILE_PX - p.y }
   }
 
   /** Le nœud visé est-il un ARBRE (abattage à maîtrise) ? Les arbres passent par la

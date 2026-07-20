@@ -28,8 +28,8 @@ Les trois dernières doivent passer avant tout commit. Elles sont rapides — le
 
 ```
 packages/sim      ← TOUTE la logique de jeu. TypeScript pur, testé en unitaire.
-packages/client   ← Phaser 4 + Vite. Rendu, input, interpolation, UI. (placeholder)
-packages/server   ← Node + Colyseus. Boucle autoritative, rooms, persistance. (placeholder)
+packages/client   ← Phaser 4 + Vite. Rendu ISO, input, interpolation, HUD/menus DOM, prédiction locale.
+packages/server   ← Node + Colyseus. Boucle autoritative, rooms, replay-log (L1 fait). Persistance PostgreSQL encore à venir (Vallée).
 docs/specs/       ← specs par système, extraites du GDD, avec critères d'acceptation
 docs/decisions.md ← journal des décisions (ADR léger) — à tenir à jour
 ```
@@ -60,6 +60,6 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 Le plan d'implémentation complet est dans **`docs/roadmap.md`** (jalons V0-V10 → LAN → Vallée → Saison 0, avec critères de sortie et gates). Le cadre vient du GDD §13.
 
-**La Phase Veillée (V0-V10) est complète** (2026-07-05, 9 specs dans `docs/specs/`). En attente d'actions humaines : brancher Cloudflare Pages (`pnpm build` → `packages/client/dist`) et jouer le **GATE 1** (la boucle solo est-elle fun 5 sessions d'affilée ?). **Prochaine phase : LAN** (voir roadmap — `packages/server` + Colyseus, une zone, 3 joueurs ; le protocole `packages/client/src/protocol.ts` est déjà le protocole réseau, seul le transport change). Le calibrage continue via `pnpm scenario`.
+**La Phase Veillée (V0-V10) est complète** (cœur posé le 2026-07-05, ~24 specs dans `docs/specs/` ; calibrage et pivots — worldgen graphe-de-zones, construction Rust, récolte vivante — poursuivis en juillet). En attente d'actions humaines : brancher Cloudflare Pages (`pnpm build` → `packages/client/dist`) et jouer le **GATE 1** (la boucle solo est-elle fun 5 sessions d'affilée ?). **Phase LAN — jalon L1 en cours** (voir roadmap — `packages/server` + Colyseus substantiellement livrés le 2026-07-18, une zone ; le protocole `packages/sim/src/protocol.ts` est déjà le protocole réseau, seul le transport change ; reste : validation à plusieurs et GATE 2). Le calibrage continue via `pnpm scenario`. *(État réel et pistes : `docs/audit-gameplay-phase1.md`, `docs/axes-amelioration-phase2.md`, `docs/direction-design.md`.)*
 
 MVP gouvernance (Veillée/LAN) : rang unique + Chef + propriété individuelle. MVP alignement : deux axes + Foyer/Meute seulement.

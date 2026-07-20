@@ -4,7 +4,9 @@ Le GDD (`braises-gdd.md`) est la source de vérité de la *vision*. Avant d'impl
 
 Une tâche d'implémentation bien posée ressemble à : « implémente l'endurance selon `specs/combat.md` §2 ; les critères A1-A4 doivent passer en test ».
 
-## Fichiers prévus (à créer au moment d'attaquer chaque système)
+## Fichiers prévus (le plan fondateur ci-dessous)
+
+> **Depuis** (2026-07-19) : ~24 specs existent — voir `ls docs/specs/`. Des specs supplémentaires ont été écrites au fil des chantiers : `worldgen.md`, `faune.md`/`chasse.md`, `construction.md`, `recolte.md`/`recolte-maitrise.md`/`recolte-vivante.md`, `craft-file.md`, `portage.md`, `evenements.md`, `tension.md`, `client.md`/`reconciliation.md`, `persistence-veillee.md`. Seule `raid.md` (Vallée) reste à créer.
 
 | Fichier | Source GDD | Phase |
 |---|---|---|

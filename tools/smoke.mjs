@@ -701,7 +701,7 @@ const SCENARIOS = {
       if (!dev) {
         console.log(`   (s'y rendre exige le TP : relancer avec --dev)`)
       } else {
-        await page.keyboard.press('F1')
+        await page.keyboard.press('P')
         await page.waitForTimeout(300)
         await page.evaluate(({ x, y }) => {
           window.__BRAISES__.scene.registry.set('debugTeleport', { x, y, at: performance.now() })
@@ -748,7 +748,7 @@ const SCENARIOS = {
     const TINT_CURIOUS = 0xffe9a0
     const TINT_ALERT = 0xff9d54
 
-    await page.keyboard.press('F1') // arme le debug (le TP passe par le registry)
+    await page.keyboard.press('P') // arme le debug (le TP passe par le registry)
     await page.waitForTimeout(300)
 
     /** Tout ce que la chasse a besoin de lire : le joueur, sa silhouette, le gibier. */
@@ -1688,7 +1688,7 @@ const SCENARIOS = {
   /** La découverte À VUE : on s'approche d'un lieu SANS le toucher, et on regarde. */
   async poiSight(page) {
     const s0 = await page.evaluate(PROBE)
-    await page.keyboard.press('F1')
+    await page.keyboard.press('P')
     await page.waitForTimeout(300)
 
     const cible = s0.pois.find((p) => p.kind === 'sanctuaire') ?? s0.pois.find((p) => p.kind === 'ruines') ?? s0.pois[0]
@@ -1767,7 +1767,7 @@ const SCENARIOS = {
   /** En jeu : on se pose SUR quelques lieux et on regarde. Clairière ? échelle ? */
   async poiInSitu(page) {
     const s = await page.evaluate(PROBE)
-    await page.keyboard.press('F1')
+    await page.keyboard.press('P')
     await page.waitForTimeout(300)
 
     // On vise des lieux de familles différentes, en priorité ceux entourés d'arbres.
@@ -1830,7 +1830,7 @@ const SCENARIOS = {
       return page.evaluate(PROBE)
     }
 
-    await page.keyboard.press('F1') // arme l'affichage debug (le TP passe par le registry)
+    await page.keyboard.press('P') // arme l'affichage debug (le TP passe par le registry)
     await page.waitForTimeout(300)
 
     console.log(`\n── La règle de base : fouler suffit à connaître ──`)

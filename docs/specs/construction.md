@@ -1,6 +1,6 @@
 # La construction — le Feu, l'enceinte, les fonctions émergentes
 
-*Source : conçu en session (2026-07-18) avec Alexis, sur la base du GDD §6ter (« modèle à slots »), qu'il **révise entièrement**, de l'Annexe B (catalogue), et de « comme Rust ». **Remplace** l'ancienne proposition à slots et la partie construction de `specs/village.md` (V3). Statut : **validée et actée** (`docs/decisions.md`, 2026-07-18 ; GDD §6ter porte le bandeau de révision) — **non implémentée**. Catalogue Veillée tranché et inclus (§4bis). Jalon : 10bis.*
+*Source : conçu en session (2026-07-18) avec Alexis, sur la base du GDD §6ter (« modèle à slots »), qu'il **révise entièrement**, de l'Annexe B (catalogue), et de « comme Rust ». **Remplace** l'ancienne proposition à slots et la partie construction de `specs/village.md` (V3). Statut : **validée et actée** (`docs/decisions.md`, 2026-07-18 ; GDD §6ter porte le bandeau de révision) — **socle implémenté** (marteau, Forge, Atelier, Grenier, Ferme, navigabilité R7 ; commits `f3da6cd`→`c6be511`). **Restent différés** : l'upkeep R16-R17, les fonctions Infirmerie/Fumoir/Dortoir et le comportement passif R12 (cf. §10-§11). Catalogue Veillée tranché et inclus (§4bis). Jalon : 10bis.*
 
 > ⚠️ **Divergence assumée d'avec le §6ter.** On quitte les *slots typés à positions fixes* pour un **builder à composition émergente façon Rust**. Le reste du §6ter (paliers du Feu, garnison, protections offline, cible de raid) survit, réexprimé.
 
@@ -40,7 +40,7 @@ Le seul acquis qui change de nature : `build` devient une pose **de barrière ou
 - **R4 — Terrain neutre.** Toute tuile marchable du carré se vaut ; aucun bonus/malus de terrain à la pose (réserve : bonus doux post-playtest).
 - **R5 — Bâtir efface d'abord le nœud.** On ne pose que sur tuile ouverte ; pour bâtir où pousse un nœud, on le **récolte** (récolter = défricher). Une structure occupe **une tuile** (`structureAt`).
 - **R6 — Paliers du Feu.** Le village a un `tier` (1→3). Monter de palier (coût matériaux croissant au Feu, éventuel seuil de population) **agrandit le carré** (`R`), débloque de **nouveaux types de composants** (le four d'acier exige P3), et renforce respawn/protections offline. Les capacités d'archétype d'alignement s'ancrent dans un composant/une fonction — donc ont une **adresse raidable**.
-- **R7 — Invariant de navigabilité (règle technique).** Au placement d'un mur/composant, on **rejette** tout ce qui déconnecterait le Feu, un composant, ou couperait l'A*/flow-field (flood-fill de vérification). On ne peut pas murer son propre Feu ni piéger un PNJ. C'est la contrepartie qui rend le placement libre sûr (remplace le « layout connu » du §6ter). Aujourd'hui non vérifié en V3.
+- **R7 — Invariant de navigabilité (règle technique).** Au placement d'un mur/composant, on **rejette** tout ce qui déconnecterait le Feu, un composant, ou couperait l'A*/flow-field (flood-fill de vérification). On ne peut pas murer son propre Feu ni piéger un PNJ. C'est la contrepartie qui rend le placement libre sûr (remplace le « layout connu » du §6ter). Vérifié depuis le socle marteau (`construction.ts` `wouldDisconnect` : flood-fill AVANT/APRÈS à ordre fixe).
 
 ---
 
@@ -92,6 +92,8 @@ Le seul acquis qui change de nature : `build` devient une pose **de barrière ou
 ## 5. La construction et l'entretien — le contrat temporel
 
 - **R15 — Pose instantanée.** Payer les matériaux → barrière/composant posé au tick suivant (V3). **Pas de chantier**, donc **pas de PNJ bâtisseurs** (dette) : la construction est joueur seul ; les PNJ récoltent/cuisinent/**réparent**/défendent. La **friction est d'acquérir les matériaux** (le fer/l'acier des paliers hauts vivent dans le sauvage/la mine — la construction pousse dehors).
+> ⚠️ **Différé, non codé** (2026-07-19). L'upkeep/cycle-de-vie ci-dessous reste une cible de design ; aucun décrément de combustible ni dégradation n'existe encore (`balance.ts:515`). Chantier R-B du backlog Phase 2, tension T3 de `direction-design.md`.
+
 - **R16 — Upkeep centralisé au Feu (comme la Tool Cupboard).** On **approvisionne le Feu** en matériaux ; il les **consomme lentement** pour tenir sa zone. Stock plein → les **murs/barrières** de la zone ne se dégradent pas. À sec → dégradation, puis le village tombe en **ruine** (cycle de vie). Le stock qui dure **~3-4 jours** *est* la règle « survit à l'abandon » (§6ter). « **Nourrir le Feu** » = la tâche communautaire zéro (tâche PNJ). Plus vite consommé au Grand Froid.
 - **R17 — Composants permanents.** Seuls les **murs/barrières** se dégradent (R16) ; les composants, une fois posés, sont **acquis**. Le métabolisme « tout se consomme » (GDD §8) vit dans les **consommables** (outils, armes, nourriture s'usent déjà), pas dans l'architecture.
 - **R18 — Démolir.** Par propriétaire ou Chef (V3), remboursement partiel. Enlever un composant fait **retomber** le palier de sa fonction (R10). Interdit sur le Feu.

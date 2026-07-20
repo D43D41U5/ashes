@@ -2,6 +2,8 @@
 
 *Titre de travail. Version 0.1 — 5 juillet 2026.*
 
+> **Statut (2026-07-19).** Le GDD reste la **vision** ; tous ses nombres sont des ordres de grandeur (§15). L'état réel du code et les écarts vision/livré sont cartographiés dans `docs/audit-gameplay-phase1.md`, priorisés dans `docs/axes-amelioration-phase2.md`, et le cap retenu est dans `docs/direction-design.md`. Écarts GDD/MVP à garder en tête : seuls **Foyer** et **Meute** sont codés (Ermitage/Charognard différés, conforme au MVP §5/§13) ; le **serveur** est déjà substantiellement écrit alors que §13 le présente comme une phase à venir. Quelques décisions actées sont aujourd'hui contredites par le code (signalées plus bas par `<!-- écart code : … -->`).
+
 > Un survival top-down persistant où ton village est ton personnage principal — et où les autres joueurs sont la meilleure et la pire chose qui puisse lui arriver.
 
 ---
@@ -263,7 +265,7 @@ Le vrai « niveau » du personnage est ce qu'il porte — et c'est lootable. La 
 
 ### Ce qui n'existe pas
 
-Pas de niveaux de personnage, pas d'XP globale, pas d'arbres de talents à respec, pas de stats d'alignement visibles en combat (l'alignement est social, pas martial), pas de régénération passive de santé (sinon le médecin et le lit ne servent à rien).
+Pas de niveaux de personnage, pas d'XP globale, pas d'arbres de talents à respec, pas de stats d'alignement visibles en combat (l'alignement est social, pas martial), pas de régénération passive de santé (sinon le médecin et le lit ne servent à rien). <!-- écart code (2026-07-19) : `balance.ts:1980` COMBAT.HP_REGEN_PER_MIN = 2 régénère 2 PV/min (faim > 50, sans saignement) via `combat.ts:734` — décision actée aujourd'hui contredite par le code. À trancher : cf. docs/direction-design.md T4, docs/axes-amelioration-phase2.md V1-14. -->
 
 La fiche tient sur un écran : six jauges, quinze maîtrises dont trois qui te définissent, et ce que tu portes. Le reste — réputation, Cicatrices, village — c'est le monde qui s'en souvient à ta place.
 

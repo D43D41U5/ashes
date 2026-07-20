@@ -29,7 +29,7 @@ import {
 } from '@braises/sim'
 
 export type PropKind =
-  | 'conifer' | 'big_trunk' | 'stump' | 'fern' | 'pine' | 'larch' | 'burnt_trunk'
+  | 'conifer' | 'big_trunk' | 'stump' | 'pine' | 'larch' | 'burnt_trunk'
   | 'grass_tuft' | 'flower' | 'pebbles' | 'boulder' | 'low_bush' | 'bush'
   | 'reed' | 'sphagnum' | 'lichen' | 'snowdrift'
 
@@ -63,10 +63,10 @@ export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
   // La forêt de la RACINE (le seul biome `forest` rendu tel quel : ailleurs les taches boisées
   // deviennent pins/mélèzes, tier > 0). PLUS DE CONIFÈRES NI DE SOUCHES DÉCORATIFS (demande
   // d'Alexis, 2026-07-18) : les arbres de cette forêt sont de VRAIS nœuds RÉCOLTABLES, denses,
-  // posés côté sim (`arbresDeLaRacine`). Le clutter ne garde ici que les fougères du sous-bois,
-  // qui habillent le sol entre les troncs qu'on coupe — fougères et buissons DODUS (2026-07-18).
-  [TERRAIN_FOREST]: { density: 0.42, scale: 26, understory: false, props: ['fern', 'bush'] },
-  [TERRAIN_OLD_GROWTH]: { density: 0.45, scale: 28, understory: true, props: ['big_trunk', 'fern'] },
+  // posés côté sim (`arbresDeLaRacine`). Le clutter ne garde ici que les buissons DODUS du
+  // sous-bois, qui habillent le sol entre les troncs qu'on coupe (plus de fougères, 2026-07-19).
+  [TERRAIN_FOREST]: { density: 0.1, scale: 26, understory: false, props: ['bush'] },
+  [TERRAIN_OLD_GROWTH]: { density: 0.45, scale: 28, understory: true, props: ['big_trunk'] },
   [TERRAIN_PINE]: { density: 0.4, scale: 22, understory: false, props: ['pine', 'grass_tuft', 'pebbles'] },
   [TERRAIN_LARCH]: { density: 0.35, scale: 20, understory: false, props: ['larch', 'grass_tuft'] },
   [TERRAIN_BURNT_FOREST]: { density: 0.4, scale: 22, understory: false, props: ['burnt_trunk', 'grass_tuft'] },
@@ -74,13 +74,17 @@ export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
   //  (demande d'Alexis, 2026-07-18 — comme dans la forêt, mais groupés en taillis sur la plaine).
   [TERRAIN_GRASS]: {
     density: 0.28, scale: 16, understory: false, props: ['grass_tuft', 'flower', 'pebbles'],
-    groves: { kind: 'bush', scale: 38, seuil: 0.66, density: 0.5 },
+    groves: { kind: 'bush', scale: 38, seuil: 0.8, density: 0.22 },
   },
   [TERRAIN_FLOWER_MEADOW]: { density: 0.5, scale: 16, understory: false, props: ['flower', 'grass_tuft'] },
   [TERRAIN_HEATH]: { density: 0.42, scale: 14, understory: false, props: ['low_bush', 'pebbles'] },
   [TERRAIN_ALPINE_MEADOW]: { density: 0.3, scale: 15, understory: false, props: ['grass_tuft', 'flower', 'pebbles'] },
   [TERRAIN_ALPINE_FLOWERS]: { density: 0.5, scale: 15, understory: false, props: ['flower', 'grass_tuft'] },
-  [TERRAIN_MARSH]: { density: 0.45, scale: 14, understory: false, props: ['reed', 'grass_tuft'] },
+  // LE MARAIS EST UN LIT DE ROSEAUX (demande d'Alexis, 2026-07-20 : « densité de roseaux ×++ »).
+  //  Presque chaque tuile en porte (density 0.95), le roseau domine largement le tirage (3/4), et
+  //  l'understory en pose un SECOND sur les tuiles pleines — une vraie roselière, pas un saupoudrage.
+  //  L'affinité REEDY (roseaux collés à l'eau) densifie encore au bord des plans d'eau.
+  [TERRAIN_MARSH]: { density: 0.95, scale: 14, understory: true, props: ['reed', 'reed', 'reed', 'grass_tuft'] },
   [TERRAIN_REED_MARSH]: { density: 0.6, scale: 13, understory: false, props: ['reed'] },
   [TERRAIN_PEAT_BOG]: { density: 0.45, scale: 14, understory: false, props: ['sphagnum', 'reed'] },
   [TERRAIN_SCREE]: { density: 0.4, scale: 16, understory: false, props: ['pebbles', 'lichen'] },
@@ -104,6 +108,17 @@ export function distToWater(tx: number, ty: number, sample: SampleTerrain, cap: 
     }
   }
   return cap
+}
+
+/** Une des 8 tuiles voisines est-elle de l'eau ? (berge au contact de l'eau) */
+function touchesWater(tx: number, ty: number, sample: SampleTerrain): boolean {
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue
+      if (WATER.has(sample(tx + dx, ty + dy))) return true
+    }
+  }
+  return false
 }
 
 /** Un des 4 voisins est-il un biome ouvert différent ? (lisière de forêt) */
@@ -153,6 +168,13 @@ export function clutterAt(
 ): PropInstance[] {
   const cfg = BIOME_CLUTTER[terrain]
   if (!cfg) return []
+
+  // PAS DE DÉCOR "DANS L'EAU". Le bord de l'eau (masque du shader en filtrage linéaire) déborde
+  // d'environ un dixième de tuile sur la terre voisine, et un prop porte un décalage jusqu'à ±0,4
+  // tuile : une fleur ou une touffe de BERGE finit donc plantée dans l'eau. On laisse une tuile de
+  // berge NUE au contact de l'eau — SAUF les ROSEAUX (REEDY), qui ont justement le droit d'y tremper.
+  if (!REEDY.has(terrain) && touchesWater(tx, ty, sample)) return []
+
   const props: PropInstance[] = []
 
   // LES BOSQUETS — un taillis d'un prop précis (buissons du pré), groupé par un bruit basse

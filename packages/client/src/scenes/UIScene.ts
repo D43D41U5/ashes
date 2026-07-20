@@ -40,7 +40,7 @@ const LOADING_DEPTH = MAP_OVERLAY_DEPTH + 1
 /** L'écran de RUPTURE passe même devant le chargement : l'hôte peut mourir en pleine
  *  génération, et il ne faut surtout pas laisser tourner une barre qui ne montera plus. */
 const FATAL_DEPTH = LOADING_DEPTH + 2
-/** L'overlay de debug (F1, DEV) reste au-dessus de tout. */
+/** L'overlay de debug (P, DEV) reste au-dessus de tout. */
 const DEBUG_DEPTH = FATAL_DEPTH + 1
 /** Pastille de POI sur la carte : plus petite et plus froide que le marqueur joueur, qui doit primer. */
 const MAP_POI_RADIUS = 3
@@ -103,7 +103,7 @@ export class UIScene extends Phaser.Scene {
   /** Aide de la carte — sa dernière ligne change quand le mode debug est armé. */
   private mapHint?: Phaser.GameObjects.Text
 
-  /** Overlay du mode debug (DEV, F1) — au-dessus de tout, carte comprise. */
+  /** Overlay du mode debug (DEV, P) — au-dessus de tout, carte comprise. */
   private debugText?: Phaser.GameObjects.Text
 
   constructor() {
@@ -203,7 +203,7 @@ export class UIScene extends Phaser.Scene {
       this.loading = undefined
     })
 
-    // L'overlay de debug (F1) — DEV seulement, et hors de cette classe : voir
+    // L'overlay de debug (P) — DEV seulement, et hors de cette classe : voir
     // l'en-tête de debug-overlay.ts (une méthode survivrait au build de prod).
     if (import.meta.env.DEV) {
       this.debugText = createDebugOverlay(this, style, DEBUG_DEPTH)
@@ -231,7 +231,7 @@ export class UIScene extends Phaser.Scene {
       this.updateMapHover(pointer)
     })
     this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-      // DEV, mode debug armé (F1) : un clic SANS glisser téléporte l'avatar sur
+      // DEV, mode debug armé (P) : un clic SANS glisser téléporte l'avatar sur
       // la tuile visée. Le seuil distingue le clic du relâchement d'un pan —
       // sans lui, tout déplacement de carte finirait par un TP surprise.
       if (import.meta.env.DEV && this.mapVisible() && getHud(this.registry, 'debugOn')) {

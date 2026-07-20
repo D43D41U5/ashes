@@ -65,7 +65,7 @@ export const KEYMAP = {
  */
 export const DEBUG_KEYMAP = {
   /** Arme/désarme le mode (tout le reste est inerte tant qu'il est éteint). */
-  toggle: ['F1'],
+  toggle: ['P'],
   /** Invulnérabilité + jauges gelées. */
   god: ['F2'],
   /** Bascule jour ↔ nuit (force l'heure à midi ou minuit). */

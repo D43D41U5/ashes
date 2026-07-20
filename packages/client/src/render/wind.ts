@@ -33,7 +33,6 @@ const GUST_TIGHTNESS = 0.035
 export const WIND_TAKE: Record<string, number> = {
   reed: 1.3,
   grass_tuft: 1,
-  fern: 0.85,
   flower: 0.9,
   low_bush: 0.5,
   bush: 0.45,

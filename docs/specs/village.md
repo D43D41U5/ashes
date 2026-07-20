@@ -2,6 +2,8 @@
 
 *Source : GDD §5 (gouvernance, MVP : rang unique + Chef + propriété individuelle), §9 (fondation semi-libre), §6 (le village comme nécessité). Statut : **implémenté** (2026-07-05, A1-A6 verts en headless + smoke test navigateur). Jalon : V3.*
 
+> ⚠️ **Partie construction supersédée** (pivot Rust, 2026-07-18). La fondation, le carré, les composants et les fonctions émergentes sont désormais régis par `docs/specs/construction.md`. Cette spec reste la source pour la **gouvernance, la propriété, les accès, le coffre et les rangs** (R10-R12), réutilisés à l'identique.
+
 ## Objectif de design
 
 Faire exister l'entité centrale du jeu : un lieu fondé par un joueur, où l'on construit, où l'on possède, et dont les serrures sont tenues par le serveur. En V3 le village est une *coquille mécanique* (Feu, murs, portes, coffres, permissions) — la vie (PNJ, économie, alignement) viendra l'habiter aux jalons suivants.
@@ -20,12 +22,12 @@ Faire exister l'entité centrale du jeu : un lieu fondé par un joueur, où l'on
 ### Le Feu
 
 - **R4 — Allumer un Feu fonde un village.** L'allumeur devient **Chef** ; le Feu appartient au village, pas au joueur. Coût : `STRUCTURE_COSTS.fire` (10 bois).
-- **R5 — Fondation semi-libre (GDD §9)** : refusée à moins de `FIRE_MIN_DISTANCE` (48 tuiles) d'un autre Feu, à l'intérieur d'une zone nommée (les landmarks sont inconstructibles), ou sur tuile bloquante. Un joueur appartient à **un seul village** ; on ne fonde pas si on est déjà membre.
-- **R6 — Le rayon de construction** : toute structure doit être à ≤ `FIRE_BUILD_RADIUS` (20 tuiles) du Feu de son village. Le respawn au Feu attend la mort (V6) ; la position du Feu est déjà le point d'ancrage du village.
+- **R5 — Fondation semi-libre (GDD §9)** : refusée à moins de `FIRE_MIN_DISTANCE` (2·R_max = 32 tuiles, cf. `construction.md` R1) d'un autre Feu, à l'intérieur d'une zone nommée (les landmarks sont inconstructibles), ou sur tuile bloquante. Un joueur appartient à **un seul village** ; on ne fonde pas si on est déjà membre.
+- **R6 — Le rayon de construction** : toute structure doit être dans le **carré ×palier** du Feu de son village (`FIRE_RADIUS_BY_TIER` = 10/13/16, cf. `construction.md` R2/R6). Le respawn au Feu attend la mort (V6) ; la position du Feu est déjà le point d'ancrage du village.
 
 ### Les structures
 
-- **R7 — Alignées sur la grille, 1×1 tuile** : `fire`, `wall`, `door`, `chest`, `workshop` (l'atelier est un stub sans recette jusqu'à V4). La **maison est reportée** à V5 : sans besoins ni sommeil, elle ne serait que décorative — elle arrive avec les PNJ dont elle est le régulateur (GDD §5 et §10).
+- **R7 — Alignées sur la grille, 1×1 tuile** : `fire`, `wall`, `door`, `chest`, `workshop` (devenu l'**Établi N1** de la fonction Atelier, cf. `construction.md` §4bis). La **maison est reportée** à V5 : sans besoins ni sommeil, elle ne serait que décorative — elle arrive avec les PNJ dont elle est le régulateur (GDD §5 et §10).
 - **R8 — Les structures participent à la collision** : un mur bloque comme de la roche. Une **porte est auto-passante pour les membres du village et bloquante pour les autres** — pas d'input d'interaction en V3, la serrure est le membership. (L'ouverture explicite, le forçage et la destruction arrivent avec le combat/raid.)
 - **R9 — Construction** : sur tuile marchable, non occupée, dans le rayon (R6), par un membre du village, en payant le coût. `demolish` : par le propriétaire de la structure ou le Chef, rembourse 50 % (`DEMOLISH_REFUND`), impossible sur le Feu (V3 : un Feu ne s'éteint pas — la mort du village est un chantier ultérieur).
 
@@ -37,7 +39,7 @@ Faire exister l'entité centrale du jeu : un lieu fondé par un joueur, où l'on
 
 ## Critères d'acceptation
 
-- **A1** — Fonder : `light_fire` avec 10 bois crée le village (fondateur Chef, événement `village_founded`) ; refusé sans bois, dans « le Pont », à < 48 tuiles d'un autre Feu, ou si déjà membre.
+- **A1** — Fonder : `light_fire` avec 10 bois crée le village (fondateur Chef, événement `village_founded`) ; refusé sans bois, dans « le Pont », à < 32 tuiles (2·R_max) d'un autre Feu, ou si déjà membre.
 - **A2** — Construire : un mur dans le rayon débite le bois, occupe la tuile, bloque le déplacement (testé par `moveAvatar`) ; refusé hors rayon, sur tuile occupée, sans matériaux, ou par un non-membre.
 - **A3** — La porte : un membre la traverse, un étranger est bloqué ; après bannissement, l'ex-membre est bloqué au tick suivant.
 - **A4** — Le coffre : dépôt/retrait par le propriétaire ; refusé pour un autre membre si `private` ; autorisé après passage en `village` ; jamais pour un étranger ; hors de portée → refusé.
@@ -55,4 +57,4 @@ Faire exister l'entité centrale du jeu : un lieu fondé par un joueur, où l'on
 
 ## Ajouts à `balance.ts`
 
-`FIRE_BUILD_RADIUS = 20`, `FIRE_MIN_DISTANCE = 48`, `INTERACT_RANGE = 1.5`, `DEMOLISH_REFUND = 0.5`, `STRUCTURE_COSTS = { fire: {wood:10}, wall: {wood:2}, door: {wood:3}, chest: {wood:4}, workshop: {wood:6, stone:4} }`.
+`FIRE_RADIUS_BY_TIER = [10, 13, 16]` (carré ×palier, remplace `FIRE_BUILD_RADIUS`), `FIRE_MIN_DISTANCE = 2·R_max = 32`, `INTERACT_RANGE = 1.5`, `DEMOLISH_REFUND = 0.5`, `STRUCTURE_COSTS = { fire: {wood:10}, wall: {wood:2}, door: {wood:3}, chest: {wood:4}, workshop: {wood:6, stone:4} }`.

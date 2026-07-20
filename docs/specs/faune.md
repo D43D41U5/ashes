@@ -1,6 +1,6 @@
 # La faune — le monde est habité
 
-*Source : GDD §8bis (catalogue des ressources : petit gibier, gros gibier ; « le geste » : pistage/approche), §9bis (« annoncés, pas surprises » ; « meutes de prédateurs, le danger de fond des trajets »), §7 (la faune est le tutorial de combat permanent). Complète `combat.md` R12, promis et jamais tenu. Statut : **implémenté** (2026-07-11 — R1-R16, 56 tests headless + smoke navigateur ; **2026-07-13 — R6 refondu, R6bis, R9bis, R10bis** : fuite engagée, espace vital, troupeau vivant, sentinelle, l'heure du loup — bancs A18-A23, postures client). Jalon : post-V10 (chantier ambiance).*
+*Source : GDD §8bis (catalogue des ressources : petit gibier, gros gibier ; « le geste » : pistage/approche), §9bis (« annoncés, pas surprises » ; « meutes de prédateurs, le danger de fond des trajets »), §7 (la faune est le tutorial de combat permanent). Complète `combat.md` R12, promis et jamais tenu. Statut : **implémenté** (2026-07-11 — R1-R18, 88 tests headless + smoke navigateur ; **2026-07-13 — R6 refondu, R6bis, R9bis, R10bis** : fuite engagée, espace vital, troupeau vivant, sentinelle, l'heure du loup ; **coins de chasse R17 + quota de prédateurs R18** — bancs A18-A26, postures client). Jalon : post-V10 (chantier ambiance).*
 
 ## Objectif de design
 

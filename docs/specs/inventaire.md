@@ -59,10 +59,10 @@ de craft (chantier 2).
 
 ### La ceinture et l'objet en main
 
-- **R7 — Une seule liste, deux régions.** Les `BALANCE.BELT_SLOTS` (6) premières cases sont
+- **R7 — Une seule liste, deux régions.** Les `SLOTS.BELT` (6) premières cases sont
   **la ceinture** (la hotbar) ; les suivantes sont le sac. Un seul tableau, donc un seul
-  espace de glisser-déposer — comme Rust. Le joueur naît avec `BALANCE.PLAYER_SLOTS` (18)
-  cases ; un PNJ avec `BALANCE.NPC_SLOTS` (40).
+  espace de glisser-déposer — comme Rust. Le joueur naît avec `SLOTS.PLAYER` (18)
+  cases ; un PNJ avec `SLOTS.NPC` (40).
 
   *Pourquoi les PNJ ont-ils un grand sac :* leur boucle de corvées (`npc-errands.ts`) n'a pas
   de notion de « sac plein » et apprendre à en gérer une ouvrirait un risque de livelock
@@ -70,7 +70,7 @@ de craft (chantier 2).
   part : la sim n'a qu'un seul jeu de règles.
 
 - **R8 — `Entity.activeSlot`** (entier) désigne la case tenue en main. `-1` = mains nues.
-  Seule une case de la **ceinture** peut être active (`0 <= activeSlot < BELT_SLOTS`), et
+  Seule une case de la **ceinture** peut être active (`0 <= activeSlot < SLOTS.BELT`), et
   une case active vide vaut mains nues.
 
 - **R9 — L'objet en main fait foi, et lui seul.** `toolMultiplier` (economy.ts) et la
@@ -89,7 +89,9 @@ de craft (chantier 2).
   refus `sac plein`, sans cooldown ni XP (le coup n'a pas eu lieu).
 
 - **R11 — Les conteneurs sont des inventaires à cases.** Le coffre naît avec
-  `BALANCE.CHEST_SLOTS` (24) cases. Le cadavre hérite des cases de l'entité morte,
+  `SLOTS.CHEST` (24) cases ; un composant de **Grenier** (silo/cave/réserve) naît, lui, avec
+  `SLOTS.GRENIER` (36) cases — une réserve de village, pas une malle (spec `construction.md`
+  §4bis). Le cadavre hérite des cases de l'entité morte,
   augmentées du butin de monstre (`addItems` sur un sac assez grand pour tout tenir : un
   cadavre ne perd jamais de butin).
 
@@ -202,7 +204,7 @@ Toutes valident portée et propriété **dans la sim** (invariant §3 : serveur 
 - **A15** — `split_slot` de `wood 20` (count 8) vers une case vide : `[wood 12, …, wood 8]`.
   Vers une case **occupée** : refus. Sur un outil (pile 1) : refus.
 - **A16** — `set_active_slot` avec un index hors de la ceinture (`>= BELT_SLOTS`) ou
-  au-delà du sac : refus, `activeSlot` inchangé.
+  au-delà du sac : refus, `activeSlot` inchangé. *(index hors ceinture : `>= SLOTS.BELT`)*
 - **A17** — `transfer` vers un coffre d'autrui (`access: 'private'`) : le **dépôt** est
   accepté (boîte aux dons) et, s'il s'agit de nourriture chez un autre village, émet
   `gift_given` avec le même effet de chaleur qu'avant la refonte ; le **retrait** est
@@ -229,9 +231,11 @@ Toutes valident portée et propriété **dans la sim** (invariant §3 : serveur 
   bâtir survit en attendant sous une forme minimale (voir le plan).
 - **Les slots d'équipement portés** (armure, tenue) : le GDD n'a pas d'armure, on n'en
   invente pas.
-- **Le poids / l'encombrement** : Rust n'en a pas, Braises non plus. La contrainte est le
-  nombre de cases.
-- **Le drop au sol** (lâcher un item hors d'un conteneur) : pas de sac au sol dans ce
-  chantier. Le cadavre reste le seul conteneur volatil.
+- **Le poids / l'encombrement** : livré depuis par la spec `portage.md` (2026-07-13) —
+  `ITEM_WEIGHT` + `CARRY.CAPACITY`. La contrainte est désormais **double** : le nombre de
+  cases (volume) ET le poids porté (peine, qui rabote la vitesse et refuse le sprint).
+- **Le drop au sol** : livré depuis par la spec chasse (C18) — actions `drop_held` /
+  `pick_up`, piles `state.groundItems` (l'appât, la viande jetée, la charge larguée), qui
+  expirent. Le cadavre n'est plus le seul conteneur volatil.
 - **La réorganisation de l'inventaire des PNJ** : ils ont un grand sac et n'en gèrent pas
   la disposition. Le jour où un PNJ doit choisir quoi porter, ce sera une spec PNJ.

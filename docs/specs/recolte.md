@@ -33,7 +33,7 @@ Cette spec ne touche pas à l'économie. Elle rend le geste *lisible*, *tenable*
 
 ### Le clic se tient, il ne se martèle pas
 
-- **G6 — Récolte au clic MAINTENU** : bouton enfoncé, le coup se répète tant que le curseur vise un nœud à portée, **à la cadence du rechargement** (`GATHER_COOLDOWN_TICKS`). Relâcher arrête.
+- **G6 — Récolte au clic MAINTENU** : bouton enfoncé, le coup se répète tant que le curseur vise un nœud à portée, **à la cadence du rechargement** (`GATHER_COOLDOWN_TICKS`). Relâcher arrête. *(Pour le BOIS, ce comportement est remplacé par une jauge charge/relâche — voir `recolte-maitrise.md` B1.)*
 - **G7 — Le maintien n'INONDE PAS la sim.** Le client cadence lui-même ses envois : il n'émet pas une `harvest` par frame pour se faire rejeter 19 fois sur 20 par « trop tôt ». Un refus n'est pas gratuit — c'est un `SimEvent` (`action_rejected`) que la chronique et l'alignement consomment. Le flux d'événements n'est pas une poubelle.
 - **G8 — La cible se ré-évalue à chaque coup**, pas une fois au clic : le nœud s'épuise, le curseur bouge, la caméra glisse encore. On récolte ce qu'on vise MAINTENANT, sinon on ne récolte rien.
 
@@ -69,4 +69,6 @@ Cette spec ne touche pas à l'économie. Elle rend le geste *lisible*, *tenable*
 
 ## Note de dette repérée
 
-`economie.md` R6 est **périmée** : elle décrit une usure « agrégée par type d'outil » (`wear[outil]`), alors que le chantier « le sac » l'a passée **par case** (`Slot.wear` — deux haches ne partagent plus un compteur). À corriger dans `economie.md`.
+`economie.md` R6 est **périmée** : elle décrit une usure « agrégée par type d'outil » (`wear[outil]`), alors que le chantier « le sac » l'a passée **par case** (`Slot.wear` — deux haches ne partagent plus un compteur). *(Mis à jour 2026-07-19 : `economie.md` R6 a depuis été corrigée — l'usure est bien « par case ».)*
+
+G6 est par ailleurs **partiellement périmée** : pour le BOIS (`tree`/`old_tree`), le clic maintenu ne répète plus un coup à la cadence du cooldown — il CHARGE une jauge, et le relâché est LA frappe (`harvest_charge_start`/`harvest_release`, spec `recolte-maitrise.md` B1). G6 ne vaut plus que pour la pierre et les plantes.

@@ -6,6 +6,8 @@
 import Phaser from 'phaser'
 import { generateItemIcons } from '../render/item-art'
 import { generateVitalIcons } from '../render/vital-art'
+import { generateLitTrees } from '../render/lit-trees'
+import { generateLitProps } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
 import { makePoiTextures } from './world/poi-art'
 
@@ -45,6 +47,8 @@ export class BootScene extends Phaser.Scene {
     this.makeGlowTexture()
     generateItemIcons(this) // les 16 icônes d'items — voir render/item-art.ts
     generateVitalIcons(this) // les 4 icônes des jauges du HUD — voir render/vital-art.ts
+    generateLitTrees(this) // essai éclairage dynamique : arbres normal-mappés — voir render/lit-trees.ts
+    generateLitProps(this) // + masse pâteuse (buissons, roches…) aplatie + normal-mappée — render/lit-props.ts
 
     // NETTETÉ DU PIXEL-ART : le rendu global est en ANTIALIAS (pour un texte/UI lisse
     // comme la maquette), donc les textures pixel-art générées ici recevraient un
@@ -337,16 +341,25 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('nd-fiber_plant', 16, 16)
     g.clear()
 
-    // BUISSON À BAIES — la référence d'Alexis : un dôme carré, plein, ombré en couches,
-    // piqué de baies rouges. (Blocky, plus de cercle.)
-    g.fillStyle(0x24401f).fillRect(3, 7, 10, 7) // ombre/contour bas
-    g.fillStyle(0x2f5e33).fillRect(3, 6, 10, 6) // corps
-    g.fillStyle(0x3d7040).fillRect(4, 6, 7, 2) // dessus éclairé
-    g.fillStyle(0x4a8049).fillRect(5, 6, 3, 1) // éclat
-    g.fillStyle(0xc0392b) // baies (petits carrés 2 px)
-    g.fillRect(4, 8, 2, 2).fillRect(9, 7, 2, 2).fillRect(7, 10, 2, 2)
-    g.fillStyle(0xe0574a).fillRect(4, 8, 1, 1).fillRect(9, 7, 1, 1) // reflet des baies
-    g.generateTexture('nd-berry_bush', 16, 16)
+    // BUISSON À BAIES — MÊME silhouette que le buisson normal (`cl-bush`), au vert de feuillage
+    // LÉGÈREMENT décalé (un poil plus clair/chaud) pour qu'on le distingue (demande d'Alexis
+    // 2026-07-19). Les BAIES sont dessinées SÉPARÉMENT : on génère `nd-berry_bush-0` (le buisson
+    // NU, vidé/en repousse) puis `-1..-3` en ajoutant une baie à chaque cran. Le rendu choisit la
+    // variante PROPORTIONNELLEMENT au stock restant (au plus 3 points), si bien qu'ils s'effacent
+    // au fil de la récolte et reviennent quand la ressource repousse. Ordre : cœur d'abord (index
+    // bas enlevé en DERNIER), le buisson s'appauvrit du dehors vers le dedans.
+    g.fillStyle(0x274a1c).fillRect(2, 5, 12, 9) // ombre/contour (le bloc)
+    g.fillStyle(0x336026).fillRect(3, 4, 10, 9) // corps (vert de baies, un peu plus vif)
+    g.fillStyle(0x437030).fillRect(4, 4, 8, 4) // dessus éclairé
+    g.fillStyle(0x51843a).fillRect(5, 3, 5, 2) // crête lumineuse
+    g.generateTexture('nd-berry_bush-0', 16, 16) // le buisson NU
+    const berries: [number, number][] = [[7, 8], [5, 10], [10, 9]] // cœur → bords
+    for (let k = 0; k < berries.length; k++) {
+      const [bx, by] = berries[k]!
+      g.fillStyle(0xc0392b).fillRect(bx, by, 2, 2) // la baie (carré 2 px)
+      g.fillStyle(0xe0574a).fillRect(bx, by, 1, 1) // reflet
+      g.generateTexture(`nd-berry_bush-${k + 1}`, 16, 16) // buisson + (k+1) baies
+    }
     g.clear()
 
     // FILON DE FER : le bloc de roche, veiné de rouille (rectangles).

@@ -2,6 +2,8 @@
 
 *Source : GDD §8 (chaînes courtes, économie de flux), §8bis (catalogue des ressources), specs `economie.md` (R10-R11), `recolte.md` (G12-G13, le marteau). Statut : **en cours** (2026-07-12). Jalon : chantier « le craft », couche 1/3.*
 
+> **Révisions ultérieures (à lire avec ce doc) :** le craft n'est plus instantané mais une FILE avec durées (`craft-file.md`) ; le barème d'outil a été réécrit — la fortune n'est plus l'égale de l'atelier (`recolte-vivante.md` D3/Y1).
+
 ## Objectif de design
 
 Aujourd'hui, **il n'existe aucun craft sans station** : `Recipe.station` est obligatoire, et `applyEconomyAction` refuse tout craft hors de portée d'un Feu, d'un atelier ou d'un four. La première marche du jeu est donc : mains nues → 10 bois → Feu → marteau → atelier. Il n'y a **rien avant le village**, et les mains nues n'ont aucune réponse à donner à la faim, au froid, au loup ou à la lenteur.
@@ -14,7 +16,7 @@ Le fil rouge : **la fortune accélère, elle n'ouvre rien.** Ce qui déverrouill
 
 ### Le craft sans poste
 
-- **C1 — `Recipe.station` devient nullable.** `station: null` = « à la main » : craftable n'importe où, sans structure, sans village. Le reste de `craft` ne change pas (instantané, coût débité, même cooldown, XP d'artisan).
+- **C1 — `Recipe.station` devient nullable.** `station: null` = « à la main » : craftable n'importe où, sans structure, sans village. Le reste de `craft` ne change pas (coût débité au clic, XP d'artisan à l'échéance) — hormis qu'il est désormais ENFILÉ avec une durée et non plus instantané (voir `craft-file.md`).
 - **C2 — Aucune autre porte.** Pas de niveau d'artisan minimal, pas d'outil requis pour crafter à la main : la couche 1 est ce que le joueur nu peut faire à la minute 0. Elle est la *rampe*, pas une récompense.
 
 ### La pierre reste à mains nues — non négociable
@@ -23,7 +25,7 @@ Le fil rouge : **la fortune accélère, elle n'ouvre rien.** Ce qui déverrouill
 
 ### Le palier d'outil remplace le booléen
 
-- **C4 — Quatre paliers, ordonnés** : `none` < `crude` < `basic` < `iron`. Rendement : mains nues ×1, **fortune ×2**, atelier ×2, fer ×3. La fortune récolte donc **aussi bien** que l'outil d'atelier — ce n'est pas un oubli (voir C5-C6 : elle paie ailleurs).
+- **C4 — Quatre paliers, ordonnés** : `none` < `crude` < `basic` < `iron`. Rendement : mains nues ×1, **fortune ×2**, atelier ×3, fer ×4. La fortune *dépanne* — elle ne remplace pas l'outil forgé (barème révisé, `recolte-vivante.md` D3/Y1) : elle paie aussi en durabilité (C6).
 - **C5 — `NodeDef.requiresTool: boolean` devient `NodeDef.minTool: ToolTier`.** Le booléen actuel teste « rendement > 1 » : tel quel, un pic de fortune ×2 **ouvrirait le fer et le charbon sans jamais bâtir d'atelier**, et trois pierres court-circuiteraient toute la géopolitique de la mine. Les filons (`iron_vein`, `coal_seam`) exigent donc `minTool: 'basic'` — **un outil forgé**, pas un caillou ficelé. Tous les autres nœuds : `minTool: 'none'`.
 - **C6 — La durabilité devient propre à l'objet.** `TOOL_DURABILITY = 100` reste le défaut ; les objets de fortune valent **20 coups** (`TOOL_DURABILITIES`). C'est là que se paie la fortune : même rendement, **un cinquième de la vie**. L'outil d'atelier n'est pas « le même en mieux » — il est *durable*, et il ouvre la mine.
 - **C7 — Le PNJ empoigne au PALIER, pas au rendement.** `equipBestTool` classait par `toolYield` : fortune et atelier étant tous deux à ×2, un PNJ aurait pu saisir le caillou et laisser la vraie hache au sac. Le classement passe au rang (`toolRank`).
@@ -52,7 +54,7 @@ Le fil rouge : **la fortune accélère, elle n'ouvre rien.** Ce qui déverrouill
 
 ## Nombres (à calibrer)
 
-`RECIPES.rope/crude_axe/crude_pickaxe/crude_spear` (ci-dessus), `TOOL_YIELD = { none: 1, crude: 2, basic: 2, iron: 3 }`, `TOOL_RANK = { none: 0, crude: 1, basic: 2, iron: 3 }`, `TOOL_DURABILITIES = { crude_axe: 20, crude_pickaxe: 20, crude_spear: 20 }` (défaut : `TOOL_DURABILITY = 100`), `WEAPON_DAMAGE.crude_spear = 10`, `STACK_SIZES.rope = 10`.
+`RECIPES.rope/crude_axe/crude_pickaxe/crude_spear` (ci-dessus), `TOOL_YIELD = { none: 1, crude: 2, basic: 3, iron: 4 }`, `TOOL_RANK = { none: 0, crude: 1, basic: 2, iron: 3 }`, `TOOL_DURABILITIES = { crude_axe: 20, crude_pickaxe: 20, crude_spear: 20 }` (défaut : `TOOL_DURABILITY = 100`), `WEAPON_DAMAGE.crude_spear = 10`, `STACK_SIZES.rope = 10`.
 
 ## Hors périmètre — les deux couches suivantes
 

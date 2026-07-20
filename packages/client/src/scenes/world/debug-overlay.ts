@@ -1,5 +1,5 @@
 /**
- * L'overlay du mode debug (F1) et le TP au clic sur la carte.
+ * L'overlay du mode debug (P) et le TP au clic sur la carte.
  *
  * Pourquoi un MODULE et pas des méthodes de scène : Rollup élimine un module
  * dont le seul appel est gardé par `import.meta.env.DEV` (statiquement faux en
@@ -46,7 +46,7 @@ export function renderDebugOverlay(
   const hover = info?.hover
   text.setText(
     [
-      'DEBUG · F1 fermer · F2 invulnérabilité · F3 jour/nuit · F4 vitesse',
+      'DEBUG · P fermer · leviers dans le panneau (à gauche) · F2/F3/F4 raccourcis',
       `tick ${info?.tick ?? 0} · ${Math.round(info?.fps ?? 0)} fps · cadence ×${speed}${god ? ' · INVULNÉRABLE' : ''}`,
       pos ? `avatar [${pos.x.toFixed(1)} ${pos.y.toFixed(1)}]` : '',
       hover

@@ -4,7 +4,7 @@
 
 Dans un monde qui meurt en soixante jours, des villages prospèrent, commercent, se pillent et se trahissent. Au centre de chacun brûle **le Feu** — et sa couleur, visible de loin, dit ce que le village a choisi d'être. La vision complète : [`braises-gdd.md`](braises-gdd.md).
 
-**État : Phase Veillée (V0-V10) complète** — le jeu solo tourne dans le navigateur, la simulation entière vit dans un Web Worker. Prochaine phase : LAN (Colyseus, 3 joueurs).
+**État : Phase Veillée (V0-V10) complète** — le jeu solo tourne dans le navigateur, la simulation entière vit dans un Web Worker. Phase LAN en cours (Colyseus) : le serveur tourne, deux navigateurs se voient et se battent ; reste à valider la boucle à plusieurs (GATE 2).
 
 ## Jouer (dev)
 
@@ -13,7 +13,7 @@ pnpm install
 pnpm dev          # http://localhost:3000
 ```
 
-ZQSD/flèches bouger · clic récolter/looter/bâtir · F allumer son Feu · 1-5 choisir une structure · ESPACE attaquer · C bloquer · SHIFT sprinter · X bander · T donner · G réparer · E/R manger · 6-0 crafter · J la chronique.
+ZQSD/flèches/WASD bouger · SHIFT sprinter · C avancer discrètement · G jeter ce qu'on tient · 1-6 armer une case de ceinture · clic interagir selon ce qu'on tient (récolter, attaquer, allumer le Feu, bâtir, bander, donner, réparer, manger) · TAB le sac & l'artisanat · M la carte · J la chronique.
 
 ## Développer
 
@@ -33,7 +33,7 @@ packages/sim      ← TOUTE la logique. TypeScript pur, déterministe au bit pr�
                     zéro dépendance (ni Phaser, ni réseau, ni Node) — imposé par lint.
 packages/client   ← Phaser 4 + Vite. Rendu, input, interpolation. La sim tourne
                     dans un Web Worker ; le client envoie des intentions.
-packages/server   ← (Phase LAN) Node + Colyseus. Même sim, autre transport.
+packages/server   ← Node + Colyseus (Phase LAN, L1 livré). Même sim, autre transport ; persistance PostgreSQL encore à venir (Vallée).
 docs/             ← specs par système, roadmap, journal des décisions.
 ```
 

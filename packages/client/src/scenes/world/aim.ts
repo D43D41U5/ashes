@@ -93,9 +93,20 @@ export function aimAt(
 export interface HandContext {
   /** Ce qu'on TIENT (spec inventaire R9). `null` = mains nues. */
   held: ItemId | null
+  /** Le slot de ceinture SÉLECTIONNÉ — la sim consomme CE slot, pas un autre.
+   *  Absent = pas de désignation (un test) : la sim retombe sur sa règle par défaut. */
+  slot?: number
   /** Direction vers le curseur, depuis l'avatar (non normalisée : la sim le fait). */
   dx: number
   dy: number
+}
+
+/** MANGER le slot qu'on tient — on transmet l'index à la sim pour qu'elle croque CE
+ *  slot, jamais un autre (spec inventaire R9). Sans index désigné, on n'en met pas. */
+function eatHeld(hand: HandContext): PlayerAction {
+  return hand.slot !== undefined && hand.slot >= 0
+    ? { type: 'eat', item: hand.held!, slot: hand.slot }
+    : { type: 'eat', item: hand.held! }
 }
 
 export function isFood(item: ItemId | null): boolean {
@@ -143,7 +154,7 @@ export function clickToAction(
   }
 
   // MANGER : on tient de quoi, on croque. (Le clic maintenu répète — voir holdHarvest.)
-  if (hand && isFood(hand.held)) return { type: 'eat', item: hand.held! }
+  if (hand && isFood(hand.held)) return eatHeld(hand)
 
   // FRAPPER : une arme en main frappe TOUJOURS — on ne coupe pas du bois avec une
   // lance, et surtout on ne veut pas qu'un clic de panique parte récolter un buisson
@@ -196,7 +207,7 @@ export function holdHarvest(
   // (« sélectionner dans la ceinture, maintenir le clic »), et il vaut pour ce qui se
   // mange. Une ARME en main, elle, ne passe jamais par ici : `input-bindings` a vu
   // partir la charge à l'appui, et n'appelle plus ce résolveur tant qu'elle dure.
-  if (hand && isFood(hand.held)) return { type: 'eat', item: hand.held! }
+  if (hand && isFood(hand.held)) return eatHeld(hand)
   if (!target.inRange || target.nodeId === null) return null
   return { type: 'harvest', nodeId: target.nodeId }
 }

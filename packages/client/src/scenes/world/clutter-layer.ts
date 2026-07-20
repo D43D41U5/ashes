@@ -8,6 +8,7 @@ import Phaser from 'phaser'
 import { poiClearings, type Structure, type WorldMap } from '@braises/sim'
 import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
 import { clutterAt, type PropKind, type SampleTerrain } from '../../render/clutter'
+import { LIT_CLUTTER_KINDS } from '../../render/lit-props'
 import { windSway, WIND_TAKE } from '../../render/wind'
 import type { Warp } from '../../render/warp'
 
@@ -53,6 +54,11 @@ export class ClutterLayer {
    *  c'est ce qui rend la règle de l'odorat lisible sans une seule ligne d'UI. */
   wind: { x: number; y: number } = { x: 1, y: 0 }
 
+  /** ESSAI éclairage dynamique (couche 1) : quand armé, le décor est éclairé par le
+   *  LightsManager (normale plate) — la lumière module son albédo peint sans le déformer.
+   *  Piloté par WorldScene. */
+  lighting = false
+
   /** LE BÂTI GOMME LE DÉCOR (décision d'Alexis) : mur/sol/porte/toit effacent le
    *  décor cosmétique de leur tuile ; feu, composants et coffre le laissent. Appelé
    *  au fil des snapshots — pose comme démolition rouvrent la tuile au décor. */
@@ -87,14 +93,21 @@ export class ClutterLayer {
             const sprite = this.acquire(used++)
             const feetY = ty + 1 + p.oy
             const feetX = tx + 0.5 + p.ox
-            sprite.setTexture(`cl-${p.kind}`)
+            // Masse pâteuse : quand éclairé, on passe sur l'albédo APLATI `_lit` (+ sa normal map) ;
+            // les autres props gardent leur art peint (la lumière plate les module sans les déformer).
+            const useLit = this.lighting && LIT_CLUTTER_KINDS.has(p.kind)
+            sprite.setTexture(useLit ? `cl-${p.kind}_lit` : `cl-${p.kind}`)
+            sprite.setLighting(this.lighting) // pooled : réarmé chaque frame (couche 1)
             // Les pieds se posent sur le sol DÉFORMÉ, comme le maillage du sol et
             // les acteurs. Sans ce lift, un prop est dessiné à sa position PLATE :
             // sur un versant à 0,8 d'élévation il glisse de 120 px vers le bas —
             // les touffes de la berge finissent par flotter sur l'eau.
             sprite.setPosition(feetX * TILE_PX, feetY * TILE_PX - this.warp.lift(feetX, feetY))
             sprite.setDisplaySize(TILE_PX * p.scale, TILE_PX * p.scale)
-            sprite.setFlipX(p.mirror)
+            // Un flip horizontal N'inverse PAS la composante X de la normal map (Phaser tourne les
+            // normales, pas le miroir) → un prop `_lit` miroité s'éclairerait à l'ENVERS sur X. On ne
+            // miroite donc pas les variantes `_lit` (leur albédo aplati est symétrique : rien de perdu).
+            sprite.setFlipX(useLit ? false : p.mirror)
             // Le vent. L'origine est aux PIEDS (0.5, 1) : une rotation fait donc
             // plier le brin depuis sa base, comme une tige — et non tourner comme
             // une aiguille d'horloge. Le rocher a un `take` de 0 : il ne bouge pas.

@@ -723,6 +723,28 @@ describe('la faim (A4)', () => {
     expect(me(sim).hunger).toBeCloseTo(86, 1)
   })
 
+  it('manger consomme le SLOT DÉSIGNÉ, jamais un autre (ceinture pleine de baies)', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    // Trois piles de baies, une par slot (fraîcheur identique : le cas qui piégeait).
+    me(sim).inventory[0] = { item: 'berries', count: 5, fresh: 1 }
+    me(sim).inventory[1] = { item: 'berries', count: 5, fresh: 1 }
+    me(sim).inventory[2] = { item: 'berries', count: 5, fresh: 1 }
+    me(sim).hunger = 20
+
+    // Je tiens le slot 3 (index 2) : c'est LUI qui se vide, pas le slot 1.
+    act(sim, id, { type: 'eat', item: 'berries', slot: 2 })
+    expect(me(sim).inventory[2]!.count).toBe(4)
+    expect(me(sim).inventory[0]!.count).toBe(5) // le slot 1 n'a pas bougé
+    expect(me(sim).inventory[1]!.count).toBe(5)
+
+    // On le vide jusqu'au bout : il s'annule, les autres restent intacts.
+    for (let k = 0; k < 4; k++) act(sim, id, { type: 'eat', item: 'berries', slot: 2 })
+    expect(me(sim).inventory[2]).toBeNull()
+    expect(me(sim).inventory[0]!.count).toBe(5)
+    expect(me(sim).inventory[1]!.count).toBe(5)
+  })
+
   it('à 0 : vitesse divisée par 2, restaurée après un repas', () => {
     const sim = makeSim([])
     const id = spawnEntity(sim, 10.5, 10.5)

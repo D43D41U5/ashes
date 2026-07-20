@@ -10,6 +10,8 @@ import {
   BALANCE,
   FAUNA,
   HUNT,
+  NODE_DEFS,
+  forageRichness,
   sentinelOf,
   STRUCTURE_HP,
   WALL_TIERS,
@@ -46,6 +48,7 @@ import {
   type ActorFootprint,
 } from '../../render/framing'
 import { warmthColor } from '../../render/lighting'
+import { LIT_NODE_TYPES } from '../../render/lit-props'
 import { shakeOffset, type HitFx } from './hit-fx'
 
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
@@ -236,6 +239,19 @@ const NODE_TILE_STRIDE = 1_000_000
 /** REPOUSSE (spec recolte-vivante D2) : échelle plancher d'un nœud qui vient de repousser
  *  — une pousse tout juste sortie reste visible (jamais une taille nulle). */
 const GROWTH_MIN = 0.14
+/** BUISSON À BAIES : au plus 3 baies dessinées (variantes `nd-berry_bush-0..3`), affichées
+ *  PROPORTIONNELLEMENT au stock restant du nœud (demande d'Alexis 2026-07-19). Un buisson vidé
+ *  (`stock 0`) reste dessiné NU (`-0`) : ses baies reviennent seules quand la ressource repousse.
+ *  La capacité de référence est la MÊME formule que la sim à la repousse (`stock de base × la
+ *  richesse seedée du coin`), donc l'affichage est EXACT dès la première repousse — et le client
+ *  la recalcule sans état (miroir de la lueur de cueillette, C3). */
+const BERRY_TEX_MAX = 3
+function berryDots(node: ResourceNode): number {
+  if (node.stock <= 0) return 0
+  const full = Math.max(1, Math.floor(NODE_DEFS.berry_bush.stock * forageRichness(node.id)))
+  // Au moins 1 point tant qu'il reste des baies ; jamais plus que la capacité l'exige.
+  return Math.max(1, Math.min(BERRY_TEX_MAX, Math.round((BERRY_TEX_MAX * node.stock) / full)))
+}
 /** SOUCHE : durée (ms client) pendant laquelle la marque d'un nœud qui a dérivé pâlit
  *  avant de disparaître. Purement cosmétique — la nature reprend le coin. */
 const STUMP_FADE_MS = 9000
@@ -291,6 +307,11 @@ function wallTint(material: WallMaterial | undefined, ratio: number): number {
 export class SnapshotView {
   /** Dernier état reçu — lu par la prédiction (collisions) et les inputs. */
   structures: Structure[] = []
+
+  /** ESSAI éclairage dynamique (decisions.md 2026-07-20) : quand armé (toggle debug
+   *  F5), l'arbre ORDINAIRE de la Racine passe sur ses textures normal-mappées
+   *  (`*_lit`) éclairées par le LightsManager. Piloté par WorldScene. */
+  lighting = false
 
   /** Le nœud sous le curseur (spec recolte.md G4), et s'il est à portée de bras. */
   private aimedNodeId: number | null = null
@@ -515,6 +536,7 @@ export class SnapshotView {
     sprite.setPosition(p.px, p.py - lift)
     sprite.setDepth(p.depth)
     sprite.setDisplaySize(p.displayW, crouch ? p.displayH * CROUCH_FACTOR : p.displayH)
+    sprite.setLighting(this.lighting) // couche 1 : acteurs (PNJ, faune, avatar) éclairés eux aussi
   }
 
   private syncEntities(entities: Entity[], playerId: number, now: number): void {
@@ -615,6 +637,7 @@ export class SnapshotView {
         sprite = this.scene.add.image(a.px, a.py - lift, `st-${s.type}`).setOrigin(0.5, 1).setDepth(depth)
         this.structureSprites.set(s.id, sprite)
       }
+      sprite.setLighting(this.lighting) // couche 1 : murs, portes, ateliers… éclairés (pooled → chaque frame)
       if (s.type === 'fire') {
         // La couleur du Feu (spec alignement R9) : bleu ↔ blanc ↔ rouge.
         const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
@@ -784,16 +807,27 @@ export class SnapshotView {
         // reforment à l'échelle (le minéral se recristallise, le buisson repart).
         const dep = this.depleted.get(n.id)
         const growing = dep !== undefined
-        const g = dep === undefined
+        // LE BUISSON À BAIES est VIVACE : il ne DÉRIVE ni ne rétrécit à la repousse (contrairement
+        // aux autres plantes). Il reste dessiné à taille pleine (échelle 1), et c'est le NOMBRE DE
+        // BAIES qui suit le stock — `min(BERRY_TEX_MAX, stock)` points, 0 quand il est vidé.
+        const isBerry = n.type === 'berry_bush'
+        const g = isBerry || dep === undefined
           ? 1
           : Math.min(1, Math.max(GROWTH_MIN, (this.tick - dep.since) / Math.max(1, dep.until - dep.since)))
-        const texture = growing && isTree
-          ? 'nd-sapling'
-          : n.type === 'tree'
-            ? 'nd-tree_trunk'
-            : n.type === 'old_tree'
-              ? 'nd-old_tree_trunk'
-              : `nd-${n.type}`
+        // ESSAI éclairage : l'arbre ORDINAIRE adulte passe sur son albédo UNIFORME `_lit`
+        // (même forme/couleur, ombrage peint retiré) + `setLighting` → relief 100 % calculé.
+        const litTree = this.lighting && n.type === 'tree' && !growing
+        const texture = isBerry
+          ? `nd-berry_bush-${berryDots(n)}`
+          : growing && isTree
+            ? 'nd-sapling'
+            : n.type === 'tree'
+              ? (litTree ? 'nd-tree_trunk_lit' : 'nd-tree_trunk')
+              : n.type === 'old_tree'
+                ? 'nd-old_tree_trunk'
+                : this.lighting && LIT_NODE_TYPES.has(n.type)
+                  ? `nd-${n.type}_lit` // masse pâteuse (roche…) : albédo aplati + normal map quand éclairé
+                  : `nd-${n.type}`
         let sprite = this.nodePool[used]
         if (!sprite) {
           sprite = this.scene.add.image(0, 0, texture).setOrigin(0.5, 1)
@@ -818,6 +852,7 @@ export class SnapshotView {
         // que deux arbres proches se trient par leur vrai pied, pas par le pool.
         sprite.setDepth(nodeDepth(ty + j.dy, TILE_PX))
         sprite.setTexture(texture)
+        sprite.setLighting(this.lighting) // couche 1 : TOUS les nœuds sont éclairés (arbres, blocs, buissons…)
         // LA SURBRILLANCE DIT CE QUI VA SE PASSER (spec recolte.md G4) : le nœud
         // visé s'éclaire s'il est à portée, et se GRISE s'il ne l'est pas. On
         // teinte le sprite plutôt que de dessiner un cadre au sol : la teinte suit
@@ -843,7 +878,10 @@ export class SnapshotView {
         // LE POOL RÉUTILISE LES SPRITES : la texture doit être reposée à CHAQUE image, sinon un
         // houppier de gros bois se retrouve sur un arbre ordinaire (et l'inverse) selon l'ordre
         // dans lequel le pool a été servi. Le tronc le faisait déjà ; le houppier, non.
-        crown.setTexture(n.type === 'old_tree' ? 'nd-old_tree_crown' : 'nd-tree_crown')
+        // Albédo UNIFORME `_lit` quand éclairé (relief calculé par la normal map cubique).
+        const litCrown = this.lighting && n.type === 'tree'
+        crown.setTexture(n.type === 'old_tree' ? 'nd-old_tree_crown' : litCrown ? 'nd-tree_crown_lit' : 'nd-tree_crown')
+        crown.setLighting(litCrown) // pooled : réarmé chaque frame (cf. le tronc)
         crown.setPosition(px, py - 16 - lift) // `px` porte déjà le tressaillement
         crown.setDepth(crownDepth(ty + 1 + j.dy, TILE_PX))
         // Un arbre visé s'éclaire ENTIER : teinter le tronc seul donnerait un

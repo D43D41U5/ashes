@@ -116,7 +116,7 @@ export type EconomyAction =
   | { type: 'harvest_release' }
   | { type: 'craft'; recipeId: RecipeId }
   | { type: 'cancel_craft'; index: number }
-  | { type: 'eat'; item: ItemId }
+  | { type: 'eat'; item: ItemId; slot?: number }
 
 // Index tuile→nœud MÉMOÏSÉ par référence de tableau. Le NOMBRE de nœuds ne change
 // jamais au runtime, mais un nœud de bois/plante peut se DÉPLACER à l'épuisement
@@ -486,11 +486,13 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
     const usure = 1 + BALANCE.DEPLETION_REGROW_PENALTY * (node.depletions - 1)
     node.regrowAt =
       state.tick + Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR[day - 1]! * usure)
-    // LA DÉRIVE (spec recolte-vivante D1/R1) : un nœud de bois/plante meurt sur sa tuile
+    // LA DÉRIVE (spec recolte-vivante D1/R1) : un nœud de bois/fibre meurt sur sa tuile
     // et rouvre AILLEURS, dans le même bosquet. La pierre/le minéral reste sur place.
     // À `stock = 0` : le client peint la souche à l'ancien coin et fait grandir la pousse
     // au nouveau sur la durée `[tick, regrowAt]`. La pierre, elle, se reforme sur place.
-    if (def.skill !== 'mining') relocateNode(state, node)
+    // LE BUISSON À BAIES est VIVACE (demande d'Alexis 2026-07-19) : comme un arbre fruitier,
+    // il RESTE sur sa tuile, vidé de ses baies, et celles-ci repoussent DESSUS — pas de dérive.
+    if (def.skill !== 'mining' && node.type !== 'berry_bush') relocateNode(state, node)
     emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id })
   }
   if (held) {
@@ -650,13 +652,21 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
     case 'eat': {
       const value = FOOD_VALUES[action.item]
       if (value === undefined) return reject('immangeable')
-      // On mange la pile la MOINS FRAÎCHE d'abord — c'est ce que ferait n'importe
-      // qui, et ça évite au joueur un tri qu'on ne veut pas lui imposer.
+      // Le joueur a DÉSIGNÉ un slot (celui qu'il tient) : on croque CE slot, pas un
+      // autre — tenir le slot 3 et vider le slot 1 « en douce » est le contraire de
+      // ce qu'on tient. À DÉFAUT de slot (un PNJ qui se nourrit seul), on mange la
+      // pile la MOINS FRAÎCHE d'abord — ce que ferait n'importe qui, sans imposer
+      // au joueur un tri qu'on ne veut pas lui imposer.
       let pire = -1
-      for (let i = 0; i < actor.inventory.length; i++) {
-        const s = actor.inventory[i]
-        if (s === null || s === undefined || s.item !== action.item) continue
-        if (pire < 0 || (s.fresh ?? 1) < (actor.inventory[pire]!.fresh ?? 1)) pire = i
+      if (action.slot !== undefined) {
+        const s = actor.inventory[action.slot]
+        if (s !== null && s !== undefined && s.item === action.item) pire = action.slot
+      } else {
+        for (let i = 0; i < actor.inventory.length; i++) {
+          const s = actor.inventory[i]
+          if (s === null || s === undefined || s.item !== action.item) continue
+          if (pire < 0 || (s.fresh ?? 1) < (actor.inventory[pire]!.fresh ?? 1)) pire = i
+        }
       }
       if (pire < 0) return reject('stock insuffisant')
       const slot = actor.inventory[pire]!

@@ -50,6 +50,7 @@ import { calibreLeFront, computeCendreField } from './cendre'
 import { distSq } from './geometry'
 import { placePois } from './poi'
 import { fbm2, hash2 } from './noise'
+import { paintWaterRacine } from './zonegen-water'
 import {
   deriveGrapheZones,
   echantillonAt,
@@ -314,6 +315,14 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
       terrain[i] = solDe(g, z, x, y)
     }
   }
+
+  // ── PASSE 1.5 : L'EAU DE LA RACINE — lacs, plans d'eau et ruisseaux dans les Prés Bas ──
+  //
+  // Avant les seuils : un seuil qui traverserait un plan d'eau le rouvre en couloir marchable
+  // (la porte gagne), donc l'eau ne bouche jamais un passage. Et l'invariant « tout cœur profond
+  // est ceint de haut-fond marchable » garantit qu'aucune poche de terre n'est enclavée — la garde
+  // de connexité (passe 3) n'a rien à réparer.
+  paintWaterRacine(terrain, zone, g.racine, width, height, seed, RELIEF.BORDURE)
 
   // ── PASSE 2 : les seuils — on perce tout droit un couloir PLAT dans la frontière ──
   for (const s of g.seuils) {

@@ -21,6 +21,9 @@ new Phaser.Game({
   backgroundColor: '#0f0b08', // le fond chaud de la maquette (palette bg)
   antialias: true,
   roundPixels: true,
+  // Éclairage dynamique (essai DA, decisions.md 2026-07-20) : le LightsManager plafonne le
+  // nombre de lumières simultanées. Le soleil + une poignée de Feux visibles tiennent large.
+  render: { maxLights: 40 },
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,

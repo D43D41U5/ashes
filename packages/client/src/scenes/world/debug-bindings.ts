@@ -1,7 +1,8 @@
 /**
- * Le mode DEBUG (dev uniquement) — F1 l'arme, puis :
- *   F1  fermer          F2  invulnérabilité      F3  jour ↔ nuit
- *   F4  cadence ×1/2/4/8            clic sur la carte (M) : se téléporter
+ * Le mode DEBUG (dev uniquement) — P l'arme et ouvre le PANNEAU cliquable
+ * (debug-panel.ts) ; les touches restent en accélérateurs :
+ *   P   fermer     F2  invulnérabilité     F3  jour ↔ nuit     F4  cadence ×1/2/4/8
+ *   (l'éclairage dynamique n'a pas de touche — voir le panneau ; clic carte M : TP)
  *
  * Tout est ISOLÉ ici, et l'unique appelant (WorldScene) garde l'import derrière
  * `import.meta.env.DEV` : en production, ce module n'est pas dans le bundle.
@@ -42,6 +43,7 @@ export function bindDebugKeys(scene: Phaser.Scene, deps: DebugDeps): void {
   setHud(scene.registry, 'debugOn', false)
   setHud(scene.registry, 'debugGod', false)
   setHud(scene.registry, 'debugSpeed', 1)
+  setHud(scene.registry, 'debugLighting', false)
 
   onDown(DEBUG_KEYMAP.toggle, () => {
     const on = !isOn()
@@ -75,4 +77,6 @@ export function bindDebugKeys(scene: Phaser.Scene, deps: DebugDeps): void {
     setHud(scene.registry, 'debugSpeed', next)
     deps.setSpeed(next)
   })
+  // L'éclairage dynamique (essai, decisions.md 2026-07-20) n'a PAS de touche : F5 rechargeait
+  // la page. Son interrupteur vit dans le panneau debug cliquable (debug-panel.ts).
 }

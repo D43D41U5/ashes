@@ -2,6 +2,8 @@
 
 *Source : GDD §3 (alignement émergent), §13 (MVP : deux axes + Foyer/Meute ; Ermitage/Charognard en phase Vallée). Statut : **implémenté** (2026-07-05, A1-A8 verts — le paquebot vire, la Meute raide). Jalon : V8.*
 
+> **⚠ Débranché du mode joué (audit 2026-07-19).** A1-A8 sont verts *en /sim et au banc* (`scenario.ts`), mais `veillee.ts` ne fonde aucun village PNJ : en Veillée solo, `isOutsider()` reste toujours faux et rien ci-dessous ne se déclenche (Feu blanc, aucun archétype, aucun raid/don n'atteint le joueur). Rebrancher = fonder 2-3 voisins dans la Veillée (backlog R-A / V1-10). *Décision de design ouverte (T1, `direction-design.md`) : le solo doit-il subir des raids, ou l'Ermitage tranquille prime-t-il ?*
+
 ## Objectif de design
 
 L'identité morale d'un village **émerge des actes de ses membres** et se voit de loin dans la couleur de son Feu. Aucun choix déclaratif : des actes discrets, vérifiables, impliquant l'extérieur — pondérés par le coût réel, agrégés avec inertie. En V8, la vallée gagne ses premiers voisins à caractère : une Meute qui raide, un Foyer qui donne.
@@ -37,7 +39,7 @@ L'identité morale d'un village **émerge des actes de ses membres** et se voit 
 ### Les effets (R7-R8) — continu pour les stats, paliers pour les capacités
 
 - **R7 — Continu** : la régénération de PV des membres est modulée par la chaleur du Feu (de ×0.75 à ×2 sur l'axe −100..+100) — le village bienveillant soigne.
-- **R8 — Paliers** : **Foyer** → structures bâties +25 % PV, mais **malus offensif** : dégâts ×0.6 contre un extérieur non-agresseur (le Foyer a une milice féroce, pas une armée d'invasion — l'interdiction formelle d'initier un raid attend Va3). **Meute** → dégâts ×1.2 contre les extérieurs, mais **économie anémique** : rendements de récolte ×0.75 (le prédateur dépend de ses proies).
+- **R8 — Paliers** : **Foyer** → structures bâties +25 % PV, mais **malus offensif** : dégâts ×0.6 contre un extérieur non-agresseur (le Foyer a une milice féroce, pas une armée d'invasion — l'interdiction formelle d'initier un raid attend Va3). **Meute** → dégâts ×1.2 contre les extérieurs, mais **économie anémique** : rendements de récolte ×0.75 (le prédateur dépend de ses proies). *(⚠ Réserve de design : ces paliers sont aujourd'hui des **multiplicateurs**, pas des capacités débloquées ; le GDD vise des déblocages nommés — Marché franc, etc. (backlog V2-23). À trancher : retire-t-on les multiplicateurs quand les capacités arrivent ? Cf. `direction-design.md` T5.)*
 
 ### La lisibilité (R9)
 
