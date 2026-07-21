@@ -58,7 +58,6 @@ export const AMBIENT_DEPTH = 1_100_000
  *  tinte alors que le fond non éclairé ; les sprites prennent leur jour/nuit du LightsManager
  *  (sinon double-assombrissement). Éclairage éteint → le voile remonte à `AMBIENT_DEPTH`. */
 export const AMBIENT_DEPTH_LIT = 8
-export const GLOW_DEPTH = 1_200_000
 /** Les lucioles sont au-dessus du voile de nuit — sinon la nuit éteindrait
  * précisément ce qui n'a de sens que la nuit. */
 export const SPARK_DEPTH = 1_250_000

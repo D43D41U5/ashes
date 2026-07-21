@@ -775,7 +775,7 @@ export class WorldScene extends Phaser.Scene {
       this.zoneAir?.setFillStyle(this.airColor).setAlpha(this.airAlpha)
       const day = daylight(hour)
       this.water?.update(time, hour, day) // la houle, et le soleil dessus
-      this.fireFx?.update(this.view.structures, this.view.villages, day, time)
+      this.fireFx?.update(this.view.structures) // flammes/braises/fumée (aucun traitement du sol)
       // ESSAI éclairage dynamique (toggle debug, panneau P) : le flag éclaire TOUS les sprites
       // (couche 1) et pilote soleil/lune/Feux. Éteint = scène rendue comme avant.
       const lit = Boolean(getHud(this.registry, 'debugLighting'))
