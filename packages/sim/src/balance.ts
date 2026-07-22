@@ -1946,6 +1946,11 @@ export const COMBAT = {
   /** Modulateurs de régén : bien nourri (faim > 70) / affamé (faim 0). */
   FED_REGEN_BONUS: 1.25,
   STARVED_REGEN_MALUS: 0.5,
+  /** UNE PLAIE NON SOIGNÉE FREINE LA GUÉRISON (V1-14, GDD §6bis) — c'est ce qui fait
+   *  exister le médecin : le bandage clôt la plaie et rend la régén pleine. On ne coupe
+   *  pas à zéro (sans soin PNJ autonome, les villageois spiraleraient) : on freine fort,
+   *  le bandage reste la vraie cure (modèle Project Zomboid : on guérit une fois traité). */
+  WOUNDED_REGEN_FACTOR: 0.25,
   /** Armement par DÉFAUT — celui des BÊTES (les avatars suivent WEAPON_PROFILES). */
   WINDUP_TICKS: ticksFor(0.4),
   /** Portée par DÉFAUT — celle des BÊTES. Un avatar frappe à la portée de son arme. */
@@ -1982,7 +1987,7 @@ export const COMBAT = {
   ARM_WOUND_DAMAGE: 0.6,
   BLEED_HP_PER_S: 1.5,
   BANDAGE_FIBER_COST: 3,
-  HP_REGEN_PER_MIN: 2, // si faim > 50 et pas de saignement
+  HP_REGEN_PER_MIN: 2, // si faim > 50 ; FREINÉ ×WOUNDED_REGEN_FACTOR par une plaie non soignée (§6bis)
   RESPAWN_HP: 50,
   RESPAWN_HUNGER: 50,
   RESPAWN_STAMINA: 20,

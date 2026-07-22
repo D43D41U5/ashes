@@ -744,7 +744,14 @@ export function advanceCombat(state: SimState): void {
     // (MONSTER_DEFS[type].hp) — sans cette garde un monstre entamé regrimpe
     // passivement au-delà de son max.
     if (!monsterIds.has(entity.id) && entity.hp > 0 && entity.hp < 100 && entity.hunger > 50) {
-      entity.hp = Math.min(100, entity.hp + (COMBAT.HP_REGEN_PER_MIN / (60 * BALANCE.TICK_RATE_HZ)) * regenFactor(state, entity))
+      // GDD §6bis : une PLAIE non soignée (saignement/jambe/bras) freine fort la guérison
+      // — c'est ce qui fait exister le médecin. Le bandage clôt la plaie → régén pleine.
+      const wounded = entity.wounds.bleeding === true || entity.wounds.leg === true || entity.wounds.arm === true
+      const woundFactor = wounded ? COMBAT.WOUNDED_REGEN_FACTOR : 1
+      entity.hp = Math.min(
+        100,
+        entity.hp + (COMBAT.HP_REGEN_PER_MIN / (60 * BALANCE.TICK_RATE_HZ)) * regenFactor(state, entity) * woundFactor,
+      )
     }
   }
 

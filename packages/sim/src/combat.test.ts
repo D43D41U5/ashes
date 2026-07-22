@@ -354,6 +354,24 @@ describe('le blocage directionnel (A3)', () => {
 })
 
 describe('les blessures (A4)', () => {
+  it('V1-14 : une plaie NON soignée freine fort la guérison ; sans plaie, elle est pleine (§6bis)', () => {
+    const sim = makeSim()
+    const hurt = spawnEntity(sim, 10, 10)
+    const sain = spawnEntity(sim, 30, 30)
+    for (const id of [hurt, sain]) {
+      const e = entity(sim, id)
+      e.hp = 50 // entamé (donc la régén opère)
+      e.hunger = 80 // > 50, et > 70 → même bonus de satiété pour les deux
+    }
+    entity(sim, hurt).wounds = { leg: true } // une plaie NON drainante, mais non soignée
+    for (let t = 0; t < 8 * BALANCE.TICK_RATE_HZ; t++) tick(sim) // 8 s de repos
+    const gainBlesse = entity(sim, hurt).hp - 50
+    const gainSain = entity(sim, sain).hp - 50
+    expect(gainSain).toBeGreaterThan(0) // le sain guérit à plein
+    expect(gainBlesse).toBeGreaterThan(0) // le blessé guérit AUSSI (résiduelle : pas de spirale)
+    expect(gainBlesse).toBeLessThan(gainSain * 0.5) // …mais bien plus lentement (le médecin existe)
+  })
+
   it('les paliers blessent, la jambe ralentit, le saignement se bande — sur un allié aussi', () => {
     const sim = makeSim()
     const a = spawnEntity(sim, 10, 10)
