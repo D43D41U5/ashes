@@ -68,6 +68,7 @@ import {
   publishAlarm,
   publishChronicle,
   publishError,
+  publishDeath,
   publishFoundableFire,
   publishUpgradableFire,
   publishOpenContainer,
@@ -1237,6 +1238,14 @@ export class WorldScene extends Phaser.Scene {
         // l'absence d'un dégât qu'on ne voyait pas venir. Le libellé de blessure du
         // HUD s'efface au même snapshot (hud-core) : le geste a un avant et un après.
         this.attackFx.spark(this.playerSprite.x, this.playerSprite.y - 6, 0, false, this.time.now)
+      } else if (event.type === 'entity_died' && event.entityId === this.playerId) {
+        // LE JOUEUR EST TOMBÉ (audit UI/UX P1) : on lève le voile de mort. La sim a
+        // DÉJÀ fait respawn au Feu — ce n'est qu'un moment de présentation, il ne bloque
+        // rien. On NOMME la chute (froid/faim/tueur), rappelle que le sac est resté sur
+        // le corps, et rassure (compétences gardées). Le type du tueur vient du snapshot
+        // (le monstre d'`byEntityId`), jamais recalculé (§3).
+        const killer = msg.monsters.find((m) => m.entityId === event.byEntityId)
+        publishDeath(this.registry, event.cause, event.byEntityId, killer?.type ?? null, this.time.now)
       }
       if (CHRONICLE_TYPES.has(event.type)) {
         this.eventLog.push(event)

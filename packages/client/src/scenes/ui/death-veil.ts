@@ -1,0 +1,134 @@
+/**
+ * LE VOILE DE MORT — le moment d'enjeu, enfin rendu (audit UI/UX P1).
+ *
+ * La mort du joueur n'avait AUCUN retour client : un saut de caméra muet au respawn.
+ * Or c'est le moment central du jeu. Ce voile lui donne un corps et une voix, dans le
+ * ton du GDD (une vallée condamnée, la mort comme jalon d'un récit) — issu d'un vote de
+ * design multi-agents (« death-moment »), dont on retient :
+ *  - un FONDU de cendre SEMI-opaque (le monde transparaît en fantôme), distinct de
+ *    l'écran de RUPTURE (`fatal.ts`, opaque : la rupture est un arrêt, la mort non) ;
+ *  - un DRAIN de couleur façon Don't Starve, en pur CSS (`backdrop-filter`) ;
+ *  - le registre VOUS (tout le HUD parle VOUS — passer à TU ne serait cohérent qu'en
+ *    basculant TOUT le HUD, hors sujet ici) ;
+ *  - la cause RÉSOLUE du vrai flux (froid, faim, saignement, tueur nommé…) ;
+ *  - PAS de rouge d'alerte (rouge = blocage/erreur ; la mort n'est pas une erreur) ;
+ *  - la conséquence qui compte : la dépouille reste où l'on tombe, et l'on garde ce
+ *    que l'on sait (anti-panique).
+ *
+ * Rendu en DOM sur `document.body` — PAS sur la planche du HUD, qui est `transform`-
+ * scalée (un `inset:0` s'y effondrerait, et un `position:fixed` s'y ancrerait quand
+ * même, car un ancêtre transformé devient le bloc conteneur du fixed). Le voile veut
+ * le VRAI plein écran : il vit donc à la racine. Purement présentationnel : la sim a
+ * DÉJÀ fait respawn (le voile ne bloque rien), il se lève et retombe tout seul.
+ */
+
+/** La cause de la chute, telle que la porte l'événement `entity_died` de la sim. */
+export type DeathCause = 'cold' | 'hunger' | null
+
+/**
+ * LA LIGNE DE CAUSE (pure, testée) — résolue du vrai flux d'événements. `killerType`
+ * vient du snapshot (le monstre d'`byEntityId`), `null` si le tueur n'est pas un monstre
+ * connu. Toujours au passé, factuel, sans point d'exclamation.
+ */
+export function deathLine(cause: DeathCause, byEntityId: number, killerType: string | null): string {
+  if (cause === 'cold') return 'Le froid vous a pris.'
+  if (cause === 'hunger') return 'La faim vous a emporté.'
+  // Saignement : la sim ne pose ni cause ni tueur (byEntityId 0) — la mort la plus
+  // opaque du jeu, enfin nommée. (Inféré ; exact tant que seul le saignement y mène.)
+  if (byEntityId === 0) return 'Vous vous êtes vidé de votre sang.'
+  if (killerType === 'wolf') return 'Un loup vous a abattu.'
+  if (killerType === 'boar') return 'Un sanglier vous a encorné.'
+  if (killerType === 'cendreux') return 'Un Cendreux vous a repris.'
+  if (killerType !== null) return 'Vous avez été abattu.' // zombie, ou tout autre monstre
+  return 'Vous êtes tombé, sans témoin.' // tueur disparu / PNJ / joueur non nommable
+}
+
+export interface DeathVeil {
+  /** Le joueur est tombé : lève le voile (cause + conséquence). `firstDeath` ajoute
+   *  l'invite « retournez-y » (une fois). Le RETRAIT est piloté par UIScene sur
+   *  l'horloge Phaser (`hide()`), pas par un timer JS. */
+  show(cause: DeathCause, byEntityId: number, killerType: string | null, firstDeath: boolean): void
+  /** Laisse retomber le voile (fondu de sortie). Idempotent. */
+  hide(): void
+  destroy(): void
+}
+
+// ── Le rythme du voile ─────────────────────────────────────────────────────────────
+// La DURÉE VISIBLE (entrée + maintien) est comptée par UIScene sur l'horloge Phaser,
+// comme le fait le bandeau d'erreur — window.setTimeout n'est PAS fiable ici (il vit
+// hors du rAF que Phaser met en pause) et le voile restait ou disparaissait à contretemps.
+export const DEATH_VEIL_MS = 3200
+/** Durée du fondu CSS (entrée ET sortie de l'opacité/translation). */
+const FADE_MS = 550
+
+export function createDeathVeil(): DeathVeil {
+  // Idempotent : un voile résiduel (rebuild de scène, HMR) est retiré avant d'en poser
+  // un neuf — sinon deux `.death-veil` s'empilent sur `body` et l'un masque l'autre.
+  document.querySelectorAll('.death-veil').forEach((n) => n.remove())
+  const root = document.createElement('div')
+  root.className = 'death-veil'
+  root.innerHTML = `
+  <style>
+    .death-veil{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
+      opacity:0;transition:opacity ${FADE_MS}ms ease;pointer-events:none;
+      background:rgba(20,20,26,.86);
+      -webkit-backdrop-filter:grayscale(.75) saturate(.35) brightness(.85);
+      backdrop-filter:grayscale(.75) saturate(.35) brightness(.85);}
+    .death-veil.dv-on{opacity:1;}
+    /* La SEULE chaleur à l'écran : la braise du Feu qui appelle déjà, en bas. */
+    .dv-glow{position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:900px;height:420px;
+      background:radial-gradient(ellipse at bottom,rgba(201,139,58,.20),transparent 68%);pointer-events:none;}
+    .dv-card{position:relative;text-align:center;max-width:720px;padding:0 44px;transform:translateY(10px);
+      transition:transform ${FADE_MS}ms ease;font-family:inherit;}
+    .death-veil.dv-on .dv-card{transform:translateY(0);}
+    .dv-title{font-size:30px;font-weight:700;color:#c98b3a;letter-spacing:6px;
+      text-shadow:0 2px 0 #14141a,0 0 18px rgba(201,139,58,.25);}
+    .dv-cause{font-size:17px;color:#e6ddc8;letter-spacing:.5px;margin-top:20px;}
+    .dv-div{width:80px;height:1px;background:#6b5a3a;margin:26px auto;}
+    .dv-corpse{font-size:15px;color:#c0a074;line-height:1.7;max-width:520px;margin:0 auto;}
+    .dv-learn{font-size:13px;color:#8a8172;margin-top:12px;letter-spacing:.5px;}
+    .dv-skills{font-size:13px;color:#6f8a70;margin-top:18px;letter-spacing:.5px;}
+  </style>
+  <div class="dv-glow"></div>
+  <div class="dv-card">
+    <div class="dv-title">VOUS ÊTES TOMBÉ</div>
+    <div class="dv-cause"></div>
+    <div class="dv-div"></div>
+    <div class="dv-corpse">Votre dépouille repose là où vous êtes tombé, avec tout ce que vous portiez.</div>
+    <div class="dv-learn">Retournez-y la reprendre — ou laissez-la au monde.</div>
+    <div class="dv-skills">Vos mains, elles, n'ont rien oublié.</div>
+  </div>`
+  document.body.appendChild(root)
+  const causeEl = root.querySelector<HTMLElement>('.dv-cause')!
+  const learnEl = root.querySelector<HTMLElement>('.dv-learn')!
+
+  // La fin du fondu de SORTIE pose display:none — piloté par l'événement `transitionend`
+  // (pas un timer) : l'opacité atteint 0, on cache. Fiable et sans horloge parallèle.
+  const onFadeOut = (e: TransitionEvent): void => {
+    if (e.propertyName === 'opacity' && !root.classList.contains('dv-on')) root.style.display = 'none'
+  }
+  root.addEventListener('transitionend', onFadeOut)
+
+  return {
+    show(cause, byEntityId, killerType, firstDeath) {
+      // LA VISIBILITÉ D'ABORD — elle ne doit dépendre d'AUCUN sous-élément. On lève le
+      // voile, puis on le remplit. Reflow forcé avant d'armer la transition, sinon
+      // display:none→flex « avale » le fondu (pas de transition depuis un état non peint).
+      root.style.display = 'flex'
+      void root.offsetWidth
+      root.classList.add('dv-on')
+      causeEl.textContent = deathLine(cause, byEntityId, killerType)
+      // « Retournez-y » n'est utile qu'à la PREMIÈRE mort — après, on a compris.
+      learnEl.style.display = firstDeath ? '' : 'none'
+    },
+    hide() {
+      // On retire dv-on : l'opacité fond vers 0 (transition CSS ${FADE_MS}ms), puis
+      // `onFadeOut` (transitionend) pose display:none. Aucun timer JS.
+      root.classList.remove('dv-on')
+    },
+    destroy() {
+      root.removeEventListener('transitionend', onFadeOut)
+      root.remove()
+    },
+  }
+}

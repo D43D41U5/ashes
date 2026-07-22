@@ -103,6 +103,11 @@ export interface HudState {
    *  Feu ». `affordable` grise le bouton et fait APPRENDRE le coût (on le voit avant
    *  de pouvoir payer). `null` = pas ici, ou pas Chef, ou palier maximal. */
   upgradableFire: { villageId: number; tier: number; nextCost: ItemBag; affordable: boolean } | null
+  /** LE JOUEUR VIENT DE MOURIR (audit UI/UX P1) — un ONE-SHOT horodaté (patron de
+   *  `error`) : UIScene lève le voile de mort quand `at` change. `cause` : froid/faim/
+   *  null (combat) ; `byEntityId` + `killerType` (le monstre du snapshot, ou null)
+   *  résolvent la ligne exacte. `null` = pas de mort en attente. */
+  deathMoment: { cause: 'cold' | 'hunger' | null; byEntityId: number; killerType: string | null; at: number } | null
   /** LE MENU PERSONNAGE (TAB) est-il ouvert ? C'est l'écran qui rassemble ce que le
    *  personnage EST et ce qu'il PEUT : son sac, sa ceinture, son artisanat — et
    *  demain ses vêtements et ses maîtrises. Il s'appelait « inventaire » quand il

@@ -1086,6 +1086,53 @@ const SCENARIOS = {
   },
 
   /**
+   * LE VOILE DE MORT (audit UI/UX P1) — se lève-t-il, et NOMME-t-il la chute ?
+   *
+   * La mort du joueur n'avait aucun retour client. On INJECTE une mort (le registry est
+   * PARTAGÉ WorldScene↔UIScene ; poser `deathMoment` avec un `at` neuf déclenche le
+   * voile, exactement comme le fait `entity_died` du joueur en vrai) après avoir laissé
+   * la scène se stabiliser, puis on LIT l'état DOM et on REGARDE la capture : le voile
+   * doit couvrir l'écran (display flex, opacité pleine) et la cause doit être écrite.
+   */
+  async mort(page) {
+    await page.waitForTimeout(1500) // le harnais a déjà navigué + attendu mapData ; on stabilise
+    await page.evaluate(() =>
+      window.__BRAISES__.scene.registry.set('deathMoment', { cause: 'cold', byEntityId: 0, killerType: null, at: 424242 }),
+    )
+    // UIScene lève le voile puis arme un timer Phaser de retrait. En jeu réel il tient
+    // DEATH_VEIL_MS ; MAIS l'horloge du harnais headless SAUTE (le `delta` explose quand
+    // le loop rattrape un stall de chargement), ce qui fait retomber le voile aussitôt.
+    // On NEUTRALISE donc le minuteur ici pour vérifier la PRÉSENTATION (le voile se lève,
+    // il nomme la chute) sans dépendre d'un minutage que ce harnais ne sait pas tenir.
+    await page.waitForTimeout(120)
+    await page.evaluate(() => {
+      const ui = window.__BRAISES__.scene.scene.get('ui')
+      ui.deathHideTimer?.remove()
+      const dv = document.querySelector('.death-veil')
+      if (dv) {
+        dv.style.display = 'flex'
+        dv.classList.add('dv-on')
+      }
+    })
+    await page.waitForTimeout(500) // le fondu d'entrée (550 ms transition CSS) achève
+    const dom = await page.evaluate(() => {
+      const dv = document.querySelector('.death-veil')
+      return {
+        count: document.querySelectorAll('.death-veil').length,
+        display: dv && getComputedStyle(dv).display,
+        opacity: dv && Number(getComputedStyle(dv).opacity).toFixed(2),
+        cause: document.querySelector('.dv-cause')?.textContent ?? '',
+      }
+    })
+    console.log(`voile de mort : ${JSON.stringify(dom)}`)
+    await page.screenshot({ path: `${OUT}/mort-voile.png` })
+    if (dom.display !== 'flex' || Number(dom.opacity) < 0.8 || !dom.cause.includes('froid')) {
+      console.error(`!! LE VOILE NE SE LÈVE PAS : ${JSON.stringify(dom)}`)
+    }
+    return dom
+  },
+
+  /**
    * LE COMBAT SE VOIT-IL ? (spec tension.md — le télégraphe du GDD §7.)
    *
    * On FRAPPE pour de vrai — clic gauche dans le vide, mains nues (la sim tranche :

@@ -253,6 +253,20 @@ export function publishError(registry: Registry, reason: string, at: number): vo
   setHud(registry, 'error', { reason, at })
 }
 
+/** LE JOUEUR EST TOMBÉ (audit UI/UX P1) : un one-shot horodaté que UIScene lit pour
+ *  lever le voile de mort. `cause` vient de l'événement `entity_died` (froid/faim, ou
+ *  `undefined` = tué → `null` ici). Horodaté avec `at` : un nouveau `at` = une nouvelle
+ *  mort (le même patron que `publishError`). */
+export function publishDeath(
+  registry: Registry,
+  cause: 'cold' | 'hunger' | undefined,
+  byEntityId: number,
+  killerType: string | null,
+  at: number,
+): void {
+  setHud(registry, 'deathMoment', { cause: cause ?? null, byEntityId, killerType, at })
+}
+
 /** L'alarme de mon village (flash rouge côté UI). */
 export function publishAlarm(registry: Registry, at: number): void {
   setHud(registry, 'alarm', { at })

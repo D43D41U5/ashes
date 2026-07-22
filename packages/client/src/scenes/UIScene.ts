@@ -16,6 +16,7 @@ import { createBuildMenu, type BuildMenu } from './ui/build-menu'
 import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
 import { createFoundVillagePrompt, type FoundVillagePrompt } from './ui/found-village-prompt'
 import { createFireUpgradePrompt, type FireUpgradePrompt } from './ui/fire-upgrade-prompt'
+import { createDeathVeil, DEATH_VEIL_MS, type DeathVeil } from './ui/death-veil'
 import { mountHud, type HudDom } from './ui/hud-dom'
 import { createLoadingScreen, type LoadingScreen } from './ui/loading'
 import { createChatPanel, type ChatPanel } from './ui/chat-panel'
@@ -62,6 +63,15 @@ export class UIScene extends Phaser.Scene {
   /** La fenêtre du bas « Fonder un village ici ? » — près d'un feu de camp libre. */
   private foundVillagePrompt!: FoundVillagePrompt
   private fireUpgradePrompt!: FireUpgradePrompt
+  private deathVeil!: DeathVeil
+  /** Le dernier `at` de mort déjà montré — un nouveau lève le voile une seule fois. */
+  private lastDeathAt = -1
+  /** Combien de fois on est tombé cette session — l'invite « retournez-y » n'apparaît
+   *  qu'à la première (après, on a compris). */
+  private deaths = 0
+  /** Le compte à rebours qui fait retomber le voile — un timer PHASER (`this.time`,
+   *  piloté par la boucle de jeu, pausable), pas un `window.setTimeout` peu fiable ici. */
+  private deathHideTimer?: Phaser.Time.TimerEvent
   private chatPanel!: ChatPanel
   private journalPanel!: Phaser.GameObjects.Container
   private journalText!: Phaser.GameObjects.Text
@@ -137,7 +147,10 @@ export class UIScene extends Phaser.Scene {
     // par-dessus le canvas du monde (voir ui/hud-dom.ts). Montée tôt : les sections
     // s'y accrochent dessous.
     this.hudRoot = mountHud()
-    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.hudRoot.destroy())
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.hudRoot.destroy()
+      this.deathVeil?.destroy() // il vit à la racine (hors planche) : à retirer à la main
+    })
 
     // LA BANDE DU HUD (maquette 2A), en DOM : jour/lieu (haut-gauche), toasts (haut-
     // droite), médaillons de vitale + ligne poids/blessures/métiers (bas-gauche),
@@ -169,6 +182,10 @@ export class UIScene extends Phaser.Scene {
     // La fenêtre sœur « Monter le Feu ? » : même patron, même contrat (WorldScene pose
     // `upgradableFire`, la sim revalide `upgrade_fire`).
     this.fireUpgradePrompt = createFireUpgradePrompt(this.hudRoot.board, (action) => queueAction(this.registry, action))
+    // Le voile de mort (P1) : monté à la racine (vrai plein écran, hors planche
+    // scalée), il ne fait que se lever quand le joueur tombe. WorldScene pose
+    // `deathMoment` (one-shot horodaté).
+    this.deathVeil = createDeathVeil()
     this.chatPanel = createChatPanel(this)
     // Le journal (J) : la chronique de la saison, la Mémoire v1.
     const panelBg = this.add.rectangle(0, 0, 720, 480, 0x14141a, 0.92).setOrigin(0.5).setStrokeStyle(2, 0x6b5a3a)
@@ -528,6 +545,17 @@ export class UIScene extends Phaser.Scene {
     // mutuellement exclusives (fonder = feu libre sans village ; monter = Chef d'un
     // village), elles ne s'affichent donc jamais ensemble.
     this.fireUpgradePrompt.update(getHud(this.registry, 'upgradableFire') ?? null)
+    // Le voile de mort : un one-shot horodaté (patron de `error`). Un nouveau `at` =
+    // une nouvelle mort → on lève le voile une fois ; il retombe tout seul.
+    const death = getHud(this.registry, 'deathMoment')
+    if (death && death.at !== this.lastDeathAt) {
+      this.lastDeathAt = death.at
+      this.deathVeil.show(death.cause, death.byEntityId, death.killerType, this.deaths === 0)
+      this.deaths += 1
+      // Le voile retombe après le maintien, via un timer PHASER (boucle de jeu, pausable).
+      this.deathHideTimer?.remove()
+      this.deathHideTimer = this.time.delayedCall(DEATH_VEIL_MS, () => this.deathVeil.hide())
+    }
     // La file, elle, se voit TOUJOURS : une file bouchée (sac plein) ou en pause
     // (station quittée) doit se remarquer sans aller ouvrir un menu (spec F15).
     this.craftQueueView.setVisible(true)
