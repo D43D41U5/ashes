@@ -9,7 +9,9 @@ pnpm install      # workspace complet
 pnpm check        # tsc --noEmit sur tous les packages
 pnpm test         # vitest sur tous les packages (/sim + cadrage du client)
 pnpm lint         # eslint, dont les garde-fous de pureté de /sim
-pnpm dev          # client Vite (jeu jouable sur http://localhost:3000)
+pnpm dev          # client Vite SUR L'HÔTE (jeu jouable sur http://localhost:3000)
+# Stack Docker : `docker compose up -d` → jeu sur http://ashes.test via le proxy Traefik
+# PARTAGÉ (~/projects/proxy, à lancer d'abord : cd ~/projects/proxy && docker compose up -d)
 pnpm build        # build web statique → packages/client/dist
 pnpm smoke        # pilote le VRAI jeu dans Chromium et rapporte ce qu'il voit
 ```

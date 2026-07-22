@@ -1,10 +1,16 @@
-# Stack de développement : serveur Vite (client) derrière Traefik.
+# Stack de développement : serveur Vite (client) + serveur autoritatif (server).
 # Édite un fichier sous packages/client/src/ → recompilation à la volée + rechargement auto.
 #
-#   docker compose up   → http://ashes.localhost  (dashboard Traefik : http://localhost:8080)
+# LE REVERSE PROXY EST DÉSORMAIS PARTAGÉ ET EXTERNE — il vit dans ~/projects/proxy
+# (Traefik commun à tous les sites). Cette stack ne publie plus le port 80 : elle
+# rejoint le réseau `traefiknet` et sa route est déclarée dans proxy/dynamic/ashes.yml.
 #
-# Provider « fichier » (et non le provider Docker) : évite le socket Docker et les
-# soucis de négociation d'API avec Docker Engine 29+ (cf. convention du projet front).
+#   cd ~/projects/proxy && docker compose up -d   # une fois : démarre le proxy
+#   docker compose up -d                          # ici : démarre client + server
+#   → http://ashes.test  (dashboard Traefik : http://localhost:8080)
+#
+# Le proxy utilise le provider « fichier » (et non Docker) : évite le socket Docker et
+# les soucis de négociation d'API avec Docker Engine 29+ (cf. convention du projet front).
 #
 # ─── AJOUTER UNE DÉPENDANCE npm (la seule manœuvre que le montage `:ro` complique) ───
 #
@@ -42,27 +48,6 @@
 # par `docker volume ls` si le dépôt est cloné ailleurs.
 # ────────────────────────────────────────────────────────────────────────────────────
 services:
-  traefik:
-    image: traefik:v3.5
-    container_name: braises-traefik-dev
-    command:
-      - "--entrypoints.web.address=:80"
-      - "--providers.file.directory=/etc/traefik/dynamic"
-      - "--providers.file.watch=true"
-      - "--api.dashboard=true"
-      - "--api.insecure=true"
-    ports:
-      - "80:80"
-      - "8080:8080"
-    volumes:
-      - ./traefik/dynamic.dev.yml:/etc/traefik/dynamic/dynamic.yml:ro
-    depends_on:
-      # Ne démarre qu'une fois Vite prêt (healthcheck ci-dessous) : `up -d --wait`
-      # ne rend la main que quand http://ashes.localhost répond vraiment.
-      client:
-        condition: service_healthy
-    restart: unless-stopped
-
   # Serveur de dev Vite. Le code source est monté en volume : les changements
   # sur l'hôte sont vus dans le conteneur. node_modules dans des volumes nommés
   # (binaires Linux/musl propres au conteneur, sans écraser ceux de l'hôte).
@@ -144,6 +129,10 @@ services:
       timeout: 3s
       retries: 20
       start_period: 120s
+    # Rejoint le réseau partagé du proxy Traefik (~/projects/proxy) : c'est par là
+    # que le proxy atteint ce conteneur (route dans proxy/dynamic/ashes.yml).
+    networks:
+      - web
     restart: unless-stopped
 
   # Le serveur AUTORITATIF de la Phase LAN (@braises/server, Colyseus + tsx). Il fait
@@ -188,3 +177,12 @@ volumes:
   braises_sim_modules:
   braises_server_modules:
   braises_pnpm_store:
+
+# Réseau partagé du proxy Traefik (~/projects/proxy). Créé hors compose
+# (`docker network create traefiknet`) ; `external: true` évite le préfixe projet.
+# Seul `client` y est attaché ; `server` reste sur le réseau par défaut de la stack
+# (le navigateur l'atteint en direct sur :2567, pas via Traefik).
+networks:
+  web:
+    external: true
+    name: traefiknet
