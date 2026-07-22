@@ -65,6 +65,10 @@ export type ItemId =
   | 'hammer'
   | 'raw_meat'
   | 'cooked_meat'
+  /** LA PEAU BRUTE (spec chasse — coup propre `slainClean`) : ce que rend un gibier
+   *  abattu PROPREMENT. La matière première du cuir — tannage → couture → tenue
+   *  d'hiver (Vague 2). Le chef-d'œuvre de la chasse irrigue enfin l'économie. */
+  | 'raw_hide'
   | 'components'
   /**
    * LE FEU DE CAMP, EN OBJET. On le fabrique (10 bois), on le PORTE, on le POSE au

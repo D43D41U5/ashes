@@ -605,7 +605,20 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
   // loot du monstre (le sanglier donne sa viande). Son sac est assez grand pour
   // que rien ne soit jamais tronqué (spec inventaire R11).
   const loot = makeInventory(SLOTS.CORPSE)
-  if (monster) addItems(loot, MONSTER_DEFS[monster.type].loot)
+  if (monster) {
+    addItems(loot, MONSTER_DEFS[monster.type].loot)
+    // LA PEAU BRUTE (spec chasse — coup propre, V0-4). Un gibier abattu PROPREMENT
+    // (`slainClean` : charge relâchée dans le vert, lent et à découvert) laisse une
+    // peau intacte ; un coup sale ne donne que la viande. Coût d'opportunité greffé
+    // sur une mécanique déjà là — le point d'ancrage `slainClean`, jusqu'ici mort
+    // (RDR2/SCUM : le coup net donne la belle peau, le coup sale la gâche). Seul le
+    // GIBIER (habitat, non-prédateur) en donne : le pelage du loup est un raffinement
+    // différé (Vague 2). Loot = ItemBag fixe, aucun tirage RNG → déterminisme intact.
+    const def = MONSTER_DEFS[monster.type]
+    if (monster.slainClean === true && (def.habitat?.length ?? 0) > 0 && !def.predator) {
+      addItems(loot, { raw_hide: 1 })
+    }
+  }
   // Les CASES passent au cadavre (spec inventaire R11), pas un sac reconstruit :
   // sinon la mort réparerait les outils qu'on portait (l'usure vit dans la case).
   for (const slot of entity.inventory) if (slot !== null) addSlot(loot, slot)

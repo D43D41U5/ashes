@@ -31,6 +31,7 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   hammer: 'Marteau de construction',
   raw_meat: 'Viande crue',
   cooked_meat: 'Viande cuite',
+  raw_hide: 'Peau brute',
   components: 'Composants',
   campfire: 'Feu de camp',
   // ── Les COMPOSANTS en objet (spec construction R20) : on les pose pour faire
@@ -383,6 +384,14 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0xa9743a).fillEllipse(6, 7, 6, 4) // dorure / reflet NO
     g.fillStyle(0xe6ddc8).fillRect(11, 2, 2, 5) // l'os
     g.fillStyle(0xe6ddc8).fillCircle(12, 2, 2)
+  },
+
+  // Peau brute : une pièce de cuir pliée, fauve, avec un pli d'ombre et le côté chair clair.
+  raw_hide: (g) => {
+    g.fillStyle(0x9c6b3f).fillRect(2, 3, 12, 10) // la peau, fauve
+    g.fillStyle(0xb98a56).fillRect(2, 3, 12, 3) // dessus éclairé (lumière au NO)
+    g.fillStyle(0x6f4a29).fillRect(2, 8, 12, 2) // le pli d'ombre
+    g.fillStyle(0xd8c3a0).fillRect(3, 11, 10, 2) // le côté chair (clair) qui dépasse
   },
 
   // Composants : un engrenage de ferraille.

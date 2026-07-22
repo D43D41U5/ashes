@@ -2229,6 +2229,9 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   stew: 0.5,
   raw_meat: 1,
   cooked_meat: 0.8,
+  // La peau brute est BULKY : elle pèse plus que la viande d'une même bête — rentrer
+  // sa chasse ET ses peaux force un arbitrage de charge (spec portage).
+  raw_hide: 1.5,
   rope: 0.4,
   iron_ore: 3,
   coal: 2,
@@ -2353,6 +2356,7 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   iron_ingot: 5,
   raw_meat: 5,
   cooked_meat: 5,
+  raw_hide: 5,
   // Outils et armes : un par case (l'usure est portée par la case).
   crude_axe: 1,
   crude_pickaxe: 1,

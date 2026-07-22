@@ -457,6 +457,41 @@ describe('les monstres (A6)', () => {
     expect(zombie.cooldownUntil).toBe(0)
   })
 
+  it('la peau brute récompense le coup PROPRE, jamais le coup sale (V0-4)', () => {
+    // On isole la RÈGLE (coup propre → peau), pas les nombres de dégâts : on épingle
+    // les PV du gibier à 1 pour qu'un seul coup l'abatte, et c'est le VERDICT propre/sale
+    // (l'embuscade vs la bête déjà alertée) qui décide de la peau, rien d'autre.
+
+    // COUP PROPRE — le sanglier n'a pas eu le temps de percevoir le chasseur : embuscade.
+    const clean = makeSim()
+    const hunterA = spawnEntity(clean, 10, 10)
+    grantHeld(clean, hunterA, 'spear')
+    const boarA = spawnMonster(clean, 'boar', 11, 10)
+    entity(clean, boarA).hp = 1
+    entity(clean, hunterA).stamina = 100
+    strike(clean, hunterA, 1, 0) // frappe IMMÉDIATE : `slainClean` reste vrai
+    const cleanCorpse = clean.corpses[0]!
+    expect(countOf(cleanCorpse.inventory, 'raw_hide')).toBe(1)
+    expect(countOf(cleanCorpse.inventory, 'raw_meat')).toBe(3) // la viande vient AUSSI
+
+    // COUP SALE — on laisse le sanglier PERCEVOIR le chasseur (il s'alerte ; flightRange 0,
+    // il ne fuit pas) : la mise à mort n'est plus propre → viande seule, pas de peau.
+    const messy = makeSim()
+    const hunterB = spawnEntity(messy, 10, 10)
+    grantHeld(messy, hunterB, 'spear')
+    const boarB = spawnMonster(messy, 'boar', 11.2, 10)
+    for (let t = 0; t < 10; t++) tick(messy) // il perçoit, sa suspicion monte, il s'alerte
+    const target = entity(messy, boarB)
+    entity(messy, hunterB).x = target.x - 1
+    entity(messy, hunterB).y = target.y
+    entity(messy, boarB).hp = 1
+    entity(messy, hunterB).stamina = 100
+    strike(messy, hunterB, 1, 0)
+    const messyCorpse = messy.corpses[0]!
+    expect(countOf(messyCorpse.inventory, 'raw_hide')).toBe(0)
+    expect(countOf(messyCorpse.inventory, 'raw_meat')).toBe(3) // la viande, elle, reste
+  })
+
   it('le sanglier fuit quand on le frappe, et sa viande se cuit', () => {
     const sim = makeSim()
     const a = spawnEntity(sim, 10, 10)
