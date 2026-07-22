@@ -39,7 +39,7 @@ import { advanceDens } from './poi'
 import { avancerLaCendre } from './cendre'
 import { advanceTime, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
 import { advanceTemperature, coldSpeedFactor } from './temperature'
-import { applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
+import { advanceUpkeep, applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
 
 /**
  * L'union des actions possibles dans un tick (village + économie + combat +
@@ -593,6 +593,10 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceCendreux(state)
   advanceCombat(state)
   advanceAlignment(state)
+  // L'UPKEEP DU FEU (spec construction R16) : le Feu brûle son combustible, et à sec les
+  // murs cèdent. Le seul évier permanent — après l'alignement (les raids ont pu casser),
+  // avant l'avance du temps (l'acte de CE tick module la combustion).
+  advanceUpkeep(state)
   advanceTime(state)
   // LA CENDRE AVANCE — après le temps, puisque c'est le temps qui la pousse. Elle ne fait quelque
   // chose qu'au BASCULEMENT d'un jour de saison : le reste des ticks, elle ne coûte qu'un test.

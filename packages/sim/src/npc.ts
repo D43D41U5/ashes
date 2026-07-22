@@ -17,6 +17,7 @@ import {
   BALANCE,
   COMBAT,
   NODE_DEFS,
+  FIRE_UPKEEP,
   NPC_AI,
   SLOTS,
   STRUCTURE_HP,
@@ -79,7 +80,7 @@ export interface Npc {
 }
 
 const TASK_DEFS: Record<
-  Exclude<TaskKind, 'cook_stew' | 'repair'>,
+  Exclude<TaskKind, 'cook_stew' | 'repair' | 'feed_fire'>,
   { nodeType: NodeType; item: ItemId; carry: number }
 > = {
   gather_berries: { nodeType: 'berry_bush', item: 'berries', carry: BALANCE.NPC_CARRY_TARGETS.berries },
@@ -282,6 +283,7 @@ const TASK_INTAKE: Record<TaskKind, ItemId[]> = {
   gather_fiber: ['fiber'],
   cook_stew: ['berries', 'fiber', 'stew'],
   repair: ['wood'],
+  feed_fire: ['wood'],
 }
 
 /** Le sac peut-il recevoir ce que cette corvée va y mettre ? (conservateur : tout ou rien) */
@@ -295,7 +297,7 @@ function claimTask(village: Village, npc: Npc, entity: Entity): void {
     .sort((a, b) => b.priority - a.priority || a.id - b.id)[0]
   if (!free) return
   free.claimedBy = npc.entityId
-  const stage = free.kind === 'cook_stew' || free.kind === 'repair' ? 'fetch' : 'work'
+  const stage = free.kind === 'cook_stew' || free.kind === 'repair' || free.kind === 'feed_fire' ? 'fetch' : 'work'
   npc.task = { id: free.id, kind: free.kind, stage, nodeId: null }
   npc.path = []
 }
@@ -332,7 +334,7 @@ function canAct(state: SimState, entity: Entity): boolean {
 
 function executeGather(state: SimState, village: Village, npc: Npc, entity: Entity): void {
   const task = npc.task!
-  const def = TASK_DEFS[task.kind as Exclude<TaskKind, 'cook_stew' | 'repair'>]
+  const def = TASK_DEFS[task.kind as Exclude<TaskKind, 'cook_stew' | 'repair' | 'feed_fire'>]
 
   if (task.stage === 'work') {
     if (countOf(entity.inventory, def.item) >= def.carry) {
@@ -531,6 +533,40 @@ function executeRepair(state: SimState, village: Village, npc: Npc, entity: Enti
   followPath(state, npc, entity)
 }
 
+/** Nourrir le Feu (spec construction R16) : chercher du bois au grenier si besoin,
+ *  puis le donner au Feu. La tâche communautaire zéro — sans elle, le village tombe. */
+function executeFeedFire(state: SimState, village: Village, npc: Npc, entity: Entity): void {
+  const task = npc.task!
+  // Feu au plein → tâche finie (refreshBoard la purgera de toute façon).
+  if (village.fuel >= FIRE_UPKEEP.CAPACITY) return dropTask(village, npc, true)
+  const hasWood = (): boolean => countOf(entity.inventory, 'wood') > 0
+
+  if (task.stage === 'fetch' && !hasWood()) {
+    const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], 'wood') > 0)
+    if (!chest) return dropTask(village, npc, false) // pas de bois au grenier : on abandonne
+    if (near(entity, chest.tx, chest.ty)) {
+      const got = withdraw(state, entity, chest.id, 'wood', Math.min(NPC_AI.REPAIR_WOOD_WITHDRAW, countOf(chest.inventory ?? [], 'wood')))
+      if (got === 0) return dropTask(village, npc, false)
+      task.stage = 'work'
+      return
+    }
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return dropTask(village, npc, false)
+    followPath(state, npc, entity)
+    return
+  }
+  task.stage = 'work'
+
+  if (near(entity, village.fireTx, village.fireTy)) {
+    if (state.tick >= entity.cooldownUntil) {
+      applyVillageAction(state, entity.id, { type: 'feed_fire' })
+      if (!hasWood()) task.stage = 'fetch'
+    }
+    return
+  }
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, village.fireTx, village.fireTy)) return dropTask(village, npc, false)
+  followPath(state, npc, entity)
+}
+
 // ─── La milice émergente (spec combat R13) ────────────────────────────────
 
 /** Une menace (monstre ou raider agresseur) près du Feu ? Tout PNJ la combat. */
@@ -657,6 +693,7 @@ export function advanceNpcs(state: SimState): void {
     }
     if (npc.task.kind === 'cook_stew') executeCook(state, village, npc, entity)
     else if (npc.task.kind === 'repair') executeRepair(state, village, npc, entity)
+    else if (npc.task.kind === 'feed_fire') executeFeedFire(state, village, npc, entity)
     else executeGather(state, village, npc, entity)
   }
 }

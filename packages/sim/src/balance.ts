@@ -2026,6 +2026,33 @@ export const STRUCTURE_HP: Record<import('./items').StructureType, number> = {
   terroir: COMPONENTS.terroir.hp,
 }
 
+/**
+ * L'UPKEEP DU FEU (spec construction R16-R17) — le seul évier PERMANENT de
+ * l'économie de flux (GDD §8). Le Feu consomme lentement du combustible pour tenir
+ * sa zone : PLEIN → les murs/barrières ne se dégradent pas ; à SEC → ils cèdent, et
+ * le village finit en ruine. Le plein tient ~3,5 cycles d'ABANDON (GDD §6ter « survit
+ * à 3-4 jours d'abandon »), plus vite au Grand Froid. BRAISES DORMANTES : le Feu ne
+ * s'éteint jamais (la chaleur tient), seule l'architecture cède — les COMPOSANTS
+ * jamais (R17). Calibrage à valider en playtest (décision de session, cf. decisions.md).
+ */
+export const FIRE_UPKEEP = {
+  /** Capacité de stock — plein = 10 bois (via FEED_PER_WOOD). */
+  CAPACITY: 240,
+  /** À la fondation : un demi-plein. Une grâce (~1,75 cycle), pas un cadeau. */
+  START: 120,
+  /** 1 bois nourrit le Feu de tant. */
+  FEED_PER_WOOD: 24,
+  /** Combustion par tick à l'acte I ; ×ACT_FACTOR ensuite. Calé pour que le PLEIN
+   *  tienne ~3,5 cycles à l'acte I (spec « 3-4 jours »). */
+  DRAIN_PER_TICK: 240 / ticksForCycles(3.5),
+  /** Le Grand Froid brûle plus (même montée que la faim, §2). */
+  ACT_FACTOR: [1, 1.5, 2] as const,
+  /** À SEC, un mur/barrière perd tant de PV/tick — un mur neuf (200) tombe en ~1,5 cycle. */
+  WALL_DECAY_PER_TICK: 200 / ticksForCycles(1.5),
+  /** Sous ce stock, le tableau poste « nourrir le Feu » (la tâche communautaire zéro, R16). */
+  TASK_THRESHOLD: 96,
+} as const
+
 /** Hordes & événements du monde (spec événements). */
 export const WORLD_EVENTS = {
   REPAIR_WOOD_COST: 1,

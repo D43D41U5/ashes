@@ -15,6 +15,7 @@ import {
   COMBAT,
   COMPONENTS,
   COMPONENT_TYPES,
+  FIRE_UPKEEP,
   FOOD_VALUES,
   SLOTS,
   STRUCTURE_COSTS,
@@ -49,6 +50,7 @@ import {
 } from './items'
 import { heldSlot } from './inventory-actions'
 import { terrainAt, zoneAt } from './map'
+import { actForDay, seasonDayAtTick } from './time'
 import type { SimState } from './sim'
 
 /** Sentinelle « jamais » pour les champs en ticks (finie : JSON-sérialisable). */
@@ -81,7 +83,7 @@ export interface Structure {
   inventory?: Inventory
 }
 
-export type TaskKind = 'gather_berries' | 'gather_wood' | 'gather_fiber' | 'cook_stew' | 'repair'
+export type TaskKind = 'gather_berries' | 'gather_wood' | 'gather_fiber' | 'cook_stew' | 'repair' | 'feed_fire'
 
 /** Une tâche du tableau du village (spec pnj R5). */
 export interface VillageTask {
@@ -108,6 +110,10 @@ export interface Village {
    * s'ouvre à la pose qu'au fil des paliers.
    */
   tier: number
+  /** LE COMBUSTIBLE DU FEU (spec construction R16) — le seul évier permanent. Décroît
+   *  chaque tick (`advanceUpkeep`) ; à SEC (0), les murs de la zone se dégradent. On le
+   *  nourrit en y déposant du bois (`feed_fire`). Braises dormantes : jamais d'extinction. */
+  fuel: number
   /** Le tableau du village — généré par seuils, consommé par les PNJ (et bientôt lu par les joueurs). */
   tasks: VillageTask[]
   nextTaskId: number
@@ -153,6 +159,10 @@ export type VillageAction =
   /** JE MONTE LE FEU D'UN PALIER (spec construction R6) : le carré grandit, de
    *  nouveaux composants se débloquent. Coût croissant, plafonné à 3. */
   | { type: 'upgrade_fire' }
+  /** NOURRIR LE FEU (spec construction R16) : je dépose le bois que je porte dans le
+   *  Feu de mon village (à portée), qui le convertit en combustible. Le seul geste qui
+   *  tient l'upkeep — sans lui, le village finit en ruine. */
+  | { type: 'feed_fire' }
   /** J'AMÉLIORE UN MUR/PORTE SUR PLACE au marteau (spec construction R8) : palier de
    *  matériau suivant (bois→pierre→métal), en payant la « différence ». Instantané. */
   | { type: 'upgrade_structure'; structureId: number }
@@ -501,6 +511,32 @@ export function applyStructureDamage(state: SimState, structureId: number, damag
 }
 
 /**
+ * L'UPKEEP DU FEU au tick (spec construction R16-R17) — le seul évier PERMANENT.
+ * Chaque village brûle du combustible (×acte : le Grand Froid mord) ; à SEC, ses
+ * MURS/BARRIÈRES se dégradent (jamais les composants, R17) et le Feu passe en braises
+ * dormantes — il ne s'éteint PAS (la chaleur tient, seule l'architecture cède). Le
+ * plein tient ~3,5 cycles d'abandon ; un village vivant, lui, nourrit son Feu (tâche
+ * `feed_fire`) et ne se dégrade jamais. Déterministe : aucun tirage, mêmes opérations.
+ */
+export function advanceUpkeep(state: SimState): void {
+  const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
+  const drain = FIRE_UPKEEP.DRAIN_PER_TICK * FIRE_UPKEEP.ACT_FACTOR[act - 1]!
+  for (const village of state.villages) {
+    const before = village.fuel
+    village.fuel = Math.max(0, village.fuel - drain)
+    // Au PASSAGE à sec (une fois) : la chronique le raconte, la milice n'a pas à réagir.
+    if (before > 0 && village.fuel <= 0) {
+      emitEvent(state, { type: 'fire_starved', tick: state.tick, villageId: village.id })
+    }
+    if (village.fuel > 0) continue
+    // À sec : les murs/barrières cèdent. On COLLECTE d'abord — `applyStructureDamage`
+    // filtre `state.structures` à la destruction, on ne l'itère donc pas en le mutant.
+    const walls = state.structures.filter((s) => s.villageId === village.id && (s.type === 'wall' || s.type === 'door'))
+    for (const w of walls) applyStructureDamage(state, w.id, FIRE_UPKEEP.WALL_DECAY_PER_TICK, 0)
+  }
+}
+
+/**
  * Dev/test uniquement — remplacé par la récolte en V4 (spec R3).
  * À appeler dans la phase de setup, qui est rejouée par le replay.
  */
@@ -534,6 +570,7 @@ export function createVillage(state: SimState, opts: CreateVillageOptions): Vill
     fireTx: opts.tx,
     fireTy: opts.ty,
     tier: 1,
+    fuel: FIRE_UPKEEP.START, // un Feu neuf naît à demi-plein (spec R16, une grâce)
     tasks: [],
     nextTaskId: 1,
     npcsArrived: opts.npcsArrived,
@@ -733,6 +770,29 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (!removeItems(actor.inventory, cost)) return reject('matériaux insuffisants')
       village.tier += 1
       emitEvent(state, { type: 'fire_upgraded', tick: state.tick, villageId: village.id, tier: village.tier })
+      return
+    }
+
+    /**
+     * NOURRIR LE FEU (spec construction R16) : le bois porté devient du combustible.
+     * N'importe quel membre (pas seulement le Chef) — c'est la tâche communautaire zéro.
+     * On donne juste ce qu'il faut pour faire le plein (pas de gaspillage au-delà de la
+     * capacité). À portée du Feu. Le seul geste qui tient l'upkeep.
+     */
+    case 'feed_fire': {
+      const village = getVillageOf(state, actorId)
+      if (!village) return reject('pas de foyer à nourrir')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, village.fireTx + 0.5, village.fireTy + 0.5) > range * range) return reject('trop loin du Feu')
+      const room = FIRE_UPKEEP.CAPACITY - village.fuel
+      if (room <= 0) return reject('le Feu est déjà plein')
+      const have = countOf(actor.inventory, 'wood')
+      if (have <= 0) return reject('il faut du bois pour nourrir le Feu')
+      // On ne brûle pas plus de bois que le Feu ne peut avaler (arrondi au bois près).
+      const give = Math.min(have, Math.ceil(room / FIRE_UPKEEP.FEED_PER_WOOD))
+      if (!removeItems(actor.inventory, { wood: give })) return reject('il faut du bois pour nourrir le Feu')
+      village.fuel = Math.min(FIRE_UPKEEP.CAPACITY, village.fuel + give * FIRE_UPKEEP.FEED_PER_WOOD)
+      emitEvent(state, { type: 'fire_fed', tick: state.tick, villageId: village.id, entityId: actorId, wood: give, fuel: village.fuel })
       return
     }
 

@@ -53,6 +53,11 @@ export type SimEvent =
   | { type: 'structure_removed'; tick: number; structureId: number }
   /** LE FEU MONTE D'UN PALIER (spec construction R6) : le carré grandit, des composants se débloquent. */
   | { type: 'fire_upgraded'; tick: number; villageId: number; tier: number }
+  /** On a nourri le Feu (upkeep R16) : `wood` bois donnés, `fuel` = stock après. */
+  | { type: 'fire_fed'; tick: number; villageId: number; entityId: number; wood: number; fuel: number }
+  /** Le Feu est tombé à SEC (upkeep R16) : ses murs vont commencer à céder. Émis UNE fois
+   *  au passage à zéro — la chronique en fait « le Feu de X faiblit ». */
+  | { type: 'fire_starved'; tick: number; villageId: number }
   /** UN MUR/PORTE PASSE AU MATÉRIAU SUIVANT (spec construction R8) : bois→pierre→métal. */
   | { type: 'structure_upgraded'; tick: number; structureId: number; material: import('./balance').WallMaterial }
   /**

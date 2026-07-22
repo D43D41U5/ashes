@@ -29,6 +29,7 @@ const TASK_LABELS: Record<VillageTask['kind'], string> = {
   gather_fiber: 'ramasser des fibres',
   cook_stew: 'cuisiner',
   repair: 'réparer',
+  feed_fire: 'nourrir le Feu',
 }
 
 /** Carte plein écran : bornes et pas du zoom (1 = carte ajustée, 8 = gros plan). */

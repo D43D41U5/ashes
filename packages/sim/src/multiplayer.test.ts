@@ -99,6 +99,7 @@ describe('multi-joueurs (L1)', () => {
       memberIds: [chief, member],
       fireTx: 8,
       fireTy: 8,
+      fuel: 120,
       tier: 1,
       tasks: [{ id: 1, kind: 'gather_wood', priority: 1, claimedBy: member }],
       nextTaskId: 2,

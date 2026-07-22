@@ -6,7 +6,7 @@
  * que les PNJ réclament (et que les joueurs liront bientôt). Des seuils et
  * une file — pas de GOAP.
  */
-import { BALANCE, NPC_AI, STRUCTURE_HP, WORLD_EVENTS } from './balance'
+import { BALANCE, FIRE_UPKEEP, NPC_AI, STRUCTURE_HP, WORLD_EVENTS } from './balance'
 import { countOf } from './items'
 import type { SimState } from './sim'
 import type { Structure, TaskKind, Village } from './village'
@@ -46,6 +46,8 @@ export function refreshBoard(state: SimState, village: Village): void {
       stocks.stew < BALANCE.VILLAGE_STEW_TARGET && stocks.berries >= NPC_AI.COOK_MIN_BERRIES && stocks.fiber >= NPC_AI.COOK_MIN_FIBER ? 1 : 0,
   }
   const priorities: Record<TaskKind, number> = {
+    // Nourrir le Feu prime sur tout : sans combustible, le village finit en ruine (R16).
+    feed_fire: 5,
     repair: 4,
     cook_stew: 3,
     gather_berries: 2,
@@ -74,6 +76,18 @@ export function refreshBoard(state: SimState, village: Village): void {
     const s = state.structures.find((st) => st.id === t.structureId)
     return s !== undefined && s.hp < STRUCTURE_HP[s.type]
   })
+
+  // NOURRIR LE FEU (spec construction R16, la tâche communautaire zéro) : une tâche
+  // unique tant que le combustible passe sous le seuil. Purgée (si non réclamée) dès
+  // que le Feu est réapprovisionné — celui qui nourrit finit son geste.
+  const needsFuel = village.fuel < FIRE_UPKEEP.TASK_THRESHOLD
+  const hasFeedTask = village.tasks.some((t) => t.kind === 'feed_fire')
+  if (needsFuel && !hasFeedTask) {
+    village.tasks.push({ id: village.nextTaskId, kind: 'feed_fire', priority: priorities.feed_fire, claimedBy: null })
+    village.nextTaskId += 1
+  } else if (!needsFuel) {
+    village.tasks = village.tasks.filter((t) => !(t.kind === 'feed_fire' && t.claimedBy === null))
+  }
 
   for (const kind of Object.keys(wanted) as TaskKind[]) {
     const want = wanted[kind] ?? 0

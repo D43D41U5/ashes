@@ -37,6 +37,7 @@ export { POI,
   RECIPES,
   SEASON,
   SLOTS,
+  FIRE_UPKEEP,
   SPOIL,
   SPOIL_CYCLES,
   STRUCTURE_COSTS,
@@ -177,7 +178,7 @@ export { foundNpcVillage } from './worldgen'
 export { spawnMonster } from './monsters'
 export { spawnHorde, spawnConvoy } from './worldevents'
 export { applyDamage } from './combat'
-export { applyStructureDamage, grantItems } from './village'
+export { advanceUpkeep, applyStructureDamage, grantItems } from './village'
 export { generateValley } from './valleygen'
 
 // ── LA NOUVELLE VALLÉE — un graphe de zones, un terrain qui en découle (spec `worldgen.md`) ──
