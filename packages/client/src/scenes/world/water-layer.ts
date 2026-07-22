@@ -21,11 +21,26 @@
 import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
+import { sunDirection } from '../../render/lighting'
 import { buildWaterField } from '../../render/water-field'
 
 /** Juste au-dessus du sol (−1), sous l'ombre du relief (−0,5) : le versant qui
  *  tombe dans l'eau l'assombrit, comme il assombrit la berge. */
 const WATER_DEPTH = GROUND_MAP_DEPTH + 0.25
+
+/** Plafond de foyers reflétés — DOIT égaler le `MAX_FIRES` du shader. */
+const MAX_FIRES = 8
+
+/** Un Feu qui se reflète sur l'eau, poussé par frame depuis l'état sim. */
+export interface WaterFire {
+  /** Centre du foyer, en TUILES. */
+  x: number
+  y: number
+  /** Portée du reflet, en tuiles. */
+  radius: number
+  /** Force 0..1 (∝ nuit, via `fireGlow.alpha`) — nulle de jour. */
+  strength: number
+}
 
 const FRAGMENT = /* glsl */ `
 #pragma phaserTemplate(shaderName)
@@ -47,6 +62,13 @@ uniform float uReliefH;
 uniform float uTime;         // secondes
 uniform vec3 uSun;           // le soleil, en 3D — voir sunVector()
 uniform float uDay;          // 0 nuit · 1 plein jour
+
+// LES FEUX SUR L'EAU. Une poignée de foyers, poussés chaque frame depuis l'état sim (même
+// fireGlow que la flaque au sol et le trou du voile → en phase). xy = tuile du foyer,
+// z = portée (tuiles), w = force (0..1, ∝ nuit·flicker : nulle de jour, vive la nuit).
+#define MAX_FIRES 8
+uniform int uFireCount;
+uniform vec4 uFires[MAX_FIRES];
 
 /**
  * LA PERSPECTIVE. Le monde ne se lit PAS à la verticale : les arbres sont debout,
@@ -112,25 +134,30 @@ float openness(vec2 tile) {
  * diagonale, et l'œil repère une somme de sinusoïdes en une seconde.
  */
 float chop(vec2 p, float t) {
-  vec2 q = p + 0.30 * vec2(sin(p.y * 1.7 + t * 0.7), cos(p.x * 1.5 - t * 0.6));
-  q += 0.16 * vec2(sin(q.y * 4.1 - t * 1.4), cos(q.x * 3.7 + t * 1.2));
+  // CALME. Trois ondes larges seulement (plus les octaves fines qui peignaient le
+  // marbre), sous une seule déformation de domaine — la houle sert de RELIEF à
+  // poster­iser, pas de texture à lire. Le grain vient de la quantification (main),
+  // pas d'ondes courtes.
+  vec2 q = p + 0.25 * vec2(sin(p.y * 1.3 + t * 0.5), cos(p.x * 1.1 - t * 0.4));
   float h = 0.0;
-  h += 0.50 * sin(dot(q, vec2(0.92, 0.39)) * 2.6 + t * 1.7);
-  h += 0.34 * sin(dot(q, vec2(-0.44, 0.90)) * 4.3 - t * 2.3);
-  h += 0.22 * sin(dot(q, vec2(0.31, -0.95)) * 7.1 + t * 3.1);
-  h += 0.14 * sin(dot(q, vec2(0.80, 0.60)) * 11.3 - t * 4.2);
-  h += 0.08 * sin(dot(q, vec2(-0.87, -0.49)) * 17.9 + t * 5.6);
-  // TENU COURT. Une eau calme est d'abord une COULEUR ; le clapot est une texture
-  // qu'on devine, pas un marbre qu'on lit. Toute la difficulté de cet effet est
-  // là : chaque terme pris isolément semblait raisonnable, et leur somme peignait
-  // des veines blanches. On divise donc à la sortie, une bonne fois.
-  return h * 0.55;
+  h += 0.60 * sin(dot(q, vec2(0.92, 0.39)) * 1.9 + t * 1.3);
+  h += 0.30 * sin(dot(q, vec2(-0.44, 0.90)) * 3.1 - t * 1.7);
+  h += 0.14 * sin(dot(q, vec2(0.31, -0.95)) * 5.3 + t * 2.2);
+  return h * 0.62;
 }
 
+// LE GRAIN. 4 px monde — exactement le pixel de lumière du Feu (fire-ground-glow.ts,
+// LIGHT_PX), lui-même multiple de la grille 2 px de l'art. Toute l'eau se calcule PAR
+// CELLULE de 4 px : c'est ce qui la rend pixel-art, du même monde que le reste.
+const float GRAIN = 4.0;
+
 void main() {
-  // Pixel du quad → position monde PLATE. On REMET LE MONDE À L'ENDROIT ici (V est
-  // bottom-up, cf. texUv) : c'est le seul endroit où le retournement se paie.
-  vec2 flatPx = vec2(outTexCoord.x, 1.0 - outTexCoord.y) * uWorldPx;
+  // Pixel du quad → position monde PLATE, PUIS PLANCHÉE sur la grille de 4 px MONDE.
+  // On REMET LE MONDE À L'ENDROIT ici (V est bottom-up, cf. texUv). On plancher en espace
+  // MONDE, pas écran : le quad est fixe, donc la grille ne GROUILLE pas quand la caméra
+  // glisse — les pixels d'eau sont accrochés au terrain, comme ceux du Feu.
+  vec2 rawPx = vec2(outTexCoord.x, 1.0 - outTexCoord.y) * uWorldPx;
+  vec2 flatPx = (floor(rawPx / GRAIN) + 0.5) * GRAIN;
   float tx = flatPx.x / uTilePx; // X n'est jamais cisaillé : exact.
 
   // On DÉFAIT le cisaillement du relief pour retrouver la tuile réelle — PAR BISECTION.
@@ -159,10 +186,11 @@ void main() {
   vec4 field = texture2D(uField, texUv(tile));
   float mask = field.r;
 
-  // LE TRAIT DE RIVE. Le masque est binaire : en filtrage linéaire il croise 0,5
-  // pile sur la frontière des tuiles. On y pose donc le bord de l'eau, net, et
-  // l'eau ne déborde plus d'un demi-texel sur l'herbe.
-  if (mask < 0.46) discard;
+  // LE TRAIT DE RIVE. Masque NEAREST → 0 ou 1 franc. Le bord tombe PILE sur la
+  // frontière des tuiles (multiple de 16 px, donc de 4) : coins CARRÉS, et l'encoche
+  // bleue des anciens coins « arrondis » (l'iso-contour 0,5 du filtrage linéaire qui
+  // rognait l'angle) disparaît d'elle-même.
+  if (mask < 0.5) discard;
 
   float open = openness(tile);            // 0 contre la berge · 1 au large
   // La vase du fond monte VITE en s'éloignant de la berge : une eau de pré est trouble, on ne voit
@@ -176,8 +204,9 @@ void main() {
   float h = chop(p, t) * amp;
 
   // La normale, par différences finies — prises DANS LE PLAN de l'eau, puis
-  // ramenées à l'écran : la pente en Y y est vue de biais, donc raccourcie.
-  float e = 0.06;
+  // ramenées à l'écran : la pente en Y y est vue de biais, donc raccourcie. Le pas
+  // vaut une CELLULE (4 px) : une normale au grain de l'image, pas plus fine qu'elle.
+  float e = GRAIN / uTilePx;
   float hx = (chop(p + vec2(e, 0.0), t) - chop(p - vec2(e, 0.0), t)) * amp;
   float hy = (chop(p + vec2(0.0, e), t) - chop(p - vec2(0.0, e), t)) * amp;
   vec3 n = normalize(vec3(-hx * 0.85, -hy * 0.85 / YSQUASH, 1.0));
@@ -213,23 +242,55 @@ void main() {
   float skyMix = clamp(0.30 + 0.55 * deep, 0.0, 0.9);
   vec3 col = mix(bottom, sky, skyMix);
 
-  // Le VOLUME : une crête est plus claire qu'un creux. Presque rien, mais c'est ce
-  // qui donne du relief à la surface avant même qu'on l'éclaire.
-  col *= 1.0 + h * 0.09;
-
-  // LE SOLEIL SUR L'EAU. Deux lobes — un large (le miroitement), un très serré
-  // (les éclats). Et surtout : ILS NE BRILLENT QUE SUR LES CRÊTES.
+  // ═══ LE CLAPOT PIXEL : la houle POSTERISÉE en paliers francs ═══
   //
-  // Sans cette porte, le spéculaire suit fidèlement les lignes de niveau des
-  // ondes et peint de longues VEINES blanches continues — un marbre, pas une eau.
-  // Le scintillement d'une vraie surface est fait de points brefs, là où une crête
-  // présente sa face au soleil. La porte est ce qui transforme l'un en l'autre.
+  // On ne module plus la couleur par une pente CONTINUE (c'était le marbre) : on
+  // quantifie la hauteur en quelques crans, et chaque cran est un APLAT. La cellule
+  // est claire (crête), moyenne (plat) ou sombre (creux) — quelques teintes d'eau,
+  // jamais un dégradé lissé. Le grain spatial est déjà donné (flatPx planché) ; ici
+  // on quantifie la VALEUR. C'est le pendant, pour l'eau, du Feu qui vacille par
+  // paliers d'alpha et non par variation continue.
+  float lvl = floor(h * 3.0 + 0.5) / 3.0;         // crans de 1/3
+  col *= 1.0 + clamp(lvl, -0.5, 0.5) * 0.20;
+
+  // L'ÉCLAT DUR, et RARE. La cellule brille ou ne brille PAS : un pixel net posé sur
+  // la CRÊTE la plus haute — là où les ondes s'additionnent — et seulement de jour, du
+  // côté éclairé. La porte est sur la HAUTEUR (h près de son maximum), pas sur le lambert :
+  // au zénith le lambert est fort partout et faisait grésiller toute la nappe de blanc.
+  // Ici les éclats sont clairsemés et se déplacent avec les crêtes — un scintillement,
+  // pas de la neige. On a retiré le lobe large (pow continu) qui repeignait le marbre.
   vec3 L = normalize(vec3(uSun.x, uSun.y / YSQUASH, uSun.z));
   float lambert = max(dot(n, L), 0.0);
-  float crest = smoothstep(0.30, 0.80, h);
-  float sheen = pow(lambert, 40.0) * 0.035;
-  float glint = pow(lambert, 300.0) * 0.34 * crest;
-  col += vec3(1.0, 0.97, 0.88) * (sheen + glint) * uDay;
+  float glint = step(0.55, h) * step(0.15, lambert);
+  col += vec3(1.0, 0.97, 0.88) * glint * 0.38 * uDay;
+
+  // ═══ LE FEU SUR L'EAU ═══
+  //
+  // Chaque foyer proche allume la nappe — c'est l'image de Braises, la nuit : le camp
+  // qui se reflète dans l'eau à ses pieds. Deux termes, comme le soleil, mais d'une
+  // source PONCTUELLE :
+  //   • un LAVAGE chaud (l'eau prend la teinte de la braise), qui décroît avec la distance ;
+  //   • des ÉCLATS DURS sur les crêtes qui FONT FACE au foyer — un pixel ambré, jamais une
+  //     veine (même porte que le soleil : hauteur de crête × orientation).
+  // La force w porte déjà la nuit (fireGlow.alpha ∝ 1−jour) : rien de jour, vif la nuit.
+  // Tout se calcule par cellule (flatPx planché) → reflets et éclats sont pixel, cohérents.
+  float fireWash = 0.0;
+  float fireSpark = 0.0;
+  for (int i = 0; i < MAX_FIRES; i++) {
+    if (i >= uFireCount) break;
+    vec4 f = uFires[i];
+    vec2 toF = f.xy - tile;                 // tuiles, vers le foyer
+    float reach = max(f.z, 0.001);
+    float fall = clamp(1.0 - length(toF) / reach, 0.0, 1.0);
+    fall = fall * fall * f.w;               // douceur quadratique × force (nuit)
+    fireWash += fall;
+    // Direction 3D vers le foyer (y écrasé comme le soleil, cf. YSQUASH), un peu au-dessus de l'eau.
+    vec3 Lf = normalize(vec3(toF.x, toF.y / YSQUASH, 1.6));
+    float sf = max(dot(n, Lf), 0.0);
+    fireSpark += step(0.28, h) * step(0.5, sf) * fall;
+  }
+  col += vec3(1.0, 0.52, 0.20) * clamp(fireWash, 0.0, 1.2) * 0.75; // la braise, en lavage
+  col += vec3(1.0, 0.86, 0.62) * clamp(fireSpark, 0.0, 1.0) * 0.95; // les éclats chauds, durs
 
   // L'ÉCUME, et elle vient DE LA BERGE. Des lignes parallèles au rivage qui
   // avancent vers la terre : le clapot qui vient mourir sur la rive, et non un
@@ -237,8 +298,8 @@ void main() {
   // quand on s'éloigne de la berge, donc une phase en open donne des bandes qui
   // épousent la rive quelle que soit sa forme.
   float band = sin(open * 26.0 - t * 2.1 + h * 1.4);
-  float lap = smoothstep(0.55, 1.0, band) * (1.0 - smoothstep(0.06, 0.30, open));
-  float rim = 1.0 - smoothstep(0.0, 0.10, open); // le tout dernier centimètre
+  float lap = step(0.55, band) * (1.0 - step(0.22, open)); // bandes FRANCHES, pas de dégradé
+  float rim = 1.0 - step(0.10, open);                      // le tout dernier cran, dur
 
   // LA COULEUR DU RIVAGE. Plutôt qu'un beige unique, l'écume prend la couleur de la
   // tuile de terre la plus proche (herbe, sable, roche…). Le masque croît vers l'eau,
@@ -263,26 +324,26 @@ void main() {
 `
 
 /**
- * LE SOLEIL, EN TROIS DIMENSIONS. `lighting.sunDirection` ne rend qu'un vecteur
- * PLAN (et son `y` vaut toujours zéro) : il sert à savoir quel versant est à
- * l'ombre, pas à faire briller une surface. Nourrir un spéculaire avec lui
- * donnerait, à midi, une nappe intégralement blanche — le soleil au zénith y est
- * réduit au vecteur nul, que le shader lit comme « lumière droit devant ».
+ * LE SOLEIL DE L'EAU — DÉRIVÉ DE LA SOURCE UNIQUE. `lighting.sunDirection(hour)` est LE
+ * soleil du jeu (il pilote aussi `DynamicLighting`) : un vecteur PLAN, `x = cos(azimut)`
+ * (est+ à l'aube → ouest− au couchant ; |x| = 1 au ras, 0 à midi), `y` toujours nul.
  *
- * Ici il faut une VRAIE direction : un azimut (d'où vient la lumière) ET une
- * hauteur. Au ras du matin, le soleil rase l'eau et la traîne d'éclats s'étire ;
- * à midi il tombe d'aplomb et toute la surface pétille. C'est la même heure qui
- * pilote les deux, mais ce n'est pas la même grandeur.
+ * On ne RECALCULE donc plus l'azimut ici : c'était un SECOND soleil, qui pouvait dériver du
+ * premier. On PART de `sunDirection` et on lui rajoute ce qu'une SURFACE réclame de plus qu'un
+ * versant — une hauteur. L'altitude se reconstruit de `x` seul (`|x|` petit = près du zénith) :
+ * `alt = √(1 − x²) = sin(azimut)`. Même heure, MÊME soleil que le reste du monde ; ce module
+ * n'en tire qu'une VRAIE direction 3D pour le spéculaire. (Nourrir le spéculaire du vecteur plan
+ * brut donnerait, à midi, une nappe blanche : `x = 0` s'y lit « lumière droit devant ». D'où la
+ * hauteur reconstruite. La nuit, `sunDirection` rend `{0,0}` → soleil au zénith, mais `uDay=0`
+ * l'éteint : pas de garde de nuit à ajouter.)
  */
 function sunVector(hour: number): { x: number; y: number; z: number } {
-  const h = ((hour % 24) + 24) % 24
-  if (h <= 6 || h >= 18) return { x: 0, y: 0, z: 1 } // nuit : inerte (uDay l'éteint)
-  const az = Math.PI * ((h - 6) / 12) // 0 = est (aube) → π = ouest (couchant)
-  const alt = Math.sin(az) // 0 à l'horizon, 1 au zénith
+  const gx = sunDirection(hour).x // la source UNIQUE : est(+) → ouest(−), |gx| = force au ras
+  const alt = Math.sqrt(Math.max(0, 1 - gx * gx)) // sin(azimut) : 0 à l'horizon, 1 au zénith
   const grazing = 1 - 0.7 * alt
   return {
-    x: Math.cos(az) * grazing,
-    y: -0.3 * grazing, // le soleil est au sud : la lumière descend vers nous
+    x: gx * grazing,
+    y: -0.3 * grazing, // biais NORD fixe (comme le SUN_NORTH du pipeline) : la lumière vient d'en haut
     z: 0.3 + 0.85 * alt,
   }
 }
@@ -312,10 +373,12 @@ export class WaterLayer {
     img.data.set(field.data)
     ctx.putImageData(img, 0, 0)
     tex.refresh()
-    // LINÉAIRE, contrairement au sol : ici on VEUT que le masque et l'élévation
-    // s'interpolent. La berge devient une transition douce au lieu d'un escalier
-    // de tuiles, et ça ne coûte rien — c'est le filtrage qui le fait.
-    tex.setFilter(Phaser.Textures.FilterMode.LINEAR)
+    // NEAREST, comme le sol et le Feu. Le masque binaire reste 0 ou 1 : le bord de
+    // l'eau tombe pile sur la frontière des tuiles, les coins sont CARRÉS, et
+    // l'ancienne encoche bleue (l'iso-contour 0,5 du filtrage linéaire qui rognait les
+    // angles convexes et découvrait la tuile d'eau bakée du sol) n'existe plus. C'est
+    // ce même filtre qui rend berge, écume et clapot chunky — pixel-art, pas marbre.
+    tex.setFilter(Phaser.Textures.FilterMode.NEAREST)
 
     const worldW = width * TILE_PX
     const worldH = height * TILE_PX
@@ -337,6 +400,8 @@ export class WaterLayer {
             setUniform('uTime', this.timeS)
             setUniform('uSun', [this.sun.x, this.sun.y, this.sun.z])
             setUniform('uDay', this.day)
+            setUniform('uFireCount', this.fireCount)
+            setUniform('uFires', this.fireData)
           },
         },
         0,
@@ -352,13 +417,31 @@ export class WaterLayer {
   private timeS = 0
   private sun = { x: 0, y: 0.3, z: 1 }
   private day = 1
+  private fireCount = 0
+  /** vec4 par foyer, à plat (xy tuile · z portée · w force) — un seul tampon, muté par frame. */
+  private readonly fireData = new Float32Array(MAX_FIRES * 4)
 
-  /** L'heure décide du soleil sur l'eau : d'où il vient, et à quelle hauteur. */
-  update(nowMs: number, hour: number, daylight: number): void {
+  /**
+   * L'heure décide du soleil sur l'eau ; `fires` allume la nappe la nuit (reflet du camp).
+   * Les foyers au-delà de `MAX_FIRES` sont ignorés (silencieusement — au pire un reflet manque).
+   */
+  update(nowMs: number, hour: number, daylight: number, fires: WaterFire[] = []): void {
     if (!this.shader) return
     this.timeS = nowMs / 1000
     this.sun = sunVector(hour)
     this.day = daylight
+    const n = Math.min(MAX_FIRES, fires.length)
+    this.fireCount = n
+    for (let i = 0; i < n; i++) {
+      const f = fires[i]
+      if (!f) continue
+      const o = i * 4
+      this.fireData[o] = f.x
+      this.fireData[o + 1] = f.y
+      this.fireData[o + 2] = f.radius
+      this.fireData[o + 3] = f.strength
+    }
+    for (let i = n; i < MAX_FIRES; i++) this.fireData[i * 4 + 3] = 0 // slots morts : force nulle
   }
 
   destroy(): void {

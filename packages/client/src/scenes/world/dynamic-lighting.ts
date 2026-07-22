@@ -36,6 +36,18 @@ const MOON_INTENSITY = 0.32 // BEAUCOUP plus faible que le soleil (~1.2) — un 
 const AMBIENT_DAY = 0xb6ad9c // ambiante multiplicative de jour (gris chaud)
 const AMBIENT_NIGHT = 0x33415f // ambiante de nuit BLEUTÉE (relevée) : les arbres ne tombent plus au noir
 const FEU_MAX = 24 // borne dure de lumières de Feu (le manager plafonne à maxLights=40)
+// LA FLAMME EST AU-DESSUS DES BÛCHES, PAS DESSUS. Le point-light du Feu était posé au CENTRE de
+// la tuile du foyer — donc pile sur le sprite des rondins. Résultat : lumière de face, la normal
+// map des bûches ne « réagissait » pas (dot(normale, lumière) ~uniforme → aplati). On décale la
+// source vers le NORD (−y, cf. le soleil/lune « en haut ») d'UNE tuile : négligeable pour le halo
+// alentour (rayon de dizaines de tuiles), mais décisif pour les rondins (16 px) — la lumière les
+// RASE, un côté clair / un côté sombre, et le galbe cylindrique ressort. On NE monte PAS le z : le
+// shader de Phaser rend `lightDir` plus VERTICAL (plus plat) quand z croît — l'inverse du but.
+// Décalage FIN (~⅓ de tuile). Une tuile pleine rasait trop : la bûche (sprite 16 px) tombait
+// presque entièrement dans l'ombre (dot ≤ 0) → bois bleu nuit. À ~⅓ de tuile, la lumière vient
+// d'un peu au-dessus/nord : les sommets des rondins restent chauds, le dessous s'ombre à peine —
+// un galbe cylindrique lisible, sans noyer le bois. Négligeable pour le halo alentour (rayon >>).
+const FEU_LIFT = TILE_PX * 0.3
 
 function setLightColor(light: Phaser.GameObjects.Light, rgb: number, scale = 1): void {
   const r = ((rgb >> 16) & 0xff) / 255 * scale
@@ -110,12 +122,16 @@ export class DynamicLighting {
         this.feux.set(s.id, light)
       }
       light.x = s.tx * TILE_PX + TILE_PX / 2
-      light.y = s.ty * TILE_PX + TILE_PX / 2
+      light.y = s.ty * TILE_PX + TILE_PX / 2 - FEU_LIFT // décalé au NORD : la flamme est au-dessus des rondins (voir FEU_LIFT)
       light.radius = g.radius * TILE_PX * 2.4 // portée élargie : la canopée s'allume plus loin autour du feu
       // Couleur CHAUDE (pas la couleur politique du Feu) — un peu plus rouge s'il couve fort.
       light.color.set(1.0, 0.5 - 0.14 * engage, 0.22 - 0.13 * engage)
-      // BIEN plus forte la nuit (demande d'Alexis : le Feu éclairait trop peu) ; socle de jour pour qu'elle existe au soleil.
-      light.intensity = (0.6 + 2.8 * (1 - day)) * (0.8 + 0.2 * engage)
+      // « CALMER la flamme au-dessus des bûches » (demande d'Alexis) : à ~3 la nuit, la source SATURAIT
+      // le sol pile autour (rouge+vert au plafond → aplat orange) et écrasait les rondins par contraste.
+      // On BAISSE l'intensité (brillance locale) SANS toucher au rayon (portée) — les deux leviers sont
+      // distincts : la canopée s'allume toujours loin (radius ×2.4), mais le sol proche ne crame plus et
+      // le galbe des bûches se lit. Valeur d'ordre de grandeur, à caler en playtest.
+      light.intensity = (0.6 + 1.2 * (1 - day)) * (0.8 + 0.2 * engage)
     }
     for (const [id, light] of this.feux) {
       if (seen.has(id)) continue

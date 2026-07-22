@@ -61,7 +61,7 @@ import {
   TILE_PX,
   zoomForFraming,
 } from '../render/framing'
-import { ambientTint, daylight, lerpColor } from '../render/lighting'
+import { ambientTint, daylight, fireGlow, lerpColor } from '../render/lighting'
 import { createWarp, type Warp } from '../render/warp'
 import {
   drainQueuedActions,
@@ -83,6 +83,8 @@ import { CendreLayer } from './world/cendre-layer'
 import { CliffLayer } from './world/cliff-layer'
 import { PoiLayer } from './world/poi-layer'
 import { FireFx } from './world/fire-fx'
+import { FireGroundGlow } from './world/fire-ground-glow'
+import { NightVeil } from './world/night-veil'
 import { DynamicLighting } from './world/dynamic-lighting'
 import { WaterLayer } from './world/water-layer'
 import { AmbientLife } from './world/ambient-life'
@@ -239,13 +241,14 @@ export class WorldScene extends Phaser.Scene {
   /** La frontière de transport (Worker aujourd'hui, Colyseus en LAN). */
   private host!: HostConnection
   private map!: WorldMap
-  private ambientRect: Phaser.GameObjects.Rectangle | null = null
-  /** L'AIR DE LA ZONE — un voile plein écran, fondu d'une zone à l'autre (voir `zone-ambiance`). */
-  private zoneAir: Phaser.GameObjects.Rectangle | null = null
+  /** LE VOILE DE NUIT — bleu de l'heure + air de zone, mais TROUÉ par les Feux (voir `night-veil`). */
+  private nightVeil: NightVeil | null = null
   private airColor = 0x000000
   private airAlpha = 0
   private airCible: { color: number; alpha: number } = { color: 0x000000, alpha: 0 }
   private fireFx: FireFx | null = null
+  /** La chaleur du Feu tombée au sol — cosmétique, cf. world/fire-ground-glow.ts. */
+  private fireGround: FireGroundGlow | null = null
   /** ESSAI éclairage dynamique (decisions.md 2026-07-20) : soleil + Feux normal-mappés,
    *  armés par le toggle debug F5. Inerte tant que le flag est éteint. */
   private dynLight: DynamicLighting | null = null
@@ -475,6 +478,9 @@ export class WorldScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       document.removeEventListener('visibilitychange', onVisibility)
       this.host.terminate()
+      // La brosse d'effacement du voile vit HORS liste d'affichage : le shutdown de scène ne la
+      // détruit pas toute seule (à la différence des GameObjects affichés).
+      this.nightVeil?.destroy()
     })
 
     // La génération de la grande carte alpine prend quelques secondes côté worker.
@@ -543,17 +549,9 @@ export class WorldScene extends Phaser.Scene {
         this.clutter = new ClutterLayer(this, this.map, this.worldSeed, this.warp)
       },
       world: () => {
-        this.ambientRect = this.add
-          .rectangle(0, 0, worldW, worldH, 0x000000, 0)
-          .setOrigin(0)
-          .setDepth(AMBIENT_DEPTH)
-        // L'AIR DE LA ZONE se pose JUSTE SOUS l'ambiance de l'heure : la nuit reste la nuit, mais
-        // la nuit du Gouffre n'est pas celle des Prés Bas.
-        this.zoneAir = this.add
-          .rectangle(0, 0, worldW, worldH, 0x000000, 0)
-          .setOrigin(0)
-          .setDepth(AMBIENT_DEPTH - 0.1)
+        this.nightVeil = new NightVeil(this)
         this.fireFx = new FireFx(this)
+        this.fireGround = new FireGroundGlow(this)
         this.dynLight = new DynamicLighting(this)
         this.ambientLife = new AmbientLife(this, (tx, ty) =>
           tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height ? -1 : (this.map.terrain[ty * this.map.width + tx] ?? -1),
@@ -766,26 +764,54 @@ export class WorldScene extends Phaser.Scene {
       // nuit du Gouffre n'est pas celle des Prés Bas. On interpole d'une zone à l'autre pour que
       // la transition soit un fondu et non un clignotement — sur ~2 s, la durée d'un pas de seuil.
       const amb = ambientTint(hour)
-      this.ambientRect?.setFillStyle(amb.color).setAlpha(amb.alpha)
       const cible = ambianceDe(zoneSlugAt(this.map, Math.floor(this.predicted.x), Math.floor(this.predicted.y))).air
       this.airCible = cible
       const k = Math.min(1, deltaMs / 900) // fondu ~0,9 s : on SENT le passage, on n'est pas ébloui
       this.airAlpha += (cible.alpha - this.airAlpha) * k
       this.airColor = lerpColor(this.airColor, cible.color, k)
-      this.zoneAir?.setFillStyle(this.airColor).setAlpha(this.airAlpha)
       const day = daylight(hour)
-      this.water?.update(time, hour, day) // la houle, et le soleil dessus
-      this.fireFx?.update(this.view.structures) // flammes/braises/fumée (aucun traitement du sol)
+      // Les Feux, résolus UNE fois : même `fireGlow` (seed/heure) pour la flaque au sol, le trou
+      // du voile ET le reflet sur l'eau → les trois battent EN PHASE avec la flamme.
+      const litFires = this.view.structures
+        .filter((s) => s.type === 'fire')
+        .map((s) => {
+          const warmth = this.view.villages.find((vg) => vg.id === s.villageId)?.warmth ?? 0
+          return { s, g: fireGlow(warmth, day, time, s.id * 1.7) }
+        })
+      this.water?.update(
+        time,
+        hour,
+        day,
+        // Portée du reflet un peu plus large que la lueur (comme le trou du voile déborde la flaque) ;
+        // force = alpha de la lueur, déjà ∝ nuit → le reflet s'éteint tout seul de jour.
+        litFires.map(({ s, g }) => ({ x: s.tx + 0.5, y: s.ty + 0.5, radius: g.radius * 2.3, strength: g.alpha })),
+      )
+      this.fireFx?.update(this.view.structures, this.view.wind) // flammes/braises/fumée, poussées par le vent
+      // La chaleur du Feu au sol : cosmétique, ∝ nuit (voir world/fire-ground-glow.ts).
+      this.fireGround?.update(this.view.structures, this.view.villages, day, time)
       // ESSAI éclairage dynamique (toggle debug, panneau P) : le flag éclaire TOUS les sprites
       // (couche 1) et pilote soleil/lune/Feux. Éteint = scène rendue comme avant.
       const lit = Boolean(getHud(this.registry, 'debugLighting'))
       this.view.lighting = lit
       if (this.clutter) this.clutter.lighting = lit
-      // Le voile d'ambiance descend SOUS les sprites quand ils sont éclairés (il ne tinte plus
-      // que le fond) ; sinon il coiffe toute la scène comme avant. Empêche le double-assombrissement.
+      // Le voile descend SOUS les sprites quand ils sont éclairés (il ne tinte plus que le fond) ;
+      // sinon il coiffe toute la scène. Et le Feu le CREUSE — sauf en mode éclairé, où la vraie
+      // pipeline fait déjà la lumière (on ne troue pas deux fois).
       const ambientDepth = lit ? AMBIENT_DEPTH_LIT : AMBIENT_DEPTH
-      this.ambientRect?.setDepth(ambientDepth)
-      this.zoneAir?.setDepth(ambientDepth - 0.1)
+      // MÊME `litFires`/`fireGlow` que l'eau et la flaque ambre → le trou du voile bat EN PHASE.
+      const veilFires = litFires.map(({ s, g }) => ({
+        worldX: (s.tx + 0.5) * TILE_PX,
+        worldY: (s.ty + 0.5) * TILE_PX,
+        radiusTiles: g.radius,
+      }))
+      this.nightVeil?.update(
+        { color: amb.color, alpha: amb.alpha },
+        { color: this.airColor, alpha: this.airAlpha },
+        veilFires,
+        this.cameras.main,
+        ambientDepth,
+        !lit,
+      )
       this.dynLight?.update(lit, this.cameras.main, this.view.structures, this.view.villages, hour, day, time)
       // La vie ambiante : les oiseaux traversent, les lucioles ne sortent qu'à la nuit.
       this.ambientLife?.update(this.cameras.main, time / 1000, deltaMs / 1000, 1 - day)

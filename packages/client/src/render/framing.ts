@@ -28,6 +28,11 @@ export const TILE_PX = 16
 
 /** Sol plat, jamais trié. */
 export const GROUND_MAP_DEPTH = -1
+/** La flaque de chaleur au sol d'un Feu : POSÉE SUR LE SOL, sous tout ce qui s'y tient — y compris
+ *  LES BÛCHES DU FOYER (`GROUND_FIRE_DEPTH = 5`) et le sol bâti, sinon la flaque additive LAVE le
+ *  bois et il disparaît. Au-dessus du seul sol nu (et eau/cendre/falaise). C'est une lueur
+ *  d'ambiance, pas un objet à pieds ; tout objet l'occulte naturellement. */
+export const FIRE_GROUND_DEPTH = 4
 export const GROUND_PROP_DEPTH = 2
 export const GROUND_FIRE_DEPTH = 5
 /** LE SOL BÂTI (décision d'Alexis) : une pièce molle POSÉE AU RAS DU SOL, sous les

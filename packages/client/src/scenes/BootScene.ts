@@ -7,7 +7,7 @@ import Phaser from 'phaser'
 import { generateItemIcons } from '../render/item-art'
 import { generateVitalIcons } from '../render/vital-art'
 import { generateLitTrees } from '../render/lit-trees'
-import { generateLitProps } from '../render/lit-props'
+import { generateFireProp, generateLitProps } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
 import { makePoiTextures } from './world/poi-art'
 
@@ -49,6 +49,7 @@ export class BootScene extends Phaser.Scene {
     generateVitalIcons(this) // les 4 icônes des jauges du HUD — voir render/vital-art.ts
     generateLitTrees(this) // essai éclairage dynamique : arbres normal-mappés — voir render/lit-trees.ts
     generateLitProps(this) // + masse pâteuse (buissons, roches…) aplatie + normal-mappée — render/lit-props.ts
+    generateFireProp(this) // + le Feu : bûches croisées, normal-mappées (st-fire + st-fire_lit) — render/lit-props.ts
 
     // NETTETÉ DU PIXEL-ART : le rendu global est en ANTIALIAS (pour un texte/UI lisse
     // comme la maquette), donc les textures pixel-art générées ici recevraient un
@@ -257,12 +258,9 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('st-house', 16, 16)
     g.clear()
 
-    // Le Feu : foyer de pierre + flamme (la couleur d'alignement viendra en V8).
-    g.fillStyle(0x55504a).fillCircle(8, 8, 7)
-    g.fillStyle(0x2b2723).fillCircle(8, 8, 5)
-    g.fillStyle(0xe8842c).fillCircle(8, 8, 4)
-    g.fillStyle(0xf7c256).fillCircle(8, 7, 2)
-    g.generateTexture('st-fire', 16, 16)
+    // Le Feu (`st-fire` / `st-fire_lit`) : des bûches croisées NORMAL-MAPPÉES, généré à
+    // part car il faut lire son canvas pour la normal map — voir `generateFireProp`
+    // (render/lit-props.ts), appelé plus bas. La flamme vient des particules (FireFx).
     g.destroy()
 
     this.makeNodes()

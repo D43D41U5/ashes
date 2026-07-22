@@ -639,6 +639,9 @@ export class SnapshotView {
       }
       sprite.setLighting(this.lighting) // couche 1 : murs, portes, ateliers… éclairés (pooled → chaque frame)
       if (s.type === 'fire') {
+        // Les BÛCHES normal-mappées : bois mat `_lit` quand l'éclairage est armé (relief
+        // calculé par la normal map cylindrique), sinon le sprite ombré simple.
+        sprite.setTexture(this.lighting ? 'st-fire_lit' : 'st-fire')
         // La couleur du Feu (spec alignement R9) : bleu ↔ blanc ↔ rouge.
         const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
         sprite.setTint(warmthColor(warmth))
