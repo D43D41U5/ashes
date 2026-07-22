@@ -1,21 +1,13 @@
 /**
- * La ceinture (hotbar) : les BALANCE.SLOTS.BELT premières cases du sac, en bas
- * au centre, avec le numéro de touche (1-6) sous chacune. La case tenue en main
- * (`activeSlot`) est surlignée. Aucune règle ici : on affiche `inv` tel que le
- * snapshot le donne (spec inventaire R17, R22).
+ * LA GÉOMÉTRIE DE LA CEINTURE — les seules constantes partagées de la rangée du bas.
+ *
+ * Le RENDU de la ceinture vit désormais entièrement dans le HUD DOM (`hud-core.ts`) ;
+ * l'ancien renderer Phaser `createHotbar` (et la trilogie `vitals`/`pickup-toasts`) a
+ * été retiré — c'était du code mort sans importeur, qui dupliquait la logique du HUD
+ * réel (audit UI/UX P3). Ne restent ici que la taille de case et le bas d'écran, dont
+ * `inventory-panel.ts` a besoin pour aligner la grille du sac sur la ceinture.
  */
-import { SLOTS, type Inventory } from '@braises/sim'
 import type Phaser from 'phaser'
-import { createSlotView, type SlotView } from './slot-view'
-import { HEX } from './palette'
-import { FONT } from './typography'
-
-export interface Hotbar {
-  update(inv: Inventory, activeSlot: number): void
-  /** Masquée quand l'écran d'inventaire est ouvert : sa rangée dans la grille la
-   *  remplace (Rust fait pareil — sinon on affiche deux fois la même ceinture). */
-  setVisible(v: boolean): void
-}
 
 /** Taille et gouttière RUST : de grandes cases, quasi jointives. La ceinture est
  *  une rangée de la grille du sac — elle doit s'écrire dans le même alphabet. */
@@ -28,47 +20,4 @@ const MARGIN = 20
  *  l'écran doit lire comme une seule bande, pas comme deux blocs qui flottent. */
 export function hotbarBottom(scene: Phaser.Scene): number {
   return scene.scale.height - MARGIN
-}
-
-export function createHotbar(scene: Phaser.Scene): Hotbar {
-  const belt = SLOTS.BELT
-  const totalW = belt * CELL + (belt - 1) * GAP
-  const startX = scene.scale.width / 2 - totalW / 2 + CELL / 2
-  const y = hotbarBottom(scene) - CELL / 2
-
-  const cells: SlotView[] = []
-  const nums: Phaser.GameObjects.Text[] = []
-  const parts: Phaser.GameObjects.GameObject[] = []
-  for (let i = 0; i < belt; i++) {
-    const x = startX + i * (CELL + GAP)
-    const view = createSlotView(scene, x, y, CELL)
-    cells.push(view)
-    // Le numéro de touche DANS la case, au coin haut-gauche (maquette Turn 5A) — il
-    // passe en BRAISE quand la case est tenue, discret sinon.
-    const num = scene.add
-      .text(x - CELL / 2 + 5, y - CELL / 2 + 3, String(i + 1), {
-        fontFamily: FONT,
-        fontSize: '12px',
-        color: HEX.dim,
-        stroke: '#14141a',
-        strokeThickness: 3,
-      })
-      .setOrigin(0, 0)
-    nums.push(num)
-    parts.push(view.root, num)
-  }
-  const root = scene.add.container(0, 0, parts)
-
-  return {
-    setVisible(v) {
-      root.setVisible(v)
-    },
-    update(inv, activeSlot) {
-      for (let i = 0; i < belt; i++) {
-        const active = i === activeSlot
-        cells[i]!.update(inv[i] ?? null, active)
-        nums[i]!.setColor(active ? HEX.ember : HEX.dim)
-      }
-    },
-  }
 }
