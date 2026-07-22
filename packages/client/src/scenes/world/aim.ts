@@ -96,9 +96,23 @@ export interface HandContext {
   /** Le slot de ceinture SÉLECTIONNÉ — la sim consomme CE slot, pas un autre.
    *  Absent = pas de désignation (un test) : la sim retombe sur sa règle par défaut. */
   slot?: number
+  /** Le joueur a-t-il une plaie ? (saignement/jambe/bras). C'est la CONDITION du
+   *  bandage : des fibres en main NE pansent que si l'on saigne — sinon le clic
+   *  retombe sur la frappe (la défense du pauvre survit, cf. le dernier cran). */
+  wounded?: boolean
   /** Direction vers le curseur, depuis l'avatar (non normalisée : la sim le fait). */
   dx: number
   dy: number
+}
+
+/**
+ * LE MATÉRIAU DE SOIN — aujourd'hui, les fibres, et elles seules (spec combat R7 :
+ * `BANDAGE_FIBER_COST`). Tenir des fibres est le geste du bandage prévu par la
+ * grammaire ceinture+clic (voir plus bas). Isolé en fonction pour que le jour où un
+ * `pansement` craftable existe, on l'ajoute ICI, à un seul endroit.
+ */
+export function isCareMaterial(item: ItemId | null): boolean {
+  return item === 'fiber'
 }
 
 /** MANGER le slot qu'on tient — on transmet l'index à la sim pour qu'elle croque CE
@@ -155,6 +169,14 @@ export function clickToAction(
 
   // MANGER : on tient de quoi, on croque. (Le clic maintenu répète — voir holdHarvest.)
   if (hand && isFood(hand.held)) return eatHeld(hand)
+
+  // SE PANSER (spec combat R7) : des fibres en main ET une plaie → on se bande. Placé
+  // AVANT la frappe et la récolte : si l'on a équipé des fibres en saignant, le clic
+  // SOIGNE, il ne part pas frapper un buisson ni récolter « en passant ». Sans plaie,
+  // on tombe plus bas (la frappe) — tenir des fibres n'ôte pas la défense du pauvre.
+  // C'est un TAP délibéré (une plaie par bandage) : le maintien ne le répète pas, pour
+  // ne pas cracher des « trop tôt » dans le flux que la chronique lit. Cible : soi.
+  if (hand && isCareMaterial(hand.held) && hand.wounded) return { type: 'bandage' }
 
   // FRAPPER : une arme en main frappe TOUJOURS — on ne coupe pas du bois avec une
   // lance, et surtout on ne veut pas qu'un clic de panique parte récolter un buisson

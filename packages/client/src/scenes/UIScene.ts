@@ -15,6 +15,7 @@ import { createHudCharacter, type HudCharacter } from './ui/hud-character'
 import { createBuildMenu, type BuildMenu } from './ui/build-menu'
 import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
 import { createFoundVillagePrompt, type FoundVillagePrompt } from './ui/found-village-prompt'
+import { createFireUpgradePrompt, type FireUpgradePrompt } from './ui/fire-upgrade-prompt'
 import { mountHud, type HudDom } from './ui/hud-dom'
 import { createLoadingScreen, type LoadingScreen } from './ui/loading'
 import { createChatPanel, type ChatPanel } from './ui/chat-panel'
@@ -60,6 +61,7 @@ export class UIScene extends Phaser.Scene {
   private craftQueueView!: CraftQueueView
   /** La fenêtre du bas « Fonder un village ici ? » — près d'un feu de camp libre. */
   private foundVillagePrompt!: FoundVillagePrompt
+  private fireUpgradePrompt!: FireUpgradePrompt
   private chatPanel!: ChatPanel
   private journalPanel!: Phaser.GameObjects.Container
   private journalText!: Phaser.GameObjects.Text
@@ -164,6 +166,9 @@ export class UIScene extends Phaser.Scene {
     // La fenêtre « Fonder un village ici ? » : née cachée, elle ne paraît qu'auprès
     // d'un feu de camp libre (WorldScene pose `foundableFire`).
     this.foundVillagePrompt = createFoundVillagePrompt(this.hudRoot.board, (action) => queueAction(this.registry, action))
+    // La fenêtre sœur « Monter le Feu ? » : même patron, même contrat (WorldScene pose
+    // `upgradableFire`, la sim revalide `upgrade_fire`).
+    this.fireUpgradePrompt = createFireUpgradePrompt(this.hudRoot.board, (action) => queueAction(this.registry, action))
     this.chatPanel = createChatPanel(this)
     // Le journal (J) : la chronique de la saison, la Mémoire v1.
     const panelBg = this.add.rectangle(0, 0, 720, 480, 0x14141a, 0.92).setOrigin(0.5).setStrokeStyle(2, 0x6b5a3a)
@@ -519,6 +524,10 @@ export class UIScene extends Phaser.Scene {
     // d'un feu libre à soi, sans foyer encore) ; elle s'efface pendant les overlays
     // (WorldScene y pose `foundableFire` à null). L'UI ne fait que la montrer.
     this.foundVillagePrompt.update(getHud(this.registry, 'foundableFire') ?? null)
+    // La fenêtre « Monter le Feu ? » suit le même chemin : elle et « Fonder » sont
+    // mutuellement exclusives (fonder = feu libre sans village ; monter = Chef d'un
+    // village), elles ne s'affichent donc jamais ensemble.
+    this.fireUpgradePrompt.update(getHud(this.registry, 'upgradableFire') ?? null)
     // La file, elle, se voit TOUJOURS : une file bouchée (sac plein) ou en pause
     // (station quittée) doit se remarquer sans aller ouvrir un menu (spec F15).
     this.craftQueueView.setVisible(true)

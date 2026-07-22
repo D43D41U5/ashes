@@ -50,6 +50,32 @@ describe('clickToAction — désarmé, le clic ne bâtit JAMAIS (A1)', () => {
   })
 })
 
+describe('clickToAction — se panser : fibres en main + une plaie (V0-2)', () => {
+  const empty = () => aimAt(11, 11, PLAYER, [], [], RANGE) // tuile vide à portée
+  const fibers = (wounded: boolean) => ({ held: 'fiber' as const, wounded, dx: 1, dy: 0 })
+
+  it('fibres en main ET blessé → on se bande', () => {
+    expect(clickToAction(empty(), null, fibers(true))).toEqual({ type: 'bandage' })
+  })
+
+  it('fibres en main SANS blessure → pas de bandage : le clic reste une frappe (défense du pauvre)', () => {
+    expect(clickToAction(empty(), null, fibers(false))).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+
+  it('se panser PRIME sur récolter : blessé, fibres en main, on soigne — on ne récolte pas « en passant »', () => {
+    const onNode = aimAt(10, 10, PLAYER, [node(7, 10, 10)], [], RANGE)
+    expect(clickToAction(onNode, null, fibers(true))).toEqual({ type: 'bandage' })
+  })
+
+  it('blessé mais mains vides → pas de bandage (il faut un matériau de soin)', () => {
+    expect(clickToAction(empty(), null, { held: null, wounded: true, dx: 1, dy: 0 })).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+
+  it('le MAINTIEN ne répète PAS le bandage — c’est un tap délibéré, une plaie à la fois', () => {
+    expect(holdHarvest(empty(), null, 1000, 0, 200, fibers(true))).toBeNull()
+  })
+})
+
 describe('clickToAction — armé, le clic bâtit (A2)', () => {
   it('sur une tuile vide, il pose la structure choisie — mur en bois par défaut', () => {
     const t = aimAt(11, 11, PLAYER, [], [], RANGE)

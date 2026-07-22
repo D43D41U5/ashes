@@ -5,7 +5,7 @@
  */
 import { BALANCE, type Structure, type Village } from '@braises/sim'
 import { describe, expect, it } from 'vitest'
-import { containerInRange, foundableFireAt } from './hud-bridge'
+import { containerInRange, foundableFireAt, upgradableFireAt } from './hud-bridge'
 
 describe('containerInRange', () => {
   const R = BALANCE.INTERACT_RANGE
@@ -57,5 +57,37 @@ describe('foundableFireAt — quel feu libre puis-je promouvoir en foyer ?', () 
 
   it('une structure qui n’est pas un feu ne compte pas', () => {
     expect(foundableFireAt(player, [fire({ type: 'chest' })], [], ME)).toBeNull()
+  })
+})
+
+describe('upgradableFireAt — puis-je monter le palier de mon Feu ?', () => {
+  const ME = 1
+  const village = (over: Partial<Village> = {}): Village =>
+    ({ id: 1, chiefId: ME, tier: 1, fireTx: 5, fireTy: 5, memberIds: [ME], ...over }) as Village
+  const player = { x: 5.5, y: 5.5 } // pile sur le centre de la tuile du Feu
+
+  it('Chef à portée de son Feu, palier 1 → coût du palier 2', () => {
+    expect(upgradableFireAt(player, [village()], ME)).toEqual({
+      villageId: 1,
+      tier: 1,
+      nextCost: BALANCE.FIRE_UPGRADE_COST[1],
+    })
+  })
+
+  it('palier 2 → coût du palier 3', () => {
+    expect(upgradableFireAt(player, [village({ tier: 2 })], ME)?.nextCost).toEqual(BALANCE.FIRE_UPGRADE_COST[2])
+  })
+
+  it('je ne suis PAS le Chef → rien à monter (seul le Chef monte le Feu)', () => {
+    expect(upgradableFireAt(player, [village({ chiefId: 2 })], ME)).toBeNull()
+  })
+
+  it('trop loin de mon Feu → rien (il faut être à portée d’interaction)', () => {
+    expect(upgradableFireAt({ x: 50, y: 50 }, [village()], ME)).toBeNull()
+  })
+
+  it('palier maximal atteint → plus rien à monter', () => {
+    const maxTier = BALANCE.FIRE_UPGRADE_COST.length // 3 → FIRE_UPGRADE_COST[3] est undefined
+    expect(upgradableFireAt(player, [village({ tier: maxTier })], ME)).toBeNull()
   })
 })

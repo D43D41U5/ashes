@@ -24,6 +24,16 @@ export const KEYMAP = {
   /** LE PAS LENT (spec chasse C2) : discret pour la faune, moitié de la vitesse. */
   sneak: ['C'],
   /**
+   * LA PARADE (spec combat — blocage directionnel). Un MODIFICATEUR de posture
+   * MAINTENU, exactement comme le sprint et le pas lent : on lève la garde tant
+   * qu'on tient la touche. Ce n'est PAS un verbe de la ceinture (ceux-là sont partis
+   * au clic, 2026-07-12) — c'est une STANCE, au même rang que courir ou ramper, et
+   * ces stances-là sont restées au clavier. Le clic droit, lui, est déjà pris par la
+   * caméra de visée (lookahead) : le lui voler ferait entrer en garde à chaque coup
+   * d'œil au loin. La sim la connaît depuis toujours (`input.block`, combat.ts).
+   */
+  block: ['SPACE'],
+  /**
    * JETER CE QU'ON TIENT (spec chasse C18). Zéro UI : la case active tombe au
    * sol, une unité à la fois. C'est le geste de l'APPÂT (poser des baies et
    * attendre), du JET DE VIANDE à une meute qui vous serre (faune R15, promis par
@@ -39,8 +49,8 @@ export const KEYMAP = {
 /*
  * CE QUI A ÉTÉ DÉBRANCHÉ, ET POURQUOI (2026-07-12, décision utilisateur).
  *
- * Le clavier ne porte plus AUCUN verbe de jeu : ni attaquer (ESPACE), ni parer
- * (C), ni bander (X), ni allumer le Feu (F), ni bâtir (B), ni réparer (G), ni
+ * Le clavier ne porte plus aucun VERBE de jeu : ni attaquer (ESPACE), ni bander
+ * (X), ni allumer le Feu (F), ni bâtir (B), ni réparer (G), ni
  * donner (T), ni manger (E/R) — et plus une seule recette (SHIFT+chiffre). Le
  * clic droit (démolir / désarmer) et le SHIFT+clic (partager) tombent avec eux.
  *

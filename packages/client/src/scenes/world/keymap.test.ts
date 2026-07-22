@@ -31,9 +31,13 @@ describe('keymap', () => {
    * fait échouer le test le jour où quelqu'un recâble une action à la va-vite —
    * ce qui est exactement la discussion qu'on veut avoir à ce moment-là.
    */
-  it('le clavier ne porte que le déplacement, les allures, JETER, et les trois écrans', () => {
+  it('le clavier ne porte que le déplacement, les allures (dont la parade), JETER, et les trois écrans', () => {
+    // `block` (la parade) est une ALLURE maintenue, au même rang que `sprint` et
+    // `sneak` — pas un verbe de ceinture. C'est le seul recâblage clavier assumé
+    // depuis 2026-07-12, et il est ici blanchi EXPRÈS : une stance a sa place au
+    // clavier, un verbe (attaquer, bander, bâtir…) n'en a pas.
     expect(Object.keys(KEYMAP).sort()).toEqual(
-      ['dropHeld', 'moveDown', 'moveLeft', 'moveRight', 'moveUp', 'sneak', 'sprint', 'toggleInventory', 'toggleJournal', 'toggleMap'].sort(),
+      ['block', 'dropHeld', 'moveDown', 'moveLeft', 'moveRight', 'moveUp', 'sneak', 'sprint', 'toggleInventory', 'toggleJournal', 'toggleMap'].sort(),
     )
   })
 })

@@ -69,6 +69,7 @@ import {
   publishChronicle,
   publishError,
   publishFoundableFire,
+  publishUpgradableFire,
   publishOpenContainer,
   publishPickup,
   publishPlayerVitals,
@@ -660,6 +661,16 @@ export class WorldScene extends Phaser.Scene {
       this.view.villages,
       this.playerId,
     )
+    // Chef à portée de MON Feu, palier < max → la fenêtre « Améliorer le Feu » (V0-3).
+    // Même patron que « Fonder » : WorldScene décide QUAND, UIScene ne fait que montrer ;
+    // étouffée pendant un overlay (elle ne se superpose ni au sac ni à la carte).
+    publishUpgradableFire(
+      this.registry,
+      this.predicted,
+      overlay ? [] : this.view.villages,
+      this.playerId,
+      getHud(this.registry, 'inv') ?? [],
+    )
     this.checkVitals()
 
     // LE COMBAT SE VOIT. Tout se redessine à chaque frame à partir du SNAPSHOT : la
@@ -708,6 +719,17 @@ export class WorldScene extends Phaser.Scene {
       this.armes.delete(id)
     }
     this.attackFx.update(time)
+
+    // LA GARDE SE VOIT (V0-1). Tout corps qui pare — le mien comme celui d'un PNJ ou
+    // d'un ennemi — porte son arc d'acier, orienté par son `facing` autoritatif et
+    // épousant le cône réellement protégé (120°). Depuis le SNAPSHOT (jamais du clic) :
+    // `entity.blocking` est posé par la sim au tick, comme le reste du combat (§3).
+    for (const e of this.lastEntities) {
+      if (!e.blocking) continue
+      const sprite = spriteOf(e.id)
+      if (!sprite) continue
+      this.attackFx.guard(sprite.x, sprite.y, e.facing.x, e.facing.y)
+    }
 
     // L'ARME EN MAIN, sur chaque corps : ce qui dit CE QUI PEUT arriver (hand-weapon.ts).
     this.handWeapons.render(
@@ -827,11 +849,11 @@ export class WorldScene extends Phaser.Scene {
     // LE PAS LENT (spec chasse C2) : il prime sur le sprint dans la sim — on
     // transmet les deux tels quels, c'est `speedScaleFor` qui arbitre.
     const sneak = !typing && this.inputs.sneakKeys.some((k) => k.isDown)
-    // La PARADE est débranchée du clavier (2026-07-12) : plus personne ne peut
-    // l'armer. On continue de la transmettre — la sim, la prédiction et
-    // `speedScaleFor` la connaissent — mais elle vaut désormais toujours `false`.
-    // Le jour où parer revient, c'est cette ligne qu'on rebranche.
-    const block = false
+    // LA PARADE EST REVENUE (V0-1) : une STANCE maintenue (touche `block`, cf. keymap),
+    // au même rang que le sprint et le pas lent — pas un verbe de ceinture. La sim, la
+    // prédiction et `speedScaleFor` la connaissent depuis toujours ; on cesse enfin de
+    // la forcer à `false`. Muette quand un champ de saisie a le clavier (on écrit).
+    const block = !typing && this.inputs.blockKeys.some((k) => k.isDown)
 
     // Prédiction locale (spec reconciliation R1-R7). `predictFrame` consomme le
     // dt de frame en sous-pas de tick fixes (rejeu exact de la suite de dt du
@@ -1209,6 +1231,12 @@ export class WorldScene extends Phaser.Scene {
         // décor qui avoue. Le joueur doit VOIR où elle est passée, et comprendre
         // qu'il fallait couper la ligne. Purement visuel : la sim n'en sait rien.
         this.view.markEscape(event.x, event.y, this.time.now)
+      } else if (event.type === 'entity_bandaged' && event.entityId === this.playerId) {
+        // ON S'EST PANSÉ (V0-2) : le saignement cesse, une plaie se referme. Une
+        // étincelle claire sur le corps le DIT — sinon la seule preuve serait
+        // l'absence d'un dégât qu'on ne voyait pas venir. Le libellé de blessure du
+        // HUD s'efface au même snapshot (hud-core) : le geste a un avant et un après.
+        this.attackFx.spark(this.playerSprite.x, this.playerSprite.y - 6, 0, false, this.time.now)
       }
       if (CHRONICLE_TYPES.has(event.type)) {
         this.eventLog.push(event)

@@ -6,7 +6,7 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { ChronicleEntry, ComponentType, CraftOrder, Entity, GameTime, Inventory, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@braises/sim'
+import type { ChronicleEntry, ComponentType, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@braises/sim'
 import type Phaser from 'phaser'
 
 /**
@@ -98,6 +98,11 @@ export interface HudState {
    *  par WorldScene chaque frame ; lu par UIScene, qui affiche alors la fenêtre du
    *  bas « Fonder un village ici ? ». Le clic Oui envoie `found_village`. */
   foundableFire: { structureId: number } | null
+  /** LE FEU AMÉLIORABLE (V0-3) : je suis Chef, à portée de MON Feu, palier < max.
+   *  Posé par WorldScene chaque frame ; UIScene en tire la fenêtre « Améliorer le
+   *  Feu ». `affordable` grise le bouton et fait APPRENDRE le coût (on le voit avant
+   *  de pouvoir payer). `null` = pas ici, ou pas Chef, ou palier maximal. */
+  upgradableFire: { villageId: number; tier: number; nextCost: ItemBag; affordable: boolean } | null
   /** LE MENU PERSONNAGE (TAB) est-il ouvert ? C'est l'écran qui rassemble ce que le
    *  personnage EST et ce qu'il PEUT : son sac, sa ceinture, son artisanat — et
    *  demain ses vêtements et ses maîtrises. Il s'appelait « inventaire » quand il

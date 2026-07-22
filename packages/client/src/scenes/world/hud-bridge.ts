@@ -6,9 +6,12 @@
 import {
   BALANCE,
   chronicleFromEvents,
+  hasItems,
   type Corpse,
   type Entity,
   type GameTime,
+  type Inventory,
+  type ItemBag,
   type ItemId,
   type PlayerAction,
   type SimEvent,
@@ -110,6 +113,48 @@ export function publishFoundableFire(
   const found = id === null ? null : { structureId: id }
   const before = getHud(registry, 'foundableFire') ?? null
   if (before?.structureId !== found?.structureId) setHud(registry, 'foundableFire', found)
+}
+
+/**
+ * LOGIQUE PURE (testée) : puis-je monter le palier de mon Feu, ici et maintenant ?
+ * Conditions miroir de la sim (`upgrade_fire`, village.ts) : je suis le CHEF de mon
+ * village, à `INTERACT_RANGE` de son Feu, et le palier n'est pas au max. Rend le
+ * palier courant et le coût du SUIVANT (`FIRE_UPGRADE_COST[tier]`), ou `null`.
+ * L'affordabilité, elle, dépend du sac — elle est calculée au moment de publier.
+ */
+export function upgradableFireAt(
+  player: { x: number; y: number },
+  villages: Village[],
+  playerId: number,
+): { villageId: number; tier: number; nextCost: ItemBag } | null {
+  const v = villages.find((vg) => vg.chiefId === playerId)
+  if (!v) return null
+  const nextCost = BALANCE.FIRE_UPGRADE_COST[v.tier] // index = palier courant → coût du suivant
+  if (!nextCost) return null // palier maximal atteint (tier ≥ longueur du barème)
+  const r = BALANCE.INTERACT_RANGE
+  const dx = v.fireTx + 0.5 - player.x
+  const dy = v.fireTy + 0.5 - player.y
+  if (dx * dx + dy * dy > r * r) return null
+  return { villageId: v.id, tier: v.tier, nextCost }
+}
+
+export function publishUpgradableFire(
+  registry: Registry,
+  player: { x: number; y: number },
+  villages: Village[],
+  playerId: number,
+  inv: Inventory,
+): void {
+  const up = upgradableFireAt(player, villages, playerId)
+  const next =
+    up === null ? null : { villageId: up.villageId, tier: up.tier, nextCost: up.nextCost, affordable: hasItems(inv, up.nextCost) }
+  // On ne republie que sur CHANGEMENT signifiant (ça tourne chaque frame) : le village,
+  // le palier, ou le passage possible↔impossible du coût. Le contenu du coût, lui, ne
+  // change pas pour un palier donné.
+  const before = getHud(registry, 'upgradableFire') ?? null
+  if (before?.villageId !== next?.villageId || before?.tier !== next?.tier || before?.affordable !== next?.affordable) {
+    setHud(registry, 'upgradableFire', next)
+  }
 }
 
 /**

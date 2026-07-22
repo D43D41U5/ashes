@@ -41,6 +41,8 @@ export interface MovementBindings {
   sprintKeys: Phaser.Input.Keyboard.Key[]
   /** Le PAS LENT (spec chasse C2), maintenu comme le sprint. */
   sneakKeys: Phaser.Input.Keyboard.Key[]
+  /** LA PARADE (spec combat), maintenue comme le sprint — une posture, pas un verbe. */
+  blockKeys: Phaser.Input.Keyboard.Key[]
   /** Entretient le clic MAINTENU (récolte en boucle) — à appeler chaque frame. */
   tickHold(): void
   /** Ce que vise le curseur MAINTENANT — pour le surlignage et le fantôme. */
@@ -125,6 +127,11 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   }
   const sprintKeys = grab(KEYMAP.sprint)
   const sneakKeys = grab(KEYMAP.sneak)
+  // La garde est une STANCE maintenue (comme sprint/sneak). On CAPTURE l'espace :
+  // sans ça, le navigateur peut faire défiler la page ou (re)cliquer un bouton DOM
+  // qui a le focus — une garde qui scrolle l'écran n'est pas une garde.
+  const blockKeys = grab(KEYMAP.block)
+  kb.addCapture(KEYMAP.block[0]!)
 
   // CE QUE LE CLIC POSERAIT. Deux sources, une seule notion : une CONSTRUCTION armée
   // au panneau (marteau en main, lue dans le HUD), OU le FEU DE CAMP qu'on tient dans
@@ -233,9 +240,13 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     const inv = getHud(scene.registry, 'inv') ?? []
     const slot = getHud(scene.registry, 'activeSlot') ?? -1
     const held = slot >= 0 ? (inv[slot]?.item ?? null) : null
+    // BLESSÉ ? Le résolveur en a besoin : des fibres en main + une plaie → se panser
+    // (aim.ts). Sans blessure, tenir des fibres ne soigne pas — le clic reste une frappe.
+    const w = getHud(scene.registry, 'wounds') ?? {}
+    const wounded = Boolean(w.bleeding || w.leg || w.arm)
     const world = pointerToWorld(pointer)
     const p = deps.predicted()
-    return { held, slot, dx: world.x / TILE_PX - p.x, dy: world.y / TILE_PX - p.y }
+    return { held, slot, wounded, dx: world.x / TILE_PX - p.x, dy: world.y / TILE_PX - p.y }
   }
 
   /** Le nœud visé est-il un ARBRE (abattage à maîtrise) ? Les arbres passent par la
@@ -452,5 +463,5 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     }
   }
 
-  return { keys, sprintKeys, sneakKeys, tickHold, aim: aimNow, placing }
+  return { keys, sprintKeys, sneakKeys, blockKeys, tickHold, aim: aimNow, placing }
 }

@@ -243,7 +243,7 @@ export function createHudCore(
       const wounds = [
         s.wounds.leg ? 'jambe blessée' : null,
         s.wounds.arm ? 'bras blessé' : null,
-        s.wounds.bleeding ? 'SAIGNEMENT (X : bander)' : null,
+        s.wounds.bleeding ? 'SAIGNEMENT — fibres en main, clic pour panser' : null,
       ].filter(Boolean)
       woundsEl.textContent = wounds.length ? `■ ${wounds.join(' · ')}` : ''
       woundsEl.style.display = wounds.length ? '' : 'none'

@@ -64,6 +64,11 @@ const BLEED = 0xc0503e
 const SPARK = 0xffe9b0
 /** L'arc d'un ENNEMI : rouge. Celui qui vient vers vous ne se lit pas comme le vôtre. */
 const THREAT = 0xe0553f
+/** LA GARDE : un acier froid, ni la lame crème ni la menace rouge — un bouclier se
+ *  lit d'un autre registre. Le cône protégé est FRONTAL, comme la sim l'applique. */
+const GUARD = 0x9db4c8
+/** Rayon du bouclier au sol, en px : court (la garde protège de près). */
+const GUARD_R = 30
 
 /** Écrasement vertical : le jeu est vu de DESSUS. Un arc rond se lirait comme une
  *  bulle plantée dans le dos de l'avatar ; écrasé, il se pose au sol. */
@@ -120,6 +125,14 @@ export interface AttackFx {
   charge(x: number, y: number, dx: number, dy: number, ratio: number, zone: Zone, mine: boolean, now: number): void
   /** LE COUP PART : la zone claque, une fois. Déclenché quand le wind-up s'achève. */
   slash(x: number, y: number, dx: number, dy: number, zone: Zone, now: number, charged: boolean): void
+  /**
+   * LA GARDE LEVÉE (parade) : un arc d'acier devant qui pare, épousant EXACTEMENT
+   * le cône protégé de la sim — 120° frontaux (BLOCK_ARC_COS = cos 60°). Dessiné
+   * chaque frame tant que l'entité bloque ; son SURGISSEMENT est le seul retour dont
+   * le joueur ait besoin (« je pare »), aucune jauge. Rend enfin visible la moitié
+   * défensive du combat de coût, longtemps câblée à `false` et donc muette.
+   */
+  guard(x: number, y: number, dx: number, dy: number): void
   /** À appeler une fois par frame AVANT les télégraphes : efface l'ardoise. */
   beginFrame(): void
   /** Un coup a porté sur une cible (événement `entity_damaged`). */
@@ -351,6 +364,20 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
 
     hurt(now) {
       bleedAt = now
+    },
+
+    guard(x, y, dx, dy) {
+      const len = Math.sqrt(dx * dx + dy * dy)
+      const angle = len < 0.0001 ? 0 : Math.atan2(dy, dx)
+      const half = Math.PI / 3 // 60° de demi-arc → 120° frontaux, exactement BLOCK_ARC_COS
+      // `arcPoints` rend [centre, ...bord], DÉJÀ écrasé au sol (même plan que les zones).
+      const pts = arcPoints(x, y, GUARD_R, angle, half)
+      blade.fillStyle(GUARD, 0.13)
+      blade.fillPoints(pts, true)
+      // Le BORD du bouclier, net et vif : c'est lui qu'on lit. `slice(1)` retire le
+      // centre pour ne tracer que l'arc (un trait ouvert, jamais refermé en triangle).
+      blade.lineStyle(2.5, GUARD, 0.85)
+      blade.strokePoints(pts.slice(1), false)
     },
 
     update(now) {

@@ -279,7 +279,7 @@ export function createVitals(scene: Phaser.Scene): Vitals {
       const labels = [
         s.wounds.leg ? 'jambe blessée' : null,
         s.wounds.arm ? 'bras blessé' : null,
-        s.wounds.bleeding ? 'SAIGNEMENT (X : bander)' : null,
+        s.wounds.bleeding ? 'SAIGNEMENT — fibres en main, clic pour panser' : null,
       ].filter(Boolean)
       wounds.setText(labels.join(' · '))
       const skillsText = (Object.keys(SKILL_LABELS) as SkillId[])
