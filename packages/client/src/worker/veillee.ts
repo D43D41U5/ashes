@@ -10,6 +10,7 @@ import {
   cycleOffsetForStartHour,
   emplacementsDeVillage,
   FAUNA,
+  foundNpcVillage,
   generateZonedTerrain,
   MONDE,
   placeHuntingGrounds,
@@ -93,5 +94,20 @@ export function createVeillee(onPhase: (phase: LoadPhase) => void = () => {}): {
   spawnPoiMonsters(sim, VEILLEE_SEED)
   // Le joueur commence les mains vides (spec économie) — pas de kit de départ.
   const playerId = spawnEntity(sim, spawn.x, spawn.y)
+
+  // PEUPLER LA VEILLÉE (V1-10, racine R-A) — LE geste qui allume le pilier n°1.
+  // Sans un second village, `isOutsider()` renvoie toujours faux et TOUT le moteur
+  // d'alignement tourne à vide en solo (le Feu reste blanc, aucun don ni raid ne vise
+  // le joueur). On fonde deux VOISINS PNJ — un Foyer (à nourrir, à commercer) et une
+  // Meute (le danger) — sur la carte RÉELLEMENT jouée (`emplacementsDeVillage`, ≥96
+  // tuiles d'écart), et LOIN du joueur : conforme au GDD (le solo joue mécaniquement un
+  // Ermitage, l'isolement reste un choix de tranquillité), la Meute est une pression
+  // DISTANTE et évitable, pas un harcèlement. Le joueur n'est cible qu'après avoir fondé
+  // SON village (chest `access:'village'`). Le drame Foyer-vs-Meute est OBSERVABLE, opt-in.
+  const d2 = (e: { tx: number; ty: number }): number => (e.tx - premier.tx) * (e.tx - premier.tx) + (e.ty - premier.ty) * (e.ty - premier.ty)
+  const voisins = emplacements.filter((e) => e.tx !== premier.tx || e.ty !== premier.ty).sort((a, b) => d2(b) - d2(a))
+  if (voisins[0]) foundNpcVillage(sim, voisins[0].tx, voisins[0].ty, 3, 'foyer')
+  if (voisins[1]) foundNpcVillage(sim, voisins[1].tx, voisins[1].ty, 3, 'meute')
+
   return { sim, playerId, spawn }
 }
