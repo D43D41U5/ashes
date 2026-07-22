@@ -281,8 +281,11 @@ export const BALANCE = {
   /** Coups outillés avant qu'un outil soit consommé. */
   TOOL_DURABILITY: 100,
 
-  /** Usure minimale par coup, quel que soit le niveau d'artisan. */
-  TOOL_WEAR_MIN: 0.25,
+  /** Usure minimale par coup, quel que soit le niveau d'artisan — le PLANCHER de
+   *  l'évier (V0-7). Relevé 0.25 → 0.6 : la spécialisation ne doit pas éroder l'un des
+   *  deux seuls éviers de l'économie de flux (GDD §8). Un maître use encore ses outils
+   *  à 60 % ; le talent récompense, il n'exonère pas. */
+  TOOL_WEAR_MIN: 0.6,
 
   /**
    * Perte de faim par heure de cycle (jauge 0-100).
@@ -343,8 +346,10 @@ export const BALANCE = {
   GATE_BASIC_LEVEL: 2,
   GATE_IRON_LEVEL: 5,
 
-  /** Réduction d'usure infligée par niveau d'artisan. */
-  SKILL_WEAR_REDUCTION: 0.03,
+  /** Réduction d'usure par niveau d'artisan (V0-7). Divisée 0.03 → 0.015 : la pente
+   *  était trop forte (jusqu'à −75 %), la spécialisation éteignait l'évier d'usure. À
+   *  0.015, même un artisan chevronné use ses outils de façon significative. */
+  SKILL_WEAR_REDUCTION: 0.015,
 
   /** Freinage d'XP par la somme des niveaux des AUTRES métiers (spec R14). */
   SKILL_SPREAD_PENALTY: 0.5,
