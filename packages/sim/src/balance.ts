@@ -39,7 +39,11 @@ export const TEMPERATURE = {
   // établi : on pouvait passer la nuit dehors sans y penser. Rentrer avant la
   // nuit — ou emporter de quoi faire du feu — devient une décision.
   NIGHT_COLD: 30,
-  ACT_COLD: [0, 25, 40] as const, // par acte (I, Grand Froid, Cendre), soustrait
+  // Par acte (I, Grand Froid, Cendre), soustrait de BASE. L'acte III passe 40→50 (fork
+  // tranché cette session, GDD « froid létal en acte III ») : plaine de nuit en acte III
+  // = 90 − 50 − 30 = 10 < HYPOTHERMIA(20) → le froid TUE la plaine, comme le discours le
+  // promet. La réponse est la TENUE D'HIVER (elle plafonne l'exposition, voir temperature.ts).
+  ACT_COLD: [0, 25, 50] as const,
   /**
    * Décalage signé par terrain (id de TERRAINS). Absent = 0.
    *
@@ -62,6 +66,11 @@ export const TEMPERATURE = {
   K_DRIFT: 0.0002,
   /** Isolation du corps nu (stub ; la Couture la fera monter plus tard). */
   INSULATION_BODY: 1,
+  /** LA TENUE D'HIVER PLAFONNE LE FROID (spec cuir/température, V2-16). Porter une
+   *  `tenue_hiver` plancher l'ambiant ressenti à cette valeur — au-dessus de
+   *  HYPOTHERMIA, donc le froid ne tue plus : c'est ce qui rend la plaine survivable en
+   *  acte III. Vraie protection (un plancher), pas un simple ralentissement de dérive. */
+  TENUE_FLOOR: 32,
   COMFORT: 60, // au-dessus : aucun effet
   HYPOTHERMIA: 20, // en dessous : dégâts
   HYPOTHERMIA_DAMAGE_MAX: 0.3, // PV/tick à température 0
@@ -813,6 +822,8 @@ export type RecipeId =
   | 'spear'
   | 'hammer'
   | 'cooked_meat'
+  | 'leather'
+  | 'tenue_hiver'
   | 'campfire'
   // Les COMPOSANTS EN OBJET (spec construction R20) : fabriqués au Feu, portés, posés.
   | 'enclume'
@@ -877,6 +888,11 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   // n'ajoute AUCUNE porte : qui peut bâtir peut le forger.
   hammer: { station: 'fire', inputs: { wood: 4, stone: 2, fiber: 2 }, output: 'hammer', seconds: 8 },
   cooked_meat: { station: 'fire', inputs: { raw_meat: 1 }, output: 'cooked_meat', seconds: 5 },
+  // LA CHAÎNE DU CUIR (spec cuir) — au Feu, pas de station neuve (réutilise le Feu).
+  // Le tannage sèche la peau brute ; la couture assemble la tenue d'hiver, la seule
+  // protection contre le froid létal d'acte III. La chasse propre irrigue la survie.
+  leather: { station: 'fire', inputs: { raw_hide: 1, fiber: 1 }, output: 'leather', seconds: 8 },
+  tenue_hiver: { station: 'fire', inputs: { leather: 3, fiber: 2 }, output: 'tenue_hiver', seconds: 12 },
   // Les COMPOSANTS EN OBJET (spec construction R20) : assemblés AU FEU, coût =
   // `COMPONENTS[type].cost`. On les pose ensuite (`place_component`) pour faire émerger
   // une fonction. Le four garde sa station-jumelle de fusion (`furnace`) à la pose.
@@ -2271,6 +2287,8 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   // La peau brute est BULKY : elle pèse plus que la viande d'une même bête — rentrer
   // sa chasse ET ses peaux force un arbitrage de charge (spec portage).
   raw_hide: 1.5,
+  leather: 0.5, // tanné, plus léger que la peau brute
+  tenue_hiver: 2, // une tenue d'hiver, ça pèse — mais ça sauve du Grand Froid
   rope: 0.4,
   iron_ore: 3,
   coal: 2,

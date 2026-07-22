@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { COMBAT } from './balance'
+import { COMBAT, TEMPERATURE } from './balance'
+import { drainEvents } from './events'
+import { addItems } from './items'
+import { createEmptyMap } from './map'
 import { createSim, spawnEntity, type Entity, type SimState } from './sim'
 import {
   advanceTemperature,
@@ -182,5 +185,46 @@ describe('engourdissement (malus)', () => {
     expect(coldStaminaRegenFactor(70)).toBe(1)
     expect(coldSpeedFactor(20)).toBeLessThan(1)
     expect(coldStaminaRegenFactor(20)).toBeLessThan(1)
+  })
+})
+
+describe('le froid létal & la tenue d’hiver (V2-15/16, fork froid tranché)', () => {
+  const T = TEMPERATURE
+
+  it('LE FORK : la plaine est LÉTALE en acte III de nuit (le discours devient vrai)', () => {
+    // Ambiant plaine (biome 0), acte III, nuit = BASE − ACT_COLD[2] − NIGHT_COLD.
+    const plaineActIIINuit = T.BASE - T.ACT_COLD[2] - T.NIGHT_COLD
+    expect(plaineActIIINuit).toBeLessThan(T.HYPOTHERMIA) // sous le seuil : ça TUE
+    expect(coldDamagePerTick(plaineActIIINuit)).toBeGreaterThan(0)
+  })
+
+  it('la tenue d’hiver plancher AU-DESSUS de l’hypothermie → zéro dégât de froid', () => {
+    expect(T.TENUE_FLOOR).toBeGreaterThan(T.HYPOTHERMIA)
+    expect(coldDamagePerTick(T.TENUE_FLOOR)).toBe(0)
+  })
+
+  it('sur glacier de nuit, la tenue d’hiver SAUVE : le nu MEURT de froid, le vêtu non', () => {
+    // Carte VIDE en glacier (aucune source chaude parasite) + nuit : un ambiant
+    // franchement mortel (0), où seule la tenue sauve.
+    const cold = (): Parameters<typeof createSim>[1] => ({ map: createEmptyMap(96, 96, 15 /* glacier */), cycleOffset: DAY_TICKS_PER_CYCLE })
+    const froid = createSim(1, cold())
+    const nu = spawn(froid, 5, 5)
+    const chaud = createSim(1, cold())
+    const vetu = spawn(chaud, 5, 5)
+    addItems(vetu.inventory, { tenue_hiver: 1 }) // on l'habille
+    nu.temperature = 25
+    vetu.temperature = 25
+    for (let t = 0; t < 8000; t++) {
+      advanceTemperature(froid)
+      advanceTemperature(chaud)
+    }
+    // Le nu dérive vers l'ambiant glacial (0) et FINIT par mourir de froid ; le vêtu,
+    // plancheré au-dessus de l'hypothermie par sa tenue, ne gèle JAMAIS.
+    const geleNu = drainEvents(froid).some((e) => e.type === 'entity_died' && e.entityId === nu.id && e.cause === 'cold')
+    const geleVetu = drainEvents(chaud).some((e) => e.type === 'entity_died' && e.entityId === vetu.id && e.cause === 'cold')
+    expect(geleNu).toBe(true) // le nu a gelé
+    expect(geleVetu).toBe(false) // le vêtu, jamais
+    expect(vetu.hp).toBe(100) // et il n'a pas pris un seul PV de froid
+    expect(vetu.temperature).toBeGreaterThan(T.HYPOTHERMIA) // il reste au-dessus du seuil
   })
 })

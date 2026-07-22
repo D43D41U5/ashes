@@ -69,6 +69,13 @@ export type ItemId =
    *  abattu PROPREMENT. La matière première du cuir — tannage → couture → tenue
    *  d'hiver (Vague 2). Le chef-d'œuvre de la chasse irrigue enfin l'économie. */
   | 'raw_hide'
+  /** LE CUIR — la peau brute TANNÉE au Feu (spec cuir). Maillon central : de la
+   *  chasse à la tenue d'hiver, la seule protection contre le froid létal d'acte III. */
+  | 'leather'
+  /** LA TENUE D'HIVER — cousue de cuir (spec cuir/température). La PROTECTION : elle
+   *  PLAFONNE le froid (advanceTemperature), ce qui rend la plaine survivable en acte
+   *  III. Une seule tenue, pas de slots (V2-16). */
+  | 'tenue_hiver'
   | 'components'
   /**
    * LE FEU DE CAMP, EN OBJET. On le fabrique (10 bois), on le PORTE, on le POSE au

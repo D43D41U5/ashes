@@ -32,6 +32,8 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   raw_meat: 'Viande crue',
   cooked_meat: 'Viande cuite',
   raw_hide: 'Peau brute',
+  leather: 'Cuir',
+  tenue_hiver: "Tenue d'hiver",
   components: 'Composants',
   campfire: 'Feu de camp',
   // ── Les COMPOSANTS en objet (spec construction R20) : on les pose pour faire
@@ -392,6 +394,22 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0xb98a56).fillRect(2, 3, 12, 3) // dessus éclairé (lumière au NO)
     g.fillStyle(0x6f4a29).fillRect(2, 8, 12, 2) // le pli d'ombre
     g.fillStyle(0xd8c3a0).fillRect(3, 11, 10, 2) // le côté chair (clair) qui dépasse
+  },
+
+  // Cuir : un rouleau tanné, brun chaud et régulier (fini, plus lisse que la peau brute).
+  leather: (g) => {
+    g.fillStyle(0x7a4a28).fillRect(3, 4, 10, 8) // le rouleau
+    g.fillStyle(0x8f5c34).fillRect(3, 4, 10, 2) // dessus éclairé
+    g.fillStyle(0x5a3520).fillRect(3, 7, 10, 1).fillRect(3, 10, 10, 1) // les enroulements
+    g.fillStyle(0x4a2c1a).fillRect(11, 4, 2, 8) // le bord du rouleau, dans l'ombre
+  },
+
+  // Tenue d'hiver : un manteau de cuir doublé, col clair (fourrure) — la protection.
+  tenue_hiver: (g) => {
+    g.fillStyle(0x6b4326).fillRect(3, 5, 10, 10) // le corps du manteau
+    g.fillStyle(0x7f5330).fillRect(3, 5, 10, 2) // épaules éclairées
+    g.fillStyle(0xcabfa0).fillRect(5, 3, 6, 3) // le col (fourrure claire)
+    g.fillStyle(0x4a2c18).fillRect(7, 7, 2, 8) // la fente centrale, ombre
   },
 
   // Composants : un engrenage de ferraille.

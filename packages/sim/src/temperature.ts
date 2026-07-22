@@ -5,6 +5,7 @@
  */
 import { POI, TEMPERATURE } from './balance'
 import { die } from './combat'
+import { countOf } from './items'
 import { terrainAt } from './map'
 import { isOnPoiKind } from './poi-discovery'
 import { getGameTime } from './time'
@@ -108,7 +109,12 @@ export function advanceTemperature(state: SimState): void {
   // Copie défensive (comme advanceCombat) : die() peut réassigner state.entities.
   for (const entity of [...state.entities]) {
     if (monsterIds.has(entity.id)) continue // pas de température pour les monstres
-    const ambient = ambientTemperature(state, entity.x, entity.y)
+    let ambient = ambientTemperature(state, entity.x, entity.y)
+    // LA TENUE D'HIVER PLAFONNE LE FROID (spec cuir/température) : la porter plancher
+    // l'ambiant ressenti — au-dessus de l'hypothermie, donc survivable. C'est ce qui
+    // donne une raison à toute la chaîne chasse→cuir→couture, et rend la plaine
+    // franchissable en acte III. Vraie protection, pas un simple ralentissement de dérive.
+    if (countOf(entity.inventory, 'tenue_hiver') > 0) ambient = Math.max(ambient, T.TENUE_FLOOR)
     entity.temperature = clampTemp(driftStep(entity.temperature, ambient, T.INSULATION_BODY))
 
     const dmg = coldDamagePerTick(entity.temperature)

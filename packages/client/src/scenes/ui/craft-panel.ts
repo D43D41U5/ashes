@@ -81,7 +81,9 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   spear: 'armes',
   stew: 'survie',
   cooked_meat: 'survie',
+  tenue_hiver: 'survie', // la tenue d'hiver : de la survie pure (le froid tue en acte III)
   rope: 'materiaux',
+  leather: 'materiaux', // le cuir : un matériau tanné
   iron_ingot: 'materiaux',
   // Les COMPOSANTS (spec construction §4bis) : assemblés au Feu, posés pour émerger.
   enclume: 'composants',
