@@ -482,6 +482,13 @@ export function creditForeignDeposit(
 export function applyStructureDamage(state: SimState, structureId: number, damage: number, byEntityId = 0): void {
   const s = state.structures.find((st) => st.id === structureId)
   if (!s) return
+  // LE FEU EST TUABLE SEULEMENT À SEC (V1-12) : nourri (`fuel > 0`), il ignore tout
+  // dégât — un totem inviolable. C'est l'upkeep (R16) qui ouvre l'endgame : un Feu
+  // qu'on alimente ne tombe jamais ; un Feu abandonné, si.
+  if (s.type === 'fire') {
+    const v = state.villages.find((vg) => vg.id === s.villageId)
+    if (v && v.fuel > 0) return
+  }
   s.hp -= damage
   // Saboter la structure d'autrui est une hostilité (premier sang par sabotage).
   // Un feu de camp LIBRE (villageId 0) n'appartient à personne : le casser ne fait
@@ -505,9 +512,33 @@ export function applyStructureDamage(state: SimState, structureId: number, damag
       }
     }
     emitEvent(state, { type: 'structure_destroyed', tick: state.tick, structureId })
+    // LE FEU ABATTU = LE VILLAGE TOMBE EN RUINE (V1-12/V2-20) — avant refreshFunctions,
+    // pour que les structures orphelines soient réévaluées sans propriétaire.
+    if (s.type === 'fire' && s.villageId !== 0) fallToRuin(state, s.villageId)
     // Détruire un composant fait retomber sa fonction ; un mur/toit, l'enceinte (R10).
     refreshFunctions(state)
   }
+}
+
+/**
+ * LE VILLAGE TOMBE EN RUINE (V1-12/V2-20) — son Feu abattu (à sec). On en fait une
+ * COQUILLE PILLABLE : les structures survivantes perdent leur propriétaire et s'ouvrent
+ * (accès public, villageId 0), et le village quitte l'état — plus d'agrégation
+ * d'alignement, plus de milice, plus de tableau. Les membres perdent leur foyer : le
+ * respawn du joueur retombe sur `homeX/homeY` (déjà géré, combat.ts). Refondation-sur-
+ * ruine et mémoire de carte : DÉFÉRÉES en Vallée (spec construction).
+ */
+function fallToRuin(state: SimState, villageId: number): void {
+  const village = state.villages.find((v) => v.id === villageId)
+  if (!village) return
+  emitEvent(state, { type: 'village_fell', tick: state.tick, villageId, name: village.name })
+  for (const s of state.structures) {
+    if (s.villageId !== villageId) continue
+    s.villageId = 0
+    s.ownerId = 0
+    s.access = 'public' // la ruine se pille : ses murs, ses coffres s'ouvrent à tous
+  }
+  state.villages = state.villages.filter((v) => v.id !== villageId)
 }
 
 /**

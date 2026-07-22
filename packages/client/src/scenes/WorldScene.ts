@@ -152,6 +152,7 @@ const BUILD_STEPS = BUILD_PHASES.length
 /** Les événements retenus pour la chronique de saison. */
 const CHRONICLE_TYPES = new Set([
   'village_founded',
+  'village_fell',
   'act_started',
   'village_archetype_changed',
   'horde_spawned',

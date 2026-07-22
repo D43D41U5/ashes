@@ -2000,12 +2000,14 @@ export const COMBAT = {
 } as const
 
 /**
- * PV des structures (spec événements R1). Le Feu est indestructible en V7 :
- * valeur sentinelle finie (JSON-sérialisable), et non-bloquant donc jamais
- * ciblé par le flux.
+ * PV des structures (spec événements R1). LE FEU EST TUABLE — MAIS SEULEMENT À SEC
+ * (V1-12) : `applyStructureDamage` ignore tout dégât tant que `village.fuel > 0` (un
+ * Feu nourri est un totem inviolable). À sec, ces PV finis peuvent tomber sous un
+ * assaut soutenu → la RUINE. Assez haut pour qu'un joueur seul ne perde pas en un
+ * souffle, assez bas pour qu'une horde vienne à bout d'un village abandonné.
  */
 export const STRUCTURE_HP: Record<import('./items').StructureType, number> = {
-  fire: 999999,
+  fire: 900,
   // `wall`/`door` : PV du palier de matériau de BASE (bois). Les paliers pierre/métal
   // montent via `WALL_TIERS` (spec construction R8) — `addStructure` les applique.
   wall: 200,

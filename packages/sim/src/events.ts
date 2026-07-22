@@ -58,6 +58,9 @@ export type SimEvent =
   /** Le Feu est tombé à SEC (upkeep R16) : ses murs vont commencer à céder. Émis UNE fois
    *  au passage à zéro — la chronique en fait « le Feu de X faiblit ». */
   | { type: 'fire_starved'; tick: number; villageId: number }
+  /** LE VILLAGE EST TOMBÉ (V1-12/V2-20) : son Feu abattu (à sec), il devient une RUINE
+   *  pillable. `name` pour la chronique (« X n'est plus que cendres »). */
+  | { type: 'village_fell'; tick: number; villageId: number; name: string }
   /** UN MUR/PORTE PASSE AU MATÉRIAU SUIVANT (spec construction R8) : bois→pierre→métal. */
   | { type: 'structure_upgraded'; tick: number; structureId: number; material: import('./balance').WallMaterial }
   /**

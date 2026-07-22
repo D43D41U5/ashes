@@ -53,6 +53,11 @@ export function chronicleFromEvents(
       case 'village_founded':
         push(`Un Feu s'est allumé : ${name(e.villageId)}.`, 'recit')
         break
+      case 'village_fell':
+        // Le village a quitté l'état : on lit le nom PORTÉ par l'événement, pas la
+        // table (il n'y est plus). La chute d'un foyer est un grand fait de saison.
+        push(`${e.name} est tombé : son Feu s'est éteint, il n'en reste que des cendres.`, 'battement')
+        break
       case 'act_started':
         if (e.act > 1) push(`${ACT_NAMES[e.act - 1]} a commencé.`, 'battement')
         break

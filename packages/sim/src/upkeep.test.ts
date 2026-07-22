@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { FIRE_UPKEEP, TERRAIN_GRASS } from './balance'
+import { FIRE_UPKEEP, STRUCTURE_HP, TERRAIN_GRASS } from './balance'
 import { drainEvents } from './events'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
 import { createSim, spawnEntity, type SimState } from './sim'
-import { addStructure, advanceUpkeep, applyVillageAction, createVillage, grantItems } from './village'
+import { addStructure, advanceUpkeep, applyStructureDamage, applyVillageAction, createVillage, grantItems } from './village'
 
 /**
  * L'UPKEEP DU FEU (V1-11, spec construction R16-R17, critère A7) — le seul évier
@@ -74,5 +74,40 @@ describe("L'upkeep du Feu (V1-11, spec construction R16-R17, A7)", () => {
     applyVillageAction(sim, chief, { type: 'feed_fire' })
     expect(v.fuel).toBe(FIRE_UPKEEP.CAPACITY) // plafonné
     expect(countOf(ent(sim, chief).inventory, 'wood')).toBe(19) // 1 seul bois avalé
+  })
+})
+
+describe('Le Feu tuable → la ruine (V1-12/V2-20)', () => {
+  it('le Feu NOURRI est inviolable ; à SEC il tombe → le village devient une ruine pillable', () => {
+    const sim = makeSim()
+    const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10, npcsArrived: true })
+    const fire = addStructure(sim, 'fire', 10, 10, v.id, 0)
+    const chest = addStructure(sim, 'chest', 11, 10, v.id, 0, 'village')
+
+    // NOURRI : aucun dégât ne mord (le totem inviolable).
+    v.fuel = 100
+    applyStructureDamage(sim, fire.id, 99999, 0)
+    expect(sim.structures.find((s) => s.id === fire.id)!.hp).toBe(STRUCTURE_HP.fire)
+
+    // À SEC : un assaut suffisant l'abat → le village TOMBE.
+    v.fuel = 0
+    drainEvents(sim)
+    applyStructureDamage(sim, fire.id, 99999, 0)
+    expect(sim.structures.some((s) => s.id === fire.id)).toBe(false) // le Feu est tombé
+    expect(sim.villages.some((vg) => vg.id === v.id)).toBe(false) // le village a quitté l'état
+    // La ruine se PILLE : le coffre survivant s'ouvre à tous, sans propriétaire.
+    const ruin = sim.structures.find((s) => s.id === chest.id)!
+    expect(ruin.access).toBe('public')
+    expect(ruin.villageId).toBe(0)
+  })
+
+  it('la chute émet village_fell (pour la chronique)', () => {
+    const sim = makeSim()
+    const v = createVillage(sim, { chiefId: 0, tx: 10, ty: 10, npcsArrived: true })
+    const fire = addStructure(sim, 'fire', 10, 10, v.id, 0)
+    v.fuel = 0
+    drainEvents(sim)
+    applyStructureDamage(sim, fire.id, 99999, 0)
+    expect(drainEvents(sim).some((e) => e.type === 'village_fell' && e.villageId === v.id)).toBe(true)
   })
 })
