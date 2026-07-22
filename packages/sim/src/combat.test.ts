@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { BALANCE, COMBAT, MONSTER_DEFS, SLOTS, TERRAIN_GRASS, WEAPON_DAMAGE, WEAPON_PROFILES } from './balance'
 import { drainEvents } from './events'
 import { countOf, inventoryOf, makeInventory, stackSize, type Inventory, type ItemBag, type ItemId } from './items'
-import { weaponDamage } from './combat'
+import { die, weaponDamage } from './combat'
 import { createEmptyMap } from './map'
 import { spawnMonster } from './monsters'
 import { foundNpcVillage } from './worldgen'
@@ -350,6 +350,26 @@ describe('le blocage directionnel (A3)', () => {
     entity(sim, b).facing = { x: 1, y: 0 }
     strike(sim, a, 1, 0, [{ entityId: b, dx: 0, dy: 0, block: true }])
     expect(100 - entity(sim, b).hp).toBeCloseTo(COMBAT.UNARMED_DAMAGE, 1)
+  })
+})
+
+describe('le coût de mort croissant (V2-21)', () => {
+  it('les morts RAPPROCHÉES coûtent plus cher, puis une longue survie les OUBLIE', () => {
+    const sim = makeSim()
+    const p = spawnEntity(sim, 10, 10)
+    const kill = (): number => {
+      const e = entity(sim, p)
+      e.hp = 0
+      die(sim, e, 0)
+      return entity(sim, p).exhaustedUntil - sim.tick // durée d'épuisement infligée
+    }
+    const exh1 = kill() // 1re mort : épuisement de base
+    const exh2 = kill() // 2e mort, même tick (rapprochée) : plus long
+    expect(exh2).toBeGreaterThan(exh1)
+    // Une longue survie remet le compteur à zéro → la mort suivante repart à la base.
+    sim.tick += COMBAT.DEATH_FORGET_TICKS + 1
+    const exh3 = kill()
+    expect(exh3).toBe(exh1)
   })
 })
 

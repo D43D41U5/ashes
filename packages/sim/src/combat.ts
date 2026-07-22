@@ -691,7 +691,13 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
   entity.hunger = COMBAT.RESPAWN_HUNGER
   entity.stamina = COMBAT.RESPAWN_STAMINA
   entity.temperature = COMBAT.RESPAWN_TEMPERATURE
-  entity.exhaustedUntil = state.tick + COMBAT.EXHAUSTION_TICKS
+  // LE COÛT DE MORT CROISSANT (V2-21) : les morts RAPPROCHÉES rallongent l'épuisement,
+  // mais une longue survie fait OUBLIER le compte (pas de spirale). Plafonné.
+  if (state.tick - entity.lastDeathAt > COMBAT.DEATH_FORGET_TICKS) entity.deathCount = 0
+  entity.deathCount += 1
+  entity.lastDeathAt = state.tick
+  const streak = Math.min(entity.deathCount - 1, COMBAT.DEATH_EXHAUSTION_CAP)
+  entity.exhaustedUntil = state.tick + Math.round(COMBAT.EXHAUSTION_TICKS * (1 + streak * COMBAT.DEATH_EXHAUSTION_GROWTH))
   if (village) {
     entity.x = village.fireTx + 0.5
     entity.y = village.fireTy + 0.5

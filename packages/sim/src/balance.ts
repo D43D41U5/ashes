@@ -2008,8 +2008,16 @@ export const COMBAT = {
   RESPAWN_HUNGER: 50,
   RESPAWN_STAMINA: 20,
   RESPAWN_TEMPERATURE: 100,
-  /** Épuisement post-mort : régén d'endurance ÷2 (~5 min démo ; GDD vise ~30 min). */
+  /** Épuisement post-mort de BASE : régén d'endurance ÷2 (~5 min). Le coût CROÎT avec
+   *  les morts rapprochées (V2-21) — voir DEATH_EXHAUSTION_*. */
   EXHAUSTION_TICKS: ticksFor(300),
+  /** Chaque mort rapprochée rallonge l'épuisement de +50 %… */
+  DEATH_EXHAUSTION_GROWTH: 0.5,
+  /** …plafonné à +6 crans (soit ×4 l'épuisement de base : le respawn n'est plus gratuit,
+   *  sans devenir une spirale de mort). */
+  DEATH_EXHAUSTION_CAP: 6,
+  /** Survivre ce temps SANS mourir remet le compteur de morts à zéro (on oublie). */
+  DEATH_FORGET_TICKS: ticksForCycles(1),
   EXHAUSTED_REGEN_FACTOR: 0.5,
   CORPSE_TICKS: ticksFor(600),
   DEFEND_RADIUS: 10,

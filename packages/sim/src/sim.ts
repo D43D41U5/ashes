@@ -96,6 +96,11 @@ export interface Entity {
    */
   gait: 'still' | 'sneak' | 'walk' | 'sprint'
   exhaustedUntil: number
+  /** LE COÛT DE MORT CROISSANT (V2-21) : morts RAPPROCHÉES → épuisement plus long
+   *  (plafonné). Une longue survie fait OUBLIER le compte (`lastDeathAt`), pas de
+   *  spirale. Le respawn n'est plus gratuit sans devenir une punition sèche. */
+  deathCount: number
+  lastDeathAt: number
   /**
    * LE COUP QUI S'ARME. Il porte SA FORME (`strike`) : c'est ce qui permet au
    * télégraphe de dessiner la zone RÉELLEMENT frappée — un pic de lance ne se lit
@@ -397,6 +402,8 @@ export function spawnEntity(state: SimState, x: number, y: number, slots: number
     // comme des marcheurs (spec chasse C2) ; l'avatar joué est re-posé chaque tick.
     gait: 'walk',
     exhaustedUntil: 0,
+    deathCount: 0,
+    lastDeathAt: 0,
     swingSide: 1,
     homeX: x,
     homeY: y,
