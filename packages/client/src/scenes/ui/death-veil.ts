@@ -58,8 +58,11 @@ export interface DeathVeil {
 // comme le fait le bandeau d'erreur — window.setTimeout n'est PAS fiable ici (il vit
 // hors du rAF que Phaser met en pause) et le voile restait ou disparaissait à contretemps.
 export const DEATH_VEIL_MS = 3200
-/** Durée du fondu CSS (entrée ET sortie de l'opacité/translation). */
-const FADE_MS = 550
+/** Durée du fondu CSS (entrée ET sortie de l'opacité/translation). Exporté : WorldScene
+ *  s'en sert pour SNAPPER la caméra au respawn pile quand le voile est OPAQUE (le saut
+ *  reste caché), pas avant (on verrait le monde traverser). */
+export const DEATH_FADE_MS = 550
+const FADE_MS = DEATH_FADE_MS
 
 export function createDeathVeil(): DeathVeil {
   // Idempotent : un voile résiduel (rebuild de scène, HMR) est retiré avant d'en poser

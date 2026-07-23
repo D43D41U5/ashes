@@ -104,6 +104,7 @@ import { createAttackFx, type AttackFx, type Zone } from './world/attack-fx'
 import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
+import { DEATH_FADE_MS, DEATH_VEIL_MS } from './ui/death-veil'
 
 /** Cadrage caméra (spec client R10) : « je veux voir ~N tuiles de haut ». */
 const VISIBLE_TILES_TALL = 20
@@ -281,6 +282,15 @@ export class WorldScene extends Phaser.Scene {
   private playerSprite!: Phaser.GameObjects.Image
   /** LE REGARD (audit UI/UX P3-11) : pion d'orientation posé au bord de l'avatar. */
   private gaze!: Phaser.GameObjects.Image
+  /** LE MOMENT DE MORT (mort-suite 1+5) : entre la chute et le réveil au Feu, on TIENT la
+   *  caméra sur la tuile où l'on tombe (on voit sa dépouille), on coupe l'input, et le
+   *  saut au respawn se fait CACHÉ sous le voile opaque. Faux hors de cette fenêtre. Les
+   *  transitions (snap sous le voile, main rendue) sont pilotées DANS `update` à partir de
+   *  `dyingAt` — un test de NIVEAU, robuste aux sauts d'horloge (là où un `delayedCall`,
+   *  déclenché sur FRONT, se perd quand le pas d'horloge bondit). */
+  private dying = false
+  private dyingAt = 0
+  private dyingSnapped = false
   /** L'historique du chat, mirroré au registry pour le panneau d'UIScene. */
   private chatLog: import('../hud-state').ChatLine[] = []
   /** Le message en cours de saisie, ou `null` si la ligne est fermée. */
@@ -645,6 +655,9 @@ export class WorldScene extends Phaser.Scene {
       return
     }
     if (!this.worldReady) return
+    // LE MOMENT DE MORT (mort-suite 1+5) : fige la caméra, coupe l'input, snappe au
+    // respawn sous le voile, rend la main à la fin — piloté ici, en niveau.
+    this.tickDying()
     // Les gestes d'inventaire posés par UIScene (elle ne parle pas à l'hôte).
     for (const action of drainQueuedActions(this.registry)) this.sendAction(action)
     // Le clic MAINTENU : il récolte en boucle, à la cadence du rechargement.
@@ -1296,6 +1309,10 @@ export class WorldScene extends Phaser.Scene {
         // (le monstre d'`byEntityId`), jamais recalculé (§3).
         const killer = msg.monsters.find((m) => m.entityId === event.byEntityId)
         publishDeath(this.registry, event.cause, event.byEntityId, killer?.type ?? null, this.time.now)
+        // …et on TIENT le moment (mort-suite 1+5). On est ici AVANT `reconcile` (l'ordre du
+        // snapshot) : `this.predicted` — donc la caméra qui la suit — est ENCORE sur la
+        // tuile de chute. On l'y fige avant que le respawn ne la fasse traverser la carte.
+        this.enterDying()
       }
       if (CHRONICLE_EVENT_TYPES.has(event.type)) {
         this.eventLog.push(event)
@@ -1320,6 +1337,47 @@ export class WorldScene extends Phaser.Scene {
     }
     if (chronicleDirty) {
       publishChronicle(this.registry, this.eventLog, this.calendarScale, msg.villages)
+    }
+  }
+
+  /**
+   * LE MOMENT DE MORT (mort-suite 1+5) : de la chute au réveil au Feu. On FIGE la caméra
+   * là où elle est — sur la tuile de chute, où la dépouille va se poser — et on COUPE
+   * l'input (on ne joue pas pendant qu'on tombe). Le respawn au Feu (un saut à travers la
+   * carte) est neutralisé le temps que le voile devienne opaque, puis SNAPPÉ dessous
+   * (`DEATH_FADE_MS`) : le saut ne se voit jamais. À la fin du voile, on rend la main et
+   * la caméra reprend l'avatar, réveillé au Feu.
+   */
+  private enterDying(): void {
+    this.dying = true
+    this.dyingAt = this.time.now
+    this.dyingSnapped = false
+    this.cameras.main.stopFollow() // gèle la caméra sur la tuile de chute
+    this.input.enabled = false // plus de clic (pas d'attaque en tombant)
+    if (this.input.keyboard) this.input.keyboard.enabled = false // les touches gelées → input neutre
+  }
+
+  /**
+   * Les transitions du moment de mort, testées EN NIVEAU (voir `dying`). Appelé chaque
+   * frame tant qu'on tombe : au passage du fondu opaque, on snappe la caméra au respawn
+   * (caché) ; à la fin du voile, on rend la main. Robuste à un pas d'horloge qui bondit —
+   * un seuil franchi reste franchi, là où un timer sur front raterait le saut.
+   */
+  private tickDying(): void {
+    if (!this.dying) return
+    const age = this.time.now - this.dyingAt
+    if (!this.dyingSnapped && age >= DEATH_FADE_MS + 80) {
+      // Sous le voile OPAQUE : on repose la caméra sur l'avatar (désormais au Feu) et on
+      // reprend le suivi. Invisible — le voile couvre tout à cet instant.
+      this.dyingSnapped = true
+      this.recenterCamera()
+      this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16)
+    }
+    if (age >= DEATH_VEIL_MS) {
+      // Fin du voile : le monde réapparaît au Feu, jouable — on rend la main.
+      this.dying = false
+      this.input.enabled = true
+      if (this.input.keyboard) this.input.keyboard.enabled = true
     }
   }
 
@@ -1367,7 +1425,10 @@ export class WorldScene extends Phaser.Scene {
       lastProcessedInput,
       SNAP_DISTANCE_TILES,
     )
-    if (jumped) this.recenterCamera()
+    // Pendant le MOMENT DE MORT, le saut au respawn est VOULU caché : `enterDying` tient
+    // la caméra et la snappera sous le voile opaque. On ne la recentre donc pas ici, sinon
+    // le monde traverserait l'écran à la vue de tous, avant que le voile ne couvre.
+    if (jumped && !this.dying) this.recenterCamera()
   }
 
   private axis(plus: 'right' | 'down', minus: 'left' | 'up'): -1 | 0 | 1 {
