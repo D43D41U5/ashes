@@ -340,6 +340,16 @@ export const BALANCE = {
    * grandeur, à caler en playtest (la friction reste d'acquérir les matériaux, pas le temps).
    */
   ENCLOSURE_CRAFT_SPEED: 0.75,
+  /**
+   * BONUS D'ENCEINTE — DURABILITÉ (construction.md R13, table §4bis : « les pièces forgées
+   * s'usent moins »). La spec assigne ce bonus à la FORGE, qui ne fait pourtant que des lingots
+   * (sans usure) — contradiction résolue par une lecture défendable : un village dont la forge
+   * est CLOSE+TOITÉE fait de MEILLEURS outils, qui s'usent moins pour TOUS ses membres (l'usure
+   * ×(1−ce facteur)). C'est la moitié FORGE du bonus, symétrique de la VITESSE côté atelier.
+   * 0,25 = −25 % d'usure — ordre de grandeur playtest. (Interprétation à valider ; le veto
+   * peut la basculer vers un tag-à-l'objet si Alexis préfère.)
+   */
+  ENCLOSURE_WEAR_REDUCTION: 0.25,
   /** Lignes maximum dans la file : l'écran doit pouvoir la montrer ENTIÈRE (F4). */
   CRAFT_QUEUE_MAX: 6,
 

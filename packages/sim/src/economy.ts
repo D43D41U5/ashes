@@ -525,9 +525,16 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
     emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id })
   }
   if (held) {
-    const wear =
+    let wear =
       Math.max(BALANCE.TOOL_WEAR_MIN, 1 - BALANCE.SKILL_WEAR_REDUCTION * levelOf(actor, 'crafting')) *
       (clean ? BALANCE.CLEAN_WEAR_FACTOR : 1)
+    // BONUS D'ENCEINTE — DURABILITÉ (construction.md R13) : un village dont la FORGE est
+    // close+toitée fait des outils qui s'usent moins, pour tous ses membres. Symétrique de la
+    // VITESSE de l'atelier (économie du craft) — ici, l'économie de l'usure.
+    const myVillage = state.villages.find((v) => v.memberIds.includes(actorId))
+    if (myVillage && state.functions.some((f) => f.functionId === 'forge' && f.enclosed && f.villageId === myVillage.id)) {
+      wear *= 1 - BALANCE.ENCLOSURE_WEAR_REDUCTION
+    }
     wearHeld(actor, wear)
   }
   gainXp(state, actor, def.skill, BALANCE.XP_PER_GATHER)

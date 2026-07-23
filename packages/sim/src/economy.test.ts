@@ -471,6 +471,33 @@ describe('l’artisanat (A3)', () => {
     expect(clos).toBe(Math.max(1, Math.floor(plein * 0.75)))
   })
 
+  it('bonus d’enceinte DURABILITÉ : une forge CLOSE use moins les outils du village (R13)', () => {
+    const tree = makeNode('tree', 11, 10)
+    tree.stock = 100000
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+    grantHeld(sim, id, 'axe')
+    grantItems(sim, id, { wood: 30, stone: 20 })
+    act(sim, id, { type: 'light_fire' })
+    const v = getVillageOf(sim, id)!
+    addStructure(sim, 'enclume', 9, 10, v.id, id) // enclume + four = une FORGE reconnue
+    addStructure(sim, 'furnace', 9, 11, v.id, id)
+    const held = () => me(sim).inventory[me(sim).activeSlot]
+
+    // Forge NON close : usure pleine (1) sur un coup (niveau 0, non propre).
+    act(sim, id, { type: 'harvest', nodeId: tree.id })
+    expect(held()!.wear).toBeCloseTo(1, 5)
+    held()!.wear = 0 // on remet à zéro pour isoler le second coup
+    for (let t = 1; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) step(sim, [])
+
+    // On rend la forge CLOSE+TOITÉE → l'usure baisse (×0,75).
+    const forge = sim.functions.find((f) => f.functionId === 'forge')
+    expect(forge).toBeDefined()
+    forge!.enclosed = true
+    act(sim, id, { type: 'harvest', nodeId: tree.id })
+    expect(held()!.wear).toBeCloseTo(0.75, 5)
+  })
+
   // Un sac plein n'est pas forcément un sac SANS place pour la sortie : les
   // intrants, en partant, LIBÈRENT des cases. Refuser d'après la place AVANT de
   // les consommer refuserait à tort un craft parfaitement légal.
