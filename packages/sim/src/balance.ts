@@ -2221,6 +2221,10 @@ export const SEASON = {
   /** Le jour où l'évacuation s'ouvre, et son rayon de « sauvetage ». */
   EVAC_DAY: 55,
   EVAC_RADIUS: 6,
+  /** L'ARCHE LÈVE L'ANCRE (V2-24) ce nombre de jours APRÈS l'ouverture : la fenêtre pour
+   *  embarquer. Départ au jour EVAC_DAY + EVAC_DEPART_DAYS (58) — avant la fin (60), pour que
+   *  le départ soit un ACTE, pas la fin passive. Ordre de grandeur playtest. */
+  EVAC_DEPART_DAYS: 3,
 } as const
 
 /** Valeur de butin pour le verdict de la Meute (spec saison R4). */

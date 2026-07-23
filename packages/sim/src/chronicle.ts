@@ -54,6 +54,7 @@ export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
   'gift_given',
   'entity_died',
   'evacuation_opened',
+  'ark_departed',
   'poi_first_visit',
   'season_ended',
 ])
@@ -116,7 +117,13 @@ export function chronicleFromEvents(
         if (!e.wasMonster) push(`Quelqu'un est tombé.`, 'intime')
         break
       case 'evacuation_opened':
-        push(`Un point d'évacuation s'est ouvert sur la route. La fin approche.`, 'battement')
+        push(`Une arche s'est ouverte sur la route. Embarquez avant qu'elle ne parte.`, 'battement')
+        break
+      case 'ark_departed':
+        push(
+          e.saved > 0 ? `L'arche a levé l'ancre — ${e.saved} à bord, sauvés.` : `L'arche est partie à vide.`,
+          'battement',
+        )
         break
       case 'poi_first_visit':
         // Seuls les quatre lieux de devise `recit` entrent dans la chronique.

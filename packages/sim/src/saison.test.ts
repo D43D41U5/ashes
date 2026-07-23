@@ -82,6 +82,25 @@ describe('l’évacuation (A3)', () => {
     expect(sim.map.terrain[ty * 40 + tx]).toBe(TERRAIN_ROAD)
     expect(sim.evacuation).toEqual({ tx, ty })
   })
+
+  it('l’arche LÈVE L’ANCRE au jour 58 : l’embarqué est sauvé, le marqueur disparaît (V2-24)', () => {
+    const sim = makeSim()
+    sim.tick = (SEASON.EVAC_DAY - 1) * TICKS_PER_CYCLE - 5
+    runTo(sim, sim.tick + 20) // ouverture (jour 55)
+    const evac = sim.evacuation
+    expect(evac).not.toBeNull()
+    // Un survivant monte À BORD (dans le rayon), un autre reste au loin.
+    const aboard = spawnEntity(sim, evac!.tx + 0.5, evac!.ty + 0.5)
+    const ashore = spawnEntity(sim, evac!.tx + 20, evac!.ty + 20)
+    // On pousse jusqu'au départ (EVAC_DAY + EVAC_DEPART_DAYS = 58).
+    sim.tick = (SEASON.EVAC_DAY + SEASON.EVAC_DEPART_DAYS - 1) * TICKS_PER_CYCLE - 5
+    const events: SimEvent[] = []
+    runTo(sim, sim.tick + 30, events)
+    expect(sim.evacuatedIds).toContain(aboard) // sauvé
+    expect(sim.evacuatedIds).not.toContain(ashore) // laissé
+    expect(sim.evacuation).toBeNull() // l'arche est partie, le marqueur disparaît
+    expect(events.some((e) => e.type === 'ark_departed')).toBe(true)
+  })
 })
 
 describe('la fin de saison (A4)', () => {
@@ -131,7 +150,7 @@ describe('la chronique (A5)', () => {
     expect(chronicle.some((l) => l.includes('Feu s\'est allumé'))).toBe(true)
     expect(chronicle.some((l) => l.includes('Grand Froid'))).toBe(true)
     expect(chronicle.some((l) => l.includes('méga-horde'))).toBe(true)
-    expect(chronicle.some((l) => l.includes('évacuation'))).toBe(true)
+    expect(chronicle.some((l) => l.includes('arche'))).toBe(true) // l'évacuation est une ARCHE qui part (V2-24)
     expect(chronicle.some((l) => l.includes('éteint. Ce qu\'on retiendra'))).toBe(true)
     expect(chronicle.some((l) => l.includes(sim.villages[0]!.name))).toBe(true)
     // Les jours sont datés en ordre croissant.

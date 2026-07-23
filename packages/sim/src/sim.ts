@@ -210,6 +210,10 @@ export interface SimState {
   /** La saison (spec saison) : méga-horde tirée, évacuation ouverte, fin émise. */
   megaHordeSpawned: boolean
   evacuation: { tx: number; ty: number } | null
+  /** L'ARCHE (V2-24) : les entités montées à bord AVANT le départ (dans le rayon à l'heure du
+   *  départ). L'évacuation n'est plus un marqueur passif — elle LÈVE L'ANCRE : seuls les
+   *  embarqués comptent au verdict Foyer, pas ceux qui traînent près à la fin. */
+  evacuatedIds: number[]
   /** LES RÉFUGIÉS (V2-25, GDD §520) — groupes de survivants arrivés sur les routes, en
    *  attente d'être recrutés/nourris/dépouillés/refoulés. Objets d'état (comme l'évacuation),
    *  pas des PNJ : ils attendent, puis repartent. `nextRefugeeGroupId`/`lastRefugeeDay`
@@ -374,6 +378,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     aggressions: [],
     megaHordeSpawned: false,
     evacuation: null,
+    evacuatedIds: [],
     visitedPois: [],
     seasonEnded: false,
     nextVillageId: 1,

@@ -1392,6 +1392,13 @@ export class WorldScene extends Phaser.Scene {
             .circle(event.tx * TILE_PX + 8, event.ty * TILE_PX + 8, 10, 0xffd94a, 0.6)
             .setStrokeStyle(2, 0xfff2b0)
             .setDepth(OVERLAY_DEPTH)
+          publishError(this.registry, 'Une arche s’est ouverte. Embarquez AVANT qu’elle ne lève l’ancre.', this.time.now)
+        }
+        if (event.type === 'ark_departed') {
+          // L'ARCHE EST PARTIE (V2-24) : le marqueur disparaît, on le DIT (le train est passé).
+          this.evacMarker?.destroy()
+          this.evacMarker = null
+          publishError(this.registry, event.saved > 0 ? `L’arche a levé l’ancre — ${event.saved} à bord.` : 'L’arche est partie. À vide.', this.time.now)
         }
         if (event.type === 'season_ended') {
           publishSeasonEnded(this.registry)

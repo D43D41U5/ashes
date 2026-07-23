@@ -172,6 +172,22 @@ export function advanceWorldEvents(state: SimState): void {
     emitEvent(state, { type: 'evacuation_opened', tick: state.tick, tx, ty })
   }
 
+  // L'ARCHE LÈVE L'ANCRE (V2-24) : l'évacuation n'est plus un marqueur passif — elle a une
+  // HEURE. Au jour EVAC_DAY + EVAC_DEPART_DAYS, qui est À BORD (dans le rayon) part sauvé ;
+  // le reste est laissé. C'est le « tenir jusqu'au départ » que le GDD promet, et le verdict
+  // Foyer ne compte plus que les EMBARQUÉS, pas ceux qui traînent à proximité à la fin.
+  if (state.evacuation !== null && day >= SEASON.EVAC_DAY + SEASON.EVAC_DEPART_DAYS) {
+    const evac = state.evacuation
+    for (const e of state.entities) {
+      if (e.hp <= 0) continue
+      const dx = e.x - (evac.tx + 0.5)
+      const dy = e.y - (evac.ty + 0.5)
+      if (dx * dx + dy * dy <= SEASON.EVAC_RADIUS * SEASON.EVAC_RADIUS) state.evacuatedIds.push(e.id)
+    }
+    emitEvent(state, { type: 'ark_departed', tick: state.tick, tx: evac.tx, ty: evac.ty, saved: state.evacuatedIds.length })
+    state.evacuation = null // partie : le marqueur disparaît
+  }
+
   // La fin de saison : les verdicts (spec saison R4).
   if (!state.seasonEnded && day > BALANCE.SEASON_DAYS) {
     state.seasonEnded = true
@@ -187,16 +203,11 @@ function computeVerdicts(state: SimState): {
   score: number
   outcome: string
 }[] {
-  const evac = state.evacuation
   return state.villages.map((village) => {
     const members = state.entities.filter((e) => village.memberIds.includes(e.id) && e.hp > 0)
-    const evacuated = evac
-      ? members.filter((m) => {
-          const dx = m.x - (evac.tx + 0.5)
-          const dy = m.y - (evac.ty + 0.5)
-          return dx * dx + dy * dy <= SEASON.EVAC_RADIUS * SEASON.EVAC_RADIUS
-        }).length
-      : 0
+    // L'ARCHE (V2-24) : seuls les EMBARQUÉS comptent (recensés au départ), pas la proximité
+    // passive à la fin — « sauver des vies » exige de les avoir mises à bord à temps.
+    const evacuated = members.filter((m) => state.evacuatedIds.includes(m.id)).length
     const lootValue = (inv: Record<string, number | undefined>): number => {
       let total = 0
       for (const item of Object.keys(inv)) {

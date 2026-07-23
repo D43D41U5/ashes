@@ -138,6 +138,8 @@ export type SimEvent =
   | { type: 'gift_given'; tick: number; byEntityId: number; toVillageId: number; item: ItemId; count: number }
   | { type: 'village_archetype_changed'; tick: number; villageId: number; archetype: 'foyer' | 'meute' | 'neutre' }
   | { type: 'evacuation_opened'; tick: number; tx: number; ty: number }
+  /** L'ARCHE A LEVÉ L'ANCRE (V2-24) : `saved` = combien étaient à bord. */
+  | { type: 'ark_departed'; tick: number; tx: number; ty: number; saved: number }
   // LES RÉFUGIÉS (V2-25, GDD §520) — l'événement d'alignement par excellence.
   | { type: 'refugees_arrived'; tick: number; groupId: number; tx: number; ty: number; count: number }
   | { type: 'refugees_recruited'; tick: number; groupId: number; villageId: number; byEntityId: number; count: number }
