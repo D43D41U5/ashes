@@ -356,6 +356,10 @@ export class SnapshotView {
   /** Sprites de nœuds POOLÉS, culled à la vue : la carte porte ~60k nœuds, on
    * n'en dessine que les ~centaines visibles (même trick que le décor). */
   private nodePool: Phaser.GameObjects.Image[] = []
+  /** Pool PARALLÈLE au précédent : l'ombre de contact du nœud i est `nodeShadowPool[i]`.
+   *  Servi et libéré par le MÊME compteur (`used`) — impossible qu'une ombre survive à son
+   *  nœud ou glisse sur un autre. Toutes partagent une texture : elles se batchent. */
+  private nodeShadowPool: Phaser.GameObjects.Image[] = []
   /** Pool SÉPARÉ : un arbre est deux sprites (tronc trié avec les acteurs,
    * houppier dans sa bande propre). Les autres nœuds n'en consomment aucun. */
   private crownPool: Phaser.GameObjects.Image[] = []
@@ -895,6 +899,16 @@ export class SnapshotView {
         sprite.setAlpha(1)
         sprite.setScale(g) // plein = 1 ; repousse = fraction (grandit depuis le pied, origine basse)
         sprite.setVisible(true)
+        // L'OMBRE DE CONTACT du nœud, au MÊME index de pool que lui (servie/libérée ensemble).
+        // La largeur se lit sur `displayWidth` APRÈS `setScale` : une pousse qui repousse porte
+        // donc une flaque qui grandit avec elle, sans calcul en plus. Posée au pied réel (`px`,
+        // `py` — décalage d'arbre et tressaillement compris), juste sous la depth du nœud.
+        let nodeShadow = this.nodeShadowPool[used]
+        if (!nodeShadow) {
+          nodeShadow = createContactShadow(this.scene)
+          this.nodeShadowPool[used] = nodeShadow
+        }
+        positionShadow(nodeShadow, px, py, sprite.displayWidth, sprite.depth)
         used++
         // Une POUSSE n'a pas encore de houppier — il reviendra avec l'arbre adulte.
         if (!isTree || growing) continue
@@ -933,6 +947,9 @@ export class SnapshotView {
       }
     }
     for (let i = used; i < this.nodePool.length; i++) this.nodePool[i]!.setVisible(false)
+    // Les ombres suivent EXACTEMENT le sort de leurs nœuds (même compteur) : aucune orpheline
+    // ne reste allumée sur une tuile que le culling vient de quitter.
+    for (let i = used; i < this.nodeShadowPool.length; i++) this.nodeShadowPool[i]!.setVisible(false)
     for (let i = crownsUsed; i < this.crownPool.length; i++) this.crownPool[i]!.setVisible(false)
 
     // LES SOUCHES (spec recolte-vivante D1) : ce qu'un nœud a laissé en DÉRIVANT. Elles
