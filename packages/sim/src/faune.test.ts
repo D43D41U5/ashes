@@ -18,7 +18,7 @@ import { createEmptyMap, type WorldMap } from './map'
 import { createSim, spawnEntity, snapshot, step, type Entity, type MoveInput, type SimState } from './sim'
 import { cycleOffsetForStartHour } from './time'
 import { spawnMonster, type Monster } from './monsters'
-import { activityAt, isPredator, isPrey, placeHuntingGrounds, sentinelOf, wolfVigor } from './faune'
+import { activityAt, isPredator, isPrey, placeHuntingGrounds, predatorBias, sentinelOf, wolfVigor } from './faune'
 import { drainEvents } from './events'
 import { applyDamage, die } from './combat'
 import { spawnPoiMonsters } from './poi'
@@ -86,6 +86,33 @@ function strike(state: SimState, attackerId: number, dx: number, dy: number): vo
   tick(state, [{ entityId: attackerId, dx: 0, dy: 0, action: { type: 'attack', dx, dy } }])
   for (let t = 0; t < COMBAT.WINDUP_TICKS + 1; t++) tick(state)
 }
+
+describe('le gradient RICHESSE ↔ DANGER (V2-19, tension.md T11bis)', () => {
+  it('predatorBias monte avec le TIER de zone, à distance radiale égale', () => {
+    // Carte 80×80, deux zones (pas 40) : ouest = racine (T0), est = karst (T1).
+    const map = createEmptyMap(80, 80, TERRAIN_GRASS)
+    map.zonePas = 40
+    map.zoneGrid = [0, 1, 0, 1] // cols=2 : bloc (0,·)=racine, (1,·)=karst
+    map.zoneDefs = [
+      { slug: 'racine', nom: 'la racine', tier: 0 },
+      { slug: 'karst', nom: 'le Karst', tier: 1 },
+    ]
+    // `home` placé pour que (10,10) [T0] et (50,10) [T1] soient à distance ÉGALE et dans la
+    // bande radiale médiane (facteur radial = 1) : seul le TIER les départage.
+    const sim = createSim(1, { map, home: { x: 30, y: 60 } })
+    const bas = predatorBias(sim, 10, 10) // T0
+    const haut = predatorBias(sim, 50, 10) // T1
+    expect(haut).toBeGreaterThan(bas)
+    expect(bas).toBeCloseTo(1, 5) // radial médian × (1 + 0.35×0)
+    expect(haut).toBeCloseTo(1.35, 5) // radial médian × (1 + 0.35×1)
+  })
+
+  it('sans zones (banc plat), le tier est ignoré — comportement historique préservé', () => {
+    const map = createEmptyMap(80, 80, TERRAIN_GRASS)
+    const sim = createSim(1, { map, home: { x: 30, y: 60 } })
+    expect(predatorBias(sim, 50, 10)).toBeCloseTo(1, 5) // pas de zoneDefs → tier 0 → facteur 1
+  })
+})
 
 describe('les définitions (R8 — trois étages de gibier)', () => {
   it('lapin, cerf et sanglier sont du GIBIER ; zombie et cendreux n’en sont pas', () => {

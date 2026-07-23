@@ -94,6 +94,23 @@ export function zoneSlugAt(map: WorldMap, tx: number, ty: number): string | unde
  * l'ancien rôle du saut de palier, tenu désormais par l'égalité de zone. Sur une carte sans zones
  * (l'ancien générateur `valleygen`), le -1 partout rend la garde inerte : comportement préservé.
  */
+/**
+ * LE TIER D'UNE ZONE à une tuile (0 = racine/hors-zone, 1 = ceinture riche, 2 = marges).
+ * Lu au bloc, comme `zoneSlugAt`. `0` sur une carte sans zones (bancs de test) → un
+ * consommateur qui module par le tier (le gradient de danger V2-19) reste inerte là, comme
+ * `predatorBias` l'est sans `home` : on n'impose pas une géographie à qui ne l'a pas.
+ */
+export function zoneTierAt(map: WorldMap, tx: number, ty: number): number {
+  const grid = map.zoneGrid
+  const pas = map.zonePas
+  const defs = map.zoneDefs
+  if (!grid || !pas || !defs) return 0
+  const cols = Math.ceil(map.width / pas)
+  const i = Math.min(cols - 1, Math.max(0, Math.floor(tx / pas)))
+  const j = Math.min(Math.ceil(map.height / pas) - 1, Math.max(0, Math.floor(ty / pas)))
+  return defs[grid[j * cols + i] ?? 0]?.tier ?? 0
+}
+
 export function zoneIdAt(map: WorldMap, tx: number, ty: number): number {
   const grid = map.zoneGrid
   const pas = map.zonePas

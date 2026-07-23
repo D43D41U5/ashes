@@ -1342,6 +1342,15 @@ export const FAUNA = {
   PREDATOR_BIAS_DOMESTIC: 0.2,
   PREDATOR_BIAS_WILD: 2.5,
   /**
+   * RICHESSE ↔ DANGER (V2-19, tension.md T11bis). Le gradient radial ne suffisait pas : le
+   * système de ressources est GÉOGRAPHIQUE (chaque zone T1 a son minerai), mais s'y rendre ne
+   * FAISAIT pas peur. On re-corrèle : une zone plus riche (tier plus haut) attire plus de
+   * prédateurs — facteur `1 + DANGER_PER_TIER × tier`. Le Karst (fer, T1) et les marges (T2)
+   * deviennent somptueux ET brûlants ; la racine (T0) reste le refuge. Ordre de grandeur, à
+   * caler en playtest : T1 ×1,35, T2 ×1,7 — cumulé au radial (loin+riche = très chaud).
+   */
+  DANGER_PER_TIER: 0.35,
+  /**
    * Plafond de bêtes ambiantes vivantes (hors bêtes de lieu, résidentes).
    *
    * CALIBRÉ EN JEU (2026-07-11) : ce qui compte n'est pas le plafond mais la

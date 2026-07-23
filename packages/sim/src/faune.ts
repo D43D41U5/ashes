@@ -45,7 +45,7 @@ import { applyDamage, die, startAttack } from './combat'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { carryRatio, carryTier, countOf, isEmpty, removeItems, type ItemId } from './items'
-import { terrainAt, type WorldMap } from './map'
+import { terrainAt, zoneTierAt, type WorldMap } from './map'
 import { moveToward, spawnMonster, type Monster } from './monsters'
 import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
@@ -66,9 +66,13 @@ export function predatorBias(state: SimState, tx: number, ty: number): number {
   const dx = tx - home.x
   const dy = ty - home.y
   const d = Math.sqrt(dx * dx + dy * dy)
-  if (d <= CIRCLES.DOMESTIC_RADIUS) return FAUNA.PREDATOR_BIAS_DOMESTIC
-  if (d >= CIRCLES.WILD_RADIUS) return FAUNA.PREDATOR_BIAS_WILD
-  return 1
+  const radial =
+    d <= CIRCLES.DOMESTIC_RADIUS ? FAUNA.PREDATOR_BIAS_DOMESTIC : d >= CIRCLES.WILD_RADIUS ? FAUNA.PREDATOR_BIAS_WILD : 1
+  // RICHESSE ↔ DANGER (V2-19, tension.md T11bis) : une zone plus riche (tier plus haut) attire
+  // plus de prédateurs — le système de ressources est géographique, la peur doit l'être aussi.
+  // `zoneTierAt` rend 0 sans zones (bancs) : le facteur vaut alors 1, comportement préservé.
+  const tier = zoneTierAt(state.map, tx, ty)
+  return radial * (1 + FAUNA.DANGER_PER_TIER * tier)
 }
 
 /**
