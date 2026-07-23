@@ -35,6 +35,12 @@ export type ItemId =
   | 'stone'
   | 'fiber'
   | 'berries'
+  /** LE LÉGUME du potager (agriculture voie A) — « nourriture de base » (GDD §8), modeste,
+   *  au niveau des baies. Récolté sur une parcelle mûre. */
+  | 'legume'
+  /** LA GRAINE à semer (agriculture voie A) — non comestible, se met en terre dans une
+   *  parcelle. Craftée au Feu depuis des baies (l'investissement d'amorçage du potager). */
+  | 'graine'
   | 'stew'
   | 'iron_ore'
   | 'coal'

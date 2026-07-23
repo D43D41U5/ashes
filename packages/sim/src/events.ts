@@ -123,6 +123,9 @@ export type SimEvent =
   | { type: 'wolf_howl'; tick: number; targetEntityId: number; packSize: number; x: number; y: number }
   | { type: 'corpse_looted'; tick: number; corpseId: number; byEntityId: number }
   | { type: 'structure_repaired'; tick: number; structureId: number; byEntityId: number }
+  /** LE POTAGER (agriculture voie A) : semé, puis récolté quand mûr. */
+  | { type: 'crop_planted'; tick: number; structureId: number; byEntityId: number }
+  | { type: 'crop_harvested'; tick: number; structureId: number; byEntityId: number; yield: number }
   | {
       type: 'access_changed'
       tick: number

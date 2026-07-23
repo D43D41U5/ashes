@@ -795,11 +795,33 @@ export const TOOL_DURABILITIES: Partial<Record<import('./items').ItemId, number>
  */
 export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
   berries: 6,
+  legume: 6, // le potager (agriculture) : « nourriture de base » (GDD §8), au niveau des baies
   raw_meat: 8,
   quartier: 20, // V0-5 : un gros repas cru (plus que raw_meat) — le gros gibier nourrit longtemps
   cooked_meat: 40,
   stew: 60,
 }
+
+/**
+ * L'AGRICULTURE — le potager (voie A, spec `agriculture.md`). Le GARDE-FOU (GDD §8bis) : le
+ * cercle domestique est « sûr, renouvelable vite, MÉDIOCRE » — un village y SURVIT, n'y
+ * PROSPÈRE jamais. Ces nombres sont donc des ORDRES DE GRANDEUR À CALIBRER en playtest ;
+ * ils ne doivent JAMAIS faire du potager un remplaçant de la chasse/cueillette (décision T3
+ * réservée à Alexis s'il devait dépasser « médiocre »).
+ *
+ * Déterminisme : la pousse est une fonction PURE du tick sur `Structure.plantedAt` (aucune
+ * entité, aucun PRNG) — voir `agriculture.ts`.
+ */
+export const AGRICULTURE = {
+  /** Temps de pousse d'une parcelle (semée → mûre). Long à dessein (médiocre = lent). */
+  GROW_TICKS: ticksForCycles(0.5),
+  /** Récolte d'une parcelle/serre mûre — modeste, mais au-dessus du coût en graine (un vrai filet). */
+  YIELD: 5,
+  /** Récolte d'un TERROIR (le meilleur palier de la ferme) : plus généreux, sans être un jackpot. */
+  YIELD_TERROIR: 9,
+  /** Baies → 1 graine (au Feu) : l'investissement d'amorçage. Forer une fois, semer ensuite. */
+  SEED_FROM_BERRIES: 3,
+} as const
 
 /**
  * LA PÉREMPTION (spec `evier.md`) — l'évier qui manquait.
@@ -841,6 +863,7 @@ export type RecipeId =
   | 'crude_pickaxe'
   | 'crude_spear'
   | 'stew'
+  | 'graine'
   | 'axe'
   | 'pickaxe'
   | 'iron_ingot'
@@ -909,6 +932,9 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   crude_spear: { station: null, inputs: { wood: 3, stone: 1, rope: 1 }, output: 'crude_spear', seconds: 5 },
 
   stew: { station: 'fire', inputs: { berries: 4, fiber: 1 }, output: 'stew', seconds: 8 },
+  // LA GRAINE (agriculture voie A) : des baies deviennent une semence, au Feu. L'amorçage du
+  // potager — cueillir une fois, semer ensuite. Se pose ensuite dans une parcelle (`plant`).
+  graine: { station: 'fire', inputs: { berries: AGRICULTURE.SEED_FROM_BERRIES }, output: 'graine', seconds: 4 },
   axe: { station: 'workshop', inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'axe', seconds: 8 },
   pickaxe: { station: 'workshop', inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'pickaxe', seconds: 8 },
   iron_ingot: { station: 'furnace', inputs: { iron_ore: 2, coal: 1 }, output: 'iron_ingot', seconds: 10 },
@@ -2396,6 +2422,8 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   stone: 2,
   fiber: 0.2,
   berries: 0.2,
+  legume: 0.2, // le potager : léger comme les baies
+  graine: 0.1, // une poignée de graines, presque rien
   stew: 0.5,
   raw_meat: 1,
   quartier: 4.5, // V0-5 : LOURD — deux quartiers = un cerf = ~9 de charge (le portage remord)

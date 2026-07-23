@@ -11,6 +11,7 @@
 import { isOutsider, recordAct, recordHostility, seasonActFactor } from './alignment'
 import { feedRefugees, recruitRefugees, robRefugees } from './refugees'
 import {
+  AGRICULTURE,
   ALIGNMENT,
   BALANCE,
   COMBAT,
@@ -29,6 +30,7 @@ import {
   type ComponentType,
   type WallMaterial,
 } from './balance'
+import { isCropMature, isPlot } from './agriculture'
 import { blocksNavigation, placementKeepsNavigable, refreshFunctions } from './construction'
 import { emitEvent } from './events'
 import { chebyshev, distSq } from './geometry'
@@ -82,6 +84,10 @@ export interface Structure {
   material?: WallMaterial
   /** Contenu, pour les structures-conteneurs (coffre). */
   inventory?: Inventory
+  /** LE TICK DE MISE EN TERRE (agriculture voie A, spec `agriculture.md`) — parcelles SEULES.
+   *  Absent = parcelle vide. La maturité se DÉRIVE par arithmétique (`tick − plantedAt`), sans
+   *  entité ni PRNG (voir `agriculture.ts`). `number` → JSON-sérialisable comme le reste. */
+  plantedAt?: number
 }
 
 export type TaskKind = 'gather_berries' | 'gather_wood' | 'gather_fiber' | 'cook_stew' | 'repair' | 'feed_fire'
@@ -143,6 +149,10 @@ export type VillageAction =
    */
   | { type: 'found_village'; structureId: number }
   | { type: 'repair'; structureId: number }
+  /** SEMER (agriculture voie A, spec `agriculture.md`) : une graine en main + une parcelle VIDE
+   *  de mon village, à portée. RÉCOLTER : une parcelle MÛRE. La pousse se dérive du tick (pur). */
+  | { type: 'plant'; structureId: number }
+  | { type: 'harvest_crop'; structureId: number }
   | { type: 'give'; targetEntityId: number; item: ItemId; count: number }
   /** LES RÉFUGIÉS (V2-25, GDD §520) — à portée d'un groupe : le RECRUTER (ils rejoignent mon
    *  village en PNJ ; il faut que j'aie un village), les NOURRIR (des vivres, chaleur) ou les
@@ -878,6 +888,52 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       s.hp = Math.min(max, s.hp + WORLD_EVENTS.REPAIR_HP)
       actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
       emitEvent(state, { type: 'structure_repaired', tick: state.tick, structureId: s.id, byEntityId: actorId })
+      return
+    }
+
+    /**
+     * SEMER (agriculture voie A, spec `agriculture.md`) : une graine en main + une PARCELLE
+     * vide de son village, à portée → on la met en terre. La pousse se dérive ensuite du tick
+     * (pur, `agriculture.ts`) — aucune entité, aucun PRNG.
+     */
+    case 'plant': {
+      const s = state.structures.find((st) => st.id === action.structureId)
+      if (!s || !isPlot(s.type)) return reject('pas une parcelle')
+      if (s.ownerId !== actorId && getVillageOf(state, actorId)?.id !== s.villageId) return reject('pas votre village')
+      if (s.plantedAt !== undefined) return reject('déjà semé')
+      // LE FROID GÈLE LA TERRE À CIEL OUVERT (acte III, spec agriculture) : seule la SERRE
+      // (cultures d'hiver, GDD §8 « poussent quand le froid tue le reste ») laisse encore semer
+      // quand tout gèle dehors. Le payoff stratégique : bâtir des serres AVANT l'hiver, ou ne
+      // plus rien planter. (Seuil « acte III » = ordre de grandeur à calibrer.)
+      if (s.type === 'parcelle' && actForDay(seasonDayAtTick(state.tick, state.calendarScale)) >= 3) {
+        return reject('la terre est gelée — il faut une serre')
+      }
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      if (!removeItems(actor.inventory, { graine: 1 })) return reject('il faut une graine')
+      s.plantedAt = state.tick
+      emitEvent(state, { type: 'crop_planted', tick: state.tick, structureId: s.id, byEntityId: actorId })
+      return
+    }
+
+    /**
+     * RÉCOLTER (agriculture voie A) : une parcelle MÛRE (dérivée du tick) de son village, à
+     * portée → verse `AGRICULTURE.YIELD` légumes et efface `plantedAt` (replantable).
+     */
+    case 'harvest_crop': {
+      if (state.tick < actor.cooldownUntil) return reject('trop tôt')
+      const s = state.structures.find((st) => st.id === action.structureId)
+      if (!s || !isPlot(s.type)) return reject('pas une parcelle')
+      if (s.ownerId !== actorId && getVillageOf(state, actorId)?.id !== s.villageId) return reject('pas votre village')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      if (!isCropMature(s, state.tick)) return reject('pas encore mûr')
+      // Le TERROIR (meilleur palier) rend plus que la parcelle/serre.
+      const gain = s.type === 'terroir' ? AGRICULTURE.YIELD_TERROIR : AGRICULTURE.YIELD
+      addItems(actor.inventory, { legume: gain })
+      delete s.plantedAt // parcelle de nouveau vide (replantable)
+      actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
+      emitEvent(state, { type: 'crop_harvested', tick: state.tick, structureId: s.id, byEntityId: actorId, yield: gain })
       return
     }
 

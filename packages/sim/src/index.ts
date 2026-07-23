@@ -27,6 +27,7 @@ export { POI,
   CARRY,
   CONVOY_LOOT,
   ITEM_WEIGHT,
+  AGRICULTURE,
   FAUNA,
   FOOD_VALUES,
   HUNT,
@@ -117,6 +118,7 @@ export type { PlacedStructure, RecogStructure, RecognizedFunction } from './cons
 export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel, recipeState, fellGreenWidth, isCleanFell, flankOfAim, mineGoodFlank, mineTolerance, isCleanMine, forageRichness, forageRevealed } from './economy'
 export type { ResourceNode, EconomyAction, CraftOrder, RecipeState } from './economy'
 export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame
+export { cropStage, isCropMature, isPlot } from './agriculture' // le potager (voie A) : maturité PURE, lue par le rendu
 export { applyCombatAction, advanceCombat, weaponDamage, weaponKind, weaponProfile, pendingStrike } from './combat'
 export type { CombatAction, Corpse } from './combat'
 export { advanceNpcs } from './npc'
