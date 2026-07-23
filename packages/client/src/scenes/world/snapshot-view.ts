@@ -22,6 +22,7 @@ import {
   type FunctionId,
   type MonsterType,
   type Npc,
+  type RefugeeGroup,
   type ResourceNode,
   type NodeType,
   type Structure,
@@ -330,6 +331,10 @@ export class SnapshotView {
   }
   nodes: ResourceNode[] = []
   corpses: Corpse[] = []
+  /** LES RÉFUGIÉS (V2-25) : groupes de survivants sur les routes — WorldScene y branche la
+   *  fenêtre à trois gestes, et on les dessine ici en huddle. */
+  refugeeGroups: RefugeeGroup[] = []
+  private refugeeSprites = new Map<number, Phaser.GameObjects.Image>()
   npcs: Npc[] = []
   monsters: Monster[] = []
   villages: SnapshotMessage['villages'] = []
@@ -407,6 +412,7 @@ export class SnapshotView {
     this.syncStructures(msg.structures, self ? { x: self.x, y: self.y } : undefined)
     this.applyNodeDeltas(msg.nodeDeltas, now)
     this.syncCorpses(msg.corpses)
+    this.syncRefugees(msg.refugeeGroups)
     this.syncEntities(msg.entities, playerId, now)
     this.syncGroundItems()
   }
@@ -953,6 +959,31 @@ export class SnapshotView {
       if (!seen.has(id)) {
         sprite.destroy()
         this.corpseSprites.delete(id)
+      }
+    }
+  }
+
+  /** LES RÉFUGIÉS (V2-25) : un marqueur PNJ par groupe, posé au centre du groupe (pieds).
+   *  Modèle groupe-objet : ils ne bougent pas — on crée/détruit le sprite selon les groupes. */
+  private syncRefugees(groups: RefugeeGroup[]): void {
+    this.refugeeGroups = groups
+    const seen = new Set<number>()
+    for (const g of groups) {
+      seen.add(g.id)
+      if (!this.refugeeSprites.has(g.id)) {
+        const lift = this.warp?.lift(g.tx + 0.5, g.ty + 0.5) ?? 0
+        const sprite = this.scene.add
+          .image((g.tx + 0.5) * TILE_PX, (g.ty + 1) * TILE_PX - lift, 'spr-npc')
+          .setOrigin(0.5, 1)
+          .setDepth(corpseDepth(g.ty + 1, TILE_PX) + 1)
+          .setTint(0xcbb98a) // teinte terne : des survivants en haillons, pas des villageois
+        this.refugeeSprites.set(g.id, sprite)
+      }
+    }
+    for (const [id, sprite] of this.refugeeSprites) {
+      if (!seen.has(id)) {
+        sprite.destroy()
+        this.refugeeSprites.delete(id)
       }
     }
   }

@@ -15,6 +15,7 @@ import {
   type ItemId,
   type PlayerAction,
   type SimEvent,
+  type RefugeeGroup,
   type Structure,
   type Village,
 } from '@braises/sim'
@@ -120,6 +121,28 @@ export function publishFoundableFire(
   const found = id === null ? null : { structureId: id }
   const before = getHud(registry, 'foundableFire') ?? null
   if (before?.structureId !== found?.structureId) setHud(registry, 'foundableFire', found)
+}
+
+/** LES RÉFUGIÉS À PORTÉE (V2-25) : le groupe le plus proche à portée d'interaction, ou `null`. */
+export function publishRefugeesNearby(
+  registry: Registry,
+  player: { x: number; y: number },
+  groups: RefugeeGroup[],
+): void {
+  const r = BALANCE.INTERACT_RANGE
+  let near: { groupId: number; count: number } | null = null
+  let bestD = r * r
+  for (const g of groups) {
+    const dx = g.tx + 0.5 - player.x
+    const dy = g.ty + 0.5 - player.y
+    const d = dx * dx + dy * dy
+    if (d <= bestD) {
+      bestD = d
+      near = { groupId: g.id, count: g.count }
+    }
+  }
+  const before = getHud(registry, 'refugeesNearby') ?? null
+  if (before?.groupId !== near?.groupId) setHud(registry, 'refugeesNearby', near)
 }
 
 /**

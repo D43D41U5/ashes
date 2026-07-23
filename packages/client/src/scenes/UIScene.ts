@@ -15,6 +15,7 @@ import { createHudCharacter, type HudCharacter } from './ui/hud-character'
 import { createBuildMenu, type BuildMenu } from './ui/build-menu'
 import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
 import { createFoundVillagePrompt, type FoundVillagePrompt } from './ui/found-village-prompt'
+import { createRefugeePrompt, type RefugeePrompt } from './ui/refugee-prompt'
 import { createFireUpgradePrompt, type FireUpgradePrompt } from './ui/fire-upgrade-prompt'
 import { createDeathVeil, DEATH_VEIL_MS, type DeathVeil } from './ui/death-veil'
 import { mountHud, type HudDom } from './ui/hud-dom'
@@ -70,6 +71,7 @@ export class UIScene extends Phaser.Scene {
   private craftQueueView!: CraftQueueView
   /** La fenêtre du bas « Fonder un village ici ? » — près d'un feu de camp libre. */
   private foundVillagePrompt!: FoundVillagePrompt
+  private refugeePrompt!: RefugeePrompt
   private fireUpgradePrompt!: FireUpgradePrompt
   private deathVeil!: DeathVeil
   /** Le dernier `at` de mort déjà montré — un nouveau lève le voile une seule fois. */
@@ -187,6 +189,7 @@ export class UIScene extends Phaser.Scene {
     // La fenêtre « Fonder un village ici ? » : née cachée, elle ne paraît qu'auprès
     // d'un feu de camp libre (WorldScene pose `foundableFire`).
     this.foundVillagePrompt = createFoundVillagePrompt(this.hudRoot.board, (action) => queueAction(this.registry, action))
+    this.refugeePrompt = createRefugeePrompt(this.hudRoot.board, (action) => queueAction(this.registry, action))
     // La fenêtre sœur « Monter le Feu ? » : même patron, même contrat (WorldScene pose
     // `upgradableFire`, la sim revalide `upgrade_fire`).
     this.fireUpgradePrompt = createFireUpgradePrompt(this.hudRoot.board, (action) => queueAction(this.registry, action))
@@ -597,6 +600,7 @@ export class UIScene extends Phaser.Scene {
     // d'un feu libre à soi, sans foyer encore) ; elle s'efface pendant les overlays
     // (WorldScene y pose `foundableFire` à null). L'UI ne fait que la montrer.
     this.foundVillagePrompt.update(getHud(this.registry, 'foundableFire') ?? null)
+    this.refugeePrompt.update(getHud(this.registry, 'refugeesNearby') ?? null)
     // La fenêtre « Monter le Feu ? » suit le même chemin : elle et « Fonder » sont
     // mutuellement exclusives (fonder = feu libre sans village ; monter = Chef d'un
     // village), elles ne s'affichent donc jamais ensemble.

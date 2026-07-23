@@ -72,6 +72,7 @@ import {
   publishHint,
   publishDeath,
   publishFoundableFire,
+  publishRefugeesNearby,
   publishUpgradableFire,
   publishOpenContainer,
   publishPickup,
@@ -716,6 +717,8 @@ export class WorldScene extends Phaser.Scene {
       this.view.villages,
       this.playerId,
     )
+    // Un groupe de réfugiés à portée → la fenêtre à trois gestes (V2-25). Étouffée en overlay.
+    publishRefugeesNearby(this.registry, this.predicted, overlay ? [] : this.view.refugeeGroups)
     // Chef à portée de MON Feu, palier < max → la fenêtre « Améliorer le Feu » (V0-3).
     // Même patron que « Fonder » : WorldScene décide QUAND, UIScene ne fait que montrer ;
     // étouffée pendant un overlay (elle ne se superpose ni au sac ni à la carte).
