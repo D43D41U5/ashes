@@ -160,6 +160,10 @@ export interface HudState {
   crafts: { item: ItemId }[]
   /** File des MONTÉES DE MÉTIER (event `skill_level_up` sur moi) : le plus gros toast. */
   levelUps: { skill: SkillId; level: number }[]
+  /** DERNIÈRE SAUVEGARDE de l'hôte — une valeur, pas une file (seul le dernier état compte).
+   *  `at` = horloge murale (pour dater), `shownAt` = horloge Phaser (pour le fondu),
+   *  `ok` = false si l'écriture a ÉCHOUÉ, ce qu'il faut dire et non taire. */
+  saveState: { at: number; ok: boolean; shownAt: number } | null
   /** File d'actions posées par UIScene (l'écran d'inventaire) — WorldScene la
    *  draine et parle seule à l'hôte (l'UI ne connaît pas le transport). */
   pendingActions: PlayerAction[]

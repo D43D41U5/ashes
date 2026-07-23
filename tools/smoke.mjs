@@ -1342,6 +1342,52 @@ const SCENARIOS = {
   },
 
   /**
+   * LE JOUEUR SAIT-IL QUE SA PARTIE EST À L'ABRI ? (sprint AAA — sauvegardes.)
+   *
+   * L'hôte autosauvait toutes les 30 s et à la sortie, mais ne le DISAIT jamais : aucune
+   * trace à l'écran. Dans un jeu où l'on peut perdre une heure de veillée, ce silence est une
+   * angoisse. Test de BOUT EN BOUT, sans rien simuler : ESC met en pause → le client envoie
+   * `pause` → l'hôte ÉCRIT vraiment → il répond `saved` → le HUD l'affiche. On referme le
+   * menu pour dégager le HUD, puis on FIGE la boucle dès l'indicateur posé (l'horloge headless
+   * court et l'effacerait avant la capture — même piège que les bandeaux).
+   */
+  async sauvegarde(page) {
+    await page.waitForTimeout(1500)
+    await page.keyboard.press('Escape') // → pause → l'hôte écrit pour de vrai
+    await page.waitForTimeout(500)
+    await page.keyboard.press('Escape') // on referme : le menu couvrait le HUD
+    let frozen = false
+    for (let i = 0; i < 15 && !frozen; i++) {
+      await page.waitForTimeout(40)
+      frozen = await page.evaluate(() => {
+        const el = document.querySelector('.hc-save')
+        if (el && getComputedStyle(el).display !== 'none' && el.textContent) {
+          window.__BRAISES__.scene.game.loop.sleep() // fige : l'indicateur ne s'efface plus
+          return true
+        }
+        return false
+      })
+    }
+    const dom = await page.evaluate(() => {
+      const el = document.querySelector('.hc-save')
+      const cs = el && getComputedStyle(el)
+      return {
+        texte: el?.textContent ?? '',
+        visible: Boolean(cs && cs.display !== 'none' && Number(cs.opacity) > 0),
+        echec: el?.classList.contains('hc-save-ko') ?? null,
+        // La preuve que le message a bien traversé l'hôte → le client (et pas un affichage en l'air).
+        etat: window.__BRAISES__.scene.registry.get('saveState') ?? null,
+      }
+    })
+    console.log(`sauvegarde : ${JSON.stringify(dom)}`)
+    await page.screenshot({ path: `${OUT}/sauvegarde.png` })
+    if (!dom.visible || !dom.etat || dom.etat.ok !== true || dom.echec) {
+      console.error(`!! L'INDICATEUR DE SAUVEGARDE NE VA PAS : ${JSON.stringify(dom)}`)
+    }
+    return dom
+  },
+
+  /**
    * LE MOUVEMENT RÉDUIT EST-IL RESPECTÉ ? (sprint AAA — accessibilité.)
    *
    * L'UI est montée en DOM par une dizaine de modules qui animent chacun les leurs ; garder

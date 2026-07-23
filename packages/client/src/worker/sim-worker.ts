@@ -133,9 +133,14 @@ async function persist(): Promise<void> {
   saving = true
   try {
     await saveSlot({ sim: serializeSim(sim), playerId, chronicle: chronicleLog, savedAt: Date.now() })
+    // ON LE DIT. Une sauvegarde muette laisse le joueur dans le doute — et ce doute coûte
+    // cher dans un jeu où l'on peut perdre une heure de veillée.
+    post({ type: 'saved', at: Date.now(), ok: true })
   } catch {
     // Un disque plein ou refusé ne doit pas tuer la partie : on perd la sauvegarde, pas la
-    // session. (Le prochain autosave retentera.)
+    // session. (Le prochain autosave retentera.) Mais on ne le TAIT PAS : un échec silencieux
+    // laisse croire au salut, ce qui est bien pire que pas d'indicateur du tout.
+    post({ type: 'saved', at: Date.now(), ok: false })
   } finally {
     saving = false
     // Une demande est tombée pendant l'écriture (typiquement la sortie) : on la rejoue MAINTENANT

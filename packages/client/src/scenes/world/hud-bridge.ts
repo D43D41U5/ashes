@@ -283,6 +283,13 @@ export function publishLevelUp(registry: Registry, skill: SkillId, level: number
   setHud(registry, 'levelUps', queue)
 }
 
+/** L'HÔTE A SAUVEGARDÉ (ou a échoué) : une VALEUR, pas une file — seul le dernier état
+ *  compte. `shownAt` est l'horloge PHASER (celle du fondu de l'indicateur) ; `at` l'horloge
+ *  murale de l'hôte, qui sert à DATER la sauvegarde, jamais à animer. */
+export function publishSaved(registry: Registry, at: number, ok: boolean, shownAt: number): void {
+  setHud(registry, 'saveState', { at, ok, shownAt })
+}
+
 /** Côté UIScene : récupère et vide la file des montées de métier. */
 export function drainLevelUps(registry: Registry): { skill: SkillId; level: number }[] {
   const queue = getHud(registry, 'levelUps') ?? []

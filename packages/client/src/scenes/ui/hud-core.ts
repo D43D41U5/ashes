@@ -76,6 +76,9 @@ export interface HudCoreState {
   /** Sac ouvert → les vitales redeviennent opaques, la ceinture s'efface (sa rangée est
    *  dans la grille). */
   characterMenuOpen: boolean
+  /** Dernière écriture de l'hôte — `null` tant qu'aucune n'a eu lieu. `shownAt` est sur
+   *  l'horloge PHASER (le fondu s'y règle), `ok=false` dit l'échec au lieu de le taire. */
+  saveState: { at: number; ok: boolean; shownAt: number } | null
   now: number
 }
 
@@ -116,6 +119,7 @@ export function createHudCore(
   const zoneEl = $('.hc-zone')
   const villageEl = $('.hc-village')
   const boardEl = $('.hc-board')
+  const saveEl = $('.hc-save')
   const toastsEl = $('.hc-toasts')
   const woundsEl = $('.hc-wounds')
   const weightEl = $('.hc-weight')
@@ -170,6 +174,10 @@ export function createHudCore(
   // ── Les toasts de récolte (haut-droite) : fusion par item, fondu après un délai ──
   const TOAST_MS = 2600
   const FADE_MS = 500
+  /** L'indicateur de sauvegarde tient un peu plus qu'un toast (on lève rarement les yeux
+   *  pile au bon moment), puis s'efface. Un ÉCHEC, lui, ne s'efface jamais. */
+  const SAVE_MS = 3200
+  const SAVE_FADE_MS = 700
   interface Toast {
     // Absent pour les bandeaux fabrication/niveau : eux ne fusionnent avec rien, ils
     // ne sont donc jamais retrouvés par `find(t => t.item === item)`. Seule la récolte
@@ -233,6 +241,21 @@ export function createHudCore(
       villageEl.style.display = s.villageLine ? '' : 'none'
       boardEl.textContent = s.boardLine
       boardEl.style.display = s.boardLine ? '' : 'none'
+
+      // LA SAUVEGARDE, DITE puis effacée. Le succès est une réassurance FUGACE (on la montre
+      // le temps d'être vue, puis elle s'en va — un HUD n'est pas un journal) ; l'ÉCHEC, lui,
+      // RESTE : tant que l'écriture ne passe pas, le joueur doit le savoir. Le fondu se règle
+      // sur `s.now`, l'horloge Phaser — comme les toasts, jamais un timer parallèle.
+      if (s.saveState === null) {
+        saveEl.style.display = 'none'
+      } else {
+        const age = s.now - s.saveState.shownAt
+        const ko = !s.saveState.ok
+        saveEl.style.display = ko || age < SAVE_MS + SAVE_FADE_MS ? '' : 'none'
+        saveEl.textContent = ko ? 'SAUVEGARDE IMPOSSIBLE' : 'partie sauvegardée'
+        saveEl.classList.toggle('hc-save-ko', ko)
+        saveEl.style.opacity = ko || age < SAVE_MS ? '1' : String(Math.max(0, 1 - (age - SAVE_MS) / SAVE_FADE_MS))
+      }
 
       // En jeu le HUD s'efface un peu ; sac ouvert il redevient opaque, et la ceinture
       // s'efface (sa rangée est dans la grille du sac — sinon deux ceintures à l'écran).
@@ -338,6 +361,16 @@ function markup(): string {
     .hc-zone{font-size:12px;color:#9a8f78;letter-spacing:2px;margin-top:3px;${INK_OUTLINE}}
     .hc-village{font-size:12px;color:#c8b88a;letter-spacing:1px;margin-top:6px;${INK_OUTLINE}}
     .hc-board{font-size:12px;color:#9a8f78;letter-spacing:1px;margin-top:3px;${INK_OUTLINE}}
+    /* L'INDICATEUR DE SAUVEGARDE : discret par nature (une réassurance, pas une récompense) —
+       d'où la teinte éteinte et la petite taille. En ÉCHEC il passe au rouge d'alerte : là,
+       il faut qu'on le voie. */
+    /* Teinte dim (#9a8f78) et non faint (#6f6a60) : au premier essai, l'indicateur était
+       ILLISIBLE sur un sol clair — discret ne veut pas dire invisible, et une réassurance
+       qu'on ne peut pas lire ne rassure personne. C'est la teinte des lignes lieu/tableau,
+       déjà lisibles à la capture. (Le sort de faint, qui échoue au contraste WCAG partout
+       ailleurs, est une question de palette réservée à Alexis.) */
+    .hc-save{font-size:11px;color:#9a8f78;letter-spacing:2px;margin-top:8px;${INK_OUTLINE}transition:opacity .4s ease;}
+    .hc-save.hc-save-ko{color:#e05a4a;}
     /* haut-droite : toasts */
     .hc-toasts{position:absolute;top:24px;right:26px;display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
     .hc-toast{font-size:14px;color:#e8e0c8;letter-spacing:1px;${INK_OUTLINE_STRONG}transition:opacity .3s ease;}
@@ -388,6 +421,7 @@ function markup(): string {
     <div class="hc-zone"></div>
     <div class="hc-village"></div>
     <div class="hc-board"></div>
+    <div class="hc-save"></div>
   </div>
   <div class="hc-toasts"></div>
   <div class="hc-bl">

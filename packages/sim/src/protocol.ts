@@ -218,4 +218,21 @@ export interface ChatBroadcast {
   text: string
 }
 
-export type HostToClient = ReadyMessage | SnapshotMessage | ProgressMessage | ChatBroadcast
+/**
+ * L'HÔTE A ÉCRIT LA PARTIE — ou n'a PAS PU. Purement informatif, aucun effet sur la sim.
+ *
+ * Le joueur doit SAVOIR que sa progression est à l'abri : dans un jeu de survie où une
+ * heure de veillée peut disparaître, une sauvegarde muette est une source d'angoisse. Et
+ * surtout il doit savoir quand elle ne l'est PAS — un échec silencieux (disque plein,
+ * stockage refusé) est bien pire que pas d'indicateur du tout : il laisse croire au salut.
+ *
+ * `at` est une horloge MURALE, donc un concern d'HÔTE : /sim ne la produit jamais (elle
+ * n'entre pas dans l'état déterministe, elle ne fait que traverser ce canal).
+ */
+export interface SavedMessage {
+  type: 'saved'
+  at: number
+  ok: boolean
+}
+
+export type HostToClient = ReadyMessage | SnapshotMessage | ProgressMessage | ChatBroadcast | SavedMessage

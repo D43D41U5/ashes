@@ -80,6 +80,7 @@ import {
   publishOpenContainer,
   publishPickup,
   publishPlayerVitals,
+  publishSaved,
   publishSeasonEnded,
   publishStationsInRange,
   publishTimeAndVillage,
@@ -1131,6 +1132,12 @@ export class WorldScene extends Phaser.Scene {
         const dy = msg.y - this.predicted.y
         if (dx * dx + dy * dy <= CHAT_RADIUS_TILES * CHAT_RADIUS_TILES) this.appendChat(msg.from, msg.text, false)
       }
+      return
+    }
+    if (msg.type === 'saved') {
+      // L'HÔTE A ÉCRIT (ou n'a pas pu) : on le porte au HUD. Aucun effet de jeu — mais savoir
+      // que la veillée est à l'abri (et surtout savoir quand elle ne l'est PAS) vaut son pixel.
+      publishSaved(this.registry, msg.at, msg.ok, this.time.now)
       return
     }
     if (msg.type === 'progress') {

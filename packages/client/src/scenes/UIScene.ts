@@ -663,6 +663,7 @@ export class UIScene extends Phaser.Scene {
       inv,
       activeSlot,
       characterMenuOpen, // sac ouvert → vitales opaques, ceinture cachée
+      saveState: getHud(this.registry, 'saveState') ?? null,
       now: this.time.now,
     })
 
