@@ -5,7 +5,7 @@ import { countOf, type ItemId } from './items'
 import { createEmptyMap } from './map'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, type MoveInput, type PlayerAction, type SimState, type SimOptions } from './sim'
-import { addStructure, getVillageOf, structureAt } from './village'
+import { structureAt } from './village'
 
 /**
  * A7 — Le bot headless : un agent scripté joue la boucle économique entière
@@ -63,17 +63,13 @@ function harvestUntil(bot: Bot, node: ResourceNode, item: ItemId, want: number):
 }
 
 describe('le bot headless (A7)', () => {
-  // SKIP (dette WIP construction, rouge depuis 30e8aa2 « RÉCOLTE VIVANTE » — pas une
-  // régression du portage) : ce scénario ne colle plus au flux de construction actuel.
-  // Deux points à retailler avec la branche construction :
-  //   1. Le Feu a désormais un HITBOX (il bloque sa tuile) : fondé sur la tuile du bot,
-  //      il piège son déplacement EN LIGNE DROITE (le bot n'a pas de pathfinding) dans la
-  //      poche feu+atelier. Un vrai joueur contourne — ce n'est pas un softlock joueur.
-  //   2. L'atelier est bâti ici par `addStructure` DIRECT (hors flux d'inputs) ; le vrai
-  //      chemin joueur est `place_component` (composant tenu), seul chemin ENREGISTRÉ —
-  //      donc le replay (l.143) ne reconstruit pas l'atelier et diverge.
-  // À revenir dessus en retaillant le bot sur place_component + une scène sans la poche.
-  it.skip('joue la boucle : récolter → fonder → bâtir l’atelier → crafter la hache → récolter mieux', () => {
+  // A7 (economie/recolte) — LA BOUCLE COMPLÈTE, headless, replay au bit près. Retaillée sur
+  // le flux de construction ACTUEL (2026-07-23) : l'atelier se bâtit par le VRAI chemin
+  // joueur — forger le composant au Feu, le prendre en main, le POSER (`place_component`),
+  // seul chemin ENREGISTRÉ (donc le replay le reconstruit). Et la SCÈNE évite la poche du
+  // Feu : l'atelier va au SUD, l'arbre de re-récolte à l'EST — le bot (sans pathfinding, il
+  // va tout droit) sort du Feu vers l'est sans jamais regraverser la poche feu+atelier.
+  it('joue la boucle : récolter → fonder → bâtir l’atelier → crafter la hache → récolter mieux', () => {
     const map = createEmptyMap(32, 32, TERRAIN_GRASS)
     // Nœuds espacés autour de la place (10, 10), chacun accessible en ligne. Stock
     // GÉNÉREUX (20) À DESSEIN : ce bot n'a pas de pathfinding (goTo va en ligne droite),
@@ -101,7 +97,7 @@ describe('le bot headless (A7)', () => {
 
     /** Prend l'objet EN MAIN. La sim ne choisit plus pour le joueur : ce qui compte,
      *  c'est ce qu'on TIENT (le marteau pour bâtir, la hache pour couper). */
-    const equip = (item: 'hammer' | 'axe') => {
+    const equip = (item: ItemId) => {
       const slot = me(bot).inventory.findIndex((s) => s?.item === item)
       expect(slot).toBeGreaterThanOrEqual(0)
       tick(bot, 0, 0, { type: 'set_active_slot', slot })
@@ -109,16 +105,22 @@ describe('le bot headless (A7)', () => {
 
     // 1. Récolter. Le MARTEAU (bois 4 + pierre 2 + fibre 2) s'ajoute à la note :
     //    25 bois (Feu 10 + marteau 4 + atelier 6 + hache 5), 9 pierre, 4 fibres.
+    //    On FINIT par l'arbre de l'EST (nodes[2], en 16,10) : c'est de là qu'on
+    //    reviendra fonder, donc le bot arrive par l'est et fonde AU BORD EST de la
+    //    tuile du Feu — d'où il peut ressortir tout droit vers l'est (§2).
+    harvestUntil(bot, sim.nodes[3]!, 'stone', 9)
+    harvestUntil(bot, sim.nodes[4]!, 'fiber', 4)
     harvestUntil(bot, sim.nodes[0]!, 'wood', 10)
     harvestUntil(bot, sim.nodes[1]!, 'wood', 20)
     harvestUntil(bot, sim.nodes[2]!, 'wood', 25)
-    harvestUntil(bot, sim.nodes[3]!, 'stone', 9)
-    harvestUntil(bot, sim.nodes[4]!, 'fiber', 4)
     expect(countOf(me(bot).inventory, 'wood')).toBeGreaterThanOrEqual(25)
 
     // 2. Fonder le village. Le Feu, lui, ne demande pas de marteau — sinon rien
-    //    ne pourrait jamais commencer.
-    goTo(bot, 10, 10, 0.35)
+    //    ne pourrait jamais commencer. Le Feu BLOQUE sa tuile (on se tient à côté,
+    //    pas dessus) : un acteur CENTRÉ dessus s'y emmure. On revient par l'est et
+    //    on s'arrête au bord est (stopDist 0.45 → x∈]10,75 ; 10,95]) : de là, le pas
+    //    suivant vers l'est franchit la tuile 11 (libre) et le bot ressort tout droit.
+    goTo(bot, 10, 10, 0.45)
     tick(bot, 0, 0, { type: 'light_fire' })
     expect(sim.villages).toHaveLength(1)
 
@@ -129,9 +131,18 @@ describe('le bot headless (A7)', () => {
     expect(countOf(me(bot).inventory, 'hammer')).toBe(1)
     equip('hammer')
 
-    // 4. Bâtir l'atelier. Au sud : hors du trajet est vers le 3e arbre (le bot n'a
-    //    pas de pathfinding).
-    addStructure(bot.sim, 'workshop', 10, 11, getVillageOf(bot.sim, bot.id)!.id, bot.id)
+    // 4. Bâtir l'atelier PAR LE VRAI CHEMIN JOUEUR : le forger au Feu (composant tenu-et-
+    //    posé, il ne se monte pas au marteau), le prendre en main, le POSER. C'est le SEUL
+    //    chemin enregistré dans le flux d'inputs — donc le replay le reconstruit à l'identique
+    //    (un `addStructure` direct, lui, divergerait). L'atelier va AU SUD du Feu (10,11) :
+    //    hors du trajet EST vers le 3e arbre, le bot sans pathfinding sort du Feu tout droit
+    //    sans jamais regraverser la poche feu+atelier. On le pose SANS bouger : (10,11) est à
+    //    portée de bâti depuis (10.5,10.5), et pas sous les pieds (le bot est en 10,10).
+    tick(bot, 0, 0, { type: 'craft', recipeId: 'workshop' })
+    waitCraft(bot)
+    expect(countOf(me(bot).inventory, 'workshop')).toBe(1)
+    equip('workshop')
+    tick(bot, 0, 0, { type: 'place_component', tx: 10, ty: 11 })
     expect(structureAt(sim.structures, 10, 11)?.type).toBe('workshop')
 
     // 5. Crafter la hache (l'atelier est à portée), et la prendre en main : le
