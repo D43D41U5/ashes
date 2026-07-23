@@ -129,6 +129,11 @@ const LOOKAHEAD_MAX_TILES = 6
 const SNAP_DISTANCE_TILES = 1.5
 /** Décroissance par frame de l'écart visuel après une correction (lissage de rendu, spec R6). */
 const RENDER_OFFSET_DECAY = 0.85
+/** LE REGARD (audit UI/UX P3-11) : à quelle distance du centre du corps se pose le pion
+ *  d'orientation (px monde), et sa taille à l'écran. Calé pour affleurer le bord de
+ *  l'avatar (~16 px de large) sans le quitter. */
+const GAZE_REACH = 6
+const GAZE_PX = 5
 /**
  * Borne du journal d'événements de chronique gardé en mémoire (les plus
  * récents gagnent). Compromis assumé : la chronique d'une Veillée reste
@@ -274,6 +279,8 @@ export class WorldScene extends Phaser.Scene {
   /** Les lieux que MON joueur connaît — lu du snapshot, jamais décidé ici (client bête). */
   private myKnownPois: readonly number[] = []
   private playerSprite!: Phaser.GameObjects.Image
+  /** LE REGARD (audit UI/UX P3-11) : pion d'orientation posé au bord de l'avatar. */
+  private gaze!: Phaser.GameObjects.Image
   /** L'historique du chat, mirroré au registry pour le panneau d'UIScene. */
   private chatLog: import('../hud-state').ChatLine[] = []
   /** Le message en cours de saisie, ou `null` si la ligne est fermée. */
@@ -383,6 +390,10 @@ export class WorldScene extends Phaser.Scene {
     // Origine PIEDS (R12) — indépendante de la texture, posée une fois ;
     // position/taille/depth viennent de `syncActor` à chaque frame.
     this.playerSprite = this.add.image(0, 0, 'spr-player').setOrigin(0.5, 1)
+    // LE REGARD (audit UI/UX P3-11) : le pion d'orientation, posé chaque frame au bord de
+    // l'avatar du côté de son `facing`. Caché jusqu'au premier placement (sinon il naîtrait
+    // en (0,0), au coin du monde).
+    this.gaze = this.add.image(0, 0, 'fx-gaze').setOrigin(0.5, 0.5).setVisible(false)
     this.view = new SnapshotView(this)
     // LE CHAT DE PROXIMITÉ : Entrée ouvre la saisie, Entrée envoie, Échap annule. On
     // écoute le clavier au niveau caractère (comme le champ de craft) ; `chatTyping`
@@ -912,6 +923,22 @@ export class WorldScene extends Phaser.Scene {
     // La silhouette du rampeur se TASSE (spec chasse C19) — la sienne aussi :
     // le joueur doit SENTIR sa posture sans regarder une jauge.
     this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player', sneak)
+    // LE REGARD (audit UI/UX P3-11) : on POSE le pion au bord de l'avatar, du côté du
+    // `facing` autoritatif (la sim le règle sur le déplacement ET sur la visée d'attaque —
+    // il dit donc « où je regarde », pas seulement « où je vais »). Sa position encode les
+    // 8 directions sans faire basculer le billboard. Le facing est unitaire ; au repos il
+    // garde sa dernière valeur — le pion ne disparaît jamais une fois posé.
+    const me = this.lastEntities.find((e) => e.id === this.playerId)
+    const f = me?.facing
+    if (f) {
+      const s = this.playerSprite
+      const headY = s.y - s.displayHeight * 0.6 // haut du corps, pas les pieds (origine basse)
+      this.gaze
+        .setPosition(s.x + f.x * GAZE_REACH, headY + f.y * GAZE_REACH)
+        .setDepth(s.depth + 0.1)
+        .setDisplaySize(GAZE_PX, GAZE_PX)
+        .setVisible(true)
+    }
 
     // La tuile réellement sous le curseur (unproject), pas la projection plate —
     // elle nourrit la visée (`aim`, plus haut), la caméra de visée et le debug.

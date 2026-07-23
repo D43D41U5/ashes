@@ -34,6 +34,16 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('spr-corpse', 16, 16)
     g.destroy()
 
+    // LE REGARD (audit UI/UX P3-11) : un pion sombre qu'on POSE au bord de l'avatar,
+    // du côté où il fait face — sa POSITION dit l'orientation (8 directions, continu),
+    // sans faire pivoter un billboard debout (qui basculerait). Un cerne clair le
+    // détache aussi bien du crème de l'avatar que du sol sombre.
+    const gz = this.add.graphics()
+    gz.fillStyle(0xf4ead0, 0.9).fillCircle(3, 3, 3) // cerne clair
+    gz.fillStyle(0x2a2622).fillCircle(3, 3, 2) // cœur sombre = le « front »
+    gz.generateTexture('fx-gaze', 6, 6)
+    gz.destroy()
+
     // L'oiseau vu de dessus : un chevron. À cette échelle, c'est tout ce que
     // l'œil retient d'un vol — et ça suffit à savoir que quelque chose vit.
     const b = this.add.graphics()
