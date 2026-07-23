@@ -127,6 +127,13 @@ export interface ReadyMessage {
   grounds: { x: number; y: number }[]
   calendarScale: number
   playerSpawn: { x: number; y: number }
+  /**
+   * LA CHRONIQUE REPRISE (persistance Veillée, P1-6) — présente UNIQUEMENT quand l'hôte
+   * relit une sauvegarde : le log borné des faits chronique-dignes déjà survenus, pour que
+   * le client réamorce son `eventLog` d'affichage et retrouve le récit de la saison. Absente
+   * sur un monde tout neuf (le récit se construit alors au fil de l'eau, depuis « Acte I »).
+   */
+  chronicle?: SimEvent[]
 }
 
 /**

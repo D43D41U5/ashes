@@ -34,6 +34,28 @@ export function formatChronicleLine(e: ChronicleEntry): string {
   return `Jour ${e.day} — ${e.text}`
 }
 
+/**
+ * LES TYPES QUI NOURRISSENT LA CHRONIQUE — exactement ceux que le `switch` de
+ * `chronicleFromEvents` sait raconter. Exporté pour que les DEUX accumulateurs filtrent
+ * sur la MÊME vérité : l'hôte, qui retient un log borné à PERSISTER (une Veillée reprise
+ * doit retrouver sa chronique), et le client, qui alimente son `eventLog` d'affichage. Un
+ * type ajouté au récit ci-dessus s'ajoute ICI — et entre alors d'un coup dans la
+ * persistance ET l'affichage, sans qu'une liste dupliquée dérive en silence (c'est
+ * exactement ce qui privait `poi_first_visit` de chronique côté client). */
+export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
+  'village_founded',
+  'village_fell',
+  'act_started',
+  'village_archetype_changed',
+  'horde_spawned',
+  'convoy_spawned',
+  'gift_given',
+  'entity_died',
+  'evacuation_opened',
+  'poi_first_visit',
+  'season_ended',
+])
+
 export function chronicleFromEvents(
   events: SimEvent[],
   calendarScale: number,

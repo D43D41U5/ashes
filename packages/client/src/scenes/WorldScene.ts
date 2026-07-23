@@ -12,6 +12,7 @@
  */
 import {
   BALANCE,
+  CHRONICLE_EVENT_TYPES,
   TEMPERATURE,
   TERRAIN_FOREST,
   TERRAINS,
@@ -151,18 +152,9 @@ const BUILD_STEPS = BUILD_PHASES.length
 
 
 /** Les événements retenus pour la chronique de saison. */
-const CHRONICLE_TYPES = new Set([
-  'village_founded',
-  'village_fell',
-  'act_started',
-  'village_archetype_changed',
-  'horde_spawned',
-  'convoy_spawned',
-  'gift_given',
-  'entity_died',
-  'evacuation_opened',
-  'season_ended',
-])
+// Les types chronique-dignes sont désormais la LISTE CANONIQUE de /sim
+// (`CHRONICLE_EVENT_TYPES`) : la même que l'hôte persiste, la même que le formateur sait
+// raconter — plus de set local qui dérive (c'est ce qui privait `poi_first_visit` de récit).
 
 const TERRAIN_COLORS: Record<number, number> = {
   // (les couleurs sont des placeholders R8, remplacées par de vrais tilesets en V3+)
@@ -339,6 +331,11 @@ export class WorldScene extends Phaser.Scene {
   private myVillageId: number | null = null
   private myHunger = 100
   private eventLog: SimEvent[] = []
+  /** Persistance P1-6 : une reprise a réamorcé `eventLog` depuis le disque — il faut
+   *  REPUBLIER la chronique une fois, au premier snapshot (là où les NOMS de village
+   *  arrivent). Sans ce forçage, aucun événement neuf ne la déclencherait et le récit
+   *  repris resterait invisible. */
+  private chronicleReseedPending = false
   private evacMarker: Phaser.GameObjects.Arc | null = null
   private myWounds: Entity['wounds'] = {}
   private myStamina = 100
@@ -525,6 +522,15 @@ export class WorldScene extends Phaser.Scene {
     this.worldSeed = msg.seed
     this.calendarScale = msg.calendarScale
     this.map = msg.map
+
+    // LA CHRONIQUE REPRISE (persistance P1-6) : sur une reprise, l'hôte joint le récit déjà
+    // vécu. On réamorce `eventLog` — mais on ne PUBLIE pas encore : les noms de village
+    // arrivent avec le premier snapshot. On arme un forçage pour republier là (voir
+    // `chronicleReseedPending`). Sur un monde neuf, `msg.chronicle` est absent : rien à faire.
+    if (msg.chronicle && msg.chronicle.length > 0) {
+      this.eventLog = msg.chronicle.slice(-EVENT_LOG_CAP)
+      this.chronicleReseedPending = true
+    }
     const worldW = this.map.width * TILE_PX
     const worldH = this.map.height * TILE_PX
 
@@ -1189,7 +1195,10 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private processEvents(msg: SnapshotMessage): void {
-    let chronicleDirty = false
+    // Une reprise a réamorcé `eventLog` mais n'a pas pu publier (pas de noms de village
+    // avant ce premier snapshot) : on force UNE republication ici, puis on désarme.
+    let chronicleDirty = this.chronicleReseedPending
+    this.chronicleReseedPending = false
     for (const event of msg.events) {
       if (event.type === 'action_rejected' && event.entityId === this.playerId) {
         publishError(this.registry, event.reason, this.time.now)
@@ -1261,7 +1270,7 @@ export class WorldScene extends Phaser.Scene {
         const killer = msg.monsters.find((m) => m.entityId === event.byEntityId)
         publishDeath(this.registry, event.cause, event.byEntityId, killer?.type ?? null, this.time.now)
       }
-      if (CHRONICLE_TYPES.has(event.type)) {
+      if (CHRONICLE_EVENT_TYPES.has(event.type)) {
         this.eventLog.push(event)
         if (this.eventLog.length > EVENT_LOG_CAP) {
           this.eventLog.splice(0, this.eventLog.length - EVENT_LOG_CAP)

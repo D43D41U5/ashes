@@ -163,7 +163,7 @@ export { applyInventoryAction, heldSlot, wearHeld, isInventoryAction } from './i
 export type { InventoryAction, SlotRef } from './inventory-actions'
 
 // ─── Consommateurs du flux d'événements ───────────────────────────────────
-export { chronicleFromEvents, formatChronicleLine } from './chronicle'
+export { chronicleFromEvents, formatChronicleLine, CHRONICLE_EVENT_TYPES } from './chronicle'
 export type { ChronicleEntry, ChronicleWeight } from './chronicle'
 
 // ─── Persistance : sérialiser/reprendre une Veillée (l'hôte écrit dans IndexedDB) ─
