@@ -56,6 +56,25 @@ export async function loadSlot(): Promise<SaveRecord | null> {
   }
 }
 
+/**
+ * EFFACE la Veillée sauvée (case 0) — « nouvelle partie ». Utile aussi après un changement
+ * de calibration (`VEILLEE_SEASON_CYCLES`) : une sauvegarde fige son `calendarScale`, donc
+ * le nouveau rythme ne s'applique qu'à une partie NEUVE. Ne jette pas si la case est vide.
+ */
+export async function clearSlot(): Promise<void> {
+  const db = await openDb()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite')
+      tx.objectStore(STORE).delete(SLOT0)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error ?? new Error('effacement du slot échoué'))
+    })
+  } finally {
+    db.close()
+  }
+}
+
 /** Écrit (remplace) la Veillée dans la case 0. */
 export async function saveSlot(record: SaveRecord): Promise<void> {
   const db = await openDb()

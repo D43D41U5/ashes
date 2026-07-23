@@ -16,6 +16,7 @@
  */
 import Phaser from 'phaser'
 import { mountMenu, type MenuHandle } from './ui/menu-dom'
+import { clearSlot } from '../worker/persistence-store'
 import type { WorldSceneData } from './WorldScene'
 
 export class MenuScene extends Phaser.Scene {
@@ -28,7 +29,16 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     // DEEP-LINK : on saute le menu si l'intention est explicite dans l'URL.
     const params = new URLSearchParams(window.location.search)
-    if (params.has('solo')) return this.launch({ mode: 'solo' })
+    // `?fresh` — NOUVELLE VEILLÉE : on efface la sauvegarde AVANT de démarrer, pour repartir
+    // de zéro. Indispensable au playtest de calibration : une sauvegarde fige son
+    // `calendarScale`, donc un nouveau `VEILLEE_SEASON_CYCLES` n'entre en jeu qu'à neuf.
+    if (params.has('solo')) {
+      if (params.has('fresh')) {
+        void clearSlot().finally(() => this.launch({ mode: 'solo' }))
+        return
+      }
+      return this.launch({ mode: 'solo' })
+    }
     const server = params.get('server')
     if (server) return this.launch({ mode: 'multi', url: server })
 
