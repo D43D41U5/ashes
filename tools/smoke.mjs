@@ -1308,6 +1308,75 @@ const SCENARIOS = {
   },
 
   /**
+   * LES ACTEURS SONT-ILS POSÉS AU SOL ? (sprint AAA, vague 1 — rendu #1 : ombres de contact.)
+   *
+   * Sans ombre, les billboards FLOTTENT. On en pose une flaque sombre sous les pieds de chaque
+   * acteur (joueur, PNJ, bête). Question de rendu → il faut la VOIR : on capture l'avatar au
+   * spawn (plein jour, ~9h — l'ombre porte sur le sol clair). L'ombre est CONSTANTE (occlusion
+   * ambiante, pas ∝ lumière), donc aucune heure à forcer : pas besoin de `--dev`.
+   *
+   * On vérifie AUSSI l'invariant qui ne se voit pas au screenshot (l'avis reviewer) : l'ombre
+   * du joueur existe, est VISIBLE, et sa profondeur est JUSTE SOUS celle de l'avatar.
+   */
+  async ombres(page) {
+    await page.waitForTimeout(1500) // stabilisation (harnais a déjà navigué + attendu mapData)
+    await page.screenshot({ path: `${OUT}/ombres-avatar.png` })
+    // Gros plan sur les pieds de l'avatar (position écran calculée depuis la caméra) : c'est
+    // là qu'on JUGE la flaque — assez présente pour poser, assez discrète pour ne pas tacher.
+    const clip = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      const ps = sc.playerSprite
+      const sx = (ps.x - cam.worldView.x) * cam.zoom
+      const sy = (ps.y - cam.worldView.y) * cam.zoom
+      return { x: Math.round(sx - 70), y: Math.round(sy - 90), width: 140, height: 130 }
+    })
+    await page.screenshot({ path: `${OUT}/ombres-pieds.png`, clip })
+    // Gros plan sur la BÊTE la plus proche : une flaque plus grosse que le lapin qu'elle
+    // porte serait pire que pas d'ombre du tout (le plancher MIN_WIDTH doit rester sobre).
+    const beast = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      const ps = sc.playerSprite
+      let best = null
+      for (const o of sc.view.others.values()) {
+        const s = o.sprite
+        const sx = (s.x - cam.worldView.x) * cam.zoom
+        const sy = (s.y - cam.worldView.y) * cam.zoom
+        if (sx < 80 || sy < 90 || sx > window.innerWidth - 80 || sy > window.innerHeight - 60) continue
+        const d = (s.x - ps.x) ** 2 + (s.y - ps.y) ** 2
+        if (!best || d < best.d) best = { d, sx, sy, w: Math.round(s.displayWidth), key: o.textureKey, shadowW: Math.round(o.shadow.displayWidth) }
+      }
+      return best
+    })
+    if (beast) {
+      console.log(`bête la plus proche : ${JSON.stringify({ key: beast.key, spriteW: beast.w, shadowW: beast.shadowW })}`)
+      await page.screenshot({
+        path: `${OUT}/ombres-bete.png`,
+        clip: { x: Math.round(beast.sx - 60), y: Math.round(beast.sy - 70), width: 120, height: 110 },
+      })
+    } else {
+      console.log('bête la plus proche : aucune à l’écran')
+    }
+    const dom = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const ps = sc.playerSprite
+      const sh = ps?.getData ? ps.getData('shadow') : null
+      return {
+        hasShadow: Boolean(sh),
+        visible: sh ? sh.visible : null,
+        underActor: sh ? sh.depth < ps.depth : null,
+        others: sc.view?.others?.size ?? 0,
+      }
+    })
+    console.log(`ombres : ${JSON.stringify(dom)}`)
+    if (!dom.hasShadow || !dom.visible || !dom.underActor) {
+      console.error(`!! L'OMBRE DE CONTACT DU JOUEUR NE VA PAS : ${JSON.stringify(dom)}`)
+    }
+    return dom
+  },
+
+  /**
    * LE COMBAT SE VOIT-IL ? (spec tension.md — le télégraphe du GDD §7.)
    *
    * On FRAPPE pour de vrai — clic gauche dans le vide, mains nues (la sim tranche :

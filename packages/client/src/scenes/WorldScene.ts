@@ -92,6 +92,7 @@ import { CliffLayer } from './world/cliff-layer'
 import { PoiLayer } from './world/poi-layer'
 import { FireFx } from './world/fire-fx'
 import { FireGroundGlow } from './world/fire-ground-glow'
+import { createContactShadow } from './world/contact-shadow'
 import { NightVeil } from './world/night-veil'
 import { DynamicLighting } from './world/dynamic-lighting'
 import { WaterLayer } from './world/water-layer'
@@ -430,6 +431,9 @@ export class WorldScene extends Phaser.Scene {
     // Origine PIEDS (R12) — indépendante de la texture, posée une fois ;
     // position/taille/depth viennent de `syncActor` à chaque frame.
     this.playerSprite = this.add.image(0, 0, 'spr-player').setOrigin(0.5, 1)
+    // L'OMBRE DE CONTACT sous l'avatar : rattachée au sprite, `syncActor` la pose chaque frame
+    // (même canal que les PNJ/bêtes). Le sprite du joueur ne meurt jamais — son ombre non plus.
+    this.playerSprite.setData('shadow', createContactShadow(this))
     // LE REGARD (audit UI/UX P3-11) : le pion d'orientation, posé chaque frame au bord de
     // l'avatar du côté de son `facing`. Caché jusqu'au premier placement (sinon il naîtrait
     // en (0,0), au coin du monde).

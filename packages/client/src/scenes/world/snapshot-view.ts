@@ -53,6 +53,7 @@ import {
 import { warmthColor } from '../../render/lighting'
 import { LIT_NODE_TYPES } from '../../render/lit-props'
 import { shakeOffset, type HitFx } from './hit-fx'
+import { createContactShadow, positionShadow } from './contact-shadow'
 
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
 const AIM_TINT = 0xffe9a8
@@ -261,6 +262,8 @@ const STUMP_FADE_MS = 9000
 
 export interface InterpolatedSprite {
   sprite: Phaser.GameObjects.Image
+  /** L'ombre de contact sous cet acteur — créée et détruite AVEC son sprite (pas d'orpheline). */
+  shadow: Phaser.GameObjects.Image
   /** Clé de texture courante — évite setTexture/re-dimensionnement inutiles. */
   textureKey: string
   /** Silhouette TASSÉE ce snapshot (rampeur, tapi, fougeur) — lue par `interpolate`. */
@@ -545,6 +548,12 @@ export class SnapshotView {
     sprite.setDepth(p.depth)
     sprite.setDisplaySize(p.displayW, crouch ? p.displayH * CROUCH_FACTOR : p.displayH)
     sprite.setLighting(this.lighting) // couche 1 : acteurs (PNJ, faune, avatar) éclairés eux aussi
+    // L'OMBRE DE CONTACT suit l'acteur (rattachée par `setData` à la création). `syncActor`
+    // est le seul point où pieds/depth/emprise sont connus — la placer ici couvre joueur ET
+    // autres, sans dupliquer le calcul de position. Aux pieds (p.py, pré-lift : l'ombre reste
+    // au sol même si le sprite se soulève), à l'emprise du sprite, juste sous sa profondeur.
+    const shadow = sprite.getData('shadow') as Phaser.GameObjects.Image | undefined
+    if (shadow) positionShadow(shadow, p.px, p.py, p.displayW, p.depth)
   }
 
   private syncEntities(entities: Entity[], playerId: number, now: number): void {
@@ -575,8 +584,10 @@ export class SnapshotView {
         pushSample(record.buffer, now, entity.x, entity.y)
       } else {
         const sprite = this.scene.add.image(0, 0, 'spr-npc').setOrigin(0.5, 1)
+        const shadow = createContactShadow(this.scene)
+        sprite.setData('shadow', shadow) // `syncActor` la retrouve par là
         this.syncActor(sprite, entity.x, entity.y, 'spr-npc')
-        record = { sprite, textureKey: 'spr-npc', crouch: false, buffer: [{ at: now, x: entity.x, y: entity.y }] }
+        record = { sprite, shadow, textureKey: 'spr-npc', crouch: false, buffer: [{ at: now, x: entity.x, y: entity.y }] }
         this.others.set(entity.id, record)
       }
       // Les villageois se distinguent des errants et des monstres ; un
@@ -609,6 +620,7 @@ export class SnapshotView {
     }
     for (const [id, o] of this.others) {
       if (!seen.has(id)) {
+        o.shadow.destroy() // l'ombre s'en va avec son acteur — jamais orpheline
         o.sprite.destroy()
         this.others.delete(id)
       }
