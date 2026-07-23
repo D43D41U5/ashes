@@ -15,6 +15,30 @@
       canvas {
         image-rendering: pixelated;
       }
+
+      /*
+        MOUVEMENT RÉDUIT — un seul garde-fou, ici, pour TOUTE l'interface.
+        Le jeu monte son UI en DOM dans une dizaine de modules (voiles, menus, panneaux,
+        chargement) qui animent chacun les leurs : les garder un par un, c'est en oublier
+        un. La règle vit donc au-dessus d'eux, et couvre aussi ce qui viendra.
+
+        On écrase la DURÉE (0.01ms), on ne met PAS `animation/transition: none` : une durée
+        quasi nulle laisse `transitionend`/`animationend` SE DÉCLENCHER, là où `none` ne les
+        émet jamais — et une UI qui attend la fin d'une transition pour enchaîner resterait
+        bloquée. Le mouvement disparaît, les enchaînements tiennent.
+
+        `scroll-behavior:auto` : un défilement animé est du mouvement, lui aussi.
+      */
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
+      }
     </style>
   </head>
   <body>

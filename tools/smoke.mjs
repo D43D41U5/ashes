@@ -1342,6 +1342,55 @@ const SCENARIOS = {
   },
 
   /**
+   * LE MOUVEMENT RÉDUIT EST-IL RESPECTÉ ? (sprint AAA — accessibilité.)
+   *
+   * L'UI est montée en DOM par une dizaine de modules qui animent chacun les leurs ; garder
+   * chacun séparément, c'est en oublier un. Un garde-fou GLOBAL vit donc dans `index.html`.
+   * On le prouve dans les deux sens — c'est ce qui distingue une règle qui MARCHE d'une règle
+   * qui a simplement tout éteint : en `reduce` la durée tombe à ~0, en `no-preference` elle
+   * revient. On vérifie aussi qu'on a écrasé la DURÉE et non mis `none` : `transitionend`
+   * doit encore se déclencher, sinon une UI qui l'attend resterait bloquée.
+   */
+  async mouvement(page) {
+    await page.waitForTimeout(1200)
+    await page.keyboard.press('Escape') // le menu pause porte une transition d'opacité (.2s)
+    await page.waitForTimeout(250)
+    const read = () => page.evaluate(() => {
+      const pm = document.querySelector('.pause-menu')
+      return pm ? getComputedStyle(pm).transitionDuration : null
+    })
+
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const reduit = await read()
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    const normal = await read()
+
+    // LE VRAI DÉPENDANT : `death-veil` ne pose `display:none` QUE sur `transitionend` (aucun
+    // timer de secours). Si écraser la durée tuait l'événement, le voile de mort resterait
+    // affiché à jamais. On rejoue donc son cycle EXACT (show → hide) en mouvement réduit.
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const veil = await page.evaluate(() => new Promise((resolve) => {
+      const dv = document.querySelector('.death-veil')
+      if (!dv) return resolve({ absent: true })
+      dv.style.display = 'flex'
+      void dv.offsetWidth
+      dv.classList.add('dv-on') // show()
+      setTimeout(() => {
+        dv.classList.remove('dv-on') // hide() — la suite ne tient QUE sur transitionend
+        setTimeout(() => resolve({ display: dv.style.display, opacity: getComputedStyle(dv).opacity }), 500)
+      }, 120)
+    }))
+
+    const secs = (v) => (v ? parseFloat(v) : NaN)
+    console.log(`mouvement réduit : ${JSON.stringify({ reduit, normal, voileDeMortRefermé: veil })}`)
+    if (!(secs(reduit) < 0.01) || !(secs(normal) > 0.05) || veil.display !== 'none') {
+      console.error(`!! LE GARDE-FOU DE MOUVEMENT RÉDUIT NE VA PAS : réduit=${reduit} normal=${normal} voile=${JSON.stringify(veil)}`)
+    }
+    await page.keyboard.press('Escape')
+    return { reduit, normal, endFires }
+  },
+
+  /**
    * LES ACTEURS SONT-ILS POSÉS AU SOL ? (sprint AAA, vague 1 — rendu #1 : ombres de contact.)
    *
    * Sans ombre, les billboards FLOTTENT. On en pose une flaque sombre sous les pieds de chaque
