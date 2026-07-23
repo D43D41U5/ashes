@@ -105,6 +105,7 @@ import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 import { DEATH_FADE_MS, DEATH_VEIL_MS } from './ui/death-veil'
+import { cendreTelegraphForDay } from './world/cendre-telegraph'
 
 /** Cadrage caméra (spec client R10) : « je veux voir ~N tuiles de haut ». */
 const VISIBLE_TILES_TALL = 20
@@ -1304,6 +1305,13 @@ export class WorldScene extends Phaser.Scene {
         // l'absence d'un dégât qu'on ne voyait pas venir. Le libellé de blessure du
         // HUD s'efface au même snapshot (hud-core) : le geste a un avant et un après.
         this.attackFx.spark(this.playerSprite.x, this.playerSprite.y - 6, 0, false, this.time.now)
+      } else if (event.type === 'season_day_started') {
+        // LE TÉLÉGRAPHE DE LA CENDRE (GDD §536) : la méga-horde de l'acte III est un fait
+        // DÉTERMINISTE du calendrier — on l'annonce des jours à l'avance, sur le canal
+        // d'alerte (c'est LE danger). Le couplage V0-9 a rendu cet acte observable ; sans
+        // lui, ce préavis n'aurait jamais eu de nuit à annoncer.
+        const cendre = cendreTelegraphForDay(event.day)
+        if (cendre) publishError(this.registry, cendre, this.time.now)
       } else if (event.type === 'entity_died' && event.entityId === this.playerId) {
         // LE JOUEUR EST TOMBÉ (audit UI/UX P1) : on lève le voile de mort. La sim a
         // DÉJÀ fait respawn au Feu — ce n'est qu'un moment de présentation, il ne bloque
