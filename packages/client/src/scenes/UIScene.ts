@@ -55,6 +55,9 @@ const MAP_CLICK_SLOP_PX = 5
 export class UIScene extends Phaser.Scene {
   private alarmOverlay!: Phaser.GameObjects.Rectangle
   private errorText!: Phaser.GameObjects.Text
+  /** LE CONSEIL (audit UI/UX P2-7) : le canal d'apprentissage, encre neutre, posé en
+   *  haut — distinct de la bulle rouge d'erreur, en bas. On APPREND un verbe ici. */
+  private hintText!: Phaser.GameObjects.Text
   /** L'écran PERSONNAGE (maquette 3A) : sac + artisanat, ouvert au TAB. */
   private hudCharacter!: HudCharacter
   /** La file de craft (toujours à l'écran). */
@@ -208,6 +211,14 @@ export class UIScene extends Phaser.Scene {
       .text(this.scale.width / 2, this.scale.height - 110, '', { ...style, color: '#ff7a6b' })
       .setOrigin(0.5, 0)
       .setVisible(false) // un texte vide « visible » reste un objet du HUD à l'écran
+
+    // LE CONSEIL (audit UI/UX P2-7) : posé EN HAUT, encre chaude neutre — l'alerte rouge
+    // vit en bas, le refus crie ; le conseil, lui, enseigne. Deux places, deux tons : on
+    // ne confond plus « tu as raté » avec « voilà comment on joue ».
+    this.hintText = this.add
+      .text(this.scale.width / 2, 72, '', { ...style, color: '#e8c66a' })
+      .setOrigin(0.5, 0)
+      .setVisible(false)
 
     // L'écran de RUPTURE (hôte mort) : caché, et prêt. Il peut s'ouvrir à N'IMPORTE
     // quel moment — y compris pendant la génération, où il recouvre la barre.
@@ -452,6 +463,23 @@ export class UIScene extends Phaser.Scene {
     }
   }
 
+  /** LE CONSEIL : posé plus longtemps que l'erreur (on LIT une règle, on ne la subit pas),
+   *  et il tient plein cadre 6 s avant de s'effacer sur 3 s — le temps d'agir dessus. */
+  private renderHint(): void {
+    const hint = getHud(this.registry, 'hint')
+    const HOLD = 6000
+    const FADE = 3000
+    const age = hint ? this.time.now - hint.at : Infinity
+    if (hint && age < HOLD + FADE) {
+      this.hintText
+        .setText(hint.text)
+        .setAlpha(age < HOLD ? 1 : 1 - (age - HOLD) / FADE)
+        .setVisible(true)
+    } else {
+      this.hintText.setText('').setVisible(false)
+    }
+  }
+
   override update(): void {
     // LA RUPTURE D'ABORD. Elle peut tomber à n'importe quel instant — y compris avant
     // que le monde existe — et elle prime sur tout le reste : plus rien n'avancera.
@@ -466,6 +494,7 @@ export class UIScene extends Phaser.Scene {
     }
 
     this.renderError()
+    this.renderHint()
 
     const time = getHud(this.registry, 'time')
     if (!this.revealed) {

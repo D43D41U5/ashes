@@ -68,6 +68,7 @@ import {
   publishAlarm,
   publishChronicle,
   publishError,
+  publishHint,
   publishDeath,
   publishFoundableFire,
   publishUpgradableFire,
@@ -1150,25 +1151,29 @@ export class WorldScene extends Phaser.Scene {
 
   private checkHints(): void {
     const now = this.time.now
+    // LE CONSEIL, PAS L'ALERTE (audit UI/UX P2-7) : ces trois lignes ENSEIGNENT — elles
+    // passent donc par le canal neutre, en haut, tenu longtemps. Le rouge du bas reste au
+    // refus et au danger : on n'apprend pas à jouer sous une alarme d'échec.
     if (this.hintsDone === 0 && now > 2000) {
       this.hintsDone = 1
-      publishError(this.registry, 'Clic gauche : récolter. TAB : votre sac et l’artisanat.', now)
+      publishHint(this.registry, 'Clic gauche : récolter. TAB : votre sac et l’artisanat.', now)
     } else if (this.hintsDone === 1 && now > 12000) {
       this.hintsDone = 2
-      publishError(this.registry, 'Ramassez du bois : il vous faut un FEU avant la nuit.', now)
+      publishHint(this.registry, 'Ramassez du bois : il vous faut un FEU avant la nuit.', now)
     } else if (this.hintsDone === 2 && now > 24000) {
       this.hintsDone = 3
       // LA règle du jeu, dite une fois, en clair. Le cru ne nourrit plus un homme.
-      publishError(this.registry, 'Le feu cuit, réchauffe, et tient les loups à distance.', now)
+      publishHint(this.registry, 'Le feu cuit, réchauffe, et tient les loups à distance.', now)
     }
     // LA RÈGLE DU COMBAT, dite À L'INSTANT OÙ ELLE SERT — pas dans un mur de texte au
     // démarrage, qu'on ferme sans lire : la première fois qu'une arme arrive en main.
     // Sans elle, le coup chargé (spec combat R4ter) reste un SECRET : rien à l'écran
     // ne dit qu'un clic peut se tenir, et un joueur qui ne connaît pas la moitié de son
-    // arsenal ne « manque pas de skill » — on lui a caché le bouton.
+    // arsenal ne « manque pas de skill » — on lui a caché le bouton. On y greffe la
+    // PARADE (ESPACE) : le geste défensif arrive dans la même main, au même instant.
     if (!this.armeHint && this.myWeapon !== 'unarmed') {
       this.armeHint = true
-      publishError(this.registry, 'MAINTENEZ le clic : un coup lourd s’arme. Il fait mal — et rate cher.', now)
+      publishHint(this.registry, 'MAINTENEZ le clic : un coup lourd s’arme. ESPACE : parez de face.', now)
     }
   }
 

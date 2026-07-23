@@ -253,6 +253,13 @@ export function publishError(registry: Registry, reason: string, at: number): vo
   setHud(registry, 'error', { reason, at })
 }
 
+/** LE CONSEIL (audit UI/UX P2-7) : le canal d'apprentissage, séparé de l'alerte rouge.
+ *  On y enseigne un verbe (récolter, parer, donner, nourrir le Feu) sans crier au refus.
+ *  Encre neutre, tenue longue côté UIScene — le patron `publishError` mais un autre ton. */
+export function publishHint(registry: Registry, text: string, at: number): void {
+  setHud(registry, 'hint', { text, at })
+}
+
 /** LE JOUEUR EST TOMBÉ (audit UI/UX P1) : un one-shot horodaté que UIScene lit pour
  *  lever le voile de mort. `cause` vient de l'événement `entity_died` (froid/faim, ou
  *  `undefined` = tué → `null` ici). Horodaté avec `at` : un nouveau `at` = une nouvelle

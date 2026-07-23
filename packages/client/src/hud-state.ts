@@ -159,6 +159,11 @@ export interface HudState {
   /** Dernier message d'erreur à afficher (action rejetée, avertissement…). Il s'efface
    *  tout seul au bout de quelques secondes : c'est du bruit de partie. */
   error: { reason: string; at: number }
+  /** LE CONSEIL (audit UI/UX P2-7) : le canal d'apprentissage, distinct de l'alerte
+   *  rouge. Encre neutre, posé en haut, tenue longue — on APPREND un verbe, on n'est pas
+   *  réprimandé. Ne partage PLUS la bulle rouge des refus/dangers/récit : quatre registres
+   *  sémantiques, un seul canal, aucune hiérarchie — c'était le défaut. */
+  hint: { text: string; at: number }
   /** LA RUPTURE : l'hôte est mort (exception du Worker, transport rompu, protocole
    *  désaccordé). Plus aucun snapshot n'arrivera — ce message-là ne s'efface JAMAIS et
    *  ouvre l'écran de rupture (ui/fatal.ts), avec son bouton de rechargement. */
