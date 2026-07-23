@@ -44,6 +44,14 @@ export class BootScene extends Phaser.Scene {
     gz.generateTexture('fx-gaze', 6, 6)
     gz.destroy()
 
+    // LA FLÈCHE DE DÉPOUILLE (mort-suite 2) : un chevron ambré, pointe à DROITE (angle 0),
+    // qu'on fait pivoter vers le sac tombé. Cerne sombre pour tenir sur n'importe quel fond.
+    const arw = this.add.graphics()
+    arw.fillStyle(0x14100a).fillTriangle(0, 1, 0, 13, 13, 7) // ombre/cerne
+    arw.fillStyle(0xe8c66a).fillTriangle(1, 3, 1, 11, 10, 7) // corps ambré
+    arw.generateTexture('fx-arrow', 14, 14)
+    arw.destroy()
+
     // L'oiseau vu de dessus : un chevron. À cette échelle, c'est tout ce que
     // l'œil retient d'un vol — et ça suffit à savoir que quelque chose vit.
     const b = this.add.graphics()

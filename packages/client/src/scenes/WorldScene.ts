@@ -106,6 +106,7 @@ import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 import { DEATH_FADE_MS, DEATH_VEIL_MS } from './ui/death-veil'
 import { cendreTelegraphForDay } from './world/cendre-telegraph'
+import { corpseArrow, corpseSecondsLeft } from './world/corpse-arrow'
 
 /** Cadrage caméra (spec client R10) : « je veux voir ~N tuiles de haut ». */
 const VISIBLE_TILES_TALL = 20
@@ -295,6 +296,12 @@ export class WorldScene extends Phaser.Scene {
   /** Le nombre de morts RAPPROCHÉES (streak V2-21) au moment de la chute — lu du snapshot,
    *  sert au bandeau de réveil à rendre LISIBLE l'épuisement croissant (sinon invisible). */
   private dyingDeaths = 1
+  /** LE TRAQUEUR DE DÉPOUILLE (mort-suite 2) : l'id du cadavre où gît MON sac (verrouillé au
+   *  premier snapshot après la chute, par proximité au lieu de mort), sa position de mort en
+   *  attente d'appariement, et les objets d'écran de la flèche de bord. `null` = rien à suivre
+   *  (dont le cas MAINS VIDES : une mort sans butin ne crée aucun cadavre — mort-suite 4). */
+  private myCorpseId: number | null = null
+  private corpseDeathPos: { x: number; y: number } | null = null
   /** L'historique du chat, mirroré au registry pour le panneau d'UIScene. */
   private chatLog: import('../hud-state').ChatLine[] = []
   /** Le message en cours de saisie, ou `null` si la ligne est fermée. */
@@ -662,6 +669,9 @@ export class WorldScene extends Phaser.Scene {
     // LE MOMENT DE MORT (mort-suite 1+5) : fige la caméra, coupe l'input, snappe au
     // respawn sous le voile, rend la main à la fin — piloté ici, en niveau.
     this.tickDying()
+    // LE TRAQUEUR DE DÉPOUILLE (mort-suite 2) : repère d'écran vers le sac tombé, republié
+    // chaque frame (la caméra bouge). Rendu par UIScene (HUD non zoomé).
+    this.publishCorpseHint()
     // Les gestes d'inventaire posés par UIScene (elle ne parle pas à l'hôte).
     for (const action of drainQueuedActions(this.registry)) this.sendAction(action)
     // Le clic MAINTENU : il récolte en boucle, à la cadence du rechargement.
@@ -1102,6 +1112,7 @@ export class WorldScene extends Phaser.Scene {
     // panneau se referme au lieu de planter sur un id mort ou de rester fantôme.
     publishOpenContainer(this.registry, this.view.structures, this.view.corpses, this.predicted)
     this.processEvents(msg)
+    this.updateCorpseTracker(msg)
 
 
     this.lastEntities = msg.entities
@@ -1319,10 +1330,20 @@ export class WorldScene extends Phaser.Scene {
         // le corps, et rassure (compétences gardées). Le type du tueur vient du snapshot
         // (le monstre d'`byEntityId`), jamais recalculé (§3).
         const killer = msg.monsters.find((m) => m.entityId === event.byEntityId)
-        publishDeath(this.registry, event.cause, event.byEntityId, killer?.type ?? null, this.time.now)
+        // TRAQUEUR DE DÉPOUILLE (mort-suite 2+4) : le sac tombé ne crée un cadavre QUE si je
+        // portais quelque chose. On lit l'inventaire d'AVANT la mort (`lastEntities`, encore
+        // le snapshot précédent : `processEvents` tourne avant `this.lastEntities = …`). Mains
+        // vides → pas de cadavre, pas de flèche, et le voile ne promet pas de dépouille.
+        const preDeath = this.lastEntities.find((e) => e.id === this.playerId)
+        const hadLoot = preDeath ? preDeath.inventory.some((s) => s !== null) : false
+        publishDeath(this.registry, event.cause, event.byEntityId, killer?.type ?? null, hadLoot, this.time.now)
         // La sim a respawn au même tick : l'entité porte déjà son `deathCount` à jour (V2-21).
         // On le retient pour le bandeau de réveil (l'épuisement croissant, enfin lisible).
         this.dyingDeaths = msg.entities.find((e) => e.id === this.playerId)?.deathCount ?? 1
+        // On note le lieu de la chute (`predicted` est ENCORE dessus, avant reconcile) pour
+        // verrouiller MON cadavre au prochain snapshot, par proximité.
+        this.myCorpseId = null
+        this.corpseDeathPos = hadLoot ? { x: this.predicted.x, y: this.predicted.y } : null
         // …et on TIENT le moment (mort-suite 1+5). On est ici AVANT `reconcile` (l'ordre du
         // snapshot) : `this.predicted` — donc la caméra qui la suit — est ENCORE sur la
         // tuile de chute. On l'y fige avant que le respawn ne la fasse traverser la carte.
@@ -1403,6 +1424,63 @@ export class WorldScene extends Phaser.Scene {
         this.time.now,
       )
     }
+  }
+
+  /**
+   * TRAQUEUR DE DÉPOUILLE (mort-suite 2) — verrouille MON cadavre au premier snapshot après
+   * la chute (le plus proche du lieu de mort, en tuiles), puis le LÂCHE quand il disparaît
+   * (fouillé ou décanté). Mains vides → `corpseDeathPos` était `null`, rien à verrouiller.
+   */
+  private updateCorpseTracker(msg: SnapshotMessage): void {
+    if (this.corpseDeathPos && this.myCorpseId === null) {
+      let bestId: number | null = null
+      let bestD = 2.5 * 2.5 // tolérance ~2,5 tuiles² autour du lieu de chute
+      for (const c of msg.corpses) {
+        const dx = c.x - this.corpseDeathPos.x
+        const dy = c.y - this.corpseDeathPos.y
+        const d = dx * dx + dy * dy
+        if (d <= bestD) {
+          bestD = d
+          bestId = c.id
+        }
+      }
+      if (bestId !== null) {
+        this.myCorpseId = bestId
+        this.corpseDeathPos = null
+      }
+    }
+    if (this.myCorpseId !== null && !msg.corpses.some((c) => c.id === this.myCorpseId)) {
+      this.myCorpseId = null // fouillé ou décanté : plus rien à suivre
+    }
+  }
+
+  /**
+   * Publie le repère de dépouille à CHAQUE frame (la caméra bouge entre deux snapshots) :
+   * position ÉCRAN de la flèche + angle + compte à rebours, ou `null`. UIScene le rend dans
+   * son HUD NON zoomé (la caméra du monde, elle, est zoomée : un objet fixé à l'écran y serait
+   * mis à l'échelle — d'où le calcul ici, le rendu là-bas).
+   */
+  private publishCorpseHint(): void {
+    if (this.myCorpseId === null) return setHud(this.registry, 'corpseHint', null)
+    const corpse = this.view.corpses.find((c) => c.id === this.myCorpseId)
+    if (!corpse) return setHud(this.registry, 'corpseHint', null)
+    const cam = this.cameras.main
+    const hint = corpseArrow(
+      this.predicted.x * TILE_PX,
+      this.predicted.y * TILE_PX,
+      corpse.x * TILE_PX,
+      corpse.y * TILE_PX,
+      cam.worldView,
+      cam.width,
+      cam.height,
+    )
+    setHud(this.registry, 'corpseHint', {
+      onScreen: hint.onScreen,
+      x: hint.x,
+      y: hint.y,
+      angle: hint.angle,
+      secs: corpseSecondsLeft(corpse.decayAt, this.lastSnapshotTick, BALANCE.TICK_RATE_HZ),
+    })
   }
 
   /**

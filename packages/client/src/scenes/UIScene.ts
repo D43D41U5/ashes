@@ -58,6 +58,10 @@ export class UIScene extends Phaser.Scene {
   /** LE CONSEIL (audit UI/UX P2-7) : le canal d'apprentissage, encre neutre, posé en
    *  haut — distinct de la bulle rouge d'erreur, en bas. On APPREND un verbe ici. */
   private hintText!: Phaser.GameObjects.Text
+  /** LE TRAQUEUR DE DÉPOUILLE (mort-suite 2) : la flèche de bord vers le sac tombé + son
+   *  compte à rebours, rendus dans le HUD NON zoomé (calcul dans WorldScene). */
+  private corpseArrow!: Phaser.GameObjects.Image
+  private corpseLabel!: Phaser.GameObjects.Text
   /** L'écran PERSONNAGE (maquette 3A) : sac + artisanat, ouvert au TAB. */
   private hudCharacter!: HudCharacter
   /** La file de craft (toujours à l'écran). */
@@ -218,6 +222,13 @@ export class UIScene extends Phaser.Scene {
     this.hintText = this.add
       .text(this.scale.width / 2, 72, '', { ...style, color: '#e8c66a' })
       .setOrigin(0.5, 0)
+      .setVisible(false)
+
+    // LA FLÈCHE DE DÉPOUILLE (mort-suite 2) : posée par `renderCorpseHint` en coords écran.
+    this.corpseArrow = this.add.image(0, 0, 'fx-arrow').setOrigin(0.5, 0.5).setScale(1.7).setVisible(false)
+    this.corpseLabel = this.add
+      .text(0, 0, '', { ...style, fontSize: '13px', color: '#e8c66a' })
+      .setOrigin(0.5, 0.5)
       .setVisible(false)
 
     // L'écran de RUPTURE (hôte mort) : caché, et prêt. Il peut s'ouvrir à N'IMPORTE
@@ -480,6 +491,20 @@ export class UIScene extends Phaser.Scene {
     }
   }
 
+  /** LA FLÈCHE DE DÉPOUILLE (mort-suite 2) : pointe vers le sac tombé quand il est HORS
+   *  cadre (on le voit sinon), avec les secondes avant décantation. Les coords viennent
+   *  déjà en espace écran (WorldScene les a calculées dans le repère caméra non zoomé). */
+  private renderCorpseHint(): void {
+    const hint = getHud(this.registry, 'corpseHint')
+    if (hint && !hint.onScreen) {
+      this.corpseArrow.setPosition(hint.x, hint.y).setRotation(hint.angle).setVisible(true)
+      this.corpseLabel.setPosition(hint.x, hint.y + 18).setText(`sac · ${hint.secs}s`).setVisible(true)
+    } else {
+      this.corpseArrow.setVisible(false)
+      this.corpseLabel.setVisible(false)
+    }
+  }
+
   override update(): void {
     // LA RUPTURE D'ABORD. Elle peut tomber à n'importe quel instant — y compris avant
     // que le monde existe — et elle prime sur tout le reste : plus rien n'avancera.
@@ -495,6 +520,7 @@ export class UIScene extends Phaser.Scene {
 
     this.renderError()
     this.renderHint()
+    this.renderCorpseHint()
 
     const time = getHud(this.registry, 'time')
     if (!this.revealed) {
@@ -580,7 +606,7 @@ export class UIScene extends Phaser.Scene {
     const death = getHud(this.registry, 'deathMoment')
     if (death && death.at !== this.lastDeathAt) {
       this.lastDeathAt = death.at
-      this.deathVeil.show(death.cause, death.byEntityId, death.killerType, this.deaths === 0)
+      this.deathVeil.show(death.cause, death.byEntityId, death.killerType, this.deaths === 0, death.hadLoot)
       this.deaths += 1
       // Le voile retombe après le maintien, via un timer PHASER (boucle de jeu, pausable).
       this.deathHideTimer?.remove()

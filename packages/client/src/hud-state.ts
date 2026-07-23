@@ -107,7 +107,11 @@ export interface HudState {
    *  `error`) : UIScene lève le voile de mort quand `at` change. `cause` : froid/faim/
    *  null (combat) ; `byEntityId` + `killerType` (le monstre du snapshot, ou null)
    *  résolvent la ligne exacte. `null` = pas de mort en attente. */
-  deathMoment: { cause: 'cold' | 'hunger' | null; byEntityId: number; killerType: string | null; at: number } | null
+  deathMoment: { cause: 'cold' | 'hunger' | null; byEntityId: number; killerType: string | null; hadLoot: boolean; at: number } | null
+  /** LE TRAQUEUR DE DÉPOUILLE (mort-suite 2) : le repère d'écran vers le sac tombé — position
+   *  (px écran, HUD non zoomé), angle de la flèche, `onScreen` (la dépouille est visible →
+   *  cacher la flèche), et le compte à rebours avant décantation. `null` = rien à suivre. */
+  corpseHint: { onScreen: boolean; x: number; y: number; angle: number; secs: number } | null
   /** LE MENU PERSONNAGE (TAB) est-il ouvert ? C'est l'écran qui rassemble ce que le
    *  personnage EST et ce qu'il PEUT : son sac, sa ceinture, son artisanat — et
    *  demain ses vêtements et ses maîtrises. Il s'appelait « inventaire » quand il

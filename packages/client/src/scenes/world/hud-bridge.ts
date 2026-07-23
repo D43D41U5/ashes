@@ -269,9 +269,10 @@ export function publishDeath(
   cause: 'cold' | 'hunger' | undefined,
   byEntityId: number,
   killerType: string | null,
+  hadLoot: boolean,
   at: number,
 ): void {
-  setHud(registry, 'deathMoment', { cause: cause ?? null, byEntityId, killerType, at })
+  setHud(registry, 'deathMoment', { cause: cause ?? null, byEntityId, killerType, hadLoot, at })
 }
 
 /** L'alarme de mon village (flash rouge côté UI). */

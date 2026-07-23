@@ -45,9 +45,10 @@ export function deathLine(cause: DeathCause, byEntityId: number, killerType: str
 
 export interface DeathVeil {
   /** Le joueur est tombé : lève le voile (cause + conséquence). `firstDeath` ajoute
-   *  l'invite « retournez-y » (une fois). Le RETRAIT est piloté par UIScene sur
+   *  l'invite « retournez-y » (une fois). `hadLoot` faux → MAINS VIDES : pas de dépouille à
+   *  reprendre, on ne la promet pas (mort-suite 4). Le RETRAIT est piloté par UIScene sur
    *  l'horloge Phaser (`hide()`), pas par un timer JS. */
-  show(cause: DeathCause, byEntityId: number, killerType: string | null, firstDeath: boolean): void
+  show(cause: DeathCause, byEntityId: number, killerType: string | null, firstDeath: boolean, hadLoot: boolean): void
   /** Laisse retomber le voile (fondu de sortie). Idempotent. */
   hide(): void
   destroy(): void
@@ -104,6 +105,9 @@ export function createDeathVeil(): DeathVeil {
   document.body.appendChild(root)
   const causeEl = root.querySelector<HTMLElement>('.dv-cause')!
   const learnEl = root.querySelector<HTMLElement>('.dv-learn')!
+  const corpseEl = root.querySelector<HTMLElement>('.dv-corpse')!
+  const CORPSE_WITH_LOOT = 'Votre dépouille repose là où vous êtes tombé, avec tout ce que vous portiez.'
+  const CORPSE_EMPTY = 'Vous ne portiez rien — la mort ne vous a rien pris.'
 
   // La fin du fondu de SORTIE pose display:none — piloté par l'événement `transitionend`
   // (pas un timer) : l'opacité atteint 0, on cache. Fiable et sans horloge parallèle.
@@ -113,7 +117,7 @@ export function createDeathVeil(): DeathVeil {
   root.addEventListener('transitionend', onFadeOut)
 
   return {
-    show(cause, byEntityId, killerType, firstDeath) {
+    show(cause, byEntityId, killerType, firstDeath, hadLoot) {
       // LA VISIBILITÉ D'ABORD — elle ne doit dépendre d'AUCUN sous-élément. On lève le
       // voile, puis on le remplit. Reflow forcé avant d'armer la transition, sinon
       // display:none→flex « avale » le fondu (pas de transition depuis un état non peint).
@@ -121,8 +125,12 @@ export function createDeathVeil(): DeathVeil {
       void root.offsetWidth
       root.classList.add('dv-on')
       causeEl.textContent = deathLine(cause, byEntityId, killerType)
-      // « Retournez-y » n'est utile qu'à la PREMIÈRE mort — après, on a compris.
-      learnEl.style.display = firstDeath ? '' : 'none'
+      // MAINS VIDES (mort-suite 4) : sans butin, aucun cadavre — on ne promet pas de dépouille
+      // à reprendre (ce serait un mensonge, et le traqueur ne pointera vers rien). On dit la
+      // vérité rassurante, et on masque l'invite « retournez-y ».
+      corpseEl.textContent = hadLoot ? CORPSE_WITH_LOOT : CORPSE_EMPTY
+      // « Retournez-y » n'a de sens qu'à la première mort AVEC un sac à récupérer.
+      learnEl.style.display = firstDeath && hadLoot ? '' : 'none'
     },
     hide() {
       // On retire dv-on : l'opacité fond vers 0 (transition CSS ${FADE_MS}ms), puis
