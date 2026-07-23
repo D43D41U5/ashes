@@ -93,6 +93,7 @@ export function buildSnapshotBase(sim: SimState, nodeDeltas: NodeDelta[]): Omit<
     npcs: sim.npcs,
     monsters: sim.monsters,
     corpses: sim.corpses,
+    refugeeGroups: sim.refugeeGroups,
     blood: sim.blood,
     wind: sim.wind,
     groundItems: sim.groundItems,

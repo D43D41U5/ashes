@@ -9,6 +9,7 @@
  * une action validée émet son événement de domaine.
  */
 import { isOutsider, recordAct, recordHostility, seasonActFactor } from './alignment'
+import { feedRefugees, recruitRefugees, robRefugees } from './refugees'
 import {
   ALIGNMENT,
   BALANCE,
@@ -143,6 +144,12 @@ export type VillageAction =
   | { type: 'found_village'; structureId: number }
   | { type: 'repair'; structureId: number }
   | { type: 'give'; targetEntityId: number; item: ItemId; count: number }
+  /** LES RÉFUGIÉS (V2-25, GDD §520) — à portée d'un groupe : le RECRUTER (ils rejoignent mon
+   *  village en PNJ ; il faut que j'aie un village), les NOURRIR (des vivres, chaleur) ou les
+   *  DÉPOUILLER (prendre leur bien, prédation). Refouler = ne rien faire, ils repartent seuls. */
+  | { type: 'recruit_refugees'; groupId: number }
+  | { type: 'feed_refugees'; groupId: number }
+  | { type: 'rob_refugees'; groupId: number }
   /**
    * JE POSE UNE PIÈCE STRUCTURELLE (mur/porte/sol/toit), marteau en main — et RIEN
    * d'autre (décision d'Alexis : le four, l'établi, le coffre se posent en objet
@@ -968,6 +975,25 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
           item: action.item,
           count: given,
         })
+      }
+      return
+    }
+
+    case 'recruit_refugees':
+    case 'feed_refugees':
+    case 'rob_refugees': {
+      const group = state.refugeeGroups.find((g) => g.id === action.groupId)
+      if (!group) return reject('plus personne ici')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, group.tx + 0.5, group.ty + 0.5) > range * range) return reject('trop loin')
+      if (action.type === 'recruit_refugees') {
+        const village = getVillageOf(state, actorId)
+        if (!village) return reject('il faut un Feu pour les accueillir')
+        recruitRefugees(state, actor, group, village)
+      } else if (action.type === 'feed_refugees') {
+        if (!feedRefugees(state, actor, group)) return reject('des vivres à offrir manquent')
+      } else {
+        robRefugees(state, actor, group)
       }
       return
     }

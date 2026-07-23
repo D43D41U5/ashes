@@ -2174,6 +2174,28 @@ export const WORLD_EVENTS = {
   CONVOY_DECAY_TICKS: ticksForCycles(2),
 } as const
 
+/**
+ * LES RÉFUGIÉS (V2-25, GDD §520) — « l'événement d'alignement par excellence, et la seule
+ * source de PNJ supplémentaires hors paliers du Feu ». Un groupe de survivants arrive sur une
+ * route ; on les RECRUTE (+PNJ, Foyer), les NOURRIT (Foyer), les refoule (rien) ou les
+ * DÉPOUILLE (Meute). Ordres de grandeur, à caler en playtest.
+ */
+export const REFUGEES = {
+  /** Un groupe tous les N jours de saison (plus rare que les convois, ×2). */
+  PERIOD_DAYS: 6,
+  /** Survivants par groupe — autant de PNJ si on les recrute. */
+  COUNT: 3,
+  /** Ils stationnent ~1 cycle, puis repartent (refouler = ne rien faire). */
+  STAY_TICKS: ticksForCycles(1),
+  /** Chaleur (Foyer) à les recruter/nourrir ; froid (Meute) à les dépouiller. */
+  WARMTH_SAVE: 12,
+  WARMTH_ROB: -12,
+  /** Ce qu'un nourrissage COÛTE (des vivres offerts). */
+  FEED_COST: { berries: 4 } as import('./items').ItemBag,
+  /** Leur maigre bien (pour qui les dépouille). */
+  LOOT: { fiber: 4, berries: 3 } as import('./items').ItemBag,
+} as const
+
 export const CONVOY_LOOT: import('./items').ItemBag = {
   components: 2,
   iron_ingot: 3,

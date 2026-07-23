@@ -10,7 +10,7 @@
 
 // ─── Noyau : état, tick, événements ───────────────────────────────────────
 export { createSim, spawnEntity, despawnAvatar, speedScaleFor, carrySpeedFactor, step, snapshot } from './sim'
-export type { SimState, SimOptions, Entity, MoveInput, PlayerAction } from './sim'
+export type { SimState, SimOptions, Entity, MoveInput, PlayerAction, RefugeeGroup } from './sim'
 export { drainEvents } from './events'
 export type { SimEvent } from './events'
 export { createReplayLog, recordAndStep, runReplay } from './replay'

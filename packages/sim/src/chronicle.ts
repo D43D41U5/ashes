@@ -49,6 +49,8 @@ export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
   'village_archetype_changed',
   'horde_spawned',
   'convoy_spawned',
+  'refugees_arrived',
+  'refugees_recruited',
   'gift_given',
   'entity_died',
   'evacuation_opened',
@@ -94,6 +96,12 @@ export function chronicleFromEvents(
         break
       case 'convoy_spawned':
         push(`Une carcasse de convoi a été signalée sur la route.`, 'recit')
+        break
+      case 'refugees_arrived':
+        push(`Des réfugiés (${e.count}) sont apparus sur une route.`, 'recit')
+        break
+      case 'refugees_recruited':
+        push(`${name(e.villageId)} a recueilli des réfugiés — la communauté grandit.`, 'recit')
         break
       case 'gift_given': {
         const key = `${e.byEntityId}:${e.toVillageId}`

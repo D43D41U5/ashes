@@ -138,6 +138,12 @@ export type SimEvent =
   | { type: 'gift_given'; tick: number; byEntityId: number; toVillageId: number; item: ItemId; count: number }
   | { type: 'village_archetype_changed'; tick: number; villageId: number; archetype: 'foyer' | 'meute' | 'neutre' }
   | { type: 'evacuation_opened'; tick: number; tx: number; ty: number }
+  // LES RÉFUGIÉS (V2-25, GDD §520) — l'événement d'alignement par excellence.
+  | { type: 'refugees_arrived'; tick: number; groupId: number; tx: number; ty: number; count: number }
+  | { type: 'refugees_recruited'; tick: number; groupId: number; villageId: number; byEntityId: number; count: number }
+  | { type: 'refugees_fed'; tick: number; groupId: number; byEntityId: number }
+  | { type: 'refugees_robbed'; tick: number; groupId: number; byEntityId: number }
+  | { type: 'refugees_left'; tick: number; groupId: number }
   | { type: 'cendreux_risen'; tick: number; entityId: number; x: number; y: number }
   | {
       type: 'season_ended'

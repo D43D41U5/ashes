@@ -31,6 +31,7 @@ import { createEmptyMap, type WorldMap } from './map'
 import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde } from './worldevents'
+import { advanceRefugees } from './refugees'
 import { rngNext } from './rng'
 import { advanceNightHunt } from './nighthunt'
 import { advanceNpcs, type Npc } from './npc'
@@ -150,6 +151,25 @@ export interface Entity {
   reachedPois: number[]
 }
 
+/**
+ * UN GROUPE DE RÉFUGIÉS (V2-25, GDD §520) — des survivants arrêtés sur une route. On peut les
+ * RECRUTER (ils rejoignent son village en PNJ — la seule source de population hors paliers du
+ * Feu), les NOURRIR (chaleur/Foyer), les REFOULER (ne rien faire, ils repartent) ou les
+ * DÉPOUILLER (prendre leur maigre butin — prédation/Meute). C'est un OBJET D'ÉTAT, pas un PNJ
+ * qui pense : il stationne, puis s'en va à `until`. Sérialisable (invariant §2).
+ */
+export interface RefugeeGroup {
+  id: number
+  tx: number
+  ty: number
+  /** Combien de survivants — autant de PNJ si on les recrute. */
+  count: number
+  /** Leur maigre bien (pour qui les dépouille). */
+  inventory: Inventory
+  /** Tick auquel ils repartent si personne ne les a pris en charge. */
+  until: number
+}
+
 export interface SimState {
   /** Numéro de tick — l'unique notion de temps dans /sim. */
   tick: number
@@ -190,6 +210,13 @@ export interface SimState {
   /** La saison (spec saison) : méga-horde tirée, évacuation ouverte, fin émise. */
   megaHordeSpawned: boolean
   evacuation: { tx: number; ty: number } | null
+  /** LES RÉFUGIÉS (V2-25, GDD §520) — groupes de survivants arrivés sur les routes, en
+   *  attente d'être recrutés/nourris/dépouillés/refoulés. Objets d'état (comme l'évacuation),
+   *  pas des PNJ : ils attendent, puis repartent. `nextRefugeeGroupId`/`lastRefugeeDay`
+   *  cadencent l'arrivée (comme les convois). */
+  refugeeGroups: RefugeeGroup[]
+  nextRefugeeGroupId: number
+  lastRefugeeDay: number
   /** Lieux déjà atteints par un joueur, tous joueurs confondus (spec lieux R12).
    *  Global : il n'y a qu'un premier — en multi, c'est une course. */
   visitedPois: number[]
@@ -339,6 +366,9 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     corpses: [],
     nextCorpseId: 1,
     hordes: [],
+    refugeeGroups: [],
+    nextRefugeeGroupId: 1,
+    lastRefugeeDay: 0,
     nextHordeId: 1,
     lastConvoyDay: 0,
     aggressions: [],
@@ -590,6 +620,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // Le monde d'abord (spawns/alarmes), puis PNJ, monstres, résolution.
   if (state.worldEvents) {
     advanceWorldEvents(state)
+    // LES RÉFUGIÉS (V2-25) : un événement du monde comme les convois — même interrupteur.
+    // Arrivée positionnée par hash2 (aucun tirage RNG), donc pas de décalage du flux seedé.
+    advanceRefugees(state)
     // LA NUIT QUI CHASSE : c'est un ÉVÉNEMENT DU MONDE, il suit donc le même
     // interrupteur — un banc de test qui n'a pas demandé de guerre n'a pas non plus
     // demandé de loups.

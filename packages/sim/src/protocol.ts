@@ -17,7 +17,7 @@ import type { SimEvent } from './events'
 import type { WorldMap } from './map'
 import type { Monster } from './monsters'
 import type { Npc } from './npc'
-import type { Entity, PlayerAction } from './sim'
+import type { Entity, PlayerAction, RefugeeGroup } from './sim'
 import type { GameTime } from './time'
 import type { Structure, Village } from './village'
 
@@ -190,6 +190,9 @@ export interface SnapshotMessage {
   npcs: Npc[]
   monsters: Monster[]
   corpses: Corpse[]
+  /** LES RÉFUGIÉS (V2-25) : les groupes de survivants sur les routes, que le client dessine
+   *  et rend interactables (recruter/nourrir/dépouiller). */
+  refugeeGroups: RefugeeGroup[]
   /** LE SANG AU SOL (spec chasse C9) : les gouttes que le client dessine et efface. */
   blood: { x: number; y: number; tick: number }[]
   /** LE VENT (C17) : il doit SE VOIR — une règle invisible est une injustice. */
