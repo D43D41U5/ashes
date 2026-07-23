@@ -1221,6 +1221,40 @@ const SCENARIOS = {
     })
     console.log(`menu pause : ${JSON.stringify(open)}`)
     await page.screenshot({ path: `${OUT}/pause-menu.png` })
+
+    // LE GARDE-FOU D'EFFACEMENT : « nouvelle Veillée » ne doit PLUS effacer au premier clic.
+    // On l'ouvre, on vérifie que la confirmation prend la place des choix, on capture — puis on
+    // ANNULE. (On ne clique JAMAIS `.pm-fresh-go` ici : il effacerait la sauvegarde pour de bon.)
+    await page.click('.pm-fresh')
+    await page.waitForTimeout(150)
+    // On lit le DISPLAY CALCULÉ, pas la propriété `hidden` : `.pm-row2{display:flex}` écrase le
+    // [hidden] du navigateur, et une assertion sur `hidden` a déjà laissé passer les DEUX
+    // rangées à l'écran. Ce qui compte est ce que l'œil voit.
+    const armed = await page.evaluate(() => ({
+      confirmShown: getComputedStyle(document.querySelector('.pm-confirm')).display !== 'none',
+      choicesHidden: getComputedStyle(document.querySelector('.pm-choices')).display === 'none',
+      warn: document.querySelector('.pm-warn')?.textContent?.slice(0, 32) ?? '',
+      danger: Boolean(document.querySelector('.pm-fresh-go')),
+      // Le bouton destructeur doit être ENTIÈREMENT à l'écran : posé en bas d'une carte qui
+      // défile, il tombait sous le pli — on ne fait pas chercher un choix pareil.
+      goOnScreen: (() => {
+        const r = document.querySelector('.pm-fresh-go').getBoundingClientRect()
+        return r.top >= 0 && r.bottom <= window.innerHeight
+      })(),
+    }))
+    console.log(`confirmation d’effacement : ${JSON.stringify(armed)}`)
+    await page.screenshot({ path: `${OUT}/pause-effacer.png` })
+    await page.click('.pm-cancel')
+    await page.waitForTimeout(150)
+    const disarmed = await page.evaluate(() => ({
+      confirmShown: getComputedStyle(document.querySelector('.pm-confirm')).display !== 'none',
+      choicesHidden: getComputedStyle(document.querySelector('.pm-choices')).display === 'none',
+    }))
+    console.log(`après annulation : ${JSON.stringify(disarmed)}`)
+    if (!armed.confirmShown || !armed.choicesHidden || !armed.danger || !armed.goOnScreen || disarmed.confirmShown || disarmed.choicesHidden) {
+      console.error(`!! LE GARDE-FOU D'EFFACEMENT NE MARCHE PAS : ${JSON.stringify({ armed, disarmed })}`)
+    }
+
     await page.keyboard.press('Escape')
     await page.waitForTimeout(200)
     const closed = await page.evaluate(() => ({

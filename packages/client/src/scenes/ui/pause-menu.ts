@@ -89,6 +89,17 @@ export function createPauseMenu({ onResume, getVolume, onVolume }: PauseMenuDeps
     .pm-btn:hover{background:rgba(232,198,106,.24);color:#f2ead0;}
     .pm-btn.pm-ghost{background:transparent;border-color:#6b5a3a;color:#9a8f78;letter-spacing:1px;font-weight:400;}
     .pm-btn.pm-ghost:hover{color:#e8e0c8;border-color:#8a7a52;background:rgba(40,34,26,.4);}
+    /* LA CONFIRMATION D'EFFACEMENT : rouge d'alerte, le seul de l'écran — on ne clique pas
+       « effacer » par inadvertance quand le bouton porte la couleur du danger. */
+    .pm-confirm[hidden]{display:none;}
+    /* Le display:flex de .pm-row2 ÉCRASE le [hidden]{display:none} de la feuille du navigateur :
+       sans cette règle plus spécifique, masquer la rangée de choix n'avait AUCUN effet visuel
+       (les deux rangées restaient à l'écran, la confirmation débordait sous le pli). */
+    .pm-row2[hidden]{display:none;}
+    .pm-warn{font-size:13px;color:#e05a4a;letter-spacing:1px;margin-top:26px;line-height:1.7;}
+    .pm-warn b{color:#f2ead0;font-weight:700;}
+    .pm-btn.pm-danger{background:rgba(224,90,74,.16);border-color:#e05a4a;color:#e05a4a;}
+    .pm-btn.pm-danger:hover{background:rgba(224,90,74,.3);color:#f2ead0;}
   </style>
   <div class="pm-glow"></div>
   <div class="pm-card">
@@ -105,15 +116,40 @@ export function createPauseMenu({ onResume, getVolume, onVolume }: PauseMenuDeps
       <span class="pm-vol-val"></span>
     </div>
     <div class="pm-hint">ESPACE pare de face · maintenir le clic, c’est charger un coup lourd · N coupe le son.</div>
-    <div class="pm-row2">
+    <div class="pm-row2 pm-choices">
       <button class="pm-btn pm-resume">REPRENDRE</button>
       <button class="pm-btn pm-ghost pm-fresh">nouvelle Veillée</button>
+    </div>
+    <div class="pm-confirm" hidden>
+      <div class="pm-warn">Repartir efface <b>la Veillée en cours</b> — la vallée, le Feu, tout ce que vous y avez bâti.<br>C'est sans retour.</div>
+      <div class="pm-row2">
+        <button class="pm-btn pm-ghost pm-cancel">revenir en arrière</button>
+        <button class="pm-btn pm-danger pm-fresh-go">EFFACER ET REPARTIR</button>
+      </div>
     </div>
   </div>`
   document.body.appendChild(root)
 
   root.querySelector<HTMLElement>('.pm-resume')!.addEventListener('click', () => onResume())
-  root.querySelector<HTMLElement>('.pm-fresh')!.addEventListener('click', reopenFreshVeillee)
+
+  // « nouvelle Veillée » EFFACE la sauvegarde, sans retour — et le bouton vivait à côté de
+  // « REPRENDRE ». Un seul clic de travers et la partie en cours disparaissait. Il ouvre
+  // désormais une CONFIRMATION explicite : le geste destructeur demande un second clic, sur
+  // un bouton rouge qui NOMME ce qu'on perd. (À la stèle de fin de saison, pas de garde-fou :
+  // la saison est finie, repartir y est le geste attendu — il n'y a plus rien à protéger.)
+  const choices = root.querySelector<HTMLElement>('.pm-choices')!
+  const confirm = root.querySelector<HTMLElement>('.pm-confirm')!
+  const askConfirm = (open: boolean): void => {
+    confirm.hidden = !open
+    choices.hidden = open // on ne laisse pas les deux rangées à l'écran : le choix est franc
+    // La carte de pause est HAUTE (contrôles + son) et défile : posée en bas, la confirmation
+    // tombait sous le pli, boutons coupés. On l'amène à l'œil. `behavior` par défaut = instantané
+    // (un défilement animé serait du mouvement, proscrit en `prefers-reduced-motion`).
+    if (open) confirm.scrollIntoView({ block: 'center' })
+  }
+  root.querySelector<HTMLElement>('.pm-fresh')!.addEventListener('click', () => askConfirm(true))
+  root.querySelector<HTMLElement>('.pm-cancel')!.addEventListener('click', () => askConfirm(false))
+  root.querySelector<HTMLElement>('.pm-fresh-go')!.addEventListener('click', reopenFreshVeillee)
 
   // LE CURSEUR DE SON : posé au volume courant, il règle le volume maître en direct (persisté
   // par le moteur audio). `onVolume` route vers WorldScene (le moteur y vit) via le registre.
@@ -143,6 +179,7 @@ export function createPauseMenu({ onResume, getVolume, onVolume }: PauseMenuDeps
       } else {
         root.classList.remove('pm-on')
         root.style.display = 'none'
+        askConfirm(false) // refermer la pause désarme la confirmation : jamais armée à l'insu
       }
     },
     destroy() {
