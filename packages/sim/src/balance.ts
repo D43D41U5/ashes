@@ -332,6 +332,14 @@ export const BALANCE = {
    * spécialiste fait en 20 min ce que le novice fait en 45.
    */
   CRAFT_SPEED_BONUS: 0.15,
+  /**
+   * BONUS D'ENCEINTE — VITESSE (construction.md R13, table §4bis). Un atelier CLOS+TOITÉ
+   * façonne plus vite : la durée de craft est multipliée par ce facteur quand un amas ENCLOS
+   * de la fonction `atelier` couvre la station. C'est ce qui PAIE murer+toiter (jusque-là,
+   * l'enceinte n'était qu'un drapeau reconnu sans effet). 0,75 = 25 % plus vite — ordre de
+   * grandeur, à caler en playtest (la friction reste d'acquérir les matériaux, pas le temps).
+   */
+  ENCLOSURE_CRAFT_SPEED: 0.75,
   /** Lignes maximum dans la file : l'écran doit pouvoir la montrer ENTIÈRE (F4). */
   CRAFT_QUEUE_MAX: 6,
 

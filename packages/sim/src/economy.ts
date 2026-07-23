@@ -8,6 +8,7 @@
 import {
   BALANCE,
   FOOD_VALUES,
+  FUNCTIONS,
   GRENIER,
   NODE_DEFS,
   RECIPES,
@@ -40,6 +41,7 @@ import {
 } from './balance'
 import { harvestFactor } from './alignment'
 import { die } from './combat'
+import { functionForStation } from './construction'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { heldSlot, wearHeld } from './inventory-actions'
@@ -347,10 +349,35 @@ export function recipeState(state: SimState, actor: Entity, recipeId: RecipeId):
  * (spec craft-file F6). Déterministe — que des `+ - * /` et un `floor`, aucun
  * tirage, aucune fonction Math approximée (invariant §2).
  */
-function craftTicks(actor: Entity, recipe: Recipe): number {
+function craftTicks(state: SimState, actor: Entity, recipe: Recipe): number {
   const base = Math.round(recipe.seconds * BALANCE.TICK_RATE_HZ)
   const level = levelOf(actor, 'crafting')
-  return Math.max(1, Math.floor(base / (1 + BALANCE.CRAFT_SPEED_BONUS * level)))
+  let ticks = Math.max(1, Math.floor(base / (1 + BALANCE.CRAFT_SPEED_BONUS * level)))
+  // BONUS D'ENCEINTE — VITESSE (construction.md R13) : un atelier CLOS+TOITÉ façonne plus
+  // vite. C'est ce qui PAIE enfin murer+toiter (l'enceinte était détectée, sans effet).
+  if (enclosedCraftSpeedup(state, actor, recipe)) {
+    ticks = Math.max(1, Math.floor(ticks * BALANCE.ENCLOSURE_CRAFT_SPEED))
+  }
+  return ticks
+}
+
+/**
+ * La recette est-elle façonnée à un amas ENCLOS dont la fonction confère la VITESSE ? Vrai
+ * quand la station relève d'une fonction (`atelier`) au bonus 'vitesse' ET qu'un amas clos+
+ * toité de cette fonction, à portée, couvre la station tenue. Pur, déterministe.
+ */
+function enclosedCraftSpeedup(state: SimState, actor: Entity, recipe: Recipe): boolean {
+  if (recipe.station === null) return false
+  const fid = functionForStation(recipe.station)
+  if (fid === null || FUNCTIONS[fid].enclosureBonus !== 'vitesse') return false
+  const station = stationFor(state, actor, recipe)
+  if (!station) return false
+  return state.functions.some(
+    (f) =>
+      f.functionId === fid &&
+      f.enclosed &&
+      f.componentTiles.some((t) => t.tx === station.tx && t.ty === station.ty),
+  )
 }
 
 /**
@@ -608,7 +635,7 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
 
       if (line) line.count += 1
       else {
-        const ticks = craftTicks(actor, recipe)
+        const ticks = craftTicks(state, actor, recipe)
         actor.craftQueue.push({
           recipeId: action.recipeId,
           count: 1,
@@ -712,7 +739,7 @@ export function advanceCraft(state: SimState): void {
       // tant qu'elle n'a pas été entamée, on la recalcule au niveau COURANT — un
       // Artisan qui monte pendant sa file en profite dès l'unité suivante.
       if (order.remainingTicks === order.totalTicks) {
-        const ticks = craftTicks(entity, recipe)
+        const ticks = craftTicks(state, entity, recipe)
         order.totalTicks = ticks
         order.remainingTicks = ticks
       }
@@ -737,7 +764,7 @@ export function advanceCraft(state: SimState): void {
     order.count -= 1
     if (order.count <= 0) entity.craftQueue.shift()
     else {
-      const ticks = craftTicks(entity, recipe)
+      const ticks = craftTicks(state, entity, recipe)
       order.totalTicks = ticks
       order.remainingTicks = ticks
     }

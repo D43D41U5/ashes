@@ -243,6 +243,19 @@ function clusterComponents(components: readonly RecogStructure[]): RecogStructur
  * peut porter PLUSIEURS fonctions (une forge ET un atelier se touchent, R9) ; deux
  * amas distincts = deux fonctions (pas d'unicité, R11).
  */
+/**
+ * QUELLE FONCTION une station de craft sert-elle (`furnace`/`four_acier` → forge ;
+ * `workshop`/`tour_meca`/`atelier_lourd` → atelier), ou `null` (le Feu, ou rien). Dérivé de
+ * `FUNCTIONS.recipeByTier` — une seule source de vérité. Sert aux bonus d'enceinte : savoir
+ * si une recette relève d'une fonction dont l'amas ENCLOS confère un bonus.
+ */
+export function functionForStation(station: string): FunctionId | null {
+  for (const fid of Object.keys(FUNCTIONS) as FunctionId[]) {
+    if (FUNCTIONS[fid].recipeByTier.some((tier) => (tier as readonly string[]).includes(station))) return fid
+  }
+  return null
+}
+
 export function recognizeFunctions(structures: readonly RecogStructure[]): RecognizedFunction[] {
   const components = structures.filter((s) => isComponent(s.type))
   const amasList = clusterComponents(components)

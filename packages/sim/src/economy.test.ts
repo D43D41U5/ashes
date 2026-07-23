@@ -448,6 +448,29 @@ describe('l’artisanat (A3)', () => {
     expect(rejections(sim)).toEqual(['station requise hors de portée : four_acier'])
   })
 
+  it('bonus d’enceinte VITESSE : un atelier CLOS+TOITÉ façonne plus vite (construction.md R13)', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 40, stone: 20, fiber: 8 })
+    act(sim, id, { type: 'light_fire' })
+    const v = getVillageOf(sim, id)!.id
+    addStructure(sim, 'workshop', 9, 10, v, id) // un atelier N1 est reconnu
+
+    // Atelier NON clos : durée pleine.
+    act(sim, id, { type: 'craft', recipeId: 'axe' })
+    const plein = me(sim).craftQueue[0]!.totalTicks
+    me(sim).craftQueue = []
+
+    // On rend l'amas CLOS (le drapeau que murer+toiter poserait — R14). L'effet doit exister.
+    const atelier = sim.functions.find((f) => f.functionId === 'atelier')
+    expect(atelier).toBeDefined()
+    atelier!.enclosed = true
+    act(sim, id, { type: 'craft', recipeId: 'axe' })
+    const clos = me(sim).craftQueue[0]!.totalTicks
+    expect(clos).toBeLessThan(plein)
+    expect(clos).toBe(Math.max(1, Math.floor(plein * 0.75)))
+  })
+
   // Un sac plein n'est pas forcément un sac SANS place pour la sortie : les
   // intrants, en partant, LIBÈRENT des cases. Refuser d'après la place AVANT de
   // les consommer refuserait à tort un craft parfaitement légal.
