@@ -30,6 +30,7 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   spear: 'Lance',
   hammer: 'Marteau de construction',
   raw_meat: 'Viande crue',
+  quartier: 'Quartier',
   cooked_meat: 'Viande cuite',
   raw_hide: 'Peau brute',
   leather: 'Cuir',
@@ -378,6 +379,14 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0xc25a50).fillEllipse(6, 7, 6, 4) // gras / reflet NO
     g.fillStyle(0xe6ddc8).fillRect(11, 2, 2, 5) // l'os
     g.fillStyle(0xe6ddc8).fillCircle(12, 2, 2)
+  },
+
+  // Quartier : un GROS morceau de viande sur l'os — plus imposant que la pièce crue.
+  quartier: (g) => {
+    g.fillStyle(0x8f2f28).fillEllipse(8, 9, 15, 12) // la masse de viande, rouge sombre
+    g.fillStyle(0xb04a40).fillEllipse(6, 6, 8, 6) // le gras / reflet NO
+    g.fillStyle(0xe6ddc8).fillRect(11, 1, 3, 7) // l'os, épais
+    g.fillStyle(0xe6ddc8).fillCircle(12, 2, 3) // la tête de l'os
   },
 
   // Viande cuite : même pièce, brun doré.

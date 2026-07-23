@@ -101,7 +101,7 @@ describe('les définitions (R8 — trois étages de gibier)', () => {
     expect(MONSTER_DEFS.boar.hp).toBeLessThan(MONSTER_DEFS.deer.hp)
     expect(MONSTER_DEFS.rabbit.loot.raw_meat).toBe(1)
     expect(MONSTER_DEFS.boar.loot.raw_meat).toBe(3)
-    expect(MONSTER_DEFS.deer.loot.raw_meat).toBe(5)
+    expect(MONSTER_DEFS.deer.loot.quartier).toBe(2) // V0-5 : le gros gibier rend des quartiers lourds
   })
 
   it('le gibier court plus vite qu’un joueur qui marche — la chasse est un geste', () => {

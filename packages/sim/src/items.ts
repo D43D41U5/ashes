@@ -64,6 +64,10 @@ export type ItemId =
   /** Le MARTEAU DE CONSTRUCTION : sans lui EN MAIN, on ne bâtit rien (spec recolte.md G12). */
   | 'hammer'
   | 'raw_meat'
+  /** LE QUARTIER (spec portage/chasse) : ce que rend le GROS gibier. Un gros morceau,
+   *  LOURD — rentrer un cerf devient un vrai dilemme de charge (le portage retrouve ses
+   *  dents que le doublement de CARRY lui avait ôtées). Se mange (gros repas cru) ou se cuit. */
+  | 'quartier'
   | 'cooked_meat'
   /** LA PEAU BRUTE (spec chasse — coup propre `slainClean`) : ce que rend un gibier
    *  abattu PROPREMENT. La matière première du cuir — tannage → couture → tenue

@@ -771,6 +771,7 @@ export const TOOL_DURABILITIES: Partial<Record<import('./items').ItemId, number>
 export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
   berries: 6,
   raw_meat: 8,
+  quartier: 20, // V0-5 : un gros repas cru (plus que raw_meat) — le gros gibier nourrit longtemps
   cooked_meat: 40,
   stew: 60,
 }
@@ -793,6 +794,7 @@ export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
 export const SPOIL_CYCLES: Partial<Record<import('./items').ItemId, number>> = {
   berries: 2,
   raw_meat: 1.5, // la viande crue est une bombe à retardement : on la cuit, ou on la perd
+  quartier: 1.5, // V0-5 : périme comme la viande crue (le dilemme du retour : poids ET péremption)
   cooked_meat: 4,
   stew: 5,
 }
@@ -1233,7 +1235,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     hp: 45, damage: 0, speed: 4.6,
     windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0,
     thinkEveryTicks: ticksFor(1.2), wanderChance: 0.2, chargeChance: 0,
-    loot: { raw_meat: 5 },
+    loot: { quartier: 2 }, // V0-5 : le gros gibier rend des QUARTIERS lourds (portage)
     habitat: [TERRAIN_ALPINE_MEADOW, TERRAIN_HEATH, TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_LARCH],
     alertRange: 14, flightRange: 9,
     herdSize: [3, 5], // la harde : ils broutent ensemble et détalent ensemble
@@ -2291,6 +2293,7 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   berries: 0.2,
   stew: 0.5,
   raw_meat: 1,
+  quartier: 4.5, // V0-5 : LOURD — deux quartiers = un cerf = ~9 de charge (le portage remord)
   cooked_meat: 0.8,
   // La peau brute est BULKY : elle pèse plus que la viande d'une même bête — rentrer
   // sa chasse ET ses peaux force un arbitrage de charge (spec portage).
@@ -2420,6 +2423,7 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   stew: 5,
   iron_ingot: 5,
   raw_meat: 5,
+  quartier: 3,
   cooked_meat: 5,
   raw_hide: 5,
   // Outils et armes : un par case (l'usure est portée par la case).
