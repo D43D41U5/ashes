@@ -429,6 +429,14 @@ export class WorldScene extends Phaser.Scene {
       structures: () => this.view.structures,
       nodes: () => this.view.nodes,
       corpses: () => this.view.corpses,
+      // Les autres ENTITÉS vivantes pour le DON — SANS soi ni les monstres (la sim les
+      // refuse de toute façon). Position LOGIQUE (tuiles), depuis le dernier snapshot.
+      others: () => {
+        const monsterIds = new Set(this.view.monsters.map((m) => m.entityId))
+        return this.lastEntities
+          .filter((e) => e.id !== this.playerId && e.hp > 0 && !monsterIds.has(e.id))
+          .map((e) => ({ id: e.id, x: e.x, y: e.y }))
+      },
       // Les handlers d'input sont posés dès `create`, mais `this.warp` n'existe
       // qu'après `onReady` (génération de carte). Avant, on renvoie le point plat :
       // de toute façon les actions sont des no-op sur structures/nodes vides.

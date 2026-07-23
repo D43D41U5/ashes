@@ -31,6 +31,9 @@ export interface InputDeps {
   structures(): Structure[]
   nodes(): ResourceNode[]
   corpses(): Corpse[]
+  /** Les autres ENTITÉS (PNJ/joueurs) — SANS soi ni les monstres : les cibles d'un DON.
+   *  Position LOGIQUE (tuiles), pour viser dans le même repère que les nœuds. */
+  others(): { id: number; x: number; y: number }[]
   /** Corrige un point monde PLAT (positionToCamera) en point monde vrai, selon le relief. */
   unproject(px: number, py: number): { x: number; y: number }
 }
@@ -225,6 +228,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       deps.nodes(),
       deps.corpses(),
       BALANCE.INTERACT_RANGE,
+      deps.others(),
     )
   }
   /** L'overlay (carte, sac) mange le clic : il ne doit pas agir dans le monde en dessous. */
@@ -244,9 +248,10 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     // (aim.ts). Sans blessure, tenir des fibres ne soigne pas — le clic reste une frappe.
     const w = getHud(scene.registry, 'wounds') ?? {}
     const wounded = Boolean(w.bleeding || w.leg || w.arm)
+    const heldCount = slot >= 0 ? (inv[slot]?.count ?? 1) : 1
     const world = pointerToWorld(pointer)
     const p = deps.predicted()
-    return { held, slot, wounded, dx: world.x / TILE_PX - p.x, dy: world.y / TILE_PX - p.y }
+    return { held, slot, wounded, heldCount, dx: world.x / TILE_PX - p.x, dy: world.y / TILE_PX - p.y }
   }
 
   /** Le nœud visé est-il un ARBRE (abattage à maîtrise) ? Les arbres passent par la

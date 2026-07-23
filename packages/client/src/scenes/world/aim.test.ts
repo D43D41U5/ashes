@@ -185,8 +185,8 @@ describe('holdHarvest — le maintien n’inonde pas la sim (A4, A6)', () => {
  * manger, ni se défendre, et la nuit qui chasse devient une exécution.
  */
 describe('la main décide du clic', () => {
-  const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, inRange: true }
-  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, inRange: true }
+  const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, entityId: null, inRange: true }
+  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, entityId: null, inRange: true }
   const versLest = { dx: 1, dy: 0 }
 
   it('DE LA NOURRITURE EN MAIN → on mange (et le maintien répète)', () => {
@@ -218,5 +218,30 @@ describe('la main décide du clic', () => {
   it('un OUTIL en main ne frappe pas : il récolte (la hache n’est pas une arme)', () => {
     const main = { held: 'crude_axe' as const, ...versLest }
     expect(clickToAction(surUnArbre, null, main)).toEqual({ type: 'harvest', nodeId: 42 })
+  })
+})
+
+describe('DONNER : nourriture en main + un voisin visé → le don chaud (V1-10)', () => {
+  it('viser un PNJ à portée, nourriture en main → on DONNE (et pas manger)', () => {
+    const voisin = [{ id: 7, x: 11.5, y: 11.5 }] // un PNJ, sous le curseur (tuile 11,11)
+    const t = aimAt(11, 11, PLAYER, [], [], RANGE, voisin)
+    expect(t.entityId).toBe(7)
+    expect(clickToAction(t, null, { held: 'berries' as const, heldCount: 4, dx: 1, dy: 0 })).toEqual({
+      type: 'give',
+      targetEntityId: 7,
+      item: 'berries',
+      count: 4,
+    })
+  })
+
+  it('sans voisin visé, la nourriture se MANGE (le don ne se déclenche que sur une cible)', () => {
+    const t = aimAt(11, 11, PLAYER, [], [], RANGE, [])
+    expect(t.entityId).toBeNull()
+    expect(clickToAction(t, null, { held: 'berries' as const, heldCount: 4, dx: 1, dy: 0 })).toEqual({ type: 'eat', item: 'berries' })
+  })
+
+  it('un voisin HORS de portée du joueur n’est pas une cible de don', () => {
+    const loin = [{ id: 7, x: 50, y: 50 }]
+    expect(aimAt(50, 50, PLAYER, [], [], RANGE, loin).entityId).toBeNull()
   })
 })

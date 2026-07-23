@@ -40,9 +40,16 @@ export interface AimTarget {
   corpseId: number | null
   /** Le nœud RÉCOLTABLE (stock > 0) sur la tuile. */
   nodeId: number | null
+  /** L'ENTITÉ (PNJ/joueur) visée sous le curseur, à portée du joueur — la cible d'un DON
+   *  ou d'un soin (spec alignement/combat). `null` = personne sous le curseur à portée. */
+  entityId: number | null
   /** Distance ≤ `range` entre le joueur et le CENTRE de la tuile visée. */
   inRange: boolean
 }
+
+/** Le curseur doit être à peu près SUR l'entité (≤ ça, en tuiles) pour la viser — sinon
+ *  un clic dans le vide près d'un PNJ donnerait « en passant ». */
+const AIM_ENTITY_TILES = 1.4
 
 /** Que vise-t-on ? Purement descriptif : aucune action décidée ici. */
 export function aimAt(
@@ -52,16 +59,36 @@ export function aimAt(
   nodes: readonly ResourceNode[],
   corpses: readonly Corpse[],
   range: number,
+  /** Les autres entités (PNJ/joueurs) — SANS soi ni les monstres : le caller filtre. */
+  entities: readonly { id: number; x: number; y: number }[] = [],
 ): AimTarget {
   const corpse = corpses.find((c) => Math.floor(c.x) === tx && Math.floor(c.y) === ty)
   const node = nodes.find((n) => n.tx === tx && n.ty === ty && n.stock > 0)
   const dx = tx + 0.5 - player.x
   const dy = ty + 0.5 - player.y
+
+  // L'ENTITÉ visée : la plus proche du CURSEUR (tuile visée), à condition d'être sous le
+  // curseur (≤ AIM_ENTITY_TILES) ET à portée de bras du JOUEUR (la sim revalide la portée).
+  let entityId: number | null = null
+  let bestD = AIM_ENTITY_TILES * AIM_ENTITY_TILES
+  for (const e of entities) {
+    const cx = e.x - (tx + 0.5)
+    const cy = e.y - (ty + 0.5)
+    const dCursor = cx * cx + cy * cy
+    const px = e.x - player.x
+    const py = e.y - player.y
+    if (px * px + py * py <= range * range && dCursor < bestD) {
+      bestD = dCursor
+      entityId = e.id
+    }
+  }
+
   return {
     tx,
     ty,
     corpseId: corpse?.id ?? null,
     nodeId: node?.id ?? null,
+    entityId,
     inRange: dx * dx + dy * dy <= range * range,
   }
 }
@@ -100,6 +127,9 @@ export interface HandContext {
    *  bandage : des fibres en main NE pansent que si l'on saigne — sinon le clic
    *  retombe sur la frappe (la défense du pauvre survit, cf. le dernier cran). */
   wounded?: boolean
+  /** Combien on tient dans la case active — le MONTANT d'un don (spec alignement). Sans
+   *  lui, on donne 1 (le contrat par défaut). */
+  heldCount?: number
   /** Direction vers le curseur, depuis l'avatar (non normalisée : la sim le fait). */
   dx: number
   dy: number
@@ -165,6 +195,14 @@ export function clickToAction(
     if (placing === 'floor' || placing === 'roof') {
       return { type: 'build', structure: placing, tx: target.tx, ty: target.ty }
     }
+  }
+
+  // DONNER (spec alignement R2, l'acte chaud FONDAMENTAL) : de la nourriture en main ET un
+  // voisin sous le curseur → on le NOURRIT, lui. Prime sur MANGER : viser un PNJ dit « c'est
+  // pour toi ». Le geste unique qui laisse choisir le Foyer (sinon le seul bouton est piller).
+  // La sim revalide tout (portée, extérieur, satiété) et ne compte l'acte chaud que si utile.
+  if (hand && isFood(hand.held) && target.entityId !== null) {
+    return { type: 'give', targetEntityId: target.entityId, item: hand.held!, count: hand.heldCount ?? 1 }
   }
 
   // MANGER : on tient de quoi, on croque. (Le clic maintenu répète — voir holdHarvest.)
