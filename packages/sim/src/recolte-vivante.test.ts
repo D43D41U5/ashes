@@ -41,19 +41,21 @@ function standOn(s: SimState, id: number, n: ResourceNode): void {
 }
 
 describe('le rendement en chaîne (D3)', () => {
-  it('A5 : quatre paliers d’outil strictement croissants', () => {
-    // À niveau assez haut pour débloquer le fer, le palier effectif = le palier réel.
-    const lvl = 100 // largement > GATE_IRON_LEVEL
-    expect(maxTierByLevel(lvl)).toBe('iron')
+  it('A5 : cinq paliers d’outil strictement croissants (dont l’acier, V2-17)', () => {
+    // À niveau assez haut pour débloquer l'ACIER (T3), le palier effectif = le palier réel.
+    const lvl = 100 // largement > GATE_STEEL_LEVEL
+    expect(maxTierByLevel(lvl)).toBe('steel')
     // effectiveTier ne rabaisse pas ce que le niveau maîtrise.
     expect(effectiveTier('none', lvl)).toBe('none')
     expect(effectiveTier('crude', lvl)).toBe('crude')
     expect(effectiveTier('basic', lvl)).toBe('basic')
     expect(effectiveTier('iron', lvl)).toBe('iron')
+    expect(effectiveTier('steel', lvl)).toBe('steel')
     // Le barème lui-même est strictement croissant (Y1) : chaque outil paie au sac.
     expect(TOOL_YIELD.none).toBeLessThan(TOOL_YIELD.crude)
     expect(TOOL_YIELD.crude).toBeLessThan(TOOL_YIELD.basic)
     expect(TOOL_YIELD.basic).toBeLessThan(TOOL_YIELD.iron)
+    expect(TOOL_YIELD.iron).toBeLessThan(TOOL_YIELD.steel)
   })
 
   it('A4 : gate DOUX — un outil trop bon rend comme le palier maîtrisé, jamais rien', () => {

@@ -60,7 +60,14 @@ export function publishStationsInRange(
   const r = BALANCE.INTERACT_RANGE
   const near = new Set<StationId>()
   for (const s of structures) {
-    if (s.type !== 'fire' && s.type !== 'workshop' && s.type !== 'furnace') continue
+    if (
+      s.type !== 'fire' &&
+      s.type !== 'workshop' &&
+      s.type !== 'furnace' &&
+      s.type !== 'four_acier' &&
+      s.type !== 'atelier_lourd'
+    )
+      continue
     const dx = s.tx + 0.5 - me.x
     const dy = s.ty + 0.5 - me.y
     if (dx * dx + dy * dy <= r * r) near.add(s.type)

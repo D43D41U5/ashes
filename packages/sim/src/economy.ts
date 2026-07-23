@@ -246,6 +246,7 @@ function gainXp(state: SimState, entity: Entity, skill: SkillId, base: number): 
 export function toolTier(item: ItemId | null, family: 'axe' | 'pickaxe' | null): ToolTier {
   if (!family || item === null) return 'none'
   const tiers = TOOL_TIERS[family]
+  if (item === tiers.steel) return 'steel'
   if (item === tiers.iron) return 'iron'
   if (item === tiers.basic) return 'basic'
   if (item === tiers.crude) return 'crude'
@@ -281,6 +282,7 @@ function toolMultiplier(
  * dès `GATE_IRON_LEVEL`. Pure et déterministe — que des comparaisons, aucun tirage.
  */
 export function maxTierByLevel(level: number): ToolTier {
+  if (level >= BALANCE.GATE_STEEL_LEVEL) return 'steel'
   if (level >= BALANCE.GATE_IRON_LEVEL) return 'iron'
   if (level >= BALANCE.GATE_BASIC_LEVEL) return 'basic'
   return 'crude'

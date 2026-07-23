@@ -22,7 +22,7 @@ export type Buildable = 'wall' | 'door' | 'floor' | 'roof'
 export type Placeable = Buildable | 'fire' | ComponentType | 'chest'
 
 /** Les stations d'artisanat (les recettes `station: null` n'en demandent aucune). */
-export type StationId = 'fire' | 'workshop' | 'furnace'
+export type StationId = 'fire' | 'workshop' | 'furnace' | 'four_acier' | 'atelier_lourd'
 
 /** Le conteneur ouvert, RÉSOLU depuis le snapshot (WorldScene) pour que UIScene
  *  n'ait pas à fouiller structures/cadavres. `null` dès qu'il disparaît (dépouille

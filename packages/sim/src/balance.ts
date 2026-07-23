@@ -354,6 +354,10 @@ export const BALANCE = {
   SKILL_YIELD_STEP: 8,
   GATE_BASIC_LEVEL: 2,
   GATE_IRON_LEVEL: 5,
+  /** Le palier ACIER (T3) exige la maîtrise — au-delà du fer : le meilleur outil du jeu
+   *  ne se rend pas à un débutant même s'il en trouve un. (Spec construction R10 : l'acier
+   *  est le sommet ; GDD §220 : « le forgeron débloque l'acier ».) */
+  GATE_STEEL_LEVEL: 8,
 
   /** Réduction d'usure par niveau d'artisan (V0-7). Divisée 0.03 → 0.015 : la pente
    *  était trop forte (jusqu'à −75 %), la spécialisation éteignait l'évier d'usure. À
@@ -679,8 +683,8 @@ export type NodeType =
  * questions distinctes, et les confondre était le bug latent : `crude` rend
  * autant que `basic` (×2), mais il ne doit ouvrir NI le fer NI le charbon.
  */
-export type ToolTier = 'none' | 'crude' | 'basic' | 'iron'
-export const TOOL_RANK: Record<ToolTier, number> = { none: 0, crude: 1, basic: 2, iron: 3 }
+export type ToolTier = 'none' | 'crude' | 'basic' | 'iron' | 'steel'
+export const TOOL_RANK: Record<ToolTier, number> = { none: 0, crude: 1, basic: 2, iron: 3, steel: 4 }
 
 export interface NodeDef {
   item: import('./items').ItemId
@@ -731,10 +735,10 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
 /** Les trois paliers outillés de chaque famille. Le barème, lui, est `TOOL_YIELD`. */
 export const TOOL_TIERS: Record<
   'axe' | 'pickaxe',
-  { crude: import('./items').ItemId; basic: import('./items').ItemId; iron: import('./items').ItemId }
+  { crude: import('./items').ItemId; basic: import('./items').ItemId; iron: import('./items').ItemId; steel: import('./items').ItemId }
 > = {
-  axe: { crude: 'crude_axe', basic: 'axe', iron: 'iron_axe' },
-  pickaxe: { crude: 'crude_pickaxe', basic: 'pickaxe', iron: 'iron_pickaxe' },
+  axe: { crude: 'crude_axe', basic: 'axe', iron: 'iron_axe', steel: 'steel_axe' },
+  pickaxe: { crude: 'crude_pickaxe', basic: 'pickaxe', iron: 'iron_pickaxe', steel: 'steel_pickaxe' },
 }
 
 /**
@@ -748,7 +752,7 @@ export const TOOL_TIERS: Record<
  * raccourci vers l'atelier. Le rendement lu est celui du palier EFFECTIF (gaté par la
  * compétence, voir `effectiveTier`), pas forcément celui de l'outil tenu.
  */
-export const TOOL_YIELD: Record<ToolTier, number> = { none: 1, crude: 2, basic: 3, iron: 4 }
+export const TOOL_YIELD: Record<ToolTier, number> = { none: 1, crude: 2, basic: 3, iron: 4, steel: 5 }
 
 /**
  * Durabilité par objet — défaut : `BALANCE.TOOL_DURABILITY` (100 coups). Seuls
@@ -758,6 +762,9 @@ export const TOOL_DURABILITIES: Partial<Record<import('./items').ItemId, number>
   crude_axe: 20,
   crude_pickaxe: 20,
   crude_spear: 20,
+  // L'ACIER dure PLUS que le fer (défaut 100) : le palier 3 se sent aussi à l'usure.
+  steel_axe: 180,
+  steel_pickaxe: 180,
 }
 
 /**
@@ -821,6 +828,9 @@ export type RecipeId =
   | 'iron_ingot'
   | 'iron_axe'
   | 'iron_pickaxe'
+  | 'steel_ingot'
+  | 'steel_axe'
+  | 'steel_pickaxe'
   | 'spear'
   | 'hammer'
   | 'cooked_meat'
@@ -843,8 +853,11 @@ export type RecipeId =
   | 'chest'
 
 export interface Recipe {
-  /** `null` = À LA MAIN : nulle part, donc partout (spec craft-fortune C1). */
-  station: 'fire' | 'workshop' | 'furnace' | null
+  /** `null` = À LA MAIN : nulle part, donc partout (spec craft-fortune C1). Les stations
+   *  du T3 (`four_acier`, `atelier_lourd`) exigent le palier 3 du village pour être POSÉES
+   *  (STRUCTURE_DEFS.unlockTier=3) — c'est là que le couplage « forge N3 = l'acier » de la
+   *  spec construction R10 se paie, via la portée de la station (comme le fer via `furnace`). */
+  station: 'fire' | 'workshop' | 'furnace' | 'four_acier' | 'atelier_lourd' | null
   inputs: import('./items').ItemBag
   output: import('./items').ItemId
   /**
@@ -883,6 +896,13 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   iron_ingot: { station: 'furnace', inputs: { iron_ore: 2, coal: 1 }, output: 'iron_ingot', seconds: 10 },
   iron_axe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_axe', seconds: 12 },
   iron_pickaxe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_pickaxe', seconds: 12 },
+  // L'ACIER (V2-17, spec construction R10, GDD §372) — le T3, ce qui PAIE le palier 3 :
+  // le lingot se fond au FOUR D'ACIER (forge N3), les outils se façonnent à l'ATELIER LOURD
+  // (atelier N3). Chaque station exige le palier 3 du village pour être posée (unlockTier 3),
+  // donc l'acier est bien « l'événement pour tout le village » (GDD §220). Plus cher, plus long.
+  steel_ingot: { station: 'four_acier', inputs: { iron_ingot: 2, coal: 2 }, output: 'steel_ingot', seconds: 16 },
+  steel_axe: { station: 'atelier_lourd', inputs: { steel_ingot: 2, wood: 2 }, output: 'steel_axe', seconds: 16 },
+  steel_pickaxe: { station: 'atelier_lourd', inputs: { steel_ingot: 2, wood: 2 }, output: 'steel_pickaxe', seconds: 16 },
   spear: { station: 'workshop', inputs: { wood: 4, stone: 2, fiber: 1 }, output: 'spear', seconds: 8 },
   // LE MARTEAU SE FORGE AU FEU, PAS À L'ATELIER — et ce n'est pas un détail : bâtir
   // exige déjà un village, donc un Feu allumé. Le mettre à l'atelier créerait un
@@ -964,7 +984,7 @@ export interface WeaponProfile {
   chargeTicks: number
 }
 
-export type WeaponKind = 'unarmed' | 'crude_spear' | 'spear' | 'iron_axe'
+export type WeaponKind = 'unarmed' | 'crude_spear' | 'spear' | 'iron_axe' | 'steel_axe'
 
 /** Cosinus tabulés — `Math.cos` est interdit dans /sim (invariant §2, moteurs JS). */
 const COS_10 = 0.9848
@@ -1122,6 +1142,37 @@ export const WEAPON_PROFILES: Record<WeaponKind, WeaponProfile> = {
     },
     chargeTicks: ticksFor(0.8),
   },
+  // L'ACIER (V2-17) : la hache de fer, mais qui MORD plus fort — le sommet de l'arsenal du
+  // survivant. Même géométrie (on ne réapprend pas le geste), dégâts au-dessus du fer.
+  steel_axe: {
+    light: {
+      shape: 'cone',
+      range: 1.5,
+      arcCos: COS_60,
+      radius: 0,
+      damage: 18,
+      stamina: 18,
+      windupTicks: ticksFor(0.55),
+      recoveryHit: ticksFor(0.45),
+      recoveryWhiff: ticksFor(0.8),
+      lunge: 0.25,
+      weave: false,
+    },
+    charged: {
+      shape: 'cone',
+      range: 2.6,
+      arcCos: -1,
+      radius: 0,
+      damage: 30,
+      stamina: 34,
+      windupTicks: ticksFor(0.5),
+      recoveryHit: ticksFor(0.6),
+      recoveryWhiff: ticksFor(1.6),
+      lunge: 0,
+      weave: false,
+    },
+    chargeTicks: ticksFor(0.8),
+  },
 }
 
 /**
@@ -1132,6 +1183,7 @@ export const WEAPON_PROFILES: Record<WeaponKind, WeaponProfile> = {
 export const WEAPON_DAMAGE: Partial<Record<import('./items').ItemId, number>> = {
   spear: WEAPON_PROFILES.spear.light.damage,
   iron_axe: WEAPON_PROFILES.iron_axe.light.damage,
+  steel_axe: WEAPON_PROFILES.steel_axe.light.damage,
   // L'épieu taillé se glisse entre les mains nues (6) et la lance (16), à 10 : une
   // réponse au loup et au sanglier dès la première nuit, sans rendre la lance
   // inutile — elle frappe 60 % plus fort et tient cinq fois plus (spec C9).
@@ -2317,6 +2369,7 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   peat: 1, // la tourbe est légère, mais il en faut beaucoup
   ash: 0.4, // de la cendre : ça ne pèse rien, et c'est un composant, pas un combustible
   iron_ingot: 4,
+  steel_ingot: 4.5, // l'acier pèse un peu plus que le fer
   components: 1.5,
   crude_axe: 2,
   crude_pickaxe: 2.5,
@@ -2325,6 +2378,8 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   pickaxe: 3,
   iron_axe: 3.5,
   iron_pickaxe: 4,
+  steel_axe: 4,
+  steel_pickaxe: 4.5,
   spear: 2,
   hammer: 3,
   // Le feu de camp en ballot : LOURD (un tiers de la besace). On ne trimballe pas

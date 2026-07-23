@@ -40,6 +40,7 @@ const SQUASH = 0.55
 const WOOD = 0x8f6f45
 const STONE = 0xa8adb3
 const IRON = 0xd9e0e8
+const STEEL = 0xeef3f7 // l'acier : plus clair, poli
 
 /** Longueur du manche et taille du fer, en px — l'échelle du GESTE, pas de la portée
  *  (la portée, elle, se lit dans la zone au sol : elle est la seule à faire foi). */
@@ -47,6 +48,7 @@ const SHAFTS: Record<Exclude<WeaponKind, 'unarmed'>, { shaft: number; head: numb
   crude_spear: { shaft: 17, head: 4, width: 1.6, metal: STONE },
   spear: { shaft: 23, head: 5, width: 2, metal: IRON },
   iron_axe: { shaft: 12, head: 6, width: 2.4, metal: IRON },
+  steel_axe: { shaft: 12, head: 7, width: 2.6, metal: STEEL },
 }
 
 export interface HandWeapons {

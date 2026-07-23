@@ -417,6 +417,37 @@ describe('l’artisanat (A3)', () => {
     expect(rejections(sim)).toEqual(['station requise hors de portée : furnace'])
   })
 
+  it('la chaîne T3 (V2-17) : l’acier au four d’acier, les outils d’acier à l’atelier lourd', () => {
+    const sim = makeSim([])
+    const id = spawnEntity(sim, 10.5, 10.5)
+    grantItems(sim, id, { wood: 30, stone: 20, iron_ingot: 4, coal: 4 })
+    act(sim, id, { type: 'light_fire' })
+    const v = getVillageOf(sim, id)!.id
+    // Sans le four d'acier (palier 3), l'acier est hors de portée — quels que soient les stocks.
+    expect(recipeState(sim, me(sim), 'steel_ingot')).toBe('no_station')
+    // On pose les stations du T3 (addStructure court-circuite le gate de palier).
+    addStructure(sim, 'four_acier', 11, 10, v, id)
+    addStructure(sim, 'atelier_lourd', 9, 10, v, id)
+    drainEvents(sim)
+    expect(recipeState(sim, me(sim), 'steel_ingot')).toBe('feasible')
+
+    // Fondre l'acier AU FOUR D'ACIER (iron_ingot 2 + coal 2 → steel_ingot).
+    act(sim, id, { type: 'craft', recipeId: 'steel_ingot' })
+    act(sim, id, { type: 'craft', recipeId: 'steel_ingot' })
+    drain(sim, id)
+    expect(countOf(me(sim).inventory, 'steel_ingot')).toBe(2)
+
+    // Hache d'acier À L'ATELIER LOURD (steel_ingot 2 + wood 2).
+    act(sim, id, { type: 'craft', recipeId: 'steel_axe' })
+    drain(sim, id)
+    expect(countOf(me(sim).inventory, 'steel_axe')).toBe(1)
+
+    // Loin des stations : rejeté avec le nom de la station du T3.
+    me(sim).x = 25.5
+    act(sim, id, { type: 'craft', recipeId: 'steel_ingot' })
+    expect(rejections(sim)).toEqual(['station requise hors de portée : four_acier'])
+  })
+
   // Un sac plein n'est pas forcément un sac SANS place pour la sortie : les
   // intrants, en partant, LIBÈRENT des cases. Refuser d'après la place AVANT de
   // les consommer refuserait à tort un craft parfaitement légal.

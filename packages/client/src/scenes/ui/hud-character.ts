@@ -50,7 +50,13 @@ const TIER_LABEL: Record<CarryTier, string> = {
   heavy: 'LOURD',
   overloaded: 'SURCHARGÉ',
 }
-const STATION_LABEL: Record<StationId, string> = { fire: 'au Feu', workshop: "à l'atelier", furnace: 'au four' }
+const STATION_LABEL: Record<StationId, string> = {
+  fire: 'au Feu',
+  workshop: "à l'atelier",
+  furnace: 'au four',
+  four_acier: "au four d'acier",
+  atelier_lourd: "à l'atelier lourd",
+}
 
 /** Les 4 métiers, à gauche : emblème (une icône d'objet du métier), libellé, niveau, barre.
  *  Le niveau vient de `skillLevel` (/sim) — l'écran montre la règle, il ne la refait pas. */

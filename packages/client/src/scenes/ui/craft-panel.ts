@@ -76,6 +76,8 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   pickaxe: 'outils',
   iron_axe: 'outils',
   iron_pickaxe: 'outils',
+  steel_axe: 'outils',
+  steel_pickaxe: 'outils',
   hammer: 'outils',
   crude_spear: 'armes',
   spear: 'armes',
@@ -85,6 +87,7 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   rope: 'materiaux',
   leather: 'materiaux', // le cuir : un matériau tanné
   iron_ingot: 'materiaux',
+  steel_ingot: 'materiaux', // l'acier : le lingot du T3
   // Les COMPOSANTS (spec construction §4bis) : assemblés au Feu, posés pour émerger.
   enclume: 'composants',
   furnace: 'composants',
@@ -166,7 +169,13 @@ const NAME = textStyle('body', 'body', false)
 const COST = textStyle('small', 'dim', false)
 const SEARCH = textStyle('label', 'body', false)
 
-const STATION_LABEL: Record<StationId, string> = { fire: 'au Feu', workshop: "à l'atelier", furnace: 'au four' }
+const STATION_LABEL: Record<StationId, string> = {
+  fire: 'au Feu',
+  workshop: "à l'atelier",
+  furnace: 'au four',
+  four_acier: "au four d'acier",
+  atelier_lourd: "à l'atelier lourd",
+}
 
 export interface CraftPanel {
   update(inv: Inventory, stations: StationId[]): void

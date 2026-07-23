@@ -19,6 +19,7 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   iron_ore: 'Minerai de fer',
   coal: 'Charbon',
   iron_ingot: 'Lingot de fer',
+  steel_ingot: "Lingot d'acier",
   rope: 'Corde',
   crude_axe: 'Hachereau de fortune',
   crude_pickaxe: 'Pic de fortune',
@@ -27,6 +28,8 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   pickaxe: 'Pioche',
   iron_axe: 'Hache de fer',
   iron_pickaxe: 'Pioche de fer',
+  steel_axe: "Hache d'acier",
+  steel_pickaxe: "Pioche d'acier",
   spear: 'Lance',
   hammer: 'Marteau de construction',
   raw_meat: 'Viande crue',
@@ -352,6 +355,31 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x6f7d8a).fillRect(2, 4, 12, 2)
     g.fillStyle(0x6f7d8a).fillTriangle(1, 5, 3, 3, 3, 7).fillTriangle(15, 5, 13, 3, 13, 7)
     g.fillStyle(0xaeb9c4).fillRect(2, 4, 12, 1)
+  },
+
+  // Lingot d'acier : le trapèze du fer, mais poli — argenté clair, reflet vif.
+  steel_ingot: (g) => {
+    g.fillStyle(0x707d86).fillTriangle(2, 12, 4, 6, 14, 12) // masse
+    g.fillRect(4, 6, 8, 6)
+    g.fillStyle(0x707d86).fillTriangle(12, 12, 12, 6, 14, 12)
+    g.fillStyle(0xd8e0e6).fillRect(4, 6, 8, 2) // dessus éclairé, poli
+  },
+
+  // Hache d'acier : la hache de fer, argentée et polie (liseré vif) — le sommet.
+  steel_axe: (g) => {
+    g.fillStyle(0x5c6b74).fillRect(9, 3, 2, 11) // manche
+    g.fillStyle(0x8a97a2).fillRect(9, 3, 1, 11)
+    g.fillStyle(0x9aa6b0).fillTriangle(4, 2, 11, 2, 11, 8) // acier
+    g.fillStyle(0xe4ecf1).fillTriangle(4, 2, 8, 2, 8, 4) // tranchant poli, vif
+  },
+
+  // Pioche d'acier : la pioche de fer, argentée et polie.
+  steel_pickaxe: (g) => {
+    g.fillStyle(0x5c6b74).fillRect(7, 4, 2, 11)
+    g.fillStyle(0x8a97a2).fillRect(7, 4, 1, 11)
+    g.fillStyle(0x9aa6b0).fillRect(2, 4, 12, 2)
+    g.fillStyle(0x9aa6b0).fillTriangle(1, 5, 3, 3, 3, 7).fillTriangle(15, 5, 13, 3, 13, 7)
+    g.fillStyle(0xe4ecf1).fillRect(2, 4, 12, 1)
   },
 
   // Lance : hampe en diagonale + pointe claire.

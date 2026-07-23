@@ -51,6 +51,12 @@ export type ItemId =
   /** LA CENDRE — le Versant Brûlé. Pas un combustible : un composant. Et du lore. */
   | 'ash'
   | 'iron_ingot'
+  /** L'ACIER (spec construction R10, GDD §372) — le T3 du métal. Fondu au FOUR D'ACIER
+   *  (forge N3) depuis le fer, il fait les meilleurs outils/armes : « le forgeron débloque
+   *  l'acier = événement pour tout le village » (GDD §220). Ce qui PAIE le palier 3. */
+  | 'steel_ingot'
+  | 'steel_axe'
+  | 'steel_pickaxe'
   /** La CORDE : le liant de la couche 1 — tout objet de fortune y passe (spec craft-fortune C8). */
   | 'rope'
   | 'crude_axe'
