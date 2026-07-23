@@ -291,6 +291,9 @@ export class WorldScene extends Phaser.Scene {
   private dying = false
   private dyingAt = 0
   private dyingSnapped = false
+  /** Le nombre de morts RAPPROCHÉES (streak V2-21) au moment de la chute — lu du snapshot,
+   *  sert au bandeau de réveil à rendre LISIBLE l'épuisement croissant (sinon invisible). */
+  private dyingDeaths = 1
   /** L'historique du chat, mirroré au registry pour le panneau d'UIScene. */
   private chatLog: import('../hud-state').ChatLine[] = []
   /** Le message en cours de saisie, ou `null` si la ligne est fermée. */
@@ -1309,6 +1312,9 @@ export class WorldScene extends Phaser.Scene {
         // (le monstre d'`byEntityId`), jamais recalculé (§3).
         const killer = msg.monsters.find((m) => m.entityId === event.byEntityId)
         publishDeath(this.registry, event.cause, event.byEntityId, killer?.type ?? null, this.time.now)
+        // La sim a respawn au même tick : l'entité porte déjà son `deathCount` à jour (V2-21).
+        // On le retient pour le bandeau de réveil (l'épuisement croissant, enfin lisible).
+        this.dyingDeaths = msg.entities.find((e) => e.id === this.playerId)?.deathCount ?? 1
         // …et on TIENT le moment (mort-suite 1+5). On est ici AVANT `reconcile` (l'ordre du
         // snapshot) : `this.predicted` — donc la caméra qui la suit — est ENCORE sur la
         // tuile de chute. On l'y fige avant que le respawn ne la fasse traverser la carte.
@@ -1378,6 +1384,16 @@ export class WorldScene extends Phaser.Scene {
       this.dying = false
       this.input.enabled = true
       if (this.input.keyboard) this.input.keyboard.enabled = true
+      // LE RÉVEIL (mort-suite 3) : un mot au réveil au Feu, sur le canal conseil (neutre,
+      // pas l'alerte). Il rend LISIBLE l'épuisement croissant de V2-21 — sinon un malus de
+      // régén qu'on subit sans le comprendre. Mourir en série coûte plus ; survivre l'oublie.
+      publishHint(
+        this.registry,
+        this.dyingDeaths > 1
+          ? 'Réveil au Feu, plus épuisé qu’avant — mourir en série coûte cher. Tenez, et le corps oublie.'
+          : 'Réveil au Feu : les jambes lourdes, mais vos mains savent encore. Reprenez souffle.',
+        this.time.now,
+      )
     }
   }
 
