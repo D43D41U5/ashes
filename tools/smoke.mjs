@@ -1407,7 +1407,27 @@ const SCENARIOS = {
     if (!dom.hasShadow || !dom.visible || !dom.underActor) {
       console.error(`!! L'OMBRE DE CONTACT DU JOUEUR NE VA PAS : ${JSON.stringify(dom)}`)
     }
-    return dom
+
+    // LA VIGNETTE : elle couvre tout le canvas. Si elle mangeait le clic, le jeu entier
+    // deviendrait injouable (récolter, frapper, bâtir passent tous par un clic monde) — et
+    // aucune capture ne le montrerait. On le prouve donc directement : l'élément SOUS le
+    // curseur au centre de l'écran doit être le CANVAS, pas le voile.
+    const vig = await page.evaluate(() => {
+      const el = document.querySelector('.world-vignette')
+      const cs = el && getComputedStyle(el)
+      const hit = document.elementFromPoint(Math.round(window.innerWidth / 2), Math.round(window.innerHeight / 2))
+      return {
+        present: Boolean(el),
+        pointerEvents: cs ? cs.pointerEvents : null,
+        zIndex: cs ? cs.zIndex : null,
+        hitTag: hit ? hit.tagName.toLowerCase() : null,
+      }
+    })
+    console.log(`vignette : ${JSON.stringify(vig)}`)
+    if (!vig.present || vig.pointerEvents !== 'none' || vig.hitTag !== 'canvas') {
+      console.error(`!! LA VIGNETTE INTERCEPTE LE CLIC (ou manque) : ${JSON.stringify(vig)}`)
+    }
+    return { ...dom, vig }
   },
 
   /**

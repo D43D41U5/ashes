@@ -21,6 +21,7 @@ import { createDeathVeil, DEATH_VEIL_MS, type DeathVeil } from './ui/death-veil'
 import { createSeasonVeil, type SeasonVeil } from './ui/season-veil'
 import { createPauseMenu, type PauseMenu } from './ui/pause-menu'
 import { mountHud, type HudDom } from './ui/hud-dom'
+import { mountVignette, type Vignette } from './ui/vignette'
 import { createLoadingScreen, type LoadingScreen } from './ui/loading'
 import { createChatPanel, type ChatPanel } from './ui/chat-panel'
 import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
@@ -95,6 +96,8 @@ export class UIScene extends Phaser.Scene {
   /** La racine DOM du HUD (voiles rendus ISO à la maquette 2A–5A, par-dessus le canvas).
    *  Les sections DOM (bande 2A, fenêtre « fonder », …) y accrochent leur planche. */
   private hudRoot!: HudDom
+  /** Le cadrage du monde (bords assombris vers l'encre) — DOM, sous le HUD. */
+  private vignette!: Vignette
   /** La bande toujours à l'écran (maquette 2A) : jour/lieu, toasts, vitales, ceinture. */
   private hudCore!: HudCore
 
@@ -163,8 +166,12 @@ export class UIScene extends Phaser.Scene {
     // par-dessus le canvas du monde (voir ui/hud-dom.ts). Montée tôt : les sections
     // s'y accrochent dessous.
     this.hudRoot = mountHud()
+    // LA VIGNETTE cadre le MONDE : montée sous le HUD (z-index 5), elle assombrit les bords
+    // vers l'encre pour que l'image ait un centre. Statique et sans couleur ajoutée.
+    this.vignette = mountVignette()
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.hudRoot.destroy()
+      this.vignette?.destroy() // elle vit à la racine (hors planche) : à retirer à la main
       this.deathVeil?.destroy() // il vit à la racine (hors planche) : à retirer à la main
       this.seasonVeil?.destroy() // idem : monté sur document.body
       this.pauseMenu?.destroy() // idem
