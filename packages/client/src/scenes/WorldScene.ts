@@ -108,6 +108,8 @@ import { INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './
 import { DEATH_FADE_MS, DEATH_VEIL_MS } from './ui/death-veil'
 import { cendreTelegraphForDay } from './world/cendre-telegraph'
 import { corpseArrow, corpseSecondsLeft } from './world/corpse-arrow'
+import { SoundEngine } from '../audio/engine'
+import { buildSound, soundForEvent } from '../audio/sound'
 
 /** Cadrage caméra (spec client R10) : « je veux voir ~N tuiles de haut ». */
 const VISIBLE_TILES_TALL = 20
@@ -359,6 +361,9 @@ export class WorldScene extends Phaser.Scene {
   private inputs!: MovementBindings
   private myVillageId: number | null = null
   private myHunger = 100
+  /** LE SON (échafaudage audio) : moteur WebAudio procédural, réveillé au 1er geste, coupable
+   *  (touche N). Esthétique à régler à l'oreille — le SYSTÈME est là, sobre et mutable. */
+  private audioFx = new SoundEngine()
   private eventLog: SimEvent[] = []
   /** Persistance P1-6 : une reprise a réamorcé `eventLog` depuis le disque — il faut
    *  REPUBLIER la chronique une fois, au premier snapshot (là où les NOMS de village
@@ -416,6 +421,14 @@ export class WorldScene extends Phaser.Scene {
     // l'avatar du côté de son `facing`. Caché jusqu'au premier placement (sinon il naîtrait
     // en (0,0), au coin du monde).
     this.gaze = this.add.image(0, 0, 'fx-gaze').setOrigin(0.5, 0.5).setVisible(false)
+    // LE SON : réveil au PREMIER geste (les navigateurs bloquent l'audio sans interaction),
+    // et bascule du mute sur N (retenu d'une session à l'autre). Le son est un décor sobre.
+    this.input.once('pointerdown', () => this.audioFx.resume())
+    this.input.keyboard?.once('keydown', () => this.audioFx.resume())
+    this.input.keyboard?.on('keydown-N', () => {
+      const muted = this.audioFx.toggleMute()
+      publishHint(this.registry, muted ? 'Son coupé (N).' : 'Son rétabli (N).', this.time.now)
+    })
     this.view = new SnapshotView(this)
     // LE CHAT DE PROXIMITÉ : Entrée ouvre la saisie, Entrée envoie, Échap annule. On
     // écoute le clavier au niveau caractère (comme le champ de craft) ; `chatTyping`
@@ -487,7 +500,9 @@ export class WorldScene extends Phaser.Scene {
     }
 
     // Hook de debug/pilotage (pattern __MANIF__) : smoke tests et futurs bots.
-    ;(window as unknown as { __BRAISES__: unknown }).__BRAISES__ = { scene: this }
+    // `audio` : les fonctions PURES du son, exposées pour la vérification hors-ligne
+    // (OfflineAudioContext) — le SYSTÈME se contrôle même si l'esthétique se juge à l'oreille.
+    ;(window as unknown as { __BRAISES__: unknown }).__BRAISES__ = { scene: this, audio: { buildSound, soundForEvent } }
 
     // L'aiguillage solo/multi vient de l'écran principal (`MenuScene`), par les `data`
     // de scène. « Seul le transport change » : le reste de la scène ne sait pas lequel
@@ -1252,12 +1267,25 @@ export class WorldScene extends Phaser.Scene {
     else if (this.myTemperature < 45) this.warn('froid', 'Le froid vous prend.', 45000)
   }
 
+  /** Ce fait me concerne-t-il DIRECTEMENT (le « sur moi » du son) ? D'après le champ d'entité
+   *  ou de village que porte l'événement — sinon c'est un son de MONDE (nuit, mort d'une bête). */
+  private eventConcernsMe(e: SimEvent): boolean {
+    const any = e as { entityId?: number; targetEntityId?: number; villageId?: number }
+    if (any.entityId !== undefined) return any.entityId === this.playerId
+    if (any.targetEntityId !== undefined) return any.targetEntityId === this.playerId
+    if (any.villageId !== undefined) return any.villageId === this.myVillageId
+    return false
+  }
+
   private processEvents(msg: SnapshotMessage): void {
     // Une reprise a réamorcé `eventLog` mais n'a pas pu publier (pas de noms de village
     // avant ce premier snapshot) : on force UNE republication ici, puis on désarme.
     let chronicleDirty = this.chronicleReseedPending
     this.chronicleReseedPending = false
     for (const event of msg.events) {
+      // LE SON (échafaudage) : chaque fait de domaine peut sonner (table pure `soundForEvent`),
+      // « sur moi » ou non selon l'entité concernée. Muet si coupé / contexte pas réveillé.
+      this.audioFx.play(soundForEvent(event, this.eventConcernsMe(event)))
       if (event.type === 'action_rejected' && event.entityId === this.playerId) {
         publishError(this.registry, event.reason, this.time.now)
       } else if (event.type === 'resource_harvested' && event.entityId === this.playerId) {
