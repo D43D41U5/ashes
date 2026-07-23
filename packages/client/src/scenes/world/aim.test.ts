@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Corpse, ResourceNode } from '@braises/sim'
-import { aimAt, clickToAction, holdHarvest } from './aim'
+import { AGRICULTURE, STRUCTURE_HP } from '@braises/sim'
+import { aimAt, clickToAction, holdHarvest, type AimStructure } from './aim'
 
 const RANGE = 1.5
 const node = (id: number, tx: number, ty: number, stock = 10): ResourceNode =>
@@ -185,8 +186,8 @@ describe('holdHarvest — le maintien n’inonde pas la sim (A4, A6)', () => {
  * manger, ni se défendre, et la nuit qui chasse devient une exécution.
  */
 describe('la main décide du clic', () => {
-  const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, entityId: null, inRange: true }
-  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, entityId: null, inRange: true }
+  const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, entityId: null, onFire: false, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
+  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, entityId: null, onFire: false, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
   const versLest = { dx: 1, dy: 0 }
 
   it('DE LA NOURRITURE EN MAIN → on mange (et le maintien répète)', () => {
@@ -243,5 +244,102 @@ describe('DONNER : nourriture en main + un voisin visé → le don chaud (V1-10)
   it('un voisin HORS de portée du joueur n’est pas une cible de don', () => {
     const loin = [{ id: 7, x: 50, y: 50 }]
     expect(aimAt(50, 50, PLAYER, [], [], RANGE, loin).entityId).toBeNull()
+  })
+})
+
+describe('clickToAction — nourrir le Feu & réparer (grappe entretien : bois en main + structure)', () => {
+  const struct = (id: number, tx: number, ty: number, type: AimStructure['type'], hp: number): AimStructure =>
+    ({ id, tx, ty, type, hp })
+  const wood = { held: 'wood' as const, dx: 1, dy: 0 }
+
+  it('bois en main + le Feu sous le curseur, à portée → feed_fire', () => {
+    const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [struct(5, 10, 10, 'fire', STRUCTURE_HP.fire)])
+    expect(t.onFire).toBe(true)
+    expect(clickToAction(t, null, wood)).toEqual({ type: 'feed_fire' })
+  })
+
+  it('bois en main + Feu HORS de portée → pas de feed (la défense du pauvre : on frappe)', () => {
+    const t = aimAt(20, 20, PLAYER, [], [], RANGE, [], [struct(5, 20, 20, 'fire', STRUCTURE_HP.fire)])
+    expect(t.onFire).toBe(true)
+    expect(t.inRange).toBe(false)
+    expect(clickToAction(t, null, wood)).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+
+  it('bois en main + un mur ABÎMÉ sous le curseur, à portée → repair avec son id', () => {
+    const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [struct(42, 10, 10, 'wall', STRUCTURE_HP.wall - 50)])
+    expect(t.repairableId).toBe(42)
+    expect(clickToAction(t, null, wood)).toEqual({ type: 'repair', structureId: 42 })
+  })
+
+  it('bois en main + un mur INTACT (hp = max) → rien à réparer (on frappe)', () => {
+    const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [struct(42, 10, 10, 'wall', STRUCTURE_HP.wall)])
+    expect(t.repairableId).toBeNull()
+    expect(clickToAction(t, null, wood)).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+
+  it('le FEU ne se répare JAMAIS (il se nourrit) : un Feu à bas PV → onFire, pas repairable', () => {
+    const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [struct(5, 10, 10, 'fire', 1)])
+    expect(t.onFire).toBe(true)
+    expect(t.repairableId).toBeNull()
+    expect(clickToAction(t, null, wood)).toEqual({ type: 'feed_fire' })
+  })
+
+  it('MAINS NUES sur le Feu → rien (pas de bois à donner)', () => {
+    const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [struct(5, 10, 10, 'fire', STRUCTURE_HP.fire)])
+    expect(clickToAction(t, null)).toBeNull()
+  })
+
+  it('de la NOURRITURE en main sur le Feu → on mange (feed exige du BOIS, pas n’importe quoi)', () => {
+    const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [struct(5, 10, 10, 'fire', STRUCTURE_HP.fire)])
+    expect(clickToAction(t, null, { held: 'berries' as const, dx: 1, dy: 0 })).toEqual({ type: 'eat', item: 'berries' })
+  })
+})
+
+describe('clickToAction — le potager : semer & récolter (agriculture voie A)', () => {
+  const wood = { held: 'wood' as const, dx: 1, dy: 0 }
+  const graine = { held: 'graine' as const, dx: 1, dy: 0 }
+  /** Une parcelle sur la tuile visée (10,10) : `plantedAt` absent = vide ; posé = semée. */
+  const parcelle = (plantedAt?: number): AimStructure => ({
+    id: 8,
+    tx: 10,
+    ty: 10,
+    type: 'parcelle',
+    hp: STRUCTURE_HP.parcelle,
+    ...(plantedAt !== undefined ? { plantedAt } : {}),
+  })
+  const RIPE = AGRICULTURE.GROW_TICKS // parcelle semée au tick 0, mûre à ce tick
+
+  it('graine en main + parcelle VIDE à portée → plant', () => {
+    const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [parcelle()], 0)
+    expect(t.plantableId).toBe(8)
+    expect(t.harvestableId).toBeNull()
+    expect(clickToAction(t, null, graine)).toEqual({ type: 'plant', structureId: 8 })
+  })
+
+  it('mains libres + parcelle MÛRE à portée → harvest_crop', () => {
+    const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [parcelle(0)], RIPE)
+    expect(t.harvestableId).toBe(8)
+    expect(t.plantableId).toBeNull()
+    expect(clickToAction(t, null)).toEqual({ type: 'harvest_crop', structureId: 8 })
+  })
+
+  it('une parcelle semée mais PAS mûre n’est ni plantable ni récoltable', () => {
+    const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [parcelle(0)], RIPE - 1)
+    expect(t.plantableId).toBeNull()
+    expect(t.harvestableId).toBeNull()
+    // graine en main sur une parcelle occupée non mûre → rien à semer, on frappe (fallback).
+    expect(clickToAction(t, null, graine)).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+
+  it('mains libres sur une parcelle vide → rien (pas de graine à semer)', () => {
+    const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [parcelle()], 0)
+    expect(clickToAction(t, null)).toBeNull()
+  })
+
+  it('du bois sur une parcelle ABÎMÉE → repair (l’agriculture n’écrase pas la réparation)', () => {
+    const abimee: AimStructure = { id: 8, tx: 10, ty: 10, type: 'parcelle', hp: STRUCTURE_HP.parcelle - 10 }
+    const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [abimee], 0)
+    expect(t.repairableId).toBe(8)
+    expect(clickToAction(t, null, wood)).toEqual({ type: 'repair', structureId: 8 })
   })
 })

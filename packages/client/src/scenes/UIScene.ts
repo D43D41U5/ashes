@@ -7,7 +7,7 @@
 import { formatChronicleLine, zoneAt, type VillageTask, type WorldMap } from '@braises/sim'
 import Phaser from 'phaser'
 import { getHud, setHud } from '../hud-state'
-import { drainPickups, queueAction } from './world/hud-bridge'
+import { drainCrafts, drainLevelUps, drainPickups, queueAction } from './world/hud-bridge'
 import { TILE_PX } from '../render/framing'
 import { createHudCore, type HudCore } from './ui/hud-core'
 import { createFatalPanel, type FatalPanel } from './ui/fatal'
@@ -18,6 +18,8 @@ import { createFoundVillagePrompt, type FoundVillagePrompt } from './ui/found-vi
 import { createRefugeePrompt, type RefugeePrompt } from './ui/refugee-prompt'
 import { createFireUpgradePrompt, type FireUpgradePrompt } from './ui/fire-upgrade-prompt'
 import { createDeathVeil, DEATH_VEIL_MS, type DeathVeil } from './ui/death-veil'
+import { createSeasonVeil, type SeasonVeil } from './ui/season-veil'
+import { createPauseMenu, type PauseMenu } from './ui/pause-menu'
 import { mountHud, type HudDom } from './ui/hud-dom'
 import { createLoadingScreen, type LoadingScreen } from './ui/loading'
 import { createChatPanel, type ChatPanel } from './ui/chat-panel'
@@ -74,6 +76,10 @@ export class UIScene extends Phaser.Scene {
   private refugeePrompt!: RefugeePrompt
   private fireUpgradePrompt!: FireUpgradePrompt
   private deathVeil!: DeathVeil
+  private seasonVeil!: SeasonVeil
+  /** La stèle de fin de saison n'est levée qu'UNE fois (la saison ne finit qu'une fois). */
+  private seasonVeilShown = false
+  private pauseMenu!: PauseMenu
   /** Le dernier `at` de mort déjà montré — un nouveau lève le voile une seule fois. */
   private lastDeathAt = -1
   /** Combien de fois on est tombé cette session — l'invite « retournez-y » n'apparaît
@@ -160,6 +166,8 @@ export class UIScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.hudRoot.destroy()
       this.deathVeil?.destroy() // il vit à la racine (hors planche) : à retirer à la main
+      this.seasonVeil?.destroy() // idem : monté sur document.body
+      this.pauseMenu?.destroy() // idem
     })
 
     // LA BANDE DU HUD (maquette 2A), en DOM : jour/lieu (haut-gauche), toasts (haut-
@@ -197,6 +205,16 @@ export class UIScene extends Phaser.Scene {
     // scalée), il ne fait que se lever quand le joueur tombe. WorldScene pose
     // `deathMoment` (one-shot horodaté).
     this.deathVeil = createDeathVeil()
+    // La stèle de fin de saison (finition GATE 1) : SŒUR du voile de mort, terminale.
+    // WorldScene pose `seasonVerdicts` au jour 61 (sa non-nullité = fin de saison) ; on la lève une fois.
+    this.seasonVeil = createSeasonVeil()
+    // Le menu PAUSE (ESC) : REPRENDRE referme (menuOpen=false → WorldScene reprend l'hôte) ; le
+    // curseur de son passe par le registre (`audioVolume`), que WorldScene applique au moteur.
+    this.pauseMenu = createPauseMenu({
+      onResume: () => setHud(this.registry, 'menuOpen', false),
+      getVolume: () => Number(getHud(this.registry, 'audioVolume') ?? 1),
+      onVolume: (v) => setHud(this.registry, 'audioVolume', v),
+    })
     this.chatPanel = createChatPanel(this)
     // Le journal (J) : la chronique de la saison, la Mémoire v1.
     const panelBg = this.add.rectangle(0, 0, 720, 480, 0x14141a, 0.92).setOrigin(0.5).setStrokeStyle(2, 0x6b5a3a)
@@ -570,6 +588,9 @@ export class UIScene extends Phaser.Scene {
 
     // Le butin récolté : WorldScene POSE, on draine, hud-core empile (fusion par item).
     for (const p of drainPickups(this.registry)) this.hudCore.pushToast(p.item, p.count)
+    // FABRIQUÉ et NIVEAU : les deux boucles les plus gratifiantes, un bandeau à part chacune.
+    for (const c of drainCrafts(this.registry)) this.hudCore.pushCraft(c.item)
+    for (const l of drainLevelUps(this.registry)) this.hudCore.pushLevelUp(l.skill, l.level)
 
     // L'écran PERSONNAGE (TAB) : la grille, le glisser, le loot, l'artisanat. Le
     // conteneur ouvert est déjà résolu par WorldScene (null s'il a disparu). Fermé,
@@ -638,15 +659,28 @@ export class UIScene extends Phaser.Scene {
       now: this.time.now,
     })
 
-    // Le journal : ouvert à la demande (J), ou de force à la fin de saison.
+    // Le journal : ouvert À LA DEMANDE (J). La fin de saison ne le force PLUS : c'est la stèle
+    // (season-veil) qui prend la cérémonie, et elle tient sa propre chronique.
     const chronicle = getHud(this.registry, 'chronicle') ?? []
-    const open = Boolean(getHud(this.registry, 'journalOpen')) || Boolean(getHud(this.registry, 'seasonEnded'))
+    const open = Boolean(getHud(this.registry, 'journalOpen'))
     this.journalPanel.setVisible(open)
     if (open) {
       this.journalText.setText(
         chronicle.slice(-26).map(formatChronicleLine).join('\n') || '(rien encore — le monde est jeune)',
       )
     }
+
+    // LA STÈLE DE FIN DE SAISON : levée UNE fois, au jour 61, avec les verdicts et la chronique
+    // entière (le vrai trophée). Terminale — le joueur ROUVRE la vallée (?fresh) depuis elle.
+    // `seasonVerdicts` non-null EST le signal de fin de saison (posé au `season_ended`).
+    const verdicts = getHud(this.registry, 'seasonVerdicts')
+    if (!this.seasonVeilShown && verdicts) {
+      this.seasonVeilShown = true
+      this.seasonVeil.show(verdicts.verdicts, verdicts.myVillageId, chronicle)
+    }
+
+    // Le menu PAUSE (ESC) : WorldScene fige l'hôte quand `menuOpen` ; on ne fait que montrer/cacher.
+    this.pauseMenu.setVisible(Boolean(getHud(this.registry, 'menuOpen')))
 
     // La carte plein écran (M) : montée à la première ouverture, puis basculée.
     const mapData = getHud(this.registry, 'mapData')

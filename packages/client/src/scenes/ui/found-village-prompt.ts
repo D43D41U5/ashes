@@ -13,6 +13,7 @@
  * ici : elle POSE l'action `found_village`, la sim tranche.
  */
 import type { PlayerAction } from '@braises/sim'
+import { createPromptGate } from './prompt-gate'
 
 export interface FoundVillagePrompt {
   /** `foundable` = le feu promouvable (ou `null` = rien à portée : la fenêtre s'efface). */
@@ -50,20 +51,30 @@ export function createFoundVillagePrompt(board: HTMLElement, send: (a: PlayerAct
   board.appendChild(root)
 
   let current: { structureId: number } | null = null
+  // Le garde anti-double-envoi : sans lui, `UIScene.update` (qui rappelle `update()` chaque
+  // frame avec `foundableFire` encore inchangé jusqu'au snapshot) rouvrirait la fenêtre et un
+  // second clic renverrait un `found_village` refusé (« déjà un foyer ») — du bruit dans le
+  // flux que la chronique/alignement lisent. Identité = l'id du feu (voir prompt-gate).
+  const gate = createPromptGate()
 
   root.querySelector<HTMLElement>('.fvp-btn')!.addEventListener('click', () => {
     if (!current) return
     send({ type: 'found_village', structureId: current.structureId })
-    // On FERME tout de suite (optimiste). Le foyer n'est fondé côté sim qu'au prochain
-    // snapshot ; d'ici là, un second clic renverrait un `found_village` refusé (« déjà un
-    // foyer ») dans le flux d'événements — un bouton qui a tiré se tait. Le snapshot suivant
-    // confirmera (foundableFire repasse à null).
+    gate.acted(current.structureId)
     current = null
     root.style.display = 'none'
   })
 
   return {
     update(foundable) {
+      // On a fondé et le snapshot n'a pas encore retiré le feu de la liste : on reste muet
+      // (et `current` null) tant que le MÊME feu revient. Fondé → `foundableFire` passe à null
+      // → le garde rend la main.
+      if (gate.suppresses(foundable?.structureId ?? null)) {
+        current = null
+        root.style.display = 'none'
+        return
+      }
       current = foundable
       root.style.display = foundable ? 'block' : 'none'
     },

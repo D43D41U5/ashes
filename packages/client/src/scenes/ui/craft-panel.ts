@@ -84,6 +84,7 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   stew: 'survie',
   cooked_meat: 'survie',
   tenue_hiver: 'survie', // la tenue d'hiver : de la survie pure (le froid tue en acte III)
+  graine: 'survie', // la graine du potager (agriculture) : de la nourriture à venir
   rope: 'materiaux',
   leather: 'materiaux', // le cuir : un matériau tanné
   iron_ingot: 'materiaux',

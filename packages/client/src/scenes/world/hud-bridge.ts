@@ -16,11 +16,12 @@ import {
   type PlayerAction,
   type SimEvent,
   type RefugeeGroup,
+  type SkillId,
   type Structure,
   type Village,
 } from '@braises/sim'
 import type Phaser from 'phaser'
-import { getHud, setHud, type StationId } from '../../hud-state'
+import { getHud, setHud, type SeasonVerdict, type StationId } from '../../hud-state'
 
 type Registry = Phaser.Data.DataManager
 
@@ -260,6 +261,35 @@ export function drainPickups(registry: Registry): { item: ItemId; count: number 
   return queue
 }
 
+/** FABRIQUÉ (event `item_crafted` sur moi) : même canal que `publishPickup`, file à part
+ *  — le bandeau de fabrication ne se fond pas dans les toasts de récolte. */
+export function publishCraft(registry: Registry, item: ItemId): void {
+  const queue = getHud(registry, 'crafts') ?? []
+  queue.push({ item })
+  setHud(registry, 'crafts', queue)
+}
+
+/** Côté UIScene : récupère et vide la file des fabrications. */
+export function drainCrafts(registry: Registry): { item: ItemId }[] {
+  const queue = getHud(registry, 'crafts') ?? []
+  if (queue.length > 0) setHud(registry, 'crafts', [])
+  return queue
+}
+
+/** NIVEAU (event `skill_level_up` sur moi) : le plus gros toast, sa propre file. */
+export function publishLevelUp(registry: Registry, skill: SkillId, level: number): void {
+  const queue = getHud(registry, 'levelUps') ?? []
+  queue.push({ skill, level })
+  setHud(registry, 'levelUps', queue)
+}
+
+/** Côté UIScene : récupère et vide la file des montées de métier. */
+export function drainLevelUps(registry: Registry): { skill: SkillId; level: number }[] {
+  const queue = getHud(registry, 'levelUps') ?? []
+  if (queue.length > 0) setHud(registry, 'levelUps', [])
+  return queue
+}
+
 /** Côté WorldScene : récupère et vide la file d'actions de l'UI. */
 export function drainQueuedActions(registry: Registry): PlayerAction[] {
   const queue = getHud(registry, 'pendingActions') ?? []
@@ -310,6 +340,9 @@ export function publishAlarm(registry: Registry, at: number): void {
   setHud(registry, 'alarm', { at })
 }
 
-export function publishSeasonEnded(registry: Registry): void {
-  setHud(registry, 'seasonEnded', true)
+export function publishSeasonEnded(registry: Registry, verdicts: SeasonVerdict[], myVillageId: number | null): void {
+  // Les verdicts + l'id de MON village : l'écran de fin de saison couronne le mien, montre
+  // les voisins, et le distingue par archétype. `seasonVerdicts !== null` EST « la saison est
+  // finie » — pas besoin d'un booléen miroir à côté. Le récit (chronique) est déjà en état.
+  setHud(registry, 'seasonVerdicts', { verdicts, myVillageId })
 }

@@ -15,6 +15,8 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   stone: 'Pierre',
   fiber: 'Fibre',
   berries: 'Baies',
+  legume: 'Légume',
+  graine: 'Graine',
   stew: 'Ragoût',
   iron_ore: 'Minerai de fer',
   coal: 'Charbon',
@@ -249,6 +251,19 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0xc0392b).fillCircle(11, 9, 3)
     g.fillStyle(0xd4564a).fillCircle(8, 12, 3)
     g.fillStyle(0xe88a80).fillCircle(4, 8, 1) // reflet NO
+  },
+
+  // Légume du potager : une racine ocre à fanes vertes (nourriture de base).
+  legume: (g) => {
+    g.fillStyle(0x3f7a33).fillRect(6, 1, 1, 4).fillRect(8, 0, 1, 5).fillRect(10, 1, 1, 4) // les fanes
+    g.fillStyle(0xd89a34).fillEllipse(8, 10, 8, 10) // la racine
+    g.fillStyle(0xefc060).fillCircle(6, 8, 1) // reflet NO
+  },
+
+  // Graines : quelques pépins clairs au creux d'une paume — l'amorçage du potager.
+  graine: (g) => {
+    g.fillStyle(0x7a5c34).fillEllipse(8, 12, 12, 5) // la paume
+    g.fillStyle(0xd8c48a).fillCircle(6, 10, 1).fillCircle(9, 9, 1).fillCircle(11, 11, 1).fillCircle(8, 11, 1)
   },
 
   // Bol fumant : coupe brune, ragoût, deux volutes.

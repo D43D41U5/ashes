@@ -39,6 +39,7 @@ import { ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { vitalIconKey, type VitalId } from '../../render/vital-art'
 import { INK_OUTLINE, INK_OUTLINE_STRONG } from './hud-dom'
 import { HEX, VITAL_HEX } from './palette'
+import { SKILL_LABELS } from './skill-labels'
 
 const BELT = SLOTS.BELT
 
@@ -49,13 +50,6 @@ const CARRY_COLOR: Record<CarryTier, string> = {
   medium: HEX.ember,
   heavy: HEX.emberDeep,
   overloaded: HEX.alert,
-}
-
-const SKILL_LABELS: Record<SkillId, string> = {
-  woodcutting: 'Bûcheron',
-  mining: 'Mineur',
-  foraging: 'Cueilleur',
-  crafting: 'Artisan',
 }
 
 /** Les 4 vitales en médaillon (le poids, lui, passe en ligne secondaire — maquette 2A). */
@@ -89,6 +83,10 @@ export interface HudCore {
   update(s: HudCoreState): void
   /** Un butin récolté vient d'entrer : on l'empile en toast (haut-droite). */
   pushToast(item: ItemId, count: number): void
+  /** Une FABRICATION s'est achevée : un bandeau ambre, plus lourd qu'une récolte. */
+  pushCraft(item: ItemId): void
+  /** Un MÉTIER a monté d'un cran : le plus gros retour des trois, un palier se franchit. */
+  pushLevelUp(skill: SkillId, level: number): void
   setVisible(v: boolean): void
 }
 
@@ -173,7 +171,10 @@ export function createHudCore(
   const TOAST_MS = 2600
   const FADE_MS = 500
   interface Toast {
-    item: ItemId
+    // Absent pour les bandeaux fabrication/niveau : eux ne fusionnent avec rien, ils
+    // ne sont donc jamais retrouvés par `find(t => t.item === item)`. Seule la récolte
+    // s'agrège (un « +2 bois » qui se recharge), et elle porte toujours son `item`.
+    item?: ItemId
     total: number
     at: number
     el: HTMLElement
@@ -200,6 +201,27 @@ export function createHudCore(
       el.innerHTML = `<span class="hc-tval">+${count} ${label(item)}</span> <span class="hc-ttot"></span>`
       toastsEl.prepend(el)
       toasts.push({ item, total: count, at: now, el })
+    },
+
+    // FABRIQUÉ et NIVEAU sont les deux boucles les plus gratifiantes du jeu — elles doivent
+    // se LIRE plus lourdes qu'une simple récolte ambre. D'où une signature à part : un chip
+    // plein pour la fabrication, un bandeau doré à deux lignes (+ lueur non-réduite) pour le
+    // palier. Aucune fusion — chacune est un fait unique. Même cycle de vie/fondu que les
+    // toasts (l'horloge Phaser via `s.now`), donc le nettoyage les prend sans code en plus.
+    pushCraft(item) {
+      const el = document.createElement('div')
+      el.className = 'hc-toast hc-craft'
+      el.innerHTML = `<span class="hc-craft-tag">FABRIQUÉ</span><span class="hc-craft-item">${label(item)}</span>`
+      toastsEl.prepend(el)
+      toasts.push({ total: 0, at: performanceNow(), el })
+    },
+
+    pushLevelUp(skill, level) {
+      const el = document.createElement('div')
+      el.className = 'hc-toast hc-levelup'
+      el.innerHTML = `<span class="hc-lvl-skill">${SKILL_LABELS[skill]}</span><span class="hc-lvl-num">NIVEAU ${level}</span>`
+      toastsEl.prepend(el)
+      toasts.push({ total: 0, at: performanceNow(), el })
     },
 
     update(s) {
@@ -320,6 +342,20 @@ function markup(): string {
     .hc-toasts{position:absolute;top:24px;right:26px;display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
     .hc-toast{font-size:14px;color:#e8e0c8;letter-spacing:1px;${INK_OUTLINE_STRONG}transition:opacity .3s ease;}
     .hc-toast .hc-tval{color:#c98b3a;}
+    /* FABRIQUÉ — un bandeau, pas une ligne : chip ambre plein + filet, plus lourd qu'un « +2 bois ». */
+    .hc-toast.hc-craft{display:flex;align-items:center;gap:8px;padding:5px 11px 5px 8px;
+      background:linear-gradient(90deg,rgba(201,139,58,.05),rgba(201,139,58,.22));border-right:3px solid #c98b3a;}
+    .hc-craft .hc-craft-tag{font-size:10px;letter-spacing:2px;font-weight:700;color:#14100c;background:#c98b3a;padding:2px 6px;}
+    .hc-craft .hc-craft-item{font-size:14px;color:#f2ead0;letter-spacing:1px;}
+    /* NIVEAU — le plus gros des trois : deux lignes, or vif, et une lueur qui s'éteint (hors réduction). */
+    .hc-toast.hc-levelup{display:flex;flex-direction:column;align-items:flex-end;gap:1px;padding:7px 12px 7px 10px;
+      background:linear-gradient(90deg,rgba(232,198,106,.05),rgba(232,198,106,.16));border-right:3px solid #e8c66a;}
+    .hc-levelup .hc-lvl-skill{font-size:15px;font-weight:700;letter-spacing:2px;color:#f4ecd2;text-shadow:0 0 10px rgba(232,198,106,.45),0 1px 0 #14141a;}
+    .hc-levelup .hc-lvl-num{font-size:11px;letter-spacing:3px;color:#e8c66a;}
+    @media (prefers-reduced-motion: no-preference){
+      .hc-toast.hc-levelup{animation:hc-lvl-pulse 1s ease-out;}
+      @keyframes hc-lvl-pulse{from{box-shadow:0 0 22px rgba(232,198,106,.55);}to{box-shadow:0 0 0 rgba(232,198,106,0);}}
+    }
     /* bas-gauche : médaillons + ligne secondaire */
     /* z-index 10 : les vitales restent visibles PAR-DESSUS l'écran personnage (3A),
        comme la maquette (« la fenêtre ne les recouvre pas »). */

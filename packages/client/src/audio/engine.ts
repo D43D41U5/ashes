@@ -6,21 +6,27 @@
 import { buildSound, type SoundSpec } from './sound'
 
 const MUTE_KEY = 'braises.audio.muted'
+const VOLUME_KEY = 'braises.audio.volume'
 const MASTER_GAIN = 0.6 // le plafond global : le son reste un DÉCOR, jamais au premier plan
+
+const clamp01 = (v: number): number => Math.max(0, Math.min(1, v))
 
 export class SoundEngine {
   private ctx: AudioContext | undefined
   private master: GainNode | undefined
   private muted: boolean
+  /** Le curseur MAÎTRE, 0..1 (persisté) — multiplie le plafond `MASTER_GAIN`. */
+  private volume: number
 
   constructor() {
-    this.muted = (() => {
-      try {
-        return localStorage.getItem(MUTE_KEY) === '1'
-      } catch {
-        return false
-      }
-    })()
+    this.muted = readStorage(MUTE_KEY) === '1'
+    const v = Number(readStorage(VOLUME_KEY))
+    this.volume = Number.isFinite(v) && readStorage(VOLUME_KEY) !== null ? clamp01(v) : 1
+  }
+
+  /** Le gain effectif = 0 si muet, sinon le plafond × le curseur. Une seule source. */
+  private applyGain(): void {
+    if (this.master) this.master.gain.value = this.muted ? 0 : MASTER_GAIN * this.volume
   }
 
   /** À appeler au premier geste utilisateur (clic/touche) : crée/réveille le contexte. */
@@ -33,7 +39,7 @@ export class SoundEngine {
       if (!Ctor) return // navigateur sans WebAudio : le jeu tourne muet, sans planter
       this.ctx = new Ctor()
       this.master = this.ctx.createGain()
-      this.master.gain.value = this.muted ? 0 : MASTER_GAIN
+      this.applyGain()
       this.master.connect(this.ctx.destination)
     }
     void this.ctx.resume()
@@ -48,16 +54,39 @@ export class SoundEngine {
   /** Bascule le mute (persisté). Rend le nouvel état. */
   toggleMute(): boolean {
     this.muted = !this.muted
-    if (this.master) this.master.gain.value = this.muted ? 0 : MASTER_GAIN
-    try {
-      localStorage.setItem(MUTE_KEY, this.muted ? '1' : '0')
-    } catch {
-      /* stockage refusé : le mute vaut pour la session */
-    }
+    this.applyGain()
+    writeStorage(MUTE_KEY, this.muted ? '1' : '0')
     return this.muted
+  }
+
+  /** Règle le curseur maître (0..1, persisté). Rend la valeur clampée. */
+  setVolume(v: number): number {
+    this.volume = clamp01(v)
+    this.applyGain()
+    writeStorage(VOLUME_KEY, String(this.volume))
+    return this.volume
+  }
+
+  getVolume(): number {
+    return this.volume
   }
 
   isMuted(): boolean {
     return this.muted
+  }
+}
+
+function readStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+function writeStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* stockage refusé : le réglage vaut pour la session */
   }
 }

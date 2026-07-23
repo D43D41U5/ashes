@@ -1133,6 +1133,181 @@ const SCENARIOS = {
   },
 
   /**
+   * LA STÈLE DE FIN DE SAISON se lève-t-elle, et COURONNE-t-elle le bon verdict ?
+   *
+   * Au jour 61, `season_ended` pose `seasonEnded` + `seasonVerdicts` (le registry est PARTAGÉ
+   * WorldScene↔UIScene). On INJECTE ces deux-là (comme `mort` injecte `deathMoment`) plus une
+   * chronique, puis on LIT le DOM et on REGARDE : la stèle couvre l'écran, nomme MON village,
+   * liste les voisins, et déplie la chronique. `reducedMotion` désarme la révélation échelonnée
+   * (l'horloge headless saute — même piège que le voile de mort), tout est visible d'emblée.
+   */
+  async saison(page) {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.waitForTimeout(1500) // stabilisation (harnais a déjà navigué + attendu mapData)
+    await page.evaluate(() => {
+      const r = window.__BRAISES__.scene.registry
+      r.set('chronicle', [
+        { day: 1, text: 'Un Feu s’est allumé : Brande-Haute.', weight: 'recit' },
+        { day: 22, text: 'Le Grand Froid a commencé.', weight: 'battement' },
+        { day: 47, text: 'Quelqu’un est tombé.', weight: 'intime' },
+        { day: 58, text: 'L’arche a levé l’ancre — 3 à bord.', weight: 'battement' },
+      ])
+      // `seasonVerdicts` non-null EST le signal de fin de saison (la stèle se lève dessus).
+      r.set('seasonVerdicts', {
+        myVillageId: 1,
+        verdicts: [
+          { villageId: 1, name: 'Brande-Haute', archetype: 'foyer', score: 5, outcome: 'a sauvé 3 vies dont 2 évacuées' },
+          { villageId: 2, name: 'Le Ravin', archetype: 'meute', score: 240, outcome: 'est partie les bras pleins (valeur 240)' },
+          { villageId: 3, name: 'Le Val', archetype: 'neutre', score: 4, outcome: 'a survécu' },
+        ],
+      })
+    })
+    await page.waitForTimeout(400) // UIScene.update lève la stèle (reduced-motion = instantané)
+    const dom = await page.evaluate(() => {
+      const sv = document.querySelector('.season-veil')
+      return {
+        count: document.querySelectorAll('.season-veil').length,
+        display: sv && getComputedStyle(sv).display,
+        title: document.querySelector('.sv-title')?.textContent ?? '',
+        youLabel: document.querySelector('.sv-you-label')?.textContent ?? '',
+        youName: document.querySelector('.sv-you-name')?.textContent ?? '',
+        youColor: (() => {
+          const n = document.querySelector('.sv-you-name')
+          return n ? getComputedStyle(n).color : ''
+        })(),
+        youOutcome: document.querySelector('.sv-you-outcome')?.textContent ?? '',
+        nbCount: document.querySelectorAll('.sv-nb').length,
+      }
+    })
+    console.log(`stèle de fin de saison : ${JSON.stringify(dom)}`)
+    await page.screenshot({ path: `${OUT}/saison-stele.png` })
+    // Déplier la chronique et vérifier ses lignes (les trois poids rendus).
+    await page.evaluate(() => document.querySelector('.sv-chron-toggle')?.click())
+    await page.waitForTimeout(200)
+    const chron = await page.evaluate(() => ({
+      open: getComputedStyle(document.querySelector('.sv-chronicle')).display,
+      lines: document.querySelectorAll('.sv-cl').length,
+      battements: document.querySelectorAll('.sv-cl.sv-battement').length,
+    }))
+    console.log(`chronique dépliée : ${JSON.stringify(chron)}`)
+    await page.screenshot({ path: `${OUT}/saison-chronique.png` })
+    if (dom.display !== 'flex' || !dom.youName.includes('Brande') || dom.nbCount !== 2) {
+      console.error(`!! LA STÈLE NE SE LÈVE PAS BIEN : ${JSON.stringify(dom)}`)
+    }
+    return { ...dom, chron }
+  },
+
+  /**
+   * LE MENU PAUSE (ESC) s'ouvre-t-il, rappelle-t-il les contrôles, et se referme-t-il ?
+   *
+   * On presse ESC pour de VRAI (le chemin complet : keydown → `menuOpen` → l'hôte se fige,
+   * l'overlay couvre), on LIT le DOM (le tableau du clic gauche + les touches), on REGARDE
+   * la capture, puis on re-presse ESC pour vérifier qu'il REFERME (une sortie qu'on ne peut
+   * plus presser est un piège).
+   */
+  async pause(page) {
+    await page.waitForTimeout(1500)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+    const open = await page.evaluate(() => {
+      const pm = document.querySelector('.pause-menu')
+      return {
+        display: pm && getComputedStyle(pm).display,
+        menuOpen: window.__BRAISES__.scene.registry.get('menuOpen'),
+        title: document.querySelector('.pm-title')?.textContent ?? '',
+        clicks: document.querySelectorAll('.pm-row.pm-click').length,
+        keys: document.querySelectorAll('.pm-table .pm-row:not(.pm-click)').length,
+      }
+    })
+    console.log(`menu pause : ${JSON.stringify(open)}`)
+    await page.screenshot({ path: `${OUT}/pause-menu.png` })
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    const closed = await page.evaluate(() => ({
+      display: getComputedStyle(document.querySelector('.pause-menu')).display,
+      menuOpen: window.__BRAISES__.scene.registry.get('menuOpen'),
+    }))
+    console.log(`après 2ᵉ ESC : ${JSON.stringify(closed)}`)
+    if (open.display !== 'flex' || open.clicks !== 6 || open.keys !== 8 || closed.display !== 'none') {
+      console.error(`!! LE MENU PAUSE NE MARCHE PAS : ouvert ${JSON.stringify(open)} / fermé ${JSON.stringify(closed)}`)
+    }
+    return { open, closed }
+  },
+
+  /**
+   * LES DEUX BOUCLES GRATIFIANTES ONT-ELLES UN RETOUR ? (audit UI/UX P0.)
+   *
+   * FABRIQUER et MONTER D'UN CRAN étaient muets. On les rend visibles par un bandeau à part
+   * — plus lourd qu'un « +2 bois ». On ne peut pas déclencher un craft en headless (il faut
+   * matériaux + établi), alors on SÈME les files `crafts`/`levelUps` du registre EXACTEMENT
+   * comme `publishCraft`/`publishLevelUp` le font, et `UIScene.update` les draine par le vrai
+   * chemin (`drainCrafts` → `pushCraft`). On lit ensuite le DOM et on REGARDE : les deux
+   * bandeaux sont là, distincts l'un de l'autre, distincts d'un toast de récolte.
+   *
+   * `reducedMotion` désarme la lueur du palier (la seule animation) — le bandeau, lui, doit
+   * rester ENTIER et lisible sans elle (sinon le smoke, qui tourne en réduit, clignerait).
+   */
+  async juice(page) {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.waitForTimeout(1500) // stabilisation (harnais a déjà navigué + attendu le monde)
+    // L'horloge Phaser headless COURT (elle rattrape le temps réel par bonds) et les toasts se
+    // fondent dessus (2,6 s d'horloge) : à peine empilés, un bond les efface. Rien de tout ça
+    // n'est un bug du jeu (in-game l'horloge avance sans saut). Pour VÉRIFIER le rendu, on sème
+    // les files, on laisse UIScene drainer, et dès que les deux bandeaux sont là on FIGE la
+    // boucle Phaser dans le MÊME eval (aucune frame ne s'intercale) — ni fondu ni retrait.
+    let frozen = false
+    for (let i = 0; i < 12 && !frozen; i++) {
+      await page.evaluate(() => {
+        const r = window.__BRAISES__.scene.registry
+        // Un toast de récolte d'abord — le repère par rapport auquel les deux autres doivent PESER.
+        r.set('pickups', [{ item: 'wood', count: 2 }])
+        r.set('crafts', [{ item: 'axe' }])
+        r.set('levelUps', [{ skill: 'woodcutting', level: 3 }])
+      })
+      await page.waitForTimeout(40) // un tour de boucle UIScene suffit à drainer + empiler
+      frozen = await page.evaluate(() => {
+        const n = document.querySelectorAll('.hc-toast.hc-craft, .hc-toast.hc-levelup').length
+        if (n >= 2) {
+          window.__BRAISES__.scene.game.loop.sleep() // fige l'horloge : les bandeaux ne s'effacent plus
+          return true
+        }
+        return false
+      })
+    }
+    await page.screenshot({ path: `${OUT}/juice-toasts.png` })
+    const dom = await page.evaluate(() => {
+      const craft = document.querySelector('.hc-toast.hc-craft')
+      const lvl = document.querySelector('.hc-toast.hc-levelup')
+      const cs = craft && getComputedStyle(craft)
+      const ls = lvl && getComputedStyle(lvl)
+      const rect = (el) => {
+        if (!el) return null
+        const r = el.getBoundingClientRect()
+        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
+      }
+      return {
+        vp: { w: window.innerWidth, h: window.innerHeight },
+        toasts: document.querySelectorAll('.hc-toast').length,
+        craftTag: document.querySelector('.hc-craft-tag')?.textContent ?? '',
+        craftItem: document.querySelector('.hc-craft-item')?.textContent ?? '',
+        craftVisible: Boolean(cs && cs.display !== 'none' && Number(cs.opacity) > 0),
+        craftBg: cs ? cs.backgroundImage.slice(0, 24) : null,
+        craftRect: rect(craft),
+        lvlSkill: document.querySelector('.hc-lvl-skill')?.textContent ?? '',
+        lvlNum: document.querySelector('.hc-lvl-num')?.textContent ?? '',
+        lvlVisible: Boolean(ls && ls.display !== 'none' && Number(ls.opacity) > 0),
+        lvlRect: rect(lvl),
+      }
+    })
+    console.log(`jus des boucles : ${JSON.stringify(dom)}`)
+    const ok =
+      dom.craftTag === 'FABRIQUÉ' && dom.craftItem && dom.craftVisible &&
+      dom.lvlSkill === 'Bûcheron' && dom.lvlNum === 'NIVEAU 3' && dom.lvlVisible
+    if (!ok) console.error(`!! LES BANDEAUX FABRIQUÉ/NIVEAU NE S'AFFICHENT PAS : ${JSON.stringify(dom)}`)
+    return dom
+  },
+
+  /**
    * LE COMBAT SE VOIT-IL ? (spec tension.md — le télégraphe du GDD §7.)
    *
    * On FRAPPE pour de vrai — clic gauche dans le vide, mains nues (la sim tranche :

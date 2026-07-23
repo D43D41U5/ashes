@@ -43,6 +43,15 @@ export interface OpenContainerView {
   title: string
 }
 
+/** Le verdict d'un village à la fin de la saison (spec saison R4, événement `season_ended`). */
+export interface SeasonVerdict {
+  villageId: number
+  name: string
+  archetype: 'foyer' | 'meute' | 'neutre'
+  score: number
+  outcome: string
+}
+
 /** Une propriété par clé du registry — la seule source de vérité des clés. */
 export interface HudState {
   /** La vallée est-elle générée ? Posé à `false` au boot de WorldScene, à `true`
@@ -146,6 +155,11 @@ export interface HudState {
    *  toasts « +2 BOIS (14) ». Une file, pas une valeur — deux récoltes peuvent
    *  tomber dans le même snapshot. */
   pickups: { item: ItemId; count: number }[]
+  /** File des FABRICATIONS achevées (event `item_crafted` sur moi) : un bandeau à part,
+   *  plus lourd qu'une récolte. Même canal POSE/draine que `pickups`. */
+  crafts: { item: ItemId }[]
+  /** File des MONTÉES DE MÉTIER (event `skill_level_up` sur moi) : le plus gros toast. */
+  levelUps: { skill: SkillId; level: number }[]
   /** File d'actions posées par UIScene (l'écran d'inventaire) — WorldScene la
    *  draine et parle seule à l'hôte (l'UI ne connaît pas le transport). */
   pendingActions: PlayerAction[]
@@ -153,6 +167,13 @@ export interface HudState {
   journalOpen: boolean
   /** Carte plein écran (M) ouverte à la demande. */
   mapOpen: boolean
+  /** Le menu PAUSE (ESC) : ouvert = le monde solo se fige (l'hôte est mis en pause) et
+   *  le menu (reprendre / contrôles / son / nouvelle Veillée) couvre l'écran. */
+  menuOpen: boolean
+  /** Le curseur de VOLUME maître (0..1) — posé par WorldScene depuis le moteur audio, réglé
+   *  par le curseur du menu pause. WorldScene l'observe et l'applique à `audioFx` (le moteur
+   *  vit là ; le menu, dans UIScene, passe par le registre). */
+  audioVolume: number
   /** La carte du monde, publiée une fois au `ready` — sert au rendu de la carte
    * plein écran et au lookup de zone/POI sous le curseur (`zoneAt`). */
   mapData: WorldMap
@@ -178,7 +199,10 @@ export interface HudState {
   fatal: { reason: string }
   /** Dernière alarme de mon village (flash rouge). */
   alarm: { at: number }
-  seasonEnded: boolean
+  /** Les VERDICTS de fin de saison + l'id de MON village (pour couronner le mien). `null` tant
+   *  que la saison n'est pas finie — sa non-nullité EST le signal « saison finie ». Lu par
+   *  l'écran de fin de saison (ui/season-veil). */
+  seasonVerdicts: { verdicts: SeasonVerdict[]; myVillageId: number | null } | null
 
   // ─── Mode debug (DEV uniquement — voir scenes/world/debug-bindings.ts) ───
   /** P : le mode debug est-il armé ? (rien d'autre ne s'affiche ni ne répond sans lui) */

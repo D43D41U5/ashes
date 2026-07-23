@@ -44,6 +44,8 @@ export const KEYMAP = {
   toggleJournal: ['J'],
   toggleMap: ['M'],
   toggleInventory: ['TAB'],
+  /** LE MENU PAUSE (reprendre / contrôles / nouvelle Veillée) : fige le monde solo. */
+  toggleMenu: ['ESC'],
 } as const
 
 /*

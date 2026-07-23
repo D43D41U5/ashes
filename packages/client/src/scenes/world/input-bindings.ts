@@ -36,6 +36,8 @@ export interface InputDeps {
   others(): { id: number; x: number; y: number }[]
   /** Corrige un point monde PLAT (positionToCamera) en point monde vrai, selon le relief. */
   unproject(px: number, py: number): { x: number; y: number }
+  /** Le tick du dernier snapshot — pour juger la maturité d'une parcelle (agriculture). */
+  simTick(): number
 }
 
 /** Les touches de déplacement, lues chaque frame par `WorldScene.update`. */
@@ -48,6 +50,9 @@ export interface MovementBindings {
   blockKeys: Phaser.Input.Keyboard.Key[]
   /** Entretient le clic MAINTENU (récolte en boucle) — à appeler chaque frame. */
   tickHold(): void
+  /** ABANDONNE tout geste maintenu en cours (charge/abattage/minage/récolte) sans rien émettre.
+   *  À appeler quand l'input se coupe (la mort) pour ne pas traîner une charge jusqu'au respawn. */
+  cancelHold(): void
   /** Ce que vise le curseur MAINTENANT — pour le surlignage et le fantôme. */
   aim(pointer: Phaser.Input.Pointer): AimTarget
   /** Ce que le clic gauche POSERAIT maintenant : une construction armée au panneau
@@ -215,6 +220,10 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   onDown(KEYMAP.toggleMap, () => {
     setHud(scene.registry, 'mapOpen', !getHud(scene.registry, 'mapOpen'))
   })
+  // ESC : le menu PAUSE. WorldScene fige/reprend l'hôte selon `menuOpen` (le monde solo se gèle).
+  onDown(KEYMAP.toggleMenu, () => {
+    setHud(scene.registry, 'menuOpen', !getHud(scene.registry, 'menuOpen'))
+  })
 
   /** La tuile sous le curseur, et ce qu'elle porte. Recalculée à la demande : le
    *  curseur bouge, le nœud s'épuise, et la caméra GLISSE ENCORE après la course
@@ -229,11 +238,15 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       deps.corpses(),
       BALANCE.INTERACT_RANGE,
       deps.others(),
+      deps.structures(), // Feu (feed_fire), structure abîmée (repair), parcelle (agriculture) visés
+      deps.simTick(), // pour juger la maturité d'une parcelle
     )
   }
-  /** L'overlay (carte, sac) mange le clic : il ne doit pas agir dans le monde en dessous. */
+  /** L'overlay (carte, sac, menu pause) mange le clic : il ne doit pas agir dans le monde. */
   const overlayOpen = (): boolean =>
-    Boolean(getHud(scene.registry, 'mapOpen')) || Boolean(getHud(scene.registry, 'characterMenuOpen'))
+    Boolean(getHud(scene.registry, 'mapOpen')) ||
+    Boolean(getHud(scene.registry, 'characterMenuOpen')) ||
+    Boolean(getHud(scene.registry, 'menuOpen'))
 
   /**
    * CE QU'ON TIENT, ET VERS OÙ ON VISE. C'est tout ce dont le résolveur pur a
@@ -468,5 +481,21 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     }
   }
 
-  return { keys, sprintKeys, sneakKeys, blockKeys, tickHold, aim: aimNow, placing }
+  /**
+   * ABANDONNE tout geste en cours (charge d'attaque, abattage, minage, récolte maintenue)
+   * SANS rien émettre. C'est le pendant manquant de `input.enabled = false` à la mort : quand
+   * l'input Phaser se coupe, le `pointerup` — et son `attack_release` — ne part jamais, donc
+   * `charging` (qui, seul, ne teste PAS l'état du bouton) resterait vrai pendant le voile ET
+   * après le respawn. `tickHold` continuerait alors d'armer la charge, et le premier relâchement
+   * au réveil cracherait un coup chargé involontaire — potentiellement sur un PNJ posté au Feu.
+   * On coupe net les drapeaux ; le prochain appui repart d'un geste neuf.
+   */
+  const cancelHold = (): void => {
+    charging = false
+    felling = false
+    mining = false
+    holding = false
+  }
+
+  return { keys, sprintKeys, sneakKeys, blockKeys, tickHold, cancelHold, aim: aimNow, placing }
 }

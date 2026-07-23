@@ -19,7 +19,7 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
-import { COMPONENT_TYPES, FOOD_VALUES, WEAPON_DAMAGE, type ItemId, type StructureType, type WallMaterial } from '@braises/sim'
+import { COMPONENT_TYPES, FOOD_VALUES, STRUCTURE_HP, WEAPON_DAMAGE, isCropMature, isPlot, type ItemId, type StructureType, type WallMaterial } from '@braises/sim'
 import type { Placeable } from '../../hud-state'
 import type { Corpse, PlayerAction, ResourceNode } from '@braises/sim'
 
@@ -43,8 +43,30 @@ export interface AimTarget {
   /** L'ENTITÉ (PNJ/joueur) visée sous le curseur, à portée du joueur — la cible d'un DON
    *  ou d'un soin (spec alignement/combat). `null` = personne sous le curseur à portée. */
   entityId: number | null
+  /** Un FEU (structure) est-il sur la tuile visée ? La cible de `feed_fire` (du bois en main
+   *  + clic sur le Feu → on le nourrit). La sim vise TOUJOURS le foyer de l'acteur. */
+  onFire: boolean
+  /** Une structure ABÎMÉE (hp < max, hors Feu) sur la tuile visée — la cible de `repair`
+   *  (du bois en main + clic → on la répare). `null` = rien à réparer ici. La sim revalide
+   *  l'appartenance et la portée. */
+  repairableId: number | null
+  /** Une PARCELLE vide sur la tuile visée — la cible de `plant` (une graine en main + clic). */
+  plantableId: number | null
+  /** Une PARCELLE mûre sur la tuile visée — la cible de `harvest_crop` (clic, mains libres). */
+  harvestableId: number | null
   /** Distance ≤ `range` entre le joueur et le CENTRE de la tuile visée. */
   inRange: boolean
+}
+
+/** Ce dont `aimAt` a besoin d'une structure pour trancher feed_fire/repair (sous-ensemble de `Structure`). */
+export interface AimStructure {
+  id: number
+  tx: number
+  ty: number
+  type: StructureType
+  hp: number
+  /** Le tick de mise en terre — parcelles seulement (agriculture). Pour la maturité. */
+  plantedAt?: number
 }
 
 /** Le curseur doit être à peu près SUR l'entité (≤ ça, en tuiles) pour la viser — sinon
@@ -61,9 +83,35 @@ export function aimAt(
   range: number,
   /** Les autres entités (PNJ/joueurs) — SANS soi ni les monstres : le caller filtre. */
   entities: readonly { id: number; x: number; y: number }[] = [],
+  /** Les structures — pour repérer le Feu (feed_fire), une structure abîmée (repair), une
+   *  parcelle à semer/récolter (agriculture) visés. */
+  structures: readonly AimStructure[] = [],
+  /** Le tick courant (dernier snapshot) — pour juger la MATURITÉ d'une parcelle (harvest_crop). */
+  tick = 0,
 ): AimTarget {
   const corpse = corpses.find((c) => Math.floor(c.x) === tx && Math.floor(c.y) === ty)
   const node = nodes.find((n) => n.tx === tx && n.ty === ty && n.stock > 0)
+  // Une seule passe sur les structures de la tuile : le Feu se NOURRIT (feed_fire, jamais
+  // « réparé ») ; toute structure abîmée se RÉPARE ; une parcelle se SÈME (vide) ou se RÉCOLTE
+  // (mûre). `STRUCTURE_HP` est TOTAL sur `StructureType` — pas de garde. Maturité PURE (isCropMature).
+  let onFire = false
+  let damaged: AimStructure | undefined
+  let plantable: AimStructure | undefined
+  let harvestable: AimStructure | undefined
+  for (const s of structures) {
+    if (s.tx !== tx || s.ty !== ty) continue
+    if (s.type === 'fire') {
+      onFire = true
+      continue
+    }
+    if (s.hp < STRUCTURE_HP[s.type]) damaged = s // toute structure hors Feu, abîmée, se répare
+    if (isPlot(s.type)) {
+      // Parcelle (plein air) / serre (hiver) / terroir (le meilleur) se sèment/récoltent pareil ;
+      // la sim tranche le gel de la terre à ciel ouvert (acte III) et le rendement au moment voulu.
+      if (s.plantedAt === undefined) plantable = s
+      else if (isCropMature(s, tick)) harvestable = s
+    }
+  }
   const dx = tx + 0.5 - player.x
   const dy = ty + 0.5 - player.y
 
@@ -89,6 +137,10 @@ export function aimAt(
     corpseId: corpse?.id ?? null,
     nodeId: node?.id ?? null,
     entityId,
+    onFire,
+    repairableId: damaged?.id ?? null,
+    plantableId: plantable?.id ?? null,
+    harvestableId: harvestable?.id ?? null,
     inRange: dx * dx + dy * dy <= range * range,
   }
 }
@@ -216,6 +268,21 @@ export function clickToAction(
   // ne pas cracher des « trop tôt » dans le flux que la chronique lit. Cible : soi.
   if (hand && isCareMaterial(hand.held) && hand.wounded) return { type: 'bandage' }
 
+  // NOURRIR LE FEU (spec construction R16) : du BOIS en main + le Feu sous le curseur, à portée
+  // → on l'alimente. « Le seul geste qui tient l'upkeep » : c'est le levier JOUEUR de la mortalité
+  // du village (sans lui, le Feu se vide et le foyer tombe en ruine sans recours). La sim vise
+  // TOUJOURS le foyer de l'acteur (pas la tuile cliquée) et revalide membre/portée/place.
+  if (hand && hand.held === 'wood' && target.onFire && target.inRange) return { type: 'feed_fire' }
+  // RÉPARER : du BOIS en main + une structure ABÎMÉE sous le curseur, à portée → on la répare.
+  // Le pendant défensif du feed_fire : après une horde, remurer sa maison de sa propre main
+  // plutôt que d'attendre un PNJ. La sim revalide l'appartenance, la portée et le coût.
+  if (hand && hand.held === 'wood' && target.repairableId !== null && target.inRange)
+    return { type: 'repair', structureId: target.repairableId }
+  // SEMER (agriculture voie A) : une GRAINE en main + une parcelle VIDE sous le curseur, à
+  // portée → on la met en terre. La pousse se dérive ensuite du tick (pur). La sim revalide.
+  if (hand && hand.held === 'graine' && target.plantableId !== null && target.inRange)
+    return { type: 'plant', structureId: target.plantableId }
+
   // FRAPPER : une arme en main frappe TOUJOURS — on ne coupe pas du bois avec une
   // lance, et surtout on ne veut pas qu'un clic de panique parte récolter un buisson
   // pendant qu'un loup arrive.
@@ -226,6 +293,9 @@ export function clickToAction(
   if (target.inRange) {
     if (target.corpseId !== null) return { type: 'loot_corpse', corpseId: target.corpseId }
     if (target.nodeId !== null) return { type: 'harvest', nodeId: target.nodeId }
+    // RÉCOLTER LE POTAGER (agriculture voie A) : une parcelle MÛRE, mains libres → on cueille
+    // (comme un nœud). La sim revalide la maturité, l'appartenance, la portée.
+    if (target.harvestableId !== null) return { type: 'harvest_crop', structureId: target.harvestableId }
   }
 
   // RIEN À RÉCOLTER, RIEN EN MAIN : on frappe. C'est la défense du pauvre, et elle

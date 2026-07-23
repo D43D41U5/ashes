@@ -23,7 +23,7 @@ import {
   type HostToClient,
   type NodeDelta,
 } from '@braises/sim'
-import { createVeillee, LOAD_PHASES, VEILLEE_CALENDAR_SCALE } from './veillee'
+import { createVeillee, LOAD_PHASES } from './veillee'
 import { loadSlot, saveSlot } from './persistence-store'
 
 const post = (message: HostToClient): void => {
@@ -44,6 +44,10 @@ const CHRONICLE_CAP = 400
 let booting = false
 /** Une écriture disque à la fois — les sérialisations lourdes ne se chevauchent pas. */
 let saving = false
+/** Une sauvegarde a été demandée pendant qu'une autre était en vol : on la rejoue à la fin,
+ *  avec l'état le plus frais. Sans ça, la SORTIE (`pause`) qui tombe pile sur un autosave était
+ *  silencieusement perdue — le trou du garde `saving` tombait exactement sur le cas à protéger. */
+let pendingPersist = false
 /** Cadence de l'autosave de sécurité (ms d'horloge murale, concern d'hôte). */
 const AUTOSAVE_MS = 30_000
 let autosaveTimer: ReturnType<typeof setInterval> | undefined
@@ -118,7 +122,14 @@ function tick(): void {
  * monde existe. C'est une opération d'HÔTE — horloge murale comprise (interdite à /sim).
  */
 async function persist(): Promise<void> {
-  if (!sim || saving) return
+  if (!sim) return
+  // Une écriture est déjà en vol : on ne la double pas, mais on RETIENT la demande — sinon un
+  // `pause` (la vraie prise de sortie) qui coïncide avec un autosave serait perdu, alors même
+  // que le joueur a quitté proprement. On rejouera avec l'état frais dès la fin de l'écriture.
+  if (saving) {
+    pendingPersist = true
+    return
+  }
   saving = true
   try {
     await saveSlot({ sim: serializeSim(sim), playerId, chronicle: chronicleLog, savedAt: Date.now() })
@@ -127,6 +138,13 @@ async function persist(): Promise<void> {
     // session. (Le prochain autosave retentera.)
   } finally {
     saving = false
+    // Une demande est tombée pendant l'écriture (typiquement la sortie) : on la rejoue MAINTENANT
+    // avec l'état le plus récent. Tant que l'onglet vit, la sortie est ainsi sauvée sans attendre
+    // les 30 s de l'autosave. (Sur une vraie fermeture d'onglet, IndexedDB reste best-effort.)
+    if (pendingPersist) {
+      pendingPersist = false
+      void persist()
+    }
   }
 }
 
@@ -186,7 +204,10 @@ async function boot(): Promise<void> {
     seed: sim.seed,
     nodes: sim.nodes,
     grounds: sim.grounds,
-    calendarScale: VEILLEE_CALENDAR_SCALE,
+    // L'échelle du MONDE, pas la constante : à la reprise d'une sauvegarde faite avec un autre
+    // `VEILLEE_SEASON_CYCLES`, la sim garde son échelle figée — le client doit recevoir CELLE-LÀ
+    // (sinon la chronique daterait ses lignes avec la mauvaise échelle). Neuf = les deux égales.
+    calendarScale: sim.calendarScale,
     // Le spawn EST la position de l'avatar : à la reprise, on relit celle du /sim sauvé
     // (là où l'on s'est arrêté), pas le point de fondation. Repli sur (0,0)-évité : un
     // monde neuf a toujours son `world.spawn` ; une reprise a toujours son entité.

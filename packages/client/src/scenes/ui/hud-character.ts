@@ -33,6 +33,7 @@ import type { OpenContainerView, StationId } from '../../hud-state'
 import { ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { costLine, craftRows, type CraftRow } from './craft-panel'
 import { dragIntentFrom, dragToAction, quickMoveToAction } from './inventory-panel'
+import { SKILL_LABELS } from './skill-labels'
 
 const COLS = 6
 const BAG_LO = SLOTS.BELT // les cases 0..BELT sont la ceinture ; le sac est au-dessus
@@ -61,10 +62,10 @@ const STATION_LABEL: Record<StationId, string> = {
 /** Les 4 métiers, à gauche : emblème (une icône d'objet du métier), libellé, niveau, barre.
  *  Le niveau vient de `skillLevel` (/sim) — l'écran montre la règle, il ne la refait pas. */
 const SKILL_META: { id: SkillId; label: string; item: ItemId }[] = [
-  { id: 'woodcutting', label: 'Bûcheron', item: 'axe' },
-  { id: 'mining', label: 'Mineur', item: 'pickaxe' },
-  { id: 'foraging', label: 'Cueilleur', item: 'berries' },
-  { id: 'crafting', label: 'Artisan', item: 'hammer' },
+  { id: 'woodcutting', label: SKILL_LABELS.woodcutting, item: 'axe' },
+  { id: 'mining', label: SKILL_LABELS.mining, item: 'pickaxe' },
+  { id: 'foraging', label: SKILL_LABELS.foraging, item: 'berries' },
+  { id: 'crafting', label: SKILL_LABELS.crafting, item: 'hammer' },
 ]
 
 /** Le paperdoll autour de l'avatar. DÉCORATIF pour l'instant : aucun système d'équipement

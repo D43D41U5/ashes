@@ -14,6 +14,7 @@
  */
 import type { ItemBag, ItemId, PlayerAction } from '@braises/sim'
 import { ITEM_LABELS } from '../../render/item-art'
+import { createPromptGate } from './prompt-gate'
 
 export interface FireUpgradeContext {
   tier: number
@@ -73,18 +74,29 @@ export function createFireUpgradePrompt(board: HTMLElement, send: (a: PlayerActi
   const btn = root.querySelector<HTMLElement>('.fup-btn')!
 
   let current: FireUpgradeContext | null = null
+  // Le garde anti-double-envoi : le handler sim de `upgrade_fire` RETIRE le coût ET monte le
+  // palier à chaque appel validé — un double-clic (la fenêtre rouvre car `UIScene.update` la
+  // rappelle chaque frame) coûterait deux paliers. Identité = le palier visé (voir prompt-gate).
+  const gate = createPromptGate()
 
   btn.addEventListener('click', () => {
     if (!current || !current.affordable) return // le bouton grisé ne tire rien
     send({ type: 'upgrade_fire' })
-    // On FERME tout de suite (optimiste) : le palier ne monte côté sim qu'au prochain
-    // snapshot, d'ici là un second clic renverrait un `upgrade_fire` refusé dans le flux.
+    gate.acted(current.tier)
     current = null
     root.style.display = 'none'
   })
 
   return {
     update(ctx) {
+      // On a tiré et le snapshot n'a pas encore bougé le palier : on reste MUET (et `current`
+      // à null, donc un clic ne tire rien). Dès que l'état change (palier différent) ou qu'il
+      // n'y a plus rien à portée (`ctx` null), le garde rend la main.
+      if (gate.suppresses(ctx?.tier ?? null)) {
+        current = null
+        root.style.display = 'none'
+        return
+      }
       current = ctx
       if (!ctx) {
         root.style.display = 'none'

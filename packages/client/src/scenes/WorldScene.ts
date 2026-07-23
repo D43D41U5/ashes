@@ -13,6 +13,7 @@
 import {
   BALANCE,
   CHRONICLE_EVENT_TYPES,
+  FIRE_UPKEEP,
   TEMPERATURE,
   TERRAIN_FOREST,
   TERRAINS,
@@ -68,9 +69,11 @@ import {
   drainQueuedActions,
   publishAlarm,
   publishChronicle,
+  publishCraft,
   publishError,
   publishHint,
   publishDeath,
+  publishLevelUp,
   publishFoundableFire,
   publishRefugeesNearby,
   publishUpgradableFire,
@@ -106,6 +109,7 @@ import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 import { DEATH_FADE_MS, DEATH_VEIL_MS } from './ui/death-veil'
+import { nextOnboardingHint, type OnboardingHintId } from './ui/onboarding'
 import { cendreTelegraphForDay } from './world/cendre-telegraph'
 import { corpseArrow, corpseSecondsLeft } from './world/corpse-arrow'
 import { SoundEngine } from '../audio/engine'
@@ -140,6 +144,15 @@ const RENDER_OFFSET_DECAY = 0.85
  *  l'avatar (~16 px de large) sans le quitter. */
 const GAZE_REACH = 6
 const GAZE_PX = 5
+
+/** À quelle distance (tuiles) un étranger déclenche le conseil du DON (ui/onboarding).
+ *  Un peu plus large que la portée d'un don : on enseigne AVANT d'être à portée. */
+const ONBOARD_NEIGHBOR_TILES = 8
+
+/** Sous quelle fraction de la capacité le Feu est « bas » — déclenche le conseil « nourris-le »
+ *  (ui/onboarding). Assez bas pour être un vrai signal (le Feu naît à la moitié), assez haut
+ *  pour laisser le temps d'agir. Seuil d'UI, pas d'équilibrage. */
+const ONBOARD_FIRE_LOW_FRAC = 0.3
 /**
  * Borne du journal d'événements de chronique gardé en mémoire (les plus
  * récents gagnent). Compromis assumé : la chronique d'une Veillée reste
@@ -429,6 +442,10 @@ export class WorldScene extends Phaser.Scene {
       const muted = this.audioFx.toggleMute()
       publishHint(this.registry, muted ? 'Son coupé (N).' : 'Son rétabli (N).', this.time.now)
     })
+    // Le VOLUME maître (curseur du menu pause) : on publie l'état courant du moteur, et on
+    // l'observe ensuite (le moteur vit ici ; le menu, dans UIScene, ne peut que poser la valeur).
+    setHud(this.registry, 'audioVolume', this.audioFx.getVolume())
+    this.lastAudioVolume = this.audioFx.getVolume()
     this.view = new SnapshotView(this)
     // LE CHAT DE PROXIMITÉ : Entrée ouvre la saisie, Entrée envoie, Échap annule. On
     // écoute le clavier au niveau caractère (comme le champ de craft) ; `chatTyping`
@@ -485,6 +502,7 @@ export class WorldScene extends Phaser.Scene {
       // qu'après `onReady` (génération de carte). Avant, on renvoie le point plat :
       // de toute façon les actions sont des no-op sur structures/nodes vides.
       unproject: (px, py) => (this.warp ? this.warp.unproject(px, py) : { x: px, y: py }),
+      simTick: () => this.lastSnapshotTick,
     })
 
     // Le mode debug (P) — DEV seulement : en prod la condition est statiquement
@@ -525,12 +543,9 @@ export class WorldScene extends Phaser.Scene {
     // Onglet caché : le rAF de Phaser s'arrête mais PAS le timer du Worker —
     // sans pause, l'hôte répéterait le dernier input (avatar sans pilote) et
     // empilerait des snapshots. Veillée = solo : on fige le monde.
-    const onVisibility = (): void => {
-      if (document.hidden) this.send({ type: 'pause' })
-      // On ne « reprend » pas un monde qui n'a pas encore commencé : tant que les couches
-      // se montent, l'hôte doit rester à l'arrêt (c'est la dernière étape qui le lance).
-      else if (this.worldReady) this.send({ type: 'resume' })
-    }
+    // Onglet caché OU menu pause ouvert → l'hôte se fige (voir syncPause). On ne « reprend »
+    // pas un monde qui n'a pas encore commencé : la dernière étape de montage le lance.
+    const onVisibility = (): void => this.syncPause()
     document.addEventListener('visibilitychange', onVisibility)
     this.events.once('shutdown', () => {
       document.removeEventListener('visibilitychange', onVisibility)
@@ -682,6 +697,20 @@ export class WorldScene extends Phaser.Scene {
       return
     }
     if (!this.worldReady) return
+    // LE MENU PAUSE (ESC) : quand `menuOpen` bascule (par ESC ou le bouton REPRENDRE), on
+    // fige ou reprend l'hôte. Piloté en niveau (sur le changement), pas à chaque frame.
+    const menuOpen = Boolean(getHud(this.registry, 'menuOpen'))
+    if (menuOpen !== this.menuPaused) {
+      this.menuPaused = menuOpen
+      this.syncPause()
+    }
+    // LE VOLUME : le curseur du menu pause pose `audioVolume` ; on l'applique au moteur (ici),
+    // sur changement seulement (le moteur vit dans WorldScene, le curseur dans UIScene).
+    const av = Number(getHud(this.registry, 'audioVolume') ?? 1)
+    if (av !== this.lastAudioVolume) {
+      this.lastAudioVolume = av
+      this.audioFx.setVolume(av)
+    }
     // LE MOMENT DE MORT (mort-suite 1+5) : fige la caméra, coupe l'input, snappe au
     // respawn sous le voile, rend la main à la fin — piloté ici, en niveau.
     this.tickDying()
@@ -690,8 +719,9 @@ export class WorldScene extends Phaser.Scene {
     this.publishCorpseHint()
     // Les gestes d'inventaire posés par UIScene (elle ne parle pas à l'hôte).
     for (const action of drainQueuedActions(this.registry)) this.sendAction(action)
-    // Le clic MAINTENU : il récolte en boucle, à la cadence du rechargement.
-    this.inputs.tickHold()
+    // Le clic MAINTENU : il récolte en boucle, à la cadence du rechargement. Coupé pendant
+    // le voile de mort (input neutralisé) : rien ne s'arme ni ne s'émet tant qu'on tombe.
+    if (!this.dying) this.inputs.tickHold()
     // CE QU'ON VISE, à chaque frame — le curseur bouge, le nœud s'épuise, et la
     // caméra glisse encore après la course : une visée figée mentirait aussitôt.
     const aim = this.inputs.aim(this.input.activePointer)
@@ -1119,6 +1149,8 @@ export class WorldScene extends Phaser.Scene {
 
     const myVillage = msg.villages.find((v) => v.memberIds.includes(this.playerId))
     this.myVillageId = myVillage?.id ?? null
+    // Mon Feu faiblit-il ? (conseil d'onboarding « nourris-le » — le geste feed_fire est câblé.)
+    this.fireLow = myVillage ? myVillage.fuel < FIRE_UPKEEP.CAPACITY * ONBOARD_FIRE_LOW_FRAC : false
     publishTimeAndVillage(this.registry, msg.time, myVillage)
     this.lastTime = msg.time
 
@@ -1196,6 +1228,22 @@ export class WorldScene extends Phaser.Scene {
       this.myCharging = me.charge !== undefined
       this.myWeapon = weaponKind(me)
       this.reconcile(me, msg.lastProcessedInput)
+      // UN VOISIN À PORTÉE D'UN DON : un PNJ d'un AUTRE village (ou de nul village mien),
+      // assez proche pour qu'on puisse le NOURRIR — le seul signal du conseil « give »
+      // (ui/onboarding). Purement client, aucun effet de jeu. On CESSE de scanner (O(npcs×
+      // entités) par snapshot) dès que le conseil a été montré : il ne revient jamais, et
+      // c'est le seul lecteur de `neighborNear` — inutile de le tenir à jour la saison durant.
+      if (!this.shownHints.has('give-neighbor')) {
+        const r2 = ONBOARD_NEIGHBOR_TILES * ONBOARD_NEIGHBOR_TILES
+        this.neighborNear = msg.npcs.some((npc) => {
+          if (this.myVillageId !== null && npc.villageId === this.myVillageId) return false
+          const e = msg.entities.find((ent) => ent.id === npc.entityId)
+          if (!e || e.hp <= 0) return false
+          const dx = e.x - me.x
+          const dy = e.y - me.y
+          return dx * dx + dy * dy <= r2
+        })
+      }
     }
   }
 
@@ -1223,37 +1271,51 @@ export class WorldScene extends Phaser.Scene {
    * Elles ne se répètent jamais (ce serait du bruit), et elles arrivent au moment
    * où elles servent — pas dans un mur de texte qu'on ferme sans lire.
    */
-  private hintsDone = 0
-  /** L'arme qu'on tient (snapshot) — et si la règle du coup lourd a déjà été dite. */
+  /** L'arme qu'on tient (snapshot) — lue pour enseigner le combat au bon instant. */
   private myWeapon: WeaponKind = 'unarmed'
-  private armeHint = false
+  /** Les conseils d'onboarding déjà montrés — aucun ne revient (voir ui/onboarding). */
+  private readonly shownHints = new Set<OnboardingHintId>()
+  /** Un étranger est-il à portée d'un don ? (recalculé à chaque snapshot, cf. plus haut) */
+  private neighborNear = false
+  /** Le combustible de MON Feu est-il bas ? (recalculé à chaque snapshot — conseil « nourris-le ») */
+  private fireLow = false
+  /** Le menu pause est-il ouvert ? (miroir de `menuOpen` — fige/reprend l'hôte, cf. syncPause) */
+  private menuPaused = false
+  /** Dernier volume appliqué au moteur audio — n'applique que sur changement (curseur du menu). */
+  private lastAudioVolume = 1
 
+  /**
+   * FIGE ou REPREND l'hôte solo. Le monde doit être EN PAUSE si l'onglet est caché OU si le
+   * menu pause (ESC) est ouvert — sinon l'hôte tourne sans pilote (avatar figé, snapshots
+   * empilés). Idempotent côté Worker (start/stopTicker sont gardés) : on peut le rappeler.
+   */
+  private syncPause(): void {
+    if (document.hidden || this.menuPaused) this.send({ type: 'pause' })
+    else if (this.worldReady) this.send({ type: 'resume' }) // pas avant que les couches soient montées
+  }
+
+  /**
+   * L'onboarding est PILOTÉ PAR L'ÉTAT (voir ui/onboarding) : on passe l'instantané du
+   * jeu au résolveur pur, il rend le prochain conseil à dire — ou rien. Fini l'horloge
+   * qui débitait « fais un feu » à qui en avait déjà un.
+   */
   private checkHints(): void {
-    const now = this.time.now
-    // LE CONSEIL, PAS L'ALERTE (audit UI/UX P2-7) : ces trois lignes ENSEIGNENT — elles
-    // passent donc par le canal neutre, en haut, tenu longtemps. Le rouge du bas reste au
-    // refus et au danger : on n'apprend pas à jouer sous une alarme d'échec.
-    if (this.hintsDone === 0 && now > 2000) {
-      this.hintsDone = 1
-      publishHint(this.registry, 'Clic gauche : récolter. TAB : votre sac et l’artisanat.', now)
-    } else if (this.hintsDone === 1 && now > 12000) {
-      this.hintsDone = 2
-      publishHint(this.registry, 'Ramassez du bois : il vous faut un FEU avant la nuit.', now)
-    } else if (this.hintsDone === 2 && now > 24000) {
-      this.hintsDone = 3
-      // LA règle du jeu, dite une fois, en clair. Le cru ne nourrit plus un homme.
-      publishHint(this.registry, 'Le feu cuit, réchauffe, et tient les loups à distance.', now)
-    }
-    // LA RÈGLE DU COMBAT, dite À L'INSTANT OÙ ELLE SERT — pas dans un mur de texte au
-    // démarrage, qu'on ferme sans lire : la première fois qu'une arme arrive en main.
-    // Sans elle, le coup chargé (spec combat R4ter) reste un SECRET : rien à l'écran
-    // ne dit qu'un clic peut se tenir, et un joueur qui ne connaît pas la moitié de son
-    // arsenal ne « manque pas de skill » — on lui a caché le bouton. On y greffe la
-    // PARADE (ESPACE) : le geste défensif arrive dans la même main, au même instant.
-    if (!this.armeHint && this.myWeapon !== 'unarmed') {
-      this.armeHint = true
-      publishHint(this.registry, 'MAINTENEZ le clic : un coup lourd s’arme. ESPACE : parez de face.', now)
-    }
+    const hint = nextOnboardingHint(
+      {
+        msAlive: this.time.now,
+        hasFire: this.myVillageId !== null,
+        fireLow: this.fireLow,
+        hasWeapon: this.myWeapon !== 'unarmed',
+        neighborNear: this.neighborNear,
+      },
+      this.shownHints,
+    )
+    if (!hint) return
+    // LE CONSEIL, PAS L'ALERTE (audit UI/UX P2-7) : il ENSEIGNE — il passe donc par le
+    // canal neutre, en haut, tenu longtemps. Le rouge du bas reste au refus et au danger :
+    // on n'apprend pas à jouer sous une alarme d'échec.
+    this.shownHints.add(hint.id)
+    publishHint(this.registry, hint.text, this.time.now)
   }
 
   private checkVitals(): void {
@@ -1297,6 +1359,18 @@ export class WorldScene extends Phaser.Scene {
         // LE TEMPO du minage : le dernier coup relance le rechargement, que la lueur du
         // bon flanc REFORME visiblement (verbe 2 — la cadence se voit, pas de timer caché).
         this.lastStrikeAt = this.time.now
+      } else if (event.type === 'item_crafted' && event.entityId === this.playerId) {
+        // FABRIQUÉ (audit UI/UX P0) : la fabrication était l'une des deux boucles les plus
+        // gratifiantes SANS aucun retour. On l'inscrit en bandeau à part (plus lourd qu'une
+        // récolte). L'étincelle sur le corps n'est qu'un extra — souvent le sac est ouvert et
+        // masque le monde ; le bandeau, lui, se voit à coup sûr. Sur l'event, jamais le clic.
+        publishCraft(this.registry, event.item)
+        this.attackFx.spark(this.playerSprite.x, this.playerSprite.y - 6, 0, false, this.time.now)
+      } else if (event.type === 'skill_level_up' && event.entityId === this.playerId) {
+        // NIVEAU (audit UI/UX P0) : franchir un palier de métier était muet. C'est le plus
+        // rare et le plus gros des trois retours — un bandeau doré qui NOMME le métier et le
+        // cran. La sim tient le niveau (`gainXp`), l'écran ne fait que l'annoncer (§3).
+        publishLevelUp(this.registry, event.skill, event.level)
       } else if (event.type === 'entity_damaged') {
         // LE COUP A PORTÉ — et on ne le sait QUE parce que la sim le dit. Un coup
         // qui « part » à l'écran mais que la sim refuse serait un mensonge (G9) —
@@ -1401,7 +1475,7 @@ export class WorldScene extends Phaser.Scene {
           publishError(this.registry, event.saved > 0 ? `L’arche a levé l’ancre — ${event.saved} à bord.` : 'L’arche est partie. À vide.', this.time.now)
         }
         if (event.type === 'season_ended') {
-          publishSeasonEnded(this.registry)
+          publishSeasonEnded(this.registry, event.verdicts, this.myVillageId)
           // La saison est finie : l'objectif d'évacuation n'a plus de sens.
           this.evacMarker?.destroy()
           this.evacMarker = null
@@ -1428,6 +1502,11 @@ export class WorldScene extends Phaser.Scene {
     this.cameras.main.stopFollow() // gèle la caméra sur la tuile de chute
     this.input.enabled = false // plus de clic (pas d'attaque en tombant)
     if (this.input.keyboard) this.input.keyboard.enabled = false // les touches gelées → input neutre
+    // ABANDONNE tout geste maintenu : sans ça, une charge d'attaque en cours à la chute
+    // (mourir face à un loup, cas fréquent) survivrait au voile — `input.enabled = false`
+    // empêche le `pointerup`, donc `charging` resterait vrai — et cracherait un coup chargé
+    // involontaire au réveil au Feu, peut-être sur un PNJ posté là.
+    this.inputs.cancelHold()
   }
 
   /**

@@ -8,6 +8,8 @@
 import {
   activityAt,
   BALANCE,
+  cropStage,
+  isPlot,
   FAUNA,
   HUNT,
   NODE_DEFS,
@@ -656,6 +658,13 @@ export class SnapshotView {
         // (les textures d'autotuile sont neutres) et assombrie par les dégâts.
         sprite.setTexture(`st-wall-${wallMask(wallTiles, s.tx, s.ty)}`)
         sprite.setTint(wallTint(s.material, s.hp / (s.material ? WALL_TIERS[s.material].wall.hp : STRUCTURE_HP.wall)))
+      } else if (isPlot(s.type)) {
+        // LE POTAGER (agriculture) : parcelle/serre/terroir VERDISSENT à mesure que la culture pousse — terre
+        // brune vide/semée, vert vif MÛRE (« c'est prêt » se lit d'un coup d'œil). Stade PUR
+        // (`cropStage`, la même source que la récolte) — pas de sprite à gérer, juste la teinte.
+        const stage = cropStage(s, this.tick) // -1 = vide, 0 → 1 en pousse
+        if (stage < 0) sprite.clearTint()
+        else sprite.setTint(Phaser.Display.Color.GetColor(Math.floor(150 - 44 * stage), Math.floor(150 + 95 * stage), Math.floor(90 - 30 * stage)))
       } else {
         // Une structure endommagée s'assombrit et rougit — lisible de loin.
         const max = (s.type === 'door' && s.material ? WALL_TIERS[s.material].door.hp : STRUCTURE_HP[s.type]) || 1

@@ -10,6 +10,7 @@
  * Rendu DOM (patron de la fenêtre « Fonder un village »), bord-haut braise.
  */
 import type { PlayerAction } from '@braises/sim'
+import { createPromptGate } from './prompt-gate'
 
 export interface RefugeePrompt {
   /** `near` = le groupe à portée (ou `null` : la fenêtre s'efface). */
@@ -55,6 +56,11 @@ export function createRefugeePrompt(board: HTMLElement, send: (a: PlayerAction) 
   const countEl = root.querySelector<HTMLElement>('.rfp-count')!
 
   let current: { groupId: number; count: number } | null = null
+  // Le garde anti-double-envoi : sans lui, un double-clic « NOURRIR » dépense deux fois les
+  // vivres avant l'arrivée du snapshot (la fenêtre rouvre car `UIScene.update` la rappelle
+  // chaque frame). Identité = l'id du groupe (voir prompt-gate). Un geste par groupe : le
+  // dilemme d'alignement se joue en un choix, pas en martelant un bouton.
+  const gate = createPromptGate()
   root.querySelectorAll<HTMLButtonElement>('.rfp-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       if (!current) return
@@ -63,8 +69,7 @@ export function createRefugeePrompt(board: HTMLElement, send: (a: PlayerAction) 
       if (verb === 'recruit') send({ type: 'recruit_refugees', groupId: g })
       else if (verb === 'feed') send({ type: 'feed_refugees', groupId: g })
       else send({ type: 'rob_refugees', groupId: g })
-      // Fermeture optimiste : le groupe disparaît (ou reste, si nourri) au prochain snapshot,
-      // qui repassera `refugeesNearby` à jour. Un second clic sur un groupe parti serait refusé.
+      gate.acted(g)
       current = null
       root.style.display = 'none'
     })
@@ -72,6 +77,14 @@ export function createRefugeePrompt(board: HTMLElement, send: (a: PlayerAction) 
 
   return {
     update(near) {
+      // On a agi et le snapshot n'a pas encore bougé le groupe : on reste muet (et `current`
+      // null) tant que le MÊME groupe revient. Recruté/dépouillé → il disparaît (`near` null) ;
+      // s'éloigner (refouler) → null aussi : le garde rend la main.
+      if (gate.suppresses(near?.groupId ?? null)) {
+        current = null
+        root.style.display = 'none'
+        return
+      }
       current = near
       if (near) countEl.textContent = near.count > 1 ? `Ils sont ${near.count}.` : `Un survivant.`
       root.style.display = near ? 'block' : 'none'
