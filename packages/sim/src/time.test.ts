@@ -4,6 +4,7 @@ import { drainEvents, type SimEvent } from './events'
 import { createSim, step } from './sim'
 import {
   actForDay,
+  calendarScaleForSeasonCycles,
   cycleOffsetForStartHour,
   DAY_TICKS_PER_CYCLE,
   getGameTime,
@@ -106,5 +107,44 @@ describe('temps (A2 — une saison accélérée headless)', () => {
     expect(days).toEqual(Array.from({ length: BALANCE.SEASON_DAYS }, (_, i) => i + 1))
     expect(acts).toEqual([1, 2, 3])
     expect(getGameTime(sim).seasonDay).toBe(BALANCE.SEASON_DAYS)
+  })
+})
+
+describe('couplage cycle↔calendrier (V0-9 — l’endgame observable en solo)', () => {
+  // Le tick où finit la saison : `seasonDayAtTick` bascule à SEASON_DAYS+1.
+  const seasonEndTick = (scale: number): number => (BALANCE.SEASON_DAYS * TICKS_PER_SEASON_DAY) / scale
+  // Le premier CRÉPUSCULE (night_started) qui tombe dans l'acte III, pour un décalage de
+  // départ donné. C'est là que déferle la méga-horde (worldevents R2) : s'il tombe APRÈS la
+  // fin de saison, l'endgame est invisible.
+  const firstAct3Nightfall = (scale: number, cycleOffset: number): number => {
+    const base = (((DAY_TICKS_PER_CYCLE - cycleOffset) % TICKS_PER_CYCLE) + TICKS_PER_CYCLE) % TICKS_PER_CYCLE
+    for (let t = base; t <= 200 * TICKS_PER_CYCLE; t += TICKS_PER_CYCLE) {
+      if (actForDay(seasonDayAtTick(t, scale)) === 3) return t
+    }
+    return Infinity
+  }
+
+  it('l’échelle DÉRIVÉE fait tomber la méga-horde DANS la saison — quel que soit l’heure de départ', () => {
+    // Un éventail de cadences jouables (≥ 4 pour que l'acte III reste observable quel que
+    // soit le décalage) — dont le défaut de la Veillée (6).
+    for (const cycles of [4, 6, 8, 12]) {
+      const scale = calendarScaleForSeasonCycles(cycles)
+      // La saison dure EXACTEMENT `cycles` cycles (contrat du couplage).
+      expect(seasonEndTick(scale)).toBeCloseTo(cycles * TICKS_PER_CYCLE, 3)
+      // Pour toute heure de départ, un crépuscule d'acte III précède la fin de saison.
+      for (const hour of [0, 6, 9, 15, 21]) {
+        const offset = cycleOffsetForStartHour(hour)
+        expect(firstAct3Nightfall(scale, offset)).toBeLessThan(seasonEndTick(scale))
+      }
+    }
+  })
+
+  it('RÉGRESSION : l’ancienne échelle codée en dur (720) laissait la méga-horde APRÈS la fin de saison', () => {
+    // Le bug que le couplage règle : à 720, la saison ne dure que ~2,5 cycles et le premier
+    // crépuscule d'acte III (départ 9 h, comme la Veillée) tombe SUR la fin de saison (tick
+    // 144 000 = jour 61) ou au-delà — donc jamais DANS les jours jouables (le test de
+    // couplage, lui, exige un `< seasonEndTick` strict). L'endgame est inobservable.
+    const offset = cycleOffsetForStartHour(9)
+    expect(firstAct3Nightfall(720, offset)).toBeGreaterThanOrEqual(seasonEndTick(720))
   })
 })

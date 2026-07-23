@@ -100,7 +100,7 @@ export {
   createEmptyMap, terrainAt, isBlockingTile, zoneAt, poisAt, poiCenter, poiClearings,
 } from './map'
 export type { WorldMap, Zone } from './map'
-export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
 export { ambientTemperature, advanceTemperature } from './temperature'
 export { resolveMove, moveAvatar, moveAvatarStepped, overlapsBlocking, isBlockedAt } from './collision'

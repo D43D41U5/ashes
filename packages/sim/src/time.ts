@@ -43,6 +43,26 @@ export function actForDay(day: number): Act {
 }
 
 /**
+ * LE COUPLAGE VEILLÉE (V0-9) — dérive le `calendarScale` pour qu'une saison de `SEASON_DAYS`
+ * jours s'étende sur EXACTEMENT `cycles` cycles jour/nuit.
+ *
+ * Le problème que ça règle (réserve de la spec saison) : en Veillée, le calendrier est
+ * accéléré indépendamment du cycle. À une échelle trop forte, les 60 jours défilent en 2,5
+ * cycles → le premier crépuscule de l'acte III (où déferle la méga-horde) tombe APRÈS la fin
+ * de saison, et toute la pression de l'endgame est INOBSERVABLE en solo. En liant l'échelle
+ * au nombre de cycles, la saison dure `cycles` cycles pile : chaque nuit est un pas
+ * observable du calendrier, et l'acte III tient dans la saison.
+ *
+ * `cycles` est la CALIBRATION — durée de session, densité d'escalade (à régler en playtest,
+ * cf. `VEILLEE_SEASON_CYCLES` côté client). Le couplage, lui, est MÉCANIQUE : il tient quel
+ * que soit `CYCLE_REAL_MINUTES`, on ne re-calera jamais l'échelle à la main. Pur, déterministe
+ * (× et /) — n'affecte que le mapping tick→jour, jamais le flux RNG.
+ */
+export function calendarScaleForSeasonCycles(cycles: number): number {
+  return (BALANCE.SEASON_DAYS * TICKS_PER_SEASON_DAY) / (cycles * TICKS_PER_CYCLE)
+}
+
+/**
  * Décalage de phase (ticks) pour qu'une partie DÉMARRE à `startHour` (horloge
  * murale, 0-24). N'affecte que le cycle jour/nuit, jamais le calendrier de
  * saison. Ex. `cycleOffsetForStartHour(0)` → commencer à minuit (en pleine nuit).

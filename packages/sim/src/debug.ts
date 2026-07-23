@@ -26,10 +26,11 @@ export type DebugAction =
   /**
    * SAUTER AU JOUR DE SAISON — l'outil sans lequel la SAISON est intestable.
    *
-   * En Veillée (`calendarScale = 720`), un jour de saison prend deux minutes réelles : atteindre
-   * l'acte III (jour 43) demande **une heure et demie de jeu**. Personne ne verra donc jamais le
-   * front de cendre avancer — ni un playtesteur, ni un smoke test. Une mécanique qu'on ne peut
-   * pas ATTEINDRE est une mécanique morte, et ce projet en a déjà enterré cinq.
+   * En Veillée, la saison est compressée sur quelques cycles jour/nuit (couplage V0-9,
+   * `calendarScaleForSeasonCycles`) : atteindre l'acte III (jour 43) demande tout de même
+   * plusieurs heures de jeu. Personne ne verra donc jamais le front de cendre avancer d'un seul
+   * élan — ni un playtesteur, ni un smoke test. Une mécanique qu'on ne peut pas ATTEINDRE est une
+   * mécanique morte, et ce projet en a déjà enterré cinq.
    *
    * On saute donc le TICK, ce qui est la seule façon honnête : le tick EST le calendrier. Tout
    * ce qui en dérive (l'acte, la faim, le froid, le front) suit sans qu'on ait à le forcer — et

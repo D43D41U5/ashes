@@ -6,6 +6,7 @@
  * client ne fera que `join`. Le client reçoit la carte dans `ready`.
  */
 import {
+  calendarScaleForSeasonCycles,
   createSim,
   cycleOffsetForStartHour,
   emplacementsDeVillage,
@@ -22,8 +23,24 @@ import {
 } from '@braises/sim'
 
 export const VEILLEE_SEED = 2026
-/** Démo : un jour de saison toutes les 2 minutes. */
-export const VEILLEE_CALENDAR_SCALE = 720
+/**
+ * ⚙ CALIBRATION (V0-9) — LA DURÉE D'UNE VEILLÉE, en cycles jour/nuit observables.
+ *
+ * C'est LE bouton de rythme de la saison solo. La saison (60 jours, 3 actes) est compressée
+ * sur exactement ce nombre de cycles ; l'acte III et sa méga-horde tombent donc DANS la
+ * saison (sans ce couplage, à l'ancienne échelle fixe 720, ils arrivaient APRÈS la fin de
+ * saison → l'endgame était invisible en solo — réserve de la spec saison).
+ *
+ * 6 cycles → ~2 nuits d'escalade par acte, marge d'acte III robuste (~1,8 cycle), et une
+ * saison d'environ 6 × CYCLE_REAL_MINUTES (≈ 5 h) à jouer EN PLUSIEURS SÉANCES grâce à la
+ * persistance (P1-6) — le format « 5 sessions » de GATE 1. À AJUSTER en playtest : plus de
+ * cycles = escalade plus étalée mais session plus longue ; moins = plus serré (garder ≥ 4
+ * pour que l'acte III reste observable quel que soit l'heure de départ).
+ */
+export const VEILLEE_SEASON_CYCLES = 6
+/** L'échelle du calendrier, DÉRIVÉE du nombre de cycles voulu (couplage cycle↔calendrier).
+ *  Ne pas coder en dur : c'est ce codage en dur (720) qui découplait l'endgame. */
+export const VEILLEE_CALENDAR_SCALE = calendarScaleForSeasonCycles(VEILLEE_SEASON_CYCLES)
 /** Heure murale de départ : 9 = matinée (bonne lumière pour découvrir l'alpin ; 0 = minuit). */
 export const VEILLEE_START_HOUR = 9
 
