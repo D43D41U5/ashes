@@ -13,6 +13,7 @@
 import type Phaser from 'phaser'
 import type { PlayerAction } from '@braises/sim'
 import { getHud, setHud } from '../../hud-state'
+import { ensureGameFont, GAME_FONT } from '../ui/game-font'
 
 const SPEEDS = [1, 2, 4, 8] as const
 const HOUR_DAY = 12
@@ -27,12 +28,13 @@ export interface DebugPanelDeps {
 export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): void {
   const reg = scene.registry
 
+  ensureGameFont()
   const root = document.createElement('div')
   root.style.cssText = [
     'position:fixed', 'top:96px', 'left:12px', 'z-index:50',
     'display:none', 'flex-direction:column', 'gap:6px',
     'padding:10px 10px 11px', 'width:186px',
-    'font:12px/1.3 ui-sans-serif,system-ui,sans-serif', 'color:#e6d9c4',
+    `font:12px/1.3 ${GAME_FONT}`, 'color:#e6d9c4', // la police du jeu, même en outil de dev
     'background:rgba(20,15,11,0.86)', 'border:1px solid #33291f', 'border-radius:12px',
     'backdrop-filter:blur(6px)', 'box-shadow:0 14px 40px -16px rgba(0,0,0,0.7)',
     'user-select:none',

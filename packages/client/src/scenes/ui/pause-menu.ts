@@ -12,6 +12,7 @@
  * que le voile de mort / la stèle : fond chaud, sourcil braise, titre espacé, filet.
  */
 import { reopenFreshVeillee } from './reopen-veillee'
+import { ensureGameFont, GAME_FONT } from './game-font'
 
 /** Une ligne du tableau des contrôles : un libellé, la ou les touches. */
 const KEYS: [string, string][] = [
@@ -25,13 +26,15 @@ const KEYS: [string, string][] = [
   ['Couper le son', 'N'],
 ]
 
-/** La règle du clic gauche — « l'objet en main décide ». La moitié invisible du jeu. */
+/** La règle du clic gauche — « l'objet en main décide ». La moitié invisible du jeu.
+ *  Colonne de droite tenue COURTE (≤ 34 signes) : en mono, au-delà, la ligne se casse en
+ *  deux et le tableau perd son rythme (une ligne sur deux vaut le double de hauteur). */
 const CLICKS: [string, string][] = [
-  ['un nœud, un arbre', 'récolter (maintenu : coup lourd d’abattage)'],
-  ['une arme en main', 'frapper (maintenu : coup lourd chargé)'],
-  ['de la nourriture', 'manger — ou, sur un voisin, la lui DONNER'],
+  ['un nœud, un arbre', 'récolter — maintenu : abattre'],
+  ['une arme en main', 'frapper — maintenu : coup lourd'],
+  ['de la nourriture', 'manger — ou la DONNER à un voisin'],
   ['des fibres, et une plaie', 'se panser'],
-  ['du bois, sur le Feu', 'le NOURRIR (le seul geste qui tient l’upkeep)'],
+  ['du bois, sur le Feu', 'le NOURRIR (il tient l’upkeep)'],
   ['du bois, sur un mur abîmé', 'le RÉPARER'],
 ]
 
@@ -51,17 +54,27 @@ export interface PauseMenuDeps {
 
 /** `onResume` referme le menu ; le bouton « nouvelle Veillée » pose le deep-link `?fresh`. */
 export function createPauseMenu({ onResume, getVolume, onVolume }: PauseMenuDeps): PauseMenu {
+  // La police du jeu, POSÉE et pas héritée : ce voile monte sur `document.body`, qui n'en
+  // déclare aucune — un `inherit` y récupérait la serif par défaut du navigateur.
+  ensureGameFont()
   document.querySelectorAll('.pause-menu').forEach((n) => n.remove())
   const root = document.createElement('div')
   root.className = 'pause-menu'
-  const row = ([a, b]: [string, string], sep = '·', cls = ''): string =>
-    `<div class="pm-row ${cls}"><span class="pm-l">${a}</span><span class="pm-sep">${sep}</span><span class="pm-r">${b}</span></div>`
+  // Plus de séparateur « · » : c'est la GRILLE qui aligne les deux colonnes (le point
+  // flottait, et son gris échouait au contraste). `display:contents` sur la ligne fait
+  // tomber ses deux cellules directement dans la grille du tableau.
+  const row = ([a, b]: [string, string], cls = ''): string =>
+    `<div class="pm-row ${cls}"><span class="pm-l">${a}</span><span class="pm-r">${b}</span></div>`
   root.innerHTML = `
   <style>
-    .pause-menu{position:fixed;inset:0;z-index:70;display:none;align-items:center;justify-content:center;
-      opacity:0;transition:opacity .2s ease;pointer-events:auto;overflow-y:auto;padding:40px 0;
-      background:rgba(20,16,12,.93);
-      -webkit-backdrop-filter:brightness(.7);backdrop-filter:brightness(.7);font-family:inherit;}
+    /* flex-start et non center : la carte est plus haute que la fenêtre (contrôles + son),
+       et la centrer poussait la rangée d'actions — donc REPRENDRE — SOUS LE PLI, sans que
+       rien ne signale qu'il fallait défiler. Le fond monte à .985 : à .93 le HUD traversait
+       (le filet du menu tombait pile sur la ligne de conseil du jeu). */
+    .pause-menu{position:fixed;inset:0;z-index:70;display:none;align-items:flex-start;justify-content:center;
+      opacity:0;transition:opacity .2s ease;pointer-events:auto;overflow-y:auto;padding:40px 0 0;
+      background:rgba(20,16,12,.985);
+      -webkit-backdrop-filter:brightness(.7);backdrop-filter:brightness(.7);font-family:${GAME_FONT};}
     .pause-menu.pm-on{opacity:1;}
     .pm-glow{position:fixed;left:50%;bottom:0;transform:translateX(-50%);width:900px;height:400px;pointer-events:none;
       background:radial-gradient(ellipse at bottom,rgba(201,139,58,.16),transparent 68%);}
@@ -71,19 +84,26 @@ export function createPauseMenu({ onResume, getVolume, onVolume }: PauseMenuDeps
       text-shadow:0 2px 0 #14141a,0 0 18px rgba(201,139,58,.25);}
     .pm-div{width:80px;height:1px;background:#6b5a3a;margin:22px auto;}
     .pm-sect{font-size:12px;color:#c98b3a;letter-spacing:4px;margin:24px 0 12px;}
-    .pm-table{max-width:520px;margin:0 auto;text-align:left;}
-    .pm-row{display:flex;align-items:baseline;gap:10px;font-size:13.5px;line-height:1.9;}
-    .pm-l{flex:0 0 46%;color:#9a8f78;}
-    .pm-sep{color:#6b5a3a;}
-    .pm-r{flex:1;color:#e8e0c8;}
+    /* UNE GRILLE, pas des lignes flex : les deux colonnes s'alignent d'elles-mêmes et le
+       rythme vertical devient CONSTANT. En flex, la colonne droite était contrainte à
+       ~32 signes pour des phrases de 45 : une ligne sur deux se cassait, donc alternait
+       26 px et 51 px de hauteur. Le tableau ne se lisait ni comme liste ni comme grille. */
+    .pm-table{display:grid;grid-template-columns:minmax(0,15rem) 1fr;column-gap:18px;row-gap:9px;
+      max-width:40rem;margin:0 auto;text-align:left;font-size:13.5px;line-height:1.5;}
+    .pm-row{display:contents;}
+    .pm-l{color:#9a8f78;}
+    .pm-r{color:#e8e0c8;}
     .pm-row.pm-click .pm-l{color:#c0a074;}
     .pm-sound{display:flex;align-items:center;gap:14px;justify-content:center;margin-top:4px;}
     .pm-vol{-webkit-appearance:none;appearance:none;width:280px;height:4px;background:#3a3225;border-radius:2px;outline:none;}
     .pm-vol::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;border-radius:50%;background:#c98b3a;cursor:pointer;border:2px solid #14100c;}
     .pm-vol::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#c98b3a;cursor:pointer;border:2px solid #14100c;}
     .pm-vol-val{font-size:13px;color:#e8c66a;min-width:42px;text-align:left;}
-    .pm-hint{font-size:12px;color:#6f6a60;letter-spacing:.5px;margin-top:14px;}
-    .pm-row2{display:flex;gap:14px;justify-content:center;margin-top:30px;flex-wrap:wrap;}
+    /* La rangée d'actions COLLE EN BAS : quelle que soit la hauteur de la carte ou de la
+       fenêtre, REPRENDRE reste sous la main. C'est le geste pour lequel on a ouvert le menu. */
+    .pm-row2{position:sticky;bottom:0;display:flex;gap:14px;justify-content:center;flex-wrap:wrap;
+      margin-top:30px;padding:18px 0 24px;
+      background:linear-gradient(transparent,rgba(20,16,12,.985) 42%);}
     .pm-btn{background:rgba(201,139,58,.14);border:2px solid #c98b3a;color:#e8c66a;font-size:15px;font-weight:700;
       letter-spacing:2px;padding:13px 30px;transition:background .12s ease,color .12s ease;}
     .pm-btn:hover{background:rgba(232,198,106,.24);color:#f2ead0;}
@@ -92,6 +112,11 @@ export function createPauseMenu({ onResume, getVolume, onVolume }: PauseMenuDeps
     /* LA CONFIRMATION D'EFFACEMENT : rouge d'alerte, le seul de l'écran — on ne clique pas
        « effacer » par inadvertance quand le bouton porte la couleur du danger. */
     .pm-confirm[hidden]{display:none;}
+    /* Pendant la confirmation d'effacement, l'écran SE VIDE : la question reste seule.
+       Sinon l'avertissement « c'est sans retour » se lisait sous un tableau de touches. */
+    .pause-menu.pm-asking .pm-table,
+    .pause-menu.pm-asking .pm-sect,
+    .pause-menu.pm-asking .pm-sound{display:none;}
     /* Le display:flex de .pm-row2 ÉCRASE le [hidden]{display:none} de la feuille du navigateur :
        sans cette règle plus spécifique, masquer la rangée de choix n'avait AUCUN effet visuel
        (les deux rangées restaient à l'écran, la confirmation débordait sous le pli). */
@@ -107,7 +132,7 @@ export function createPauseMenu({ onResume, getVolume, onVolume }: PauseMenuDeps
     <div class="pm-title">BRAISES</div>
     <div class="pm-div"></div>
     <div class="pm-sect">LE CLIC GAUCHE — L’OBJET EN MAIN DÉCIDE</div>
-    <div class="pm-table">${CLICKS.map((c) => row(c, '→', 'pm-click')).join('')}</div>
+    <div class="pm-table">${CLICKS.map((c) => row(c, 'pm-click')).join('')}</div>
     <div class="pm-sect">LES TOUCHES</div>
     <div class="pm-table">${KEYS.map((k) => row(k)).join('')}</div>
     <div class="pm-sect">LE SON</div>
@@ -115,7 +140,6 @@ export function createPauseMenu({ onResume, getVolume, onVolume }: PauseMenuDeps
       <input type="range" class="pm-vol" min="0" max="100" step="1" aria-label="Volume">
       <span class="pm-vol-val"></span>
     </div>
-    <div class="pm-hint">ESPACE pare de face · maintenir le clic, c’est charger un coup lourd · N coupe le son.</div>
     <div class="pm-row2 pm-choices">
       <button class="pm-btn pm-resume">REPRENDRE</button>
       <button class="pm-btn pm-ghost pm-fresh">nouvelle Veillée</button>
@@ -142,10 +166,9 @@ export function createPauseMenu({ onResume, getVolume, onVolume }: PauseMenuDeps
   const askConfirm = (open: boolean): void => {
     confirm.hidden = !open
     choices.hidden = open // on ne laisse pas les deux rangées à l'écran : le choix est franc
-    // La carte de pause est HAUTE (contrôles + son) et défile : posée en bas, la confirmation
-    // tombait sous le pli, boutons coupés. On l'amène à l'œil. `behavior` par défaut = instantané
-    // (un défilement animé serait du mouvement, proscrit en `prefers-reduced-motion`).
-    if (open) confirm.scrollIntoView({ block: 'center' })
+    // …et l'écran SE VIDE (contrôles, touches, son) : un geste irréversible mérite d'être
+    // seul à l'écran. La carte redevenant courte, plus besoin de la faire défiler à l'œil.
+    root.classList.toggle('pm-asking', open)
   }
   root.querySelector<HTMLElement>('.pm-fresh')!.addEventListener('click', () => askConfirm(true))
   root.querySelector<HTMLElement>('.pm-cancel')!.addEventListener('click', () => askConfirm(false))

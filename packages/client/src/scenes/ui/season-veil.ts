@@ -29,6 +29,7 @@ import type { ChronicleEntry } from '@braises/sim'
 import type { SeasonVerdict } from '../../hud-state'
 import { warmthColor } from '../../render/lighting'
 import { reopenFreshVeillee } from './reopen-veillee'
+import { ensureGameFont, GAME_FONT } from './game-font'
 
 /** `0xrrggbb` (Phaser) → `#rrggbb` (CSS). */
 function hex(col: number): string {
@@ -57,6 +58,9 @@ export interface SeasonVeil {
 }
 
 export function createSeasonVeil(): SeasonVeil {
+  // La police du jeu, POSÉE et pas héritée : ce voile monte sur `document.body`, qui n'en
+  // déclare aucune — un `inherit` y récupérait la serif par défaut du navigateur.
+  ensureGameFont()
   // Idempotent (rebuild de scène / HMR) : un voile résiduel est retiré avant d'en poser un neuf.
   document.querySelectorAll('.season-veil').forEach((n) => n.remove())
   const root = document.createElement('div')
@@ -67,7 +71,7 @@ export function createSeasonVeil(): SeasonVeil {
       opacity:0;transition:opacity .7s ease;pointer-events:auto;overflow-y:auto;padding:40px 0;
       background:rgba(20,16,12,.94);
       -webkit-backdrop-filter:sepia(.18) saturate(.5) brightness(.66);
-      backdrop-filter:sepia(.18) saturate(.5) brightness(.66);font-family:inherit;}
+      backdrop-filter:sepia(.18) saturate(.5) brightness(.66);font-family:${GAME_FONT};}
     .season-veil.sv-on{opacity:1;}
     /* La dernière chaleur : la braise du Feu qui a tenu, en bas. */
     .sv-glow{position:fixed;left:50%;bottom:0;transform:translateX(-50%);width:1000px;height:460px;

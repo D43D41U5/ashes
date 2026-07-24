@@ -1222,6 +1222,24 @@ const SCENARIOS = {
     console.log(`menu pause : ${JSON.stringify(open)}`)
     await page.screenshot({ path: `${OUT}/pause-menu.png` })
 
+    // LA POLICE DES VOILES. Ils montent sur `document.body`, qui ne déclare AUCUNE
+    // font-family : un `font-family:inherit` y récupère donc la police par défaut du
+    // navigateur (une serif), pas celle du jeu. Le test unitaire ne pouvait pas le voir
+    // (il ne connaît que la propriété camelCase de Phaser). Seul le navigateur tranche :
+    // on compare la police CALCULÉE du voile à celle du HUD, qui est la référence.
+    const polices = await page.evaluate(() => {
+      const f = (sel) => {
+        const el = document.querySelector(sel)
+        return el ? getComputedStyle(el).fontFamily : null
+      }
+      return { voile: f('.pm-title'), hud: f('.hud-board'), corpsPage: getComputedStyle(document.body).fontFamily }
+    })
+    const memePolice = polices.voile === polices.hud
+    console.log(`polices : ${JSON.stringify({ ...polices, memePolice })}`)
+    if (!memePolice) {
+      console.error(`!! LE VOILE N'EST PAS DANS LA POLICE DU JEU : voile=${polices.voile} / hud=${polices.hud}`)
+    }
+
     // LE GARDE-FOU D'EFFACEMENT : « nouvelle Veillée » ne doit PLUS effacer au premier clic.
     // On l'ouvre, on vérifie que la confirmation prend la place des choix, on capture — puis on
     // ANNULE. (On ne clique JAMAIS `.pm-fresh-go` ici : il effacerait la sauvegarde pour de bon.)

@@ -22,6 +22,8 @@
  * DÉJÀ fait respawn (le voile ne bloque rien), il se lève et retombe tout seul.
  */
 
+import { ensureGameFont, GAME_FONT } from './game-font'
+
 /** La cause de la chute, telle que la porte l'événement `entity_died` de la sim. */
 export type DeathCause = 'cold' | 'hunger' | null
 
@@ -66,6 +68,9 @@ export const DEATH_FADE_MS = 550
 const FADE_MS = DEATH_FADE_MS
 
 export function createDeathVeil(): DeathVeil {
+  // La police du jeu, POSÉE et pas héritée : ce voile monte sur `document.body`, qui n'en
+  // déclare aucune — un `inherit` y récupérait la serif par défaut du navigateur.
+  ensureGameFont()
   // Idempotent : un voile résiduel (rebuild de scène, HMR) est retiré avant d'en poser
   // un neuf — sinon deux `.death-veil` s'empilent sur `body` et l'un masque l'autre.
   document.querySelectorAll('.death-veil').forEach((n) => n.remove())
@@ -83,7 +88,7 @@ export function createDeathVeil(): DeathVeil {
     .dv-glow{position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:900px;height:420px;
       background:radial-gradient(ellipse at bottom,rgba(201,139,58,.20),transparent 68%);pointer-events:none;}
     .dv-card{position:relative;text-align:center;max-width:720px;padding:0 44px;transform:translateY(10px);
-      transition:transform ${FADE_MS}ms ease;font-family:inherit;}
+      transition:transform ${FADE_MS}ms ease;font-family:${GAME_FONT};}
     .death-veil.dv-on .dv-card{transform:translateY(0);}
     .dv-title{font-size:30px;font-weight:700;color:#c98b3a;letter-spacing:6px;
       text-shadow:0 2px 0 #14141a,0 0 18px rgba(201,139,58,.25);}

@@ -34,6 +34,49 @@ describe('la typographie du jeu', () => {
     expect(coupables).toEqual([])
   })
 
+  /**
+   * LE TROU PAR LEQUEL DEUX POLICES SONT PASSÉES.
+   *
+   * Le test ci-dessus ne connaît que `fontFamily:` — la propriété camelCase de Phaser. Or
+   * la moitié de l'interface est en DOM, où la police s'écrit `font-family:` dans une chaîne
+   * CSS. Trois voiles (pause, mort, stèle) montaient sur `document.body` — qui ne pose AUCUNE
+   * police — en déclarant `font-family:inherit` : ils héritaient donc de la serif par défaut
+   * du navigateur. Le jeu a tourné à DEUX polices, ce test au vert, pendant des semaines.
+   *
+   * La règle exacte n'est PAS « `inherit` est interdit » : sur la planche du HUD (qui, elle,
+   * pose la police) `inherit` est correct — et sur un `<input>` il est même OBLIGATOIRE, les
+   * contrôles de formulaire n'héritant pas de la police par défaut. Ce qui est interdit, c'est
+   * de monter un écran sur `document.body` SANS y poser la police du jeu.
+   */
+  it('tout écran monté sur document.body pose la police du jeu', () => {
+    // Justifiées, et seulement celles-là : elles montent sur `body` sans porter de texte.
+    const SANS_TEXTE = [
+      'vignette.ts', // un dégradé, pas un mot
+      'hud-character.ts', // n'y met qu'un <img> (le fantôme de glisser-déposer) ; sa racine est sur la planche
+    ]
+    const coupables = Object.entries(SOURCES)
+      .filter(([path]) => !path.endsWith('.test.ts'))
+      .filter(([path]) => !SANS_TEXTE.some((f) => path.endsWith(f)))
+      .filter(([, source]) => /document\.body\.appendChild/.test(source))
+      .filter(([, source]) => !source.includes('GAME_FONT'))
+      .map(([path]) => path)
+
+    // Un fichier ici monte un écran sur `body` sans police : il rendra en Times New Roman.
+    expect(coupables).toEqual([])
+  })
+
+  /** Et la police DOM ne se nomme qu'à un seul endroit : `game-font.ts`. */
+  it('la police DOM n’est nommée que dans game-font.ts', () => {
+    const coupables = Object.entries(SOURCES)
+      .filter(([path]) => !path.endsWith('game-font.ts') && !path.endsWith('.test.ts'))
+      // On vise une police NOMMÉE en dur (guillemet ou lettre), pas les interpolations
+      // `font-family:${GAME_FONT}` ni les `font-family:inherit` légitimes.
+      .filter(([, source]) => /font-family\s*:\s*(?!\$\{|inherit)['"a-zA-Z]/i.test(source))
+      .map(([path]) => path)
+
+    expect(coupables).toEqual([])
+  })
+
   it('l’échelle est COURTE : quatre tailles, six encres — pas une de plus', () => {
     // Au-delà, on ne compose plus, on bricole : l'œil ne sait plus ce qui compte.
     expect(Object.keys(SIZE)).toHaveLength(4)
