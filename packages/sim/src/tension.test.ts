@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { aLAbriDeLaNuit } from './test-abri'
 import { BALANCE, CIRCLES, FOOD_VALUES, NIGHT_HUNT, SPOIL, SPOIL_CYCLES, SLOTS, TERRAIN_GRASS } from './balance'
 import { generateNodes, type ResourceNode } from './economy'
 import { drainEvents } from './events'
@@ -72,12 +73,14 @@ describe('2. LA NOURRITURE POURRIT (on ne stocke pas, on fait tourner)', () => {
   it('les baies se gâtent, nourrissent moitié moins, puis DISPARAISSENT', () => {
     const sim = monde()
     const id = spawnEntity(sim, 10.5, 10.5)
+    aLAbriDeLaNuit(sim, id) // ce banc parle de POURRISSEMENT : la nuit ne doit pas signer sa fin
     grantItems(sim, id, { berries: 10 })
-    expect(me(sim).inventory[0]!.fresh).toBe(1) // ce qu'on récolte est frais
+    expect(me(sim).inventory.find((sl) => sl?.item === 'berries')!.fresh).toBe(1) // ce qu'on récolte est frais
 
     // Un cycle plus tard (les baies tiennent 2 cycles) : RASSIES.
     for (let t = 0; t < TICKS_PER_CYCLE * 1.2; t++) step(sim, [])
-    const slot = me(sim).inventory[0]!
+    // On DÉSIGNE les baies plutôt que de parier sur un rang : le bois du Feu occupe le premier.
+    const slot = me(sim).inventory.find((sl) => sl?.item === 'berries')!
     expect(spoilTier(slot.fresh!)).toBe('stale')
     expect(nutritionFactor(slot.fresh)).toBe(SPOIL.NUTRITION_STALE) // moitié moins
 
@@ -120,12 +123,14 @@ describe('2. LA NOURRITURE POURRIT (on ne stocke pas, on fait tourner)', () => {
   it('deux piles qui fusionnent MOYENNENT leur fraîcheur (ranger ne rajeunit rien)', () => {
     const sim = monde()
     const id = spawnEntity(sim, 10.5, 10.5)
+    aLAbriDeLaNuit(sim, id) // ce banc parle de FRAÎCHEUR : la nuit ne doit pas signer sa fin
+    const baies = (): number => me(sim).inventory.find((sl) => sl?.item === 'berries')!.fresh!
     grantItems(sim, id, { berries: 5 })
     for (let t = 0; t < TICKS_PER_CYCLE; t++) step(sim, []) // elles vieillissent
-    const vieilles = me(sim).inventory[0]!.fresh!
+    const vieilles = baies()
 
     grantItems(sim, id, { berries: 5 }) // cinq FRAÎCHES par-dessus
-    const melange = me(sim).inventory[0]!.fresh!
+    const melange = baies()
 
     // Ni « toutes fraîches » (le coffre serait une machine à remonter le temps),
     // ni « toutes vieilles » (ça punirait le rangement) : la MOYENNE.
@@ -233,6 +238,36 @@ describe('4. LA NUIT CHASSE (mais elle s’annonce, et elle a une parade)', () =
     expect(events.filter((e) => e.type === 'wolf_howl').length).toBeGreaterThan(0)
     // BORNÉ : on peut perdre, on ne doit pas être submergé.
     expect(loups.length).toBeLessThanOrEqual(NIGHT_HUNT.MAX_ALIVE)
+  })
+
+  /**
+   * LE TEST QUI MANQUAIT — et son absence a laissé passer un bug qui tuait la règle entière.
+   *
+   * Le test ci-dessus vérifie que les loups VIENNENT et qu'ils HURLENT. Nulle part il ne
+   * vérifiait qu'ils MORDENT — et pendant tout ce temps, ils ne mordaient pas : le courage exige
+   * `PACK_COURAGE` congénères proches, or la nuit n'en lève que `MAX_ALIVE` sans meute. Deux
+   * loups tournaient à trois tuiles jusqu'à l'aube, et il ne se passait rien.
+   *
+   * La promesse centrale de ce système n'a qu'un effet observable : le sang. On teste celui-là.
+   */
+  it('LOIN D’UN FEU, LA NUIT MORD — la promesse centrale, vérifiée par le sang', () => {
+    const sim = nuit()
+    const id = spawnEntity(sim, 32.5, 32.5)
+    const moi = sim.entities.find((e) => e.id === id)!
+    const hp0 = moi.hp
+
+    let mordu = false
+    for (let t = 0; t < 20 * 60 * BALANCE.TICK_RATE_HZ && !mordu; t++) {
+      step(sim, [])
+      // On ISOLE la morsure : ni la faim ni le froid ne doivent pouvoir signer ces dégâts.
+      moi.hunger = 100
+      moi.temperature = 100
+      if (moi.hp < hp0) mordu = true
+    }
+
+    // Le VOIR d'abord : sans loup levé, le test ne prouverait rien.
+    expect(sim.monsters.filter((m) => m.type === 'wolf').length).toBeGreaterThan(0)
+    expect(mordu, 'les rôdeurs de la nuit tournent sans jamais mordre — la nuit ne chasse pas').toBe(true)
   })
 
   it('AU FEU, ON EST TRANQUILLE : la parade existe, et le joueur l’a dès la minute 0', () => {

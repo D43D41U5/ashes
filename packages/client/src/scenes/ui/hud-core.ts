@@ -364,7 +364,7 @@ function markup(): string {
     /* L'INDICATEUR DE SAUVEGARDE : discret par nature (une réassurance, pas une récompense) —
        d'où la teinte éteinte et la petite taille. En ÉCHEC il passe au rouge d'alerte : là,
        il faut qu'on le voie. */
-    /* Teinte dim (#9a8f78) et non faint (#6f6a60) : au premier essai, l'indicateur était
+    /* Teinte dim (#9a8f78) et non faint (#8b8474) : au premier essai, l'indicateur était
        ILLISIBLE sur un sol clair — discret ne veut pas dire invisible, et une réassurance
        qu'on ne peut pas lire ne rassure personne. C'est la teinte des lignes lieu/tableau,
        déjà lisibles à la capture. (Le sort de faint, qui échoue au contraste WCAG partout

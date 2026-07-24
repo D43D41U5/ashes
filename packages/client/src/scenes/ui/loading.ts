@@ -205,7 +205,7 @@ function board(): string {
 
     <div style="position:absolute;left:50%;bottom:70px;transform:translateX(-50%);width:620px;text-align:center;">
       <div class="bl-geste" style="font-size:13px;color:#9a8f78;letter-spacing:1px;min-height:1em;"></div>
-      <div class="bl-pct" style="font-size:11px;color:#6f6a60;letter-spacing:2px;margin-top:14px;">0 % · LA BRAISE COUVE</div>
+      <div class="bl-pct" style="font-size:11px;color:#8b8474;letter-spacing:2px;margin-top:14px;">0 % · LA BRAISE COUVE</div>
     </div>
   </div>`
 }

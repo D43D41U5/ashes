@@ -2308,7 +2308,10 @@ export function wolfStep(
     // 4. LE COURAGE. Face à un HOMME, un loup mal entouré suit sans mordre : il
     //    reste à distance de morsure, il pèse. La meute décimée cesse d'attaquer,
     //    et le joueur SENT qu'il a brisé quelque chose.
-    const brave = !isAvatar(target.id) || packNearby(pack, monster, entity, byId) >= FAUNA.PACK_COURAGE
+    const brave =
+      !isAvatar(target.id) ||
+      monster.nightHunter === true || // la nuit ne pèse pas un homme : elle est venue pour lui
+      packNearby(pack, monster, entity, byId) >= FAUNA.PACK_COURAGE
     const d2 = distSq(entity.x, entity.y, target.x, target.y)
 
     if (!brave) {

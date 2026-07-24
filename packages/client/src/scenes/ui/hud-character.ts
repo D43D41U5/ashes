@@ -406,7 +406,7 @@ function markup(): string {
        Coordonnées dans le plan 1920×1080 (voir hud-dom.ts). */
     .hch{position:absolute;inset:0;background:#14100c;display:none;pointer-events:auto;
       background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.012) 0 2px,transparent 2px 4px);}
-    .hch-close{position:absolute;top:24px;right:30px;font-size:12px;color:#6f6a60;letter-spacing:1px;}
+    .hch-close{position:absolute;top:24px;right:30px;font-size:12px;color:#8b8474;letter-spacing:1px;}
 
     /* SAC : bas-centre, colonnes ALIGNÉES sur la ceinture, posé JUSTE au-dessus d'elle.
        bottom = 26 (ceinture) + 78 (sa hauteur) + 16 (interstice ≤20). */
@@ -435,7 +435,7 @@ function markup(): string {
     .hch-doll{display:flex;align-items:center;justify-content:space-between;}
     .hch-eqcol{display:flex;flex-direction:column;justify-content:space-between;height:492px;}
     .hch-eq{position:relative;width:78px;height:78px;background:rgba(27,27,34,.5);border:3px solid #14141a;display:grid;place-items:center;}
-    .hch-eq-lbl{font-size:9px;color:#6f6a60;letter-spacing:1px;}
+    .hch-eq-lbl{font-size:9px;color:#8b8474;letter-spacing:1px;}
     .hch-portrait{position:relative;width:300px;height:492px;border:3px solid #2a2a34;background:#16120d;
       background-image:radial-gradient(ellipse at 50% 50%,rgba(201,139,58,.14),rgba(20,16,12,0) 60%);display:grid;place-items:center;overflow:hidden;}
     .hch-portrait::after{content:'';position:absolute;bottom:118px;left:50%;transform:translateX(-50%);width:150px;height:18px;
@@ -476,10 +476,10 @@ function markup(): string {
     .hch-art{position:absolute;top:70px;right:60px;width:600px;bottom:150px;display:flex;flex-direction:column;min-width:0;}
     .hch-art-h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;}
     .hch-art-t{font-size:17px;font-weight:700;color:#ffffff;letter-spacing:1px;}
-    .hch-art-hint{font-size:12px;color:#6f6a60;letter-spacing:1px;}
+    .hch-art-hint{font-size:12px;color:#8b8474;letter-spacing:1px;}
     .hch-search{background:#1b1b22;border:3px solid #14141a;padding:12px 14px;font-size:16px;color:#e8e0c8;letter-spacing:1px;
       margin-bottom:18px;font-family:inherit;outline:none;}
-    .hch-search::placeholder{color:#6f6a60;}
+    .hch-search::placeholder{color:#8b8474;}
     .hch-search:focus{border-color:#6b5a3a;}
     /* La liste défile : une VRAIE barre visible (le contenu déborde presque toujours). */
     .hch-list{flex:1;min-height:0;overflow-y:scroll;display:flex;flex-direction:column;gap:18px;padding-right:12px;
@@ -498,12 +498,12 @@ function markup(): string {
     .hch-rec-off .hch-rec-ic img{opacity:.4;}
     .hch-rec-mid{flex:1;min-width:0;}
     .hch-rec-name{font-size:17px;color:#e8e0c8;}
-    .hch-rec-off .hch-rec-name{color:#6f6a60;}
+    .hch-rec-off .hch-rec-name{color:#8b8474;}
     .hch-rec-cost{font-size:14px;color:#9a8f78;margin-top:2px;}
-    .hch-rec-off .hch-rec-cost{color:#6f6a60;}
+    .hch-rec-off .hch-rec-cost{color:#8b8474;}
     .hch-rec-state{font-size:13px;color:#8a9a4a;letter-spacing:1px;flex:0 0 auto;}
     .hch-rec-off .hch-rec-state{color:#e05a4a;}
-    .hch-note{font-size:12px;color:#6f6a60;letter-spacing:1px;margin-top:12px;padding-top:12px;border-top:1px solid #2a2a34;}
+    .hch-note{font-size:12px;color:#8b8474;letter-spacing:1px;margin-top:12px;padding-top:12px;border-top:1px solid #2a2a34;}
     .hch-ghost{position:fixed;width:44px;height:44px;image-rendering:pixelated;pointer-events:none;z-index:60;transform:translate(-50%,-50%);opacity:.85;}
   </style>
   <div class="hch-close">TAB — FERMER</div>

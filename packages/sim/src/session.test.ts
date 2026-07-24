@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { aLAbriDeLaNuit } from './test-abri'
 import { BALANCE, TERRAIN_GRASS } from './balance'
 import { type ResourceNode } from './economy'
 import { drainEvents } from './events'
@@ -124,7 +125,12 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
   })
 
   it('QUI JOUE MAL MEURT : rester assis, ne rien faire, ignorer sa faim', () => {
-    const { sim } = mondeSolo()
+    const { sim, id } = mondeSolo()
+    // À L'ABRI, ET C'EST EXPRÈS : ce banc exige une mort DE FAIM, donc la faim doit être la
+    // seule cause possible. Dehors, depuis que la nuit mord, le loup signerait à sa place — et
+    // le banc mesurerait la prédation en croyant mesurer la faim. Assis près de son Feu, notre
+    // joueur a tout ce qu'il faut pour vivre : il ne lui manque que de se nourrir.
+    aLAbriDeLaNuit(sim, id)
     drainEvents(sim)
 
     // Il ne fait RIEN. Avant le chantier tension, ce joueur s'en tirait sans y
@@ -148,7 +154,13 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
     expect(morts).toBeLessThanOrEqual(3)
   })
 
-  it('LA CUEILLETTE SEULE NE SUFFIT PAS : manger des baies crues ne tient pas un homme', () => {
+  // TIMEOUT EXPLICITE (2026-07-24) : ce banc est le SEUL à devoir rester DEHORS — sa prémisse
+  // est « sans jamais faire de feu », on ne peut donc pas l'abriter comme les autres. Depuis que
+  // la nuit mord, son sujet est chassé, meurt et renaît : la simulation fait trois fois plus de
+  // travail (mesuré ~14 s contre le défaut de 5 s de vitest). L'ASSERTION est inchangée — c'est
+  // le chronomètre qu'on corrige, pas la règle. Et le fait qu'il soit désormais chassé sert
+  // plutôt son propos : cueillir sans feu ne tient pas un homme, la nuit encore moins.
+  it('LA CUEILLETTE SEULE NE SUFFIT PAS : manger des baies crues ne tient pas un homme', { timeout: 60_000 }, () => {
     const { sim, id } = mondeSolo()
 
     // Il cueille et croque, sans jamais faire de feu — la stratégie qui marchait

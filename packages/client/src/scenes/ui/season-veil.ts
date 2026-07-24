@@ -96,7 +96,7 @@ export function createSeasonVeil(): SeasonVeil {
     .sv-chronicle{display:none;margin:26px auto 0;max-width:560px;max-height:38vh;overflow-y:auto;text-align:left;
       padding:18px 20px;background:rgba(20,16,12,.6);border:1px solid #2a2a34;}
     .sv-cl{font-size:13px;line-height:1.7;display:flex;gap:12px;}
-    .sv-cl-day{flex:0 0 42px;color:#6f6a60;text-align:right;}
+    .sv-cl-day{flex:0 0 42px;color:#8b8474;text-align:right;}
     .sv-cl-text{flex:1;color:#e8e0c8;}
     .sv-cl.sv-battement .sv-cl-text{color:#f2ead0;border-left:2px solid #c98b3a;padding-left:10px;margin-left:-12px;}
     .sv-cl.sv-intime .sv-cl-text{font-style:italic;color:#9a8f78;}
@@ -106,7 +106,7 @@ export function createSeasonVeil(): SeasonVeil {
     .sv-btn:hover{background:rgba(232,198,106,.24);color:#f2ead0;}
     .sv-btn.sv-ghost{background:transparent;border-color:#6b5a3a;color:#9a8f78;letter-spacing:1px;font-weight:400;}
     .sv-btn.sv-ghost:hover{color:#e8e0c8;border-color:#8a7a52;background:rgba(40,34,26,.4);}
-    .sv-fine{font-size:11px;color:#6f6a60;letter-spacing:1px;margin-top:20px;}
+    .sv-fine{font-size:11px;color:#8b8474;letter-spacing:1px;margin-top:20px;}
     /* Révélation par battements — délais CSS, aucun timer. Les gestes en DERNIER. */
     .sv-eyebrow,.sv-title,.sv-div,.sv-body,.sv-you,.sv-neighbors,.sv-row,.sv-fine{
       opacity:0;transform:translateY(8px);transition:opacity .6s ease,transform .6s ease;}

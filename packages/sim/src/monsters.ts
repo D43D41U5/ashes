@@ -34,6 +34,20 @@ export interface Monster {
    * elles appartiennent à leur lieu et restent.
    */
   ambient?: boolean
+  /**
+   * LA NUIT QUI CHASSE — ce loup est venu POUR vous (spec `nighthunt`, GDD §9bis).
+   *
+   * Il est exempté du COURAGE, et c'est tout le correctif d'un bug qui tuait une règle entière :
+   * le courage exige `PACK_COURAGE` congénères proches, `packNearby` s'excluant lui-même — or la
+   * nuit n'en lève que `MAX_ALIVE = 2` au total, sans meute. Aucun des deux ne pouvait donc
+   * JAMAIS être brave face à un homme : ils rôdaient à trois tuiles jusqu'à l'aube sans mordre
+   * une seule fois, et « loin d'un Feu, on est chassé » n'était pas tenu.
+   *
+   * Le courage garde tout son sens là où il a été écrit : un loup AMBIANT, croisé au hasard, pèse
+   * un homme et n'engage qu'en nombre — une meute décimée renonce, et le joueur SENT qu'il a
+   * brisé quelque chose. Un rôdeur de nuit, lui, n'a pas été croisé : il a été ENVOYÉ.
+   */
+  nightHunter?: boolean
   /** Tick où la fuite a commencé — cadence les à-coups (-1 = ne fuit pas). */
   fleeSince: number
   /**

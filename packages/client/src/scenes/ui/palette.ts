@@ -19,7 +19,28 @@ export const HEX = {
   title: '#ffffff',
   body: '#e8e0c8',
   dim: '#9a8f78',
-  faint: '#6f6a60',
+  /**
+   * L'encre VIVE — plus claire que `body`, pour ce qui est survolé, tenu, ou qu'on vient de
+   * gagner. NOMMÉE le 2026-07-24 : elle existait déjà dans SEPT fichiers, en dur, sans nom.
+   * Une teinte que sept écrans partagent n'est pas un détail local, c'est un token qui
+   * s'ignore — et une valeur anonyme dérive au premier réglage. On lui donne son nom.
+   */
+  bodyBright: '#f2ead0',
+  /**
+   * L'encre la plus discrète — RELEVÉE de #6f6a60 à #8b8474 le 2026-07-24 (décision d'Alexis).
+   *
+   * L'ancienne valeur échouait au contraste WCAG AA partout où elle portait une PHRASE : 3,52:1
+   * sur le voile, 3,19:1 sur un panneau, quand la norme demande 4,5. Ce n'est pas un détail
+   * d'accessibilité : l'indicateur de sauvegarde a dû fuir cette teinte en catastrophe parce
+   * qu'il était illisible sur un sol clair, et la ligne « la chronique garde le détail de ces
+   * soixante jours » était la moins lisible de la stèle alors qu'elle explique le bouton.
+   *
+   * La nouvelle valeur passe AA sur les trois fonds du jeu (5,09 / 4,61 / 5,27) tout en gardant
+   * 1,16 d'écart avec `dim` : la HIÉRARCHIE d'encre survit — faint reste le plus effacé des
+   * quatre, il cesse simplement d'être illisible. On n'a pas supprimé un rang, on l'a rendu
+   * lisible. (Valeurs calculées, pas choisies à l'œil.)
+   */
+  faint: '#8b8474',
   // ── Les deux accents ──
   ember: '#c98b3a', // braise : sélection, progression, ce qui chauffe
   emberBright: '#e8c66a', // braise vive : survol, halo, geste armé

@@ -28,14 +28,14 @@ export function createCraftQueueView(board: HTMLElement, send: (a: PlayerAction)
       padding:14px;z-index:10;pointer-events:auto;display:none;}
     .cq-h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;}
     .cq-t{font-size:13px;color:#e8e0c8;letter-spacing:2px;}
-    .cq-n{font-size:12px;color:#6f6a60;}
+    .cq-n{font-size:12px;color:#8b8474;}
     .cq-row{margin-bottom:10px;}
     .cq-row:last-child{margin-bottom:0;}
     .cq-line{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;}
     .cq-name{font-size:14px;color:#e8e0c8;}
     .cq-mult{color:#9a8f78;}
     .cq-state{letter-spacing:1px;}
-    .cq-x{font-size:14px;color:#6f6a60;cursor:pointer;padding:0 2px;}
+    .cq-x{font-size:14px;color:#8b8474;cursor:pointer;padding:0 2px;}
     .cq-x:hover{color:#e05a4a;}
     .cq-barbg{height:8px;background:#1b1b22;border:1px solid #14141a;}
     .cq-bar{height:100%;background:#c9a227;}
@@ -80,9 +80,9 @@ export function createCraftQueueView(board: HTMLElement, send: (a: PlayerAction)
         rowsEl.innerHTML = ''
         bars = queue.map((order, i) => {
           const blocked = blockedOf(order)
-          const barColor = blocked ? '#e05a4a' : order.paused ? '#6f6a60' : '#c9a227'
+          const barColor = blocked ? '#e05a4a' : order.paused ? '#8b8474' : '#c9a227'
           const stateTxt = blocked ? ' · sac plein' : order.paused ? ' · pause' : ''
-          const xColor = blocked ? '#e05a4a' : '#6f6a60'
+          const xColor = blocked ? '#e05a4a' : '#8b8474'
           const row = document.createElement('div')
           row.className = 'cq-row'
           row.innerHTML =

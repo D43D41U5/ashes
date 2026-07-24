@@ -128,11 +128,11 @@ function board(): string {
         <div class="cs-sub" style="font-size:13px;color:#9a8f78;letter-spacing:1px;margin-top:10px;">La Veillée — la vallée pour vous seul, hors ligne</div>
       </div>
 
-      <div style="font-size:13px;color:#6f6a60;letter-spacing:2px;margin-top:58px;">— ou rejoindre une vallée partagée —</div>
+      <div style="font-size:13px;color:#8b8474;letter-spacing:2px;margin-top:58px;">— ou rejoindre une vallée partagée —</div>
       ${rows}
     </div>
 
-    <div style="position:absolute;left:0;right:0;bottom:26px;text-align:center;font-size:12px;color:#6f6a60;letter-spacing:2px;">Phase LAN</div>
+    <div style="position:absolute;left:0;right:0;bottom:26px;text-align:center;font-size:12px;color:#8b8474;letter-spacing:2px;">Phase LAN</div>
     <div style="position:absolute;bottom:24px;right:28px;font-size:11px;color:#3a3a44;letter-spacing:1px;">v0.1.0 · ALPHA</div>
   </div>`
 }

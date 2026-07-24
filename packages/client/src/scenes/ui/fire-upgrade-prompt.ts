@@ -55,7 +55,7 @@ export function createFireUpgradePrompt(board: HTMLElement, send: (a: PlayerActi
     .fup-btn:hover{background:rgba(232,198,106,.24);color:#f2ead0;}
     .fup.fup-short .fup-btn{border-color:#6b5a3a;color:#8a7f68;background:rgba(40,34,26,.5);cursor:not-allowed;}
     .fup.fup-short .fup-btn:hover{background:rgba(40,34,26,.5);color:#8a7f68;}
-    .fup-fine{font-size:11px;color:#6f6a60;letter-spacing:1px;margin-top:16px;}
+    .fup-fine{font-size:11px;color:#8b8474;letter-spacing:1px;margin-top:16px;}
   </style>
   <div class="fup-halo"></div>
   <div class="fup-panel">

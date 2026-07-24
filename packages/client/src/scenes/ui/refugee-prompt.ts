@@ -37,7 +37,7 @@ export function createRefugeePrompt(board: HTMLElement, send: (a: PlayerAction) 
     .rfp-btn:hover{background:rgba(232,198,106,.24);color:#f2ead0;}
     .rfp-btn.rob{border-color:#d5624a;color:#e79a86;}
     .rfp-btn.rob:hover{background:rgba(213,98,74,.22);color:#f2c9bd;}
-    .rfp-fine{font-size:11px;color:#6f6a60;letter-spacing:1px;margin-top:14px;}
+    .rfp-fine{font-size:11px;color:#8b8474;letter-spacing:1px;margin-top:14px;}
   </style>
   <div class="rfp-halo"></div>
   <div class="rfp-panel">

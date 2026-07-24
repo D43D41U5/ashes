@@ -133,7 +133,7 @@ function markup(): string {
     .bmn-title{display:flex;align-items:center;gap:10px;margin-bottom:4px;}
     .bmn-title .bmn-hammer{font-size:20px;filter:grayscale(1) brightness(1.4);}
     .bmn-title .bmn-t{font-size:15px;font-weight:700;color:#ffffff;letter-spacing:1px;}
-    .bmn-sub{font-size:11px;color:#6f6a60;letter-spacing:1px;margin-bottom:22px;}
+    .bmn-sub{font-size:11px;color:#8b8474;letter-spacing:1px;margin-bottom:22px;}
     .bmn-rows{display:flex;flex-direction:column;gap:8px;}
     .bmn-row{border:2px solid #6b5a3a;background:rgba(107,90,58,.08);padding:11px 13px;transition:border-color .12s,background .12s;}
     .bmn-row.bmn-armed{border-color:#e8c66a;background:rgba(232,198,106,.1);}
@@ -141,19 +141,19 @@ function markup(): string {
     .bmn-head{display:flex;justify-content:space-between;align-items:center;}
     .bmn-name{font-size:14px;color:#e8e0c8;}
     .bmn-row.bmn-armed .bmn-name{color:#ffffff;}
-    .bmn-row.bmn-off .bmn-name{color:#6f6a60;}
+    .bmn-row.bmn-off .bmn-name{color:#8b8474;}
     .bmn-tag{color:#e8c66a;letter-spacing:1px;}
     .bmn-arm{font-size:11px;color:#e8c66a;opacity:0;}
     .bmn-row.bmn-armed .bmn-arm{opacity:1;}
     .bmn-cost{font-size:12px;color:#9a8f78;margin-top:4px;}
-    .bmn-row.bmn-off .bmn-cost{color:#6f6a60;}
+    .bmn-row.bmn-off .bmn-cost{color:#8b8474;}
     .bmn-miss{color:#e05a4a;}
     .bmn-mat{margin-top:auto;border:2px solid #6b5a3a;background:rgba(107,90,58,.12);padding:13px;}
     .bmn-mat-h{font-size:11px;color:#9a8f78;letter-spacing:1px;margin-bottom:10px;}
     .bmn-tabs{display:flex;gap:0;border:2px solid #14141a;}
-    .bmn-tab{flex:1;text-align:center;font-size:12px;padding:8px 0;background:#1b1b22;color:#6f6a60;letter-spacing:1px;}
+    .bmn-tab{flex:1;text-align:center;font-size:12px;padding:8px 0;background:#1b1b22;color:#8b8474;letter-spacing:1px;}
     .bmn-tab.bmn-tab-on{background:#e8c66a;color:#14100c;font-weight:700;}
-    .bmn-palier{font-size:11px;color:#6f6a60;letter-spacing:1px;margin-top:8px;}
+    .bmn-palier{font-size:11px;color:#8b8474;letter-spacing:1px;margin-top:8px;}
   </style>
   <div class="bmn-title"><span class="bmn-hammer">🔨</span><span class="bmn-t">CONSTRUCTION</span></div>
   <div class="bmn-sub">RANGER LE MARTEAU POUR DÉSARMER</div>

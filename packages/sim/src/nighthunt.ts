@@ -85,6 +85,7 @@ export function advanceNightHunt(state: SimState): void {
     const monster = state.monsters.find((m) => m.entityId === id)
     if (monster) {
       monster.ambient = true // il se dissipera comme la faune : pas d'accumulation
+      monster.nightHunter = true // il MORD : exempté d'un courage qu'il ne pourrait jamais satisfaire
       monster.targetId = prey.id
     }
 

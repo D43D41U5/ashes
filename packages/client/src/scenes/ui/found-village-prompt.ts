@@ -37,7 +37,7 @@ export function createFoundVillagePrompt(board: HTMLElement, send: (a: PlayerAct
     .fvp-btn{display:inline-block;margin-top:26px;background:rgba(201,139,58,.14);border:2px solid #c98b3a;color:#e8c66a;
       font-size:15px;font-weight:700;letter-spacing:2px;padding:14px 34px;transition:background .12s ease,color .12s ease;}
     .fvp-btn:hover{background:rgba(232,198,106,.24);color:#f2ead0;}
-    .fvp-fine{font-size:11px;color:#6f6a60;letter-spacing:1px;margin-top:16px;}
+    .fvp-fine{font-size:11px;color:#8b8474;letter-spacing:1px;margin-top:16px;}
   </style>
   <div class="fvp-halo"></div>
   <div class="fvp-panel">
