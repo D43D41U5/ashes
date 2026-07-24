@@ -96,6 +96,16 @@ import { FireGroundGlow } from './world/fire-ground-glow'
 import { createContactShadow } from './world/contact-shadow'
 import { champLisiere, poidsLisiere, LISIERE_MAX, LISIERE_PORTEE } from '../render/ecotone'
 import { creerBrouillard, depackBrouillard, FOG_RAYON_TUILES, loadFog, packBrouillard, revele, saveFog, type Brouillard } from '../render/fog'
+import { POI_CHARGES } from '@braises/sim'
+
+/**
+ * Le rayon qu'un lieu dévoile, LU DANS LA TABLE DE LA SIM (`POI_CHARGES`) et jamais recopié :
+ * une seconde source de vérité dériverait au premier réglage. 0 = ce lieu ne dévoile rien.
+ */
+function revealRadiusOf(kind: string): number {
+  const charge = POI_CHARGES[kind]
+  return charge && charge.devise === 'savoir' && charge.reveal === 'radius' ? charge.radiusTiles : 0
+}
 import { NightVeil } from './world/night-veil'
 import { DynamicLighting } from './world/dynamic-lighting'
 import { WaterLayer } from './world/water-layer'
@@ -1395,6 +1405,19 @@ export class WorldScene extends Phaser.Scene {
         // LE TEMPO du minage : le dernier coup relance le rechargement, que la lueur du
         // bon flanc REFORME visiblement (verbe 2 — la cadence se voit, pas de timer caché).
         this.lastStrikeAt = this.time.now
+      } else if (event.type === 'poi_discovered' && event.byEntityId === this.playerId) {
+        // MONTER, C'EST VOIR (spec lieux.md) : un lieu qui révèle un RAYON dévoile aussi le
+        // TERRAIN de ce rayon, pas seulement les pastilles. C'est ce qui referme la boucle
+        // d'exploration — on repère un monument, on y va, et la carte s'ouvre autour de lui.
+        // La sim reste seule juge de la découverte (elle a émis l'événement) ; le client ne
+        // fait que lever SON brouillard, qui est un objet d'affichage (voir `fog`).
+        const rayon = revealRadiusOf(event.kind)
+        const lieu = this.map.zones[event.poiId]
+        if (rayon > 0 && lieu && this.fog) {
+          if (revele(this.fog, lieu.x + lieu.w / 2, lieu.y + lieu.h / 2, rayon)) {
+            setHud(this.registry, 'fogVersion', (getHud(this.registry, 'fogVersion') ?? 0) + 1)
+          }
+        }
       } else if (event.type === 'item_crafted' && event.entityId === this.playerId) {
         // FABRIQUÉ (audit UI/UX P0) : la fabrication était l'une des deux boucles les plus
         // gratifiantes SANS aucun retour. On l'inscrit en bandeau à part (plus lourd qu'une

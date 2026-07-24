@@ -68,6 +68,9 @@ const ART: Record<string, { fp: number; w: number; h: number; crown?: number }> 
   fondriere: { fp: 3, w: 58, h: 16 },
   crevasses: { fp: 4, w: 68, h: 20 },
   // ── LES ONZE LIEUX CHARGÉS ──
+  // Le GRAND CHÊNE : le plus haut de la plaine. 92 px pour une canopée à 44 → il la perce de
+  // moitié et se voit de loin par-dessus les bosquets. C'est l'unique horizon de la Racine.
+  chene: { fp: 2, w: 72, h: 92, crown: 54 },
   belvedere: { fp: 2, w: 46, h: 80, crown: 40 }, // il fait grimper : il se voit du fond de la vallée
   grotte: { fp: 2, w: 48, h: 52, crown: 12 }, //    la masse rocheuse déborde sa gueule
   cascade: { fp: 2, w: 52, h: 96, crown: 56 }, //   une chute se voit de très loin ; l'écume s'étale
@@ -412,6 +415,42 @@ export function makePoiTextures(scene: Phaser.Scene): void {
     g.fillStyle(STONE.lit, 0.5).fillRect(c - 8, b - 27, 11, 2) // une veine de quartz
     g.fillStyle(LEAF.dark, 0.4).fillEllipse(c + 12, b - 30, 8, 4) // un peu de mousse, au nord
   })
+  // LE GRAND CHÊNE — l'unique horizon de la zone de départ.
+  //
+  // Il doit se distinguer de DEUX choses à la fois : d'un arbre de forêt (44×32), qu'il écrase ;
+  // et de l'Arbre remarquable de la Sylve (100×80), dont il n'est pas une copie plus petite.
+  // D'où sa silhouette propre : un chêne de PLEIN CHAMP — tronc court et très épais, houppier
+  // en DÔME large et bas posé dessus. L'Arbre remarquable, lui, est un géant de futaie : plus
+  // haut, plus étalé, avec des maîtresses branches qui percent le feuillage. Ici, une masse
+  // ronde et pleine qu'on reconnaît à sa forme, de loin, au-dessus des bosquets.
+  tex('chene', (w, b) => {
+    ground(w, b, 0.62)
+    const c = w / 2
+    // Les contreforts : un vieux chêne isolé s'ancre large. C'est ce qui dit son âge.
+    g.fillStyle(WOOD.deep).fillEllipse(c, b - 4, 40, 11)
+    g.fillStyle(WOOD.dark).fillEllipse(c - 12, b - 6, 14, 7)
+    g.fillStyle(WOOD.dark).fillEllipse(c + 13, b - 5, 13, 6)
+    // LE TRONC : court (26 px) et ÉPAIS (20) — trapu, pas élancé. Un fût de plein vent.
+    g.fillStyle(WOOD.dark).fillTriangle(c - 16, b - 4, c - 10, b - 30, c + 10, b - 30)
+    g.fillStyle(WOOD.dark).fillTriangle(c + 16, b - 4, c + 10, b - 30, c - 10, b - 30)
+    g.fillStyle(WOOD.dark).fillRect(c - 10, b - 32, 20, 30)
+    g.fillStyle(WOOD.mid).fillRect(c - 10, b - 32, 7, 30) // arête NO — même lumière que partout
+    g.fillStyle(WOOD.deep).fillRect(c + 4, b - 32, 6, 30) // ombre SE
+    // Deux charpentières courtes, écartées : elles portent le dôme, elles ne le percent pas.
+    g.fillStyle(WOOD.dark).fillTriangle(c - 8, b - 28, c - 24, b - 40, c - 8, b - 36)
+    g.fillStyle(WOOD.dark).fillTriangle(c + 8, b - 29, c + 25, b - 39, c + 8, b - 37)
+    // LE DÔME : large, bas, PLEIN. La forme qui se reconnaît par-dessus les bosquets.
+    g.fillStyle(LEAF.dark).fillEllipse(c, b - 54, 70, 46)
+    g.fillStyle(LEAF.dark).fillEllipse(c - 26, b - 44, 24, 20) // les jupes qui retombent
+    g.fillStyle(LEAF.dark).fillEllipse(c + 27, b - 43, 22, 18)
+    g.fillStyle(LEAF.mid).fillEllipse(c - 6, b - 62, 48, 34)
+    g.fillStyle(LEAF.mid).fillEllipse(c - 24, b - 50, 20, 16)
+    g.fillStyle(LEAF.lit).fillEllipse(c - 14, b - 72, 26, 17) // la lumière prend au NO
+    g.fillStyle(LEAF.lit).fillEllipse(c - 2, b - 78, 15, 10)
+    g.fillStyle(LEAF.deep).fillEllipse(c + 20, b - 50, 24, 19) // l'ombre au SE
+    g.fillStyle(LEAF.deep).fillEllipse(c + 8, b - 40, 20, 11) // et sous le feuillage
+  })
+
   tex('arbre', (w, b) => {
     ground(w, b, 0.5)
     const c = w / 2

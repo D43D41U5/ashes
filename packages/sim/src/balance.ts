@@ -94,6 +94,9 @@ export const POI = {
    * À 300 : ~8 lieux révélés en moyenne, jamais zéro — une grappe.
    */
   REVEAL_BELVEDERE_TILES: 300,
+  /** Le Grand Chêne de la Racine : plus court qu'un belvédère (on est en plaine), mais c'est
+   *  le premier « voir plus loin » de la partie — assez pour désigner la sortie de la zone. */
+  REVEAL_CHENE_TILES: 180,
   /**
    * De l'Arche, on voit les abris de l'autre versant. Même portée que le
    * Belvédère, mais filtrée aux `shelter` : ~2 abris en moyenne (ils sont plus
@@ -117,7 +120,15 @@ export const POI = {
    * que si l'on MONTE dessus (sinon il ne ferait plus grimper), et « le premier
    * à ATTEINDRE le Sanctuaire » ne peut pas être quelqu'un qui l'a vu de loin.
    */
-  SIGHT_TILES: 14,
+  /*
+   * 14 → 30 (2026-07-24). La valeur d'origine était PLUS COURTE que ce que l'écran montre
+   * (~35 tuiles) : on « découvrait » donc un lieu déjà bien visible depuis un moment, ce qui
+   * vide de sens la phrase ci-dessus (« se voit venir »). Depuis l'arrivée du brouillard de
+   * guerre (R19), c'était même incohérent : le sol se dévoilait à 22 tuiles, soit AVANT le
+   * monument posé dessus — on éclairait le décor avant l'objet qu'il porte. 30 tuiles remet
+   * l'ordre juste : on repère le monument à peu près quand il entre dans l'image.
+   */
+  SIGHT_TILES: 30,
   /**
    * LA CLAIRIÈRE (2026-07-11) : marge dégagée autour de l'empreinte d'un lieu,
    * en tuiles. Rien n'y pousse — ni arbre, ni buisson, ni rocher, ni décor.

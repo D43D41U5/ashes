@@ -48,6 +48,10 @@ export const POI_CHARGES: Record<string, PoiCharge> = {
   // ── Le récit : quatre lieux qui entrent dans la chronique ──
   sanctuaire: { devise: 'recit' },
   arbre: { devise: 'recit' },
+  // Le Grand Chêne ouvre la carte autour de lui : c'est la RÉCOMPENSE qui apprend au joueur
+  // que marcher vers un repère paie. Rayon plus court qu'un Belvédère (on est en plaine, on
+  // ne domine rien) — mais c'est le premier « voir plus loin » de la partie.
+  chene: { devise: 'savoir', reveal: 'radius', radiusTiles: POI.REVEAL_CHENE_TILES },
   erratique: { devise: 'recit' },
   cascade: { devise: 'recit' },
 }

@@ -51,6 +51,22 @@ de lieu — donc le flux, dès le tick 0 ; (3) le banc `pnpm scenario`, qui tour
 LEGACY** : les nombres d'équilibrage sont mesurés sur une carte que plus personne ne joue. Angle mort
 à traiter avant toute recalibration.
 
+### Vague 4 — LA RACINE (T0) ENGAGEANTE — **mandat Alexis 2026-07-24**
+
+*« La map T0 doit être engageante et pousser à l'exploration, par nécessité comme pour le plaisir
+de découvrir. »* Audit d'abord (le backlog ment par pessimisme). Ce qu'il a établi :
+
+- **La nécessité est DÉJÀ bien construite** — le charbon n'existe pas dans la Racine, donc pas de
+  fer, donc pas de palier 3 sans expédition ; le Feu palier 3 exige **trois zones**. La géographie
+  EST la porte. Rien à refaire de ce côté.
+- **Le plaisir, lui, manquait entièrement.** La Racine était la SEULE zone du jeu **sans skyline** :
+  ses cinq lieux plafonnent à 50 px quand la canopée fait 44 — aucun ne perce, donc rien ne se voit
+  venir, donc rien n'indique une direction.
+- **Deux de ses cinq lieux ne font RIEN** (`verger`, `bivouac` : aucune charge, aucun contenu).
+- **Le teaser de fer est introuvable par construction** : un `ResourceNode` (jamais dans `knownPois`),
+  posé à la tuile la plus lointaine d'une zone de ~820 000 tuiles.
+- **Six minutes de traversée** pour une densité d'événements calibrée à la baisse (`PAS_SEMIS` ÷5).
+
 ### File d'attente — décisions d'Alexis (regroupées, jamais tranchées seul)
 
 Étalonnage couleur · couche de tokens (≈250 hex en dur, 2 ambres + 3 rouges divergents) ·

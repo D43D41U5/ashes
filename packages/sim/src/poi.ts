@@ -58,6 +58,16 @@ export interface PoiType {
    * point.** Absent = 0 (le type prend sa chance comme avant).
    */
   reserve?: number
+  /**
+   * CE LIEU EST UNIQUE AU MONDE — son plafond ne suit PAS la taille de la carte.
+   *
+   * `capFor` multiplie normalement le plafond par la surface : une vallée deux fois plus
+   * grande porte deux fois plus de Cairns, ce qui est juste pour du mobilier. Mais un REPÈRE
+   * ne se duplique pas : deux « Grands » Chênes, et il n'y a plus de grand chêne du tout —
+   * on ne s'oriente pas sur un objet qu'on peut confondre avec un autre. Sans ce drapeau,
+   * `cap: 1` rendait bel et bien 2 exemplaires sur une carte de production (attrapé par un test).
+   */
+  unique?: boolean
   minElev?: number
   maxElev?: number
   footprint: number
@@ -212,6 +222,18 @@ export const POI_TYPES: PoiType[] = [
   { slug: 'cascade', zones: ['alpages', 'karst', 'aiguilles'], name: 'la Cascade', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.4, weight: 2, cap: 4, reserve: 1, footprint: 2 },
   { slug: 'erratique', zones: ['pres_bas', 'alpages', 'ruines'], name: 'le Bloc erratique', family: 'reward', biomes: [BOULDERS, AL_MEADOW, GRASS, FLOWER], weight: 4, cap: 5, reserve: 1, footprint: 2 },
   { slug: 'arbre', zones: ['sylve'], name: "l'Arbre remarquable", family: 'reward', biomes: [OLD_GROWTH], weight: 2, cap: 3, reserve: 1, footprint: 2 },
+  // ═══ LE GRAND CHÊNE — l'HORIZON de la zone de départ ═══
+  // La Racine était la SEULE zone du jeu sans skyline : ses cinq lieux plafonnaient à 50 px de
+  // haut quand la canopée en fait 44, donc aucun ne perçait, donc rien ne se voyait venir et
+  // rien n'indiquait une direction. `lieux.md` promet pourtant qu'« un monument qui dépasse la
+  // canopée se voit venir, donc s'apprend de loin » : la promesse n'était tenue nulle part ici.
+  //
+  // Il est RÉSERVÉ à `pres_bas`, et c'est ce qui le garantit : `reserve` est un compte GLOBAL,
+  // donc un type qui ne peut se poser QUE dans la Racine y place forcément son exemplaire.
+  // `cap: 1` — un repère n'en est un que s'il est seul. Sa devise est le SAVOIR : l'atteindre
+  // ouvre la carte alentour (et le brouillard avec), ce qui enseigne la boucle du jeu —
+  // on voit un repère, on y va, on y gagne de quoi voir plus loin.
+  { slug: 'chene', zones: ['pres_bas'], name: 'le Grand Chêne', family: 'reward', biomes: [GRASS, FOREST, FLOWER], weight: 3, cap: 1, reserve: 1, unique: true, footprint: 2 },
   { slug: 'cairn', name: 'le Cairn', family: 'reward', biomes: [GRASS, AL_MEADOW, HEATH, SCREE, ROCK, FLOWER, AL_FLOWERS, FOREST, PINE], weight: 12, cap: 14, reserve: 1, footprint: 1 },
   { slug: 'sanctuaire', zones: ['aiguilles', 'alpages', 'karst'], name: 'le Sanctuaire', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.7, weight: 1, cap: 2, reserve: 1, footprint: 2 },
   { slug: 'source_chaude', zones: ['alpages', 'karst'], name: 'la Source chaude', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 2, cap: 2, reserve: 1, footprint: 2 },
@@ -522,6 +544,8 @@ export function capFor(map: WorldMap, t: PoiType): number {
   // les siens. (Sans ce `max`, une carte de test de 240×360 — soit 4 % de la surface
   // de référence — voyait TOUS ses plafonds tomber à 1 : vingt-six lieux au total,
   // dont onze pris par les réservations. La carte se vidait, et les tests le disaient.)
+  // Un lieu UNIQUE ne se multiplie pas avec la carte : son plafond est son plafond.
+  if (t.unique === true) return t.cap
   return Math.max(t.cap, Math.round(t.cap * k))
 }
 

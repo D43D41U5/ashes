@@ -16,7 +16,7 @@ import { generateZonedTerrain } from './zonegen'
 const CARTE = generateZonedTerrain(5)
 const MAP = CARTE.map
 import { POI_TYPES, poiSemis, poiSpacing, spawnPoiMonsters, placePois } from './poi'
-import { terrainAt, createEmptyMap } from './map'
+import { terrainAt, createEmptyMap, zoneSlugAt } from './map'
 import { poissonPoints } from './poisson'
 import { TERRAINS, TERRAIN_DEEP_WATER } from './balance'
 import { createSim } from './sim'
@@ -45,6 +45,22 @@ describe('placePois', () => {
     const gis = POI_TYPES.find((t) => t.slug === 'gisement')!
     expect(count('gisement')).toBeLessThanOrEqual(gis.cap)
   })
+  it('la RACINE a SON Grand Chêne — la zone de départ cesse d’être sans horizon', () => {
+    // La Racine était la SEULE zone du jeu sans repère perçant la canopée (44 px) : ses cinq
+    // lieux plafonnaient à 50 px, donc rien ne se voyait venir et rien n'indiquait de direction.
+    // Le Grand Chêne est RÉSERVÉ à `pres_bas` — et c'est ce qui le garantit : `reserve` est un
+    // compte GLOBAL, donc un type qui ne peut se poser QUE là y place forcément son exemplaire.
+    const map = MAP
+    const chenes = map.zones.filter((z) => z.kind === 'chene')
+    // Un repère n'en est un que s'il est SEUL : `cap: 1`. Deux « grands » chênes, aucun repère.
+    expect(chenes, 'la Racine n’a pas son repère — elle redevient sans horizon').toHaveLength(1)
+    const c = chenes[0]!
+    expect(
+      zoneSlugAt(map, Math.floor(c.x + c.w / 2), Math.floor(c.y + c.h / 2)),
+      'le Grand Chêne a poussé hors de la Racine',
+    ).toBe('pres_bas')
+  })
+
   it('déterministe : même seed → mêmes zones', () => {
     const a = MAP
     const b = MAP

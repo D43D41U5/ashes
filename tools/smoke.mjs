@@ -1406,6 +1406,41 @@ const SCENARIOS = {
   },
 
   /**
+   * LA RACINE A-T-ELLE UN HORIZON ? (mandat T0 — « pousser à l'exploration ».)
+   *
+   * La zone de départ était la SEULE du jeu sans repère perçant la canopée : ses cinq lieux
+   * plafonnaient à 50 px pour une canopée à 44, donc rien ne se voyait venir et rien
+   * n'indiquait de direction. On vérifie dans le VRAI jeu que le Grand Chêne est là, qu'il
+   * est UNIQUE (deux « grands » chênes, et il n'y a plus de repère du tout), et que son art
+   * dépasse réellement la cime des arbres.
+   */
+  async chene(page) {
+    await page.waitForTimeout(1500)
+    const vu = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const zones = sc.map?.zones ?? []
+      const chenes = zones.filter((z) => z.kind === 'chene')
+      return {
+        nombre: chenes.length,
+        nom: chenes[0]?.name ?? null,
+        // Les textures sont générées au boot. `poi-chene-crown` n'existe QUE si l'art déclare
+        // un `crown` — c'est donc la preuve mécanique qu'il perce la canopée, et pas une
+        // déclaration d'intention : sans crown, pas de texture, pas d'horizon.
+        texture: sc.textures?.exists?.('poi-chene') ?? null,
+        percheLaCanopee: sc.textures?.exists?.('poi-chene-crown') ?? null,
+      }
+    })
+    console.log(`grand chêne : ${JSON.stringify(vu)}`)
+    if (vu.nombre !== 1) {
+      console.error(`!! LA RACINE N'A PAS SON REPÈRE UNIQUE (${vu.nombre} chêne(s)) — pas d'horizon`)
+    }
+    if (!vu.texture || !vu.percheLaCanopee) {
+      console.error(`!! LE GRAND CHÊNE NE PERCE PAS LA CANOPÉE : ${JSON.stringify(vu)}`)
+    }
+    return vu
+  },
+
+  /**
    * LA CARTE SE DÉCOUVRE-T-ELLE EN MARCHANT ? (spec worldgen R19 — brouillard de guerre.)
    *
    * Décision d'Alexis du 2026-07-14, restée non implémentée : la forme de la vallée était

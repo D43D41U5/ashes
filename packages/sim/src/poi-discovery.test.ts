@@ -46,10 +46,12 @@ describe('poiCenter', () => {
 })
 
 describe('POI_CHARGES', () => {
-  it('charge les onze lieux de famille reward, et EUX SEULS', () => {
+  it('charge les douze lieux de famille reward, et EUX SEULS', () => {
+    // `chene` (le Grand Chêne) a rejoint la liste le 2026-07-24 : la Racine était la seule zone
+    // du jeu sans repère perçant la canopée, donc sans horizon et sans direction à suivre.
     const charged = Object.keys(POI_CHARGES).sort()
     expect(charged).toEqual(
-      ['arbre', 'arche', 'belvedere', 'cairn', 'cascade', 'erratique', 'grotte', 'petroglyphes', 'sanctuaire', 'source_chaude', 'tarn'].sort(),
+      ['arbre', 'arche', 'belvedere', 'cairn', 'cascade', 'chene', 'erratique', 'grotte', 'petroglyphes', 'sanctuaire', 'source_chaude', 'tarn'].sort(),
     )
   })
 
@@ -59,9 +61,12 @@ describe('POI_CHARGES', () => {
     }
   })
 
-  it('répartit les onze en 4 savoir / 3 répit / 4 récit', () => {
+  it('répartit les douze en 5 savoir / 3 répit / 4 récit', () => {
+    // Le SAVOIR passe de 4 à 5 : le Grand Chêne ouvre la carte autour de lui (`reveal: radius`).
+    // C'est délibéré — la zone de départ n'avait aucune récompense de VUE, et c'est précisément
+    // ce qui manquait pour donner envie d'aller voir plus loin.
     const count = (d: string) => Object.values(POI_CHARGES).filter((c) => c.devise === d).length
-    expect(count('savoir')).toBe(4)
+    expect(count('savoir')).toBe(5)
     expect(count('repit')).toBe(3)
     expect(count('recit')).toBe(4)
   })
@@ -501,7 +506,7 @@ describe('le répit — la vallée comme réseau', () => {
 describe('la règle qui protège l’émerveillement', () => {
   it('AUCUN lieu de famille reward n’ajoute d’item à l’inventaire (critère A9)', () => {
     const rewardKinds = POI_TYPES.filter((t) => t.family === 'reward').map((t) => t.slug)
-    expect(rewardKinds).toHaveLength(11) // garde-fou : si ça change, ce test doit être relu
+    expect(rewardKinds).toHaveLength(12) // garde-fou : si ça change, ce test doit être relu
 
     const zones = rewardKinds.map((kind, i) => ({
       name: `${kind} I`,
@@ -519,6 +524,6 @@ describe('la règle qui protège l’émerveillement', () => {
       p.y = z.y + 1
       step(state, [])
     }
-    expect(toBag(p.inventory)).toEqual({}) // les mains vides, après les onze
+    expect(toBag(p.inventory)).toEqual({}) // les mains vides, après les douze
   })
 })
