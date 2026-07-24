@@ -15,18 +15,35 @@
 3. **Exécution en VAGUES** — une tranche verticale à la fois, menée au vert (tests + smoke) avant la suivante. Client-only d'abord (risque nul) ; `/sim` (worldgen) traité comme danger de déterminisme.
 4. **Vérif visuelle** systématique au smoke pour tout ce qui se voit.
 
-## Backlog priorisé — à remplir depuis les audits
+## Backlog priorisé
 
-*(Rempli au retour des 4 panels. Rangé par vague.)*
+### Vague 1 — les plus gros leviers, client-only, risque nul — **LIVRÉE (7 tranches)**
 
-### Vague 1 — les plus gros leviers, client-only, risque nul
-_(à définir)_
+V1.1 jus craft/niveau · V1.2 ombres acteurs · V1.3 ombres nœuds · V1.4 garde-fou d'effacement ·
+V1.5 vignette · V1.6 mouvement réduit global · V1.7 indicateur de sauvegarde. Détail au journal
+ci-dessous et dans `docs/decisions.md`.
 
-### Vague 2 — approfondissements
-_(à définir)_
+### Vague 2 — DIRECTION ARTISTIQUE (panel élargi, mandat Alexis 2026-07-24)
 
-### Vague 3 — worldgen (déterministe) + saves
-_(à définir)_
+Trois DA en revue **sur captures réelles**, lecture seule : (a) sprites & pixel art — lisibilité,
+silhouettes, **paires de zones confusables** ; (b) menus & écrans — grammaire partagée, hiérarchie,
+contraste ; (c) HUD & UI en jeu — design d'information, épreuve du coup d'œil, lisibilité sur fond
+variable. Contrainte dure rappelée à chacun : **aucun asset dessiné à la main** (pas d'artiste au
+projet) — tout doit être atteignable par la technique. Toute teinte hors « encre + 2 accents » est
+remontée comme décision d'Alexis, jamais appliquée d'office.
+
+### Vague 3 — WORLDMAP GEN (`/sim`, déterministe) — **priorité demandée**
+
+Audit d'architecture d'abord (pipeline, points de consommation du PRNG, état réel vs backlog), puis
+chantiers classés par *impact monde × risque de déterminisme*. **Règle de survie** : le décompte
+d'entités décale le flux PRNG seedé et casse des tests sans rapport → tout changement s'isole sur un
+chemin neuf/salé, et la suite complète (`replay`, `events`, scénario) est rejouée à chaque tranche.
+
+### File d'attente — décisions d'Alexis (regroupées, jamais tranchées seul)
+
+Étalonnage couleur · couche de tokens (≈250 hex en dur, 2 ambres + 3 rouges divergents) ·
+sort du gris `faint #6f6a60` (échoue au contraste). Les trois touchent la grammaire de palette,
+qui est un invariant d'architecture — donc une conversation, pas trois interruptions.
 
 ## Journal du sprint
 _(chaque tranche livrée = une ligne, comme decisions.md)_
