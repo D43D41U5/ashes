@@ -141,6 +141,16 @@ export const RELIEF = {
    *  frontière pour déboucher FRANCHEMENT dans le pays au lieu de mourir contre son mur. */
   DEBORD_SEUIL: 20,
 
+  // ── R11 : LE SECOND PASSAGE EST TOUJOURS PIRE ──────────────────────────────────────
+  // La spec le promet depuis le début, le drapeau `secours` était CALCULÉ (`marquerLesSecours`)
+  // et affiché dans un toponyme — mais jamais rendu en géométrie : les seize seuils étaient le
+  // même rectangle. Un secours devient donc un DÉFILÉ : plus étroit (on s'y engage sans pouvoir
+  // se déployer) et plus long (on y reste exposé plus longtemps). Aucun tirage : deux constantes.
+  /** Demi-largeur d'un seuil de SECOURS. 4 → 9 tuiles au lieu de 15 : une gorge, pas une porte. */
+  DEMI_LARGEUR_SECOURS: 4,
+  /** Demi-longueur d'un seuil de SECOURS. 36 au lieu de 20 : la traversée dure, et se mérite. */
+  DEBORD_SECOURS: 36,
+
   /** Demi-largeur du couloir plat que la garde de connexité perce pour rouvrir une poche isolée.
    *  3 → 7 tuiles : on le voit, on le prend. */
   DEMI_RAMPE: 3,
@@ -468,7 +478,7 @@ function solDe(g: GrapheZones, id: number, x: number, y: number): number {
 function percerSeuil(
   g: GrapheZones,
   _blocs: Blocs,
-  s: { a: number; b: number; x: number; y: number; ax: number; ay: number },
+  s: { a: number; b: number; x: number; y: number; ax: number; ay: number; secours?: boolean },
   terrain: number[],
   zone: Int32Array,
   rampe: Uint8Array,
@@ -484,8 +494,11 @@ function percerSeuil(
   const py = ax
 
   // Le couloir est posé SUR la frontière : il déborde d'autant de chaque côté (longueur fixe, plate).
-  const half = RELIEF.DEBORD_SEUIL
-  const L = RELIEF.DEMI_LARGEUR_SEUIL
+  // R11 — un seuil de SECOURS n'est pas une seconde porte, c'est un DÉFILÉ : plus étroit et plus
+  // long. Le drapeau était calculé et affiché depuis le début ; il commande enfin la géométrie.
+  const secours = s.secours === true
+  const half = secours ? RELIEF.DEBORD_SECOURS : RELIEF.DEBORD_SEUIL
+  const L = secours ? RELIEF.DEMI_LARGEUR_SECOURS : RELIEF.DEMI_LARGEUR_SEUIL
 
   for (let t = -half; t <= half; t++) {
     // Le sol du couloir est celui de la région vers laquelle on va : **la porte a déjà la couleur de

@@ -69,6 +69,56 @@ function coeurDe(c: CarteZonee, id: number): number {
 
 describe('le terrain, à la taille de production', () => {
   /**
+   * R11 — LE SECOND PASSAGE EST TOUJOURS PIRE, et ça se MESURE dans le terrain.
+   *
+   * `marquerLesSecours` calcule le drapeau depuis toujours, et `percerSeuil` l'ignorait : les
+   * seize seuils étaient le même rectangle. La promesse de spec ne vivait que dans un toponyme.
+   * On ne teste donc PAS que le drapeau existe (il existait déjà) — on compte les tuiles de
+   * passage sur la frontière et on vérifie que le secours est réellement une gorge plus étroite.
+   */
+  it('A28 — un seuil de SECOURS est plus étroit qu’une voie naturelle (R11)', () => {
+    // La largeur RÉELLE : les tuiles de rampe sur la ligne perpendiculaire à l'axe, au point
+    // de passage. C'est ce que le joueur franchit, pas ce que la constante déclare.
+    const largeurAuPoint = (c: CarteZonee, s: { x: number; y: number; ax: number; ay: number }): number => {
+      const px = -s.ay
+      const py = s.ax
+      let n = 0
+      for (let w = -40; w <= 40; w++) {
+        const x = s.x + px * w
+        const y = s.y + py * w
+        if (x < 0 || y < 0 || x >= c.map.width || y >= c.map.height) continue
+        if (c.rampe[y * c.map.width + x] === 1) n++
+      }
+      return n
+    }
+
+    let naturels = 0
+    let secours = 0
+    let sommeNaturels = 0
+    let sommeSecours = 0
+    for (const c of cartes) {
+      for (const s of c.graphe.seuils) {
+        const l = largeurAuPoint(c, s)
+        if (s.secours) {
+          secours++
+          sommeSecours += l
+        } else {
+          naturels++
+          sommeNaturels += l
+        }
+      }
+    }
+
+    // Le VOIR d'abord : sans les deux espèces, la comparaison ne dirait rien.
+    expect(naturels, 'aucune voie naturelle dans le balayage').toBeGreaterThan(0)
+    expect(secours, 'aucun seuil de secours dans le balayage').toBeGreaterThan(0)
+    expect(
+      sommeSecours / secours,
+      'le secours n’est pas plus étroit : R11 n’est pas rendue en géométrie',
+    ).toBeLessThan(sommeNaturels / naturels)
+  })
+
+  /**
    * A13 — LE BUDGET DE GÉNÉRATION, gardé PAR LE TIMEOUT lui-même.
    *
    * On ne peut pas chronométrer dans `/sim` : `Date` y est interdit par lint (invariant n°2 —

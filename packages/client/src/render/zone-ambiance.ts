@@ -73,6 +73,19 @@ export const ZONE_AMBIANCE: Record<string, Ambiance> = {
   gouffre: { sol: [0.5, 0.5, 0.58], air: { color: 0x05060a, alpha: 0.55 } },
   // Le Lac Mort : une eau TROP CLAIRE. Un cyan malade, immobile. Rien n'y vit, et ça se voit.
   lac_mort: { sol: [0.82, 1.04, 1.0], air: { color: 0x86d8cc, alpha: 0.16 } },
+  // LE NÉVÉ BLANC — l'entrée manquait purement et simplement : il retombait sur le NEUTRE,
+  //   c'est-à-dire aucune identité du tout, alors qu'il est la zone la PLUS PÂLE du jeu et la
+  //   plus proche du Glacier (mesuré : 28,4 de distance RVB, le 3ᵉ couple le plus confusable).
+  //   Son identité passe donc par le SOL, pas par l'air : il est le plus CLAIR de tous, et
+  //   volontairement NEUTRE là où le Glacier tire au bleu — c'est ce qui les sépare.
+  //
+  //   ALPHA D'AIR DÉLIBÉRÉMENT BAS (0,08) malgré le blizzard qu'il est censé être. Le voile
+  //   d'ambiance se peint AU-DESSUS des sprites : il écrase le contraste de tout, y compris de
+  //   l'avatar — or c'est précisément ici que l'avatar est déjà le plus invisible (contraste de
+  //   Weber mesuré à 0,04 sur névé/glacier). Monter l'alpha pour « faire blizzard » aggraverait
+  //   le seul vrai défaut de lisibilité du jeu. Le blizzard réclame des particules et un voile
+  //   passé SOUS les sprites — pas une teinte plate. À faire dans cet ordre.
+  neve: { sol: [1.18, 1.18, 1.16], air: { color: 0xe8eef2, alpha: 0.08 } },
 }
 
 /** L'ambiance d'une zone — neutre si on ne la connaît pas (une carte sans zones). */

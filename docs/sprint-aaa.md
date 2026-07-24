@@ -34,10 +34,22 @@ remontée comme décision d'Alexis, jamais appliquée d'office.
 
 ### Vague 3 — WORLDMAP GEN (`/sim`, déterministe) — **priorité demandée**
 
-Audit d'architecture d'abord (pipeline, points de consommation du PRNG, état réel vs backlog), puis
-chantiers classés par *impact monde × risque de déterminisme*. **Règle de survie** : le décompte
-d'entités décale le flux PRNG seedé et casse des tests sans rapport → tout changement s'isole sur un
-chemin neuf/salé, et la suite complète (`replay`, `events`, scénario) est rejouée à chaque tranche.
+Audit d'architecture fait (pipeline, points de consommation du PRNG, état réel vs backlog).
+
+**La règle de survie a été CORRIGÉE par la mesure, et elle était trop peureuse.** On croyait que
+tout changement de worldgen risquait de décaler le flux PRNG et de casser des tests sans rapport.
+Vérifié dans le code : **faux pour ce domaine.** Les trois canaris (`sim`, `replay`, `events`) ne
+construisent jamais de carte générée — ils retombent sur `createEmptyMap`. Un changement de worldgen
+**ne peut pas** les casser ; il rebaseline les tests de worldgen, ce qui est le comportement attendu.
+Tout l'aléa de génération est d'ailleurs déjà positionnel et salé (`hash2(x, y, seed ^ CONSTANTE)`),
+hors du PRNG partagé.
+
+**Ce qui reste réellement sensible**, et qu'il faut surveiller à chaque tranche : (1) tout ce qui
+change la **marchabilité** ou le **type de terrain** (le semis de nœuds, l'habitat de faune et les
+emplacements de village s'y accrochent) ; (2) le **nombre de POI**, qui commande le nombre de bêtes
+de lieu — donc le flux, dès le tick 0 ; (3) le banc `pnpm scenario`, qui tourne **encore sur la carte
+LEGACY** : les nombres d'équilibrage sont mesurés sur une carte que plus personne ne joue. Angle mort
+à traiter avant toute recalibration.
 
 ### File d'attente — décisions d'Alexis (regroupées, jamais tranchées seul)
 
@@ -54,4 +66,6 @@ _(chaque tranche livrée = une ligne, comme decisions.md)_
 - **V1.1 — JUS des boucles FABRIQUER / MONTER DE MÉTIER** (audit UI/UX P0, « le trou le plus visible au regard du standard AAA »). Deux bandeaux dédiés, branchés sur `item_crafted`/`skill_level_up` (jamais le clic), signature plus lourde qu'une récolte (chip **FABRIQUÉ**, bandeau doré 2 lignes **NIVEAU**), lueur du palier gatée reduced-motion. Libellés de métier dédupliqués (`ui/skill-labels.ts`). Smoke `juice` (fige la boucle Phaser pour capturer les toasts malgré l'horloge headless rapide). Client-only, zéro `/sim`. Détail : `docs/decisions.md`.
 - **V1.6 — MOUVEMENT RÉDUIT, garde-fou GLOBAL** (accessibilité). 2 modules sur ~11 respectaient `prefers-reduced-motion` ; une règle unique dans `index.html` couvre tout l'existant ET le futur. Écrase la DURÉE (0.01ms) et non `none`, sinon `transitionend` ne se déclenche plus et le voile de mort — qui n'a pas de timer de secours — resterait à l'écran. Smoke `mouvement` prouve la règle dans les deux sens + rejoue le cycle du voile.
 - **V1.5 — VIGNETTE** (rendu #2, moitié libre). Bords assombris vers l'encre : l'image gagne un centre. En DOM (un post-FX Phaser risquait de rendre blanc sous swiftshader = perte du juge visuel). N'ajoute AUCUNE teinte — l'étalonnage, lui, est différé à Alexis (invariant « encre + 2 accents »). Assertion : `elementFromPoint` au centre renvoie le CANVAS (sinon la vignette mangeait tous les clics monde).
+- **V3.1 — WORLDGEN : le test de rejouabilité MENTAIT** (premier geste du chantier : mesurer, pas construire). A8 signait sur les *slugs*, or `melange` permute les identités — il lisait une permutation d'étiquettes comme de la variété. Mesuré sur 24 seeds : **topologie 1**, déplacement max **2,5 %** de la carte, identités **24/24**. Une vallée, 24 baptêmes. A8bis épingle l'état réel ; sa chute future prouvera que la variété est arrivée. **Croyance corrigée** : le worldgen ne peut PAS casser `sim`/`replay`/`events` (leurs canaris tournent sur `createEmptyMap`) — je le sur-freinais.
+- **V2.1 — TROIS ÉCRANS EN TIMES NEW ROMAN** (panel DA). `font-family:inherit` sur `document.body`, qui ne déclare aucune police. Le garde-fou ne testait que `fontFamily:` (camelCase Phaser) : vert sur un jeu à deux polices. Corrigé + 3 garde-fous neufs (dont un anti-backtick prouvé dans ses trois états, sa 1re version étant un faux vert). Passe de mise en page couplée : grille, rangée d'actions collante (REPRENDRE était sous le pli), fond opaque.
 - **V1.7 — INDICATEUR DE SAUVEGARDE** (saves). La sauvegarde était déjà solide (autosave 30 s, écriture à la sortie) mais MUETTE. L'hôte répond `saved {at, ok}` ; le HUD dit « partie sauvegardée » (fugace) et « SAUVEGARDE IMPOSSIBLE » (rouge, permanent) — un échec silencieux est pire que pas d'indicateur. Testé de bout en bout (ESC → écriture réelle → message → HUD). Ajout de TYPE seul dans `/sim`.
