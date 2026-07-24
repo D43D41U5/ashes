@@ -734,6 +734,93 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0x2e3238).fillRect(8, 11, 2, 4).fillRect(12, 11, 2, 4).fillRect(16, 10, 2, 4) // pattes
     g.fillStyle(0x6b7078).fillTriangle(19, 5, 22, 2, 20, 8) // queue
     g.generateTexture('spr-wolf-eat', 22, 15)
+    g.clear()
+
+    // ══════════════ L'OISEAU POSÉ ══════════════
+    // Le SEUL animal du jeu entièrement dans « encre + 2 accents » (le sanglier, le cerf et le
+    // loup vivent sur des bruns hors règle — dossier déjà en file chez Alexis).
+    //
+    // LA RÈGLE DE LISIBILITÉ, mesurée par la DA : chaque posture porte DEUX masses, et jamais
+    // une seule. L'ENCRE (#14141a, luma 20) porte sur les sols PÂLES — contraste de Weber 0,92
+    // sur la neige, 0,89 sur l'alpage ; la BRAISE porte sur les sols SOMBRES — 1,29 sur la
+    // cendre, 1,91 sur la vieille forêt, là où l'encre est au plus faible (0,59). Les deux se
+    // relaient : aucun terrain du jeu ne peut avaler l'oiseau. (À comparer aux 0,04 de l'avatar
+    // sur les zones pâles : ici le pire cas vaut quinze fois le meilleur cas de l'avatar.)
+    //
+    // DESSINÉ À 2× SON AFFICHAGE (20 px natifs pour 10 px à l'écran) : à cette taille, la grille
+    // de 2 px de l'art ne laisserait que 5×5 cellules en coordonnées finales — il n'y a pas
+    // d'oiseau dans 25 cellules. Le rapport 1:2 exact fait correspondre 2×2 texels à un pixel
+    // écran : aucun pixel n'est mangé, et l'oeil de 2 px survit. (Le lapin, lui, est réduit de
+    // 0,8 et perd un pixel sur cinq — supportable sur 12 px, fatal sur un oiseau.)
+    const OI_ENCRE = 0x14141a
+    const OI_DIM = 0x9a8f78
+    const OI_BRAISE = 0xc98b3a
+    const OI_CREME = 0xe8e0c8
+
+    // POSÉ — tête rentrée dans les épaules, deux pattes. Les pattes sont l'un des trois
+    // discriminants qui l'empêchent d'être lu comme un caillou (aucun décor n'en a).
+    g.fillStyle(OI_ENCRE).fillEllipse(8, 12, 18, 14)
+    g.fillStyle(OI_DIM).fillEllipse(8, 10, 12, 8)
+    g.fillStyle(OI_ENCRE).fillCircle(14, 6, 4)
+    g.fillStyle(OI_DIM).fillRect(18, 6, 2, 2)
+    g.fillStyle(OI_CREME).fillRect(16, 4, 2, 2)
+    g.fillStyle(OI_BRAISE).fillRect(10, 10, 6, 4)
+    g.fillStyle(OI_ENCRE).fillTriangle(0, 8, 0, 16, 6, 12)
+    g.fillStyle(OI_ENCRE).fillRect(6, 18, 2, 2).fillRect(10, 18, 2, 2)
+    g.generateTexture('spr-bird', 20, 20)
+    g.clear()
+
+    // PICORE — le corps s'aplatit, la croupe se relève, le bec touche le sol. Même chute de
+    // silhouette que `spr-rabbit` → `spr-rabbit-graze` : c'est la grammaire de la maison.
+    g.fillStyle(OI_ENCRE).fillEllipse(8, 8, 18, 12)
+    g.fillStyle(OI_DIM).fillEllipse(8, 6, 12, 6)
+    g.fillStyle(OI_ENCRE).fillTriangle(12, 6, 20, 12, 14, 14)
+    g.fillStyle(OI_DIM).fillRect(16, 14, 4, 2)
+    g.fillStyle(OI_BRAISE).fillRect(10, 8, 6, 4)
+    g.fillStyle(OI_ENCRE).fillTriangle(0, 4, 0, 12, 6, 8)
+    g.fillStyle(OI_ENCRE).fillRect(6, 14, 2, 2).fillRect(10, 14, 2, 2)
+    g.generateTexture('spr-bird-peck', 20, 16)
+    g.clear()
+
+    // ALERTE — LE COU SE DÉPLIE : la silhouette grandit de 75 % par rapport au picorage. C'est
+    // la variation d'emprise la plus violente de toute la faune, et elle est voulue : c'est ce
+    // qui rend l'envol LOYAL (« annoncés, pas surprises »). Sans elle, l'envol est une surprise.
+    g.fillStyle(OI_ENCRE).fillEllipse(8, 20, 18, 14)
+    g.fillStyle(OI_DIM).fillEllipse(8, 18, 12, 8)
+    g.fillStyle(OI_ENCRE).fillRect(12, 6, 4, 12)
+    g.fillStyle(OI_ENCRE).fillCircle(14, 4, 4)
+    g.fillStyle(OI_DIM).fillRect(18, 4, 2, 2)
+    g.fillStyle(OI_CREME).fillRect(16, 2, 2, 2)
+    g.fillStyle(OI_BRAISE).fillRect(12, 8, 4, 8)
+    g.fillStyle(OI_ENCRE).fillTriangle(0, 16, 0, 24, 6, 20)
+    g.fillStyle(OI_ENCRE).fillRect(6, 26, 2, 2).fillRect(10, 26, 2, 2)
+    g.generateTexture('spr-bird-alert', 20, 28)
+    g.clear()
+
+    // ENVOL — le morceau de bravoure. Il n'est à l'écran que ~300 ms : il doit HURLER.
+    // L'envergure explose (×1,8 de surface d'un coup), la gorge de braise est au centre de
+    // l'étoile, et les pattes PENDENT — elles viennent de lâcher le sol.
+    g.fillStyle(OI_ENCRE).fillTriangle(2, 0, 12, 16, 18, 2)
+    g.fillStyle(OI_ENCRE).fillTriangle(34, 0, 24, 16, 18, 2)
+    g.fillStyle(OI_DIM).fillTriangle(6, 4, 14, 16, 16, 6)
+    g.fillStyle(OI_DIM).fillTriangle(30, 4, 22, 16, 20, 6)
+    g.fillStyle(OI_ENCRE).fillEllipse(18, 18, 14, 14)
+    g.fillStyle(OI_BRAISE).fillRect(16, 16, 6, 6)
+    g.fillStyle(OI_ENCRE).fillCircle(22, 12, 4)
+    g.fillStyle(OI_CREME).fillRect(24, 10, 2, 2)
+    g.fillStyle(OI_ENCRE).fillTriangle(8, 22, 16, 26, 18, 22)
+    g.fillStyle(OI_ENCRE).fillRect(16, 24, 2, 4).fillRect(20, 24, 2, 4)
+    g.generateTexture('spr-bird-flush', 36, 28)
+    g.clear()
+
+    // EN VOL — vu de dessus, ailes en flèche arrière. La gorge se RÉDUIT vue d'en haut : juste.
+    g.fillStyle(OI_ENCRE).fillTriangle(0, 0, 14, 8, 4, 10)
+    g.fillStyle(OI_ENCRE).fillTriangle(32, 0, 18, 8, 28, 10)
+    g.fillStyle(OI_DIM).fillRect(12, 6, 8, 4)
+    g.fillStyle(OI_ENCRE).fillEllipse(16, 8, 10, 10)
+    g.fillStyle(OI_BRAISE).fillRect(14, 8, 4, 4)
+    g.fillStyle(OI_ENCRE).fillTriangle(12, 10, 20, 10, 16, 16)
+    g.generateTexture('spr-bird-fly', 32, 16)
     g.destroy()
   }
 
