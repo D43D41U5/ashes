@@ -94,6 +94,7 @@ import { PoiLayer } from './world/poi-layer'
 import { FireFx } from './world/fire-fx'
 import { FireGroundGlow } from './world/fire-ground-glow'
 import { createContactShadow } from './world/contact-shadow'
+import { champLisiere, poidsLisiere, LISIERE_MAX, LISIERE_PORTEE } from '../render/ecotone'
 import { NightVeil } from './world/night-veil'
 import { DynamicLighting } from './world/dynamic-lighting'
 import { WaterLayer } from './world/water-layer'
@@ -1720,6 +1721,28 @@ export class WorldScene extends Phaser.Scene {
     // eau, mur) gardent leur couleur pure : pas de halo gris au pied d'une paroi, et ils sont
     // recouverts par leurs propres couches. Puis modulation de zone + grain.
     const solParZone = new Map<string | undefined, readonly [number, number, number]>()
+
+    // LE CHAMP DE LISIÈRE, calculé UNE fois à la maille de la grille de zones (~10 k cellules)
+    // et non par tuile (~2,5 M) : un BFS multi-source, négligeable devant le bake lui-même.
+    const zonePas = this.map.zonePas ?? 0
+    const zoneGrid = this.map.zoneGrid
+    const zoneDefs = this.map.zoneDefs
+    const champ =
+      zoneGrid && zonePas > 0 && zoneDefs
+        ? champLisiere(zoneGrid, Math.ceil(width / zonePas), Math.ceil(height / zonePas), LISIERE_PORTEE)
+        : undefined
+    // La modulation d'un pays voisin, par id de zone — mémoïsée comme `solParZone`.
+    const solVoisinCache = new Map<number, readonly [number, number, number] | undefined>()
+    const solVoisinDe = zoneDefs
+      ? (id: number): readonly [number, number, number] | undefined => {
+          if (id < 0) return undefined
+          const cached = solVoisinCache.get(id)
+          if (cached !== undefined || solVoisinCache.has(id)) return cached
+          const s = zoneDefs[id] ? ambianceDe(zoneDefs[id]!.slug).sol : undefined
+          solVoisinCache.set(id, s)
+          return s
+        }
+      : undefined
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
         const i = ty * width + tx
@@ -1754,6 +1777,26 @@ export class WorldScene extends Phaser.Scene {
         if (!sol) {
           sol = ambianceDe(slug).sol
           solParZone.set(slug, sol)
+        }
+        // LA LISIÈRE (R21) : près d'une frontière, la modulation du pays dérive vers celle du
+        // pays d'en face — la forêt s'éclaircit AVANT la neige, l'éboulis annonce la pierre. Le
+        // poids se lit dans le champ (maille de 16 tuiles) ; le GRAIN par tuile le tramé, sinon
+        // la maille se verrait en bandes. Aucune tuile de terrain n'est touchée : c'est une
+        // teinte, donc zéro effet sur les nœuds, la faune ou les villages.
+        if (champ && solVoisinDe) {
+          const cell = Math.min(champ.cols - 1, Math.floor(tx / zonePas)) +
+            Math.min(champ.rows - 1, Math.floor(ty / zonePas)) * champ.cols
+          const t = poidsLisiere(champ, cell, LISIERE_MAX) * (0.55 + 0.9 * hash2(tx, ty, 0x115132))
+          if (t > 0.01) {
+            const autre = solVoisinDe(champ.voisin[cell]!)
+            if (autre) {
+              sol = [
+                sol[0] + (autre[0] - sol[0]) * t,
+                sol[1] + (autre[1] - sol[1]) * t,
+                sol[2] + (autre[2] - sol[2]) * t,
+              ] as const
+            }
+          }
         }
         const grain = 0.96 + 0.07 * hash2(tx, ty)
         g.fillStyle(shade(moduler(base, sol), grain))
