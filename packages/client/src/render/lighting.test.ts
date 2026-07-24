@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { ambientTint, daylight, fireGlow, warmthColor, NIGHT_ALPHA_MAX } from './lighting'
 
+/** Les sources du rendu, pour le garde-fou de CÂBLAGE du blend (voir le dernier banc). */
+const SOURCES = import.meta.glob('../scenes/world/*.ts', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>
+
 const r = (c: number): number => (c >> 16) & 0xff
 const b = (c: number): number => c & 0xff
 
@@ -91,7 +98,8 @@ describe('fireGlow (halo des Feux)', () => {
  * ça expliquait le seul vrai défaut de lisibilité du jeu (« le voile écrase le contraste de
  * tout, y compris de l'avatar », note du Névé).
  *
- * Si quelqu'un remet un jour le voile de l'heure en blend NORMAL, ces trois bancs tombent.
+ * Ces bancs prouvent le MODÈLE. Le dernier, lui, vérifie le CÂBLAGE — sans quoi on aurait la
+ * démonstration sans la garantie qu'elle s'applique au jeu.
  */
 describe("l'étalonnage : la lumière MULTIPLIE, elle ne se mélange pas", () => {
   /** Blend NORMAL (l'ancien voile) : `sortie = source·(1-α) + teinte·α`. Par canal. */
@@ -157,6 +165,16 @@ describe("l'étalonnage : la lumière MULTIPLIE, elle ne se mélange pas", () =>
     // NIGHT_COLOR, la nuit virait au gris. Le contrat, c'est que la nuit reste BLEUE.
     const gris = 0x808080
     expect(multiplie(gris, nuit, BLEU)).toBeGreaterThan(multiplie(gris, nuit, ROUGE) * 1.5)
+  })
+
+  it('le voile de l’heure est CÂBLÉ en MULTIPLY — la démonstration ci-dessus s’applique au jeu', () => {
+    // Les bancs précédents prouvent une ÉQUATION ; celui-ci prouve qu'on l'a bien branchée. Sans
+    // lui, retirer le `setBlendMode` laisserait toute la suite au vert avec un jeu redevenu délavé.
+    // (Instancier `NightVeil` demanderait un Phaser complet : on lit la source, comme le garde-fou
+    // de palette et celui des CSS en template literal.)
+    const veil = SOURCES['../scenes/world/night-veil.ts']
+    expect(veil, 'night-veil.ts introuvable — le garde-fou ne garde plus rien').toBeTruthy()
+    expect(veil).toContain('Phaser.BlendModes.MULTIPLY')
   })
 
   it('l’HEURE DORÉE ne teinte plus que ce qu’elle ÉCLAIRE : les ombres restent neutres', () => {
