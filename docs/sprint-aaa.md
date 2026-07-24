@@ -15,6 +15,64 @@
 3. **Exécution en VAGUES** — une tranche verticale à la fois, menée au vert (tests + smoke) avant la suivante. Client-only d'abord (risque nul) ; `/sim` (worldgen) traité comme danger de déterminisme.
 4. **Vérif visuelle** systématique au smoke pour tout ce qui se voit.
 
+## L'ÉQUIPE — protocole permanent (mandat Alexis, 2026-07-24)
+
+### Le constat qui fonde tout le reste
+
+Sur quatre sessions menées en équipe : **quand un spécialiste a lu du code, il a produit du plausible-et-faux ; quand il a mesuré, il a produit du vrai.**
+
+| Ce qui a été *lu* | Ce que la mesure a dit |
+| --- | --- |
+| Deux hypothèses de perf (boucle de repousse, `nearestAliveNode`) | **Fausses toutes les deux.** Le vrai coût : `findPath` à 40 %, l'index de collision rebâti à chaque appel → 8,8× de gain |
+| Un audit recommandait de rétrécir la Racine | 1 nœud / 20 tuiles, 6-7 des 8-10 coins de chasse : recommandation **réfutée** |
+| Le voile d'ambiance « bien réglé » | µ = 104,3 à l'heure dorée contre 93,5 à midi — **le crépuscule éclairait plus que le zénith** |
+| Le gris `faint` « un peu discret » | 3,52:1 — **échoue au contraste AA** |
+| Le loup vient et hurle, tests verts | Il ne **mord** jamais : la promesse centrale n'était pas tenue |
+
+**Règle d'organisation qui en découle : un rôle mérite une définition permanente quand il possède un instrument que le dépôt sait faire tourner.** Les rôles sans instrument propre (systèmes, UI, éclaireur) le compensent par un **artefact de preuve** obligatoire — respectivement un test rouge, un calcul de contraste ou un garde-fou vu tomber, et une citation `fichier:ligne`.
+
+### Le contrat de restitution
+
+Tout constat porte une étiquette, et une seule :
+
+- **`MESURÉ`** — avec la commande exacte et le nombre (ou le test rouge, ou la citation). **Seuls les constats `MESURÉ` peuvent entrer dans `docs/decisions.md`.**
+- **`SUSPECTÉ`** — hypothèse sans instrument. Elle se dit franchement.
+
+Ce contrat existe parce qu'une explication plausible est entrée au journal comme un fait et a dû être **barrée** (voir l'entrée du 2026-07-23 sur le banc de calibrage). Une hypothèse coûte plus cher que rien : on agit dessus.
+
+### Le contrat d'isolement
+
+Tout spécialiste qui écrit travaille en **worktree** (`isolation: worktree` dans sa définition, pas dans le prompt d'appel — donc impossible à oublier). Un panel de 19 agents a sali l'arbre partagé et modifié un fichier en cours d'édition ailleurs. L'éclaireur, lui, est en **lecture seule** : pas de worktree, pas de coût.
+
+**Qui écrit quoi** : un spécialiste écrit quand le changement est **mécanique et isolable** (propager une teinte sur 25 occurrences, une migration, un renommage) ; il rend un **plan** quand le changement demande de tenir tous les invariants à la fois (déterminisme + RNG + palette + timing) — là, l'intégration revient au lead.
+
+### Discipline de coût
+
+**On convoque un spécialiste quand il y a un instrument à lancer ou une spec à confronter — jamais pour brainstormer.** Le seul panel qui a coûté sans rien rendre est celui qui a produit des avis.
+
+### L'effectif et son instrument
+
+| Rôle (`.claude/agents/`) | Instrument | Règle non négociable |
+| --- | --- | --- |
+| `perf` | `tools/profil-tick.mts` | Aucune hypothèse par lecture. On profile, puis on parle. |
+| `da-rendu` | `pnpm smoke` (35 scénarios), dont `etalonnage` (µ/σ/σ-sur-µ sur les pixels rendus) | Un constat de rendu arrive avec des nombres, ou il n'arrive pas. |
+| `determinisme-sim` | Canaris `sim`/`replay`/`events` + lint de pureté | Liste de contrôle mécanique, jamais discrétionnaire. |
+| `systemes-jeu` | `docs/specs/` et leurs critères d'acceptation | Aucun bug déclaré sans **test rouge d'abord**. |
+| `ui-access` | `palette.test`, `typography.test`, `css-template.test`, calcul WCAG | « Lisible » est un calcul. Un garde-fou se prouve **dans les deux sens**. |
+| `eclaireur-etat` *(lecture seule)* | — (discipline) | Chaque affirmation porte son `fichier:ligne`. |
+
+### Ce qu'on ne sait PAS mesurer — la liste qui dit qui recruter ensuite
+
+Un rôle sans instrument ne rend que du goût. Trois trous connus, par ordre de coût :
+
+1. **Le banc d'équilibrage tourne sur une carte fantôme.** Il n'appelle pas `placeHuntingGrounds` : il juge la faim dans un monde où l'on ne peut pas chasser. **Tous les seuils de famine sont calés contre un fantôme.** La migration est écrite et le chantier de perf l'a rendue plausible ; elle n'a jamais été validée de bout en bout.
+2. **Le feel temporel n'a aucun instrument.** Les bêtes *glissent* — pas de terme temporel dans la synchro des acteurs — et rien dans le dépôt ne sait mesurer ça. Un « DA animation » convoqué aujourd'hui ne rendrait que du goût.
+3. **Aucune mesure de l'engagement.** « La map t0 pousse-t-elle à explorer ? » n'a pas d'instrument — seulement le GATE 1, c'est-à-dire Alexis.
+
+### Ce qui ne se délègue jamais
+
+Une **conséquence de jeu** (difficulté, létalité, ce qu'on voit venir, ce qui devient invisible) n'est pas un arbitrage technique. Le spécialiste la **prouve et la chiffre** ; Alexis tranche. Les correctifs purement techniques, eux, restent du ressort de l'équipe.
+
 ## Backlog priorisé
 
 ### Vague 1 — les plus gros leviers, client-only, risque nul — **LIVRÉE (7 tranches)**

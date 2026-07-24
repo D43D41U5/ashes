@@ -55,6 +55,7 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 - **État de sim JSON-sérialisable** : pas de classes, pas de `Map`/`Set` dans `SimState` — snapshot, transport Worker et persistance en dépendent.
 - **Specs avant systèmes** : avant d'implémenter un système de jeu (combat, alignement, économie…), extraire/compléter sa spec dans `docs/specs/` avec des critères d'acceptation testables, puis implémenter contre ces critères.
 - **Décisions** : toute décision de design ou d'architecture prise en session s'ajoute en une ligne dans `docs/decisions.md`. Les 14 décisions fondatrices sont dans le GDD §14.
+- **Travail en équipe de spécialistes** : six rôles ont une définition permanente dans `.claude/agents/` (`perf`, `da-rendu`, `determinisme-sim`, `systemes-jeu`, `ui-access`, `eclaireur-etat`), chacun avec l'instrument qu'il possède. Le protocole — **contrat `MESURÉ`/`SUSPECTÉ`** (seul `MESURÉ` entre au journal), worktree obligatoire pour qui écrit, et la liste de ce qu'on ne sait PAS encore mesurer — vit dans `docs/sprint-aaa.md` § L'ÉQUIPE. On convoque un spécialiste quand il y a un instrument à lancer ou une spec à confronter, jamais pour brainstormer.
 - **Tests** : l'effort de test se concentre sur `/sim`. Chaque système livré arrive avec ses tests headless. Les bugs se reproduisent par un test `seed + inputs → état attendu` avant d'être corrigés.
 - Le code et les docs du projet sont en **français** (comme le GDD) ; les identifiants de code en anglais.
 
