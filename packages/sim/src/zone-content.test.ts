@@ -59,6 +59,30 @@ describe('la table du contenu', () => {
 })
 
 describe('le contenu, sur la vraie carte', () => {
+  it('A29 — le VERGER SAUVAGE porte de vrais fruits (il ne portait qu\'un nom)', () => {
+    // Deux des cinq lieux de la zone de départ étaient des noms sans contenu — et c'est ce qui
+    // rend une carte T0 décevante : on marche vers quelque chose qui s'annonce, et il n'y a
+    // rien. On MESURE donc que le verger est plus riche en baies que la zone qui l'entoure ;
+    // vérifier « le code tourne » ne prouverait pas qu'il paie.
+    let vergersVus = 0
+    for (const { c, nodes } of mondes) {
+      const dansVerger = new Set<number>()
+      for (const z of c.map.zones) {
+        if (z.kind !== 'verger') continue
+        vergersVus += 1
+        for (let ty = Math.floor(z.y); ty < z.y + z.h; ty++) {
+          for (let tx = Math.floor(z.x); tx < z.x + z.w; tx++) dansVerger.add(ty * c.map.width + tx)
+        }
+      }
+      if (dansVerger.size === 0) continue
+      const baiesDedans = nodes.filter((n) => n.type === 'berry_bush' && dansVerger.has(n.ty * c.map.width + n.tx)).length
+      // Une emprise de verger est petite ; sans la passe dédiée elle porterait ~0 buisson.
+      expect(baiesDedans, 'un verger sans un seul buisson : le lieu ne paie toujours pas').toBeGreaterThan(0)
+    }
+    // Le VOIR d'abord : sans verger sur aucune carte, le test ne prouverait rien.
+    expect(vergersVus, 'aucun verger dans le balayage — le test ne mesure rien').toBeGreaterThan(0)
+  })
+
   it('A14 — TOUTE ressource structurante n\'existe QUE dans sa zone (le teaser excepté, et il est UNIQUE)', () => {
     for (const { c, nodes } of mondes) {
       const attendu = new Map<string, string>()

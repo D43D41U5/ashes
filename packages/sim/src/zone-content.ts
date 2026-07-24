@@ -80,6 +80,10 @@ export const CONTENU = {
   CLAIRIERE_SEUIL: 0.62,
 
   /** Le teaser : UN filon, et son stock est dérisoire. Épuisé en une heure. */
+  /** La densité d'un VERGER : un buisson toutes ~3 tuiles de son emprise. Assez dense pour que
+   *  le trouver soit une aubaine (c'est une récompense d'exploration), assez épars pour rester
+   *  un bosquet et non un mur de fruits. Calibration. */
+  VERGER_DENSITE: 0.34,
   TEASER_STOCK: 3,
 
   /**
@@ -237,10 +241,56 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   for (const a of arbres) nodes.push(a)
   id += arbres.length
 
+  // ── LES VERGERS SAUVAGES — le lieu qui portait un NOM et rien d'autre ─────
+  const vergers = vergersSauvages(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  for (const v of vergers) nodes.push(v)
+  id += vergers.length
+
   // ── LE TEASER — un seul filon, dans la racine, et il est dérisoire ────────
   const t = poserLeTeaser(c, id)
   if (t) nodes.push(t)
   return nodes
+}
+
+/**
+ * LE VERGER SAUVAGE PORTE ENFIN DES FRUITS.
+ *
+ * C'était un lieu VIDE : `family: 'eco'`, aucune charge de découverte, aucun contenu — un nom
+ * posé sur de l'herbe ordinaire. Deux des cinq lieux de la zone de départ étaient dans ce cas,
+ * et c'est exactement ce qui rend une carte T0 décevante : on marche vers quelque chose qui
+ * s'annonce, et il n'y a rien. Trouver un verger DOIT payer.
+ *
+ * Ce qu'il pose : de VRAIS buissons à baies récoltables (mémoire de projet : « ajoute X au
+ * biome Y » veut dire de vrais nœuds, pas du décor ni une teinte), densément, dans son
+ * empreinte. C'est une récompense de NOURRITURE — la ressource qui compte le plus tôt.
+ *
+ * DÉTERMINISME : décision par tuile via `hash2` salé d'une constante ASCII neuve ('VERG'), le
+ * patron canonique du worldgen. Aucun tirage sur le PRNG partagé, aucune entité — donc aucun
+ * décalage de flux. Et rien qui touche la marchabilité : on n'ajoute que des nœuds.
+ */
+function vergersSauvages(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
+  const { width, terrain, zones } = c.map
+  const out: ResourceNode[] = []
+  let id = idStart
+  for (const z of zones) {
+    if (z.kind !== 'verger') continue
+    for (let ty = Math.floor(z.y); ty < z.y + z.h; ty++) {
+      for (let tx = Math.floor(z.x); tx < z.x + z.w; tx++) {
+        if (tx < 0 || ty < 0 || tx >= width || ty >= c.map.height) continue
+        const i = ty * width + tx
+        if (c.rampe[i] || occupees.has(i)) continue
+        const t = terrain[i]!
+        // On respecte l'admission du terrain : un verger ne fait pas pousser de buisson sur
+        // la roche. S'il tombe sur un sol qui n'en veut pas, il reste maigre — et c'est juste.
+        if (!terrainAdmet('berry_bush', t)) continue
+        if (hash2(tx, ty, (c.graphe.seed ^ 0x56455247) | 0) >= CONTENU.VERGER_DENSITE) continue
+        out.push({ id, type: 'berry_bush', tx, ty, stock: NODE_DEFS.berry_bush.stock, regrowAt: 0 })
+        occupees.add(i)
+        id += 1
+      }
+    }
+  }
+  return out
 }
 
 /**
