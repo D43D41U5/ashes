@@ -8,6 +8,7 @@
  */
 import type { ChronicleEntry, ComponentType, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@braises/sim'
 import type Phaser from 'phaser'
+import type { Brouillard } from './render/fog'
 
 /**
  * LES PIÈCES STRUCTURELLES du MENU DU MARTEAU (spec construction R20, décision
@@ -160,6 +161,13 @@ export interface HudState {
   crafts: { item: ItemId }[]
   /** File des MONTÉES DE MÉTIER (event `skill_level_up` sur moi) : le plus gros toast. */
   levelUps: { skill: SkillId; level: number }[]
+  /** COMPTEUR DE DÉVOILEMENT du brouillard (spec R19). WorldScene l'incrémente quand la marche
+   *  a découvert du neuf ; l'écran de carte s'en sert pour ne repeindre son calque QUE là —
+   *  repeindre 40 000 cellules à chaque frame pour un pas qui ne révèle rien serait absurde. */
+  fogVersion: number
+  /** Le brouillard lui-même, publié PAR RÉFÉRENCE (l'objet est muté en place par la marche).
+   *  L'écran de carte le lit pour peindre son calque ; `fogVersion` lui dit quand le relire. */
+  fog: Brouillard | null
   /** DERNIÈRE SAUVEGARDE de l'hôte — une valeur, pas une file (seul le dernier état compte).
    *  `at` = horloge murale (pour dater), `shownAt` = horloge Phaser (pour le fondu),
    *  `ok` = false si l'écriture a ÉCHOUÉ, ce qu'il faut dire et non taire. */

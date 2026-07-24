@@ -22,6 +22,7 @@ import { createSeasonVeil, type SeasonVeil } from './ui/season-veil'
 import { createPauseMenu, type PauseMenu } from './ui/pause-menu'
 import { mountHud, type HudDom } from './ui/hud-dom'
 import { mountVignette, type Vignette } from './ui/vignette'
+import { partDecouverte } from '../render/fog'
 import { createLoadingScreen, type LoadingScreen } from './ui/loading'
 import { createChatPanel, type ChatPanel } from './ui/chat-panel'
 import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
@@ -50,6 +51,8 @@ const FATAL_DEPTH = LOADING_DEPTH + 2
 /** L'overlay de debug (P, DEV) reste au-dessus de tout. */
 const DEBUG_DEPTH = FATAL_DEPTH + 1
 /** Pastille de POI sur la carte : plus petite et plus froide que le marqueur joueur, qui doit primer. */
+/** La texture du calque de brouillard : une cellule = un pixel, étirée en NEAREST. */
+const MAP_FOG_TEX = 'map-fog'
 const MAP_POI_RADIUS = 3
 const MAP_POI_FILL = 0xe8e0c8
 const MAP_POI_STROKE = 0x14141a
@@ -115,6 +118,12 @@ export class UIScene extends Phaser.Scene {
   private mapRoot?: Phaser.GameObjects.Container
   private mapLayer!: Phaser.GameObjects.Container
   private mapImage!: Phaser.GameObjects.Image
+  /** Le calque de brouillard posé sur la carte (spec R19) — absent tant que la carte n'est pas montée. */
+  private mapFog?: Phaser.GameObjects.Image
+  /** La version de brouillard DÉJÀ peinte : on ne repeint que si la marche a découvert du neuf. */
+  private mapFogVersion = -1
+  /** La texture CANVAS du brouillard — c'est ce type-là (et pas `Texture`) qui sait se rafraîchir. */
+  private mapFogTex?: Phaser.Textures.CanvasTexture
   private mapMarker!: Phaser.GameObjects.Arc
   /** Une pastille par POI (zone avec un `kind`), AVEC son poiId — l'index dans `map.zones`,
    *  qui est l'identité d'un lieu (spec lieux R4). Le filtre `knownPois` en dépend. */
@@ -133,6 +142,8 @@ export class UIScene extends Phaser.Scene {
   private mapWasOpen = false
   /** Aide de la carte — sa dernière ligne change quand le mode debug est armé. */
   private mapHint?: Phaser.GameObjects.Text
+  /** « ARPENTÉ : x % » — la part de vallée découverte (spec R19). */
+  private mapArpente?: Phaser.GameObjects.Text
 
   /** Overlay du mode debug (DEV, P) — au-dessus de tout, carte comprise. */
   private debugText?: Phaser.GameObjects.Text
@@ -334,6 +345,13 @@ export class UIScene extends Phaser.Scene {
       .text(W / 2, H - 28, 'molette : zoom · glisser : déplacer · M : fermer', { ...style, fontSize: '13px', color: '#b8b0a0' })
       .setOrigin(0.5, 0)
     this.mapHint = hint
+    // CE QUI EST ARPENTÉ (spec R19). Sans ce chiffre, la première ouverture de la carte est un
+    // rectangle noir avec un point : ça se lit comme une PANNE, pas comme un mystère. Nommer la
+    // part parcourue retourne le vide en JAUGE — le noir cesse d'être une absence, il devient
+    // ce qui reste à prendre. C'est la ligne qui transforme le brouillard en moteur.
+    this.mapArpente = this.add
+      .text(W / 2, 44, '', { ...style, fontSize: '13px', color: '#9a8f78' })
+      .setOrigin(0.5, 0)
     // Le lieu sous le curseur — en haut à gauche de la carte.
     this.mapHover = this.add.text(16, 16, '', { ...style, fontSize: '16px', color: '#e8c66a' }).setOrigin(0, 0)
 
@@ -360,11 +378,33 @@ export class UIScene extends Phaser.Scene {
       }))
 
     this.mapMarker = this.add.circle(0, 0, 5, 0xffd94a).setStrokeStyle(2, 0x14141a)
+
+    // LE BROUILLARD (spec R19) : un calque posé SUR le terrain et SOUS les pastilles — ce
+    // qu'on n'a pas arpenté est de l'encre. Une texture d'UNE cellule par pixel, étirée à la
+    // taille de la carte : le grossissement en NEAREST donne des carrés francs, la grammaire
+    // du jeu, et coûte 40 000 pixels au lieu de 2,5 millions.
+    const fog = getHud(this.registry, 'fog') ?? null
+    if (fog) {
+      if (this.textures.exists(MAP_FOG_TEX)) this.textures.remove(MAP_FOG_TEX)
+      const tex = this.textures.createCanvas(MAP_FOG_TEX, fog.cols, fog.rows)
+      if (tex) {
+        tex.setFilter(Phaser.Textures.FilterMode.NEAREST)
+        this.mapFogTex = tex
+      }
+      this.mapFog = this.add.image(0, 0, MAP_FOG_TEX).setOrigin(0.5).setDisplaySize(texW, texH)
+      this.mapFogVersion = -1 // force la première peinture
+    }
+
     // Le marqueur joueur passe APRÈS les pastilles : il doit rester lisible par-dessus.
-    this.mapLayer = this.add.container(W / 2, H / 2, [this.mapImage, ...this.mapPoiDots.map((p) => p.dot), this.mapMarker])
+    this.mapLayer = this.add.container(W / 2, H / 2, [
+      this.mapImage,
+      ...(this.mapFog ? [this.mapFog] : []),
+      ...this.mapPoiDots.map((p) => p.dot),
+      this.mapMarker,
+    ])
 
     this.mapRoot = this.add
-      .container(0, 0, [bg, this.mapLayer, title, hint, this.mapHover])
+      .container(0, 0, [bg, this.mapLayer, title, hint, this.mapArpente, this.mapHover])
       .setDepth(MAP_OVERLAY_DEPTH)
       .setVisible(false)
   }
@@ -443,6 +483,46 @@ export class UIScene extends Phaser.Scene {
 
   private mapLocalY(map: WorldMap, ty: number): number {
     return ty * TILE_PX - (map.height * TILE_PX) / 2
+  }
+
+  /**
+   * REPEINT LE BROUILLARD (spec R19) — et seulement si la marche a découvert du neuf.
+   *
+   * Une cellule non vue est de l'ENCRE OPAQUE : on ne devine rien de la forme du pays derrière.
+   * Une cellule vue est transparente : le terrain déjà baké transparaît tel quel. Il n'y a
+   * volontairement pas de troisième état (« vu mais pas en vue ») : la carte dit ce qu'on a
+   * arpenté, pas ce qu'on surveille — ce serait une autre promesse, et une autre spec.
+   */
+  private refreshMapFog(): void {
+    const fog = getHud(this.registry, 'fog')
+    const version = getHud(this.registry, 'fogVersion') ?? 0
+    if (!fog || !this.mapFog || version === this.mapFogVersion) return
+    this.mapFogVersion = version
+    const tex = this.mapFogTex
+    if (!tex) return
+    const src = tex.getSourceImage() as HTMLCanvasElement
+    const ctx = src.getContext('2d')
+    if (!ctx) return
+    const img = ctx.createImageData(fog.cols, fog.rows)
+    for (let i = 0; i < fog.vu.length; i++) {
+      const k = i * 4
+      // L'encre de la palette (#14141a) : le brouillard est la MÊME matière que les cadres
+      // et les contours du jeu, pas un gris neutre venu d'ailleurs.
+      img.data[k] = 0x14
+      img.data[k + 1] = 0x14
+      img.data[k + 2] = 0x1a
+      img.data[k + 3] = fog.vu[i] ? 0 : 255
+    }
+    ctx.putImageData(img, 0, 0)
+    tex.refresh()
+
+    // Et on le DIT. Au premier jour, « ARPENTÉ : 0 % » explique le noir au lieu de le subir ;
+    // plus tard, le chiffre qui monte est une raison de sortir à lui tout seul.
+    if (this.mapArpente) {
+      const pct = partDecouverte(fog) * 100
+      this.mapArpente.setText(`ARPENTÉ : ${pct < 1 && pct > 0 ? '< 1' : Math.round(pct)} %` +
+        (pct < 1 ? '  ·  la carte se dessine à mesure que vous marchez' : ''))
+    }
   }
 
   /** Place le marqueur « tu es ici » et le tient à taille écran constante. */
@@ -698,6 +778,7 @@ export class UIScene extends Phaser.Scene {
       this.mapRoot.setVisible(mapOpen)
       if (mapOpen && mapData) {
         if (!this.mapWasOpen) this.resetMapView() // vue neuve à chaque ouverture
+        this.refreshMapFog() // ne repeint que si la marche a découvert du neuf
         this.updateMapMarker(mapData)
         this.updateMapPoiDots()
       }

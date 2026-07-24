@@ -1406,6 +1406,55 @@ const SCENARIOS = {
   },
 
   /**
+   * LA CARTE SE DÉCOUVRE-T-ELLE EN MARCHANT ? (spec worldgen R19 — brouillard de guerre.)
+   *
+   * Décision d'Alexis du 2026-07-14, restée non implémentée : la forme de la vallée était
+   * acquise dès la première seconde. On vérifie les deux moitiés de la promesse : au spawn la
+   * carte est FERMÉE (on ne connaît qu'un disque autour de soi), et MARCHER l'ouvre.
+   */
+  async brouillard(page) {
+    await page.waitForTimeout(1500)
+    const part = () => page.evaluate(() => {
+      const f = window.__BRAISES__.scene.registry.get('fog')
+      if (!f) return null
+      let n = 0
+      for (let i = 0; i < f.vu.length; i++) n += f.vu[i]
+      return +(n / f.vu.length).toFixed(5)
+    })
+    const auSpawn = await part()
+
+    // La carte, fermée : c'est l'image qui dit tout.
+    await page.keyboard.press('m')
+    await page.waitForTimeout(500)
+    await page.screenshot({ path: `${OUT}/brouillard-spawn.png` })
+    await page.keyboard.press('m')
+    await page.waitForTimeout(200)
+
+    // ON MARCHE — vraiment, au clavier, comme un joueur. Quatre longues foulées vers l'est.
+    for (let i = 0; i < 4; i++) {
+      await page.keyboard.down('d')
+      await page.waitForTimeout(900)
+      await page.keyboard.up('d')
+      await page.waitForTimeout(120)
+    }
+    const apresMarche = await part()
+
+    await page.keyboard.press('m')
+    await page.waitForTimeout(500)
+    await page.screenshot({ path: `${OUT}/brouillard-apres-marche.png` })
+    await page.keyboard.press('m')
+
+    console.log(`brouillard : spawn ${auSpawn} → après marche ${apresMarche}`)
+    if (auSpawn === null || auSpawn > 0.02) {
+      console.error(`!! LA CARTE N'EST PAS FERMÉE AU SPAWN (${auSpawn}) — il n'y a rien à découvrir`)
+    }
+    if (apresMarche !== null && auSpawn !== null && apresMarche <= auSpawn) {
+      console.error(`!! MARCHER N'OUVRE PAS LA CARTE (${auSpawn} → ${apresMarche}) — le brouillard ne suit pas les pas`)
+    }
+    return { auSpawn, apresMarche }
+  },
+
+  /**
    * LE MOUVEMENT RÉDUIT EST-IL RESPECTÉ ? (sprint AAA — accessibilité.)
    *
    * L'UI est montée en DOM par une dizaine de modules qui animent chacun les leurs ; garder
@@ -1537,6 +1586,21 @@ const SCENARIOS = {
       }
     })
     console.log(`vignette : ${JSON.stringify(vig)}`)
+
+    // LE BROUILLARD (spec R19) : au spawn, on ne doit connaître qu'un disque autour de soi.
+    // Si la part découverte est déjà large, c'est que le brouillard ne se pose pas — et une
+    // carte offerte d'emblée est exactement ce qu'on cherchait à supprimer.
+    const brouillard = await page.evaluate(() => {
+      const f = window.__BRAISES__.scene.registry.get('fog')
+      if (!f) return { absent: true }
+      let vus = 0
+      for (let i = 0; i < f.vu.length; i++) vus += f.vu[i]
+      return { cellules: f.vu.length, vues: vus, part: +(vus / f.vu.length).toFixed(4), cols: f.cols, rows: f.rows }
+    })
+    console.log(`brouillard : ${JSON.stringify(brouillard)}`)
+    if (brouillard.absent || brouillard.part > 0.02) {
+      console.error(`!! LE BROUILLARD NE COUVRE PAS LA CARTE AU SPAWN : ${JSON.stringify(brouillard)}`)
+    }
     if (!vig.present || vig.pointerEvents !== 'none' || vig.hitTag !== 'canvas') {
       console.error(`!! LA VIGNETTE INTERCEPTE LE CLIC (ou manque) : ${JSON.stringify(vig)}`)
     }

@@ -95,6 +95,7 @@ import { FireFx } from './world/fire-fx'
 import { FireGroundGlow } from './world/fire-ground-glow'
 import { createContactShadow } from './world/contact-shadow'
 import { champLisiere, poidsLisiere, LISIERE_MAX, LISIERE_PORTEE } from '../render/ecotone'
+import { creerBrouillard, depackBrouillard, FOG_RAYON_TUILES, loadFog, packBrouillard, revele, saveFog, type Brouillard } from '../render/fog'
 import { NightVeil } from './world/night-veil'
 import { DynamicLighting } from './world/dynamic-lighting'
 import { WaterLayer } from './world/water-layer'
@@ -282,6 +283,8 @@ export class WorldScene extends Phaser.Scene {
   /** Couvert de canopée lissé autour de l'avatar — piloté vers la valeur échantillonnée. */
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
   private worldReady = false
+  /** Ce que ce joueur a ARPENTÉ (spec R19). Vit côté client : aucune règle n'en dépend. */
+  private fog?: Brouillard
   /** Les étapes de montage du monde qui restent à jouer — une par frame (voir `onReady`).
    *  Non vide ⇒ le monde est en train de naître : `update` ne fait QUE le monter. */
   private buildQueue: [phase: string, run: () => void][] = []
@@ -592,6 +595,17 @@ export class WorldScene extends Phaser.Scene {
     this.calendarScale = msg.calendarScale
     this.map = msg.map
 
+    // LE BROUILLARD DE GUERRE (spec worldgen R19) : on relit ce que ce joueur a déjà arpenté,
+    // ou on ouvre une carte vierge. `depackBrouillard` rend un brouillard NEUF si les dimensions
+    // ne correspondent plus (vallée régénérée) — on redécouvre plutôt que d'afficher un savoir
+    // faux. Il vit ici, côté client : aucune règle de jeu n'en dépend (voir l'en-tête de `fog`).
+    const memoire = loadFog()
+    this.fog = memoire
+      ? depackBrouillard(memoire, this.map.width, this.map.height)
+      : creerBrouillard(this.map.width, this.map.height)
+    setHud(this.registry, 'fog', this.fog)
+    setHud(this.registry, 'fogVersion', 1)
+
     // LA CHRONIQUE REPRISE (persistance P1-6) : sur une reprise, l'hôte joint le récit déjà
     // vécu. On réamorce `eventLog` — mais on ne PUBLIE pas encore : les noms de village
     // arrivent avec le premier snapshot. On arme un forçage pour republier là (voir
@@ -703,6 +717,13 @@ export class WorldScene extends Phaser.Scene {
       return
     }
     if (!this.worldReady) return
+    // LE BROUILLARD SE LÈVE SOUS LES PAS (spec worldgen R19). On dévoile autour de la position
+    // PRÉDITE (celle qu'on voit, pas celle du dernier snapshot : le brouillard suit l'œil).
+    // `revele` ne rend `true` que si du neuf est apparu — on ne prévient donc l'écran de carte
+    // que dans ce cas, au lieu de le faire repeindre à chaque frame pour rien.
+    if (this.fog && revele(this.fog, this.predicted.x, this.predicted.y, FOG_RAYON_TUILES)) {
+      setHud(this.registry, 'fogVersion', (getHud(this.registry, 'fogVersion') ?? 0) + 1)
+    }
     // LE MENU PAUSE (ESC) : quand `menuOpen` bascule (par ESC ou le bouton REPRENDRE), on
     // fige ou reprend l'hôte. Piloté en niveau (sur le changement), pas à chaque frame.
     const menuOpen = Boolean(getHud(this.registry, 'menuOpen'))
@@ -1138,6 +1159,9 @@ export class WorldScene extends Phaser.Scene {
     if (msg.type === 'saved') {
       // L'HÔTE A ÉCRIT (ou n'a pas pu) : on le porte au HUD. Aucun effet de jeu — mais savoir
       // que la veillée est à l'abri (et surtout savoir quand elle ne l'est PAS) vaut son pixel.
+      // Le brouillard se range AU MÊME MOMENT que la partie : un seul geste de sauvegarde,
+      // donc jamais un savoir géographique en avance ou en retard sur le monde qu'il décrit.
+      if (this.fog && msg.ok) saveFog(packBrouillard(this.fog))
       publishSaved(this.registry, msg.at, msg.ok, this.time.now)
       return
     }
