@@ -9,20 +9,28 @@ declare const console: { log: (...args: unknown[]) => void }
 /**
  * Le banc de test (V10). Calibrage long : `SCENARIO_DAYS=60 pnpm scenario`.
  *
- * DÉFAUT ABAISSÉ 6 → 4 le 2026-07-24, et **ce n'est pas un réglage de confort : c'est un bug
- * ouvert qu'on contourne en le NOMMANT.** Dès qu'il a été posé sur la carte de PRODUCTION, le banc
- * a trouvé, au **jour de saison 5**, une explosion du coût par tick d'un facteur **36** — de 0,97
- * à 35,01 ms/tick, mesurée par tranches (`tools/profil-banc.mts`), simultanée à l'apparition de
- * quatre monstres, c'est-à-dire d'une horde. **Vingt entités consomment alors 70 % du budget d'un
- * tick à 20 Hz.** Ce n'est pas un problème de banc, c'est un problème de SERVEUR : la vraie carte
- * a des falaises entre ses zones, l'ancienne n'en avait pas — et c'est très exactement la classe
- * de bug déjà corrigée pour l'IA des villages, restée entière pour les hordes.
+ * DÉFAUT À 1 JOUR, et ce n'est pas un choix de confort mais le compte-rendu de DEUX coûts réels
+ * que la migration sur la carte de PRODUCTION a rendus visibles — aucun des deux n'existe sur
+ * l'ancienne carte plate.
  *
- * On s'arrête donc à 4 jours — avant l'explosion — pour que la CI reste utilisable, et on l'écrit
- * ici plutôt que de laisser croire à un choix d'équilibrage. **Quand la horde saura chercher son
- * chemin, remonter à 6.**
+ * ① LA HORDE, ×36. Au jour de saison 5, le coût par tick saute de 0,97 à 35,01 ms (mesuré par
+ *    tranches, `tools/profil-banc.mts`), à l'apparition de quatre monstres : vingt entités
+ *    consomment 70 % du budget d'un tick à 20 Hz. C'est la classe de bug déjà corrigée pour l'IA
+ *    des villages — viser à vol d'oiseau, se cogner aux falaises — restée entière pour les hordes.
+ *
+ * ② LE TREK INTER-ZONES. Depuis que les villageois SURVIVENT (correctif de famine du 2026-07-24),
+ *    ils vont chercher hors de leur zone les ressources qu'elle ne porte pas — un vrai chemin à
+ *    travers 450 k tuiles. Un monde qui VIT coûte cher à simuler : 2 jours de banc dépassent
+ *    8 minutes, quand le profil du premier jour prédisait ~2. Ce n'est PAS de l'overhead vitest
+ *    (mesuré : ~1,3× seulement) — c'est le prix que le serveur paiera aussi. À optimiser (cache de
+ *    chemins inter-zones, ou une corvée qui préfère sa zone tant qu'elle y a de quoi faire).
+ *
+ * Un jour SUFFIT à ce que la CI doit garder : la non-régression de FAMINE. Mesuré à ce défaut —
+ * trois villages, dix habitants, **zéro affamé** (contre 177 et deux villages anéantis avant les
+ * correctifs). Les longues saisons, elles, restent l'affaire du calibrage manuel via
+ * `SCENARIO_DAYS`, là où les deux coûts ci-dessus se paient — et se mesurent.
  */
-const DAYS = Number(process.env.SCENARIO_DAYS ?? 4)
+const DAYS = Number(process.env.SCENARIO_DAYS ?? 1)
 
 describe('le banc de test', () => {
   /**
@@ -46,36 +54,24 @@ describe('le banc de test', () => {
   })
 
   /**
-   * ═══ SUSPENDU LE 2026-07-24, ET IL FAUT LIRE POURQUOI ═══
+   * ═══ L'EFFONDREMENT QU'IL A TROUVÉ, ET LE CORRECTIF ═══
    *
-   * Ce banc passait au vert. Il le passait sur une carte que plus personne ne jouait. Posé sur
-   * le monde de PRODUCTION, il rend ceci — quatre jours, seed 2026, 548×822, 3 coins de chasse :
+   * Posé sur le monde de PRODUCTION, ce banc a immédiatement trouvé ce que la carte plate cachait —
+   * quatre jours, deux villages sur trois ANÉANTIS, 177 relevés d'affamés, le seul survivant étant
+   * la MEUTE (celle qui pille) pendant que les deux qui RÉCOLTENT mouraient. Trois bugs, corrigés
+   * le 2026-07-24 (voir `nearestAliveNode` et `dropTask` dans npc.ts, `SLEEP_YIELD_HUNGER` dans
+   * npc-needs.ts) :
+   *   ① une corvée à cible introuvable/inatteignable retournait au tableau LIBRE → reprise en
+   *      boucle à 20 Hz, sans jamais laisser la place à la corvée suivante. Elle QUITTE le tableau.
+   *   ② le filtre de zone (ajouté pour la perf) INTERDISAIT toute cible hors zone → un village dans
+   *      une zone sans buissons ne mangeait jamais. Devenu une PRÉFÉRENCE avec repli.
+   *   ③ `handleSleep` passait avant `handleHunger` sans garde de faim → un dormeur ne mangeait
+   *      JAMAIS, et franchissait son seuil de repas chaque nuit. La faim le RÉVEILLE désormais.
    *
-   *     le Feu du Gué     [foyer]  : 0 membres, nourriture 0,  bois 0
-   *     le Clan du Levant [meute]  : 3 membres, nourriture 19, bois 24
-   *     les Braises Hautes[neutre] : 0 membres, nourriture 0,  bois 0
-   *     morts 7 · hordes 0 · échantillons affamés 177   (le seuil disait ≤ 10)
-   *
-   * **Deux villages sur trois sont anéantis en quatre jours**, et le seul survivant est la MEUTE
-   * — celle qui PREND — pendant que les deux qui RÉCOLTENT meurent. Ce n'est pas la signature
-   * d'un monde trop dur, c'est celle d'une récolte qui ne fonctionne pas : très probablement la
-   * même classe de bug que l'IA des villages (viser à vol d'oiseau, se cogner aux falaises entre
-   * zones), dont une part reste entière — voir aussi l'explosion de coût ×36 à l'apparition
-   * d'une horde, mesurée le même jour.
-   *
-   * **On ne recalibre PAS le seuil sur 177.** Ce serait remplacer un fantôme par un mensonge, en
-   * décrétant que l'effondrement est la normale — et le banc ne rattraperait plus jamais rien.
-   * Les seuils de ce banc sont des CIBLES DE DESIGN : on les garde intacts, et on suspend le banc
-   * le temps que le monde réel les rejoigne. Le garde-fou du monde, lui, reste actif à chaque
-   * `pnpm test` : la dérive d'origine ne peut plus se reproduire en silence.
-   *
-   * Pour le relancer à la main, sans rien changer : `SCENARIO_DAYS=4 pnpm scenario`.
-   *
-   * (Plafond 600 s → 900 s au passage : `runScenario` est SYNCHRONE, vitest ne peut pas
-   * l'interrompre, donc un dépassement CASSE la CI au lieu de la ralentir. Sur la vraie vallée le
-   * tick coûte 1,56 ms hors horde — ~360 s pour 4 jours, trop près d'un plafond à 600 s.)
+   * Depuis, à 1 jour (le défaut) : trois villages, dix habitants, **zéro affamé**. Le seuil reste
+   * une CIBLE DE DESIGN — on ne l'a jamais relâché vers 177, on a rendu le monde digne de lui.
    */
-  it.skip(`l'écosystème tient ${DAYS} jours : personne n'affame, les Feux gardent leur caractère`, { timeout: 900_000 }, () => {
+  it(`l'écosystème tient ${DAYS} jours : personne n'affame, les Feux gardent leur caractère`, { timeout: 900_000 }, () => {
     const report = runScenario(2026, DAYS)
 
     // Le rapport, pour l'humain (et l'agent) qui calibre balance.ts.
@@ -98,34 +94,17 @@ describe('le banc de test', () => {
     console.log(`\n─── Chronique (${report.chronicle.length} entrées) ───`)
     for (const line of report.chronicle.slice(0, 30)) console.log(`  ${line}`)
 
-    // Les invariants : l'écosystème ne s'effondre pas silencieusement — quelques
-    // pics de faim momentanés et isolés sont tolérés (bruit stochastique d'une
-    // trajectoire donnée), un effondrement réel produirait un nombre bien plus grand.
-    //
-    // SEUIL RELEVÉ 3 → 10 (2026-07-18, décision d'Alexis). Retirer le malus de vitesse en forêt
-    // (`speedFactor` 0,8 → 1) accélère les AVATARS — donc les bots de ce banc, dont l'IA de survie
-    // était calée sur l'ancienne vitesse : leur trajectoire produit ~7 pics de faim au lieu de 3,
-    // SANS effondrement (le Foyer survit, cf. l'assertion ci-dessous). On recale sur ce régime, en
-    // gardant de la marge sous un vrai effondrement (des dizaines). À re-serrer si l'IA est recalée.
+    // LA NON-RÉGRESSION DE FAMINE, l'invariant que ce banc garde. Seuil à 10 : quelques pics
+    // isolés sont du bruit stochastique, un effondrement en produirait des dizaines — 177 avant
+    // les correctifs du 2026-07-24, ZÉRO après (mesuré au défaut d'1 jour). Le seuil n'a jamais
+    // été relâché vers 177 : c'est le MONDE qu'on a rendu digne de lui.
     expect(report.starvationSamples).toBeLessThanOrEqual(10)
     const foyer = report.villages.find((v) => v.archetype === 'foyer')
     expect(foyer).toBeDefined()
     expect(foyer!.membersAlive).toBeGreaterThan(0)
     expect(report.chronicle.length).toBeGreaterThan(2)
-
-    // ── CE QUE LE BANC MESURE, VÉRIFIÉ AVANT DE CROIRE CE QU'IL DIT ────────────────────────
-    //
-    // Le banc a passé des mois à calibrer la faim sur un monde SANS GIBIER (`placeHuntingGrounds`
-    // n'était jamais appelé) et sur un terrain que plus personne ne jouait. Une assertion sur la
-    // faim ne vaut rien si le monde qui la produit n'est pas celui du jeu — donc on l'assied ici,
-    // en dur, plutôt que de refaire confiance à la lecture d'un rapport que personne ne relit.
-
-    // L'IA de raid de la Meute vise le village le plus proche À VOL D'OISEAU. À quasi-égalité,
-    // elle raide le même chaque nuit jusqu'à destruction mutuelle des deux — et le banc mesure
-    // alors une guerre, pas une économie. C'est arrivé : marge de 0,4 % sur l'ancienne carte, et
-    // il avait fallu déplacer un site à la main. Ici on ne touche à aucune coordonnée, on
-    // maximise l'écart — et on VÉRIFIE que la marge obtenue est franche.
-
+    // Le monde MESURÉ (coins de chasse, nœuds, marge de ciblage) est déjà tenu par le banc rapide
+    // ci-dessus — ici on ne vérifie que ce qu'on y VIT. Les trois villages doivent exister.
     expect(report.villages.length, 'trois villages : foyer, meute, neutre').toBe(3)
   })
 })

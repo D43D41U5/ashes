@@ -58,6 +58,16 @@ export function handleHunger(state: SimState, village: Village, npc: Npc, entity
 }
 
 export function handleSleep(state: SimState, npc: Npc, entity: Entity): boolean {
+  // LA FAIM RÉVEILLE — le pendant de la garde de la défense (`DEFENSE_YIELD_HUNGER`), qui
+  // manquait ici. `handleSleep` rend `true` inconditionnellement tant qu'il fait nuit, et il passe
+  // AVANT `handleHunger` dans la chaîne : un dormeur ne mangeait donc jamais, quelle que soit sa
+  // faim. Ce n'était pas un cas rare — la faim franchit son seuil de repas en pleine nuit chaque
+  // nuit (mesuré : 88 au matin, 30 franchi vers minuit, 0 avant l'aube). On rend la main pour que
+  // `handleHunger` prenne le relais ; manger coûte un tick, puis il se recouche.
+  if (entity.hunger <= NPC_AI.SLEEP_YIELD_HUNGER) {
+    npc.sleeping = false
+    return false
+  }
   const night = getGameTime(state).isNight
   if (npc.sleeping) {
     const home = npc.homeId !== null ? state.structures.find((s) => s.id === npc.homeId) : undefined

@@ -120,16 +120,41 @@ function nearestAliveNode(state: SimState, entity: Entity, type: NodeType): Reso
   const maZone = zoneIdAt(state.map, Math.floor(entity.x), Math.floor(entity.y))
   let best: ResourceNode | undefined
   let bestD = Infinity
+  // LE REPLI HORS ZONE, et pourquoi il n'est pas négociable.
+  //
+  // Le filtre de zone existe pour une raison mesurée : sans lui, un PNJ visait le nœud le plus
+  // proche À VOL D'OISEAU sans voir les falaises qui séparent les zones, et 99 % des recherches
+  // de chemin échouaient après avoir brûlé leurs 4096 expansions, à chaque tick.
+  //
+  // Mais **filtrer n'est pas interdire**, et la version stricte affamait des villages entiers.
+  // Le monde distribue ses ressources PAR ZONE, délibérément : une zone peut ne porter aucun
+  // buisson (mesuré : 0 sur 1177 pour la zone d'un village du banc). Le PNJ n'avait alors AUCUN
+  // candidat, relâchait sa corvée, la reprenait au tick suivant — même priorité, même id, rien
+  // n'a bougé — et restait épinglé sur une tâche impossible sans jamais descendre à celle,
+  // accessible, qui la suivait au tableau. Deux villages sur trois mouraient en quatre jours,
+  // grenier vide, pendant que celui qui PILLAIT survivait.
+  //
+  // On garde donc la préférence — elle porte tout le gain de perf, puisqu'une zone offre
+  // presque toujours ce qu'on lui demande — et on n'abandonne le voisinage qu'à défaut. Le
+  // repli ne coûte que là où il est la seule issue : voyager est ce que le jeu attend.
+  let hors: ResourceNode | undefined
+  let horsD = Infinity
   for (const n of state.nodes) {
     if (n.type !== type || n.stock <= 0) continue
-    if (maZone >= 0 && zoneIdAt(state.map, n.tx, n.ty) !== maZone) continue
     const d = distSq(entity.x, entity.y, n.tx + 0.5, n.ty + 0.5)
+    if (maZone >= 0 && zoneIdAt(state.map, n.tx, n.ty) !== maZone) {
+      if (d < horsD || (d === horsD && hors && n.id < hors.id)) {
+        hors = n
+        horsD = d
+      }
+      continue
+    }
     if (d < bestD || (d === bestD && best && n.id < best.id)) {
       best = n
       bestD = d
     }
   }
-  return best
+  return best ?? hors
 }
 
 /** Fait suivre le chemin au PNJ. Retourne true s'il marche encore. */
@@ -383,7 +408,19 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
       if (!node) {
         // Rien à récolter dans le monde : si on porte déjà quelque chose, on le range.
         if (countOf(entity.inventory, def.item) > 0) task.stage = 'store'
-        else dropTask(village, npc, false)
+        // …sinon la corvée QUITTE LE TABLEAU (et non « retour au tableau, libre »).
+        //
+        // « Il n'existe aucun nœud de ce type » n'est PAS un empêchement propre à ce PNJ : ses
+        // voisins sont dans la même zone, devant les mêmes falaises, et échoueront à l'identique.
+        // La relâcher libre, c'est la voir reprise au tick suivant — même priorité, même id, rien
+        // n'a bougé dans le monde — par le même PNJ, pour l'éternité. Et comme la cueillette prime
+        // sur le bois, il ne DESCEND JAMAIS jusqu'à la corvée qu'il pourrait faire.
+        //
+        // Ce n'est pas théorique : c'est ce qui affamait deux villages sur trois en quatre jours
+        // sur la carte de production (mesuré — zone du village : 0 buisson sur les 1177 du monde,
+        // dix PNJ sans tâche pendant une journée entière, faim de 88 à 4). Le seul survivant était
+        // celui qui PILLE. `refreshBoard` la repostera dans cinq minutes de jeu si le besoin tient.
+        else dropTask(village, npc, true)
         return
       }
       task.nodeId = node.id
@@ -398,7 +435,13 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
       return
     }
     if (npc.path.length === 0 && !setPathTo(state, npc, entity, node.tx, node.ty)) {
-      dropTask(village, npc, false) // inaccessible
+      // INACCESSIBLE — et là encore, la corvée QUITTE le tableau. Un nœud qu'aucune route ne
+      // rejoint depuis le village n'est pas plus atteignable pour le voisin. Relâchée libre, elle
+      // était reprise au tick suivant et **chaque reprise brûle une recherche de chemin complète**
+      // (4096 expansions) : mesuré, le tick passait de 1,56 à 26 ms — ×17 — sans que personne ne
+      // récolte quoi que ce soit. Retirée du tableau, la tentative ne coûte plus qu'une fois par
+      // rafraîchissement, et le PNJ passe à la corvée suivante.
+      dropTask(village, npc, true)
       return
     }
     followPath(state, npc, entity)

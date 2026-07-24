@@ -41,7 +41,8 @@ import { createSim, step, type SimState } from './sim'
 import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { FAUNA } from './balance'
 import { foundNpcVillage } from './worldgen'
-import { emplacementsDeVillage, placeZoneNodes, type Emplacement } from './zone-content'
+import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, type Emplacement } from './zone-content'
+import { MONDE } from './zonegraph'
 import { generateZonedTerrain } from './zonegen'
 
 /**
@@ -120,8 +121,7 @@ function d2(a: { tx: number; ty: number }, b: { tx: number; ty: number }): numbe
  * assertion. Maximiser ne suffit pas : sur une vallée à quatre joueurs, la marge tombe à 4,4 % et
  * le cas dégénéré revient. C'est ce garde-fou, et non l'intuition, qui a écarté cette taille.
  */
-function troisVillages(emplacements: Emplacement[]): Emplacement[] {
-  const premier = emplacements[0]
+function troisVillages(emplacements: Emplacement[], premier: Emplacement | undefined): Emplacement[] {
   if (!premier) return []
   const choisis = [premier]
   while (choisis.length < 3) {
@@ -160,7 +160,14 @@ export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEU
   const map = carte.map
   const nodes = placeZoneNodes(carte)
   const emplacements = emplacementsDeVillage(carte, nodes)
-  const sites = troisVillages(emplacements)
+  // LE PREMIER SITE VIENT DE `pointsDeSpawn`, comme en production — pas du premier emplacement
+  // venu. C'est LUI qui vise les Prés Bas, la zone nourricière où le jeu fait naître les joueurs
+  // (spec R18) ; les deux autres s'en éloignent, exactement comme `worker/veillee.ts` pose ses
+  // voisins PNJ. Prendre trois extrêmes de carte, comme on le faisait, plantait les trois villages
+  // dans des zones qui peuvent n'avoir aucun buisson — et un village PNJ n'a QU'UNE source de
+  // nourriture (les baies : il ne chasse pas). On mesurait alors une famine de placement.
+  const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
+  const sites = troisVillages(emplacements, spawns[0] ?? emplacements[0])
   const base = sites[0]
   if (!base) throw new Error('scenario: la vallée ne porte aucun emplacement viable — carte dégénérée')
 

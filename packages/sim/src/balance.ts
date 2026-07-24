@@ -2403,6 +2403,19 @@ export const NPC_AI = {
   /** Sous ce seuil de faim, MANGER passe avant la défense. Un défenseur mort de
    *  faim ne défend rien — et manger prend UN tick : le village n'est pas désarmé. */
   DEFENSE_YIELD_HUNGER: 15,
+  /**
+   * Sous ce seuil de faim, MANGER passe avant le SOMMEIL — et c'est le pendant exact de la garde
+   * ci-dessus, qui manquait.
+   *
+   * `handleSleep` rend `true` inconditionnellement tant qu'il fait nuit : un PNJ endormi ne mange
+   * donc JAMAIS, quelle que soit sa faim. Or la faim décroît d'environ 12 par tranche de 7 200
+   * ticks : partie de 88 au matin, elle franchit le seuil de repas (30) en pleine nuit — chaque
+   * nuit, systématiquement. Mesuré sur le banc : la faim tombe à 4 puis 0 avant l'aube, et le
+   * village compte 177 relevés d'affamés en quatre jours pour un seuil de 10.
+   *
+   * Un dormeur mort de faim ne se réveille pas. Manger prend UN tick, puis il se rendort.
+   */
+  SLEEP_YIELD_HUNGER: 15,
   /** Ticks sans le moindre PROGRÈS vers la menace (jamais plus près qu'avant) au
    *  bout desquels on LÂCHE la garde : on ne fige pas une vie devant un rocher. */
   DEFENSE_GIVE_UP_TICKS: ticksFor(3),
