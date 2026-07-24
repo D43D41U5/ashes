@@ -81,3 +81,92 @@ describe('fireGlow (halo des Feux)', () => {
     expect(fireGlow(90, daylight(0)).radius).toBeGreaterThan(fireGlow(10, daylight(0)).radius)
   })
 })
+
+/**
+ * L'ÉTALONNAGE — « la brume s'AJOUTE, la lumière se MULTIPLIE ».
+ *
+ * Ce banc ne teste pas du code : il teste une DÉCISION DE RENDU, celle du blend. Les deux
+ * opérations sont donc écrites ici telles que la carte graphique les calcule, et on montre
+ * NOIR SUR BLANC ce que chacune fait au contraste — parce que c'était invisible à l'œil et que
+ * ça expliquait le seul vrai défaut de lisibilité du jeu (« le voile écrase le contraste de
+ * tout, y compris de l'avatar », note du Névé).
+ *
+ * Si quelqu'un remet un jour le voile de l'heure en blend NORMAL, ces trois bancs tombent.
+ */
+describe("l'étalonnage : la lumière MULTIPLIE, elle ne se mélange pas", () => {
+  /** Blend NORMAL (l'ancien voile) : `sortie = source·(1-α) + teinte·α`. Par canal. */
+  const melange = (src: number, tint: { color: number; alpha: number }, c: number): number => {
+    const s = (src >> c) & 0xff
+    const t = (tint.color >> c) & 0xff
+    return s * (1 - tint.alpha) + t * tint.alpha
+  }
+  /** Blend MULTIPLY (le voile actuel) : `sortie = source · ((1-α) + α·teinte/255)`. Par canal.
+   *  C'est l'équation de `gl.blendFunc(DST_COLOR, ONE_MINUS_SRC_ALPHA)` avec une source
+   *  prémultipliée — Phaser ne fait rien d'autre, on n'a aucun calcul à écrire côté CPU. */
+  const multiplie = (src: number, tint: { color: number; alpha: number }, c: number): number => {
+    const s = (src >> c) & 0xff
+    const t = (tint.color >> c) & 0xff
+    return s * (1 - tint.alpha + (tint.alpha * t) / 255)
+  }
+
+  // Décalages d'octet dans `0xRRGGBB` — nommés, parce que le rouge est le poids FORT.
+  const ROUGE = 16
+  const VERT = 8 // canal dominant de la luminance perçue : celui qui porte le contraste
+  const BLEU = 0
+  const nuit = ambientTint(0)
+
+  it('MINUIT : le contraste de Weber de l’avatar traverse la nuit INTACT', () => {
+    // Un acteur sur son sol. Weber = |acteur - sol| / sol : ce qui décide qu'on le VOIT.
+    const sol = 0x6a7a52 // une herbe
+    const acteur = 0xb08040 // un avatar
+    const weber = (a: number, b: number): number => Math.abs(a - b) / b
+
+    const avant = weber((acteur >> 8) & 0xff, (sol >> 8) & 0xff)
+    const apresMultiply = weber(multiplie(acteur, nuit, VERT), multiplie(sol, nuit, VERT))
+    const apresMelange = weber(melange(acteur, nuit, VERT), melange(sol, nuit, VERT))
+
+    // Le multiply est un GAIN : il divise numérateur ET dénominateur par le même facteur, donc
+    // le rapport ne bouge pas d'un chouïa. Ce n'est pas « mieux réglé », c'est INVARIANT.
+    expect(apresMultiply).toBeCloseTo(avant, 10)
+    // Le mélange, lui, en mange un quart (mesuré : 0,0368 contre 0,0492, soit 75 % de l'original)
+    // — et c'est le cas FAVORABLE, la nuit étant sombre. Plus la teinte du voile est CLAIRE, plus
+    // son plancher additif pèse : c'est pourquoi l'avatar disparaissait sur le Névé.
+    expect(apresMelange).toBeLessThan(avant * 0.8)
+  })
+
+  it('MINUIT : un noir reste NOIR — le mélange lui posait un plancher', () => {
+    for (const c of [ROUGE, VERT, BLEU]) {
+      expect(multiplie(0x000000, nuit, c)).toBeCloseTo(0, 10)
+    }
+    // L'ancien voile relevait le noir absolu à un bleu nuit franc : plus rien dans le jeu ne
+    // pouvait être plus sombre que ça, et toute la plage se tassait au-dessus.
+    expect(melange(0x000000, nuit, BLEU)).toBeGreaterThan(20)
+  })
+
+  it('MIDI : le multiply est l’IDENTITÉ EXACTE — le plein jour n’est pas étalonné', () => {
+    const midi = ambientTint(12)
+    for (const src of [0x000000, 0x6a7a52, 0xb08040, 0xffffff]) {
+      for (const c of [ROUGE, VERT, BLEU]) {
+        expect(multiplie(src, midi, c)).toBeCloseTo((src >> c) & 0xff, 6)
+      }
+    }
+  })
+
+  it('la nuit garde sa FROIDEUR : le multiplicateur laisse passer plus de bleu que de rouge', () => {
+    // Le multiply supprime le terme additif d'où venait la moitié du bleu : sans rehausser
+    // NIGHT_COLOR, la nuit virait au gris. Le contrat, c'est que la nuit reste BLEUE.
+    const gris = 0x808080
+    expect(multiplie(gris, nuit, BLEU)).toBeGreaterThan(multiplie(gris, nuit, ROUGE) * 1.5)
+  })
+
+  it('l’HEURE DORÉE ne teinte plus que ce qu’elle ÉCLAIRE : les ombres restent neutres', () => {
+    const doree = ambientTint(20)
+    const ombre = 0x0a0a0a // un creux d'ombre, presque noir
+    const chaleur = (f: typeof melange): number => f(ombre, doree, ROUGE) - f(ombre, doree, BLEU)
+    // Sous le mélange, l'ombre virait à l'orange comme le reste — le filtre posé sur l'objectif.
+    expect(chaleur(melange)).toBeGreaterThan(40)
+    // Sous le multiply, le virage est PROPORTIONNEL à la lumière reçue : une ombre n'en reçoit
+    // presque pas, elle ne vire donc presque pas. Mesuré : 25 fois moins que le mélange.
+    expect(chaleur(multiplie)).toBeLessThan(chaleur(melange) / 20)
+  })
+})

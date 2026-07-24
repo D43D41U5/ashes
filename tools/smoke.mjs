@@ -1568,6 +1568,82 @@ const SCENARIOS = {
    * On vérifie AUSSI l'invariant qui ne se voit pas au screenshot (l'avis reviewer) : l'ombre
    * du joueur existe, est VISIBLE, et sa profondeur est JUSTE SOUS celle de l'avatar.
    */
+  /**
+   * L'ÉTALONNAGE — « la brume s'AJOUTE, la lumière se MULTIPLIE ».
+   *
+   * Le voile de l'heure est passé en `MULTIPLY` (cf. `night-veil.ts`). Ce scénario ne demande
+   * pas si c'est joli : il MESURE, sur les vrais pixels rendus par swiftshader, les deux choses
+   * que le changement promet — et il rend les chiffres, pas un avis.
+   *
+   *   1. LE PLANCHER DE NOIR. L'ancien voile ajoutait `teinte·α` à TOUT : à minuit, plus rien
+   *      ne pouvait être plus sombre que ce plancher. On lit donc le 1er centile de luminance :
+   *      il doit s'effondrer vers 0.
+   *   2. LE CONTRASTE. On lit l'écart-type de luminance RAPPORTÉ à la moyenne (σ/µ) — la version
+   *      « image entière » du contraste de Weber que `lighting.test.ts` prouve conservé. Un
+   *      mélange l'écrase, un multiply le laisse intact : à minuit il doit rejoindre celui de midi.
+   *
+   * Et il vérifie l'essentiel avant tout le reste : que MULTIPLY RENDE, sous swiftshader. Un
+   * blend cassé donnerait un écran noir ou blanc — donc µ au plancher ou au plafond.
+   *
+   * Exige `--dev` (le réglage de l'heure est un pouvoir de debug, inerte en build de prod).
+   */
+  async etalonnage(page) {
+    if (!dev) {
+      console.log("\n(l'étalonnage exige le mode debug pour régler l'heure — relancer avec --dev)")
+      return {}
+    }
+    await page.waitForTimeout(1500)
+
+    /** Statistiques de LUMINANCE sur la frame rendue. Rec. 709, sur les pixels du monde
+     *  seulement : on saute la bande du HUD en bas, qui ne subit aucun étalonnage. */
+    const mesurer = async () =>
+      page.evaluate(async () => {
+        const s = window.__BRAISES__.scene
+        const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+        const c = document.createElement('canvas')
+        c.width = img.width
+        c.height = img.height
+        c.getContext('2d').drawImage(img, 0, 0)
+        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+        const lum = []
+        for (let y = 0; y < c.height - 140; y += 2) {
+          for (let x = 0; x < c.width; x += 2) {
+            const i = (y * c.width + x) * 4
+            lum.push(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2])
+          }
+        }
+        lum.sort((a, b) => a - b)
+        const moy = lum.reduce((a, b) => a + b, 0) / lum.length
+        const ec = Math.sqrt(lum.reduce((a, b) => a + (b - moy) ** 2, 0) / lum.length)
+        const pc = (q) => lum[Math.floor(q * (lum.length - 1))]
+        return { moy, ec, cv: ec / moy, p01: pc(0.01), p50: pc(0.5), p99: pc(0.99) }
+      })
+
+    const out = {}
+    for (const [nom, heure] of [
+      ['midi', 12],
+      ['doree', 20],
+      ['minuit', 0],
+    ]) {
+      await page.evaluate((h) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: h }), heure)
+      await page.waitForTimeout(1200) // le fondu d'air met ~0,9 s à se poser
+      await page.screenshot({ path: `${OUT}/etalonnage-${nom}.png` })
+      out[nom] = await mesurer()
+    }
+
+    console.log('\n  heure     µ      σ     σ/µ    p01    p50    p99')
+    for (const [nom, m] of Object.entries(out)) {
+      const f = (v) => String(Math.round(v * 10) / 10).padStart(6)
+      console.log(`  ${nom.padEnd(7)}${f(m.moy)}${f(m.ec)}${String(Math.round(m.cv * 1000) / 1000).padStart(7)}${f(m.p01)}${f(m.p50)}${f(m.p99)}`)
+    }
+    // Le contraste RELATIF doit survivre à la nuit : c'est toute la promesse du multiply.
+    console.log(
+      `\n  contraste relatif conservé à minuit : ${Math.round((out.minuit.cv / out.midi.cv) * 100)} % de celui de midi`,
+    )
+    console.log(`  plancher de noir à minuit (p01) : ${Math.round(out.minuit.p01 * 10) / 10}`)
+    return out
+  },
+
   async ombres(page) {
     await page.waitForTimeout(1500) // stabilisation (harnais a déjà navigué + attendu mapData)
     await page.screenshot({ path: `${OUT}/ombres-avatar.png` })

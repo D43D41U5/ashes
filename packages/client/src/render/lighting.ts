@@ -93,7 +93,26 @@ interface TintKey {
   alpha: number
 }
 
-const NIGHT_COLOR = 0x0b1030 // bleu froid
+/**
+ * Le bleu froid de la nuit — REHAUSSÉ de `0x0b1030` à `0x0b104e` le 2026-07-24, avec le passage
+ * du voile de l'heure en `MULTIPLY` (cf. `night-veil.ts`).
+ *
+ * Ce n'est PAS un choix d'ambiance, c'est la conversion de l'ancien. En blend NORMAL, la moitié
+ * de la froideur venait du terme ADDITIF (`teinte·α`) — le même terme qui relevait les noirs.
+ * Le multiply le supprime : la couleur doit donc porter seule la teinte que le mélange offrait.
+ *
+ * Premier calcul : conserver le RAPPORT bleu/rouge du rendu précédent (1,61 sur un gris moyen)
+ * → B = 78. Rendu, mesuré : INSUFFISANT. Un multiply conserve la teinte PROPRE de la surface,
+ * donc un sol brun sous un multiplicateur à peine bleu reste brun — la nuit avait la lisibilité
+ * qu'on cherchait mais elle avait perdu sa FROIDEUR, qui était portée par le terme additif.
+ * On refroidit donc le multiplicateur lui-même : `M = (0,303 · 0,320 · 0,540)`, bleu 1,8× le
+ * rouge. Le plancher de `M_r` est `1-α = 0,28` — aucune couleur ne refroidira davantage à cette
+ * opacité, et monter l'opacité rendrait la nuit injouable. C'est le froid maximal disponible.
+ *
+ * À gris moyen le rendu passe de (44, 47, 70) à (39, 41, 69) — et surtout un noir qui redevient
+ * NOIR au lieu de plafonner à (8, 11, 35).
+ */
+const NIGHT_COLOR = 0x080e5c // bleu froid
 const GOLDEN_COLOR = 0xc8702a // ambre chaud (heure dorée)
 const NEUTRAL_COLOR = 0x101018
 
