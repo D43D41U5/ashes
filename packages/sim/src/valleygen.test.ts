@@ -345,7 +345,13 @@ describe('réseau d’eau', () => {
     expect(maxPerp2).toBeGreaterThan(1)
   })
 
-  it('scalabilité (R6) : plus de tuiles d’eau procédurale sur une plus grande surface, mêmes densités', () => {
+  // TIMEOUT EXPLICITE (2026-07-24) : ce test génère DEUX vallées complètes (96² puis 192²) et
+  // tient ~5,2 à 5,8 s — il flottait donc de part et d'autre du défaut de 5 s de vitest, et
+  // échouait une fois sur deux SANS que rien ne soit cassé (mesuré : il échoue même lancé seul).
+  // Un test qui ment une fois sur deux ne protège plus rien : on lui donne le temps que sa
+  // besogne demande. L'ASSERTION est inchangée — c'est le chronomètre qu'on corrige, pas la règle.
+  // (Même patron que A13/A2 ailleurs dans le projet, où la génération coûte déjà des secondes.)
+  it('scalabilité (R6) : plus de tuiles d’eau procédurale sur une plus grande surface, mêmes densités', { timeout: 30_000 }, () => {
     const water = { streamDensity: 0.004, pondDensity: 0.006 }
     const small = generateValley(riverless(96, 96, water), 11)
     const big = generateValley(riverless(192, 192, water), 11)

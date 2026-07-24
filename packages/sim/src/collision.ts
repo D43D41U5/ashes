@@ -83,10 +83,51 @@ function blockedAt(world: MoveWorld, tx: number, ty: number): boolean {
  * jeté dans l'appel, jamais dans SimState. Hors bornes de la carte, on
  * retombe sur `blockedAt` (pas d'aliasing de clé possible).
  */
-export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: number) => boolean {
+type Occupant = { structure?: Structure; node?: ResourceNode }
+
+/**
+ * ═══ LE CACHE D'OCCUPATION — mesuré, puis corrigé ═══
+ *
+ * L'index était reconstruit à CHAQUE appel : or `findPath` en fait un par recherche de chemin,
+ * et chaque PNJ, monstre ou bête en demande. Profilé (`tools/profil-tick.mts`) sur une vallée
+ * de 0,6 M de tuiles et 16 137 nœuds : `findPath` 28,9 % du tick, la collision 18,5 %, et le
+ * ramasse-miettes 12,8 % — l'allocation d'une Map de milliers d'entrées, plusieurs fois par
+ * tick, se payait deux fois (à la construction ET au nettoyage). Verdict global : **25,5 ms
+ * par tick, soit 51 % du budget 20 Hz, sur une carte SIX FOIS plus petite que la production.**
+ *
+ * On mémoïse donc l'occupation, et c'est SÛR pour une raison précise : la table ne stocke que
+ * des RÉFÉRENCES. Le stock d'un nœud, les PV ou le propriétaire d'une structure sont relus à
+ * chaque requête sur l'objet vivant — les muter en place reste donc parfaitement visible. Seuls
+ * un AJOUT ou un RETRAIT changent la table, et l'un comme l'autre change l'identité du tableau
+ * (`filter`) ou sa longueur (`push`) : c'est exactement ce qu'on valide.
+ *
+ * Le `moverVillageId`, lui, ne participe PAS à l'occupation (il n'intervient qu'au moment de
+ * juger si une structure bloque CE marcheur) : la table est donc partagée entre marcheurs, et
+ * seule la petite fermeture de requête est refaite. Déterminisme intact : même entrées, même
+ * table, même réponses — un mémo ne change aucun résultat.
+ */
+const OCCUPANCY_CACHE = new WeakMap<
+  object,
+  { structures: unknown; structuresLen: number; nodes: unknown; nodesLen: number; occupancy: Map<number, Occupant> }
+>()
+
+function occupancyOf(world: MoveWorld): Map<number, Occupant> {
   const { width, height } = world.map
-  const occupancy = new Map<number, { structure?: Structure; node?: ResourceNode }>()
-  const entryAt = (tx: number, ty: number): { structure?: Structure; node?: ResourceNode } => {
+  const structures = world.structures
+  const nodes = world.nodes
+  const cached = OCCUPANCY_CACHE.get(world.map as object)
+  if (
+    cached !== undefined &&
+    cached.structures === structures &&
+    cached.structuresLen === (structures?.length ?? -1) &&
+    cached.nodes === nodes &&
+    cached.nodesLen === (nodes?.length ?? -1)
+  ) {
+    return cached.occupancy
+  }
+
+  const occupancy = new Map<number, Occupant>()
+  const entryAt = (tx: number, ty: number): Occupant => {
     const key = ty * width + tx
     let entry = occupancy.get(key)
     if (!entry) {
@@ -114,6 +155,19 @@ export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: numbe
       if (entry.node === undefined) entry.node = n
     }
   }
+  OCCUPANCY_CACHE.set(world.map as object, {
+    structures,
+    structuresLen: structures?.length ?? -1,
+    nodes,
+    nodesLen: nodes?.length ?? -1,
+    occupancy,
+  })
+  return occupancy
+}
+
+export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: number) => boolean {
+  const { width, height } = world.map
+  const occupancy = occupancyOf(world)
   const moverVillageId = world.moverVillageId ?? null
   return (tx: number, ty: number): boolean => {
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return blockedAt(world, tx, ty)
