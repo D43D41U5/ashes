@@ -396,6 +396,40 @@ describe('le graphe, sur 12 seeds', () => {
     expect(vues.size, 'les seeds produisent le même plan').toBeGreaterThanOrEqual(SEEDS.length - 1)
   })
 
+  /**
+   * A8bis — CE QUE VARIE VRAIMENT UNE SEED : les étiquettes, pas le plan.
+   *
+   * Test de CARACTÉRISATION : il ne réclame rien, il ÉPINGLE l'état réel, mesuré. Car A8
+   * ci-dessus est trompeur — il signe sur les SLUGS, or `melange` permute justement les
+   * identités à l'intérieur d'un palier. Sa signature bouge donc à chaque seed alors que la
+   * géométrie ne bouge pas d'un pouce : A8 mesure une permutation d'étiquettes et le lit
+   * comme de la « rejouabilité ». Il est vert sur un monde qui serait éternellement le même
+   * terrain avec les meubles renommés.
+   *
+   * Mesuré sur 24 seeds (2026-07-24) : topologie par index de case **1 seule** ; déplacement
+   * maximal d'une case **32 tuiles, soit 2,5 % de la carte** ; ordre nord→sud **2** ; mais
+   * affectation des identités **24 sur 24**. Autrement dit : une seule vallée, 24 baptêmes.
+   *
+   * C'est un CHOIX ASSUMÉ (« la carte est DESSINÉE, pas tirée au sort » — modèle Valheim, cf.
+   * l'en-tête de SQUELETTE). Ce test ne le conteste pas : il l'empêche de se perdre. Tant
+   * qu'il est vert, le plan est constant — ce qui est voulu. Le jour où l'on rouvrira un degré
+   * de liberté (jitter plus ample, permutation de rôles, variantes de squelette), c'est CE
+   * test qui tombera, et sa chute sera la preuve que la variété est enfin arrivée.
+   */
+  it('A8bis — épingle ce qu’une seed change VRAIMENT : les identités, pas la géométrie', () => {
+    // Le VOIR d'abord : sans graphes, tout passerait au vert en ne comparant rien.
+    expect(graphes.length).toBeGreaterThanOrEqual(8)
+
+    // La TOPOLOGIE par INDEX de case — indépendante des positions ET des étiquettes.
+    // `LIENS` étant une constante de module, elle est la même pour toutes les seeds.
+    const topologies = new Set(graphes.map((g) => g.seuils.map((s) => `${s.a}-${s.b}`).sort().join('|')))
+    expect(topologies.size, 'la topologie a changé : un degré de liberté a été ouvert (ou cassé)').toBe(1)
+
+    // Les IDENTITÉS, elles, tournent bel et bien : c'est le seul aléa inter-saisons actuel.
+    const identites = new Set(graphes.map((g) => g.zones.map((z) => z.def.slug).join(',')))
+    expect(identites.size, 'les identités ne tournent plus — `melange` est-il cassé ?').toBeGreaterThan(1)
+  })
+
   it('A12 — le graphe est DÉTERMINISTE : même seed, même plan, au bit près', { timeout: 60_000 }, () => {
     for (const seed of SEEDS) {
       const a = deriveGrapheZones(seed)
