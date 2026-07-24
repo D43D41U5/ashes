@@ -31,6 +31,7 @@ import { engageRange, startAttack, weaponProfile } from './combat'
 import { applyEconomyAction, toolRank, type ResourceNode } from './economy'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
+import { zoneIdAt } from './map'
 import { countOf, freeRoomFor, moveSlotWithin, type ItemId } from './items'
 import { handleCold, handleHunger, handleSleep } from './npc-needs'
 import { assignErrands, handleErrand } from './npc-errands'
@@ -97,11 +98,31 @@ function moveWorldFor(state: SimState, villageId: number): MoveWorld {
   return { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: villageId }
 }
 
+/**
+ * Le nœud vivant le plus proche — DANS LA ZONE DU PNJ, et c'est tout le correctif.
+ *
+ * Il choisissait le plus proche À VOL D'OISEAU, sans conscience des murs. Or les frontières de
+ * zone sont des falaises (`murerLesAretes`) dont le seul passage est un seuil : un arbre à
+ * trente tuiles, mais de l'autre côté d'une paroi, demande un détour de plusieurs centaines de
+ * tuiles. L'A* brûlait alors tout son budget (4096 expansions) et rendait `null` — puis
+ * recommençait au tick suivant, indéfiniment.
+ *
+ * MESURÉ avant/après (`tools/profil-tick.mts`) : **99 % des recherches de chemin échouaient**,
+ * sur des cibles à 37 tuiles en moyenne — donc toutes proches, mais INATTEIGNABLES. Ce n'était
+ * pas un problème de budget : c'était un problème de CIBLE. Autrement dit les PNJ ne récoltaient
+ * quasiment jamais : le coût CPU n'était que la partie visible d'une IA qui tournait à vide.
+ *
+ * On filtre donc sur la zone du PNJ. `zoneIdAt` rend `-1` sur une carte sans zones (tests,
+ * ancienne vallée) : le filtre est alors inerte et le comportement d'origine est conservé,
+ * exactement.
+ */
 function nearestAliveNode(state: SimState, entity: Entity, type: NodeType): ResourceNode | undefined {
+  const maZone = zoneIdAt(state.map, Math.floor(entity.x), Math.floor(entity.y))
   let best: ResourceNode | undefined
   let bestD = Infinity
   for (const n of state.nodes) {
     if (n.type !== type || n.stock <= 0) continue
+    if (maZone >= 0 && zoneIdAt(state.map, n.tx, n.ty) !== maZone) continue
     const d = distSq(entity.x, entity.y, n.tx + 0.5, n.ty + 0.5)
     if (d < bestD || (d === bestD && best && n.id < best.id)) {
       best = n

@@ -50,3 +50,4 @@ const parTick = dt / ticks
 console.log(`\n${ticks} ticks en ${(dt / 1000).toFixed(2)} s → ${parTick.toFixed(3)} ms/tick · ${Math.round(1000 / parTick)} ticks/s`)
 // Le jeu tourne à 20 Hz : un tick doit coûter bien moins de 50 ms, sinon le serveur décroche.
 console.log(`budget 20 Hz (50 ms/tick) : ${(parTick / 50 * 100).toFixed(1)} % consommé`)
+
