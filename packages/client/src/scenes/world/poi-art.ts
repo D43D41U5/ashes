@@ -70,6 +70,9 @@ const ART: Record<string, { fp: number; w: number; h: number; crown?: number }> 
   // ── LES ONZE LIEUX CHARGÉS ──
   // Le GRAND CHÊNE : le plus haut de la plaine. 92 px pour une canopée à 44 → il la perce de
   // moitié et se voit de loin par-dessus les bosquets. C'est l'unique horizon de la Racine.
+  // Le FILON AFFLEURANT : une veine de roche qui perce l'herbe. Bas (c'est un affleurement,
+  // pas un monument), mais assez haut pour se détacher du pré — sinon on ne le chercherait pas.
+  filon: { fp: 2, w: 52, h: 46, crown: 10 },
   chene: { fp: 2, w: 72, h: 92, crown: 54 },
   belvedere: { fp: 2, w: 46, h: 80, crown: 40 }, // il fait grimper : il se voit du fond de la vallée
   grotte: { fp: 2, w: 48, h: 52, crown: 12 }, //    la masse rocheuse déborde sa gueule
@@ -415,6 +418,25 @@ export function makePoiTextures(scene: Phaser.Scene): void {
     g.fillStyle(STONE.lit, 0.5).fillRect(c - 8, b - 27, 11, 2) // une veine de quartz
     g.fillStyle(LEAF.dark, 0.4).fillEllipse(c + 12, b - 30, 8, 4) // un peu de mousse, au nord
   })
+  // LE FILON AFFLEURANT — la promesse du fer, posée dans l'herbe.
+  // Une échine de roche brisée d'où sort une veine claire. Il ne doit PAS ressembler au
+  // Gisement des hauteurs (une masse minière) : ici c'est un accident du sol, maigre et net —
+  // ce qu'on remarque parce que c'est la seule pierre du pré à briller.
+  tex('filon', (w, b) => {
+    ground(w, b, 0.7)
+    const c = w / 2
+    g.fillStyle(RUST.deep).fillEllipse(c, b - 5, 44, 13) // la terre remuée autour
+    g.fillStyle(RUST.dark).fillTriangle(c - 22, b - 6, c - 4, b - 30, c + 8, b - 8) // l'échine
+    g.fillStyle(RUST.mid).fillTriangle(c - 14, b - 7, c - 2, b - 27, c + 6, b - 9)
+    g.fillStyle(RUST.dark).fillTriangle(c + 4, b - 7, c + 16, b - 24, c + 24, b - 6)
+    g.fillStyle(RUST.lit).fillTriangle(c + 8, b - 8, c + 16, b - 22, c + 20, b - 8) // face NO éclairée
+    // LA VEINE — le seul trait clair, et c'est lui qu'on vient voir.
+    g.fillStyle(OCHRE.lit).fillTriangle(c - 6, b - 12, c - 2, b - 26, c + 2, b - 13)
+    g.fillStyle(OCHRE.mid).fillTriangle(c + 10, b - 11, c + 15, b - 21, c + 18, b - 11)
+    g.fillStyle(RUST.deep).fillEllipse(c - 18, b - 6, 12, 6) // des éclats tombés au pied
+    g.fillStyle(RUST.deep).fillEllipse(c + 20, b - 5, 10, 5)
+  })
+
   // LE GRAND CHÊNE — l'unique horizon de la zone de départ.
   //
   // Il doit se distinguer de DEUX choses à la fois : d'un arbre de forêt (44×32), qu'il écrase ;

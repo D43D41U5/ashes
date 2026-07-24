@@ -233,6 +233,21 @@ export const POI_TYPES: PoiType[] = [
   // `cap: 1` — un repère n'en est un que s'il est seul. Sa devise est le SAVOIR : l'atteindre
   // ouvre la carte alentour (et le brouillard avec), ce qui enseigne la boucle du jeu —
   // on voit un repère, on y va, on y gagne de quoi voir plus loin.
+  // ═══ LE FILON AFFLEURANT — « ça existe. Pas ici. », enfin DIT ═══
+  // Le teaser de fer existait depuis toujours : UN filon au stock dérisoire, posé à la tuile la
+  // plus lointaine de la Racine. Son intention — « il faut l'avoir cherché pour le trouver, et
+  // l'avoir trouvé pour se demander où sont les autres » — n'était jamais délivrée : un
+  // `ResourceNode` n'entre pas dans `knownPois`, n'a pas d'art, n'apparaît sur aucune carte.
+  // Chercher était impossible : une tuile sur 700 000, sans le moindre signal. Ce n'était pas
+  // caché, c'était absent. En faire un LIEU garde l'intention (loin, maigre, unique) et rend
+  // la quête possible : il se voit, il se retient, il se raconte.
+  //
+  // Il ne porte VOLONTAIREMENT aucune charge de découverte : le projet réserve les charges à
+  // la famille `reward` (un garde-fou le vérifie), et le filon est `eco` — il porte un vrai
+  // minerai. Sa charge serait d'ailleurs redondante : le voir sur la carte sous son nom dit
+  // déjà « le fer existe », et l'épuiser en trois coups dit « pas ici ». Le message passe par
+  // le LIEU et par son stock dérisoire, pas par une ligne de chronique.
+  { slug: 'filon', zones: ['pres_bas'], name: 'le Filon affleurant', family: 'eco', biomes: [GRASS, FOREST, SCREE, ROCK, BOULDERS, FLOWER], weight: 2, cap: 1, reserve: 1, unique: true, footprint: 2 },
   { slug: 'chene', zones: ['pres_bas'], name: 'le Grand Chêne', family: 'reward', biomes: [GRASS, FOREST, FLOWER], weight: 3, cap: 1, reserve: 1, unique: true, footprint: 2 },
   { slug: 'cairn', name: 'le Cairn', family: 'reward', biomes: [GRASS, AL_MEADOW, HEATH, SCREE, ROCK, FLOWER, AL_FLOWERS, FOREST, PINE], weight: 12, cap: 14, reserve: 1, footprint: 1 },
   { slug: 'sanctuaire', zones: ['aiguilles', 'alpages', 'karst'], name: 'le Sanctuaire', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.7, weight: 1, cap: 2, reserve: 1, footprint: 2 },

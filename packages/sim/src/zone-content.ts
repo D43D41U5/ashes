@@ -416,6 +416,26 @@ function tirerType(
  */
 function poserLeTeaser(c: CarteZonee, id: number): ResourceNode | null {
   const { width, height, terrain } = c.map
+
+  // LE FILON EST UN LIEU, DÉSORMAIS — et le minerai se pose DANS ce lieu.
+  // Tant qu'il n'était qu'un nœud perdu à la tuile la plus lointaine, son message ne pouvait
+  // pas être délivré : rien ne le signalait, rien ne le retenait, il n'était sur aucune carte.
+  // En l'ancrant sur « le Filon affleurant », on garde exactement ce qu'il était (unique, loin,
+  // dérisoire) et on rend enfin possible ce que son intention demandait : le CHERCHER.
+  for (const z of c.map.zones) {
+    if (z.kind !== 'filon') continue
+    for (let ty = Math.floor(z.y); ty < z.y + z.h; ty++) {
+      for (let tx = Math.floor(z.x); tx < z.x + z.w; tx++) {
+        if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue
+        const i = ty * width + tx
+        if (c.rampe[i] || !terrainAdmet('iron_vein', terrain[i]!)) continue
+        return { id, type: 'iron_vein', tx, ty, stock: CONTENU.TEASER_STOCK, regrowAt: 0 }
+      }
+    }
+  }
+
+  // REPLI — aucune carte ne porte forcément un lieu (cartes de test, anciennes vallées) :
+  // on retombe alors sur le comportement d'origine, la tuile la plus loin du cœur.
   const r = c.graphe.zones[c.graphe.racine]!
   let best: { tx: number; ty: number } | null = null
   let bestD = -1

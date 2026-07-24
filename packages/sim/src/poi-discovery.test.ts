@@ -46,7 +46,7 @@ describe('poiCenter', () => {
 })
 
 describe('POI_CHARGES', () => {
-  it('charge les douze lieux de famille reward, et EUX SEULS', () => {
+  it('charge les douze lieux chargés, et EUX SEULS', () => {
     // `chene` (le Grand Chêne) a rejoint la liste le 2026-07-24 : la Racine était la seule zone
     // du jeu sans repère perçant la canopée, donc sans horizon et sans direction à suivre.
     const charged = Object.keys(POI_CHARGES).sort()

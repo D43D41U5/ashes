@@ -1420,9 +1420,22 @@ const SCENARIOS = {
       const sc = window.__BRAISES__.scene
       const zones = sc.map?.zones ?? []
       const chenes = zones.filter((z) => z.kind === 'chene')
+      // LE FILON AFFLEURANT : le teaser de fer était un nœud perdu à la tuile la plus lointaine
+      // d'une zone de 700 000 tuiles — introuvable par construction. Devenu un LIEU, il doit
+      // exister, être unique, ET porter son minerai (sinon on aurait déplacé le problème).
+      const filons = zones.filter((z) => z.kind === 'filon')
+      const f = filons[0]
+      const veines = (sc.view?.nodes ?? []).filter((n) => n.type === 'iron_vein')
+      const veineSurLeFilon = f
+        ? veines.some((n) => n.tx >= f.x - 1 && n.tx <= f.x + f.w && n.ty >= f.y - 1 && n.ty <= f.y + f.h)
+        : false
       return {
         nombre: chenes.length,
         nom: chenes[0]?.name ?? null,
+        filons: filons.length,
+        veinesDeFer: veines.length,
+        veineSurLeFilon,
+        filonDessine: sc.textures?.exists?.('poi-filon') ?? null,
         // Les textures sont générées au boot. `poi-chene-crown` n'existe QUE si l'art déclare
         // un `crown` — c'est donc la preuve mécanique qu'il perce la canopée, et pas une
         // déclaration d'intention : sans crown, pas de texture, pas d'horizon.
@@ -1436,6 +1449,12 @@ const SCENARIOS = {
     }
     if (!vu.texture || !vu.percheLaCanopee) {
       console.error(`!! LE GRAND CHÊNE NE PERCE PAS LA CANOPÉE : ${JSON.stringify(vu)}`)
+    }
+    if (vu.filons !== 1 || !vu.filonDessine) {
+      console.error(`!! LE FILON AFFLEURANT MANQUE OU NE SE DESSINE PAS : ${JSON.stringify(vu)}`)
+    }
+    if (!vu.veineSurLeFilon) {
+      console.error(`!! LE MINERAI N'EST PAS SUR LE FILON — le teaser reste introuvable : ${JSON.stringify(vu)}`)
     }
     return vu
   },
