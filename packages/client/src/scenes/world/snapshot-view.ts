@@ -53,6 +53,7 @@ import {
 } from '../../render/framing'
 import { warmthColor } from '../../render/lighting'
 import { LIT_NODE_TYPES } from '../../render/lit-props'
+import { LIT_STRUCTURE_TYPES } from '../../render/lit-structures'
 import { shakeOffset, type HitFx } from './hit-fx'
 import { createContactShadow, positionShadow } from './contact-shadow'
 
@@ -274,7 +275,7 @@ function berryDots(node: ResourceNode): number {
  *  repousse d'arbre montre `nd-sapling`, dont le gap n'est pas celui du tronc. */
 function nodeArtGap(texture: string): number {
   if (texture.startsWith('nd-tree_trunk') || texture.startsWith('nd-old_tree_trunk')) return 0 // tronc plein jusqu'au bas
-  if (texture === 'nd-sapling' || texture === 'nd-fiber_plant' || texture === 'nd-stump') return 1 // plantes fines, art bas
+  if (texture.startsWith('nd-sapling') || texture.startsWith('nd-fiber_plant') || texture.startsWith('nd-stump')) return 1 // plantes fines, art bas (suffixe _lit compris — piège épinglé par la vague A)
   return 2 // blocs (roche, baies, minerais…) : l'art bombe et s'arrête ~2 texels avant le bord
 }
 
@@ -684,6 +685,11 @@ export class SnapshotView {
         this.structureSprites.set(s.id, sprite)
       }
       sprite.setLighting(this.lighting) // couche 1 : murs, portes, ateliers… éclairés (pooled → chaque frame)
+      // Les CHIPS dressés basculent sur leur albédo aplati + normale (da-feeling R4). Les murs,
+      // la porte (autotile re-texturé plus bas) et le feu (swap dédié) ont leurs propres chemins.
+      if (LIT_STRUCTURE_TYPES.has(s.type)) {
+        sprite.setTexture(this.lighting ? `st-${s.type}_lit` : `st-${s.type}`)
+      }
       if (s.type === 'fire') {
         // Les BÛCHES normal-mappées : bois mat `_lit` quand l'éclairage est armé (relief
         // calculé par la normal map cylindrique), sinon le sprite ombré simple.
@@ -878,15 +884,15 @@ export class SnapshotView {
           : Math.min(1, Math.max(GROWTH_MIN, (this.tick - dep.since) / Math.max(1, dep.until - dep.since)))
         // ESSAI éclairage : l'arbre ORDINAIRE adulte passe sur son albédo UNIFORME `_lit`
         // (même forme/couleur, ombrage peint retiré) + `setLighting` → relief 100 % calculé.
-        const litTree = this.lighting && n.type === 'tree' && !growing
+        const litTree = this.lighting && (n.type === 'tree' || n.type === 'old_tree') && !growing
         const texture = isBerry
-          ? `nd-berry_bush-${berryDots(n)}`
+          ? `nd-berry_bush-${berryDots(n)}${this.lighting ? '_lit' : ''}`
           : growing && isTree
-            ? 'nd-sapling'
+            ? (this.lighting ? 'nd-sapling_lit' : 'nd-sapling')
             : n.type === 'tree'
               ? (litTree ? 'nd-tree_trunk_lit' : 'nd-tree_trunk')
               : n.type === 'old_tree'
-                ? 'nd-old_tree_trunk'
+                ? (litTree ? 'nd-old_tree_trunk_lit' : 'nd-old_tree_trunk')
                 : this.lighting && LIT_NODE_TYPES.has(n.type)
                   ? `nd-${n.type}_lit` // masse pâteuse (roche…) : albédo aplati + normal map quand éclairé
                   : `nd-${n.type}`
@@ -962,8 +968,12 @@ export class SnapshotView {
         // houppier de gros bois se retrouve sur un arbre ordinaire (et l'inverse) selon l'ordre
         // dans lequel le pool a été servi. Le tronc le faisait déjà ; le houppier, non.
         // Albédo UNIFORME `_lit` quand éclairé (relief calculé par la normal map cubique).
-        const litCrown = this.lighting && n.type === 'tree'
-        crown.setTexture(n.type === 'old_tree' ? 'nd-old_tree_crown' : litCrown ? 'nd-tree_crown_lit' : 'nd-tree_crown')
+        const litCrown = this.lighting
+        crown.setTexture(
+          n.type === 'old_tree'
+            ? (litCrown ? 'nd-old_tree_crown_lit' : 'nd-old_tree_crown')
+            : litCrown ? 'nd-tree_crown_lit' : 'nd-tree_crown',
+        )
         crown.setLighting(litCrown) // pooled : réarmé chaque frame (cf. le tronc)
         crown.setPosition(px, py - 16 - lift) // `px` porte déjà le tressaillement
         crown.setDepth(crownDepth(ty + 1 + j.dy, TILE_PX))
@@ -1005,7 +1015,12 @@ export class SnapshotView {
         this.stumpPool[stumpsUsed] = g
       }
       const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
-      g.setTexture(isTreeStump ? 'nd-stump' : 'nd-scar')
+      g.setTexture(
+        isTreeStump
+          ? (this.lighting ? 'nd-stump_lit' : 'nd-stump')
+          : this.lighting ? 'nd-scar_lit' : 'nd-scar',
+      )
+      g.setLighting(this.lighting) // pooled : réarmé chaque frame, comme les nœuds
       g.setPosition(a.px, a.py)
       g.setDepth(nodeDepth(s.ty, TILE_PX))
       g.setScale(1)

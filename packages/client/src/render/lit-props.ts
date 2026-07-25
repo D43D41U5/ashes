@@ -25,12 +25,22 @@ import { enc, FLIP_G, mirrorCanvas, newCanvas, norm3, normalFromCanvas, register
 
 /** Un prop pâteux : sa clé, sa taille, le tracé de son albédo, et — pour les petits props BLOCKY —
  *  des cadrans de normale (`passes`/`k`, cf. `normalFromCanvas`) pour un cube franc plutôt qu'un dôme. */
-interface LitProp { key: string; w: number; h: number; draw: (ctx: CanvasRenderingContext2D) => void; passes?: number; k?: number }
+interface LitProp {
+  key: string
+  w: number
+  h: number
+  draw: (ctx: CanvasRenderingContext2D) => void
+  passes?: number
+  k?: number
+  /** L'ombre de contact bakée, peinte APRÈS la dérivation de la normale (le masque alpha la
+   *  lirait comme de la matière — décision du 25/07). Le pendant de VARIANT_FAMILIES.shades. */
+  shade?: (ctx: CanvasRenderingContext2D) => void
+}
 
-const disc = (ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void => {
+export const disc = (ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void => {
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill()
 }
-const tri = (ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, x2: number, y2: number): void => {
+export const tri = (ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, x2: number, y2: number): void => {
   ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x2, y2); ctx.closePath(); ctx.fill()
 }
 
@@ -76,6 +86,39 @@ const PROPS: LitProp[] = [
   { key: 'cl-stump', w: 16, h: 16, draw: (c) => { c.fillStyle = '#4a3826'; c.fillRect(6, 9, 4, 5) } },
   // Le nœud roche (masse pâteuse côté SnapshotView) — pas de miroir (les nœuds ne se miroitent pas).
   { key: 'nd-rock', w: 16, h: 16, draw: (c) => { c.fillStyle = '#6a6a72'; c.fillRect(3, 6, 11, 8) } },
+  // ═══ LA VAGUE A DE LA BASCULE (spec da-feeling R3) — les nœuds restants, silhouettes
+  //     BootScene reproduites à l'identique (deux backends, une forme), hillshade retiré. ═══
+  // Le BUISSON À BAIES : 4 états de stock (berryDots borne à 3). Socle vert aplati '#3b682b'
+  // (mi-corps/mi-dessus, comme cl-bush) ; les baies sont un MATÉRIAU (reflet spéculaire retiré).
+  ...([0, 1, 2, 3] as const).map((n) => ({
+    key: `nd-berry_bush-${n}`,
+    w: 16,
+    h: 16,
+    draw: (c: CanvasRenderingContext2D) => {
+      c.fillStyle = '#3b682b'
+      c.fillRect(2, 5, 12, 9)
+      c.fillRect(3, 4, 10, 9) // la crête (5,3,5,2) DÉBORDE d'une rangée : elle est DANS la silhouette
+      c.fillRect(5, 3, 5, 2)
+      c.fillStyle = '#c0392b'
+      const baies: readonly (readonly [number, number])[] = [[7, 8], [5, 10], [10, 9]]
+      for (let b = 0; b < n; b++) c.fillRect(baies[b]![0], baies[b]![1], 2, 2)
+    },
+  })),
+  // La FIBRE : trois brins verticaux, pointes zénithales retirées, vert relevé d'un tiers.
+  { key: 'nd-fiber_plant', w: 16, h: 16, draw: (c) => { c.fillStyle = '#77a53f'; c.fillRect(4, 8, 2, 7); c.fillRect(7, 6, 2, 9); c.fillRect(10, 9, 2, 6) } },
+  // La POUSSE : fût + cube de feuillage — LES MATÉRIAUX DE L'ARBRE ADULTE LIT (aucun pop à l'âge).
+  { key: 'nd-sapling', w: 16, h: 16, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#5c4429'; c.fillRect(7, 9, 2, 6); c.fillStyle = '#2d6b32'; c.fillRect(4, 3, 8, 8) } },
+  // Les GRAVATS : deux pierres deux gris + le fragment de travers — on reconnaît le mur qu'elle fut.
+  { key: 'nd-rubble', w: 16, h: 16, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#5e5a56'; c.fillRect(2, 9, 6, 5); c.fillStyle = '#6a6560'; c.fillRect(8, 7, 6, 7); c.fillStyle = '#4a4642'; c.fillRect(5, 5, 4, 3) } },
+  // La SOUCHE (récolte vivante) : billot + coupe claire (bois frais = matériau) ; l'ombre au sol
+  // passe en `shade` (après la normale — la rangée 0x241a10 du painter peint était du contact).
+  {
+    key: 'nd-stump', w: 16, h: 16, passes: 1, k: 3.5,
+    draw: (c) => { c.fillStyle = '#3a2c1a'; c.fillRect(5, 11, 6, 3); c.fillStyle = '#6b5334'; c.fillRect(5, 9, 6, 2); c.fillStyle = '#8a6a44'; c.fillRect(7, 9, 2, 1) },
+    shade: (c) => { c.fillStyle = 'rgba(0,0,0,0.22)'; c.fillRect(4, 14, 8, 1) },
+  },
+  // La CICATRICE : une plaque de terre remuée, à plat — la butte basse fait le « à peine un relief ».
+  { key: 'nd-scar', w: 16, h: 16, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#3a2f22'; c.fillRect(4, 11, 8, 3) } },
   // Le nœud CHAMPIGNON — cubique (arêtes franches, `passes:1`/`k:3.5`), silhouette partagée avec BootScene.
   { key: 'nd-champignon', w: 16, h: 16, passes: 1, k: 3.5, draw: drawChampignon },
 ]
@@ -210,7 +253,7 @@ export const LIT_CLUTTER_KINDS: ReadonlySet<string> = new Set([
  *  types de nœud (`nd-tree_trunk`, `nd-tree_crown`, `nd-berry_bush-2`, `nd-rubble`, `nd-fiber_plant`…).
  *  Dériver de `nd-*` polluerait ce whitelist et ferait demander à SnapshotView un `nd-<type>_lit`
  *  inexistant. On ne met ici QUE des `n.type` réels (test : chacun a bien sa texture générée). */
-export const LIT_NODE_TYPES: ReadonlySet<string> = new Set(['rock', 'champignon'])
+export const LIT_NODE_TYPES: ReadonlySet<string> = new Set(['rock', 'champignon', 'fiber_plant', 'rubble'])
 /** Toutes les clés de texture RÉELLEMENT générées par `generateLitProps` — surface testable du
  *  câblage (le clutter a `_lit` + `_lit_m` ; les nœuds, `_lit` seul ; chaque variété de fleur, les deux). */
 export const LIT_PROP_KEYS: ReadonlySet<string> = new Set([
@@ -226,11 +269,11 @@ export function generateLitProps(scene: Phaser.Scene): void {
   for (const p of PROPS) {
     const alb = newCanvas(p.w, p.h)
     p.draw(alb.ctx)
-    register(scene, `${p.key}_lit`, alb.c, normalFromCanvas(alb.c, p.passes, p.k))
-    if (p.key.startsWith('cl-')) {
-      const m = mirrorCanvas(alb.c)
-      register(scene, `${p.key}_lit_m`, m, normalFromCanvas(m, p.passes, p.k))
-    }
+    const nrm = normalFromCanvas(alb.c, p.passes, p.k)
+    const nrmM = p.key.startsWith('cl-') ? normalFromCanvas(mirrorCanvas(alb.c), p.passes, p.k) : null
+    p.shade?.(alb.ctx) // l'ombre bakée APRÈS la normale (voir LitProp.shade)
+    register(scene, `${p.key}_lit`, alb.c, nrm)
+    if (nrmM) register(scene, `${p.key}_lit_m`, mirrorCanvas(alb.c), nrmM)
   }
   // Les FAMILLES à variétés (fleurs, cailloux…) — chacune son `cl-<kind>-<i>_lit` + `_lit_m`.
   for (const fam of VARIANT_FAMILIES) {
@@ -240,9 +283,12 @@ export function generateLitProps(scene: Phaser.Scene): void {
       const base = `cl-${variantBase(fam.kind, i)}`
       // LES DEUX NORMALES SE DÉRIVENT DE LA MASSE SEULE, avant toute ombre (`normalFromCanvas` lit le
       // masque alpha : une bande d'ombre y passerait pour de la matière et arrondirait l'arête basse).
-      fam.shades?.[i]?.(alb.ctx) // A/B TEMPORAIRE — séquence CASSÉE exprès, à remettre après mesure
       const nrm = normalFromCanvas(alb.c, fam.passes, fam.k)
       const nrmM = normalFromCanvas(mirrorCanvas(alb.c), fam.passes, fam.k)
+      // L'OMBRE APRÈS LES DEUX NORMALES (séquence d'origine, REMISE — l'A/B du 25/07 est clos
+      // et consigné) ; et le _lit_m se re-miroite APRÈS l'ombre, sinon une tuile sur deux
+      // livrerait un caillou sans ombre (journal du 25/07, mot pour mot).
+      fam.shades?.[i]?.(alb.ctx)
       register(scene, `${base}_lit`, alb.c, nrm)
       register(scene, `${base}_lit_m`, mirrorCanvas(alb.c), nrmM)
     }

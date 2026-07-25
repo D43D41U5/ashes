@@ -7,6 +7,7 @@ import Phaser from 'phaser'
 import { generateItemIcons } from '../render/item-art'
 import { generateVitalIcons } from '../render/vital-art'
 import { generateLitTrees } from '../render/lit-trees'
+import { generateLitStructures } from '../render/lit-structures'
 import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
 import { makePoiTextures } from './world/poi-art'
@@ -289,6 +290,7 @@ export class BootScene extends Phaser.Scene {
     makePoiTextures(this) // les lieux — voir world/poi-art.ts
     makeBorneTextures(this) // les bornes qui annoncent les seuils (worldgen R21) — world/borne-layer.ts
     makeGueStoneTexture(this) // les dalles des gués : le passage se lit par la forme — world/gue-stones.ts
+    generateLitStructures(this) // les chips de structures, albédo aplati + normale (da-feeling R4)
     generateLitErratiques(this) // ESSAI DA cubique sur les POI : 3 variantes du bloc erratique (poi-erratique-<i>_lit) — voir render/poi-lit.ts
     makeCliffTextures(this) // les bandes de roche plate des frontières — voir render/cliff-art.ts
   }

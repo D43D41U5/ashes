@@ -995,6 +995,7 @@ export class WorldScene extends Phaser.Scene {
       this.view.lighting = lit
       if (this.clutter) this.clutter.lighting = lit
       this.pois.lighting = lit // le bloc erratique (couche POI cubique) suit le même toggle
+      this.bornes?.setLighting(lit) // les bornes de seuil aussi (da-feeling R5)
       // Le voile descend SOUS les sprites quand ils sont éclairés (il ne tinte plus que le fond) ;
       // sinon il coiffe toute la scène. Et le Feu le CREUSE — sauf en mode éclairé, où la vraie
       // pipeline fait déjà la lumière (on ne troue pas deux fois).

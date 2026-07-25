@@ -75,4 +75,19 @@ describe('câblage des variantes cubiques (_lit / _lit_m)', () => {
     expect(LIT_PROP_KEYS.has('nd-rock_lit')).toBe(true)
     expect(LIT_PROP_KEYS.has('nd-rock_lit_m')).toBe(false)
   })
+
+  it('LA VAGUE A (da-feeling R3) : les nœuds restants ont leur _lit — et le câblage par BRANCHES est documenté', () => {
+    // Les 4 états du buisson à baies, la pousse, la fibre, les gravats, la souche, la cicatrice.
+    for (const key of ['nd-berry_bush-0', 'nd-berry_bush-1', 'nd-berry_bush-2', 'nd-berry_bush-3', 'nd-sapling', 'nd-fiber_plant', 'nd-rubble', 'nd-stump', 'nd-scar']) {
+      expect(LIT_PROP_KEYS.has(`${key}_lit`), key).toBe(true)
+      expect(LIT_PROP_KEYS.has(`${key}_lit_m`), `${key} : un nœud ne se miroite pas`).toBe(false)
+    }
+    // fiber_plant et rubble passent par le whitelist générique ; berry_bush et sapling passent
+    // par leurs BRANCHES SPÉCIALES de SnapshotView (berryDots, repousse) — les mettre ici serait
+    // du câblage mort et trompeur (note d'intégration de la vague A).
+    expect(LIT_NODE_TYPES.has('fiber_plant')).toBe(true)
+    expect(LIT_NODE_TYPES.has('rubble')).toBe(true)
+    expect(LIT_NODE_TYPES.has('berry_bush')).toBe(false)
+    expect(LIT_NODE_TYPES.has('sapling')).toBe(false)
+  })
 })

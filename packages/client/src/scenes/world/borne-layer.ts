@@ -16,6 +16,7 @@
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
+import { type Crack, newCanvas, normalFromCanvas, registerLit } from '../../render/normal-map'
 import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import type { Warp } from '../../render/warp'
 
@@ -73,10 +74,62 @@ export function makeBorneTextures(scene: Phaser.Scene): void {
   pilier(H_BRISEE, true)
   g.generateTexture(BORNE_BRISEE_KEY, W, H_BRISEE)
   g.destroy()
+
+  // ═══ LES VARIANTES `_lit` (spec da-feeling R5) — albédo APLATI + normale dérivée ═══
+  //
+  // Même silhouette que la version peinte (deux backends, une forme), l'ombrage NO retiré :
+  // socle et fût en tons-MATIÈRE plats, le relief viendra de la lumière. Un monolithe est une
+  // grosse masse dressée : cellules de 3 px, base PLANTÉE (le bord bas ne plonge pas), un
+  // sillon de fissure au fût — la grammaire du pilote erratique.
+  const albedo = (b: number, brisee: boolean): HTMLCanvasElement => {
+    const { c: cv, ctx } = newCanvas(W, brisee ? H_BRISEE : H)
+    const c = W / 2
+    ctx.fillStyle = '#6a645a' // le socle : une pierre plus sombre, posée
+    ctx.fillRect(c - 9, b - 8, 18, 7)
+    ctx.fillRect(c - 7, b - 12, 14, 5)
+    const haut = brisee ? b - (H_BRISEE - 6) : b - (H - 12)
+    ctx.fillStyle = '#8d867b' // le fût : LA matière, aplat — la lumière fera les faces
+    ctx.fillRect(c - 5, haut, 10, b - 10 - haut)
+    if (brisee) {
+      ctx.beginPath()
+      ctx.moveTo(c - 5, haut); ctx.lineTo(c + 5, haut); ctx.lineTo(c - 2, haut - 5); ctx.closePath()
+      ctx.fill()
+      ctx.fillStyle = '#6a645a'
+      ctx.fillRect(c + 4, b - 14, 7, 5) // le tronçon tombé
+    } else {
+      ctx.fillStyle = '#7b756b' // le chapeau : une dalle, un ton sous le fût
+      ctx.fillRect(c - 8, haut - 6, 16, 7)
+    }
+    // L'ombre de contact, PEINTE APRÈS la normale ? Non : ici l'albédo sert AUSSI à dériver la
+    // normale — l'ombre s'ajoute donc sur un CLONE après dérivation (voir plus bas).
+    return cv
+  }
+  const ombre = (src: HTMLCanvasElement, b: number): HTMLCanvasElement => {
+    const { c: cv, ctx } = newCanvas(src.width, src.height)
+    ctx.drawImage(src, 0, 0)
+    ctx.fillStyle = 'rgba(0,0,0,0.26)'
+    ctx.beginPath()
+    ctx.ellipse(W / 2 + 1, b - 2, W * 0.45, 3.5, 0, 0, Math.PI * 2)
+    ctx.fill()
+    return cv
+  }
+  const fissure: Crack[] = [{ path: [[W / 2 + 3, H - 10], [W / 2 + 2, H - 30], [W / 2 + 3, H - 46]], crevasse: true }]
+  const entA = albedo(H, false)
+  const entN = normalFromCanvas(entA, 1, 3.5, 3, true, fissure)
+  registerLit(scene, `${BORNE_KEY}_lit`, ombre(entA, H), entN)
+  // La couronne : la DÉCOUPE HAUTE des mêmes canvas — identiques au pixel là où ils se recouvrent.
+  const crop = (src: HTMLCanvasElement, hh: number): HTMLCanvasElement => {
+    const { c: cv, ctx } = newCanvas(src.width, hh)
+    ctx.drawImage(src, 0, 0)
+    return cv
+  }
+  registerLit(scene, `${crownKey(BORNE_KEY)}_lit`, crop(entA, CROWN), crop(entN, CROWN))
+  const briA = albedo(H_BRISEE, true)
+  registerLit(scene, `${BORNE_BRISEE_KEY}_lit`, ombre(briA, H_BRISEE), normalFromCanvas(briA, 1, 3.5, 3, true))
 }
 
 export class BorneLayer {
-  private readonly sprites: Phaser.GameObjects.Image[] = []
+  private readonly sprites: { img: Phaser.GameObjects.Image; base: string }[] = []
 
   constructor(scene: Phaser.Scene, map: WorldMap, warp: Warp) {
     for (const s of map.seuils ?? []) {
@@ -90,21 +143,32 @@ export class BorneLayer {
         const px = tx * TILE_PX
         const py = ty * TILE_PX - warp.lift(tx, ty)
         const key = s.secours ? BORNE_BRISEE_KEY : BORNE_KEY
-        const body = scene.add.image(px, py, key).setOrigin(0.5, 1)
+        // Nominal : la variante _lit (albédo aplati + normale) — le toggle debug rebascule.
+        const body = scene.add.image(px, py, `${key}_lit`).setOrigin(0.5, 1)
+        body.setLighting(true)
         body.setDepth(ySortDepth(ty, TILE_PX, TIE_NODE))
-        this.sprites.push(body)
+        this.sprites.push({ img: body, base: key })
         if (!s.secours) {
           // La tête perce la canopée — même superposition au pixel près que les lieux.
-          const crown = scene.add.image(px, py - H, crownKey(BORNE_KEY)).setOrigin(0.5, 0)
+          const crown = scene.add.image(px, py - H, `${crownKey(BORNE_KEY)}_lit`).setOrigin(0.5, 0)
+          crown.setLighting(true)
           crown.setDepth(crownDepth(ty, TILE_PX))
-          this.sprites.push(crown)
+          this.sprites.push({ img: crown, base: crownKey(BORNE_KEY) })
         }
       }
     }
   }
 
+  /** Le toggle debug : _lit + LightsManager, ou la version peinte d'avant — comme les lieux. */
+  setLighting(lit: boolean): void {
+    for (const e of this.sprites) {
+      e.img.setTexture(lit ? `${e.base}_lit` : e.base)
+      e.img.setLighting(lit)
+    }
+  }
+
   destroy(): void {
-    for (const s of this.sprites) s.destroy()
+    for (const e of this.sprites) e.img.destroy()
     this.sprites.length = 0
   }
 }
