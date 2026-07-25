@@ -44,6 +44,19 @@ export interface OpenContainerView {
   title: string
 }
 
+/** Ce que le MODAL DU FEU affiche (spec feu-station S18), résolu contre le snapshot chaque frame. */
+export interface FireView {
+  structureId: number
+  /** allumé / braises / éteint — dérivé du combustible + tick (source unique : `fireStateAt` du sim). */
+  state: import('@braises/sim').FireState
+  fuel: number
+  fuelCap: number
+  /** Le slot de cuisson : l'aliment, s'il est PRÊT (cuit), et sa progression 0..1 (en cours). `null` = vide. */
+  cook: { item: import('@braises/sim').ItemId; ready: boolean; progress: number } | null
+  /** Le bouton contextuel : fonder un Foyer ici, ou monter le palier du Foyer — ou rien (spec S19). */
+  action: { kind: 'found'; label: string } | { kind: 'upgrade'; label: string; affordable: boolean } | null
+}
+
 /** Le verdict d'un village à la fin de la saison (spec saison R4, événement `season_ended`). */
 export interface SeasonVerdict {
   villageId: number
@@ -152,6 +165,11 @@ export interface HudState {
   openContainer: { kind: 'structure' | 'corpse'; id: number } | null
   /** Son contenu, résolu chaque snapshot par WorldScene (null s'il a disparu). */
   openContainerView: OpenContainerView | null
+  /** LE FEU OUVERT au modal (spec feu-station S17) — posé par E (feu visé, à portée), null sinon. */
+  openFire: { structureId: number } | null
+  /** Sa vue résolue chaque snapshot par WorldScene (état, combustible, cuisson, bouton) ;
+   *  null quand le feu disparaît ou que le joueur s'en éloigne (le modal se referme seul). */
+  openFireView: FireView | null
   /** File des récoltes reçues de la sim (WorldScene POSE, UIScene draine) : les
    *  toasts « +2 BOIS (14) ». Une file, pas une valeur — deux récoltes peuvent
    *  tomber dans le même snapshot. */

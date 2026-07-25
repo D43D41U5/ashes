@@ -14,9 +14,8 @@ import { createFatalPanel, type FatalPanel } from './ui/fatal'
 import { createHudCharacter, type HudCharacter } from './ui/hud-character'
 import { createBuildMenu, type BuildMenu } from './ui/build-menu'
 import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
-import { createFoundVillagePrompt, type FoundVillagePrompt } from './ui/found-village-prompt'
+import { createFirePanel, type FirePanel } from './ui/fire-panel'
 import { createRefugeePrompt, type RefugeePrompt } from './ui/refugee-prompt'
-import { createFireUpgradePrompt, type FireUpgradePrompt } from './ui/fire-upgrade-prompt'
 import { createDeathVeil, DEATH_VEIL_MS, type DeathVeil } from './ui/death-veil'
 import { createSeasonVeil, type SeasonVeil } from './ui/season-veil'
 import { createPauseMenu, type PauseMenu } from './ui/pause-menu'
@@ -75,10 +74,9 @@ export class UIScene extends Phaser.Scene {
   /** Le MENU DU MARTEAU (spec construction R20) — pièces structurelles, séparé du craft. */
   private buildMenu!: BuildMenu
   private craftQueueView!: CraftQueueView
-  /** La fenêtre du bas « Fonder un village ici ? » — près d'un feu de camp libre. */
-  private foundVillagePrompt!: FoundVillagePrompt
+  /** LE MODAL DU FEU (spec feu-station S17-S19) — ouvert à E, il remplace les deux fenêtres flottantes. */
+  private firePanel!: FirePanel
   private refugeePrompt!: RefugeePrompt
-  private fireUpgradePrompt!: FireUpgradePrompt
   private deathVeil!: DeathVeil
   private seasonVeil!: SeasonVeil
   /** La stèle de fin de saison n'est levée qu'UNE fois (la saison ne finit qu'une fois). */
@@ -212,13 +210,13 @@ export class UIScene extends Phaser.Scene {
     // Cachée jusqu'au premier instant jouable : rien du HUD ne doit s'afficher
     // par-dessus l'écran de chargement (même règle que la ceinture, ci-dessus).
     this.craftQueueView.setVisible(false)
-    // La fenêtre « Fonder un village ici ? » : née cachée, elle ne paraît qu'auprès
-    // d'un feu de camp libre (WorldScene pose `foundableFire`).
-    this.foundVillagePrompt = createFoundVillagePrompt(this.hudRoot.board, (action) => queueAction(this.registry, action))
     this.refugeePrompt = createRefugeePrompt(this.hudRoot.board, (action) => queueAction(this.registry, action))
-    // La fenêtre sœur « Monter le Feu ? » : même patron, même contrat (WorldScene pose
-    // `upgradableFire`, la sim revalide `upgrade_fire`).
-    this.fireUpgradePrompt = createFireUpgradePrompt(this.hudRoot.board, (action) => queueAction(this.registry, action))
+    // LE MODAL DU FEU (spec feu-station S17-S19) : ouvert à E (viser un feu + E), il REMPLACE
+    // les deux fenêtres flottantes « Fonder un village » / « Monter le Feu » — leurs boutons
+    // vivent désormais dedans. Il POSE ses actions ; WorldScene les draine (spec R22).
+    this.firePanel = createFirePanel(this.hudRoot.board, this.game, {
+      queue: (action) => queueAction(this.registry, action),
+    })
     // Le voile de mort (P1) : monté à la racine (vrai plein écran, hors planche
     // scalée), il ne fait que se lever quand le joueur tombe. WorldScene pose
     // `deathMoment` (one-shot horodaté).
@@ -704,15 +702,10 @@ export class UIScene extends Phaser.Scene {
     // pose au clic. L'UI décide, la scène du monde exécute.
     setHud(this.registry, 'selected', building ? this.buildMenu.armed() : null)
     setHud(this.registry, 'buildMaterial', this.buildMenu.material())
-    // La fenêtre du bas « Fonder un village ici ? » : WorldScene décide QUAND (près
-    // d'un feu libre à soi, sans foyer encore) ; elle s'efface pendant les overlays
-    // (WorldScene y pose `foundableFire` à null). L'UI ne fait que la montrer.
-    this.foundVillagePrompt.update(getHud(this.registry, 'foundableFire') ?? null)
     this.refugeePrompt.update(getHud(this.registry, 'refugeesNearby') ?? null)
-    // La fenêtre « Monter le Feu ? » suit le même chemin : elle et « Fonder » sont
-    // mutuellement exclusives (fonder = feu libre sans village ; monter = Chef d'un
-    // village), elles ne s'affichent donc jamais ensemble.
-    this.fireUpgradePrompt.update(getHud(this.registry, 'upgradableFire') ?? null)
+    // LE MODAL DU FEU (spec feu-station S18) : WorldScene a résolu `openFireView` contre le
+    // snapshot (état, combustible, cuisson, bouton) ; l'UI n'a qu'à le montrer avec le sac.
+    this.firePanel.update({ view: getHud(this.registry, 'openFireView') ?? null, inv })
     // Le voile de mort : un one-shot horodaté (patron de `error`). Un nouveau `at` =
     // une nouvelle mort → on lève le voile une fois ; il retombe tout seul.
     const death = getHud(this.registry, 'deathMoment')

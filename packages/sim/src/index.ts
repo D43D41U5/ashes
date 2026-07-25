@@ -106,7 +106,11 @@ export {
 export type { WorldMap, Zone } from './map'
 export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
-export { ambientTemperature, advanceTemperature } from './temperature'
+export { ambientTemperature, baselineTemperature, advanceTemperature } from './temperature'
+// LE FEU-STATION (spec feu-station) : l'état dérivable du snapshot côté client, et la donnée des slots.
+export { fireState, fireStateAt, fireActive, fireWarmthFactor, advanceFire } from './fire'
+export type { FireState } from './fire'
+export { FIRE, COOK_SLOT } from './balance'
 export { resolveMove, moveAvatar, moveAvatarStepped, overlapsBlocking, isBlockedAt } from './collision'
 export type { MoveWorld } from './collision'
 export { findPath, computeFlowField } from './pathfinding'

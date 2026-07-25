@@ -25,7 +25,7 @@
  * AUCUNE logique de jeu. `fireGlow` (module pur) porte le battement et l'extinction de jour.
  */
 import Phaser from 'phaser'
-import type { SnapshotMessage, Structure } from '@braises/sim'
+import { fireStateAt, type SnapshotMessage, type Structure } from '@braises/sim'
 import { fireGlow } from '../../render/lighting'
 import { FIRE_GROUND_DEPTH, TILE_PX } from '../../render/framing'
 
@@ -95,10 +95,13 @@ export class FireGroundGlow {
   }
 
   /** Réconcilie une flaque par Feu et la fait respirer (alpha) avec la flamme (`fireGlow`). */
-  update(structures: Structure[], villages: SnapshotMessage['villages'], day: number, now: number): void {
+  update(structures: Structure[], villages: SnapshotMessage['villages'], day: number, now: number, tick: number): void {
     const seen = new Set<number>()
     for (const s of structures) {
       if (s.type !== 'fire') continue
+      // Un feu ÉTEINT ne rougeoie plus le sol (spec feu-station S1/S3) : on le saute → la
+      // réconciliation détruit sa flaque. (Les braises la gardent, atténuée par `fireGlow`.)
+      if (fireStateAt(tick, s) === 'out') continue
       seen.add(s.id)
       const warmth = villages.find((v) => v.id === s.villageId)?.warmth ?? 0
       const g = fireGlow(warmth, day, now, s.id * 1.7)

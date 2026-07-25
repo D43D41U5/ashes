@@ -20,7 +20,7 @@
  * AUCUNE logique de jeu : pur habillage.
  */
 import Phaser from 'phaser'
-import type { Structure } from '@braises/sim'
+import { fireStateAt, type Structure } from '@braises/sim'
 import { SPARK_DEPTH, TILE_PX } from '../../render/framing'
 
 /** Une braise en PIXEL — un CARRÉ PLEIN et UNIFORME (demande d'Alexis : plus rond du
@@ -73,7 +73,7 @@ export class FireFx {
 
   /** Réconcilie les particules avec les Feux du snapshot et LE VENT les pousse (vecteur
    *  unité de la sim, {0,0} = calme plat → aucune dérive). */
-  update(structures: Structure[], wind: { x: number; y: number } = { x: 0, y: 0 }): void {
+  update(structures: Structure[], tick: number, wind: { x: number; y: number } = { x: 0, y: 0 }): void {
     const seen = new Set<number>()
     for (const s of structures) {
       if (s.type !== 'fire') continue
@@ -85,6 +85,12 @@ export class FireFx {
         unit = this.spawn(cx, cy)
         this.units.set(s.id, unit)
       }
+      // Les particules suivent l'ÉTAT (spec feu-station S1/S3) : allumé → flammes + braises + fumée ;
+      // braises → plus de flammes, seulement braises + fumée ; éteint → rien ne monte.
+      const st = fireStateAt(tick, s)
+      unit.flame.emitting = st === 'lit'
+      unit.ember.emitting = st !== 'out'
+      unit.smoke.emitting = st !== 'out'
       applyWind(unit.flame, wind, FLAME_WIND)
       applyWind(unit.ember, wind, EMBER_WIND)
       applyWind(unit.smoke, wind, SMOKE_WIND)

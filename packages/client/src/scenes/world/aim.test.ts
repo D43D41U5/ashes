@@ -186,8 +186,8 @@ describe('holdHarvest — le maintien n’inonde pas la sim (A4, A6)', () => {
  * manger, ni se défendre, et la nuit qui chasse devient une exécution.
  */
 describe('la main décide du clic', () => {
-  const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, entityId: null, onFire: false, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
-  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, entityId: null, onFire: false, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
+  const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, entityId: null, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
+  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, entityId: null, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
   const versLest = { dx: 1, dy: 0 }
 
   it('DE LA NOURRITURE EN MAIN → on mange (et le maintien répète)', () => {

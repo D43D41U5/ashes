@@ -74,9 +74,8 @@ import {
   publishHint,
   publishDeath,
   publishLevelUp,
-  publishFoundableFire,
+  publishOpenFire,
   publishRefugeesNearby,
-  publishUpgradableFire,
   publishOpenContainer,
   publishPickup,
   publishPlayerVitals,
@@ -96,7 +95,7 @@ import { FireGroundGlow } from './world/fire-ground-glow'
 import { createContactShadow } from './world/contact-shadow'
 import { champLisiere, poidsLisiere, LISIERE_MAX, LISIERE_PORTEE } from '../render/ecotone'
 import { creerBrouillard, depackBrouillard, FOG_RAYON_TUILES, loadFog, packBrouillard, revele, saveFog, type Brouillard } from '../render/fog'
-import { POI_CHARGES } from '@braises/sim'
+import { fireStateAt, POI_CHARGES } from '@braises/sim'
 
 /**
  * Le rayon qu'un lieu dévoile, LU DANS LA TABLE DE LA SIM (`POI_CHARGES`) et jamais recopié :
@@ -784,25 +783,18 @@ export class WorldScene extends Phaser.Scene {
     // craft. Miroir pur du client — la sim revalide tout, à l'enfilage et à chaque
     // tick (spec craft-file F7, F14).
     publishStationsInRange(this.registry, this.predicted, this.view.structures)
-    // Un feu de camp libre à mes pieds → la fenêtre du bas « Fonder un village ? ».
-    // Étouffé pendant un overlay (sac/carte ouverts) : la fenêtre ne s'y superpose pas.
-    publishFoundableFire(
-      this.registry,
-      this.predicted,
-      overlay ? [] : this.view.structures,
-      this.view.villages,
-      this.playerId,
-    )
     // Un groupe de réfugiés à portée → la fenêtre à trois gestes (V2-25). Étouffée en overlay.
     publishRefugeesNearby(this.registry, this.predicted, overlay ? [] : this.view.refugeeGroups)
-    // Chef à portée de MON Feu, palier < max → la fenêtre « Améliorer le Feu » (V0-3).
-    // Même patron que « Fonder » : WorldScene décide QUAND, UIScene ne fait que montrer ;
-    // étouffée pendant un overlay (elle ne se superpose ni au sac ni à la carte).
-    publishUpgradableFire(
+    // LE MODAL DU FEU (spec feu-station S17-S19) : un feu OUVERT (E) résout son état / combustible /
+    // cuisson + le BOUTON contextuel « Fonder » / « Améliorer » — qui REMPLACENT les deux fenêtres
+    // flottantes d'avant. Jamais étouffé par l'overlay : le modal EST l'overlay.
+    publishOpenFire(
       this.registry,
+      this.view.structures,
+      this.view.villages,
       this.predicted,
-      overlay ? [] : this.view.villages,
       this.playerId,
+      this.lastSnapshotTick,
       getHud(this.registry, 'inv') ?? [],
     )
     this.checkVitals()
@@ -932,7 +924,12 @@ export class WorldScene extends Phaser.Scene {
         .filter((s) => s.type === 'fire')
         .map((s) => {
           const warmth = this.view.villages.find((vg) => vg.id === s.villageId)?.warmth ?? 0
-          return { s, g: fireGlow(warmth, day, time, s.id * 1.7) }
+          const g = fireGlow(warmth, day, time, s.id * 1.7)
+          // La lueur suit l'ÉTAT du feu (spec feu-station S1/S3) : pleine allumé, faible en braises,
+          // NULLE éteint — la flaque au sol, le trou du voile et le reflet sur l'eau s'éteignent ensemble.
+          const st = fireStateAt(this.lastSnapshotTick, s)
+          const factor = st === 'lit' ? 1 : st === 'ember' ? 0.4 : 0
+          return { s, g: { ...g, alpha: g.alpha * factor } }
         })
       this.water?.update(
         time,
@@ -942,9 +939,9 @@ export class WorldScene extends Phaser.Scene {
         // force = alpha de la lueur, déjà ∝ nuit → le reflet s'éteint tout seul de jour.
         litFires.map(({ s, g }) => ({ x: s.tx + 0.5, y: s.ty + 0.5, radius: g.radius * 2.3, strength: g.alpha })),
       )
-      this.fireFx?.update(this.view.structures, this.view.wind) // flammes/braises/fumée, poussées par le vent
+      this.fireFx?.update(this.view.structures, this.lastSnapshotTick, this.view.wind) // flammes/braises/fumée (∝ état), poussées par le vent
       // La chaleur du Feu au sol : cosmétique, ∝ nuit (voir world/fire-ground-glow.ts).
-      this.fireGround?.update(this.view.structures, this.view.villages, day, time)
+      this.fireGround?.update(this.view.structures, this.view.villages, day, time, this.lastSnapshotTick)
       // ÉCLAIRAGE DYNAMIQUE — le rendu PAR DÉFAUT (décision d'Alexis, docs/decisions.md 2026-07-24) :
       // il éclaire TOUS les sprites (couche 1) et pilote soleil/lune/Feux. Le flag n'existe (et n'est
       // posé) qu'en DEV, où le panneau P permet de l'ÉTEINDRE pour comparer avec l'ancien rendu à

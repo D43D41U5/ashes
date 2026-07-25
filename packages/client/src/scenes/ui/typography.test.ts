@@ -53,6 +53,7 @@ describe('la typographie du jeu', () => {
     const SANS_TEXTE = [
       'vignette.ts', // un dégradé, pas un mot
       'hud-character.ts', // n'y met qu'un <img> (le fantôme de glisser-déposer) ; sa racine est sur la planche
+      'fire-panel.ts', // idem : seul le fantôme de drag va sur `body` ; le modal monte sur la planche
     ]
     const coupables = Object.entries(SOURCES)
       .filter(([path]) => !path.endsWith('.test.ts'))

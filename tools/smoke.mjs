@@ -390,6 +390,66 @@ const SCENARIOS = {
   },
 
   /**
+   * LE MODAL DU FEU (spec feu-station S17-S19). On se donne un feu de camp, on le POSE,
+   * et on OUVRE son modal comme le fait la touche E : deux slots (combustible + cuisson),
+   * la jauge d'état, le bouton contextuel « Fonder un Foyer ». Le smoke LIT ce que le jeu
+   * affiche (openFireView), il ne le fabrique pas. Exige `--dev` (grant/place/teleport armés).
+   */
+  async feu(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+
+    // Un feu de camp dans la ceinture, et on gagne du terrain DÉGAGÉ (le spawn est un village).
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      s.sendAction({ type: 'debug_grant', item: 'campfire' })
+      const p = s.predicted
+      s.sendAction({ type: 'debug_teleport', x: p.x, y: p.y - 16 })
+    })
+    await page.waitForTimeout(700)
+
+    // On TIENT le feu (case active), puis on le POSE devant soi — la première tuile libre gagne.
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const inv = s.registry.get('inv') ?? []
+      const slot = inv.findIndex((c) => c && c.item === 'campfire')
+      if (slot >= 0 && slot < 6) s.sendAction({ type: 'set_active_slot', slot })
+      const px = Math.floor(s.predicted.x)
+      const py = Math.floor(s.predicted.y)
+      // On ratisse large (spirale) : la sim refuse l'occupée/hors terrain, la 1re libre gagne
+      // (et consomme le feu — les tentatives suivantes échouent sans nuire).
+      for (let r = 1; r <= 3; r++) {
+        for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]]) {
+          s.sendAction({ type: 'place_campfire', tx: px + dx, ty: py + dy })
+        }
+      }
+    })
+    await page.waitForTimeout(700)
+
+    // On repère le feu LIBRE qu'on vient de poser et on se TÉLÉPORTE à son pied.
+    const feu = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const fires = (s.view?.structures ?? []).filter((st) => st.type === 'fire')
+      const target = fires.find((st) => st.villageId === 0) ?? fires[0]
+      if (!target) return null
+      s.sendAction({ type: 'debug_teleport', x: target.tx + 0.5, y: target.ty + 1.0 })
+      return { id: target.id, tx: target.tx, ty: target.ty, fuel: target.fuel ?? null, villageId: target.villageId }
+    })
+    // On LAISSE le snapshot rattraper la téléportation AVANT d'ouvrir : sinon publishOpenFire
+    // juge le joueur hors de portée (ancienne position) et referme le modal aussitôt.
+    await page.waitForTimeout(800)
+    if (feu) await page.evaluate((id) => window.__BRAISES__.scene.registry.set('openFire', { structureId: id }), feu.id)
+    await page.waitForTimeout(600)
+
+    const modal = await page.evaluate(() => {
+      const v = window.__BRAISES__.scene.registry.get('openFireView')
+      return v ? { state: v.state, fuel: v.fuel, cap: v.fuelCap, cook: v.cook, action: v.action?.kind ?? null } : null
+    })
+    console.log(`feu ${feu ? `#${feu.id} (${feu.tx},${feu.ty}) libre=${feu.villageId === 0} fuel=${feu.fuel}` : 'ABSENT'} · modal: ${JSON.stringify(modal)}`)
+    await page.screenshot({ path: `${OUT}/feu-modal.png` })
+  },
+
+  /**
    * LE CHARGEMENT. Deux promesses à tenir : rien du HUD ne doit paraître avant que
    * la vallée existe, et la barre doit dire la VÉRITÉ (le compte de passes de l'hôte,
    * pas une animation). On RECHARGE la page pour assister à la naissance du monde —

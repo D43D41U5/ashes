@@ -19,7 +19,11 @@ export type FireState = 'lit' | 'ember' | 'out'
  * L'état d'un feu (spec S1-S3). Le Foyer (villageId ≠ 0) tient TOUJOURS ; le feu LIBRE
  * suit son combustible, puis la fenêtre de braises (`emberUntil`), puis s'éteint.
  */
-export function fireState(state: SimState, s: Structure): FireState {
+/**
+ * L'état d'un feu, à partir du seul TICK (et non d'un `SimState` complet) — pour que le
+ * CLIENT puisse le dériver du snapshot (il a le tick + la structure), source unique avec la sim.
+ */
+export function fireStateAt(tick: number, s: Structure): FireState {
   if (s.type !== 'fire') return 'out'
   if (s.villageId !== 0) return 'lit' // Foyer : inchangé tant que l'upkeep n'est pas migré (S16)
   // Feu libre SANS champ combustible = hors modèle (feu forgé à la main dans un test,
@@ -27,8 +31,12 @@ export function fireState(state: SimState, s: Structure): FireState {
   // feu libre naît avec `fuel` (addStructure), donc ce cas ne s'y produit jamais.
   if (s.fuel === undefined) return 'lit'
   if (s.fuel > 0) return 'lit'
-  if (s.emberUntil !== undefined && state.tick < s.emberUntil) return 'ember'
+  if (s.emberUntil !== undefined && tick < s.emberUntil) return 'ember'
   return 'out'
+}
+
+export function fireState(state: SimState, s: Structure): FireState {
+  return fireStateAt(state.tick, s)
 }
 
 /** Le feu chauffe-t-il / garde-t-il encore ? (allumé OU braises — la garde tient jusqu'aux braises, S4). */

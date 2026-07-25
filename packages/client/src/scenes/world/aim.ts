@@ -46,6 +46,9 @@ export interface AimTarget {
   /** Un FEU (structure) est-il sur la tuile visée ? La cible de `feed_fire` (du bois en main
    *  + clic sur le Feu → on le nourrit). La sim vise TOUJOURS le foyer de l'acteur. */
   onFire: boolean
+  /** L'id du FEU visé (structure) — pour ouvrir SON modal à la touche E (spec feu-station S17).
+   *  `null` = aucun feu sous le curseur. La portée se lit sur `inRange`. */
+  fireId: number | null
   /** Une structure ABÎMÉE (hp < max, hors Feu) sur la tuile visée — la cible de `repair`
    *  (du bois en main + clic → on la répare). `null` = rien à réparer ici. La sim revalide
    *  l'appartenance et la portée. */
@@ -95,6 +98,7 @@ export function aimAt(
   // « réparé ») ; toute structure abîmée se RÉPARE ; une parcelle se SÈME (vide) ou se RÉCOLTE
   // (mûre). `STRUCTURE_HP` est TOTAL sur `StructureType` — pas de garde. Maturité PURE (isCropMature).
   let onFire = false
+  let fireId: number | null = null
   let damaged: AimStructure | undefined
   let plantable: AimStructure | undefined
   let harvestable: AimStructure | undefined
@@ -102,6 +106,7 @@ export function aimAt(
     if (s.tx !== tx || s.ty !== ty) continue
     if (s.type === 'fire') {
       onFire = true
+      fireId = s.id
       continue
     }
     if (s.hp < STRUCTURE_HP[s.type]) damaged = s // toute structure hors Feu, abîmée, se répare
@@ -138,6 +143,7 @@ export function aimAt(
     nodeId: node?.id ?? null,
     entityId,
     onFire,
+    fireId,
     repairableId: damaged?.id ?? null,
     plantableId: plantable?.id ?? null,
     harvestableId: harvestable?.id ?? null,

@@ -6,6 +6,9 @@
 import {
   BALANCE,
   chronicleFromEvents,
+  COOK_SLOT,
+  FIRE,
+  fireStateAt,
   hasItems,
   type Corpse,
   type Entity,
@@ -21,7 +24,7 @@ import {
   type Village,
 } from '@braises/sim'
 import type Phaser from 'phaser'
-import { getHud, setHud, type SeasonVerdict, type StationId } from '../../hud-state'
+import { getHud, setHud, type FireView, type SeasonVerdict, type StationId } from '../../hud-state'
 
 type Registry = Phaser.Data.DataManager
 
@@ -234,6 +237,68 @@ export function publishOpenContainer(
   // Disparu ou hors de portée : on referme (le sac joueur reste, lui, ouvert).
   setHud(registry, 'openContainer', null)
   setHud(registry, 'openContainerView', null)
+}
+
+/**
+ * LE MODAL DU FEU (spec feu-station S18) résolu contre CE snapshot : l'état (allumé/braises/
+ * éteint dérivé du tick + combustible), le combustible, le slot de cuisson, et le BOUTON
+ * contextuel (fonder / améliorer, S19 — même logique que les fenêtres d'avant, déplacée dans
+ * le panneau). On referme le modal si le feu a disparu ou si le joueur s'en est éloigné.
+ */
+export function publishOpenFire(
+  registry: Registry,
+  structures: Structure[],
+  villages: Village[],
+  player: { x: number; y: number },
+  playerId: number,
+  tick: number,
+  inv: Inventory,
+): void {
+  const of = getHud(registry, 'openFire') ?? null
+  if (of === null) {
+    setHud(registry, 'openFireView', null)
+    return
+  }
+  const s = structures.find((x) => x.id === of.structureId)
+  if (!s || s.type !== 'fire' || !containerInRange(s.tx + 0.5, s.ty + 0.5, player)) {
+    setHud(registry, 'openFire', null) // disparu ou hors de portée → le modal se referme seul
+    setHud(registry, 'openFireView', null)
+    return
+  }
+  // Le slot de cuisson : en cours (remainingTicks>0, `item` encore BRUT) → progression via COOK_SLOT ;
+  // prêt (remainingTicks<=0, `item` = résultat cuit) → 100 %.
+  let cook: FireView['cook'] = null
+  if (s.cook) {
+    const ready = s.cook.remainingTicks <= 0
+    const rule = COOK_SLOT[s.type]?.[s.cook.item]
+    const progress = ready || !rule ? 1 : 1 - s.cook.remainingTicks / rule.ticks
+    cook = { item: s.cook.item, ready, progress }
+  }
+  // Le bouton contextuel (S19), même logique de disponibilité que les fenêtres flottantes retirées.
+  let action: FireView['action'] = null
+  if (foundableFireAt(player, structures, villages, playerId) === of.structureId) {
+    action = { kind: 'found', label: 'Fonder un Foyer ici' }
+  } else {
+    const up = upgradableFireAt(player, villages, playerId)
+    if (up && s.villageId === up.villageId) {
+      action = {
+        kind: 'upgrade',
+        label: `Améliorer le Foyer (palier ${up.tier + 1})`,
+        affordable: hasItems(inv, up.nextCost),
+      }
+    }
+  }
+  // Le combustible : sur un feu LIBRE il vit sur la structure ; sur un FOYER, encore sur le
+  // village (migration différée S16). On lit le bon des deux pour que la jauge soit juste.
+  const village = s.villageId !== 0 ? villages.find((v) => v.id === s.villageId) : undefined
+  setHud(registry, 'openFireView', {
+    structureId: s.id,
+    state: fireStateAt(tick, s),
+    fuel: village ? village.fuel : s.fuel ?? 0,
+    fuelCap: FIRE.FUEL_CAPACITY,
+    cook,
+    action,
+  })
 }
 
 /** UIScene POSE une action ici ; WorldScene la draine (`drainQueuedActions`).

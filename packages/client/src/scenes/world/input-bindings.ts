@@ -246,7 +246,8 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   const overlayOpen = (): boolean =>
     Boolean(getHud(scene.registry, 'mapOpen')) ||
     Boolean(getHud(scene.registry, 'characterMenuOpen')) ||
-    Boolean(getHud(scene.registry, 'menuOpen'))
+    Boolean(getHud(scene.registry, 'menuOpen')) ||
+    Boolean(getHud(scene.registry, 'openFire'))
 
   /**
    * CE QU'ON TIENT, ET VERS OÙ ON VISE. C'est tout ce dont le résolveur pur a
@@ -366,9 +367,28 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
    * Restreint au métier `foraging` : viser un arbre/rocher avec E ne fait rien (leur geste
    * est le clic maintenu). La sim revalide portée, stock et métier.
    */
-  onDown(KEYMAP.forage, () => {
-    if (overlayOpen()) return // le sac/la carte/le menu mangent la touche comme le clic
+  onDownAlways(KEYMAP.forage, () => {
+    if (typing()) return // E va au champ de recherche, pas au monde
+    // E REBASCULE le modal du feu : ouvert → on le referme (spec feu-station S17).
+    if (getHud(scene.registry, 'openFire')) {
+      setHud(scene.registry, 'openFire', null)
+      return
+    }
+    // Un AUTRE overlay (sac, carte, menu) mange la touche, comme le clic.
+    if (
+      getHud(scene.registry, 'mapOpen') ||
+      getHud(scene.registry, 'characterMenuOpen') ||
+      getHud(scene.registry, 'menuOpen')
+    ) {
+      return
+    }
     const aim = aimNow(scene.input.activePointer)
+    // VISER UN FEU + E → ouvrir SON modal (spec S17 : E = interagir avec ce qu'on vise).
+    if (aim.inRange && aim.fireId !== null) {
+      setHud(scene.registry, 'openFire', { structureId: aim.fireId })
+      return
+    }
+    // Sinon la CUEILLETTE (comportement d'avant) : un buisson visé + E le récolte d'un coup.
     if (aim.inRange && aim.nodeId !== null && isForageNode(aim.nodeId)) {
       deps.sendAction({ type: 'harvest', nodeId: aim.nodeId, whole: true })
     }

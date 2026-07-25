@@ -32,6 +32,7 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@braises/sim'
+import { fireStateAt } from '@braises/sim'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
 import { windSway } from '../../render/wind'
@@ -687,9 +688,15 @@ export class SnapshotView {
         // Les BÛCHES normal-mappées : bois mat `_lit` quand l'éclairage est armé (relief
         // calculé par la normal map cylindrique), sinon le sprite ombré simple.
         sprite.setTexture(this.lighting ? 'st-fire_lit' : 'st-fire')
-        // La couleur du Feu (spec alignement R9) : bleu ↔ blanc ↔ rouge.
-        const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
-        sprite.setTint(warmthColor(warmth))
+        // La couleur suit l'ÉTAT (spec feu-station S1) : allumé → couleur du Feu (alignement R9,
+        // bleu↔blanc↔rouge) ; braises → ambre sombre ; éteint → bûches froides et grises.
+        const st = fireStateAt(this.tick, s)
+        if (st === 'out') sprite.setTint(0x555560)
+        else if (st === 'ember') sprite.setTint(0x8a4a2a)
+        else {
+          const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
+          sprite.setTint(warmthColor(warmth))
+        }
       } else if (s.type === 'wall') {
         // Le mur prend la texture qui CONNECTE ses voisins, teintée par son matériau
         // (les textures d'autotuile sont neutres) et assombrie par les dégâts.
