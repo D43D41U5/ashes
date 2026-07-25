@@ -15,6 +15,7 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   stone: 'Pierre',
   fiber: 'Fibre',
   berries: 'Baies',
+  champignons: 'Champignons',
   legume: 'Légume',
   graine: 'Graine',
   stew: 'Ragoût',
@@ -251,6 +252,15 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0xc0392b).fillCircle(11, 9, 3)
     g.fillStyle(0xd4564a).fillCircle(8, 12, 3)
     g.fillStyle(0xe88a80).fillCircle(4, 8, 1) // reflet NO
+  },
+
+  // Champignons : deux chapeaux bruns sur pieds clairs — la trouvaille de l'herboriste.
+  champignons: (g) => {
+    g.fillStyle(0xe8dcc0).fillRect(5, 8, 2, 6) // pied gauche
+    g.fillStyle(0x8a5a34).fillEllipse(6, 8, 7, 4) // chapeau gauche
+    g.fillStyle(0xe8dcc0).fillRect(10, 6, 2, 8) // pied droit (plus grand)
+    g.fillStyle(0x9c6636).fillEllipse(11, 6, 8, 5) // chapeau droit
+    g.fillStyle(0xb98a58).fillCircle(9, 5, 1) // reflet NO
   },
 
   // Légume du potager : une racine ocre à fanes vertes (nourriture de base).

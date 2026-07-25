@@ -78,9 +78,12 @@ export { POI,
   WEAPON_DAMAGE,
   WEAPON_PROFILES,
   WORLD_EVENTS,
+  TOOL_RANK,
+  TOOL_YIELD,
 } from './balance'
 export type {
   CarryTier,
+  ToolTier,
   MonsterDef,
   MonsterType,
   NodeDef,
@@ -115,7 +118,7 @@ export { applyVillageAction, structureAt, solidAt, floorAt, roofAt, structureBlo
 export type { Structure, Village, VillageAction, TaskKind, VillageTask, BuildEval, BuildReject } from './village'
 export { blocksNavigation, placementKeepsNavigable, isComponent, recognizeFunctions, refreshFunctions } from './construction'
 export type { PlacedStructure, RecogStructure, RecognizedFunction } from './construction'
-export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel, recipeState, fellGreenWidth, isCleanFell, flankOfAim, mineGoodFlank, mineTolerance, isCleanMine, forageRichness, forageRevealed } from './economy'
+export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel, recipeState, fellGreenWidth, isCleanFell, flankOfAim, mineGoodFlank, mineTolerance, isCleanMine, forageRichness, forageBounty, maxTierByLevel, effectiveTier } from './economy'
 export type { ResourceNode, EconomyAction, CraftOrder, RecipeState } from './economy'
 export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame
 export { cropStage, isCropMature, isPlot } from './agriculture' // le potager (voie A) : maturité PURE, lue par le rendu

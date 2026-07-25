@@ -39,6 +39,7 @@ export interface PropInstance {
   oy: number
   scale: number // multiplicateur d'échelle (~0.7..1.0)
   mirror: boolean
+  variant: number // hash ∈ [0,1) pour choisir une VARIÉTÉ de texture (fleurs) ; ignoré si le prop n'en a qu'une
 }
 
 export type SampleTerrain = (tx: number, ty: number) => number
@@ -64,8 +65,10 @@ export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
   // deviennent pins/mélèzes, tier > 0). PLUS DE CONIFÈRES NI DE SOUCHES DÉCORATIFS (demande
   // d'Alexis, 2026-07-18) : les arbres de cette forêt sont de VRAIS nœuds RÉCOLTABLES, denses,
   // posés côté sim (`arbresDeLaRacine`). Le clutter ne garde ici que les buissons DODUS du
-  // sous-bois, qui habillent le sol entre les troncs qu'on coupe (plus de fougères, 2026-07-19).
-  [TERRAIN_FOREST]: { density: 0.1, scale: 26, understory: false, props: ['bush'] },
+  // sous-bois, qui habillent le sol entre les troncs qu'on coupe (plus de fougères, 2026-07-19), et
+  // depuis le 2026-07-24 QUELQUES cailloux (demande d'Alexis : « un peu en forêt aussi ») — le bloc
+  // est minoritaire (1/4 des tirages) pour rester un accent, pas un semis.
+  [TERRAIN_FOREST]: { density: 0.1, scale: 26, understory: false, props: ['bush', 'bush', 'bush', 'pebbles'] },
   [TERRAIN_OLD_GROWTH]: { density: 0.45, scale: 28, understory: true, props: ['big_trunk'] },
   [TERRAIN_PINE]: { density: 0.4, scale: 22, understory: false, props: ['pine', 'grass_tuft', 'pebbles'] },
   [TERRAIN_LARCH]: { density: 0.35, scale: 20, understory: false, props: ['larch', 'grass_tuft'] },
@@ -73,12 +76,14 @@ export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
   // Le PRÉ (l'herbe) : touffes + fleurs, ET des BOSQUETS DE BUISSONS DODUS en taillis épars
   //  (demande d'Alexis, 2026-07-18 — comme dans la forêt, mais groupés en taillis sur la plaine).
   [TERRAIN_GRASS]: {
-    density: 0.28, scale: 16, understory: false, props: ['grass_tuft', 'flower', 'pebbles'],
+    // Cailloux RARÉFIÉS (demande d'Alexis 2026-07-24) : herbe et fleurs pèsent double dans le tirage,
+    //  le caillou n'est plus qu'1/5 (contre 1/3 avant) — un pré d'herbe et de fleurs, ponctué de pierres.
+    density: 0.28, scale: 16, understory: false, props: ['grass_tuft', 'grass_tuft', 'flower', 'flower', 'pebbles'],
     groves: { kind: 'bush', scale: 38, seuil: 0.8, density: 0.22 },
   },
   [TERRAIN_FLOWER_MEADOW]: { density: 0.5, scale: 16, understory: false, props: ['flower', 'grass_tuft'] },
   [TERRAIN_HEATH]: { density: 0.42, scale: 14, understory: false, props: ['low_bush', 'pebbles'] },
-  [TERRAIN_ALPINE_MEADOW]: { density: 0.3, scale: 15, understory: false, props: ['grass_tuft', 'flower', 'pebbles'] },
+  [TERRAIN_ALPINE_MEADOW]: { density: 0.3, scale: 15, understory: false, props: ['grass_tuft', 'grass_tuft', 'flower', 'flower', 'pebbles'] },
   [TERRAIN_ALPINE_FLOWERS]: { density: 0.5, scale: 15, understory: false, props: ['flower', 'grass_tuft'] },
   // LE MARAIS EST UN LIT DE ROSEAUX (demande d'Alexis, 2026-07-20 : « densité de roseaux ×++ »).
   //  Presque chaque tuile en porte (density 0.95), le roseau domine largement le tirage (3/4), et
@@ -151,6 +156,7 @@ function makePropKind(kind: PropKind, tx: number, ty: number, seed: number, slot
     oy: (h3 - 0.5) * 0.8,
     scale: 0.7 + h4 * 0.3, // 0.7..1.0
     mirror: hash2(tx, ty, (seed ^ (0x5000 + slot)) | 0) < 0.5,
+    variant: hash2(tx, ty, (seed ^ (0x6000 + slot)) | 0), // hash indépendant : ne perturbe pas ox/oy/scale/mirror
   }
 }
 

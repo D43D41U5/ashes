@@ -107,7 +107,11 @@ export type EconomyAction =
   // `aimX/aimY` (monde) : où vise le curseur, pour LE MINAGE À MAÎTRISE (spec recolte-maitrise,
   // verbe 2) — la sim en déduit le flanc frappé et le compare au bon. Absent (PNJ, plantes,
   // ou client muet) = coup baseline. Ignoré hors nœud de minage.
-  | { type: 'harvest'; nodeId: number; aimX?: number; aimY?: number }
+  // `whole` : LA CUEILLETTE D'UN COUP (décision utilisateur 2026-07-24) — un seul geste vide
+  // le nœud ENTIER dans le sac. JOUEUR-only (le PNJ ne le pose jamais, son économie ne bouge
+  // pas) et n'a d'effet que sur la CUEILLETTE (`skill==='foraging'`) : le minage et l'abattage
+  // gardent leur geste à maîtrise, quoi qu'un client trafiqué envoie. Additif, aucun bump.
+  | { type: 'harvest'; nodeId: number; aimX?: number; aimY?: number; whole?: boolean }
   // L'ABATTAGE À MAÎTRISE (spec recolte-maitrise, verbe 1) : le clic maintenu sur un
   // arbre EMPLIT une jauge (`harvest_charge_start`, `hold` vrai sur les frames de
   // maintien pour taire les refus — comme `attack_charge`), le relâchement porte le
@@ -436,13 +440,14 @@ export function isCleanMine(node: ResourceNode, aimX: number, aimY: number, leve
 }
 
 /**
- * LA CUEILLETTE À MAÎTRISE (spec recolte-maitrise, verbe 3) — « la perception du bon coin ».
- * La maîtrise ne vit PAS au moment de la récolte (le geste est nu) mais dans le MONDE.
+ * LA CUEILLETTE À MAÎTRISE (spec recolte-maitrise, verbe 3, révisée 2026-07-25). Le geste reste NU
+ * (viser + E, le nœud entier) ; la maîtrise change ce qui SORT du buisson. La richesse d'un coin,
+ * croisée avec le niveau `foraging`, ouvre une ÉCHELLE DE PRODUIT — semence, puis champignon.
  */
 
 /** La RICHESSE seedée d'un coin de cueillette : un facteur de stock centré sur ~1 (maigre →
- *  riche), pure fonction du nodeId (`hash2`, aucun flux RNG à décaler). Le client la recalcule
- *  à l'identique pour peindre la lueur (C3). Le seed 7 la distingue des autres usages de hash2. */
+ *  riche), pure fonction du nodeId (`hash2`, aucun flux RNG à décaler). C'est le substrat que
+ *  l'échelle de butin LIT. Le seed 7 la distingue des autres usages de hash2. */
 export function forageRichness(nodeId: number): number {
   return BALANCE.FORAGE_RICHNESS_MIN + hash2(nodeId, 7) * (BALANCE.FORAGE_RICHNESS_MAX - BALANCE.FORAGE_RICHNESS_MIN)
 }
@@ -453,11 +458,30 @@ export function withForageRichness(type: NodeType, nodeId: number, stock: number
   return Math.max(1, Math.floor(stock * forageRichness(nodeId)))
 }
 
-/** Le client peint-il ce coin ? Perception GATÉE par le niveau LOCAL (P3, fuite assumée) :
- *  rien sous le seuil (le novice voit uniforme), et seuls les coins RICHES luisent. Pure —
- *  testable, et miroir exact de ce que le rendu montre. */
-export function forageRevealed(level: number, richness: number): boolean {
-  return level >= BALANCE.FORAGE_REVEAL_LEVEL && richness >= BALANCE.FORAGE_RICH_THRESHOLD
+/* Sel du butin de cueillette : décorrélé de la richesse (seed 7) et des autres usages de hash2. */
+const FORAGE_BOUNTY_SALT = 0x9e3779b9
+
+/**
+ * LE BUTIN DE MAÎTRISE (spec recolte-maitrise verbe 3, révisée). Sur la cueillette d'un coin RICHE,
+ * une `graine` peut s'ajouter au geste nu dès `FORAGE_SEED_LEVEL` — l'herboriste amorce le potager
+ * sans passer par le Feu. La proba monte avec `(richesse − plancher) × (niveau − palier)`, plafonnée :
+ * la graine reste RARE (la recette baies→graine garde le rôle fiable). Rend `'graine'` ou `null`.
+ *
+ * *(La QUALITÉ — les champignons — n'est plus un drop : c'est un VRAI nœud de map, `champignon`,
+ * humide/ombragé, gaté par le savoir (`minForageLevel`). Voir `NODE_DEFS` et `strikeRejection`.)*
+ *
+ * Tirage POSITIONNEL — `hash2(nodeId, tick)`, décorrélé (sel), AUCUN flux RNG consommé : il ne décale
+ * pas la suite seedée (leçon RNG) et reproduit à l'identique au replay (le tick est l'horloge sim).
+ * Inclure le TICK, et pas seulement `depletions` (borné + oublié), interdit qu'un même buisson rejoue
+ * éternellement le même drop. Pure : que des + − × ÷, min, aucune fonction Math approximée. */
+export function forageBounty(nodeId: number, tick: number, richness: number, level: number): ItemId | null {
+  const richBonus = richness - BALANCE.FORAGE_BOUNTY_RICH_FLOOR
+  if (richBonus <= 0 || level < BALANCE.FORAGE_SEED_LEVEL) return null // coin pauvre ou novice : rien
+  const seedChance = Math.min(
+    BALANCE.FORAGE_BOUNTY_CHANCE_MAX,
+    richBonus * BALANCE.FORAGE_SEED_CHANCE_PER_LEVEL * (level - BALANCE.FORAGE_SEED_LEVEL + 1),
+  )
+  return hash2(nodeId, tick, FORAGE_BOUNTY_SALT) < seedChance ? 'graine' : null
 }
 
 /**
@@ -474,6 +498,11 @@ function strikeRejection(actor: Entity, node: ResourceNode | undefined, range: n
   if (TOOL_RANK[tier] < TOOL_RANK[def.minTool]) {
     return tier === 'none' ? 'il faut une pioche en main' : 'il faut un outil forgé en main'
   }
+  // Le GATE DE SAVOIR (verbe 3) : le patch de champignons est visible de tous, mais on ne sait
+  // reconnaître les bons qu'expert. Sœur de `minTool`, côté connaissance — pas outil.
+  if (def.minForageLevel !== undefined && levelOf(actor, def.skill) < def.minForageLevel) {
+    return 'il faut mieux connaître les champignons'
+  }
   return null
 }
 
@@ -484,7 +513,7 @@ function strikeRejection(actor: Entity, node: ResourceNode | undefined, range: n
  * +~50 % de rendement (plancher +1, sinon un arbre à 1 bois n'en verrait rien) et une
  * usure atténuée. Suppose le nœud DÉJÀ validé (`strikeRejection` a rendu `null`).
  */
-function harvestStrike(state: SimState, actor: Entity, actorId: number, node: ResourceNode, clean: boolean): void {
+function harvestStrike(state: SimState, actor: Entity, actorId: number, node: ResourceNode, clean: boolean, whole = false): void {
   const def = NODE_DEFS[node.type]
   const { held, tier } = toolMultiplier(actor, def.tool)
   const level = levelOf(actor, def.skill)
@@ -505,7 +534,10 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
     emitEvent(state, { type: 'action_rejected', tick: state.tick, entityId: actorId, reason: 'sac plein' })
     return
   }
-  const yielded = Math.min(node.stock, base + bonus, room)
+  // D'UN COUP (`whole`, cueillette au clavier) : on prend TOUT le nœud, borné au sac —
+  // le rendement par coup (base/bonus) ne s'applique plus, c'est le nœud entier qui vient.
+  // Sinon, le coup baseline : le rendement par frappe, borné au stock ET au sac.
+  const yielded = whole ? Math.min(node.stock, room) : Math.min(node.stock, base + bonus, room)
   addItems(actor.inventory, { [def.item]: yielded })
   node.stock -= yielded
   if (node.stock <= 0) {
@@ -537,8 +569,13 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
     }
     wearHeld(actor, wear)
   }
-  gainXp(state, actor, def.skill, BALANCE.XP_PER_GATHER)
-  actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
+  // L'XP SUIT CE QU'ON RAMÈNE quand on cueille d'un coup : sans ça, vider un buisson d'un
+  // seul geste donnerait l'XP d'UNE unité au lieu des ~8 d'autant de coups — un nerf muet du
+  // métier qu'on est en train d'ouvrir. Le coup baseline garde son XP par frappe, inchangé.
+  gainXp(state, actor, def.skill, whole ? BALANCE.XP_PER_GATHER * yielded : BALANCE.XP_PER_GATHER)
+  // La cueillette D'UN COUP ne POSE pas de cadence non plus (2026-07-25) : le buisson suivant
+  // part aussitôt, sans que le cooldown d'une cueillette gèle un minage qui la suivrait.
+  if (!whole) actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
   emitEvent(state, {
     type: 'resource_harvested',
     tick: state.tick,
@@ -548,6 +585,18 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
     count: yielded,
     ...(clean ? { clean: true } : {}),
   })
+  // LE BUTIN DE MAÎTRISE (verbe 3) : sur la cueillette d'un coin RICHE, une `graine` seedée peut
+  // s'ajouter au geste nu (l'herboriste amorce le potager). `whole` garantit un nœud de `foraging`,
+  // donc `level` est bien le niveau de cueillette. Le PATCH DE CHAMPIGNONS en est exclu (un mycélium
+  // ne donne pas de graine — sa valeur est le champignon lui-même). Borné au sac : s'il est plein, le
+  // bonus est simplement PERDU (c'est un cadeau, pas un dû — aucun refus, aucune inondation d'events).
+  if (whole && node.type !== 'champignon') {
+    const bounty = forageBounty(node.id, state.tick, forageRichness(node.id), level)
+    if (bounty !== null && freeRoomFor(actor.inventory, bounty) > 0) {
+      addItems(actor.inventory, { [bounty]: 1 })
+      emitEvent(state, { type: 'resource_harvested', tick: state.tick, entityId: actorId, nodeId: node.id, item: bounty, count: 1 })
+    }
+  }
 }
 
 export function applyEconomyAction(state: SimState, actorId: number, action: EconomyAction): void {
@@ -566,12 +615,17 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
      * Le sac borné, l'usure, l'épuisement, le bonus propre : tout vit dans `harvestStrike`.
      */
     case 'harvest': {
-      // PAS de refus « trop tôt » (décision d'Alexis, comme l'abattage) : le cooldown
-      // reste une cadence SILENCIEUSE — un coup trop tôt ne PORTE pas, mais ne CRACHE pas
-      // un rejet à l'écran. C'est le geste (le maintien cadencé du client, le tressaillement
-      // du nœud à chaque coup) qui donne le rythme, pas un timer invisible qui punit.
-      if (state.tick < actor.cooldownUntil) return
       const node = state.nodes.find((n) => n.id === action.nodeId)
+      // LA CUEILLETTE D'UN COUP : `whole` ne mord QUE sur le métier `foraging` (fibre, baies,
+      // tourbe, cendre — le geste nu). Le minage et l'abattage l'ignorent : leur maîtrise
+      // (flanc, jauge) suppose des coups répétés, et la sim ne la laisse pas court-circuiter.
+      const whole = action.whole === true && node !== undefined && NODE_DEFS[node.type].skill === 'foraging'
+      // PAS de refus « trop tôt » (décision d'Alexis, comme l'abattage) : le cooldown reste une
+      // cadence SILENCIEUSE — un coup trop tôt ne PORTE pas, mais ne CRACHE pas un rejet. C'est
+      // le geste qui donne le rythme, pas un timer invisible. EXCEPTION : la cueillette D'UN
+      // COUP n'a AUCUNE cadence (décision utilisateur 2026-07-25) — on enchaîne les buissons
+      // sans attendre. Le minage et le PNJ (qui n'envoient jamais `whole`) gardent la leur.
+      if (!whole && state.tick < actor.cooldownUntil) return
       const bad = strikeRejection(actor, node, range)
       if (bad) return reject(bad)
       const def = NODE_DEFS[node!.type]
@@ -579,7 +633,7 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
         def.skill === 'mining' && action.aimX !== undefined && action.aimY !== undefined
           ? isCleanMine(node!, action.aimX, action.aimY, levelOf(actor, 'mining'))
           : false
-      harvestStrike(state, actor, actorId, node!, clean)
+      harvestStrike(state, actor, actorId, node!, clean, whole)
       return
     }
 
@@ -1045,6 +1099,39 @@ export function generateNodes(
         if (r < 0.04) push('berry_bush', tx, ty)
         else if (r < 0.18) push('fiber_plant', tx, ty)
       }
+    }
+  }
+
+  // LES CHAMPIGNONS (spec recolte-maitrise verbe 3) — un SECOND passage, APRÈS le principal : les
+  // nœuds déjà posés gardent leur id et leur tuile (on ne décale pas le flux de génération — leçon
+  // RNG). Ils poussent ABONDAMMENT à l'humide/l'ombre franche (marais, tourbière, roselière, sous-bois
+  // de vieille sylve) et TRÈS RAREMENT sur le sol des forêts ordinaires (demande d'Alexis : quelques-uns
+  // dans les bois de la zone T0, comme une curiosité qu'on croise avant de savoir la récolter). Jamais
+  // ailleurs, jamais sur une tuile prise ni dans une clairière. Positionnel.
+  const MUSHROOM_PROB: Partial<Record<number, number>> = {
+    [TERRAIN_MARSH]: 0.05,
+    [TERRAIN_PEAT_BOG]: 0.05,
+    [TERRAIN_REED_MARSH]: 0.05,
+    [TERRAIN_OLD_GROWTH]: 0.05,
+    [TERRAIN_FOREST]: 0.006, // TRÈS rare : le sous-bois humide en cache quelques-uns (zone T0)
+  }
+  const mushSeed = (seed ^ 0x1b56c4f9) | 0
+  const occupied = new Set(nodes.map((n) => n.ty * map.width + n.tx))
+  for (let ty = 0; ty < map.height; ty++) {
+    for (let tx = 0; tx < map.width; tx++) {
+      const terrain = terrainAt(map, tx, ty)
+      const prob = MUSHROOM_PROB[terrain]
+      if (prob === undefined) continue
+      if (density < 1) {
+        // Sous-échantillonnage clusterisé, comme le passage principal (grandes cartes).
+        const keep = Math.min(1, density * groveBoost(tx, ty, terrain, mushSeed))
+        if (hash2(tx, ty, (mushSeed ^ 0x2b) | 0) >= keep) continue
+      }
+      if (hash2(tx, ty, mushSeed) >= prob) continue
+      const key = ty * map.width + tx
+      if (cleared.has(key) || occupied.has(key)) continue // clairière de lieu, ou tuile déjà prise
+      push('champignon', tx, ty)
+      occupied.add(key)
     }
   }
   return nodes

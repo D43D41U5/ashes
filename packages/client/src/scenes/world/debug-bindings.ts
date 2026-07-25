@@ -43,7 +43,10 @@ export function bindDebugKeys(scene: Phaser.Scene, deps: DebugDeps): void {
   setHud(scene.registry, 'debugOn', false)
   setHud(scene.registry, 'debugGod', false)
   setHud(scene.registry, 'debugSpeed', 1)
-  setHud(scene.registry, 'debugLighting', false)
+  // L'éclairage dynamique est le rendu PAR DÉFAUT (decisions.md 2026-07-24) : on l'arme donc à
+  // `true` — en DEV comme en prod la lumière est allumée. Le panneau P sert à l'ÉTEINDRE pour
+  // comparer avec l'ancien rendu à plat, pas à l'allumer.
+  setHud(scene.registry, 'debugLighting', true)
 
   onDown(DEBUG_KEYMAP.toggle, () => {
     const on = !isOn()

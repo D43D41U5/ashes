@@ -7,7 +7,7 @@ import Phaser from 'phaser'
 import { generateItemIcons } from '../render/item-art'
 import { generateVitalIcons } from '../render/vital-art'
 import { generateLitTrees } from '../render/lit-trees'
-import { generateFireProp, generateLitProps } from '../render/lit-props'
+import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, variantBase, CHAMPIGNON_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
 import { makePoiTextures } from './world/poi-art'
 
@@ -357,6 +357,13 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('nd-fiber_plant', 16, 16)
     g.clear()
 
+    // PATCH DE CHAMPIGNONS (cueillette à maîtrise verbe 3) — cubique, tons feutrés d'ombre (aucun
+    // vert : on le distingue des plantes d'un coup d'œil). La silhouette vient de `CHAMPIGNON_RECTS`
+    // (partagée avec `lit-props`), rejouée ici en Phaser Graphics : flat et `_lit` ne peuvent pas diverger.
+    for (const [x, y, w, h, col] of CHAMPIGNON_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
+    g.generateTexture('nd-champignon', 16, 16)
+    g.clear()
+
     // BUISSON À BAIES — MÊME silhouette que le buisson normal (`cl-bush`), au vert de feuillage
     // LÉGÈREMENT décalé (un poil plus clair/chaud) pour qu'on le distingue (demande d'Alexis
     // 2026-07-19). Les BAIES sont dessinées SÉPARÉMENT : on génère `nd-berry_bush-0` (le buisson
@@ -505,12 +512,27 @@ export class BootScene extends Phaser.Scene {
     g.fillRect(5, 9, 2, 5).fillRect(8, 8, 2, 6).fillRect(11, 10, 2, 4)
     tex('cl-grass_tuft')
 
-    g.fillStyle(0x50662f).fillCircle(8, 11, 3) // fleur (tige + corolle discrète)
-    g.fillStyle(0x9a7bb0).fillCircle(8, 6, 2)
-    tex('cl-flower')
+    // Fleurs CUBIQUES à VARIÉTÉS (choix d'Alexis 2026-07-24) : plusieurs têtes blocky + couleurs. On
+    // rejoue la MÊME donnée `FLOWERS` que l'albédo `_lit` (render/lit-props.ts) → silhouette identique,
+    // aucune rupture au swap. Peint = à plat (l'éclairage par défaut porte le relief cubique).
+    const flowerStemNum = parseInt(FLOWER_STEM_COLOR.slice(1), 16)
+    for (let i = 0; i < FLOWERS.length; i++) {
+      const f = FLOWERS[i]!
+      g.fillStyle(flowerStemNum).fillRect(f.stem[0], f.stem[1], f.stem[2], f.stem[3])
+      g.fillStyle(parseInt(f.bloom.slice(1), 16))
+      for (const [x, y, w, h] of f.rects) g.fillRect(x, y, w, h)
+      tex(`cl-${variantBase('flower', i)}`)
+    }
 
-    g.fillStyle(0x6a6a6e).fillCircle(6, 11, 2).fillCircle(10, 12, 2).fillCircle(8, 10, 1.5) // cailloux
-    tex('cl-pebbles')
+    // Cailloux CARRÉS à VARIÉTÉS (choix d'Alexis 2026-07-24) : des BLOCS, pas des disques ; mêmes
+    // données `PEBBLES`+`PEBBLE_TONES` que l'albédo lit → silhouette identique, aucune rupture au swap.
+    for (let i = 0; i < PEBBLES.length; i++) {
+      PEBBLES[i]!.rects.forEach(([x, y, w, h], j) => {
+        g.fillStyle(parseInt(PEBBLE_TONES[j % PEBBLE_TONES.length]!.slice(1), 16))
+        g.fillRect(x, y, w, h)
+      })
+      tex(`cl-${variantBase('pebbles', i)}`)
+    }
 
     g.fillStyle(0x5f5f64).fillCircle(8, 10, 5) // gros bloc
     g.fillStyle(0x6f6f75).fillCircle(6, 9, 2)

@@ -100,6 +100,98 @@ const PROBE = () => {
 
 const SCENARIOS = {
   /**
+   * LE CUBIQUE (DA 2026-07-24) — décor passé en normal-map + fleurs en VARIÉTÉS. On MESURE ce qui se
+   * mesure (géométrie du miroir, étendue des facettes de la normale) et on CAPTURE ce qui se juge à
+   * l'œil (variété des fleurs, penche des nœuds-plantes au vent). Tourne en build de PROD — aucun TP.
+   */
+  async cubique(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForTimeout(800)
+
+    // 1) MIROIR — `cl-grass_tuft_lit` vs `_lit_m` : les colonnes opaques doivent être {15 − x}. C'est
+    //    LE fix de variété (un flip Phaser casserait la normale ; on pré-retourne le canvas).
+    const mir = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const cols = (key) => {
+        const img = s.textures.get(key).getSourceImage()
+        const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height
+        const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0)
+        const d = cx.getImageData(0, 0, cv.width, cv.height).data
+        const set = new Set()
+        for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) if (d[(y * cv.width + x) * 4 + 3] > 8) set.add(x)
+        return { w: cv.width, cols: [...set].sort((a, b) => a - b) }
+      }
+      const a = cols('cl-grass_tuft_lit'), b = cols('cl-grass_tuft_lit_m')
+      const expected = a.cols.map((x) => a.w - 1 - x).sort((x, y) => x - y)
+      return { lit: a.cols, mir: b.cols, expected, match: JSON.stringify(expected) === JSON.stringify(b.cols) }
+    })
+    console.log(`MIROIR grass_tuft — lit:[${mir.lit}] mir:[${mir.mir}] attendu:[${mir.expected}] → ${mir.match ? '✓ MIROITÉ' : '✗ PAS MIROITÉ'}`)
+
+    // 2) FACETTES — étendue de la normale nx sur la tête, par variété de fleur, vs grass (censé plat)
+    //    et bush (cube de référence). Large étendue = vraies facettes = cubique.
+    const fac = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const nxRange = (key, x0, y0, x1, y1) => {
+        const tex = s.textures.get(key)
+        const src = tex && tex.dataSource && tex.dataSource[0]
+        const nrm = src ? (src.image || src) : null
+        if (!nrm) return null
+        const cv = document.createElement('canvas'); cv.width = nrm.width; cv.height = nrm.height
+        const cx = cv.getContext('2d'); cx.drawImage(nrm, 0, 0)
+        const d = cx.getImageData(0, 0, cv.width, cv.height).data
+        let mn = 1, mx = -1
+        for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+          const nx = (d[(y * cv.width + x) * 4] / 255) * 2 - 1
+          if (nx < mn) mn = nx; if (nx > mx) mx = nx
+        }
+        return mx <= mn ? 0 : +(mx - mn).toFixed(2)
+      }
+      const flowers = []
+      for (let i = 0; s.textures.exists(`cl-flower-${i}_lit`); i++) flowers.push(nxRange(`cl-flower-${i}_lit`, 4, 2, 12, 10))
+      return { flowers, grass: nxRange('cl-grass_tuft_lit', 4, 7, 13, 15), bush: nxRange('cl-bush_lit', 2, 3, 14, 14) }
+    })
+    console.log(`FACETTES nx (étendue) — fleurs:[${fac.flowers.join(', ')}]  grass(≈plat):${fac.grass}  bush(cube réf):${fac.bush}`)
+
+    // 3) ATLAS — chaque variété d'une famille, peinte (haut) + albédo lit (bas), ×8 NEAREST : la
+    //    VARIÉTÉ forme+couleur, sans dépendre de ce qui a poussé au spawn.
+    for (const kind of ['flower', 'pebbles']) {
+      const atlas = await page.evaluate((k) => {
+        const s = window.__BRAISES__.scene
+        let n = 0; while (s.textures.exists(`cl-${k}-${n}`)) n++
+        const SC = 8, cell = 16 * SC
+        const cv = document.createElement('canvas'); cv.width = n * cell; cv.height = 2 * cell
+        const cx = cv.getContext('2d'); cx.imageSmoothingEnabled = false
+        cx.fillStyle = '#3b4a2e'; cx.fillRect(0, 0, cv.width, cv.height)
+        for (let i = 0; i < n; i++) {
+          cx.drawImage(s.textures.get(`cl-${k}-${i}`).getSourceImage(), i * cell, 0, cell, cell)
+          cx.drawImage(s.textures.get(`cl-${k}-${i}_lit`).getSourceImage(), i * cell, cell, cell, cell)
+        }
+        return cv.toDataURL('image/png')
+      }, kind)
+      writeFileSync(`${OUT}/cubique-${kind}-atlas.png`, Buffer.from(atlas.split(',')[1], 'base64'))
+    }
+
+    // 4) IN-WORLD — un nœud-plante penche au vent, la roche NON (BASE_LEAN visible même à l'arrêt), et
+    //    les fleurs lues sous l'éclairage-défaut. On regarde autour du spawn.
+    const near = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const p = s.registry.get('playerPos')
+      const kinds = {}
+      for (const n of s.view.nodes) kinds[n.type] = (kinds[n.type] ?? 0) + 1
+      return { player: `${p.x.toFixed(0)},${p.y.toFixed(0)}`, nodeKinds: kinds }
+    })
+    console.log(`spawn ${near.player} — nœuds en vue : ${JSON.stringify(near.nodeKinds)}`)
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(3.4))
+    await page.waitForTimeout(700)
+    await page.screenshot({ path: `${OUT}/cubique-monde.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(6))
+    await page.waitForTimeout(700)
+    await page.screenshot({ path: `${OUT}/cubique-zoom.png` })
+    console.log(`captures : cubique-fleurs-atlas.png · cubique-monde.png · cubique-zoom.png`)
+  },
+
+  /**
    * LES ZONES SE DISTINGUENT-ELLES D'UN COUP D'ŒIL ?
    *
    * C'est le principe n°3 du directeur de jeu, et c'est le SEUL test qui vaille : on se pose au
@@ -961,7 +1053,7 @@ const SCENARIOS = {
         const d = (n.tx + 0.5 - p.x) ** 2 + (n.ty + 0.5 - p.y) ** 2
         if (d < bestD) {
           bestD = d
-          best = { tx: n.tx, ty: n.ty }
+          best = { tx: n.tx, ty: n.ty, stock: n.stock }
         }
       }
       return best
@@ -972,13 +1064,18 @@ const SCENARIOS = {
     } else {
       await tp(buisson.tx + 0.5, buisson.ty + 1.4) // juste en dessous : à portée de bras
       await page.waitForTimeout(900)
-      // On vise le buisson et on MAINTIENT le clic : c'est la récolte (recolte G7).
+      // LA CUEILLETTE EST PASSÉE À LA TOUCHE E (décision 2026-07-24) : on prouve les DEUX
+      // moitiés. La règle neuve vit dans un closure Phaser (`input-bindings`) que l'unité
+      // ne teste pas (cf. l'en-tête d'`aim.ts`) — ce smoke est sa seule preuve automatique.
       //
-      // La conversion monde → ÉCRAN passe par le canvas RÉEL : Phaser rend en
-      // 1280×720 mais le canvas est mis à l'échelle par le CSS, et `page.mouse`
-      // parle en pixels de page. Sans ce facteur (et sans l'offset du canvas), on
-      // clique à côté — et le smoke conclut « la récolte ne marche pas » alors
-      // qu'il visait le vide. (Même correction que le bouton de `rupture`.)
+      // Les baies dans le sac, à la demande. La conversion monde → ÉCRAN (pour le clic)
+      // passe par le canvas RÉEL : Phaser rend en 1280×720, le CSS le met à l'échelle, et
+      // `page.mouse` parle en pixels de page — sans ce facteur on clique à côté.
+      const berries = () => page.evaluate(() => {
+        const inv = window.__BRAISES__.scene.registry.get('inv') ?? []
+        const i = inv.findIndex((s) => s && s.item === 'berries')
+        return { slot: i, count: i >= 0 ? inv[i].count : 0 }
+      })
       const cible = await page.evaluate(({ tx, ty }) => {
         const scene = window.__BRAISES__.scene
         const cam = scene.cameras.main
@@ -992,19 +1089,49 @@ const SCENARIOS = {
           y: c.top + gy * (c.height / scene.scale.height),
         }
       }, buisson)
+
+      // NÉGATIF — un clic maintenu sur le buisson ne cueille PLUS rien.
       await page.mouse.move(cible.x, cible.y)
       await page.mouse.down()
-      await page.waitForTimeout(2500) // le temps de quelques cueillettes
+      await page.waitForTimeout(2500) // de quoi cueillir PLUSIEURS baies… si le clic cueillait encore
       await page.mouse.up()
+      const parClic = await berries()
+      console.log(parClic.count === 0
+        ? `   ✓ le clic ne cueille plus (0 baie) — la cueillette est passée à E`
+        : `   ✗ le clic a cueilli ${parClic.count} baies : la coupure du clic ne tient pas`)
 
-      const sac = await page.evaluate(() => {
-        const inv = window.__BRAISES__.scene.registry.get('inv') ?? []
-        const i = inv.findIndex((s) => s && s.item === 'berries')
-        return { slot: i, count: i >= 0 ? inv[i].count : 0 }
+      // POSITIF — on POINTE le buisson au curseur et on TAPE E UNE FOIS : le nœud ENTIER
+      // vient d'un coup (recolte-maitrise P1, `whole`). On RECALCULE `cible` maintenant que
+      // la caméra est POSÉE (le TP l'avait fait paner ; le clic ci-dessus lui a laissé 2,5 s)
+      // — un tap unique n'a qu'une chance, là où l'ancien clic MAINTENU réessayait tant qu'on
+      // tenait le bouton. Un déplacement RÉEL de souris d'abord, pour un pointermove sûr.
+      const cible2 = await page.evaluate(({ tx, ty }) => {
+        const scene = window.__BRAISES__.scene
+        const cam = scene.cameras.main
+        const gx = ((tx + 0.5) * 16 - cam.worldView.x) * cam.zoom
+        const gy = ((ty + 0.5) * 16 - cam.worldView.y) * cam.zoom
+        const c = scene.scale.canvas.getBoundingClientRect()
+        return { x: c.left + gx * (c.width / scene.scale.width), y: c.top + gy * (c.height / scene.scale.height) }
+      }, buisson)
+      await page.mouse.move(cible2.x - 40, cible2.y - 40)
+      await page.mouse.move(cible2.x, cible2.y)
+      // DIAGNOSTIC : sur quelle tuile le curseur tombe-t-il vraiment, et y a-t-il un nœud ?
+      // (worldX/Y sans relief — bon sur l'herbe plate ; sert à distinguer « E cassé » de
+      //  « curseur à côté du buisson ».)
+      const viseur = await page.evaluate(() => {
+        const s = window.__BRAISES__.scene
+        const p = s.input.activePointer
+        const tx = Math.floor(p.worldX / 16), ty = Math.floor(p.worldY / 16)
+        const n = s.view.nodes.find((q) => q.tx === tx && q.ty === ty && q.stock > 0)
+        return { tx, ty, node: n ? n.type : null }
       })
-      console.log(sac.count > 0
-        ? `   ✓ récolté : ${sac.count} baies (case ${sac.slot})`
-        : `   ✗ rien récolté — le clic maintenu n'a pas cueilli`)
+      console.log(`   curseur → tuile ${viseur.tx},${viseur.ty} (nœud : ${viseur.node ?? 'aucun'}), buisson en ${buisson.tx},${buisson.ty}`)
+      await page.keyboard.press('e')
+      await page.waitForTimeout(500)
+      const sac = await berries()
+      console.log(sac.count > 1
+        ? `   ✓ cueilli à E d'un coup : ${sac.count} baies sur un stock de ${buisson.stock} (case ${sac.slot})`
+        : `   ✗ E n'a pas vidé le buisson d'un geste : ${sac.count} baie(s) pour un stock de ${buisson.stock}`)
 
       if (sac.count > 0 && sac.slot >= 0 && sac.slot < 6) {
         const avant = await page.evaluate(() => window.__BRAISES__.scene.view.groundItems.length)
@@ -1997,7 +2124,88 @@ const SCENARIOS = {
     console.log(vue.weight.includes('/') ? `   ✓ la charge s'affiche : « ${vue.weight} »` : `   ✗ la charge ne s'affiche pas`)
 
     await page.screenshot({ path: `${OUT}/craft.png` })
-    return { ...vue, beltHud, beltSame, gap, sacOk, centre, cote, topsAlign, deborde }
+
+    // 8. L'ONGLET MÉTIERS : on bascule (clic sur l'en-tête), on lit les 4 colonnes. La fiche
+    //    vient de `skill-guide` (dérivée du sim, testée) ; ici on prouve qu'elle SE PEINT —
+    //    quatre colonnes, chacune ses paliers, le SAC effacé, rien hors écran.
+    await page.click('.hch-tab[data-tab="metiers"]')
+    await page.waitForTimeout(250)
+    const met = await page.evaluate(() => {
+      const W = window.innerWidth
+      const H = window.innerHeight
+      const cols = Array.from(document.querySelectorAll('.hch-met-col'))
+      const read = (c) => ({
+        name: c.querySelector('.hch-met-name')?.textContent ?? '',
+        lvl: c.querySelector('.hch-met-lvl')?.textContent ?? '',
+        paliers: Array.from(c.querySelectorAll('.hch-mp')).map((p) => {
+          const st = p.classList.contains('is-done') ? '✓' : p.classList.contains('is-next') ? '▶' : '·'
+          return `${st}${p.querySelector('.hch-mp-lvl')?.textContent ?? ''}`
+        }),
+        none: c.querySelector('.hch-mp-none')?.textContent ?? null,
+      })
+      const panel = document.querySelector('.hch-met')
+      const over = cols.filter((c) => {
+        const r = c.getBoundingClientRect()
+        return r.left < -2 || r.right > W + 2 || r.top < -2 || r.bottom > H + 2
+      }).length
+      return {
+        visible: panel ? getComputedStyle(panel).display !== 'none' : false,
+        sacHidden: getComputedStyle(document.querySelector('.hch-sac')).display === 'none',
+        n: cols.length,
+        over,
+        cols: cols.map(read),
+      }
+    })
+    console.log(met.visible ? `   ✓ l'onglet MÉTIERS s'affiche` : `   ✗ l'onglet MÉTIERS ne s'affiche pas`)
+    console.log(met.n === 4 ? `   ✓ 4 colonnes de métier` : `   ✗ ${met.n} colonne(s) au lieu de 4`)
+    console.log(met.sacHidden ? `   ✓ le SAC s'est effacé sous MÉTIERS` : `   ✗ le SAC déborde sur l'onglet MÉTIERS`)
+    console.log(met.over === 0 ? `   ✓ aucune colonne ne déborde de l'écran` : `   ✗ ${met.over} colonne(s) hors écran`)
+    for (const c of met.cols) console.log(`      ${c.name} — ${c.lvl}${c.none ? ` [${c.none}]` : ''} : ${c.paliers.join(' · ')}`)
+    await page.screenshot({ path: `${OUT}/craft-metiers.png` })
+
+    // 9. LE NŒUD CHAMPIGNON (verbe 3 révisé) : flat + albédo `_lit` + NORMAL MAP, rendus ×8, et
+    //    l'étendue de nx sur la normale (large = vraies facettes cubiques, pas une plaque plate).
+    //    Rareté oblige, on ne le croise pas au spawn — on lit donc les TEXTURES, générées au boot.
+    const mush = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      if (!s.textures.exists('nd-champignon') || !s.textures.exists('nd-champignon_lit')) return null
+      const SC = 8, cell = 16 * SC
+      const cv = document.createElement('canvas'); cv.width = cell * 3; cv.height = cell
+      const cx = cv.getContext('2d'); cx.imageSmoothingEnabled = false
+      cx.fillStyle = '#2e2a22'; cx.fillRect(0, 0, cv.width, cv.height)
+      cx.drawImage(s.textures.get('nd-champignon').getSourceImage(), 0, 0, cell, cell) // flat
+      cx.drawImage(s.textures.get('nd-champignon_lit').getSourceImage(), cell, 0, cell, cell) // albédo lit
+      // La NORMAL MAP vit dans dataSource[0] ; on la peint (3e case) et on mesure l'étendue de nx.
+      const tex = s.textures.get('nd-champignon_lit')
+      const src = tex && tex.dataSource && tex.dataSource[0]
+      const nrm = src ? (src.image || src) : null
+      let nxRange = -1
+      if (nrm) {
+        cx.drawImage(nrm, cell * 2, 0, cell, cell)
+        const t = document.createElement('canvas'); t.width = nrm.width; t.height = nrm.height
+        const tc = t.getContext('2d'); tc.drawImage(nrm, 0, 0)
+        const d = tc.getImageData(0, 0, t.width, t.height).data
+        let mn = 1, mx = -1
+        for (let i = 0; i < t.width * t.height; i++) {
+          if (d[i * 4 + 3] < 8) continue
+          const nx = (d[i * 4] / 255) * 2 - 1
+          if (nx < mn) mn = nx; if (nx > mx) mx = nx
+        }
+        nxRange = mx <= mn ? 0 : +(mx - mn).toFixed(2)
+      }
+      return { url: cv.toDataURL('image/png'), nxRange }
+    })
+    if (mush) {
+      writeFileSync(`${OUT}/champignon.png`, Buffer.from(mush.url.split(',')[1], 'base64'))
+      console.log(`   ✓ nd-champignon + _lit générés (flat · albédo · normale → champignon.png)`)
+      console.log(mush.nxRange > 0.3
+        ? `   ✓ la NORMAL MAP a des facettes (étendue nx ${mush.nxRange}) — le champignon prend la lumière`
+        : `   ✗ normale plate (étendue nx ${mush.nxRange}) — pas de relief`)
+    } else {
+      console.log(`   ✗ nd-champignon / _lit manque au boot`)
+    }
+
+    return { ...vue, beltHud, beltSame, gap, sacOk, centre, cote, topsAlign, deborde, met, mushroom: Boolean(mush) }
   },
 
   /**
@@ -2109,13 +2317,15 @@ const SCENARIOS = {
   },
 
   /**
-   * LA CUEILLETTE À MAÎTRISE MARCHE-T-ELLE ? (spec recolte-maitrise, verbe 3)
+   * LA CUEILLETTE À MAÎTRISE (spec recolte-maitrise, verbe 3, RÉVISÉE 2026-07-25).
    *
-   * La maîtrise vit DANS LE MONDE : un `foraging` haut fait luire les bons coins que le
-   * novice voit uniformes. On vérifie la BASCULE : NOVICE (foraging 0, en direct) → aucune
-   * lueur ; HERBORISTE (rendu appelé à niveau haut, figé) → des étincelles sur les coins
-   * riches. Le JUGEMENT (richesse, gate) est prouvé au tick près par les tests unitaires.
-   * Exige `--dev` (le TP n'est armé que là).
+   * L'ancien HALO des « bons coins » est RETIRÉ ; la maîtrise change désormais ce qui SORT du
+   * buisson (échelle de PRODUIT : semences puis champignons). On vérifie ici trois faits en jeu :
+   *   (1) le halo a bien disparu (`scene.forageGlow` n'existe plus) ;
+   *   (2) le geste nu marche encore (cueillir d'un coup rentre des baies) ;
+   *   (3) le GATE : au niveau 0, AUCUN bonus de maîtrise ne tombe (ni graine ni champignon).
+   * Le drop-SELON-le-niveau (le cœur de l'échelle) est prouvé au tick près par le test unitaire
+   * `economy.test.ts` — le smoke ne peut pas monter `foraging` au palier en jeu. Exige `--dev`.
    */
   async cueillette(page) {
     await page.goto(URL)
@@ -2123,38 +2333,44 @@ const SCENARIOS = {
     await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
     await page.waitForTimeout(300)
 
-    // Se poser au milieu d'un coin de cueillette (le plus de plantes autour → des riches à voir).
-    const spot = await page.evaluate(() => {
+    // Un buisson à baies (cueillette nue), et on se pose à côté.
+    const start = await page.evaluate(() => {
       const s = window.__BRAISES__.scene
-      const forage = s.view.nodes.filter((n) => ['berry_bush', 'fiber_plant', 'peat_cut', 'ash_heap'].includes(n.type) && n.stock > 0)
-      if (forage.length === 0) return null
-      const dense = (a) => forage.filter((b) => (a.tx - b.tx) ** 2 + (a.ty - b.ty) ** 2 < 100).length
-      const best = forage.reduce((m, n) => (dense(n) > dense(m) ? n : m), forage[0])
-      s.sendAction({ type: 'debug_teleport', x: best.tx, y: best.ty })
-      return { tx: best.tx, ty: best.ty, autour: dense(best) }
+      const b = s.view.nodes.find((n) => n.type === 'berry_bush' && n.stock > 0)
+      if (!b) return null
+      s.sendAction({ type: 'debug_teleport', x: b.tx - 0.5, y: b.ty + 0.5 })
+      return { id: b.id, tx: b.tx, ty: b.ty, stock: b.stock }
     })
-    if (!spot) { console.log('   ✗ aucun coin de cueillette dans cette carte'); return {} }
+    if (!start) { console.log('   ✗ aucun buisson à portée dans cette carte'); return {} }
     await page.waitForTimeout(500)
 
-    // NOVICE (foraging 0, en direct) : rien ne luit.
-    const low = await page.evaluate(() => window.__BRAISES__.scene.forageGlow?.g?.commandBuffer?.length ?? -1)
-    await page.screenshot({ path: `${OUT}/cueillette-novice.png` })
+    // (1) LE HALO A-T-IL DISPARU ? `forageGlow` était un champ de WorldScene ; il ne doit plus exister.
+    const halo = await page.evaluate(() => (window.__BRAISES__.scene.forageGlow === undefined ? 'absent' : 'présent'))
+    console.log(halo === 'absent' ? `   ✓ le halo des « bons coins » a bien disparu` : `   ✗ forageGlow existe encore`)
 
-    // HERBORISTE : on appelle le rendu à niveau haut, puis on FIGE pour capturer.
-    const high = await page.evaluate(() => {
+    const bag = () => page.evaluate(() => {
       const s = window.__BRAISES__.scene
-      s.forageGlow.update(s.view.nodes, s.predicted, 3, 1000, s.warp) // foraging niveau 3
-      const cmds = s.forageGlow.g.commandBuffer?.length ?? -1
-      s.scene.pause()
-      return cmds
+      const inv = s.lastEntities?.find((e) => e.id === s.playerId)?.inventory ?? []
+      const count = (item) => inv.reduce((n, sl) => n + (sl?.item === item ? sl.count : 0), 0)
+      return { berries: count('berries'), graine: count('graine'), champignons: count('champignons') }
     })
-    await page.waitForTimeout(150)
-    await page.screenshot({ path: `${OUT}/cueillette-herboriste.png` })
+    const before = await bag()
 
-    console.log(`   coin de ${spot.autour} plantes autour`)
-    console.log(low === 0 ? `   ✓ NOVICE : aucune lueur (voit uniforme)` : `   ✗ le novice voit une lueur (cmds=${low})`)
-    console.log(high > 0 ? `   ✓ HERBORISTE : les bons coins luisent (cmds=${high})` : `   ✗ aucun bon coin ne luit à niveau haut (cmds=${high})`)
-    return { autour: spot.autour, low, high }
+    // (2)+(3) CUEILLIR D'UN COUP (whole). Au niveau 0, le butin de maîtrise est GATÉ : des baies
+    // rentrent, mais aucune graine / aucun champignon (le gate, moitié du contrat, gratuit ici).
+    await page.evaluate((id) => window.__BRAISES__.scene.sendAction({ type: 'harvest', nodeId: id, whole: true }), start.id)
+    await page.waitForTimeout(500)
+    const after = await bag()
+    await page.screenshot({ path: `${OUT}/cueillette.png` })
+
+    console.log(after.berries > before.berries
+      ? `   ✓ le geste nu marche : baies ${before.berries} → ${after.berries}`
+      : `   ✗ la cueillette n'a rien rapporté (${before.berries} → ${after.berries})`)
+    const bonus = after.graine - before.graine + (after.champignons - before.champignons)
+    console.log(bonus === 0
+      ? `   ✓ GATE : au niveau 0, aucun bonus de maîtrise (ni graine ni champignon)`
+      : `   ✗ un bonus est tombé au niveau 0 — le gate ne tient pas (Δ=${bonus})`)
+    return { halo, before, after }
   },
 
   /**

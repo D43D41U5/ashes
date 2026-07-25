@@ -1,6 +1,72 @@
 import { defineConfig, type Plugin } from 'vite'
 
 /**
+ * LE NUMÉRO DE BUILD (demande d'Alexis) — pour vérifier d'un coup d'œil que le jeu SERVI
+ * correspond au dernier code produit. Horodatage + hash git court (marqué `+` si l'arbre a des
+ * changements non commités ; le hash tombe en dev-conteneur, où `git` est absent → horodatage seul).
+ *
+ * Servi par un MODULE VIRTUEL (`virtual:braises-build-id`), PAS un `define`. Raison : un `define`
+ * est figé au démarrage de Vite, or le jeu tourne en conteneur où l'on édite À CHAUD (HMR) sans
+ * redémarrer le serveur — le numéro serait resté bloqué à l'heure de démarrage pendant que le code
+ * changeait sous lui, ce qui est exactement le contraire du but. Le plugin RÉÉVALUE le module (et
+ * donc l'horodatage) à chaque changement de source : après un reload, le numéro reflète l'instant
+ * du dernier changement. En build de prod, `load()` ne tourne qu'une fois → l'heure du build.
+ *
+ * `node:child_process` est déclaré localement, comme `process` plus bas : ce fichier tourne sur
+ * Node, mais le paquet client n'embarque pas @types/node.
+ */
+declare module 'node:child_process' {
+  export function execSync(
+    command: string,
+    options: { encoding: 'utf8'; stdio?: readonly ('ignore' | 'pipe' | 'inherit')[] },
+  ): string
+}
+import { execSync } from 'node:child_process'
+
+function buildId(): string {
+  const d = new Date()
+  const p = (n: number): string => String(n).padStart(2, '0')
+  const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  // `stdio` muet sur stderr : le conteneur Docker (node:alpine) n'a PAS `git` — sans ça il
+  // crachait « git: not found » à chaque démarrage de Vite. Le catch retombe sur l'horodatage.
+  const git = (cmd: string): string =>
+    execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+  let rev = ''
+  try {
+    rev = ` · ${git('git rev-parse --short HEAD')}`
+    if (git('git status --porcelain')) rev += '+'
+  } catch {
+    /* hors dépôt git, ou git absent (conteneur) : l'horodatage seul fait le travail */
+  }
+  return stamp + rev
+}
+
+/** Le module virtuel `virtual:braises-build-id` (voir l'en-tête). Réévalué à chaque changement
+ *  de source en dev → le numéro suit le code ; évalué une fois en build → l'heure du build. */
+function buildIdPlugin(): Plugin {
+  const VIRTUAL = 'virtual:braises-build-id'
+  const RESOLVED = '\0' + VIRTUAL
+  return {
+    name: 'braises:build-id',
+    resolveId(id) {
+      return id === VIRTUAL ? RESOLVED : undefined
+    },
+    load(id) {
+      return id === RESOLVED ? `export const BUILD_ID = ${JSON.stringify(buildId())}` : undefined
+    },
+    configureServer(server) {
+      // Toute modif de source INVALIDE le module virtuel : son `load()` se rejouera au prochain
+      // reload (déclenché par le changement lui-même) avec un horodatage frais. Découplé du
+      // retour de `handleHotUpdate` pour ne pas gêner le plugin de full-reload de `/sim`.
+      server.watcher.on('all', () => {
+        const mod = server.moduleGraph.getModuleById(RESOLVED)
+        if (mod) server.moduleGraph.invalidateModule(mod)
+      })
+    },
+  }
+}
+
+/**
  * LE HMR NE SAIT PAS HOT-PATCHER `/sim`.
  *
  * La simulation tourne dans un Web Worker (mode Veillée). Quand un module de
@@ -55,7 +121,7 @@ declare const process: { env: Record<string, string | undefined> }
 const SCRUTE = process.env.BRAISES_POLL === '1'
 
 export default defineConfig({
-  plugins: [fullReloadOnSimChange()],
+  plugins: [fullReloadOnSimChange(), buildIdPlugin()],
   // `allowedHosts: true` : le serveur de dev est derrière Traefik, qui lui
   // transmet le Host demandé par le navigateur (ashes.test, l'IP nue du VPS…).
   // Les lister ici reviendrait à figer l'adresse de la machine dans le dépôt.

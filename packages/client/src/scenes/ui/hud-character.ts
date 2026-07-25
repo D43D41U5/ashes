@@ -1,10 +1,19 @@
 /**
- * L'ÉCRAN PERSONNAGE (maquette Turn 3A), en DOM — le SAC + l'ARTISANAT, ouverts au TAB.
+ * L'ÉCRAN PERSONNAGE (maquette Turn 3A), en DOM — ouvert au TAB, en DEUX ONGLETS.
  *
- * À GAUCHE le SAC : la grille du sac + un rappel de la CEINTURE, glisser-déposer et clic
- * droit (envoi rapide). À DROITE l'ARTISANAT : recherche, recettes groupées par rayon,
- * trois états (faisable / manque / grisé), un clic FAIT. Un conteneur ouvert (coffre,
- * dépouille) ajoute sa colonne de butin. Rendu ISO à la maquette, par-dessus le canvas.
+ * ONGLET SAC (le geste — on FAIT) : à gauche le SAC + un rappel de la CEINTURE,
+ * glisser-déposer et clic droit (envoi rapide) ; à droite l'ARTISANAT : recherche,
+ * recettes groupées par rayon, trois états (faisable / manque / grisé), un clic FAIT.
+ * Un conteneur ouvert (coffre, dépouille) ajoute sa colonne de butin — et RAMÈNE à SAC
+ * (on loote, on ne consulte pas ses stats). C'est l'écran d'avant, INTACT.
+ *
+ * ONGLET MÉTIERS (la maîtrise — on COMPREND) : les quatre métiers en colonnes, chacun sa
+ * fiche complète — le geste, l'échelle de PALIERS (atteint ✓ / prochain ▶ / verrouillé),
+ * les gains continus, la note d'accès outil. Le contenu vient de `skill-guide.ts`, DÉRIVÉ
+ * du sim et testé : la colonne ne peut pas mentir sur un seuil.
+ *
+ * La CEINTURE reste ancrée sur les deux onglets (c'est la hotbar, elle ne saute jamais) ;
+ * seul le contenu du haut change. TAB ouvre/ferme ; les en-têtes d'onglet basculent.
  *
  * AUCUNE RÈGLE DE JEU. Les gestes ne calculent QUE l'action à envoyer — la logique dure
  * (`dragToAction`, `quickMoveToAction`, `craftRows`) est PURE et testée, importée telle
@@ -34,6 +43,7 @@ import { ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { costLine, craftRows, type CraftRow } from './craft-panel'
 import { dragIntentFrom, dragToAction, quickMoveToAction } from './inventory-panel'
 import { SKILL_LABELS } from './skill-labels'
+import { skillGuides, type SkillGuide } from './skill-guide'
 
 const COLS = 6
 const BAG_LO = SLOTS.BELT // les cases 0..BELT sont la ceinture ; le sac est au-dessus
@@ -125,6 +135,13 @@ export function createHudCharacter(
   const stationNote = $('.hch-note')
   const search = $<HTMLInputElement>('.hch-search')
   const skillsWrap = $('.hch-skills')
+  // Les GROUPES d'onglet : l'onglet SAC = ces quatre blocs (l'écran d'avant) ; l'onglet
+  // MÉTIERS = le seul `.hch-met`. La ceinture (`.hch-belt`) et la barre d'onglets restent.
+  const artWrap = $('.hch-art')
+  const persoWrap = $('.hch-perso')
+  const sacWrap = $('.hch-sac')
+  const metWrap = $('.hch-met')
+  const tabBtns = Array.from(root.querySelectorAll<HTMLElement>('.hch-tab'))
 
   // ── L'avatar : le VRAI sprite du monde (`spr-player`), à ses proportions (carré, pixel) —
   //    la même effigie qu'en jeu, pour que le joueur se reconnaisse. ──
@@ -143,11 +160,107 @@ export function createHudCharacter(
     return { fill: el.querySelector<HTMLElement>('.hch-sk-fill')!, lvl: el.querySelector<HTMLElement>('.hch-sk-lvl')! }
   })
 
+  // ── Les COLONNES de l'onglet MÉTIERS : une fiche par métier, bâtie une fois. Le texte
+  //    des paliers est FIXE (il vient de `skill-guide`) ; seuls le niveau, la barre et le
+  //    statut ✓/▶/verrouillé se repeignent à l'update, selon le niveau courant. ──
+  const metGrid = $('.hch-met-row')
+  interface MetCol {
+    id: SkillId
+    lvl: HTMLElement
+    fill: HTMLElement
+    paliers: { el: HTMLElement; mark: HTMLElement; level: number }[]
+  }
+  // `skillGuides()` et `SKILL_META` sont dans le MÊME ordre (woodcutting, mining, foraging,
+  // crafting) : on apparie par index pour retrouver l'emblème (icône d'objet) de chaque métier.
+  const metCols: MetCol[] = skillGuides().map((guide: SkillGuide, i: number): MetCol => {
+    const col = document.createElement('div')
+    col.className = 'hch-met-col'
+    const paliersHtml = guide.paliers.length
+      ? guide.paliers
+          .map(
+            (p) =>
+              `<div class="hch-mp" data-lvl="${p.level}"><span class="hch-mp-mk"></span>` +
+              `<span class="hch-mp-lvl">niv ${p.level}</span><span class="hch-mp-txt">${p.text}</span></div>`,
+          )
+          .join('')
+      : `<div class="hch-mp-none">une pente, pas des marches</div>`
+    col.innerHTML =
+      `<div class="hch-met-head">` +
+      `<div class="hch-met-ic"><img src="${iconUrl(SKILL_META[i]!.item)}" alt=""></div>` +
+      `<div class="hch-met-name">${guide.label}</div>` +
+      `<div class="hch-met-lvl">niveau 0</div>` +
+      `<div class="hch-met-bar"><div class="hch-met-fill"></div></div></div>` +
+      `<div class="hch-met-gest">${guide.gesture}</div>` +
+      `<div class="hch-met-sec">PALIERS</div>` +
+      `<div class="hch-met-pal">${paliersHtml}</div>` +
+      `<div class="hch-met-sec">TOUJOURS</div>` +
+      `<div class="hch-met-pas">${guide.passifs.map((s) => `<div class="hch-mp-pas">${s}</div>`).join('')}</div>` +
+      (guide.outilNote ? `<div class="hch-met-outil">${guide.outilNote}</div>` : '')
+    metGrid.appendChild(col)
+    return {
+      id: guide.id,
+      lvl: col.querySelector<HTMLElement>('.hch-met-lvl')!,
+      fill: col.querySelector<HTMLElement>('.hch-met-fill')!,
+      paliers: Array.from(col.querySelectorAll<HTMLElement>('.hch-mp')).map((el) => ({
+        el,
+        mark: el.querySelector<HTMLElement>('.hch-mp-mk')!,
+        level: Number(el.dataset.lvl),
+      })),
+    }
+  })
+
   // ── État courant (relu à chaque geste : la vérité vient du snapshot) ──
   let inv: Inventory = []
   let activeSlot = -1
   let stations: readonly StationId[] = []
   let container: OpenContainerView | null = null
+  let activeTab: 'sac' | 'metiers' = 'sac'
+
+  // ── Les ONGLETS : bascule PUREMENT visuelle. Le sac/craft reste monté (jamais détruit) —
+  //    le glisser-déposer et la file de craft survivent à un aller-retour sur MÉTIERS. ──
+  const applyTab = (): void => {
+    const sac = activeTab === 'sac'
+    for (const b of tabBtns) b.classList.toggle('is-on', b.dataset.tab === activeTab)
+    artWrap.style.display = sac ? '' : 'none'
+    persoWrap.style.display = sac ? '' : 'none'
+    sacWrap.style.display = sac ? '' : 'none'
+    metWrap.style.display = sac ? 'none' : 'flex'
+    // Hors SAC, le butin et les métiers-à-gauche disparaissent ; sur SAC, leur affichage
+    // fin (butin vs stats) reste tranché dans `update`, au vu du conteneur.
+    if (!sac) {
+      contWrap.style.display = 'none'
+      skillsWrap.style.display = 'none'
+    }
+  }
+  for (const b of tabBtns) {
+    b.addEventListener('click', () => {
+      activeTab = b.dataset.tab === 'metiers' ? 'metiers' : 'sac'
+      applyTab()
+    })
+  }
+
+  /** Repeint les colonnes MÉTIERS : niveau, barre, et statut ✓/▶/verrouillé de chaque
+   *  palier selon le niveau COURANT. Le texte, lui, est fixe (posé à la construction). */
+  const paintMet = (skills: Partial<Record<SkillId, number>>): void => {
+    for (const col of metCols) {
+      const xp = skills[col.id] ?? 0
+      const level = skillLevel(xp)
+      const frac = xp > 0 ? Math.min(1, Math.max(0, Math.sqrt(xp / 100) - level)) : 0
+      col.lvl.textContent = `niveau ${level}`
+      col.fill.style.width = `${(frac * 100).toFixed(0)}%`
+      // Le PROCHAIN palier = le plus bas encore verrouillé (Infinity si tout est atteint).
+      const nextLevel = Math.min(...col.paliers.filter((p) => p.level > level).map((p) => p.level))
+      for (const p of col.paliers) {
+        const done = p.level <= level
+        const next = !done && p.level === nextLevel
+        p.el.classList.toggle('is-done', done)
+        p.el.classList.toggle('is-next', next)
+        p.el.classList.toggle('is-locked', !done && !next)
+        p.mark.textContent = done ? '✓' : next ? '▶' : '·'
+      }
+    }
+  }
+  applyTab() // état de départ : l'onglet SAC
 
   // ── La recherche : un vrai <input>. Focalisé = le jeu ne bouge plus (`uiTyping`). ──
   search.addEventListener('focus', () => hooks.setTyping(true))
@@ -344,12 +457,19 @@ export function createHudCharacter(
           drag.ghost.remove()
           drag = null
         }
+        activeTab = 'sac' // le TAB rouvre toujours sur le SAC (l'usage premier), pas sur la fiche métiers
         return
       }
       inv = s.inv
       activeSlot = s.activeSlot
       stations = s.stations
       container = s.container
+
+      // Un conteneur qui s'ouvre RAMÈNE à SAC : on loote, on ne lit pas ses stats. Puis on
+      // fixe l'onglet et on rafraîchit les colonnes MÉTIERS (le niveau monte en jouant).
+      if (container) activeTab = 'sac'
+      applyTab()
+      paintMet(s.skills)
 
       for (let i = 0; i < bagCells.length; i++) paintCell(bagCells[i]!, inv[BAG_LO + i] ?? null, false)
       for (let i = 0; i < beltCells.length; i++) paintCell(beltCells[i]!, inv[i] ?? null, i === activeSlot)
@@ -369,25 +489,26 @@ export function createHudCharacter(
         skillBars[i]!.fill.style.width = `${(frac * 100).toFixed(0)}%`
       }
 
-      // À gauche, un seul locataire : le butin d'un conteneur ouvert PRIME sur les métiers
-      // (on loote, on ne consulte pas ses stats) ; sinon les métiers reprennent la place.
-      skillsWrap.style.display = container ? 'none' : ''
-
-      // Le conteneur ouvert : sa colonne de butin (cases `side:container`).
-      if (container) {
-        contWrap.style.display = 'block'
-        contTitle.textContent = container.title.toUpperCase()
-        if (contCells.length !== container.inv.length) {
-          contGrid.innerHTML = ''
-          contCells = container.inv.map((_, i) => {
-            const c = makeCell('container', i, false)
-            contGrid.appendChild(c.el)
-            return c
-          })
+      // La gauche de l'onglet SAC : un seul locataire. Le butin d'un conteneur ouvert PRIME
+      // sur les métiers (on loote, on ne consulte pas ses stats) ; sinon les métiers reprennent
+      // la place. Tout ceci ne vaut QUE sur SAC — sur MÉTIERS, `applyTab` a déjà tout caché.
+      if (activeTab === 'sac') {
+        skillsWrap.style.display = container ? 'none' : ''
+        if (container) {
+          contWrap.style.display = 'block'
+          contTitle.textContent = container.title.toUpperCase()
+          if (contCells.length !== container.inv.length) {
+            contGrid.innerHTML = ''
+            contCells = container.inv.map((_, i) => {
+              const c = makeCell('container', i, false)
+              contGrid.appendChild(c.el)
+              return c
+            })
+          }
+          for (let i = 0; i < contCells.length; i++) paintCell(contCells[i]!, container.inv[i] ?? null, false)
+        } else {
+          contWrap.style.display = 'none'
         }
-        for (let i = 0; i < contCells.length; i++) paintCell(contCells[i]!, container.inv[i] ?? null, false)
-      } else {
-        contWrap.style.display = 'none'
       }
 
       syncList() // ne reconstruit la liste QUE si recherche/stations/bourse ont changé
@@ -401,8 +522,9 @@ const CARRY_CAP = CARRY.CAPACITY
 function markup(): string {
   return `
   <style>
-    /* Écran façon Rust : la CEINTURE ne bouge pas (identique au HUD, bas-centre), le SAC
-       se pose juste au-dessus d'elle, l'ARTISANAT tient une colonne à droite — pas d'onglet.
+    /* Écran façon Rust en DEUX ONGLETS. La CEINTURE ne bouge pas (identique au HUD, bas-centre)
+       et reste sur les deux onglets ; l'onglet SAC pose le sac juste au-dessus d'elle et
+       l'ARTISANAT en colonne à droite ; l'onglet MÉTIERS remplit le haut de ses colonnes.
        Coordonnées dans le plan 1920×1080 (voir hud-dom.ts). */
     .hch{position:absolute;inset:0;background:#14100c;display:none;pointer-events:auto;
       background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.012) 0 2px,transparent 2px 4px);}
@@ -505,8 +627,52 @@ function markup(): string {
     .hch-rec-off .hch-rec-state{color:#e05a4a;}
     .hch-note{font-size:12px;color:#8b8474;letter-spacing:1px;margin-top:12px;padding-top:12px;border-top:1px solid #2a2a34;}
     .hch-ghost{position:fixed;width:44px;height:44px;image-rendering:pixelated;pointer-events:none;z-index:60;transform:translate(-50%,-50%);opacity:.85;}
+
+    /* ONGLETS : barre fine en haut-gauche. TAB ouvre/ferme ; ces en-tetes basculent le
+       contenu du haut (SAC vs METIERS). L'onglet actif porte un liseré de braise. */
+    .hch-tabs{position:absolute;top:22px;left:40px;display:flex;gap:4px;}
+    .hch-tab{font-size:13px;font-weight:700;letter-spacing:2px;color:#8b8474;background:none;border:none;
+      border-bottom:3px solid transparent;padding:6px 16px 8px;cursor:pointer;font-family:inherit;}
+    .hch-tab:hover{color:#e8e0c8;}
+    .hch-tab.is-on{color:#f4ecd2;border-bottom-color:#c98b3a;}
+
+    /* ONGLET METIERS : quatre colonnes pleine largeur, centrées, entre la barre d'onglets et
+       la ceinture. Chaque colonne = une fiche : geste, echelle de paliers, passifs, note outil. */
+    .hch-met{position:absolute;left:0;right:0;top:96px;bottom:120px;display:none;justify-content:center;align-items:flex-start;}
+    .hch-met-row{display:flex;gap:26px;justify-content:center;padding:0 40px;}
+    .hch-met-col{width:396px;background:#16120d;border:3px solid #14141a;padding:22px 22px 24px;display:flex;flex-direction:column;}
+    .hch-met-head{display:grid;grid-template-columns:48px 1fr auto;grid-template-rows:auto auto;column-gap:14px;align-items:center;margin-bottom:16px;}
+    .hch-met-ic{grid-row:1 / span 2;width:48px;height:48px;background:#1b1b22;border:2px solid #2a2a34;display:grid;place-items:center;}
+    .hch-met-ic img{width:34px;height:34px;image-rendering:pixelated;}
+    .hch-met-name{font-size:18px;font-weight:700;color:#ffffff;letter-spacing:1px;}
+    .hch-met-lvl{grid-column:3;grid-row:1;font-size:13px;color:#c98b3a;letter-spacing:1px;}
+    .hch-met-bar{grid-column:2 / span 2;grid-row:2;height:5px;background:#2a2320;margin-top:7px;}
+    .hch-met-fill{height:100%;background:#c98b3a;transition:width .2s ease;}
+    .hch-met-gest{font-size:14px;color:#b9b09a;line-height:1.5;margin-bottom:18px;min-height:44px;}
+    .hch-met-sec{font-size:12px;color:#c98b3a;letter-spacing:2px;margin-bottom:9px;}
+    .hch-met-pal{display:flex;flex-direction:column;gap:7px;margin-bottom:18px;}
+    .hch-mp{display:grid;grid-template-columns:18px 52px 1fr;column-gap:8px;align-items:baseline;font-size:13px;line-height:1.4;}
+    .hch-mp-mk{text-align:center;font-size:12px;}
+    .hch-mp-lvl{letter-spacing:.5px;}
+    .hch-mp.is-done{color:#e8e0c8;}
+    .hch-mp.is-done .hch-mp-mk{color:#8a9a4a;}
+    .hch-mp.is-next{color:#f4ecd2;}
+    .hch-mp.is-next .hch-mp-mk{color:#c98b3a;}
+    .hch-mp.is-locked{color:#6f685a;}
+    .hch-mp.is-locked .hch-mp-mk{color:#4a453a;}
+    .hch-mp-none{font-size:13px;color:#8b8474;font-style:italic;margin-bottom:18px;}
+    .hch-met-pas{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;}
+    .hch-mp-pas{font-size:13px;color:#b9b09a;line-height:1.4;padding-left:14px;text-indent:-14px;}
+    .hch-mp-pas::before{content:'• ';color:#c98b3a;}
+    .hch-met-outil{font-size:12px;color:#9a8f78;line-height:1.45;border-top:1px solid #2a2a34;padding-top:12px;padding-left:16px;text-indent:-16px;margin-top:8px;}
+    .hch-met-outil::before{content:'⚑ ';color:#c98b3a;}
   </style>
   <div class="hch-close">TAB — FERMER</div>
+  <div class="hch-tabs">
+    <button class="hch-tab hud-click" data-tab="sac">SAC</button>
+    <button class="hch-tab hud-click" data-tab="metiers">MÉTIERS</button>
+  </div>
+  <div class="hch-met"><div class="hch-met-row"></div></div>
   <div class="hch-art">
     <div class="hch-art-h"><span class="hch-art-t">ARTISANAT</span><span class="hch-art-hint">MOLETTE POUR DÉFILER</span></div>
     <input class="hch-search" type="text" placeholder="rechercher une recette…" spellcheck="false">
@@ -514,7 +680,7 @@ function markup(): string {
     <div class="hch-note"></div>
   </div>
   <div class="hch-cont"><div class="hch-cont-title"></div><div class="hch-cont-grid"></div></div>
-  <div class="hch-skills"><div class="hch-sk-h">MÉTIERS</div></div>
+  <div class="hch-skills"><div class="hch-sk-h">NIVEAUX</div></div>
   <div class="hch-perso">
     <div class="hch-doll-h">PERSONNAGE</div>
     <div class="hch-doll">

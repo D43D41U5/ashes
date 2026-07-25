@@ -8,9 +8,11 @@ import Phaser from 'phaser'
 import { poiClearings, type Structure, type WorldMap } from '@braises/sim'
 import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
 import { clutterAt, type PropKind, type SampleTerrain } from '../../render/clutter'
-import { LIT_CLUTTER_KINDS } from '../../render/lit-props'
+import { LIT_CLUTTER_KINDS, litClutterTextureKey, VARIANT_COUNTS, variantBase } from '../../render/lit-props'
+import { SHADOW_PROPS, SHADOW_PROP_GAP, SHADOW_PROP_GAP_LIT, SHADOW_PROP_WIDTH } from '../../render/prop-shadows'
 import { windSway, WIND_TAKE } from '../../render/wind'
 import type { Warp } from '../../render/warp'
+import { createContactShadow, positionShadow } from './contact-shadow'
 
 const CLUTTER_MIN_ZOOM = 1.2 // en-deçà, on coupe le décor (props illisibles) : le canopy prend le relais
 /** Props RAMPANTS : des textures de sol, sans hauteur. Ils restent sous la bande
@@ -26,6 +28,10 @@ const MAX_SPRITES = 4000 // borne dure de perf (cap silencieux : on log si dépa
 
 export class ClutterLayer {
   private readonly pool: Phaser.GameObjects.Image[] = []
+  /** Pool d'ombres de contact — POOL SÉPARÉ, servi par son PROPRE compteur (`shadowsUsed`), car
+   *  tous les props n'en portent pas (cf. `SHADOW_PROPS`) : un caillou entre deux buissons
+   *  désynchroniserait un index partagé et laisserait une ombre orpheline allumée. */
+  private readonly shadowPool: Phaser.GameObjects.Image[] = []
   private readonly sample: SampleTerrain
   /** Les clairières des lieux — MÊME fonction que celle qui bannit les nœuds côté
    *  sim (`poiClearings`). Une source unique : deux calculs divergents feraient
@@ -54,9 +60,9 @@ export class ClutterLayer {
    *  c'est ce qui rend la règle de l'odorat lisible sans une seule ligne d'UI. */
   wind: { x: number; y: number } = { x: 1, y: 0 }
 
-  /** ESSAI éclairage dynamique (couche 1) : quand armé, le décor est éclairé par le
+  /** Éclairage dynamique (couche 1) — le rendu par défaut : le décor est éclairé par le
    *  LightsManager (normale plate) — la lumière module son albédo peint sans le déformer.
-   *  Piloté par WorldScene. */
+   *  Piloté par WorldScene (armé sauf coupure via le panneau debug DEV). */
   lighting = false
 
   /** LE BÂTI GOMME LE DÉCOR (décision d'Alexis) : mur/sol/porte/toit effacent le
@@ -71,6 +77,7 @@ export class ClutterLayer {
 
   update(camera: Phaser.Cameras.Scene2D.Camera, now: number): void {
     let used = 0
+    let shadowsUsed = 0
     if (camera.zoom >= CLUTTER_MIN_ZOOM) {
       const v = camera.worldView
       const x0 = Math.max(0, Math.floor(v.x / TILE_PX) - MARGIN_TILES)
@@ -96,17 +103,25 @@ export class ClutterLayer {
             // Masse pâteuse : quand éclairé, on passe sur l'albédo APLATI `_lit` (+ sa normal map) ;
             // les autres props gardent leur art peint (la lumière plate les module sans les déformer).
             const useLit = this.lighting && LIT_CLUTTER_KINDS.has(p.kind)
-            sprite.setTexture(useLit ? `cl-${p.kind}_lit` : `cl-${p.kind}`)
+            // Les FAMILLES à variétés (fleur, cailloux) ont N textures : le `variant` (hash de la tuile)
+            // choisit laquelle. Les autres props n'ont qu'un stem de texture (leur `kind`).
+            const count = VARIANT_COUNTS[p.kind]
+            const base = count !== undefined
+              ? variantBase(p.kind, Math.min(count - 1, Math.floor(p.variant * count)))
+              : p.kind
+            sprite.setTexture(useLit ? litClutterTextureKey(base, p.mirror) : `cl-${base}`)
             sprite.setLighting(this.lighting) // pooled : réarmé chaque frame (couche 1)
             // Les pieds se posent sur le sol DÉFORMÉ, comme le maillage du sol et
             // les acteurs. Sans ce lift, un prop est dessiné à sa position PLATE :
             // sur un versant à 0,8 d'élévation il glisse de 120 px vers le bas —
             // les touffes de la berge finissent par flotter sur l'eau.
-            sprite.setPosition(feetX * TILE_PX, feetY * TILE_PX - this.warp.lift(feetX, feetY))
+            const sy = feetY * TILE_PX - this.warp.lift(feetX, feetY)
+            sprite.setPosition(feetX * TILE_PX, sy)
             sprite.setDisplaySize(TILE_PX * p.scale, TILE_PX * p.scale)
-            // Un flip horizontal N'inverse PAS la composante X de la normal map (Phaser tourne les
-            // normales, pas le miroir) → un prop `_lit` miroité s'éclairerait à l'ENVERS sur X. On ne
-            // miroite donc pas les variantes `_lit` (leur albédo aplati est symétrique : rien de perdu).
+            // Un flip Phaser N'inverse PAS la composante X de la normal map (il tourne les normales,
+            // pas le miroir) → un prop `_lit` miroité par flip s'éclairerait à l'ENVERS sur X. La
+            // variété par miroir passe donc par une texture `_lit_m` PRÉ-RETOURNÉE (normale juste par
+            // construction, cf. `litClutterTextureKey`) ; le flip Phaser reste éteint en mode `_lit`.
             sprite.setFlipX(useLit ? false : p.mirror)
             // Le vent. L'origine est aux PIEDS (0.5, 1) : une rotation fait donc
             // plier le brin depuis sa base, comme une tige — et non tourner comme
@@ -119,6 +134,28 @@ export class ClutterLayer {
             // couche ; à pieds égaux le nœud passe devant.)
             sprite.setDepth(FLAT_PROPS.has(p.kind) ? GROUND_PROP_DEPTH : clutterDepth(feetY, TILE_PX))
             sprite.setVisible(true)
+            // L'OMBRE DE CONTACT — même flaque, même règle (grand diamètre sur le pixel le plus bas)
+            // et même depth-under que nœuds/acteurs, mais pool et compteur À PART (tous les props
+            // n'en portent pas). Non tournée par le vent : le buisson plie, sa flaque au sol ne bouge
+            // pas. Au sol DÉFORMÉ (`sy`, post-lift).
+            if (SHADOW_PROPS.has(p.kind)) {
+              let shadow = this.shadowPool[shadowsUsed]
+              if (!shadow) {
+                shadow = createContactShadow(this.scene)
+                this.shadowPool[shadowsUsed] = shadow
+              }
+              // Gap de la variante RENDUE : `_lit` (défaut) quand `useLit`, sinon l'art peint.
+              const litGap = SHADOW_PROP_GAP_LIT[p.kind]
+              const gapTexels = useLit && litGap !== undefined ? litGap : (SHADOW_PROP_GAP[p.kind] ?? 2)
+              const gapWorld = gapTexels * sprite.scaleY
+              // LARGEUR sur l'emprise RÉELLE de l'art (texels × échelle du sprite) pour les props DEBOUT
+              // qui ne remplissent pas leur tuile — sinon `displayWidth` (tuile pleine) surdimensionne
+              // la flaque d'un prop mince. Les props pleins (absents de la table) gardent `displayWidth`.
+              const artW = SHADOW_PROP_WIDTH[p.kind]
+              const widthBasis = artW !== undefined ? artW * sprite.scaleX : sprite.displayWidth
+              positionShadow(shadow, feetX * TILE_PX, sy, widthBasis, clutterDepth(feetY, TILE_PX), gapWorld)
+              shadowsUsed++
+            }
           }
         }
       }
@@ -128,6 +165,9 @@ export class ClutterLayer {
       }
     }
     for (let i = used; i < this.pool.length; i++) this.pool[i]!.setVisible(false)
+    // Les ombres suivent le sort de leurs props (même logique que le pool de sprites) : dézoomé
+    // ou culled, `shadowsUsed` retombe à 0 et aucune flaque ne reste allumée sous une tuile vide.
+    for (let i = shadowsUsed; i < this.shadowPool.length; i++) this.shadowPool[i]!.setVisible(false)
   }
 
   private acquire(i: number): Phaser.GameObjects.Image {
@@ -142,5 +182,7 @@ export class ClutterLayer {
   destroy(): void {
     for (const s of this.pool) s.destroy()
     this.pool.length = 0
+    for (const s of this.shadowPool) s.destroy()
+    this.shadowPool.length = 0
   }
 }

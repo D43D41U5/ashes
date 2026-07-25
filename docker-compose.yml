@@ -15,11 +15,15 @@
 # ─── AJOUTER UNE DÉPENDANCE npm (la seule manœuvre que le montage `:ro` complique) ───
 #
 # Les sources sont montées `:ro` (voir le service `client`) et les node_modules vivent
-# dans des volumes nommés. Conséquence : le `pnpm install` du conteneur ne peut PAS
-# écrire son fichier temporaire à la racine `/app` — il ne passe donc que quand il n'a
-# RIEN à installer. Dès qu'un package.json gagne une dépendance, le conteneur tombe en
-# BOUCLE DE CRASH sur « EROFS: read-only file system, open '/app/_tmp_…' » (vécu le
-# 2026-07-18 en ajoutant colyseus.js pour le multi).
+# dans des volumes nommés. Conséquence : AUCUN conteneur ne fait `pnpm install` au
+# démarrage (client comme server lancent leur binaire directement) — sinon `pnpm install`
+# tenterait d'écrire son fichier temporaire à la racine `/app`, interdite `:ro`, et
+# tomberait en boucle de crash sur « EROFS: read-only file system, open '/app/_tmp_…' »
+# (vécu le 2026-07-18 en ajoutant colyseus.js, le 2026-07-24 en ajoutant tsx).
+#
+# Donc après un ajout de dépendance, le conteneur ne CRASHE PLUS — mais il tourne avec des
+# modules PÉRIMÉS jusqu'à ce qu'on repeuple les volumes (Vite/tsx lèvera alors une erreur de
+# résolution explicite, pas un crash-loop opaque). La repopulation reste OBLIGATOIRE :
 #
 # La marche à suivre, après avoir édité un package.json et lancé `pnpm install` SUR
 # L'HÔTE (qui met à jour pnpm-lock.yaml) — peupler les volumes du conteneur par un
@@ -54,8 +58,18 @@ services:
   client:
     image: node:22-alpine
     container_name: braises-client-dev
-    working_dir: /app
-    command: sh -c "corepack enable && pnpm install && pnpm --filter @braises/client dev"
+    working_dir: /app/packages/client
+    # ON LANCE VITE DIRECTEMENT DEPUIS LE VOLUME (comme le `server` lance `tsx`) — PAS de
+    # `pnpm install` au démarrage. Raison : les sources sont montées `:ro`, or `pnpm install`
+    # écrit un fichier temporaire à la racine `/app` dès qu'il a du travail → EROFS → boucle
+    # de crash (vécu le 2026-07-18 avec colyseus, le 2026-07-24 avec tsx). Le server n'a JAMAIS
+    # eu ce bug parce qu'il n'installe rien : on aligne le client dessus. Les deps vivent déjà
+    # dans les volumes nommés (recette « AJOUTER UNE DÉPENDANCE » en tête de fichier).
+    # COMPROMIS ASSUMÉ : après un ajout de dépendance, le conteneur ne CRASHE plus mais tourne
+    # avec des modules PÉRIMÉS (Vite lèvera « does not provide an export » sur le paquet neuf)
+    # tant qu'on n'a pas rejoué la recette de repeuplement. Le silence du crash-loop se paie
+    # d'une erreur plus explicite au bon moment — un meilleur marché.
+    command: sh -c "exec ./node_modules/.bin/vite"
     volumes:
       #
       # LES SOURCES SONT MONTÉES EN LECTURE SEULE — et c'est LA garde définitive.

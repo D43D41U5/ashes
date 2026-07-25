@@ -26,19 +26,27 @@ describe('keymap', () => {
   })
 
   /*
-   * La garde de fond du débranchement : le clavier ne porte plus AUCUN verbe de
-   * jeu. S'en tenir à une liste blanche (déplacement, sprint, les trois écrans)
-   * fait échouer le test le jour où quelqu'un recâble une action à la va-vite —
-   * ce qui est exactement la discussion qu'on veut avoir à ce moment-là.
+   * La garde de fond du débranchement : le clavier ne porte quasiment AUCUN verbe de
+   * jeu. S'en tenir à une liste blanche (déplacement, allures, JETER, CUEILLIR, les
+   * écrans) fait échouer le test le jour où quelqu'un recâble une action à la va-vite —
+   * ce qui est exactement la discussion qu'on veut avoir à ce moment-là. Elle a eu lieu
+   * deux fois : `block` (2026-07-12) et `forage` (2026-07-24), toutes deux DÉCISIONS
+   * UTILISATEUR blanchies ci-dessous. Toute troisième doit passer par la même porte.
    */
-  it('le clavier ne porte que le déplacement, les allures (dont la parade), JETER, et les écrans (sac/carte/chronique/pause)', () => {
+  it('le clavier ne porte que le déplacement, les allures (dont la parade), JETER, CUEILLIR (E), et les écrans (sac/carte/chronique/pause)', () => {
     // `block` (la parade) est une ALLURE maintenue, au même rang que `sprint` et
-    // `sneak` — pas un verbe de ceinture. C'est le seul recâblage clavier assumé
-    // depuis 2026-07-12, et il est ici blanchi EXPRÈS : une stance a sa place au
-    // clavier, un verbe (attaquer, bander, bâtir…) n'en a pas. `toggleMenu` (ESC, le
-    // menu pause) est un ÉCRAN, au même rang que le sac/la carte/la chronique — pas un verbe.
+    // `sneak` — pas un verbe de ceinture. C'est le premier recâblage clavier assumé
+    // depuis 2026-07-12, blanchi EXPRÈS : une stance a sa place au clavier, un verbe
+    // (attaquer, bander, bâtir…) n'en a pas. `toggleMenu` (ESC, le menu pause) est un
+    // ÉCRAN, au même rang que le sac/la carte/la chronique — pas un verbe.
+    //
+    // `forage` (E), lui, EST un verbe — et c'est la seule exception assumée (décision
+    // utilisateur 2026-07-24, docs/decisions.md) : UNE touche contextuelle « interagir »
+    // à la Rust (on pointe le buisson au curseur, E le cueille ENTIER d'un coup, quoi
+    // qu'on tienne), pas l'explosion un-verbe-une-touche qu'on avait bannie. Elle laisse
+    // le CLIC strictement inchangé (« l'objet en main décide » : une arme frappe toujours).
     expect(Object.keys(KEYMAP).sort()).toEqual(
-      ['block', 'dropHeld', 'moveDown', 'moveLeft', 'moveRight', 'moveUp', 'sneak', 'sprint', 'toggleInventory', 'toggleJournal', 'toggleMap', 'toggleMenu'].sort(),
+      ['block', 'dropHeld', 'forage', 'moveDown', 'moveLeft', 'moveRight', 'moveUp', 'sneak', 'sprint', 'toggleInventory', 'toggleJournal', 'toggleMap', 'toggleMenu'].sort(),
     )
   })
 })

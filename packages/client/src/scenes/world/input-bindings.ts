@@ -284,6 +284,17 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     return node !== undefined && NODE_DEFS[node.type].skill === 'mining'
   }
 
+  /** Le nœud visé est-il de la CUEILLETTE (`foraging`) ? Depuis le 2026-07-24, la
+   *  cueillette est passée à la touche E : le CLIC ne la récolte plus. On l'emploie
+   *  pour COUPER le clic sur fibre/baies/tourbe/cendre, aux deux points d'envoi souris
+   *  (l'appui `pointerdown` ET le maintien `holdHarvest`) — sinon fouiller un cadavre
+   *  puis glisser le curseur sur un buisson cueillerait encore. */
+  const isForageNode = (nodeId: number): boolean => {
+    const node = deps.nodes().find((n) => n.id === nodeId)
+    return node !== undefined && NODE_DEFS[node.type].skill === 'foraging'
+  }
+  const isClickForage = (a: PlayerAction | null): boolean => a?.type === 'harvest' && isForageNode(a.nodeId)
+
   /** La position MONDE (en tuiles) du curseur — la visée du minage. La sim en déduit le
    *  flanc frappé (spec verbe 2). Attachée à tout `harvest` ; ignorée hors nœud de minage. */
   const cursorAim = (pointer: Phaser.Input.Pointer): { aimX: number; aimY: number } => {
@@ -346,6 +357,23 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   let mineNodeId = -1
   let lastMineAt = -Infinity
 
+  /**
+   * LA CUEILLETTE À LA TOUCHE E (décision utilisateur 2026-07-24 ; spec recolte-maitrise
+   * verbe 3). Un TAP suffit — E et la SOURIS ensemble : on pointe le buisson au curseur,
+   * on presse E, et le nœud ENTIER vient dans le sac d'un coup (`whole: true`, la sim vide
+   * tout le stock). Rien à maintenir : « d'un coup » veut dire un geste, pas une cadence.
+   * Le clic, lui, ne cueille plus (couche plus bas) — il garde sa grammaire (une arme frappe).
+   * Restreint au métier `foraging` : viser un arbre/rocher avec E ne fait rien (leur geste
+   * est le clic maintenu). La sim revalide portée, stock et métier.
+   */
+  onDown(KEYMAP.forage, () => {
+    if (overlayOpen()) return // le sac/la carte/le menu mangent la touche comme le clic
+    const aim = aimNow(scene.input.activePointer)
+    if (aim.inRange && aim.nodeId !== null && isForageNode(aim.nodeId)) {
+      deps.sendAction({ type: 'harvest', nodeId: aim.nodeId, whole: true })
+    }
+  })
+
   scene.input.mouse?.disableContextMenu()
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
     if (overlayOpen()) return
@@ -386,6 +414,14 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       mineNodeId = action.nodeId
       lastMineAt = scene.time.now
       deps.sendAction({ type: 'harvest', nodeId: action.nodeId, ...cursorAim(pointer) })
+      return
+    }
+    // LA CUEILLETTE EST PASSÉE À E (décision utilisateur 2026-07-24) : le clic ne récolte
+    // plus fibre/baies/tourbe/cendre. On le rend MUET sur un buisson — il ne frappe pas
+    // « en passant » (seule une arme frappe, traitée plus haut), il ne fait rien. On coupe
+    // aussi le maintien (`holding = false`) pour que `tickHold` ne cueille pas non plus.
+    if (isClickForage(action)) {
+      holding = false
       return
     }
     if (action) {
@@ -475,7 +511,10 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       GATHER_COOLDOWN_MS,
       handAt(pointer),
     )
-    if (action) {
+    // On COUPE la cueillette au maintien souris aussi (elle est passée à E, 2026-07-24) :
+    // sans ça, fouiller un cadavre puis glisser le curseur sur un buisson le cueillerait
+    // encore. `holdHarvest` peut toujours nourrir (manger) — ça, on le laisse passer.
+    if (action && !isClickForage(action)) {
       deps.sendAction(action)
       lastHarvestAt = scene.time.now
     }

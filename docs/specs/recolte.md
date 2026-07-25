@@ -33,7 +33,7 @@ Cette spec ne touche pas à l'économie. Elle rend le geste *lisible*, *tenable*
 
 ### Le clic se tient, il ne se martèle pas
 
-- **G6 — Récolte au clic MAINTENU** : bouton enfoncé, le coup se répète tant que le curseur vise un nœud à portée, **à la cadence du rechargement** (`GATHER_COOLDOWN_TICKS`). Relâcher arrête. *(Pour le BOIS, ce comportement est remplacé par une jauge charge/relâche — voir `recolte-maitrise.md` B1.)*
+- **G6 — Récolte au clic MAINTENU** : bouton enfoncé, le coup se répète tant que le curseur vise un nœud à portée, **à la cadence du rechargement** (`GATHER_COOLDOWN_TICKS`). Relâcher arrête. *(Pour le BOIS, ce comportement est remplacé par une jauge charge/relâche — voir `recolte-maitrise.md` B1 ; pour la CUEILLETTE — fibre, baies, tourbe, cendre — il est remplacé par la touche **E**, qui vide le nœud d'un coup, voir `recolte-maitrise.md` P1 et `docs/decisions.md` 2026-07-24.)*
 - **G7 — Le maintien n'INONDE PAS la sim.** Le client cadence lui-même ses envois : il n'émet pas une `harvest` par frame pour se faire rejeter 19 fois sur 20 par « trop tôt ». Un refus n'est pas gratuit — c'est un `SimEvent` (`action_rejected`) que la chronique et l'alignement consomment. Le flux d'événements n'est pas une poubelle.
 - **G8 — La cible se ré-évalue à chaque coup**, pas une fois au clic : le nœud s'épuise, le curseur bouge, la caméra glisse encore. On récolte ce qu'on vise MAINTENANT, sinon on ne récolte rien.
 
@@ -71,4 +71,4 @@ Cette spec ne touche pas à l'économie. Elle rend le geste *lisible*, *tenable*
 
 `economie.md` R6 est **périmée** : elle décrit une usure « agrégée par type d'outil » (`wear[outil]`), alors que le chantier « le sac » l'a passée **par case** (`Slot.wear` — deux haches ne partagent plus un compteur). *(Mis à jour 2026-07-19 : `economie.md` R6 a depuis été corrigée — l'usure est bien « par case ».)*
 
-G6 est par ailleurs **partiellement périmée** : pour le BOIS (`tree`/`old_tree`), le clic maintenu ne répète plus un coup à la cadence du cooldown — il CHARGE une jauge, et le relâché est LA frappe (`harvest_charge_start`/`harvest_release`, spec `recolte-maitrise.md` B1). G6 ne vaut plus que pour la pierre et les plantes.
+G6 est par ailleurs **largement périmée** : pour le BOIS (`tree`/`old_tree`), le clic maintenu ne répète plus un coup à la cadence du cooldown — il CHARGE une jauge, et le relâché est LA frappe (`harvest_charge_start`/`harvest_release`, spec `recolte-maitrise.md` B1). Pour la CUEILLETTE (fibre, baies, tourbe, cendre), le clic ne récolte plus DU TOUT : c'est la touche **E** qui vide le nœud d'un coup (décision utilisateur 2026-07-24, `recolte-maitrise.md` P1). G6 (le clic maintenu qui répète) ne vaut donc plus que pour la PIERRE — et encore, sous la forme du verrou-nœud du minage à maîtrise (`recolte-maitrise.md` verbe 2).

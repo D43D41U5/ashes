@@ -12,6 +12,10 @@ import { BootScene } from './scenes/BootScene'
 import { MenuScene } from './scenes/MenuScene'
 import { UIScene } from './scenes/UIScene'
 import { WorldScene } from './scenes/WorldScene'
+import { mountBuildStamp } from './scenes/ui/build-stamp'
+
+// Le numéro de build en bas à droite, dès le boot (visible aussi sur le menu).
+mountBuildStamp()
 
 new Phaser.Game({
   type: Phaser.AUTO,
@@ -21,8 +25,8 @@ new Phaser.Game({
   backgroundColor: '#0f0b08', // le fond chaud de la maquette (palette bg)
   antialias: true,
   roundPixels: true,
-  // Éclairage dynamique (essai DA, decisions.md 2026-07-20) : le LightsManager plafonne le
-  // nombre de lumières simultanées. Le soleil + une poignée de Feux visibles tiennent large.
+  // Éclairage dynamique (rendu par défaut, decisions.md 2026-07-20/24) : le LightsManager
+  // plafonne le nombre de lumières simultanées. Le soleil + une poignée de Feux tiennent large.
   render: { maxLights: 40 },
   scale: {
     mode: Phaser.Scale.FIT,

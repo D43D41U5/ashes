@@ -287,16 +287,28 @@ export const BALANCE = {
   MINE_LEVELS_PER_TOLERANCE: 5,
 
   /**
-   * LA CUEILLETTE À MAÎTRISE (spec recolte-maitrise, verbe 3). Chaque coin porte une
-   * RICHESSE seedée (facteur de stock, centré sur ~1 pour que les moyennes par cercle ne
-   * bougent pas) : maigre → riche. `foraging` fait LUIRE les bons coins que le novice voit
-   * uniformes — rendu GATÉ côté client (fuite assumée) : rien sous `REVEAL_LEVEL`, et seuls
-   * les coins au-dessus de `RICH_THRESHOLD` luisent. Ordres de grandeur, calibrés en playtest.
+   * LA CUEILLETTE À MAÎTRISE (spec recolte-maitrise, verbe 3, révisée 2026-07-25). Chaque coin
+   * porte une RICHESSE seedée (facteur de stock, centré sur ~1 pour que les moyennes par cercle ne
+   * bougent pas) : maigre → riche. La maîtrise ne fait plus LUIRE les coins (l'ancien halo, retiré) ;
+   * elle ouvre une ÉCHELLE : d'abord un bonus de SEMENCE sur le geste nu (`forageBounty`, dès
+   * `FORAGE_SEED_LEVEL` — relie le potager), puis, au sommet, l'accès aux PATCHES DE CHAMPIGNONS
+   * (`champignon`, un vrai nœud humide/ombragé, gaté par le savoir `FORAGE_QUALITY_LEVEL`). Le tirage
+   * de semence est POSITIONNEL (`hash2(nodeId, tick)`, aucun flux RNG, déterministe au replay). Ordres
+   * de grandeur, calibrés en playtest.
    */
   FORAGE_RICHNESS_MIN: 0.55,
   FORAGE_RICHNESS_MAX: 1.45,
-  FORAGE_REVEAL_LEVEL: 1, // niveau `foraging` où la perception s'ouvre (le novice voit uniforme)
-  FORAGE_RICH_THRESHOLD: 1.1, // au-dessus = « bon coin » qui luit (~40 % du haut de la fourchette)
+  /** Sous cette richesse, un coin ne rend AUCUN bonus de semence (les coins pauvres restent nus). */
+  FORAGE_BOUNTY_RICH_FLOOR: 1.0,
+  /** Le bonus de SEMENCE s'ouvre à ce niveau. */
+  FORAGE_SEED_LEVEL: 3,
+  /** Le SAVOIR pour récolter les patches de champignons (gate d'accès du nœud `champignon`). */
+  FORAGE_QUALITY_LEVEL: 6,
+  /** Pente de la proba de semence par niveau au-dessus du palier (× la richesse au-dessus du plancher).
+   *  La graine reste RARE à dessein : la recette d'amorçage (baies→graine au Feu) garde le rôle fiable. */
+  FORAGE_SEED_CHANCE_PER_LEVEL: 0.05,
+  /** Plafond doux de la proba de semence — la cueillette n'est pas une imprimante. */
+  FORAGE_BOUNTY_CHANCE_MAX: 0.35,
 
   /** Coups outillés avant qu'un outil soit consommé. */
   TOOL_DURABILITY: 100,
@@ -692,6 +704,9 @@ export type NodeType =
   | 'rock'
   | 'fiber_plant'
   | 'berry_bush'
+  /** Le PATCH DE CHAMPIGNONS (cueillette à maîtrise verbe 3) — pousse à l'humide/l'ombre.
+   *  Visible de tous (un TRAJET), mais on ne sait le récolter qu'expert (`minForageLevel`). */
+  | 'champignon'
   | 'iron_vein'
   | 'coal_seam'
   // ── LES NŒUDS STRUCTURANTS DES ZONES (spec worldgen R9) — chacun n'existe QUE chez lui ──
@@ -741,6 +756,12 @@ export interface NodeDef {
    * que `recolte.md` G13 a déjà refusé pour le marteau.
    */
   minTool: ToolTier
+  /**
+   * Le niveau de MÉTIER minimal pour entamer le nœud (spec recolte-maitrise verbe 3). Sœur de
+   * `minTool` côté SAVOIR, pas outil : le patch de champignons est VISIBLE de tous (un trajet),
+   * mais on ne sait reconnaître les bons qu'expert. Absent = aucun palier de savoir (le défaut).
+   */
+  minForageLevel?: number
 }
 
 export const NODE_DEFS: Record<NodeType, NodeDef> = {
@@ -748,6 +769,9 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'none' },
   fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
   berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
+  // LE PATCH DE CHAMPIGNONS : cueilli à mains nues (E), mais gaté par le SAVOIR — on ne récolte
+  // les bons qu'à `FORAGE_QUALITY_LEVEL` (le novice les voit sans savoir les prendre). Humide/ombre.
+  champignon: { item: 'champignons', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', minForageLevel: BALANCE.FORAGE_QUALITY_LEVEL },
   iron_vein: { item: 'iron_ore', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
   coal_seam: { item: 'coal', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
 
@@ -806,6 +830,7 @@ export const TOOL_DURABILITIES: Partial<Record<import('./items').ItemId, number>
  */
 export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
   berries: 6,
+  champignons: 12, // la trouvaille de l'herboriste (cueillette à maîtrise) : 2× les baies, mais bien sous le cuit
   legume: 6, // le potager (agriculture) : « nourriture de base » (GDD §8), au niveau des baies
   raw_meat: 8,
   quartier: 20, // V0-5 : un gros repas cru (plus que raw_meat) — le gros gibier nourrit longtemps
@@ -851,6 +876,7 @@ export const AGRICULTURE = {
  */
 export const SPOIL_CYCLES: Partial<Record<import('./items').ItemId, number>> = {
   berries: 2,
+  champignons: 2, // périssable comme les baies — la trouvaille ne se thésaurise pas
   raw_meat: 1.5, // la viande crue est une bombe à retardement : on la cuit, ou on la perd
   quartier: 1.5, // V0-5 : périme comme la viande crue (le dilemme du retour : poids ET péremption)
   cooked_meat: 4,
@@ -2446,6 +2472,7 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   stone: 2,
   fiber: 0.2,
   berries: 0.2,
+  champignons: 0.2, // léger comme les baies
   legume: 0.2, // le potager : léger comme les baies
   graine: 0.1, // une poignée de graines, presque rien
   stew: 0.5,
@@ -2579,6 +2606,7 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   coal: 20,
   components: 10,
   berries: 10,
+  champignons: 10, // s'empile comme les baies
   rope: 10,
   stew: 5,
   iron_ingot: 5,

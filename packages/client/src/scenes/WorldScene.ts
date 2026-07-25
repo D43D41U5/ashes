@@ -116,7 +116,6 @@ import { syncDebug } from './world/debug-overlay'
 import { BuildGhost } from './world/build-ghost'
 import { FellGauge, type FellCharge } from './world/fell-gauge'
 import { FlankGlow } from './world/flank-glow'
-import { ForageGlow } from './world/forage-glow'
 import { HitFx } from './world/hit-fx'
 import { createAttackFx, type AttackFx, type Zone } from './world/attack-fx'
 import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
@@ -373,8 +372,6 @@ export class WorldScene extends Phaser.Scene {
   private flankGlow!: FlankGlow
   /** Instant (horloge client) du dernier coup de récolte porté — le tempo que la lueur reforme. */
   private lastStrikeAt = -Infinity
-  /** La lueur des bons coins de cueillette, révélée par `foraging` (spec recolte-maitrise, verbe 3). */
-  private forageGlow!: ForageGlow
   /** Exposé pour le hook `__BRAISES__` (les smoke tests lisent `others.size`). */
   private get others(): ReadonlyMap<number, InterpolatedSprite> {
     return this.view.others
@@ -481,7 +478,6 @@ export class WorldScene extends Phaser.Scene {
     this.buildGhost = new BuildGhost(this)
     this.fellGauge = new FellGauge(this)
     this.flankGlow = new FlankGlow(this)
-    this.forageGlow = new ForageGlow(this)
 
     const zoom = zoomForFraming(VISIBLE_TILES_TALL, TILE_PX, this.scale.height)
     this.cameras.main.setZoom(zoom)
@@ -784,8 +780,6 @@ export class WorldScene extends Phaser.Scene {
     const cooldownMs = (BALANCE.GATHER_COOLDOWN_TICKS / BALANCE.TICK_RATE_HZ) * 1000
     const readiness = (time - this.lastStrikeAt) / cooldownMs
     this.flankGlow.update(this.view.nodes, this.predicted, skillLevel(meNow?.skills.mining ?? 0), readiness, time, this.warp)
-    // La lueur des bons coins de cueillette — révélée par MON niveau de foraging (gate client).
-    this.forageGlow.update(this.view.nodes, this.predicted, skillLevel(meNow?.skills.foraging ?? 0), time, this.warp)
     // Les stations à portée : elles grisent (ou non) les vignettes du panneau de
     // craft. Miroir pur du client — la sim revalide tout, à l'enfilage et à chaque
     // tick (spec craft-file F7, F14).
@@ -951,9 +945,11 @@ export class WorldScene extends Phaser.Scene {
       this.fireFx?.update(this.view.structures, this.view.wind) // flammes/braises/fumée, poussées par le vent
       // La chaleur du Feu au sol : cosmétique, ∝ nuit (voir world/fire-ground-glow.ts).
       this.fireGround?.update(this.view.structures, this.view.villages, day, time)
-      // ESSAI éclairage dynamique (toggle debug, panneau P) : le flag éclaire TOUS les sprites
-      // (couche 1) et pilote soleil/lune/Feux. Éteint = scène rendue comme avant.
-      const lit = Boolean(getHud(this.registry, 'debugLighting'))
+      // ÉCLAIRAGE DYNAMIQUE — le rendu PAR DÉFAUT (décision d'Alexis, docs/decisions.md 2026-07-24) :
+      // il éclaire TOUS les sprites (couche 1) et pilote soleil/lune/Feux. Le flag n'existe (et n'est
+      // posé) qu'en DEV, où le panneau P permet de l'ÉTEINDRE pour comparer avec l'ancien rendu à
+      // plat ; absent (prod) → `?? true`, la lumière est allumée. Éteint = scène rendue « comme avant ».
+      const lit = getHud(this.registry, 'debugLighting') ?? true
       this.view.lighting = lit
       if (this.clutter) this.clutter.lighting = lit
       // Le voile descend SOUS les sprites quand ils sont éclairés (il ne tinte plus que le fond) ;

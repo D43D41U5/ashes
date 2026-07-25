@@ -87,6 +87,16 @@ export const CONTENU = {
   TEASER_STOCK: 3,
 
   /**
+   * LES CHAMPIGNONS (spec recolte-maitrise verbe 3) — un patch tous les X tuiles LIBRES, par
+   * terrain. ABONDANT à l'humide et à l'ombre franche (marais, tourbière, roselière, sous-bois de
+   * vieille sylve) ; TRÈS RARE sur le sol des forêts ordinaires (demande d'Alexis : quelques-uns
+   * dans les bois de la zone T0, une curiosité qu'on croise tôt). Posés en PASSE SÉPARÉE, appendue,
+   * positionnelle — la table `CONTENUS` n'est pas touchée, aucun nœud existant ne bouge. Calibration.
+   */
+  CHAMPIGNON_HUMIDE: 0.06,
+  CHAMPIGNON_FORET: 0.006,
+
+  /**
    * UN EMPLACEMENT DE VILLAGE : ce qu'il lui faut sous la main, et sur quel rayon.
    *
    * **CES SEUILS SONT COUPLÉS À `PAS_SEMIS`, et je l'avais oublié.** En divisant la densité de
@@ -188,6 +198,10 @@ function terrainAdmet(type: NodeType, terrain: number): boolean {
       return n !== 'shallow_water' && n !== 'peat_bog' && n !== 'reed_marsh'
     case 'ash_heap':
       return n === 'burnt_forest' || n === 'heath'
+    case 'champignon':
+      // L'humide et l'ombre : marais, tourbière, roselière, sous-bois de vieille sylve, et le sol
+      // des forêts ordinaires (là, très rare — voir `champignonsRares`).
+      return n === 'marsh' || n === 'peat_bog' || n === 'reed_marsh' || n === 'old_growth' || n === 'forest'
     default:
       return true
   }
@@ -246,6 +260,11 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   for (const v of vergers) nodes.push(v)
   id += vergers.length
 
+  // ── LES CHAMPIGNONS — abondants à l'humide/l'ombre, TRÈS RARES en forêt (verbe 3) ──
+  const mush = champignonsRares(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  for (const m of mush) nodes.push(m)
+  id += mush.length
+
   // ── LE TEASER — un seul filon, dans la racine, et il est dérisoire ────────
   const t = poserLeTeaser(c, id)
   if (t) nodes.push(t)
@@ -268,6 +287,45 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
  * patron canonique du worldgen. Aucun tirage sur le PRNG partagé, aucune entité — donc aucun
  * décalage de flux. Et rien qui touche la marchabilité : on n'ajoute que des nœuds.
  */
+/**
+ * LES CHAMPIGNONS (spec recolte-maitrise verbe 3). Un patch pousse là où c'est adapté : ABONDANT
+ * à l'humide/l'ombre franche (marais, tourbière, roselière, sous-bois de vieille sylve), TRÈS RARE
+ * sur le sol des forêts ordinaires (`forest` — quelques-uns dans les bois de la zone T0, demande
+ * d'Alexis). Nulle part ailleurs. VISIBLE de tous (un trajet) ; le SAVOIR pour le récolter est gaté
+ * à part (`NodeDef.minForageLevel`, jugé dans `economy.strikeRejection`).
+ *
+ * PASSE SÉPARÉE, appendue (comme `vergersSauvages`/`arbresDeLaRacine`) : elle ne touche pas la table
+ * `CONTENUS`, donc aucun nœud existant ne bouge et le flux de génération n'est pas décalé (leçon RNG).
+ * Tirage POSITIONNEL (`hash2` salé de 'MUSH'), aucun PRNG partagé, sur tuile LIBRE (hors seuil, hors
+ * tuile déjà occupée). Pur et déterministe.
+ */
+function champignonsRares(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
+  const { width, height, terrain } = c.map
+  const out: ResourceNode[] = []
+  let id = idStart
+  const salt = (c.graphe.seed ^ 0x4d555348) | 0 // 'MUSH'
+  for (let ty = 0; ty < height; ty++) {
+    for (let tx = 0; tx < width; tx++) {
+      const i = ty * width + tx
+      if (c.rampe[i] || occupees.has(i)) continue // le seuil ne nourrit rien ; tuile déjà prise
+      const def = TERRAINS[terrain[i]!]
+      if (!def?.walkable) continue
+      const n = def.name
+      const prob =
+        n === 'marsh' || n === 'peat_bog' || n === 'reed_marsh' || n === 'old_growth'
+          ? CONTENU.CHAMPIGNON_HUMIDE
+          : n === 'forest'
+            ? CONTENU.CHAMPIGNON_FORET
+            : -1 // tout autre terrain : jamais de champignon
+      if (prob < 0 || hash2(tx, ty, salt) >= prob) continue
+      out.push({ id, type: 'champignon', tx, ty, stock: NODE_DEFS.champignon.stock, regrowAt: 0 })
+      occupees.add(i)
+      id += 1
+    }
+  }
+  return out
+}
+
 function vergersSauvages(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
   const { width, terrain, zones } = c.map
   const out: ResourceNode[] = []

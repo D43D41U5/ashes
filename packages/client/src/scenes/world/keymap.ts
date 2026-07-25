@@ -40,6 +40,18 @@ export const KEYMAP = {
    * le GDD §9bis et jamais tenu), et de l'allègement d'un porteur en fuite.
    */
   dropHeld: ['G'],
+  /**
+   * CUEILLIR (fibre, baies, tourbe, cendre — le métier `foraging`, spec
+   * recolte-maitrise verbe 3). La SEULE exception au « plus aucun verbe au
+   * clavier » (2026-07-12), actée le 2026-07-24 (décision utilisateur) : on POINTE
+   * le buisson au curseur et on presse E — le nœud ENTIER vient d'un coup, quoi
+   * qu'on tienne. Ce n'est pas l'explosion un-verbe-une-touche qu'on avait bannie
+   * (quinze touches saturées) — c'est UNE touche contextuelle « interagir », façon
+   * Rust, et elle laisse le CLIC strictement inchangé : une arme frappe toujours,
+   * un clic de panique ne part jamais cueillir. La sim connaît `harvest` depuis
+   * toujours (economy.ts) ; `whole` y vide le stock d'un seul geste.
+   */
+  forage: ['E'],
   // Les ÉCRANS, et eux seuls (décision utilisateur, 2026-07-12).
   toggleJournal: ['J'],
   toggleMap: ['M'],

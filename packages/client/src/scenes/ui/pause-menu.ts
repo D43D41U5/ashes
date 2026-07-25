@@ -19,6 +19,7 @@ const KEYS: [string, string][] = [
   ['Se déplacer', 'ZQSD · WASD · flèches'],
   ['Courir · Marcher lentement', 'SHIFT · C'],
   ['Parer (maintenu)', 'ESPACE'],
+  ['Cueillir (baies, fibre…)', 'E'],
   ['Ceinture (objet en main)', '1 – 6'],
   ['Jeter ce qu’on tient', 'G'],
   ['Sac & artisanat', 'TAB'],
@@ -30,7 +31,7 @@ const KEYS: [string, string][] = [
  *  Colonne de droite tenue COURTE (≤ 34 signes) : en mono, au-delà, la ligne se casse en
  *  deux et le tableau perd son rythme (une ligne sur deux vaut le double de hauteur). */
 const CLICKS: [string, string][] = [
-  ['un nœud, un arbre', 'récolter — maintenu : abattre'],
+  ['un arbre, un rocher', 'abattre, miner (maintenu)'],
   ['une arme en main', 'frapper — maintenu : coup lourd'],
   ['de la nourriture', 'manger — ou la DONNER à un voisin'],
   ['des fibres, et une plaie', 'se panser'],

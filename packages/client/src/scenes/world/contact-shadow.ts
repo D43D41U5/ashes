@@ -15,9 +15,12 @@
  *   • NOIR en ALPHA NORMAL (~⅓), pas MULTIPLY. Le multiply « correct » a des ratés WebGL et
  *     se cumule avec l'ombrage de pente (`ShadeLayer`) sur les mêmes pixels de sol → des
  *     zones plates-en-ombre imprévisibles. Un noir composité normalement se règle à l'œil.
- *   • CENTRÉE, jamais orientée par le soleil. Une ombre décalée par `sunDirection(hour)`
- *     serait plus riche MAIS engagerait la promotion de l'éclairage dynamique — une décision
- *     réservée à Alexis. On reste pure technique : ellipse de contact, sans angle de lumière.
+ *   • CENTRÉE, jamais orientée par le soleil. L'éclairage dynamique est désormais le rendu par
+ *     défaut (décision d'Alexis, docs/decisions.md 2026-07-24), mais on garde DÉLIBÉRÉMENT
+ *     l'ombre de contact hors du modèle de lumière : c'est une occlusion ambiante cosmétique,
+ *     composée en alpha normal, qui doit rendre à l'identique lumière allumée ou éteinte. Une
+ *     ombre orientée par `sunDirection(hour)` serait plus riche mais rouvrirait ce couplage —
+ *     hors scope ici. On reste pure technique : ellipse de contact, sans angle de lumière.
  *   • CONSTANTE (occlusion ambiante), pas ∝ jour/nuit. L'objet bloque la lumière ambiante
  *     qu'il fasse jour ou nuit ; une ombre stable est plus simple et n'introduit aucune
  *     dépendance au modèle de lumière. Purement cosmétique, ne conditionne rien.
@@ -85,17 +88,25 @@ export function createContactShadow(scene: Phaser.Scene): Phaser.GameObjects.Ima
 }
 
 /** Pose l'ombre aux pieds de l'acteur (mêmes `px/py` que le sprite), aplatie et dimensionnée
- *  à son emprise, juste sous sa profondeur. Appelée chaque frame depuis `syncActor`. */
+ *  à son emprise, juste sous sa profondeur. Appelée chaque frame depuis `syncActor`.
+ *
+ *  RÈGLE DE PLACEMENT (Alexis) : l'ombre est une ellipse ; on cale son PLUS GRAND DIAMÈTRE (l'axe
+ *  horizontal, qui passe par son centre) PILE sur le PIXEL LE PLUS BAS du sprite qu'elle ombre.
+ *  Donc centre_y = pixel opaque le plus bas. Pour un acteur, ce pixel EST la ligne de pieds (`py`),
+ *  d'où `baseGapWorld = 0`. Pour un prop dont l'art s'arrête au-dessus du bas de tuile, on remonte
+ *  le centre de ce gap (en px MONDE = gap en texels × échelle du sprite) — voir les callers. */
 export function positionShadow(
   shadow: Phaser.GameObjects.Image,
   feetX: number,
   feetY: number,
   actorDisplayW: number,
   actorDepth: number,
+  baseGapWorld = 0,
 ): void {
   const w = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, actorDisplayW * WIDTH_FACTOR))
-  shadow.setPosition(feetX, feetY)
-  shadow.setDisplaySize(w, w * FLATTEN)
+  const h = w * FLATTEN
+  shadow.setPosition(feetX, feetY - baseGapWorld)
+  shadow.setDisplaySize(w, h)
   shadow.setDepth(actorDepth - DEPTH_UNDER)
   shadow.setVisible(true)
 }

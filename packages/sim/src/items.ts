@@ -35,6 +35,10 @@ export type ItemId =
   | 'stone'
   | 'fiber'
   | 'berries'
+  /** LES CHAMPIGNONS — la trouvaille de l'herboriste (cueillette à maîtrise, spec recolte-maitrise
+   *  verbe 3). Un aliment de valeur qu'on TROUVE sur les meilleurs coins à haut `foraging` : sink
+   *  immédiat (se mange, 2× les baies). Périssable, comme tout ce qui se cueille. */
+  | 'champignons'
   /** LE LÉGUME du potager (agriculture voie A) — « nourriture de base » (GDD §8), modeste,
    *  au niveau des baies. Récolté sur une parcelle mûre. */
   | 'legume'

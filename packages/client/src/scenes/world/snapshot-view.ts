@@ -115,6 +115,15 @@ const DEFAULT_FOOTPRINT: ActorFootprint = { widthTiles: 1, heightTiles: 1.6 }
  * il oscille moins qu'un roseau, mais il est large, donc ça se voit. */
 const CROWN_WIND_TAKE = 0.5
 
+/** LES NŒUDS-PLANTES PLIENT AUSSI (demande d'Alexis 2026-07-24). Le sway n'était branché que sur le
+ *  décor (clutter, `WIND_TAKE`) et les houppiers — la fibre restait DROITE à côté d'une touffe qui se
+ *  couche. On applique donc la MÊME logique aux nœuds-plantes, à une prise cohérente avec leur cousin
+ *  de décor : fibre ≈ roseau/herbe, buisson à baies ≈ buisson-décor (0,45). La roche et le tronc
+ *  adulte restent RIGIDES (absents ici → prise 0) — un tronc interactif ne doit pas dodeliner ; seul
+ *  son houppier bouge. Une pousse d'arbre (état `growing`) plie un peu, comme un jeune plant. */
+const NODE_WIND_TAKE: Record<string, number> = { fiber_plant: 1, berry_bush: 0.45 }
+const SAPLING_WIND_TAKE = 0.4
+
 /** Chaque type de monstre a sa texture — exhaustif, donc un nouveau type ne
  * peut pas se glisser dans le monde déguisé en sanglier. */
 const MONSTER_TEXTURES: Record<MonsterType, string> = {
@@ -256,6 +265,18 @@ function berryDots(node: ResourceNode): number {
   // Au moins 1 point tant qu'il reste des baies ; jamais plus que la capacité l'exige.
   return Math.max(1, Math.min(BERRY_TEX_MAX, Math.round((BERRY_TEX_MAX * node.stock) / full)))
 }
+/** GAP DU BAS DE L'ART d'un nœud, en TEXELS : combien de rangées transparentes sous la silhouette,
+ *  jusqu'au bord bas de sa tuile (16×N). L'ombre de contact se pose sur cette base VISIBLE, pas sur
+ *  le bord de tuile — sinon un art qui REMPLIT sa hauteur (le tronc) verrait sa flaque remonter
+ *  comme celle d'un BLOC qui, lui, laisse ~2 texels (bug vu par Alexis : ombres d'arbres/fibre trop
+ *  hautes). Mesuré sur `BootScene.makeNodes`. Clé = la TEXTURE effective, pas le `type` : une
+ *  repousse d'arbre montre `nd-sapling`, dont le gap n'est pas celui du tronc. */
+function nodeArtGap(texture: string): number {
+  if (texture.startsWith('nd-tree_trunk') || texture.startsWith('nd-old_tree_trunk')) return 0 // tronc plein jusqu'au bas
+  if (texture === 'nd-sapling' || texture === 'nd-fiber_plant' || texture === 'nd-stump') return 1 // plantes fines, art bas
+  return 2 // blocs (roche, baies, minerais…) : l'art bombe et s'arrête ~2 texels avant le bord
+}
+
 /** SOUCHE : durée (ms client) pendant laquelle la marque d'un nœud qui a dérivé pâlit
  *  avant de disparaître. Purement cosmétique — la nature reprend le coin. */
 const STUMP_FADE_MS = 9000
@@ -898,6 +919,12 @@ export class SnapshotView {
         // Épuisé, il n'est pas « à moitié là » — il REPOUSSE, et c'est son échelle qui le dit.
         sprite.setAlpha(1)
         sprite.setScale(g) // plein = 1 ; repousse = fraction (grandit depuis le pied, origine basse)
+        // LE VENT PLIE LES NŒUDS-PLANTES (fibre, baies, pousse — cf. NODE_WIND_TAKE). POOLÉ : reposé
+        // CHAQUE frame, car une prise 0 (roche, tronc adulte) fait rendre 0 à windSway → le sprite est
+        // remis DROIT, jamais la rotation d'un voisin héritée. Pivot aux pieds (origine 0.5,1) → il
+        // plie depuis sa base, comme le houppier et les touffes du décor.
+        const windTake = growing && isTree ? SAPLING_WIND_TAKE : (NODE_WIND_TAKE[n.type] ?? 0)
+        sprite.setRotation(windSway(tx + j.dx, ty + j.dy, now, windTake, this.wind))
         sprite.setVisible(true)
         // L'OMBRE DE CONTACT du nœud, au MÊME index de pool que lui (servie/libérée ensemble).
         // La largeur se lit sur `displayWidth` APRÈS `setScale` : une pousse qui repousse porte
@@ -908,7 +935,12 @@ export class SnapshotView {
           nodeShadow = createContactShadow(this.scene)
           this.nodeShadowPool[used] = nodeShadow
         }
-        positionShadow(nodeShadow, px, py, sprite.displayWidth, sprite.depth)
+        // RÈGLE (Alexis) : le grand diamètre de l'ellipse pile sur le PIXEL LE PLUS BAS du sprite.
+        // Ce pixel est au-dessus du bas de tuile du gap de l'art (texels) × échelle du sprite (une
+        // repousse à g<1 réduit le gap d'autant). Sans ça, l'arbre (art plein) et le bloc (art
+        // creux) ne s'aligneraient pas — bug vu par Alexis (ombres d'arbres/fibre trop hautes).
+        const gapWorld = nodeArtGap(texture) * sprite.scaleY
+        positionShadow(nodeShadow, px, py, sprite.displayWidth, sprite.depth, gapWorld)
         used++
         // Une POUSSE n'a pas encore de houppier — il reviendra avec l'arbre adulte.
         if (!isTree || growing) continue

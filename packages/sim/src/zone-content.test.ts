@@ -59,6 +59,21 @@ describe('la table du contenu', () => {
 })
 
 describe('le contenu, sur la vraie carte', () => {
+  it('verbe 3 — les CHAMPIGNONS naissent sur la VRAIE carte, et SEULEMENT à l\'humide/l\'ombre/la forêt', () => {
+    // Le bug d'origine : les champignons n'étaient posés que par `generateNodes` (générique/tests),
+    // alors que la Veillée joue `placeZoneNodes` — donc AUCUN champignon en jeu. Cette garde vit sur
+    // le VRAI générateur. (La densité forêt≪humide est prouvée à part, sur `generateNodes`.)
+    const OK = new Set(['marsh', 'peat_bog', 'reed_marsh', 'old_growth', 'forest'])
+    for (const { c, nodes } of mondes) {
+      const champs = nodes.filter((n) => n.type === 'champignon')
+      expect(champs.length).toBeGreaterThan(0) // la carte réelle en porte
+      for (const m of champs) {
+        const name = TERRAINS[c.map.terrain[m.ty * c.map.width + m.tx]!]?.name
+        expect(OK.has(name ?? ''), `champignon sur « ${name} » — terrain non adapté`).toBe(true)
+      }
+    }
+  })
+
   it('A29 — le VERGER SAUVAGE porte de vrais fruits (il ne portait qu\'un nom)', () => {
     // Deux des cinq lieux de la zone de départ étaient des noms sans contenu — et c'est ce qui
     // rend une carte T0 décevante : on marche vers quelque chose qui s'annonce, et il n'y a

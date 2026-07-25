@@ -1,6 +1,6 @@
 /**
- * ESSAI ÉCLAIRAGE DYNAMIQUE (DA actée, docs/decisions.md 2026-07-20) — pilotage du
- * LightsManager de Phaser 4 pour la tranche verticale « arbres normal-mappés ».
+ * ÉCLAIRAGE DYNAMIQUE — le rendu PAR DÉFAUT du jeu (DA actée, docs/decisions.md 2026-07-20
+ * puis promu par défaut 2026-07-24) — pilotage du LightsManager de Phaser 4.
  *
  * TROIS sources, toutes tirées de l'état sim (jamais inventées ici) :
  *   • LE SOLEIL — une lumière directionnelle SIMULÉE par un point lointain, posé dans
@@ -13,9 +13,9 @@
  *     `fireGlow` (le MÊME module que le halo cosmétique). La nuit, c'est la source qui
  *     DOMINE : la canopée s'allume autour des braises. C'est tout l'argument.
  *
- * N'affecte QUE les objets en `setLighting(true)` (les arbres, quand le toggle est
- * armé) — tout le reste du monde rend comme avant. Inerte tant que `update(active=…)`
- * n'est pas nourri : on le coupe d'un coup avec le flag debug.
+ * N'affecte QUE les objets en `setLighting(true)` (arbres, nœuds, décor volumique). Actif par
+ * défaut ; le panneau debug (DEV) peut le couper (`update(active=false)`) pour retomber sur
+ * l'ancien rendu à plat — utile pour comparer, jamais le mode nominal.
  */
 import type Phaser from 'phaser'
 import type { SnapshotMessage, Structure } from '@braises/sim'

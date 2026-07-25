@@ -43,7 +43,7 @@ export const BASICS_DELAY_MS = 2000
 export const MAKE_FIRE_DELAY_MS = 12000
 
 const HINT_TEXT: Record<OnboardingHintId, string> = {
-  basics: 'Clic gauche : récolter. TAB : votre sac et l’artisanat.',
+  basics: 'E : cueillir baies & fibre. TAB : votre sac et l’artisanat.',
   'make-fire': 'Ramassez du bois : il vous faut un FEU avant la nuit.',
   // La règle du jeu, dite une fois, à l'instant où le Feu naît : le cru ne nourrit plus un homme.
   'fire-purpose': 'Le feu cuit, réchauffe, et tient les loups à distance.',

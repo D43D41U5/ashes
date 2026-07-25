@@ -12,7 +12,7 @@ import {
 import {
   fellGreenWidth,
   flankOfAim,
-  forageRevealed,
+  forageBounty,
   forageRichness,
   generateNodes,
   isCleanFell,
@@ -146,6 +146,68 @@ describe('la récolte sous archétype Meute (économie anémique, spec alignemen
     const harvested = drainEvents(sim).find((e) => e.type === 'resource_harvested')
     expect(harvested).toBeDefined()
     expect(harvested!.type === 'resource_harvested' && harvested!.count).toBeGreaterThanOrEqual(1)
+  })
+})
+
+/**
+ * LA CUEILLETTE D'UN COUP (touche E, spec recolte-maitrise P1 — décision utilisateur
+ * 2026-07-24). Le drapeau `whole` de l'action `harvest` vide le NŒUD ENTIER dans le sac
+ * en un seul geste — mais UNIQUEMENT sur le métier `foraging`, pour que le minage et
+ * l'abattage à maîtrise gardent leurs coups répétés quoi qu'un client envoie.
+ */
+describe('la cueillette d’un coup (whole)', () => {
+  it('vide le NŒUD ENTIER dans le sac en un seul geste', () => {
+    const bush = makeNode('berry_bush', 11, 10) // stock 8
+    const sim = makeSim([bush])
+    const id = spawnEntity(sim, 10.3, 10.5) // 1,2 tuile du centre : à portée
+    const stock0 = bush.stock
+    drainEvents(sim)
+
+    act(sim, id, { type: 'harvest', nodeId: bush.id, whole: true })
+
+    expect(countOf(me(sim).inventory, 'berries')).toBe(stock0) // TOUT le buisson
+    expect(sim.nodes[0]!.stock).toBe(0) // le nœud est vidé
+    // Un SEUL événement, comptant tout le stock — le HUD somme dessus (`count`).
+    const harvested = drainEvents(sim).find((e) => e.type === 'resource_harvested')
+    expect(harvested!.type === 'resource_harvested' && harvested!.count).toBe(stock0)
+  })
+
+  it('sans `whole`, le même coup ne rend que le rendement de base (1 à mains nues)', () => {
+    const bush = makeNode('berry_bush', 11, 10)
+    const sim = makeSim([bush])
+    const id = spawnEntity(sim, 10.3, 10.5)
+
+    act(sim, id, { type: 'harvest', nodeId: bush.id }) // baseline, pas de whole
+
+    expect(countOf(me(sim).inventory, 'berries')).toBe(1)
+    expect(sim.nodes[0]!.stock).toBe(NODE_DEFS.berry_bush.stock - 1)
+  })
+
+  it('`whole` est IGNORÉ hors cueillette : sur un ARBRE il retombe au baseline (l’abattage tient)', () => {
+    const tree = makeNode('tree', 11, 10) // woodcutting, stock 10
+    const sim = makeSim([tree])
+    const id = spawnEntity(sim, 10.3, 10.5)
+
+    act(sim, id, { type: 'harvest', nodeId: tree.id, whole: true }) // le gate foraging l'écarte
+
+    expect(countOf(me(sim).inventory, 'wood')).toBe(1) // 1 bois, PAS les 10
+    expect(sim.nodes[0]!.stock).toBe(NODE_DEFS.tree.stock - 1)
+  })
+
+  it('n’a AUCUNE cadence : deux buissons se vident sur des ticks CONSÉCUTIFS (2026-07-25)', () => {
+    const b1 = makeNode('berry_bush', 11, 10)
+    const b2 = makeNode('berry_bush', 9, 10)
+    const sim = makeSim([b1, b2])
+    const id = spawnEntity(sim, 10.3, 10.5) // à portée des DEUX centres (1,2 et 0,8 tuile)
+
+    // Deux cueillettes d'un coup, SANS avancer le temps entre elles (`act` = un tick chacun) :
+    // avec le cooldown, la seconde tomberait dans les ~20 ticks de cadence et serait muette.
+    act(sim, id, { type: 'harvest', nodeId: b1.id, whole: true })
+    act(sim, id, { type: 'harvest', nodeId: b2.id, whole: true })
+
+    expect(sim.nodes.find((n) => n.id === b1.id)!.stock).toBe(0)
+    expect(sim.nodes.find((n) => n.id === b2.id)!.stock).toBe(0)
+    expect(countOf(me(sim).inventory, 'berries')).toBe(NODE_DEFS.berry_bush.stock * 2)
   })
 })
 
@@ -1288,12 +1350,83 @@ describe('la cueillette à maîtrise (spec recolte-maitrise, verbe 3)', () => {
     expect(withForageRichness('berry_bush', richId, 8)).toBeGreaterThan(withForageRichness('berry_bush', poorId, 8))
   })
 
-  it('P2/P3 — la perception est GATÉE : le novice voit uniforme, seuls les bons coins luisent', () => {
-    const rich = BALANCE.FORAGE_RICH_THRESHOLD + 0.1
-    const poor = BALANCE.FORAGE_RICH_THRESHOLD - 0.2
-    expect(forageRevealed(0, rich)).toBe(false) // novice : rien, même un bon coin
-    expect(forageRevealed(BALANCE.FORAGE_REVEAL_LEVEL, poor)).toBe(false) // au niveau : un coin maigre ne luit pas
-    expect(forageRevealed(BALANCE.FORAGE_REVEAL_LEVEL, rich)).toBe(true) // au niveau : le bon coin luit
+  it('verbe 3 — le BUTIN de SEMENCE : gaté par niveau, seedé, sur les seuls coins riches', () => {
+    // Un coin RICHE (au-dessus du plancher) et un coin PAUVRE (en-dessous).
+    let richId = -1
+    let poorId = -1
+    for (let id = 1; id <= 3000 && (richId < 0 || poorId < 0); id++) {
+      if (forageRichness(id) > 1.35 && richId < 0) richId = id
+      if (forageRichness(id) < BALANCE.FORAGE_BOUNTY_RICH_FLOOR && poorId < 0) poorId = id
+    }
+    const rich = forageRichness(richId)
+    const poor = forageRichness(poorId)
+    // Balayage de ticks : on compte les graines qui tombent (tirage positionnel sur (nodeId, tick)).
+    const graines = (nodeId: number, richness: number, level: number): number => {
+      let g = 0
+      for (let t = 0; t < 1000; t++) if (forageBounty(nodeId, t, richness, level) === 'graine') g++
+      return g
+    }
+
+    // NOVICE (sous le palier semences) : aucune graine, même sur le meilleur coin.
+    expect(graines(richId, rich, BALANCE.FORAGE_SEED_LEVEL - 1)).toBe(0)
+    // Au palier, des graines tombent ; et de plus en plus haut (la pente monte avec le niveau).
+    const atPalier = graines(richId, rich, BALANCE.FORAGE_SEED_LEVEL)
+    const higher = graines(richId, rich, BALANCE.FORAGE_SEED_LEVEL + 5)
+    expect(atPalier).toBeGreaterThan(0)
+    expect(higher).toBeGreaterThan(atPalier)
+    // Un coin PAUVRE ne donne JAMAIS de graine, quel que soit le niveau.
+    expect(graines(poorId, poor, BALANCE.FORAGE_SEED_LEVEL + 20)).toBe(0)
+    // DÉTERMINISME : même (nodeId, tick, richesse, niveau) → même résultat.
+    for (let t = 0; t < 60; t++) expect(forageBounty(42, t, rich, 9)).toBe(forageBounty(42, t, rich, 9))
+  })
+
+  it('verbe 3 — le PATCH DE CHAMPIGNONS : un vrai nœud, gaté par le SAVOIR (minForageLevel)', () => {
+    const patch = makeNode('champignon', 11, 10)
+    const sim = makeSim([patch])
+    const id = spawnEntity(sim, 11.3, 10.5) // collé au patch (à portée)
+    const champs = (): number => me(sim).inventory.reduce((n, sl) => n + (sl?.item === 'champignons' ? sl.count : 0), 0)
+
+    // NOVICE (sous FORAGE_QUALITY_LEVEL) : la récolte est REFUSÉE — le patch se voit, mais on ne
+    // sait pas encore lire les bons. Rien ne rentre, et le refus le DIT.
+    drainEvents(sim)
+    act(sim, id, { type: 'harvest', nodeId: patch.id, whole: true })
+    expect(champs()).toBe(0)
+    expect(rejections(sim)).toContain('il faut mieux connaître les champignons')
+
+    // EXPERT (niveau atteint) : le patch tombe dans le sac. `level = FORAGE_QUALITY_LEVEL` via Q²·100.
+    me(sim).skills.foraging = BALANCE.FORAGE_QUALITY_LEVEL * BALANCE.FORAGE_QUALITY_LEVEL * 100
+    act(sim, id, { type: 'harvest', nodeId: patch.id, whole: true })
+    expect(champs()).toBeGreaterThan(0)
+  })
+
+  it('verbe 3 — les champignons : ABONDANTS à l\'humide, TRÈS RARES en forêt, JAMAIS ailleurs', () => {
+    const champs = (terrain: number): number =>
+      generateNodes(createEmptyMap(64, 64, terrain), 123).filter((n) => n.type === 'champignon').length
+    const marais = champs(TERRAIN_MARSH)
+    const foret = champs(TERRAIN_FOREST)
+    expect(marais).toBeGreaterThan(0) // le marais en porte, abondamment
+    expect(foret).toBeGreaterThan(0) // la forêt en cache quelques-uns (zone T0)
+    expect(foret).toBeLessThan(marais / 2) // …mais BIEN moins qu'au marais (le « très rare »)
+    expect(champs(TERRAIN_GRASS)).toBe(0) // l'herbe rase, jamais
+  })
+
+  it('verbe 3 — le passage champignon est ISOLÉ : les nœuds existants gardent id et place', () => {
+    // Une carte AVEC forêt ET marais (les champignons y poussent) — sans quoi le test ne prouve
+    // RIEN (les canaris replay/sim/bot tournent sur de l'herbe pure : zéro champignon, isolation
+    // jamais exercée). Ici on la met à l'épreuve.
+    const map = createEmptyMap(48, 48, TERRAIN_FOREST)
+    for (let ty = 0; ty < 48; ty++) for (let tx = 0; tx < 24; tx++) map.terrain[ty * 48 + tx] = TERRAIN_MARSH
+    const nodes = generateNodes(map, 777)
+    const champs = nodes.filter((n) => n.type === 'champignon')
+    const autres = nodes.filter((n) => n.type !== 'champignon')
+    expect(champs.length).toBeGreaterThan(0) // la carte en porte (sinon on ne teste rien)
+    // ISOLATION : le passage PRINCIPAL est intact — ses nœuds portent les ids 1..N CONTIGUS, dans
+    // l'ordre ; et TOUS les champignons ont un id strictement AU-DESSUS (appendus après, le compteur
+    // d'id n'est pas touché avant la fin du passage principal). Donc le principal produit exactement
+    // ce qu'il produisait sans champignons — le flux de génération n'est pas décalé (leçon RNG).
+    expect(autres.map((n) => n.id)).toEqual(autres.map((_, i) => i + 1))
+    const maxAutre = Math.max(...autres.map((n) => n.id))
+    expect(champs.every((n) => n.id > maxAutre)).toBe(true)
   })
 
   it('la repousse d\'un coin garde sa richesse (propriété du lieu, pas stock ponctuel)', () => {
