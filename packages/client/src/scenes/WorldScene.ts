@@ -949,6 +949,7 @@ export class WorldScene extends Phaser.Scene {
       const lit = getHud(this.registry, 'debugLighting') ?? true
       this.view.lighting = lit
       if (this.clutter) this.clutter.lighting = lit
+      this.pois.lighting = lit // le bloc erratique (couche POI cubique) suit le même toggle
       // Le voile descend SOUS les sprites quand ils sont éclairés (il ne tinte plus que le fond) ;
       // sinon il coiffe toute la scène. Et le Feu le CREUSE — sauf en mode éclairé, où la vraie
       // pipeline fait déjà la lumière (on ne troue pas deux fois).

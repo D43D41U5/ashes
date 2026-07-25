@@ -10,6 +10,7 @@ import { generateLitTrees } from '../render/lit-trees'
 import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
 import { makePoiTextures } from './world/poi-art'
+import { generateLitErratiques } from '../render/poi-lit'
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -284,6 +285,7 @@ export class BootScene extends Phaser.Scene {
     this.makeNodes()
     this.makeClutter()
     makePoiTextures(this) // les 26 lieux — voir world/poi-art.ts
+    generateLitErratiques(this) // ESSAI DA cubique sur les POI : 3 variantes du bloc erratique (poi-erratique-<i>_lit) — voir render/poi-lit.ts
     makeCliffTextures(this) // les bandes de roche plate des frontières — voir render/cliff-art.ts
   }
 

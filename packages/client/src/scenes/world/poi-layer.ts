@@ -20,6 +20,7 @@ import Phaser from 'phaser'
 import { POI, type WorldMap } from '@braises/sim'
 import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import { poiCrownKey, poiTextureKey, POI_ART } from './poi-art'
+import { erratiqueVariantFor, litErratiqueKey } from '../../render/poi-lit'
 import type { Warp } from '../../render/warp'
 import { FONT } from '../ui/typography'
 
@@ -43,10 +44,15 @@ interface Placed {
   ty: number
   /** Hauteur du sprite, en px : le nom se pose au-dessus. */
   h: number
+  /** Rendu par le pipeline d'éclairage dynamique (albédo `_lit` + normal map) : on réarme
+   *  `setLighting` à chaque frame comme les autres couches. Aujourd'hui : le bloc erratique. */
+  lit?: boolean
 }
 
 export class PoiLayer {
   private readonly placed: Placed[] = []
+  /** Éclairage dynamique armé ? Posé par WorldScene, comme pour le clutter. Défaut : allumé (mode nominal). */
+  lighting = true
 
   constructor(scene: Phaser.Scene, map: WorldMap, warp: Warp) {
     const art = new Map(POI_ART.map((a) => [a.slug, a]))
@@ -61,12 +67,18 @@ export class PoiLayer {
       const px = feetX * TILE_PX
       const py = feetY * TILE_PX - warp.lift(feetX, feetY)
 
-      const body = scene.add.image(px, py, poiTextureKey(z.kind)).setOrigin(0.5, 1).setVisible(false)
+      // Le BLOC ERRATIQUE est passé à la DA cubique : 3 variantes `_lit`, choisie DÉTERMINISTIQUEMENT
+      // par l'identité du lieu (poiId) → même pierre à chaque session, les trois réparties. Les autres
+      // lieux gardent leur texture peinte pour l'instant.
+      const lit = z.kind === 'erratique'
+      const key = lit ? litErratiqueKey(erratiqueVariantFor(poiId)) : poiTextureKey(z.kind)
+      const body = scene.add.image(px, py, key).setOrigin(0.5, 1).setVisible(false)
+      if (lit) body.setLighting(this.lighting)
       // Même bande que les acteurs et les nœuds : à pieds égaux, un lieu se
       // comporte comme un nœud (on passe devant en descendant vers le sud).
       body.setDepth(ySortDepth(feetY, TILE_PX, TIE_NODE))
 
-      const entry: Placed = { body, label: makeLabel(scene, z.name, px, py - a.h), poiId, tx: feetX, ty: feetY, h: a.h }
+      const entry: Placed = { body, label: makeLabel(scene, z.name, px, py - a.h), poiId, tx: feetX, ty: feetY, h: a.h, lit }
 
       if (a.crown !== undefined) {
         // Ancrée par le HAUT, exactement là où commence le sprite complet :
@@ -91,6 +103,7 @@ export class PoiLayer {
       const onScreen = p.tx >= x0 && p.tx <= x1 && p.ty >= y0 && p.ty <= y1
       p.body.setVisible(onScreen)
       p.crown?.setVisible(onScreen)
+      if (p.lit && onScreen) p.body.setLighting(this.lighting) // réarmé comme les autres couches (toggle debug)
 
       // Le nom : seulement si le lieu est CONNU, et seulement à l'écran.
       if (!onScreen || !knownPois.includes(p.poiId)) {

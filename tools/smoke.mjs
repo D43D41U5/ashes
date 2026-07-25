@@ -301,6 +301,236 @@ const SCENARIOS = {
   },
 
   /**
+   * LE BLOC ERRATIQUE EN DA CUBIQUE — 3 variantes à choisir (demande d'Alexis 2026-07-25).
+   *
+   * On LIT les vraies textures `poi-erratique-<i>_lit` (albédo + normale en dataSource, générées
+   * au boot par render/poi-lit.ts) et on compose une planche : pour chaque variante, la SILHOUETTE
+   * (test ombre chinoise), l'albédo aplati, la normale, puis le rendu JOUR et le rendu NUIT calculés
+   * avec les CONSTANTES EXACTES de dynamic-lighting.ts (ambiante/soleil/lune) — le seul moyen de voir
+   * qu'une masse ne tombe pas en blob bleu la nuit. En bas : les silhouettes des 3, alignées avec le
+   * Cairn et la Grotte, pour vérifier qu'on les distingue. Enfin 3 sprites RÉELS `setLighting(true)`
+   * dans le monde (pipeline Phaser Light2D authentique) comme contre-épreuve du jour.
+   *
+   * Autonome (aucun `--dev`) : ne pilote aucune horloge, calcule l'éclairage hors-ligne à partir
+   * des mêmes normales et des mêmes constantes.
+   */
+  async erratique(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForTimeout(800)
+
+    const dataUrl = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const SC = 5, S = 42
+      // Lit un canvas de texture (albédo) ou sa normale (dataSource) en ImageData 42×42.
+      const readPix = (img) => {
+        const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height
+        const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0)
+        return { w: cv.width, h: cv.height, d: cx.getImageData(0, 0, cv.width, cv.height).data }
+      }
+      const albedoOf = (key) => readPix(s.textures.get(key).getSourceImage())
+      const normalOf = (key) => {
+        const src = s.textures.get(key).dataSource && s.textures.get(key).dataSource[0]
+        return readPix(src.image || src)
+      }
+      // Éclairage hors-ligne, per-pixel : out = albédo × (ambiante + couleurLumière × intensité × max(0,N·L)).
+      // Constantes reprises TELLES QUELLES de dynamic-lighting.ts / poi-art.ts (lumière NO, rule 4).
+      const norml = (x, y, z) => { const l = Math.hypot(x, y, z) || 1; return [x / l, y / l, z / l] }
+      const hex = (n) => [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+      const shade = (alb, nrm, amb, lightRGB, intensity, L) => {
+        const [ar, ag, ab] = hex(amb), [lr, lg, lb] = hex(lightRGB)
+        const out = document.createElement('canvas'); out.width = S; out.height = S
+        const ox = out.getContext('2d'); const od = ox.createImageData(S, S)
+        for (let i = 0; i < S * S; i++) {
+          const a = alb.d[i * 4 + 3]
+          if (a <= 8) { od.data[i * 4 + 3] = 0; continue }
+          const nx = (nrm.d[i * 4] / 255) * 2 - 1
+          const ny = -((nrm.d[i * 4 + 1] / 255) * 2 - 1) // FLIP_G : le vert stocké est -ny
+          const nz = (nrm.d[i * 4 + 2] / 255) * 2 - 1
+          const dot = Math.max(0, nx * L[0] + ny * L[1] + nz * L[2])
+          const mix = (alc, ambc, lc) => Math.min(255, Math.round(alc * (ambc / 255 + (lc / 255) * intensity * dot)))
+          od.data[i * 4] = mix(alb.d[i * 4], ar, lr)
+          od.data[i * 4 + 1] = mix(alb.d[i * 4 + 1], ag, lg)
+          od.data[i * 4 + 2] = mix(alb.d[i * 4 + 2], ab, lb)
+          od.data[i * 4 + 3] = a
+        }
+        ox.putImageData(od, 0, 0)
+        return out
+      }
+      const L_SUN = norml(-0.45, -0.6, 0.75) // soleil : rasant du NORD-OUEST (rule 4 / SUN_NORTH)
+      const L_MOON = norml(0.0, -0.7, 0.7) //   lune : voile froid venu d'en haut
+      const dayOf = (alb, nrm) => shade(alb, nrm, 0xb6ad9c, 0xfff2e6, 1.2, L_SUN)
+      const nightOf = (alb, nrm) => shade(alb, nrm, 0x33415f, 0xaec2e6, 0.32, L_MOON)
+      // Masque de silhouette (ombre chinoise) : noir plein là où l'albédo est opaque.
+      const silhouetteOf = (alb) => {
+        const out = document.createElement('canvas'); out.width = alb.w; out.height = alb.h
+        const ox = out.getContext('2d'); const od = ox.createImageData(alb.w, alb.h)
+        // Cream clair sur fond sombre : une ombre chinoise DOIT trancher (le bug précédent la peignait
+        // à la couleur du fond → invisible). On lit la FORME, rien d'autre.
+        for (let i = 0; i < alb.w * alb.h; i++) if (alb.d[i * 4 + 3] > 8) { od.data[i * 4 + 3] = 255; od.data[i * 4] = 206; od.data[i * 4 + 1] = 212; od.data[i * 4 + 2] = 200 }
+        ox.putImageData(od, 0, 0); return out
+      }
+
+      let n = 0; while (s.textures.exists(`poi-erratique-${n}_lit`)) n++
+      const NAMES = ['monolithe fendu', 'bloc coiffé', 'bloc et son éclat']
+      // JOUR/NUIT ici = APERÇU hors-ligne (indicatif) ; la vérité est dans erratique-jour/nuit.png (pipeline réel).
+      const COLS = ['silhouette', 'albédo', 'normale', 'jour (aperçu)', 'nuit (aperçu)']
+      const tile = S * SC, GAP = 16, LBL = 22, PADX = 150, HEAD = 40
+      const W = PADX + COLS.length * (tile + GAP) + GAP
+      const H = HEAD + n * (tile + LBL + GAP) + 40 + tile + LBL + 30
+
+      const c = document.createElement('canvas'); c.width = W; c.height = H
+      const ctx = c.getContext('2d'); ctx.imageSmoothingEnabled = false
+      ctx.fillStyle = '#14171c'; ctx.fillRect(0, 0, W, H)
+      ctx.textBaseline = 'alphabetic'
+
+      ctx.fillStyle = '#ffd94a'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'left'
+      ctx.fillText('LE BLOC ERRATIQUE — 3 variantes en DA cubique (albédo plat + normale, éclairage réel jour/nuit)', 14, 26)
+      // en-têtes de colonnes
+      ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'
+      COLS.forEach((cLabel, j) => {
+        ctx.fillStyle = cLabel.startsWith('jour') ? '#ffd08a' : cLabel.startsWith('nuit') ? '#9fb6e6' : '#7f8a96'
+        ctx.fillText(cLabel, PADX + j * (tile + GAP) + tile / 2, HEAD + 12)
+      })
+
+      const put = (canvas, x, y) => ctx.drawImage(canvas, x, y, tile, tile)
+      for (let i = 0; i < n; i++) {
+        const alb = albedoOf(`poi-erratique-${i}_lit`), nrm = normalOf(`poi-erratique-${i}_lit`)
+        const y = HEAD + 22 + i * (tile + LBL + GAP)
+        // nom de variante, à gauche
+        ctx.fillStyle = '#e6ddc8'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left'
+        ctx.fillText(`${i}`, 14, y + 24)
+        ctx.fillStyle = '#b9c2cc'; ctx.font = '12px monospace'
+        ctx.fillText(NAMES[i] ?? '', 30, y + 24)
+        // les 5 colonnes : silhouette · albédo · normale · jour · nuit
+        put(silhouetteOf(alb), PADX + 0 * (tile + GAP), y)
+        put(s.textures.get(`poi-erratique-${i}_lit`).getSourceImage(), PADX + 1 * (tile + GAP), y)
+        const nsrc = s.textures.get(`poi-erratique-${i}_lit`).dataSource[0]
+        put(nsrc.image || nsrc, PADX + 2 * (tile + GAP), y)
+        put(dayOf(alb, nrm), PADX + 3 * (tile + GAP), y)
+        put(nightOf(alb, nrm), PADX + 4 * (tile + GAP), y)
+      }
+
+      // ── OMBRE CHINOISE : les 3 variantes alignées avec le Cairn et la Grotte ──
+      const yS = HEAD + 22 + n * (tile + LBL + GAP) + 24
+      ctx.fillStyle = '#7fd0a8'; ctx.font = 'bold 13px monospace'; ctx.textAlign = 'left'
+      ctx.fillText('OMBRE CHINOISE — se distingue-t-il de ses voisins de pierre ?', 14, yS - 6)
+      const sil = [
+        ...Array.from({ length: n }, (_, i) => ({ label: `err.${i}`, sil: silhouetteOf(albedoOf(`poi-erratique-${i}_lit`)) })),
+        { label: 'cairn', sil: silhouetteOf(albedoOf('poi-cairn')) },
+        { label: 'grotte', sil: silhouetteOf(albedoOf('poi-grotte')) },
+      ]
+      let sx = 14
+      for (const { label, sil: cvs } of sil) {
+        const w = cvs.width * SC, h = cvs.height * SC
+        ctx.drawImage(cvs, sx, yS + (tile - h) + 4, w, h)
+        ctx.fillStyle = '#93a1ad'; ctx.font = '12px monospace'; ctx.textAlign = 'center'
+        ctx.fillText(label, sx + w / 2, yS + tile + 22)
+        sx += w + GAP
+      }
+      // ── COMPARAISON DU BAS DE LA NORMALE — bord qui plonge (avant) vs base plantée (après) ──
+      const SC2 = 6, T = 42 * SC2
+      const CO = ['normale · avant', 'normale · après', 'jour · avant', 'jour · après']
+      const PADX2 = 170, GAP2 = 14, HEAD2 = 66
+      const WB = PADX2 + CO.length * (T + GAP2) + GAP2
+      const HB = HEAD2 + n * (T + 30) + 10
+      const cB = document.createElement('canvas'); cB.width = WB; cB.height = HB
+      const bx = cB.getContext('2d'); bx.imageSmoothingEnabled = false
+      bx.fillStyle = '#14171c'; bx.fillRect(0, 0, WB, HB)
+      bx.fillStyle = '#ffd94a'; bx.font = 'bold 17px monospace'; bx.textAlign = 'left'
+      bx.fillText('LE BAS DE LA NORMALE — bord qui plonge (avant) vs base plantée (après)', 14, 26)
+      bx.fillStyle = '#9fb6e6'; bx.font = '12px monospace'
+      bx.fillText('même albédo, même ombre de contact : seule la normale du bord du bas change.', 14, 46)
+      bx.font = 'bold 12px monospace'; bx.textAlign = 'center'
+      CO.forEach((cl, j) => { bx.fillStyle = cl.includes('avant') ? '#d69090' : '#8ac9a0'; bx.fillText(cl, PADX2 + j * (T + GAP2) + T / 2, HEAD2 - 8) })
+      const putB = (cv, x, y) => bx.drawImage(cv, x, y, T, T)
+      const nImg = (key) => { const d = s.textures.get(key).dataSource[0]; return d.image || d }
+      for (let i = 0; i < n; i++) {
+        const alb = albedoOf(`poi-erratique-${i}_lit`)
+        const nCurl = normalOf(`poi-erratique-${i}-curl_lit`)
+        const nPlant = normalOf(`poi-erratique-${i}_lit`)
+        const y = HEAD2 + i * (T + 30)
+        bx.fillStyle = '#e6ddc8'; bx.font = 'bold 12px monospace'; bx.textAlign = 'left'
+        bx.fillText(`${i}`, 12, y + T / 2 - 6)
+        bx.fillStyle = '#b9c2cc'; bx.font = '11px monospace'
+        bx.fillText(NAMES[i] ?? '', 12, y + T / 2 + 10)
+        putB(nImg(`poi-erratique-${i}-curl_lit`), PADX2 + 0 * (T + GAP2), y)
+        putB(nImg(`poi-erratique-${i}_lit`), PADX2 + 1 * (T + GAP2), y)
+        putB(dayOf(alb, nCurl), PADX2 + 2 * (T + GAP2), y)
+        putB(dayOf(alb, nPlant), PADX2 + 3 * (T + GAP2), y)
+      }
+      return { planche: c.toDataURL('image/png'), base: cB.toDataURL('image/png') }
+    })
+    writeFileSync(`${OUT}/erratique-variantes.png`, Buffer.from(dataUrl.planche.split(',')[1], 'base64'))
+    writeFileSync(`${OUT}/erratique-base.png`, Buffer.from(dataUrl.base.split(',')[1], 'base64'))
+    console.log(`✓ planche des 3 variantes → ${OUT}/erratique-variantes.png`)
+    console.log(`✓ comparaison base plantée → ${OUT}/erratique-base.png`)
+
+    // ── CONTRE-ÉPREUVE : 3 sprites RÉELS sous le pipeline Phaser Light2D — jour PUIS nuit ──
+    // C'est la VÉRITÉ (l'aperçu hors-ligne de la planche sous-estime la lumière). On pose les sprites,
+    // on capture au jour in-world, puis on GÈLE le contrôleur d'éclairage sur le préréglage NUIT
+    // (constantes de dynamic-lighting.ts) pour voir si une masse tient ou tombe en blob bleu.
+    const info = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const cam = s.cameras.main
+      const cx = cam.worldView.x + cam.worldView.width / 2
+      const cy = cam.worldView.y + cam.worldView.height / 2 + 20
+      let n = 0; while (s.textures.exists(`poi-erratique-${n}_lit`)) n++
+      for (let i = 0; i < n; i++) {
+        const img = s.add.image(cx + (i - 1) * 72, cy, `poi-erratique-${i}_lit`).setOrigin(0.5, 1).setDepth(800000)
+        img.setLighting(true)
+      }
+      const reg = s.registry.get('debugInfo')
+      return { n, hour: reg?.hour ?? null, cx, cy }
+    })
+    await page.evaluate(() => window.__BRAISES__.scene.cameras.main.setZoom(3.4))
+    await page.waitForTimeout(700)
+    await page.screenshot({ path: `${OUT}/erratique-jour.png` })
+
+    // ── CÂBLAGE RÉEL : les VRAIS POI erratiques posés par PoiLayer (choix déterministe des 3) ──
+    // On lit ce que PoiLayer a réellement attribué, on vérifie que les 3 variantes sont réparties,
+    // et on CENTRE la caméra (sans debug) sur un erratique réel pour le capturer tel qu'en jeu.
+    const wired = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const placed = (s.pois && s.pois.placed) || []
+      const errs = placed.filter((p) => (p.body.texture.key || '').startsWith('poi-erratique-'))
+      const dist = {}
+      for (const p of errs) { const k = p.body.texture.key; dist[k] = (dist[k] || 0) + 1 }
+      const t = errs[0] ? { x: errs[0].body.x, y: errs[0].body.y, key: errs[0].body.texture.key } : null
+      if (t) { s.cameras.main.stopFollow(); s.cameras.main.centerOn(t.x, t.y - 60) }
+      return { count: errs.length, dist, target: t }
+    })
+    console.log(`CÂBLAGE — ${wired.count} POI erratiques en jeu · variantes posées : ${JSON.stringify(wired.dist)}`)
+    if (wired.target) {
+      await page.waitForTimeout(600)
+      await page.screenshot({ path: `${OUT}/erratique-inworld-poi.png` })
+      console.log(`✓ POI erratique RÉEL (PoiLayer, ${wired.target.key}) → erratique-inworld-poi.png`)
+    }
+    // recentre sur les 3 sprites témoins pour la capture nuit
+    await page.evaluate((c) => window.__BRAISES__.scene.cameras.main.centerOn(c.cx, c.cy), { cx: info.cx, cy: info.cy })
+    await page.waitForTimeout(300)
+
+    // NUIT : on gèle le contrôleur (sinon il réécrit l'ambiante chaque frame depuis l'heure in-world)
+    // et on impose le préréglage nuit — mêmes lumières que le jeu (this.sun/this.moon), valeurs de nuit.
+    const night = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const dl = s.dynLight
+      if (!dl) return { ok: false }
+      dl.update = () => {} // GEL : plus de réécriture par frame
+      const v = s.cameras.main.worldView
+      s.lights.setAmbientColor(0x33415f) // AMBIENT_NIGHT
+      dl.sun.intensity = 0
+      dl.moon.intensity = 0.32 // MOON_INTENSITY
+      dl.moon.x = v.x + v.width / 2
+      dl.moon.y = v.y - 1600 // au NORD, au-dessus de la vue (SUN_NORTH)
+      return { ok: true }
+    })
+    await page.waitForTimeout(500)
+    await page.screenshot({ path: `${OUT}/erratique-nuit.png` })
+    console.log(`✓ ${info.n} sprites réels (pipeline Phaser) → erratique-jour.png (heure ${info.hour}) · erratique-nuit.png ${night.ok ? '' : '(⚠ dynLight introuvable)'}`)
+  },
+
+  /**
    * LES ZONES SE DISTINGUENT-ELLES D'UN COUP D'ŒIL ?
    *
    * C'est le principe n°3 du directeur de jeu, et c'est le SEUL test qui vaille : on se pose au
@@ -3338,7 +3568,10 @@ if (!run) {
 const stop = await serve()
 const browser = await chromium.launch({
   headless: !headed,
-  // SwiftShader : pas de GPU sous WSL2, et on veut un rendu déterministe.
+  // SwiftShader : la machine de dev est une VM KVM sans GPU (driver DRM cirrus-qemu),
+  // donc AUCUN navigateur n'y aura de rendu accéléré — installer un Chrome système ou
+  // passer en `channel: 'chrome'` ne change rien, mesuré. Et on veut un rendu déterministe :
+  // le Chromium de Playwright est pinné, Chrome stable s'auto-update.
   args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox'],
 })
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
