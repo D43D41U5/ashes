@@ -25,6 +25,10 @@ export type Placeable = Buildable | 'fire' | ComponentType | 'chest'
 /** Les stations d'artisanat (les recettes `station: null` n'en demandent aucune). */
 export type StationId = 'fire' | 'workshop' | 'furnace' | 'four_acier' | 'atelier_lourd'
 
+/** Les onglets de l'écran personnage : ce qu'on PORTE (sac, artisanat, paperdoll), ce
+ *  qu'on MAÎTRISE (métiers), et où l'on EST (la carte, qui s'ouvre aussi à M). */
+export type CharacterTab = 'perso' | 'metiers' | 'carte'
+
 /** Le conteneur ouvert, RÉSOLU depuis le snapshot (WorldScene) pour que UIScene
  *  n'ait pas à fouiller structures/cadavres. `null` dès qu'il disparaît (dépouille
  *  vidée → effacée) : c'est le signal qui referme proprement le panneau de loot. */
@@ -152,6 +156,11 @@ export interface HudState {
    *  demain ses vêtements et ses maîtrises. Il s'appelait « inventaire » quand il
    *  n'y avait qu'une grille dedans (décision utilisateur, 2026-07-13). */
   characterMenuOpen: boolean
+  /** QUEL ONGLET de l'écran personnage est ouvert. C'est l'ENTRÉE (TAB pose `perso`,
+   *  M pose `carte`, un clic d'en-tête pose le sien) ; `mapOpen` en est la SORTIE,
+   *  dérivée chaque frame par UIScene. Une seule vérité : impossible que la carte
+   *  soit ouverte sans son onglet, ou l'inverse. */
+  characterTab: CharacterTab
   /** LE CHAMP DE RECHERCHE DU CRAFT A LE CLAVIER. Tant qu'il l'a, plus une touche
    *  ne part au jeu : taper « hache » ferait sinon MARCHER le personnage (Z, Q, S,
    *  D sont des lettres) et « journal » ouvrirait le journal. Un champ de saisie
@@ -203,7 +212,10 @@ export interface HudState {
   pendingActions: PlayerAction[]
   /** Journal (J) ouvert à la demande. */
   journalOpen: boolean
-  /** Carte plein écran (M) ouverte à la demande. */
+  /** La carte plein écran est-elle à l'écran ? DÉRIVÉE (UIScene, chaque frame) de
+   *  `characterMenuOpen && characterTab === 'carte'` — la carte est un ONGLET de l'écran
+   *  personnage. Personne d'autre ne l'écrit ; tout le reste du jeu (fantômes de
+   *  construction, molette, clic monde) continue de la LIRE comme avant. */
   mapOpen: boolean
   /** Le menu PAUSE (ESC) : ouvert = le monde solo se fige (l'hôte est mis en pause) et
    *  le menu (reprendre / contrôles / son / nouvelle Veillée) couvre l'écran. */

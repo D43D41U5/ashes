@@ -88,7 +88,10 @@ export function syncDebug(scene: Phaser.Scene, deps: DebugSyncDeps): number {
   if (teleport && teleport.at > lastTeleportAt) {
     lastTeleportAt = teleport.at
     deps.sendAction({ type: 'debug_teleport', x: teleport.x, y: teleport.y })
-    setHud(scene.registry, 'mapOpen', false) // on veut voir où l'on atterrit
+    // On veut VOIR où l'on atterrit : on referme l'écran personnage, dont la carte est
+    // l'onglet (`mapOpen` en est dérivé — l'écrire ici ne tiendrait pas une frame).
+    setHud(scene.registry, 'characterMenuOpen', false)
+    setHud(scene.registry, 'characterTab', 'perso')
   }
 
   if (getHud(scene.registry, 'debugOn')) {

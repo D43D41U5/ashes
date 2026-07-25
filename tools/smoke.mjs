@@ -100,6 +100,102 @@ const PROBE = () => {
 
 const SCENARIOS = {
   /**
+   * L'ONGLET CARTE (2026-07-25) — la carte est devenue le 3ᵉ onglet de l'écran personnage,
+   * rendue par Phaser SOUS le panneau DOM effacé. Ce qui ne se prouve qu'au navigateur : que
+   * le panneau ne mange NI la molette NI le glisser (pointer-events), que M ouvre/referme
+   * l'écran entier, et que la carte tient dans sa BOÎTE — la marge au-dessus de la ceinture,
+   * mesurée au pixel du renderer, y compris AU ZOOM (où elle débordait avant les bandes).
+   */
+  async carte(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const lire = () => page.evaluate(() => {
+      const ui = window.__BRAISES__.scene.scene.get('ui')
+      const r = window.__BRAISES__.scene.registry
+      const l = ui.mapLayer
+      const b = document.querySelector('.hch-belt')?.getBoundingClientRect() ?? null
+      const cv = document.querySelector('canvas').getBoundingClientRect()
+      // Bas de la carte à l'écran (px navigateur) : centre + demi-hauteur scalée, ramené au canvas.
+      const k = cv.height / 720
+      const bas = cv.top + (l.y + (ui.mapTexH * l.scaleY) / 2) * k
+      return {
+        mapOpen: Boolean(r.get('mapOpen')), tab: r.get('characterTab'),
+        x: +l.x.toFixed(1), y: +l.y.toFixed(1), scale: +l.scaleX.toFixed(4),
+        basCarte: +bas.toFixed(1), hautCeinture: b ? +b.top.toFixed(1) : null,
+      }
+    })
+    await page.keyboard.press('m')
+    await page.waitForTimeout(500)
+    const a = await lire()
+    console.log(`ouverture : mapOpen=${a.mapOpen} tab=${a.tab} · échelle ${a.scale} · centre y ${a.y}`)
+    console.log(a.basCarte < a.hautCeinture
+      ? `   ✓ MARGE : bas de carte ${a.basCarte} < haut de ceinture ${a.hautCeinture} (${(a.hautCeinture - a.basCarte).toFixed(0)} px)`
+      : `   ✗ la carte mord la ceinture (${a.basCarte} vs ${a.hautCeinture})`)
+    // MOLETTE : zoom ancré au curseur, au centre de l'écran.
+    await page.mouse.move(640, 400)
+    for (let i = 0; i < 5; i++) { await page.mouse.wheel(0, -120); await page.waitForTimeout(60) }
+    const z = await lire()
+    console.log(z.scale > a.scale ? `   ✓ la molette zoome (${a.scale} → ${z.scale})` : `   ✗ la molette ne zoome plus (${z.scale})`)
+    // GLISSER : clic gauche maintenu.
+    await page.mouse.move(640, 400); await page.mouse.down()
+    await page.mouse.move(760, 430, { steps: 8 }); await page.waitForTimeout(80); await page.mouse.up()
+    const p = await lire()
+    console.log(p.x !== z.x || p.y !== z.y ? `   ✓ le glisser déplace (Δ ${(p.x - z.x).toFixed(0)}, ${(p.y - z.y).toFixed(0)})` : `   ✗ le glisser ne déplace plus`)
+    // GLISSER DEPUIS LA CEINTURE : elle reste affichée sur cet onglet, mais ses cases sont du
+    // DOM cliquable — si elles gardent le pointeur, elles VOLENT le geste (et leur clic droit
+    // déplacerait un objet dans un sac qu'on ne voit même pas).
+    // On vise le CENTRE D'UNE CASE, lu dans le DOM : entre deux cases il y a un interstice de
+    // 3 px qui laisse passer le pointeur — y tomber ne prouverait rien.
+    const cell = await page.evaluate(() => {
+      const r = document.querySelectorAll('.hch-cell-belt')[2].getBoundingClientRect()
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+    })
+    await page.mouse.move(cell.x, cell.y); await page.mouse.down()
+    await page.mouse.move(cell.x, cell.y - 55, { steps: 8 }); await page.waitForTimeout(80); await page.mouse.up()
+    const c = await lire()
+    console.log(c.y !== p.y
+      ? `   ✓ un glisser PARTI DE LA CEINTURE déplace la carte (Δy ${(c.y - p.y).toFixed(0)})`
+      : `   ✗ la ceinture vole le geste (la carte n'a pas bougé)`)
+    // LA BOÎTE TIENT-ELLE AU ZOOM ? On lit les VRAIS pixels rendus (snapshot du renderer) :
+    // au-dessus de MAP_BOX_TOP et sous MAP_BOX_BOTTOM, il ne doit rester que le fond #14100c.
+    const px = await page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+      const c = document.createElement('canvas')
+      c.width = img.width; c.height = img.height
+      c.getContext('2d').drawImage(img, 0, 0)
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+      const at = (x, y) => { const i = (y * c.width + x) * 4; return [d[i], d[i + 1], d[i + 2]] }
+      return { w: c.width, h: c.height, haut: at(200, 20), dansBoite: at(c.width >> 1, 300), bas: at(c.width >> 1, c.height - 40) }
+    })
+    const fond = (p) => p[0] === 0x14 && p[1] === 0x10 && p[2] === 0x0c
+    console.log(`   pixels (${px.w}×${px.h}) haut ${px.haut} · boîte ${px.dansBoite} · bas ${px.bas}`)
+    console.log(fond(px.haut) && fond(px.bas)
+      ? `   ✓ au zoom, la carte reste DANS sa boîte (bandes haut/bas au fond nu)`
+      : `   ✗ au zoom, la carte déborde de sa boîte`)
+    await page.screenshot({ path: `${OUT}/carte-onglet-zoom.png` })
+    // Retour : M referme TOUT (l'écran personnage compris).
+    await page.keyboard.press('m'); await page.waitForTimeout(300)
+    const f = await page.evaluate(() => ({
+      map: Boolean(window.__BRAISES__.scene.registry.get('mapOpen')),
+      menu: Boolean(window.__BRAISES__.scene.registry.get('characterMenuOpen')),
+    }))
+    console.log(!f.map && !f.menu ? `   ✓ M referme l'écran entier` : `   ✗ reste ouvert : map=${f.map} menu=${f.menu}`)
+    // TAB ouvre sur PERSONNAGE, puis M bascule sur CARTE sans refermer.
+    await page.keyboard.press('Tab'); await page.waitForTimeout(300)
+    const t1 = await page.evaluate(() => window.__BRAISES__.scene.registry.get('characterTab'))
+    await page.keyboard.press('m'); await page.waitForTimeout(300)
+    const t2 = await page.evaluate(() => ({
+      tab: window.__BRAISES__.scene.registry.get('characterTab'),
+      menu: Boolean(window.__BRAISES__.scene.registry.get('characterMenuOpen')),
+    }))
+    console.log(t1 === 'perso' ? `   ✓ TAB ouvre sur PERSONNAGE` : `   ✗ TAB ouvre sur ${t1}`)
+    console.log(t2.tab === 'carte' && t2.menu ? `   ✓ M bascule sur CARTE sans refermer` : `   ✗ ${JSON.stringify(t2)}`)
+    return {}
+  },
+
+  /**
    * LE CUBIQUE (DA 2026-07-24) — décor passé en normal-map + fleurs en VARIÉTÉS. On MESURE ce qui se
    * mesure (géométrie du miroir, étendue des facettes de la normale) et on CAPTURE ce qui se juge à
    * l'œil (variété des fleurs, penche des nœuds-plantes au vent). Tourne en build de PROD — aucun TP.

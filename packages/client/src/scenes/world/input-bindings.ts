@@ -197,6 +197,9 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   onDownAlways(KEYMAP.toggleInventory, () => {
     const opening = !getHud(scene.registry, 'characterMenuOpen')
     setHud(scene.registry, 'characterMenuOpen', opening)
+    // TAB rouvre TOUJOURS sur PERSONNAGE (l'usage premier) — pas sur les métiers ni sur la
+    // carte, où l'on n'atterrit que par choix (clic d'onglet ou M).
+    setHud(scene.registry, 'characterTab', 'perso')
     setHud(scene.registry, 'openContainer', opening ? nearestContainer(deps) : null)
   })
 
@@ -213,12 +216,19 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     setHud(scene.registry, 'activeSlot', next)
   })
 
-  // J : le journal. M : la carte plein écran (visionneuse rendue par UIScene).
+  // J : le journal. M : la CARTE — devenue un ONGLET de l'écran personnage (décision
+  // d'Alexis, 2026-07-25). M ouvre donc l'écran DIRECTEMENT dessus, et le referme si l'on
+  // y est déjà. Depuis un autre onglet, M bascule sur la carte sans refermer.
   onDown(KEYMAP.toggleJournal, () => {
     setHud(scene.registry, 'journalOpen', !getHud(scene.registry, 'journalOpen'))
   })
   onDown(KEYMAP.toggleMap, () => {
-    setHud(scene.registry, 'mapOpen', !getHud(scene.registry, 'mapOpen'))
+    const onMap = Boolean(getHud(scene.registry, 'mapOpen'))
+    setHud(scene.registry, 'characterMenuOpen', !onMap)
+    setHud(scene.registry, 'characterTab', onMap ? 'perso' : 'carte')
+    // La carte n'est pas un écran de loot : on n'y ouvre aucun conteneur, et on referme
+    // celui qu'un TAB aurait ouvert (l'écran change de sujet).
+    setHud(scene.registry, 'openContainer', null)
   })
   // ESC : le menu PAUSE. WorldScene fige/reprend l'hôte selon `menuOpen` (le monde solo se gèle).
   onDown(KEYMAP.toggleMenu, () => {

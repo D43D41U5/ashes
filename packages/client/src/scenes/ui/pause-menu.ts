@@ -22,7 +22,7 @@ const KEYS: [string, string][] = [
   ['Cueillir (baies, fibre…)', 'E'],
   ['Ceinture (objet en main)', '1 – 6'],
   ['Jeter ce qu’on tient', 'G'],
-  ['Sac & artisanat', 'TAB'],
+  ['Personnage (sac, artisanat)', 'TAB'],
   ['Carte · Chronique', 'M · J'],
   ['Couper le son', 'N'],
 ]

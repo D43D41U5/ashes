@@ -40,6 +40,18 @@ const TASK_LABELS: Record<VillageTask['kind'], string> = {
 const MAP_ZOOM_MIN = 1
 const MAP_ZOOM_MAX = 8
 const MAP_ZOOM_STEP = 1.15
+/**
+ * LA BOÎTE DE LA CARTE, en unités Phaser (plan 1280×720) — l'onglet CARTE n'est pas le plein
+ * écran : le chrome DOM de l'écran personnage l'encadre, et la carte ne doit ni passer sous la
+ * barre d'onglets ni toucher la CEINTURE. Les deux plans sont en FIT 16:9 (DOM 1920×1080,
+ * Phaser 1280×720) : un pixel DOM = 1/1,5 pixel Phaser, donc ces bornes tiennent à tout écran.
+ *   · haut  60 → sous la barre d'onglets (DOM 22..52) et la ligne ARPENTÉ.
+ *   · bas  626 → la ceinture commence à 650,7 (DOM bottom 26 + 78 de haut) : 24 px de marge.
+ */
+const MAP_BOX_TOP = 60
+const MAP_BOX_BOTTOM = 626
+/** Largeur : on garde une marge sur les côtés (rien n'y empiète, mais la carte respire). */
+const MAP_BOX_WIDTH_FRAC = 0.9
 /** Au-dessus de tout le HUD (et du journal, à profondeur par défaut). */
 const MAP_OVERLAY_DEPTH = 1000
 /** L'écran de chargement couvre TOUT (carte comprise) — il est seul au monde. */
@@ -129,9 +141,12 @@ export class UIScene extends Phaser.Scene {
   /** Dernière échelle appliquée aux pastilles — évite de les reparcourir à chaque frame. */
   private mapPoiScale = 0
   private mapHover!: Phaser.GameObjects.Text
-  /** Échelle « carte entière ajustée à l'écran » — l'ancre du zoom (facteur ×). */
+  /** Échelle « carte entière ajustée à sa BOÎTE » — l'ancre du zoom (facteur ×). */
   private mapFit = 1
   private mapZoom = 1
+  /** Le centre de la boîte (voir MAP_BOX_TOP/BOTTOM) : la carte n'est PAS centrée sur l'écran,
+   *  elle est centrée entre la barre d'onglets et la ceinture. */
+  private mapCenterY = 0
   /** Dimensions de la texture carte (px monde) — pour borner le pan. */
   private mapTexW = 0
   private mapTexH = 0
@@ -201,6 +216,9 @@ export class UIScene extends Phaser.Scene {
     this.hudCharacter = createHudCharacter(this.hudRoot.board, this.game, {
       queue: (action) => queueAction(this.registry, action),
       setTyping: (v) => setHud(this.registry, 'uiTyping', v),
+      // L'onglet vit dans le REGISTRE : le clavier (TAB, M) et les en-têtes écrivent au même
+      // endroit, et `mapOpen` s'en déduit plus bas — la carte ne peut pas diverger de son onglet.
+      setTab: (t) => setHud(this.registry, 'characterTab', t),
     })
     // LE MENU DU MARTEAU (spec construction R20) : à gauche, dans le monde (hors
     // TAB) — il ne paraît que le marteau EN MAIN, et se referme quand on le range.
@@ -331,27 +349,37 @@ export class UIScene extends Phaser.Scene {
     return Boolean(this.mapRoot) && Boolean(getHud(this.registry, 'mapOpen'))
   }
 
-  /** Monte l'overlay carte au premier affichage (texture `map-demo` prête). */
+  /**
+   * Monte l'overlay carte au premier affichage (texture `map-demo` prête).
+   *
+   * C'EST LE CONTENU DE L'ONGLET CARTE. Le panneau DOM de l'écran personnage s'efface
+   * là-dessus (fond transparent, pointeur traversant) et ne garde par-dessus que sa barre
+   * d'onglets et sa ceinture : d'où le FOND OPAQUE couleur des autres onglets (#14100c —
+   * un onglet ne laisse pas voir le monde derrière lui) et l'absence de titre, l'onglet
+   * CARTE nommant déjà l'écran.
+   */
   private ensureMapOverlay(map: WorldMap): void {
     if (this.mapRoot) return
     const W = this.scale.width
     const H = this.scale.height
     const style = { fontFamily: FONT, fontSize: '16px', color: '#e8e0c8', stroke: '#14141a', strokeThickness: 3 }
-    const bg = this.add.rectangle(0, 0, W, H, 0x0a0a0e, 0.9).setOrigin(0)
-    const title = this.add.text(W / 2, 16, 'LA CARTE', { ...style, fontSize: '20px', color: '#e8c66a' }).setOrigin(0.5, 0)
+    const bg = this.add.rectangle(0, 0, W, H, 0x14100c, 1).setOrigin(0)
+    // L'aide : à DROITE de la ceinture (qui tient le bas-centre), sur sa ligne. Centrée, elle
+    // tomberait dessus — la ceinture est du DOM, elle passe TOUJOURS devant.
     const hint = this.add
-      .text(W / 2, H - 28, 'molette : zoom · glisser : déplacer · M : fermer', { ...style, fontSize: '13px', color: '#b8b0a0' })
-      .setOrigin(0.5, 0)
+      .text(W - 28, H - 52, 'molette : zoom · glisser : déplacer · M : fermer', { ...style, fontSize: '13px', color: '#b8b0a0' })
+      .setOrigin(1, 0)
     this.mapHint = hint
     // CE QUI EST ARPENTÉ (spec R19). Sans ce chiffre, la première ouverture de la carte est un
     // rectangle noir avec un point : ça se lit comme une PANNE, pas comme un mystère. Nommer la
     // part parcourue retourne le vide en JAUGE — le noir cesse d'être une absence, il devient
     // ce qui reste à prendre. C'est la ligne qui transforme le brouillard en moteur.
     this.mapArpente = this.add
-      .text(W / 2, 44, '', { ...style, fontSize: '13px', color: '#9a8f78' })
+      .text(W / 2, 22, '', { ...style, fontSize: '13px', color: '#9a8f78' })
       .setOrigin(0.5, 0)
-    // Le lieu sous le curseur — en haut à gauche de la carte.
-    this.mapHover = this.add.text(16, 16, '', { ...style, fontSize: '16px', color: '#e8c66a' }).setOrigin(0, 0)
+    // Le lieu sous le curseur — en haut à gauche, SOUS la barre d'onglets DOM (top 22 px sur
+    // la planche 1920×1080, soit ~35 px ici : les deux plans sont en FIT 16:9, rapport 1,5).
+    this.mapHover = this.add.text(28, 46, '', { ...style, fontSize: '16px', color: '#e8c66a' }).setOrigin(0, 0)
 
     const texW = map.width * TILE_PX
     const texH = map.height * TILE_PX
@@ -360,8 +388,10 @@ export class UIScene extends Phaser.Scene {
     this.mapImage = this.add.image(0, 0, 'map-demo').setOrigin(0.5).setDisplaySize(texW, texH)
     this.mapTexW = texW
     this.mapTexH = texH
-    // Ajuste la carte entière dans ~90 % × 82 % de l'écran (titre + aide gardent leur place).
-    this.mapFit = Math.min((W * 0.9) / texW, (H * 0.82) / texH)
+    // Ajuste la carte entière dans sa BOÎTE : entre la barre d'onglets et la ceinture, avec
+    // la marge qui la décolle des deux. Elle se centre sur la boîte, pas sur l'écran.
+    this.mapCenterY = (MAP_BOX_TOP + MAP_BOX_BOTTOM) / 2
+    this.mapFit = Math.min((W * MAP_BOX_WIDTH_FRAC) / texW, (MAP_BOX_BOTTOM - MAP_BOX_TOP) / texH)
     // Une pastille par POI (zone porteuse d'un `kind` ; les zones sans `kind` sont de simples
     // toponymes). Créées une fois — leur VISIBILITÉ, elle, suit `knownPois` (spec lieux R1).
     this.mapPoiDots = map.zones
@@ -394,15 +424,30 @@ export class UIScene extends Phaser.Scene {
     }
 
     // Le marqueur joueur passe APRÈS les pastilles : il doit rester lisible par-dessus.
-    this.mapLayer = this.add.container(W / 2, H / 2, [
+    this.mapLayer = this.add.container(W / 2, this.mapCenterY, [
       this.mapImage,
       ...(this.mapFog ? [this.mapFog] : []),
       ...this.mapPoiDots.map((p) => p.dot),
       this.mapMarker,
     ])
+    // LA CARTE EST BORNÉE À SA BOÎTE. Sans bornage, la marge n'existe qu'au zoom d'ouverture :
+    // dès qu'on grossit, la carte déborde et repasse sous la ceinture et la barre d'onglets.
+    // On borne par un CACHE (quatre bandes du fond, peintes PAR-DESSUS la carte) et non par un
+    // masque géométrique : MESURÉ au pixel (snapshot du renderer), un `setMask` sur un enfant
+    // de conteneur ne coupe rien ici — la carte bavait encore sous la boîte. Le fond étant
+    // opaque, le cache rend exactement ce qu'un masque rendrait, et ne dépend de rien.
+    const boxX = (W * (1 - MAP_BOX_WIDTH_FRAC)) / 2
+    const band = (x: number, y: number, w: number, h: number): Phaser.GameObjects.Rectangle =>
+      this.add.rectangle(x, y, w, h, 0x14100c, 1).setOrigin(0)
+    const bands = [
+      band(0, 0, W, MAP_BOX_TOP),
+      band(0, MAP_BOX_BOTTOM, W, H - MAP_BOX_BOTTOM),
+      band(0, MAP_BOX_TOP, boxX, MAP_BOX_BOTTOM - MAP_BOX_TOP),
+      band(W - boxX, MAP_BOX_TOP, boxX, MAP_BOX_BOTTOM - MAP_BOX_TOP),
+    ]
 
     this.mapRoot = this.add
-      .container(0, 0, [bg, this.mapLayer, title, hint, this.mapArpente, this.mapHover])
+      .container(0, 0, [bg, this.mapLayer, ...bands, hint, this.mapArpente, this.mapHover])
       .setDepth(MAP_OVERLAY_DEPTH)
       .setVisible(false)
   }
@@ -425,20 +470,23 @@ export class UIScene extends Phaser.Scene {
   }
 
   /**
-   * Borne le pan sur la taille SCALÉE de la carte : plus petite que l'écran
-   * (dans une dimension) → verrouillée au centre (pas de pan parasite quand la
-   * carte tient déjà à l'écran) ; plus grande → pan autorisé mais l'image
-   * couvre toujours l'écran, donc les bords peuvent atteindre les bords (mais
-   * jamais de vide au-delà).
+   * Borne le pan sur la taille SCALÉE de la carte : plus petite que sa BOÎTE (dans
+   * une dimension) → verrouillée au centre de la boîte (pas de pan parasite quand la
+   * carte y tient déjà, et la marge sous la ceinture ne se fait pas manger) ; plus
+   * grande → pan autorisé, mais l'image couvre toujours la boîte, donc les bords
+   * peuvent l'atteindre sans jamais laisser de vide au-delà.
    */
   private clampMapPan(): void {
     const scale = this.mapFit * this.mapZoom
     const W = this.scale.width
-    const H = this.scale.height
     const halfW = (this.mapTexW * scale) / 2
     const halfH = (this.mapTexH * scale) / 2
+    const boxH = MAP_BOX_BOTTOM - MAP_BOX_TOP
     this.mapLayer.x = 2 * halfW <= W ? W / 2 : Phaser.Math.Clamp(this.mapLayer.x, W - halfW, halfW)
-    this.mapLayer.y = 2 * halfH <= H ? H / 2 : Phaser.Math.Clamp(this.mapLayer.y, H - halfH, halfH)
+    this.mapLayer.y =
+      2 * halfH <= boxH
+        ? this.mapCenterY
+        : Phaser.Math.Clamp(this.mapLayer.y, MAP_BOX_BOTTOM - halfH, MAP_BOX_TOP + halfH)
   }
 
   /** Le point de la carte sous le curseur, en TUILES — `null` hors des bornes. */
@@ -460,6 +508,12 @@ export class UIScene extends Phaser.Scene {
   private updateMapHover(pointer: Phaser.Input.Pointer): void {
     const map = getHud(this.registry, 'mapData')
     if (!map) return
+    // Hors de la boîte, la carte est MASQUÉE : le curseur y survolerait un pays qu'on ne voit
+    // pas — le nom se tairait mal de sortir d'un endroit vide.
+    if (pointer.y < MAP_BOX_TOP || pointer.y > MAP_BOX_BOTTOM) {
+      this.mapHover.setText('')
+      return
+    }
     const at = this.mapTileAt(pointer)
     const zone = at ? zoneAt(map, at.tx, at.ty) : undefined
     const poiId = zone ? map.zones.indexOf(zone) : -1
@@ -467,11 +521,11 @@ export class UIScene extends Phaser.Scene {
     this.mapHover.setText(zone && !hidden ? zone.name : '')
   }
 
-  /** Réinitialise la vue à l'ouverture : carte entière, centrée, zoom 1. */
+  /** Réinitialise la vue à l'ouverture : carte entière, centrée SUR SA BOÎTE, zoom 1. */
   private resetMapView(): void {
     this.mapZoom = 1
     this.mapLayer.setScale(this.mapFit)
-    this.mapLayer.setPosition(this.scale.width / 2, this.scale.height / 2)
+    this.mapLayer.setPosition(this.scale.width / 2, this.mapCenterY)
   }
 
   /** Tuile → coordonnée locale du `mapLayer` (pixels-monde, origine au centre de la carte). */
@@ -681,9 +735,16 @@ export class UIScene extends Phaser.Scene {
     // conteneur ouvert est déjà résolu par WorldScene (null s'il a disparu). Fermé,
     // il rend la main au déplacement (`uiTyping` false — la recherche a lâché le clavier).
     const characterMenuOpen = Boolean(getHud(this.registry, 'characterMenuOpen'))
+    const characterTab = getHud(this.registry, 'characterTab') ?? 'perso'
+    // LA CARTE EST UN ONGLET : `mapOpen` n'est plus écrit par personne, il se DÉDUIT ici, une
+    // fois pour toutes. Tous ses lecteurs (molette, fantôme de construction, clic monde,
+    // caméra) continuent de marcher tels quels, et l'invariant « la carte n'est à l'écran que
+    // sur son onglet » se répare de lui-même, quoi qu'il arrive à l'écran personnage.
+    setHud(this.registry, 'mapOpen', characterMenuOpen && characterTab === 'carte')
     if (!characterMenuOpen) setHud(this.registry, 'uiTyping', false)
     this.hudCharacter.update({
       open: characterMenuOpen,
+      tab: characterTab,
       inv,
       activeSlot,
       stations: getHud(this.registry, 'stationsInRange') ?? [],
@@ -763,10 +824,14 @@ export class UIScene extends Phaser.Scene {
     // Le menu PAUSE (ESC) : WorldScene fige l'hôte quand `menuOpen` ; on ne fait que montrer/cacher.
     this.pauseMenu.setVisible(Boolean(getHud(this.registry, 'menuOpen')))
 
-    // La carte plein écran (M) : montée à la première ouverture, puis basculée.
+    // LA CARTE (onglet CARTE, ouvert à M) : montée à la première ouverture, puis basculée.
+    // Le BROUILLARD doit être publié À CE MOMENT-LÀ : `ensureMapOverlay` ne monte son calque
+    // qu'une fois, et sans lui la carte serait offerte entière — l'exact contraire de R19.
     const mapData = getHud(this.registry, 'mapData')
     const mapOpen = Boolean(getHud(this.registry, 'mapOpen'))
-    if (mapOpen && mapData && this.textures.exists('map-demo')) this.ensureMapOverlay(mapData)
+    if (mapOpen && mapData && getHud(this.registry, 'fog') && this.textures.exists('map-demo')) {
+      this.ensureMapOverlay(mapData)
+    }
     if (this.mapRoot) {
       this.mapRoot.setVisible(mapOpen)
       if (mapOpen && mapData) {

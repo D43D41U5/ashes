@@ -143,6 +143,7 @@ export function createHudCore(
 
   // ── La ceinture : BELT cases cliquables (→ set_active_slot) ──
   const beltWrap = $('.hc-belt')
+  const tlWrap = $('.hc-tl')
   const slots: {
     cell: HTMLElement
     num: HTMLElement
@@ -261,6 +262,10 @@ export function createHudCore(
       // s'efface (sa rangée est dans la grille du sac — sinon deux ceintures à l'écran).
       root.style.setProperty('--hud-alpha', s.characterMenuOpen ? '1' : '.85')
       beltWrap.style.display = s.characterMenuOpen ? 'none' : ''
+      // Le coin haut-gauche (jour, lieu, village) cède la place à la BARRE D'ONGLETS de
+      // l'écran personnage, qui occupe le même coin. Invisible de toute façon sur les onglets
+      // opaques ; sur l'onglet CARTE, où le panneau s'efface, les deux se chevaucheraient.
+      tlWrap.style.display = s.characterMenuOpen ? 'none' : ''
 
       // Vitales : hauteur du liquide + couleur (rouge sous le seuil d'alarme) + infobulle.
       const vals: Record<string, number> = {

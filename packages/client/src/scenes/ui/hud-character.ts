@@ -1,10 +1,10 @@
 /**
- * L'ÉCRAN PERSONNAGE (maquette Turn 3A), en DOM — ouvert au TAB, en DEUX ONGLETS.
+ * L'ÉCRAN PERSONNAGE (maquette Turn 3A), en DOM — ouvert au TAB, en TROIS ONGLETS.
  *
- * ONGLET SAC (le geste — on FAIT) : à gauche le SAC + un rappel de la CEINTURE,
+ * ONGLET PERSONNAGE (le geste — on FAIT) : à gauche le SAC + un rappel de la CEINTURE,
  * glisser-déposer et clic droit (envoi rapide) ; à droite l'ARTISANAT : recherche,
  * recettes groupées par rayon, trois états (faisable / manque / grisé), un clic FAIT.
- * Un conteneur ouvert (coffre, dépouille) ajoute sa colonne de butin — et RAMÈNE à SAC
+ * Un conteneur ouvert (coffre, dépouille) ajoute sa colonne de butin — et RAMÈNE à PERSONNAGE
  * (on loote, on ne consulte pas ses stats). C'est l'écran d'avant, INTACT.
  *
  * ONGLET MÉTIERS (la maîtrise — on COMPREND) : les quatre métiers en colonnes, chacun sa
@@ -12,7 +12,13 @@
  * les gains continus, la note d'accès outil. Le contenu vient de `skill-guide.ts`, DÉRIVÉ
  * du sim et testé : la colonne ne peut pas mentir sur un seuil.
  *
- * La CEINTURE reste ancrée sur les deux onglets (c'est la hotbar, elle ne saute jamais) ;
+ * ONGLET CARTE (le pays — on se SITUE) : la carte plein écran, celle de toujours, avec son
+ * brouillard, ses pastilles de lieux et son zoom. Elle est RENDUE PAR PHASER (UIScene) : sur
+ * cet onglet le panneau DOM s'efface — fond transparent, `pointer-events:none` — et ne garde
+ * que sa barre d'onglets et sa ceinture par-dessus. Le DOM ne redessine pas la carte, il lui
+ * fait sa place. M ouvre l'écran DIRECTEMENT sur cet onglet (et le referme).
+ *
+ * La CEINTURE reste ancrée sur les trois onglets (c'est la hotbar, elle ne saute jamais) ;
  * seul le contenu du haut change. TAB ouvre/ferme ; les en-têtes d'onglet basculent.
  *
  * AUCUNE RÈGLE DE JEU. Les gestes ne calculent QUE l'action à envoyer — la logique dure
@@ -38,7 +44,7 @@ import {
   type SlotRef,
 } from '@braises/sim'
 import type Phaser from 'phaser'
-import type { OpenContainerView, StationId } from '../../hud-state'
+import type { CharacterTab, OpenContainerView, StationId } from '../../hud-state'
 import { ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { costLine, craftRows, type CraftRow } from './craft-panel'
 import { dragIntentFrom, dragToAction, quickMoveToAction } from './inventory-panel'
@@ -95,6 +101,9 @@ const EQUIP_RIGHT: { key: string; label: string }[] = [
 export interface HudCharacter {
   update(s: {
     open: boolean
+    /** L'onglet À AFFICHER — la vérité vient du registre (TAB pose `perso`, M pose `carte`) ;
+     *  l'écran ne garde AUCUN onglet à lui. Un clic d'en-tête repasse par `hooks.setTab`. */
+    tab: CharacterTab
     inv: Inventory
     activeSlot: number
     stations: readonly StationId[]
@@ -106,7 +115,7 @@ export interface HudCharacter {
 export function createHudCharacter(
   board: HTMLElement,
   game: Phaser.Game,
-  hooks: { queue: (a: PlayerAction) => void; setTyping: (v: boolean) => void },
+  hooks: { queue: (a: PlayerAction) => void; setTyping: (v: boolean) => void; setTab: (t: CharacterTab) => void },
 ): HudCharacter {
   const urls = new Map<string, string>()
   const iconUrl = (item: ItemId): string => {
@@ -214,28 +223,32 @@ export function createHudCharacter(
   let activeSlot = -1
   let stations: readonly StationId[] = []
   let container: OpenContainerView | null = null
-  let activeTab: 'sac' | 'metiers' = 'sac'
+  let activeTab: CharacterTab = 'perso'
 
   // ── Les ONGLETS : bascule PUREMENT visuelle. Le sac/craft reste monté (jamais détruit) —
-  //    le glisser-déposer et la file de craft survivent à un aller-retour sur MÉTIERS. ──
+  //    le glisser-déposer et la file de craft survivent à un aller-retour sur MÉTIERS.
+  //    Sur CARTE, le panneau lui-même s'EFFACE (`hch-carte` : fond transparent, pointeur
+  //    qui traverse) pour laisser voir la carte Phaser dessous et la laisser se zoomer. ──
   const applyTab = (): void => {
-    const sac = activeTab === 'sac'
+    const perso = activeTab === 'perso'
     for (const b of tabBtns) b.classList.toggle('is-on', b.dataset.tab === activeTab)
-    artWrap.style.display = sac ? '' : 'none'
-    persoWrap.style.display = sac ? '' : 'none'
-    sacWrap.style.display = sac ? '' : 'none'
-    metWrap.style.display = sac ? 'none' : 'flex'
-    // Hors SAC, le butin et les métiers-à-gauche disparaissent ; sur SAC, leur affichage
-    // fin (butin vs stats) reste tranché dans `update`, au vu du conteneur.
-    if (!sac) {
+    root.classList.toggle('hch-carte', activeTab === 'carte')
+    artWrap.style.display = perso ? '' : 'none'
+    persoWrap.style.display = perso ? '' : 'none'
+    sacWrap.style.display = perso ? '' : 'none'
+    metWrap.style.display = activeTab === 'metiers' ? 'flex' : 'none'
+    // Hors PERSONNAGE, le butin et les métiers-à-gauche disparaissent ; sur PERSONNAGE, leur
+    // affichage fin (butin vs stats) reste tranché dans `update`, au vu du conteneur.
+    if (!perso) {
       contWrap.style.display = 'none'
       skillsWrap.style.display = 'none'
     }
   }
   for (const b of tabBtns) {
     b.addEventListener('click', () => {
-      activeTab = b.dataset.tab === 'metiers' ? 'metiers' : 'sac'
-      applyTab()
+      // L'onglet cliqué part au REGISTRE ; il nous revient au prochain `update`. Un seul
+      // écrivain, une seule vérité (c'est lui qui décide aussi si la carte est à l'écran).
+      hooks.setTab((b.dataset.tab ?? 'perso') as CharacterTab)
     })
   }
 
@@ -260,7 +273,7 @@ export function createHudCharacter(
       }
     }
   }
-  applyTab() // état de départ : l'onglet SAC
+  applyTab() // état de départ : l'onglet PERSONNAGE
 
   // ── La recherche : un vrai <input>. Focalisé = le jeu ne bouge plus (`uiTyping`). ──
   search.addEventListener('focus', () => hooks.setTyping(true))
@@ -457,17 +470,20 @@ export function createHudCharacter(
           drag.ghost.remove()
           drag = null
         }
-        activeTab = 'sac' // le TAB rouvre toujours sur le SAC (l'usage premier), pas sur la fiche métiers
+        container = null // l'onglet, lui, est remis à `perso` par qui ferme l'écran (input-bindings)
         return
       }
+      const hadContainer = container !== null
       inv = s.inv
       activeSlot = s.activeSlot
       stations = s.stations
       container = s.container
 
-      // Un conteneur qui s'ouvre RAMÈNE à SAC : on loote, on ne lit pas ses stats. Puis on
-      // fixe l'onglet et on rafraîchit les colonnes MÉTIERS (le niveau monte en jouant).
-      if (container) activeTab = 'sac'
+      // Un conteneur qui S'OUVRE ramène à PERSONNAGE : on loote, on ne lit pas ses stats. Sur
+      // le FRONT seulement (null → conteneur) : le forcer à chaque frame collerait l'écran sur
+      // PERSONNAGE tant qu'un coffre est ouvert — plus moyen d'aller voir la carte ni les métiers.
+      activeTab = container && !hadContainer ? 'perso' : s.tab
+      if (activeTab !== s.tab) hooks.setTab(activeTab)
       applyTab()
       paintMet(s.skills)
 
@@ -489,10 +505,10 @@ export function createHudCharacter(
         skillBars[i]!.fill.style.width = `${(frac * 100).toFixed(0)}%`
       }
 
-      // La gauche de l'onglet SAC : un seul locataire. Le butin d'un conteneur ouvert PRIME
-      // sur les métiers (on loote, on ne consulte pas ses stats) ; sinon les métiers reprennent
-      // la place. Tout ceci ne vaut QUE sur SAC — sur MÉTIERS, `applyTab` a déjà tout caché.
-      if (activeTab === 'sac') {
+      // La gauche de l'onglet PERSONNAGE : un seul locataire. Le butin d'un conteneur ouvert
+      // PRIME sur les métiers (on loote, on ne consulte pas ses stats) ; sinon les métiers
+      // reprennent la place. Ceci ne vaut QUE sur PERSONNAGE — ailleurs, `applyTab` a tout caché.
+      if (activeTab === 'perso') {
         skillsWrap.style.display = container ? 'none' : ''
         if (container) {
           contWrap.style.display = 'block'
@@ -629,7 +645,17 @@ function markup(): string {
     .hch-ghost{position:fixed;width:44px;height:44px;image-rendering:pixelated;pointer-events:none;z-index:60;transform:translate(-50%,-50%);opacity:.85;}
 
     /* ONGLETS : barre fine en haut-gauche. TAB ouvre/ferme ; ces en-tetes basculent le
-       contenu du haut (SAC vs METIERS). L'onglet actif porte un liseré de braise. */
+       contenu du haut (PERSONNAGE / METIERS / CARTE). L'onglet actif porte un liseré de braise.
+       Sur CARTE, le panneau s'EFFACE : la carte est rendue par Phaser SOUS le HUD DOM, donc le
+       fond opaque partirait devant elle et le panneau lui volerait molette et glisser. On rend
+       le fond transparent et le pointeur traversant — seuls les .hud-click (onglets, ceinture)
+       gardent le clic, exactement comme le HUD par-dessus le monde (voir hud-dom.ts). */
+    .hch-carte{background:none;pointer-events:none;}
+    /* La ceinture RESTE affichée sur CARTE (elle est ancrée aux trois onglets) mais elle rend
+       le POINTEUR : ses cases sont du DOM cliquable, elles voleraient le glisser de la carte
+       (MESURÉ : un glisser parti d'une case ne déplaçait rien) et leur clic droit enverrait un
+       objet dans un sac qu'on ne voit même pas. Les touches 1-6, elles, marchent toujours. */
+    .hch-carte .hch-cell-belt{pointer-events:none;cursor:default;}
     .hch-tabs{position:absolute;top:22px;left:40px;display:flex;gap:4px;}
     .hch-tab{font-size:13px;font-weight:700;letter-spacing:2px;color:#8b8474;background:none;border:none;
       border-bottom:3px solid transparent;padding:6px 16px 8px;cursor:pointer;font-family:inherit;}
@@ -669,8 +695,9 @@ function markup(): string {
   </style>
   <div class="hch-close">TAB — FERMER</div>
   <div class="hch-tabs">
-    <button class="hch-tab hud-click" data-tab="sac">SAC</button>
+    <button class="hch-tab hud-click" data-tab="perso">PERSONNAGE</button>
     <button class="hch-tab hud-click" data-tab="metiers">MÉTIERS</button>
+    <button class="hch-tab hud-click" data-tab="carte">CARTE</button>
   </div>
   <div class="hch-met"><div class="hch-met-row"></div></div>
   <div class="hch-art">
