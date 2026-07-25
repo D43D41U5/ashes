@@ -61,8 +61,13 @@ export function naturalWarmth(state: SimState, x: number, y: number): number {
   return best
 }
 
-/** Température ambiante cible (0-100) au lieu (x,y) et à l'instant courant. */
-export function ambientTemperature(state: SimState, x: number, y: number): number {
+/**
+ * Température de BASE d'un lieu — biome + heure + acte + abri, SANS aucune source de chaleur
+ * (ni feu ni source chaude). C'est le froid « du monde ». Sert au gate d'attraction des
+ * Cendreux (spec feu-station S5) : surtout PAS l'ambiant fini (qui inclut le feu), sinon un
+ * Cendreux qui s'approche se réchaufferait, franchirait le seuil et oscillerait à la lisière.
+ */
+export function baselineTemperature(state: SimState, x: number, y: number): number {
   const tx = Math.floor(x)
   const ty = Math.floor(y)
   const time = getGameTime(state)
@@ -73,10 +78,13 @@ export function ambientTemperature(state: SimState, x: number, y: number): numbe
   const base = T.BASE - T.ACT_COLD[time.act - 1]! // non coupé par un toit
   const exposed = biome - (time.isNight ? T.NIGHT_COLD : 0) // amorti par l'abri
   const shelter = isSheltered(state, tx, ty) ? T.SHELTER_FACTOR : 1
-  const ambient = clampTemp(base + shelter * exposed)
+  return clampTemp(base + shelter * exposed)
+}
 
+/** Température ambiante cible (0-100) au lieu (x,y) : le froid de base, PLANCHERÉ par un feu / une source chaude. */
+export function ambientTemperature(state: SimState, x: number, y: number): number {
   // Ni le feu ni la source chaude ne peuvent refroidir : ils ne font que plancher.
-  return Math.max(ambient, fireBubble(state, x, y), naturalWarmth(state, x, y))
+  return Math.max(baselineTemperature(state, x, y), fireBubble(state, x, y), naturalWarmth(state, x, y))
 }
 
 /** Un pas de dérive vers l'ambiant, freiné par l'isolation. Pur. */

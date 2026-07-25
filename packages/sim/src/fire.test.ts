@@ -5,7 +5,9 @@ import { willRiseAsCendreux } from './cendreux'
 import { drainEvents } from './events'
 import { advanceFire, fireState } from './fire'
 import { createEmptyMap } from './map'
+import { advanceMonsters, spawnMonster } from './monsters'
 import { createSim, spawnEntity, type SimState } from './sim'
+import { DAY_TICKS_PER_CYCLE } from './time'
 import { fireBubble } from './temperature'
 import { addStructure, applyStructureDamage, applyVillageAction, grantItems } from './village'
 
@@ -157,6 +159,39 @@ describe('Le Feu-station : la cuisson au slot, passive (spec feu-station, A5/A6/
     delete fire.emberUntil
     advanceFire(sim)
     expect(fire.cook!.remainingTicks).toBe(start - 1)
+  })
+})
+
+describe('Le Feu-station : le feu ATTIRE les Cendreux quand il fait froid (spec feu-station, A4)', () => {
+  const nightSim = (): SimState => createSim(1, { cycleOffset: DAY_TICKS_PER_CYCLE, map: createEmptyMap(96, 96, TERRAIN_GRASS) })
+
+  it('A4 — la NUIT (froid), un Cendreux chemine vers un feu ALLUMÉ à portée', () => {
+    const sim = nightSim()
+    const id = spawnMonster(sim, 'cendreux', 5, 5)
+    const monster = sim.monsters.find((m) => m.entityId === id)!
+    addStructure(sim, 'fire', 15, 5, 0, 0) // feu libre PLEIN (allumé), dans WARMTH_SEEK_RANGE (20)
+    advanceMonsters(sim)
+    expect(monster.path?.length ?? 0).toBeGreaterThan(0) // il rampe vers le phare
+  })
+
+  it('A4 — un feu ÉTEINT n’est PAS un phare : il n’attire pas', () => {
+    const sim = nightSim()
+    const id = spawnMonster(sim, 'cendreux', 5, 5)
+    const monster = sim.monsters.find((m) => m.entityId === id)!
+    const fire = addStructure(sim, 'fire', 15, 5, 0, 0)
+    fire.fuel = 0
+    fire.emberUntil = sim.tick // tick >= emberUntil → 'out'
+    advanceMonsters(sim)
+    expect(monster.path?.length ?? 0).toBe(0)
+  })
+
+  it('A4 — de JOUR en zone TEMPÉRÉE (pas froid), aucun appel vers le feu', () => {
+    const sim = createSim(1, { map: createEmptyMap(96, 96, TERRAIN_GRASS) }) // jour, herbe, acte I → base 90
+    const id = spawnMonster(sim, 'cendreux', 5, 5)
+    const monster = sim.monsters.find((m) => m.entityId === id)!
+    addStructure(sim, 'fire', 15, 5, 0, 0) // allumé, mais il fait chaud → pas de phare
+    advanceMonsters(sim)
+    expect(monster.path?.length ?? 0).toBe(0)
   })
 })
 

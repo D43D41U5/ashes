@@ -2094,6 +2094,10 @@ export const CENDREUX = {
   HEARTH_WARD_RADIUS: 12, // « loin d'un feu » : aucune structure feu (mort ET réveil)
   RISE_DELAY: ticksFor(300), // délai mort→levée (~5 min ; le cadavre marqué ne décante pas d'ici là)
   WARMTH_SEEK_RANGE: 20, // rayon de recherche de chaleur la nuit
+  /** Seuil de FROID DE BASE (température hors feu, 0-100) sous lequel un Cendreux rampe vers un
+   *  feu ALLUMÉ même de JOUR (spec feu-station S5). La nuit attire déjà toujours ; ce seuil ajoute
+   *  les biomes froids (neige/glacier) et le Grand Froid (actes II-III). À calibrer. */
+  COLD_ATTRACT_THRESHOLD: 55,
 }
 
 /** Le combat (GDD §7, spec combat) — lent, positionnel, gagné avant l'échange. */

@@ -5,7 +5,8 @@ import { CENDREUX, COMBAT, MONSTER_DEFS } from './balance'
 import { startAttack } from './combat'
 import { distSq } from './geometry'
 import { emitEvent } from './events'
-import { fireActive } from './fire'
+import { fireActive, fireState } from './fire'
+import { baselineTemperature } from './temperature'
 import { isEmpty, pourInto } from './items'
 import { moveToward, nearestPrey, spawnMonster, type Monster } from './monsters'
 import { pathToward } from './pathfinding'
@@ -75,6 +76,7 @@ export function nearestWarmth(
   let bestD = r2
   for (const s of state.structures) {
     if (s.type !== 'fire') continue
+    if (fireState(state, s) !== 'lit') continue // seul un feu ALLUMÉ est un phare (spec feu-station S5)
     const d = distSq(s.tx + 0.5, s.ty + 0.5, entity.x, entity.y)
     if (d < bestD) {
       bestD = d
@@ -102,7 +104,11 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity):
   if (state.tick >= (monster.thinkAt ?? 0)) {
     monster.thinkAt = state.tick + def.thinkEveryTicks
     let goal: { x: number; y: number; prey?: Entity } | undefined
-    if (night) {
+    // Attirés par la chaleur quand il fait FROID (spec feu-station S5) : la nuit (comme
+    // toujours), OU quand le froid de BASE — hors feu, sinon oscillation à la lisière de la
+    // bulle — mord (biome froid, Grand Froid). Sinon, la chasse diurne.
+    const cold = night || baselineTemperature(state, entity.x, entity.y) < CENDREUX.COLD_ATTRACT_THRESHOLD
+    if (cold) {
       goal = nearestWarmth(state, entity, CENDREUX.WARMTH_SEEK_RANGE)
     } else {
       const prey = nearestPrey(state, entity, def.aggroRange)
