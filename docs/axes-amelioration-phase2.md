@@ -99,8 +99,8 @@ Rien en aval ne mord tant que sa racine n'a pas atterri. **Financer ces racines 
 - **Risque** : **RNG fragile** (spawn d'entités → décale le flux seedé, casse des tests sim/replay sans rapport) → isoler sur chemin neuf, régénérer les fixtures à part. Scope creep vers escortes/patrouilles/panique : s'en tenir au peuplement nu. Équilibre : une Meute trop proche transforme la Veillée en tower-defense (le solo joue mécaniquement un Ermitage, GDD §4).
 - **Décision Alexis** (load-bearing, voir §6-Groupe 1) : combien de voisins, à quelle distance, le joueur est-il cible dès le spawn.
 
-**[V1-11] L'upkeep du Feu (combustible)** — `[NEW, L]` · gardé (R-B, seul dilemme fort de son chantier)
-- **Problème** (audit §5, §6) : économie de stock sans évier permanent ; R16 écrite mais différée (`balance.ts:515`).
+**[V1-11] L'upkeep du Feu (combustible)** — `[LIVRÉ 2026-07-22]`
+- **Problème** (audit §5, §6) : économie de stock sans évier permanent — RÉSOLU : `advanceUpkeep` brûle `village.fuel` au tick, murs dégradés à sec. Le feu **LIBRE** gagne ensuite son propre combustible + l'extinction/braises (spec `feu-station.md`, 2026-07-25).
 - **Dilemme** : chaque bûche jetée au Feu est une bûche non investie ailleurs ; à sec, les murs se dégradent puis le village tombe. Le dilemme s'aiguise au Grand Froid (conso ×, alors que la Cendre brûle le bois autour) → « rester et alimenter vs migrer ». Version PNJ : « nourrir le Feu » = tâche village-board prioritaire → une garnison qui alimente ne récolte/défend pas.
 - **Articulation** : un champ `fuel: number` sur `Village` (JSON-sérialisable), décrément par tick modulé par la température ambiante. Livrer **d'abord** la conséquence-à-sec = **murs qui se dégradent seuls** (via `applyStructureDamage`, déjà là), **sans** couper la bulle de chaleur (double-peine à calibrer plus tard). Jamais d'extinction sèche : état « braises » dormant. Réhabilite `peat`/`ash` comme combustibles denses (orphelins §8-14).
 - **Risque** : un taux trop mordant = corvée anti-fun en solo (calibrer pour qu'un joueur seul tienne, ~3-4 j spec A7) ; régression de tests température.

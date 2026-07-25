@@ -705,7 +705,7 @@ export class UIScene extends Phaser.Scene {
     this.refugeePrompt.update(getHud(this.registry, 'refugeesNearby') ?? null)
     // LE MODAL DU FEU (spec feu-station S18) : WorldScene a résolu `openFireView` contre le
     // snapshot (état, combustible, cuisson, bouton) ; l'UI n'a qu'à le montrer avec le sac.
-    this.firePanel.update({ view: getHud(this.registry, 'openFireView') ?? null, inv })
+    this.firePanel.update({ view: getHud(this.registry, 'openFireView') ?? null, inv, activeSlot })
     // Le voile de mort : un one-shot horodaté (patron de `error`). Un nouveau `at` =
     // une nouvelle mort → on lève le voile une fois ; il retombe tout seul.
     const death = getHud(this.registry, 'deathMoment')

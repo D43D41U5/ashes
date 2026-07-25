@@ -185,6 +185,18 @@ describe('holdHarvest — le maintien n’inonde pas la sim (A4, A6)', () => {
  * verbes qu'on a débranchées. Elle doit tenir : sans elle, un joueur ne peut ni
  * manger, ni se défendre, et la nuit qui chasse devient une exécution.
  */
+describe('viser un feu → fireId (pour ouvrir le modal à E, spec feu-station S17)', () => {
+  it('un FEU sur la tuile visée → fireId = son id', () => {
+    const fire = { id: 9, tx: 5, ty: 5, type: 'fire' as const, hp: 100 }
+    const t = aimAt(5, 5, PLAYER, [], [], RANGE, [], [fire])
+    expect(t.fireId).toBe(9)
+    expect(t.onFire).toBe(true)
+  })
+  it('aucune structure feu sur la tuile → fireId null', () => {
+    expect(aimAt(5, 5, PLAYER, [], [], RANGE).fireId).toBeNull()
+  })
+})
+
 describe('la main décide du clic', () => {
   const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, entityId: null, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
   const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, entityId: null, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, inRange: true }

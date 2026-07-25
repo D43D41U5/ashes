@@ -399,32 +399,39 @@ const SCENARIOS = {
     await page.goto(URL)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
 
-    // Un feu de camp dans la ceinture, et on gagne du terrain DÉGAGÉ (le spawn est un village).
+    // Un feu de camp + de quoi remplir le sac (pour VOIR le composant sac/ceinture partagé),
+    // et on gagne du terrain DÉGAGÉ (le spawn est un village).
+    // Le client n'envoie QU'UNE action par frame : on ESPACE les grants (sinon seul le dernier
+    // survit). Un feu de camp + de quoi remplir le sac (bois, viande) pour voir le composant.
+    for (const item of ['campfire', 'wood', 'wood', 'wood', 'wood', 'wood', 'raw_meat', 'raw_meat']) {
+      await page.evaluate((it) => window.__BRAISES__.scene.sendAction({ type: 'debug_grant', item: it }), item)
+      await page.waitForTimeout(130)
+    }
+    // On gagne du terrain DÉGAGÉ (le spawn est un village).
     await page.evaluate(() => {
       const s = window.__BRAISES__.scene
-      s.sendAction({ type: 'debug_grant', item: 'campfire' })
-      const p = s.predicted
-      s.sendAction({ type: 'debug_teleport', x: p.x, y: p.y - 16 })
+      s.sendAction({ type: 'debug_teleport', x: s.predicted.x, y: s.predicted.y - 16 })
     })
     await page.waitForTimeout(700)
 
-    // On TIENT le feu (case active), puis on le POSE devant soi — la première tuile libre gagne.
+    // On TIENT le feu (case active), puis on le POSE — une tentative PAR FRAME (une action/frame),
+    // la 1re tuile libre gagne et consomme le feu ; on s'arrête dès qu'un feu libre apparaît.
     await page.evaluate(() => {
       const s = window.__BRAISES__.scene
       const inv = s.registry.get('inv') ?? []
       const slot = inv.findIndex((c) => c && c.item === 'campfire')
       if (slot >= 0 && slot < 6) s.sendAction({ type: 'set_active_slot', slot })
-      const px = Math.floor(s.predicted.x)
-      const py = Math.floor(s.predicted.y)
-      // On ratisse large (spirale) : la sim refuse l'occupée/hors terrain, la 1re libre gagne
-      // (et consomme le feu — les tentatives suivantes échouent sans nuire).
-      for (let r = 1; r <= 3; r++) {
-        for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]]) {
-          s.sendAction({ type: 'place_campfire', tx: px + dx, ty: py + dy })
-        }
-      }
     })
-    await page.waitForTimeout(700)
+    await page.waitForTimeout(150)
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, -1], [-1, 1], [2, 0], [0, -2], [2, -1], [-2, 1]]) {
+      await page.evaluate(([ox, oy]) => {
+        const s = window.__BRAISES__.scene
+        s.sendAction({ type: 'place_campfire', tx: Math.floor(s.predicted.x) + ox, ty: Math.floor(s.predicted.y) + oy })
+      }, [dx, dy])
+      await page.waitForTimeout(150)
+      const done = await page.evaluate(() => (window.__BRAISES__.scene.view?.structures ?? []).some((st) => st.type === 'fire' && st.villageId === 0))
+      if (done) break
+    }
 
     // On repère le feu LIBRE qu'on vient de poser et on se TÉLÉPORTE à son pied.
     const feu = await page.evaluate(() => {
@@ -441,11 +448,14 @@ const SCENARIOS = {
     if (feu) await page.evaluate((id) => window.__BRAISES__.scene.registry.set('openFire', { structureId: id }), feu.id)
     await page.waitForTimeout(600)
 
-    const modal = await page.evaluate(() => {
-      const v = window.__BRAISES__.scene.registry.get('openFireView')
-      return v ? { state: v.state, fuel: v.fuel, cap: v.fuelCap, cook: v.cook, action: v.action?.kind ?? null } : null
+    const diag = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const inv = s.registry.get('inv') ?? []
+      const items = inv.filter(Boolean).map((c) => `${c.item}×${c.count}`)
+      const v = s.registry.get('openFireView')
+      return { items, modal: v ? { title: v.title, state: v.state, fuel: Math.round(v.fuel) } : null }
     })
-    console.log(`feu ${feu ? `#${feu.id} (${feu.tx},${feu.ty}) libre=${feu.villageId === 0} fuel=${feu.fuel}` : 'ABSENT'} · modal: ${JSON.stringify(modal)}`)
+    console.log(`feu ${feu ? `#${feu.id} libre=${feu.villageId === 0}` : 'ABSENT'} · sac: ${JSON.stringify(diag.items)} · modal: ${JSON.stringify(diag.modal)}`)
     await page.screenshot({ path: `${OUT}/feu-modal.png` })
   },
 

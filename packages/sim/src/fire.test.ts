@@ -195,6 +195,35 @@ describe('Le Feu-station : le feu ATTIRE les Cendreux quand il fait froid (spec 
   })
 })
 
+describe('Le Feu-station : nourrir un feu CIBLÉ par le modal (spec feu-station, S15)', () => {
+  it('feed_fire { structureId } alimente CE feu libre et le rallume depuis les braises', () => {
+    const sim = makeSim()
+    const owner = spawnEntity(sim, 10, 10)
+    const fire = addStructure(sim, 'fire', 10, 10, 0, owner)
+    fire.fuel = 0
+    fire.emberUntil = sim.tick + 100 // en braises
+    grantItems(sim, owner, { wood: 5 })
+    drainEvents(sim)
+    applyVillageAction(sim, owner, { type: 'feed_fire', structureId: fire.id })
+    expect(fire.fuel).toBeGreaterThan(0) // CE feu, celui du modal, est nourri
+    expect(fire.emberUntil).toBeUndefined() // rallumé
+    expect(drainEvents(sim).some((e) => e.type === 'fire_relit' && e.structureId === fire.id)).toBe(true)
+  })
+
+  it('feed_fire { structureId } vise le BON feu même quand un autre est plus proche', () => {
+    const sim = makeSim()
+    const owner = spawnEntity(sim, 10.5, 10.5)
+    const proche = addStructure(sim, 'fire', 10, 10, 0, owner) // le plus proche (distSq 0)
+    const cible = addStructure(sim, 'fire', 11, 10, 0, owner) // celui qu'on a ouvert (à portée)
+    proche.fuel = 50
+    cible.fuel = 50
+    grantItems(sim, owner, { wood: 5 })
+    applyVillageAction(sim, owner, { type: 'feed_fire', structureId: cible.id })
+    expect(cible.fuel).toBeGreaterThan(50) // c'est LA CIBLE qui monte
+    expect(proche.fuel).toBe(50) // pas le plus proche
+  })
+})
+
 describe('Le Feu-station : destructibilité découplée du combustible (spec feu-station, A11)', () => {
   it('A11 — un feu LIBRE allumé reste destructible (pas d’invulnérabilité liée au combustible)', () => {
     const sim = makeSim()

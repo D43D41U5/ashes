@@ -293,6 +293,7 @@ export function publishOpenFire(
   const village = s.villageId !== 0 ? villages.find((v) => v.id === s.villageId) : undefined
   setHud(registry, 'openFireView', {
     structureId: s.id,
+    title: s.villageId === 0 ? 'FEU DE CAMP' : 'FOYER',
     state: fireStateAt(tick, s),
     fuel: village ? village.fuel : s.fuel ?? 0,
     fuelCap: FIRE.FUEL_CAPACITY,

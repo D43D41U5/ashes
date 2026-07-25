@@ -47,6 +47,8 @@ export interface OpenContainerView {
 /** Ce que le MODAL DU FEU affiche (spec feu-station S18), résolu contre le snapshot chaque frame. */
 export interface FireView {
   structureId: number
+  /** Le titre du panneau : « FEU DE CAMP » (feu libre) ou « FOYER » (feu d'un village). */
+  title: string
   /** allumé / braises / éteint — dérivé du combustible + tick (source unique : `fireStateAt` du sim). */
   state: import('@braises/sim').FireState
   fuel: number

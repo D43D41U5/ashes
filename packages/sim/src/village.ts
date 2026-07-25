@@ -192,7 +192,7 @@ export type VillageAction =
   /** NOURRIR LE FEU (spec construction R16) : je dépose le bois que je porte dans le
    *  Feu de mon village (à portée), qui le convertit en combustible. Le seul geste qui
    *  tient l'upkeep — sans lui, le village finit en ruine. */
-  | { type: 'feed_fire' }
+  | { type: 'feed_fire'; structureId?: number }
   /** CUISINE AU SLOT (spec feu-station S7) : je dépose `item` (viande crue) dans le slot de
    *  cuisson d'un feu à portée ; il cuit PASSIVEMENT tant que le feu brûle (le travail de la
    *  station, pas ma file de craft). Une seule chose à la fois. */
@@ -658,6 +658,39 @@ export function createVillage(state: SimState, opts: CreateVillageOptions): Vill
   return village
 }
 
+/**
+ * NOURRIR un feu LIBRE : son combustible vit sur la structure (spec feu-station S12/S15).
+ * Rend le motif de rejet (sac vide, feu plein), ou `null` en cas de succès. Rallume s'il était éteint.
+ */
+function feedFreeFire(state: SimState, actor: SimState['entities'][number], s: Structure): string | null {
+  const room = FIRE.FUEL_CAPACITY - (s.fuel ?? 0)
+  if (room <= 0) return 'le feu est déjà plein'
+  const have = countOf(actor.inventory, 'wood')
+  if (have <= 0) return 'il faut du bois pour nourrir le feu'
+  const give = Math.min(have, Math.ceil(room / FIRE.FEED_PER_WOOD))
+  if (!removeItems(actor.inventory, { wood: give })) return 'il faut du bois pour nourrir le feu'
+  const before = s.fuel ?? 0
+  s.fuel = Math.min(FIRE.FUEL_CAPACITY, before + give * FIRE.FEED_PER_WOOD)
+  if (before <= 0 && s.fuel > 0) {
+    delete s.emberUntil
+    emitEvent(state, { type: 'fire_relit', tick: state.tick, structureId: s.id })
+  }
+  return null
+}
+
+/** NOURRIR le Foyer d'un village : son combustible vit encore sur le village (upkeep, migration S16). */
+function feedVillageFire(state: SimState, actor: SimState['entities'][number], actorId: number, v: Village): string | null {
+  const room = FIRE_UPKEEP.CAPACITY - v.fuel
+  if (room <= 0) return 'le Feu est déjà plein'
+  const have = countOf(actor.inventory, 'wood')
+  if (have <= 0) return 'il faut du bois pour nourrir le Feu'
+  const give = Math.min(have, Math.ceil(room / FIRE_UPKEEP.FEED_PER_WOOD))
+  if (!removeItems(actor.inventory, { wood: give })) return 'il faut du bois pour nourrir le Feu'
+  v.fuel = Math.min(FIRE_UPKEEP.CAPACITY, v.fuel + give * FIRE_UPKEEP.FEED_PER_WOOD)
+  emitEvent(state, { type: 'fire_fed', tick: state.tick, villageId: v.id, entityId: actorId, wood: give, fuel: v.fuel })
+  return null
+}
+
 export function applyVillageAction(state: SimState, actorId: number, action: VillageAction): void {
   const actor = state.entities.find((e) => e.id === actorId)
   if (!actor) return
@@ -847,48 +880,44 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
      * capacité). À portée du Feu. Le seul geste qui tient l'upkeep.
      */
     case 'feed_fire': {
-      const village = getVillageOf(state, actorId)
-      if (!village) {
-        // FEU LIBRE (spec feu-station S15) — quick-feed : on nourrit le feu à portée
-        // qu'on possède, sans ouvrir le modal. Alimente `structure.fuel` (pas un village).
-        const freeRange = BALANCE.INTERACT_RANGE
-        let fire: Structure | undefined
-        let bestD = freeRange * freeRange
-        for (const s of state.structures) {
-          if (s.type !== 'fire' || s.villageId !== 0 || s.ownerId !== actorId) continue
-          const d = distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5)
-          if (d <= bestD) {
-            bestD = d
-            fire = s
-          }
+      const range = BALANCE.INTERACT_RANGE
+      // CIBLE EXPLICITE (le modal du feu, spec S15) : on nourrit CE feu à portée — libre ou Foyer.
+      if (action.structureId !== undefined) {
+        const s = state.structures.find((st) => st.id === action.structureId && st.type === 'fire')
+        if (!s) return reject('pas un feu')
+        if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin du feu')
+        if (s.villageId === 0) {
+          const r = feedFreeFire(state, actor, s)
+          if (r) return reject(r)
+          return
         }
-        if (!fire) return reject('pas de feu à nourrir')
-        const room = FIRE.FUEL_CAPACITY - (fire.fuel ?? 0)
-        if (room <= 0) return reject('le feu est déjà plein')
-        const have = countOf(actor.inventory, 'wood')
-        if (have <= 0) return reject('il faut du bois pour nourrir le feu')
-        const give = Math.min(have, Math.ceil(room / FIRE.FEED_PER_WOOD))
-        if (!removeItems(actor.inventory, { wood: give })) return reject('il faut du bois pour nourrir le feu')
-        const before = fire.fuel ?? 0
-        fire.fuel = Math.min(FIRE.FUEL_CAPACITY, before + give * FIRE.FEED_PER_WOOD)
-        // Rallumage depuis les braises/l'extinction : on rouvre la fenêtre et on l'annonce.
-        if (before <= 0 && fire.fuel > 0) {
-          delete fire.emberUntil
-          emitEvent(state, { type: 'fire_relit', tick: state.tick, structureId: fire.id })
-        }
+        const v = state.villages.find((vg) => vg.id === s.villageId)
+        if (!v) return reject('pas de foyer')
+        const r = feedVillageFire(state, actor, actorId, v)
+        if (r) return reject(r)
         return
       }
-      const range = BALANCE.INTERACT_RANGE
-      if (distSq(actor.x, actor.y, village.fireTx + 0.5, village.fireTy + 0.5) > range * range) return reject('trop loin du Feu')
-      const room = FIRE_UPKEEP.CAPACITY - village.fuel
-      if (room <= 0) return reject('le Feu est déjà plein')
-      const have = countOf(actor.inventory, 'wood')
-      if (have <= 0) return reject('il faut du bois pour nourrir le Feu')
-      // On ne brûle pas plus de bois que le Feu ne peut avaler (arrondi au bois près).
-      const give = Math.min(have, Math.ceil(room / FIRE_UPKEEP.FEED_PER_WOOD))
-      if (!removeItems(actor.inventory, { wood: give })) return reject('il faut du bois pour nourrir le Feu')
-      village.fuel = Math.min(FIRE_UPKEEP.CAPACITY, village.fuel + give * FIRE_UPKEEP.FEED_PER_WOOD)
-      emitEvent(state, { type: 'fire_fed', tick: state.tick, villageId: village.id, entityId: actorId, wood: give, fuel: village.fuel })
+      // SANS cible (quick-feed historique, S15) : mon Foyer, sinon mon feu libre le plus proche.
+      const village = getVillageOf(state, actorId)
+      if (village) {
+        if (distSq(actor.x, actor.y, village.fireTx + 0.5, village.fireTy + 0.5) > range * range) return reject('trop loin du Feu')
+        const r = feedVillageFire(state, actor, actorId, village)
+        if (r) return reject(r)
+        return
+      }
+      let fire: Structure | undefined
+      let bestD = range * range
+      for (const s of state.structures) {
+        if (s.type !== 'fire' || s.villageId !== 0 || s.ownerId !== actorId) continue
+        const d = distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5)
+        if (d <= bestD) {
+          bestD = d
+          fire = s
+        }
+      }
+      if (!fire) return reject('pas de feu à nourrir')
+      const r = feedFreeFire(state, actor, fire)
+      if (r) return reject(r)
       return
     }
 

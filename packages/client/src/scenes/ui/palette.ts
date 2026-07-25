@@ -55,6 +55,11 @@ export const HEX = {
   panelWarm: '#16120d', // vignette de détail (survol, alternative)
   borderDim: '#2a2a34', // cadre neutre
   borderWarm: '#6b5a3a', // cadre chaud (bord haut d'une fenêtre)
+  // NOMMÉES le 2026-07-25 : partagées par le sac de l'écran perso, le composant sac/ceinture
+  // partagé et le modal du feu (≥3 fichiers) — une teinte que plusieurs écrans emploient est un
+  // token qui s'ignore (mémoire palette). On leur donne leur nom pour qu'elles ne dérivent pas.
+  armed: '#241d14', // surface d'une case ARMÉE / active (ceinture tenue, bouton du feu)
+  wearTrack: '#3a2f22', // le rail sombre derrière une jauge d'usure d'outil
 } as const
 
 /** Les remplissages de médaillon de vitale (maquette Turn 2A) : fill + liseré. */
