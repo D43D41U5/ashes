@@ -447,6 +447,9 @@ const SCENARIOS = {
     await page.waitForTimeout(800)
     if (feu) await page.evaluate((id) => window.__BRAISES__.scene.registry.set('openFire', { structureId: id }), feu.id)
     await page.waitForTimeout(600)
+    // On met une viande à cuire pour montrer le flux ENTRÉE → SORTIE (elle en ressort CUITE).
+    if (feu) await page.evaluate((id) => window.__BRAISES__.scene.sendAction({ type: 'cook_put', structureId: id, item: 'raw_meat' }), feu.id)
+    await page.waitForTimeout(6500)
 
     const diag = await page.evaluate(() => {
       const s = window.__BRAISES__.scene
