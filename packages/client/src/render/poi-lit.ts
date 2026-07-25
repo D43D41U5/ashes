@@ -6,164 +6,26 @@
  * « tout-ou-rien » (docs/decisions.md 2026-07-20) veut l'inverse : albédo APLATI + carte
  * de NORMALES dérivée de la silhouette, relief 100 % calculé par la lumière (`setLighting(true)`).
  *
- * Ce module porte cette recette AUX POI, sur le seul erratique pour l'instant : on en tire
- * TROIS variantes de silhouette (`ERRATIQUES`), chacune enregistrée en `poi-erratique-<i>_lit`
- * (albédo + normale en dataSource). Le câblage de `PoiLayer` sur le pipeline (swap `_lit` +
- * `setLighting`) attend qu'Alexis ait CHOISI une variante — ici on ne fait que fabriquer et
- * exposer les textures, pour les montrer (scénario smoke `erratique`).
+ * Ce module a PORTÉ la recette aux POI via le pilote erratique (trois variantes `ERRATIQUES`,
+ * câblées dans PoiLayer, réparties par poiId — les trois tournent en jeu). Le mandat du 25/07
+ * (« passer l'ensemble des sprites ») a promu le pilote en règle : la bascule des autres lieux
+ * suit ce format (listes de blocs + accents-matériau + fissures), spec `da-feeling` §3.
  *
- * Helpers VOLONTAIREMENT recopiés de `render/lit-props.ts` (et non importés) : ce fichier-là
- * est en cours d'édition dans une autre session (A/B sur l'ordre ombre/normale), on s'en
- * découple. La seule vraie différence : `normalFromCanvas` prend une taille de CELLULE — à
- * 42 px un lieu a besoin de facettes plus GROSSES qu'un caillou de 16 px, sinon la normale
- * grouille au lieu de montrer quelques plans francs.
+ * La recette (normale, fissures, miroir, enregistrement) vit dans `render/normal-map.ts` —
+ * l'apport historique d'ici (la CELLULE paramétrable : à 42 px un lieu veut des facettes plus
+ * grosses qu'un caillou de 16 px, sinon la normale grouille) y est intégré.
  */
 import type Phaser from 'phaser'
-
-const FLIP_G = true // Phaser attend le vert « Y vers le haut » ; notre espace a Y vers le bas
-
-function norm3(x: number, y: number, z: number): [number, number, number] {
-  const l = Math.hypot(x, y, z) || 1
-  return [x / l, y / l, z / l]
-}
-function enc(v: number): number {
-  return Math.max(0, Math.min(255, Math.round((v * 0.5 + 0.5) * 255)))
-}
-function newCanvas(w: number, h: number): { c: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
-  const c = document.createElement('canvas')
-  c.width = w
-  c.height = h
-  return { c, ctx: c.getContext('2d')! }
-}
+// LA RECETTE VIT DANS normal-map.ts (spec da-feeling R1) — la recopie « volontaire » de
+// l'en-tête est morte : l'A/B de lit-props est tranché et commité, on importe.
+import { type Crack, newCanvas, normalFromCanvas, registerLit as register, walkPath } from './normal-map'
 
 // ── FISSURES ──────────────────────────────────────────────────────────────────────────────────
-/** Une fissure = un CHEMIN (polyligne) qui PART d'un point réel (le sol, la jonction de deux
- *  pierres, une fracture) et remonte en s'affinant. `crevasse` en élargit/creuse l'ORIGINE (path[0])
- *  — une petite crevasse là où la pierre travaille le plus. Elle creuse la normale (un sillon) en
- *  plus d'un liseré d'albédo. */
-type Pt = readonly [number, number]
-export interface Crack { path: readonly Pt[]; crevasse?: boolean }
 
-/** Parcourt une polyligne à ~2 échantillons/px ; `fn(px, py, t)` avec t∈[0,1] de l'origine à la pointe. */
-function walkPath(path: readonly Pt[], fn: (px: number, py: number, t: number) => void): void {
-  const seg: number[] = []
-  let total = 0
-  for (let i = 0; i < path.length - 1; i++) {
-    const L = Math.hypot(path[i + 1]![0] - path[i]![0], path[i + 1]![1] - path[i]![1])
-    seg.push(L); total += L
-  }
-  if (total === 0) { fn(path[0]![0], path[0]![1], 0); return }
-  let acc = 0
-  for (let i = 0; i < path.length - 1; i++) {
-    const [x0, y0] = path[i]!, [x1, y1] = path[i + 1]!, L = seg[i]!
-    const steps = Math.max(1, Math.ceil(L * 2))
-    for (let s = 0; s <= steps; s++) { const f = s / steps; fn(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f, (acc + L * f) / total) }
-    acc += L
-  }
-}
 
-/** Grave les fissures dans le champ de hauteur AVANT lissage : chaque chemin abaisse `hf` d'un
- *  sillon dont le rayon et la profondeur DÉCROISSENT de l'origine (large/creux, la crevasse) vers la
- *  pointe (capillaire). Le relief du sillon sort ensuite de la normale — un flanc s'éclaire, l'autre
- *  s'ombre. On ne creuse que la matière (hf reste ≥ 0). */
-function carveCracks(hf: Float32Array, w: number, h: number, cracks: readonly Crack[]): void {
-  for (const cr of cracks) {
-    const wide = cr.crevasse ? 2.2 : 1.5
-    const deep = cr.crevasse ? 0.9 : 0.7
-    walkPath(cr.path, (px, py, t) => {
-      const rad = wide * (1 - t) + 0.55 * t
-      const dep = deep * (1 - t) + 0.3 * t
-      const r = Math.ceil(rad), cx = Math.round(px), cy = Math.round(py)
-      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-        const xx = cx + dx, yy = cy + dy
-        if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue
-        const d = Math.hypot(dx, dy)
-        if (d > rad) continue
-        const idx = yy * w + xx
-        hf[idx] = Math.max(0, hf[idx]! - dep * (1 - d / rad))
-      }
-    })
-  }
-}
 
-/**
- * Carte de normales dérivée du masque alpha (butte lissée → facettes). `cell` = taille du
- * facet en px : GROS pour une masse de lieu (plans larges, pas de grouillement), petit pour un
- * prop. `passes` (lissage) et `k` (gain) restent les deux cadrans du « cubique » (cf. lit-props).
- *
- * `plant` = BASE PLANTÉE. Sans lui, la silhouette est traitée comme une bosse : TOUS les bords
- * s'inclinent vers l'extérieur, dont le bord du BAS qui plonge vers le sud → normale tournée vers
- * le bas → NON éclairée (la lumière vient d'en haut) → un liseré sombre qui fait ROULER la base
- * sous le bloc (galet qui flotte) et double l'ombre de contact. `plant` prolonge la matière sous
- * le plus bas pixel opaque de chaque colonne : le bord du bas ne plonge plus, la base reste
- * franche et éclairée, et c'est l'ombre de contact (albédo) SEULE qui l'ancre au sol. */
-function normalFromCanvas(src: HTMLCanvasElement, passes = 1, k = 3.5, cell = 3, plant = false, cracks: readonly Crack[] = []): HTMLCanvasElement {
-  const w = src.width, h = src.height
-  const srcData = src.getContext('2d')!.getImageData(0, 0, w, h).data
-  let hf = new Float32Array(w * h)
-  for (let i = 0; i < w * h; i++) hf[i] = srcData[i * 4 + 3]! > 8 ? 1 : 0
-  // BASE PLANTÉE : sous le plus bas pixel opaque de chaque colonne, on remplit la hauteur à 1 (la
-  // pierre s'enfonce dans le sol). Le bord du bas n'a plus de pente → il regarde droit, pas vers le
-  // bas. N'ajoute AUCUN pixel visible (l'albédo y est transparent) : ne change QUE le gradient du bord.
-  if (plant) {
-    for (let x = 0; x < w; x++) {
-      let lowest = -1
-      for (let y = 0; y < h; y++) if (srcData[(y * w + x) * 4 + 3]! > 8) lowest = y
-      for (let y = lowest + 1; y < h; y++) hf[y * w + x] = 1
-    }
-  }
-  // FISSURES : on les grave dans la hauteur (sillons) AVANT lissage → relief de crevasse dans la normale.
-  if (cracks.length) carveCracks(hf, w, h, cracks)
-  for (let pass = 0; pass < passes; pass++) {
-    const n = new Float32Array(w * h)
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let s = 0, cnt = 0
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-          const xx = x + dx, yy = y + dy
-          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue
-          s += hf[yy * w + xx]!; cnt++
-        }
-        n[y * w + x] = s / cnt
-      }
-    }
-    hf = n
-  }
-  const cellsX = Math.max(2, Math.round(w / cell)), cellsY = Math.max(2, Math.round(h / cell))
-  const csx = w / cellsX, csy = h / cellsY
-  const H = new Float32Array(cellsX * cellsY)
-  for (let cy = 0; cy < cellsY; cy++) for (let cx = 0; cx < cellsX; cx++) {
-    let s = 0, cnt = 0
-    for (let y = Math.floor(cy * csy); y < Math.floor((cy + 1) * csy); y++)
-      for (let x = Math.floor(cx * csx); x < Math.floor((cx + 1) * csx); x++) { s += hf[y * w + x]!; cnt++ }
-    H[cy * cellsX + cx] = cnt ? s / cnt : 0
-  }
-  const at = (cx: number, cy: number): number =>
-    H[Math.min(cellsY - 1, Math.max(0, cy)) * cellsX + Math.min(cellsX - 1, Math.max(0, cx))]!
-  const out = newCanvas(w, h)
-  const d = out.ctx.createImageData(w, h)
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4
-      const cx = Math.min(cellsX - 1, Math.floor(x / csx)), cy = Math.min(cellsY - 1, Math.floor(y / csy))
-      const dhx = at(cx + 1, cy) - at(cx - 1, cy)
-      const dhy = at(cx, cy + 1) - at(cx, cy - 1)
-      const [nx, ny, nz] = norm3(-dhx * k, -dhy * k, 1)
-      d.data[i] = enc(nx)
-      d.data[i + 1] = enc(FLIP_G ? -ny : ny)
-      d.data[i + 2] = enc(nz)
-      d.data[i + 3] = 255
-    }
-  }
-  out.ctx.putImageData(d, 0, 0)
-  return out.c
-}
 
-function register(scene: Phaser.Scene, key: string, albedo: HTMLCanvasElement, normal: HTMLCanvasElement): void {
-  if (scene.textures.exists(key)) scene.textures.remove(key)
-  const tex = scene.textures.addCanvas(key, albedo)
-  tex?.setDataSource(normal)
-}
+
 
 // ── Matière (albédo PLAT — le relief vient de la lumière, pas d'un hillshade peint) ──
 const STONE_A = '#8b847a' // la grande masse

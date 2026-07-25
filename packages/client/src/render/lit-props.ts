@@ -16,89 +16,12 @@
  * Phaser générée (dont la relecture WebGL est incertaine). Convention Y : voir `FLIP_G`.
  */
 import type Phaser from 'phaser'
+// LA RECETTE VIT DANS normal-map.ts (spec da-feeling R1) : ce module n'est plus que l'ART des
+// props. Nos appels historiques (`passes`/`k`, cell 2 implicite) sont le cas particulier exact
+// de la recette finale — bit-identique, le smoke `cubique` en témoigne.
+import { enc, FLIP_G, mirrorCanvas, newCanvas, norm3, normalFromCanvas, registerLit as register } from './normal-map'
 
-const FLIP_G = true // Phaser attend le vert « Y vers le haut » ; notre espace a Y vers le bas
 
-function norm3(x: number, y: number, z: number): [number, number, number] {
-  const l = Math.hypot(x, y, z) || 1
-  return [x / l, y / l, z / l]
-}
-function enc(v: number): number {
-  return Math.max(0, Math.min(255, Math.round((v * 0.5 + 0.5) * 255)))
-}
-function newCanvas(w: number, h: number): { c: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
-  const c = document.createElement('canvas')
-  c.width = w
-  c.height = h
-  return { c, ctx: c.getContext('2d')! }
-}
-
-/**
- * Carte de normales dérivée du masque alpha d'un canvas (butte lissée → facettes).
- *
- * `passes` (lissage) et `k` (gain sur le gradient) sont les DEUX cadrans du « cubique ». Une grande
- * masse (buisson 12 px) veut BEAUCOUP de lissage → un dôme doux. Un petit prop BLOCKY (la corolle
- * cubique de la fleur, ~6 px) veut PEU de lissage → ses arêtes restent franches, si bien que les
- * cellules du bord regardent NET vers l'extérieur : un vrai cube, pas une bosse molle. Défauts =
- * réglage de la masse pâteuse historique (inchangé pour tous les props qui ne les surchargent pas). */
-function normalFromCanvas(src: HTMLCanvasElement, passes = 4, k = 2.6): HTMLCanvasElement {
-  const w = src.width, h = src.height
-  const srcData = src.getContext('2d')!.getImageData(0, 0, w, h).data
-  // 1) hauteur = masque (opaque ? 1 : 0), lissé → butte conforme à la forme
-  let hf = new Float32Array(w * h)
-  for (let i = 0; i < w * h; i++) hf[i] = srcData[i * 4 + 3]! > 8 ? 1 : 0
-  for (let pass = 0; pass < passes; pass++) {
-    const n = new Float32Array(w * h)
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let s = 0, cnt = 0
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-          const xx = x + dx, yy = y + dy
-          if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue
-          s += hf[yy * w + xx]!; cnt++
-        }
-        n[y * w + x] = s / cnt
-      }
-    }
-    hf = n
-  }
-  // 2) FACETTES : hauteur moyenne par cellule ~2 px → normale = gradient de cellule
-  const cellsX = Math.max(2, Math.round(w / 2)), cellsY = Math.max(2, Math.round(h / 2))
-  const csx = w / cellsX, csy = h / cellsY
-  const H = new Float32Array(cellsX * cellsY)
-  for (let cy = 0; cy < cellsY; cy++) for (let cx = 0; cx < cellsX; cx++) {
-    let s = 0, cnt = 0
-    for (let y = Math.floor(cy * csy); y < Math.floor((cy + 1) * csy); y++)
-      for (let x = Math.floor(cx * csx); x < Math.floor((cx + 1) * csx); x++) { s += hf[y * w + x]!; cnt++ }
-    H[cy * cellsX + cx] = cnt ? s / cnt : 0
-  }
-  const K = k
-  const at = (cx: number, cy: number): number =>
-    H[Math.min(cellsY - 1, Math.max(0, cy)) * cellsX + Math.min(cellsX - 1, Math.max(0, cx))]!
-  const out = newCanvas(w, h)
-  const d = out.ctx.createImageData(w, h)
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4
-      const cx = Math.min(cellsX - 1, Math.floor(x / csx)), cy = Math.min(cellsY - 1, Math.floor(y / csy))
-      const dhx = at(cx + 1, cy) - at(cx - 1, cy)
-      const dhy = at(cx, cy + 1) - at(cx, cy - 1)
-      const [nx, ny, nz] = norm3(-dhx * K, -dhy * K, 1)
-      d.data[i] = enc(nx)
-      d.data[i + 1] = enc(FLIP_G ? -ny : ny)
-      d.data[i + 2] = enc(nz)
-      d.data[i + 3] = 255
-    }
-  }
-  out.ctx.putImageData(d, 0, 0)
-  return out.c
-}
-
-function register(scene: Phaser.Scene, key: string, albedo: HTMLCanvasElement, normal: HTMLCanvasElement): void {
-  if (scene.textures.exists(key)) scene.textures.remove(key)
-  const tex = scene.textures.addCanvas(key, albedo)
-  tex?.setDataSource(normal)
-}
 
 /** Un prop pâteux : sa clé, sa taille, le tracé de son albédo, et — pour les petits props BLOCKY —
  *  des cadrans de normale (`passes`/`k`, cf. `normalFromCanvas`) pour un cube franc plutôt qu'un dôme. */
@@ -295,16 +218,7 @@ export const LIT_PROP_KEYS: ReadonlySet<string> = new Set([
   ...VARIANT_FAMILIES.flatMap((fam) => fam.draws.flatMap((_, i) => [`cl-${variantBase(fam.kind, i)}_lit`, `cl-${variantBase(fam.kind, i)}_lit_m`])),
 ])
 
-/** Copie MIROIR horizontale d'un canvas. La normale de `_lit_m` est dérivée de CE canvas retourné
- *  (pas d'un flip Phaser, qui ne retourne pas le canal X de la normale) → éclairage X juste par
- *  construction. */
-function mirrorCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
-  const { c, ctx } = newCanvas(src.width, src.height)
-  ctx.translate(src.width, 0)
-  ctx.scale(-1, 1)
-  ctx.drawImage(src, 0, 0)
-  return c
-}
+
 
 /** Enregistre les variantes `_lit` (albédo + normal map) de tout le décor, et `_lit_m` (miroir
  *  pré-retourné) pour le clutter — voir l'en-tête. */
