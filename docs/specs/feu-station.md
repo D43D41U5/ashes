@@ -1,6 +1,6 @@
 # Le Feu — station interactive : combustible, cuisson, modal
 
-*Source : la demande de session 2026-07-25 (« interagir avec le feu comme dans Rust »), GDD §7 (le Grand Froid, le Foyer comme salut), §8 (chaînes courtes), specs `construction.md` (le Feu, l'upkeep, R19 « l'interaction passe par ce qu'on tient »), `craft-file.md` (la file de craft, F7), `economie.md` (« le Feu cuit »), `tension.md` (T13, le froid a une parade). Statut : **spec écrite, rien codé** (2026-07-25). Décisions utilisateur du 2026-07-25, actées une à une — ne pas les rouvrir.*
+*Source : la demande de session 2026-07-25 (« interagir avec le feu comme dans Rust »), GDD §7 (le Grand Froid, le Foyer comme salut), §8 (chaînes courtes), specs `construction.md` (le Feu, l'upkeep, R19 « l'interaction passe par ce qu'on tient »), `craft-file.md` (la file de craft, F7), `economie.md` (« le Feu cuit »), `tension.md` (T13, le froid a une parade). Statut : **LIVRÉ** (2026-07-25) — sim en 4 étapes (extinction/braises, Cendreux attirés, slot de cuisson, combustible sur la structure ; gate `determinisme-sim` passé) + client (modal E, drag&drop, rendu des 3 états, retrait des 2 bulles). Reliquats explicites en « Hors périmètre ». Décisions utilisateur du 2026-07-25, actées une à une — ne pas les rouvrir.*
 
 ## Objectif de design
 
