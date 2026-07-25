@@ -132,7 +132,9 @@ const SCENARIOS = {
     //    et bush (cube de référence). Large étendue = vraies facettes = cubique.
     const fac = await page.evaluate(() => {
       const s = window.__BRAISES__.scene
-      const nxRange = (key, x0, y0, x1, y1) => {
+      // `ch` : 0 = nx (facing gauche/droite), 1 = ny (facing haut/bas — c'est LUI qui porte l'arête
+      // BASSE d'un bloc, donc lui que polluerait une ombre comptée comme de la matière).
+      const range = (key, x0, y0, x1, y1, ch = 0) => {
         const tex = s.textures.get(key)
         const src = tex && tex.dataSource && tex.dataSource[0]
         const nrm = src ? (src.image || src) : null
@@ -142,16 +144,27 @@ const SCENARIOS = {
         const d = cx.getImageData(0, 0, cv.width, cv.height).data
         let mn = 1, mx = -1
         for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
-          const nx = (d[(y * cv.width + x) * 4] / 255) * 2 - 1
+          const nx = (d[(y * cv.width + x) * 4 + ch] / 255) * 2 - 1
           if (nx < mn) mn = nx; if (nx > mx) mx = nx
         }
         return mx <= mn ? 0 : +(mx - mn).toFixed(2)
       }
+      const nxRange = range
       const flowers = []
       for (let i = 0; s.textures.exists(`cl-flower-${i}_lit`); i++) flowers.push(nxRange(`cl-flower-${i}_lit`, 4, 2, 12, 10))
-      return { flowers, grass: nxRange('cl-grass_tuft_lit', 4, 7, 13, 15), bush: nxRange('cl-bush_lit', 2, 3, 14, 14) }
+      // LES CAILLOUX — l'ombre au pied de chaque bloc (2026-07-25) est peinte APRÈS la dérivation de
+      // la normale, justement pour que la normale l'ignore (`normalFromCanvas` seuille l'ALPHA : une
+      // bande semi-opaque y passerait pour de la matière et affaisserait l'arête basse). On mesure donc
+      // nx ET ny sur la fenêtre blocs+bande : si la séquence se casse un jour, ny s'écroule ici.
+      const pebbles = { nx: [], ny: [] }
+      for (let i = 0; s.textures.exists(`cl-pebbles-${i}_lit`); i++) {
+        pebbles.nx.push(range(`cl-pebbles-${i}_lit`, 3, 8, 15, 16, 0))
+        pebbles.ny.push(range(`cl-pebbles-${i}_lit`, 3, 8, 15, 16, 1))
+      }
+      return { flowers, pebbles, grass: nxRange('cl-grass_tuft_lit', 4, 7, 13, 15), bush: nxRange('cl-bush_lit', 2, 3, 14, 14) }
     })
     console.log(`FACETTES nx (étendue) — fleurs:[${fac.flowers.join(', ')}]  grass(≈plat):${fac.grass}  bush(cube réf):${fac.bush}`)
+    console.log(`CAILLOUX — normale AVEUGLE à l'ombre ? nx:[${fac.pebbles.nx.join(', ')}]  ny:[${fac.pebbles.ny.join(', ')}]`)
 
     // 3) ATLAS — chaque variété d'une famille, peinte (haut) + albédo lit (bas), ×8 NEAREST : la
     //    VARIÉTÉ forme+couleur, sans dépendre de ce qui a poussé au spawn.
@@ -447,9 +460,14 @@ const SCENARIOS = {
     await page.waitForTimeout(800)
     if (feu) await page.evaluate((id) => window.__BRAISES__.scene.registry.set('openFire', { structureId: id }), feu.id)
     await page.waitForTimeout(600)
-    // On met une viande à cuire pour montrer le flux ENTRÉE → SORTIE (elle en ressort CUITE).
-    if (feu) await page.evaluate((id) => window.__BRAISES__.scene.sendAction({ type: 'cook_put', structureId: id, item: 'raw_meat' }), feu.id)
-    await page.waitForTimeout(6500)
+    // On cuit une viande à fond (elle passe en SORTIE), puis on en met une 2e (elle reste en ENTRÉE,
+    // en cours) — pour montrer les deux niveaux peuplés à la fois.
+    if (feu) {
+      await page.evaluate((id) => window.__BRAISES__.scene.sendAction({ type: 'cook_put', structureId: id, item: 'raw_meat' }), feu.id)
+      await page.waitForTimeout(6500)
+      await page.evaluate((id) => window.__BRAISES__.scene.sendAction({ type: 'cook_put', structureId: id, item: 'raw_meat' }), feu.id)
+      await page.waitForTimeout(2000)
+    }
 
     const diag = await page.evaluate(() => {
       const s = window.__BRAISES__.scene

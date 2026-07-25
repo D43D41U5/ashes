@@ -23,7 +23,8 @@ import type { Structure, Village } from './village'
 
 /** À incrémenter à tout changement incompatible — vérifié au `ready`. */
 // v3 : les actions de station `cook_put`/`cook_take` (slot de cuisson, spec feu-station).
-export const PROTOCOL_VERSION = 3
+// v4 : cuisson 3 entrées / 3 sorties (`cook_take_in`/`cook_take_out`) + combustible en 3 slots.
+export const PROTOCOL_VERSION = 4
 
 /**
  * LE CHAT DE PROXIMITÉ — un rayon d'audition, en tuiles. Le serveur ne relaie un

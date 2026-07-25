@@ -10,6 +10,7 @@
  */
 import { COOK_SLOT, FIRE } from './balance'
 import { emitEvent } from './events'
+import { addItems, countOf, makeInventory, removeItems } from './items'
 import type { SimState } from './sim'
 import type { Structure } from './village'
 
@@ -24,8 +25,8 @@ export function fireStateAt(tick: number, s: Structure): FireState {
   if (s.villageId !== 0) return 'lit' // Foyer : inchangé tant que l'upkeep n'est pas migré (S16)
   // Feu libre SANS slot combustible = hors modèle (feu forgé à la main dans un test, ou d'avant
   // cette feature) : il vaut ALLUMÉ. En prod, tout feu libre naît avec `fuelWood` (addStructure).
-  if (s.fuelWood === undefined) return 'lit'
-  if (s.fuelWood > 0) return 'lit' // il reste des bûches à brûler
+  if (s.fuel === undefined) return 'lit'
+  if (countOf(s.fuel, 'wood') > 0) return 'lit' // il reste des bûches à brûler
   if (s.emberUntil !== undefined && tick < s.emberUntil) return 'ember'
   return 'out'
 }
@@ -50,7 +51,7 @@ export function fireWarmthFactor(state: SimState, s: Structure): number {
 
 /** Ticks restants avant extinction — le TEMPS que le combustible fait tenir le feu (affiché au modal). */
 export function fuelTicksRemaining(tick: number, s: Structure): number {
-  const wood = s.fuelWood ?? 0
+  const wood = s.fuel ? countOf(s.fuel, 'wood') : 0
   if (wood <= 0 || s.burnAt === undefined) return 0
   return Math.max(0, wood * FIRE.BURN_TICKS - (tick - s.burnAt))
 }
@@ -69,12 +70,11 @@ export function fuelBurnProgress(tick: number, s: Structure): number {
 export function advanceFire(state: SimState): void {
   for (const s of state.structures) {
     if (s.type !== 'fire') continue
-    if (s.villageId === 0 && (s.fuelWood ?? 0) > 0) {
+    if (s.villageId === 0 && s.fuel && countOf(s.fuel, 'wood') > 0) {
       if (s.burnAt === undefined) s.burnAt = state.tick // sécurité : rallumer si du bois attend
       if (state.tick >= s.burnAt + FIRE.BURN_TICKS) {
-        // La bûche en cours est entièrement consommée.
-        s.fuelWood = (s.fuelWood ?? 0) - 1
-        if (s.fuelWood > 0) {
+        removeItems(s.fuel, { wood: 1 }) // la bûche en cours est entièrement consommée
+        if (countOf(s.fuel, 'wood') > 0) {
           s.burnAt = state.tick // la suivante s'allume
         } else {
           delete s.burnAt
@@ -83,26 +83,34 @@ export function advanceFire(state: SimState): void {
         }
       }
     }
-    // Cuisson passive du slot (S7-S9) — sur TOUT feu (libre ou Foyer), le travail de la STATION.
-    advanceCookSlot(state, s)
+    // Cuisson passive (S7-S9) — sur TOUT feu (libre ou Foyer), le travail de la STATION.
+    advanceCook(state, s)
   }
 }
 
 /**
- * Une étape de cuisson (spec S7-S9) : le slot descend son compteur UNIQUEMENT tant que le feu
- * est allumé (S8 : exige la flamme, ni braises ni éteint). À 0, l'aliment DEVIENT son résultat
- * cuit et y reste — pas de brûlé (S9). Continue sans le joueur : c'est le travail de la station.
+ * Une étape de cuisson (spec S7-S9) : chaque ENTRÉE descend son compteur tant que le feu est ALLUMÉ
+ * (exige la flamme, ni braises ni éteint). À échéance, le résultat (+ sous-produits) part vers les
+ * SORTIES (empilé, via `addItems`) et l'entrée se vide ; si les sorties sont pleines, l'entrée reste
+ * PRÊTE et réessaie (rien ne se perd). Passif, sans le joueur — le travail de la station.
  */
-function advanceCookSlot(state: SimState, s: Structure): void {
-  const cook = s.cook
-  if (!cook || cook.remainingTicks <= 0) return
-  if (fireState(state, s) !== 'lit') return
-  cook.remainingTicks -= 1
-  if (cook.remainingTicks <= 0) {
-    const rule = COOK_SLOT[s.type]?.[cook.item]
-    if (rule) {
-      cook.item = rule.output
-      emitEvent(state, { type: 'meat_cooked', tick: state.tick, structureId: s.id, item: rule.output })
+function advanceCook(state: SimState, s: Structure): void {
+  if (!s.cookIn || fireState(state, s) !== 'lit') return
+  for (let i = 0; i < s.cookIn.length; i++) {
+    const slot = s.cookIn[i]
+    if (!slot) continue
+    if (slot.remainingTicks > 0) slot.remainingTicks -= 1
+    if (slot.remainingTicks > 0) continue
+    const rule = COOK_SLOT[s.type]?.[slot.item]
+    if (!rule) {
+      s.cookIn[i] = null
+      continue
     }
+    if (!s.cookOut) s.cookOut = makeInventory(FIRE.COOK_OUTPUTS)
+    const leftover = addItems(s.cookOut, { [rule.output]: 1 })
+    if ((leftover[rule.output] ?? 0) > 0) continue // sorties pleines → l'entrée reste PRÊTE, on attend
+    for (const bp of rule.byproducts ?? []) addItems(s.cookOut, { [bp.item]: bp.count }) // best-effort
+    emitEvent(state, { type: 'meat_cooked', tick: state.tick, structureId: s.id, item: rule.output })
+    s.cookIn[i] = null
   }
 }

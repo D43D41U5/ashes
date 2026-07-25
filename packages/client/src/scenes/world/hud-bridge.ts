@@ -270,13 +270,17 @@ export function publishOpenFire(
   }
   // Le slot de cuisson : en cours (remainingTicks>0, `item` encore BRUT) → progression via COOK_SLOT ;
   // prêt (remainingTicks<=0, `item` = résultat cuit) → 100 %.
-  let cook: FireView['cook'] = null
-  if (s.cook) {
-    const ready = s.cook.remainingTicks <= 0
-    const rule = COOK_SLOT[s.type]?.[s.cook.item]
-    const progress = ready || !rule ? 1 : 1 - s.cook.remainingTicks / rule.ticks
-    cook = { item: s.cook.item, ready, progress }
-  }
+  // CUISSON : 3 ENTRÉES (aliment en cours + progression) et 3 SORTIES (cuit + sous-produit).
+  const cookIn: FireView['cookIn'] = Array.from({ length: FIRE.COOK_INPUTS }, (_, i) => {
+    const sl = s.cookIn?.[i]
+    if (!sl) return null
+    const rule = COOK_SLOT[s.type]?.[sl.item]
+    return { item: sl.item, ready: sl.remainingTicks <= 0, progress: rule ? Math.max(0, 1 - sl.remainingTicks / rule.ticks) : 1 }
+  })
+  const cookOut: FireView['cookOut'] = Array.from({ length: FIRE.COOK_OUTPUTS }, (_, i) => {
+    const sl = s.cookOut?.[i]
+    return sl ? { item: sl.item, count: sl.count } : null
+  })
   // Le bouton contextuel (S19), même logique de disponibilité que les fenêtres flottantes retirées.
   let action: FireView['action'] = null
   if (foundableFireAt(player, structures, villages, playerId) === of.structureId) {
@@ -294,16 +298,24 @@ export function publishOpenFire(
   // Le combustible : sur un feu LIBRE il vit sur la structure (bûches brûlées une à une) ; sur un
   // FOYER, encore sur le village (réserve, migration différée S16). On dérive dans les deux cas le
   // NOMBRE de bûches, le TEMPS restant avant extinction, et la progression de la bûche EN COURS.
+  // COMBUSTIBLE : 3 slots de bois (feu libre) ; un FOYER (réserve village, S16) → un pseudo-slot.
   const village = s.villageId !== 0 ? villages.find((v) => v.id === s.villageId) : undefined
+  const fuel: FireView['fuel'] = village
+    ? [{ item: 'wood', count: Math.floor(village.fuel / FIRE_UPKEEP.FEED_PER_WOOD) }, null, null]
+    : Array.from({ length: FIRE.FUEL_SLOTS }, (_, i) => {
+        const sl = s.fuel?.[i]
+        return sl ? { item: sl.item, count: sl.count } : null
+      })
   setHud(registry, 'openFireView', {
     structureId: s.id,
     title: s.villageId === 0 ? 'FEU DE CAMP' : 'FOYER',
     state: fireStateAt(tick, s),
-    fuelWood: village ? Math.floor(village.fuel / FIRE_UPKEEP.FEED_PER_WOOD) : s.fuelWood ?? 0,
-    fuelSlotMax: village ? Math.floor(FIRE_UPKEEP.CAPACITY / FIRE_UPKEEP.FEED_PER_WOOD) : FIRE.FUEL_SLOT_MAX,
+    fuel,
     fuelTimeRemaining: village ? Math.round(village.fuel / FIRE_UPKEEP.DRAIN_PER_TICK) : fuelTicksRemaining(tick, s),
     fuelBurnProgress: village ? 0 : fuelBurnProgress(tick, s),
-    cook,
+    fuelBurnSlot: fuel.findIndex((sl) => sl !== null && sl.count > 0),
+    cookIn,
+    cookOut,
     action,
   })
 }

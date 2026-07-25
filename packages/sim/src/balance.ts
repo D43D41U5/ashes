@@ -2238,9 +2238,9 @@ export const FIRE_UPKEEP = {
  * migration différée S16). Mêmes unités que FIRE_UPKEEP. Calibrage à valider en playtest.
  */
 export const FIRE = {
-  /** Le SLOT COMBUSTIBLE d'un feu libre tient jusqu'à tant de BÛCHES. */
-  FUEL_SLOT_MAX: 20,
-  /** À la pose : le feu est fait de 10 bois → il démarre avec ça dans le slot. */
+  /** Le combustible d'un feu libre est un inventaire de tant de SLOTS (bûches). */
+  FUEL_SLOTS: 3,
+  /** À la pose : le feu démarre avec tant de bois dans ses slots combustible. */
   FUEL_START_WOOD: 10,
   /** Durée de combustion d'UNE bûche (ticks) — le feu en brûle une à la fois. Calé pour que
    *  10 bois tiennent ~1,5 cycle (comme avant). C'est aussi la durée de l'indicateur de
@@ -2250,6 +2250,9 @@ export const FIRE = {
   EMBER_TICKS: ticksFor(30),
   /** Chaleur des braises = fraction de la chaleur pleine (S3). */
   EMBER_WARMTH_FACTOR: 0.4,
+  /** Slots de cuisson : 3 ENTRÉES (aliments cuisant en parallèle), 3 SORTIES (cuits + sous-produits). */
+  COOK_INPUTS: 3,
+  COOK_OUTPUTS: 3,
 } as const
 
 /**
@@ -2261,9 +2264,16 @@ export const FIRE = {
 export const COOK_SLOT: Partial<
   Record<
     import('./items').StructureType,
-    Partial<Record<import('./items').ItemId, { output: import('./items').ItemId; ticks: number }>>
+    Partial<
+      Record<
+        import('./items').ItemId,
+        { output: import('./items').ItemId; byproducts?: { item: import('./items').ItemId; count: number }[]; ticks: number }
+      >
+    >
   >
 > = {
+  // Le feu cuit la VIANDE (S10). `byproducts` déclare d'éventuels SOUS-PRODUITS (graisse, os… —
+  // items à définir par Alexis) qui tombent dans les 3 slots de SORTIE avec le résultat.
   fire: { raw_meat: { output: 'cooked_meat', ticks: ticksFor(5) } },
 }
 

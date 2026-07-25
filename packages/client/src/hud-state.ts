@@ -51,14 +51,15 @@ export interface FireView {
   title: string
   /** allumé / braises / éteint — dérivé du combustible + tick (source unique : `fireStateAt` du sim). */
   state: import('@braises/sim').FireState
-  /** Combustible : le nombre de BÛCHES dans le slot, le max du slot, le TEMPS restant (ticks) avant
-   *  extinction, et la progression de consommation de la bûche EN COURS (0..1, l'indicateur du slot). */
-  fuelWood: number
-  fuelSlotMax: number
+  /** COMBUSTIBLE : 3 slots de bois, le TEMPS restant (ticks) avant extinction, la progression de
+   *  consommation de la bûche EN COURS (0..1) et l'index de la case qui brûle (l'indicateur). */
+  fuel: ({ item: import('@braises/sim').ItemId; count: number } | null)[]
   fuelTimeRemaining: number
   fuelBurnProgress: number
-  /** Le slot de cuisson : l'aliment, s'il est PRÊT (cuit), et sa progression 0..1 (en cours). `null` = vide. */
-  cook: { item: import('@braises/sim').ItemId; ready: boolean; progress: number } | null
+  fuelBurnSlot: number
+  /** CUISSON : 3 ENTRÉES (aliment en cours + progression 0..1 + prêt) et 3 SORTIES (cuit + sous-produit). */
+  cookIn: ({ item: import('@braises/sim').ItemId; progress: number; ready: boolean } | null)[]
+  cookOut: ({ item: import('@braises/sim').ItemId; count: number } | null)[]
   /** Le bouton contextuel : fonder un Foyer ici, ou monter le palier du Foyer — ou rien (spec S19). */
   action: { kind: 'found'; label: string } | { kind: 'upgrade'; label: string; affordable: boolean } | null
 }
