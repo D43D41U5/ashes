@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   LIT_CLUTTER_KINDS, LIT_NODE_TYPES, LIT_PROP_KEYS, litClutterTextureKey,
-  FLOWERS, PEBBLES, VARIANT_COUNTS, variantBase,
+  FLOWERS, PEBBLES, PEBBLE_SHADOW, pebbleShadowRects, VARIANT_COUNTS, variantBase,
 } from './lit-props'
 import { BIOME_CLUTTER } from './clutter'
 
@@ -45,6 +45,23 @@ describe('câblage des variantes cubiques (_lit / _lit_m)', () => {
       if (cfg.groves) rendered.add(cfg.groves.kind)
     }
     for (const kind of rendered) expect(LIT_CLUTTER_KINDS.has(kind)).toBe(true)
+  })
+
+  it('CHAQUE bloc de caillou a son ombre au pied, dans la tuile (une variété plus basse clipperait)', () => {
+    for (const p of PEBBLES) {
+      const shadows = pebbleShadowRects(p)
+      expect(shadows.length).toBe(p.rects.length) // un bloc = une ombre, aucun oublié
+      shadows.forEach(([sx, sy, sw, sh], i) => {
+        const [bx, by, bw, bh] = p.rects[i]!
+        expect(sy).toBe(by + bh) // collée SOUS le bloc, jamais flottante
+        expect(sx + sw / 2).toBe(bx + bw / 2) // CENTRÉE : pas de décalage soleil, le miroir reste juste
+        // Le débord latéral est ce qui fait lire « flaque au sol » et non « rangée basse du cube ».
+        expect(sw).toBe(bw + 2 * (bw >= PEBBLE_SHADOW.minW ? PEBBLE_SHADOW.overhang : 0))
+        expect(sx).toBeGreaterThanOrEqual(0)
+        expect(sx + sw).toBeLessThanOrEqual(16)
+        expect(sy + sh).toBeLessThanOrEqual(16) // la tuile fait 16 px : un bloc au ras du bas clipperait
+      })
+    }
   })
 
   it('chaque type de nœud câblé a sa texture `nd-<type>_lit` générée (whitelist ≠ préfixe nd-)', () => {

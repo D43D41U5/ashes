@@ -31,7 +31,12 @@ describe('câblage des ombres de contact du décor', () => {
       expect(SHADOW_PROPS.has(kind)).toBe(true)
   })
 
-  it('laisse SANS ombre les brins wispy et les props plats (décision de DA)', () => {
+  // ATTENTION en lisant ce qui suit : « sans ombre » veut dire SANS SPRITE D'OMBRE DE CONTACT (la
+  // flaque unique posée sous le prop). Les CAILLOUX, eux, ont bien une ombre depuis le 2026-07-25 —
+  // mais BAKÉE DANS LEUR TEXTURE, une bande par bloc (`pebbleShadowRects`, render/lit-props.ts) : un
+  // tas de 2-3 blocs ne se pose pas avec une flaque unique. Les remettre dans `SHADOW_PROPS` leur en
+  // donnerait DEUX ; supprimer la bande bakée les ferait reflotter. Les deux mécanismes coexistent.
+  it('laisse SANS SPRITE d\'ombre les brins wispy et les props plats (décision de DA)', () => {
     for (const kind of ['grass_tuft', 'reed', 'pebbles', 'lichen', 'sphagnum'] as PropKind[])
       expect(SHADOW_PROPS.has(kind)).toBe(false)
   })

@@ -199,17 +199,59 @@ export const PEBBLES: readonly PebbleVariant[] = [
   // 3 — un semis de trois petits carrés
   { rects: [[4, 12, 2, 2], [7, 10, 3, 3], [11, 12, 3, 3]] },
 ]
+/** L'OMBRE AU PIED DE CHAQUE BLOC (demande d'Alexis 2026-07-25). Un caillou est un TAS : chacun de
+ *  ses blocs doit poser sur le sol, pas y flotter. Une bande sombre d'1 px sous chaque bloc, DÉBORDANT
+ *  d'1 px de part et d'autre — le débord est ce qui fait lire « flaque au sol » plutôt que « rangée
+ *  du bas du cube en plus foncé » (le bloc grandirait d'un pixel et redeviendrait le blob qu'on a
+ *  chassé le 24/07). Pas de débord sous les blocs de 2 px : il les avalerait. AUCUN décalage latéral —
+ *  l'ombre est CENTRÉE sous son bloc, comme les ombres de contact des acteurs (décision du 2026-07-23 :
+ *  une ombre orientée par le soleil engagerait la promotion de l'éclairage dynamique). Le miroir la
+ *  retourne donc sans jamais la mettre du mauvais côté. */
+export const PEBBLE_SHADOW = { color: '#000000', alpha: 0.38, h: 1, overhang: 1, minW: 3 } as const
+
+/** Les rects d'ombre d'une variété — DÉRIVÉS de ses blocs, donc jamais désynchronisés d'eux. Seule
+ *  fabrique : `drawPebbles` (albédo canvas) et BootScene (texture peinte) la rejouent tous deux. */
+export function pebbleShadowRects(p: PebbleVariant): readonly (readonly [number, number, number, number])[] {
+  return p.rects.map(([x, y, w, h]) => {
+    const o = w >= PEBBLE_SHADOW.minW ? PEBBLE_SHADOW.overhang : 0
+    return [x - o, y + h, w + 2 * o, PEBBLE_SHADOW.h] as const
+  })
+}
+
 /** Dessine une variété de cailloux (blocs carrés, deux tons) — l'albédo `_lit`. BootScene rejoue la
  *  MÊME donnée `PEBBLES`+`PEBBLE_TONES` en Phaser Graphics → silhouette identique. */
 function drawPebbles(ctx: CanvasRenderingContext2D, p: PebbleVariant): void {
   p.rects.forEach(([x, y, w, h], i) => { ctx.fillStyle = PEBBLE_TONES[i % PEBBLE_TONES.length]!; ctx.fillRect(x, y, w, h) })
 }
 
+/** LA PASSE D'OMBRE — peinte APRÈS que la normale a été dérivée (cf. `generateLitProps`), et c'est
+ *  tout l'enjeu : `normalFromCanvas` bâtit sa hauteur sur le MASQUE ALPHA (`alpha > 8`), donc une
+ *  bande d'ombre semi-opaque compterait comme de la MATIÈRE — le champ de hauteur descendrait d'une
+ *  rangée et adoucirait exactement l'arête basse qu'on veut franche. L'ombre doit rester un
+ *  assombrissement d'ALBÉDO, invisible à la normale. Passe unique après tous les blocs : là où elle
+ *  recouvre un bloc voisin plus bas, elle l'assombrit — c'est le contact, pas un défaut. */
+function shadePebbles(ctx: CanvasRenderingContext2D, p: PebbleVariant): void {
+  ctx.fillStyle = PEBBLE_SHADOW.color
+  ctx.globalAlpha = PEBBLE_SHADOW.alpha
+  for (const [x, y, w, h] of pebbleShadowRects(p)) ctx.fillRect(x, y, w, h)
+  ctx.globalAlpha = 1
+}
+
 /** LES FAMILLES À VARIÉTÉS — un même `kind` de clutter porté par N textures `cl-<kind>-<i>`, tirées
- *  par tuile (hash `PropInstance.variant`). `passes`/`k` : les cadrans de normale (cube franc). */
-const VARIANT_FAMILIES: { kind: string; passes: number; k: number; draws: ((ctx: CanvasRenderingContext2D) => void)[] }[] = [
+ *  par tuile (hash `PropInstance.variant`). `passes`/`k` : les cadrans de normale (cube franc).
+ *  `shades` (optionnel) : la passe d'ombre au sol, peinte APRÈS la dérivation de la normale — voir
+ *  `shadePebbles` pour pourquoi elle ne peut pas être dans `draws`. */
+const VARIANT_FAMILIES: {
+  kind: string; passes: number; k: number
+  draws: ((ctx: CanvasRenderingContext2D) => void)[]
+  shades?: ((ctx: CanvasRenderingContext2D) => void)[]
+}[] = [
   { kind: 'flower', passes: 1, k: 3.5, draws: FLOWERS.map((f) => (c: CanvasRenderingContext2D) => drawFlower(c, f)) },
-  { kind: 'pebbles', passes: 1, k: 3.5, draws: PEBBLES.map((p) => (c: CanvasRenderingContext2D) => drawPebbles(c, p)) },
+  {
+    kind: 'pebbles', passes: 1, k: 3.5,
+    draws: PEBBLES.map((p) => (c: CanvasRenderingContext2D) => drawPebbles(c, p)),
+    shades: PEBBLES.map((p) => (c: CanvasRenderingContext2D) => shadePebbles(c, p)),
+  },
 ]
 /** Combien de variétés par `kind` (pour ClutterLayer : quelle texture tirer). */
 export const VARIANT_COUNTS: Readonly<Record<string, number>> = Object.fromEntries(VARIANT_FAMILIES.map((f) => [f.kind, f.draws.length]))
@@ -275,9 +317,13 @@ export function generateLitProps(scene: Phaser.Scene): void {
       const alb = newCanvas(16, 16)
       fam.draws[i]!(alb.ctx)
       const base = `cl-${variantBase(fam.kind, i)}`
-      register(scene, `${base}_lit`, alb.c, normalFromCanvas(alb.c, fam.passes, fam.k))
-      const m = mirrorCanvas(alb.c)
-      register(scene, `${base}_lit_m`, m, normalFromCanvas(m, fam.passes, fam.k))
+      // LES DEUX NORMALES SE DÉRIVENT DE LA MASSE SEULE, avant toute ombre (`normalFromCanvas` lit le
+      // masque alpha : une bande d'ombre y passerait pour de la matière et arrondirait l'arête basse).
+      fam.shades?.[i]?.(alb.ctx) // A/B TEMPORAIRE — séquence CASSÉE exprès, à remettre après mesure
+      const nrm = normalFromCanvas(alb.c, fam.passes, fam.k)
+      const nrmM = normalFromCanvas(mirrorCanvas(alb.c), fam.passes, fam.k)
+      register(scene, `${base}_lit`, alb.c, nrm)
+      register(scene, `${base}_lit_m`, mirrorCanvas(alb.c), nrmM)
     }
   }
 }

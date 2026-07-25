@@ -7,7 +7,7 @@ import Phaser from 'phaser'
 import { generateItemIcons } from '../render/item-art'
 import { generateVitalIcons } from '../render/vital-art'
 import { generateLitTrees } from '../render/lit-trees'
-import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, variantBase, CHAMPIGNON_RECTS } from '../render/lit-props'
+import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
 import { makePoiTextures } from './world/poi-art'
 
@@ -526,11 +526,16 @@ export class BootScene extends Phaser.Scene {
 
     // Cailloux CARRÉS à VARIÉTÉS (choix d'Alexis 2026-07-24) : des BLOCS, pas des disques ; mêmes
     // données `PEBBLES`+`PEBBLE_TONES` que l'albédo lit → silhouette identique, aucune rupture au swap.
+    // Chaque bloc POSE sur le sol : sa bande d'ombre (donnée `pebbleShadowRects`) est peinte APRÈS
+    // les blocs, comme dans l'albédo `_lit` — même ordre, même donnée, aucune rupture au swap.
+    const pebbleShadowNum = parseInt(PEBBLE_SHADOW.color.slice(1), 16)
     for (let i = 0; i < PEBBLES.length; i++) {
       PEBBLES[i]!.rects.forEach(([x, y, w, h], j) => {
         g.fillStyle(parseInt(PEBBLE_TONES[j % PEBBLE_TONES.length]!.slice(1), 16))
         g.fillRect(x, y, w, h)
       })
+      g.fillStyle(pebbleShadowNum, PEBBLE_SHADOW.alpha)
+      for (const [x, y, w, h] of pebbleShadowRects(PEBBLES[i]!)) g.fillRect(x, y, w, h)
       tex(`cl-${variantBase('pebbles', i)}`)
     }
 
