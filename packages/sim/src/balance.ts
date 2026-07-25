@@ -2238,15 +2238,14 @@ export const FIRE_UPKEEP = {
  * migration différée S16). Mêmes unités que FIRE_UPKEEP. Calibrage à valider en playtest.
  */
 export const FIRE = {
-  /** Combustible max d'un feu libre — plein = 10 bois (via FEED_PER_WOOD). */
-  FUEL_CAPACITY: 240,
-  /** À la pose : le feu est fait de 10 bois → il démarre PLEIN. */
-  FUEL_START: 240,
-  /** 1 bois → tant de combustible. */
-  FEED_PER_WOOD: 24,
-  /** Combustion par tick d'un feu libre (constante — pas d'échelle d'acte ici, à calibrer).
-   *  Calé pour qu'un plein tienne ~1,5 cycle sans être nourri. */
-  DRAIN_PER_TICK: 240 / ticksForCycles(1.5),
+  /** Le SLOT COMBUSTIBLE d'un feu libre tient jusqu'à tant de BÛCHES. */
+  FUEL_SLOT_MAX: 20,
+  /** À la pose : le feu est fait de 10 bois → il démarre avec ça dans le slot. */
+  FUEL_START_WOOD: 10,
+  /** Durée de combustion d'UNE bûche (ticks) — le feu en brûle une à la fois. Calé pour que
+   *  10 bois tiennent ~1,5 cycle (comme avant). C'est aussi la durée de l'indicateur de
+   *  consommation du slot combustible. */
+  BURN_TICKS: ticksForCycles(0.15),
   /** Fenêtre de BRAISES après épuisement, avant l'extinction totale — le sas d'alerte (S2). */
   EMBER_TICKS: ticksFor(30),
   /** Chaleur des braises = fraction de la chaleur pleine (S3). */

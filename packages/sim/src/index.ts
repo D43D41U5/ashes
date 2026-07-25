@@ -108,7 +108,7 @@ export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, calen
 export type { GameTime, Act } from './time'
 export { ambientTemperature, baselineTemperature, advanceTemperature } from './temperature'
 // LE FEU-STATION (spec feu-station) : l'état dérivable du snapshot côté client, et la donnée des slots.
-export { fireState, fireStateAt, fireActive, fireWarmthFactor, advanceFire } from './fire'
+export { fireState, fireStateAt, fireActive, fireWarmthFactor, advanceFire, fuelTicksRemaining, fuelBurnProgress } from './fire'
 export type { FireState } from './fire'
 export { FIRE, COOK_SLOT } from './balance'
 export { resolveMove, moveAvatar, moveAvatarStepped, overlapsBlocking, isBlockedAt } from './collision'

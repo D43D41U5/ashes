@@ -8,7 +8,10 @@ import {
   chronicleFromEvents,
   COOK_SLOT,
   FIRE,
+  FIRE_UPKEEP,
   fireStateAt,
+  fuelBurnProgress,
+  fuelTicksRemaining,
   hasItems,
   type Corpse,
   type Entity,
@@ -288,15 +291,18 @@ export function publishOpenFire(
       }
     }
   }
-  // Le combustible : sur un feu LIBRE il vit sur la structure ; sur un FOYER, encore sur le
-  // village (migration différée S16). On lit le bon des deux pour que la jauge soit juste.
+  // Le combustible : sur un feu LIBRE il vit sur la structure (bûches brûlées une à une) ; sur un
+  // FOYER, encore sur le village (réserve, migration différée S16). On dérive dans les deux cas le
+  // NOMBRE de bûches, le TEMPS restant avant extinction, et la progression de la bûche EN COURS.
   const village = s.villageId !== 0 ? villages.find((v) => v.id === s.villageId) : undefined
   setHud(registry, 'openFireView', {
     structureId: s.id,
     title: s.villageId === 0 ? 'FEU DE CAMP' : 'FOYER',
     state: fireStateAt(tick, s),
-    fuel: village ? village.fuel : s.fuel ?? 0,
-    fuelCap: FIRE.FUEL_CAPACITY,
+    fuelWood: village ? Math.floor(village.fuel / FIRE_UPKEEP.FEED_PER_WOOD) : s.fuelWood ?? 0,
+    fuelSlotMax: village ? Math.floor(FIRE_UPKEEP.CAPACITY / FIRE_UPKEEP.FEED_PER_WOOD) : FIRE.FUEL_SLOT_MAX,
+    fuelTimeRemaining: village ? Math.round(village.fuel / FIRE_UPKEEP.DRAIN_PER_TICK) : fuelTicksRemaining(tick, s),
+    fuelBurnProgress: village ? 0 : fuelBurnProgress(tick, s),
     cook,
     action,
   })

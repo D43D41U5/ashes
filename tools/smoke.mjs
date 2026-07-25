@@ -456,7 +456,7 @@ const SCENARIOS = {
       const inv = s.registry.get('inv') ?? []
       const items = inv.filter(Boolean).map((c) => `${c.item}×${c.count}`)
       const v = s.registry.get('openFireView')
-      return { items, modal: v ? { title: v.title, state: v.state, fuel: Math.round(v.fuel) } : null }
+      return { items, modal: v ? { title: v.title, state: v.state, wood: v.fuelWood, timeTicks: v.fuelTimeRemaining } : null }
     })
     console.log(`feu ${feu ? `#${feu.id} libre=${feu.villageId === 0}` : 'ABSENT'} · sac: ${JSON.stringify(diag.items)} · modal: ${JSON.stringify(diag.modal)}`)
     await page.screenshot({ path: `${OUT}/feu-modal.png` })

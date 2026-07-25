@@ -1,12 +1,12 @@
 /**
  * LE FEU COMME STATION (spec `docs/specs/feu-station.md`) — l'état du feu LIBRE
- * (allumé / braises / éteint), dérivé de son combustible, et la combustion au tick.
- * Pur et déterministe : aucun tirage, le temps est le numéro de tick.
+ * (allumé / braises / éteint) et la combustion au tick. Pur et déterministe : aucun tirage,
+ * le temps est le numéro de tick.
  *
- * L'upkeep du FOYER (village.fuel, `advanceUpkeep`) reste dans `village.ts` — la
- * migration vers ce modèle unifié sur la structure est DIFFÉRÉE (spec S16). Ici, seul
- * le feu libre (villageId 0) porte `structure.fuel` ; un Foyer tient toujours (braises
- * dormantes) tant que l'upkeep n'est pas migré.
+ * COMBUSTIBLE EN SLOT : le feu libre tient des BÛCHES (`fuelWood`) et en brûle UNE à la fois
+ * (`burnAt` = tick d'allumage de l'unité en cours, consommée sur `FIRE.BURN_TICKS`). Quand la
+ * dernière s'éteint, le feu passe en braises puis meurt. L'upkeep du FOYER (village.fuel) reste
+ * dans `village.ts` — migration différée (S16) ; un Foyer tient toujours.
  */
 import { COOK_SLOT, FIRE } from './balance'
 import { emitEvent } from './events'
@@ -16,21 +16,16 @@ import type { Structure } from './village'
 export type FireState = 'lit' | 'ember' | 'out'
 
 /**
- * L'état d'un feu (spec S1-S3). Le Foyer (villageId ≠ 0) tient TOUJOURS ; le feu LIBRE
- * suit son combustible, puis la fenêtre de braises (`emberUntil`), puis s'éteint.
- */
-/**
- * L'état d'un feu, à partir du seul TICK (et non d'un `SimState` complet) — pour que le
- * CLIENT puisse le dériver du snapshot (il a le tick + la structure), source unique avec la sim.
+ * L'état d'un feu, à partir du seul TICK (et non d'un `SimState` complet) — pour que le CLIENT
+ * puisse le dériver du snapshot (il a le tick + la structure), source unique avec la sim.
  */
 export function fireStateAt(tick: number, s: Structure): FireState {
   if (s.type !== 'fire') return 'out'
   if (s.villageId !== 0) return 'lit' // Foyer : inchangé tant que l'upkeep n'est pas migré (S16)
-  // Feu libre SANS champ combustible = hors modèle (feu forgé à la main dans un test,
-  // ou d'avant cette feature) : il vaut ALLUMÉ, comportement historique. En prod, tout
-  // feu libre naît avec `fuel` (addStructure), donc ce cas ne s'y produit jamais.
-  if (s.fuel === undefined) return 'lit'
-  if (s.fuel > 0) return 'lit'
+  // Feu libre SANS slot combustible = hors modèle (feu forgé à la main dans un test, ou d'avant
+  // cette feature) : il vaut ALLUMÉ. En prod, tout feu libre naît avec `fuelWood` (addStructure).
+  if (s.fuelWood === undefined) return 'lit'
+  if (s.fuelWood > 0) return 'lit' // il reste des bûches à brûler
   if (s.emberUntil !== undefined && tick < s.emberUntil) return 'ember'
   return 'out'
 }
@@ -53,20 +48,36 @@ export function fireWarmthFactor(state: SimState, s: Structure): number {
   return 0
 }
 
+/** Ticks restants avant extinction — le TEMPS que le combustible fait tenir le feu (affiché au modal). */
+export function fuelTicksRemaining(tick: number, s: Structure): number {
+  const wood = s.fuelWood ?? 0
+  if (wood <= 0 || s.burnAt === undefined) return 0
+  return Math.max(0, wood * FIRE.BURN_TICKS - (tick - s.burnAt))
+}
+
+/** Progression de la CONSOMMATION de la bûche EN COURS (0..1) — l'indicateur du slot combustible. */
+export function fuelBurnProgress(tick: number, s: Structure): number {
+  if (s.burnAt === undefined) return 0
+  return Math.max(0, Math.min(1, (tick - s.burnAt) / FIRE.BURN_TICKS))
+}
+
 /**
- * La combustion au tick (spec S2, S12) : chaque feu LIBRE brûle son combustible ; à 0,
- * les flammes meurent — il entre en BRAISES (`emberUntil`) et émet `fire_extinguished`.
- * Le Foyer n'est PAS concerné (village.fuel / `advanceUpkeep`, migration différée S16).
+ * La combustion au tick (spec S2) : chaque feu LIBRE brûle sa bûche en cours ; à échéance, il en
+ * consomme une du slot et allume la suivante. À court de bois, les flammes meurent — braises
+ * (`emberUntil`) puis extinction (`fire_extinguished`). Le Foyer n'est PAS concerné (S16).
  */
 export function advanceFire(state: SimState): void {
   for (const s of state.structures) {
     if (s.type !== 'fire') continue
-    // Combustion du feu LIBRE (le Foyer tourne sur village.fuel / advanceUpkeep, S16).
-    if (s.villageId === 0) {
-      const before = s.fuel ?? 0
-      if (before > 0) {
-        s.fuel = Math.max(0, before - FIRE.DRAIN_PER_TICK)
-        if (s.fuel <= 0) {
+    if (s.villageId === 0 && (s.fuelWood ?? 0) > 0) {
+      if (s.burnAt === undefined) s.burnAt = state.tick // sécurité : rallumer si du bois attend
+      if (state.tick >= s.burnAt + FIRE.BURN_TICKS) {
+        // La bûche en cours est entièrement consommée.
+        s.fuelWood = (s.fuelWood ?? 0) - 1
+        if (s.fuelWood > 0) {
+          s.burnAt = state.tick // la suivante s'allume
+        } else {
+          delete s.burnAt
           s.emberUntil = state.tick + FIRE.EMBER_TICKS
           emitEvent(state, { type: 'fire_extinguished', tick: state.tick, structureId: s.id })
         }

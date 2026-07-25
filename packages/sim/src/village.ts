@@ -93,8 +93,14 @@ export interface Structure {
   /** COMBUSTIBLE d'un feu LIBRE (spec feu-station S12) — porté par la structure, pas le
    *  village. Présent sur les feux libres (villageId 0) ; > 0 = allumé. Le Foyer, lui,
    *  reste gouverné par `village.fuel` (migration différée S16). */
-  fuel?: number
-  /** Tick de fin de la fenêtre de BRAISES (S2) : posé quand `fuel` tombe à 0, effacé au
+  /** COMBUSTIBLE d'un feu LIBRE (spec feu-station) — le nombre de BÛCHES dans le slot combustible.
+   *  Le feu en brûle UNE à la fois (`burnAt`). Feu libre (villageId 0) uniquement ; le Foyer reste
+   *  sur `village.fuel` (migration différée S16). > 0 = allumé. */
+  fuelWood?: number
+  /** Le tick où la bûche EN COURS s'est allumée : sa consommation court sur `FIRE.BURN_TICKS` depuis
+   *  là (c'est l'indicateur de consommation du slot). Absent = rien ne brûle (braises / éteint / hors modèle). */
+  burnAt?: number
+  /** Tick de fin de la fenêtre de BRAISES (S2) : posé quand le bois tombe à 0, effacé au
    *  rallumage. Feu libre uniquement. */
   emberUntil?: number
   /** LE SLOT DE CUISSON (spec feu-station S7) — un aliment brut qui se transforme SUR PLACE,
@@ -663,15 +669,16 @@ export function createVillage(state: SimState, opts: CreateVillageOptions): Vill
  * Rend le motif de rejet (sac vide, feu plein), ou `null` en cas de succès. Rallume s'il était éteint.
  */
 function feedFreeFire(state: SimState, actor: SimState['entities'][number], s: Structure): string | null {
-  const room = FIRE.FUEL_CAPACITY - (s.fuel ?? 0)
+  const room = FIRE.FUEL_SLOT_MAX - (s.fuelWood ?? 0)
   if (room <= 0) return 'le feu est déjà plein'
   const have = countOf(actor.inventory, 'wood')
   if (have <= 0) return 'il faut du bois pour nourrir le feu'
-  const give = Math.min(have, Math.ceil(room / FIRE.FEED_PER_WOOD))
+  const give = Math.min(have, room)
   if (!removeItems(actor.inventory, { wood: give })) return 'il faut du bois pour nourrir le feu'
-  const before = s.fuel ?? 0
-  s.fuel = Math.min(FIRE.FUEL_CAPACITY, before + give * FIRE.FEED_PER_WOOD)
-  if (before <= 0 && s.fuel > 0) {
+  const before = s.fuelWood ?? 0
+  s.fuelWood = before + give
+  if (before <= 0) {
+    s.burnAt = state.tick // rallumage : la première bûche s'allume
     delete s.emberUntil
     emitEvent(state, { type: 'fire_relit', tick: state.tick, structureId: s.id })
   }
@@ -1249,9 +1256,12 @@ export function addStructure(
   if (material && material !== 'wood' && isWallLike) structure.material = material
   const containerSlots = CONTAINER_TYPES[type]
   if (containerSlots !== undefined) structure.inventory = makeInventory(containerSlots)
-  // LE FEU LIBRE naît PLEIN (spec feu-station S12) : il est fait de 10 bois. Le Foyer
-  // (villageId ≠ 0) n'a pas de combustible de structure — il tourne sur `village.fuel`.
-  if (type === 'fire' && villageId === 0) structure.fuel = FIRE.FUEL_START
+  // LE FEU LIBRE naît avec 10 bois dans son slot combustible, la première allumée maintenant.
+  // Le Foyer (villageId ≠ 0) n'a pas de combustible de structure — il tourne sur `village.fuel`.
+  if (type === 'fire' && villageId === 0) {
+    structure.fuelWood = FIRE.FUEL_START_WOOD
+    structure.burnAt = state.tick
+  }
   state.structures.push(structure)
   emitEvent(state, {
     type: 'structure_built',

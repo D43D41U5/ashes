@@ -5,16 +5,17 @@
  * BARRE DE CONTRÔLE en bas (le bouton contextuel « Fonder » / « Améliorer »). EN DESSOUS, ancré au
  * bas de l'écran, le sac + la ceinture du joueur : le MÊME composant partagé que l'écran perso.
  *
- * Le slot de cuisson est UNIQUE côté sim (l'aliment se transforme sur place) ; on le REPRÉSENTE en
- * deux cases façon four : l'aliment CRU vit dans l'ENTRÉE avec sa progression, et une fois cuit il
- * passe à la SORTIE (clic pour le reprendre). Une seule vérité (`view.cook`), deux cases à l'écran.
+ * Le COMBUSTIBLE tient des bûches (le feu en brûle une à la fois) : on affiche le TEMPS restant
+ * avant extinction (pas de X/Y ni jauge) et un INDICATEUR DE CONSOMMATION sur la case (la bûche en
+ * cours qui se consume). Le slot de cuisson est UNIQUE côté sim (l'aliment se transforme sur place),
+ * représenté en deux cases : le CRU vit dans l'ENTRÉE avec sa progression, le CUIT passe à la SORTIE.
  *
  * AUCUNE RÈGLE DE JEU. Les gestes ne calculent QUE l'action à envoyer (feed_fire / cook_put /
  * cook_take / found_village / upgrade_fire) — la sim tranche (invariant §3). On GLISSE une bûche sur
  * la case COMBUSTIBLE, un aliment sur l'ENTRÉE (résolu par `externalDrop` du composant sac), ou clic
  * droit pour router vite. Le client n'anticipe que l'affichage (le snapshot fait foi).
  */
-import { COOK_SLOT, type Inventory, type ItemId, type PlayerAction } from '@braises/sim'
+import { BALANCE, COOK_SLOT, type Inventory, type ItemId, type PlayerAction } from '@braises/sim'
 import type Phaser from 'phaser'
 import type { FireView } from '../../hud-state'
 import { itemIconKey } from '../../render/item-art'
@@ -22,6 +23,14 @@ import { createInventoryGrid } from './inventory-grid'
 
 const STATE_LABEL: Record<FireView['state'], string> = { lit: 'ALLUMÉ', ember: 'BRAISES', out: 'ÉTEINT' }
 const STATE_COLOR: Record<FireView['state'], string> = { lit: '#e8a33a', ember: '#b5602a', out: '#6f685a' }
+
+/** Ticks → durée lisible (le temps réel de jeu que le combustible fait tenir). */
+function fmtTime(ticks: number): string {
+  const s = Math.round(ticks / BALANCE.TICK_RATE_HZ)
+  if (s >= 3600) return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`
+  if (s >= 60) return `${Math.floor(s / 60)} min`
+  return `${s} s`
+}
 
 export interface FirePanel {
   update(s: { view: FireView | null; inv: Inventory; activeSlot: number }): void
@@ -54,8 +63,9 @@ export function createFirePanel(
   const titleEl = $('.fpn-title')
   const stateEl = $('.fpn-state')
   const fuelCell = $('.fpn-fuel')
-  const fuelFill = $('.fpn-fuel-fill')
   const fuelCt = $('.fpn-fuel-ct')
+  const fuelConsume = $('.fpn-fuel-consume')
+  const fuelTime = $('.fpn-fuel-time')
   const inCell = $('.fpn-in')
   const inIcon = $<HTMLImageElement>('.fpn-in-ic')
   const inProg = $('.fpn-in-prog')
@@ -63,7 +73,7 @@ export function createFirePanel(
   const outIcon = $<HTMLImageElement>('.fpn-out-ic')
   const btn = $<HTMLButtonElement>('.fpn-btn')
 
-  // La case COMBUSTIBLE montre toujours du bois (ce qu'on y met) ; la jauge + le compteur, le stock.
+  // La case COMBUSTIBLE montre toujours du bois (ce qu'on y met) ; le compteur, la quantité.
   $<HTMLImageElement>('.fpn-fuel-ic').src = iconUrl('wood')
 
   // ── Le SAC + la CEINTURE : le composant PARTAGÉ (identique à l'écran perso), ancré EN BAS. Un
@@ -111,8 +121,12 @@ export function createFirePanel(
       titleEl.textContent = view.title
       stateEl.textContent = STATE_LABEL[view.state]
       stateEl.style.color = STATE_COLOR[view.state]
-      fuelFill.style.width = `${Math.round((view.fuel / view.fuelCap) * 100)}%`
-      fuelCt.textContent = `${Math.round(view.fuel)} / ${view.fuelCap}`
+
+      // COMBUSTIBLE : le nombre de bûches, l'indicateur de consommation (bûche en cours), le TEMPS restant.
+      fuelCt.textContent = view.fuelWood > 0 ? `×${view.fuelWood}` : ''
+      fuelConsume.style.width = `${Math.round(view.fuelBurnProgress * 100)}%`
+      fuelTime.textContent =
+        view.state === 'out' ? 'éteint' : view.state === 'ember' ? 'braises…' : `reste ${fmtTime(view.fuelTimeRemaining)}`
 
       // ENTRÉE = l'aliment en cours de cuisson (cru + progression) ; SORTIE = l'aliment cuit (prêt).
       const cooking = view.cook !== null && !view.cook.ready
@@ -140,8 +154,8 @@ function markup(): string {
   return `
   <style>
     /* MODAL DU FEU — calqué sur le FOUR de Rust (« after ») : un FLUX VERTICAL (COMBUSTIBLE → ↓ →
-       ENTRÉE → ↓ → SORTIE) dans un panneau, une BARRE DE CONTRÔLE en bas, et le sac + ceinture
-       ANCRÉS EN BAS (la ceinture à bottom:26, PILE sa place au HUD → elle ne bouge pas à l'ouverture). */
+       ENTRÉE → ↓ → SORTIE), une BARRE DE CONTRÔLE en bas, et le sac + ceinture ANCRÉS EN BAS
+       (la ceinture à bottom:26, PILE sa place au HUD → elle ne bouge pas à l'ouverture). */
     .fpn{position:absolute;inset:0;background:rgba(20,16,12,.72);display:none;pointer-events:auto;}
     .fpn-close{position:absolute;top:24px;right:30px;font-size:12px;color:#8b8474;letter-spacing:1px;}
     /* Le sac+ceinture (composant partagé) : bottom:7 = 26 (place HUD de la ceinture) moins le liseré
@@ -159,14 +173,14 @@ function markup(): string {
     .fpn-cell{position:relative;width:70px;height:70px;background:#1b1b22;border:3px solid #14141a;display:grid;place-items:center;cursor:pointer;flex:0 0 auto;}
     .fpn-cell[data-drop]:hover{border-color:#6b5a3a;}
     .fpn-cell-ic{width:40px;height:40px;image-rendering:pixelated;pointer-events:none;}
-    /* La flèche de flux entre les sections, comme le four de Rust. */
+    .fpn-cell-ct{position:absolute;bottom:2px;right:4px;font-size:11px;color:#e8e0c8;}
+    /* L'INDICATEUR DE CONSOMMATION (spec feu-station) : une barre au bas de la case, qui suit la
+       consommation de l'UNITÉ en cours (ici la bûche qui brûle). Réutilisable partout (manger…). */
+    .fpn-consume{position:absolute;left:0;right:0;bottom:0;height:5px;background:#2a2320;}
+    .fpn-consume-fill{height:100%;background:#c98b3a;transition:width .1s linear;}
     .fpn-arrow{color:#6b5a3a;font-size:15px;line-height:1;text-align:center;margin:2px 0;}
-    /* COMBUSTIBLE : la case bois + une jauge + le compteur, à droite. */
     .fpn-row{display:flex;align-items:center;gap:14px;}
-    .fpn-meter{display:flex;flex-direction:column;gap:6px;min-width:180px;}
-    .fpn-fuel-bar{height:12px;background:#2a2320;border:1px solid #14141a;}
-    .fpn-fuel-fill{height:100%;background:linear-gradient(90deg,#b5602a,#e8a33a);transition:width .2s ease;}
-    .fpn-fuel-ct{font-size:12px;color:#9a8f78;letter-spacing:1px;}
+    .fpn-fuel-time{font-size:15px;color:#f2ead0;letter-spacing:1px;}
     .fpn-hint{font-size:11px;color:#8b8474;letter-spacing:.5px;}
     .fpn-in-pbar{position:absolute;left:0;right:0;bottom:0;height:5px;background:#2a2320;}
     .fpn-in-prog{height:100%;background:#8a9a4a;transition:width .2s ease;}
@@ -182,10 +196,13 @@ function markup(): string {
     <div class="fpn-flow">
       <div class="fpn-sec-lbl">COMBUSTIBLE</div>
       <div class="fpn-row">
-        <div class="fpn-cell fpn-fuel" data-drop data-fire="fuel"><img class="fpn-cell-ic fpn-fuel-ic" alt=""></div>
+        <div class="fpn-cell fpn-fuel" data-drop data-fire="fuel">
+          <img class="fpn-cell-ic fpn-fuel-ic" alt="">
+          <span class="fpn-cell-ct fpn-fuel-ct"></span>
+          <div class="fpn-consume"><div class="fpn-consume-fill fpn-fuel-consume"></div></div>
+        </div>
         <div class="fpn-meter">
-          <div class="fpn-fuel-bar"><div class="fpn-fuel-fill"></div></div>
-          <div class="fpn-fuel-ct"></div>
+          <div class="fpn-fuel-time"></div>
           <div class="fpn-hint">glisser des bûches</div>
         </div>
       </div>
