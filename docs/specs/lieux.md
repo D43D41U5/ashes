@@ -6,6 +6,8 @@
 
 Les 26 types de POI de la Vallée existent, sont placés, sont nommés — et **onze d'entre eux, la famille `reward`, ne font rien** : `family === 'reward'` n'est lu que par `vignette.ts`, pour choisir la couleur d'une pastille. Le squelette de l'émerveillement est creusé ; il n'a jamais reçu de charge. Cette spec lui en donne une.
 
+> *Errata de compte (2026-07-25) : les « onze » sont devenus QUINZE — le Grand Chêne (2026-07-24, savoir), puis la Tour de guet, la Pierre levée et le Cercle de pierres (spec `t0-exploration.md` §1 : 7 savoir / 3 répit / 5 récit). Les règles de cette spec valent inchangées pour les nouveaux venus ; seuls les comptes des exemples datent.*
+
 Le principe qui la gouverne, et qui lève une contradiction apparente avec le GDD :
 
 > **Le budget de surprise de BRAISES vit dans sa géographie, pas dans son calendrier.**
