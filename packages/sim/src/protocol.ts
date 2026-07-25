@@ -22,7 +22,8 @@ import type { GameTime } from './time'
 import type { Structure, Village } from './village'
 
 /** À incrémenter à tout changement incompatible — vérifié au `ready`. */
-export const PROTOCOL_VERSION = 2
+// v3 : les actions de station `cook_put`/`cook_take` (slot de cuisson, spec feu-station).
+export const PROTOCOL_VERSION = 3
 
 /**
  * LE CHAT DE PROXIMITÉ — un rayon d'audition, en tuiles. Le serveur ne relaie un

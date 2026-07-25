@@ -62,6 +62,8 @@ export type SimEvent =
   // ou il se rallume quand on le nourrit. Portés par la STRUCTURE (pas un village).
   | { type: 'fire_extinguished'; tick: number; structureId: number }
   | { type: 'fire_relit'; tick: number; structureId: number }
+  // LA CUISSON AU SLOT (spec feu-station S25) : un aliment est sorti cuit du slot d'une station.
+  | { type: 'meat_cooked'; tick: number; structureId: number; item: import('./items').ItemId }
   /** LE VILLAGE EST TOMBÉ (V1-12/V2-20) : son Feu abattu (à sec), il devient une RUINE
    *  pillable. `name` pour la chronique (« X n'est plus que cendres »). */
   | { type: 'village_fell'; tick: number; villageId: number; name: string }

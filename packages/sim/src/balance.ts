@@ -2247,9 +2247,22 @@ export const FIRE = {
   EMBER_TICKS: ticksFor(30),
   /** Chaleur des braises = fraction de la chaleur pleine (S3). */
   EMBER_WARMTH_FACTOR: 0.4,
-  /** Cuisson d'une viande grillée dans le slot (ticks) — aligné sur `cooked_meat` (5 s). */
-  COOK_TICKS: ticksFor(5),
 } as const
+
+/**
+ * CE QUI SE CUIT AU SLOT D'UNE STATION (spec feu-station S10-S11) — par type de station :
+ * l'entrée BRUTE → le résultat + la durée (ticks). C'est LA donnée réutilisable : le futur
+ * Fumoir déclarera les siennes, le modal se rend à partir d'ici. Ce passage : le feu cuit
+ * la VIANDE, rien d'autre (S10) ; `stew`/`graine`/cuir/outils restent au panneau de craft.
+ */
+export const COOK_SLOT: Partial<
+  Record<
+    import('./items').StructureType,
+    Partial<Record<import('./items').ItemId, { output: import('./items').ItemId; ticks: number }>>
+  >
+> = {
+  fire: { raw_meat: { output: 'cooked_meat', ticks: ticksFor(5) } },
+}
 
 /** Hordes & événements du monde (spec événements). */
 export const WORLD_EVENTS = {

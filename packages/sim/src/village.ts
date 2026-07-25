@@ -17,6 +17,7 @@ import {
   COMBAT,
   COMPONENTS,
   COMPONENT_TYPES,
+  COOK_SLOT,
   FIRE,
   FIRE_UPKEEP,
   FOOD_VALUES,
@@ -96,6 +97,10 @@ export interface Structure {
   /** Tick de fin de la fenêtre de BRAISES (S2) : posé quand `fuel` tombe à 0, effacé au
    *  rallumage. Feu libre uniquement. */
   emberUntil?: number
+  /** LE SLOT DE CUISSON (spec feu-station S7) — un aliment brut qui se transforme SUR PLACE,
+   *  passivement, tant que le feu brûle. `remainingTicks` descend au tick (S8) ; à 0, `item`
+   *  est devenu le résultat cuit et y reste (pas de brûlé, S9). Absent = slot vide. */
+  cook?: { item: ItemId; remainingTicks: number }
 }
 
 export type TaskKind = 'gather_berries' | 'gather_wood' | 'gather_fiber' | 'cook_stew' | 'repair' | 'feed_fire'
@@ -188,6 +193,12 @@ export type VillageAction =
    *  Feu de mon village (à portée), qui le convertit en combustible. Le seul geste qui
    *  tient l'upkeep — sans lui, le village finit en ruine. */
   | { type: 'feed_fire' }
+  /** CUISINE AU SLOT (spec feu-station S7) : je dépose `item` (viande crue) dans le slot de
+   *  cuisson d'un feu à portée ; il cuit PASSIVEMENT tant que le feu brûle (le travail de la
+   *  station, pas ma file de craft). Une seule chose à la fois. */
+  | { type: 'cook_put'; structureId: number; item: ItemId }
+  /** Je REPRENDS ce qui est dans le slot de cuisson (cru ou grillé) → mon sac. */
+  | { type: 'cook_take'; structureId: number }
   /** J'AMÉLIORE UN MUR/PORTE SUR PLACE au marteau (spec construction R8) : palier de
    *  matériau suivant (bois→pierre→métal), en payant la « différence ». Instantané. */
   | { type: 'upgrade_structure'; structureId: number }
@@ -878,6 +889,37 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (!removeItems(actor.inventory, { wood: give })) return reject('il faut du bois pour nourrir le Feu')
       village.fuel = Math.min(FIRE_UPKEEP.CAPACITY, village.fuel + give * FIRE_UPKEEP.FEED_PER_WOOD)
       emitEvent(state, { type: 'fire_fed', tick: state.tick, villageId: village.id, entityId: actorId, wood: give, fuel: village.fuel })
+      return
+    }
+
+    /**
+     * DÉPOSER un aliment brut dans le slot de cuisson d'un feu à portée (spec feu-station
+     * S7). Une seule chose à la fois ; il faut que la station accepte cet aliment (`COOK_SLOT`).
+     * Ne dépend PAS de l'état du feu à la pose — la cuisson n'AVANCE que si le feu brûle (S8).
+     */
+    case 'cook_put': {
+      const s = state.structures.find((st) => st.id === action.structureId)
+      if (!s || s.type !== 'fire') return reject('pas un feu')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin du feu')
+      if (s.cook) return reject('le feu cuit déjà quelque chose')
+      const rule = COOK_SLOT[s.type]?.[action.item]
+      if (!rule) return reject('ça ne se cuit pas ici')
+      if (!removeItems(actor.inventory, { [action.item]: 1 })) return reject('il faut l’aliment à cuire')
+      s.cook = { item: action.item, remainingTicks: rule.ticks }
+      return
+    }
+
+    /** REPRENDRE le contenu du slot de cuisson (cru ou grillé) → mon sac. Sac plein → l'attente. */
+    case 'cook_take': {
+      const s = state.structures.find((st) => st.id === action.structureId)
+      if (!s || s.type !== 'fire') return reject('pas un feu')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin du feu')
+      if (!s.cook) return reject('le slot de cuisson est vide')
+      const leftover = addItems(actor.inventory, { [s.cook.item]: 1 })
+      if (Object.keys(leftover).length > 0) return reject('sac plein')
+      delete s.cook
       return
     }
 

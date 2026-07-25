@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { FIRE, TERRAIN_GRASS } from './balance'
+import { COOK_SLOT, FIRE, TERRAIN_GRASS } from './balance'
+import { countOf } from './items'
 import { willRiseAsCendreux } from './cendreux'
 import { drainEvents } from './events'
 import { advanceFire, fireState } from './fire'
@@ -93,6 +94,69 @@ describe('Le Feu-station : les bénéfices suivent l’état (spec feu-station, 
 
     sim.tick = fire.emberUntil
     expect(willRiseAsCendreux(sim, ent(sim, victim))).toBe(true) // éteint : plus de rempart
+  })
+})
+
+describe('Le Feu-station : la cuisson au slot, passive (spec feu-station, A5/A6/A7)', () => {
+  const COOK = COOK_SLOT.fire!.raw_meat!.ticks
+
+  it('A5 — la cuisson est PASSIVE : elle avance même joueur PARTI, puis il reprend la viande grillée', () => {
+    const sim = makeSim()
+    const cook = spawnEntity(sim, 10, 10)
+    const fire = addStructure(sim, 'fire', 10, 10, 0, cook) // allumé (plein), à portée
+    grantItems(sim, cook, { raw_meat: 1 })
+    applyVillageAction(sim, cook, { type: 'cook_put', structureId: fire.id, item: 'raw_meat' })
+    expect(fire.cook?.item).toBe('raw_meat')
+    expect(countOf(ent(sim, cook).inventory, 'raw_meat')).toBe(0) // sortie du sac
+
+    // Le joueur s'en va LOIN (au-delà d'INTERACT_RANGE) : la cuisson continue quand même.
+    ent(sim, cook).x = 60
+    ent(sim, cook).y = 60
+    drainEvents(sim)
+    for (let t = 0; t < COOK; t++) advanceFire(sim)
+    expect(fire.cook?.item).toBe('cooked_meat') // cuit SANS le joueur (travail de la station)
+    expect(drainEvents(sim).some((e) => e.type === 'meat_cooked')).toBe(true)
+
+    // Il revient et reprend.
+    ent(sim, cook).x = 10
+    ent(sim, cook).y = 10
+    applyVillageAction(sim, cook, { type: 'cook_take', structureId: fire.id })
+    expect(fire.cook).toBeUndefined()
+    expect(countOf(ent(sim, cook).inventory, 'cooked_meat')).toBe(1)
+  })
+
+  it('A6 — pas de brûlé : la viande cuite reste au chaud INDÉFINIMENT dans le slot', () => {
+    const sim = makeSim()
+    const fire = addStructure(sim, 'fire', 10, 10, 0, 0)
+    fire.cook = { item: 'cooked_meat', remainingTicks: 0 } // déjà cuite
+    for (let t = 0; t < 3000; t++) advanceFire(sim)
+    expect(fire.cook?.item).toBe('cooked_meat') // ne se dégrade jamais
+  })
+
+  it('A7 — la cuisson exige la FLAMME : ni éteint ni braises ne cuisent ; rallumé, ça reprend', () => {
+    const sim = makeSim()
+    const fire = addStructure(sim, 'fire', 10, 10, 0, 0)
+    fire.cook = { item: 'raw_meat', remainingTicks: 10 }
+    const start = fire.cook.remainingTicks
+
+    // ÉTEINT : aucune progression.
+    fire.fuel = 0
+    fire.emberUntil = sim.tick + 5
+    sim.tick = fire.emberUntil // → 'out'
+    advanceFire(sim)
+    advanceFire(sim)
+    expect(fire.cook!.remainingTicks).toBe(start)
+
+    // BRAISES : toujours aucune (S8 exige la flamme).
+    fire.emberUntil = sim.tick + 100 // fuel toujours 0, tick < emberUntil → 'ember'
+    advanceFire(sim)
+    expect(fire.cook!.remainingTicks).toBe(start)
+
+    // RALLUMÉ : ça reprend.
+    fire.fuel = FIRE.FUEL_START
+    delete fire.emberUntil
+    advanceFire(sim)
+    expect(fire.cook!.remainingTicks).toBe(start - 1)
   })
 })
 

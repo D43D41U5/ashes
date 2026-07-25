@@ -8,7 +8,7 @@
  * le feu libre (villageId 0) porte `structure.fuel` ; un Foyer tient toujours (braises
  * dormantes) tant que l'upkeep n'est pas migré.
  */
-import { FIRE } from './balance'
+import { COOK_SLOT, FIRE } from './balance'
 import { emitEvent } from './events'
 import type { SimState } from './sim'
 import type { Structure } from './village'
@@ -52,14 +52,38 @@ export function fireWarmthFactor(state: SimState, s: Structure): number {
  */
 export function advanceFire(state: SimState): void {
   for (const s of state.structures) {
-    if (s.type !== 'fire' || s.villageId !== 0) continue
-    const before = s.fuel ?? 0
-    if (before <= 0) continue
-    s.fuel = Math.max(0, before - FIRE.DRAIN_PER_TICK)
-    if (s.fuel <= 0) {
-      s.emberUntil = state.tick + FIRE.EMBER_TICKS
-      emitEvent(state, { type: 'fire_extinguished', tick: state.tick, structureId: s.id })
+    if (s.type !== 'fire') continue
+    // Combustion du feu LIBRE (le Foyer tourne sur village.fuel / advanceUpkeep, S16).
+    if (s.villageId === 0) {
+      const before = s.fuel ?? 0
+      if (before > 0) {
+        s.fuel = Math.max(0, before - FIRE.DRAIN_PER_TICK)
+        if (s.fuel <= 0) {
+          s.emberUntil = state.tick + FIRE.EMBER_TICKS
+          emitEvent(state, { type: 'fire_extinguished', tick: state.tick, structureId: s.id })
+        }
+      }
     }
-    // (spec S7-S9) la cuisson passive du slot s'avancera ici, uniquement tant que le feu est allumé.
+    // Cuisson passive du slot (S7-S9) — sur TOUT feu (libre ou Foyer), le travail de la STATION.
+    advanceCookSlot(state, s)
+  }
+}
+
+/**
+ * Une étape de cuisson (spec S7-S9) : le slot descend son compteur UNIQUEMENT tant que le feu
+ * est allumé (S8 : exige la flamme, ni braises ni éteint). À 0, l'aliment DEVIENT son résultat
+ * cuit et y reste — pas de brûlé (S9). Continue sans le joueur : c'est le travail de la station.
+ */
+function advanceCookSlot(state: SimState, s: Structure): void {
+  const cook = s.cook
+  if (!cook || cook.remainingTicks <= 0) return
+  if (fireState(state, s) !== 'lit') return
+  cook.remainingTicks -= 1
+  if (cook.remainingTicks <= 0) {
+    const rule = COOK_SLOT[s.type]?.[cook.item]
+    if (rule) {
+      cook.item = rule.output
+      emitEvent(state, { type: 'meat_cooked', tick: state.tick, structureId: s.id, item: rule.output })
+    }
   }
 }
