@@ -206,8 +206,15 @@ export const PEBBLES: readonly PebbleVariant[] = [
  *  chassé le 24/07). Pas de débord sous les blocs de 2 px : il les avalerait. AUCUN décalage latéral —
  *  l'ombre est CENTRÉE sous son bloc, comme les ombres de contact des acteurs (décision du 2026-07-23 :
  *  une ombre orientée par le soleil engagerait la promotion de l'éclairage dynamique). Le miroir la
- *  retourne donc sans jamais la mettre du mauvais côté. */
-export const PEBBLE_SHADOW = { color: '#000000', alpha: 0.38, h: 1, overhang: 1, minW: 3 } as const
+ *  retourne donc sans jamais la mettre du mauvais côté.
+ *
+ *  `alpha` = 0,22, CALIBRÉ À L'ŒIL (Alexis, 25/07). Il était parti à 0,38, la valeur des ombres de
+ *  contact des acteurs (23/07) — reprise sans la rejuger à SON échelle, et c'était l'erreur : leur
+ *  flaque fait 10+ px et se dilue, celle-ci en fait 1 de haut et frappe bien plus fort à surface
+ *  égale. La FORME, elle, ne se transpose pas non plus : une ellipse (essayée puis écartée le même
+ *  jour, cf. `docs/decisions.md`) DÉGÉNÈRE à 16 px — ses deux rangées visibles tombent à la même
+ *  largeur après arrondi. À cette échelle, ce qui pose un bloc est une bande qui DÉBORDE. */
+export const PEBBLE_SHADOW = { color: '#000000', alpha: 0.22, h: 1, overhang: 1, minW: 3 } as const
 
 /** Les rects d'ombre d'une variété — DÉRIVÉS de ses blocs, donc jamais désynchronisés d'eux. Seule
  *  fabrique : `drawPebbles` (albédo canvas) et BootScene (texture peinte) la rejouent tous deux. */
