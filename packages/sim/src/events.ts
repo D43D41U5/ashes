@@ -58,6 +58,10 @@ export type SimEvent =
   /** Le Feu est tombé à SEC (upkeep R16) : ses murs vont commencer à céder. Émis UNE fois
    *  au passage à zéro — la chronique en fait « le Feu de X faiblit ». */
   | { type: 'fire_starved'; tick: number; villageId: number }
+  // LE FEU LIBRE (spec feu-station S25) : ses flammes meurent (combustible à 0 → braises),
+  // ou il se rallume quand on le nourrit. Portés par la STRUCTURE (pas un village).
+  | { type: 'fire_extinguished'; tick: number; structureId: number }
+  | { type: 'fire_relit'; tick: number; structureId: number }
   /** LE VILLAGE EST TOMBÉ (V1-12/V2-20) : son Feu abattu (à sec), il devient une RUINE
    *  pillable. `name` pour la chronique (« X n'est plus que cendres »). */
   | { type: 'village_fell'; tick: number; villageId: number; name: string }

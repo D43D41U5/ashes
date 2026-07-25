@@ -17,6 +17,7 @@ import {
   COMBAT,
   COMPONENTS,
   COMPONENT_TYPES,
+  FIRE,
   FIRE_UPKEEP,
   FOOD_VALUES,
   SLOTS,
@@ -88,6 +89,13 @@ export interface Structure {
    *  Absent = parcelle vide. La maturité se DÉRIVE par arithmétique (`tick − plantedAt`), sans
    *  entité ni PRNG (voir `agriculture.ts`). `number` → JSON-sérialisable comme le reste. */
   plantedAt?: number
+  /** COMBUSTIBLE d'un feu LIBRE (spec feu-station S12) — porté par la structure, pas le
+   *  village. Présent sur les feux libres (villageId 0) ; > 0 = allumé. Le Foyer, lui,
+   *  reste gouverné par `village.fuel` (migration différée S16). */
+  fuel?: number
+  /** Tick de fin de la fenêtre de BRAISES (S2) : posé quand `fuel` tombe à 0, effacé au
+   *  rallumage. Feu libre uniquement. */
+  emberUntil?: number
 }
 
 export type TaskKind = 'gather_berries' | 'gather_wood' | 'gather_fiber' | 'cook_stew' | 'repair' | 'feed_fire'
@@ -829,7 +837,36 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
      */
     case 'feed_fire': {
       const village = getVillageOf(state, actorId)
-      if (!village) return reject('pas de foyer à nourrir')
+      if (!village) {
+        // FEU LIBRE (spec feu-station S15) — quick-feed : on nourrit le feu à portée
+        // qu'on possède, sans ouvrir le modal. Alimente `structure.fuel` (pas un village).
+        const freeRange = BALANCE.INTERACT_RANGE
+        let fire: Structure | undefined
+        let bestD = freeRange * freeRange
+        for (const s of state.structures) {
+          if (s.type !== 'fire' || s.villageId !== 0 || s.ownerId !== actorId) continue
+          const d = distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5)
+          if (d <= bestD) {
+            bestD = d
+            fire = s
+          }
+        }
+        if (!fire) return reject('pas de feu à nourrir')
+        const room = FIRE.FUEL_CAPACITY - (fire.fuel ?? 0)
+        if (room <= 0) return reject('le feu est déjà plein')
+        const have = countOf(actor.inventory, 'wood')
+        if (have <= 0) return reject('il faut du bois pour nourrir le feu')
+        const give = Math.min(have, Math.ceil(room / FIRE.FEED_PER_WOOD))
+        if (!removeItems(actor.inventory, { wood: give })) return reject('il faut du bois pour nourrir le feu')
+        const before = fire.fuel ?? 0
+        fire.fuel = Math.min(FIRE.FUEL_CAPACITY, before + give * FIRE.FEED_PER_WOOD)
+        // Rallumage depuis les braises/l'extinction : on rouvre la fenêtre et on l'annonce.
+        if (before <= 0 && fire.fuel > 0) {
+          delete fire.emberUntil
+          emitEvent(state, { type: 'fire_relit', tick: state.tick, structureId: fire.id })
+        }
+        return
+      }
       const range = BALANCE.INTERACT_RANGE
       if (distSq(actor.x, actor.y, village.fireTx + 0.5, village.fireTy + 0.5) > range * range) return reject('trop loin du Feu')
       const room = FIRE_UPKEEP.CAPACITY - village.fuel
@@ -1141,6 +1178,9 @@ export function addStructure(
   if (material && material !== 'wood' && isWallLike) structure.material = material
   const containerSlots = CONTAINER_TYPES[type]
   if (containerSlots !== undefined) structure.inventory = makeInventory(containerSlots)
+  // LE FEU LIBRE naît PLEIN (spec feu-station S12) : il est fait de 10 bois. Le Foyer
+  // (villageId ≠ 0) n'a pas de combustible de structure — il tourne sur `village.fuel`.
+  if (type === 'fire' && villageId === 0) structure.fuel = FIRE.FUEL_START
   state.structures.push(structure)
   emitEvent(state, {
     type: 'structure_built',

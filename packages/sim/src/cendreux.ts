@@ -5,6 +5,7 @@ import { CENDREUX, COMBAT, MONSTER_DEFS } from './balance'
 import { startAttack } from './combat'
 import { distSq } from './geometry'
 import { emitEvent } from './events'
+import { fireActive } from './fire'
 import { isEmpty, pourInto } from './items'
 import { moveToward, nearestPrey, spawnMonster, type Monster } from './monsters'
 import { pathToward } from './pathfinding'
@@ -17,7 +18,7 @@ export function willRiseAsCendreux(state: SimState, entity: Entity): boolean {
   // Loin d'un feu : aucune structure feu dans HEARTH_WARD_RADIUS.
   const hearthWardR = CENDREUX.HEARTH_WARD_RADIUS
   const nearFire = state.structures.some(
-    (s) => s.type === 'fire' && distSq(s.tx + 0.5, s.ty + 0.5, entity.x, entity.y) <= hearthWardR * hearthWardR,
+    (s) => s.type === 'fire' && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, entity.x, entity.y) <= hearthWardR * hearthWardR,
   )
   if (nearFire) return false
   // Seul : aucun allié vivant (même village) dans WITNESS_RADIUS.
@@ -40,7 +41,7 @@ export function advanceCendreux(state: SimState): void {
     if (corpse.risesAt === undefined || state.tick < corpse.risesAt) continue
     // Veillé par un feu à portée → annulation.
     const warded = state.structures.some(
-      (s) => s.type === 'fire' && distSq(s.tx + 0.5, s.ty + 0.5, corpse.x, corpse.y) <= ward * ward,
+      (s) => s.type === 'fire' && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, corpse.x, corpse.y) <= ward * ward,
     )
     if (warded) {
       delete corpse.risesAt

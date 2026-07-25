@@ -2228,6 +2228,29 @@ export const FIRE_UPKEEP = {
   TASK_THRESHOLD: 96,
 } as const
 
+/**
+ * LE FEU COMME STATION (spec `docs/specs/feu-station.md`) — le combustible du feu
+ * LIBRE, porté par la STRUCTURE (et non le village : l'upkeep du Foyer reste séparé,
+ * migration différée S16). Mêmes unités que FIRE_UPKEEP. Calibrage à valider en playtest.
+ */
+export const FIRE = {
+  /** Combustible max d'un feu libre — plein = 10 bois (via FEED_PER_WOOD). */
+  FUEL_CAPACITY: 240,
+  /** À la pose : le feu est fait de 10 bois → il démarre PLEIN. */
+  FUEL_START: 240,
+  /** 1 bois → tant de combustible. */
+  FEED_PER_WOOD: 24,
+  /** Combustion par tick d'un feu libre (constante — pas d'échelle d'acte ici, à calibrer).
+   *  Calé pour qu'un plein tienne ~1,5 cycle sans être nourri. */
+  DRAIN_PER_TICK: 240 / ticksForCycles(1.5),
+  /** Fenêtre de BRAISES après épuisement, avant l'extinction totale — le sas d'alerte (S2). */
+  EMBER_TICKS: ticksFor(30),
+  /** Chaleur des braises = fraction de la chaleur pleine (S3). */
+  EMBER_WARMTH_FACTOR: 0.4,
+  /** Cuisson d'une viande grillée dans le slot (ticks) — aligné sur `cooked_meat` (5 s). */
+  COOK_TICKS: ticksFor(5),
+} as const
+
 /** Hordes & événements du monde (spec événements). */
 export const WORLD_EVENTS = {
   REPAIR_WOOD_COST: 1,

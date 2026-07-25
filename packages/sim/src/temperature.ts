@@ -4,6 +4,7 @@
  * par la bulle d'un feu. Aucune fonction transcendante (seul `sqrt`, autorisé).
  */
 import { POI, TEMPERATURE } from './balance'
+import { fireWarmthFactor } from './fire'
 import { die } from './combat'
 import { countOf } from './items'
 import { terrainAt } from './map'
@@ -28,11 +29,14 @@ export function fireBubble(state: SimState, x: number, y: number): number {
   let best = 0
   for (const s of state.structures) {
     if (s.type !== 'fire') continue
+    // Un feu éteint ne chauffe plus ; les braises chauffent atténué (spec feu-station S3).
+    const factor = fireWarmthFactor(state, s)
+    if (factor <= 0) continue
     const dx = s.tx - x
     const dy = s.ty - y
     const dist = Math.sqrt(dx * dx + dy * dy)
     if (dist >= T.FIRE_RANGE) continue
-    const warmth = T.FIRE_WARMTH * (1 - dist / T.FIRE_RANGE)
+    const warmth = T.FIRE_WARMTH * factor * (1 - dist / T.FIRE_RANGE)
     if (warmth > best) best = warmth
   }
   return best

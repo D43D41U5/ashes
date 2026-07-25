@@ -14,6 +14,7 @@ import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type Str
 import { moveAvatar } from './collision'
 import { advanceCombat, applyCombatAction, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
+import { advanceFire } from './fire'
 import { applyDebugAction, isDebugAction, refreshGodMode, type DebugAction } from './debug'
 import {
   advanceCraft,
@@ -642,6 +643,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // murs cèdent. Le seul évier permanent — après l'alignement (les raids ont pu casser),
   // avant l'avance du temps (l'acte de CE tick module la combustion).
   advanceUpkeep(state)
+  // LE FEU LIBRE brûle son combustible (spec feu-station S2/S12) — jumeau de l'upkeep,
+  // pour la structure feu hors village. À sec, il passe en braises puis s'éteint.
+  advanceFire(state)
   advanceTime(state)
   // LA CENDRE AVANCE — après le temps, puisque c'est le temps qui la pousse. Elle ne fait quelque
   // chose qu'au BASCULEMENT d'un jour de saison : le reste des ticks, elle ne coûte qu'un test.
