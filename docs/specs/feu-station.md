@@ -1,6 +1,6 @@
 # Le Feu — station interactive : combustible, cuisson, modal
 
-*Source : la demande de session 2026-07-25 (« interagir avec le feu comme dans Rust »), GDD §7 (le Grand Froid, le Foyer comme salut), §8 (chaînes courtes), specs `construction.md` (le Feu, l'upkeep, R19 « l'interaction passe par ce qu'on tient »), `craft-file.md` (la file de craft, F7), `economie.md` (« le Feu cuit »), `tension.md` (T13, le froid a une parade). Statut : **LIVRÉ** (2026-07-25) — sim en 4 étapes (extinction/braises, Cendreux attirés, slot de cuisson, combustible sur la structure ; gate `determinisme-sim` passé) + client (modal E, drag&drop, rendu des 3 états, retrait des 2 bulles). Reliquats explicites en « Hors périmètre ». Décisions utilisateur du 2026-07-25, actées une à une — ne pas les rouvrir.*
+*Source : la demande de session 2026-07-25 (« interagir avec le feu comme dans Rust »), GDD §7 (le Grand Froid, le Foyer comme salut), §8 (chaînes courtes), specs `construction.md` (le Feu, l'upkeep, R19 « l'interaction passe par ce qu'on tient »), `craft-file.md` (la file de craft, F7), `economie.md` (« le Feu cuit »), `tension.md` (T13, le froid a une parade). Statut : **LIVRÉ** (2026-07-25) — sim en 4 étapes (extinction/braises, Cendreux attirés, slot de cuisson, combustible sur la structure ; gate `determinisme-sim` passé) + client (modal E, drag&drop, rendu des 3 états, retrait des 2 bulles). **Reprise 2026-07-25 : les slots deviennent de VRAIS conteneurs** (dépôt/retrait/déplacement libres, verrou de consommation) — voir « Les slots sont des conteneurs » (S26-S31) et A13-A17. Reliquats explicites en « Hors périmètre ». Décisions utilisateur du 2026-07-25, actées une à une — ne pas les rouvrir.*
 
 ## Objectif de design
 
@@ -49,6 +49,17 @@ Conséquence structurante, comme pour la file de craft : **tout l'état vit dans
 - **S15 — Le raccourci quick-feed est conservé.** « Bois en main + clic sur le feu » (`feed_fire`, `aim.ts:275`) alimente le slot combustible sans ouvrir le modal — jeter une bûche au passage, ergonomique.
 - **S16 — DIFFÉRÉ : l'upkeep du village.** `advanceUpkeep` / `village.fuel` ne sont PAS migrés ce passage ; le Foyer garde `village.fuel` tel quel. À la migration ultérieure vers la réserve unifiée sur la structure, ne pas oublier le **transfert de combustible au moment `found_village`** (feu libre → Foyer).
 
+### Les slots sont des conteneurs (reprise 2026-07-25)
+
+*Demande d'Alexis : « ce sont des cases spécialisées d'inventaire de la station : je dois pouvoir déposer ET retirer les items. La SEULE limite : un item en cours de consommation ne peut pas partir ou changer de slot. Pour une pile, on déplace `total − nombre en consommation`. »*
+
+- **S26 — Combustible, ENTRÉES et SORTIES sont de VRAIS conteneurs.** Chaque zone est un inventaire (tableau de `Slot`) ; on y **dépose, retire et déplace** librement, sac↔feu et feu↔feu, par glisser-déposer — exactement comme un coffre. Fini les actions bespoke `cook_put`/`cook_take_in`/`cook_take_out` (retirées) : **tout passe par l'action générique `transfer`** (`inventory-actions.ts`) étendue d'une **`zone`** (`fuel`/`cookIn`/`cookOut`) sur le `SlotRef`. Le versement réutilise `pourOntoSlot` (mesure la place AVANT de retirer, aucun échange de case occupée) — donc pas de duplication d'item possible.
+- **S27 — Cases SPÉCIALISÉES : un filtre par zone.** Le combustible n'accepte que du bois ; une ENTRÉE, que ce qui s'y cuit (`COOK_SLOT`) ; une SORTIE, que les produits cuits (résultats + sous-produits). Le dépôt d'un item non accepté est refusé (`fireZoneAccepts`).
+- **S28 — Le VERROU DE CONSOMMATION.** L'unité EN COURS de consommation ne quitte pas sa case : la **bûche qui brûle** (ancrée à `burnSlot`, S29) et l'**aliment qui cuit** (compteur `cookRemaining`). Une pile se déplace de `count − verrou` (`fireSlotLocked` rend ce nombre — `number`, pas booléen, pour une future station qui consommerait plusieurs unités à la fois) : on **plafonne** le transfert, on ne le refuse que si RIEN n'est mobile. Retirer 10 bûches d'un slot qui en brûle 1 en rend 9 ; l'ENTRÉE rend sa pile sauf l'unité qui cuit.
+- **S29 — Les ENTRÉES sont des STACKS ; la combustion est ANCRÉE.** Une entrée tient une **pile** d'aliments crus (`cookIn: Inventory`) et la cuit **une unité à la fois** ; le compteur de l'unité en cours vit dans `cookRemaining` (parallèle, même index — pause préservée en braises, ce que le modèle *dérivé* du combustible ne saurait faire). Le combustible mémorise `burnSlot` = la case dont la bûche brûle : déposer du bois AILLEURS ne détourne pas la flamme (sans quoi le verrou serait contournable — on déposerait à côté pour « libérer » la case qui brûle).
+- **S30 — Le combustible n'existe QUE sur un feu libre.** Un **Foyer** (`villageId ≠ 0`) tient sur `village.fuel` (migration différée, S16) : sa zone `fuel` rend `undefined`, y glisser du bois est refusé (le quick-feed `feed_fire` reste, S15). ENTRÉES/SORTIES marchent sur tout feu.
+- **S31 — Sous-produits de cuisson : capacité posée.** Une recette `COOK_SLOT` peut déclarer des `byproducts` (versés en SORTIE à la cuisson, best-effort). `cooked_meat` n'en déclare aucun pour l'instant — la mécanique attend les items (graisse, os…).
+
 ### L'interaction : la touche E
 
 - **S17 — E devient la touche unique « interagir avec ce que je vise ».** Viser un buisson + E = cueillir (inchangé, `input-bindings.ts`, décision 2026-07-24). Viser un **feu** à `INTERACT_RANGE` + E = **ouvrir son modal**. C'est l'**extension** d'un contrat existant (E est déjà l'interaction par visée), pas une réouverture du débranchement des verbes du 2026-07-12 : ouvrir un panneau n'est pas un verbe, et les vrais verbes (mettre une bûche, lancer la cuisson) se font *dans* le modal, au drag&drop.
@@ -81,6 +92,14 @@ Conséquence structurante, comme pour la file de craft : **tout l'état vit dans
 - **A10 — Le bouton contextuel.** « Fonder » apparaît sur un feu libre fondable ; « Améliorer » sur un Foyer améliorable ; l'action déclenchée est bien `found_village` / `upgrade_fire`. Les deux bulles flottantes n'existent plus.
 - **A11 — Destructibilité découplée (feu libre).** Un feu libre (`villageId === 0`) **allumé** encaisse des dégâts et peut tomber en ruine (aucune invulnérabilité liée au combustible). Le cas du **Foyer** (invulnérabilité via `village.fuel`) est hors périmètre ici (S16) — inchangé, non retesté.
 - **A12 — Déterminisme.** Même seed + mêmes inputs (poser un feu, le nourrir, cuire, s'éloigner, revenir) → même état ET même flux d'événements (`replay.test.ts`, `events.test.ts`). Aucune de ces mécaniques ne dépend d'une horloge ni d'un tirage non seedé.
+
+*Reprise conteneurs (2026-07-25) :*
+
+- **A13 — Combustible : on retire le surplus, jamais la bûche qui brûle.** Un feu de 10 bûches allumé : `transfer` de tout le combustible vers le sac en rend **9**, la case garde **1** (la bûche en cours) et le feu reste allumé.
+- **A14 — La flamme est ancrée (anti-dodge).** Bûche en cours en case 1, on dépose du bois en case 0 : un tick de combustion ne DÉPLACE pas la flamme en case 0 (`burnSlot` reste 1) ; la case 0 (froide) se retire entièrement, la case 1 garde sa bûche.
+- **A15 — ENTRÉES : on récupère la pile sauf l'unité qui cuit.** Une pile de 3 crus qui cuit : `transfer` de 3 vers le sac en rend **2**, l'unité en cours reste.
+- **A16 — Cases spécialisées.** Déposer de la viande dans le combustible est refusé ; du bois dans une ENTRÉE, refusé ; un Foyer n'a pas de zone combustible (dépôt refusé, S30).
+- **A17 — Zéro duplication.** Retrait/dépôt passent par `pourOntoSlot` (place mesurée AVANT retrait) : aucun item créé ni perdu, quel que soit le remplissage du sac (corrige le bug mesuré de l'ancien `cook_take_out`).
 
 ## Nombres (à calibrer)
 

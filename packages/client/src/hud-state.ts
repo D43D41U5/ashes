@@ -57,8 +57,9 @@ export interface FireView {
   fuelTimeRemaining: number
   fuelBurnProgress: number
   fuelBurnSlot: number
-  /** CUISSON : 3 ENTRÉES (aliment en cours + progression 0..1 + prêt) et 3 SORTIES (cuit + sous-produit). */
-  cookIn: ({ item: import('@braises/sim').ItemId; progress: number; ready: boolean } | null)[]
+  /** CUISSON : 3 ENTRÉES (STACK d'aliments — `count` — + progression 0..1 de l'unité qui cuit + prêt)
+   *  et 3 SORTIES (cuit + sous-produit, avec compte). Ce sont de vraies cases-conteneurs (glisser). */
+  cookIn: ({ item: import('@braises/sim').ItemId; count: number; progress: number; ready: boolean } | null)[]
   cookOut: ({ item: import('@braises/sim').ItemId; count: number } | null)[]
   /** Le bouton contextuel : fonder un Foyer ici, ou monter le palier du Foyer — ou rien (spec S19). */
   action: { kind: 'found'; label: string } | { kind: 'upgrade'; label: string; affordable: boolean } | null

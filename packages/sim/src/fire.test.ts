@@ -3,7 +3,8 @@ import { COOK_SLOT, FIRE, TERRAIN_GRASS } from './balance'
 import { addItems, countOf, inventoryOf, makeInventory } from './items'
 import { willRiseAsCendreux } from './cendreux'
 import { drainEvents } from './events'
-import { advanceFire, fireState } from './fire'
+import { advanceFire, fireState, type FireZone } from './fire'
+import { applyInventoryAction } from './inventory-actions'
 import { createEmptyMap } from './map'
 import { advanceMonsters, spawnMonster } from './monsters'
 import { createSim, spawnEntity, type SimState } from './sim'
@@ -31,7 +32,30 @@ function wood(fire: Structure, n: number): void {
 function douse(sim: SimState, fire: Structure, emberFor = 100): void {
   fire.fuel = makeInventory(FIRE.FUEL_SLOTS)
   delete fire.burnAt
+  delete fire.burnSlot
   fire.emberUntil = sim.tick + emberFor
+}
+
+// ── Les cases du feu comme CONTENEURS (spec feu-station) : dépôt/retrait/déplacement par `transfer`. ──
+const bagSlot = (sim: SimState, id: number, item: string): number =>
+  sim.entities.find((e) => e.id === id)!.inventory.findIndex((s) => s?.item === item)
+const emptyBag = (sim: SimState, id: number): number =>
+  sim.entities.find((e) => e.id === id)!.inventory.findIndex((s) => s === null)
+/** Glisser depuis le SAC vers une zone du feu (dépôt). */
+function drop(sim: SimState, id: number, fire: Structure, zone: FireZone, toSlot: number, item: string, count: number): void {
+  applyInventoryAction(sim, id, {
+    type: 'transfer', kind: 'structure', containerId: fire.id,
+    from: { side: 'player', slot: bagSlot(sim, id, item) },
+    to: { side: 'container', slot: toSlot, zone }, count,
+  })
+}
+/** Glisser d'une zone du feu vers le SAC (retrait). */
+function take(sim: SimState, id: number, fire: Structure, zone: FireZone, fromSlot: number, count: number): void {
+  applyInventoryAction(sim, id, {
+    type: 'transfer', kind: 'structure', containerId: fire.id,
+    from: { side: 'container', slot: fromSlot, zone },
+    to: { side: 'player', slot: emptyBag(sim, id) }, count,
+  })
 }
 
 describe('Le Feu-station : combustible & état (spec feu-station, A1)', () => {
@@ -119,8 +143,9 @@ describe('Le Feu-station : la cuisson 3 entrées → 3 sorties, passive (spec fe
     const cook = spawnEntity(sim, 10, 10)
     const fire = addStructure(sim, 'fire', 10, 10, 0, cook) // allumé (du bois), à portée
     grantItems(sim, cook, { raw_meat: 1 })
-    applyVillageAction(sim, cook, { type: 'cook_put', structureId: fire.id, item: 'raw_meat' })
-    expect(fire.cookIn?.[0]?.item).toBe('raw_meat') // dans la 1re entrée libre
+    drop(sim, cook, fire, 'cookIn', 0, 'raw_meat', 1) // glissé dans la 1re ENTRÉE
+    expect(fire.cookIn?.[0]?.item).toBe('raw_meat')
+    expect(fire.cookIn?.[0]?.count).toBe(1)
     expect(countOf(ent(sim, cook).inventory, 'raw_meat')).toBe(0) // sortie du sac
 
     // Le joueur s'en va LOIN (au-delà d'INTERACT_RANGE) : la cuisson continue quand même.
@@ -132,10 +157,10 @@ describe('Le Feu-station : la cuisson 3 entrées → 3 sorties, passive (spec fe
     expect(countOf(fire.cookOut!, 'cooked_meat')).toBe(1) // le cuit est en SORTIE
     expect(drainEvents(sim).some((e) => e.type === 'meat_cooked')).toBe(true)
 
-    // Il revient et reprend la SORTIE.
+    // Il revient et reprend la SORTIE (glissée vers le sac).
     ent(sim, cook).x = 10
     ent(sim, cook).y = 10
-    applyVillageAction(sim, cook, { type: 'cook_take_out', structureId: fire.id, slot: 0 })
+    take(sim, cook, fire, 'cookOut', 0, 1)
     expect(fire.cookOut?.[0]).toBeNull()
     expect(countOf(ent(sim, cook).inventory, 'cooked_meat')).toBe(1)
   })
@@ -151,37 +176,116 @@ describe('Le Feu-station : la cuisson 3 entrées → 3 sorties, passive (spec fe
   it('A7 — la cuisson exige la FLAMME : ni éteint ni braises ne cuisent ; rallumé, ça reprend', () => {
     const sim = makeSim()
     const fire = addStructure(sim, 'fire', 10, 10, 0, 0)
-    fire.cookIn = [{ item: 'raw_meat', remainingTicks: 10 }, null, null]
-    const start = fire.cookIn[0]!.remainingTicks
+    fire.cookIn = [{ item: 'raw_meat', count: 1 }, null, null] // une unité déjà engagée
+    fire.cookRemaining = [10, null, null]
+    const start = fire.cookRemaining[0]!
 
-    // ÉTEINT : aucune progression.
+    // ÉTEINT : aucune progression (le compteur se FIGE).
     douse(sim, fire, 5)
     sim.tick = fire.emberUntil! // → 'out'
     advanceFire(sim)
     advanceFire(sim)
-    expect(fire.cookIn![0]!.remainingTicks).toBe(start)
+    expect(fire.cookRemaining![0]).toBe(start)
 
     // BRAISES : toujours aucune (S8 exige la flamme).
     fire.emberUntil = sim.tick + 100 // pas de bois, tick < emberUntil → 'ember'
     advanceFire(sim)
-    expect(fire.cookIn![0]!.remainingTicks).toBe(start)
+    expect(fire.cookRemaining![0]).toBe(start)
 
     // RALLUMÉ : ça reprend.
     wood(fire, FIRE.FUEL_START_WOOD)
     fire.burnAt = sim.tick
+    fire.burnSlot = 0
     delete fire.emberUntil
     advanceFire(sim)
-    expect(fire.cookIn![0]!.remainingTicks).toBe(start - 1)
+    expect(fire.cookRemaining![0]).toBe(start - 1)
   })
 
-  it('les 3 ENTRÉES cuisent EN PARALLÈLE ; une 4e est refusée (entrées pleines)', () => {
+  it('les 3 ENTRÉES cuisent EN PARALLÈLE, chacune UNE unité de sa pile à la fois', () => {
     const sim = makeSim()
     const cook = spawnEntity(sim, 10, 10)
     const fire = addStructure(sim, 'fire', 10, 10, 0, cook)
     grantItems(sim, cook, { raw_meat: 5 })
-    for (let i = 0; i < 4; i++) applyVillageAction(sim, cook, { type: 'cook_put', structureId: fire.id, item: 'raw_meat' })
-    expect(fire.cookIn!.filter(Boolean).length).toBe(3) // 3 posées, la 4e refusée
-    expect(countOf(ent(sim, cook).inventory, 'raw_meat')).toBe(2) // 3 sorties du sac, 2 restent
+    drop(sim, cook, fire, 'cookIn', 0, 'raw_meat', 2) // une PILE de 2 dans l'entrée 0
+    drop(sim, cook, fire, 'cookIn', 1, 'raw_meat', 1)
+    drop(sim, cook, fire, 'cookIn', 2, 'raw_meat', 1)
+    expect(fire.cookIn!.map((s) => s?.count ?? 0)).toEqual([2, 1, 1]) // 4 posées, 1 reste au sac
+    expect(countOf(ent(sim, cook).inventory, 'raw_meat')).toBe(1)
+
+    drainEvents(sim)
+    for (let t = 0; t < COOK; t++) advanceFire(sim) // UNE passe de cuisson
+    // Chaque entrée a cuit UNE unité EN PARALLÈLE → 3 cuits ; l'entrée 0 garde sa 2e unité.
+    expect(countOf(fire.cookOut!, 'cooked_meat')).toBe(3)
+    expect(fire.cookIn![0]?.count).toBe(1)
+    expect(fire.cookIn![1]).toBeNull()
+    expect(fire.cookIn![2]).toBeNull()
+  })
+})
+
+describe('Le Feu-station : les cases sont de vrais CONTENEURS + verrou de consommation (spec feu-station, A8/A9)', () => {
+  it('A8 — le COMBUSTIBLE : on retire le surplus, jamais la bûche qui BRÛLE', () => {
+    const sim = makeSim()
+    const owner = spawnEntity(sim, 10, 10)
+    const fire = addStructure(sim, 'fire', 10, 10, 0, owner) // 10 bois en case 0, burnSlot 0, allumé
+    expect(fire.burnSlot).toBe(0)
+    take(sim, owner, fire, 'fuel', 0, 999) // je tire tout ce que je peux
+    expect(countOf(fire.fuel!, 'wood')).toBe(1) // la bûche EN COURS reste, verrouillée
+    expect(countOf(ent(sim, owner).inventory, 'wood')).toBe(9) // les 9 autres sont à moi
+    expect(fireState(sim, fire)).toBe('lit') // il lui reste sa bûche
+  })
+
+  it('A8 — la case qui brûle est ANCRÉE : déposer ailleurs ne détourne pas la flamme (dodge)', () => {
+    const sim = makeSim()
+    const owner = spawnEntity(sim, 10, 10)
+    const fire = addStructure(sim, 'fire', 10, 10, 0, owner)
+    // La bûche en cours est en case 1 (case 0 vide), comme après un réagencement.
+    fire.fuel = makeInventory(FIRE.FUEL_SLOTS)
+    fire.fuel[1] = { item: 'wood', count: 5 }
+    fire.burnAt = sim.tick
+    fire.burnSlot = 1
+    grantItems(sim, owner, { wood: 1 })
+    drop(sim, owner, fire, 'fuel', 0, 'wood', 1) // je dépose 1 bois en case 0 (froide)
+    advanceFire(sim) // un tick : la flamme ne DÉMÉNAGE pas en case 0
+    expect(fire.burnSlot).toBe(1)
+    take(sim, owner, fire, 'fuel', 0, 9) // la case 0 (froide) part ENTIÈREMENT
+    expect(fire.fuel![0]).toBeNull()
+    take(sim, owner, fire, 'fuel', 1, 9) // la case 1 (en feu) garde SA bûche
+    expect(fire.fuel![1]?.count).toBe(1)
+  })
+
+  it('A9 — les ENTRÉES : on récupère la pile SAUF l’unité qui cuit', () => {
+    const sim = makeSim()
+    const cook = spawnEntity(sim, 10, 10)
+    const fire = addStructure(sim, 'fire', 10, 10, 0, cook)
+    grantItems(sim, cook, { raw_meat: 3 })
+    drop(sim, cook, fire, 'cookIn', 0, 'raw_meat', 3)
+    advanceFire(sim) // une unité s'engage → verrou posé
+    expect(fire.cookRemaining![0]).not.toBeNull()
+    take(sim, cook, fire, 'cookIn', 0, 3) // je veux tout reprendre
+    expect(fire.cookIn![0]?.count).toBe(1) // celle qui cuit reste
+    expect(countOf(ent(sim, cook).inventory, 'raw_meat')).toBe(2)
+  })
+
+  it('A9 — cases SPÉCIALISÉES : le combustible refuse la viande, l’ENTRÉE refuse le bois', () => {
+    const sim = makeSim()
+    const p = spawnEntity(sim, 10, 10)
+    const fire = addStructure(sim, 'fire', 10, 10, 0, p)
+    grantItems(sim, p, { raw_meat: 1, wood: 1 })
+    drop(sim, p, fire, 'fuel', 1, 'raw_meat', 1) // viande dans le COMBUSTIBLE : refusé
+    expect(countOf(ent(sim, p).inventory, 'raw_meat')).toBe(1) // rien n'a bougé
+    drop(sim, p, fire, 'cookIn', 0, 'wood', 1) // bois dans l'ENTRÉE : refusé
+    expect(countOf(ent(sim, p).inventory, 'wood')).toBe(1)
+    expect(fire.cookIn?.[0] == null).toBe(true)
+  })
+
+  it('A9 — un FOYER n’a PAS de zone combustible : y glisser du bois est refusé (S16)', () => {
+    const sim = makeSim()
+    const owner = spawnEntity(sim, 10, 10)
+    const foyer = addStructure(sim, 'fire', 10, 10, 1, owner) // villageId 1 = Foyer (upkeep village.fuel)
+    grantItems(sim, owner, { wood: 1 })
+    drop(sim, owner, foyer, 'fuel', 0, 'wood', 1)
+    expect(countOf(ent(sim, owner).inventory, 'wood')).toBe(1) // refusé : le Foyer tient sur village.fuel
+    expect(foyer.fuel).toBeUndefined()
   })
 })
 

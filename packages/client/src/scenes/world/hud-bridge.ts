@@ -268,14 +268,16 @@ export function publishOpenFire(
     setHud(registry, 'openFireView', null)
     return
   }
-  // Le slot de cuisson : en cours (remainingTicks>0, `item` encore BRUT) → progression via COOK_SLOT ;
-  // prêt (remainingTicks<=0, `item` = résultat cuit) → 100 %.
-  // CUISSON : 3 ENTRÉES (aliment en cours + progression) et 3 SORTIES (cuit + sous-produit).
+  // CUISSON : 3 ENTRÉES (STACK d'aliments crus). Le compteur de l'unité EN COURS vit dans
+  // `cookRemaining` (parallèle) : engagée (`rem>0`) → progression via COOK_SLOT ; prête (`rem<=0`,
+  // sorties pleines) → 100 % ; pas engagée (`rem==null`, feu éteint depuis la pose) → 0 %.
   const cookIn: FireView['cookIn'] = Array.from({ length: FIRE.COOK_INPUTS }, (_, i) => {
     const sl = s.cookIn?.[i]
     if (!sl) return null
     const rule = COOK_SLOT[s.type]?.[sl.item]
-    return { item: sl.item, ready: sl.remainingTicks <= 0, progress: rule ? Math.max(0, 1 - sl.remainingTicks / rule.ticks) : 1 }
+    const rem = s.cookRemaining?.[i]
+    const progress = rem == null ? 0 : rule ? Math.max(0, Math.min(1, 1 - rem / rule.ticks)) : 1
+    return { item: sl.item, count: sl.count, ready: rem != null && rem <= 0, progress }
   })
   const cookOut: FireView['cookOut'] = Array.from({ length: FIRE.COOK_OUTPUTS }, (_, i) => {
     const sl = s.cookOut?.[i]
@@ -313,7 +315,7 @@ export function publishOpenFire(
     fuel,
     fuelTimeRemaining: village ? Math.round(village.fuel / FIRE_UPKEEP.DRAIN_PER_TICK) : fuelTicksRemaining(tick, s),
     fuelBurnProgress: village ? 0 : fuelBurnProgress(tick, s),
-    fuelBurnSlot: fuel.findIndex((sl) => sl !== null && sl.count > 0),
+    fuelBurnSlot: village ? -1 : s.burnSlot ?? -1, // la case ANCRÉE qui brûle (source unique : la sim)
     cookIn,
     cookOut,
     action,

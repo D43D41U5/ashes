@@ -17,7 +17,6 @@ import {
   COMBAT,
   COMPONENTS,
   COMPONENT_TYPES,
-  COOK_SLOT,
   FIRE,
   FIRE_UPKEEP,
   FOOD_VALUES,
@@ -90,26 +89,31 @@ export interface Structure {
    *  Absent = parcelle vide. La maturité se DÉRIVE par arithmétique (`tick − plantedAt`), sans
    *  entité ni PRNG (voir `agriculture.ts`). `number` → JSON-sérialisable comme le reste. */
   plantedAt?: number
-  /** COMBUSTIBLE d'un feu LIBRE (spec feu-station S12) — porté par la structure, pas le
-   *  village. Présent sur les feux libres (villageId 0) ; > 0 = allumé. Le Foyer, lui,
-   *  reste gouverné par `village.fuel` (migration différée S16). */
-  /** COMBUSTIBLE d'un feu LIBRE (spec feu-station) — un inventaire de BÛCHES (3 slots). Le feu en
-   *  brûle UNE à la fois (`burnAt`). Feu libre (villageId 0) uniquement ; le Foyer reste sur
-   *  `village.fuel` (migration différée S16). Bois total > 0 = allumé. */
+  /** COMBUSTIBLE d'un feu LIBRE (spec feu-station) — un inventaire de BÛCHES (3 cases), géré comme
+   *  un coffre : dépôt/retrait/déplacement libres (`transfer` zone `fuel`). Le feu en brûle UNE à la
+   *  fois, tirée de la case `burnSlot` (`burnAt` = tick d'allumage). Feu libre (villageId 0)
+   *  UNIQUEMENT ; le Foyer reste sur `village.fuel` (migration différée S16). Bois total > 0 = allumé. */
   fuel?: Inventory
   /** Le tick où la bûche EN COURS s'est allumée : sa consommation court sur `FIRE.BURN_TICKS` depuis
    *  là (c'est l'indicateur de consommation). Absent = rien ne brûle (braises / éteint / hors modèle). */
   burnAt?: number
+  /** La CASE de `fuel` d'où la bûche en cours est tirée — l'ancre du verrou : cette case ne peut pas
+   *  descendre sous 1 bûche tant qu'elle brûle. Va de pair avec `burnAt` (posé/effacé ensemble). */
+  burnSlot?: number
   /** Tick de fin de la fenêtre de BRAISES (S2) : posé quand le bois tombe à 0, effacé au
    *  rallumage. Feu libre uniquement. */
   emberUntil?: number
-  /** LE SLOT DE CUISSON (spec feu-station S7) — un aliment brut qui se transforme SUR PLACE,
-   *  passivement, tant que le feu brûle. `remainingTicks` descend au tick (S8) ; à 0, `item`
-   *  est devenu le résultat cuit et y reste (pas de brûlé, S9). Absent = slot vide. */
-  /** LES SLOTS DE CUISSON (spec feu-station) — 2 ENTRÉES (aliments en cours) + 3 SORTIES (cuits +
-   *  sous-produits). Lazy : absents tant qu'on n'a rien mis. Le cru cuit dans une entrée puis le
-   *  résultat part en sortie (`advanceCook`). JSON-sérialisable (tableaux plats de Slot/null). */
-  cookIn?: ({ item: ItemId; remainingTicks: number } | null)[]
+  /** LES ENTRÉES DE CUISSON (spec feu-station) — un inventaire de STACKS d'aliments crus (3 cases),
+   *  géré comme un coffre (dépôt/retrait/déplacement libres). Chaque case cuit sa pile UNE unité à la
+   *  fois ; le compteur de l'unité en cours vit dans `cookRemaining` (parallèle, MÊME index). L'unité
+   *  en cours de cuisson est VERROUILLÉE (ne quitte pas la case). Lazy. JSON-sérialisable. */
+  cookIn?: Inventory
+  /** Le compteur de cuisson de l'unité EN COURS de chaque ENTRÉE (parallèle à `cookIn`, même index).
+   *  `null` = aucune unité engagée (rien ne cuit → rien de verrouillé). Descend au tick tant que le feu
+   *  brûle ; se FIGE en braises (pause). C'est aussi le drapeau du verrou de consommation de l'entrée. */
+  cookRemaining?: (number | null)[]
+  /** LES SORTIES (spec feu-station) — un inventaire des cuits (+ sous-produits), 3 cases. Dépôt/retrait
+   *  libres (filtré aux produits cuits). Aucune consommation ici : rien n'y est jamais verrouillé. */
   cookOut?: Inventory
 }
 
@@ -203,13 +207,9 @@ export type VillageAction =
    *  Feu de mon village (à portée), qui le convertit en combustible. Le seul geste qui
    *  tient l'upkeep — sans lui, le village finit en ruine. */
   | { type: 'feed_fire'; structureId?: number }
-  /** CUISINE AU SLOT (spec feu-station S7) : je dépose `item` (viande crue) dans le slot de
-   *  cuisson d'un feu à portée ; il cuit PASSIVEMENT tant que le feu brûle (le travail de la
-   *  station, pas ma file de craft). Une seule chose à la fois. */
-  | { type: 'cook_put'; structureId: number; item: ItemId }
-  /** Je REPRENDS un aliment d'une ENTRÉE (annuler la cuisson) ou d'une SORTIE (le cuit + sous-produit). */
-  | { type: 'cook_take_in'; structureId: number; slot: number }
-  | { type: 'cook_take_out'; structureId: number; slot: number }
+  // CUISINE : les cases du feu (COMBUSTIBLE/ENTRÉES/SORTIES) sont de vrais conteneurs — on y dépose,
+  // retire et déplace via l'action `transfer` (zone `fuel`/`cookIn`/`cookOut`, voir inventory-actions.ts).
+  // Les anciennes actions `cook_put`/`cook_take_in`/`cook_take_out` sont retirées (spec feu-station).
   /** J'AMÉLIORE UN MUR/PORTE SUR PLACE au marteau (spec construction R8) : palier de
    *  matériau suivant (bois→pierre→métal), en payant la « différence ». Instantané. */
   | { type: 'upgrade_structure'; structureId: number }
@@ -684,6 +684,7 @@ function feedFreeFire(state: SimState, actor: SimState['entities'][number], s: S
   removeItems(actor.inventory, { wood: added })
   if (before <= 0) {
     s.burnAt = state.tick // rallumage : la première bûche s'allume
+    s.burnSlot = s.fuel.findIndex((sl) => sl !== null && sl.count > 0) // la case où le bois vient d'atterrir
     delete s.emberUntil
     emitEvent(state, { type: 'fire_relit', tick: state.tick, structureId: s.id })
   }
@@ -930,54 +931,6 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (!fire) return reject('pas de feu à nourrir')
       const r = feedFreeFire(state, actor, fire)
       if (r) return reject(r)
-      return
-    }
-
-    /**
-     * DÉPOSER un aliment brut dans le slot de cuisson d'un feu à portée (spec feu-station
-     * S7). Une seule chose à la fois ; il faut que la station accepte cet aliment (`COOK_SLOT`).
-     * Ne dépend PAS de l'état du feu à la pose — la cuisson n'AVANCE que si le feu brûle (S8).
-     */
-    case 'cook_put': {
-      const s = state.structures.find((st) => st.id === action.structureId)
-      if (!s || s.type !== 'fire') return reject('pas un feu')
-      const range = BALANCE.INTERACT_RANGE
-      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin du feu')
-      const rule = COOK_SLOT[s.type]?.[action.item]
-      if (!rule) return reject('ça ne se cuit pas ici')
-      if (!s.cookIn) s.cookIn = Array.from({ length: FIRE.COOK_INPUTS }, () => null)
-      const free = s.cookIn.findIndex((c) => c === null)
-      if (free < 0) return reject('les entrées de cuisson sont pleines')
-      if (!removeItems(actor.inventory, { [action.item]: 1 })) return reject('il faut l’aliment à cuire')
-      s.cookIn[free] = { item: action.item, remainingTicks: rule.ticks }
-      return
-    }
-
-    /** REPRENDRE un aliment CRU d'une ENTRÉE (annuler sa cuisson) → mon sac. Sac plein → l'attente. */
-    case 'cook_take_in': {
-      const s = state.structures.find((st) => st.id === action.structureId)
-      if (!s || s.type !== 'fire') return reject('pas un feu')
-      const range = BALANCE.INTERACT_RANGE
-      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin du feu')
-      const slot = s.cookIn?.[action.slot]
-      if (!slot) return reject('rien à reprendre ici')
-      const leftover = addItems(actor.inventory, { [slot.item]: 1 })
-      if (Object.keys(leftover).length > 0) return reject('sac plein')
-      s.cookIn![action.slot] = null
-      return
-    }
-
-    /** REPRENDRE le contenu cuit (+ sous-produit) d'une SORTIE → mon sac. Sac plein → l'attente. */
-    case 'cook_take_out': {
-      const s = state.structures.find((st) => st.id === action.structureId)
-      if (!s || s.type !== 'fire') return reject('pas un feu')
-      const range = BALANCE.INTERACT_RANGE
-      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin du feu')
-      const slot = s.cookOut?.[action.slot]
-      if (!slot) return reject('rien à reprendre ici')
-      const leftover = addItems(actor.inventory, { [slot.item]: slot.count })
-      if (Object.keys(leftover).length > 0) return reject('sac plein')
-      s.cookOut![action.slot] = null
       return
     }
 
@@ -1284,6 +1237,7 @@ export function addStructure(
     structure.fuel = makeInventory(FIRE.FUEL_SLOTS)
     addItems(structure.fuel, { wood: FIRE.FUEL_START_WOOD })
     structure.burnAt = state.tick
+    structure.burnSlot = 0 // le bois de départ atterrit dans la 1re case : c'est elle qui brûle
   }
   state.structures.push(structure)
   emitEvent(state, {

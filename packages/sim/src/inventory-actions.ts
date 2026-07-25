@@ -17,6 +17,7 @@
  */
 import { BALANCE, HUNT, SLOTS } from './balance'
 import { emitEvent } from './events'
+import { fireSlotLocked, fireZoneAccepts, fireZoneInventory, type FireZone } from './fire'
 import { distSq } from './geometry'
 import {
   addItems,
@@ -35,6 +36,17 @@ import { creditForeignDeposit, hasAccess, type Structure } from './village'
 export interface SlotRef {
   side: 'player' | 'container'
   slot: number
+  /**
+   * LA ZONE-CONTENEUR, pour un feu-station : `fuel` (combustible), `cookIn` (entrées), `cookOut`
+   * (sorties). Absente = l'inventaire du conteneur (coffre, dépouille). Ignorée côté `player`. C'est
+   * ce qui fait des cases du feu de VRAIS conteneurs (dépôt/retrait/déplacement), à un verrou près.
+   */
+  zone?: FireZone
+}
+
+/** Une `zone` de client hostile : on la borne aux valeurs légales (comme `side`), `undefined` compris. */
+function isFireZone(zone: unknown): zone is FireZone | undefined {
+  return zone === undefined || zone === 'fuel' || zone === 'cookIn' || zone === 'cookOut'
 }
 
 export type InventoryAction =
@@ -145,26 +157,30 @@ export function applyInventoryAction(state: SimState, actorId: number, action: I
     }
 
     case 'transfer': {
-      const { kind, containerId, from, to, count } = action
+      let { count } = action
+      const { kind, containerId, from, to } = action
       if (!Number.isInteger(count) || count <= 0) return reject('quantité invalide')
       if (!Number.isInteger(from.slot) || !Number.isInteger(to.slot)) return reject('case invalide')
-      if (from.side === to.side) return reject('transfert sur place')
-      // `side` vient d'un client HOSTILE : le TYPE ne le borne qu'à la compilation.
-      // Un `side` qui ment (ni 'player' ni 'container') échappe à toute comparaison
-      // d'égalité — il SAUTE la garde de retrait `from.side === 'container'` (donc
-      // `hasAccess` n'est jamais consulté) et se fait traiter comme le conteneur.
-      // On borne chaque champ à ses valeurs légales : comparer des champs entre eux
-      // ne suffit pas (leçon de la faille rouverte).
+      // `side`/`zone` viennent d'un client HOSTILE : le TYPE ne les borne qu'à la compilation.
+      // Un `side` qui ment (ni 'player' ni 'container') échappe à toute comparaison d'égalité — il
+      // SAUTE la garde de retrait `from.side === 'container'` (donc `hasAccess` n'est jamais consulté)
+      // et se fait traiter comme le conteneur. On borne CHAQUE champ à ses valeurs légales : comparer
+      // des champs entre eux ne suffit pas (leçon de la faille rouverte). La `zone` de même.
       if (from.side !== 'player' && from.side !== 'container') return reject('case invalide')
       if (to.side !== 'player' && to.side !== 'container') return reject('case invalide')
+      if (!isFireZone(from.zone) || !isFireZone(to.zone)) return reject('zone invalide')
+      // Même côté : le sac sur lui-même, c'est `move_slot` ; deux cases-conteneur DIFFÉRENTES (zones
+      // ou slots) se déplacent bien l'une vers l'autre (réorganiser un feu), la MÊME case est un no-op.
+      if (from.side === to.side) {
+        if (from.side === 'player') return reject('transfert sur place')
+        if (from.zone === to.zone && from.slot === to.slot) return reject('transfert sur place')
+      }
 
-      // Le conteneur : un coffre (structure) ou une dépouille.
+      // Le conteneur : un coffre/feu (structure) ou une dépouille.
       const structure = kind === 'structure' ? findStructure(state, containerId) : undefined
       const corpse = kind === 'corpse' ? state.corpses.find((c) => c.id === containerId) : undefined
       if (kind === 'structure' && structure === undefined) return reject('conteneur inconnu')
       if (kind === 'corpse' && corpse === undefined) return reject('conteneur inconnu')
-      const box: Inventory | undefined = structure ? structure.inventory : corpse?.inventory
-      if (box === undefined) return reject('pas un conteneur')
 
       const range = BALANCE.INTERACT_RANGE
       const cx = structure ? structure.tx + 0.5 : corpse!.x
@@ -178,13 +194,32 @@ export function applyInventoryAction(state: SimState, actorId: number, action: I
         return reject('accès refusé')
       }
 
-      const srcInv = from.side === 'player' ? actor.inventory : box
-      const dstInv = to.side === 'player' ? actor.inventory : box
+      // La case-conteneur d'un côté : une ZONE du feu (combustible/entrées/sorties) OU l'inventaire du
+      // coffre/de la dépouille. `undefined` = pas un conteneur ICI (ex. combustible d'un Foyer, S16).
+      const boxOf = (ref: SlotRef): Inventory | undefined =>
+        structure ? (ref.zone ? fireZoneInventory(structure, ref.zone) : structure.inventory) : corpse?.inventory
+      const srcInv = from.side === 'player' ? actor.inventory : boxOf(from)
+      const dstInv = to.side === 'player' ? actor.inventory : boxOf(to)
+      if (srcInv === undefined || dstInv === undefined) return reject('pas un conteneur')
       if (from.slot < 0 || from.slot >= srcInv.length) return reject('case invalide')
       if (to.slot < 0 || to.slot >= dstInv.length) return reject('case invalide')
       const src = srcInv[from.slot]
       if (src === null || src === undefined) return reject('case vide')
       const item = src.item // la case source peut disparaître : on retient l'item AVANT
+
+      // Case SPÉCIALISÉE du feu (spec feu-station) : la SORTIE n'accepte que des cuits, le combustible
+      // que du bois, l'ENTRÉE que ce qui s'y cuit. Le filtre borne le DÉPÔT vers une zone.
+      if (to.side === 'container' && structure && to.zone && !fireZoneAccepts(structure, to.zone, item)) {
+        return reject('ça ne va pas dans ce slot')
+      }
+      // VERROU DE CONSOMMATION (spec feu-station) : l'unité EN COURS (bûche qui brûle, aliment qui
+      // cuit) ne quitte pas sa case. Une pile se déplace de `count − verrou` — on PLAFONNE, et on ne
+      // refuse que si RIEN n'est mobile.
+      if (from.side === 'container' && structure && from.zone) {
+        const movable = src.count - fireSlotLocked(structure, from.zone, from.slot)
+        if (movable <= 0) return reject('en cours de consommation')
+        if (count > movable) count = movable
+      }
 
       // Le versement mesure la place AVANT de retirer quoi que ce soit : ce qui ne
       // rentre pas reste à la source (A19/A21). Et une case OCCUPÉE ne s'échange
@@ -198,9 +233,9 @@ export function applyInventoryAction(state: SimState, actorId: number, action: I
         return reject(dst.item === item ? 'destination pleine' : 'case occupée')
       }
 
-      // Le don de nourriture au grenier d'un AUTRE village (spec alignement R11) :
-      // la MÊME fonction que `deposit`, sur la quantité RÉELLEMENT déposée.
-      if (to.side === 'container' && structure) {
+      // Le don de nourriture au grenier d'un AUTRE village (spec alignement R11) : les VRAIS coffres
+      // SEULEMENT (pas les zones techniques d'un feu). Sur la quantité RÉELLEMENT déposée.
+      if (to.side === 'container' && structure && to.zone === undefined) {
         creditForeignDeposit(state, actorId, structure, item, moved)
       }
       // Une dépouille vidée s'efface, comme après un `loot_corpse` : sinon fouiller

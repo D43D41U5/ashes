@@ -416,7 +416,7 @@ const SCENARIOS = {
     // et on gagne du terrain DÉGAGÉ (le spawn est un village).
     // Le client n'envoie QU'UNE action par frame : on ESPACE les grants (sinon seul le dernier
     // survit). Un feu de camp + de quoi remplir le sac (bois, viande) pour voir le composant.
-    for (const item of ['campfire', 'wood', 'wood', 'wood', 'wood', 'wood', 'raw_meat', 'raw_meat']) {
+    for (const item of ['campfire', 'wood', 'wood', 'wood', 'wood', 'wood', 'raw_meat', 'raw_meat', 'raw_meat', 'raw_meat']) {
       await page.evaluate((it) => window.__BRAISES__.scene.sendAction({ type: 'debug_grant', item: it }), item)
       await page.waitForTimeout(130)
     }
@@ -460,13 +460,29 @@ const SCENARIOS = {
     await page.waitForTimeout(800)
     if (feu) await page.evaluate((id) => window.__BRAISES__.scene.registry.set('openFire', { structureId: id }), feu.id)
     await page.waitForTimeout(600)
-    // On cuit une viande à fond (elle passe en SORTIE), puis on en met une 2e (elle reste en ENTRÉE,
-    // en cours) — pour montrer les deux niveaux peuplés à la fois.
+    // Les cases du feu sont de VRAIS conteneurs : on GLISSE (action `transfer` + `zone`). On dépose
+    // une PILE de 3 viandes dans l'ENTRÉE 0 (cuit une à une → l'unité en cours reste verrouillée, la
+    // pile descend), et 1 dans l'ENTRÉE 1 (cuisson EN PARALLÈLE) — pour montrer stacks + sorties.
     if (feu) {
-      await page.evaluate((id) => window.__BRAISES__.scene.sendAction({ type: 'cook_put', structureId: id, item: 'raw_meat' }), feu.id)
-      await page.waitForTimeout(6500)
-      await page.evaluate((id) => window.__BRAISES__.scene.sendAction({ type: 'cook_put', structureId: id, item: 'raw_meat' }), feu.id)
-      await page.waitForTimeout(2000)
+      const putMeat = async (toSlot, count) => {
+        await page.evaluate(
+          ({ id, toSlot, count }) => {
+            const s = window.__BRAISES__.scene
+            const inv = s.registry.get('inv') ?? []
+            const from = inv.findIndex((c) => c && c.item === 'raw_meat')
+            if (from >= 0)
+              s.sendAction({
+                type: 'transfer', kind: 'structure', containerId: id,
+                from: { side: 'player', slot: from }, to: { side: 'container', slot: toSlot, zone: 'cookIn' }, count,
+              })
+          },
+          { id: feu.id, toSlot, count },
+        )
+      }
+      await putMeat(0, 3)
+      await page.waitForTimeout(300)
+      await putMeat(1, 1)
+      await page.waitForTimeout(6500) // une passe : 1 unité de chaque entrée part en SORTIE
     }
 
     const diag = await page.evaluate(() => {
@@ -474,7 +490,13 @@ const SCENARIOS = {
       const inv = s.registry.get('inv') ?? []
       const items = inv.filter(Boolean).map((c) => `${c.item}×${c.count}`)
       const v = s.registry.get('openFireView')
-      return { items, modal: v ? { title: v.title, state: v.state, wood: v.fuelWood, timeTicks: v.fuelTimeRemaining } : null }
+      const cells = (arr) => (arr ?? []).filter(Boolean).map((c) => `${c.item}×${c.count}${c.progress !== undefined ? `@${Math.round(c.progress * 100)}%` : ''}`)
+      return {
+        items,
+        modal: v
+          ? { title: v.title, state: v.state, fuel: cells(v.fuel), burnSlot: v.fuelBurnSlot, timeTicks: v.fuelTimeRemaining, cookIn: cells(v.cookIn), cookOut: cells(v.cookOut) }
+          : null,
+      }
     })
     console.log(`feu ${feu ? `#${feu.id} libre=${feu.villageId === 0}` : 'ABSENT'} · sac: ${JSON.stringify(diag.items)} · modal: ${JSON.stringify(diag.modal)}`)
     await page.screenshot({ path: `${OUT}/feu-modal.png` })

@@ -5,19 +5,22 @@
  * et une BARRE DE CONTRÔLE en bas (le bouton « Fonder » / « Améliorer »). EN DESSOUS, ancré au bas
  * de l'écran, le sac + la ceinture : le MÊME composant partagé que l'écran perso.
  *
- * Le COMBUSTIBLE affiche le TEMPS restant avant extinction (pas de X/Y ni jauge) ; la case qui BRÛLE
- * porte l'INDICATEUR DE CONSOMMATION (la bûche en cours). Chaque ENTRÉE montre l'aliment cru + sa
- * progression ; chaque SORTIE le cuit + son compte.
+ * Les cases du feu sont de VRAIS CONTENEURS (spec feu-station) : on y DÉPOSE, RETIRE et DÉPLACE par
+ * glisser-déposer (sac↔feu et feu↔feu), clic droit pour router vite. Tout part en une seule action
+ * `transfer` avec une `zone` (fuel/cookIn/cookOut) — la sim tranche : la case SPÉCIALISÉE filtre ce
+ * qu'elle accepte, et l'unité EN COURS de consommation (bûche qui brûle, aliment qui cuit) est
+ * VERROUILLÉE (une pile bouge de `count − verrou`). Le COMBUSTIBLE affiche le TEMPS restant (pas de
+ * X/Y ni jauge) ; la case qui BRÛLE porte l'INDICATEUR DE CONSOMMATION ; chaque ENTRÉE, sa progression.
  *
- * AUCUNE RÈGLE DE JEU. Les gestes ne calculent QUE l'action à envoyer — la sim tranche. On GLISSE
- * une bûche sur une case COMBUSTIBLE, un aliment sur une ENTRÉE (résolu par `externalDrop` du sac),
- * clic droit pour router vite ; un clic sur une ENTRÉE la reprend (annule), sur une SORTIE la sort.
+ * AUCUNE RÈGLE DE JEU ici. Les gestes ne calculent QUE l'action à envoyer.
  */
-import { COOK_SLOT, BALANCE, type Inventory, type ItemId, type PlayerAction } from '@braises/sim'
+import { BALANCE, COOK_SLOT, stackSize, type Inventory, type ItemId, type PlayerAction, type SlotRef } from '@braises/sim'
 import type Phaser from 'phaser'
 import type { FireView } from '../../hud-state'
 import { itemIconKey } from '../../render/item-art'
 import { createInventoryGrid } from './inventory-grid'
+
+type FireZone = 'fuel' | 'cookIn' | 'cookOut'
 
 const STATE_LABEL: Record<FireView['state'], string> = { lit: 'ALLUMÉ', ember: 'BRAISES', out: 'ÉTEINT' }
 const STATE_COLOR: Record<FireView['state'], string> = { lit: '#e8a33a', ember: '#b5602a', out: '#6f685a' }
@@ -28,6 +31,11 @@ function fmtTime(ticks: number): string {
   if (s >= 3600) return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`
   if (s >= 60) return `${Math.floor(s / 60)} min`
   return `${s} s`
+}
+
+function moveGhost(el: HTMLElement, x: number, y: number): void {
+  el.style.left = `${x}px`
+  el.style.top = `${y}px`
 }
 
 interface Cell {
@@ -58,6 +66,7 @@ export function createFirePanel(
   }
 
   let view: FireView | null = null
+  let currentInv: Inventory = []
 
   const root = document.createElement('div')
   root.className = 'fpn'
@@ -70,16 +79,81 @@ export function createFirePanel(
   const timeEl = $('.fpn-fuel-time')
   const btn = $<HTMLButtonElement>('.fpn-btn')
 
-  // ── Une case de station : icône + compte + une barre (consommation / progression). ──
-  const makeCell = (kind: 'fuel' | 'cook' | null, onClick: () => void): Cell => {
+  // ── Une action `transfer` vers/depuis une case du feu — kind 'structure', la sim tranche. ──
+  const transfer = (from: SlotRef, to: SlotRef, count: number): PlayerAction | null =>
+    view && count > 0 ? { type: 'transfer', kind: 'structure', containerId: view.structureId, from, to, count } : null
+
+  /** Le contenu affiché d'une case du feu (depuis la vue) — `null` si vide. */
+  const cellSlot = (zone: FireZone, slot: number): { item: ItemId; count: number } | null => {
+    if (!view) return null
+    const c = zone === 'fuel' ? view.fuel[slot] : zone === 'cookIn' ? view.cookIn[slot] : view.cookOut[slot]
+    return c ? { item: c.item, count: c.count } : null
+  }
+
+  /** Une case du SAC pour recevoir un retrait : même item avec de la place, sinon 1re case vide. */
+  const firstBagTarget = (item: ItemId): SlotRef | null => {
+    let empty = -1
+    for (let i = 0; i < currentInv.length; i++) {
+      const sl = currentInv[i]
+      if (sl === null || sl === undefined) {
+        if (empty < 0) empty = i
+        continue
+      }
+      if (sl.item === item && sl.count < stackSize(item)) return { side: 'player', slot: i }
+    }
+    return empty >= 0 ? { side: 'player', slot: empty } : null
+  }
+
+  /** La zone/case du FEU où router un dépôt rapide : bois → combustible ; cuisinable → entrée. */
+  const firstFireTarget = (item: ItemId): SlotRef | null => {
+    if (!view) return null
+    const pick = (zone: FireZone, cells: ({ item: ItemId; count: number } | null)[]): SlotRef | null => {
+      let empty = -1
+      for (let i = 0; i < cells.length; i++) {
+        const c = cells[i]
+        if (!c) {
+          if (empty < 0) empty = i
+          continue
+        }
+        if (c.item === item && c.count < stackSize(item)) return { side: 'container', slot: i, zone }
+      }
+      return empty >= 0 ? { side: 'container', slot: empty, zone } : null
+    }
+    if (item === 'wood') return pick('fuel', view.fuel)
+    if (COOK_SLOT.fire?.[item]) return pick('cookIn', view.cookIn)
+    return null
+  }
+
+  // ── Glisser DEPUIS une case du feu (retrait vers le sac, ou déplacement feu↔feu). ──
+  let fdrag: { zone: FireZone; slot: number; ghost: HTMLElement } | null = null
+  const makeCell = (zone: FireZone, slot: number): Cell => {
     const el = document.createElement('div')
     el.className = 'fpn-cell hud-click'
-    if (kind) {
-      el.dataset.drop = ''
-      el.dataset.fire = kind
-    }
+    el.dataset.drop = '' // cible de dépôt pour un glisser DEPUIS le sac (externalDrop)
+    el.dataset.fzone = zone
+    el.dataset.fslot = String(slot)
     el.innerHTML = `<img class="fpn-cell-ic" alt="" style="display:none"><span class="fpn-cell-ct"></span><div class="fpn-cbar"><div class="fpn-cbar-fill"></div></div>`
-    el.addEventListener('click', onClick)
+    el.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || !cellSlot(zone, slot)) return
+      e.preventDefault()
+      const cur = cellSlot(zone, slot)!
+      const ghost = document.createElement('img')
+      ghost.className = 'igr-ghost' // même fantôme que le sac (style global, monté par la grille)
+      ghost.src = iconUrl(cur.item)
+      moveGhost(ghost, e.clientX, e.clientY)
+      document.body.appendChild(ghost)
+      fdrag = { zone, slot, ghost }
+    })
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault()
+      const cur = cellSlot(zone, slot)
+      if (!cur) return
+      const to = firstBagTarget(cur.item) // clic droit = retrait rapide vers le sac
+      if (to) {
+        const a = transfer({ side: 'container', slot, zone }, to, cur.count)
+        if (a) hooks.queue(a)
+      }
+    })
     return {
       el,
       icon: el.querySelector<HTMLImageElement>('.fpn-cell-ic')!,
@@ -89,42 +163,57 @@ export function createFirePanel(
   }
   const row = (sel: string, cells: Cell[]): void => cells.forEach((c) => $(sel).appendChild(c.el))
 
-  const fuelCells = [0, 1, 2].map(() =>
-    makeCell('fuel', () => {
-      if (view) hooks.queue({ type: 'feed_fire', structureId: view.structureId })
-    }),
-  )
-  const inCells = [0, 1, 2].map((i) =>
-    makeCell('cook', () => {
-      if (view?.cookIn[i]) hooks.queue({ type: 'cook_take_in', structureId: view.structureId, slot: i })
-    }),
-  )
-  const outCells = [0, 1, 2].map((i) =>
-    makeCell(null, () => {
-      if (view?.cookOut[i]) hooks.queue({ type: 'cook_take_out', structureId: view.structureId, slot: i })
-    }),
-  )
+  const fuelCells = [0, 1, 2].map((i) => makeCell('fuel', i))
+  const inCells = [0, 1, 2].map((i) => makeCell('cookIn', i))
+  const outCells = [0, 1, 2].map((i) => makeCell('cookOut', i))
   row('.fpn-fuel-row', fuelCells)
   row('.fpn-in-row', inCells)
   row('.fpn-out-row', outCells)
 
+  const onMove = (e: MouseEvent): void => {
+    if (fdrag) moveGhost(fdrag.ghost, e.clientX, e.clientY)
+  }
+  const onUp = (e: MouseEvent): void => {
+    if (!fdrag) return // un drag du SAC est géré par la grille — on ne s'en mêle pas
+    const d = fdrag
+    fdrag = null
+    d.ghost.remove()
+    const cur = cellSlot(d.zone, d.slot)
+    if (!cur) return
+    const from: SlotRef = { side: 'container', slot: d.slot, zone: d.zone }
+    const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+    const bagCell = el?.closest<HTMLElement>('.igr-cell')
+    if (bagCell) {
+      const a = transfer(from, { side: 'player', slot: Number(bagCell.dataset.slot) }, cur.count)
+      if (a) hooks.queue(a)
+      return
+    }
+    const fireCell = el?.closest<HTMLElement>('.fpn-cell')
+    if (fireCell && !(fireCell.dataset.fzone === d.zone && Number(fireCell.dataset.fslot) === d.slot)) {
+      const to: SlotRef = { side: 'container', slot: Number(fireCell.dataset.fslot), zone: fireCell.dataset.fzone as FireZone }
+      const a = transfer(from, to, cur.count)
+      if (a) hooks.queue(a)
+    }
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+
   // ── Le SAC + la CEINTURE : le composant PARTAGÉ, ancré EN BAS. Un dépôt sur une case du feu
-  //    (`data-fire`) ou un clic droit route vers feed_fire / cook_put (première entrée libre). ──
+  //    (`data-fzone`/`data-fslot`) ou un clic droit route en un `transfer` vers la bonne zone. ──
   const grid = createInventoryGrid(game, {
     queue: hooks.queue,
-    externalDrop: (_from, item, target) => routeItem(item, target.dataset.fire),
-    quickMove: (_from, item) => routeItem(item, undefined),
+    externalDrop: (from, _item, target) => {
+      const zone = target.dataset.fzone as FireZone | undefined
+      const fslot = target.dataset.fslot
+      if (!zone || fslot === undefined) return null
+      return transfer(from, { side: 'container', slot: Number(fslot), zone }, currentInv[from.slot]?.count ?? 1)
+    },
+    quickMove: (from, item) => {
+      const dest = firstFireTarget(item)
+      return dest ? transfer(from, dest, currentInv[from.slot]?.count ?? 1) : null
+    },
   })
   $('.fpn-inv').appendChild(grid.root)
-
-  const routeItem = (item: ItemId, slot: string | undefined): PlayerAction | null => {
-    if (!view) return null
-    const toFuel = slot === 'fuel' || (slot === undefined && item === 'wood')
-    const toCook = slot === 'cook' || (slot === undefined && item !== 'wood')
-    if (toFuel && item === 'wood') return { type: 'feed_fire', structureId: view.structureId }
-    if (toCook && COOK_SLOT.fire?.[item]) return { type: 'cook_put', structureId: view.structureId, item }
-    return null
-  }
 
   btn.addEventListener('click', () => {
     if (!view?.action) return
@@ -147,9 +236,14 @@ export function createFirePanel(
   return {
     update(s) {
       view = s.view
+      currentInv = s.inv
       root.style.display = view ? 'block' : 'none'
       if (!view) {
         grid.cancelDrag()
+        if (fdrag) {
+          fdrag.ghost.remove()
+          fdrag = null
+        }
         return
       }
 
@@ -163,9 +257,9 @@ export function createFirePanel(
         // COMBUSTIBLE : bois + compte ; la case qui BRÛLE porte l'indicateur de consommation.
         const f = view.fuel[i]
         paint(fuelCells[i]!, f?.item ?? null, f?.count ?? 0, i === view.fuelBurnSlot ? view.fuelBurnProgress : 0, '#c98b3a')
-        // ENTRÉE : l'aliment cru + sa progression (vert quand prêt).
+        // ENTRÉE : la pile crue + sa progression (l'unité EN COURS de cuisson).
         const ci = view.cookIn[i]
-        paint(inCells[i]!, ci?.item ?? null, 0, ci?.progress ?? 0, '#8a9a4a')
+        paint(inCells[i]!, ci?.item ?? null, ci?.count ?? 0, ci?.progress ?? 0, '#8a9a4a')
         // SORTIE : le cuit (+ sous-produit) + son compte.
         const co = view.cookOut[i]
         paint(outCells[i]!, co?.item ?? null, co?.count ?? 0, 0, '#8a9a4a')
@@ -202,7 +296,7 @@ function markup(): string {
     .fpn-sec-lbl{font-size:12px;color:#c98b3a;letter-spacing:2px;display:flex;justify-content:space-between;align-items:baseline;}
     .fpn-fuel-time{font-size:12px;color:#f2ead0;letter-spacing:.5px;}
     .fpn-row{display:flex;gap:8px;}
-    /* Une case de station : carrée, façon slot Rust, cible de dépôt (data-fire). */
+    /* Une case de station : carrée, façon slot Rust, cible de dépôt (data-drop) ET source de glisser. */
     .fpn-cell{position:relative;width:78px;height:78px;background:#1b1b22;border:3px solid #14141a;display:grid;place-items:center;cursor:pointer;flex:0 0 auto;}
     .fpn-cell[data-drop]:hover{border-color:#6b5a3a;}
     .fpn-cell-ic{width:44px;height:44px;image-rendering:pixelated;pointer-events:none;}
