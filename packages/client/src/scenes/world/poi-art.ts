@@ -74,6 +74,18 @@ const ART: Record<string, { fp: number; w: number; h: number; crown?: number }> 
   // pas un monument), mais assez haut pour se détacher du pré — sinon on ne le chercherait pas.
   filon: { fp: 2, w: 52, h: 46, crown: 10 },
   chene: { fp: 2, w: 72, h: 92, crown: 54 },
+  // ── Les repères d'horizon de la Racine (spec t0-exploration §1) : ils PERCENT la canopée. ──
+  tour_guet: { fp: 3, w: 46, h: 88, crown: 46 }, // la ruine qui guettait le sud — le Belvédère de la plaine
+  pierre_levee: { fp: 2, w: 26, h: 64, crown: 24 }, // un menhir seul : la chaîne des pierres
+  // ── Les ruines basses du pays d'avant (R19). ──
+  ferme_ruinee: { fp: 4, w: 76, h: 58, crown: 16 }, // des murs bas, UN pignon debout
+  charrette: { fp: 2, w: 42, h: 34 }, //               une épave au bord de la sente — basse, pas de crown
+  // ── Les SET-PIECES : leur corps est leur TERRAIN (R10) — PoiLayer n'affiche que l'étiquette.
+  //    Les entrées existent pour la garde bidirectionnelle POI_TYPES↔POI_ART ; aucune texture
+  //    n'est générée pour elles (aucun appel tex()), et aucune n'est cherchée. ──
+  bois_noir: { fp: 40, w: 16, h: 16 },
+  cercle_pierres: { fp: 24, w: 16, h: 16 },
+  combe_brumeuse: { fp: 32, w: 16, h: 16 },
   belvedere: { fp: 2, w: 46, h: 80, crown: 40 }, // il fait grimper : il se voit du fond de la vallée
   grotte: { fp: 2, w: 48, h: 52, crown: 12 }, //    la masse rocheuse déborde sa gueule
   cascade: { fp: 2, w: 52, h: 96, crown: 56 }, //   une chute se voit de très loin ; l'écume s'étale
@@ -471,6 +483,86 @@ export function makePoiTextures(scene: Phaser.Scene): void {
     g.fillStyle(LEAF.lit).fillEllipse(c - 2, b - 78, 15, 10)
     g.fillStyle(LEAF.deep).fillEllipse(c + 20, b - 50, 24, 19) // l'ombre au SE
     g.fillStyle(LEAF.deep).fillEllipse(c + 8, b - 40, 20, 11) // et sous le feuillage
+  })
+
+  // ═══ LES REPÈRES D'HORIZON DE LA RACINE (spec t0-exploration §1) ═══
+
+  tex('tour_guet', (w, b) => {
+    ground(w, b, 0.8)
+    const c = w / 2
+    // Le glacis d'éboulis : la tour s'est à moitié versée dedans. C'est une RUINE, pas un donjon.
+    g.fillStyle(STONE.dark).fillEllipse(c, b - 6, 40, 14)
+    g.fillStyle(STONE.mid).fillEllipse(c - 10, b - 8, 16, 8)
+    g.fillStyle(STONE.deep).fillEllipse(c + 12, b - 6, 14, 7)
+    // LE FÛT : un cylindre trapu, ébréché en biais — le haut manque côté sud (il est tombé là).
+    g.fillStyle(STONE.mid).fillRect(c - 11, b - 66, 22, 58)
+    g.fillStyle(STONE.lit).fillRect(c - 11, b - 66, 7, 58) //  la lumière prend au NO
+    g.fillStyle(STONE.deep).fillRect(c + 5, b - 62, 6, 54) //  l'ombre au SE
+    // La BRÈCHE : la couronne est arrachée en diagonale. Deux crocs de pierre tiennent debout.
+    g.fillStyle(STONE.mid).fillTriangle(c - 11, b - 66, c - 11, b - 84, c - 3, b - 66)
+    g.fillStyle(STONE.lit).fillTriangle(c - 11, b - 66, c - 11, b - 82, c - 6, b - 66)
+    g.fillStyle(STONE.mid).fillTriangle(c + 2, b - 66, c + 8, b - 76, c + 11, b - 66)
+    // La MEURTRIÈRE : une fente noire — on comprend d'un coup d'œil que ça se GARDAIT.
+    g.fillStyle(VOID).fillRect(c - 2, b - 52, 3, 12)
+    // Les moellons tombés, épars au pied sud.
+    g.fillStyle(STONE.dark).fillRect(c + 12, b - 12, 6, 5)
+    g.fillStyle(STONE.mid).fillRect(c + 17, b - 8, 5, 4)
+  })
+
+  tex('pierre_levee', (w, b) => {
+    ground(w, b, 0.7)
+    const c = w / 2
+    // UN menhir : dressé, légèrement épaulé — une silhouette qu'on reconnaît à contre-jour.
+    g.fillStyle(STONE.mid).fillTriangle(c - 8, b - 4, c - 5, b - 58, c + 4, b - 58)
+    g.fillStyle(STONE.mid).fillTriangle(c + 9, b - 4, c + 4, b - 58, c - 8, b - 4)
+    g.fillStyle(STONE.lit).fillTriangle(c - 7, b - 6, c - 5, b - 56, c - 1, b - 54) // arête NO
+    g.fillStyle(STONE.deep).fillTriangle(c + 8, b - 6, c + 4, b - 54, c + 1, b - 30) // flanc SE
+    // Le sommet, épaulé : la pierre penche d'un degré — levée par des mains, pas par un moule.
+    g.fillStyle(STONE.dark).fillTriangle(c - 5, b - 58, c + 4, b - 58, c + 1, b - 62)
+    // La mousse au pied : le temps a passé.
+    g.fillStyle(LEAF.dark).fillEllipse(c - 5, b - 6, 10, 4)
+    g.fillStyle(LEAF.mid).fillEllipse(c + 6, b - 5, 7, 3)
+  })
+
+  // ═══ LES RUINES BASSES DU PAYS D'AVANT (spec t0-exploration R19) ═══
+
+  tex('ferme_ruinee', (w, b) => {
+    ground(w, b, 0.9)
+    const c = w / 2
+    // L'EMPRISE : des murs bas, arasés — le rectangle de la maison se lit encore au sol.
+    g.fillStyle(STONE.dark).fillRect(c - 34, b - 26, 68, 6) //  mur nord, arasé
+    g.fillStyle(STONE.mid).fillRect(c - 34, b - 28, 68, 3)
+    g.fillStyle(STONE.dark).fillRect(c - 34, b - 10, 26, 6) //  mur sud, troué (la porte, effondrée)
+    g.fillStyle(STONE.dark).fillRect(c + 6, b - 10, 28, 6)
+    g.fillStyle(STONE.mid).fillRect(c - 34, b - 24, 5, 18) //  retours d'angle
+    g.fillStyle(STONE.mid).fillRect(c + 29, b - 24, 5, 18)
+    // LE PIGNON : le seul pan qui tienne — c'est LUI la silhouette, et il porte la crown.
+    g.fillStyle(STONE.mid).fillTriangle(c - 30, b - 26, c - 30, b - 54, c - 8, b - 26)
+    g.fillStyle(STONE.lit).fillTriangle(c - 30, b - 26, c - 30, b - 52, c - 14, b - 26)
+    g.fillStyle(VOID).fillRect(c - 26, b - 40, 4, 6) // la fenêtre du grenier, béante
+    // La charpente tombée : deux chevrons de bois en croix dans l'emprise.
+    g.fillStyle(WOOD.dark).fillTriangle(c - 4, b - 24, c + 22, b - 12, c + 24, b - 15)
+    g.fillStyle(WOOD.mid).fillTriangle(c + 18, b - 26, c - 2, b - 11, c - 5, b - 13)
+    // L'herbe reprend le dedans : le pré digère la maison.
+    g.fillStyle(LEAF.dark).fillEllipse(c + 6, b - 16, 18, 6)
+  })
+
+  tex('charrette', (w, b) => {
+    ground(w, b, 0.85)
+    const c = w / 2
+    // La caisse, versée sur le flanc : un trapèze de planches, l'avant piqué au sol.
+    g.fillStyle(WOOD.mid).fillTriangle(c - 16, b - 8, c - 12, b - 24, c + 14, b - 20)
+    g.fillStyle(WOOD.mid).fillTriangle(c - 16, b - 8, c + 14, b - 20, c + 16, b - 9)
+    g.fillStyle(WOOD.lit).fillRect(c - 13, b - 22, 26, 3) //   le plat-bord qui prend la lumière
+    g.fillStyle(WOOD.deep).fillRect(c - 13, b - 12, 27, 3) //  l'ombre sous la caisse
+    // LA ROUE : à demi enterrée, c'est elle qui dit « charrette » — et « abandon ».
+    g.fillStyle(WOOD.dark).fillEllipse(c + 12, b - 8, 14, 14)
+    g.fillStyle(OCHRE.dark).fillEllipse(c + 12, b - 8, 8, 8)
+    g.fillStyle(WOOD.dark).fillRect(c + 11, b - 15, 2, 14) // deux rayons
+    g.fillStyle(WOOD.dark).fillRect(c + 5, b - 9, 14, 2)
+    // Le brancard, planté en l'air — la bête est partie depuis longtemps. (Pointe à c−20 :
+    // c vaut 21, une pointe à c−26 sortait du canvas et se coupait net à la génération.)
+    g.fillStyle(WOOD.dark).fillTriangle(c - 15, b - 10, c - 20, b - 19, c - 18, b - 21)
   })
 
   tex('arbre', (w, b) => {

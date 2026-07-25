@@ -100,6 +100,110 @@ const PROBE = () => {
 
 const SCENARIOS = {
   /**
+   * T0-EXPLORATION (2026-07-25) — la Racine donne envie de marcher (spec t0-exploration).
+   *
+   * Ce qui ne se prouve qu'au navigateur : que les nouveautés SE VOIENT. On lit d'abord l'état
+   * (map.seuils exposé, lieux nouveaux présents, sentes peintes), puis on va REGARDER : un seuil
+   * et ses bornes, la rivière et un gué, le Bois Noir, le Cercle, la Combe et sa brume, la
+   * lisière sud calcinée, la Tour de guet. Exige `--dev` (TP).
+   */
+  async t0(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForTimeout(1000)
+
+    const etat = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const m = sc.map
+      const compte = (k) => (m.zones ?? []).filter((z) => z.kind === k).length
+      let routes = 0
+      for (let i = 0; i < m.terrain.length; i += 7) if (m.terrain[i] === 2) routes++
+      return {
+        seuils: (m.seuils ?? []).length,
+        borneTex: sc.textures?.exists?.('seuil-borne') ?? false,
+        borneBrisee: sc.textures?.exists?.('seuil-borne-brisee') ?? false,
+        tour: compte('tour_guet'), pierres: compte('pierre_levee'), cercle: compte('cercle_pierres'),
+        bois: compte('bois_noir'), combe: compte('combe_brumeuse'),
+        fermes: compte('ferme_ruinee'), charrettes: compte('charrette'),
+        gues: (m.zones ?? []).filter((z) => z.name === 'le Gué').length,
+        routesEchantillon: routes, // 1 tuile sur 7 : l'ordre de grandeur suffit
+      }
+    })
+    console.log(`état : ${JSON.stringify(etat)}`)
+    if (etat.seuils === 0) console.error('!! map.seuils est VIDE — les bornes n\'ont rien à annoncer')
+    if (!etat.borneTex || !etat.borneBrisee) console.error('!! les textures de borne manquent')
+    if (etat.tour !== 1 || etat.cercle !== 1 || etat.bois !== 1 || etat.combe !== 1) {
+      console.error('!! il manque un repère ou un set-piece unique')
+    }
+    if (etat.gues < 2) console.error(`!! ${etat.gues} gué(s) — la rivière est un goulot`)
+    if (etat.routesEchantillon === 0) console.error('!! aucune sente sur la carte')
+
+    // Plein jour, puis on va REGARDER chaque nouveauté.
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+    const viser = async (nom, x, y) => {
+      await page.evaluate(({ x: px, y: py }) => {
+        window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py })
+      }, { x, y })
+      await page.waitForTimeout(1500)
+      await page.screenshot({ path: `${OUT}/t0-${nom}.png` })
+      console.log(`   → ${nom} @(${Math.round(x)}, ${Math.round(y)})`)
+    }
+    const cibles = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const centre = (k) => {
+        const z = (m.zones ?? []).find((q) => q.kind === k)
+        return z ? { x: z.x + z.w / 2, y: z.y + z.h / 2 } : null
+      }
+      const gue = (m.zones ?? []).find((q) => q.name === 'le Gué')
+      // Le seuil le plus proche du Bois Noir, pour voir des bornes ENTIÈRES (pas un secours).
+      const s = (m.seuils ?? []).find((q) => !q.secours) ?? (m.seuils ?? [])[0]
+      return {
+        seuil: s ? { x: s.x, y: s.y } : null,
+        gue: gue ? { x: gue.x + 3.5, y: gue.y + 3.5 } : null,
+        bois: centre('bois_noir'), cercle: centre('cercle_pierres'), combe: centre('combe_brumeuse'),
+        tour: centre('tour_guet'), ferme: centre('ferme_ruinee'),
+      }
+    })
+    if (cibles.seuil) await viser('seuil-bornes', cibles.seuil.x, cibles.seuil.y)
+    if (cibles.gue) await viser('gue', cibles.gue.x, cibles.gue.y)
+    if (cibles.bois) await viser('bois-noir', cibles.bois.x, cibles.bois.y)
+    if (cibles.cercle) await viser('cercle', cibles.cercle.x, cibles.cercle.y)
+    if (cibles.combe) await viser('combe', cibles.combe.x, cibles.combe.y)
+    if (cibles.tour) await viser('tour-guet', cibles.tour.x, cibles.tour.y)
+    if (cibles.ferme) await viser('ferme', cibles.ferme.x, cibles.ferme.y)
+    // La lisière sud : au bord de la Racine, côté Cendrière (le gradient + la braise du front).
+    const sud = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const g = (m.zones ?? []).find((q) => q.kind === 'bois_noir')
+      return g ? { x: g.x + 20 } : { x: 700 }
+    })
+    const racineSud = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      // La dernière rangée d'herbe/lande avant le mur sud de la Racine : on balaie depuis le bas.
+      const defs = m.zoneDefs ?? []
+      const idRacine = defs.findIndex((d) => d.slug === 'pres_bas')
+      const cols = Math.ceil(m.width / m.zonePas)
+      let best = null
+      for (let j = Math.ceil(m.height / m.zonePas) - 1; j >= 0 && !best; j--) {
+        for (let i = 0; i < cols; i++) {
+          if (m.zoneGrid[j * cols + i] === idRacine) { best = { x: i * m.zonePas, y: j * m.zonePas }; break }
+        }
+      }
+      return best
+    })
+    if (racineSud) await viser('lisiere-sud', sud.x, racineSud.y - 6)
+    // L'ONGLET CARTE : la rivière, les sentes et la lisière doivent se lire aussi SUR LA CARTE
+    // (le bake `map-demo` sert aux deux — si ça se voit ici, c'est cuit pareil au sol).
+    await page.keyboard.press('m')
+    await page.waitForTimeout(800)
+    await page.screenshot({ path: `${OUT}/t0-carte.png` })
+    await page.keyboard.press('m')
+    console.log(`captures → ${OUT}/t0-*.png`)
+    return etat
+  },
+
+  /**
    * L'ONGLET CARTE (2026-07-25) — la carte est devenue le 3ᵉ onglet de l'écran personnage,
    * rendue par Phaser SOUS le panneau DOM effacé. Ce qui ne se prouve qu'au navigateur : que
    * le panneau ne mange NI la molette NI le glisser (pointer-events), que M ouvre/referme
@@ -2892,10 +2996,16 @@ const SCENARIOS = {
         belvedere: 'le BELVÉDÈRE', grotte: 'la GROTTE', cascade: 'la CASCADE', erratique: 'le Bloc erratique',
         arbre: "l'ARBRE remarquable", cairn: 'le CAIRN', sanctuaire: 'le SANCTUAIRE',
         source_chaude: 'la SOURCE CHAUDE', arche: "l'ARCHE", tarn: 'le TARN', petroglyphes: 'les PÉTROGLYPHES',
+        chene: 'le GRAND CHÊNE', filon: 'le Filon affleurant',
+        tour_guet: 'la TOUR DE GUET', pierre_levee: 'la PIERRE LEVÉE',
+        ferme_ruinee: 'la Ferme ruinée', charrette: 'la Charrette',
       }
-      // Les onze chargés sont en MAJUSCULES ci-dessus — on les souligne en couleur.
+      // Les chargés sont en MAJUSCULES ci-dessus — on les souligne en couleur. (Les trois
+      // set-pieces — bois_noir, cercle_pierres, combe_brumeuse — n'ont PAS de texture : leur
+      // corps est leur terrain, ils n'ont rien à faire sur une planche de sprites.)
       const CHARGED = new Set(['belvedere', 'grotte', 'cascade', 'erratique', 'arbre', 'cairn',
-        'sanctuaire', 'source_chaude', 'arche', 'tarn', 'petroglyphes'])
+        'sanctuaire', 'source_chaude', 'arche', 'tarn', 'petroglyphes',
+        'chene', 'tour_guet', 'pierre_levee'])
 
       const sizeOf = (key) => {
         if (key === '__tree__') return { w: 32, h: 44 }
@@ -2919,12 +3029,12 @@ const SCENARIOS = {
       // chaque rangée REDONNE l'échelle (avatar + arbre) — sinon on la perd en
       // descendant la planche.
       const ROWS = [
-        { titre: 'ÉCONOMIE', slugs: ['gisement', 'carriere', 'saline', 'verger'] },
-        { titre: 'ABRIS', slugs: ['ruines', 'cabane', 'abri', 'mine', 'oratoire', 'bivouac'] },
+        { titre: 'ÉCONOMIE', slugs: ['gisement', 'carriere', 'saline', 'verger', 'filon'] },
+        { titre: 'ABRIS', slugs: ['ruines', 'cabane', 'abri', 'mine', 'oratoire', 'bivouac', 'ferme_ruinee', 'charrette'] },
         { titre: 'DANGER', slugs: ['taniere', 'repaire', 'epave', 'fondriere', 'crevasses'] },
-        { titre: 'LES ONZE LIEUX CHARGÉS — savoir', slugs: ['belvedere', 'cairn', 'petroglyphes', 'arche'] },
-        { titre: 'LES ONZE — répit', slugs: ['source_chaude', 'grotte', 'tarn'] },
-        { titre: 'LES ONZE — récit', slugs: ['sanctuaire', 'arbre', 'erratique', 'cascade'] },
+        { titre: 'LES CHARGÉS — savoir', slugs: ['belvedere', 'cairn', 'petroglyphes', 'arche', 'chene', 'tour_guet', 'pierre_levee'] },
+        { titre: 'LES CHARGÉS — répit', slugs: ['source_chaude', 'grotte', 'tarn'] },
+        { titre: 'LES CHARGÉS — récit', slugs: ['sanctuaire', 'arbre', 'erratique', 'cascade'] },
       ]
       const REF = ['spr-player', '__tree__']
       const REF_LABEL = { 'spr-player': 'avatar (1 tuile)', __tree__: 'arbre (~2,7 tuiles)' }
@@ -3114,8 +3224,10 @@ const SCENARIOS = {
     console.log(`\n── Ce que la vallée CONTIENT vraiment (les onze lieux chargés) ──`)
     const CHARGES = {
       belvedere: 'savoir', arche: 'savoir', cairn: 'savoir', petroglyphes: 'savoir',
+      chene: 'savoir', tour_guet: 'savoir', pierre_levee: 'savoir', // les repères de la Racine
       source_chaude: 'repit', grotte: 'repit', tarn: 'repit',
       sanctuaire: 'recit', arbre: 'recit', erratique: 'recit', cascade: 'recit',
+      cercle_pierres: 'recit', // la destination de la chaîne des menhirs
     }
     for (const [kind, devise] of Object.entries(CHARGES)) {
       const n = s.pois.filter((p) => p.kind === kind).length

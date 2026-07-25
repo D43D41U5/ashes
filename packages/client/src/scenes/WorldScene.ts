@@ -90,6 +90,9 @@ import { ambianceDe, moduler } from '../render/zone-ambiance'
 import { CendreLayer } from './world/cendre-layer'
 import { CliffLayer } from './world/cliff-layer'
 import { PoiLayer } from './world/poi-layer'
+import { BorneLayer } from './world/borne-layer'
+import { CombeMist } from './world/combe-mist'
+import { GueStones } from './world/gue-stones'
 import { FireFx } from './world/fire-fx'
 import { FireGroundGlow } from './world/fire-ground-glow'
 import { createContactShadow } from './world/contact-shadow'
@@ -305,6 +308,10 @@ export class WorldScene extends Phaser.Scene {
   private cendre!: CendreLayer
   private cliffs!: CliffLayer
   private pois!: PoiLayer
+  /** Les bornes de seuil (worldgen R21) et la brume de la Combe — décor dérivé de la carte. */
+  private bornes: BorneLayer | null = null
+  private combeMist: CombeMist | null = null
+  private gueStones: GueStones | null = null
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
   private lastSnapshotTick = 0
@@ -649,6 +656,11 @@ export class WorldScene extends Phaser.Scene {
       },
       pois: () => {
         this.pois = new PoiLayer(this, this.map, this.warp) // les lieux se voient enfin
+        // Les BORNES qui annoncent les seuils (worldgen R21) et la brume de la Combe : du
+        // décor dérivé de la carte (map.seuils, zone `combe_brumeuse`) — rien n'est deviné.
+        this.bornes = new BorneLayer(this, this.map, this.warp)
+        this.combeMist = new CombeMist(this, this.map, this.warp)
+        this.gueStones = new GueStones(this, this.map, this.warp)
         this.view.setNodes(msg.nodes)
       },
       clutter: () => {

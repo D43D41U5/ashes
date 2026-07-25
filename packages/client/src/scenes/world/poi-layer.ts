@@ -17,7 +17,7 @@
  * Purement visuel : la découverte, elle, est une décision de sim.
  */
 import Phaser from 'phaser'
-import { POI, type WorldMap } from '@braises/sim'
+import { POI, type WorldMap } from '@braises/sim' // POI : SIGHT_TILES (labels) + SET_PIECE_KINDS (R10)
 import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import { poiCrownKey, poiTextureKey, POI_ART } from './poi-art'
 import { erratiqueVariantFor, litErratiqueKey } from '../../render/poi-lit'
@@ -34,7 +34,9 @@ const LABEL_MIN_SCALE = 0.55
 const LABEL_MIN_ALPHA = 0.18
 
 interface Placed {
-  body: Phaser.GameObjects.Image
+  /** Absent pour un SET-PIECE (spec t0-exploration R10) : son corps est son TERRAIN — le sol
+   *  peint par le worldgen EST le lieu, l'étiquette seule flotte dessus. */
+  body?: Phaser.GameObjects.Image
   crown?: Phaser.GameObjects.Image
   label: Phaser.GameObjects.Text
   /** poiId — l'index dans `map.zones`, l'identité d'un lieu. */
@@ -47,10 +49,17 @@ interface Placed {
   /** Rendu par le pipeline d'éclairage dynamique (albédo `_lit` + normal map) : on réarme
    *  `setLighting` à chaque frame comme les autres couches. Aujourd'hui : le bloc erratique. */
   lit?: boolean
+  /** L'EMPREINTE (tuiles), pour un SET-PIECE : culling et fondu du nom se mesurent AU RECT —
+   *  exactement le clamp de la découverte sim (`advancePois`). Mesuré par la revue : au centre,
+   *  le nom du Bois Noir (48×40) s'éteignait alors qu'on était DEDANS (dist 24 > les seuils du
+   *  fondu, et les rangées nord/sud sortaient de la fenêtre d'écran du centre). */
+  rect?: { x: number; y: number; w: number; h: number }
 }
 
 export class PoiLayer {
   private readonly placed: Placed[] = []
+  /** Le décor DÉRIVÉ des lieux (les pierres du Cercle) : détruit avec la couche, jamais mis à jour. */
+  private readonly decor: Phaser.GameObjects.Image[] = []
   /** Éclairage dynamique armé ? Posé par WorldScene, comme pour le clutter. Défaut : allumé (mode nominal). */
   lighting = true
 
@@ -66,6 +75,43 @@ export class PoiLayer {
       const feetY = z.y + z.h
       const px = feetX * TILE_PX
       const py = feetY * TILE_PX - warp.lift(feetX, feetY)
+
+      // UN SET-PIECE N'A PAS DE CORPS (spec t0-exploration R10) : le Bois Noir EST ses arbres,
+      // la Combe EST son marais — un sprite-centre mentirait. L'étiquette seule, posée au
+      // CENTRE de l'empreinte (les pieds d'une zone de 40 tuiles seraient à un demi-écran du
+      // cœur), et le mécanisme de découverte inchangé.
+      if (POI.SET_PIECE_KINDS.includes(z.kind)) {
+        const cy = (z.y + z.h / 2) * TILE_PX - warp.lift(feetX, z.y + z.h / 2)
+        this.placed.push({
+          label: makeLabel(scene, z.name, px, cy - 10),
+          poiId, tx: feetX, ty: z.y + z.h / 2, h: 0,
+          rect: { x: z.x, y: z.y, w: z.w, h: z.h },
+        })
+        // LE CERCLE A SES PIERRES — sinon c'est une fleuraie avec un nom, le syndrome exact du
+        // « Verger vide » que le projet a déjà payé. Une COURONNE de menhirs (la texture de la
+        // Pierre levée, déclinée en échelle et en miroir), dérivée du rectangle : déterministe
+        // des deux côtés sans une donnée de plus. L'anneau est de l'ART, pas une forme de carte
+        // — R32 contraint le sol, pas les silhouettes qu'on y dresse.
+        if (z.kind === 'cercle_pierres') {
+          const rx = (z.w / 2 - 2.5) * TILE_PX
+          const ry = (z.h / 2 - 2.5) * 0.86
+          const N = 9
+          for (let k = 0; k < N; k++) {
+            const a = (k / N) * Math.PI * 2 - Math.PI / 2
+            const sx = (z.x + z.w / 2) * TILE_PX + Math.cos(a) * rx
+            const sty = z.y + z.h / 2 + Math.sin(a) * ry
+            const sy = sty * TILE_PX - warp.lift(sx / TILE_PX, sty)
+            const stone = scene.add
+              .image(sx, sy, poiTextureKey('pierre_levee'))
+              .setOrigin(0.5, 1)
+              .setScale(0.66 + ((k * 37) % 5) * 0.05)
+              .setFlipX(k % 2 === 1)
+            stone.setDepth(ySortDepth(sty, TILE_PX, TIE_NODE))
+            this.decor.push(stone)
+          }
+        }
+        return
+      }
 
       // Le BLOC ERRATIQUE est passé à la DA cubique : 3 variantes `_lit`, choisie DÉTERMINISTIQUEMENT
       // par l'identité du lieu (poiId) → même pierre à chaque session, les trois réparties. Les autres
@@ -100,18 +146,23 @@ export class PoiLayer {
     const y1 = (v.y + v.height) / TILE_PX + MARGIN_TILES
 
     for (const p of this.placed) {
-      const onScreen = p.tx >= x0 && p.tx <= x1 && p.ty >= y0 && p.ty <= y1
-      p.body.setVisible(onScreen)
+      // Un SET-PIECE se juge à son EMPREINTE (le rect chevauche-t-il la vue ?) ; un lieu à
+      // sprite, à ses pieds — comme avant.
+      const onScreen = p.rect
+        ? p.rect.x <= x1 && p.rect.x + p.rect.w >= x0 && p.rect.y <= y1 && p.rect.y + p.rect.h >= y0
+        : p.tx >= x0 && p.tx <= x1 && p.ty >= y0 && p.ty <= y1
+      p.body?.setVisible(onScreen)
       p.crown?.setVisible(onScreen)
-      if (p.lit && onScreen) p.body.setLighting(this.lighting) // réarmé comme les autres couches (toggle debug)
+      if (p.lit && onScreen) p.body?.setLighting(this.lighting) // réarmé comme les autres couches (toggle debug)
 
       // Le nom : seulement si le lieu est CONNU, et seulement à l'écran.
       if (!onScreen || !knownPois.includes(p.poiId)) {
         p.label.setVisible(false)
         continue
       }
-      const dx = p.tx - playerX
-      const dy = p.ty - playerY
+      // La distance au lieu : au RECT pour un set-piece (0 dedans → nom plein), au centre sinon.
+      const dx = p.rect ? Math.max(p.rect.x - playerX, 0, playerX - (p.rect.x + p.rect.w)) : p.tx - playerX
+      const dy = p.rect ? Math.max(p.rect.y - playerY, 0, playerY - (p.rect.y + p.rect.h)) : p.ty - playerY
       const dist = Math.sqrt(dx * dx + dy * dy)
       // 1 au contact, 0 à la limite de la vue : le nom se lève à mesure qu'on approche.
       const near = 1 - clamp01((dist - LABEL_NEAR) / (POI.SIGHT_TILES - LABEL_NEAR))
@@ -124,11 +175,13 @@ export class PoiLayer {
 
   destroy(): void {
     for (const p of this.placed) {
-      p.body.destroy()
+      p.body?.destroy()
       p.crown?.destroy()
       p.label.destroy()
     }
     this.placed.length = 0
+    for (const d of this.decor) d.destroy()
+    this.decor.length = 0
   }
 }
 
