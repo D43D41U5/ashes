@@ -104,17 +104,24 @@ describe('le contenu, sur la vraie carte', () => {
       for (const [slug, def] of Object.entries(CONTENUS)) {
         if (def.structurant) attendu.set(def.structurant.type, slug)
       }
-      // LA SEULE EXCEPTION, et elle se NOMME : le teaser. Un filon de fer dans la racine, au
-      // stock dérisoire. On ne relâche pas la règle — on la dit en entier. (Et A15 vérifie
-      // qu'il n'y en a qu'UN, et qu'il ne sert à rien qu'à informer.)
-      let teasers = 0
+      // LES EXCEPTIONS SE NOMMENT, et il y en a DEUX : les teasers. Un filon de fer dans la
+      // racine, et UN vieil arbre dans le Bois Noir (spec t0-exploration R11 — même grammaire :
+      // « ça existe. Pas ici. »). On ne relâche pas la règle — on la dit en entier. (A15
+      // vérifie que le filon est unique et dérisoire ; le vieil arbre l'est par construction :
+      // stock TEASER_STOCK, quand la Vieille Sylve en porte des centaines.)
+      let teaserFer = 0
+      let teaserBois = 0
       for (const n of nodes) {
         const chezElle = attendu.get(n.type)
         if (!chezElle) continue // un commun ou une liaison : il a le droit d'être partout
         const ici = slugDe(c, c.zone[n.ty * c.map.width + n.tx]!)
         if (ici === chezElle) continue
         if (n.type === 'iron_vein' && ici === 'pres_bas' && n.stock === CONTENU.TEASER_STOCK) {
-          teasers += 1
+          teaserFer += 1
+          continue
+        }
+        if (n.type === 'old_tree' && ici === 'pres_bas' && n.stock === CONTENU.TEASER_STOCK) {
+          teaserBois += 1
           continue
         }
         expect(
@@ -122,7 +129,8 @@ describe('le contenu, sur la vraie carte', () => {
           `seed ${c.graphe.seed} : un « ${n.type} » pousse dans ${ici}, alors qu'il n'appartient qu'à ${chezElle}`,
         ).toBe(chezElle)
       }
-      expect(teasers, `seed ${c.graphe.seed} : ${teasers} teasers (il en faut exactement UN)`).toBe(1)
+      expect(teaserFer, `seed ${c.graphe.seed} : ${teaserFer} teasers de fer (il en faut exactement UN)`).toBe(1)
+      expect(teaserBois, `seed ${c.graphe.seed} : ${teaserBois} teasers de gros bois (il en faut exactement UN)`).toBe(1)
     }
   }, 120_000)
 

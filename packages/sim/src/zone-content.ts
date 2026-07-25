@@ -24,7 +24,7 @@
  *
  * Pur et déterministe : `hash2`/`fbm2`, `+ - * / sqrt` (invariant n°2).
  */
-import { NODE_DEFS, TERRAIN_GRASS, TERRAINS, type NodeType } from './balance'
+import { NODE_DEFS, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_OLD_GROWTH, TERRAIN_ROAD, TERRAINS, type NodeType } from './balance'
 import { estCendre } from './cendre'
 import type { ResourceNode } from './economy'
 import { distSq } from './geometry'
@@ -225,6 +225,7 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
       const i = ty * width + tx
       if (c.rampe[i]) continue // le seuil ne nourrit rien
       const t = terrain[i]!
+      if (t === TERRAIN_ROAD) continue // rien ne pousse sur une sente (t0-exploration R18)
       if (!TERRAINS[t]?.walkable) continue
 
       // Une CLAIRIÈRE de la forêt de la racine reste NUE — la trouée respire (le sol y verdit).
@@ -267,8 +268,43 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
 
   // ── LE TEASER — un seul filon, dans la racine, et il est dérisoire ────────
   const t = poserLeTeaser(c, id)
-  if (t) nodes.push(t)
+  if (t) { nodes.push(t); id += 1 }
+
+  // ── LE TEASER DU BOIS NOIR — le patron du Filon, appliqué au gros bois ────
+  const vieux = teaserDuBoisNoir(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  if (vieux) nodes.push(vieux)
   return nodes
+}
+
+/**
+ * UN vieil arbre dans le Bois Noir, au stock dérisoire (spec t0-exploration R11).
+ *
+ * Même grammaire que le Filon affleurant : « le gros bois existe. Pas ici. » Le joueur qui a
+ * compris le fer comprend le bois sans un mot. C'est la SECONDE exception déclarée à
+ * l'exclusivité des structurantes (worldgen R9/A14) — un teaser informe, il n'équipe pas :
+ * `TEASER_STOCK` coups et il est mort, quand la Vieille Sylve en porte des centaines.
+ *
+ * Déterminisme : choix positionnel salé ('VIEU') parmi les tuiles admissibles de l'empreinte,
+ * balayées en row-major — aucun tirage sur le PRNG partagé, aucun décalage de flux.
+ */
+function teaserDuBoisNoir(c: CarteZonee, occupees: Set<number>, id: number): ResourceNode | null {
+  const { width, terrain } = c.map
+  const bois = c.map.zones.find((z) => z.kind === 'bois_noir')
+  if (!bois) return null
+  const libres: number[] = []
+  for (let ty = Math.floor(bois.y); ty < bois.y + bois.h; ty++) {
+    for (let tx = Math.floor(bois.x); tx < bois.x + bois.w; tx++) {
+      if (tx < 0 || ty < 0 || tx >= width || ty >= c.map.height) continue
+      const i = ty * width + tx
+      if (c.rampe[i] || occupees.has(i)) continue
+      if (!terrainAdmet('old_tree', terrain[i]!)) continue
+      libres.push(i)
+    }
+  }
+  if (libres.length === 0) return null
+  const k = Math.min(libres.length - 1, Math.floor(hash2(bois.x, bois.y, (c.graphe.seed ^ 0x56494555) | 0) * libres.length))
+  const i = libres[k]!
+  return { id, type: 'old_tree', tx: i % width, ty: (i - (i % width)) / width, stock: CONTENU.TEASER_STOCK, regrowAt: 0 }
 }
 
 /**
@@ -391,14 +427,19 @@ function arbresDeLaRacine(c: CarteZonee, occupees: Set<number>, idStart: number)
       let ampli: number
       if (t === TERRAIN_GRASS) {
         pas = CONTENU.ARBRES_PRE_PAS; socle = 0.5; ampli = 1.2
-      } else if (terrainAdmet('tree', t)) {
+      } else if (t === TERRAIN_FOREST || t === TERRAIN_OLD_GROWTH) {
         // LES CLAIRIÈRES : décidées par BLOC (cf. `clairiereForet`) → des trouées RECTANGULAIRES.
         // Le MÊME champ sert au rendu du sol (qui y verdit) : une source unique, sinon les
         // clairières des arbres et celles du sol divergeraient.
+        //
+        // La FUTAIE, c'est la forêt et le Bois Noir (old_growth, spec t0-exploration R9) — PAS
+        // la lisière calcinée : « admet l'arbre » ne veut pas dire « en est couvert ». Le
+        // calciné du sud garde ses arbres épars de la table commune, il ne devient pas une
+        // pépinière plus riche que le pré qu'il remplace.
         if (clairiereForet(c.graphe.seed, tx, ty) > 0) continue // ce bloc est une clairière : nu
         pas = CONTENU.ARBRES_FORET_PAS; socle = 0.85; ampli = 0.4
       } else {
-        continue // ni herbe ni forêt : ce sol garde sa nature (fleuraie, accent…)
+        continue // ni herbe ni futaie : ce sol garde sa nature (fleuraie, lande, accent…)
       }
 
       const bosquet = fbm2(tx, ty, CONTENU.ARBRES_ECHELLE, (seed ^ 0x4be1) | 0)

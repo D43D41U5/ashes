@@ -18,7 +18,7 @@ const MAP = CARTE.map
 import { POI_TYPES, poiSemis, poiSpacing, spawnPoiMonsters, placePois } from './poi'
 import { terrainAt, createEmptyMap, zoneSlugAt } from './map'
 import { poissonPoints } from './poisson'
-import { TERRAINS, TERRAIN_DEEP_WATER } from './balance'
+import { POI, TERRAINS, TERRAIN_DEEP_WATER } from './balance'
 import { createSim } from './sim'
 import { POI_FAMILY_RGB } from './vignette'
 
@@ -35,6 +35,10 @@ describe('placePois', () => {
     for (const z of map.zones) {
       const t = bySlug.get(z.kind!)
       if (!t) continue
+      // Les SET-PIECES ne sont pas des citoyens du semis : leur corps est le terrain qu'ils
+      // PEIGNENT eux-mêmes (`biomes: []`, posés par `zonegen-setpieces.ts`) — la cohérence de
+      // biome est ici une tautologie, pas une garde. Le semis, lui, reste tenu.
+      if (POI.SET_PIECE_KINDS.includes(z.kind!)) continue
       const terr = terrainAt(map, Math.floor(z.x + z.w / 2), Math.floor(z.y + z.h / 2))
       expect(t.biomes.includes(terr)).toBe(true) // biome-cohérence
     }

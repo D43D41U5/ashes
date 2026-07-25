@@ -302,5 +302,9 @@ describe('le terrain, à la taille de production', () => {
     const b = generateZonedTerrain(42)
     expect(a.map.terrain).toEqual(b.map.terrain)
     expect([...a.zone]).toEqual([...b.zone])
+    // Les LIEUX et les SEUILS aussi (revue déterminisme du 2026-07-25) : une non-reproductibilité
+    // confinée au placement des set-pieces/gués/POI ou à l'export des seuils passait sous la garde.
+    expect(a.map.zones).toEqual(b.map.zones)
+    expect(a.map.seuils).toEqual(b.map.seuils)
   }, 60_000)
 })

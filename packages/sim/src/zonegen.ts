@@ -51,6 +51,8 @@ import { distSq } from './geometry'
 import { placePois } from './poi'
 import { fbm2, hash2 } from './noise'
 import { paintWaterRacine } from './zonegen-water'
+import { forcerLesGues, tracerLesSentes } from './zonegen-sentes'
+import { placerLesSetPieces } from './zonegen-setpieces'
 import {
   deriveGrapheZones,
   echantillonAt,
@@ -326,13 +328,45 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
     }
   }
 
-  // ── PASSE 1.5 : L'EAU DE LA RACINE — lacs, plans d'eau et ruisseaux dans les Prés Bas ──
+  // ── PASSE 1.4 : LA LISIÈRE SUD — le seul gradient de la carte (spec t0-exploration R13-R15) ──
+  //
+  // La frontière de la Cendrière est la seule qui AVANCE (le front la franchira au jour 1) :
+  // elle a droit à un traitement que les autres n'ont pas. Herbe → lande → lisière calcinée,
+  // par motifs dithérés — le sud se SENT avant de se toucher. Avant l'eau : la rivière qui s'y
+  // jette garde ses berges d'eau, pas de cendre.
+  peindreLisiereSud(terrain, zone, g, width, height, seed)
+
+  // ── PASSE 1.5 : L'EAU DE LA RACINE — lacs, LA RIVIÈRE, ruisseaux et marais des Prés Bas ──
   //
   // Avant les seuils : un seuil qui traverserait un plan d'eau le rouvre en couloir marchable
   // (la porte gagne), donc l'eau ne bouche jamais un passage. Et l'invariant « tout cœur profond
   // est ceint de haut-fond marchable » garantit qu'aucune poche de terre n'est enclavée — la garde
-  // de connexité (passe 3) n'a rien à réparer.
-  paintWaterRacine(terrain, zone, g.racine, width, height, seed, RELIEF.BORDURE)
+  // de connexité (passe 3) n'a rien à réparer. La rivière rend son fil et son cœur : les sentes
+  // s'en servent pour percer les gués.
+  const riviere = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE)
+
+  // ── PASSE 1.6 : LES SET-PIECES — trois endroits à grande empreinte (spec t0-exploration R9) ──
+  const setPieces = placerLesSetPieces(terrain, zone, g, width, height, seed)
+
+  // ── PASSE 1.7 : LES SENTES — les routes du pays d'avant, et leurs gués (R17, R7) ──
+  // Elles CONTOURNENT les set-pieces (R18 : un lieu se poste au bord du chemin) ; et la
+  // garantie « au moins deux gués » vit à part, indépendante des aléas du traceur.
+  const gues = tracerLesSentes(terrain, zone, g, width, height, seed, riviere, setPieces)
+  forcerLesGues(terrain, riviere, gues, width, height)
+
+  // ── PASSE 1.8 : L'ASSAINISSEMENT DU PROFOND — l'anneau de R45, CONSTATÉ ──
+  //
+  // Les coudes de la rivière et les bords des gués fabriquent des coins où le cœur profond
+  // touche la terre sèche — mille géométries, et chaque fois qu'on croit avoir couvert les
+  // cas, il en reste un (la leçon de `garantirLaConnexite`, mot pour mot). On cesse donc de
+  // raisonner : tout PROFOND de la Racine au contact orthogonal d'une terre marchable sèche
+  // redevient haut-fond (le point fixe tient en UNE passe : convertir produit de l'eau,
+  // jamais de la terre — le prédicat est statique). AVANT le murage, et c'est important :
+  // à la frontière, ce haut-fond neuf forme une paire marchable inter-zones que
+  // `murerLesAretes` mure ensuite — déplacé APRÈS, l'assainissement ROUVRAIT ces frontières
+  // (mesuré : 137 ouvertures sur la seed 7, le profond était le mur). (Le Lac Mort, lui,
+  // garde son profond ceint de marais : c'est SA forme, voulue — on ne touche que la Racine.)
+  assainirLeProfond(terrain, zone, g.racine, width, height)
 
   // ── PASSE 2 : les seuils — on perce tout droit un couloir PLAT dans la frontière ──
   for (const s of g.seuils) {
@@ -350,6 +384,15 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
     murerLesAretes(terrain, zone, rampe, width, height)
     garantirLaConnexite(g, terrain, zone, rampe, width, height)
   }
+
+  // ── PASSE 3.5 : LA REPRISE D'ASSAINISSEMENT, INTRA-ZONE SEULEMENT ──
+  //
+  // La fenêtre pointée par la revue : un couloir de seuil ou une rampe de connexité qui perce
+  // du profond fabrique du sol sec au contact du cœur — APRÈS la passe 1.8. On repasse donc,
+  // mais en ne comptant que les voisins secs DE LA RACINE : à la frontière, le profond est un
+  // mur légitime (R5), et le convertir ici ROUVRIRAIT une frontière que `murerLesAretes` ne
+  // repassera plus (mesuré : 137 ouvertures quand la passe pleine tournait à cette place).
+  assainirLeProfond(terrain, zone, g.racine, width, height, true)
 
   // ── PASSE 4 : l'anneau de bordure. La vallée est CLOSE ────────────────────
   for (let y = 0; y < height; y++) {
@@ -415,8 +458,26 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
     zoneGrid,
     zonePas: ZONE_PAS,
     zoneDefs: g.zones.map((z) => ({ slug: z.def.slug, nom: z.def.nom, tier: z.def.tier })),
+    // LES SEUILS, DONNÉE DE PREMIER ORDRE (spec t0-exploration R20) : le client en tire les
+    // BORNES qui annoncent les portes (worldgen R21) — il ne devine plus rien par les noms.
+    seuils: g.seuils.map((s) => ({
+      x: s.x, y: s.y, ax: s.ax, ay: s.ay, secours: s.secours, vers: g.zones[s.b]!.def.nom,
+    })),
   }
   const carte: CarteZonee = { map, graphe: g, zone, rampe }
+
+  // ── PASSE 4.5 : LES SET-PIECES ET LES GUÉS ENTRENT DANS LA CARTE ──────────
+  //
+  // AVANT les lieux : le semis de Poisson écarte ses points de tout lieu déjà enregistré
+  // (spec t0-exploration R10) — un Cairn au milieu du Cercle de pierres n'est pas un Cairn.
+  // Les set-pieces sont des LIEUX (kind : ils se découvrent, la garde A19 les couvre) ; les
+  // gués sont des TOPONYMES (un nom qu'on foule, pas une pastille).
+  for (const p of setPieces) {
+    map.zones.push({ name: p.nom, x: p.x, y: p.y, w: p.w, h: p.h, kind: p.kind })
+  }
+  for (const q2 of gues) {
+    map.zones.push({ name: 'le Gué', x: q2.x - 3, y: q2.y - 3, w: 7, h: 7 })
+  }
 
   // ── PASSE 5 : LES LIEUX — et ils ont désormais une ADRESSE ────────────────
   placePois(map, seed, (tx, ty) => {
@@ -425,6 +486,92 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   })
 
   return carte
+}
+
+/**
+ * ═══ LA LISIÈRE SUD — le seul gradient de la carte, et il est ASSUMÉ (R13-R15) ═══
+ *
+ * « De ton pas de porte, tu vois l'enfer » (décision fondatrice R13) : la frontière de la
+ * Cendrière est la seule qui avance, elle a droit au seul dégradé du jeu. Herbe → lande →
+ * lisière calcinée sur ~40 tuiles, décidé par MOTIF de 8 avec un dither positionnel : des
+ * marches irrégulières de blocs (R32 : le bruit ne survit que quantifié), jamais une ligne.
+ *
+ * L'exception à « une zone = un thème » (worldgen R7) est bornée ICI : aucune autre
+ * frontière ne déteint. Et rien d'autre ne change : les terrains existent (aucun id neuf),
+ * les nœuds suivent les admissions en place, la garde A17 reste un critère.
+ */
+const LISIERE_SUD = {
+  /** Portée du gradient depuis la frontière Cendrière, en tuiles. */
+  LARGEUR: 40,
+  /** En deçà : la lisière CALCINÉE (burnt_forest) domine. */
+  PLEIN: 14,
+  /** Entre PLEIN et LANDE : la lande (heath). Au-delà : le pré reprend. */
+  LANDE: 30,
+  /** Amplitude du dither positionnel (± la moitié), en tuiles de distance. */
+  DITHER: 16,
+} as const
+
+/** L'anneau de R45, tenu au point fixe : le profond de la Racine ne touche jamais la terre.
+ *  `memeZone` restreint le déclencheur aux voisins secs DE LA RACINE — la variante d'après
+ *  murage, qui ne rouvre jamais une frontière (le profond y est un mur légitime, R5). */
+function assainirLeProfond(
+  terrain: number[],
+  zone: Int32Array,
+  racineId: number,
+  width: number,
+  height: number,
+  memeZone = false,
+): void {
+  for (let passe = 0; passe < 8; passe++) {
+    let corriges = 0
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const i = y * width + x
+        if (terrain[i] !== TERRAIN_DEEP_WATER || zone[i] !== racineId) continue
+        for (const j of [i - 1, i + 1, i - width, i + width]) {
+          const t = terrain[j]!
+          if (t === TERRAIN_DEEP_WATER || t === TERRAIN_SHALLOW_WATER) continue
+          if (TERRAINS[t]?.walkable !== true) continue
+          if (memeZone && zone[j] !== racineId) continue
+          terrain[i] = TERRAIN_SHALLOW_WATER
+          corriges++
+          break
+        }
+      }
+    }
+    if (corriges === 0) return
+  }
+}
+
+function peindreLisiereSud(
+  terrain: number[],
+  zone: Int32Array,
+  g: GrapheZones,
+  width: number,
+  height: number,
+  seed: number,
+): void {
+  const r = g.zones[g.racine]!.rect
+  if (!r) return
+  const sud = r.y + r.h // la frontière Cendrière EST le bord sud du rectangle de la Racine
+  const sel = (seed ^ 0x4c495355) | 0 /* 'LISU' */
+  const M = RELIEF.MOTIF
+  const y0 = Math.max(0, sud - LISIERE_SUD.LARGEUR - LISIERE_SUD.DITHER)
+  for (let y = y0; y < Math.min(height, sud); y++) {
+    for (let x = r.x; x < Math.min(width, r.x + r.w); x++) {
+      const i = y * width + x
+      if (zone[i] !== g.racine) continue
+      const t = terrain[i]!
+      // Seul le THÈME du pré cède : herbe, bosquets, fleuraie. L'eau, le marais, la roche
+      // et tout ce que les autres passes poseront gardent leur nature.
+      if (t !== TERRAIN_GRASS && t !== TERRAIN_FOREST && t !== TERRAIN_FLOWER_MEADOW) continue
+      const mx = Math.floor(x / M)
+      const my = Math.floor(y / M)
+      const v = sud - y + (hash2(mx, my, sel) - 0.5) * LISIERE_SUD.DITHER
+      if (v < LISIERE_SUD.PLEIN) terrain[i] = TERRAIN_BURNT_FOREST
+      else if (v < LISIERE_SUD.LANDE) terrain[i] = TERRAIN_HEATH
+    }
+  }
 }
 
 /**

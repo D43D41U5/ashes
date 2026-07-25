@@ -46,12 +46,15 @@ describe('poiCenter', () => {
 })
 
 describe('POI_CHARGES', () => {
-  it('charge les douze lieux chargés, et EUX SEULS', () => {
+  it('charge les quinze lieux chargés, et EUX SEULS', () => {
     // `chene` (le Grand Chêne) a rejoint la liste le 2026-07-24 : la Racine était la seule zone
     // du jeu sans repère perçant la canopée, donc sans horizon et sans direction à suivre.
+    // `tour_guet`, `pierre_levee` et `cercle_pierres` l'ont rejointe le 2026-07-25 (spec
+    // t0-exploration §1) : le langage du Chêne, généralisé — des repères qui percent la
+    // canopée, une chaîne de menhirs qui mène au Cercle, et le Cercle qui se raconte.
     const charged = Object.keys(POI_CHARGES).sort()
     expect(charged).toEqual(
-      ['arbre', 'arche', 'belvedere', 'cairn', 'cascade', 'chene', 'erratique', 'grotte', 'petroglyphes', 'sanctuaire', 'source_chaude', 'tarn'].sort(),
+      ['arbre', 'arche', 'belvedere', 'cairn', 'cascade', 'cercle_pierres', 'chene', 'erratique', 'grotte', 'petroglyphes', 'pierre_levee', 'sanctuaire', 'source_chaude', 'tarn', 'tour_guet'].sort(),
     )
   })
 
@@ -61,14 +64,15 @@ describe('POI_CHARGES', () => {
     }
   })
 
-  it('répartit les douze en 5 savoir / 3 répit / 4 récit', () => {
-    // Le SAVOIR passe de 4 à 5 : le Grand Chêne ouvre la carte autour de lui (`reveal: radius`).
-    // C'est délibéré — la zone de départ n'avait aucune récompense de VUE, et c'est précisément
-    // ce qui manquait pour donner envie d'aller voir plus loin.
+  it('répartit les quinze en 7 savoir / 3 répit / 5 récit', () => {
+    // Le SAVOIR passe de 4 à 5 avec le Chêne (2026-07-24), puis à 7 avec la Tour de guet
+    // (radius — le Belvédère de la plaine) et la Pierre levée (nearest parmi les pierres — la
+    // chaîne de menhirs, patron Vegvisir). Le RÉCIT gagne le Cercle de pierres : la destination
+    // de la chaîne entre dans la chronique. C'est délibéré, et c'est la spec t0-exploration §1.
     const count = (d: string) => Object.values(POI_CHARGES).filter((c) => c.devise === d).length
-    expect(count('savoir')).toBe(5)
+    expect(count('savoir')).toBe(7)
     expect(count('repit')).toBe(3)
-    expect(count('recit')).toBe(4)
+    expect(count('recit')).toBe(5)
   })
 })
 
@@ -506,7 +510,8 @@ describe('le répit — la vallée comme réseau', () => {
 describe('la règle qui protège l’émerveillement', () => {
   it('AUCUN lieu de famille reward n’ajoute d’item à l’inventaire (critère A9)', () => {
     const rewardKinds = POI_TYPES.filter((t) => t.family === 'reward').map((t) => t.slug)
-    expect(rewardKinds).toHaveLength(12) // garde-fou : si ça change, ce test doit être relu
+    expect(rewardKinds).toHaveLength(15) // garde-fou : si ça change, ce test doit être relu
+    // (12 → 15 le 2026-07-25 : tour_guet, pierre_levee, cercle_pierres — spec t0-exploration §1.)
 
     const zones = rewardKinds.map((kind, i) => ({
       name: `${kind} I`,

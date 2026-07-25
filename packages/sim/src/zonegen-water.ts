@@ -31,6 +31,7 @@
  */
 import { TERRAINS, TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_SHALLOW_WATER } from './balance'
 import { hash2 } from './noise'
+import type { GrapheZones } from './zonegraph'
 
 /**
  * Le RÉGLAGE de l'eau — densité et formes. La densité des lacs est PAR TUILE MARCHABLE de la
@@ -76,7 +77,38 @@ export const EAU = {
   MARGE_FRONTIERE: 6,
   /** Tentatives de rejet par lac avant d'abandonner ce tirage. */
   ESSAIS: 60,
+
+  // ══ LA RIVIÈRE (spec t0-exploration R5-R8) — la colonne vertébrale de la Racine ══
+  //
+  // Elle TRAVERSE la zone du nord au sud : elle naît au pied d'une frontière de la ceinture
+  // (l'eau descend des hauteurs), enfile les lacs qui sont sur sa route, et meurt à la
+  // frontière de la Cendrière — l'eau descend vers le feu. STRICTEMENT intra-Racine : R45
+  // garde sa lettre (l'eau est le marqueur de la zone basse), on n'a pas ressuscité le
+  // fleuve traversant abrogé — c'est la zone qu'elle traverse, pas la carte.
+
+  /** Demi-largeur du LIT (haut-fond marchable). 3 → 7 tuiles : une rivière, pas un fossé. */
+  RIVIERE_DEMI_LIT: 3,
+  /** Demi-largeur du CŒUR profond. 1 → 3 tuiles de mur d'eau (R5), toujours ceint du lit. */
+  RIVIERE_DEMI_COEUR: 1,
+  /** Le cœur s'arrête à N pas de chaque bout : la source et la bouche sont des hauts-fonds. */
+  RIVIERE_BOUCHE: 8,
+  /** Écart minimal (tuiles) entre l'embouchure/la source et tout seuil : une porte n'a pas
+   *  les pieds dans l'eau (worldgen R10 : un seuil ne nourrit rien, pas même à boire). */
+  RIVIERE_MARGE_SEUIL: 40,
+  /** Un lac est « sur la route » s'il s'écarte de moins de N tuiles de la ligne source→bouche. */
+  RIVIERE_DETOUR_MAX: 220,
+  // Les GUÉS appartiennent aux SENTES (`zonegen-sentes.ts`, SENTES.GUES_MIN / GUE_DEMI) :
+  // c'est le croisement qui crée le gué. Ne pas redéclarer de bouton ici — la revue a trouvé
+  // deux constantes mortes à cet endroit, et un bouton mort finit toujours par être tourné.
 } as const
+
+/** Ce que la rivière laisse derrière elle — de quoi percer les gués et nommer les lieux. */
+export interface Riviere {
+  /** Les cellules du FIL de la rivière, dans l'ordre amont → aval (index de tuile). */
+  fil: number[]
+  /** Les tuiles du cœur PROFOND (sous-ensemble du fil élargi). Les sentes y creusent les gués. */
+  coeur: Set<number>
+}
 
 interface Lac {
   cx: number
@@ -95,20 +127,21 @@ interface Lac {
 export function paintWaterRacine(
   terrain: number[],
   zone: Int32Array,
-  racineId: number,
+  g: GrapheZones,
   width: number,
   height: number,
   seed: number,
   bordure: number,
-): void {
+): Riviere | null {
   const N = width * height
+  const racineId = g.racine
 
   // La SURFACE marchable de la Racine — c'est elle qui dose le nombre de lacs.
   let surface = 0
   for (let i = 0; i < N; i++) {
     if (zone[i] === racineId && TERRAINS[terrain[i]!]?.walkable === true) surface++
   }
-  if (surface === 0) return
+  if (surface === 0) return null
 
   const nLacs = Math.round(surface * EAU.DENSITE_LACS)
   const s = seed ^ 0x45415500 /* 'EAU' */
@@ -117,8 +150,13 @@ export function paintWaterRacine(
   // à rebalayer la carte entière (une passe de 3,75 M de tuiles épargnée par génération).
   const eaux: number[] = []
   const lacs = placerLacs(terrain, zone, racineId, width, height, bordure, s, nLacs, eaux)
+  // LA RIVIÈRE D'ABORD, les ruisseaux ensuite : elle réclame les lacs de sa route, et c'est
+  // elle qui porte désormais le titre — la « plus longue liaison » de l'ancien réseau redevient
+  // un simple ruisseau (le titre se GAGNE en traversant, pas en étant long).
+  const riviere = tracerLaRiviere(terrain, zone, g, width, height, s, lacs, eaux)
   relierLesLacs(terrain, zone, racineId, width, height, lacs, eaux)
   frangeDeMarais(terrain, zone, racineId, width, height, s, eaux)
+  return riviere
 }
 
 /**
@@ -231,18 +269,176 @@ function relierLesLacs(
     liaisons.push({ a: i, b: best, d: bestD })
   }
 
-  // La plus longue liaison est la rivière : elle se creuse plus large.
-  let riviere = -1
-  let riviereD = -1
-  for (let k = 0; k < liaisons.length; k++) {
-    if (liaisons[k]!.d > riviereD) { riviereD = liaisons[k]!.d; riviere = k }
-  }
-
+  // Tous les chenaux sont des RUISSEAUX : le titre de rivière appartient désormais à celle
+  // qui TRAVERSE (spec t0-exploration R5), plus à la liaison la plus longue d'un archipel.
   for (let k = 0; k < liaisons.length; k++) {
     const l = liaisons[k]!
-    const hw = k === riviere ? EAU.RIVIERE_DEMI_LARGEUR : EAU.RUISSEAU_DEMI_LARGEUR
-    tracerChenal(terrain, zone, racineId, width, height, lacs[l.a]!, lacs[l.b]!, hw, eaux)
+    tracerChenal(terrain, zone, racineId, width, height, lacs[l.a]!, lacs[l.b]!, EAU.RUISSEAU_DEMI_LARGEUR, eaux)
   }
+}
+
+/**
+ * ═══ LA RIVIÈRE — elle naît au mur de la ceinture, elle meurt au mur du feu ═══
+ *
+ * (Spec t0-exploration R5-R8.) Le tracé : une COLONNE d'entrée au nord (au pied de la
+ * frontière T1), une colonne de sortie au sud (la frontière de la Cendrière), les lacs qui
+ * sont à moins de `RIVIERE_DETOUR_MAX` de la ligne enfilés comme des perles, et des marches
+ * Manhattan entre chaque étape (R32 : rien ne serpente, tout est rectiligne).
+ *
+ * DEUX PASSES DE PEINTURE, et l'ordre est l'invariant : le LIT d'abord (haut-fond, demi-
+ * largeur 3), le CŒUR ensuite (profond, demi-largeur 1) — et le cœur ne repeint QUE des
+ * tuiles que le lit vient de poser (jamais un lac, jamais un ruisseau). L'anneau de
+ * haut-fond de R45 tient donc par construction : le profond de la rivière est né entouré
+ * de son propre lit. Le cœur s'arrête à `RIVIERE_BOUCHE` pas des deux bouts — la source et
+ * l'embouchure se traversent à gué.
+ *
+ * L'embouchure et la source évitent les seuils de `RIVIERE_MARGE_SEUIL` : une porte n'a
+ * pas les pieds dans l'eau (worldgen R10 — un seuil ne nourrit rien, pas même à boire).
+ */
+function tracerLaRiviere(
+  terrain: number[],
+  zone: Int32Array,
+  g: GrapheZones,
+  width: number,
+  height: number,
+  s: number,
+  lacs: Lac[],
+  eaux: number[],
+): Riviere | null {
+  const racineId = g.racine
+  const r = g.zones[racineId]!.rect
+  if (!r) return null
+  const sel = s ^ 0x52495645 /* 'RIVE' */
+
+  // Les seuils de la Racine — la source et la bouche s'en écartent.
+  const seuils = g.seuils.filter((x) => x.a === racineId || x.b === racineId)
+  const loinDesSeuils = (x: number, y: number): boolean =>
+    seuils.every((q) => Math.abs(q.x - x) + Math.abs(q.y - y) >= EAU.RIVIERE_MARGE_SEUIL)
+
+  // Une colonne candidate doit TOUCHER la Racine : on descend depuis le haut du rectangle
+  // (les ceintures mordent dedans — la première tuile Racine marchable est le pied du mur),
+  // ou l'on remonte depuis le bas (la Cendrière). Rendu : la tuile de départ, ou -1.
+  const descendre = (x: number): number => {
+    for (let y = r.y; y < r.y + r.h; y++) {
+      const i = y * width + x
+      if (zone[i] === racineId && TERRAINS[terrain[i]!]?.walkable === true) return y
+    }
+    return -1
+  }
+  const remonter = (x: number): number => {
+    for (let y = r.y + r.h - 1; y >= r.y; y--) {
+      const i = y * width + x
+      if (zone[i] === racineId && TERRAINS[terrain[i]!]?.walkable === true) return y
+    }
+    return -1
+  }
+
+  // On tire la colonne d'entrée et celle de sortie — vingt essais chacune, dans le tiers
+  // central élargi (une rivière qui longe le bord ne structure rien).
+  let x0 = -1
+  let y0 = -1
+  let x1 = -1
+  let y1 = -1
+  for (let essai = 0; essai < 20 && x0 < 0; essai++) {
+    const x = Math.round(r.x + (0.18 + 0.64 * hash2(essai, 0, sel)) * r.w)
+    const y = descendre(x)
+    if (y >= 0 && loinDesSeuils(x, y)) { x0 = x; y0 = y }
+  }
+  for (let essai = 0; essai < 20 && x1 < 0; essai++) {
+    const x = Math.round(r.x + (0.18 + 0.64 * hash2(essai, 1, sel)) * r.w)
+    const y = remonter(x)
+    if (y >= 0 && loinDesSeuils(x, y)) { x1 = x; y1 = y }
+  }
+  if (x0 < 0 || x1 < 0 || y1 <= y0) return null // une Racine dégénérée n'a pas de rivière
+
+  // LES PERLES : les lacs proches de la ligne source→bouche, enfilés du nord au sud.
+  const perles = lacs
+    .filter((l) => l.cy > y0 + 8 && l.cy < y1 - 8)
+    .filter((l) => {
+      const t = (l.cy - y0) / Math.max(1, y1 - y0)
+      return Math.abs(l.cx - (x0 + (x1 - x0) * t)) <= EAU.RIVIERE_DETOUR_MAX
+    })
+    .sort((a, b) => a.cy - b.cy)
+    .slice(0, 3)
+
+  // LE FIL : les étapes, reliées en marches de Manhattan. On note chaque pas dans l'ordre.
+  const etapes = [{ cx: x0, cy: y0 }, ...perles.map((l) => ({ cx: l.cx, cy: l.cy })), { cx: x1, cy: y1 }]
+  const fil: number[] = []
+  let px = x0
+  let py = y0
+  fil.push(py * width + px)
+  for (const e of etapes.slice(1)) {
+    let garde = 0
+    while ((px !== e.cx || py !== e.cy) && garde < width + height) {
+      const dx = e.cx - px
+      const dy = e.cy - py
+      // La rivière DESCEND : à distances égales, l'axe vertical gagne (elle coule vers le feu).
+      const horiz = Math.abs(dx) > Math.abs(dy)
+      const step = horiz ? Math.sign(dx) : Math.sign(dy)
+      const troncon = Math.min(EAU.TRONCON, horiz ? Math.abs(dx) : Math.abs(dy))
+      for (let t = 0; t < troncon; t++) {
+        if (horiz) px += step
+        else py += step
+        fil.push(py * width + px)
+        garde++
+      }
+    }
+  }
+
+  // PASSE 1 — LE LIT : haut-fond, demi-largeur RIVIERE_DEMI_LIT, perpendiculaire au fil.
+  // On ne note dans `litNeuf` QUE ce que la rivière vient de poser : le cœur n'aura le droit
+  // de creuser QUE là-dedans (jamais un lac, jamais un chenal — leur anneau ne nous doit rien).
+  const litNeuf = new Set<number>()
+  const peindreBande = (cx: number, cy: number, horiz: boolean, demi: number): void => {
+    for (let w = -demi; w <= demi; w++) {
+      const bx = horiz ? cx : cx + w
+      const by = horiz ? cy + w : cy
+      if (bx < 0 || by < 0 || bx >= width || by >= height) continue
+      const i = by * width + bx
+      if (zone[i] !== racineId) continue // la rivière ne sort JAMAIS de la Racine
+      const cur = terrain[i]!
+      if (cur === TERRAIN_SHALLOW_WATER || cur === TERRAIN_DEEP_WATER) continue // eau existante : intacte
+      if (TERRAINS[cur]?.walkable !== true) continue // on ne noie pas un mur
+      terrain[i] = TERRAIN_SHALLOW_WATER
+      litNeuf.add(i)
+      eaux.push(i)
+    }
+  }
+  for (let k = 1; k < fil.length; k++) {
+    const i = fil[k]!
+    const prev = fil[k - 1]!
+    const cx = i % width
+    const cy = (i - cx) / width
+    const horiz = Math.abs(i - prev) === 1 // le pas était horizontal → la bande est verticale
+    peindreBande(cx, cy, horiz, EAU.RIVIERE_DEMI_LIT)
+    // Au COUDE, la bande pivote et laisse un coin sec dans le lit : on peint les deux axes.
+    if (k >= 2) {
+      const prev2 = fil[k - 2]!
+      const horizAvant = Math.abs(prev - prev2) === 1
+      if (horizAvant !== horiz) peindreBande(cx, cy, horizAvant, EAU.RIVIERE_DEMI_LIT)
+    }
+  }
+
+  // PASSE 2 — LE CŒUR : profond, demi-largeur RIVIERE_DEMI_COEUR, en retrait des deux bouts.
+  const coeur = new Set<number>()
+  for (let k = EAU.RIVIERE_BOUCHE; k < fil.length - EAU.RIVIERE_BOUCHE; k++) {
+    const i = fil[k]!
+    const prev = fil[k - 1]!
+    const cx = i % width
+    const cy = (i - cx) / width
+    const horiz = Math.abs(i - prev) === 1
+    for (let w = -EAU.RIVIERE_DEMI_COEUR; w <= EAU.RIVIERE_DEMI_COEUR; w++) {
+      const bx = horiz ? cx : cx + w
+      const by = horiz ? cy + w : cy
+      if (bx < 0 || by < 0 || bx >= width || by >= height) continue
+      const i2 = by * width + bx
+      if (!litNeuf.has(i2)) continue // le cœur ne creuse QUE le lit de la rivière
+      terrain[i2] = TERRAIN_DEEP_WATER
+      coeur.add(i2)
+    }
+  }
+
+  return { fil, coeur }
 }
 
 /**

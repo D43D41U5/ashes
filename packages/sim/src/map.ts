@@ -60,6 +60,15 @@ export interface WorldMap {
   zonePas?: number
   /** L'identité de chaque zone, indexée par son id : de quoi bâtir une palette. */
   zoneDefs?: { slug: string; nom: string; tier: number }[]
+  /**
+   * LES SEUILS, DONNÉE DE PREMIER ORDRE (spec t0-exploration R20). Le client les devinait
+   * jusqu'ici par le NOM de leurs toponymes (« le seuil de… ») — fragile. Ils portent :
+   * la position du couloir, son axe de traversée (`ax`,`ay` — celui du percement), le
+   * drapeau de secours (le second passage, toujours pire — R11), et le nom de la zone de
+   * destination. Consommateurs : les BORNES de seuil (client, R4 — le seuil s'annonce),
+   * l'onglet carte, et demain les toponymes eux-mêmes. Additif et JSON-sérialisable.
+   */
+  seuils?: { x: number; y: number; ax: number; ay: number; secours: boolean; vers: string }[]
 }
 
 /**
@@ -191,6 +200,9 @@ export function poiClearings(map: WorldMap): Set<number> {
   for (const z of map.zones) {
     if (z.kind === undefined) continue
     if (z.kind === 'gisement' || z.kind === 'carriere') continue // une mine ne se dégage pas
+    // Un SET-PIECE ne se dégage pas non plus (spec t0-exploration R10) : son corps est son
+    // terrain, son contenu est sa raison d'être — le Bois Noir SANS ses arbres serait un pré.
+    if (POI.SET_PIECE_KINDS.includes(z.kind)) continue
     // Rayon = demi-empreinte + marge. Le lieu respire, quelle que soit sa taille.
     const r = Math.max(z.w, z.h) / 2 + POI.CLEARING_MARGIN_TILES
     const r2 = r * r

@@ -9,7 +9,7 @@ import { terrainAt, isBlockingTile, type WorldMap, type Zone } from './map'
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
 import { setTile } from './valleygen-primitives'
-import { FAUNA, TERRAIN_SCREE } from './balance'
+import { FAUNA, TERRAIN_ROAD, TERRAIN_SCREE } from './balance'
 import { distSq } from './geometry'
 import { type CarveField, carveDistanceToMain, walkableComponents } from './connectivity'
 
@@ -249,6 +249,33 @@ export const POI_TYPES: PoiType[] = [
   // le LIEU et par son stock dérisoire, pas par une ligne de chronique.
   { slug: 'filon', zones: ['pres_bas'], name: 'le Filon affleurant', family: 'eco', biomes: [GRASS, FOREST, SCREE, ROCK, BOULDERS, FLOWER], weight: 2, cap: 1, reserve: 1, unique: true, footprint: 2 },
   { slug: 'chene', zones: ['pres_bas'], name: 'le Grand Chêne', family: 'reward', biomes: [GRASS, FOREST, FLOWER], weight: 3, cap: 1, reserve: 1, unique: true, footprint: 2 },
+  // ═══ LES REPÈRES D'HORIZON DE LA RACINE (spec t0-exploration §1) ═══
+  // Le Grand Chêne prouvait la boucle « voir un repère → y aller → y gagner de quoi voir plus
+  // loin » — mais il était SEUL dans 614 000 tuiles. On généralise le langage sans le diluer :
+  // chaque repère a une crown qui perce la canopée, et une charge qui suit les devises de
+  // `lieux.md` (aucune inventée).
+  //
+  // LA TOUR DE GUET EFFONDRÉE — le Belvédère de la plaine : on grimpe aux décombres, on voit
+  // (savoir/radius, REVEAL_TOUR_TILES). Unique : un repère n'en est un que s'il est seul. Et
+  // c'est une RUINE : le pays d'avant guettait déjà le sud — la tour regarde la Cendrière.
+  { slug: 'tour_guet', zones: ['pres_bas'], name: 'la Tour de guet effondrée', family: 'reward', biomes: [GRASS, FLOWER, HEATH, FOREST], weight: 2, cap: 1, reserve: 1, unique: true, footprint: 3 },
+  // LES PIERRES LEVÉES — les menhirs se RÉPONDENT (savoir/nearest parmi PIERRES_KINDS) : une
+  // chaîne d'indices qui mène au Cercle, le patron Vegvisir de Valheim. reserve 2 : la chaîne
+  // exige au moins deux maillons, sinon c'est un caillou qui pointe vers rien.
+  { slug: 'pierre_levee', zones: ['pres_bas'], name: 'la Pierre levée', family: 'reward', biomes: [GRASS, FLOWER, HEATH], weight: 3, cap: 3, reserve: 2, footprint: 2 },
+  // ═══ LES RUINES BASSES DU PAYS D'AVANT (spec t0-exploration R19) ═══
+  // Des abris au sens des shelters existants, AUCUN butin (lieux.md A9). Avec la Tour, le pré
+  // raconte : on vivait ici, on guettait le sud, on est partis.
+  { slug: 'ferme_ruinee', zones: ['pres_bas'], name: 'la Ferme ruinée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH], weight: 3, cap: 2, reserve: 1, footprint: 4 },
+  { slug: 'charrette', zones: ['pres_bas'], name: 'la Charrette abandonnée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH, FOREST], weight: 3, cap: 3, reserve: 1, footprint: 2 },
+  // ═══ LES SET-PIECES — des lieux HORS SEMIS (spec t0-exploration R9-R10) ═══
+  // `biomes: []` : jamais éligibles au tirage — ils se posent en passe dédiée du worldgen
+  // (`zonegen-setpieces.ts`), leur corps est leur TERRAIN. Ils figurent ici pour que la garde
+  // A19 (« chaque type naît vraiment ») les couvre, et que `poiFamily` sache répondre (le
+  // garde-fou des charges exige la famille reward pour le Cercle, qui porte un récit).
+  { slug: 'bois_noir', zones: ['pres_bas'], name: 'le Bois Noir', family: 'eco', biomes: [], weight: 0, cap: 1, unique: true, footprint: 40 },
+  { slug: 'cercle_pierres', zones: ['pres_bas'], name: 'le Cercle de pierres', family: 'reward', biomes: [], weight: 0, cap: 1, unique: true, footprint: 24 },
+  { slug: 'combe_brumeuse', zones: ['pres_bas'], name: 'la Combe brumeuse', family: 'eco', biomes: [], weight: 0, cap: 1, unique: true, footprint: 32 },
   { slug: 'cairn', name: 'le Cairn', family: 'reward', biomes: [GRASS, AL_MEADOW, HEATH, SCREE, ROCK, FLOWER, AL_FLOWERS, FOREST, PINE], weight: 12, cap: 14, reserve: 1, footprint: 1 },
   { slug: 'sanctuaire', zones: ['aiguilles', 'alpages', 'karst'], name: 'le Sanctuaire', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.7, weight: 1, cap: 2, reserve: 1, footprint: 2 },
   { slug: 'source_chaude', zones: ['alpages', 'karst'], name: 'la Source chaude', family: 'reward', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 2, cap: 2, reserve: 1, footprint: 2 },
@@ -362,7 +389,27 @@ function isEligible(
   if ((used.get(t.slug) ?? 0) >= capFor(map, t)) return false // le plafond suit la SURFACE
   const fp = footprintAt(map, t, tx, ty)
   if (touchesBorderRing(map, fp)) return false
+  // AUCUN LIEU À CHEVAL SUR UNE SENTE (spec t0-exploration R18) : un lieu se poste AU BORD du
+  // chemin, pas dessus — et un Verger coupé par la route perdrait ses baies (sa garde A29 le
+  // compterait). L'empreinte entière doit être libre de route.
+  for (let y = fp.y; y < fp.y + fp.h; y++) {
+    for (let x = fp.x; x < fp.x + fp.w; x++) {
+      if (terrainAt(map, x, y) === TERRAIN_ROAD) return false
+    }
+  }
   return entryTile(map, field, fp) !== undefined
+}
+
+/**
+ * LE POINT EST-IL TROP PRÈS D'UN LIEU DÉJÀ ENREGISTRÉ ? (spec t0-exploration R10.)
+ *
+ * Les set-pieces se posent AVANT le semis, hors Poisson — sans cette garde, un Cairn pouvait
+ * naître au milieu du Cercle de pierres. Elle protège aussi, gratuitement, contre un point de
+ * semis qui tomberait près d'un lieu posé par le FILET de réservation (lui aussi hors Poisson).
+ */
+function tropPres(map: WorldMap, tx: number, ty: number, radius: number): boolean {
+  const r2 = radius * radius
+  return map.zones.some((z) => z.kind !== undefined && distSq(tx, ty, z.x + z.w / 2, z.y + z.h / 2) < r2)
 }
 
 function candidatesFor(
@@ -453,6 +500,7 @@ function reserveCharged(
       const p = pts[i]!
       const tx = Math.floor(p.x)
       const ty = Math.floor(p.y)
+      if (tropPres(map, tx, ty, radius)) continue // un set-piece a déjà pris ce coin
       if (!isEligible(map, field, t, tx, ty, used, zoneDe)) continue
       placeOne(map, field, t, tx, ty, used)
       taken.add(i)
@@ -599,6 +647,7 @@ export function placePois(map: WorldMap, seed: number, zoneDe?: ZoneLookup): voi
     const p = pts[i]!
     const tx = Math.floor(p.x)
     const ty = Math.floor(p.y)
+    if (tropPres(map, tx, ty, radius)) continue // un set-piece (ou un filet) a déjà pris ce coin
     const cands = candidatesFor(map, field, tx, ty, used, zoneDe)
     if (cands.length === 0) continue // biome sans POI valide → point sauvage (l'entre-deux)
     // Tirage pondéré déterministe.

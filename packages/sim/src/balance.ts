@@ -139,6 +139,23 @@ export const POI = {
   CLEARING_MARGIN_TILES: 3,
   /** Ce que les Pétroglyphes savent montrer : les lieux ANCIENS. */
   ANCIENT_KINDS: ['ruines', 'mine', 'sanctuaire', 'oratoire'] as readonly string[],
+  /**
+   * LA TOUR DE GUET EFFONDRÉE — le Belvédère de la plaine (spec t0-exploration R1-R2).
+   * On grimpe aux décombres, on voit. Entre le Chêne (180 — un arbre, on est dessous) et le
+   * Belvédère (300 — on domine tout) : une tour éboulée domine un peu.
+   */
+  REVEAL_TOUR_TILES: 240,
+  /** Ce qu'une Pierre levée sait montrer : LES PIERRES SE RÉPONDENT (spec t0-exploration R2).
+   *  La chaîne des menhirs mène au Cercle — le patron Vegvisir de Valheim : un indice ne
+   *  révèle que le prochain maillon, jamais la carte. */
+  PIERRES_KINDS: ['pierre_levee', 'cercle_pierres'] as readonly string[],
+  /**
+   * LES SET-PIECES (spec t0-exploration R9-R10) — des lieux dont le corps est le TERRAIN.
+   * Deux exemptions en découlent : pas de clairière (`poiClearings` — on ne « dégage » pas
+   * un endroit dont le contenu est la raison d'être, même logique que gisement/carrière),
+   * et pas de sprite-corps côté client (l'étiquette seule — le sol parle).
+   */
+  SET_PIECE_KINDS: ['bois_noir', 'cercle_pierres', 'combe_brumeuse'] as readonly string[],
 }
 
 export const BALANCE = {

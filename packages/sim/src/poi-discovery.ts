@@ -39,6 +39,12 @@ export const POI_CHARGES: Record<string, PoiCharge> = {
   cairn: { devise: 'savoir', reveal: 'nearest' },
   // Quelqu'un a gravé ça pour dire « c'est par là ».
   petroglyphes: { devise: 'savoir', reveal: 'nearest', kinds: POI.ANCIENT_KINDS },
+  // La Tour de guet effondrée : le Belvédère de la plaine — on grimpe aux décombres, on voit.
+  // Rayon entre le Chêne (on est sous un arbre) et le Belvédère (on domine tout).
+  tour_guet: { devise: 'savoir', reveal: 'radius', radiusTiles: POI.REVEAL_TOUR_TILES },
+  // LES PIERRES SE RÉPONDENT : un menhir révèle la pierre (ou le Cercle) inconnue la plus
+  // proche — une chaîne d'indices, le patron Vegvisir. Jamais la carte d'un coup.
+  pierre_levee: { devise: 'savoir', reveal: 'nearest', kinds: POI.PIERRES_KINDS },
 
   // ── Le répit : trois lieux qui refont les trajets ──
   source_chaude: { devise: 'repit' },
@@ -54,6 +60,8 @@ export const POI_CHARGES: Record<string, PoiCharge> = {
   chene: { devise: 'savoir', reveal: 'radius', radiusTiles: POI.REVEAL_CHENE_TILES },
   erratique: { devise: 'recit' },
   cascade: { devise: 'recit' },
+  // Le Cercle de pierres : la destination de la chaîne des menhirs. L'atteindre se raconte.
+  cercle_pierres: { devise: 'recit' },
 }
 
 /** La famille d'un `kind` de POI (undefined si le kind est inconnu). */
