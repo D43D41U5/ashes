@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { COOK_SLOT, FIRE, TERRAIN_GRASS } from './balance'
-import { addItems, countOf, inventoryOf, makeInventory } from './items'
+import { addItems, countOf, inventoryOf, makeInventory, stackSize } from './items'
 import { willRiseAsCendreux } from './cendreux'
 import { drainEvents } from './events'
 import { advanceFire, fireState, type FireZone } from './fire'
@@ -286,6 +286,21 @@ describe('Le Feu-station : les cases sont de vrais CONTENEURS + verrou de consom
     drop(sim, owner, foyer, 'fuel', 0, 'wood', 1)
     expect(countOf(ent(sim, owner).inventory, 'wood')).toBe(1) // refusé : le Foyer tient sur village.fuel
     expect(foyer.fuel).toBeUndefined()
+  })
+
+  it('A17 — SORTIES pleines : l’unité reste PRÊTE, aucun cuit dupliqué ni perdu (conservation)', () => {
+    const sim = makeSim()
+    const cook = spawnEntity(sim, 10, 10)
+    const fire = addStructure(sim, 'fire', 10, 10, 0, cook)
+    // Sorties saturées (3 cases × la pile max) : plus AUCUNE place.
+    const full = FIRE.COOK_OUTPUTS * stackSize('cooked_meat')
+    fire.cookOut = inventoryOf(FIRE.COOK_OUTPUTS, { cooked_meat: full })
+    grantItems(sim, cook, { raw_meat: 3 })
+    drop(sim, cook, fire, 'cookIn', 0, 'raw_meat', 3)
+    const dur = COOK_SLOT.fire!.raw_meat!.ticks
+    for (let t = 0; t < dur * 5; t++) advanceFire(sim) // de quoi cuire plusieurs fois si ça débordait
+    expect(countOf(fire.cookOut!, 'cooked_meat')).toBe(full) // PAS d'inflation : rien ne sort tant que c'est plein
+    expect(fire.cookIn![0]?.count).toBe(3) // les 3 crus RESTENT (l'unité en tête reste PRÊTE, jamais consumée dans le vide)
   })
 })
 
