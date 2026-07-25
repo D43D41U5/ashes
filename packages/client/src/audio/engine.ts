@@ -46,9 +46,11 @@ export class SoundEngine {
   }
 
   /** Joue un son (ou rien si muet / contexte pas encore réveillé). */
-  play(spec: SoundSpec | null): void {
+  play(spec: SoundSpec | null, delayS = 0): void {
     if (!spec || this.muted || !this.ctx || !this.master || this.ctx.state !== 'running') return
-    buildSound(this.ctx, this.master, spec, this.ctx.currentTime)
+    // `delayS` se planifie sur l'horloge WebAudio (la seule juste pour le son) — jamais un
+    // setTimeout : les notes d'un pépiement restent serrées même si le thread principal souffle.
+    buildSound(this.ctx, this.master, spec, this.ctx.currentTime + delayS)
   }
 
   /** Bascule le mute (persisté). Rend le nouvel état. */

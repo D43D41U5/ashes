@@ -33,7 +33,7 @@ Le tout-ou-rien du 2026-07-20 est acté mais inachevé : ~55 textures monde sur 
 
 ## §5 — L'eau : lisible d'abord, vivante ensuite
 
-- **R10** — LE GUÉ SE LIT EN LUMINANCE : contraste rendu profond/haut-fond ≥ 1,4:1 (mesuré sur capture, il vaut 1,29:1). Molettes : `murk` foncé et/ou socle `mud` relevé — jamais le ciel (la réflexion joue contre le gué de jour). L'arbitrage consigné du 25/07 est couvert par le présent mandat.
+- **R10** — LE GUÉ SE LIT EN LUMINANCE : contraste rendu profond/haut-fond ≥ 1,4:1, mesuré sur capture (moyenne de 3 instantanés — le clapot postérisé bruite ±0,1). Molettes : `mud`/`murk`, ET le ciel réfléchi un cran plus profond — la doctrine R45 est le GRADIENT de réflexion, pas la valeur du bleu (l'essai « vase sable clair » seul faisait lire la rivière comme une route : regardé, rejeté). Tenu à 1,44-1,5:1.
 - **R11** — LES REMOUS : un acteur qui marche dans le haut-fond émet des anneaux quantifiés (grille 4 px, paliers de palette, alpha seul) — le patron `uFires` (positions poussées par frame) devient `uWaders`. C'est l'événement qui rend l'eau vivante, pas l'animation de toute la surface.
 - **R12** — Rien d'autre ne bouge sans mesure : berge animée, éclats et reflets de Feux existent et sont calibrés. Le « trou noir nocturne » et la densité d'éclats restent des affinages à l'œil consignés.
 
@@ -41,7 +41,7 @@ Le tout-ou-rien du 2026-07-20 est acté mais inachevé : ~55 textures monde sur 
 
 - **R13** — La brume NAÎT DE L'EAU : une nappe sur les tuiles d'eau et de marais DILATÉES de ~4 tuiles (le champ existe — `water-field`/terrain), en PLAQUES quantifiées (grain 4 px, NEAREST, hash positionnel à avalanche — le vocabulaire de la Combe), posée au ras du sol (sous les pieds).
 - **R14** — FENÊTRE COURTE, PENTE CONTINUE (règle maison) : densité nulle avant ~4h30, pleine (~0,26 d'alpha) vers 6h, dissoute en pente continue jusqu'à ~8h30 — une fonction PURE de l'heure, testée, dans le module lighting (à côté de `daylight`). La respiration reste par l'alpha. La brume permanente de la Combe coexiste (c'est SON identité) ; la matinale s'y superpose sans doubler l'alpha au-delà du plafond.
-- **R15** — Aucun post-FX, aucun shader neuf si l'image + fenêtre suffisent. Le Feu ne troue PAS la brume (c'est de la MATIÈRE — la doctrine du 24/07 ; le veto en suspens reste consigné).
+- **R15** — LA BRUME EST UN SHADER DE NAPPES (amendé le 25/07 : la clause « aucun shader si l'image suffit » est tombée par son propre critère — Alexis, sur l'image plate : « on doit sentir que ça bouge et qu'il y a du volume »). La recette de l'eau : deux couches de bruit-valeur qui dérivent au vent (et sa perpendiculaire — la parallaxe interne fait le volume), champ POSTÉRISÉ en crans francs (trous, corps, crêtes claires), cellule 4 px, masque NEAREST. Le bord est une ASSISE en marches sur ~7 tuiles qui déborde des deux côtés (la coupe au couteau : jugée trop franche). Elle COIFFE LE MONDE (au-dessus du personnage et des houppiers, sous les oiseaux et le voile de nuit — la nuit l'assombrit d'elle-même ; retour d'Alexis). Sortie PRÉMULTIPLIÉE (le contrat réel du pipeline — prouvé à l'écran : non prémultiplié = mur blanc). Aucun post-FX. Le Feu ne troue PAS la brume (matière, doctrine du 24/07).
 
 ## §7 — L'ambiance de l'aube (le pack au meilleur rapport effet/effort)
 

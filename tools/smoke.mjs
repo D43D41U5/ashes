@@ -204,6 +204,141 @@ const SCENARIOS = {
   },
 
   /**
+   * LE FEELING (spec da-feeling, 2026-07-25) — eau lisible, brume du matin, aube qui chante.
+   *
+   * Ce qui ne se prouve qu'au navigateur : A4 (le gué contraste ≥ 1,4:1 EN LUMINANCE — mesuré
+   * en projetant des tuiles connues profond/haut-fond sur la capture), A5 (les remous d'un
+   * marcheur — capture à REGARDER), A6 (la brume à 5h30/6h/8h : visible sur l'eau ; à 12h :
+   * rien), A7 (la sonde `aube.chirps` compte dans la fenêtre, se tait dehors). Exige `--dev`.
+   */
+  async feeling(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForTimeout(1000)
+
+    const gue = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const g = (m.zones ?? []).find((z) => z.name === 'le Gué')
+      return g ? { x: g.x + 3.5, y: g.y + 3.5 } : null
+    })
+    if (!gue) { console.error('!! aucun Gué sur cette carte'); return }
+
+    const heure = async (h) => {
+      // TÊTU : le protocole ne porte qu'UNE action par input — un envoi peut se faire manger.
+      // On renvoie jusqu'à ce que l'heure LUE colle (mesuré : un set_hour(12) perdu laissait
+      // la brume de 8h sous l'étiquette « midi »).
+      for (let essai = 0; essai < 4; essai++) {
+        await page.evaluate((hh) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: hh }), h)
+        await page.waitForTimeout(600)
+        const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1)
+        if (Math.abs(lu - h) < 0.3) return
+      }
+      console.error(`!! set_hour(${h}) n'a jamais pris`)
+    }
+    const tp = async (x, y) => {
+      await page.evaluate(({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }), { px: x, py: y })
+      await page.waitForTimeout(1400)
+    }
+
+    // ── A4 : le contraste du gué, en pleine lumière ──
+    await tp(gue.x, gue.y)
+    await heure(11)
+    await page.waitForTimeout(600)
+    await page.screenshot({ path: `${OUT}/feeling-gue-jour.png` })
+    const contraste = await page.evaluate(async () => {
+      const sc = window.__BRAISES__.scene
+      const m = sc.map
+      const cam = sc.cameras.main
+      // Des tuiles profond/haut-fond DANS la vue, projetées en pixels écran.
+      const vis = { x0: cam.worldView.x / 16 + 2, y0: cam.worldView.y / 16 + 2, x1: (cam.worldView.x + cam.worldView.width) / 16 - 2, y1: (cam.worldView.y + cam.worldView.height) / 16 - 2 }
+      const deeps = []
+      const shallows = []
+      const terr = (tx, ty) => m.terrain[ty * m.width + tx]
+      const entoure = (tx, ty, ok) => ok(terr(tx + 1, ty)) && ok(terr(tx - 1, ty)) && ok(terr(tx, ty + 1)) && ok(terr(tx, ty - 1))
+      for (let ty = Math.ceil(vis.y0); ty < vis.y1 && (deeps.length < 40 || shallows.length < 40); ty++) {
+        for (let tx = Math.ceil(vis.x0); tx < vis.x1; tx++) {
+          const t = terr(tx, ty)
+          // HORS BERGE : le profond au cœur du profond, le haut-fond au cœur de l'eau — l'écume
+          // de rive et les transitions fausseraient la mesure (c'est le CORPS des deux eaux qu'on juge).
+          if (t === 6 && deeps.length < 40 && entoure(tx, ty, (q) => q === 6)) deeps.push([tx, ty])
+          else if (t === 4 && shallows.length < 40 && entoure(tx, ty, (q) => q === 4)) shallows.push([tx, ty])
+        }
+      }
+      // TROIS captures espacées, moyennées : le clapot postérisé bruite ±0,1 de ratio
+      // d'un instantané à l'autre — on mesure l'EAU, pas la phase de sa houle.
+      const shots = []
+      for (let k = 0; k < 3; k++) {
+        shots.push(await new Promise((ok) => sc.game.renderer.snapshot((img) => ok(img))))
+        await new Promise((ok) => setTimeout(ok, 350))
+      }
+      const cv = document.createElement('canvas')
+      cv.width = shots[0].width; cv.height = shots[0].height
+      const ctx = cv.getContext('2d')
+      ctx.globalAlpha = 1
+      ctx.drawImage(shots[0], 0, 0)
+      ctx.globalAlpha = 0.5
+      ctx.drawImage(shots[1], 0, 0)
+      ctx.globalAlpha = 0.34
+      ctx.drawImage(shots[2], 0, 0)
+      ctx.globalAlpha = 1
+      const shot = shots[0]
+      const lum = (pts) => {
+        let somme = 0, n = 0
+        for (const [tx, ty] of pts) {
+          // Projection SIMPLE : fraction de la vue → fraction du snapshot.
+          const fx = ((tx + 0.5) * 16 - cam.worldView.x) / cam.worldView.width
+          const fy = ((ty + 0.5) * 16 - cam.worldView.y) / cam.worldView.height
+          if (fx < 0 || fx > 1 || fy < 0 || fy > 1) continue
+          const px = ctx.getImageData(Math.round(fx * shot.width), Math.round(fy * shot.height), 1, 1).data
+          somme += 0.299 * px[0] + 0.587 * px[1] + 0.114 * px[2]
+          n++
+        }
+        return n ? somme / n : 0
+      }
+      const ld = lum(deeps)
+      const ls = lum(shallows)
+      return { deep: Math.round(ld), shallow: Math.round(ls), nD: deeps.length, nS: shallows.length, ratio: +(Math.max(ld, ls) / Math.max(1, Math.min(ld, ls))).toFixed(2) }
+    })
+    console.log(`A4 — gué : profond ${contraste.deep} vs haut-fond ${contraste.shallow} (n=${contraste.nD}/${contraste.nS}) → ${contraste.ratio}:1 ${contraste.ratio >= 1.4 ? '✓' : '✗ (< 1,4)'}`)
+
+    // ── A5 : les remous — on marche dans le gué, et on REGARDE ──
+    await page.keyboard.down('KeyA')
+    await page.waitForTimeout(900)
+    await page.screenshot({ path: `${OUT}/feeling-remous.png` })
+    await page.keyboard.up('KeyA')
+
+    // ── A6 : la brume, aux quatre heures qui la racontent ──
+    for (const [h, nom] of [[5.5, '0530'], [6, '0600'], [8, '0800'], [12, '1200']]) {
+      await heure(h)
+      await page.waitForTimeout(800)
+      const brume = await page.evaluate(() => {
+        const mm = window.__BRAISES__.scene.morningMist
+        const ly = mm?.layer
+        const lu = window.__BRAISES__.scene.lastTime?.hourOfCycle
+        return ly?.shader ? { h: +(lu ?? -1).toFixed(2), visible: ly.shader.visible, densite: +ly.density.toFixed(3) } : null
+      })
+      await page.screenshot({ path: `${OUT}/feeling-brume-${nom}.png` })
+      console.log(`A6 — ${h}h : brume ${JSON.stringify(brume)}`)
+      if (h === 6 && (!brume || !brume.visible || brume.densite < 0.1)) console.error('!! la brume de 6h est invisible')
+      if (h === 12 && brume?.visible) console.error('!! il reste de la brume à midi')
+    }
+
+    // ── A7 : les oiseaux comptent à l'aube, se taisent à midi ──
+    await heure(6)
+    const c0 = await page.evaluate(() => window.__BRAISES__.scene.aube.chirps)
+    await page.waitForTimeout(5000)
+    const c1 = await page.evaluate(() => window.__BRAISES__.scene.aube.chirps)
+    await heure(12)
+    await page.waitForTimeout(600) // l'heure s'installe AVANT la base de mesure (sinon course)
+    const c15 = await page.evaluate(() => window.__BRAISES__.scene.aube.chirps)
+    await page.waitForTimeout(3000)
+    const c2 = await page.evaluate(() => window.__BRAISES__.scene.aube.chirps)
+    console.log(`A7 — pépiements : aube +${c1 - c0} en 5 s ${c1 > c0 ? '✓' : '✗'} · midi +${c2 - c15} en 3 s ${c2 === c15 ? '✓' : '✗'}`)
+    console.log(`captures → ${OUT}/feeling-*.png`)
+    return { contraste }
+  },
+
+  /**
    * L'ONGLET CARTE (2026-07-25) — la carte est devenue le 3ᵉ onglet de l'écran personnage,
    * rendue par Phaser SOUS le panneau DOM effacé. Ce qui ne se prouve qu'au navigateur : que
    * le panneau ne mange NI la molette NI le glisser (pointer-events), que M ouvre/referme

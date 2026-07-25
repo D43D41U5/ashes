@@ -87,6 +87,29 @@ export function daylight(hour: number): number {
   return lerp(lo.value, hi.value, t)
 }
 
+/**
+ * LA BRUME DU MATIN (spec da-feeling R14) — un ÉVÉNEMENT de l'aube, pas un état.
+ *
+ * Elle se lève dans la nuit finissante (4h30), est pleine quand le jour point (6h), et le
+ * soleil la dissout en pente CONTINUE jusqu'à 8h30 (règle maison « feel = pente continue » :
+ * on interpole sur tout l'intervalle, bornes exactes, jamais un palier). Rend [0..1] — la
+ * nappe (`world/morning-mist.ts`) y applique son plafond d'alpha. Fonction PURE de l'heure,
+ * comme `daylight` : testable, et une seule vérité pour qui voudra s'y accorder (sons d'aube).
+ */
+const BRUME_KEYS: DayKey[] = [
+  { hour: 0, value: 0 },
+  { hour: 4.5, value: 0 },
+  { hour: 5.5, value: 1 }, // elle se lève vite (l'air froid se condense d'un coup)
+  { hour: 6.5, value: 1 }, // pleine à l'heure où le jour point
+  { hour: 8.5, value: 0 }, // le soleil la mange, lentement
+  { hour: 24, value: 0 },
+]
+
+export function brumeDuMatin(hour: number): number {
+  const { lo, hi, t } = bracket(BRUME_KEYS, hour)
+  return lerp(lo.value, hi.value, t)
+}
+
 interface TintKey {
   hour: number
   color: number

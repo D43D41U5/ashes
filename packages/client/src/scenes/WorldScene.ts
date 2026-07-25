@@ -93,12 +93,13 @@ import { PoiLayer } from './world/poi-layer'
 import { BorneLayer } from './world/borne-layer'
 import { CombeMist } from './world/combe-mist'
 import { GueStones } from './world/gue-stones'
+import { MorningMist } from './world/morning-mist'
 import { FireFx } from './world/fire-fx'
 import { FireGroundGlow } from './world/fire-ground-glow'
 import { createContactShadow } from './world/contact-shadow'
 import { champLisiere, poidsLisiere, LISIERE_MAX, LISIERE_PORTEE } from '../render/ecotone'
 import { creerBrouillard, depackBrouillard, FOG_RAYON_TUILES, loadFog, packBrouillard, revele, saveFog, type Brouillard } from '../render/fog'
-import { fireStateAt, POI_CHARGES } from '@braises/sim'
+import { fireStateAt, POI_CHARGES, TERRAIN_SHALLOW_WATER } from '@braises/sim'
 
 /**
  * Le rayon qu'un lieu dévoile, LU DANS LA TABLE DE LA SIM (`POI_CHARGES`) et jamais recopié :
@@ -110,7 +111,7 @@ function revealRadiusOf(kind: string): number {
 }
 import { NightVeil } from './world/night-veil'
 import { DynamicLighting } from './world/dynamic-lighting'
-import { WaterLayer } from './world/water-layer'
+import { WaterLayer, type WaterWader } from './world/water-layer'
 import { AmbientLife } from './world/ambient-life'
 import { bindDebugKeys } from './world/debug-bindings'
 import { createDebugPanel } from './world/debug-panel'
@@ -129,6 +130,7 @@ import { cendreTelegraphForDay } from './world/cendre-telegraph'
 import { corpseArrow, corpseSecondsLeft } from './world/corpse-arrow'
 import { SoundEngine } from '../audio/engine'
 import { buildSound, soundForEvent } from '../audio/sound'
+import { ChantsDeLAube } from '../audio/aube'
 
 /** Cadrage caméra (spec client R10) : « je veux voir ~N tuiles de haut ». */
 const VISIBLE_TILES_TALL = 20
@@ -312,6 +314,7 @@ export class WorldScene extends Phaser.Scene {
   private bornes: BorneLayer | null = null
   private combeMist: CombeMist | null = null
   private gueStones: GueStones | null = null
+  private morningMist: MorningMist | null = null
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
   private lastSnapshotTick = 0
@@ -390,12 +393,17 @@ export class WorldScene extends Phaser.Scene {
    * de commandes de dessin dit qu'il se passe quelque chose, jamais QUOI.
    */
   lastEntities: Entity[] = []
+  /** Suivi des marcheurs pour les remous de l'eau (spec da-feeling R11) : dernière
+   *  position vue et date du dernier pas — la force du remous s'en déduit. */
+  private readonly waderTrack = new Map<number, { x: number; y: number; lastMove: number }>()
   private inputs!: MovementBindings
   private myVillageId: number | null = null
   private myHunger = 100
   /** LE SON (échafaudage audio) : moteur WebAudio procédural, réveillé au 1er geste, coupable
    *  (touche N). Esthétique à régler à l'oreille — le SYSTÈME est là, sobre et mutable. */
   private audioFx = new SoundEngine()
+  /** Les oiseaux de l'aube (da-feeling R16) — sa sonde `chirps` sert au smoke (A7). */
+  readonly aube = new ChantsDeLAube()
   private eventLog: SimEvent[] = []
   /** Persistance P1-6 : une reprise a réamorcé `eventLog` depuis le disque — il faut
    *  REPUBLIER la chronique une fois, au premier snapshot (là où les NOMS de village
@@ -659,8 +667,9 @@ export class WorldScene extends Phaser.Scene {
         // Les BORNES qui annoncent les seuils (worldgen R21) et la brume de la Combe : du
         // décor dérivé de la carte (map.seuils, zone `combe_brumeuse`) — rien n'est deviné.
         this.bornes = new BorneLayer(this, this.map, this.warp)
-        this.combeMist = new CombeMist(this, this.map, this.warp)
+        this.combeMist = new CombeMist(this, this.map)
         this.gueStones = new GueStones(this, this.map, this.warp)
+        this.morningMist = new MorningMist(this, this.map) // la brume de l'aube naît de l'eau (da-feeling R13)
         this.view.setNodes(msg.nodes)
       },
       clutter: () => {
@@ -943,6 +952,26 @@ export class WorldScene extends Phaser.Scene {
           const factor = st === 'lit' ? 1 : st === 'ember' ? 0.4 : 0
           return { s, g: { ...g, alpha: g.alpha * factor } }
         })
+      // LES REMOUS (spec da-feeling R11) : qui MARCHE dans le haut-fond ? Suivi léger par
+      // entité — la force s'éteint ~0,7 s après le dernier pas : un avatar immobile ne remue
+      // pas l'eau, et les anneaux du dernier pas meurent d'eux-mêmes (critère A5).
+      const waders: WaterWader[] = []
+      for (const e of this.lastEntities) {
+        if (waders.length >= 8) break
+        const moi = e.id === this.playerId && this.predicted
+        const ex = moi ? this.predicted.x : e.x
+        const ey = moi ? this.predicted.y : e.y
+        const shallow = this.map.terrain[Math.floor(ey) * this.map.width + Math.floor(ex)] === TERRAIN_SHALLOW_WATER
+        const prev = this.waderTrack.get(e.id)
+        const bouge = prev !== undefined && (Math.abs(ex - prev.x) > 0.02 || Math.abs(ey - prev.y) > 0.02)
+        const lastMove = shallow && bouge ? time : (prev?.lastMove ?? -1e9)
+        this.waderTrack.set(e.id, { x: ex, y: ey, lastMove })
+        if (!shallow) continue
+        const force = Math.max(0, 1 - (time - lastMove) / 700)
+        if (force <= 0) continue
+        // Phase par identité : les anneaux de deux marcheurs ne battent pas ensemble.
+        waders.push({ x: ex, y: ey, phase: (e.id % 97) * 0.211, strength: force })
+      }
       this.water?.update(
         time,
         hour,
@@ -950,7 +979,11 @@ export class WorldScene extends Phaser.Scene {
         // Portée du reflet un peu plus large que la lueur (comme le trou du voile déborde la flaque) ;
         // force = alpha de la lueur, déjà ∝ nuit → le reflet s'éteint tout seul de jour.
         litFires.map(({ s, g }) => ({ x: s.tx + 0.5, y: s.ty + 0.5, radius: g.radius * 2.3, strength: g.alpha })),
+        waders,
       )
+      this.morningMist?.update(time, hour, this.view.wind) // l'heure décide, le vent porte (R14)
+      this.combeMist?.update(time, this.view.wind) // la combe garde son air, au quart du vent
+      this.aube.update(time, hour, (sp, d2) => this.audioFx.play(sp, d2)) // les oiseaux, fenêtre de l'aube
       this.fireFx?.update(this.view.structures, this.lastSnapshotTick, this.view.wind) // flammes/braises/fumée (∝ état), poussées par le vent
       // La chaleur du Feu au sol : cosmétique, ∝ nuit (voir world/fire-ground-glow.ts).
       this.fireGround?.update(this.view.structures, this.view.villages, day, time, this.lastSnapshotTick)

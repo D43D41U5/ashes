@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ambientTint, daylight, fireGlow, warmthColor, NIGHT_ALPHA_MAX } from './lighting'
+import { ambientTint, brumeDuMatin, daylight, fireGlow, warmthColor, NIGHT_ALPHA_MAX } from './lighting'
 
 /** Les sources du rendu, pour le garde-fou de CÂBLAGE du blend (voir le dernier banc). */
 const SOURCES = import.meta.glob('../scenes/world/*.ts', {
@@ -186,5 +186,26 @@ describe("l'étalonnage : la lumière MULTIPLIE, elle ne se mélange pas", () =>
     // Sous le multiply, le virage est PROPORTIONNEL à la lumière reçue : une ombre n'en reçoit
     // presque pas, elle ne vire donc presque pas. Mesuré : 25 fois moins que le mélange.
     expect(chaleur(multiplie)).toBeLessThan(chaleur(melange) / 20)
+  })
+})
+
+describe('la brume du matin (da-feeling R14) — un événement, pas un état', () => {
+  it('dort la nuit et le jour : zéro avant 4h30, zéro après 8h30, zéro à midi et minuit', () => {
+    for (const h of [0, 2, 4.5, 8.75, 12, 18, 23.9]) {
+      expect(brumeDuMatin(h), `à ${h}h`).toBe(0)
+    }
+  })
+
+  it('est pleine quand le jour point (5h30-6h30), et sur une PENTE CONTINUE de part et d’autre', () => {
+    expect(brumeDuMatin(5.5)).toBe(1)
+    expect(brumeDuMatin(6.5)).toBe(1)
+    // La montée et la dissolution sont continues : chaque pas d'un quart d'heure borne le saut.
+    for (let h = 4; h < 9.5; h += 0.25) {
+      const saut = Math.abs(brumeDuMatin(h + 0.25) - brumeDuMatin(h))
+      expect(saut, `saut à ${h}h`).toBeLessThanOrEqual(0.26)
+    }
+    // Strictement croissante dans la levée, strictement décroissante dans la dissolution.
+    expect(brumeDuMatin(5)).toBeGreaterThan(brumeDuMatin(4.6))
+    expect(brumeDuMatin(7.5)).toBeGreaterThan(brumeDuMatin(8.2))
   })
 })

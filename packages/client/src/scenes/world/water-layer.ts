@@ -31,6 +31,20 @@ const WATER_DEPTH = GROUND_MAP_DEPTH + 0.25
 /** Plafond de foyers reflétés — DOIT égaler le `MAX_FIRES` du shader. */
 const MAX_FIRES = 8
 
+/** Plafond de marcheurs à remous — DOIT égaler le `MAX_WADERS` du shader. */
+const MAX_WADERS = 8
+
+/** Un acteur qui marche dans le haut-fond : il émet des anneaux (spec da-feeling R11). */
+export interface WaterWader {
+  /** Position, en TUILES. */
+  x: number
+  y: number
+  /** Décalage de phase (s) : les anneaux de deux marcheurs ne battent pas ensemble. */
+  phase: number
+  /** Force 0..1 — pleine en marche, s'éteint en ~0,7 s après l'arrêt. */
+  strength: number
+}
+
 /** Un Feu qui se reflète sur l'eau, poussé par frame depuis l'état sim. */
 export interface WaterFire {
   /** Centre du foyer, en TUILES. */
@@ -69,6 +83,9 @@ uniform float uDay;          // 0 nuit · 1 plein jour
 #define MAX_FIRES 8
 uniform int uFireCount;
 uniform vec4 uFires[MAX_FIRES];
+#define MAX_WADERS 8
+uniform int uWaderCount;
+uniform vec4 uWaders[MAX_WADERS]; // xy tuile · z phase (s) · w force (s'éteint après l'arrêt)
 
 /**
  * LA PERSPECTIVE. Le monde ne se lit PAS à la verticale : les arbres sont debout,
@@ -226,12 +243,20 @@ void main() {
   //   • SUR la surface (réflexion) : le ciel, d'autant plus présent que l'eau est profonde — c'est
   //     lui qui éclaircit le large et donne sa couleur au plan d'eau.
   float bedLum = dot(bed, vec3(0.299, 0.587, 0.114));
-  vec3 mud = vec3(0.35, 0.26, 0.14) * (0.65 + 0.7 * bedLum); // la vase du fond, brune, ondulante
-  vec3 murk = vec3(0.16, 0.22, 0.20);                        // l'eau profonde trouble (vert-de-gris)
+  // LE GUÉ SE LIT EN LUMINANCE (spec da-feeling R10) : mesuré sur capture, profond/haut-fond ne
+  // contrastaient qu'à 1,29:1 — la lecture ne tenait qu'au canal bleu. La molette est ICI, sur la
+  // vase (plus sableuse, gain relevé) : le haut-fond s'éclaircit, le large garde son ciel — la
+  // doctrine « la réflexion croît avec la profondeur » (R45) n'est pas touchée. Cible ≥ 1,4:1.
+  vec3 mud = vec3(0.46, 0.36, 0.21) * (1.0 + 0.8 * bedLum);  // la vase du fond, brune — ÇA RESTE DE L'EAU
+  // (l'essai « sable clair » a fait lire la rivière comme une route : rollback, regardé)
+  vec3 murk = vec3(0.11, 0.155, 0.15);                       // l'eau profonde trouble (vert-de-gris)
   vec3 bottom = mix(mud, murk, deep);                        // ce qu'on voit SOUS la surface
 
   // Le ciel réfléchi : bleu pâle de jour, éteint la nuit (uDay), réchauffé quand le soleil rase.
-  vec3 daySky = vec3(0.52, 0.62, 0.70);
+  // Le ciel réfléchi, UN CRAN plus profond (0.52,0.62,0.70 → lac de montagne) : le gradient
+  // de réflexion (la doctrine R45) est intact, mais le large cesse d'être plus CLAIR que le
+  // gué — c'est lui qui plafonnait le contraste de lisibilité (mesuré 1,29:1 puis 1,11:1).
+  vec3 daySky = vec3(0.34, 0.45, 0.56);
   vec3 nightSky = vec3(0.05, 0.08, 0.13);
   vec3 sky = mix(nightSky, daySky, uDay);
   sky += vec3(0.12, 0.05, -0.03) * uDay * max(0.0, 1.0 - uSun.z); // chaleur au ras du matin/soir
@@ -239,7 +264,7 @@ void main() {
   // La part de ciel : un socle (l'eau en réfléchit toujours un peu), FORTE au large, faible sur le
   // gué (là on regarde le fond presque à la verticale). C'est ce mélange qui remplace le marron
   // uniforme — le fond reste brun là où on le voit, le large prend la lumière du ciel.
-  float skyMix = clamp(0.30 + 0.55 * deep, 0.0, 0.9);
+  float skyMix = clamp(0.16 + 0.69 * deep, 0.0, 0.9);
   vec3 col = mix(bottom, sky, skyMix);
 
   // ═══ LE CLAPOT PIXEL : la houle POSTERISÉE en paliers francs ═══
@@ -291,6 +316,31 @@ void main() {
   }
   col += vec3(1.0, 0.52, 0.20) * clamp(fireWash, 0.0, 1.2) * 0.75; // la braise, en lavage
   col += vec3(1.0, 0.86, 0.62) * clamp(fireSpark, 0.0, 1.0) * 0.95; // les éclats chauds, durs
+
+  // ═══ LES REMOUS (spec da-feeling R11) — l'eau vit par ses ÉVÉNEMENTS ═══
+  //
+  // Un marcheur dans le haut-fond émet des ANNEAUX : rayon ∝ l'âge (répété), qui MEURENT en
+  // s'élargissant. Le langage du clapot : bande FRANCHE (step), calculée par cellule (flatPx
+  // déjà planché) — jamais un dégradé. La force w vient du CPU : pleine en marche, elle
+  // s'éteint en ~0,7 s après l'arrêt — un avatar immobile ne remue pas l'eau.
+  float ripple = 0.0;
+  for (int i = 0; i < MAX_WADERS; i++) {
+    if (i >= uWaderCount) break;
+    vec4 wd = uWaders[i];
+    if (wd.w <= 0.0) continue;
+    float dw = length(tile - wd.xy);
+    float age = fract((t - wd.z) * 1.15);      // un anneau tous les ~0,87 s
+    float r = 0.25 + age * 1.5;                // il naît au pied, meurt à ~1,75 tuile
+    // Largeur ≈ la CELLULE (4 px = 0,25 tuile) : plus fin, l'anneau raterait les cellules du grain.
+    float band = step(abs(dw - r), 0.27) * (1.0 - age) * (1.0 - step(1.9, dw));
+    // Le second anneau, en quinconce : la traîne du pas précédent.
+    float age2 = fract((t - wd.z) * 1.15 + 0.5);
+    float r2 = 0.25 + age2 * 1.5;
+    band += step(abs(dw - r2), 0.22) * (1.0 - age2) * 0.6 * (1.0 - step(1.9, dw));
+    ripple += band * wd.w;
+  }
+  // La crête du remous ÉCLAIRCIT (l'eau retournée prend la lumière) — un palier, pas un halo.
+  col = mix(col, col * 1.3 + vec3(0.07, 0.07, 0.05), clamp(ripple, 0.0, 1.0) * 0.6);
 
   // L'ÉCUME, et elle vient DE LA BERGE. Des lignes parallèles au rivage qui
   // avancent vers la terre : le clapot qui vient mourir sur la rive, et non un
@@ -402,6 +452,8 @@ export class WaterLayer {
             setUniform('uDay', this.day)
             setUniform('uFireCount', this.fireCount)
             setUniform('uFires', this.fireData)
+            setUniform('uWaderCount', this.waderCount)
+            setUniform('uWaders', this.waderData)
           },
         },
         0,
@@ -420,12 +472,15 @@ export class WaterLayer {
   private fireCount = 0
   /** vec4 par foyer, à plat (xy tuile · z portée · w force) — un seul tampon, muté par frame. */
   private readonly fireData = new Float32Array(MAX_FIRES * 4)
+  /** vec4 par marcheur (xy tuile · z phase s · w force) — les remous (spec da-feeling R11). */
+  private readonly waderData = new Float32Array(MAX_WADERS * 4)
+  private waderCount = 0
 
   /**
-   * L'heure décide du soleil sur l'eau ; `fires` allume la nappe la nuit (reflet du camp).
-   * Les foyers au-delà de `MAX_FIRES` sont ignorés (silencieusement — au pire un reflet manque).
+   * L'heure décide du soleil sur l'eau ; `fires` allume la nappe la nuit (reflet du camp) ;
+   * `waders` fait naître les remous sous les pas (au-delà des plafonds : ignorés en silence).
    */
-  update(nowMs: number, hour: number, daylight: number, fires: WaterFire[] = []): void {
+  update(nowMs: number, hour: number, daylight: number, fires: WaterFire[] = [], waders: WaterWader[] = []): void {
     if (!this.shader) return
     this.timeS = nowMs / 1000
     this.sun = sunVector(hour)
@@ -442,6 +497,18 @@ export class WaterLayer {
       this.fireData[o + 3] = f.strength
     }
     for (let i = n; i < MAX_FIRES; i++) this.fireData[i * 4 + 3] = 0 // slots morts : force nulle
+    const m = Math.min(MAX_WADERS, waders.length)
+    this.waderCount = m
+    for (let i = 0; i < m; i++) {
+      const wd = waders[i]
+      if (!wd) continue
+      const o = i * 4
+      this.waderData[o] = wd.x
+      this.waderData[o + 1] = wd.y
+      this.waderData[o + 2] = wd.phase
+      this.waderData[o + 3] = wd.strength
+    }
+    for (let i = m; i < MAX_WADERS; i++) this.waderData[i * 4 + 3] = 0
   }
 
   destroy(): void {
