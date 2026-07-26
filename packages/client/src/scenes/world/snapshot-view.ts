@@ -88,7 +88,9 @@ export const INTERP_DELAY_MULTI_MS = 100
  * regard (spec R9bis : la bête regarde où elle va) s'en déduit. */
 const ACTOR_FOOTPRINTS: Record<string, ActorFootprint & { facesRight?: boolean }> = {
   'spr-player': { widthTiles: 1, heightTiles: 1.6 },
+  'spr-player_lit': { widthTiles: 1, heightTiles: 1.6 }, // même emprise que la version peinte
   'spr-npc': { widthTiles: 1, heightTiles: 1.6 },
+  'spr-npc_lit': { widthTiles: 1, heightTiles: 1.6 },
   'spr-zombie': { widthTiles: 1, heightTiles: 1.6 },
   // Le gibier (spec faune) : sa TAILLE est la première information, et sa
   // POSTURE est la seconde (R9bis/C19) — tête au sol elle broute, tête dressée
@@ -624,7 +626,9 @@ export class SnapshotView {
       // LA POSTURE dit l'état (R9bis/C19) — et l'alpha garde sa silhouette
       // propre (spec faune R12) : le joueur doit pouvoir le désigner d'un coup
       // d'œil, c'est LUI qu'il faut abattre.
-      const key = monster ? beastTexture(monster, sentinels.has(entity.id), this.hour) : 'spr-npc'
+      const key = monster
+        ? beastTexture(monster, sentinels.has(entity.id), this.hour)
+        : this.lighting ? 'spr-npc_lit' : 'spr-npc' // l'humain bascule (R9) ; la bête reste peinte (consigné)
       if (record.textureKey !== key) {
         // setTexture réinitialise la frame : ne le rappeler que si la texture
         // change vraiment. `syncActor` re-applique aussitôt l'emprise (R12).

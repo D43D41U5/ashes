@@ -19,6 +19,8 @@ import type Phaser from 'phaser'
 // LA RECETTE VIT DANS normal-map.ts (spec da-feeling R1) — la recopie « volontaire » de
 // l'en-tête est morte : l'A/B de lit-props est tranché et commité, on importe.
 import { type Crack, newCanvas, normalFromCanvas, registerLit as register, walkPath } from './normal-map'
+import { POI_LIT_DEFS_DATA } from './poi-lit-defs'
+import { CRACK, CRACK2, STONE_A, STONE_B, QUARTZ, MOSS, MOSS_BR, MOSS_DK, LICHEN, GRAIN_D, GRAIN_L } from './matiere'
 
 // ── FISSURES ──────────────────────────────────────────────────────────────────────────────────
 
@@ -27,19 +29,7 @@ import { type Crack, newCanvas, normalFromCanvas, registerLit as register, walkP
 
 
 
-// ── Matière (albédo PLAT — le relief vient de la lumière, pas d'un hillshade peint) ──
-const STONE_A = '#8b847a' // la grande masse
-const STONE_B = '#7b756b' // un second bloc, légère variation de matière
-const QUARTZ = '#c7c1b2' // une veine claire / une face fraîchement fracturée
-const MOSS = '#43592f' // un peu de mousse, au nord
-// Météorisation — de la MATIÈRE, pas de l'ombrage : fissures, mousse variée, grain minéral, lichen.
-const CRACK = '#4f4840' // une fissure franche (pierre fendue, pas noire)
-const CRACK2 = '#5f584e' // une fissure plus discrète / capillaire
-const MOSS_BR = '#5c7838' // mousse plus vive (là où la lumière porte)
-const MOSS_DK = '#38502a' // mousse d'ombre, dans les creux
-const LICHEN = '#a8a493' // une pastille de lichen pâle
-const GRAIN_D = '#7d766c' // grain minéral, un ton sous la masse
-const GRAIN_L = '#978f84' // grain minéral, un ton au-dessus
+// La MATIÈRE (tons nommés, garde de palette) vit dans render/matiere.ts.
 
 /** Un bloc : son rect et son ton. La SILHOUETTE (l'union des rects, avec ses fentes d'1 px)
  *  porte tout le relief ; le ton n'est qu'un matériau, pas un ombrage. */
@@ -174,16 +164,64 @@ export function erratiqueVariantFor(seed: number): number {
  *  sous chaque bloc, débordant, pour qu'il POSE au lieu de flotter. Peinte APRÈS la normale
  *  (assombrit l'albédo seul) — sinon `normalFromCanvas` la lit comme de la matière et affaisse
  *  l'arête basse. Un bloc posé sur un autre projette donc son ombre sur la face de dessous. */
+/** La FORME CUBIQUE commune : ce que partagent le pilote erratique et tous les lieux basculés. */
+interface FormeCubique {
+  blocks: readonly Block[]
+  accents?: readonly Accent[]
+  details?: readonly Accent[]
+  cracks?: readonly Crack[]
+}
+
+/** Un LIEU basculé (spec da-feeling §3) : sa forme cubique aux dimensions de la table ART,
+ *  et sa couronne (la découpe haute des MÊMES canvas — identique au pixel où ils se recouvrent). */
+export interface PoiLitDef extends FormeCubique {
+  slug: string
+  w: number
+  h: number
+  crown?: number
+}
+
+/** LES LIEUX BASCULÉS — autorés par familles de matière (vague B du 26/07), format du pilote.
+ *  La donnée vit dans poi-lit-defs.ts (générée, dimensions réalignées sur la table ART) ;
+ *  la garde de câblage et la planche jour/nuit couvrent tout ce qui y entre. */
+export const POI_LIT_DEFS: readonly PoiLitDef[] = POI_LIT_DEFS_DATA
+
+/** Les kinds qui ont leur `_lit` — PoiLayer s'y câble (R8 : le câblage suit la texture). */
+export const POI_LIT_KINDS: ReadonlySet<string> = new Set(POI_LIT_DEFS.map((d) => d.slug))
+
+export const poiLitKey = (slug: string): string => `poi-${slug}_lit`
+export const poiLitCrownKey = (slug: string): string => `poi-${slug}-crown_lit`
+
+/** Enregistre tous les lieux basculés : albédo aplati + normale (base plantée, sillons),
+ *  l'ombre de contact APRÈS la dérivation, la couronne = découpe haute des mêmes canvas. */
+export function generateLitPois(scene: Phaser.Scene): void {
+  for (const d of POI_LIT_DEFS) {
+    const alb = newCanvas(d.w, d.h)
+    drawErratic(alb.ctx, d)
+    const nrm = normalFromCanvas(alb.c, 1, 3.5, 3, true, d.cracks ?? [])
+    shadeErratic(alb.ctx, d)
+    register(scene, poiLitKey(d.slug), alb.c, nrm)
+    if (d.crown !== undefined) {
+      const crop = (src: HTMLCanvasElement): HTMLCanvasElement => {
+        const { c, ctx } = newCanvas(d.w, d.crown!)
+        ctx.drawImage(src, 0, 0)
+        return c
+      }
+      register(scene, poiLitCrownKey(d.slug), crop(alb.c), crop(nrm))
+    }
+  }
+}
+
 const SHADOW = { color: '#000000', alpha: 0.26, h: 2, overhang: 1, minW: 5 } as const
 
-function contactBands(v: ErraticVariant): readonly (readonly [number, number, number, number])[] {
+function contactBands(v: FormeCubique): readonly (readonly [number, number, number, number])[] {
   return v.blocks.map(({ rect: [x, y, w, h] }) => {
     const o = w >= SHADOW.minW ? SHADOW.overhang : 0
     return [x - o, y + h, w + 2 * o, SHADOW.h] as const
   })
 }
 
-function drawErratic(ctx: CanvasRenderingContext2D, v: ErraticVariant): void {
+function drawErratic(ctx: CanvasRenderingContext2D, v: FormeCubique): void {
   for (const { rect: [x, y, w, h], tone } of v.blocks) { ctx.fillStyle = tone; ctx.fillRect(x, y, w, h) }
   // Les marques de matière (accents + météorisation) en SOURCE-ATOP : elles ne peignent QUE là où la
   // masse est déjà opaque → jamais un débord de silhouette (donc normale intacte), et on peut les
@@ -204,7 +242,7 @@ function drawErratic(ctx: CanvasRenderingContext2D, v: ErraticVariant): void {
   ctx.globalCompositeOperation = 'source-over'
 }
 
-function shadeErratic(ctx: CanvasRenderingContext2D, v: ErraticVariant): void {
+function shadeErratic(ctx: CanvasRenderingContext2D, v: FormeCubique): void {
   ctx.fillStyle = SHADOW.color
   ctx.globalAlpha = SHADOW.alpha
   for (const [x, y, w, h] of contactBands(v)) ctx.fillRect(x, y, w, h)

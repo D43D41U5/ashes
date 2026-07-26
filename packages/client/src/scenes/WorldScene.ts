@@ -315,6 +315,8 @@ export class WorldScene extends Phaser.Scene {
   private combeMist: CombeMist | null = null
   private gueStones: GueStones | null = null
   private morningMist: MorningMist | null = null
+  /** Le dernier état du toggle appliqué à l'avatar (swap _lit une fois, pas par frame). */
+  private playerLit: boolean | null = null
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
   private lastSnapshotTick = 0
@@ -996,6 +998,12 @@ export class WorldScene extends Phaser.Scene {
       if (this.clutter) this.clutter.lighting = lit
       this.pois.lighting = lit // le bloc erratique (couche POI cubique) suit le même toggle
       this.bornes?.setLighting(lit) // les bornes de seuil aussi (da-feeling R5)
+      // L'AVATAR bascule sur son _lit (R9 — un humain est un chip symétrique). Une fois par
+      // changement de toggle : setTexture par frame réinitialiserait la frame pour rien.
+      if (this.playerLit !== lit) {
+        this.playerLit = lit
+        this.playerSprite?.setTexture(lit ? 'spr-player_lit' : 'spr-player')
+      }
       // Le voile descend SOUS les sprites quand ils sont éclairés (il ne tinte plus que le fond) ;
       // sinon il coiffe toute la scène. Et le Feu le CREUSE — sauf en mode éclairé, où la vraie
       // pipeline fait déjà la lumière (on ne troue pas deux fois).

@@ -13,7 +13,7 @@ import { makeCliffTextures } from '../render/cliff-art'
 import { makePoiTextures } from './world/poi-art'
 import { makeBorneTextures } from './world/borne-layer'
 import { makeGueStoneTexture } from './world/gue-stones'
-import { generateLitErratiques } from '../render/poi-lit'
+import { generateLitErratiques, generateLitPois } from '../render/poi-lit'
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -291,7 +291,8 @@ export class BootScene extends Phaser.Scene {
     makeBorneTextures(this) // les bornes qui annoncent les seuils (worldgen R21) — world/borne-layer.ts
     makeGueStoneTexture(this) // les dalles des gués : le passage se lit par la forme — world/gue-stones.ts
     generateLitStructures(this) // les chips de structures, albédo aplati + normale (da-feeling R4)
-    generateLitErratiques(this) // ESSAI DA cubique sur les POI : 3 variantes du bloc erratique (poi-erratique-<i>_lit) — voir render/poi-lit.ts
+    generateLitErratiques(this)
+    generateLitPois(this) // les lieux basculés (vague B, da-feeling §3) — table POI_LIT_DEFS // ESSAI DA cubique sur les POI : 3 variantes du bloc erratique (poi-erratique-<i>_lit) — voir render/poi-lit.ts
     makeCliffTextures(this) // les bandes de roche plate des frontières — voir render/cliff-art.ts
   }
 

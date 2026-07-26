@@ -20,7 +20,7 @@ import Phaser from 'phaser'
 import { POI, type WorldMap } from '@braises/sim' // POI : SIGHT_TILES (labels) + SET_PIECE_KINDS (R10)
 import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import { poiCrownKey, poiTextureKey, POI_ART } from './poi-art'
-import { erratiqueVariantFor, litErratiqueKey } from '../../render/poi-lit'
+import { erratiqueVariantFor, litErratiqueKey, POI_LIT_KINDS, poiLitCrownKey, poiLitKey } from '../../render/poi-lit'
 import type { Warp } from '../../render/warp'
 import { FONT } from '../ui/typography'
 
@@ -113,11 +113,13 @@ export class PoiLayer {
         return
       }
 
-      // Le BLOC ERRATIQUE est passé à la DA cubique : 3 variantes `_lit`, choisie DÉTERMINISTIQUEMENT
-      // par l'identité du lieu (poiId) → même pierre à chaque session, les trois réparties. Les autres
-      // lieux gardent leur texture peinte pour l'instant.
-      const lit = z.kind === 'erratique'
-      const key = lit ? litErratiqueKey(erratiqueVariantFor(poiId)) : poiTextureKey(z.kind)
+      // LA DA CUBIQUE SUIT LA TEXTURE (da-feeling R8) : l'erratique garde ses 3 variantes
+      // réparties par poiId ; tout kind présent dans POI_LIT_KINDS bascule sur son `_lit` —
+      // aucune liste à tenir à jour ici, le câblage vient de la table des formes.
+      const lit = z.kind === 'erratique' || POI_LIT_KINDS.has(z.kind)
+      const key = z.kind === 'erratique'
+        ? litErratiqueKey(erratiqueVariantFor(poiId))
+        : POI_LIT_KINDS.has(z.kind) ? poiLitKey(z.kind) : poiTextureKey(z.kind)
       const body = scene.add.image(px, py, key).setOrigin(0.5, 1).setVisible(false)
       if (lit) body.setLighting(this.lighting)
       // Même bande que les acteurs et les nœuds : à pieds égaux, un lieu se
@@ -129,7 +131,9 @@ export class PoiLayer {
       if (a.crown !== undefined) {
         // Ancrée par le HAUT, exactement là où commence le sprite complet :
         // les deux se superposent au pixel près sur la part commune.
-        const crown = scene.add.image(px, py - a.h, poiCrownKey(z.kind)).setOrigin(0.5, 0).setVisible(false)
+        const crownTex = POI_LIT_KINDS.has(z.kind) ? poiLitCrownKey(z.kind) : poiCrownKey(z.kind)
+        const crown = scene.add.image(px, py - a.h, crownTex).setOrigin(0.5, 0).setVisible(false)
+        if (lit) crown.setLighting(this.lighting)
         crown.setDepth(crownDepth(feetY, TILE_PX))
         entry.crown = crown
       }
@@ -153,7 +157,10 @@ export class PoiLayer {
         : p.tx >= x0 && p.tx <= x1 && p.ty >= y0 && p.ty <= y1
       p.body?.setVisible(onScreen)
       p.crown?.setVisible(onScreen)
-      if (p.lit && onScreen) p.body?.setLighting(this.lighting) // réarmé comme les autres couches (toggle debug)
+      if (p.lit && onScreen) {
+        p.body?.setLighting(this.lighting) // réarmé comme les autres couches (toggle debug)
+        p.crown?.setLighting(this.lighting)
+      }
 
       // Le nom : seulement si le lieu est CONNU, et seulement à l'écran.
       if (!onScreen || !knownPois.includes(p.poiId)) {

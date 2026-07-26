@@ -339,6 +339,85 @@ const SCENARIOS = {
   },
 
   /**
+   * LES LIEUX BASCULÉS (spec da-feeling §3, critère A2) — la planche de la vague B.
+   *
+   * Pour CHAQUE texture `poi-*_lit` : l'étendue des canaux nx/ny de sa normale (une masse
+   * dont la normale est plate tombera en blob bleu la nuit — c'est LE juge). Puis on va
+   * REGARDER quelques lieux représentatifs, de jour et de nuit. Exige `--dev` (TP + heure).
+   */
+  async 'lieux-lit'(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForTimeout(800)
+
+    const mesures = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const range = (key, ch) => {
+        const tex = s.textures.get(key)
+        const src = tex && tex.dataSource && tex.dataSource[0]
+        if (!src) return null
+        const img = src.image
+        const cv = document.createElement('canvas')
+        cv.width = img.width; cv.height = img.height
+        const ctx = cv.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        const d = ctx.getImageData(0, 0, cv.width, cv.height).data
+        let mn = 1, mx = -1
+        for (let i = ch; i < d.length; i += 4) {
+          const v = (d[i] / 255) * 2 - 1
+          if (v < mn) mn = v
+          if (v > mx) mx = v
+        }
+        return +(mx - mn).toFixed(2)
+      }
+      const out = []
+      for (const key of s.textures.getTextureKeys()) {
+        if (!/^poi-.+_lit$/.test(key) || key.includes('-curl')) continue
+        out.push({ key, nx: range(key, 0), ny: range(key, 1) })
+      }
+      return out.sort((a, b) => (a.key < b.key ? -1 : 1))
+    })
+    let plats = 0
+    for (const m of mesures) {
+      // Une COURONNE est une tranche mince du même canvas : sa plage ny est structurellement
+      // étroite (le corps, lui, est jugé plein cadre) — le seuil ne vaut que pour les corps.
+      const crown = m.key.includes('-crown')
+      const plat = (m.nx ?? 0) < 0.9 || (!crown && (m.ny ?? 0) < 0.9)
+      if (plat) plats++
+      console.log(`${m.key.padEnd(30)} nx:${m.nx} ny:${m.ny}${plat ? '  ✗ PLAT (blob bleu la nuit)' : ''}`)
+    }
+    console.log(`${mesures.length} lieux _lit mesurés — ${plats === 0 ? '✓ aucune normale plate' : `✗ ${plats} suspect(s)`}`)
+
+    // ── ON VA REGARDER : cinq lieux, midi puis nuit noire ──
+    const cibles = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const un = (k) => {
+        const z = (m.zones ?? []).find((q) => q.kind === k)
+        return z ? { k, x: z.x + z.w / 2, y: z.y + z.h / 2 } : null
+      }
+      return ['chene', 'cairn', 'tour_guet', 'grotte', 'cascade'].map(un).filter(Boolean)
+    })
+    const heure = async (h) => {
+      for (let essai = 0; essai < 4; essai++) {
+        await page.evaluate((hh) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: hh }), h)
+        await page.waitForTimeout(600)
+        const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1)
+        if (Math.abs(lu - h) < 0.3) return
+      }
+    }
+    for (const [h, tag] of [[11, 'jour'], [23, 'nuit']]) {
+      await heure(h)
+      for (const c of cibles) {
+        await page.evaluate(({ x, y }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y: y + 4 }), c)
+        await page.waitForTimeout(1200)
+        await page.screenshot({ path: `${OUT}/lit-${c.k}-${tag}.png` })
+      }
+      console.log(`captures ${tag} : ${cibles.map((c) => c.k).join(', ')}`)
+    }
+    return { mesures: mesures.length, plats }
+  },
+
+  /**
    * L'ONGLET CARTE (2026-07-25) — la carte est devenue le 3ᵉ onglet de l'écran personnage,
    * rendue par Phaser SOUS le panneau DOM effacé. Ce qui ne se prouve qu'au navigateur : que
    * le panneau ne mange NI la molette NI le glisser (pointer-events), que M ouvre/referme

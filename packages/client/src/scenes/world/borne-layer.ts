@@ -17,6 +17,7 @@
 import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
 import { type Crack, newCanvas, normalFromCanvas, registerLit } from '../../render/normal-map'
+import { STONE_B } from '../../render/matiere'
 import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import type { Warp } from '../../render/warp'
 
@@ -97,7 +98,7 @@ export function makeBorneTextures(scene: Phaser.Scene): void {
       ctx.fillStyle = '#6a645a'
       ctx.fillRect(c + 4, b - 14, 7, 5) // le tronçon tombé
     } else {
-      ctx.fillStyle = '#7b756b' // le chapeau : une dalle, un ton sous le fût
+      ctx.fillStyle = STONE_B // le chapeau : une dalle, un ton sous le fût (matière nommée)
       ctx.fillRect(c - 8, haut - 6, 16, 7)
     }
     // L'ombre de contact, PEINTE APRÈS la normale ? Non : ici l'albédo sert AUSSI à dériver la

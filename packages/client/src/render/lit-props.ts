@@ -86,6 +86,12 @@ const PROPS: LitProp[] = [
   { key: 'cl-stump', w: 16, h: 16, draw: (c) => { c.fillStyle = '#4a3826'; c.fillRect(6, 9, 4, 5) } },
   // Le nœud roche (masse pâteuse côté SnapshotView) — pas de miroir (les nœuds ne se miroitent pas).
   { key: 'nd-rock', w: 16, h: 16, draw: (c) => { c.fillStyle = '#6a6a72'; c.fillRect(3, 6, 11, 8) } },
+  // ═══ LES HUMAINS (da-feeling R9) — des billboards mono-frame SYMÉTRIQUES, jamais miroités :
+  //     la bascule est celle d'un chip. Bord + cœur = deux MATÉRIAUX (un liseré n'est pas un
+  //     ombrage), normale blocky. La FAUNE, elle, reste consignée : asymétrique, miroitée par
+  //     le regard, et déclinée en postures — la recette « normale par posture » n'est pas actée.
+  { key: 'spr-player', w: 12, h: 12, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#8a6f3c'; c.fillRect(0, 0, 12, 12); c.fillStyle = '#f0e6c8'; c.fillRect(1, 1, 10, 10) } },
+  { key: 'spr-npc', w: 12, h: 12, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#4a5364'; c.fillRect(0, 0, 12, 12); c.fillStyle = '#9aa4b5'; c.fillRect(1, 1, 10, 10) } },
   // ═══ LA VAGUE A DE LA BASCULE (spec da-feeling R3) — les nœuds restants, silhouettes
   //     BootScene reproduites à l'identique (deux backends, une forme), hillshade retiré. ═══
   // Le BUISSON À BAIES : 4 états de stock (berryDots borne à 3). Socle vert aplati '#3b682b'
