@@ -396,6 +396,21 @@ void main() {
   // (l'essai « sable clair » a fait lire la rivière comme une route : rollback, regardé)
   vec3 murk = vec3(0.11, 0.155, 0.15);                       // l'eau profonde trouble (vert-de-gris)
   vec3 bottom = mix(mud, murk, deep);                        // ce qu'on voit SOUS la surface
+
+  // ═══ LE LIT STRIÉ PAR LE COURANT (geste 04, eau-fond) — le courant a SCULPTÉ le fond ═══
+  //
+  // Là où le courant porte, le sable du lit garde ses rides : des STRIES perpendiculaires
+  // au fil, STATIQUES (le courant les a faites, il ne les anime pas), en bandes franches
+  // d'une demi-tuile. La rivière lit sa direction même sans une feuille à l'écran ; les
+  // lacs, à courant nul, restent lisses — deux eaux, deux matières. Éteintes en profond
+  // (on ne voit plus le fond) et sous le seuil de courant.
+  float fmag = length(rf.yz);
+  if (fmag > 0.12) {
+    vec2 fperp = vec2(-rf.z, rf.y) / fmag;
+    float strie = step(0.0, sin(dot(tile, fperp) * 6.9));
+    float strieVis = (1.0 - deep) * smoothstep(0.12, 0.3, fmag) * 0.12;
+    bottom *= 1.0 + (strie - 0.5) * 2.0 * strieVis;
+  }
   // ═══ LE LIT VISIBLE (spec eau-vivante R10') — l'eau montre son fond avant de se saturer ═══
   // Près du trait de rive, le VRAI lit (le bake réfracté) gagne, par crans francs : on
   // devine le sable et la vase du bord, puis l'eau prend le dessus en ~1 tuile. C'est le
