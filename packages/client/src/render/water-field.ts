@@ -235,12 +235,16 @@ const FOND_COURANT_GALETS = 0.3
 /** Le sable s'arrête à cette distance de la rive (tuiles) ; la vase prend ensuite. */
 const FOND_SABLE_TUILES = 1.6
 
+/** Le lit du Lac Mort (geste 10) : des galets pâles, froids — un fond qu'on voit TROP bien. */
+const FOND_LAC_MORT: [number, number, number] = [138, 142, 136]
+
 export function buildFondField(
   terrain: ArrayLike<number>,
   sd: Float32Array,
   courant: ReadonlyMap<number, { x: number; y: number }> | null,
   width: number,
   height: number,
+  regime?: ArrayLike<number>,
 ): Uint8ClampedArray {
   const data = new Uint8ClampedArray(width * height * 4)
   for (let y = 0; y < height; y++) {
@@ -254,6 +258,9 @@ export function buildFondField(
         // La terre porte du sable : la réfraction qui déborde d'un rien près du bord
         // doit trouver une plage, pas un trou noir.
         base = FOND_SABLE
+      } else if (regime?.[i] === REGIME_LAC_MORT) {
+        // Le Lac Mort (geste 10) montre son fond partout — des galets pâles, froids.
+        base = FOND_LAC_MORT
       } else if (t === SHALLOW) {
         // LE HAUT-FOND EST SABLE (ou galets sous le courant), PARTOUT : c'est le lit
         // qu'on FOULE — marchable = clair, la lisibilité du gué (R10) passe par lui.

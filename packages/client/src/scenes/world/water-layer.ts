@@ -25,12 +25,20 @@ import {
   TERRAIN_PEAT_BOG,
   TERRAIN_REED_MARSH,
   TERRAIN_SHALLOW_WATER,
+  zoneSlugAt,
   type WorldMap,
 } from '@braises/sim'
 import { buildFlowField, COURANT_VITESSE, TAPER_RIVE_MAX, TAPER_RIVE_MIN, type FlowField } from '../../render/flow-field'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { sunDirection } from '../../render/lighting'
-import { buildFondField, buildRiveField, buildWaterField, REGIME_MARAIS, type RiveField } from '../../render/water-field'
+import {
+  buildFondField,
+  buildRiveField,
+  buildWaterField,
+  REGIME_LAC_MORT,
+  REGIME_MARAIS,
+  type RiveField,
+} from '../../render/water-field'
 
 /** Période du cycle d'advection dual-phase (s). Courte À DESSEIN : sur la rampe du taper
  *  de berge, les deux couches divergent d'au plus 0,25·T·vitesse — à 3 s l'écart (0,41
@@ -318,6 +326,9 @@ void main() {
   // LE RÉGIME (gestes 06/10) : 0 = eau normale · ~0,47 = MARAIS (eau morte) · ~0,78 = LAC MORT.
   float regime = field.b;
   float morte = step(0.30, regime) * (1.0 - step(0.63, regime));
+  // LE LAC MORT (geste 10) : « parfaitement immobile, trop claire, sans un poisson ».
+  // Le malaise vient de l'EXCÈS de clarté — jamais d'un filtre sombre.
+  float lacMort = step(0.63, regime);
   vec3 rf = riveFlow(tile); // x : distance à la rive (+eau/−terre) · yz : le courant
   float dRive = rf.x;
 
@@ -329,8 +340,8 @@ void main() {
   // Purement visuel : la vérité sim (riveAt, franchissements, audio) ne bouge pas, et
   // l'amplitude reste sous l'hystérésis de ±0,2 tuile des événements (eau-vivante R3) —
   // l'œil et les règles ne peuvent pas se contredire. L'eau morte ne respire pas.
-  float maree = floor(sin(uTime * 0.31) * 2.0 + 0.5) / 2.0 * 0.12 * (1.0 - morte);
-  float mareeVieille = floor(sin((uTime - 2.0) * 0.31) * 2.0 + 0.5) / 2.0 * 0.12 * (1.0 - morte);
+  float maree = floor(sin(uTime * 0.31) * 2.0 + 0.5) / 2.0 * 0.12 * (1.0 - max(morte, lacMort));
+  float mareeVieille = floor(sin((uTime - 2.0) * 0.31) * 2.0 + 0.5) / 2.0 * 0.12 * (1.0 - max(morte, lacMort));
 
   // LE TRAIT DE RIVE. Masque NEAREST → 0 ou 1 franc. Le bord tombe PILE sur la
   // frontière des tuiles (multiple de 16 px, donc de 4) : coins CARRÉS, et l'encoche
@@ -417,7 +428,8 @@ void main() {
 
   // Le clapot meurt sur les hauts-fonds : on ne clapote pas dans deux doigts d'eau.
   float amp = 0.35 + 0.65 * smoothstep(0.0, 0.45, open);
-  amp *= 1.0 - 0.85 * morte; // l'eau morte du marais ne clapote pas (geste 06)
+  amp *= 1.0 - 0.85 * morte;   // l'eau morte du marais ne clapote pas (geste 06)
+  amp *= 1.0 - 0.95 * lacMort; // le Lac Mort est PARFAITEMENT immobile (geste 10)
   vec2 p = tile * PLANE; // le plan de l'eau, redressé (voir YSQUASH)
 
   // ═══ LA TURBIDITÉ (geste 07, eau-fond) — l'eau garde la trace du passage ═══
@@ -473,7 +485,8 @@ void main() {
   // l'herbe d'à côté et la peindrait dans l'eau. Le fond n'est PLUS le bake (qui, sous
   // l'eau, contient… la couleur d'eau) : c'est le LIT inféré du geste 03 — sable près
   // des berges, galets sous le courant, vase qui fonce au large.
-  vec2 refr = tile + (n.xy / PLANE) * 0.55 * (1.0 - deep) * smoothstep(0.0, 0.4, open);
+  // (Au Lac Mort, la réfraction ne meurt PAS en profond : on voit le fond partout — geste 10.)
+  vec2 refr = tile + (n.xy / PLANE) * 0.55 * (1.0 - deep * (1.0 - lacMort)) * smoothstep(0.0, 0.4, open);
   vec3 bed = texture2D(uFond, texUv(refr)).rgb; // la texture est retournée comme le champ
 
   // ═══ LE FOND MARRON SOUS LA SURFACE, LE CIEL RÉFLÉCHI DESSUS ═══
@@ -553,6 +566,9 @@ void main() {
   bottom = mix(bottom, vec3(0.085, 0.075, 0.05), morte * 0.75);
   // La vase soulevée (geste 07) voile le fond de sa propre couleur.
   bottom = mix(bottom, mud * 0.85, turb * 0.5);
+  // LE LAC MORT (geste 10) : la transparence ANORMALE — le fond net loin de la berge,
+  // l'inverse de partout ailleurs. C'est l'excès de clarté qui met mal à l'aise.
+  bottom = mix(bottom, bed * (0.95 + 0.35 * bedLum), lacMort * 0.85);
 
   // Le ciel réfléchi : bleu pâle de jour, éteint la nuit (uDay), réchauffé quand le soleil rase.
   // Le ciel réfléchi, UN CRAN plus profond (0.52,0.62,0.70 → lac de montagne) : le gradient
@@ -567,8 +583,10 @@ void main() {
   // gué (là on regarde le fond presque à la verticale). C'est ce mélange qui remplace le marron
   // uniforme — le fond reste brun là où on le voit, le large prend la lumière du ciel.
   float skyMix = clamp(0.16 + 0.69 * deep, 0.0, 0.9);
-  skyMix = mix(skyMix, 0.10, morte); // l'eau morte est MATE : presque pas de ciel (geste 06)
+  skyMix = mix(skyMix, 0.10, morte);   // l'eau morte est MATE : presque pas de ciel (geste 06)
+  skyMix = mix(skyMix, 0.06, lacMort); // le Lac Mort : on regarde À TRAVERS (geste 10)
   vec3 col = mix(bottom, sky, skyMix);
+  col = mix(col, col * vec3(0.88, 1.05, 1.04), lacMort); // la froideur irréelle du Lac Mort
 
   // ═══ LE CLAPOT PIXEL : la houle POSTERISÉE en paliers francs ═══
   //
@@ -590,7 +608,8 @@ void main() {
   vec3 L = normalize(vec3(uSun.x, uSun.y / YSQUASH, uSun.z));
   float lambert = max(dot(n, L), 0.0);
   float glint = step(0.55, h) * step(0.15, lambert);
-  col += vec3(1.0, 0.97, 0.88) * glint * 0.38 * uDay * (1.0 - morte); // rien ne brille sur l'eau morte
+  // Rien ne brille sur l'eau morte ; au Lac Mort les reflets sont PARFAITS — plus durs qu'ailleurs.
+  col += vec3(1.0, 0.97, 0.88) * glint * 0.38 * uDay * (1.0 - morte) * (1.0 + 0.6 * lacMort);
 
   // ═══ LE FEU SUR L'EAU ═══
   //
@@ -686,9 +705,10 @@ void main() {
     float dedans = step(dPerp, 0.9);
     dedans = max(dedans, step(dPerp, 1.7) * step(0.5, cellHash(flatPx / GRAIN + vec2(71.0, 13.0))));
     if (dedans > 0.0) {
-      col = mix(col, uAstreCol, 0.16 * uAstre * dedans);
+      // Au Lac Mort, le chemin de l'astre est RENFORCÉ (geste 10) : le seul éclat du lieu.
+      col = mix(col, uAstreCol, 0.16 * (1.0 + 0.8 * lacMort) * uAstre * dedans);
       float scint = step(0.25, h) * step(0.84, cellHash(flatPx / GRAIN + vec2(floor(t * 6.0), 3.0)));
-      col += uAstreCol * scint * dedans * 0.55 * uAstre;
+      col += uAstreCol * scint * dedans * 0.55 * (1.0 + 0.8 * lacMort) * uAstre;
     }
   }
 
@@ -712,7 +732,7 @@ void main() {
   // berge mouillée est plus sombre que le sol sec — sans ça la teinte du pré clair
   // se lit comme un liseré qui brille.
   vec3 shoreCol = texture2D(uSeabed, texUv(tile + toShore)).rgb * 0.62;
-  col = mix(col, shoreCol, clamp(rim * 0.26 + lap * 0.28, 0.0, 0.5) * (1.0 - morte));
+  col = mix(col, shoreCol, clamp(rim * 0.26 + lap * 0.28, 0.0, 0.5) * (1.0 - max(morte, lacMort)));
 
   // ═══ L'ÉCUME DE RIVE (spec eau-vivante R9) — des PLAQUES qui lèchent le bord ═══
   //
@@ -737,9 +757,9 @@ void main() {
   float d2 = abs(dRiveM - (0.95 + 0.12 * sin(pasT * 2.6 + nCell * 6.2831853)));
   float bande2 = step(d2, 0.06) * step(0.74, cellHash(flatPx / GRAIN + vec2(53.0, 29.0)));
   vec3 ecumeCol = vec3(1.0, 0.99, 0.94);
-  // L'eau morte n'écume pas (geste 06) — rien ne bat contre la tourbe.
-  col = mix(col, ecumeCol * 0.82, clamp(dansEcume * 0.38 + bande2 * 0.2, 0.0, 0.6) * (1.0 - morte));
-  col = mix(col, ecumeCol, crete2 * 0.55 * (1.0 - morte));
+  // L'eau morte n'écume pas (geste 06), le Lac Mort non plus (geste 10) — rien n'y bat.
+  col = mix(col, ecumeCol * 0.82, clamp(dansEcume * 0.38 + bande2 * 0.2, 0.0, 0.6) * (1.0 - max(morte, lacMort)));
+  col = mix(col, ecumeCol, crete2 * 0.55 * (1.0 - max(morte, lacMort)));
 
   // ═══ LE TOMBANT (geste 02, eau-fond) — la rupture se DESSINE, elle ne se cache pas ═══
   //
@@ -773,7 +793,7 @@ void main() {
     float pasTb = floor(t * 6.0) / 6.0;
     float frontTb = 0.28 + 0.1 * sin(pasTb * 3.7 + nTb * 6.2831853);
     float casse = (1.0 - step(frontTb, dHaut)) * step(0.55, nTb) * step(0.15, h + 0.2 * nTb);
-    col = mix(col, ecumeCol * 0.85, casse * 0.3);
+    col = mix(col, ecumeCol * 0.85, casse * 0.3 * (1.0 - lacMort)); // rien ne casse au Lac Mort
   }
 
   // Translucide sur le gué, opaque au large : on voit où l'on passe. PAS de fondu
@@ -781,7 +801,8 @@ void main() {
   // transparaître la tuile d'eau du SOL (bakée en cyan clair) — le liseré clair.
   // On garde donc l'eau assez opaque jusqu'à sa ligne de coupe, bord net.
   float a = mix(0.88, 0.96, deep);
-  a = mix(a, 0.94, morte); // l'eau morte ne laisse rien voir (geste 06)
+  a = mix(a, 0.94, morte);   // l'eau morte ne laisse rien voir (geste 06)
+  a = mix(a, 0.90, lacMort); // le Lac Mort laisse TOUT voir (geste 10)
   // L'aube sur l'eau morte : le blanc-lait de la brume qui germe ici même.
   col += uAstreCol * 0.08 * uAstre * morte;
   gl_FragColor = vec4(col, a);
@@ -874,6 +895,14 @@ export class WaterLayer {
           continue
         }
         if (t !== TERRAIN_SHALLOW_WATER && t !== TERRAIN_DEEP_WATER) continue
+        // LE LAC MORT (geste 10) : « une eau parfaitement immobile, trop claire, sans un
+        // poisson » (worldgen.md, case fantastique). L'EAU de la zone porte son régime —
+        // le sol marécageux autour garde celui du marais. Le rendu seul : le lore reste
+        // une décision d'Alexis.
+        if (zoneSlugAt(map, tx, ty) === 'lac_mort') {
+          regime[i] = REGIME_LAC_MORT
+          continue
+        }
         let voisinsMarais = 0
         for (let dy = -1; dy <= 1; dy++) {
           const ny = ty + dy
@@ -939,7 +968,7 @@ export class WaterLayer {
     // LA MÉMOIRE DU FOND (geste 03) : le lit inféré — sable/galets/vase — dans sa
     // texture 1 px/tuile. La réfraction et le lit visible le lisent à la place du
     // bake ; le bake reste la vérité de la couleur de rive.
-    const fond = buildFondField(map.terrain, rive.sd, flow?.courant ?? null, width, height)
+    const fond = buildFondField(map.terrain, rive.sd, flow?.courant ?? null, width, height, regime)
     const fondKey = 'water-fond'
     this.fondKey = fondKey
     const fondTex = this.scene.textures.createCanvas(fondKey, width, height)
