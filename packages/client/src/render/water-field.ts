@@ -11,12 +11,14 @@
  *       donc son trait de rive au bon endroit, au pixel près. La première version
  *       encodait la profondeur dans ce canal (0,45 pour un haut-fond) — l'eau
  *       débordait alors d'une demi-tuile sur l'herbe, et son écume avec elle.
- *   G — ÉLÉVATION. Nécessaire pour DÉFAIRE le cisaillement du relief : le sol est
- *       dessiné à `screenY = worldY·TILE − elev·H`, et le shader, lui, part d'un
- *       pixel écran. Sans ce canal il ne saurait pas de quelle tuile il parle, et
- *       l'eau glisserait sur ses berges.
- *   B — PROFONDEUR : 1 au large, 0 sur le haut-fond. C'est du GAMEPLAY autant que
- *       de la couleur — le haut-fond est le gué, et il doit se voir.
+ *   G — PROFONDEUR CASE À CASE (geste 01, eau-fond) : 0 sur le haut-fond, 255 au
+ *       cœur profond, et la TUILE FRONTIÈRE (profonde, touchant un haut-fond) porte
+ *       un poids intermédiaire biaisé profond (0,70 ± 0,08, ondulé par hash de
+ *       tuile) — le même langage que le lerp de la passe 2 du bake des biomes,
+ *       côté profond seulement : les tuiles marchables gardent leur luminance.
+ *       (Le canal portait l'élévation, morte avec la carte plate — R35 caduque.)
+ *   B — PROFONDEUR BINAIRE historique (255 au large, 0 ailleurs) — le trait dur
+ *       entre les deux eaux, encore utile pour repérer les VRAIES tuiles profondes.
  *   A — 1, toujours. Un canal alpha non plein serait prémultiplié à l'upload et
  *       corromprait les trois autres.
  *
@@ -28,6 +30,20 @@
 /** Les deux terrains d'eau (ids de `TERRAINS`, sim/balance.ts). */
 const SHALLOW = 4
 const DEEP = 6
+
+/** Le poids de profondeur de la tuile frontière (geste 01) : biaisé vers le profond
+ *  pour que le premier cran depuis le haut-fond tienne le contraste du gué (R10
+ *  da-feeling, ≥ 1,4:1) — l'ondulation joue le rôle du fbm2 ±17,5 % du bake. */
+const FRONTIERE_POIDS = 0.7
+const FRONTIERE_ONDULATION = 0.08
+
+/** Hash positionnel (le patron imul des feuilles) — l'ondulation du poids de la
+ *  tuile frontière, stable par carte, jamais `Math.random`. */
+function hache(x: number, y: number): number {
+  let h = (Math.imul(x, 0x9e3779b1) ^ Math.imul(y, 0x85ebca6b)) >>> 0
+  h = Math.imul(h ^ (h >>> 15), 0x45d9f3b) >>> 0
+  return ((h ^ (h >>> 13)) & 0xffff) / 0x10000
+}
 
 /** Portée du champ de rive, en tuiles (bornée par l'encodage 128 ± d×16 sur un octet). */
 export const RIVE_MAX_TILES = 7.9
@@ -191,12 +207,7 @@ export interface WaterField {
   hasWater: boolean
 }
 
-export function buildWaterField(
-  terrain: ArrayLike<number>,
-  elevation: ArrayLike<number> | undefined,
-  width: number,
-  height: number,
-): WaterField {
+export function buildWaterField(terrain: ArrayLike<number>, width: number, height: number): WaterField {
   const data = new Uint8ClampedArray(width * height * 4)
   let hasWater = false
 
@@ -207,9 +218,38 @@ export function buildWaterField(
 
     const o = i * 4
     data[o] = wet ? 255 : 0 // masque BINAIRE — voir l'en-tête
-    data[o + 1] = Math.round(Math.min(1, Math.max(0, elevation?.[i] ?? 0)) * 255)
+    // G (profondeur) : 0 par défaut — la 2e passe pose le profond et sa frontière.
     data[o + 2] = t === DEEP ? 255 : 0
     data[o + 3] = 255
+  }
+
+  // ═══ LA PROFONDEUR CASE À CASE (geste 01) ═══
+  // Le même langage que la transition de biomes de la passe 2 du bake : la tuile
+  // FRONTIÈRE — profonde, touchant un haut-fond (8 voisins : les coins rectilignes
+  // du worldgen comptent) — prend un poids intermédiaire dont l'ondulation varie
+  // tuile par tuile. UN SEUL CÔTÉ PEINT, le profond : les tuiles marchables gardent
+  // leur luminance exacte (le gué se mesure, R10), et le gué gagne des épaulements.
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      if (terrain[i] !== DEEP) continue
+      let bord = false
+      for (let dy = -1; dy <= 1 && !bord; dy++) {
+        const ny = y + dy
+        if (ny < 0 || ny >= height) continue
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue
+          const nx = x + dx
+          if (nx < 0 || nx >= width) continue
+          if (terrain[ny * width + nx] === SHALLOW) {
+            bord = true
+            break
+          }
+        }
+      }
+      const poids = bord ? FRONTIERE_POIDS + (hache(x, y) - 0.5) * 2 * FRONTIERE_ONDULATION : 1
+      data[i * 4 + 1] = Math.round(poids * 255)
+    }
   }
 
   return { data, width, height, hasWater }

@@ -83,7 +83,7 @@ precision mediump float;
 
 varying vec2 outTexCoord;
 
-uniform sampler2D uField;    // R masque (binaire) · G élévation · B profondeur
+uniform sampler2D uField;    // R masque (binaire) · G profondeur CASE À CASE (geste 01) · B profond binaire
 uniform sampler2D uSeabed;   // le bake du terrain : le FOND, vu à travers l'eau
 uniform sampler2D uRive;     // R : distance SIGNÉE à la rive (128 = la rive) · G/B : le COURANT (128 = nul)
 uniform vec2 uWorldPx;       // taille du monde, en pixels
@@ -150,7 +150,10 @@ const vec2 PLANE = vec2(1.0, YSQUASH);
 vec2 texUv(vec2 tile) { return vec2(tile.x / uMapTiles.x, 1.0 - tile.y / uMapTiles.y); }
 
 float maskAt(vec2 tile) { return texture2D(uField, texUv(tile)).r; }
-float elevAt(vec2 tile) { return texture2D(uField, texUv(tile)).g; }
+// CARTE PLATE (R35 caduque) : le canal G porte désormais la PROFONDEUR (geste 01), plus
+// l'élévation. Si le relief revenait, il lui faudrait son propre canal — d'ici là, la
+// bissection (gatée par uReliefH > 0, jamais vrai) lit un monde plat, ce qui est vrai.
+float elevAt(vec2 tile) { return 0.0; }
 
 /** Hash de cellule SANS sinus (polynôme de permutation mod 289, 3 étages — le patron
  *  éprouvé de la brume) : portable au bit près, sert aux plaques d'écume et à la frange
@@ -331,7 +334,10 @@ void main() {
   float open = openness(tile);            // 0 contre la berge · 1 au large
   // La vase du fond monte VITE en s'éloignant de la berge : une eau de pré est trouble, on ne voit
   // pas loin. Rampe resserrée → le marron du fond couvre l'essentiel du plan d'eau, pas juste son cœur.
-  float deep = field.b * smoothstep(0.03, 0.35, open);
+  // LA PROFONDEUR EST CASE À CASE (geste 01) : le canal G, lu NEAREST — 0 sur le haut-fond,
+  // ~0,70 sur la tuile frontière (poids ondulé côté CPU), 1 au cœur. Plus un cran dur d'une
+  // tuile : un escalier — le langage des transitions de biomes du bake, appliqué au fond.
+  float deep = field.g * smoothstep(0.03, 0.35, open);
   float t = uTime;
 
   // Le clapot meurt sur les hauts-fonds : on ne clapote pas dans deux doigts d'eau.
@@ -646,8 +652,8 @@ export class WaterLayer {
     seabedKey: string,
   ) {
     const { width, height } = map
-    // Carte plate : plus de champ d'élévation (le canal G du champ d'eau reste à 0).
-    const field = buildWaterField(map.terrain, undefined, width, height)
+    // Carte plate : le canal G du champ porte la profondeur case à case (geste 01).
+    const field = buildWaterField(map.terrain, width, height)
     if (!field.hasWater) return // une carte sèche ne paie pas une couche d'eau
 
     // Le champ vit dans une texture canvas : 1 px/tuile, comme le bake du sol.
