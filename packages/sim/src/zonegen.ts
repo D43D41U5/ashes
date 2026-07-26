@@ -839,9 +839,16 @@ function garantirLaConnexite(
       const x = i % width
       const y = (i - x) / width
       // Les quatre voisins, DÉROULÉS — même ordre qu'avant (est, ouest, sud, nord), donc même
-      // ordre de découverte et même `file`. Le `for…of [[1,0],[-1,0],[0,1],[0,-1]]` qui tenait
-      // ici allouait CINQ tableaux par tuile dépilée : sur 3,75 M de tuiles, plusieurs fois par
-      // génération, c'était le premier poste du profil (16,8 % du temps, MESURÉ).
+      // ordre de découverte et même `file`.
+      //
+      // CORRECTION D'UNE ATTRIBUTION FAUSSE, écrite ici même : ce corps de BFS pesait 16,8 % du
+      // profil, et j'en avais crédité les CINQ tableaux que le `for…of [[1,0],…]` allouait par
+      // tuile dépilée. C'était faux. Le même littéral retiré ailleurs dans ce fichier
+      // (`murerLesAretes`, un par tuile marchable, deux passes) ne rend RIEN de mesurable sur
+      // douze passes A/B : V8 supprime ces petits tableaux qui ne s'échappent pas. Les 16,8 %
+      // étaient le corps entier, et ce qu'on a gagné ici vient surtout de `MARCHABLE`. Le
+      // déroulé reste — il ne coûte rien et ne dépend pas d'une optimisation de moteur, or
+      // `/sim` doit tourner aussi bien dans un Worker de navigateur que sur Node.
       if (x + 1 < width) { const j = i + 1; if (!vu[j] && walk(j)) { vu[j] = 1; file.push(j) } }
       if (x > 0) { const j = i - 1; if (!vu[j] && walk(j)) { vu[j] = 1; file.push(j) } }
       if (y + 1 < height) { const j = i + width; if (!vu[j] && walk(j)) { vu[j] = 1; file.push(j) } }

@@ -328,6 +328,14 @@ export function moveToward(
  * calculaient deux champs identiques ; elles en partagent un. Le champ étant le même, le pas de
  * chaque monstre l'est aussi.
  */
+/**
+ * Les quatre voisins — est, ouest, sud, nord, et l'ORDRE COMPTE : la descente de gradient garde
+ * le PREMIER minimum (comparaison stricte), donc changer l'ordre changerait la tuile choisie à
+ * égalité de distance. Écrit ici plutôt qu'en littéral dans la boucle, où il s'allouait à chaque
+ * pas de chaque monstre de horde.
+ */
+const VOISINS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
+
 interface CacheFlux {
   /** Un entier par nœud : sa tuile et son caractère bloquant. Voir `signerLesNoeuds`. */
   signature: Int32Array
@@ -407,7 +415,7 @@ function hordeStep(state: SimState, monster: Monster, entity: Entity, flux: Cach
   let bestTy = ty
   let bestD = field[ty * width + tx] ?? -1
   if (bestD === -1) bestD = Infinity
-  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+  for (const [dx, dy] of VOISINS4) {
     const nx = tx + dx
     const ny = ty + dy
     if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
