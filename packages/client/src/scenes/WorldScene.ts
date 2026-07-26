@@ -94,6 +94,7 @@ import { BorneLayer } from './world/borne-layer'
 import { CombeMist } from './world/combe-mist'
 import { MistBanks } from './world/mist-banks'
 import { VentLisse } from './world/vent-lisse'
+import { ensureEauFxTextures } from './world/eau-fx'
 import { GueStones } from './world/gue-stones'
 import { MorningMist } from './world/morning-mist'
 import { FireFx } from './world/fire-fx'
@@ -668,6 +669,8 @@ export class WorldScene extends Phaser.Scene {
         // L'eau, par-dessus le sol : un shader qui défait le cisaillement du relief et
         // réfracte le fond (le bake `map-demo` lui sert de lit).
         this.water = new WaterLayer(this, this.map, 'map-demo')
+        this.view.rive = this.water.rive // une seule vérité de « où est l'eau » (eau-vivante R2)
+        ensureEauFxTextures(this) // anneaux de flottaison, gerbe, empreinte — bakés une fois
         this.cendre = new CendreLayer(this, this.map, String(this.map.width))
         this.cliffs = new CliffLayer(this, this.map)
       },

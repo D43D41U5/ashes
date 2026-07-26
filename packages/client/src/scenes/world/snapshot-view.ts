@@ -55,7 +55,8 @@ import { warmthColor } from '../../render/lighting'
 import { LIT_NODE_TYPES } from '../../render/lit-props'
 import { LIT_STRUCTURE_TYPES } from '../../render/lit-structures'
 import { shakeOffset, type HitFx } from './hit-fx'
-import { createContactShadow, positionShadow } from './contact-shadow'
+import { createContactShadow, positionShadow, SHADOW_ALPHA } from './contact-shadow'
+import { riveAt, type RiveField } from '../../render/water-field'
 
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
 const AIM_TINT = 0xffe9a8
@@ -343,6 +344,9 @@ export class SnapshotView {
    *  F5), l'arbre ORDINAIRE de la Racine passe sur ses textures normal-mappées
    *  (`*_lit`) éclairées par le LightsManager. Piloté par WorldScene. */
   lighting = false
+  /** Le champ de rive (spec eau-vivante R1-R2), posé par WorldScene après la couche d'eau —
+   *  la MÊME distance que le shader : l'immersion des acteurs ne peut pas la contredire. */
+  rive: RiveField | null = null
 
   /** Le nœud sous le curseur (spec recolte.md G4), et s'il est à portée de bras. */
   private aimedNodeId: number | null = null
@@ -573,16 +577,73 @@ export class SnapshotView {
     const p = actorPlacement(x, y, footprint, TILE_PX, BALANCE.AVATAR_HITBOX_TILES)
     const feetY = y + BALANCE.AVATAR_HITBOX_TILES / 2
     const lift = this.warp?.lift(x, feetY) ?? 0
-    sprite.setPosition(p.px, p.py - lift)
+    // ═══ L'IMMERSION AUX GENOUX (spec eau-vivante R4) — le corps ENTRE dans l'eau ═══
+    // CONTINUE (« feel = pente continue ») : 0 pile au trait de rive, pleine à 0,6 tuile
+    // d'avancée — le champ de rive (le même que le shader) donne la profondeur d'avancée.
+    let immersion = 0
+    if (this.rive) {
+      const d = riveAt(this.rive, x, feetY)
+      if (d > 0) immersion = Math.min(1, d / 0.6)
+    }
+    const displayH = crouch ? p.displayH * CROUCH_FACTOR : p.displayH
+    // La coupe est en px MONDE constants (l'eau a UNE profondeur — ~7 px au plein) : le
+    // lapin y disparaît presque, le cerf y trempe les pattes, l'avatar y entre aux genoux —
+    // la taille de chacun raconte la profondeur. L'eau est rendue SOUS les acteurs
+    // (WATER_DEPTH < 0) : la découpe RÉVÈLE la nappe, aucun raccord à faire.
+    const coupe = immersion > 0.02 ? Math.min(7 * immersion, displayH * 0.45) : 0
+    // Le corps descend de la coupe (+2 px d'enfoncement) : la ligne de flottaison est aux pieds.
+    sprite.setPosition(p.px, p.py - lift + coupe + 2 * immersion)
     sprite.setDepth(p.depth)
-    sprite.setDisplaySize(p.displayW, crouch ? p.displayH * CROUCH_FACTOR : p.displayH)
+    sprite.setDisplaySize(p.displayW, displayH)
+    if (coupe > 0) {
+      const frame = sprite.frame
+      const coupeTexels = (coupe / displayH) * frame.height
+      sprite.setCrop(0, 0, frame.width, Math.max(1, frame.height - coupeTexels))
+    } else if (sprite.isCropped) {
+      sprite.setCrop()
+    }
     sprite.setLighting(this.lighting) // couche 1 : acteurs (PNJ, faune, avatar) éclairés eux aussi
     // L'OMBRE DE CONTACT suit l'acteur (rattachée par `setData` à la création). `syncActor`
     // est le seul point où pieds/depth/emprise sont connus — la placer ici couvre joueur ET
     // autres, sans dupliquer le calcul de position. Aux pieds (p.py, pré-lift : l'ombre reste
     // au sol même si le sprite se soulève), à l'emprise du sprite, juste sous sa profondeur.
+    // L'EAU LA FOND (R4) : l'anneau de flottaison prend le relais comme ancrage.
     const shadow = sprite.getData('shadow') as Phaser.GameObjects.Image | undefined
-    if (shadow) positionShadow(shadow, p.px, p.py, p.displayW, p.depth)
+    if (shadow) {
+      positionShadow(shadow, p.px, p.py, p.displayW, p.depth)
+      shadow.setAlpha(SHADOW_ALPHA * (1 - immersion))
+    }
+    this.syncFlottaison(sprite, p.px, p.py - lift, p.displayW, p.depth, immersion)
+  }
+
+  /** L'ANNEAU DE FLOTTAISON (spec eau-vivante R5) : ellipse pointillée 3 phases (~7 im/s),
+   *  posée à la ligne de flottaison, SOUS l'acteur dans le tri — c'est lui qui ancre le
+   *  corps à l'eau quand l'ombre de contact s'est fondue. Vacillement par l'alpha seul. */
+  private syncFlottaison(
+    sprite: Phaser.GameObjects.Image,
+    px: number,
+    py: number,
+    displayW: number,
+    depth: number,
+    immersion: number,
+  ): void {
+    let ring = sprite.getData('flottaison') as Phaser.GameObjects.Image | undefined
+    if (immersion <= 0.08) {
+      ring?.setVisible(false)
+      return
+    }
+    if (!ring) {
+      ring = this.scene.add.image(0, 0, 'fx-flottaison-0').setOrigin(0.5, 0.5)
+      sprite.setData('flottaison', ring)
+    }
+    const now = this.scene.time.now
+    ring.setTexture(`fx-flottaison-${Math.floor(now / 150) % 3}`)
+    ring.setPosition(px, py)
+    ring.setDepth(depth - 0.01)
+    const w = displayW + 12
+    ring.setDisplaySize(w, w * 0.45)
+    ring.setAlpha(immersion * (0.34 + 0.1 * Math.sin(now / 260 + px)))
+    ring.setVisible(true)
   }
 
   private syncEntities(entities: Entity[], playerId: number, now: number): void {
@@ -652,6 +713,7 @@ export class SnapshotView {
     for (const [id, o] of this.others) {
       if (!seen.has(id)) {
         o.shadow.destroy() // l'ombre s'en va avec son acteur — jamais orpheline
+        ;(o.sprite.getData('flottaison') as Phaser.GameObjects.Image | undefined)?.destroy()
         o.sprite.destroy()
         this.others.delete(id)
       }

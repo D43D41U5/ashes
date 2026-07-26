@@ -34,7 +34,8 @@ const RADIUS_CELLS = 4
 const TEX_SIDE = RADIUS_CELLS * 2 + 1
 /** Opacité de contact : présente assez pour POSER l'acteur, discrète assez pour ne pas tacher.
  *  (0,32 lu au smoke = quasi invisible sur sol clair ; 0,42 pose sans faire pâté.) */
-const SHADOW_ALPHA = 0.42
+/** Exporté : l'immersion (spec eau-vivante R4) fond l'ombre en gardant ce plafond. */
+export const SHADOW_ALPHA = 0.42
 /** L'ellipse est APLATIE : au sol, une flaque plus large que haute (billboard sur carte plate). */
 const FLATTEN = 0.5
 /** Largeur de l'ombre ∝ emprise de l'acteur. Un poil PLUS LARGE que le footprint logique (×1,2) :
