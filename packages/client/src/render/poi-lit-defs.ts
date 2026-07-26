@@ -9,7 +9,7 @@
  * La planche `pnpm smoke --scenario lieux-lit` est le juge : aucune normale plate.
  */
 import type { PoiLitDef } from './poi-lit'
-import { CRACK, CRACK2, GRAIN_D, GRAIN_L, LICHEN, MOSS, MOSS_BR, MOSS_DK, QUARTZ, STONE_A, STONE_B } from './matiere'
+import { GRAIN_D, GRAIN_L, LICHEN, MOSS, MOSS_BR, MOSS_DK, QUARTZ, STONE_A, STONE_B } from './matiere'
 
 export const POI_LIT_DEFS_DATA: readonly PoiLitDef[] = [
   {
