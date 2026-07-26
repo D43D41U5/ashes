@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { ambientTint, brumeDuMatin, daylight, fireGlow, warmthColor, NIGHT_ALPHA_MAX } from './lighting'
+import {
+  ambientTint,
+  brumeDuMatin,
+  daylight,
+  fireGlow,
+  frontDeBrume,
+  warmthColor,
+  FRONT_BRUME_MAX_TILES,
+  NIGHT_ALPHA_MAX,
+} from './lighting'
 
 /** Les sources du rendu, pour le garde-fou de CÂBLAGE du blend (voir le dernier banc). */
 const SOURCES = import.meta.glob('../scenes/world/*.ts', {
@@ -207,5 +216,35 @@ describe('la brume du matin (da-feeling R14) — un événement, pas un état', 
     // Strictement croissante dans la levée, strictement décroissante dans la dissolution.
     expect(brumeDuMatin(5)).toBeGreaterThan(brumeDuMatin(4.6))
     expect(brumeDuMatin(7.5)).toBeGreaterThan(brumeDuMatin(8.2))
+  })
+})
+
+describe('le front de la marée (brume V1, décision du 2026-07-26) — il monte de l’eau, le soleil le repousse', () => {
+  it('dort hors fenêtre : zéro tuile avant 4h30, après 8h30, à midi et minuit', () => {
+    for (const h of [0, 3, 4.5, 8.5, 12, 20, 23.9]) {
+      expect(frontDeBrume(h), `à ${h}h`).toBe(0)
+    }
+  })
+
+  it('culmine à FRONT_BRUME_MAX_TILES sur l’étale (6h-6h48)', () => {
+    expect(frontDeBrume(6)).toBeCloseTo(FRONT_BRUME_MAX_TILES, 9)
+    expect(frontDeBrume(6.4)).toBeCloseTo(FRONT_BRUME_MAX_TILES, 9)
+    expect(frontDeBrume(6.8)).toBeCloseTo(FRONT_BRUME_MAX_TILES, 9)
+  })
+
+  it('monte et recule en PENTE CONTINUE — jamais un saut de plus d’un quart d’heure de marche', () => {
+    for (let h = 4; h < 9.5; h += 0.25) {
+      const saut = Math.abs(frontDeBrume(h + 0.25) - frontDeBrume(h))
+      expect(saut, `saut à ${h}h`).toBeLessThanOrEqual(FRONT_BRUME_MAX_TILES / 4)
+    }
+    // La montée est plus vive que le retrait (1h30 contre 1h42) — et chacune strictement monotone.
+    expect(frontDeBrume(5.2)).toBeGreaterThan(frontDeBrume(4.8))
+    expect(frontDeBrume(7.2)).toBeGreaterThan(frontDeBrume(8))
+  })
+
+  it('recule VERS l’eau : à 7h36 le front est plus près de la berge qu’à l’étale', () => {
+    const retrait = frontDeBrume(7.6)
+    expect(retrait).toBeGreaterThan(0)
+    expect(retrait).toBeLessThan(frontDeBrume(6.8) * 0.65)
   })
 })

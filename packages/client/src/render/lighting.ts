@@ -110,6 +110,32 @@ export function brumeDuMatin(hour: number): number {
   return lerp(lo.value, hi.value, t)
 }
 
+/** Portée maximale de la marée de brume, en tuiles depuis l'eau. */
+export const FRONT_BRUME_MAX_TILES = 9
+
+/**
+ * LA MARÉE DE L'AUBE (variante V1, choisie par Alexis le 2026-07-26) — le FRONT de brume,
+ * en tuiles gagnées depuis l'eau : il monte de la berge vers l'intérieur des terres
+ * (4h30 → 6h), reste étale (→ 6h48), puis le soleil le REPOUSSE vers l'eau (→ 8h30) —
+ * l'ordre spatial de la dissolution est l'inverse de la naissance, les dernières flaques
+ * flottent sur les mares. Fonction PURE de l'heure, pente continue, testée — le pendant
+ * spatial de `brumeDuMatin` (qui reste l'enveloppe d'alpha) : les deux partagent la fenêtre,
+ * la brume s'amincit donc en même temps qu'elle recule.
+ */
+const FRONT_KEYS: DayKey[] = [
+  { hour: 0, value: 0 },
+  { hour: 4.5, value: 0 },
+  { hour: 6, value: 1 }, // la marée monte en 1h30 — on la VOIT venir
+  { hour: 6.8, value: 1 }, // étale
+  { hour: 8.5, value: 0 }, // le soleil la repousse, plus lentement qu'elle n'est montée
+  { hour: 24, value: 0 },
+]
+
+export function frontDeBrume(hour: number): number {
+  const { lo, hi, t } = bracket(FRONT_KEYS, hour)
+  return FRONT_BRUME_MAX_TILES * lerp(lo.value, hi.value, t)
+}
+
 interface TintKey {
   hour: number
   color: number

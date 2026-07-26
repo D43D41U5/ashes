@@ -1,18 +1,25 @@
 /**
  * LA BRUME DE LA COMBE — permanente : c'est l'identité du lieu (spec t0-exploration R9).
  *
- * Même langage que la brume du matin (`mist-layer.ts` — nappes qui dérivent, crans, volume :
- * retour d'Alexis du 25/07), mais SON calendrier à elle : toujours là, plus paresseuse (le
- * creux de la combe retient son air), un peu plus verte (l'eau dormante, pas l'aube froide).
- * Son masque est son empreinte ; la nappe matinale l'évide pour ne pas doubler l'alpha.
+ * Même langage que la brume du matin (`mist-layer.ts` — marée, nappes qui dérivent, crans),
+ * mais SON calendrier à elle : toujours là, plus paresseuse (le creux de la combe retient son
+ * air). Son masque est un champ de distance à son EMPREINTE (0 dedans, croissant dehors) et
+ * son front est CONSTANT : un halo de ~2,5 tuiles qui s'effrange autour du rectangle — la
+ * coupe au couteau de l'ancien masque binaire meurt ici aussi. La nappe matinale évide la
+ * Combe de son propre champ : on ne double pas l'alpha.
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
-import { MIST_DEPTH, MistLayer } from './mist-layer'
+import { DIST_FIELD_MAX, MIST_DEPTH, MistLayer } from './mist-layer'
 
 const DENSITE = 0.2
+/** Le halo permanent : plateau plein ~1,5 tuile au-delà de l'empreinte, puis la rampe de
+ *  2,5 tuiles du shader — regardé à 23h : à 2,5 le rectangle se devinait encore. */
+const FRONT_COMBE = 4
 /** Le vent de la combe : le quart de celui du monde — un creux garde son air. */
 const VENT_FACTEUR = 0.25
+/** Vitesse de dérive de base (tuiles/s), comme la matinale, avant le facteur du creux. */
+const DERIVE = 0.32
 
 export class CombeMist {
   private layer: MistLayer | null = null
@@ -27,11 +34,19 @@ export class CombeMist {
     cv.height = height
     const ctx = cv.getContext('2d')!
     const img = ctx.createImageData(width, height)
-    for (let y = combe.y; y < combe.y + combe.h; y++) {
-      for (let x = combe.x; x < combe.x + combe.w; x++) {
-        const o = (y * width + x) * 4
-        img.data[o] = 255
-        img.data[o + 3] = 255
+    // R = 255 (« loin ») PARTOUT d'un seul geste, puis on ne calcule que le sous-rectangle
+    // utile (empreinte + portée du champ) : 4 000 cellules au lieu de 3,75 M (revue, ×1600).
+    img.data.fill(255)
+    const x1 = combe.x + combe.w - 1
+    const y1 = combe.y + combe.h - 1
+    const marge = DIST_FIELD_MAX + 1
+    for (let y = Math.max(0, combe.y - marge); y <= Math.min(height - 1, y1 + marge); y++) {
+      for (let x = Math.max(0, combe.x - marge); x <= Math.min(width - 1, x1 + marge); x++) {
+        // Distance euclidienne au rectangle (0 dedans) — client : Math.sqrt autorisé.
+        const dx = Math.max(combe.x - x, x - x1, 0)
+        const dy = Math.max(combe.y - y, y - y1, 0)
+        const dist = Math.min(Math.sqrt(dx * dx + dy * dy), DIST_FIELD_MAX)
+        img.data[(y * width + x) * 4] = Math.round((dist / DIST_FIELD_MAX) * 255)
       }
     }
     ctx.putImageData(img, 0, 0)
@@ -41,11 +56,9 @@ export class CombeMist {
     this.layer = new MistLayer(scene, this.key, width, height, MIST_DEPTH + 0.01)
   }
 
-  update(nowMs: number, wind?: { x: number; y: number }, day = 1): void {
-    const w = wind
-      ? { x: (0.3 + wind.x * 0.02) * VENT_FACTEUR, y: (0.1 + wind.y * 0.02) * VENT_FACTEUR }
-      : { x: 0.09, y: 0.03 }
-    this.layer?.update(nowMs, DENSITE, w, day)
+  update(nowMs: number, vent: { x: number; y: number }, day = 1): void {
+    const w = { x: vent.x * DERIVE * VENT_FACTEUR, y: vent.y * DERIVE * VENT_FACTEUR }
+    this.layer?.update(nowMs, DENSITE, FRONT_COMBE, w, day)
   }
 
   destroy(): void {

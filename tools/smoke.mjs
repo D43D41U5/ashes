@@ -345,6 +345,82 @@ const SCENARIOS = {
   },
 
   /**
+   * LA MARÉE DE L'AUBE (brume V1+V2, choix d'Alexis du 2026-07-26) — le front mesuré, les
+   * bancs comptés, et les captures qui se REGARDENT.
+   *
+   * Sondes d'état (le smoke LIT, il ne fabrique pas) : `morningMist.layer.front` doit suivre
+   * `frontDeBrume(h)` (montée 4h30→6h, étale, retrait →8h30, zéro à midi) ; `mistBanks.bancs`
+   * doit compter ≥ 1 banc près de la rivière dans la fenêtre, 0 à midi. Exige `--dev`.
+   */
+  async maree(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForTimeout(1000)
+
+    const gue = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const g = (m.zones ?? []).find((z) => z.name === 'le Gué')
+      return g ? { x: g.x + 3.5, y: g.y + 3.5 } : null
+    })
+    if (!gue) { console.error('!! aucun Gué sur cette carte'); return }
+    await page.evaluate(({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }), { px: gue.x, py: gue.y })
+    await page.waitForTimeout(1400)
+
+    const heure = async (h) => {
+      for (let essai = 0; essai < 4; essai++) {
+        await page.evaluate((hh) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: hh }), h)
+        await page.waitForTimeout(600)
+        const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1)
+        if (Math.abs(lu - h) < 0.3) return
+      }
+      console.error(`!! set_hour(${h}) n'a jamais pris`)
+    }
+
+    // Le front ATTENDU à chaque heure sondée (copie de frontDeBrume — 9 tuiles au max) :
+    const attendu = { 5: 3, 6.2: 9, 7.6: 4.76, 12: 0 }
+    let bancsVus = 0
+    for (const [h, nom] of [[5, '0500'], [6.2, '0612'], [7.6, '0736'], [12, '1200']]) {
+      await heure(h)
+      // On laisse VIVRE : les bancs naissent au compte-gouttes (un contrôle par 700 ms).
+      await page.waitForTimeout(h === 12 ? 1200 : 4500)
+      const sonde = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const ly = sc.morningMist?.layer
+        return {
+          h: +(sc.lastTime?.hourOfCycle ?? -1).toFixed(2),
+          front: ly ? +ly.front.toFixed(2) : null,
+          densite: ly ? +ly.density.toFixed(3) : null,
+          visible: ly?.shader?.visible ?? null,
+          bancs: sc.mistBanks?.bancs?.length ?? -1,
+        }
+      })
+      await page.screenshot({ path: `${OUT}/maree-${nom}.png` })
+      const cible = attendu[h]
+      // L'heure du jeu AVANCE entre le set_hour et la sonde : on juge le front CONTRE l'heure
+      // LUE, à la tolérance de la pente la plus raide (6 tuiles/h de jeu × la dérive lue).
+      const derive = Math.abs(sonde.h - h)
+      const tolerance = 0.6 + derive * 6.5
+      const ecart = sonde.front === null ? Infinity : Math.abs(sonde.front - cible)
+      console.log(`maree — ${h}h : ${JSON.stringify(sonde)} (front attendu ${cible} ± ${tolerance.toFixed(1)})`)
+      // UNE SONDE DÉBRANCHÉE N'EST PAS UN ZÉRO (revue : un champ privé renommé cassait tout
+      // en silence) : -1/null = le harnais ne lit plus l'état, c'est une erreur à part entière.
+      if (sonde.bancs === -1 || sonde.visible === null || sonde.densite === null)
+        console.error('!! sonde brume débranchée (champ privé renommé ? morningMist/mistBanks absents ?)')
+      if (ecart > tolerance) console.error(`!! front hors marée à ${h}h : ${sonde.front} pour ${cible} attendu`)
+      if (h !== 12 && sonde.front > 3 && (sonde.densite ?? 0) < 0.2)
+        console.error(`!! densité anémique à ${h}h (${sonde.densite}) alors que la marée est à ${sonde.front} tuiles`)
+      if (h === 12 && sonde.visible) console.error('!! il reste de la brume à midi')
+      if (h === 12 && (sonde.densite ?? 0) > 0) console.error(`!! densité non nulle à midi (${sonde.densite})`)
+      if (h === 12 && sonde.bancs > 0) console.error(`!! ${sonde.bancs} banc(s) encore vivants à midi`)
+      if (h !== 12) bancsVus = Math.max(bancsVus, sonde.bancs)
+    }
+    console.log(`maree — bancs voyageurs : maximum vu ${bancsVus} ${bancsVus >= 1 ? '✓' : '✗'}`)
+    if (bancsVus < 1) console.error('!! aucun banc voyageur né près de la rivière dans toute la fenêtre')
+    console.log(`captures → ${OUT}/maree-*.png — à REGARDER (le front qui monte, les bancs, le retrait)`)
+    return { bancsVus }
+  },
+
+  /**
    * LES LIEUX BASCULÉS (spec da-feeling §3, critère A2) — la planche de la vague B.
    *
    * Pour CHAQUE texture `poi-*_lit` : l'étendue des canaux nx/ny de sa normale (une masse

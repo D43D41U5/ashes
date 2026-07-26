@@ -92,6 +92,8 @@ import { CliffLayer } from './world/cliff-layer'
 import { PoiLayer } from './world/poi-layer'
 import { BorneLayer } from './world/borne-layer'
 import { CombeMist } from './world/combe-mist'
+import { MistBanks } from './world/mist-banks'
+import { VentLisse } from './world/vent-lisse'
 import { GueStones } from './world/gue-stones'
 import { MorningMist } from './world/morning-mist'
 import { FireFx } from './world/fire-fx'
@@ -315,6 +317,9 @@ export class WorldScene extends Phaser.Scene {
   private combeMist: CombeMist | null = null
   private gueStones: GueStones | null = null
   private morningMist: MorningMist | null = null
+  /** Les bancs voyageurs (brume V2) et le vent lissé qui porte toute la brume. */
+  private mistBanks: MistBanks | null = null
+  private ventLisse = new VentLisse()
   /** Le dernier état du toggle appliqué à l'avatar (swap _lit une fois, pas par frame). */
   private playerLit: boolean | null = null
   /** Marcheurs à remous poussés cette frame — la sonde du critère A5 (lue par le smoke). */
@@ -674,6 +679,7 @@ export class WorldScene extends Phaser.Scene {
         this.combeMist = new CombeMist(this, this.map)
         this.gueStones = new GueStones(this, this.map, this.warp)
         this.morningMist = new MorningMist(this, this.map) // la brume de l'aube naît de l'eau (da-feeling R13)
+        this.mistBanks = new MistBanks(this, this.map) // les bancs voyageurs (V2) — nés des grandes eaux
         this.view.setNodes(msg.nodes)
       },
       clutter: () => {
@@ -1000,8 +1006,23 @@ export class WorldScene extends Phaser.Scene {
         litFires.map(({ s, g }) => ({ x: s.tx + 0.5, y: s.ty + 0.5, radius: g.radius * 2.3, strength: g.alpha })),
         waders,
       )
-      this.morningMist?.update(time, hour, this.view.wind, day) // l'heure décide, le vent porte, la nuit assombrit
-      this.combeMist?.update(time, this.view.wind, day) // la combe garde son air, au quart du vent
+      // LE VENT LISSÉ porte toute la brume : cap de la sim rallié en ~15 s, force inventée —
+      // jamais un saut, jamais un vecteur nul (vent-lisse.ts, diagnostic du 26/07).
+      const vent = this.ventLisse.update(time, deltaMs, this.view.wind)
+      this.morningMist?.update(time, hour, vent, day) // la marée : l'heure décide, le vent porte
+      this.combeMist?.update(time, vent, day) // la combe garde son air, au quart du vent
+      // LES BANCS VOYAGEURS (V2) : nés des grandes eaux autour de la caméra, ils dérivent
+      // dans la bande des houppiers — devant un arbre, derrière l'autre.
+      const centre = this.cameras.main.worldView
+      this.mistBanks?.update(
+        time,
+        deltaMs,
+        hour,
+        vent,
+        day,
+        (centre.x + centre.width / 2) / TILE_PX,
+        (centre.y + centre.height / 2) / TILE_PX,
+      )
       this.aube.update(time, hour, (sp, d2) => this.audioFx.play(sp, d2)) // les oiseaux, fenêtre de l'aube
       this.fireFx?.update(this.view.structures, this.lastSnapshotTick, this.view.wind) // flammes/braises/fumée (∝ état), poussées par le vent
       // La chaleur du Feu au sol : cosmétique, ∝ nuit (voir world/fire-ground-glow.ts).
