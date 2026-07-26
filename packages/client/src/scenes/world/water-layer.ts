@@ -390,6 +390,28 @@ void main() {
   amp *= 1.0 - 0.85 * morte; // l'eau morte du marais ne clapote pas (geste 06)
   vec2 p = tile * PLANE; // le plan de l'eau, redressé (voir YSQUASH)
 
+  // ═══ LA TURBIDITÉ (geste 07, eau-fond) — l'eau garde la trace du passage ═══
+  //
+  // Les pas soulèvent la vase : un nuage brun en DEUX crans francs traîne derrière
+  // chaque marcheur (le même fenêtrage arrière que le sillage) et meurt avec sa force
+  // (w s'éteint ~0,7 s après l'arrêt — plusieurs marcheurs au même gué gardent l'eau
+  // trouble ENSEMBLE : un passage se lit). L'eau trouble cache son fond : elle éteint
+  // localement caustiques et lit visible — c'est sa définition. Rien en profond, où
+  // le fond est déjà invisible.
+  float turb = 0.0;
+  for (int i = 0; i < MAX_WADERS; i++) {
+    if (i >= uWaderCount) break;
+    vec4 wt = uWaders[i];
+    if (wt.w <= 0.0) continue;
+    vec2 dirT = uWaderDirs[i];
+    float marcheT = step(0.01, dot(dirT, dirT));
+    vec2 centreT = wt.xy - dirT * 0.55 * marcheT; // le nuage traîne derrière le cap
+    float dT = length(tile - centreT);
+    float arriereT = mix(1.0, max(0.3, step(-0.1, dot(tile - wt.xy, -dirT) / max(dT, 0.001))), marcheT);
+    turb += ((1.0 - step(1.0, dT)) * 0.5 + (1.0 - step(0.55, dT)) * 0.5) * wt.w * arriereT;
+  }
+  turb = floor(clamp(turb, 0.0, 1.0) * (1.0 - deep) * 3.0 + 0.5) / 3.0; // crans, jamais un dégradé
+
   // ═══ LE COURANT (chantier « l'eau suit le flow ») — la surface AVANCE vers l'aval ═══
   //
   // Le vecteur vient du fil de la worldgen (flow-field.ts, cuit dans G/B de uRive) ; il
@@ -465,7 +487,7 @@ void main() {
   // de la berge (le lit visible garde la main). Vitesses LENTES à dessein — la doctrine
   // R12 : rien ne bouge sans mesure, et la sonde optique ne corrèle qu'à ω·dt ≲ 1 rad.
   // Alpha bas : c'est le deuxième candidat au « lait » après l'écume, la leçon est écrite.
-  float caustGate = uDay * clamp(uSun.z, 0.0, 1.0) * (1.0 - deep) * smoothstep(0.1, 0.4, open) * (1.0 - morte);
+  float caustGate = uDay * clamp(uSun.z, 0.0, 1.0) * (1.0 - deep) * smoothstep(0.1, 0.4, open) * (1.0 - morte) * (1.0 - turb);
   if (caustGate > 0.02) {
     vec2 cq = p * 3.3;
     float web = sin(cq.x + sin(cq.y * 1.13 + t * 0.33)) * sin(cq.y - sin(cq.x * 0.87 - t * 0.26));
@@ -479,10 +501,12 @@ void main() {
   // de sable » consigné se lit désormais comme le bord qu'il est).
   float litGagne = 1.0 - clamp((dRive - 0.15) / 0.85, 0.0, 1.0);
   litGagne = floor(litGagne * 3.0 + 0.5) / 3.0;
-  bottom = mix(bottom, bed * (0.72 + 0.34 * bedLum), litGagne * 0.55);
+  bottom = mix(bottom, bed * (0.72 + 0.34 * bedLum), litGagne * 0.55 * (1.0 - 0.7 * turb));
   // L'eau morte du marais (geste 06) : le thé noir de tourbe couvre le fond — on ne
   // voit rien à travers, et c'est le point.
   bottom = mix(bottom, vec3(0.085, 0.075, 0.05), morte * 0.75);
+  // La vase soulevée (geste 07) voile le fond de sa propre couleur.
+  bottom = mix(bottom, mud * 0.85, turb * 0.5);
 
   // Le ciel réfléchi : bleu pâle de jour, éteint la nuit (uDay), réchauffé quand le soleil rase.
   // Le ciel réfléchi, UN CRAN plus profond (0.52,0.62,0.70 → lac de montagne) : le gradient
