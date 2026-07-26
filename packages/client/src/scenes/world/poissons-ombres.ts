@@ -176,7 +176,7 @@ export class PoissonsOmbres {
       const cv = document.createElement('canvas')
       cv.width = w
       cv.height = h
-      const c = cv.getContext('2d')!
+      const c = cv.getContext('2d', { willReadFrequently: true })!
       dessin(c)
       scene.textures.addCanvas(cle, cv)
       scene.textures.get(cle).setFilter(Phaser.Textures.FilterMode.NEAREST)
@@ -284,7 +284,7 @@ export class PoissonsOmbres {
       const cv = document.createElement('canvas')
       cv.width = 1
       cv.height = 1
-      const c = cv.getContext('2d')!
+      const c = cv.getContext('2d', { willReadFrequently: true })!
       c.fillStyle = '#e9e7da'
       c.fillRect(0, 0, 1, 1)
       scene.textures.addCanvas('fx-traine', cv)

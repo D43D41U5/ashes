@@ -37,7 +37,13 @@ export function newCanvas(w: number, h: number): { c: HTMLCanvasElement; ctx: Ca
   const c = document.createElement('canvas')
   c.width = w
   c.height = h
-  return { c, ctx: c.getContext('2d')! }
+  // `willReadFrequently` DÈS LA CRÉATION : ces canvas sont RELUS (getImageData) — par nous pour
+  // dériver la normale, et par Phaser lui-même (`CanvasTexture` relit tout le canvas à
+  // `addCanvas`). Les attributs de contexte ne s'appliquent qu'à la PREMIÈRE création : le
+  // `{ willReadFrequently: true }` que Phaser passe ensuite sur le même canvas est IGNORÉ, d'où
+  // les 166 avertissements Canvas2D au boot (mesuré le 26/07). Ils sont des SOURCES de texture,
+  // jamais composités : les garder côté CPU est de toute façon le bon choix.
+  return { c, ctx: c.getContext('2d', { willReadFrequently: true })! }
 }
 
 /** Une fissure = un CHEMIN (polyligne) qui PART d'un point réel (le sol, la jonction de deux
@@ -100,7 +106,9 @@ export function normalFromCanvas(
   cracks: readonly Crack[] = [],
 ): HTMLCanvasElement {
   const w = src.width, h = src.height
-  const srcData = src.getContext('2d')!.getImageData(0, 0, w, h).data
+  // Le drapeau ne mord que si `src` vient de `newCanvas` (il y est déjà) — on le redit ici pour
+  // qu'un futur appelant qui apporterait SON canvas ne réintroduise pas l'avertissement.
+  const srcData = src.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, w, h).data
   let hf = new Float32Array(w * h)
   for (let i = 0; i < w * h; i++) hf[i] = srcData[i * 4 + 3]! > 8 ? 1 : 0
   if (plant) {

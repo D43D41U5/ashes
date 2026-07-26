@@ -21,6 +21,7 @@ import { createEmptyMap } from './map'
 import { capFor, POI_TYPES } from './poi'
 import { CONTENU, placeZoneNodes } from './zone-content'
 import { generateZonedTerrain, type CarteZonee } from './zonegen'
+import { EAU, estUnCoude } from './zonegen-water'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import type { ResourceNode } from './economy'
 
@@ -140,6 +141,57 @@ describe('A2/A3 — la rivière traverse, son profond ne touche jamais la terre,
         }
       }
       expect(fautes, `seed ${c.graphe.seed} : du profond au contact de la terre sèche`).toBe(0)
+    }
+  })
+
+  it('A2ter — le COUDE est ÉQUERRÉ : plus de langue de terre au coin extérieur', () => {
+    // Le lit se peint en bandes perpendiculaires au fil : au virage, chaque bras s'arrêtait au
+    // pivot et le quart extérieur n'appartenait à aucun des deux — un bloc de 3×4 tuiles sèches
+    // planté dans le coin de CHAQUE coude (MESURÉ le 2026-07-26 : 275/336 tuiles sèches sur la
+    // seed 2026, portée de l'eau sur la diagonale extérieure médiane 0,00 t contre 4,24 dedans).
+    //
+    // Le prédicat n'est PAS « les 12 tuiles sont mouillées » : `poser` refuse de noyer un mur,
+    // de sortir de la Racine, et un couloir de seuil (`rampe`) rouvre l'eau en terre à dessein.
+    // Ce qui ne doit PLUS jamais s'y trouver, c'est de la TERRE MARCHABLE de la Racine.
+    for (const { c } of mondes) {
+      const { width, height, terrain } = c.map
+      const fil = c.map.fil
+      expect(fil, `seed ${c.graphe.seed} : la carte n'a pas de fil de rivière`).toBeDefined()
+      const DEMI = EAU.RIVIERE_DEMI_LIT
+      const fautifs: string[] = []
+      let coudes = 0
+      for (let k = EAU.RIVIERE_BOUCHE; k + 1 < fil!.length - EAU.RIVIERE_BOUCHE; k++) {
+        if (!estUnCoude(fil!, k, width)) continue
+        coudes++
+        const bx = fil![k]! % width
+        const by = (fil![k]! - bx) / width
+        const ax = fil![k - 1]! % width
+        const ay = (fil![k - 1]! - ax) / width
+        const cx = fil![k + 1]! % width
+        const cy = (fil![k + 1]! - cx) / width
+        const din = [bx - ax, by - ay]
+        const dout = [cx - bx, cy - by]
+        // Le coin EXTÉRIEUR : { pivot + a·din − b·dout }, a ∈ [1,DEMI], b ∈ [0,DEMI].
+        for (let a = 1; a <= DEMI; a++) {
+          for (let b = 0; b <= DEMI; b++) {
+            const x = bx + a * din[0]! - b * dout[0]!
+            const y = by + a * din[1]! - b * dout[1]!
+            if (x < 0 || y < 0 || x >= width || y >= height) continue
+            const i = y * width + x
+            if (c.zone[i] !== c.graphe.racine) continue // hors Racine : la rivière n'y va pas
+            if (c.rampe[i]) continue // couloir de seuil : la porte gagne (ordre des passes)
+            const t = terrain[i]!
+            if (eau(t)) continue
+            if (TERRAINS[t]?.walkable !== true) continue // un mur ne se noie pas
+            fautifs.push(`(${x},${y})=${TERRAINS[t]?.name}`)
+          }
+        }
+      }
+      expect(coudes, `seed ${c.graphe.seed} : aucun coude à vérifier`).toBeGreaterThan(0)
+      expect(
+        fautifs.slice(0, 12),
+        `seed ${c.graphe.seed} : ${fautifs.length} tuiles de terre au coin extérieur d'un coude`,
+      ).toEqual([])
     }
   })
 

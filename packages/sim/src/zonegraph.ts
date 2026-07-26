@@ -476,6 +476,13 @@ const SQUELETTE: readonly Case[] = [
 ]
 
 /**
+ * Les priorités du squelette, à plat — lues une fois par région et PAR TUILE dans
+ * `regionProprietaire`. Un tableau d'entiers évite d'y déréférencer un objet treize fois par tuile.
+ * Dérivé de `SQUELETTE`, donc jamais désynchronisé.
+ */
+const PRIORITE: readonly number[] = SQUELETTE.map((c) => c.p)
+
+/**
  * ═══ LES LIENS — l'adjacence se DÉCLARE, elle ne se déduit pas ═══
  *
  * Seize liens, écrits. Deux régions liées PARTAGENT une arête (leurs rectangles se touchent, et
@@ -563,16 +570,7 @@ export interface Echantillon {
  */
 export function echantillonAt(g: GrapheZones, x: number, y: number): Echantillon {
   const n = g.zones.length
-  // LA PLUS HAUTE PRIORITÉ GAGNE. Les rectangles se recouvrent (voir `Case.p`) : c'est ce
-  // chevauchement qui fabrique les terrasses, et c'est ici qu'il se tranche.
-  let zone = -1
-  let best = -1
-  for (let i = 0; i < n; i++) {
-    const r = g.zones[i]!.rect!
-    if (x < r.x || x >= r.x + r.w || y < r.y || y >= r.y + r.h) continue
-    const p = SQUELETTE[i]!.p
-    if (p > best) { best = p; zone = i }
-  }
+  const zone = regionProprietaire(g, x, y)
 
   // LA CREVASSE. On rend tout de même la région la plus proche : la cendre en fait une distance, le
   // client en tire une teinte d'air, et un échantillon doit toujours répondre.
@@ -589,17 +587,8 @@ export function echantillonAt(g: GrapheZones, x: number, y: number): Echantillon
     return { zone: best, voisin: second, marge: -bestD, purete: secondD, vide: true }
   }
 
-  const r = g.zones[zone]!.rect!
-  // La distance à chacun des quatre bords, et la région d'en face au droit du point.
-  const bords: readonly (readonly [number, number, number])[] = [
-    [x - r.x, r.x - 1, y],
-    [r.x + r.w - 1 - x, r.x + r.w, y],
-    [y - r.y, x, r.y - 1],
-    [r.y + r.h - 1 - y, x, r.y + r.h],
-  ]
-  let marge = Infinity
-  let voisin = zone
-  for (const [d, px, py] of bords) if (d < marge) { marge = d; voisin = regionLaPlusProche(g, px, py, zone) }
+  const voisin = regionDEnFace(g, zone, x, y)
+  let marge = distanceAuBord(g, zone, x, y)
   if (!Number.isFinite(marge)) marge = g.width + g.height
 
   let purete = Infinity
@@ -611,6 +600,97 @@ export function echantillonAt(g: GrapheZones, x: number, y: number): Echantillon
   if (!Number.isFinite(purete)) purete = g.width + g.height
 
   return { zone, voisin, marge, purete, vide: false }
+}
+
+/**
+ * LA RÉGION D'EN FACE, SEULE — et c'est tout ce que le champ de cendre demande.
+ *
+ * `echantillonAt` répond cinq choses ; la passe de cendre (`zonegen.ts`, un appel PAR TUILE sur
+ * 3,75 M) n'en lit qu'une. Elle payait donc, par tuile : la boucle de `purete` (treize
+ * `distAuRect`), un objet `Echantillon`, et le calcul de `marge` — pour le jeter. Ici, rien de
+ * tout ça. Même géométrie, mêmes comparaisons, dans le même ordre : le résultat est
+ * BIT À BIT celui de `echantillonAt(g, x, y).voisin` (invariant n°2 — vérifié par digest de la
+ * `CarteZonee` entière sur cinq seeds).
+ */
+export function voisinAt(g: GrapheZones, x: number, y: number): number {
+  const zone = regionProprietaire(g, x, y)
+  if (zone < 0) {
+    // La crevasse : le voisin est la SECONDE région la plus proche.
+    const n = g.zones.length
+    let best = 0
+    let bestD = Infinity
+    let second = 0
+    let secondD = Infinity
+    for (let i = 0; i < n; i++) {
+      const d = distAuRect(x, y, g.zones[i]!.rect!)
+      if (d < bestD) { secondD = bestD; second = best; bestD = d; best = i }
+      else if (d < secondD) { secondD = d; second = i }
+    }
+    return second
+  }
+  return regionDEnFace(g, zone, x, y)
+}
+
+/**
+ * LA PLUS HAUTE PRIORITÉ GAGNE. Les rectangles se recouvrent (voir `Case.p`) : c'est ce
+ * chevauchement qui fabrique les terrasses, et c'est ici qu'il se tranche. −1 = la crevasse.
+ *
+ * Les priorités ne sont PAS distinctes (deux `p: 2`, deux `p: 3`, trois `p: 5`…) : la comparaison
+ * reste donc STRICTE, et l'égalité revient au plus petit index. Ne pas la relâcher, et ne pas
+ * parcourir les régions dans un autre ordre.
+ */
+function regionProprietaire(g: GrapheZones, x: number, y: number): number {
+  const n = g.zones.length
+  let zone = -1
+  let best = -1
+  for (let i = 0; i < n; i++) {
+    const r = g.zones[i]!.rect!
+    if (x < r.x || x >= r.x + r.w || y < r.y || y >= r.y + r.h) continue
+    const p = PRIORITE[i]!
+    if (p > best) { best = p; zone = i }
+  }
+  return zone
+}
+
+/** La distance au plus proche des quatre bords de sa région. */
+function distanceAuBord(g: GrapheZones, zone: number, x: number, y: number): number {
+  const r = g.zones[zone]!.rect!
+  let m = x - r.x
+  const d1 = r.x + r.w - 1 - x
+  if (d1 < m) m = d1
+  const d2 = y - r.y
+  if (d2 < m) m = d2
+  const d3 = r.y + r.h - 1 - y
+  if (d3 < m) m = d3
+  return m
+}
+
+/**
+ * La région d'en face, au droit du bord LE PLUS PROCHE.
+ *
+ * Le tableau de quatre triplets qu'on allouait ici coûtait cinq objets PAR TUILE, et appelait
+ * `regionLaPlusProche` (treize `distAuRect`) une fois par bord AMÉLIORANT — jusqu'à quatre fois
+ * pour un seul résultat retenu. On cherche donc le bord gagnant d'abord, on n'interroge qu'une
+ * fois ensuite. La comparaison reste STRICTE et l'ordre des quatre bords inchangé : c'est le
+ * PREMIER minimum qui gagne, comme avant.
+ */
+function regionDEnFace(g: GrapheZones, zone: number, x: number, y: number): number {
+  const r = g.zones[zone]!.rect!
+  let m = Infinity
+  let k = -1
+  const d0 = x - r.x
+  if (d0 < m) { m = d0; k = 0 }
+  const d1 = r.x + r.w - 1 - x
+  if (d1 < m) { m = d1; k = 1 }
+  const d2 = y - r.y
+  if (d2 < m) { m = d2; k = 2 }
+  const d3 = r.y + r.h - 1 - y
+  if (d3 < m) { m = d3; k = 3 }
+  // Aucun bord n'a gagné (que des NaN) : l'ancienne boucle laissait `voisin` à `zone`.
+  if (k < 0) return zone
+  const px = k === 0 ? r.x - 1 : k === 1 ? r.x + r.w : x
+  const py = k === 2 ? r.y - 1 : k === 3 ? r.y + r.h : y
+  return regionLaPlusProche(g, px, py, zone)
 }
 
 /** La région la plus proche d'un point, en excluant `sauf`. Le vide n'appartient à personne. */

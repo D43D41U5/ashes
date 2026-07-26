@@ -109,7 +109,7 @@ const SCENARIOS = {
    */
   async t0(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1000)
 
     const etat = await page.evaluate(() => {
@@ -213,7 +213,7 @@ const SCENARIOS = {
    */
   async feeling(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1000)
 
     const gue = await page.evaluate(() => {
@@ -276,7 +276,9 @@ const SCENARIOS = {
       }
       const cv = document.createElement('canvas')
       cv.width = shots[0].width; cv.height = shots[0].height
-      const ctx = cv.getContext('2d')
+      // `willReadFrequently` : la sonde `lum` fait jusqu'à 80 relectures 1×1 sur CE canvas —
+      // sans le drapeau, chacune est un aller-retour GPU→CPU (et Chrome le dit en console).
+      const ctx = cv.getContext('2d', { willReadFrequently: true })
       for (let k = 0; k < 5; k++) {
         ctx.globalAlpha = 1 / (k + 1)
         ctx.drawImage(shots[k], 0, 0)
@@ -362,7 +364,7 @@ const SCENARIOS = {
    */
   async maree(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1000)
 
     const gue = await page.evaluate(() => {
@@ -477,7 +479,7 @@ const SCENARIOS = {
         const c = document.createElement('canvas')
         c.width = img.width
         c.height = img.height
-        const ctx = c.getContext('2d')
+        const ctx = c.getContext('2d', { willReadFrequently: true })
         ctx.drawImage(img, 0, 0)
         const d = ctx.getImageData(0, 0, c.width, c.height).data
         const larg = c.width >> 1
@@ -603,7 +605,7 @@ const SCENARIOS = {
 
     // ── STATION COMBE, midi : la brume permanente, seule au monde (TÉMOIN) ──
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1200)
     const combe = await zone('combe_brumeuse')
     if (combe) {
@@ -663,7 +665,7 @@ const SCENARIOS = {
    */
   async 'eau-vivante'(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1000)
     const gue = await page.evaluate(() => {
       const m = window.__BRAISES__.scene.map
@@ -869,7 +871,7 @@ const SCENARIOS = {
    */
   async 'eau-courant'(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1000)
     await page.mouse.move(640, 400)
     const heure = async (h) => {
@@ -1137,7 +1139,7 @@ const SCENARIOS = {
    */
   async 'lieux-lit'(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(800)
 
     const mesures = await page.evaluate(() => {
@@ -1149,7 +1151,7 @@ const SCENARIOS = {
         const img = src.image
         const cv = document.createElement('canvas')
         cv.width = img.width; cv.height = img.height
-        const ctx = cv.getContext('2d')
+        const ctx = cv.getContext('2d', { willReadFrequently: true })
         ctx.drawImage(img, 0, 0)
         const d = ctx.getImageData(0, 0, cv.width, cv.height).data
         let mn = 1, mx = -1
@@ -1216,7 +1218,7 @@ const SCENARIOS = {
    */
   async carte(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1200)
     const lire = () => page.evaluate(() => {
       const ui = window.__BRAISES__.scene.scene.get('ui')
@@ -1272,8 +1274,9 @@ const SCENARIOS = {
       const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
       const c = document.createElement('canvas')
       c.width = img.width; c.height = img.height
-      c.getContext('2d').drawImage(img, 0, 0)
-      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+      const cx = c.getContext('2d', { willReadFrequently: true })
+      cx.drawImage(img, 0, 0)
+      const d = cx.getImageData(0, 0, c.width, c.height).data
       const at = (x, y) => { const i = (y * c.width + x) * 4; return [d[i], d[i + 1], d[i + 2]] }
       return { w: c.width, h: c.height, haut: at(200, 20), dansBoite: at(c.width >> 1, 300), bas: at(c.width >> 1, c.height - 40) }
     })
@@ -1310,7 +1313,7 @@ const SCENARIOS = {
    */
   async cubique(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(800)
 
     // 1) MIROIR — `cl-grass_tuft_lit` vs `_lit_m` : les colonnes opaques doivent être {15 − x}. C'est
@@ -1320,7 +1323,7 @@ const SCENARIOS = {
       const cols = (key) => {
         const img = s.textures.get(key).getSourceImage()
         const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height
-        const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0)
+        const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(img, 0, 0)
         const d = cx.getImageData(0, 0, cv.width, cv.height).data
         const set = new Set()
         for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) if (d[(y * cv.width + x) * 4 + 3] > 8) set.add(x)
@@ -1344,7 +1347,7 @@ const SCENARIOS = {
         const nrm = src ? (src.image || src) : null
         if (!nrm) return null
         const cv = document.createElement('canvas'); cv.width = nrm.width; cv.height = nrm.height
-        const cx = cv.getContext('2d'); cx.drawImage(nrm, 0, 0)
+        const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(nrm, 0, 0)
         const d = cx.getImageData(0, 0, cv.width, cv.height).data
         let mn = 1, mx = -1
         for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
@@ -1424,7 +1427,7 @@ const SCENARIOS = {
    */
   async erratique(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(800)
 
     const dataUrl = await page.evaluate(() => {
@@ -1433,7 +1436,7 @@ const SCENARIOS = {
       // Lit un canvas de texture (albédo) ou sa normale (dataSource) en ImageData 42×42.
       const readPix = (img) => {
         const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height
-        const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0)
+        const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(img, 0, 0)
         return { w: cv.width, h: cv.height, d: cx.getImageData(0, 0, cv.width, cv.height).data }
       }
       const albedoOf = (key) => readPix(s.textures.get(key).getSourceImage())
@@ -1649,7 +1652,7 @@ const SCENARIOS = {
    */
   async zones(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
 
     const zones = await page.evaluate(() => {
       const m = window.__BRAISES__.scene.map
@@ -1703,7 +1706,7 @@ const SCENARIOS = {
    */
   async atlas(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
 
     // ON NE DEMANDE PAS À PHASER DE DÉZOOMER. La première écriture le faisait, et la page GELAIT :
     // le sol se maille à la vue, et « la vue » devenait alors les 3,75 M de tuiles de la carte. On
@@ -1761,7 +1764,7 @@ const SCENARIOS = {
    */
   async paroi(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
 
     // On cherche des murs de roche (terrain 23) bordés de sol des deux côtés — une frontière qu'on
     // longe — et on se plante juste à côté, au ras du mur.
@@ -1807,7 +1810,7 @@ const SCENARIOS = {
    */
   async cendre(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
 
     // Le client ne TIENT pas la sim : il tient la vue du dernier snapshot. C'est elle qu'on lit —
     // le smoke lit l'état du jeu, il ne le fabrique pas.
@@ -1844,7 +1847,7 @@ const SCENARIOS = {
    */
   async feu(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
 
     // Un feu de camp + de quoi remplir le sac (pour VOIR le composant sac/ceinture partagé),
     // et on gagne du terrain DÉGAGÉ (le spawn est un village).
@@ -1967,7 +1970,7 @@ const SCENARIOS = {
 
     await page.goto(URL)
     // Le hook est posé dès le `create` de WorldScene — donc AVANT la fin de la génération.
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry), { timeout: 30000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry), null, { timeout: 30000 })
 
     const passes = []
     let hudPendant = 0
@@ -2030,8 +2033,8 @@ const SCENARIOS = {
   async rupture(page) {
     await page.route('**/sim-worker*', (route) => route.abort())
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry), { timeout: 30000 })
-    await page.waitForFunction(() => Boolean(window.__BRAISES__.scene.registry.get('fatal')), { timeout: 20000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry), null, { timeout: 30000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__.scene.registry.get('fatal')), null, { timeout: 20000 })
 
     const motif = await page.evaluate(() => window.__BRAISES__.scene.registry.get('fatal').reason)
     console.log(`rupture : « ${motif} »`)
@@ -2060,7 +2063,7 @@ const SCENARIOS = {
     await page.mouse.click(bouton.x, bouton.y)
 
     const rejoue = await page
-      .waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('mapData')), { timeout: 90000 })
+      .waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('mapData')), null, { timeout: 90000 })
       .then(() => true)
       .catch(() => false)
     console.log(rejoue
@@ -2120,8 +2123,9 @@ const SCENARIOS = {
       const c = document.createElement('canvas')
       c.width = img.width
       c.height = img.height
-      c.getContext('2d').drawImage(img, 0, 0)
-      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+      const cx = c.getContext('2d', { willReadFrequently: true })
+      cx.drawImage(img, 0, 0)
+      const d = cx.getImageData(0, 0, c.width, c.height).data
       // « Peint en eau » : le bleu domine franchement (l'eau du shader ET le lit baké).
       const bleu = (sx, sy) => {
         const i = (sy * c.width + sx) * 4
@@ -2155,6 +2159,108 @@ const SCENARIOS = {
       ? `   ✓ l'eau tient dans son lit`
       : `   ✗ l'eau a QUITTÉ ses berges (${pct.toFixed(1)} % de justesse — la projection du shader est fausse)`)
     return { justesse }
+  },
+
+  /**
+   * LE COUDE DE LA RIVIÈRE — on va REGARDER l'extérieur d'un virage.
+   *
+   * La worldgen trace le lit en bandes perpendiculaires au fil (zonegen-water.ts) ;
+   * au coude, chaque bras s'arrête au pivot, si bien que le coin EXTÉRIEUR n'est
+   * peint par aucun des deux. On lit le fil dans `mapData.fil`, on localise les
+   * coudes, on mesure le bloc extérieur, et on se pose DESSUS pour le voir.
+   * Exige `--dev` (TP).
+   */
+  async coude(page) {
+    const DEMI = 3 // EAU.RIVIERE_DEMI_LIT
+    const releve = await page.evaluate((DEMI) => {
+      const map = window.__BRAISES__.scene.registry.get('mapData')
+      const fil = map.fil
+      if (!fil) return null
+      const W = map.width
+      const eau = (x, y) => {
+        const t = map.terrain[y * W + x]
+        return t === 4 || t === 6
+      }
+      const coudes = []
+      for (let k = 1; k < fil.length - 1; k++) {
+        const ax = fil[k - 1] % W
+        const ay = (fil[k - 1] - ax) / W
+        const bx = fil[k] % W
+        const by = (fil[k] - bx) / W
+        const cx = fil[k + 1] % W
+        const cy = (fil[k + 1] - cx) / W
+        const din = [bx - ax, by - ay]
+        const dout = [cx - bx, cy - by]
+        if (din[0] === dout[0] && din[1] === dout[1]) continue
+        // Le bloc extérieur prédit : C + a·din − b·dout, a∈[1,DEMI], b∈[0,DEMI].
+        let sec = 0
+        let total = 0
+        for (let a = 1; a <= DEMI; a++) {
+          for (let b = 0; b <= DEMI; b++) {
+            const x = bx + a * din[0] - b * dout[0]
+            const y = by + a * din[1] - b * dout[1]
+            total++
+            if (!eau(x, y)) sec++
+          }
+        }
+        coudes.push({ k, x: bx, y: by, din, dout, sec, total })
+      }
+      // Un coude bien au milieu du cours (le cœur profond y vit) et qui a de VRAIES BERGES :
+      // le fil enfile des lacs (les « perles »), et un coude au milieu d'un lac ne cadre que de
+      // l'eau. On exige donc de la terre à DEMI+2 pas sur la diagonale extérieure ET sur
+      // l'intérieure — c'est ce qui distingue un virage de rivière d'un virage dans un plan d'eau.
+      const berges = (c) => {
+        const d = DEMI + 2
+        const ex = c.x + d * (c.din[0] - c.dout[0])
+        const ey = c.y + d * (c.din[1] - c.dout[1])
+        const ix = c.x + d * (c.dout[0] - c.din[0])
+        const iy = c.y + d * (c.dout[1] - c.din[1])
+        return !eau(ex, ey) && !eau(ix, iy)
+      }
+      const bons = coudes.filter((c) => c.k > 60 && c.k < fil.length - 60 && berges(c))
+      const choisi = bons[Math.floor(bons.length / 2)] ?? coudes[Math.floor(coudes.length / 2)] ?? null
+      const secs = coudes.reduce((s, c) => s + c.sec, 0)
+      const tot = coudes.reduce((s, c) => s + c.total, 0)
+      return { n: coudes.length, secs, tot, choisi, filLen: fil.length }
+    }, DEMI)
+
+    if (!releve) { console.log('cette carte n’a pas de rivière'); return }
+    console.log(`fil : ${releve.filLen} tuiles, ${releve.n} coudes`)
+    console.log(`bloc extérieur du coude : ${releve.secs}/${releve.tot} tuiles SÈCHES (${(100 * releve.secs / releve.tot).toFixed(1)} %)`)
+    const c = releve.choisi
+    if (!c) { console.log('aucun coude'); return }
+    console.log(`coude choisi : k=${c.k} pivot (${c.x},${c.y}) din=[${c.din}] dout=[${c.dout}] — ${c.sec}/${c.total} sec`)
+
+    // On se pose AU MILIEU du bloc sec : la caméra cadre le coin fautif.
+    const px = c.x + 2 * c.din[0] - 2 * c.dout[0]
+    const py = c.y + 2 * c.din[1] - 2 * c.dout[1]
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.evaluate(({ x, y }) => {
+      window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
+    }, { x: px + 0.5, y: py + 0.5 })
+    await page.waitForTimeout(2000)
+    await page.screenshot({ path: `${OUT}/coude-exterieur.png` })
+    console.log(`→ ${OUT}/coude-exterieur.png (posé en ${px},${py})`)
+
+    // Le même coude vu d'un peu plus loin, à l'aplomb du coin extérieur.
+    await page.evaluate(({ x, y }) => {
+      window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
+    }, { x: px + 6.5, y: py + 6.5 })
+    await page.waitForTimeout(1600)
+    await page.screenshot({ path: `${OUT}/coude-recul.png` })
+
+    // LE CADRE LARGE — par la FENÊTRE, pas par le zoom : `setZoom` fait re-baker le sol
+    // sur une emprise énorme et le message CDP qui suit dépasse la limite de chaîne de Node
+    // (ERR_STRING_TOO_LONG, reproduit deux fois). Agrandir la vue montre autant de monde
+    // sans toucher à la caméra.
+    await page.setViewportSize({ width: 1920, height: 1200 })
+    await page.evaluate(({ x, y }) => {
+      window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
+    }, { x: px + 1.5, y: py + 1.5 })
+    await page.waitForTimeout(2000)
+    await page.screenshot({ path: `${OUT}/coude-large.png` })
+
+    return { coudes: releve.n, secs: releve.secs, tot: releve.tot, pivot: [c.x, c.y] }
   },
 
   /**
@@ -3277,8 +3383,9 @@ const SCENARIOS = {
         const c = document.createElement('canvas')
         c.width = img.width
         c.height = img.height
-        c.getContext('2d').drawImage(img, 0, 0)
-        const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data
+        const cx = c.getContext('2d', { willReadFrequently: true })
+        cx.drawImage(img, 0, 0)
+        const d = cx.getImageData(0, 0, c.width, c.height).data
         const lum = []
         for (let y = 0; y < c.height - 140; y += 2) {
           for (let x = 0; x < c.width; x += 2) {
@@ -3730,7 +3837,7 @@ const SCENARIOS = {
       if (nrm) {
         cx.drawImage(nrm, cell * 2, 0, cell, cell)
         const t = document.createElement('canvas'); t.width = nrm.width; t.height = nrm.height
-        const tc = t.getContext('2d'); tc.drawImage(nrm, 0, 0)
+        const tc = t.getContext('2d', { willReadFrequently: true }); tc.drawImage(nrm, 0, 0)
         const d = tc.getImageData(0, 0, t.width, t.height).data
         let mn = 1, mx = -1
         for (let i = 0; i < t.width * t.height; i++) {
@@ -3770,7 +3877,7 @@ const SCENARIOS = {
    */
   async abattage(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
     await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
     await page.waitForTimeout(300)
 
@@ -3827,7 +3934,7 @@ const SCENARIOS = {
    */
   async minage(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
     await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
     await page.waitForTimeout(300)
 
@@ -3876,7 +3983,7 @@ const SCENARIOS = {
    */
   async cueillette(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
     await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
     await page.waitForTimeout(300)
 
@@ -3932,7 +4039,7 @@ const SCENARIOS = {
    */
   async recolte_vivante(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
     await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
     await page.waitForTimeout(300)
 
@@ -4370,7 +4477,7 @@ const SCENARIOS = {
    */
   async construction(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
     await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
     await page.waitForTimeout(400)
 
@@ -4536,7 +4643,7 @@ const SCENARIOS = {
    */
   async village(page) {
     await page.goto(URL)
-    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 60000 })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
     await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
     await page.waitForTimeout(400)
 
@@ -4713,7 +4820,7 @@ try {
     }
   }
   // Le jeu est prêt quand WorldScene a publié la carte (donc après le `ready` de l'hôte).
-  await page.waitForFunction(() => window.__BRAISES__?.scene?.registry?.get('mapData'), { timeout: 60000 })
+  await page.waitForFunction(() => window.__BRAISES__?.scene?.registry?.get('mapData'), null, { timeout: 60000 })
   await page.waitForTimeout(1500) // quelques ticks de sim, le temps que le HUD se remplisse
 
   await run(page)

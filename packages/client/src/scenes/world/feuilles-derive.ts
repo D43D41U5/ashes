@@ -75,7 +75,7 @@ export class FeuillesDerive {
         const cv = document.createElement('canvas')
         cv.width = 5
         cv.height = 4
-        const ctx = cv.getContext('2d')!
+        const ctx = cv.getContext('2d', { willReadFrequently: true })!
         ctx.fillStyle = k === 0 ? '#c9a35a' : '#a8763c'
         ctx.fillRect(0, 1, 5, 2)
         ctx.fillRect(1, 0, 3, 4)
@@ -89,7 +89,7 @@ export class FeuillesDerive {
       const cv = document.createElement('canvas')
       cv.width = 1
       cv.height = 1
-      const ctx = cv.getContext('2d')!
+      const ctx = cv.getContext('2d', { willReadFrequently: true })!
       ctx.fillStyle = '#e9e7da' // le ton de l'écume, un cran sous elle
       ctx.fillRect(0, 0, 1, 1)
       scene.textures.addCanvas('fx-traine', cv)

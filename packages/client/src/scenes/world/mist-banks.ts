@@ -118,7 +118,7 @@ export class MistBanks {
       const cv = document.createElement('canvas')
       cv.width = W
       cv.height = H
-      const ctx = cv.getContext('2d')!
+      const ctx = cv.getContext('2d', { willReadFrequently: true })!
       for (let cy = 0; cy < H / GRAIN; cy++) {
         for (let cx = 0; cx < W / GRAIN; cx++) {
           const nx = ((cx + 0.5) / (W / GRAIN)) * 2 - 1

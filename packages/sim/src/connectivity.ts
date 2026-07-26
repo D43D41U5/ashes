@@ -18,7 +18,7 @@
  *
  * Pur et déterministe : balayage row-major, pile explicite, aucun aléa.
  */
-import { isBlockingTile, zoneIdAt, type WorldMap } from './map'
+import { MARCHABLE, type WorldMap } from './map'
 import { isWater } from './valleygen-primitives'
 
 /** Voisinage à 4 — le seul qui dise la vérité sur ce monde (cf. en-tête). */
@@ -46,10 +46,15 @@ export function walkableComponents(map: WorldMap): WalkableComponents {
   const label = new Int32Array(N).fill(-1)
   const sizes: number[] = []
   const stack = new Int32Array(N) // pile explicite : pas de récursion (2 M tuiles)
+  // Le terrain et la table de marchabilité, tenus en local : `isBlockingTile` refaisait un test
+  // de bornes et un accès à `TERRAINS` pour des tuiles qu'on vient de borner soi-même. Même
+  // réponse, à l'identique (voir `MARCHABLE`).
+  const terrain = map.terrain
+  const bloque = (i: number): boolean => MARCHABLE[terrain[i]!] !== 1
 
   for (let start = 0; start < N; start++) {
     if (label[start] !== -1) continue
-    if (isBlockingTile(map, start % W, (start / W) | 0)) continue
+    if (bloque(start)) continue
     const id = sizes.length
     let sp = 0
     let size = 0
@@ -65,7 +70,7 @@ export function walkableComponents(map: WorldMap): WalkableComponents {
         const ny = cy + N4Y[d]!
         if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
         const ni = ny * W + nx
-        if (label[ni] !== -1 || isBlockingTile(map, nx, ny)) continue
+        if (label[ni] !== -1 || bloque(ni)) continue
         label[ni] = id
         stack[sp++] = ni
       }
@@ -168,8 +173,9 @@ export function carveDistanceToMain(map: WorldMap, c: WalkableComponents, limit:
   // Une tuile qu'on ne perce jamais : l'anneau de bordure (une seule tuile percée
   // là, et la vallée s'ouvre sur le vide) et l'eau (on ne comble pas un lac pour
   // entrer dans une grotte).
+  const terrain = map.terrain
   const sealed = (tx: number, ty: number): boolean =>
-    tx <= 0 || ty <= 0 || tx >= W - 1 || ty >= H - 1 || isWater(map.terrain[ty * W + tx] ?? 0)
+    tx <= 0 || ty <= 0 || tx >= W - 1 || ty >= H - 1 || isWater(terrain[ty * W + tx] ?? 0)
 
   /**
    * ═══ ON NE PERCE JAMAIS UNE FRONTIÈRE DE ZONE — et ça a failli coûter toute la topologie ═══
@@ -203,7 +209,22 @@ export function carveDistanceToMain(map: WorldMap, c: WalkableComponents, limit:
    * Une carte sans zones (l'ancien générateur) rend -1 partout : la règle est alors sans effet, et
    * le comportement d'avant est préservé à l'identique.
    */
-  const zid = (tx: number, ty: number): number => zoneIdAt(map, tx, ty)
+  /**
+   * `zoneIdAt` recalculait DEUX divisions et deux `Math.ceil` (les colonnes et les lignes de la
+   * grille de zones) à chaque appel — et il y a un appel par voisin, soit quatre par tuile
+   * dépilée. La grille ne bouge pas pendant le parcours : on la lit une fois. Même arithmétique,
+   * mêmes clamps, donc même id (invariant n°2).
+   */
+  const zgrid = map.zoneGrid
+  const zpas = map.zonePas
+  const zcols = zgrid && zpas ? Math.ceil(W / zpas) : 0
+  const zrows = zgrid && zpas ? Math.ceil(H / zpas) : 0
+  const zid = (tx: number, ty: number): number => {
+    if (!zgrid || !zpas) return -1
+    const i = Math.min(zcols - 1, Math.max(0, Math.floor(tx / zpas)))
+    const j = Math.min(zrows - 1, Math.max(0, Math.floor(ty / zpas)))
+    return zgrid[j * zcols + i] ?? -1
+  }
 
   /**
    * FILE À SEAUX plutôt que deque : les coûts d'arête ne valent que 0 ou 1, donc
@@ -234,15 +255,18 @@ export function carveDistanceToMain(map: WorldMap, c: WalkableComponents, limit:
       if (d === limit) continue // budget épuisé : on ne développe plus
       const cx = cur % W
       const cy = (cur / W) | 0
+      // La zone de la tuile COURANTE ne dépend pas du voisin : elle était recalculée quatre fois.
+      const zcur = zid(cx, cy)
       for (let n = 0; n < 4; n++) {
         const nx = cx + N4X[n]!
         const ny = cy + N4Y[n]!
         if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
         const ni = ny * W + nx
         if (sealed(nx, ny)) continue
-        if (zid(nx, ny) !== zid(cx, cy)) continue // ON NE PERCE PAS UNE FRONTIÈRE DE ZONE (voir `zid`)
-        // Entrer sur une tuile bloquante, c'est la percer : +1. Sinon : gratuit.
-        const w = isBlockingTile(map, nx, ny) ? 1 : 0
+        if (zid(nx, ny) !== zcur) continue // ON NE PERCE PAS UNE FRONTIÈRE DE ZONE (voir `zid`)
+        // Entrer sur une tuile bloquante, c'est la percer : +1. Sinon : gratuit. (`ni` est borné
+        // juste au-dessus : le test de bornes de `isBlockingTile` serait redondant.)
+        const w = MARCHABLE[terrain[ni]!] !== 1 ? 1 : 0
         const nd = d + w
         if (nd > limit || nd >= dist[ni]!) continue
         dist[ni] = nd

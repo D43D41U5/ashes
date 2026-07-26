@@ -146,6 +146,28 @@ export function createEmptyMap(width: number, height: number, fillTerrainId: num
   }
 }
 
+/**
+ * LA MARCHABILITÉ, À PLAT — `MARCHABLE[id] === 1` ⇔ `TERRAINS[id]?.walkable === true`.
+ *
+ * Les parcours en largeur (connexité, percement, worldgen) posent cette question des dizaines de
+ * millions de fois par génération. La poser à `TERRAINS` — objet à clés numériques, plus un
+ * chaînage optionnel — coûte un accès de propriété ; la poser à un `Uint8Array` coûte une lecture.
+ *
+ * Le tableau est DÉRIVÉ de `TERRAINS` : il ne peut pas se désynchroniser. Hors table (id absent
+ * ou négatif) la lecture rend `undefined`, donc `!== 1`, donc bloquant — exactement ce que
+ * rendaient `TERRAINS[id] === undefined || !walkable` et `?.walkable === true`. Et `TERRAINS[0]`
+ * (`void`) est lui-même non marchable, donc le `?? 0` de `terrainAt` sur un trou de tableau tombe
+ * sur la même réponse.
+ */
+export const MARCHABLE: Uint8Array = ((): Uint8Array => {
+  const t = new Uint8Array(256)
+  for (const [id, def] of Object.entries(TERRAINS)) {
+    const i = Number(id)
+    if (i >= 0 && i < 256 && def.walkable === true) t[i] = 1
+  }
+  return t
+})()
+
 /** Id de terrain à une tuile. Hors carte = void (0). */
 export function terrainAt(map: WorldMap, tx: number, ty: number): number {
   if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return 0

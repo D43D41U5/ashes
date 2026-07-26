@@ -35,7 +35,7 @@ export function ensureEauFxTextures(scene: Phaser.Scene): void {
     const cv = document.createElement('canvas')
     cv.width = W
     cv.height = H
-    const ctx = cv.getContext('2d')!
+    const ctx = cv.getContext('2d', { willReadFrequently: true })!
     const rx = 14 * (0.82 + 0.16 * k)
     const ry = rx * 0.42
     for (let cy = 0; cy < H / G; cy++) {
@@ -61,7 +61,7 @@ export function ensureEauFxTextures(scene: Phaser.Scene): void {
     const cv = document.createElement('canvas')
     cv.width = W
     cv.height = H
-    const ctx = cv.getContext('2d')!
+    const ctx = cv.getContext('2d', { willReadFrequently: true })!
     const base = H - 2 // le pied de la gerbe (posé à la ligne de flottaison)
     // la colonne centrale : 2 cellules de large, blanche au cœur
     const hCol = COLONNE[f]!
@@ -91,7 +91,7 @@ export function ensureEauFxTextures(scene: Phaser.Scene): void {
     const cv = document.createElement('canvas')
     cv.width = 4
     cv.height = 6
-    const ctx = cv.getContext('2d')!
+    const ctx = cv.getContext('2d', { willReadFrequently: true })!
     ctx.fillStyle = 'rgba(20,16,10,0.85)'
     ctx.fillRect(0, 0, 4, 4)
     ctx.fillStyle = 'rgba(20,16,10,0.6)'

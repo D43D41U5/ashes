@@ -45,7 +45,7 @@ import {
   TERRAIN_SHALLOW_WATER,
   TERRAIN_SNOW,
 } from './balance'
-import type { WorldMap, Zone as ZoneRect } from './map'
+import { MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
 import { calibreLeFront, computeCendreField } from './cendre'
 import { distSq } from './geometry'
 import { placePois } from './poi'
@@ -57,6 +57,7 @@ import {
   deriveGrapheZones,
   echantillonAt,
   MONDE,
+  voisinAt,
   type GrapheZones,
 } from './zonegraph'
 
@@ -314,7 +315,27 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   // La carte n'est PAS un pavage (spec R39) : ce qui n'est pas une région est du VIDE. On ne peint
   // donc plus une zone partout — on peint des ÎLES, et le reste devient de la ROCHE PLATE,
   // infranchissable (façon montagne RimWorld). Pas de gouffre, pas de hauteur : un mur qu'on longe.
+  /**
+   * LE SOL, MÉMORISÉ PAR MOTIF — et ce n'est pas une approximation, c'est la lecture de `solDe`.
+   *
+   * `solDe` n'échantillonne le bruit qu'au CENTRE du motif de 8×8 : « tout le carré partage son
+   * verdict », dit sa doc, et c'est vrai. On le lui demandait pourtant une fois par TUILE —
+   * soixante-quatre fois le même calcul, six évaluations de `gradientNoise2` à chaque fois. C'était
+   * 20 % du temps de génération (MESURÉ).
+   *
+   * On le calcule donc une fois par (motif, région) — la région varie DANS un motif, un motif de 8
+   * n'étant pas aligné sur le bloc de 16, d'où la clé à deux termes. Le cache ne vit que le temps
+   * d'une RANGÉE de motifs, puisque `my` ne dépend que de `y` : un tableau plat, vidé au changement
+   * de rangée. `solDe` étant pure, le terrain est BIT À BIT le même (invariant n°2).
+   */
+  const M_SOL = RELIEF.MOTIF
+  const colsMotif = Math.ceil(width / M_SOL)
+  const solCache = new Int16Array(colsMotif * g.zones.length).fill(-1)
+  let rangeeMotif = -1
+
   for (let y = 0; y < height; y++) {
+    const rangee = Math.floor(y / M_SOL)
+    if (rangee !== rangeeMotif) { solCache.fill(-1); rangeeMotif = rangee }
     for (let x = 0; x < width; x++) {
       const i = y * width + x
       const k = blocDe(blocs, x, y)
@@ -324,7 +345,13 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
         terrain[i] = TERRAIN_ROCK
         continue
       }
-      terrain[i] = solDe(g, z, x, y)
+      const kc = Math.floor(x / M_SOL) * g.zones.length + z
+      let sol = solCache[kc]!
+      if (sol < 0) {
+        sol = solDe(g, z, x, y)
+        solCache[kc] = sol
+      }
+      terrain[i] = sol
     }
   }
 
@@ -428,8 +455,7 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
     if (zid === cendriere.id) return -m // DEDANS : elle brûle depuis le premier jour
     // Dehors : la distance à la frontière de la Cendrière. Si le bloc ne la touche pas, on prend la
     // distance au site — une borne honnête, et le front s'arrête de toute façon bien avant.
-    const e = echantillonAt(g, x, y)
-    if (e.voisin === cendriere.id) return m
+    if (voisinAt(g, x, y) === cendriere.id) return m
     return Math.sqrt(distSq(x, y, cendriere.x, cendriere.y))
   })
 
@@ -801,7 +827,7 @@ function garantirLaConnexite(
   height: number,
 ): void {
   const N = width * height
-  const walk = (i: number): boolean => TERRAINS[terrain[i]!]?.walkable === true
+  const walk = (i: number): boolean => MARCHABLE[terrain[i]!] === 1
 
   const inonder = (depart: number): Uint8Array => {
     const vu = new Uint8Array(N)
@@ -812,15 +838,14 @@ function garantirLaConnexite(
       const i = file[h]!
       const x = i % width
       const y = (i - x) / width
-      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-        const nx = x + dx
-        const ny = y + dy
-        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
-        const j = ny * width + nx
-        if (vu[j] || !walk(j)) continue
-        vu[j] = 1
-        file.push(j)
-      }
+      // Les quatre voisins, DÉROULÉS — même ordre qu'avant (est, ouest, sud, nord), donc même
+      // ordre de découverte et même `file`. Le `for…of [[1,0],[-1,0],[0,1],[0,-1]]` qui tenait
+      // ici allouait CINQ tableaux par tuile dépilée : sur 3,75 M de tuiles, plusieurs fois par
+      // génération, c'était le premier poste du profil (16,8 % du temps, MESURÉ).
+      if (x + 1 < width) { const j = i + 1; if (!vu[j] && walk(j)) { vu[j] = 1; file.push(j) } }
+      if (x > 0) { const j = i - 1; if (!vu[j] && walk(j)) { vu[j] = 1; file.push(j) } }
+      if (y + 1 < height) { const j = i + width; if (!vu[j] && walk(j)) { vu[j] = 1; file.push(j) } }
+      if (y > 0) { const j = i - width; if (!vu[j] && walk(j)) { vu[j] = 1; file.push(j) } }
     }
     return vu
   }
@@ -847,15 +872,13 @@ function garantirLaConnexite(
         const i = poche[h]!
         const x = i % width
         const y = (i - x) / width
-        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-          const nx = x + dx
-          const ny = y + dy
-          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
-          const j = ny * width + nx
-          if (vues[j] || !walk(j) || monde[j]) continue
-          vues[j] = 1
-          poche.push(j)
-        }
+        // Déroulé comme dans `inonder`, et dans le MÊME ordre : l'ordre de `poche` compte
+        // (c'est `poche[0]` qui donne la zone du percement, et l'ordre de la file décide
+        // quelle tuile atteint le monde la première).
+        if (x + 1 < width) { const j = i + 1; if (!vues[j] && walk(j) && !monde[j]) { vues[j] = 1; poche.push(j) } }
+        if (x > 0) { const j = i - 1; if (!vues[j] && walk(j) && !monde[j]) { vues[j] = 1; poche.push(j) } }
+        if (y + 1 < height) { const j = i + width; if (!vues[j] && walk(j) && !monde[j]) { vues[j] = 1; poche.push(j) } }
+        if (y > 0) { const j = i - width; if (!vues[j] && walk(j) && !monde[j]) { vues[j] = 1; poche.push(j) } }
       }
       if (poche.length < POCHE_MIN) continue // du décor, pas un défaut
 

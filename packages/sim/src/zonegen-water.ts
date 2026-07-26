@@ -110,6 +110,24 @@ export interface Riviere {
   coeur: Set<number>
 }
 
+/**
+ * Le fil TOURNE-T-IL en `fil[k]` ? — LA définition du coude, et il n'y en a qu'une.
+ *
+ * Comparaison COMPOSANTE PAR COMPOSANTE des deux pas, et non « le pas est-il horizontal ? » :
+ * la garde de test et les sondes énumèrent les coudes avec cette règle-là. Deux définitions du
+ * coude qui divergeraient, et on chercherait un fantôme.
+ */
+export function estUnCoude(fil: readonly number[], k: number, width: number): boolean {
+  const a = fil[k - 1]!
+  const b = fil[k]!
+  const c = fil[k + 1]!
+  const ax = a % width
+  const bx = b % width
+  const cx = c % width
+  if (bx - ax !== cx - bx) return true
+  return (b - bx) / width - (a - ax) / width !== (c - cx) / width - (b - bx) / width
+}
+
 interface Lac {
   cx: number
   cy: number
@@ -389,52 +407,72 @@ function tracerLaRiviere(
   // On ne note dans `litNeuf` QUE ce que la rivière vient de poser : le cœur n'aura le droit
   // de creuser QUE là-dedans (jamais un lac, jamais un chenal — leur anneau ne nous doit rien).
   const litNeuf = new Set<number>()
+  /** Une tuile de lit — les mêmes refus partout : hors carte, hors Racine, eau déjà là, mur. */
+  const poser = (bx: number, by: number): void => {
+    if (bx < 0 || by < 0 || bx >= width || by >= height) return
+    const i = by * width + bx
+    if (zone[i] !== racineId) return // la rivière ne sort JAMAIS de la Racine
+    const cur = terrain[i]!
+    if (cur === TERRAIN_SHALLOW_WATER || cur === TERRAIN_DEEP_WATER) return // eau existante : intacte
+    if (TERRAINS[cur]?.walkable !== true) return // on ne noie pas un mur
+    terrain[i] = TERRAIN_SHALLOW_WATER
+    litNeuf.add(i)
+    eaux.push(i)
+  }
   const peindreBande = (cx: number, cy: number, horiz: boolean, demi: number): void => {
-    for (let w = -demi; w <= demi; w++) {
-      const bx = horiz ? cx : cx + w
-      const by = horiz ? cy + w : cy
-      if (bx < 0 || by < 0 || bx >= width || by >= height) continue
-      const i = by * width + bx
-      if (zone[i] !== racineId) continue // la rivière ne sort JAMAIS de la Racine
-      const cur = terrain[i]!
-      if (cur === TERRAIN_SHALLOW_WATER || cur === TERRAIN_DEEP_WATER) continue // eau existante : intacte
-      if (TERRAINS[cur]?.walkable !== true) continue // on ne noie pas un mur
-      terrain[i] = TERRAIN_SHALLOW_WATER
-      litNeuf.add(i)
-      eaux.push(i)
+    for (let w = -demi; w <= demi; w++) poser(horiz ? cx : cx + w, horiz ? cy + w : cy)
+  }
+  /** LE COUDE ÉQUERRÉ — le carré plein de côté `2·demi+1` centré sur le PIVOT. */
+  const peindreCarre = (cx: number, cy: number, demi: number): void => {
+    for (let dy = -demi; dy <= demi; dy++) {
+      for (let dx = -demi; dx <= demi; dx++) poser(cx + dx, cy + dy)
     }
   }
   for (let k = 1; k < fil.length; k++) {
     const i = fil[k]!
-    const prev = fil[k - 1]!
     const cx = i % width
     const cy = (i - cx) / width
-    const horiz = Math.abs(i - prev) === 1 // le pas était horizontal → la bande est verticale
-    peindreBande(cx, cy, horiz, EAU.RIVIERE_DEMI_LIT)
-    // Au COUDE, la bande pivote et laisse un coin sec dans le lit : on peint les deux axes.
-    if (k >= 2) {
-      const prev2 = fil[k - 2]!
-      const horizAvant = Math.abs(prev - prev2) === 1
-      if (horizAvant !== horiz) peindreBande(cx, cy, horizAvant, EAU.RIVIERE_DEMI_LIT)
-    }
+    // le pas était horizontal → la bande est verticale
+    peindreBande(cx, cy, Math.abs(i - fil[k - 1]!) === 1, EAU.RIVIERE_DEMI_LIT)
+  }
+  // LES COUDES, en passe à part — et le PIVOT est l'index de boucle. C'est tout le correctif :
+  // l'ancienne version équerrait `fil[k]`, un pas APRÈS le virage, si bien qu'elle repeignait
+  // une bande déjà couverte pendant que le coin EXTÉRIEUR restait sec (MESURÉ le 2026-07-26 :
+  // portée de l'eau sur la diagonale extérieure, médiane 0,00 tuile contre 4,24 à l'intérieur).
+  // Poser le carré plein sur le pivot revient EXACTEMENT à prolonger chaque bras de `demi`
+  // tuiles au-delà : la berge extérieure tourne son angle droit au lieu de couper le virage.
+  for (let k = 1; k + 1 < fil.length; k++) {
+    if (!estUnCoude(fil, k, width)) continue
+    const cx = fil[k]! % width
+    peindreCarre(cx, (fil[k]! - cx) / width, EAU.RIVIERE_DEMI_LIT)
   }
 
   // PASSE 2 — LE CŒUR : profond, demi-largeur RIVIERE_DEMI_COEUR, en retrait des deux bouts.
   const coeur = new Set<number>()
+  const creuser = (bx: number, by: number): void => {
+    if (bx < 0 || by < 0 || bx >= width || by >= height) return
+    const i2 = by * width + bx
+    if (!litNeuf.has(i2)) return // le cœur ne creuse QUE le lit de la rivière
+    terrain[i2] = TERRAIN_DEEP_WATER
+    coeur.add(i2)
+  }
   for (let k = EAU.RIVIERE_BOUCHE; k < fil.length - EAU.RIVIERE_BOUCHE; k++) {
     const i = fil[k]!
-    const prev = fil[k - 1]!
     const cx = i % width
     const cy = (i - cx) / width
-    const horiz = Math.abs(i - prev) === 1
+    const horiz = Math.abs(i - fil[k - 1]!) === 1
     for (let w = -EAU.RIVIERE_DEMI_COEUR; w <= EAU.RIVIERE_DEMI_COEUR; w++) {
-      const bx = horiz ? cx : cx + w
-      const by = horiz ? cy + w : cy
-      if (bx < 0 || by < 0 || bx >= width || by >= height) continue
-      const i2 = by * width + bx
-      if (!litNeuf.has(i2)) continue // le cœur ne creuse QUE le lit de la rivière
-      terrain[i2] = TERRAIN_DEEP_WATER
-      coeur.add(i2)
+      creuser(horiz ? cx : cx + w, horiz ? cy + w : cy)
+    }
+    // Le cœur s'équerre comme le lit : le fil sombre tourne l'angle, il ne le coupe pas. Sans
+    // risque pour l'anneau de R45 — ce carré de 3 vit au centre du carré de 7 que le lit vient
+    // de poser, et `creuser` ne touche de toute façon que `litNeuf`.
+    if (k + 1 < fil.length && estUnCoude(fil, k, width)) {
+      for (let dy = -EAU.RIVIERE_DEMI_COEUR; dy <= EAU.RIVIERE_DEMI_COEUR; dy++) {
+        for (let dx = -EAU.RIVIERE_DEMI_COEUR; dx <= EAU.RIVIERE_DEMI_COEUR; dx++) {
+          creuser(cx + dx, cy + dy)
+        }
+      }
     }
   }
 
@@ -462,34 +500,46 @@ function tracerChenal(
   let y = a.cy
   const maxPas = width + height // garde-fou : un chemin de Manhattan ne dépasse jamais ça
 
+  const poser = (px: number, py: number): void => {
+    if (px < 0 || py < 0 || px >= width || py >= height) return
+    const i = py * width + px
+    if (zone[i] !== racineId) return // on ne déborde jamais hors de la Racine
+    const cur = terrain[i]
+    if (cur === TERRAIN_SHALLOW_WATER || cur === TERRAIN_DEEP_WATER) return // eau existante : intacte
+    if (TERRAINS[cur!]?.walkable !== true) return // on ne noie pas un mur
+    terrain[i] = TERRAIN_SHALLOW_WATER
+    eaux.push(i)
+  }
   const bande = (cx: number, cy: number, horiz: boolean): void => {
-    for (let w = -hw; w <= hw; w++) {
-      const px = horiz ? cx : cx + w
-      const py = horiz ? cy + w : cy
-      if (px < 0 || py < 0 || px >= width || py >= height) continue
-      const i = py * width + px
-      if (zone[i] !== racineId) continue // on ne déborde jamais hors de la Racine
-      const cur = terrain[i]
-      if (cur === TERRAIN_SHALLOW_WATER || cur === TERRAIN_DEEP_WATER) continue // eau existante : intacte
-      if (TERRAINS[cur!]?.walkable !== true) continue // on ne noie pas un mur
-      terrain[i] = TERRAIN_SHALLOW_WATER
-      eaux.push(i)
+    for (let w = -hw; w <= hw; w++) poser(horiz ? cx : cx + w, horiz ? cy + w : cy)
+  }
+  /** LE COUDE ÉQUERRÉ — même géométrie que la rivière, à l'échelle du ruisseau. */
+  const carre = (cx: number, cy: number): void => {
+    for (let dy = -hw; dy <= hw; dy++) {
+      for (let dx = -hw; dx <= hw; dx++) poser(cx + dx, cy + dy)
     }
   }
 
   let pas = 0
+  // L'axe du tronçon précédent : 1 horizontal, 0 vertical, −1 « pas encore de tronçon ».
+  let axeAvant = -1
   while ((x !== b.cx || y !== b.cy) && pas < maxPas) {
     const dx = b.cx - x
     const dy = b.cy - y
     const horiz = Math.abs(dx) >= Math.abs(dy)
     const step = horiz ? Math.sign(dx) : Math.sign(dy)
     const troncon = Math.min(EAU.TRONCON, horiz ? Math.abs(dx) : Math.abs(dy))
+    // Le chenal avait le MÊME coin sec que la rivière, en plus discret (2 tuiles à demi-largeur
+    // 1 au lieu de 12 à demi-largeur 3) : il n'avait aucune correction de coude du tout. Le
+    // pivot est la position COURANTE, avant le premier pas du nouveau tronçon.
+    if (axeAvant >= 0 && axeAvant !== (horiz ? 1 : 0)) carre(x, y)
     for (let t = 0; t < troncon; t++) {
       if (horiz) x += step
       else y += step
       bande(x, y, horiz)
       pas++
     }
+    axeAvant = horiz ? 1 : 0
   }
 }
 

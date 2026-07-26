@@ -125,7 +125,7 @@ export class MorningMist {
     const cv = document.createElement('canvas')
     cv.width = width
     cv.height = height
-    const ctx = cv.getContext('2d')!
+    const ctx = cv.getContext('2d', { willReadFrequently: true })!
     const img = ctx.createImageData(width, height)
     for (let i = 0; i < width * height; i++) {
       img.data[i * 4] = Math.round((Math.min(dist[i]! / 3, DIST_FIELD_MAX) / DIST_FIELD_MAX) * 255)

@@ -32,7 +32,7 @@ export class CombeMist {
     const cv = document.createElement('canvas')
     cv.width = width
     cv.height = height
-    const ctx = cv.getContext('2d')!
+    const ctx = cv.getContext('2d', { willReadFrequently: true })!
     const img = ctx.createImageData(width, height)
     // R = 255 (« loin ») PARTOUT d'un seul geste, puis on ne calcule que le sous-rectangle
     // utile (empreinte + portée du champ) : 4 000 cellules au lieu de 3,75 M (revue, ×1600).
