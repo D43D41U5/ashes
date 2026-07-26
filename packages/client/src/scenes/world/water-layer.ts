@@ -19,11 +19,18 @@
  * AUCUNE logique de jeu ici : de l'habillage, et rien d'autre.
  */
 import Phaser from 'phaser'
-import type { WorldMap } from '@braises/sim'
+import {
+  TERRAIN_DEEP_WATER,
+  TERRAIN_MARSH,
+  TERRAIN_PEAT_BOG,
+  TERRAIN_REED_MARSH,
+  TERRAIN_SHALLOW_WATER,
+  type WorldMap,
+} from '@braises/sim'
 import { buildFlowField, COURANT_VITESSE, TAPER_RIVE_MAX, TAPER_RIVE_MIN, type FlowField } from '../../render/flow-field'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { sunDirection } from '../../render/lighting'
-import { buildFondField, buildRiveField, buildWaterField, type RiveField } from '../../render/water-field'
+import { buildFondField, buildRiveField, buildWaterField, REGIME_MARAIS, type RiveField } from '../../render/water-field'
 
 /** Période du cycle d'advection dual-phase (s). Courte À DESSEIN : sur la rampe du taper
  *  de berge, les deux couches divergent d'au plus 0,25·T·vitesse — à 3 s l'écart (0,41
@@ -83,7 +90,7 @@ precision mediump float;
 
 varying vec2 outTexCoord;
 
-uniform sampler2D uField;    // R masque (binaire) · G profondeur CASE À CASE (geste 01) · B profond binaire
+uniform sampler2D uField;    // R masque (binaire) · G profondeur CASE À CASE (geste 01) · B régime (06/10)
 uniform sampler2D uSeabed;   // le bake du terrain : la couleur de RIVE (l'écume s'y teinte)
 uniform sampler2D uFond;     // le LIT réel (geste 03) : sable, galets, vase — vu à travers l'eau
 uniform sampler2D uRive;     // R : distance SIGNÉE à la rive (128 = la rive) · G/B : le COURANT (128 = nul)
@@ -308,6 +315,9 @@ void main() {
 
   vec4 field = texture2D(uField, texUv(tile));
   float mask = field.r;
+  // LE RÉGIME (gestes 06/10) : 0 = eau normale · ~0,47 = MARAIS (eau morte) · ~0,78 = LAC MORT.
+  float regime = field.b;
+  float morte = step(0.30, regime) * (1.0 - step(0.63, regime));
   vec3 rf = riveFlow(tile); // x : distance à la rive (+eau/−terre) · yz : le courant
   float dRive = rf.x;
 
@@ -316,6 +326,40 @@ void main() {
   // bleue des anciens coins « arrondis » (l'iso-contour 0,5 du filtrage linéaire qui
   // rognait l'angle) disparaît d'elle-même.
   if (mask < 0.5) {
+    // ═══ L'EAU MORTE DU MARAIS (geste 06, eau-fond) — le sol qui ne répond pas ═══
+    //
+    // Le marais entre dans le pipeline de l'eau comme son CONTRAIRE : un sol détrempé
+    // où AFFLEURENT des plaques d'eau morte — mates, thé noir de tourbe, presque sans
+    // ciel — par blocs de 12 px aux marges rongées cellule à cellule. De loin en loin
+    // une bulle y crève en un anneau lent d'un cran. À l'aube, les plaques s'allument
+    // blanc-lait AVEC la brume qui germe ici même (morning-mist sème sur le marais) :
+    // les deux racontent la même eau. La rivière répond au monde, le marais ne répond
+    // pas — c'est ça qui inquiète. Les roseaux du clutter restent posés par-dessus.
+    if (morte > 0.5) {
+      vec2 bloc = floor(flatPx / (GRAIN * 3.0));
+      float nB = cellHash(bloc + vec2(3.0, 47.0));
+      float plaque = step(0.62, nB) * step(0.22, cellHash(flatPx / GRAIN + vec2(11.0, 5.0)));
+      if (plaque > 0.5) {
+        vec3 the = vec3(0.075, 0.065, 0.045);        // le thé noir de tourbe — mate
+        the += vec3(0.05, 0.08, 0.09) * uDay * 0.35; // un souffle de ciel, à peine
+        the += uAstreCol * 0.10 * uAstre;            // blanc-lait à l'aube, avec la brume
+        // LA BULLE : certains cycles seulement (hash du bloc ET du cycle), un anneau
+        // lent qui s'élargit et meurt — le langage des remous, au ralenti de la tourbe.
+        vec2 lb = fract(flatPx / (GRAIN * 3.0)) - 0.5;
+        float bAge = fract(t * 0.12 + nB * 7.0);
+        float cycle = floor(t * 0.12 + nB * 7.0);
+        float bulle = step(abs(length(lb) * 2.0 - bAge * 0.8), 0.14)
+                    * step(0.8, cellHash(bloc + vec2(cycle, 19.0))) * (1.0 - bAge);
+        the += vec3(0.05, 0.05, 0.04) * bulle;
+        gl_FragColor = vec4(the * 0.55, 0.55);
+        return;
+      }
+      // Hors plaque : le sol détrempé — un demi-cran sombre, dentelé à la cellule.
+      float nSol = cellHash(flatPx / GRAIN + vec2(37.0, 11.0));
+      float aS = 0.10 + 0.08 * step(0.5, nSol);
+      gl_FragColor = vec4(vec3(0.14, 0.13, 0.09) * aS, aS);
+      return;
+    }
     // ═══ LE SOL HUMIDE (spec eau-vivante R10') — la terre SAIT qu'elle touche l'eau ═══
     // Le quad ne jette plus tout de suite : sur ~0,55 tuile au contact, le sol
     // s'assombrit d'un palier — bande DENTELÉE par cellule (des cellules sèches dans la
@@ -343,6 +387,7 @@ void main() {
 
   // Le clapot meurt sur les hauts-fonds : on ne clapote pas dans deux doigts d'eau.
   float amp = 0.35 + 0.65 * smoothstep(0.0, 0.45, open);
+  amp *= 1.0 - 0.85 * morte; // l'eau morte du marais ne clapote pas (geste 06)
   vec2 p = tile * PLANE; // le plan de l'eau, redressé (voir YSQUASH)
 
   // ═══ LE COURANT (chantier « l'eau suit le flow ») — la surface AVANCE vers l'aval ═══
@@ -420,7 +465,7 @@ void main() {
   // de la berge (le lit visible garde la main). Vitesses LENTES à dessein — la doctrine
   // R12 : rien ne bouge sans mesure, et la sonde optique ne corrèle qu'à ω·dt ≲ 1 rad.
   // Alpha bas : c'est le deuxième candidat au « lait » après l'écume, la leçon est écrite.
-  float caustGate = uDay * clamp(uSun.z, 0.0, 1.0) * (1.0 - deep) * smoothstep(0.1, 0.4, open);
+  float caustGate = uDay * clamp(uSun.z, 0.0, 1.0) * (1.0 - deep) * smoothstep(0.1, 0.4, open) * (1.0 - morte);
   if (caustGate > 0.02) {
     vec2 cq = p * 3.3;
     float web = sin(cq.x + sin(cq.y * 1.13 + t * 0.33)) * sin(cq.y - sin(cq.x * 0.87 - t * 0.26));
@@ -435,6 +480,9 @@ void main() {
   float litGagne = 1.0 - clamp((dRive - 0.15) / 0.85, 0.0, 1.0);
   litGagne = floor(litGagne * 3.0 + 0.5) / 3.0;
   bottom = mix(bottom, bed * (0.72 + 0.34 * bedLum), litGagne * 0.55);
+  // L'eau morte du marais (geste 06) : le thé noir de tourbe couvre le fond — on ne
+  // voit rien à travers, et c'est le point.
+  bottom = mix(bottom, vec3(0.085, 0.075, 0.05), morte * 0.75);
 
   // Le ciel réfléchi : bleu pâle de jour, éteint la nuit (uDay), réchauffé quand le soleil rase.
   // Le ciel réfléchi, UN CRAN plus profond (0.52,0.62,0.70 → lac de montagne) : le gradient
@@ -449,6 +497,7 @@ void main() {
   // gué (là on regarde le fond presque à la verticale). C'est ce mélange qui remplace le marron
   // uniforme — le fond reste brun là où on le voit, le large prend la lumière du ciel.
   float skyMix = clamp(0.16 + 0.69 * deep, 0.0, 0.9);
+  skyMix = mix(skyMix, 0.10, morte); // l'eau morte est MATE : presque pas de ciel (geste 06)
   vec3 col = mix(bottom, sky, skyMix);
 
   // ═══ LE CLAPOT PIXEL : la houle POSTERISÉE en paliers francs ═══
@@ -471,7 +520,7 @@ void main() {
   vec3 L = normalize(vec3(uSun.x, uSun.y / YSQUASH, uSun.z));
   float lambert = max(dot(n, L), 0.0);
   float glint = step(0.55, h) * step(0.15, lambert);
-  col += vec3(1.0, 0.97, 0.88) * glint * 0.38 * uDay;
+  col += vec3(1.0, 0.97, 0.88) * glint * 0.38 * uDay * (1.0 - morte); // rien ne brille sur l'eau morte
 
   // ═══ LE FEU SUR L'EAU ═══
   //
@@ -539,6 +588,17 @@ void main() {
     band += step(abs(dw2 - r2), 0.22) * (1.0 - age2) * 0.6 * (1.0 - step(1.9, dw2)) * arriere2;
     ripple += band * wd.w;
   }
+  // LA BULLE DE TOURBE sur l'eau morte (geste 06) : le même anneau lent que sur les
+  // plaques du sol — certains cycles seulement, jamais un battement régulier.
+  if (morte > 0.5) {
+    vec2 blocM = floor(flatPx / (GRAIN * 3.0));
+    float nM = cellHash(blocM + vec2(3.0, 47.0));
+    vec2 lbM = fract(flatPx / (GRAIN * 3.0)) - 0.5;
+    float bAgeM = fract(t * 0.12 + nM * 7.0);
+    float cycleM = floor(t * 0.12 + nM * 7.0);
+    ripple += step(abs(length(lbM) * 2.0 - bAgeM * 0.8), 0.14)
+            * step(0.8, cellHash(blocM + vec2(cycleM, 19.0))) * (1.0 - bAgeM) * 0.5;
+  }
   // La crête du remous ÉCLAIRCIT (l'eau retournée prend la lumière) — un palier, pas un halo.
   col = mix(col, col * 1.3 + vec3(0.07, 0.07, 0.05), clamp(ripple, 0.0, 1.0) * 0.6);
 
@@ -582,7 +642,7 @@ void main() {
   // berge mouillée est plus sombre que le sol sec — sans ça la teinte du pré clair
   // se lit comme un liseré qui brille.
   vec3 shoreCol = texture2D(uSeabed, texUv(tile + toShore)).rgb * 0.62;
-  col = mix(col, shoreCol, clamp(rim * 0.26 + lap * 0.28, 0.0, 0.5));
+  col = mix(col, shoreCol, clamp(rim * 0.26 + lap * 0.28, 0.0, 0.5) * (1.0 - morte));
 
   // ═══ L'ÉCUME DE RIVE (spec eau-vivante R9) — des PLAQUES qui lèchent le bord ═══
   //
@@ -606,8 +666,9 @@ void main() {
   float d2 = abs(dRive - (0.95 + 0.12 * sin(pasT * 2.6 + nCell * 6.2831853)));
   float bande2 = step(d2, 0.06) * step(0.74, cellHash(flatPx / GRAIN + vec2(53.0, 29.0)));
   vec3 ecumeCol = vec3(1.0, 0.99, 0.94);
-  col = mix(col, ecumeCol * 0.82, clamp(dansEcume * 0.38 + bande2 * 0.2, 0.0, 0.6));
-  col = mix(col, ecumeCol, crete2 * 0.55);
+  // L'eau morte n'écume pas (geste 06) — rien ne bat contre la tourbe.
+  col = mix(col, ecumeCol * 0.82, clamp(dansEcume * 0.38 + bande2 * 0.2, 0.0, 0.6) * (1.0 - morte));
+  col = mix(col, ecumeCol, crete2 * 0.55 * (1.0 - morte));
 
   // ═══ LE TOMBANT (geste 02, eau-fond) — la rupture se DESSINE, elle ne se cache pas ═══
   //
@@ -649,6 +710,9 @@ void main() {
   // transparaître la tuile d'eau du SOL (bakée en cyan clair) — le liseré clair.
   // On garde donc l'eau assez opaque jusqu'à sa ligne de coupe, bord net.
   float a = mix(0.88, 0.96, deep);
+  a = mix(a, 0.94, morte); // l'eau morte ne laisse rien voir (geste 06)
+  // L'aube sur l'eau morte : le blanc-lait de la brume qui germe ici même.
+  col += uAstreCol * 0.08 * uAstre * morte;
   gl_FragColor = vec4(col, a);
 }
 `
@@ -722,8 +786,39 @@ export class WaterLayer {
     seabedKey: string,
   ) {
     const { width, height } = map
+    // ═══ LE RÉGIME DE L'EAU (gestes 06/10) — quel marais, quelle eau morte ═══
+    // Le marais entre dans le pipeline de l'eau : ses tuiles (marsh, tourbe, roselière)
+    // portent le régime MARAIS, et une flaque d'eau NOYÉE dedans (majorité de voisins
+    // marais) devient eau morte avec lui. Zéro changement /sim : une lecture du terrain.
+    const terr = map.terrain
+    const estMarais = (t: number | undefined): boolean =>
+      t === TERRAIN_MARSH || t === TERRAIN_PEAT_BOG || t === TERRAIN_REED_MARSH
+    const regime = new Uint8Array(width * height)
+    for (let ty = 0; ty < height; ty++) {
+      for (let tx = 0; tx < width; tx++) {
+        const i = ty * width + tx
+        const t = terr[i]
+        if (estMarais(t)) {
+          regime[i] = REGIME_MARAIS
+          continue
+        }
+        if (t !== TERRAIN_SHALLOW_WATER && t !== TERRAIN_DEEP_WATER) continue
+        let voisinsMarais = 0
+        for (let dy = -1; dy <= 1; dy++) {
+          const ny = ty + dy
+          if (ny < 0 || ny >= height) continue
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue
+            const nx = tx + dx
+            if (nx < 0 || nx >= width) continue
+            if (estMarais(terr[ny * width + nx])) voisinsMarais++
+          }
+        }
+        if (voisinsMarais >= 5) regime[i] = REGIME_MARAIS
+      }
+    }
     // Carte plate : le canal G du champ porte la profondeur case à case (geste 01).
-    const field = buildWaterField(map.terrain, width, height)
+    const field = buildWaterField(map.terrain, width, height, regime)
     if (!field.hasWater) return // une carte sèche ne paie pas une couche d'eau
 
     // Le champ vit dans une texture canvas : 1 px/tuile, comme le bake du sol.

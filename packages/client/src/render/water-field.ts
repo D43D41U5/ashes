@@ -17,8 +17,10 @@
  *       tuile) — le même langage que le lerp de la passe 2 du bake des biomes,
  *       côté profond seulement : les tuiles marchables gardent leur luminance.
  *       (Le canal portait l'élévation, morte avec la carte plate — R35 caduque.)
- *   B — PROFONDEUR BINAIRE historique (255 au large, 0 ailleurs) — le trait dur
- *       entre les deux eaux, encore utile pour repérer les VRAIES tuiles profondes.
+ *   B — RÉGIME (gestes 06/10, eau-fond) : 0 = eau normale · 120 = MARAIS (sol
+ *       détrempé et eau morte — marsh/peat_bog/reed_marsh et les flaques noyées
+ *       dedans) · 200 = LAC MORT (l'eau trop claire). Le canal portait le profond
+ *       binaire, redondant depuis que G porte la profondeur.
  *   A — 1, toujours. Un canal alpha non plein serait prémultiplié à l'upload et
  *       corromprait les trois autres.
  *
@@ -291,19 +293,33 @@ export function buildFondField(
   return data
 }
 
-export function buildWaterField(terrain: ArrayLike<number>, width: number, height: number): WaterField {
+/** Les régimes d'eau du canal B (gestes 06/10). */
+export const REGIME_NORMAL = 0
+export const REGIME_MARAIS = 1
+export const REGIME_LAC_MORT = 2
+
+export function buildWaterField(
+  terrain: ArrayLike<number>,
+  width: number,
+  height: number,
+  /** Régime par tuile (REGIME_*) — absent : tout est eau normale. */
+  regime?: ArrayLike<number>,
+): WaterField {
   const data = new Uint8ClampedArray(width * height * 4)
   let hasWater = false
 
   for (let i = 0; i < width * height; i++) {
     const t = terrain[i]
     const wet = t === SHALLOW || t === DEEP
-    if (wet) hasWater = true
+    const r = regime?.[i] ?? REGIME_NORMAL
+    // Le marais monte la couche même sans une tuile d'eau franche : ses plaques
+    // d'eau morte sont rendues par le quad (geste 06).
+    if (wet || r === REGIME_MARAIS) hasWater = true
 
     const o = i * 4
     data[o] = wet ? 255 : 0 // masque BINAIRE — voir l'en-tête
     // G (profondeur) : 0 par défaut — la 2e passe pose le profond et sa frontière.
-    data[o + 2] = t === DEEP ? 255 : 0
+    data[o + 2] = r === REGIME_MARAIS ? 120 : r === REGIME_LAC_MORT ? 200 : 0
     data[o + 3] = 255
   }
 
