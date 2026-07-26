@@ -56,6 +56,19 @@ describe('le champ de rive — un SDF de berge (eau-vivante R1)', () => {
     expect(f.data[j * 4]).toBe(120)
   })
 
+  it('G et B valent 128 PARTOUT — « pas de courant » se décode (0,0) exactement', () => {
+    // Ces canaux portent le courant (flow-field), décodé (v−128/255)·255/112 par le
+    // shader : un octet à 0 y mettrait une dérive diagonale plein pot (revue, bloquant).
+    // Les TROIS chemins d'écriture (terre loin, eau loin, cellule près de la rive)
+    // doivent poser 128 — la mare 4×4 dans un pré les traverse tous.
+    const { terrain, w, h } = mare()
+    const f = buildRiveField(terrain, w, h)
+    for (let i = 0; i < w * h; i++) {
+      expect(f.data[i * 4 + 1]).toBe(128)
+      expect(f.data[i * 4 + 2]).toBe(128)
+    }
+  })
+
   it('la diagonale approche l’euclidien (chanfrein 3-4 : 4/3 ≈ √2)', () => {
     const { terrain, w, h } = mare()
     const f = buildRiveField(terrain, w, h)

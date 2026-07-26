@@ -20,13 +20,25 @@
  */
 import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
+import { buildFlowField, COURANT_VITESSE, TAPER_RIVE_MAX, TAPER_RIVE_MIN, type FlowField } from '../../render/flow-field'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { sunDirection } from '../../render/lighting'
 import { buildRiveField, buildWaterField, type RiveField } from '../../render/water-field'
 
+/** Période du cycle d'advection dual-phase (s). Courte À DESSEIN : sur la rampe du taper
+ *  de berge, les deux couches divergent d'au plus 0,25·T·vitesse — à 3 s l'écart (0,41
+ *  tuile) reste sous le grain visuel (revue adversariale : à 5 s, la bande de rive
+ *  « respirait » en cisaillement). */
+const DUAL_T = 3.0
+
 /** Juste au-dessus du sol (−1), sous l'ombre du relief (−0,5) : le versant qui
  *  tombe dans l'eau l'assombrit, comme il assombrit la berge. */
 const WATER_DEPTH = GROUND_MAP_DEPTH + 0.25
+
+/** Bornes du taper de berge, INJECTÉES dans le GLSL — la même rampe que
+ *  `flow-field.taperRive` côté CPU (les feuilles) : une seule vérité. */
+const TAPER_MIN = TAPER_RIVE_MIN.toFixed(2)
+const TAPER_MAX = TAPER_RIVE_MAX.toFixed(2)
 
 /** Plafond de foyers reflétés — DOIT égaler le `MAX_FIRES` du shader. */
 const MAX_FIRES = 8
@@ -73,7 +85,7 @@ varying vec2 outTexCoord;
 
 uniform sampler2D uField;    // R masque (binaire) · G élévation · B profondeur
 uniform sampler2D uSeabed;   // le bake du terrain : le FOND, vu à travers l'eau
-uniform sampler2D uRive;     // R : distance SIGNÉE à la rive (+eau/−terre), 128 = la rive — spec eau-vivante R1
+uniform sampler2D uRive;     // R : distance SIGNÉE à la rive (128 = la rive) · G/B : le COURANT (128 = nul)
 uniform vec2 uWorldPx;       // taille du monde, en pixels
 uniform vec2 uMapTiles;      // taille du monde, en tuiles
 uniform float uTilePx;
@@ -100,6 +112,12 @@ uniform vec2 uCam;        // centre caméra, en tuiles
 uniform float uAstre;     // 0 = pas de chemin · 1 = plein (fenêtres aube/couchant/lune)
 uniform vec3 uAstreCol;   // la couleur du ciel de l'astre (orange à l'aube, os sous la lune)
 uniform float uAstreDirX; // l'azimut du couloir : est(+) → ouest(−)
+
+// L'ADVECTION DUAL-PHASE (chantier « l'eau suit le flow ») — les phases se calculent
+// CÔTÉ CPU, en double (uTime non borné + fract en mediump = crossfade qui saute).
+uniform float uPh0;  // phase de la couche 0, 0..1 (couche 1 : +0,5, wrap)
+uniform float uAdv0; // (ph0 − 0,5) · T · vitesse — l'offset d'advection (tuiles), pré-multiplié
+uniform float uAdv1; // idem couche 1
 
 /**
  * LA PERSPECTIVE. Le monde ne se lit PAS à la verticale : les arbres sont debout,
@@ -143,18 +161,23 @@ float cellHash(vec2 c) {
   return fract(permute(permute(permute(p.x) + p.y) + p.x) / 289.0);
 }
 
-/** LA DISTANCE À LA RIVE (spec eau-vivante R1-R2) : le SDF de berge, lu en BILINÉAIRE
- *  MANUEL (la texture reste NEAREST — on interpole nous-mêmes 4 texels) : une distance
- *  CONTINUE, sous-tuile, qui croise 0 pile sur le trait de rive du masque binaire. */
-float riveTexel(vec2 tile) { return (texture2D(uRive, texUv(tile)).r - 0.501960784) * 15.9375; }
-float rive(vec2 tile) {
+/** LA DISTANCE À LA RIVE (spec eau-vivante R1-R2) + LE COURANT, dans les MÊMES 4 texels :
+ *  le SDF de berge (canal R) et le vecteur courant (G/B, cuit de flow-field.ts), lus en
+ *  BILINÉAIRE MANUEL (la texture reste NEAREST — on interpole nous-mêmes) : distance
+ *  CONTINUE qui croise 0 pile sur le trait de rive, courant CONTINU entre les tuiles.
+ *  x = distance (tuiles, +eau/−terre) · yz = courant (aval, norme ≤ 1, nul hors rivière). */
+vec3 riveFlowTexel(vec2 tile) {
+  vec3 t = texture2D(uRive, texUv(tile)).rgb;
+  return vec3((t.r - 0.501960784) * 15.9375, (t.gb - vec2(0.501960784)) * 2.2767857);
+}
+vec3 riveFlow(vec2 tile) {
   vec2 p = tile - 0.5;
   vec2 i = floor(p);
   vec2 f = p - i;
-  float a = riveTexel(i + vec2(0.5, 0.5));
-  float b = riveTexel(i + vec2(1.5, 0.5));
-  float c = riveTexel(i + vec2(0.5, 1.5));
-  float d = riveTexel(i + vec2(1.5, 1.5));
+  vec3 a = riveFlowTexel(i + vec2(0.5, 0.5));
+  vec3 b = riveFlowTexel(i + vec2(1.5, 0.5));
+  vec3 c = riveFlowTexel(i + vec2(0.5, 1.5));
+  vec3 d = riveFlowTexel(i + vec2(1.5, 1.5));
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
@@ -193,12 +216,46 @@ float chop(vec2 p, float t) {
   // marbre), sous une seule déformation de domaine — la houle sert de RELIEF à
   // poster­iser, pas de texture à lire. Le grain vient de la quantification (main),
   // pas d'ondes courtes.
-  vec2 q = p + 0.25 * vec2(sin(p.y * 1.3 + t * 0.5), cos(p.x * 1.1 - t * 0.4));
+  //
+  // LES VITESSES DE PHASE SONT RÉÉQUILIBRÉES (chantier « l'eau suit le flow ») : les
+  // trois ondes d'origine (+1.3, −1.7, +2.2) filaient TOUTES vers la gauche — dérive
+  // nette (−0.47, +0.02) tuile/s, le « tapis roulant » vu par le joueur, mare comprise.
+  // Or l'espace des vitesses qui ANNULE la dérive pondérée par l'amplitude est une
+  // droite : s ∝ (0.012, 0.273, 1). D'où (0.04, 0.89, 3.27) — dérive nette (0.000,
+  // 0.000) tuile/s : l'onde dominante quasi stationnaire (sa vie vient du warp), les
+  // deux petites vivantes. Le MOUVEMENT dirigé, lui, vient du courant (advection).
+  // Le warp gagne un rien de vivacité (0.5→0.65, 0.4→0.5 — dérive moyenne nulle par
+  // construction) pour compenser la grande onde ralentie.
+  vec2 q = p + 0.25 * vec2(sin(p.y * 1.3 + t * 0.65), cos(p.x * 1.1 - t * 0.5));
   float h = 0.0;
-  h += 0.60 * sin(dot(q, vec2(0.92, 0.39)) * 1.9 + t * 1.3);
-  h += 0.30 * sin(dot(q, vec2(-0.44, 0.90)) * 3.1 - t * 1.7);
-  h += 0.14 * sin(dot(q, vec2(0.31, -0.95)) * 5.3 + t * 2.2);
+  h += 0.60 * sin(dot(q, vec2(0.92, 0.39)) * 1.9 + t * 0.04);
+  h += 0.30 * sin(dot(q, vec2(-0.44, 0.90)) * 3.1 + t * 0.89);
+  h += 0.14 * sin(dot(q, vec2(0.31, -0.95)) * 5.3 + t * 3.27);
   return h * 0.62;
+}
+
+/**
+ * LE CLAPOT QUI SUIT LE COURANT — l'advection DUAL-PHASE (flow map classique).
+ *
+ * Advecter naïvement (p − courant·t) étire le motif sans fin aux gradients de courant.
+ * On échantillonne donc DEUX couches dont l'offset repart cycliquement (période T,
+ * décalées d'un demi-cycle) et on fond l'une vers l'autre — le poids s'annule PILE
+ * quand une couche wrap : le saut est invisible, le motif translate vers l'AVAL.
+ *
+ * Trois garde-fous de la revue adversariale :
+ *   • le fondu PRÉSERVE LA VARIANCE (÷ sqrt(w² + (1−w)²)) — un mix linéaire aplatissait
+ *     h de 30 % deux fois par cycle, et h porte TOUT (paliers, glints step 0.55, écume) ;
+ *   • l'offset de décorrélation (46.37, 2.97) met les TROIS ondes en quadrature
+ *     (cos δ ≈ 0) — le premier venu (37.3, 17.1) ANNULAIT l'onde 2 à mi-fondu ;
+ *   • le GATE par la norme du courant : eau sans courant → la couche 0 SEULE, qui y
+ *     est EXACTEMENT le clapot d'origine (offset nul) — mares et bord d'écume au bit
+ *     près, et la branche cohérente s'y épargne la seconde couche.
+ */
+float chopCourant(vec2 ps, float t, vec2 adv0, vec2 adv1, float gate, float wD, float rn) {
+  float e0 = chop(ps - adv0, t);
+  if (gate < 0.001) return e0;
+  float e1 = chop(ps - adv1 + vec2(46.37, 2.97), t);
+  return mix(e0, (wD * e0 + (1.0 - wD) * e1) * rn, gate);
 }
 
 // LE GRAIN. 4 px monde — exactement le pixel de lumière du Feu (fire-ground-glow.ts,
@@ -226,21 +283,29 @@ void main() {
   // (Avant, un point fixe. Il tenait, mais il affirmait converger toujours — ce qui n'est
   // vrai que si |d elev / d ty|·H/TILE < 1, et assertNoFold ne borne le gradient que vers
   // le SUD. La bissection, elle, ne demande que la monotonie, qui est GARANTIE.)
-  float lo = flatPx.y / uTilePx;
-  float hi = lo + uReliefH / uTilePx;
-  for (int i = 0; i < 12; i++) {
-    float mid = 0.5 * (lo + hi);
-    float screenY = mid * uTilePx - elevAt(vec2(tx, mid)) * uReliefH;
-    if (screenY < flatPx.y) lo = mid; else hi = mid;
+  // CARTE PLATE : uReliefH = 0 rend la bissection INERTE (l'écran EST le monde) — on la
+  // saute alors tout à fait : 12 tours × 1 lecture texture sur CHAQUE pixel du quad,
+  // ~20-25 % du coût du fragment, pour rien (revue perf — c'est ce gain qui paie
+  // l'advection dual-phase). La branche est UNIFORME : aucun coût de divergence.
+  float ty = flatPx.y / uTilePx;
+  if (uReliefH > 0.0) {
+    float lo = ty;
+    float hi = lo + uReliefH / uTilePx;
+    for (int i = 0; i < 12; i++) {
+      float mid = 0.5 * (lo + hi);
+      float screenY = mid * uTilePx - elevAt(vec2(tx, mid)) * uReliefH;
+      if (screenY < flatPx.y) lo = mid; else hi = mid;
+    }
+    ty = 0.5 * (lo + hi);
   }
-  float ty = 0.5 * (lo + hi);
   vec2 tile = vec2(tx, ty);
   vec2 uv = tile / uMapTiles;
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) discard;
 
   vec4 field = texture2D(uField, texUv(tile));
   float mask = field.r;
-  float dRive = rive(tile); // + dans l'eau, − sur terre, 0 sur le trait de rive
+  vec3 rf = riveFlow(tile); // x : distance à la rive (+eau/−terre) · yz : le courant
+  float dRive = rf.x;
 
   // LE TRAIT DE RIVE. Masque NEAREST → 0 ou 1 franc. Le bord tombe PILE sur la
   // frontière des tuiles (multiple de 16 px, donc de 4) : coins CARRÉS, et l'encoche
@@ -272,14 +337,31 @@ void main() {
   // Le clapot meurt sur les hauts-fonds : on ne clapote pas dans deux doigts d'eau.
   float amp = 0.35 + 0.65 * smoothstep(0.0, 0.45, open);
   vec2 p = tile * PLANE; // le plan de l'eau, redressé (voir YSQUASH)
-  float h = chop(p, t) * amp;
+
+  // ═══ LE COURANT (chantier « l'eau suit le flow ») — la surface AVANCE vers l'aval ═══
+  //
+  // Le vecteur vient du fil de la worldgen (flow-field.ts, cuit dans G/B de uRive) ; il
+  // MEURT contre la berge (taper — l'écume et le trait de rive restent ancrés, mêmes
+  // bornes que le CPU des feuilles) et le clapot advecté vole à la MÊME vitesse que les
+  // feuilles qui flottent dessus (COURANT_VITESSE, pré-multipliée dans uAdv0/uAdv1).
+  // L'offset s'applique en espace PLANE (y dilaté) : la vitesse ÉCRAN est la bonne.
+  vec2 flow = rf.yz * smoothstep(${TAPER_MIN}, ${TAPER_MAX}, dRive);
+  float gate = smoothstep(0.02, 0.10, length(flow));
+  vec2 adv0 = flow * PLANE * uAdv0;
+  vec2 adv1 = flow * PLANE * uAdv1;
+  float wD = 1.0 - abs(2.0 * uPh0 - 1.0);
+  float rn = inversesqrt(wD * wD + (1.0 - wD) * (1.0 - wD));
+  float h = chopCourant(p, t, adv0, adv1, gate, wD, rn) * amp;
 
   // La normale, par différences finies — prises DANS LE PLAN de l'eau, puis
   // ramenées à l'écran : la pente en Y y est vue de biais, donc raccourcie. Le pas
   // vaut une CELLULE (4 px) : une normale au grain de l'image, pas plus fine qu'elle.
+  // Le courant du CENTRE advecte les 4 échantillons (le vecteur est gelé sur le
+  // stencil : différencier le champ de courant peindrait une fausse pente à chaque
+  // gradient de flow) — la réfraction du lit coule donc vers l'aval avec le reste.
   float e = GRAIN / uTilePx;
-  float hx = (chop(p + vec2(e, 0.0), t) - chop(p - vec2(e, 0.0), t)) * amp;
-  float hy = (chop(p + vec2(0.0, e), t) - chop(p - vec2(0.0, e), t)) * amp;
+  float hx = (chopCourant(p + vec2(e, 0.0), t, adv0, adv1, gate, wD, rn) - chopCourant(p - vec2(e, 0.0), t, adv0, adv1, gate, wD, rn)) * amp;
+  float hy = (chopCourant(p + vec2(0.0, e), t, adv0, adv1, gate, wD, rn) - chopCourant(p - vec2(0.0, e), t, adv0, adv1, gate, wD, rn)) * amp;
   vec3 n = normalize(vec3(-hx * 0.85, -hy * 0.85 / YSQUASH, 1.0));
 
   // LA RÉFRACTION. On rééchantillonne le FOND (le bake du terrain) décalé par la
@@ -550,6 +632,12 @@ export class WaterLayer {
    *  CPU (`riveAt`) : immersion des acteurs, événements de franchissement, volume du
    *  clapotis. Nul si la carte est sèche. */
   readonly rive: RiveField | null = null
+  /** Le champ de courant (« l'eau suit le flow ») — la MÊME donnée que le shader, lisible
+   *  CPU : les feuilles dérivent dessus. Nul si la carte n'a pas de rivière. */
+  readonly flow: FlowField | null = null
+  /** La période du fondu dual-phase (s) — la sonde smoke mesure l'advection entre deux
+   *  instants espacés d'exactement T (même état de fondu : seule la translation reste). */
+  readonly dualT = DUAL_T
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -583,6 +671,17 @@ export class WaterLayer {
     // d'eau garde son masque binaire (le trait) et son canal G (réservé au relief).
     const rive = buildRiveField(map.terrain, width, height)
     ;(this as { rive: RiveField | null }).rive = rive
+    // LE COURANT (« l'eau suit le flow ») : le champ de flow-field.ts, cuit dans les
+    // canaux G/B de la MÊME texture (128 + dir×112 ; 128 pile = pas de courant — le
+    // défaut que buildRiveField pose déjà partout). Le shader advecte le clapot avec.
+    const flow = buildFlowField(map)
+    ;(this as { flow: FlowField | null }).flow = flow
+    if (flow) {
+      for (const [j, v] of flow.courant) {
+        rive.data[j * 4 + 1] = Math.round(128 + Math.max(-1, Math.min(1, v.x)) * 112)
+        rive.data[j * 4 + 2] = Math.round(128 + Math.max(-1, Math.min(1, v.y)) * 112)
+      }
+    }
     const riveKey = 'water-rive'
     this.riveKey = riveKey
     const riveTex = this.scene.textures.createCanvas(riveKey, width, height)
@@ -625,6 +724,9 @@ export class WaterLayer {
             setUniform('uAstre', this.astre.force)
             setUniform('uAstreCol', this.astre.col)
             setUniform('uAstreDirX', this.astre.dirX)
+            setUniform('uPh0', this.ph0)
+            setUniform('uAdv0', this.adv0)
+            setUniform('uAdv1', this.adv1)
           },
         },
         0,
@@ -638,6 +740,10 @@ export class WaterLayer {
   }
 
   private timeS = 0
+  /** Les phases dual-phase, calculées CPU en double (voir les uniformes du shader). */
+  private ph0 = 0
+  private adv0 = -0.5 * DUAL_T * COURANT_VITESSE
+  private adv1 = 0
   private sun = { x: 0, y: 0.3, z: 1 }
   private day = 1
   private cam = { x: 0, y: 0 }
@@ -669,6 +775,9 @@ export class WaterLayer {
   ): void {
     if (!this.shader) return
     this.timeS = nowMs / 1000
+    this.ph0 = (this.timeS / DUAL_T) % 1
+    this.adv0 = (this.ph0 - 0.5) * DUAL_T * COURANT_VITESSE
+    this.adv1 = (((this.ph0 + 0.5) % 1) - 0.5) * DUAL_T * COURANT_VITESSE
     this.sun = sunVector(hour)
     this.day = daylight
     this.astre = cheminDeLAstre(hour, daylight)

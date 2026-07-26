@@ -697,7 +697,8 @@ export class WorldScene extends Phaser.Scene {
         this.eauEvents.joueur = this.playerSprite
         this.view.eau = this.eauEvents
         if (this.water.rive) this.poissons = new PoissonsOmbres(this, this.map, this.water.rive)
-        this.feuilles = new FeuillesDerive(this, this.map) // le courant se voit (R15)
+        // Le courant se voit (R15) — sur le champ PARTAGÉ avec le shader (source unique).
+        this.feuilles = new FeuillesDerive(this, this.map, this.water.flow, this.water.rive)
         this.reflets = new RefletsLayer(this, this.map)
         this.view.reflets = this.reflets
         // LA SONDE A10 (eau-vivante) : le boot de l'eau se CHRONOMÈTRE, il ne s'affirme pas.

@@ -134,10 +134,13 @@ export function buildRiveField(terrain: ArrayLike<number>, width: number, height
   const sd = new Float32Array(N)
   const data = new Uint8ClampedArray(N * 4)
   const u32 = new Uint32Array(data.buffer) // little-endian : R au poids faible, A au fort
+  // G = B = 128 PARTOUT par défaut : ces canaux portent le COURANT (flow-field.ts,
+  // encodé 128 + dir×112 par water-layer) et 128 pile décode « pas de courant » —
+  // un zéro y ferait dériver TOUTE l'eau en diagonale (revue adversariale, bloquant).
   const R_TERRE_LOIN = Math.round(128 - RIVE_MAX_TILES * 16)
   const R_EAU_LOIN = Math.round(128 + RIVE_MAX_TILES * 16)
-  const U_TERRE_LOIN = 0xff000000 | R_TERRE_LOIN
-  const U_EAU_LOIN = 0xff000000 | R_EAU_LOIN
+  const U_TERRE_LOIN = 0xff808000 | R_TERRE_LOIN
+  const U_EAU_LOIN = 0xff808000 | R_EAU_LOIN
   for (let i = 0; i < N; i++) {
     const di = d[i]!
     if (di >= CAP) {
@@ -154,7 +157,7 @@ export function buildRiveField(terrain: ArrayLike<number>, width: number, height
     const brut = eauMask[i] === 1 ? di / 3 - 0.5 : -(di / 3 - 0.5)
     const borne = Math.max(-RIVE_MAX_TILES, Math.min(RIVE_MAX_TILES, brut))
     sd[i] = borne
-    u32[i] = 0xff000000 | Math.round(128 + borne * 16)
+    u32[i] = 0xff808000 | Math.round(128 + borne * 16)
   }
   return { sd, data, width, height }
 }

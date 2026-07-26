@@ -616,6 +616,285 @@ const SCENARIOS = {
   },
 
   /**
+   * LE COURANT SE MESURE (chantier « l'eau suit le flow », 2026-07-26) — la surface de la
+   * rivière doit AVANCER vers l'aval, l'eau dormante ne doit dériver nulle part.
+   *
+   * Mesure OPTIQUE, en page, zéro dépendance : des snapshots datés (renderer.snapshot,
+   * horloge sc.time.now — celle du shader), une ROI d'eau projetée via cam.worldView
+   * (le motif A5′), et la corrélation croisée (SSD sur luminance centrée) entre paires.
+   * Le déplacement est projeté sur le courant local ET sa perpendiculaire — l'auto-contrôle
+   * qui distingue une vraie advection le long du fil d'une dérive de phase globale (le bug
+   * d'origine : trois ondes qui filaient toutes vers la gauche, rivière comme mare).
+   *
+   * Pièges connus et parés : feuilles et poissons dérivent AU-DESSUS de l'eau et
+   * corrompraient la corrélation (on les éteint) ; le joueur reste À TERRE, immobile
+   * (aucun remous), souris au centre (pas de lookahead caméra) ; midi (pas d'astre, feux
+   * éteints) ; la ROI vit au MILIEU du lit (sd ≥ 2 — hors taper de berge) ; 3 candidats
+   * rivière, le meilleur v∥ juge (un reflet statique sous-estime, jamais ne surestime).
+   * Exige `--dev`.
+   */
+  async 'eau-courant'(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForTimeout(1000)
+    await page.mouse.move(640, 400)
+    const heure = async (h) => {
+      for (let essai = 0; essai < 4; essai++) {
+        await page.evaluate((hh) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: hh }), h)
+        await page.waitForTimeout(600)
+        const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1)
+        if (Math.abs(lu - h) < 0.3) return
+      }
+      console.error(`!! set_hour(${h}) n'a jamais pris`)
+    }
+    await heure(11)
+
+    // ── Les points de mesure : 3 candidats au milieu du lit + une eau dormante loin du fil ──
+    const spots = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const m = sc.map
+      const rive = sc.water?.rive
+      if (!m.fil || m.fil.length < 2 || !rive) return null
+      const EAU = (t) => t === 4 || t === 6
+      const sd = (tx, ty) => rive.sd[Math.floor(ty) * m.width + Math.floor(tx)]
+      // La rivière : des points du fil à sd ≥ 2, sur des TRONÇONS FRANCS (|flow| ≥ 0,85 —
+      // aux coudes le champ flouté raccourcit et la tangente brute du fil ment : la 1re
+      // version y mesurait un courant « absent » alors que le zigzag seul était en cause),
+      // espacés de 200 pas pour juger des biefs distincts. La direction vient du CHAMP
+      // réel (sc.water.flow) — exactement ce que le shader advecte, pas une re-dérivation.
+      const flowMap = sc.water?.flow?.courant
+      const rivieres = []
+      for (let i = Math.floor(m.fil.length * 0.1); i < m.fil.length * 0.95; i++) {
+        const t = m.fil[i]
+        const tx = (t % m.width) + 0.5
+        const ty = Math.floor(t / m.width) + 0.5
+        if (!EAU(m.terrain[Math.floor(ty) * m.width + Math.floor(tx)])) continue
+        if (sd(tx, ty) < 2) continue
+        if (rivieres.length && i - rivieres[rivieres.length - 1].i < 200) continue
+        const v = flowMap?.get(Math.floor(ty) * m.width + Math.floor(tx))
+        if (!v) continue
+        const nv = Math.hypot(v.x, v.y)
+        if (nv < 0.85) continue
+        rivieres.push({ i, x: tx, y: ty, cx: v.x / nv, cy: v.y / nv })
+        if (rivieres.length >= 3) break
+      }
+      // L'eau dormante : loin de TOUT le fil (grille grossière de cellules 8×8 — aucune
+      // cellule de fil à moins de 2 cellules ⇒ ≥ 8 tuiles du fil, hors couloir de courant).
+      // sd VISÉ dans [2,5 .. 6,5] : assez du bord pour être hors taper, assez PRÈS pour
+      // qu'une tuile de terre existe à ≤ 9 tuiles — le zoom (2,5) ne montre que ±10 tuiles
+      // de haut : un spot au cœur d'un grand lac (sd 7,9) mettait la ROI HORS CHAMP,
+      // clampée au bord de l'écran — elle mesurait n'importe quoi (constaté).
+      const filCells = new Set()
+      for (const t of m.fil) filCells.add(((t % m.width) >> 3) + ',' + (Math.floor(t / m.width) >> 3))
+      let dormante = null
+      for (let ty = 2; ty < m.height - 2; ty += 2) {
+        for (let tx = 2; tx < m.width - 2; tx += 2) {
+          if (!EAU(m.terrain[ty * m.width + tx])) continue
+          const s = sd(tx + 0.5, ty + 0.5)
+          if (s < 2.5 || s > 6.5 || (dormante && s <= dormante.sd)) continue
+          let pres = false
+          const cx = tx >> 3
+          const cy = ty >> 3
+          for (let oy = -2; oy <= 2 && !pres; oy++)
+            for (let ox = -2; ox <= 2 && !pres; ox++) if (filCells.has(cx + ox + ',' + (cy + oy))) pres = true
+          if (!pres) dormante = { x: tx + 0.5, y: ty + 0.5, sd: s }
+        }
+      }
+      // Un pied À TERRE près d'un point : la première tuile sèche en spirale (le joueur
+      // immobile n'émet ni remous ni gerbe, et son sprite reste loin de la ROI). r ≤ 9 :
+      // au-delà, la cible sortirait du cadre (demi-champ vertical 10 tuiles au zoom 2,5).
+      const terre = (px, py) => {
+        for (let r = 4; r < 10; r++)
+          for (let oy = -r; oy <= r; oy++)
+            for (let ox = -r; ox <= r; ox++) {
+              if (Math.max(Math.abs(ox), Math.abs(oy)) !== r) continue
+              const tx = Math.floor(px) + ox
+              const ty = Math.floor(py) + oy
+              if (tx < 2 || ty < 2 || tx >= m.width - 2 || ty >= m.height - 2) continue
+              if (sd(tx + 0.5, ty + 0.5) <= -1.5) return { x: tx + 0.5, y: ty + 0.5 }
+            }
+        return null
+      }
+      return {
+        rivieres: rivieres.map((r) => ({ ...r, pied: terre(r.x, r.y) })).filter((r) => r.pied),
+        dormante: dormante ? { ...dormante, pied: terre(dormante.x, dormante.y) } : null,
+      }
+    })
+    if (!spots || spots.rivieres.length < 1) { console.error('!! eau-courant : aucun point de mesure sur le fil'); return }
+    // Feuilles et poissons dérivent au-dessus de l'eau : ils fausseraient la corrélation.
+    await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      sc.feuilles?.destroy(); sc.feuilles = null
+      sc.poissons?.destroy(); sc.poissons = null
+    })
+
+    /** TP au pied, ROI sur l'eau, snapshots datés, corrélation par paires → médianes. */
+    const mesure = async (spot) => {
+      await heure(11) // l'horloge headless file (~12×) : re-fixer midi AVANT chaque spot
+      await page.evaluate(({ x, y }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y }), spot.pied)
+      // 4,5 s : la caméra se pose ET le brouillard de guerre finit de se révéler — son
+      // fondu en dither traînait dans la ROI et dégénérait la corrélation (constaté :
+      // argmin épinglé au coin de la fenêtre sur une eau parfaitement immobile).
+      await page.waitForTimeout(4500)
+      return page.evaluate(async ({ cible }) => {
+        const sc = window.__BRAISES__.scene
+        const cam = sc.cameras.main
+        // LA CAMÉRA LENTE. Une corrélation rigide sur un champ d'ondes n'est IDENTIFIABLE
+        // qu'à petit dt : dès que la phase propre d'une onde tourne de ≫ 1 rad entre deux
+        // prises (ω max 3,27 rad/s → dt ≲ 0,3 s), le motif ne se raccorde plus que modulo
+        // son réseau — l'argmin saute d'alias en alias (constaté : ±83 px, et la période
+        // écran de l'onde dominante vaut PILE le déplacement attendu à dt = T). Or une
+        // frame SwiftShader ≈ 1,1-1,5 s de jeu. On met donc L'EAU SEULE au ralenti pendant
+        // la mesure (le temps passé à water.update est rescalé ×0,15 — instrumentation du
+        // rendu, même famille que game.loop.sleep() ; la sim n'y touche pas), et on mesure
+        // les vitesses en temps d'eau EFFECTIF — la même arithmétique de shader, échantillonnée
+        // assez fin pour être lisible. Restauré à la fin.
+        const RALENTI = 0.15
+        const CAPT = 12
+        const ROI = 120 // px écran de côté
+        // La cible DOIT être dans le cadre, marge comprise — une ROI clampée au bord de
+        // l'écran mesure un autre morceau de monde (constaté sur le cœur d'un grand lac).
+        {
+          const wv = sc.cameras.main.worldView
+          const cx = cible.x * 16
+          const cy = cible.y * 16
+          const marge = (ROI / 2 + 8) / (1280 / wv.width)
+          if (cx < wv.x + marge || cx > wv.right - marge || cy < wv.y + marge || cy > wv.bottom - marge) return null
+        }
+        const water = sc.water
+        const origUpdate = water.update.bind(water)
+        let base = null
+        let hourFige = null
+        let dayFige = null
+        water.update = (nowMs, hour, day, ...rest) => {
+          if (base === null) {
+            base = nowMs
+            // L'heure et la lumière aussi : l'horloge headless court ~12× — sans gel, le
+            // soleil balaie ~2 h de jeu pendant la rafale et le champ d'éclats rase GLISSE
+            // en x avec l'azimut (mesuré : un fantôme +0,53 t/s, vy pile 0, sur eau morte).
+            hourFige = hour
+            dayFige = day
+          }
+          const t = base + (nowMs - base) * RALENTI
+          water.__probeT = t
+          return origUpdate(t, hourFige, dayFige, ...rest)
+        }
+        const prises = []
+        let fpsSum = 0
+        for (let k = 0; k < CAPT; k++) {
+          const snap = await new Promise((ok) => sc.game.renderer.snapshot((img) => ok(img)))
+          const tGame = water.__probeT ?? sc.time.now
+          fpsSum += sc.game.loop.actualFps
+          const cv = document.createElement('canvas')
+          cv.width = snap.width; cv.height = snap.height
+          const ctx = cv.getContext('2d', { willReadFrequently: true })
+          ctx.drawImage(snap, 0, 0)
+          const scaleX = snap.width / cam.worldView.width
+          const scaleY = snap.height / cam.worldView.height
+          const cx = Math.round((cible.x * 16 - cam.worldView.x) * scaleX)
+          const cy = Math.round((cible.y * 16 - cam.worldView.y) * scaleY)
+          const x0 = Math.max(0, Math.min(snap.width - ROI, cx - ROI / 2))
+          const y0 = Math.max(0, Math.min(snap.height - ROI, cy - ROI / 2))
+          const img = ctx.getImageData(x0, y0, ROI, ROI).data
+          const lum = new Float32Array(ROI * ROI)
+          let moy = 0
+          for (let i = 0; i < ROI * ROI; i++) {
+            const v = 0.299 * img[i * 4] + 0.587 * img[i * 4 + 1] + 0.114 * img[i * 4 + 2]
+            lum[i] = v; moy += v
+          }
+          moy /= ROI * ROI
+          for (let i = 0; i < ROI * ROI; i++) lum[i] -= moy
+          prises.push({ lum, tGame, scaleX, scaleY })
+        }
+        water.update = origUpdate
+        delete water.__probeT
+        // La corrélation par paires VOISINES (dt d'eau effectif 0,12-0,6 s) : SSD grossière
+        // (pas de 4) puis raffinée (±3), et l'hypothèse nulle en garde-fou.
+        const ssdEn = (A, B, dx, dy, pas) => {
+          let ssd = 0
+          let n = 0
+          for (let y = Math.max(0, dy); y < Math.min(ROI, ROI + dy); y += pas)
+            for (let x = Math.max(0, dx); x < Math.min(ROI, ROI + dx); x += pas) {
+              const d = B.lum[y * ROI + x] - A.lum[(y - dy) * ROI + (x - dx)]
+              ssd += d * d; n++
+            }
+          return n >= 200 ? ssd / n : Infinity
+        }
+        const vitesses = []
+        for (let a = 0; a < prises.length; a++) {
+          for (let b = a + 1; b < Math.min(prises.length, a + 5); b++) {
+            const A = prises[a]
+            const B = prises[b]
+            const dt = (B.tGame - A.tGame) / 1000
+            // [0,3 .. 0,7] s d'eau effective : en deçà, le décalage vrai (< 4-5 px) reste
+            // SOUS le grain de postérisation (cellules de 4 px ancrées au monde) et
+            // l'argmin colle à zéro (constaté — le test binaire gelé, lui, voyait 18 px
+            // au pixel près) ; au-delà, la phase propre des ondes brouille le raccord.
+            if (dt < 0.3 || dt > 0.7) continue
+            const S = Math.min(40, Math.ceil(1.0 * 16 * A.scaleX * dt) + 8)
+            let best = Infinity
+            let bx = 0
+            let by = 0
+            for (let dy = -S; dy <= S; dy += 4) for (let dx = -S; dx <= S; dx += 4) {
+              const s = ssdEn(A, B, dx, dy, 2)
+              if (s < best) { best = s; bx = dx; by = dy }
+            }
+            for (let dy = by - 3; dy <= by + 3; dy++) for (let dx = bx - 3; dx <= bx + 3; dx++) {
+              const s = ssdEn(A, B, dx, dy, 2)
+              if (s < best) { best = s; bx = dx; by = dy }
+            }
+            if (!Number.isFinite(best)) continue
+            // Un argmin ÉPINGLÉ au bord de la fenêtre n'est pas une mesure : c'est une
+            // corrélation dégénérée (paysage SSD monotone — brouillard en fondu, ROI
+            // pauvre en texture…). On jette la paire plutôt que d'avaler un extrême.
+            if (Math.abs(bx) >= S - 1 || Math.abs(by) >= S - 1) continue
+            // Pas de garde « hypothèse nulle » ici : à petit dt la fenêtre S (≤ 40 px)
+            // exclut l'alias de l'onde dominante (période écran ~59 px) — et sur des
+            // aplats postérisés, un petit décalage vrai ne bat jamais l'offset 0 de
+            // beaucoup (il ne change que les frontières de cellules) : le garde snapait
+            // tout à zéro (constaté). La médiane des paires fait le tri du bruit.
+            // px écran → tuiles/s (16 px monde par tuile, worldView redonne le zoom)
+            vitesses.push({ vx: bx / A.scaleX / 16 / dt, vy: by / A.scaleY / 16 / dt })
+          }
+        }
+        const med = (arr) => { const s = [...arr].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0 }
+        const vx = med(vitesses.map((v) => v.vx))
+        const vy = med(vitesses.map((v) => v.vy))
+        return { vx: +vx.toFixed(3), vy: +vy.toFixed(3), paires: vitesses.length, fps: +(fpsSum / CAPT).toFixed(1) }
+      }, { cible: { x: spot.x, y: spot.y } })
+    }
+
+    // ── LA RIVIÈRE : v∥ (le long du fil, aval +) doit dominer, v⊥ rester du bruit.
+    // Le verdict exige 2 candidats sur 3 : à la mise au point, la dérive de phase globale
+    // (le bug) donnait UN v∥ positif par chance d'orientation — un seul ne prouve rien. ──
+    const rivMesures = []
+    for (const r of spots.rivieres) {
+      const m = await mesure(r)
+      if (!m || m.paires < 2) continue
+      const vPar = m.vx * r.cx + m.vy * r.cy
+      const vPerp = -m.vx * r.cy + m.vy * r.cx
+      console.log(`courant — rivière (${r.x.toFixed(0)},${r.y.toFixed(0)}) fil(${r.cx.toFixed(2)},${r.cy.toFixed(2)}) : v∥ ${vPar.toFixed(3)} t/s · v⊥ ${vPerp.toFixed(3)} · ${m.paires} paires · ${m.fps} fps`)
+      rivMesures.push({ ...m, vPar, vPerp })
+    }
+    // ── L'EAU DORMANTE : aucune dérive, dans aucune direction ──
+    let dortM = null
+    if (spots.dormante?.pied) {
+      dortM = await mesure(spots.dormante)
+      const norme = dortM ? Math.hypot(dortM.vx, dortM.vy) : NaN
+      console.log(`courant — eau dormante (${spots.dormante.x.toFixed(0)},${spots.dormante.y.toFixed(0)}, sd ${spots.dormante.sd.toFixed(1)}) : |v| ${norme.toFixed(3)} t/s (${dortM?.vx}, ${dortM?.vy}) · ${dortM?.paires} paires`)
+      if (norme > 0.1) console.error(`!! l'eau dormante DÉRIVE (|v| ${norme.toFixed(3)} > 0,1 t/s) — le tapis roulant`)
+    } else console.error('!! eau-courant : aucune eau dormante loin du fil sur cette carte')
+    if (rivMesures.length < 1) console.error('!! eau-courant : aucune paire de mesure exploitable sur la rivière')
+    else {
+      const passent = rivMesures.filter((m) => m.vPar > 0.2 && Math.abs(m.vPerp) < Math.abs(m.vPar) * 0.5 + 0.1)
+      const ok = passent.length >= Math.min(2, rivMesures.length)
+      console.log(`courant — verdict rivière : ${passent.length}/${rivMesures.length} candidats suivent le fil (v∥ > 0,2 t/s, v⊥ dominé ; attendu ~0,55 vers l'AVAL) ${ok ? '✓' : '✗'}`)
+      if (!ok) console.error('!! la surface de la rivière ne suit PAS le fil')
+    }
+    return { rivieres: rivMesures, dormante: dortM }
+  },
+
+  /**
    * LES LIEUX BASCULÉS (spec da-feeling §3, critère A2) — la planche de la vague B.
    *
    * Pour CHAQUE texture `poi-*_lit` : l'étendue des canaux nx/ny de sa normale (une masse
