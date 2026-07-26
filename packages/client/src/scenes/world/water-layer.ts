@@ -43,6 +43,10 @@ export interface WaterWader {
   phase: number
   /** Force 0..1 — pleine en marche, s'éteint en ~0,7 s après l'arrêt. */
   strength: number
+  /** Cap de marche NORMALISÉ (spec eau-vivante R6) — {0,0} à l'arrêt : anneaux isotropes.
+   *  En marche, les anneaux sont fenêtrés à l'ARRIÈRE du cap et traînés : le sillage. */
+  dirX: number
+  dirY: number
 }
 
 /** Un Feu qui se reflète sur l'eau, poussé par frame depuis l'état sim. */
@@ -87,6 +91,15 @@ uniform vec4 uFires[MAX_FIRES];
 #define MAX_WADERS 8
 uniform int uWaderCount;
 uniform vec4 uWaders[MAX_WADERS]; // xy tuile · z phase (s) · w force (s'éteint après l'arrêt)
+uniform vec2 uWaderDirs[MAX_WADERS]; // cap de marche normalisé — {0,0} = à l'arrêt (isotrope)
+
+// LE CHEMIN DE L'ASTRE (spec eau-vivante R12) — le couloir de lumière du soleil bas / de la
+// lune. ANCRÉ À LA CAMÉRA : le glitter est vue-dépendant, c'est sa physique (chaque
+// observateur a son chemin). L'azimut vient de la SOURCE UNIQUE sunDirection, côté CPU.
+uniform vec2 uCam;        // centre caméra, en tuiles
+uniform float uAstre;     // 0 = pas de chemin · 1 = plein (fenêtres aube/couchant/lune)
+uniform vec3 uAstreCol;   // la couleur du ciel de l'astre (orange à l'aube, os sous la lune)
+uniform float uAstreDirX; // l'azimut du couloir : est(+) → ouest(−)
 
 /**
  * LA PERSPECTIVE. Le monde ne se lit PAS à la verticale : les arbres sont debout,
@@ -377,19 +390,55 @@ void main() {
     if (i >= uWaderCount) break;
     vec4 wd = uWaders[i];
     if (wd.w <= 0.0) continue;
-    float dw = length(tile - wd.xy);
+    // LE SILLAGE (spec eau-vivante R6) : en marche, le centre d'émission RECULE le long du
+    // cap avec l'âge de l'anneau — les anneaux se sèment DERRIÈRE le marcheur et le V
+    // émerge tout seul (personne ne simule un sillage : on émet des décals qui vieillissent).
+    // Et l'anneau est FENÊTRÉ à l'arrière : devant le marcheur, l'eau n'a pas encore bougé.
+    // À l'arrêt (dir = {0,0}), tout ceci s'annule : les ronds isotropes de R11, intacts.
+    vec2 dir = uWaderDirs[i];
+    float marche = step(0.01, dot(dir, dir));
     float age = fract((t - wd.z) * 1.15);      // un anneau tous les ~0,87 s
+    vec2 centre = wd.xy - dir * age * (0.9 * marche);
+    vec2 v = tile - centre;
+    float dw = length(v);
     float r = 0.25 + age * 1.5;                // il naît au pied, meurt à ~1,75 tuile
+    // La fenêtre arrière : palier FRANC sur l'orientation (jamais un dégradé) — on garde
+    // un fond isotrope de 35 % pour que le pied du marcheur reste ancré dans son eau.
+    float arriere = mix(1.0, max(0.35, step(-0.15, dot(v, -dir) / max(dw, 0.001))), marche);
     // Largeur ≈ la CELLULE (4 px = 0,25 tuile) : plus fin, l'anneau raterait les cellules du grain.
-    float band = step(abs(dw - r), 0.27) * (1.0 - age) * (1.0 - step(1.9, dw));
-    // Le second anneau, en quinconce : la traîne du pas précédent.
+    float band = step(abs(dw - r), 0.27) * (1.0 - age) * (1.0 - step(1.9, dw)) * arriere;
+    // Le second anneau, en quinconce : la traîne du pas précédent, semée un cran plus loin.
     float age2 = fract((t - wd.z) * 1.15 + 0.5);
+    vec2 centre2 = wd.xy - dir * age2 * (0.9 * marche);
+    vec2 v2 = tile - centre2;
+    float dw2 = length(v2);
     float r2 = 0.25 + age2 * 1.5;
-    band += step(abs(dw - r2), 0.22) * (1.0 - age2) * 0.6 * (1.0 - step(1.9, dw));
+    float arriere2 = mix(1.0, max(0.35, step(-0.15, dot(v2, -dir) / max(dw2, 0.001))), marche);
+    band += step(abs(dw2 - r2), 0.22) * (1.0 - age2) * 0.6 * (1.0 - step(1.9, dw2)) * arriere2;
     ripple += band * wd.w;
   }
   // La crête du remous ÉCLAIRCIT (l'eau retournée prend la lumière) — un palier, pas un halo.
   col = mix(col, col * 1.3 + vec3(0.07, 0.07, 0.05), clamp(ripple, 0.0, 1.0) * 0.6);
+
+  // ═══ LE CHEMIN DE L'ASTRE (spec eau-vivante R12) ═══
+  //
+  // Quand le soleil rase (aube, couchant) ou sous la lune, un COULOIR traverse l'eau selon
+  // l'azimut : la palette y monte d'UN palier vers le ciel de l'astre, et les étincelles y
+  // explosent — des CELLULES qui s'allument au palier max quelques pas de temps, jamais un
+  // spéculaire lissé (la doctrine des FX de lumière pixellisés). Bords en dither au grain ;
+  // la géométrie du couloir est CONTINUE (pente continue), le rendu par paliers.
+  if (uAstre > 0.001) {
+    vec2 A = normalize(vec2(uAstreDirX, 0.35));
+    vec2 rel = tile - uCam;
+    float dPerp = abs(rel.x * (-A.y) + rel.y * A.x);
+    float dedans = step(dPerp, 0.9);
+    dedans = max(dedans, step(dPerp, 1.7) * step(0.5, cellHash(flatPx / GRAIN + vec2(71.0, 13.0))));
+    if (dedans > 0.0) {
+      col = mix(col, uAstreCol, 0.16 * uAstre * dedans);
+      float scint = step(0.25, h) * step(0.84, cellHash(flatPx / GRAIN + vec2(floor(t * 6.0), 3.0)));
+      col += uAstreCol * scint * dedans * 0.55 * uAstre;
+    }
+  }
 
   // L'ÉCUME, et elle vient DE LA BERGE. Des lignes parallèles au rivage qui
   // avancent vers la terre : le clapot qui vient mourir sur la rive, et non un
@@ -461,6 +510,27 @@ void main() {
  * hauteur reconstruite. La nuit, `sunDirection` rend `{0,0}` → soleil au zénith, mais `uDay=0`
  * l'éteint : pas de garde de nuit à ajouter.)
  */
+/**
+ * LES FENÊTRES DU CHEMIN DE L'ASTRE (spec eau-vivante R12) — pure de l'heure et du jour :
+ * l'aube et le couchant allument un couloir CHAUD quand le soleil rase ; la nuit claire,
+ * la lune en tient un d'OS, plus discret. Pentes continues partout (règle maison).
+ * L'azimut du couloir vient de `sunDirection` (source unique) ; la lune, que la sim ne
+ * connaît pas, prend un couchant figé — une direction inventée mais CONSTANTE.
+ */
+export function cheminDeLAstre(hour: number, day: number): { force: number; col: [number, number, number]; dirX: number } {
+  const rampe = (h: number, a: number, b: number, c: number, d: number): number =>
+    h <= a || h >= d ? 0 : h < b ? (h - a) / (b - a) : h <= c ? 1 : 1 - (h - c) / (d - c)
+  const aube = rampe(hour, 5.6, 6.3, 7.2, 8.3)
+  const couchant = rampe(hour, 16.6, 17.4, 18.6, 19.6)
+  const soleil = Math.max(aube, couchant)
+  if (soleil > 0) {
+    return { force: soleil, col: [1.0, 0.62, 0.3], dirX: sunDirection(hour).x || (aube > 0 ? 1 : -1) }
+  }
+  // La lune : la nuit franche seulement (le jour l'éteint), toujours au sud-ouest.
+  const lune = Math.max(0, 1 - day / 0.06) * 0.5
+  return { force: lune, col: [0.75, 0.8, 0.88], dirX: -0.4 }
+}
+
 function sunVector(hour: number): { x: number; y: number; z: number } {
   const gx = sunDirection(hour).x // la source UNIQUE : est(+) → ouest(−), |gx| = force au ras
   const alt = Math.sqrt(Math.max(0, 1 - gx * gx)) // sin(azimut) : 0 à l'horizon, 1 au zénith
@@ -550,6 +620,11 @@ export class WaterLayer {
             setUniform('uFires', this.fireData)
             setUniform('uWaderCount', this.waderCount)
             setUniform('uWaders', this.waderData)
+            setUniform('uWaderDirs', this.waderDirData)
+            setUniform('uCam', [this.cam.x, this.cam.y])
+            setUniform('uAstre', this.astre.force)
+            setUniform('uAstreCol', this.astre.col)
+            setUniform('uAstreDirX', this.astre.dirX)
           },
         },
         0,
@@ -565,22 +640,39 @@ export class WaterLayer {
   private timeS = 0
   private sun = { x: 0, y: 0.3, z: 1 }
   private day = 1
+  private cam = { x: 0, y: 0 }
+  private astre: { force: number; col: [number, number, number]; dirX: number } = {
+    force: 0,
+    col: [1, 0.62, 0.3],
+    dirX: 1,
+  }
   private fireCount = 0
   /** vec4 par foyer, à plat (xy tuile · z portée · w force) — un seul tampon, muté par frame. */
   private readonly fireData = new Float32Array(MAX_FIRES * 4)
   /** vec4 par marcheur (xy tuile · z phase s · w force) — les remous (spec da-feeling R11). */
   private readonly waderData = new Float32Array(MAX_WADERS * 4)
+  /** vec2 par marcheur : le cap normalisé du sillage (eau-vivante R6), {0,0} à l'arrêt. */
+  private readonly waderDirData = new Float32Array(MAX_WADERS * 2)
   private waderCount = 0
 
   /**
    * L'heure décide du soleil sur l'eau ; `fires` allume la nappe la nuit (reflet du camp) ;
    * `waders` fait naître les remous sous les pas (au-delà des plafonds : ignorés en silence).
    */
-  update(nowMs: number, hour: number, daylight: number, fires: WaterFire[] = [], waders: WaterWader[] = []): void {
+  update(
+    nowMs: number,
+    hour: number,
+    daylight: number,
+    fires: WaterFire[] = [],
+    waders: WaterWader[] = [],
+    camTile?: { x: number; y: number },
+  ): void {
     if (!this.shader) return
     this.timeS = nowMs / 1000
     this.sun = sunVector(hour)
     this.day = daylight
+    this.astre = cheminDeLAstre(hour, daylight)
+    if (camTile) this.cam = camTile
     const n = Math.min(MAX_FIRES, fires.length)
     this.fireCount = n
     for (let i = 0; i < n; i++) {
@@ -603,8 +695,14 @@ export class WaterLayer {
       this.waderData[o + 1] = wd.y
       this.waderData[o + 2] = wd.phase
       this.waderData[o + 3] = wd.strength
+      this.waderDirData[i * 2] = wd.dirX
+      this.waderDirData[i * 2 + 1] = wd.dirY
     }
-    for (let i = m; i < MAX_WADERS; i++) this.waderData[i * 4 + 3] = 0
+    for (let i = m; i < MAX_WADERS; i++) {
+      this.waderData[i * 4 + 3] = 0
+      this.waderDirData[i * 2] = 0
+      this.waderDirData[i * 2 + 1] = 0
+    }
   }
 
   destroy(): void {

@@ -412,7 +412,10 @@ export class WorldScene extends Phaser.Scene {
   lastEntities: Entity[] = []
   /** Suivi des marcheurs pour les remous de l'eau (spec da-feeling R11) : dernière
    *  position vue et date du dernier pas — la force du remous s'en déduit. */
-  private readonly waderTrack = new Map<number, { x: number; y: number; lastMove: number }>()
+  private readonly waderTrack = new Map<
+    number,
+    { x: number; y: number; lastMove: number; dirX: number; dirY: number }
+  >()
   private inputs!: MovementBindings
   private myVillageId: number | null = null
   private myHunger = 100
@@ -994,7 +997,26 @@ export class WorldScene extends Phaser.Scene {
         const prev = this.waderTrack.get(e.id)
         const bouge = prev !== undefined && (Math.abs(ex - prev.x) > 0.02 || Math.abs(ey - prev.y) > 0.02)
         const lastMove = shallow && bouge ? time : (prev?.lastMove ?? -1e9)
-        this.waderTrack.set(e.id, { x: ex, y: ey, lastMove })
+        // LE CAP DU SILLAGE (eau-vivante R6) : dérivé des positions, LISSÉ (le jitter
+        // d'interpolation ne fait pas claquer le V) ; conservé à l'arrêt le temps que la
+        // force meure — le sillage s'éteint en reculant, il ne pivote pas en rond.
+        let dirX = prev?.dirX ?? 0
+        let dirY = prev?.dirY ?? 0
+        if (bouge && prev) {
+          const ddx = ex - prev.x
+          const ddy = ey - prev.y
+          const n = Math.sqrt(ddx * ddx + ddy * ddy)
+          if (n > 1e-6) {
+            dirX += (ddx / n - dirX) * 0.35
+            dirY += (ddy / n - dirY) * 0.35
+            const nn = Math.sqrt(dirX * dirX + dirY * dirY)
+            if (nn > 1e-6) {
+              dirX /= nn
+              dirY /= nn
+            }
+          }
+        }
+        this.waderTrack.set(e.id, { x: ex, y: ey, lastMove, dirX, dirY })
         if (!shallow || waders.length >= 8) continue
         // PRIORITÉ À LA VUE (revue : 8 bêtes hors écran volaient les slots d'un cerf visible) —
         // un remous qu'on ne voit pas ne vaut aucun slot. Et le suivi, lui, couvre TOUT LE MONDE.
@@ -1002,7 +1024,7 @@ export class WorldScene extends Phaser.Scene {
         const force = Math.max(0, 1 - (time - lastMove) / 700)
         if (force <= 0) continue
         // Phase par identité : les anneaux de deux marcheurs ne battent pas ensemble.
-        waders.push({ x: ex, y: ey, phase: (e.id % 97) * 0.211, strength: force })
+        waders.push({ x: ex, y: ey, phase: (e.id % 97) * 0.211, strength: force, dirX, dirY })
       }
       // LA PURGE (revue : la Map croissait à vie — les ids sim sont monotones) : on oublie
       // toute entité sortie du snapshot.
@@ -1018,6 +1040,8 @@ export class WorldScene extends Phaser.Scene {
         // force = alpha de la lueur, déjà ∝ nuit → le reflet s'éteint tout seul de jour.
         litFires.map(({ s, g }) => ({ x: s.tx + 0.5, y: s.ty + 0.5, radius: g.radius * 2.3, strength: g.alpha })),
         waders,
+        // Le chemin de l'astre est ancré à la CAMÉRA (le glitter est vue-dépendant, R12).
+        { x: (vue.x + vue.width / 2) / TILE_PX, y: (vue.y + vue.height / 2) / TILE_PX },
       )
       // LE VENT LISSÉ porte toute la brume : cap de la sim rallié en ~15 s, force inventée —
       // jamais un saut, jamais un vecteur nul (vent-lisse.ts, diagnostic du 26/07).
