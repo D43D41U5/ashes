@@ -620,7 +620,7 @@ export class SnapshotView {
     }
     this.syncFlottaison(sprite, p.px, p.py - lift, p.displayW, p.depth, immersion)
     // LES ÉVÉNEMENTS D'EAU (R3/R7) : la gerbe au franchissement, les pas mouillés en sortant.
-    if (this.rive) this.eau?.track(sprite, p.px, p.py, p.depth, dRive, this.scene.time.now)
+    if (this.rive) this.eau?.track(sprite, p.px, p.py, p.depth, dRive, this.scene.time.now, p.displayW)
     // LE REFLET (R13) : un acteur dans l'eau se redit tête-bêche sur la nappe sous lui.
     if (this.reflets && immersion > 0.05) {
       const coupeTexels = coupe > 0 ? Math.round((coupe / displayH) * sprite.frame.height) : 0

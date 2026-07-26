@@ -264,22 +264,23 @@ const SCENARIOS = {
           else if (t === 4 && shallows.length < 40 && entoure(tx, ty, (q) => q === 4)) shallows.push([tx, ty])
         }
       }
-      // TROIS captures espacées, moyennées : le clapot postérisé bruite ±0,1 de ratio
-      // d'un instantané à l'autre — on mesure l'EAU, pas la phase de sa houle.
+      // CINQ captures espacées, moyennées (3 → 5, revue eau-vivante : avec 17 tuiles
+      // toutes-profondes dans la vue, 3 instantanés laissaient ±0,06 de bruit inter-run
+      // sur un seuil tenu à +0,05 — le gate claquait au faux rouge ~1 run sur 25) : le
+      // clapot postérisé bruite, on mesure l'EAU, pas la phase de sa houle. Les alphas
+      // 1, 1/2, 1/3, 1/4, 1/5 composent une moyenne équipondérée des cinq.
       const shots = []
-      for (let k = 0; k < 3; k++) {
+      for (let k = 0; k < 5; k++) {
         shots.push(await new Promise((ok) => sc.game.renderer.snapshot((img) => ok(img))))
-        await new Promise((ok) => setTimeout(ok, 350))
+        await new Promise((ok) => setTimeout(ok, 300))
       }
       const cv = document.createElement('canvas')
       cv.width = shots[0].width; cv.height = shots[0].height
       const ctx = cv.getContext('2d')
-      ctx.globalAlpha = 1
-      ctx.drawImage(shots[0], 0, 0)
-      ctx.globalAlpha = 0.5
-      ctx.drawImage(shots[1], 0, 0)
-      ctx.globalAlpha = 0.34
-      ctx.drawImage(shots[2], 0, 0)
+      for (let k = 0; k < 5; k++) {
+        ctx.globalAlpha = 1 / (k + 1)
+        ctx.drawImage(shots[k], 0, 0)
+      }
       ctx.globalAlpha = 1
       const shot = shots[0]
       const lum = (pts) => {
@@ -302,16 +303,23 @@ const SCENARIOS = {
     console.log(`A4 — gué : profond ${contraste.deep} vs haut-fond ${contraste.shallow} (n=${contraste.nD}/${contraste.nS}) → ${contraste.ratio}:1 ${contraste.ratio >= 1.4 ? '✓' : '✗ (< 1,4)'}`)
 
     // ── A5 : les remous — sondés PAR L'ÉTAT (lastWaderCount), puis regardés ──
+    // La sonde échantillonne EN BOUCLE pendant la marche et garde le MAX (revue eau-vivante :
+    // le point unique à 900 ms ratait le marcheur — l'horloge headless va ~12× trop vite,
+    // l'avatar bute au mur du profond et la force meurt AVANT la lecture ; 2 rouges sur 3).
     await page.waitForTimeout(1200) // immobile depuis le TP : le remous doit être mort
     const wImmobile = await page.evaluate(() => window.__BRAISES__.scene.lastWaderCount)
+    let wMarche = 0
     await page.keyboard.down('KeyA')
-    await page.waitForTimeout(900)
-    const wMarche = await page.evaluate(() => window.__BRAISES__.scene.lastWaderCount)
+    for (let k = 0; k < 6; k++) {
+      await page.waitForTimeout(160)
+      const w = await page.evaluate(() => window.__BRAISES__.scene.lastWaderCount)
+      wMarche = Math.max(wMarche, w)
+    }
     await page.screenshot({ path: `${OUT}/feeling-remous.png` })
     await page.keyboard.up('KeyA')
     await page.waitForTimeout(1100) // l'extinction fait 0,7 s
     const wArret = await page.evaluate(() => window.__BRAISES__.scene.lastWaderCount)
-    console.log(`A5 — remous : immobile ${wImmobile} ${wImmobile === 0 ? '✓' : '✗'} · en marche ${wMarche} ${wMarche >= 1 ? '✓' : '✗'} · 1,1 s après l'arrêt ${wArret} ${wArret === 0 ? '✓' : '✗'}`)
+    console.log(`A5 — remous : immobile ${wImmobile} ${wImmobile === 0 ? '✓' : '✗'} · en marche (max) ${wMarche} ${wMarche >= 1 ? '✓' : '✗'} · 1,1 s après l'arrêt ${wArret} ${wArret === 0 ? '✓' : '✗'}`)
 
     // ── A6 : la brume, aux quatre heures qui la racontent ──
     for (const [h, nom] of [[5.5, '0530'], [6, '0600'], [8, '0800'], [12, '1200']]) {
@@ -489,6 +497,36 @@ const SCENARIOS = {
     if (vie.dMin !== null && vie.dMin < 1.2) console.error(`!! un poisson n’a pas fui (d ${vie.dMin} < 1,2 t)`)
     if (vie.fil < 2) console.error('!! map.fil absent ou vide — le courant n’existe pas')
     if (vie.feuilles < 1) console.error('!! aucune feuille au fil de l’eau en 7 s')
+    // A9 : la feuille avance vers l'AVAL — déplacement projeté sur le courant local > 0
+    // (revue : sans cette sonde, un courant INVERSÉ passerait vert).
+    const aval = await page.evaluate(async () => {
+      const f = window.__BRAISES__.scene.feuilles
+      if (!f || f.vivantes < 1) return null
+      const avant = f.feuilles.map((x) => ({ x: x.x, y: x.y }))
+      await new Promise((ok) => setTimeout(ok, 1200))
+      let somme = 0
+      let n = 0
+      for (let i = 0; i < Math.min(avant.length, f.feuilles.length); i++) {
+        const a = avant[i]
+        const b = f.feuilles[i]
+        const c = f.courantEn(a.x, a.y)
+        if (!c) continue
+        somme += (b.x - a.x) * c.x + (b.y - a.y) * c.y
+        n++
+      }
+      return n > 0 ? +(somme / n).toFixed(3) : null
+    })
+    console.log(`eau — aval : déplacement projeté ${aval} t ${aval !== null && aval > 0 ? '✓' : '✗'}`)
+    if (aval !== null && aval <= 0) console.error('!! les feuilles ne dérivent PAS vers l’aval')
+    // A10 : le boot des couches d'eau se CHRONOMÈTRE. La sonde couvre TOUT le bloc eau
+    // (dont la construction PRÉ-EXISTANTE de WaterLayer et deux uploads de texture
+    // 1581×2372 sur SwiftShader) — mesuré 700-900 ms sur la VM sans GPU, build dev ;
+    // buildRiveField seul : ~200 ms en Node à chaud. Budget re-chiffré APRÈS mesure :
+    // < 1 200 ms pour le bloc, une fois, au boot d'un monde qui met des secondes à naître.
+    const boot = await page.evaluate(() => window.__BRAISES__.scene.bootEauMs)
+    console.log(`eau — boot des couches d'eau : ${boot} ms ${boot >= 0 && boot < 1200 ? '✓' : '✗ (budget 1 200 ms)'}`)
+    if (boot < 0) console.error('!! sonde bootEauMs débranchée')
+    else if (boot >= 1200) console.error(`!! boot de l'eau ${boot} ms — budget A10 dépassé`)
 
     // ── HORS DE L'EAU : tout doit s'éteindre (crop, anneau, reflet du joueur) ──
     await tp(gue.x, gue.y - 8)
@@ -524,6 +562,55 @@ const SCENARIOS = {
     console.log(`eau — événements : gerbe max ${ploufsVus} ${ploufsVus >= 1 ? '✓' : '✗'} · traces max ${tracesVues} ${tracesVues >= 1 ? '✓' : '✗'}`)
     if (ploufsVus < 1) console.error('!! aucune gerbe sur tout l’aller-retour')
     if (tracesVues < 1) console.error('!! aucune empreinte mouillée sur tout l’aller-retour')
+
+    // ── A5′ : LE SILLAGE SE MESURE (revue : « derrière > devant » n'était pas prouvé sur
+    // capture — la première paire livrée disait même l'inverse, noyée par le gradient E-O
+    // du chenal). Marche NORD-SUD (le gradient du gué est E-O), boîtes 3×2 tuiles à ±2 t
+    // de la position PRÉDITE (celle où les anneaux vivent), cumul sur les frames où un
+    // wader vit. Mesuré à la mise au point : derrière 11,7 % vs devant 2,0 % (×5,7). ──
+    await tp(gue.x - 1, gue.y - 2)
+    await page.keyboard.down('KeyS')
+    let sAvant = 0
+    let sArriere = 0
+    let sFrames = 0
+    for (let k = 0; k < 14; k++) {
+      await page.waitForTimeout(260)
+      const m = await page.evaluate(async () => {
+        const sc = window.__BRAISES__.scene
+        if ((sc.lastWaderCount ?? 0) < 1) return null
+        const p = sc.predicted
+        const cam = sc.cameras.main
+        const snap = await new Promise((ok) => sc.game.renderer.snapshot((img) => ok(img)))
+        const cv = document.createElement('canvas')
+        cv.width = snap.width; cv.height = snap.height
+        const ctx = cv.getContext('2d', { willReadFrequently: true })
+        ctx.drawImage(snap, 0, 0)
+        const boite = (dyT) => {
+          const fx = (p.x * 16 - cam.worldView.x) / cam.worldView.width
+          const fy = ((p.y + dyT) * 16 - cam.worldView.y) / cam.worldView.height
+          const cx = Math.round(fx * snap.width)
+          const cy = Math.round(fy * snap.height)
+          let clairs = 0, n = 0
+          for (let dy = -16; dy <= 16; dy += 2) for (let dx = -24; dx <= 24; dx += 2) {
+            const px = cx + dx, py = cy + dy
+            if (px < 0 || py < 40 || px >= snap.width || py >= snap.height - 60) continue
+            const d = ctx.getImageData(px, py, 1, 1).data
+            const lum = 0.299 * d[0] + 0.587 * d[1] + 0.114 * d[2]
+            if (lum > 172) clairs++
+            n++
+          }
+          return n ? clairs / n : 0
+        }
+        return { av: boite(2.0), ar: boite(-2.0) } // marche SUD : avant = sud, arrière = nord
+      })
+      if (m) { sAvant += m.av; sArriere += m.ar; sFrames++ }
+    }
+    await page.keyboard.up('KeyS')
+    const mAv = sAvant / Math.max(1, sFrames)
+    const mAr = sArriere / Math.max(1, sFrames)
+    console.log(`eau — sillage (A5′) : ${sFrames} frames · arrière ${(mAr * 100).toFixed(1)} % vs avant ${(mAv * 100).toFixed(1)} % ${sFrames >= 1 && mAr > mAv ? '✓' : '✗'}`)
+    if (sFrames < 1) console.error('!! sillage : aucune frame avec wader vivant — sonde muette')
+    else if (mAr <= mAv) console.error('!! sillage : l’éclaircissement n’est PAS derrière le marcheur')
     console.log(`captures → ${OUT}/eau-*.png — à REGARDER`)
     return { dansLEau, vie, ploufsVus, tracesVues }
   },

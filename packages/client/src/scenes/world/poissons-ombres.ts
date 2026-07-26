@@ -17,8 +17,11 @@ import type { WorldMap } from '@braises/sim'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { riveAt, type RiveField } from '../../render/water-field'
 
-/** Sous l'eau (−0,75), sur le sol (−1) : la nappe teinte le poisson d'elle-même. */
-const POISSON_DEPTH = GROUND_MAP_DEPTH + 0.15
+/** AU-DESSUS du quad d'eau (−0,75), sous feuilles et reflets — revue, MESURÉ : sous le
+ *  quad (alpha 0,88-0,96), le poisson était couvert à 88-96 % — invisible en profond. Il
+ *  reste « sous la surface » par la COULEUR (tache sombre semi-transparente teintée eau),
+ *  pas par la profondeur d'affichage. */
+const POISSON_DEPTH = GROUND_MAP_DEPTH + 0.22
 const MAX_POISSONS = 6
 /** Rayon (tuiles) autour de la caméra où un poisson peut vivre. */
 const RAYON = 26
@@ -62,9 +65,9 @@ export class PoissonsOmbres {
       cv.width = 8
       cv.height = 4
       const ctx = cv.getContext('2d')!
-      ctx.fillStyle = 'rgba(16,24,34,0.5)'
+      ctx.fillStyle = 'rgba(14,26,40,0.55)'
       ctx.fillRect(1, 0, 6, 4) // le corps
-      ctx.fillStyle = 'rgba(16,24,34,0.35)'
+      ctx.fillStyle = 'rgba(14,26,40,0.38)'
       ctx.fillRect(0, 1, 1, 2) // la queue
       ctx.fillRect(7, 1, 1, 2) // le museau
       scene.textures.addCanvas('fx-poisson', cv)

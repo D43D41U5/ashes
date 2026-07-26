@@ -53,55 +53,108 @@ export interface RiveField {
   height: number
 }
 
-function chanfrein(estSource: (i: number) => boolean, width: number, height: number): Uint16Array {
+export function buildRiveField(terrain: ArrayLike<number>, width: number, height: number): RiveField {
+  const N = width * height
+  // Le masque d'eau APLATI d'abord (revue, MESURÉ : appeler une closure des millions de
+  // fois dominait le coût du chanfrein plein-cadre — 520-610 ms de boot).
+  const eauMask = new Uint8Array(N)
+  for (let i = 0; i < N; i++) {
+    const t = terrain[i]
+    if (t === SHALLOW || t === DEEP) eauMask[i] = 1
+  }
+  // LA BANDE, PAS LA CARTE (2e passe de la revue : même en tableau plat, deux chanfreins
+  // pleins-cadres coûtaient ~250-380 ms sur 3,75 M de tuiles). Le champ ne sert que sous
+  // ±8 tuiles du rivage : une expansion de DIAL (poids 3/4, seaux 0..CAP) depuis les
+  // cellules de CONTACT ne visite que le voisinage du rivage — ~rivage × 16 cellules.
+  // d = distance au milieu OPPOSÉ en tiers de tuile, propagée DANS son milieu (le plus
+  // court chemin vers l'autre milieu ne traverse jamais l'autre milieu : il s'y arrête).
   const CAP = Math.ceil((RIVE_MAX_TILES + 1) * 3)
-  const d = new Uint16Array(width * height).fill(CAP)
-  for (let i = 0; i < width * height; i++) if (estSource(i)) d[i] = 0
+  const d = new Uint16Array(N).fill(CAP)
+  const seaux: number[][] = []
+  for (let k = 0; k <= CAP; k++) seaux.push([])
+  // Les graines : chaque paire de voisins de milieux OPPOSÉS seed ses deux cellules —
+  // 3 (contact ortho) ou 4 (contact diagonal pur, le coin rectiligne du worldgen).
   for (let y = 0; y < height; y++) {
+    const fin = y < height - 1
     for (let x = 0; x < width; x++) {
       const i = y * width + x
-      let v = d[i]!
-      if (v === 0) continue
-      if (x > 0) v = Math.min(v, d[i - 1]! + 3)
+      const e = eauMask[i]!
+      if (x < width - 1 && eauMask[i + 1] !== e) {
+        if (d[i]! > 3) { d[i] = 3; seaux[3]!.push(i) }
+        if (d[i + 1]! > 3) { d[i + 1] = 3; seaux[3]!.push(i + 1) }
+      }
+      if (fin && eauMask[i + width] !== e) {
+        if (d[i]! > 3) { d[i] = 3; seaux[3]!.push(i) }
+        if (d[i + width]! > 3) { d[i + width] = 3; seaux[3]!.push(i + width) }
+      }
+      if (fin && x < width - 1 && eauMask[i + width + 1] !== e) {
+        if (d[i]! > 4) { d[i] = 4; seaux[4]!.push(i) }
+        if (d[i + width + 1]! > 4) { d[i + width + 1] = 4; seaux[4]!.push(i + width + 1) }
+      }
+      if (fin && x > 0 && eauMask[i + width - 1] !== e) {
+        if (d[i]! > 4) { d[i] = 4; seaux[4]!.push(i) }
+        if (d[i + width - 1]! > 4) { d[i + width - 1] = 4; seaux[4]!.push(i + width - 1) }
+      }
+    }
+  }
+  // L'expansion : monotone par seaux croissants — chaque cellule se fixe à sa première
+  // sortie (une entrée plus tardive dans un seau porte forcément une distance ≥).
+  for (let k = 3; k <= CAP; k++) {
+    const seau = seaux[k]!
+    for (let s = 0; s < seau.length; s++) {
+      const i = seau[s]!
+      if (d[i]! < k) continue // fixée par un chemin plus court — entrée périmée
+      const e = eauMask[i]!
+      const x = i % width
+      const y = (i - x) / width
+      const relaxe = (j: number, poids: number): void => {
+        if (eauMask[j] !== e) return // la distance se propage DANS son milieu
+        const nv = k + poids
+        if (nv < d[j]! && nv <= CAP) {
+          d[j] = nv
+          seaux[nv]!.push(j)
+        }
+      }
+      if (x > 0) relaxe(i - 1, 3)
+      if (x < width - 1) relaxe(i + 1, 3)
       if (y > 0) {
-        v = Math.min(v, d[i - width]! + 3)
-        if (x > 0) v = Math.min(v, d[i - width - 1]! + 4)
-        if (x < width - 1) v = Math.min(v, d[i - width + 1]! + 4)
+        relaxe(i - width, 3)
+        if (x > 0) relaxe(i - width - 1, 4)
+        if (x < width - 1) relaxe(i - width + 1, 4)
       }
-      d[i] = Math.min(v, CAP)
-    }
-  }
-  for (let y = height - 1; y >= 0; y--) {
-    for (let x = width - 1; x >= 0; x--) {
-      const i = y * width + x
-      let v = d[i]!
-      if (v === 0) continue
-      if (x < width - 1) v = Math.min(v, d[i + 1]! + 3)
       if (y < height - 1) {
-        v = Math.min(v, d[i + width]! + 3)
-        if (x < width - 1) v = Math.min(v, d[i + width + 1]! + 4)
-        if (x > 0) v = Math.min(v, d[i + width - 1]! + 4)
+        relaxe(i + width, 3)
+        if (x > 0) relaxe(i + width - 1, 4)
+        if (x < width - 1) relaxe(i + width + 1, 4)
       }
-      d[i] = Math.min(v, CAP)
     }
   }
-  return d
-}
-
-export function buildRiveField(terrain: ArrayLike<number>, width: number, height: number): RiveField {
-  const eau = (i: number): boolean => terrain[i] === SHALLOW || terrain[i] === DEEP
-  const versEau = chanfrein(eau, width, height) // 0 dans l'eau, croît sur terre
-  const versTerre = chanfrein((i) => !eau(i), width, height) // 0 sur terre, croît dans l'eau
-  const sd = new Float32Array(width * height)
-  const data = new Uint8ClampedArray(width * height * 4)
-  for (let i = 0; i < width * height; i++) {
+  // L'encodage en UNE passe, écritures 32 bits, chemins RAPIDES pour le loin (l'écrasante
+  // majorité des cellules est à d = CAP : deux constantes préchiffrées, zéro arithmétique).
+  const sd = new Float32Array(N)
+  const data = new Uint8ClampedArray(N * 4)
+  const u32 = new Uint32Array(data.buffer) // little-endian : R au poids faible, A au fort
+  const R_TERRE_LOIN = Math.round(128 - RIVE_MAX_TILES * 16)
+  const R_EAU_LOIN = Math.round(128 + RIVE_MAX_TILES * 16)
+  const U_TERRE_LOIN = 0xff000000 | R_TERRE_LOIN
+  const U_EAU_LOIN = 0xff000000 | R_EAU_LOIN
+  for (let i = 0; i < N; i++) {
+    const di = d[i]!
+    if (di >= CAP) {
+      if (eauMask[i] === 1) {
+        sd[i] = RIVE_MAX_TILES
+        u32[i] = U_EAU_LOIN
+      } else {
+        sd[i] = -RIVE_MAX_TILES
+        u32[i] = U_TERRE_LOIN
+      }
+      continue
+    }
     // La demi-tuile retranchée place le zéro sur l'ARÊTE entre deux centres voisins.
-    const d = eau(i) ? versTerre[i]! / 3 - 0.5 : -(versEau[i]! / 3 - 0.5)
-    const borne = Math.max(-RIVE_MAX_TILES, Math.min(RIVE_MAX_TILES, d))
+    const brut = eauMask[i] === 1 ? di / 3 - 0.5 : -(di / 3 - 0.5)
+    const borne = Math.max(-RIVE_MAX_TILES, Math.min(RIVE_MAX_TILES, brut))
     sd[i] = borne
-    const o = i * 4
-    data[o] = Math.round(128 + borne * 16)
-    data[o + 3] = 255
+    u32[i] = 0xff000000 | Math.round(128 + borne * 16)
   }
   return { sd, data, width, height }
 }

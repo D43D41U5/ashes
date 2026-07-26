@@ -17,7 +17,8 @@ import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 
-/** Au-dessus de l'eau (−0,75) et des feuilles (−0,43), sous tout le monde trié (≥ 0). */
+/** Au-dessus de l'eau (−0,75), SOUS les feuilles (−0,68) — un reflet passe sous ce qui
+ *  flotte — et sous tout le monde trié (≥ 0). */
 const REFLET_DEPTH = GROUND_MAP_DEPTH + 0.28
 /** Course d'eau maximale utile sous un sujet, en tuiles (au-delà le reflet meurt seul). */
 const RUN_MAX = 4
@@ -79,8 +80,11 @@ export class RefletsLayer {
     const tx = Math.floor(px / TILE_PX)
     const ty = Math.floor(py / TILE_PX)
     // Le reflet vit SOUS les pieds : la première tuile à inspecter est celle des pieds
-    // (un acteur immergé) ou la suivante (un sujet posé sur la berge).
+    // (un acteur immergé) ou la suivante (un sujet posé sur la berge). L'early-out AVANT
+    // le cache (revue : chaque arbre de pré déposait un zéro éternel dans la Map — le
+    // cache ne garde plus que les vraies courses d'eau).
     const dep = this.eau(tx, ty) ? ty : ty + 1
+    if (!this.eau(tx, dep)) return
     const run = this.runSud(tx, dep)
     if (run <= 0) return
     // Hauteur visible : jusqu'au bout de la course d'eau, jamais plus haut que le sujet.
@@ -97,18 +101,18 @@ export class RefletsLayer {
     img.setTexture(textureKey)
     const frame = img.frame
     const scaleY = displayH / frame.height
-    // La découpe : on retire au FRAME ses rangs du BAS (déjà coupés au sujet — l'immersion)
-    // et ses rangs du HAUT (la part du reflet qui déborderait la course d'eau). Avec flipY,
-    // les rangs hauts du frame sont le BAS visuel du reflet — le lointain, côté large.
+    // La découpe, en espace AFFICHÉ (revue, MESURÉ par sonde WebGL au pixel : la première
+    // écriture inversait les deux coupes sous flipY) : setCrop respecte le flip — le rang
+    // « y » du crop désigne le HAUT AFFICHÉ. Haut affiché = les pieds du sujet (déjà coupés
+    // par l'immersion → on saute coupeBasTexels), bas affiché = le lointain, côté large.
     const coupeLoin = Math.max(0, Math.round((displayH - visible) / scaleY))
     const hFrame = Math.max(1, frame.height - coupeLoin - coupeBasTexels)
-    img.setCrop(0, coupeLoin, frame.width, hFrame)
+    img.setCrop(0, coupeBasTexels, frame.width, hFrame)
     // Le balancement : UN pixel, par pas de temps quantifié — jamais un tremblé continu.
-    // Les rangs coupés au sujet (l'immersion) laissent, une fois retournés, un VIDE en haut
-    // du reflet (le crop ne déplace rien) : on REMONTE l'objet d'autant — le torse réfléchi
-    // colle à la ligne de flottaison, le vide se perd sous le sujet.
+    // La bande visible colle d'elle-même à l'ancre (origine 0.5,0 aux pieds) : zéro
+    // compensation de position.
     const balance = Math.floor(now / 420 + px * 0.03) % 2 === 0 ? 0 : 1
-    img.setPosition(px + balance, py + 1 - coupeBasTexels * scaleY)
+    img.setPosition(px + balance, py + 1)
     img.setDisplaySize(displayW, displayH)
     img.setFlipX(flipX)
     img.setFlipY(true)

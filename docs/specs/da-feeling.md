@@ -33,7 +33,7 @@ Le tout-ou-rien du 2026-07-20 est acté mais inachevé : ~55 textures monde sur 
 
 ## §5 — L'eau : lisible d'abord, vivante ensuite
 
-- **R10** — LE GUÉ SE LIT EN LUMINANCE : contraste rendu profond/haut-fond ≥ 1,4:1, mesuré sur capture (moyenne de 3 instantanés — le clapot postérisé bruite ±0,1). Molettes : `mud`/`murk`, ET le ciel réfléchi un cran plus profond — la doctrine R45 est le GRADIENT de réflexion, pas la valeur du bleu (l'essai « vase sable clair » seul faisait lire la rivière comme une route : regardé, rejeté). Tenu à 1,44-1,5:1.
+- **R10** — LE GUÉ SE LIT EN LUMINANCE : contraste rendu profond/haut-fond ≥ 1,4:1, mesuré sur capture (moyenne de 3 instantanés — le clapot postérisé bruite ±0,1). Molettes : `mud`/`murk`, ET le ciel réfléchi un cran plus profond — la doctrine R45 est le GRADIENT de réflexion, pas la valeur du bleu (l'essai « vase sable clair » seul faisait lire la rivière comme une route : regardé, rejeté). Tenu à 1,44-1,5:1 ; re-mesuré après la berge d'eau-vivante (26/07) : FOURCHETTE 1,40-1,46:1 sur 6 runs — la marge s'est resserrée (+0,05), le gate est passé à 5 instantanés pour tuer le bruit inter-run ; racheter de la marge = +0,05-0,1 de gain sur la vase `mud` (retouche d'œil, à Alexis).
 - **R11** — LES REMOUS : un acteur qui marche dans le haut-fond émet des anneaux quantifiés (grille 4 px, paliers de palette, alpha seul) — le patron `uFires` (positions poussées par frame) devient `uWaders`. C'est l'événement qui rend l'eau vivante, pas l'animation de toute la surface.
 - **R12** — Rien d'autre ne bouge sans mesure : berge animée, éclats et reflets de Feux existent et sont calibrés. Le « trou noir nocturne » et la densité d'éclats restent des affinages à l'œil consignés.
 

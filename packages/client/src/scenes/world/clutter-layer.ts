@@ -60,11 +60,11 @@ export class ClutterLayer {
    *  c'est ce qui rend la règle de l'odorat lisible sans une seule ligne d'UI. */
   wind: { x: number; y: number } = { x: 1, y: 0 }
 
-  /** LA VÉGÉTATION FRÔLÉE (spec eau-vivante R16) : les entités EN MARCHE de la frame —
-   *  un brin à moins d'une tuile s'ÉCARTE de leur passage (poussé du côté opposé), et se
-   *  redresse dès qu'elles s'éloignent. Posé chaque frame par WorldScene ; les roseaux de
-   *  la berge comme l'herbe du pré plient — on traverse la végétation, elle le sait. */
-  agitateurs: { x: number; y: number }[] = []
+  /** LA VÉGÉTATION FRÔLÉE (spec eau-vivante R16) : les marcheurs de la frame, chacun avec
+   *  sa FORCE (1 en marche, fond en ~0,5 s après l'arrêt — l'enveloppe des waders : le brin
+   *  se REDRESSE, il ne claque pas). Un brin à moins d'une tuile s'écarte du passage,
+   *  roseaux de la berge comme herbe du pré — on traverse la végétation, elle le sait. */
+  agitateurs: { x: number; y: number; force: number }[] = []
 
   /** Éclairage dynamique (couche 1) — le rendu par défaut : le décor est éclairé par le
    *  LightsManager (normale plate) — la lumière module son albédo peint sans le déformer.
@@ -145,7 +145,7 @@ export class ClutterLayer {
                 const d2 = dx * dx + dy * dy
                 if (d2 >= 1) continue
                 const prox = 1 - Math.sqrt(d2)
-                sway += (dx >= 0 ? 1 : -1) * 0.38 * prox * Math.min(1, take * 3)
+                sway += (dx >= 0 ? 1 : -1) * 0.38 * prox * a.force * Math.min(1, take * 3)
               }
             }
             sprite.setRotation(sway)

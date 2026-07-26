@@ -337,6 +337,8 @@ export class WorldScene extends Phaser.Scene {
   private feuilles: FeuillesDerive | null = null
   /** Les reflets du monde (R13) — acteurs immergés et fûts de la rive nord. */
   private reflets: RefletsLayer | null = null
+  /** Sonde A10 : le coût de boot des couches d'eau (champ de rive compris), en ms. */
+  bootEauMs = -1
   /** Le dernier état du toggle appliqué à l'avatar (swap _lit une fois, pas par frame). */
   private playerLit: boolean | null = null
   /** Marcheurs à remous poussés cette frame — la sonde du critère A5 (lue par le smoke). */
@@ -423,7 +425,7 @@ export class WorldScene extends Phaser.Scene {
    *  position vue et date du dernier pas — la force du remous s'en déduit. */
   private readonly waderTrack = new Map<
     number,
-    { x: number; y: number; lastMove: number; dirX: number; dirY: number }
+    { x: number; y: number; lastMove: number; lastBouge: number; dirX: number; dirY: number }
   >()
   private inputs!: MovementBindings
   private myVillageId: number | null = null
@@ -687,6 +689,7 @@ export class WorldScene extends Phaser.Scene {
       water: () => {
         // L'eau, par-dessus le sol : un shader qui défait le cisaillement du relief et
         // réfracte le fond (le bake `map-demo` lui sert de lit).
+        const bootEau0 = performance.now()
         this.water = new WaterLayer(this, this.map, 'map-demo')
         this.view.rive = this.water.rive // une seule vérité de « où est l'eau » (eau-vivante R2)
         ensureEauFxTextures(this) // anneaux de flottaison, gerbe, empreinte — bakés une fois
@@ -697,6 +700,8 @@ export class WorldScene extends Phaser.Scene {
         this.feuilles = new FeuillesDerive(this, this.map) // le courant se voit (R15)
         this.reflets = new RefletsLayer(this, this.map)
         this.view.reflets = this.reflets
+        // LA SONDE A10 (eau-vivante) : le boot de l'eau se CHRONOMÈTRE, il ne s'affirme pas.
+        this.bootEauMs = Math.round(performance.now() - bootEau0)
         this.cendre = new CendreLayer(this, this.map, String(this.map.width))
         this.cliffs = new CliffLayer(this, this.map)
       },
@@ -998,7 +1003,7 @@ export class WorldScene extends Phaser.Scene {
       // entité — la force s'éteint ~0,7 s après le dernier pas : un avatar immobile ne remue
       // pas l'eau, et les anneaux du dernier pas meurent d'eux-mêmes (critère A5).
       const waders: WaterWader[] = []
-      const agitateurs: { x: number; y: number }[] = []
+      const agitateurs: { x: number; y: number; force: number }[] = []
       const vue = this.cameras.main.worldView
       const vx0 = vue.x / TILE_PX - 3
       const vy0 = vue.y / TILE_PX - 3
@@ -1033,9 +1038,23 @@ export class WorldScene extends Phaser.Scene {
             }
           }
         }
-        this.waderTrack.set(e.id, { x: ex, y: ey, lastMove, dirX, dirY })
-        // LA VÉGÉTATION FRÔLÉE (eau-vivante R16) : qui MARCHE écarte les brins qu'il traverse.
-        if (bouge && agitateurs.length < 16) agitateurs.push({ x: ex, y: ey })
+        const lastBouge = bouge ? time : (prev?.lastBouge ?? -1e9)
+        this.waderTrack.set(e.id, { x: ex, y: ey, lastMove, lastBouge, dirX, dirY })
+        // LA VÉGÉTATION FRÔLÉE (eau-vivante R16) : qui MARCHE écarte les brins qu'il
+        // traverse. La poussée porte une FORCE continue (l'enveloppe des waders — revue :
+        // l'appartenance binaire strobait à 20 Hz pour les bêtes et claquait à l'arrêt),
+        // et le cap de 16 se sert APRÈS le filtre de vue (revue : des bêtes hors écran
+        // volaient les slots des brins visibles).
+        const forceAgit = Math.max(0, 1 - (time - lastBouge) / 500)
+        if (
+          forceAgit > 0 &&
+          agitateurs.length < 16 &&
+          ex >= vx0 &&
+          ex <= vx1 &&
+          ey >= vy0 &&
+          ey <= vy1
+        )
+          agitateurs.push({ x: ex, y: ey, force: forceAgit })
         if (!shallow || waders.length >= 8) continue
         // PRIORITÉ À LA VUE (revue : 8 bêtes hors écran volaient les slots d'un cerf visible) —
         // un remous qu'on ne voit pas ne vaut aucun slot. Et le suivi, lui, couvre TOUT LE MONDE.

@@ -20,6 +20,9 @@ const HYSTERESIS = 0.2
 const SEMELLE_HUMIDE_MS = 3500
 /** Un pas mouillé tous les N px de marche. */
 const PAS_PX = 9
+/** Plafond de pas par sortie d'eau (revue : sans lui, la piste courait ~14 tuiles à pleine
+ *  vitesse — l'artefact validé promettait 2-3 ; huit pas ≈ 4-5 tuiles, la molette est là). */
+const PAS_MAX = 8
 /** Plafond de traces à l'écran — au-delà, la plus vieille sèche d'un coup. */
 const MAX_TRACES = 64
 
@@ -29,6 +32,7 @@ interface EtatEau {
   sx: number
   sy: number
   pied: number // l'alternance gauche/droite
+  pasRestants: number // le plafond de pas par sortie (la semelle n'a qu'une eau à rendre)
 }
 
 export class EauEvents {
@@ -44,41 +48,55 @@ export class EauEvents {
     private readonly onSplash?: (moi: boolean) => void,
   ) {}
 
-  /** Appelé par `syncActor` pour CHAQUE acteur, chaque frame, avec sa distance de rive. */
-  track(sprite: Phaser.GameObjects.Image, px: number, py: number, depth: number, dRive: number, now: number): void {
+  /** Appelé par `syncActor` pour CHAQUE acteur, chaque frame, avec sa distance de rive.
+   *  `largeur` : l'emprise affichée de l'acteur — la gerbe se met à SON échelle (revue :
+   *  une gerbe unique faisait 1,5× le lapin et 0,5× le cerf). */
+  track(
+    sprite: Phaser.GameObjects.Image,
+    px: number,
+    py: number,
+    depth: number,
+    dRive: number,
+    now: number,
+    largeur = 16,
+  ): void {
     let e = this.etats.get(sprite)
     if (!e) {
-      e = { dansLEau: dRive > HYSTERESIS, wetUntil: 0, sx: px, sy: py, pied: 0 }
+      e = { dansLEau: dRive > HYSTERESIS, wetUntil: 0, sx: px, sy: py, pied: 0, pasRestants: 0 }
       this.etats.set(sprite, e)
       return // le premier passage POSE l'état — jamais de gerbe au spawn/téléport initial
     }
     if (!e.dansLEau && dRive > HYSTERESIS) {
       e.dansLEau = true
-      this.plouf(px, py, depth, now)
+      this.plouf(px, py, depth, now, largeur)
       this.onSplash?.(sprite === this.joueur)
     } else if (e.dansLEau && dRive < -HYSTERESIS) {
       e.dansLEau = false
       e.wetUntil = now + SEMELLE_HUMIDE_MS
+      e.pasRestants = PAS_MAX
       e.sx = px
       e.sy = py
     }
     // LES PAS MOUILLÉS : sur terre, semelle humide → une empreinte tous les ~9 px de marche.
-    if (dRive < 0 && now < e.wetUntil) {
+    if (dRive < 0 && now < e.wetUntil && e.pasRestants > 0) {
       const dx = px - e.sx
       const dy = py - e.sy
       if (dx * dx + dy * dy >= PAS_PX * PAS_PX) {
         e.sx = px
         e.sy = py
         e.pied = 1 - e.pied
+        e.pasRestants--
         this.trace(px + (e.pied === 0 ? -2 : 2), py, now)
       }
     }
   }
 
-  private plouf(px: number, py: number, depth: number, now: number): void {
+  private plouf(px: number, py: number, depth: number, now: number, largeur: number): void {
+    const echelle = Math.max(0.8, Math.min(2, largeur / 16))
     const img = this.scene.add
       .image(px, py - 1, 'fx-plouf-0')
       .setOrigin(0.5, 1)
+      .setDisplaySize(28 * echelle, 24 * echelle)
       .setDepth(depth + 0.02)
     this.ploufs.push({ img, bornAt: now })
   }
