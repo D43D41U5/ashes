@@ -1153,6 +1153,7 @@ export class WorldScene extends Phaser.Scene {
       this.pois.lighting = lit // le bloc erratique (couche POI cubique) suit le même toggle
       this.bornes?.setLighting(lit) // les bornes de seuil aussi (da-feeling R5)
       this.gueStones?.setLighting(lit) // et les dalles de gué (la revue a vu des dalles noires en OFF)
+      this.nenuphars?.setLighting(lit) // et les nénuphars (même recette cubique que les dalles)
       // L'AVATAR bascule sur son _lit (R9 — un humain est un chip symétrique). Une fois par
       // changement de toggle : setTexture par frame réinitialiserait la frame pour rien.
       if (this.playerLit !== lit) {
