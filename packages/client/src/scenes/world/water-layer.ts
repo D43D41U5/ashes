@@ -524,6 +524,22 @@ void main() {
     float caust = step(0.55, web) * 0.5 + step(0.82, web) * 0.5; // deux tons, crans francs
     bottom += vec3(0.34, 0.31, 0.22) * caust * 0.55 * caustGate;
   }
+
+  // ═══ LES HERBIERS (geste 09, eau-fond) — l'eau immobile a une matière à elle ═══
+  //
+  // Sous le haut-fond CALME, des taches d'herbes sombres par blocs (~1,7 tuile) aux
+  // marges rongées cellule à cellule, deux crans (le cœur plus dense). À peine
+  // balancées par la houle déjà calculée (l'offset suit h) — le courant les efface :
+  // la rivière reste nue, c'est le privilège des lacs et des mares.
+  float calme = 1.0 - smoothstep(0.05, 0.18, fmag);
+  if (calme > 0.02 && morte < 0.5) {
+    vec2 hb = floor((tile + vec2(h * 0.10)) / 1.7);
+    float nHerb = cellHash(hb + vec2(7.0, 91.0));
+    float herb = step(0.70, nHerb) * step(0.25, cellHash(flatPx / GRAIN + hb));
+    herb *= calme * smoothstep(0.3, 0.8, dRive) * (1.0 - 0.6 * deep) * (1.0 - turb);
+    float herbFort = step(0.85, nHerb);
+    bottom = mix(bottom, vec3(0.10, 0.16, 0.09), herb * (0.35 + 0.25 * herbFort));
+  }
   // ═══ LE LIT VISIBLE (spec eau-vivante R10') — l'eau montre son fond avant de se saturer ═══
   // Près du trait de rive, le VRAI lit (le bake réfracté) gagne, par crans francs : on
   // devine le sable et la vase du bord, puis l'eau prend le dessus en ~1 tuile. C'est le

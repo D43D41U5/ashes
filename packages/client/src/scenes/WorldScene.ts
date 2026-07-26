@@ -98,6 +98,7 @@ import { ensureEauFxTextures } from './world/eau-fx'
 import { EauEvents } from './world/eau-events'
 import { PoissonsOmbres } from './world/poissons-ombres'
 import { FeuillesDerive } from './world/feuilles-derive'
+import { Nenuphars } from './world/nenuphars'
 import { RefletsLayer } from './world/reflets'
 import { SonsDeLEau } from '../audio/eau-audio'
 import { riveAt } from '../render/water-field'
@@ -335,6 +336,8 @@ export class WorldScene extends Phaser.Scene {
   private poissons: PoissonsOmbres | null = null
   /** Les feuilles au fil de l'eau (R15) — le courant se voit. */
   private feuilles: FeuillesDerive | null = null
+  /** Les nénuphars ancrés (geste 09, eau-fond) — l'eau immobile porte sa flore. */
+  private nenuphars: Nenuphars | null = null
   /** Les reflets du monde (R13) — acteurs immergés et fûts de la rive nord. */
   private reflets: RefletsLayer | null = null
   /** Sonde A10 : le coût de boot des couches d'eau (champ de rive compris), en ms. */
@@ -699,6 +702,7 @@ export class WorldScene extends Phaser.Scene {
         if (this.water.rive) this.poissons = new PoissonsOmbres(this, this.map, this.water.flow, this.water.rive)
         // Le courant se voit (R15) — sur le champ PARTAGÉ avec le shader (source unique).
         this.feuilles = new FeuillesDerive(this, this.map, this.water.flow, this.water.rive)
+        this.nenuphars = new Nenuphars(this, this.map, this.water.flow, this.water.rive)
         this.reflets = new RefletsLayer(this, this.map)
         this.view.reflets = this.reflets
         // LA SONDE A10 (eau-vivante) : le boot de l'eau se CHRONOMÈTRE, il ne s'affirme pas.
@@ -1125,6 +1129,8 @@ export class WorldScene extends Phaser.Scene {
         (centre.y + centre.height / 2) / TILE_PX,
         vent,
       )
+      // LES NÉNUPHARS (geste 09, eau-fond) : amarrés au haut-fond calme, ils respirent d'1 px.
+      this.nenuphars?.update(time, (centre.x + centre.width / 2) / TILE_PX, (centre.y + centre.height / 2) / TILE_PX)
       if (this.water?.rive && this.predicted) {
         const dR = riveAt(this.water.rive, this.predicted.x, this.predicted.y + BALANCE.AVATAR_HITBOX_TILES / 2)
         const bouge =
