@@ -321,6 +321,17 @@ void main() {
   vec3 rf = riveFlow(tile); // x : distance à la rive (+eau/−terre) · yz : le courant
   float dRive = rf.x;
 
+  // ═══ LE MARNAGE (geste 08, eau-fond) — la ligne d'eau respire ═══
+  //
+  // La rive avance et se retire de ~0,12 tuile sur ~20 s, PAR CRANS (cinq paliers :
+  // elle saute, elle ne glisse pas) ; une seconde lecture RETARDÉE de 2 s sert de
+  // mémoire — le sol reste humide là où l'eau ÉTAIT, la berge sèche DERRIÈRE la marée.
+  // Purement visuel : la vérité sim (riveAt, franchissements, audio) ne bouge pas, et
+  // l'amplitude reste sous l'hystérésis de ±0,2 tuile des événements (eau-vivante R3) —
+  // l'œil et les règles ne peuvent pas se contredire. L'eau morte ne respire pas.
+  float maree = floor(sin(uTime * 0.31) * 2.0 + 0.5) / 2.0 * 0.12 * (1.0 - morte);
+  float mareeVieille = floor(sin((uTime - 2.0) * 0.31) * 2.0 + 0.5) / 2.0 * 0.12 * (1.0 - morte);
+
   // LE TRAIT DE RIVE. Masque NEAREST → 0 ou 1 franc. Le bord tombe PILE sur la
   // frontière des tuiles (multiple de 16 px, donc de 4) : coins CARRÉS, et l'encoche
   // bleue des anciens coins « arrondis » (l'iso-contour 0,5 du filtrage linéaire qui
@@ -365,7 +376,18 @@ void main() {
     // s'assombrit d'un palier — bande DENTELÉE par cellule (des cellules sèches dans la
     // frange, jamais un liseré), en crans francs. Sortie PRÉMULTIPLIÉE sombre : le bake
     // du sol (dessous, à −1) transparaît assombri — c'est le même sol, mouillé.
-    float humide = 1.0 - clamp((-dRive - 0.05) / 0.5, 0.0, 1.0);
+    //
+    // LE FILM DE MARÉE HAUTE (geste 08) : sur la bande conquise par le cran de marée,
+    // l'eau AFFLEURE — un voile clair qui se retire au cran suivant.
+    if (-dRive < maree) {
+      float aF = 0.30;
+      vec3 filmCol = vec3(0.20, 0.28, 0.33) * (0.35 + 0.65 * uDay);
+      gl_FragColor = vec4(filmCol * aF, aF);
+      return;
+    }
+    // La bande humide suit l'eau OU son souvenir de 2 s : elle sèche derrière la marée.
+    float bordEau = max(maree, mareeVieille);
+    float humide = 1.0 - clamp((-dRive - bordEau - 0.05) / 0.5, 0.0, 1.0);
     if (humide <= 0.0) discard;
     float nSec = cellHash(flatPx / GRAIN + vec2(37.0, 11.0));
     humide *= step(0.3, humide * 0.75 + nSec * 0.45);
@@ -373,6 +395,14 @@ void main() {
     if (cran <= 0.0) discard;
     float aH = 0.26 * cran;
     gl_FragColor = vec4(vec3(0.16, 0.14, 0.09) * aH, aH);
+    return;
+  }
+
+  // LA MARÉE BASSE (geste 08) découvre le lit : sous le cran retiré, l'eau cède une
+  // bande de sable mouillé — sombre, nue, reprise au cran suivant.
+  if (dRive < -maree) {
+    vec3 bedBas = texture2D(uFond, texUv(tile)).rgb * 0.66;
+    gl_FragColor = vec4(bedBas * 0.92, 0.92);
     return;
   }
 
@@ -499,7 +529,7 @@ void main() {
   // devine le sable et la vase du bord, puis l'eau prend le dessus en ~1 tuile. C'est le
   // volume vertical qui manquait — et il donne au haut-fond clair son CONTEXTE (le « banc
   // de sable » consigné se lit désormais comme le bord qu'il est).
-  float litGagne = 1.0 - clamp((dRive - 0.15) / 0.85, 0.0, 1.0);
+  float litGagne = 1.0 - clamp((dRive + maree - 0.15) / 0.85, 0.0, 1.0); // suit la marée (geste 08)
   litGagne = floor(litGagne * 3.0 + 0.5) / 3.0;
   bottom = mix(bottom, bed * (0.72 + 0.34 * bedLum), litGagne * 0.55 * (1.0 - 0.7 * turb));
   // L'eau morte du marais (geste 06) : le thé noir de tourbe couvre le fond — on ne
@@ -678,16 +708,17 @@ void main() {
   // ici TOUT vit sous ~0,7 tuile du trait de rive, et la 2e bande est residuelle.
   float pasT = floor(t * 6.0) / 6.0;
   float nCell = cellHash(flatPx / GRAIN);
+  float dRiveM = dRive + maree; // l'écume est ancrée à la ligne d'eau VISIBLE (geste 08)
   float front = 0.18 + 0.14 * sin(pasT * 4.4 + nCell * 6.2831853);
   // L'écume vit sur les CRÊTES du clapot qui vient mourir au bord (h haut) — jamais un
   // cadre statique : la première écriture cernait le plan d'eau d'un liseré blanc continu
   // (regardé, refusé — c'est le mot exact de la spec). Les plaques naissent et meurent
   // avec les vaguelettes, les trous sont assumés.
   float surCrete = step(0.02, h + 0.22 * nCell);
-  float dansEcume = step(dRive, front) * step(0.02, dRive) * step(0.34, nCell) * surCrete;
-  float crete2 = dansEcume * step(dRive, front * 0.5) * step(0.55, nCell);
+  float dansEcume = step(dRiveM, front) * step(0.02, dRiveM) * step(0.34, nCell) * surCrete;
+  float crete2 = dansEcume * step(dRiveM, front * 0.5) * step(0.55, nCell);
   // La 2e bande, au large du premier repli : RARE (le clapot qui se reforme), pointillée.
-  float d2 = abs(dRive - (0.95 + 0.12 * sin(pasT * 2.6 + nCell * 6.2831853)));
+  float d2 = abs(dRiveM - (0.95 + 0.12 * sin(pasT * 2.6 + nCell * 6.2831853)));
   float bande2 = step(d2, 0.06) * step(0.74, cellHash(flatPx / GRAIN + vec2(53.0, 29.0)));
   vec3 ecumeCol = vec3(1.0, 0.99, 0.94);
   // L'eau morte n'écume pas (geste 06) — rien ne bat contre la tourbe.
