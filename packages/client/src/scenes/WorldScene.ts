@@ -98,6 +98,7 @@ import { ensureEauFxTextures } from './world/eau-fx'
 import { EauEvents } from './world/eau-events'
 import { PoissonsOmbres } from './world/poissons-ombres'
 import { FeuillesDerive } from './world/feuilles-derive'
+import { RefletsLayer } from './world/reflets'
 import { SonsDeLEau } from '../audio/eau-audio'
 import { riveAt } from '../render/water-field'
 import { GueStones } from './world/gue-stones'
@@ -334,6 +335,8 @@ export class WorldScene extends Phaser.Scene {
   private poissons: PoissonsOmbres | null = null
   /** Les feuilles au fil de l'eau (R15) — le courant se voit. */
   private feuilles: FeuillesDerive | null = null
+  /** Les reflets du monde (R13) — acteurs immergés et fûts de la rive nord. */
+  private reflets: RefletsLayer | null = null
   /** Le dernier état du toggle appliqué à l'avatar (swap _lit une fois, pas par frame). */
   private playerLit: boolean | null = null
   /** Marcheurs à remous poussés cette frame — la sonde du critère A5 (lue par le smoke). */
@@ -692,6 +695,8 @@ export class WorldScene extends Phaser.Scene {
         this.view.eau = this.eauEvents
         if (this.water.rive) this.poissons = new PoissonsOmbres(this, this.map, this.water.rive)
         this.feuilles = new FeuillesDerive(this, this.map) // le courant se voit (R15)
+        this.reflets = new RefletsLayer(this, this.map)
+        this.view.reflets = this.reflets
         this.cendre = new CendreLayer(this, this.map, String(this.map.width))
         this.cliffs = new CliffLayer(this, this.map)
       },
@@ -777,6 +782,9 @@ export class WorldScene extends Phaser.Scene {
       return
     }
     if (!this.worldReady) return
+    // LES REFLETS (eau-vivante R13) : pool par frame — ouvert ici, servi par syncActor et
+    // renderNodes au fil du tick, refermé en toute fin d'update (le surplus s'éteint).
+    this.reflets?.begin()
     // LE BROUILLARD SE LÈVE SOUS LES PAS (spec worldgen R19). On dévoile autour de la position
     // PRÉDITE (celle qu'on voit, pas celle du dernier snapshot : le brouillard suit l'œil).
     // `revele` ne rend `true` que si du neuf est apparu — on ne prévient donc l'écran de carte
@@ -1262,6 +1270,8 @@ export class WorldScene extends Phaser.Scene {
       : { x: 0, y: 0 }
     // followOffset est SOUSTRAIT du point suivi → on nie pour pencher VERS le curseur.
     this.cameras.main.setFollowOffset(-off.x, -off.y)
+    // Le pool de reflets se referme : tout miroir non servi cette frame s'éteint.
+    this.reflets?.end()
   }
 
   /** Le clavier au niveau caractère, pour le chat. Entrée ouvre la ligne de saisie

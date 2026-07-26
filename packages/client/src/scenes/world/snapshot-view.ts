@@ -349,6 +349,8 @@ export class SnapshotView {
   rive: RiveField | null = null
   /** Les événements d'eau (gerbe, empreintes — R3/R7), posés par WorldScene avec la couche. */
   eau: import('./eau-events').EauEvents | null = null
+  /** Les reflets du monde (R13) — pool par frame, posé par WorldScene avec la couche d'eau. */
+  reflets: import('./reflets').RefletsLayer | null = null
 
   /** Le nœud sous le curseur (spec recolte.md G4), et s'il est à portée de bras. */
   private aimedNodeId: number | null = null
@@ -619,6 +621,20 @@ export class SnapshotView {
     this.syncFlottaison(sprite, p.px, p.py - lift, p.displayW, p.depth, immersion)
     // LES ÉVÉNEMENTS D'EAU (R3/R7) : la gerbe au franchissement, les pas mouillés en sortant.
     if (this.rive) this.eau?.track(sprite, p.px, p.py, p.depth, dRive, this.scene.time.now)
+    // LE REFLET (R13) : un acteur dans l'eau se redit tête-bêche sur la nappe sous lui.
+    if (this.reflets && immersion > 0.05) {
+      const coupeTexels = coupe > 0 ? Math.round((coupe / displayH) * sprite.frame.height) : 0
+      this.reflets.miroir(
+        sprite.texture.key,
+        sprite.flipX,
+        p.px,
+        p.py,
+        p.displayW,
+        displayH,
+        this.scene.time.now,
+        coupeTexels,
+      )
+    }
   }
 
   /** L'ANNEAU DE FLOTTAISON (spec eau-vivante R5) : ellipse pointillée 3 phases (~7 im/s),
@@ -1010,6 +1026,11 @@ export class SnapshotView {
         const windTake = growing && isTree ? SAPLING_WIND_TAKE : (NODE_WIND_TAKE[n.type] ?? 0)
         sprite.setRotation(windSway(tx + j.dx, ty + j.dy, now, windTake, this.wind))
         sprite.setVisible(true)
+        // LE REFLET DE L'ARBRE (eau-vivante R13) : un fût de la rive nord se redit dans
+        // l'eau au sud de son pied — la couche découpe elle-même à la course d'eau.
+        if (this.reflets && isTree && !growing) {
+          this.reflets.miroir(texture, false, px, py - lift, sprite.displayWidth, sprite.displayHeight, now)
+        }
         // L'OMBRE DE CONTACT du nœud, au MÊME index de pool que lui (servie/libérée ensemble).
         // La largeur se lit sur `displayWidth` APRÈS `setScale` : une pousse qui repousse porte
         // donc une flaque qui grandit avec elle, sans calcul en plus. Posée au pied réel (`px`,
