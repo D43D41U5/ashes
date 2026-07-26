@@ -346,8 +346,8 @@ void main() {
         // LA BULLE : certains cycles seulement (hash du bloc ET du cycle), un anneau
         // lent qui s'élargit et meurt — le langage des remous, au ralenti de la tourbe.
         vec2 lb = fract(flatPx / (GRAIN * 3.0)) - 0.5;
-        float bAge = fract(t * 0.12 + nB * 7.0);
-        float cycle = floor(t * 0.12 + nB * 7.0);
+        float bAge = fract(uTime * 0.12 + nB * 7.0);
+        float cycle = floor(uTime * 0.12 + nB * 7.0);
         float bulle = step(abs(length(lb) * 2.0 - bAge * 0.8), 0.14)
                     * step(0.8, cellHash(bloc + vec2(cycle, 19.0))) * (1.0 - bAge);
         the += vec3(0.05, 0.05, 0.04) * bulle;
