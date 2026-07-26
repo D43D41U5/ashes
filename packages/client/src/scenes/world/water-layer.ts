@@ -411,6 +411,22 @@ void main() {
     float strieVis = (1.0 - deep) * smoothstep(0.12, 0.3, fmag) * 0.12;
     bottom *= 1.0 + (strie - 0.5) * 2.0 * strieVis;
   }
+
+  // ═══ LES CAUSTIQUES POSTERISÉES (geste 05, eau-fond) — le soleil au fond du gué ═══
+  //
+  // Un filet de lumière sur le LIT du haut-fond seul : deux tons, crans francs, calculé
+  // par cellule de 4 px comme tout le reste — jamais un dégradé. Il n'existe qu'en plein
+  // jour (uDay × hauteur du soleil), meurt en profond (on ne voit plus le fond) et près
+  // de la berge (le lit visible garde la main). Vitesses LENTES à dessein — la doctrine
+  // R12 : rien ne bouge sans mesure, et la sonde optique ne corrèle qu'à ω·dt ≲ 1 rad.
+  // Alpha bas : c'est le deuxième candidat au « lait » après l'écume, la leçon est écrite.
+  float caustGate = uDay * clamp(uSun.z, 0.0, 1.0) * (1.0 - deep) * smoothstep(0.1, 0.4, open);
+  if (caustGate > 0.02) {
+    vec2 cq = p * 3.3;
+    float web = sin(cq.x + sin(cq.y * 1.13 + t * 0.33)) * sin(cq.y - sin(cq.x * 0.87 - t * 0.26));
+    float caust = step(0.55, web) * 0.5 + step(0.82, web) * 0.5; // deux tons, crans francs
+    bottom += vec3(0.34, 0.31, 0.22) * caust * 0.55 * caustGate;
+  }
   // ═══ LE LIT VISIBLE (spec eau-vivante R10') — l'eau montre son fond avant de se saturer ═══
   // Près du trait de rive, le VRAI lit (le bake réfracté) gagne, par crans francs : on
   // devine le sable et la vase du bord, puis l'eau prend le dessus en ~1 tuile. C'est le
