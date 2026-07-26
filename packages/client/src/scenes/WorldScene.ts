@@ -696,7 +696,7 @@ export class WorldScene extends Phaser.Scene {
         this.eauEvents = new EauEvents(this, (moi) => this.sonsEau.splash(moi, (sp, d2) => this.audioFx.play(sp, d2)))
         this.eauEvents.joueur = this.playerSprite
         this.view.eau = this.eauEvents
-        if (this.water.rive) this.poissons = new PoissonsOmbres(this, this.map, this.water.rive)
+        if (this.water.rive) this.poissons = new PoissonsOmbres(this, this.map, this.water.flow, this.water.rive)
         // Le courant se voit (R15) — sur le champ PARTAGÉ avec le shader (source unique).
         this.feuilles = new FeuillesDerive(this, this.map, this.water.flow, this.water.rive)
         this.reflets = new RefletsLayer(this, this.map)

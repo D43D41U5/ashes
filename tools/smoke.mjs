@@ -567,7 +567,16 @@ const SCENARIOS = {
     // capture — la première paire livrée disait même l'inverse, noyée par le gradient E-O
     // du chenal). Marche NORD-SUD (le gradient du gué est E-O), boîtes 3×2 tuiles à ±2 t
     // de la position PRÉDITE (celle où les anneaux vivent), cumul sur les frames où un
-    // wader vit. Mesuré à la mise au point : derrière 11,7 % vs devant 2,0 % (×5,7). ──
+    // wader vit. Mesuré à la mise au point : derrière 11,7 % vs devant 2,0 % (×5,7).
+    // Les POISSONS s'éteignent d'abord : ils fuient DEVANT le marcheur en semant leur
+    // écume claire (chantier poissons) — la boîte « avant » s'en trouvait polluée
+    // (constaté : un run inversé 2,6 % vs 7,1 %). La sonde mesure le sillage du
+    // MARCHEUR ; leurs propres sondes (A8) ont déjà été lues plus haut. ──
+    await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      sc.poissons?.destroy()
+      sc.poissons = null
+    })
     await tp(gue.x - 1, gue.y - 2)
     await page.keyboard.down('KeyS')
     let sAvant = 0
