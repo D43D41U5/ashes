@@ -1,0 +1,49 @@
+# eau-vivante — dix gestes pour une eau qu'on n'oublie pas
+
+*Source : mandat d'Alexis du 2026-07-26 (« améliorer drastiquement l'eau : son rendu, la frontière entre côte et eau, l'interaction entités/eau — immersion à hauteur de genou, l'eau déplacée en bougeant ; une eau vraiment belle, des interactions vraiment sympas ») puis « fais tout » sur l'artefact des 10 propositions (maquettes + état des lieux + inspirations : CrossCode, Wind Waker, Stardew, Sea of Stars, Zelda, la grammaire du splash de Medeiros). Statut : **en chantier**.*
+
+Cadre acté qui borne tout : grain 4 px NEAREST, paliers francs (jamais un dégradé lissé), un seul soleil (`sunDirection`), zéro post-FX, R45 (le gradient de réflexion croît avec la profondeur), R10 da-feeling (gué ≥ 1,4:1 mesuré), R11 (les remous existent), le profond est un mur, `/sim` pur et déterministe.
+
+## §0 — Le socle : le champ de rive
+
+- **R1** — Une **2ᵉ texture** `uRive` (1 px/tuile, NEAREST) porte la **distance SIGNÉE à la rive** : positive dans l'eau, négative sur terre, 0 pile sur la frontière des tuiles — un SDF de berge. Chanfrein 3-4 double (vers l'eau, vers la terre), encodage `128 + d×16` (résolution 1/16 tuile, portée ±7,9). Le champ existant (`water-field`) n'est PAS touché : son masque binaire reste le trait de rive, son canal G reste réservé au relief.
+- **R2** — Le shader lit `uRive` en **bilinéaire MANUEL** (4 texels + poids — la texture reste NEAREST) : une distance continue qui épouse la berge, sous-tuile. Le CPU lit le MÊME champ (accès exporté, bilinéaire aussi) pour l'immersion, les événements et l'audio — une seule vérité de « où est l'eau ».
+- **R3** — Tout ÉVÉNEMENT de franchissement (gerbe, empreintes, sons) est détecté sur la position INTERPOLÉE avec **hystérésis** (bascule à ±0,2 tuile de pénétration) : jamais un double événement au jitter des snapshots 20 Hz.
+
+## §1 — Le corps dans l'eau
+
+- **R4** (P1) — L'IMMERSION EST CONTINUE (« feel = pente continue ») : la coupe du bas du sprite = fonction de la profondeur d'avancée dans l'eau (bornes exactes : 0 au rivage → coupe max à ~0,6 tuile), enfoncement de ~2 px, via `setCrop` (SONDÉ contre le pipeline lighting avant généralisation — sans précédent dans le repo). L'ombre de contact se FOND avec l'immersion (l'anneau la remplace comme ancrage). Avatar, PNJ et bêtes — la taille de chacun raconte la profondeur.
+- **R5** (P1) — L'ANNEAU DE FLOTTAISON : ellipse quantifiée 3 frames (~7 fps, NEAREST), vacillement par l'alpha seul, juste sous l'acteur dans le tri.
+- **R6** (P2) — LE SILLAGE : les anneaux des marcheurs sont FENÊTRÉS à l'arrière du cap (le client dérive le cap des positions interpolées — `uWaderDirs`), avec traîne ; bandes franches au grain, le langage du clapot. À l'arrêt (cap nul), les anneaux isotropes actuels — le critère A5 da-feeling et sa sonde restent intacts.
+- **R7** (P3) — LE PLOUF : gerbe SURJOUÉE 5 frames (colonne + gouttes 1-2 px en arc — Medeiros : « un splash timide ne se lit pas ») au franchissement terre→eau ; à la sortie, EMPREINTES MOUILLÉES (le sol, palier −1, pas alternés) qui sèchent en ~3-4 s par paliers d'alpha, sur ~2-3 tuiles.
+- **R8** (P10) — LES SONS : splash (3 hauteurs), « patauge » rythmé en marche dans l'eau, clapotis de rive au volume ∝ proximité de l'eau (le champ R1, côté terre) — WebAudio procédural sur l'horloge audio (le patron de l'aube), zéro asset, jamais `setTimeout`.
+
+## §2 — La berge
+
+- **R9** (P4) — L'ÉCUME : des PLAQUES claires 2 tons, TROUÉES (l'écume respire, jamais un liseré continu), dont le front bat par PAS (~0,8 Hz, dents au grain) ; une 2ᵉ bande plus fine, déphasée, un peu au large. BORNÉE près du bord (la leçon écrite dans le shader : « l'écume sur 5 tuiles a fait virer l'eau au lait ») — l'essentiel sous ~1 tuile de la rive.
+- **R10′** (P5) — LE LIT VISIBLE : près du bord, le fond (bake réfracté) GAGNE par paliers — on devine le lit avant que l'eau ne se sature ; côté terre, une bande de SOL HUMIDE (≤ 0,6 tuile, dentelée, palier −1 du même sol) rendue par le quad d'eau qui ne `discard` plus sur cette bande.
+- **R11′** — Toute retouche de couleur d'eau RE-PASSE la mesure du gué (R10 da-feeling, ≥ 1,4:1, moyenne de 3 instantanés) au smoke.
+
+## §3 — La surface & la lumière
+
+- **R12** (P6) — LE CHEMIN DE L'ASTRE : quand le soleil est bas (aube/couchant) ou sous la lune la nuit, un COULOIR de 2-3 tuiles traverse l'eau selon l'azimut (dérivé de la SOURCE UNIQUE `sunDirection` — on n'invente pas un second azimut), ANCRÉ À LA CAMÉRA (le glitter est vue-dépendant, c'est sa physique) : densité d'étincelles ×5, palette montée d'UN palier vers la couleur du ciel (orange à l'aube, os sous la lune), bords en dither au grain.
+- **R13** (P7) — LES REFLETS DU MONDE : acteurs et arbres proches de la rive redessinés tête-bêche, assombris de ~2 paliers vers l'eau, alpha par paliers, DÉCOUPÉS par le masque d'eau (BitmapMask du masque binaire ×16 NEAREST — à PROUVER au smoke ; repli consigné si le pipeline refuse : reflets en pleine eau seulement), distordus à la grille de l'art — JAMAIS à la résolution écran (la faute de style nommée).
+
+## §4 — La vie
+
+- **R14** (P8) — LES POISSONS-OMBRES : 5-8 par écran, taches 8×4 px au palier −1, SOUS la surface (profondeur entre le sol et l'eau — l'eau les teinte d'elle-même), errance seedée par hash positionnel (zéro `Math.random`), FUITE en dard sous 1,5 tuile d'une entité. La frontière est écrite dans le module : tant que la pêche n'existe pas, c'est du décor assumé ; le jour où elle existe, les spawns montent dans `/sim` (règle « objets de jeu réels »).
+- **R15** (P9) — LE FIL DE L'EAU : la worldgen GARDE le fil amont→aval de la rivière dans `WorldMap` (une DONNÉE sérialisable, aucune règle — seule touche `/sim` du chantier, revue déterminisme obligatoire) ; le client en dérive au boot un sens d'écoulement par tuile de rivière ; des FEUILLES (4×4 px) dérivent vers l'aval avec une traîne pointillée — le courant se VOIT.
+- **R16** (P9) — LES ROSEAUX FRÔLÉS : le sway du clutter localement amplifié au passage d'une entité SI le clutter le permet par instance ; sinon, consigné honnêtement — on ne simule pas une végétation qu'on ne sait pas plier.
+
+## Critères d'acceptation
+
+- **A1** — Les gardes existantes restent vertes AU PIXEL : smoke `cubique`, planche `lieux-lit`, scénario `maree`.
+- **A2** — GUÉ : ≥ 1,4:1 re-mesuré (scénario `feeling` A4) après l'écume, le lit et le sol humide.
+- **A3** — REMOUS : A5 da-feeling intact (immobile 0 · marche ≥ 1 · éteint 1,1 s après l'arrêt).
+- **A4** — IMMERSION : sonde d'état (coupe > 0 dans l'eau, 0 sur terre, continue entre les deux) + captures REGARDÉES (avatar, cerf).
+- **A5′** — SILLAGE : en marche, l'éclaircissement derrière le cap > devant (mesuré sur capture) ; à l'arrêt, symétrique.
+- **A6** — PLOUF : UN seul splash par franchissement (jitter toléré par R3) ; les empreintes plafonnées et toutes éteintes ≤ 5 s.
+- **A7** — CHEMIN DE L'ASTRE : présent à 7h/18h30/nuit claire, ABSENT à midi ; captures regardées.
+- **A8** — POISSONS : comptés par sonde ; après approche d'une entité, distance min > avant (la fuite se mesure).
+- **A9** — FIL : worldgen déterministe au bit près (suites /sim + replay vertes) ; les feuilles avancent vers l'AVAL (sonde de direction).
+- **A10** — BUDGET : boot + < 150 ms mesuré ; aucune nouvelle passe plein écran hors reflets ; `check`/`lint`/tests verts ; chaque tranche = captures regardées avant de passer à la suivante.

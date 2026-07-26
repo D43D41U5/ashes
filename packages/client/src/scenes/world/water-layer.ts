@@ -22,7 +22,7 @@ import Phaser from 'phaser'
 import type { WorldMap } from '@braises/sim'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { sunDirection } from '../../render/lighting'
-import { buildWaterField } from '../../render/water-field'
+import { buildRiveField, buildWaterField, type RiveField } from '../../render/water-field'
 
 /** Juste au-dessus du sol (−1), sous l'ombre du relief (−0,5) : le versant qui
  *  tombe dans l'eau l'assombrit, comme il assombrit la berge. */
@@ -69,6 +69,7 @@ varying vec2 outTexCoord;
 
 uniform sampler2D uField;    // R masque (binaire) · G élévation · B profondeur
 uniform sampler2D uSeabed;   // le bake du terrain : le FOND, vu à travers l'eau
+uniform sampler2D uRive;     // R : distance SIGNÉE à la rive (+eau/−terre), 128 = la rive — spec eau-vivante R1
 uniform vec2 uWorldPx;       // taille du monde, en pixels
 uniform vec2 uMapTiles;      // taille du monde, en tuiles
 uniform float uTilePx;
@@ -119,6 +120,30 @@ vec2 texUv(vec2 tile) { return vec2(tile.x / uMapTiles.x, 1.0 - tile.y / uMapTil
 
 float maskAt(vec2 tile) { return texture2D(uField, texUv(tile)).r; }
 float elevAt(vec2 tile) { return texture2D(uField, texUv(tile)).g; }
+
+/** Hash de cellule SANS sinus (polynôme de permutation mod 289, 3 étages — le patron
+ *  éprouvé de la brume) : portable au bit près, sert aux plaques d'écume et à la frange
+ *  du sol humide. */
+float permute(float x) { return mod((x * 34.0 + 1.0) * x, 289.0); }
+float cellHash(vec2 c) {
+  vec2 p = mod(c, 289.0);
+  return fract(permute(permute(permute(p.x) + p.y) + p.x) / 289.0);
+}
+
+/** LA DISTANCE À LA RIVE (spec eau-vivante R1-R2) : le SDF de berge, lu en BILINÉAIRE
+ *  MANUEL (la texture reste NEAREST — on interpole nous-mêmes 4 texels) : une distance
+ *  CONTINUE, sous-tuile, qui croise 0 pile sur le trait de rive du masque binaire. */
+float riveTexel(vec2 tile) { return (texture2D(uRive, texUv(tile)).r - 0.501960784) * 15.9375; }
+float rive(vec2 tile) {
+  vec2 p = tile - 0.5;
+  vec2 i = floor(p);
+  vec2 f = p - i;
+  float a = riveTexel(i + vec2(0.5, 0.5));
+  float b = riveTexel(i + vec2(1.5, 0.5));
+  float c = riveTexel(i + vec2(0.5, 1.5));
+  float d = riveTexel(i + vec2(1.5, 1.5));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
 
 /**
  * LE LARGE. Le masque est binaire : sondé sur un anneau de quelques tuiles, sa
@@ -202,12 +227,28 @@ void main() {
 
   vec4 field = texture2D(uField, texUv(tile));
   float mask = field.r;
+  float dRive = rive(tile); // + dans l'eau, − sur terre, 0 sur le trait de rive
 
   // LE TRAIT DE RIVE. Masque NEAREST → 0 ou 1 franc. Le bord tombe PILE sur la
   // frontière des tuiles (multiple de 16 px, donc de 4) : coins CARRÉS, et l'encoche
   // bleue des anciens coins « arrondis » (l'iso-contour 0,5 du filtrage linéaire qui
   // rognait l'angle) disparaît d'elle-même.
-  if (mask < 0.5) discard;
+  if (mask < 0.5) {
+    // ═══ LE SOL HUMIDE (spec eau-vivante R10') — la terre SAIT qu'elle touche l'eau ═══
+    // Le quad ne jette plus tout de suite : sur ~0,55 tuile au contact, le sol
+    // s'assombrit d'un palier — bande DENTELÉE par cellule (des cellules sèches dans la
+    // frange, jamais un liseré), en crans francs. Sortie PRÉMULTIPLIÉE sombre : le bake
+    // du sol (dessous, à −1) transparaît assombri — c'est le même sol, mouillé.
+    float humide = 1.0 - clamp((-dRive - 0.05) / 0.5, 0.0, 1.0);
+    if (humide <= 0.0) discard;
+    float nSec = cellHash(flatPx / GRAIN + vec2(37.0, 11.0));
+    humide *= step(0.3, humide * 0.75 + nSec * 0.45);
+    float cran = floor(humide * 3.0 + 0.5) / 3.0;
+    if (cran <= 0.0) discard;
+    float aH = 0.26 * cran;
+    gl_FragColor = vec4(vec3(0.16, 0.14, 0.09) * aH, aH);
+    return;
+  }
 
   float open = openness(tile);            // 0 contre la berge · 1 au large
   // La vase du fond monte VITE en s'éloignant de la berge : une eau de pré est trouble, on ne voit
@@ -251,6 +292,14 @@ void main() {
   // (l'essai « sable clair » a fait lire la rivière comme une route : rollback, regardé)
   vec3 murk = vec3(0.11, 0.155, 0.15);                       // l'eau profonde trouble (vert-de-gris)
   vec3 bottom = mix(mud, murk, deep);                        // ce qu'on voit SOUS la surface
+  // ═══ LE LIT VISIBLE (spec eau-vivante R10') — l'eau montre son fond avant de se saturer ═══
+  // Près du trait de rive, le VRAI lit (le bake réfracté) gagne, par crans francs : on
+  // devine le sable et la vase du bord, puis l'eau prend le dessus en ~1 tuile. C'est le
+  // volume vertical qui manquait — et il donne au haut-fond clair son CONTEXTE (le « banc
+  // de sable » consigné se lit désormais comme le bord qu'il est).
+  float litGagne = 1.0 - clamp((dRive - 0.15) / 0.85, 0.0, 1.0);
+  litGagne = floor(litGagne * 3.0 + 0.5) / 3.0;
+  bottom = mix(bottom, bed * (0.72 + 0.34 * bedLum), litGagne * 0.55);
 
   // Le ciel réfléchi : bleu pâle de jour, éteint la nuit (uDay), réchauffé quand le soleil rase.
   // Le ciel réfléchi, UN CRAN plus profond (0.52,0.62,0.70 → lac de montagne) : le gradient
@@ -364,6 +413,31 @@ void main() {
   vec3 shoreCol = texture2D(uSeabed, texUv(tile + toShore)).rgb * 0.62;
   col = mix(col, shoreCol, clamp(rim * 0.26 + lap * 0.28, 0.0, 0.5));
 
+  // ═══ L'ÉCUME DE RIVE (spec eau-vivante R9) — des PLAQUES qui lèchent le bord ═══
+  //
+  // Chaque cellule de 4 px a SA phase : son front d'écume avance et recule par PAS
+  // (le temps est planché à ~6 Hz — l'eau pixel s'anime par crans, jamais en glissé),
+  // si bien que la ligne se dissout en plaques qui gagnent et rendent du terrain une
+  // à une. Des TROUS assumés (l'écume respire), deux tons (crête claire, corps).
+  // LA LEÇON RESTE ÉCRITE : l'écume sur 5 tuiles a déjà fait virer l'eau au lait —
+  // ici TOUT vit sous ~0,7 tuile du trait de rive, et la 2e bande est residuelle.
+  float pasT = floor(t * 6.0) / 6.0;
+  float nCell = cellHash(flatPx / GRAIN);
+  float front = 0.18 + 0.14 * sin(pasT * 4.4 + nCell * 6.2831853);
+  // L'écume vit sur les CRÊTES du clapot qui vient mourir au bord (h haut) — jamais un
+  // cadre statique : la première écriture cernait le plan d'eau d'un liseré blanc continu
+  // (regardé, refusé — c'est le mot exact de la spec). Les plaques naissent et meurent
+  // avec les vaguelettes, les trous sont assumés.
+  float surCrete = step(0.02, h + 0.22 * nCell);
+  float dansEcume = step(dRive, front) * step(0.02, dRive) * step(0.34, nCell) * surCrete;
+  float crete2 = dansEcume * step(dRive, front * 0.5) * step(0.55, nCell);
+  // La 2e bande, au large du premier repli : RARE (le clapot qui se reforme), pointillée.
+  float d2 = abs(dRive - (0.95 + 0.12 * sin(pasT * 2.6 + nCell * 6.2831853)));
+  float bande2 = step(d2, 0.06) * step(0.74, cellHash(flatPx / GRAIN + vec2(53.0, 29.0)));
+  vec3 ecumeCol = vec3(1.0, 0.99, 0.94);
+  col = mix(col, ecumeCol * 0.82, clamp(dansEcume * 0.38 + bande2 * 0.2, 0.0, 0.6));
+  col = mix(col, ecumeCol, crete2 * 0.55);
+
   // Translucide sur le gué, opaque au large : on voit où l'on passe. PAS de fondu
   // d'alpha au bord : sinon l'eau devient transparente pile sur la rive et laisse
   // transparaître la tuile d'eau du SOL (bakée en cyan clair) — le liseré clair.
@@ -401,6 +475,11 @@ function sunVector(hour: number): { x: number; y: number; z: number } {
 export class WaterLayer {
   private shader: Phaser.GameObjects.Shader | null = null
   private fieldKey: string | null = null
+  private riveKey: string | null = null
+  /** Le champ de rive (spec eau-vivante R1-R2) — la MÊME distance que le shader, lisible
+   *  CPU (`riveAt`) : immersion des acteurs, événements de franchissement, volume du
+   *  clapotis. Nul si la carte est sèche. */
+  readonly rive: RiveField | null = null
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -430,6 +509,22 @@ export class WaterLayer {
     // ce même filtre qui rend berge, écume et clapot chunky — pixel-art, pas marbre.
     tex.setFilter(Phaser.Textures.FilterMode.NEAREST)
 
+    // LE CHAMP DE RIVE (spec eau-vivante R1) : le SDF de berge, dans SA texture — le champ
+    // d'eau garde son masque binaire (le trait) et son canal G (réservé au relief).
+    const rive = buildRiveField(map.terrain, width, height)
+    ;(this as { rive: RiveField | null }).rive = rive
+    const riveKey = 'water-rive'
+    this.riveKey = riveKey
+    const riveTex = this.scene.textures.createCanvas(riveKey, width, height)
+    if (riveTex) {
+      const rctx = riveTex.getContext()
+      const rimg = rctx.createImageData(width, height)
+      rimg.data.set(rive.data)
+      rctx.putImageData(rimg, 0, 0)
+      riveTex.refresh()
+      riveTex.setFilter(Phaser.Textures.FilterMode.NEAREST) // le bilinéaire est MANUEL, dans le shader
+    }
+
     const worldW = width * TILE_PX
     const worldH = height * TILE_PX
 
@@ -441,6 +536,7 @@ export class WaterLayer {
           setupUniforms: (setUniform: (name: string, value: unknown) => void) => {
             setUniform('uField', 0)
             setUniform('uSeabed', 1)
+            setUniform('uRive', 2)
             setUniform('uWorldPx', [worldW, worldH])
             setUniform('uMapTiles', [width, height])
             setUniform('uTilePx', TILE_PX)
@@ -460,7 +556,7 @@ export class WaterLayer {
         0,
         worldW,
         worldH,
-        [key, seabedKey],
+        [key, seabedKey, riveKey],
       )
       .setOrigin(0, 0)
       .setDepth(WATER_DEPTH)
@@ -515,5 +611,6 @@ export class WaterLayer {
     this.shader?.destroy()
     this.shader = null
     if (this.fieldKey) this.scene.textures.remove(this.fieldKey)
+    if (this.riveKey) this.scene.textures.remove(this.riveKey)
   }
 }
