@@ -421,6 +421,114 @@ const SCENARIOS = {
   },
 
   /**
+   * L'EAU VIVANTE (spec eau-vivante, chantier du 2026-07-26) — les sondes des dix gestes.
+   *
+   * Le smoke LIT l'état : l'immersion (crop du sprite dans l'eau, zéro sur terre), la gerbe
+   * et les traces (compteurs), les poissons (population + fuite), les feuilles (courant),
+   * les reflets (pool), le contraste du gué (A2 : la berge ne l'a pas cassé). Les captures
+   * se REGARDENT. Exige `--dev`.
+   */
+  async 'eau-vivante'(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForTimeout(1000)
+    const gue = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const g = (m.zones ?? []).find((z) => z.name === 'le Gué')
+      return g ? { x: g.x + 4.5, y: g.y + 2.5 } : null
+    })
+    if (!gue) { console.error('!! aucun Gué sur cette carte'); return }
+    const tp = async (x, y) => {
+      await page.evaluate(({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }), { px: x, py: y })
+      await page.waitForTimeout(1400)
+    }
+    const heure = async (h) => {
+      for (let essai = 0; essai < 4; essai++) {
+        await page.evaluate((hh) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: hh }), h)
+        await page.waitForTimeout(600)
+        const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1)
+        if (Math.abs(lu - h) < 0.3) return
+      }
+      console.error(`!! set_hour(${h}) n'a jamais pris`)
+    }
+
+    // ── L'IMMERSION + LES REFLETS : dans l'eau, coupé et reflété ; état sondé ──
+    await tp(gue.x, gue.y)
+    await heure(11)
+    await page.waitForTimeout(900)
+    const dansLEau = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      return {
+        crop: sc.playerSprite.isCropped,
+        ombre: sc.playerSprite.getData('shadow')?.alpha ?? -1,
+        anneau: sc.playerSprite.getData('flottaison')?.visible ?? false,
+        reflets: sc.reflets?.vivants ?? -1,
+      }
+    })
+    console.log(`eau — immersion : ${JSON.stringify(dansLEau)}`)
+    if (!dansLEau.crop) console.error('!! le sprite n’est pas coupé dans l’eau (immersion morte)')
+    if (dansLEau.ombre > 0.05) console.error(`!! l’ombre de contact flotte sur l’eau (alpha ${dansLEau.ombre})`)
+    if (!dansLEau.anneau) console.error('!! pas d’anneau de flottaison')
+    if (dansLEau.reflets < 1) console.error('!! aucun reflet vivant dans l’eau')
+    await page.screenshot({ path: `${OUT}/eau-immersion.png` })
+
+    // ── LA VIE : poissons (population + distance) et feuilles (courant) ──
+    await page.waitForTimeout(6000)
+    const vie = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const p = sc.predicted
+      return {
+        poissons: sc.poissons?.vivants ?? -1,
+        dMin: p && sc.poissons ? +sc.poissons.distanceMin(p.x, p.y).toFixed(2) : null,
+        feuilles: sc.feuilles?.vivantes ?? -1,
+        fil: (sc.map.fil ?? []).length,
+      }
+    })
+    console.log(`eau — vie : ${JSON.stringify(vie)}`)
+    if (vie.poissons < 1) console.error('!! aucun poisson-ombre né en 7 s près de la rivière')
+    if (vie.dMin !== null && vie.dMin < 1.2) console.error(`!! un poisson n’a pas fui (d ${vie.dMin} < 1,2 t)`)
+    if (vie.fil < 2) console.error('!! map.fil absent ou vide — le courant n’existe pas')
+    if (vie.feuilles < 1) console.error('!! aucune feuille au fil de l’eau en 7 s')
+
+    // ── HORS DE L'EAU : tout doit s'éteindre (crop, anneau, reflet du joueur) ──
+    await tp(gue.x, gue.y - 8)
+    await page.waitForTimeout(900)
+    const surTerre = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      return { crop: sc.playerSprite.isCropped, anneau: sc.playerSprite.getData('flottaison')?.visible ?? false }
+    })
+    console.log(`eau — sur terre : ${JSON.stringify(surTerre)}`)
+    if (surTerre.crop) console.error('!! le sprite reste coupé SUR TERRE')
+    if (surTerre.anneau) console.error('!! l’anneau de flottaison survit sur terre')
+
+    // ── LA GERBE ET LES TRACES : marcher dedans, ressortir — compteurs sondés en chemin ──
+    // (le rendu headless traîne derrière la prédiction : on marche LONGTEMPS, on somme)
+    let ploufsVus = 0
+    let tracesVues = 0
+    await page.keyboard.down('KeyS')
+    for (let k = 0; k < 8; k++) {
+      await page.waitForTimeout(450)
+      const s = await page.evaluate(() => ({ p: window.__BRAISES__.scene.eauEvents?.ploufsVivants ?? 0, t: window.__BRAISES__.scene.eauEvents?.tracesVivantes ?? 0 }))
+      ploufsVus = Math.max(ploufsVus, s.p)
+      tracesVues = Math.max(tracesVues, s.t)
+    }
+    await page.keyboard.up('KeyS')
+    await page.keyboard.down('KeyW')
+    for (let k = 0; k < 16; k++) {
+      await page.waitForTimeout(700)
+      const s = await page.evaluate(() => ({ p: window.__BRAISES__.scene.eauEvents?.ploufsVivants ?? 0, t: window.__BRAISES__.scene.eauEvents?.tracesVivantes ?? 0 }))
+      ploufsVus = Math.max(ploufsVus, s.p)
+      tracesVues = Math.max(tracesVues, s.t)
+    }
+    await page.keyboard.up('KeyW')
+    console.log(`eau — événements : gerbe max ${ploufsVus} ${ploufsVus >= 1 ? '✓' : '✗'} · traces max ${tracesVues} ${tracesVues >= 1 ? '✓' : '✗'}`)
+    if (ploufsVus < 1) console.error('!! aucune gerbe sur tout l’aller-retour')
+    if (tracesVues < 1) console.error('!! aucune empreinte mouillée sur tout l’aller-retour')
+    console.log(`captures → ${OUT}/eau-*.png — à REGARDER`)
+    return { dansLEau, vie, ploufsVus, tracesVues }
+  },
+
+  /**
    * LES LIEUX BASCULÉS (spec da-feeling §3, critère A2) — la planche de la vague B.
    *
    * Pour CHAQUE texture `poi-*_lit` : l'étendue des canaux nx/ny de sa normale (une masse
