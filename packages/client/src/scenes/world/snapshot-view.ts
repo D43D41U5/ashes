@@ -347,6 +347,8 @@ export class SnapshotView {
   /** Le champ de rive (spec eau-vivante R1-R2), posé par WorldScene après la couche d'eau —
    *  la MÊME distance que le shader : l'immersion des acteurs ne peut pas la contredire. */
   rive: RiveField | null = null
+  /** Les événements d'eau (gerbe, empreintes — R3/R7), posés par WorldScene avec la couche. */
+  eau: import('./eau-events').EauEvents | null = null
 
   /** Le nœud sous le curseur (spec recolte.md G4), et s'il est à portée de bras. */
   private aimedNodeId: number | null = null
@@ -581,9 +583,10 @@ export class SnapshotView {
     // CONTINUE (« feel = pente continue ») : 0 pile au trait de rive, pleine à 0,6 tuile
     // d'avancée — le champ de rive (le même que le shader) donne la profondeur d'avancée.
     let immersion = 0
+    let dRive = -99
     if (this.rive) {
-      const d = riveAt(this.rive, x, feetY)
-      if (d > 0) immersion = Math.min(1, d / 0.6)
+      dRive = riveAt(this.rive, x, feetY)
+      if (dRive > 0) immersion = Math.min(1, dRive / 0.6)
     }
     const displayH = crouch ? p.displayH * CROUCH_FACTOR : p.displayH
     // La coupe est en px MONDE constants (l'eau a UNE profondeur — ~7 px au plein) : le
@@ -614,6 +617,8 @@ export class SnapshotView {
       shadow.setAlpha(SHADOW_ALPHA * (1 - immersion))
     }
     this.syncFlottaison(sprite, p.px, p.py - lift, p.displayW, p.depth, immersion)
+    // LES ÉVÉNEMENTS D'EAU (R3/R7) : la gerbe au franchissement, les pas mouillés en sortant.
+    if (this.rive) this.eau?.track(sprite, p.px, p.py, p.depth, dRive, this.scene.time.now)
   }
 
   /** L'ANNEAU DE FLOTTAISON (spec eau-vivante R5) : ellipse pointillée 3 phases (~7 im/s),

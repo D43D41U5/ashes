@@ -95,6 +95,9 @@ import { CombeMist } from './world/combe-mist'
 import { MistBanks } from './world/mist-banks'
 import { VentLisse } from './world/vent-lisse'
 import { ensureEauFxTextures } from './world/eau-fx'
+import { EauEvents } from './world/eau-events'
+import { SonsDeLEau } from '../audio/eau-audio'
+import { riveAt } from '../render/water-field'
 import { GueStones } from './world/gue-stones'
 import { MorningMist } from './world/morning-mist'
 import { FireFx } from './world/fire-fx'
@@ -321,6 +324,10 @@ export class WorldScene extends Phaser.Scene {
   /** Les bancs voyageurs (brume V2) et le vent lissé qui porte toute la brume. */
   private mistBanks: MistBanks | null = null
   private ventLisse = new VentLisse()
+  /** Les événements d'eau (gerbe/empreintes) et leurs sons (spec eau-vivante R7-R8). */
+  private eauEvents: EauEvents | null = null
+  private sonsEau = new SonsDeLEau()
+  private lastSonPos: { x: number; y: number } | null = null
   /** Le dernier état du toggle appliqué à l'avatar (swap _lit une fois, pas par frame). */
   private playerLit: boolean | null = null
   /** Marcheurs à remous poussés cette frame — la sonde du critère A5 (lue par le smoke). */
@@ -671,6 +678,9 @@ export class WorldScene extends Phaser.Scene {
         this.water = new WaterLayer(this, this.map, 'map-demo')
         this.view.rive = this.water.rive // une seule vérité de « où est l'eau » (eau-vivante R2)
         ensureEauFxTextures(this) // anneaux de flottaison, gerbe, empreinte — bakés une fois
+        this.eauEvents = new EauEvents(this, (moi) => this.sonsEau.splash(moi, (sp, d2) => this.audioFx.play(sp, d2)))
+        this.eauEvents.joueur = this.playerSprite
+        this.view.eau = this.eauEvents
         this.cendre = new CendreLayer(this, this.map, String(this.map.width))
         this.cliffs = new CliffLayer(this, this.map)
       },
@@ -1027,6 +1037,18 @@ export class WorldScene extends Phaser.Scene {
         (centre.y + centre.height / 2) / TILE_PX,
       )
       this.aube.update(time, hour, (sp, d2) => this.audioFx.play(sp, d2)) // les oiseaux, fenêtre de l'aube
+      // LES ÉVÉNEMENTS ET SONS DE L'EAU (eau-vivante R7-R8) : gerbes qui s'animent, traces
+      // qui sèchent, patauge et clapotis pilotés par la position du joueur (champ de rive).
+      this.eauEvents?.update(time)
+      if (this.water?.rive && this.predicted) {
+        const dR = riveAt(this.water.rive, this.predicted.x, this.predicted.y + BALANCE.AVATAR_HITBOX_TILES / 2)
+        const bouge =
+          this.lastSonPos !== null &&
+          (Math.abs(this.predicted.x - this.lastSonPos.x) > 0.008 ||
+            Math.abs(this.predicted.y - this.lastSonPos.y) > 0.008)
+        this.lastSonPos = { x: this.predicted.x, y: this.predicted.y }
+        this.sonsEau.update(time, dR, bouge, (sp, d2) => this.audioFx.play(sp, d2))
+      }
       this.fireFx?.update(this.view.structures, this.lastSnapshotTick, this.view.wind) // flammes/braises/fumée (∝ état), poussées par le vent
       // La chaleur du Feu au sol : cosmétique, ∝ nuit (voir world/fire-ground-glow.ts).
       this.fireGround?.update(this.view.structures, this.view.villages, day, time, this.lastSnapshotTick)
