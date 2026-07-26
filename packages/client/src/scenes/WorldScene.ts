@@ -97,6 +97,7 @@ import { VentLisse } from './world/vent-lisse'
 import { ensureEauFxTextures } from './world/eau-fx'
 import { EauEvents } from './world/eau-events'
 import { PoissonsOmbres } from './world/poissons-ombres'
+import { FeuillesDerive } from './world/feuilles-derive'
 import { SonsDeLEau } from '../audio/eau-audio'
 import { riveAt } from '../render/water-field'
 import { GueStones } from './world/gue-stones'
@@ -331,6 +332,8 @@ export class WorldScene extends Phaser.Scene {
   private lastSonPos: { x: number; y: number } | null = null
   /** Les poissons-ombres (R14) — décor assumé tant que la pêche n'existe pas. */
   private poissons: PoissonsOmbres | null = null
+  /** Les feuilles au fil de l'eau (R15) — le courant se voit. */
+  private feuilles: FeuillesDerive | null = null
   /** Le dernier état du toggle appliqué à l'avatar (swap _lit une fois, pas par frame). */
   private playerLit: boolean | null = null
   /** Marcheurs à remous poussés cette frame — la sonde du critère A5 (lue par le smoke). */
@@ -688,6 +691,7 @@ export class WorldScene extends Phaser.Scene {
         this.eauEvents.joueur = this.playerSprite
         this.view.eau = this.eauEvents
         if (this.water.rive) this.poissons = new PoissonsOmbres(this, this.map, this.water.rive)
+        this.feuilles = new FeuillesDerive(this, this.map) // le courant se voit (R15)
         this.cendre = new CendreLayer(this, this.map, String(this.map.width))
         this.cliffs = new CliffLayer(this, this.map)
       },
@@ -986,6 +990,7 @@ export class WorldScene extends Phaser.Scene {
       // entité — la force s'éteint ~0,7 s après le dernier pas : un avatar immobile ne remue
       // pas l'eau, et les anneaux du dernier pas meurent d'eux-mêmes (critère A5).
       const waders: WaterWader[] = []
+      const agitateurs: { x: number; y: number }[] = []
       const vue = this.cameras.main.worldView
       const vx0 = vue.x / TILE_PX - 3
       const vy0 = vue.y / TILE_PX - 3
@@ -1021,6 +1026,8 @@ export class WorldScene extends Phaser.Scene {
           }
         }
         this.waderTrack.set(e.id, { x: ex, y: ey, lastMove, dirX, dirY })
+        // LA VÉGÉTATION FRÔLÉE (eau-vivante R16) : qui MARCHE écarte les brins qu'il traverse.
+        if (bouge && agitateurs.length < 16) agitateurs.push({ x: ex, y: ey })
         if (!shallow || waders.length >= 8) continue
         // PRIORITÉ À LA VUE (revue : 8 bêtes hors écran volaient les slots d'un cerf visible) —
         // un remous qu'on ne voit pas ne vaut aucun slot. Et le suivi, lui, couvre TOUT LE MONDE.
@@ -1036,6 +1043,7 @@ export class WorldScene extends Phaser.Scene {
         if (!vus.has(id)) this.waderTrack.delete(id)
       }
       this.lastWaderCount = waders.length // la sonde d'A5 (lue par le smoke)
+      if (this.clutter) this.clutter.agitateurs = agitateurs
       this.water?.update(
         time,
         hour,
@@ -1081,6 +1089,14 @@ export class WorldScene extends Phaser.Scene {
           entites,
         )
       }
+      // LES FEUILLES AU FIL DE L'EAU (R15) : elles dérivent vers l'aval, le vent chahute.
+      this.feuilles?.update(
+        time,
+        deltaMs,
+        (centre.x + centre.width / 2) / TILE_PX,
+        (centre.y + centre.height / 2) / TILE_PX,
+        vent,
+      )
       if (this.water?.rive && this.predicted) {
         const dR = riveAt(this.water.rive, this.predicted.x, this.predicted.y + BALANCE.AVATAR_HITBOX_TILES / 2)
         const bouge =

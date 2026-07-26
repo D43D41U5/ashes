@@ -69,6 +69,13 @@ export interface WorldMap {
    * l'onglet carte, et demain les toponymes eux-mêmes. Additif et JSON-sérialisable.
    */
   seuils?: { x: number; y: number; ax: number; ay: number; secours: boolean; vers: string }[]
+  /**
+   * LE FIL DE LA RIVIÈRE, amont → aval (spec eau-vivante R15) : les index de tuile du fil,
+   * dans l'ordre du tracé. Une DONNÉE sérialisable, additive — aucune règle de sim ne la
+   * lit aujourd'hui ; le client en dérive le SENS DU COURANT (feuilles qui dérivent). Le
+   * jour où le courant POUSSE (objets, nage), ce sera une décision de design à part.
+   */
+  fil?: number[]
 }
 
 /**

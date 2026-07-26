@@ -463,6 +463,11 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
     seuils: g.seuils.map((s) => ({
       x: s.x, y: s.y, ax: s.ax, ay: s.ay, secours: s.secours, vers: g.zones[s.b]!.def.nom,
     })),
+    // LE FIL DE LA RIVIÈRE, amont → aval (spec eau-vivante R15) : une DONNÉE, pas une règle.
+    // Il était jeté après la génération — rien au runtime ne savait dans quel sens l'eau
+    // coule. Le client en dérive le courant (feuilles qui dérivent) ; demain, un courant
+    // qui pousse serait une décision de design à part (consignée, pas ouverte).
+    ...(riviere ? { fil: riviere.fil.slice() } : {}),
   }
   const carte: CarteZonee = { map, graphe: g, zone, rampe }
 

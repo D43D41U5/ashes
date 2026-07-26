@@ -60,6 +60,12 @@ export class ClutterLayer {
    *  c'est ce qui rend la règle de l'odorat lisible sans une seule ligne d'UI. */
   wind: { x: number; y: number } = { x: 1, y: 0 }
 
+  /** LA VÉGÉTATION FRÔLÉE (spec eau-vivante R16) : les entités EN MARCHE de la frame —
+   *  un brin à moins d'une tuile s'ÉCARTE de leur passage (poussé du côté opposé), et se
+   *  redresse dès qu'elles s'éloignent. Posé chaque frame par WorldScene ; les roseaux de
+   *  la berge comme l'herbe du pré plient — on traverse la végétation, elle le sait. */
+  agitateurs: { x: number; y: number }[] = []
+
   /** Éclairage dynamique (couche 1) — le rendu par défaut : le décor est éclairé par le
    *  LightsManager (normale plate) — la lumière module son albédo peint sans le déformer.
    *  Piloté par WorldScene (armé sauf coupure via le panneau debug DEV). */
@@ -126,7 +132,23 @@ export class ClutterLayer {
             // Le vent. L'origine est aux PIEDS (0.5, 1) : une rotation fait donc
             // plier le brin depuis sa base, comme une tige — et non tourner comme
             // une aiguille d'horloge. Le rocher a un `take` de 0 : il ne bouge pas.
-            sprite.setRotation(windSway(feetX, feetY, now, WIND_TAKE[p.kind] ?? 0, this.wind))
+            const take = WIND_TAKE[p.kind] ?? 0
+            let sway = windSway(feetX, feetY, now, take, this.wind)
+            // LA VÉGÉTATION FRÔLÉE (eau-vivante R16) : un marcheur à moins d'une tuile
+            // pousse le brin du côté opposé — pente continue sur la distance, bornes
+            // exactes (pleine au contact, nulle à 1 tuile). Ce qui ne prend pas le vent
+            // (take 0 : cailloux) ne prend pas non plus le passage.
+            if (take > 0 && this.agitateurs.length > 0) {
+              for (const a of this.agitateurs) {
+                const dx = feetX - a.x
+                const dy = feetY - a.y
+                const d2 = dx * dx + dy * dy
+                if (d2 >= 1) continue
+                const prox = 1 - Math.sqrt(d2)
+                sway += (dx >= 0 ? 1 : -1) * 0.38 * prox * Math.min(1, take * 3)
+              }
+            }
+            sprite.setRotation(sway)
             // Un conifère trie avec les acteurs — on passe derrière, puis devant.
             // Le tri se fait sur les pieds RÉELS : deux props d'une même rangée
             // s'ordonnent par leur décalage sub-tuile, pas par l'ordre du pool.
