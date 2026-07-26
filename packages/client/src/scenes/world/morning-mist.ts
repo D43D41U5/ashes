@@ -21,16 +21,43 @@
 import Phaser from 'phaser'
 import { TERRAIN_MARSH, TERRAIN_REED_MARSH, TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER, type WorldMap } from '@braises/sim'
 import { frontDeBrume } from '../../render/lighting'
-import { DIST_FIELD_MAX, MIST_DEPTH, MistLayer } from './mist-layer'
+import { DIST_FIELD_MAX, MIST_DEPTH, MistLayer, type ReglageCrans } from './mist-layer'
 
 /** Plafond de densité à brume pleine — la crête du shader monte au-delà (voir ses crans).
  *  0,3 → 0,38 le 26/07 : regardé à 6h12, le sol de l'aube en jeu est plus clair que celui de
  *  la maquette de calibrage — la nappe y restait timide sur la berge.
- *  GARDE-FOU (revue) : JAMAIS ≥ 0,45 — au-delà les crans du shader fusionnent (corps ≡ crête
- *  à l'alpha plafond) et le drap uniforme « toute blanche » revient en silence. */
+ *  GARDE-FOU (revue) : JAMAIS ≥ 0,41 — au-delà le plafond de CRANS_MAREE mord, corps et crête
+ *  s'y écrasent ensemble et le drap uniforme « toute blanche » revient en silence. */
 const DENSITE_MAX = 0.38
 /** Vitesse de dérive des nappes (tuiles/s) appliquée au vent lissé unitaire. */
 const DERIVE = 0.32
+
+/** LES CRANS DE LA MARÉE — plus transparents en HAUT de l'échelle que ceux de la maquette
+ *  (0,34 / 0,66 / 0,90, plafond 0,72), sur DEUX retours d'Alexis du 2026-07-26 : « augmente la
+ *  transparence des parties les plus blanches », puis « encore plus transparent ».
+ *
+ *  MESURÉ (`pnpm smoke --scenario blancheur --dev` — Gué 6h12, marée seule, écart pixel à pixel
+ *  contre le MÊME monde nu ; le second passage a balayé les candidats sur une seule scène,
+ *  heure re-réglée entre chacun, le réglage courant répété en tête ET en queue pour lire le
+ *  résidu : ±1,3 sur le p99, donc tout écart au-delà de 2 est réel) :
+ *
+ *      crans (mince/corps/crête)   médian   p99    >60 % de l'écran
+ *      0,34 / 0,66 / 0,90 (départ)  +40,4  +102,3       14,5 %
+ *      0,34 / 0,50 / 0,64 (1er cran) +26,6  +74,6        7,9 %
+ *      0,34 / 0,42 / 0,50 (ICI)     +21,1  +61,2        1,26 %
+ *      0,34 / 0,38 / 0,44 (regardé) +19,0  +52,7        0,16 %  ← la structure de plaques MEURT
+ *
+ *  On s'arrête donc à 0,50 : un cran de plus et les crêtes ne se détachent plus du corps — la
+ *  nappe devient un film pâle uniforme, l'autre façon de perdre la brume.
+ *
+ *  On baisse l'opacité des DEUX crans hauts, jamais celle du cran MINCE (0,34 inchangé) : les
+ *  franges qui effrangent le front sont ce qui fait que la marée n'est pas un mur, et le retour
+ *  vise le blanc, pas le bord. La TEINTE ne bouge pas non plus — la crête reste la plus claire
+ *  (×1,12) : Alexis demande de la transparence, pas de la grisaille.
+ *
+ *  L'échelle reste ordonnée (α au pic : 0,284 / 0,351 / 0,418, écarts 0,067 et 0,067). Le rail
+ *  0,45 passe juste au-dessus du pic 0,418 : il ne mord pas, il garde. */
+const CRANS_MAREE: ReglageCrans = { poids: [0.34, 0.42, 0.5], plafond: 0.45 }
 
 /** Chanfrein 3-4 : distance à l'eau en tiers de tuile, deux passes (avant/arrière). */
 export function champDistanceEau(estSource: (i: number) => boolean, width: number, height: number): Uint16Array {
@@ -109,7 +136,7 @@ export class MorningMist {
     scene.textures.addCanvas(this.key, cv)
     scene.textures.get(this.key).setFilter(Phaser.Textures.FilterMode.NEAREST)
 
-    this.layer = new MistLayer(scene, this.key, width, height, MIST_DEPTH)
+    this.layer = new MistLayer(scene, this.key, width, height, MIST_DEPTH, CRANS_MAREE)
   }
 
   /** Chaque frame : la MARÉE décide de tout (pente continue), le vent LISSÉ du monde

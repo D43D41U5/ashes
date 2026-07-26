@@ -27,6 +27,10 @@
  *
  * Deux consommatrices : la BRUME DU MATIN (champ = distance aux eaux/marais, front = la marée
  * horaire) et la COMBE BRUMEUSE (champ = distance à son empreinte, front constant — son halo).
+ * Elles partagent le shader mais PAS leur opacité : chacune apporte son `ReglageCrans` (le poids
+ * des trois paliers et son rail). Le 26/07 la marée du matin a été rendue plus transparente en
+ * haut de l'échelle sur retour d'Alexis ; la Combe, dont la brume EST l'identité, garde les
+ * valeurs de la maquette. Une constante partagée aurait retouché les deux d'un coup.
  */
 import Phaser from 'phaser'
 import { TILE_PX } from '../../render/framing'
@@ -54,6 +58,8 @@ uniform vec2 uOff2;        // dérive intégrée des volutes (vent + perpendicul
 uniform float uDensity;    // 0..1 — l'heure (ou l'identité du lieu) décide
 uniform float uFront;      // la MARÉE : tuiles gagnées depuis l'eau (0 = eau seule)
 uniform float uDay;        // 0 nuit · 1 plein jour — LA NUIT ASSOMBRIT LA BRUME (revue du 26/07)
+uniform vec3 uPoids;       // opacité des trois crans (mince, corps, crête) — PROPRE à chaque brume
+uniform float uPlafond;    // plafond d'alpha : un RAIL de sécurité, jamais un plateau actif
 
 const float GRAIN = 4.0;    // le pixel de l'art : toute la brume se décide par cellule de 4 px
 const float DIST_MAX = 15.0;
@@ -133,10 +139,13 @@ void main() {
   // bleuté et au-dessus du noir pour que la Combe demeure une présence à 23h, pas un amer.
   float eclat = sqrt(clamp(uDay, 0.0, 1.0));
   teinte *= mix(vec3(0.42, 0.46, 0.60), vec3(1.0), eclat);
-  // GARDE-FOU (revue, MESURÉ) : au-delà de d ≈ 0,45, min(1, d·2,6) sature ET corps rejoint
-  // le plafond 0,72 — les crans fusionnent, le drap uniforme (« toute blanche ») revient.
-  // Toute retouche de DENSITE_MAX (morning-mist) doit rester SOUS 0,45.
-  float a = min(0.72, d * 2.2 * (0.34 * mince + 0.66 * corps + 0.9 * crete));
+  // L'OPACITÉ DES CRANS EST PROPRE À CHAQUE BRUME (uPoids) : la marée du matin a la sienne,
+  // plus transparente en haut de l'échelle (retour d'Alexis du 26/07) ; la Combe garde la
+  // sienne — son halo permanent est SON identité, on ne la retouche pas par ricochet.
+  // GARDE-FOU (revue, MESURÉ) : le plafond doit rester AU-DESSUS du pic (d_max·2,2·uPoids.z),
+  // sinon corps et crête s'y écrasent ensemble — les crans fusionnent et le drap uniforme
+  // (« toute blanche ») revient en silence. Chaque appelant justifie son couple (poids, plafond).
+  float a = min(uPlafond, d * 2.2 * (uPoids.x * mince + uPoids.y * corps + uPoids.z * crete));
   // PRÉMULTIPLIÉ — le contrat du pipeline Phaser (prouvé dans la source : le blend NORMAL
   // du Shader GO est ONE, ONE_MINUS_SRC_ALPHA). Non prémultiplié = le mur blanc d'origine.
   gl_FragColor = vec4(teinte * a, a);
@@ -148,7 +157,24 @@ void main() {
 const PERIODE_NAPPES = 289 * 5.5
 const PERIODE_VOLUTES = 289 * 2.3
 
+/** Le réglage d'OPACITÉ d'une brume : ce que pèsent ses trois crans, et son rail. Les valeurs
+ *  par défaut sont celles de la maquette validée à l'œil — la Combe brumeuse les garde. */
+export interface ReglageCrans {
+  /** Opacité relative des crans (mince, corps, crête) — ordre croissant obligatoire : c'est
+   *  l'écart entre les paliers qui fait lire le VOLUME. Deux crans au même poids = un drap. */
+  poids: [number, number, number]
+  /** Rail d'alpha. À tenir AU-DESSUS de densité_max·2,2·poids[2] : un plafond qui mord est
+   *  un plateau, et un plateau écrase corps et crête l'un sur l'autre. */
+  plafond: number
+}
+
+const CRANS_MAQUETTE: ReglageCrans = { poids: [0.34, 0.66, 0.9], plafond: 0.72 }
+
 export class MistLayer {
+  /** LU À CHAQUE FRAME, donc réglable À CHAUD : le smoke `blancheur` balaie des candidats sur
+   *  une seule scène (même monde, même heure, même caméra) et les MESURE contre le même monde
+   *  nu. Un « encore plus transparent » se tranche sur des chiffres, pas sur un souvenir. */
+  crans: ReglageCrans
   private shader: Phaser.GameObjects.Shader | null = null
   private density = 0
   private front = 0
@@ -160,7 +186,15 @@ export class MistLayer {
   private off2 = { x: 0, y: 0 }
   private lastMs: number | null = null
 
-  constructor(scene: Phaser.Scene, maskKey: string, width: number, height: number, depth: number) {
+  constructor(
+    scene: Phaser.Scene,
+    maskKey: string,
+    width: number,
+    height: number,
+    depth: number,
+    crans: ReglageCrans = CRANS_MAQUETTE,
+  ) {
+    this.crans = crans
     const worldW = width * TILE_PX
     const worldH = height * TILE_PX
     this.shader = scene.add
@@ -178,6 +212,8 @@ export class MistLayer {
             setUniform('uDensity', this.density)
             setUniform('uFront', this.front)
             setUniform('uDay', this.day)
+            setUniform('uPoids', this.crans.poids)
+            setUniform('uPlafond', this.crans.plafond)
           },
         },
         0,

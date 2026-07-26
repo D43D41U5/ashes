@@ -429,6 +429,231 @@ const SCENARIOS = {
   },
 
   /**
+   * LA BLANCHEUR DE LA BRUME — combien de blanc chaque brume AJOUTE au monde, et laquelle.
+   *
+   * Instrument né du retour d'Alexis du 2026-07-26 (« augmente la transparence des parties les
+   * plus blanches ») : une plainte sur le blanc ne se règle qu'avec un nombre. On ne lit pas la
+   * luminance de la frame — le sol de l'aube et le voile de l'heure la portent autant que la
+   * nappe. On mesure la CONTRIBUTION PROPRE de chaque calque : on l'ÉTEINT sur la même scène,
+   * au même cadrage, et on lit l'ÉCART.
+   *
+   *   • station GUÉ à 6h12 (pleine marée) : tout → sans les bancs → sans rien ;
+   *   • station COMBE à midi (la marée est morte, les bancs aussi) : la brume permanente seule.
+   *     C'est le TÉMOIN de non-régression — elle partage le shader `mist-layer` mais garde SES
+   *     réglages : toute retouche des crans de la matinale doit la laisser au même chiffre.
+   *
+   * Le seuil ABSOLU de blanc ne discrimine pas : mesuré le 26/07, la marée de 6h12 plafonne à
+   * ~183 de luminance (l'aube est sombre, `eclat = sqrt(uDay)` retient la nappe) — zéro pixel
+   * au-dessus de 190, brume ou pas. Ce qu'on lit est donc l'ÉCART PIXEL À PIXEL entre la frame
+   * avec et la frame sans : `lum_avec − lum_sans = a·(teinte − fond)`, c'est-à-dire l'opacité
+   * de la nappe, là où elle est. Son p99 EST « la partie la plus blanche ».
+   *
+   * Et l'écart se juge contre un PLANCHER DE BRUIT : deux frames prises à 400 ms d'intervalle
+   * avec la MÊME brume (l'eau clapote, la nappe dérive, les feuilles bougent). Un effet plus
+   * petit que ce plancher n'est pas un effet. Exige `--dev`.
+   *
+   * NB — éteindre un calque se fait par `destroy()` : c'est SANS RETOUR pour la page. D'où le
+   * `goto` qui recharge le monde entre la station du Gué et celle de la Combe. Toute station
+   * ajoutée ici doit recharger de même, ou mesurer un monde déjà amputé.
+   *
+   * BALAYAGE (`BRUME_SWEEP="0,34/0,46/0,56  0,34/0,42/0,50"`, triplets mince/corps/crête) : les
+   * crans de la marée sont lus à chaque frame, donc on peut poser plusieurs candidats sur LA
+   * MÊME scène et les mesurer tous contre LE MÊME monde nu — c'est ainsi qu'on tranche un
+   * « encore plus transparent » sans rejouer le monde entre deux essais. Le rail suit le pic
+   * du candidat (+0,03). Une capture par candidat, à REGARDER.
+   */
+  async blancheur(page) {
+    if (!dev) {
+      console.log("\n(la blancheur exige le mode debug pour régler l'heure — relancer avec --dev)")
+      return {}
+    }
+
+    /** Capture une frame, garde sa luminance (Rec. 709, pixels du MONDE — le HUD est exclu)
+     *  sous `window.__blanc[nom]` pour les écarts, et rend ses percentiles. */
+    const capture = (nom) =>
+      page.evaluate(async (n) => {
+        const s = window.__BRAISES__.scene
+        const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+        const c = document.createElement('canvas')
+        c.width = img.width
+        c.height = img.height
+        const ctx = c.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        const d = ctx.getImageData(0, 0, c.width, c.height).data
+        const larg = c.width >> 1
+        const haut = (c.height - 140) >> 1
+        const lum = new Float32Array(larg * haut)
+        for (let y = 0; y < haut; y++) {
+          for (let x = 0; x < larg; x++) {
+            const i = (y * 2 * c.width + x * 2) * 4
+            lum[y * larg + x] = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]
+          }
+        }
+        window.__blanc = window.__blanc ?? {}
+        window.__blanc[n] = lum
+        const tri = Array.from(lum).sort((a, b) => a - b)
+        const pc = (q) => Math.round(tri[Math.floor(q * (tri.length - 1))] * 100) / 100
+        const moy = Math.round((tri.reduce((a, b) => a + b, 0) / tri.length) * 100) / 100
+        return { moy, p50: pc(0.5), p90: pc(0.9), p99: pc(0.99), p999: pc(0.999), max: pc(1) }
+      }, nom)
+
+    /** L'écart pixel à pixel entre deux captures : ce que le calque éteint AJOUTAIT. */
+    const ecart = (a, b) =>
+      page.evaluate(([na, nb]) => {
+        const A = window.__blanc[na]
+        const B = window.__blanc[nb]
+        const d = new Float32Array(A.length)
+        for (let i = 0; i < A.length; i++) d[i] = A[i] - B[i]
+        const tri = Array.from(d).sort((x, y) => x - y)
+        const pc = (q) => Math.round(tri[Math.floor(q * (tri.length - 1))] * 100) / 100
+        const part = (seuil) => Math.round((tri.filter((v) => v >= seuil).length / tri.length) * 10000) / 100
+        return {
+          moy: Math.round((tri.reduce((x, y) => x + y, 0) / tri.length) * 100) / 100,
+          p50: pc(0.5),
+          p90: pc(0.9),
+          p99: pc(0.99),
+          p999: pc(0.999),
+          max: pc(1),
+          sup40: part(40),
+          sup60: part(60),
+        }
+      }, [a, b])
+
+    const heure = async (h) => {
+      for (let essai = 0; essai < 4; essai++) {
+        await page.evaluate((hh) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: hh }), h)
+        await page.waitForTimeout(600)
+        const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1)
+        if (Math.abs(lu - h) < 0.3) return
+      }
+      console.error(`!! set_hour(${h}) n'a jamais pris`)
+    }
+    const tp = async (x, y) => {
+      await page.evaluate(({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }), { px: x, py: y })
+      await page.waitForTimeout(1400)
+    }
+    /** La zone brute (x,y,w,h) — le cadrage se décide ici, pas dans une fonction lointaine. */
+    const zone = async (cle) =>
+      page.evaluate((k) => {
+        const z = (window.__BRAISES__.scene.map.zones ?? []).find((z) => z.kind === k || z.name === k)
+        return z ? { x: z.x, y: z.y, w: z.w, h: z.h } : null
+      }, cle)
+
+    const out = {}
+
+    // ── STATION GUÉ, 6h12 : la pleine marée (même cadrage que le scénario `maree`) ──
+    const gue = await zone('le Gué')
+    if (!gue) {
+      console.error('!! aucun Gué sur cette carte')
+      return {}
+    }
+    await tp(gue.x + 3.5, gue.y + 3.5)
+    await heure(6.2)
+    await page.waitForTimeout(4500) // les bancs naissent au compte-gouttes
+    await page.screenshot({ path: `${OUT}/blancheur-gue-avec.png` })
+    // Les BANCS voyageurs sont un autre objet (sprites bakés, leurs propres crans) : on les
+    // éteint AVANT de mesurer — ce qu'on règle ici est la nappe de la marée, elle seule.
+    const bancs = await page.evaluate(() => {
+      const n = window.__BRAISES__.scene.mistBanks?.bancs?.length ?? -1
+      window.__BRAISES__.scene.mistBanks?.destroy()
+      return n
+    })
+    await page.waitForTimeout(600)
+    out.gueA = await capture('gueA')
+    await page.waitForTimeout(400)
+    out.gueB = await capture('gueB') // même brume, 400 ms plus tard → le plancher de bruit
+
+    // ── BALAYAGE : d'autres crans, sur la MÊME scène (les uniformes sont relus par frame) ──
+    const candidats = (process.env.BRUME_SWEEP ?? '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((t) => t.replace(/,/g, '.').split('/').map(Number))
+      .filter((p) => p.length === 3 && p.every((v) => Number.isFinite(v)))
+    const poidsCourants = await page.evaluate(() => window.__BRAISES__.scene.morningMist?.layer?.crans?.poids ?? null)
+    for (let k = 0; k < candidats.length; k++) {
+      const poids = candidats[k]
+      await page.evaluate(
+        ({ p }) => {
+          const ly = window.__BRAISES__.scene.morningMist?.layer
+          if (ly) ly.crans = { poids: p, plafond: Math.round((0.38 * 2.2 * p[2] + 0.03) * 1000) / 1000 }
+        },
+        { p: poids },
+      )
+      // L'HEURE SE REMET À L'HEURE entre deux candidats : l'horloge du jeu avance pendant le
+      // balayage (mesuré : le monde nu gagnait ~8 niveaux de µ en une poignée de secondes) et
+      // un fond plus clair rend TOUTE nappe plus discrète — le dernier candidat aurait gagné
+      // par le lever du jour, pas par ses crans. Répéter le réglage courant en fin de liste
+      // donne le résidu : deux lignes identiques doivent rendre deux fois le même chiffre.
+      await heure(6.2)
+      await page.waitForTimeout(1200) // le fondu d'air met ~0,9 s à se poser
+      await page.screenshot({ path: `${OUT}/blancheur-sweep-${k + 1}.png` })
+      await capture(`sweep${k}`)
+    }
+    await heure(6.2)
+    await page.waitForTimeout(1200)
+
+    await page.evaluate(() => window.__BRAISES__.scene.morningMist?.destroy())
+    await page.waitForTimeout(400)
+    out.gueSans = await capture('gueSans')
+    await page.screenshot({ path: `${OUT}/blancheur-gue-sans.png` })
+    out.bruitGue = await ecart('gueA', 'gueB')
+    out.maree = await ecart('gueB', 'gueSans')
+    out.sweep = []
+    for (let k = 0; k < candidats.length; k++) out.sweep.push({ poids: candidats[k], ...(await ecart(`sweep${k}`, 'gueSans')) })
+
+    // ── STATION COMBE, midi : la brume permanente, seule au monde (TÉMOIN) ──
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const combe = await zone('combe_brumeuse')
+    if (combe) {
+      await tp(combe.x + combe.w / 2, combe.y + combe.h / 2)
+      await heure(12)
+      await page.waitForTimeout(1500)
+      await page.screenshot({ path: `${OUT}/blancheur-combe-avec.png` })
+      out.combeA = await capture('combeA')
+      await page.waitForTimeout(400)
+      out.combeB = await capture('combeB')
+      await page.evaluate(() => window.__BRAISES__.scene.combeMist?.destroy())
+      await page.waitForTimeout(400)
+      out.combeSans = await capture('combeSans')
+      await page.screenshot({ path: `${OUT}/blancheur-combe-sans.png` })
+      out.bruitCombe = await ecart('combeA', 'combeB')
+      out.combe = await ecart('combeB', 'combeSans')
+    } else console.error('!! aucune Combe brumeuse sur cette carte')
+
+    const col = (v) => String(v).padStart(8)
+    console.log(`\n  (${bancs} banc(s) voyageur(s) vivants avant la mesure du Gué — éteints pour mesurer la marée seule)`)
+    console.log('\n  LUMINANCE de la frame        µ     p50     p90     p99   p99,9     max')
+    const lig = (nom, m) => console.log(`  ${nom.padEnd(24)}${col(m.moy)}${col(m.p50)}${col(m.p90)}${col(m.p99)}${col(m.p999)}${col(m.max)}`)
+    lig('gué 6h12 — avec marée', out.gueB)
+    lig('gué 6h12 — sans', out.gueSans)
+    if (out.combeB) {
+      lig('combe 12h — avec brume', out.combeB)
+      lig('combe 12h — sans', out.combeSans)
+    }
+    console.log("\n  ÉCART pixel à pixel (l'opacité de la nappe, en niveaux de luminance)")
+    console.log('                                               µ     p50     p90     p99   p99,9     max    >40%    >60%')
+    const ligE = (nom, m) =>
+      console.log(`  ${nom.padEnd(40)}${col(m.moy)}${col(m.p50)}${col(m.p90)}${col(m.p99)}${col(m.p999)}${col(m.max)}${col(m.sup40)}${col(m.sup60)}`)
+    ligE('gué — bruit (témoin)', out.bruitGue)
+    ligE(`gué — LA MARÉE ${poidsCourants ? `[${poidsCourants.join('/')}]` : ''}`.trim(), out.maree)
+    for (const s of out.sweep) ligE(`gué — candidat [${s.poids.join('/')}]`, s)
+    if (out.combe) {
+      ligE('combe — bruit (témoin)', out.bruitCombe)
+      ligE('combe — brume du lieu', out.combe)
+    }
+    console.log(
+      `\n  LES PARTIES LES PLUS BLANCHES de la marée : p99 = ${out.maree.p99} niveaux ajoutés ` +
+        `(plancher de bruit p99 = ${out.bruitGue.p99}) · ${out.maree.sup60} % de l'écran au-dessus de +60`,
+    )
+    if (out.combe)
+      console.log(`  TÉMOIN Combe (ne doit PAS bouger) : p99 = ${out.combe.p99} · >60 ${out.combe.sup60} %`)
+    console.log(`\n  captures → ${OUT}/blancheur-*.png`)
+    return out
+  },
+
+  /**
    * L'EAU VIVANTE (spec eau-vivante, chantier du 2026-07-26) — les sondes des dix gestes.
    *
    * Le smoke LIT l'état : l'immersion (crop du sprite dans l'eau, zéro sur terre), la gerbe

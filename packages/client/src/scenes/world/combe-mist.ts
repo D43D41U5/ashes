@@ -53,6 +53,8 @@ export class CombeMist {
     if (scene.textures.exists(this.key)) scene.textures.remove(this.key)
     scene.textures.addCanvas(this.key, cv)
     scene.textures.get(this.key).setFilter(Phaser.Textures.FilterMode.NEAREST)
+    // Pas de `ReglageCrans` : la Combe garde les crans de la maquette (le défaut de MistLayer).
+    // La marée du matin, elle, a le sien depuis le 26/07 — sa transparence ne descend pas ici.
     this.layer = new MistLayer(scene, this.key, width, height, MIST_DEPTH + 0.01)
   }
 
