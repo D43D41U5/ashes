@@ -301,11 +301,17 @@ const SCENARIOS = {
     })
     console.log(`A4 — gué : profond ${contraste.deep} vs haut-fond ${contraste.shallow} (n=${contraste.nD}/${contraste.nS}) → ${contraste.ratio}:1 ${contraste.ratio >= 1.4 ? '✓' : '✗ (< 1,4)'}`)
 
-    // ── A5 : les remous — on marche dans le gué, et on REGARDE ──
+    // ── A5 : les remous — sondés PAR L'ÉTAT (lastWaderCount), puis regardés ──
+    await page.waitForTimeout(1200) // immobile depuis le TP : le remous doit être mort
+    const wImmobile = await page.evaluate(() => window.__BRAISES__.scene.lastWaderCount)
     await page.keyboard.down('KeyA')
     await page.waitForTimeout(900)
+    const wMarche = await page.evaluate(() => window.__BRAISES__.scene.lastWaderCount)
     await page.screenshot({ path: `${OUT}/feeling-remous.png` })
     await page.keyboard.up('KeyA')
+    await page.waitForTimeout(1100) // l'extinction fait 0,7 s
+    const wArret = await page.evaluate(() => window.__BRAISES__.scene.lastWaderCount)
+    console.log(`A5 — remous : immobile ${wImmobile} ${wImmobile === 0 ? '✓' : '✗'} · en marche ${wMarche} ${wMarche >= 1 ? '✓' : '✗'} · 1,1 s après l'arrêt ${wArret} ${wArret === 0 ? '✓' : '✗'}`)
 
     // ── A6 : la brume, aux quatre heures qui la racontent ──
     for (const [h, nom] of [[5.5, '0530'], [6, '0600'], [8, '0800'], [12, '1200']]) {
@@ -395,7 +401,7 @@ const SCENARIOS = {
         const z = (m.zones ?? []).find((q) => q.kind === k)
         return z ? { k, x: z.x + z.w / 2, y: z.y + z.h / 2 } : null
       }
-      return ['chene', 'cairn', 'tour_guet', 'grotte', 'cascade'].map(un).filter(Boolean)
+      return ['chene', 'cairn', 'tour_guet', 'grotte', 'cascade', 'combe_brumeuse'].map(un).filter(Boolean)
     })
     const heure = async (h) => {
       for (let essai = 0; essai < 4; essai++) {

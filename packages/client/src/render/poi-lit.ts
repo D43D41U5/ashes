@@ -18,7 +18,7 @@
 import type Phaser from 'phaser'
 // LA RECETTE VIT DANS normal-map.ts (spec da-feeling R1) — la recopie « volontaire » de
 // l'en-tête est morte : l'A/B de lit-props est tranché et commité, on importe.
-import { type Crack, newCanvas, normalFromCanvas, registerLit as register, walkPath } from './normal-map'
+import { type Crack, mirrorCanvas, newCanvas, normalFromCanvas, registerLit as register, walkPath } from './normal-map'
 import { POI_LIT_DEFS_DATA } from './poi-lit-defs'
 import { CRACK, CRACK2, STONE_A, STONE_B, QUARTZ, MOSS, MOSS_BR, MOSS_DK, LICHEN, GRAIN_D, GRAIN_L } from './matiere'
 
@@ -191,6 +191,11 @@ export const POI_LIT_KINDS: ReadonlySet<string> = new Set(POI_LIT_DEFS.map((d) =
 
 export const poiLitKey = (slug: string): string => `poi-${slug}_lit`
 export const poiLitCrownKey = (slug: string): string => `poi-${slug}-crown_lit`
+export const poiLitMirrorKey = (slug: string): string => `poi-${slug}_lit_m`
+
+/** Les lieux dont le DÉCOR se décline en miroir (les 9 pierres du Cercle) : un setFlipX
+ *  casserait le canal X de la normale — on pré-retourne (R5, la règle du 24/07). */
+export const POI_LIT_MIRRORED: ReadonlySet<string> = new Set(['pierre_levee'])
 
 /** Enregistre tous les lieux basculés : albédo aplati + normale (base plantée, sillons),
  *  l'ombre de contact APRÈS la dérivation, la couronne = découpe haute des mêmes canvas. */
@@ -201,6 +206,17 @@ export function generateLitPois(scene: Phaser.Scene): void {
     const nrm = normalFromCanvas(alb.c, 1, 3.5, 3, true, d.cracks ?? [])
     shadeErratic(alb.ctx, d)
     register(scene, poiLitKey(d.slug), alb.c, nrm)
+    if (POI_LIT_MIRRORED.has(d.slug)) {
+      // Le miroir : canvas pré-retourné, normale dérivée DU retourné (jamais un flip Phaser).
+      const alb2 = newCanvas(d.w, d.h)
+      drawErratic(alb2.ctx, d)
+      const m = mirrorCanvas(alb2.c)
+      const nrmM = normalFromCanvas(m, 1, 3.5, 3, true, (d.cracks ?? []).map((c) => ({
+        ...c, path: c.path.map(([x, y]) => [d.w - 1 - x, y] as const),
+      })))
+      shadeErratic(alb2.ctx, d)
+      register(scene, poiLitMirrorKey(d.slug), mirrorCanvas(alb2.c), nrmM)
+    }
     if (d.crown !== undefined) {
       const crop = (src: HTMLCanvasElement): HTMLCanvasElement => {
         const { c, ctx } = newCanvas(d.w, d.crown!)

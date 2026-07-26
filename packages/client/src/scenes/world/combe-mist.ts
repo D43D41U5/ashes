@@ -41,11 +41,11 @@ export class CombeMist {
     this.layer = new MistLayer(scene, this.key, width, height, MIST_DEPTH + 0.01)
   }
 
-  update(nowMs: number, wind?: { x: number; y: number }): void {
+  update(nowMs: number, wind?: { x: number; y: number }, day = 1): void {
     const w = wind
       ? { x: (0.3 + wind.x * 0.02) * VENT_FACTEUR, y: (0.1 + wind.y * 0.02) * VENT_FACTEUR }
       : { x: 0.09, y: 0.03 }
-    this.layer?.update(nowMs, DENSITE, w)
+    this.layer?.update(nowMs, DENSITE, w, day)
   }
 
   destroy(): void {

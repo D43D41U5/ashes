@@ -48,6 +48,15 @@ export function makeGueStoneTexture(scene: Phaser.Scene): void {
 export class GueStones {
   private readonly sprites: Phaser.GameObjects.Image[] = []
 
+  /** Le toggle debug : _lit + LightsManager, ou la dalle peinte d'avant (contrat « éteint =
+   *  comme avant » — la revue a mesuré des dalles noires en OFF, l'instrument d'A/B mentait). */
+  setLighting(lit: boolean): void {
+    for (const s of this.sprites) {
+      s.setTexture(lit ? `${KEY}_lit` : KEY)
+      s.setLighting(lit)
+    }
+  }
+
   constructor(scene: Phaser.Scene, map: WorldMap, warp: Warp) {
     for (const z of map.zones) {
       if (z.kind !== undefined || z.name !== 'le Gué') continue

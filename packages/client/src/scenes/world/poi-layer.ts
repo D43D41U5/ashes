@@ -20,7 +20,7 @@ import Phaser from 'phaser'
 import { POI, type WorldMap } from '@braises/sim' // POI : SIGHT_TILES (labels) + SET_PIECE_KINDS (R10)
 import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import { poiCrownKey, poiTextureKey, POI_ART } from './poi-art'
-import { erratiqueVariantFor, litErratiqueKey, POI_LIT_KINDS, poiLitCrownKey, poiLitKey } from '../../render/poi-lit'
+import { erratiqueVariantFor, litErratiqueKey, POI_LIT_KINDS, poiLitCrownKey, poiLitKey, poiLitMirrorKey } from '../../render/poi-lit'
 import type { Warp } from '../../render/warp'
 import { FONT } from '../ui/typography'
 
@@ -49,6 +49,8 @@ interface Placed {
   /** Rendu par le pipeline d'éclairage dynamique (albédo `_lit` + normal map) : on réarme
    *  `setLighting` à chaque frame comme les autres couches. Aujourd'hui : le bloc erratique. */
   lit?: boolean
+  /** Le kind — de quoi re-swapper peint↔lit quand le toggle debug bascule. */
+  kind?: string
   /** L'EMPREINTE (tuiles), pour un SET-PIECE : culling et fondu du nom se mesurent AU RECT —
    *  exactement le clamp de la découverte sim (`advancePois`). Mesuré par la revue : au centre,
    *  le nom du Bois Noir (48×40) s'éteignait alors qu'on était DEDANS (dist 24 > les seuils du
@@ -58,8 +60,10 @@ interface Placed {
 
 export class PoiLayer {
   private readonly placed: Placed[] = []
-  /** Le décor DÉRIVÉ des lieux (les pierres du Cercle) : détruit avec la couche, jamais mis à jour. */
+  /** Le décor DÉRIVÉ des lieux (les pierres du Cercle) : détruit avec la couche. */
   private readonly decor: Phaser.GameObjects.Image[] = []
+  private readonly decorMir: boolean[] = []
+  private lastLighting: boolean | null = null
   /** Éclairage dynamique armé ? Posé par WorldScene, comme pour le clutter. Défaut : allumé (mode nominal). */
   lighting = true
 
@@ -101,13 +105,16 @@ export class PoiLayer {
             const sx = (z.x + z.w / 2) * TILE_PX + Math.cos(a) * rx
             const sty = z.y + z.h / 2 + Math.sin(a) * ry
             const sy = sty * TILE_PX - warp.lift(sx / TILE_PX, sty)
+            // _lit / _lit_m pré-retournée (R5) : un setFlipX casserait le canal X de la normale.
+            const mir = k % 2 === 1
             const stone = scene.add
-              .image(sx, sy, poiTextureKey('pierre_levee'))
+              .image(sx, sy, mir ? poiLitMirrorKey('pierre_levee') : poiLitKey('pierre_levee'))
               .setOrigin(0.5, 1)
               .setScale(0.66 + ((k * 37) % 5) * 0.05)
-              .setFlipX(k % 2 === 1)
+            stone.setLighting(this.lighting)
             stone.setDepth(ySortDepth(sty, TILE_PX, TIE_NODE))
             this.decor.push(stone)
+            this.decorMir.push(mir)
           }
         }
         return
@@ -126,7 +133,7 @@ export class PoiLayer {
       // comporte comme un nœud (on passe devant en descendant vers le sud).
       body.setDepth(ySortDepth(feetY, TILE_PX, TIE_NODE))
 
-      const entry: Placed = { body, label: makeLabel(scene, z.name, px, py - a.h), poiId, tx: feetX, ty: feetY, h: a.h, lit }
+      const entry: Placed = { body, label: makeLabel(scene, z.name, px, py - a.h), poiId, tx: feetX, ty: feetY, h: a.h, lit, kind: z.kind }
 
       if (a.crown !== undefined) {
         // Ancrée par le HAUT, exactement là où commence le sprite complet :
@@ -149,6 +156,27 @@ export class PoiLayer {
     const x1 = (v.x + v.width) / TILE_PX + MARGIN_TILES
     const y1 = (v.y + v.height) / TILE_PX + MARGIN_TILES
 
+    // LE TOGGLE RE-SWAPPE LES TEXTURES (revue du 26/07 : « éteint = comme avant » doit être
+    // vrai — un albédo aplati sans lumière est un sprite délavé, pas l'art peint). Une fois
+    // par changement, pas par frame.
+    if (this.lastLighting !== this.lighting) {
+      this.lastLighting = this.lighting
+      for (const p of this.placed) {
+        if (!p.lit || !p.body || p.kind === undefined) continue
+        const kk = p.kind
+        const litKey = kk === 'erratique' ? litErratiqueKey(erratiqueVariantFor(p.poiId)) : poiLitKey(kk)
+        p.body.setTexture(this.lighting ? litKey : poiTextureKey(kk))
+        p.crown?.setTexture(this.lighting ? poiLitCrownKey(kk) : poiCrownKey(kk))
+      }
+      for (let i = 0; i < this.decor.length; i++) {
+        const st = this.decor[i]!
+        st.setTexture(this.lighting
+          ? (this.decorMir[i] ? poiLitMirrorKey('pierre_levee') : poiLitKey('pierre_levee'))
+          : poiTextureKey('pierre_levee'))
+        st.setFlipX(!this.lighting && this.decorMir[i] === true) // le flip n'est licite qu'en peint
+        st.setLighting(this.lighting)
+      }
+    }
     for (const p of this.placed) {
       // Un SET-PIECE se juge à son EMPREINTE (le rect chevauche-t-il la vue ?) ; un lieu à
       // sprite, à ses pieds — comme avant.

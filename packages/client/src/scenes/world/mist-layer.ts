@@ -41,6 +41,7 @@ uniform float uTilePx;
 uniform float uTime;       // secondes
 uniform float uDensity;    // 0..1 — l'heure (ou l'identité du lieu) décide
 uniform vec2 uWind;        // tuiles/s, lent — la direction du monde (fireFx la partage)
+uniform float uDay;        // 0 nuit · 1 plein jour — LA NUIT ASSOMBRIT LA BRUME (revue du 26/07)
 
 const float GRAIN = 4.0;   // le pixel de l'art : toute la brume se décide par cellule de 4 px
 
@@ -102,6 +103,11 @@ void main() {
   float mince = (1.0 - corps - crete);
 
   vec3 teinte = vec3(0.84, 0.87, 0.91) * (0.93 + 0.07 * corps + 0.19 * crete);
+  // LA NUIT L'ASSOMBRIT ICI — pas par le voile : en mode éclairé (le défaut), le voile descend
+  // SOUS les sprites, donc sous la brume. Mesuré par la revue : sans ce terme, la Combe
+  // (permanente) devenait un amer laiteux visible de loin à 23h. Teinte de nuit bleutée,
+  // cohérente avec l'ambiante nocturne du LightsManager.
+  teinte *= mix(vec3(0.20, 0.24, 0.40), vec3(1.0), uDay);
   float a = uDensity * (0.5 * mince + 0.85 * corps + 1.2 * crete) * (0.35 + 0.65 * assise);
   a = clamp(a, 0.0, 0.6);
   // PRÉMULTIPLIÉ — le contrat du pipeline Phaser (prouvé à l'écran : la sortie non
@@ -115,6 +121,7 @@ export class MistLayer {
   private shader: Phaser.GameObjects.Shader | null = null
   private density = 0
   private timeS = 0
+  private day = 1
   private wind = { x: 0.35, y: 0.12 }
 
   constructor(scene: Phaser.Scene, maskKey: string, width: number, height: number, depth: number) {
@@ -133,6 +140,7 @@ export class MistLayer {
             setUniform('uTime', this.timeS)
             setUniform('uDensity', this.density)
             setUniform('uWind', [this.wind.x, this.wind.y])
+            setUniform('uDay', this.day)
           },
         },
         0,
@@ -145,10 +153,12 @@ export class MistLayer {
       .setDepth(depth)
   }
 
-  /** Chaque frame : le temps fait dériver les nappes, la densité vient de l'appelant. */
-  update(nowMs: number, density: number, wind?: { x: number; y: number }): void {
+  /** Chaque frame : le temps fait dériver les nappes, la densité vient de l'appelant,
+   *  et le jour (daylight) décide de la teinte — la nuit assombrit la brume elle-même. */
+  update(nowMs: number, density: number, wind?: { x: number; y: number }, day = 1): void {
     this.timeS = nowMs / 1000
     this.density = density
+    this.day = day
     if (wind) this.wind = wind
     this.shader?.setVisible(density > 0.003)
   }

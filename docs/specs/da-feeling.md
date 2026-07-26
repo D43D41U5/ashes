@@ -1,6 +1,6 @@
 # da-feeling — le monde entier sous la même lumière
 
-*Source : mandat d'Alexis du 2026-07-25 (« même procédure pour améliorer l'ambiance, l'eau et son rendu, la brume le matin, passer l'ensemble des sprites en suivant la DA actée + normal map — même rigueur »). Cadre : les décisions DA des 14/17/19/20/22/23/24/25-07 (rectiligne, tout-ou-rien, un seul soleil, FX quantifiés, zéro post-FX, recette cubique figée). Statut : **en chantier**.*
+*Source : mandat d'Alexis du 2026-07-25 (« même procédure pour améliorer l'ambiance, l'eau et son rendu, la brume le matin, passer l'ensemble des sprites en suivant la DA actée + normal map — même rigueur »). Cadre : les décisions DA des 14/17/19/20/22/23/24/25-07 (rectiligne, tout-ou-rien, un seul soleil, FX quantifiés, zéro post-FX, recette cubique figée). Statut : **livré le 2026-07-26** — §1-§7 implémentés (A1 partielle : la garde texte couvre props/nœuds ; st-/poi-/spr- gardés par la planche smoke `lieux-lit`), exceptions consignées : faune (recette par posture non actée), murs/porte (champ-de-hauteur à écrire), sol, pièces au ras du sol. Détails au journal du 26/07.*
 
 ---
 

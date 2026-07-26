@@ -317,6 +317,8 @@ export class WorldScene extends Phaser.Scene {
   private morningMist: MorningMist | null = null
   /** Le dernier état du toggle appliqué à l'avatar (swap _lit une fois, pas par frame). */
   private playerLit: boolean | null = null
+  /** Marcheurs à remous poussés cette frame — la sonde du critère A5 (lue par le smoke). */
+  lastWaderCount = 0
   private calendarScale = 1
   /** Dernier tick de snapshot appliqué — rejette les snapshots périmés/hors ordre. */
   private lastSnapshotTick = 0
@@ -958,8 +960,14 @@ export class WorldScene extends Phaser.Scene {
       // entité — la force s'éteint ~0,7 s après le dernier pas : un avatar immobile ne remue
       // pas l'eau, et les anneaux du dernier pas meurent d'eux-mêmes (critère A5).
       const waders: WaterWader[] = []
+      const vue = this.cameras.main.worldView
+      const vx0 = vue.x / TILE_PX - 3
+      const vy0 = vue.y / TILE_PX - 3
+      const vx1 = (vue.x + vue.width) / TILE_PX + 3
+      const vy1 = (vue.y + vue.height) / TILE_PX + 3
+      const vus = new Set<number>()
       for (const e of this.lastEntities) {
-        if (waders.length >= 8) break
+        vus.add(e.id)
         const moi = e.id === this.playerId && this.predicted
         const ex = moi ? this.predicted.x : e.x
         const ey = moi ? this.predicted.y : e.y
@@ -968,12 +976,21 @@ export class WorldScene extends Phaser.Scene {
         const bouge = prev !== undefined && (Math.abs(ex - prev.x) > 0.02 || Math.abs(ey - prev.y) > 0.02)
         const lastMove = shallow && bouge ? time : (prev?.lastMove ?? -1e9)
         this.waderTrack.set(e.id, { x: ex, y: ey, lastMove })
-        if (!shallow) continue
+        if (!shallow || waders.length >= 8) continue
+        // PRIORITÉ À LA VUE (revue : 8 bêtes hors écran volaient les slots d'un cerf visible) —
+        // un remous qu'on ne voit pas ne vaut aucun slot. Et le suivi, lui, couvre TOUT LE MONDE.
+        if (ex < vx0 || ex > vx1 || ey < vy0 || ey > vy1) continue
         const force = Math.max(0, 1 - (time - lastMove) / 700)
         if (force <= 0) continue
         // Phase par identité : les anneaux de deux marcheurs ne battent pas ensemble.
         waders.push({ x: ex, y: ey, phase: (e.id % 97) * 0.211, strength: force })
       }
+      // LA PURGE (revue : la Map croissait à vie — les ids sim sont monotones) : on oublie
+      // toute entité sortie du snapshot.
+      for (const id of this.waderTrack.keys()) {
+        if (!vus.has(id)) this.waderTrack.delete(id)
+      }
+      this.lastWaderCount = waders.length // la sonde d'A5 (lue par le smoke)
       this.water?.update(
         time,
         hour,
@@ -983,8 +1000,8 @@ export class WorldScene extends Phaser.Scene {
         litFires.map(({ s, g }) => ({ x: s.tx + 0.5, y: s.ty + 0.5, radius: g.radius * 2.3, strength: g.alpha })),
         waders,
       )
-      this.morningMist?.update(time, hour, this.view.wind) // l'heure décide, le vent porte (R14)
-      this.combeMist?.update(time, this.view.wind) // la combe garde son air, au quart du vent
+      this.morningMist?.update(time, hour, this.view.wind, day) // l'heure décide, le vent porte, la nuit assombrit
+      this.combeMist?.update(time, this.view.wind, day) // la combe garde son air, au quart du vent
       this.aube.update(time, hour, (sp, d2) => this.audioFx.play(sp, d2)) // les oiseaux, fenêtre de l'aube
       this.fireFx?.update(this.view.structures, this.lastSnapshotTick, this.view.wind) // flammes/braises/fumée (∝ état), poussées par le vent
       // La chaleur du Feu au sol : cosmétique, ∝ nuit (voir world/fire-ground-glow.ts).
@@ -998,6 +1015,7 @@ export class WorldScene extends Phaser.Scene {
       if (this.clutter) this.clutter.lighting = lit
       this.pois.lighting = lit // le bloc erratique (couche POI cubique) suit le même toggle
       this.bornes?.setLighting(lit) // les bornes de seuil aussi (da-feeling R5)
+      this.gueStones?.setLighting(lit) // et les dalles de gué (la revue a vu des dalles noires en OFF)
       // L'AVATAR bascule sur son _lit (R9 — un humain est un chip symétrique). Une fois par
       // changement de toggle : setTexture par frame réinitialiserait la frame pour rien.
       if (this.playerLit !== lit) {

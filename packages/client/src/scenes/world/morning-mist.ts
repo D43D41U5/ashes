@@ -81,12 +81,12 @@ export class MorningMist {
   }
 
   /** Chaque frame : l'heure décide (pente continue), le vent du monde porte les nappes. */
-  update(nowMs: number, hour: number, wind?: { x: number; y: number }): void {
+  update(nowMs: number, hour: number, wind?: { x: number; y: number }, day = 1): void {
     const densite = DENSITE_MAX * brumeDuMatin(hour)
     // Le vent du monde (px/s des particules) ramené à des tuiles/s de nappe, avec un fond de
     // dérive : une brume parfaitement immobile est une image — c'est ce qu'on a jugé et rejeté.
     const w = wind ? { x: 0.3 + wind.x * 0.02, y: 0.1 + wind.y * 0.02 } : undefined
-    this.layer?.update(nowMs, densite, w)
+    this.layer?.update(nowMs, densite, w, day)
   }
 
   destroy(): void {
