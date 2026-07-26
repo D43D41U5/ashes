@@ -15,7 +15,10 @@
  * lancer à côté, rien à tuer après.
  *
  * Avec `--dev`, il vise le serveur de dev du projet — celui du conteneur, sur
- * http://ashes.localhost (docker compose : service `client` derrière Traefik).
+ * http://ashes.test (docker compose : service `client` derrière Traefik — la route
+ * du proxy partagé est `Host(ashes.test)` ; `ashes.localhost` est périmé). Le nom
+ * ne résout pas hors du proxy : Chromium reçoit un --host-resolver-rules qui le
+ * mappe sur 127.0.0.1, rien à ajouter dans /etc/hosts.
  * On ne lance PAS un `pnpm dev` local : le conteneur tourne en root et son
  * cache `.vite` (bind-monté) devient root-owned, ce qui fait échouer un `vite`
  * lancé côté hôte avec EACCES. Le conteneur doit donc être up :
@@ -53,7 +56,7 @@ const dev = args.includes('--dev')
 const scenario = args[args.indexOf('--scenario') + 1] ?? 'default'
 // `?solo` : le deep-link qui saute l'écran principal et démarre droit en Veillée
 // (voir MenuScene). Sans lui, tous les scénarios resteraient bloqués sur le menu.
-const BASE_URL = process.env.SMOKE_URL ?? (dev ? 'http://ashes.localhost/' : `http://localhost:${PORT}/`)
+const BASE_URL = process.env.SMOKE_URL ?? (dev ? 'http://ashes.test/' : `http://localhost:${PORT}/`)
 const URL = BASE_URL.includes('?') ? BASE_URL : `${BASE_URL}?solo`
 
 mkdirSync(OUT, { recursive: true })
@@ -4795,7 +4798,13 @@ const browser = await chromium.launch({
   // donc AUCUN navigateur n'y aura de rendu accéléré — installer un Chrome système ou
   // passer en `channel: 'chrome'` ne change rien, mesuré. Et on veut un rendu déterministe :
   // le Chromium de Playwright est pinné, Chrome stable s'auto-update.
-  args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox'],
+  args: [
+    '--use-gl=swiftshader',
+    '--enable-unsafe-swiftshader',
+    '--no-sandbox',
+    // `ashes.test` n'existe que dans le proxy Traefik : on le résout ici même.
+    ...(dev ? ['--host-resolver-rules=MAP ashes.test 127.0.0.1'] : []),
+  ],
 })
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
 
