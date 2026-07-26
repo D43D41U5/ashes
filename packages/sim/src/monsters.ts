@@ -5,7 +5,9 @@
  * lire les wind-ups contre lui. Le sanglier est la chasse : neutre, fuit,
  * charge parfois blessé. IA dans /sim, aléa via le PRNG de la sim.
  */
-import { BALANCE, COMBAT, FAUNA, HUNT, MONSTER_DEFS, SLOTS, TICK_DT_S, type MonsterType } from './balance'
+import { BALANCE, COMBAT, FAUNA, HUNT, MONSTER_DEFS, NODE_DEFS, SLOTS, TICK_DT_S, type MonsterType } from './balance'
+// Type seul : `economy` importe `monsters`, un import de valeur fermerait le cycle.
+import type { ResourceNode } from './economy'
 import { startAttack } from './combat'
 import { moveAvatar } from './collision'
 import { distSq } from './geometry'
@@ -284,29 +286,117 @@ export function moveToward(
 }
 
 /**
- * Champs de flux du tick, un par horde active (dérivés purs, jamais
- * sérialisés). Le cache vit le temps d'un advanceMonsters : partagé entre
- * les monstres d'une même horde, jamais entre ticks ni entre instances de
- * sim — un cache au niveau module servirait le champ d'une autre partie
- * dès que deux sims cohabitent dans le même processus (rooms LAN).
+ * ═══ LES CHAMPS DE FLUX — le cache SURVIT AUX TICKS, et c'est tout le sujet ═══
+ *
+ * Le champ de flux est un BFS sur TOUTE la carte. Il vivait le temps d'un `advanceMonsters` :
+ * une horde vivante le faisait donc refaire vingt fois par seconde. MESURÉ, seed 2026 :
+ *
+ *   · banc (450 k tuiles) : 0,33 ms/tick avant la horde → **77 ms/tick** dès l'apparition de
+ *     quatre monstres, et ça ne redescend plus. C'est un facteur 250, et c'est ce qui faisait
+ *     durer 43 minutes un banc d'un jour.
+ *   · carte de PRODUCTION (3,75 M tuiles, 125 686 nœuds) : **1192 ms par champ**. Une seule
+ *     horde et le tick coûte 1,2 s, contre un budget de 50 ms à 20 Hz — le jeu ne ralentit pas,
+ *     il s'arrête.
+ *
+ * ═══ POURQUOI ON PEUT LE GARDER, ET À QUELLE CONDITION EXACTE ═══
+ *
+ * Le champ ne dépend que de trois choses : le TERRAIN (statique — rien dans `/sim` n'écrit dans
+ * `map.terrain` après la génération), les NŒUDS, et la tuile du Feu visé. Les structures sont
+ * explicitement ignorées (le gradient traverse les murs : c'est le siège naturel).
+ *
+ * Les nœuds, eux, bougent vraiment : `stock` franchit zéro dans les deux sens (récolte, repousse),
+ * il en naît (`economy.ts`), et il en DÉPLACE (`economy.ts:212`). On garde donc une SIGNATURE —
+ * pour chaque nœud, sa tuile et son caractère bloquant — et le moindre écart vide le cache. Une
+ * signature qui change pour rien ne coûte qu'un recalcul ; c'est l'inverse qui serait grave, d'où
+ * une signature volontairement large plutôt qu'un compteur de version à semer dans le code.
+ *
+ * Elle est relue UNE FOIS PAR TICK, en tête d'`advanceMonsters`. C'est exact parce que rien ne
+ * touche aux nœuds pendant ce tick-là : `advanceMonsters` n'appelle que `advanceFauna`, et la
+ * faune ne les modifie jamais (la récolte et la repousse vivent dans `advanceEconomy`).
+ *
+ * ═══ OÙ IL VIT — la réponse à la crainte que cette note portait avant ═══
+ *
+ * *« Un cache au niveau module servirait le champ d'une autre partie dès que deux sims cohabitent
+ * dans le même processus (rooms LAN). »* — c'était juste, et c'est précisément pourquoi il est
+ * dans une `WeakMap` CLÉE PAR LE `SimState` : chaque partie a le sien, et il disparaît avec elle.
+ * Il n'est PAS dans le `SimState` (un `Int32Array` et une `Map` n'y ont pas leur place, et il ne
+ * doit ni se sérialiser ni se transporter) : c'est un dérivé pur, reconstruit à l'identique après
+ * un snapshot ou dans un replay.
+ *
+ * UNE SEULE DIFFÉRENCE VISIBLE, et elle est bénigne : les champs sont désormais indexés par la
+ * TUILE DU FEU visé, non par l'id de horde. Deux hordes qui marchent sur le même village
+ * calculaient deux champs identiques ; elles en partagent un. Le champ étant le même, le pas de
+ * chaque monstre l'est aussi.
  */
-type FlowCache = Map<number, Int32Array>
+interface CacheFlux {
+  /** Un entier par nœud : sa tuile et son caractère bloquant. Voir `signerLesNoeuds`. */
+  signature: Int32Array
+  /** Le nombre de nœuds au moment de la signature — un ajout ou un retrait invalide. */
+  taille: number
+  /** Les champs, par tuile de Feu visé. */
+  champs: Map<number, Int32Array>
+}
+
+const CACHES_DE_FLUX = new WeakMap<SimState, CacheFlux>()
+
+/**
+ * La signature d'un nœud : `tuile × 2 + bloquant`.
+ *
+ * BORNE : `tuile` vaut au plus `width × height − 1`, soit 3 749 999 sur la carte de production —
+ * le double tient très au large dans un `Int32Array`. Une carte de plus de ~1 milliard de tuiles
+ * déborderait et rendrait une signature fausse mais plausible : c'est la seule façon dont ce
+ * cache pourrait mentir, et elle est hors d'atteinte de deux ordres de grandeur.
+ */
+function signerLeNoeud(node: ResourceNode, width: number): number {
+  const bloquant = node.stock > 0 && NODE_DEFS[node.type].blockHalfSub > 0
+  return (node.ty * width + node.tx) * 2 + (bloquant ? 1 : 0)
+}
+
+/**
+ * Rend le cache de la partie, VIDÉ si les nœuds ont bougé. Un seul parcours : on compare tant
+ * que ça colle, on ne réalloue qu'en cas d'écart.
+ */
+function cacheDeFlux(state: SimState): CacheFlux {
+  const nodes = state.nodes
+  const n = nodes.length
+  const width = state.map.width
+  const courant = CACHES_DE_FLUX.get(state)
+
+  if (courant !== undefined && courant.taille === n) {
+    let identique = true
+    for (let i = 0; i < n; i++) {
+      if (courant.signature[i] !== signerLeNoeud(nodes[i]!, width)) {
+        identique = false
+        break
+      }
+    }
+    if (identique) return courant
+  }
+
+  const signature = new Int32Array(n)
+  for (let i = 0; i < n; i++) signature[i] = signerLeNoeud(nodes[i]!, width)
+  const neuf: CacheFlux = { signature, taille: n, champs: new Map() }
+  CACHES_DE_FLUX.set(state, neuf)
+  return neuf
+}
 
 /**
  * Descente de gradient vers le Feu ciblé (spec événements R3). Si la
  * meilleure tuile est bouchée par une structure, on la frappe. Retourne
  * true si le monstre appartient à une horde (et a donc agi).
  */
-function hordeStep(state: SimState, monster: Monster, entity: Entity, flows: FlowCache): boolean {
+function hordeStep(state: SimState, monster: Monster, entity: Entity, flux: CacheFlux | null): boolean {
   const horde = state.hordes.find((h) => h.memberEntityIds.includes(monster.entityId))
   if (!horde) return false
   const village = state.villages.find((v) => v.id === horde.targetVillageId)
-  if (!village) return true
+  if (!village || flux === null) return true
 
-  let field = flows.get(horde.id)
+  // Indexé par la TUILE DU FEU visé : deux hordes sur le même village partagent le champ.
+  const cleDuFoyer = village.fireTy * state.map.width + village.fireTx
+  let field = flux.champs.get(cleDuFoyer)
   if (!field) {
     field = computeFlowField(state.map, state.nodes, village.fireTx, village.fireTy)
-    flows.set(horde.id, field)
+    flux.champs.set(cleDuFoyer, field)
   }
 
   const width = state.map.width
@@ -380,7 +470,9 @@ function attackBlockingStructure(state: SimState, monster: Monster, entity: Enti
 }
 
 export function advanceMonsters(state: SimState): void {
-  const flows: FlowCache = new Map()
+  // Le cache des champs de flux, relu UNE FOIS pour tout le tick — et seulement s'il y a une
+  // horde, sinon on ne paie même pas la signature. Voir la note de `CacheFlux`.
+  const flux = state.hordes.length > 0 ? cacheDeFlux(state) : null
 
   // Les avatars (tout ce qui n'est pas un monstre) sont la liste des menaces :
   // la faune n'a peur que d'eux, et ils sont peu nombreux.
@@ -488,7 +580,7 @@ export function advanceMonsters(state: SimState): void {
             attackBlockingStructure(state, monster, entity, target.x, target.y)
           }
         }
-      } else if (hordeStep(state, monster, entity, flows)) {
+      } else if (hordeStep(state, monster, entity, flux)) {
         // membre de horde sans proie : il coule vers le Feu (flow field)
       } else if (monster.wanderDx !== 0 || monster.wanderDy !== 0) {
         moveToward(state, monster, entity, entity.x + monster.wanderDx, entity.y + monster.wanderDy, false)
