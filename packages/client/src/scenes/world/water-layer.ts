@@ -575,6 +575,41 @@ void main() {
   col = mix(col, ecumeCol * 0.82, clamp(dansEcume * 0.38 + bande2 * 0.2, 0.0, 0.6));
   col = mix(col, ecumeCol, crete2 * 0.55);
 
+  // ═══ LE TOMBANT (geste 02, eau-fond) — la rupture se DESSINE, elle ne se cache pas ═══
+  //
+  // La tuile frontière (profondeur intermédiaire, geste 01) porte les deux signes du
+  // mur : un LISERÉ un cran plus sombre collé à son bord profond — l'ombre de la
+  // marche — et une ÉCUME rare qui « casse » par plaques battues sur son bord
+  // haut-fond, là où le clapot bute dessus. Tout vit DANS la tuile frontière : jamais
+  // une bande large (la leçon du lait), et le profond s'annonce — R5 se lit à distance.
+  float gDepth = field.g;
+  if (gDepth > 0.2 && gDepth < 0.9) {
+    float gE = texture2D(uField, texUv(tile + vec2(1.0, 0.0))).g;
+    float gW = texture2D(uField, texUv(tile - vec2(1.0, 0.0))).g;
+    float gS = texture2D(uField, texUv(tile + vec2(0.0, 1.0))).g;
+    float gN = texture2D(uField, texUv(tile - vec2(0.0, 1.0))).g;
+    vec2 frTb = fract(tile);
+    float dProfond = 1.0; // distance au bord PLUS profond de la tuile (en tuiles)
+    if (gE > gDepth + 0.1) dProfond = min(dProfond, 1.0 - frTb.x);
+    if (gW > gDepth + 0.1) dProfond = min(dProfond, frTb.x);
+    if (gS > gDepth + 0.1) dProfond = min(dProfond, 1.0 - frTb.y);
+    if (gN > gDepth + 0.1) dProfond = min(dProfond, frTb.y);
+    float dHaut = 1.0; // distance au bord MOINS profond
+    if (gE < gDepth - 0.1) dHaut = min(dHaut, 1.0 - frTb.x);
+    if (gW < gDepth - 0.1) dHaut = min(dHaut, frTb.x);
+    if (gS < gDepth - 0.1) dHaut = min(dHaut, 1.0 - frTb.y);
+    if (gN < gDepth - 0.1) dHaut = min(dHaut, frTb.y);
+    // Le liseré : 4 px (0,25 tuile), un cran d'assombrissement franc — l'ombre du mur.
+    col *= 1.0 - 0.13 * (1.0 - step(0.25, dProfond));
+    // L'écume du tombant : plaques trouées battues à ~6 Hz (le pas de l'écume de rive),
+    // vivantes sur les crêtes seulement, sous ~0,4 tuile du bord haut-fond.
+    float nTb = cellHash(flatPx / GRAIN + vec2(17.0, 59.0));
+    float pasTb = floor(t * 6.0) / 6.0;
+    float frontTb = 0.28 + 0.1 * sin(pasTb * 3.7 + nTb * 6.2831853);
+    float casse = (1.0 - step(frontTb, dHaut)) * step(0.55, nTb) * step(0.15, h + 0.2 * nTb);
+    col = mix(col, ecumeCol * 0.85, casse * 0.3);
+  }
+
   // Translucide sur le gué, opaque au large : on voit où l'on passe. PAS de fondu
   // d'alpha au bord : sinon l'eau devient transparente pile sur la rive et laisse
   // transparaître la tuile d'eau du SOL (bakée en cyan clair) — le liseré clair.
