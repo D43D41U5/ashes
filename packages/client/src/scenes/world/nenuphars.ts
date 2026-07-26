@@ -39,27 +39,12 @@ const ESPACEMENT = 2.5
 /** Le haut-fond (id de `TERRAINS`, sim/balance.ts) — même duplication assumée que les feuilles. */
 const SHALLOW = 4
 
-/** Les deux gabarits de coussin : [w, h, rects [x, y, w, h, couleur]]. Rects only —
- *  la silhouette blocky de la DA cubique, l'encoche est un coin VRAIMENT manquant. */
-const GABARITS: readonly (readonly [number, number, readonly (readonly [number, number, number, number, string])[]])[] = [
-  [
-    8,
-    7,
-    [
-      [1, 0, 5, 7, '#2f5c2e'], // le coussin
-      [0, 1, 8, 5, '#2f5c2e'],
-      [1, 1, 4, 2, '#4a7d40'], // le plat qui prend le jour — un MATÉRIAU, pas un ombrage
-    ],
-  ],
-  [
-    6,
-    6,
-    [
-      [1, 0, 4, 6, '#325f2c'],
-      [0, 1, 6, 4, '#325f2c'],
-      [1, 1, 3, 2, '#4d7f3e'],
-    ],
-  ],
+/** Les deux gabarits de coussin : [w, h]. La silhouette est une ELLIPSE PLATE — la
+ *  forme de son ombre de contact (retour d'Alexis) : le coussin vu d'au-dessus est un
+ *  disque écrasé, comme la dalle de gué — l'encoche est le coin VRAIMENT manquant. */
+const GABARITS: readonly (readonly [number, number])[] = [
+  [10, 7],
+  [8, 6],
 ]
 
 function hache(x: number, y: number, s: number): number {
@@ -68,14 +53,23 @@ function hache(x: number, y: number, s: number): number {
   return ((h ^ (h >>> 13)) & 0xffff) / 0x10000
 }
 
-/** Peint l'albédo d'un gabarit, avec l'ENCOCHE (le coin manquant du nénuphar). */
+/** Peint l'albédo d'un gabarit : l'ellipse du coussin, le plat qui prend le jour
+ *  (un MATÉRIAU, pas un ombrage), puis l'ENCOCHE. À 8-10 px, l'ellipse se rastérise
+ *  chunky d'elle-même — le pixel-art vient de la taille, pas d'un lissage. */
 function peindre(ctx: CanvasRenderingContext2D, k: number): void {
-  const [w, , rects] = GABARITS[k]!
-  for (const [x, y, rw, rh, col] of rects) {
-    ctx.fillStyle = col
-    ctx.fillRect(x, y, rw, rh)
-  }
-  ctx.clearRect(w - 2, 0, 2, 2)
+  const [w, h] = GABARITS[k]!
+  const cx = w / 2
+  const cy = h / 2
+  ctx.fillStyle = k === 0 ? '#2f5c2e' : '#325f2c'
+  ctx.beginPath()
+  ctx.ellipse(cx, cy, cx - 0.5, cy - 0.5, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = k === 0 ? '#4a7d40' : '#4d7f3e'
+  ctx.beginPath()
+  ctx.ellipse(cx - 1, cy - 0.8, cx * 0.45, cy * 0.4, 0, 0, Math.PI * 2)
+  ctx.fill()
+  // L'encoche : la fente du nénuphar, vers le bord — un coin franchement retiré.
+  ctx.clearRect(w - 3, 0, 3, 3)
 }
 
 interface Nenuphar {
