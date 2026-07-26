@@ -17,10 +17,10 @@
  *       tuile) — le même langage que le lerp de la passe 2 du bake des biomes,
  *       côté profond seulement : les tuiles marchables gardent leur luminance.
  *       (Le canal portait l'élévation, morte avec la carte plate — R35 caduque.)
- *   B — RÉGIME (gestes 06/10, eau-fond) : 0 = eau normale · 120 = MARAIS (sol
- *       détrempé et eau morte — marsh/peat_bog/reed_marsh et les flaques noyées
- *       dedans) · 200 = LAC MORT (l'eau trop claire). Le canal portait le profond
- *       binaire, redondant depuis que G porte la profondeur.
+ *   B — RÉGIME (geste 10, eau-fond) : 0 = eau normale · 200 = LAC MORT (l'eau trop
+ *       claire). Le canal portait le profond binaire, redondant depuis que G porte
+ *       la profondeur. (Le régime 120 — l'eau morte du marais — a existé un soir :
+ *       regardé, refusé par Alexis le 2026-07-26.)
  *   A — 1, toujours. Un canal alpha non plein serait prémultiplié à l'upload et
  *       corromprait les trois autres.
  *
@@ -238,6 +238,16 @@ const FOND_SABLE_TUILES = 1.6
 /** Le lit du Lac Mort (geste 10) : des galets pâles, froids — un fond qu'on voit TROP bien. */
 const FOND_LAC_MORT: [number, number, number] = [138, 142, 136]
 
+/** Les herbiers (geste 09, repris) : des TUILES d'algues dans le langage du sol —
+ *  des aplats 1 px/tuile comme le bake, jamais un blob shader (retour d'Alexis). */
+const FOND_ALGUE: [number, number, number] = [64, 84, 54]
+/** Les algues poussent par plaques : un hash de région (blocs de 8 tuiles) ouvre la
+ *  plaque, un hash fin sème les tuiles dedans — des massifs épars, jamais un tapis. */
+const ALGUE_REGION = 0.55
+const ALGUE_TUILE = 0.5
+/** Pas d'algues dans la bande du lit visible : le bord reste sable. */
+const ALGUE_RIVE_MIN = 1.3
+
 export function buildFondField(
   terrain: ArrayLike<number>,
   sd: Float32Array,
@@ -272,6 +282,15 @@ export function buildFondField(
         if (mag > FOND_COURANT_GALETS) {
           base = FOND_GALETS
           galet = true
+        } else if (
+          mag < 0.1 &&
+          (sd[i] ?? 0) > ALGUE_RIVE_MIN &&
+          hache((x >> 3) + 911, (y >> 3) + 613) > ALGUE_REGION &&
+          hache(x + 331, y + 577) > ALGUE_TUILE
+        ) {
+          // L'HERBIER : des massifs de tuiles d'algues sur le haut-fond CALME, loin du
+          // bord — le courant les interdit (la rivière reste nue), la rive reste sable.
+          base = FOND_ALGUE
         } else {
           base = FOND_SABLE
         }
@@ -300,9 +319,8 @@ export function buildFondField(
   return data
 }
 
-/** Les régimes d'eau du canal B (gestes 06/10). */
+/** Les régimes d'eau du canal B (geste 10). */
 export const REGIME_NORMAL = 0
-export const REGIME_MARAIS = 1
 export const REGIME_LAC_MORT = 2
 
 export function buildWaterField(
@@ -318,15 +336,12 @@ export function buildWaterField(
   for (let i = 0; i < width * height; i++) {
     const t = terrain[i]
     const wet = t === SHALLOW || t === DEEP
-    const r = regime?.[i] ?? REGIME_NORMAL
-    // Le marais monte la couche même sans une tuile d'eau franche : ses plaques
-    // d'eau morte sont rendues par le quad (geste 06).
-    if (wet || r === REGIME_MARAIS) hasWater = true
+    if (wet) hasWater = true
 
     const o = i * 4
     data[o] = wet ? 255 : 0 // masque BINAIRE — voir l'en-tête
     // G (profondeur) : 0 par défaut — la 2e passe pose le profond et sa frontière.
-    data[o + 2] = r === REGIME_MARAIS ? 120 : r === REGIME_LAC_MORT ? 200 : 0
+    data[o + 2] = regime?.[i] === REGIME_LAC_MORT ? 200 : 0
     data[o + 3] = 255
   }
 
