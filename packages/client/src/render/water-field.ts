@@ -207,6 +207,85 @@ export interface WaterField {
   hasWater: boolean
 }
 
+/**
+ * LA MÉMOIRE DU FOND (geste 03, eau-fond) — le lit de l'eau a une MATIÈRE.
+ *
+ * Le worldgen écrase le terrain par les ids d'eau : ce qu'il y avait dessous est
+ * perdu, et la réfraction du shader rééchantillonnait… la couleur d'eau bakée
+ * elle-même (le cyan du bake, consigné dans l'état des lieux). Ce champ INFÈRE un
+ * fond plausible — variante client seul, actée sur l'artefact eau-fond :
+ *
+ *   SABLE   près des berges (le champ de rive donne la distance),
+ *   GALETS  là où le courant porte (le lit de la rivière est lavé),
+ *   VASE    partout ailleurs, qui fonce en s'éloignant du bord.
+ *
+ * 1 px/tuile, RGB = couleur du lit, A = 255 (jamais prémultiplié à tort), lu par le
+ * shader (`uFond`) à la place du bake pour la réfraction et le lit visible. Le bake
+ * (`uSeabed`) reste la vérité de la COULEUR DE RIVE (l'écume s'y teinte).
+ * Moucheté par hash de tuile — des aplats qui vivent, jamais un dégradé.
+ */
+const FOND_SABLE: [number, number, number] = [142, 120, 80]
+const FOND_GALETS: [number, number, number] = [109, 104, 94]
+const FOND_VASE: [number, number, number] = [86, 66, 42]
+const FOND_VASE_PROFONDE: [number, number, number] = [60, 47, 30]
+/** Seuil de norme de courant au-delà duquel le lit est lavé (galets). */
+const FOND_COURANT_GALETS = 0.3
+/** Le sable s'arrête à cette distance de la rive (tuiles) ; la vase prend ensuite. */
+const FOND_SABLE_TUILES = 1.6
+
+export function buildFondField(
+  terrain: ArrayLike<number>,
+  sd: Float32Array,
+  courant: ReadonlyMap<number, { x: number; y: number }> | null,
+  width: number,
+  height: number,
+): Uint8ClampedArray {
+  const data = new Uint8ClampedArray(width * height * 4)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      const t = terrain[i]
+      const eau = t === SHALLOW || t === DEEP
+      let base: [number, number, number]
+      let galet = false
+      if (!eau) {
+        // La terre porte du sable : la réfraction qui déborde d'un rien près du bord
+        // doit trouver une plage, pas un trou noir.
+        base = FOND_SABLE
+      } else {
+        const v = courant?.get(i)
+        const mag = v ? Math.sqrt(v.x * v.x + v.y * v.y) : 0
+        const d = sd[i] ?? 0
+        if (mag > FOND_COURANT_GALETS) {
+          base = FOND_GALETS
+          galet = true
+        } else if (d < FOND_SABLE_TUILES) {
+          base = FOND_SABLE
+        } else {
+          // La vase fonce avec la distance au bord — par la même rampe que l'œil :
+          // on ne voit plus le fond, il devient nuit.
+          const prof = Math.min(1, (d - FOND_SABLE_TUILES) / 5)
+          base = [
+            FOND_VASE[0] + (FOND_VASE_PROFONDE[0] - FOND_VASE[0]) * prof,
+            FOND_VASE[1] + (FOND_VASE_PROFONDE[1] - FOND_VASE[1]) * prof,
+            FOND_VASE[2] + (FOND_VASE_PROFONDE[2] - FOND_VASE[2]) * prof,
+          ]
+        }
+      }
+      // Le moucheté : ±8 % par tuile, et le gros galet clair de loin en loin.
+      const n = hache(x + 7919, y + 104729)
+      let gain = 0.92 + n * 0.16
+      if (galet && n > 0.82) gain = 1.18
+      const o = i * 4
+      data[o] = Math.round(base[0] * gain)
+      data[o + 1] = Math.round(base[1] * gain)
+      data[o + 2] = Math.round(base[2] * gain)
+      data[o + 3] = 255
+    }
+  }
+  return data
+}
+
 export function buildWaterField(terrain: ArrayLike<number>, width: number, height: number): WaterField {
   const data = new Uint8ClampedArray(width * height * 4)
   let hasWater = false

@@ -23,7 +23,7 @@ import type { WorldMap } from '@braises/sim'
 import { buildFlowField, COURANT_VITESSE, TAPER_RIVE_MAX, TAPER_RIVE_MIN, type FlowField } from '../../render/flow-field'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { sunDirection } from '../../render/lighting'
-import { buildRiveField, buildWaterField, type RiveField } from '../../render/water-field'
+import { buildFondField, buildRiveField, buildWaterField, type RiveField } from '../../render/water-field'
 
 /** Période du cycle d'advection dual-phase (s). Courte À DESSEIN : sur la rampe du taper
  *  de berge, les deux couches divergent d'au plus 0,25·T·vitesse — à 3 s l'écart (0,41
@@ -84,7 +84,8 @@ precision mediump float;
 varying vec2 outTexCoord;
 
 uniform sampler2D uField;    // R masque (binaire) · G profondeur CASE À CASE (geste 01) · B profond binaire
-uniform sampler2D uSeabed;   // le bake du terrain : le FOND, vu à travers l'eau
+uniform sampler2D uSeabed;   // le bake du terrain : la couleur de RIVE (l'écume s'y teinte)
+uniform sampler2D uFond;     // le LIT réel (geste 03) : sable, galets, vase — vu à travers l'eau
 uniform sampler2D uRive;     // R : distance SIGNÉE à la rive (128 = la rive) · G/B : le COURANT (128 = nul)
 uniform vec2 uWorldPx;       // taille du monde, en pixels
 uniform vec2 uMapTiles;      // taille du monde, en tuiles
@@ -370,11 +371,13 @@ void main() {
   float hy = (chopCourant(p + vec2(0.0, e), t, adv0, adv1, gate, wD, rn) - chopCourant(p - vec2(0.0, e), t, adv0, adv1, gate, wD, rn)) * amp;
   vec3 n = normalize(vec3(-hx * 0.85, -hy * 0.85 / YSQUASH, 1.0));
 
-  // LA RÉFRACTION. On rééchantillonne le FOND (le bake du terrain) décalé par la
-  // normale : le fond ondule sous la surface. Le décalage s'annule contre la
-  // berge — sinon il irait chercher l'herbe d'à côté et la peindrait dans l'eau.
+  // LA RÉFRACTION. On rééchantillonne le FOND décalé par la normale : le fond ondule
+  // sous la surface. Le décalage s'annule contre la berge — sinon il irait chercher
+  // l'herbe d'à côté et la peindrait dans l'eau. Le fond n'est PLUS le bake (qui, sous
+  // l'eau, contient… la couleur d'eau) : c'est le LIT inféré du geste 03 — sable près
+  // des berges, galets sous le courant, vase qui fonce au large.
   vec2 refr = tile + (n.xy / PLANE) * 0.55 * (1.0 - deep) * smoothstep(0.0, 0.4, open);
-  vec3 bed = texture2D(uSeabed, texUv(refr)).rgb; // le bake est retourné comme le champ
+  vec3 bed = texture2D(uFond, texUv(refr)).rgb; // la texture est retournée comme le champ
 
   // ═══ LE FOND MARRON SOUS LA SURFACE, LE CIEL RÉFLÉCHI DESSUS ═══
   //
@@ -669,6 +672,7 @@ export class WaterLayer {
   private shader: Phaser.GameObjects.Shader | null = null
   private fieldKey: string | null = null
   private riveKey: string | null = null
+  private fondKey: string | null = null
   /** Le champ de rive (spec eau-vivante R1-R2) — la MÊME distance que le shader, lisible
    *  CPU (`riveAt`) : immersion des acteurs, événements de franchissement, volume du
    *  clapotis. Nul si la carte est sèche. */
@@ -735,6 +739,22 @@ export class WaterLayer {
       riveTex.setFilter(Phaser.Textures.FilterMode.NEAREST) // le bilinéaire est MANUEL, dans le shader
     }
 
+    // LA MÉMOIRE DU FOND (geste 03) : le lit inféré — sable/galets/vase — dans sa
+    // texture 1 px/tuile. La réfraction et le lit visible le lisent à la place du
+    // bake ; le bake reste la vérité de la couleur de rive.
+    const fond = buildFondField(map.terrain, rive.sd, flow?.courant ?? null, width, height)
+    const fondKey = 'water-fond'
+    this.fondKey = fondKey
+    const fondTex = this.scene.textures.createCanvas(fondKey, width, height)
+    if (fondTex) {
+      const fctx = fondTex.getContext()
+      const fimg = fctx.createImageData(width, height)
+      fimg.data.set(fond)
+      fctx.putImageData(fimg, 0, 0)
+      fondTex.refresh()
+      fondTex.setFilter(Phaser.Textures.FilterMode.NEAREST) // des aplats de tuile, comme le bake
+    }
+
     const worldW = width * TILE_PX
     const worldH = height * TILE_PX
 
@@ -747,6 +767,7 @@ export class WaterLayer {
             setUniform('uField', 0)
             setUniform('uSeabed', 1)
             setUniform('uRive', 2)
+            setUniform('uFond', 3)
             setUniform('uWorldPx', [worldW, worldH])
             setUniform('uMapTiles', [width, height])
             setUniform('uTilePx', TILE_PX)
@@ -774,7 +795,7 @@ export class WaterLayer {
         0,
         worldW,
         worldH,
-        [key, seabedKey, riveKey],
+        [key, seabedKey, riveKey, fondKey],
       )
       .setOrigin(0, 0)
       .setDepth(WATER_DEPTH)
@@ -860,5 +881,6 @@ export class WaterLayer {
     this.shader = null
     if (this.fieldKey) this.scene.textures.remove(this.fieldKey)
     if (this.riveKey) this.scene.textures.remove(this.riveKey)
+    if (this.fondKey) this.scene.textures.remove(this.fondKey)
   }
 }
