@@ -224,7 +224,7 @@ export interface WaterField {
  * (`uSeabed`) reste la vérité de la COULEUR DE RIVE (l'écume s'y teinte).
  * Moucheté par hash de tuile — des aplats qui vivent, jamais un dégradé.
  */
-const FOND_SABLE: [number, number, number] = [142, 120, 80]
+const FOND_SABLE: [number, number, number] = [150, 128, 86]
 const FOND_GALETS: [number, number, number] = [109, 104, 94]
 const FOND_VASE: [number, number, number] = [86, 66, 42]
 const FOND_VASE_PROFONDE: [number, number, number] = [60, 47, 30]
@@ -252,25 +252,30 @@ export function buildFondField(
         // La terre porte du sable : la réfraction qui déborde d'un rien près du bord
         // doit trouver une plage, pas un trou noir.
         base = FOND_SABLE
-      } else {
+      } else if (t === SHALLOW) {
+        // LE HAUT-FOND EST SABLE (ou galets sous le courant), PARTOUT : c'est le lit
+        // qu'on FOULE — marchable = clair, la lisibilité du gué (R10) passe par lui.
+        // La vase est réservée au profond : la première écriture la faisait commencer
+        // à 1,6 tuile de la rive, en plein cœur du gué — le haut-fond mesuré fonçait
+        // de ~10 % et A4 tombait à 1,38:1 (MESURÉ). La matière suit le TERRAIN.
         const v = courant?.get(i)
         const mag = v ? Math.sqrt(v.x * v.x + v.y * v.y) : 0
-        const d = sd[i] ?? 0
         if (mag > FOND_COURANT_GALETS) {
           base = FOND_GALETS
           galet = true
-        } else if (d < FOND_SABLE_TUILES) {
-          base = FOND_SABLE
         } else {
-          // La vase fonce avec la distance au bord — par la même rampe que l'œil :
-          // on ne voit plus le fond, il devient nuit.
-          const prof = Math.min(1, (d - FOND_SABLE_TUILES) / 5)
-          base = [
-            FOND_VASE[0] + (FOND_VASE_PROFONDE[0] - FOND_VASE[0]) * prof,
-            FOND_VASE[1] + (FOND_VASE_PROFONDE[1] - FOND_VASE[1]) * prof,
-            FOND_VASE[2] + (FOND_VASE_PROFONDE[2] - FOND_VASE[2]) * prof,
-          ]
+          base = FOND_SABLE
         }
+      } else {
+        // La vase du profond fonce avec la distance au bord — par la même rampe que
+        // l'œil : on ne voit plus le fond, il devient nuit.
+        const d = sd[i] ?? 0
+        const prof = Math.min(1, Math.max(0, d - FOND_SABLE_TUILES) / 5)
+        base = [
+          FOND_VASE[0] + (FOND_VASE_PROFONDE[0] - FOND_VASE[0]) * prof,
+          FOND_VASE[1] + (FOND_VASE_PROFONDE[1] - FOND_VASE[1]) * prof,
+          FOND_VASE[2] + (FOND_VASE_PROFONDE[2] - FOND_VASE[2]) * prof,
+        ]
       }
       // Le moucheté : ±8 % par tuile, et le gros galet clair de loin en loin.
       const n = hache(x + 7919, y + 104729)
@@ -304,28 +309,21 @@ export function buildWaterField(terrain: ArrayLike<number>, width: number, heigh
 
   // ═══ LA PROFONDEUR CASE À CASE (geste 01) ═══
   // Le même langage que la transition de biomes de la passe 2 du bake : la tuile
-  // FRONTIÈRE — profonde, touchant un haut-fond (8 voisins : les coins rectilignes
-  // du worldgen comptent) — prend un poids intermédiaire dont l'ondulation varie
-  // tuile par tuile. UN SEUL CÔTÉ PEINT, le profond : les tuiles marchables gardent
-  // leur luminance exacte (le gué se mesure, R10), et le gué gagne des épaulements.
+  // FRONTIÈRE — profonde, partageant une ARÊTE avec un haut-fond (4-voisinage : un
+  // coin n'est pas une couture, et les coins restent carrés — doctrine du trait de
+  // rive ; c'est aussi le voisinage de la sonde A4, qui juge le CORPS du profond) —
+  // prend un poids intermédiaire dont l'ondulation varie tuile par tuile. UN SEUL
+  // CÔTÉ PEINT, le profond : les tuiles marchables gardent leur luminance exacte
+  // (le gué se mesure, R10), et le gué gagne des épaulements.
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x
       if (terrain[i] !== DEEP) continue
-      let bord = false
-      for (let dy = -1; dy <= 1 && !bord; dy++) {
-        const ny = y + dy
-        if (ny < 0 || ny >= height) continue
-        for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dy === 0) continue
-          const nx = x + dx
-          if (nx < 0 || nx >= width) continue
-          if (terrain[ny * width + nx] === SHALLOW) {
-            bord = true
-            break
-          }
-        }
-      }
+      const bord =
+        (x > 0 && terrain[i - 1] === SHALLOW) ||
+        (x < width - 1 && terrain[i + 1] === SHALLOW) ||
+        (y > 0 && terrain[i - width] === SHALLOW) ||
+        (y < height - 1 && terrain[i + width] === SHALLOW)
       const poids = bord ? FRONTIERE_POIDS + (hache(x, y) - 0.5) * 2 * FRONTIERE_ONDULATION : 1
       data[i * 4 + 1] = Math.round(poids * 255)
     }
