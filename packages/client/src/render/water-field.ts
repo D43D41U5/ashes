@@ -255,20 +255,26 @@ export function buildFondField(
   width: number,
   height: number,
   regime?: ArrayLike<number>,
+  /** Tampon de sortie (ex. l'ImageData de la texture) — épargne une copie de 15 Mo
+   *  sur la carte pleine (budget A10 : le boot de l'eau se chronomètre). */
+  out?: Uint8ClampedArray,
 ): Uint8ClampedArray {
-  const data = new Uint8ClampedArray(width * height * 4)
+  const data = out ?? new Uint8ClampedArray(width * height * 4)
+  // LA TERRE D'ABORD, EN BLOC (budget A10, MESURÉ : la version qui hachait chaque tuile
+  // coûtait ~290 ms sur la carte pleine — pour 95 % de tuiles de terre que le shader
+  // n'échantillonne jamais au-delà de la marge de réfraction). Un remplissage u32
+  // constant : la terre porte du sable — la réfraction qui déborde d'un rien près du
+  // bord trouve une plage, pas un trou noir. Le moucheté n'existe que sous l'eau.
+  const u32 = new Uint32Array(data.buffer, data.byteOffset, width * height)
+  u32.fill(0xff000000 | (FOND_SABLE[2] << 16) | (FOND_SABLE[1] << 8) | FOND_SABLE[0])
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x
       const t = terrain[i]
-      const eau = t === SHALLOW || t === DEEP
+      if (t !== SHALLOW && t !== DEEP) continue
       let base: [number, number, number]
       let galet = false
-      if (!eau) {
-        // La terre porte du sable : la réfraction qui déborde d'un rien près du bord
-        // doit trouver une plage, pas un trou noir.
-        base = FOND_SABLE
-      } else if (regime?.[i] === REGIME_LAC_MORT) {
+      if (regime?.[i] === REGIME_LAC_MORT) {
         // Le Lac Mort (geste 10) montre son fond partout — des galets pâles, froids.
         base = FOND_LAC_MORT
       } else if (t === SHALLOW) {

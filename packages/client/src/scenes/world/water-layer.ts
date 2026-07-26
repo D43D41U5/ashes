@@ -820,21 +820,25 @@ export class WaterLayer {
       riveTex.setFilter(Phaser.Textures.FilterMode.NEAREST) // le bilinéaire est MANUEL, dans le shader
     }
 
-    // LA MÉMOIRE DU FOND (geste 03) : le lit inféré — sable/galets/vase — dans sa
-    // texture 1 px/tuile. La réfraction et le lit visible le lisent à la place du
+    // LA MÉMOIRE DU FOND (geste 03) : le lit inféré — sable/galets/vase/algues — dans
+    // sa texture 1 px/tuile. La réfraction et le lit visible le lisent à la place du
     // bake ; le bake reste la vérité de la couleur de rive.
+    //
+    // UPLOAD DIRECT depuis le tableau typé (`addUint8Array`, budget A10) : le chemin
+    // canvas (createCanvas + putImageData + readback à l'upload) coûtait ~2 copies
+    // plein-cadre de 15 Mo de plus sur SwiftShader — la 3e texture d'eau faisait
+    // déborder le boot (1 382-1 489 ms mesurés contre 700-900 avant elle). A = 255
+    // partout : la prémultiplication est l'identité, l'upload brut est sûr.
     const fond = buildFondField(map.terrain, rive.sd, flow?.courant ?? null, width, height, regime)
     const fondKey = 'water-fond'
     this.fondKey = fondKey
-    const fondTex = this.scene.textures.createCanvas(fondKey, width, height)
-    if (fondTex) {
-      const fctx = fondTex.getContext()
-      const fimg = fctx.createImageData(width, height)
-      fimg.data.set(fond)
-      fctx.putImageData(fimg, 0, 0)
-      fondTex.refresh()
-      fondTex.setFilter(Phaser.Textures.FilterMode.NEAREST) // des aplats de tuile, comme le bake
-    }
+    const fondTex = this.scene.textures.addUint8Array(
+      fondKey,
+      new Uint8Array(fond.buffer, fond.byteOffset, fond.byteLength),
+      width,
+      height,
+    )
+    fondTex?.setFilter(Phaser.Textures.FilterMode.NEAREST) // des aplats de tuile, comme le bake
 
     const worldW = width * TILE_PX
     const worldH = height * TILE_PX
