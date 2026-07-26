@@ -96,6 +96,7 @@ import { MistBanks } from './world/mist-banks'
 import { VentLisse } from './world/vent-lisse'
 import { ensureEauFxTextures } from './world/eau-fx'
 import { EauEvents } from './world/eau-events'
+import { PoissonsOmbres } from './world/poissons-ombres'
 import { SonsDeLEau } from '../audio/eau-audio'
 import { riveAt } from '../render/water-field'
 import { GueStones } from './world/gue-stones'
@@ -328,6 +329,8 @@ export class WorldScene extends Phaser.Scene {
   private eauEvents: EauEvents | null = null
   private sonsEau = new SonsDeLEau()
   private lastSonPos: { x: number; y: number } | null = null
+  /** Les poissons-ombres (R14) — décor assumé tant que la pêche n'existe pas. */
+  private poissons: PoissonsOmbres | null = null
   /** Le dernier état du toggle appliqué à l'avatar (swap _lit une fois, pas par frame). */
   private playerLit: boolean | null = null
   /** Marcheurs à remous poussés cette frame — la sonde du critère A5 (lue par le smoke). */
@@ -684,6 +687,7 @@ export class WorldScene extends Phaser.Scene {
         this.eauEvents = new EauEvents(this, (moi) => this.sonsEau.splash(moi, (sp, d2) => this.audioFx.play(sp, d2)))
         this.eauEvents.joueur = this.playerSprite
         this.view.eau = this.eauEvents
+        if (this.water.rive) this.poissons = new PoissonsOmbres(this, this.map, this.water.rive)
         this.cendre = new CendreLayer(this, this.map, String(this.map.width))
         this.cliffs = new CliffLayer(this, this.map)
       },
@@ -1064,6 +1068,19 @@ export class WorldScene extends Phaser.Scene {
       // LES ÉVÉNEMENTS ET SONS DE L'EAU (eau-vivante R7-R8) : gerbes qui s'animent, traces
       // qui sèchent, patauge et clapotis pilotés par la position du joueur (champ de rive).
       this.eauEvents?.update(time)
+      // LES POISSONS-OMBRES (R14) : ils errent sous la surface et fuient les entités.
+      if (this.poissons) {
+        const entites = this.lastEntities.map((e) =>
+          e.id === this.playerId && this.predicted ? { x: this.predicted.x, y: this.predicted.y } : { x: e.x, y: e.y },
+        )
+        this.poissons.update(
+          time,
+          deltaMs,
+          (centre.x + centre.width / 2) / TILE_PX,
+          (centre.y + centre.height / 2) / TILE_PX,
+          entites,
+        )
+      }
       if (this.water?.rive && this.predicted) {
         const dR = riveAt(this.water.rive, this.predicted.x, this.predicted.y + BALANCE.AVATAR_HITBOX_TILES / 2)
         const bouge =
