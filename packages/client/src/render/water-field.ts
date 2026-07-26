@@ -33,11 +33,15 @@
 const SHALLOW = 4
 const DEEP = 6
 
-/** Le poids de profondeur de la tuile frontière (geste 01) : biaisé vers le profond
- *  pour que le premier cran depuis le haut-fond tienne le contraste du gué (R10
- *  da-feeling, ≥ 1,4:1) — l'ondulation joue le rôle du fbm2 ±17,5 % du bake. */
-const FRONTIERE_POIDS = 0.7
-const FRONTIERE_ONDULATION = 0.08
+/** LE PROFIL DE LA RAMPE (geste 01, élargi sur demande d'Alexis « lerp encore plus ») :
+ *  cinq anneaux autour de l'arête shallow|deep — deux côté haut-fond, trois côté
+ *  profond — que le lerp bilinéaire du shader fond en un dégradé de ~5 tuiles.
+ *  Index : 0 rien · 1 = S2 (haut-fond, 2 tuiles de l'arête) · 2 = S1 (contre l'arête)
+ *  · 3 = D1 · 4 = D2 · 5 = D3. L'ondulation ±0,05 par tuile garde les iso-lignes
+ *  courbes. Les extrêmes (haut-fond loin = 0, cœur profond = 1) restent purs : le
+ *  contraste du gué (R10, ≥ 1,4:1) se re-mesure après chaque retouche du profil. */
+const RAMPE_PROFIL = [0, 0.1, 0.28, 0.55, 0.8, 0.93] as const
+const RAMPE_ONDULATION = 0.05
 
 /** Hash positionnel (le patron imul des feuilles) — l'ondulation du poids de la
  *  tuile frontière, stable par carte, jamais `Math.random`. */
@@ -351,25 +355,59 @@ export function buildWaterField(
     data[o + 3] = 255
   }
 
-  // ═══ LA PROFONDEUR CASE À CASE (geste 01) ═══
-  // Le même langage que la transition de biomes de la passe 2 du bake : la tuile
-  // FRONTIÈRE — profonde, partageant une ARÊTE avec un haut-fond (4-voisinage : un
-  // coin n'est pas une couture, et les coins restent carrés — doctrine du trait de
-  // rive ; c'est aussi le voisinage de la sonde A4, qui juge le CORPS du profond) —
-  // prend un poids intermédiaire dont l'ondulation varie tuile par tuile. UN SEUL
-  // CÔTÉ PEINT, le profond : les tuiles marchables gardent leur luminance exacte
-  // (le gué se mesure, R10), et le gué gagne des épaulements.
+  // ═══ LA PROFONDEUR EN RAMPE (geste 01, élargi) ═══
+  // Cinq anneaux depuis l'arête shallow|deep (4-voisinage : un coin n'est pas une
+  // couture), fondus ensuite par le bilinéaire du shader : la transition s'étale sur
+  // ~5 tuiles au lieu d'une. Les anneaux côté haut-fond assombrissent un peu le bord
+  // marchable — assumé (demande « lerp encore plus ») : le CENTRE du gué reste à 0,
+  // et la sonde A4 exclut de toute façon les tuiles au contact.
+  const ring = new Uint8Array(width * height)
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = y * width + x
-      if (terrain[i] !== DEEP) continue
+      const t = terrain[i]
+      if (t !== DEEP && t !== SHALLOW) continue
+      // L'AUTRE eau en 4-voisinage — inliné : une closure ici s'allouait par tuile
+      // d'eau et triplait le coût de la passe (106 → 327 ms au banc, MESURÉ).
+      const autre = t === DEEP ? SHALLOW : DEEP
       const bord =
-        (x > 0 && terrain[i - 1] === SHALLOW) ||
-        (x < width - 1 && terrain[i + 1] === SHALLOW) ||
-        (y > 0 && terrain[i - width] === SHALLOW) ||
-        (y < height - 1 && terrain[i + width] === SHALLOW)
-      const poids = bord ? FRONTIERE_POIDS + (hache(x, y) - 0.5) * 2 * FRONTIERE_ONDULATION : 1
-      data[i * 4 + 1] = Math.round(poids * 255)
+        (x > 0 && terrain[i - 1] === autre) ||
+        (x < width - 1 && terrain[i + 1] === autre) ||
+        (y > 0 && terrain[i - width] === autre) ||
+        (y < height - 1 && terrain[i + width] === autre)
+      if (bord) ring[i] = t === DEEP ? 3 : 2
+    }
+  }
+  // Les 2es anneaux (S2/D2), puis le 3e côté profond (D3) — chaque passe ne lit que
+  // les valeurs posées par la précédente : la propagation reste symétrique.
+  const dilate = (deVal: number, versTerrain: number, versVal: number): void => {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x
+        if (ring[i] !== 0 || terrain[i] !== versTerrain) continue
+        const touche =
+          (x > 0 && ring[i - 1] === deVal) ||
+          (x < width - 1 && ring[i + 1] === deVal) ||
+          (y > 0 && ring[i - width] === deVal) ||
+          (y < height - 1 && ring[i + width] === deVal)
+        if (touche) ring[i] = versVal
+      }
+    }
+  }
+  dilate(2, SHALLOW, 1)
+  dilate(3, DEEP, 4)
+  dilate(4, DEEP, 5)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      const t = terrain[i]
+      const r = ring[i]!
+      let poids: number
+      if (t === DEEP) poids = r >= 3 ? RAMPE_PROFIL[r]! : 1
+      else if (t === SHALLOW && r > 0) poids = RAMPE_PROFIL[r]!
+      else continue
+      poids += (hache(x, y) - 0.5) * 2 * RAMPE_ONDULATION
+      data[i * 4 + 1] = Math.round(Math.min(1, Math.max(0, poids)) * 255)
     }
   }
 
