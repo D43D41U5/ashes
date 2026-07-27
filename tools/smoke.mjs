@@ -39,7 +39,7 @@
  */
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -1696,6 +1696,219 @@ const SCENARIOS = {
       const arrive = Math.abs(ou.x - z.x) < 30 && Math.abs(ou.y - z.y) < 30
       console.log(`T${z.tier} ${z.nom.padEnd(22)} visé (${z.x}, ${z.y}) → ${arrive ? 'OK' : `ÉCHOUÉ, on est en (${ou.x}, ${ou.y})`}`)
     }
+  },
+
+  /**
+   * SORTIR L'ART EN PNG — pour qu'il se REGARDE et se RETOUCHE hors du code.
+   *
+   * L'art est peint au boot ; il n'existe donc nulle part sous forme de fichier. Ce scénario le
+   * fait exister : il prend chaque texture du cache et l'écrit en PNG sous `art-export/`, rangée
+   * par famille, plus une planche-contact pour tout voir d'un coup.
+   *
+   * TROIS CHOSES QU'ON N'EXPORTE PAS, et chacune pour une raison :
+   *   • les CHAMPS pleine-carte (nappe d'eau, masques de brume, terrain) — repeints à chaque
+   *     partie depuis les données de la sim, propres à la graine : les retoucher ne mène nulle part ;
+   *   • les SURFACES de composition (le voile de nuit) — une cible de rendu WebGL, pas un dessin ;
+   *   • les cartes de NORMALES des textures `_lit` — `normalFromCanvas` les redérive de l'albédo à
+   *     chaque boot. Retoucher l'albédo suffit : le relief suit tout seul.
+   *
+   * Les clés qui partagent le MÊME dessin (typiquement `x` et `x_lit`) sortent en UN fichier, et
+   * les doublons sont listés dans `art-export/index.html`. Sans ça, on retoucherait `cl-bush.png`
+   * pendant que le jeu affiche `cl-bush_lit`.
+   *
+   * Autonome (aucun `--dev`).
+   */
+  async png(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(2000)
+
+    const dessins = await page.evaluate(() => {
+      const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-/
+      const list = window.__BRAISES__.scene.textures.list
+      const out = []
+      for (const k of Object.keys(list)) {
+        if (k.startsWith('__') || UUID.test(k)) continue
+        const t = list[k]
+        const s = t.source?.[0]
+        if (!s?.isCanvas) continue // une cible de rendu WebGL n'a pas de canvas à sortir
+        if (s.width > 500) continue // les champs pleine-carte : repeints par graine, pas de l'art
+        out.push({ key: k, w: s.width, h: s.height, png: t.getSourceImage().toDataURL('image/png') })
+      }
+      return out
+    })
+
+    // MÊME DESSIN, PLUSIEURS CLÉS. On dédoublonne sur le contenu du PNG, et le fichier prend le
+    // nom le plus COURT du groupe (donc `cl-bush` plutôt que `cl-bush_lit`) : c'est celui qu'on a
+    // envie d'ouvrir. Les autres clés sont déclarées comme alias dans la planche.
+    const parImage = new Map()
+    for (const d of dessins) {
+      const g = parImage.get(d.png) ?? { cles: [], w: d.w, h: d.h }
+      g.cles.push(d.key)
+      parImage.set(d.png, g)
+    }
+
+    const DIR = resolve(ROOT, 'art-export')
+    rmSync(DIR, { recursive: true, force: true }) // un export périmé qui traîne ment sur ce qui existe
+    const famille = (k) => (k.includes('-') ? k.slice(0, k.indexOf('-')) : 'divers')
+    const fichiers = []
+    for (const [png, g] of parImage) {
+      g.cles.sort((a, b) => a.length - b.length || a.localeCompare(b))
+      const nom = g.cles[0]
+      const fam = famille(nom)
+      mkdirSync(`${DIR}/${fam}`, { recursive: true })
+      writeFileSync(`${DIR}/${fam}/${nom}.png`, Buffer.from(png.split(',')[1], 'base64'))
+      fichiers.push({ fam, nom, w: g.w, h: g.h, alias: g.cles.slice(1) })
+    }
+    fichiers.sort((a, b) => a.fam.localeCompare(b.fam) || a.nom.localeCompare(b.nom))
+
+    // QUEL FICHIER EST CELUI QU'ON VOIT ? Le rendu bascule sur `<clé>_lit` dès que l'éclairage est
+    // armé — c'est-à-dire presque toujours (`snapshot-view.ts`). Quand l'albédo `_lit` DIFFÈRE de
+    // sa base, les deux sortent en deux fichiers, et retoucher la base ne changerait rien à
+    // l'écran. La planche le dit, sinon on retouche le repli en croyant retoucher le jeu.
+    const noms = new Set(fichiers.map((f) => f.nom))
+    for (const f of fichiers) {
+      f.ecran = f.nom.endsWith('_lit') || f.nom.endsWith('_lit_m')
+      f.repli = noms.has(`${f.nom}_lit`)
+    }
+
+    // LA PLANCHE-CONTACT. Du pixel art de 12 px ne se juge pas à 12 px : on l'affiche au ×4, en
+    // NEAREST, sur le fond du jeu. C'est la seule façon de VOIR ce qu'on a.
+    const fams = [...new Set(fichiers.map((f) => f.fam))]
+    const vignette = (f) =>
+      '<figure class="' + (f.repli ? 'repli' : '') + '"><img src="' + f.fam + '/' + f.nom + '.png" width="' + f.w * 4 + '" height="' + f.h * 4 + '">' +
+      '<figcaption>' + f.nom + (f.ecran ? ' <b>◆</b>' : '') + (f.repli ? ' <i>repli</i>' : '') +
+      '<br><small>' + f.w + '×' + f.h +
+      (f.alias.length ? ' · = ' + f.alias.join(', ') : '') + '</small></figcaption></figure>'
+    const html = [
+      '<!doctype html><meta charset="utf-8"><title>BRAISES — planche d\'art</title>',
+      '<style>body{background:#0e0e12;color:#cfc7b6;font:13px/1.5 monospace;margin:24px}',
+      'h1{font-size:18px}h2{font-size:15px;color:#e8c66a;border-bottom:1px solid #2a2622;padding-bottom:4px;margin-top:32px}',
+      'img{image-rendering:pixelated;background:#1a1720;display:block;margin:0 auto 6px}',
+      'section{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-end}',
+      'figure{margin:0;text-align:center;max-width:200px}small{color:#8a8272}',
+      'figure.repli{opacity:.45}b{color:#e8c66a}i{color:#8a8272;font-style:normal}</style>',
+      '<h1>' + fichiers.length + ' dessins · ' + dessins.length + ' clés · ×4, NEAREST</h1>',
+      '<p>Retoucher un PNG ne change RIEN au jeu tant que le chargeur n\'est pas branché : ' +
+        'l\'art est encore peint par code au boot. Voir docs/inventaire-sprites.md.</p>',
+      '<p><b>◆</b> = ce que l\'écran affiche vraiment (l\'éclairage est armé en jeu). ' +
+        '<i>repli</i> grisé = la version non éclairée du même sujet, doublée par un <code>_lit</code> ' +
+        'différent : la retoucher ne se verrait pas. <code>=</code> liste les autres clés qui ' +
+        'partagent EXACTEMENT ce dessin — un fichier, plusieurs usages.</p>',
+      ...fams.map((fam) =>
+        '<h2>' + fam + '-* (' + fichiers.filter((f) => f.fam === fam).length + ')</h2><section>' +
+        fichiers.filter((f) => f.fam === fam).map(vignette).join('') + '</section>',
+      ),
+    ].join('\n')
+    writeFileSync(`${DIR}/index.html`, html)
+
+    const alias = fichiers.filter((f) => f.alias.length)
+    console.log(`\n${dessins.length} clés exportables → ${fichiers.length} fichiers PNG (${alias.length} dessins portent plusieurs clés)`)
+    for (const fam of fams) {
+      console.log(`  ${String(fichiers.filter((f) => f.fam === fam).length).padStart(4)}  ${fam}-*`)
+    }
+    console.log(`\n${fichiers.filter((f) => f.ecran).length} fichiers sont ce que l'écran affiche (◆), ${fichiers.filter((f) => f.repli).length} sont des replis non éclairés`)
+
+    // ON REGARDE LA PLANCHE. Une planche-contact qu'on n'a pas vue peut être une page de cadres
+    // vides (chemin faux, PNG vide) sans que rien ne le dise. Dans un ONGLET NEUF : capturer la
+    // page du jeu après l'avoir quittée fait échouer le compositeur (contexte WebGL démonté).
+    const ctx = await page.context().browser().newContext({ viewport: { width: 1280, height: 1400 } })
+    const onglet = await ctx.newPage()
+    await onglet.goto(`file://${DIR}/index.html`)
+    await onglet.waitForTimeout(500)
+    await onglet.screenshot({ path: `${OUT}/art-planche.png` })
+    await ctx.close()
+    console.log(`\nart-export/index.html — la planche-contact (aperçu : ${OUT}/art-planche.png)`)
+    console.log(`art → ${DIR}`)
+  },
+
+  /**
+   * QU'EST-CE QU'ON DESSINE, AU JUSTE ? (inventaire des textures)
+   *
+   * Tout l'art du jeu est peint par code au boot — aucun binaire dans le dépôt. La CONSÉQUENCE,
+   * c'est qu'on n'a pas de dossier d'assets à ouvrir pour savoir ce qui existe : la seule liste
+   * qui ne mente pas est celle que Phaser tient en mémoire. On la lit.
+   *
+   * On ne compte pas des fichiers : on lit `textures.list`, avec pour chaque entrée sa taille, son
+   * nombre de frames et sa NATURE (canvas peint une fois vs. surface de composition redessinée
+   * chaque frame). C'est cette distinction qui sépare l'ART du décor technique.
+   *
+   * Autonome (aucun `--dev`) : rien à téléporter, on lit ce que le boot a produit. Les familles
+   * conditionnelles (cendre du jour 58, brumes de la Combe…) n'y seront pas — c'est attendu, et
+   * le delta est justement ce qu'un inventaire doit dire.
+   */
+  async textures(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(2000) // les couches du monde (eau, brume, poissons) montent après le boot
+
+    const inv = await page.evaluate(() => {
+      const list = window.__BRAISES__.scene.textures.list
+      return Object.keys(list).map((k) => {
+        const t = list[k]
+        const s = t.source?.[0]
+        return {
+          key: k,
+          w: s?.width ?? 0,
+          h: s?.height ?? 0,
+          frames: t.frameTotal ?? 0,
+          canvas: Boolean(s?.isCanvas),
+          // Une DynamicTexture porte sa propre caméra et se redessine : c'est une SURFACE,
+          // pas un dessin. `isRenderTexture` la trahit quel que soit le renderer.
+          dynamique: Boolean(s?.isRenderTexture || t.renderTarget || t.camera),
+        }
+      })
+    })
+
+    inv.sort((a, b) => a.key.localeCompare(b.key))
+    writeFileSync(`${OUT}/inventaire-textures.json`, JSON.stringify(inv, null, 2))
+
+    // TROIS CHOSES QUI NE SONT PAS DE L'ART, et qu'il faut sortir du compte sous peine de
+    // publier un nombre faux :
+    //   • les natives de Phaser (`__DEFAULT`…) ;
+    //   • un canvas par `Phaser.Text` VIVANT — Phaser leur donne une clé UUID. C'est du texte ;
+    //   • les surfaces de composition (DynamicTexture), redessinées chaque frame : le voile de
+    //     nuit est une surface plein écran, pas un dessin.
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-/
+    const natives = inv.filter((t) => t.key.startsWith('__'))
+    const surfaces = inv.filter((t) => t.dynamique)
+    const textes = inv.filter((t) => UUID.test(t.key) && !t.dynamique)
+    const art = inv.filter((t) => !t.key.startsWith('__') && !UUID.test(t.key) && !t.dynamique)
+
+    // `_lit` (albédo + normale) et `_lit_m` (miroir pré-retourné) sont DÉRIVÉS d'un dessin de
+    // base : les compter comme des sprites doublerait l'inventaire pour rien.
+    const litm = art.filter((t) => t.key.endsWith('_lit_m'))
+    const lit = art.filter((t) => t.key.endsWith('_lit'))
+    const base = art.filter((t) => !t.key.endsWith('_lit') && !t.key.endsWith('_lit_m'))
+    // Un « champ » est peint à la taille de la CARTE (nappe d'eau, masque de brume) : c'est une
+    // couche, pas un sujet.
+    const champs = base.filter((t) => t.w > 500)
+
+    console.log(`\n${inv.length} textures : ${natives.length} natives Phaser + ${textes.length} canvas de texte + ${surfaces.length} surface(s) de composition + ${art.length} dessins`)
+    console.log(`dessins : ${base.length} de base (dont ${champs.length} champs pleine-carte → ${base.length - champs.length} SPRITES) + ${lit.length} _lit + ${litm.length} _lit_m`)
+
+    // Par famille : le préfixe avant le premier tiret dit à quel système appartient le dessin.
+    const familles = {}
+    for (const t of base) {
+      const f = t.key.includes('-') ? t.key.slice(0, t.key.indexOf('-')) : '(sans préfixe)'
+      ;(familles[f] ??= { base: 0, lit: 0, m: 0 }).base++
+    }
+    for (const t of lit) {
+      const f = t.key.includes('-') ? t.key.slice(0, t.key.indexOf('-')) : '(sans préfixe)'
+      ;(familles[f] ??= { base: 0, lit: 0, m: 0 }).lit++
+    }
+    for (const t of litm) {
+      const f = t.key.includes('-') ? t.key.slice(0, t.key.indexOf('-')) : '(sans préfixe)'
+      ;(familles[f] ??= { base: 0, lit: 0, m: 0 }).m++
+    }
+    console.log(`\n  base   _lit  _lit_m  famille`)
+    for (const [f, a] of Object.entries(familles).sort((x, y) => y[1].base - x[1].base)) {
+      console.log(`  ${String(a.base).padStart(4)}  ${String(a.lit).padStart(5)}  ${String(a.m).padStart(6)}  ${f}-*`)
+    }
+    console.log(`\nchamps : ${champs.map((t) => `${t.key} (${t.w}×${t.h})`).join(', ')}`)
+    if (surfaces.length) console.log(`surfaces : ${surfaces.map((t) => `${t.w}×${t.h}`).join(', ')}`)
+    console.log(`\ninventaire complet → ${OUT}/inventaire-textures.json`)
+    console.log(`(le relevé commenté vit dans docs/inventaire-sprites.md — le tenir à jour)`)
   },
 
   /**
