@@ -3587,6 +3587,182 @@ const SCENARIOS = {
   },
 
   /**
+   * LE DERNIER ÉCRAN DU JEU EST-IL ATTEIGNABLE ? — la question que GATE 1 pose en dernier.
+   *
+   * Le scénario `saison` montre la stèle de fin, mais il l'OBTIENT EN LA FABRIQUANT : il écrit
+   * `seasonVerdicts` dans le registre à la main. Il prouve donc que l'écran se dessine bien —
+   * pas que le jeu y mène. Or l'en-tête de ce fichier pose la règle : « le smoke test LIT
+   * l'état, il ne le fabrique pas ».
+   *
+   * Personne n'a jamais vu la fin de saison sortir de la simulation. C'est pourtant le dernier
+   * écran que GATE 1 montrera — et une saison solo vaut ~4 h 48 de jeu (6 cycles), donc
+   * personne ne l'atteindra par accident non plus.
+   *
+   * Ici, on ne touche PAS à l'écran. On fonde un vrai Feu, on pousse le CALENDRIER au jour 61
+   * (`debug_set_season_day`, qui se pose un tick avant la bascule pour que la sim la franchisse
+   * elle-même), et on regarde ce que le jeu fait de lui-même : `/sim` émet `season_ended` avec
+   * ses verdicts, le pont les publie, la stèle se lève. Tout ce qu'on lit ensuite vient de la
+   * simulation. Exige `--dev`.
+   */
+  async finale(page) {
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(500)
+
+    const doAction = async (action, wait = 150) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(wait)
+    }
+
+    // ── UN VRAI FEU, parce que la stèle COURONNE le village du joueur : sans village, on ne
+    // vérifierait que la moitié de l'écran (les voisins) et pas le verdict qui le regarde, lui.
+    const spawn = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    let feu = null
+    for (const [ox, oy] of [[0, 0], [-24, 0], [24, 0], [0, -24], [0, 24], [-48, 0], [48, 0]]) {
+      const bx = Math.round(spawn.x) + ox, by = Math.round(spawn.y) + oy
+      await doAction({ type: 'debug_teleport', x: bx + 0.5, y: by + 0.5 }, 200)
+      await doAction({ type: 'debug_grant', item: 'campfire' })
+      const cslot = await page.evaluate(() => (window.__BRAISES__.scene.registry.get('inv') ?? []).findIndex((s) => s?.item === 'campfire'))
+      if (cslot < 0 || cslot >= 6) continue
+      await doAction({ type: 'set_active_slot', slot: cslot }, 120)
+      await doAction({ type: 'place_campfire', tx: bx + 1, ty: by }, 300)
+      const fireId = await page.evaluate(({ x, y }) => {
+        const f = window.__BRAISES__.scene.view.structures.find((s) => s.type === 'fire' && s.villageId === 0 && s.tx === x && s.ty === y)
+        return f ? f.id : null
+      }, { x: bx + 1, y: by })
+      if (fireId === null) continue
+      await doAction({ type: 'found_village', structureId: fireId }, 400)
+      if (await page.evaluate(() => (window.__BRAISES__.scene.registry.get('village') ?? 0) > 0)) { feu = { bx, by }; break }
+    }
+    console.log(`fondation : ${feu ? `Feu en (${feu.bx + 1}, ${feu.by})` : 'ABSENTE — la stèle ne couronnera personne'}`)
+
+    // ── ON POUSSE LE CALENDRIER, PAS L'ÉCRAN. `SEASON_DAYS` vaut 60 ; la fin tombe à `day > 60`.
+    const avant = await page.evaluate(() => window.__BRAISES__.scene.registry.get('seasonVerdicts') ?? null)
+    if (avant !== null) console.error('!! la saison était DÉJÀ finie avant le saut — le scénario ne prouverait rien')
+    await doAction({ type: 'debug_set_season_day', day: 61 }, 300)
+
+    // La stèle se lève sur le SNAPSHOT qui porte l'événement : on l'attend, on ne la pose pas.
+    let levee = false
+    try {
+      await page.waitForFunction(() => Boolean(window.__BRAISES__.scene.registry.get('seasonVerdicts')), null, { timeout: 20000 })
+      levee = true
+    } catch { /* on rapporte l'absence plus bas — elle EST le résultat */ }
+    await page.waitForTimeout(600)
+
+    const r = await page.evaluate(() => {
+      const reg = window.__BRAISES__.scene.registry
+      const sv = document.querySelector('.season-veil')
+      const verdicts = reg.get('seasonVerdicts')
+      return {
+        // ── ce que la SIMULATION a produit
+        verdictsDuSim: verdicts
+          ? { monVillage: verdicts.myVillageId, n: verdicts.verdicts.length, qui: verdicts.verdicts.map((v) => `${v.name}/${v.archetype}: ${v.outcome}`) }
+          : null,
+        chronique: (reg.get('chronicle') ?? []).length,
+        // ── ce que l'ÉCRAN en fait
+        steleLevee: sv ? getComputedStyle(sv).display : null,
+        titre: document.querySelector('.sv-title')?.textContent ?? '',
+        monNom: document.querySelector('.sv-you-name')?.textContent ?? '',
+        monVerdict: document.querySelector('.sv-you-outcome')?.textContent ?? '',
+        voisins: document.querySelectorAll('.sv-nb').length,
+        rouvrir: Boolean(document.querySelector('.sv-reopen')),
+      }
+    })
+
+    console.log(`finale : ${JSON.stringify(r, null, 2)}`)
+    await page.screenshot({ path: `${OUT}/finale.png`, fullPage: false })
+
+    if (!levee || !r.verdictsDuSim) {
+      console.error("!! LE FINALE N'EST PAS ATTEIGNABLE : le calendrier est au bout et `/sim` n'a pas rendu ses verdicts")
+    } else if (r.steleLevee !== 'flex') {
+      console.error(`!! /sim a fini la saison mais la stèle ne se lève pas (display=${r.steleLevee})`)
+    } else if (feu && !r.monNom) {
+      console.error('!! la stèle se lève mais ne couronne aucun village, alors que le joueur en a fondé un')
+    }
+    return { ...r, fondation: Boolean(feu) }
+  },
+
+  /**
+   * LA NUIT DE HORDE COÛTE-T-ELLE VRAIMENT UNE SECONDE ? — la mesure qui manquait.
+   *
+   * Le second gel suspecté de la Veillée. On sait, sur Node, que le premier tick d'une horde
+   * paie un champ de flux plein-carte (~1 s pour 50 ms de budget) ; on ne l'a JAMAIS vu dans
+   * le Worker du navigateur, et le scénario `gels` a montré que Node sous-estime ce moteur
+   * d'un facteur 2,3. Tant que ce chiffre-là n'existe pas, toucher au pathfinding serait
+   * optimiser contre une baseline fausse.
+   *
+   * On ne fabrique pas la horde : on met le monde dans les conditions où elle NAÎT (acte III,
+   * `HORDE_CHANCE_PER_NIGHT` = 0,9) et on laisse le tirage faire. God mode, sinon le joueur
+   * meurt avant d'avoir mesuré quoi que ce soit ; cadence ×16, sinon une nuit dure 18 minutes.
+   *
+   * LA SONDE SÉPARE DÉJÀ LES DEUX GELS, et c'est tout son intérêt : l'autosave donne un grand
+   * `picEcartMs` avec un `picMs` minuscule (elle tombe HORS du tick), la horde donne un grand
+   * `picMs` AVEC un grand `picStepMs` (elle est DANS `step`, donc dans /sim). Exige `--dev`.
+   */
+  async horde(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(4000)
+
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      s.sendAction({ type: 'debug_god', on: true }) // sinon on meurt avant de mesurer
+      s.sendAction({ type: 'debug_set_season_day', day: 45 }) // acte III : 0,9 horde par nuit
+      s.perfSamples.length = 0
+    })
+    await page.waitForTimeout(1000)
+    await page.evaluate(() => window.__BRAISES__.scene.send({ type: 'debug_speed', factor: 16 }))
+
+    // On attend qu'une horde NAISSE : le compte de monstres saute d'un coup (une horde d'acte
+    // III en pose douze). On plafonne l'attente — un tirage peut rater plusieurs nuits.
+    const DUREE_MS = 300000
+    const debut = Date.now()
+    let base = await page.evaluate(() => window.__BRAISES__.scene.view.monsters.length)
+    let pic = base
+    let vue = false
+    console.log(`  monstres au départ : ${base}`)
+    while (Date.now() - debut < DUREE_MS && !vue) {
+      await page.waitForTimeout(2000)
+      const n = await page.evaluate(() => window.__BRAISES__.scene.view.monsters.length)
+      if (n > pic) pic = n
+      if (n >= base + 6) {
+        vue = true
+        console.log(`  ⚑ horde à ${Math.round((Date.now() - debut) / 1000)} s — ${base} → ${n} monstres`)
+      }
+      const t = Math.round((Date.now() - debut) / 1000)
+      if (t % 30 < 2) console.log(`  … ${t} s — ${n} monstres (pic ${pic})`)
+    }
+    // On laisse la horde marcher un peu : le premier tick paie le champ, les suivants disent
+    // si le régime RESTE cher (c'est lui qui dure les dix-huit minutes d'une nuit).
+    if (vue) await page.waitForTimeout(20000)
+
+    const r = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene.perfSamples
+      const r2 = (v) => Math.round(v * 100) / 100
+      const tri = (xs) => [...xs].sort((a, b) => a - b)
+      const med = (xs) => (xs.length ? tri(xs)[Math.floor(xs.length / 2)] : -1)
+      // DANS le tick (donc /sim) : c'est la signature de la horde, pas celle de l'autosave.
+      const dansLeTick = s
+        .map((x, i) => ({ i, picMs: r2(x.picMs), picStepMs: r2(x.picStepMs), picTick: x.picTick, ecartMs: r2(x.picEcartMs) }))
+        .filter((g) => g.picStepMs > 100)
+        .sort((a, b) => b.picStepMs - a.picStepMs)
+      return {
+        echantillons: s.length,
+        tickMedianMs: r2(med(s.map((x) => x.moyenneMs))),
+        tickPireMs: r2(Math.max(...s.map((x) => x.picMs), 0)),
+        picStepPireMs: r2(Math.max(...s.map((x) => x.picStepMs), 0)),
+        nbTicksChers: dansLeTick.length,
+        ticksChers: dansLeTick.slice(0, 8),
+        monstres: window.__BRAISES__.scene.view.monsters.length,
+      }
+    })
+
+    console.log(`horde : ${JSON.stringify({ ...r, hordeVue: vue, picMonstres: pic }, null, 2)}`)
+    if (!vue) console.error(`!! aucune horde en ${DUREE_MS / 1000} s — le tirage n'est pas tombé, la mesure du champ de flux reste À FAIRE`)
+    return { ...r, hordeVue: vue, picMonstres: pic }
+  },
+
+  /**
    * LA RACINE A-T-ELLE UN HORIZON ? (mandat T0 — « pousser à l'exploration ».)
    *
    * La zone de départ était la SEULE du jeu sans repère perçant la canopée : ses cinq lieux
