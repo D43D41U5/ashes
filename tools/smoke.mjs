@@ -6235,6 +6235,194 @@ const SCENARIOS = {
     }
     await page.screenshot({ path: `${OUT}/village.png` })
   },
+
+  /**
+   * LA VITRINE (2026-07-28) — les images du carrousel de l'accueil.
+   *
+   * Ce n'est pas un test : c'est un ATELIER DE PRISE DE VUE, et il est ici pour une raison
+   * précise. Des captures faites à la main sont mortes le jour où l'art bouge (les arbres ont
+   * changé de taille avant-hier) ; un scénario nommé rend la reprise gratuite — on relance et
+   * les six images du menu sont à jour. Ce qu'il fabrique n'entre PAS dans le dépôt tout seul :
+   * on regarde, on choisit, et on copie dans `packages/client/src/assets/vitrine/`.
+   *
+   *   pnpm smoke --scenario vitrine --dev        (--dev obligatoire : TP + heure)
+   *
+   * Cinq règles de prise de vue, toutes apprises en ratant la première série :
+   * ① LE HUD ET LE TAMPON DE BUILD SORTENT DU CADRE — ce sont des surcouches DOM, on les
+   *    masque par une feuille injectée plutôt que par une option de jeu qui n'existe pas.
+   * ② LE NOM DU LIEU AUSSI. Fouler un lieu le rend CONNU, et `poi-layer` lève alors son nom en
+   *    grand au milieu de l'image. On ne peut pas le désarmer par le jeu (ce serait « oublier »
+   *    un lieu) : on éteint les Text du canvas ET on leur confisque `setVisible`, sinon la
+   *    boucle de rendu les rallume à la frame suivante.
+   * ③ ON NE PRESSE PAS `P` pour se téléporter : l'overlay debug se peindrait DANS l'image.
+   *    Le TP passe par `sendAction`, comme dans le scénario `feeling`.
+   * ④ L'HEURE SE RELIT AU DÉCLENCHEMENT, pas à la consigne. La sim continue de tourner
+   *    pendant qu'on attend les fondus ; c'est l'heure LUE qui explique la lumière obtenue,
+   *    et sans elle on règle une image à l'aveugle.
+   * ⑤ LA CARTE N'A PAS TOUS LES LIEUX (cf. `lieux` : « ABSENT de cette carte »). Chaque prise
+   *    déclare plusieurs candidats et on prend le premier présent ; ce qui manque est ANNONCÉ,
+   *    jamais silencieusement sauté — sinon on croit avoir six images et on en a quatre.
+   */
+  async vitrine(page) {
+    if (!dev) {
+      console.error('!! la vitrine exige --dev (téléportation et heure)')
+      return
+    }
+    // La fenêtre EST la résolution native du jeu (1280×720, Scale.FIT) : à cette taille le
+    // canvas ne subit ni bande noire ni rééchelonnage, donc l'art pixel reste au pixel près.
+    await page.setViewportSize({ width: 1280, height: 720 })
+    // `#braises-build` est stylé EN LIGNE (build-stamp.ts) : seul un `!important` de feuille
+    // le couche. Sans ça le tampon de build signe chaque image du menu.
+    await page.addStyleTag({ content: '.hud-overlay,#braises-build{display:none!important}' })
+    await page.waitForTimeout(600)
+
+    /**
+     * Éteint TOUT texte peint sur le canvas — et l'EMPÊCHE de se rallumer (règle ② en tête).
+     * LES DEUX SCÈNES, et la seconde n'est pas un détail : les noms de lieux vivent dans
+     * WorldScene, mais les conseils d'onboarding (« Un voisin, tout près… ») vivent dans
+     * UIScene, et il a fallu une prise gâchée pour s'en apercevoir.
+     */
+    const museler = () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      for (const s of [sc, sc.scene.get('ui')]) {
+        for (const o of s?.children?.list ?? []) {
+          if (o.type !== 'Text') continue
+          o.visible = false
+          o.setVisible = () => o
+        }
+      }
+    })
+
+    const heure = async (h) => {
+      // TÊTU, comme dans `feeling` : une action par input, un `set_hour` peut se faire manger.
+      for (let essai = 0; essai < 4; essai++) {
+        await page.evaluate((hh) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: hh }), h)
+        await page.waitForTimeout(500)
+        const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1)
+        if (Math.abs(lu - h) < 0.4) return true
+      }
+      console.error(`!! set_hour(${h}) n'a jamais pris`)
+      return false
+    }
+
+    /**
+     * LE RECENSEMENT DE LA CARTE, imprimé avant toute prise — sans lui on règle des heures
+     * pour des lieux qui n'existent pas. Il lit `map.zones` DIRECTEMENT et non `PROBE`, qui
+     * ne rend que les zones portant un `kind` : le Gué, lui, n'a pas de kind (c'est un lieu
+     * de terrain, pas un POI), donc PROBE ne le voit pas — la première série a silencieusement
+     * replié « l'eau » sur la Cascade pour cette seule raison.
+     */
+    const recensement = await page.evaluate(() => {
+      const par = {}
+      for (const z of window.__BRAISES__.scene.map.zones ?? []) {
+        const k = z.kind ?? `~${z.name}`
+        par[k] = (par[k] ?? 0) + 1
+      }
+      return par
+    })
+    console.log(`\n── cette carte contient ──\n   ${Object.entries(recensement).map(([k, n]) => `${k}×${n}`).join('  ')}`)
+
+    /** Vise le premier candidat présent : `kind` tel quel, ou `~Nom` pour une zone sans kind. */
+    const viser = (candidats) => page.evaluate((cands) => {
+      const zones = window.__BRAISES__.scene.map.zones ?? []
+      for (const c of cands) {
+        const z = c.startsWith('~') ? zones.find((q) => q.name === c.slice(1)) : zones.find((q) => q.kind === c)
+        if (z) return { x: z.x + z.w / 2, y: z.y + z.h / 2, kind: z.kind ?? '(terrain)', name: z.name }
+      }
+      return null
+    }, candidats)
+
+    /**
+     * LA PLANCHE DE PRISES. Chaque ligne : un lieu (avec ses replis), une heure, un fichier.
+     *
+     * L'HEURE EST LE VRAI LEVIER, et la première série l'a prouvé par l'absurde : le même
+     * décor est un relevé cadastral à 12 h et un tableau à 19 h. `ambientTint` (render/
+     * lighting.ts) donne l'ambre à 6 h et à 20 h, le bleu de nuit après 21 h ; entre 10 et
+     * 15 h son alpha est NUL — une prise de midi est, littéralement, sans ambiance.
+     *
+     * ET LE LIEU COMPTE AUTANT QUE L'HEURE : un plateau de roche ou une plaine rase ne
+     * deviennent pas beaux à l'heure dorée, ils deviennent une plaine rase dorée. Ce qui
+     * porte une image, ici, c'est la DENSITÉ — futaie, menhirs, berge, feu — donc la planche
+     * vise ce qui encombre le cadre, jamais ce qui l'ouvre.
+     */
+    const PRISES = [
+      { nom: 'sylve-matin', heure: 8, ou: ['bois_noir', 'chene', 'arbre'], quoi: 'la futaie au soleil levant' },
+      { nom: 'sylve-soir', heure: 19.5, ou: ['bois_noir', 'chene', 'arbre'], quoi: 'la même futaie, au couchant' },
+      { nom: 'gue-or', heure: 18.5, ou: ['~le Gué'], quoi: "la rivière à l'heure dorée" },
+      { nom: 'gue-brume', heure: 6, ou: ['~le Gué'], quoi: 'la rivière dans la brume' },
+      { nom: 'cercle', heure: 19.5, ou: ['cercle_pierres', 'pierre_levee', 'erratique'], quoi: 'les menhirs au couchant' },
+      { nom: 'tour', heure: 19, ou: ['tour_guet', 'ferme_ruinee', 'charrette'], quoi: 'la ruine au couchant' },
+      { nom: 'chene', heure: 7, ou: ['chene', 'arbre', 'bois_noir'], quoi: 'le gros bois au petit matin' },
+      { nom: 'feu-nuit', heure: 22, feu: true, quoi: 'un feu dans le noir' },
+      { nom: 'feu-aube', heure: 5, feu: true, garde: true, quoi: 'le même feu, avant le jour' },
+    ]
+
+    let prises = 0
+    let feuPose = null // le Feu fondé une fois sert à toutes les prises de feu
+    for (const p of PRISES) {
+      // LE FEU N'EST PAS UN LIEU : on le FONDE. Il exige du bois et un endroit loin des POI
+      // (règle R1 de la construction), d'où les décalages successifs autour du point courant.
+      let cible = null
+      if (p.feu && p.garde && feuPose) {
+        cible = feuPose
+      } else if (p.feu) {
+        for (let i = 0; i < 12; i++) await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_grant', item: 'wood' }))
+        const depart = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+        for (const [ox, oy] of [[0, 0], [24, 0], [-24, 0], [0, 24], [0, -24], [40, 40]]) {
+          await page.evaluate(({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }), { px: Math.round(depart.x) + ox + 0.5, py: Math.round(depart.y) + oy + 0.5 })
+          await page.waitForTimeout(250)
+          await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'light_fire' }))
+          await page.waitForTimeout(500)
+          const f = await page.evaluate(() => {
+            const x = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire')
+            return x ? { x: x.tx + 0.5, y: x.ty + 1.5, kind: 'feu', name: 'un Feu' } : null
+          })
+          if (f) { cible = f; feuPose = f; break }
+        }
+        if (!cible) { console.error(`   ✗ ${p.nom.padEnd(11)} aucun Feu n'a pris — prise SAUTÉE`); continue }
+      } else {
+        cible = await viser(p.ou)
+        if (!cible) {
+          console.error(`   ✗ ${p.nom.padEnd(11)} AUCUN de [${p.ou.join(', ')}] sur cette carte — prise SAUTÉE`)
+          continue
+        }
+      }
+
+      await page.evaluate(({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }), { px: cible.x, py: cible.y })
+      await page.waitForTimeout(1400)
+      await heure(p.heure)
+      await museler() // APRÈS le TP : fouler le lieu vient de le rendre connu, donc nommé
+      // La souris au centre : le décalage caméra « Foxhole » (framing R11) suit le curseur, et
+      // une souris oubliée dans un coin décadre toute la série.
+      await page.mouse.move(640, 360)
+      await page.waitForTimeout(900) // les fondus de lumière et la brume s'installent
+      const vue = await page.evaluate(() => ({ h: window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1 }))
+      await page.screenshot({ path: `${OUT}/vitrine-${p.nom}.jpg`, type: 'jpeg', quality: 82 })
+      console.log(`   ✓ ${p.nom.padEnd(11)} ${String(cible.kind).padEnd(15)} « ${cible.name} » — visée ${p.heure} h, PRISE À ${vue.h.toFixed(1)} h — ${p.quoi}`)
+      prises++
+    }
+    console.log(`\n${prises}/${PRISES.length} prises → ${OUT}/vitrine-*.jpg`)
+
+    // ── LE MONTAGE : les images DÉJÀ retenues, vues DANS le menu ────────────────────────
+    // L'atelier ne s'arrête pas à la prise de vue, parce qu'une image se juge à sa place.
+    // Une capture séduisante en plein écran peut buter sur le rail, écraser le titre ou
+    // avaler la mention de version — et c'est le recadrage du carrousel, pas la prise, qui
+    // le décide. On revient donc au menu et on regarde DEUX vues (la seconde après un pas
+    // de carrousel), en 1920×1080 : la taille où la vitrine est à l'échelle 1:1.
+    await page.setViewportSize({ width: 1920, height: 1080 })
+    await page.goto(BASE_URL.replace('?solo', ''), { waitUntil: 'networkidle' })
+    await page.waitForFunction(() => document.querySelector('.bm-vue'), null, { timeout: 30000 })
+    const montage = await page.evaluate(() => {
+      const v = document.querySelector('.bm-vitrine').getBoundingClientRect()
+      return { vues: document.querySelectorAll('.bm-vue').length, largeur: Math.round(v.width), hauteur: Math.round(v.height) }
+    })
+    console.log(`\n── le montage ──\n   ${montage.vues} vues dans une fente de ${montage.largeur}×${montage.hauteur}`)
+    await page.waitForTimeout(3000) // la première vue a fini son fondu d'entrée
+    await page.screenshot({ path: `${OUT}/vitrine-menu-1.png` })
+    await page.waitForTimeout(8000) // UN PAS de carrousel : la vue suivante a pris la place
+    await page.screenshot({ path: `${OUT}/vitrine-menu-2.png` })
+    console.log(`   → ${OUT}/vitrine-menu-{1,2}.png`)
+  },
 }
 
 const run = SCENARIOS[scenario]

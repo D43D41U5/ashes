@@ -1,0 +1,37 @@
+/**
+ * LA VITRINE — les images du jeu qui défilent à droite du menu principal (demande d'Alexis,
+ * 2026-07-28).
+ *
+ * CE SONT DE VRAIES CAPTURES DU JEU, PAS DES ILLUSTRATIONS. Elles sortent du scénario smoke
+ * `vitrine` (`pnpm smoke --scenario vitrine --dev`), qui téléporte l'avatar de lieu en lieu,
+ * pose l'heure, masque le HUD et les noms de lieux, et déclenche. C'est important pour deux
+ * raisons : ① l'accueil ne peut donc pas promettre un jeu qui n'existe pas ; ② le jour où l'art
+ * bouge (les arbres ont changé de taille le 2026-07-28), on RELANCE l'atelier et on remplace ces
+ * cinq fichiers — la fraîcheur des images est à une commande, pas à une séance de photo.
+ *
+ * L'ORDRE EST UNE DRAMATURGIE, pas un tri de dossier : on ouvre sur le feu dans le noir (ce que
+ * le jeu a de plus fort à montrer), puis la futaie, les menhirs, la rivière, et le Grand Chêne.
+ * Le carrousel boucle, donc la dernière image doit pouvoir revenir sur la première sans heurt.
+ *
+ * IMPORTÉES ET NON CODÉES EN DUR : Vite les empreinte (hash) et les copie au build ; une URL
+ * écrite à la main dans le HTML casserait au premier `pnpm build`. ~344 Ko pour les cinq.
+ */
+import feuAube from '../../assets/vitrine/feu-aube.jpg'
+import sylveMatin from '../../assets/vitrine/sylve-matin.jpg'
+import cercle from '../../assets/vitrine/cercle.jpg'
+import gueOr from '../../assets/vitrine/gue-or.jpg'
+import chene from '../../assets/vitrine/chene.jpg'
+
+export interface Vue {
+  src: string
+  /** Décrit l'image pour qui ne la voit pas — et sert de repère quand on rejoue l'atelier. */
+  alt: string
+}
+
+export const VITRINE: Vue[] = [
+  { src: feuAube, alt: "Un feu de camp allumé dans la nuit, ses tentes autour, au milieu d'une clairière" },
+  { src: sylveMatin, alt: 'Une futaie dense au soleil levant, champignons et sous-bois' },
+  { src: cercle, alt: 'Un cercle de menhirs dans une prairie fleurie, des cerfs au loin' },
+  { src: gueOr, alt: 'Un gué de galets sur une rivière, à la lumière du soir' },
+  { src: chene, alt: 'Le Grand Chêne, immense, au petit matin' },
+]
