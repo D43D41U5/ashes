@@ -1,14 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import type { SlotMeta } from '../../worker/persistence-store'
-import { depuisQuand, etatDeMonde, nomDeCase } from './monde-libelle'
+import { depuisQuand, etatDeMonde, nomDeCase, titreDeMonde } from './monde-libelle'
 
-const meta = (p: Partial<SlotMeta> = {}): SlotMeta => ({ seed: 2026, seasonDay: 14, savedAt: 1000, createdAt: 0, ...p })
+const meta = (p: Partial<SlotMeta> = {}): SlotMeta => ({ nom: '', seed: 2026, seasonDay: 14, savedAt: 1000, createdAt: 0, ...p })
 
 describe('ce qu’une ligne de l’écran des vallées annonce', () => {
   it('nomme la case par sa POSITION, à partir de 1 — pas par son index', () => {
     // Le joueur compte ses vallées de 1 à 5 ; l'index 0 est une affaire de clé de disque.
     expect(nomDeCase(0)).toBe('VALLÉE 1')
     expect(nomDeCase(4)).toBe('VALLÉE 5')
+  })
+
+  it('porte le NOM que le joueur a donné, et retombe sur la position quand il n’y en a pas', () => {
+    expect(titreDeMonde(1, meta({ nom: 'La Combe Grise' }))).toBe('La Combe Grise')
+    // Nommer est FACULTATIF, et aucune Veillée d'avant l'écran des vallées n'a de nom :
+    // le repli n'est pas un cas d'erreur, c'est la moitié des cas.
+    expect(titreDeMonde(1, meta({ nom: '' }))).toBe('VALLÉE 2')
+    expect(titreDeMonde(1, meta({ nom: '   ' }))).toBe('VALLÉE 2') // un nom d'espaces n'est pas un nom
+    expect(titreDeMonde(4, null)).toBe('VALLÉE 5')
   })
 
   it('dit le jour atteint ET la seed — les deux choses qui distinguent deux vallées', () => {

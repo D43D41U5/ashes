@@ -1,7 +1,7 @@
 import { seasonDayAtTick } from '@braises/sim'
 import { describe, expect, it } from 'vitest'
 import { metaDepuisSauvegarde, type SaveRecord } from './persistence-store'
-import { SLOT_COUNT, seedValide, slotValide } from './mondes'
+import { NOM_MAX, SLOT_COUNT, nettoieNom, seedValide, slotValide } from './mondes'
 
 /**
  * L'ÉCRAN DES VALLÉES PROMET, IL NE DOIT PAS MENTIR.
@@ -51,6 +51,7 @@ describe('metaDepuisSauvegarde — ce que le menu dit d’une case sans l’ouvr
     for (const brut of ['', '{{', 'null', '[]', '"texte"', '{"v":1}', enveloppe({})]) {
       const meta = metaDepuisSauvegarde(record(brut))
       expect(meta.seed).toBe(0)
+      expect(meta.nom).toBe('') // aucune de ces sauvegardes n'a jamais eu de nom à donner
       expect(meta.seasonDay).toBe(0) // « jour ? », jamais un jour 1 inventé
       expect(meta.savedAt).toBe(1_700_000_000_000)
     }
@@ -60,6 +61,32 @@ describe('metaDepuisSauvegarde — ce que le menu dit d’une case sans l’ouvr
     // `seasonDayAtTick(tick, 0)` rendrait 1 quel que soit le tick : une saison bien avancée
     // s'afficherait comme fraîche, et l'on effacerait la mauvaise case en la croyant vide.
     expect(metaDepuisSauvegarde(record(enveloppe({ seed: 5, tick: 500_000 }))).seasonDay).toBe(0)
+  })
+})
+
+describe('nommer une vallée — le seul texte libre du jeu', () => {
+  it('rogne les bords et borne la longueur', () => {
+    expect(nettoieNom('  La Combe Grise  ')).toBe('La Combe Grise')
+    expect(nettoieNom('')).toBe('')
+    expect(nettoieNom('   ')).toBe('')
+    expect(nettoieNom('a'.repeat(NOM_MAX + 12))).toBe('a'.repeat(NOM_MAX))
+    // Couper à la longueur peut laisser un espace en bout : on retaille APRÈS la coupe.
+    expect(nettoieNom(`${'a'.repeat(NOM_MAX - 1)} bcdef`)).toBe('a'.repeat(NOM_MAX - 1))
+  })
+
+  it('écrase les signes de contrôle — un collage multiligne ne casse pas la ligne', () => {
+    // Un nom vient d'un collage aussi souvent que d'une frappe. Un saut de ligne au milieu
+    // ferait déborder la ligne sur ses voisines (leur hauteur est fixe).
+    expect(nettoieNom('La Combe\nGrise')).toBe('La Combe Grise')
+    expect(nettoieNom('La\tCombe\u0000Grise')).toBe('La Combe Grise')
+    expect(nettoieNom('\n\n')).toBe('')
+  })
+
+  it('N’ÉCHAPPE PAS le HTML — c’est le rendu qui le fait, et lui seul', () => {
+    // Deux échappements valent pire qu'un : si on échappait ici, le nom partirait au disque
+    // en `&lt;b&gt;`, et le jour où on l'affiche ailleurs qu'en innerHTML on lirait les entités.
+    // Le nom se range TEL QUEL ; `menu-dom` l'échappe au moment d'écrire dans le DOM.
+    expect(nettoieNom('<b>Combe</b>')).toBe('<b>Combe</b>')
   })
 })
 

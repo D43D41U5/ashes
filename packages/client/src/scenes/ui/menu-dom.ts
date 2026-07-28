@@ -29,8 +29,8 @@
  */
 import { SERVERS, type ServerEntry } from '../../servers'
 import type { SlotMeta } from '../../worker/persistence-store'
-import { SEED_MAX, SLOT_COUNT, VEILLEE_SEED, seedValide } from '../../worker/mondes'
-import { depuisQuand, etatDeMonde, nomDeCase } from './monde-libelle'
+import { NOM_MAX, SEED_MAX, SLOT_COUNT, VEILLEE_SEED, nettoieNom, seedValide } from '../../worker/mondes'
+import { depuisQuand, etatDeMonde, nomDeCase, titreDeMonde } from './monde-libelle'
 import { ensureGameFont, GAME_FONT } from './game-font'
 
 export interface MenuHandle {
@@ -40,8 +40,8 @@ export interface MenuHandle {
 export interface MenuCallbacks {
   /** Rouvrir la vallée sauvée dans cette case (elle porte sa propre seed). */
   onContinue(slot: number): void
-  /** Semer une vallée neuve dans une case VIDE. */
-  onCreate(slot: number, seed: number): void
+  /** Semer une vallée neuve dans une case VIDE — `nom` peut être vide (nommer est facultatif). */
+  onCreate(slot: number, seed: number, nom: string): void
   /** Effacer une case. L'écran redessine la ligne quand la promesse tient. */
   onDelete(slot: number): Promise<void>
   onServer(server: ServerEntry): void
@@ -83,11 +83,9 @@ export function mountMenu(slots: (SlotMeta | null)[], cb: MenuCallbacks): MenuHa
     brancher()
     // Le champ de seed vient d'apparaître : on y met le curseur, et on SÉLECTIONNE la valeur
     // proposée — taper la sienne ne demande alors pas d'effacer d'abord.
-    if (mode === 'semer') {
-      const champ = listeEl.querySelector<HTMLInputElement>('.mw-seed')
-      champ?.focus()
-      champ?.select()
-    }
+    // On donne le curseur au NOM, pas à la seed : nommer est le premier geste, et la seed a
+    // déjà une valeur utilisable. (Le champ de seed reste pré-rempli et se sélectionne au clic.)
+    if (mode === 'semer') listeEl.querySelector<HTMLInputElement>('.mw-nom')?.focus()
   }
 
   const rouvrirToutes = (): void => {
@@ -145,19 +143,31 @@ export function mountMenu(slots: (SlotMeta | null)[], cb: MenuCallbacks): MenuHa
           champ.focus()
           return
         }
-        cb.onCreate(Number(semer.dataset.semer), seed)
+        // Le nom, lui, ne peut pas être « faux » : vide est une réponse valable, et ce qui
+        // reste est nettoyé (contrôle, bordures) exactement comme le Worker le fera.
+        const nomEl = listeEl.querySelector<HTMLInputElement>('.mw-nom')
+        cb.onCreate(Number(semer.dataset.semer), seed, nettoieNom(nomEl?.value ?? ''))
       }
       semer.addEventListener('click', (e) => {
         e.stopPropagation()
         fonder()
       })
-      champ.addEventListener('click', (e) => e.stopPropagation())
-      champ.addEventListener('input', () => champ.classList.remove('mw-seed-faux'))
-      champ.addEventListener('keydown', (e) => {
+      champ.addEventListener('click', (e) => {
         e.stopPropagation()
-        if (e.key === 'Enter') fonder()
-        if (e.key === 'Escape') rouvrirToutes()
+        champ.select() // cliquer la seed la SÉLECTIONNE : on la remplace, on ne l'édite pas
       })
+      champ.addEventListener('input', () => champ.classList.remove('mw-seed-faux'))
+      // Les deux champs répondent pareil : ENTRÉE fonde, ÉCHAP referme. Et tous deux retiennent
+      // leurs touches, sinon un « e » tapé dans un nom déclencherait la ceinture du jeu derrière.
+      for (const el of [champ, listeEl.querySelector<HTMLInputElement>('.mw-nom')]) {
+        if (!el) continue
+        el.addEventListener('click', (e) => e.stopPropagation())
+        el.addEventListener('keydown', (e) => {
+          e.stopPropagation()
+          if (e.key === 'Enter') fonder()
+          if (e.key === 'Escape') rouvrirToutes()
+        })
+      }
       // LE DÉ — une vallée au hasard, parce que « choisis un entier » n'est pas une invitation
       // à jouer. `Math.random` est ici SANS DANGER : on choisit une seed, on ne simule rien
       // (l'invariant de déterminisme porte sur /sim, pas sur le doigt qui sème).
@@ -247,7 +257,7 @@ function style(): string {
      déborde SUR les lignes voisines — un conseil trop long a déjà écrasé le nom de la case. */
   .bm .mw-row{height:66px;overflow:hidden;background:rgba(27,27,34,.55);border:2px solid #2a2a34;
     padding:0 22px;display:grid;align-items:center;gap:16px;text-align:left;
-    grid-template-columns:210px 1fr auto 40px;
+    grid-template-columns:320px 1fr auto 40px;
     transition:background .12s ease,border-color .12s ease,box-shadow .12s ease;}
   .bm .mw-row.mw-clic{cursor:pointer;}
   .bm .mw-row.mw-clic:hover,.bm .mw-row.mw-clic:focus-visible{background:rgba(201,139,58,.1);border-color:#c98b3a;
@@ -255,7 +265,10 @@ function style(): string {
   .bm .mw-row.mw-clic:hover .mw-name,.bm .mw-row.mw-clic:focus-visible .mw-name{color:#f2ead0;}
   /* Le bord haut chaud dit « ici, il y a un monde » — la case vide ne le porte pas. */
   .bm .mw-row.mw-plein{border-top-color:#6b5a3a;}
-  .bm .mw-name{font-size:19px;font-weight:700;color:#e8c66a;letter-spacing:3px;}
+  /* Le titre porte un NOM LIBRE (24 signes au plus) : la colonne est taillée pour, et ce qui
+     dépasserait malgré tout se coupe proprement plutôt que de pousser l'état du monde. */
+  .bm .mw-name{font-size:18px;font-weight:700;color:#e8c66a;letter-spacing:2px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
   .bm .mw-row.mw-vide .mw-name{color:#6b6558;}
   .bm .mw-state{font-size:14px;color:#c0a074;letter-spacing:1px;}
   .bm .mw-row.mw-vide .mw-state{color:#8b8474;}
@@ -268,17 +281,21 @@ function style(): string {
   /* SEMER — la ligne devient son champ de seed, sans changer de hauteur. Les colonnes sont
      FIXES (et le conseil, seul élastique, se coupe plutôt qu'il ne pousse) : la ligne doit
      tenir sur UN rang quelle que soit la largeur du texte. */
-  .bm .mw-row.mw-semer{grid-template-columns:140px 140px 40px 1fr auto;border-color:#c98b3a;
+  /* LE CHAMP DE NOM OCCUPE LA COLONNE DU TITRE — la même largeur, la même graisse, la même
+     place : on écrit LÀ OÙ ON LIRA. Et son invite est « VALLÉE N », donc le repli se montre
+     lui-même — inutile d'écrire quelque part que nommer est facultatif. */
+  .bm .mw-row.mw-semer{grid-template-columns:320px 120px 40px auto;border-color:#c98b3a;
     background:rgba(201,139,58,.08);}
-  .bm .mw-seed{width:100%;background:#14100c;border:2px solid #3a3225;color:#e8c66a;
-    font-family:inherit;font-size:16px;letter-spacing:2px;padding:9px 12px;outline:none;}
-  .bm .mw-seed:focus{border-color:#c98b3a;}
+  .bm .mw-champ{width:100%;background:#14100c;border:2px solid #3a3225;
+    font-family:inherit;padding:9px 12px;outline:none;}
+  .bm .mw-champ:focus{border-color:#c98b3a;}
+  .bm .mw-nom{color:#f2ead0;font-size:18px;font-weight:700;letter-spacing:2px;}
+  .bm .mw-nom::placeholder{color:#6b6558;font-weight:700;letter-spacing:2px;}
+  .bm .mw-seed{color:#e8c66a;font-size:15px;letter-spacing:2px;}
   .bm .mw-seed-faux{border-color:#e05a4a;color:#e05a4a;}
   .bm .mw-de{width:40px;height:40px;background:transparent;border:2px solid #3a3225;color:#c98b3a;
     font-size:17px;line-height:1;cursor:pointer;font-family:inherit;}
   .bm .mw-de:hover{border-color:#c98b3a;background:rgba(201,139,58,.14);}
-  .bm .mw-hint{font-size:12px;color:#8b8474;letter-spacing:1px;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
   .bm .mw-actes{display:flex;gap:12px;}
 
   /* EFFACER — le seul rouge de l'écran, comme au menu pause : on ne perd pas une vallée
@@ -304,14 +321,18 @@ function style(): string {
 
 /** UNE LIGNE de l'écran des mondes, dans le mode où elle se trouve. */
 function ligne(slot: number, meta: SlotMeta | null, mode: ModeLigne, maintenant: number): string {
-  const nom = `<span class="mw-name">${nomDeCase(slot)}</span>`
+  // ÉCHAPPÉ, toujours : le nom d'une vallée est le seul texte libre du jeu, et il arrive ici
+  // dans un `innerHTML`. Le nettoyage à la saisie ne remplace pas l'échappement au rendu.
+  const nom = `<span class="mw-name">${esc(titreDeMonde(slot, meta))}</span>`
 
   if (mode === 'semer') {
+    // Le champ de nom REMPLACE le titre, il ne s'ajoute pas à côté : c'est la même place, donc
+    // on tape ce qu'on lira. Son invite est le nom de repli — la ligne montre ainsi elle-même
+    // comment elle s'appellera si on ne la nomme pas, et nommer reste facultatif sans le dire.
     return `<div class="mw-row mw-semer">
-      ${nom}
-      <input class="mw-seed" type="text" inputmode="numeric" value="${VEILLEE_SEED}" aria-label="seed de la vallée" maxlength="9">
+      <input class="mw-champ mw-nom" type="text" placeholder="${nomDeCase(slot)}" aria-label="nom de la vallée" maxlength="${NOM_MAX}">
+      <input class="mw-champ mw-seed" type="text" inputmode="numeric" value="${VEILLEE_SEED}" aria-label="seed de la vallée" maxlength="9">
       <button class="mw-de" data-de title="une seed au hasard">⚄</button>
-      <span class="mw-hint">même seed, même vallée</span>
       <span class="mw-actes"><button class="mw-btn" data-semer="${slot}">FONDER</button>
       <button class="mw-btn mw-ghost" data-annuler>annuler</button></span>
     </div>`
@@ -320,7 +341,7 @@ function ligne(slot: number, meta: SlotMeta | null, mode: ModeLigne, maintenant:
   if (mode === 'effacer') {
     const etat = meta ? etatDeMonde(meta) : ''
     return `<div class="mw-row mw-effacer">
-      <span class="mw-warn">Effacer <b>${nomDeCase(slot)}</b>${etat ? ` (${esc(etat)})` : ''} — c'est sans retour.</span>
+      <span class="mw-warn">Effacer <b>${esc(titreDeMonde(slot, meta))}</b>${etat ? ` (${esc(etat)})` : ''} — c'est sans retour.</span>
       <button class="mw-btn mw-ghost" data-annuler>revenir en arrière</button>
       <button class="mw-btn mw-danger" data-effacer="${slot}">EFFACER</button>
     </div>`
@@ -339,7 +360,7 @@ function ligne(slot: number, meta: SlotMeta | null, mode: ModeLigne, maintenant:
     ${nom}
     <span class="mw-state">${esc(etatDeMonde(meta))}</span>
     <span class="mw-when">${esc(depuisQuand(meta.savedAt, maintenant))}</span>
-    <button class="mw-x" data-x="${slot}" title="effacer ce monde" aria-label="effacer ${nomDeCase(slot)}">✕</button>
+    <button class="mw-x" data-x="${slot}" title="effacer ce monde" aria-label="effacer ${esc(titreDeMonde(slot, meta))}">✕</button>
   </div>`
 }
 

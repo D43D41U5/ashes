@@ -64,6 +64,13 @@ export interface SaveRecord {
 
 /** Ce que l'ÉCRAN DES MONDES doit savoir d'une case — sans ouvrir la partie. */
 export interface SlotMeta {
+  /**
+   * LE NOM donné à la vallée à sa fondation — le seul texte libre du jeu. `''` quand elle n'en
+   * a pas (nommer est facultatif, et les sauvegardes d'avant n'en portent aucun) : l'écran
+   * retombe alors sur « VALLÉE N ». Il vit ICI, avec la seed, et pas dans un rangement à part :
+   * un nom qui pourrait survivre à l'effacement de son monde irait se recoller au suivant.
+   */
+  nom: string
   /** La seed semée à la fondation : l'identité de la vallée. 0 = inconnue (voir `metaDepuisSauvegarde`). */
   seed: number
   /** Jour de saison atteint (à partir de 1). 0 = inconnu. */
@@ -231,7 +238,9 @@ export async function saveMeta(slot: number, meta: SlotMeta): Promise<void> {
  * faire échouer l'écran entier. Ce qu'on n'a pas su lire vaut 0, et l'écran dit « jour ? ».
  */
 export function metaDepuisSauvegarde(record: SaveRecord): SlotMeta {
-  const inconnu: SlotMeta = { seed: 0, seasonDay: 0, savedAt: record.savedAt ?? 0, createdAt: record.savedAt ?? 0 }
+  // Une Veillée d'avant l'écran des vallées n'a jamais eu de nom à donner : `''`, et l'écran
+  // dira « VALLÉE N ». On n'en invente pas un depuis la seed — un nom est un choix, pas un dérivé.
+  const inconnu: SlotMeta = { nom: '', seed: 0, seasonDay: 0, savedAt: record.savedAt ?? 0, createdAt: record.savedAt ?? 0 }
   let parsed: unknown
   try {
     parsed = JSON.parse(record.sim)
@@ -246,6 +255,7 @@ export function metaDepuisSauvegarde(record: SaveRecord): SlotMeta {
   const tick = nombre(etat.tick)
   const echelle = nombre(etat.calendarScale)
   return {
+    nom: '',
     seed: nombre(etat.seed),
     // Sans échelle de calendrier, le jour ne se calcule pas : on dit « inconnu » plutôt que
     // d'inventer un jour 1 sur une saison bien avancée.

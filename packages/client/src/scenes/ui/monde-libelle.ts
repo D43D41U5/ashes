@@ -14,6 +14,17 @@ export function nomDeCase(slot: number): string {
 }
 
 /**
+ * COMMENT S'APPELLE CE MONDE : le nom que le joueur lui a donné, ou sa position à défaut.
+ *
+ * Nommer est FACULTATIF, et les Veillées d'avant l'écran des vallées n'ont jamais eu de nom
+ * à donner : le repli n'est pas un cas d'erreur, c'est la moitié des cas. On n'invente rien
+ * depuis la seed — un nom est un choix, pas un dérivé.
+ */
+export function titreDeMonde(slot: number, meta: SlotMeta | null): string {
+  return meta?.nom?.trim() || nomDeCase(slot)
+}
+
+/**
  * L'état d'une vallée : le jour atteint, et la seed qui l'a semée.
  *
  * `seasonDay: 0` et `seed: 0` sont les inconnus de `metaDepuisSauvegarde` (sauvegarde d'un

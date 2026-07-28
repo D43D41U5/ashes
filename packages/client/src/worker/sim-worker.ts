@@ -34,7 +34,7 @@ import {
 } from '@braises/sim'
 import { createVeillee, LOAD_PHASES } from './veillee'
 import { loadCarte, loadMeta, loadSlot, saveCarteEtSlot, saveSlot, type SlotMeta } from './persistence-store'
-import { seedValide, slotValide, type VeilleeInit } from './mondes'
+import { nettoieNom, seedValide, slotValide, type VeilleeInit } from './mondes'
 
 const post = (message: HostToClient): void => {
   ;(self as unknown as { postMessage(m: unknown): void }).postMessage(message)
@@ -49,9 +49,11 @@ let playerId = 0
  * écrit, la seed dit quelle vallée il sème. Changer de monde veut dire un autre Worker — et,
  * dans les faits, un rechargement de page (l'invariant de `clearSlot`).
  */
-let monde: { slot: number; seed: number } | undefined
+let monde: { slot: number; seed: number; nom: string } | undefined
 /** Horloge murale de la FONDATION du monde — conservée d'une session à l'autre par la méta. */
 let mondeCreeA = 0
+/** LE NOM de la vallée : celui de la fondation, ou celui relu au disque à la reprise. */
+let mondeNom = ''
 /**
  * LA SONDE DE COÛT (dev seulement — voir `PerfMessage`). Le budget d'un tick est de 50 ms
  * (20 Hz) ; ce que le projet en sait vient de Node sous `tsx`, pas de ce moteur-ci. On relève
@@ -256,6 +258,7 @@ async function persist(): Promise<void> {
     // qu'on rouvrira, jamais celui d'avant. Elle se calcule ici parce qu'elle demande le
     // `SimState` vivant, que le menu, lui, n'ouvrira pas.
     const meta: SlotMeta = {
+      nom: mondeNom,
       seed: sim.seed,
       seasonDay: getGameTime(sim).seasonDay,
       savedAt: record.savedAt,
@@ -305,7 +308,7 @@ async function persist(): Promise<void> {
  * génération est annoncée au fil de l'eau (barre de chargement) ; une reprise, elle, est
  * quasi instantanée — on annonce alors une barre pleine d'un coup.
  */
-async function boot(slot: number, seed: number): Promise<void> {
+async function boot(slot: number, seed: number, nom: string): Promise<void> {
   let spawn: { x: number; y: number } | undefined
   let resumed = false
   try {
@@ -349,7 +352,11 @@ async function boot(slot: number, seed: number): Promise<void> {
       // LA DATE DE FONDATION SURVIT À LA REPRISE : sans ça, chaque sauvegarde ferait naître le
       // monde à l'instant — et l'écran des mondes dirait « commencée à l'instant » d'une vallée
       // vieille de trois jours. Sauvegarde d'avant les métas : sa date de sauvegarde fait foi.
-      mondeCreeA = (await loadMeta(slot))?.createdAt || rec.savedAt
+      const metaDisque = await loadMeta(slot)
+      mondeCreeA = metaDisque?.createdAt || rec.savedAt
+      // LE NOM AUSSI SURVIT, et il vient du DISQUE, pas de la configuration d'hôte : rouvrir
+      // une vallée nommée ne doit pas pouvoir la rebaptiser (ni l'effacer si le menu se tait).
+      mondeNom = metaDisque?.nom ?? ''
       // LA SEED SEMÉE PERD FACE À CELLE DU MONDE SAUVÉ : on rouvre CETTE vallée-là, telle
       // qu'elle est au disque. `seed` ne sert qu'à en FONDER une (plus bas).
       resumed = true
@@ -367,6 +374,7 @@ async function boot(slot: number, seed: number): Promise<void> {
       post({ type: 'progress', phase, done: LOAD_PHASES.indexOf(phase), total: LOAD_PHASES.length })
     })
     mondeCreeA = Date.now() // la fondation, horloge murale d'hôte — /sim n'en sait rien
+    mondeNom = nom // le nom n'a de sens qu'ici : une vallée se nomme quand on la fonde
     sim = world.sim
     playerId = world.playerId
     spawn = world.spawn
@@ -441,7 +449,7 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost | VeilleeInit
     if (!slotValide(msg.slot) || !seedValide(msg.seed)) {
       throw new Error(`sim-worker: monde impossible (case ${msg.slot}, seed ${msg.seed})`)
     }
-    monde = { slot: msg.slot, seed: msg.seed }
+    monde = { slot: msg.slot, seed: msg.seed, nom: nettoieNom(msg.nom ?? '') }
   } else if (msg.type === 'join') {
     if (sim || booting) return // déjà en jeu (ou en cours de boot async) : pas de second monde
     // ON JETTE ICI, PAS DANS `boot()` : `void boot()` avale sa rejection (le `onerror` du Worker
@@ -449,7 +457,7 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost | VeilleeInit
     // dans le handler, l'erreur remonte au client, qui a un écran fatal pour ça.
     if (!monde) throw new Error('sim-worker: « join » sans configuration d’hôte (« veillee_init »)')
     booting = true
-    void boot(monde.slot, monde.seed)
+    void boot(monde.slot, monde.seed, monde.nom)
   } else if (msg.type === 'input') {
     playerInput = { dx: msg.dx, dy: msg.dy, sprint: msg.sprint, sneak: msg.sneak, block: msg.block }
     lastProcessedInput = msg.seq

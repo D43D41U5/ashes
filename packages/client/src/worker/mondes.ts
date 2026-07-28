@@ -40,6 +40,27 @@ export function seedValide(n: number): boolean {
 }
 
 /**
+ * COMBIEN DE SIGNES pour nommer une vallée. 24 : c'est ce qui tient dans la colonne de gauche
+ * de l'écran des vallées sans la faire déborder sur l'état du monde (mesuré en mono, à 19 px).
+ * Au-delà, on ne coupe pas à l'affichage — on refuse à la saisie, pour que ce qu'on tape soit
+ * exactement ce qu'on lira.
+ */
+export const NOM_MAX = 24
+
+/**
+ * NETTOIE un nom de vallée — c'est le SEUL texte libre du jeu, et il finit dans un `innerHTML`.
+ *
+ * L'échappement HTML se fait au rendu (`esc`, dans `menu-dom`), mais on ne laisse pas entrer
+ * n'importe quoi pour autant : les caractères de contrôle (dont les sauts de ligne, qu'un
+ * collage apporte) casseraient la ligne, et les espaces de bordure font des noms qui se
+ * ressemblent sans être égaux. Rend `''` pour un nom vide — l'écran retombe alors sur
+ * « VALLÉE N », et nommer reste facultatif.
+ */
+export function nettoieNom(brut: string): string {
+  return brut.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, NOM_MAX).trim()
+}
+
+/**
  * LA CONFIGURATION D'HÔTE du Worker — QUEL monde il ouvre.
  *
  * Ce message n'est **pas** du protocole de jeu (`ClientToHost`, dans /sim) et n'a rien à y
@@ -53,4 +74,7 @@ export interface VeilleeInit {
   type: 'veillee_init'
   slot: number
   seed: number
+  /** Le nom donné à la vallée à sa fondation. `''` = pas de nom (l'écran dira « VALLÉE N »).
+   *  Ignoré à la REPRISE : une vallée sauvée porte déjà le sien, au disque. */
+  nom: string
 }

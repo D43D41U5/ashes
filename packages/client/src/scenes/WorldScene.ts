@@ -298,6 +298,8 @@ export interface WorldSceneData {
   slot?: number
   /** SOLO — la seed à SEMER si la case est vide. Une case occupée garde la sienne. */
   seed?: number
+  /** SOLO — le nom donné à la vallée qu'on FONDE. Une case occupée garde le sien. */
+  nom?: string
 }
 
 export class WorldScene extends Phaser.Scene {
@@ -619,7 +621,7 @@ export class WorldScene extends Phaser.Scene {
     this.slot = data.slot ?? 0
     this.host = serverUrl
       ? createColyseusHost(serverUrl)
-      : createWorkerHost({ slot: this.slot, seed: data.seed ?? VEILLEE_SEED })
+      : createWorkerHost({ slot: this.slot, seed: data.seed ?? VEILLEE_SEED, nom: data.nom ?? '' })
     // MULTI : les autres entités sont rendues ~100 ms en retard (tampon de gigue,
     // spec Tranche B) ; en solo on garde le tick de retard par défaut, ~0 latence.
     if (serverUrl) this.view.interpDelayMs = INTERP_DELAY_MULTI_MS

@@ -82,7 +82,7 @@ export class MenuScene extends Phaser.Scene {
           // cinq cases deviendraient LA MÊME vallée, chacune ayant annoncé la sienne juste avant.
           // `||` et non `??` : la seed 0 est l'inconnu de `metaDepuisSauvegarde`, pas une seed.
           onContinue: (slot) => this.launch({ mode: 'solo', slot, seed: slots[slot]?.seed || VEILLEE_SEED }),
-          onCreate: (slot, seed) => this.launch({ mode: 'solo', slot, seed }),
+          onCreate: (slot, seed, nom) => this.launch({ mode: 'solo', slot, seed, nom }),
           // Effacer un monde emporte AUSSI son brouillard : refonder une vallée dans cette case
           // doit être une vraie découverte, pas une carte déjà dépliée sur un terrain inconnu.
           onDelete: (slot) => clearSlot(slot).then(() => clearFog(slot)),

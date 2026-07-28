@@ -3430,19 +3430,33 @@ const SCENARIOS = {
 
     // ── 2. FONDER, EN CHOISISSANT LA SEED. La case vide devient son champ ; on y met la nôtre.
     const SEED = 31415
+    const NOM = 'La Combe Grise'
     await page.click('.mw-row:nth-child(2)')
     await page.waitForTimeout(200)
     await page.screenshot({ path: `${OUT}/accueil-semer.png` })
-    const champ = await page.evaluate(() => {
-      const el = document.querySelector('.mw-seed')
-      // Le champ doit être PRÊ-REMPLI et sélectionné : taper sa seed ne doit pas demander
-      // d'effacer d'abord (c'est le geste que le dé remplace, pas un formulaire à vider).
-      return el ? { valeur: el.value, focus: document.activeElement === el, de: Boolean(document.querySelector('.mw-de')) } : null
+    const champs = await page.evaluate(() => {
+      const nom = document.querySelector('.mw-nom')
+      const seed = document.querySelector('.mw-seed')
+      // Le NOM prend le curseur (c'est le premier geste), la SEED est déjà posée : on ne
+      // demande pas de remplir un formulaire pour fonder une vallée.
+      return {
+        nomFocus: document.activeElement === nom,
+        nomVide: nom?.value === '',
+        // L'invite EST le nom de repli, à la place exacte du titre : la ligne montre
+        // elle-même comment elle s'appellera si on ne la nomme pas.
+        invite: nom?.placeholder ?? '',
+        seed: seed?.value ?? '',
+        de: Boolean(document.querySelector('.mw-de')),
+      }
     })
-    console.log(`champ de seed : ${JSON.stringify(champ)}`)
-    if (!champ?.focus || !champ.de) console.error(`!! LE CHAMP DE SEED N'EST PAS PRÊT : ${JSON.stringify(champ)}`)
+    console.log(`champs de fondation : ${JSON.stringify(champs)}`)
+    if (!champs.nomFocus || !champs.nomVide || champs.invite !== 'VALLÉE 2' || champs.seed !== '2026' || !champs.de) {
+      console.error(`!! LES CHAMPS DE FONDATION NE SONT PAS PRÊTS : ${JSON.stringify(champs)}`)
+    }
 
+    await page.fill('.mw-nom', NOM)
     await page.fill('.mw-seed', String(SEED))
+    await page.screenshot({ path: `${OUT}/accueil-semer-rempli.png` })
     await page.click('[data-semer]')
     await page.waitForFunction(() => window.__BRAISES__?.scene?.registry?.get('mapData'), null, { timeout: 150000 })
     await page.waitForTimeout(1500)
@@ -3466,6 +3480,15 @@ const SCENARIOS = {
     if (!apresFondation[1]?.plein || !apresFondation[1]?.etat.includes(`seed ${SEED}`)) {
       console.error(`!! LA VALLÉE FONDÉE NE S'ANNONCE PAS : ${JSON.stringify(apresFondation[1])}`)
     }
+    // LE NOM A-T-IL SURVÉCU au disque et au rechargement ? C'est tout l'intérêt de le ranger
+    // dans la méta plutôt qu'à côté : il revient avec le monde, pas avec la session.
+    if (apresFondation[1]?.nom !== NOM) {
+      console.error(`!! LE NOM DE LA VALLÉE NE SURVIT PAS : « ${apresFondation[1]?.nom} » ≠ « ${NOM} »`)
+    }
+    // …et la case jamais nommée garde son repli de position.
+    if (apresFondation[0]?.nom !== 'VALLÉE 1') {
+      console.error(`!! LE REPLI « VALLÉE N » A SAUTÉ : ${JSON.stringify(apresFondation[0])}`)
+    }
     if (!apresFondation[0]?.plein) console.error(`!! FONDER UNE VALLÉE A EMPORTÉ L'AUTRE`)
 
     // ── 4. ROUVRIR UNE VALLÉE (le geste de la stèle de fin de saison) — `?solo&fresh` efface
@@ -3486,6 +3509,9 @@ const SCENARIOS = {
     await page.waitForTimeout(400)
     const apresFresh = await cases()
     console.log(`après ?fresh sur la case 2 : ${JSON.stringify(apresFresh)}`)
+    if (apresFresh[1]?.nom !== 'VALLÉE 2') {
+      console.error(`!! ?fresh A GARDÉ LE NOM D'UN MONDE EFFACÉ : ${JSON.stringify(apresFresh[1])}`)
+    }
     if (!apresFresh[1]?.etat.includes('seed 888')) {
       console.error(`!! LA CASE ROUVERTE N'A PAS CHANGÉ DE MONDE : ${JSON.stringify(apresFresh[1])}`)
     }
