@@ -567,7 +567,9 @@ export class WorldScene extends Phaser.Scene {
         const monsterIds = new Set(this.view.monsters.map((m) => m.entityId))
         return this.lastEntities
           .filter((e) => e.id !== this.playerId && e.hp > 0 && !monsterIds.has(e.id))
-          .map((e) => ({ id: e.id, x: e.x, y: e.y }))
+          // `wounds` accompagne la position : c'est ce qui permet de PANSER un tiers et pas
+          // seulement de lui donner. Le snapshot les porte déjà — il ne manquait que le fil.
+          .map((e) => ({ id: e.id, x: e.x, y: e.y, wounds: e.wounds }))
       },
       // Les handlers d'input sont posés dès `create`, mais `this.warp` n'existe
       // qu'après `onReady` (génération de carte). Avant, on renvoie le point plat :

@@ -43,6 +43,9 @@ export interface AimTarget {
   /** L'ENTITÉ (PNJ/joueur) visée sous le curseur, à portée du joueur — la cible d'un DON
    *  ou d'un soin (spec alignement/combat). `null` = personne sous le curseur à portée. */
   entityId: number | null
+  /** L'entité visée SAIGNE-t-elle (ou boite, ou a le bras cassé) ? La cible d'un soin.
+   *  Faux si personne n'est visé. Le snapshot porte les plaies de chacun ; la sim revalide. */
+  entityWounded: boolean
   /** Un FEU (structure) est-il sur la tuile visée ? La cible de `feed_fire` (du bois en main
    *  + clic sur le Feu → on le nourrit). La sim vise TOUJOURS le foyer de l'acteur. */
   onFire: boolean
@@ -84,8 +87,9 @@ export function aimAt(
   nodes: readonly ResourceNode[],
   corpses: readonly Corpse[],
   range: number,
-  /** Les autres entités (PNJ/joueurs) — SANS soi ni les monstres : le caller filtre. */
-  entities: readonly { id: number; x: number; y: number }[] = [],
+  /** Les autres entités (PNJ/joueurs) — SANS soi ni les monstres : le caller filtre.
+   *  `wounds` est OPTIONNEL : un appelant qui ne vise que le don n'a pas à le fournir. */
+  entities: readonly { id: number; x: number; y: number; wounds?: { leg?: true; arm?: true; bleeding?: true } }[] = [],
   /** Les structures — pour repérer le Feu (feed_fire), une structure abîmée (repair), une
    *  parcelle à semer/récolter (agriculture) visés. */
   structures: readonly AimStructure[] = [],
@@ -123,6 +127,7 @@ export function aimAt(
   // L'ENTITÉ visée : la plus proche du CURSEUR (tuile visée), à condition d'être sous le
   // curseur (≤ AIM_ENTITY_TILES) ET à portée de bras du JOUEUR (la sim revalide la portée).
   let entityId: number | null = null
+  let entityWounded = false
   let bestD = AIM_ENTITY_TILES * AIM_ENTITY_TILES
   for (const e of entities) {
     const cx = e.x - (tx + 0.5)
@@ -133,6 +138,10 @@ export function aimAt(
     if (px * px + py * py <= range * range && dCursor < bestD) {
       bestD = dCursor
       entityId = e.id
+      // La plaie de la CIBLE, pas la mienne. C'est toute la différence entre « je me panse »
+      // et « je le panse » — et c'est ce que le client ne portait pas jusqu'ici.
+      const w = e.wounds
+      entityWounded = Boolean(w && (w.bleeding || w.leg || w.arm))
     }
   }
 
@@ -142,6 +151,7 @@ export function aimAt(
     corpseId: corpse?.id ?? null,
     nodeId: node?.id ?? null,
     entityId,
+    entityWounded,
     onFire,
     fireId,
     repairableId: damaged?.id ?? null,
@@ -265,6 +275,21 @@ export function clickToAction(
 
   // MANGER : on tient de quoi, on croque. (Le clic maintenu répète — voir holdHarvest.)
   if (hand && isFood(hand.held)) return eatHeld(hand)
+
+  // PANSER QUELQU'UN (décision d'Alexis 2026-07-28 : TOUT blessé, étranger compris) — le
+  // troisième verbe chaud, et le dernier qui manquait au joueur. La sim l'acceptait DÉJÀ et
+  // le récompensait (`combat.ts` → `HEAL_OUTSIDER_WARMTH`) ; le client, lui, ne savait panser
+  // que soi. Il contredisait donc la sim, et le dilemme du voisin n'avait que deux issues —
+  // donner ou piller — là où le froid en a deux aussi. Un étranger blessé devient une
+  // OCCASION, pas seulement une menace ou une ressource.
+  //
+  // Même règle que le DON, et pour la même raison : viser quelqu'un dit « c'est pour toi ».
+  // On passe donc AVANT le soin sur soi — sinon, en saignant tous les deux, le clic sur le
+  // voisin se serait soigné moi. La sim revalide tout (portée, plaie, fibres, cooldown), et
+  // elle seule décide si l'acte est chaud.
+  if (hand && isCareMaterial(hand.held) && target.entityId !== null && target.entityWounded) {
+    return { type: 'bandage', targetEntityId: target.entityId }
+  }
 
   // SE PANSER (spec combat R7) : des fibres en main ET une plaie → on se bande. Placé
   // AVANT la frappe et la récolte : si l'on a équipé des fibres en saignant, le clic

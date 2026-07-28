@@ -77,6 +77,62 @@ describe('clickToAction — se panser : fibres en main + une plaie (V0-2)', () =
   })
 })
 
+/**
+ * PANSER QUELQU'UN D'AUTRE — le troisième verbe chaud (décision d'Alexis 2026-07-28 : TOUT
+ * blessé, étranger compris).
+ *
+ * `/sim` l'acceptait déjà et le récompensait (`combat.ts` → `HEAL_OUTSIDER_WARMTH`) ; le
+ * client, lui, ne savait panser que SOI — il contredisait donc la sim, et le dilemme du
+ * voisin n'avait que deux issues, donner ou piller. Ce qui manquait n'était pas une règle :
+ * c'était le fil qui porte la PLAIE DE LA CIBLE jusqu'au résolveur.
+ */
+describe('clickToAction — panser un tiers : fibres en main + quelqu’un qui saigne', () => {
+  const blesse = (id: number) => ({ id, x: 11.5, y: 11.5, wounds: { bleeding: true as const } })
+  const indemne = (id: number) => ({ id, x: 11.5, y: 11.5, wounds: {} })
+  const vise = (autres: { id: number; x: number; y: number; wounds: { bleeding?: true } }[]) =>
+    aimAt(11, 11, PLAYER, [], [], RANGE, autres)
+  const fibres = (wounded = false) => ({ held: 'fiber' as const, wounded, dx: 1, dy: 0 })
+
+  it('un voisin qui SAIGNE sous le curseur → on le panse, LUI', () => {
+    expect(clickToAction(vise([blesse(9)]), null, fibres())).toEqual({ type: 'bandage', targetEntityId: 9 })
+  })
+
+  it('un voisin INDEMNE → pas de soin : le clic retombe sur la frappe', () => {
+    expect(clickToAction(vise([indemne(9)]), null, fibres())).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+
+  it('LE VISER PRIME SUR SE SOIGNER — viser quelqu’un dit « c’est pour toi »', () => {
+    // Les deux saignent, et c'est LE cas qui décide de l'ordre des branches : si le soin sur
+    // soi passait d'abord, cliquer sur le blessé se serait soigné moi. Même règle que le don.
+    expect(clickToAction(vise([blesse(9)]), null, fibres(true))).toEqual({ type: 'bandage', targetEntityId: 9 })
+  })
+
+  it('personne sous le curseur, mais je saigne → je me panse (aucune régression)', () => {
+    expect(clickToAction(vise([]), null, fibres(true))).toEqual({ type: 'bandage' })
+  })
+
+  it('un blessé HORS DE PORTÉE n’est pas une cible — le bras ne s’allonge pas', () => {
+    const loin = [{ id: 9, x: 30.5, y: 30.5, wounds: { bleeding: true as const } }]
+    const vu = aimAt(30, 30, PLAYER, [], [], RANGE, loin)
+    // `aimAt` ne le retient même pas : la portée est jugée AVANT le reste. Le clic retombe
+    // donc sur la frappe à mains nues, comme avec des fibres sans plaie — jamais sur un soin
+    // que la sim refuserait (un refus n'est pas gratuit : la chronique le lit).
+    expect(vu.entityId).toBeNull()
+    expect(vu.entityWounded).toBe(false)
+    expect(clickToAction(vu, null, fibres())).not.toMatchObject({ type: 'bandage' })
+  })
+
+  it('le MAINTIEN ne répète pas le soin d’un tiers non plus', () => {
+    expect(holdHarvest(vise([blesse(9)]), null, 1000, 0, 200, fibres())).toBeNull()
+  })
+
+  it('la plaie lue est celle de la CIBLE, pas la mienne (aimAt porte le fil)', () => {
+    expect(vise([blesse(9)]).entityWounded).toBe(true)
+    expect(vise([indemne(9)]).entityWounded).toBe(false)
+    expect(vise([]).entityWounded).toBe(false)
+  })
+})
+
 describe('clickToAction — armé, le clic bâtit (A2)', () => {
   it('sur une tuile vide, il pose la structure choisie — mur en bois par défaut', () => {
     const t = aimAt(11, 11, PLAYER, [], [], RANGE)
@@ -198,8 +254,8 @@ describe('viser un feu → fireId (pour ouvrir le modal à E, spec feu-station S
 })
 
 describe('la main décide du clic', () => {
-  const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, entityId: null, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
-  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, entityId: null, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
+  const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
+  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
   const versLest = { dx: 1, dy: 0 }
 
   it('DE LA NOURRITURE EN MAIN → on mange (et le maintien répète)', () => {
