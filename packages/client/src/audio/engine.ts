@@ -18,10 +18,23 @@ export class SoundEngine {
   /** Le curseur MAÎTRE, 0..1 (persisté) — multiplie le plafond `MASTER_GAIN`. */
   private volume: number
 
-  constructor() {
-    this.muted = readStorage(MUTE_KEY) === '1'
-    const v = Number(readStorage(VOLUME_KEY))
-    this.volume = Number.isFinite(v) && readStorage(VOLUME_KEY) !== null ? clamp01(v) : 1
+  /** Faux = moteur JETABLE : ni lecture ni écriture des réglages du joueur (voir plus bas). */
+  private readonly persist: boolean
+
+  /**
+   * `persist: false` pour tout moteur qui n'est PAS celui de la partie — le banc d'écoute,
+   * un test, un aperçu. Sans ça, un instrument de dev écrit dans les réglages du JEU : le
+   * curseur du banc et celui du menu pause partagent `braises.audio.volume` sur la même
+   * origine (localhost:3000 sert les deux pages), donc baisser le volume en calant un son
+   * baissait le volume de la Veillée — et le silence survivait au rechargement, sans que
+   * rien à l'écran du jeu ne dise pourquoi.
+   */
+  constructor({ persist = true }: { persist?: boolean } = {}) {
+    this.persist = persist
+    this.muted = persist && readStorage(MUTE_KEY) === '1'
+    const raw = persist ? readStorage(VOLUME_KEY) : null
+    const v = Number(raw)
+    this.volume = raw !== null && Number.isFinite(v) ? clamp01(v) : 1
   }
 
   /** Le gain effectif = 0 si muet, sinon le plafond × le curseur. Une seule source. */
@@ -57,7 +70,7 @@ export class SoundEngine {
   toggleMute(): boolean {
     this.muted = !this.muted
     this.applyGain()
-    writeStorage(MUTE_KEY, this.muted ? '1' : '0')
+    if (this.persist) writeStorage(MUTE_KEY, this.muted ? '1' : '0')
     return this.muted
   }
 
@@ -65,7 +78,7 @@ export class SoundEngine {
   setVolume(v: number): number {
     this.volume = clamp01(v)
     this.applyGain()
-    writeStorage(VOLUME_KEY, String(this.volume))
+    if (this.persist) writeStorage(VOLUME_KEY, String(this.volume))
     return this.volume
   }
 
@@ -75,6 +88,16 @@ export class SoundEngine {
 
   isMuted(): boolean {
     return this.muted
+  }
+
+  /**
+   * Le contexte est-il RÉELLEMENT en train de jouer ? `play()` abandonne en silence tant que
+   * le navigateur n'a pas accordé l'audio (pas encore de geste utilisateur) — un silence
+   * qu'on ne peut distinguer d'un son raté. Le banc d'écoute l'affiche : on ne fait pas
+   * douter quelqu'un de ses oreilles.
+   */
+  isReady(): boolean {
+    return this.ctx?.state === 'running'
   }
 }
 

@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import type { SimEvent } from '@braises/sim'
-import { soundForEvent } from './sound'
+import { soundForEvent, type SoundSpec } from './sound'
+import { SONORES, VOIX } from './inventaire'
 
 /** Fabrique un événement synthétique (les champs superflus sont ignorés par le routage). */
 const ev = (type: string, extra: Record<string, unknown> = {}): SimEvent =>
   ({ type, tick: 0, ...extra }) as unknown as SimEvent
 
 /**
- * QUI A UNE VOIX, ET QUI N'EN A PAS — la table exhaustive, tenue par le compilateur.
+ * QUI A UNE VOIX, ET QUI N'EN A PAS — la table exhaustive vit dans `inventaire.ts`.
  *
- * `Record<SimEvent['type'], …>` : ajouter une variante à `SimEvent` rend ce fichier ROUGE
- * tant que personne ne dit ce qu'elle fait entendre. C'est tout l'objet de cette table.
+ * Elle y a MONTÉ (elle était ici) le jour où le banc d'écoute est né : le banc doit lire au
+ * runtime ce que le test vérifie, et une seconde copie aurait divergé au premier arbitrage.
+ * La garantie n'a pas bougé — `Record<SimEvent['type'], …>` rend le fichier ROUGE tant que
+ * personne n'a dit ce qu'une nouvelle variante fait entendre.
  *
  * Le monde émet **61 faits de domaine** ; **10 sonnent**. Les 51 autres étaient muets parce
  * que personne ne les avait regardés — pas parce qu'on avait décidé qu'ils se taisent. La
@@ -18,86 +21,9 @@ const ev = (type: string, extra: Record<string, unknown> = {}): SimEvent =>
  * ENTENDRE le résultat », et l'audit de GATE 1 classe le son « oreilles d'Alexis ». Un
  * silence choisi est un choix de design ; un silence par omission est un trou.
  *
- * Cette table ne tranche donc RIEN d'esthétique — elle rend l'inventaire exact et le rend
- * impossible à laisser dériver. La liste des `muet` est ce sur quoi Alexis a à se prononcer,
- * casque sur les oreilles, en une passe.
+ * Ce qui suit ne tranche donc RIEN d'esthétique — ça rend l'inventaire exact et impossible à
+ * laisser dériver. La liste des `muet` est ce sur quoi Alexis a à se prononcer, au banc.
  */
-const VOIX: Record<SimEvent['type'], 'voix' | 'muet'> = {
-  // ── LES DIX QUI SONNENT (l'échafaudage actuel) ────────────────────────────────
-  resource_harvested: 'voix',
-  entity_damaged: 'voix',
-  monster_slain: 'voix',
-  wolf_howl: 'voix',
-  night_started: 'voix',
-  entity_died: 'voix',
-  entity_bandaged: 'voix',
-  refugees_arrived: 'voix',
-  alarm_raised: 'voix',
-  evacuation_opened: 'voix',
-
-  // ── HAUTE FRÉQUENCE ou pure interface : le silence est ici un vrai choix ───────
-  action_rejected: 'muet',
-  entity_spawned: 'muet',
-  entity_despawned: 'muet',
-  entity_respawned: 'muet',
-  node_depleted: 'muet',
-  item_dropped: 'muet',
-  corpse_looted: 'muet',
-  wound_inflicted: 'muet',
-  prey_escaped: 'muet',
-  craft_queued: 'muet',
-  craft_cancelled: 'muet',
-  access_changed: 'muet',
-  function_changed: 'muet',
-  poi_discovered: 'muet',
-
-  // ── LE FEU, LE BÂTI, L'ATELIER — des gestes qu'on FAIT, et qui ne s'entendent pas ─
-  fire_fed: 'muet',
-  fire_relit: 'muet',
-  fire_starved: 'muet',
-  fire_extinguished: 'muet',
-  fire_upgraded: 'muet',
-  structure_built: 'muet',
-  structure_upgraded: 'muet',
-  structure_repaired: 'muet',
-  structure_removed: 'muet',
-  structure_destroyed: 'muet',
-  item_crafted: 'muet',
-  meat_cooked: 'muet',
-  meal_eaten: 'muet',
-  crop_planted: 'muet',
-  crop_harvested: 'muet',
-  skill_level_up: 'muet',
-
-  // ── LE SOCIAL ET LE VILLAGE — le cœur de l'alignement, entièrement silencieux ──
-  gift_given: 'muet',
-  village_founded: 'muet',
-  village_fell: 'muet',
-  village_archetype_changed: 'muet',
-  member_joined: 'muet',
-  member_banished: 'muet',
-  refugees_fed: 'muet',
-  refugees_recruited: 'muet',
-  refugees_robbed: 'muet',
-  refugees_left: 'muet',
-
-  // ── LE TEMPS ET LA MENACE — les battements de la saison, sans un son ──────────
-  day_started: 'muet',
-  season_day_started: 'muet',
-  act_started: 'muet',
-  season_ended: 'muet',
-  cendre_avance: 'muet',
-  cendreux_risen: 'muet',
-  horde_spawned: 'muet',
-  horde_dispersed: 'muet',
-  convoy_spawned: 'muet',
-  ark_departed: 'muet',
-  poi_first_visit: 'muet',
-}
-
-const SONORES = Object.entries(VOIX)
-  .filter(([, v]) => v === 'voix')
-  .map(([t]) => t)
 
 describe('la table de routage audio (soundForEvent)', () => {
   it('sonne les faits qui comptent (récolte, coup, mort, hurlement, nuit)', () => {
@@ -110,7 +36,7 @@ describe('la table de routage audio (soundForEvent)', () => {
 
   it('reste MUET sur les faits non sonores (haute fréquence ou hors registre)', () => {
     expect(soundForEvent(ev('action_rejected', { entityId: 1 }), true)).toBeNull()
-    expect(soundForEvent(ev('gift_given'), false)).toBeNull()
+    expect(soundForEvent(ev('meal_eaten', { entityId: 1 }), true)).toBeNull()
     expect(soundForEvent(ev('season_day_started', { day: 3 }), false)).toBeNull()
   })
 
@@ -140,13 +66,39 @@ describe('la table de routage audio (soundForEvent)', () => {
     expect(desaccords).toEqual([])
   })
 
-  it("l'inventaire est celui que GATE 1 doit trancher : 61 faits, 10 voix", () => {
+  it("l'inventaire tranché de GATE 1 : 61 faits, 34 voix", () => {
     // Un compte, pas un jugement. S'il bouge, c'est qu'un fait de domaine est né ou qu'une
     // voix a changé — dans les deux cas, quelqu'un doit le savoir.
     const total = Object.keys(VOIX).length
     const voix = SONORES.length
     expect(total).toBe(61)
-    expect(voix).toBe(10)
+    expect(voix).toBe(34)
+  })
+
+  it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {
+    // Le principe qui a décidé la famille SOCIAL, et la seule chose qui la rende lisible à
+    // l'oreille avant qu'on en ait appris les mots. Une retouche de timbre qui inverserait
+    // une pente casserait le sens sans casser aucun autre test — celui-ci la rattrape.
+    const spec = (t: string): SoundSpec => soundForEvent(ev(t, { entityId: 2 }), false)!
+    for (const chaud of ['gift_given', 'refugees_fed', 'refugees_recruited', 'refugees_arrived']) {
+      const s = spec(chaud)
+      expect(s.freqEnd, `${chaud} doit MONTER`).toBeGreaterThan(s.freq)
+    }
+    for (const froid of ['refugees_robbed', 'member_banished']) {
+      const s = spec(froid)
+      expect(s.freqEnd, `${froid} doit TOMBER`).toBeLessThan(s.freq)
+      // Le timbre du prédateur, réservé aux verbes froids et à la horde qui marche.
+      expect(s.wave, `${froid} est un verbe froid`).toBe('sawtooth')
+    }
+  })
+
+  it('la CHUTE D’UN VILLAGE pèse plus lourd qu’une mort d’homme', () => {
+    // Une hiérarchie qu'on ne peut pas expliquer au joueur : elle doit s'entendre. Un village
+    // qui tombe est plus qu'une personne qui s'éteint — c'est plus long, et plus grave.
+    const village = soundForEvent(ev('village_fell', { villageId: 3 }), false)!
+    const homme = soundForEvent(ev('entity_died', { entityId: 2 }), false)!
+    expect(village.dur).toBeGreaterThan(homme.dur)
+    expect(village.freqEnd!).toBeLessThan(homme.freqEnd!)
   })
 
   it('tous les gains restent BAS et les durées positives (décor sonore, pas arcade)', () => {
