@@ -12,6 +12,7 @@ import {
   BALANCE,
   createNodeShadow,
   despawnAvatar,
+  filtreParInteret,
   PROTOCOL_VERSION,
   seedNodeShadow,
   spawnEntity,
@@ -266,7 +267,12 @@ export class ZoneRoom extends Room {
       // Seuls les clients ayant fait leur `join` protocole ont un état (et un avatar) :
       // les autres, connectés mais pas encore annoncés, ne reçoivent pas de snapshot.
       const client = this.clients.getById(sessionId)
-      if (client) client.send('snapshot', { ...base, lastProcessedInput: state.ack })
+      if (!client) continue
+      // LA ZONE D'INTÉRÊT : chacun ne reçoit que ce qui l'entoure. Le corps commun reste
+      // partagé quand rien n'est rogné — on ne paie une copie que pour ce qui sort du rayon.
+      const moi = this.world.sim.entities.find((e) => e.id === state.entityId)
+      const vu = moi ? filtreParInteret(base, moi) : base
+      client.send('snapshot', { ...vu, lastProcessedInput: state.ack })
     }
 
     // LE CHAT : diffusé à TOUS les joueurs sur son propre canal `chatmsg`, en TABLEAU

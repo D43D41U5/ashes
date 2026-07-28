@@ -223,6 +223,8 @@ export { PROTOCOL_VERSION, CHAT_RADIUS_TILES, CHAT_MAX_LEN } from './protocol'
 // Le DIFF des stocks de nœuds : mécanique de protocole, partagée par les deux hôtes
 // (serveur LAN et worker Veillée) pour qu'ils ne puissent plus en diverger.
 export { collectNodeDeltas, createNodeShadow, seedNodeShadow, type NodeShadow } from './node-shadow'
+// LA ZONE D'INTÉRÊT : chacun ne reçoit que ce qui l'entoure (bande passante ET anti-ESP).
+export { filtreParInteret, INTEREST_RADIUS_TILES } from './interest'
 export type {
   ClientToHost,
   HostToClient,

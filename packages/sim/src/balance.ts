@@ -1351,6 +1351,33 @@ export type MonsterType = 'zombie' | 'boar' | 'cendreux' | 'rabbit' | 'deer' | '
  */
 export type Activity = 'diurnal' | 'nocturnal' | 'crepuscular'
 
+/**
+ * Tailles de sac (spec inventaire R7). La longueur du tableau EST la capacité.
+ *
+ * DÉCLARÉ ICI, AVANT SES LECTEURS, et ce n'est pas cosmétique : `MONSTER_DEFS` lit
+ * `SLOTS.NPC` dans son littéral, donc à l'ÉVALUATION du module. Placé plus bas, il
+ * tombait dans sa zone morte temporelle — « Cannot access 'SLOTS' before
+ * initialization » au premier import, et `tsc` ne disait RIEN. Une constante lue par
+ * une autre constante du même fichier doit la précéder ; l'ordre est ici une règle,
+ * pas un rangement.
+ */
+export const SLOTS = {
+  /** Les N premières cases du sac du joueur SONT la ceinture (la hotbar). */
+  BELT: 6,
+  PLAYER: 18,
+  /** Les PNJ ont un GRAND sac : ils portent une journée de corvées sans buter sur
+   *  leur borne. Ils la voient quand même (npc.ts TASK_INTAKE, handleHunger) —
+   *  sinon un sac plein les figerait. Une DONNÉE, pas une règle à part : la sim
+   *  n'a qu'un seul jeu de règles. */
+  NPC: 40,
+  CHEST: 24,
+  /** Le conteneur d'un composant de Grenier (silo/cave/réserve) : plus grand qu'un
+   *  coffre — c'est une réserve de village, pas une malle (spec construction §4bis). */
+  GRENIER: 36,
+  /** Assez grand pour que le cadavre ne tronque JAMAIS le butin (spec R11). */
+  CORPSE: 48,
+} as const
+
 export interface MonsterDef {
   hp: number
   damage: number
@@ -1371,6 +1398,23 @@ export interface MonsterDef {
   /** Sanglier blessé : probabilité de charger (sinon il fuit) à chaque réflexion. */
   chargeChance: number
   loot: import('./items').ItemBag
+  /**
+   * LA TAILLE DU SAC DE LA BÊTE — et pour presque toutes, c'est ZÉRO.
+   *
+   * Toutes les bêtes naissaient avec le sac d'un PNJ (40 cases), pour une seule raison
+   * écrite dans `spawnMonster` : « le Cendreux levé hérite du butin d'un cadavre entier ».
+   * Vrai — pour le Cendreux. Les cinq autres espèces ne portent RIEN : leur butin vient de
+   * `loot` ci-dessus, versé dans le CADAVRE à la mort (`combat.ts`), jamais de leur sac.
+   *
+   * Le prix était MESURÉ et absurde : un lapin pesait **574 octets de JSON, dont 201 pour
+   * son sac vide** — un sac plus GRAND que celui d'un humain (18 cases, 91 o) —, et ça
+   * partait dans le snapshot de chaque client, vingt fois par seconde, pour ~600 bêtes.
+   *
+   * C'est le champ qui manquait pour que le type dise la vérité : une bête n'est pas un
+   * porteur. `Record<MonsterType, MonsterDef>` étant exhaustif, une espèce ajoutée devra
+   * répondre — et répondre `0` est la réponse ordinaire.
+   */
+  sac: number
   /**
    * Le gibier (spec faune R2) : les terrains où l'espèce vit. Non vide = c'est
    * une BÊTE — elle broute, s'alerte, fuit, et le peuplement ambiant peut la
@@ -1405,12 +1449,14 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     windupTicks: ticksFor(0.6), attackCooldownTicks: ticksFor(2), aggroRange: 6,
     thinkEveryTicks: ticksFor(0.5), wanderChance: 0.3, chargeChance: 0,
     loot: {},
+    sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
   },
   boar: {
     hp: 30, damage: 8, speed: 3.6,
     windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0,
     thinkEveryTicks: ticksFor(1), wanderChance: 0.25, chargeChance: 0.25,
     loot: { raw_meat: 3 },
+    sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
     // Le sanglier tient sa forêt. Il laisse approcher — et c'est le piège.
     habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH],
     alertRange: 7, flightRange: 0,
@@ -1421,6 +1467,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     windupTicks: ticksFor(0.7), attackCooldownTicks: ticksFor(2.5), aggroRange: 5,
     thinkEveryTicks: ticksFor(0.5), wanderChance: 0, chargeChance: 0,
     loot: {}, // il porte celui du cadavre (voir levée)
+    sac: SLOTS.NPC, // il hérite du butin d'un cadavre entier (cendreux.ts) — le SEUL porteur
   },
   // Le petit gibier (GDD §8bis) : il détale avant qu'on l'ait vu. L'école de l'approche.
   rabbit: {
@@ -1428,6 +1475,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     windupTicks: ticksFor(0.3), attackCooldownTicks: ticksFor(2), aggroRange: 0,
     thinkEveryTicks: ticksFor(0.6), wanderChance: 0.4, chargeChance: 0,
     loot: { raw_meat: 1 },
+    sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
     habitat: [TERRAIN_GRASS, TERRAIN_HEATH, TERRAIN_FLOWER_MEADOW, TERRAIN_ALPINE_MEADOW, TERRAIN_ALPINE_FLOWERS],
     alertRange: 11, flightRange: 7,
     activity: 'crepuscular', // à l'aube et au crépuscule : les heures du lapin
@@ -1439,6 +1487,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0,
     thinkEveryTicks: ticksFor(1.2), wanderChance: 0.2, chargeChance: 0,
     loot: { quartier: 2 }, // V0-5 : le gros gibier rend des QUARTIERS lourds (portage)
+    sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
     habitat: [TERRAIN_ALPINE_MEADOW, TERRAIN_HEATH, TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_LARCH],
     alertRange: 14, flightRange: 9,
     herdSize: [3, 5], // la harde : ils broutent ensemble et détalent ensemble
@@ -1461,6 +1510,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     windupTicks: ticksFor(0.45), attackCooldownTicks: ticksFor(1.5), aggroRange: 13,
     thinkEveryTicks: ticksFor(0.5), wanderChance: 0.2, chargeChance: 0,
     loot: { raw_meat: 2 },
+    sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
     habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_HEATH],
     alertRange: 0, flightRange: 0, // il ne fuit pas parce qu'on approche : il fuit parce qu'il saigne
     herdSize: [3, 4], // la meute
@@ -2778,20 +2828,3 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   chest: 1,
 }
 
-/** Tailles de sac (spec inventaire R7). La longueur du tableau EST la capacité. */
-export const SLOTS = {
-  /** Les N premières cases du sac du joueur SONT la ceinture (la hotbar). */
-  BELT: 6,
-  PLAYER: 18,
-  /** Les PNJ ont un GRAND sac : ils portent une journée de corvées sans buter sur
-   *  leur borne. Ils la voient quand même (npc.ts TASK_INTAKE, handleHunger) —
-   *  sinon un sac plein les figerait. Une DONNÉE, pas une règle à part : la sim
-   *  n'a qu'un seul jeu de règles. */
-  NPC: 40,
-  CHEST: 24,
-  /** Le conteneur d'un composant de Grenier (silo/cave/réserve) : plus grand qu'un
-   *  coffre — c'est une réserve de village, pas une malle (spec construction §4bis). */
-  GRENIER: 36,
-  /** Assez grand pour que le cadavre ne tronque JAMAIS le butin (spec R11). */
-  CORPSE: 48,
-} as const

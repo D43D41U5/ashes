@@ -5,7 +5,7 @@
  * lire les wind-ups contre lui. Le sanglier est la chasse : neutre, fuit,
  * charge parfois blessé. IA dans /sim, aléa via le PRNG de la sim.
  */
-import { BALANCE, COMBAT, FAUNA, HUNT, MONSTER_DEFS, NODE_DEFS, SLOTS, TICK_DT_S, type MonsterType } from './balance'
+import { BALANCE, COMBAT, FAUNA, HUNT, MONSTER_DEFS, NODE_DEFS, TICK_DT_S, type MonsterType } from './balance'
 // Type seul : `economy` importe `monsters`, un import de valeur fermerait le cycle.
 import type { ResourceNode } from './economy'
 import { startAttack } from './combat'
@@ -202,9 +202,15 @@ export interface Monster {
 }
 
 export function spawnMonster(state: SimState, type: MonsterType, x: number, y: number): number {
-  // Grand sac : une bête ne porte rien, mais le Cendreux levé hérite du butin
-  // d'un cadavre entier — il ne doit jamais en perdre une miette.
-  const id = spawnEntity(state, x, y, SLOTS.NPC)
+  // LE SAC EST DÉCLARÉ PAR ESPÈCE (`MONSTER_DEFS[type].sac`), et il vaut ZÉRO pour cinq
+  // espèces sur six. Toutes naissaient avec le sac d'un PNJ (40 cases) pour une seule
+  // raison, vraie mais pour UNE bête : le Cendreux levé hérite du butin d'un cadavre
+  // entier et ne doit pas en perdre une miette. Les autres ne portent rien — leur butin
+  // vient de `MONSTER_DEFS[type].loot`, versé dans le cadavre à la mort (`combat.ts`).
+  // MESURÉ, ce détail coûtait cher : un lapin pesait 574 octets de JSON dont 201 pour son
+  // sac vide — plus gros que celui d'un humain —, répété pour ~600 bêtes, dans le snapshot
+  // de chaque client, vingt fois par seconde.
+  const id = spawnEntity(state, x, y, MONSTER_DEFS[type].sac)
   const entity = state.entities.find((e) => e.id === id)!
   entity.hp = MONSTER_DEFS[type].hp
   state.monsters.push({

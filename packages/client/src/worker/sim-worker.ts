@@ -13,6 +13,7 @@ import {
   createNodeShadow,
   deserializeSim,
   drainEvents,
+  filtreParInteret,
   getGameTime,
   seedNodeShadow,
   serializeSim,
@@ -89,8 +90,13 @@ function tick(): void {
   // tient sa propre copie d'affichage — les deux filtrent sur la MÊME liste (/sim).
   for (const e of events) if (CHRONICLE_EVENT_TYPES.has(e.type)) chronicleLog.push(e)
   if (chronicleLog.length > CHRONICLE_CAP) chronicleLog.splice(0, chronicleLog.length - CHRONICLE_CAP)
-  post({
-    type: 'snapshot',
+  // LA ZONE D'INTÉRÊT — le même filtre qu'en multi (voir `/sim/interest.ts`). En solo il n'y a
+  // qu'un client, mais il est AU BOUT D'UN postMessage : tout ce qu'on n'envoie pas est un
+  // clone structuré qu'on ne paie pas. Et surtout, l'appliquer des deux côtés garde
+  // l'invariant n°7 — une simulation, pas deux jeux : le solo et le multi voient la même chose.
+  const moi = sim.entities.find((e) => e.id === playerId)
+  const corps = {
+    type: 'snapshot' as const,
     tick: sim.tick,
     lastProcessedInput,
     time: getGameTime(sim),
@@ -109,7 +115,8 @@ function tick(): void {
     wind: sim.wind,
     groundItems: sim.groundItems,
     events,
-  })
+  }
+  post(moi ? filtreParInteret(corps, moi) : corps)
 }
 
 /**
