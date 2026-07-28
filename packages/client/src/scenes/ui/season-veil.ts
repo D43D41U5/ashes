@@ -28,7 +28,6 @@
 import type { ChronicleEntry } from '@braises/sim'
 import type { SeasonVerdict } from '../../hud-state'
 import { warmthColor } from '../../render/lighting'
-import { reopenFreshVeillee } from './reopen-veillee'
 import { ensureGameFont, GAME_FONT } from './game-font'
 
 /** `0xrrggbb` (Phaser) → `#rrggbb` (CSS). */
@@ -57,7 +56,12 @@ export interface SeasonVeil {
   destroy(): void
 }
 
-export function createSeasonVeil(): SeasonVeil {
+/**
+ * `onReopen` : ROUVRIR la vallée — même case, même seed, vidée. La stèle ne connaît plus le
+ * monde qu'elle couronne (il y en a cinq depuis 2026-07-28) : UIScene lui passe le geste, qui
+ * lit la case et la seed courantes dans le registre.
+ */
+export function createSeasonVeil(onReopen: () => void): SeasonVeil {
   // La police du jeu, POSÉE et pas héritée : ce voile monte sur `document.body`, qui n'en
   // déclare aucune — un `inherit` y récupérait la serif par défaut du navigateur.
   ensureGameFont()
@@ -159,10 +163,11 @@ export function createSeasonVeil(): SeasonVeil {
   const chronicleEl = q('.sv-chronicle')
   const chronToggle = q('.sv-chron-toggle')
 
-  // ROUVRIR : une Veillée neuve — on efface la sauvegarde (?fresh) et on relance solo. La seed
-  // étant fixe (VEILLEE_SEED), c'est la MÊME vallée qui se réveille du froid, vidée de nos marques
-  // — d'où « ROUVRIR », pas « nouvelle vallée » (le libellé honnête tant que la seed ne varie pas).
-  q('.sv-reopen').addEventListener('click', reopenFreshVeillee)
+  // ROUVRIR : une Veillée neuve — on efface la sauvegarde (?fresh) et on relance solo. On
+  // REJOUE LA SEED DE CE MONDE-CI : c'est la MÊME vallée qui se réveille du froid, vidée de nos
+  // marques — d'où « ROUVRIR », pas « nouvelle vallée ». (Une vallée neuve se fonde à l'écran
+  // des vallées, où l'on choisit sa seed ; ici, la saison qui s'achève est celle qu'on rouvre.)
+  q('.sv-reopen').addEventListener('click', () => onReopen())
   // RELIRE : la chronique se déplie DANS la stèle (pas un panneau concurrent).
   chronToggle.addEventListener('click', () => {
     const open = chronicleEl.style.display === 'block'

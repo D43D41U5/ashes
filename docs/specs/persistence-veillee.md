@@ -84,3 +84,18 @@ L'enregistrement d'un slot (hôte) est donc `{ sim: string (serializePartie), pl
 
 - Pas de sauvegarde côté **multi** (La Vallée) : la persistance serveur (PostgreSQL, write-behind) est un autre chantier (Phase LAN). Ici, IndexedDB, solo, dans le Worker.
 - Le commentaire `packages/client/src/scenes/ui/fatal.ts` (« la persistance viendra avec la Phase LAN ») est **caduc** pour le solo : à mettre à jour à l'intégration.
+
+## 7. État de livraison — l'écran des vallées (2026-07-28)
+
+**R4 est livré**, avec deux écarts assumés, et R7/R8 avec lui.
+
+| Exigence | État | Écart |
+|---|---|---|
+| **R4** — cinq emplacements | ✅ `ui/menu-dom.ts`, cases `slot0..slot4` | **`?solo` vise la CASE 1**, pas « le dernier slot actif » : trente-neuf scénarios de smoke entrent par ce deep-link, et un accueil qui change de monde selon l'historique du disque rendrait chacun d'eux non reproductible. `?slot=N` le précise. |
+| **R7** — écraser, geste grave | ✅ confirmation en ligne, rouge, qui NOMME le jour et la seed | Fonder sur une case occupée est **impossible** plutôt que confirmé : une case pleine ne propose que REPRENDRE. Pour la réutiliser, on l'efface — un geste, une conséquence. |
+| **R8** — autosave | ✅ (déjà livré) | Étendu : « retour aux vallées » **attend l'acquittement du disque** avant de recharger. |
+| **R6** — la chronique survit | ✅ tranché depuis : elle est persistée à part (`SaveRecord.chronicle`), pas dans `state.events` | — |
+
+**Ce que la maquette 10A demandait et qui n'est PAS là.** La carte de slot montre `jour N · seed S` et « il y a 2 h » ; elle ne montre **ni le nom du Foyer, ni l'acte, ni les survivants, ni le temps de jeu cumulé**. Raison : chacun de ces champs exigerait d'ouvrir la partie (~75 ko à désérialiser, par case) ou une métadonnée de plus à tenir en phase, alors que `slot{i}:meta` reste volontairement minuscule. La **seed**, elle, n'était pas à la maquette : c'est une demande d'Alexis du 2026-07-28 (on choisit sa vallée), et c'est ce qui distingue deux mondes au premier coup d'œil.
+
+**R5 (l'état « close ») n'est PAS livré.** Une vallée dont la saison s'est éteinte reste aujourd'hui une case ordinaire : on la reprend, on ne la « relit » pas. La stèle de fin de saison propose `ROUVRIR LA VALLÉE` (même case, même seed, vidée). Distinguer *close* de *ouvert* demanderait `state.seasonEnded` dans la méta et un troisième état de ligne — petit, mais c'est une décision de jeu (que garde-t-on d'une saison finie ?), pas une dette technique.

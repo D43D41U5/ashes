@@ -220,6 +220,14 @@ export interface HudState {
   /** Le menu PAUSE (ESC) : ouvert = le monde solo se fige (l'hôte est mis en pause) et
    *  le menu (reprendre / contrôles / son / nouvelle Veillée) couvre l'écran. */
   menuOpen: boolean
+  /** QUEL MONDE SOLO on joue — la case du disque et sa seed, publiées au `ready`. UIScene en a
+   *  besoin pour les deux sorties : « rouvrir la vallée » (stèle) et « retour aux vallées »
+   *  (menu pause). Absent en multi : le monde n'est pas sur ce disque. */
+  veillee: { slot: number; seed: number }
+  /** LE JOUEUR DEMANDE À QUITTER vers l'écran des vallées (menu pause). WorldScene la sert :
+   *  il fait ÉCRIRE la partie, puis recharge la page (voir `quitEnCours`). Sens unique — rien
+   *  ne la remet à faux, la page part. */
+  quitMondes: boolean
   /** Le curseur de VOLUME maître (0..1) — posé par WorldScene depuis le moteur audio, réglé
    *  par le curseur du menu pause. WorldScene l'observe et l'applique à `audioFx` (le moteur
    *  vit là ; le menu, dans UIScene, passe par le registre). */

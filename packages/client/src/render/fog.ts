@@ -98,31 +98,41 @@ export function partDecouverte(b: Brouillard): number {
 
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
-/** Là où le savoir géographique du joueur dort entre deux sessions. */
+/**
+ * Là où le savoir géographique du joueur dort entre deux sessions — UNE CLÉ PAR MONDE.
+ *
+ * Le brouillard vit dans `localStorage`, hors de la sauvegarde de sim (IndexedDB) : il a donc
+ * fallu le numéroter à part quand la Veillée est passée à cinq cases (2026-07-28). Sans ça, la
+ * vallée 2 s'ouvrait avec la carte explorée de la vallée 1 — un monde neuf sans rien à découvrir.
+ *
+ * La case 0 GARDE L'ANCIENNE CLÉ : les Veillées d'avant l'écran des mondes retrouvent leur
+ * carte sans migration, comme leur sauvegarde retrouve la sienne (`slot0`).
+ */
 const FOG_KEY = 'braises.fog'
+const cleFog = (slot: number): string => (slot === 0 ? FOG_KEY : `${FOG_KEY}.${slot}`)
 
-/** Relit le brouillard rangé, ou `null` s'il n'y en a pas (première Veillée, stockage refusé). */
-export function loadFog(): string | null {
+/** Relit le brouillard rangé d'un monde, ou `null` (première Veillée, stockage refusé). */
+export function loadFog(slot: number): string | null {
   try {
-    return localStorage.getItem(FOG_KEY)
+    return localStorage.getItem(cleFog(slot))
   } catch {
     return null // stockage refusé : on jouera sans mémoire, plutôt que de casser
   }
 }
 
 /** Range le brouillard. Silencieux en cas de refus : perdre la carte ne doit pas perdre la partie. */
-export function saveFog(texte: string): void {
+export function saveFog(slot: number, texte: string): void {
   try {
-    localStorage.setItem(FOG_KEY, texte)
+    localStorage.setItem(cleFog(slot), texte)
   } catch {
     /* stockage plein ou refusé : le savoir vaut pour la session */
   }
 }
 
-/** Efface le savoir géographique — appelé quand on repart sur une Veillée NEUVE. */
-export function clearFog(): void {
+/** Efface le savoir géographique d'un monde — Veillée NEUVE, ou case effacée. */
+export function clearFog(slot: number): void {
   try {
-    localStorage.removeItem(FOG_KEY)
+    localStorage.removeItem(cleFog(slot))
   } catch {
     /* rien à faire : au pire on rouvre avec l'ancienne carte */
   }

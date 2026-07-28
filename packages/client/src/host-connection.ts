@@ -7,6 +7,7 @@
  */
 import type { ClientToHost, HostToClient } from '@braises/sim'
 import { Client, type Room } from 'colyseus.js'
+import type { VeilleeInit } from './worker/mondes'
 
 export interface HostConnection {
   send(msg: ClientToHost): void
@@ -16,9 +17,20 @@ export interface HostConnection {
   terminate(): void
 }
 
-/** L'hôte Veillée : la sim dans un Web Worker, sur cette machine. */
-export function createWorkerHost(): HostConnection {
+/**
+ * L'hôte Veillée : la sim dans un Web Worker, sur cette machine.
+ *
+ * `monde` dit QUELLE vallée ouvrir — la case du disque et la seed à semer si elle est vide.
+ * C'est l'exact pendant de l'URL que prend `createColyseusHost` : une configuration d'HÔTE,
+ * pas un message de jeu. Elle part donc en `postMessage` direct, hors du protocole partagé
+ * avec le serveur LAN (voir `worker/mondes.ts`), et AVANT tout `join` — l'ordre des messages
+ * vers un même Worker est garanti, et le navigateur les met en file jusqu'à ce que le module
+ * du Worker soit évalué : le boot trouve toujours sa configuration posée.
+ */
+export function createWorkerHost(monde: { slot: number; seed: number }): HostConnection {
   const worker = new Worker(new URL('./worker/sim-worker.ts', import.meta.url), { type: 'module' })
+  const init: VeilleeInit = { type: 'veillee_init', slot: monde.slot, seed: monde.seed }
+  worker.postMessage(init)
   return {
     send: (msg) => worker.postMessage(msg),
     onMessage: (cb) =>

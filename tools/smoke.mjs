@@ -3332,37 +3332,27 @@ const SCENARIOS = {
       console.error(`!! LE VOILE N'EST PAS DANS LA POLICE DU JEU : voile=${polices.voile} / hud=${polices.hud}`)
     }
 
-    // LE GARDE-FOU D'EFFACEMENT : « nouvelle Veillée » ne doit PLUS effacer au premier clic.
-    // On l'ouvre, on vérifie que la confirmation prend la place des choix, on capture — puis on
-    // ANNULE. (On ne clique JAMAIS `.pm-fresh-go` ici : il effacerait la sauvegarde pour de bon.)
-    await page.click('.pm-fresh')
-    await page.waitForTimeout(150)
-    // On lit le DISPLAY CALCULÉ, pas la propriété `hidden` : `.pm-row2{display:flex}` écrase le
-    // [hidden] du navigateur, et une assertion sur `hidden` a déjà laissé passer les DEUX
-    // rangées à l'écran. Ce qui compte est ce que l'œil voit.
-    const armed = await page.evaluate(() => ({
-      confirmShown: getComputedStyle(document.querySelector('.pm-confirm')).display !== 'none',
-      choicesHidden: getComputedStyle(document.querySelector('.pm-choices')).display === 'none',
-      warn: document.querySelector('.pm-warn')?.textContent?.slice(0, 32) ?? '',
-      danger: Boolean(document.querySelector('.pm-fresh-go')),
-      // Le bouton destructeur doit être ENTIÈREMENT à l'écran : posé en bas d'une carte qui
-      // défile, il tombait sous le pli — on ne fait pas chercher un choix pareil.
-      goOnScreen: (() => {
-        const r = document.querySelector('.pm-fresh-go').getBoundingClientRect()
+    // CE MENU N'EFFACE PLUS RIEN (2026-07-28). Il portait « nouvelle Veillée » et sa
+    // confirmation rouge — le seul chemin, à l'époque, pour repartir à neuf, puisque l'accueil
+    // n'avait qu'une porte. Depuis l'écran des vallées, on efface DANS LA LISTE, en face de ce
+    // qu'on perd (scénario `accueil`). Ici, on vérifie deux choses : la sortie existe, et il ne
+    // reste AUCUN chemin destructeur — un bouton d'effacement oublié dans un menu de pause est
+    // exactement le genre de résidu qu'on ne retrouve qu'après avoir perdu une partie.
+    const sortie = await page.evaluate(() => ({
+      quit: document.querySelector('.pm-quit')?.textContent ?? '',
+      // Le bouton de sortie doit être ENTIÈREMENT à l'écran : posé en bas d'une carte qui
+      // défile, il tomberait sous le pli — on ne fait pas chercher une sortie.
+      quitOnScreen: (() => {
+        const el = document.querySelector('.pm-quit')
+        if (!el) return false
+        const r = el.getBoundingClientRect()
         return r.top >= 0 && r.bottom <= window.innerHeight
       })(),
+      resteDestructeur: Boolean(document.querySelector('.pm-fresh, .pm-fresh-go, .pm-confirm, .pm-danger')),
     }))
-    console.log(`confirmation d’effacement : ${JSON.stringify(armed)}`)
-    await page.screenshot({ path: `${OUT}/pause-effacer.png` })
-    await page.click('.pm-cancel')
-    await page.waitForTimeout(150)
-    const disarmed = await page.evaluate(() => ({
-      confirmShown: getComputedStyle(document.querySelector('.pm-confirm')).display !== 'none',
-      choicesHidden: getComputedStyle(document.querySelector('.pm-choices')).display === 'none',
-    }))
-    console.log(`après annulation : ${JSON.stringify(disarmed)}`)
-    if (!armed.confirmShown || !armed.choicesHidden || !armed.danger || !armed.goOnScreen || disarmed.confirmShown || disarmed.choicesHidden) {
-      console.error(`!! LE GARDE-FOU D'EFFACEMENT NE MARCHE PAS : ${JSON.stringify({ armed, disarmed })}`)
+    console.log(`sortie du menu pause : ${JSON.stringify(sortie)}`)
+    if (!sortie.quit || !sortie.quitOnScreen || sortie.resteDestructeur) {
+      console.error(`!! LA SORTIE DU MENU PAUSE NE VA PAS : ${JSON.stringify(sortie)}`)
     }
 
     await page.keyboard.press('Escape')
@@ -3372,7 +3362,8 @@ const SCENARIOS = {
       menuOpen: window.__BRAISES__.scene.registry.get('menuOpen'),
     }))
     console.log(`après 2ᵉ ESC : ${JSON.stringify(closed)}`)
-    if (open.display !== 'flex' || open.clicks !== 6 || open.keys !== 8 || closed.display !== 'none') {
+    // 6 règles de clic, 10 touches — les longueurs de CLICKS et KEYS dans `ui/pause-menu.ts`.
+    if (open.display !== 'flex' || open.clicks !== 6 || open.keys !== 10 || closed.display !== 'none') {
       console.error(`!! LE MENU PAUSE NE MARCHE PAS : ouvert ${JSON.stringify(open)} / fermé ${JSON.stringify(closed)}`)
     }
     return { open, closed }
@@ -3391,6 +3382,146 @@ const SCENARIOS = {
    * `reducedMotion` désarme la lueur du palier (la seule animation) — le bandeau, lui, doit
    * rester ENTIER et lisible sans elle (sinon le smoke, qui tourne en réduit, clignerait).
    */
+  /**
+   * L'ÉCRAN DES VALLÉES (2026-07-28) — les trois verbes, sur le vrai jeu.
+   *
+   * Ce que rien d'autre ne prouve : que FONDER (avec SA seed), REPRENDRE et EFFACER font
+   * vraiment ce qu'ils annoncent, bout en bout — le menu, le disque, le Worker, et le retour au
+   * menu. Les tests unitaires ne tiennent que les libellés (`monde-libelle`) et la déduction de
+   * métadonnées (`persistence-store`) : IndexedDB, lui, n'existe qu'ici.
+   *
+   * ON NE FABRIQUE AUCUN ÉTAT : le harnais est déjà entré en jeu par `?solo` (case 1, seed
+   * canonique) ; on en SORT par le menu pause, ce qui sauve — et c'est cette sauvegarde-là que
+   * l'écran doit annoncer. Puis on fonde une deuxième vallée avec une seed choisie, on vérifie
+   * que le monde la porte, on revient, et on l'efface.
+   */
+  async accueil(page) {
+    await page.waitForTimeout(1500)
+
+    // ── 1. SORTIR DE LA PARTIE : ESC, puis « retour aux vallées ». WorldScene fait ÉCRIRE la
+    //    partie et ne recharge qu'une fois le disque acquitté — la case 1 doit donc être pleine
+    //    de l'autre côté, sans qu'on ait attendu les 30 s de l'autosave.
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+    await page.click('.pm-quit')
+    await page.waitForFunction(() => document.querySelectorAll('.mw-row').length > 0, null, { timeout: 30000 })
+    await page.waitForTimeout(400)
+
+    const cases = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll('.mw-row')].map((r) => ({
+          nom: r.querySelector('.mw-name')?.textContent ?? '',
+          etat: r.querySelector('.mw-state')?.textContent ?? '',
+          quand: r.querySelector('.mw-when')?.textContent ?? '',
+          plein: r.classList.contains('mw-plein'),
+        })),
+      )
+
+    const apresSortie = await cases()
+    console.log(`écran des vallées : ${JSON.stringify(apresSortie)}`)
+    await page.screenshot({ path: `${OUT}/accueil-vallees.png` })
+    if (apresSortie.length !== 5) console.error(`!! ${apresSortie.length} cases au lieu de 5`)
+    // La vallée qu'on vient de quitter DOIT s'annoncer — avec son jour et sa seed. Une case
+    // muette après une partie, c'est la panne d'origine : la porte qui reprenait en silence.
+    if (!apresSortie[0]?.plein || !/jour \d+ · seed 2026/.test(apresSortie[0]?.etat ?? '')) {
+      console.error(`!! LA VALLÉE QUITTÉE NE S'ANNONCE PAS : ${JSON.stringify(apresSortie[0])}`)
+    }
+    if (apresSortie.slice(1).some((c) => c.plein)) console.error(`!! une case jamais jouée se dit pleine`)
+
+    // ── 2. FONDER, EN CHOISISSANT LA SEED. La case vide devient son champ ; on y met la nôtre.
+    const SEED = 31415
+    await page.click('.mw-row:nth-child(2)')
+    await page.waitForTimeout(200)
+    await page.screenshot({ path: `${OUT}/accueil-semer.png` })
+    const champ = await page.evaluate(() => {
+      const el = document.querySelector('.mw-seed')
+      // Le champ doit être PRÊ-REMPLI et sélectionné : taper sa seed ne doit pas demander
+      // d'effacer d'abord (c'est le geste que le dé remplace, pas un formulaire à vider).
+      return el ? { valeur: el.value, focus: document.activeElement === el, de: Boolean(document.querySelector('.mw-de')) } : null
+    })
+    console.log(`champ de seed : ${JSON.stringify(champ)}`)
+    if (!champ?.focus || !champ.de) console.error(`!! LE CHAMP DE SEED N'EST PAS PRÊT : ${JSON.stringify(champ)}`)
+
+    await page.fill('.mw-seed', String(SEED))
+    await page.click('[data-semer]')
+    await page.waitForFunction(() => window.__BRAISES__?.scene?.registry?.get('mapData'), null, { timeout: 150000 })
+    await page.waitForTimeout(1500)
+    // LA SEED A-T-ELLE PRIS ? On la lit sur la scène — c'est celle que l'hôte a renvoyée dans
+    // son `ready`, donc celle que /sim a réellement semée, pas celle qu'on a tapée.
+    const semee = await page.evaluate(() => window.__BRAISES__.scene.worldSeed)
+    console.log(`seed du monde fondé : ${semee} (demandée ${SEED})`)
+    if (semee !== SEED) console.error(`!! LA SEED CHOISIE N'A PAS PRIS : ${semee} ≠ ${SEED}`)
+    await page.screenshot({ path: `${OUT}/accueil-monde-seme.png` })
+
+    // ── 3. REVENIR : la deuxième vallée doit maintenant s'annoncer avec SA seed, à côté de la
+    //    première — deux mondes distincts sur le même disque, ce que la case unique interdisait.
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+    await page.click('.pm-quit')
+    await page.waitForFunction(() => document.querySelectorAll('.mw-row').length > 0, null, { timeout: 30000 })
+    await page.waitForTimeout(400)
+    const apresFondation = await cases()
+    console.log(`après fondation : ${JSON.stringify(apresFondation)}`)
+    await page.screenshot({ path: `${OUT}/accueil-deux-vallees.png` })
+    if (!apresFondation[1]?.plein || !apresFondation[1]?.etat.includes(`seed ${SEED}`)) {
+      console.error(`!! LA VALLÉE FONDÉE NE S'ANNONCE PAS : ${JSON.stringify(apresFondation[1])}`)
+    }
+    if (!apresFondation[0]?.plein) console.error(`!! FONDER UNE VALLÉE A EMPORTÉ L'AUTRE`)
+
+    // ── 4. ROUVRIR UNE VALLÉE (le geste de la stèle de fin de saison) — `?solo&fresh` efface
+    //    LA CASE VISÉE, et elle seule. Le mode d'échec de ce chemin n'est pas un affichage de
+    //    travers : c'est effacer la mauvaise vallée. On le prouve donc sur la VOISINE, en
+    //    vérifiant qu'elle est intacte après coup.
+    const base = await page.evaluate(() => location.origin + location.pathname)
+    await page.goto(`${base}?solo&fresh&slot=1&seed=888`)
+    await page.waitForFunction(() => window.__BRAISES__?.scene?.registry?.get('mapData'), null, { timeout: 150000 })
+    await page.waitForTimeout(1500)
+    const rouverte = await page.evaluate(() => window.__BRAISES__.scene.worldSeed)
+    console.log(`vallée rouverte à neuf : seed ${rouverte} (demandée 888)`)
+    if (rouverte !== 888) console.error(`!! ?fresh N'A PAS SEMÉ LA SEED DEMANDÉE : ${rouverte}`)
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+    await page.click('.pm-quit')
+    await page.waitForFunction(() => document.querySelectorAll('.mw-row').length > 0, null, { timeout: 30000 })
+    await page.waitForTimeout(400)
+    const apresFresh = await cases()
+    console.log(`après ?fresh sur la case 2 : ${JSON.stringify(apresFresh)}`)
+    if (!apresFresh[1]?.etat.includes('seed 888')) {
+      console.error(`!! LA CASE ROUVERTE N'A PAS CHANGÉ DE MONDE : ${JSON.stringify(apresFresh[1])}`)
+    }
+    // LA CLAUSE QUI COMPTE : la voisine n'a pas bougé. C'est elle qui prouve que `?fresh` vise.
+    if (!apresFresh[0]?.plein || !apresFresh[0]?.etat.includes('seed 2026')) {
+      console.error(`!! ?fresh A EMPORTÉ LA VALLÉE VOISINE : ${JSON.stringify(apresFresh[0])}`)
+    }
+
+    // ── 5. EFFACER — la confirmation prend la place de la ligne, en rouge, et NOMME ce qu'on
+    //    perd. On efface la vallée 2 (celle qu'on vient de rouvrir), jamais la 1.
+    await page.click('.mw-row:nth-child(2) .mw-x')
+    await page.waitForTimeout(200)
+    const arme = await page.evaluate(() => ({
+      warn: document.querySelector('.mw-warn')?.textContent ?? '',
+      bouton: document.querySelector('[data-effacer]')?.textContent ?? '',
+      // La confirmation ne doit pas décaler la liste : on cliquerait la ligne du dessous.
+      hauteurs: [...document.querySelectorAll('.mw-row')].map((r) => Math.round(r.getBoundingClientRect().height)),
+    }))
+    console.log(`confirmation d’effacement : ${JSON.stringify(arme)}`)
+    await page.screenshot({ path: `${OUT}/accueil-effacer.png` })
+    if (!arme.warn.includes('sans retour') || !arme.warn.includes('888')) {
+      console.error(`!! LA CONFIRMATION NE NOMME PAS CE QU'ON PERD : ${JSON.stringify(arme)}`)
+    }
+    if (new Set(arme.hauteurs).size !== 1) console.error(`!! LA LISTE SE DÉCALE : ${arme.hauteurs}`)
+
+    await page.click('[data-effacer]')
+    await page.waitForTimeout(600)
+    const apresEffacement = await cases()
+    console.log(`après effacement : ${JSON.stringify(apresEffacement)}`)
+    await page.screenshot({ path: `${OUT}/accueil-apres-effacement.png` })
+    if (apresEffacement[1]?.plein) console.error(`!! LA VALLÉE EFFACÉE EST TOUJOURS LÀ`)
+    if (!apresEffacement[0]?.plein) console.error(`!! EFFACER UNE VALLÉE A EMPORTÉ L'AUTRE`)
+
+    return { apresSortie, semee, apresFondation, rouverte, apresFresh, apresEffacement }
+  },
+
   async juice(page) {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.waitForTimeout(1500) // stabilisation (harnais a déjà navigué + attendu le monde)

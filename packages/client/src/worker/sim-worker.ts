@@ -33,7 +33,8 @@ import {
   type NodeShadow,
 } from '@braises/sim'
 import { createVeillee, LOAD_PHASES } from './veillee'
-import { loadCarte, loadSlot, saveCarteEtSlot, saveSlot } from './persistence-store'
+import { loadCarte, loadMeta, loadSlot, saveCarteEtSlot, saveSlot, type SlotMeta } from './persistence-store'
+import { seedValide, slotValide, type VeilleeInit } from './mondes'
 
 const post = (message: HostToClient): void => {
   ;(self as unknown as { postMessage(m: unknown): void }).postMessage(message)
@@ -41,6 +42,16 @@ const post = (message: HostToClient): void => {
 
 let sim: SimState | undefined
 let playerId = 0
+/**
+ * QUEL MONDE CE WORKER OUVRE — posé par `veillee_init`, avant tout `join` (voir `mondes.ts`).
+ *
+ * Un Worker n'ouvre qu'un monde dans sa vie, et le sait avant de naître : la case dit où il
+ * écrit, la seed dit quelle vallée il sème. Changer de monde veut dire un autre Worker — et,
+ * dans les faits, un rechargement de page (l'invariant de `clearSlot`).
+ */
+let monde: { slot: number; seed: number } | undefined
+/** Horloge murale de la FONDATION du monde — conservée d'une session à l'autre par la méta. */
+let mondeCreeA = 0
 /**
  * LA SONDE DE COÛT (dev seulement — voir `PerfMessage`). Le budget d'un tick est de 50 ms
  * (20 Hz) ; ce que le projet en sait vient de Node sous `tsx`, pas de ce moteur-ci. On relève
@@ -212,7 +223,9 @@ function releverPerf(tickNo: number, t0: number, tStep: number): void {
  * monde existe. C'est une opération d'HÔTE — horloge murale comprise (interdite à /sim).
  */
 async function persist(): Promise<void> {
-  if (!sim) return
+  // `monde` est posé avant le boot (voir `veillee_init`) : pas de sim sans lui. On l'exige
+  // quand même — écrire une partie dans la case d'un autre monde ne se rattrape pas.
+  if (!sim || !monde) return
   // Une écriture est déjà en vol : on ne la double pas, mais on RETIENT la demande — sinon un
   // `pause` (la vraie prise de sortie) qui coïncide avec un autosave serait perdu, alors même
   // que le joueur a quitté proprement. On rejouera avec l'état frais dès la fin de l'écriture.
@@ -238,6 +251,17 @@ async function persist(): Promise<void> {
       perfOctets = new TextEncoder().encode(texte).length
     }
     const record = { sim: texte, playerId, chronicle: chronicleLog, savedAt: Date.now() }
+    // LA MÉTA DE L'ÉCRAN DES MONDES — écrite dans la MÊME transaction que la partie (voir
+    // `persistence-store.ts`) : le jour annoncé au menu est toujours celui de la sauvegarde
+    // qu'on rouvrira, jamais celui d'avant. Elle se calcule ici parce qu'elle demande le
+    // `SimState` vivant, que le menu, lui, n'ouvrira pas.
+    const meta: SlotMeta = {
+      seed: sim.seed,
+      seasonDay: getGameTime(sim).seasonDay,
+      savedAt: record.savedAt,
+      // Une fondation ne se réécrit pas : à la reprise, `boot()` a relu celle du disque.
+      createdAt: mondeCreeA || record.savedAt,
+    }
     // LA CARTE, UNE SEULE FOIS — et ATOMIQUEMENT avec la partie. Elle pèse 86,9 % de la
     // sauvegarde et ne change jamais (garde : `carte-immuable.test.ts`) : la réécrire deux fois
     // par minute était le gel. Mais la poser dans SA transaction ouvrait une fenêtre où le
@@ -245,9 +269,9 @@ async function persist(): Promise<void> {
     // ensemble ou pas du tout. Si l'écriture échoue, `carteEcrite` reste faux et le prochain
     // autosave retentera : une partie sans sa carte ne se reprend pas.
     if (carteEcrite) {
-      await saveSlot(record)
+      await saveSlot(monde.slot, record, meta)
     } else {
-      await saveCarteEtSlot(serializeCarte(sim.map, sim.seed, sim.nodes), record)
+      await saveCarteEtSlot(monde.slot, serializeCarte(sim.map, sim.seed, sim.nodes), record, meta)
       carteEcrite = true
     }
     // ON LE DIT. Une sauvegarde muette laisse le joueur dans le doute — et ce doute coûte
@@ -281,11 +305,11 @@ async function persist(): Promise<void> {
  * génération est annoncée au fil de l'eau (barre de chargement) ; une reprise, elle, est
  * quasi instantanée — on annonce alors une barre pleine d'un coup.
  */
-async function boot(): Promise<void> {
+async function boot(slot: number, seed: number): Promise<void> {
   let spawn: { x: number; y: number } | undefined
   let resumed = false
   try {
-    const rec = await loadSlot()
+    const rec = await loadSlot(slot)
     if (rec) {
       // LA CARTE VIENT DE SA PROPRE CASE (elle ne bouge pas, on ne la réécrit pas — voir
       // `persistence-store.ts`), et on RETOMBE sur l'ancien format si le recollage échoue.
@@ -299,7 +323,7 @@ async function boot(): Promise<void> {
       // reprise ne se perd pas pour un changement de rangement » : elle se tient ici.
       let carteEnMain = false
       let state: SimState | undefined
-      const carteTexte = await loadCarte()
+      const carteTexte = await loadCarte(slot)
       if (carteTexte) {
         try {
           const naissance = deserializeCarte(carteTexte)
@@ -322,6 +346,12 @@ async function boot(): Promise<void> {
       chronicleLog = rec.chronicle ?? []
       const me = state.entities.find((e) => e.id === playerId)
       if (me) spawn = { x: me.x, y: me.y }
+      // LA DATE DE FONDATION SURVIT À LA REPRISE : sans ça, chaque sauvegarde ferait naître le
+      // monde à l'instant — et l'écran des mondes dirait « commencée à l'instant » d'une vallée
+      // vieille de trois jours. Sauvegarde d'avant les métas : sa date de sauvegarde fait foi.
+      mondeCreeA = (await loadMeta(slot))?.createdAt || rec.savedAt
+      // LA SEED SEMÉE PERD FACE À CELLE DU MONDE SAUVÉ : on rouvre CETTE vallée-là, telle
+      // qu'elle est au disque. `seed` ne sert qu'à en FONDER une (plus bas).
       resumed = true
     }
   } catch {
@@ -333,9 +363,10 @@ async function boot(): Promise<void> {
   }
 
   if (!sim) {
-    const world = createVeillee((phase) => {
+    const world = createVeillee(seed, (phase) => {
       post({ type: 'progress', phase, done: LOAD_PHASES.indexOf(phase), total: LOAD_PHASES.length })
     })
+    mondeCreeA = Date.now() // la fondation, horloge murale d'hôte — /sim n'en sait rien
     sim = world.sim
     playerId = world.playerId
     spawn = world.spawn
@@ -397,12 +428,28 @@ function stopTicker(): void {
   }
 }
 
-self.addEventListener('message', (event: MessageEvent<ClientToHost>) => {
+// `VeilleeInit` n'est PAS du protocole de jeu (voir `mondes.ts`) : c'est la configuration
+// d'hôte, l'équivalent de l'URL passée à `createColyseusHost`. On élargit donc le type du
+// canal ici, à la frontière, plutôt que d'ajouter un champ solo au protocole partagé avec
+// le serveur LAN — « une simulation, pas deux jeux » vaut aussi pour le protocole.
+self.addEventListener('message', (event: MessageEvent<ClientToHost | VeilleeInit>) => {
   const msg = event.data
-  if (msg.type === 'join') {
+  if (msg.type === 'veillee_init') {
+    // La configuration arrive AVANT le `join` (ordre garanti vers un même Worker), et une
+    // seule fois : un Worker n'ouvre qu'un monde. On refuse net une case ou une seed hors
+    // bornes — écrire dans une clé fantôme se découvrirait à la reprise, trop tard.
+    if (!slotValide(msg.slot) || !seedValide(msg.seed)) {
+      throw new Error(`sim-worker: monde impossible (case ${msg.slot}, seed ${msg.seed})`)
+    }
+    monde = { slot: msg.slot, seed: msg.seed }
+  } else if (msg.type === 'join') {
     if (sim || booting) return // déjà en jeu (ou en cours de boot async) : pas de second monde
+    // ON JETTE ICI, PAS DANS `boot()` : `void boot()` avale sa rejection (le `onerror` du Worker
+    // n'écoute que le synchrone), et le joueur resterait sur un écran de chargement muet. Levée
+    // dans le handler, l'erreur remonte au client, qui a un écran fatal pour ça.
+    if (!monde) throw new Error('sim-worker: « join » sans configuration d’hôte (« veillee_init »)')
     booting = true
-    void boot()
+    void boot(monde.slot, monde.seed)
   } else if (msg.type === 'input') {
     playerInput = { dx: msg.dx, dy: msg.dy, sprint: msg.sprint, sneak: msg.sneak, block: msg.block }
     lastProcessedInput = msg.seq

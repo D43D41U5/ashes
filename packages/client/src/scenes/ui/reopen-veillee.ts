@@ -1,16 +1,32 @@
 /**
- * ROUVRIR une Veillée NEUVE — le deep-link de boot `?solo&fresh` que `MenuScene` consomme
- * (`params.has('solo')` + `params.has('fresh')` → `clearSlot()` puis relance solo). Une SEULE
- * source de ce contrat : la stèle de fin de saison et le menu pause l'appellent, MenuScene le
- * lit. La seed est fixe (`VEILLEE_SEED`) — c'est la MÊME vallée qui se réveille, vidée des
- * marques ; d'où « rouvrir », pas « nouvelle vallée ».
+ * LES DEUX SORTIES D'UNE PARTIE — rouvrir la même vallée à neuf, ou revenir aux vallées.
+ *
+ * Toutes deux RECHARGENT LA PAGE, et ce n'est pas de la paresse : un Worker vivant garde en
+ * mémoire l'identité du monde qu'il a ouvert (`carteEcrite`, la base des nœuds, la chronique).
+ * Repartir sans recharger demanderait de prouver qu'aucun de ces états ne survit au changement
+ * de monde — alors que l'invariant de `clearSlot` exige justement qu'aucun Worker ne vive quand
+ * on efface. Un rechargement rend cette preuve gratuite. (Voir `persistence-store.ts`.)
  */
-import { clearFog } from '../../render/fog'
 
-export function reopenFreshVeillee(): void {
-  // Une Veillée NEUVE oublie aussi la CARTE : le brouillard vit hors de la sauvegarde de sim
-  // (localStorage), donc `clearSlot()` ne l'emporte pas. Sans ça, on rouvrirait une vallée
-  // vierge avec le savoir géographique de la précédente — et il n'y aurait plus rien à découvrir.
-  clearFog()
-  window.location.href = window.location.pathname + '?solo&fresh'
+/**
+ * ROUVRIR une Veillée NEUVE — MÊME case, MÊME seed, vidée de nos marques. C'est le geste de la
+ * stèle de fin de saison : la vallée se réveille du froid, on n'en change pas.
+ *
+ * Le deep-link `?solo&fresh` que `MenuScene` consomme fait le ménage (sauvegarde ET brouillard)
+ * avant de démarrer — une SEULE source de ce contrat.
+ */
+export function reopenFreshVeillee(slot: number, seed: number): void {
+  window.location.href = `${window.location.pathname}?solo&fresh&slot=${slot}&seed=${seed}`
+}
+
+/**
+ * REVENIR À L'ÉCRAN DES VALLÉES — sans rien détruire. Le geste du menu pause depuis que le
+ * joueur tient cinq mondes : quitter n'est plus « effacer », c'est changer de vallée. (Ce qu'on
+ * efface, on l'efface DANS la liste, où l'on voit ce qu'on perd.)
+ *
+ * L'appelant doit s'être assuré que la partie est SAUVÉE (voir `WorldScene.quitVersMondes`) :
+ * ici, on ne fait que naviguer.
+ */
+export function reopenMondes(): void {
+  window.location.href = window.location.pathname
 }

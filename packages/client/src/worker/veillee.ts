@@ -23,7 +23,13 @@ import {
   type SimState,
 } from '@braises/sim'
 
-export const VEILLEE_SEED = 2026
+/**
+ * LA SEED PAR DÉFAUT vit dans `mondes.ts` (module feuille) : depuis l'écran des mondes, le
+ * joueur SÈME sa vallée — la seed est devenue un paramètre de `createVeillee`, plus une
+ * constante du scénario. On la ré-exporte pour qui la citait ici.
+ */
+import { VEILLEE_SEED } from './mondes'
+export { VEILLEE_SEED }
 /**
  * ⚙ CALIBRATION (V0-9) — LA DURÉE D'UNE VEILLÉE, en cycles jour/nuit observables.
  *
@@ -63,8 +69,16 @@ export type LoadPhase = (typeof LOAD_PHASES)[number]
  * `onPhase` est annoncé AVANT la passe qu'il nomme : quand il dit « hydrology »,
  * les rivières se creusent à cet instant. Le compte de passes achevées est donc
  * son index — la barre ne devance jamais le travail.
+ *
+ * LA SEED EST UN PARAMÈTRE depuis l'écran des mondes (2026-07-28) : le joueur sème sa
+ * vallée. Elle traverse TOUTES les passes — terrain, nœuds, coins de chasse, monstres,
+ * lieux bâtis — parce qu'un monde est ce que sa seed en fait, et rien d'autre : deux
+ * parties de même seed doivent être la même vallée, tuile pour tuile.
  */
-export function createVeillee(onPhase: (phase: LoadPhase) => void = () => {}): {
+export function createVeillee(
+  seed: number = VEILLEE_SEED,
+  onPhase: (phase: LoadPhase) => void = () => {},
+): {
   sim: SimState
   playerId: number
   spawn: { x: number; y: number }
@@ -77,7 +91,7 @@ export function createVeillee(onPhase: (phase: LoadPhase) => void = () => {}): {
   // LA NOUVELLE VALLÉE (spec `worldgen.md`) : un GRAPHE DE ZONES d'abord, le terrain ensuite.
   // La taille se déduit du nombre de joueurs cible — on ne la règle plus à la main.
   onPhase('zones')
-  const carte = generateZonedTerrain(VEILLEE_SEED)
+  const carte = generateZonedTerrain(seed)
   const map = carte.map
   onPhase('terrain')
   onPhase('seuils')
@@ -98,20 +112,20 @@ export function createVeillee(onPhase: (phase: LoadPhase) => void = () => {}): {
   if (!premier) throw new Error('veillee: la vallée ne porte aucun emplacement viable — carte dégénérée')
   const spawn = { x: premier.tx + 0.5, y: premier.ty + 0.5 }
 
-  const sim = createSim(VEILLEE_SEED, {
+  const sim = createSim(seed, {
     map,
     calendarScale: VEILLEE_CALENDAR_SCALE,
     nodes,
     cycleOffset: cycleOffsetForStartHour(VEILLEE_START_HOUR),
     faunaCap: FAUNA.CAP,
-    grounds: placeHuntingGrounds(map, VEILLEE_SEED),
+    grounds: placeHuntingGrounds(map, seed),
     home: spawn,
     debug: import.meta.env.DEV,
   })
   onPhase('monsters')
-  spawnPoiMonsters(sim, VEILLEE_SEED)
+  spawnPoiMonsters(sim, seed)
   // LES LIEUX BÂTIS — même moment, même patron : le worldgen a marqué, l'hôte peuple.
-  buildPoiStructures(sim, VEILLEE_SEED)
+  buildPoiStructures(sim, seed)
   // Le joueur commence les mains vides (spec économie) — pas de kit de départ.
   const playerId = spawnEntity(sim, spawn.x, spawn.y)
 

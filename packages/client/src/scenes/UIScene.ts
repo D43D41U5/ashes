@@ -26,6 +26,8 @@ import { createLoadingScreen, type LoadingScreen } from './ui/loading'
 import { createChatPanel, type ChatPanel } from './ui/chat-panel'
 import { createDebugOverlay, renderDebugOverlay, requestTeleport } from './world/debug-overlay'
 import { FONT } from './ui/typography'
+import { reopenFreshVeillee } from './ui/reopen-veillee'
+import { VEILLEE_SEED } from '../worker/mondes'
 
 const TASK_LABELS: Record<VillageTask['kind'], string> = {
   gather_berries: 'récolter des baies',
@@ -241,13 +243,21 @@ export class UIScene extends Phaser.Scene {
     this.deathVeil = createDeathVeil()
     // La stèle de fin de saison (finition GATE 1) : SŒUR du voile de mort, terminale.
     // WorldScene pose `seasonVerdicts` au jour 61 (sa non-nullité = fin de saison) ; on la lève une fois.
-    this.seasonVeil = createSeasonVeil()
+    // ROUVRIR LA VALLÉE : la case et la seed du monde en cours (posées au `ready` par
+    // WorldScene) — lues AU CLIC, pas à la construction : la stèle se monte avant le `ready`.
+    this.seasonVeil = createSeasonVeil(() => {
+      const v = getHud(this.registry, 'veillee')
+      reopenFreshVeillee(v?.slot ?? 0, v?.seed ?? VEILLEE_SEED)
+    })
     // Le menu PAUSE (ESC) : REPRENDRE referme (menuOpen=false → WorldScene reprend l'hôte) ; le
     // curseur de son passe par le registre (`audioVolume`), que WorldScene applique au moteur.
     this.pauseMenu = createPauseMenu({
       onResume: () => setHud(this.registry, 'menuOpen', false),
       getVolume: () => Number(getHud(this.registry, 'audioVolume') ?? 1),
       onVolume: (v) => setHud(this.registry, 'audioVolume', v),
+      // QUITTER : on ne navigue PAS d'ici. WorldScene tient l'hôte, donc la sauvegarde : il
+      // fait écrire la partie et ne recharge qu'une fois le disque acquitté.
+      onQuit: () => setHud(this.registry, 'quitMondes', true),
     })
     this.chatPanel = createChatPanel(this)
     // Le journal (J) : la chronique de la saison, la Mémoire v1.

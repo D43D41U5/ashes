@@ -55,6 +55,8 @@ import {
 } from '@braises/sim'
 import Phaser from 'phaser'
 import { createColyseusHost, createWorkerHost, type HostConnection } from '../host-connection'
+import { VEILLEE_SEED } from '../worker/mondes'
+import { reopenMondes } from './ui/reopen-veillee'
 import { getHud, setHud } from '../hud-state'
 import {
   AMBIENT_DEPTH,
@@ -282,9 +284,20 @@ function solForet(tx: number, ty: number, seed: number): number {
  * (Veillée) ; `multi` → serveur Colyseus à `url`. Absent (lancement direct) → on
  * retombe sur `VITE_SERVER_URL` (rétrocompat dev/smoke).
  */
+/**
+ * Combien de temps on attend l'écriture disque avant de quitter quand même (menu pause →
+ * « retour aux vallées »). Trois secondes : au-delà, mieux vaut rendre la main que retenir le
+ * joueur dans une partie qu'il quitte — l'autosave a de toute façon écrit il y a moins de 30 s.
+ */
+const QUIT_ATTENTE_MS = 3000
+
 export interface WorldSceneData {
   mode?: 'solo' | 'multi'
   url?: string
+  /** SOLO — la case du disque à ouvrir (0..`SLOT_COUNT`-1). Défaut : la case 0. */
+  slot?: number
+  /** SOLO — la seed à SEMER si la case est vide. Une case occupée garde la sienne. */
+  seed?: number
 }
 
 export class WorldScene extends Phaser.Scene {
@@ -601,7 +614,12 @@ export class WorldScene extends Phaser.Scene {
     // sur `VITE_SERVER_URL` (rétrocompat).
     const data = (this.scene.settings.data ?? {}) as WorldSceneData
     const serverUrl = data.mode === 'multi' ? data.url : data.mode === 'solo' ? undefined : import.meta.env.VITE_SERVER_URL
-    this.host = serverUrl ? createColyseusHost(serverUrl) : createWorkerHost()
+    // SOLO : quelle case, quelle seed. `MenuScene` les pose toujours (écran des mondes ou
+    // deep-link) ; le repli — case 0, seed canonique — sert le lancement direct sans menu.
+    this.slot = data.slot ?? 0
+    this.host = serverUrl
+      ? createColyseusHost(serverUrl)
+      : createWorkerHost({ slot: this.slot, seed: data.seed ?? VEILLEE_SEED })
     // MULTI : les autres entités sont rendues ~100 ms en retard (tampon de gigue,
     // spec Tranche B) ; en solo on garde le tick de retard par défaut, ~0 latence.
     if (serverUrl) this.view.interpDelayMs = INTERP_DELAY_MULTI_MS
@@ -656,6 +674,9 @@ export class WorldScene extends Phaser.Scene {
     }
     this.playerId = msg.playerId
     this.worldSeed = msg.seed
+    // QUEL MONDE ON JOUE — pour les deux boutons d'UIScene qui en ont besoin : « rouvrir la
+    // vallée » (stèle de fin de saison : même case, même seed) et « retour aux vallées ».
+    setHud(this.registry, 'veillee', { slot: this.slot, seed: msg.seed })
     this.calendarScale = msg.calendarScale
     this.map = msg.map
 
@@ -663,7 +684,7 @@ export class WorldScene extends Phaser.Scene {
     // ou on ouvre une carte vierge. `depackBrouillard` rend un brouillard NEUF si les dimensions
     // ne correspondent plus (vallée régénérée) — on redécouvre plutôt que d'afficher un savoir
     // faux. Il vit ici, côté client : aucune règle de jeu n'en dépend (voir l'en-tête de `fog`).
-    const memoire = loadFog()
+    const memoire = loadFog(this.slot)
     this.fog = memoire
       ? depackBrouillard(memoire, this.map.width, this.map.height)
       : creerBrouillard(this.map.width, this.map.height)
@@ -817,6 +838,19 @@ export class WorldScene extends Phaser.Scene {
     if (menuOpen !== this.menuPaused) {
       this.menuPaused = menuOpen
       this.syncPause()
+    }
+    // QUITTER VERS LES VALLÉES : UIScene pose la demande (menu pause), on la sert ici — c'est
+    // nous qui tenons l'hôte, donc la sauvegarde. Le départ part sur le `saved` (voir plus haut).
+    if (Boolean(getHud(this.registry, 'quitMondes')) && !this.quitEnCours) {
+      this.quitEnCours = true
+      this.quitDepuis = this.time.now
+      this.send({ type: 'pause' }) // l'hôte ÉCRIT sur `pause` (sim-worker) — c'est la vraie prise
+    }
+    // Le garde-fou, EN NIVEAU et pas sur un front : une horloge headless saute, et un départ
+    // qui DOIT partir ne se pilote pas sur un `delayedCall` qu'un saut peut enjamber.
+    if (this.quitEnCours && this.time.now - this.quitDepuis >= QUIT_ATTENTE_MS) {
+      this.quitEnCours = false
+      reopenMondes()
     }
     // LE VOLUME : le curseur du menu pause pose `audioVolume` ; on l'applique au moteur (ici),
     // sur changement seulement (le moteur vit dans WorldScene, le curseur dans UIScene).
@@ -1383,8 +1417,14 @@ export class WorldScene extends Phaser.Scene {
       // que la veillée est à l'abri (et surtout savoir quand elle ne l'est PAS) vaut son pixel.
       // Le brouillard se range AU MÊME MOMENT que la partie : un seul geste de sauvegarde,
       // donc jamais un savoir géographique en avance ou en retard sur le monde qu'il décrit.
-      if (this.fog && msg.ok) saveFog(packBrouillard(this.fog))
+      if (this.fog && msg.ok) saveFog(this.slot, packBrouillard(this.fog))
       publishSaved(this.registry, msg.at, msg.ok, this.time.now)
+      // QUITTER VERS LES VALLÉES attendait CE message : la partie est au disque (ou l'hôte a
+      // dit qu'il n'y arrivait pas — dans les deux cas, attendre plus ne sauvera rien de plus).
+      if (this.quitEnCours) {
+        this.quitEnCours = false
+        reopenMondes()
+      }
       return
     }
     if (msg.type === 'perf') {
@@ -1546,6 +1586,18 @@ export class WorldScene extends Phaser.Scene {
   private fireLow = false
   /** Le menu pause est-il ouvert ? (miroir de `menuOpen` — fige/reprend l'hôte, cf. syncPause) */
   private menuPaused = false
+  /** SOLO — la case du disque que cette partie occupe (brouillard, sauvegarde, retour au menu). */
+  private slot = 0
+  /**
+   * ON QUITTE VERS LES VALLÉES, et on attend que le disque ait fini.
+   *
+   * Recharger la page à l'instant du clic perdrait jusqu'à 30 s de jeu (la période de
+   * l'autosave) : on demande d'abord une écriture (`pause`), et c'est le `saved` de l'hôte qui
+   * déclenche le départ. `quitDepuis` borne l'attente — un hôte mort ne doit pas séquestrer le
+   * joueur dans une partie qu'il a demandé à quitter.
+   */
+  private quitEnCours = false
+  private quitDepuis = 0
   /** Dernier volume appliqué au moteur audio — n'applique que sur changement (curseur du menu). */
   private lastAudioVolume = 1
 

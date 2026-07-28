@@ -13,3 +13,10 @@ dist/
 
 # Bac à sable de session (captures de smoke test, scripts jetables)
 scratchpad/
+# Worktrees des sous-agents : des CLONES du dépôt (256 Mo au dernier compte).
+.claude/worktrees/
+# Journaux de console du Playwright MCP.
+.playwright-mcp/
+# Planche-contact de l'art, REGÉNÉRABLE : `pnpm smoke --scenario png` la refait
+# entièrement (voir docs/inventaire-sprites.md). Une sortie d'outil, pas une source.
+art-export/

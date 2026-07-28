@@ -9,7 +9,8 @@
 **Mais `livré-en-code ≠ prouvé-fun`.** Rien n'a encore été *joué* 5 sessions. Ce qui reste pour GATE 1 se répartit en trois natures :
 
 1. **Calibration playtest** (le vrai reste) — presque chaque nombre livré est « ordre de grandeur, à valider ». → Décisions d'Alexis, au banc `pnpm scenario` + sessions réelles. Je peux *instruire* (faire tourner le banc, rapporter, recommander), pas *trancher*.
-2. **Décisions réservées à Alexis** — chantier IA-village **en pause et flaggé** (ne pas rouvrir), esthétique audio (oreilles d'Alexis), sémantique du finale.
+2. **Décisions réservées à Alexis** — chantier IA-village **en pause et flaggé** (ne pas rouvrir), ~~esthétique audio (oreilles d'Alexis)~~, sémantique du finale.
+   - **✅ LE SON EST TRANCHÉ (2026-07-28, mandat « tu fais tout »).** Les 51 silences ont été arbitrés : **34 faits ont une voix, 27 un silence DÉCIDÉ** — plus aucun par omission. Une grammaire est écrite dans `sound.ts` (ce qui monte ouvre, ce qui descend ferme ; `sawtooth`, inemployé, devient la voix du prédateur — **l'axe d'alignement s'entend**, et deux tests le gardent). Instrument livré : **`banc-son.html`** (`pnpm dev` → `/banc-son.html`), qui joue le vrai routage sur le vrai moteur, et dont l'atelier rend la ligne à coller. **Ce qui reste à tes oreilles** : le TIMBRE des 24 voix neuves, posé sans les entendre — chaque retouche est une ligne, au banc. Détail complet dans `docs/decisions.md`.
 3. **Résidu de finition constructible** — ma voie. C'est ce backlog.
 
 ---

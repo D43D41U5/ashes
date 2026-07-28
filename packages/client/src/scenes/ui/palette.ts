@@ -27,6 +27,14 @@ export const HEX = {
    */
   bodyBright: '#f2ead0',
   /**
+   * L'ENCRE TIÈDE — du texte de corps qui a pris la couleur de la braise sans en être un accent.
+   * NOMMÉE le 2026-07-28 : le voile de mort (la ligne du corps), le menu PAUSE (la colonne
+   * gauche du tableau des clics) et l'écran des vallées (l'état d'un monde) la portaient en dur.
+   * Son rôle est toujours le même : une SECONDE VOIX, plus chaude que `dim`, pour ce qui
+   * commente le geste principal sans le concurrencer.
+   */
+  bodyWarm: '#c0a074',
+  /**
    * L'encre la plus discrète — RELEVÉE de #6f6a60 à #8b8474 le 2026-07-24 (décision d'Alexis).
    *
    * L'ancienne valeur échouait au contraste WCAG AA partout où elle portait une PHRASE : 3,52:1
@@ -55,11 +63,26 @@ export const HEX = {
   panelWarm: '#16120d', // vignette de détail (survol, alternative)
   borderDim: '#2a2a34', // cadre neutre
   borderWarm: '#6b5a3a', // cadre chaud (bord haut d'une fenêtre)
+  /**
+   * Le cadre chaud SURVOLÉ — `borderWarm` éclairci. NOMMÉE le 2026-07-28 : elle vivait en dur
+   * dans la stèle de fin de saison et le menu PAUSE, et le banc d'écoute en a fait un troisième
+   * porteur — le seuil où la garde de palette exige un nom. Trois écrans qui partagent une
+   * teinte anonyme la font dériver au premier réglage (c'est déjà arrivé : trois rouges pour
+   * un seul accent). Toujours le même rôle : le bord d'un bouton FANTÔME sous le curseur.
+   */
+  borderWarmHover: '#8a7a52',
   // NOMMÉES le 2026-07-25 : partagées par le sac de l'écran perso, le composant sac/ceinture
   // partagé et le modal du feu (≥3 fichiers) — une teinte que plusieurs écrans emploient est un
   // token qui s'ignore (mémoire palette). On leur donne leur nom pour qu'elles ne dérivent pas.
   armed: '#241d14', // surface d'une case ARMÉE / active (ceinture tenue, bouton du feu)
   wearTrack: '#3a2f22', // le rail sombre derrière une jauge d'usure d'outil
+  /**
+   * LE RAIL D'UN CONTRÔLE au repos — le sillon du curseur de volume, le bord d'un champ de
+   * saisie. NOMMÉE le 2026-07-28 : le menu PAUSE, le banc d'écoute et l'écran des vallées la
+   * portaient en dur. Cousine de `wearTrack` (le rail d'une JAUGE, qu'on lit) : celui-ci est
+   * le rail d'un ORGANE, qu'on manipule — même famille, deux rôles, deux noms.
+   */
+  controlRail: '#3a3225',
 } as const
 
 /** Les remplissages de médaillon de vitale (maquette Turn 2A) : fill + liseré. */
