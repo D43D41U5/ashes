@@ -187,6 +187,10 @@ export {
   deserializePartie,
   SAVE_FORMAT_VERSION,
 } from './persistence'
+export type { CarteSauvee } from './persistence'
+// Le diff des nœuds : les 125 686 nœuds ne se réécrivent plus en entier deux fois par minute.
+export { baseDepuisNoeuds, diffNoeuds, appliqueDiffNoeuds } from './node-baseline'
+export type { BaseNoeuds, DiffNoeuds, NoeudMuable } from './node-baseline'
 
 // ─── Outils de DEV (inertes hors sim créée avec `debug: true`) ────────────
 export type { DebugAction } from './debug'

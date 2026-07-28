@@ -32,6 +32,7 @@ import { grantItems } from './village'
 import { TICKS_PER_SEASON_DAY, TICKS_PER_CYCLE, seasonDayAtTick } from './time'
 import type { WorldMap } from './map'
 import { serializeCarte, serializePartie, serializeSim } from './persistence'
+import { baseDepuisNoeuds } from './node-baseline'
 
 /**
  * LES CHAMPS PAR TUILE — trop gros pour un JSON, hachés élément par élément.
@@ -250,22 +251,25 @@ describe('la carte est immuable pendant la partie', () => {
  */
 describe('le poids de la sauvegarde périodique', () => {
   /** Généreux : on veut attraper un facteur, pas discuter un mégaoctet. */
-  const PLAFOND_PARTIE_MO = 20
+  const PLAFOND_PARTIE_MO = 1
 
   it("A4 — la partie pèse un ordre de grandeur de moins que l'état entier", () => {
     const { sim } = mondeReel()
 
     const entier = serializeSim(sim).length
-    const partie = serializePartie(sim).length
-    const carte = serializeCarte(sim.map, sim.seed).length
+    const base = baseDepuisNoeuds(sim.nodes)
+    const partie = serializePartie(sim, base).length
+    const naissance = serializeCarte(sim.map, sim.seed, sim.nodes).length
 
-    // Le fait central : la carte est l'essentiel du poids, et elle n'est plus du voyage.
-    expect(carte / entier).toBeGreaterThan(0.5)
-    expect(partie).toBeLessThan(entier / 4)
+    // Le fait central : l'enregistrement de naissance (carte + nœuds d'origine) est
+    // l'essentiel du poids, et il n'est plus du voyage.
+    expect(naissance / entier).toBeGreaterThan(0.9)
     expect(partie / 1e6).toBeLessThan(PLAFOND_PARTIE_MO)
 
-    // Et la partie ne contient PAS la carte — la vérification directe, au cas où les
-    // rapports de taille tiendraient un jour par accident.
-    expect(serializePartie(sim)).not.toContain('"terrain":[')
+    // Et la partie ne contient NI la carte NI les nœuds — la vérification directe, au cas
+    // où les rapports de taille tiendraient un jour par accident.
+    const texte = serializePartie(sim, base)
+    expect(texte).not.toContain('"terrain":[')
+    expect(texte).not.toContain('"berry_bush"')
   })
 })

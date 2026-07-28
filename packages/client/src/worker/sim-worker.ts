@@ -19,6 +19,8 @@ import {
   getGameTime,
   seedNodeShadow,
   serializeCarte,
+  baseDepuisNoeuds,
+  type BaseNoeuds,
   serializePartie,
   step,
   type MoveInput,
@@ -77,6 +79,14 @@ let booting = false
 let saving = false
 /** La carte de CE monde est-elle déjà sur le disque ? Elle ne s'écrit qu'une fois (§ `persist`). */
 let carteEcrite = false
+/**
+ * L'ÉTAT DES NŒUDS TEL QU'IL EST AU DISQUE — la référence du diff de sauvegarde.
+ *
+ * Toujours celui de l'enregistrement de NAISSANCE, jamais celui de la dernière sauvegarde :
+ * le diff est donc cumulatif et se recolle en une seule passe, sans dépendre d'une chaîne de
+ * sauvegardes intermédiaires dont il suffirait d'en perdre une. Voir `node-baseline.ts`.
+ */
+let baseNoeuds: BaseNoeuds | undefined
 /** Une sauvegarde a été demandée pendant qu'une autre était en vol : on la rejoue à la fin,
  *  avec l'état le plus frais. Sans ça, la SORTIE (`pause`) qui tombe pile sur un autosave était
  *  silencieusement perdue — le trou du garde `saving` tombait exactement sur le cas à protéger. */
@@ -215,8 +225,12 @@ async function persist(): Promise<void> {
     // LA SÉRIALISATION EST SYNCHRONE, ET ELLE EST LE SUJET. Tant qu'elle tourne, ce Worker ne
     // tique pas : le monde s'arrête. On la chronomètre à part de l'écriture disque (qui, elle,
     // rend la main) pour savoir lequel des deux gèle la Veillée. Sonde de dev, coût nul sinon.
+    // LA BASE DES NŒUDS EST POSÉE AVANT LE PREMIER DIFF — et sur l'état d'AVANT la
+    // sérialisation, puisque c'est cet état-là qui part au disque dans le même geste.
+    const premiere = baseNoeuds === undefined
+    if (premiere) baseNoeuds = baseDepuisNoeuds(sim.nodes)
     const s0 = SONDE_PERF ? performance.now() : 0
-    const texte = serializePartie(sim)
+    const texte = serializePartie(sim, baseNoeuds!)
     if (SONDE_PERF) {
       perfSerialisationMs = performance.now() - s0
       // `length` compte des unités UTF-16, pas des octets : on rend des OCTETS, sinon la
@@ -233,7 +247,7 @@ async function persist(): Promise<void> {
     if (carteEcrite) {
       await saveSlot(record)
     } else {
-      await saveCarteEtSlot(serializeCarte(sim.map, sim.seed), record)
+      await saveCarteEtSlot(serializeCarte(sim.map, sim.seed, sim.nodes), record)
       carteEcrite = true
     }
     // ON LE DIT. Une sauvegarde muette laisse le joueur dans le doute — et ce doute coûte
@@ -288,13 +302,20 @@ async function boot(): Promise<void> {
       const carteTexte = await loadCarte()
       if (carteTexte) {
         try {
-          state = deserializePartie(rec.sim, deserializeCarte(carteTexte))
+          const naissance = deserializeCarte(carteTexte)
+          state = deserializePartie(rec.sim, naissance)
+          // LA BASE RESTE CELLE DE LA NAISSANCE, pas celle qu'on vient de relire : les
+          // prochains diffs se comparent au même point de départ que ceux d'avant la reprise.
+          baseNoeuds = baseDepuisNoeuds(naissance.nodes)
           carteEnMain = true
         } catch {
           state = undefined // on tente l'ancien format avant d'abandonner le monde
         }
       }
-      if (!state) state = deserializeSim(rec.sim) // JETTE pour de bon → on tombe dans le catch
+      if (!state) {
+        state = deserializeSim(rec.sim) // JETTE pour de bon → on tombe dans le catch
+        baseNoeuds = undefined // pas d'enregistrement de naissance : le prochain `persist` en pose un
+      }
       sim = state
       carteEcrite = carteEnMain
       playerId = rec.playerId
@@ -308,6 +329,7 @@ async function boot(): Promise<void> {
     sim = undefined
     resumed = false
     carteEcrite = false
+    baseNoeuds = undefined
   }
 
   if (!sim) {
@@ -319,6 +341,7 @@ async function boot(): Promise<void> {
     spawn = world.spawn
     chronicleLog = []
     carteEcrite = false
+    baseNoeuds = undefined
   } else if (resumed) {
     // Reprise : aucune passe de génération n'a tourné — on remplit la barre d'un coup pour
     // que le seuil de chargement se lève (il attend `worldReady`, posé au `ready`).

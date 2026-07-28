@@ -16,6 +16,8 @@
  * jeu comme la « dernière fois vue » sont de l'horloge murale — donc de l'hôte (§2).
  */
 import type { SimState } from './sim'
+import type { ResourceNode } from './economy'
+import { appliqueDiffNoeuds, diffNoeuds, type BaseNoeuds, type DiffNoeuds } from './node-baseline'
 
 /**
  * Version du FORMAT de sauvegarde. À INCRÉMENTER à tout changement incompatible de la
@@ -138,11 +140,22 @@ interface CarteEnvelope {
    */
   seed: number
   carte: SimState['map']
+  /**
+   * LES NŒUDS À LEUR NAISSANCE — la base contre laquelle l'autosave ne écrit qu'un diff.
+   *
+   * Une fois la carte sortie, les 125 686 nœuds faisaient **9,12 des 9,20 Mo restants**,
+   * réécrits deux fois par minute alors qu'une poignée seulement bouge entre deux
+   * sauvegardes. Leur part FIXE (`id`, `type`, `tx`, `ty`) naît avec le monde, exactement
+   * comme la carte : elle voyage donc avec elle, dans le même enregistrement, écrit une
+   * fois. Voir `node-baseline.ts`.
+   */
+  nodes: ResourceNode[]
 }
 
-/** Une carte relue, avec la seed du monde auquel elle appartient. */
+/** Le monde à sa naissance, relu : sa carte, ses nœuds d'origine, et la seed qui les lie. */
 export interface CarteSauvee {
   carte: SimState['map']
+  nodes: ResourceNode[]
   seed: number
 }
 
@@ -154,16 +167,22 @@ export interface CarteSauvee {
  * détail de rangement. En laissant la clé en place avec `null`, l'ordre est intact des deux
  * côtés (réaffecter une clé existante ne la déplace pas), et le poids tombe à quatre octets.
  */
-type PartieState = Omit<SimState, 'map'> & { map: null }
+type PartieState = Omit<SimState, 'map' | 'nodes'> & { map: null; nodes: null }
 
 interface PartieEnvelope {
   v: number
   partie: PartieState
+  /** Ce qui a bougé dans les nœuds depuis la naissance du monde (voir `node-baseline.ts`). */
+  noeuds: DiffNoeuds
 }
 
-/** Sérialise LA CARTE seule (immuable) — écrite une fois, à la naissance du monde. */
-export function serializeCarte(map: SimState['map'], seed: number): string {
-  const envelope: CarteEnvelope = { v: SAVE_FORMAT_VERSION, seed, carte: map }
+/**
+ * Sérialise LE MONDE À SA NAISSANCE — la carte et les nœuds d'origine. Écrit une fois,
+ * jamais réécrit : c'est tout l'intérêt (86,9 % du poids pour la carte, 99 % du reste
+ * pour les nœuds).
+ */
+export function serializeCarte(map: SimState['map'], seed: number, nodes: readonly ResourceNode[]): string {
+  const envelope: CarteEnvelope = { v: SAVE_FORMAT_VERSION, seed, carte: map, nodes: nodes as ResourceNode[] }
   return JSON.stringify(envelope)
 }
 
@@ -205,19 +224,32 @@ export function deserializeCarte(text: string): CarteSauvee {
   if (typeof env.seed !== 'number') {
     throw new Error("Carte illisible : elle ne dit pas de quel monde elle est (seed absente)")
   }
-  return { carte: env.carte, seed: env.seed }
+  if (!Array.isArray(env.nodes)) {
+    throw new Error('Carte illisible : les nœuds de naissance sont absents')
+  }
+  return { carte: env.carte, nodes: env.nodes, seed: env.seed }
 }
 
 /**
- * Sérialise LA PARTIE (tout sauf la carte) — c'est ce que l'autosave réécrit.
+ * Sérialise LA PARTIE — tout sauf la carte et les nœuds, plus le DIFF des nœuds. C'est ce
+ * que l'autosave réécrit, et c'est tout ce qui gèle encore le monde.
  *
- * L'étalement `{ ...state, map: null }` est SUPERFICIEL : il recopie une quarantaine de
- * références, pas les 7,5 M de nombres de la carte. C'est le `JSON.stringify` qui coûtait,
- * et c'est lui qu'on allège.
+ * L'étalement `{ ...state, map: null, nodes: null }` est SUPERFICIEL : il recopie une
+ * quarantaine de références, pas les 7,5 M de nombres de la carte ni les 125 686 nœuds.
+ * C'est le `JSON.stringify` qui coûtait, et c'est lui qu'on allège.
+ *
+ * `base` est l'état mobile des nœuds tel qu'il a été ÉCRIT au disque (`baseDepuisNoeuds`
+ * sur les nœuds de l'enregistrement de naissance) — pas l'état d'il y a trente secondes.
+ * Un diff cumulatif se recolle en une passe et ne dépend d'aucune sauvegarde intermédiaire ;
+ * un diff incrémental aurait exigé de les rejouer toutes, et d'en perdre une aurait suffi.
  */
-export function serializePartie(state: SimState): string {
-  const partie: PartieState = { ...state, map: null }
-  const envelope: PartieEnvelope = { v: SAVE_FORMAT_VERSION, partie }
+export function serializePartie(state: SimState, base: BaseNoeuds): string {
+  const partie: PartieState = { ...state, map: null, nodes: null }
+  const envelope: PartieEnvelope = {
+    v: SAVE_FORMAT_VERSION,
+    partie,
+    noeuds: diffNoeuds(state.nodes, base),
+  }
   return JSON.stringify(envelope)
 }
 
@@ -249,15 +281,20 @@ export function deserializePartie(text: string, carte: CarteSauvee): SimState {
     throw new Error(`Carte d'un autre monde : seed ${carte.seed} ≠ ${env.partie.seed}`)
   }
   const map = carte.carte
-  // `map` est déjà une clé de `env.partie` (à `null`) : la réaffecter la remplit SANS la
-  // déplacer — l'ordre des clés, donc `snapshot()`, reste celui d'un monde jamais sauvé.
-  const etat = { ...env.partie, map } as SimState
-  // La MÊME garde de forme que la sauvegarde d'un seul tenant : `map` vient d'être recollée,
-  // tout le reste doit être là. Un champ neuf de `SimState` oublié ici se verrait donc
-  // exactement comme avant — la coupe ne crée pas un trou dans le filet.
-  const manquants = SAVE_REQUIRED_KEYS.filter((k) => !Object.hasOwn(etat, k))
+  if (typeof env.noeuds !== 'object' || env.noeuds === null || !Array.isArray(env.noeuds.bouges)) {
+    throw new Error('Veillée illisible : le diff des nœuds est absent')
+  }
+  // LA GARDE DE FORME PASSE EN PREMIER, et elle porte sur `env.partie` — où `map` et `nodes`
+  // sont présentes (à `null`), donc la liste des champs requis s'y confronte telle quelle.
+  // L'ordre compte : une enveloppe amputée doit se faire refuser POUR CE QU'ELLE EST, et non
+  // se voir reprocher un recollage de nœuds qui n'avait aucune chance d'aboutir.
+  const manquants = SAVE_REQUIRED_KEYS.filter((k) => !Object.hasOwn(env.partie, k))
   if (manquants.length > 0) {
     throw new Error(`Veillée d'un format antérieur : ${manquants.length} champ(s) manquant(s) — ${manquants.join(', ')}`)
   }
-  return etat
+  // `map` et `nodes` sont déjà des clés de `env.partie` (à `null`) : les réaffecter les
+  // remplit SANS les déplacer — l'ordre des clés, donc `snapshot()`, reste celui d'un monde
+  // jamais sauvé. `appliqueDiffNoeuds` JETTE si le recollage ne rend pas la liste attendue.
+  const nodes = appliqueDiffNoeuds(carte.nodes, env.noeuds)
+  return { ...env.partie, map, nodes } as SimState
 }

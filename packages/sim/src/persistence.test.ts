@@ -19,6 +19,8 @@ import {
   SAVE_FORMAT_VERSION,
   SAVE_REQUIRED_KEYS,
 } from './persistence'
+import { appliqueDiffNoeuds, baseDepuisNoeuds, diffNoeuds, type DiffNoeuds } from './node-baseline'
+import type { ResourceNode } from './economy'
 
 function makeSim(): SimState {
   // `worldEvents` armé : le pire cas de déterminisme (RNG, hordes, convois) doit
@@ -131,13 +133,36 @@ describe('persistance de la Veillée', () => {
  *
  * L'immuabilité de la carte elle-même, elle, se prouve ailleurs : `carte-immuable.test.ts`.
  */
+/** Un monde AVEC des nœuds — sans eux, le diff de nœuds ne prouverait rien. */
+function makeSimNoeuds(): SimState {
+  const nodes: ResourceNode[] = []
+  for (let i = 0; i < 40; i++) {
+    nodes.push({ id: i + 1, type: i % 2 === 0 ? 'tree' : 'berry_bush', tx: 10 + i, ty: 20, stock: 5, regrowAt: 0 })
+  }
+  return createSim(7, { map: createEmptyMap(96, 96, TERRAIN_GRASS), nodes, worldEvents: true })
+}
+
+/**
+ * LE COFFRE, tel que l'hôte le tient : l'enregistrement de NAISSANCE est pris une fois, et
+ * toutes les sauvegardes suivantes se diffent contre LUI — jamais contre la précédente.
+ * Reproduire ça ici est le seul moyen de tester ce que `sim-worker.ts` fait vraiment.
+ */
+function coffre(sim: SimState) {
+  const carteTexte = serializeCarte(sim.map, sim.seed, sim.nodes)
+  const base = baseDepuisNoeuds(sim.nodes)
+  return {
+    naissance: () => deserializeCarte(carteTexte),
+    ecrire: (s: SimState) => serializePartie(s, base),
+  }
+}
+
 describe('la carte se sauve à part', () => {
   it('recoller partie + carte rend le MÊME état, au bit près', () => {
     const sim = makeSim()
     spawnEntity(sim, 20.5, 20.5)
+    const c = coffre(sim)
     idle(sim, 40)
-    const carte = deserializeCarte(serializeCarte(sim.map, sim.seed))
-    const repris = deserializePartie(serializePartie(sim), carte)
+    const repris = deserializePartie(c.ecrire(sim), c.naissance())
     expect(snapshot(repris)).toBe(snapshot(sim))
     // Et la carte est bien celle du monde, pas une carte vide qui aurait passé par chance.
     expect(repris.map.terrain.length).toBe(sim.map.terrain.length)
@@ -151,8 +176,9 @@ describe('la carte se sauve à part', () => {
 
     const sauve = makeSim()
     spawnEntity(sauve, 20.5, 20.5)
+    const c = coffre(sauve)
     idle(sauve, 60)
-    const repris = deserializePartie(serializePartie(sauve), deserializeCarte(serializeCarte(sauve.map, sauve.seed)))
+    const repris = deserializePartie(c.ecrire(sauve), c.naissance())
     idle(repris, 60)
 
     expect(snapshot(repris)).toBe(snapshot(live))
@@ -166,10 +192,11 @@ describe('la carte se sauve à part', () => {
   it('REFUSE la carte d’un AUTRE monde — sans la seed, on recollait n’importe quoi', () => {
     const a = makeSim()
     const b = createSim(99, { map: createEmptyMap(96, 96, TERRAIN_GRASS), worldEvents: true })
-    const carteDeB = deserializeCarte(serializeCarte(b.map, b.seed))
-    expect(() => deserializePartie(serializePartie(a), carteDeB)).toThrow(/autre monde/)
+    const ca = coffre(a)
+    const carteDeB = deserializeCarte(serializeCarte(b.map, b.seed, b.nodes))
+    expect(() => deserializePartie(ca.ecrire(a), carteDeB)).toThrow(/autre monde/)
     // Et sa propre carte passe toujours, évidemment.
-    expect(() => deserializePartie(serializePartie(a), deserializeCarte(serializeCarte(a.map, a.seed)))).not.toThrow()
+    expect(() => deserializePartie(ca.ecrire(a), ca.naissance())).not.toThrow()
   })
 
   it('REFUSE une carte TRONQUÉE plutôt que d’éteindre la saison en silence', () => {
@@ -177,14 +204,14 @@ describe('la carte se sauve à part', () => {
     const attendu = sim.map.width * sim.map.height
 
     // Un relief à moitié écrit : l'avatar pouvait se retrouver hors carte, sans une erreur.
-    const courte = JSON.parse(serializeCarte(sim.map, sim.seed)) as { carte: Record<string, unknown> }
+    const courte = JSON.parse(serializeCarte(sim.map, sim.seed, sim.nodes)) as { carte: Record<string, unknown> }
     courte.carte.terrain = (courte.carte.terrain as number[]).slice(0, 500)
     expect(() => deserializeCarte(JSON.stringify(courte))).toThrow(/tronquée/)
 
     // Le pire cas, et le plus sournois : un champ de cendre plus court que la carte. Sur les
     // tuiles manquantes, `undefined < front` vaut FAUX — donc elles ne brûlent JAMAIS, et le
     // front de la saison s'arrête sans un bruit. Rien, avant, ne l'aurait dit.
-    const cendreCourte = JSON.parse(serializeCarte({ ...sim.map, cendre: new Array(attendu).fill(1) }, sim.seed)) as {
+    const cendreCourte = JSON.parse(serializeCarte({ ...sim.map, cendre: new Array(attendu).fill(1) }, sim.seed, sim.nodes)) as {
       carte: Record<string, unknown>
     }
     cendreCourte.carte.cendre = (cendreCourte.carte.cendre as number[]).slice(0, 10)
@@ -193,26 +220,31 @@ describe('la carte se sauve à part', () => {
     // Une carte sans cendre du tout reste licite : toutes les cartes n'ont pas de Cendrière.
     const sansCendre = { ...sim.map }
     delete (sansCendre as { cendre?: number[] }).cendre
-    expect(() => deserializeCarte(serializeCarte(sansCendre, sim.seed))).not.toThrow()
+    expect(() => deserializeCarte(serializeCarte(sansCendre, sim.seed, sim.nodes))).not.toThrow()
   })
 
   it('la PARTIE ne porte plus la carte — mais garde sa clé, donc l’ordre', () => {
     const sim = makeSim()
-    const partie = JSON.parse(serializePartie(sim)) as { partie: Record<string, unknown> }
+    const partie = JSON.parse(serializePartie(sim, baseDepuisNoeuds(sim.nodes))) as { partie: Record<string, unknown> }
     expect(partie.partie.map).toBeNull() // vidée, pas retirée
+    expect(partie.partie.nodes).toBeNull()
     // La clé reste EXACTEMENT à sa place : c'est ce qui garde `snapshot()` identique entre un
     // monde repris et un monde continu (le contrat « au bit près » du projet).
     expect(Object.keys(partie.partie)).toEqual(Object.keys(sim))
     // Et elle est franchement plus légère que l'état d'un seul tenant.
-    expect(serializePartie(sim).length).toBeLessThan(serializeSim(sim).length)
+    expect(serializePartie(sim, baseDepuisNoeuds(sim.nodes)).length).toBeLessThan(serializeSim(sim).length)
   })
 
   it('garde la MÊME exigence de forme : un champ manquant est refusé, et nommé', () => {
     const ampute = makeSim() as unknown as Record<string, unknown>
     delete ampute.blood
     ampute.map = null
-    const texte = JSON.stringify({ v: SAVE_FORMAT_VERSION, partie: ampute })
-    const carte = { carte: createEmptyMap(96, 96, TERRAIN_GRASS), seed: ampute.seed as number }
+    const texte = JSON.stringify({
+      v: SAVE_FORMAT_VERSION,
+      partie: ampute,
+      noeuds: { bouges: [], disparus: [], nes: [], empreinte: 0 },
+    })
+    const carte = { carte: createEmptyMap(96, 96, TERRAIN_GRASS), nodes: [], seed: ampute.seed as number }
     expect(() => deserializePartie(texte, carte)).toThrow(/antérieur/)
     expect(() => deserializePartie(texte, carte)).toThrow(/blood/)
   })
@@ -222,7 +254,7 @@ describe('la carte se sauve à part', () => {
     const carte = createEmptyMap(8, 8, TERRAIN_GRASS)
     expect(() => deserializeCarte(JSON.stringify({ v: SAVE_FORMAT_VERSION + 1, carte }))).toThrow(/incompatible/)
     expect(() =>
-      deserializePartie(JSON.stringify({ v: SAVE_FORMAT_VERSION + 1, partie: sim }), { carte, seed: sim.seed }),
+      deserializePartie(JSON.stringify({ v: SAVE_FORMAT_VERSION + 1, partie: sim }), { carte, nodes: [], seed: sim.seed }),
     ).toThrow(/incompatible/)
   })
 
@@ -230,6 +262,117 @@ describe('la carte se sauve à part', () => {
     expect(() => deserializeCarte('{')).toThrow(/illisible/)
     expect(() => deserializeCarte(JSON.stringify({ v: SAVE_FORMAT_VERSION }))).toThrow(/illisible/)
     // Une enveloppe correcte mais sans relief : le pire cas, celui qui passerait en silence.
-    expect(() => deserializeCarte(JSON.stringify({ v: SAVE_FORMAT_VERSION, seed: 1, carte: { width: 8 } }))).toThrow(/relief/)
+    expect(() => deserializeCarte(JSON.stringify({ v: SAVE_FORMAT_VERSION, seed: 1, nodes: [], carte: { width: 8 } }))).toThrow(/relief/)
+  })
+})
+
+/**
+ * LE DIFF DES NŒUDS — le second palier du gel (voir `node-baseline.ts`).
+ *
+ * Une fois la carte sortie, les nœuds faisaient 9,12 des 9,20 Mo restants. On n'écrit plus
+ * que ce qui a bougé depuis la naissance du monde. Ce qui se joue ici est simple à dire et
+ * facile à rater : un nœud récolté, épuisé, oublié, brûlé par la Cendre ou né en cours de
+ * partie doit se retrouver EXACTEMENT tel qu'il était — sinon le joueur reprend une vallée
+ * qui a oublié ce qu'il lui a fait, et rien ne le lui dira.
+ */
+describe('les nœuds ne se réécrivent plus en entier', () => {
+  it('un monde intact : le diff est VIDE, et le recollage rend le même état', () => {
+    const sim = makeSimNoeuds()
+    const c = coffre(sim)
+    const enveloppe = JSON.parse(c.ecrire(sim)) as { noeuds: DiffNoeuds }
+    expect(enveloppe.noeuds.bouges).toEqual([])
+    expect(enveloppe.noeuds.disparus).toEqual([])
+    expect(enveloppe.noeuds.nes).toEqual([])
+    expect(snapshot(deserializePartie(c.ecrire(sim), c.naissance()))).toBe(snapshot(sim))
+  })
+
+  it('RÉCOLTÉ, ÉPUISÉ, OUBLIÉ : chaque champ mobile revient à l’identique', () => {
+    const sim = makeSimNoeuds()
+    const c = coffre(sim)
+
+    // Les quatre champs qui bougent, chacun dans un état différent — y compris les deux
+    // optionnels, qui doivent revenir ABSENTS quand ils le sont (le monde les `delete`).
+    sim.nodes[0]!.stock = 0
+    sim.nodes[0]!.regrowAt = 4242
+    sim.nodes[1]!.depletions = 3
+    sim.nodes[1]!.forgetAt = 999
+    sim.nodes[2]!.stock = 2
+
+    const enveloppe = JSON.parse(c.ecrire(sim)) as { noeuds: DiffNoeuds }
+    expect(enveloppe.noeuds.bouges).toHaveLength(3) // et TROIS, pas quarante
+
+    const repris = deserializePartie(c.ecrire(sim), c.naissance())
+    expect(snapshot(repris)).toBe(snapshot(sim))
+    expect(repris.nodes[1]!.depletions).toBe(3)
+    expect(Object.hasOwn(repris.nodes[0]!, 'depletions')).toBe(false)
+  })
+
+  it('OUBLIÉ PUIS RÉ-ÉPUISÉ : les clés reviennent dans l’ordre canonique', () => {
+    // Le cas tordu : `depletions`/`forgetAt` sont posés, `delete`és quand le monde oublie,
+    // puis reposés. Ils se retrouvent alors à la FIN de l'objet. Reconstruire par étalement
+    // de la base les aurait remis à leur ancienne place — et `snapshot()` aurait divergé.
+    const sim = makeSimNoeuds()
+    const c = coffre(sim)
+    const n = sim.nodes[5]!
+    n.depletions = 2
+    n.forgetAt = 100
+    delete n.depletions
+    delete n.forgetAt
+    n.depletions = 1
+    n.forgetAt = 700
+
+    const repris = deserializePartie(c.ecrire(sim), c.naissance())
+    expect(Object.keys(repris.nodes[5]!)).toEqual(Object.keys(n))
+    expect(snapshot(repris)).toBe(snapshot(sim))
+  })
+
+  it('BRÛLÉS ET NÉS : la Cendre en retire, un lieu bâti en pose — l’ordre tient', () => {
+    const sim = makeSimNoeuds()
+    const c = coffre(sim)
+    // La Cendre filtre (elle préserve l'ordre), un POI pousse à la fin : les deux seules
+    // façons dont `state.nodes` change de composition dans tout le dépôt.
+    sim.nodes = sim.nodes.filter((n) => n.id % 3 !== 0)
+    sim.nodes.push({ id: 500, type: 'rock', tx: 4, ty: 4, stock: 9, regrowAt: 0 })
+
+    const enveloppe = JSON.parse(c.ecrire(sim)) as { noeuds: DiffNoeuds }
+    expect(enveloppe.noeuds.disparus.length).toBeGreaterThan(10)
+    expect(enveloppe.noeuds.nes).toHaveLength(1)
+
+    const repris = deserializePartie(c.ecrire(sim), c.naissance())
+    expect(repris.nodes.map((n) => n.id)).toEqual(sim.nodes.map((n) => n.id))
+    expect(snapshot(repris)).toBe(snapshot(sim))
+  })
+
+  it('REFUSE de recoller si quelqu’un a RÉORDONNÉ les nœuds', () => {
+    // Le recollage suppose que `state.nodes` n'est jamais trié — vrai aujourd'hui (quatre
+    // écrits, tous `filter` ou `push`). Le jour où ça changera, la reprise doit CRIER, pas
+    // rendre un monde décalé en silence. C'est la seule garde possible d'ici.
+    const base = [
+      { id: 1, type: 'tree' as const, tx: 0, ty: 0, stock: 3, regrowAt: 0 },
+      { id: 2, type: 'rock' as const, tx: 1, ty: 0, stock: 3, regrowAt: 0 },
+      { id: 3, type: 'tree' as const, tx: 2, ty: 0, stock: 3, regrowAt: 0 },
+    ]
+    const b = baseDepuisNoeuds(base)
+    const melanges = [base[2]!, base[0]!, base[1]!]
+    const diff = diffNoeuds(melanges, b)
+    expect(() => appliqueDiffNoeuds(base, diff)).toThrow(/irrecollables/)
+    // …et l'ordre d'origine passe, évidemment.
+    expect(appliqueDiffNoeuds(base, diffNoeuds(base, b)).map((n) => n.id)).toEqual([1, 2, 3])
+  })
+
+  it('le DIFF EST CUMULATIF : deux sauvegardes de suite se recollent chacune seule', () => {
+    // La base reste celle de la NAISSANCE. Une sauvegarde tardive doit donc se recoller sans
+    // qu'on ait gardé les précédentes — sinon en perdre une perdrait toute la suite.
+    const sim = makeSimNoeuds()
+    const c = coffre(sim)
+    sim.nodes[0]!.stock = 1
+    const tot = c.ecrire(sim)
+    sim.nodes[1]!.stock = 2
+    const tard = c.ecrire(sim)
+
+    expect(deserializePartie(tot, c.naissance()).nodes[0]!.stock).toBe(1)
+    const repris = deserializePartie(tard, c.naissance())
+    expect(repris.nodes[0]!.stock).toBe(1)
+    expect(repris.nodes[1]!.stock).toBe(2)
   })
 })
