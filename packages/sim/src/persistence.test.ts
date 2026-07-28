@@ -19,7 +19,7 @@ import {
   SAVE_FORMAT_VERSION,
   SAVE_REQUIRED_KEYS,
 } from './persistence'
-import { appliqueDiffNoeuds, baseDepuisNoeuds, diffNoeuds, type DiffNoeuds } from './node-baseline'
+import { appliqueDiffNoeuds, baseDepuisNoeuds, diffNoeuds, PART_DU_NOEUD, type DiffNoeuds } from './node-baseline'
 import type { ResourceNode } from './economy'
 
 function makeSim(): SimState {
@@ -374,5 +374,51 @@ describe('les nœuds ne se réécrivent plus en entier', () => {
     const repris = deserializePartie(tard, c.naissance())
     expect(repris.nodes[0]!.stock).toBe(1)
     expect(repris.nodes[1]!.stock).toBe(2)
+  })
+})
+
+/**
+ * LA GARDE DE LA GARDE — aucun champ mobile d'un nœud ne se perd en route.
+ *
+ * `node-baseline.ts` classait les champs d'un nœud à la main. Le jour où `ResourceNode` en
+ * gagne un — un stade de pousse, un propriétaire —, le diff ne le verrait pas bouger et le
+ * recollage le laisserait tomber. Et la perte serait INTERMITTENTE : les nœuds touchés par
+ * le joueur oublieraient, les autres non (ceux-là reviennent intacts de la naissance).
+ *
+ * `PART_DU_NOEUD` est un `Record<keyof ResourceNode, …>` : ajouter un champ rend `/sim`
+ * ROUGE tant que personne ne dit s'il voyage. Ce test-ci va plus loin — il écrit une valeur
+ * reconnaissable dans CHAQUE champ déclaré mobile et exige de la retrouver. Classer ne suffit
+ * donc pas : il faut que le code le porte.
+ */
+describe('la table des champs d’un nœud', () => {
+  it('déclare TOUT champ de ResourceNode, et le code porte tous les mobiles', () => {
+    const nu: ResourceNode = { id: 1, type: 'tree', tx: 3, ty: 4, stock: 5, regrowAt: 0 }
+    const base = baseDepuisNoeuds([nu])
+
+    // Une valeur reconnaissable dans chaque champ MOBILE — quelle que soit la liste du jour.
+    const touche = { ...nu } as unknown as Record<string, unknown>
+    const mobiles = Object.entries(PART_DU_NOEUD).filter(([, p]) => p === 'mobile').map(([k]) => k)
+    expect(mobiles.length).toBeGreaterThan(0)
+    mobiles.forEach((k, i) => { touche[k] = 4242 + i })
+
+    const courant = [touche as unknown as ResourceNode]
+    const repris = appliqueDiffNoeuds([nu], diffNoeuds(courant, base))
+
+    // Aller-retour EXACT : ni champ perdu, ni valeur écrasée, ni clé en trop.
+    expect(repris).toEqual(courant)
+    expect(Object.keys(repris[0]!).sort()).toEqual(Object.keys(touche).sort())
+  })
+
+  it('les champs FIXES reviennent de la naissance, jamais du diff', () => {
+    // Ils ne voyagent pas : c'est tout l'intérêt. On vérifie qu'ils survivent quand même à
+    // un nœud retouché — sinon un nœud récolté perdrait son type ou sa position.
+    const nu: ResourceNode = { id: 7, type: 'rock', tx: 11, ty: 12, stock: 5, regrowAt: 0 }
+    const base = baseDepuisNoeuds([nu])
+    const courant: ResourceNode[] = [{ ...nu, stock: 1 }]
+    const repris = appliqueDiffNoeuds([nu], diffNoeuds(courant, base))
+    for (const [k, part] of Object.entries(PART_DU_NOEUD)) {
+      if (part !== 'fixe') continue
+      expect((repris[0] as unknown as Record<string, unknown>)[k], k).toEqual((nu as unknown as Record<string, unknown>)[k])
+    }
   })
 })

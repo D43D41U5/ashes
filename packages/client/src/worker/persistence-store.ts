@@ -113,6 +113,17 @@ export async function saveCarteEtSlot(carte: string, record: SaveRecord): Promis
 }
 
 /**
+ * ⚠ INVARIANT : `clearSlot` ne s'appelle qu'AU BOOT, avant qu'un Worker ne vive.
+ *
+ * Les deux seuls appelants sont `MenuScene` sur le deep-link `?solo&fresh`, et
+ * `reopenFreshVeillee` — qui RECHARGE la page pour y arriver. C'est ce qui rend l'appel sûr :
+ * effacer les clés pendant qu'un Worker tourne laisserait son `carteEcrite` à `true` alors
+ * que l'enregistrement de naissance a disparu du disque, et **chaque autosave suivant
+ * écrirait une partie sans sa carte** — au boot d'après, plus rien ne serait relisible.
+ * Ce n'est pas une fenêtre d'une seconde comme celle des deux transactions : ce serait une
+ * sauvegarde durablement morte. Si un jour « nouvelle partie » se fait sans rechargement,
+ * il faudra remettre `carteEcrite` à faux dans le Worker par le même geste.
+ *
  * EFFACE la Veillée sauvée (case 0) — « nouvelle partie ». Utile aussi après un changement
  * de calibration (`VEILLEE_SEASON_CYCLES`) : une sauvegarde fige son `calendarScale`, donc
  * le nouveau rythme ne s'applique qu'à une partie NEUVE. Ne jette pas si la case est vide.

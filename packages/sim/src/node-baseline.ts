@@ -38,6 +38,36 @@
  */
 import type { ResourceNode } from './economy'
 
+/**
+ * CE QUI NAÎT AVEC LE MONDE, ET CE QUI VOYAGE — la table tenue par LE COMPILATEUR.
+ *
+ * Sans elle, ce fichier énumérait les champs d'un nœud à la main, et c'était le même trou que
+ * celui qu'on venait de fermer sur la carte (`carte-immuable.test.ts` A0), un étage plus bas.
+ * Le jour où `ResourceNode` gagne un champ MOBILE — un stade de pousse pour l'agriculture, un
+ * propriétaire, un dernier-récolté —, `diffNoeuds` ne le verrait jamais changer et
+ * `appliqueDiffNoeuds` le laisserait tomber. Et la perte serait INTERMITTENTE : les nœuds
+ * que le joueur a touchés oublieraient, les autres non — puisque ceux-là reviennent intacts
+ * de l'enregistrement de naissance. Le pire genre de bug de sauvegarde.
+ *
+ * `Record<keyof ResourceNode, …>` rend le fichier ROUGE tant que le champ neuf n'est pas
+ * classé, et son auteur doit alors dire s'il voyage dans le diff. Le test
+ * « aucun champ mobile ne se perd » va plus loin : il écrit une valeur reconnaissable dans
+ * CHAQUE champ déclaré mobile, puis exige de la retrouver après un aller-retour — donc
+ * classer le champ ne suffit pas, il faut aussi que le code le porte.
+ */
+export const PART_DU_NOEUD: Record<keyof ResourceNode, 'fixe' | 'mobile'> = {
+  // FIXE : un nœud ne se déplace pas et ne change pas d'essence. Écrit une fois, avec la carte.
+  id: 'fixe',
+  type: 'fixe',
+  tx: 'fixe',
+  ty: 'fixe',
+  // MOBILE : ce que la récolte, la repousse et l'oubli font bouger. C'est tout le diff.
+  stock: 'mobile',
+  regrowAt: 'mobile',
+  depletions: 'mobile',
+  forgetAt: 'mobile',
+}
+
 /** Ce qui BOUGE dans un nœud — le reste naît avec le monde et ne change plus. */
 export interface NoeudMuable {
   id: number

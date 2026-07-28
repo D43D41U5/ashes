@@ -3633,9 +3633,15 @@ const SCENARIOS = {
       }, { x: bx + 1, y: by })
       if (fireId === null) continue
       await doAction({ type: 'found_village', structureId: fireId }, 400)
-      if (await page.evaluate(() => (window.__BRAISES__.scene.registry.get('village') ?? 0) > 0)) { feu = { bx, by }; break }
+      if (await page.evaluate(() => (window.__BRAISES__.scene.registry.get('village') ?? 0) > 0)) { feu = { bx, by, fireId }; break }
     }
-    console.log(`fondation : ${feu ? `Feu en (${feu.bx + 1}, ${feu.by})` : 'ABSENTE — la stèle ne couronnera personne'}`)
+    // L'ID DU VILLAGE FONDÉ, lu sur le Feu qu'on vient de poser. C'est lui qui rend
+    // l'assertion finale non tautologique : sans ça, on ne saurait pas distinguer « la stèle
+    // couronne MON village » de « la stèle couronne un village PNJ » — les deux affichent un nom.
+    const monVillageId = feu
+      ? await page.evaluate((id) => window.__BRAISES__.scene.view.structures.find((s) => s.id === id)?.villageId ?? null, feu.fireId)
+      : null
+    console.log(`fondation : ${feu ? `Feu en (${feu.bx + 1}, ${feu.by}) → village ${monVillageId}` : 'ABSENTE — la stèle ne couronnera personne'}`)
 
     // ── ON POUSSE LE CALENDRIER, PAS L'ÉCRAN. `SEASON_DAYS` vaut 60 ; la fin tombe à `day > 60`.
     const avant = await page.evaluate(() => window.__BRAISES__.scene.registry.get('seasonVerdicts') ?? null)
@@ -3679,8 +3685,13 @@ const SCENARIOS = {
       console.error(`!! /sim a fini la saison mais la stèle ne se lève pas (display=${r.steleLevee})`)
     } else if (feu && !r.monNom) {
       console.error('!! la stèle se lève mais ne couronne aucun village, alors que le joueur en a fondé un')
+    } else if (feu && monVillageId !== null && r.verdictsDuSim.monVillage !== monVillageId) {
+      // Le cas qui passerait pour une réussite : un nom s'affiche, mais c'est celui d'un
+      // voisin PNJ. La stèle est censée couronner le village DU JOUEUR — on le vérifie par
+      // l'identifiant, pas par la présence d'un texte.
+      console.error(`!! LA STÈLE COURONNE LE MAUVAIS VILLAGE : ${r.verdictsDuSim.monVillage} au lieu du tien (${monVillageId})`)
     }
-    return { ...r, fondation: Boolean(feu) }
+    return { ...r, fondation: Boolean(feu), monVillageId }
   },
 
   /**
