@@ -239,4 +239,53 @@ export interface SavedMessage {
   ok: boolean
 }
 
-export type HostToClient = ReadyMessage | SnapshotMessage | ProgressMessage | ChatBroadcast | SavedMessage
+/**
+ * CE QUE COÛTE L'HÔTE, MESURÉ SUR SON PROPRE MOTEUR — sonde de DEV, jamais émise en prod.
+ *
+ * Tout ce que le projet sait de son coût par tick a été mesuré sur Node (et sous `tsx`, qui
+ * ment de ~25 %). Or la Veillée ne tourne PAS sur Node : elle tourne dans un Web Worker de
+ * navigateur, et ce moteur-là n'a jamais eu un seul chiffre. C'est le seul qui décide de ce
+ * qu'Alexis ressent manette en main — donc le seul sur lequel on ait le droit de dire
+ * « MESURÉ » à propos d'un gel.
+ *
+ * Ce canal ne porte AUCUN état de jeu : rien ici n'entre dans la sim, rien n'en sort. Les
+ * durées sont des horloges MURALES, donc un concern d'HÔTE exclusivement (interdit à /sim).
+ *
+ * On envoie le PIC autant que la moyenne : une moyenne noie exactement ce qu'on cherche.
+ * Un tick à 1 s tous les six cents ne déplace pas une moyenne — il arrête le monde.
+ */
+export interface PerfMessage {
+  type: 'perf'
+  /** Ticks joués dans la fenêtre relevée. */
+  ticks: number
+  /** Coût MOYEN d'un tick d'hôte sur la fenêtre (step + snapshot + envoi), en ms. */
+  moyenneMs: number
+  /** Le tick le PLUS CHER de la fenêtre — c'est lui qu'on sent. */
+  picMs: number
+  /** Part de `step()` (donc de /sim) dans ce pic : sépare la faute de la sim de celle de l'hôte. */
+  picStepMs: number
+  /** Numéro du tick du pic — un repère pour savoir QUEL moment de jeu coûte. */
+  picTick: number
+  /**
+   * LE PLUS GRAND TROU ENTRE DEUX DÉBUTS DE TICK, en ms — et c'est LA mesure du gel.
+   *
+   * Le coût d'un tick ne dit pas tout : ce qui arrête le monde peut tourber HORS du tick
+   * (l'autosave est appelée par son propre minuteur, une GC tombe où elle veut). Un tick à
+   * 20 Hz doit repartir toutes les 50 ms ; l'écart réel entre deux départs mesure donc tout
+   * ce qui a occupé le Worker, d'où que ça vienne. C'est le seul chiffre qui corresponde à
+   * ce que le joueur voit : les PNJ, les bêtes et l'horloge du monde s'arrêtent puis sautent.
+   */
+  picEcartMs: number
+  /** Dernière sérialisation d'autosave : le temps pendant lequel le Worker n'a PAS tiqué. −1 si aucune. */
+  serialisationMs: number
+  /** Poids de la dernière sauvegarde, en octets. −1 si aucune. */
+  sauvegardeOctets: number
+}
+
+export type HostToClient =
+  | ReadyMessage
+  | SnapshotMessage
+  | ProgressMessage
+  | ChatBroadcast
+  | SavedMessage
+  | PerfMessage

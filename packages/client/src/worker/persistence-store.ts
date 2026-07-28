@@ -17,10 +17,28 @@ const DB_NAME = 'braises'
 const STORE = 'veillee'
 /** L'unique case pour l'instant (GATE 1 : un monde, une reprise). */
 const SLOT0 = 'slot0'
+/**
+ * LA CARTE, DANS SA PROPRE CASE — parce qu'elle ne bouge pas.
+ *
+ * MESURÉ (2026-07-28, Worker du navigateur) : la carte fait 86,9 % des 69,7 Mo d'une
+ * sauvegarde, et sérialiser le tout arrête le monde ~2,5 s toutes les 30 s. Elle naît avec le
+ * monde et ne change jamais (garde : `carte-immuable.test.ts`) : on l'écrit UNE FOIS ici, et
+ * l'autosave ne réécrit plus que la partie. Une clé à part plutôt qu'un champ du même
+ * enregistrement — sinon IndexedDB réécrirait les 60 Mo à chaque `put`, et on n'aurait rien
+ * gagné que du travail.
+ */
+const SLOT0_CARTE = 'slot0:carte'
 
 /** Ce que l'hôte écrit sur le disque — la sim sérialisée + ce que /sim ne sait pas. */
 export interface SaveRecord {
-  /** L'état de jeu, chaîne `serializeSim` (enveloppe versionnée de /sim). */
+  /**
+   * L'état de jeu SANS sa carte, chaîne `serializePartie` (enveloppe versionnée de /sim) —
+   * c'est ce que l'autosave réécrit toutes les 30 s. La carte vit dans `SLOT0_CARTE`.
+   *
+   * Une sauvegarde d'AVANT la coupe porte ici l'enveloppe entière (`serializeSim`, carte
+   * comprise) : `boot()` la relit telle quelle, puis réécrit au format neuf. Une reprise ne
+   * se perd pas pour un changement de rangement.
+   */
   sim: string
   /** QUELLE entité est l'avatar — sans elle, on reprendrait le monde sans savoir qui l'on est. */
   playerId: number
@@ -56,6 +74,35 @@ export async function loadSlot(): Promise<SaveRecord | null> {
   }
 }
 
+/** Relit LA CARTE sauvée (chaîne `serializeCarte`), ou `null` s'il n'y en a pas. */
+export async function loadCarte(): Promise<string | null> {
+  const db = await openDb()
+  try {
+    return await new Promise((resolve, reject) => {
+      const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(SLOT0_CARTE)
+      req.onsuccess = () => resolve((req.result as string | undefined) ?? null)
+      req.onerror = () => reject(req.error ?? new Error('lecture de la carte échouée'))
+    })
+  } finally {
+    db.close()
+  }
+}
+
+/** Écrit LA CARTE (une seule fois, à la naissance du monde — voir `SLOT0_CARTE`). */
+export async function saveCarte(carte: string): Promise<void> {
+  const db = await openDb()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite')
+      tx.objectStore(STORE).put(carte, SLOT0_CARTE)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error ?? new Error('écriture de la carte échouée'))
+    })
+  } finally {
+    db.close()
+  }
+}
+
 /**
  * EFFACE la Veillée sauvée (case 0) — « nouvelle partie ». Utile aussi après un changement
  * de calibration (`VEILLEE_SEASON_CYCLES`) : une sauvegarde fige son `calendarScale`, donc
@@ -67,6 +114,9 @@ export async function clearSlot(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite')
       tx.objectStore(STORE).delete(SLOT0)
+      // La carte part AVEC la partie : « nouvelle partie » veut dire une vallée neuve, et une
+      // carte orpheline serait recollée au prochain état — donc un monde qui ne serait le sien.
+      tx.objectStore(STORE).delete(SLOT0_CARTE)
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error ?? new Error('effacement du slot échoué'))
     })

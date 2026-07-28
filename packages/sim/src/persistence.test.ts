@@ -9,7 +9,16 @@ import { describe, expect, it } from 'vitest'
 import { createEmptyMap } from './map'
 import { TERRAIN_GRASS } from './balance'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
-import { deserializeSim, serializeSim, SAVE_FORMAT_VERSION, SAVE_REQUIRED_KEYS } from './persistence'
+import {
+  deserializeSim,
+  serializeSim,
+  deserializeCarte,
+  serializeCarte,
+  deserializePartie,
+  serializePartie,
+  SAVE_FORMAT_VERSION,
+  SAVE_REQUIRED_KEYS,
+} from './persistence'
 
 function makeSim(): SimState {
   // `worldEvents` armé : le pire cas de déterminisme (RNG, hordes, convois) doit
@@ -109,5 +118,80 @@ describe('persistance de la Veillée', () => {
     spawnEntity(sim, 20.5, 20.5)
     idle(sim, 30)
     expect(() => deserializeSim(serializeSim(sim))).not.toThrow()
+  })
+})
+
+/**
+ * LA CARTE À PART — la coupe qui rend l'autosave abordable.
+ *
+ * MESURÉ (2026-07-28, Worker du navigateur) : une sauvegarde pèse 69,7 Mo dont **86,9 % de
+ * carte immuable**, et la sérialiser arrête le monde ~2,5 s toutes les 30 s. On l'écrit donc
+ * une fois et on ne réécrit plus que la partie. La promesse à tenir est double : rien ne se
+ * perd (le recollage rend l'état AU BIT PRÈS), et rien ne passe (la garde de forme reste).
+ *
+ * L'immuabilité de la carte elle-même, elle, se prouve ailleurs : `carte-immuable.test.ts`.
+ */
+describe('la carte se sauve à part', () => {
+  it('recoller partie + carte rend le MÊME état, au bit près', () => {
+    const sim = makeSim()
+    spawnEntity(sim, 20.5, 20.5)
+    idle(sim, 40)
+    const carte = deserializeCarte(serializeCarte(sim.map))
+    const repris = deserializePartie(serializePartie(sim), carte)
+    expect(snapshot(repris)).toBe(snapshot(sim))
+    // Et la carte est bien celle du monde, pas une carte vide qui aurait passé par chance.
+    expect(repris.map.terrain.length).toBe(sim.map.terrain.length)
+    expect(repris.map.width).toBe(sim.map.width)
+  })
+
+  it('REPREND le pas : couper la carte ne change pas le futur du monde', () => {
+    const live = makeSim()
+    spawnEntity(live, 20.5, 20.5)
+    idle(live, 120)
+
+    const sauve = makeSim()
+    spawnEntity(sauve, 20.5, 20.5)
+    idle(sauve, 60)
+    const repris = deserializePartie(serializePartie(sauve), deserializeCarte(serializeCarte(sauve.map)))
+    idle(repris, 60)
+
+    expect(snapshot(repris)).toBe(snapshot(live))
+  })
+
+  it('la PARTIE ne porte plus la carte — mais garde sa clé, donc l’ordre', () => {
+    const sim = makeSim()
+    const partie = JSON.parse(serializePartie(sim)) as { partie: Record<string, unknown> }
+    expect(partie.partie.map).toBeNull() // vidée, pas retirée
+    // La clé reste EXACTEMENT à sa place : c'est ce qui garde `snapshot()` identique entre un
+    // monde repris et un monde continu (le contrat « au bit près » du projet).
+    expect(Object.keys(partie.partie)).toEqual(Object.keys(sim))
+    // Et elle est franchement plus légère que l'état d'un seul tenant.
+    expect(serializePartie(sim).length).toBeLessThan(serializeSim(sim).length)
+  })
+
+  it('garde la MÊME exigence de forme : un champ manquant est refusé, et nommé', () => {
+    const ampute = makeSim() as unknown as Record<string, unknown>
+    delete ampute.blood
+    ampute.map = null
+    const texte = JSON.stringify({ v: SAVE_FORMAT_VERSION, partie: ampute })
+    const carte = createEmptyMap(96, 96, TERRAIN_GRASS)
+    expect(() => deserializePartie(texte, carte)).toThrow(/antérieur/)
+    expect(() => deserializePartie(texte, carte)).toThrow(/blood/)
+  })
+
+  it('refuse une carte ou une partie d’une VERSION inconnue', () => {
+    const sim = makeSim()
+    const carte = createEmptyMap(8, 8, TERRAIN_GRASS)
+    expect(() => deserializeCarte(JSON.stringify({ v: SAVE_FORMAT_VERSION + 1, carte }))).toThrow(/incompatible/)
+    expect(() =>
+      deserializePartie(JSON.stringify({ v: SAVE_FORMAT_VERSION + 1, partie: sim }), carte),
+    ).toThrow(/incompatible/)
+  })
+
+  it('refuse une carte illisible plutôt que de rendre un monde amputé', () => {
+    expect(() => deserializeCarte('{')).toThrow(/illisible/)
+    expect(() => deserializeCarte(JSON.stringify({ v: SAVE_FORMAT_VERSION }))).toThrow(/illisible/)
+    // Une enveloppe correcte mais sans relief : le pire cas, celui qui passerait en silence.
+    expect(() => deserializeCarte(JSON.stringify({ v: SAVE_FORMAT_VERSION, carte: { width: 8 } }))).toThrow(/relief/)
   })
 })

@@ -11,12 +11,15 @@ import {
   CHRONICLE_EVENT_TYPES,
   collectNodeDeltas,
   createNodeShadow,
+  deserializeCarte,
+  deserializePartie,
   deserializeSim,
   drainEvents,
   filtreParInteret,
   getGameTime,
   seedNodeShadow,
-  serializeSim,
+  serializeCarte,
+  serializePartie,
   step,
   type MoveInput,
   type PlayerAction,
@@ -28,7 +31,7 @@ import {
   type NodeShadow,
 } from '@braises/sim'
 import { createVeillee, LOAD_PHASES } from './veillee'
-import { loadSlot, saveSlot } from './persistence-store'
+import { loadCarte, loadSlot, saveCarte, saveSlot } from './persistence-store'
 
 const post = (message: HostToClient): void => {
   ;(self as unknown as { postMessage(m: unknown): void }).postMessage(message)
@@ -36,6 +39,30 @@ const post = (message: HostToClient): void => {
 
 let sim: SimState | undefined
 let playerId = 0
+/**
+ * LA SONDE DE COÛT (dev seulement — voir `PerfMessage`). Le budget d'un tick est de 50 ms
+ * (20 Hz) ; ce que le projet en sait vient de Node sous `tsx`, pas de ce moteur-ci. On relève
+ * ici, dans le Worker qui joue vraiment la Veillée, et on rend un échantillon par seconde de
+ * jeu — moyenne ET pic, parce qu'un gel d'une seconde toutes les six cents ne bouge pas une
+ * moyenne mais arrête le monde.
+ *
+ * Armée sur `import.meta.env.DEV` comme le reste de l'outillage de dev : un build de prod ne
+ * mesure rien et n'émet rien.
+ */
+const SONDE_PERF = import.meta.env.DEV
+/** Ticks par échantillon — 20 Hz, donc une seconde de jeu. */
+const PERF_FENETRE = 20
+let perfN = 0
+let perfSomme = 0
+let perfPic = 0
+let perfPicStep = 0
+let perfPicTick = 0
+/** Départ du tick précédent — l'écart avec le suivant mesure TOUT ce qui a occupé le Worker. */
+let perfDernierDepart = -1
+let perfPicEcart = 0
+/** Dernière sérialisation d'autosave : le temps pendant lequel le Worker n'a pas tiqué. */
+let perfSerialisationMs = -1
+let perfOctets = -1
 /**
  * LE RÉCIT RETENU PAR L'HÔTE (persistance P1-6) : le log borné des faits chronique-dignes,
  * accumulé au fil des ticks pour être SAUVÉ — une Veillée reprise doit retrouver sa
@@ -48,6 +75,8 @@ const CHRONICLE_CAP = 400
 let booting = false
 /** Une écriture disque à la fois — les sérialisations lourdes ne se chevauchent pas. */
 let saving = false
+/** La carte de CE monde est-elle déjà sur le disque ? Elle ne s'écrit qu'une fois (§ `persist`). */
+let carteEcrite = false
 /** Une sauvegarde a été demandée pendant qu'une autre était en vol : on la rejoue à la fin,
  *  avec l'état le plus frais. Sans ça, la SORTIE (`pause`) qui tombe pile sur un autosave était
  *  silencieusement perdue — le trou du garde `saving` tombait exactement sur le cas à protéger. */
@@ -79,11 +108,16 @@ let nodeStockShadow: NodeShadow = createNodeShadow([])
 
 function tick(): void {
   if (!sim) return
+  const t0 = SONDE_PERF ? performance.now() : 0
   const inputs: MoveInput[] = [
     { entityId: playerId, ...playerInput, ...(pendingAction ? { action: pendingAction } : {}) },
   ]
   pendingAction = undefined
   step(sim, inputs)
+  // Le partage step/hôte se prend ICI : après `step` (donc /sim), avant la construction du
+  // snapshot et le postMessage (donc nous). Un pic qui vient du filtrage ou du clone
+  // structuré n'est pas le même chantier qu'un pic qui vient de la simulation.
+  const tStep = SONDE_PERF ? performance.now() : 0
   const events = drainEvents(sim)
   // On RETIENT au passage les faits chronique-dignes, pour la sauvegarde : c'est ici
   // qu'ils transitent, une seule fois. Le client, lui, les reçoit dans le snapshot et
@@ -117,6 +151,49 @@ function tick(): void {
     events,
   }
   post(moi ? filtreParInteret(corps, moi) : corps)
+  if (SONDE_PERF) releverPerf(sim.tick, t0, tStep)
+}
+
+/**
+ * UN ÉCHANTILLON PAR SECONDE DE JEU (sonde de dev). On accumule la somme pour la moyenne et
+ * on RETIENT le pire tick de la fenêtre avec sa part de `step` — puis on remet à zéro. Le
+ * coût de la sonde elle-même est de deux `performance.now()` par tick, et rien en prod.
+ */
+function releverPerf(tickNo: number, t0: number, tStep: number): void {
+  const fin = performance.now()
+  const total = fin - t0
+  perfN += 1
+  perfSomme += total
+  if (total > perfPic) {
+    perfPic = total
+    perfPicStep = tStep - t0
+    perfPicTick = tickNo
+  }
+  // LE TROU. On le prend entre DÉPARTS de tick : ce qui s'est glissé entre les deux (autosave,
+  // GC, n'importe quoi d'autre) est compté, alors que le coût du tick seul le manquerait.
+  if (perfDernierDepart >= 0) {
+    const ecart = t0 - perfDernierDepart
+    if (ecart > perfPicEcart) perfPicEcart = ecart
+  }
+  perfDernierDepart = t0
+  if (perfN < PERF_FENETRE) return
+  post({
+    type: 'perf',
+    ticks: perfN,
+    moyenneMs: perfSomme / perfN,
+    picMs: perfPic,
+    picStepMs: perfPicStep,
+    picTick: perfPicTick,
+    picEcartMs: perfPicEcart,
+    serialisationMs: perfSerialisationMs,
+    sauvegardeOctets: perfOctets,
+  })
+  perfN = 0
+  perfSomme = 0
+  perfPic = 0
+  perfPicStep = 0
+  perfPicTick = 0
+  perfPicEcart = 0
 }
 
 /**
@@ -135,7 +212,24 @@ async function persist(): Promise<void> {
   }
   saving = true
   try {
-    await saveSlot({ sim: serializeSim(sim), playerId, chronicle: chronicleLog, savedAt: Date.now() })
+    // LA CARTE, UNE SEULE FOIS. Elle pèse 86,9 % de la sauvegarde et ne change jamais (garde :
+    // `carte-immuable.test.ts`) : la réécrire deux fois par minute était le gel. On la pose au
+    // premier enregistrement du monde, puis plus jamais. Si son écriture échoue, `carteEcrite`
+    // reste faux et le prochain autosave retentera — une partie sans sa carte ne se reprend pas.
+    if (!carteEcrite) {
+      await saveCarte(serializeCarte(sim.map))
+      carteEcrite = true
+    }
+    // LA SÉRIALISATION EST SYNCHRONE, ET ELLE EST LE SUJET. Tant qu'elle tourne, ce Worker ne
+    // tique pas : le monde s'arrête. On la chronomètre à part de l'écriture disque (qui, elle,
+    // rend la main) pour savoir lequel des deux gèle la Veillée. Sonde de dev, coût nul sinon.
+    const s0 = SONDE_PERF ? performance.now() : 0
+    const texte = serializePartie(sim)
+    if (SONDE_PERF) {
+      perfSerialisationMs = performance.now() - s0
+      perfOctets = texte.length
+    }
+    await saveSlot({ sim: texte, playerId, chronicle: chronicleLog, savedAt: Date.now() })
     // ON LE DIT. Une sauvegarde muette laisse le joueur dans le doute — et ce doute coûte
     // cher dans un jeu où l'on peut perdre une heure de veillée.
     post({ type: 'saved', at: Date.now(), ok: true })
@@ -173,8 +267,17 @@ async function boot(): Promise<void> {
   try {
     const rec = await loadSlot()
     if (rec) {
-      const state = deserializeSim(rec.sim) // JETTE si version incompatible → on tombe dans le catch
+      // LA CARTE VIENT DE SA PROPRE CASE (elle ne bouge pas, on ne la réécrit pas — voir
+      // `persistence-store.ts`). Si elle manque, c'est une sauvegarde d'AVANT la coupe : elle
+      // porte encore l'état d'un seul tenant, carte comprise, et se relit telle quelle. Une
+      // reprise ne se perd pas pour un changement de rangement — le prochain autosave la
+      // rangera au format neuf.
+      const carteTexte = await loadCarte()
+      const state = carteTexte
+        ? deserializePartie(rec.sim, deserializeCarte(carteTexte)) // JETTE → on tombe dans le catch
+        : deserializeSim(rec.sim)
       sim = state
+      carteEcrite = Boolean(carteTexte)
       playerId = rec.playerId
       chronicleLog = rec.chronicle ?? []
       const me = state.entities.find((e) => e.id === playerId)
@@ -185,6 +288,7 @@ async function boot(): Promise<void> {
     // Sauvegarde absente, illisible ou d'une version incompatible : on repart à neuf.
     sim = undefined
     resumed = false
+    carteEcrite = false
   }
 
   if (!sim) {
@@ -195,6 +299,7 @@ async function boot(): Promise<void> {
     playerId = world.playerId
     spawn = world.spawn
     chronicleLog = []
+    carteEcrite = false
   } else if (resumed) {
     // Reprise : aucune passe de génération n'a tourné — on remplit la barre d'un coup pour
     // que le seuil de chargement se lève (il attend `worldReady`, posé au `ready`).

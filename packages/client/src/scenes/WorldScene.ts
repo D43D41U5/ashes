@@ -51,6 +51,7 @@ import {
   type HostToClient,
   type ReadyMessage,
   type SnapshotMessage,
+  type PerfMessage,
 } from '@braises/sim'
 import Phaser from 'phaser'
 import { createColyseusHost, createWorkerHost, type HostConnection } from '../host-connection'
@@ -200,6 +201,9 @@ const BUILD_PHASES = ['relief', 'bake', 'ground', 'water', 'pois', 'clutter', 'w
 type BuildPhase = (typeof BUILD_PHASES)[number]
 const BUILD_STEPS = BUILD_PHASES.length
 
+/** Fenêtre de la sonde de coût (un échantillon par seconde de jeu) — ~10 min, puis on oublie. */
+const PERF_ECHANTILLONS_MAX = 600
+
 
 /** Les événements retenus pour la chronique de saison. */
 // Les types chronique-dignes sont désormais la LISTE CANONIQUE de /sim
@@ -339,6 +343,13 @@ export class WorldScene extends Phaser.Scene {
   private reflets: RefletsLayer | null = null
   /** Sonde A10 : le coût de boot des couches d'eau (champ de rive compris), en ms. */
   bootEauMs = -1
+  /**
+   * LE COÛT DE L'HÔTE, TEL QUE LE WORKER LE MESURE (dev seulement — voir `PerfMessage`).
+   * Un échantillon par seconde de jeu, gardés en fenêtre glissante : le smoke LIT cette
+   * liste, il ne la fabrique pas. C'est la seule mesure de coût par tick du projet qui soit
+   * prise sur le moteur que la Veillée joue réellement — tout le reste vient de Node.
+   */
+  perfSamples: PerfMessage[] = []
   /** Le dernier état du toggle appliqué à l'avatar (swap _lit une fois, pas par frame). */
   private playerLit: boolean | null = null
   /** Marcheurs à remous poussés cette frame — la sonde du critère A5 (lue par le smoke). */
@@ -1372,6 +1383,13 @@ export class WorldScene extends Phaser.Scene {
       // donc jamais un savoir géographique en avance ou en retard sur le monde qu'il décrit.
       if (this.fog && msg.ok) saveFog(packBrouillard(this.fog))
       publishSaved(this.registry, msg.at, msg.ok, this.time.now)
+      return
+    }
+    if (msg.type === 'perf') {
+      // SONDE DE DEV : on empile, on ne juge rien. La fenêtre est bornée (~10 min de jeu) —
+      // une sonde qui fuit en mémoire serait une belle ironie dans un chantier sur les gels.
+      this.perfSamples.push(msg)
+      if (this.perfSamples.length > PERF_ECHANTILLONS_MAX) this.perfSamples.shift()
       return
     }
     if (msg.type === 'progress') {

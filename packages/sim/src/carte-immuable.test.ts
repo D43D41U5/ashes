@@ -1,0 +1,216 @@
+/**
+ * LA CARTE NE BOUGE PAS — la garde qui rend l'autosave abordable.
+ *
+ * MESURÉ (2026-07-28, dans le Worker du navigateur) : une sauvegarde de Veillée pèse 69,7 Mo
+ * et sa sérialisation JSON arrête le monde **2,4 à 2,5 s**, toutes les 30 s. Sur 80 s de jeu
+ * réel, c'étaient les SEULS gels observés — trois autosaves, trois arrêts. Et **86,9 % de ce
+ * poids est la carte** (`map.cendre` 50,7 Mo à lui seul, `map.terrain` 9,7 Mo).
+ *
+ * D'où la coupe : la carte n'est écrite QU'UNE FOIS, à la naissance du monde ; l'autosave ne
+ * réécrit plus que les 9,15 Mo qui bougent (voir `serializePartie`).
+ *
+ * Toute cette optimisation repose sur UNE affirmation : **`step()` n'écrit jamais dans
+ * `state.map`.** Le code le dit de lui-même (« donnée STATIQUE : calculée une fois, jamais
+ * modifiée », `map.ts`) et le grep le confirme (`terrain[…] =` n'apparaît que dans les
+ * fichiers de worldgen). Mais un grep ne protège pas l'avenir : le jour où un système se
+ * mettra à peindre le sol — une tuile brûlée, un champ labouré, une route qui s'use — il
+ * réécrira `map.terrain`, la sauvegarde périodique ne le verra plus, et le joueur retrouvera
+ * à la reprise une vallée qui a oublié ce qu'il lui a fait. En SILENCE.
+ *
+ * Ce fichier est ce cri. Il fait vivre le monde de production pour de bon — front de cendre
+ * poussé au bout de la saison, récolte, abattage, construction, feu, faune et monstres — et
+ * exige que la carte en ressorte identique au bit près. Si un jour cette garde devient
+ * rouge, ce n'est PAS elle qu'il faut changer : c'est `serializePartie` qu'il faut retirer.
+ */
+import { describe, expect, it } from 'vitest'
+import { generateZonedTerrain } from './zonegen'
+import { placeZoneNodes, emplacementsDeVillage } from './zone-content'
+import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
+import { drainEvents } from './events'
+import { frontActuel } from './cendre'
+import { grantItems } from './village'
+import { TICKS_PER_SEASON_DAY, TICKS_PER_CYCLE, seasonDayAtTick } from './time'
+import type { WorldMap } from './map'
+
+/**
+ * L'EMPREINTE DE LA CARTE. On ne garde pas une copie (7,5 M de nombres, ~60 Mo) : on somme.
+ *
+ * `Math.imul` et les entiers 32 bits sont dans les opérations autorisées à /sim (invariant §2) ;
+ * l'empreinte est donc reproductible d'un moteur à l'autre, comme le reste. On mêle l'INDICE à
+ * la valeur pour qu'une permutation ne passe pas inaperçue, et on couvre aussi les petits
+ * champs (zones, seuils, fil…) par leur JSON — eux tiennent en quelques dizaines de ko.
+ */
+function empreinte(map: WorldMap): string {
+  const melange = (h: number, i: number, v: number): number =>
+    (Math.imul(h ^ (i + 0x9e3779b9), 0x85ebca6b) ^ Math.imul(v | 0, 0xc2b2ae35)) | 0
+
+  let hT = 0x811c9dc5
+  for (let i = 0; i < map.terrain.length; i++) hT = melange(hT, i, map.terrain[i]!)
+
+  let hC = 0x811c9dc5
+  const cendre = map.cendre
+  if (cendre) {
+    // `cendre` porte des distances FRACTIONNAIRES : on ne peut pas la hacher en entiers sans
+    // perdre exactement ce qui pourrait changer. On multiplie avant de tronquer — la précision
+    // retenue (1/1024 de tuile) est très en deçà de toute modification qui aurait un sens.
+    for (let i = 0; i < cendre.length; i++) hC = melange(hC, i, Math.round(cendre[i]! * 1024))
+  }
+
+  const petits = JSON.stringify({
+    width: map.width,
+    height: map.height,
+    zones: map.zones,
+    cendreMax: map.cendreMax,
+    zoneGrid: map.zoneGrid,
+    zonePas: map.zonePas,
+    zoneDefs: map.zoneDefs,
+    seuils: map.seuils,
+    fil: map.fil,
+  })
+  let hP = 0x811c9dc5
+  for (let i = 0; i < petits.length; i++) hP = melange(hP, i, petits.charCodeAt(i))
+
+  return `${hT >>> 0}:${hC >>> 0}:${hP >>> 0}:${map.terrain.length}:${cendre ? cendre.length : -1}`
+}
+
+/** Le monde de PRODUCTION, comme `worker/veillee.ts` et le banc le bâtissent. */
+function mondeReel(): { sim: SimState; joueur: number } {
+  const carte = generateZonedTerrain(2026)
+  const nodes = placeZoneNodes(carte)
+  const emplacements = emplacementsDeVillage(carte, nodes)
+  const base = emplacements[0]!
+  const sim = createSim(2026, {
+    map: carte.map,
+    nodes,
+    calendarScale: TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE,
+    home: { x: base.tx + 0.5, y: base.ty + 0.5 },
+  })
+  const joueur = spawnEntity(sim, base.tx + 0.5, base.ty + 0.5)
+  return { sim, joueur }
+}
+
+const agir = (sim: SimState, id: number, action: PlayerAction): string[] => {
+  step(sim, [{ entityId: id, dx: 0, dy: 0, action }])
+  return drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))
+}
+
+describe('la carte est immuable pendant la partie', () => {
+  it("A1 — mille ticks de monde vivant ne changent pas un bit de `map`", () => {
+    const { sim, joueur } = mondeReel()
+    const avant = empreinte(sim.map)
+
+    // Un monde qui VIT : le joueur marche (donc il découvre, il piétine, il traverse l'eau),
+    // pendant que la faune, les monstres, les villages PNJ et le feu font leur travail.
+    for (let t = 0; t < 1000; t++) {
+      const dx = t % 4 === 0 ? 1 : t % 4 === 2 ? -1 : 0
+      const dy = t % 4 === 1 ? 1 : t % 4 === 3 ? -1 : 0
+      step(sim, [{ entityId: joueur, dx, dy }])
+      drainEvents(sim)
+    }
+
+    expect(empreinte(sim.map)).toBe(avant)
+  })
+
+  it("A2 — le FRONT DE CENDRE dévore la vallée sans réécrire une tuile", () => {
+    // Le suspect n°1, et de loin : c'est le système qui « brûle » la carte. Il ne le fait
+    // pas en peignant le sol — il déplace un SEUIL (`cendreFront`, un seul nombre) et compare
+    // (`map.cendre[i] < front`). C'est ce qui rend le front bon marché, et c'est très
+    // exactement ce que cette garde protège : le jour où quelqu'un le fera « pour de vrai »
+    // en repeignant le terrain, l'autosave allégée mentirait.
+    const { sim, joueur } = mondeReel()
+    const avant = empreinte(sim.map)
+    const noeudsAvant = sim.nodes.length
+
+    expect(sim.map.cendreMax ?? 0).toBeGreaterThan(0)
+    // Le front ne se POSE pas : il se DÉDUIT du tick (`frontActuel` → `seasonDayAtTick`). Pour
+    // l'amener au bout de la saison, on avance donc l'horloge du monde — il n'existe aucun
+    // champ d'état à écrire, et c'est justement pour ça que la cendre ne coûte rien.
+    // Et la cendre ne MORD qu'au BASCULEMENT d'un jour de saison (le reste des ticks, elle ne
+    // coûte qu'un test) : on se pose donc juste AVANT la frontière, pour que le premier `step`
+    // la franchisse. Un tick plus loin et le test serait passé sans que rien ne brûle.
+    const JOUR = 59
+    sim.tick = Math.ceil(((JOUR - 1) * TICKS_PER_SEASON_DAY) / sim.calendarScale) - 1
+    expect(seasonDayAtTick(sim.tick, sim.calendarScale)).toBe(JOUR - 1)
+    expect(frontActuel({ ...sim, tick: sim.tick + 1 })).toBeGreaterThan(0) // sans ça, rien à garder
+
+    // Dix ticks suffisent : le basculement tombe au premier, et le jour 59 est l'acte III —
+    // méga-horde, évacuation, champ de flux… chaque tick y coûte cher. On prouve la cendre,
+    // pas l'endgame.
+    for (let t = 0; t < 10; t++) {
+      step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
+      drainEvents(sim)
+    }
+
+    // La preuve que la cendre a bien MORDU : elle dévore les nœuds qu'elle recouvre.
+    expect(seasonDayAtTick(sim.tick, sim.calendarScale)).toBe(JOUR)
+    expect(sim.nodes.length).toBeLessThan(noeudsAvant)
+    expect(empreinte(sim.map)).toBe(avant)
+  })
+
+  it("A3 — RÉCOLTER, ABATTRE, BÂTIR et FONDER ne touchent pas la carte", () => {
+    // Les gestes qui MODIFIENT le monde pour de bon. Ils écrivent tous ailleurs — dans
+    // `nodes`, `structures`, `villages`, `groundItems` — et c'est la promesse à tenir : ces
+    // listes-là restent dans la sauvegarde périodique, la carte n'y est plus.
+    const { sim, joueur } = mondeReel()
+    const avant = empreinte(sim.map)
+
+    grantItems(sim, joueur, { campfire: 1, hammer: 1, wood: 80, stone: 40 })
+    const slotDe = (item: string): number =>
+      sim.entities.find((e) => e.id === joueur)!.inventory.findIndex((s) => s?.item === item)
+
+    // Un nœud à portée, quel qu'il soit : on le vide. (S'il n'y en a pas dans le rayon, le
+    // refus est muet et la garde reste valable — on ne teste pas la récolte ici, on teste la carte.)
+    const moi = sim.entities.find((e) => e.id === joueur)!
+    // Le nœud le plus proche, et on va À LUI : sur la carte de production, rien ne garantit
+    // qu'il en pousse un sous les pieds du joueur — un `if` silencieux aurait vidé le test.
+    const proche = sim.nodes.reduce((meilleur, n) => {
+      const ex = n.tx + 0.5 - moi.x
+      const ey = n.ty + 0.5 - moi.y
+      const d = ex * ex + ey * ey // pas `**` : /sim doit rejouer au bit près entre moteurs
+      return d < (meilleur.d ?? Infinity) ? { n, d } : meilleur
+    }, {} as { n?: (typeof sim.nodes)[number]; d?: number }).n
+    expect(proche).toBeDefined()
+    const stockAvant = proche!.stock
+    moi.x = proche!.tx + 0.5
+    moi.y = proche!.ty + 1.5 // à portée, jamais sous ses pieds
+    for (let t = 0; t < 200; t++) agir(sim, joueur, { type: 'harvest', nodeId: proche!.id })
+    expect(proche!.stock).toBeLessThan(stockAvant) // la récolte a bien MORDU
+
+    // Le feu se fonde À CÔTÉ, jamais sous ses propres pieds : une structure pleine-tuile
+    // emmure l'acteur centré dessus (leçon `feu-piege-centre-place-component`).
+    const refus: string[] = []
+    const feuTx = Math.floor(moi.x)
+    const feuTy = Math.floor(moi.y) - 1 // à côté : une structure pleine-tuile emmure qui est dessus
+    refus.push(...agir(sim, joueur, { type: 'set_active_slot', slot: slotDe('campfire') }))
+    refus.push(...agir(sim, joueur, { type: 'place_campfire', tx: feuTx, ty: feuTy }))
+    const feu = sim.structures.find((s) => s.tx === feuTx && s.ty === feuTy)
+    expect(feu, `refus : ${refus.join(', ')}`).toBeDefined()
+    refus.push(...agir(sim, joueur, { type: 'found_village', structureId: feu!.id }))
+    expect(sim.villages.length, `refus : ${refus.join(', ')}`).toBeGreaterThan(0)
+
+    // BÂTIR — les deux gestes, parce qu'ils écrivent dans des listes différentes : le MUR
+    // (`build`, une barrière à cheval sur l'arête des tuiles — le plus proche d'une écriture
+    // de terrain qui existe dans ce jeu) et le COMPOSANT tenu (`place_component`). La pose
+    // passe par l'input, jamais par `addStructure` : sinon le replay divergerait
+    // (leçon `feu-piege-centre-place-component`).
+    const structuresAvant = sim.structures.length
+    for (const [dx, dy] of [[2, 0], [3, 0], [2, 1], [3, 1]] as const) {
+      const tx = feuTx + dx
+      const ty = feuTy + dy
+      moi.x = tx + 0.5
+      moi.y = ty + 1.5
+      refus.push(...agir(sim, joueur, { type: 'build', structure: 'wall', tx, ty }))
+    }
+    const compTx = feuTx + 2
+    const compTy = feuTy + 3
+    moi.inventory[0] = { item: 'workshop', count: 1 }
+    moi.activeSlot = 0
+    moi.x = compTx + 0.5
+    moi.y = compTy + 1.5
+    refus.push(...agir(sim, joueur, { type: 'place_component', tx: compTx, ty: compTy }))
+
+    // La preuve que le monde a VRAIMENT changé — sans quoi la garde ne prouverait rien.
+    expect(sim.structures.length, `refus : ${refus.join(', ')}`).toBeGreaterThan(structuresAvant)
+    expect(empreinte(sim.map)).toBe(avant)
+  })
+})

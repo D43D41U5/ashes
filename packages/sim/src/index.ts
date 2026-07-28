@@ -177,7 +177,16 @@ export { chronicleFromEvents, formatChronicleLine, CHRONICLE_EVENT_TYPES } from 
 export type { ChronicleEntry, ChronicleWeight } from './chronicle'
 
 // ─── Persistance : sérialiser/reprendre une Veillée (l'hôte écrit dans IndexedDB) ─
-export { serializeSim, deserializeSim, SAVE_FORMAT_VERSION } from './persistence'
+export {
+  serializeSim,
+  deserializeSim,
+  // La carte à part : elle ne change jamais, l'autosave ne la réécrit plus (voir `persistence.ts`).
+  serializeCarte,
+  deserializeCarte,
+  serializePartie,
+  deserializePartie,
+  SAVE_FORMAT_VERSION,
+} from './persistence'
 
 // ─── Outils de DEV (inertes hors sim créée avec `debug: true`) ────────────
 export type { DebugAction } from './debug'
@@ -239,6 +248,7 @@ export type {
   ReadyMessage,
   ProgressMessage,
   SnapshotMessage,
+  PerfMessage,
   NodeDelta,
 } from './protocol'
 

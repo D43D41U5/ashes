@@ -3498,6 +3498,87 @@ const SCENARIOS = {
   },
 
   /**
+   * LES GELS DU MONDE — combien de temps la Veillée s'arrête-t-elle, et pourquoi ?
+   *
+   * Le projet sait ce que coûte un tick sur Node, sous `tsx` (qui ment de ~25 %). Il n'a
+   * JAMAIS mesuré le moteur qui joue réellement le solo : le Web Worker du navigateur.
+   * C'est pourtant le seul dont le coût se ressente manette en main, et le seul sur lequel
+   * on ait le droit d'écrire « MESURÉ » à propos d'un gel.
+   *
+   * On ne fabrique rien : le Worker relève lui-même (sonde `PerfMessage`, dev seulement) et
+   * WorldScene empile les échantillons ; ici on LIT. Deux chiffres comptent, et ils ne
+   * disent pas la même chose : le coût d'un TICK (ce que la sim et l'hôte paient dans la
+   * boucle) et l'ÉCART entre deux départs de tick (ce qui a occupé le Worker, d'où que ça
+   * vienne — l'autosave, appelée par son propre minuteur, ne tombe dans aucun tick).
+   *
+   * Le scénario dure ~80 s de mur pour croiser au moins deux autosaves (AUTOSAVE_MS = 30 s).
+   * Exige `--dev` : la sonde est armée sur `import.meta.env.DEV`.
+   */
+  async gels(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    // On laisse le monde se poser : les premières secondes paient encore le montage du client.
+    await page.waitForTimeout(4000)
+    await page.evaluate(() => {
+      window.__BRAISES__.scene.perfSamples.length = 0 // on repart d'une fenêtre propre
+    })
+
+    const DUREE_MS = 80000
+    const debut = Date.now()
+    let dernierDit = 0
+    while (Date.now() - debut < DUREE_MS) {
+      await page.waitForTimeout(2000)
+      const n = await page.evaluate(() => window.__BRAISES__.scene.perfSamples.length)
+      const ecoule = Math.round((Date.now() - debut) / 1000)
+      if (ecoule - dernierDit >= 20) {
+        dernierDit = ecoule
+        console.log(`  … ${ecoule} s — ${n} échantillons`)
+      }
+    }
+
+    const r = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene.perfSamples
+      if (s.length === 0) return { echantillons: 0 }
+      const tri = (xs) => [...xs].sort((a, b) => a - b)
+      const med = (xs) => (xs.length ? tri(xs)[Math.floor(xs.length / 2)] : -1)
+      const r2 = (v) => Math.round(v * 100) / 100
+      const moyennes = s.map((x) => x.moyenneMs)
+      const ecarts = s.map((x) => x.picEcartMs)
+      // LES GELS : tout écart qui dépasse le double du budget (50 ms à 20 Hz) est un moment
+      // où le monde s'est arrêté pour de bon. On les NOMME au lieu de les moyenner.
+      const gels = s
+        .map((x, i) => ({ i, ecartMs: r2(x.picEcartMs), picMs: r2(x.picMs), picStepMs: r2(x.picStepMs), picTick: x.picTick }))
+        .filter((g) => g.ecartMs > 100)
+        .sort((a, b) => b.ecartMs - a.ecartMs)
+      // L'autosave : sa durée ne change QUE quand elle vient de tourner — on repère l'instant
+      // où le chiffre bouge, et on regarde l'écart relevé au même moment.
+      const saves = []
+      let vu = -1
+      s.forEach((x, i) => {
+        if (x.serialisationMs >= 0 && x.serialisationMs !== vu) {
+          vu = x.serialisationMs
+          saves.push({ i, serialisationMs: r2(x.serialisationMs), octets: x.sauvegardeOctets, ecartAuMemeMoment: r2(x.picEcartMs) })
+        }
+      })
+      return {
+        echantillons: s.length,
+        tickMedianMs: r2(med(moyennes)),
+        tickPireMs: r2(Math.max(...s.map((x) => x.picMs))),
+        ecartMedianMs: r2(med(ecarts)),
+        ecartPireMs: r2(Math.max(...ecarts)),
+        gels: gels.slice(0, 6),
+        nbGels: gels.length,
+        autosaves: saves,
+      }
+    })
+
+    console.log(`gels : ${JSON.stringify(r, null, 2)}`)
+    if (!r.echantillons) {
+      console.error('!! sonde perf débranchée — aucun échantillon (as-tu bien lancé avec --dev ?)')
+    }
+    return r
+  },
+
+  /**
    * LA RACINE A-T-ELLE UN HORIZON ? (mandat T0 — « pousser à l'exploration ».)
    *
    * La zone de départ était la SEULE du jeu sans repère perçant la canopée : ses cinq lieux
