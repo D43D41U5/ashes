@@ -5,7 +5,7 @@
  * ici on ne fait que du pooling Phaser et du placement.
  */
 import Phaser from 'phaser'
-import { poiClearings, type Structure, type WorldMap } from '@braises/sim'
+import { poiClearings, type Structure, type WorldMap } from '@ashes/sim'
 import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
 import { clutterAt, type PropKind, type SampleTerrain } from '../../render/clutter'
 import { LIT_CLUTTER_KINDS, litClutterTextureKey, VARIANT_COUNTS, variantBase } from '../../render/lit-props'

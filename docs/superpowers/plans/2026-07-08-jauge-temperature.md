@@ -17,7 +17,7 @@
 - **Nommage** : `warmth` reste l'axe MORAL (Foyer↔Meute) — ne jamais réutiliser pour le froid physique ; la jauge s'appelle `temperature`.
 - Code/commentaires en **français**, identifiants en anglais.
 - **API rappelée (vérifiée)** : `createSim(seed: number, options?)` — le seed est **positionnel**. `spawnEntity(state, x, y): number` **retourne l'id** (pas l'objet). `getGameTime(state)` → `{ isNight, act, … }`. `elevationAt(map,tx,ty)`, `terrainAt(map,tx,ty)`. `state.map`, `state.structures` (`{type,tx,ty,…}`), `state.monsters` (`{entityId,type}`).
-- Vérifs avant chaque commit : `pnpm check && pnpm lint && pnpm --filter @braises/sim test` (verts).
+- Vérifs avant chaque commit : `pnpm check && pnpm lint && pnpm --filter @ashes/sim test` (verts).
 
 ## File Structure
 
@@ -70,7 +70,7 @@ describe('jauge temperature', () => {
 
 - [ ] **Step 2 : Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/temperature.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/temperature.test.ts`
 Expected: FAIL — `temperature` absent du type / `undefined`.
 
 - [ ] **Step 3 : Implémenter**
@@ -87,8 +87,8 @@ Dans `spawnEntity`, à la création de l'objet entité (près de `hunger: 100`) 
 
 - [ ] **Step 4 : Vérifier le succès**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/temperature.test.ts`
-Expected: PASS. Puis `pnpm --filter @braises/sim test` — suite complète verte (le champ s'ajoute au snapshot `JSON.stringify` ; les contrats de replay comparent deux runs identiques → inchangés).
+Run: `pnpm --filter @ashes/sim exec vitest run src/temperature.test.ts`
+Expected: PASS. Puis `pnpm --filter @ashes/sim test` — suite complète verte (le champ s'ajoute au snapshot `JSON.stringify` ; les contrats de replay comparent deux runs identiques → inchangés).
 
 - [ ] **Step 5 : Commit**
 
@@ -152,7 +152,7 @@ describe('ambientTemperature', () => {
 
 - [ ] **Step 2 : Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/temperature.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/temperature.test.ts`
 Expected: FAIL — `ambientTemperature` introuvable.
 
 - [ ] **Step 3 : Implémenter**
@@ -240,7 +240,7 @@ export { ambientTemperature } from './temperature'
 
 - [ ] **Step 4 : Vérifier le succès**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/temperature.test.ts && pnpm check && pnpm lint`
+Run: `pnpm --filter @ashes/sim exec vitest run src/temperature.test.ts && pnpm check && pnpm lint`
 Expected: PASS ; lint vert (seul `sqrt` — autorisé).
 
 - [ ] **Step 5 : Commit**
@@ -309,7 +309,7 @@ describe('dérive thermostat', () => {
 
 - [ ] **Step 2 : Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/temperature.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/temperature.test.ts`
 Expected: FAIL — `advanceTemperature`/`driftStep` introuvables.
 
 - [ ] **Step 3 : Implémenter**
@@ -351,7 +351,7 @@ Dans `index.ts`, compléter l'export : `export { ambientTemperature, advanceTemp
 
 - [ ] **Step 4 : Vérifier le succès**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/temperature.test.ts && pnpm check`
+Run: `pnpm --filter @ashes/sim exec vitest run src/temperature.test.ts && pnpm check`
 Expected: PASS.
 
 - [ ] **Step 5 : Commit**
@@ -408,7 +408,7 @@ describe('hypothermie', () => {
 
 - [ ] **Step 2 : Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/temperature.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/temperature.test.ts`
 Expected: FAIL — `coldDamagePerTick` introuvable / `cause` absent.
 
 - [ ] **Step 3 : Implémenter**
@@ -466,7 +466,7 @@ Dans `advanceTemperature`, après la mise à jour de `entity.temperature` :
 
 - [ ] **Step 4 : Vérifier le succès**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/temperature.test.ts && pnpm check && pnpm --filter @braises/sim test`
+Run: `pnpm --filter @ashes/sim exec vitest run src/temperature.test.ts && pnpm check && pnpm --filter @ashes/sim test`
 Expected: PASS, aucun cycle.
 
 - [ ] **Step 5 : Commit**
@@ -514,7 +514,7 @@ describe('engourdissement (malus)', () => {
 
 - [ ] **Step 2 : Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/temperature.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/temperature.test.ts`
 Expected: FAIL — fonctions introuvables.
 
 - [ ] **Step 3 : Implémenter**
@@ -557,7 +557,7 @@ Importer : `import { coldStaminaRegenFactor } from './temperature'`.
 
 - [ ] **Step 4 : Vérifier le succès**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/temperature.test.ts && pnpm check && pnpm lint && pnpm --filter @braises/sim test`
+Run: `pnpm --filter @ashes/sim exec vitest run src/temperature.test.ts && pnpm check && pnpm lint && pnpm --filter @ashes/sim test`
 Expected: tout vert.
 
 - [ ] **Step 5 : Commit**
@@ -600,12 +600,12 @@ describe('tyrannie de l\'acte', () => {
 
 - [ ] **Step 2 : Vérifier (vert)**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/temperature.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/temperature.test.ts`
 Expected: PASS (a1≈62, a2≈37, a3≈22).
 
 - [ ] **Step 3 : Suite complète + check/lint**
 
-Run: `pnpm check && pnpm lint && pnpm --filter @braises/sim test`
+Run: `pnpm check && pnpm lint && pnpm --filter @ashes/sim test`
 Expected: vert (le champ `temperature` est déterministe → `sim.test.ts`/`replay.test.ts`/`events.test.ts` restent verts).
 
 - [ ] **Step 4 : Banc scénario (non-régression écosystème)**

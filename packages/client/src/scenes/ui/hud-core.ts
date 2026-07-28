@@ -33,7 +33,7 @@ import {
   type Inventory,
   type ItemId,
   type SkillId,
-} from '@braises/sim'
+} from '@ashes/sim'
 import type Phaser from 'phaser'
 import { ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { vitalIconKey, type VitalId } from '../../render/vital-art'

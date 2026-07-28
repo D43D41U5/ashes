@@ -4,7 +4,7 @@
  * objet scrollFactor 0 dans une caméra zoomée serait projeté hors écran).
  * Communication par le registry : WorldScene écrit, UIScene lit.
  */
-import { formatChronicleLine, zoneAt, type VillageTask, type WorldMap } from '@braises/sim'
+import { formatChronicleLine, zoneAt, type VillageTask, type WorldMap } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud } from '../hud-state'
 import { drainCrafts, drainLevelUps, drainPickups, queueAction } from './world/hud-bridge'

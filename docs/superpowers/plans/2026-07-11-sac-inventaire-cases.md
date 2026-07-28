@@ -228,7 +228,7 @@ describe('le socle à cases', () => {
 
 - [ ] **Step 3: Lancer les tests, vérifier le ROUGE**
 
-Run: `pnpm --filter @braises/sim test items`
+Run: `pnpm --filter @ashes/sim test items`
 Expected: FAIL — `makeInventory is not exported` / erreurs de type.
 
 - [ ] **Step 4: Réécrire `items.ts`**
@@ -436,7 +436,7 @@ Le compilateur est le guide : `pnpm check` liste tout. Les changements, exhausti
       .map(([item, label]) => `${label} ${bag[item]}`)
       .join(' · ')
     ```
-    (importer `toBag` depuis `@braises/sim`).
+    (importer `toBag` depuis `@ashes/sim`).
 
 - [ ] **Step 6: Vérifier le VERT complet**
 
@@ -522,7 +522,7 @@ it('A11 : sac plein → refus « sac plein », rien ne bouge, pas de cooldown ni
 
 - [ ] **Step 2: Lancer, vérifier le ROUGE**
 
-Run: `pnpm --filter @braises/sim test economy`
+Run: `pnpm --filter @ashes/sim test economy`
 Expected: FAIL — A10 : le stock baisse du rendement entier (l'excédent s'évapore) ; A11 : aucun `action_rejected`, le cooldown est armé.
 
 - [ ] **Step 3: Implémenter**
@@ -551,7 +551,7 @@ Ajouter `freeRoomFor` à l'import depuis `./items`.
 
 - [ ] **Step 4: Vérifier le VERT**
 
-Run: `pnpm --filter @braises/sim test economy` → PASS
+Run: `pnpm --filter @ashes/sim test economy` → PASS
 Run: `pnpm check && pnpm test && pnpm lint` → PASS (aucune régression ailleurs)
 
 - [ ] **Step 5: Commit**
@@ -732,7 +732,7 @@ it('A9 : les dégâts viennent de l’arme TENUE, pas de la meilleure du sac', (
 
 - [ ] **Step 2: Lancer, vérifier le ROUGE**
 
-Run: `pnpm --filter @braises/sim test`
+Run: `pnpm --filter @ashes/sim test`
 Expected: FAIL — `activeSlot` n'existe pas, `applyInventoryAction`/`heldSlot` non exportés, A7 rend 2 (la sim fouille encore le sac).
 
 - [ ] **Step 3: `Entity.activeSlot` + suppression de `Entity.wear`**
@@ -879,7 +879,7 @@ Importer `heldSlot, wearHeld` depuis `./inventory-actions`.
 
 - [ ] **Step 7: Vérifier le VERT**
 
-Run: `pnpm --filter @braises/sim test` → PASS
+Run: `pnpm --filter @ashes/sim test` → PASS
 Run: `pnpm check && pnpm test && pnpm lint` → PASS
 
 **Attention aux PNJ :** ils n'ont pas de `activeSlot` armé (ils naissent à `-1`) — donc ils récoltent désormais à mains nues et frappent sans arme. **C'est une régression de gameplay réelle.** Correction *dans cette tâche* : dans `npc.ts`, au moment où un PNJ va récolter (chercher la logique qui déclenche `harvest`), armer sa case active sur le meilleur outil qu'il porte :
@@ -985,7 +985,7 @@ it('A21 : looter un cadavre avec un sac plein n’ÉVAPORE rien — le cadavre g
 
 - [ ] **Step 2: Lancer, vérifier le ROUGE**
 
-Run: `pnpm --filter @braises/sim test combat`
+Run: `pnpm --filter @ashes/sim test combat`
 Expected: FAIL — le cadavre est supprimé même quand le sac est plein (le butin s'évapore).
 
 - [ ] **Step 3: Implémenter**
@@ -1148,7 +1148,7 @@ describe('transfer joueur ⇄ conteneur', () => {
 
 - [ ] **Step 2: Lancer, vérifier le ROUGE**
 
-Run: `pnpm --filter @braises/sim test inventory-actions`
+Run: `pnpm --filter @ashes/sim test inventory-actions`
 Expected: FAIL — actions inconnues.
 
 - [ ] **Step 3: Implémenter dans `inventory-actions.ts`**
@@ -1314,7 +1314,7 @@ Spec inventaire R14-R16 — critères A13-A19."
 - Test: `packages/client/src/render/item-art.test.ts` (les 16 items ont une icône)
 
 **Interfaces:**
-- Consumes: `Inventory`, `Slot`, `ItemId`, `SLOTS`, `stackSize` (`@braises/sim`).
+- Consumes: `Inventory`, `Slot`, `ItemId`, `SLOTS`, `stackSize` (`@ashes/sim`).
 - Produces:
   ```ts
   // item-art.ts
@@ -1360,7 +1360,7 @@ describe('item-art', () => {
 
 - [ ] **Step 2: Lancer, vérifier le ROUGE**
 
-Run: `pnpm --filter @braises/client test item-art`
+Run: `pnpm --filter @ashes/client test item-art`
 Expected: FAIL — module inexistant.
 
 - [ ] **Step 3: `item-art.ts` — les icônes, dessinées en code**
@@ -1374,7 +1374,7 @@ Suivre **exactement** le motif de `BootScene.ts` (lire `generateTexture` sur `st
  * Palette alignée sur celle du monde (bois chaud, pierre froide, fer bleuté).
  */
 import type Phaser from 'phaser'
-import type { ItemId } from '@braises/sim'
+import type { ItemId } from '@ashes/sim'
 
 export const ITEM_ICON_PX = 16
 
@@ -1426,8 +1426,8 @@ Partagé par la hotbar, la grille et le loot : une seule définition de ce qu'es
  * UNE case, à l'écran. Partagée par la ceinture, la grille du sac et le panneau
  * de loot : si la case se dessine à trois endroits, elle se dessine une fois.
  */
-import type { Slot } from '@braises/sim'
-import { stackSize } from '@braises/sim'
+import type { Slot } from '@ashes/sim'
+import { stackSize } from '@ashes/sim'
 import Phaser from 'phaser'
 import { BALANCE_UI } from './ui-theme' // couleurs — cf. la palette déjà utilisée par UIScene
 import { ITEM_ICON_PX, itemIconKey } from '../../render/item-art'
@@ -1475,7 +1475,7 @@ export function createSlotView(scene: Phaser.Scene, x: number, y: number, size: 
 }
 ```
 
-*(Importer `BALANCE` depuis `@braises/sim` pour `TOOL_DURABILITY`. Si `ui-theme.ts` n'existe pas, inliner les couleurs — ne pas créer un module pour trois constantes.)*
+*(Importer `BALANCE` depuis `@ashes/sim` pour `TOOL_DURABILITY`. Si `ui-theme.ts` n'existe pas, inliner les couleurs — ne pas créer un module pour trois constantes.)*
 
 - [ ] **Step 5: `hotbar.ts` et `vitals.ts`**
 
@@ -1596,7 +1596,7 @@ describe('dragToAction', () => {
 })
 ```
 
-- [ ] **Step 2: Lancer, vérifier le ROUGE** — `pnpm --filter @braises/client test inventory-panel` → FAIL.
+- [ ] **Step 2: Lancer, vérifier le ROUGE** — `pnpm --filter @ashes/client test inventory-panel` → FAIL.
 
 - [ ] **Step 3: Implémenter `dragToAction` (pur) puis le panneau**
 

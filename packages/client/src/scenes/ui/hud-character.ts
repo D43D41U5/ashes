@@ -42,7 +42,7 @@ import {
   type SkillId,
   type Slot,
   type SlotRef,
-} from '@braises/sim'
+} from '@ashes/sim'
 import type Phaser from 'phaser'
 import type { CharacterTab, OpenContainerView, StationId } from '../../hud-state'
 import { ITEM_LABELS, itemIconKey } from '../../render/item-art'

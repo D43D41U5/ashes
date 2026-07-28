@@ -1,4 +1,4 @@
-import { seasonDayAtTick } from '@braises/sim'
+import { seasonDayAtTick } from '@ashes/sim'
 import { describe, expect, it } from 'vitest'
 import { metaDepuisSauvegarde, type SaveRecord } from './persistence-store'
 import { NOM_MAX, SLOT_COUNT, nettoieNom, seedValide, slotValide } from './mondes'

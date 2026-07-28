@@ -9,7 +9,7 @@
  *     d'enclos affiche une texture manquante, quelque part, une fois.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE } from '@braises/sim'
+import { BALANCE } from '@ashes/sim'
 import { BATI_KEYS, BATI_LIT_TYPES, ENCADREMENT_POST, profilDeCrete } from './bati-art'
 
 const N = 1, E = 2, S = 4, O = 8

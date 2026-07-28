@@ -25,7 +25,7 @@
  * Rendu en DOM sur `document.body` (comme le voile de mort) — PAS sur la planche du HUD,
  * qui est `transform`-scalée. Purement présentationnel : la sim a fini la saison.
  */
-import type { ChronicleEntry } from '@braises/sim'
+import type { ChronicleEntry } from '@ashes/sim'
 import type { SeasonVerdict } from '../../hud-state'
 import { warmthColor } from '../../render/lighting'
 import { ensureGameFont, GAME_FONT } from './game-font'

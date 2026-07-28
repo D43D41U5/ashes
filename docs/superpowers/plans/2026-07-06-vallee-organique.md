@@ -73,7 +73,7 @@ describe('stampBlob — contours organiques (Lac)', () => {
 
 - [ ] **Step 2: Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: FAIL — le Lac est un disque parfait (`waterBeyond + landWithin` = 0).
 
 - [ ] **Step 3: Implémenter `stampBlob` et l'utiliser pour le Lac**
@@ -121,7 +121,7 @@ function paintRiver(map: WorldMap, skeleton: ValleySkeleton): void {
 
 - [ ] **Step 4: Vérifier que les tests passent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: PASS. Si `waterBeyond + landWithin` reste sous 8, augmenter `wobble` à 0.32 (contenu de carte, ajustable) — pas le seuil du test.
 
 - [ ] **Step 5: Vérifier et commiter**
@@ -182,7 +182,7 @@ describe('roche en amas (dé-confettisage)', () => {
 
 - [ ] **Step 2: Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: FAIL — le semis `hash2` par tuile donne une majorité de tuiles isolées (`isolated/rockTiles` ~0.5+).
 
 - [ ] **Step 3: Remplacer le critère de roche dans `paintBiomes`**
@@ -207,7 +207,7 @@ par un seuil sur bruit fractal (contigu → amas) :
 
 - [ ] **Step 4: Vérifier que les tests passent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: PASS. Note : `fbm2 > 1 - rock` donne une densité *voisine* de `rock` mais pas identique (le bruit n'est pas uniforme) — c'est voulu, la densité reste une densité (scalable). Si `rockTiles` tombe sous 20, l'échelle de bruit 7 est trop grosse pour la petite région de test : la ramener à 5.
 
 - [ ] **Step 5: Vérifier et commiter**
@@ -271,7 +271,7 @@ describe('enceinte organique', () => {
 
 - [ ] **Step 2: Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: FAIL sur la variance — l'enceinte actuelle (`borderThickness + floor(4·fbm2)`) varie trop peu / de façon trop douce pour dépasser 1 sur cet échantillonnage. (Si par chance elle passe, le test reste valide comme garde-fou.)
 
 - [ ] **Step 3: Enceinte multi-octave + éboulis, crête bruitée**
@@ -345,7 +345,7 @@ function paintRidge(map: WorldMap, points: ValleyPoint[], halfWidth: number, see
 
 - [ ] **Step 4: Vérifier que les tests passent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: PASS (dernier anneau bloquant + variance > 1).
 
 - [ ] **Step 5: Vérifier et commiter**
@@ -371,7 +371,7 @@ git commit -m "feat(sim): enceinte multi-octave + éboulis + crête bruitée (bo
 - Consumes: `stampBlob` (Task 1), `paintPolyline`, `isWater`, `Paint`, `setTile`, `TERRAIN_SHALLOW_WATER`, `TERRAIN_DEEP_WATER`, `fbm2`, `hash2`.
 - Produces (dans `valleygen-water.ts`, exportés pour `generateValley`) : `paintStreams(map, skeleton, seed)` et `paintPonds(map, skeleton, seed)`. `ValleySkeleton` gagne `water?: { streamDensity?: number; pondDensity?: number }` (optionnel → `TEST_SKELETON` reste valide). `generateValley` appelle les deux passes **après** `paintRiver` (l'eau existe) et **avant** `paintRoads`.
 
-> **Note d'architecture** : `stampBlob`, `setTile`, `paintPolyline`, `isWater`, `Paint` sont pour l'instant privés à `valleygen.ts`. Pour que `valleygen-water.ts` les consomme, les **exporter** (sans `export` de barrel — juste `export function`/`export type` dans `valleygen.ts`). Garder l'API publique `@braises/sim` (`index.ts`) inchangée : ces helpers ne sont pas ré-exportés depuis `index.ts`.
+> **Note d'architecture** : `stampBlob`, `setTile`, `paintPolyline`, `isWater`, `Paint` sont pour l'instant privés à `valleygen.ts`. Pour que `valleygen-water.ts` les consomme, les **exporter** (sans `export` de barrel — juste `export function`/`export type` dans `valleygen.ts`). Garder l'API publique `@ashes/sim` (`index.ts`) inchangée : ces helpers ne sont pas ré-exportés depuis `index.ts`.
 
 - [ ] **Step 1: Écrire le test qui échoue**
 
@@ -414,7 +414,7 @@ describe('réseau d’eau', () => {
 
 - [ ] **Step 2: Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: FAIL — `water` n'est pas dans le type `ValleySkeleton` (erreur TS) puis, une fois le champ ajouté, aucun ruisseau/étang n'est peint.
 
 - [ ] **Step 3: Créer `valleygen-water.ts`**
@@ -536,7 +536,7 @@ Dans `packages/sim/src/valley-veillee.ts`, ajouter au `VEILLEE_SKELETON` (après
 
 - [ ] **Step 5: Vérifier que les tests passent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: PASS (3 nouveaux). Si aucun `shallow` n'apparaît sur `watery`, augmenter les densités du test (`streamDensity: 0.006`) — pas les seuils.
 
 - [ ] **Step 6: Vérifier et commiter**
@@ -581,7 +581,7 @@ it('une zone carrière ne pose que de la pierre (spec mines 2026-07-06)', () => 
 
 - [ ] **Step 2: Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/economy.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/economy.test.ts`
 Expected: FAIL — aucune branche `carriere`, donc `inZone.length` = 0.
 
 - [ ] **Step 3: Ajouter la branche `carriere`**
@@ -599,7 +599,7 @@ Dans `packages/sim/src/economy.ts`, `generateNodes`, ajouter une branche **avant
 
 - [ ] **Step 4: Vérifier que les tests passent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/economy.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/economy.test.ts`
 Expected: PASS (dont le nouveau ; les cas existants inchangés — aucune carte actuelle n'a de zone `carriere`).
 
 - [ ] **Step 5: Vérifier et commiter**
@@ -666,7 +666,7 @@ describe('mines dans la bordure', () => {
 
 - [ ] **Step 2: Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: FAIL — `mines` absent du type, puis aucune zone `gisement`/`carriere` créée.
 
 - [ ] **Step 3: Créer `valleygen-mines.ts`**
@@ -791,7 +791,7 @@ import { carveMines } from './valleygen-mines'
 
 - [ ] **Step 4: Vérifier que les tests passent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: PASS (3 nouveaux). Si la chambre n'a aucune tuile marchable, c'est que la bouche part trop loin dans la roche — vérifier que `d.x/d.y` du test tombe bien sur la bordure (Task 7 les câblera correctement pour la Veillée).
 
 - [ ] **Step 5: Vérifier et commiter**
@@ -863,7 +863,7 @@ describe('R6 — scalabilité : les features suivent la taille de la carte', () 
 
 - [ ] **Step 2: Lancer le test**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: PASS. Si une carrière n'apparaît pas sur la petite carte (`simpleDensity` trop bas pour un périmètre de 384), c'est que la conversion `× perimeter / 100` de Task 6 est mal calibrée — l'ajuster dans `valleygen-mines.ts` (contenu), pas le test.
 
 - [ ] **Step 3: Commiter**
@@ -910,7 +910,7 @@ Dans `packages/sim/src/valley-veillee.ts` :
 
 - [ ] **Step 2: Lancer les critères d'acceptation de la Veillée**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valley-veillee.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valley-veillee.test.ts`
 Expected: idéalement PASS. Points de rupture probables et leur remède (ajuster le **squelette**, jamais le générateur ni le sens des tests) :
 - *Connectivité d'un landmark* (l'enceinte organique ou la roche en amas a bougé) → élargir la clairière concernée ou décaler le landmark de 1-2 tuiles.
 - *La chambre profonde n'est pas atteignable depuis le spawn* → la galerie doit déboucher sur du sol relié : rapprocher `deep.x/y` de la bordure réelle (l'épaisseur d'enceinte varie maintenant — viser `x` à `width - borderThickness - 2` environ), et vérifier que la bouche tombe dans la roche de bordure.
@@ -929,7 +929,7 @@ Rebuild et capturer (méthode connue — `pnpm dev` bloqué par le cache `.vite`
 
 ```bash
 pnpm build
-pnpm --filter @braises/client exec vite preview --port 4173 &
+pnpm --filter @ashes/client exec vite preview --port 4173 &
 ```
 
 Écrire un script dans `$CLAUDE_JOB_DIR/tmp/smoke-organique.mjs` qui charge http://localhost:4173, attend `window.__BRAISES__`, temporise 2 s, et capture une vue au spawn + une vue large (zoom caméra dézoomé si `__BRAISES__` l'expose). Lire les PNG (outil Read) et **juger** : le Lac a-t-il une berge irrégulière ? Les bords ondulent-ils ? La roche est-elle en amas et non en confetti ? Voit-on de l'eau vive et des étangs ? La zone Collines est-elle dégagée ? Ajuster les amplitudes/densités (contenu) si un critère visuel n'est pas atteint, puis re-vérifier les gates. Tuer le serveur (`kill %1`) à la fin.

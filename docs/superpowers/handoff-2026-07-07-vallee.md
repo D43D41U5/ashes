@@ -55,7 +55,7 @@ et supprimerait cette fragilité — à faire avant/avec le lot mine.
 
 ## Comment reprendre
 
-Lire d'abord `braises-gdd.md` (§9 carte, §8 économie). Le générateur est pur et testé : itérer par
-`pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts src/valley-veillee.test.ts`, puis
+Lire d'abord `ashes-gdd.md` (§9 carte, §8 économie). Le générateur est pur et testé : itérer par
+`pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts src/valley-veillee.test.ts`, puis
 `pnpm scenario` pour la non-régression écosystème, puis smoke navigateur (build + preview, cf. mémoire
 `[[browser-smoke-test]]`). Ajuster le **squelette** (contenu), jamais le sens des tests.

@@ -15,7 +15,7 @@
  * voit arriver, pas un état ; Don't Starve — la brume par nappes locales liées au lieu.
  */
 import Phaser from 'phaser'
-import { TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER, type WorldMap } from '@braises/sim'
+import { TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER, type WorldMap } from '@ashes/sim'
 import { crownDepth, TILE_PX } from '../../render/framing'
 import { brumeDuMatin, lerpColor } from '../../render/lighting'
 

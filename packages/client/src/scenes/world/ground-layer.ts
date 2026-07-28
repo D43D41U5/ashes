@@ -14,7 +14,7 @@
  * directement — même partition pur/Phaser que le reste du rendu.
  */
 import Phaser from 'phaser'
-import type { WorldMap } from '@braises/sim'
+import type { WorldMap } from '@ashes/sim'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { gridMesh } from '../../render/ground-mesh'
 import type { Warp } from '../../render/warp'

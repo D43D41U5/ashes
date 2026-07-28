@@ -17,7 +17,7 @@
  * Rendu en espace-monde (objet positionné au nœud, dessin local) — même patron que la jauge
  * d'abattage, pour les mêmes raisons (pas de calcul écran manuel, pas de culling).
  */
-import { BALANCE, NODE_DEFS, mineGoodFlank, mineTolerance, type ResourceNode } from '@braises/sim'
+import { BALANCE, NODE_DEFS, mineGoodFlank, mineTolerance, type ResourceNode } from '@ashes/sim'
 import { OVERLAY_DEPTH, TILE_PX } from '../../render/framing'
 import type { Warp } from '../../render/warp'
 import type Phaser from 'phaser'

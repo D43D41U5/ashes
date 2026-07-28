@@ -5,7 +5,7 @@
  * une connexion Colyseus en Phase LAN — « seul le transport change ». La
  * scène ne doit jamais instancier un Worker ou un socket elle-même.
  */
-import type { ClientToHost, HostToClient } from '@braises/sim'
+import type { ClientToHost, HostToClient } from '@ashes/sim'
 import { Client, type Room } from 'colyseus.js'
 import type { VeilleeInit } from './worker/mondes'
 

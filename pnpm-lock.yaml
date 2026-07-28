@@ -31,7 +31,7 @@ importers:
 
   packages/client:
     dependencies:
-      '@braises/sim':
+      '@ashes/sim':
         specifier: workspace:*
         version: link:../sim
       '@fontsource/jetbrains-mono':
@@ -56,7 +56,7 @@ importers:
 
   packages/server:
     dependencies:
-      '@braises/sim':
+      '@ashes/sim':
         specifier: workspace:*
         version: link:../sim
       '@colyseus/core':

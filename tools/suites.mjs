@@ -4,7 +4,7 @@
  * ── CE QUE ÇA REMPLACE, ET POURQUOI ─────────────────────────────────────────────
  *
  * `pnpm -r run test` s'arrête au PREMIER paquet qui échoue. Et comme `client` et `server`
- * dépendent de `@braises/sim` en `workspace:*`, pnpm ordonne toujours /sim en tête : le
+ * dépendent de `@ashes/sim` en `workspace:*`, pnpm ordonne toujours /sim en tête : le
  * masquage n'était donc pas de la malchance, il était STRUCTUREL. Dès que /sim sortait en
  * 1, les 325 tests du client, les 37 du serveur et le banc de scénario ne tournaient
  * **pas du tout** — sans qu'une ligne de la sortie le dise.

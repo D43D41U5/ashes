@@ -5,7 +5,7 @@
  * vit le déterminisme (ordre des inputs, deltas), et ça se teste headless
  * (`tick-driver.test.ts`). `zone-room.ts` ne fait que brancher le transport dessus.
  */
-import { drainEvents, getGameTime, type MoveInput, type NodeDelta, type PlayerAction, type SimState, type SnapshotMessage } from '@braises/sim'
+import { drainEvents, getGameTime, type MoveInput, type NodeDelta, type PlayerAction, type SimState, type SnapshotMessage } from '@ashes/sim'
 import type { SanitizedInput } from './validate'
 
 /**
@@ -103,7 +103,7 @@ export function gatherInputs(clients: Iterable<ClientState>): MoveInput[] {
  *
  * Ré-exporté ici pour que les appelants du serveur n'aient pas à changer d'import.
  */
-export { collectNodeDeltas } from '@braises/sim'
+export { collectNodeDeltas } from '@ashes/sim'
 
 /**
  * Le corps COMMUN d'un snapshot — tout sauf `lastProcessedInput`, qui diffère par

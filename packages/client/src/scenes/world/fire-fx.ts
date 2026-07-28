@@ -20,7 +20,7 @@
  * AUCUNE logique de jeu : pur habillage.
  */
 import Phaser from 'phaser'
-import { fireStateAt, type Structure } from '@braises/sim'
+import { fireStateAt, type Structure } from '@ashes/sim'
 import { SPARK_DEPTH, TILE_PX } from '../../render/framing'
 
 /** Une braise en PIXEL — un CARRÉ PLEIN et UNIFORME (demande d'Alexis : plus rond du

@@ -149,7 +149,7 @@ services:
       - web
     restart: unless-stopped
 
-  # Le serveur AUTORITATIF de la Phase LAN (@braises/server, Colyseus + tsx). Il fait
+  # Le serveur AUTORITATIF de la Phase LAN (@ashes/server, Colyseus + tsx). Il fait
   # tourner /sim sur Node ; le client (navigateur) s'y branche par l'écran principal
   # (mode Multi) sur ws://localhost:2567. Même patron de volumes que `client` : sources
   # en `:ro`, node_modules en volumes nommés (voir la recette « AJOUTER UNE DÉPENDANCE »

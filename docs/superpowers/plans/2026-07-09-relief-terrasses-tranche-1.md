@@ -179,7 +179,7 @@ describe('computeLevel', () => {
 - [ ] **Step 3: Lancer le test pour vérifier qu'il échoue**
 
 ```bash
-pnpm --filter @braises/sim exec vitest run src/terrace.test.ts
+pnpm --filter @ashes/sim exec vitest run src/terrace.test.ts
 ```
 
 Attendu : ÉCHEC — `Failed to resolve import "./terrace"`.
@@ -260,7 +260,7 @@ export function computeLevel(elevation: number[], width: number, height: number)
 - [ ] **Step 5: Lancer le test pour vérifier qu'il passe**
 
 ```bash
-pnpm --filter @braises/sim exec vitest run src/terrace.test.ts
+pnpm --filter @ashes/sim exec vitest run src/terrace.test.ts
 ```
 
 Attendu : PASS, 7 tests.
@@ -294,7 +294,7 @@ git commit -m "feat(sim): passe de terrassement — lissage + quantification de 
 - Produces:
   - `WorldMap.level?: number[]`
   - `levelAt(map: WorldMap, tx: number, ty: number): number` — hors carte ou absent → `0`
-  - exports depuis `@braises/sim` : `elevationAt`, `levelAt`, `computeLevel`, `smoothField`, `TERRACE`
+  - exports depuis `@ashes/sim` : `elevationAt`, `levelAt`, `computeLevel`, `smoothField`, `TERRACE`
 
 - [ ] **Step 1: Écrire le test qui échoue**
 
@@ -323,7 +323,7 @@ import { createEmptyMap, elevationAt, levelAt, type WorldMap } from './map'
 - [ ] **Step 2: Lancer le test pour vérifier qu'il échoue**
 
 ```bash
-pnpm --filter @braises/sim exec vitest run src/map.test.ts
+pnpm --filter @ashes/sim exec vitest run src/map.test.ts
 ```
 
 Attendu : ÉCHEC — `levelAt` n'est pas exporté par `./map`.
@@ -352,7 +352,7 @@ export function levelAt(map: WorldMap, tx: number, ty: number): number {
 - [ ] **Step 4: Lancer le test pour vérifier qu'il passe**
 
 ```bash
-pnpm --filter @braises/sim exec vitest run src/map.test.ts
+pnpm --filter @ashes/sim exec vitest run src/map.test.ts
 ```
 
 Attendu : PASS.
@@ -441,7 +441,7 @@ Compléter les imports en tête du fichier de test : `TERRACE` depuis `./balance
 - [ ] **Step 2: Lancer le test pour vérifier qu'il échoue**
 
 ```bash
-pnpm --filter @braises/sim exec vitest run src/alpinegen.test.ts
+pnpm --filter @ashes/sim exec vitest run src/alpinegen.test.ts
 ```
 
 Attendu : ÉCHEC — `expected undefined to be defined` (`map.level`).
@@ -489,7 +489,7 @@ export function generateAlpineTerrain(width: number, height: number, seed: numbe
 - [ ] **Step 4: Lancer le test pour vérifier qu'il passe**
 
 ```bash
-pnpm --filter @braises/sim exec vitest run src/alpinegen.test.ts
+pnpm --filter @ashes/sim exec vitest run src/alpinegen.test.ts
 ```
 
 Attendu : PASS.
@@ -584,7 +584,7 @@ describe('stepShadeAt', () => {
 - [ ] **Step 2: Lancer le test pour vérifier qu'il échoue**
 
 ```bash
-pnpm --filter @braises/client exec vitest run src/render/hillshade.test.ts
+pnpm --filter @ashes/client exec vitest run src/render/hillshade.test.ts
 ```
 
 Attendu : ÉCHEC — `Failed to resolve import "./hillshade"`.
@@ -650,7 +650,7 @@ export function stepShadeAt(tx: number, ty: number, sample: SampleLevel): number
 - [ ] **Step 4: Lancer le test pour vérifier qu'il passe**
 
 ```bash
-pnpm --filter @braises/client exec vitest run src/render/hillshade.test.ts
+pnpm --filter @ashes/client exec vitest run src/render/hillshade.test.ts
 ```
 
 Attendu : PASS, 8 tests.
@@ -879,7 +879,7 @@ describe('cliffPlacement', () => {
 - [ ] **Step 3: Lancer le test pour vérifier qu'il échoue**
 
 ```bash
-pnpm --filter @braises/client exec vitest run src/render/cliffs.test.ts
+pnpm --filter @ashes/client exec vitest run src/render/cliffs.test.ts
 ```
 
 Attendu : ÉCHEC — `Failed to resolve import "./cliffs"`.
@@ -968,7 +968,7 @@ export function cliffPlacement(face: CliffFace, tilePx: number = TILE_PX): Cliff
 - [ ] **Step 5: Lancer les tests pour vérifier qu'ils passent**
 
 ```bash
-pnpm --filter @braises/client exec vitest run src/render/cliffs.test.ts src/render/framing.test.ts
+pnpm --filter @ashes/client exec vitest run src/render/cliffs.test.ts src/render/framing.test.ts
 ```
 
 Attendu : PASS. `framing.test.ts` (21 tests) doit rester vert : `TIE_CORPSE` passe de `0` à `0.1`, ce qui ne change aucun **ordre** (le cadavre reste sous le décor, au-dessus de la paroi).
@@ -1012,7 +1012,7 @@ Créer `packages/client/src/scenes/world/cliff-layer.ts` :
  * juste au-dessus du champ de vision doit quand même être dessinée.
  */
 import Phaser from 'phaser'
-import type { WorldMap } from '@braises/sim'
+import type { WorldMap } from '@ashes/sim'
 import { cliffAt, cliffPlacement, MAX_DROP, STEP_PX } from '../../render/cliffs'
 import type { SampleLevel } from '../../render/hillshade'
 import { TILE_PX } from '../../render/framing'
@@ -1165,7 +1165,7 @@ git commit -m "feat(client): les falaises se dessinent en parois verticales Y-so
 
 ```bash
 pnpm build
-pnpm --filter @braises/client exec vite preview --port 4173
+pnpm --filter @ashes/client exec vite preview --port 4173
 ```
 
 - [ ] **Step 2: Prendre les quatre captures**

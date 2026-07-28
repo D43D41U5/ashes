@@ -74,7 +74,7 @@ async function serve() {
   })
   const srv = spawn(
     'pnpm',
-    ['--filter', '@braises/client', 'exec', 'vite', 'preview', '--port', String(PORT), '--strictPort'],
+    ['--filter', '@ashes/client', 'exec', 'vite', 'preview', '--port', String(PORT), '--strictPort'],
     { cwd: ROOT, stdio: 'ignore', detached: true },
   )
   return () => {

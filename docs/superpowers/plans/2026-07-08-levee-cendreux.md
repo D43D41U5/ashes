@@ -17,7 +17,7 @@
 - **NE PAS toucher** les branches `zombie`/`boar` de `advanceMonsters` (IA scopée au type `cendreux`).
 - Commentaires en **français**.
 - **API (vérifiée)** : `die(state,entity,byEntityId,cause?)` (combat.ts:256) ; `Corpse {id,x,y,inventory,decayAt}` (combat.ts:19) ; décantation `combat.ts:360` `corpses.filter(c => c.decayAt > tick)` ; `spawnMonster(state,type,x,y): number` (monsters.ts:29, entity.inventory init `{}`) ; `Monster` (monsters.ts:17) ; `findPath(world,{tx,ty},{tx,ty}): {tx,ty}[]|null` ; monde monstre = `{map,structures,nodes,moverVillageId:null}` ; `getGameTime(state).isNight` ; `startAttack(state,entity,dx,dy,{windupTicks,damage})` ; `distSq` (geometry). Nouveau `ticksFor` déjà utilisé dans `balance.ts`.
-- Vérifs avant chaque commit : `pnpm check && pnpm lint && pnpm --filter @braises/sim exec vitest run --exclude src/scenario.test.ts`.
+- Vérifs avant chaque commit : `pnpm check && pnpm lint && pnpm --filter @ashes/sim exec vitest run --exclude src/scenario.test.ts`.
 
 ## File Structure
 
@@ -66,7 +66,7 @@ describe('type cendreux (fondation)', () => {
 })
 ```
 
-- [ ] **Step 2 : Vérifier l'échec** — `pnpm --filter @braises/sim exec vitest run src/cendreux.test.ts` → FAIL.
+- [ ] **Step 2 : Vérifier l'échec** — `pnpm --filter @ashes/sim exec vitest run src/cendreux.test.ts` → FAIL.
 
 - [ ] **Step 3 : Implémenter**
 
@@ -92,7 +92,7 @@ export const CENDREUX = {
 Dans `combat.ts`, ajouter à l'interface `Corpse` : `risesAt?: number`.
 Dans `monsters.ts`, ajouter à l'interface `Monster` : `path?: { tx: number; ty: number }[]`.
 
-- [ ] **Step 4 : Vérifier** — `pnpm --filter @braises/sim exec vitest run src/cendreux.test.ts && pnpm check` → PASS.
+- [ ] **Step 4 : Vérifier** — `pnpm --filter @ashes/sim exec vitest run src/cendreux.test.ts && pnpm check` → PASS.
 
 - [ ] **Step 5 : Commit**
 ```bash
@@ -207,7 +207,7 @@ Dans `combat.ts`, `die()` : importer `willRiseAsCendreux` et `CENDREUX`. Remplac
 Filtre de décantation (combat.ts:360) : ne pas décanter un cadavre marqué —
 `state.corpses = state.corpses.filter((c) => c.risesAt !== undefined || c.decayAt > state.tick)`.
 
-- [ ] **Step 4 : Vérifier** — `pnpm --filter @braises/sim exec vitest run src/cendreux.test.ts && pnpm check && pnpm lint` → PASS (vérifier l'absence de `**`).
+- [ ] **Step 4 : Vérifier** — `pnpm --filter @ashes/sim exec vitest run src/cendreux.test.ts && pnpm check && pnpm lint` → PASS (vérifier l'absence de `**`).
 
 - [ ] **Step 5 : Commit**
 ```bash
@@ -306,7 +306,7 @@ export function advanceCendreux(state: SimState): void {
 ```
 Dans `sim.ts`, dans `step`, après `advanceMonsters(state)` : `advanceCendreux(state)` (+ import). Dans `index.ts` : `export { advanceCendreux, willRiseAsCendreux } from './cendreux'`.
 
-- [ ] **Step 4 : Vérifier** — `pnpm --filter @braises/sim exec vitest run src/cendreux.test.ts && pnpm check && pnpm --filter @braises/sim test` (hors scénario) → PASS.
+- [ ] **Step 4 : Vérifier** — `pnpm --filter @ashes/sim exec vitest run src/cendreux.test.ts && pnpm check && pnpm --filter @ashes/sim test` (hors scénario) → PASS.
 
 - [ ] **Step 5 : Commit**
 ```bash
@@ -440,7 +440,7 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity):
 ```
 > `moveToward` applique déjà `def.speed` (vitesse lente du Cendreux). Vérifier sa signature exacte dans `monsters.ts` et l'adapter si besoin (elle prend `(state, monster, entity, tx, ty, flee)`).
 
-- [ ] **Step 4 : Vérifier** — `pnpm --filter @braises/sim exec vitest run src/cendreux.test.ts && pnpm check && pnpm lint` → PASS. Vérifier que `src/monsters` (zombie/boar) reste vert (`pnpm --filter @braises/sim exec vitest run src/monsters.test.ts` s'il existe, sinon la suite).
+- [ ] **Step 4 : Vérifier** — `pnpm --filter @ashes/sim exec vitest run src/cendreux.test.ts && pnpm check && pnpm lint` → PASS. Vérifier que `src/monsters` (zombie/boar) reste vert (`pnpm --filter @ashes/sim exec vitest run src/monsters.test.ts` s'il existe, sinon la suite).
 
 - [ ] **Step 5 : Commit**
 ```bash
@@ -478,7 +478,7 @@ describe('intégration Cendreux', () => {
 
 - [ ] **Step 2 : Vérifier** — PASS.
 
-- [ ] **Step 3 : Déterminisme + suite** — `pnpm check && pnpm lint && pnpm --filter @braises/sim exec vitest run --exclude src/scenario.test.ts` → vert (les contrats replay/events restent verts : `risesAt`/`path`/`cendreux` sont déterministes).
+- [ ] **Step 3 : Déterminisme + suite** — `pnpm check && pnpm lint && pnpm --filter @ashes/sim exec vitest run --exclude src/scenario.test.ts` → vert (les contrats replay/events restent verts : `risesAt`/`path`/`cendreux` sont déterministes).
 
 - [ ] **Step 4 : Banc scénario** — `pnpm scenario` → **vert** (acte I, vallée chaude : aucune mort de froid → aucune levée ; zombies/hordes inchangés). Si rouge : investiguer/remonter, ne pas masquer.
 

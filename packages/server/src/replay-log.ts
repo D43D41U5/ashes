@@ -34,7 +34,7 @@
  * PUR — aucune dépendance Colyseus, testé dans `replay-log.test.ts`. C'est l'outil de
  * debug, le banc de charge, et le futur « tribunal » de modération (GDD §11).
  */
-import { despawnAvatar, spawnEntity, step, type MoveInput, type SimState } from '@braises/sim'
+import { despawnAvatar, spawnEntity, step, type MoveInput, type SimState } from '@ashes/sim'
 
 /**
  * La profondeur du journal, en ticks. 12 000 = 10 minutes à 20 Hz : assez pour tenir la

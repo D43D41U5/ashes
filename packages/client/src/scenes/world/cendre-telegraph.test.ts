@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE } from '@braises/sim'
+import { BALANCE } from '@ashes/sim'
 import { cendreTelegraphForDay } from './cendre-telegraph'
 
 const CENDRE_DAY = BALANCE.ACT_BOUNDARIES[1] + 1 // premier jour de l'acte III

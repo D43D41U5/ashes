@@ -23,7 +23,7 @@
  * Page de DEV, hors du jeu et hors du build de prod (Vite ne bâtit que `index.html`) : elle ne
  * touche ni la sim, ni le client, ni le protocole. Servie par `pnpm dev` → /banc-son.html
  */
-import type { SimEvent } from '@braises/sim'
+import type { SimEvent } from '@ashes/sim'
 import { SoundEngine } from './audio/engine'
 import { FAMILLES, INVENTAIRE, SONORES, faitsDeFamille, type Voix } from './audio/inventaire'
 import { soundForEvent, type SoundSpec, type Waveform } from './audio/sound'

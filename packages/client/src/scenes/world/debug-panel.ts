@@ -11,7 +11,7 @@
  * importé que sous `import.meta.env.DEV` : Rollup l'élimine du bundle de prod.
  */
 import type Phaser from 'phaser'
-import type { PlayerAction } from '@braises/sim'
+import type { PlayerAction } from '@ashes/sim'
 import { getHud, setHud } from '../../hud-state'
 import { ensureGameFont, GAME_FONT } from '../ui/game-font'
 

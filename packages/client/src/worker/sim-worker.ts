@@ -31,7 +31,7 @@ import {
   type ClientToHost,
   type HostToClient,
   type NodeShadow,
-} from '@braises/sim'
+} from '@ashes/sim'
 import { createVeillee, LOAD_PHASES } from './veillee'
 import { loadCarte, loadMeta, loadSlot, saveCarteEtSlot, saveSlot, type SlotMeta } from './persistence-store'
 import { nettoieNom, seedValide, slotValide, type VeilleeInit } from './mondes'

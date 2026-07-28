@@ -54,7 +54,7 @@ import {
   type FireZone,
   type PlayerAction,
   type SlotRef,
-} from '@braises/sim'
+} from '@ashes/sim'
 
 /** L'input assaini que le serveur applique (miroir de `MoveInput` moins l'action). */
 export interface SanitizedInput {

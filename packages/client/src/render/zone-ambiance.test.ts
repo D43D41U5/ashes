@@ -11,7 +11,7 @@
  * confronte à la liste des zones que `/sim` déclare vraiment, jamais à une liste recopiée.
  */
 import { describe, expect, it } from 'vitest'
-import { ZONES } from '@braises/sim'
+import { ZONES } from '@ashes/sim'
 import { ambianceDe, ZONE_AMBIANCE } from './zone-ambiance'
 
 describe('l’ambiance des zones', () => {

@@ -6,7 +6,7 @@
 
 **Architecture:** Un module pur `warp.ts` (client, sans Phaser) est la source de vérité : `lift` (monde→décalage écran) sert au rendu, `unproject` (écran→monde) sert au picking — les deux ne peuvent pas diverger. Le sol se dessine en `Mesh2D` déformé (grille de sommets `x,y,u,v`, fenêtrée à la vue, texturée par le bake `map-demo` existant) ; les billboards se soulèvent de `lift` ; le tri Y reste `ySortDepth(worldY)`. La gen alpine s'ouvre au sud pour garantir zéro repli.
 
-**Tech Stack:** TypeScript, Vitest, Phaser 4.2 (`GameObjects.Mesh2D`), monorepo pnpm (`@braises/sim` + client).
+**Tech Stack:** TypeScript, Vitest, Phaser 4.2 (`GameObjects.Mesh2D`), monorepo pnpm (`@ashes/sim` + client).
 
 ## Global Constraints
 
@@ -109,7 +109,7 @@ describe('garde anti-repli', () => {
 
 - [ ] **Step 2 : Lancer les tests, vérifier l'échec**
 
-Run: `pnpm --filter @braises/client test warp`
+Run: `pnpm --filter @ashes/client test warp`
 Expected: FAIL — « Cannot find module './warp' » / exports absents.
 
 - [ ] **Step 3 : Écrire l'implémentation**
@@ -210,7 +210,7 @@ Dans `warp.test.ts` Step 1, l'import de `SampleElevation` doit être `'./hillsha
 
 - [ ] **Step 5 : Lancer les tests, vérifier le succès**
 
-Run: `pnpm --filter @braises/client test warp`
+Run: `pnpm --filter @ashes/client test warp`
 Expected: PASS (tous les `describe`).
 
 - [ ] **Step 6 : Commit**
@@ -265,7 +265,7 @@ describe('vallée ouverte au sud (relief continu)', () => {
 
 - [ ] **Step 2 : Lancer, vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim test alpinegen`
+Run: `pnpm --filter @ashes/sim test alpinegen`
 Expected: FAIL — `south` est haut (mur sud actuel).
 
 - [ ] **Step 3 : Modifier `computeElevation`**
@@ -291,12 +291,12 @@ Dans le même fichier, `computeFlowField` (~L84) porte la MÊME ligne `edge`. La
 
 - [ ] **Step 5 : Lancer les tests, vérifier le succès et réparer les goldens**
 
-Run: `pnpm --filter @braises/sim test alpinegen`
+Run: `pnpm --filter @ashes/sim test alpinegen`
 Expected: les deux nouveaux tests PASS. **D'autres tests d'alpinegen peuvent casser** s'ils affirment une symétrie de cuvette (4 bords hauts). Pour chacun : si l'assertion suppose un bord sud haut, la corriger pour refléter le sud ouvert (bord sud non testé, ou testé bas). Ne PAS affaiblir les assertions d'ordre structurel des bandes (prairie→forêt→éboulis→roche→neige par altitude) : elles restent valides, la neige est juste absente au sud.
 
 - [ ] **Step 6 : Suite complète `/sim` verte**
 
-Run: `pnpm --filter @braises/sim test`
+Run: `pnpm --filter @ashes/sim test`
 Expected: PASS, dont `replay.test.ts` et `events.test.ts` (même seed → même monde → même flux).
 
 - [ ] **Step 7 : Commit**
@@ -358,7 +358,7 @@ Déclarer le champ dans la classe : `private warp!: import('../render/warp').War
 
 - [ ] **Step 3 : Vérifier check + build**
 
-Run: `pnpm --filter @braises/client check && pnpm --filter @braises/client build`
+Run: `pnpm --filter @ashes/client check && pnpm --filter @ashes/client build`
 Expected: PASS (aucun repli lancé à la génération de la vallée ouverte au sud).
 
 - [ ] **Step 4 : Commit**
@@ -417,7 +417,7 @@ describe('gridMesh', () => {
 
 - [ ] **Step 2 : Lancer, vérifier l'échec**
 
-Run: `pnpm --filter @braises/client test ground-layer`
+Run: `pnpm --filter @ashes/client test ground-layer`
 Expected: FAIL — module absent.
 
 - [ ] **Step 3 : Écrire `ground-layer.ts`**
@@ -436,7 +436,7 @@ Expected: FAIL — module absent.
  * sans couture. AUCUNE logique de jeu ici — rendu pur d'état reçu.
  */
 import Phaser from 'phaser'
-import type { WorldMap } from '@braises/sim'
+import type { WorldMap } from '@ashes/sim'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import type { Warp } from '../../render/warp'
 
@@ -536,7 +536,7 @@ Après `this.mesh.vertices = …` / `this.mesh.indices = …`, vérifier que `Me
 
 - [ ] **Step 6 : Test unitaire + check + build**
 
-Run: `pnpm --filter @braises/client test ground-layer && pnpm --filter @braises/client check && pnpm --filter @braises/client build`
+Run: `pnpm --filter @ashes/client test ground-layer && pnpm --filter @ashes/client check && pnpm --filter @ashes/client build`
 Expected: PASS.
 
 - [ ] **Step 7 : Vérification EN JEU (obligatoire, rendu)**
@@ -636,7 +636,7 @@ Dans `WorldScene.onReady`, après création du warp et de la vue, appeler `this.
 
 - [ ] **Step 4 : Check + build**
 
-Run: `pnpm --filter @braises/client check && pnpm --filter @braises/client build`
+Run: `pnpm --filter @ashes/client check && pnpm --filter @ashes/client build`
 Expected: PASS.
 
 - [ ] **Step 5 : Vérification EN JEU**
@@ -709,7 +709,7 @@ Remplacer le bloc fantôme de la Task 5 Step 3 par une version qui part de `unpr
 
 - [ ] **Step 4 : Check + build**
 
-Run: `pnpm --filter @braises/client check && pnpm --filter @braises/client build`
+Run: `pnpm --filter @ashes/client check && pnpm --filter @ashes/client build`
 Expected: PASS.
 
 - [ ] **Step 5 : Vérification EN JEU (parité picking)**

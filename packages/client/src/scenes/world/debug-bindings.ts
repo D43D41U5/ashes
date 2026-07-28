@@ -13,7 +13,7 @@
  * dans UIScene. Elle publie une demande (`debugTeleport`) que WorldScene
  * consomme — le registry est le bus entre les deux scènes.
  */
-import type { PlayerAction } from '@braises/sim'
+import type { PlayerAction } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud } from '../../hud-state'
 import { DEBUG_KEYMAP } from './keymap'

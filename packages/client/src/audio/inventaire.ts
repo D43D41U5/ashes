@@ -21,7 +21,7 @@
  * TIMBRE de chacun reste une proposition posée sans l'entendre — il se rejuge et se retouche
  * au banc d'écoute (`banc-son.html`), qui rend la ligne à coller dans `sound.ts`.
  */
-import type { SimEvent } from '@braises/sim'
+import type { SimEvent } from '@ashes/sim'
 
 /** L'état actuel d'un fait : le routage lui donne un son, ou pas. */
 export type Voix = 'voix' | 'muet'

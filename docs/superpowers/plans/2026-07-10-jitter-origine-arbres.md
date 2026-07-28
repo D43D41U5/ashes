@@ -136,7 +136,7 @@ describe('treeJitter — décalage déterministe de l’origine des arbres', () 
 
 - [ ] **Step 3: Lancer les tests pour vérifier qu'ils échouent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/economy.test.ts -t "treeJitter"`
+Run: `pnpm --filter @ashes/sim exec vitest run src/economy.test.ts -t "treeJitter"`
 Expected: FAIL — `treeJitter is not a function` (l'import ne résout pas).
 
 - [ ] **Step 4: Écrire `treeJitter` et les sels**
@@ -181,7 +181,7 @@ export { generateNodes, treeJitter } from './economy'
 
 - [ ] **Step 6: Lancer les tests pour vérifier qu'ils passent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/economy.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/economy.test.ts`
 Expected: PASS — les 4 tests neufs, et tout le fichier préexistant.
 
 - [ ] **Step 7: Vérifier les garde-fous**
@@ -316,7 +316,7 @@ describe('décalage d’origine des arbres : la collision suit le tronc', () => 
 
 - [ ] **Step 2: Lancer la série B pour vérifier qu'elle échoue**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/collision.test.ts -t "décalage d’origine"`
+Run: `pnpm --filter @ashes/sim exec vitest run src/collision.test.ts -t "décalage d’origine"`
 Expected : **B2 et B3 échouent** — ce sont les discriminants nets. Sans le décalage dans la collision, B2 clampe au centre (`TX + 0,375 − 0,3`) au lieu de la face décalée, et B3 laisse l'avatar **traverser** un couloir que la géométrie dit pincé (`p.y > TY`, l'assertion `< TY` casse). B1 passe déjà (géométrie pure sur `treeJitter`). B4 et B5 sont des propriétés de **correction côté GREEN** : elles peuvent passer dès le RED selon la géométrie des tuiles — c'est normal, elles ne sont pas des discriminants. **Ne pas continuer tant que B2 et B3 ne sont pas rouges pour ces raisons.**
 
 - [ ] **Step 3: Décaler le centre dans `blockedSubAt`**
@@ -359,7 +359,7 @@ Justification à mettre dans le message de commit : A1-A3/A7 affirmaient des pos
 
 - [ ] **Step 5: Lancer les tests pour vérifier qu'ils passent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/collision.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/collision.test.ts`
 Expected: PASS — la série B (B1-B5), A4/A5/A6, et tout le reste du fichier. Plus aucune trace de A1/A2/A3/A7.
 
 - [ ] **Step 6: Relancer le filet complet**
@@ -388,14 +388,14 @@ requête tuile) inchangés car le jitter ne les touche pas."
 - Modify: `packages/client/src/scenes/world/snapshot-view.ts` (`renderNodes`, le corps de la boucle, lignes ~250-290)
 
 **Interfaces:**
-- Consumes: `treeJitter(tx, ty)` de `@braises/sim` (réexporté au barrel, Task 1) ; `nodeDepth`, `crownDepth`, `tileFeetAnchor`, `TILE_PX` de `framing.ts` (déjà importés).
+- Consumes: `treeJitter(tx, ty)` de `@ashes/sim` (réexporté au barrel, Task 1) ; `nodeDepth`, `crownDepth`, `tileFeetAnchor`, `TILE_PX` de `framing.ts` (déjà importés).
 - Produces: le sprite du tronc, le sprite du houppier et **leur profondeur de tri** décalés du même `{dx, dy}` que la collision.
 
 **Rappel des profondeurs.** `nodeDepth(ty)` calcule en interne `ySortDepth(ty + 1, …)` — le pied est `ty + 1`. `crownDepth(feetY)` prend le pied directement, et l'appelant passe `ty + 1`. Pour intégrer le jitter Y au tri, on remplace `ty` par `ty + dy` dans `nodeDepth` (qui rajoute son `+1`) et `ty + 1` par `ty + 1 + dy` dans `crownDepth`.
 
 - [ ] **Step 1: Ajouter l'import `treeJitter`**
 
-Dans `packages/client/src/scenes/world/snapshot-view.ts`, l'import depuis `@braises/sim` en tête du fichier liste déjà `BALANCE`, `type ResourceNode`, etc. Ajouter `treeJitter` :
+Dans `packages/client/src/scenes/world/snapshot-view.ts`, l'import depuis `@ashes/sim` en tête du fichier liste déjà `BALANCE`, `type ResourceNode`, etc. Ajouter `treeJitter` :
 
 ```ts
 import {
@@ -408,7 +408,7 @@ import {
   type Npc,
   type ResourceNode,
   type Structure,
-} from '@braises/sim'
+} from '@ashes/sim'
 ```
 
 (Respecter l'ordre existant de l'import ; l'essentiel est que `treeJitter` y figure.)
@@ -465,7 +465,7 @@ Le disque de découvert (`dx`/`dy` du joueur au pied du tronc, quelques lignes p
 - [ ] **Step 4: Vérifier que ça compile et que rien ne casse**
 
 Run: `pnpm check && pnpm test && pnpm lint`
-Expected: PASS. Aucun test ne pilote Phaser ; le rendu se juge à l'œil en Task 4. `pnpm check` valide que `treeJitter` est bien exporté par `@braises/sim` et que les types collent.
+Expected: PASS. Aucun test ne pilote Phaser ; le rendu se juge à l'œil en Task 4. `pnpm check` valide que `treeJitter` est bien exporté par `@ashes/sim` et que les types collent.
 
 - [ ] **Step 5: Commit**
 
@@ -494,7 +494,7 @@ git commit -m "feat(client): le tronc et le houppier suivent l'origine décalée
 
 ```bash
 pnpm build
-pnpm --filter @braises/client exec vite preview --port 4173
+pnpm --filter @ashes/client exec vite preview --port 4173
 ```
 
 - [ ] **Step 2: Capturer avant/après en forêt dense**

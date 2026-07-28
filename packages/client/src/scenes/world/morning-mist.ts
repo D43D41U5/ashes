@@ -19,7 +19,7 @@
  * (oiseaux, bancs) ; ici, une seule vérité : le front.
  */
 import Phaser from 'phaser'
-import { TERRAIN_MARSH, TERRAIN_REED_MARSH, TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER, type WorldMap } from '@braises/sim'
+import { TERRAIN_MARSH, TERRAIN_REED_MARSH, TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER, type WorldMap } from '@ashes/sim'
 import { frontDeBrume } from '../../render/lighting'
 import { DIST_FIELD_MAX, MIST_DEPTH, MistLayer, type ReglageCrans } from './mist-layer'
 

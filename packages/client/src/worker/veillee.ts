@@ -21,7 +21,7 @@ import {
   spawnPoiMonsters,
   buildPoiStructures,
   type SimState,
-} from '@braises/sim'
+} from '@ashes/sim'
 
 /**
  * LA SEED PAR DÉFAUT vit dans `mondes.ts` (module feuille) : depuis l'écran des mondes, le

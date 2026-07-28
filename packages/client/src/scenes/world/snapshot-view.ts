@@ -31,8 +31,8 @@ import {
   type WallMaterial,
   type NodeDelta,
   type SnapshotMessage,
-} from '@braises/sim'
-import { fireStateAt } from '@braises/sim'
+} from '@ashes/sim'
+import { fireStateAt } from '@ashes/sim'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
 import { windSway } from '../../render/wind'

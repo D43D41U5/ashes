@@ -19,7 +19,7 @@
  * de la sim, écrasé en Y comme tout ce qui se pose dans ce monde vu de dessus.
  */
 import Phaser from 'phaser'
-import type { WeaponKind } from '@braises/sim'
+import type { WeaponKind } from '@ashes/sim'
 
 /** Un corps, ce qu'il tient, et où il regarde. */
 export interface HandView {

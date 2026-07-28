@@ -11,7 +11,7 @@
  *   - EN PAUSE   : `paused` — la station a été quittée (F7). Rien n'est perdu ;
  *   - SAC PLEIN  : `remainingTicks === 0` — l'objet est prêt, le sac est plein (F10).
  */
-import { RECIPES, type CraftOrder, type PlayerAction } from '@braises/sim'
+import { RECIPES, type CraftOrder, type PlayerAction } from '@ashes/sim'
 import { ITEM_LABELS } from '../../render/item-art'
 
 export interface CraftQueueView {

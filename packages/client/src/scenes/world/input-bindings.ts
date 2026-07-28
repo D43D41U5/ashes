@@ -17,7 +17,7 @@
  * nœuds, cadavres et position prédite changent à chaque snapshot ou frame —
  * chaque handler lit l'état AU MOMENT de la frappe.
  */
-import { BALANCE, COMPONENT_TYPES, NODE_DEFS, SLOTS, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@braises/sim'
+import { BALANCE, COMPONENT_TYPES, NODE_DEFS, SLOTS, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'

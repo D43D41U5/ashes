@@ -19,7 +19,7 @@
  *
  * Pur : aucun import Phaser — testé headless (`flow-field.test.ts`).
  */
-import type { WorldMap } from '@braises/sim'
+import type { WorldMap } from '@ashes/sim'
 
 /** Les deux terrains d'eau (ids de `TERRAINS`, sim/balance.ts) — même duplication
  *  assumée que feuilles-derive et water-field : fragile si balance renumérote. */

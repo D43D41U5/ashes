@@ -11,7 +11,7 @@
  *  - l'usure est une BARRE HORIZONTALE en bas (rail sombre, remplissage braise) ;
  *  - la case tenue en main s'allume d'un LISERÉ BRAISE (pas d'une teinte bleue).
  */
-import { durabilityOf, spoilTier, type Slot } from '@braises/sim'
+import { durabilityOf, spoilTier, type Slot } from '@ashes/sim'
 import type Phaser from 'phaser'
 import { ITEM_ICON_PX, itemIconKey } from '../../render/item-art'
 import { COL } from './palette'

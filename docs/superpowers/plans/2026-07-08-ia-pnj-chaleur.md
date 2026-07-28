@@ -17,7 +17,7 @@
 - **ANTI-LIVELOCK (leçon `[[milice-livelock]]`)** : si `setPathTo` échoue (feu inatteignable), `handleCold` **rend la main (`return false`)** — jamais de figeage. C'est le point le plus important du plan.
 - Commentaires en **français**, identifiants en anglais.
 - **API (vérifiée)** : `setPathTo(state,npc,entity,tx,ty): boolean` (true = chemin trouvé). `near(entity,tx,ty,r): boolean`. `fireBubble(state,x,y): number`, `isSheltered(state,tx,ty): boolean` (de `./temperature`). `Npc` interface à npc.ts:38 ; PNJ créé à npc.ts:442-450. Structures : `{type:'fire', tx, ty, villageId, …}`. Helper de test local `npcVillageSim(count, extraNodes?)` dans `npc.test.ts` (village fondé à (12,12) avec un Feu).
-- Vérifs avant chaque commit : `pnpm check && pnpm lint && pnpm --filter @braises/sim exec vitest run --exclude src/scenario.test.ts` (verts). Ne pas lancer la suite scénario (lente) sauf en Task 2.
+- Vérifs avant chaque commit : `pnpm check && pnpm lint && pnpm --filter @ashes/sim exec vitest run --exclude src/scenario.test.ts` (verts). Ne pas lancer la suite scénario (lente) sauf en Task 2.
 
 ## File Structure
 
@@ -105,7 +105,7 @@ describe('recherche de chaleur (handleCold)', () => {
 
 - [ ] **Step 2 : Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/npc.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/npc.test.ts`
 Expected: FAIL — `handleCold` introuvable / `seekingWarmth` absent.
 
 - [ ] **Step 3 : Implémenter**
@@ -177,7 +177,7 @@ et compléter l'import : `import { handleCold, handleHunger, handleSleep } from 
 
 - [ ] **Step 4 : Vérifier le succès**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/npc.test.ts && pnpm check && pnpm lint`
+Run: `pnpm --filter @ashes/sim exec vitest run src/npc.test.ts && pnpm check && pnpm lint`
 Expected: PASS ; lint vert (pas de transcendante ajoutée).
 
 - [ ] **Step 5 : Commit**
@@ -215,7 +215,7 @@ Ajouter dans le `describe('recherche de chaleur…')` de `npc.test.ts` :
 
 - [ ] **Step 2 : Vérifier (vert) + déterminisme + suite**
 
-Run: `pnpm check && pnpm lint && pnpm --filter @braises/sim exec vitest run --exclude src/scenario.test.ts`
+Run: `pnpm check && pnpm lint && pnpm --filter @ashes/sim exec vitest run --exclude src/scenario.test.ts`
 Expected: vert. Le test de déterminisme PNJ existant (`npc.test.ts` A8 — même seed = même village au bit près) reste vert : `seekingWarmth` est déterministe (dérive de la température, elle-même déterministe).
 
 - [ ] **Step 3 : Banc scénario (non-régression)**

@@ -14,7 +14,7 @@
  * en roche comme le reste.
  */
 import type Phaser from 'phaser'
-import { hash2, TERRAIN_CLIFF, type WorldMap } from '@braises/sim'
+import { hash2, TERRAIN_CLIFF, type WorldMap } from '@ashes/sim'
 import { cliffKey } from '../../render/cliff-art'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 

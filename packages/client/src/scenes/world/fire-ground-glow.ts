@@ -25,7 +25,7 @@
  * AUCUNE logique de jeu. `fireGlow` (module pur) porte le battement et l'extinction de jour.
  */
 import Phaser from 'phaser'
-import { fireStateAt, type SnapshotMessage, type Structure } from '@braises/sim'
+import { fireStateAt, type SnapshotMessage, type Structure } from '@ashes/sim'
 import { fireGlow } from '../../render/lighting'
 import { FIRE_GROUND_DEPTH, TILE_PX } from '../../render/framing'
 

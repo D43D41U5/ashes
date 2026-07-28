@@ -10,7 +10,7 @@
  * Réimplémenter `moveWithin`/`pourInto` ici signerait leur divergence : on ne
  * le fait pas.
  */
-import { CARRY, SLOTS, carryRatio, carryTier, carryWeight, durabilityOf, isStackable, spoilTier, stackSize, type CarryTier, type Inventory, type ItemId, type PlayerAction, type Slot, type SlotRef } from '@braises/sim'
+import { CARRY, SLOTS, carryRatio, carryTier, carryWeight, durabilityOf, isStackable, spoilTier, stackSize, type CarryTier, type Inventory, type ItemId, type PlayerAction, type Slot, type SlotRef } from '@ashes/sim'
 import type Phaser from 'phaser'
 import type { OpenContainerView } from '../../hud-state'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'

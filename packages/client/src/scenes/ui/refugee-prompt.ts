@@ -9,7 +9,7 @@
  *
  * Rendu DOM (patron de la fenêtre « Fonder un village »), bord-haut braise.
  */
-import type { PlayerAction } from '@braises/sim'
+import type { PlayerAction } from '@ashes/sim'
 import { createPromptGate } from './prompt-gate'
 
 export interface RefugeePrompt {

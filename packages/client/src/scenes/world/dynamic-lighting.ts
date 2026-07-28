@@ -18,7 +18,7 @@
  * l'ancien rendu à plat — utile pour comparer, jamais le mode nominal.
  */
 import type Phaser from 'phaser'
-import type { SnapshotMessage, Structure } from '@braises/sim'
+import type { SnapshotMessage, Structure } from '@ashes/sim'
 import { fireGlow, sunDirection, lerpColor } from '../../render/lighting'
 import { TILE_PX } from '../../render/framing'
 

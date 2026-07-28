@@ -14,7 +14,7 @@
  *
  * AUCUNE RÈGLE DE JEU ici. Les gestes ne calculent QUE l'action à envoyer.
  */
-import { BALANCE, COOK_SLOT, stackSize, type Inventory, type ItemId, type PlayerAction, type SlotRef } from '@braises/sim'
+import { BALANCE, COOK_SLOT, stackSize, type Inventory, type ItemId, type PlayerAction, type SlotRef } from '@ashes/sim'
 import type Phaser from 'phaser'
 import type { FireView } from '../../hud-state'
 import { itemIconKey } from '../../render/item-art'

@@ -17,7 +17,7 @@
  * Purement visuel : la découverte, elle, est une décision de sim.
  */
 import Phaser from 'phaser'
-import { BUILT_KINDS, POI, type WorldMap } from '@braises/sim' // POI : SIGHT_TILES (labels) + SET_PIECE_KINDS (R10)
+import { BUILT_KINDS, POI, type WorldMap } from '@ashes/sim' // POI : SIGHT_TILES (labels) + SET_PIECE_KINDS (R10)
 import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import { poiCrownKey, poiTextureKey, POI_ART } from './poi-art'
 import { erratiqueVariantFor, litErratiqueKey, POI_LIT_KINDS, poiLitCrownKey, poiLitKey, poiLitMirrorKey } from '../../render/poi-lit'

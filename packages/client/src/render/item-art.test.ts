@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { ItemId } from '@braises/sim'
+import type { ItemId } from '@ashes/sim'
 import { ITEM_LABELS, ITEM_PAINTS, itemIconKey } from './item-art'
 
 // La liste des items se DÉRIVE des labels (un Record<ItemId, …>, donc exhaustif

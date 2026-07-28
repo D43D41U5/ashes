@@ -11,7 +11,7 @@
  * Canal ROUGE (l'alerte, comme la nuit qui tombe ou le hurlement) : la Cendre est LE danger,
  * pas une leçon — sa place n'est pas le canal conseil (neutre), c'est l'alarme.
  */
-import { BALANCE } from '@braises/sim'
+import { BALANCE } from '@ashes/sim'
 
 /** Le premier jour de l'acte III — le jour où la Cendre déferle (borne GDD §2). */
 const CENDRE_DAY = BALANCE.ACT_BOUNDARIES[1] + 1

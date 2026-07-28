@@ -18,7 +18,7 @@
  * afficher deux nombres. Elle s'écrit dans LA MÊME transaction que la partie ; une méta qui
  * pourrait retarder d'une sauvegarde serait un écran qui ment sur le jour atteint.
  */
-import { seasonDayAtTick, type SimEvent } from '@braises/sim'
+import { seasonDayAtTick, type SimEvent } from '@ashes/sim'
 import { SLOT_COUNT, slotValide } from './mondes'
 
 const DB_NAME = 'braises'

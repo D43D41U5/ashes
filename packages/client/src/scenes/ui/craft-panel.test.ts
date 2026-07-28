@@ -1,4 +1,4 @@
-import { RECIPES, type RecipeId } from '@braises/sim'
+import { RECIPES, type RecipeId } from '@ashes/sim'
 import { describe, expect, it } from 'vitest'
 import { CATEGORY_LABEL, CATEGORY_ORDER, RECIPE_CATEGORY, craftRows, costLine } from './craft-panel'
 

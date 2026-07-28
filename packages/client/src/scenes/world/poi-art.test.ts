@@ -11,7 +11,7 @@
  * jamais à une liste recopiée qui dériverait au premier ajout.
  */
 import { describe, expect, it } from 'vitest'
-import { POI_TYPES } from '@braises/sim'
+import { POI_TYPES } from '@ashes/sim'
 import { POI_ART, TREE_H } from './poi-art'
 
 describe('l’art des lieux', () => {

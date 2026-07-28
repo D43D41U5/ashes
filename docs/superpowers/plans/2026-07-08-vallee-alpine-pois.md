@@ -18,7 +18,7 @@
 - **Équilibrage/contenu** : constantes de placement (rayon, plafonds) = **contenu de carte**, à côté du générateur (pas dans `balance.ts` — convention SP1 : les densités de carte vivent avec le générateur).
 - Commentaires **français**, identifiants **anglais**.
 - **API (vérifiée)** : `generateAlpineTerrain(w,h,seed): WorldMap` (alpinegen.ts:328, mute un map local, insérer la passe POI entre `paintAvalanches` l.336 et `sealBorderRing` l.337) ; `Zone{name,x,y,w,h,kind?}` + `map.zones: Zone[]` + `zoneAt(map,x,y)` (map.ts:11,26,60) ; `hash2(x,y,seed=0)` (noise.ts:11) ; `terrainAt(map,tx,ty)`/`elevationAt(map,tx,ty)` (map.ts:42,48) ; `generateNodes(map,seed)` branche `zone.kind==='gisement'|'carriere'` (economy.ts:229, INCHANGÉ) ; `spawnMonster(state,type,x,y): number` (monsters.ts:31) ; `renderVignette(map,maxDim): {w,h,rgb}` (vignette.ts:37) ; ids terrain (balance.ts:202+) : scree 9, rock 5, boulders 16, glacier 15, burnt_forest 21, peat_bog 18, reed_marsh 19, alpine_meadow 12, alpine_flowers 20, old_growth 22, snow 10, heath 11, pine 13, larch 14, flower_meadow 17, forest 3, grass 1, marsh 8.
-- Vérifs avant commit : `pnpm check && pnpm lint && pnpm --filter @braises/sim exec vitest run --exclude src/scenario.test.ts`.
+- Vérifs avant commit : `pnpm check && pnpm lint && pnpm --filter @ashes/sim exec vitest run --exclude src/scenario.test.ts`.
 
 ## File Structure
 
@@ -82,7 +82,7 @@ describe('poissonPoints (bruit bleu)', () => {
 })
 ```
 
-- [ ] **Step 2 : Vérifier l'échec** — `pnpm --filter @braises/sim exec vitest run src/poisson.test.ts` → FAIL.
+- [ ] **Step 2 : Vérifier l'échec** — `pnpm --filter @ashes/sim exec vitest run src/poisson.test.ts` → FAIL.
 
 - [ ] **Step 3 : Implémenter** — créer `poisson.ts` :
 ```ts
@@ -158,7 +158,7 @@ export function poissonPoints(width: number, height: number, seed: number, radiu
 ```
 `index.ts` : `export { poissonPoints } from './poisson'`.
 
-- [ ] **Step 4 : Vérifier** — `pnpm --filter @braises/sim exec vitest run src/poisson.test.ts && pnpm check && pnpm lint` → PASS (aucune transcendante ; `Math.SQRT1_2`/`sqrt` OK).
+- [ ] **Step 4 : Vérifier** — `pnpm --filter @ashes/sim exec vitest run src/poisson.test.ts && pnpm check && pnpm lint` → PASS (aucune transcendante ; `Math.SQRT1_2`/`sqrt` OK).
 
 - [ ] **Step 5 : Commit**
 ```bash
@@ -332,7 +332,7 @@ function roman(n: number): string { return ROMANS[n] ?? String(n) }
 
 > Note : le nom `roman()` évite deux POIs homonymes ; le `name` doit rester déterministe (compteur d'ordre d'insertion, pas de hasard).
 
-- [ ] **Step 4 : Vérifier** — `pnpm --filter @braises/sim exec vitest run src/poi.test.ts && pnpm check && pnpm lint` → PASS.
+- [ ] **Step 4 : Vérifier** — `pnpm --filter @ashes/sim exec vitest run src/poi.test.ts && pnpm check && pnpm lint` → PASS.
 
 - [ ] **Step 5 : Commit**
 ```bash
@@ -385,7 +385,7 @@ describe('POIs dans la carte alpine', () => {
 ```
 et l'import `import { placePois } from './poi'`.
 
-- [ ] **Step 4 : Vérifier** — `pnpm --filter @braises/sim exec vitest run src/poi.test.ts src/alpinegen.test.ts && pnpm check && pnpm lint` → PASS (les tests substrat existants restent verts : `placePois` n'ajoute que des zones, ne touche pas le terrain).
+- [ ] **Step 4 : Vérifier** — `pnpm --filter @ashes/sim exec vitest run src/poi.test.ts src/alpinegen.test.ts && pnpm check && pnpm lint` → PASS (les tests substrat existants restent verts : `placePois` n'ajoute que des zones, ne touche pas le terrain).
 
 - [ ] **Step 5 : Commit**
 ```bash
@@ -451,7 +451,7 @@ export function spawnPoiMonsters(state: SimState, seed: number): void {
 
 > Note perf/déterminisme : `spawnMonster` utilise `spawnEntity` (id incrémental) → ordre déterministe car on itère `state.map.zones` dans l'ordre d'insertion (stable). Aucun `SimState.rngState` consommé.
 
-- [ ] **Step 4 : Vérifier** — `pnpm --filter @braises/sim exec vitest run src/poi.test.ts && pnpm check && pnpm lint && pnpm --filter @braises/sim exec vitest run --exclude src/scenario.test.ts` → PASS.
+- [ ] **Step 4 : Vérifier** — `pnpm --filter @ashes/sim exec vitest run src/poi.test.ts && pnpm check && pnpm lint && pnpm --filter @ashes/sim exec vitest run --exclude src/scenario.test.ts` → PASS.
 
 - [ ] **Step 5 : Commit**
 ```bash
@@ -514,7 +514,7 @@ Après le remplissage des pixels de terrain (juste avant `return`), ajouter :
 ```
 (adapter `w`/`h`/`step`/`rgb` aux noms réels du corps de `renderVignette`, vignette.ts:37-59.)
 
-- [ ] **Step 4 : Vérifier** — `pnpm --filter @braises/sim exec vitest run src/poi.test.ts && pnpm check && pnpm lint` → PASS.
+- [ ] **Step 4 : Vérifier** — `pnpm --filter @ashes/sim exec vitest run src/poi.test.ts && pnpm check && pnpm lint` → PASS.
 
 - [ ] **Step 5 : Commit**
 ```bash

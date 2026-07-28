@@ -9,7 +9,7 @@ import {
   TERRAIN_ROCK,
   type MoveInput,
   type SimOptions,
-} from '@braises/sim'
+} from '@ashes/sim'
 import {
   applyLifecycle,
   createServerReplayLog,

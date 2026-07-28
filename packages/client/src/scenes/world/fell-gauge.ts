@@ -17,7 +17,7 @@
  * d'une frame et ripe dès que la caméra bouge). Positionner l'objet sur une tuile visible
  * évite aussi tout culling. La barre suit donc le zoom : ses tailles sont en px MONDE.
  */
-import { BALANCE, fellGreenWidth, type ResourceNode } from '@braises/sim'
+import { BALANCE, fellGreenWidth, type ResourceNode } from '@ashes/sim'
 import { tileFeetAnchor, OVERLAY_DEPTH, TILE_PX } from '../../render/framing'
 import type { Warp } from '../../render/warp'
 import type Phaser from 'phaser'

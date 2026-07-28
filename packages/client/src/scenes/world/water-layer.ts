@@ -19,7 +19,7 @@
  * AUCUNE logique de jeu ici : de l'habillage, et rien d'autre.
  */
 import Phaser from 'phaser'
-import { TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, zoneSlugAt, type WorldMap } from '@braises/sim'
+import { TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, zoneSlugAt, type WorldMap } from '@ashes/sim'
 import { buildFlowField, COURANT_VITESSE, TAPER_RIVE_MAX, TAPER_RIVE_MIN, type FlowField } from '../../render/flow-field'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { sunDirection } from '../../render/lighting'

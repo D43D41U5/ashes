@@ -15,7 +15,7 @@
  * secours. Tout est dérivé, rien n'est deviné par les noms.
  */
 import Phaser from 'phaser'
-import type { WorldMap } from '@braises/sim'
+import type { WorldMap } from '@ashes/sim'
 import { type Crack, newCanvas, normalFromCanvas, registerLit } from '../../render/normal-map'
 import { STONE_B } from '../../render/matiere'
 import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'

@@ -24,7 +24,7 @@ import {
   mineTolerance,
   type SkillId,
   type ToolTier,
-} from '@braises/sim'
+} from '@ashes/sim'
 import { SKILL_LABELS } from './skill-labels'
 
 export interface SkillPalier {

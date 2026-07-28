@@ -10,7 +10,7 @@
  * gêner le playtest, pas un design sonore final. À régler à l'oreille par Alexis (l'audit le
  * classe « oreilles »). Le SYSTÈME, lui, est vérifiable (routage + niveaux/durées des buffers).
  */
-import type { SimEvent } from '@braises/sim'
+import type { SimEvent } from '@ashes/sim'
 
 export type Waveform = 'sine' | 'triangle' | 'square' | 'sawtooth' | 'noise'
 

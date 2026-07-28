@@ -9,7 +9,7 @@
  * Combe de son propre champ : on ne double pas l'alpha.
  */
 import Phaser from 'phaser'
-import type { WorldMap } from '@braises/sim'
+import type { WorldMap } from '@ashes/sim'
 import { DIST_FIELD_MAX, MIST_DEPTH, MistLayer } from './mist-layer'
 
 const DENSITE = 0.2

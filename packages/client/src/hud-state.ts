@@ -6,7 +6,7 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { ChronicleEntry, ComponentType, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@braises/sim'
+import type { ChronicleEntry, ComponentType, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@ashes/sim'
 import type Phaser from 'phaser'
 import type { Brouillard } from './render/fog'
 
@@ -54,17 +54,17 @@ export interface FireView {
   /** Le titre du panneau : « FEU DE CAMP » (feu libre) ou « FOYER » (feu d'un village). */
   title: string
   /** allumé / braises / éteint — dérivé du combustible + tick (source unique : `fireStateAt` du sim). */
-  state: import('@braises/sim').FireState
+  state: import('@ashes/sim').FireState
   /** COMBUSTIBLE : 3 slots de bois, le TEMPS restant (ticks) avant extinction, la progression de
    *  consommation de la bûche EN COURS (0..1) et l'index de la case qui brûle (l'indicateur). */
-  fuel: ({ item: import('@braises/sim').ItemId; count: number } | null)[]
+  fuel: ({ item: import('@ashes/sim').ItemId; count: number } | null)[]
   fuelTimeRemaining: number
   fuelBurnProgress: number
   fuelBurnSlot: number
   /** CUISSON : 3 ENTRÉES (STACK d'aliments — `count` — + progression 0..1 de l'unité qui cuit + prêt)
    *  et 3 SORTIES (cuit + sous-produit, avec compte). Ce sont de vraies cases-conteneurs (glisser). */
-  cookIn: ({ item: import('@braises/sim').ItemId; count: number; progress: number; ready: boolean } | null)[]
-  cookOut: ({ item: import('@braises/sim').ItemId; count: number } | null)[]
+  cookIn: ({ item: import('@ashes/sim').ItemId; count: number; progress: number; ready: boolean } | null)[]
+  cookOut: ({ item: import('@ashes/sim').ItemId; count: number } | null)[]
   /** Le bouton contextuel : fonder un Foyer ici, ou monter le palier du Foyer — ou rien (spec S19). */
   action: { kind: 'found'; label: string } | { kind: 'upgrade'; label: string; affordable: boolean } | null
 }

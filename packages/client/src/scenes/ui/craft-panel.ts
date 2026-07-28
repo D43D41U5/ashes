@@ -30,7 +30,7 @@ import {
   type ItemId,
   type PlayerAction,
   type RecipeId,
-} from '@braises/sim'
+} from '@ashes/sim'
 import type Phaser from 'phaser'
 import type { StationId } from '../../hud-state'
 import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'

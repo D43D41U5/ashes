@@ -1,8 +1,8 @@
 # ASHES
 
-*(ex-BRAISES — renommé le 2026-07-28 ; le nom du dépôt, des paquets `@braises/*`, du GDD et des clés de stockage n'a PAS suivi : ce sont des identifiants, pas le titre.)*
+*(ex-BRAISES — renommé le 2026-07-28, jusqu'aux paquets (`@ashes/*`) et au GDD (`ashes-gdd.md`). **Les clés de stockage, elles, restent en `braises`** — base IndexedDB, brouillard, son, touches : ce sont des ADRESSES, et les renommer orphelinerait toutes les sauvegardes existantes. Et « braises » reste du vocabulaire de jeu : un feu qui couve est en braises.)*
 
-Survival multijoueur top-down 2D persistant, saisons de 60 jours, villages de joueurs, alignement émergent. La source de vérité du design est **`braises-gdd.md`** — le lire avant tout travail sur un système de jeu.
+Survival multijoueur top-down 2D persistant, saisons de 60 jours, villages de joueurs, alignement émergent. La source de vérité du design est **`ashes-gdd.md`** — le lire avant tout travail sur un système de jeu.
 
 ## Commandes
 

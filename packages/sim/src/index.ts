@@ -1,5 +1,5 @@
 /**
- * L'API publique de @braises/sim, par usage. Tout ce qui n'est pas ici est
+ * L'API publique de @ashes/sim, par usage. Tout ce qui n'est pas ici est
  * un détail interne. Deux règles :
  * - le flux d'événements n'est écrit QUE par la sim (`emitEvent` et les
  *   mutateurs d'alignement `recordAct`/`recordHostility` ne sont pas

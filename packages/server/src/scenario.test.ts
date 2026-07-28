@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { avanceeDuFront, estCendre, seasonDayAtTick, TICKS_PER_SEASON_DAY, zoneSlugAt } from '@braises/sim'
+import { avanceeDuFront, estCendre, seasonDayAtTick, TICKS_PER_SEASON_DAY, zoneSlugAt } from '@ashes/sim'
 import { baseDeNaissance, createZone, MAX_PLAYERS, nextSpawnNear } from './scenario'
 
 /**

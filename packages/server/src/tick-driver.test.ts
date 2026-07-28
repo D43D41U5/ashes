@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createSim } from '@braises/sim'
+import { createSim } from '@ashes/sim'
 import {
   acceptInput,
   CHAT_BUCKET,

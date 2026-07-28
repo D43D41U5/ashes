@@ -12,7 +12,7 @@
  * positionnel — même dessin à chaque session.
  */
 import Phaser from 'phaser'
-import type { WorldMap } from '@braises/sim'
+import type { WorldMap } from '@ashes/sim'
 import { TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import { newCanvas, normalFromCanvas, registerLit } from '../../render/normal-map'
 import type { Warp } from '../../render/warp'

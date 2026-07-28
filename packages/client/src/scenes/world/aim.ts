@@ -19,9 +19,9 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
-import { COMPONENT_TYPES, FOOD_VALUES, STRUCTURE_HP, WEAPON_DAMAGE, isCropMature, isPlot, type ItemId, type StructureType, type WallMaterial } from '@braises/sim'
+import { COMPONENT_TYPES, FOOD_VALUES, STRUCTURE_HP, WEAPON_DAMAGE, isCropMature, isPlot, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
 import type { Placeable } from '../../hud-state'
-import type { Corpse, PlayerAction, ResourceNode } from '@braises/sim'
+import type { Corpse, PlayerAction, ResourceNode } from '@ashes/sim'
 
 /**
  * Le contexte de POSE (spec construction R8) : le palier de matériau choisi pour

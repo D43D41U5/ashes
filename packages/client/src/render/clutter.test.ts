@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TERRAIN_FOREST, TERRAIN_DEEP_WATER, TERRAIN_REED_MARSH } from '@braises/sim'
+import { TERRAIN_FOREST, TERRAIN_DEEP_WATER, TERRAIN_REED_MARSH } from '@ashes/sim'
 import { BIOME_CLUTTER, clutterAt, distToWater, type SampleTerrain } from './clutter'
 
 const allForest: SampleTerrain = () => TERRAIN_FOREST

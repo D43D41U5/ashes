@@ -24,7 +24,7 @@ import {
   spawnPoiMonsters,
   type SimState,
   type WorldMap,
-} from '@braises/sim'
+} from '@ashes/sim'
 
 /** Le NOM du serveur, affiché dans l'écran principal du client (métadonnées de room).
  *  Surchargéable par l'env `SERVER_NAME` ; un seul serveur pour l'instant. */

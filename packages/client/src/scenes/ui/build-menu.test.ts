@@ -1,4 +1,4 @@
-import { STRUCTURE_COSTS, WALL_TIERS } from '@braises/sim'
+import { STRUCTURE_COSTS, WALL_TIERS } from '@ashes/sim'
 import { describe, expect, it } from 'vitest'
 import { BUILDABLES, pieceCost } from './build-menu'
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Corpse, ResourceNode } from '@braises/sim'
-import { AGRICULTURE, STRUCTURE_HP } from '@braises/sim'
+import type { Corpse, ResourceNode } from '@ashes/sim'
+import { AGRICULTURE, STRUCTURE_HP } from '@ashes/sim'
 import { aimAt, clickToAction, holdHarvest, type AimStructure } from './aim'
 
 const RANGE = 1.5

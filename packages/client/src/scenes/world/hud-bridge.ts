@@ -25,7 +25,7 @@ import {
   type SkillId,
   type Structure,
   type Village,
-} from '@braises/sim'
+} from '@ashes/sim'
 import type Phaser from 'phaser'
 import { getHud, setHud, type FireView, type SeasonVerdict, type StationId } from '../../hud-state'
 

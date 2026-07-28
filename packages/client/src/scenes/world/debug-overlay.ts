@@ -9,7 +9,7 @@
  * garde rien. La vraie garde reste côté autorité : la sim de prod n'est pas
  * créée avec `debug: true` et refuse ces actions (packages/sim/src/debug.ts).
  */
-import { terrainAt, TERRAINS, zoneAt, type PlayerAction, type WorldMap } from '@braises/sim'
+import { terrainAt, TERRAINS, zoneAt, type PlayerAction, type WorldMap } from '@ashes/sim'
 import type Phaser from 'phaser'
 import { getHud, setHud } from '../../hud-state'
 

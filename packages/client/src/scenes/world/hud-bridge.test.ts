@@ -3,7 +3,7 @@
  * portée ? ». Le reste du fichier n'est que du câblage registry, vérifié à l'œil.
  * La portée vient de /sim (`BALANCE.INTERACT_RANGE`) — jamais recopiée.
  */
-import { BALANCE, type Structure, type Village } from '@braises/sim'
+import { BALANCE, type Structure, type Village } from '@ashes/sim'
 import { describe, expect, it } from 'vitest'
 import { containerInRange, foundableFireAt, upgradableFireAt } from './hud-bridge'
 

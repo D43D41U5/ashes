@@ -121,7 +121,7 @@ describe('POI_CHARGES', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --filter @braises/sim test poi-discovery`
+Run: `pnpm --filter @ashes/sim test poi-discovery`
 Expected: FAIL — `poisAt`/`poiCenter` n'existent pas dans `map.ts`, `poi-discovery.ts` n'existe pas.
 
 - [ ] **Step 3: Ajouter les deux helpers à `map.ts`**
@@ -240,7 +240,7 @@ export function poiFamily(kind: string): PoiType['family'] | undefined {
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `pnpm --filter @braises/sim test poi-discovery`
+Run: `pnpm --filter @ashes/sim test poi-discovery`
 Expected: PASS (9 tests).
 
 Puis la suite complète : `pnpm check && pnpm test && pnpm lint` → tout vert.
@@ -329,7 +329,7 @@ describe('la règle de base : un lieu foulé entre dans la carte', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --filter @braises/sim test poi-discovery`
+Run: `pnpm --filter @ashes/sim test poi-discovery`
 Expected: FAIL — `knownPois` n'existe pas sur `Entity`.
 
 - [ ] **Step 3: Étendre `Entity`, `SimState`, `createSim`, `spawnEntity`**
@@ -451,7 +451,7 @@ export { poisAt, poiCenter } from './map'
 
 - [ ] **Step 8: Run tests to verify they pass**
 
-Run: `pnpm --filter @braises/sim test poi-discovery`
+Run: `pnpm --filter @ashes/sim test poi-discovery`
 Expected: PASS.
 
 Puis `pnpm check && pnpm test && pnpm lint`.
@@ -563,7 +563,7 @@ describe('le savoir — quatre lieux qui rendent la carte', () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pnpm --filter @braises/sim test poi-discovery`
+Run: `pnpm --filter @ashes/sim test poi-discovery`
 Expected: FAIL — aucune révélation à distance n'a lieu (seule la règle de base joue).
 
 - [ ] **Step 3: Implémenter `applyKnowledge`**
@@ -643,7 +643,7 @@ Remplacer le corps de la boucle interne d'`advancePois` :
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `pnpm --filter @braises/sim test poi-discovery`
+Run: `pnpm --filter @ashes/sim test poi-discovery`
 Expected: PASS.
 
 Puis `pnpm check && pnpm test && pnpm lint`.
@@ -735,7 +735,7 @@ describe('le récit — la première fois seulement', () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pnpm --filter @braises/sim test poi-discovery`
+Run: `pnpm --filter @ashes/sim test poi-discovery`
 Expected: FAIL — `poi_first_visit` n'existe pas.
 
 - [ ] **Step 3: Ajouter l'événement dans `events.ts`**
@@ -785,7 +785,7 @@ Puis un `case` dans le `switch` :
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `pnpm --filter @braises/sim test poi-discovery`
+Run: `pnpm --filter @ashes/sim test poi-discovery`
 Expected: PASS.
 
 Puis `pnpm check && pnpm test && pnpm lint`.
@@ -915,7 +915,7 @@ describe('la règle qui protège l’émerveillement', () => {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pnpm --filter @braises/sim test poi-discovery`
+Run: `pnpm --filter @ashes/sim test poi-discovery`
 Expected: FAIL sur la Source chaude, la Grotte et le Tarn. **Le test anti-butin (A9) doit déjà PASSER** — rien dans le code ne donne d'item. C'est voulu : c'est un test de **non-régression**, il garde la porte pour l'avenir.
 
 - [ ] **Step 3: Ajouter `isOnPoiKind` et `staminaPoiFactor` à `poi-discovery.ts`**
@@ -990,7 +990,7 @@ Dans la boucle de régén d'endurance (~ligne 372), **après** `perS *= coldStam
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `pnpm --filter @braises/sim test poi-discovery`
+Run: `pnpm --filter @ashes/sim test poi-discovery`
 Expected: PASS (toute la suite du fichier).
 
 Puis `pnpm check && pnpm test && pnpm lint`.
@@ -999,7 +999,7 @@ Puis `pnpm check && pnpm test && pnpm lint`.
 
 - [ ] **Step 7: Vérifier le déterminisme et le replay (critère A10)**
 
-Run: `pnpm --filter @braises/sim test replay events sim`
+Run: `pnpm --filter @ashes/sim test replay events sim`
 Expected: PASS. Même seed + mêmes inputs → mêmes `knownPois`, mêmes `visitedPois`, même flux d'événements.
 
 Si l'un de ces trois fichiers montre une **divergence entre deux runs**, arrêtez-vous : c'est un bug de déterminisme, pas un attendu à mettre à jour.

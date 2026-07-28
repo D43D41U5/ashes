@@ -1,11 +1,11 @@
 /**
- * @braises/server — Node + Colyseus : la boucle autoritative de la Phase LAN.
+ * @ashes/server — Node + Colyseus : la boucle autoritative de la Phase LAN.
  *
  * La simulation ne change pas en passant ici — c'est tout l'intérêt (invariant
  * « une seule simulation »). Ce module ne fait qu'ouvrir le transport WebSocket et
  * déclarer la zone ; tout le jeu vit dans `/sim`, piloté par `ZoneRoom`.
  *
- * Lancer : `pnpm --filter @braises/server dev` (ou `start`). Le client s'y branche
+ * Lancer : `pnpm --filter @ashes/server dev` (ou `start`). Le client s'y branche
  * via `VITE_SERVER_URL=ws://localhost:2567`.
  */
 import { matchMaker, Server } from '@colyseus/core'

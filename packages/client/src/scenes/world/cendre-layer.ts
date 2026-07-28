@@ -18,7 +18,7 @@
  * Zéro tuile transmise, zéro état synchronisé — c'est tout l'intérêt du modèle.
  */
 import Phaser from 'phaser'
-import type { WorldMap } from '@braises/sim'
+import type { WorldMap } from '@ashes/sim'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 
 /** Juste au-dessus du sol, sous l'ombre du relief et sous tout ce qui a des pieds. */

@@ -110,7 +110,7 @@ describe('canopyDensity / canopyStrength', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --filter @braises/client exec vitest run src/render/lighting.test.ts`
+Run: `pnpm --filter @ashes/client exec vitest run src/render/lighting.test.ts`
 Expected: FAIL — `Failed to resolve import "./lighting"` / functions not defined.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -202,7 +202,7 @@ export function canopyStrength(day: number): number {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm --filter @braises/client exec vitest run src/render/lighting.test.ts`
+Run: `pnpm --filter @ashes/client exec vitest run src/render/lighting.test.ts`
 Expected: PASS (9 tests).
 
 - [ ] **Step 5: Commit**
@@ -258,7 +258,7 @@ describe('ambientTint (teinte selon l’heure)', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --filter @braises/client exec vitest run src/render/lighting.test.ts`
+Run: `pnpm --filter @ashes/client exec vitest run src/render/lighting.test.ts`
 Expected: FAIL — `ambientTint is not a function`.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -311,7 +311,7 @@ export function ambientTint(hour: number): { color: number; alpha: number } {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm --filter @braises/client exec vitest run src/render/lighting.test.ts`
+Run: `pnpm --filter @ashes/client exec vitest run src/render/lighting.test.ts`
 Expected: PASS (tous les tests, dont les 4 nouveaux).
 
 - [ ] **Step 5: Commit**
@@ -361,7 +361,7 @@ describe('fireGlow (halo des Feux)', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `pnpm --filter @braises/client exec vitest run src/render/lighting.test.ts`
+Run: `pnpm --filter @ashes/client exec vitest run src/render/lighting.test.ts`
 Expected: FAIL — `fireGlow is not a function`.
 
 - [ ] **Step 3: Write minimal implementation**
@@ -388,7 +388,7 @@ export function fireGlow(warmth: number, day: number): { color: number; radius: 
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `pnpm --filter @braises/client exec vitest run src/render/lighting.test.ts`
+Run: `pnpm --filter @ashes/client exec vitest run src/render/lighting.test.ts`
 Expected: PASS (tous les tests).
 
 - [ ] **Step 5: Commit**
@@ -409,7 +409,7 @@ git commit -m "feat(client): fireGlow — halo coloré par alignement, fort la n
 - Consumes: rien.
 - Produces: une texture Phaser `'glow'` (256×256, blanc au centre → transparent), consommée en Task 6.
 
-> Pas de test unitaire : génération de texture Phaser, vérifiée à l'intégration (Task 8) via typecheck + smoke visuel. Le « cycle de test » de cette task est `pnpm --filter @braises/client check`.
+> Pas de test unitaire : génération de texture Phaser, vérifiée à l'intégration (Task 8) via typecheck + smoke visuel. Le « cycle de test » de cette task est `pnpm --filter @ashes/client check`.
 
 - [ ] **Step 1: Add the glow texture generator**
 
@@ -440,7 +440,7 @@ private makeGlowTexture(): void {
 
 - [ ] **Step 2: Verify it typechecks**
 
-Run: `pnpm --filter @braises/client check`
+Run: `pnpm --filter @ashes/client check`
 Expected: PASS (aucune erreur tsc).
 
 - [ ] **Step 3: Commit**
@@ -458,14 +458,14 @@ git commit -m "feat(client): texture 'glow' — dégradé radial pour les halos 
 - Modify: `packages/client/src/scenes/WorldScene.ts`
 
 **Interfaces:**
-- Consumes: `canopyDensity`, `canopyStrength`, `ambientTint`, `daylight` (Tasks 1-2), `hash2` (déjà importé), `GameTime` (type `@braises/sim`).
+- Consumes: `canopyDensity`, `canopyStrength`, `ambientTint`, `daylight` (Tasks 1-2), `hash2` (déjà importé), `GameTime` (type `@ashes/sim`).
 - Produces: `this.lastTime: GameTime | null` et les objets `canopyImage` / `ambientRect` (consommés en Task 6 pour l'ordre de profondeur : la Task 6 dessine les halos AU-DESSUS, à la profondeur 2200).
 
-> Pas de test unitaire (rendu Phaser). Cycle de test : `pnpm --filter @braises/client check` + smoke visuel en Task 8.
+> Pas de test unitaire (rendu Phaser). Cycle de test : `pnpm --filter @ashes/client check` + smoke visuel en Task 8.
 
 - [ ] **Step 1: Import lighting + GameTime**
 
-Dans le bloc d'import `@braises/sim` (WorldScene.ts:13-28), ajouter `type GameTime` à la liste. Ajouter après les imports de framing (ligne 33) :
+Dans le bloc d'import `@ashes/sim` (WorldScene.ts:13-28), ajouter `type GameTime` à la liste. Ajouter après les imports de framing (ligne 33) :
 
 ```ts
 import { ambientTint, canopyDensity, canopyStrength, daylight } from '../render/lighting'
@@ -548,7 +548,7 @@ if (this.lastTime) {
 
 - [ ] **Step 6: Verify it typechecks**
 
-Run: `pnpm --filter @braises/client check`
+Run: `pnpm --filter @ashes/client check`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -567,7 +567,7 @@ git commit -m "feat(client): couches canopée (locale) + ambiance (heure) dans W
 - Modify: `packages/client/src/scenes/WorldScene.ts`
 
 **Interfaces:**
-- Consumes: `fireGlow` (Task 3), texture `'glow'` (Task 4), `TILE_PX` (framing), `Structure` (`@braises/sim`), `SnapshotMessage` (protocol), `this.view.structures` / `this.view.villages` / `daylight` (Task 5).
+- Consumes: `fireGlow` (Task 3), texture `'glow'` (Task 4), `TILE_PX` (framing), `Structure` (`@ashes/sim`), `SnapshotMessage` (protocol), `this.view.structures` / `this.view.villages` / `daylight` (Task 5).
 - Produces: classe `FireGlow` avec `update(structures, villages, day): void`.
 
 > Pas de test unitaire (rendu Phaser). Cycle de test : `check` + smoke visuel (Task 8).
@@ -583,7 +583,7 @@ git commit -m "feat(client): couches canopée (locale) + ambiance (heure) dans W
  * logique de jeu — pur habillage (spec lumière & ambiance).
  */
 import Phaser from 'phaser'
-import type { Structure } from '@braises/sim'
+import type { Structure } from '@ashes/sim'
 import { fireGlow } from '../../render/lighting'
 import { TILE_PX } from '../../render/framing'
 import type { SnapshotMessage } from '../../protocol'
@@ -655,7 +655,7 @@ this.fireGlow?.update(this.view.structures, this.view.villages, daylight(hour))
 
 - [ ] **Step 3: Verify it typechecks**
 
-Run: `pnpm --filter @braises/client check`
+Run: `pnpm --filter @ashes/client check`
 Expected: PASS.
 
 - [ ] **Step 4: Commit**
@@ -714,7 +714,7 @@ import { warmthColor } from '../../render/lighting'
 
 - [ ] **Step 2: Run client tests to confirm no regression**
 
-Run: `pnpm --filter @braises/client exec vitest run`
+Run: `pnpm --filter @ashes/client exec vitest run`
 Expected: PASS (framing + keymap + lighting).
 
 - [ ] **Step 3: UIScene — retirer nightAlpha et les constantes de crépuscule**
@@ -742,7 +742,7 @@ et SUPPRIMER la fonction `nightAlpha` (lignes ~79-86) en entier.
 `BALANCE` n'était utilisé que dans les constantes supprimées. Dans l'import ligne 7, retirer `BALANCE,` :
 
 ```ts
-import { skillLevel, zoneAt, type Inventory, type SkillId, type VillageTask, type WorldMap } from '@braises/sim'
+import { skillLevel, zoneAt, type Inventory, type SkillId, type VillageTask, type WorldMap } from '@ashes/sim'
 ```
 
 - [ ] **Step 5: UIScene — renommer nightOverlay → alarmOverlay (usage unique : alarme)**
@@ -781,7 +781,7 @@ Remplacer le bloc alarme final (~lignes 405-412) :
 
 - [ ] **Step 6: Verify typecheck + lint (unused imports/vars caught here)**
 
-Run: `pnpm --filter @braises/client check && pnpm lint`
+Run: `pnpm --filter @ashes/client check && pnpm lint`
 Expected: PASS. Si lint signale un `BALANCE`/`nightAlpha`/`CYCLE_HOURS` résiduel, supprimer la référence oubliée.
 
 - [ ] **Step 7: Commit**
@@ -806,7 +806,7 @@ Expected: tout vert (sim 19 fichiers, client incluant `lighting.test.ts`, lint p
 
 - [ ] **Step 2: Build + preview + smoke visuel**
 
-Suivre la mémoire `browser-smoke-test` : `pnpm build` puis `pnpm --filter @braises/client preview`, piloter via le Chromium en cache (`playwright-core` du projet demo) et le hook `window.__BRAISES__`.
+Suivre la mémoire `browser-smoke-test` : `pnpm build` puis `pnpm --filter @ashes/client preview`, piloter via le Chromium en cache (`playwright-core` du projet demo) et le hook `window.__BRAISES__`.
 
 Pour forcer l'heure sans attendre le cycle réel, exposer/forcer le tick via le hook si dispo, ou capturer aux moments naturels. Captures attendues (dossier scratchpad) :
 - **Midi** : image quasi neutre, pas de voile.
@@ -821,7 +821,7 @@ Confronter les captures aux critères 3 (heure dorée), 5 (halo nuit), 8 (progre
 
 - [ ] **Step 4: Ajustement d'intensité si besoin (optionnel)**
 
-Si une intensité déplaît en jeu, ajuster UNIQUEMENT les constantes de `lighting.ts`, relancer `pnpm --filter @braises/client exec vitest run src/render/lighting.test.ts` (les tests tolèrent les valeurs tant que les invariants tiennent), puis recommit.
+Si une intensité déplaît en jeu, ajuster UNIQUEMENT les constantes de `lighting.ts`, relancer `pnpm --filter @ashes/client exec vitest run src/render/lighting.test.ts` (les tests tolèrent les valeurs tant que les invariants tiennent), puis recommit.
 
 - [ ] **Step 5: Commit final éventuel**
 

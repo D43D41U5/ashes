@@ -16,7 +16,7 @@
  * invariant §3). Un fantôme vert n'est PAS une promesse — c'est « rien ici ne
  * l'interdit *de ce que le client peut voir* ».
  */
-import { COMPONENT_TYPES, recognizeFunctions, type RecognizedFunction, type Structure } from '@braises/sim'
+import { COMPONENT_TYPES, recognizeFunctions, type RecognizedFunction, type Structure } from '@ashes/sim'
 import { tileFeetAnchor, structureDepth } from '../../render/framing'
 import { TILE_PX } from '../../render/framing'
 import type { Placeable } from '../../hud-state'

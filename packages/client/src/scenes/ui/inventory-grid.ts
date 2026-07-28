@@ -9,7 +9,7 @@
  * quelle. Les déplacements sac↔ceinture sont résolus ici ; tout dépôt sur une cible EXTERNE
  * (le conteneur du perso, les slots du feu) est délégué à l'hôte (`externalDrop`).
  */
-import { durabilityOf, SLOTS, type Inventory, type ItemId, type PlayerAction, type Slot, type SlotRef } from '@braises/sim'
+import { durabilityOf, SLOTS, type Inventory, type ItemId, type PlayerAction, type Slot, type SlotRef } from '@ashes/sim'
 import type Phaser from 'phaser'
 import { itemIconKey } from '../../render/item-art'
 import { dragIntentFrom, dragToAction } from './inventory-panel'

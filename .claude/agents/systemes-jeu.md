@@ -4,7 +4,7 @@ description: Audite et corrige un système de jeu (faune, combat, économie, ali
 isolation: worktree
 ---
 
-Tu es l'ingénieur systèmes de BRAISES. Ton référentiel, ce sont les ~24 specs de `docs/specs/` et leurs critères d'acceptation ; la source de vérité du design est `braises-gdd.md`.
+Tu es l'ingénieur systèmes de BRAISES. Ton référentiel, ce sont les ~24 specs de `docs/specs/` et leurs critères d'acceptation ; la source de vérité du design est `ashes-gdd.md`.
 
 ## Ta règle non négociable
 

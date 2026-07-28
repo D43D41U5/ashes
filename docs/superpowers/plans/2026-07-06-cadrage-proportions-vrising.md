@@ -19,7 +19,7 @@
 
 **Contexte figé (vérifié dans le repo au 2026-07-06) :**
 - `TILE_PX = 16` (constante en tête de `WorldScene.ts`). Résolution interne **1280×720** en `Scale.FIT` (`main.ts`), donc centre écran = **(640, 360)** et hauteur viewport = **720**.
-- `BALANCE.AVATAR_HITBOX_TILES = 0.6` (importable depuis `@braises/sim`).
+- `BALANCE.AVATAR_HITBOX_TILES = 0.6` (importable depuis `@ashes/sim`).
 - Sprites placeholder générés dans `BootScene.ts` : humanoïdes (`spr-player`/`spr-npc`/`spr-zombie`/`spr-boar`) en **12×12 px**, `spr-corpse` et `st-*`/`nd-*` en **16×16 px**. Le découplage (R12) rend ces tailles natives sans importance.
 - Profondeurs fixes actuelles : map 0, `spr-corpse` 3, `nd-*` 4, `st-fire` 5, autres `st-*` 6, `evacMarker` 7, `ghost` 8, `spr-npc` 9, `spr-player` 10.
 - `WorldScene.syncSprite(sprite, x, y)` fait aujourd'hui `sprite.setPosition(x * TILE_PX, y * TILE_PX)` ; les sprites d'acteurs sont créés par `this.add.image(0, 0, key)` (origine par défaut 0,5/0,5). Caméra : `this.cameras.main.setBounds(...).startFollow(this.playerSprite, true, 0.12, 0.12).setZoom(2)`.
@@ -60,7 +60,7 @@ Modifier `packages/client/package.json` — ajouter le script `test` et la devDe
 
 ```json
 {
-  "name": "@braises/client",
+  "name": "@ashes/client",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -72,7 +72,7 @@ Modifier `packages/client/package.json` — ajouter le script `test` et la devDe
     "test": "vitest run"
   },
   "dependencies": {
-    "@braises/sim": "workspace:*",
+    "@ashes/sim": "workspace:*",
     "phaser": "^4.1.0"
   },
   "devDependencies": {
@@ -86,7 +86,7 @@ Modifier `packages/client/package.json` — ajouter le script `test` et la devDe
 Puis installer :
 
 Run: `pnpm install`
-Expected: résout sans erreur, vitest ajouté à `@braises/client`.
+Expected: résout sans erreur, vitest ajouté à `@ashes/client`.
 
 - [ ] **Step 2: Écrire les tests (qui échouent)**
 
@@ -173,7 +173,7 @@ describe('structureDepth (R13)', () => {
 
 - [ ] **Step 3: Lancer les tests → échec attendu**
 
-Run: `pnpm --filter @braises/client test`
+Run: `pnpm --filter @ashes/client test`
 Expected: FAIL — `Cannot find module './framing'` (le module n'existe pas encore).
 
 - [ ] **Step 4: Écrire l'implémentation**
@@ -284,7 +284,7 @@ export function structureDepth(ty: number): number {
 
 - [ ] **Step 5: Lancer les tests → succès attendu**
 
-Run: `pnpm --filter @braises/client test`
+Run: `pnpm --filter @ashes/client test`
 Expected: PASS (tous les `describe`).
 
 - [ ] **Step 6: Gates + commit**
@@ -401,7 +401,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Consumes: `actorPlacement`, `ActorFootprint` de `framing.ts` ; `BALANCE.AVATAR_HITBOX_TILES`.
 - Produces: convention de placement des acteurs (origine pieds + display size), réutilisée par la Task 4 pour la depth.
 
-Note : `BALANCE` est déjà importé de `@braises/sim` dans `WorldScene.ts` — vérifier qu'`AVATAR_HITBOX_TILES` est accessible via `BALANCE.AVATAR_HITBOX_TILES` (il l'est).
+Note : `BALANCE` est déjà importé de `@ashes/sim` dans `WorldScene.ts` — vérifier qu'`AVATAR_HITBOX_TILES` est accessible via `BALANCE.AVATAR_HITBOX_TILES` (il l'est).
 
 - [ ] **Step 1: Importer et déclarer les emprises visuelles**
 

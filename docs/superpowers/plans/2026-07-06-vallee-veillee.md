@@ -83,7 +83,7 @@ describe('le bruit déterministe', () => {
 
 - [ ] **Step 2: Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/noise.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/noise.test.ts`
 Expected: FAIL — « Cannot find module './noise' » (ou équivalent).
 
 - [ ] **Step 3: Implémenter `noise.ts`**
@@ -134,7 +134,7 @@ export function fbm2(x: number, y: number, scale: number, seed = 0): number {
 
 - [ ] **Step 4: Vérifier que le test passe**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/noise.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/noise.test.ts`
 Expected: PASS (4 tests).
 
 - [ ] **Step 5: Exporter depuis l'API publique**
@@ -189,7 +189,7 @@ it('le marais est riche en baies et fibres (spec vallée 2026-07-06)', () => {
 
 - [ ] **Step 2: Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/economy.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/economy.test.ts`
 Expected: FAIL — `TERRAIN_MARSH` n'existe pas (erreur de compilation) ; après l'étape balance seule, le test échouerait sur `berries > 0`.
 
 - [ ] **Step 3: Implémenter**
@@ -223,7 +223,7 @@ Dans `packages/sim/src/economy.ts`, fonction `generateNodes`, ajouter une branch
 
 - [ ] **Step 4: Vérifier que le test passe**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/economy.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/economy.test.ts`
 Expected: PASS (tous les cas du fichier, dont le nouveau).
 
 - [ ] **Step 5: Vérifier et commiter**
@@ -324,7 +324,7 @@ Note : à ce stade la rivière/lac/routes du squelette sont **déclarées mais p
 
 - [ ] **Step 2: Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: FAIL — « Cannot find module './valleygen' ».
 
 - [ ] **Step 3: Implémenter le socle de `valleygen.ts`**
@@ -474,7 +474,7 @@ Note : `TERRAIN_DEEP_WATER`, `TERRAIN_SHALLOW_WATER`, `TERRAIN_ROAD`, `TERRAIN_W
 
 - [ ] **Step 4: Vérifier que les tests passent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: PASS (5 tests). Si « la région forestière » échoue de peu, c'est un seuil de bruit — vérifier `fbm2` (moyenne ~0,5) avant de toucher au test.
 
 - [ ] **Step 5: Vérifier et commiter**
@@ -560,7 +560,7 @@ Compléter les imports du fichier de test : `TERRAIN_DEEP_WATER, TERRAIN_GRASS, 
 
 - [ ] **Step 2: Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: FAIL — les nouveaux cas (la rivière n'est pas peinte : herbe à la place).
 
 - [ ] **Step 3: Implémenter les passes restantes**
@@ -631,7 +631,7 @@ function paintRuin(map: WorldMap, x: number, y: number): void {
 
 - [ ] **Step 4: Vérifier que les tests passent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valleygen.test.ts`
 Expected: PASS (12 tests). Le cas « ruine » vérifie (12,34) mur et (14,35) libre : avec le tampon en (12,34), les murs sont aux offsets de `RUIN_WALLS` — (14,35) correspond à l'offset (2,1) qui n'y figure pas.
 
 - [ ] **Step 5: Vérifier et commiter**
@@ -766,7 +766,7 @@ describe('la Vallée de la Veillée — critères d'acceptation', () => {
 
 - [ ] **Step 2: Vérifier l'échec**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valley-veillee.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valley-veillee.test.ts`
 Expected: FAIL — « Cannot find module './valley-veillee' ».
 
 - [ ] **Step 3: Écrire le squelette**
@@ -881,7 +881,7 @@ export const VEILLEE_SITES = {
 
 - [ ] **Step 4: Itérer jusqu'au vert**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/valley-veillee.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/valley-veillee.test.ts`
 Expected: PASS (6 tests). C'est l'étape de calibrage : si la connectivité échoue, les suspects sont (dans l'ordre) un site de monstre tombé sur une tuile de roche/bruit (déplacer le site de 1-2 tuiles), une zone entièrement recouverte par le bruit (ajouter une clairière), le Col obstrué (élargir sa clairière). **Ajuster les coordonnées du squelette, pas le générateur ni les tests.**
 
 - [ ] **Step 5: Exporter depuis l'API publique**
@@ -914,7 +914,7 @@ git commit -m "feat(sim): VEILLEE_SKELETON — la Vallée de la Veillée 192×19
 - Delete: `packages/client/src/demo-map.ts`
 
 **Interfaces:**
-- Consumes: `generateValley`, `VEILLEE_SKELETON`, `VEILLEE_SITES`, `hash2` — tous depuis `@braises/sim` (Task 1, 5).
+- Consumes: `generateValley`, `VEILLEE_SKELETON`, `VEILLEE_SITES`, `hash2` — tous depuis `@ashes/sim` (Task 1, 5).
 - Produces: `veillee.ts` continue d'exporter `VEILLEE_SEED`, `VEILLEE_CALENDAR_SCALE`, `VEILLEE_SPAWN`, `createVeillee()` — mêmes signatures, `sim-worker.ts` ne change pas.
 
 - [ ] **Step 1: Réécrire `veillee.ts`**
@@ -939,7 +939,7 @@ import {
   VEILLEE_SITES,
   VEILLEE_SKELETON,
   type SimState,
-} from '@braises/sim'
+} from '@ashes/sim'
 
 export const VEILLEE_SEED = 2026
 /** Démo : un jour de saison toutes les 2 minutes. */
@@ -968,7 +968,7 @@ export function createVeillee(): { sim: SimState; playerId: number } {
 - [ ] **Step 2: Adapter `WorldScene.ts` et supprimer `demo-map.ts`**
 
 Dans `packages/client/src/scenes/WorldScene.ts` :
-- Ligne 29 : remplacer `import { hash2 } from '../demo-map'` par un ajout de `hash2` à l'import existant depuis `'@braises/sim'`.
+- Ligne 29 : remplacer `import { hash2 } from '../demo-map'` par un ajout de `hash2` à l'import existant depuis `'@ashes/sim'`.
 - Table `TERRAIN_COLORS` (ligne ~79) : ajouter après l'entrée `7` :
 
 ```ts
@@ -1055,7 +1055,7 @@ git commit -m "feat(sim): le banc de calibrage tourne sur la Vallée de la Veill
 
 ```bash
 pnpm build
-pnpm --filter @braises/client exec vite preview --port 4173 &
+pnpm --filter @ashes/client exec vite preview --port 4173 &
 ```
 
 (`pnpm dev` est bloqué par un cache `.vite` root — c'est connu, utiliser build+preview.)

@@ -8,7 +8,7 @@
  * Il vit dans `/sim` — et non plus dans le client — parce qu'il est le contrat
  * PARTAGÉ entre n'importe quel hôte (Worker, serveur Colyseus) et n'importe quel
  * client : pur (rien que des types + une constante), au même titre que le netcode
- * `prediction.ts`. Le serveur, qui ne dépend que de `@braises/sim`, le lit d'ici.
+ * `prediction.ts`. Le serveur, qui ne dépend que de `@ashes/sim`, le lit d'ici.
  */
 import type { Corpse } from './combat'
 import type { RecognizedFunction } from './construction'

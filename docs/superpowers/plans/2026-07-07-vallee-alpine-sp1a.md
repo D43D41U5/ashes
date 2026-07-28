@@ -17,7 +17,7 @@
 - **Dimensions = paramètres** : `generateAlpineTerrain(width, height, seed)`. Toute échelle/amplitude est une **fraction de `min(width,height)`**, jamais un entier supposant une taille. Testé à deux tailles.
 - **Barre AAA** : on juge à la **vignette** (hillshade + couleurs de biome) ; on ne déclare pas « bon » un rendu « bof ». Les seuils de bande sont des constantes de contenu réglées à l'œil.
 - **Hors périmètre SP1a** (→ SP1b) : hydrologie (rivières/lacs), placement de features/ancres, chemins, re-siting des villages, banc de scénario, tableaux typés. SP1a n'a **pas d'eau** — la vignette juge le relief et les bandes sèches.
-- Vérifs : `pnpm --filter @braises/sim exec vitest run src/<fichier>` (un fichier) ; `pnpm --filter @braises/sim exec vitest run --exclude src/scenario.test.ts` (suite) ; `pnpm check && pnpm lint`.
+- Vérifs : `pnpm --filter @ashes/sim exec vitest run src/<fichier>` (un fichier) ; `pnpm --filter @ashes/sim exec vitest run --exclude src/scenario.test.ts` (suite) ; `pnpm check && pnpm lint`.
 
 ---
 
@@ -52,7 +52,7 @@ describe('terrains d’altitude alpins', () => {
 
 - [ ] **Step 2: Lancer (RED)**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/balance.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/balance.test.ts`
 Expected: FAIL — `TERRAIN_SCREE`/`TERRAIN_SNOW` non exportés.
 
 - [ ] **Step 3: Ajouter les terrains**
@@ -74,12 +74,12 @@ export const TERRAIN_SNOW = 10
 
 - [ ] **Step 4: Lancer (GREEN)**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/balance.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/balance.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Vérifier suite + pureté**
 
-Run: `pnpm --filter @braises/sim exec vitest run --exclude src/scenario.test.ts && pnpm check && pnpm lint`
+Run: `pnpm --filter @ashes/sim exec vitest run --exclude src/scenario.test.ts && pnpm check && pnpm lint`
 Expected: vert (les nouveaux terrains n'affectent aucun code existant).
 
 - [ ] **Step 6: Commit**
@@ -127,7 +127,7 @@ Import ligne 2 : `import { fbm2, fbmWarp2, gradientNoise2, hash2, ridgedFbm2 } f
 
 - [ ] **Step 2: Lancer (RED)**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/noise.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/noise.test.ts`
 Expected: FAIL — `ridgedFbm2` non exporté.
 
 - [ ] **Step 3: Implémenter**
@@ -168,7 +168,7 @@ export { hash2, gradientNoise2, fbm2, fbmWarp2, ridgedFbm2 } from './noise'
 
 - [ ] **Step 5: Lancer (GREEN) + pureté**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/noise.test.ts && pnpm check && pnpm lint`
+Run: `pnpm --filter @ashes/sim exec vitest run src/noise.test.ts && pnpm check && pnpm lint`
 Expected: PASS, 0 erreur pureté.
 
 - [ ] **Step 6: Commit**
@@ -213,7 +213,7 @@ describe('WorldMap.elevation', () => {
 
 - [ ] **Step 2: Lancer (RED)**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/map.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/map.test.ts`
 Expected: FAIL — `elevationAt` non exporté / `elevation` inconnu.
 
 - [ ] **Step 3: Implémenter**
@@ -237,7 +237,7 @@ export function elevationAt(map: WorldMap, tx: number, ty: number): number {
 
 - [ ] **Step 4: Lancer (GREEN) + suite + pureté**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/map.test.ts && pnpm --filter @braises/sim exec vitest run --exclude src/scenario.test.ts && pnpm check && pnpm lint`
+Run: `pnpm --filter @ashes/sim exec vitest run src/map.test.ts && pnpm --filter @ashes/sim exec vitest run --exclude src/scenario.test.ts && pnpm check && pnpm lint`
 Expected: vert (champ optionnel → aucun consommateur existant cassé).
 
 - [ ] **Step 5: Commit**
@@ -310,7 +310,7 @@ describe('computeElevation — le relief alpin', () => {
 
 - [ ] **Step 2: Lancer (RED)**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/alpinegen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/alpinegen.test.ts`
 Expected: FAIL — module/fonction absents.
 
 - [ ] **Step 3: Implémenter `computeElevation`**
@@ -365,7 +365,7 @@ export function computeElevation(width: number, height: number, seed: number): n
 
 - [ ] **Step 4: Lancer (GREEN)**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/alpinegen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/alpinegen.test.ts`
 Expected: PASS. Si « enceinte » échoue (bord < 0.9), augmenter `RIM_FRAC` ou le plancher ; si « intérieur varié » échoue, ajuster `RIDGE_WEIGHT`. Ce sont des réglages de contenu — noter le changement.
 
 - [ ] **Step 5: Pureté**
@@ -421,7 +421,7 @@ describe('computeMoisture', () => {
 
 - [ ] **Step 2: Lancer (RED)**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/alpinegen.test.ts -t moisture`
+Run: `pnpm --filter @ashes/sim exec vitest run src/alpinegen.test.ts -t moisture`
 Expected: FAIL — `computeMoisture` absent.
 
 - [ ] **Step 3: Implémenter**
@@ -448,7 +448,7 @@ export function computeMoisture(width: number, height: number, elevation: number
 
 - [ ] **Step 4: Lancer (GREEN) + pureté**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/alpinegen.test.ts && pnpm check && pnpm lint`
+Run: `pnpm --filter @ashes/sim exec vitest run src/alpinegen.test.ts && pnpm check && pnpm lint`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -536,7 +536,7 @@ describe('generateAlpineTerrain — bandes & assemblage', () => {
 
 - [ ] **Step 2: Lancer (RED)**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/alpinegen.test.ts -t "bandes"`
+Run: `pnpm --filter @ashes/sim exec vitest run src/alpinegen.test.ts -t "bandes"`
 Expected: FAIL — `generateAlpineTerrain`/`paintAlpineBands` absents.
 
 - [ ] **Step 3: Implémenter**
@@ -596,12 +596,12 @@ Note : `sealBorderRing` pose `TERRAIN_ROCK` sur l'anneau ; comme le bord est dé
 
 - [ ] **Step 4: Lancer (GREEN)**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/alpinegen.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/alpinegen.test.ts`
 Expected: tous verts. Si « variété » échoue (< 5 terrains), ajuster les seuils `BANDS`/`*_MOIST` pour que chaque bande ait de la surface (réglage contenu, documenté). Si « bandes ordonnées » échoue, c'est un bug de seuil (les bornes doivent être croissantes).
 
 - [ ] **Step 5: Suite + pureté**
 
-Run: `pnpm --filter @braises/sim exec vitest run --exclude src/scenario.test.ts && pnpm check && pnpm lint`
+Run: `pnpm --filter @ashes/sim exec vitest run --exclude src/scenario.test.ts && pnpm check && pnpm lint`
 Expected: vert.
 
 - [ ] **Step 6: Commit**
@@ -652,7 +652,7 @@ describe('renderVignette', () => {
 
 - [ ] **Step 2: Lancer (RED)**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/vignette.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/vignette.test.ts`
 Expected: FAIL — `renderVignette` absent.
 
 - [ ] **Step 3: Implémenter `renderVignette` (pur)**
@@ -718,7 +718,7 @@ const clampByte = (v: number): number => {
 
 - [ ] **Step 4: Lancer (GREEN)**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/vignette.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/vignette.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Le script Node d'écriture PNG**
@@ -775,7 +775,7 @@ Produire au moins une vignette (ex. seed 7, 480×720) dans `/tmp` ou le scratchp
 
 - [ ] **Step 7: Suite + pureté + commit**
 
-Run: `pnpm --filter @braises/sim exec vitest run --exclude src/scenario.test.ts && pnpm check && pnpm lint`
+Run: `pnpm --filter @ashes/sim exec vitest run --exclude src/scenario.test.ts && pnpm check && pnpm lint`
 Expected: vert (`vignette.ts` est pur ; le `.mjs` est hors périmètre lint sim — le placer sous `scripts/`).
 
 ```bash

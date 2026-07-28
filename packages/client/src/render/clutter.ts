@@ -26,7 +26,7 @@ import {
   TERRAIN_SNOW,
   TERRAIN_SHALLOW_WATER,
   TERRAIN_DEEP_WATER,
-} from '@braises/sim'
+} from '@ashes/sim'
 
 export type PropKind =
   | 'conifer' | 'big_trunk' | 'stump' | 'pine' | 'larch' | 'burnt_trunk'

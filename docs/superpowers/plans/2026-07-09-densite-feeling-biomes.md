@@ -6,7 +6,7 @@
 
 **Architecture:** Deux systèmes découplés. (1) `/sim` : `generateNodes` regroupe les nœuds via un champ de bruit spatial quand la carte est sous-échantillonnée (`density < 1`), sans changer le total. (2) Client : une couche de décor cosmétique **culled à la vue**, jamais dans le sim ni les snapshots — un module pur (`clutterAt` + table `BIOME_CLUTTER`) plus un helper de scène qui pool les sprites. Les deux dérivent leurs champs du **même seed** pour que bosquets de nœuds et massifs de décor coïncident.
 
-**Tech Stack:** TypeScript, pnpm workspace, Vitest, Phaser 4. Bruit déterministe via `@braises/sim` (`fbm2`, `hash2` dans `noise.ts`).
+**Tech Stack:** TypeScript, pnpm workspace, Vitest, Phaser 4. Bruit déterministe via `@ashes/sim` (`fbm2`, `hash2` dans `noise.ts`).
 
 ## Global Constraints
 
@@ -94,7 +94,7 @@ describe('clustering spatial des nœuds (densité-feeling 2026-07-09)', () => {
 
 - [ ] **Step 2: Lancer les tests, vérifier qu'ils échouent**
 
-Run: `pnpm --filter @braises/sim test -- economy`
+Run: `pnpm --filter @ashes/sim test -- economy`
 Expected: le test « sur-dispersion » ÉCHOUE (variance/moyenne ≈ 1 avec le sous-échantillonnage uniforme actuel). Les tests budget/déterminisme peuvent passer.
 
 - [ ] **Step 3: Ajouter l'import `fbm2`**
@@ -163,12 +163,12 @@ par :
 
 - [ ] **Step 6: Lancer les tests, ajuster `GROVE_MEAN_SQ` si besoin**
 
-Run: `pnpm --filter @braises/sim test -- economy`
+Run: `pnpm --filter @ashes/sim test -- economy`
 Expected: tous PASS. Si « budget préservé » échoue (total hors ±10 %), ajuster `GROVE_MEAN_SQ` : total trop BAS → baisser la constante ; total trop HAUT → l'augmenter. Re-lancer jusqu'au vert. Si « sur-dispersion » est trop juste, augmenter le contraste (utiliser `g * g * g` et recalibrer `GROVE_MEAN_SQ ≈ E[fbm2³] ≈ 0.19`).
 
 - [ ] **Step 7: Vérifier la non-régression globale du sim**
 
-Run: `pnpm --filter @braises/sim test`
+Run: `pnpm --filter @ashes/sim test`
 Expected: PASS — en particulier les tests A6 existants (déterminisme, positionnel) qui appellent `generateNodes(map, seed)` avec `density = 1` doivent être INCHANGÉS (la branche clustering ne s'exécute pas).
 
 - [ ] **Step 8: Commit**
@@ -188,8 +188,8 @@ git commit -m "feat(sim): clustering spatial des nœuds sur carte sous-échantil
 - Modify: `packages/sim/src/index.ts` (exporter les constantes de terrain manquantes)
 
 **Interfaces:**
-- Consumes: `fbm2`, `hash2` de `@braises/sim` ; constantes de terrain de `@braises/sim` (`TERRAIN_FOREST`, etc.).
-- NB : le barrel `@braises/sim` (`packages/sim/src/index.ts`) n'exporte aujourd'hui que `TERRAIN_FOREST/GRASS/ROAD/ROCK/VOID`. Les biomes alpins utilisés ici doivent être ajoutés à cet export (Step 0).
+- Consumes: `fbm2`, `hash2` de `@ashes/sim` ; constantes de terrain de `@ashes/sim` (`TERRAIN_FOREST`, etc.).
+- NB : le barrel `@ashes/sim` (`packages/sim/src/index.ts`) n'exporte aujourd'hui que `TERRAIN_FOREST/GRASS/ROAD/ROCK/VOID`. Les biomes alpins utilisés ici doivent être ajoutés à cet export (Step 0).
 - Produces:
   - `type PropKind` (union de chaînes).
   - `interface PropInstance { kind: PropKind; ox: number; oy: number; scale: number; mirror: boolean }` — `ox/oy` en fraction de tuile ∈ (-0.5, 0.5).
@@ -221,7 +221,7 @@ Dans `packages/sim/src/index.ts`, dans le bloc `export { ... } from './balance'`
   TERRAIN_DEEP_WATER,
 ```
 
-Run: `pnpm --filter @braises/sim check`
+Run: `pnpm --filter @ashes/sim check`
 Expected: PASS (ré-exports purs, ces constantes existent déjà dans `balance.ts`).
 
 - [ ] **Step 1: Écrire les tests qui échouent**
@@ -230,7 +230,7 @@ Créer `packages/client/src/render/clutter.test.ts` :
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { TERRAIN_FOREST, TERRAIN_DEEP_WATER, TERRAIN_REED_MARSH } from '@braises/sim'
+import { TERRAIN_FOREST, TERRAIN_DEEP_WATER, TERRAIN_REED_MARSH } from '@ashes/sim'
 import { BIOME_CLUTTER, clutterAt, distToWater, type SampleTerrain } from './clutter'
 
 const allForest: SampleTerrain = () => TERRAIN_FOREST
@@ -305,7 +305,7 @@ describe('distToWater (affinité réaliste, INV-6)', () => {
 
 - [ ] **Step 2: Lancer, vérifier l'échec**
 
-Run: `pnpm --filter @braises/client test -- clutter`
+Run: `pnpm --filter @ashes/client test -- clutter`
 Expected: FAIL — `./clutter` n'existe pas encore.
 
 - [ ] **Step 3: Créer le module `clutter.ts`**
@@ -341,7 +341,7 @@ import {
   TERRAIN_SNOW,
   TERRAIN_SHALLOW_WATER,
   TERRAIN_DEEP_WATER,
-} from '@braises/sim'
+} from '@ashes/sim'
 
 export type PropKind =
   | 'conifer' | 'big_trunk' | 'stump' | 'fern' | 'pine' | 'larch' | 'burnt_trunk'
@@ -463,12 +463,12 @@ export function clutterAt(
 
 - [ ] **Step 4: Lancer les tests, ajuster les seuils si besoin**
 
-Run: `pnpm --filter @braises/client test -- clutter`
+Run: `pnpm --filter @ashes/client test -- clutter`
 Expected: PASS. Si « sur-dispersion » échoue de peu, augmenter le contraste (`field * field * field` + `CLUTTER_MEAN_SQ ≈ 0.19`). Si l'affinité eau échoue, vérifier que `distToWater` renvoie bien 0 seulement sur eau (une tuile roselière n'est pas de l'eau).
 
 - [ ] **Step 5: Vérifier types + lint**
 
-Run: `pnpm --filter @braises/client check && pnpm lint`
+Run: `pnpm --filter @ashes/client check && pnpm lint`
 Expected: PASS (aucun import Phaser dans `clutter.ts`).
 
 - [ ] **Step 6: Commit**
@@ -567,7 +567,7 @@ Après `makeNodes()` dans la classe `BootScene`, ajouter (placeholders volontair
 
 - [ ] **Step 3: Vérifier que le jeu charge (pas de texture manquante)**
 
-Run: `pnpm --filter @braises/client build`
+Run: `pnpm --filter @ashes/client build`
 Expected: build OK. (La vérification visuelle vient en Task 5.)
 
 - [ ] **Step 4: Commit**
@@ -588,7 +588,7 @@ git commit -m "feat(client): sprites placeholder du décor cosmétique (cl-*, te
 - Modify: `packages/client/src/worker/sim-worker.ts` (`seed: sim.seed` dans le post `ready`)
 
 **Interfaces:**
-- Consumes: `clutterAt`, `BIOME_CLUTTER` de `../../render/clutter` ; `TILE_PX` de `../../render/framing` ; `WorldMap` de `@braises/sim`.
+- Consumes: `clutterAt`, `BIOME_CLUTTER` de `../../render/clutter` ; `TILE_PX` de `../../render/framing` ; `WorldMap` de `@ashes/sim`.
 - Produces: `class ClutterLayer { constructor(scene, map, seed); update(camera): void; destroy(): void }`.
 
 - [ ] **Step 1: Propager le seed du monde jusqu'au client**
@@ -613,7 +613,7 @@ Créer `packages/client/src/scenes/world/clutter-layer.ts` :
  * ici on ne fait que du pooling Phaser et du placement.
  */
 import Phaser from 'phaser'
-import type { WorldMap } from '@braises/sim'
+import type { WorldMap } from '@ashes/sim'
 import { TILE_PX } from '../../render/framing'
 import { clutterAt, type SampleTerrain } from '../../render/clutter'
 
@@ -711,12 +711,12 @@ Dans `packages/client/src/scenes/WorldScene.ts` :
 
 - [ ] **Step 4: Vérifier types, lint, build**
 
-Run: `pnpm --filter @braises/client check && pnpm lint && pnpm --filter @braises/client build`
+Run: `pnpm --filter @ashes/client check && pnpm lint && pnpm --filter @ashes/client build`
 Expected: PASS. Corriger toute erreur de type (nom exact de l'interface `ready` dans protocol.ts, champ `sim.seed`).
 
 - [ ] **Step 5: Vérifier la non-régression des tests client**
 
-Run: `pnpm --filter @braises/client test`
+Run: `pnpm --filter @ashes/client test`
 Expected: PASS (les tests existants + `clutter` de Task 2).
 
 - [ ] **Step 6: Commit**
@@ -736,7 +736,7 @@ git commit -m "feat(client): couche de rendu du décor cosmétique (culling + LO
 
 - [ ] **Step 1: Build + preview**
 
-Run: `pnpm --filter @braises/client build && pnpm --filter @braises/client preview` (préférer build+preview au `pnpm dev` bloqué par le cache `.vite` root — cf. mémoire).
+Run: `pnpm --filter @ashes/client build && pnpm --filter @ashes/client preview` (préférer build+preview au `pnpm dev` bloqué par le cache `.vite` root — cf. mémoire).
 
 - [ ] **Step 2: Piloter le navigateur et capturer 4 biomes**
 

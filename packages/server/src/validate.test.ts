@@ -9,7 +9,7 @@ import {
   TERRAIN_GRASS,
   type PlayerAction,
   type SimState,
-} from '@braises/sim'
+} from '@ashes/sim'
 import { ACTION_FORMES, isJoinMessage, sanitizeAction, sanitizeChat, sanitizeInput, type Genre } from './validate'
 
 /** L'enveloppe réseau d'une action, telle qu'elle arrive du socket. */

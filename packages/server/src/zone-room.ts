@@ -19,7 +19,7 @@ import {
   step,
   type NodeShadow,
   type ReadyMessage,
-} from '@braises/sim'
+} from '@ashes/sim'
 import { Room, type Client as ColyseusClient, type RoomException } from '@colyseus/core'
 import { baseDeNaissance, LAN_SEED, MAX_PLAYERS, nextSpawnNear, SERVER_NAME, type LanWorld } from './scenario'
 import { claimZone, releaseZone } from './zone-singleton'

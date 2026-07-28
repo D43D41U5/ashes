@@ -103,7 +103,7 @@ describe('le bruit déterministe', () => {
 
 - [ ] **Step 2: Lancer les tests pour les voir échouer**
 
-Run: `pnpm --filter @braises/sim test -- noise.test.ts`
+Run: `pnpm --filter @ashes/sim test -- noise.test.ts`
 Expected: FAIL — `gradientNoise2` n'est pas exporté (`No known export 'gradientNoise2'`).
 
 - [ ] **Step 3: Implémenter `gradientNoise2` et rebaser `fbm2`**
@@ -178,7 +178,7 @@ export { hash2, gradientNoise2, fbm2 } from './noise'
 
 - [ ] **Step 5: Lancer les tests du bruit**
 
-Run: `pnpm --filter @braises/sim test -- noise.test.ts`
+Run: `pnpm --filter @ashes/sim test -- noise.test.ts`
 Expected: PASS (6 tests verts).
 
 - [ ] **Step 6: Vérifier pureté + types**
@@ -252,7 +252,7 @@ import { fbm2, fbmWarp2, gradientNoise2, hash2 } from './noise'
 
 - [ ] **Step 2: Lancer les tests pour les voir échouer**
 
-Run: `pnpm --filter @braises/sim test -- noise.test.ts`
+Run: `pnpm --filter @ashes/sim test -- noise.test.ts`
 Expected: FAIL — `fbmWarp2` non exporté.
 
 - [ ] **Step 3: Implémenter `fbmWarp2`**
@@ -284,7 +284,7 @@ export { hash2, gradientNoise2, fbm2, fbmWarp2 } from './noise'
 
 - [ ] **Step 5: Lancer les tests**
 
-Run: `pnpm --filter @braises/sim test -- noise.test.ts`
+Run: `pnpm --filter @ashes/sim test -- noise.test.ts`
 Expected: PASS (9 tests verts).
 
 - [ ] **Step 6: Vérifier pureté + types**
@@ -344,7 +344,7 @@ Ajouter dans `packages/sim/src/valleygen.test.ts`, dans le `describe('generateVa
 
 - [ ] **Step 2: Lancer le test pour le voir échouer**
 
-Run: `pnpm --filter @braises/sim test -- valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim test -- valleygen.test.ts`
 Expected: FAIL — `forestEastOfSeam` vaut 0 (frontière droite, aucune forêt à l'est de la couture).
 
 - [ ] **Step 3: Warper le lookup et le seuil dans `paintBiomes`**
@@ -402,7 +402,7 @@ function paintBiomes(map: WorldMap, skeleton: ValleySkeleton, seed: number): voi
 
 - [ ] **Step 4: Lancer les tests valleygen**
 
-Run: `pnpm --filter @braises/sim test -- valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim test -- valleygen.test.ts`
 Expected: le nouveau test PASS. Le test existant « la région forestière est majoritairement boisée » (region `forest: 0.9`) doit rester vert — le warp déforme le bord, pas la densité globale. S'il devient rouge (le grain gradient concentré autour de 0.5 peut baisser un peu la proportion), abaisser son seuil d'assertion d'un cran (ex. `forest / total > 0.6` → `> 0.5`) ET le noter comme re-pinning de grain, pas comme régression.
 
 - [ ] **Step 5: Vérifier pureté + types**
@@ -471,7 +471,7 @@ Ajouter dans `packages/sim/src/valleygen.test.ts`, dans le `describe('generateVa
 
 - [ ] **Step 2: Lancer les tests pour les voir échouer**
 
-Run: `pnpm --filter @braises/sim test -- valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim test -- valleygen.test.ts`
 Expected: FAIL — `xsWithDeep.size` vaut 1 (rivière droite sur x = 30).
 
 - [ ] **Step 3: Ajouter le paramètre `meander` à `paintPolyline`**
@@ -601,12 +601,12 @@ function paintCrossings(map: WorldMap, skeleton: ValleySkeleton): void {
 
 - [ ] **Step 5: Lancer les tests valleygen**
 
-Run: `pnpm --filter @braises/sim test -- valleygen.test.ts`
+Run: `pnpm --filter @ashes/sim test -- valleygen.test.ts`
 Expected: les deux nouveaux tests PASS ; les tests existants (déterminisme, enceinte étanche, forêt majoritaire) restent verts. Si « l'enceinte est étanche » casse, c'est que `sealBorderRing` (appelé après les croisements dans `generateValley`) protège déjà le bord — vérifier que l'ordre d'appel n'a pas changé ; ne pas toucher.
 
 - [ ] **Step 6: Vérifier que ruisseaux et mines n'ont pas bougé (méandre absent = bit-identique)**
 
-Run: `pnpm --filter @braises/sim test`
+Run: `pnpm --filter @ashes/sim test`
 Expected: toute la suite sim (hors scénario) verte. `paintStreams`/`carveMines` appellent `paintPolyline` **sans** `meander` → tracé inchangé. Si un test de mine/ruisseau casse, c'est une régression du chemin `meander` absent — revoir Step 3 (le calcul de `ox/oy` doit rester 0 quand `meander` est `undefined`).
 
 - [ ] **Step 7: Vérifier pureté + types**
@@ -639,12 +639,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Lancer la suite complète sim + non-régression monde**
 
-Run: `pnpm --filter @braises/sim test`
+Run: `pnpm --filter @ashes/sim test`
 Expected: vert. Noter tout test rouge dans `valley-veillee.test.ts` : ce sont des invariants (connectivité landmarks, spawn atteignable, minerai atteignable) — s'ils cassent, **ne pas** relâcher l'invariant, mais comprendre pourquoi le nouveau grain le viole (ex. une clairière de spawn trop boisée). Corriger par le squelette (`valley-veillee.ts`), pas par l'assertion, sauf s'il s'agit d'un seuil de *proportion* (forêt majoritaire) légitimement décalé par le grain — dans ce cas re-pinner d'un cran et documenter.
 
 - [ ] **Step 2: Lancer le banc de scénario (le gate)**
 
-Run: `pnpm --filter @braises/sim test:scenario`
+Run: `pnpm --filter @ashes/sim test:scenario`
 Expected attendu APRÈS calibrage : **0 échantillon affamé**, villages tenus sur 6 jours (seed 2026).
 
 Si un village s'affame (le nouveau grain a redistribué son écosystème vivrier via le flux RNG séquentiel de `generateNodes`) : ajuster les densités de biome de la ou des régions concernées dans `VEILLEE_SKELETON.regions` (`packages/sim/src/valley-veillee.ts`, lignes 81-87) — typiquement remonter un peu la forêt/l'herbe autour du site affamé pour restaurer baies/fibres — puis relancer. Itérer jusqu'au banc vert. C'est le cœur du travail de ce lot, pas un imprévu. Ne jamais désactiver ni assouplir le banc.

@@ -5,7 +5,7 @@
  * le trou : la planche smoke jugeait le rendu, mais aucune garde texte ne tenait le compte.
  */
 import { describe, expect, it } from 'vitest'
-import { POI } from '@braises/sim'
+import { POI } from '@ashes/sim'
 import { POI_ART } from '../scenes/world/poi-art'
 import { ERRATIQUES, POI_LIT_DEFS, POI_LIT_KINDS, POI_LIT_MIRRORED } from './poi-lit'
 import { LIT_STRUCTURE_KEYS, LIT_STRUCTURE_TYPES } from './lit-structures'

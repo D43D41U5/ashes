@@ -52,7 +52,7 @@ import {
   type ReadyMessage,
   type SnapshotMessage,
   type PerfMessage,
-} from '@braises/sim'
+} from '@ashes/sim'
 import Phaser from 'phaser'
 import { createColyseusHost, createWorkerHost, type HostConnection } from '../host-connection'
 import { VEILLEE_SEED } from '../worker/mondes'
@@ -115,7 +115,7 @@ import { FireGroundGlow } from './world/fire-ground-glow'
 import { createContactShadow } from './world/contact-shadow'
 import { champLisiere, poidsLisiere, LISIERE_MAX, LISIERE_PORTEE } from '../render/ecotone'
 import { creerBrouillard, depackBrouillard, FOG_RAYON_TUILES, loadFog, packBrouillard, revele, saveFog, type Brouillard } from '../render/fog'
-import { fireStateAt, POI_CHARGES, TERRAIN_SHALLOW_WATER } from '@braises/sim'
+import { fireStateAt, POI_CHARGES, TERRAIN_SHALLOW_WATER } from '@ashes/sim'
 
 /**
  * Le rayon qu'un lieu dévoile, LU DANS LA TABLE DE LA SIM (`POI_CHARGES`) et jamais recopié :

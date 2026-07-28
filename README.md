@@ -2,7 +2,7 @@
 
 > Un survival top-down persistant où ton village est ton personnage principal — et où les autres joueurs sont la meilleure et la pire chose qui puisse lui arriver.
 
-Dans un monde qui meurt en soixante jours, des villages prospèrent, commercent, se pillent et se trahissent. Au centre de chacun brûle **le Feu** — et sa couleur, visible de loin, dit ce que le village a choisi d'être. La vision complète : [`braises-gdd.md`](braises-gdd.md).
+Dans un monde qui meurt en soixante jours, des villages prospèrent, commercent, se pillent et se trahissent. Au centre de chacun brûle **le Feu** — et sa couleur, visible de loin, dit ce que le village a choisi d'être. La vision complète : [`ashes-gdd.md`](ashes-gdd.md).
 
 **État : Phase Veillée (V0-V10) complète** — le jeu solo tourne dans le navigateur, la simulation entière vit dans un Web Worker. Phase LAN en cours (Colyseus) : le serveur tourne, deux navigateurs se voient et se battent ; reste à valider la boucle à plusieurs (GATE 2).
 

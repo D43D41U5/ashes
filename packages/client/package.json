@@ -1,5 +1,5 @@
 {
-  "name": "@braises/client",
+  "name": "@ashes/client",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@braises/sim": "workspace:*",
+    "@ashes/sim": "workspace:*",
     "@fontsource/jetbrains-mono": "^5.2.8",
     "colyseus.js": "^0.16.22",
     "phaser": "^4.1.0"

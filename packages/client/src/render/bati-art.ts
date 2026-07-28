@@ -29,7 +29,7 @@
  * textures en sortent — `st-<type>` et `st-<type>_lit`, du même trait.
  */
 import type Phaser from 'phaser'
-import { BALANCE } from '@braises/sim'
+import { BALANCE } from '@ashes/sim'
 import { type Crack, newCanvas, normalFromCanvas, registerLit } from './normal-map'
 
 const T = 16 // le côté d'une tuile

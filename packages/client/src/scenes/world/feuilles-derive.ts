@@ -10,7 +10,7 @@
  * Les lacs et mares n'ont pas de fil : pas de courant, pas de feuilles — c'est juste.
  */
 import Phaser from 'phaser'
-import type { WorldMap } from '@braises/sim'
+import type { WorldMap } from '@ashes/sim'
 import { COURANT_VITESSE, flowAt, taperRive, type FlowField } from '../../render/flow-field'
 import { GROUND_MAP_DEPTH, TILE_PX } from '../../render/framing'
 import { riveAt, type RiveField } from '../../render/water-field'

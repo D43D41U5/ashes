@@ -6,7 +6,7 @@
  * pierre froide, fer bleuté).
  */
 import type Phaser from 'phaser'
-import type { ItemId } from '@braises/sim'
+import type { ItemId } from '@ashes/sim'
 
 export const ITEM_ICON_PX = 16
 

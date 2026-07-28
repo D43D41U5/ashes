@@ -1,6 +1,6 @@
 # Specs par système
 
-Le GDD (`braises-gdd.md`) est la source de vérité de la *vision*. Avant d'implémenter un système, on en extrait ici une spec *travaillable* : assez précise pour coder contre elle, avec des critères d'acceptation testables en headless.
+Le GDD (`ashes-gdd.md`) est la source de vérité de la *vision*. Avant d'implémenter un système, on en extrait ici une spec *travaillable* : assez précise pour coder contre elle, avec des critères d'acceptation testables en headless.
 
 Une tâche d'implémentation bien posée ressemble à : « implémente l'endurance selon `specs/combat.md` §2 ; les critères A1-A4 doivent passer en test ».
 

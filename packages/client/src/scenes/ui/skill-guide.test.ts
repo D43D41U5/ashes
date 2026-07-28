@@ -13,7 +13,7 @@ import {
   maxTierByLevel,
   mineTolerance,
   type ToolTier,
-} from '@braises/sim'
+} from '@ashes/sim'
 import {
   craftSpeedLevel,
   fellAutopilotLevel,

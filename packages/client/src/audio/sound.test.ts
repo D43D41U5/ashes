@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { SimEvent } from '@braises/sim'
+import type { SimEvent } from '@ashes/sim'
 import { soundForEvent, type SoundSpec } from './sound'
 import { SONORES, VOIX } from './inventaire'
 

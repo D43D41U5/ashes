@@ -14,7 +14,7 @@
  * Le fantôme, lui, reste dans le monde (Phaser) : il est ancré à la TUILE. Comme tout
  * le HUD, ce panneau ne DÉCIDE rien : il arme une intention, la sim revalide la pose.
  */
-import { STRUCTURE_COSTS, WALL_TIERS, hasItems, type Inventory, type ItemBag, type ItemId, type WallMaterial } from '@braises/sim'
+import { STRUCTURE_COSTS, WALL_TIERS, hasItems, type Inventory, type ItemBag, type ItemId, type WallMaterial } from '@ashes/sim'
 import type { Buildable } from '../../hud-state'
 
 /** Les pièces structurelles du menu du marteau (spec construction R20). */

@@ -5,7 +5,7 @@
  * On ne teste JAMAIS le RÉSULTAT d'un geste (ça, c'est la sim, seule source de
  * vérité — invariant §3) : on teste seulement quelle ACTION le client envoie.
  */
-import type { Inventory, Slot } from '@braises/sim'
+import type { Inventory, Slot } from '@ashes/sim'
 import { describe, expect, it } from 'vitest'
 import { dragIntentFrom, dragToAction, firstFitSlot, quickMoveToAction } from './inventory-panel'
 

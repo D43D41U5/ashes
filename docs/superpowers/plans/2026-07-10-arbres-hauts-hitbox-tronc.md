@@ -474,7 +474,7 @@ import { isBlockedAt, makeIndexedIsBlockedAt, moveAvatar, moveAvatarStepped, ove
 
 - [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/collision.test.ts -t "arbres hauts"`
+Run: `pnpm --filter @ashes/sim exec vitest run src/collision.test.ts -t "arbres hauts"`
 Expected: FAIL. A1 échoue (l'avatar bute sur la rangée d'arbres pleine tuile, `p.y` reste ≈ 3,7), A2 échoue (`p.x` vaut `7.7` = `8 − HALF` au lieu de `8.075`), A7 échoue (`overlapsBlocking(7, 4.5)` rend `true`). A3, A4, A5, A6 passent déjà.
 
 - [ ] **Step 3: Tourner le `4` en `1`**
@@ -487,7 +487,7 @@ Dans `packages/sim/src/balance.ts`, une seule ligne de `NODE_DEFS` :
 
 - [ ] **Step 4: Lancer les tests pour vérifier qu'ils passent**
 
-Run: `pnpm --filter @braises/sim exec vitest run src/collision.test.ts`
+Run: `pnpm --filter @ashes/sim exec vitest run src/collision.test.ts`
 Expected: PASS — les 7 critères, **et** tous les tests préexistants du fichier.
 
 - [ ] **Step 5: Relancer le filet complet**
@@ -605,7 +605,7 @@ import {
 
 - [ ] **Step 2: Lancer les tests pour vérifier qu'ils échouent**
 
-Run: `pnpm --filter @braises/client exec vitest run src/render/framing.test.ts`
+Run: `pnpm --filter @ashes/client exec vitest run src/render/framing.test.ts`
 Expected: FAIL — `crownDepth is not a function` / `crownAlpha is not a function` (et l'import échoue à la compilation TS).
 
 - [ ] **Step 3: Écrire l'implémentation**
@@ -660,7 +660,7 @@ export function crownAlpha(distTiles: number): number {
 
 - [ ] **Step 4: Lancer les tests pour vérifier qu'ils passent**
 
-Run: `pnpm --filter @braises/client exec vitest run src/render/framing.test.ts`
+Run: `pnpm --filter @ashes/client exec vitest run src/render/framing.test.ts`
 Expected: PASS, y compris le test préexistant « la vallée canonique (3600 tuiles) ne perce pas la canopée ni la nuit ».
 
 - [ ] **Step 5: Vérifier et committer**
@@ -841,7 +841,7 @@ Remplacer intégralement la méthode :
   }
 ```
 
-(`BALANCE` est déjà importé de `@braises/sim` en tête du fichier.)
+(`BALANCE` est déjà importé de `@ashes/sim` en tête du fichier.)
 
 - [ ] **Step 4: Passer la position du joueur depuis `WorldScene`**
 
@@ -890,7 +890,7 @@ git commit -m "feat(client): l'arbre devient tronc + houppier, effacé par un di
 
 ```bash
 pnpm build
-pnpm --filter @braises/client exec vite preview --port 4173
+pnpm --filter @ashes/client exec vite preview --port 4173
 ```
 
 - [ ] **Step 2: Prendre les quatre captures**
