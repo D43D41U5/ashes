@@ -3575,6 +3575,14 @@ const SCENARIOS = {
     if (!r.echantillons) {
       console.error('!! sonde perf débranchée — aucun échantillon (as-tu bien lancé avec --dev ?)')
     }
+    // LA CARTE EST-ELLE REVENUE DANS L'AUTOSAVE ? `carte-immuable.test.ts` garde
+    // `serializePartie` ; il ne garde pas que `persist()` l'APPELLE. Repasser à
+    // `serializeSim` dans l'hôte laisserait la suite verte et rendrait le gel de 2,5 s —
+    // seul le poids réellement écrit par le vrai Worker le dit. (Mesuré : 9,2 Mo.)
+    const dernier = r.autosaves?.[r.autosaves.length - 1]
+    if (dernier && dernier.octets > 20e6) {
+      console.error(`!! LA CARTE EST REVENUE DANS L'AUTOSAVE : ${(dernier.octets / 1e6).toFixed(1)} Mo écrits, ${dernier.serialisationMs} ms de monde arrêté (attendu ~9 Mo)`)
+    }
     return r
   },
 
