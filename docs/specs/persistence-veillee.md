@@ -35,7 +35,26 @@ L'enregistrement d'un slot (hôte) est donc `{ sim: string (serializePartie), pl
 
   **Ce sur quoi ça repose, et qui est gardé** : `step()` n'écrit jamais dans `state.map`. `carte-immuable.test.ts` fait vivre le monde de production (mille ticks, front de cendre au jour 59, récolte, mur, composant, fondation) et exige que l'empreinte de la carte en ressorte identique — chaque cas prouvant d'abord que le monde a bel et bien changé. Son A0 confronte les champs couverts par l'empreinte aux clés réelles de `WorldMap` : **ajouter un champ à la carte rend le test rouge**, et son auteur doit trancher — le hacher, ou le déclarer volatile et le sortir de la carte. Le jour où un système se mettra à *peindre le sol*, c'est cette coupe-là qu'il faudra retirer, pas la garde.
 
-  **Reste** : 9,2 Mo, soit 211–271 ms de gel toutes les 30 s — encore 4-5× le budget d'un tick (50 ms). Ce sont les 125 686 `nodes`. Le palier suivant est soit un diff de nœuds, soit la cadence de l'autosave (donc ce qu'on accepte de perdre) — **décision d'Alexis**.
+- **R8 — Les nœuds ne se réécrivent plus en entier** (2026-07-28, décision d'Alexis : le diff plutôt que l'espacement de l'autosave — la cadence de 30 s est conservée, donc on ne perd toujours qu'une demi-minute sur un plantage). ✅
+
+  **Pourquoi.** Une fois la carte sortie (R7), les 125 686 `nodes` pesaient **9,12 des 9,20 Mo restants** — tout le reste du monde (entités, structures, villages, monstres, PNJ, chronique) tient dans 0,03 Mo. Or entre deux sauvegardes, une poignée seulement bouge : celles qu'on vient de récolter.
+
+  **Comment.** La part FIXE d'un nœud (`id`, `type`, `tx`, `ty`) naît avec le monde et ne change plus : elle part avec la carte, dans le même enregistrement de naissance. L'autosave n'écrit plus que ce qui a bougé — `node-baseline.ts` (`baseDepuisNoeuds` / `diffNoeuds` / `appliqueDiffNoeuds`), pur et testé, dans `/sim` pour la même raison que `node-shadow.ts` : la persistance serveur de la Vallée aura le même besoin, et deux copies auraient divergé.
+
+  **Le diff est CUMULATIF, jamais incrémental** : la base reste celle de la naissance, pas celle de la sauvegarde précédente. Chaque sauvegarde se recolle donc seule, en une passe ; un diff incrémental aurait exigé de rejouer toute la chaîne, et d'en perdre une aurait tout perdu.
+
+  **Ce sur quoi le recollage repose, et qui est gardé** : `state.nodes` n'est jamais réordonné (les quatre seuls écrits du dépôt sont des `filter` et un `push`). Le diff porte l'**empreinte** de la suite d'identifiants attendue, et `appliqueDiffNoeuds` refuse de rendre une liste qui n'y correspond pas — le jour où un système triera les nœuds, la reprise criera au lieu de rendre un monde décalé en silence.
+
+  **MESURÉ**, Worker du navigateur, même sonde tout du long :
+
+  | | ce matin | après R7 | après R8 |
+  |---|---|---|---|
+  | sauvegarde | 69,72 Mo | 9,20 Mo | **75,5 ko** |
+  | sérialisation | 2 394–2 470 ms | 164–232 ms | **17,7–27,7 ms** |
+  | écart entre ticks | 2 419–2 513 ms | 211–400 ms | **58–65 ms** |
+  | gels en 80 s | 3 | 3 | **1** |
+
+  L'écart médian **nominal** est de 52 ms : à 58–65 ms, l'autosave est rentrée dans le bruit de fond — elle n'est plus un événement. Le seul gel restant (~950 ms, **une** fois) est l'écriture de l'enregistrement de naissance : un coût déplacé au premier enregistrement du monde, pas ajouté.
 
   **Reprise d'un ancien format** : une sauvegarde d'avant la coupe porte encore l'état d'un seul tenant et se relit telle quelle (`deserializeSim`) ; le prochain autosave la range au format neuf. Une reprise ne se perd pas pour un changement de rangement.
 
