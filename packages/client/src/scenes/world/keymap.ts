@@ -97,8 +97,15 @@ export const KEYMAP = {
   toggleJournal: ['J'],
   toggleMap: ['M'],
   toggleInventory: ['TAB'],
-  /** LE MENU PAUSE (reprendre / contrôles / nouvelle Veillée) : fige le monde solo. */
+  /** LE MENU PAUSE (reprendre / contrôles / retour aux vallées) : fige le monde solo. */
   toggleMenu: ['ESC'],
+  /**
+   * COUPER LE SON. Elle vivait EN DUR dans `WorldScene` (`keydown-N`), hors de cette table —
+   * donc invisible au rebinding, alors que le menu pause l'annonçait au joueur. Rapatriée ici
+   * le 2026-07-28 avec l'écran des réglages : une touche que le jeu écoute et qu'on affiche
+   * doit venir d'UNE source, sinon l'écran des touches ment par omission.
+   */
+  toggleMute: ['N'],
 } as const
 
 /*

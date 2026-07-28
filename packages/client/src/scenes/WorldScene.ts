@@ -57,6 +57,10 @@ import Phaser from 'phaser'
 import { createColyseusHost, createWorkerHost, type HostConnection } from '../host-connection'
 import { VEILLEE_SEED } from '../worker/mondes'
 import { reopenMondes } from './ui/reopen-veillee'
+import { keymapEffectif } from './world/keymap-perso'
+import { noteMulti } from '../derniere-partie'
+import { SERVERS } from '../servers'
+import { libelleTouche } from './world/touches'
 import { getHud, setHud } from '../hud-state'
 import {
   AMBIENT_DEPTH,
@@ -525,10 +529,17 @@ export class WorldScene extends Phaser.Scene {
     // et bascule du mute sur N (retenu d'une session à l'autre). Le son est un décor sobre.
     this.input.once('pointerdown', () => this.audioFx.resume())
     this.input.keyboard?.once('keydown', () => this.audioFx.resume())
-    this.input.keyboard?.on('keydown-N', () => {
-      const muted = this.audioFx.toggleMute()
-      publishHint(this.registry, muted ? 'Son coupé (N).' : 'Son rétabli (N).', this.time.now)
-    })
+    // LA TOUCHE VIENT DU JEU EFFECTIF, plus d'un `keydown-N` en dur : elle est réglable comme
+    // les autres, et le message qui l'annonce cite CE que le joueur a mis, pas ce qu'on a livré.
+    for (const nom of keymapEffectif().toggleMute) {
+      const code = Phaser.Input.Keyboard.KeyCodes[nom as keyof typeof Phaser.Input.Keyboard.KeyCodes]
+      if (code === undefined) continue
+      this.input.keyboard?.addKey(code, false).on('down', () => {
+        const muted = this.audioFx.toggleMute()
+        const t = libelleTouche(nom)
+        publishHint(this.registry, muted ? `Son coupé (${t}).` : `Son rétabli (${t}).`, this.time.now)
+      })
+    }
     // Le VOLUME maître (curseur du menu pause) : on publie l'état courant du moteur, et on
     // l'observe ensuite (le moteur vit ici ; le menu, dans UIScene, ne peut que poser la valeur).
     setHud(this.registry, 'audioVolume', this.audioFx.getVolume())
@@ -619,6 +630,8 @@ export class WorldScene extends Phaser.Scene {
     // SOLO : quelle case, quelle seed. `MenuScene` les pose toujours (écran des mondes ou
     // deep-link) ; le repli — case 0, seed canonique — sert le lancement direct sans menu.
     this.slot = data.slot ?? 0
+    this.serverUrl = serverUrl
+    this.serverNom = SERVERS.find((e) => e.url === serverUrl)?.name ?? serverUrl ?? ''
     this.host = serverUrl
       ? createColyseusHost(serverUrl)
       : createWorkerHost({ slot: this.slot, seed: data.seed ?? VEILLEE_SEED, nom: data.nom ?? '' })
@@ -679,6 +692,9 @@ export class WorldScene extends Phaser.Scene {
     // QUEL MONDE ON JOUE — pour les deux boutons d'UIScene qui en ont besoin : « rouvrir la
     // vallée » (stèle de fin de saison : même case, même seed) et « retour aux vallées ».
     setHud(this.registry, 'veillee', { slot: this.slot, seed: msg.seed })
+    // LE SIGNET DE LA VALLÉE PARTAGÉE — « REPRENDRE » à l'accueil n'a que ça pour parler d'une
+    // partie multi : le monde vit sur le serveur, pas sur ce disque (voir `derniere-partie.ts`).
+    if (this.serverUrl) noteMulti(this.serverUrl, this.serverNom, Date.now())
     this.calendarScale = msg.calendarScale
     this.map = msg.map
 
@@ -1590,6 +1606,9 @@ export class WorldScene extends Phaser.Scene {
   private menuPaused = false
   /** SOLO — la case du disque que cette partie occupe (brouillard, sauvegarde, retour au menu). */
   private slot = 0
+  /** MULTI — l'adresse rejointe et son nom, pour le signet de « REPRENDRE ». Vides en solo. */
+  private serverUrl: string | undefined
+  private serverNom = ''
   /**
    * ON QUITTE VERS LES VALLÉES, et on attend que le disque ait fini.
    *

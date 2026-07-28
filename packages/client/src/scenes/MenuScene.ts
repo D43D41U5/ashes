@@ -27,6 +27,7 @@ import { mountMenu, type MenuHandle } from './ui/menu-dom'
 import { clearSlot, listSlots, type SlotMeta } from '../worker/persistence-store'
 import { SLOT_COUNT, seedValide, slotValide, VEILLEE_SEED } from '../worker/mondes'
 import { clearFog } from '../render/fog'
+import { lireDerniereMulti } from '../derniere-partie'
 import type { WorldSceneData } from './WorldScene'
 
 export class MenuScene extends Phaser.Scene {
@@ -74,7 +75,7 @@ export class MenuScene extends Phaser.Scene {
       .catch(() => new Array<SlotMeta | null>(SLOT_COUNT).fill(null))
       .then((slots) => {
         if (this.parti) return
-        this.menu = mountMenu(slots, {
+        this.menu = mountMenu(slots, lireDerniereMulti(), {
           // LA SEED VOYAGE AVEC LA REPRISE, alors qu'une sauvegarde lisible porte la sienne.
           // Elle sert au SEUL cas où la case ne se relit pas : format de sauvegarde incompatible
           // (une bosse de `SAVE_FORMAT_VERSION`) ou enregistrement corrompu. `boot()` régénère

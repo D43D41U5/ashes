@@ -3362,8 +3362,9 @@ const SCENARIOS = {
       menuOpen: window.__BRAISES__.scene.registry.get('menuOpen'),
     }))
     console.log(`après 2ᵉ ESC : ${JSON.stringify(closed)}`)
-    // 6 règles de clic, 10 touches — les longueurs de CLICKS et KEYS dans `ui/pause-menu.ts`.
-    if (open.display !== 'flex' || open.clicks !== 6 || open.keys !== 10 || closed.display !== 'none') {
+    // 6 règles de clic ; les touches sont DÉRIVÉES de `ACTIONS` (14) + la ceinture = 15 lignes.
+    // Ce nombre garde surtout que le tableau se peint : vide, il tomberait à 0 sans rien dire.
+    if (open.display !== 'flex' || open.clicks !== 6 || open.keys !== 15 || closed.display !== 'none') {
       console.error(`!! LE MENU PAUSE NE MARCHE PAS : ouvert ${JSON.stringify(open)} / fermé ${JSON.stringify(closed)}`)
     }
     return { open, closed }
@@ -3404,8 +3405,39 @@ const SCENARIOS = {
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
     await page.click('.pm-quit')
-    await page.waitForFunction(() => document.querySelectorAll('.mw-row').length > 0, null, { timeout: 30000 })
+    await page.waitForFunction(() => document.querySelector('.bm-menu'), null, { timeout: 30000 })
     await page.waitForTimeout(400)
+
+    // ── 1bis. L'ACCUEIL — trois entrées, et « REPRENDRE » qui NOMME la partie qu'on vient de
+    //    quitter. C'est la panne d'origine : une porte qui reprenait sans rien dire.
+    const accueil = await page.evaluate(() => ({
+      entrees: [...document.querySelectorAll('.bm-e-titre')].map((e) => e.textContent),
+      reprendre: document.querySelector('.bm-entree[data-reprendre] .bm-e-sous')?.textContent ?? '',
+    }))
+    console.log(`accueil : ${JSON.stringify(accueil)}`)
+    await page.screenshot({ path: `${OUT}/accueil-principal.png` })
+    if (accueil.entrees[0] !== 'REPRENDRE' || !/jour \d+ · seed 2026/.test(accueil.reprendre)) {
+      console.error(`!! « REPRENDRE » NE DIT PAS QUELLE PARTIE : ${JSON.stringify(accueil)}`)
+    }
+    if (!accueil.entrees.includes('JOUER') || !accueil.entrees.includes('OPTIONS')) {
+      console.error(`!! L'ACCUEIL N'A PAS SES TROIS ENTRÉES : ${JSON.stringify(accueil.entrees)}`)
+    }
+
+    // ── 1ter. JOUER → deux tuiles → SEUL mène à la liste des vallées.
+    const auxVallees = async () => {
+      await page.click('.bm-entree[data-go="jouer"]')
+      await page.waitForTimeout(200)
+      await page.click('.bm-tuile[data-go="vallees"]')
+      await page.waitForTimeout(250)
+    }
+    await page.click('.bm-entree[data-go="jouer"]')
+    await page.waitForTimeout(250)
+    const tuiles = await page.evaluate(() => [...document.querySelectorAll('.bm-t-titre')].map((e) => e.textContent))
+    console.log(`tuiles de JOUER : ${JSON.stringify(tuiles)}`)
+    await page.screenshot({ path: `${OUT}/accueil-jouer.png` })
+    if (tuiles.length !== 2) console.error(`!! JOUER N'A PAS DEUX TUILES : ${JSON.stringify(tuiles)}`)
+    await page.click('.bm-tuile[data-go="vallees"]')
+    await page.waitForTimeout(250)
 
     const cases = () =>
       page.evaluate(() =>
@@ -3472,8 +3504,9 @@ const SCENARIOS = {
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
     await page.click('.pm-quit')
-    await page.waitForFunction(() => document.querySelectorAll('.mw-row').length > 0, null, { timeout: 30000 })
+    await page.waitForFunction(() => document.querySelector('.bm-menu'), null, { timeout: 30000 })
     await page.waitForTimeout(400)
+    await auxVallees()
     const apresFondation = await cases()
     console.log(`après fondation : ${JSON.stringify(apresFondation)}`)
     await page.screenshot({ path: `${OUT}/accueil-deux-vallees.png` })
@@ -3505,8 +3538,9 @@ const SCENARIOS = {
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
     await page.click('.pm-quit')
-    await page.waitForFunction(() => document.querySelectorAll('.mw-row').length > 0, null, { timeout: 30000 })
+    await page.waitForFunction(() => document.querySelector('.bm-menu'), null, { timeout: 30000 })
     await page.waitForTimeout(400)
+    await auxVallees()
     const apresFresh = await cases()
     console.log(`après ?fresh sur la case 2 : ${JSON.stringify(apresFresh)}`)
     if (apresFresh[1]?.nom !== 'VALLÉE 2') {
@@ -3545,7 +3579,55 @@ const SCENARIOS = {
     if (apresEffacement[1]?.plein) console.error(`!! LA VALLÉE EFFACÉE EST TOUJOURS LÀ`)
     if (!apresEffacement[0]?.plein) console.error(`!! EFFACER UNE VALLÉE A EMPORTÉ L'AUTRE`)
 
-    return { apresSortie, semee, apresFondation, rouverte, apresFresh, apresEffacement }
+    // ── 6. LES OPTIONS — le son, et surtout LES TOUCHES. On rebinde pour de vrai et on vérifie
+    //    que ça tient : c'est le seul système du client dont une erreur rend le jeu injouable
+    //    sans rien afficher.
+    await page.click('[data-go="accueil"]')
+    await page.waitForTimeout(200)
+    await page.click('.bm-entree[data-go="options"]')
+    await page.waitForTimeout(300)
+    const options = await page.evaluate(() => ({
+      lignes: document.querySelectorAll('.op-ligne').length,
+      volume: document.querySelector('.op-vol')?.value ?? '',
+      // `avancer` est livré avec ses trois alias : ils DOIVENT survivre tant qu'on n'y touche pas.
+      avancer: document.querySelector('[data-bind="moveUp"]')?.textContent?.trim() ?? '',
+      // ÉCHAP ne se rebinde pas : sa case n'est pas un bouton.
+      echapFige: Boolean(document.querySelector('.op-touche.op-fige')),
+    }))
+    console.log(`options : ${JSON.stringify(options)}`)
+    await page.screenshot({ path: `${OUT}/accueil-options.png` })
+    if (!options.lignes || !options.avancer.includes('·') || !options.echapFige) {
+      console.error(`!! L'ÉCRAN DES OPTIONS NE VA PAS : ${JSON.stringify(options)}`)
+    }
+
+    // REBINDER : on clique la case, on presse K, et la ligne doit se ramener à cette seule touche.
+    await page.click('[data-bind="moveUp"]')
+    await page.waitForTimeout(150)
+    const enAttente = await page.evaluate(() => document.querySelector('[data-bind="moveUp"]')?.textContent?.trim() ?? '')
+    await page.screenshot({ path: `${OUT}/accueil-capture.png` })
+    await page.keyboard.press('k')
+    await page.waitForTimeout(250)
+    const apresRebind = await page.evaluate(() => ({
+      avancer: document.querySelector('[data-bind="moveUp"]')?.textContent?.trim() ?? '',
+      // Le réglage est au disque : c'est lui que le jeu relira au prochain démarrage.
+      disque: localStorage.getItem('braises.touches') ?? '',
+    }))
+    console.log(`en attente : « ${enAttente} » → après K : ${JSON.stringify(apresRebind)}`)
+    if (!enAttente.includes('pressez') || apresRebind.avancer !== 'K' || !apresRebind.disque.includes('moveUp')) {
+      console.error(`!! LE REBIND N'A PAS PRIS : ${JSON.stringify({ enAttente, apresRebind })}`)
+    }
+
+    // …et RÉINITIALISER rend les alias d'origine : un réglage qu'on ne sait pas défaire est un piège.
+    await page.click('[data-rebind-reset="moveUp"]')
+    await page.waitForTimeout(200)
+    const apresReset = await page.evaluate(() => document.querySelector('[data-bind="moveUp"]')?.textContent?.trim() ?? '')
+    console.log(`après réinitialisation : « ${apresReset} »`)
+    if (apresReset !== options.avancer) {
+      console.error(`!! RÉINITIALISER NE REND PAS LES ALIAS : « ${apresReset} » ≠ « ${options.avancer} »`)
+    }
+    await page.screenshot({ path: `${OUT}/accueil-options-fin.png` })
+
+    return { apresSortie, semee, apresFondation, rouverte, apresFresh, apresEffacement, options, apresRebind }
   },
 
   async juice(page) {
@@ -4391,6 +4473,163 @@ const SCENARIOS = {
       if (ruines === 0) console.error('!! aucun mur ruiné : la Ferme ne bascule pas sur son appareil de pierre')
     }
     return { cibles: cibles.length, structures }
+  },
+
+  /**
+   * L'ÉCHELLE VERTICALE — le joueur, l'arbre, le gros bois, à la MÊME mesure.
+   *
+   * Question d'Alexis (2026-07-28) : « la taille des arbres par rapport au sprite du joueur ».
+   * Elle ne se lit pas dans le code, parce que la hauteur d'un arbre n'y est écrite NULLE PART :
+   * c'est la somme émergente de trois nombres posés dans deux fichiers (hauteur du tronc dans
+   * `BootScene`, hauteur du houppier dans `BootScene`, ancrage `py − 16` dans `snapshot-view`).
+   * On la relève donc SUR LE RENDU, en pixels monde, telle que Phaser la dessine.
+   *
+   * La silhouette d'un arbre = de ses pieds (bas du tronc) au sommet de son houppier. Le
+   * recouvrement des deux sprites est mesuré, lui aussi : il est censé valoir 6 px « sous le
+   * sommet du tronc » — pour le gros bois, dont le fût fait 24 px et non 22, le MÊME `py − 16`
+   * en donne 8. C'est ce qu'on vient prouver.
+   *
+   * Exige `--dev` (le TP n'est armé que là).
+   */
+  async echelle(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1500)
+
+    const tp = async (x, y) => {
+      await page.evaluate(({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }), { px: x, py: y })
+      await page.waitForTimeout(1400)
+    }
+    // Plein jour : on vient JUGER DES TAILLES, pas de la nuit. Têtu (cf. `feeling`).
+    for (let essai = 0; essai < 4; essai++) {
+      await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+      await page.waitForTimeout(500)
+      const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1)
+      if (Math.abs(lu - 11) < 0.3) break
+    }
+
+    /**
+     * Ce que le rendu dessine VRAIMENT, en pixels monde. Les pools sont privés en TypeScript et
+     * publics à l'exécution : on lit `nodePool`/`crownPool` plutôt que de refaire le calcul —
+     * refaire le calcul, ce serait tester ma copie, pas le jeu.
+     */
+    const MESURE = (prefixe) => {
+      const sc = window.__BRAISES__.scene
+      const T = 16
+      const vivants = (p) => (p ?? []).filter((s) => s && s.visible)
+      const troncs = vivants(sc.view?.nodePool).filter((s) => s.texture.key.startsWith(prefixe))
+      const houppiers = vivants(sc.view?.crownPool)
+      // Le houppier est posé sur le MÊME x que son tronc (`px`, tressaillement compris) :
+      // c'est l'appariement exact, sans deviner.
+      const t = troncs[0]
+      if (!t) return null
+      const c = houppiers.find((h) => Math.abs(h.x - t.x) < 0.01)
+      const sommet = c ? c.y - c.displayHeight : t.y - t.displayHeight
+      return {
+        texture: t.texture.key,
+        troncPx: Math.round(t.displayHeight * 100) / 100,
+        houppierPx: c ? Math.round(c.displayHeight * 100) / 100 : 0,
+        largeurPx: Math.round(Math.max(t.displayWidth, c?.displayWidth ?? 0) * 100) / 100,
+        // La silhouette entière : des pieds au sommet.
+        hautPx: Math.round((t.y - sommet) * 100) / 100,
+        hautTuiles: Math.round(((t.y - sommet) / T) * 100) / 100,
+        // Combien le houppier mord sur le haut du tronc. Le commentaire du code dit 6.
+        recouvrementPx: c ? Math.round((c.y - (t.y - t.displayHeight)) * 100) / 100 : null,
+        arbresVus: troncs.length,
+      }
+    }
+    const JOUEUR = () => {
+      const sc = window.__BRAISES__.scene
+      const s = sc.playerSprite
+      return {
+        texture: s.texture.key,
+        hautPx: Math.round(s.displayHeight * 100) / 100,
+        hautTuiles: Math.round((s.displayHeight / 16) * 100) / 100,
+        largeurPx: Math.round(s.displayWidth * 100) / 100,
+      }
+    }
+
+    /** Se planter JUSTE À CÔTÉ d'un nœud du type voulu, pour l'avoir à l'écran avec soi. */
+    const aCoteDun = async (type) => {
+      const cible = await page.evaluate((ty) => {
+        const sc = window.__BRAISES__.scene
+        const p = sc.registry.get('playerPos')
+        const cands = (sc.view?.nodes ?? []).filter((n) => n.type === ty)
+        if (!cands.length) return null
+        // Le plus proche : on veut qu'il soit DÉJÀ streamé, pas au bout du monde.
+        cands.sort((a, b) => (a.tx - p.x) ** 2 + (a.ty - p.y) ** 2 - ((b.tx - p.x) ** 2 + (b.ty - p.y) ** 2))
+        return { tx: cands[0].tx, ty: cands[0].ty }
+      }, type)
+      if (!cible) return null
+      // DEUX tuiles à l'est et une au sud : côte à côte, et le joueur DEVANT le houppier
+      // (au nord, il passerait derrière — le tri Y est juste, mais on ne verrait rien).
+      await tp(cible.tx + 2.5, cible.ty + 1.5)
+      return cible
+    }
+
+    const lignes = []
+    const releve = {}
+
+    // ── L'ARBRE ORDINAIRE ──
+    const ordinaire = await aCoteDun('tree')
+    if (!ordinaire) {
+      console.error('!! aucun arbre streamé autour du spawn — rien à mesurer')
+    } else {
+      await page.waitForTimeout(600)
+      releve.joueur = await page.evaluate(JOUEUR)
+      releve.arbre = await page.evaluate(MESURE, 'nd-tree_trunk')
+      await page.screenshot({ path: `${OUT}/echelle-arbre.png` })
+    }
+
+    // ── LE GROS BOIS (Vieille Sylve) ──
+    const sylve = await page.evaluate(() => {
+      const z = (window.__BRAISES__.scene.map?.zones ?? []).find((v) => v.kind === 'sylve')
+      return z ? { x: z.x + z.w / 2, y: z.y + z.h / 2, nom: z.name ?? 'sylve' } : null
+    })
+    if (!sylve) {
+      console.error('!! pas de Vieille Sylve sur la carte : le gros bois ne se mesure pas')
+    } else {
+      await tp(sylve.x, sylve.y)
+      await page.waitForTimeout(900)
+      const vieux = await aCoteDun('old_tree')
+      if (!vieux) console.error(`!! aucun old_tree dans « ${sylve.nom} » — le gros bois ne se mesure pas`)
+      else {
+        await page.waitForTimeout(600)
+        releve.grosBois = await page.evaluate(MESURE, 'nd-old_tree_trunk')
+        await page.screenshot({ path: `${OUT}/echelle-gros-bois.png` })
+      }
+    }
+
+    // ── LE RELEVÉ ──
+    const j = releve.joueur
+    const rang = (nom, m) => {
+      if (!m || !j) return
+      lignes.push(
+        `${nom.padEnd(13)} ${String(m.hautPx).padStart(6)} px  ${String(m.hautTuiles).padStart(5)} tuiles  ` +
+          `larg. ${String(m.largeurPx).padStart(5)} px  ×${(m.hautPx / j.hautPx).toFixed(2)} le joueur` +
+          (m.recouvrementPx !== null && m.recouvrementPx !== undefined ? `  (houppier sur tronc : ${m.recouvrementPx} px)` : ''),
+      )
+    }
+    if (j) {
+      lignes.push(`${'joueur'.padEnd(13)} ${String(j.hautPx).padStart(6)} px  ${String(j.hautTuiles).padStart(5)} tuiles  larg. ${String(j.largeurPx).padStart(5)} px  ×1,00`)
+    }
+    rang('arbre', releve.arbre)
+    rang('gros bois', releve.grosBois)
+    for (const l of lignes) console.log(`  ${l}`)
+
+    // L'INVARIANT QU'ON VIENT CHERCHER : le recouvrement houppier/tronc est-il le MÊME pour les
+    // deux arbres ? `snapshot-view` pose un `py − 16` unique alors que les deux fûts n'ont pas la
+    // même hauteur — si les deux nombres diffèrent, l'ancrage est ÉCRIT, pas DÉRIVÉ.
+    const a = releve.arbre?.recouvrementPx
+    const b = releve.grosBois?.recouvrementPx
+    if (a !== null && a !== undefined && b !== null && b !== undefined && a !== b) {
+      console.error(
+        `!! L'ANCRAGE DU HOUPPIER N'EST PAS DÉRIVÉ : il mord ${a} px sur le tronc de l'arbre et ${b} px sur celui du gros bois ` +
+          `— même « py − 16 » pour deux fûts de hauteurs différentes (22 et 24 px).`,
+      )
+    }
+    console.log(`\ncaptures → ${OUT}/echelle-arbre.png, ${OUT}/echelle-gros-bois.png`)
+    return releve
   },
 
   async chene(page) {

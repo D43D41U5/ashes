@@ -12,20 +12,28 @@
  * que le voile de mort / la stèle : fond chaud, sourcil braise, titre espacé, filet.
  */
 import { ensureGameFont, GAME_FONT } from './game-font'
+import { ACTIONS, keymapEffectif } from '../world/keymap-perso'
+import { libelleTouches } from '../world/touches'
 
-/** Une ligne du tableau des contrôles : un libellé, la ou les touches. */
-const KEYS: [string, string][] = [
-  ['Se déplacer', 'ZQSD · WASD · flèches'],
-  ['Courir · Marcher lentement', 'SHIFT · C'],
-  ['Parer (maintenu)', 'ESPACE'],
-  ['Interagir (cueillir, ouvrir)', 'F'],
-  ['Tourner ce qu’on pose', 'A · E'],
-  ['Ceinture (objet en main)', '1 – 6'],
-  ['Jeter ce qu’on tient', 'G'],
-  ['Personnage (sac, artisanat)', 'TAB'],
-  ['Carte · Chronique', 'M · J'],
-  ['Couper le son', 'N'],
-]
+/**
+ * LE TABLEAU DES TOUCHES SE DÉRIVE, IL NE SE RÉCITE PLUS.
+ *
+ * Il était une liste écrite à la main — « Se déplacer · ZQSD · WASD · flèches ». Elle disait
+ * vrai tant que personne ne pouvait rien changer ; depuis l'écran des réglages, elle aurait
+ * MENTI dès le premier rebind, et c'est le pire endroit pour mentir : c'est là qu'on vient
+ * quand on ne sait plus quelle touche fait quoi. Elle vient donc de la même source que le jeu
+ * (`keymapEffectif`) et se recalcule à CHAQUE ouverture — un réglage changé en cours de partie
+ * se lit tout de suite.
+ *
+ * Y RESTE EN DUR ce que `KEYMAP` ne porte pas : la ceinture (`BELT_BINDINGS`, six touches pour
+ * une seule notion — les lister une par une noierait le tableau).
+ */
+function lignesDeTouches(): [string, string][] {
+  const effectif = keymapEffectif()
+  const out: [string, string][] = ACTIONS.map((a) => [a.libelle, libelleTouches(effectif[a.action])])
+  out.push(['Ceinture (objet en main)', '1 – 6'])
+  return out
+}
 
 /** La règle du clic gauche — « l'objet en main décide ». La moitié invisible du jeu.
  *  Colonne de droite tenue COURTE (≤ 34 signes) : en mono, au-delà, la ligne se casse en
@@ -129,7 +137,7 @@ export function createPauseMenu({ onResume, getVolume, onVolume, onQuit }: Pause
     <div class="pm-sect">LE CLIC GAUCHE — L’OBJET EN MAIN DÉCIDE</div>
     <div class="pm-table">${CLICKS.map((c) => row(c, 'pm-click')).join('')}</div>
     <div class="pm-sect">LES TOUCHES</div>
-    <div class="pm-table">${KEYS.map((k) => row(k)).join('')}</div>
+    <div class="pm-table pm-keys"></div>
     <div class="pm-sect">LE SON</div>
     <div class="pm-sound">
       <input type="range" class="pm-vol" min="0" max="100" step="1" aria-label="Volume">
@@ -148,6 +156,16 @@ export function createPauseMenu({ onResume, getVolume, onVolume, onQuit }: Pause
   // est ÉCRITE avant qu'on parte (WorldScene attend le `saved` de l'hôte). Le bouton reste
   // fantôme, à côté de REPRENDRE — le geste principal doit rester le plus lumineux des deux.
   root.querySelector<HTMLElement>('.pm-quit')!.addEventListener('click', () => onQuit())
+
+  // Repeint le tableau depuis le jeu de touches EFFECTIF. Appelé à chaque ouverture : c'est le
+  // seul moment qui compte, et ça coûte quinze lignes de HTML.
+  const tableKeys = root.querySelector<HTMLElement>('.pm-keys')!
+  const peindreTouches = (): void => {
+    tableKeys.innerHTML = lignesDeTouches()
+      .map((l) => row(l))
+      .join('')
+  }
+  peindreTouches()
 
   // LE CURSEUR DE SON : posé au volume courant, il règle le volume maître en direct (persisté
   // par le moteur audio). `onVolume` route vers WorldScene (le moteur y vit) via le registre.
@@ -171,6 +189,7 @@ export function createPauseMenu({ onResume, getVolume, onVolume, onQuit }: Pause
       if (open === shown) return
       shown = open
       if (open) {
+        peindreTouches() // un réglage changé depuis la dernière ouverture doit se lire ici
         root.style.display = 'flex'
         void root.offsetWidth // reflow : la transition d'opacité ne part pas depuis display:none
         root.classList.add('pm-on')

@@ -101,6 +101,31 @@ export class SoundEngine {
   }
 }
 
+/**
+ * LES RÉGLAGES DE SON, HORS PARTIE — l'écran des Options du menu principal doit pouvoir les
+ * lire et les écrire alors qu'aucun `SoundEngine` ne vit (rien ne joue encore). Les mêmes clés,
+ * donc : le curseur du menu et celui de la partie règlent la MÊME chose, et un moteur créé plus
+ * tard relit exactement ce qui a été posé ici (voir le constructeur).
+ */
+export function lireReglagesSon(): { volume: number; muted: boolean } {
+  const brut = readStorage(VOLUME_KEY)
+  const v = Number(brut)
+  return {
+    volume: brut !== null && Number.isFinite(v) ? clamp01(v) : 1,
+    muted: readStorage(MUTE_KEY) === '1',
+  }
+}
+
+/** Pose le volume persisté (0..1). Sans effet sur un moteur en vol : celui-là passe par le registre. */
+export function ecrireVolume(v: number): void {
+  writeStorage(VOLUME_KEY, String(clamp01(v)))
+}
+
+/** Pose la sourdine persistée. */
+export function ecrireMute(muted: boolean): void {
+  writeStorage(MUTE_KEY, muted ? '1' : '0')
+}
+
 function readStorage(key: string): string | null {
   try {
     return localStorage.getItem(key)

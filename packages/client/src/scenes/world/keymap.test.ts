@@ -59,7 +59,7 @@ describe('keymap', () => {
     // des alias, pas la couverture des dispositions. Le raisonnement de fond est dans
     // `keymap.ts`, sur `moveLeft`.
     expect(Object.keys(KEYMAP).sort()).toEqual(
-      ['block', 'dropHeld', 'forage', 'moveDown', 'moveLeft', 'moveRight', 'moveUp', 'rotateLeft', 'rotateRight', 'sneak', 'sprint', 'toggleInventory', 'toggleJournal', 'toggleMap', 'toggleMenu'].sort(),
+      ['block', 'dropHeld', 'forage', 'moveDown', 'moveLeft', 'moveRight', 'moveUp', 'rotateLeft', 'rotateRight', 'sneak', 'sprint', 'toggleInventory', 'toggleJournal', 'toggleMap', 'toggleMenu', 'toggleMute'].sort(),
     )
   })
 })

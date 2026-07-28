@@ -22,7 +22,8 @@ import Phaser from 'phaser'
 import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
 import { aimAt, clickToAction, holdHarvest, type AimTarget, type BuildContext, type HandContext } from './aim'
-import { BELT_BINDINGS, KEYMAP } from './keymap'
+import { BELT_BINDINGS } from './keymap'
+import { keymapEffectif } from './keymap-perso'
 
 export interface InputDeps {
   sendAction(action: PlayerAction): void
@@ -97,7 +98,18 @@ function nearestContainer(deps: InputDeps): { kind: 'structure' | 'corpse'; id: 
 export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindings {
   const kb = scene.input.keyboard!
   const K = Phaser.Input.Keyboard.KeyCodes as Record<string, number>
-  const grab = (names: readonly string[]): Phaser.Input.Keyboard.Key[] => names.map((n) => kb.addKey(K[n]!, false))
+  /**
+   * LE JEU DE TOUCHES EFFECTIF — le livré, écrasé par ce que le joueur a réglé (`keymap-perso`).
+   * Lu UNE fois, à la création de la scène : c'est pourquoi un rebind fait recréer les liaisons
+   * (voir `recableTouches`), plutôt que de demander au joueur de relancer sa partie.
+   */
+  const TOUCHES = keymapEffectif()
+  /**
+   * Un nom que `KeyCodes` ne connaît pas ne doit RIEN casser : `addKey(undefined)` jetterait, et
+   * le jeu entier tomberait pour un réglage corrompu à la main dans le stockage. On saute.
+   */
+  const grab = (names: readonly string[]): Phaser.Input.Keyboard.Key[] =>
+    names.filter((n) => K[n] !== undefined).map((n) => kb.addKey(K[n]!, false))
   /**
    * LE CHAMP DE RECHERCHE A-T-IL LE CLAVIER ? Si oui, plus AUCUNE touche ne part
    * au jeu : taper « hache » dans le panneau de craft ferait sinon marcher le
@@ -108,16 +120,22 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   /** Câble un handler `down` sur chaque alias d'une action (KEYMAP). MUET tant que
    *  le champ de recherche a le clavier. */
   const onDown = (names: readonly string[], fn: () => void): void => {
-    for (const n of names) kb.addKey(K[n]!, false).on('down', () => {
-      if (typing()) return
-      fn()
-    })
+    for (const n of names) {
+      if (K[n] === undefined) continue
+      kb.addKey(K[n]!, false).on('down', () => {
+        if (typing()) return
+        fn()
+      })
+    }
   }
   /** …sauf TAB, qui doit TOUJOURS pouvoir refermer l'écran. Une touche de sortie
    *  qu'on peut se retrouver à ne plus pouvoir presser est un piège : on tape dans
    *  la recherche, on veut fermer le sac, et plus rien ne répond. */
   const onDownAlways = (names: readonly string[], fn: () => void): void => {
-    for (const n of names) kb.addKey(K[n]!, false).on('down', fn)
+    for (const n of names) {
+      if (K[n] === undefined) continue
+      kb.addKey(K[n]!, false).on('down', fn)
+    }
   }
   // Le pointeur en monde PLAT, puis corrigé de l'élévation : la tuile réellement
   // SOUS le curseur, pas celle du sol non déformé (spec relief-continu §4.4).
@@ -128,18 +146,20 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   }
 
   const keys = {
-    up: grab(KEYMAP.moveUp),
-    down: grab(KEYMAP.moveDown),
-    left: grab(KEYMAP.moveLeft),
-    right: grab(KEYMAP.moveRight),
+    up: grab(TOUCHES.moveUp),
+    down: grab(TOUCHES.moveDown),
+    left: grab(TOUCHES.moveLeft),
+    right: grab(TOUCHES.moveRight),
   }
-  const sprintKeys = grab(KEYMAP.sprint)
-  const sneakKeys = grab(KEYMAP.sneak)
+  const sprintKeys = grab(TOUCHES.sprint)
+  const sneakKeys = grab(TOUCHES.sneak)
   // La garde est une STANCE maintenue (comme sprint/sneak). On CAPTURE l'espace :
   // sans ça, le navigateur peut faire défiler la page ou (re)cliquer un bouton DOM
   // qui a le focus — une garde qui scrolle l'écran n'est pas une garde.
-  const blockKeys = grab(KEYMAP.block)
-  kb.addCapture(KEYMAP.block[0]!)
+  const blockKeys = grab(TOUCHES.block)
+  // Une action peut n'avoir PLUS de touche (le joueur l'a donnée à une autre) : on ne capture
+  // alors rien. Sans cette garde, `addCapture(undefined)` tuait la scène au démarrage.
+  if (TOUCHES.block[0]) kb.addCapture(TOUCHES.block[0])
 
   // CE QUE LE CLIC POSERAIT. Deux sources, une seule notion : une CONSTRUCTION armée
   // au panneau (marteau en main, lue dans le HUD), OU le FEU DE CAMP qu'on tient dans
@@ -185,7 +205,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
    * l'allègement d'un porteur en fuite. La sim valide : rien en main, rien ne
    * tombe. Un clic gauche sur une pile la RAMASSE (voir `clickToAction`).
    */
-  onDown(KEYMAP.dropHeld, () => {
+  onDown(TOUCHES.dropHeld, () => {
     deps.sendAction({ type: 'drop_held' })
   })
 
@@ -193,8 +213,8 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   // navigateur déplace le focus hors du canvas. À l'OUVERTURE, on choisit le
   // conteneur à looter — le plus proche à portée, un cadavre primant sur un
   // coffre (on loote ce qu'on vient de tuer) ; à la FERMETURE on l'oublie.
-  kb.addCapture(KEYMAP.toggleInventory[0])
-  onDownAlways(KEYMAP.toggleInventory, () => {
+  if (TOUCHES.toggleInventory[0]) kb.addCapture(TOUCHES.toggleInventory[0])
+  onDownAlways(TOUCHES.toggleInventory, () => {
     const opening = !getHud(scene.registry, 'characterMenuOpen')
     setHud(scene.registry, 'characterMenuOpen', opening)
     // TAB rouvre TOUJOURS sur PERSONNAGE (l'usage premier) — pas sur les métiers ni sur la
@@ -219,10 +239,10 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   // J : le journal. M : la CARTE — devenue un ONGLET de l'écran personnage (décision
   // d'Alexis, 2026-07-25). M ouvre donc l'écran DIRECTEMENT dessus, et le referme si l'on
   // y est déjà. Depuis un autre onglet, M bascule sur la carte sans refermer.
-  onDown(KEYMAP.toggleJournal, () => {
+  onDown(TOUCHES.toggleJournal, () => {
     setHud(scene.registry, 'journalOpen', !getHud(scene.registry, 'journalOpen'))
   })
-  onDown(KEYMAP.toggleMap, () => {
+  onDown(TOUCHES.toggleMap, () => {
     const onMap = Boolean(getHud(scene.registry, 'mapOpen'))
     setHud(scene.registry, 'characterMenuOpen', !onMap)
     setHud(scene.registry, 'characterTab', onMap ? 'perso' : 'carte')
@@ -231,7 +251,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     setHud(scene.registry, 'openContainer', null)
   })
   // ESC : le menu PAUSE. WorldScene fige/reprend l'hôte selon `menuOpen` (le monde solo se gèle).
-  onDown(KEYMAP.toggleMenu, () => {
+  onDown(TOUCHES.toggleMenu, () => {
     setHud(scene.registry, 'menuOpen', !getHud(scene.registry, 'menuOpen'))
   })
 
@@ -378,7 +398,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
    * Restreint au métier `foraging` : viser un arbre/rocher avec E ne fait rien (leur geste
    * est le clic maintenu). La sim revalide portée, stock et métier.
    */
-  onDownAlways(KEYMAP.forage, () => {
+  onDownAlways(TOUCHES.forage, () => {
     if (typing()) return // E va au champ de recherche, pas au monde
     // E REBASCULE le modal du feu : ouvert → on le referme (spec feu-station S17).
     if (getHud(scene.registry, 'openFire')) {
