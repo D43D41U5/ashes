@@ -9,9 +9,12 @@
 import {
   BALANCE,
   CHRONICLE_EVENT_TYPES,
+  collectNodeDeltas,
+  createNodeShadow,
   deserializeSim,
   drainEvents,
   getGameTime,
+  seedNodeShadow,
   serializeSim,
   step,
   type MoveInput,
@@ -21,7 +24,7 @@ import {
   PROTOCOL_VERSION,
   type ClientToHost,
   type HostToClient,
-  type NodeDelta,
+  type NodeShadow,
 } from '@braises/sim'
 import { createVeillee, LOAD_PHASES } from './veillee'
 import { loadSlot, saveSlot } from './persistence-store'
@@ -56,29 +59,22 @@ let playerInput: Pick<MoveInput, 'dx' | 'dy' | 'sprint' | 'sneak' | 'block'> = {
 let lastProcessedInput = 0
 /** Une action au plus par tick (spec village R1) — la dernière reçue gagne. */
 let pendingAction: PlayerAction | undefined
-/** Ombre du stock par nœud (dernier envoyé) — état du TRANSPORT, pas du /sim.
- * Permet de ne transmettre que les nœuds dont le stock a changé (deltas),
- * sans cloner les ~60k nœuds à chaque tick. Rempli à l'envoi de la liste
- * complète (ready). */
-const nodeStockShadow = new Map<number, number>()
-
-/** Diff local (zéro clone) : nœuds dont le stock a bougé depuis le dernier tick. Un nœud
- *  qui tombe à `stock 0` a pu DÉRIVER (spec recolte-vivante) : on joint alors sa position
- *  (l'épuisement est le seul instant où un nœud se déplace) pour que le client le déménage. */
-function collectNodeDeltas(state: SimState): NodeDelta[] {
-  const deltas: NodeDelta[] = []
-  for (const n of state.nodes) {
-    if (nodeStockShadow.get(n.id) !== n.stock) {
-      nodeStockShadow.set(n.id, n.stock)
-      deltas.push(
-        n.stock === 0
-          ? { id: n.id, stock: 0, tx: n.tx, ty: n.ty, regrowAt: n.regrowAt }
-          : { id: n.id, stock: n.stock },
-      )
-    }
-  }
-  return deltas
-}
+/**
+ * Ombre du stock par nœud (dernier envoyé) — état du TRANSPORT, pas du /sim : elle permet
+ * de ne transmettre que les nœuds dont le stock a changé, sans cloner les ~125 000 nœuds à
+ * chaque tick. Amorcée à l'envoi de la liste complète (`ready`).
+ *
+ * Le DIFF lui-même vient de `/sim` (`node-shadow.ts`). Il vivait ici en COPIE de celui du
+ * serveur — identiques à un bloc près, et ce bloc-là faisait déjà diverger le solo du multi
+ * (le serveur réconciliait les nœuds détruits par la Cendre, pas nous). Une seule
+ * implémentation, testée, pour les deux hôtes.
+ *
+ * Ce que ça coûtait ICI, dans le mode réellement joué — MESURÉ sur le monde de la Veillée
+ * (125 661 nœuds) : **9,6 ms de CPU par tick, 19 % du budget de 50 ms et TROIS FOIS le prix
+ * de `step()` lui-même**, vingt fois par seconde, pour émettre zéro delta. Le tableau typé
+ * ramène ça à ~1,0 ms (×9) et l'empreinte de 3,6 Mio à 0,5 Mio.
+ */
+let nodeStockShadow: NodeShadow = createNodeShadow([])
 
 function tick(): void {
   if (!sim) return
@@ -102,7 +98,7 @@ function tick(): void {
     structures: sim.structures,
     villages: sim.villages,
     functions: sim.functions,
-    nodeDeltas: collectNodeDeltas(sim),
+    nodeDeltas: collectNodeDeltas(sim.nodes, nodeStockShadow),
     npcs: sim.npcs,
     monsters: sim.monsters,
     corpses: sim.corpses,
@@ -199,8 +195,9 @@ async function boot(): Promise<void> {
   }
 
   // Liste complète des nœuds envoyée UNE fois ; on amorce l'ombre pour que le premier tick
-  // n'émette pas 60k deltas redondants.
-  for (const n of sim.nodes) nodeStockShadow.set(n.id, n.stock)
+  // n'émette pas 125k deltas redondants.
+  nodeStockShadow = createNodeShadow(sim.nodes)
+  seedNodeShadow(nodeStockShadow, sim.nodes)
   post({
     type: 'ready',
     protocolVersion: PROTOCOL_VERSION,

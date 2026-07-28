@@ -220,6 +220,9 @@ export { VEILLEE_SKELETON, VEILLEE_SITES } from './valley-veillee'
 
 // ─── Protocole hôte ⇄ client (transport-agnostique — Worker ou serveur) ───
 export { PROTOCOL_VERSION, CHAT_RADIUS_TILES, CHAT_MAX_LEN } from './protocol'
+// Le DIFF des stocks de nœuds : mécanique de protocole, partagée par les deux hôtes
+// (serveur LAN et worker Veillée) pour qu'ils ne puissent plus en diverger.
+export { collectNodeDeltas, createNodeShadow, seedNodeShadow, type NodeShadow } from './node-shadow'
 export type {
   ClientToHost,
   HostToClient,

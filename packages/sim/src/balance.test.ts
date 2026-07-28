@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, SLOTS, TERRAINS, TERRAIN_SCREE, TERRAIN_SNOW } from './balance'
-import { stackSize } from './items'
+import { BALANCE, FOOD_VALUES, ITEM_WEIGHT, SLOTS, SPOIL_CYCLES, TERRAINS, TERRAIN_SCREE, TERRAIN_SNOW } from './balance'
+import { stackSize, type ItemId } from './items'
 
 describe('les tailles de sac (spec inventaire R11)', () => {
   // Les `addItems` de la sim qui jettent leur reliquat le font À RAISON — parce que
@@ -61,5 +61,62 @@ describe('terrains d\'altitude alpins', () => {
     expect(TERRAIN_SNOW).toBe(10)
     expect(TERRAINS[TERRAIN_SNOW]!.walkable).toBe(true)
     expect(TERRAINS[TERRAIN_SNOW]!.speedFactor).toBeLessThan(1)
+  })
+})
+
+/**
+ * LES TABLES QUI DOIVENT SE RÉPONDRE.
+ *
+ * `balance.ts` est un fichier de DONNÉES, par décision de projet — et c'est très bien.
+ * Mais plusieurs de ses tables sont des `Partial<Record<ItemId, …>>` : y oublier une
+ * entrée ne casse rien, ne se voit pas, et retire silencieusement une règle du jeu.
+ * C'est déjà arrivé une fois, et le défaut est LIVE (voir ci-dessous).
+ *
+ * Ces gardes ne fixent aucun nombre — l'équilibrage reste une décision d'Alexis. Elles
+ * affirment seulement qu'une table ne peut pas oublier ce qu'une autre déclare.
+ */
+describe('les tables de balance se répondent (pas de trou silencieux)', () => {
+  /**
+   * TOUT ALIMENT DOIT POUVOIR POURRIR — sinon la promesse est cassée en silence.
+   *
+   * `SPOIL_CYCLES` le dit lui-même : « un objet absent de cette table ne pourrit pas ».
+   * Et son en-tête dit POURQUOI elle existe : le GDD §8 veut « une économie de flux, pas
+   * de stock ». Un aliment oublié ici est donc un aliment éternel — l'inverse exact de
+   * l'intention, et il vide de son sens le Grenier, dont tout l'intérêt est de RALENTIR
+   * la péremption.
+   *
+   * MESURÉ aujourd'hui : `legume` est le seul aliment absent de la table. C'est le plus
+   * conséquent des sept — le potager est la seule nourriture qu'on PRODUISE à l'échelle,
+   * et c'est aussi celle qui s'empile le plus (20 par case, contre 10 pour les baies).
+   *
+   * Le NOMBRE (en combien de cycles un légume s'avarie) est un arbitrage d'équilibrage,
+   * donc une décision d'Alexis — un tubercule qui se garde plus longtemps que des baies
+   * est parfaitement défendable, et ça change si la ferme est un stock viable. Je ne le
+   * tranche pas : je le NOMME ici pour qu'il cesse d'être invisible. Retirer `legume` de
+   * cette liste dès qu'il a sa valeur est le geste qui referme le trou.
+   */
+  const IMPERISSABLES_ASSUMES: readonly ItemId[] = ['legume']
+
+  it('tout aliment a une durée de péremption (hors exemption nommée)', () => {
+    const sansPeremption = (Object.keys(FOOD_VALUES) as ItemId[]).filter((i) => SPOIL_CYCLES[i] === undefined)
+    expect(sansPeremption.sort()).toEqual([...IMPERISSABLES_ASSUMES].sort())
+  })
+
+  it("l'exemption ne couvre que des aliments réels (garde de la garde)", () => {
+    // Sinon on pourrait « refermer » le trou en exemptant un item qui n'existe plus.
+    for (const i of IMPERISSABLES_ASSUMES) expect(FOOD_VALUES[i], `${i} n'est pas un aliment`).toBeDefined()
+  })
+
+  it('tout aliment a une valeur nutritive ET un poids', () => {
+    for (const i of Object.keys(FOOD_VALUES) as ItemId[]) {
+      expect(FOOD_VALUES[i], `${i} sans nutrition`).toBeGreaterThan(0)
+      expect(ITEM_WEIGHT[i], `${i} sans poids`).toBeGreaterThan(0)
+    }
+  })
+
+  it('rien ne périme sans être un aliment (une table ne déborde pas sur l\'autre)', () => {
+    for (const i of Object.keys(SPOIL_CYCLES) as ItemId[]) {
+      expect(FOOD_VALUES[i], `${i} périme mais ne nourrit pas`).toBeDefined()
+    }
   })
 })

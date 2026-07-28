@@ -5,3 +5,48 @@ allowBuilds:
   # Accélération native optionnelle de msgpackr (Colyseus) : le pur JS suffit et
   # évite une toolchain node-gyp/C++ dans le build et le Docker (résister à la complexité).
   msgpackr-extract: false
+
+# ── CORRECTIFS DE SÉCURITÉ TRANSITIFS ────────────────────────────────────────────
+# Trois avis de sécurité portaient sur des dépendances qu'on ne choisit pas : elles
+# arrivent SOUS Vite et ESLint. Aucune n'est exploitable ici (rien ne compile de CSS
+# hostile, rien ne passe de motif glob hostile à ESLint) et aucune ne part dans le
+# bundle de production — mais un `pnpm audit` rouge en permanence est un détecteur de
+# fumée qu'on a débranché : le jour où un vrai avis tombe, il se noie dans les trois
+# autres. On remonte donc au correctif, et on garde l'audit à zéro.
+#
+# La forme `paquet@<version>` ne réécrit QUE la plage vulnérable, et la CIBLE est bornée
+# à la même ligne de version majeure. Ce second point n'est pas un détail : écrite sans
+# borne haute, `brace-expansion@<1.1.16: '>=1.1.16'` a fait sauter `minimatch@3` (qui
+# demande `^1.1.7`) directement en **brace-expansion 5** — un bond de MAJEURE imposé en
+# douce à une dépendance transitive, sous le linter qui sert de garde-fou au projet.
+# Un correctif de sécurité qui change une majeure sans le dire est une dette, pas un
+# correctif. On reste donc dans la ligne : v1 va en v1, v5 va en v5.
+#
+# NB — ces réglages ne vivent PLUS dans `package.json` : pnpm 11 ne lit plus son champ
+# `pnpm` (il le signale par un avertissement et IGNORE le contenu, en silence côté
+# résolution). Leur maison, c'est ici.
+overrides:
+  # GHSA-r28c-9q8g-f849 (high) — postcss, traversée de chemin via sourceMappingURL. Vient de vite.
+  postcss@<8.5.18: '>=8.5.18'
+  # GHSA-3jxr-9vmj-r5cp (high) — brace-expansion, déni de service par expansion exponentielle.
+  brace-expansion@<1.1.16: '>=1.1.16 <2'
+  # GHSA-mh99-v99m-4gvg (high) — brace-expansion, expansion non bornée → OOM. Vient d'eslint.
+  brace-expansion@>=2.0.0 <5.0.8: '>=5.0.8'
+#
+# ── CE QUI RESTE ROUGE, ET POURQUOI ON N'Y TOUCHE PAS ────────────────────────────
+# Deux avis survivent à ces overrides. Aucun des deux ne se corrige sans casser quelque
+# chose de plus gros — c'est établi, pas supposé :
+#
+# • brace-expansion 1.1.16 (GHSA-mh99-v99m-4gvg, high). Le correctif N'EXISTE QUE en 5.0.8 :
+#   la ligne 1.x n'a jamais été patchée pour cet avis. Elle arrive par
+#   `@eslint/eslintrc` → `minimatch@^3.1.5`, et ESLint 10 la garde encore (vérifié sur le
+#   registre). La seule sortie serait la majeure forcée qu'on vient justement de refuser.
+#   Non exploitable ici : le déni de service demande un motif glob HOSTILE, or les motifs
+#   viennent de notre propre `eslint.config.js`.
+#
+# • nanoid 2.1.11 (GHSA-mmhx-hmjr-r674, moderate) via `@colyseus/core`. FAUX POSITIF vérifié :
+#   l'avis porte sur `nanoid(taille)` appelé avec un NON-ENTIER, et Colyseus n'appelle
+#   `generateId` qu'avec des entiers (`Utils.js:49`, défaut 9). Et la source d'aléa est bien
+#   `crypto.randomFillSync` (`nanoid/random.js`) : les `sessionId` et les
+#   `reconnectionToken` ne sont donc pas prédictibles. Le remplacer forcerait une majeure
+#   sur la génération d'identifiants de session — beaucoup plus risqué que l'avis lui-même.

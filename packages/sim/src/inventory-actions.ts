@@ -73,10 +73,34 @@ export type InventoryAction =
   /** JE RAMASSE une pile au sol (portée de bras). */
   | { type: 'pick_up'; pileId: number }
 
-const INVENTORY_ACTION_TYPES: string[] = ['set_active_slot', 'move_slot', 'split_slot', 'transfer', 'drop_held', 'pick_up']
+/**
+ * LES TYPES DE CETTE FAMILLE — `Record<Union, true>` et non `string[]`, exprès.
+ *
+ * C'était une liste de chaînes écrite à la main, doublant l'union juste au-dessus. Or
+ * `isInventoryAction` est un PRÉDICAT DE TYPE : le compilateur le croit sur parole. Une
+ * variante ajoutée à `InventoryAction` sans être recopiée ici compilait donc sans un mot,
+ * et l'action tombait dans le vide au routage (`sim.ts` la passe à la famille suivante).
+ * C'est la seule des quatre familles d'actions que le compilateur ne gardait pas — les
+ * trois autres ont un `else` typé qui joue le rôle d'un garde `never`.
+ *
+ * Avec un `Record` total, une variante de plus NE COMPILE PLUS tant qu'elle n'est pas
+ * déclarée ici. Même remède que la table `FORMES` du serveur, et pour la même raison :
+ * une vérité écrite deux fois finit toujours par diverger, sauf si le compilateur tient
+ * la seconde copie.
+ */
+const INVENTORY_ACTION_TYPES: Record<InventoryAction['type'], true> = {
+  set_active_slot: true,
+  move_slot: true,
+  split_slot: true,
+  transfer: true,
+  drop_held: true,
+  pick_up: true,
+}
 
 export function isInventoryAction(action: { type: string }): action is InventoryAction {
-  return INVENTORY_ACTION_TYPES.includes(action.type)
+  // `hasOwn` et pas `in` : `'toString' in table` est vrai sur tout objet, et le `type`
+  // vient parfois du réseau.
+  return Object.hasOwn(INVENTORY_ACTION_TYPES, action.type)
 }
 
 /**

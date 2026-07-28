@@ -19,11 +19,56 @@ export interface ClientState {
   input: { dx: -1 | 0 | 1; dy: -1 | 0 | 1; sprint: boolean; sneak: boolean; block: boolean }
   ack: number
   pendingAction?: PlayerAction
+  /** Jetons de parole restants (voir `CHAT_BUCKET`). Décrémentés à l'émission, regarnis au tick. */
+  chatTokens: number
 }
 
-/** Un client tout juste connecté : immobile, rien d'acquitté. */
+/**
+ * LE SEAU DE JETONS DU CHAT — la seule chose qui empêche un client de faire tousser la
+ * boucle autoritative avec du texte.
+ *
+ * Rien ne bornait le chat : ni `sanitizeChat`, ni la room, ni Colyseus. MESURÉ sur un
+ * serveur `ws` en boucle locale : 47 400 trames de chat par seconde acceptées d'un seul
+ * client — chacune relayée à TOUS les autres, donc amplifiée ×50. Le budget d'un tick est
+ * de 50 ms ; il n'en restait rien pour simuler la vallée.
+ *
+ * Un seau plutôt qu'un « un par tick » : un humain ne doit JAMAIS perdre un message qu'il
+ * a tapé, même s'il en envoie deux coup sur coup. La rafale (`MAX`) couvre l'humain
+ * pressé, le régime permanent (un jeton tous les `REFILL_TICKS`) coupe la machine.
+ */
+export const CHAT_BUCKET = {
+  /** Rafale : quatre messages d'affilée passent sans attendre. */
+  MAX: 4,
+  /** Régime permanent : un jeton toutes les 10 ticks = 2 messages/seconde. Très au-dessus
+   *  de la frappe humaine, très en dessous de ce qu'il faut pour noyer un tick. */
+  REFILL_TICKS: 10,
+} as const
+
+/** Un client tout juste connecté : immobile, rien d'acquitté, le seau plein. */
 export function newClientState(entityId: number): ClientState {
-  return { entityId, input: { dx: 0, dy: 0, sprint: false, sneak: false, block: false }, ack: 0 }
+  return {
+    entityId,
+    input: { dx: 0, dy: 0, sprint: false, sneak: false, block: false },
+    ack: 0,
+    chatTokens: CHAT_BUCKET.MAX,
+  }
+}
+
+/**
+ * Ce client a-t-il le droit de parler maintenant ? Consomme un jeton et répond `true`,
+ * ou répond `false` (le message est jeté, sans réponse — on ne renvoie pas d'accusé à
+ * un flot, ce serait l'amplifier).
+ */
+export function spendChatToken(state: ClientState): boolean {
+  if (state.chatTokens < 1) return false
+  state.chatTokens -= 1
+  return true
+}
+
+/** Regarnit les seaux : un jeton par client tous les `REFILL_TICKS`, plafonné à `MAX`. */
+export function refillChatTokens(clients: Iterable<ClientState>, tick: number): void {
+  if (tick % CHAT_BUCKET.REFILL_TICKS !== 0) return
+  for (const c of clients) if (c.chatTokens < CHAT_BUCKET.MAX) c.chatTokens += 1
 }
 
 /** Applique un input assaini à l'état d'un client : il devient le dernier input, et son `seq` l'ack. */
@@ -49,28 +94,16 @@ export function gatherInputs(clients: Iterable<ClientState>): MoveInput[] {
 }
 
 /**
- * Diff local des stocks de nœuds depuis le dernier tick (zéro clone des ~60k nœuds).
- * `shadow` est l'état du TRANSPORT (dernier stock envoyé), pas du /sim — amorcé à la
- * création de la zone avec les stocks courants, puis avancé ici. Une seule fois par
- * tick, globalement : le corps du snapshot est partagé par tous les clients.
+ * Le diff des stocks de nœuds a ÉMIGRÉ dans `/sim` (`node-shadow.ts`) : il était écrit
+ * DEUX fois — ici et dans `client/worker/sim-worker.ts` —, identiques à un bloc près, et
+ * ce bloc-là faisait déjà diverger le solo du multi. C'est de la mécanique de protocole,
+ * pure, dont les deux hôtes ont besoin : elle vit désormais à un seul endroit, à côté du
+ * protocole qu'elle sert. Au passage l'ombre est devenue un tableau typé indexé par `id`
+ * (MESURÉ : 12,02 ms/tick → 0,27 ms sur le monde de production).
+ *
+ * Ré-exporté ici pour que les appelants du serveur n'aient pas à changer d'import.
  */
-export function collectNodeDeltas(sim: SimState, shadow: Map<number, number>): NodeDelta[] {
-  const deltas: NodeDelta[] = []
-  for (const n of sim.nodes) {
-    if (shadow.get(n.id) !== n.stock) {
-      shadow.set(n.id, n.stock)
-      // Un nœud à `stock 0` a pu DÉRIVER (spec recolte-vivante) : l'épuisement est le seul
-      // instant où un nœud bouge, donc on joint sa position (le client le déménage) ET son
-      // `regrowAt` (le client anime la repousse au lieu de popper).
-      deltas.push(
-        n.stock === 0
-          ? { id: n.id, stock: 0, tx: n.tx, ty: n.ty, regrowAt: n.regrowAt }
-          : { id: n.id, stock: n.stock },
-      )
-    }
-  }
-  return deltas
-}
+export { collectNodeDeltas } from '@braises/sim'
 
 /**
  * Le corps COMMUN d'un snapshot — tout sauf `lastProcessedInput`, qui diffère par
