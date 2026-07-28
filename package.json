@@ -8,7 +8,7 @@
   },
   "scripts": {
     "check": "pnpm -r run check",
-    "test": "pnpm -r run test",
+    "test": "node tools/suites.mjs",
     "lint": "eslint .",
     "dev": "pnpm --filter @braises/client dev",
     "build": "pnpm --filter @braises/client build",

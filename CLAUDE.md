@@ -7,7 +7,7 @@ Survival multijoueur top-down 2D persistant, saisons de 60 jours, villages de jo
 ```bash
 pnpm install      # workspace complet
 pnpm check        # tsc --noEmit sur tous les packages
-pnpm test         # vitest sur tous les packages (/sim + cadrage du client)
+pnpm test         # LES QUATRE SUITES — sim, client, serveur, banc de scénario (tools/suites.mjs)
 pnpm lint         # eslint, dont les garde-fous de pureté de /sim
 pnpm dev          # client Vite SUR L'HÔTE (jeu jouable sur http://localhost:3000)
 # Stack Docker : `docker compose up -d` → jeu sur http://ashes.test via le proxy Traefik

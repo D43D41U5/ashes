@@ -8,7 +8,7 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "vitest run --exclude src/scenario.test.ts && pnpm run test:scenario",
+    "test": "vitest run --exclude src/scenario.test.ts",
     "test:scenario": "vitest run src/scenario.test.ts --dangerouslyIgnoreUnhandledErrors"
   },
   "devDependencies": {
