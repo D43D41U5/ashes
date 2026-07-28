@@ -31,7 +31,7 @@ import {
   type NodeShadow,
 } from '@braises/sim'
 import { createVeillee, LOAD_PHASES } from './veillee'
-import { loadCarte, loadSlot, saveCarte, saveSlot } from './persistence-store'
+import { loadCarte, loadSlot, saveCarteEtSlot, saveSlot } from './persistence-store'
 
 const post = (message: HostToClient): void => {
   ;(self as unknown as { postMessage(m: unknown): void }).postMessage(message)
@@ -212,14 +212,6 @@ async function persist(): Promise<void> {
   }
   saving = true
   try {
-    // LA CARTE, UNE SEULE FOIS. Elle pèse 86,9 % de la sauvegarde et ne change jamais (garde :
-    // `carte-immuable.test.ts`) : la réécrire deux fois par minute était le gel. On la pose au
-    // premier enregistrement du monde, puis plus jamais. Si son écriture échoue, `carteEcrite`
-    // reste faux et le prochain autosave retentera — une partie sans sa carte ne se reprend pas.
-    if (!carteEcrite) {
-      await saveCarte(serializeCarte(sim.map))
-      carteEcrite = true
-    }
     // LA SÉRIALISATION EST SYNCHRONE, ET ELLE EST LE SUJET. Tant qu'elle tourne, ce Worker ne
     // tique pas : le monde s'arrête. On la chronomètre à part de l'écriture disque (qui, elle,
     // rend la main) pour savoir lequel des deux gèle la Veillée. Sonde de dev, coût nul sinon.
@@ -227,9 +219,23 @@ async function persist(): Promise<void> {
     const texte = serializePartie(sim)
     if (SONDE_PERF) {
       perfSerialisationMs = performance.now() - s0
-      perfOctets = texte.length
+      // `length` compte des unités UTF-16, pas des octets : on rend des OCTETS, sinon la
+      // sonde mentirait dès qu'un nom de village porte un accent.
+      perfOctets = new TextEncoder().encode(texte).length
     }
-    await saveSlot({ sim: texte, playerId, chronicle: chronicleLog, savedAt: Date.now() })
+    const record = { sim: texte, playerId, chronicle: chronicleLog, savedAt: Date.now() }
+    // LA CARTE, UNE SEULE FOIS — et ATOMIQUEMENT avec la partie. Elle pèse 86,9 % de la
+    // sauvegarde et ne change jamais (garde : `carte-immuable.test.ts`) : la réécrire deux fois
+    // par minute était le gel. Mais la poser dans SA transaction ouvrait une fenêtre où le
+    // disque portait la carte d'un monde et la partie d'un autre — les deux clés partent donc
+    // ensemble ou pas du tout. Si l'écriture échoue, `carteEcrite` reste faux et le prochain
+    // autosave retentera : une partie sans sa carte ne se reprend pas.
+    if (carteEcrite) {
+      await saveSlot(record)
+    } else {
+      await saveCarteEtSlot(serializeCarte(sim.map, sim.seed), record)
+      carteEcrite = true
+    }
     // ON LE DIT. Une sauvegarde muette laisse le joueur dans le doute — et ce doute coûte
     // cher dans un jeu où l'on peut perdre une heure de veillée.
     post({ type: 'saved', at: Date.now(), ok: true })
@@ -268,16 +274,29 @@ async function boot(): Promise<void> {
     const rec = await loadSlot()
     if (rec) {
       // LA CARTE VIENT DE SA PROPRE CASE (elle ne bouge pas, on ne la réécrit pas — voir
-      // `persistence-store.ts`). Si elle manque, c'est une sauvegarde d'AVANT la coupe : elle
-      // porte encore l'état d'un seul tenant, carte comprise, et se relit telle quelle. Une
-      // reprise ne se perd pas pour un changement de rangement — le prochain autosave la
-      // rangera au format neuf.
+      // `persistence-store.ts`), et on RETOMBE sur l'ancien format si le recollage échoue.
+      //
+      // Ce repli n'est pas de la prudence de principe, il ferme une PERTE DE PARTIE réelle :
+      // `persist()` écrit en DEUX transactions (la carte, puis la partie). Entre les deux, le
+      // disque porte une carte neuve et une partie d'AVANT la coupe. Fermer l'onglet pile là —
+      // c'est-à-dire pendant les ~790 ms de la toute première sauvegarde au format neuf —
+      // laissait `deserializePartie` jeter, et le joueur repartait sur un monde neuf alors que
+      // sa Veillée était parfaitement lisible par `deserializeSim`. La promesse est « une
+      // reprise ne se perd pas pour un changement de rangement » : elle se tient ici.
+      let carteEnMain = false
+      let state: SimState | undefined
       const carteTexte = await loadCarte()
-      const state = carteTexte
-        ? deserializePartie(rec.sim, deserializeCarte(carteTexte)) // JETTE → on tombe dans le catch
-        : deserializeSim(rec.sim)
+      if (carteTexte) {
+        try {
+          state = deserializePartie(rec.sim, deserializeCarte(carteTexte))
+          carteEnMain = true
+        } catch {
+          state = undefined // on tente l'ancien format avant d'abandonner le monde
+        }
+      }
+      if (!state) state = deserializeSim(rec.sim) // JETTE pour de bon → on tombe dans le catch
       sim = state
-      carteEcrite = Boolean(carteTexte)
+      carteEcrite = carteEnMain
       playerId = rec.playerId
       chronicleLog = rec.chronicle ?? []
       const me = state.entities.find((e) => e.id === playerId)

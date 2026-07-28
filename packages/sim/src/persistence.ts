@@ -124,7 +124,26 @@ export function deserializeSim(text: string): SimState {
  */
 interface CarteEnvelope {
   v: number
+  /**
+   * LA SEED DU MONDE DONT C'EST LA CARTE — le lien qui manquait, et sans lequel la coupe
+   * était dangereuse. Rien n'attachait une carte à SA partie : une carte d'un autre monde,
+   * ou d'une autre taille, se recollait sans une erreur. Le pire cas n'était pas un plantage
+   * mais un silence — une `cendre` plus courte que le terrain rend `undefined < front` FAUX,
+   * donc **la tuile ne brûle jamais**, et le front de la saison s'arrête sans un bruit.
+   *
+   * Ce n'est pas théorique : `sim-worker.ts` écrit la carte et la partie en DEUX transactions.
+   * Une interruption entre les deux, ou une lecture refusée par IndexedDB (quota, éviction)
+   * qui fait repartir sur un monde neuf, suffit à laisser sur le disque la partie du monde A
+   * et la carte du monde B — toutes deux valides. La seed les réconcilie ou refuse.
+   */
+  seed: number
   carte: SimState['map']
+}
+
+/** Une carte relue, avec la seed du monde auquel elle appartient. */
+export interface CarteSauvee {
+  carte: SimState['map']
+  seed: number
 }
 
 /**
@@ -143,13 +162,20 @@ interface PartieEnvelope {
 }
 
 /** Sérialise LA CARTE seule (immuable) — écrite une fois, à la naissance du monde. */
-export function serializeCarte(map: SimState['map']): string {
-  const envelope: CarteEnvelope = { v: SAVE_FORMAT_VERSION, carte: map }
+export function serializeCarte(map: SimState['map'], seed: number): string {
+  const envelope: CarteEnvelope = { v: SAVE_FORMAT_VERSION, seed, carte: map }
   return JSON.stringify(envelope)
 }
 
-/** Relit une carte écrite par `serializeCarte`. JETTE si elle est illisible ou périmée. */
-export function deserializeCarte(text: string): SimState['map'] {
+/**
+ * Relit une carte écrite par `serializeCarte`. JETTE si elle est illisible, périmée, ou
+ * INCOMPLÈTE — et c'est ce dernier point qui compte. Une carte à moitié écrite passait
+ * autrefois toutes les vérifications (« un tableau, une largeur ») et rendait un monde
+ * silencieusement faux : un relief tronqué, une `cendre` plus courte que le terrain, un
+ * avatar hors carte. On vérifie donc que les tailles se RÉPONDENT, pas seulement qu'elles
+ * existent.
+ */
+export function deserializeCarte(text: string): CarteSauvee {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -164,10 +190,22 @@ export function deserializeCarte(text: string): SimState['map'] {
     throw new Error(`Carte d'une version incompatible (v${env.v} ≠ v${SAVE_FORMAT_VERSION})`)
   }
   const c = env.carte as Partial<SimState['map']> | null
-  if (typeof c !== 'object' || c === null || !Array.isArray(c.terrain) || typeof c.width !== 'number') {
+  if (typeof c !== 'object' || c === null || !Array.isArray(c.terrain) || typeof c.width !== 'number' || typeof c.height !== 'number') {
     throw new Error('Carte illisible : relief absent')
   }
-  return env.carte
+  const attendu = c.width * c.height
+  if (c.terrain.length !== attendu) {
+    throw new Error(`Carte tronquée : ${c.terrain.length} tuiles pour ${c.width}×${c.height} = ${attendu}`)
+  }
+  // `cendre` est optionnelle (une carte sans Cendrière n'en a pas) — mais si elle est là, elle
+  // couvre TOUTE la carte. Une `cendre` courte ne jette pas : elle éteint le front en silence.
+  if (c.cendre !== undefined && (!Array.isArray(c.cendre) || c.cendre.length !== attendu)) {
+    throw new Error(`Champ de cendre tronqué : ${Array.isArray(c.cendre) ? c.cendre.length : 'absent'} pour ${attendu} tuiles`)
+  }
+  if (typeof env.seed !== 'number') {
+    throw new Error("Carte illisible : elle ne dit pas de quel monde elle est (seed absente)")
+  }
+  return { carte: env.carte, seed: env.seed }
 }
 
 /**
@@ -187,7 +225,7 @@ export function serializePartie(state: SimState): string {
  * Recolle une partie et sa carte en un `SimState` reprenable. Mêmes refus francs que
  * `deserializeSim` : version inconnue ou forme incomplète ⇒ on ne reprend pas.
  */
-export function deserializePartie(text: string, map: SimState['map']): SimState {
+export function deserializePartie(text: string, carte: CarteSauvee): SimState {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -204,6 +242,13 @@ export function deserializePartie(text: string, map: SimState['map']): SimState 
   if (typeof env.partie !== 'object' || env.partie === null) {
     throw new Error('Veillée illisible : état absent')
   }
+  // LA CARTE EST-ELLE CELLE DE CETTE PARTIE ? Deux écritures séparées, donc deux moments où
+  // le disque peut porter la partie d'un monde et la carte d'un autre — toutes deux valides.
+  // Sans cette ligne, on recollerait les deux et on rendrait un monde faux SANS ERREUR.
+  if (carte.seed !== env.partie.seed) {
+    throw new Error(`Carte d'un autre monde : seed ${carte.seed} ≠ ${env.partie.seed}`)
+  }
+  const map = carte.carte
   // `map` est déjà une clé de `env.partie` (à `null`) : la réaffecter la remplit SANS la
   // déplacer — l'ordre des clés, donc `snapshot()`, reste celui d'un monde jamais sauvé.
   const etat = { ...env.partie, map } as SimState

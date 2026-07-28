@@ -88,15 +88,24 @@ export async function loadCarte(): Promise<string | null> {
   }
 }
 
-/** Écrit LA CARTE (une seule fois, à la naissance du monde — voir `SLOT0_CARTE`). */
-export async function saveCarte(carte: string): Promise<void> {
+/**
+ * Écrit LA CARTE ET LA PARTIE **d'un seul geste** — la première fois seulement.
+ *
+ * Une transaction, pas deux. Deux écritures séparées laissaient une fenêtre où le disque
+ * portait la carte d'un monde et la partie d'un autre : fermer l'onglet là-dedans (~790 ms,
+ * le temps d'écrire 60 Mo) coûtait la Veillée entière. IndexedDB sait poser deux clés
+ * atomiquement — il suffisait de le lui demander, exactement comme `clearSlot` en efface deux.
+ */
+export async function saveCarteEtSlot(carte: string, record: SaveRecord): Promise<void> {
   const db = await openDb()
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, 'readwrite')
-      tx.objectStore(STORE).put(carte, SLOT0_CARTE)
+      const store = tx.objectStore(STORE)
+      store.put(carte, SLOT0_CARTE)
+      store.put(record, SLOT0)
       tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error ?? new Error('écriture de la carte échouée'))
+      tx.onerror = () => reject(tx.error ?? new Error('écriture de la carte et du slot échouée'))
     })
   } finally {
     db.close()

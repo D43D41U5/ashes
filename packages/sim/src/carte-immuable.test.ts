@@ -34,44 +34,50 @@ import type { WorldMap } from './map'
 import { serializeCarte, serializePartie, serializeSim } from './persistence'
 
 /**
+ * LES CHAMPS PAR TUILE — trop gros pour un JSON, hachés élément par élément.
+ * Ce sont eux qui font 60 des 69,7 Mo, et donc eux qu'on a sortis de l'autosave.
+ */
+const CHAMPS_HACHES = ['terrain', 'cendre'] as const
+/** Le reste de la carte — quelques dizaines de ko, couverts par leur JSON. */
+const CHAMPS_JSON = [
+  'width', 'height', 'zones', 'cendreMax', 'zoneGrid', 'zonePas', 'zoneDefs', 'seuils', 'fil',
+] as const
+
+/**
  * L'EMPREINTE DE LA CARTE. On ne garde pas une copie (7,5 M de nombres, ~60 Mo) : on somme.
  *
  * `Math.imul` et les entiers 32 bits sont dans les opérations autorisées à /sim (invariant §2) ;
  * l'empreinte est donc reproductible d'un moteur à l'autre, comme le reste. On mêle l'INDICE à
- * la valeur pour qu'une permutation ne passe pas inaperçue, et on couvre aussi les petits
- * champs (zones, seuils, fil…) par leur JSON — eux tiennent en quelques dizaines de ko.
+ * la valeur pour qu'une permutation ne passe pas inaperçue.
+ *
+ * ELLE DOIT COUVRIR TOUTE LA CARTE, et c'est A0 qui l'exige : le mode d'échec pour lequel ce
+ * fichier existe — « un jour, un système se mettra à peindre le sol » — arrivera très
+ * probablement sous la forme d'un CHAMP NEUF de `WorldMap`. Une empreinte qui énumère les
+ * champs à la main l'ignorerait en silence, et la garde serait verte pendant que la
+ * sauvegarde ment. La liste est donc confrontée aux clés réelles (A0), pas choisie.
  */
 function empreinte(map: WorldMap): string {
   const melange = (h: number, i: number, v: number): number =>
     (Math.imul(h ^ (i + 0x9e3779b9), 0x85ebca6b) ^ Math.imul(v | 0, 0xc2b2ae35)) | 0
 
-  let hT = 0x811c9dc5
-  for (let i = 0; i < map.terrain.length; i++) hT = melange(hT, i, map.terrain[i]!)
-
-  let hC = 0x811c9dc5
-  const cendre = map.cendre
-  if (cendre) {
-    // `cendre` porte des distances FRACTIONNAIRES : on ne peut pas la hacher en entiers sans
-    // perdre exactement ce qui pourrait changer. On multiplie avant de tronquer — la précision
-    // retenue (1/1024 de tuile) est très en deçà de toute modification qui aurait un sens.
-    for (let i = 0; i < cendre.length; i++) hC = melange(hC, i, Math.round(cendre[i]! * 1024))
-  }
-
-  const petits = JSON.stringify({
-    width: map.width,
-    height: map.height,
-    zones: map.zones,
-    cendreMax: map.cendreMax,
-    zoneGrid: map.zoneGrid,
-    zonePas: map.zonePas,
-    zoneDefs: map.zoneDefs,
-    seuils: map.seuils,
-    fil: map.fil,
+  const champs = map as unknown as Record<string, number[] | undefined>
+  // `cendre` porte des distances FRACTIONNAIRES : on ne peut pas la hacher en entiers sans
+  // perdre exactement ce qui pourrait changer. On multiplie avant d'arrondir — la précision
+  // retenue (1/1024 de tuile) est très en deçà de toute modification qui aurait un sens.
+  const haches = CHAMPS_HACHES.map((nom) => {
+    const arr = champs[nom]
+    if (!arr) return 'ø'
+    let h = 0x811c9dc5
+    for (let i = 0; i < arr.length; i++) h = melange(h, i, Math.round(arr[i]! * 1024))
+    return `${h >>> 0}/${arr.length}`
   })
+
+  const petit = map as unknown as Record<string, unknown>
+  const petits = JSON.stringify(CHAMPS_JSON.map((nom) => petit[nom]))
   let hP = 0x811c9dc5
   for (let i = 0; i < petits.length; i++) hP = melange(hP, i, petits.charCodeAt(i))
 
-  return `${hT >>> 0}:${hC >>> 0}:${hP >>> 0}:${map.terrain.length}:${cendre ? cendre.length : -1}`
+  return `${haches.join(':')}:${hP >>> 0}`
 }
 
 /** Le monde de PRODUCTION, comme `worker/veillee.ts` et le banc le bâtissent. */
@@ -96,6 +102,19 @@ const agir = (sim: SimState, id: number, action: PlayerAction): string[] => {
 }
 
 describe('la carte est immuable pendant la partie', () => {
+  it("A0 — l'empreinte couvre TOUTE la carte, par construction et non par choix", () => {
+    // La garde de la garde. Le jour où `WorldMap` gagne un champ — une couche de sol peint,
+    // une usure de route, une humidité —, `empreinte()` l'ignorerait sans rien dire et A1-A3
+    // resteraient vertes pendant que la sauvegarde périodique perdrait ce champ à chaque
+    // reprise. On confronte donc la liste couverte aux clés RÉELLES du monde de production :
+    // ajouter un champ rend ce test rouge, et son auteur doit alors trancher — le hacher, ou
+    // le déclarer volatile et le sortir de la carte. Même méthode que `SAVE_REQUIRED_KEYS`
+    // dans `persistence.test.ts` : la liste ne se maintient pas de mémoire.
+    const { sim } = mondeReel()
+    const couverts = [...CHAMPS_HACHES, ...CHAMPS_JSON].sort()
+    expect(Object.keys(sim.map).sort()).toEqual(couverts)
+  })
+
   it("A1 — mille ticks de monde vivant ne changent pas un bit de `map`", () => {
     const { sim, joueur } = mondeReel()
     const avant = empreinte(sim.map)
@@ -238,7 +257,7 @@ describe('le poids de la sauvegarde périodique', () => {
 
     const entier = serializeSim(sim).length
     const partie = serializePartie(sim).length
-    const carte = serializeCarte(sim.map).length
+    const carte = serializeCarte(sim.map, sim.seed).length
 
     // Le fait central : la carte est l'essentiel du poids, et elle n'est plus du voyage.
     expect(carte / entier).toBeGreaterThan(0.5)

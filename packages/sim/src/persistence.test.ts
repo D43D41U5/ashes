@@ -136,7 +136,7 @@ describe('la carte se sauve à part', () => {
     const sim = makeSim()
     spawnEntity(sim, 20.5, 20.5)
     idle(sim, 40)
-    const carte = deserializeCarte(serializeCarte(sim.map))
+    const carte = deserializeCarte(serializeCarte(sim.map, sim.seed))
     const repris = deserializePartie(serializePartie(sim), carte)
     expect(snapshot(repris)).toBe(snapshot(sim))
     // Et la carte est bien celle du monde, pas une carte vide qui aurait passé par chance.
@@ -152,10 +152,48 @@ describe('la carte se sauve à part', () => {
     const sauve = makeSim()
     spawnEntity(sauve, 20.5, 20.5)
     idle(sauve, 60)
-    const repris = deserializePartie(serializePartie(sauve), deserializeCarte(serializeCarte(sauve.map)))
+    const repris = deserializePartie(serializePartie(sauve), deserializeCarte(serializeCarte(sauve.map, sauve.seed)))
     idle(repris, 60)
 
     expect(snapshot(repris)).toBe(snapshot(live))
+  })
+
+  /**
+   * LES DEUX FAILLES QUE L'AUDIT DE DÉTERMINISME A TROUVÉES (2026-07-28) — et qui ne se
+   * voyaient pas, parce qu'aucune ne JETAIT. Un monde faux rendu sans une erreur est pire
+   * qu'un plantage : le joueur continue de jouer une vallée qui a déjà menti.
+   */
+  it('REFUSE la carte d’un AUTRE monde — sans la seed, on recollait n’importe quoi', () => {
+    const a = makeSim()
+    const b = createSim(99, { map: createEmptyMap(96, 96, TERRAIN_GRASS), worldEvents: true })
+    const carteDeB = deserializeCarte(serializeCarte(b.map, b.seed))
+    expect(() => deserializePartie(serializePartie(a), carteDeB)).toThrow(/autre monde/)
+    // Et sa propre carte passe toujours, évidemment.
+    expect(() => deserializePartie(serializePartie(a), deserializeCarte(serializeCarte(a.map, a.seed)))).not.toThrow()
+  })
+
+  it('REFUSE une carte TRONQUÉE plutôt que d’éteindre la saison en silence', () => {
+    const sim = makeSim()
+    const attendu = sim.map.width * sim.map.height
+
+    // Un relief à moitié écrit : l'avatar pouvait se retrouver hors carte, sans une erreur.
+    const courte = JSON.parse(serializeCarte(sim.map, sim.seed)) as { carte: Record<string, unknown> }
+    courte.carte.terrain = (courte.carte.terrain as number[]).slice(0, 500)
+    expect(() => deserializeCarte(JSON.stringify(courte))).toThrow(/tronquée/)
+
+    // Le pire cas, et le plus sournois : un champ de cendre plus court que la carte. Sur les
+    // tuiles manquantes, `undefined < front` vaut FAUX — donc elles ne brûlent JAMAIS, et le
+    // front de la saison s'arrête sans un bruit. Rien, avant, ne l'aurait dit.
+    const cendreCourte = JSON.parse(serializeCarte({ ...sim.map, cendre: new Array(attendu).fill(1) }, sim.seed)) as {
+      carte: Record<string, unknown>
+    }
+    cendreCourte.carte.cendre = (cendreCourte.carte.cendre as number[]).slice(0, 10)
+    expect(() => deserializeCarte(JSON.stringify(cendreCourte))).toThrow(/cendre tronqué/)
+
+    // Une carte sans cendre du tout reste licite : toutes les cartes n'ont pas de Cendrière.
+    const sansCendre = { ...sim.map }
+    delete (sansCendre as { cendre?: number[] }).cendre
+    expect(() => deserializeCarte(serializeCarte(sansCendre, sim.seed))).not.toThrow()
   })
 
   it('la PARTIE ne porte plus la carte — mais garde sa clé, donc l’ordre', () => {
@@ -174,7 +212,7 @@ describe('la carte se sauve à part', () => {
     delete ampute.blood
     ampute.map = null
     const texte = JSON.stringify({ v: SAVE_FORMAT_VERSION, partie: ampute })
-    const carte = createEmptyMap(96, 96, TERRAIN_GRASS)
+    const carte = { carte: createEmptyMap(96, 96, TERRAIN_GRASS), seed: ampute.seed as number }
     expect(() => deserializePartie(texte, carte)).toThrow(/antérieur/)
     expect(() => deserializePartie(texte, carte)).toThrow(/blood/)
   })
@@ -184,7 +222,7 @@ describe('la carte se sauve à part', () => {
     const carte = createEmptyMap(8, 8, TERRAIN_GRASS)
     expect(() => deserializeCarte(JSON.stringify({ v: SAVE_FORMAT_VERSION + 1, carte }))).toThrow(/incompatible/)
     expect(() =>
-      deserializePartie(JSON.stringify({ v: SAVE_FORMAT_VERSION + 1, partie: sim }), carte),
+      deserializePartie(JSON.stringify({ v: SAVE_FORMAT_VERSION + 1, partie: sim }), { carte, seed: sim.seed }),
     ).toThrow(/incompatible/)
   })
 
@@ -192,6 +230,6 @@ describe('la carte se sauve à part', () => {
     expect(() => deserializeCarte('{')).toThrow(/illisible/)
     expect(() => deserializeCarte(JSON.stringify({ v: SAVE_FORMAT_VERSION }))).toThrow(/illisible/)
     // Une enveloppe correcte mais sans relief : le pire cas, celui qui passerait en silence.
-    expect(() => deserializeCarte(JSON.stringify({ v: SAVE_FORMAT_VERSION, carte: { width: 8 } }))).toThrow(/relief/)
+    expect(() => deserializeCarte(JSON.stringify({ v: SAVE_FORMAT_VERSION, seed: 1, carte: { width: 8 } }))).toThrow(/relief/)
   })
 })
