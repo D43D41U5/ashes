@@ -28,7 +28,8 @@ describe('onboarding — piloté par l’état', () => {
   it('dit LES BASES une fois le souffle passé', () => {
     const h = nextOnboardingHint(base({ msAlive: BASICS_DELAY_MS }), none)
     expect(h?.id).toBe('basics')
-    // Le premier geste enseigné, c'est CUEILLIR à la touche E (décision 2026-07-24) —
+    // Le premier geste enseigné, c'est CUEILLIR — passée de E à F le 2026-07-27 pour libérer
+    // E : A et E tournent désormais ce qu'on pose (décision d'Alexis). Le geste est le même —
     // ce n'est plus « clic gauche : récolter ». Cf. onboarding.ts HINT_TEXT.basics.
     expect(h?.text).toMatch(/cueillir/i)
   })

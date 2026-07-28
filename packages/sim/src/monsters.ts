@@ -244,6 +244,20 @@ export function nearestPrey(state: SimState, entity: Entity, range: number): Ent
   return best
 }
 
+/**
+ * LA ZONE MORTE DU PAS — en deçà, on ne corrige pas son alignement, et c'est ce qui évite de
+ * frétiller sur place quand on est déjà en face.
+ *
+ * ELLE SE DÉRIVE DU CORPS, elle ne se choisit pas. Un corps de `AVATAR_HITBOX_TILES` de large a
+ * `(1 − largeur)/2` de jeu de chaque côté dans un couloir d'une tuile : c'est sa marge
+ * d'alignement. Une zone morte PLUS LARGE que cette marge est un piège — la bête se croit en
+ * face, son corps déborde sur la tuile voisine, et elle pousse contre l'obstacle pour toujours.
+ * MESURÉ avant la correction : un zombie remontant une chicane s'immobilisait en (4,64 ; 13,19)
+ * pour les 3 000 pas du test, à quatorze centièmes de tuile de son couloir. On prend la MOITIÉ
+ * de la marge : assez fin pour se replacer, assez large pour ne pas osciller.
+ */
+const ZONE_MORTE = (1 - BALANCE.AVATAR_HITBOX_TILES) / 4
+
 export function moveToward(
   state: SimState,
   monster: Monster,
@@ -261,8 +275,8 @@ export function moveToward(
     dx = -dx
     dy = -dy
   }
-  const sx = (dx > 0.15 ? 1 : dx < -0.15 ? -1 : 0) as -1 | 0 | 1
-  const sy = (dy > 0.15 ? 1 : dy < -0.15 ? -1 : 0) as -1 | 0 | 1
+  const sx = (dx > ZONE_MORTE ? 1 : dx < -ZONE_MORTE ? -1 : 0) as -1 | 0 | 1
+  const sy = (dy > ZONE_MORTE ? 1 : dy < -ZONE_MORTE ? -1 : 0) as -1 | 0 | 1
   // Le pas ORIENTE la bête (spec chasse C4) : sa perception est directionnelle,
   // il faut donc que son regard suive sa marche — sans quoi « dans le dos » ne
   // voudrait rien dire pour une bête née face à l'est et jamais tournée.

@@ -296,7 +296,8 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   }
 
   /** Le nœud visé est-il de la CUEILLETTE (`foraging`) ? Depuis le 2026-07-24, la
-   *  cueillette est passée à la touche E : le CLIC ne la récolte plus. On l'emploie
+   *  cueillette est passée à la touche d'INTERACTION (E le 2026-07-24, puis F le 2026-07-27
+   *  quand A/E sont devenues la rotation) : le CLIC ne la récolte plus. On l'emploie
    *  pour COUPER le clic sur fibre/baies/tourbe/cendre, aux deux points d'envoi souris
    *  (l'appui `pointerdown` ET le maintien `holdHarvest`) — sinon fouiller un cadavre
    *  puis glisser le curseur sur un buisson cueillerait encore. */

@@ -204,6 +204,7 @@ export {
   clairiereForet, CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, type Emplacement,
 } from './zone-content'
 export { placePois, POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
+export { buildPoiStructures, BUILT_KINDS, PLANS } from './poi-batis'
 // Où le monde commence, et ce qui communique avec quoi — le client LIT le spawn,
 // il ne le recalcule pas (il le faisait, et sans vérifier la connexité).
 export {

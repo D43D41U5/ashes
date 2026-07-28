@@ -18,7 +18,28 @@ export const KEYMAP = {
   // Déplacement (maintenu, lu chaque frame)
   moveUp: ['Z', 'W', 'UP'],
   moveDown: ['S', 'DOWN'],
-  moveLeft: ['Q', 'A', 'LEFT'],
+  /**
+   * ALLER À GAUCHE — `'Q'` (81), et c'est un choix ZQSD assumé (décision d'Alexis, 2026-07-27).
+   *
+   * PHASER NE RÉSOUT PAS PAR POSITION PHYSIQUE. Il dispatche sur `event.keyCode`
+   * (`KeyboardPlugin.js` : `var code = event.keyCode; var key = keys[code]`), et dans un
+   * navigateur ce code suit l'ÉTIQUETTE de la disposition, pas la position — c'est
+   * exactement pourquoi WASD ne marche pas en AZERTY. La touche « Q » d'un clavier
+   * français émet donc 81, jamais 65. La preuve tient quatre lignes plus haut : si la
+   * résolution était physique, `'Z'`(90) et `'W'`(87) seraient deux touches DIFFÉRENTES
+   * et le « W » AZERTY (en bas à gauche) ferait monter — l'alias `Z` n'existe que parce
+   * que la résolution est par étiquette.
+   *
+   * On a cru le contraire une fois, et la gauche du ZQSD est morte en silence : `'Q'`
+   * retiré de cette ligne, plus rien ne répondait sous l'annulaire. Les tests passaient
+   * (ils ne gardent que l'unicité des alias, jamais la couverture de disposition).
+   *
+   * `'A'` (65) — la touche que l'AZERTY nomme « A » — a servi ici la gauche du QWERTY
+   * (WASD). Elle est LIBÉRÉE au profit de `rotateLeft`, qu'elle sert mieux : sur AZERTY
+   * elle borde « Z ». CONSÉQUENCE ASSUMÉE : le WASD n'a plus de gauche — un QWERTY va à
+   * gauche par « Q » (la touche à gauche de W) ou par la flèche.
+   */
+  moveLeft: ['Q', 'LEFT'],
   moveRight: ['D', 'RIGHT'],
   sprint: ['SHIFT'],
   /** LE PAS LENT (spec chasse C2) : discret pour la faune, moitié de la vitesse. */
@@ -51,7 +72,27 @@ export const KEYMAP = {
    * un clic de panique ne part jamais cueillir. La sim connaît `harvest` depuis
    * toujours (economy.ts) ; `whole` y vide le stock d'un seul geste.
    */
-  forage: ['E'],
+  forage: ['F'],
+  /**
+   * TOURNER CE QU'ON POSE (décision d'Alexis) — deux sens, parce qu'un seul fait tourner en
+   * boucle : jusqu'à trois appuis pour revenir en arrière. Deux donnent le TOUR COURT, au pire
+   * un cran pour atteindre n'importe quelle arête.
+   *
+   * ELLES ENCADRENT « HAUT » SUR AZERTY : `'A'`(65) et `'E'`(69) sont les deux voisines
+   * immédiates de « Z ». La main ne quitte pas ZQSD. Sur QWERTY ce sont les voisines de la
+   * ligne WASD (A à gauche de S, E au-dessus de D) — moins symétrique, toujours à portée.
+   *
+   * Elles ne mordent sur rien : `forage` a migré de E vers F (F est la touche sous l'index,
+   * jamais liée), et `moveLeft` a rendu son alias 65 — Alexis a tranché pour ZQSD, la gauche
+   * est « Q »(81). Surtout PAS 81 ici : c'est la gauche du ZQSD, et la lui reprendre a déjà
+   * cassé le déplacement une fois (voir `moveLeft`).
+   *
+   * ELLES NE SONT PAS UN VERBE — elles ne changent pas l'état du monde, elles orientent un
+   * FANTÔME avant la pose. À ce titre elles sont du même rang que viser : de l'intention, pas
+   * de l'action. C'est ce qui les distingue des quinze touches bannies le 2026-07-12.
+   */
+  rotateLeft: ['A'],
+  rotateRight: ['E'],
   // Les ÉCRANS, et eux seuls (décision utilisateur, 2026-07-12).
   toggleJournal: ['J'],
   toggleMap: ['M'],

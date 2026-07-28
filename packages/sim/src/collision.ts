@@ -18,10 +18,14 @@
 import { BALANCE, NODE_DEFS, TERRAINS, TICK_DT_S } from './balance'
 import { nodeAt, treeJitter, type ResourceNode } from './economy'
 import { isBlockingTile, terrainAt, type WorldMap } from './map'
-import { solidAt, structureBlocks, type Structure } from './village'
+import { structureBlocks, type Structure } from './village'
 
 const EPS = 1e-6
-const HALF = BALANCE.AVATAR_HITBOX_TILES / 2
+/** Les DEUX demi-mesures de la hitbox : elle est rectangulaire (16 × 8 px, décision d'Alexis).
+ *  `HALF_X` borne le déplacement est-ouest et l'étendue verticale du balayage ; `HALF_Y` fait
+ *  l'inverse. Les confondre, c'est rendre un corps carré — ce qu'il n'est plus. */
+const HALF_X = BALANCE.AVATAR_HITBOX_TILES / 2
+const HALF_Y = BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
 
 /* ── Le cœur travaille en SOUS-TUILES ───────────────────────────────────────
  *
@@ -38,7 +42,8 @@ const HALF = BALANCE.AVATAR_HITBOX_TILES / 2
  * `Math.floor` équivalents à l'échelle près, et non huit fois plus serrés.
  */
 const SUB = BALANCE.SUBTILES_PER_TILE
-const HALF_SUB = HALF * SUB
+const HALF_X_SUB = HALF_X * SUB
+const HALF_Y_SUB = HALF_Y * SUB
 const EPS_SUB = EPS * SUB
 
 /**
@@ -54,16 +59,90 @@ export interface MoveWorld {
   moverVillageId?: number | null
 }
 
+/**
+ * LES ARÊTES D'UN MUR MINCE — les quatre bits, et le sous-domaine que chacun bloque.
+ *
+ * Un mur qui déclare des `edges` n'occupe plus sa tuile : il occupe une bande de
+ * `WALL_EDGE_SUB` sous-tuiles **À CHEVAL SUR L'ARÊTE** — moitié chez lui, moitié chez le voisin
+ * (décision d'Alexis, 2026-07-27 : « un mur sur une arête doit prendre autant sur une tuile que
+ * sur l'autre »). Une arête est une LIMITE, pas une bordure intérieure : la coller d'un seul
+ * côté mettait toute la maçonnerie dans la tuile du dehors, et le mur ne tombait pas là où
+ * l'œil le place — sur le trait.
+ *
+ * CE QUE ÇA COÛTE AU DEDANS : la tuile de la salle qui borde le mur perd `WALL_EDGE_SUB/2`
+ * sous-tuiles. Elle reste praticable en son centre (il lui en reste `SUB − WALL_EDGE_SUB/2`),
+ * mais elle n'est plus ENTIÈRE — c'est le prix du trait, et il se paie des deux côtés.
+ */
+const EDGE_N = 1, EDGE_E = 2, EDGE_S = 4, EDGE_O = 8
+/** La demi-épaisseur : ce qu'une arête prend DE CHAQUE CÔTÉ de la limite qu'elle occupe. */
+const WALL_HALF = BALANCE.WALL_EDGE_SUB / 2
+
+/** La SOUS-TUILE (sx,sy) tombe-t-elle sur une des arêtes déclarées de la tuile (tx,ty) ? */
+function onDeclaredEdge(edges: number, sx: number, sy: number, tx: number, ty: number): boolean {
+  const lx = sx - tx * SUB // position dans la tuile, en sous-tuiles [0, SUB)
+  const ly = sy - ty * SUB
+  if (edges & EDGE_N && ly < WALL_HALF) return true
+  if (edges & EDGE_S && ly >= SUB - WALL_HALF) return true
+  if (edges & EDGE_O && lx < WALL_HALF) return true
+  if (edges & EDGE_E && lx >= SUB - WALL_HALF) return true
+  return false
+}
+
+/**
+ * LA MOITIÉ QUI DÉBORDE CHEZ LE VOISIN — l'autre moitié de la même bande.
+ *
+ * Sans elle, le mur à cheval ne bloquerait plus que la moitié de son épaisseur : la tuile
+ * voisine ne regarde que SA structure, et celle du mur est à côté. On ne consulte le voisin que
+ * si la sous-tuile est effectivement au ras de la limite — au plus deux balayages de plus, et
+ * seulement pour les sous-tuiles de bord.
+ */
+function edgeDeborde(world: MoveWorld, tx: number, ty: number, bit: number): boolean {
+  const mover = world.moverVillageId ?? null
+  for (const s of world.structures ?? []) {
+    // On BALAIE, on ne prend pas « le premier solide » : la tuile d'en face porte presque
+    // toujours un sol de cour EN PLUS de son mur, et c'est ce raccourci qui laissait passer.
+    if (s.tx !== tx || s.ty !== ty || s.edges === undefined) continue
+    if ((s.edges & bit) !== 0 && structureBlocks(s, mover)) return true
+  }
+  return false
+}
+
 /** Une tuile est-elle bloquante pour ce déplaceur ? (terrain + structures + nœuds) */
 export function isBlockedAt(world: MoveWorld, tx: number, ty: number): boolean {
   return blockedAt(world, tx, ty)
 }
 
+/**
+ * LE BLOQUANT D'UNE TUILE — et surtout PAS « la première structure qui n'est ni sol ni toit ».
+ *
+ * `solidAt` écarte `floor` et `roof`, et c'était suffisant tant qu'une tuile ne portait que ça
+ * de mou. Depuis les lieux bâtis, une même tuile porte la TERRE BATTUE de la cour ET le mur qui
+ * la borde — et la terre, posée d'abord, était rendue la première. Le mur n'était alors jamais
+ * consulté : **on traversait le mur du sud d'une ferme** (constaté par Alexis le 2026-07-27,
+ * reproduit headless). Le symptôme aurait grandi avec chaque nouvelle pièce molle (friche,
+ * parcelle…), et la garde du cache d'occupation annonçait déjà exactement ce piège.
+ *
+ * On ne cherche donc plus « le solide », on cherche **ce qui BLOQUE ce marcheur** — la seule
+ * question que la collision se pose vraiment.
+ */
+function bloquantAt(world: MoveWorld, tx: number, ty: number, pleineTuile: boolean): Structure | undefined {
+  const mover = world.moverVillageId ?? null
+  for (const s of world.structures ?? []) {
+    if (s.tx !== tx || s.ty !== ty) continue
+    if (pleineTuile && s.edges !== undefined) continue
+    if (structureBlocks(s, mover)) return s
+  }
+  return undefined
+}
+
 function blockedAt(world: MoveWorld, tx: number, ty: number): boolean {
   if (isBlockingTile(world.map, tx, ty)) return true
   if (world.structures) {
-    const s = solidAt(world.structures, tx, ty)
-    if (s !== undefined && structureBlocks(s, world.moverVillageId ?? null)) return true
+    // UN MUR SUR ARÊTE NE BLOQUE PAS SA TUILE : on s'y tient, on la traverse même — ce qui est
+    // bloqué, c'est le FRANCHISSEMENT de l'arête, et cela ne se décide qu'en sous-tuile. À
+    // l'échelle de la tuile, la réponse honnête est « libre » ; répondre « bloquée » ferait
+    // fuir la faune d'une salle parfaitement praticable.
+    if (bloquantAt(world, tx, ty, true) !== undefined) return true
   }
   if (world.nodes) {
     const n = nodeAt(world.nodes, tx, ty)
@@ -139,11 +218,14 @@ function occupancyOf(world: MoveWorld): Map<number, Occupant> {
   if (world.structures) {
     for (const s of world.structures) {
       if (s.tx < 0 || s.ty < 0 || s.tx >= width || s.ty >= height) continue
-      // On n'indexe que le SOLIDE de la tuile (mur/porte/composant/Feu…), jamais une
-      // pièce molle (sol/toit) : sinon un sol posé AVANT un mur sur la même tuile
-      // masquerait le mur, et le pathfinding traverserait la paroi (décision d'Alexis :
-      // sol et toit se superposent au solide). Même sémantique que `solidAt`.
-      if (s.type === 'floor' || s.type === 'roof') continue
+      // On n'indexe QUE CE QUI PEUT BLOQUER, jamais une pièce molle : sinon une pièce posée
+      // AVANT un mur sur la même tuile masque le mur, et le pathfinding traverse la paroi.
+      // La garde disait « ni sol ni toit » — trop étroit : la TERRE BATTUE d'une cour, la
+      // friche, une parcelle partagent aussi leur tuile avec un mur, et masquaient le mur
+      // (bug constaté et corrigé le 2026-07-27, cf. `bloquantAt`). On teste donc ce qui
+      // bloque un ÉTRANGER (`null`) : c'est la seule propriété indépendante du marcheur, et
+      // le cache est partagé entre marcheurs. Le porteur du village est retesté à la requête.
+      if (!structureBlocks(s, null)) continue
       const entry = entryAt(s.tx, s.ty)
       if (entry.structure === undefined) entry.structure = s
     }
@@ -181,17 +263,30 @@ export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: numbe
 }
 
 /**
- * Une SOUS-TUILE est-elle bloquante ? Terrain et structures bloquent leur tuile
- * entière ; un nœud ne bloque que le carré `[c−h, c+h)` autour du centre `c` de
- * sa tuile, où `h = blockHalfSub`. Pour `h = 4` on retrouve exactement la tuile.
+ * Une SOUS-TUILE est-elle bloquante ? Le terrain bloque sa tuile entière ; une structure
+ * aussi, SAUF si elle déclare des `edges` — elle ne prend alors que des bandes de bord ; un
+ * nœud ne bloque que le carré `[c−h, c+h)` autour du centre `c` de sa tuile, où
+ * `h = blockHalfSub`. Pour `h = 4` on retrouve exactement la tuile.
  */
 function blockedSubAt(world: MoveWorld, sx: number, sy: number): boolean {
   const tx = Math.floor(sx / SUB)
   const ty = Math.floor(sy / SUB)
   if (isBlockingTile(world.map, tx, ty)) return true
   if (world.structures) {
-    const s = solidAt(world.structures, tx, ty)
-    if (s !== undefined && structureBlocks(s, world.moverVillageId ?? null)) return true
+    const s = bloquantAt(world, tx, ty, false)
+    if (s !== undefined) {
+      // Sans `edges`, la structure prend sa tuile entière (comportement historique) ; avec,
+      // elle ne prend que les bandes déclarées — et le reste de la tuile reste praticable.
+      if (s.edges === undefined) return true
+      if (onDeclaredEdge(s.edges, sx, sy, tx, ty)) return true
+    }
+    // L'AUTRE MOITIÉ : une arête déclarée par la tuile d'en face déborde ici d'autant.
+    const lx = sx - tx * SUB
+    const ly = sy - ty * SUB
+    if (ly < WALL_HALF && edgeDeborde(world, tx, ty - 1, EDGE_S)) return true
+    if (ly >= SUB - WALL_HALF && edgeDeborde(world, tx, ty + 1, EDGE_N)) return true
+    if (lx < WALL_HALF && edgeDeborde(world, tx - 1, ty, EDGE_E)) return true
+    if (lx >= SUB - WALL_HALF && edgeDeborde(world, tx + 1, ty, EDGE_O)) return true
   }
   if (world.nodes) {
     const n = nodeAt(world.nodes, tx, ty)
@@ -251,6 +346,8 @@ function moveAxis(
   horizontal: boolean,
 ): number {
   if (delta === 0) return pos
+  // La demi-mesure de l'axe SUR LEQUEL ON AVANCE — c'est elle qui décide où le corps bute.
+  const HALF_SUB = horizontal ? HALF_X_SUB : HALF_Y_SUB
   const target = pos + delta
   const posSub = pos * SUB
   const targetSub = target * SUB
@@ -280,8 +377,8 @@ export function resolveMove(
   dx: number,
   dy: number,
 ): { x: number; y: number } {
-  const nx = moveAxis(world, x, dx, y - HALF, y + HALF, true)
-  const ny = moveAxis(world, y, dy, nx - HALF, nx + HALF, false)
+  const nx = moveAxis(world, x, dx, y - HALF_Y, y + HALF_Y, true)
+  const ny = moveAxis(world, y, dy, nx - HALF_X, nx + HALF_X, false)
   return { x: nx, y: ny }
 }
 
@@ -357,8 +454,8 @@ export function moveAvatarStepped(
  * tuile, un avatar légalement debout entre deux troncs les ferait échouer à tort.
  */
 export function overlapsBlocking(world: MoveWorld, x: number, y: number): boolean {
-  const [sx0, sx1] = subSpan((x - HALF) * SUB, (x + HALF) * SUB)
-  const [sy0, sy1] = subSpan((y - HALF) * SUB, (y + HALF) * SUB)
+  const [sx0, sx1] = subSpan((x - HALF_X) * SUB, (x + HALF_X) * SUB)
+  const [sy0, sy1] = subSpan((y - HALF_Y) * SUB, (y + HALF_Y) * SUB)
   for (let sy = sy0; sy <= sy1; sy++) {
     for (let sx = sx0; sx <= sx1; sx++) {
       if (blockedSubAt(world, sx, sy)) return true

@@ -50,6 +50,10 @@ export const TIE_CORPSE = 0.1
 export const TIE_CLUTTER = 0.2
 export const TIE_NODE = 0.4
 export const TIE_STRUCTURE = 0.6
+/** LE SEUIL passe APRÈS les murs à pieds égaux. Une bande de mur déborde d'une demi-épaisseur
+ *  chez ses voisins (c'est ce qui la recoud) : sans ce départage, la pierre du mur d'à côté
+ *  mordait le bois de la porte. Reste SOUS les acteurs — on entre par la porte, pas derrière. */
+export const TIE_SEUIL = 0.7
 export const TIE_ACTOR = 0.8
 
 /** Coiffent le monde : canopée, voile de nuit, halos des Feux. */
@@ -165,10 +169,86 @@ export function structureDepth(ty: number, tilePx: number): number {
   return ySortDepth(ty + 1, tilePx, TIE_STRUCTURE)
 }
 
+/**
+ * ═══ LA PROFONDEUR D'UNE BARRIÈRE SUR ARÊTE — ses pieds sont SA BANDE, pas sa tuile ═══
+ *
+ * Une structure pleine tuile trie sur `ty + 1`, le bas de sa tuile, et c'est juste : elle
+ * l'occupe entièrement. Une barrière d'arête, non — elle n'en occupe qu'un LISERÉ. Le mur qui
+ * borde une salle par le sud porte son arête au NORD de sa tuile : ses pieds sont donc tout en
+ * haut de cette tuile, et non un pixel au-dessus de la tuile suivante.
+ *
+ * Sans ça, quiconque se colle à un mur PAR LE BAS (ou à une clôture) partage la tuile de la
+ * barrière tout en étant AU SUD d'elle — et passait derrière : le personnage disparaissait
+ * dans un mur qu'il longeait par l'extérieur (constaté par Alexis, 2026-07-27).
+ *
+ * `demiTuiles` = la demi-épaisseur de la bande, en tuiles (elle est À CHEVAL sur l'arête, donc
+ * son bord sud descend d'autant chez le voisin). Une bande VERTICALE (est/ouest), elle, court
+ * sur toute la hauteur de sa tuile : ses pieds restent `ty + 1`.
+ */
+export function barriereDepth(ty: number, edges: number, tilePx: number, demiTuiles: number, tie = TIE_STRUCTURE): number {
+  const SUD = 4, EST = 2, OUEST = 8
+  const feetY = (edges & (SUD | EST | OUEST)) !== 0 ? ty + 1 : ty + demiTuiles
+  return ySortDepth(feetY, tilePx, tie)
+}
+
+/** Le seuil de porte : comme une structure, mais APRÈS elle (cf. `TIE_SEUIL`). */
+export function seuilDepth(ty: number, tilePx: number): number {
+  return ySortDepth(ty + 1, tilePx, TIE_SEUIL)
+}
+
 /** Un nœud (arbre, bloc, buisson) est un prop VERTICAL : il trie comme une
  * structure. À pieds égaux il passe devant le décor, jamais devant un acteur. */
 export function nodeDepth(ty: number, tilePx: number): number {
   return ySortDepth(ty + 1, tilePx, TIE_NODE)
+}
+
+/**
+ * ═══ UNE BARRIÈRE AVALE-T-ELLE CET ACTEUR ? (décision d'Alexis, 2026-07-27) ═══
+ *
+ * NB — CETTE FONCTION EST LA VÉRIFICATION, PLUS LA POLITIQUE. Ce qui DÉCIDE d'effacer un mur,
+ * c'est la règle des PANS (`render/pans.ts`, décision d'Alexis : un côté de bâtiment tombe d'un
+ * bloc, à deux tuiles). Celle-ci répond à la question qu'on lui pose ensuite — « reste-t-il une
+ * barrière pleine qui recouvre le joueur ? » — et c'est à ce titre qu'elle est testée, en
+ * unitaire comme au navigateur : la politique change, l'invariant non.
+ *
+ * Le tri Y est JUSTE et il produit quand même un défaut : un mur trie sur le bas de sa tuile,
+ * mais il se DRESSE au-dessus d'elle (`MUR_HT`, deux tuiles). Tout ce qui se tient dans ces
+ * deux rangées au nord passe donc DERRIÈRE lui — physiquement correct (on est derrière le mur,
+ * vu du sud), visuellement inacceptable : le joueur disparaît.
+ *
+ * Ce n'est pas une faute de tri, c'est le prix de la hauteur, et on ne le paie pas en trichant
+ * sur les profondeurs — inverser l'ordre ferait marcher l'avatar SUR la maçonnerie. On le paie
+ * en DÉCOUPANT le mur fautif (à la Project Zomboid), et cette fonction dit lequel : celui dont
+ * le sprite recouvre l'acteur ET qui se dessine après lui.
+ *
+ * Tout est en pixels MONDE, et rien n'est deviné : la hauteur du sprite et sa largeur viennent
+ * de `bati-art`, la boîte de l'acteur de son propre art. Un test balaie les huit directions.
+ */
+export function barriereAvale(
+  barriere: { tx: number; ty: number; hauteurPx: number; largeurPx: number },
+  acteur: { x: number; y: number; largeurPx: number; hauteurPx: number },
+  tilePx: number,
+): boolean {
+  // Qui passe devant ? Le tri Y, et lui seul — on ne découpe JAMAIS ce qui est déjà derrière.
+  const dBarriere = structureDepth(barriere.ty, tilePx)
+  const dActeur = ySortDepth(acteur.y, tilePx, TIE_ACTOR)
+  if (dBarriere <= dActeur) return false
+  // Les deux empreintes à l'écran. Une barrière est ancrée au bas de sa TUILE et monte ;
+  // un acteur est ancré à ses pieds et monte aussi.
+  const bx = (barriere.tx + 0.5) * tilePx
+  const bBas = (barriere.ty + 1) * tilePx
+  const bHaut = bBas - tilePx - barriere.hauteurPx
+  const ax = acteur.x * tilePx
+  const aBas = acteur.y * tilePx
+  const aHaut = aBas - acteur.hauteurPx
+  // IL FAUT UN VRAI RECOUVREMENT, pas un frôlement. Sans ce seuil, une clôture dont la coiffe
+  // mord deux pixels sur les pieds de l'avatar se tranche — et se retranche à chaque pas, ce
+  // qui donne un clignotement le long de tout un enclos. Deux pixels sur seize : en deçà, on
+  // voit encore l'acteur, et le remède serait pire que le mal.
+  const SEUIL = 2
+  const recouvreY = Math.min(aBas, bBas) - Math.max(aHaut, bHaut)
+  const recouvreX = (acteur.largeurPx + barriere.largeurPx) / 2 - Math.abs(ax - bx)
+  return recouvreY > SEUIL && recouvreX > SEUIL
 }
 
 /* ── Les houppiers : une bande à eux seuls ───────────────────────────────────

@@ -176,7 +176,7 @@ export const POI_TYPES: PoiType[] = [
   { slug: 'verger', zones: ['pres_bas', 'sylve'], name: 'le Verger sauvage', family: 'eco', biomes: [FLOWER, GRASS, AL_MEADOW], weight: 3, cap: 4, reserve: 1, footprint: 3 },
   // Abris
   { slug: 'ruines', zones: ['ruines'], name: 'les Ruines', family: 'shelter', biomes: [OLD_GROWTH, FOREST, GRASS], weight: 3, cap: 4, reserve: 1, footprint: 4 },
-  { slug: 'cabane', zones: ['alpages'], name: 'la Cabane de berger', family: 'shelter', biomes: [AL_MEADOW, AL_FLOWERS], weight: 4, cap: 5, reserve: 1, footprint: 2 },
+  { slug: 'cabane', zones: ['alpages'], name: 'la Cabane de berger', family: 'shelter', biomes: [AL_MEADOW, AL_FLOWERS], weight: 4, cap: 5, reserve: 1, footprint: 5 },
   { slug: 'abri', zones: ['karst', 'aiguilles', 'gouffre', 'ruines'], name: "l'Abri sous roche", family: 'shelter', biomes: [ROCK, BOULDERS, SCREE], weight: 5, cap: 6, reserve: 1, footprint: 2 },
   { slug: 'mine', zones: ['karst', 'gouffre'], name: 'la Mine abandonnée', family: 'shelter', biomes: [SCREE, ROCK], minElev: 0.5, weight: 3, cap: 3, reserve: 1, footprint: 3 },
   { slug: 'oratoire', zones: ['alpages', 'karst'], name: 'l’Oratoire', family: 'shelter', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 2 },
@@ -266,7 +266,7 @@ export const POI_TYPES: PoiType[] = [
   // ═══ LES RUINES BASSES DU PAYS D'AVANT (spec t0-exploration R19) ═══
   // Des abris au sens des shelters existants, AUCUN butin (lieux.md A9). Avec la Tour, le pré
   // raconte : on vivait ici, on guettait le sud, on est partis.
-  { slug: 'ferme_ruinee', zones: ['pres_bas'], name: 'la Ferme ruinée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH], weight: 3, cap: 2, reserve: 1, footprint: 4 },
+  { slug: 'ferme_ruinee', zones: ['pres_bas'], name: 'la Ferme ruinée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH], weight: 3, cap: 2, reserve: 1, footprint: 18 },
   { slug: 'charrette', zones: ['pres_bas'], name: 'la Charrette abandonnée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH, FOREST], weight: 3, cap: 3, reserve: 1, footprint: 2 },
   // ═══ LES SET-PIECES — des lieux HORS SEMIS (spec t0-exploration R9-R10) ═══
   // `biomes: []` : jamais éligibles au tirage — ils se posent en passe dédiée du worldgen

@@ -78,6 +78,29 @@ export interface Structure {
   /** PV (spec événements R1) — les hordes frappent ce qui bloque. */
   hp: number
   /**
+   * LES ARÊTES OCCUPÉES — un masque de 4 bits (N=1, E=2, S=4, O=8), et le pivot du modèle
+   * de mur MINCE (décision d'Alexis).
+   *
+   * Un mur ne prend plus sa tuile entière : il vit sur une ou plusieurs de ses ARÊTES. La salle
+   * qu'il borde garde donc 100 % de son dallage, et une pièce de 6×4 s'écrit 6×4 au lieu de
+   * réclamer 8×6. Un ANGLE est un mur à deux arêtes — pas deux murs : `structureAt` (appelé à
+   * 35 endroits) survit intact, et l'autotuilage cesse d'être DEVINÉ du voisinage puisque la
+   * forme est portée ici.
+   *
+   * **ABSENT = COMPORTEMENT HISTORIQUE**, et c'est la clé de la migration : un mur sans `edges`
+   * bloque sa tuile entière, exactement comme avant. Les villages déjà bâtis, les tests seedés
+   * et les parties sauvegardées ne bougent pas d'un pixel ; seul ce qui déclare des arêtes
+   * emprunte le nouveau chemin.
+   */
+  edges?: number
+  /**
+   * L'ORIENTATION d'une pièce de mobilier (0=N, 1=E, 2=S, 3=O). COSMÉTIQUE — la sim ne la lit
+   * jamais : ni la reconnaissance de fonction, ni l'accès n'en dépendent. Elle voyage dans
+   * l'ACTION (donc le rejeu la reproduit) et sert au seul rendu : une étagère tourne le dos au
+   * mur, un âtre ouvre sa gueule vers la pièce.
+   */
+  facing?: number
+  /**
    * LE PALIER DE MATÉRIAU (spec construction R8) — mur/porte seulement : bois →
    * pierre → métal. Absent = bois (défaut) ou pièce sans palier. Améliorable sur
    * place au marteau (`upgrade_structure`) ; chaque palier monte les PV.
@@ -242,6 +265,23 @@ const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = {
   parcelle: 'village',
   serre: 'village',
   terroir: 'village',
+  // LES PIÈCES DU MONDE BÂTI : `village` comme le reste du mobilier. Les vestiges du
+  // pays d'avant sont posés en `public` explicite par `poi-batis.ts` — une ruine
+  // n'appartient à personne, donc elle s'ouvre à qui la trouve.
+  table: 'village',
+  banc: 'village',
+  paillasse: 'village',
+  etagere: 'private', // un rangement personnel, comme le coffre
+  tonneau: 'village',
+  friche: 'village',
+  terre: 'village',
+  cloture: 'village',
+  abreuvoir: 'village',
+  meule: 'village',
+  encadrement: 'village',
+  atre: 'village',
+  poutre: 'village',
+  mur_bas: 'village',
 }
 
 /** Les CONTENEURS (spec construction §4bis) : coffre + les conteneurs du Grenier. */
@@ -430,6 +470,15 @@ export function structureBlocks(s: Structure, moverVillageId: number | null): bo
   // Pièces MOLLES (spec construction R14) : sol et toit ne bloquent JAMAIS —
   // seuls les murs comptent, ce qui garde l'invariant de navigabilité simple.
   if (s.type === 'floor' || s.type === 'roof') return false
+  // Les pièces BASSES du monde bâti : on les ENJAMBE. Un banc, une poutre tombée, un
+  // carré de friche ne ferment rien — et une ruine dont chaque débris bloque devient un
+  // labyrinthe où l'on se coince, pas un lieu où l'on entre.
+  if (s.type === 'banc' || s.type === 'poutre' || s.type === 'friche' || s.type === 'mur_bas') return false
+  if (s.type === 'terre') return false // un sol ne bloque pas — c'est un sol
+  // L'ENCADREMENT NE BLOQUE PAS — c'est un trou dans le mur, on passe DEDANS. S'il bloquait,
+  // il serait un mur de plus, et le bâtiment n'aurait pas d'entrée. (Une `door`, elle, bloque
+  // et s'ouvre pour les siens : ce sont deux objets différents, pas deux réglages du même.)
+  if (s.type === 'encadrement') return false
   if (s.type === 'door') return s.villageId !== moverVillageId
   return true
 }

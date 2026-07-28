@@ -56,7 +56,7 @@ const ART: Record<string, { fp: number; w: number; h: number; crown?: number }> 
   verger: { fp: 3, w: 72, h: 50 }, //               les houppiers se touchent et débordent
   // ── ABRIS — bois, pierre chaude ──
   ruines: { fp: 4, w: 80, h: 78, crown: 38 }, //    un pan debout ; les gravats vont plus loin que le socle
-  cabane: { fp: 2, w: 44, h: 56, crown: 16 }, //    LE TOIT DÉBORDE : c'est ce qui fait un toit
+  cabane: { fp: 5, w: 16, h: 16 }, // bâtie en pièces (poi-batis) : plus de corps peint
   abri: { fp: 2, w: 48, h: 34 }, //                 LE SURPLOMB DÉBORDE : c'est ce qui fait un abri
   mine: { fp: 3, w: 52, h: 66, crown: 26 }, //      le chevalement la signale de loin
   oratoire: { fp: 2, w: 34, h: 54, crown: 14 },
@@ -78,7 +78,7 @@ const ART: Record<string, { fp: number; w: number; h: number; crown?: number }> 
   tour_guet: { fp: 3, w: 46, h: 88, crown: 46 }, // la ruine qui guettait le sud — le Belvédère de la plaine
   pierre_levee: { fp: 2, w: 26, h: 64, crown: 24 }, // un menhir seul : la chaîne des pierres
   // ── Les ruines basses du pays d'avant (R19). ──
-  ferme_ruinee: { fp: 4, w: 76, h: 58, crown: 16 }, // des murs bas, UN pignon debout
+  ferme_ruinee: { fp: 12, w: 16, h: 16 }, // des murs bas, UN pignon debout
   charrette: { fp: 2, w: 42, h: 34 }, //               une épave au bord de la sente — basse, pas de crown
   // ── Les SET-PIECES : leur corps est leur TERRAIN (R10) — PoiLayer n'affiche que l'étiquette.
   //    Les entrées existent pour la garde bidirectionnelle POI_TYPES↔POI_ART ; aucune texture

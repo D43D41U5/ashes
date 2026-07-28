@@ -46,7 +46,7 @@ export interface AimTarget {
   /** Un FEU (structure) est-il sur la tuile visée ? La cible de `feed_fire` (du bois en main
    *  + clic sur le Feu → on le nourrit). La sim vise TOUJOURS le foyer de l'acteur. */
   onFire: boolean
-  /** L'id du FEU visé (structure) — pour ouvrir SON modal à la touche E (spec feu-station S17).
+  /** L'id du FEU visé (structure) — pour ouvrir SON modal à la touche F (spec feu-station S17).
    *  `null` = aucun feu sous le curseur. La portée se lit sur `inRange`. */
   fireId: number | null
   /** Une structure ABÎMÉE (hp < max, hors Feu) sur la tuile visée — la cible de `repair`

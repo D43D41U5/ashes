@@ -8,6 +8,7 @@ import { generateItemIcons } from '../render/item-art'
 import { generateVitalIcons } from '../render/vital-art'
 import { generateLitTrees } from '../render/lit-trees'
 import { generateLitStructures } from '../render/lit-structures'
+import { generateBatiArt } from '../render/bati-art'
 import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
 import { makePoiTextures } from './world/poi-art'
@@ -291,6 +292,7 @@ export class BootScene extends Phaser.Scene {
     makeBorneTextures(this) // les bornes qui annoncent les seuils (worldgen R21) — world/borne-layer.ts
     makeGueStoneTexture(this) // les dalles des gués : le passage se lit par la forme — world/gue-stones.ts
     generateLitStructures(this) // les chips de structures, albédo aplati + normale (da-feeling R4)
+    generateBatiArt(this) // tout l'art du monde bâti (mobilier, clôture, mur ruiné) — render/bati-art.ts
     generateLitErratiques(this)
     generateLitPois(this) // les lieux basculés (vague B, da-feeling §3) — table POI_LIT_DEFS // ESSAI DA cubique sur les POI : 3 variantes du bloc erratique (poi-erratique-<i>_lit) — voir render/poi-lit.ts
     makeCliffTextures(this) // les bandes de roche plate des frontières — voir render/cliff-art.ts
@@ -860,11 +862,19 @@ export class BootScene extends Phaser.Scene {
     g.destroy()
   }
 
+  /**
+   * L'HUMANOÏDE FAIT 12 × 24 (décision d'Alexis, 2026-07-27) — et la TEXTURE aussi.
+   *
+   * Elle faisait 12×12 pour un rendu de 16 × 25,6 : chaque pixel d'art s'étirait de 1,33 en
+   * largeur et 2,13 en hauteur, donc en RECTANGLES, et de travers. À la taille du rendu, un
+   * pixel d'art vaut un pixel d'écran — le pion redevient net. La largeur (12) est celle de la
+   * hitbox : le corps et le dessin s'arrêtent ensemble.
+   */
   private makeSprite(key: string, fill: number, border: number): void {
     const g = this.add.graphics()
-    g.fillStyle(border).fillRect(0, 0, 12, 12)
-    g.fillStyle(fill).fillRect(1, 1, 10, 10)
-    g.generateTexture(key, 12, 12)
+    g.fillStyle(border).fillRect(0, 0, 12, 24)
+    g.fillStyle(fill).fillRect(1, 1, 10, 22)
+    g.generateTexture(key, 12, 24)
     g.destroy()
   }
 }

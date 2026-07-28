@@ -39,8 +39,9 @@ describe('collisions (A3)', () => {
     const sim = createSim(1, { map: createEmptyMap(8, 8, TERRAIN_GRASS) })
     const id = spawnEntity(sim, 1, 1)
     for (let t = 0; t < 100; t++) step(sim, [{ entityId: id, dx: -1, dy: -1 }])
-    expect(sim.entities[0]!.x).toBe(HALF)
-    expect(sim.entities[0]!.y).toBe(HALF)
+    // Le corps est un RECTANGLE : il bute à sa demi-LARGEUR en x, à sa demi-PROFONDEUR en y.
+    expect(sim.entities[0]!.x).toBe(BALANCE.AVATAR_HITBOX_TILES / 2)
+    expect(sim.entities[0]!.y).toBe(BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2)
   })
 
   it('le terrain module la vitesse (route plus rapide que l’herbe)', () => {

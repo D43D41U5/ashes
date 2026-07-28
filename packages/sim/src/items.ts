@@ -183,6 +183,52 @@ export type StructureType =
   | 'parcelle'
   | 'serre'
   | 'terroir'
+  /**
+   * ── LES PIÈCES DU MONDE BÂTI (`poi-batis.ts`) ──
+   *
+   * Le vocabulaire qui manquait pour dire RUINE et FERME. Ce ne sont ni des barrières
+   * (elles ne closent rien) ni des composants (elles ne font émerger aucune fonction) :
+   * ce sont des pièces ORDINAIRES, du même bois que le reste — un mur du pays d'avant
+   * et un mur qu'on pose sont le même objet, et c'est tout le propos.
+   *
+   * Elles ne sont pas encore posables au marteau (aucun objet-jumeau à fabriquer) : le
+   * catalogue de la construction §4bis les promet déjà au joueur par l'Atelier
+   * (« mobilier/charrettes ») et le Dortoir (« Lit(s) ») — cette tranche pose les
+   * pièces, la suivante posera les recettes.
+   */
+  // Mobilier — ce qui dit qu'on VIVAIT là.
+  | 'table'
+  | 'banc'
+  | 'paillasse'
+  | 'etagere'
+  | 'tonneau'
+  // Ferme — ce qui dit qu'on CULTIVAIT là.
+  | 'friche'
+  /**
+   * LA TERRE BATTUE — le sol d'une cour. Sans elle, un enclos n'était qu'une clôture posée dans
+   * l'herbe : rien ne disait qu'on avait piétiné là pendant des années. Elle fait de la cour une
+   * PIÈCE du bâtiment, et non un bout de pré qu'on a entouré.
+   */
+  | 'terre'
+  | 'cloture'
+  | 'abreuvoir'
+  | 'meule'
+  /**
+   * L'ENCADREMENT DE PORTE, SANS PORTE — l'entrée d'un bâtiment.
+   *
+   * Ce n'est PAS une `door` : la porte est une barrière à serrure, qui bloque et qui s'ouvre
+   * pour les siens. L'encadrement, lui, ne ferme rien — c'est un TROU DANS LE MUR, tenu par
+   * deux jambages et un linteau. Il dit « on entre ici » sans rien interdire.
+   *
+   * Et c'est ce dont le monde bâti a besoin : une `door` sans village bloque TOUT LE MONDE
+   * (bug vivant sur les ruines de villages tombés), donc aucune ruine ne peut en porter. Un
+   * encadrement le peut, et il donne au bâtiment son seuil.
+   */
+  | 'encadrement'
+  // Ruine — ce qui dit que c'est TOMBÉ.
+  | 'atre'
+  | 'poutre'
+  | 'mur_bas'
 
 /**
  * LES PIÈCES STRUCTURELLES du marteau (spec construction R20, décision d'Alexis

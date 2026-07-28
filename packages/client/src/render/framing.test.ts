@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   actorPlacement,
+  barriereAvale,
+  barriereDepth,
+  seuilDepth,
   AMBIENT_DEPTH,
   CANOPY_DEPTH,
   CROWN_ALPHA_MIN,
@@ -184,5 +187,116 @@ describe('houppiers : le disque de découvert (A8)', () => {
   it('les jointures sont continues (R_IN et R_OUT)', () => {
     expect(crownAlpha(CROWN_R_IN + 1e-6)).toBeCloseTo(CROWN_ALPHA_MIN, 5)
     expect(crownAlpha(CROWN_R_OUT - 1e-6)).toBeCloseTo(1, 5)
+  })
+})
+
+/**
+ * ═══ LE TRI Y, DANS TOUS LES SENS (décision d'Alexis, 2026-07-27) ═══
+ *
+ * Deux choses distinctes, et il faut les deux :
+ *   1. L'ORDRE — un acteur au sud d'une barrière passe DEVANT, au nord il passe DERRIÈRE. C'est
+ *      le tri Y nu, et il est juste dans les quatre directions.
+ *   2. L'AVALEMENT — « derrière » devient invisible dès que la barrière est HAUTE (deux tuiles).
+ *      `barriereAvale` désigne alors la barrière à trancher. Une garde par direction, plus les
+ *      diagonales, plus les deux hauteurs : un mur avale à deux tuiles, une clôture non.
+ */
+describe('le tri Y et l’avalement des barrières', () => {
+  const MUR = { hauteurPx: 32, largeurPx: 20 }
+  const CLOTURE = { hauteurPx: 8, largeurPx: 20 }
+  const ACTEUR = { largeurPx: 12, hauteurPx: 12 }
+  /** Le mur de référence : la tuile (10,10). */
+  const mur = { tx: 10, ty: 10, ...MUR }
+  const acteur = (x: number, y: number) => ({ x, y, ...ACTEUR })
+
+  it('l’ORDRE : au sud on passe devant, au nord on passe derrière', () => {
+    const devant = ySortDepth(11.5, TILE, TIE_ACTOR) //   un acteur UNE tuile au sud
+    const derriere = ySortDepth(10.0, TILE, TIE_ACTOR) // un acteur au nord
+    expect(devant).toBeGreaterThan(structureDepth(10, TILE))
+    expect(derriere).toBeLessThan(structureDepth(10, TILE))
+  })
+
+  it('un MUR avale qui se tient dans les deux rangées au NORD, et le dit', () => {
+    expect(barriereAvale(mur, acteur(10.5, 10.4), TILE), 'même tuile, au-dessus du bas').toBe(true)
+    expect(barriereAvale(mur, acteur(10.5, 9.6), TILE), 'une tuile au nord').toBe(true)
+    expect(barriereAvale(mur, acteur(10.5, 8.9), TILE), 'deux tuiles au nord').toBe(true)
+  })
+
+  it('mais PAS au-delà de sa hauteur : à trois tuiles, il ne cache plus rien', () => {
+    expect(barriereAvale(mur, acteur(10.5, 7.5), TILE)).toBe(false)
+  })
+
+  it('ni au SUD — là, c’est l’acteur qui passe devant, il n’y a rien à trancher', () => {
+    for (const y of [11.2, 12.5, 14]) expect(barriereAvale(mur, acteur(10.5, y), TILE), `y=${y}`).toBe(false)
+  })
+
+  it('ni À CÔTÉ : une colonne d’écart et les deux sprites ne se touchent plus', () => {
+    expect(barriereAvale(mur, acteur(12.2, 9.6), TILE), 'loin à l’est').toBe(false)
+    expect(barriereAvale(mur, acteur(8.8, 9.6), TILE), 'loin à l’ouest').toBe(false)
+    // En revanche le sprite du mur DÉBORDE de sa tuile (20 px pour 16) : un acteur qui mord sur
+    // la colonne voisine est bel et bien recouvert, et la garde doit le voir.
+    expect(barriereAvale(mur, acteur(11.3, 9.6), TILE), 'à cheval sur la colonne voisine').toBe(true)
+  })
+
+  it('LES DIAGONALES suivent la même règle, sans cas particulier', () => {
+    const clot = { tx: 10, ty: 10, ...CLOTURE }
+    // Au nord-ouest et au nord-est, à portée du sprite : avalé par le mur, PAS par la clôture
+    // (8 px : elle ne monte pas jusqu’à la rangée du dessus).
+    for (const [x, y] of [[10.2, 9.6], [10.8, 9.6]] as const) {
+      expect(barriereAvale(mur, acteur(x, y), TILE), `mur (${x},${y})`).toBe(true)
+      expect(barriereAvale(clot, acteur(x, y), TILE), `clôture (${x},${y})`).toBe(false)
+    }
+    // Au sud-ouest et au sud-est : jamais.
+    for (const [x, y] of [[10.2, 11.4], [10.8, 11.4]] as const) {
+      expect(barriereAvale(mur, acteur(x, y), TILE), `mur (${x},${y})`).toBe(false)
+    }
+  })
+
+  it('une CLÔTURE basse n’avale que ce qui la touche vraiment', () => {
+    const clot = { tx: 10, ty: 10, ...CLOTURE }
+    expect(barriereAvale(clot, acteur(10.5, 10.5), TILE), 'dans sa tuile').toBe(true)
+    expect(barriereAvale(clot, acteur(10.5, 9.2), TILE), 'une tuile au nord').toBe(false)
+  })
+})
+
+describe('le seuil se dessine APRÈS le mur (il ne doit pas être mordu)', () => {
+  it('à pieds ÉGAUX, le seuil passe devant le mur — et reste sous l’acteur', () => {
+    // Une bande de mur déborde d'une demi-épaisseur chez ses voisins pour se recoudre à eux ;
+    // sans ce départage, la pierre du mur d'à côté recouvrait le bois de la porte.
+    expect(seuilDepth(10, TILE)).toBeGreaterThan(structureDepth(10, TILE))
+    expect(seuilDepth(10, TILE)).toBeLessThan(ySortDepth(11, TILE, TIE_ACTOR))
+  })
+  it('mais le départage ne renverse jamais une rangée d’écart', () => {
+    expect(seuilDepth(10, TILE)).toBeLessThan(structureDepth(11, TILE))
+  })
+})
+
+/**
+ * SE COLLER À UN MUR PAR LE BAS (rapport d'Alexis, 2026-07-27) — on doit passer DEVANT.
+ *
+ * Une clôture, ou le mur du bas d'une ferme, porte son arête au NORD de sa tuile. Qui se colle
+ * à elle par le sud partage donc SA TUILE tout en étant au sud d'elle : trier la barrière sur
+ * `ty + 1` la faisait passer devant le personnage, qui disparaissait dans un mur qu'il longeait.
+ */
+describe('une barrière trie sur sa BANDE, pas sur sa tuile', () => {
+  const N = 1, S = 4, E = 2
+  const DEMI = 0.125 //  WALL_EDGE_SUB/2 sur SUBTILES_PER_TILE
+
+  it('collé par le BAS à une clôture (arête nord), le personnage passe DEVANT', () => {
+    const cloture = barriereDepth(18, N, TILE, DEMI)
+    const joueurColle = ySortDepth(18.5 + 0.3, TILE, TIE_ACTOR) //  pieds à 18,8
+    expect(joueurColle).toBeGreaterThan(cloture)
+  })
+
+  it('mais au NORD de la même bande, il passe bien DERRIÈRE', () => {
+    const cloture = barriereDepth(18, N, TILE, DEMI)
+    // La collision l'arrête bande comprise : ses pieds ne dépassent pas le bord nord.
+    const joueurDerriere = ySortDepth(17.575 + 0.3, TILE, TIE_ACTOR)
+    expect(joueurDerriere).toBeLessThan(cloture)
+  })
+
+  it('une bande SUD ou VERTICALE garde les pieds au bas de sa tuile (elle y descend)', () => {
+    expect(barriereDepth(18, S, TILE, DEMI)).toBe(structureDepth(18, TILE))
+    expect(barriereDepth(18, E, TILE, DEMI)).toBe(structureDepth(18, TILE))
+    expect(barriereDepth(18, N | E, TILE, DEMI), 'un angle descend aussi').toBe(structureDepth(18, TILE))
   })
 })

@@ -181,8 +181,25 @@ export const BALANCE = {
   /** Derniers jours des actes I et II (GDD §2 : semaines 1-3, 4-6, 7-8+). */
   ACT_BOUNDARIES: [21, 42],
 
-  /** Côté de la hitbox AABB d'un avatar, en tuiles (spec monde R9). */
-  AVATAR_HITBOX_TILES: 0.6,
+  /**
+   * LA HITBOX D'UN AVATAR : **12 × 6 px**, soit 0,75 × 0,375 tuile (décision d'Alexis,
+   * 2026-07-27). `AVATAR_HITBOX_TILES` en est la LARGEUR (est-ouest, spec monde R9).
+   *
+   * DEUX CHOSES S'Y JOUENT, ET AUCUNE N'EST DÉCORATIVE.
+   *
+   * ① **LARGEUR = LARGEUR DU DESSIN.** L'avatar est rendu sur 12 px de large : le corps et le
+   *    dessin s'arrêtent donc ENSEMBLE. Avec 0,6 (9,6 px) sous un dessin de 16, on voyait
+   *    l'avatar entrer dans la pierre alors que la collision l'arrêtait à fleur ; avec 1 tuile
+   *    pleine, aucun passage d'une tuile ne se franchissait plus sans être aligné au pixel (un
+   *    zombie s'immobilisait pour de bon dans une chicane — MESURÉ). 0,75 laisse un quart de
+   *    tuile de jeu : on se faufile encore, et le dessin ne ment plus.
+   *
+   * ② **LE CORPS EST UN RECTANGLE.** Vu de dessus, des épaules sont plus larges que profondes :
+   *    0,375 tuile en nord-sud. C'est ce qui permet de longer un mur au sud sans le chevaucher,
+   *    et de se glisser entre deux obstacles décalés.
+   */
+  AVATAR_HITBOX_TILES: 0.75,
+  AVATAR_HITBOX_DEPTH_TILES: 0.375,
 
   /** Résolution de la collision sous-tuile : sous-tuiles par côté de tuile.
    * PUISSANCE DE DEUX obligatoire — la collision multiplie et divise par cette
@@ -191,6 +208,25 @@ export const BALANCE = {
    * (invariant 2). 8 permet un tronc centré de 2 sous-tuiles (0,25 tuile) qui
    * laisse 0,75 tuile d'écart entre deux troncs voisins — l'avatar (0,6) passe. */
   SUBTILES_PER_TILE: 8,
+
+  /**
+   * L'ÉPAISSEUR D'UN MUR SUR ARÊTE, en SOUS-TUILES (modèle d'arête, décision d'Alexis).
+   *
+   * **2 sur 8 = 0,25 tuile**, et cette épaisseur est À CHEVAL sur la limite : **2 px de dessin
+   * dans une tuile, 2 px dans l'autre** (décision d'Alexis, 2026-07-27, le mot pour mot). Une
+   * arête est une LIMITE, pas une bordure intérieure — la coller d'un seul côté mettait toute
+   * la maçonnerie dans la tuile du dehors, et le mur ne tombait pas là où l'œil le place.
+   *
+   * Le chiffre vit ICI et non dans le rendu, parce que le rendu en DÉRIVE (`bati-art.ts`) :
+   * épaissir le dessin seul donnerait le pire des défauts — un mur qu'on voit ici et qui arrête
+   * là — et personne ne saurait lequel des deux a tort.
+   *
+   * CE QUE LE PARTAGE COÛTE AU DEDANS : la tuile de la salle qui borde le mur perd une
+   * demi-épaisseur (1 sous-tuile, 0,125 tuile). Il lui en reste 0,875, l'avatar (0,6) y tient
+   * largement — la salle reste praticable jusqu'au pied de ses murs. Et la tuile du dehors garde
+   * autant : on longe un mur des deux côtés.
+   */
+  WALL_EDGE_SUB: 2,
 
   /** Amplitude du décalage pseudo-aléatoire de l'origine d'un arbre, en tuiles
    * (spec décalage d'origine). Chaque arbre est décalé de ±cette valeur en X et
@@ -579,6 +615,23 @@ export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./
   parcelle: { wood: 4, fiber: 4 },
   serre: { wood: 8, fiber: 6 },
   terroir: { cut_stone: 6, hardwood: 4 },
+  // LES PIÈCES DU MONDE BÂTI (`poi-batis.ts`) — coûts posés pour le jour où l'Atelier
+  // les fabriquera (catalogue §4bis). Aujourd'hui inertes : le monde les pose sans payer,
+  // et personne ne les démolit (une pièce sans village n'a ni propriétaire ni Chef).
+  table: { wood: 4 },
+  banc: { wood: 2 },
+  paillasse: { fiber: 6, wood: 2 },
+  etagere: { wood: 3 },
+  tonneau: { wood: 5 },
+  friche: { fiber: 2 },
+  terre: { stone: 1 },
+  cloture: { wood: 1 },
+  abreuvoir: { stone: 4 },
+  meule: { fiber: 8 },
+  encadrement: { wood: 4 },
+  atre: { stone: 8 },
+  poutre: { wood: 3 },
+  mur_bas: { stone: 2 },
 }
 
 export type WallMaterial = 'wood' | 'stone' | 'metal'
@@ -2220,6 +2273,23 @@ export const STRUCTURE_HP: Record<import('./items').StructureType, number> = {
   parcelle: COMPONENTS.parcelle.hp,
   serre: COMPONENTS.serre.hp,
   terroir: COMPONENTS.terroir.hp,
+  // LES PIÈCES DU MONDE BÂTI — du mobilier, pas de la fortification : ça casse.
+  // Ce sont aussi les PV de RÉFÉRENCE de leur usure : `poi-batis.ts` pose une ruine à
+  // une fraction de ce nombre, et le client l'assombrit d'autant.
+  table: 60,
+  banc: 40,
+  paillasse: 40,
+  etagere: 50,
+  tonneau: 60,
+  friche: 30,
+  terre: 40,
+  cloture: 80,
+  abreuvoir: 120,
+  meule: 40,
+  encadrement: 120, // deux jambages et un linteau : ça tient quand le reste tombe
+  atre: 250, // la pierre du foyer tient quand tout le reste est tombé
+  poutre: 60,
+  mur_bas: 150,
 }
 
 /**

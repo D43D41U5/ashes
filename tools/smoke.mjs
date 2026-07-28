@@ -314,14 +314,17 @@ const SCENARIOS = {
     await page.waitForTimeout(1200) // immobile depuis le TP : le remous doit être mort
     const wImmobile = await page.evaluate(() => window.__BRAISES__.scene.lastWaderCount)
     let wMarche = 0
-    await page.keyboard.down('KeyA')
+    // ALLER À L'OUEST, C'EST `KeyQ` — PAS `KeyA`. Playwright frappe sur un QWERTY US :
+    // `KeyQ` envoie le keyCode 81, et 81 est la gauche du jeu depuis le 2026-07-27 (ZQSD ;
+    // voir `keymap.ts`, `moveLeft`). `KeyA` envoie 65, qui fait désormais TOURNER un fantôme.
+    await page.keyboard.down('KeyQ')
     for (let k = 0; k < 6; k++) {
       await page.waitForTimeout(160)
       const w = await page.evaluate(() => window.__BRAISES__.scene.lastWaderCount)
       wMarche = Math.max(wMarche, w)
     }
     await page.screenshot({ path: `${OUT}/feeling-remous.png` })
-    await page.keyboard.up('KeyA')
+    await page.keyboard.up('KeyQ')
     await page.waitForTimeout(1100) // l'extinction fait 0,7 s
     const wArret = await page.evaluate(() => window.__BRAISES__.scene.lastWaderCount)
     console.log(`A5 — remous : immobile ${wImmobile} ${wImmobile === 0 ? '✓' : '✗'} · en marche (max) ${wMarche} ${wMarche >= 1 ? '✓' : '✗'} · 1,1 s après l'arrêt ${wArret} ${wArret === 0 ? '✓' : '✗'}`)
@@ -2512,7 +2515,9 @@ const SCENARIOS = {
     console.log(`eau la plus proche : (${cap.best.tx}, ${cap.best.ty}) — à ${cap.d.toFixed(0)} tuiles`)
 
     // On y marche, en corrigeant le cap toutes les demi-secondes.
-    const KEYS = { E: 'KeyD', O: 'KeyA', S: 'KeyS', N: 'KeyW' }
+    // `O` (ouest) = `KeyQ` : Playwright frappe sur un QWERTY US, donc `KeyQ` → keyCode 81,
+    // la gauche du ZQSD (keymap.ts). `KeyA` (65) fait tourner un fantôme, il ne marche plus.
+    const KEYS = { E: 'KeyD', O: 'KeyQ', S: 'KeyS', N: 'KeyW' }
     let held = new Set()
     const hold = async (want) => {
       for (const k of held) if (!want.has(k)) await page.keyboard.up(k)
@@ -2607,7 +2612,8 @@ const SCENARIOS = {
     // dans l'anneau — et c'est la condition réelle du jeu.
     // `--vers-la-foret` marche vers l'ouest (le massif) : c'est là que vivent les
     // sangliers et, la nuit, les lucioles. Sinon on part vers l'est (la prairie).
-    const touche = process.argv.includes('--vers-la-foret') ? 'KeyA' : 'KeyD'
+    // Ouest = `KeyQ` (keyCode 81, la gauche du ZQSD) — pas `KeyA`, qui vaut 65 et tourne.
+    const touche = process.argv.includes('--vers-la-foret') ? 'KeyQ' : 'KeyD'
     const depart = await census()
     await page.keyboard.down(touche)
     await page.waitForTimeout(18000)
@@ -2839,7 +2845,7 @@ const SCENARIOS = {
         // Cap sur la proie, allure choisie.
         const want = new Set()
         if (m.x - st.p.x > 0.7) want.add('KeyD')
-        else if (m.x - st.p.x < -0.7) want.add('KeyA')
+        else if (m.x - st.p.x < -0.7) want.add('KeyQ') // ouest = 81 (ZQSD), pas KeyA/65
         if (m.y - st.p.y > 0.7) want.add('KeyS')
         else if (m.y - st.p.y < -0.7) want.add('KeyW')
         if (sneak) want.add('KeyC')
@@ -3074,6 +3080,96 @@ const SCENARIOS = {
   },
 
   /** Le jeu démarre-t-il, rend-il, et que contient sa vallée ? */
+  /**
+   * LES QUATRE DIRECTIONS BOUGENT-ELLES VRAIMENT ? (2026-07-27)
+   *
+   * `keymap.test.ts` garde l'unicité des alias — jamais la COUVERTURE. Le jour où `moveLeft` a
+   * perdu son alias 81 sur une théorie fausse (« Phaser résout par position physique » : non, il
+   * dispatche sur `event.keyCode`, qui suit l'étiquette de la disposition), la gauche du ZQSD est
+   * morte EN SILENCE et tous les tests sont restés verts. Il fallait ouvrir le jeu pour le voir.
+   *
+   * Ce scénario l'ouvre. Il tient chaque touche et LIT L'AXE que la scène en tire — l'état
+   * `isDown` des `Phaser.Key` que `WorldScene.axis()` interroge à chaque frame. C'est la couche
+   * EXACTE qui a cassé (quel keyCode nourrit quelle direction), et la seule mesurable ici :
+   * mesurer par la POSITION ne marche pas dans ce harnais, l'horloge headless stalle puis le
+   * worker rattrape ses ticks en rafale — l'avatar avance encore 14 tuiles après le relâchement,
+   * bien après la lecture. On garde donc une seule lecture de position, indicative, pour prouver
+   * qu'un axe armé fait VRAIMENT avancer (le reste du fil : prédiction, worker, snapshot).
+   *
+   * Playwright frappe sur un QWERTY US : `KeyQ`→81, `KeyZ`→90, `KeyS`→83, `KeyD`→68 — exactement
+   * les codes qu'émet un AZERTY qui joue en ZQSD. `KeyA`→65 est la touche LIBÉRÉE : elle ne doit
+   * plus armer aucune direction.
+   */
+  async deplacement(page) {
+    await page.waitForTimeout(1200) // le monde se pose (le spawn glisse encore)
+    /** Les quatre axes tels que la scène les voit MAINTENANT — sans passer par la sim. */
+    const axes = () => page.evaluate(() => {
+      const k = window.__BRAISES__.scene.inputs.keys
+      const bas = (dir) => k[dir].some((key) => key.isDown)
+      return { left: bas('left'), right: bas('right'), up: bas('up'), down: bas('down') }
+    })
+    const CAS = [
+      { nom: 'gauche (ZQSD)', touche: 'KeyQ', attendu: 'left' },
+      { nom: 'droite', touche: 'KeyD', attendu: 'right' },
+      { nom: 'haut (ZQSD)', touche: 'KeyZ', attendu: 'up' },
+      { nom: 'bas', touche: 'KeyS', attendu: 'down' },
+      // La touche LIBÉRÉE le 2026-07-27 : 65 n'est plus la gauche (elle ira tourner un fantôme).
+      { nom: 'A libérée', touche: 'KeyA', attendu: null },
+    ]
+    const lignes = []
+    let cassées = 0
+    for (const c of CAS) {
+      await page.keyboard.down(c.touche)
+      await page.waitForTimeout(120) // Phaser traite sa file d'événements à la frame
+      const a = await axes()
+      await page.keyboard.up(c.touche)
+      await page.waitForTimeout(120)
+      const relâché = await axes()
+      const armés = Object.keys(a).filter((d) => a[d])
+      // Bon = l'axe attendu est armé, LUI SEUL, et il retombe au relâchement. « lui seul »
+      // compte autant que « armé » : c'est ainsi qu'une touche volée à une action se voit.
+      const ok = c.attendu === null
+        ? armés.length === 0
+        : armés.length === 1 && armés[0] === c.attendu && !Object.values(relâché).some(Boolean)
+      if (!ok) cassées++
+      lignes.push(
+        `${c.nom.padEnd(14)} [${c.touche}] → ${armés.length ? armés.join('+') : 'aucun axe'} ${ok ? '✓' : '✗'}` +
+          (c.attendu === null ? ' (elle ne doit plus déplacer)' : ` (attendu : ${c.attendu})`),
+      )
+    }
+
+    // ET L'AVATAR AVANCE-T-IL POUR DE VRAI ? Une seule mesure, sur la gauche — celle qui était
+    // morte. On ATTEND le déplacement au lieu de l'échantillonner à heure fixe : ici le rendu
+    // est FAMÉLIQUE (MESURÉ : ~4 frames en 2,7 s sous swiftshader, pendant que la sim avalait
+    // 104 ticks), et `playerPos` ne s'écrit que dans `update()` — une fenêtre fixe tombe entre
+    // deux frames et lit 0,00 sans que rien ne soit cassé. On tient donc la touche et on
+    // sonde jusqu'à voir l'ouest arriver, avec une échéance.
+    const px = () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      return { x: sc.registry.get('playerPos').x, tick: sc.lastSnapshotTick, frames: sc.game.loop.frame }
+    })
+    const s0 = await px()
+    let s1 = s0
+    await page.keyboard.down('KeyQ')
+    for (let i = 0; i < 32 && s0.x - s1.x <= 0.5; i++) {
+      await page.waitForTimeout(250)
+      s1 = await px()
+    }
+    await page.keyboard.up('KeyQ')
+    const versLOuest = s0.x - s1.x
+    const marche = versLOuest > 0.5
+    if (!marche) cassées++
+    lignes.push(
+      `la gauche fait MARCHER : x ${s0.x.toFixed(2)} → ${s1.x.toFixed(2)} (${versLOuest.toFixed(2)} tuile(s) vers l'ouest) ${marche ? '✓' : '✗'}` +
+        `  — ticks sim ${s0.tick}→${s1.tick}, frames rendues ${s1.frames - s0.frames}`,
+    )
+
+    for (const l of lignes) console.log(`  ${l}`)
+    if (cassées > 0) console.error(`!! ${cassées} VÉRIFICATION(S) AU ROUGE — une touche de déplacement est débranchée ou volée`)
+    else console.log('les quatre directions du ZQSD répondent, et A ne déplace plus ✓')
+    return { lignes, cassées }
+  },
+
   async default(page) {
     const s = await page.evaluate(PROBE)
     console.log(`tick ${s.tick} · joueur (${s.player.x.toFixed(1)}, ${s.player.y.toFixed(1)}) · ${s.pois.length} lieux sur la carte`)
@@ -3410,6 +3506,460 @@ const SCENARIOS = {
    * est UNIQUE (deux « grands » chênes, et il n'y a plus de repère du tout), et que son art
    * dépasse réellement la cime des arbres.
    */
+  /**
+   * LE COMPARATIF DES LIEUX BÂTIS — « pourquoi ne pas construire une ferme, tout simplement ? »
+   *
+   * Un scénario de REGARD, pas de garde : il ne juge rien, il pose l'appareil au même endroit,
+   * au même zoom, à la même heure, avant et après. C'est la seule façon honnête de trancher
+   * entre le sprite peint à la main et un bâti fait des pièces du jeu — l'aperçu offline
+   * sous-estime le pipeline (mémoire `da-cubique-a-l-echelle-poi`).
+   *
+   * Trois cadrages par lieu : le plan large (est-ce qu'on le voit venir ?), le plan moyen
+   * (qu'est-ce qu'on lit ?), le plan serré (qu'est-ce que ça vaut de près ?). Exige `--dev`.
+   */
+  /**
+   * LA FERME, TELLE QUE LE MOTEUR LA REND — pour la confronter à la §1bis de l'artefact.
+   *
+   * On n'interroge PAS `/sim` ni une redérivation : on lit les GameObjects que Phaser a sur
+   * l'écran. Clé d'atlas réellement posée, taille d'affichage réelle, alpha, teinte. C'est la
+   * seule mesure qui puisse contredire la maquette — tout le reste compare une copie à sa copie.
+   */
+  async 'ferme-sprites'(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    const zone = await page.evaluate(() => {
+      const z = (window.__BRAISES__.scene.map.zones ?? []).find((q) => q.kind === 'ferme_ruinee')
+      return z ? { x: z.x, y: z.y, w: z.w, h: z.h } : null
+    })
+    if (!zone) { console.error('!! pas de ferme sur cette carte'); return }
+    await page.evaluate((z) => window.__BRAISES__.scene.sendAction({
+      type: 'debug_teleport', x: z.x + z.w / 2, y: z.y + z.h / 2,
+    }), zone)
+    await page.waitForTimeout(1600)
+
+    const vu = await page.evaluate((z) => {
+      const sc = window.__BRAISES__.scene
+      const T = 16
+      const out = []
+      for (const o of sc.children.list) {
+        const k = o.texture?.key
+        if (!k || (!k.startsWith('st-') && !k.startsWith('nd-'))) continue
+        // L'ancre du moteur est le PIED de la tuile : x = (tx+.5)·T, y = (ty+1)·T.
+        const tx = Math.round(o.x / T - 0.5)
+        const ty = Math.round(o.y / T - 1)
+        if (tx < z.x - 1 || tx > z.x + z.w || ty < z.y - 1 || ty > z.y + z.h) continue
+        out.push({
+          x: tx - z.x, y: ty - z.y, cle: k,
+          w: +o.displayWidth.toFixed(2), h: +o.displayHeight.toFixed(2),
+          alpha: +o.alpha.toFixed(3), tint: o.tintTopLeft ?? null,
+          origine: [o.originX, o.originY], profondeur: o.depth,
+        })
+      }
+      out.sort((a, b) => a.y - b.y || a.x - b.x || (a.cle < b.cle ? -1 : 1))
+      return out
+    }, zone)
+
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(`${OUT}/ferme-sprites.json`, JSON.stringify({ zone, sprites: vu }))
+    console.log(`FERME_SPRITES ${vu.length} sprites lus dans le moteur → ${OUT}/ferme-sprites.json`)
+    await page.screenshot({ path: `${OUT}/ferme-moteur.png` })
+  },
+
+  /**
+   * DEDANS — LA DÉCOUPE DE FAÇADE (décision d'Alexis, 2026-07-27, à la Project Zomboid).
+   *
+   * `lieux-batis` cadre le CENTRE de la zone, qui tombe dans la cour : la découpe ne s'y arme
+   * jamais, puisqu'elle ne s'arme que sous la nappe de la SALLE. On entre donc pour de vrai —
+   * et on lit la clé de texture réellement posée sur le mur du bas, parce qu'une capture ne
+   * prouve pas le câblage : un mur coupé et un mur caché par un autre se ressemblent.
+   * Exige `--dev` (TP).
+   */
+  async 'ferme-dedans'(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    const z = await page.evaluate(() => {
+      const q = (window.__BRAISES__.scene.map.zones ?? []).find((w) => w.kind === 'ferme_ruinee')
+      return q ? { x: q.x, y: q.y } : null
+    })
+    if (!z) { console.error('!! aucune Ferme sur la carte'); return }
+
+    // LE MILIEU DE LA SALLE — le plan la pose en (1..9, 2..7) dans l'emprise.
+    // `seuil` : depuis la cour, à une tuile sous la porte — c'est le seul cadrage où l'on juge
+    // si l'encadrement est DANS le mur (même crête, même épaisseur) et s'il est PERCÉ.
+    for (const [nom, dx, dy, zoom] of [['salle', 5, 5, 3.4], ['salle-serre', 5, 5, 5.5], ['cour', 5, 10, 3.4], ['seuil', 4, 9, 7]]) {
+      await page.evaluate(({ x, y, zz }) => {
+        window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
+        window.__BRAISES__.scene.cameras.main.setZoom(zz)
+      }, { x: z.x + dx + 0.5, y: z.y + dy + 0.5, zz: zoom })
+      await page.waitForTimeout(1400)
+      await page.screenshot({ path: `${OUT}/dedans-${process.env.SMOKE_TAG ?? 'a'}-${nom}.png` })
+    }
+
+    // ═══ LE TRI Y, SUR LES QUATRE CÔTÉS (décision d'Alexis : « on ne doit jamais perdre le
+    // joueur derrière une barrière ») ═══
+    //
+    // On mesure la SEULE chose qui compte : existe-t-il une barrière qui recouvre le sprite du
+    // joueur À L'ÉCRAN, qui se dessine APRÈS lui (depth supérieure), et qui n'est PAS tranchée ?
+    // On le demande depuis les quatre côtés d'un mur, plus les quatre diagonales — c'est la
+    // géométrie du sprite qui répond, pas mon œil.
+    const AUTOUR = [
+      ['nord', 0, -1.2], ['sud', 0, 1.2], ['est', 1.2, 0], ['ouest', -1.2, 0],
+      ['nord-est', 1, -1], ['nord-ouest', -1, -1], ['sud-est', 1, 1], ['sud-ouest', -1, 1],
+    ]
+    const avales = []
+    for (const [nom, ddx, ddy] of AUTOUR) {
+      // Le mur du bas de la salle : le plan la ferme en (z.y + 13), la porte est en x+10/+11.
+      await page.evaluate(({ x, y }) => {
+        window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
+        window.__BRAISES__.scene.cameras.main.setZoom(4)
+      }, { x: z.x + 3.5 + ddx, y: z.y + 13.5 + ddy })
+      await page.waitForTimeout(900)
+      const verdict = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const p = sc.registry.get('playerPos')
+        const T = 16
+        const ax = p.x * T, aBas = p.y * T, aHaut = aBas - 12
+        const fautes = []
+        for (const [, sp] of sc.view.structureSprites ?? []) {
+          const k = sp.texture?.key ?? ''
+          if (!k.startsWith('st-wall-e') && !k.startsWith('st-wall-ruine-e') && !k.startsWith('st-cloture-e') && !k.startsWith('st-encadrement-')) continue
+          if (k.includes('coupe')) continue
+          const bBas = sp.y, bHaut = sp.y - sp.height * sp.originY
+          const dx = Math.abs(sp.x - ax)
+          const rx = (12 + sp.width) / 2 - dx
+          const ry = Math.min(aBas, bBas) - Math.max(aHaut, bHaut)
+          // La profondeur du joueur : la formule de `framing.ts` (Y_SORT_BASE + pieds×tuile +
+          // TIE_ACTOR). On la recalcule ici plutôt que de lire un sprite privé — si elle change,
+          // la sonde ment, et c'est pour ça qu'elle est écrite en toutes lettres.
+          const dJoueur = 1000 + p.y * T + 0.8
+          if (rx > 2 && ry > 2 && sp.depth > dJoueur) fautes.push(`${k} @${sp.x},${sp.y}`)
+        }
+        return { pos: p, fautes }
+      })
+      if (verdict.fautes.length) avales.push(`${nom} : ${verdict.fautes.join(', ')}`)
+      await page.screenshot({ path: `${OUT}/ysort-${process.env.SMOKE_TAG ?? 'a'}-${nom}.png` })
+    }
+    console.log(`tri Y : ${avales.length === 0 ? 'aucune barrière n’avale le joueur' : JSON.stringify(avales)}`)
+    if (avales.length) console.error(`!! LE JOUEUR DISPARAÎT DERRIÈRE : ${JSON.stringify(avales)}`)
+
+    // ═══ « JE TRAVERSE LÉGÈREMENT LES MURS LATÉRAUX » — hitbox ou sprite ? ═══
+    //
+    // La question ne se tranche qu'avec un nombre. On POUSSE vraiment (au clavier, comme un
+    // joueur), on lit la position prédite par le client — celle qu'Alexis voit — et on la
+    // compare à la bande que le moteur bloque. Deux verdicts possibles, et ils n'ont pas le
+    // même remède : la HITBOX pénètre (bug de collision), ou seul le SPRITE déborde (12 px de
+    // sprite pour 9,6 px de hitbox : le dessin est 25 % plus large que le corps).
+    const DEMI = 0.125 //  demi-bande, en tuiles (WALL_EDGE_SUB/2 ÷ SUBTILES_PER_TILE)
+    const HITBOX = 0.3 //  demi-hitbox de l'avatar
+    // Le demi-DESSIN, en tuiles : la largeur d'emprise de l'humanoïde (`ACTOR_FOOTPRINTS`), pas
+    // la résolution de sa texture — c'est l'emprise qui est étirée à l'écran, et c'est elle
+    // qui entre dans la pierre.
+    const SPRITE = 0.75 / 2 //  demi-LARGEUR du dessin (12 px) — désormais celle du corps
+    for (const [nom, dx, dy, touche, bordX] of [
+      ['ouest', 3, 5.5, 'KeyQ', 1], //  le pan ouest de la salle : sa ligne est en x0 + 1
+      ['est', 9, 5.5, 'KeyD', 12], //   le pan est : sa ligne est en x0 + 12
+    ]) {
+      await page.evaluate(({ x, y }) => {
+        window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
+        window.__BRAISES__.scene.cameras.main.setZoom(4)
+      }, { x: z.x + dx, y: z.y + dy })
+      await page.waitForTimeout(700)
+      // ON POUSSE JUSQU'À L'ARRÊT, ON NE COMPTE PAS LE TEMPS. Sous swiftshader le rendu est
+      // famélique et `playerPos` ne s'écrit que dans `update()` : une fenêtre fixe mesure un
+      // joueur qui n'a pas encore bougé (mesuré : 0,2 tuile en 2,5 s). On attend donc que la
+      // position se STABILISE — c'est le seul signal qui dise « il est contre le mur ».
+      await page.keyboard.down(touche)
+      let p = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      let stable = 0
+      for (let i = 0; i < 60 && stable < 4; i++) {
+        await page.waitForTimeout(250)
+        const q = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+        stable = Math.abs(q.x - p.x) < 0.002 ? stable + 1 : 0
+        p = q
+      }
+      await page.keyboard.up(touche)
+      await page.waitForTimeout(300)
+      p = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      const ligne = z.x + bordX
+      // De combien le corps, puis le dessin, mordent-ils au-delà du bord de la bande ?
+      const bordBande = nom === 'ouest' ? ligne + DEMI : ligne - DEMI
+      const penetreCorps = nom === 'ouest' ? bordBande - (p.x - HITBOX) : (p.x + HITBOX) - bordBande
+      const penetreDessin = nom === 'ouest' ? bordBande - (p.x - SPRITE) : (p.x + SPRITE) - bordBande
+      console.log(`   mur ${nom} : x=${p.x.toFixed(3)} · corps ${penetreCorps > 0.001 ? `PÉNÈTRE de ${penetreCorps.toFixed(3)} tuile` : 'à fleur (0)'} · dessin déborde de ${Math.max(0, penetreDessin).toFixed(3)} tuile`)
+      if (penetreCorps > 0.001) console.error(`!! LA HITBOX TRAVERSE LE MUR ${nom.toUpperCase()} de ${penetreCorps.toFixed(3)} tuile`)
+      await page.screenshot({ path: `${OUT}/colle-${process.env.SMOKE_TAG ?? 'a'}-${nom}.png` })
+    }
+
+    // ═══ LA RÈGLE DES PANS (décisions d'Alexis, 2026-07-27) ═══
+    //
+    // Un pan = un côté de bâtiment, et il tombe D'UN BLOC à deux tuiles. On le vérifie en
+    // COMPTANT : au centre de la salle, seul le pan du sud est tranché (11 tuiles, seuil
+    // compris) ; collé au nord, le pan du nord tombe EN PLUS, entier. Un compte qui grimpe de
+    // deux ou trois dirait « on tranche à la tuile », et c'est exactement ce qu'on a quitté.
+    for (const [nom, dx, dy] of [['centre', 5.5, 5.5], ['contre-nord', 5.5, 2.6], ['contre-ouest', 1.6, 5.5]]) {
+      // UN TÉLÉPORT PEUT ÊTRE AVALÉ (une action par tick — s'il tombe pendant qu'une autre
+      // passe, il est perdu, et la sonde mesure alors la position PRÉCÉDENTE en croyant
+      // mesurer la nouvelle). On redemande jusqu'à ce que la position soit celle voulue.
+      for (let essai = 0; essai < 8; essai++) {
+        await page.evaluate(({ x, y }) => {
+          window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
+          window.__BRAISES__.scene.cameras.main.setZoom(2.6)
+        }, { x: z.x + dx, y: z.y + dy })
+        await page.waitForTimeout(400)
+        const p = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+        if (Math.abs(p.x - (z.x + dx)) < 0.6 && Math.abs(p.y - (z.y + dy)) < 0.6) break
+      }
+      await page.waitForTimeout(600)
+      const n = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        let coupes = 0
+        for (const [, sp] of sc.view.structureSprites ?? []) if ((sp.texture?.key ?? '').includes('coupe')) coupes++
+        return { coupes, pos: sc.registry.get('playerPos') }
+      })
+      console.log(`   pan ${nom} : ${n.coupes} tuiles tranchées (joueur en ${n.pos.x.toFixed(2)}, ${n.pos.y.toFixed(2)} ; zone en ${z.x}, ${z.y})`)
+      await page.screenshot({ path: `${OUT}/pans-${process.env.SMOKE_TAG ?? 'a'}-${nom}.png` })
+    }
+
+    // LE CÂBLAGE : depuis la salle, les murs qui la BORDENT AU SUD portent-ils la texture coupée ?
+    await page.evaluate(({ x, y }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y }),
+      { x: z.x + 5.5, y: z.y + 5.5 })
+    await page.waitForTimeout(900)
+    const cles = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const out = { coupes: 0, pleins: 0, seuilCoupe: 0, exemples: [], seuils: [] }
+      for (const [id, sp] of sc.view.structureSprites ?? []) {
+        const k = sp.texture?.key ?? ''
+        if (k.startsWith('st-wall-coupe')) { out.coupes++; if (out.exemples.length < 3) out.exemples.push(k) }
+        else if (k.startsWith('st-wall-')) out.pleins++
+        else if (k.startsWith('st-encadrement-coupe')) out.seuilCoupe++
+        if (k.startsWith('st-encadrement')) out.seuils.push(`${k} x=${Math.round(sp.x)} w=${sp.width}`)
+        void id
+      }
+      return out
+    })
+    console.log(`découpe : ${JSON.stringify(cles)}`)
+    if (cles.coupes === 0) console.error('!! AUCUN mur coupé alors qu’on est dans la salle')
+    return cles
+  },
+
+  async 'lieux-batis'(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+
+    // Plein jour : on compare des FORMES, pas des ambiances nocturnes.
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    const cibles = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const KINDS = ['ferme_ruinee', 'ruines', 'cabane', 'oratoire']
+      const out = []
+      for (const k of KINDS) {
+        const z = (m.zones ?? []).find((q) => q.kind === k)
+        if (z) out.push({ kind: k, x: z.x + z.w / 2, y: z.y + z.h / 2, w: z.w, h: z.h, name: z.name })
+      }
+      return out
+    })
+    console.log(`lieux trouvés : ${JSON.stringify(cibles)}`)
+    if (cibles.length === 0) console.error('!! aucun lieu bâti sur la carte — rien à comparer')
+
+    // Combien de structures le monde porte-t-il ? C'est le chiffre qui dira, après, ce que
+    // le bâti coûte au snapshot (le tableau `structures` part ENTIER à chaque tick).
+    const structures = await page.evaluate(() => (window.__BRAISES__.scene.view?.structures ?? []).length)
+    console.log(`structures dans le monde : ${structures}`)
+
+    // LES VRAIES TEXTURES, EXPORTÉES. Pour qu'une planche de pièces montre ce que le jeu
+    // dessine, et pas ce qu'on croit qu'il dessine : on lit l'atlas Phaser lui-même.
+    if (process.env.SMOKE_PIECES) {
+      const pieces = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const out = {}
+        for (const key of sc.textures.getTextureKeys()) {
+          // Les nœuds AUSSI : la ferme sème des gravats (nœud `rubble`), et une planche qui
+          // ne connaît que les structures les peindrait en rouge — ou pire, les oublierait.
+          if (!key.startsWith('st-') && !key.startsWith('nd-')) continue
+          const src = sc.textures.get(key).getSourceImage()
+          if (!src || !src.width) continue
+          const c = document.createElement('canvas')
+          c.width = src.width; c.height = src.height
+          c.getContext('2d').drawImage(src, 0, 0)
+          out[key] = c.toDataURL('image/png')
+        }
+        return out
+      })
+      console.log(`PIECES_JSON ${JSON.stringify(pieces).length} octets`)
+      const { writeFileSync } = await import('node:fs')
+      writeFileSync(`${OUT}/pieces.json`, JSON.stringify(pieces))
+    }
+
+    const etiquette = process.env.SMOKE_TAG ?? 'avant'
+    for (const c of cibles) {
+      for (const [nom, zoom] of [['large', 1.3], ['moyen', 2.6], ['serre', 4.5]]) {
+        await page.evaluate(({ x, y, z }) => {
+          window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
+          window.__BRAISES__.scene.cameras.main.setZoom(z)
+        }, { x: c.x, y: c.y, z: zoom })
+        await page.waitForTimeout(1400)
+        await page.screenshot({ path: `${OUT}/batis-${etiquette}-${c.kind}-${nom}.png` })
+      }
+      console.log(`   → ${c.kind} (${c.w}×${c.h}) @(${Math.round(c.x)}, ${Math.round(c.y)})`)
+    }
+
+    // ═══ LA PREUVE DU RELIEF : LA LUMIÈRE RASANTE ═══
+    //
+    // Une normal map ne se voit PAS sous un soleil au zénith — c'est très exactement le moment
+    // où elle ne sert à rien. On refait donc la Ferme à trois heures du jour : le modelé doit
+    // CHANGER d'une heure à l'autre, sinon la normale n'est pas branchée et la texture ment.
+    // (Et on relit la clé de texture réellement posée : une capture ne prouve pas le câblage.)
+    const ferme = cibles.find((c) => c.kind === 'ferme_ruinee')
+    if (ferme) {
+      for (const heure of [7, 11, 18]) {
+        // UNE ACTION PAR TICK (invariant de la sim) : envoyer le téléport et l'heure dans le
+        // même `evaluate` fait que la seconde ÉCRASE la première — la caméra restait sur le
+        // lieu précédent et la capture montrait l'Oratoire au lieu de la Ferme.
+        await page.evaluate(({ x, y }) => {
+          window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
+          window.__BRAISES__.scene.cameras.main.setZoom(5.5)
+        }, { x: ferme.x, y: ferme.y })
+        await page.waitForTimeout(700)
+        await page.evaluate((hh) => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: hh }), heure)
+        await page.waitForTimeout(1600)
+        await page.screenshot({ path: `${OUT}/batis-${etiquette}-relief-${heure}h.png` })
+      }
+      const cablage = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const cles = {}
+        for (const [, s] of sc.view?.structureSprites ?? new Map()) {
+          const k = s.texture?.key ?? '?'
+          if (k.startsWith('st-wall') || k.startsWith('st-cloture')) cles[k] = (cles[k] ?? 0) + 1
+        }
+        return { lighting: sc.view?.lighting ?? null, murs: cles }
+      })
+      // Les clés ont changé de forme avec le modèle d'ARÊTE : `st-wall-ruine-e<masque>` au lieu
+      // de `st-wall-ruine-<masque>`. La garde suit le nommage réel, jamais un souvenir.
+      const ruines = Object.keys(cablage.murs).filter((k) => k.includes('ruine')).length
+      console.log(`câblage : lighting=${cablage.lighting} · ${ruines} clés de mur RUINÉ posées`)
+
+      // ═══ LE MUR A-T-IL DU RELIEF ? — la mesure, pas l'impression ═══
+      //
+      // PREMIÈRE MESURE ESSAYÉE, ET FAUSSE : σ(luminance) sur toute la tuile. Elle donnait le
+      // mur ORDINAIRE gagnant (28,0 contre 19,1) — et c'était exact : il a trois grandes bandes
+      // très contrastées (coiffe claire, face, pied sombre). σ mesure l'AMPLITUDE, pas le
+      // DÉTAIL. Or « on voit les pierres » ne veut pas dire « il y a du clair et du sombre »,
+      // ça veut dire « ça change d'un pixel au suivant ».
+      //
+      // La bonne quantité est donc la VARIATION LOCALE : |ΔL| moyen entre pixels voisins. Une
+      // bande unie vaut 0 quelle que soit sa clarté ; un appareil de pierre monte. Et pour la
+      // normale, l'INCLINAISON MOYENNE en degrés — une dalle est plate (0°), pas « inclinée
+      // sur 100 % de sa surface », ce que le premier seuil racontait sans rien dire.
+      // Le mur ORDINAIRE sert de témoin : même atlas, même lecture, même code.
+      const relief = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const lire = (cle) => {
+          const t = sc.textures.get(cle)
+          const src = t?.getSourceImage?.()
+          if (!src || !src.width) return null
+          const c = document.createElement('canvas')
+          c.width = src.width; c.height = src.height
+          c.getContext('2d').drawImage(src, 0, 0)
+          return c.getContext('2d').getImageData(0, 0, src.width, src.height).data
+        }
+        /** |ΔL| moyen entre pixels VOISINS (4-connexité) — le « détail », pas l'amplitude. */
+        const detail = (cle, w, hh) => {
+          const d = lire(cle)
+          if (!d) return null
+          const L = (x, y) => {
+            const i = (y * w + x) * 4
+            if (d[i + 3] < 8) return null // le vide : on ne compare pas de la matière à du rien
+            return 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]
+          }
+          let s = 0, n = 0
+          for (let y = 0; y < hh; y++) {
+            for (let x = 0; x < w; x++) {
+              const a = L(x, y)
+              if (a === null) continue
+              for (const [dx, dy] of [[1, 0], [0, 1]]) {
+                const b = x + dx < w && y + dy < hh ? L(x + dx, y + dy) : null
+                if (b === null) continue
+                s += Math.abs(a - b); n++
+              }
+            }
+          }
+          return n ? s / n : null
+        }
+        /**
+         * Inclinaison MOYENNE de la normale, en degrés — SUR LA MATIÈRE SEULEMENT.
+         *
+         * Le masque compte : la normale couvre toute la tuile, transparent compris, et le
+         * pourtour d'une silhouette est incliné à fond PAR CONSTRUCTION (le champ de hauteur
+         * y tombe de 1 à 0). Les inclure gonflait la moyenne à 45° — un chiffre qui ne parlait
+         * pas du mur mais de son contour. On ne mesure que là où il y a de la pierre.
+         */
+        const inclinaison = (cle, cleAlbedo) => {
+          const t = sc.textures.get(cle)
+          const n = t?.dataSource?.[0]?.image ?? t?.dataSource?.[0]
+          const alb = lire(cleAlbedo)
+          if (!n || !n.width || !alb) return null
+          const c = document.createElement('canvas')
+          c.width = n.width; c.height = n.height
+          c.getContext('2d').drawImage(n, 0, 0)
+          const d = c.getContext('2d').getImageData(0, 0, n.width, n.height).data
+          let s = 0, total = 0
+          for (let i = 0; i < d.length; i += 4) {
+            if (alb[i + 3] < 8) continue
+            const nz = Math.max(-1, Math.min(1, (d[i + 2] / 255) * 2 - 1))
+            s += (Math.acos(nz) * 180) / Math.PI
+            total++
+          }
+          return total ? s / total : null
+        }
+        const ord = [], rui = []
+        for (let m = 0; m < 16; m++) {
+          const a = detail(`st-wall-${m}`, 16, 22)
+          const b = detail(`st-wall-ruine-${m}`, 16, 22)
+          if (a !== null) ord.push(a)
+          if (b !== null) rui.push(b)
+        }
+        const moy = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null)
+        return {
+          detailOrdinaire: moy(ord),
+          detailRuine: moy(rui),
+          // Le mur ORDINAIRE n'a pas de `_lit` du tout (hors pipeline, cf. lit-structures.ts) :
+          // `null` ici n'est pas un raté de mesure, c'est le constat de départ.
+          inclOrdinaire: inclinaison('st-wall-8_lit', 'st-wall-8'),
+          inclRuine: inclinaison('st-wall-ruine-8_lit', 'st-wall-ruine-8'),
+          // DEUX TÉMOINS DE FAMILLE, et leur écart est le vrai enseignement :
+          //   • le COFFRE (`st-chest_lit`) est un carré plein — sa normale est PLATE à
+          //     l'intérieur ; tout son relief vient de son contour. C'est le cas de TOUS les
+          //     chips de structure : voilà pourquoi un mur ne pouvait qu'être une dalle.
+          //   • le BLOC ERRATIQUE, lui, est gravé de fissures (`cracks`) — c'est la seule
+          //     pièce du jeu qui ait du modelé INTERNE, et donc la bonne référence.
+          inclCoffre: inclinaison('st-chest_lit', 'st-chest'),
+          inclErratique: inclinaison('poi-erratique-0_lit', 'poi-erratique-0_lit'),
+        }
+      })
+      const f = (v) => (v === null || v === undefined ? 'aucune' : v.toFixed(1))
+      console.log(
+        `RELIEF · détail local (|ΔL| moyen) : mur ordinaire ${f(relief.detailOrdinaire)} → ruiné ${f(relief.detailRuine)}` +
+        ` · normale : ordinaire ${f(relief.inclOrdinaire)} → ruiné ${f(relief.inclRuine)}° (témoins : coffre ${f(relief.inclCoffre)}°, bloc erratique ${f(relief.inclErratique)}°)`,
+      )
+      if (relief.detailRuine !== null && relief.detailOrdinaire !== null && relief.detailRuine < relief.detailOrdinaire * 2) {
+        console.error('!! le mur ruiné n’est pas plus DÉTAILLÉ que la dalle — l’appareil ne se voit pas')
+      }
+      if (cablage.lighting && ruines > 0 && !Object.keys(cablage.murs).some((k) => k.endsWith('_lit'))) {
+        console.error('!! les murs ruinés ne prennent PAS leur texture _lit — la normale est morte')
+      }
+      if (ruines === 0) console.error('!! aucun mur ruiné : la Ferme ne bascule pas sur son appareil de pierre')
+    }
+    return { cibles: cibles.length, structures }
+  },
+
   async chene(page) {
     await page.waitForTimeout(1500)
     const vu = await page.evaluate(() => {

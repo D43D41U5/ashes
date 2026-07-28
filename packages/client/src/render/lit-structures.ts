@@ -10,6 +10,12 @@
  * HORS PÉRIMÈTRE, et c'est un CHOIX consigné :
  *   • `wall`/`door` (l'autotile re-texture chaque frame — la recette champ-de-hauteur est le
  *     chantier suivant) ; `fire` (déjà `_lit`, generateFireProp) ;
+ *   • le COFFRE, parti dans `bati-art.ts` : il est désormais vu à 45° comme le reste du
+ *     mobilier (dessus foreshortené + face avant), au lieu d'être un carré plat ;
+ *   • les pièces du MONDE BÂTI (mobilier, clôture, mur ruiné) : elles vivent dans `bati-art.ts`,
+ *     qui les dessine UNE fois et en tire ses DEUX textures. Elles y gagnent ce que les chips
+ *     d'ici n'ont pas : une vraie silhouette et du relief GRAVÉ (mesuré : un chip plein cadre
+ *     s'incline de 0,0° sur sa matière — sa `_lit` ne fait rien à l'intérieur) ;
  *   • les pièces AU RAS DU SOL — `floor`, `roof`, `parcelle`, `terroir` : une normale en butte
  *     ferait de chaque tuile un coussin (un plancher-édredon, un toit matelassé par tuile).
  *     Elles restent peintes, et la question « quelle normale pour le plat ? » est consignée
@@ -31,7 +37,6 @@ interface LitChip {
 }
 
 const CHIPS: readonly LitChip[] = [
-  { type: 'chest', draw: (c) => { c.fillStyle = '#4a3520'; c.fillRect(0, 0, 16, 16); c.fillStyle = '#7a5a30'; c.fillRect(1, 1, 14, 14); c.fillStyle = '#c9a227'; c.fillRect(3, 6, 10, 4) } },
   { type: 'workshop', draw: (c) => { c.fillStyle = '#3c3c40'; c.fillRect(0, 0, 16, 16); c.fillStyle = '#5c5c62'; c.fillRect(1, 1, 14, 14); c.fillStyle = '#2a2a2e'; c.fillRect(4, 7, 8, 5) } },
   { type: 'furnace', draw: (c) => { c.fillStyle = '#4a3220'; c.fillRect(0, 0, 16, 16); c.fillStyle = '#9c7448'; c.fillRect(1, 1, 14, 14); c.fillStyle = '#2a2a2e'; c.fillRect(4, 4, 8, 8); c.fillStyle = '#e8842c'; c.fillRect(6, 8, 4, 3) } },
   { type: 'enclume', draw: (c) => { c.fillStyle = '#24242a'; c.fillRect(0, 0, 16, 16); c.fillStyle = '#3c3c44'; c.fillRect(1, 1, 14, 14); c.fillStyle = '#54545e'; c.fillRect(2, 5, 12, 2); c.fillStyle = '#3c3c44'; tri(c, 11, 5, 16, 5, 11, 9); c.fillStyle = '#24242a'; c.fillRect(6, 10, 4, 4) } },

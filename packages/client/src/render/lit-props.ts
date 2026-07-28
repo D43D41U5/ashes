@@ -90,8 +90,8 @@ const PROPS: LitProp[] = [
   //     la bascule est celle d'un chip. Bord + cœur = deux MATÉRIAUX (un liseré n'est pas un
   //     ombrage), normale blocky. La FAUNE, elle, reste consignée : asymétrique, miroitée par
   //     le regard, et déclinée en postures — la recette « normale par posture » n'est pas actée.
-  { key: 'spr-player', w: 12, h: 12, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#8a6f3c'; c.fillRect(0, 0, 12, 12); c.fillStyle = '#f0e6c8'; c.fillRect(1, 1, 10, 10) } },
-  { key: 'spr-npc', w: 12, h: 12, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#4a5364'; c.fillRect(0, 0, 12, 12); c.fillStyle = '#9aa4b5'; c.fillRect(1, 1, 10, 10) } },
+  { key: 'spr-player', w: 12, h: 24, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#8a6f3c'; c.fillRect(0, 0, 12, 24); c.fillStyle = '#f0e6c8'; c.fillRect(1, 1, 10, 22) } },
+  { key: 'spr-npc', w: 12, h: 24, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#4a5364'; c.fillRect(0, 0, 12, 24); c.fillStyle = '#9aa4b5'; c.fillRect(1, 1, 10, 22) } },
   // ═══ LA VAGUE A DE LA BASCULE (spec da-feeling R3) — les nœuds restants, silhouettes
   //     BootScene reproduites à l'identique (deux backends, une forme), hillshade retiré. ═══
   // Le BUISSON À BAIES : 4 états de stock (berryDots borne à 3). Socle vert aplati '#3b682b'

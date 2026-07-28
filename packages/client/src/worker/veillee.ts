@@ -19,6 +19,7 @@ import {
   pointsDeSpawn,
   spawnEntity,
   spawnPoiMonsters,
+  buildPoiStructures,
   type SimState,
 } from '@braises/sim'
 
@@ -109,6 +110,8 @@ export function createVeillee(onPhase: (phase: LoadPhase) => void = () => {}): {
   })
   onPhase('monsters')
   spawnPoiMonsters(sim, VEILLEE_SEED)
+  // LES LIEUX BÂTIS — même moment, même patron : le worldgen a marqué, l'hôte peuple.
+  buildPoiStructures(sim, VEILLEE_SEED)
   // Le joueur commence les mains vides (spec économie) — pas de kit de départ.
   const playerId = spawnEntity(sim, spawn.x, spawn.y)
 

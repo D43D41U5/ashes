@@ -17,7 +17,7 @@
  * Purement visuel : la découverte, elle, est une décision de sim.
  */
 import Phaser from 'phaser'
-import { POI, type WorldMap } from '@braises/sim' // POI : SIGHT_TILES (labels) + SET_PIECE_KINDS (R10)
+import { BUILT_KINDS, POI, type WorldMap } from '@braises/sim' // POI : SIGHT_TILES (labels) + SET_PIECE_KINDS (R10)
 import { crownDepth, TILE_PX, TIE_NODE, ySortDepth } from '../../render/framing'
 import { poiCrownKey, poiTextureKey, POI_ART } from './poi-art'
 import { erratiqueVariantFor, litErratiqueKey, POI_LIT_KINDS, poiLitCrownKey, poiLitKey, poiLitMirrorKey } from '../../render/poi-lit'
@@ -84,7 +84,10 @@ export class PoiLayer {
       // la Combe EST son marais — un sprite-centre mentirait. L'étiquette seule, posée au
       // CENTRE de l'empreinte (les pieds d'une zone de 40 tuiles seraient à un demi-écran du
       // cœur), et le mécanisme de découverte inchangé.
-      if (POI.SET_PIECE_KINDS.includes(z.kind)) {
+      // UN LIEU BÂTI N'A PAS DE CORPS PEINT NON PLUS : son corps, ce sont ses MURS, posés
+      // comme des structures et dessinés par `syncStructures`. Un sprite en plus les
+      // doublerait. Même règle qu'un set-piece, autre matière (`poi-batis.ts`).
+      if (POI.SET_PIECE_KINDS.includes(z.kind) || BUILT_KINDS.includes(z.kind)) {
         const cy = (z.y + z.h / 2) * TILE_PX - warp.lift(feetX, z.y + z.h / 2)
         this.placed.push({
           label: makeLabel(scene, z.name, px, cy - 10),

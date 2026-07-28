@@ -1,5 +1,5 @@
 /**
- * LE MODAL DU FEU (spec feu-station S17-S19), en DOM — ouvert à la touche E (viser un feu + E).
+ * LE MODAL DU FEU (spec feu-station S17-S19), en DOM — ouvert à la touche F (viser un feu + F).
  * Layout calqué sur l'UI du FOUR de Rust (« after ») : un FLUX VERTICAL labellisé, avec 3 SLOTS
  * par niveau — COMBUSTIBLE (3) → ↓ → ENTRÉE (3, à cuire) → ↓ → SORTIE (3, cuits + sous-produits) —,
  * et une BARRE DE CONTRÔLE en bas (le bouton « Fonder » / « Améliorer »). EN DESSOUS, ancré au bas

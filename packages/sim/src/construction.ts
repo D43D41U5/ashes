@@ -40,6 +40,61 @@ export function blocksNavigation(type: StructureType): boolean {
 const tileIndex = (map: WorldMap, tx: number, ty: number): number => ty * map.width + tx
 
 /**
+ * ═══ LE FRANCHISSEMENT, ET NON PLUS LA TUILE ═══
+ *
+ * C'est le SEUL endroit où le modèle d'arête force l'abstraction tuile à céder. Les deux
+ * remplissages de ce fichier — l'invariant de navigabilité (R7) et la détection d'enceinte
+ * (R13-R14) — demandaient « cette tuile est-elle bloquée ? ». Avec des murs minces, la question
+ * juste est « ce PASSAGE est-il bloqué ? » : une tuile bordée d'un mur au nord se traverse très
+ * bien d'est en ouest.
+ *
+ * Ces deux gardes ne sont pas décoratives : ce sont elles qui empêchent un joueur d'emmurer son
+ * propre Feu, et elles décident du bonus d'enceinte. Se tromper ici ne se verrait qu'en partie.
+ */
+const EDGE_N = 1, EDGE_E = 2, EDGE_S = 4, EDGE_O = 8
+
+/** Le bit de l'arête de (tx,ty) qui regarde (dx,dy), et son opposé chez le voisin. */
+function edgeBits(dx: number, dy: number): { ici: number; la: number } {
+  if (dy < 0) return { ici: EDGE_N, la: EDGE_S }
+  if (dy > 0) return { ici: EDGE_S, la: EDGE_N }
+  if (dx < 0) return { ici: EDGE_O, la: EDGE_E }
+  return { ici: EDGE_E, la: EDGE_O }
+}
+
+/**
+ * Peut-on passer de (tx,ty) vers son voisin (tx+dx, ty+dy) ? Un mur mince coupe le passage
+ * qu'il porte, de l'un OU l'autre côté — deux tuiles voisines partagent une arête, et il suffit
+ * que l'une la déclare. Les structures SANS `edges` gardent la règle historique : elles bloquent
+ * leur tuile, donc on n'y entre pas.
+ */
+function crossingBlocked(
+  parEdges: Map<number, number>, pleines: ReadonlySet<number>, map: WorldMap,
+  tx: number, ty: number, dx: number, dy: number,
+): boolean {
+  const nx = tx + dx
+  const ny = ty + dy
+  if (pleines.has(tileIndex(map, nx, ny))) return true // la voisine est prise en entier
+  const { ici, la } = edgeBits(dx, dy)
+  if (((parEdges.get(tileIndex(map, tx, ty)) ?? 0) & ici) !== 0) return true
+  if (((parEdges.get(tileIndex(map, nx, ny)) ?? 0) & la) !== 0) return true
+  return false
+}
+
+/** Les deux tables que les remplissages consultent : arêtes par tuile, et tuiles pleines. */
+function murs(map: WorldMap, structures: readonly { tx: number; ty: number; type: StructureType; edges?: number }[],
+  bloque: (t: StructureType) => boolean): { parEdges: Map<number, number>; pleines: Set<number> } {
+  const parEdges = new Map<number, number>()
+  const pleines = new Set<number>()
+  for (const s of structures) {
+    if (!bloque(s.type)) continue
+    const i = tileIndex(map, s.tx, s.ty)
+    if (s.edges === undefined) pleines.add(i)
+    else parEdges.set(i, (parEdges.get(i) ?? 0) | s.edges)
+  }
+  return { parEdges, pleines }
+}
+
+/**
  * Flood-fill des tuiles PASSABLES atteignables depuis le Feu, borné à `region`,
  * en 4-connexité et à ordre de parcours FIXE. Le Feu sert d'AMORCE (sa tuile bloque,
  * mais on part de là) ; on ne s'étend que vers des tuiles marchables non bloquées.
@@ -50,7 +105,7 @@ const tileIndex = (map: WorldMap, tx: number, ty: number): number => ty * map.wi
  */
 function floodFromFire(
   map: WorldMap,
-  blocked: ReadonlySet<number>,
+  murs: { parEdges: Map<number, number>; pleines: ReadonlySet<number> },
   region: { x0: number; y0: number; x1: number; y1: number },
   fireTx: number,
   fireTy: number,
@@ -58,7 +113,7 @@ function floodFromFire(
   const visited = new Set<number>()
   const inRegion = (tx: number, ty: number): boolean => tx >= region.x0 && tx <= region.x1 && ty >= region.y0 && ty <= region.y1
   const passable = (tx: number, ty: number): boolean =>
-    inRegion(tx, ty) && !blocked.has(tileIndex(map, tx, ty)) && (TERRAINS[terrainAt(map, tx, ty)]?.walkable ?? false)
+    inRegion(tx, ty) && !murs.pleines.has(tileIndex(map, tx, ty)) && (TERRAINS[terrainAt(map, tx, ty)]?.walkable ?? false)
 
   const start = tileIndex(map, fireTx, fireTy)
   visited.add(start)
@@ -79,6 +134,9 @@ function floodFromFire(
       const idx = tileIndex(map, nx, ny)
       if (visited.has(idx)) continue
       if (!passable(nx, ny)) continue
+      // ET LE FRANCHISSEMENT LUI-MÊME : un mur mince ne prend pas la tuile d'en face, il coupe
+      // le passage. Sans ce test, une enceinte de murs minces serait invisible au remplissage.
+      if (crossingBlocked(murs.parEdges, murs.pleines, map, tx, ty, dx, dy)) continue
       visited.add(idx)
       queue.push({ tx: nx, ty: ny })
     }
@@ -129,13 +187,14 @@ export function placementKeepsNavigable(
     y1: Math.min(map.height - 1, fire.ty + (radius + 1)),
   }
 
-  const blockedBefore = new Set<number>()
-  for (const s of structures) if (blocksNavigation(s.type)) blockedBefore.add(tileIndex(map, s.tx, s.ty))
-  const blockedAfter = new Set<number>(blockedBefore)
-  blockedAfter.add(tileIndex(map, add.tx, add.ty))
+  // AVANT / APRÈS, en ARÊTES : `murs` sépare les tuiles prises en entier (comportement
+  // historique) des arêtes déclarées. Le comparatif reste le même — on ne punit pas une poche
+  // de terrain préexistante, on ne refuse que ce que CETTE pose ferme.
+  const avant = murs(map, structures, blocksNavigation)
+  const apres = murs(map, [...structures, add], blocksNavigation)
 
-  const before = floodFromFire(map, blockedBefore, region, fire.tx, fire.ty)
-  const after = floodFromFire(map, blockedAfter, region, fire.tx, fire.ty)
+  const before = floodFromFire(map, avant, region, fire.tx, fire.ty)
+  const after = floodFromFire(map, apres, region, fire.tx, fire.ty)
 
   // ANCRE 1 — le DEHORS : la couronne de tuiles au bord du carré (Chebyshev = radius+1).
   // Si le Feu la touchait avant et ne la touche plus, on l'a muré (ou muré le composant).
@@ -180,6 +239,8 @@ export interface RecogStructure {
   tx: number
   ty: number
   villageId: number
+  /** Les arêtes occupées (modèle de mur mince) — la détection d'enceinte en dépend. */
+  edges?: number
 }
 
 /**
@@ -305,13 +366,24 @@ export function recognizeFunctions(structures: readonly RecogStructure[]): Recog
 function isEnclosed(amas: readonly RecogStructure[], structures: readonly RecogStructure[]): boolean {
   const CAP = 400
   const wallDoor = new Set<string>()
+  // LES ARÊTES CLÔTURANTES, par tuile. Une enceinte de murs MINCES n'occupe aucune tuile : sans
+  // cette table, le remplissage de l'intérieur passerait à travers et déclarerait « débordé ».
+  const closEdges = new Map<string, number>()
   const roofTiles = new Set<string>()
   for (const s of structures) {
     const k = `${s.tx},${s.ty}`
-    if (s.type === 'wall' || s.type === 'door') wallDoor.add(k)
+    if (s.type === 'wall' || s.type === 'door') {
+      if (s.edges === undefined) wallDoor.add(k)
+      else closEdges.set(k, (closEdges.get(k) ?? 0) | s.edges)
+    }
     // Le TOIT est une couche à part (décision d'Alexis : il se superpose au reste) :
     // une tuile est « couverte » si un toit s'y trouve, quoi qu'il y ait dessous.
     if (s.type === 'roof') roofTiles.add(k)
+  }
+  const coupe = (tx: number, ty: number, dx: number, dy: number): boolean => {
+    const { ici, la } = edgeBits(dx, dy)
+    if (((closEdges.get(`${tx},${ty}`) ?? 0) & ici) !== 0) return true
+    return ((closEdges.get(`${tx + dx},${ty + dy}`) ?? 0) & la) !== 0
   }
   const interior = new Set<string>()
   const queue: { tx: number; ty: number }[] = []
@@ -336,6 +408,7 @@ function isEnclosed(amas: readonly RecogStructure[], structures: readonly RecogS
       const ny = ty + dy
       const k = `${nx},${ny}`
       if (interior.has(k) || wallDoor.has(k)) continue
+      if (coupe(tx, ty, dx, dy)) continue // l'arête close arrête le remplissage
       interior.add(k)
       queue.push({ tx: nx, ty: ny })
     }

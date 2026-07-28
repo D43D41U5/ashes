@@ -854,7 +854,7 @@ export class WorldScene extends Phaser.Scene {
     publishStationsInRange(this.registry, this.predicted, this.view.structures)
     // Un groupe de réfugiés à portée → la fenêtre à trois gestes (V2-25). Étouffée en overlay.
     publishRefugeesNearby(this.registry, this.predicted, overlay ? [] : this.view.refugeeGroups)
-    // LE MODAL DU FEU (spec feu-station S17-S19) : un feu OUVERT (E) résout son état / combustible /
+    // LE MODAL DU FEU (spec feu-station S17-S19) : un feu OUVERT (F) résout son état / combustible /
     // cuisson + le BOUTON contextuel « Fonder » / « Améliorer » — qui REMPLACENT les deux fenêtres
     // flottantes d'avant. Jamais étouffé par l'overlay : le modal EST l'overlay.
     publishOpenFire(

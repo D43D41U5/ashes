@@ -33,7 +33,7 @@ describe('keymap', () => {
    * deux fois : `block` (2026-07-12) et `forage` (2026-07-24), toutes deux DÉCISIONS
    * UTILISATEUR blanchies ci-dessous. Toute troisième doit passer par la même porte.
    */
-  it('le clavier ne porte que le déplacement, les allures (dont la parade), JETER, CUEILLIR (E), et les écrans (sac/carte/chronique/pause)', () => {
+  it('le clavier ne porte que le déplacement, les allures (dont la parade), JETER, CUEILLIR (F), TOURNER (A/E), et les écrans (sac/carte/chronique/pause)', () => {
     // `block` (la parade) est une ALLURE maintenue, au même rang que `sprint` et
     // `sneak` — pas un verbe de ceinture. C'est le premier recâblage clavier assumé
     // depuis 2026-07-12, blanchi EXPRÈS : une stance a sa place au clavier, un verbe
@@ -45,8 +45,21 @@ describe('keymap', () => {
     // à la Rust (on pointe le buisson au curseur, E le cueille ENTIER d'un coup, quoi
     // qu'on tienne), pas l'explosion un-verbe-une-touche qu'on avait bannie. Elle laisse
     // le CLIC strictement inchangé (« l'objet en main décide » : une arme frappe toujours).
+    //
+    // `rotateLeft`/`rotateRight` (2026-07-27, décision d'Alexis) sont le TROISIÈME recâblage,
+    // et il passe par la même porte que les deux autres. Ce ne sont pas des verbes : elles ne
+    // changent RIEN au monde, elles orientent un fantôme avant la pose — du même rang que
+    // viser. Elles prennent A et E : `forage` a migré de E vers F, et `moveLeft` a rendu son
+    // alias 65 (la gauche du WASD) pour ne garder que 81 — la gauche du ZQSD, celle d'Alexis.
+    //
+    // ATTENTION en relisant cette table : Phaser dispatche sur `event.keyCode`, qui suit
+    // l'ÉTIQUETTE de la disposition et NON la position physique (d'où WASD illisible en
+    // AZERTY). Une première version a cru l'inverse et a donné 81 à `rotateLeft` : la gauche
+    // du ZQSD est morte en silence, et CE TEST EST RESTÉ VERT — il ne garde que l'unicité
+    // des alias, pas la couverture des dispositions. Le raisonnement de fond est dans
+    // `keymap.ts`, sur `moveLeft`.
     expect(Object.keys(KEYMAP).sort()).toEqual(
-      ['block', 'dropHeld', 'forage', 'moveDown', 'moveLeft', 'moveRight', 'moveUp', 'sneak', 'sprint', 'toggleInventory', 'toggleJournal', 'toggleMap', 'toggleMenu'].sort(),
+      ['block', 'dropHeld', 'forage', 'moveDown', 'moveLeft', 'moveRight', 'moveUp', 'rotateLeft', 'rotateRight', 'sneak', 'sprint', 'toggleInventory', 'toggleJournal', 'toggleMap', 'toggleMenu'].sort(),
     )
   })
 })

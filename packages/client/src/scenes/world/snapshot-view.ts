@@ -45,14 +45,19 @@ import {
   FLOOR_DEPTH,
   GROUND_FIRE_DEPTH,
   nodeDepth,
+  barriereDepth,
   ROOF_DEPTH,
+  seuilDepth,
   structureDepth,
+  TIE_SEUIL,
   tileFeetAnchor,
   TILE_PX,
   type ActorFootprint,
 } from '../../render/framing'
 import { warmthColor } from '../../render/lighting'
 import { LIT_NODE_TYPES } from '../../render/lit-props'
+import { BATI_LIT_TYPES, EDGE_ORIGIN_Y } from '../../render/bati-art'
+import { calculerPans, pansTombes } from '../../render/pans'
 import { LIT_STRUCTURE_TYPES } from '../../render/lit-structures'
 import { shakeOffset, type HitFx } from './hit-fx'
 import { createContactShadow, positionShadow, SHADOW_ALPHA } from './contact-shadow'
@@ -83,16 +88,18 @@ const INTERP_DELAY_DEFAULT_MS = 1000 / BALANCE.TICK_RATE_HZ
 export const INTERP_DELAY_MULTI_MS = 100
 
 /** Emprise VISUELLE par texture d'acteur (tuiles) — R12. Découplée de la
- * résolution native de l'art : un placeholder 12×12 rend ici à ces proportions.
+ * résolution native de l'art. LES HUMANOÏDES font 12 × 24 px (0,75 × 1,5 tuile, décision
+ * d'Alexis 2026-07-27) : la LARGEUR est celle de leur hitbox — le dessin et le corps s'arrêtent
+ * ensemble — et la texture fait 12 × 24 elle aussi, donc ses pixels restent CARRÉS.
  * L'emprise logique (collision/clic) reste AVATAR_HITBOX_TILES, inchangée.
  * `facesRight` : le sens dans lequel la silhouette est DESSINÉE — le flip du
  * regard (spec R9bis : la bête regarde où elle va) s'en déduit. */
 const ACTOR_FOOTPRINTS: Record<string, ActorFootprint & { facesRight?: boolean }> = {
-  'spr-player': { widthTiles: 1, heightTiles: 1.6 },
-  'spr-player_lit': { widthTiles: 1, heightTiles: 1.6 }, // même emprise que la version peinte
-  'spr-npc': { widthTiles: 1, heightTiles: 1.6 },
-  'spr-npc_lit': { widthTiles: 1, heightTiles: 1.6 },
-  'spr-zombie': { widthTiles: 1, heightTiles: 1.6 },
+  'spr-player': { widthTiles: 0.75, heightTiles: 1.5 },
+  'spr-player_lit': { widthTiles: 0.75, heightTiles: 1.5 }, // même emprise que la version peinte
+  'spr-npc': { widthTiles: 0.75, heightTiles: 1.5 },
+  'spr-npc_lit': { widthTiles: 0.75, heightTiles: 1.5 },
+  'spr-zombie': { widthTiles: 0.75, heightTiles: 1.5 },
   // Le gibier (spec faune) : sa TAILLE est la première information, et sa
   // POSTURE est la seconde (R9bis/C19) — tête au sol elle broute, tête dressée
   // elle a vu quelque chose, corps tendu elle fuit. Le lapin rase le sol, le
@@ -114,7 +121,7 @@ const ACTOR_FOOTPRINTS: Record<string, ActorFootprint & { facesRight?: boolean }
   // signal qui rend la règle jouable — on ne peut pas le rater dans la meute.
   'spr-wolf-alpha': { widthTiles: 2, heightTiles: 1.55 },
 }
-const DEFAULT_FOOTPRINT: ActorFootprint = { widthTiles: 1, heightTiles: 1.6 }
+const DEFAULT_FOOTPRINT: ActorFootprint = { widthTiles: 0.75, heightTiles: 1.5 }
 
 /** Combien la canopée prend le vent (voir render/wind.ts). Un houppier est lourd :
  * il oscille moins qu'un roseau, mais il est large, donc ça se voit. */
@@ -336,9 +343,80 @@ function wallTint(material: WallMaterial | undefined, ratio: number): number {
   return Phaser.Display.Color.GetColor(Math.floor(rgb[0]! * dim), Math.floor(rgb[1]! * dim), Math.floor(rgb[2]! * dim))
 }
 
+/**
+ * LA NAPPE SOUS LAQUELLE ON SE TIENT — remplissage sur les tuiles COUVERTES, jamais sur les murs.
+ *
+ * Le piège est connu et documenté chez Project Zomboid : leur découpe casse quand un mur est
+ * détruit, parce qu'elle teste une ENCEINTE close. Or nos ruines ont des trous par conception.
+ * On inonde donc sur ce qui fait le DEDANS — un dallage ou un toit — et jamais sur ce qui le
+ * borde. Robuste aux brèches, et plus simple.
+ */
+function calculerNappe(structures: readonly Structure[], self?: { x: number; y: number }): Set<string> | null {
+  if (!self) return null
+  const dedans = new Set<string>()
+  for (const s of structures) if (s.type === 'floor' || s.type === 'roof') dedans.add(`${s.tx},${s.ty}`)
+  const depart = `${Math.floor(self.x)},${Math.floor(self.y)}`
+  if (!dedans.has(depart)) return null
+  const vus = new Set([depart])
+  const file = [depart]
+  for (let h = 0; h < file.length; h++) {
+    const [x, y] = file[h]!.split(',').map(Number) as [number, number]
+    for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
+      const k = `${x + dx},${y + dy}`
+      if (vus.has(k) || !dedans.has(k)) continue
+      vus.add(k)
+      file.push(k)
+    }
+  }
+  return vus
+}
+
+/**
+ * EN DEÇÀ DE CE TAUX DE PV, une pièce du monde (`villageId 0`) bascule sur sa texture
+ * RUINÉE. Ce n'est pas un seuil de dégâts : c'est le seuil au-delà duquel une chose a
+ * cessé d'être entretenue. `poi-batis.ts` pose la Ferme à 0,45 et la Cabane à 1 — la
+ * première tombe donc du bon côté, la seconde jamais, et c'est tout le contraste.
+ */
+const RUINE_SEUIL = 0.8
+
+/**
+ * ⚙ CALIBRATION — À QUELLE DISTANCE UN PAN DE MUR TOMBE (décision d'Alexis, 2026-07-27).
+ *
+ * 2 tuiles, et le nombre n'est pas libre : c'est la hauteur apparente d'un mur (`MUR_HT` = 32 px
+ * = 2 tuiles). On voit donc derrière un pan exactement quand il pourrait cacher quelqu'un à sa
+ * hauteur — ni plus tôt (le bâtiment garderait ses murs pour rien), ni plus tard (il resterait
+ * un angle mort d'une rangée, celui-là même qu'on voulait supprimer).
+ *
+ * Dans une salle de six rangées, on peut se tenir au milieu sans effacer le nord : la pièce
+ * garde deux pans sur quatre. C'est ce qui la distingue d'un plan au sol.
+ */
+const PAN_DISTANCE_TUILES = 2
+
+/** La demi-épaisseur d'une bande d'arête, en tuiles — DÉRIVÉE de l'équilibrage, comme le
+ *  dessin (`bati-art`) et la collision (`collision.ts`). Trois lectures, une seule source. */
+const DEMI_BANDE_TUILES = BALANCE.WALL_EDGE_SUB / 2 / BALANCE.SUBTILES_PER_TILE
+
 export class SnapshotView {
   /** Dernier état reçu — lu par la prédiction (collisions) et les inputs. */
   structures: Structure[] = []
+
+  /**
+   * LA NAPPE — l'ensemble des tuiles du bâtiment sous lequel se tient l'avatar, ou `null`
+   * dehors. Recalculée à chaque snapshot ; jamais sérialisée (dérivé pur).
+   *
+   * Elle remplace le DISQUE des houppiers, et c'était une confusion de fond : `crownAlpha` est
+   * la fonction des CIMES (`CROWN_R_IN = 6` tuiles, `CROWN_R_OUT = 16`), calibrée pour une
+   * canopée où l'on voit loin à l'horizontale. Sur une maison de six tuiles, elle rendait le
+   * toit transparent **alors qu'on était encore dehors** — il ne cachait donc jamais rien. Une
+   * pièce n'est pas une cime : on efface le couvert de la pièce OÙ L'ON EST, entièrement, et on
+   * laisse les autres pleins. C'est ce que font Project Zomboid et RimWorld.
+   */
+  private nappe: Set<string> | null = null
+
+  /** L'avatar est-il sous le même couvert que cette tuile ? */
+  private dedansAvec(tx: number, ty: number): boolean {
+    return this.nappe !== null && this.nappe.has(`${tx},${ty}`)
+  }
 
   /** ESSAI éclairage dynamique (decisions.md 2026-07-20) : quand armé (toggle debug
    *  F5), l'arbre ORDINAIRE de la Racine passe sur ses textures normal-mappées
@@ -578,8 +656,8 @@ export class SnapshotView {
    * (origine (0.5, 1)) — le tri en profondeur et l'emprise logique non plus. */
   syncActor(sprite: Phaser.GameObjects.Image, x: number, y: number, textureKey: string, crouch = false): void {
     const footprint = ACTOR_FOOTPRINTS[textureKey] ?? DEFAULT_FOOTPRINT
-    const p = actorPlacement(x, y, footprint, TILE_PX, BALANCE.AVATAR_HITBOX_TILES)
-    const feetY = y + BALANCE.AVATAR_HITBOX_TILES / 2
+    const p = actorPlacement(x, y, footprint, TILE_PX, BALANCE.AVATAR_HITBOX_DEPTH_TILES)
+    const feetY = y + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
     const lift = this.warp?.lift(x, feetY) ?? 0
     // ═══ L'IMMERSION AUX GENOUX (spec eau-vivante R4) — le corps ENTRE dans l'eau ═══
     // CONTINUE (« feel = pente continue ») : 0 pile au trait de rive, pleine à 0,6 tuile
@@ -749,7 +827,22 @@ export class SnapshotView {
     // ET portes) pour former une paroi, pas des carrés juxtaposés. On indexe d'abord.
     const wallTiles = new Set<string>()
     for (const s of structures) if (s.type === 'wall' || s.type === 'door') wallTiles.add(`${s.tx},${s.ty}`)
-    const feetY = self ? self.y + BALANCE.AVATAR_HITBOX_TILES / 2 : 0
+    // LA CLÔTURE S'AUTOTUILE COMME LE MUR — et il le fallait : sans masque, elle dessinait ses
+    // deux lisses HORIZONTALES quoi qu'il arrive, donc une barrière courant du nord au sud
+    // montrait des barreaux en travers d'elle-même. Elle ne connaît pas les murs (une clôture
+    // ne se raccorde pas à une maçonnerie : elle bute dessus).
+    const clotureTiles = new Set<string>()
+    for (const s of structures) if (s.type === 'cloture') clotureTiles.add(`${s.tx},${s.ty}`)
+    // LE SEUIL SE LIE À SON VOISIN (porte de deux cases) : il ne connaît que ses semblables à
+    // l'ouest et à l'est — le montant tombe de ce côté-là, et la porte devient une ouverture.
+    const seuilTiles = new Set<string>()
+    for (const s of structures) if (s.type === 'encadrement') seuilTiles.add(`${s.tx},${s.ty}`)
+    this.nappe = calculerNappe(structures, self)
+    // LES PANS — l'unité d'effacement du bâti. Recalculés à chaque snapshot comme la nappe :
+    // dérivé pur, jamais stocké. C'est ici que se décide QUEL mur s'efface, et le pourquoi vit
+    // dans `render/pans.ts` (un côté de bâtiment, brèches comprises, à 2 tuiles).
+    const pans = calculerPans(structures)
+    const tombes = pansTombes(pans, self, PAN_DISTANCE_TUILES)
     const seen = new Set<number>()
     for (const s of structures) {
       seen.add(s.id)
@@ -765,17 +858,32 @@ export class SnapshotView {
             ? GROUND_FIRE_DEPTH
             : isRoof
               ? ROOF_DEPTH + s.ty
-              : s.type === 'floor'
-                ? FLOOR_DEPTH
-                : structureDepth(s.ty, TILE_PX)
+              : s.type === 'floor' || s.type === 'friche' || s.type === 'terre'
+                ? FLOOR_DEPTH // friche et terre battue SONT le sol : un champ ne se dresse pas
+                // UNE BARRIÈRE TRIE SUR SA BANDE, pas sur sa tuile : sinon, collé à un mur par
+                // le bas, on passe derrière lui (cf. `barriereDepth`). Et LE SEUIL APRÈS LE MUR :
+                // une bande de mur déborde d'une demi-épaisseur chez ses voisins, et sa pierre
+                // mordait le bois de la porte (constaté par Alexis).
+                : s.edges !== undefined && (s.type === 'wall' || s.type === 'cloture' || s.type === 'encadrement')
+                  ? barriereDepth(s.ty, s.edges, TILE_PX, DEMI_BANDE_TUILES, s.type === 'encadrement' ? TIE_SEUIL : undefined)
+                  : s.type === 'encadrement'
+                    ? seuilDepth(s.ty, TILE_PX)
+                    : structureDepth(s.ty, TILE_PX)
         sprite = this.scene.add.image(a.px, a.py - lift, `st-${s.type}`).setOrigin(0.5, 1).setDepth(depth)
         this.structureSprites.set(s.id, sprite)
       }
       sprite.setLighting(this.lighting) // couche 1 : murs, portes, ateliers… éclairés (pooled → chaque frame)
       // Les CHIPS dressés basculent sur leur albédo aplati + normale (da-feeling R4). Les murs,
       // la porte (autotile re-texturé plus bas) et le feu (swap dédié) ont leurs propres chemins.
-      if (LIT_STRUCTURE_TYPES.has(s.type)) {
+      if (LIT_STRUCTURE_TYPES.has(s.type) || BATI_LIT_TYPES.has(s.type)) {
         sprite.setTexture(this.lighting ? `st-${s.type}_lit` : `st-${s.type}`)
+      }
+      if (s.type === 'cloture') {
+        // La clôture prend la texture qui CONNECTE ses voisines : poteau au centre, lisses
+        // vers chaque direction du masque. Un bout d'enclos n'a qu'une branche, un angle deux,
+        // un poteau isolé reste un poteau — les seize cas d'un coup, sans table.
+        const m = wallMask(clotureTiles, s.tx, s.ty)
+        sprite.setTexture(this.lighting ? `st-cloture-${m}_lit` : `st-cloture-${m}`)
       }
       if (s.type === 'fire') {
         // Les BÛCHES normal-mappées : bois mat `_lit` quand l'éclairage est armé (relief
@@ -790,11 +898,87 @@ export class SnapshotView {
           const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
           sprite.setTint(warmthColor(warmth))
         }
+      } else if (s.edges !== undefined && (s.type === 'wall' || s.type === 'cloture')) {
+        // ═══ LA BARRIÈRE SUR ARÊTE — la forme est PORTÉE, plus devinée ═══
+        //
+        // L'autotuilage lisait le voisinage ; ici `edges` dit tout. Seize masques suffisent, et
+        // la question des coins rentrants disparaît : ils s'expriment directement.
+        // LES PV DE RÉFÉRENCE SUIVENT LE MATÉRIAU. Comparer au barème de BASE (200, le bois)
+        // alors qu'un mur de pierre en vaut 500 faisait passer la Ferme pour NEUVE : ses murs
+        // à 45 % valent 225, soit au-dessus du seuil calculé sur 200. Le lieu s'appelait
+        // « ruinée » et rendait une maçonnerie propre.
+        const maxHp = s.material ? WALL_TIERS[s.material].wall.hp : STRUCTURE_HP[s.type]
+        const ruine = s.villageId === 0 && s.hp < maxHp * RUINE_SEUIL
+        const fam = s.type === 'cloture' ? 'cloture' : ruine ? 'wall-ruine' : 'wall'
+        // ═══ LA DÉCOUPE DE FAÇADE (à la Zomboid — décision d'Alexis, 2026-07-27) ═══
+        //
+        // QUEL MUR CACHE LA PIÈCE ? Celui qui est DEVANT elle, entre elle et la caméra — donc
+        // celui posé au SUD de la salle. Et ce mur-là porte le bit NORD (1) : une barrière se
+        // pose sur la tuile du DEHORS avec le bit qui REGARDE la région (`poi-batis`), si bien
+        // que le mur du bas d'une pièce la regarde vers le nord. On testait le bit 4 — c'est
+        // l'inverse : ça effaçait le mur du HAUT, dont la face ne monte que sur le dehors et ne
+        // cachait donc rien. Le mur qui gênait, lui, restait plein.
+        //
+        // ET IL SE COUPE, il ne s'efface pas : la texture `coupe` ne garde que l'empreinte au
+        // sol, sombre. Un mur à 22 % laissait un fantôme gris sur toute la hauteur de sa face —
+        // la salle restait voilée par ce qu'on prétendait retirer. C'est ce qui achète la
+        // hauteur : le mur peut avoir du corps dehors, puisqu'il se tranche dedans.
+        // ON TRANCHE PAR PAN, JAMAIS PAR TUILE (décision d'Alexis) : un trou qui suit le
+        // joueur dans un mur continu lit comme une brèche, donc comme une entrée. Le côté
+        // entier tombe, ou rien. La règle et ses raisons : `render/pans.ts`.
+        const cacheLaSalle = (pans.parBarriere.get(s.id) ?? []).some((i) => tombes.has(i))
+        const cle = cacheLaSalle
+          ? (fam === 'cloture' ? `st-cloture-coupe-e${s.edges}` : `st-wall-coupe-e${s.edges}`)
+          : `st-${fam}-e${s.edges}`
+        sprite.setTexture(this.lighting && !cacheLaSalle ? `${cle}_lit` : cle)
+        // L'ANCRAGE D'UNE BARRIÈRE N'EST PAS LE BAS DE SON IMAGE. Le mur est à cheval sur
+        // l'arête : son sprite déborde d'une demi-épaisseur SOUS sa tuile. On ancre donc au bas
+        // de la TUILE (`EDGE_ORIGIN_Y`) — à défaut, tout le bâti remonterait d'autant.
+        sprite.setOrigin(0.5, EDGE_ORIGIN_Y[fam] ?? 1)
+        // La teinte reste douce : la texture porte déjà ses aplats et ses tons. La réassombrir
+        // autant qu'un mur endommagé écraserait ce travail. (Le mur COUPÉ ne se teinte pas : son
+        // empreinte est déjà une ombre, une teinte de matériau n'y voudrait rien dire.)
+        const ratio = Math.max(0, Math.min(1, s.hp / (maxHp || 1)))
+        const dim = 0.82 + 0.18 * ratio
+        if (cacheLaSalle) sprite.clearTint()
+        else {
+          sprite.setTint(Phaser.Display.Color.GetColor(
+            Math.floor(248 * dim), Math.floor(250 * dim), Math.floor(255 * dim),
+          ))
+        }
+        sprite.setAlpha(1)
       } else if (s.type === 'wall') {
         // Le mur prend la texture qui CONNECTE ses voisins, teintée par son matériau
         // (les textures d'autotuile sont neutres) et assombrie par les dégâts.
-        sprite.setTexture(`st-wall-${wallMask(wallTiles, s.tx, s.ty)}`)
-        sprite.setTint(wallTint(s.material, s.hp / (s.material ? WALL_TIERS[s.material].wall.hp : STRUCTURE_HP.wall)))
+        const max = s.material ? WALL_TIERS[s.material].wall.hp : STRUCTURE_HP.wall
+        const ratio = s.hp / max
+        const masque = wallMask(wallTiles, s.tx, s.ty)
+        if (s.villageId === 0 && ratio < RUINE_SEUIL) {
+          // LE MUR D'UNE RUINE A SON PROPRE APPAREIL (render/ruined-wall.ts) : crête ébréchée,
+          // pierres descellées, joints gravés dans la normale. Une teinte ne pouvait pas le
+          // donner — le mur ordinaire est une DALLE, quelle que soit sa couleur.
+          sprite.setTexture(this.lighting ? `st-wall-ruine-${masque}_lit` : `st-wall-ruine-${masque}`)
+          // Teinte ADOUCIE : la texture porte déjà son propre modelé (cinq gris, joints peints,
+          // mousse, crête ébréchée). La réassombrir autant que le mur neuf écraserait ce
+          // travail — on garde la couleur du matériau et un rien de vieillissement. Presque
+          // BLANCHE, donc : le mur ruiné tient sa valeur de son albédo, pas de sa teinte.
+          const dim = 0.82 + 0.18 * Math.max(0, Math.min(1, ratio))
+          sprite.setTint(Phaser.Display.Color.GetColor(
+            Math.floor(244 * dim), Math.floor(246 * dim), Math.floor(252 * dim),
+          ))
+        } else {
+          sprite.setTexture(`st-wall-${masque}`)
+          sprite.setTint(wallTint(s.material, ratio))
+        }
+      } else if ((s.type === 'floor' || s.type === 'roof') && s.villageId === 0 && s.hp < STRUCTURE_HP[s.type] * RUINE_SEUIL) {
+        // LE SOL ET LE TOIT D'UNE RUINE ONT LEUR PROPRE TEXTURE, et il le fallait : une
+        // teinte ne fait pas un TROU. Un chaume ruiné laisse voir dessous, un dallage percé
+        // laisse voir la terre — c'est ce qui distingue « tombé » de « à l'ombre ».
+        sprite.setTexture(`st-${s.type}-ruine`)
+      } else if (s.type === 'friche' || s.type === 'terre') {
+        // La friche tire sa variante de sa POSITION — un champ de vingt tuiles ne peut pas
+        // porter vingt fois le même carré. Déterministe des deux côtés, sans une donnée de plus.
+        sprite.setTexture(`st-${s.type}-${(((s.tx * 7 + s.ty * 13) % 4) + 4) % 4}`)
       } else if (isPlot(s.type)) {
         // LE POTAGER (agriculture) : parcelle/serre/terroir VERDISSENT à mesure que la culture pousse — terre
         // brune vide/semée, vert vif MÛRE (« c'est prêt » se lit d'un coup d'œil). Stade PUR
@@ -803,17 +987,46 @@ export class SnapshotView {
         if (stage < 0) sprite.clearTint()
         else sprite.setTint(Phaser.Display.Color.GetColor(Math.floor(150 - 44 * stage), Math.floor(150 + 95 * stage), Math.floor(90 - 30 * stage)))
       } else {
-        // Une structure endommagée s'assombrit et rougit — lisible de loin.
+        // LE SEUIL SUIT SON MUR : quand le mur du bas est tranché, le linteau resterait sinon en
+        // l'air au-dessus d'une salle ouverte. Même test que le mur (le bit NORD regarde la pièce).
+        // (Le cas NON coupé est déjà posé plus haut par le swap `BATI_LIT_TYPES` — on ne
+        // repasse ici que sur la découpe.)
+        if (s.type === 'encadrement') {
+          sprite.setOrigin(0.5, EDGE_ORIGIN_Y.encadrement ?? 1) //  à cheval, comme le mur qu'il perce
+          const m = (seuilTiles.has(`${s.tx - 1},${s.ty}`) ? 1 : 0) | (seuilTiles.has(`${s.tx + 1},${s.ty}`) ? 2 : 0)
+          // Le seuil tombe avec le pan qu'il perce — il en fait partie (même arête).
+          const coupe = (pans.parBarriere.get(s.id) ?? []).some((i) => tombes.has(i))
+          sprite.setTexture(coupe ? `st-encadrement-coupe-${m}`
+            : this.lighting ? `st-encadrement-${m}_lit` : `st-encadrement-${m}`)
+        }
         const max = (s.type === 'door' && s.material ? WALL_TIERS[s.material].door.hp : STRUCTURE_HP[s.type]) || 1
         const ratio = Math.max(0, Math.min(1, s.hp / max))
-        const shade = Math.floor(140 + 115 * ratio)
-        sprite.setTint(Phaser.Display.Color.GetColor(255, shade, shade))
+        if (s.villageId === 0) {
+          // LES PIÈCES DU MONDE (`poi-batis.ts`) NE SONT PAS « ENDOMMAGÉES », ELLES SONT VIEILLES.
+          // Le rouge veut dire « répare-moi » : c'est un appel à l'action, et il n'a aucun sens
+          // sur une ferme abandonnée depuis dix ans — vu à l'œil, il la faisait virer au ROSE.
+          // Une chose ancienne perd sa lumière et sa couleur : on assombrit, et on tire vers le gris.
+          //
+          // La pente est FRANCHE (0,40 au lieu de 0,55 au pied) : la première version était trop
+          // douce, la ruine lisait « maison à l'ombre ». Une ruine doit se distinguer d'un bâtiment
+          // entretenu à la première seconde, sans lire son nom.
+          const dim = 0.4 + 0.6 * ratio
+          const gris = 0.58 + 0.42 * ratio // 1 = couleur pleine, plus bas = délavé
+          const c = Math.floor(255 * dim)
+          sprite.setTint(Phaser.Display.Color.GetColor(c, Math.floor(c * (1 - (1 - gris) * 0.2)), Math.floor(c * gris)))
+        } else {
+          // Une structure endommagée s'assombrit et rougit — lisible de loin.
+          const shade = Math.floor(140 + 115 * ratio)
+          sprite.setTint(Phaser.Display.Color.GetColor(255, shade, shade))
+        }
       }
       // LE TOIT SE RÉVÈLE COMME UNE CIME (décision d'Alexis) : effacé quand on est
       // dessous/près, opaque quand on est loin — même disque de découvert (`crownAlpha`).
       if (isRoof) {
-        const d = self ? Math.sqrt((self.x - (s.tx + 0.5)) ** 2 + (feetY - (s.ty + 1)) ** 2) : Infinity
-        sprite.setAlpha(crownAlpha(d))
+        // PAR PIÈCE, PAS PAR DISQUE : le couvert de la pièce où l'on est s'efface d'un coup,
+        // les autres restent pleins. Hors bâtiment, `nappe` est nul et tout reste opaque —
+        // c'est ce que le disque des cimes ne savait pas faire.
+        sprite.setAlpha(this.dedansAvec(s.tx, s.ty) ? 0.12 : 1)
       }
     }
     for (const [id, sprite] of this.structureSprites) {
@@ -945,7 +1158,7 @@ export class SnapshotView {
     const ty0 = Math.floor(v.y / TILE_PX) - 1
     const tx1 = Math.ceil((v.x + v.width) / TILE_PX) + 2
     const ty1 = Math.ceil((v.y + v.height) / TILE_PX) + crownMargin
-    const feetY = playerY + BALANCE.AVATAR_HITBOX_TILES / 2
+    const feetY = playerY + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
     let used = 0
     let crownsUsed = 0
     for (let ty = ty0; ty <= ty1; ty++) {

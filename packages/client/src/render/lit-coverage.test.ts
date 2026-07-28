@@ -9,6 +9,7 @@ import { POI } from '@braises/sim'
 import { POI_ART } from '../scenes/world/poi-art'
 import { ERRATIQUES, POI_LIT_DEFS, POI_LIT_KINDS, POI_LIT_MIRRORED } from './poi-lit'
 import { LIT_STRUCTURE_KEYS, LIT_STRUCTURE_TYPES } from './lit-structures'
+import { BATI_KEYS, BATI_LIT_TYPES } from './bati-art'
 import { LIT_PROP_KEYS } from './lit-props'
 
 describe('la couverture _lit (garde A1)', () => {
@@ -36,14 +37,27 @@ describe('la couverture _lit (garde A1)', () => {
     }
   })
 
+  /**
+   * LA COUVERTURE SE COMPTE SUR LES DEUX MODULES, depuis que le mobilier du monde bâti vit
+   * dans `bati-art` (avec sa vraie silhouette et son relief gravé). Ne compter que
+   * `lit-structures` a fait rougir cette garde quand le COFFRE a déménagé — il n'avait rien
+   * perdu, il avait changé d'adresse. Une garde qui suit un module plutôt qu'une PROPRIÉTÉ
+   * crie sur les rangements.
+   */
   it('les structures basculées ont leurs clés, et le whitelist n’est jamais recopié', () => {
-    expect(LIT_STRUCTURE_TYPES.size).toBeGreaterThanOrEqual(12)
+    const tous = new Set([...LIT_STRUCTURE_TYPES, ...BATI_LIT_TYPES])
+    expect(tous.size, 'la garde doit d’abord VOIR').toBeGreaterThanOrEqual(20)
     for (const type of LIT_STRUCTURE_TYPES) {
       expect(LIT_STRUCTURE_KEYS.has(`st-${type}_lit`), type).toBe(true)
     }
-    // Les exceptions consignées ne se glissent pas dans le whitelist par accident.
+    for (const type of BATI_LIT_TYPES) {
+      expect(BATI_KEYS.includes(`st-${type}_lit`), type).toBe(true)
+    }
+    // Le COFFRE a sa `_lit` — peu importe lequel des deux modules la produit.
+    expect(tous.has('chest'), 'le coffre a perdu sa bascule').toBe(true)
+    // Les exceptions consignées ne se glissent dans AUCUN des deux whitelists par accident.
     for (const exclu of ['wall', 'door', 'fire', 'floor', 'roof', 'parcelle', 'terroir']) {
-      expect(LIT_STRUCTURE_TYPES.has(exclu), `${exclu} est consigné hors bascule`).toBe(false)
+      expect(tous.has(exclu), `${exclu} est consigné hors bascule`).toBe(false)
     }
   })
 
