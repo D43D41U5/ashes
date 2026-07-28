@@ -199,7 +199,7 @@ function board(): string {
         <div style="position:absolute;inset:0;animation:blRingSpin 3.4s linear infinite;"><div style="position:absolute;left:50%;top:-3px;transform:translateX(-50%);width:7px;height:7px;border-radius:50%;background:#e8c66a;box-shadow:0 0 10px #e8c66a;"></div></div>
       </div>
 
-      <div style="font-size:52px;font-weight:700;color:#e8763a;letter-spacing:5px;margin-top:34px;text-shadow:0 0 30px rgba(201,139,58,.4);">BRAISES</div>
+      <div style="font-size:52px;font-weight:700;color:#e8763a;letter-spacing:5px;margin-top:34px;text-shadow:0 0 30px rgba(201,139,58,.4);">ASHES</div>
       <div style="font-size:16px;color:#e8e0c8;letter-spacing:2px;margin-top:8px;">la Veillée</div>
     </div>
 

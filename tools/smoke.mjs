@@ -1784,7 +1784,7 @@ const SCENARIOS = {
       '<br><small>' + f.w + '×' + f.h +
       (f.alias.length ? ' · = ' + f.alias.join(', ') : '') + '</small></figcaption></figure>'
     const html = [
-      '<!doctype html><meta charset="utf-8"><title>BRAISES — planche d\'art</title>',
+      '<!doctype html><meta charset="utf-8"><title>ASHES — planche d\'art</title>',
       '<style>body{background:#0e0e12;color:#cfc7b6;font:13px/1.5 monospace;margin:24px}',
       'h1{font-size:18px}h2{font-size:15px;color:#e8c66a;border-bottom:1px solid #2a2622;padding-bottom:4px;margin-top:32px}',
       'img{image-rendering:pixelated;background:#1a1720;display:block;margin:0 auto 6px}',
@@ -4582,9 +4582,26 @@ const SCENARIOS = {
     }
 
     // ── LE GROS BOIS (Vieille Sylve) ──
+    // La Vieille Sylve n'est PAS un lieu (`map.zones`, qui porte les POI) : c'est une ZONE du
+    // graphe, et le client ne la connaît que par la grille grossière `zoneGrid` au pas `zonePas`.
+    // On y lit un bloc de sylve et on vise son centre — c'est ainsi que le jeu la localise.
     const sylve = await page.evaluate(() => {
-      const z = (window.__BRAISES__.scene.map?.zones ?? []).find((v) => v.kind === 'sylve')
-      return z ? { x: z.x + z.w / 2, y: z.y + z.h / 2, nom: z.name ?? 'sylve' } : null
+      const m = window.__BRAISES__.scene.map
+      const { zoneGrid: g, zonePas: pas, zoneDefs: defs } = m ?? {}
+      if (!g || !pas || !defs) return null
+      const id = defs.findIndex((d) => d.slug === 'sylve')
+      if (id < 0) return null
+      const cols = Math.ceil(m.width / pas)
+      const p = window.__BRAISES__.scene.registry.get('playerPos')
+      let meilleur = null
+      for (let k = 0; k < g.length; k++) {
+        if (g[k] !== id) continue
+        const x = ((k % cols) + 0.5) * pas
+        const y = (Math.floor(k / cols) + 0.5) * pas
+        const d = (x - p.x) ** 2 + (y - p.y) ** 2
+        if (!meilleur || d < meilleur.d) meilleur = { x, y, d }
+      }
+      return meilleur ? { x: meilleur.x, y: meilleur.y, nom: defs[id].nom } : null
     })
     if (!sylve) {
       console.error('!! pas de Vieille Sylve sur la carte : le gros bois ne se mesure pas')

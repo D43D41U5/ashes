@@ -132,7 +132,7 @@ export function createPauseMenu({ onResume, getVolume, onVolume, onQuit }: Pause
   <div class="pm-glow"></div>
   <div class="pm-card">
     <div class="pm-eyebrow">LA VEILLÉE, EN PAUSE</div>
-    <div class="pm-title">BRAISES</div>
+    <div class="pm-title">ASHES</div>
     <div class="pm-div"></div>
     <div class="pm-sect">LE CLIC GAUCHE — L’OBJET EN MAIN DÉCIDE</div>
     <div class="pm-table">${CLICKS.map((c) => row(c, 'pm-click')).join('')}</div>

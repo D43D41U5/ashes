@@ -1,4 +1,6 @@
-# BRAISES
+# ASHES
+
+*(ex-BRAISES — renommé le 2026-07-28 ; le nom du dépôt, des paquets `@braises/*`, du GDD et des clés de stockage n'a PAS suivi : ce sont des identifiants, pas le titre.)*
 
 Survival multijoueur top-down 2D persistant, saisons de 60 jours, villages de joueurs, alignement émergent. La source de vérité du design est **`braises-gdd.md`** — le lire avant tout travail sur un système de jeu.
 

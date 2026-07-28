@@ -52,7 +52,7 @@ export const HEX = {
   // ── Les deux accents ──
   ember: '#c98b3a', // braise : sélection, progression, ce qui chauffe
   emberBright: '#e8c66a', // braise vive : survol, halo, geste armé
-  emberDeep: '#e8763a', // braise profonde : le titre « BRAISES »
+  emberDeep: '#e8763a', // braise profonde : le titre « ASHES »
   alert: '#e05a4a', // alerte : blocage, destruction
   gel: '#6f93a0', // accent conditionnel : le froid
   // ── Surfaces ──

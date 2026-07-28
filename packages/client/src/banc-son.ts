@@ -292,7 +292,7 @@ racine.innerHTML = `
   .b-at-cible b{color:${HEX.emberBright};font-weight:400;}
 </style>
 
-<div class="b-eyebrow">BRAISES — OUTIL DE DEV</div>
+<div class="b-eyebrow">ASHES — OUTIL DE DEV</div>
 <h1 class="b-title">LE BANC D’ÉCOUTE</h1>
 <p class="b-sub">
   Le monde émet <span class="b-count"><b>${nbTotal}</b> faits de domaine</span> :

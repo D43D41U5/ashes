@@ -380,10 +380,13 @@ function chapeau(titre: string): string {
  */
 function ecranAccueil(v: Vue): string {
   const r = repriseLaPlusRecente(v.slots, v.multi)
+  // JOUER et OPTIONS n'ont PAS de sous-titre (demande d'Alexis) : les deux mots se suffisent,
+  // et les gloser mettait trois lignes de commentaire là où il n'y a aucune décision à prendre.
+  // REPRENDRE garde le sien — ce n'est pas une glose, c'est LA partie qu'on rouvrira.
   return `<div class="bm-menu">
     ${r ? entreeReprendre(r, Date.now()) : ''}
-    ${entree('JOUER', 'une Veillée pour vous seul, ou une vallée partagée', 'data-go="jouer"')}
-    ${entree('OPTIONS', 'les touches, et le son', 'data-go="options"')}
+    ${entree('JOUER', '', 'data-go="jouer"')}
+    ${entree('OPTIONS', '', 'data-go="options"')}
   </div>`
 }
 
@@ -397,10 +400,12 @@ function entreeReprendre(r: Reprise, maintenant: number): string {
   return entree('REPRENDRE', esc(sous), 'data-reprendre', 'bm-e-fort')
 }
 
+/** Une entrée d'accueil. Sans sous-titre, la ligne se resserre d'elle-même : le padding suffit,
+ *  et une entrée courte à côté d'une entrée haute donne la hiérarchie sans qu'on l'écrive. */
 function entree(titre: string, sous: string, attr: string, cls = ''): string {
   return `<button class="bm-entree ${cls}" ${attr}>
     <span class="bm-e-titre">${titre}</span>
-    <span class="bm-e-sous">${sous}</span>
+    ${sous ? `<span class="bm-e-sous">${sous}</span>` : ''}
   </button>`
 }
 
@@ -552,7 +557,7 @@ function planche(): string {
         <div class="bm-anneau-tour"><div class="bm-etincelle"></div></div>
       </div>
 
-      <div class="bm-titre">BRAISES</div>
+      <div class="bm-titre">ASHES</div>
       <div class="bm-baseline">Survie · une vallée de 60 jours · l'alignement émerge</div>
 
       <div class="bm-corps"></div>
