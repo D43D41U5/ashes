@@ -31,6 +31,7 @@ import { frontActuel } from './cendre'
 import { grantItems } from './village'
 import { TICKS_PER_SEASON_DAY, TICKS_PER_CYCLE, seasonDayAtTick } from './time'
 import type { WorldMap } from './map'
+import { serializeCarte, serializePartie, serializeSim } from './persistence'
 
 /**
  * L'EMPREINTE DE LA CARTE. On ne garde pas une copie (7,5 M de nombres, ~60 Mo) : on somme.
@@ -212,5 +213,40 @@ describe('la carte est immuable pendant la partie', () => {
     // La preuve que le monde a VRAIMENT changé — sans quoi la garde ne prouverait rien.
     expect(sim.structures.length, `refus : ${refus.join(', ')}`).toBeGreaterThan(structuresAvant)
     expect(empreinte(sim.map)).toBe(avant)
+  })
+})
+
+/**
+ * CE QUE PÈSE UNE SAUVEGARDE — la garde qui empêche le gel de revenir.
+ *
+ * Le poids EST le gel : mesuré dans le Worker du navigateur, la sérialisation coûtait
+ * ~2,45 s pour 69,7 Mo et coûte ~200 ms pour 9,2 Mo. Rien, jusqu'ici, ne surveillait ce
+ * poids — le correctif serait donc mort en silence le jour où quelqu'un remettrait la carte
+ * dans la sauvegarde périodique, ou y ajouterait un autre champ par tuile. On garde donc la
+ * TAILLE, pas la durée : une durée dépend de la machine et rendrait la suite capricieuse,
+ * alors que le nombre d'octets est le même partout et dit exactement la même chose.
+ *
+ * Le plafond est large exprès (20 Mo pour 9,2 mesurés) : il n'est pas là pour calibrer, il
+ * est là pour crier quand un ordre de grandeur change.
+ */
+describe('le poids de la sauvegarde périodique', () => {
+  /** Généreux : on veut attraper un facteur, pas discuter un mégaoctet. */
+  const PLAFOND_PARTIE_MO = 20
+
+  it("A4 — la partie pèse un ordre de grandeur de moins que l'état entier", () => {
+    const { sim } = mondeReel()
+
+    const entier = serializeSim(sim).length
+    const partie = serializePartie(sim).length
+    const carte = serializeCarte(sim.map).length
+
+    // Le fait central : la carte est l'essentiel du poids, et elle n'est plus du voyage.
+    expect(carte / entier).toBeGreaterThan(0.5)
+    expect(partie).toBeLessThan(entier / 4)
+    expect(partie / 1e6).toBeLessThan(PLAFOND_PARTIE_MO)
+
+    // Et la partie ne contient PAS la carte — la vérification directe, au cas où les
+    // rapports de taille tiendraient un jour par accident.
+    expect(serializePartie(sim)).not.toContain('"terrain":[')
   })
 })
