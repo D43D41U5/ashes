@@ -269,10 +269,15 @@ export const CROWN_BASE = 900_000
 
 /** Rayon du cœur clair du disque de découvert, en tuiles : en deçà, le houppier
  * est effacé. Large, car sous une canopée on voit loin à l'horizontale — la cime
- * est au-dessus, elle tamise la lumière du ciel, elle ne bloque pas la vue. */
-export const CROWN_R_IN = 6.0
-/** Au-delà, la forêt redevient un couvert opaque. Disque ×4 de l'origine (1,5 / 4). */
-export const CROWN_R_OUT = 16.0
+ * est au-dessus, elle tamise la lumière du ciel, elle ne bloque pas la vue.
+ *
+ * SUIT LA TAILLE DU HOUPPIER (2026-07-28). Le disque s'exprime en TUILES et la canopée a
+ * grandi de 31 % en largeur (houppier ordinaire 32 → 42 px, soit 2 → 2,625 tuiles) : un disque
+ * figé aurait laissé le même nombre de tuiles dégagées sous des cimes une fois et demie plus
+ * couvrantes en surface. Les deux rayons montent donc du MÊME facteur — 6 → 7,9 et 16 → 21. */
+export const CROWN_R_IN = 7.9
+/** Au-delà, la forêt redevient un couvert opaque. */
+export const CROWN_R_OUT = 21.0
 /** Opacité résiduelle sous la cime : on devine le feuillage, on voit le sol. */
 export const CROWN_ALPHA_MIN = 0.22
 

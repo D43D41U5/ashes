@@ -267,9 +267,12 @@ describe('décalage d’origine des arbres : la collision suit le tronc', () => 
     map: createEmptyMap(width, 16, TERRAIN_GRASS),
     nodes: trees.map(([tx, ty], i) => ({ id: i + 1, type: 'tree' as const, tx, ty, stock: 10, regrowAt: 0 })),
   })
-  /** Le couloir vertical (tuiles) entre les arbres (tx,ty) et (tx+1,ty). */
+  /** Le couloir vertical (tuiles) entre les arbres (tx,ty) et (tx+1,ty).
+   *  DÉRIVÉ du demi-tronc : deux centres à une tuile l'un de l'autre, moins les deux
+   *  demi-troncs, plus l'écart des décalages. La constante 0,75 qui traînait ici valait
+   *  `1 − 2h` pour h = 0,125, et serait devenue fausse en silence à l'épaississement du tronc. */
   const corridor = (tx: number, ty: number): number =>
-    0.75 + treeJitter(tx + 1, ty).dx - treeJitter(tx, ty).dx
+    1 - 2 * H_TREE + treeJitter(tx + 1, ty).dx - treeJitter(tx, ty).dx
   /** Centre X du couloir, face droite du tronc gauche → face gauche du tronc droit. */
   const corridorCenter = (tx: number, ty: number): number => {
     const left = tx + 0.5 + treeJitter(tx, ty).dx + H_TREE
@@ -312,7 +315,7 @@ describe('décalage d’origine des arbres : la collision suit le tronc', () => 
     expect(p.y).toBe(TY + 0.5)
   })
 
-  it('B3 — le fourré est réel : une paire pincée bloque un avatar de 0,6 qui descend à travers', () => {
+  it('B3 — le fourré est réel : une paire pincée bloque l’avatar qui descend à travers', () => {
     const TY = 4
     let best = { tx: -1, gap: Infinity }
     for (let tx = 0; tx < 400; tx++) {
@@ -327,12 +330,12 @@ describe('décalage d’origine des arbres : la collision suit le tronc', () => 
     // Les troncs sont AUSSI décalés en Y (dy) : la bande bloquante d'un arbre
     // peut se situer n'importe où dans [ty, ty+1), pas forcément au bord nord
     // de la tuile. L'avatar peut donc entamer la rangée avant de buter — mais
-    // il ne la franchit jamais (gap < 0,6 sur toute la traversée en X). Le fourré
+    // il ne la franchit jamais (gap < largeur d’avatar sur toute la traversée en X). Le fourré
     // bloque : « ne franchit pas », pas « s'arrête avant le bord nord ».
     expect(p.y).toBeLessThan(TY + 1)
   })
 
-  it('B4 — au couloir large, l’avatar (0,6) se faufile entre deux arbres voisins', () => {
+  it('B4 — au couloir large, l’avatar se faufile entre deux arbres voisins', () => {
     const TY = 4
     let best = { tx: -1, gap: -Infinity }
     for (let tx = 0; tx < 400; tx++) {
@@ -344,6 +347,31 @@ describe('décalage d’origine des arbres : la collision suit le tronc', () => 
     let p = { x: corridorCenter(best.tx, TY), y: TY - 1.5 }
     for (let t = 0; t < 60; t++) p = moveAvatar(world, p.x, p.y, 0, 1, TICK_DT_S)
     expect(p.y).toBeGreaterThan(TY + 1) // passé au sud de la rangée
+  })
+
+  it('B6 — LA FORÊT SE FAUFILE-T-ELLE ENCORE ? le nombre cité en balance.ts est tenu', () => {
+    // `SUBTILES_PER_TILE` justifie sa valeur par DEUX pourcentages MESURÉS le 2026-07-28, quand
+    // le tronc est passé de 4 à 6 px. Un commentaire qui cite un nombre mesuré périme en
+    // silence : on le rend vérifiable. Tout est déterministe (le décalage est un hash pur),
+    // donc ces parts sont des CONSTANTES du jeu, pas un échantillon.
+    const LARGEUR = BALANCE.AVATAR_HITBOX_TILES // est-ouest : ce qu'il faut pour passer entre deux colonnes
+    const PROFONDEUR = BALANCE.AVATAR_HITBOX_DEPTH_TILES // nord-sud : le corps est un rectangle
+    const N = 600
+    let eo = 0, ns = 0
+    for (let ty = 0; ty < N; ty++) {
+      for (let tx = 0; tx < N; tx++) {
+        const a = treeJitter(tx, ty)
+        if (1 - 2 * H_TREE + treeJitter(tx + 1, ty).dx - a.dx >= LARGEUR) eo++
+        if (1 - 2 * H_TREE + treeJitter(tx, ty + 1).dy - a.dy >= PROFONDEUR) ns++
+      }
+    }
+    const part = (n: number): number => (n / (N * N)) * 100
+    expect(part(eo)).toBeCloseTo(31.3, 1)
+    expect(part(ns)).toBeCloseTo(83.1, 1)
+    // ET LA PROPRIÉTÉ QUI COMPTE VRAIMENT, au-delà du chiffre exact : une forêt doit rester
+    // traversable. Si une retouche du tronc ou du décalage fermait la moitié des couloirs
+    // est-ouest restants, c'est ici qu'on l'apprendrait — pas en playtest.
+    expect(part(eo)).toBeGreaterThan(20)
   })
 
   it('B5 — contrat SOUS-TUILE : overlapsBlocking suit le tronc décalé', () => {

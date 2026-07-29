@@ -4,6 +4,15 @@
 **Branche** : feat/relief-terrasses
 **Statut** : **IMPLÉMENTÉ** (2026-07-10, plan `docs/superpowers/plans/2026-07-10-arbres-hauts-hitbox-tronc.md`, branche feat/relief-terrasses). Verdict en jeu : sous-bois traversable, aucun réglage retouché — artefact `bbf4c077`.
 
+> **⚠ CHIFFRES RÉVISÉS LE 2026-07-28** (décision d'Alexis au journal). Le PRINCIPE de ce document
+> tient entièrement — haut et fin, collision limitée au tronc, canopée à disque de découvert —
+> mais **trois de ses nombres sont périmés**, et il les calcule explicitement plus bas :
+> l'arbre fait désormais **quatre tuiles (64 px)** et non trois, son fût **6 px** et non 4, donc
+> `blockHalfSub` **1,5** et non 1. Le gros bois monte à six tuiles. Les tailles ne se lisent plus
+> ici : elles sont DÉCLARÉES dans `packages/client/src/render/arbre-art.ts`, et une garde
+> (`arbre-art.test.ts`) les confronte à `NODE_DEFS`. Le rayon du disque a suivi la canopée
+> (`CROWN_R_IN` 6 → 7,9 ; `CROWN_R_OUT` 16 → 21).
+
 ## Problème
 
 Un arbre est aujourd'hui un carré de 16×16 px qui bloque **une tuile entière**

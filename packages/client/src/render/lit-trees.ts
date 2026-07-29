@@ -17,34 +17,39 @@
  */
 import type Phaser from 'phaser'
 import { enc, FLIP_G, newCanvas, norm3, normalFromCanvas, registerLit as register } from './normal-map'
+import { colonneX, houppierOpaqueDe, TOUTES_VARIANTES, TONS_HOUPPIER_VIEUX, type MesuresArbre } from './arbre-art'
 
-// Couleurs UNIFORMES, tirées de l'art d'origine (famille inchangée), au niveau « éclairé »
-// pour que la lumière SCULPTE vers le bas plutôt que de partir dans le noir.
-const TRUNK_BROWN = '#5c4429' // l'arête claire de nd-tree_trunk (le houppier décode son vert inline)
-const OLD_CROWN_GREEN = '#1d4a26' // un cran plus sombre que le 2d6b32 ordinaire : il ferme le ciel
+/* LES COULEURS NE SONT PLUS RÉÉCRITES ICI NON PLUS. Elles étaient recopiées de l'art peint —
+ * la garde de palette a fini par le voir (trois fichiers pour un même brun sans nom). C'est
+ * l'arête CLAIRE de chaque famille qu'on aplatit : l'albédo se pose au niveau « éclairé », pour
+ * que la lumière calculée SCULPTE vers le bas plutôt que de partir dans le noir. */
+
+/** `#rrggbb` → triplet. Aucune dépendance à Phaser : ce module tourne aussi hors scène. */
+function rgb(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16)
+  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]
+}
 
 /** Albédo UNIFORME d'un houppier : sa silhouette, à plat. */
-function crownAlbedo(S: number, opaque: (x: number, y: number) => boolean, rgb: readonly [number, number, number]): HTMLCanvasElement {
+function crownAlbedo(S: number, opaque: (x: number, y: number) => boolean, ton: string): HTMLCanvasElement {
+  const [r, g, b] = rgb(ton)
   const { c, ctx } = newCanvas(S, S)
   const d = ctx.createImageData(S, S)
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
       if (!opaque(x, y)) continue
       const i = (y * S + x) * 4
-      d.data[i] = rgb[0]; d.data[i + 1] = rgb[1]; d.data[i + 2] = rgb[2]; d.data[i + 3] = 255
+      d.data[i] = r; d.data[i + 1] = g; d.data[i + 2] = b; d.data[i + 3] = 255
     }
   }
   ctx.putImageData(d, 0, 0)
   return c
 }
 
-/** LA SILHOUETTE du houppier ordinaire (32×32) — l'union des deux rects blocky d'origine. */
-const crownOpaque = (x: number, y: number): boolean =>
-  (x >= 4 && x < 28 && y >= 6 && y < 28) || (x >= 6 && x < 26 && y >= 4 && y < 26)
-
-/** Celle du GROS BOIS (40×40) — l'union des deux pavés de BootScene, coins mordus. */
-const oldCrownOpaque = (x: number, y: number): boolean =>
-  (x >= 4 && x < 36 && y >= 8 && y < 36) || (x >= 6 && x < 34 && y >= 5 && y < 35)
+/* LES SILHOUETTES NE SONT PLUS RÉÉCRITES ICI. Elles étaient déclarées une deuxième fois, à la
+ * main, en face des rects de `BootScene` — deux écritures d'une même forme, qui finissent
+ * toujours par différer d'un pixel. `houppierOpaque` les DÉDUIT du dessin peint (union de la
+ * masse et du corps), donc elles ne peuvent plus s'écarter. */
 
 /** Carte de normales d'un TRONC : cylindre analytique sur la colonne du fût. */
 function trunkNormal(W: number, H: number, x0: number, x1: number): HTMLCanvasElement {
@@ -68,36 +73,47 @@ function trunkNormal(W: number, H: number, x0: number, x1: number): HTMLCanvasEl
   return c
 }
 
-/** Albédo UNIFORME du tronc ordinaire : la colonne de `nd-tree_trunk`, à plat. */
-function trunkAlbedo(): HTMLCanvasElement {
-  const { c, ctx } = newCanvas(16, 22)
-  ctx.fillStyle = TRUNK_BROWN
-  ctx.fillRect(6, 0, 4, 22)
+/**
+ * Albédo UNIFORME d'un fût : sa colonne, à plat, aux mesures déclarées. `coeur` (le bout clair
+ * du vieux bois) est un MATÉRIAU, pas un ombrage : il reste sur l'albédo aplati.
+ */
+function futAlbedo(m: MesuresArbre, ton: string, coeur?: string): HTMLCanvasElement {
+  const { c, ctx } = newCanvas(m.futW, m.futH)
+  const x = colonneX(m)
+  ctx.fillStyle = ton
+  ctx.fillRect(x, 0, m.colonneW, m.futH)
+  if (coeur !== undefined) {
+    ctx.fillStyle = coeur
+    ctx.fillRect(x + 2, Math.round(m.futH * 0.125), m.colonneW - 4, Math.max(2, Math.round(m.futH * 0.08)))
+  }
   return c
 }
 
-/** Le fût du GROS BOIS : 10 px de large sur 24, le cœur clair en bout (matériau — il est vieux). */
-function oldTrunkAlbedo(): HTMLCanvasElement {
-  const { c, ctx } = newCanvas(16, 24)
-  ctx.fillStyle = '#543a22'
-  ctx.fillRect(3, 0, 10, 24)
-  ctx.fillStyle = '#a8865c'
-  ctx.fillRect(5, 3, 6, 2)
-  return c
-}
-
-/** Enregistre les `_lit` des deux arbres : albédo uniforme + normale (houppier commun, tronc analytique). */
+/**
+ * Enregistre les `_lit` de TOUTES les variantes : albédo uniforme + normale (houppier par la
+ * recette commune, tronc analytique).
+ *
+ * UNE SEULE BOUCLE DEPUIS LE 2026-07-29 — elle remplace les deux blocs écrits à la main, et elle
+ * rend le même résultat AU BIT PRÈS pour `tree` et `old_tree` : mêmes cadrans (7 passes,
+ * facettes de 4 px, K 3,2), même silhouette (`houppierOpaqueDe` sur une variante de silhouette 2
+ * est exactement l'ancien `houppierOpaque`), mêmes tons (la table les tient déjà). On garde la
+ * TAILLE de facette et non le compte de cellules : le houppier grandit, le grain non.
+ */
 export function generateLitTrees(scene: Phaser.Scene): void {
-  // L'ORDINAIRE — les cadrans historiques : 7 passes, facettes de 4 px (32/8 cellules), K 3,2.
-  const crown = crownAlbedo(32, crownOpaque, [0x2d, 0x6b, 0x32])
-  register(scene, 'nd-tree_crown_lit', crown, normalFromCanvas(crown, 7, 3.2, 4))
-  register(scene, 'nd-tree_trunk_lit', trunkAlbedo(), trunkNormal(16, 22, 6, 10))
-  // LE GROS BOIS — même taille de facette (4 px : on garde la TAILLE, pas le compte de cellules).
-  const oldCrown = crownAlbedo(40, oldCrownOpaque, [0x1d, 0x4a, 0x26])
-  register(scene, 'nd-old_tree_crown_lit', oldCrown, normalFromCanvas(oldCrown, 7, 3.2, 4))
-  register(scene, 'nd-old_tree_trunk_lit', oldTrunkAlbedo(), trunkNormal(16, 24, 3, 13))
+  for (const v of TOUTES_VARIANTES) {
+    const m = v.mesures
+    const crown = crownAlbedo(m.houppierS, houppierOpaqueDe(v), v.tons.lumiere)
+    register(scene, `nd-${v.slug}_crown_lit`, crown, normalFromCanvas(crown, 7, 3.2, 4))
+    register(
+      scene,
+      `nd-${v.slug}_trunk_lit`,
+      futAlbedo(m, v.fut.clair, v.fut.coeur),
+      trunkNormal(m.futW, m.futH, colonneX(m), colonneX(m) + m.colonneW),
+    )
+  }
 }
 
 // (Le vert du gros bois est exporté pour d'éventuels consommateurs de cohérence — la pousse
-// du vieux bois, si elle naît un jour, devra le reprendre : aucun pop de couleur à l'âge.)
-export const OLD_TREE_CROWN_GREEN = OLD_CROWN_GREEN
+// du vieux bois, si elle naît un jour, devra le reprendre : aucun pop de couleur à l'âge.
+// Réexporté depuis `arbre-art`, qui le possède désormais.)
+export const OLD_TREE_CROWN_GREEN = TONS_HOUPPIER_VIEUX.lumiere

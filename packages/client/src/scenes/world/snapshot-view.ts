@@ -32,7 +32,7 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@ashes/sim'
-import { fireStateAt } from '@ashes/sim'
+import { fireStateAt, type WorldMap } from '@ashes/sim'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
 import { windSway } from '../../render/wind'
@@ -54,6 +54,12 @@ import {
   TILE_PX,
   type ActorFootprint,
 } from '../../render/framing'
+import { ancrageHouppierPx, hauteurTuiles, TOUTES_VARIANTES, VARIANTES } from '../../render/arbre-art'
+
+/** Le débord de fenêtre, en TUILES : la hauteur du plus haut arbre de la table. Dérivé une fois
+ *  au chargement — un arbre qui grandit l'emporte avec lui, sans qu'on ait à y penser. */
+const MARGE_CIMES = Math.ceil(Math.max(...TOUTES_VARIANTES.map((v) => hauteurTuiles(v.mesures))))
+import { varianteArbre } from '../../render/arbre-peuplement'
 import { warmthColor } from '../../render/lighting'
 import { LIT_NODE_TYPES } from '../../render/lit-props'
 import { BATI_LIT_TYPES, EDGE_ORIGIN_Y } from '../../render/bati-art'
@@ -284,7 +290,12 @@ function berryDots(node: ResourceNode): number {
  *  hautes). Mesuré sur `BootScene.makeNodes`. Clé = la TEXTURE effective, pas le `type` : une
  *  repousse d'arbre montre `nd-sapling`, dont le gap n'est pas celui du tronc. */
 function nodeArtGap(texture: string): number {
-  if (texture.startsWith('nd-tree_trunk') || texture.startsWith('nd-old_tree_trunk')) return 0 // tronc plein jusqu'au bas
+  // TOUT TRONC D'ARBRE est plein jusqu'au bas — et il y en a désormais dix (2026-07-29), pas
+  // deux. La règle se lit sur la FORME de la clé (`nd-<variante>_trunk[_lit]`) plutôt que sur une
+  // liste de noms : une variante ajoutée aurait sinon reçu le gap des BLOCS (2 texels) et son
+  // ombre de contact serait remontée de deux pixels — exactement le bug qu'Alexis avait vu sur
+  // les arbres et la fibre, à ceci près qu'il serait revenu par la porte de derrière.
+  if (/^nd-.+_trunk(_lit)?$/.test(texture)) return 0 // tronc plein jusqu'au bas
   if (texture.startsWith('nd-sapling') || texture.startsWith('nd-fiber_plant') || texture.startsWith('nd-stump')) return 1 // plantes fines, art bas (suffixe _lit compris — piège épinglé par la vague A)
   return 2 // blocs (roche, baies, minerais…) : l'art bombe et s'arrête ~2 texels avant le bord
 }
@@ -481,6 +492,18 @@ export class SnapshotView {
   /** Index tuile→nœud (≤1 nœud/tuile) : le rendu n'itère que la fenêtre caméra,
    * pas les ~140k nœuds — coût par frame borné à la vue, comme le décor. */
   private nodeByTile = new Map<number, ResourceNode>()
+  /**
+   * LA CARTE ET LA SEED — pour savoir QUEL arbre pousse ici (2026-07-29).
+   *
+   * La vue ne les avait pas : son constructeur ne prend que la scène, et les nœuds arrivent par
+   * `setNodes`. Or la variante d'un arbre se décide sur son SOL et sa ZONE (`arbre-peuplement`),
+   * qui ne vivent que dans la carte. On les pousse donc ici, au même patron que `setWarp` —
+   * plutôt que de recopier un choix de sprite dans la scène, qui le referait à chaque image.
+   * Tant qu'elles sont absentes, tout arbre est l'arbre ordinaire : le repli est le sprite
+   * historique, jamais une texture manquante.
+   */
+  private carte: WorldMap | null = null
+  private worldSeed = 0
   /** REPOUSSE EN COURS (spec recolte-vivante D2) : un nœud épuisé, avec la fenêtre
    * `[since, until]` en TICKS reçue au delta (`regrowAt`). Le rendu en tire la
    * fraction de croissance (pousse qui grandit / minéral qui se reforme), au lieu du
@@ -1078,6 +1101,12 @@ export class SnapshotView {
     }
   }
 
+  /** La carte et la seed du monde — d'elles dépend l'essence de chaque arbre. */
+  setPeuplement(map: WorldMap, seed: number): void {
+    this.carte = map
+    this.worldSeed = seed
+  }
+
   private reindexer(nodes: ResourceNode[]): void {
     this.nodes = nodes
     this.nodeById = new Map(nodes.map((n) => [n.id, n]))
@@ -1151,9 +1180,15 @@ export class SnapshotView {
    * caméra, sinon il glisserait avec le lookahead du pointeur. */
   renderNodes(camera: Phaser.Cameras.Scene2D.Camera, playerX: number, playerY: number, now: number): void {
     const v = camera.worldView
-    // La fenêtre s'élargit vers le BAS pour les cimes qui débordent (un houppier planté sous l'écran
-    // survole encore la vue). Colonnes ±2 pour le débord de houppier. (Plus de marge de lift : plat.)
-    const crownMargin = 4
+    // La fenêtre s'élargit vers le BAS pour les cimes qui débordent (un houppier planté sous
+    // l'écran survole encore la vue). Colonnes ±2 pour le débord de houppier.
+    //
+    // ELLE SE DÉRIVE DE L'ARBRE LE PLUS HAUT (2026-07-29), elle ne se devine plus. Elle valait 4
+    // tuiles quand le gros bois en fait SIX : un gros bois planté cinq tuiles sous l'écran voyait
+    // sa cime apparaître d'un coup en avançant — un défaut ANTÉRIEUR aux variantes, que celles-ci
+    // n'ont fait qu'élargir (le conifère en fait cinq). Le maximum de la table est la seule valeur
+    // qui ne puisse pas dériver le jour où un arbre grandit.
+    const crownMargin = MARGE_CIMES
     const tx0 = Math.floor(v.x / TILE_PX) - 2
     const ty0 = Math.floor(v.y / TILE_PX) - 1
     const tx1 = Math.ceil((v.x + v.width) / TILE_PX) + 2
@@ -1185,15 +1220,20 @@ export class SnapshotView {
         // ESSAI éclairage : l'arbre ORDINAIRE adulte passe sur son albédo UNIFORME `_lit`
         // (même forme/couleur, ombrage peint retiré) + `setLighting` → relief 100 % calculé.
         const litTree = this.lighting && (n.type === 'tree' || n.type === 'old_tree') && !growing
+        // QUEL ARBRE POUSSE ICI. Une fonction PURE de (sol, zone, tuile) : rien n'est mémorisé,
+        // rien ne transite, le même arbre est toujours le même. Sans carte, on retombe sur
+        // l'arbre ordinaire — le repli est un sprite qui existe, pas un carré vert de texture
+        // manquante (la faute des cinq structurants, qu'on ne refait pas).
+        const variante = isTree && this.carte !== null
+          ? varianteArbre(this.carte, n.tx, n.ty, this.worldSeed, n.type === 'old_tree')
+          : VARIANTES[n.type === 'old_tree' ? 'old_tree' : 'tree']!
         const texture = isBerry
           ? `nd-berry_bush-${berryDots(n)}${this.lighting ? '_lit' : ''}`
           : growing && isTree
             ? (this.lighting ? 'nd-sapling_lit' : 'nd-sapling')
-            : n.type === 'tree'
-              ? (litTree ? 'nd-tree_trunk_lit' : 'nd-tree_trunk')
-              : n.type === 'old_tree'
-                ? (litTree ? 'nd-old_tree_trunk_lit' : 'nd-old_tree_trunk')
-                : this.lighting && LIT_NODE_TYPES.has(n.type)
+            : isTree
+              ? `nd-${variante.slug}_trunk${litTree ? '_lit' : ''}`
+              : this.lighting && LIT_NODE_TYPES.has(n.type)
                   ? `nd-${n.type}_lit` // masse pâteuse (roche…) : albédo aplati + normal map quand éclairé
                   : `nd-${n.type}`
         let sprite = this.nodePool[used]
@@ -1263,24 +1303,25 @@ export class SnapshotView {
         // Une POUSSE n'a pas encore de houppier — il reviendra avec l'arbre adulte.
         if (!isTree || growing) continue
 
-        // Le houppier : ancré 6 px sous le sommet du tronc (22 px), donc à py−16.
+        // LE HOUPPIER. Ses mesures — hauteur du fût, côté du houppier, recouvrement — sont
+        // déclarées dans `arbre-art` : c'est de là que sort son ancrage, plus d'un nombre écrit ici.
+        const mesures = variante.mesures
         let crown = this.crownPool[crownsUsed]
         if (!crown) {
-          crown = this.scene.add.image(0, 0, n.type === 'old_tree' ? 'nd-old_tree_crown' : 'nd-tree_crown').setOrigin(0.5, 1)
+          crown = this.scene.add.image(0, 0, `nd-${variante.slug}_crown`).setOrigin(0.5, 1)
           this.crownPool[crownsUsed] = crown
         }
         // LE POOL RÉUTILISE LES SPRITES : la texture doit être reposée à CHAQUE image, sinon un
         // houppier de gros bois se retrouve sur un arbre ordinaire (et l'inverse) selon l'ordre
         // dans lequel le pool a été servi. Le tronc le faisait déjà ; le houppier, non.
         // Albédo UNIFORME `_lit` quand éclairé (relief calculé par la normal map cubique).
-        const litCrown = this.lighting
-        crown.setTexture(
-          n.type === 'old_tree'
-            ? (litCrown ? 'nd-old_tree_crown_lit' : 'nd-old_tree_crown')
-            : litCrown ? 'nd-tree_crown_lit' : 'nd-tree_crown',
-        )
-        crown.setLighting(litCrown) // pooled : réarmé chaque frame (cf. le tronc)
-        crown.setPosition(px, py - 16 - lift) // `px` porte déjà le tressaillement
+        crown.setTexture(`nd-${variante.slug}_crown${this.lighting ? '_lit' : ''}`)
+        crown.setLighting(this.lighting) // pooled : réarmé chaque frame (cf. le tronc)
+        // L'ANCRAGE SE DÉRIVE, il ne s'écrit plus. C'était `py − 16` pour LES DEUX arbres alors
+        // que leurs fûts n'ont pas la même hauteur : le houppier mordait 6 px sur l'un et 8 sur
+        // l'autre, pendant que le commentaire d'ici affirmait 6 pour les deux (relevé au
+        // navigateur, `smoke --scenario echelle`). Le recouvrement est désormais DÉCLARÉ.
+        crown.setPosition(px, py - ancrageHouppierPx(mesures) - lift) // `px` porte déjà le tressaillement
         crown.setDepth(crownDepth(ty + 1 + j.dy, TILE_PX))
         // Un arbre visé s'éclaire ENTIER : teinter le tronc seul donnerait un
         // houppier flottant, détaché de ce qu'on vise.

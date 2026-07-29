@@ -767,6 +767,9 @@ export class WorldScene extends Phaser.Scene {
         this.gueStones = new GueStones(this, this.map, this.warp)
         this.morningMist = new MorningMist(this, this.map) // la brume de l'aube naît de l'eau (da-feeling R13)
         this.mistBanks = new MistBanks(this, this.map) // les bancs voyageurs (V2) — nés des grandes eaux
+        // LE PEUPLEMENT AVANT LES NŒUDS : la vue doit savoir sur quelle carte elle pose ses
+        // arbres avant d'en dessiner un, sinon la première image sort en arbres ordinaires.
+        this.view.setPeuplement(this.map, this.worldSeed)
         this.view.setNodes(msg.nodes)
       },
       clutter: () => {

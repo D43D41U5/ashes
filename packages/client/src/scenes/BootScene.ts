@@ -15,6 +15,9 @@ import { makePoiTextures } from './world/poi-art'
 import { makeBorneTextures } from './world/borne-layer'
 import { makeGueStoneTexture } from './world/gue-stones'
 import { generateLitErratiques, generateLitPois } from '../render/poi-lit'
+import {
+  futRectsDe, houppierRectsDe, TOUTES_VARIANTES, type RectTon,
+} from '../render/arbre-art'
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -304,26 +307,35 @@ export class BootScene extends Phaser.Scene {
    * une silhouette blocky nette, dans l'esprit du buisson (compact, coloré, ombré en
    * COUCHES : un liseré clair en haut/à gauche, une ombre en bas/à droite, comme le
    * hillshade). Chaque nœud reste lisible en ombre chinoise à 16 px. */
+  /** Pose une liste de rects tonés sur `g`, en tire la texture, et rend le graphics propre. */
+  private peindre(g: Phaser.GameObjects.Graphics, rects: RectTon[], w: number, h: number, cle: string): void {
+    for (const [[x, y, rw, rh], ton] of rects) {
+      g.fillStyle(Phaser.Display.Color.HexStringToColor(ton).color).fillRect(x, y, rw, rh)
+    }
+    g.generateTexture(cle, w, h)
+    g.clear()
+  }
+
   private makeNodes(): void {
     const g = this.add.graphics()
 
-    // Un arbre est HAUT (3 tuiles) et FIN (un tronc) — spec arbres hauts. Deux
-    // sprites : le tronc, opaque et trié avec les acteurs ; le houppier, qui
-    // coiffe le monde et s'efface autour du joueur.
-    g.fillStyle(0x4a3620).fillRect(6, 0, 4, 22) // tronc : 4 px de large, 22 de haut
-    g.fillStyle(0x5c4429).fillRect(6, 0, 2, 22) // une arête claire, pour le volume
-    g.fillStyle(0x38281a).fillRect(9, 0, 1, 22) // une arête d'ombre à droite
-    g.generateTexture('nd-tree_trunk', 16, 22)
-    g.clear()
-
-    // Houppier BLOCKY : un pavé de feuillage, coins mordus pour l'arrondir sans cercle.
-    g.fillStyle(0x18401d).fillRect(4, 6, 24, 22) // masse/ombre (base)
-    g.fillStyle(0x1e4d22).fillRect(6, 4, 20, 22) // corps
-    g.fillStyle(0x2d6b32).fillRect(8, 6, 11, 9) // lumière au nord-ouest (cf. hillshade)
-    g.fillStyle(0x347b3a).fillRect(9, 7, 5, 4) // éclat
-    g.fillStyle(0x143518).fillRect(18, 20, 8, 6) // ombre au sud-est
-    g.generateTexture('nd-tree_crown', 32, 32)
-    g.clear()
+    // Un arbre est HAUT (QUATRE tuiles depuis le 2026-07-28) et FIN (un tronc) — spec arbres
+    // hauts. Deux sprites : le tronc, opaque et trié avec les acteurs ; le houppier, qui coiffe
+    // le monde et s'efface autour du joueur. AUCUNE taille n'est écrite ici : elles viennent
+    // toutes de `arbre-art`, qui est la seule à les connaître (et que `/sim` confronte).
+    // TOUTES LES VARIANTES EN UNE BOUCLE (2026-07-29) — l'arbre ordinaire, le gros bois, et les
+    // huit voisins ajoutés (feuillus et conifères). Deux textures chacun : le tronc, opaque et
+    // trié avec les acteurs ; le houppier, qui coiffe le monde et s'efface autour du joueur.
+    // Aucune taille n'est écrite ici : elles viennent toutes de `arbre-art`, seule à les
+    // connaître (et que `/sim` confronte). Le gros bois y passe aussi — il n'était traité à part
+    // que parce qu'il était le seul autre.
+    for (const v of TOUTES_VARIANTES) {
+      const m = v.mesures
+      this.peindre(g, futRectsDe(v), m.futW, m.futH, `nd-${v.slug}_trunk`)
+      // Houppier BLOCKY : un pavé de feuillage, coins mordus pour l'arrondir sans cercle ; un
+      // conifère, lui, empile ses étages — c'est sa composition qui le dit, pas ce code.
+      this.peindre(g, houppierRectsDe(v), m.houppierS, m.houppierS, `nd-${v.slug}_crown`)
+    }
 
     // POUSSE (spec recolte-vivante D2) : un arbre qui repousse — un petit fût + une touffe
     // carrée. Le rendu la met à l'échelle sur la fenêtre de repousse (0 → adulte).
@@ -425,22 +437,14 @@ export class BootScene extends Phaser.Scene {
     // n'est pas un arbre en plus foncé, c'est un FÛT. Une pierre de taille n'est pas un caillou,
     // c'est un BLOC. À seize pixels, la silhouette est tout ce qu'on a.
 
-    // LE GROS BOIS (Vieille Sylve) — un fût ÉPAIS. Deux fois le tronc ordinaire, et ses cernes.
-    g.fillStyle(0x3f2c19).fillRect(3, 0, 10, 24)
-    g.fillStyle(0x543a22).fillRect(3, 0, 4, 24) // l'arête claire, comme l'arbre : même lumière
-    g.fillStyle(0x2a1c0f).fillRect(11, 0, 2, 24)
-    g.fillStyle(0xa8865c).fillRect(5, 3, 6, 2) // le cœur, en bout : on voit qu'il est VIEUX
-    g.generateTexture('nd-old_tree_trunk', 16, 24)
-    g.clear()
-    // Son houppier : plus large et plus SOMBRE que celui de l'arbre — il ferme le ciel.
-    // Blocky lui aussi : un grand pavé de feuillage, coins mordus.
-    g.fillStyle(0x0d2413).fillRect(4, 8, 32, 28) // masse/ombre
-    g.fillStyle(0x12321a).fillRect(6, 5, 28, 30) // corps
-    g.fillStyle(0x1d4a26).fillRect(9, 8, 14, 12) // lumière NO
-    g.fillStyle(0x245c30).fillRect(11, 10, 6, 5) // éclat
-    g.fillStyle(0x081c0e).fillRect(24, 26, 10, 8) // ombre SE
-    g.generateTexture('nd-old_tree_crown', 40, 40)
-    g.clear()
+    // LE GROS BOIS (Vieille Sylve) — SIX tuiles depuis le 2026-07-28, un fût ÉPAIS (plus du
+    // double du tronc ordinaire, avec ses cernes) et un houppier plus large et plus SOMBRE : il
+    // ferme le ciel. Il est peint par la boucle des variantes (voir `makeNodes`), avec tous les
+    // autres arbres — sa DA n'a pas changé d'un pixel, seul l'endroit d'où sort son dessin.
+    //
+    // ET IL N'A PAS DE VARIANTES, délibérément : sa silhouette est une information de JEU (il
+    // donne le gros bois, ressource structurante de la Sylve), pas une texture. La décliner en
+    // quatre versions brouillerait la seule chose qu'il dit.
 
     // LA TOURBE (Tourbière) — une entaille dans l'eau noire. Pas un objet : un TROU.
     g.fillStyle(0x2a2219).fillRect(2, 6, 12, 8)

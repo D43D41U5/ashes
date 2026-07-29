@@ -205,8 +205,15 @@ export const BALANCE = {
    * PUISSANCE DE DEUX obligatoire — la collision multiplie et divise par cette
    * valeur, et seule une puissance de deux garantit `fl(8a − 8b) = 8·fl(a − b)`,
    * donc l'exactitude au bit près face à l'ancienne collision en tuiles pleines
-   * (invariant 2). 8 permet un tronc centré de 2 sous-tuiles (0,25 tuile) qui
-   * laisse 0,75 tuile d'écart entre deux troncs voisins — l'avatar (0,6) passe. */
+   * (invariant 2).
+   *
+   * CE QUE 8 ACHÈTE, AU 2026-07-28 : un tronc de 3 sous-tuiles (0,375 tuile, 6 px) ne laisse
+   * que 0,625 tuile entre deux troncs voisins NON décalés — moins que l'avatar (0,75). C'est
+   * le DÉCALAGE D'ORIGINE qui ouvre les couloirs, et il ne les ouvre pas tous : MESURÉ sur
+   * 360 000 tuiles, l'avatar se faufile entre **31,3 %** des paires d'arbres voisines d'est en
+   * ouest et **83,1 %** du nord au sud (il n'est profond que de 0,375). Avant l'épaississement
+   * du tronc : 50,1 % et 93,0 %. La forêt est un couvert qui accroche — et ces deux nombres
+   * sont ceux qu'on relit le jour où l'on trouvera qu'elle accroche trop. */
   SUBTILES_PER_TILE: 8,
 
   /**
@@ -222,8 +229,8 @@ export const BALANCE = {
    * là — et personne ne saurait lequel des deux a tort.
    *
    * CE QUE LE PARTAGE COÛTE AU DEDANS : la tuile de la salle qui borde le mur perd une
-   * demi-épaisseur (1 sous-tuile, 0,125 tuile). Il lui en reste 0,875, l'avatar (0,6) y tient
-   * largement — la salle reste praticable jusqu'au pied de ses murs. Et la tuile du dehors garde
+   * demi-épaisseur (1 sous-tuile, 0,125 tuile). Il lui en reste 0,875, l'avatar (0,75) y tient
+   * encore — la salle reste praticable jusqu'au pied de ses murs. Et la tuile du dehors garde
    * autant : on longe un mur des deux côtés.
    */
   WALL_EDGE_SUB: 2,
@@ -233,8 +240,13 @@ export const BALANCE = {
    * en Y pour casser l'alignement des troncs en grille. BORNE DURE :
    * `TREE_JITTER_TILES + blockHalfSub(tree)/SUBTILES_PER_TILE ≤ 0.5`, sinon le
    * carré bloquant d'un arbre décalé déborde dans la tuile voisine et échappe à
-   * la collision (testé). Avec blockHalfSub 1 et SUB 8 : plafond 0,375. Calibré
-   * en jeu (départ 0,22). */
+   * la collision (testé). Avec blockHalfSub **1,5** et SUB 8 : plafond **0,3125**.
+   * Calibré en jeu (départ 0,22 ; 0,3 depuis).
+   *
+   * LA MARGE EST DEVENUE MINCE — 0,3 sous un plafond de 0,3125 : le tronc épais du 2026-07-28
+   * a mangé le reste. Épaissir encore (blockHalfSub 1,75) EXIGERAIT de baisser ce décalage,
+   * donc de réaligner les troncs sur la grille — ce que ce nombre existe précisément pour
+   * empêcher. Les deux ne peuvent plus monter ensemble. */
   TREE_JITTER_TILES: 0.3,
 
   /** Accélération du calendrier : jours de saison écoulés par jour réel. */
@@ -807,7 +819,14 @@ export interface NodeDef {
    * (spec économie R1, spec arbres hauts). La tuile `t` couvre les sous-tuiles
    * `[8t, 8t+8)`, son centre est `8t+4`, et le carré bloquant est
    * `[8t+4−h, 8t+4+h)`. `h = 4` → tuile entière ; `h = 0` → ne bloque pas ;
-   * `h = 1` → tronc de 0,25 tuile. */
+   * `h = 1` → tronc de 0,25 tuile ; `h = 1,5` → 0,375 tuile.
+   *
+   * DEMI-ENTIER ADMIS, MAIS SEULEMENT SUR UN NŒUD DÉCALÉ. Le test porte sur des index
+   * ENTIERS de sous-tuile : à centre entier, une fenêtre demi-ouverte de largeur impaire
+   * penche d'un côté — `h = 1,5` sur un centre à `8t+4` bloque `{3,4,5}`, soit un pixel
+   * de trop à l'est (vérifié). L'arbre, lui, porte un décalage d'origine continu : sa
+   * bande fait toujours 3 sous-tuiles pleines, où que le décalage la pose. D'où 1,5 pour
+   * `tree` et 1 pour `old_tree`, qui n'est pas décalé. */
   blockHalfSub: number
   skill: import('./items').SkillId
   /** Famille d'outil qui multiplie le rendement. */
@@ -835,7 +854,9 @@ export interface NodeDef {
 }
 
 export const NODE_DEFS: Record<NodeType, NodeDef> = {
-  tree: { item: 'wood', stock: 10, blockHalfSub: 1, skill: 'woodcutting', tool: 'axe', minTool: 'none' },
+  // LE TRONC S'ÉPAISSIT (décision d'Alexis, 2026-07-28) : 1 → 1,5, soit 0,375 tuile (6 px),
+  // la largeur de la colonne dessinée (`client/render/arbre-art.ts`, qui confronte les deux).
+  tree: { item: 'wood', stock: 10, blockHalfSub: 1.5, skill: 'woodcutting', tool: 'axe', minTool: 'none' },
   rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'none' },
   fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
   berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
@@ -848,6 +869,10 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   // ── LES STRUCTURANTES. Toutes exigent l'outil d'ATELIER (`basic`) : la ressource d'une zone
   //    T1 ne se prend pas à mains nues. L'outil est la porte du palier, pas un bonus — et la
   //    ZONE est la porte de l'outil. Les deux verrous se répondent.
+  // Le gros bois GARDE le cœur d'un tronc mince, alors qu'il se dessine bien plus large : il
+  // n'a pas de décalage d'origine (un demi-entier lui décentrerait sa bande), et à 30 % de la
+  // Vieille Sylve un cœur d'une demi-tuile y rendrait deux voisins infranchissables. On se
+  // faufile au pied d'un géant. Voir `client/render/arbre-art.ts` pour la dérogation déclarée.
   old_tree: { item: 'hardwood', stock: 6, blockHalfSub: 1, skill: 'woodcutting', tool: 'axe', minTool: 'basic' },
   peat_cut: { item: 'peat', stock: 10, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
   quarry: { item: 'cut_stone', stock: 6, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
@@ -1098,7 +1123,7 @@ export const RECIPES: Record<RecipeId, Recipe> = {
  *     qui s'écrase au sol).
  *
  * La portée est mesurée CENTRE À CENTRE, comme la sim : deux corps qui se touchent
- * ont leurs centres à `AVATAR_HITBOX_TILES` (0,6) l'un de l'autre. Tout s'ancre là —
+ * ont leurs centres à `AVATAR_HITBOX_TILES` (0,75) l'un de l'autre. Tout s'ancre là —
  * un poing porte à un bras (1,1), une lance à deux mètres de bois (2,3).
  */
 export interface Strike {
