@@ -54,6 +54,17 @@ const args = process.argv.slice(2)
 const headed = args.includes('--headed')
 const dev = args.includes('--dev')
 const scenario = args[args.indexOf('--scenario') + 1] ?? 'default'
+/**
+ * `--prise <nom>[,<nom>…]` — ne tirer QUE ces prises de la vitrine (la planche complète sinon).
+ *
+ * Ajouté le 2026-07-29, après qu'un timeout de capture (le flake SwiftShader de cette machine)
+ * a fait tomber la deuxième série au deuxième cliché : rejouer neuf prises pour en récupérer
+ * deux coûte huit minutes ET rejoue le tirage aux dés. Le montage final est sauté quand un
+ * filtre est actif — il juge la vitrine, pas une prise isolée.
+ */
+const prisesVoulues = args.includes('--prise')
+  ? new Set((args[args.indexOf('--prise') + 1] ?? '').split(',').filter(Boolean))
+  : null
 // `?solo` : le deep-link qui saute l'écran principal et démarre droit en Veillée
 // (voir MenuScene). Sans lui, tous les scénarios resteraient bloqués sur le menu.
 const BASE_URL = process.env.SMOKE_URL ?? (dev ? 'http://ashes.test/' : `http://localhost:${PORT}/`)
@@ -175,6 +186,41 @@ const SCENARIOS = {
     if (cibles.combe) await viser('combe', cibles.combe.x, cibles.combe.y)
     if (cibles.tour) await viser('tour-guet', cibles.tour.x, cibles.tour.y)
     if (cibles.ferme) await viser('ferme', cibles.ferme.x, cibles.ferme.y)
+    // LE BOSQUET DE CRÊTE (t0 R31, 2026-07-29) — le bois SEC des dos, pin et mélèze. Il empile
+    // deux couches denses qui n'avaient JAMAIS coexisté : le clutter du pin (0,4) et les nœuds
+    // d'arbres de la futaie (un tous les ~5 tuiles), que le pin ne recevait pas tant qu'il vivait
+    // hors de la Racine. Si ça doit être un mur végétal, c'est ici qu'on le verra.
+    const crete = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      // Le plus gros amas de conifère : on balaie au pas de 4, on garde le centre du meilleur bloc.
+      const PIN = 13
+      const MELEZE = 14
+      // DANS LA RACINE, ET SEULEMENT ELLE. Le pin existe aussi dans les zones du nord (`HAUT_BOIS`
+      // de `solDe`) : sans ce filtre, le balayage trouve la futaie d'une T1 et l'on capture un
+      // bois qui n'a rien à voir. Attrapé en regardant l'ordonnée de la première capture — 752,
+      // soit huit cents tuiles au nord des Prés Bas.
+      const idRacine = (m.zoneDefs ?? []).findIndex((d) => d.slug === 'pres_bas')
+      const cols = Math.ceil(m.width / m.zonePas)
+      const dansRacine = (x, y) =>
+        m.zoneGrid[Math.floor(y / m.zonePas) * cols + Math.floor(x / m.zonePas)] === idRacine
+      let best = null
+      for (let by = 0; by < m.height - 32; by += 32) {
+        for (let bx = 0; bx < m.width - 32; bx += 32) {
+          if (!dansRacine(bx + 16, by + 16)) continue
+          let n = 0
+          for (let y = by; y < by + 32; y += 4) {
+            for (let x = bx; x < bx + 32; x += 4) {
+              const t = m.terrain[y * m.width + x]
+              if (t === PIN || t === MELEZE) n++
+            }
+          }
+          if (!best || n > best.n) best = { n, x: bx + 16, y: by + 16 }
+        }
+      }
+      return best && best.n > 20 ? best : null
+    })
+    if (crete) await viser('bosquet-crete', crete.x, crete.y)
+    else console.error('!! aucun bosquet de crête trouvé sur la carte (t0 R31)')
     // La lisière sud : au bord de la Racine, côté Cendrière (le gradient + la braise du front).
     const sud = await page.evaluate(() => {
       const m = window.__BRAISES__.scene.map
@@ -6353,17 +6399,49 @@ const SCENARIOS = {
       { nom: 'cercle', heure: 19.5, ou: ['cercle_pierres', 'pierre_levee', 'erratique'], quoi: 'les menhirs au couchant' },
       { nom: 'tour', heure: 19, ou: ['tour_guet', 'ferme_ruinee', 'charrette'], quoi: 'la ruine au couchant' },
       { nom: 'chene', heure: 7, ou: ['chene', 'arbre', 'bois_noir'], quoi: 'le gros bois au petit matin' },
+      // LE BOIS SEC (2026-07-29) — les conifères des bosquets de crête. Il n'a pas de `kind` :
+      // ce n'est pas un lieu, c'est du TERRAIN. On le vise donc au balayage, comme le Gué a dû
+      // l'être. Deux heures, parce qu'un conifère se lit à sa silhouette et qu'on ne sait pas
+      // encore laquelle des deux lumières la sert le mieux.
+      { nom: 'crete-or', heure: 19, conifere: true, quoi: 'le bois sec des crêtes, au couchant' },
+      { nom: 'crete-matin', heure: 8, conifere: true, quoi: 'le même bois, au soleil levant' },
       { nom: 'feu-nuit', heure: 22, feu: true, quoi: 'un feu dans le noir' },
       { nom: 'feu-aube', heure: 5, feu: true, garde: true, quoi: 'le même feu, avant le jour' },
     ]
 
     let prises = 0
     let feuPose = null // le Feu fondé une fois sert à toutes les prises de feu
-    for (const p of PRISES) {
+    const planche = prisesVoulues ? PRISES.filter((p) => prisesVoulues.has(p.nom)) : PRISES
+    if (prisesVoulues) console.log(`\n── filtre : ${planche.length}/${PRISES.length} prises (${[...prisesVoulues].join(', ')}) ──`)
+    for (const p of planche) {
       // LE FEU N'EST PAS UN LIEU : on le FONDE. Il exige du bois et un endroit loin des POI
       // (règle R1 de la construction), d'où les décalages successifs autour du point courant.
       let cible = null
-      if (p.feu && p.garde && feuPose) {
+      if (p.conifere) {
+        // LE PLUS GROS AMAS DE CONIFÈRE **DE LA RACINE**. Le filtre de zone n'est pas un luxe :
+        // `solDe` peint aussi du pin dans les zones du nord, et sans lui le balayage part
+        // huit cents tuiles trop haut (erreur commise, et vue à l'ordonnée de la capture).
+        cible = await page.evaluate(() => {
+          const m = window.__BRAISES__.scene.map
+          const idRacine = (m.zoneDefs ?? []).findIndex((d) => d.slug === 'pres_bas')
+          const cols = Math.ceil(m.width / m.zonePas)
+          const dansRacine = (x, y) => m.zoneGrid[Math.floor(y / m.zonePas) * cols + Math.floor(x / m.zonePas)] === idRacine
+          let best = null
+          for (let by = 0; by < m.height - 32; by += 16) {
+            for (let bx = 0; bx < m.width - 32; bx += 16) {
+              if (!dansRacine(bx + 16, by + 16)) continue
+              let n = 0
+              for (let y = by; y < by + 32; y += 4) for (let x = bx; x < bx + 32; x += 4) {
+                const t = m.terrain[y * m.width + x]
+                if (t === 13 || t === 14) n++
+              }
+              if (!best || n > best.n) best = { n, x: bx + 16, y: by + 16, kind: '(terrain)', name: 'un bosquet de crête' }
+            }
+          }
+          return best && best.n > 24 ? best : null
+        })
+        if (!cible) { console.error(`   ✗ ${p.nom.padEnd(11)} aucun bosquet de crête trouvé — prise SAUTÉE`); continue }
+      } else if (p.feu && p.garde && feuPose) {
         cible = feuPose
       } else if (p.feu) {
         for (let i = 0; i < 12; i++) await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_grant', item: 'wood' }))
@@ -6397,11 +6475,19 @@ const SCENARIOS = {
       await page.mouse.move(640, 360)
       await page.waitForTimeout(900) // les fondus de lumière et la brume s'installent
       const vue = await page.evaluate(() => ({ h: window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1 }))
-      await page.screenshot({ path: `${OUT}/vitrine-${p.nom}.jpg`, type: 'jpeg', quality: 82 })
+      // TIMEOUT LARGE (2026-07-29). Le défaut par défaut est de 30 s, et il est TOMBÉ deux fois
+      // sur cette machine — sur deux scènes différentes, donc ce n'est pas la scène : c'est
+      // SwiftShader (aucun GPU ici) qui met parfois plus de trente secondes à rendre une frame
+      // dense pour la relecture. Une série de neuf prises qui meurt à la deuxième coûte huit
+      // minutes ; quatre-vingt-dix secondes d'attente ne coûtent rien quand tout va bien.
+      await page.screenshot({ path: `${OUT}/vitrine-${p.nom}.jpg`, type: 'jpeg', quality: 82, timeout: 90000 })
       console.log(`   ✓ ${p.nom.padEnd(11)} ${String(cible.kind).padEnd(15)} « ${cible.name} » — visée ${p.heure} h, PRISE À ${vue.h.toFixed(1)} h — ${p.quoi}`)
       prises++
     }
-    console.log(`\n${prises}/${PRISES.length} prises → ${OUT}/vitrine-*.jpg`)
+    console.log(`\n${prises}/${planche.length} prises → ${OUT}/vitrine-*.jpg`)
+
+    // LE MONTAGE juge la VITRINE, pas une prise isolée : sous filtre, il n'a rien à dire.
+    if (prisesVoulues) return
 
     // ── LE MONTAGE : les images DÉJÀ retenues, vues DANS le menu ────────────────────────
     // L'atelier ne s'arrête pas à la prise de vue, parce qu'une image se juge à sa place.

@@ -6,8 +6,18 @@
  * `vitrine` (`pnpm smoke --scenario vitrine --dev`), qui téléporte l'avatar de lieu en lieu,
  * pose l'heure, masque le HUD et les noms de lieux, et déclenche. C'est important pour deux
  * raisons : ① l'accueil ne peut donc pas promettre un jeu qui n'existe pas ; ② le jour où l'art
- * bouge (les arbres ont changé de taille le 2026-07-28), on RELANCE l'atelier et on remplace ces
- * cinq fichiers — la fraîcheur des images est à une commande, pas à une séance de photo.
+ * bouge, on RELANCE l'atelier et on remplace ces cinq fichiers — la fraîcheur des images est à
+ * une commande, pas à une séance de photo.
+ *
+ * ET C'EST ARRIVÉ DEUX FOIS : le 2026-07-28 quand les arbres ont changé de taille, le 2026-07-29
+ * quand ils sont passés de deux sprites à dix (conifères et feuillus, `arbre-peuplement.ts`).
+ * Les cinq images de cette liste sont de la seconde série.
+ *
+ * POURQUOI PAS SIX. L'atelier tire désormais une prise du BOIS SEC des crêtes — et elle n'est
+ * pas retenue. Vu de l'INTÉRIEUR d'un bois, le disque de découvert (`crownAlpha`) efface les
+ * cimes autour du joueur : on photographie des troncs. Un conifère se lit à sa SILHOUETTE, donc
+ * de l'extérieur — et le Cercle de pierres en montre justement une lisière entière, opaque, au
+ * couchant. Allonger le carrousel d'une vue plus faible ne le renforce pas.
  *
  * L'ORDRE EST UNE DRAMATURGIE, pas un tri de dossier : on ouvre sur le feu dans le noir (ce que
  * le jeu a de plus fort à montrer), puis la futaie, les menhirs, la rivière, et le Grand Chêne.
@@ -31,7 +41,7 @@ export interface Vue {
 export const VITRINE: Vue[] = [
   { src: feuAube, alt: "Un feu de camp allumé dans la nuit, ses tentes autour, au milieu d'une clairière" },
   { src: sylveMatin, alt: 'Une futaie dense au soleil levant, champignons et sous-bois' },
-  { src: cercle, alt: 'Un cercle de menhirs dans une prairie fleurie, des cerfs au loin' },
+  { src: cercle, alt: 'Un cercle de menhirs dans une prairie fleurie, une lisière de conifères au loin' },
   { src: gueOr, alt: 'Un gué de galets sur une rivière, à la lumière du soir' },
-  { src: chene, alt: 'Le Grand Chêne, immense, au petit matin' },
+  { src: chene, alt: 'Le Grand Chêne, immense, au petit matin, entouré d’arbres plus jeunes et d’un bouleau au fût pâle' },
 ]
