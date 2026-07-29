@@ -554,7 +554,7 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
     // LE BUISSON À BAIES est VIVACE (demande d'Alexis 2026-07-19) : comme un arbre fruitier,
     // il RESTE sur sa tuile, vidé de ses baies, et celles-ci repoussent DESSUS — pas de dérive.
     if (def.skill !== 'mining' && node.type !== 'berry_bush') relocateNode(state, node)
-    emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id })
+    emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id, nodeType: node.type })
   }
   if (held) {
     let wear =

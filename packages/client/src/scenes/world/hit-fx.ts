@@ -1,8 +1,9 @@
 /**
- * LE TRESSAILLEMENT DU NŒUD FRAPPÉ (spec recolte.md G10).
+ * LA MÉMOIRE DES COUPS PORTÉS — et le TRESSAILLEMENT du nœud frappé (spec recolte.md G10).
  *
- * Le coup qui porte se voit à DEUX endroits, et deux seulement : ici, le nœud
- * tressaille ; et dans le HUD, le butin s'inscrit (`ui/pickup-toasts.ts`).
+ * Le coup qui porte se voit à TROIS endroits : ici, le nœud tressaille ; la matière
+ * gicle (`recolte-fx.ts`, ajouté le 2026-07-29) ; et dans le HUD, le butin s'inscrit
+ * (chaîne `hud-bridge.publishPickup` → `UIScene.drainPickups` → `hud-core.pushToast`).
  *
  * Le « +1 bois » a d'abord été affiché AU-DESSUS DU NŒUD, dans le monde. Ça
  * marchait, la donnée le prouvait — mais dans une forêt dense, un petit texte
@@ -16,6 +17,12 @@
  * Les sprites de nœuds sont POOLÉS et reconstruits chaque frame par
  * `snapshot-view` : elle seule peut appliquer le décalage. On ne tient donc ici
  * que la MÉMOIRE des coups.
+ *
+ * Cette mémoire porte AUSSI d'où le coup est venu (`fromX/fromY`, la position du
+ * RÉCOLTEUR) et ce qu'il a rapporté (`count`, `clean`) : les éclats en tirent leur
+ * direction de projection et leur épaisseur. C'est la position du récolteur, pas
+ * « celle du joueur » — le jour où le multi ouvrira ce retour aux autres entités, il
+ * n'y aura rien à changer ici.
  */
 
 /** Durée du tressaillement (ms). Court : c'est un frisson, pas une danse. */
@@ -39,22 +46,40 @@ export function shakeOffset(now: number, hitAt: number): number {
   return Math.sin((t / SHAKE_MS) * Math.PI * 5) * SHAKE_PX * decay * decay
 }
 
-export class HitFx {
-  /** Dernier coup reçu PAR NŒUD (id → instant). `snapshot-view` y lit le tressaillement. */
-  private readonly hits = new Map<number, number>()
+/** UN COUP PORTÉ, tel que la sim l'a raconté — plus l'endroit d'où il partait. */
+export interface Coup {
+  /** Instant du coup (horloge Phaser, ms). */
+  at: number
+  /** Le RÉCOLTEUR, en px monde : la face frappée est celle qui lui fait face. */
+  fromX: number
+  fromY: number
+  /** Ce que le coup a rapporté (`resource_harvested.count`). */
+  count: number
+  /** Frappe NETTE (spec recolte-maitrise) : le coup dans le vert. */
+  clean: boolean
+}
 
-  hit(nodeId: number, now: number): void {
-    this.hits.set(nodeId, now)
+export class HitFx {
+  /** Dernier coup reçu PAR NŒUD. `snapshot-view` y lit le tressaillement ET la gerbe. */
+  private readonly hits = new Map<number, Coup>()
+
+  hit(nodeId: number, now: number, fromX: number, fromY: number, count = 1, clean = false): void {
+    this.hits.set(nodeId, { at: now, fromX, fromY, count, clean })
   }
 
   hitAt(nodeId: number): number | undefined {
+    return this.hits.get(nodeId)?.at
+  }
+
+  /** Le coup entier — d'où il vient et ce qu'il a rapporté (lu par `recolte-fx`). */
+  coup(nodeId: number): Coup | undefined {
     return this.hits.get(nodeId)
   }
 
-  /** À chaque frame : la mémoire des coups s'oublie (elle ne sert qu'au tressaillement). */
+  /** À chaque frame : la mémoire des coups s'oublie (elle ne sert qu'au retour de frappe). */
   update(now: number): void {
-    for (const [nodeId, at] of this.hits) {
-      if (now - at > HIT_MEMORY_MS) this.hits.delete(nodeId)
+    for (const [nodeId, c] of this.hits) {
+      if (now - c.at > HIT_MEMORY_MS) this.hits.delete(nodeId)
     }
   }
 }

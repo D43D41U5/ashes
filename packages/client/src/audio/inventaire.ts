@@ -110,7 +110,9 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   entity_spawned: { voix: 'muet', famille: 'plomberie', quoi: 'une entité entre dans le monde' },
   entity_despawned: { voix: 'muet', famille: 'plomberie', quoi: 'une entité quitte le monde (déconnexion)' },
   entity_respawned: { voix: 'muet', famille: 'plomberie', quoi: 'on se réveille au Feu (le voile le dit déjà)' },
-  node_depleted: { voix: 'muet', famille: 'plomberie', quoi: 'un nœud est vidé (le nœud disparaît à l’écran)' },
+  // Il était muet, au motif que « le nœud disparaît à l'écran ». PÉRIMÉ depuis G15 : il ne
+  // disparaît plus, il TOMBE ou il ÉCLATE. Trois voix selon la matière — voir `sound.ts`.
+  node_depleted: { voix: 'voix', famille: 'batir', quoi: 'un nœud meurt : l’arbre craque et tombe, la pierre s’éboule, le végétal froisse' },
   item_dropped: { voix: 'muet', famille: 'plomberie', quoi: 'un objet est jeté au sol' },
   corpse_looted: { voix: 'muet', famille: 'plomberie', quoi: 'une dépouille est fouillée' },
   prey_escaped: { voix: 'muet', famille: 'plomberie', quoi: 'la proie regagne son terrier' },

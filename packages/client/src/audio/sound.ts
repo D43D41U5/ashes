@@ -147,6 +147,56 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     // ── BÂTIR, CRAFTER, MANGER ───────────────────────────────────────────────────────────
     case 'resource_harvested':
       return onMe ? { wave: 'square', freq: 440, freqEnd: 520, dur: 0.06, gain: 0.05, lowpass: 2200 } : null
+
+    /**
+     * LE NŒUD MEURT — ET IL A TROIS VOIX, PAS UNE (demande d'Alexis, 2026-07-29 :
+     * « un petit son de craquement lorsque l'arbre tombe comme irl »).
+     *
+     * Il était `muet`, et son inventaire le justifiait ainsi : « le nœud disparaît à
+     * l'écran ». Cette raison est PÉRIMÉE — depuis G15 il ne disparaît plus, il TOMBE ou
+     * il ÉCLATE, et un fait qui dure une seconde et demie à l'image mérite sa seconde à
+     * l'oreille. C'est aussi le fait le plus RARE de la boucle de récolte (une fois tous
+     * les dix coups) : le budget d'attention est disponible, à la différence du coup lui-
+     * même, qui reste un `square` de 60 ms.
+     *
+     * LA GRAMMAIRE DE LA MAISON DONNE LE TIMBRE : `noise` est la voix de LA MATIÈRE ET DE
+     * CE QUI S'EFFONDRE — c'est déjà celle de `structure_destroyed`, et un nœud qui meurt
+     * est de cette famille-là. En revanche **la règle « une hauteur qui descend ferme » ne
+     * s'applique PAS ici, et il ne faut pas faire semblant** : `buildSound` ignore
+     * `freq`/`freqEnd` pour le bruit, et pose le coupe-bas à une fréquence FIXE. Un bruit
+     * n'a pas de hauteur à faire descendre. Ce qui reste pour dire la matière, ce sont les
+     * deux seules dimensions que le bruit offre — LA COUPURE et LA DURÉE :
+     *
+     *   L'ARBRE — le plus long et le plus PLEIN (0,5 s, coupure 1100 Hz). Assez large pour
+     *     garder le grain sec du bois qui cède, assez long pour tenir sous la chute (0,76 s
+     *     d'animation). C'est le seul épuisement qui a le droit de s'entendre de loin.
+     *   LA PIERRE — plus court et plus SOURD (0,3 s, coupure 620 Hz) : un éboulis qui
+     *     retombe, pas une explosion.
+     *   LE VÉGÉTAL — bref et CLAIR (0,16 s, coupure 3200 Hz), le froissement de ce qui n'a
+     *     pas de masse. À peine un son : on vide un buisson, on n'abat rien.
+     *
+     * CE QUE LA TABLE NE SAIT PAS DIRE, et c'est une vraie limite : un craquement réel est
+     * DEUX sons — la fibre qui claque, puis la masse qui touche. Un `SoundSpec` par
+     * événement n'en exprime qu'un ; on a choisi le corps de la chute. Le doubler
+     * demanderait que le routage rende une SÉQUENCE, ce qui n'est pas le contrat d'aujourd'hui.
+     *
+     * Gains sous le plafond de 0,15 tenu par test. ⚠ Comme tout le fichier : posé SANS
+     * L'ENTENDRE, à rejuger au banc d'écoute (`banc-son`), qui rend la ligne à coller ici.
+     */
+    case 'node_depleted':
+      switch (event.nodeType) {
+        case 'tree':
+        case 'old_tree':
+          return { wave: 'noise', freq: 0, dur: 0.5, gain: 0.11, lowpass: 1100 }
+        case 'rock':
+        case 'quarry':
+        case 'iron_vein':
+        case 'coal_seam':
+        case 'rubble':
+          return { wave: 'noise', freq: 0, dur: 0.3, gain: 0.08, lowpass: 620 }
+        default:
+          return { wave: 'noise', freq: 0, dur: 0.16, gain: 0.05, lowpass: 3200 }
+      }
     case 'structure_built':
       return { wave: 'noise', freq: 0, dur: 0.12, gain: 0.06, lowpass: 800 } // ça se pose
     case 'structure_destroyed':

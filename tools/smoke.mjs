@@ -128,6 +128,28 @@ const canopeePleine = (page) => page.evaluate(() => {
   window.__BRAISES__.scene.view?.setCanopeePleine?.(true)
 })
 
+/**
+ * FRAPPER UN NŒUD JUSQU'À CE QU'IL MEURE, au VRAI rythme de son verbe.
+ *
+ * Le premier jet martelait `harvest { whole: true }` en boucle serrée : ni l'arbre ni le
+ * rocher n'en meurent jamais (la sim ne concède `whole` qu'au métier `foraging`, et le
+ * minage garde sa cadence). On envoie donc le geste que le nœud demande, à l'intervalle
+ * qu'il impose, et on s'arrête dès que la sonde a vu naître l'animation. Rend `false` si
+ * le nœud n'est pas mort dans le nombre de coups imparti — jamais un faux vert.
+ */
+async function frapperJusquAMort(page, nodeId, action, intervalle, coups, sonde, whole = false) {
+  const cle = sonde()
+  for (let i = 0; i < coups; i++) {
+    await page.evaluate(({ id, action, whole }) => {
+      window.__BRAISES__.scene.sendAction({ type: action, nodeId: id, ...(whole ? { whole: true } : {}) })
+    }, { id: nodeId, action, whole })
+    await page.waitForTimeout(intervalle)
+    const vu = await page.evaluate((k) => (window.__PROBE__?.[k] ?? 0) > 0, cle)
+    if (vu) return true
+  }
+  return false
+}
+
 const SCENARIOS = {
   /**
    * T0-EXPLORATION (2026-07-25) — la Racine donne envie de marcher (spec t0-exploration).
@@ -5543,6 +5565,477 @@ const SCENARIOS = {
       ? `   ✓ GATE : au niveau 0, aucun bonus de maîtrise (ni graine ni champignon)`
       : `   ✗ un bonus est tombé au niveau 0 — le gate ne tient pas (Δ=${bonus})`)
     return { halo, before, after }
+  },
+
+  /**
+   * LES ÉCLATS DE LA RÉCOLTE (spec recolte.md G10, 3e signe — 2026-07-29).
+   *
+   * La gerbe vit 0,6-0,9 s : elle est éteinte avant toute capture prise « après coup ».
+   * On FIGE donc la boucle de rendu dès qu'un éclat existe (`game.loop.sleep()`, règle
+   * maison), et on mesure sur l'image arrêtée. Trois faits, et ce sont les trois qui
+   * peuvent mentir en silence :
+   *
+   *   (1) LA COULEUR EST LUE SUR LE SPRITE. C'est le point qui casse sans bruit : si
+   *       `textures.getPixel` ne rendait rien sur les textures `nd-*` (générées par
+   *       `Graphics.generateTexture`), tout retomberait sur le ton de repli et la gerbe
+   *       serait GRISE partout — un échec parfaitement silencieux. On exige donc que les
+   *       tons échantillonnés soient NON VIDES et qu'ils se retrouvent dans les éclats.
+   *   (2) LA PROJECTION SORT DE LA FACE FRAPPÉE : le barycentre des éclats est du côté du
+   *       joueur, pas de l'autre. On se téléporte à l'OUEST du nœud et on l'exige à
+   *       l'ouest ; sans ce test, une gerbe centrée passerait pour juste.
+   *   (3) ELLE EST VISIBLE : les éclats sont dans la vue caméra, et au-dessus du nœud
+   *       dans le tri (sinon ils giclent derrière le rocher et personne ne les voit).
+   *
+   * Exige `--dev` (téléportation).
+   */
+  async eclats(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(300)
+
+    const out = {}
+    // Trois matières, trois lois de vol : la pierre CLAQUE, le bois VOLE, la feuille FLOTTE.
+    for (const [famille, type] of [['pierre', 'rock'], ['bois', 'tree'], ['feuille', 'berry_bush']]) {
+      const cible = await page.evaluate((t) => {
+        const s = window.__BRAISES__.scene
+        const n = s.view.nodes.find((n) => n.type === t && n.stock > 0)
+        if (!n) return null
+        // À l'OUEST du nœud : la gerbe doit donc partir vers l'OUEST (x décroissant).
+        s.sendAction({ type: 'debug_teleport', x: n.tx - 0.5, y: n.ty + 0.5 })
+        return { id: n.id, tx: n.tx, ty: n.ty }
+      }, type)
+      if (!cible) { console.log(`   ✗ aucun nœud « ${type} » dans cette carte`); continue }
+      await page.waitForTimeout(500)
+
+      // ON FIGE À LA NAISSANCE DE LA GERBE, PAS APRÈS. Un `waitForFunction` sur
+      // `vivants > 0` puis un `evaluate` échoue TOUJOURS ici : le rendu logiciel tourne à
+      // ~3 im/s, une frame dure donc plus longtemps que la gerbe entière (0,6 s) — mesuré,
+      // trois matières sur trois rendaient 0 éclat. On s'accroche donc à `eclater` : la
+      // boucle s'endort DANS l'appel qui vient de créer la gerbe.
+      await page.evaluate(({ id, tx, ty }) => {
+        const s = window.__BRAISES__.scene
+        window.__PROBE__ = { eclater: 0 }
+        const vrai = s.recolteFx.eclater.bind(s.recolteFx)
+        s.recolteFx.eclater = (...a) => {
+          const r = vrai(...a)
+          window.__PROBE__.eclater++
+          s.recolteFx.eclater = vrai // un seul gel : le coup suivant doit pouvoir jouer
+          s.game.loop.sleep()
+          return r
+        }
+        s.sendAction({ type: 'harvest', nodeId: id, aimX: tx + 0.5, aimY: ty + 0.5 })
+      }, cible)
+
+      const ne = await page
+        .waitForFunction(() => window.__PROBE__.eclater > 0, null, { timeout: 8000 })
+        .then(() => true)
+        .catch(() => false)
+      if (!ne) { console.log(`   ✗ ${famille} : AUCUNE gerbe n'est née du coup`); out[famille] = { n: 0 }; continue }
+
+      const m = await page.evaluate(() => {
+        const s = window.__BRAISES__.scene
+        const fx = s.recolteFx
+        // La boucle DORT : les éclats sont figés à leur naissance, tous au point de
+        // morsure. On les fait donc voler NOUS-MÊMES, à l'horloge — trois pas de 50 ms,
+        // le `dt` borné exact du vrai jeu. C'est le vrai code de vol, avec une horloge
+        // qu'on maîtrise : sans ça, la mesure dépendrait du framerate de la machine.
+        const t0 = s.time.now
+        // À LA NAISSANCE, chaque gerbe est encore à SON point d'émission : c'est le seul
+        // instant où l'on peut séparer les copeaux (au fût) des feuilles (dans la cime).
+        // Après le vol, tout se mélange et la mesure ne veut plus rien dire.
+        const naissance = fx.eclats.map((e) => ({ y: Math.round(e.y - e.z), c: e.img.fillColor }))
+        const avant = { n: fx.eclats.length, t0, ages: fx.eclats.map((e) => Math.round(t0 - e.ne)), naissance }
+        // MI-VOL : 350 ms, soit l'instant où la gerbe est la plus ouverte pour les trois
+        // matières. À 150 ms elle est encore un point — on jugerait « invisible » ce qui
+        // n'est que « pas encore parti ».
+        //
+        // ON PASSE PAR `game.step`, PAS PAR `fx.update` : la boucle DORT, donc pousser
+        // nous-mêmes les positions déplaçait les objets SANS jamais redessiner — la
+        // capture montrait la gerbe encore tassée à sa naissance, et on en concluait
+        // « on ne voit rien ». `game.step` fait une VRAIE frame (update + rendu), sur une
+        // horloge qu'on tient : la photo montre enfin ce que le joueur verrait.
+        for (let i = 1; i <= 7; i++) s.game.step(t0 + i * 50, 50)
+        const vue = s.cameras.main.worldView
+        const me = { x: s.playerSprite.x, y: s.playerSprite.y }
+        const eclats = fx.eclats.map((e) => ({
+          x: e.img.x, y: e.img.y, c: e.img.fillColor, d: e.img.depth, w: e.img.width,
+        }))
+        // LES DEUX POPULATIONS, SÉPARÉES PAR LEUR HAUTEUR DE NAISSANCE — et il FAUT les
+        // séparer : les copeaux sont DIRIGÉS (à l'opposé du bûcheron), les feuilles sont
+        // RADIALES (elles se détachent tout autour de la cime). Mêlées, leur barycentre
+        // retombe sur le tronc et le test de direction accuse à tort la gerbe de partir du
+        // mauvais côté — c'est exactement ce qui vient d'arriver. L'ordre de `fx.eclats` est
+        // stable entre la naissance et le vol : l'index sert de trait d'union.
+        const ysN = naissance.map((e) => e.y)
+        const etendue = Math.max(...ysN) - Math.min(...ysN)
+        const seuil = (Math.max(...ysN) + Math.min(...ysN)) / 2
+        const estFeuille = (i) => etendue >= 8 && naissance[i].y < seuil
+        const copeaux = eclats.filter((_, i) => !estFeuille(i))
+        const moyenne = (a, k) => a.reduce((s, e) => s + e[k], 0) / a.length
+        return {
+          n: eclats.length,
+          // Les tons ÉCHANTILLONNÉS, par texture — vides = getPixel n'a rien rendu.
+          tons: [...fx.tons.entries()].map(([k, v]) => [k, v.map((c) => `#${c.toString(16).padStart(6, '0')}`)]),
+          couleurs: [...new Set(eclats.map((e) => `#${e.c.toString(16).padStart(6, '0')}`))],
+          nCopeaux: copeaux.length,
+          // Le barycentre des SEULS copeaux : c'est d'eux qu'on affirme la direction.
+          bary: { x: moyenne(copeaux, 'x'), y: moyenne(copeaux, 'y') },
+          me,
+          dansLaVue: eclats.filter((e) => e.x >= vue.x && e.x <= vue.right && e.y >= vue.y && e.y <= vue.bottom).length,
+          tailles: [...new Set(eclats.map((e) => e.w))].sort(),
+          avant,
+          // DEUX GERBES, DEUX HAUTEURS : on coupe la population de naissance à mi-chemin
+          // entre son plus haut et son plus bas. Les feuilles sont le groupe du HAUT.
+          feuilles: (() => {
+            const hautes = naissance.filter((_, i) => estFeuille(i))
+            const basses = naissance.filter((_, i) => !estFeuille(i))
+            if (hautes.length === 0) return { n: 0, couleurs: [], hautDessusDesCopeaux: 0 }
+            const moy = (a) => a.reduce((s, e) => s + e.y, 0) / a.length
+            return {
+              n: hautes.length,
+              couleurs: [...new Set(hautes.map((e) => `#${e.c.toString(16).padStart(6, '0')}`))],
+              hautDessusDesCopeaux: basses.length ? moy(basses) - moy(hautes) : 0,
+            }
+          })(),
+          // L'ÉTALEMENT de la gerbe à mi-vol, en px monde ET en px écran (zoom compris) :
+          // c'est ce qui décide si on voit une GERBE ou un point. Relatif au nœud.
+          etale: {
+            w: Math.max(...eclats.map((e) => e.x)) - Math.min(...eclats.map((e) => e.x)),
+            h: Math.max(...eclats.map((e) => e.y)) - Math.min(...eclats.map((e) => e.y)),
+            zoom: s.cameras.main.zoom,
+          },
+          pos: eclats.map((e) => [Math.round(e.x), Math.round(e.y)]),
+        }
+      })
+      console.log(`   · ${famille} : avant vol → ${JSON.stringify(m.avant)}`)
+      console.log(`   · ${famille} : étalement à mi-vol ${m.etale.w.toFixed(1)}×${m.etale.h.toFixed(1)} px monde `
+        + `(≈${(m.etale.w * m.etale.zoom).toFixed(0)}×${(m.etale.h * m.etale.zoom).toFixed(0)} px écran, zoom ${m.etale.zoom}) — ${JSON.stringify(m.pos)}`)
+      await page.screenshot({ path: `${OUT}/eclats-${famille}.png` })
+      // …ET LA MÊME CHOSE DE PRÈS. Un grain fait 2 px d'art : sur une capture plein
+      // écran il occupe quatre pixels, et « on ne voit rien » y est indiscernable de
+      // « c'est trop petit pour être jugé ». On recadre donc sur le nœud avant de
+      // conclure quoi que ce soit à l'œil.
+      const cadre = await page.evaluate(() => {
+        const s = window.__BRAISES__.scene
+        const cam = s.cameras.main
+        const p = s.playerSprite
+        const cx = (p.x - cam.worldView.x) * cam.zoom
+        const cy = (p.y - cam.worldView.y) * cam.zoom
+        const demi = 110
+        return {
+          x: Math.max(0, Math.round(cx - demi)),
+          y: Math.max(0, Math.round(cy - demi)),
+          width: demi * 2,
+          height: demi * 2,
+        }
+      })
+      await page.screenshot({ path: `${OUT}/eclats-${famille}-pres.png`, clip: cadre })
+
+      const tonsLus = m.tons.flatMap(([, v]) => v)
+      console.log(tonsLus.length > 0
+        ? `   ✓ ${famille} : la couleur est LUE sur le sprite — ${m.tons.map(([k, v]) => `${k}→${v.join(' ')}`).join(' | ')}`
+        : `   ✗ ${famille} : AUCUN ton échantillonné (getPixel muet) — la gerbe est au ton de repli`)
+      // Un éclat n'est pas la COPIE d'un ton du sprite : c'en est une VALEUR (sombre /
+      // juste / claire). On vérifie donc la propriété — même teinte, valeur voisine — au
+      // lieu de recopier ici le barème de `VALEURS`, qui dériverait au premier réglage.
+      const memeMatiere = (hexEclat, hexTon) => {
+        const rgb = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]
+        const c = rgb(hexEclat)
+        const t = rgb(hexTon)
+        const st = t.reduce((a, v) => a + v, 0)
+        const sc = c.reduce((a, v) => a + v, 0)
+        if (st === 0 || sc === 0) return false
+        const k = sc / st
+        if (k < 0.65 || k > 1.35) return false // la VALEUR bouge, mais pas de plus d'un tiers
+        return t.every((v, i) => Math.abs(c[i] - v * k) <= 10) // la TEINTE, elle, est conservée
+      }
+      const teintesDuSprite = m.n > 0 && m.couleurs.every((c) => tonsLus.some((t) => memeMatiere(c, t)))
+      console.log(teintesDuSprite
+        ? `   ✓ ${famille} : les ${m.n} éclats sont des VALEURS des tons du nœud (${m.couleurs.join(' ')})`
+        : `   ✗ ${famille} : ${m.n} éclats, teintes ${m.couleurs.join(' ') || '—'} étrangères au sprite ${tonsLus.join(' ')}`)
+      // Le joueur s'est planté à l'OUEST du nœud : la gerbe doit donc ressortir à l'EST du
+      // nœud — de l'autre côté que lui (correction d'Alexis, 29/07 : envoyée vers le
+      // joueur, elle se tassait sur son sprite). On le mesure sur le CENTRE DU NŒUD, pas
+      // « quelque part près du joueur » : sans ça, une gerbe centrée passerait pour juste.
+      const centreNoeud = (cible.tx + 0.5) * 16
+      const alOppose = m.nCopeaux > 0 && m.bary.x > centreNoeud
+      console.log(alOppose
+        ? `   ✓ ${famille} : la gerbe ressort à l'OPPOSÉ du joueur (bary des ${m.nCopeaux} copeaux x=${m.bary.x.toFixed(1)} > nœud x=${centreNoeud} > joueur x=${m.me.x.toFixed(1)})`
+        : `   ✗ ${famille} : la gerbe part du MAUVAIS côté (bary x=${m.bary.x.toFixed(1)}, nœud x=${centreNoeud}, joueur x=${m.me.x.toFixed(1)})`)
+      console.log(m.n > 0 && m.dansLaVue === m.n
+        ? `   ✓ ${famille} : les ${m.n} éclats sont dans le cadre (grains de ${m.tailles.join('/')} px)`
+        : `   ✗ ${famille} : ${m.n - m.dansLaVue}/${m.n} éclats hors cadre`)
+
+      // LE HOUPPIER LÂCHE DES FEUILLES quand on tape un arbre (demande d'Alexis) : DEUX
+      // gerbes pour un coup, à deux hauteurs. C'est le DÉCALAGE qui porte l'effet — des
+      // feuilles émises au pied du fût seraient indiscernables des copeaux, et l'arbre
+      // redeviendrait un poteau qu'on gratte.
+      if (famille === 'bois') {
+        const f = m.feuilles
+        console.log(f.n > 0
+          ? `   ✓ bois : le houppier lâche ${f.n} feuilles (${f.couleurs.join(' ')})`
+          : `   ✗ bois : AUCUNE feuille ne tombe du houppier`)
+        console.log(f.hautDessusDesCopeaux > 15
+          ? `   ✓ bois : elles tombent de la CIME — ${f.hautDessusDesCopeaux.toFixed(1)} px au-dessus des copeaux`
+          : `   ✗ bois : feuilles et copeaux partent d'à peu près la même hauteur (Δ=${f.hautDessusDesCopeaux.toFixed(1)} px)`)
+      }
+      out[famille] = m
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(1500) // la gerbe s'éteint avant de passer à la matière suivante
+    }
+
+    // ─── LA LOUPE ─────────────────────────────────────────────────────────────────────
+    // Les quatre captures ci-dessus sont au zoom du JEU : c'est à elles qu'on juge « est-ce
+    // que ça se voit en jouant ». Elles ne permettent PAS de juger la forme de la gerbe —
+    // un grain y fait quatre pixels. Cette dernière passe zoome à 6× pour qu'on puisse
+    // regarder la gerbe elle-même : sa direction, son éventail, ses trois valeurs. Elle ne
+    // remplace pas les autres, elle répond à une autre question.
+    const loupe = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const n = s.view.nodes.find((n) => n.type === 'rock' && n.stock > 0)
+      if (!n) return null
+      s.sendAction({ type: 'debug_teleport', x: n.tx - 0.5, y: n.ty + 0.5 })
+      s.cameras.main.setZoom(6)
+      return { id: n.id, tx: n.tx, ty: n.ty }
+    })
+    if (loupe) {
+      await page.waitForTimeout(600)
+      await page.evaluate(({ id, tx, ty }) => {
+        const s = window.__BRAISES__.scene
+        window.__PROBE__ = { eclater: 0 }
+        const vrai = s.recolteFx.eclater.bind(s.recolteFx)
+        s.recolteFx.eclater = (...a) => {
+          const r = vrai(...a)
+          window.__PROBE__.eclater++
+          s.recolteFx.eclater = vrai
+          s.game.loop.sleep()
+          return r
+        }
+        s.sendAction({ type: 'harvest', nodeId: id, aimX: tx + 0.5, aimY: ty + 0.5 })
+      }, loupe)
+      const nee = await page
+        .waitForFunction(() => window.__PROBE__.eclater > 0, null, { timeout: 8000 })
+        .then(() => true)
+        .catch(() => false)
+      if (nee) {
+        const vue = await page.evaluate(() => {
+          const s = window.__BRAISES__.scene
+          const fx = s.recolteFx
+          const t0 = s.time.now
+          for (let i = 1; i <= 7; i++) s.game.step(t0 + i * 50, 50) // de VRAIES frames : ça redessine
+          const cam = s.cameras.main
+          // LE CADRE SUIT LA GERBE, pas le joueur : centré sur l'avatar, le recadrage
+          // laissait les éclats HORS CHAMP — et une gerbe absente de la photo se lit
+          // « invisible » alors qu'elle n'est qu'ailleurs. On encadre donc joueur ET gerbe.
+          const ecran = (x, y) => ({ x: (x - cam.worldView.x) * cam.zoom, y: (y - cam.worldView.y) * cam.zoom })
+          const pts = [ecran(s.playerSprite.x, s.playerSprite.y), ...fx.eclats.map((e) => ecran(e.img.x, e.img.y))]
+          const xs = pts.map((p) => p.x)
+          const ys = pts.map((p) => p.y)
+          const marge = 70
+          return {
+            clip: {
+              x: Math.max(0, Math.round(Math.min(...xs) - marge)),
+              y: Math.max(0, Math.round(Math.min(...ys) - marge)),
+              width: Math.round(Math.max(...xs) - Math.min(...xs) + marge * 2),
+              height: Math.round(Math.max(...ys) - Math.min(...ys) + marge * 2),
+            },
+            n: fx.eclats.length,
+            joueur: pts[0],
+          }
+        })
+        await page.screenshot({ path: `${OUT}/eclats-loupe.png`, clip: vue.clip })
+        console.log(`   ✓ loupe : ${vue.n} éclats de pierre à 6×, cadre ${vue.clip.width}×${vue.clip.height} → eclats-loupe.png`)
+      } else {
+        console.log(`   ✗ loupe : aucune gerbe à zoomer`)
+      }
+    }
+    return out
+  },
+
+  /**
+   * LA MORT D'UN NŒUD (spec recolte.md G15 — 2026-07-29).
+   *
+   * Trois animations, une par matière : l'ARBRE tombe, la PIERRE s'effondre en gerbe à
+   * 360°, le VÉGÉTAL lâche ses feuilles. On vide donc trois nœuds jusqu'au bout et on
+   * regarde ce qui se passe à l'instant où le stock atteint zéro.
+   *
+   * L'ARBRE SE MESURE EN PLUSIEURS POINTS, pas un seul. Une chute dure ~1,6 s, et
+   * « il a tourné » n'est pas « il a tourné du bon côté, jusqu'au sol, et s'est arrêté » —
+   * ce sont deux affirmations différentes. On échantillonne donc l'angle au DÉBUT, à
+   * MI-CHUTE et une fois POSÉ, et on exige la progression ET l'arrivée.
+   *
+   * Exige `--dev` (téléportation).
+   */
+  async epuisement(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(300)
+
+    const out = {}
+
+    // ─── L'ARBRE TOMBE ────────────────────────────────────────────────────────────────
+    const arbre = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const n = s.view.nodes.find((n) => n.type === 'tree' && n.stock > 0)
+      if (!n) return null
+      s.sendAction({ type: 'debug_teleport', x: n.tx - 0.6, y: n.ty + 0.5 }) // à l'OUEST : il tombe à l'est
+      return { id: n.id, tx: n.tx, ty: n.ty, stock: n.stock }
+    })
+    if (!arbre) {
+      console.log('   ✗ aucun arbre dans cette carte')
+    } else {
+      await page.waitForTimeout(500)
+      // ON L'ABAT POUR DE VRAI. `whole` ne mord QUE sur le métier `foraging` (economy.ts) :
+      // un arbre l'ignore, et le marteler ne l'aurait jamais vidé. L'abattage passe par la
+      // JAUGE — et la sim SUPPRIME la charge à chaque coup parti tout seul, donc il faut la
+      // réarmer entre deux. C'est le vrai geste du jeu, joué au vrai rythme.
+      await page.evaluate(() => {
+        const s = window.__BRAISES__.scene
+        window.__PROBE__ = { chutes: 0 }
+        const vrai = s.chuteArbre.tomber.bind(s.chuteArbre)
+        s.chuteArbre.tomber = (...a) => {
+          const r = vrai(...a)
+          window.__PROBE__.chutes++
+          s.chuteArbre.tomber = vrai
+          s.game.loop.sleep() // on fige DÈS que l'arbre part : la chute ne s'achèvera pas sans nous
+          return r
+        }
+      })
+      const tombe = await frapperJusquAMort(page, arbre.id, 'harvest_charge_start', 1400, 20, () => 'chutes')
+      if (!tombe) {
+        console.log(`   ✗ arbre : le fût s'est vidé sans TOMBER`)
+      } else {
+        // TROIS INSTANTS de la même chute : au départ, à mi-course, et posé. `game.step`
+        // fait de vraies frames (cf. `eclats`) — sans lui, rien ne se redessinerait.
+        const m = await page.evaluate(() => {
+          const s = window.__BRAISES__.scene
+          const t0 = s.time.now
+          const releve = []
+          const cam = s.cameras.main
+          const lire = () => {
+            const c = s.chuteArbre.chutes[0]
+            return c ? { a: c.fut.rotation, hx: c.houppier.x, hy: c.houppier.y, hd: c.houppier.depth, fd: c.fut.depth, cible: c.alpha } : null
+          }
+          releve.push({ t: 0, ...lire() })
+          let t = 0
+          for (const cible of [380, 760, 1100]) {
+            while (t < cible) { t += 40; s.game.step(t0 + t, 40) }
+            releve.push({ t, ...lire() })
+          }
+          return {
+            releve,
+            joueur: { x: s.playerSprite.x, y: s.playerSprite.y, d: s.playerSprite.depth },
+            vue: { x: cam.worldView.x, y: cam.worldView.y, r: cam.worldView.right, b: cam.worldView.bottom, zoom: cam.zoom },
+          }
+        })
+        const [r0, r1, r2, r3] = m.releve
+        console.log(`   · arbre : angles ${m.releve.map((r) => `t=${r.t}→${(r.a ?? 0).toFixed(2)}`).join(' ')} (cible ${(r0.cible ?? 0).toFixed(2)})`)
+        console.log(Math.abs(r0.a) < Math.abs(r1.a) && Math.abs(r1.a) < Math.abs(r2.a)
+          ? `   ✓ arbre : le fût BASCULE et accélère (0 → ${r1.a.toFixed(2)} → ${r2.a.toFixed(2)} rad)`
+          : `   ✗ arbre : le fût ne bascule pas comme prévu (${m.releve.map((r) => (r.a ?? 0).toFixed(2)).join(' → ')})`)
+        console.log(r3 && Math.abs(r3.a - r0.cible) < 0.02
+          ? `   ✓ arbre : il se POSE à l'angle visé et s'y arrête (${r3.a.toFixed(3)} ≈ ${r0.cible.toFixed(3)})`
+          : `   ✗ arbre : il ne s'arrête pas à l'angle visé (${r3 ? r3.a.toFixed(3) : 'disparu'} vs ${r0.cible.toFixed(3)})`)
+        // LE JOUEUR EST À L'OUEST : l'arbre doit tomber vers l'EST (rotation positive).
+        console.log(r0.cible > 0
+          ? `   ✓ arbre : il tombe À L'OPPOSÉ du bûcheron (angle visé +${r0.cible.toFixed(2)} = vers l'est)`
+          : `   ✗ arbre : il tombe SUR le bûcheron (angle visé ${r0.cible.toFixed(2)})`)
+        // LE HOUPPIER A QUITTÉ LA BANDE CANOPÉE (≥ 900 000) : couché, il passe sous les acteurs.
+        console.log(r3 && r3.hd < 900000 && r3.hd < m.joueur.d
+          ? `   ✓ arbre : le houppier couché est SOUS le joueur (${r3.hd.toFixed(0)} < ${m.joueur.d.toFixed(0)}), hors canopée`
+          : `   ✗ arbre : le houppier couché coiffe encore le monde (depth ${r3 ? r3.hd.toFixed(0) : '—'})`)
+        await page.screenshot({ path: `${OUT}/epuisement-arbre.png` })
+        const clip = await page.evaluate(() => {
+          const s = window.__BRAISES__.scene
+          const cam = s.cameras.main
+          const c = s.chuteArbre.chutes[0]
+          const pts = [[s.playerSprite.x, s.playerSprite.y]]
+          if (c) pts.push([c.fut.x, c.fut.y], [c.houppier.x, c.houppier.y])
+          const xs = pts.map((p) => (p[0] - cam.worldView.x) * cam.zoom)
+          const ys = pts.map((p) => (p[1] - cam.worldView.y) * cam.zoom)
+          return {
+            x: Math.max(0, Math.round(Math.min(...xs) - 90)), y: Math.max(0, Math.round(Math.min(...ys) - 120)),
+            width: Math.round(Math.max(...xs) - Math.min(...xs) + 180), height: Math.round(Math.max(...ys) - Math.min(...ys) + 200),
+          }
+        })
+        await page.screenshot({ path: `${OUT}/epuisement-arbre-pres.png`, clip })
+        out.arbre = m
+      }
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(1500)
+    }
+
+    // ─── LA PIERRE ET LE VÉGÉTAL ÉCLATENT ─────────────────────────────────────────────
+    for (const [famille, type] of [['pierre', 'rock'], ['vegetal', 'berry_bush']]) {
+      const cible = await page.evaluate((t) => {
+        const s = window.__BRAISES__.scene
+        const n = s.view.nodes.find((n) => n.type === t && n.stock > 0)
+        if (!n) return null
+        s.sendAction({ type: 'debug_teleport', x: n.tx - 0.6, y: n.ty + 0.5 })
+        return { id: n.id, tx: n.tx, ty: n.ty, stock: n.stock }
+      }, type)
+      if (!cible) { console.log(`   ✗ aucun nœud « ${type} »`); continue }
+      await page.waitForTimeout(500)
+
+      await page.evaluate(() => {
+        const s = window.__BRAISES__.scene
+        window.__PROBE__ = { eclatements: 0 }
+        const vrai = s.recolteFx.eclatement.bind(s.recolteFx)
+        s.recolteFx.eclatement = (...a) => {
+          const r = vrai(...a)
+          window.__PROBE__.eclatements++
+          s.recolteFx.eclatement = vrai
+          s.game.loop.sleep()
+          return r
+        }
+      })
+      // LA PIERRE se mine coup par coup, à la cadence du rechargement (`whole` ne mord pas
+      // sur le minage) ; LE BUISSON se cueille d'un geste, sans cadence. Deux verbes, deux
+      // rythmes — on joue celui du nœud, pas un martèlement qui n'existe pas dans le jeu.
+      const ne = type === 'rock'
+        ? await frapperJusquAMort(page, cible.id, 'harvest', 1100, 20, () => 'eclatements')
+        : await frapperJusquAMort(page, cible.id, 'harvest', 250, 12, () => 'eclatements', true)
+      if (!ne) { console.log(`   ✗ ${famille} : le nœud s'est vidé SANS éclater`); continue }
+
+      const m = await page.evaluate(() => {
+        const s = window.__BRAISES__.scene
+        const fx = s.recolteFx
+        const t0 = s.time.now
+        for (let i = 1; i <= 7; i++) s.game.step(t0 + i * 50, 50)
+        const eclats = fx.eclats.map((e) => ({ x: e.img.x, y: e.img.y, c: e.img.fillColor }))
+        const cx = eclats.reduce((a, e) => a + e.x, 0) / eclats.length
+        const cy = eclats.reduce((a, e) => a + e.y, 0) / eclats.length
+        return {
+          n: eclats.length,
+          couleurs: [...new Set(eclats.map((e) => `#${e.c.toString(16).padStart(6, '0')}`))],
+          tons: [...fx.tons.entries()].map(([k, v]) => [k, v.map((c) => `#${c.toString(16).padStart(6, '0')}`)]),
+          // LES QUATRE QUADRANTS autour du centre de la gerbe : un éclatement est RADIAL,
+          // il ne doit pas ressembler à un jet dirigé. C'est la seule différence de fond
+          // avec la gerbe de frappe, donc c'est elle qu'on mesure.
+          quadrants: [
+            eclats.filter((e) => e.x >= cx && e.y < cy).length,
+            eclats.filter((e) => e.x < cx && e.y < cy).length,
+            eclats.filter((e) => e.x < cx && e.y >= cy).length,
+            eclats.filter((e) => e.x >= cx && e.y >= cy).length,
+          ],
+        }
+      })
+      await page.screenshot({ path: `${OUT}/epuisement-${famille}.png` })
+      const tonsLus = m.tons.flatMap(([, v]) => v)
+      const occupes = m.quadrants.filter((q) => q > 0).length
+      console.log(occupes >= 3
+        ? `   ✓ ${famille} : la gerbe est RADIALE — ${occupes}/4 quadrants occupés (${m.quadrants.join('/')}) sur ${m.n} éclats`
+        : `   ✗ ${famille} : la gerbe n'est pas radiale (${m.quadrants.join('/')})`)
+      console.log(m.n > 0 && tonsLus.length > 0
+        ? `   ✓ ${famille} : ${m.n} éclats à la couleur du nœud (${m.couleurs.join(' ')})`
+        : `   ✗ ${famille} : ${m.n} éclats, tons ${tonsLus.join(' ') || '—'}`)
+      out[famille] = m
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      await page.waitForTimeout(1500)
+    }
+    return out
   },
 
   /**

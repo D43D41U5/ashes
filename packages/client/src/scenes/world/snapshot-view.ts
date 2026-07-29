@@ -66,12 +66,18 @@ import { BATI_LIT_TYPES, EDGE_ORIGIN_Y } from '../../render/bati-art'
 import { calculerPans, pansTombes } from '../../render/pans'
 import { LIT_STRUCTURE_TYPES } from '../../render/lit-structures'
 import { shakeOffset, type HitFx } from './hit-fx'
+import type { RecolteFx } from './recolte-fx'
+import type { ChuteArbre } from './chute-arbre'
 import { createContactShadow, positionShadow, SHADOW_ALPHA } from './contact-shadow'
 import { riveAt, type RiveField } from '../../render/water-field'
 
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
 const AIM_TINT = 0xffe9a8
 const AIM_TINT_FAR = 0x8a8a92
+
+/** Plafond de morts consignées en une frame. Un front qui rase un bosquet ne doit pas
+ *  jeter mille chutes à l'écran — et au-delà, plus personne ne les distingue. */
+const MAX_EPUISEMENTS = 12
 
 /** Combien de temps le TROU reste visible après qu'un lapin y est rentré (C16).
  *  Assez pour qu'on comprenne où il est passé — pas assez pour joncher la carte. */
@@ -446,6 +452,19 @@ export class SnapshotView {
   private aimedInRange = false
   /** La mémoire des coups reçus — pour le tressaillement. Posée par WorldScene. */
   private hitFx?: HitFx
+  /** LA GERBE D'ÉCLATS. Elle naît ICI et nulle part ailleurs : cette boucle est la seule
+   *  à connaître la position RÉELLE du sprite du nœud (décalage d'arbre, tressaillement,
+   *  relief du warp), sa hauteur affichée et sa texture du moment — les trois entrées de
+   *  la gerbe. Les recalculer côté WorldScene les aurait fait diverger. Posée par WorldScene. */
+  private recolteFx?: RecolteFx
+  /** LES ARBRES QUI S'ABATTENT (G15). Posée par WorldScene, comme la gerbe. */
+  private chuteArbre?: ChuteArbre
+  /**
+   * LES NŒUDS MORTS CETTE FRAME, à leur ANCIENNE tuile — la seule que la dérive va leur
+   * prendre, et donc la seule où l'animation a un sens. Consignés par `applyNodeDeltas`
+   * (à la réception du snapshot), joués et VIDÉS par `renderNodes`.
+   */
+  private epuisements: { id: number; tx: number; ty: number; type: NodeType; at: number }[] = []
 
   /** Ce que le curseur vise MAINTENANT. Purement de l'affichage : la sim revalide. */
   setAim(nodeId: number | null, inRange: boolean): void {
@@ -455,6 +474,14 @@ export class SnapshotView {
 
   setHitFx(fx: HitFx): void {
     this.hitFx = fx
+  }
+
+  setRecolteFx(fx: RecolteFx): void {
+    this.recolteFx = fx
+  }
+
+  setChuteArbre(fx: ChuteArbre): void {
+    this.chuteArbre = fx
   }
   nodes: ResourceNode[] = []
   corpses: Corpse[] = []
@@ -1175,6 +1202,15 @@ export class SnapshotView {
         this.depleted.delete(d.id)
         continue
       }
+      // LE NŒUD MEURT (spec recolte.md G15). On le CONSIGNE ici — à son ANCIENNE tuile,
+      // avant que la dérive ne la lui prenne — et c'est la boucle de nœuds qui jouera la
+      // chute / l'éclatement, elle seule sachant traduire une tuile en pixels. `depleted`
+      // fait le garde-fou du doublon : un nœud déjà noté épuisé ne remeurt pas si un delta
+      // à stock 0 repasse. Borné : une file qui grossit sans fin serait une fuite, et
+      // personne ne verrait la millième chute.
+      if (!this.depleted.has(d.id) && this.epuisements.length < MAX_EPUISEMENTS) {
+        this.epuisements.push({ id: d.id, tx: n.tx, ty: n.ty, type: n.type, at: now })
+      }
       // Épuisement. Déménagement éventuel (bois/plante qui dérive).
       if (d.tx !== undefined && d.ty !== undefined && (d.tx !== n.tx || d.ty !== n.ty)) {
         this.stumps.push({ tx: n.tx, ty: n.ty, type: n.type, at: now })
@@ -1267,8 +1303,8 @@ export class SnapshotView {
         // Le coup qui porte fait TRESSAILLIR le nœud (spec recolte.md G10). Le
         // décalage est purement visuel et transitoire : il s'ajoute au dessin, il
         // ne touche ni la tuile, ni la profondeur, ni l'emprise logique.
-        const hitAt = this.hitFx?.hitAt(n.id)
-        const shake = hitAt === undefined ? 0 : shakeOffset(now, hitAt)
+        const coup = this.hitFx?.coup(n.id)
+        const shake = coup === undefined ? 0 : shakeOffset(now, coup.at)
         const px = a.px + j.dx * TILE_PX + shake
         const py = a.py + j.dy * TILE_PX
         const lift = this.warp?.lift(tx + 0.5 + j.dx, ty + 1 + j.dy) ?? 0
@@ -1290,6 +1326,40 @@ export class SnapshotView {
         // Épuisé, il n'est pas « à moitié là » — il REPOUSSE, et c'est son échelle qui le dit.
         sprite.setAlpha(1)
         sprite.setScale(g) // plein = 1 ; repousse = fraction (grandit depuis le pied, origine basse)
+        // LA MATIÈRE QUITTE LE NŒUD (spec recolte.md G10, 3e signe). Ici et pas ailleurs :
+        // `px/py-lift` est le pied RÉEL du sprite, `displayHeight` sa hauteur APRÈS
+        // `setScale` (une pousse qui repousse gicle donc à sa taille), et `texture` est
+        // exactement ce que le joueur regarde — c'est d'elle que la gerbe tire sa couleur.
+        // `eclater` se garde lui-même du double appel : la boucle repasse chaque frame, et
+        // la sim peut émettre DEUX `resource_harvested` au même tick sur le même nœud (le
+        // butin de maîtrise) — un coup, une gerbe.
+        if (coup !== undefined) {
+          this.recolteFx?.eclater(
+            n.id, coup.at, now, n.type, texture,
+            px, py - lift, sprite.displayHeight,
+            coup.fromX, coup.fromY, coup.count, coup.clean,
+          )
+          // ET LE HOUPPIER LÂCHE DES FEUILLES (demande d'Alexis, 2026-07-29). La hache mord
+          // le fût à hauteur de ceinture ; le choc, lui, remonte l'arbre — et ce qui se
+          // détache là-haut n'est pas du bois. Deux gerbes pour un coup, à DEUX hauteurs :
+          // c'est ce décalage qui donne son échelle à l'arbre (une seule gerbe au pied en
+          // ferait un poteau qu'on gratte). Pas sur une POUSSE : elle n'a pas de houppier.
+          if (isTree && !growing) {
+            // DANS LE BAS DE LA CIME, ET SUR SON POURTOUR — deux corrections, deux raisons.
+            // (1) À l'ancrage nu, les feuilles naissaient 8 px au-dessus des copeaux : à
+            // cette distance les deux gerbes n'en faisaient qu'une. (2) Au CŒUR du
+            // houppier, elles sont vertes sur du vert et il leur faudrait presque toute
+            // leur vie pour sortir de la silhouette — invisibles. Le bas du feuillage,
+            // sur sa couronne, résout les deux : l'écart aux copeaux se voit, et elles se
+            // détachent de la masse dès la première image.
+            const m = variante.mesures
+            this.recolteFx?.feuillage(
+              n.id, coup.at, now,
+              `nd-${variante.slug}_crown${litTree ? '_lit' : ''}`,
+              px, py - lift, ancrageHouppierPx(m) + m.houppierS * 0.3, m.houppierS * 0.4,
+            )
+          }
+        }
         // LE VENT PLIE LES NŒUDS-PLANTES (fibre, baies, pousse — cf. NODE_WIND_TAKE). POOLÉ : reposé
         // CHAQUE frame, car une prise 0 (roche, tronc adulte) fait rendre 0 à windSway → le sprite est
         // remis DROIT, jamais la rotation d'un voisin héritée. Pivot aux pieds (origine 0.5,1) → il
@@ -1364,6 +1434,50 @@ export class SnapshotView {
     // ne reste allumée sur une tuile que le culling vient de quitter.
     for (let i = used; i < this.nodeShadowPool.length; i++) this.nodeShadowPool[i]!.setVisible(false)
     for (let i = crownsUsed; i < this.crownPool.length; i++) this.crownPool[i]!.setVisible(false)
+
+    // ═══ LA MORT DES NŒUDS (spec recolte.md G15) ═══════════════════════════════════════
+    //
+    // LA FILE SE VIDE ENTIÈREMENT, CHAQUE IMAGE — et c'est la seule façon correcte de la
+    // traiter. La tentation était de ne dépiler que les tuiles à l'écran : un nœud épuisé
+    // hors caméra serait alors resté dans la file POUR TOUJOURS (`depleted` empêche de le
+    // reconsigner), et la file n'aurait fait que grossir. On dépile donc tout, et ce qui
+    // est mort hors du cadre est jeté SANS ANIMATION : personne ne l'a vu mourir.
+    for (const e of this.epuisements) {
+      if (e.tx < tx0 || e.tx > tx1 || e.ty < ty0 || e.ty > ty1) continue
+      const arbre = e.type === 'tree' || e.type === 'old_tree'
+      const j = arbre ? treeJitter(e.tx, e.ty) : { dx: 0, dy: 0 }
+      const a = tileFeetAnchor(e.tx, e.ty, TILE_PX)
+      const px = a.px + j.dx * TILE_PX
+      const py = a.py + j.dy * TILE_PX - (this.warp?.lift(e.tx + 0.5 + j.dx, e.ty + 1 + j.dy) ?? 0)
+      if (arbre) {
+        // L'ARBRE TOMBE — À L'OPPOSÉ DU BÛCHERON, comme la gerbe (correction d'Alexis du
+        // 29/07 : un arbre ne s'abat pas sur celui qui le coupe). La mémoire du dernier
+        // coup porte sa position ; `applyNodeDeltas` tourne AVANT `processEvents`, mais
+        // `renderNodes` tourne APRÈS les deux — d'où la lecture ici, où elle est sûre.
+        // Sans coup en mémoire (l'arbre d'un AUTRE joueur, en multi), on prend un côté
+        // stable tiré de la tuile : jamais juste, jamais faux, jamais scintillant.
+        const coup = this.hitFx?.coup(e.id)
+        const dir = coup
+          ? { dx: px - coup.fromX, dy: py - coup.fromY }
+          : { dx: ((e.tx * 31 + e.ty * 17) % 2 === 0 ? 1 : -1), dy: 0.35 }
+        const variante = this.carte !== null
+          ? varianteArbre(this.carte, e.tx, e.ty, this.worldSeed, e.type === 'old_tree')
+          : VARIANTES[e.type === 'old_tree' ? 'old_tree' : 'tree']!
+        this.chuteArbre?.tomber(px, py, variante, this.lighting, dir.dx, dir.dy, now)
+      } else {
+        // LA PIERRE S'EFFONDRE, LE VÉGÉTAL LÂCHE SES FEUILLES : une gerbe à 360°, de la
+        // couleur du nœud — la même texture que celle qu'il affichait, donc la même
+        // matière. `nd-berry_bush-0` : un buisson VIDÉ n'a plus de baies, ses feuilles
+        // non plus.
+        const texture = e.type === 'berry_bush'
+          ? `nd-berry_bush-0${this.lighting ? '_lit' : ''}`
+          : this.lighting && LIT_NODE_TYPES.has(e.type)
+            ? `nd-${e.type}_lit`
+            : `nd-${e.type}`
+        this.recolteFx?.eclatement(e.type, texture, px, py, TILE_PX, now)
+      }
+    }
+    this.epuisements.length = 0
 
     // LES SOUCHES (spec recolte-vivante D1) : ce qu'un nœud a laissé en DÉRIVANT. Elles
     // pâlissent puis disparaissent (la nature reprend le coin) — transitoire client pur.

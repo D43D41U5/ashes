@@ -136,6 +136,8 @@ import { BuildGhost } from './world/build-ghost'
 import { FellGauge, type FellCharge } from './world/fell-gauge'
 import { FlankGlow } from './world/flank-glow'
 import { HitFx } from './world/hit-fx'
+import { RecolteFx } from './world/recolte-fx'
+import { ChuteArbre } from './world/chute-arbre'
 import { createAttackFx, type AttackFx, type Zone } from './world/attack-fx'
 import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
@@ -431,6 +433,10 @@ export class WorldScene extends Phaser.Scene {
   private view!: SnapshotView
   /** Le retour de frappe (tressaillement + butin qui monte) — spec recolte.md G9. */
   private hitFx!: HitFx
+  /** LES ÉCLATS arrachés au nœud — 3e signe de la récolte (spec recolte.md G10). */
+  private recolteFx!: RecolteFx
+  /** LES ARBRES QUI S'ABATTENT quand le fût est vidé (spec recolte.md G15). */
+  private chuteArbre!: ChuteArbre
   /** La silhouette de ce qu'on va poser, quand le mode construction est armé. */
   private buildGhost!: BuildGhost
   /** La jauge d'abattage au-dessus de l'arbre qu'on charge (spec recolte-maitrise). */
@@ -556,7 +562,11 @@ export class WorldScene extends Phaser.Scene {
     this.attackFx = createAttackFx(this, OVERLAY_DEPTH - 10)
     // Sous le télégraphe : l'arme se pose SUR le corps, la zone se peint AU SOL.
     this.handWeapons = createHandWeapons(this, OVERLAY_DEPTH - 12)
+    this.recolteFx = new RecolteFx(this)
+    this.chuteArbre = new ChuteArbre(this)
     this.view.setHitFx(this.hitFx) // elle seule dessine les nœuds : à elle le tressaillement
+    this.view.setRecolteFx(this.recolteFx) // …et la gerbe d'éclats, qui a besoin des mêmes px
+    this.view.setChuteArbre(this.chuteArbre) // …et la chute, qui a besoin de la MÊME tuile qu'avant la dérive
     this.buildGhost = new BuildGhost(this)
     this.fellGauge = new FellGauge(this)
     this.flankGlow = new FlankGlow(this)
@@ -1002,7 +1012,6 @@ export class WorldScene extends Phaser.Scene {
       }),
     )
 
-    this.hitFx.update(time)
     this.ground.render(this.cameras.main)
     // LE VENT DE LA SIM (spec chasse C17) : le décor plie DANS SON SENS. C'est
     // la seule affordance de l'odorat — et elle doit exister, sans quoi la règle
@@ -1013,6 +1022,22 @@ export class WorldScene extends Phaser.Scene {
     this.clutter?.setBarriers(this.view.structures)
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y, time)
+    // LA MÉMOIRE DES COUPS S'OUBLIE **APRÈS** LA BOUCLE DE NŒUDS, JAMAIS AVANT.
+    //
+    // Elle s'oubliait avant, et ça rendait le retour de frappe MUET dès que la frame
+    // s'allongeait : la mémoire d'un coup ne vit que 220 ms, et une frame lente (le
+    // rendu logiciel du smoke tourne à ~3 im/s, mais une simple hoquet suffit) la
+    // purgeait AVANT que la boucle de nœuds ait eu sa seule chance de la lire. Le
+    // tressaillement partait avec — un défaut ANTÉRIEUR aux éclats, que personne
+    // n'avait vu parce que rien ne le regardait (aucun scénario ne pilotait une vraie
+    // récolte jusqu'à l'écran). Dans cet ordre, tout coup reçu obtient exactement une
+    // passe de rendu, quelle que soit la durée de la frame. Mesuré : `--scenario eclats`
+    // ne voyait NAISSER aucune gerbe avant cette inversion, trois matières sur trois.
+    this.hitFx.update(time)
+    // APRÈS la boucle de nœuds : c'est elle qui vient d'y jeter les gerbes du coup reçu,
+    // et les arbres qu'un dernier coup vient d'abattre.
+    this.recolteFx.update(time, deltaMs)
+    this.chuteArbre.update(time)
     // LE SANG AU SOL (spec chasse C9) : la piste, et son horloge — les gouttes
     // fraîches sont vives, les vieilles pâlissent. C'est tout ce que le chasseur
     // a pour savoir s'il suit une bête ou un souvenir.
@@ -1695,7 +1720,18 @@ export class WorldScene extends Phaser.Scene {
         // LE COUP A PORTÉ — et on ne le sait QUE parce que la sim le dit (G9). Rien
         // n'est affiché au clic : un « +1 bois » qui monte avant le refus de la sim
         // serait un mensonge, et le client n'a pas le droit de mentir (invariant §3).
-        this.hitFx.hit(event.nodeId, this.time.now) // le nœud tressaille
+        // Le nœud tressaille, ET la matière lui est arrachée — la gerbe part de la face
+        // qui me fait FACE, d'où la position du récolteur (`playerSprite`, en px monde).
+        // C'est `snapshot-view` qui l'émet : elle seule sait où le sprite du nœud est
+        // réellement posé cette frame. Ici on ne fait que consigner le coup.
+        this.hitFx.hit(
+          event.nodeId,
+          this.time.now,
+          this.playerSprite.x,
+          this.playerSprite.y,
+          event.count,
+          event.clean === true,
+        )
         publishPickup(this.registry, event.item, event.count) // et le butin s'inscrit au HUD
         // LE TEMPO du minage : le dernier coup relance le rechargement, que la lueur du
         // bon flanc REFORME visiblement (verbe 2 — la cadence se voit, pas de timer caché).

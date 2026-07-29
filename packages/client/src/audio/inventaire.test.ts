@@ -35,11 +35,12 @@ describe('l’inventaire des 61 faits', () => {
     expect(muets).toEqual([])
   })
 
-  it('l’état publié est bien l’état ACTUEL : 34 voix, 27 silences décidés', () => {
-    // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 34 sonnent
-    // VRAIMENT (et que les 27 se taisent vraiment) — ici on garde seulement la proportion.
-    expect(SONORES.length).toBe(34)
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(27)
+  it('l’état publié est bien l’état ACTUEL : 35 voix, 26 silences décidés', () => {
+    // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 35 sonnent
+    // VRAIMENT (et que les 26 se taisent vraiment) — ici on garde seulement la proportion.
+    // 34 → 35 le 2026-07-29 : `node_depleted` sort du silence (l'arbre qui tombe craque).
+    expect(SONORES.length).toBe(35)
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(26)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

@@ -66,13 +66,14 @@ describe('la table de routage audio (soundForEvent)', () => {
     expect(desaccords).toEqual([])
   })
 
-  it("l'inventaire tranché de GATE 1 : 61 faits, 34 voix", () => {
+  it("l'inventaire tranché de GATE 1 : 61 faits, 35 voix", () => {
     // Un compte, pas un jugement. S'il bouge, c'est qu'un fait de domaine est né ou qu'une
     // voix a changé — dans les deux cas, quelqu'un doit le savoir.
     const total = Object.keys(VOIX).length
     const voix = SONORES.length
     expect(total).toBe(61)
-    expect(voix).toBe(34)
+    // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
+    expect(voix).toBe(35)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

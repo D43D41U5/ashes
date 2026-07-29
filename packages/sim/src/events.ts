@@ -15,7 +15,7 @@
  * - Haute fréquence ≠ domaine : un déplacement n'est pas un événement (le
  *   replay log des inputs couvre ça) ; un premier sang, un don, un spawn, oui.
  */
-import type { RecipeId } from './balance'
+import type { NodeType, RecipeId } from './balance'
 import type { ItemId, SkillId, StructureType } from './items'
 import type { SimState } from './sim'
 
@@ -91,7 +91,13 @@ export type SimEvent =
   // A4) — l'événement porte l'info, la chronique et le retour de frappe la lisent
   // sans deviner. Absent/`false` = coup baseline (toute récolte instantanée l'est).
   | { type: 'resource_harvested'; tick: number; entityId: number; nodeId: number; item: ItemId; count: number; clean?: boolean }
-  | { type: 'node_depleted'; tick: number; nodeId: number }
+  // IL DIT CE QUI MEURT, pas seulement QUE quelque chose meurt (2026-07-29). L'événement ne
+  // portait que l'`id`, et ses consommateurs ne pouvaient donc rien en faire de MATÉRIEL :
+  // un arbre qui s'abat, un filon qui s'effondre et un buisson qu'on vide ne sonnent pas
+  // pareil, et sans le type il aurait fallu que le son aille lire l'état du monde — soit
+  // exactement l'instrumentation après coup que CLAUDE.md interdit. Le fait de domaine porte
+  // sa matière ; l'audio, la chronique et le reste n'ont plus qu'à la lire.
+  | { type: 'node_depleted'; tick: number; nodeId: number; nodeType: NodeType }
   // Le craft a un DÉBUT et une FIN distincts depuis la file (spec craft-file) :
   // `craft_queued` est l'intention (les intrants partent), `item_crafted` reste
   // l'objet qui SORT — et il ne s'émet qu'à la livraison réelle, jamais quand la
