@@ -11,8 +11,14 @@ import {
   POI,
   TERRAIN_BURNT_FOREST,
   TERRAIN_DEEP_WATER,
+  TERRAIN_FLOWER_MEADOW,
+  TERRAIN_FOREST,
   TERRAIN_GRASS,
   TERRAIN_HEATH,
+  TERRAIN_LARCH,
+  TERRAIN_MARSH,
+  TERRAIN_PINE,
+  TERRAIN_REED_MARSH,
   TERRAIN_ROAD,
   TERRAIN_SHALLOW_WATER,
   TERRAINS,
@@ -464,4 +470,221 @@ describe('A8 — les charges des nouveaux repères', () => {
     for (const z of state.map.zones) walkTo(state, playerId, z.x + 1, z.y + 1)
     expect(JSON.stringify(state.entities.find((e) => e.id === playerId)!.inventory)).toBe(avant)
   })
+})
+
+/**
+ * ═══ §2bis — LE MICRO-RELIEF MUET : une variable d'ORDRE commande les Prés Bas ═══
+ *
+ * A11 est LE critère du chantier du 2026-07-29, et il est écrit comme un RANG plutôt que comme
+ * une distance : ce qui manquait à l'ancienne carte n'était pas « de l'eau plus près des bois »,
+ * c'était **une relation**. Mesuré alors, sur trois seeds : bosquet 70/85/96, herbe 83/93/92,
+ * fleuraie 76/92/103 — des nombres du même ordre, **et dont l'ordre s'inversait d'une seed à
+ * l'autre** (seed 42 : l'herbe plus près de l'eau que le bosquet). Un seuil chiffré aurait pu
+ * passer au vert par chance ; un RANG stable sur toutes les seeds, non.
+ *
+ * Et la garde prouve d'abord sa prémisse (A11a) : si les distances devenaient toutes égales —
+ * une carte sans eau, un champ qu'on aurait débranché — les inégalités passeraient au vert
+ * pour rien. On affirme donc AUSSI que les terrains sont vraiment séparés.
+ */
+describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre', () => {
+  /** Distance de chaque tuile de la Racine à l'eau la plus proche, en tuiles, au pas de 4.
+   *  BFS multi-source 4-connexe (R23), à la maille grossière : 80× moins cher, et l'écart
+   *  qu'on mesure se compte en dizaines de tuiles. */
+  const distancesALEau = (c: CarteZonee): Map<number, number> => {
+    const { width, height, terrain } = c.map
+    const P = 4
+    const W = Math.ceil(width / P)
+    const H = Math.ceil(height / P)
+    const dist = new Int32Array(W * H).fill(-1)
+    let file: number[] = []
+    for (let i = 0; i < width * height; i++) {
+      if (c.zone[i] !== c.graphe.racine || !eau(terrain[i]!)) continue
+      const k = Math.floor((i % width) / P) + Math.floor(Math.floor(i / width) / P) * W
+      if (dist[k] === -1) { dist[k] = 0; file.push(k) }
+    }
+    for (let d = 0; file.length > 0; d++) {
+      const suivante: number[] = []
+      for (const k of file) {
+        const kx = k % W
+        const ky = (k - kx) / W
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const nx = kx + dx
+          const ny = ky + dy
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue
+          const nk = ny * W + nx
+          if (dist[nk] !== -1) continue
+          dist[nk] = d + 1
+          suivante.push(nk)
+        }
+      }
+      file = suivante
+    }
+    // Moyenne par terrain, sur la terre marchable de la Racine.
+    const somme = new Map<number, number>()
+    const compte = new Map<number, number>()
+    for (let i = 0; i < width * height; i++) {
+      if (c.zone[i] !== c.graphe.racine) continue
+      const t = terrain[i]!
+      if (TERRAINS[t]?.walkable !== true) continue
+      const k = Math.floor((i % width) / P) + Math.floor(Math.floor(i / width) / P) * W
+      const d = dist[k]!
+      if (d < 0) continue
+      somme.set(t, (somme.get(t) ?? 0) + d * P)
+      compte.set(t, (compte.get(t) ?? 0) + 1)
+    }
+    const moy = new Map<number, number>()
+    for (const [t, n] of compte) if (n > 500) moy.set(t, somme.get(t)! / n)
+    return moy
+  }
+
+  it('A11 — le RANG à l’eau est le même sur toute seed : marais < roselière < bosquet < herbe < fleuraie', () => {
+    for (const { c } of mondes) {
+      const seed = c.graphe.seed
+      const d = distancesALEau(c)
+      const de = (t: number, nom: string): number => {
+        const v = d.get(t)
+        expect(v, `seed ${seed} : pas assez de ${nom} pour mesurer`).toBeDefined()
+        return v!
+      }
+      const marais = de(TERRAIN_MARSH, 'marais')
+      const roseliere = de(TERRAIN_REED_MARSH, 'roselière')
+      const bosquet = de(TERRAIN_FOREST, 'bosquet')
+      const herbe = de(TERRAIN_GRASS, 'herbe')
+      const fleuraie = de(TERRAIN_FLOWER_MEADOW, 'fleuraie')
+
+      expect(marais, `seed ${seed} : marais < roselière`).toBeLessThan(roseliere)
+      expect(roseliere, `seed ${seed} : roselière < bosquet`).toBeLessThan(bosquet)
+      expect(bosquet, `seed ${seed} : bosquet < herbe`).toBeLessThan(herbe)
+      expect(herbe, `seed ${seed} : herbe < fleuraie`).toBeLessThan(fleuraie)
+
+      // A11a — LA PRÉMISSE : les rangs ne valent que si les terrains sont VRAIMENT séparés.
+      // Sur l'ancienne carte, ces cinq nombres tenaient dans une trentaine de tuiles et leur
+      // ordre changeait avec la seed ; ici le pré sec est à plus de cent tuiles du bosquet.
+      expect(fleuraie - bosquet, `seed ${seed} : la fleuraie doit être NETTEMENT plus sèche que le bosquet`)
+        .toBeGreaterThan(60)
+    }
+  })
+
+  it('A12 — la composition est un CONTRAT, pas un espoir (les seuils sont des quantiles)', () => {
+    for (const { c } of mondes) {
+      const seed = c.graphe.seed
+      const { width, height, terrain } = c.map
+      let tot = 0
+      const cpt = new Map<number, number>()
+      for (let i = 0; i < width * height; i++) {
+        if (c.zone[i] !== c.graphe.racine) continue
+        tot++
+        cpt.set(terrain[i]!, (cpt.get(terrain[i]!) ?? 0) + 1)
+      }
+      const part = (t: number): number => (100 * (cpt.get(t) ?? 0)) / tot
+      expect(part(TERRAIN_FOREST), `seed ${seed} : bosquet`).toBeGreaterThanOrEqual(9)
+      expect(part(TERRAIN_FOREST), `seed ${seed} : bosquet`).toBeLessThanOrEqual(16)
+      expect(part(TERRAIN_FLOWER_MEADOW), `seed ${seed} : fleuraie`).toBeGreaterThanOrEqual(10)
+      expect(part(TERRAIN_FLOWER_MEADOW), `seed ${seed} : fleuraie`).toBeLessThanOrEqual(18)
+      // Les Prés Bas restent un PRÉ : on s'y reconnaît à son CIEL (worldgen R7).
+      expect(part(TERRAIN_GRASS), `seed ${seed} : herbe`).toBeGreaterThanOrEqual(50)
+      expect(part(TERRAIN_GRASS), `seed ${seed} : herbe`).toBeLessThanOrEqual(62)
+    }
+  })
+
+  it('A13 — la Racine marchable reste d’UN SEUL TENANT : l’eau neuve n’enclave personne', () => {
+    for (const { c } of mondes) {
+      const { width, height, terrain } = c.map
+      const vu = new Uint8Array(width * height)
+      let plusGrande = 0
+      let total = 0
+      for (let i = 0; i < width * height; i++) {
+        if (c.zone[i] !== c.graphe.racine || TERRAINS[terrain[i]!]?.walkable !== true) continue
+        total++
+        if (vu[i]) continue
+        const q = [i]
+        vu[i] = 1
+        let n = 0
+        for (let k = 0; k < q.length; k++) {
+          const j = q[k]!
+          n++
+          const jx = j % width
+          for (const v of [jx > 0 ? j - 1 : -1, jx + 1 < width ? j + 1 : -1, j - width, j + width]) {
+            if (v < 0 || v >= width * height || vu[v] || c.zone[v] !== c.graphe.racine) continue
+            if (TERRAINS[terrain[v]!]?.walkable !== true) continue
+            vu[v] = 1
+            q.push(v)
+          }
+        }
+        if (n > plusGrande) plusGrande = n
+      }
+      // Une poignée de tuiles isolées derrière un lac serait tolérable ; un pays coupé en deux
+      // ne l'est pas. On exige que la composante principale porte tout le pays, à 1 % près.
+      expect(plusGrande / total, `seed ${c.graphe.seed} : la Racine est morcelée`).toBeGreaterThan(0.99)
+    }
+  })
+
+  it('A14 — les BOSQUETS DE CRÊTE : un bois sec, nombreux, et PLUS LOIN de l’eau que le bois humide', () => {
+    for (const { c } of mondes) {
+      const seed = c.graphe.seed
+      const { width, height, terrain } = c.map
+      const sec = (t: number): boolean => t === TERRAIN_PINE || t === TERRAIN_LARCH
+
+      // ── LE COMPTE : des composantes 4-connexes de conifère, à la taille d’un vrai bois. ──
+      const vu = new Uint8Array(width * height)
+      const tailles: number[] = []
+      for (let i = 0; i < width * height; i++) {
+        if (vu[i] || c.zone[i] !== c.graphe.racine || !sec(terrain[i]!)) continue
+        const q = [i]
+        vu[i] = 1
+        let n = 0
+        for (let k = 0; k < q.length; k++) {
+          const j = q[k]!
+          n++
+          const jx = j % width
+          for (const v of [jx > 0 ? j - 1 : -1, jx + 1 < width ? j + 1 : -1, j - width, j + width]) {
+            if (v < 0 || v >= width * height || vu[v] || c.zone[v] !== c.graphe.racine) continue
+            if (!sec(terrain[v]!)) continue
+            vu[v] = 1
+            q.push(v)
+          }
+        }
+        tailles.push(n)
+      }
+      // 400 tuiles = 20 de côté : en deçà c'est un buisson, pas un repère qu'on voit venir.
+      const vrais = tailles.filter((n) => n >= 400)
+      expect(vrais.length, `seed ${seed} : bosquets de crête (≥ 400 tuiles)`).toBeGreaterThanOrEqual(5)
+
+      // ── « LOIN DES POINTS D’EAU » — et c'est un RANG, pas une distance écrite. ──
+      // La demande d'Alexis était « loin de l'eau » ; l'implémentation la tient en exigeant que
+      // le sommet soit dans la bande sèche de l'humidité, laquelle DÉRIVE de la distance à l'eau.
+      // On affirme donc la DEMANDE (le bois sec est plus loin de l'eau que le bois humide), pas
+      // le moyen — si demain le placement change de mécanisme, ce critère reste le bon.
+      const d = distancesALEau(c)
+      const humide = d.get(TERRAIN_FOREST)
+      const pin = d.get(TERRAIN_PINE)
+      const meleze = d.get(TERRAIN_LARCH)
+      expect(humide, `seed ${seed} : pas assez de bosquet humide`).toBeDefined()
+      expect(pin ?? meleze, `seed ${seed} : pas assez de conifère pour mesurer`).toBeDefined()
+      for (const [nom, v] of [['pin', pin], ['mélèze', meleze]] as const) {
+        if (v === undefined) continue
+        expect(v, `seed ${seed} : le ${nom} doit être PLUS LOIN de l’eau que le bosquet humide`)
+          .toBeGreaterThan(humide! * 3)
+      }
+    }
+  })
+
+  it('A16 — aucune eau douce dans l’EMPRISE d’un seuil (worldgen R10.3 : pas même à boire)', () => {
+    for (const { c } of mondes) {
+      const { width, height, terrain } = c.map
+      // L'EMPRISE, c'est le COULOIR — les tuiles que `percerSeuil` a marquées `rampe`. Pas un
+      // rayon de confort autour du point de seuil : `masqueDesSeuils` interdit déjà l'eau
+      // dormante dans ce rayon, une garde qui le rebalaierait n'affirmerait que l'implémentation.
+      // Ici on affirme la RÈGLE, et sur la seule surface qu'elle nomme. Une tuile d'eau suffit à
+      // faire échouer : on ne boit pas dans une porte.
+      let mouillees = 0
+      for (let i = 0; i < width * height; i++) {
+        if (c.rampe[i] !== 1) continue
+        if (c.zone[i] !== c.graphe.racine) continue
+        if (eau(terrain[i]!)) mouillees++
+      }
+      expect(mouillees, `seed ${c.graphe.seed} : un couloir de seuil a les pieds dans l’eau`).toBe(0)
+    }
+  })
+
 })

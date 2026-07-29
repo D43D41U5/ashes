@@ -1,0 +1,524 @@
+/**
+ * ═══ LE MICRO-RELIEF MUET — la variable d'ORDRE des Prés Bas ═══
+ *
+ * *Décision d'Alexis, 2026-07-29, sur la carte rendue : « l'enchaînement des biomes ne suit aucune
+ * logique et produit un patchwork de rectangles… idem pour l'eau, on a juste posé l'eau sur le
+ * patchwork de biome — sauf les marais, qui sont assez logiquement posés. »*
+ *
+ * LA MESURE QUI A TRANCHÉ (2026-07-29, trois seeds, BFS multi-source depuis l'eau). Distance
+ * moyenne à l'eau, par terrain de la Racine, en tuiles :
+ *
+ *   | seed | marais | roselière | bosquet | herbe | fleuraie | futaie |
+ *   |    1 |      3 |         8 |      70 |    83 |       76 |    102 |
+ *   |    7 |      3 |         8 |      85 |    93 |       92 |     81 |
+ *   |   42 |      3 |         8 |      96 |    92 |      103 |    112 |
+ *
+ * Deux terrains savent où est l'eau ; tous les autres sont à la même distance, **et leur ordre
+ * s'inverse d'une seed à l'autre** (seed 42 : l'herbe est plus près de l'eau que le bosquet). C'est
+ * la signature mathématique de l'INDÉPENDANCE. Et ce n'est pas un hasard que les deux terrains qui
+ * savent soient précisément ceux qu'Alexis trouve logiques : le marais et la roselière étaient les
+ * SEULS terrains du T0 posés par une règle DÉRIVÉE (`frangeDeMarais` relit l'eau déjà peinte).
+ *
+ *   **Ce qui se lit comme logique, c'est ce qui est DÉRIVÉ. Ce qui se lit comme arbitraire, c'est
+ *   ce qui est POSÉ.**
+ *
+ * Avant : `solDe` composait le sol des Prés Bas avec DEUX bruits indépendants, seuillés — l'un
+ * pour la fleuraie, l'autre pour les bosquets, graines différentes, zéro interaction — et l'eau
+ * était posée par-dessus par tirage-rejet (`rectPosable` ne demandait que « dans la Racine,
+ * marchable, à ≥ 6 tuiles d'une frontière »). Trois systèmes, trois hasards, aucune cause commune.
+ *
+ * Après : UNE variable, et tout la lit.
+ *
+ *   micro-relief  →  l'eau va dans les creux  →  l'humidité rayonne de l'eau  →  la végétation
+ *   suit l'humidité
+ *
+ * Le relief est la CAUSE, l'humidité l'EFFET. C'est la seule chaîne qui explique aussi *pourquoi
+ * le lac est là* — un champ d'humidité seul aurait ordonné la végétation en laissant l'eau
+ * inexpliquée.
+ *
+ * ═══ IL EST MUET, ET C'EST LE POINT ═══
+ *
+ * Le champ n'est JAMAIS rendu, jamais stocké dans la carte, jamais lu au runtime : **la carte
+ * reste plate** (pivot RimWorld du 2026-07-17 — pas de palier, pas de marche, pas de falaise
+ * intra-zone). Il ne vit que le temps de la génération. Ça ne rouvre pas le renversement du §1 de
+ * `worldgen.md` (« on génère d'abord un GRAPHE de zones, le terrain en découle ») : le graphe
+ * reste roi, il décide encore de tout ce qui est structure — zones, frontières, seuils, paliers.
+ * Le relief ne décide que de la CHAIR d'UNE zone, à l'intérieur de ses murs. C'est très exactement
+ * ce que R36 laisse ouvert : *« l'élévation flottante [0,1] ne survit que comme DÉRIVÉE. »*
+ *
+ * ═══ LES SEUILS SONT DES QUANTILES, PAS DES VALEURS ═══
+ *
+ * `fbm2` a une moyenne de 0,5 et un écart-type d'environ 0,17, mais sa distribution BOUGE d'une
+ * seed à l'autre. Seuiller sur une valeur absolue ferait donc varier la composition de la zone
+ * d'une carte à l'autre — et une seed sortirait un jour avec 40 % de bois là où le design en veut
+ * 14 % (worldgen R7 : *les Prés Bas se reconnaissent à leur CIEL*). On seuille donc sur des
+ * QUANTILES du champ réellement tiré : la part de chaque terrain est un CONTRAT, pas un espoir.
+ * Le quantile se lit dans un histogramme d'entiers (jamais un tri) — déterministe sans dépendre
+ * de la stabilité du tri du moteur.
+ *
+ * Pur et déterministe : `fbm2`/`hash2`, et `+ - * / sqrt abs floor ceil round sign min max`
+ * uniquement (invariant n°2).
+ */
+import { fbm2 } from './noise'
+import type { GrapheZones } from './zonegraph'
+
+export const CREUX = {
+  /** Le quantum de décision, en tuiles — le MOTIF de `zonegen.ts`. Tout est rectiligne (R32) :
+   *  le champ décide, le carré de 8 exécute. */
+  MOTIF: 8,
+
+  /** Échelle de la grande ondulation, en tuiles. 300 sur une Racine de ~1400×560 : quatre ou cinq
+   *  grandes cuvettes en travers, deux en profondeur. C'est la FORME du fond de vallée. */
+  ECHELLE_LARGE: 300,
+  /** Échelle du vallonnement de détail — les petits vallons dans les grands. */
+  ECHELLE_FINE: 90,
+  /** Poids de la fine dans le mélange. Assez pour que deux cuvettes voisines ne soient pas jumelles,
+   *  pas assez pour hacher la grande forme (qui est ce qui rend le relief LISIBLE). */
+  POIDS_FINE: 0.32,
+
+  // ══ L'EAU — elle va dans les creux ═══════════════════════════════════════════════════════
+  /** Part des cellules de la Racine assez basses pour porter un lac. Un lac se creuse dans le
+   *  fond d'une cuvette : on ne retient que le dixième le plus bas du pays. */
+  PART_BASSIN: 0.1,
+  /** Épaisseur de la lame d'eau au-dessus du point bas, en unités d'altitude. C'est elle qui fait
+   *  qu'un lac ÉPOUSE sa cuvette : on pose un niveau, on inonde ce qui est dessous. */
+  LAME: 0.05,
+  /**
+   * DE COMBIEN DE `LAME` UN RUISSEAU PEUT-IL ENJAMBER UN SILLON, en sortant de son lac.
+   *
+   * Le déversoir d'un lac n'est PAS le col réel de sa cuvette : l'inondation est plafonnée
+   * (`LAC_MAX_CELLULES`), donc le plan d'eau s'arrête avant d'atteindre le col, et tout ce qui
+   * entoure son pourtour MONTE encore. Une première écriture qui exigeait une descente stricte
+   * n'a pas peint un seul ruisseau sur toute la carte — l'algorithme était juste, la prémisse
+   * était fausse. On accorde donc au filet d'eau de quoi finir de gravir le col avant de couler.
+   *
+   * 3 → trois lames, soit 0,15 d'altitude : assez pour sortir d'une cuvette plafonnée, trop peu
+   * pour escalader un dos. Au-delà, le lac n'a pas d'exutoire, et c'est la bonne réponse.
+   */
+  FRANCHISSEMENT: 3,
+
+  // ══ L'HUMIDITÉ — elle rayonne de l'eau, et elle stagne dans les creux ═══════════════════
+  //
+  // L'ÉQUILIBRE ENTRE CES DEUX POIDS EST LE RÉGLAGE DÉLICAT du chantier, et il a été payé à
+  // l'œil. Premier essai (eau 0,5 / creux 0,5, portée 8) : les bois se collaient à l'eau à
+  // DOUZE tuiles de moyenne quand l'herbe était à cent dix — un liseré sombre autour de chaque
+  // lac, pas un bois. Une variable d'ordre trop obéissante ne fabrique pas de la logique, elle
+  // fabrique une courbe de niveau. Le creux domine donc : le bois pousse dans les VALLONS,
+  // qu'il y ait un lac au fond ou non, et l'eau ne fait que renforcer.
+  /** Portée de l'eau, en MOTIFS (× 8 tuiles). 14 → 112 tuiles : une rampe LONGUE, qui décroît
+   *  doucement au lieu de dessiner un bord. */
+  PORTEE_EAU: 14,
+  /** Poids du creux dans l'humidité — l'eau stagne en bas même loin d'un lac. Il DOMINE. */
+  POIDS_CREUX: 0.66,
+  /** Poids de la proximité de l'eau — un renfort, pas la loi. */
+  POIDS_EAU: 0.34,
+  /** Amplitude du bruit ajouté à l'humidité. **C'est lui qui empêche la bande.** Sans lui, les
+   *  bois formeraient un ruban continu le long de la rivière — un dégradé propre et mort. L'ORDRE
+   *  vient du champ, la TEXTURE vient du bruit : c'est le mélange des deux qui fait une lisière
+   *  vivante plutôt qu'une courbe de niveau. */
+  AMPLITUDE_BRUIT: 0.42,
+  /** Échelle de ce bruit, en tuiles. Fin : c'est du grain de lisière, pas une seconde géographie. */
+  ECHELLE_BRUIT: 52,
+
+  // ══ LA COMPOSITION — le contrat, en parts du pays ══════════════════════════════════════
+  //
+  // Les Prés Bas sont un PRÉ : on s'y reconnaît à son CIEL (worldgen R7, palette `pres_bas`).
+  // Mesuré avant ce chantier : 66 % d'herbe, 9-10 % de bosquets, 5 % de fleuraie — soit deux
+  // tiers de la zone en un seul aplat. On rééquilibre SANS fermer le ciel : le bois monte à 14 %
+  // (il était à 9-10 %, mais il était partout ; il est désormais quelque part), et la fleuraie
+  // triple — sur les DOS SECS, qui sont la partie la plus ouverte du pays.
+  /** Part de bosquet — le quantile HAUT de l'humidité. Visé un peu HAUT à dessein : le quantile
+   *  porte sur toutes les cellules de la Racine, mais la passe ne repeint que le thème du pré —
+   *  or les cellules les plus humides sont justement celles que l'eau et le marais occupent déjà.
+   *  0,18 de quantile rend ~13 % de bosquet réel (MESURÉ). */
+  PART_BOIS: 0.18,
+  /** Part de fleuraie — le quantile BAS. Les dos secs et ensoleillés. */
+  PART_FLEURAIE: 0.16,
+
+  // ══ LES BOSQUETS DE CRÊTE — le bois SEC, et le seul repère du haut pays ═══════════════════
+  //
+  // *Demande d'Alexis, 2026-07-29 : « il faudrait quelques patchs de forêt déposés de manière
+  // équilibrée loin des points d'eau ».*
+  //
+  // LA MESURE QUI A DIT POURQUOI, et elle corrige l'hypothèse évidente : ce n'est PAS une pénurie
+  // de bois (au pire on est à 52 tuiles d'un arbre, une écran et demi — personne n'est bloqué).
+  // C'est que la FLEURAIE ne porte pas un seul arbre — `arbresDeLaRacine` sème sur l'herbe et
+  // dans la futaie, et s'arrête là (« ce sol garde sa nature ») — et que la fleuraie vient de
+  // passer de 32-38 k à 86-103 k tuiles. Le trou existait déjà ; il était un moucheté de 5 %,
+  // donc invisible. Il est devenu 13,5 % en plaques cohérentes, donc **un endroit** — et un
+  // endroit sans une seule verticale, où rien ne casse l'horizon et rien n'appelle à marcher.
+  //
+  // LE BOSQUET COIFFE UNE BOSSE — c'est le lac à l'envers, et c'est ce qui le garde DÉRIVÉ. On
+  // ne saupoudre pas des patchs avec une graine de plus : ce serait réintroduire exactement le
+  // « posé » que ce chantier a retiré. On prend le point HAUT, on pose un chapeau, on garde ce
+  // qui dépasse. Le lac inonde par en dessous, le bosquet coiffe par au-dessus, même champ.
+  //
+  // ET C'EST VRAI DU PAYSAGE, ce qui fait que les deux bois racontent deux choses : dans une
+  // vallée habitée, le fond plat se fauche pour le foin, et le bois ne survit que sur les bosses
+  // que personne ne pouvait dégager. Ripisylve en bas, bois sec en haut.
+
+  /** Pas de la grille de semis, en CELLULES de motif. 36 → 288 tuiles : sur une Racine de
+   *  178×70 cellules, une dizaine de cases, donc une dizaine de bosquets RÉGULIÈREMENT écartés.
+   *  C'est le « de manière équilibrée » : la couverture est garantie par la grille, et c'est le
+   *  RELIEF qui choisit où dans la case — jamais un tirage. */
+  CRETE_PAS: 36,
+  /** Épaisseur du chapeau sous le sommet, en unités d'altitude. Le miroir de `LAME`. */
+  CHAPEAU: 0.045,
+  /** Taille maximale d'un bosquet, en cellules de motif (× 64 tuiles). 20 → ~1 280 tuiles,
+   *  36 de côté : un bois qu'on traverse en un écran, pas une seconde Sylve. */
+  CRETE_MAX_CELLULES: 20,
+} as const
+
+/**
+ * Le champ, à la maille du MOTIF, sur le rectangle de la Racine.
+ *
+ * Structure LOCALE À LA GÉNÉRATION : elle ne va jamais dans `SimState` ni dans `WorldMap` (d'où
+ * les tableaux typés, interdits d'état de sim mais parfaits ici).
+ */
+export interface Creux {
+  /** Origine de la grille, en MOTIFS (coordonnée tuile ÷ MOTIF, plancher). */
+  mx0: number
+  my0: number
+  cols: number
+  rows: number
+  /** L'altitude de chaque cellule, [0,1]. Basse = creux. Deux octaves — c'est elle que lit la
+   *  végétation, qui a besoin du détail. */
+  alt: Float64Array
+  /**
+   * LA GRANDE ONDULATION SEULE — et c'est elle, et elle seule, qui creuse les lacs.
+   *
+   * Payé à l'œil (2026-07-29, première carte rendue) : inonder le champ à DEUX octaves donnait des
+   * lacs FILANDREUX — des tentacules, pas des plans d'eau. La faute est géométrique et vaut d'être
+   * écrite : la ligne de niveau d'un champ lisse près d'un minimum est une ellipse, donc compacte ;
+   * l'octave fine (échelle 90) y creuse des rigoles étroites qui se connectent, et l'inondation les
+   * enfile au lieu de remplir la cuvette. **On inonde donc la forme, pas le grain.**
+   */
+  altLarge: Float64Array
+  /** La cellule est-elle dans la Racine ? (centre du motif). Le reste ne compte dans aucun quantile. */
+  dedans: Uint8Array
+  /** Distance à l'eau, en MOTIFS. −1 = pas d'eau atteignable. Rempli par `mesurerLaDistanceALEau`. */
+  distEau: Int32Array
+  /** L'humidité de chaque cellule. Remplie par `composerLHumidite`. */
+  hum: Float64Array
+  /** Altitude sous laquelle une cellule peut porter un lac (quantile `PART_BASSIN`). */
+  seuilBassin: number
+  /** Humidité au-dessus de laquelle : bosquet (quantile `1 − PART_BOIS`). */
+  seuilBois: number
+  /** Humidité en dessous de laquelle : fleuraie (quantile `PART_FLEURAIE`). */
+  seuilFleuraie: number
+}
+
+/** LA GRANDE ONDULATION — la forme du fond de vallée, sans le grain. Pure. */
+function ondulation(x: number, y: number, seed: number): number {
+  return fbm2(x, y, CREUX.ECHELLE_LARGE, (seed ^ 0x43524555) | 0 /* 'CREU' */)
+}
+
+/** Le vallonnement de détail, qui s'ajoute à l'ondulation. Pure. */
+function grain(x: number, y: number, seed: number): number {
+  return fbm2(x, y, CREUX.ECHELLE_FINE, (seed ^ 0x66696e65) | 0 /* 'fine' */)
+}
+
+/**
+ * LE SEUIL PAR QUANTILE — par HISTOGRAMME, jamais par tri.
+ *
+ * Rend la valeur T telle qu'environ `part` des cellules actives soient sous T. Mille vingt-quatre
+ * seaux d'entiers : déterministe au bit près sans rien devoir à la stabilité du tri du moteur JS
+ * (invariant n°2), et une seule passe.
+ */
+function seuilParQuantile(vals: Float64Array, actifs: Uint8Array, part: number, lo: number, hi: number): number {
+  const SEAUX = 1024
+  const hist = new Int32Array(SEAUX)
+  let n = 0
+  const etendue = hi - lo
+  for (let k = 0; k < vals.length; k++) {
+    if (actifs[k] === 0) continue
+    let b = Math.floor(((vals[k]! - lo) / etendue) * SEAUX)
+    if (b < 0) b = 0
+    if (b >= SEAUX) b = SEAUX - 1
+    hist[b]!++
+    n++
+  }
+  if (n === 0) return lo
+  const cible = Math.floor(n * part)
+  let cum = 0
+  for (let b = 0; b < SEAUX; b++) {
+    cum += hist[b]!
+    if (cum > cible) return lo + ((b + 1) / SEAUX) * etendue
+  }
+  return hi
+}
+
+/**
+ * RELÈVE LE CREUX — le champ d'altitude de la Racine, et le seuil des bassins.
+ *
+ * `zone` doit déjà être rempli (passe 1 de `generateZonedTerrain`) : c'est lui qui dit quelles
+ * cellules appartiennent vraiment à la Racine — le rectangle n'est qu'une boîte englobante, les
+ * zones de la ceinture lui ont mordu le haut (priorité du squelette).
+ */
+export function releverLeCreux(
+  g: GrapheZones,
+  seed: number,
+  zone: Int32Array,
+  width: number,
+  height: number,
+): Creux | null {
+  const r = g.zones[g.racine]!.rect
+  if (!r) return null
+  const M = CREUX.MOTIF
+  const mx0 = Math.floor(r.x / M)
+  const my0 = Math.floor(r.y / M)
+  const cols = Math.ceil((r.x + r.w) / M) - mx0
+  const rows = Math.ceil((r.y + r.h) / M) - my0
+  if (cols <= 0 || rows <= 0) return null
+
+  const n = cols * rows
+  const alt = new Float64Array(n)
+  const altLarge = new Float64Array(n)
+  const dedans = new Uint8Array(n)
+  const distEau = new Int32Array(n).fill(-1)
+  const hum = new Float64Array(n)
+
+  for (let my = 0; my < rows; my++) {
+    for (let mx = 0; mx < cols; mx++) {
+      // Le CENTRE du motif : tout le carré de 8 partage son verdict (R32).
+      const tx = (mx0 + mx) * M + M / 2
+      const ty = (my0 + my) * M + M / 2
+      const k = my * cols + mx
+      const large = ondulation(tx, ty, seed)
+      altLarge[k] = large
+      alt[k] = large * (1 - CREUX.POIDS_FINE) + grain(tx, ty, seed) * CREUX.POIDS_FINE
+      if (tx >= 0 && ty >= 0 && tx < width && ty < height && zone[ty * width + tx] === g.racine) {
+        dedans[k] = 1
+      }
+    }
+  }
+
+  // Le seuil des bassins se lit sur la GRANDE ondulation — c'est elle qu'on inonde.
+  const seuilBassin = seuilParQuantile(altLarge, dedans, CREUX.PART_BASSIN, 0, 1)
+  return { mx0, my0, cols, rows, alt, altLarge, dedans, distEau, hum, seuilBassin, seuilBois: 1, seuilFleuraie: 0 }
+}
+
+/** L'index de la cellule qui contient la tuile (x, y) — ou −1 hors grille. */
+export function celluleDe(c: Creux, x: number, y: number): number {
+  const mx = Math.floor(x / CREUX.MOTIF) - c.mx0
+  const my = Math.floor(y / CREUX.MOTIF) - c.my0
+  if (mx < 0 || my < 0 || mx >= c.cols || my >= c.rows) return -1
+  return my * c.cols + mx
+}
+
+/**
+ * L'ALTITUDE HYDROLOGIQUE en une tuile — la GRANDE ondulation, lue au motif.
+ *
+ * Tout ce qui coule la lit : le creusement des lacs, le sens de l'écoulement d'un ruisseau, le
+ * choix de la source et de l'embouchure. **L'eau suit la forme du pays, pas son grain** — c'est
+ * la même leçon que les lacs filandreux, à l'échelle du réseau. La végétation, elle, lit `alt`
+ * (deux octaves) : elle a besoin du détail.
+ *
+ * 1 (le point le plus haut) hors grille : rien ne s'y creuse, rien n'y coule.
+ */
+export function altitudeAt(c: Creux, x: number, y: number): number {
+  const k = celluleDe(c, x, y)
+  return k < 0 ? 1 : c.altLarge[k]!
+}
+
+/**
+ * LA DISTANCE À L'EAU, en motifs — un BFS multi-source sur la grille du motif.
+ *
+ * Onze mille cellules au lieu de sept cent mille tuiles : c'est la même maille que tout le reste
+ * de la carte, et c'est quatre-vingts fois moins cher. 4-connexité, comme le pathfinder (R23).
+ */
+export function mesurerLaDistanceALEau(
+  c: Creux,
+  estEau: (x: number, y: number) => boolean,
+): void {
+  const M = CREUX.MOTIF
+  c.distEau.fill(-1)
+  let file: number[] = []
+  for (let my = 0; my < c.rows; my++) {
+    for (let mx = 0; mx < c.cols; mx++) {
+      const k = my * c.cols + mx
+      if (estEau((c.mx0 + mx) * M + M / 2, (c.my0 + my) * M + M / 2)) {
+        c.distEau[k] = 0
+        file.push(k)
+      }
+    }
+  }
+  let d = 0
+  while (file.length > 0) {
+    const suivante: number[] = []
+    for (const k of file) {
+      const kx = k % c.cols
+      const ky = (k - kx) / c.cols
+      if (kx > 0) pousser(c, suivante, ky * c.cols + kx - 1, d + 1)
+      if (kx + 1 < c.cols) pousser(c, suivante, ky * c.cols + kx + 1, d + 1)
+      if (ky > 0) pousser(c, suivante, (ky - 1) * c.cols + kx, d + 1)
+      if (ky + 1 < c.rows) pousser(c, suivante, (ky + 1) * c.cols + kx, d + 1)
+    }
+    file = suivante
+    d++
+  }
+}
+
+function pousser(c: Creux, file: number[], k: number, d: number): void {
+  if (c.distEau[k] !== -1) return
+  c.distEau[k] = d
+  file.push(k)
+}
+
+/**
+ * COMPOSE L'HUMIDITÉ — et fixe les deux seuils de végétation, par quantile.
+ *
+ * À appeler APRÈS `mesurerLaDistanceALEau`. L'humidité mêle trois termes :
+ *   — le CREUX (l'eau stagne en bas, même loin d'un lac),
+ *   — la PROXIMITÉ de l'eau (la nappe rayonne),
+ *   — un BRUIT fin, qui casse la bande (voir `AMPLITUDE_BRUIT`).
+ */
+export function composerLHumidite(c: Creux, seed: number): void {
+  const M = CREUX.MOTIF
+  const sel = (seed ^ 0x48554d49) | 0 /* 'HUMI' */
+  for (let my = 0; my < c.rows; my++) {
+    for (let mx = 0; mx < c.cols; mx++) {
+      const k = my * c.cols + mx
+      const tx = (c.mx0 + mx) * M + M / 2
+      const ty = (c.my0 + my) * M + M / 2
+      const d = c.distEau[k]!
+      // Rampe LINÉAIRE (pas d'`exp` : invariant n°2). Hors d'atteinte de l'eau : zéro.
+      const proche = d < 0 ? 0 : Math.max(0, 1 - d / CREUX.PORTEE_EAU)
+      const bas = 1 - c.alt[k]!
+      const grain = fbm2(tx, ty, CREUX.ECHELLE_BRUIT, sel) - 0.5
+      c.hum[k] = bas * CREUX.POIDS_CREUX + proche * CREUX.POIDS_EAU + grain * CREUX.AMPLITUDE_BRUIT
+    }
+  }
+  // Les seuils sont des quantiles du champ RÉELLEMENT tiré : la composition est un contrat.
+  // Bornes larges (l'humidité peut sortir de [0,1] par le bruit) — l'histogramme les clampe.
+  c.seuilBois = seuilParQuantile(c.hum, c.dedans, 1 - CREUX.PART_BOIS, -0.5, 1.5)
+  c.seuilFleuraie = seuilParQuantile(c.hum, c.dedans, CREUX.PART_FLEURAIE, -0.5, 1.5)
+}
+
+/**
+ * LE VERDICT DE VÉGÉTATION en une tuile : −1 fleuraie (sec), 0 herbe, 1 bosquet (humide).
+ *
+ * Trois terrains, UN ordre. C'est toute la réparation : avant, deux bruits indépendants
+ * décidaient chacun le leur, et rien ne rangeait l'un par rapport à l'autre.
+ */
+export function vegetationAt(c: Creux, x: number, y: number): -1 | 0 | 1 {
+  const k = celluleDe(c, x, y)
+  if (k < 0) return 0
+  const h = c.hum[k]!
+  if (h >= c.seuilBois) return 1
+  if (h < c.seuilFleuraie) return -1
+  return 0
+}
+
+/**
+ * ═══ LES BOSQUETS DE CRÊTE — LE LAC À L'ENVERS ═══
+ *
+ * Une grille grossière garantit la COUVERTURE (« de manière équilibrée ») ; à l'intérieur de
+ * chaque case, c'est le relief qui choisit le point — le SOMMET sec. On pose ensuite un chapeau
+ * `CHAPEAU` sous ce sommet et l'on garde tout ce qui dépasse : le bosquet épouse la bosse comme
+ * le lac épouse la cuvette, en union de motifs (rectiligne, R32).
+ *
+ * « LOIN DES POINTS D'EAU » EST TENU PAR CONSTRUCTION, et pas par une distance écrite : le
+ * sommet doit être dans la bande SÈCHE de l'humidité (`hum < seuilFleuraie`), or l'humidité
+ * dérive de la distance à l'eau. On n'a donc pas deux règles qui pourraient diverger — la
+ * sécheresse EST l'éloignement.
+ *
+ * `peignable` reçoit l'ORIGINE d'un motif et dit si ce carré de 8 accepte d'être boisé : le
+ * relief ne sait rien du terrain, des seuils ni de la lisière sud, et n'a pas à le savoir.
+ *
+ * IL JUGE LE MOTIF ENTIER, PAS SON CENTRE, et ce détail a une conséquence visible. En ne testant
+ * que le centre, une cellule à moitié noyée (une rive, un ruisseau, une sente) entrait dans le
+ * chapeau ; à la peinture, ses tuiles refusées COUPAIENT le bosquet, qui sortait alors en un bois
+ * plus deux ou trois miettes de vingt tuiles semées à côté. Une miette de conifère au milieu d'un
+ * pré ne se lit pas comme un boqueteau : elle se lit comme une erreur.
+ *
+ * Rend une liste de bosquets, chacun une liste de cellules de motif.
+ */
+export function coifferLesCretes(
+  c: Creux,
+  horsSeuils: Uint8Array,
+  peignable: (x: number, y: number) => boolean,
+): number[][] {
+  const M = CREUX.MOTIF
+  const n = c.cols * c.rows
+
+  // ═══ DEUX MASQUES, ET LES CONFONDRE ÉTAIT UNE FAUTE ═══
+  //
+  // Première écriture : une seule condition, « sec ET peignable », pour le sommet COMME pour le
+  // chapeau. Les bosquets sortaient minuscules et hachés, et la raison est arithmétique — la
+  // bande sèche est le quantile 16 % de l'humidité, un ensemble MOUCHETÉ (le bruit de lisière
+  // l'émiette à dessein). Exiger que chaque cellule du chapeau y tombe, c'était demander à une
+  // colline d'être entièrement faite de confettis.
+  //
+  // La sécheresse qualifie le LIEU — donc le sommet, une fois. La forme, elle, vient du RELIEF :
+  // le chapeau prend tout ce qui dépasse et qu'on a le droit de peindre. Un bois pousse sur une
+  // bosse ; il ne pousse pas seulement sur les points les plus secs de cette bosse.
+  const libre = new Uint8Array(n) // peignable : la forme du chapeau
+  const sec = new Uint8Array(n) // + assez sec pour mériter un bois : le choix du sommet
+  for (let k = 0; k < n; k++) {
+    if (c.dedans[k] !== 1) continue
+    if (horsSeuils.length > 0 && horsSeuils[k] === 0) continue
+    const kx = k % c.cols
+    const ky = (k - kx) / c.cols
+    if (!peignable((c.mx0 + kx) * M, (c.my0 + ky) * M)) continue
+    libre[k] = 1
+    // SEC : dans la bande basse de l'humidité — donc loin de l'eau, par dérivation et non par
+    // une distance écrite. Les deux règles ne peuvent pas diverger, il n'y en a qu'une.
+    if (c.hum[k]! < c.seuilFleuraie) sec[k] = 1
+  }
+
+  const pris = new Uint8Array(n)
+  const bosquets: number[][] = []
+  const P = CREUX.CRETE_PAS
+  for (let gy = 0; gy * P < c.rows; gy++) {
+    for (let gx = 0; gx * P < c.cols; gx++) {
+      // ── LE SOMMET de la case : le plus HAUT parmi les cellules libres. Comparaison stricte
+      //    puis index — ordre total, donc déterministe (invariant n°2).
+      let sommet = -1
+      let haut = -Infinity
+      for (let dy = 0; dy < P; dy++) {
+        const ky = gy * P + dy
+        if (ky >= c.rows) break
+        for (let dx = 0; dx < P; dx++) {
+          const kx = gx * P + dx
+          if (kx >= c.cols) break
+          const k = ky * c.cols + kx
+          if (sec[k] !== 1 || pris[k] === 1) continue
+          const a = c.altLarge[k]!
+          if (a > haut || (a === haut && k < sommet)) { haut = a; sommet = k }
+        }
+      }
+      if (sommet < 0) continue
+
+      // ── LE CHAPEAU : on garde ce qui dépasse, par proche-en-proche, plafonné en taille.
+      const plancher = haut - CREUX.CHAPEAU
+      const bosquet: number[] = [sommet]
+      const vu = new Set<number>([sommet])
+      for (let t = 0; t < bosquet.length && bosquet.length < CREUX.CRETE_MAX_CELLULES; t++) {
+        const k = bosquet[t]!
+        const kx = k % c.cols
+        const ky = (k - kx) / c.cols
+        const voisines = [
+          kx > 0 ? k - 1 : -1,
+          kx + 1 < c.cols ? k + 1 : -1,
+          ky > 0 ? k - c.cols : -1,
+          ky + 1 < c.rows ? k + c.cols : -1,
+        ]
+        for (const v of voisines) {
+          if (v < 0 || vu.has(v)) continue
+          vu.add(v)
+          if (libre[v] !== 1 || pris[v] === 1 || c.altLarge[v]! < plancher) continue
+          bosquet.push(v)
+          if (bosquet.length >= CREUX.CRETE_MAX_CELLULES) break
+        }
+      }
+      // Un chapeau minuscule n'est pas un bois, c'est un buisson : on préfère PAS DE BOSQUET à
+      // un moignon — la case reste ouverte, et c'est une réponse. 8 cellules = 512 tuiles, environ
+      // 23 de côté : les deux tiers d'un écran, donc un bois qu'on VOIT venir.
+      if (bosquet.length < 8) continue
+      for (const k of bosquet) pris[k] = 1
+      bosquets.push(bosquet)
+    }
+  }
+  return bosquets
+}

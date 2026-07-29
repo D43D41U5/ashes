@@ -50,7 +50,15 @@ import { calibreLeFront, computeCendreField } from './cendre'
 import { distSq } from './geometry'
 import { placePois } from './poi'
 import { fbm2, hash2 } from './noise'
-import { paintWaterRacine } from './zonegen-water'
+import { masqueDesSeuils, paintWaterRacine } from './zonegen-water'
+import {
+  coifferLesCretes,
+  composerLHumidite,
+  mesurerLaDistanceALEau,
+  releverLeCreux,
+  vegetationAt,
+  type Creux,
+} from './racine-relief'
 import { forcerLesGues, tracerLesSentes } from './zonegen-sentes'
 import { placerLesSetPieces } from './zonegen-setpieces'
 import {
@@ -355,13 +363,13 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
     }
   }
 
-  // ── PASSE 1.4 : LA LISIÈRE SUD — le seul gradient de la carte (spec t0-exploration R13-R15) ──
+  // ── PASSE 1.45 : LE MICRO-RELIEF MUET DE LA RACINE (voir `racine-relief.ts`) ──────────────
   //
-  // La frontière de la Cendrière est la seule qui AVANCE (le front la franchira au jour 1) :
-  // elle a droit à un traitement que les autres n'ont pas. Herbe → lande → lisière calcinée,
-  // par motifs dithérés — le sud se SENT avant de se toucher. Avant l'eau : la rivière qui s'y
-  // jette garde ses berges d'eau, pas de cendre.
-  peindreLisiereSud(terrain, zone, g, width, height, seed)
+  // Décision d'Alexis, 2026-07-29 : les Prés Bas cessent d'être trois hasards indépendants
+  // (deux bruits pour le sol, un tirage-rejet pour l'eau) et reçoivent UNE variable d'ordre.
+  // Le champ est INVISIBLE — la carte reste plate (pivot RimWorld) — et ne vit que le temps de
+  // la génération : il ne va ni dans `WorldMap`, ni dans `SimState`.
+  const creux = releverLeCreux(g, seed, zone, width, height)
 
   // ── PASSE 1.5 : L'EAU DE LA RACINE — lacs, LA RIVIÈRE, ruisseaux et marais des Prés Bas ──
   //
@@ -370,7 +378,37 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   // est ceint de haut-fond marchable » garantit qu'aucune poche de terre n'est enclavée — la garde
   // de connexité (passe 3) n'a rien à réparer. La rivière rend son fil et son cœur : les sentes
   // s'en servent pour percer les gués.
-  const riviere = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE)
+  //
+  // Les lacs sont désormais des CUVETTES INONDÉES (le creux commande) : ils épousent le fond du
+  // pays au lieu d'être des rectangles tirés au sort.
+  const riviere = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux)
+
+  // ── PASSE 1.55 : LA VÉGÉTATION DE LA RACINE — dérivée de l'eau qu'on vient de poser ───────
+  //
+  // APRÈS l'eau, et c'est tout le renversement de ce chantier : la végétation ne peut suivre
+  // l'humidité que si l'eau existe déjà. Bosquet dans les creux humides et le long des rives,
+  // fleuraie sur les dos secs, herbe entre les deux.
+  peindreLaVegetationRacine(terrain, zone, g, width, height, seed, creux)
+
+  // ── PASSE 1.58 : LA LISIÈRE SUD — le seul gradient de la carte (spec t0-exploration R13-R15) ──
+  //
+  // La frontière de la Cendrière est la seule qui AVANCE (le front la franchira au jour 1) :
+  // elle a droit à un traitement que les autres n'ont pas. Herbe → lande → lisière calcinée,
+  // par motifs dithérés — le sud se SENT avant de se toucher.
+  //
+  // APRÈS l'eau et la végétation depuis le 2026-07-29 (elle passait avant) : la passe de
+  // végétation repeint herbe/bosquet/fleuraie, elle EFFACERAIT donc la bande. La promesse
+  // d'origine — « la rivière qui s'y jette garde ses berges d'eau, pas de cendre » — est tenue
+  // à l'identique par l'autre bout : `peindreLisiereSud` ne touche QUE le thème du pré et
+  // laisse l'eau, le marais et la roche intacts.
+  peindreLisiereSud(terrain, zone, g, width, height, seed)
+
+  // ── PASSE 1.59 : LES BOSQUETS DE CRÊTE — le bois SEC, et le repère du haut pays ───────────
+  //
+  // Demande d'Alexis, 2026-07-29 : « quelques patchs de forêt déposés de manière équilibrée loin
+  // des points d'eau ». APRÈS la lisière sud, et c'est ce qui les tient hors du sud calciné : la
+  // passe ne coiffe que l'herbe et la fleuraie, or la lisière a déjà pris ce qui lui revient.
+  peindreLesBosquetsDeCrete(terrain, zone, g, width, height, seed, creux)
 
   // ── PASSE 1.6 : LES SET-PIECES — trois endroits à grande empreinte (spec t0-exploration R9) ──
   const setPieces = placerLesSetPieces(terrain, zone, g, width, height, seed)
@@ -571,6 +609,147 @@ function assainirLeProfond(
       }
     }
     if (corriges === 0) return
+  }
+}
+
+/**
+ * ═══ LA VÉGÉTATION DE LA RACINE — TROIS TERRAINS, UN SEUL ORDRE ═══
+ *
+ * *(Décision d'Alexis, 2026-07-29 — voir `racine-relief.ts` pour la mesure qui l'a motivée.)*
+ *
+ * `solDe` composait les Prés Bas avec deux bruits INDÉPENDANTS : l'un tirait la fleuraie, l'autre
+ * les bosquets, graines différentes, aucune interaction. D'où le grief : *« l'enchaînement des
+ * biomes ne suit aucune logique et produit un patchwork de polygones sans inspiration. »* Il n'y
+ * avait pas d'enchaînement parce qu'il n'y avait aucune VARIABLE D'ORDRE.
+ *
+ * Ici, une seule : l'humidité — elle-même dérivée du creux et de l'eau. La succession devient
+ * lisible d'un bout à l'autre du pays :
+ *
+ *   roselière → marais → BOSQUET → HERBE → FLEURAIE
+ *   (l'eau)     (la rive)  (le creux)  (le pré)  (le dos sec)
+ *
+ * ON NE REPEINT QUE LE THÈME DU PRÉ (herbe, bosquet, fleuraie) : l'eau, le marais, la roselière,
+ * la roche et tout ce que les autres passes ont posé gardent leur nature. C'est ce qui rend cette
+ * passe sûre à glisser au milieu des autres — et c'est la même règle que `peindreLisiereSud`.
+ *
+ * ET LES SET-PIECES SONT ÉPARGNÉS par construction : ils se peignent APRÈS (passe 1.6), donc le
+ * Bois Noir garde sa futaie et la Combe brumeuse sa roselière.
+ */
+function peindreLaVegetationRacine(
+  terrain: number[],
+  zone: Int32Array,
+  g: GrapheZones,
+  width: number,
+  height: number,
+  seed: number,
+  creux: Creux | null,
+): void {
+  if (!creux) return
+  const r = g.zones[g.racine]!.rect
+  if (!r) return
+
+  // L'humidité se compose APRÈS l'eau : elle en dérive. `estEau` lit le terrain déjà peint —
+  // lacs, rivière, ruisseaux et flaques comprises.
+  mesurerLaDistanceALEau(creux, (x, y) => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return false
+    const i = y * width + x
+    if (zone[i] !== g.racine) return false
+    const t = terrain[i]!
+    return t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER
+  })
+  composerLHumidite(creux, seed)
+
+  const y0 = Math.max(0, r.y)
+  const y1 = Math.min(height, r.y + r.h)
+  const x0 = Math.max(0, r.x)
+  const x1 = Math.min(width, r.x + r.w)
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = y * width + x
+      if (zone[i] !== g.racine) continue
+      const t = terrain[i]!
+      // Seul le thème du pré cède. Tout le reste est le fait d'une autre passe : on n'y touche pas.
+      if (t !== TERRAIN_GRASS && t !== TERRAIN_FOREST && t !== TERRAIN_FLOWER_MEADOW) continue
+      const v = vegetationAt(creux, x, y)
+      terrain[i] = v === 1 ? TERRAIN_FOREST : v === -1 ? TERRAIN_FLOWER_MEADOW : TERRAIN_GRASS
+    }
+  }
+}
+
+/**
+ * ═══ LES BOSQUETS DE CRÊTE — un bois SEC, et il n'est pas le même que celui des rives ═══
+ *
+ * *(Demande d'Alexis, 2026-07-29 ; essence tranchée par lui : pin et mélèze, pas le feuillu des
+ * berges. Placement : `coifferLesCretes`, dans `racine-relief.ts`.)*
+ *
+ * LE PROBLÈME MESURÉ : `arbresDeLaRacine` sème des arbres épars sur l'herbe et dense dans la
+ * futaie — et s'arrête là. La FLEURAIE ne porte pas un seul arbre (0 sur 86 000 tuiles, vérifié).
+ * Ce trou existait avant ce chantier ; la fleuraie n'étant qu'un moucheté de 5 %, il ne se voyait
+ * pas. Elle est passée à 13,5 % en plaques cohérentes : le trou est devenu un ENDROIT, et un
+ * endroit sans une seule verticale — rien qui casse l'horizon, rien vers quoi marcher.
+ *
+ * DEUX BOIS QUI RACONTENT DEUX CHOSES. Le pin et le mélèze étaient réservés aux zones de palier
+ * > 0 (`HAUT_BOIS`, dans `solDe`) ; ils descendent ici sur les crêtes sèches de la Racine. Feuillu
+ * sombre au fond humide, conifère clair sur la bosse : la logique qu'on vient d'installer (humide
+ * = couvert, sec = ouvert) reste lisible, et le bois sec ne se lit pas comme son rattrapage. C'est
+ * aussi un avant-goût de ce que promettent les hauteurs — la même grammaire que le vieil arbre
+ * dérisoire du Bois Noir, ou que le filon de fer du teaser.
+ *
+ * ON NE COIFFE QUE L'HERBE ET LA FLEURAIE. Tout le reste est le fait d'une autre passe et garde
+ * sa nature : l'eau, le marais, la roselière, la roche, la lande et le calciné du sud (qui vient
+ * d'être peint), les couloirs de seuil. La règle est la même que partout dans ce fichier.
+ */
+function peindreLesBosquetsDeCrete(
+  terrain: number[],
+  zone: Int32Array,
+  g: GrapheZones,
+  width: number,
+  height: number,
+  seed: number,
+  creux: Creux | null,
+): void {
+  if (!creux) return
+  const M = RELIEF.MOTIF
+  /** Une TUILE accepte-t-elle d'être boisée ? Seuls le pré et la fleuraie cèdent. */
+  const tuileLibre = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return false
+    const i = y * width + x
+    if (zone[i] !== g.racine) return false
+    const t = terrain[i]!
+    return t === TERRAIN_GRASS || t === TERRAIN_FLOWER_MEADOW
+  }
+  /**
+   * Un MOTIF ENTIER accepte-t-il d'être boisé ? On exige les 64 tuiles, pas une majorité — et
+   * c'est ce qui a supprimé les miettes. Un motif à moitié pris (une rive, un ruisseau, une
+   * sente) entrait dans le chapeau, puis ses tuiles refusées COUPAIENT le bosquet à la peinture :
+   * il sortait en un bois plus deux ou trois taches de vingt tuiles à côté. Une miette de
+   * conifère au milieu d'un pré ne se lit pas comme un boqueteau, elle se lit comme une erreur.
+   */
+  const peignable = (tx0: number, ty0: number): boolean => {
+    for (let dy = 0; dy < M; dy++) {
+      for (let dx = 0; dx < M; dx++) if (!tuileLibre(tx0 + dx, ty0 + dy)) return false
+    }
+    return true
+  }
+  // Le masque des seuils est celui de l'eau : un bosquet dans une porte la NOURRIRAIT (du bois),
+  // et worldgen R10.3 l'interdit au même titre que l'eau. Une seule règle, un seul masque.
+  const bosquets = coifferLesCretes(creux, masqueDesSeuils(creux, g, g.racine), peignable)
+
+  const sel = (seed ^ 0x43524554) | 0 /* 'CRET' */
+  for (const bosquet of bosquets) {
+    for (const k of bosquet) {
+      const kx = k % creux.cols
+      const tx0 = (creux.mx0 + kx) * M
+      const ty0 = (creux.my0 + (k - kx) / creux.cols) * M
+      // L'essence se tire PAR MOTIF, pas par bosquet : un bois de montagne est un mélange de pins
+      // et de mélèzes, pas une monoculture. Même grain que le reste de la carte (R32).
+      const essence = HAUT_BOIS[Math.floor(hash2(tx0 / M, ty0 / M, sel) * HAUT_BOIS.length)]!
+      // Le motif est ENTIÈREMENT libre (`peignable` l'a exigé) : on le prend en entier, et le
+      // bosquet reste donc d'un seul tenant.
+      for (let dy = 0; dy < M; dy++) {
+        for (let dx = 0; dx < M; dx++) terrain[(ty0 + dy) * width + tx0 + dx] = essence
+      }
+    }
   }
 }
 

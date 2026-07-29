@@ -24,7 +24,17 @@
  *
  * Pur et déterministe : `hash2`/`fbm2`, `+ - * / sqrt` (invariant n°2).
  */
-import { NODE_DEFS, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_OLD_GROWTH, TERRAIN_ROAD, TERRAINS, type NodeType } from './balance'
+import {
+  NODE_DEFS,
+  TERRAIN_FOREST,
+  TERRAIN_GRASS,
+  TERRAIN_LARCH,
+  TERRAIN_OLD_GROWTH,
+  TERRAIN_PINE,
+  TERRAIN_ROAD,
+  TERRAINS,
+  type NodeType,
+} from './balance'
 import { estCendre } from './cendre'
 import type { ResourceNode } from './economy'
 import { distSq } from './geometry'
@@ -427,15 +437,21 @@ function arbresDeLaRacine(c: CarteZonee, occupees: Set<number>, idStart: number)
       let ampli: number
       if (t === TERRAIN_GRASS) {
         pas = CONTENU.ARBRES_PRE_PAS; socle = 0.5; ampli = 1.2
-      } else if (t === TERRAIN_FOREST || t === TERRAIN_OLD_GROWTH) {
+      } else if (t === TERRAIN_FOREST || t === TERRAIN_OLD_GROWTH || t === TERRAIN_PINE || t === TERRAIN_LARCH) {
         // LES CLAIRIÈRES : décidées par BLOC (cf. `clairiereForet`) → des trouées RECTANGULAIRES.
         // Le MÊME champ sert au rendu du sol (qui y verdit) : une source unique, sinon les
         // clairières des arbres et celles du sol divergeraient.
         //
-        // La FUTAIE, c'est la forêt et le Bois Noir (old_growth, spec t0-exploration R9) — PAS
-        // la lisière calcinée : « admet l'arbre » ne veut pas dire « en est couvert ». Le
-        // calciné du sud garde ses arbres épars de la table commune, il ne devient pas une
-        // pépinière plus riche que le pré qu'il remplace.
+        // La FUTAIE, c'est la forêt, le Bois Noir (old_growth, spec t0-exploration R9) et — depuis
+        // le 2026-07-29 — les BOSQUETS DE CRÊTE (pin, mélèze : le bois SEC des dos, demande
+        // d'Alexis). Ce sont les quatre sols de la Racine qu'on habite sous un couvert. PAS la
+        // lisière calcinée : « admet l'arbre » ne veut pas dire « en est couvert » — le calciné du
+        // sud garde ses arbres épars de la table commune, il ne devient pas une pépinière plus
+        // riche que le pré qu'il remplace.
+        //
+        // SANS CETTE LIGNE le bosquet de crête serait un APLAT DE COULEUR : `terrainAdmet` laisse
+        // bien le pin porter des arbres, mais à la densité commune du semis (un nœud toutes les
+        // 36 tuiles) — on aurait peint un bois qui n'en est pas un.
         if (clairiereForet(c.graphe.seed, tx, ty) > 0) continue // ce bloc est une clairière : nu
         pas = CONTENU.ARBRES_FORET_PAS; socle = 0.85; ampli = 0.4
       } else {
