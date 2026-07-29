@@ -16,7 +16,7 @@ import { makeBorneTextures } from './world/borne-layer'
 import { makeGueStoneTexture } from './world/gue-stones'
 import { generateLitErratiques, generateLitPois } from '../render/poi-lit'
 import {
-  futRectsDe, houppierRectsDe, TOUTES_VARIANTES, type RectTon,
+  futRectsDe, houppierLargeur, houppierRectsDe, TOUTES_VARIANTES, type RectTon,
 } from '../render/arbre-art'
 
 export class BootScene extends Phaser.Scene {
@@ -334,7 +334,9 @@ export class BootScene extends Phaser.Scene {
       this.peindre(g, futRectsDe(v), m.futW, m.futH, `nd-${v.slug}_trunk`)
       // Houppier BLOCKY : un pavé de feuillage, coins mordus pour l'arrondir sans cercle ; un
       // conifère, lui, empile ses étages — c'est sa composition qui le dit, pas ce code.
-      this.peindre(g, houppierRectsDe(v), m.houppierS, m.houppierS, `nd-${v.slug}_crown`)
+      // La boîte du houppier n'est plus forcément CARRÉE : le saule et le parasol du vieux pin
+      // sont plus larges que hauts (`houppierW`). La texture suit les deux côtés.
+      this.peindre(g, houppierRectsDe(v), houppierLargeur(m), m.houppierS, `nd-${v.slug}_crown`)
     }
 
     // POUSSE (spec recolte-vivante D2) : un arbre qui repousse — un petit fût + une touffe

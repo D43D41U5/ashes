@@ -28,7 +28,7 @@
  * `tree`, pas des nœuds : aucun `NODE_DEFS`, aucun protocole, aucun flux RNG touché. C'est ce
  * qui rend le changement gratuit côté simulation, et réversible côté client.
  */
-import { hash2, zoneSlugAt, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_PINE, type WorldMap } from '@ashes/sim'
+import { hash2, zoneSlugAt, TERRAIN_GRASS, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_PINE, type WorldMap } from '@ashes/sim'
 import { VARIANTES, type VarianteArbre } from './arbre-art'
 
 /** Un mélange : des slugs de variante et leurs poids RELATIFS (ils n'ont pas à sommer à 1). */
@@ -115,6 +115,31 @@ const MELANGE_FUTAIE: Melange = [['hetre', 48], ['tree', 36], ['baliveau', 16]]
 const MELANGE_PIN: Melange = [['pin', 44], ['vieux_pin', 30], ['sapin', 26]]
 const MELANGE_MELEZE: Melange = [['meleze', 62], ['sapin', 22], ['pin', 16]]
 
+/**
+ * ═══ LE PRÉ — et c'est la CONCURRENCE qui parle, pas l'espèce ═══
+ *
+ * *Relevé photographique du 2026-07-29, confronté à l'espacement mesuré sur la carte.*
+ *
+ * Un hêtre de futaie est une colonne sans une branche sur les deux tiers de sa hauteur ; un
+ * hêtre isolé a des branches qui touchent l'herbe. **Même espèce, deux ports** — et c'est le
+ * voisin qui décide, pas la botanique. Cette table variait par espèce et par zone, jamais par
+ * DENSITÉ.
+ *
+ * Or la densité, elle, est mesurée : distance médiane au plus proche voisin, seed 2026,
+ * 34 479 arbres — `forest` (ubac) **1,00 tuile**, `pine`/`larch` 2,24, `old_growth` 3,00,
+ * `grass` **4,12**. Dans l'ubac, à 16 px d'écart pour des cimes de 32, le couvert est déjà
+ * saturé : il n'y a pas un pixel de marge, et `tree` n'y est pas touché. Sur l'herbe, à 66 px,
+ * une cime large reste ISOLÉE — c'est le seul terrain du jeu qui autorise la forme de plein
+ * champ.
+ *
+ * Le HÊTRE en est absent, et c'est le sens même de la règle : c'est l'arbre de la futaie fermée,
+ * il n'a rien à faire seul au milieu d'un pré.
+ *
+ * (L'herbe ne porte des arbres que dans la RACINE, par la passe dédiée `arbresDeLaRacine` — cf.
+ * la note d'A19 plus haut. Lire le SOL suffit donc à dire « le pré », sans énumérer les zones.)
+ */
+const MELANGE_PRE: Melange = [['chene_pre', 46], ['saule', 16], ['bouleau', 14], ['baliveau', 24]]
+
 /** Tire dans un mélange, en fonction d'un hachage [0,1). Total pré-calculé à chaque appel :
  *  cinq additions, contre une table à maintenir en parallèle qui finirait par diverger. */
 function tirer(m: Melange, h: number): string {
@@ -155,6 +180,12 @@ export function varianteArbre(map: WorldMap, tx: number, ty: number, seed: numbe
   if (sol === TERRAIN_OLD_GROWTH) {
     return VARIANTES[tirer(MELANGE_FUTAIE, hash2(tx, ty, (seed ^ SEL) | 0))] ?? VARIANTES.tree!
   }
+  // ②bis LE PRÉ : à 4,12 tuiles entre deux troncs, l'arbre pousse en PLEIN CHAMP — fût court,
+  // cime large. C'est la même lecture du sol que pour le conifère et la futaie, appliquée à
+  // l'autre bout de l'échelle de concurrence.
+  if (sol === TERRAIN_GRASS) {
+    return VARIANTES[tirer(MELANGE_PRE, hash2(tx, ty, (seed ^ SEL) | 0))] ?? VARIANTES.tree!
+  }
   // ③ LA ZONE décide du mélange de feuillus.
   const zone = zoneSlugAt(map, tx, ty)
   const m = (zone !== undefined ? MELANGE_PAR_ZONE[zone] : undefined) ?? DEFAUT
@@ -168,7 +199,7 @@ export const ZONES_PEUPLEES: readonly string[] = Object.keys(MELANGE_PAR_ZONE)
 /** Les variantes qu'un mélange peut rendre — pour la garde d'exhaustivité des textures. */
 export function variantesAtteignables(): readonly string[] {
   const out = new Set<string>(['old_tree'])
-  for (const m of [...Object.values(MELANGE_PAR_ZONE), DEFAUT, MELANGE_FUTAIE, MELANGE_PIN, MELANGE_MELEZE]) {
+  for (const m of [...Object.values(MELANGE_PAR_ZONE), DEFAUT, MELANGE_FUTAIE, MELANGE_PRE, MELANGE_PIN, MELANGE_MELEZE]) {
     for (const [slug] of m) out.add(slug)
   }
   return [...out].sort()

@@ -95,7 +95,8 @@ function carveCracks(hf: Float32Array, w: number, h: number, cracks: readonly Cr
 /**
  * LA carte de normales : masque alpha → butte lissée (`passes`) → facettes de `cell` px →
  * gradient de cellule × `k`. `plant` = base plantée (le bord bas ne plonge plus — le galet ne
- * « roule » pas sous sa base) ; `cracks` = sillons gravés avant lissage.
+ * « roule » pas sous sa base) ; `cracks` = sillons gravés avant lissage ; `relief` = hauteur de
+ * MATIÈRE non binaire (l'écorce d'un tronc), qui remplace le plateau plein.
  */
 export function normalFromCanvas(
   src: HTMLCanvasElement,
@@ -104,6 +105,7 @@ export function normalFromCanvas(
   cell = 2,
   plant = false,
   cracks: readonly Crack[] = [],
+  relief?: Float32Array,
 ): HTMLCanvasElement {
   const w = src.width, h = src.height
   // Le drapeau ne mord que si `src` vient de `newCanvas` (il y est déjà) — on le redit ici pour
@@ -111,6 +113,16 @@ export function normalFromCanvas(
   const srcData = src.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, w, h).data
   let hf = new Float32Array(w * h)
   for (let i = 0; i < w * h; i++) hf[i] = srcData[i * 4 + 3]! > 8 ? 1 : 0
+  // LE RELIEF INTERNE — la seule chose que ce module ne savait pas faire, et qui manquait.
+  //
+  // Le champ de départ est BINAIRE : matière (1) ou vide (0). Une masse pleine est donc un
+  // PLATEAU, et la normale n'y trouve de pente qu'aux BORDS — c'est parfait pour un galet ou un
+  // houppier, dont toute la forme est la silhouette, et c'est précisément pourquoi le tronc,
+  // lui, avait dû être calculé à part (un cylindre analytique dans `lit-trees`). Un `relief`
+  // facultatif donne à la matière une hauteur non binaire : l'écorce peut enfin creuser DANS la
+  // colonne. Il ne s'applique qu'à la matière (`hf > 0`), jamais au vide — le contour reste la
+  // silhouette, et sans lui le module rend exactement ce qu'il rendait.
+  if (relief) for (let i = 0; i < w * h; i++) if (hf[i]! > 0) hf[i] = relief[i]!
   if (plant) {
     for (let x = 0; x < w; x++) {
       let lowest = -1

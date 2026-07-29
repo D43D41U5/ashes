@@ -6303,6 +6303,72 @@ const SCENARIOS = {
     return {}
   },
 
+  /**
+   * LA PLANCHE DES ARBRES — les onze variantes `_lit`, composées comme en jeu, côte à côte.
+   *
+   * Elle existe parce qu'une silhouette d'arbre ne se juge pas sur un diff : le parasol du vieux
+   * pin, le fût gris du hêtre et les lenticelles du bouleau sont des faits d'IMAGE. En jeu, ces
+   * variantes sont dispersées sur trois cents mètres de carte et sur trois sols différents —
+   * les réunir sur une planche est la seule façon de les comparer d'un coup d'œil.
+   *
+   * On lit les textures VIVANTES de la scène (`nd-<slug>_trunk_lit` / `_crown_lit`) : c'est le
+   * pipeline réel, albédo aplati compris, pas un aperçu offline.
+   */
+  async arbres(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const planche = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const tm = sc.textures
+      const slugs = tm.getTextureKeys()
+        .filter((k) => k.startsWith('nd-') && k.endsWith('_trunk_lit'))
+        .map((k) => k.slice(3, -('_trunk_lit'.length)))
+        .sort()
+      const Z = 3, GAP = 6
+      // Chaque arbre occupe la largeur de son houppier ; la planche fait la hauteur du plus haut.
+      const tailles = slugs.map((s) => {
+        const t = tm.get(`nd-${s}_trunk_lit`).getSourceImage()
+        const c = tm.get(`nd-${s}_crown_lit`).getSourceImage()
+        return { s, tw: t.width, th: t.height, cw: c.width, ch: c.height }
+      })
+      const H = Math.max(...tailles.map((t) => t.ch + t.th))
+      const W = tailles.reduce((a, t) => a + Math.max(t.cw, t.tw) + GAP, GAP)
+      const cv = document.createElement('canvas')
+      cv.width = W * Z
+      cv.height = (H + 10) * Z
+      const ctx = cv.getContext('2d')
+      ctx.imageSmoothingEnabled = false
+      ctx.fillStyle = '#2a2e26'
+      ctx.fillRect(0, 0, cv.width, cv.height)
+      let x = GAP
+      const posés = []
+      for (const t of tailles) {
+        const larg = Math.max(t.cw, t.tw)
+        const sol = H + 4
+        // LE RECOUVREMENT SE DÉDUIT, il n'a pas à être exposé : la garde E1 impose que la
+        // hauteur totale (fût + houppier − recouvrement) soit un compte ENTIER de tuiles, et
+        // le recouvrement vaut 8 à 14 px — il est donc l'unique reste de (fût + houppier) mod 16.
+        const recouvrement = (t.th + t.ch) % 16
+        const ancrage = t.th - recouvrement // hauteur du BAS du houppier au-dessus des pieds
+        ctx.drawImage(tm.get(`nd-${t.s}_trunk_lit`).getSourceImage(),
+          (x + (larg - t.tw) / 2) * Z, (sol - t.th) * Z, t.tw * Z, t.th * Z)
+        ctx.drawImage(tm.get(`nd-${t.s}_crown_lit`).getSourceImage(),
+          (x + (larg - t.cw) / 2) * Z, (sol - ancrage - t.ch) * Z, t.cw * Z, t.ch * Z)
+        posés.push({
+          slug: t.s, crown: `${t.cw}×${t.ch}`, trunk: `${t.tw}×${t.th}`,
+          hauteur: ancrage + t.ch, tuiles: (ancrage + t.ch) / 16,
+        })
+        x += larg + GAP
+      }
+      return { png: cv.toDataURL('image/png'), posés, nombre: slugs.length }
+    })
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(`${OUT}/planche-arbres.png`, Buffer.from(planche.png.split(',')[1], 'base64'))
+    for (const p of planche.posés) console.log(`  ${p.slug.padEnd(11)} houppier ${p.crown.padEnd(7)} fût ${p.trunk.padEnd(6)} → ${p.hauteur} px (${p.tuiles} tuiles)`)
+    console.log(`\n✓ ${planche.nombre} variantes → ${OUT}/planche-arbres.png`)
+    return { variantes: planche.nombre }
+  },
+
   /** En jeu : on se pose SUR quelques lieux et on regarde. Clairière ? échelle ? */
   async poiInSitu(page) {
     const s = await page.evaluate(PROBE)

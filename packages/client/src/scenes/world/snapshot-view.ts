@@ -54,7 +54,7 @@ import {
   TILE_PX,
   type ActorFootprint,
 } from '../../render/framing'
-import { ancrageHouppierPx, hauteurTuiles, TOUTES_VARIANTES, VARIANTES } from '../../render/arbre-art'
+import { ancrageHouppierPx, houppierLargeur, hauteurTuiles, TOUTES_VARIANTES, VARIANTES } from '../../render/arbre-art'
 
 /** Le débord de fenêtre, en TUILES : la hauteur du plus haut arbre de la table. Dérivé une fois
  *  au chargement — un arbre qui grandit l'emporte avec lui, sans qu'on ait à y penser. */
@@ -1356,7 +1356,11 @@ export class SnapshotView {
             this.recolteFx?.feuillage(
               n.id, coup.at, now,
               `nd-${variante.slug}_crown${litTree ? '_lit' : ''}`,
-              px, py - lift, ancrageHouppierPx(m) + m.houppierS * 0.3, m.houppierS * 0.4,
+              // La HAUTEUR d'où les feuilles tombent suit la hauteur du houppier ; leur
+              // dispersion suit sa LARGEUR, qui n'est plus la même depuis `houppierW` (le saule
+              // et le parasol du vieux pin sont plus larges que hauts). Les feuilles d'un saule
+              // tombaient dans un rayon de cime carrée, donc trop serré pour la sienne.
+              px, py - lift, ancrageHouppierPx(m) + m.houppierS * 0.3, houppierLargeur(m) * 0.4,
             )
           }
         }

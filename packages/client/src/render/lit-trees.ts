@@ -16,8 +16,12 @@
  * C'était le SEUL sprite du monde volontairement éteint — l'exception tombe (da-feeling R3).
  */
 import type Phaser from 'phaser'
-import { enc, FLIP_G, newCanvas, norm3, normalFromCanvas, registerLit as register } from './normal-map'
-import { colonneX, houppierOpaqueDe, TOUTES_VARIANTES, TONS_HOUPPIER_VIEUX, type MesuresArbre } from './arbre-art'
+import { newCanvas, normalFromCanvas, registerLit as register } from './normal-map'
+import {
+  colonneX, houppierLargeur, houppierOpaqueDe, TOUTES_VARIANTES, TONS_HOUPPIER_VIEUX,
+  type MesuresArbre, type TonsFut,
+} from './arbre-art'
+import { champDeHauteur, ecorceDe, facteurPied, type Ecorce, type GrainFut } from './ecorce'
 
 /* LES COULEURS NE SONT PLUS RÉÉCRITES ICI NON PLUS. Elles étaient recopiées de l'art peint —
  * la garde de palette a fini par le voir (trois fichiers pour un même brun sans nom). C'est
@@ -30,15 +34,16 @@ function rgb(hex: string): [number, number, number] {
   return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]
 }
 
-/** Albédo UNIFORME d'un houppier : sa silhouette, à plat. */
-function crownAlbedo(S: number, opaque: (x: number, y: number) => boolean, ton: string): HTMLCanvasElement {
+/** Albédo UNIFORME d'un houppier : sa silhouette, à plat. La boîte n'est plus forcément carrée
+ *  (le saule et le parasol du vieux pin sont plus larges que hauts). */
+function crownAlbedo(W: number, S: number, opaque: (x: number, y: number) => boolean, ton: string): HTMLCanvasElement {
   const [r, g, b] = rgb(ton)
-  const { c, ctx } = newCanvas(S, S)
-  const d = ctx.createImageData(S, S)
+  const { c, ctx } = newCanvas(W, S)
+  const d = ctx.createImageData(W, S)
   for (let y = 0; y < S; y++) {
-    for (let x = 0; x < S; x++) {
+    for (let x = 0; x < W; x++) {
       if (!opaque(x, y)) continue
-      const i = (y * S + x) * 4
+      const i = (y * W + x) * 4
       d.data[i] = r; d.data[i + 1] = g; d.data[i + 2] = b; d.data[i + 3] = 255
     }
   }
@@ -51,39 +56,41 @@ function crownAlbedo(S: number, opaque: (x: number, y: number) => boolean, ton: 
  * toujours par différer d'un pixel. `houppierOpaque` les DÉDUIT du dessin peint (union de la
  * masse et du corps), donc elles ne peuvent plus s'écarter. */
 
-/** Carte de normales d'un TRONC : cylindre analytique sur la colonne du fût. */
-function trunkNormal(W: number, H: number, x0: number, x1: number): HTMLCanvasElement {
-  const { c, ctx } = newCanvas(W, H)
-  const d = ctx.createImageData(W, H)
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const i = (y * W + x) * 4
-      let dx = 0, dy = 0, dz = 1
-      if (x >= x0 && x < x1) {
-        const t = ((x - x0 + 0.5) / (x1 - x0)) * 2 - 1
-        ;[dx, dy, dz] = norm3(t * 0.9, 0, 0.7)
-      }
-      d.data[i] = enc(dx)
-      d.data[i + 1] = enc(FLIP_G ? -dy : dy)
-      d.data[i + 2] = enc(dz)
-      d.data[i + 3] = 255
-    }
-  }
-  ctx.putImageData(d, 0, 0)
-  return c
+/* LE CYLINDRE ANALYTIQUE A DISPARU (2026-07-29). `trunkNormal` calculait la normale du fût à la
+ * main — `norm3(t * 0.9, 0, 0.7)`, un dégradé CONTINU en travers de la colonne, avec `dy` nul
+ * partout. C'était la définition d'un tube, et le tronc était la seule surface du pipeline à ne
+ * pas passer par la recette commune. Il y passe désormais, avec un champ de hauteur d'ÉCORCE :
+ * voir `ecorce.ts`, qui explique pourquoi le grain se taille en Y et pas en X. */
+
+/** Mélange deux teintes `#rrggbb`. Sert au pied sombre du pin et du bouleau. */
+function melanger(a: [number, number, number], b: [number, number, number], k: number): string {
+  const v = (i: number): number => Math.round(a[i]! * (1 - k) + b[i]! * k)
+  return `rgb(${v(0)},${v(1)},${v(2)})`
 }
 
 /**
- * Albédo UNIFORME d'un fût : sa colonne, à plat, aux mesures déclarées. `coeur` (le bout clair
- * du vieux bois) est un MATÉRIAU, pas un ombrage : il reste sur l'albédo aplati.
+ * Albédo d'un fût : sa colonne, à plat, aux mesures déclarées — mais avec son ÉCORCE.
+ *
+ * Il remplissait un rectangle d'une seule couleur : c'est pour ça qu'il n'y avait aucune texture
+ * à voir sur un tronc. Les tons restent de la MATIÈRE (creux du sillon, plaque claire, lenticelle,
+ * pied sombre), donc ils survivent à l'aplatissement — comme le `coeur` du vieux bois, qui n'a
+ * jamais été un ombrage.
  */
-function futAlbedo(m: MesuresArbre, ton: string, coeur?: string): HTMLCanvasElement {
+function futAlbedo(m: MesuresArbre, tons: TonsFut, e: Ecorce, grain: GrainFut): HTMLCanvasElement {
   const { c, ctx } = newCanvas(m.futW, m.futH)
   const x = colonneX(m)
-  ctx.fillStyle = ton
-  ctx.fillRect(x, 0, m.colonneW, m.futH)
-  if (coeur !== undefined) {
-    ctx.fillStyle = coeur
+  const creux = rgb(tons.sombre)
+  for (let y = 0; y < m.futH; y++) {
+    const k = facteurPied(e, y, m.futH)
+    for (let px = x; px < x + m.colonneW; px++) {
+      const t = grain.ton[y * m.futW + px]
+      if (t === null || t === undefined) continue
+      ctx.fillStyle = k > 0 ? melanger(rgb(t), creux, k) : t
+      ctx.fillRect(px, y, 1, 1)
+    }
+  }
+  if (tons.coeur !== undefined) {
+    ctx.fillStyle = tons.coeur
     ctx.fillRect(x + 2, Math.round(m.futH * 0.125), m.colonneW - 4, Math.max(2, Math.round(m.futH * 0.08)))
   }
   return c
@@ -102,14 +109,17 @@ function futAlbedo(m: MesuresArbre, ton: string, coeur?: string): HTMLCanvasElem
 export function generateLitTrees(scene: Phaser.Scene): void {
   for (const v of TOUTES_VARIANTES) {
     const m = v.mesures
-    const crown = crownAlbedo(m.houppierS, houppierOpaqueDe(v), v.tons.lumiere)
+    const crown = crownAlbedo(houppierLargeur(m), m.houppierS, houppierOpaqueDe(v), v.tons.lumiere)
     register(scene, `nd-${v.slug}_crown_lit`, crown, normalFromCanvas(crown, 7, 3.2, 4))
-    register(
-      scene,
-      `nd-${v.slug}_trunk_lit`,
-      futAlbedo(m, v.fut.clair, v.fut.coeur),
-      trunkNormal(m.futW, m.futH, colonneX(m), colonneX(m) + m.colonneW),
-    )
+
+    // LE FÛT — même recette que tout le reste du pipeline, sur un champ de hauteur d'écorce.
+    // Les cadrans sont ceux du « cube franc » du 24/07 : `passes:1`, `k:3,5`, facettes de 2 px.
+    // À 6 px de colonne, `cell:2` donne trois pans — le budget exact d'un tronc d'arbre.
+    const e = ecorceDe(v.slug)
+    const x0 = colonneX(m)
+    const grain = champDeHauteur(e, m.futW, m.futH, x0, x0 + m.colonneW, v.fut)
+    const alb = futAlbedo(m, v.fut, e, grain)
+    register(scene, `nd-${v.slug}_trunk_lit`, alb, normalFromCanvas(alb, 1, 3.5, 2, false, [], grain.relief))
   }
 }
 

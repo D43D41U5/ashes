@@ -26,6 +26,7 @@ import {
   createEmptyMap,
   hash2,
   NODE_DEFS,
+  TERRAIN_FOREST,
   TERRAIN_GRASS,
   TERRAIN_LARCH,
   TERRAIN_OLD_GROWTH,
@@ -38,6 +39,7 @@ import {
   assiseHouppier,
   colonneX,
   hauteurPx,
+  houppierLargeur,
   houppierOpaque,
   houppierOpaqueDe,
   houppierRects,
@@ -48,8 +50,10 @@ import {
   TONS_HOUPPIER_VIEUX,
   TOUTES_VARIANTES,
   VARIANTES,
+  type MesuresArbre,
 } from './arbre-art'
 import { varianteArbre, variantesAtteignables, ZONES_PEUPLEES } from './arbre-peuplement'
+import { champDeHauteur, ecorceDe, ECORCE_PAR_VARIANTE } from './ecorce'
 import { TILE_PX } from './framing'
 
 describe('les variantes d’arbre : ce qui est déclaré est ce qui est dessiné', () => {
@@ -81,11 +85,13 @@ describe('les variantes d’arbre : ce qui est déclaré est ce qui est dessiné
 
   it('V4 — tout rect peint reste DANS sa texture', () => {
     for (const v of TOUTES_VARIANTES) {
-      const S = v.mesures.houppierS
+      // La boîte du houppier n'est plus forcément CARRÉE : `houppierW` la sépare de la hauteur
+      // pour le saule et le parasol du vieux pin. Les deux côtés se bornent séparément.
+      const W = houppierLargeur(v.mesures), S = v.mesures.houppierS
       for (const [[x, y, w, h]] of houppierRectsDe(v)) {
         expect(x, `${v.slug} houppier x`).toBeGreaterThanOrEqual(0)
         expect(y, `${v.slug} houppier y`).toBeGreaterThanOrEqual(0)
-        expect(x + w, `${v.slug} houppier déborde à droite`).toBeLessThanOrEqual(S)
+        expect(x + w, `${v.slug} houppier déborde à droite`).toBeLessThanOrEqual(W)
         expect(y + h, `${v.slug} houppier déborde en bas`).toBeLessThanOrEqual(S)
       }
       for (const [[x, y, w, h]] of futRectsDe(v)) {
@@ -133,6 +139,85 @@ describe('la généralisation n’a rien cassé', () => {
       for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) if (a(x, y) !== b(x, y)) ecarts++
       expect(ecarts, `${t} : ${ecarts} pixels d’écart entre l’ancienne silhouette et la nouvelle`).toBe(0)
     }
+  })
+})
+
+describe('l’écorce : le grain se taille en Y', () => {
+  /** Le fût d’une variante, tel que `lit-trees` le fabrique. Pur : aucun canvas ici. */
+  function grainDe(slug: string): { relief: Float32Array; m: MesuresArbre; x0: number } {
+    const v = VARIANTES[slug]!
+    const m = v.mesures
+    const x0 = colonneX(m)
+    return { relief: champDeHauteur(ecorceDe(slug), m.futW, m.futH, x0, x0 + m.colonneW, v.fut).relief, m, x0 }
+  }
+  /** L’amplitude du relief le long d’un axe — c’est ce que la lumière transforme en contraste. */
+  function amplitude(slug: string, axe: 'x' | 'y'): number {
+    const { relief, m, x0 } = grainDe(slug)
+    let max = 0
+    for (let y = 1; y < m.futH - 1; y++) {
+      for (let x = x0 + 1; x < x0 + m.colonneW - 1; x++) {
+        const a = relief[y * m.futW + x]!
+        const b = axe === 'y' ? relief[(y + 1) * m.futW + x]! : relief[y * m.futW + x + 1]!
+        max = Math.max(max, Math.abs(a - b))
+      }
+    }
+    return max
+  }
+
+  it('V15 — CHAQUE variante a une écorce nommée (jamais un repli silencieux)', () => {
+    // `ecorceDe` retombe sur le chêne pour un slug inconnu : sans cette garde, une variante
+    // ajoutée sans écorce prendrait celle du chêne sans que personne le voie.
+    for (const v of TOUTES_VARIANTES) {
+      expect(ECORCE_PAR_VARIANTE[v.slug], `« ${v.slug} » n’a pas d’écorce déclarée`).toBeDefined()
+    }
+  })
+
+  it('V16 — LE RELIEF VARIE EN Y, et c’est tout le sujet', () => {
+    // LA MESURE QUI COMMANDE (cf. l’en-tête de `ecorce.ts`) : le soleil du jeu est rasant et
+    // vient du NORD, et `sunDirection` annule sa composante x À MIDI. Une facette inclinée en X
+    // est alors MOINS contrastée qu’une surface plane (0,261 contre 0,365) — le cylindre
+    // analytique d’avant avait `dy = 0` partout, donc il ne pouvait rien dire de 10 h à 15 h.
+    //
+    // On affirme donc la seule chose qui rende une écorce visible à midi : elle a du relief le
+    // long de Y. Une écorce purement verticale repasserait cette garde en rouge.
+    for (const v of TOUTES_VARIANTES) {
+      expect(amplitude(v.slug, 'y'), `« ${v.slug} » n’a aucun relief horizontal : muet à midi`)
+        .toBeGreaterThan(0.05)
+    }
+  })
+
+  it('V17 — le HÊTRE est le plus lisse, le PIN le plus accidenté', () => {
+    // L’intention, figée : l’écorce du hêtre est lisse (son grain est l’absence de grain — c’est
+    // ce qui le sépare du chêne à trois pixels), celle du pin sylvestre est la plus polygonale.
+    const feuillus = ['tree', 'chene_pre', 'saule', 'bouleau', 'baliveau']
+    for (const autre of feuillus) {
+      expect(amplitude('hetre', 'y'), `le hêtre est plus accidenté que ${autre}`)
+        .toBeLessThan(amplitude(autre, 'y'))
+    }
+    expect(amplitude('pin', 'y')).toBeGreaterThan(amplitude('hetre', 'y'))
+  })
+
+  it('V18 — les lenticelles n’existent que sur le bouleau, et elles sont HORIZONTALES', () => {
+    for (const v of TOUTES_VARIANTES) {
+      const attendu = v.slug === 'bouleau'
+      expect(ecorceDe(v.slug).lenticelles > 0, `« ${v.slug} » : lenticelles`).toBe(attendu)
+    }
+    // Un tiret couvre PLUSIEURS colonnes d’une même ligne — sinon c’est un grain, pas une
+    // lenticelle, et le bouleau ne se reconnaît plus. (Première écriture : un hachage par blocs
+    // de 2×2, qui sortait en camouflage.)
+    const v = VARIANTES.bouleau!
+    const m = v.mesures, x0 = colonneX(m)
+    const { ton } = champDeHauteur(ecorceDe('bouleau'), m.futW, m.futH, x0, x0 + m.colonneW, v.fut)
+    let ligneLaPlusLongue = 0
+    for (let y = 0; y < m.futH; y++) {
+      let run = 0
+      for (let x = x0; x < x0 + m.colonneW; x++) {
+        run = ton[y * m.futW + x] === v.fut.sombre ? run + 1 : 0
+        ligneLaPlusLongue = Math.max(ligneLaPlusLongue, run)
+      }
+    }
+    expect(ligneLaPlusLongue, 'aucun tiret horizontal de deux pixels sur le bouleau')
+      .toBeGreaterThanOrEqual(2)
   })
 })
 
@@ -196,16 +281,45 @@ describe('le peuplement : quel arbre pousse où', () => {
   })
 
   it('V9bis — et il COUVRE son mélange : les cinq feuillus de la Racine sortent tous', () => {
-    const m = carte(TERRAIN_GRASS, 'pres_bas')
+    // Sur le SOL FORESTIER de la Racine : c’est là que le mélange de zone s’applique.
+    const m = carte(TERRAIN_FOREST, 'pres_bas')
     const vus = new Set<string>()
     for (let ty = 0; ty < 60; ty++) for (let tx = 0; tx < 60; tx++) vus.add(varianteArbre(m, tx, ty, 2026, false).slug)
     for (const attendu of ['tree', 'hetre', 'saule', 'bouleau', 'baliveau']) {
       expect(vus.has(attendu), `« ${attendu} » ne sort jamais dans les Prés Bas`).toBe(true)
     }
-    // Et AUCUN conifère : le sol est de l’herbe, pas du pin.
+    // Et AUCUN conifère : le sol est de l’ubac, pas du pin.
+    for (const conifere of ['pin', 'vieux_pin', 'sapin', 'meleze']) {
+      expect(vus.has(conifere), `« ${conifere} » pousse sur du feuillu`).toBe(false)
+    }
+  })
+
+  it('V9ter — SUR LE PRÉ, l’arbre pousse en PLEIN CHAMP : forme large, et pas de hêtre', () => {
+    // La règle du 2026-07-29 : le port suit la CONCURRENCE, pas l’espèce. Sur l’herbe, deux
+    // troncs sont à 4,12 tuiles l’un de l’autre (MESURÉ, seed 2026) — c’est le seul terrain du
+    // jeu où une cime large ne ferme pas l’écran, et donc le seul qui porte la forme isolée.
+    const m = carte(TERRAIN_GRASS, 'pres_bas')
+    const vus = new Set<string>()
+    for (let ty = 0; ty < 60; ty++) for (let tx = 0; tx < 60; tx++) vus.add(varianteArbre(m, tx, ty, 2026, false).slug)
+    expect(vus.has('chene_pre'), 'le chêne de plein champ ne sort jamais sur l’herbe').toBe(true)
+    // LE HÊTRE EN EST ABSENT, et c’est le sens même de la règle : c’est l’arbre de la futaie
+    // fermée, il n’a rien à faire seul au milieu d’un pré.
+    expect(vus.has('hetre'), 'un hêtre de futaie pousse seul dans un pré').toBe(false)
+    // Et la forme de FORÊT non plus : `tree` est un arbre de peuplement serré (42 % de fût nu).
+    expect(vus.has('tree'), 'la forme de peuplement serré pousse en plein champ').toBe(false)
     for (const conifere of ['pin', 'vieux_pin', 'sapin', 'meleze']) {
       expect(vus.has(conifere), `« ${conifere} » pousse sur de l’herbe`).toBe(false)
     }
+  })
+
+  it('V9quater — le chêne du pré est BIEN une autre forme, pas le même arbre renommé', () => {
+    // Une variante qui ne diffère que par son nom serait un mensonge de table. On affirme
+    // l’écart mesuré : fût nu deux fois plus court, cime bien plus large.
+    const pre = VARIANTES.chene_pre!, foret = VARIANTES.tree!
+    const partFut = (v: typeof pre): number => ancrageHouppierPx(v.mesures) / hauteurPx(v.mesures)
+    expect(partFut(pre)).toBeLessThan(partFut(foret) * 0.75)
+    expect(houppierLargeur(pre.mesures)).toBeGreaterThan(houppierLargeur(foret.mesures) * 1.15)
+    expect(hauteurPx(pre.mesures), 'les deux formes font la même taille').toBe(hauteurPx(foret.mesures))
   })
 
   it('V10 — LE SOL L’EMPORTE : une tuile de pin porte un conifère, dans N’IMPORTE QUELLE zone', () => {

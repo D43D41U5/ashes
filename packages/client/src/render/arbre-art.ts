@@ -25,6 +25,7 @@
 
 /** Taille de tuile de l'art. Le module raisonne en pixels monde ; `TILE_PX` les convertit. */
 import { TILE_PX } from './framing'
+import { ecorceDe } from './ecorce'
 
 /** Un rect de dessin : `[x, y, largeur, hauteur]`, dans le repère de sa texture. */
 export type Rect = readonly [number, number, number, number]
@@ -38,8 +39,26 @@ export interface MesuresArbre {
   futH: number
   /** Largeur de la COLONNE dessinée du fût (px) — c'est le tronc qu'on voit, et qu'on heurte. */
   colonneW: number
-  /** Côté du houppier (px) : il est carré. */
+  /**
+   * HAUTEUR du houppier (px). C'est elle qui entre dans la hauteur totale.
+   *
+   * Elle s'appelait « côté » quand la boîte était forcément CARRÉE. Elle ne l'est plus :
+   * `houppierW` permet une cime plus large que haute (le saule, le parasol du vieux pin). Le nom
+   * reste `houppierS` pour ne pas renommer un champ que six fichiers lisent — mais il désigne la
+   * hauteur, et `houppierLargeur()` donne l'autre côté.
+   */
   houppierS: number
+  /**
+   * LARGEUR du houppier (px), si elle diffère de la hauteur. Absente = boîte carrée, le cas de
+   * la plupart des arbres.
+   *
+   * POURQUOI ELLE EXISTE : une boîte carrée plafonne la largeur d'une cime à la hauteur qui
+   * reste une fois le fût posé, soit ~0,81 × la hauteur de l'arbre. Or un saule blanc est
+   * MESURÉ à 1,15 fois sa hauteur (relevé photographique du 2026-07-29), et un vieux pin
+   * sylvestre porte un parasol plus large que long. Deux formes que la boîte carrée rendait
+   * inatteignables — pas « difficiles » : impossibles.
+   */
+  houppierW?: number
   /** De combien le houppier mord sur le sommet du fût (px). */
   recouvrementPx: number
   /**
@@ -76,6 +95,11 @@ export const ARBRES = {
 } as const satisfies Record<string, MesuresArbre>
 
 export type TypeArbre = keyof typeof ARBRES
+
+/** LARGEUR de la boîte du houppier : `houppierW` si elle est déclarée, sinon la hauteur (carré). */
+export function houppierLargeur(m: MesuresArbre): number {
+  return m.houppierW ?? m.houppierS
+}
 
 /** La SILHOUETTE ENTIÈRE, en pixels : des pieds au sommet du houppier. */
 export function hauteurPx(m: MesuresArbre): number {
@@ -116,10 +140,15 @@ export function demiTroncAppele(m: MesuresArbre, subtilesParTuile: number): numb
  * `BootScene` posait à la main — la DA ne change pas, seule l'échelle.
  */
 
-/** `[x, y, w, h]` en fractions, porté à un carré de côté `S`. Les bords sont recollés (x1 − x0). */
-function porter(f: Rect, S: number): Rect {
-  const x0 = Math.round(f[0] * S), y0 = Math.round(f[1] * S)
-  const x1 = Math.round((f[0] + f[2]) * S), y1 = Math.round((f[1] + f[3]) * S)
+/**
+ * `[x, y, w, h]` en fractions, porté à une boîte de `W` × `H`. Les bords sont recollés (x1 − x0).
+ *
+ * `H` vaut `W` par défaut : c'est le cas carré, et il rend EXACTEMENT ce que rendait l'ancienne
+ * signature à un seul côté — la généralisation ne déplace pas un pixel des arbres existants.
+ */
+function porter(f: Rect, W: number, H: number = W): Rect {
+  const x0 = Math.round(f[0] * W), y0 = Math.round(f[1] * H)
+  const x1 = Math.round((f[0] + f[2]) * W), y1 = Math.round((f[1] + f[3]) * H)
   return [x0, y0, Math.max(1, x1 - x0), Math.max(1, y1 - y0)]
 }
 
@@ -138,6 +167,14 @@ export interface TonsFut {
   clair: string
   sombre: string
   coeur?: string
+  /**
+   * LE TON DE PLAQUE — le haut d'une écaille d'écorce, plus clair que le fond.
+   *
+   * C'est de la MATIÈRE, pas un ombrage : il reste sur l'albédo aplati de la variante `_lit`, au
+   * même titre que le `coeur` du vieux bois. Absent = l'écorce n'a pas de plaque claire (le
+   * hêtre est lisse, le chêne n'a que des creux).
+   */
+  eclat?: string
 }
 
 /**
@@ -215,15 +252,48 @@ export function houppierOpaque(t: TypeArbre): (x: number, y: number) => boolean 
  * 4, 4 et 2 sur une colonne de 10.
  */
 export function futRects(t: TypeArbre, tons: TonsFut): RectTon[] {
-  const m = ARBRES[t]
+  return futRectsCommuns(ARBRES[t], tons, t === 'old_tree' ? 'old_tree' : 'tree')
+}
+
+/**
+ * ═══ LES RECTS PEINTS D'UN FÛT — et pourquoi ils ont cessé d'être un cylindre ═══
+ *
+ * Ils posaient une arête CLAIRE à l'ouest (40 % de la colonne) et une arête d'OMBRE à l'est
+ * (22 %) : l'ombrage d'un tube éclairé de trois quarts, peint en dur. C'est exactement le défaut
+ * que la carte de normales du `_lit` avait de son côté (`ecorce.ts` le mesure), et le corriger
+ * d'un seul côté aurait fait diverger les deux chemins.
+ *
+ * Le fût peint prend donc le même vocabulaire que l'écorce : des SILLONS verticaux au ton de
+ * creux, et une PLAQUE claire. Les deux chemins ne se ressemblent pas au pixel près — l'un est
+ * fait de rects, l'autre d'un champ de hauteur — mais ils disent la même chose : un tronc a de
+ * l'écorce, pas un dégradé.
+ *
+ * Le chemin peint reste le repli (éclairage éteint) ; c'est `_lit` qui est à l'écran en partie.
+ */
+function futRectsCommuns(m: MesuresArbre, tons: TonsFut, slug: string): RectTon[] {
+  const e = ecorceDe(slug)
   const x = colonneX(m)
-  const clair = Math.round(m.colonneW * 0.4)
-  const sombre = Math.round(m.colonneW * 0.22)
-  const out: RectTon[] = [
-    [[x, 0, m.colonneW, m.futH], tons.corps],
-    [[x, 0, clair, m.futH], tons.clair],
-    [[x + m.colonneW - sombre, 0, sombre, m.futH], tons.sombre],
-  ]
+  const out: RectTon[] = [[[x, 0, m.colonneW, m.futH], tons.clair]]
+
+  // LES SILLONS — mêmes abscisses que le relief de `ecorce.ts` : une colonne sur `nSillons + 1`,
+  // large d'un pixel. Sur une colonne de 6 px, deux sillons suffisent à dire l'écorce.
+  if (e.sillons > 0.2) {
+    const pas = Math.max(2, Math.floor(m.colonneW / (e.nSillons + 1)))
+    for (let s = 1; s <= e.nSillons; s++) {
+      const px = x + Math.min(m.colonneW - 1, s * pas)
+      out.push([[px, 0, 1, m.futH], tons.sombre])
+    }
+  }
+  // LA PLAQUE CLAIRE — une bande verticale sur le pan qui prend la lumière, quand la famille en
+  // déclare une (le pin saumon, le bouleau). Le hêtre n'en a pas : son écorce est lisse.
+  if (tons.eclat !== undefined && e.plaqueProfondeur > 0.2) {
+    out.push([[x, 0, Math.max(1, Math.round(m.colonneW * 0.3)), m.futH], tons.eclat])
+  }
+  // LE PIED SOMBRE — le bas du fût vire au creux (pin sylvestre, bouleau). Matière, pas ombre.
+  if (e.piedSombre > 0) {
+    const h = Math.max(1, Math.round(m.futH * e.piedSombre))
+    out.push([[x, m.futH - h, m.colonneW, h], tons.corps])
+  }
   // LE CŒUR EN BOUT : on voit qu'il est VIEUX. Posé à la même hauteur relative qu'à l'origine.
   if (tons.coeur !== undefined) {
     const y = Math.round(m.futH * 0.125)
@@ -290,12 +360,32 @@ export interface VarianteArbre {
   fut: TonsFut
 }
 
-/** Le fût pâle du bouleau — sa signature, et la variation la plus lisible de toute la table. */
-export const TONS_FUT_PALE: TonsFut = { corps: '#9a9484', clair: '#bdb7a4', sombre: '#6e6a5c' }
+/**
+ * Le fût pâle du bouleau — sa signature, et la variation la plus lisible de toute la table.
+ * Son `sombre` est presque noir : c'est la LENTICELLE, le tiret horizontal qui le fait
+ * reconnaître de loin (cf. `ecorce.ts`), pas une arête d'ombre.
+ */
+export const TONS_FUT_PALE: TonsFut = { corps: '#9a9484', clair: '#bdb7a4', sombre: '#2a2620', eclat: '#d6d2c2' }
 /** Le fût du saule : plus bas, plus noir. */
-export const TONS_FUT_SOMBRE: TonsFut = { corps: '#3a2a1c', clair: '#4a3624', sombre: '#281c12' }
-/** Le fût des conifères — plus rouge et plus sec que celui des feuillus. */
+export const TONS_FUT_SOMBRE: TonsFut = { corps: '#3a2a1c', clair: '#4a3624', sombre: '#281c12', eclat: '#5a4430' }
+/** Le fût des conifères SOMBRES (sapin, mélèze) — plus rouge et plus sec que celui des feuillus. */
 export const TONS_FUT_CONIFERE: TonsFut = { corps: '#3d2b1c', clair: '#4e3823', sombre: '#2c1e13' }
+/**
+ * LE FÛT DU PIN SYLVESTRE — saumon, et c'est l'écorce la plus reconnaissable du jeu après celle
+ * du bouleau. Les photos (Pinus_sylvestris_bark) montrent de grandes plaques rose-orangé
+ * séparées de clefts noirs ; le bas du fût, lui, reste sombre et crevassé (`ecorce.ts` le rend
+ * par `piedSombre`). Il se sépare donc du conifère générique, qui garde le brun sec.
+ */
+export const TONS_FUT_PIN: TonsFut = { corps: '#7a4f34', clair: '#8a5a3c', sombre: '#3a2418', eclat: '#b0784e' }
+/**
+ * LE FÛT DU HÊTRE — gris lisse, et c'est une correction de FOND, pas une nuance.
+ *
+ * Le hêtre portait le brun de l'arbre ordinaire, alors que son écorce lisse et grise est
+ * exactement ce qui fait qu'on reconnaît une hêtraie (photos de Soignes et du Cansiglio :
+ * une colonnade grise). C'est aussi ce qui le sépare du chêne à trois pixels de distance,
+ * là où deux silhouettes de feuillus ne se séparent plus.
+ */
+export const TONS_FUT_GRIS: TonsFut = { corps: '#6d6a63', clair: '#87847b', sombre: '#4c4a45' }
 
 /** Les familles de houppier. Même famille, sous-teintes : le vert ne doit pas se disperser.
  *  C'est le ton `lumiere` qui devient l'albédo éclairé — c'est donc LUI qu'on voit en jeu. */
@@ -320,12 +410,56 @@ export const TONS_MELEZE: TonsHouppier = { masse: '#3a4a1e', corps: '#4a5c26', l
 
 /** Les boîtes. Chacune fait 64 px (4 tuiles), 80 (5) ou 48 (3) : c'est la RÉPARTITION entre le
  *  fût et le houppier qui varie, jamais la hauteur totale — E1 exige un compte entier de tuiles. */
-const B_HETRE: MesuresArbre = { futW: 16, futH: 26, colonneW: 6, houppierS: 46, recouvrementPx: 8, demiTroncSub: 1.5 }
-const B_SAULE: MesuresArbre = { futW: 16, futH: 36, colonneW: 6, houppierS: 40, recouvrementPx: 12, demiTroncSub: 1.5 }
-const B_BOULEAU: MesuresArbre = { futW: 16, futH: 44, colonneW: 6, houppierS: 34, recouvrementPx: 14, demiTroncSub: 1.5 }
-const B_BALIVEAU: MesuresArbre = { futW: 16, futH: 22, colonneW: 6, houppierS: 34, recouvrementPx: 8, demiTroncSub: 1.5 }
+/**
+ * ═══ CE QUE LE RELEVÉ PHOTOGRAPHIQUE DU 2026-07-29 A CHANGÉ ═══
+ *
+ * Quinze ports d'arbre (l'arbre entier, du pied à la cime) relevés essence par essence, et
+ * confrontés à l'ESPACEMENT réel entre troncs, mesuré sur la carte que le jeu génère
+ * (`placeZoneNodes`, seed 2026, 34 479 arbres) :
+ *
+ *   `forest` (ubac) 1,00 tuile · `pine`/`larch` 2,24 · `old_growth` 3,00 · `grass` (pré) 4,12
+ *
+ * Le relevé a dit deux choses, et la seconde est celle qui structure la table.
+ *
+ * ① **TROIS ESSENCES SUR DIX ÉTAIENT DÉJÀ JUSTES** — le sapin (21 % de fût nu, largeur 0,25 ;
+ *    la photo d'Abies alba donne 15 % et 0,20), le mélèze (24 % / 0,33 ; un mélézein donne
+ *    0,35 — le mélèze LARGE et ajouré est le mélèze isolé, que le jeu ne pose jamais) et le
+ *    jeune pin. Elles ne bougent pas : la photo les a sauvées d'une « correction ».
+ *
+ * ② **LE PORT SUIT LA CONCURRENCE, PAS L'ESPÈCE.** Un hêtre de futaie est une colonne sans une
+ *    branche sur les deux tiers de sa hauteur ; un hêtre isolé a des branches qui touchent
+ *    l'herbe. Même espèce, deux ports. La table variait par espèce et par zone, jamais par
+ *    DENSITÉ — d'où le `chene_pre`, forme de plein champ qui ne se pose que sur l'herbe du pré,
+ *    le seul terrain (4,12 tuiles) où une cime large ne ferme pas l'écran. Dans l'ubac, à
+ *    1 tuile d'écart, il n'y a pas un pixel de marge : `tree` n'y est pas touché.
+ */
+/** LE HÊTRE DE FUTAIE — 53 % de fût nu contre 39 %, et l'inversion la plus nette du relevé :
+ *  il avait le fût le plus COURT des feuillus quand la futaie lui donne le plus LONG. */
+const B_HETRE: MesuresArbre = { futW: 16, futH: 48, colonneW: 6, houppierS: 30, recouvrementPx: 14, demiTroncSub: 1.5 }
+/**
+ * LE SAULE — cime BASSE et LARGE, là où la boîte carrée plafonnait à 0,56 de la hauteur.
+ * La photo de ripisylve donne 1,15 ; on s'arrête à **60 px**, et le nombre n'est pas un goût :
+ * c'est un peu moins que les 66 px (4,12 tuiles) qui séparent deux troncs sur l'herbe. Une cime
+ * plus large que l'espacement souderait la ripisylve en nappe — le défaut exact qu'on a corrigé
+ * sur les pins le 2026-07-29.
+ */
+const B_SAULE: MesuresArbre = { futW: 16, futH: 24, colonneW: 6, houppierS: 52, houppierW: 60, recouvrementPx: 12, demiTroncSub: 1.5 }
+/** LE BOULEAU — 63 % de fût nu, c'était un bouleau de futaie serrée. Sur un versant brûlé les
+ *  tiges sont jeunes : 44 %, et la cime s'élargit d'autant. */
+const B_BOULEAU: MesuresArbre = { futW: 16, futH: 38, colonneW: 6, houppierS: 38, recouvrementPx: 12, demiTroncSub: 1.5 }
+/** LE BALIVEAU — une jeune tige n'a pas encore élagué ses branches basses : le feuillage
+ *  descend presque au sol (23 % de fût nu contre 40 %). C'est ce qui la distingue d'un arbre
+ *  simplement RÉTRÉCI. */
+const B_BALIVEAU: MesuresArbre = { futW: 16, futH: 18, colonneW: 6, houppierS: 38, recouvrementPx: 8, demiTroncSub: 1.5 }
 /** Le conifère : 5 tuiles, et son fût NU ne fait qu'une tuile — un conifère porte bas. */
 const B_CONIFERE: MesuresArbre = { futW: 16, futH: 30, colonneW: 6, houppierS: 64, recouvrementPx: 14, demiTroncSub: 1.5 }
+/** LE VIEUX PIN — 57 % de fût nu et une cime PLUS LARGE QUE LONGUE : le parasol. Un pin
+ *  sylvestre mûr n'est pas un grand jeune pin, c'est une autre silhouette (photos Skuleskogen
+ *  et Beinn a' Bhuird : un fût nu sur plus de la moitié, coiffé d'une ombelle plate). */
+const B_VIEUX_PIN: MesuresArbre = { futW: 16, futH: 50, colonneW: 6, houppierS: 44, houppierW: 56, recouvrementPx: 14, demiTroncSub: 1.5 }
+/** LE CHÊNE DU PRÉ — la forme de plein champ : fût court (23 %), cime large (0,75 de la
+ *  hauteur). Elle n'existe que sur l'herbe, où les troncs sont à 4,12 tuiles l'un de l'autre. */
+const B_CHENE_PRE: MesuresArbre = { futW: 16, futH: 26, colonneW: 6, houppierS: 50, recouvrementPx: 12, demiTroncSub: 1.5 }
 
 /**
  * LA TABLE DES VARIANTES. `tree` et `old_tree` y figurent avec leurs rects et leurs tons
@@ -341,39 +475,55 @@ export const VARIANTES: Record<string, VarianteArbre> = {
     slug: 'old_tree', noeud: 'old_tree', mesures: ARBRES.old_tree, silhouette: 2,
     compo: COMPO_HOUPPIER.old_tree, tons: TONS_HOUPPIER_VIEUX, fut: TONS_FUT_VIEUX,
   },
-  // LE HÊTRE — une COLONNE de feuillage : il monte au lieu de s'étaler.
+  // LE CHÊNE DU PRÉ — la forme de PLEIN CHAMP, et la seule variante que la densité justifie.
+  // Fût court, cime large qui descend bas : c'est le chêne isolé des photos (Baginton, Kolare),
+  // et il ne se pose que sur l'herbe, à 4,12 tuiles de son voisin.
+  chene_pre: {
+    slug: 'chene_pre', noeud: 'tree', mesures: B_CHENE_PRE, silhouette: 2,
+    compo: [
+      [0.02, 0.30, 0.96, 0.68], [0.12, 0.10, 0.76, 0.72],
+      [0.20, 0.18, 0.34, 0.30], [0.24, 0.22, 0.15, 0.13], [0.60, 0.62, 0.26, 0.24],
+    ],
+    tons: TONS_HOUPPIER, fut: TONS_FUT,
+  },
+  // LE HÊTRE DE FUTAIE — une COLONNE GRISE surmontée d'une cime modeste. C'est la photo de la
+  // forêt de Soignes : on voit LOIN sous la voûte, parce que le fût est nu sur plus de la moitié.
   hetre: {
     slug: 'hetre', noeud: 'tree', mesures: B_HETRE, silhouette: 2,
     compo: [
-      [0.26, 0.04, 0.48, 0.80], [0.16, 0.22, 0.68, 0.56],
-      [0.30, 0.12, 0.22, 0.34], [0.33, 0.16, 0.10, 0.14], [0.58, 0.56, 0.20, 0.26],
+      [0.02, 0.34, 0.96, 0.64], [0.16, 0.04, 0.68, 0.74],
+      [0.28, 0.16, 0.24, 0.30], [0.32, 0.20, 0.11, 0.14], [0.58, 0.58, 0.22, 0.26],
     ],
-    tons: TONS_HETRE, fut: TONS_FUT,
+    tons: TONS_HETRE, fut: TONS_FUT_GRIS,
   },
-  // LE SAULE — l'inverse exact : large et BAS, presque plus large que haut. Il pèse.
+  // LE SAULE — l'inverse exact : large et BAS, plus large que haut. Il pèse.
   saule: {
     slug: 'saule', noeud: 'tree', mesures: B_SAULE, silhouette: 2,
     compo: [
-      [0.04, 0.32, 0.92, 0.56], [0.14, 0.16, 0.72, 0.54],
-      [0.22, 0.26, 0.30, 0.26], [0.25, 0.30, 0.14, 0.12], [0.62, 0.60, 0.26, 0.22],
+      [0.00, 0.34, 1.00, 0.64], [0.10, 0.12, 0.80, 0.70],
+      [0.20, 0.22, 0.32, 0.28], [0.24, 0.26, 0.14, 0.12], [0.62, 0.62, 0.26, 0.24],
     ],
     tons: TONS_SAULE, fut: TONS_FUT_SOMBRE,
   },
-  // LE BOULEAU — petit houppier haut perché sur un long fût PÂLE. C'est le fût qui le signe.
+  // LE BOULEAU — cime moyenne sur un fût PÂLE, et deux rameaux qui PENDENT de part et d'autre.
+  // C'est ce bord irrégulier qu'on reconnaît d'un bouleau à distance, pas sa forme générale :
+  // d'où `silhouette: 4` — les rameaux font partie de la FORME, pas de l'ombrage.
   bouleau: {
-    slug: 'bouleau', noeud: 'tree', mesures: B_BOULEAU, silhouette: 2,
+    slug: 'bouleau', noeud: 'tree', mesures: B_BOULEAU, silhouette: 4,
     compo: [
-      [0.14, 0.10, 0.72, 0.62], [0.22, 0.02, 0.56, 0.62],
-      [0.28, 0.14, 0.24, 0.26], [0.31, 0.18, 0.11, 0.12], [0.58, 0.50, 0.22, 0.22],
+      [0.14, 0.22, 0.72, 0.70], [0.24, 0.02, 0.52, 0.72],
+      [0.06, 0.48, 0.10, 0.46], [0.84, 0.44, 0.10, 0.50],
+      [0.30, 0.14, 0.22, 0.26], [0.33, 0.18, 0.10, 0.12], [0.58, 0.54, 0.20, 0.22],
     ],
     tons: TONS_BOULEAU, fut: TONS_FUT_PALE,
   },
-  // LE BALIVEAU (3 tuiles) — étroit et dense. Pas un arbre rétréci : il remplit le sous-bois.
+  // LE BALIVEAU (3 tuiles) — étroit et dense, et le feuillage descend PRESQUE AU SOL : une jeune
+  // tige n'a pas encore élagué ses branches basses. Pas un arbre rétréci : il remplit le sous-bois.
   baliveau: {
     slug: 'baliveau', noeud: 'tree', mesures: B_BALIVEAU, silhouette: 2,
     compo: [
-      [0.26, 0.06, 0.48, 0.78], [0.16, 0.26, 0.68, 0.52],
-      [0.32, 0.16, 0.22, 0.30], [0.35, 0.20, 0.10, 0.13], [0.58, 0.58, 0.20, 0.24],
+      [0.28, 0.20, 0.44, 0.78], [0.18, 0.34, 0.64, 0.52],
+      [0.32, 0.28, 0.22, 0.28], [0.35, 0.32, 0.10, 0.12], [0.58, 0.60, 0.20, 0.24],
     ],
     tons: TONS_BALIVEAU, fut: TONS_FUT,
   },
@@ -389,17 +539,23 @@ export const VARIANTES: Record<string, VarianteArbre> = {
       [0.27, 0.76, 0.46, 0.22], [0.31, 0.54, 0.38, 0.24], [0.36, 0.32, 0.28, 0.24], [0.42, 0.06, 0.16, 0.28],
       [0.36, 0.36, 0.07, 0.40], [0.37, 0.40, 0.04, 0.14], [0.56, 0.62, 0.11, 0.26],
     ],
-    tons: TONS_PIN, fut: TONS_FUT_CONIFERE,
+    tons: TONS_PIN, fut: TONS_FUT_PIN,
   },
-  // LE VIEUX PIN — la cime a perdu sa flèche, les étages bas débordent d'un côté. C'est LUI qui
-  // casse la répétition dans un bosquet, bien plus qu'une différence de taille.
+  // LE VIEUX PIN — UN PARASOL, PAS UN GRAND JEUNE PIN. C'est la correction la plus visible du
+  // relevé : il partageait la silhouette conique du pin et ne s'en distinguait que par sa teinte
+  // — donc pas du tout, une fois l'albédo aplati par la variante `_lit`. Un pin sylvestre mûr a
+  // un fût NU sur 55 % de sa hauteur, coiffé d'une ombelle plate et asymétrique, plus large que
+  // longue (photos Skuleskogen, Beinn a' Bhuird). Deux conifères qui se distinguent enfin de
+  // loin, et c'est la SILHOUETTE qui le fait.
   vieux_pin: {
-    slug: 'vieux_pin', noeud: 'tree', mesures: B_CONIFERE, silhouette: 4,
+    slug: 'vieux_pin', noeud: 'tree', mesures: B_VIEUX_PIN, silhouette: 3,
     compo: [
-      [0.24, 0.76, 0.50, 0.22], [0.29, 0.55, 0.40, 0.23], [0.33, 0.34, 0.30, 0.23], [0.36, 0.16, 0.24, 0.20],
-      [0.34, 0.38, 0.07, 0.38], [0.35, 0.42, 0.04, 0.13], [0.56, 0.60, 0.12, 0.26],
+      [0.00, 0.46, 1.00, 0.26], // l'étage bas : large et PLAT, il déborde
+      [0.16, 0.24, 0.68, 0.28], // l'étage haut, plus court — la flèche est perdue
+      [0.26, 0.66, 0.42, 0.12], // une touffe basse, décalée : un vieux pin est asymétrique
+      [0.38, 0.48, 0.10, 0.26], [0.40, 0.52, 0.05, 0.12], [0.58, 0.54, 0.14, 0.16],
     ],
-    tons: TONS_VIEUX_PIN, fut: TONS_FUT_CONIFERE,
+    tons: TONS_VIEUX_PIN, fut: TONS_FUT_PIN,
   },
   // LE SAPIN JEUNE — étroit et dense, presque une flèche : il aère un bosquet.
   sapin: {
@@ -434,21 +590,21 @@ export const TOUTES_VARIANTES: readonly VarianteArbre[] = Object.values(VARIANTE
  * historique : la généralisation est rétro-compatible par construction, pas par précaution.
  */
 export function houppierRectsDe(v: VarianteArbre, tons: TonsHouppier = v.tons): RectTon[] {
-  const S = v.mesures.houppierS
+  const W = houppierLargeur(v.mesures), H = v.mesures.houppierS
   const apres = [tons.lumiere, tons.eclat, tons.ombre]
   return v.compo.map((f, i) => {
     const ton = i < v.silhouette
       ? (i % 2 === 0 ? tons.masse : tons.corps)
       : (apres[i - v.silhouette] ?? tons.ombre)
-    return [porter(f, S), ton] as RectTon
+    return [porter(f, W, H), ton] as RectTon
   })
 }
 
 /** LA SILHOUETTE d'une variante — l'union de ses `silhouette` premiers rects, et rien d'autre.
  *  Déduite du dessin, comme `houppierOpaque` : deux écritures d'une même forme divergent. */
 export function houppierOpaqueDe(v: VarianteArbre): (x: number, y: number) => boolean {
-  const S = v.mesures.houppierS
-  const rects = v.compo.slice(0, v.silhouette).map((f) => porter(f, S))
+  const W = houppierLargeur(v.mesures), H = v.mesures.houppierS
+  const rects = v.compo.slice(0, v.silhouette).map((f) => porter(f, W, H))
   return (x, y) => rects.some((r) => x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3])
 }
 
@@ -458,13 +614,13 @@ export function houppierOpaqueDe(v: VarianteArbre): (x: number, y: number) => bo
  * Rendu en paire pour que la garde affirme l'écart, pas seulement le verdict.
  */
 export function assiseHouppier(v: VarianteArbre): { bas: number; requis: number } {
-  const S = v.mesures.houppierS
+  const W = houppierLargeur(v.mesures), H = v.mesures.houppierS
   let bas = 0
   for (const f of v.compo.slice(0, v.silhouette)) {
-    const r = porter(f, S)
+    const r = porter(f, W, H)
     if (r[1] + r[3] > bas) bas = r[1] + r[3]
   }
-  return { bas, requis: S - v.mesures.recouvrementPx }
+  return { bas, requis: H - v.mesures.recouvrementPx }
 }
 
 /**
@@ -473,19 +629,5 @@ export function assiseHouppier(v: VarianteArbre): { bas: number; requis: number 
  * le bouleau ait son fût pâle et le saule le sien sans qu'aucun appelant ne le sache.
  */
 export function futRectsDe(v: VarianteArbre): RectTon[] {
-  const m = v.mesures
-  const tons = v.fut
-  const x = colonneX(m)
-  const clair = Math.round(m.colonneW * 0.4)
-  const sombre = Math.round(m.colonneW * 0.22)
-  const out: RectTon[] = [
-    [[x, 0, m.colonneW, m.futH], tons.corps],
-    [[x, 0, clair, m.futH], tons.clair],
-    [[x + m.colonneW - sombre, 0, sombre, m.futH], tons.sombre],
-  ]
-  if (tons.coeur !== undefined) {
-    const y = Math.round(m.futH * 0.125)
-    out.push([[x + 2, y, m.colonneW - 4, Math.max(2, Math.round(m.futH * 0.08))], tons.coeur])
-  }
-  return out
+  return futRectsCommuns(v.mesures, v.fut, v.slug)
 }
