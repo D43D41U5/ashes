@@ -112,6 +112,22 @@ const PROBE = () => {
   }
 }
 
+/**
+ * LA CANOPÉE RESTE PLEINE POUR LES PHOTOS (demande d'Alexis, 2026-07-29).
+ *
+ * `crownAlpha` efface la cime au-dessus du joueur — c'est une aide de JEU (voir où l'on marche),
+ * et c'est un défaut sur une CAPTURE : on photographie une forêt de troncs sous des houppiers
+ * fantômes, et la moitié de l'art ne se voit pas. Même famille que le masquage du HUD, du tampon
+ * de build et des noms de lieux : des retraits d'AFFORDANCE, que la photo ne veut pas.
+ *
+ * À rappeler APRÈS chaque téléportation : le pool de houppiers se réarme à chaque image, mais
+ * l'interrupteur, lui, vit sur la vue — un seul appel par scène suffit. On le refait quand même
+ * à chaque prise, parce qu'un scénario qui recharge la page perdrait le réglage en silence.
+ */
+const canopeePleine = (page) => page.evaluate(() => {
+  window.__BRAISES__.scene.view?.setCanopeePleine?.(true)
+})
+
 const SCENARIOS = {
   /**
    * T0-EXPLORATION (2026-07-25) — la Racine donne envie de marcher (spec t0-exploration).
@@ -159,6 +175,7 @@ const SCENARIOS = {
       await page.evaluate(({ x: px, y: py }) => {
         window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py })
       }, { x, y })
+      await canopeePleine(page) // la cime ne s'efface pas sur une photo
       await page.waitForTimeout(1500)
       await page.screenshot({ path: `${OUT}/t0-${nom}.png` })
       console.log(`   → ${nom} @(${Math.round(x)}, ${Math.round(y)})`)
@@ -6470,6 +6487,7 @@ const SCENARIOS = {
       await page.waitForTimeout(1400)
       await heure(p.heure)
       await museler() // APRÈS le TP : fouler le lieu vient de le rendre connu, donc nommé
+      await canopeePleine(page) // et la canopée reste pleine : c'est une photo, pas une partie
       // La souris au centre : le décalage caméra « Foxhole » (framing R11) suit le curseur, et
       // une souris oubliée dans un coin décadre toute la série.
       await page.mouse.move(640, 360)

@@ -485,6 +485,19 @@ export class SnapshotView {
   /** Pool SÉPARÉ : un arbre est deux sprites (tronc trié avec les acteurs,
    * houppier dans sa bande propre). Les autres nœuds n'en consomment aucun. */
   private crownPool: Phaser.GameObjects.Image[] = []
+  /**
+   * LA CANOPÉE RESTE PLEINE — pour les images, et pour elles seules.
+   *
+   * `crownAlpha` est une aide de JEU : la cime au-dessus de toi s'efface pour que tu voies où
+   * tu marches. Sur une CAPTURE, c'est un défaut — l'atelier photographie une forêt de troncs
+   * sous des houppiers fantômes, et la moitié de l'art ne se voit pas (constat d'Alexis).
+   *
+   * L'interrupteur ne sert donc qu'au harnais smoke, au même titre que le masquage du HUD, du
+   * tampon de build et des noms de lieux : ce sont tous des retraits d'AFFORDANCE, des choses
+   * que le joueur veut et que la photo ne veut pas. Il est FAUX par défaut et personne d'autre
+   * ne l'appelle — le jeu joué ne peut pas tomber dessus par accident.
+   */
+  private canopeePleine = false
   /** Pool des SOUCHES/traces laissées par la dérive (spec recolte-vivante D1). */
   private stumpPool: Phaser.GameObjects.Image[] = []
   /** Index id→nœud pour appliquer les deltas de stock en O(1). */
@@ -1101,6 +1114,11 @@ export class SnapshotView {
     }
   }
 
+  /** Fige la canopée à l'opacité pleine — l'atelier photo, jamais le jeu (cf. `canopeePleine`). */
+  setCanopeePleine(v: boolean): void {
+    this.canopeePleine = v
+  }
+
   /** La carte et la seed du monde — d'elles dépend l'essence de chaque arbre. */
   setPeuplement(map: WorldMap, seed: number): void {
     this.carte = map
@@ -1332,7 +1350,7 @@ export class SnapshotView {
         const dx = playerX - (tx + 0.5)
         const dy = feetY - (ty + 1)
         const d = Math.sqrt(dx * dx + dy * dy)
-        crown.setAlpha(crownAlpha(d))
+        crown.setAlpha(this.canopeePleine ? 1 : crownAlpha(d))
         // La canopée prend le vent, elle aussi. Sans ça, la forêt reste une photo
         // posée sur un sol qui remue — et c'est le contraste qui trahit le décor.
         // Origine (0.5, 1) : le houppier bascule autour du haut du tronc.
