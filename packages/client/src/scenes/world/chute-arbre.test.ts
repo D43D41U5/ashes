@@ -29,17 +29,45 @@ describe('deplacementPointe — la géométrie de la projection, sans détour', 
   })
 })
 
+/**
+ * OÙ TOMBE LA POINTE, VRAIMENT — la mesure se prend sur le SPRITE, pas sur l'azimut.
+ *
+ * L'ancienne garde inversait la rotation avec la formule qu'elle était censée vérifier
+ * (`φ = π/2 − α`) : elle mesurait donc la direction DEMANDÉE, quelle que soit celle qui
+ * était jouée, et une symétrie nord↔sud lui était invisible — c'est exactement la faute
+ * qui a survécu jusqu'au 29/07. On repart du seul fait que le rendu utilise : un fût
+ * d'origine (0.5, 1) qui pointe vers le HAUT, tourné de `α`, a sa pointe en
+ * `h·(sin α, −cos α)`.
+ */
+const pointe = (alpha: number, futH: number): { x: number; y: number } => ({
+  x: futH * Math.sin(alpha),
+  y: -futH * Math.cos(alpha),
+})
+
 describe('angleChute — aucune direction ne produit une chute invisible', () => {
   it.each(FUTS)('fût de %i px : la pointe parcourt toujours le minimum visible', (futH: number) => {
     // BALAYAGE EXHAUSTIF. La faute qu'on chasse est un TROU dans la rose des directions :
     // elle ne se prouve pas absente sur quelques azimuts.
     for (let deg = 0; deg < 360; deg += 3) {
       const rad = (deg * Math.PI) / 180
-      const alpha = angleChute(Math.cos(rad), Math.sin(rad), futH)
-      // De la rotation du sprite on RETROUVE l'azimut réellement joué (α = π/2 − φ), et
-      // c'est celui-là qu'on mesure — pas celui qu'on avait demandé.
-      const phiJoue = Math.PI / 2 - alpha
-      expect(deplacementPointe(phiJoue, futH)).toBeGreaterThanOrEqual(POINTE_MIN_PX - 1e-9)
+      const p = pointe(angleChute(Math.cos(rad), Math.sin(rad), futH), futH)
+      // Distance parcourue par la pointe, du repos (0, −h) à sa place couchée.
+      const parcours = Math.sqrt(p.x * p.x + (p.y + futH) * (p.y + futH))
+      expect(parcours).toBeGreaterThanOrEqual(POINTE_MIN_PX - 1e-9)
+    }
+  })
+
+  it.each(FUTS)('fût de %i px : l’arbre tombe DU CÔTÉ demandé, jamais du côté opposé', (futH: number) => {
+    // LA GARDE QUI MANQUAIT. Le rabattement a le droit de changer l'azimut ; il n'a jamais
+    // le droit de changer d'hémisphère (il ne fait que rapprocher la chute du sud, en
+    // gardant son bord). Un arbre qui s'abat sur le bûcheron rend ce produit NÉGATIF —
+    // c'est ce que faisait `π/2 − φ` sur toute la rose sauf l'axe est-ouest.
+    for (let deg = 0; deg < 360; deg += 3) {
+      const rad = (deg * Math.PI) / 180
+      const dx = Math.cos(rad)
+      const dy = Math.sin(rad)
+      const p = pointe(angleChute(dx, dy, futH), futH)
+      expect(p.x * dx + p.y * dy).toBeGreaterThan(0)
     }
   })
 
@@ -54,14 +82,28 @@ describe('angleChute — aucune direction ne produit une chute invisible', () =>
     // Plein est : la pointe parcourt 1,41 fût, largement au-dessus du minimum — l'angle
     // doit sortir intact (π/2), sans rabattement parasite.
     expect(angleChute(1, 0, 30)).toBeCloseTo(Math.PI / 2, 6)
-    // Plein sud : le maximum, intact lui aussi.
-    expect(angleChute(0, 1, 30)).toBeCloseTo(0, 6)
+    // Plein sud : le maximum, intact lui aussi — un demi-tour, le fût vient à la caméra.
+    // (Cette ligne attendait 0, c'est-à-dire un arbre qui ne bouge pas : la faute EN GARDE.)
+    expect(angleChute(0, 1, 30)).toBeCloseTo(Math.PI, 6)
+    // Plein ouest : le chemin le plus court, donc −π/2 et non 3π/2 — pas de pirouette.
+    expect(angleChute(-1, 0, 30)).toBeCloseTo(-Math.PI / 2, 6)
+  })
+
+  it('ne fait JAMAIS plus d’un demi-tour : le sol est du bon côté', () => {
+    // La borne qui interdit la pirouette, sur toute la rose et les deux fûts.
+    for (const futH of FUTS) {
+      for (let deg = 0; deg < 360; deg += 3) {
+        const rad = (deg * Math.PI) / 180
+        expect(Math.abs(angleChute(Math.cos(rad), Math.sin(rad), futH))).toBeLessThanOrEqual(Math.PI + 1e-9)
+      }
+    }
   })
 
   it('une direction NULLE reste une chute, pas un NaN', () => {
     const a = angleChute(0, 0, 30)
     expect(Number.isNaN(a)).toBe(false)
-    expect(deplacementPointe(Math.PI / 2 - a, 30)).toBeGreaterThanOrEqual(POINTE_MIN_PX - 1e-9)
+    const p = pointe(a, 30)
+    expect(Math.sqrt(p.x * p.x + (p.y + 30) * (p.y + 30))).toBeGreaterThanOrEqual(POINTE_MIN_PX - 1e-9)
   })
 })
 

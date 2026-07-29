@@ -63,8 +63,22 @@ export function deplacementPointe(phi: number, futH: number): number {
  * L'ANGLE DE ROTATION DU SPRITE pour une chute dans la direction `(dx, dy)`.
  *
  * Deux choses d'un coup, et la seconde est celle qui compte :
- *   1. la conversion azimut → rotation. Le sprite pointe vers le HAUT au repos, donc une
- *      chute vers l'azimut `φ` demande `α = π/2 − φ` (vérifié : est → +π/2, nord → 0).
+ *   1. la conversion azimut → rotation. Le sprite pointe vers le HAUT au repos : tourné de
+ *      `α`, sa pointe est en `h·(sin α, −cos α)`. Pour qu'elle atteigne l'azimut `φ`, donc
+ *      `h·(cos φ, sin φ)`, il faut `α = φ + π/2` (est → +π/2, nord → 0, sud → π).
+ *
+ *      LE SIGNE ÉTAIT INVERSÉ (`π/2 − φ`, corrigé le 2026-07-29 sur constat d'Alexis
+ *      « les arbres qui tombent font parfois 180 degrés de plus que prévu »). Cette
+ *      formule-là est une SYMÉTRIE : elle laisse l'est et l'ouest intacts et retourne le
+ *      nord et le sud l'un dans l'autre. L'arbre s'abattait donc SUR le bûcheron placé au
+ *      sud, et un arbre qu'on coupait par le nord ne tournait pas du tout (`α = 0`) —
+ *      alors que `deplacementPointe` promet là son maximum, deux hauteurs de fût. Le
+ *      module se contredisait lui-même, et sa garde reprenait la faute pour inverser la
+ *      mesure : elle ne pouvait pas la voir.
+ *
+ *      La rotation se ramène ensuite dans `(−π, π]` : le sprite prend le CHEMIN LE PLUS
+ *      COURT vers le sol. Sans ça une chute vers l'ouest partirait à `3π/2`, c'est-à-dire
+ *      trois quarts de tour dans le mauvais sens — un arbre qui pirouette.
  *   2. LE RABATTEMENT. Si `φ` ne fait pas parcourir `POINTE_MIN_PX` à la pointe, on le
  *      rabat sur le plus proche azimut qui le fait, EN GARDANT SON CÔTÉ (est ou ouest) :
  *      l'arbre tombe toujours du bon bord, seulement moins « dans l'écran ». Une chute
@@ -79,7 +93,8 @@ export function angleChute(dx: number, dy: number, futH: number): number {
     const cosSigne = Math.cos(phi) >= 0 ? 1 : -1
     phi = Math.atan2(sinMin, cosSigne * Math.sqrt(Math.max(0, 1 - sinMin * sinMin)))
   }
-  return Math.PI / 2 - phi
+  const alpha = phi + Math.PI / 2
+  return alpha > Math.PI ? alpha - 2 * Math.PI : alpha
 }
 
 /**

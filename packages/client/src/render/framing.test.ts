@@ -19,10 +19,12 @@ import {
   OVERLAY_DEPTH,
   structureDepth,
   TIE_ACTOR,
+  VISIBLE_TILES_TALL,
   Y_SORT_BASE,
   ySortDepth,
   zoomForFraming,
 } from './framing'
+import { ARBRES, hauteurTuiles } from './arbre-art'
 
 const TILE = 16
 
@@ -187,6 +189,34 @@ describe('houppiers : le disque de découvert (A8)', () => {
   it('les jointures sont continues (R_IN et R_OUT)', () => {
     expect(crownAlpha(CROWN_R_IN + 1e-6)).toBeCloseTo(CROWN_ALPHA_MIN, 5)
     expect(crownAlpha(CROWN_R_OUT - 1e-6)).toBeCloseTo(1, 5)
+  })
+
+  /**
+   * LES DEUX RAYONS SONT DES DÉRIVÉS — et c'est ça qu'on garde.
+   *
+   * Les trois gardes ci-dessus s'écrivent en fonction des constantes qu'elles testent : elles
+   * passent à N'IMPORTE QUELLE valeur, y compris celle du 28/07 qui avait poussé `R_OUT` hors
+   * du cadre (21 tuiles pour une demi-diagonale d'écran de 20,4 — plus un seul houppier opaque
+   * dans l'image, mesuré 5/131 au navigateur). Ce qui suit affirme le MONDE : le cadre, et la
+   * hauteur des arbres. Un futur agrandissement des cimes ne peut plus emporter le disque.
+   */
+  it('le couvert se referme DANS le cadre, pas au-delà', () => {
+    // Le bord haut/bas de l'image : au-delà, la forêt est pleine. Sinon la borne extérieure
+    // n'existe que dans la fonction.
+    expect(CROWN_R_OUT).toBeLessThanOrEqual(VISIBLE_TILES_TALL / 2)
+    // …et elle se referme quand même APRÈS le cœur clair : un disque, pas une marche.
+    expect(CROWN_R_OUT).toBeGreaterThan(CROWN_R_IN)
+  })
+
+  it('le cœur clair couvre EXACTEMENT les cimes capables de te cacher', () => {
+    // Un houppier ne déborde que vers le HAUT de l'écran, sur la hauteur de son arbre : au-delà
+    // de la hauteur du plus haut, aucune cime ne peut plus couvrir l'avatar. En deçà, il en
+    // resterait une qui te cache — l'aide de jeu manquerait sa raison d'être.
+    const plusHaut = Math.max(...Object.values(ARBRES).map(hauteurTuiles))
+    expect(CROWN_R_IN).toBe(plusHaut)
+    // La confrontation que `framing` ne peut pas faire lui-même (il est en amont d'`arbre-art`,
+    // qui lit `TILE_PX` : l'importer ferait un cycle). Si les arbres grandissent, ça tombe ici.
+    expect(hauteurTuiles(ARBRES.old_tree)).toBe(6)
   })
 })
 

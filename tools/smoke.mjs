@@ -6369,6 +6369,202 @@ const SCENARIOS = {
     return { variantes: planche.nombre }
   },
 
+  /**
+   * L'ARBRE TOMBE-T-IL DU BON CÔTÉ ? — on l'abat DEPUIS LE NORD, exprès.
+   *
+   * `angleChute` rendait `π/2 − φ` au lieu de `φ + π/2` : une SYMÉTRIE, qui laisse l'est et
+   * l'ouest intacts et retourne le nord et le sud l'un dans l'autre (constat d'Alexis du
+   * 2026-07-29, « les arbres qui tombent font parfois 180 degrés de plus que prévu »). Le seul
+   * scénario d'abattage existant coupait par l'OUEST — l'axe où la faute est invisible. On se
+   * plante donc AU NORD : l'arbre doit s'abattre vers la caméra (rotation ≈ 180°), et c'était
+   * exactement le cas que la faute figeait à 0 — un arbre qui disparaît sans tomber.
+   *
+   * Le fait mesuré n'est pas l'angle mais sa CONSÉQUENCE : la pointe du fût finit-elle plus
+   * LOIN du bûcheron que son pied ? Un arbre ne s'abat pas sur celui qui le coupe.
+   *
+   * On fige la boucle en plein vol (`game.loop.sleep`) — une chute dure 760 ms et l'horloge
+   * headless saute : sans ça la capture tombe sur un sol vide. Exige `--dev` (TP).
+   */
+  async chute(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(300)
+
+    // AU NORD de l'arbre, à portée de bras : c'est le placement qui rend la faute visible.
+    const tree = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const t = s.view.nodes.find((n) => n.type === 'tree' && n.stock > 0)
+      if (!t) return null
+      s.sendAction({ type: 'debug_teleport', x: t.tx + 0.5, y: t.ty - 0.5 })
+      return { id: t.id, tx: t.tx, ty: t.ty, stock: t.stock }
+    })
+    if (!tree) { console.log('   ✗ aucun arbre à portée dans cette carte'); return {} }
+    await page.waitForTimeout(600)
+
+    // LE GUETTEUR EST ARMÉ AVANT LE DERNIER COUP : la chute part à l'épuisement du nœud et
+    // dure moins que l'intervalle entre deux frappes. Le poser après, c'est la manquer.
+    await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      window.__chute = new Promise((res) => {
+        let frames = 0
+        const tick = () => {
+          const c = sc.chuteArbre?.chutes?.[0]
+          // À mi-course : l'arbre est franchement engagé, et pas encore couché.
+          if (c && Math.abs(c.fut.rotation) >= Math.abs(c.alpha) * 0.45) {
+            sc.game.loop.sleep() // FIGÉ EN PLEIN VOL, sinon la capture arrive après la chute
+            const h = c.fut.displayHeight
+            const r = c.fut.rotation
+            const p = sc.predicted
+            const T = 16
+            // La pointe du fût, telle que le rendu la pose : origine (0.5, 1), pointe en haut.
+            const pointe = { x: c.fut.x + Math.sin(r) * h, y: c.fut.y - Math.cos(r) * h }
+            const d = (a, b) => Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2)
+            const bucheron = { x: p.x * T, y: p.y * T }
+            res({
+              rotationDeg: +((r * 180) / Math.PI).toFixed(1),
+              cibleDeg: +((c.alpha * 180) / Math.PI).toFixed(1),
+              piedAuBucheronPx: +d({ x: c.fut.x, y: c.fut.y }, bucheron).toFixed(1),
+              pointeAuBucheronPx: +d(pointe, bucheron).toFixed(1),
+            })
+            return
+          }
+          if (++frames > 4000) { res(null); return }
+          requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      })
+    })
+
+    // On le rase : dix coups, un par seconde de recharge.
+    for (let i = 0; i < 15; i++) {
+      const reste = await page.evaluate((id) => {
+        const n = window.__BRAISES__.scene.view.nodes.find((x) => x.id === id)
+        return n ? n.stock : 0
+      }, tree.id)
+      if (reste <= 0) break
+      await page.evaluate((id) => window.__BRAISES__.scene.sendAction({ type: 'harvest', nodeId: id }), tree.id)
+      await page.waitForTimeout(1100) // > GATHER_COOLDOWN (1 s)
+    }
+
+    const vu = await page.evaluate(() => window.__chute)
+    await page.screenshot({ path: `${OUT}/chute-arbre.png` })
+    if (!vu) { console.log('   ✗ aucune chute saisie (le guetteur n’a rien vu)'); return {} }
+    console.log(`   chute : ${JSON.stringify(vu)}`)
+    console.log(vu.pointeAuBucheronPx > vu.piedAuBucheronPx
+      ? `   ✓ IL TOMBE À L'OPPOSÉ : la pointe finit à ${vu.pointeAuBucheronPx} px du bûcheron, le pied à ${vu.piedAuBucheronPx}`
+      : `   ✗ L'ARBRE S'ABAT SUR LE BÛCHERON : pointe ${vu.pointeAuBucheronPx} px < pied ${vu.piedAuBucheronPx}`)
+    if (Math.abs(vu.cibleDeg) < 120) {
+      console.error(`!! CE N'EST PAS UNE CHUTE VERS LE SUD (cible ${vu.cibleDeg}°) — le placement n'éprouve pas la faute`)
+    }
+    return vu
+  },
+
+  /**
+   * LE COUVERT SE REFERME-T-IL ? — le disque de découvert, MESURÉ dans le vrai bois.
+   *
+   * `crownAlpha` efface les houppiers autour du joueur pour qu'il voie où il marche. La
+   * question n'est pas s'il existe (une garde d'unité le prouve déjà) mais JUSQU'OÙ il porte,
+   * et cette question-là ne se pose qu'à l'écran : un rayon en tuiles ne veut rien dire tant
+   * qu'on ne le compare pas au CADRE. On va donc se planter dans le bois le plus dense de la
+   * carte, en plein jour, et compter — sur tous les houppiers réellement dessinés — combien
+   * sont opaques, combien sont effacés, et à quelle distance le couvert se referme *par
+   * rapport au demi-écran*. Si aucun houppier n'atteint l'opacité, la borne extérieure du
+   * disque existe dans la fonction et jamais dans l'image : la forêt est transparente partout.
+   *
+   * Exige `--dev` (téléportation).
+   */
+  async couvert(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+
+    // LE BOIS LE PLUS DENSE, pas « un endroit boisé » : on cherche la fenêtre de 21 tuiles
+    // qui compte le plus de forêt, sinon on juge le couvert depuis une lisière.
+    const cible = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const FOREST = 3
+      const R = 10
+      let best = null
+      for (let ty = R; ty < m.height - R; ty += 4) {
+        for (let tx = R; tx < m.width - R; tx += 4) {
+          let n = 0
+          for (let dy = -R; dy <= R; dy += 2) {
+            const row = (ty + dy) * m.width
+            for (let dx = -R; dx <= R; dx += 2) if (m.terrain[row + tx + dx] === FOREST) n++
+          }
+          if (!best || n > best.n) best = { x: tx, y: ty, n }
+        }
+      }
+      return best
+    })
+
+    // UNE ACTION PAR TICK (le protocole n'en porte qu'une : la seconde écraserait la première).
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+    await page.evaluate(({ x, y }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y }), cible)
+    await page.waitForTimeout(1600)
+
+    const mesure = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const p = sc.predicted
+      const vue = sc.cameras.main.worldView
+      const TILE = 16
+      // LA DISTANCE SE PREND AU PIED DU TRONC, comme `crownAlpha` la prend. L'ancre du
+      // houppier est 1,4 à 2 tuiles PLUS HAUT (il est planté sur le fût) : mesurer jusqu'à
+      // elle donnerait un premier opaque « à 9,5 tuiles » pour une bordure à 10 — un écart
+      // qui n'est pas le disque, mais mon point de mesure. Le fût du même arbre partage
+      // exactement l'abscisse de sa cime (les deux sortent du même `px`) : on l'apparie
+      // là-dessus, et on garde celui qui est juste EN DESSOUS.
+      const troncs = (sc.view?.nodePool ?? []).filter((n) => n.visible)
+      const piedDe = (c) => {
+        let best = null
+        for (const t of troncs) {
+          if (Math.abs(t.x - c.x) > 0.01 || t.y <= c.y) continue
+          if (!best || t.y < best.y) best = t
+        }
+        return best ? best.y : c.y // pas de fût apparié (culling) : on retombe sur l'ancre
+      }
+      const crowns = (sc.view?.crownPool ?? []).filter((c) => c.visible)
+      const rangs = crowns
+        .map((c) => ({
+          alpha: c.alpha,
+          d: Math.sqrt((c.x / TILE - p.x) ** 2 + (piedDe(c) / TILE - p.y) ** 2),
+        }))
+        .sort((a, b) => a.d - b.d)
+      const opaques = rangs.filter((r) => r.alpha >= 0.999)
+      const effaces = rangs.filter((r) => r.alpha <= 0.25)
+      return {
+        houppiersÀLÉcran: rangs.length,
+        opaques: opaques.length,
+        effacés: effaces.length,
+        // Le cadre, dans la même unité que les rayons : c'est LUI l'étalon.
+        écranTuiles: `${+(vue.width / TILE).toFixed(1)} × ${+(vue.height / TILE).toFixed(1)}`,
+        demiHauteurTuiles: +(vue.height / TILE / 2).toFixed(1),
+        demiDiagonaleTuiles: +(Math.sqrt(vue.width ** 2 + vue.height ** 2) / TILE / 2).toFixed(1),
+        // La distance à laquelle le couvert redevient plein, telle qu'on la VOIT.
+        premierOpaqueTuiles: opaques.length ? +opaques[0].d.toFixed(1) : null,
+        dernierEffacéTuiles: effaces.length ? +effaces[effaces.length - 1].d.toFixed(1) : null,
+        où: { x: Math.round(p.x), y: Math.round(p.y) },
+      }
+    })
+    await page.screenshot({ path: `${OUT}/couvert.png` })
+
+    const part = mesure.houppiersÀLÉcran ? Math.round((100 * mesure.opaques) / mesure.houppiersÀLÉcran) : 0
+    console.log(`bois le plus dense visé (${cible.x}, ${cible.y}) → ${JSON.stringify(mesure)}`)
+    console.log(`  ${mesure.opaques}/${mesure.houppiersÀLÉcran} houppiers OPAQUES à l'écran (${part} %) — écran ${mesure.écranTuiles} tuiles`)
+    // LE SEUIL EST TENU PAR LA MESURE, pas par « > 0 ». Depuis que les deux rayons se
+    // dérivent du cadre, `opaques === 0` ne peut plus arriver par un mauvais réglage — la
+    // garde d'unité l'interdit. Ce qui peut encore lâcher, c'est le CÂBLAGE (plus personne
+    // n'appelle `crownAlpha`, ou `canopeePleine` reste armé), et ça se voit à la part qui
+    // s'effondre. 60 % mesuré le 29/07 dans le bois le plus dense : on alarme sous 30.
+    if (mesure.houppiersÀLÉcran < 10) {
+      console.error(`!! PAS DE BOIS À L'ÉCRAN (${mesure.houppiersÀLÉcran} houppiers) — la mesure ne vaut rien`)
+    } else if (part < 30) {
+      console.error(`!! LE COUVERT NE SE REFERME PLUS DANS LE CADRE : ${part} % d'opaques (60 % attendus)`)
+    }
+    return mesure
+  },
+
   /** En jeu : on se pose SUR quelques lieux et on regarde. Clairière ? échelle ? */
   async poiInSitu(page) {
     const s = await page.evaluate(PROBE)

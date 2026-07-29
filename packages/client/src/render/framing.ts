@@ -12,6 +12,13 @@
  * reste du client importe cette constante plutôt que de la redéclarer. */
 export const TILE_PX = 16
 
+/** Hauteur de l'image, en TUILES : ce que la caméra montre du monde (le zoom en découle,
+ * `zoomForFraming`). À 16:9, la largeur suit — ~35,6 tuiles. C'est l'ÉTALON de tout rayon
+ * qu'on veut voir se refermer dans le cadre : un rayon en tuiles ne dit rien tant qu'on ne
+ * le compare pas à lui. Vivait en privé dans `WorldScene` ; remontée ici le 2026-07-29 pour
+ * que le disque de découvert puisse s'y accrocher, et que sa garde puisse le lire. */
+export const VISIBLE_TILES_TALL = 20
+
 /* ── Budget des profondeurs de la scène monde ────────────────────────────────
  *
  * UNE seule échelle de tri pour tout ce qui a des « pieds » : acteurs, nœuds,
@@ -267,17 +274,38 @@ export const ROOF_DEPTH = 800_000
 
 export const CROWN_BASE = 900_000
 
-/** Rayon du cœur clair du disque de découvert, en tuiles : en deçà, le houppier
- * est effacé. Large, car sous une canopée on voit loin à l'horizontale — la cime
- * est au-dessus, elle tamise la lumière du ciel, elle ne bloque pas la vue.
+/**
+ * Hauteur du PLUS HAUT arbre du jeu, en tuiles (`hauteurTuiles(ARBRES.old_tree)` — le gros
+ * bois). RECOPIÉE ici pour être CONFRONTÉE, jamais consommée depuis `arbre-art` : ce module
+ * est en amont (l'art y lit `TILE_PX`), et l'importer ferait un cycle. Le test échoue si les
+ * deux divergent — même patron que `demiTroncSub`, qui recopie /sim pour le confronter.
+ */
+const PLUS_HAUT_ARBRE_TUILES = 6
+
+/**
+ * LE DISQUE DE DÉCOUVERT — deux rayons qui ne s'écrivent plus, ils se DÉRIVENT.
  *
- * SUIT LA TAILLE DU HOUPPIER (2026-07-28). Le disque s'exprime en TUILES et la canopée a
- * grandi de 31 % en largeur (houppier ordinaire 32 → 42 px, soit 2 → 2,625 tuiles) : un disque
- * figé aurait laissé le même nombre de tuiles dégagées sous des cimes une fois et demie plus
- * couvrantes en surface. Les deux rayons montent donc du MÊME facteur — 6 → 7,9 et 16 → 21. */
-export const CROWN_R_IN = 7.9
-/** Au-delà, la forêt redevient un couvert opaque. */
-export const CROWN_R_OUT = 21.0
+ * Le cœur clair (`R_IN`, houppier effacé) est exactement la portée d'une cime capable de te
+ * CACHER : un houppier ne déborde que vers le haut de l'écran, sur la hauteur de son arbre.
+ * Au-delà de la hauteur du plus haut arbre, plus aucune cime ne peut te couvrir — l'aide de
+ * jeu a fini son travail, et tout ce qu'elle efface en plus, elle le prend à la forêt.
+ *
+ * La bordure (`R_OUT`, couvert plein) est le DEMI-ÉCRAN : le bois se referme franchement au
+ * bord haut et au bord bas de l'image. C'est la seule échelle qui veuille dire quelque chose
+ * — un rayon en tuiles ne se juge que contre le cadre.
+ *
+ * CE QUI A DÉRAILLÉ, et c'est la classe de bug qu'on ferme (constat d'Alexis du 2026-07-29,
+ * « la vision sous les arbres va trop loin ») : le 28/07, les deux rayons ont été montés du
+ * facteur de croissance des HOUPPIERS (6 → 7,9 et 16 → 21). Or ils ne bornent pas une cime,
+ * ils bornent une portée dans le CADRE — et le cadre, lui, n'a pas grandi. `R_OUT` a dépassé
+ * la demi-diagonale de l'écran (20,4 tuiles) : la borne extérieure existait dans la fonction
+ * et JAMAIS dans l'image. MESURÉ dans le bois le plus dense de la carte (`smoke --scenario
+ * couvert`) : **5 houppiers opaques sur 131**, tous au-delà de 21 tuiles, c'est-à-dire dans
+ * les coins seuls. La forêt était transparente d'un bord à l'autre de l'écran.
+ */
+export const CROWN_R_IN = PLUS_HAUT_ARBRE_TUILES
+/** Au-delà, la forêt redevient un couvert opaque — au bord de l'image, donc. */
+export const CROWN_R_OUT = VISIBLE_TILES_TALL / 2
 /** Opacité résiduelle sous la cime : on devine le feuillage, on voit le sol. */
 export const CROWN_ALPHA_MIN = 0.22
 

@@ -68,6 +68,7 @@ import {
   lookaheadOffset,
   OVERLAY_DEPTH,
   TILE_PX,
+  VISIBLE_TILES_TALL,
   zoomForFraming,
 } from '../render/framing'
 import { ambientTint, daylight, fireGlow, lerpColor } from '../render/lighting'
@@ -149,9 +150,6 @@ import { corpseArrow, corpseSecondsLeft } from './world/corpse-arrow'
 import { SoundEngine } from '../audio/engine'
 import { buildSound, soundForEvent } from '../audio/sound'
 import { ChantsDeLAube } from '../audio/aube'
-
-/** Cadrage caméra (spec client R10) : « je veux voir ~N tuiles de haut ». */
-const VISIBLE_TILES_TALL = 20
 
 /**
  * LA ZONE DE LA SIM, EN PIXELS. La SEULE traduction que le client s'autorise sur le
