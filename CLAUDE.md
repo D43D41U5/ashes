@@ -12,6 +12,9 @@ pnpm check        # tsc --noEmit sur tous les packages
 pnpm test         # LES QUATRE SUITES — sim, client, serveur, banc de scénario (tools/suites.mjs)
 pnpm lint         # eslint, dont les garde-fous de pureté de /sim
 pnpm dev          # client Vite SUR L'HÔTE (jeu jouable sur http://localhost:3000)
+pnpm --filter @ashes/server dev   # zone LAN Colyseus sur ws://localhost:2567
+                                  # le client s'y branche par VITE_SERVER_URL
+pnpm scenario     # banc d'équilibrage : le vrai worldgen joué sur des milliers de ticks
 # Stack Docker : `docker compose up -d` → jeu sur http://ashes.test via le proxy Traefik
 # PARTAGÉ (~/projects/proxy, à lancer d'abord : cd ~/projects/proxy && docker compose up -d)
 pnpm build        # build web statique → packages/client/dist
@@ -26,16 +29,27 @@ pnpm smoke        # pilote le VRAI jeu dans Chromium et rapporte ce qu'il voit
 
 Le jeu s'expose via `window.__BRAISES__.scene` : le smoke test **lit** l'état, il ne le fabrique pas.
 
-Les trois dernières doivent passer avant tout commit. Elles sont rapides — les lancer souvent.
+**Avant tout commit : `pnpm check`, `pnpm test`, `pnpm lint`** — les trois passent, plus le
+`smoke --scenario` du système touché s'il se voit. Rapides : les lancer souvent.
 
 ## Structure
 
 ```
 packages/sim      ← TOUTE la logique de jeu. TypeScript pur, testé en unitaire.
 packages/client   ← Phaser 4 + Vite. Rendu ISO, input, interpolation, HUD/menus DOM, prédiction locale.
+                    scenes/ (le plus gros : WorldScene + scenes/ui/ en DOM) · render/ (couches,
+                    éclairage, art procédural) · worker/ (la sim en Veillée) · audio/ · assets/
 packages/server   ← Node + Colyseus. Boucle autoritative, rooms, replay-log (L1 fait). Persistance PostgreSQL encore à venir (Vallée).
+tools/            ← les instruments. `smoke.mjs` (navigateur), `suites.mjs` (les 4 suites), et les
+                    profileurs `profil-tick` / `profil-banc` / `diag-recolte` / `trace-corvee` —
+                    ils vivent ICI et non dans /sim parce que le lint y interdit `Date`/`performance`,
+                    or c'est de chronométrage qu'on a besoin. `node --import tsx tools/profil-tick.mts`.
 docs/specs/       ← specs par système, extraites du GDD, avec critères d'acceptation
+docs/gate1-finition.md ← le backlog de finition solo priorisé (P0/P1/P2) — ce qui reste vraiment à construire
 docs/decisions.md ← journal des décisions (ADR léger) — à tenir à jour
+docs/superpowers/ ← notes et plans de conception détaillés (juillet 06→11), COMPLÉMENT de docs/specs/ :
+                    encore amendés quand le système bouge (bannière « chiffres révisés » en tête) — donc
+                    lire le bandeau avant les nombres, qui vivent dans le code et ses gardes.
 ```
 
 ## Invariants d'architecture — NON NÉGOCIABLES
@@ -65,6 +79,6 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 Le plan d'implémentation complet est dans **`docs/roadmap.md`** (jalons V0-V10 → LAN → Vallée → Saison 0, avec critères de sortie et gates). Le cadre vient du GDD §13.
 
-**La Phase Veillée (V0-V10) est complète** (cœur posé le 2026-07-05, ~24 specs dans `docs/specs/` ; calibrage et pivots — worldgen graphe-de-zones, construction Rust, récolte vivante — poursuivis en juillet). En attente d'actions humaines : brancher Cloudflare Pages (`pnpm build` → `packages/client/dist`) et jouer le **GATE 1** (la boucle solo est-elle fun 5 sessions d'affilée ?). **Phase LAN — jalon L1 en cours** (voir roadmap — `packages/server` + Colyseus substantiellement livrés le 2026-07-18, une zone ; le protocole `packages/sim/src/protocol.ts` est déjà le protocole réseau, seul le transport change ; reste : validation à plusieurs et GATE 2). Le calibrage continue via `pnpm scenario`. *(État réel et pistes : `docs/audit-gameplay-phase1.md`, `docs/axes-amelioration-phase2.md`, `docs/direction-design.md`.)*
+**La Phase Veillée (V0-V10) est complète** (cœur posé le 2026-07-05, une trentaine de specs dans `docs/specs/` ; calibrage et pivots — worldgen graphe-de-zones, construction Rust, récolte vivante — poursuivis en juillet). En attente d'actions humaines : brancher Cloudflare Pages (`pnpm build` → `packages/client/dist`) et jouer le **GATE 1** (la boucle solo est-elle fun 5 sessions d'affilée ?). Ce qui reste **constructible** d'ici là est priorisé dans **`docs/gate1-finition.md`** — le lire avant de choisir un chantier solo. **Phase LAN — jalon L1 en cours** (voir roadmap — `packages/server` + Colyseus substantiellement livrés le 2026-07-18, une zone ; le protocole `packages/sim/src/protocol.ts` est déjà le protocole réseau, seul le transport change ; reste : validation à plusieurs et GATE 2). Le calibrage continue via `pnpm scenario`. *(État réel et pistes : `docs/audit-gameplay-phase1.md`, `docs/axes-amelioration-phase2.md`, `docs/direction-design.md`.)*
 
 MVP gouvernance (Veillée/LAN) : rang unique + Chef + propriété individuelle. MVP alignement : deux axes + Foyer/Meute seulement.
