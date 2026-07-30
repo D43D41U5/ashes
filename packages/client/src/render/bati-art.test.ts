@@ -139,14 +139,34 @@ describe('la porte du joueur, sur arête', () => {
     }
   })
 
-  it('ÇA S’ANIME VRAIMENT : le passage se dégage STRICTEMENT à chaque frame', () => {
-    // LA GARDE QUI COMPTE. Sans elle, cinq copies du même dessin passeraient les deux
-    // précédentes du moment que la première et la dernière sont bonnes — et le joueur verrait
-    // une porte qui saute d'un état à l'autre en cinq fois plus de temps.
+  it('ÇA S’ANIME VRAIMENT : le battant BOUGE à chaque frame, et il DÉGAGE en s’ouvrant', () => {
+    // LA GARDE QUI COMPTE. Sans elle, cinq copies du même dessin passeraient les deux précédentes
+    // du moment que la première et la dernière sont bonnes — et le joueur verrait une porte qui
+    // saute d'un état à l'autre en cinq fois plus de temps.
+    //
+    // ELLE A DÛ CHANGER DE MESURE, ET C'EST INSTRUCTIF. Elle exigeait d'abord que la couverture
+    // du passage décroisse STRICTEMENT à chaque pas ; depuis que le battant pivote sur un axe
+    // OBLIQUE, il se range hors de l'ouverture AVANT d'avoir fini sa course — la couverture
+    // atteint zéro à la frame 3 et n'a plus rien à décroître, alors que le panneau bouge encore.
+    // La garde mesurait donc la bonne propriété sur une portée trop courte. On affirme les deux :
+    // la SILHOUETTE change à chaque pas (c'est ça, « ça bouge »), et le passage se dégage tant
+    // qu'il reste quelque chose à dégager (c'est ça, « ça s'ouvre »).
+    const silhouette = (bit: number, f: number): string =>
+      piecesDePorte(bit, PORTE_FRAMES[f]!)
+        .map((q) => `${q.x},${q.y},${q.w},${q.h},${q.ton}`)
+        .sort()
+        .join('|')
     for (const bit of BITS) {
       const parts = PORTE_FRAMES.map((_, f) => couverture(bit, f))
-      for (let f = 1; f < parts.length; f++) {
-        expect(parts[f]!, `arête ${NOM[bit]} : frame ${f} (${parts.join(' → ')})`).toBeLessThan(parts[f - 1]!)
+      for (let f = 1; f < PORTE_FRAMES.length; f++) {
+        expect(silhouette(bit, f), `arête ${NOM[bit]} : la frame ${f} est identique à la ${f - 1}`)
+          .not.toBe(silhouette(bit, f - 1))
+        expect(parts[f]!, `arête ${NOM[bit]} : le passage se rebouche (${parts.join(' → ')})`)
+          .toBeLessThanOrEqual(parts[f - 1]!)
+        if (parts[f - 1]! > 0) {
+          expect(parts[f]!, `arête ${NOM[bit]} : frame ${f} ne dégage rien (${parts.join(' → ')})`)
+            .toBeLessThan(parts[f - 1]!)
+        }
       }
     }
   })

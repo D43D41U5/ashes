@@ -593,6 +593,166 @@ const PORTE_LINTEAU = 6
 type Piece2 = { x: number; y: number; w: number; h: number; ton: string }
 
 /**
+ * ═══ LA PORTE A SON PROPRE FORMAT, PLUS GRAND QUE SA BANDE (demande d'Alexis, 2026-07-30) ═══
+ *
+ * « J'aimerais qu'on ait une vision isométrique et pas de face, de sorte qu'on puisse voir la
+ * porte ouverte. » Le reproche est juste et il est précis : le battant ne PIVOTAIT pas, il se
+ * RÉTRACTAIT — sa largeur fondait vers le gond et il finissait par n'être plus rien. Une porte
+ * ouverte, ça se VOIT : le panneau sort du mur et se tient en travers.
+ *
+ * Or un battant qui pivote sort de sa bande — de douze pixels, sa propre longueur. Le format
+ * d'une barrière (20 × 52) n'a pas cette place : sous une bande SUD il n'y a plus rien, à l'est
+ * d'un ruban non plus. La porte prend donc un canevas élargi de `PORTE_MARGE` **sur les quatre
+ * côtés** — symétrique, pour que l'ancre horizontale reste au centre (origine x = 0,5) et que
+ * rien ne se décale. Tout le dessin est ensuite TRANSLATÉ de cette marge : les coordonnées
+ * écrites pour la bande (`bande`, `tuileDans`) restent valables telles quelles.
+ */
+const PORTE_MARGE = 14
+const formatPorte = (): { w: number; h: number } => {
+  const f = formatBarriere(MUR_HT)
+  return { w: f.w + 2 * PORTE_MARGE, h: f.h + 2 * PORTE_MARGE }
+}
+/** L'ancre verticale de la porte : le bas de sa TUILE, décalé de la marge du haut. */
+const originYPorte = (): number => (MUR_HT + T + M + PORTE_MARGE) / formatPorte().h
+
+/**
+ * ═══ LE BATTANT QUI PIVOTE — la silhouette d'un panneau vu de trois quarts ═══
+ *
+ * On ne dessine plus un rectangle qui rétrécit : on dessine le PANNEAU LUI-MÊME, à l'angle où il
+ * se trouve. Son EMPREINTE au sol est un rectangle `L × e` qui tourne autour du gond ; ce qu'on
+ * voit à l'écran, c'est cette empreinte EXTRUDÉE vers le haut de la hauteur du battant. Fermé,
+ * l'empreinte est parallèle au mur et l'extrusion rend exactement le panneau plein d'avant ;
+ * ouvert, elle part en biais et l'on voit le battant en travers — c'est là toute la demande.
+ *
+ * LE SENS DE L'OUVERTURE : **toujours vers le bas de l'écran** pour une arête horizontale, et
+ * vers l'est pour une verticale. Ce n'est pas un choix de vraisemblance mais de VISIBILITÉ : la
+ * caméra regarde d'en haut avec un rien d'avancée, donc c'est le seul côté où le panneau ne
+ * disparaît pas derrière son propre mur. Une porte qui s'ouvrirait « vers l'intérieur » serait
+ * physiquement défendable et invisible une fois sur deux.
+ *
+ * ON RASTÉRISE EN COLONNES D'UN PIXEL, et pas en `fill()` d'un polygone : le canevas lisserait
+ * les bords, or tout l'art du jeu est en pixels francs. Chaque colonne rend un rectangle entier —
+ * ce sont donc des `Piece2` comme les autres, et **les gardes du passage continuent de les lire
+ * sans rien savoir de la rotation**.
+ */
+function vantailPivotant(bit: number, ouverture: number, hauteur: number): Piece2[] {
+  const b = bande(bit, MUR_HT)
+  const t = tuileDans(MUR_HT)
+  const POST = ENCADREMENT_POST
+  const L = T - 2 * POST //   la longueur du battant : l'ouverture qu'il doit boucher
+  const horizontal0 = bit === N_B || bit === S_B
+  // SON ÉPAISSEUR — et elle n'est pas la même selon l'axe, ce que la garde a dû m'apprendre.
+  //
+  // Vu de TROIS QUARTS (arête horizontale), on regarde sa FACE : deux pixels suffisent à ce qu'il
+  // ne disparaisse pas quand il se met en travers. Vu de DESSUS (arête verticale), son épaisseur
+  // EST sa largeur apparente, et elle doit remplir le ruban — sinon la porte close ne bouche que
+  // la moitié de son ouverture. MESURÉ par la garde : couverture 0,5 au lieu de 1.
+  const EPAIS = horizontal0 ? 2 : EP
+  const o = Math.max(0, Math.min(1, ouverture))
+  const angle = (o * Math.PI) / 2
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  const horizontal = bit === N_B || bit === S_B
+  const pieces: Piece2[] = []
+
+  /**
+   * ═══ L'AXE QUI SORT DU MUR SE PROJETTE EN BIAIS — c'est ÇA, la vision isométrique ═══
+   *
+   * Premier jet : le battant tournait dans le PLAN DE L'ÉCRAN, du vecteur (1,0) au vecteur (0,1).
+   * Géométriquement juste pour une caméra qui regarde droit vers le bas… et le résultat est que
+   * la porte grande ouverte se présente PAR LA TRANCHÉE : deux pixels de large, elle disparaît.
+   * C'était le reproche d'origine, revenu par l'autre bout.
+   *
+   * La vraie réponse est celle qu'Alexis a nommée : une projection OBLIQUE. Dans une vue
+   * isométrique, aucune direction du sol ne se présente jamais de face NI par la tranche —
+   * chacune garde une composante en x ET en y. On projette donc l'axe « perpendiculaire au mur »
+   * sur un vecteur en biais plutôt que sur la verticale de l'écran : grande ouverte, la porte
+   * reste un PANNEAU qu'on voit, couché le long de son propre mur.
+   *
+   * ET ÇA RÈGLE LE PASSAGE DU MÊME COUP : le gond est au jambage de gauche, l'axe oblique part
+   * vers la GAUCHE — le battant ouvert se range donc HORS de l'ouverture, contre la maçonnerie,
+   * au lieu de rester en travers. La garde « ouverte, elle laisse un trou » tient sans qu'on ait
+   * à l'assouplir, et c'est le signe que la géométrie est juste et non arrangée.
+   */
+  const OBLIQUE = { x: -0.55, y: 0.83 }
+
+  // LE GOND, et les deux axes du battant : `u` le long de sa longueur, `n` en travers (épaisseur).
+  // LE GOND est sur le BORD du battant, jamais en son milieu : c'est un axe de rotation, pas un
+  // centre. Au repos, le panneau doit donc couvrir l'ouverture ENTIÈRE à partir de là.
+  const gond = horizontal
+    ? { x: t.x + POST, y: b.y + b.h / 2 }
+    : { x: b.x, y: t.y + POST }
+  // `u` — la longueur du battant, du gond vers son bord libre. HORIZONTAL : elle glisse de l'axe
+  // du mur (1,0) vers l'axe oblique qui en sort. VERTICAL : vu de dessus, la planche sort droit
+  // vers l'est — il n'y a rien à obliquer, la caméra voit déjà le sol en vraie grandeur.
+  const u = horizontal
+    ? { x: cos + sin * OBLIQUE.x, y: sin * OBLIQUE.y }
+    : { x: sin, y: cos }
+  // `n` — son épaisseur, perpendiculaire à `u` dans le plan de l'écran.
+  const n = horizontal ? { x: -u.y, y: u.x } : { x: cos, y: -sin }
+
+  // L'EMPREINTE : quatre coins, dans l'ordre du contour.
+  const coins = [0, 1].flatMap((k) =>
+    [0, 1].map((j) => {
+      const a = k === 0 ? 0 : L
+      const c = (k === 0 ? j : 1 - j) * EPAIS
+      return { x: gond.x + u.x * a + n.x * c, y: gond.y + u.y * a + n.y * c }
+    }),
+  )
+
+  /** L'intervalle couvert par l'empreinte sur cette tranche, ou `null` si elle n'y est pas. */
+  const tranche = (v: number, axe: 'x' | 'y'): { min: number; max: number } | null => {
+    const autre = axe === 'x' ? 'y' : 'x'
+    let min = Infinity
+    let max = -Infinity
+    for (let i = 0; i < coins.length; i++) {
+      const a = coins[i]!
+      const c = coins[(i + 1) % coins.length]!
+      const lo = Math.min(a[axe], c[axe])
+      const hi = Math.max(a[axe], c[axe])
+      if (v < lo || v > hi || hi === lo) continue
+      const q = a[autre] + ((c[autre] - a[autre]) * (v - a[axe])) / (c[axe] - a[axe])
+      min = Math.min(min, q)
+      max = Math.max(max, q)
+    }
+    return min === Infinity ? null : { min, max }
+  }
+
+  if (horizontal) {
+    // VU DE TROIS QUARTS : chaque colonne rend le panneau depuis le haut de son extrusion
+    // jusqu'au bas de son empreinte. Le liseré clair du haut est le DESSUS du battant — c'est
+    // lui qui donne le volume, et c'est ce qui manquait au rectangle qui rétrécissait.
+    const x0 = Math.floor(Math.min(...coins.map((c) => c.x)))
+    const x1 = Math.ceil(Math.max(...coins.map((c) => c.x)))
+    for (let x = x0; x < x1; x++) {
+      const tr = tranche(x + 0.5, 'x')
+      if (tr === null) continue
+      const bas = Math.round(tr.max)
+      const haut = Math.round(tr.min) - hauteur
+      if (bas <= haut) continue
+      pieces.push({ x, y: haut, w: 1, h: bas - haut, ton: BOIS.mid })
+      pieces.push({ x, y: haut, w: 1, h: 2, ton: BOIS.clair })
+      pieces.push({ x, y: bas - 2, w: 1, h: 2, ton: BOIS.nuit })
+    }
+    return pieces
+  }
+  // VU DE DESSUS : un mur nord-sud est un ruban, le battant y est une planche à plat. Pas
+  // d'extrusion — sa hauteur et sa longueur tomberaient sur le même axe (voir `dessinerBarriere`).
+  const y0 = Math.floor(Math.min(...coins.map((c) => c.y)))
+  const y1 = Math.ceil(Math.max(...coins.map((c) => c.y)))
+  for (let y = y0; y < y1; y++) {
+    const tr = tranche(y + 0.5, 'y')
+    if (tr === null) continue
+    const g0 = Math.round(tr.min)
+    const g1 = Math.round(tr.max)
+    if (g1 <= g0) continue
+    pieces.push({ x: g0, y, w: g1 - g0, h: 1, ton: BOIS.mid })
+    pieces.push({ x: g0, y, w: 1, h: 1, ton: BOIS.clair })
+  }
+  return pieces
+}
+
+/**
  * LE PLAN DE DESSIN D'UNE PORTE D'ARÊTE — pur, pour que la garde lise la géométrie.
  *
  * Rendu séparément du dessin parce que c'est LUI qu'on veut pouvoir affirmer : `dessinerPorte`
@@ -606,11 +766,6 @@ export function piecesDePorte(bit: number, ouverture: number): readonly Piece2[]
   const horizontal = bit === N_B || bit === S_B
   const CRETE = b.y - MUR_HT //  le plan du dessus, celui du mur
   const o = Math.max(0, Math.min(1, ouverture))
-  // LE VANTAIL SE RÉTRACTE VERS SON GOND, en continu. C'est la seule façon de dire « il pivote »
-  // dans une projection où l'on ne voit pas la profondeur : sa largeur apparente se raccourcit,
-  // et ce qu'il libère est très exactement ce par quoi l'on passe.
-  const passe = T - 2 * POST //          l'ouverture nue, entre les deux jambages
-  const vantail = Math.round(passe * (1 - o)) //  ce qu'il en couvre encore
   if (horizontal) {
     const PIED = b.y + b.h //    le bas de la bande
     const hautJambage = CRETE + EP + PORTE_LINTEAU
@@ -628,20 +783,19 @@ export function piecesDePorte(bit: number, ouverture: number): readonly Piece2[]
       { x: t.x, y: PIED - 3, w: POST, h: 3, ton: BOIS.nuit },
       { x: t.x + T - POST, y: PIED - 3, w: POST, h: 3, ton: BOIS.nuit },
     ]
-    if (vantail > 0) {
-      // LE VANTAIL, accroché au gond et raccourci d'autant. À `o = 0` il remplit l'ouverture —
-      // une porte close DOIT boucher ; à `o = 1` il n'en reste rien.
-      pieces.push({ x: x0, y: hautJambage, w: vantail, h: PIED - hautJambage, ton: BOIS.mid })
-      pieces.push({ x: x0 + vantail - 1, y: hautJambage, w: 1, h: PIED - hautJambage, ton: BOIS.nuit })
-      pieces.push({ x: x0, y: PIED - 2, w: vantail, h: 2, ton: BOIS.nuit })
-      // LA POIGNÉE voyage AVEC le battant : elle est à son bord libre, pas au milieu de la
-      // tuile. C'est le détail qui fait lire une rotation plutôt qu'un rideau qui se rétracte.
-      if (vantail >= 4) pieces.push({ x: x0 + vantail - 3, y: PIED - 11, w: 2, h: 2, ton: BOIS.clair })
+    // LE BATTANT, à l'angle où il se trouve — un PANNEAU vu de trois quarts, pas un rectangle
+    // qui rétrécit (demande d'Alexis : « qu'on puisse voir la porte ouverte »).
+    pieces.push(...vantailPivotant(bit, o, PIED - hautJambage))
+    // LA POIGNÉE voyage avec lui, à son bord libre : c'est elle qui dit de quel côté il tourne.
+    // LA POIGNÉE suit le bord libre, sur le MÊME axe oblique que le battant — sinon elle se
+    // détacherait du panneau dès la première frame, et c'est elle qui dit de quel côté il tourne.
+    const ang = (o * Math.PI) / 2
+    const lg = T - 2 * POST
+    const bout = {
+      x: x0 + lg * (Math.cos(ang) - Math.sin(ang) * 0.55),
+      y: PIED - 11 + lg * Math.sin(ang) * 0.83,
     }
-    // ET CE QU'IL DEVIENT EN S'OUVRANT : une tranche de bois clair sur la CRÊTE, qui grandit à
-    // mesure qu'il se replie contre le mur — vue de dessus, c'est là que le battant s'en va.
-    const replie = Math.round((passe / 2) * o)
-    if (replie > 0) pieces.push({ x: x0, y: CRETE, w: replie, h: EP, ton: BOIS.clair })
+    pieces.push({ x: Math.round(bout.x) - 3, y: Math.round(bout.y), w: 2, h: 2, ton: BOIS.clair })
     return pieces
   }
   // ═══ ARÊTE VERTICALE — ET UNE IMPOSSIBILITÉ GÉOMÉTRIQUE, TROUVÉE PAR LA GARDE ═══
@@ -667,11 +821,8 @@ export function piecesDePorte(bit: number, ouverture: number): readonly Piece2[]
     { x: b.x, y: finHaut - 1, w: b.w, h: 1, ton: BOIS.clair },
     { x: b.x, y: debutBas, w: b.w, h: 1, ton: BOIS.clair },
   ]
-  if (vantail > 0) {
-    // Le battant remplit le vide du ruban, et se rétracte vers son gond — même geste, autre axe.
-    pieces.push({ x: b.x, y: finHaut, w: b.w, h: vantail, ton: BOIS.mid })
-    pieces.push({ x: b.x, y: finHaut + vantail - 1, w: b.w, h: 1, ton: BOIS.nuit })
-  }
+  // Le battant pivote AUSSI ici, mais à plat : vu de dessus, une planche qui sort du ruban.
+  pieces.push(...vantailPivotant(bit, o, 0))
   return pieces
 }
 
@@ -735,8 +886,9 @@ export function passageDePorte(bit: number): { x: number; y: number; w: number; 
  * jamais vue par personne. (Mesuré : chaque relevé du smoke lit `st-door-coupe-*`.)
  */
 function dessinerPorteCoupee(mask: number, ouverture: number): HTMLCanvasElement {
-  const f = formatBarriere(MUR_HT)
+  const f = formatPorte()
   const { c, ctx: g } = newCanvas(f.w, f.h)
+  g.translate(PORTE_MARGE, PORTE_MARGE)
   const POST = ENCADREMENT_POST
   const o = Math.max(0, Math.min(1, ouverture))
   const passe = T - 2 * POST
@@ -770,8 +922,11 @@ function dessinerPorteCoupee(mask: number, ouverture: number): HTMLCanvasElement
 }
 
 function dessinerPorte(mask: number, ouverture: number): { albedo: HTMLCanvasElement; joints: Crack[] } {
-  const f = formatBarriere(MUR_HT)
+  const f = formatPorte()
   const { c, ctx: g } = newCanvas(f.w, f.h)
+  // TOUT LE DESSIN EST TRANSLATÉ DE LA MARGE : les coordonnées écrites pour la bande restent
+  // valables telles quelles, et le battant a la place de sortir.
+  g.translate(PORTE_MARGE, PORTE_MARGE)
   const joints: Crack[] = []
   for (const bit of [N_B, E_B, S_B, O_B].filter((b) => (mask & b) !== 0)) {
     for (const p of piecesDePorte(bit, ouverture)) rect(g, p.ton, p.x, p.y, p.w, p.h)
@@ -1211,8 +1366,8 @@ export const EDGE_ORIGIN_Y: Readonly<Record<string, number>> = {
   'wall-ruine': originY(MUR_HT),
   'wall-coupe': originY(MUR_HT),
   'cloture-coupe': originY(CLOT_HT),
-  door: originY(MUR_HT),
-  'door-coupe': originY(MUR_HT),
+  door: originYPorte(),
+  'door-coupe': originYPorte(),
   encadrement: originY(MUR_HT),
   cloture: originY(CLOT_HT),
 }
