@@ -97,7 +97,7 @@ export const KEYMAP = {
   toggleJournal: ['J'],
   toggleMap: ['M'],
   toggleInventory: ['TAB'],
-  /** LE MENU PAUSE (reprendre / contrôles / retour aux vallées) : fige le monde solo. */
+  /** LE MENU PAUSE (reprendre / contrôles / retour au menu principal) : fige le monde solo. */
   toggleMenu: ['ESC'],
   /**
    * COUPER LE SON. Elle vivait EN DUR dans `WorldScene` (`keydown-N`), hors de cette table —

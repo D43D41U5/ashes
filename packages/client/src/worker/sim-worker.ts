@@ -46,8 +46,9 @@ let playerId = 0
  * QUEL MONDE CE WORKER OUVRE — posé par `veillee_init`, avant tout `join` (voir `mondes.ts`).
  *
  * Un Worker n'ouvre qu'un monde dans sa vie, et le sait avant de naître : la case dit où il
- * écrit, la seed dit quelle vallée il sème. Changer de monde veut dire un autre Worker — et,
- * dans les faits, un rechargement de page (l'invariant de `clearSlot`).
+ * écrit, la seed dit quelle vallée il sème. Changer de monde veut donc dire un AUTRE Worker —
+ * celui-ci est tué à l'arrêt de `WorldScene` (`host.terminate()`), ce qui est aussi ce qui tient
+ * l'invariant de `clearSlot` depuis que revenir au menu ne recharge plus la page (2026-07-29).
  */
 let monde: { slot: number; seed: number; nom: string } | undefined
 /** Horloge murale de la FONDATION du monde — conservée d'une session à l'autre par la méta. */
@@ -104,6 +105,18 @@ let baseNoeuds: BaseNoeuds | undefined
  *  avec l'état le plus frais. Sans ça, la SORTIE (`pause`) qui tombe pile sur un autosave était
  *  silencieusement perdue — le trou du garde `saving` tombait exactement sur le cas à protéger. */
 let pendingPersist = false
+/**
+ * LE TICK DÉJÀ SUR LE DISQUE, et QUAND il y est allé. Réécrire ce tick-là ne pose pas un
+ * octet de neuf : le monde n'a pas bougé depuis.
+ *
+ * Ce n'est pas un cas de bord, c'est le chemin de SORTIE. Le menu pause envoie `pause` en
+ * s'ouvrant — donc une écriture — ET arrête le ticker ; le clic « retour au menu principal » en
+ * renvoie un second sur un monde figé depuis. On sérialisait ~60k nœuds pour reposer les mêmes
+ * octets, et le joueur qui sort attendait ça (MESURÉ le 2026-07-29 : ~0,9 s sur trois tirs,
+ * l'essentiel de son attente avant que l'écran bouge).
+ */
+let tickEcrit = -1
+let dernierSaveAt = 0
 /** Cadence de l'autosave de sécurité (ms d'horloge murale, concern d'hôte). */
 const AUTOSAVE_MS = 30_000
 let autosaveTimer: ReturnType<typeof setInterval> | undefined
@@ -228,6 +241,14 @@ async function persist(): Promise<void> {
   // `monde` est posé avant le boot (voir `veillee_init`) : pas de sim sans lui. On l'exige
   // quand même — écrire une partie dans la case d'un autre monde ne se rattrape pas.
   if (!sim || !monde) return
+  // DÉJÀ ÉCRIT, à ce tick près : rien à sérialiser. Mais on RÉPOND quand même — c'est ce `saved`
+  // que `WorldScene` attend pour quitter, et se taire ici le condamnerait aux 3 s de son
+  // garde-fou. On rend la date de l'écriture RÉELLE, pas l'instant présent : l'indicateur du HUD
+  // date la sauvegarde, il ne doit pas prétendre qu'on vient d'écrire.
+  if (sim.tick === tickEcrit) {
+    post({ type: 'saved', at: dernierSaveAt, ok: true })
+    return
+  }
   // Une écriture est déjà en vol : on ne la double pas, mais on RETIENT la demande — sinon un
   // `pause` (la vraie prise de sortie) qui coïncide avec un autosave serait perdu, alors même
   // que le joueur a quitté proprement. On rejouera avec l'état frais dès la fin de l'écriture.
@@ -245,6 +266,10 @@ async function persist(): Promise<void> {
     const premiere = baseNoeuds === undefined
     if (premiere) baseNoeuds = baseDepuisNoeuds(sim.nodes)
     const s0 = SONDE_PERF ? performance.now() : 0
+    // LE TICK QU'ON EMPORTE, relevé AVANT l'attente disque : le ticker peut repartir pendant
+    // qu'IndexedDB écrit, et créditer le disque d'un tick qu'il ne porte pas rendrait la garde
+    // ci-dessus menteuse — elle sauterait une vraie sauvegarde.
+    const tickSerialise = sim.tick
     const texte = serializePartie(sim, baseNoeuds!)
     if (SONDE_PERF) {
       perfSerialisationMs = performance.now() - s0
@@ -279,7 +304,9 @@ async function persist(): Promise<void> {
     }
     // ON LE DIT. Une sauvegarde muette laisse le joueur dans le doute — et ce doute coûte
     // cher dans un jeu où l'on peut perdre une heure de veillée.
-    post({ type: 'saved', at: Date.now(), ok: true })
+    tickEcrit = tickSerialise
+    dernierSaveAt = Date.now()
+    post({ type: 'saved', at: dernierSaveAt, ok: true })
   } catch {
     // Un disque plein ou refusé ne doit pas tuer la partie : on perd la sauvegarde, pas la
     // session. (Le prochain autosave retentera.) Mais on ne le TAIT PAS : un échec silencieux

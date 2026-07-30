@@ -8,6 +8,8 @@ import Phaser from 'phaser'
 import { poiClearings, type Structure, type WorldMap } from '@ashes/sim'
 import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
 import { clutterAt, type PropKind, type SampleTerrain } from '../../render/clutter'
+import { teinteTouffe } from '../../render/clutter-teinte'
+import { TERRAIN_COLORS } from '../../render/terrain-colors'
 import { LIT_CLUTTER_KINDS, litClutterTextureKey, VARIANT_COUNTS, variantBase } from '../../render/lit-props'
 import { SHADOW_PROPS, SHADOW_PROP_GAP, SHADOW_PROP_GAP_LIT, SHADOW_PROP_WIDTH } from '../../render/prop-shadows'
 import { windSway, WIND_TAKE } from '../../render/wind'
@@ -23,11 +25,28 @@ const FLAT_PROPS = new Set<PropKind>(['pebbles', 'lichen', 'sphagnum'])
  *  composants (four, enclume) et le coffre, eux, se posent dans l'herbe : elle reste. */
 const DECOR_CLEARING_STRUCTURES = new Set(['wall', 'door', 'floor', 'roof'])
 const CLUTTER_TINT = 0xbfc4bd // léger assombrissement/désaturation (INV-2)
+/** LA TOUFFE PREND LA GAMME DE SON BIOME (demande d'Alexis, 2026-07-29) — une teinte par terrain,
+ *  dérivée de la palette de sol (`render/clutter-teinte.ts`). Mémoïsée : la règle est une
+ *  conversion TSV, on ne la rejoue pas 4 000 fois par frame. Un terrain sans couleur connue
+ *  retombe sur la teinte commune. */
+const TEINTE_TOUFFE = new Map<number, number>()
+function teinteDeLaTouffe(terrain: number): number {
+  let t = TEINTE_TOUFFE.get(terrain)
+  if (t === undefined) {
+    const sol = TERRAIN_COLORS[terrain]
+    t = sol === undefined ? CLUTTER_TINT : teinteTouffe(sol)
+    TEINTE_TOUFFE.set(terrain, t)
+  }
+  return t
+}
 const MARGIN_TILES = 2 // marge de culling pour éviter le pop en bordure d'écran
 const MAX_SPRITES = 4000 // borne dure de perf (cap silencieux : on log si dépassé)
 
 export class ClutterLayer {
   private readonly pool: Phaser.GameObjects.Image[] = []
+  /** La teinte RÉELLEMENT posée sur chaque sprite du pool — pour n'appeler `setTint` qu'au
+   *  changement (le décor d'un même biome garde la sienne d'une frame à l'autre). */
+  private readonly poolTint: number[] = []
   /** Pool d'ombres de contact — POOL SÉPARÉ, servi par son PROPRE compteur (`shadowsUsed`), car
    *  tous les props n'en portent pas (cf. `SHADOW_PROPS`) : un caillou entre deux buissons
    *  désynchroniserait un index partagé et laisserait une ombre orpheline allumée. */
@@ -103,7 +122,17 @@ export class ClutterLayer {
           const props = clutterAt(tx, ty, terrain, this.seed, this.sample)
           for (const p of props) {
             if (used >= MAX_SPRITES) break
-            const sprite = this.acquire(used++)
+            const slot = used++
+            const sprite = this.acquire(slot)
+            // LA GAMME DU BIOME (demande d'Alexis, 2026-07-29) : la touffe se teinte du sol qui la
+            // porte ; le reste du décor garde la teinte commune. Réarmé comme la texture — un
+            // sprite poolé sert des tuiles de biomes différents d'une frame à l'autre. On n'appelle
+            // `setTint` que si elle CHANGE : elle ne bouge pas pour la grande majorité des sprites.
+            const teinte = p.kind === 'grass_tuft' ? teinteDeLaTouffe(terrain) : CLUTTER_TINT
+            if (this.poolTint[slot] !== teinte) {
+              sprite.setTint(teinte)
+              this.poolTint[slot] = teinte
+            }
             const feetY = ty + 1 + p.oy
             const feetX = tx + 0.5 + p.ox
             // Masse pâteuse : quand éclairé, on passe sur l'albédo APLATI `_lit` (+ sa normal map) ;
@@ -197,6 +226,7 @@ export class ClutterLayer {
     if (!sprite) {
       sprite = this.scene.add.image(0, 0, 'cl-grass_tuft').setOrigin(0.5, 1).setTint(CLUTTER_TINT)
       this.pool[i] = sprite
+      this.poolTint[i] = CLUTTER_TINT
     }
     return sprite
   }
@@ -204,6 +234,7 @@ export class ClutterLayer {
   destroy(): void {
     for (const s of this.pool) s.destroy()
     this.pool.length = 0
+    this.poolTint.length = 0
     for (const s of this.shadowPool) s.destroy()
     this.shadowPool.length = 0
   }

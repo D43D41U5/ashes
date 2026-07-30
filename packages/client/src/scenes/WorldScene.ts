@@ -56,7 +56,6 @@ import {
 import Phaser from 'phaser'
 import { createColyseusHost, createWorkerHost, type HostConnection } from '../host-connection'
 import { VEILLEE_SEED } from '../worker/mondes'
-import { reopenMondes } from './ui/reopen-veillee'
 import { keymapEffectif } from './world/keymap-perso'
 import { noteMulti } from '../derniere-partie'
 import { SERVERS } from '../servers'
@@ -95,6 +94,7 @@ import {
 import { ClutterLayer } from './world/clutter-layer'
 import { GroundLayer } from './world/ground-layer'
 import { ambianceDe, moduler } from '../render/zone-ambiance'
+import { TERRAIN_COLORS } from '../render/terrain-colors'
 import { CendreLayer } from './world/cendre-layer'
 import { CliffLayer } from './world/cliff-layer'
 import { PoiLayer } from './world/poi-layer'
@@ -216,43 +216,6 @@ const PERF_ECHANTILLONS_MAX = 600
 // (`CHRONICLE_EVENT_TYPES`) : la même que l'hôte persiste, la même que le formateur sait
 // raconter — plus de set local qui dérive (c'est ce qui privait `poi_first_visit` de récit).
 
-const TERRAIN_COLORS: Record<number, number> = {
-  // (les couleurs sont des placeholders R8, remplacées par de vrais tilesets en V3+)
-  0: 0x101014, // void
-  1: 0x3e7d3a, // herbe
-  2: 0xb2996a, // route
-  3: 0x2c5a2e, // forêt
-  4: 0x4a7fa8, // eau peu profonde
-  5: 0x6d6d70, // roche
-  6: 0x274a6d, // eau profonde
-  7: 0x4a4038, // mur
-  8: 0x556b4a, // marais
-  // Biomes alpins (SP3) — portés depuis BIOME_RGB (sim/vignette.ts) en 0xRRGGBB.
-  9: 0x96928a, // éboulis (scree)
-  10: 0xeef2f8, // neige (snow)
-  11: 0x8a7078, // lande (heath)
-  12: 0xb2c278, // alpage (alpine_meadow)
-  13: 0x507438, // forêt claire de pins (pine)
-  14: 0x9c964e, // mélèzes (larch)
-  15: 0xcee2ee, // glacier
-  16: 0x7c7468, // chaos de blocs (boulders)
-  17: 0x9cb25c, // pré fleuri (flower_meadow)
-  18: 0x484c3a, // tourbière (peat_bog)
-  19: 0x707a50, // roselière (reed_marsh)
-  20: 0xbebe94, // alpage fleuri (alpine_flowers)
-  21: 0x4a3e38, // forêt brûlée (burnt_forest)
-  22: 0x1c3a28, // vieille forêt (old_growth)
-  /**
-   * LA FALAISE — et elle doit se lire comme un MUR, pas comme un caillou.
-   *
-   * Elle est le squelette de la carte : c'est en la LONGEANT qu'on trouve les portes (« on ne
-   * trouve pas une porte, on suit un mur »). Il lui faut donc l'arête la plus franche de toute la
-   * palette : presque noire, très froide, sans le moindre parent visuel dans la roche (0x6d6d70)
-   * ni le mur (0x4a4038). À l'écran, on ne doit pas pouvoir hésiter une seconde.
-   */
-  23: 0x4b4852, // falaise — le 1 px cuit SOUS les sprites de paroi : la teinte du dessus d'ardoise
-}
-
 /** Terrains STRUCTURELS — pas des biomes. Ils ne participent PAS au fondu inter-biome du bake
  *  (sinon un halo gris au pied des falaises, une frange sur la berge) : void, eaux, mur, falaise.
  *  Ils sont de toute façon recouverts par leurs propres couches (paroi, eau). */
@@ -290,7 +253,7 @@ function solForet(tx: number, ty: number, seed: number): number {
  */
 /**
  * Combien de temps on attend l'écriture disque avant de quitter quand même (menu pause →
- * « retour aux vallées »). Trois secondes : au-delà, mieux vaut rendre la main que retenir le
+ * « retour au menu principal »). Trois secondes : au-delà, mieux vaut rendre la main que retenir le
  * joueur dans une partie qu'il quitte — l'autosave a de toute façon écrit il y a moins de 30 s.
  */
 const QUIT_ATTENTE_MS = 3000
@@ -664,9 +627,19 @@ export class WorldScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       document.removeEventListener('visibilitychange', onVisibility)
       this.host.terminate()
-      // La brosse d'effacement du voile vit HORS liste d'affichage : le shutdown de scène ne la
-      // détruit pas toute seule (à la différence des GameObjects affichés).
-      this.nightVeil?.destroy()
+      // CE QUI NE VIT PAS DANS LA LISTE D'AFFICHAGE, le shutdown de scène ne le détruit PAS :
+      // les GameObjects tombent tout seuls, mais les TEXTURES appartiennent au gestionnaire du
+      // JEU et lui survivent. Chacune de ces couches a un `destroy()` qui rend ses clés — il
+      // n'était appelé nulle part, parce que jusqu'au 2026-07-29 aucune partie ne s'arrêtait
+      // sans que la page entière ne meure avec elle. La deuxième Veillée retrouvait alors
+      // « Texture key already in use: water-field » et rendait l'EAU DE LA VALLÉE PRÉCÉDENTE
+      // (`water-layer`, seul à créer ses clés sans garde — les autres se réécrivent, mais
+      // fuyaient un canvas par partie). Le scénario smoke `retour` surveille cette famille :
+      // il échoue sur toute clé déjà prise, donc sur la couche qu'on oublierait ici demain.
+      for (const couche of [
+        this.nightVeil, this.water, this.combeMist, this.morningMist, this.mistBanks,
+        this.fireFx, this.fireGround, this.poissons, this.feuilles, this.cendre,
+      ]) couche?.destroy()
     })
 
     // La génération de la grande carte alpine prend quelques secondes côté worker.
@@ -698,7 +671,7 @@ export class WorldScene extends Phaser.Scene {
     this.playerId = msg.playerId
     this.worldSeed = msg.seed
     // QUEL MONDE ON JOUE — pour les deux boutons d'UIScene qui en ont besoin : « rouvrir la
-    // vallée » (stèle de fin de saison : même case, même seed) et « retour aux vallées ».
+    // vallée » (stèle de fin de saison : même case, même seed) et « retour au menu principal ».
     setHud(this.registry, 'veillee', { slot: this.slot, seed: msg.seed })
     // LE SIGNET DE LA VALLÉE PARTAGÉE — « REPRENDRE » à l'accueil n'a que ça pour parler d'une
     // partie multi : le monde vit sur le serveur, pas sur ce disque (voir `derniere-partie.ts`).
@@ -843,6 +816,13 @@ export class WorldScene extends Phaser.Scene {
   }
 
   override update(time: number, deltaMs: number): void {
+    // ON S'EN VA (retour au menu principal) : plus une ligne. `scene.start`/`stop` passent par la FILE
+    // du gestionnaire de scènes, pas par un arrêt immédiat — cette scène peut donc encore être
+    // steppée alors que sa liste d'affichage est déjà détruite, et le premier `setTexture` de
+    // `setLighting` explose sur un GameObject sans scène (MESURÉ : c'est ce qui cassait le
+    // scénario `retour` avant cette garde). On ne compte pas sur l'ordonnancement de Phaser :
+    // on refuse de rendre dès l'instant où le départ est décidé.
+    if (this.quitte) return
     // Le monde se monte encore : UNE étape, et on rend la main au navigateur (il a
     // un écran de chargement à peindre). Deux étapes d'affilée refabriqueraient le
     // gel qu'on cherche à défaire.
@@ -868,7 +848,7 @@ export class WorldScene extends Phaser.Scene {
       this.menuPaused = menuOpen
       this.syncPause()
     }
-    // QUITTER VERS LES VALLÉES : UIScene pose la demande (menu pause), on la sert ici — c'est
+    // QUITTER VERS LE MENU : UIScene pose la demande (menu pause), on la sert ici — c'est
     // nous qui tenons l'hôte, donc la sauvegarde. Le départ part sur le `saved` (voir plus haut).
     if (Boolean(getHud(this.registry, 'quitMondes')) && !this.quitEnCours) {
       this.quitEnCours = true
@@ -879,7 +859,7 @@ export class WorldScene extends Phaser.Scene {
     // qui DOIT partir ne se pilote pas sur un `delayedCall` qu'un saut peut enjamber.
     if (this.quitEnCours && this.time.now - this.quitDepuis >= QUIT_ATTENTE_MS) {
       this.quitEnCours = false
-      reopenMondes()
+      this.quitterVersMondes()
     }
     // LE VOLUME : le curseur du menu pause pose `audioVolume` ; on l'applique au moteur (ici),
     // sur changement seulement (le moteur vit dans WorldScene, le curseur dans UIScene).
@@ -1463,11 +1443,11 @@ export class WorldScene extends Phaser.Scene {
       // donc jamais un savoir géographique en avance ou en retard sur le monde qu'il décrit.
       if (this.fog && msg.ok) saveFog(this.slot, packBrouillard(this.fog))
       publishSaved(this.registry, msg.at, msg.ok, this.time.now)
-      // QUITTER VERS LES VALLÉES attendait CE message : la partie est au disque (ou l'hôte a
+      // QUITTER VERS LE MENU attendait CE message : la partie est au disque (ou l'hôte a
       // dit qu'il n'y arrivait pas — dans les deux cas, attendre plus ne sauvera rien de plus).
       if (this.quitEnCours) {
         this.quitEnCours = false
-        reopenMondes()
+        this.quitterVersMondes()
       }
       return
     }
@@ -1645,6 +1625,36 @@ export class WorldScene extends Phaser.Scene {
    */
   private quitEnCours = false
   private quitDepuis = 0
+  /** LE DÉPART EST ORDONNÉ : cette scène ne doit plus rien rendre (voir `quitterVersMondes`). */
+  private quitte = false
+
+  /**
+   * REVENIR AU MENU PRINCIPAL — sans recharger la page (2026-07-29 ; ça coûtait ~1,9 s de boot
+   * complet pour afficher un menu qui est du DOM pur).
+   *
+   * On rentre par l'ACCUEIL, pas par la liste des vallées (demande d'Alexis) : quitter une
+   * Veillée ne veut pas dire qu'on va en ouvrir une autre.
+   *
+   * `scene.start` ARRÊTE cette scène : son `shutdown` part, donc `host.terminate()`. Le Worker
+   * est donc mort avant que `MenuScene` ne se monte — c'est exactement ce qu'exige `clearSlot`
+   * (voir `persistence-store.ts`), et ce que le rechargement obtenait à coups de masse.
+   *
+   * `ui` tourne EN PARALLÈLE (`scene.launch`) : `start` ne la couche pas, il faut le dire. Et
+   * ce qui reste après nous — le registry du jeu, les instances de scène — est remis à neuf
+   * par `MenuScene` (`resetHud` et `rafraichirScenesDeJeu`), qui est la seule à savoir qu'on
+   * revient de quelque part.
+   */
+  private quitterVersMondes(): void {
+    if (this.quitte) return
+    this.quitte = true
+    // LA BARRE D'ADRESSE SUIT — comme avant, quand on partait sur `pathname` nu. Ce n'est pas du
+    // contrôle de flux (`MenuScene` consomme son deep-link une fois, elle ne relit pas l'URL) :
+    // c'est que l'adresse ne doit plus dire « joue la case 3 » quand on vient de quitter la
+    // case 3. Un F5 depuis le menu rouvre le menu, pas la partie.
+    window.history.replaceState(null, '', window.location.pathname)
+    this.scene.stop('ui')
+    this.scene.start('menu')
+  }
   /** Dernier volume appliqué au moteur audio — n'applique que sur changement (curseur du menu). */
   private lastAudioVolume = 1
 

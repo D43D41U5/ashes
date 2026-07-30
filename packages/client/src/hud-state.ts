@@ -221,10 +221,10 @@ export interface HudState {
    *  le menu (reprendre / contrôles / son / nouvelle Veillée) couvre l'écran. */
   menuOpen: boolean
   /** QUEL MONDE SOLO on joue — la case du disque et sa seed, publiées au `ready`. UIScene en a
-   *  besoin pour les deux sorties : « rouvrir la vallée » (stèle) et « retour aux vallées »
+   *  besoin pour les deux sorties : « rouvrir la vallée » (stèle) et « retour au menu principal »
    *  (menu pause). Absent en multi : le monde n'est pas sur ce disque. */
   veillee: { slot: number; seed: number }
-  /** LE JOUEUR DEMANDE À QUITTER vers l'écran des vallées (menu pause). WorldScene la sert :
+  /** LE JOUEUR DEMANDE À QUITTER vers le menu principal (menu pause). WorldScene la sert :
    *  il fait ÉCRIRE la partie, puis recharge la page (voir `quitEnCours`). Sens unique — rien
    *  ne la remet à faux, la page part. */
   quitMondes: boolean
@@ -291,4 +291,43 @@ export function setHud<K extends keyof HudState>(registry: Registry, key: K, val
 export function getHud<K extends keyof HudState>(registry: Registry, key: K): HudState[K] | undefined {
   // Seule coercition autorisée sur le registry : le point de passage typé.
   return registry.get(key) as HudState[K] | undefined
+}
+
+/**
+ * TOUTES LES CLÉS DU HUD — exhaustive PAR CONSTRUCTION, et c'est tout l'intérêt du type :
+ * ajouter un champ à `HudState` sans l'ajouter ici ne compile pas. Une liste tenue à la main
+ * aurait dérivé au premier champ suivant, et `resetHud` aurait laissé fuiter précisément
+ * celui-là — en silence.
+ */
+export const CLES_HUD: Record<keyof HudState, true> = {
+  worldReady: true, loadProgress: true, time: true, zone: true, village: true,
+  tasks: true, archetype: true, villageWarmth: true, inv: true, activeSlot: true,
+  craftQueue: true, stationsInRange: true, hunger: true, temperature: true, skills: true,
+  hp: true, stamina: true, wounds: true, selected: true, buildMaterial: true,
+  foundableFire: true, refugeesNearby: true, upgradableFire: true, deathMoment: true, corpseHint: true,
+  characterMenuOpen: true, characterTab: true, uiTyping: true, chatTyping: true, chatLog: true,
+  chatDraft: true, openContainer: true, openContainerView: true, openFire: true, openFireView: true,
+  pickups: true, crafts: true, levelUps: true, fogVersion: true, fog: true,
+  saveState: true, pendingActions: true, journalOpen: true, mapOpen: true, menuOpen: true,
+  veillee: true, quitMondes: true, audioVolume: true, mapData: true, knownPois: true,
+  playerPos: true, chronicle: true, error: true, hint: true, fatal: true,
+  alarm: true, seasonVerdicts: true, debugOn: true, debugGod: true, debugSpeed: true,
+  debugLighting: true, debugInfo: true, debugTeleport: true,
+}
+
+/**
+ * EFFACE tout ce que la partie précédente a écrit — à appeler quand on revient au menu.
+ *
+ * Le registry est celui du JEU, pas de la scène : il survit à l'arrêt de WorldScene comme il
+ * survivait autrefois… à rien, puisque quitter rechargeait la page. Depuis que le retour aux
+ * vallées se fait SANS rechargement (2026-07-29), c'est lui la mémoire qui traverse, et une
+ * vallée neuve héritait sinon du savoir de l'ancienne (`worldReady` déjà vrai, la chronique,
+ * la carte, le brouillard).
+ *
+ * On EFFACE les clés au lieu de leur poser une valeur de repos : `undefined` est déjà l'état
+ * documenté par `getHud` (« tant que WorldScene n'a pas écrit »), c'est exactement celui d'une
+ * page fraîche, et ça évite d'inventer une valeur vide à `mapData` — qui n'en a pas.
+ */
+export function resetHud(registry: Registry): void {
+  for (const cle of Object.keys(CLES_HUD)) registry.remove(cle)
 }

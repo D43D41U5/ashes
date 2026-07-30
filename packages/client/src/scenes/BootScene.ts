@@ -525,7 +525,9 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0x2b2b2f).fillRect(7, 4, 2, 10) // tronc calciné
     tex('cl-burnt_trunk')
 
-    g.fillStyle(0x5a6e33) // touffe d'herbe
+    // Touffe d'herbe — le bleu (0x42) est de la MARGE, pas une couleur : la teinte de biome
+    // (render/clutter-teinte.ts) ne sait qu'assombrir, et une touffe grise de marais en demande 58.
+    g.fillStyle(0x5a6e42)
     g.fillRect(5, 9, 2, 5).fillRect(8, 8, 2, 6).fillRect(11, 10, 2, 4)
     tex('cl-grass_tuft')
 

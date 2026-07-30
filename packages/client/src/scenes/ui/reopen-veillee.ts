@@ -1,11 +1,15 @@
 /**
- * LES DEUX SORTIES D'UNE PARTIE — rouvrir la même vallée à neuf, ou revenir aux vallées.
+ * ROUVRIR LA MÊME VALLÉE À NEUF — la sortie par la stèle de fin de saison.
  *
- * Toutes deux RECHARGENT LA PAGE, et ce n'est pas de la paresse : un Worker vivant garde en
- * mémoire l'identité du monde qu'il a ouvert (`carteEcrite`, la base des nœuds, la chronique).
- * Repartir sans recharger demanderait de prouver qu'aucun de ces états ne survit au changement
- * de monde — alors que l'invariant de `clearSlot` exige justement qu'aucun Worker ne vive quand
- * on efface. Un rechargement rend cette preuve gratuite. (Voir `persistence-store.ts`.)
+ * Elle RECHARGE LA PAGE, et ce n'est pas de la paresse : elle doit EFFACER la case avant de
+ * repartir, et l'invariant de `clearSlot` exige qu'aucun Worker ne vive à cet instant (voir
+ * `persistence-store.ts`). Le rechargement rend cette preuve gratuite, et le deep-link
+ * `?solo&fresh` fait le ménage en un seul endroit.
+ *
+ * L'AUTRE SORTIE — « retour au menu principal », le geste du menu pause — ne recharge PLUS depuis le
+ * 2026-07-29 : elle n'efface rien, donc elle n'a pas ce prix à payer. Elle vit dans
+ * `WorldScene.quitterVersMondes`, qui arrête la scène (donc tue le Worker) et rend la main à
+ * `MenuScene`.
  */
 
 /**
@@ -17,16 +21,4 @@
  */
 export function reopenFreshVeillee(slot: number, seed: number): void {
   window.location.href = `${window.location.pathname}?solo&fresh&slot=${slot}&seed=${seed}`
-}
-
-/**
- * REVENIR À L'ÉCRAN DES VALLÉES — sans rien détruire. Le geste du menu pause depuis que le
- * joueur tient cinq mondes : quitter n'est plus « effacer », c'est changer de vallée. (Ce qu'on
- * efface, on l'efface DANS la liste, où l'on voit ce qu'on perd.)
- *
- * L'appelant doit s'être assuré que la partie est SAUVÉE (voir `WorldScene.quitVersMondes`) :
- * ici, on ne fait que naviguer.
- */
-export function reopenMondes(): void {
-  window.location.href = window.location.pathname
 }

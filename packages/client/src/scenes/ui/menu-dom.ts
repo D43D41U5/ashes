@@ -100,6 +100,10 @@ interface Vue {
  * Monte le voile du menu sur `document.body` et rend de quoi le retirer.
  * `slots` est l'état du disque, déjà lu par `MenuScene` — l'écran ne touche pas IndexedDB :
  * il montre ce qu'on lui donne et prévient par callback.
+ *
+ * ON ENTRE TOUJOURS PAR L'ACCUEIL — au boot comme au retour d'une partie (demande d'Alexis,
+ * 2026-07-29). Quitter une Veillée ne présume donc pas qu'on veut en ouvrir une autre : on
+ * revient au SEUIL, d'où REPRENDRE, JOUER et OPTIONS sont à un clic chacun.
  */
 export function mountMenu(slots: (SlotMeta | null)[], multi: DerniereMulti | null, cb: MenuCallbacks): MenuHandle {
   ensureGameFont()

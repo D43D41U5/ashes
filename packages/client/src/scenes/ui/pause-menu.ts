@@ -59,12 +59,12 @@ export interface PauseMenuDeps {
   getVolume(): number
   /** L'utilisateur a bougé le curseur de son (0..1). */
   onVolume(v: number): void
-  /** QUITTER vers l'écran des vallées. WorldScene sauve d'abord, puis recharge. */
+  /** QUITTER vers le menu principal. WorldScene sauve d'abord, puis rend la main à MenuScene. */
   onQuit(): void
 }
 
 /**
- * `onResume` referme le menu ; « retour aux vallées » rend la main à l'écran des mondes.
+ * `onResume` referme le menu ; « retour au menu principal » rend la main à `MenuScene`.
  *
  * ⚠ CE MENU N'EFFACE PLUS RIEN (2026-07-28). Il portait « nouvelle Veillée » et sa confirmation
  * rouge — le seul chemin, à l'époque, pour repartir à neuf, puisque l'accueil n'avait qu'une
@@ -145,16 +145,20 @@ export function createPauseMenu({ onResume, getVolume, onVolume, onQuit }: Pause
     </div>
     <div class="pm-row2 pm-choices">
       <button class="pm-btn pm-resume">REPRENDRE</button>
-      <button class="pm-btn pm-ghost pm-quit">retour aux vallées</button>
+      <button class="pm-btn pm-ghost pm-quit">retour au menu principal</button>
     </div>
   </div>`
   document.body.appendChild(root)
 
   root.querySelector<HTMLElement>('.pm-resume')!.addEventListener('click', () => onResume())
 
-  // « RETOUR AUX VALLÉES » ne détruit rien et ne demande donc pas de confirmation : la partie
-  // est ÉCRITE avant qu'on parte (WorldScene attend le `saved` de l'hôte). Le bouton reste
+  // « RETOUR AU MENU PRINCIPAL » ne détruit rien et ne demande donc pas de confirmation : la
+  // partie est ÉCRITE avant qu'on parte (WorldScene attend le `saved` de l'hôte). Le bouton reste
   // fantôme, à côté de REPRENDRE — le geste principal doit rester le plus lumineux des deux.
+  //
+  // Il DIT OÙ IL VA, et il n'a pas toujours été vrai : il portait « retour aux vallées » alors
+  // qu'il atterrissait sur l'accueil, laissant la liste des vallées à deux clics de son propre
+  // nom. Le geste va au SEUIL (décision d'Alexis, 2026-07-29) ; l'étiquette le suit.
   root.querySelector<HTMLElement>('.pm-quit')!.addEventListener('click', () => onQuit())
 
   // Repeint le tableau depuis le jeu de touches EFFECTIF. Appelé à chaque ouverture : c'est le

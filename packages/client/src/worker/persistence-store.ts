@@ -161,9 +161,13 @@ export async function saveCarteEtSlot(slot: number, carte: string, record: SaveR
  * laisserait son `carteEcrite` à `true` alors que l'enregistrement de naissance a disparu du
  * disque, et **chaque autosave suivant écrirait une partie sans sa carte** — au boot d'après,
  * plus rien ne serait relisible. Ce n'est pas une fenêtre d'une seconde comme celle des deux
- * transactions : ce serait une sauvegarde durablement morte. C'est aussi POURQUOI changer de
- * monde depuis le menu pause recharge la page (`reopenMondes`) au lieu de redémarrer la scène :
- * un Worker vivant garde en mémoire l'identité du monde précédent.
+ * transactions : ce serait une sauvegarde durablement morte.
+ *
+ * Ce qui tient l'invariant quand on revient au menu SANS recharger (2026-07-29), c'est l'ordre
+ * imposé par Phaser : `WorldScene.quitterVersMondes` fait `scene.start('menu')`, ce qui arrête
+ * la scène du monde — et son `shutdown` appelle `host.terminate()`. `MenuScene.create` ne monte
+ * l'écran qu'après, et le bouton EFFACER n'existe qu'une fois l'écran monté. Aucun Worker ne
+ * peut donc être vivant quand on efface.
  *
  * EFFACE la Veillée sauvée d'une case — « effacer ce monde ». Ne jette pas si la case est vide.
  */

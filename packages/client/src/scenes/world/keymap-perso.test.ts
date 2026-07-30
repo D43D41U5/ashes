@@ -60,7 +60,7 @@ describe('poser une touche', () => {
   })
 
   it('NE TOUCHE JAMAIS à la sortie de secours, ni comme cible ni comme victime', () => {
-    // ÉCHAP ouvre le menu pause — donc le son, le retour aux vallées, et la réparation d'un
+    // ÉCHAP ouvre le menu pause — donc le son, le retour au menu, et la réparation d'un
     // binding raté. La lier ailleurs enfermerait le joueur dans sa partie, sans recours.
     expect(INREBINDABLE).toContain('toggleMenu')
     expect(poseBinding({}, 'toggleMenu', 'K')).toEqual({}) // on ne la rebinde pas…

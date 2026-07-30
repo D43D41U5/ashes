@@ -6565,6 +6565,84 @@ const SCENARIOS = {
     return mesure
   },
 
+  /**
+   * LA TOUFFE PREND-ELLE LA GAMME DE SON BIOME ? (demande d'Alexis, 2026-07-29)
+   *
+   * Ce qui ne se prouve qu'au navigateur : que la teinte calculée ATTEINT L'ÉCRAN. Elle est
+   * posée sur des sprites POOLÉS et traverse le pipeline `_lit` (éclairage armé par défaut) —
+   * deux endroits où elle pouvait se perdre sans que rien n'échoue.
+   *
+   * On va donc se planter dans chaque biome à touffes de la Racine, et on LIT la teinte
+   * réellement portée par les sprites d'herbe à l'écran. Le fait mesuré : deux biomes ne
+   * portent pas la même. Exige `--dev` (TP).
+   */
+  async touffes(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+
+    const BIOMES = [
+      { id: 1, nom: 'pré' }, { id: 17, nom: 'fleuraie' }, { id: 21, nom: 'calciné' },
+      { id: 14, nom: 'mélèzes' }, { id: 13, nom: 'pins' }, { id: 8, nom: 'marais' },
+    ]
+    // LA TUILE LA PLUS ENTOURÉE de son propre biome, pas « une tuile de ce biome » : au bord,
+    // l'écran serait rempli par le voisin et la capture jugerait la mauvaise gamme.
+    const cibles = await page.evaluate((biomes) => {
+      const m = window.__BRAISES__.scene.map
+      const R = 6
+      const out = {}
+      for (const b of biomes) {
+        let best = null
+        for (let ty = R; ty < m.height - R; ty += 3) {
+          for (let tx = R; tx < m.width - R; tx += 3) {
+            if (m.terrain[ty * m.width + tx] !== b.id) continue
+            let n = 0
+            for (let dy = -R; dy <= R; dy += 2) {
+              const row = (ty + dy) * m.width
+              for (let dx = -R; dx <= R; dx += 2) if (m.terrain[row + tx + dx] === b.id) n++
+            }
+            if (!best || n > best.n) best = { x: tx, y: ty, n }
+          }
+        }
+        out[b.nom] = best
+      }
+      return out
+    }, BIOMES)
+
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    const vus = {}
+    for (const b of BIOMES) {
+      const c = cibles[b.nom]
+      if (!c) { console.log(`   (pas de ${b.nom} sur cette carte)`); continue }
+      await page.evaluate(({ x, y }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y }), c)
+      await page.waitForTimeout(1200)
+      await page.evaluate(() => { window.__BRAISES__.scene.cameras.main.setZoom(3) })
+      await page.waitForTimeout(600)
+      // La teinte PORTÉE, lue sur les sprites d'herbe visibles — pas celle qu'on a calculée.
+      const lu = await page.evaluate(() => {
+        const pool = window.__BRAISES__.scene.clutter?.pool ?? []
+        const compte = {}
+        for (const s of pool) {
+          if (!s.visible || !String(s.texture?.key ?? '').startsWith('cl-grass_tuft')) continue
+          const t = '0x' + (s.tintTopLeft >>> 0).toString(16).padStart(6, '0')
+          compte[t] = (compte[t] ?? 0) + 1
+        }
+        return compte
+      })
+      await page.screenshot({ path: `${OUT}/touffes-${b.nom}.png` })
+      const dominante = Object.entries(lu).sort((a, b2) => b2[1] - a[1])[0]
+      vus[b.nom] = dominante ? dominante[0] : null
+      console.log(`  ${b.nom.padEnd(10)} (${c.x}, ${c.y}) → ${dominante ? `${dominante[0]} sur ${dominante[1]} touffes` : 'AUCUNE TOUFFE À L’ÉCRAN'}`)
+    }
+
+    const distinctes = new Set(Object.values(vus).filter(Boolean))
+    console.log(`\n  ${distinctes.size} teintes DISTINCTES portées à l'écran sur ${Object.keys(vus).length} biomes`)
+    if (distinctes.size < 2) console.error(`!! LA GAMME DE BIOME N'ATTEINT PAS L'ÉCRAN — toutes les touffes portent la même teinte`)
+    return vus
+  },
+
   /** En jeu : on se pose SUR quelques lieux et on regarde. Clairière ? échelle ? */
   async poiInSitu(page) {
     const s = await page.evaluate(PROBE)
@@ -7281,6 +7359,137 @@ const SCENARIOS = {
     await page.waitForTimeout(8000) // UN PAS de carrousel : la vue suivante a pris la place
     await page.screenshot({ path: `${OUT}/vitrine-menu-2.png` })
     console.log(`   → ${OUT}/vitrine-menu-{1,2}.png`)
+  },
+
+  /**
+   * ON REVIENT AUX VALLÉES, ET ON REPART — SANS RECHARGER LA PAGE (2026-07-29)
+   *
+   * Le seul endroit où ce chemin se prouve. Jusqu'ici, quitter rechargeait : `WorldScene`
+   * n'était donc JAMAIS entrée deux fois dans la même page, et rien n'a jamais exercé la
+   * deuxième entrée. Le mode de panne n'est pas un plantage franc mais une vallée neuve qui
+   * hérite de l'ancienne — Phaser réutilise l'instance de scène (72 champs de `WorldScene`
+   * survivent à `create()`), et le registry appartient au JEU, pas à la scène.
+   *
+   * On joue donc le tour complet : Veillée → menu pause → retour au menu principal → JOUER →
+   * FONDER une AUTRE case avec une AUTRE seed. Ce qui est affirmé, un fait par ligne :
+   *   1. aucun rechargement (c'est TOUT l'objet du changement) ;
+   *   2. le registry est vide en arrivant au menu (`resetHud`) ;
+   *   3. on atterrit sur l'ACCUEIL — le SEUIL (décision d'Alexis, 2026-07-29) : quitter une
+   *      Veillée ne présume pas qu'on veut en ouvrir une autre, et le bouton dit où il va ;
+   *   4. l'ordre des scènes est intact — `add` empile en fin de liste, donc `ui` doit
+   *      repasser après `world`, sinon le monde se dessinerait par-dessus le HUD ;
+   *   5. la seconde vallée porte SA seed, et sa chronique est vierge ;
+   *   6. aucune erreur de page sur tout le tour — c'est la sonde qui attrape les objets
+   *      détruits qu'un champ porté ferait toucher.
+   *
+   * Autonome (aucun `--dev`) : rien à téléporter, rien à forcer.
+   */
+  async retour(page) {
+    const erreurs = []
+    page.on('pageerror', (e) => erreurs.push(String(e).split('\n')[0]))
+    // LA SONDE À FUITES DE TEXTURES. Elle ne vise pas un bug, elle vise une FAMILLE : toute
+    // couche du monde qui crée une clé de texture sans la rendre au shutdown se signale par
+    // « Texture key already in use » à la deuxième partie — et rend l'art de la PREMIÈRE vallée
+    // dans la seconde, en silence. C'est ainsi qu'on a trouvé `water-field` (le seul qui
+    // n'avait pas de garde). Elle vaut pour la couche qu'on ajoutera demain.
+    const clesReprises = []
+    page.on('console', (m) => {
+      const t = m.text()
+      if (t.includes('Texture key already in use')) clesReprises.push(t.split(':').pop().trim())
+    })
+
+    const pret = () => page.waitForFunction(
+      () => window.__BRAISES__?.scene?.registry?.get('worldReady') === true, null, { timeout: 180000 })
+
+    await page.goto(URL) // `?solo` → case 0, seed canonique
+    await pret()
+    // On AGRIPPE le registry et le jeu MAINTENANT : `window.__BRAISES__.scene` va pointer sur
+    // une scène détruite, et c'est justement ce qu'on veut pouvoir interroger après coup.
+    await page.evaluate(() => {
+      window.__REG = window.__BRAISES__.scene.registry
+      window.__GAME = window.__BRAISES__.scene.game
+    })
+    const seed1 = await page.evaluate(() => window.__REG.get('veillee').seed)
+    console.log(`\n── la première Veillée ──\n   case 0, seed ${seed1}`)
+
+    // ── LE GESTE : ÉCHAP, puis « retour aux vallées » ──
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('.pause-menu', { state: 'visible', timeout: 30000 })
+    await page.click('.pm-quit')
+    await page.waitForSelector('.bm-overlay', { timeout: 120000 })
+
+    const auMenu = await page.evaluate(() => ({
+      navigations: performance.getEntriesByType('navigation').length,
+      clesRestantes: ['worldReady', 'mapData', 'chronicle', 'fog', 'veillee', 'menuOpen', 'quitMondes']
+        .filter((k) => window.__REG.get(k) !== undefined),
+      scenes: window.__GAME.scene.scenes.map((s) => s.sys.settings.key),
+      // L'ACCUEIL se reconnaît à ses portes (JOUER / OPTIONS) ; la liste des vallées, à ses
+      // lignes (`[data-row]`). On affirme LES DEUX : la bonne présente ET l'autre absente.
+      accueil: Boolean(document.querySelector('[data-go="jouer"]')),
+      listeVallees: Boolean(document.querySelector('[data-row]')),
+    }))
+    console.log('\n── de retour au menu ──')
+    console.log(`   navigations depuis le début : ${auMenu.navigations}  ${auMenu.navigations === 1 ? '✔ aucun rechargement' : '!! LA PAGE A RECHARGÉ'}`)
+    console.log(`   clés de HUD survivantes : ${auMenu.clesRestantes.length === 0 ? '0 ✔' : `!! ${auMenu.clesRestantes.join(', ')}`}`)
+    console.log(`   on est sur l'ACCUEIL : ${auMenu.accueil && !auMenu.listeVallees ? '✔' : `!! accueil=${auMenu.accueil} listeVallées=${auMenu.listeVallees}`}`)
+    console.log(`   ordre des scènes : ${auMenu.scenes.join(' → ')}`)
+
+    // ── ON REPART, AILLEURS : JOUER → vos vallées → case 1, seed choisie ──
+    const SEED2 = 424242
+    await page.click('[data-go="jouer"]')
+    await page.click('[data-go="vallees"]')
+    await page.waitForSelector('[data-row="1"]', { timeout: 15000 })
+    await page.click('[data-row="1"]')
+    await page.waitForSelector('.mw-seed', { timeout: 15000 })
+    await page.fill('.mw-seed', String(SEED2))
+    await page.click('[data-semer="1"]')
+    await pret()
+
+    const seconde = await page.evaluate(() => ({
+      slot: window.__REG.get('veillee').slot,
+      seed: window.__REG.get('veillee').seed,
+      chronique: (window.__REG.get('chronicle') ?? []).length,
+      navigations: performance.getEntriesByType('navigation').length,
+      hud: Boolean(document.querySelector('.hc')),
+      voileMenu: Boolean(document.querySelector('.bm-overlay')),
+    }))
+    console.log('\n── la seconde Veillée, dans la même page ──')
+    console.log(`   case ${seconde.slot}, seed ${seconde.seed}  ${seconde.seed === SEED2 && seconde.slot === 1 ? '✔ c’est bien celle qu’on a semée' : '!! ce n’est pas la vallée demandée'}`)
+    console.log(`   chronique : ${seconde.chronique} entrée(s) ${seconde.chronique === 0 ? '✔ vierge' : '!! elle a hérité d’un récit'}`)
+    console.log(`   navigations : ${seconde.navigations} ${seconde.navigations === 1 ? '✔' : '!!'}`)
+    console.log(`   HUD monté : ${seconde.hud ? '✔' : '!!'} · voile du menu retiré : ${seconde.voileMenu ? '!! il traîne' : '✔'}`)
+    console.log(`   textures héritées de la 1re vallée : ${clesReprises.length === 0 ? '0 ✔' : `!! ${[...new Set(clesReprises)].join(', ')} — la couche qui les crée ne les rend pas au shutdown`}`)
+
+    await page.screenshot({ path: `${OUT}/retour-seconde-veillee.png` })
+    console.log(`   → ${OUT}/retour-seconde-veillee.png`)
+
+    // ── TROISIÈME TOUR, PAR REPRENDRE : un AUTRE deuxième démarrage ──
+    // FONDER part d'une case vide, donc l'hôte n'envoie aucune chronique. REPRENDRE relit le
+    // DISQUE : `msg.chronicle` arrive non vide et arme `chronicleReseedPending` — précisément
+    // le champ que l'analyse des 72 donnait comme capable de faire couler le récit d'une vallée
+    // dans une autre. La branche ne s'exerce que par ici.
+    await page.keyboard.press('Escape')
+    await page.waitForSelector('.pause-menu', { state: 'visible', timeout: 30000 })
+    await page.click('.pm-quit')
+    await page.waitForSelector('[data-reprendre]', { timeout: 120000 })
+    await page.click('[data-reprendre]')
+    await pret()
+
+    const reprise = await page.evaluate(() => ({
+      slot: window.__REG.get('veillee').slot,
+      seed: window.__REG.get('veillee').seed,
+      chronique: (window.__REG.get('chronicle') ?? []).length,
+      navigations: performance.getEntriesByType('navigation').length,
+    }))
+    console.log('\n── troisième tour, par REPRENDRE (relecture disque) ──')
+    console.log(`   case ${reprise.slot}, seed ${reprise.seed}  ${reprise.slot === 1 && reprise.seed === SEED2 ? '✔ c’est bien la vallée qu’on vient de quitter' : '!! ce n’est pas celle qu’on a reprise'}`)
+    console.log(`   chronique relue : ${reprise.chronique} entrée(s) (celle de la case 1, pas celle de la case 0)`)
+    console.log(`   navigations : ${reprise.navigations} ${reprise.navigations === 1 ? '✔' : '!!'}`)
+    console.log(`   erreurs de page, tour complet : ${erreurs.length === 0 ? '0 ✔' : `!! ${erreurs.length}`}`)
+    for (const e of erreurs.slice(0, 6)) console.log(`      ${e}`)
+    console.log(`   textures héritées, tour complet : ${clesReprises.length === 0 ? '0 ✔' : `!! ${[...new Set(clesReprises)].join(', ')}`}`)
+
+    return { auMenu, seconde, reprise, erreurs }
   },
 }
 

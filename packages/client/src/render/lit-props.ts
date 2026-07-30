@@ -73,7 +73,8 @@ const PROPS: LitProp[] = [
   { key: 'cl-sphagnum', w: 16, h: 16, draw: (c) => { c.fillStyle = '#6a6a3a'; disc(c, 8, 11, 4) } },
   // Le petit décor de sol + les brins, désormais cubiques (mousse, touffes… « tout en cubique »).
   //  Les FLEURS, elles, ont plusieurs VARIÉTÉS (forme + couleur) — voir `FLOWERS` plus bas.
-  { key: 'cl-grass_tuft', w: 16, h: 16, draw: (c) => { c.fillStyle = '#5a6e33'; c.fillRect(5, 9, 2, 5); c.fillRect(8, 8, 2, 6); c.fillRect(11, 10, 2, 4) } },
+  // Le bleu de la touffe (0x42) est de la MARGE pour la teinte de biome — cf. `clutter-teinte.ts`.
+  { key: 'cl-grass_tuft', w: 16, h: 16, draw: (c) => { c.fillStyle = '#5a6e42'; c.fillRect(5, 9, 2, 5); c.fillRect(8, 8, 2, 6); c.fillRect(11, 10, 2, 4) } },
   { key: 'cl-reed', w: 16, h: 16, draw: (c) => { c.fillStyle = '#6d7a40'; c.fillRect(6, 4, 1, 11); c.fillRect(9, 3, 1, 12); c.fillRect(11, 6, 1, 9) } },
   { key: 'cl-lichen', w: 16, h: 16, draw: (c) => { c.fillStyle = '#777c50'; disc(c, 6, 10, 2); disc(c, 9, 11, 2) } },
   { key: 'cl-snowdrift', w: 16, h: 16, draw: (c) => { c.fillStyle = '#d8dde6'; disc(c, 8, 12, 4) } },
