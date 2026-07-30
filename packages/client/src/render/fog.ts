@@ -99,6 +99,29 @@ export function partDecouverte(b: Brouillard): number {
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
 /**
+ * DE QUEL MONDE EST CE SAVOIR — l'estampille que porte tout brouillard rangé.
+ *
+ * La CASE ne suffit pas à nommer une vallée : on refonde dans la même case, et une sauvegarde
+ * illisible (bosse de `SAVE_FORMAT_VERSION`, champ neuf dans `SimState`) fait naître un monde
+ * NEUF dans la case qu'on croyait reprendre. La SEED ne suffit pas non plus, pour la même
+ * raison : refonder la même seed donne une vallée identique mais une partie neuve, où l'on n'a
+ * encore rien arpenté.
+ *
+ * Il faut donc les deux, plus la DATE DE FONDATION (`neA`, horloge murale d'hôte, unique à
+ * chaque naissance de monde). C'est le même geste que `deserializePartie`, qui refuse une carte
+ * dont la seed n'est pas celle de la partie : un savoir doit dire de quel monde il parle.
+ */
+export interface IdentiteMonde {
+  /** La seed semée — deux vallées de seeds différentes ne partagent aucun savoir. */
+  seed: number
+  /** L'horloge murale de la FONDATION : ce qui sépare deux mondes de MÊME seed dans la MÊME case. */
+  neA: number
+}
+
+/** Marque de format en tête du brouillard rangé : `f1|seed|neA|charge utile`. */
+const EN_TETE = 'f1'
+
+/**
  * Là où le savoir géographique du joueur dort entre deux sessions — UNE CLÉ PAR MONDE.
  *
  * Le brouillard vit dans `localStorage`, hors de la sauvegarde de sim (IndexedDB) : il a donc
@@ -107,6 +130,10 @@ const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
  *
  * La case 0 GARDE L'ANCIENNE CLÉ : les Veillées d'avant l'écran des mondes retrouvent leur
  * carte sans migration, comme leur sauvegarde retrouve la sienne (`slot0`).
+ *
+ * LA CLÉ NE FAIT PAS L'IDENTITÉ, et c'était le bug (2026-07-30) : ranger par case suppose que
+ * la case ne contient qu'un monde dans sa vie. C'est l'estampille (`IdentiteMonde`), pas la clé,
+ * qui dit de quelle vallée est le savoir — voir `depackBrouillard`.
  */
 const FOG_KEY = 'braises.fog'
 const cleFog = (slot: number): string => (slot === 0 ? FOG_KEY : `${FOG_KEY}.${slot}`)
@@ -138,8 +165,8 @@ export function clearFog(slot: number): void {
   }
 }
 
-/** Tasse le brouillard en base64, un bit par cellule. */
-export function packBrouillard(b: Brouillard): string {
+/** Tasse le brouillard en base64, un bit par cellule, ESTAMPILLÉ du monde qu'il décrit. */
+export function packBrouillard(b: Brouillard, monde: IdentiteMonde): string {
   const octets = new Uint8Array(Math.ceil(b.vu.length / 8))
   for (let i = 0; i < b.vu.length; i++) {
     if (b.vu[i]) octets[i >> 3]! |= 1 << (i & 7)
@@ -152,27 +179,49 @@ export function packBrouillard(b: Brouillard): string {
     const n = (a << 16) | (c << 8) | d
     out += B64[(n >> 18) & 63]! + B64[(n >> 12) & 63]! + B64[(n >> 6) & 63]! + B64[n & 63]!
   }
-  return out
+  return `${EN_TETE}|${monde.seed}|${monde.neA}|${out}`
 }
 
 /**
- * Relit un brouillard tassé. Les DIMENSIONS ne sont pas dans la chaîne : elles viennent de la
- * carte courante. Si elles ne correspondent plus (carte régénérée, taille changée), on rend un
- * brouillard NEUF plutôt qu'un décalage silencieux — mieux vaut tout redécouvrir qu'afficher
- * un savoir faux.
+ * Relit un brouillard tassé — et REFUSE tout ce qui ne vient pas EXACTEMENT de ce monde-ci.
+ *
+ * Deux gardes, et il en fallait deux :
+ *  1. L'ESTAMPILLE (seed + date de fondation). Sans elle, une vallée refondée — ou régénérée
+ *     parce que sa sauvegarde était devenue illisible — rouvrait avec la carte de la
+ *     précédente : « une partie de la carte déjà découverte » dans une partie neuve.
+ *  2. LES DIMENSIONS, qui ne sont pas dans la chaîne : elles viennent de la carte courante.
+ *     Elle ne suffisait pas seule, et c'est le fond de l'affaire — `tailleCarte()` ne dépend
+ *     que du nombre de joueurs cible, pas de la seed. Toutes les vallées font la même taille :
+ *     cette garde ne pouvait donc RIEN refuser.
+ *
+ * Dans les deux cas on rend un brouillard NEUF plutôt qu'un décalage silencieux — mieux vaut
+ * tout redécouvrir qu'afficher un savoir faux. Une chaîne d'AVANT l'estampille (sans en-tête)
+ * tombe dans le même refus : elle ne dit pas de quel monde elle est, on ne la croit pas.
  */
-export function depackBrouillard(texte: string, largeurTuiles: number, hauteurTuiles: number, pas = FOG_PAS): Brouillard {
+export function depackBrouillard(
+  texte: string,
+  monde: IdentiteMonde,
+  largeurTuiles: number,
+  hauteurTuiles: number,
+  pas = FOG_PAS,
+): Brouillard {
   const b = creerBrouillard(largeurTuiles, hauteurTuiles, pas)
+  const parts = texte.split('|')
+  if (parts.length !== 4 || parts[0] !== EN_TETE) return b
+  if (Number(parts[1]) !== monde.seed || Number(parts[2]) !== monde.neA) return b
+  // LA GARDE DE LONGUEUR PORTE SUR LA CHARGE UTILE, pas sur la chaîne entière : la mesurer
+  // en-tête compris refuserait tout brouillard estampillé, et la reprise perdrait sa carte.
+  const charge = parts[3]!
   const attendus = Math.ceil(Math.ceil(b.vu.length / 8) / 3) * 4
-  if (texte.length !== attendus) return b
+  if (charge.length !== attendus) return b
   const octets = new Uint8Array(Math.ceil(b.vu.length / 8))
   let o = 0
-  for (let i = 0; i < texte.length; i += 4) {
+  for (let i = 0; i < charge.length; i += 4) {
     const n =
-      (B64.indexOf(texte[i]!) << 18) |
-      (B64.indexOf(texte[i + 1]!) << 12) |
-      (B64.indexOf(texte[i + 2]!) << 6) |
-      B64.indexOf(texte[i + 3]!)
+      (B64.indexOf(charge[i]!) << 18) |
+      (B64.indexOf(charge[i + 1]!) << 12) |
+      (B64.indexOf(charge[i + 2]!) << 6) |
+      B64.indexOf(charge[i + 3]!)
     if (o < octets.length) octets[o++] = (n >> 16) & 0xff
     if (o < octets.length) octets[o++] = (n >> 8) & 0xff
     if (o < octets.length) octets[o++] = n & 0xff

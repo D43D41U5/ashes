@@ -118,7 +118,17 @@ import { FireFx } from './world/fire-fx'
 import { FireGroundGlow } from './world/fire-ground-glow'
 import { createContactShadow } from './world/contact-shadow'
 import { champLisiere, poidsLisiere, LISIERE_MAX, LISIERE_PORTEE } from '../render/ecotone'
-import { creerBrouillard, depackBrouillard, FOG_RAYON_TUILES, loadFog, packBrouillard, revele, saveFog, type Brouillard } from '../render/fog'
+import {
+  creerBrouillard,
+  depackBrouillard,
+  FOG_RAYON_TUILES,
+  loadFog,
+  packBrouillard,
+  revele,
+  saveFog,
+  type Brouillard,
+  type IdentiteMonde,
+} from '../render/fog'
 import { fireStateAt, POI_CHARGES, TERRAIN_SHALLOW_WATER } from '@ashes/sim'
 
 /**
@@ -691,14 +701,18 @@ export class WorldScene extends Phaser.Scene {
     this.calendarScale = msg.calendarScale
     this.map = msg.map
 
-    // LE BROUILLARD DE GUERRE (spec worldgen R19) : on relit ce que ce joueur a déjà arpenté,
-    // ou on ouvre une carte vierge. `depackBrouillard` rend un brouillard NEUF si les dimensions
-    // ne correspondent plus (vallée régénérée) — on redécouvre plutôt que d'afficher un savoir
-    // faux. Il vit ici, côté client : aucune règle de jeu n'en dépend (voir l'en-tête de `fog`).
-    const memoire = loadFog(this.slot)
-    this.fog = memoire
-      ? depackBrouillard(memoire, this.map.width, this.map.height)
-      : creerBrouillard(this.map.width, this.map.height)
+    // LE BROUILLARD DE GUERRE (spec worldgen R19) : on relit ce que ce joueur a déjà arpenté DANS
+    // CETTE VALLÉE-CI, ou on ouvre une carte vierge. L'estampille (seed + fondation) est ce qui
+    // rattache un savoir à son monde : `depackBrouillard` rend un brouillard NEUF dès qu'elle ne
+    // correspond pas — vallée refondée, monde régénéré après une sauvegarde illisible, ou hôte
+    // qui ne nomme pas son monde. On redécouvre plutôt que d'afficher un savoir faux.
+    // Il vit ici, côté client : aucune règle de jeu n'en dépend (voir l'en-tête de `fog`).
+    this.mondeFog = msg.createdAt !== undefined ? { seed: msg.seed, neA: msg.createdAt } : undefined
+    const memoire = this.mondeFog ? loadFog(this.slot) : null
+    this.fog =
+      memoire && this.mondeFog
+        ? depackBrouillard(memoire, this.mondeFog, this.map.width, this.map.height)
+        : creerBrouillard(this.map.width, this.map.height)
     setHud(this.registry, 'fog', this.fog)
     setHud(this.registry, 'fogVersion', 1)
 
@@ -1455,7 +1469,9 @@ export class WorldScene extends Phaser.Scene {
       // que la veillée est à l'abri (et surtout savoir quand elle ne l'est PAS) vaut son pixel.
       // Le brouillard se range AU MÊME MOMENT que la partie : un seul geste de sauvegarde,
       // donc jamais un savoir géographique en avance ou en retard sur le monde qu'il décrit.
-      if (this.fog && msg.ok) saveFog(this.slot, packBrouillard(this.fog))
+      // …ESTAMPILLÉ du monde qu'il décrit : la case ne suffit pas à nommer une vallée (on y
+      // refonde), et sans ce nom la suivante s'ouvrirait avec la carte de celle-ci.
+      if (this.fog && this.mondeFog && msg.ok) saveFog(this.slot, packBrouillard(this.fog, this.mondeFog))
       publishSaved(this.registry, msg.at, msg.ok, this.time.now)
       // QUITTER VERS LE MENU attendait CE message : la partie est au disque (ou l'hôte a
       // dit qu'il n'y arrivait pas — dans les deux cas, attendre plus ne sauvera rien de plus).
@@ -1626,6 +1642,13 @@ export class WorldScene extends Phaser.Scene {
   private menuPaused = false
   /** SOLO — la case du disque que cette partie occupe (brouillard, sauvegarde, retour au menu). */
   private slot = 0
+  /**
+   * DE QUEL MONDE EST LE BROUILLARD qu'on relit et qu'on range — seed + date de fondation, dites
+   * par l'hôte au `ready`. `undefined` quand l'hôte ne les dit pas (un serveur) : on joue alors
+   * sur une carte vierge et on ne range rien, plutôt que d'ouvrir la vallée d'à côté avec le
+   * savoir d'une Veillée solo.
+   */
+  private mondeFog: IdentiteMonde | undefined
   /** MULTI — l'adresse rejointe et son nom, pour le signet de « REPRENDRE ». Vides en solo. */
   private serverUrl: string | undefined
   private serverNom = ''

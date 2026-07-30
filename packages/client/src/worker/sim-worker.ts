@@ -380,7 +380,11 @@ async function boot(slot: number, seed: number, nom: string): Promise<void> {
       // monde à l'instant — et l'écran des mondes dirait « commencée à l'instant » d'une vallée
       // vieille de trois jours. Sauvegarde d'avant les métas : sa date de sauvegarde fait foi.
       const metaDisque = await loadMeta(slot)
-      mondeCreeA = metaDisque?.createdAt || rec.savedAt
+      // `|| Date.now()` en dernier recours : la fondation doit être un nombre STABLE et non nul,
+      // parce qu'elle part au client comme identité de monde (voir `createdAt` dans `ready`) ET
+      // en méta au prochain `persist()`. Une sauvegarde si vieille qu'elle n'a ni méta ni date
+      // de sauvegarde naît donc aujourd'hui — plutôt que de porter deux dates différentes.
+      mondeCreeA = metaDisque?.createdAt || rec.savedAt || Date.now()
       // LE NOM AUSSI SURVIT, et il vient du DISQUE, pas de la configuration d'hôte : rouvrir
       // une vallée nommée ne doit pas pouvoir la rebaptiser (ni l'effacer si le menu se tait).
       mondeNom = metaDisque?.nom ?? ''
@@ -434,6 +438,12 @@ async function boot(slot: number, seed: number, nom: string): Promise<void> {
     // (là où l'on s'est arrêté), pas le point de fondation. Repli sur (0,0)-évité : un
     // monde neuf a toujours son `world.spawn` ; une reprise a toujours son entité.
     playerSpawn: spawn ?? { x: sim.map.width / 2, y: sim.map.height / 2 },
+    // LA DATE DE FONDATION — avec la seed, elle NOMME cette vallée-ci. Le client en estampille
+    // son brouillard : sans elle, un monde régénéré (sauvegarde illisible) ou refondé dans la
+    // même case rouvrait avec le savoir géographique du précédent. C'est la MÊME valeur que
+    // celle qui part en méta au prochain `persist()` — sinon l'estampille ne se reconnaîtrait
+    // pas à la reprise, et la carte se redécouvrirait pour rien.
+    createdAt: mondeCreeA,
     // La chronique n'accompagne QUE la reprise (sur un monde neuf, le récit démarre vide).
     ...(resumed ? { chronicle: chronicleLog } : {}),
   })

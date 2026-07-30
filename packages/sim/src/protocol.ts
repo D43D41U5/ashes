@@ -138,6 +138,21 @@ export interface ReadyMessage {
    * sur un monde tout neuf (le récit se construit alors au fil de l'eau, depuis « Acte I »).
    */
   chronicle?: SimEvent[]
+  /**
+   * QUAND CE MONDE EST NÉ — horloge murale de l'hôte à la fondation, stable pour toute la vie
+   * de la vallée (relue du disque à chaque reprise). Avec la seed, elle NOMME le monde : deux
+   * vallées de même seed fondées à deux instants sont deux vallées.
+   *
+   * Le client s'en sert pour son brouillard de guerre, qui vit hors de la sauvegarde de sim et
+   * n'avait, jusqu'au 2026-07-30, aucun moyen de savoir de quel monde il était (voir
+   * `render/fog.ts`). Aucune règle de jeu n'en dépend.
+   *
+   * OPTIONNELLE, et elle N'INCRÉMENTE PAS `PROTOCOL_VERSION` — même raison que `ProgressMessage`
+   * ci-dessous : elle est additive. Un hôte qui ne l'envoie pas (un serveur, où la Veillée n'a
+   * pas de sens) reste jouable ; le client ouvre alors une carte vierge plutôt que d'en croire
+   * une qu'il ne peut pas rattacher.
+   */
+  createdAt?: number
 }
 
 /**
