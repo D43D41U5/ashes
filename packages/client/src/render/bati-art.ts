@@ -529,26 +529,17 @@ function dessinerEncadrement(masque: number): { albedo: HTMLCanvasElement; joint
 }
 
 /**
- * LE SEUIL COUPÉ — l'encadrement suit son mur. Sans lui, la découpe laissait un LINTEAU
- * flottant à un mètre du sol au-dessus d'une salle ouverte : la seule pièce restée debout.
+ * ═══ LE SEUIL NE SE TRANCHE PAS NON PLUS (décision d'Alexis, 2026-07-30) ═══
  *
- * Il ne reste que le pied des deux jambages, sur l'arête SUD (celle où les plans percent leurs
- * seuils, cf. `DEC` plus haut) — et le passage entre eux reste NU : c'est ce qui continue de
- * dire « on entre par ici », même tranché.
+ * Il y avait ici une `dessinerEncadrementCoupe` — le pied des deux jambages, passage nu — pour
+ * que le seuil suive son mur : sans elle, la découpe laissait un LINTEAU flottant à un mètre du
+ * sol, seule pièce restée debout au-dessus d'une salle ouverte.
+ *
+ * Ce n'est plus la peine, parce que ce n'est plus LE LINTEAU qui reste : c'est le SEUIL ENTIER,
+ * jambages compris — donc un portique, et un portique se lit. La règle est celle de la porte du
+ * joueur, étendue à l'huisserie du bâti généré (« idem pour un encadrement de porte sans
+ * porte ») : ce par quoi l'on entre reste visible quand le mur qui le porte tombe.
  */
-function dessinerEncadrementCoupe(masque: number): HTMLCanvasElement {
-  const f = formatBarriere(MUR_HT)
-  const { c, ctx: g } = newCanvas(f.w, f.h)
-  const y = bande(N, MUR_HT).y //  la MÊME arête que le seuil debout : le nord de sa tuile
-  for (const [x, bit] of [[M, O_VOISIN], [M + T - ENCADREMENT_POST, E_VOISIN]] as const) {
-    if (masque & bit) continue //  le même autotuilage que debout : pas de montant au milieu
-    // Les tons du bois de la maison, pas une nouvelle encre : un pied de jambage tranché est
-    // le MÊME bois vu au ras du sol.
-    rect(g, BOIS.nuit, x, y, ENCADREMENT_POST, EP)
-    rect(g, BOIS.sombre, x, y, ENCADREMENT_POST, 1)
-  }
-  return c
-}
 
 /**
  * LA PORTE DU JOUEUR, SUR ARÊTE (spec construction R25, décision d'Alexis 2026-07-30).
@@ -864,62 +855,23 @@ export function passageDePorte(bit: number): { x: number; y: number; w: number; 
 }
 
 /**
- * LA PORTE TRANCHÉE — et l'empreinte d'une porte OUVERTE n'est pas celle d'un mur.
+ * ═══ LA PORTE NE SE TRANCHE PAS (décision d'Alexis, 2026-07-30) ═══
  *
- * Quand un pan tombe (règle des pans), il ne reste que l'empreinte au sol, sombre. Pour un mur
- * c'est une barre continue : il n'y a rien à traverser. Pour une porte OUVERTE, une barre
- * continue MENTIRAIT — elle dirait « mur » là où l'on passe, au moment précis où le joueur est
- * dedans et ne voit plus que ça.
+ * Il y avait ici une `dessinerPorteCoupee` : l'empreinte au sol d'une porte, jambages gardés,
+ * passage nu. Elle n'existe plus, et c'est une DÉCISION, pas un rangement — « contrairement aux
+ * murs, les portes sont toujours visibles ».
  *
- * MESURÉ au navigateur (smoke `porte`) : la porte ouverte prenait `st-wall-coupe-e4`, c'est-à-dire
- * l'empreinte pleine d'un mur, parce que la table des familles coupées ne connaissait pas
- * `door-ouverte` et retombait sur son défaut. Ma garde n'avait rien vu : elle affirmait que la
- * texture CHANGE, pas qu'elle reste une porte. Une assertion trop faible vaut un test absent.
+ * Ce qu'on y gagne, et pourquoi l'ancienne solution ne pouvait pas suffire : on pousse une porte
+ * à portée de BRAS (1,5 tuile) et un pan tombe à DEUX. Une porte à laquelle on touche était donc
+ * TOUJOURS rendue tranchée — son battant, qui pivote en cinq positions depuis R26, ne se jouait
+ * qu'à plat, en empreinte. On avait animé l'empreinte pour rattraper ça ; la vraie réponse est
+ * que la porte reste DEBOUT, et le battant avec elle.
  *
- * On garde donc les deux pieds de jambage et on laisse le passage NU — exactement ce que fait
- * déjà le seuil du bâti généré (`dessinerEncadrementCoupe`), et pour la même raison : « on entre
- * par ici » doit rester lisible même tranché.
- *
- * ET ELLE S'ANIME AUSSI, ce qui n'est pas un luxe : on pousse une porte à portée de BRAS (1,5
- * tuile) et un pan tombe à DEUX — la porte qu'on vient d'ouvrir est donc TOUJOURS en train
- * d'être rendue tranchée. Une animation qui ne vivrait que sur la famille debout ne serait
- * jamais vue par personne. (Mesuré : chaque relevé du smoke lit `st-door-coupe-*`.)
+ * Comment la règle s'exprime : par l'ABSENCE de `door` dans `COUPE_DE`. Une famille sans
+ * empreinte ne se tranche pas — `snapshot-view` le lit là et nulle part ailleurs, donc il n'y a
+ * pas deux tables à tenir d'accord. Elle reste en revanche membre du PAN (`render/pans.ts`) :
+ * c'est son appartenance qui donne au mur percé une emprise continue de part et d'autre.
  */
-function dessinerPorteCoupee(mask: number, ouverture: number): HTMLCanvasElement {
-  const f = formatPorte()
-  const { c, ctx: g } = newCanvas(f.w, f.h)
-  g.translate(PORTE_MARGE, PORTE_MARGE)
-  const POST = ENCADREMENT_POST
-  const o = Math.max(0, Math.min(1, ouverture))
-  const passe = T - 2 * POST
-  const vantail = Math.round(passe * (1 - o))
-  for (const bit of [N_B, E_B, S_B, O_B].filter((b) => (mask & b) !== 0)) {
-    const b = bande(bit, MUR_HT)
-    const t = tuileDans(MUR_HT)
-    if (bit === N_B || bit === S_B) {
-      // Les deux pieds de jambage, TOUJOURS — c'est eux qui disent « on entre par ici ».
-      for (const x of [t.x, t.x + T - POST]) {
-        rect(g, BOIS.nuit, x, b.y, POST, b.h)
-        rect(g, BOIS.clair, x, b.y, POST, 1)
-      }
-      // Et l'empreinte du BATTANT, qui se rétracte vers son gond exactement comme lui.
-      if (vantail > 0) {
-        rect(g, BOIS.nuit, t.x + POST, b.y, vantail, b.h)
-        rect(g, BOIS.clair, t.x + POST, b.y, vantail, 1)
-      }
-    } else {
-      for (const y of [t.y, t.y + T - POST]) {
-        rect(g, BOIS.nuit, b.x, y, b.w, POST)
-        rect(g, BOIS.clair, b.x, y, 1, POST)
-      }
-      if (vantail > 0) {
-        rect(g, BOIS.nuit, b.x, t.y + POST, b.w, vantail)
-        rect(g, BOIS.clair, b.x, t.y + POST, 1, vantail)
-      }
-    }
-  }
-  return c
-}
 
 function dessinerPorte(mask: number, ouverture: number): { albedo: HTMLCanvasElement; joints: Crack[] } {
   const f = formatPorte()
@@ -1227,8 +1179,9 @@ export const BATI_KEYS: readonly string[] = [
   // le voisinage (le fantôme de pose). Il a sa `_lit` comme les autres — l'oublier ici l'aurait
   // rendu invisible à la garde de couverture, alors qu'il existe bel et bien.
   'st-cloture', 'st-cloture_lit',
-  // Les COUPÉS sont PLATS (aucune `_lit`) : un trait d'ombre au sol ne s'éclaire pas.
-  ...Array.from({ length: 4 }, (_, m) => `st-encadrement-coupe-${m}`),
+  // LE SEUIL N'A PLUS D'EMPREINTE : il reste debout quand son pan tombe (voir plus haut, avec la
+  // porte du joueur). Ce sont donc quatre clés en moins, et elles doivent partir d'ici aussi —
+  // cette liste dit ce qui EXISTE, et une clé fantôme rendrait la garde de couverture menteuse.
   ...Array.from({ length: 4 }, (_, m) => [`st-encadrement-${m}`, `st-encadrement-${m}_lit`]).flat(),
   'st-encadrement', 'st-encadrement_lit',
   'st-friche', 'st-friche-0', 'st-friche-1', 'st-friche-2', 'st-friche-3',
@@ -1318,12 +1271,8 @@ function generateEdgeBarrieres(scene: Phaser.Scene): void {
     // clés le dit, pour qu'une lecture ne cherche pas ce qui n'a jamais été posé.
     if (isSingleEdge(mask)) {
       for (let f = 0; f < PORTE_FRAMES.length; f++) {
-        const o = PORTE_FRAMES[f]!
-        const { albedo, joints } = dessinerPorte(mask, o)
+        const { albedo, joints } = dessinerPorte(mask, PORTE_FRAMES[f]!)
         poser(scene, `st-door-e${mask}-f${f}`, albedo, normalFromCanvas(albedo, 1, 3.2, 2, false, joints))
-        const cle = `st-door-coupe-e${mask}-f${f}`
-        if (scene.textures.exists(cle)) scene.textures.remove(cle)
-        scene.textures.addCanvas(cle, dessinerPorteCoupee(mask, o))
       }
     }
     // LES COUPÉS — une seule famille de mur pour le neuf comme pour la ruine (une empreinte au
@@ -1367,7 +1316,6 @@ export const EDGE_ORIGIN_Y: Readonly<Record<string, number>> = {
   'wall-coupe': originY(MUR_HT),
   'cloture-coupe': originY(CLOT_HT),
   door: originYPorte(),
-  'door-coupe': originYPorte(),
   encadrement: originY(MUR_HT),
   cloture: originY(CLOT_HT),
 }
@@ -1383,12 +1331,16 @@ export const EDGE_ORIGIN_Y: Readonly<Record<string, number>> = {
  *
  * Les deux collapses intentionnels sont donc ÉCRITS, et un test vérifie que chaque valeur existe
  * vraiment parmi les textures posées — une famille neuve sans empreinte se voit tout de suite.
+ *
+ * ET UNE FAMILLE ABSENTE NE SE TRANCHE PAS — c'est le cas de la PORTE (décision d'Alexis,
+ * 2026-07-30 : « contrairement aux murs, les portes sont toujours visibles »). L'absence n'est
+ * donc pas un oubli à combler : c'est la règle elle-même, lue par `snapshot-view` (pas
+ * d'empreinte ⇒ le sprite reste debout), et un test l'affirme pour qu'on ne la « répare » pas.
  */
 export const COUPE_DE: Readonly<Record<string, string>> = {
   wall: 'wall-coupe',
   'wall-ruine': 'wall-coupe', //   une empreinte au sol n'a ni appareil ni usure
   cloture: 'cloture-coupe',
-  door: 'door-coupe',
 }
 
 /** Toutes les clés d'arête — la surface testable, jamais recopiée. */
@@ -1397,10 +1349,11 @@ export const EDGE_BARRIER_KEYS: readonly string[] = [
     Array.from({ length: 15 }, (_, i) => [`st-${nom}-e${i + 1}`, `st-${nom}-e${i + 1}_lit`]).flat()),
   ...['wall-coupe', 'cloture-coupe'].flatMap((nom) =>
     Array.from({ length: 15 }, (_, i) => `st-${nom}-e${i + 1}`)),
-  // LA PORTE : quatre arêtes uniques × cinq frames, debout et tranchée. Pas de masque composite —
-  // une porte n'en porte jamais (R25), et la table doit dire ce qui EXISTE, pas ce qu'on imagine.
+  // LA PORTE : quatre arêtes uniques × cinq frames, DEBOUT — et debout seulement, elle ne se
+  // tranche plus (voir `COUPE_DE`). Pas de masque composite non plus : une porte n'en porte
+  // jamais (R25), et la table doit dire ce qui EXISTE, pas ce qu'on imagine.
   ...[1, 2, 4, 8].flatMap((bit) =>
-    PORTE_FRAMES.flatMap((_, f) => [`st-door-e${bit}-f${f}`, `st-door-e${bit}-f${f}_lit`, `st-door-coupe-e${bit}-f${f}`])),
+    PORTE_FRAMES.flatMap((_, f) => [`st-door-e${bit}-f${f}`, `st-door-e${bit}-f${f}_lit`])),
 ]
 
 export function generateBatiArt(scene: Phaser.Scene): void {
@@ -1436,10 +1389,6 @@ export function generateBatiArt(scene: Phaser.Scene): void {
   for (let m = 0; m < 4; m++) {
     const e = dessinerEncadrement(m)
     poser(scene, `st-encadrement-${m}`, e.albedo, normalFromCanvas(e.albedo, 1, 3.2, 2, false, e.joints))
-    const cc = dessinerEncadrementCoupe(m)
-    const cle = `st-encadrement-coupe-${m}`
-    if (scene.textures.exists(cle)) scene.textures.remove(cle)
-    scene.textures.addCanvas(cle, cc)
   }
   for (const [cle, canvas] of [
     ['st-friche', dessinerFriche(0)],

@@ -4340,9 +4340,12 @@ const SCENARIOS = {
     // ═══ LA RÈGLE DES PANS (décisions d'Alexis, 2026-07-27) ═══
     //
     // Un pan = un côté de bâtiment, et il tombe D'UN BLOC à deux tuiles. On le vérifie en
-    // COMPTANT : au centre de la salle, seul le pan du sud est tranché (11 tuiles, seuil
-    // compris) ; collé au nord, le pan du nord tombe EN PLUS, entier. Un compte qui grimpe de
-    // deux ou trois dirait « on tranche à la tuile », et c'est exactement ce qu'on a quitté.
+    // COMPTANT : au centre de la salle, seul le pan du sud est tranché ; collé au nord, le pan
+    // du nord tombe EN PLUS, entier. Un compte qui grimpe de deux ou trois dirait « on tranche
+    // à la tuile », et c'est exactement ce qu'on a quitté.
+    //
+    // (Le SEUIL ne compte plus parmi les tranchés depuis le 2026-07-30 : il reste debout avec la
+    // porte du joueur — le compte du pan sud a donc baissé du nombre de tuiles de son ouverture.)
     for (const [nom, dx, dy] of [['centre', 5.5, 5.5], ['contre-nord', 5.5, 2.6], ['contre-ouest', 1.6, 5.5]]) {
       // UN TÉLÉPORT PEUT ÊTRE AVALÉ (une action par tick — s'il tombe pendant qu'une autre
       // passe, il est perdu, et la sonde mesure alors la position PRÉCÉDENTE en croyant
@@ -4373,19 +4376,29 @@ const SCENARIOS = {
     await page.waitForTimeout(900)
     const cles = await page.evaluate(() => {
       const sc = window.__BRAISES__.scene
-      const out = { coupes: 0, pleins: 0, seuilCoupe: 0, exemples: [], seuils: [] }
+      const out = { coupes: 0, pleins: 0, seuilCoupe: 0, seuilDebout: 0, exemples: [], seuils: [] }
       for (const [id, sp] of sc.view.structureSprites ?? []) {
         const k = sp.texture?.key ?? ''
         if (k.startsWith('st-wall-coupe')) { out.coupes++; if (out.exemples.length < 3) out.exemples.push(k) }
         else if (k.startsWith('st-wall-')) out.pleins++
         else if (k.startsWith('st-encadrement-coupe')) out.seuilCoupe++
-        if (k.startsWith('st-encadrement')) out.seuils.push(`${k} x=${Math.round(sp.x)} w=${sp.width}`)
+        if (k.startsWith('st-encadrement')) {
+          if (!k.startsWith('st-encadrement-coupe')) out.seuilDebout++
+          out.seuils.push(`${k} x=${Math.round(sp.x)} w=${sp.width}`)
+        }
         void id
       }
       return out
     })
     console.log(`découpe : ${JSON.stringify(cles)}`)
     if (cles.coupes === 0) console.error('!! AUCUN mur coupé alors qu’on est dans la salle')
+    // ═══ LE SEUIL RESTE DEBOUT PENDANT QUE SON MUR TOMBE (décision d'Alexis, 2026-07-30) ═══
+    //
+    // La paire est ce qui prouve quelque chose : un seuil debout ne veut rien dire si aucun mur
+    // n'est tranché (il serait debout de toute façon). On exige donc les deux DANS LA MÊME
+    // LECTURE — des murs coupés (ci-dessus), et pas un seul seuil coupé.
+    if (cles.seuilCoupe > 0) console.error(`!! ${cles.seuilCoupe} seuil(s) TRANCHÉ(S) : l’entrée disparaît avec le mur`)
+    if (cles.seuilDebout === 0) console.error('!! aucun seuil DEBOUT dans la salle — la garde ne mesure rien')
     return cles
   },
 
@@ -4491,10 +4504,12 @@ const SCENARIOS = {
     /**
      * L'INDICE DE FRAME LU DANS UNE CLÉ DE TEXTURE — et il ne finit pas toujours la clé.
      *
-     * Une porte DEBOUT et éclairée rend `st-door-e4-f0_lit` ; TRANCHÉE, `st-door-coupe-e4-f0`
-     * (les empreintes sont plates, elles n'ont pas de `_lit`). Un motif ancré à la fin de la
-     * chaîne ne voit donc que la moitié des cas — et il l'a fait : la pellicule a photographié
-     * ZÉRO frame en croyant qu'aucune n'existait, alors qu'elles défilaient toutes.
+     * Une porte éclairée rend `st-door-e4-f0_lit`, sans éclairage `st-door-e4-f0` : l'indice est
+     * au milieu dans un cas sur deux. Un motif ancré à la fin de la chaîne ne voit donc que la
+     * moitié des cas — et il l'a fait : la pellicule a photographié ZÉRO frame en croyant
+     * qu'aucune n'existait, alors qu'elles défilaient toutes. (Le `_lit` optionnel couvrait
+     * jusqu'au 2026-07-30 le cas de la porte TRANCHÉE, qui n'existe plus : une porte reste
+     * debout, empreinte comprise, et garde donc son éclairage.)
      */
     const frameDe = (cle) => {
       const m = String(cle).match(/-f(\d+)(?:_lit)?$/)
@@ -4602,26 +4617,49 @@ const SCENARIOS = {
         const q = await pos()
         if (Math.abs(q.y - (ligne - 0.5)) < 0.3) break
       }
+      // ═══ ON JOURNALISE À LA SOURCE, ON N'ÉCHANTILLONNE PLUS ═══
+      //
+      // La sonde d'origine lisait `texture.key` entre deux `step` : un aller-retour Playwright par
+      // point, donc une passoire. Elle a laissé passer un vrai défaut — la porte peinte à sa
+      // position d'ARRIVÉE le temps d'un snapshot avant de rejouer sa course (Alexis, 2026-07-30,
+      // « l'animation saute depuis son état final »). Le flash dure UN intervalle de snapshot,
+      // 50 ms : selon l'instant du relevé, on le voyait ou non. MESURÉ deux fois de suite sur le
+      // MÊME code fautif : `f0 → f4 → f0 → f1 → f2 → f3 → f4` d'abord, puis une course
+      // impeccable. Une garde qui ne mord qu'une fois sur deux ne garde rien.
+      //
+      // On s'accroche donc au `setTexture` DU SPRITE : plus une seule pose ne peut nous échapper,
+      // qu'elle vienne d'un snapshot ou d'une image de rendu, et le relevé se lit d'un coup à la
+      // fin. (Les snapshots continuent d'arriver pendant que la boucle dort : ils viennent du
+      // Worker, pas de la boucle — c'est précisément par là que le flash entrait.)
+      await page.evaluate((id) => {
+        const sp = window.__BRAISES__.scene.view.structureSprites.get(id)
+        window.__PORTE_LOG__ = []
+        if (!sp.__origSetTexture) {
+          sp.__origSetTexture = sp.setTexture.bind(sp)
+          sp.setTexture = (k, ...reste) => {
+            const l = window.__PORTE_LOG__
+            if (l[l.length - 1] !== k) l.push(k)
+            return sp.__origSetTexture(k, ...reste)
+          }
+        }
+      }, porteId)
       // On FIGE la boucle de jeu pour la stepper nous-même : l'horloge headless avale des
       // centaines de millisecondes d'un coup et engloutirait toute l'animation entre deux
       // lectures (leçon `fx-ephemere-figer-et-stepper`).
       await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
       await page.keyboard.press('KeyF')
-      await page.waitForTimeout(120)
-      const vues = []
-      for (let i = 0; i < 40; i++) {
-        const k = await page.evaluate((id) => {
+      for (let i = 0; i < 60; i++) {
+        await page.evaluate(() => {
           const sc = window.__BRAISES__.scene
           sc.game.loop.step(sc.game.loop.time + 20)
-          return sc.view.structureSprites?.get(id)?.texture?.key ?? null
-        }, porteId)
-        if (k !== null && vues[vues.length - 1] !== k) vues.push(k)
+        })
       }
       await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
-      return vues
+      return page.evaluate(() => window.__PORTE_LOG__ ?? [])
     }
+    const avantLeGeste = (await etat()).open //  d'où le battant DOIT partir
     const frames = await suivreLeBattant()
-    console.log(`   battant : ${frames.length} position(s) distincte(s) — ${frames.join(' → ')}`)
+    console.log(`   battant (départ ${avantLeGeste ? 'OUVERTE' : 'close'}) : ${frames.length} position(s) distincte(s) — ${frames.join(' → ')}`)
     if (frames.length < 3) console.error(`!! LE BATTANT SAUTE au lieu de pivoter : ${frames.length} position(s) vue(s)`)
     const indices = frames.map(frameDe).filter((n) => n !== null)
     if (indices.length !== frames.length) console.error(`!! une position n'est pas une frame de porte : ${frames.join(' → ')}`)
@@ -4631,6 +4669,104 @@ const SCENARIOS = {
     if (indices.length >= 2 && indices[0] === indices[indices.length - 1]) {
       console.error(`!! le battant revient à sa position de départ : ${indices.join(',')}`)
     }
+    // ═══ LE GESTE VA DANS UN SEUL SENS — la garde qui manquait ═══
+    //
+    // MESURÉ le 2026-07-30, avec l'ancien ordre de dépliage (état peint avant le fait lu) :
+    // `f0 → f4 → f0 → f1 → f2 → f3 → f4`. La porte se montrait GRANDE OUVERTE le temps d'un
+    // snapshot, puis rejouait sa course depuis le début — « l'animation saute depuis son état
+    // final » (Alexis). Compter les positions distinctes ne le voyait pas (il y en avait plus,
+    // pas moins) ; le début et la fin étaient justes ; aucune paire consécutive n'était égale.
+    // La seule propriété qui l'attrape est la MONOTONIE : un battant qui s'ouvre ne se referme
+    // jamais en chemin, et il ne touche pas sa position d'arrivée avant d'y arriver.
+    const attenduDepart = avantLeGeste ? dernier : 0
+    if (indices.length > 0 && indices[0] !== attenduDepart) {
+      console.error(`!! LE BATTANT NE PART PAS DE SA POSITION : première vue f${indices[0]}, attendu f${attenduDepart} (${indices.join(',')})`)
+    }
+    const sens = avantLeGeste ? -1 : 1 //  on ouvre (0 → 4) ou on referme (4 → 0)
+    for (let i = 1; i < indices.length; i++) {
+      if ((indices[i] - indices[i - 1]) * sens < 0) {
+        console.error(`!! LE BATTANT REVIENT EN ARRIÈRE entre f${indices[i - 1]} et f${indices[i]} : ${indices.join(',')}`)
+      }
+    }
+
+    // ═══ DEBOUT PENDANT QUE SON MUR TOMBE (décision d'Alexis, 2026-07-30) ═══
+    //
+    // « Contrairement aux murs, il faudrait que les portes soient toujours visibles. » Ce qui le
+    // prouve est une PAIRE, lue au même instant sur le même pan : la porte garde son art DEBOUT
+    // (`st-door-e…`) pendant que le mur témoin d'à côté n'est plus que son empreinte
+    // (`st-wall-coupe-…`). Lire la seule porte ne dirait rien — à trois tuiles elle serait debout
+    // de toute façon ; c'est le mur tranché qui atteste que le pan est bien tombé.
+    for (let essai = 0; essai < 8; essai++) {
+      await agir({ type: 'debug_teleport', x: porteTx + 0.5, y: ligne - 0.5 }, 340)
+      const q = await pos()
+      if (Math.abs(q.y - (ligne - 0.5)) < 0.3) break
+    }
+    await page.waitForTimeout(400)
+    const paire = await page.evaluate(({ id, x, y }) => {
+      const sc = window.__BRAISES__.scene
+      const mur = sc.view.structures.find((q) => q.type === 'wall' && q.tx === x + 1 && q.ty === y)
+      const sp = sc.view.structureSprites
+      return { porte: sp?.get(id)?.texture?.key ?? null, mur: mur ? (sp?.get(mur.id)?.texture?.key ?? null) : null }
+    }, { id: porteId, x: porteTx, y: ligne - 1 })
+    console.log(`   au contact : porte ${paire.porte} · mur voisin ${paire.mur}`)
+    if (!String(paire.mur).startsWith('st-wall-coupe')) {
+      console.error(`!! le mur témoin n’est PAS tranché (${paire.mur}) — la garde ne prouverait rien`)
+    } else if (!String(paire.porte).startsWith('st-door-e')) {
+      console.error(`!! LA PORTE NE RESTE PAS DEBOUT au contact : ${paire.porte}`)
+    }
+
+    // ═══ CE QUE ÇA COÛTE : LA PORTE PEUT AVALER QUI SE TIENT DERRIÈRE ELLE ═══
+    //
+    // La règle des pans promet « on voit derrière un mur exactement quand il pourrait cacher
+    // quelqu'un » (`render/pans.ts`). Une porte qui ne tombe plus rompt cette promesse sur SA
+    // tuile — une seule, contre tout un côté de bâtiment, mais le chiffre doit être RELEVÉ et pas
+    // découvert en jouant. On mesure donc le recouvrement du sprite de l'avatar par celui de la
+    // porte, dans la position la plus défavorable : collé au nord d'une porte d'arête sud, là où
+    // l'on se tient forcément pour l'ouvrir de l'intérieur. C'est une MESURE, pas une garde : le
+    // compromis est assumé (décision d'Alexis), on veut juste savoir ce qu'il vaut.
+    // ON COMPTE DES PIXELS OPAQUES, PAS DES BOÎTES. Le premier jet croisait deux `getBounds` et
+    // rendait 100 % — faux de bout en bout : une porte est un CADRE, son milieu est un trou, et
+    // c'est par ce trou qu'on se voit. Une sonde qui ne regarde pas l'alpha mesure le sprite,
+    // pas l'occlusion (leçon `la-capture-peut-mentir`).
+    const mesurerOcclusion = (id) => page.evaluate((pid) => {
+      const sc = window.__BRAISES__.scene
+      const sp = sc.view.structureSprites?.get(pid)
+      const moi = sc.playerSprite
+      if (!sp || !moi) return null
+      const a = sp.getBounds()
+      const b = moi.getBounds()
+      const x0 = Math.max(a.left, b.left)
+      const x1 = Math.min(a.right, b.right)
+      const y0 = Math.max(a.top, b.top)
+      const y1 = Math.min(a.bottom, b.bottom)
+      const aire = b.width * b.height
+      if (x1 <= x0 || y1 <= y0 || aire <= 0) return { boite: 0, opaque: 0, devant: sp.depth > moi.depth }
+      const src = sc.textures.get(sp.texture.key)?.getSourceImage()
+      let opaque = null
+      if (src && src.getContext) {
+        // L'intersection, ramenée en TEXELS de la porte (son sprite est mis à l'échelle du zoom).
+        const kx = src.width / a.width
+        const ky = src.height / a.height
+        const tx = Math.max(0, Math.floor((x0 - a.left) * kx))
+        const ty = Math.max(0, Math.floor((y0 - a.top) * ky))
+        const tw = Math.min(src.width - tx, Math.max(1, Math.ceil((x1 - x0) * kx)))
+        const th = Math.min(src.height - ty, Math.max(1, Math.ceil((y1 - y0) * ky)))
+        const d = src.getContext('2d').getImageData(tx, ty, tw, th).data
+        let n = 0
+        for (let i = 3; i < d.length; i += 4) if (d[i] > 8) n++
+        // Rapporté à l'aire de l'AVATAR (pas de l'intersection) : c'est « quelle part de moi
+        // disparaît », la seule question qui compte.
+        opaque = Math.round((100 * n * ((x1 - x0) * (y1 - y0)) / (tw * th)) / aire)
+      }
+      return { boite: Math.round((100 * (x1 - x0) * (y1 - y0)) / aire), opaque, devant: sp.depth > moi.depth }
+    }, id)
+    // LES DEUX ÉTATS, parce que ce sont deux occlusions différentes : close, la porte est un
+    // panneau plein ; ouverte, son battant s'est rangé de côté et le trou rend l'avatar.
+    const occOuverte = await mesurerOcclusion(porteId)
+    await presserF()
+    const occClose = await mesurerOcclusion(porteId)
+    const dire = (o) => `${o?.opaque ?? '?'} % en pixels pleins (boîte ${o?.boite ?? '?'} %)`
+    console.log(`   occlusion de l'avatar collé au nord : porte OUVERTE ${dire(occOuverte)} · CLOSE ${dire(occClose)} — elle se dessine ${occClose?.devant ? 'APRÈS lui (elle le cache)' : 'AVANT lui (il passe devant)'}`)
 
     // ═══ LE CHEVAUCHEMENT — le mur d'à côté mord-il le bois de la porte ? ═══
     //

@@ -213,12 +213,12 @@ describe('la porte du joueur, sur arête', () => {
     for (const bit of BITS) expect(piecesDePorte(bit, 1).length, `arête ${NOM[bit]}`).toBeGreaterThanOrEqual(4)
   })
 
-  it('CHAQUE frame est POSÉE — debout, éclairée, et tranchée', () => {
+  it('CHAQUE frame est POSÉE — debout et éclairée', () => {
     // Une frame manquante ne lève pas : Phaser rend un damier magenta, et il n'apparaîtrait qu'à
     // la troisième image d'une animation, sur une seule des quatre arêtes.
     for (const bit of BITS) {
       for (let f = 0; f < PORTE_FRAMES.length; f++) {
-        for (const cle of [`st-door-e${bit}-f${f}`, `st-door-e${bit}-f${f}_lit`, `st-door-coupe-e${bit}-f${f}`]) {
+        for (const cle of [`st-door-e${bit}-f${f}`, `st-door-e${bit}-f${f}_lit`]) {
           expect(EDGE_BARRIER_KEYS, `${cle} manque`).toContain(cle)
         }
       }
@@ -245,18 +245,30 @@ describe('l’empreinte d’un pan tombé', () => {
    */
   it('nomme une empreinte pour chaque famille, et chacune est POSÉE', () => {
     for (const [debout, coupe] of Object.entries(COUPE_DE)) {
-      // La porte porte sa frame dans sa clé ; les autres familles n'ont qu'un état.
-      const cle = debout === 'door' ? `st-${coupe}-e1-f0` : `st-${coupe}-e1`
+      const cle = `st-${coupe}-e1`
       expect(EDGE_BARRIER_KEYS, `${debout} : l’empreinte ${cle} n’est pas posée`).toContain(cle)
     }
   })
 
-  it('une porte ne prend jamais l’empreinte d’un mur — c’est le bug d’origine', () => {
-    // L'ÉTAT est passé dans la FRAME (`st-door-coupe-e<bit>-f<i>`), plus dans une famille à part :
-    // il n'y a donc plus qu'une entrée à garder ici, et c'est mieux — la famille `door-ouverte`
-    // avait justement échappé à la cascade de `snapshot-view`.
-    expect(COUPE_DE.door).toBe('door-coupe')
-    expect(COUPE_DE.door).not.toBe(COUPE_DE.wall)
+  /**
+   * CE QUI RESTE DEBOUT SE DIT PAR L'ABSENCE — et l'absence, ça se garde.
+   *
+   * Décision d'Alexis (2026-07-30) : « contrairement aux murs, il faudrait que les portes soient
+   * toujours visibles », étendue au seuil du bâti généré (« idem pour un encadrement de porte
+   * sans porte »). `snapshot-view` ne tranche que ce que `COUPE_DE` nomme : une famille qui n'y
+   * figure pas garde son sprite debout, quel que soit son pan.
+   *
+   * Sans cette garde, la règle ressemblerait à un OUBLI — la table dit « chaque famille a son
+   * empreinte » deux tests plus haut, et le premier lecteur venu recollerait `door: 'door-coupe'`
+   * en croyant réparer un trou. On affirme donc les deux moitiés : ce qui tombe, et ce qui non.
+   */
+  it('la PORTE et le SEUIL n’ont AUCUNE empreinte — ils restent debout', () => {
+    expect(COUPE_DE.door, 'une porte qui se tranche : son battant ne se voit plus pivoter').toBeUndefined()
+    expect(COUPE_DE.encadrement, 'un seuil qui se tranche : l’entrée disparaît avec le mur').toBeUndefined()
+    // Et aucune texture d'empreinte ne traîne derrière elles : ce qui n'est plus choisi n'est
+    // plus dessiné (sinon la liste des clés promet un art que personne ne verra jamais).
+    expect(EDGE_BARRIER_KEYS.some((k) => k.startsWith('st-door-coupe')), 'st-door-coupe-* survit').toBe(false)
+    expect(BATI_KEYS.some((k) => k.startsWith('st-encadrement-coupe')), 'st-encadrement-coupe-* survit').toBe(false)
   })
 
   it('le mur RUINÉ partage l’empreinte du neuf — collapse VOULU, donc écrit', () => {

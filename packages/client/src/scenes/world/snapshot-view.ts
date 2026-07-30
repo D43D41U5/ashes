@@ -591,9 +591,22 @@ export class SnapshotView {
   /**
    * UNE PORTE VIENT D'ÊTRE POUSSÉE (fait `door_toggled`) — on lance son battant.
    *
-   * `WorldScene` l'appelle en dépliant les faits du snapshot. C'est le SEUL déclencheur d'une
-   * animation : un simple changement d'état, lui, se CALE sans jouer le geste (reconnexion,
-   * rechargement, fait perdu) — la règle et sa raison vivent dans `porte-anim`.
+   * C'est le SEUL déclencheur d'une animation : un simple changement d'état, lui, se CALE sans
+   * jouer le geste (reconnexion, rechargement, fait perdu) — la règle et sa raison vivent dans
+   * `porte-anim`.
+   *
+   * ═══ ET IL SE CONSOMME AVANT L'ÉTAT, PAS APRÈS (constaté par Alexis le 2026-07-30) ═══
+   *
+   * « Dès qu'on ouvre ou ferme une porte l'animation saute depuis son état final. » Exactement,
+   * et l'ordre en était la cause entière : `WorldScene` appliquait le snapshot PUIS dépliait ses
+   * faits. Le temps d'un snapshot, la porte se peignait donc à sa position de REPOS — grande
+   * ouverte, `open` étant déjà vrai dans l'état — et le battant ne partait de sa position close
+   * qu'à l'image suivante. On voyait la fin, puis le début : 50 ms de porte ouverte avant qu'elle
+   * ne s'ouvre.
+   *
+   * Le fait et l'état arrivent dans le MÊME message : c'est donc ici, en tête d'`apply`, qu'ils
+   * doivent se rencontrer — avant que quoi que ce soit ne se peigne. (Le module d'animation, lui,
+   * était juste : rien à corriger dans `porte-anim`.)
    */
   pousserPorte(structureId: number, open: boolean): void {
     this.portes.pousse(structureId, open, this.scene.time.now)
@@ -605,6 +618,9 @@ export class SnapshotView {
   }
 
   apply(msg: SnapshotMessage, playerId: number, now: number): void {
+    // LES BATTANTS D'ABORD — avant que `syncStructures` ne choisisse une frame (voir
+    // `pousserPorte` : peindre l'état avant d'avoir lu le fait montrait la porte déjà ouverte).
+    for (const e of msg.events) if (e.type === 'door_toggled') this.pousserPorte(e.structureId, e.open)
     this.villages = msg.villages
     this.functions = msg.functions
     this.npcs = msg.npcs
@@ -1022,12 +1038,22 @@ export class SnapshotView {
         // ON TRANCHE PAR PAN, JAMAIS PAR TUILE (décision d'Alexis) : un trou qui suit le
         // joueur dans un mur continu lit comme une brèche, donc comme une entrée. Le côté
         // entier tombe, ou rien. La règle et ses raisons : `render/pans.ts`.
-        const cacheLaSalle = (pans.parBarriere.get(s.id) ?? []).some((i) => tombes.has(i))
+        //
         // L'EMPREINTE SE LIT DANS `COUPE_DE`, jamais dans une cascade à défaut : c'est très
         // exactement ce qui a fait prendre à une porte OUVERTE l'empreinte pleine d'un MUR
         // (mesuré au navigateur le 2026-07-30 — `door-ouverte` ne figurait dans aucune branche).
         // La table vit à côté des textures qu'elle nomme, et un test la garde complète.
+        //
+        // ET C'EST ELLE QUI DIT AUSSI QUI NE TOMBE PAS : **une famille sans empreinte reste
+        // DEBOUT**, quel que soit son pan. C'est le cas de la PORTE (décision d'Alexis,
+        // 2026-07-30 : « contrairement aux murs, les portes sont toujours visibles »). Une porte
+        // se pousse à portée de bras — 1,5 tuile — et un pan tombe à deux : tranchée avec son
+        // mur, elle l'était donc TOUJOURS au moment précis où on la regarde s'ouvrir, et son
+        // battant ne pivotait qu'à plat, en empreinte. Debout, l'entrée reste lisible dans la
+        // ligne d'empreintes, et le geste se voit. Une seule table décide — pas de second
+        // drapeau ici, qui finirait par la contredire en silence.
         const coupeFam = COUPE_DE[fam]
+        const cacheLaSalle = coupeFam !== undefined && (pans.parBarriere.get(s.id) ?? []).some((i) => tombes.has(i))
         // ═══ LA PORTE PORTE SA FRAME (spec construction R26) ═══
         //
         // Son battant pivote en cinq positions ; l'état (`open`) n'est que la position de REPOS.
@@ -1099,17 +1125,18 @@ export class SnapshotView {
         if (stage < 0) sprite.clearTint()
         else sprite.setTint(Phaser.Display.Color.GetColor(Math.floor(150 - 44 * stage), Math.floor(150 + 95 * stage), Math.floor(90 - 30 * stage)))
       } else {
-        // LE SEUIL SUIT SON MUR : quand le mur du bas est tranché, le linteau resterait sinon en
-        // l'air au-dessus d'une salle ouverte. Même test que le mur (le bit NORD regarde la pièce).
-        // (Le cas NON coupé est déjà posé plus haut par le swap `BATI_LIT_TYPES` — on ne
-        // repasse ici que sur la découpe.)
+        // LE SEUIL NE SUIT PLUS SON MUR — il reste DEBOUT (décision d'Alexis, 2026-07-30 :
+        // « idem pour un encadrement de porte sans porte »). Il tombait avec son pan, comme la
+        // porte du joueur ; ce qu'on craignait alors — un LINTEAU flottant au-dessus d'une salle
+        // ouverte — n'arrive pas, parce que ce n'est pas le linteau seul qui reste, ce sont ses
+        // jambages avec lui : un portique, et un portique dit « on entre par ici » là où une
+        // ligne d'empreintes ne dit plus rien.
+        // (Le swap `_lit` est déjà posé plus haut par `BATI_LIT_TYPES` ; on ne repasse ici que
+        // pour l'ancrage et l'autotuilage entre seuils mitoyens.)
         if (s.type === 'encadrement') {
           sprite.setOrigin(0.5, EDGE_ORIGIN_Y.encadrement ?? 1) //  à cheval, comme le mur qu'il perce
           const m = (seuilTiles.has(`${s.tx - 1},${s.ty}`) ? 1 : 0) | (seuilTiles.has(`${s.tx + 1},${s.ty}`) ? 2 : 0)
-          // Le seuil tombe avec le pan qu'il perce — il en fait partie (même arête).
-          const coupe = (pans.parBarriere.get(s.id) ?? []).some((i) => tombes.has(i))
-          sprite.setTexture(coupe ? `st-encadrement-coupe-${m}`
-            : this.lighting ? `st-encadrement-${m}_lit` : `st-encadrement-${m}`)
+          sprite.setTexture(this.lighting ? `st-encadrement-${m}_lit` : `st-encadrement-${m}`)
         }
         const max = (s.type === 'door' && s.material ? WALL_TIERS[s.material].door.hp : STRUCTURE_HP[s.type]) || 1
         const ratio = Math.max(0, Math.min(1, s.hp / max))

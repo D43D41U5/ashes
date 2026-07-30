@@ -1759,11 +1759,11 @@ export class WorldScene extends Phaser.Scene {
       // LE SON (échafaudage) : chaque fait de domaine peut sonner (table pure `soundForEvent`),
       // « sur moi » ou non selon l'entité concernée. Muet si coupé / contexte pas réveillé.
       this.audioFx.play(soundForEvent(event, this.eventConcernsMe(event)))
-      if (event.type === 'door_toggled') {
-        // LE BATTANT PIVOTE SUR LE FAIT, jamais sur la différence d'état : c'est ce qui empêche
-        // tout un village de s'ouvrir en fanfare à la reconnexion (voir `porte-anim`).
-        this.view.pousserPorte(event.structureId, event.open)
-      }
+      // LE BATTANT PIVOTE SUR LE FAIT (`door_toggled`), jamais sur la différence d'état — c'est
+      // ce qui empêche tout un village de s'ouvrir en fanfare à la reconnexion. Il ne se déplie
+      // PLUS ici : `SnapshotView.apply` le lit en tête, avant de peindre quoi que ce soit. D'ici,
+      // on arrivait UN SNAPSHOT trop tard et la porte se montrait ouverte avant de s'ouvrir
+      // (constaté par Alexis le 2026-07-30 ; le pourquoi est écrit sur `pousserPorte`).
       if (event.type === 'action_rejected' && event.entityId === this.playerId) {
         publishError(this.registry, event.reason, this.time.now)
       } else if (event.type === 'resource_harvested' && event.entityId === this.playerId) {

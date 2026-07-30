@@ -71,9 +71,16 @@ export interface Pans {
 const N = 1, E = 2, S = 4, O = 8
 /** Les sols qui font un DEDANS. Deux types différents = deux régions, même s'ils se touchent. */
 const SOLS = new Set(['floor', 'terre', 'roof'])
-/** Ce qui peut porter une arête et se faire trancher. `door` depuis R23 : une porte de joueur
- *  fait partie du pan qu'elle perce — la laisser dehors dresserait un vantail seul debout au
- *  milieu d'un mur tranché, exactement le linteau flottant qu'on a corrigé sur le seuil. */
+/**
+ * Ce qui porte une arête, donc ce qui APPARTIENT à un pan — la porte du joueur (`door`, R23) et
+ * le seuil du bâti généré (`encadrement`) compris : sans eux, un mur percé se scinderait en deux
+ * pans à chaque ouverture, et ses deux moitiés ne tomberaient plus ensemble.
+ *
+ * APPARTENIR N'EST PAS TOMBER (décision d'Alexis, 2026-07-30). Une porte et un seuil restent
+ * DEBOUT quand leur pan tombe — « contrairement aux murs, les portes sont toujours visibles ».
+ * Ce module décide de l'EMPRISE ; ce qui se dessine à la place se lit dans `bati-art` (`COUPE_DE`,
+ * où l'absence d'une famille vaut « ne se tranche pas »).
+ */
 const BARRIERES = new Set(['wall', 'cloture', 'encadrement', 'door'])
 
 /**
