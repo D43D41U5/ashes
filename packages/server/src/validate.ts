@@ -46,6 +46,7 @@
  */
 import {
   CHAT_MAX_LEN,
+  EDGE_BITS,
   ITEM_WEIGHT,
   RECIPES,
   WALL_TIERS,
@@ -137,6 +138,11 @@ type Genre =
   | { g: 'booleen' }
   /** Une clé d'une table exhaustive de /sim — la liste ne peut pas dériver. */
   | { g: 'clef'; table: Readonly<Record<string, unknown>> }
+  /** Une valeur NUMÉRIQUE d'une liste exhaustive de /sim. Le pendant de `clef` pour ce qui
+   *  n'est pas une chaîne : l'arête d'un mur mince est un bit (1, 2, 4, 8), pas un nom. Un
+   *  intervalle `[1, 8]` aurait laissé passer 3 — deux arêtes d'un coup, là où la pose n'en
+   *  admet qu'une : /sim le refuse, mais la frontière n'a pas à lui déléguer une FORME. */
+  | { g: 'parmi'; valeurs: readonly number[] }
   /** Un objet imbriqué, validé par sa propre forme (une `SlotRef` de `transfer`). */
   | { g: 'objet'; forme: Record<string, Champ> }
 
@@ -214,8 +220,13 @@ const FORMES: { [T in ActionJouable]: FormeDe<Extract<PlayerAction, { type: T }>
     // `WALL_TIERS` est indexé par `WallMaterial` : un matériau inconnu y déréférençait
     // `undefined[structure]` et LEVAIT — c'est le second crash mesuré.
     material: opt(clef(WALL_TIERS)),
+    // L'ARÊTE VISÉE (spec construction R23) : UN des quatre bits, lus sur /sim — jamais
+    // recopiés. Absent = pose pleine tuile (sol, toit, et tout le bâti d'avant).
+    edges: opt({ g: 'parmi', valeurs: EDGE_BITS }),
   },
   place_component: { tx: req(TUILE), ty: req(TUILE) },
+  // POUSSER UNE PORTE (spec construction R26) : une bascule, rien de plus qu'un identifiant.
+  toggle_door: { structureId: req(ID) },
   upgrade_fire: {},
   feed_fire: { structureId: opt(ID) },
   upgrade_structure: { structureId: req(ID) },
@@ -301,6 +312,8 @@ function retenir(v: unknown, genre: Genre): unknown {
     case 'clef':
       // `hasOwn` et pas `in` : `'__proto__' in table` est VRAI sur tout objet.
       return typeof v === 'string' && Object.hasOwn(genre.table, v) ? v : undefined
+    case 'parmi':
+      return typeof v === 'number' && genre.valeurs.includes(v) ? v : undefined
     case 'objet':
       return v && typeof v === 'object' && !Array.isArray(v)
         ? selonForme(v as Record<string, unknown>, genre.forme)

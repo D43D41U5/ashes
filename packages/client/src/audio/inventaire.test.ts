@@ -4,10 +4,10 @@ import { FAMILLES, INVENTAIRE, SONORES, faitsDeFamille, type FamilleId } from '.
 /**
  * L'inventaire n'a de valeur que s'il est ENTIER et LISIBLE : un fait rangé dans une famille
  * qui n'existe pas disparaît du banc d'écoute, donc ne se tranche jamais — et c'est exactement
- * le trou que ce chantier vient boucher. Les gardes balaient tout l'espace (61 faits), elles
+ * le trou que ce chantier vient boucher. Les gardes balaient tout l'espace (62 faits), elles
  * ne piochent pas des cas.
  */
-describe('l’inventaire des 61 faits', () => {
+describe('l’inventaire des 62 faits', () => {
   const ids = new Set<string>(FAMILLES.map((f) => f.id))
 
   it('AUCUN fait ne tombe dans une famille non déclarée (sinon il sort du banc en silence)', () => {
@@ -18,12 +18,12 @@ describe('l’inventaire des 61 faits', () => {
     expect(orphelins).toEqual([])
   })
 
-  it('les familles PARTITIONNENT les 61 faits — chacune en porte, aucune n’est vide', () => {
+  it('les familles PARTITIONNENT les 62 faits — chacune en porte, aucune n’est vide', () => {
     const comptes = FAMILLES.map((f) => ({ id: f.id, n: faitsDeFamille(f.id).length }))
     expect(comptes.filter((c) => c.n === 0)).toEqual([]) // pas de section vide à l'écran
     const somme = comptes.reduce((t, c) => t + c.n, 0)
     expect(somme).toBe(Object.keys(INVENTAIRE).length)
-    expect(somme).toBe(61)
+    expect(somme).toBe(62)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -35,11 +35,13 @@ describe('l’inventaire des 61 faits', () => {
     expect(muets).toEqual([])
   })
 
-  it('l’état publié est bien l’état ACTUEL : 35 voix, 26 silences décidés', () => {
-    // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 35 sonnent
+  it('l’état publié est bien l’état ACTUEL : 36 voix, 26 silences décidés', () => {
+    // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 36 sonnent
     // VRAIMENT (et que les 26 se taisent vraiment) — ici on garde seulement la proportion.
     // 34 → 35 le 2026-07-29 : `node_depleted` sort du silence (l'arbre qui tombe craque).
-    expect(SONORES.length).toBe(35)
+    // 35 → 36 le 2026-07-30 : `door_toggled` naît sonore (spec construction R26) — c'est le seul
+    // retour d'un geste dont l'écran ne montre presque rien.
+    expect(SONORES.length).toBe(36)
     expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(26)
   })
 

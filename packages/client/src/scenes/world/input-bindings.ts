@@ -17,7 +17,7 @@
  * nœuds, cadavres et position prédite changent à chaque snapshot ou frame —
  * chaque handler lit l'état AU MOMENT de la frappe.
  */
-import { BALANCE, COMPONENT_TYPES, NODE_DEFS, SLOTS, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@ashes/sim'
+import { BALANCE, COMPONENT_TYPES, EDGE_BITS, NODE_DEFS, SLOTS, edgeBarrierAt, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
@@ -182,8 +182,16 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
    *  menu du marteau, et la structure DÉJÀ sur la tuile visée (pour l'améliorer). */
   const buildCtx = (aim: AimTarget): BuildContext => {
     const material = getHud(scene.registry, 'buildMaterial') ?? 'wood'
-    const s = deps.structures().find((st) => st.tx === aim.tx && st.ty === aim.ty) ?? null
-    return { material, onTile: s ? { id: s.id, type: s.type } : null }
+    const edge = getHud(scene.registry, 'buildEdge') ?? EDGE_BITS[0]!
+    const armed = getHud(scene.registry, 'selected') ?? null
+    // CE QU'ON AMÉLIORE D'UN CLIC : la barrière qui porte l'ARÊTE VISÉE quand on tient un mur ou
+    // une porte (R23), et non plus « la première structure de la tuile ». Un coin de pièce porte
+    // déjà un mur au nord ; le lire améliorerait celui-là au lieu de poser celui de l'ouest, et
+    // fermer un angle — le geste le plus courant de la construction — deviendrait impossible.
+    const s = armed === 'wall' || armed === 'door'
+      ? edgeBarrierAt(deps.structures(), aim.tx, aim.ty, edge) ?? null
+      : deps.structures().find((st) => st.tx === aim.tx && st.ty === aim.ty) ?? null
+    return { material, edge, onTile: s ? { id: s.id, type: s.type } : null }
   }
 
   // La CEINTURE : 1-6 tiennent une case (spec inventaire R17). Affichage
@@ -208,6 +216,33 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   onDown(TOUCHES.dropHeld, () => {
     deps.sendAction({ type: 'drop_held' })
   })
+
+  /**
+   * A / E : JE FAIS TOURNER CE QUE JE POSE (spec construction R23, décision d'Alexis).
+   *
+   * Ces deux touches étaient DÉCLARÉES depuis le 2026-07-27 et lues par personne — la note de
+   * `keymap-perso` le disait mot pour mot, en attendant que la pose sur arête existe. Elle
+   * existe : le mur et la porte ne prennent plus une tuile, ils se posent sur une des quatre
+   * ARÊTES de la tuile visée, et c'est ici qu'on choisit laquelle.
+   *
+   * DEUX SENS, et c'est la raison d'être de la paire : un seul sens ferait jusqu'à trois appuis
+   * pour revenir en arrière ; à deux, n'importe quelle arête est à UN cran.
+   *
+   * ELLES NE SONT PAS UN VERBE — elles ne touchent pas au monde, elles orientent une INTENTION.
+   * Aucune action ne part : on écrit dans le HUD, le fantôme suit, et c'est le clic qui pose.
+   * C'est ce qui les distingue des quinze touches bannies le 2026-07-12.
+   */
+  const tourner = (sens: 1 | -1): void => {
+    // On tourne même DÉSARMÉ : l'arête persiste, et s'armer ensuite retrouve son orientation.
+    // La barrer sur `placing` obligerait à re-tourner après chaque changement d'outil.
+    const courant = getHud(scene.registry, 'buildEdge') ?? EDGE_BITS[0]!
+    const i = EDGE_BITS.indexOf(courant)
+    // ORDRE HORAIRE (N → E → S → O), celui de `EDGE_BITS` — le même que /sim, jamais recopié.
+    const suivant = EDGE_BITS[(((i < 0 ? 0 : i) + sens + EDGE_BITS.length) % EDGE_BITS.length)]!
+    setHud(scene.registry, 'buildEdge', suivant)
+  }
+  onDown(TOUCHES.rotateLeft, () => tourner(-1))
+  onDown(TOUCHES.rotateRight, () => tourner(1))
 
   // TAB : ouvre/ferme l'écran d'inventaire. On capture la touche : sinon le
   // navigateur déplace le focus hors du canvas. À l'OUVERTURE, on choisit le
@@ -296,6 +331,30 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     const world = pointerToWorld(pointer)
     const p = deps.predicted()
     return { held, slot, wounded, heldCount, dx: world.x / TILE_PX - p.x, dy: world.y / TILE_PX - p.y }
+  }
+
+  /**
+   * LA PORTE LA PLUS PROCHE dans la portée d'interaction, ou `null`.
+   *
+   * On mesure au CENTRE de sa tuile, comme la sim (`toggle_door` compare à `s.tx + 0.5`) : deux
+   * métriques différentes donneraient une porte que le client propose et que le moteur refuse.
+   */
+  const porteLaPlusProche = (): number | null => {
+    const p = deps.predicted()
+    const r = BALANCE.INTERACT_RANGE
+    let meilleure: number | null = null
+    let d2 = r * r
+    for (const s of deps.structures()) {
+      if (s.type !== 'door') continue
+      const dx = s.tx + 0.5 - p.x
+      const dy = s.ty + 0.5 - p.y
+      const d = dx * dx + dy * dy
+      if (d <= d2) {
+        d2 = d
+        meilleure = s.id
+      }
+    }
+    return meilleure
   }
 
   /** Le nœud visé est-il un ARBRE (abattage à maîtrise) ? Les arbres passent par la
@@ -419,10 +478,22 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       setHud(scene.registry, 'openFire', { structureId: aim.fireId })
       return
     }
-    // Sinon la CUEILLETTE (comportement d'avant) : un buisson visé + E le récolte d'un coup.
+    // LA CUEILLETTE PASSE D'ABORD (comportement d'avant) : un buisson visé + F le récolte d'un
+    // coup. Elle prime sur la porte, et c'est un ORDRE, pas un hasard — dans un jardin clos, un
+    // buisson pousse à un pas du seuil, et on VISE le buisson au curseur alors que la porte est
+    // simplement à côté de nous. Une porte qui volerait le geste rendrait ce potager irrécoltable.
     if (aim.inRange && aim.nodeId !== null && isForageNode(aim.nodeId)) {
       deps.sendAction({ type: 'harvest', nodeId: aim.nodeId, whole: true })
+      return
     }
+    // SINON LA PORTE LA PLUS PROCHE, À PORTÉE DE BRAS (spec construction R26).
+    //
+    // ELLE NE SE VISE PAS AU CURSEUR, et c'est délibéré : depuis R25 une porte vit sur une ARÊTE,
+    // pas sur une tuile — viser « la tuile de la porte » demanderait au joueur de deviner laquelle
+    // des deux la déclare, alors qu'il est simplement DEVANT elle. On prend donc la plus proche
+    // dans la portée d'interaction. La sim revalide le droit et la distance.
+    const porte = porteLaPlusProche()
+    if (porte !== null) deps.sendAction({ type: 'toggle_door', structureId: porte })
   })
 
   scene.input.mouse?.disableContextMenu()

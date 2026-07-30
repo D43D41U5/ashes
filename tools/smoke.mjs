@@ -38,6 +38,8 @@
  * la sim de production n'obéit pas aux tricheurs.
  */
 import { chromium } from 'playwright'
+import { inflateSync } from 'node:zlib'
+import { writeFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -148,6 +150,45 @@ async function frapperJusquAMort(page, nodeId, action, intervalle, coups, sonde,
     if (vu) return true
   }
   return false
+}
+
+/**
+ * LA COULEUR D'UN PIXEL À L'ÉCRAN — par une capture de 1×1, décodée ici.
+ *
+ * POURQUOI PAS `getImageData` : le canvas de Phaser est un contexte WebGL sans
+ * `preserveDrawingBuffer`. Le recopier dans un canvas 2D hors du cycle de rendu rend du NOIR
+ * (MESURÉ : [0,0,0] partout, y compris sur l'herbe) — une sonde qui ment sans le dire.
+ *
+ * Playwright, lui, capture après composition. Un PNG de 1×1 se décode sans dépendance : une
+ * seule scanline, donc un octet de filtre puis les canaux — et sur le PREMIER pixel les cinq
+ * filtres PNG se réduisent tous au brut (aucun voisin à gauche ni au-dessus).
+ */
+async function pixelAt(page, x, y) {
+  const png = await page.screenshot({ clip: { x: Math.max(0, x), y: Math.max(0, y), width: 1, height: 1 } })
+  // ON RECOLLE TOUS LES `IDAT` AVANT D'INFLATER : le flux deflate est UN seul flux, mais rien
+  // n'oblige l'encodeur à le mettre dans un seul chunk — Chromium le découpe, et inflater le
+  // premier morceau seul lève `Z_BUF_ERROR` (« unexpected end of file »).
+  let i = 8 //  on saute la signature
+  const morceaux = []
+  while (i + 8 <= png.length) {
+    const len = png.readUInt32BE(i)
+    const type = png.toString('ascii', i + 4, i + 8)
+    if (type === 'IDAT') morceaux.push(png.subarray(i + 8, i + 8 + len))
+    if (type === 'IEND') break
+    i += 12 + len
+  }
+  if (morceaux.length === 0) return null
+  const brut = inflateSync(Buffer.concat(morceaux))
+  return [brut[1], brut[2], brut[3]]
+}
+
+/** L'écart de LUMINANCE entre deux points de l'écran — le nombre qui tranche « on le voit ». */
+async function mesurerContraste(page, a, b) {
+  const pa = await pixelAt(page, a.x, a.y)
+  const pb = await pixelAt(page, b.x, b.y)
+  if (!pa || !pb) return null
+  const lum = ([r, v, bl]) => 0.2126 * r + 0.7152 * v + 0.0722 * bl
+  return { fantome: pa, fond: pb, dLum: Number((lum(pa) - lum(pb)).toFixed(1)) }
 }
 
 const SCENARIOS = {
@@ -4346,6 +4387,975 @@ const SCENARIOS = {
     console.log(`découpe : ${JSON.stringify(cles)}`)
     if (cles.coupes === 0) console.error('!! AUCUN mur coupé alors qu’on est dans la salle')
     return cles
+  },
+
+  /**
+   * ARÊTE (2026-07-30) — LE JOUEUR BÂTIT SUR LE TRAIT (spec construction R23).
+   *
+   * Ce que `pnpm test` ne peut PAS voir, et qui est pourtant tout l'enjeu d'un mode de pose :
+   *   ① le FANTÔME tourne quand on presse `A`/`E`, et il tourne dans le BON SENS ;
+   *   ② il tombe aux MÊMES PIXELS que le mur qu'il annonce (même texture, même ancrage) ;
+   *   ③ le COIN se ferme — deux murs sur une tuile, ce que « tuile occupée » interdisait ;
+   *   ④ la PORTE a une silhouette sur les quatre arêtes (son art n'existait pas avant ce jour).
+   *
+   * Exige `--dev` : on se dote au `debug_grant` et on se téléporte.
+   */
+  /**
+   * PORTE (2026-07-30) — ON L'OUVRE ET ON LA FERME À LA TOUCHE (spec construction R26).
+   *
+   * Ce que `pnpm test` ne peut pas voir : que la touche est CÂBLÉE, que le sprite CHANGE, et que
+   * la collision suit dans les deux sens. La mesure est une PAIRE DE PAIRES, parce qu'aucun cas
+   * seul ne prouve rien — un joueur qui ne bouge pas et un joueur qui traverse tout donnent le
+   * même « ça ne marche pas » :
+   *   ① close, elle arrête son PROPRIÉTAIRE (c'est ce qui donne un sens à l'ouvrir) ;
+   *   ② la touche l'ouvre, et on sort ;
+   *   ③ la même touche la referme, et on est de nouveau retenu ;
+   *   ④ le SPRITE suit l'état — sans quoi presser la touche ne se verrait pas.
+   *
+   * Bâti minimal (un mur, une porte) : le scénario `arete` couvre déjà la pose. Exige `--dev`.
+   */
+  async 'porte'(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(300)
+
+    const agir = async (action, ms = 320) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const slotDe = (item) => page.evaluate((it) => (window.__BRAISES__.scene.registry.get('inv') ?? [])
+      .findIndex((s) => s?.item === it), item)
+    const pos = () => page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+
+    // ── FONDER, loin des landmarks (recette éprouvée de `finale`).
+    const p0 = await pos()
+    let feu = null
+    let bx = 0
+    let by = 0
+    for (const [ox, oy] of [[0, 0], [-24, 0], [24, 0], [0, -24], [0, 24], [-48, 0], [48, 0]]) {
+      const tx = Math.round(p0.x) + ox
+      const ty = Math.round(p0.y) + oy
+      await agir({ type: 'debug_teleport', x: tx + 0.5, y: ty + 0.5 }, 220)
+      await agir({ type: 'debug_grant', item: 'campfire' }, 160)
+      const cslot = await slotDe('campfire')
+      if (cslot < 0 || cslot >= 6) continue
+      await agir({ type: 'set_active_slot', slot: cslot }, 140)
+      await agir({ type: 'place_campfire', tx: tx + 1, ty }, 320)
+      const id = await page.evaluate(({ x, y }) => {
+        const f = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.villageId === 0 && q.tx === x && q.ty === y)
+        return f ? f.id : null
+      }, { x: tx + 1, y: ty })
+      if (id === null) continue
+      await agir({ type: 'found_village', structureId: id }, 420)
+      if (await page.evaluate(() => (window.__BRAISES__.scene.registry.get('village') ?? 0) > 0)) {
+        feu = id
+        bx = tx
+        by = ty
+        break
+      }
+    }
+    if (feu === null) { console.error('!! aucun village fondé — la porte n’est pas bâtissable'); return }
+
+    for (let i = 0; i < 10; i++) await agir({ type: 'debug_grant', item: 'wood' }, 90)
+    await agir({ type: 'debug_grant', item: 'hammer' }, 180)
+    const hslot = await slotDe('hammer')
+    if (hslot < 0 || hslot >= 6) { console.error(`!! marteau hors ceinture (case ${hslot})`); return }
+    await agir({ type: 'set_active_slot', slot: hslot }, 300)
+
+    // ── UNE PORTE ET UN MUR VOISIN, sur la même ligne d'arêtes (bit SUD de leur tuile).
+    // Le mur est le TÉMOIN : sans lui, « je ne passe pas » ne distinguerait pas une porte close
+    // d'un bug de collision. Une tuile SANS NŒUD de chaque côté, sinon un arbre fait la mesure.
+    const S = 4
+    let porteTx = null
+    const ligne = by + 3 //  l'arête visée : le sud de la rangée (by+2)
+    for (const dx of [0, 1, -1, 2, -2, 3]) {
+      const tx = bx + dx
+      const propre = await page.evaluate(({ x, y }) => (window.__BRAISES__.scene.view.nodes ?? [])
+        .every((n) => !((n.tx === x || n.tx === x + 1) && (n.ty === y || n.ty === y + 1))), { x: tx, y: ligne - 1 })
+      if (!propre) continue
+      await agir({ type: 'debug_teleport', x: tx + 0.5, y: ligne - 0.5 }, 300)
+      await agir({ type: 'build', structure: 'door', tx, ty: ligne - 1, material: 'wood', edges: S }, 320)
+      await agir({ type: 'build', structure: 'wall', tx: tx + 1, ty: ligne - 1, material: 'wood', edges: S }, 320)
+      const ok = await page.evaluate(({ x, y }) => {
+        const st = window.__BRAISES__.scene.view.structures
+        return st.some((q) => q.type === 'door' && q.tx === x && q.ty === y)
+          && st.some((q) => q.type === 'wall' && q.tx === x + 1 && q.ty === y)
+      }, { x: tx, y: ligne - 1 })
+      if (ok) { porteTx = tx; break }
+    }
+    if (porteTx === null) { console.error('!! ni porte ni mur posés — rien à mesurer'); return }
+    const porteId = await page.evaluate(({ x, y }) => window.__BRAISES__.scene.view.structures
+      .find((q) => q.type === 'door' && q.tx === x && q.ty === y).id, { x: porteTx, y: ligne - 1 })
+
+    /**
+     * L'INDICE DE FRAME LU DANS UNE CLÉ DE TEXTURE — et il ne finit pas toujours la clé.
+     *
+     * Une porte DEBOUT et éclairée rend `st-door-e4-f0_lit` ; TRANCHÉE, `st-door-coupe-e4-f0`
+     * (les empreintes sont plates, elles n'ont pas de `_lit`). Un motif ancré à la fin de la
+     * chaîne ne voit donc que la moitié des cas — et il l'a fait : la pellicule a photographié
+     * ZÉRO frame en croyant qu'aucune n'existait, alors qu'elles défilaient toutes.
+     */
+    const frameDe = (cle) => {
+      const m = String(cle).match(/-f(\d+)(?:_lit)?$/)
+      return m ? Number(m[1]) : null
+    }
+
+    /** L'état lu sur le MONDE et sur le SPRITE — les deux doivent s'accorder. */
+    const etat = () => page.evaluate((id) => {
+      const sc = window.__BRAISES__.scene
+      const s2 = sc.view.structures.find((q) => q.id === id)
+      const sp = sc.view.structureSprites?.get(id)
+      return { open: s2?.open ?? false, cle: sp?.texture?.key ?? null }
+    }, porteId)
+
+    /**
+     * Pousse vers le SUD depuis la tuile visée, et rend la position finale.
+     *
+     * On POUSSE jusqu'à l'arrêt, sans compter le temps : sous swiftshader le rendu est famélique
+     * et `playerPos` ne s'écrit que dans `update()`. Et la garde PROUVE SA PRÉMISSE — si le
+     * placement échoue, elle rend `null` plutôt qu'une position qui ne veut rien dire.
+     */
+    const pousser = async (tx) => {
+      let place = false
+      for (let essai = 0; essai < 10; essai++) {
+        await agir({ type: 'debug_teleport', x: tx + 0.5, y: ligne - 0.5 }, 340)
+        const q = await pos()
+        if (Math.abs(q.x - (tx + 0.5)) < 0.3 && Math.abs(q.y - (ligne - 0.5)) < 0.3) { place = true; break }
+      }
+      if (!place) { console.error(`!! placement impossible en (${tx + 0.5}, ${ligne - 0.5})`); return null }
+      await page.keyboard.down('KeyS')
+      let q = await pos()
+      let stable = 0
+      for (let i = 0; i < 40 && stable < 4; i++) {
+        await page.waitForTimeout(220)
+        const r2 = await pos()
+        stable = Math.abs(r2.y - q.y) < 0.002 ? stable + 1 : 0
+        q = r2
+      }
+      await page.keyboard.up('KeyS')
+      await page.waitForTimeout(250)
+      return pos()
+    }
+    /** Revient au contact de la porte et presse la touche d'interaction. */
+    const presserF = async () => {
+      for (let essai = 0; essai < 10; essai++) {
+        await agir({ type: 'debug_teleport', x: porteTx + 0.5, y: ligne - 0.5 }, 340)
+        const q = await pos()
+        if (Math.abs(q.y - (ligne - 0.5)) < 0.3) break
+      }
+      await page.keyboard.press('KeyF')
+      await page.waitForTimeout(700)
+    }
+
+    const close = await etat()
+    console.log(`   porte #${porteId} en (${porteTx},${ligne - 1}), arête sud en y=${ligne} — départ ${close.open ? 'OUVERTE' : 'close'} (${close.cle})`)
+    if (close.open) console.error('!! une porte NEUVE devrait être CLOSE')
+
+    // ① CLOSE, elle m'arrête, MOI — et ② le MUR voisin aussi (le témoin).
+    const bloque = await pousser(porteTx)
+    const contreMur = await pousser(porteTx + 1)
+    // ③ LA TOUCHE l'ouvre, et je sors.
+    await presserF()
+    const ouvert = await etat()
+    const sorti = await pousser(porteTx)
+    // ④ LA MÊME TOUCHE la referme, et je suis de nouveau retenu.
+    await presserF()
+    const refermee = await etat()
+    const rebloque = await pousser(porteTx)
+
+    const y = (p2) => (p2 === null ? 'NON MESURÉ' : p2.y.toFixed(2))
+    console.log(`   close → y=${y(bloque)} · mur témoin → y=${y(contreMur)} · F ouvre (${ouvert.cle}) → y=${y(sorti)} · F referme (${refermee.cle}) → y=${y(rebloque)}`)
+    if (bloque && bloque.y > ligne) console.error(`!! CLOSE, ELLE NE M'ARRÊTE PAS : sorti en y=${bloque.y.toFixed(2)}`)
+    if (contreMur && contreMur.y > ligne) console.error(`!! LE MUR TÉMOIN SE TRAVERSE : la mesure ne prouverait rien`)
+    if (ouvert.open !== true) console.error('!! la touche d’interaction n’a pas OUVERT la porte')
+    if (sorti && sorti.y <= ligne) console.error(`!! OUVERTE, ELLE NE LIVRE PAS PASSAGE : arrêté en y=${sorti.y.toFixed(2)}`)
+    if (refermee.open !== false) console.error('!! la touche d’interaction n’a pas REFERMÉ la porte')
+    if (rebloque && rebloque.y > ligne) console.error(`!! REFERMÉE, ELLE NE M'ARRÊTE PLUS : sorti en y=${rebloque.y.toFixed(2)}`)
+    // ④ LE SPRITE SUIT L'ÉTAT — et il RESTE UNE PORTE. « La texture change » ne suffit pas : la
+    // première version de cette garde était verte alors que la porte ouverte prenait la texture
+    // d'un MUR (`st-wall-coupe-e4`), c'est-à-dire l'empreinte pleine de ce qu'on vient d'ouvrir.
+    if (ouvert.cle === close.cle) console.error(`!! LE SPRITE NE CHANGE PAS À L'OUVERTURE (${close.cle})`)
+    if (refermee.cle !== close.cle) console.error(`!! le sprite refermé (${refermee.cle}) ne revient pas à l'état clos (${close.cle})`)
+    for (const [nom, e] of [['close', close], ['ouverte', ouvert], ['refermée', refermee]]) {
+      if (!String(e.cle).startsWith('st-door')) console.error(`!! ${nom}, ce n'est plus une porte : ${e.cle}`)
+    }
+    // L'ÉTAT VIT DANS LA FRAME depuis l'animation (`-f0` close … `-f4` ouverte) : on affirme donc
+    // les DEUX extrémités, et pas un nom de famille. (L'assertion d'avant cherchait « ouverte »
+    // dans la clé — vraie tant que l'état était une famille, périmée dès qu'il est devenu un
+    // indice. Une garde qui teste un NOM survit mal à un changement de représentation.)
+    const dernier = 4
+    if (frameDe(close.cle) !== 0) console.error(`!! close, elle n'est pas à la frame 0 : ${close.cle}`)
+    if (frameDe(ouvert.cle) !== dernier) console.error(`!! ouverte, elle n'est pas à la dernière frame : ${ouvert.cle}`)
+    if (frameDe(refermee.cle) !== 0) console.error(`!! refermée, elle n'est pas revenue à la frame 0 : ${refermee.cle}`)
+
+    // ═══ LES CINQ FRAMES PASSENT-ELLES VRAIMENT ? ═══
+    //
+    // Une animation « qui marche » peut n'être qu'un saut de l'état A à l'état B en 300 ms. Ce
+    // qu'on veut savoir, c'est si les positions INTERMÉDIAIRES s'affichent — donc on ÉCHANTILLONNE
+    // pendant le geste, aussi vite que le harnais le permet, et on regarde combien de frames
+    // distinctes sont passées. Sous swiftshader le rendu est famélique : on n'en verra pas cinq à
+    // tous les coups, mais en voir **au moins trois** prouve qu'il y a une course et non un saut.
+    const suivreLeBattant = async () => {
+      for (let essai = 0; essai < 10; essai++) {
+        await agir({ type: 'debug_teleport', x: porteTx + 0.5, y: ligne - 0.5 }, 340)
+        const q = await pos()
+        if (Math.abs(q.y - (ligne - 0.5)) < 0.3) break
+      }
+      // On FIGE la boucle de jeu pour la stepper nous-même : l'horloge headless avale des
+      // centaines de millisecondes d'un coup et engloutirait toute l'animation entre deux
+      // lectures (leçon `fx-ephemere-figer-et-stepper`).
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+      await page.keyboard.press('KeyF')
+      await page.waitForTimeout(120)
+      const vues = []
+      for (let i = 0; i < 40; i++) {
+        const k = await page.evaluate((id) => {
+          const sc = window.__BRAISES__.scene
+          sc.game.loop.step(sc.game.loop.time + 20)
+          return sc.view.structureSprites?.get(id)?.texture?.key ?? null
+        }, porteId)
+        if (k !== null && vues[vues.length - 1] !== k) vues.push(k)
+      }
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+      return vues
+    }
+    const frames = await suivreLeBattant()
+    console.log(`   battant : ${frames.length} position(s) distincte(s) — ${frames.join(' → ')}`)
+    if (frames.length < 3) console.error(`!! LE BATTANT SAUTE au lieu de pivoter : ${frames.length} position(s) vue(s)`)
+    const indices = frames.map(frameDe).filter((n) => n !== null)
+    if (indices.length !== frames.length) console.error(`!! une position n'est pas une frame de porte : ${frames.join(' → ')}`)
+    for (let i = 1; i < indices.length; i++) {
+      if (indices[i] === indices[i - 1]) console.error(`!! deux frames identiques d'affilée : ${indices.join(',')}`)
+    }
+    if (indices.length >= 2 && indices[0] === indices[indices.length - 1]) {
+      console.error(`!! le battant revient à sa position de départ : ${indices.join(',')}`)
+    }
+
+    // ═══ LE CHEVAUCHEMENT — le mur d'à côté mord-il le bois de la porte ? ═══
+    //
+    // Une bande de mur déborde d'une demi-épaisseur chez ses voisins pour se recoudre. À pieds
+    // égaux, l'ordre tombait sur l'ordre de POSE : la pierre passait par-dessus le bois. C'est le
+    // défaut corrigé pour le seuil du bâti généré le 2026-07-27, et la porte du joueur en a
+    // hérité intact. On mesure les PROFONDEURS, pas l'impression : la porte doit se dessiner
+    // APRÈS le mur voisin dès lors que leurs pieds sont au même rang.
+    const tri = await page.evaluate(({ id, x, y }) => {
+      const sc = window.__BRAISES__.scene
+      const mur = sc.view.structures.find((q) => q.type === 'wall' && q.tx === x + 1 && q.ty === y)
+      const sp = sc.view.structureSprites
+      const dp = sp?.get(id)?.depth ?? null
+      const dm = mur ? (sp?.get(mur.id)?.depth ?? null) : null
+      return { porte: dp, mur: dm, memeRang: dp !== null && dm !== null && Math.abs(dp - dm) < 1 }
+    }, { id: porteId, x: porteTx, y: ligne - 1 })
+    console.log(`   tri : porte ${tri.porte} · mur voisin ${tri.mur}`)
+    if (tri.porte === null || tri.mur === null) console.error('!! profondeurs illisibles — le chevauchement n’est pas mesuré')
+    else if (tri.porte <= tri.mur) console.error(`!! LE MUR SE DESSINE APRÈS LA PORTE (${tri.mur} ≥ ${tri.porte}) : sa pierre mordra le bois`)
+
+    // ═══ LA PELLICULE : les cinq positions, une image chacune, au même cadrage ═══
+    //
+    // On FIGE la boucle et on la steppe soi-même : sinon l'horloge headless avale l'animation
+    // entière entre deux captures et l'on photographie deux fois la même extrémité.
+    {
+      // ON REPART D'UNE PORTE CLOSE, ET ON RESTE AU CONTACT.
+      //
+      // Le premier jet éloignait le joueur de trois tuiles pour « mieux cadrer », puis pressait la
+      // touche : il ne se passait rien, et la pellicule photographiait douze fois la frame 0. La
+      // règle marchait très bien — `toggle_door` exige la portée de BRAS (1,5 tuile) — c'était la
+      // sonde qui s'était mise hors de portée de ce qu'elle voulait déclencher. On CADRE avec la
+      // caméra (`stopFollow` + `centerOn`), jamais en déplaçant celui qui agit.
+      if ((await etat()).open) await presserF()
+      for (let essai = 0; essai < 8; essai++) {
+        await agir({ type: 'debug_teleport', x: porteTx + 0.5, y: ligne - 0.5 }, 320)
+        const q = await pos()
+        if (Math.abs(q.y - (ligne - 0.5)) < 0.5) break
+      }
+      await page.evaluate(({ x, yy }) => {
+        const cam = window.__BRAISES__.scene.cameras.main
+        cam.stopFollow()
+        cam.setZoom(8)
+        cam.centerOn(x * 16, yy * 16)
+      }, { x: porteTx + 0.5, yy: ligne - 0.2 })
+      await page.waitForTimeout(600)
+      const boite = await page.evaluate((id) => {
+        const sc = window.__BRAISES__.scene
+        const sp = sc.view.structureSprites?.get(id)
+        const cv = document.querySelector('canvas')
+        if (!sp || !cv) return null
+        const r = cv.getBoundingClientRect()
+        const sx = r.width / cv.width
+        const sy = r.height / cv.height
+        const cam = sc.cameras.main
+        const gx = (sp.x - cam.worldView.x) * cam.zoom
+        const gy = (sp.y - cam.worldView.y) * cam.zoom
+        const gw = sp.displayWidth * cam.zoom
+        const gh = sp.displayHeight * cam.zoom
+        return { x: r.left + (gx - gw / 2) * sx, y: r.top + (gy - gh * sp.originY) * sy, w: gw * sx, h: gh * sy }
+      }, porteId)
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.sleep() })
+      await page.keyboard.press('KeyF')
+      await page.waitForTimeout(120)
+      const prises = new Set()
+      for (let i = 0; i < 60 && prises.size < 5; i++) {
+        const k = await page.evaluate((id) => {
+          const sc = window.__BRAISES__.scene
+          sc.game.loop.step(sc.game.loop.time + 16)
+          return sc.view.structureSprites?.get(id)?.texture?.key ?? null
+        }, porteId)
+        const f = frameDe(k)
+        if (f === null || prises.has(f)) continue
+        prises.add(f)
+        const marge = 40
+        await page.screenshot({
+          path: `${OUT}/porte-${process.env.SMOKE_TAG ?? 'a'}-frame${f}.png`,
+          ...(boite
+            ? { clip: {
+                x: Math.max(0, Math.round(boite.x - marge)),
+                y: Math.max(0, Math.round(boite.y - marge)),
+                width: Math.round(boite.w + 2 * marge),
+                height: Math.round(boite.h + 2 * marge),
+              } }
+            : {}),
+        })
+      }
+      await page.evaluate(() => { window.__BRAISES__.scene.game.loop.wake() })
+      console.log(`   pellicule : ${prises.size} frame(s) capturée(s) — ${[...prises].join(', ')}`)
+      if (prises.size < 5) console.error(`!! seulement ${prises.size} frame(s) sur 5 photographiées`)
+    }
+
+    // ═══ L'ART DES CINQ POSITIONS, TEXTURE PAR TEXTURE ═══
+    //
+    // POURQUOI IL FAUT AUSSI CELLE-CI, et pourquoi ce n'est pas un aveu de paresse : la version
+    // DEBOUT du battant n'est **jamais visible par celui qui ouvre**. Ouvrir exige la portée de
+    // bras (1,5 tuile), un pan tombe à deux : la porte qu'on pousse est toujours rendue TRANCHÉE.
+    // Sa silhouette debout n'est vue que par un TIERS, à trois tuiles ou plus. On l'exporte donc
+    // depuis les textures elles-mêmes, à l'échelle où elles sont dessinées — c'est l'ART, pas le
+    // moment de jeu, et les deux jeux de captures se complètent.
+    for (const bit of [4, 2]) {
+      for (let f = 0; f < 5; f++) {
+        const b64 = await page.evaluate(({ cle }) => {
+          const src = window.__BRAISES__.scene.textures.get(cle)?.getSourceImage()
+          if (!src || !src.toDataURL) return null
+          // ×6, au plus proche : un art de 20 px se juge agrandi, jamais interpolé.
+          const c2 = document.createElement('canvas')
+          c2.width = src.width * 6
+          c2.height = src.height * 6
+          const g = c2.getContext('2d')
+          g.imageSmoothingEnabled = false
+          g.fillStyle = '#5c7a3f'
+          g.fillRect(0, 0, c2.width, c2.height)
+          g.drawImage(src, 0, 0, c2.width, c2.height)
+          return c2.toDataURL('image/png').split(',')[1]
+        }, { cle: `st-door-e${bit}-f${f}` })
+        if (b64 === null) { console.error(`!! texture st-door-e${bit}-f${f} illisible`); continue }
+        await writeFile(`${OUT}/porte-art-e${bit}-f${f}.png`, Buffer.from(b64, 'base64'))
+      }
+    }
+    console.log('   art : 2 arêtes × 5 positions exportées')
+
+    // ON VA REGARDER : les deux états, au même cadrage, pour les comparer côte à côte.
+    for (const [nom, ouvrir] of [['close', false], ['ouverte', true]]) {
+      const e = await etat()
+      if (e.open !== ouvrir) await presserF()
+      for (let essai = 0; essai < 8; essai++) {
+        await agir({ type: 'debug_teleport', x: porteTx + 0.5, y: ligne + 2.5 }, 320)
+        const q = await pos()
+        if (Math.abs(q.y - (ligne + 2.5)) < 0.5) break
+      }
+      await page.evaluate(({ x, yy }) => {
+        const cam = window.__BRAISES__.scene.cameras.main
+        cam.stopFollow()
+        cam.setZoom(8)
+        cam.centerOn(x * 16, yy * 16)
+      }, { x: porteTx + 0.5, yy: ligne - 0.2 })
+      await page.waitForTimeout(800)
+      await page.screenshot({ path: `${OUT}/porte-${process.env.SMOKE_TAG ?? 'a'}-${nom}.png` })
+    }
+    return { close: close.cle, ouvert: ouvert.cle }
+  },
+
+  async 'arete'(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(300)
+
+    // ── SE DOTER, PUIS FONDER. Une action par tick : on espace, et on VÉRIFIE l'effet plutôt
+    // que d'espérer (une action avalée laisserait la suite mesurer un monde qui n'a pas changé).
+    // UNE ACTION PAR TICK — deux `sendAction` dans le même `evaluate` et la seconde est perdue
+    // (le premier jet posait le feu sans l'avoir pris en main, et le scénario s'arrêtait là).
+    const agir = async (action, ms = 320) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const slotDe = (item) => page.evaluate((it) => (window.__BRAISES__.scene.registry.get('inv') ?? [])
+      .findIndex((s) => s?.item === it), item)
+
+    // ── FONDER, LOIN DES LANDMARKS. On se DÉPLACE d'abord (le spawn de la Racine est cerné de
+    // POI, et `found_village` refuse un carré qui en contient un) puis on se dote sur place :
+    // c'est la recette éprouvée du scénario `finale`, et il n'y a aucune raison d'en avoir deux.
+    const p0 = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    let feu = null
+    let bx = 0
+    let by = 0
+    for (const [ox, oy] of [[0, 0], [-24, 0], [24, 0], [0, -24], [0, 24], [-48, 0], [48, 0]]) {
+      const tx = Math.round(p0.x) + ox
+      const ty = Math.round(p0.y) + oy
+      await agir({ type: 'debug_teleport', x: tx + 0.5, y: ty + 0.5 }, 220)
+      await agir({ type: 'debug_grant', item: 'campfire' }, 160)
+      const cslot = await slotDe('campfire')
+      if (cslot < 0 || cslot >= 6) continue
+      await agir({ type: 'set_active_slot', slot: cslot }, 140)
+      await agir({ type: 'place_campfire', tx: tx + 1, ty }, 320)
+      const id = await page.evaluate(({ x, y }) => {
+        const f = window.__BRAISES__.scene.view.structures.find((s) => s.type === 'fire' && s.villageId === 0 && s.tx === x && s.ty === y)
+        return f ? f.id : null
+      }, { x: tx + 1, y: ty })
+      if (id === null) continue
+      await agir({ type: 'found_village', structureId: id }, 420)
+      if (await page.evaluate(() => (window.__BRAISES__.scene.registry.get('village') ?? 0) > 0)) {
+        feu = id
+        bx = tx
+        by = ty
+        break
+      }
+    }
+    if (feu === null) {
+      const pourquoi = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error') ?? null)
+      console.error(`!! aucun village fondé (${JSON.stringify(pourquoi)}) — la pose au marteau serait refusée`)
+      return
+    }
+    console.log(`village fondé, Feu en ${bx + 1},${by}`)
+    // DE QUOI BÂTIR — après la fondation : `debug_grant` met l'objet EN MAIN, et une main pleine
+    // de bois au moment de poser le feu ferait échouer la fondation elle-même.
+    // 11 murs à 2 bois + 1 porte à 3 : 25 au minimum, et un sac large évite qu'un refus de
+    // COÛT se lise comme un refus de PLACEMENT.
+    // 16 murs à 2 bois, 1 porte à 3, 18 sols à 1 : 53 au minimum. Un sac large évite qu'un refus
+    // de COÛT se lise comme un refus de PLACEMENT.
+    for (let i = 0; i < 70; i++) await agir({ type: 'debug_grant', item: 'wood' }, 80)
+    await agir({ type: 'debug_grant', item: 'hammer' }, 200)
+    // LE MARTEAU DOIT ÊTRE DANS LA CEINTURE (cases 0-5) : c'est elle que `set_active_slot`
+    // adresse, et le menu du marteau ne s'ouvre que si la MAIN le tient.
+    const hslot = await slotDe('hammer')
+    if (hslot < 0 || hslot >= 6) { console.error(`!! le marteau n’est pas dans la ceinture (case ${hslot})`); return }
+    await agir({ type: 'set_active_slot', slot: hslot }, 320)
+
+    // ── ARMER LE MUR (le menu du marteau écrit `selected`), marteau en main.
+    // ON ARME PAR LE VRAI MENU, jamais par le registre. `UIScene` RÉÉCRIT `selected` à chaque
+    // frame depuis son menu du marteau (R20-R21) : un `registry.set('selected','wall')` est
+    // effacé à la frame suivante, et la sonde mesurait alors le fantôme du FEU DE CAMP encore
+    // en sac (`st-fire`) en croyant mesurer celui du mur. On clique la ligne « Mur ».
+    const arme = await page.evaluate(() => {
+      const lignes = [...document.querySelectorAll('.bmn-row')]
+      const mur = lignes.find((l) => (l.textContent ?? '').startsWith('Mur'))
+      if (!mur) return `menu absent (${lignes.length} lignes)`
+      mur.click()
+      return 'ok'
+    })
+    if (arme !== 'ok') { console.error(`!! impossible d’armer le mur : ${arme}`); return }
+    await page.waitForTimeout(400)
+    const selected = await page.evaluate(() => window.__BRAISES__.scene.registry.get('selected') ?? null)
+    if (selected !== 'wall') { console.error(`!! le mur n’est pas armé (selected=${selected})`); return }
+    // ⚠ CORPS EN BLOC, PAS UNE EXPRESSION. `setZoom` rend la Camera (API fluide de Phaser), et
+    // `page.evaluate` sérialise ce qu'on lui rend : la Camera référence la Scene, donc tout le
+    // graphe du jeu. Le pont CDP reçoit alors un message de plus de 512 Mo et **Node meurt** sur
+    // `ERR_STRING_TOO_LONG` — un plantage qui ne dit rien du jeu et tout de la sonde.
+    await page.evaluate(() => { window.__BRAISES__.scene.cameras.main.setZoom(7) })
+
+    // ① ET ② — LE FANTÔME TOURNE, ET IL RESSEMBLE AU MUR. On lit la texture ET l'ancrage du
+    // sprite fantôme après chaque appui : c'est la seule preuve que la touche est CÂBLÉE (elles
+    // étaient déclarées et lues par personne depuis le 2026-07-27) et qu'elle vise la bonne arête.
+    const lireGhost = () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const g = sc.buildGhost?.sprite
+      return {
+        // Le MÊME défaut que tous les lecteurs (`?? EDGE_N`) : la clé n'est écrite qu'au
+        // premier appui, comme `buildMaterial`. La lire brute donnerait un `null` de départ
+        // qui ferait rougir la garde du cycle sans qu'il y ait quoi que ce soit de cassé.
+        edge: sc.registry.get('buildEdge') ?? 1,
+        cle: g?.texture?.key ?? null,
+        originY: g ? Number(g.originY.toFixed(3)) : null,
+        depth: g ? Math.round(g.depth) : null,
+        visible: Boolean(g?.visible),
+        // LA GÉOMÉTRIE RENDUE, pas celle que je crois. Un fantôme dont on ne peut pas rendre
+        // compte de la taille est exactement ce qui cache un vrai défaut.
+        w: g ? Math.round(g.displayWidth) : null,
+        h: g ? Math.round(g.displayHeight) : null,
+        zoom: Number(sc.cameras.main.zoom.toFixed(2)),
+        // Où il est À L'ÉCRAN, en px canvas : de quoi vérifier qu'il suit bien le curseur.
+        ecran: g ? {
+          x: Math.round((g.x - sc.cameras.main.worldView.x) * sc.cameras.main.zoom),
+          y: Math.round((g.y - sc.cameras.main.worldView.y) * sc.cameras.main.zoom),
+        } : null,
+        alpha: g ? Number(g.alpha.toFixed(2)) : null,
+      }
+    })
+    /**
+     * LA BOÎTE DU FANTÔME EN COORDONNÉES DE PAGE — trois changements d'unité, et sauter un seul
+     * donne un cadrage qui coupe le sujet (MESURÉ : le premier jet capturait 57 % du sprite en
+     * croyant le centrer, et la silhouette obtenue ne ressemblait à aucun mur).
+     *
+     *   ① `displayWidth`/`displayHeight` sont en px MONDE (20×52 pour un mur d'arête) ;
+     *   ② la caméra les met à l'échelle de son ZOOM → px internes du canvas ;
+     *   ③ le canvas est affiché par CSS à une autre taille → px de page.
+     */
+    const boiteGhost = () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const g = sc.buildGhost?.sprite
+      const cv = document.querySelector('canvas')
+      if (!g || !cv) return null
+      const r = cv.getBoundingClientRect()
+      const sx = r.width / cv.width
+      const sy = r.height / cv.height
+      const cam = sc.cameras.main
+      const gx = (g.x - cam.worldView.x) * cam.zoom
+      const gy = (g.y - cam.worldView.y) * cam.zoom
+      const gw = g.displayWidth * cam.zoom
+      const gh = g.displayHeight * cam.zoom
+      return {
+        x: r.left + (gx - gw / 2) * sx,
+        y: r.top + (gy - gh * g.originY) * sy,
+        w: gw * sx,
+        h: gh * sy,
+      }
+    })
+    // La souris DOIT survoler le canvas : le fantôme suit la tuile visée, et sans pointeur la
+    // visée retombe sur le joueur — on mesurerait un fantôme collé aux pieds.
+    const box = await page.locator('canvas').first().boundingBox()
+    const cx = box.x + box.width / 2 + 90
+    const cy = box.y + box.height / 2
+    await page.mouse.move(cx, cy)
+    await page.waitForTimeout(400)
+
+    const tour = []
+    for (const [nom, touche] of [['départ', null], ['E×1', 'KeyE'], ['E×2', 'KeyE'], ['E×3', 'KeyE'], ['E×4', 'KeyE'], ['A×1', 'KeyA']]) {
+      if (touche) { await page.keyboard.press(touche); await page.waitForTimeout(350) }
+      const g = await lireGhost()
+      tour.push(`${nom} → arête ${g.edge} (${g.cle}, originY ${g.originY}, ${g.w}×${g.h}px, zoom ${g.zoom}, écran ${g.ecran?.x},${g.ecran?.y}, alpha ${g.alpha})`)
+      // CADRÉ SUR LE FANTÔME : pleine page, il fait quelques dizaines de pixels au milieu d'un
+      // paysage — on ne juge pas une silhouette sur une vignette. Le fantôme colle à la tuile
+      // sous le curseur, donc une boîte autour du curseur le contient toujours.
+      const bg = await boiteGhost()
+      const marge = 90
+      await page.screenshot({
+        path: `${OUT}/arete-ghost-${process.env.SMOKE_TAG ?? 'a'}-${nom.replace(/[×]/g, 'x')}.png`,
+        clip: bg
+          ? {
+              x: Math.max(0, Math.round(bg.x - marge)),
+              y: Math.max(0, Math.round(bg.y - marge)),
+              width: Math.round(bg.w + 2 * marge),
+              height: Math.round(bg.h + 2 * marge),
+            }
+          : { x: Math.round(cx - 170), y: Math.round(cy - 200), width: 340, height: 340 },
+      })
+    }
+    console.log(`fantôme : ${tour.join(' | ')}`)
+    // ② — IL RESSEMBLE AU MUR. La texture doit être celle de l'ARÊTE armée (`st-wall-e<bit>`) et
+    // l'ancrage celui d'une barrière (bas de TUILE, ~0,96), pas le bas de l'image. Sans ce test,
+    // un fantôme pleine tuile aurait passé la garde du cycle : les bits tournaient très bien.
+    for (const t of tour) {
+      const bit = t.match(/arête (\d+)/)?.[1]
+      if (!t.includes(`st-wall-e${bit}`)) console.error(`!! le fantôme ne porte pas l’art d’arête : ${t}`)
+    }
+    const edges = tour.map((t) => Number(t.match(/arête (\d+)/)?.[1]))
+    // QUATRE APPUIS RAMÈNENT AU DÉPART (le cycle est de 4), et `A` défait `E` : deux sens.
+    if (edges[0] !== edges[4]) console.error(`!! quatre appuis de E ne bouclent pas : ${edges.join('→')}`)
+    if (edges[5] !== edges[3]) console.error(`!! A ne défait pas E : ${edges.join('→')}`)
+    if (new Set(edges.slice(0, 4)).size !== 4) console.error(`!! le tour ne visite pas les 4 arêtes : ${edges.join('→')}`)
+
+    // ③ ET ④ — UNE VRAIE PIÈCE, BÂTIE ARÊTE PAR ARÊTE.
+    //
+    // Un mur isolé ne prouve rien : ce qu'on veut voir, c'est qu'une PIÈCE se ferme — donc que
+    // les quatre COINS portent chacun DEUX murs (le cas que « tuile occupée » interdisait) et
+    // qu'une PORTE s'insère dans le pan sud comme un segment parmi les autres.
+    //
+    // On pose depuis les tuiles du DEDANS, bit tourné vers le dehors : c'est la convention du
+    // bâti généré (`poi-batis`), et c'est elle que la découpe de façade sait lire.
+    // ELLE EST PROFONDE (3 × 6) ET ELLE A UN SOL, et les deux comptent pour ce qu'on mesure :
+    //   • la règle des PANS a deux détentes — la DISTANCE (≤ 2 tuiles, la hauteur d'un mur) et le
+    //     DEDANS (le pan qui borde une région AU SUD tombe dès qu'on entre, quelle que soit la
+    //     distance). Dans une pièce de 3 de profond on est toujours à ≤ 2 tuiles de tout : la
+    //     distance masque le dedans, et on ne mesurerait qu'elle.
+    //   • le DEDANS n'existe que s'il y a une RÉGION, c'est-à-dire un SOL bâti. Sans sol, la
+    //     question ne se pose même pas.
+    const LARGE = 3
+    const PROFOND = 6
+    const x0 = bx + 2
+    const y0 = by + 3
+    const N = 1, E = 2, S = 4, O = 8
+    const aPoser = []
+    for (let dx = 0; dx < LARGE; dx++) {
+      aPoser.push(['wall', x0 + dx, y0, N])
+      // LA PORTE D'ABORD, au milieu du sud : une pièce qui se scelle puis s'ouvre passerait par
+      // un état CLOS, et l'invariant de navigabilité (R7) refuserait le segment qui la ferme.
+      aPoser.push([dx === 1 ? 'door' : 'wall', x0 + dx, y0 + PROFOND - 1, S])
+    }
+    for (let dy = 0; dy < PROFOND; dy++) {
+      aPoser.push(['wall', x0, y0 + dy, O])
+      aPoser.push(['wall', x0 + LARGE - 1, y0 + dy, E])
+    }
+    for (let dy = 0; dy < PROFOND; dy++) for (let dx = 0; dx < LARGE; dx++) aPoser.push(['floor', x0 + dx, y0 + dy, null])
+    // La porte en tête, pour la raison ci-dessus.
+    aPoser.sort((a, b2) => (a[0] === 'door' ? -1 : 0) - (b2[0] === 'door' ? -1 : 0))
+    // ON SE PLACE AU MILIEU DE LA PIÈCE. `BUILD_RANGE` vaut 6 tuiles : bâtir les douze segments
+    // depuis le Feu laissait le coin le plus lointain à 6,4 — MESURÉ, deux poses refusées
+    // « trop loin », et le compte de coins accusait alors le modèle d'arête pour une portée de
+    // bras. Depuis le centre, aucune arête n'est à plus de 1,5 tuile.
+    await agir({ type: 'debug_teleport', x: x0 + 1.5, y: y0 + 1.5 }, 400)
+    for (const [type, tx, ty, bit] of aPoser) {
+      // ON SE RAPPROCHE DE CE QU'ON POSE : `BUILD_RANGE` vaut 6 tuiles, et une pièce de 6 de
+      // profond ne tient pas dans un bras depuis un seul point.
+      await agir({ type: 'debug_teleport', x: tx + 0.5, y: ty + 0.5 }, 110)
+      // Le SOL prend la tuile (R25) : pas d'arête pour lui, et son coût est d'un bois.
+      if (bit === null) await agir({ type: 'build', structure: type, tx, ty }, 150)
+      else await agir({ type: 'build', structure: type, tx, ty, material: 'wood', edges: bit }, 150)
+    }
+    await page.waitForTimeout(700)
+
+    const bati = await page.evaluate(({ x, y, w, h }) => {
+      const sc = window.__BRAISES__.scene
+      const murs = sc.view.structures.filter((q) => q.edges !== undefined && q.villageId !== 0)
+      const parTuile = {}
+      const sprites = []
+      for (const q of murs) {
+        parTuile[`${q.tx},${q.ty}`] = (parTuile[`${q.tx},${q.ty}`] ?? 0) + 1
+        const sp = sc.view.structureSprites?.get(q.id)
+        sprites.push({ type: q.type, edges: q.edges, cle: sp?.texture?.key ?? null, originY: sp ? Number(sp.originY.toFixed(3)) : null })
+      }
+      // LES QUATRE COINS de la pièce : chacun doit porter DEUX murs.
+      const coins = [[x, y], [x + w - 1, y], [x, y + h - 1], [x + w - 1, y + h - 1]]
+        .map(([cx, cy]) => parTuile[`${cx},${cy}`] ?? 0)
+      const sols = sc.view.structures.filter((q) => q.type === 'floor' && q.villageId !== 0).length
+      return { total: murs.length, coins, sols, portes: murs.filter((q) => q.type === 'door').length, sprites }
+    }, { x: x0, y: y0, w: LARGE, h: PROFOND })
+
+    const attendus = 2 * LARGE + 2 * PROFOND
+    console.log(`pièce bâtie : ${bati.total} segments, ${bati.sols} sols, coins = ${JSON.stringify(bati.coins)}, ${bati.portes} porte(s)`)
+    if (bati.coins.some((n) => n !== 2)) console.error(`!! UN COIN NE SE FERME PAS : ${JSON.stringify(bati.coins)} (attendu 2 partout)`)
+    if (bati.total !== attendus) console.error(`!! ${bati.total} segments posés, attendu ${attendus} — une pose a été refusée`)
+    if (bati.sols !== LARGE * PROFOND) console.error(`!! ${bati.sols} sols posés, attendu ${LARGE * PROFOND}`)
+    if (bati.portes !== 1) console.error(`!! ${bati.portes} porte(s), attendu 1`)
+    if (bati.sprites.some((q) => q.cle === null)) console.error('!! un segment posé n’a AUCUN sprite')
+    const porte = bati.sprites.find((q) => q.type === 'door')
+    if (porte && !String(porte.cle).startsWith('st-door-')) console.error(`!! la porte ne prend pas l’art d’arête : ${porte.cle}`)
+
+    // ON VA REGARDER. De LOIN les murs se dressent ; de PRÈS le pan qui nous fait face tombe
+    // (règle des pans, 2 tuiles) — c'est voulu, et les deux captures le montrent côte à côte.
+    //
+    // ON CADRE SUR LA PIÈCE, PAS SUR LE JOUEUR. La caméra SUIT l'avatar : viser la pièce en
+    // téléportant le joueur à côté la repoussait hors du cadre (MESURÉ : elle sortait par le
+    // haut, à demi coupée par le letterbox). On coupe le suivi et on centre.
+    const cadrer = async (cx, cy, zoom) => {
+      await page.evaluate(({ x, y, zz }) => {
+        const cam = window.__BRAISES__.scene.cameras.main
+        cam.stopFollow()
+        cam.setZoom(zz)
+        cam.centerOn(x * 16, y * 16)
+      }, { x: cx, y: cy, zz: zoom })
+      await page.waitForTimeout(500)
+    }
+    const centreX = x0 + LARGE / 2
+    const centreY = y0 + PROFOND / 2
+    for (const [nom, px, py, zoom, poste] of [
+      // DEHORS, à plus de 2 tuiles de tous les pans : rien ne tombe, les murs se DRESSENT.
+      ['piece-debout', centreX, centreY, 4, [centreX, y0 + PROFOND + 4]],
+      // DEDANS, AU FOND DE LA PIÈCE : à 5 tuiles du mur sud, donc HORS de la portée de la règle
+      // de DISTANCE (2 tuiles). Ce qui tombe ici ne peut venir que de la règle du DEDANS — c'est
+      // le seul cadrage qui la met à l'épreuve, et la raison d'être des 6 tuiles de profondeur.
+      ['piece-dedans-fond', centreX, centreY, 3.4, [centreX, y0 + 0.5]],
+      // LE SEUIL, de près : la porte est-elle DANS le mur, et se lit-elle comme une porte ?
+      ['piece-seuil', centreX, y0 + PROFOND - 0.5, 8, [centreX, y0 + PROFOND - 2]],
+    ]) {
+      // Le joueur d'abord (c'est LUI qui décide des pans tombés), la caméra ensuite.
+      for (let essai = 0; essai < 6; essai++) {
+        await agir({ type: 'debug_teleport', x: poste[0], y: poste[1] }, 380)
+        const p = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+        if (Math.abs(p.x - poste[0]) < 0.7 && Math.abs(p.y - poste[1]) < 0.7) break
+      }
+      await cadrer(px, py, zoom)
+      await page.waitForTimeout(700)
+      const coupes = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        let n = 0
+        for (const [, sp] of sc.view.structureSprites ?? []) if ((sp.texture?.key ?? '').includes('coupe')) n++
+        return n
+      })
+      console.log(`   ${nom} : ${coupes} segment(s) tranché(s)`)
+      await page.screenshot({ path: `${OUT}/arete-${process.env.SMOKE_TAG ?? 'a'}-${nom}.png` })
+    }
+
+    // ═══ LE FANTÔME CONTRE LE BÂTI — là où il se LIT ═══
+    //
+    // Les quatre captures d'avant prouvent le CÂBLAGE (la texture change avec la touche), mais
+    // sur de l'herbe nue le fantôme est un lavis vert très pâle : `OK_TINT` clair à 55 % d'alpha
+    // sur du vert ne contraste pas. Contre la pierre d'un mur déjà posé, il se lit — et c'est
+    // aussi la seule image qui raconte le geste : voilà le segment suivant, voilà où il ira.
+    for (let essai = 0; essai < 6; essai++) {
+      await agir({ type: 'debug_teleport', x: x0 - 1.5, y: y0 + 1.5 }, 380)
+      const p = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      if (Math.abs(p.x - (x0 - 1.5)) < 0.7) break
+    }
+    await page.evaluate(() => {
+      const cam = window.__BRAISES__.scene.cameras.main
+      cam.stopFollow()
+      cam.setZoom(6)
+    })
+    await page.waitForTimeout(400)
+    // On vise la tuile LIBRE juste à l'ouest de la pièce : son arête EST est le mur déjà posé,
+    // ses trois autres sont vierges — un seul cadrage montre donc « pris » et « libre ».
+    const cible = await page.evaluate(({ tx, ty }) => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      cam.centerOn(tx * 16, ty * 16)
+      const cv = document.querySelector('canvas')
+      const r = cv.getBoundingClientRect()
+      const sx = r.width / cv.width
+      const sy = r.height / cv.height
+      const px = ((tx + 0.5) * 16 - cam.worldView.x) * cam.zoom
+      const py = ((ty + 0.5) * 16 - cam.worldView.y) * cam.zoom
+      return { x: r.left + px * sx, y: r.top + py * sy }
+    }, { tx: x0 - 1, ty: y0 + 1 })
+    await page.mouse.move(cible.x, cible.y)
+    await page.waitForTimeout(500)
+    const contre = []
+    for (const [nom, touche] of [['N', null], ['E', 'KeyE'], ['S', 'KeyE'], ['O', 'KeyE']]) {
+      if (touche) { await page.keyboard.press(touche); await page.waitForTimeout(320) }
+      await page.mouse.move(cible.x, cible.y)
+      await page.waitForTimeout(420)
+      const g = await lireGhost()
+      // ═══ LE CONTRASTE DU FANTÔME, EN NOMBRES ═══
+      //
+      // « On ne le voit pas » n'est pas un verdict, c'est une impression. On lit donc les PIXELS
+      // du canvas : la luminance au CŒUR du fantôme contre celle du fond juste à côté. La teinte
+      // est un MULTIPLICATEUR — un vert pâle sur une pierre moyenne rend un vert moyen, soit
+      // très exactement la couleur de l'herbe. C'est cette hypothèse que le nombre tranche.
+      // Où lire, EN PX DE PAGE : le cœur du fantôme, et le fond trois tuiles à l'est.
+      const points = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const gh = sc.buildGhost?.sprite
+        const cv = document.querySelector('canvas')
+        if (!gh || !cv) return null
+        const cam = sc.cameras.main
+        const r = cv.getBoundingClientRect()
+        const sx = r.width / cv.width
+        const sy = r.height / cv.height
+        const page = (wx, wy) => ({
+          x: Math.round(r.left + (wx - cam.worldView.x) * cam.zoom * sx),
+          y: Math.round(r.top + (wy - cam.worldView.y) * cam.zoom * sy),
+        })
+        // ═══ OÙ EST LA MATIÈRE DU SPRITE — et pas « son milieu » ═══
+        //
+        // Le sprite est ancré au BAS de sa tuile, donc sa matière est AU-DESSUS de l'ancre. Mais
+        // surtout : une bande VERTICALE n'est qu'un ruban de 4 px collé au bord du sprite (20 px
+        // de large), pendant qu'une bande horizontale occupe toute la largeur. Viser « le milieu »
+        // tombait donc dans le TRANSPARENT une fois sur deux, et la sonde rendait la couleur de
+        // l'herbe en annonçant celle du fantôme (MESURÉ : ΔL = +1,2, soit « invisible », sur un
+        // fantôme parfaitement dessiné). On vise la bande que l'arête DÉCLARE.
+        const e = sc.registry.get('buildEdge') ?? 1
+        const w = gh.displayWidth
+        const h = gh.displayHeight
+        const dx = e === 2 ? w * 0.4 : e === 8 ? -w * 0.4 : 0
+        // En Y, la face d'une bande horizontale monte depuis la bande : on vise à mi-hauteur de
+        // mur au-dessus de l'ancre pour N/S, et n'importe où dans la hauteur pour E/O.
+        const hy = gh.y - h * 0.5
+        return { coeur: page(gh.x + dx, hy), fond: page(gh.x + 64, hy) }
+      })
+      const contraste = points ? await mesurerContraste(page, points.coeur, points.fond) : null
+      contre.push(`${nom}→${g.edge}/${g.cle} vis=${g.visible} contraste ΔL=${contraste?.dLum} (${JSON.stringify(contraste?.fantome)} vs fond ${JSON.stringify(contraste?.fond)})`)
+      await page.screenshot({
+        path: `${OUT}/arete-bati-${process.env.SMOKE_TAG ?? 'a'}-${nom}.png`,
+        clip: { x: Math.max(0, Math.round(cible.x - 260)), y: Math.max(0, Math.round(cible.y - 300)), width: 520, height: 460 },
+      })
+    }
+    console.log(`   fantôme contre le bâti : ${contre.join(' ')}`)
+
+    // ═══ LE VRAI CHEMIN DU CLIC — la seule promesse qui reste à éprouver ═══
+    //
+    // Tout ce qui précède envoie l'action `build` directement. Or la promesse du mode est « le
+    // clic pose là où le fantôme se voit », et ce fil-là passe par `pointerdown` →
+    // `clickToAction` → `buildCtx` → `edges`. Un maillon manquant s'y verrait comme une pose
+    // silencieusement pleine tuile, ou sur la mauvaise arête. On CLIQUE donc, une fois, sur une
+    // arête qu'on sait libre, et on va relire ce que la sim a écrit.
+    await page.keyboard.press('KeyE') //  on s'écarte de l'arête déjà prise
+    await page.waitForTimeout(320)
+    await page.mouse.move(cible.x, cible.y)
+    await page.waitForTimeout(400)
+    const viseAvant = await lireGhost()
+    const avantIds = await page.evaluate(() => window.__BRAISES__.scene.view.structures.filter((q) => q.edges !== undefined).map((q) => q.id))
+    await page.mouse.click(cible.x, cible.y)
+    await page.waitForTimeout(700)
+    // ON NE DEVINE PAS LA TUILE VISÉE : on demande au fantôme où IL est (c'est lui la promesse),
+    // et on compare à ce que la sim a écrit. Deviner la tuile du curseur a déjà fait rougir cette
+    // garde pour rien — le fantôme suit la tuile sous le pointeur, pas celle que je calcule.
+    const pose = await page.evaluate((ids) => {
+      const sc = window.__BRAISES__.scene
+      const neuf = sc.view.structures.filter((q) => q.edges !== undefined && !ids.includes(q.id))
+      const g = sc.buildGhost?.sprite
+      return {
+        n: sc.view.structures.filter((q) => q.edges !== undefined).length,
+        neufs: neuf.map((q) => ({ type: q.type, tx: q.tx, ty: q.ty, edges: q.edges })),
+        // LÀ OÙ LE FANTÔME SE TIENT, EN TUILES. Son ancre est `tileFeetAnchor` — les PIEDS de la
+        // tuile, soit `((tx + 0.5) · 16, (ty + 1) · 16)`. Le `y` est donc le bas de la tuile, et
+        // `floor(y / 16)` rend la tuile SUIVANTE : un rang de trop, qui a fait rougir cette garde
+        // alors que le clic tombait juste.
+        ghostTx: g ? Math.floor(g.x / 16) : null,
+        ghostTy: g ? Math.round(g.y / 16) - 1 : null,
+      }
+    }, avantIds)
+    console.log(`   clic réel : arête visée ${viseAvant.edge} sur la tuile du fantôme (${pose.ghostTx},${pose.ghostTy}) → ${JSON.stringify(pose.neufs)}`)
+    if (pose.neufs.length !== 1) console.error(`!! le clic a posé ${pose.neufs.length} segment(s), attendu 1 — le fil pointeur→action est coupé`)
+    else if (pose.neufs[0].edges !== viseAvant.edge) console.error(`!! le clic a posé sur l'arête ${pose.neufs[0].edges}, le fantôme montrait ${viseAvant.edge}`)
+    else if (pose.neufs[0].tx !== pose.ghostTx || pose.neufs[0].ty !== pose.ghostTy) console.error(`!! le clic a posé en (${pose.neufs[0].tx},${pose.neufs[0].ty}), le fantôme se tenait en (${pose.ghostTx},${pose.ghostTy})`)
+
+
+    // ═══ ON FRANCHIT SA PORTE, ET PAS LE MUR D'À CÔTÉ ═══
+    //
+    // Constat d'Alexis : « visuellement toute la case est prise et on ne peut pas faire passer un
+    // sprite de joueur ». Le dessin était en cause (une face pleine), pas le moteur — mais ça se
+    // MESURE, et la mesure qui tranche est une PAIRE : la porte doit livrer passage ET le mur
+    // voisin doit refuser. Un seul des deux ne dirait rien (un joueur qui traverse tout, ou un
+    // joueur qui ne bouge pas, donnent le même « ça ne marche pas »).
+    const porteTx = x0 + 1
+    const murTx = x0
+    const ligneSud = y0 + PROFOND //  l'arête que porte le mur du bas (bit S de sa tuile)
+    const franchir = async (tx) => {
+      // ON PART À L'INTÉRIEUR, une tuile au nord de l'arête, et on POUSSE vers le sud.
+      //
+      // ET LA GARDE PROUVE SA PRÉMISSE : sans ça, un téléport avalé laisse le joueur ailleurs et
+      // l'on mesure une position de départ en croyant mesurer un franchissement. C'est exactement
+      // ce qui est arrivé au premier jet — « la porte ne livre pas passage », sur un joueur qui
+      // n'avait jamais été devant.
+      // ON PART DE LA TUILE QUI PORTE L'ARÊTE, pas d'une tuile plus loin : depuis R25 une arête se
+      // pose sur une tuile qui garde son nœud, et le premier jet démarrait pile sur un ARBRE
+      // resté debout dans la pièce (MESURÉ : `796,1888 tree`). Le joueur ne bougeait pas d'un
+      // pouce et la sonde accusait la porte. On part au ras de l'arête, et on refuse de mesurer
+      // si un nœud traîne là.
+      const cible = { x: tx + 0.5, y: ligneSud - 0.5 }
+      const gene = await page.evaluate(({ x, y }) => (window.__BRAISES__.scene.view.nodes ?? [])
+        .filter((n) => n.tx === x && n.ty === y).map((n) => n.type), { x: tx, y: ligneSud - 1 })
+      if (gene.length > 0) {
+        console.error(`!! un nœud (${gene.join(',')}) occupe la tuile de départ (${tx},${ligneSud - 1}) — le franchissement n'est pas mesurable ici`)
+        return null
+      }
+      let depart = null
+      for (let essai = 0; essai < 10; essai++) {
+        await agir({ type: 'debug_teleport', x: cible.x, y: cible.y }, 380)
+        const q = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+        if (Math.abs(q.x - cible.x) < 0.3 && Math.abs(q.y - cible.y) < 0.3) { depart = q; break }
+      }
+      if (depart === null) {
+        const q = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+        console.error(`!! IMPOSSIBLE DE SE PLACER en (${cible.x}, ${cible.y}) — le joueur est en (${q.x.toFixed(2)}, ${q.y.toFixed(2)}) ; la mesure suivante ne voudrait rien dire`)
+        return null
+      }
+      // ON POUSSE JUSQU'À L'ARRÊT, on ne compte pas le temps : sous swiftshader le rendu est
+      // famélique et une fenêtre fixe mesure un joueur qui n'a pas encore bougé.
+      await page.keyboard.down('KeyS')
+      let p2 = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      let stable = 0
+      for (let i = 0; i < 50 && stable < 4; i++) {
+        await page.waitForTimeout(220)
+        const q = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+        stable = Math.abs(q.y - p2.y) < 0.002 ? stable + 1 : 0
+        p2 = q
+      }
+      await page.keyboard.up('KeyS')
+      await page.waitForTimeout(250)
+      return page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    }
+    // CE QU'IL Y A VRAIMENT SUR LES DEUX COLONNES — avant de conclure quoi que ce soit d'un
+    // joueur qui ne bouge pas. Un « ça ne passe pas » peut venir de la porte, d'un voisin, ou de
+    // mon village qui ne correspond pas au sien : trois causes, un seul symptôme.
+    const quoi = await page.evaluate(({ xs, y0b, y1b }) => {
+      const sc = window.__BRAISES__.scene
+      const out = { moi: sc.registry.get('village') ?? null, sur: [] }
+      for (const s2 of sc.view.structures) {
+        if (!xs.includes(s2.tx) || s2.ty < y0b || s2.ty > y1b) continue
+        out.sur.push(`${s2.tx},${s2.ty} ${s2.type}${s2.edges === undefined ? ' PLEIN' : ' e' + s2.edges} v${s2.villageId}`)
+      }
+      // LES NŒUDS BLOQUENT AUSSI (arbre, roche, filon) — et depuis R25 une arête se pose SUR une
+      // tuile qui en porte un. Les omettre de la sonde, c'est accuser la porte d'un arbre.
+      out.noeuds = []
+      for (const n of sc.view.nodes ?? []) {
+        if (!xs.includes(n.tx) || n.ty < y0b || n.ty > y1b + 2) continue
+        out.noeuds.push(`${n.tx},${n.ty} ${n.type}`)
+      }
+      return out
+    }, { xs: [murTx, porteTx], y0b: ligneSud - 3, y1b: ligneSud })
+    console.log(`   mon village ${quoi.moi} · structures ${murTx}/${porteTx} : ${quoi.sur.join(' | ')}`)
+    console.log(`   nœuds sur ces colonnes : ${quoi.noeuds.length === 0 ? 'aucun' : quoi.noeuds.join(' | ')}`)
+
+    // ON OUVRE LA PORTE AVANT DE LA FRANCHIR (spec construction R26, depuis le 2026-07-30).
+    //
+    // Cette sonde date d'avant l'état de porte : elle poussait dans une porte CLOSE et concluait
+    // « elle ne livre pas passage ». Elle avait raison — une porte close arrête tout le monde, y
+    // compris son bâtisseur, et c'est tout l'objet de R26. Ce que ce scénario-ci veut prouver
+    // reste l'ANCIEN point : que le dessin ne ment pas sur l'ouverture. On l'ouvre donc d'abord.
+    // (La bascule elle-même, et la paire close/ouverte, sont couvertes par le scénario `porte`.)
+    for (let essai = 0; essai < 8; essai++) {
+      await agir({ type: 'debug_teleport', x: porteTx + 0.5, y: ligneSud - 0.5 }, 340)
+      const q = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      if (Math.abs(q.y - (ligneSud - 0.5)) < 0.3) break
+    }
+    await page.keyboard.press('KeyF')
+    await page.waitForTimeout(700)
+    const ouverte = await page.evaluate(({ x, y }) => window.__BRAISES__.scene.view.structures
+      .find((q) => q.type === 'door' && q.tx === x && q.ty === y)?.open === true, { x: porteTx, y: ligneSud - 1 })
+    if (!ouverte) console.error('!! la porte ne s’est pas ouverte — le franchissement ne prouverait rien')
+
+    const parLaPorte = await franchir(porteTx)
+    const parLeMur = await franchir(murTx)
+    if (parLaPorte === null || parLeMur === null) console.error('!! franchissement NON MESURÉ (placement impossible)')
+    else {
+      console.log(`   franchissement : par la porte (${parLaPorte.x.toFixed(2)}, ${parLaPorte.y.toFixed(2)}) · par le mur (${parLeMur.x.toFixed(2)}, ${parLeMur.y.toFixed(2)}) — arête en y=${ligneSud}`)
+      if (parLaPorte.y <= ligneSud) console.error(`!! LA PORTE NE LIVRE PAS PASSAGE : arrêté en y=${parLaPorte.y.toFixed(2)}, l'arête est en ${ligneSud}`)
+      if (parLeMur.y > ligneSud) console.error(`!! LE MUR SE TRAVERSE : sorti en y=${parLeMur.y.toFixed(2)}, l'arête est en ${ligneSud}`)
+    }
+
+    // ET LE TROU SE VOIT-IL ? On lit l'OPACITÉ de la texture de porte le long du passage, contre
+    // celle d'un mur au même endroit. Les textures d'art sont des canvas 2D (`addCanvas`), donc
+    // `getImageData` y répond vraiment — contrairement au canvas WebGL du jeu.
+    const opacite = await page.evaluate(() => {
+      const lire = (cle) => {
+        const src = window.__BRAISES__.scene.textures.get(cle)?.getSourceImage()
+        if (!src || !src.getContext) return null
+        const g = src.getContext('2d')
+        // La bande de passage d'une arête SUD : le milieu de la tuile, à mi-hauteur du mur.
+        const d = g.getImageData(0, 0, src.width, src.height).data
+        let opaques = 0
+        let total = 0
+        // On balaie la colonne centrale sur la moitié basse du dessin — là où un corps passe.
+        for (let y = Math.floor(src.height * 0.45); y < src.height - 4; y++) {
+          for (let x = Math.floor(src.width * 0.3); x < Math.ceil(src.width * 0.7); x++) {
+            total++
+            if (d[(y * src.width + x) * 4 + 3] > 8) opaques++
+          }
+        }
+        return total === 0 ? null : Math.round((100 * opaques) / total)
+      }
+      // LA PORTE **OUVERTE** (dernière frame) contre le mur : c'est le seul couple qui ait un
+      // sens depuis R26. Close, elle bouche autant qu'un mur — c'est même ce qu'on exige d'elle.
+      return { porte: lire('st-door-e4-f4'), mur: lire('st-wall-e4') }
+    })
+    console.log(`   opacité du passage : porte OUVERTE ${opacite.porte}% · mur ${opacite.mur}%`)
+    if (opacite.porte === null || opacite.mur === null) console.error('!! textures illisibles — la sonde d’opacité ne mesure rien')
+    else if (opacite.porte >= opacite.mur) console.error(`!! LA PORTE EST AUSSI PLEINE QUE LE MUR (${opacite.porte}% contre ${opacite.mur}%)`)
+
+    for (const [nom, px, py, zoom, poste] of [
+      ['porte-face', centreX, y0 + PROFOND - 1, 8, [centreX, y0 + PROFOND + 3]],
+      ['porte-dedans', centreX, y0 + PROFOND - 1.5, 8, [centreX, y0 + PROFOND - 2.5]],
+    ]) {
+      for (let essai = 0; essai < 6; essai++) {
+        await agir({ type: 'debug_teleport', x: poste[0], y: poste[1] }, 380)
+        const q = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+        if (Math.abs(q.y - poste[1]) < 0.7) break
+      }
+      await cadrer(px, py, zoom)
+      await page.waitForTimeout(800)
+      await page.screenshot({ path: `${OUT}/arete-${process.env.SMOKE_TAG ?? 'a'}-${nom}.png` })
+    }
+
+
+    return bati
   },
 
   async 'lieux-batis'(page) {

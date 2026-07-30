@@ -17,6 +17,7 @@
  */
 import { BALANCE, NODE_DEFS, TERRAINS, TICK_DT_S } from './balance'
 import { nodeAt, treeJitter, type ResourceNode } from './economy'
+import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { isBlockingTile, terrainAt, type WorldMap } from './map'
 import { structureBlocks, type Structure } from './village'
 
@@ -57,6 +58,15 @@ export interface MoveWorld {
   /** Les nœuds vivants de type bloquant (arbre, roche, filon) sont des obstacles. */
   nodes?: ResourceNode[]
   moverVillageId?: number | null
+  /**
+   * CE DÉPLACEUR ACTIONNE-T-IL LES PORTES DE SON VILLAGE ? (spec construction R26)
+   *
+   * Absent = non, et c'est le cas du JOUEUR : depuis que la porte a un état, il la pousse
+   * lui-même (touche d'interaction) — c'est tout l'objet de la fonctionnalité. Les PNJ du
+   * village, eux, l'ont : sans quoi une porte close les enfermerait chez eux, et leurs corvées
+   * s'arrêteraient sans que rien ne le dise (`npc.ts`, `moveWorldFor`).
+   */
+  opensDoors?: boolean
 }
 
 /**
@@ -73,7 +83,6 @@ export interface MoveWorld {
  * sous-tuiles. Elle reste praticable en son centre (il lui en reste `SUB − WALL_EDGE_SUB/2`),
  * mais elle n'est plus ENTIÈRE — c'est le prix du trait, et il se paie des deux côtés.
  */
-const EDGE_N = 1, EDGE_E = 2, EDGE_S = 4, EDGE_O = 8
 /** La demi-épaisseur : ce qu'une arête prend DE CHAQUE CÔTÉ de la limite qu'elle occupe. */
 const WALL_HALF = BALANCE.WALL_EDGE_SUB / 2
 
@@ -98,11 +107,12 @@ function onDeclaredEdge(edges: number, sx: number, sy: number, tx: number, ty: n
  */
 function edgeDeborde(world: MoveWorld, tx: number, ty: number, bit: number): boolean {
   const mover = world.moverVillageId ?? null
+  const portes = world.opensDoors ?? false
   for (const s of world.structures ?? []) {
     // On BALAIE, on ne prend pas « le premier solide » : la tuile d'en face porte presque
     // toujours un sol de cour EN PLUS de son mur, et c'est ce raccourci qui laissait passer.
     if (s.tx !== tx || s.ty !== ty || s.edges === undefined) continue
-    if ((s.edges & bit) !== 0 && structureBlocks(s, mover)) return true
+    if ((s.edges & bit) !== 0 && structureBlocks(s, mover, portes)) return true
   }
   return false
 }
@@ -127,10 +137,11 @@ export function isBlockedAt(world: MoveWorld, tx: number, ty: number): boolean {
  */
 function bloquantAt(world: MoveWorld, tx: number, ty: number, pleineTuile: boolean): Structure | undefined {
   const mover = world.moverVillageId ?? null
+  const portes = world.opensDoors ?? false
   for (const s of world.structures ?? []) {
     if (s.tx !== tx || s.ty !== ty) continue
     if (pleineTuile && s.edges !== undefined) continue
-    if (structureBlocks(s, mover)) return s
+    if (structureBlocks(s, mover, portes)) return s
   }
   return undefined
 }
@@ -225,7 +236,10 @@ function occupancyOf(world: MoveWorld): Map<number, Occupant> {
       // (bug constaté et corrigé le 2026-07-27, cf. `bloquantAt`). On teste donc ce qui
       // bloque un ÉTRANGER (`null`) : c'est la seule propriété indépendante du marcheur, et
       // le cache est partagé entre marcheurs. Le porteur du village est retesté à la requête.
-      if (!structureBlocks(s, null)) continue
+      // Le cache d'occupation sert le PATHFINDING, qui interroge ensuite par déplaceur : on
+      // indexe donc large — ce qui bloque QUELQU'UN — et `makeIndexedIsBlockedAt` tranche après.
+      // Une porte close y entre à ce titre, et c'est bien : elle bloque le joueur et les monstres.
+      if (!structureBlocks(s, null, false)) continue
       const entry = entryAt(s.tx, s.ty)
       if (entry.structure === undefined) entry.structure = s
     }
@@ -251,12 +265,13 @@ export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: numbe
   const { width, height } = world.map
   const occupancy = occupancyOf(world)
   const moverVillageId = world.moverVillageId ?? null
+  const portes = world.opensDoors ?? false
   return (tx: number, ty: number): boolean => {
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return blockedAt(world, tx, ty)
     if (isBlockingTile(world.map, tx, ty)) return true
     const entry = occupancy.get(ty * width + tx)
     if (entry === undefined) return false
-    if (entry.structure !== undefined && structureBlocks(entry.structure, moverVillageId)) return true
+    if (entry.structure !== undefined && structureBlocks(entry.structure, moverVillageId, portes)) return true
     if (entry.node !== undefined && entry.node.stock > 0 && NODE_DEFS[entry.node.type].blockHalfSub > 0) return true
     return false
   }

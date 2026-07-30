@@ -16,9 +16,10 @@
  * invariant §3). Un fantôme vert n'est PAS une promesse — c'est « rien ici ne
  * l'interdit *de ce que le client peut voir* ».
  */
-import { COMPONENT_TYPES, recognizeFunctions, type RecognizedFunction, type Structure } from '@ashes/sim'
-import { tileFeetAnchor, structureDepth } from '../../render/framing'
+import { COMPONENT_TYPES, EDGE_N, edgeBarrierAt, recognizeFunctions, type RecognizedFunction, type Structure } from '@ashes/sim'
+import { tileFeetAnchor } from '../../render/framing'
 import { TILE_PX } from '../../render/framing'
+import { EDGE_ORIGIN_Y } from '../../render/bati-art'
 import type { Placeable } from '../../hud-state'
 import type Phaser from 'phaser'
 import type { Warp } from '../../render/warp'
@@ -27,6 +28,25 @@ import { FONT } from '../ui/typography'
 const OK_TINT = 0x9adf7a
 const BAD_TINT = 0xd9614f
 const GHOST_ALPHA = 0.55
+
+/**
+ * LE FANTÔME NE SE TRIE PAS DANS LE MONDE — il se pose PAR-DESSUS (R23/R25).
+ *
+ * Il triait avec le bâti (`barriereDepth`/`structureDepth`), ce qui semble juste : on voulait le
+ * voir « se glisser » derrière ce qui le dépasse. Avec la pose sur ARÊTE, ça se retourne — on
+ * bâtit presque toujours **contre un mur déjà là**.
+ *
+ * LE RAISONNEMENT (géométrie, pas mesure — il suffit de lire `barriereDepth`) : un mur monte à
+ * DEUX tuiles, et il se dessine après tout ce dont les pieds sont plus au nord. Un fantôme visé
+ * une tuile au nord d'un mur existant a donc des pieds plus petits, et le mur — deux fois plus
+ * haut que sa tuile — le RECOUVRE. C'est le même piège que `barriereAvale` règle pour les
+ * acteurs. Or un fantôme qu'on ne voit pas ne peut pas être tourné.
+ *
+ * Il reste POSITIONNÉ comme le mur qu'il annonce (même ancre, même arête, `EDGE_ORIGIN_Y`) : sa
+ * géométrie ne ment pas. Seule sa PROFONDEUR quitte le monde — c'est une pièce d'interface, au
+ * même titre que l'étiquette prédictive juste au-dessus (1 450 000).
+ */
+const GHOST_DEPTH = 1_440_000
 
 /** Le nom affiché d'une fonction prédite (spec construction R22). Étendu par tranche. */
 const FUNCTION_LABEL: Record<string, string> = { forge: 'Forge', atelier: 'Atelier', grenier: 'Grenier', ferme: 'Ferme' }
@@ -55,19 +75,37 @@ export class BuildGhost {
     inRange: boolean,
     structures: readonly Structure[],
     warp: Warp | undefined,
+    /** L'ARÊTE ARMÉE (R23) — le bit que `A`/`E` ont choisi. Mur et porte seuls la portent. */
+    edge: number = EDGE_N,
   ): void {
     if (placing === null) {
       this.sprite.setVisible(false)
       this.predict.setVisible(false)
       return
     }
-    const occupied = structures.some((s) => s.tx === tx && s.ty === ty)
+    // ═══ LE FANTÔME D'ARÊTE (spec construction R23) ═══
+    //
+    // Un mur et une porte ne prennent plus la tuile : ils se posent sur une de ses ARÊTES. Le
+    // fantôme doit donc tomber sur les MÊMES PIXELS que la barrière posée — même texture
+    // `st-<fam>-e<bit>`, même ancrage `EDGE_ORIGIN_Y` (le sprite déborde sous sa tuile, le mur
+    // étant à cheval). Les deux formules ne sont pas recopiées de `snapshot-view` : elles sont
+    // lues là où elles vivent. Seule la PROFONDEUR diffère, et exprès (`GHOST_DEPTH`).
+    const surArete = placing === 'wall' || placing === 'door'
+    // ET L'OCCUPATION SE LIT SUR L'ARÊTE. « Une structure sur la tuile » rougissait le coin
+    // d'une pièce dès son premier mur — or c'est exactement là qu'il faut poser le second.
+    const occupied = surArete
+      ? edgeBarrierAt(structures, tx, ty, edge) !== undefined
+      : structures.some((s) => s.tx === tx && s.ty === ty)
     const a = tileFeetAnchor(tx, ty, TILE_PX)
     const lift = warp?.lift(tx + 0.5, ty + 1) ?? 0
     this.sprite
-      .setTexture(`st-${placing}`)
+      // LA PORTE PORTE SA FRAME (R26) : sa famille est indexée, `st-door-e<bit>` n'existe plus.
+      // Le fantôme montre la frame 0 — CLOSE, ce qu'on va effectivement poser. Sans ce suffixe,
+      // armer « Porte » affichait un damier magenta : une texture manquante ne lève pas.
+      .setTexture(surArete ? `st-${placing}-e${edge}${placing === 'door' ? '-f0' : ''}` : `st-${placing}`)
+      .setOrigin(0.5, surArete ? EDGE_ORIGIN_Y[placing] ?? 1 : 1)
       .setPosition(a.px, a.py - lift)
-      .setDepth(structureDepth(ty, TILE_PX))
+      .setDepth(GHOST_DEPTH)
       .setTint(inRange && !occupied ? OK_TINT : BAD_TINT)
       .setVisible(true)
 

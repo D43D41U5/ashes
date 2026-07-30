@@ -38,7 +38,7 @@ export interface Fait {
 }
 
 /**
- * LES 61 FAITS. Exhaustif par le compilateur ; l'ordre d'écriture suit les familles pour
+ * LES 62 FAITS. Exhaustif par le compilateur ; l'ordre d'écriture suit les familles pour
  * qu'une relecture à l'œil reste possible.
  */
 export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
@@ -87,6 +87,10 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   resource_harvested: { voix: 'voix', famille: 'batir', quoi: 'un coup de récolte rapporte (moi seul)' },
   structure_built: { voix: 'voix', famille: 'batir', quoi: 'une pièce est posée' },
   structure_upgraded: { voix: 'muet', famille: 'batir', quoi: 'un mur passe au matériau suivant' },
+  // LA PORTE : le seul geste de bâtisseur qu'on refait dix fois par jour, et le SEUL retour qu'on
+  // en ait — rien ne bouge à l'écran d'une porte close à une porte ouverte de plus d'un liseré.
+  // C'est donc un son qui PORTE l'information, pas qui l'accompagne.
+  door_toggled: { voix: 'voix', famille: 'batir', quoi: 'une porte s’ouvre ou se referme' },
   structure_repaired: { voix: 'muet', famille: 'batir', quoi: 'on répare une structure abîmée' },
   structure_removed: { voix: 'muet', famille: 'batir', quoi: 'on démonte une pièce' },
   structure_destroyed: { voix: 'voix', famille: 'batir', quoi: 'une structure est DÉTRUITE (une horde l’a eue)' },

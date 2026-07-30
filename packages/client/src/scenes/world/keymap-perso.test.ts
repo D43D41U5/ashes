@@ -112,13 +112,16 @@ describe('relire un réglage venu du disque', () => {
 })
 
 describe('l’écran des réglages couvre ce que le jeu écoute', () => {
-  it('toute action de KEYMAP est affichée, ou volontairement écartée', () => {
+  it('toute action de KEYMAP est affichée — PLUS AUCUNE exception', () => {
     // La table de l'écran est écrite à la main : sans cette garde, une action ajoutée à
     // `KEYMAP` demain n'apparaîtrait nulle part et serait irréglable en silence.
-    // `rotateLeft`/`rotateRight` sont écartées EXPRÈS — rien ne les lit (voir `keymap-perso`).
+    //
+    // ELLE AVAIT UNE LISTE D'ÉCARTÉES, ET C'EST FINI (2026-07-30). `rotateLeft`/`rotateRight`
+    // y figuraient parce que rien ne les lisait ; la pose sur arête (R23) les câble, donc elles
+    // s'affichent. La liste elle-même disparaît : une dérogation qui survit à sa raison est
+    // exactement ce qui laisse une action retomber hors de l'écran sans que personne ne le voie.
     const affichees = new Set(ACTIONS.map((a) => a.action))
-    const ecartees = new Set(['rotateLeft', 'rotateRight'])
-    const manquantes = Object.keys(KEYMAP).filter((a) => !affichees.has(a as never) && !ecartees.has(a))
+    const manquantes = Object.keys(KEYMAP).filter((a) => !affichees.has(a as never))
     expect(manquantes).toEqual([])
   })
 

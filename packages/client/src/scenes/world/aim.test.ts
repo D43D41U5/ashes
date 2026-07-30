@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Corpse, ResourceNode } from '@ashes/sim'
-import { AGRICULTURE, STRUCTURE_HP } from '@ashes/sim'
+import { AGRICULTURE, EDGE_N, EDGE_O, STRUCTURE_HP } from '@ashes/sim'
 import { aimAt, clickToAction, holdHarvest, type AimStructure } from './aim'
 
 const RANGE = 1.5
@@ -136,20 +136,23 @@ describe('clickToAction — panser un tiers : fibres en main + quelqu’un qui s
 describe('clickToAction — armé, le clic bâtit (A2)', () => {
   it('sur une tuile vide, il pose la structure choisie — mur en bois par défaut', () => {
     const t = aimAt(11, 11, PLAYER, [], [], RANGE)
-    expect(clickToAction(t, 'wall')).toEqual({ type: 'build', structure: 'wall', tx: 11, ty: 11, material: 'wood' })
+    // SANS contexte de pose, l'arête retombe sur le NORD (R23) : le fantôme en dessine toujours
+    // une, et le clic doit poser là où le fantôme se voit — jamais en pleine tuile.
+    expect(clickToAction(t, 'wall')).toEqual({ type: 'build', structure: 'wall', tx: 11, ty: 11, material: 'wood', edges: EDGE_N })
   })
 
   it('R8 : le matériau choisi accompagne mur/porte, jamais les pièces molles', () => {
     const t = aimAt(11, 11, PLAYER, [], [], RANGE)
-    expect(clickToAction(t, 'wall', undefined, { material: 'stone', onTile: null })).toEqual({
+    expect(clickToAction(t, 'wall', undefined, { material: 'stone', edge: EDGE_O, onTile: null })).toEqual({
       type: 'build',
       structure: 'wall',
       tx: 11,
       ty: 11,
       material: 'stone',
+      edges: EDGE_O,
     })
-    // Le sol n'a pas de palier de matériau : pas de champ `material`.
-    expect(clickToAction(t, 'floor', undefined, { material: 'stone', onTile: null })).toEqual({
+    // Le sol n'a ni palier de matériau ni arête : il prend la tuile (R23).
+    expect(clickToAction(t, 'floor', undefined, { material: 'stone', edge: EDGE_O, onTile: null })).toEqual({
       type: 'build',
       structure: 'floor',
       tx: 11,
@@ -159,7 +162,9 @@ describe('clickToAction — armé, le clic bâtit (A2)', () => {
 
   it('R8 : cliquer un MUR existant, mur armé, l’AMÉLIORE au lieu de buter « occupé »', () => {
     const t = aimAt(11, 11, PLAYER, [], [], RANGE)
-    expect(clickToAction(t, 'wall', undefined, { material: 'stone', onTile: { id: 42, type: 'wall' } })).toEqual({
+    // `onTile` désigne désormais la barrière qui porte l'ARÊTE VISÉE (R23), pas « la première
+    // structure de la tuile » — c'est ce qui laisse fermer un coin sans améliorer son voisin.
+    expect(clickToAction(t, 'wall', undefined, { material: 'stone', edge: EDGE_N, onTile: { id: 42, type: 'wall' } })).toEqual({
       type: 'upgrade_structure',
       structureId: 42,
     })

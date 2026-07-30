@@ -121,8 +121,11 @@ export type { TiledMapFile, TiledImportResult } from './tiled'
 // ─── Actions & systèmes (l'hôte les applique, les requêtes sont pures) ────
 export { applyVillageAction, structureAt, solidAt, floorAt, roofAt, structureBlocks, getVillageOf, hasAccess, fireRadius, evaluateBuild, buildPlacementValid } from './village'
 export type { Structure, Village, VillageAction, TaskKind, VillageTask, BuildEval, BuildReject } from './village'
-export { blocksNavigation, placementKeepsNavigable, isComponent, recognizeFunctions, refreshFunctions } from './construction'
-export type { PlacedStructure, RecogStructure, RecognizedFunction } from './construction'
+export { blocksNavigation, placementKeepsNavigable, isComponent, recognizeFunctions, refreshFunctions, fullTileAt, edgeBarrierAt, crossingBlocker } from './construction'
+export type { PlacedStructure, RecogStructure, RecognizedFunction, EdgeAware } from './construction'
+/** LE VOCABULAIRE DES ARÊTES (spec construction R23) — la même valeur traverse le fantôme du
+ *  client, le protocole, la validation du serveur et la collision : une seule définition. */
+export { EDGE_N, EDGE_E, EDGE_S, EDGE_O, EDGE_BITS, edgeBits, edgeStep, oppositeEdge, isSingleEdge } from './geometry'
 export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel, recipeState, fellGreenWidth, isCleanFell, flankOfAim, mineGoodFlank, mineTolerance, isCleanMine, forageRichness, forageBounty, maxTierByLevel, effectiveTier } from './economy'
 export type { ResourceNode, EconomyAction, CraftOrder, RecipeState } from './economy'
 export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame

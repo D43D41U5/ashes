@@ -128,6 +128,21 @@ export interface HudState {
   /** Le palier de matériau choisi pour mur/porte (spec construction R8) : bois par
    *  défaut. La pose neuve le prend ; cliquer un mur existant l'améliore vers lui. */
   buildMaterial: WallMaterial
+  /**
+   * L'ARÊTE ARMÉE (spec construction R23) : le bit N/E/S/O sur lequel le prochain mur ou la
+   * prochaine porte se posera, que `A`/`E` font tourner. Sol et toit l'ignorent — ils prennent
+   * la tuile.
+   *
+   * ELLE VIT ICI ET PAS DANS `WorldScene` parce qu'elle a DEUX lecteurs qui ne se parlent pas :
+   * le fantôme (qui la dessine) et le résolveur de clic (qui l'envoie). Deux copies dériveraient
+   * le jour où l'une se remet à zéro et pas l'autre — on poserait alors un mur ailleurs que là
+   * où on le voit, et rien à l'écran ne dirait pourquoi.
+   *
+   * Elle PERSISTE d'une pose à l'autre : on bâtit un mur droit en cliquant plusieurs fois, sans
+   * retoucher au clavier. C'est le comportement de Rust, et c'est ce qui rend la rotation
+   * supportable — sinon chaque segment demanderait de la re-viser.
+   */
+  buildEdge: number
   /** Un feu de camp LIBRE à portée qu'on pourrait promouvoir en foyer (un `fire`
    *  villageId 0 que JE possède, et je n'ai pas encore de village), ou `null`. Posé
    *  par WorldScene chaque frame ; lu par UIScene, qui affiche alors la fenêtre du
@@ -303,7 +318,7 @@ export const CLES_HUD: Record<keyof HudState, true> = {
   worldReady: true, loadProgress: true, time: true, zone: true, village: true,
   tasks: true, archetype: true, villageWarmth: true, inv: true, activeSlot: true,
   craftQueue: true, stationsInRange: true, hunger: true, temperature: true, skills: true,
-  hp: true, stamina: true, wounds: true, selected: true, buildMaterial: true,
+  hp: true, stamina: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true,
   foundableFire: true, refugeesNearby: true, upgradableFire: true, deathMoment: true, corpseHint: true,
   characterMenuOpen: true, characterTab: true, uiTyping: true, chatTyping: true, chatLog: true,
   chatDraft: true, openContainer: true, openContainerView: true, openFire: true, openFireView: true,

@@ -71,17 +71,42 @@ export interface Pans {
 const N = 1, E = 2, S = 4, O = 8
 /** Les sols qui font un DEDANS. Deux types différents = deux régions, même s'ils se touchent. */
 const SOLS = new Set(['floor', 'terre', 'roof'])
-/** Ce qui peut porter une arête et se faire trancher. */
-const BARRIERES = new Set(['wall', 'cloture', 'encadrement'])
+/** Ce qui peut porter une arête et se faire trancher. `door` depuis R23 : une porte de joueur
+ *  fait partie du pan qu'elle perce — la laisser dehors dresserait un vantail seul debout au
+ *  milieu d'un mur tranché, exactement le linteau flottant qu'on a corrigé sur le seuil. */
+const BARRIERES = new Set(['wall', 'cloture', 'encadrement', 'door'])
 
-/** Le bit déclaré, la direction où il regarde, et le côté de la région qu'il borde alors. */
-const BITS: readonly { bit: number; dx: number; dy: number; cote: Cote; axe: 'H' | 'V' }[] = [
+/**
+ * Le bit déclaré, la direction où il regarde, et le côté de la région qu'il borde — DES DEUX
+ * CÔTÉS DE L'ARÊTE.
+ *
+ * ═══ POURQUOI DEUX CÔTES, ET PAS UNE (mesuré le 2026-07-30) ═══
+ *
+ * Une arête sépare DEUX tuiles, et n'importe laquelle des deux peut la déclarer : le mur entre
+ * (5,5) et (5,6) s'écrit « (5,5)+S » ou « (5,6)+N ». La collision le sait depuis toujours ; ce
+ * module, lui, ne regardait que la tuile d'EN FACE (`cote`) — ce qui suffisait tant que le bâti
+ * était généré, parce que `poi-batis` pose ses murs sur la tuile du DEHORS avec le bit tourné
+ * vers la salle.
+ *
+ * LE JOUEUR, LUI, POSE DE L'INTÉRIEUR. Sa façade sud porte le bit S et n'a que de l'herbe au sud :
+ * elle ne bordait donc AUCUNE région, retombait en pan de contiguïté, et la règle du DEDANS —
+ * celle qui fait tomber la façade dès qu'on entre, quelle que soit la distance — ne trouvait
+ * rien à faire tomber. MESURÉ (`smoke --scenario arete`, pièce de 3 × 6 avec son sol) : au fond
+ * de la pièce, **15 des 18 segments tranchés, et les 3 manquants étaient exactement le mur sud**.
+ * Conséquence de jeu : un acteur collé à ce mur y reste caché tant qu'on est à plus de deux
+ * tuiles — très exactement ce que la règle des pans existe pour empêcher.
+ *
+ * On lit donc les deux côtés. `cote` = la région d'EN FACE, bordée par le côté opposé au bit ;
+ * `coteIci` = la région de SA PROPRE TUILE, bordée par le côté du bit lui-même.
+ */
+const BITS: readonly { bit: number; dx: number; dy: number; cote: Cote; coteIci: Cote; axe: 'H' | 'V' }[] = [
   // Une barrière qui déclare son arête NORD regarde la tuile du dessus : elle borde donc cette
-  // région-là par le SUD. C'est l'inversion qui a déjà coûté une découpe à l'envers.
-  { bit: N, dx: 0, dy: -1, cote: 'S', axe: 'H' },
-  { bit: S, dx: 0, dy: 1, cote: 'N', axe: 'H' },
-  { bit: E, dx: 1, dy: 0, cote: 'O', axe: 'V' },
-  { bit: O, dx: -1, dy: 0, cote: 'E', axe: 'V' },
+  // région-là par le SUD. C'est l'inversion qui a déjà coûté une découpe à l'envers. Et si SA
+  // tuile porte du sol, elle borde cette région-ci par le NORD — le côté du bit.
+  { bit: N, dx: 0, dy: -1, cote: 'S', coteIci: 'N', axe: 'H' },
+  { bit: S, dx: 0, dy: 1, cote: 'N', coteIci: 'S', axe: 'H' },
+  { bit: E, dx: 1, dy: 0, cote: 'O', coteIci: 'E', axe: 'V' },
+  { bit: O, dx: -1, dy: 0, cote: 'E', coteIci: 'O', axe: 'V' },
 ]
 
 export function calculerPans(structures: readonly StructureLike[]): Pans {
@@ -131,15 +156,23 @@ export function calculerPans(structures: readonly StructureLike[]): Pans {
 
   for (const s of structures) {
     if (!BARRIERES.has(s.type) || s.edges === undefined) continue
-    for (const { bit, dx, dy, cote, axe } of BITS) {
+    for (const { bit, dx, dy, cote, coteIci, axe } of BITS) {
       if ((s.edges & bit) === 0) continue
       const r = regionDe(s.tx + dx, s.ty + dy)
       // La LIGNE d'un pan est l'arête elle-même : le bord de tuile que la barrière occupe.
       const ligne = axe === 'H' ? s.ty + (bit === S ? 1 : 0) : s.tx + (bit === E ? 1 : 0)
       const le = axe === 'H' ? s.tx : s.ty
+      // LA RÉGION DE SA PROPRE TUILE — l'autre côté de l'arête (voir `BITS`). Le joueur pose de
+      // l'intérieur : sa façade sud borde sa salle par le sud DEPUIS SA TUILE, et c'est cette
+      // adresse-là que la règle du DEDANS a besoin de voir. On l'ajoute EN PLUS ; la région d'en
+      // face garde exactement le pan qu'elle avait, donc le bâti généré ne bouge pas.
+      const rIci = regionDe(s.tx, s.ty)
+      if (rIci >= 0) {
+        ajouter(`r${rIci}:${coteIci}:${ligne}`, { axe, ligne, debut: le, fin: le, region: rIci, cote: coteIci }, s.id)
+      }
       if (r >= 0) {
         ajouter(`r${r}:${cote}:${ligne}`, { axe, ligne, debut: le, fin: le, region: r, cote }, s.id)
-      } else {
+      } else if (rIci < 0) {
         // AUCUNE RÉGION DE L'AUTRE CÔTÉ — un mur de joueur dans l'herbe, la face extérieure
         // d'une enceinte. On regroupe alors par CONTIGUÏTÉ sur la même ligne : le voisin
         // immédiat qui déclare la même arête appartient au même pan. Le `find` suffit : les

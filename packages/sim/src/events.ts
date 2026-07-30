@@ -70,6 +70,13 @@ export type SimEvent =
   /** UN MUR/PORTE PASSE AU MATÉRIAU SUIVANT (spec construction R8) : bois→pierre→métal. */
   | { type: 'structure_upgraded'; tick: number; structureId: number; material: import('./balance').WallMaterial }
   /**
+   * UNE PORTE S'OUVRE OU SE FERME (spec construction R26). Fait de domaine à part entière, et pas
+   * du bruit : c'est le geste qui décide si une base est ouverte ou close. Basse fréquence (un
+   * appui, pas un déplacement), et il porte QUI l'a fait — ce dont une chronique de raid aura
+   * besoin le jour où « quelqu'un a ouvert la porte » devient une accusation.
+   */
+  | { type: 'door_toggled'; tick: number; structureId: number; open: boolean; byEntityId: number }
+  /**
    * UNE FONCTION ÉMERGENTE A CHANGÉ (spec construction R9-R10). Formée (nouveau
    * `tier`≥1), montée/descendue de palier, close/ouverte, ou PERDUE (`tier` 0). Ancrée
    * au composant primaire (tx,ty). Le tableau du village et l'overlay client en dérivent.

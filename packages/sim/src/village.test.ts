@@ -424,25 +424,81 @@ describe('la porte (A3)', () => {
     return e.x
   }
 
-  it('membre : passe ; étranger : bloqué ; invité : passe ; banni : bloqué', () => {
+  /**
+   * ═══ CE QUE CE TEST DISAIT AVANT LE 2026-07-30, ET POURQUOI IL A DÛ CHANGER ═══
+   *
+   * Il affirmait « membre : passe ; étranger : bloqué » — la porte lisait le VILLAGE du marcheur
+   * et rien d'autre. Depuis R26, elle a un ÉTAT : close, elle arrête **tout le monde**, y compris
+   * le Chef qui l'a bâtie ; ouverte, elle ne retient plus personne, pillard compris. C'est ce qui
+   * donne un sens à l'ouvrir — une porte qui cède toujours aux siens n'aurait aucune raison de
+   * s'ouvrir, et la touche d'interaction serait un ornement.
+   *
+   * L'APPARTENANCE N'A PAS DISPARU, elle a changé de rôle : elle ne décide plus qui PASSE, mais
+   * qui a le droit de POUSSER (`hasAccess`). L'invitation et le bannissement gardent donc tout
+   * leur mordant — c'est ce que la seconde moitié de ce test vérifie.
+   */
+  const pousser = (sim: SimState, id: number, doorId: number): void => {
+    const e = sim.entities.find((en) => en.id === id)!
+    // Au CONTACT : la bascule exige la portée de bras, pas celle du marteau.
+    e.x = 13.5
+    e.y = 12.5
+    act(sim, id, { type: 'toggle_door', structureId: doorId })
+  }
+
+  it('CLOSE, elle arrête même le Chef ; il la POUSSE, et alors il passe', () => {
     const { sim, chief } = doorSim()
+    const porte = structureAt(sim.structures, 14, 12)!
+    expect(porte.type).toBe('door')
+    expect(porte.open, 'une porte neuve est close').toBeUndefined()
+
+    // ① CLOSE : elle retient son propre bâtisseur. C'est le cœur de R26.
+    expect(tryCross(sim, chief)).toBe(14 - BALANCE.AVATAR_HITBOX_TILES / 2)
+
+    // ② IL LA POUSSE : elle s'ouvre, et il passe.
+    pousser(sim, chief, porte.id)
+    expect(sim.structures.find((s) => s.id === porte.id)?.open).toBe(true)
     expect(tryCross(sim, chief)).toBeGreaterThan(15)
 
+    // ③ OUVERTE, ELLE NE FAIT PLUS DE TRI : l'étranger entre aussi. C'est le prix de l'oubli,
+    // et c'est ce qui fait de « fermer le soir » un vrai geste.
     const stranger = spawnEntity(sim, 11.5, 12.5)
-    expect(tryCross(sim, stranger)).toBe(14 - BALANCE.AVATAR_HITBOX_TILES / 2)
+    expect(tryCross(sim, stranger)).toBeGreaterThan(15)
 
-    // Invitation (à portée du Chef), puis la porte s'ouvre.
+    // ④ REFERMÉE, elle arrête l'étranger — et lui ne peut pas la pousser (accès `village`).
+    pousser(sim, chief, porte.id)
+    expect(sim.structures.find((s) => s.id === porte.id)?.open).toBeUndefined()
+    expect(tryCross(sim, stranger)).toBe(14 - BALANCE.AVATAR_HITBOX_TILES / 2)
+    drainEvents(sim)
+    pousser(sim, stranger, porte.id)
+    expect(rejections(sim)).toEqual(['cette porte n’est pas à vous'])
+    expect(sim.structures.find((s) => s.id === porte.id)?.open).toBeUndefined()
+  })
+
+  it('l’APPARTENANCE décide qui POUSSE : l’invité ouvre, le banni ne peut plus', () => {
+    const { sim, chief } = doorSim()
+    const porte = structureAt(sim.structures, 14, 12)!
+    const stranger = spawnEntity(sim, 11.5, 12.5)
+
+    // Invitation (à portée du Chef) : il gagne le droit de pousser.
     sim.entities[0]!.x = 11.5
     sim.entities[0]!.y = 12.5
     sim.entities.find((e) => e.id === stranger)!.x = 11.8
     sim.entities.find((e) => e.id === stranger)!.y = 12.5
     act(sim, chief, { type: 'invite', targetEntityId: stranger })
     expect(getVillageOf(sim, stranger)).toBeDefined()
+    drainEvents(sim)
+    pousser(sim, stranger, porte.id)
+    expect(rejections(sim)).toEqual([])
+    expect(sim.structures.find((s) => s.id === porte.id)?.open, 'l’invité ouvre').toBe(true)
     expect(tryCross(sim, stranger)).toBeGreaterThan(15)
 
-    // Bannissement : la serrure obéit au tick suivant.
+    // On referme, puis on le bannit : la serrure obéit au tick suivant.
+    pousser(sim, chief, porte.id)
     act(sim, chief, { type: 'banish', targetEntityId: stranger })
     expect(getVillageOf(sim, stranger)).toBeUndefined()
+    drainEvents(sim)
+    pousser(sim, stranger, porte.id)
+    expect(rejections(sim)).toEqual(['cette porte n’est pas à vous'])
     expect(tryCross(sim, stranger)).toBe(14 - BALANCE.AVATAR_HITBOX_TILES / 2)
   })
 })

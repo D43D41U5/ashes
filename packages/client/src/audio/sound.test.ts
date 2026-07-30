@@ -15,7 +15,7 @@ const ev = (type: string, extra: Record<string, unknown> = {}): SimEvent =>
  * La garantie n'a pas bougé — `Record<SimEvent['type'], …>` rend le fichier ROUGE tant que
  * personne n'a dit ce qu'une nouvelle variante fait entendre.
  *
- * Le monde émet **61 faits de domaine** ; **10 sonnent**. Les 51 autres étaient muets parce
+ * Le monde émet **62 faits de domaine** ; **11 sonnent** (la porte depuis R26). Les autres étaient muets parce
  * que personne ne les avait regardés — pas parce qu'on avait décidé qu'ils se taisent. La
  * nuance compte : `sound.ts` dit lui-même en en-tête « ESTHÉTIQUE À VALIDER — je ne peux pas
  * ENTENDRE le résultat », et l'audit de GATE 1 classe le son « oreilles d'Alexis ». Un
@@ -66,14 +66,15 @@ describe('la table de routage audio (soundForEvent)', () => {
     expect(desaccords).toEqual([])
   })
 
-  it("l'inventaire tranché de GATE 1 : 61 faits, 35 voix", () => {
+  it("l'inventaire tranché de GATE 1 : 62 faits, 36 voix", () => {
     // Un compte, pas un jugement. S'il bouge, c'est qu'un fait de domaine est né ou qu'une
     // voix a changé — dans les deux cas, quelqu'un doit le savoir.
     const total = Object.keys(VOIX).length
     const voix = SONORES.length
-    expect(total).toBe(61)
+    expect(total).toBe(62)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
-    expect(voix).toBe(35)
+    // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
+    expect(voix).toBe(36)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

@@ -34,11 +34,16 @@ const piece = (type: StructureType): Structure =>
 /**
  * LA SEULE DIVERGENCE LÉGITIME, et il faut la dire pour ne pas la « corriger » un jour.
  *
- * Une PORTE arrête un étranger (`structureBlocks(door, null) === true`) et laisse passer
- * les siens (`structureBlocks(door, 0) === false`) : elle dépend du déplaceur. Pour R7 elle
- * ne bloque PAS, et c'est exactement ce qui rend une enceinte navigable — « on entre dans
- * sa forge ». Les faire s'accorder ici reviendrait à traiter la porte comme un mur et à
+ * Une PORTE CLOSE arrête TOUT LE MONDE (spec construction R26, 2026-07-30) — pas seulement
+ * l'étranger : c'est ce qui donne un sens à l'ouvrir. Pour R7, elle ne bloque PAS, et c'est
+ * exactement ce qui rend une enceinte navigable — « on entre dans sa forge », parce qu'on
+ * POUSSE la porte. Les faire s'accorder ici reviendrait à traiter la porte comme un mur et à
  * interdire de clore un village. C'est un accord qu'il NE FAUT PAS chercher.
+ *
+ * ⚠ CE QUI A CHANGÉ LE 2026-07-30, et pourquoi ce test a dû bouger : la porte ne dépend plus du
+ * VILLAGE du déplaceur mais de son ÉTAT (`open`) et de la capacité à l'actionner (`opensDoors`,
+ * que seuls les PNJ du village portent). L'ancienne formulation — « elle laisse passer les
+ * siens » — est devenue fausse : le joueur est des siens, et il doit pousser sa porte.
  */
 const DIVERGENCES_VOULUES: readonly StructureType[] = ['door']
 
@@ -70,14 +75,29 @@ const ECARTS_A_CORRIGER: readonly StructureType[] = ['banc', 'friche', 'terre', 
 
 describe('« ça bloque ? » — les deux réponses du dépôt, et leurs écarts nommés', () => {
   it('les deux prédicats s\'accordent partout, sauf sur les écarts nommés', () => {
-    const divergents = TYPES.filter((t) => structureBlocks(piece(t), null) !== blocksNavigation(t))
+    const divergents = TYPES.filter((t) => structureBlocks(piece(t), null, false) !== blocksNavigation(t))
     expect(divergents.sort()).toEqual([...DIVERGENCES_VOULUES, ...ECARTS_A_CORRIGER].sort())
   })
 
-  it('la PORTE dépend du déplaceur — et elle est la seule', () => {
+  it('la PORTE dépend de son ÉTAT et de qui l’actionne — et elle est la seule', () => {
     // C'est ce qui distingue les deux questions : sans ça, les faire s'accorder serait juste.
-    const relatifs = TYPES.filter((t) => structureBlocks(piece(t), null) !== structureBlocks(piece(t), 0))
+    //
+    // ELLE NE DÉPEND PLUS DU VILLAGE SEUL (R26) : close, elle arrête aussi les siens. Ce qui la
+    // rend « relative », c'est désormais la CAPACITÉ à la pousser — et un seul type la respecte.
+    const relatifs = TYPES.filter(
+      (t) => structureBlocks(piece(t), 0, false) !== structureBlocks(piece(t), 0, true),
+    )
     expect(relatifs).toEqual(['door'])
+    // CLOSE (le défaut) : elle arrête le joueur comme le pillard. C'est le cœur de R26.
+    expect(structureBlocks(piece('door'), 0, false), 'close, elle arrête même les siens').toBe(true)
+    expect(structureBlocks(piece('door'), null, false), 'close, elle arrête l’étranger').toBe(true)
+    // OUVERTE : elle ne retient plus personne — ami comme pillard. C'est le prix de l'oubli.
+    const ouverte = { ...piece('door'), open: true }
+    expect(structureBlocks(ouverte, 0, false), 'ouverte, les siens passent').toBe(false)
+    expect(structureBlocks(ouverte, null, false), 'ouverte, l’étranger passe AUSSI').toBe(false)
+    // QUI L'ACTIONNE (les PNJ du village) passe une porte close — mais SEULEMENT la sienne.
+    expect(structureBlocks(piece('door'), 0, true), 'son PNJ la pousse').toBe(false)
+    expect(structureBlocks(piece('door'), 99, true), 'le PNJ d’un autre village, non').toBe(true)
     // Et pour R7 elle ne ferme pas : c'est elle qui rend une enceinte navigable.
     expect(blocksNavigation('door')).toBe(false)
   })
@@ -85,19 +105,19 @@ describe('« ça bloque ? » — les deux réponses du dépôt, et leurs écarts
   it('les pièces basses du monde bâti s\'ENJAMBENT — côté déplacement, c\'est déjà vrai', () => {
     // La vérité que le joueur ressent est la bonne ; c'est `blocksNavigation` qui doit la rejoindre.
     for (const t of ECARTS_A_CORRIGER) {
-      expect(structureBlocks(piece(t), null), `${t} devrait s'enjamber`).toBe(false)
+      expect(structureBlocks(piece(t), null, false), `${t} devrait s'enjamber`).toBe(false)
     }
   })
 
   it('les pièces MOLLES ne bloquent nulle part (R14), et la maison se franchit', () => {
     for (const t of ['floor', 'roof', 'house'] as StructureType[]) {
-      expect(structureBlocks(piece(t), null), `${t} (déplacement)`).toBe(false)
+      expect(structureBlocks(piece(t), null, false), `${t} (déplacement)`).toBe(false)
       expect(blocksNavigation(t), `${t} (navigation)`).toBe(false)
     }
   })
 
   it('un mur bloque des deux côtés — le témoin qui prouve que ce test peut échouer', () => {
-    expect(structureBlocks(piece('wall'), null)).toBe(true)
+    expect(structureBlocks(piece('wall'), null, false)).toBe(true)
     expect(blocksNavigation('wall')).toBe(true)
     expect(TYPES.length).toBeGreaterThan(30) // et qu'il balaie bien tout l'espace
   })

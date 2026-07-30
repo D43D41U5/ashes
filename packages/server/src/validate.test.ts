@@ -202,13 +202,20 @@ describe('validate — propriété : rien de non fini ne franchit la frontière'
   const CHAINES = ['__proto__', 'constructor', 'toString', 'inconnu', '', 'a'.repeat(500)]
   /** Des champs qui n'appartiennent à AUCUNE action : ils doivent être ignorés, jamais recopiés. */
   const ETRANGERS = ['__proto__', 'constructor', 'tricheur', 'seq', 'protocolVersion']
+  /**
+   * LES TYPES À FUZZER — DÉRIVÉS de la table des formes, jamais recopiés.
+   *
+   * C'était une liste écrite à la main de trente-huit noms, et elle a dérivé au premier ajout :
+   * `toggle_door` (spec construction R26) est né dans /sim, déclaré dans `FORMES`, et n'a JAMAIS
+   * été fuzzé — le corpus l'ignorait. Seule l'assertion de compte l'a rattrapé (« 38 valides pour
+   * 39 formes »), ce qui est précisément la garde-de-la-garde qu'il fallait ; mais une liste qui
+   * demande à un test de compte de la rappeler à l'ordre est une liste à supprimer.
+   *
+   * On y ajoute ce qui N'EST PAS une action de jeu, et qui doit être refusé en bloc : les
+   * `debug_*`, un nom inventé, et `__proto__`.
+   */
   const TYPES = [
-    'light_fire', 'place_campfire', 'found_village', 'repair', 'plant', 'harvest_crop', 'give',
-    'recruit_refugees', 'feed_refugees', 'rob_refugees', 'build', 'place_component', 'upgrade_fire',
-    'feed_fire', 'upgrade_structure', 'demolish', 'deposit', 'withdraw', 'set_access', 'invite',
-    'banish', 'harvest', 'harvest_charge_start', 'harvest_release', 'craft', 'cancel_craft', 'eat',
-    'attack', 'attack_charge', 'attack_release', 'bandage', 'loot_corpse', 'set_active_slot',
-    'move_slot', 'split_slot', 'drop_held', 'pick_up', 'transfer',
+    ...Object.keys(ACTION_FORMES),
     'debug_teleport', 'debug_god', 'debug_grant', 'nawak', '__proto__',
   ]
 

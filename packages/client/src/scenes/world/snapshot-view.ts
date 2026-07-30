@@ -42,6 +42,7 @@ import {
   corpseDepth,
   crownAlpha,
   crownDepth,
+  DEMI_BANDE_TUILES,
   FLOOR_DEPTH,
   GROUND_FIRE_DEPTH,
   nodeDepth,
@@ -62,7 +63,8 @@ const MARGE_CIMES = Math.ceil(Math.max(...TOUTES_VARIANTES.map((v) => hauteurTui
 import { varianteArbre } from '../../render/arbre-peuplement'
 import { warmthColor } from '../../render/lighting'
 import { LIT_NODE_TYPES } from '../../render/lit-props'
-import { BATI_LIT_TYPES, EDGE_ORIGIN_Y } from '../../render/bati-art'
+import { BATI_LIT_TYPES, COUPE_DE, EDGE_ORIGIN_Y } from '../../render/bati-art'
+import { creerPortesAnimees } from '../../render/porte-anim'
 import { calculerPans, pansTombes } from '../../render/pans'
 import { LIT_STRUCTURE_TYPES } from '../../render/lit-structures'
 import { shakeOffset, type HitFx } from './hit-fx'
@@ -411,7 +413,6 @@ const PAN_DISTANCE_TUILES = 2
 
 /** La demi-épaisseur d'une bande d'arête, en tuiles — DÉRIVÉE de l'équilibrage, comme le
  *  dessin (`bati-art`) et la collision (`collision.ts`). Trois lectures, une seule source. */
-const DEMI_BANDE_TUILES = BALANCE.WALL_EDGE_SUB / 2 / BALANCE.SUBTILES_PER_TILE
 
 export class SnapshotView {
   /** Dernier état reçu — lu par la prédiction (collisions) et les inputs. */
@@ -572,6 +573,13 @@ export class SnapshotView {
   /** Le tick et l'heure du dernier snapshot — la posture des bêtes en dépend
    * (sentinelle dérivée du tick, cerf couché hors de ses heures). */
   private tick = 0
+  /**
+   * LES BATTANTS EN MOUVEMENT (spec construction R26) — quelle frame de porte montrer, à cet
+   * instant. Il vit ICI et pas dans `WorldScene` parce que c'est ici qu'on peint : le fait
+   * (`door_toggled`) y entre par `pousserPorte`, l'état arrive avec chaque snapshot, et la
+   * réconciliation des deux est tout le travail de `porte-anim`.
+   */
+  private readonly portes = creerPortesAnimees()
   private hour = 12
 
   /** LE SANG AU SOL (spec chasse C9), LE VENT (C17), LES PILES (C18). */
@@ -580,6 +588,22 @@ export class SnapshotView {
   groundItems: SnapshotMessage['groundItems'] = []
 
   /** Applique un snapshot complet — hors avatar local (prédit par la scène). */
+  /**
+   * UNE PORTE VIENT D'ÊTRE POUSSÉE (fait `door_toggled`) — on lance son battant.
+   *
+   * `WorldScene` l'appelle en dépliant les faits du snapshot. C'est le SEUL déclencheur d'une
+   * animation : un simple changement d'état, lui, se CALE sans jouer le geste (reconnexion,
+   * rechargement, fait perdu) — la règle et sa raison vivent dans `porte-anim`.
+   */
+  pousserPorte(structureId: number, open: boolean): void {
+    this.portes.pousse(structureId, open, this.scene.time.now)
+  }
+
+  /** Combien de battants bougent — surface de LECTURE pour le smoke test, rien d'autre. */
+  get portesEnMouvement(): number {
+    return this.portes.enCours(this.scene.time.now)
+  }
+
   apply(msg: SnapshotMessage, playerId: number, now: number): void {
     this.villages = msg.villages
     this.functions = msg.functions
@@ -927,8 +951,14 @@ export class SnapshotView {
                 // le bas, on passe derrière lui (cf. `barriereDepth`). Et LE SEUIL APRÈS LE MUR :
                 // une bande de mur déborde d'une demi-épaisseur chez ses voisins, et sa pierre
                 // mordait le bois de la porte (constaté par Alexis).
-                : s.edges !== undefined && (s.type === 'wall' || s.type === 'cloture' || s.type === 'encadrement')
-                  ? barriereDepth(s.ty, s.edges, TILE_PX, DEMI_BANDE_TUILES, s.type === 'encadrement' ? TIE_SEUIL : undefined)
+                : s.edges !== undefined && (s.type === 'wall' || s.type === 'cloture' || s.type === 'encadrement' || s.type === 'door')
+                  // LE SEUIL **ET LA PORTE** APRÈS LE MUR (`TIE_SEUIL`). Une bande de mur déborde
+                  // d'une demi-épaisseur chez ses voisins pour se recoudre ; à pieds égaux et
+                  // départage identique, l'ordre tombait sur l'ordre de POSE, et la pierre du mur
+                  // d'à côté mordait le bois. C'est le défaut corrigé pour l'`encadrement` le
+                  // 2026-07-27 — la porte du joueur, née depuis, l'avait hérité intact.
+                  ? barriereDepth(s.ty, s.edges, TILE_PX, DEMI_BANDE_TUILES,
+                      s.type === 'encadrement' || s.type === 'door' ? TIE_SEUIL : undefined)
                   : s.type === 'encadrement'
                     ? seuilDepth(s.ty, TILE_PX)
                     : structureDepth(s.ty, TILE_PX)
@@ -961,7 +991,7 @@ export class SnapshotView {
           const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
           sprite.setTint(warmthColor(warmth))
         }
-      } else if (s.edges !== undefined && (s.type === 'wall' || s.type === 'cloture')) {
+      } else if (s.edges !== undefined && (s.type === 'wall' || s.type === 'cloture' || s.type === 'door')) {
         // ═══ LA BARRIÈRE SUR ARÊTE — la forme est PORTÉE, plus devinée ═══
         //
         // L'autotuilage lisait le voisinage ; ici `edges` dit tout. Seize masques suffisent, et
@@ -970,9 +1000,12 @@ export class SnapshotView {
         // alors qu'un mur de pierre en vaut 500 faisait passer la Ferme pour NEUVE : ses murs
         // à 45 % valent 225, soit au-dessus du seuil calculé sur 200. Le lieu s'appelait
         // « ruinée » et rendait une maçonnerie propre.
-        const maxHp = s.material ? WALL_TIERS[s.material].wall.hp : STRUCTURE_HP[s.type]
+        const maxHp = s.material ? WALL_TIERS[s.material][s.type === 'door' ? 'door' : 'wall'].hp : STRUCTURE_HP[s.type]
         const ruine = s.villageId === 0 && s.hp < maxHp * RUINE_SEUIL
-        const fam = s.type === 'cloture' ? 'cloture' : ruine ? 'wall-ruine' : 'wall'
+        // LA PORTE A SA FAMILLE (R23) : elle bloque l'étranger, donc elle se dessine FERMÉE —
+        // l'`encadrement` du bâti généré, lui, est une huisserie percée. Pas de variante ruinée :
+        // le monde bâti n'en pose pas, et une porte de joueur abandonnée n'existe pas encore.
+        const fam = s.type === 'door' ? 'door' : s.type === 'cloture' ? 'cloture' : ruine ? 'wall-ruine' : 'wall'
         // ═══ LA DÉCOUPE DE FAÇADE (à la Zomboid — décision d'Alexis, 2026-07-27) ═══
         //
         // QUEL MUR CACHE LA PIÈCE ? Celui qui est DEVANT elle, entre elle et la caméra — donc
@@ -990,9 +1023,25 @@ export class SnapshotView {
         // joueur dans un mur continu lit comme une brèche, donc comme une entrée. Le côté
         // entier tombe, ou rien. La règle et ses raisons : `render/pans.ts`.
         const cacheLaSalle = (pans.parBarriere.get(s.id) ?? []).some((i) => tombes.has(i))
+        // L'EMPREINTE SE LIT DANS `COUPE_DE`, jamais dans une cascade à défaut : c'est très
+        // exactement ce qui a fait prendre à une porte OUVERTE l'empreinte pleine d'un MUR
+        // (mesuré au navigateur le 2026-07-30 — `door-ouverte` ne figurait dans aucune branche).
+        // La table vit à côté des textures qu'elle nomme, et un test la garde complète.
+        const coupeFam = COUPE_DE[fam]
+        // ═══ LA PORTE PORTE SA FRAME (spec construction R26) ═══
+        //
+        // Son battant pivote en cinq positions ; l'état (`open`) n'est que la position de REPOS.
+        // `portes` décide laquelle montrer maintenant — il anime sur le FAIT (`door_toggled`) et
+        // se cale sur l'ÉTAT quand les deux se contredisent (voir `porte-anim`).
+        //
+        // ET LA DÉCOUPE S'ANIME AUSSI : on pousse une porte à portée de bras (1,5 tuile) et un
+        // pan tombe à deux — la porte qu'on vient d'ouvrir est donc TOUJOURS rendue tranchée.
+        // Une animation qui ne vivrait que debout ne serait jamais vue.
+        const frame = s.type === 'door' ? this.portes.frame(s.id, s.open === true, this.scene.time.now) : -1
+        const suffixe = frame >= 0 ? `-f${frame}` : ''
         const cle = cacheLaSalle
-          ? (fam === 'cloture' ? `st-cloture-coupe-e${s.edges}` : `st-wall-coupe-e${s.edges}`)
-          : `st-${fam}-e${s.edges}`
+          ? `st-${coupeFam}-e${s.edges}${suffixe}`
+          : `st-${fam}-e${s.edges}${suffixe}`
         sprite.setTexture(this.lighting && !cacheLaSalle ? `${cle}_lit` : cle)
         // L'ANCRAGE D'UNE BARRIÈRE N'EST PAS LE BAS DE SON IMAGE. Le mur est à cheval sur
         // l'arête : son sprite déborde d'une demi-épaisseur SOUS sa tuile. On ancre donc au bas

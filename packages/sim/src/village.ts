@@ -32,9 +32,9 @@ import {
   type WallMaterial,
 } from './balance'
 import { isCropMature, isPlot } from './agriculture'
-import { blocksNavigation, placementKeepsNavigable, refreshFunctions } from './construction'
+import { blocksNavigation, edgeBarrierAt, fullTileAt, placementKeepsNavigable, refreshFunctions } from './construction'
 import { emitEvent } from './events'
-import { chebyshev, distSq } from './geometry'
+import { chebyshev, distSq, isSingleEdge } from './geometry'
 import {
   addItems,
   addSlot,
@@ -106,6 +106,25 @@ export interface Structure {
    * place au marteau (`upgrade_structure`) ; chaque palier monte les PV.
    */
   material?: WallMaterial
+  /**
+   * ═══ LA PORTE EST OUVERTE OU CLOSE (spec construction R26, décision d'Alexis 2026-07-30) ═══
+   *
+   * `true` = elle est OUVERTE et **tout le monde passe**, ami comme pillard. Absent ou `false` =
+   * elle est CLOSE et **plus personne ne passe** — pas même son propriétaire, qui doit la pousser
+   * (touche d'interaction, `toggle_door`). C'est cette symétrie qui donne un sens à l'ouvrir : une
+   * porte qui laisserait toujours passer les siens n'aurait aucune raison d'être ouverte, et le
+   * geste serait décoratif.
+   *
+   * ELLE NE BOUGE JAMAIS SEULE (choix d'Alexis contre une refermeture automatique) : l'état
+   * survit au snapshot, au rejeu et à la sauvegarde. Fermer le soir est un geste ; l'oublier
+   * ouverte a un prix — un pillard entre sans rien casser.
+   *
+   * ⚠ MIGRATION NON SILENCIEUSE, ET C'EST VOULU : `undefined` vaut CLOSE, donc les portes des
+   * parties déjà sauvegardées se retrouvent fermées à la reprise. C'est le seul défaut acceptable
+   * (on les rouvre d'une touche) ; l'inverse — `undefined` = ouverte — laisserait une base
+   * grande ouverte sans que le joueur l'ait décidé, et ça ne se répare pas après un raid.
+   */
+  open?: boolean
   /** Contenu, pour les structures-conteneurs (coffre). */
   inventory?: Inventory
   /** LE TICK DE MISE EN TERRE (agriculture voie A, spec `agriculture.md`) — parcelles SEULES.
@@ -215,14 +234,28 @@ export type VillageAction =
    * d'autre (décision d'Alexis : le four, l'établi, le coffre se posent en objet
    * tenu, `place_component`). `material` ne vaut que pour mur/porte (défaut bois, R8).
    * Pose INSTANTANÉE (R15), dans le carré du Feu (R2), sous réserve de navigabilité (R7).
+   *
+   * `edges` — L'ARÊTE VISÉE (spec construction R23, décision d'Alexis 2026-07-30) : mur et porte
+   * ne prennent plus une TUILE, ils se posent sur une des quatre ARÊTES de la tuile visée, que
+   * le joueur choisit au clavier (`A`/`E` font tourner le fantôme). UN SEUL bit — un clic pose
+   * un segment, et le coin d'une pièce en porte donc deux (deux structures, deux fois les PV :
+   * un pillard qui casse le coin ouvre UN côté). Absent = pose PLEINE TUILE, le comportement
+   * historique, que sol et toit gardent pour toujours.
    */
-  | { type: 'build'; structure: BarrierType; tx: number; ty: number; material?: WallMaterial }
+  | { type: 'build'; structure: BarrierType; tx: number; ty: number; material?: WallMaterial; edges?: number }
   /**
    * JE POSE UN COMPOSANT TENU (enclume, four…) sur la tuile visée (spec construction
    * R20, flux feu de camp). L'objet se consomme et DEVIENT la structure ; GROUPÉ à
    * d'autres, il fait émerger une fonction (R9). Instantané (R15).
    */
   | { type: 'place_component'; tx: number; ty: number }
+  /**
+   * JE POUSSE UNE PORTE (spec construction R26, décision d'Alexis) — la touche d'interaction, à
+   * portée de bras. Bascule : close → ouverte, ouverte → close. Il faut y AVOIR DROIT
+   * (`hasAccess` : propriétaire, village, ou publique) — un pillard, lui, doit la casser. Aucun
+   * outil en main n'est requis : on ouvre une porte les mains vides.
+   */
+  | { type: 'toggle_door'; structureId: number }
   /** JE MONTE LE FEU D'UN PALIER (spec construction R6) : le carré grandit, de
    *  nouveaux composants se débloquent. Coût croissant, plafonné à 3. */
   | { type: 'upgrade_fire' }
@@ -343,6 +376,10 @@ export type BuildReject =
   | 'node'
   | 'blocks_nav'
   | 'unaffordable'
+  /** Cette ARÊTE porte déjà un mur — vu des deux côtés (spec construction R23). */
+  | 'edge_taken'
+  /** Sol et toit ne se posent PAS sur une arête : ils sont mous et prennent la tuile. */
+  | 'no_edge'
 
 /** Le verdict d'une pose au marteau. `cost` est TOUJOURS renseigné (palier appliqué),
  *  même sur refus de placement — le panneau affiche le coût quoi qu'il arrive. */
@@ -364,6 +401,15 @@ export function buildPlacementValid(e: BuildEval): boolean {
  * pour que le FANTÔME de placement du client et le serveur partagent UNE SEULE vérité
  * — au lieu de réimplémenter (et faire diverger) les gardes. `ok` couvre placement ET
  * coût ; le handler mappe `reason` vers son message et débite. Déterministe (§7).
+ *
+ * `edges` — L'ARÊTE VISÉE (R23) : un seul bit, mur/porte seulement. Ce qu'il change au verdict
+ * tient en trois lignes, et chacune découle du fait qu'une arête n'occupe PAS la tuile :
+ *   • l'OCCUPATION se lit sur l'arête (des deux côtés), plus sur la tuile — sans quoi le coin
+ *     d'une pièce, qui en porte deux, serait impossible à fermer ;
+ *   • un NŒUD sur la tuile ne s'y oppose plus : on longe une haie de buissons sans défricher
+ *     (le mur est sur le trait, pas sur le buisson) ;
+ *   • la NAVIGABILITÉ reçoit l'arête et juge donc des FRANCHISSEMENTS — c'est elle qui refuse
+ *     encore la dernière arête qui scellerait le Feu.
  */
 export function evaluateBuild(
   state: SimState,
@@ -372,6 +418,7 @@ export function evaluateBuild(
   tx: number,
   ty: number,
   material?: WallMaterial,
+  edges?: number,
 ): BuildEval {
   // Le coût ne dépend que de la pièce et du palier (mur/porte seulement, R8) : calculé
   // d'emblée et renvoyé dans TOUS les cas, y compris les refus de placement.
@@ -396,19 +443,29 @@ export function evaluateBuild(
   if (chebyshev(village.fireTx, village.fireTy, tx, ty) > fireRadius(village.tier)) return fail('out_of_square')
   if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) return fail('too_far')
   if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return fail('unbuildable')
-  // Occupation PAR COUCHE : seul un doublon de la MÊME couche (sol/toit/solide) refuse.
-  const occupant =
-    structure === 'floor'
+  // L'ARÊTE VISÉE (R23) : mur/porte seulement, et UN SEUL bit. Sol et toit sont MOUS — ils
+  // prennent la tuile et n'ont pas d'arête à porter ; leur en donner une les rendrait
+  // invisibles à `floorAt`/`roofAt` (qui ne regardent pas `edges`) et on en empilerait dix.
+  const surArete = edges !== undefined
+  if (surArete && !isWallLike) return fail('no_edge')
+  if (surArete && !isSingleEdge(edges)) return fail('bad_tile')
+  // Occupation PAR COUCHE : seul un doublon de la MÊME couche (sol/toit/solide/arête) refuse.
+  const occupant = surArete
+    ? edgeBarrierAt(state.structures, tx, ty, edges)
+    : structure === 'floor'
       ? floorAt(state.structures, tx, ty)
       : structure === 'roof'
         ? roofAt(state.structures, tx, ty)
-        : solidAt(state.structures, tx, ty)
-  if (occupant) return fail('occupied')
-  // Récolter = défricher (R5) : pas de mur/porte sur un nœud (le sol/toit mou, si).
-  if (structure !== 'floor' && structure !== 'roof' && state.nodes.some((n) => n.tx === tx && n.ty === ty)) {
+        : fullTileAt(state.structures, tx, ty)
+  if (occupant) return fail(surArete ? 'edge_taken' : 'occupied')
+  // Récolter = défricher (R5) : pas de mur/porte PLEINE TUILE sur un nœud (le sol/toit mou, si ;
+  // et l'ARÊTE aussi — elle court sur le trait, elle ne prend pas le buisson).
+  if (!surArete && structure !== 'floor' && structure !== 'roof' && state.nodes.some((n) => n.tx === tx && n.ty === ty)) {
     return fail('node')
   }
-  // Invariant de navigabilité (R7), AVANT le coût : un rejet ne débite rien.
+  // Invariant de navigabilité (R7), AVANT le coût : un rejet ne débite rien. L'arête part au
+  // verdict telle quelle — c'est ce qui fait juger des FRANCHISSEMENTS et non des tuiles, donc
+  // ce qui refuse encore le dernier segment qui scellerait le Feu.
   if (blocksNavigation(structure)) {
     const okNav = placementKeepsNavigable(
       state.map,
@@ -417,7 +474,7 @@ export function evaluateBuild(
       actorId,
       { tx: village.fireTx, ty: village.fireTy },
       fireRadius(village.tier),
-      { tx, ty, type: structure },
+      surArete ? { tx, ty, type: structure, edges } : { tx, ty, type: structure },
     )
     if (!okNav) return fail('blocks_nav')
   }
@@ -437,6 +494,8 @@ const BUILD_REJECT_REASON: Record<BuildReject, string> = {
   node: 'un nœud occupe la tuile',
   blocks_nav: 'cela couperait le passage',
   unaffordable: 'matériaux insuffisants',
+  edge_taken: 'cette arête porte déjà un mur',
+  no_edge: 'cette pièce prend la tuile, pas une arête',
 }
 
 /**
@@ -461,8 +520,23 @@ function poiSpecificInSquare(state: SimState, cx: number, cy: number): boolean {
   return false
 }
 
-/** Une structure bloque-t-elle ce déplaceur ? (spec village R8) */
-export function structureBlocks(s: Structure, moverVillageId: number | null): boolean {
+/**
+ * Une structure bloque-t-elle ce déplaceur ? (spec village R8)
+ *
+ * `opensDoors` — CE DÉPLACEUR ACTIONNE-T-IL LES PORTES DE SON VILLAGE ? (spec construction R26)
+ *
+ * Le paramètre est REQUIS, sans valeur par défaut, et c'est délibéré : un défaut à `false` aurait
+ * laissé le compilateur muet sur chaque site d'appel oublié, alors qu'ici un oubli enferme des
+ * PNJ chez eux ou laisse un monstre traverser une porte close — deux défauts qui ne lèvent rien
+ * et ne se voient qu'en partie. En le rendant obligatoire, `tsc` énumère les appelants à ma place
+ * (la leçon de `enumerer-une-union-par-le-compilateur`). Le défaut, lui, vit à la frontière :
+ * `MoveWorld.opensDoors`, absent = ne les actionne pas.
+ *
+ * QUI L'A : les PNJ du village (`npc.ts`) — ils ouvrent et referment derrière eux, et on ne
+ * simule pas le battant. QUI NE L'A PAS : le JOUEUR (c'est tout le propos — il pousse la porte
+ * lui-même), les monstres, et les membres d'un autre village.
+ */
+export function structureBlocks(s: Structure, moverVillageId: number | null, opensDoors: boolean): boolean {
   // La MAISON, on en franchit le seuil (on y entre). Le FEU, lui, a désormais un
   // hitbox : un foyer de braises sous les pieds, ça se CONTOURNE (décision
   // utilisateur) — on cuisine et on se chauffe en se tenant à côté, pas dessus.
@@ -479,7 +553,13 @@ export function structureBlocks(s: Structure, moverVillageId: number | null): bo
   // il serait un mur de plus, et le bâtiment n'aurait pas d'entrée. (Une `door`, elle, bloque
   // et s'ouvre pour les siens : ce sont deux objets différents, pas deux réglages du même.)
   if (s.type === 'encadrement') return false
-  if (s.type === 'door') return s.villageId !== moverVillageId
+  if (s.type === 'door') {
+    // OUVERTE : tout le monde passe — ami comme pillard. C'est le prix de l'avoir laissée ouverte.
+    if (s.open === true) return false
+    // CLOSE : plus personne, SAUF qui l'actionne — et seulement sur les portes de SON village.
+    // Sans la seconde condition, un PNJ franchirait les portes closes d'un village rival.
+    return !(opensDoors && s.villageId === moverVillageId)
+  }
   return true
 }
 
@@ -812,8 +892,9 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible') // eau, roche…
       // TUILE LIBRE, au sens LARGE (décision utilisateur) : ni structure, ni ressource
       // (arbre, filon, buisson…), ni personne (animal, PNJ, autre joueur) dessus. On ne
-      // pose pas un foyer sur ce qui est déjà là.
-      if (solidAt(state.structures, tx, ty)) return reject('tuile occupée')
+      // pose pas un foyer sur ce qui est déjà là. « Prise ENTIÈRE », depuis R23 : un mur
+      // d'arête borde la tuile sans l'occuper — on plante son feu contre sa clôture.
+      if (fullTileAt(state.structures, tx, ty)) return reject('tuile occupée')
       if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) return reject('tuile occupée')
       if (state.entities.some((e) => e.id !== actorId && e.hp > 0 && Math.floor(e.x) === tx && Math.floor(e.y) === ty)) {
         return reject('tuile occupée')
@@ -861,12 +942,12 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // occupation par couche, nœud, navigabilité, coût) vit dans `evaluateBuild` —
       // PUR et partagé avec le fantôme du client (source unique, pas de divergence).
       const structure = action.structure
-      const ev = evaluateBuild(state, actorId, structure, action.tx, action.ty, action.material)
+      const ev = evaluateBuild(state, actorId, structure, action.tx, action.ty, action.material, action.edges)
       if (!ev.ok) return reject(BUILD_REJECT_REASON[ev.reason!])
       // Placement ET coût validés (evaluateBuild a fait `hasItems`) : le débit passe.
       const village = getVillageOf(state, actorId)!
       removeItems(actor.inventory, ev.cost)
-      addStructure(state, structure, action.tx, action.ty, village.id, actorId, DEFAULT_ACCESS[structure], ev.material)
+      addStructure(state, structure, action.tx, action.ty, village.id, actorId, DEFAULT_ACCESS[structure], ev.material, action.edges)
       return
     }
 
@@ -896,7 +977,9 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // Un composant/coffre BLOQUE : pas sous ses pieds (on s'y emmurerait), comme le Feu.
       if (Math.floor(actor.x) === tx && Math.floor(actor.y) === ty) return reject('pas sous ses pieds')
       if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible')
-      if (solidAt(state.structures, tx, ty)) return reject('tuile occupée')
+      // « Prise ENTIÈRE » (R23) : un mur d'arête borde la tuile sans l'occuper — on ADOSSE
+      // donc son four à son propre mur, ce que `solidAt` refusait dès la première arête posée.
+      if (fullTileAt(state.structures, tx, ty)) return reject('tuile occupée')
       if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) return reject('un nœud occupe la tuile')
       // Invariant de navigabilité (R7) : un composant/coffre bloque, comme un mur.
       const ok = placementKeepsNavigable(
@@ -1007,6 +1090,29 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // (on renforce, on ne répare pas gratuitement).
       s.hp = wasMax ? newMax : Math.min(s.hp, newMax)
       emitEvent(state, { type: 'structure_upgraded', tick: state.tick, structureId: s.id, material: next })
+      return
+    }
+
+    /**
+     * POUSSER UNE PORTE (spec construction R26, décision d'Alexis 2026-07-30).
+     *
+     * Une bascule, à portée de BRAS, et rien de plus : pas d'outil, pas de coût, pas de délai. Ce
+     * qu'on vérifie, c'est le DROIT (`hasAccess` — propriétaire, village, ou publique) : un
+     * pillard n'ouvre pas la porte d'un autre, il la casse. Et la portée, parce qu'une porte
+     * qu'on ouvrirait de loin serait un interrupteur, pas une porte.
+     */
+    case 'toggle_door': {
+      const s = state.structures.find((st) => st.id === action.structureId)
+      if (!s || s.type !== 'door') return reject('ce n’est pas une porte')
+      if (!hasAccess(state, actorId, s)) return reject('cette porte n’est pas à vous')
+      const range = BALANCE.INTERACT_RANGE
+      if (distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) > range * range) return reject('trop loin')
+      // `open` reste ABSENT quand elle se referme : `undefined` EST « close » (voir `Structure`),
+      // et un `false` explicite alourdirait chaque snapshot d'un champ qui ne dit rien de neuf.
+      const ouverte = s.open !== true
+      if (ouverte) s.open = true
+      else delete s.open
+      emitEvent(state, { type: 'door_toggled', tick: state.tick, structureId: s.id, open: ouverte, byEntityId: actorId })
       return
     }
 
@@ -1257,6 +1363,9 @@ export function addStructure(
   access: AccessLevel = DEFAULT_ACCESS[type],
   /** Palier de matériau (spec construction R8) — mur/porte seulement ; défaut bois. */
   material?: WallMaterial,
+  /** LES ARÊTES PORTÉES (R23) — mur mince. Absent = la structure prend sa tuile entière,
+   *  et c'est ce qui rend la migration SILENCIEUSE : tout ce qui existait est inchangé. */
+  edges?: number,
 ): Structure {
   const id = state.nextStructureId
   state.nextStructureId += 1
@@ -1278,6 +1387,9 @@ export function addStructure(
   // On ne stocke le matériau que s'il n'est pas le défaut (bois) : snapshot léger,
   // et `s.material ?? 'wood'` fait foi partout (upgrade, démolition, PV).
   if (material && material !== 'wood' && isWallLike) structure.material = material
+  // On n'écrit `edges` que s'il y en a : `undefined` EST le comportement historique, et un
+  // `edges: 0` posé par mégarde ferait un mur qui ne bloque plus rien nulle part.
+  if (edges !== undefined && edges !== 0) structure.edges = edges
   const containerSlots = CONTAINER_TYPES[type]
   if (containerSlots !== undefined) structure.inventory = makeInventory(containerSlots)
   // LE FEU LIBRE naît avec 10 bois dans son slot combustible, la première allumée maintenant.

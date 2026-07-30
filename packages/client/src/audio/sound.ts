@@ -11,6 +11,7 @@
  * classe « oreilles »). Le SYSTÈME, lui, est vérifiable (routage + niveaux/durées des buffers).
  */
 import type { SimEvent } from '@ashes/sim'
+import { PORTE_ANIM_MS } from '../render/porte-anim'
 
 export type Waveform = 'sine' | 'triangle' | 'square' | 'sawtooth' | 'noise'
 
@@ -199,6 +200,26 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
       }
     case 'structure_built':
       return { wave: 'noise', freq: 0, dur: 0.12, gain: 0.06, lowpass: 800 } // ça se pose
+    case 'door_toggled':
+      // ═══ LA PORTE — et pourquoi ce n'est PAS du `noise` ═══
+      //
+      // L'instinct dit « une porte, c'est du bois, donc de la matière, donc `noise` ». Mais la
+      // grammaire de ce fichier pose le SENS comme la règle la plus forte : une hauteur qui MONTE
+      // ouvre, une hauteur qui DESCEND ferme. Or c'est très exactement l'information qu'une porte
+      // a à donner, et le bruit blanc ne sait pas la porter (il n'a pas de hauteur). `triangle`,
+      // « un fait sur un corps ou une chose », est le timbre juste — et le passe-bas lui rend son
+      // grain de bois. Le sens de la rampe n'est pas un ornement : c'est le message.
+      //
+      // LA DURÉE SUIT LE BATTANT (`PORTE_ANIM_MS`) — elle n'est pas écrite ici. Un grincement plus
+      // court ou plus long que le geste se remarque immédiatement, et deux constantes jumelles
+      // finissent toujours par se désaccorder à la première retouche.
+      //
+      // Le TIMBRE, lui, reste à juger d'oreille au banc (`banc-son.html`) : c'est la limite
+      // assumée de tout ce fichier. Ce qui est arrêté ici, c'est la grammaire et l'accord des
+      // durées ; pas la couleur exacte du grincement.
+      return event.open
+        ? { wave: 'triangle', freq: 165, freqEnd: 300, dur: PORTE_ANIM_MS / 1000, gain: 0.055, lowpass: 1500 }
+        : { wave: 'triangle', freq: 300, freqEnd: 120, dur: PORTE_ANIM_MS / 1000, gain: 0.075, lowpass: 620 }
     case 'structure_destroyed':
       return { wave: 'noise', freq: 0, dur: 0.42, gain: 0.1, lowpass: 520 } // ça s'effondre
     case 'item_crafted':

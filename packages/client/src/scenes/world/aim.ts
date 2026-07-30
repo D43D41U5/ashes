@@ -19,7 +19,7 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
-import { COMPONENT_TYPES, FOOD_VALUES, STRUCTURE_HP, WEAPON_DAMAGE, isCropMature, isPlot, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
+import { COMPONENT_TYPES, EDGE_N, FOOD_VALUES, STRUCTURE_HP, WEAPON_DAMAGE, isCropMature, isPlot, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
 import type { Placeable } from '../../hud-state'
 import type { Corpse, PlayerAction, ResourceNode } from '@ashes/sim'
 
@@ -29,6 +29,19 @@ import type { Corpse, PlayerAction, ResourceNode } from '@ashes/sim'
  */
 export interface BuildContext {
   material: WallMaterial
+  /**
+   * L'ARÊTE ARMÉE (spec construction R23) — le bit que `A`/`E` ont choisi. Il part TEL QUEL dans
+   * l'action `build` quand la pièce armée est un mur ou une porte ; sol et toit l'ignorent.
+   */
+  edge: number
+  /**
+   * LA PIÈCE DÉJÀ EN PLACE SUR LA CIBLE, celle qu'un clic AMÉLIORE au lieu de doubler.
+   *
+   * « La cible » n'est plus la tuile quand on pose sur une arête : c'est **l'arête armée**. Lire
+   * la tuile ferait qu'un coin de pièce, qui porte déjà un mur au nord, améliorerait ce mur-là
+   * au lieu de poser celui de l'ouest — le geste le plus courant de la construction (fermer un
+   * angle) deviendrait impossible, et l'inventaire se viderait en améliorations non demandées.
+   */
   onTile: { id: number; type: StructureType } | null
 }
 
@@ -255,8 +268,19 @@ export function clickToAction(
     }
     // `material` n'accompagne QUE mur/porte (les pièces molles n'en ont pas) : on ne
     // le glisse dans l'action que là — `exactOptionalPropertyTypes` refuse un `undefined`.
+    // ET L'ARÊTE VA AVEC (R23) : un mur de joueur ne prend plus sa tuile. Sans `build`
+    // (un appelant qui n'en fournit pas), on retombe sur le NORD plutôt que sur la pose
+    // pleine tuile — le fantôme, lui, dessine toujours une arête, et les deux doivent dire
+    // la même chose ou l'on poserait ailleurs que là où on vise.
     if (placing === 'wall' || placing === 'door') {
-      return { type: 'build', structure: placing, tx: target.tx, ty: target.ty, material: build?.material ?? 'wood' }
+      return {
+        type: 'build',
+        structure: placing,
+        tx: target.tx,
+        ty: target.ty,
+        material: build?.material ?? 'wood',
+        edges: build?.edge ?? EDGE_N,
+      }
     }
     // Il ne reste que les pièces MOLLES du marteau (sol/toit) — le reste (composants,
     // coffre, feu) a déjà été traité au-dessus.

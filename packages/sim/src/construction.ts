@@ -12,7 +12,7 @@
  */
 import { BALANCE, COMPONENT_TYPES, FUNCTIONS, TERRAINS, type ComponentType, type FunctionId } from './balance'
 import { emitEvent } from './events'
-import { chebyshev } from './geometry'
+import { chebyshev, edgeBits, edgeStep, oppositeEdge } from './geometry'
 import { terrainAt, type WorldMap } from './map'
 import type { StructureType } from './items'
 import type { SimState } from './sim'
@@ -22,6 +22,10 @@ export interface PlacedStructure {
   tx: number
   ty: number
   type: StructureType
+  /** Les ARÊTES portées (bits N/E/S/O), si c'est un mur mince. Absent = la tuile entière.
+   *  `murs()` en dépend, et donc les deux remplissages : une pose d'arête doit pouvoir se
+   *  soumettre au même verdict de navigabilité qu'une pose pleine tuile. */
+  edges?: number
 }
 
 /**
@@ -37,6 +41,97 @@ export function blocksNavigation(type: StructureType): boolean {
   return type !== 'door' && type !== 'floor' && type !== 'roof' && type !== 'house'
 }
 
+/**
+ * ═══ L'OCCUPATION EST À QUATRE COUCHES, PLUS À TROIS ═══
+ *
+ * Une tuile portait un SOL, un TOIT et un SOLIDE — trois couches, une pièce chacune. Depuis que
+ * le joueur pose sur les ARÊTES, il y en a une quatrième, et elle n'appartient même pas tout à
+ * fait à la tuile : **les quatre arêtes**, qu'elle partage avec ses quatre voisines.
+ *
+ * `solidAt` (village.ts) rendait « la première structure qui n'est ni sol ni toit », ce qui
+ * attrape un mur d'arête. Trois portes de pose s'y adossaient, et le branchement du mode arête
+ * les cassait toutes les trois d'un coup — sans qu'aucune ne LÈVE, elles auraient juste refusé :
+ *   • le COIN d'une pièce, qui porte deux arêtes, devenait impossible à fermer (la deuxième pose
+ *     trouvait la première et disait « tuile occupée ») ;
+ *   • on ne pouvait plus ADOSSER un four ni un coffre à son propre mur ;
+ *   • ni planter un feu de camp contre une clôture.
+ *
+ * D'où ces deux questions, exactes chacune sur sa couche. Elles prennent la FORME minimale
+ * (`{tx, ty, type, edges?}`) pour rester sans cycle d'import avec `village.ts`.
+ */
+export interface EdgeAware {
+  tx: number
+  ty: number
+  type: StructureType
+  edges?: number
+}
+
+/** La structure qui prend cette tuile ENTIÈRE — ni sol, ni toit, ni mur d'arête. */
+export function fullTileAt<T extends EdgeAware>(structures: readonly T[], tx: number, ty: number): T | undefined {
+  return structures.find(
+    (s) => s.tx === tx && s.ty === ty && s.type !== 'floor' && s.type !== 'roof' && s.edges === undefined,
+  )
+}
+
+/**
+ * LA BARRIÈRE QUI PORTE CETTE ARÊTE — vue des DEUX CÔTÉS, et c'est tout l'enjeu.
+ *
+ * Le mur entre (5,5) et (5,6) s'écrit « (5,5) + SUD » ou « (5,6) + NORD » : même maçonnerie,
+ * deux adresses (`edgeBits`). La collision le sait depuis toujours (elle consulte le voisin) ;
+ * la POSE devait l'apprendre, sinon le joueur qui contourne son mur et vise depuis l'autre côté
+ * le rebâtit une seconde fois — **il paie deux fois, et deux sprites se superposent dans une
+ * bande de 8 px**. Rien ne l'aurait dit : les deux structures sont parfaitement légales.
+ *
+ * On ne CANONISE pas l'adresse pour autant (« toute arête se stocke en S ou en E ») : la Ferme
+ * générée pose ses murs sur la tuile du DEHORS, une convention qui porte du sens de jeu, et la
+ * découpe de façade la lit. La question symétrique suffit et ne perturbe rien en aval.
+ */
+export function edgeBarrierAt<T extends EdgeAware>(
+  structures: readonly T[], tx: number, ty: number, bit: number,
+): T | undefined {
+  const { dx, dy } = edgeStep(bit)
+  const oppose = oppositeEdge(bit)
+  const nx = tx + dx
+  const ny = ty + dy
+  for (const s of structures) {
+    if (s.edges === undefined) continue
+    if (s.tx === tx && s.ty === ty && (s.edges & bit) !== 0) return s
+    if (s.tx === nx && s.ty === ny && (s.edges & oppose) !== 0) return s
+  }
+  return undefined
+}
+
+/**
+ * CE QUI BLOQUE LE FRANCHISSEMENT de (tx,ty) vers son voisin — la question qu'une bête qui
+ * chasse doit poser, et qu'elle posait de travers.
+ *
+ * `advanceMonsters` demandait `solidAt(destination)` : « qu'y a-t-il sur la tuile où je veux
+ * aller ? ». Avec des murs pleins c'était la même question ; avec un mur d'arête, non — le mur
+ * qui me barre la route peut être déclaré sur MA tuile (bit vers la destination), et la
+ * destination, elle, est vide. La bête ne trouvait alors rien à frapper, avançait, se cognait à
+ * la bande, et **restait là pour l'éternité** : une enceinte de murs minces aurait été un mur
+ * que les pillards ignorent, c'est-à-dire une défense qui ne défend pas.
+ *
+ * Rend la structure à frapper, ou `undefined` si le passage est libre. `blocks` filtre selon le
+ * déplaceur (une porte s'ouvre pour les membres) — la même question que la collision se pose.
+ */
+export function crossingBlocker<T extends EdgeAware>(
+  structures: readonly T[], tx: number, ty: number, dx: number, dy: number, blocks: (s: T) => boolean,
+): T | undefined {
+  const nx = tx + dx
+  const ny = ty + dy
+  const { ici, la } = edgeBits(dx, dy)
+  // La destination prise EN ENTIER : on n'y entre pas, quelle que soit l'arête.
+  const pleine = fullTileAt(structures, nx, ny)
+  if (pleine !== undefined && blocks(pleine)) return pleine
+  for (const s of structures) {
+    if (s.edges === undefined || !blocks(s)) continue
+    if (s.tx === tx && s.ty === ty && (s.edges & ici) !== 0) return s
+    if (s.tx === nx && s.ty === ny && (s.edges & la) !== 0) return s
+  }
+  return undefined
+}
+
 const tileIndex = (map: WorldMap, tx: number, ty: number): number => ty * map.width + tx
 
 /**
@@ -50,16 +145,11 @@ const tileIndex = (map: WorldMap, tx: number, ty: number): number => ty * map.wi
  *
  * Ces deux gardes ne sont pas décoratives : ce sont elles qui empêchent un joueur d'emmurer son
  * propre Feu, et elles décident du bonus d'enceinte. Se tromper ici ne se verrait qu'en partie.
+ *
+ * Les quatre bits et la paire `edgeBits` viennent de `geometry.ts` : le joueur en POSE
+ * désormais, donc la même valeur traverse le réseau, le fantôme et la collision — une seule
+ * définition, ou une inversion N/S dans une copie donnerait un mur qui arrête ailleurs.
  */
-const EDGE_N = 1, EDGE_E = 2, EDGE_S = 4, EDGE_O = 8
-
-/** Le bit de l'arête de (tx,ty) qui regarde (dx,dy), et son opposé chez le voisin. */
-function edgeBits(dx: number, dy: number): { ici: number; la: number } {
-  if (dy < 0) return { ici: EDGE_N, la: EDGE_S }
-  if (dy > 0) return { ici: EDGE_S, la: EDGE_N }
-  if (dx < 0) return { ici: EDGE_O, la: EDGE_E }
-  return { ici: EDGE_E, la: EDGE_O }
-}
 
 /**
  * Peut-on passer de (tx,ty) vers son voisin (tx+dx, ty+dy) ? Un mur mince coupe le passage

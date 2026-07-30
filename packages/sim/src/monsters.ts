@@ -14,7 +14,8 @@ import { distSq } from './geometry'
 import { rngRoll } from './rng'
 import { spawnEntity, type Entity, type SimState } from './sim'
 import { computeFlowField } from './pathfinding'
-import { solidAt, structureBlocks } from './village'
+import { structureBlocks } from './village'
+import { crossingBlocker } from './construction'
 import { cendreuxStep } from './cendreux'
 import { advanceFauna, avatarDetectability, avatarThreat, coverAt, faunaStep, isPredator, isPrey, wolfStep, type Threat } from './faune'
 import { getGameTime } from './time'
@@ -448,9 +449,16 @@ function hordeStep(state: SimState, monster: Monster, entity: Entity, flux: Cach
   }
   if (bestTx === tx && bestTy === ty) return true // au but ou coincé hors champ
 
-  // La tuile du gradient est-elle bouchée par une structure ? On la frappe.
-  const blocker = solidAt(state.structures, bestTx, bestTy)
-  if (blocker && structureBlocks(blocker, null)) {
+  // LE PASSAGE vers la tuile du gradient est-il barré ? On frappe ce qui le barre.
+  //
+  // On demandait « qu'y a-t-il SUR la tuile où je veux aller ? » (`solidAt`). Avec des murs
+  // pleins c'était la même question ; avec un mur d'ARÊTE (R23), non — le mur qui me barre la
+  // route est souvent déclaré sur MA tuile, bit tourné vers la destination, et la destination
+  // est vide. La bête ne trouvait alors rien à frapper, avançait, butait sur la bande et
+  // **restait là** : une enceinte de murs minces aurait été une défense que les pillards
+  // ignorent. `crossingBlocker` regarde les deux côtés de l'arête, comme la collision.
+  const blocker = crossingBlocker(state.structures, tx, ty, bestTx - tx, bestTy - ty, (s) => structureBlocks(s, null, false))
+  if (blocker) {
     if (!entity.windup && state.tick >= entity.cooldownUntil) {
       const def = MONSTER_DEFS[monster.type]
       const started = startAttack(state, entity, bestTx + 0.5 - entity.x, bestTy + 0.5 - entity.y, {
@@ -486,8 +494,12 @@ function attackBlockingStructure(state: SimState, monster: Monster, entity: Enti
           [ex + Math.sign(dx), ey],
         ]
   for (const [cx, cy] of candidates) {
-    const s = solidAt(state.structures, cx, cy)
-    if (s && structureBlocks(s, null)) {
+    // Le FRANCHISSEMENT, pas la tuile (R23) — même correction qu'au gradient : un mur d'arête
+    // qui me barre la route peut être déclaré chez moi. `Math.sign` rend 0 quand l'axe est
+    // aligné : ce « voisin » est ma propre tuile, il n'y a pas d'arête à franchir.
+    if (cx === ex && cy === ey) continue
+    const s = crossingBlocker(state.structures, ex, ey, cx - ex, cy - ey, (st) => structureBlocks(st, null, false))
+    if (s) {
       const def = MONSTER_DEFS[monster.type]
       if (startAttack(state, entity, cx + 0.5 - entity.x, cy + 0.5 - entity.y, { windupTicks: def.windupTicks, damage: def.damage, structureId: s.id })) {
         entity.cooldownUntil = state.tick + def.attackCooldownTicks

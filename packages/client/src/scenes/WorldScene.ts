@@ -52,6 +52,9 @@ import {
   type ReadyMessage,
   type SnapshotMessage,
   type PerfMessage,
+  EDGE_BITS,
+  edgeBarrierAt,
+  fullTileAt,
 } from '@ashes/sim'
 import Phaser from 'phaser'
 import { createColyseusHost, createWorkerHost, type HostConnection } from '../host-connection'
@@ -60,7 +63,7 @@ import { keymapEffectif } from './world/keymap-perso'
 import { noteMulti } from '../derniere-partie'
 import { SERVERS } from '../servers'
 import { libelleTouche } from './world/touches'
-import { getHud, setHud } from '../hud-state'
+import { getHud, setHud, type Placeable } from '../hud-state'
 import {
   AMBIENT_DEPTH,
   AMBIENT_DEPTH_LIT,
@@ -379,14 +382,23 @@ export class WorldScene extends Phaser.Scene {
    * le fantôme (il a les structures). La sim revalide tout — ceci ne fait que colorer
    * le fantôme juste, pour ne pas afficher « perdu » là où la pose passe (et l'inverse).
    */
-  private placeable(tx: number, ty: number): boolean {
+  private placeable(tx: number, ty: number, placing: Placeable | null, edge: number): boolean {
     const p = this.predicted
     const r = BALANCE.BUILD_RANGE
     if ((tx + 0.5 - p.x) ** 2 + (ty + 0.5 - p.y) ** 2 > r * r) return false
     if (zoneAt(this.map, tx + 0.5, ty + 0.5)) return false
     if (TERRAINS[terrainAt(this.map, tx, ty)]?.walkable !== true) return false // eau, roche…
-    // Tuile LIBRE : ni structure, ni ressource, ni personne dessus (miroir du sim).
-    if (this.view.structures.some((s) => s.tx === tx && s.ty === ty)) return false
+    // ═══ SUR UNE ARÊTE, C'EST L'ARÊTE QUI DOIT ÊTRE LIBRE (spec construction R23) ═══
+    //
+    // Un mur mince ne prend pas sa tuile : il court sur le trait. Exiger la tuile vide rougirait
+    // tout ce qu'on veut justement pouvoir faire — fermer un COIN (la tuile porte déjà l'autre
+    // arête), longer une haie de buissons, ceindre son propre four. La seule question qui reste
+    // est « ce trait porte-t-il déjà un mur ? », et elle se pose des DEUX côtés.
+    if (placing === 'wall' || placing === 'door') {
+      return edgeBarrierAt(this.view.structures, tx, ty, edge) === undefined
+    }
+    // Tuile LIBRE : ni structure PLEINE, ni ressource, ni personne dessus (miroir du sim).
+    if (fullTileAt(this.view.structures, tx, ty)) return false
     if (this.view.nodes.some((n) => n.tx === tx && n.ty === ty)) return false
     return !this.lastEntities.some((e) => e.hp > 0 && Math.floor(e.x) === tx && Math.floor(e.y) === ty)
   }
@@ -888,13 +900,15 @@ export class WorldScene extends Phaser.Scene {
     // BÂTI, terrain, landmark) — pas la portée de bras `aim.inRange`, qui vaut pour
     // récolter, pas pour poser (sinon un feu posable à 3 tuiles s'affiche « perdu »).
     const placing = overlay ? null : this.inputs.placing()
+    const edgeArme = getHud(this.registry, 'buildEdge') ?? EDGE_BITS[0]!
     this.buildGhost.update(
       placing,
       aim.tx,
       aim.ty,
-      placing !== null && this.placeable(aim.tx, aim.ty),
+      placing !== null && this.placeable(aim.tx, aim.ty, placing, edgeArme),
       this.view.structures,
       this.warp,
+      edgeArme,
     )
     // La jauge d'abattage flotte au-dessus de l'arbre qu'on charge (spec recolte-maitrise).
     this.fellGauge.update(this.fells, this.view.nodes, this.warp)
@@ -1722,6 +1736,11 @@ export class WorldScene extends Phaser.Scene {
       // LE SON (échafaudage) : chaque fait de domaine peut sonner (table pure `soundForEvent`),
       // « sur moi » ou non selon l'entité concernée. Muet si coupé / contexte pas réveillé.
       this.audioFx.play(soundForEvent(event, this.eventConcernsMe(event)))
+      if (event.type === 'door_toggled') {
+        // LE BATTANT PIVOTE SUR LE FAIT, jamais sur la différence d'état : c'est ce qui empêche
+        // tout un village de s'ouvrir en fanfare à la reconnexion (voir `porte-anim`).
+        this.view.pousserPorte(event.structureId, event.open)
+      }
       if (event.type === 'action_rejected' && event.entityId === this.playerId) {
         publishError(this.registry, event.reason, this.time.now)
       } else if (event.type === 'resource_harvested' && event.entityId === this.playerId) {

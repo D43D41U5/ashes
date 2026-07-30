@@ -35,6 +35,8 @@ export const ACTIONS: readonly { action: ActionJeu; libelle: string; groupe: str
   { action: 'block', libelle: 'Parer (maintenu)', groupe: 'AGIR' },
   { action: 'forage', libelle: 'Cueillir, interagir', groupe: 'AGIR' },
   { action: 'dropHeld', libelle: 'Jeter ce qu’on tient', groupe: 'AGIR' },
+  { action: 'rotateLeft', libelle: 'Tourner ce qu’on pose (sens inverse)', groupe: 'BÂTIR' },
+  { action: 'rotateRight', libelle: 'Tourner ce qu’on pose', groupe: 'BÂTIR' },
   { action: 'toggleInventory', libelle: 'Personnage (sac, artisanat)', groupe: 'OUVRIR' },
   { action: 'toggleMap', libelle: 'Carte', groupe: 'OUVRIR' },
   { action: 'toggleJournal', libelle: 'Chronique', groupe: 'OUVRIR' },
@@ -43,15 +45,16 @@ export const ACTIONS: readonly { action: ActionJeu; libelle: string; groupe: str
 ]
 
 /**
- * ⚠ `rotateLeft`/`rotateRight` (`A`/`E`) SONT ABSENTES DE CETTE TABLE, ET C'EST VOULU.
+ * ✅ `rotateLeft`/`rotateRight` (`A`/`E`) SONT ENTRÉES DANS CETTE TABLE LE 2026-07-30.
  *
- * Elles sont déclarées dans `KEYMAP` (avec toute leur justification de disposition) et le menu
- * pause les annonçait — mais **aucun code ne les lit**, et aucune action de `/sim` ne porte
- * d'orientation de pose : il n'y a rien à tourner. Les offrir au rebinding donnerait une ligne
- * de réglages qui ne peut RIEN faire, c'est-à-dire précisément l'écran qui ment qu'on cherche à
- * éviter. On ne les retire pas de `KEYMAP` pour autant (leurs touches restent réservées, et le
- * choix de A/E est une décision d'Alexis) : c'est à lui de dire si la rotation se branche ou si
- * la promesse se retire. Signalé le 2026-07-28.
+ * Elles en étaient absentes EXPRÈS depuis le 2026-07-28 : déclarées dans `KEYMAP`, annoncées par
+ * le menu pause, et **lues par personne** — aucune action de /sim ne portait d'orientation de
+ * pose, il n'y avait rien à tourner. Les offrir au rebinding aurait donné une ligne de réglages
+ * qui ne peut RIEN faire, c'est-à-dire l'écran qui ment qu'on cherchait à éviter.
+ *
+ * La pose sur ARÊTE (spec construction R23) leur donne enfin leur objet : elles font tourner
+ * l'arête armée du fantôme, et `input-bindings.ts` les câble. La promesse est tenue, la ligne
+ * de réglages fait quelque chose, et le groupe « BÂTIR » naît avec elles.
  */
 
 /** Ce que le joueur a changé : action → LA touche qu'il a choisie (ou aucune, si on la lui a volée). */

@@ -41,7 +41,7 @@ interface Bande { x0: number; y0: number; x1: number; y1: number; quoi: string }
 function bandes(structures: readonly Structure[]): Bande[] {
   const out: Bande[] = []
   for (const s of structures) {
-    if (!structureBlocks(s, null)) continue
+    if (!structureBlocks(s, null, false)) continue
     const quoi = `${s.type}@(${s.tx},${s.ty})`
     if (s.edges === undefined) {
       out.push({ x0: s.tx, y0: s.ty, x1: s.tx + 1, y1: s.ty + 1, quoi })
@@ -127,7 +127,7 @@ describe('la Ferme bâtie ne se traverse pas', () => {
   it('un ANGLE ne se force pas en diagonale', () => {
     const fautes: string[] = []
     for (const s of structures) {
-      if (s.edges === undefined || !structureBlocks(s, null)) continue
+      if (s.edges === undefined || !structureBlocks(s, null, false)) continue
       if ((s.edges & N) === 0 && (s.edges & O) === 0) continue
       // On se place en biais du coin nord-ouest de la tuile et on pousse DEDANS.
       for (const [dx, dy] of [[1, 1], [1, 0], [0, 1]] as const) {

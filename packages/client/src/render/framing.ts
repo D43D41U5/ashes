@@ -5,7 +5,11 @@
  * grandeurs de rendu (zoom, décalage caméra en px monde, position/taille/depth
  * d'un sprite). Extrait de `WorldScene` pour être unit-testable en isolation.
  * Spec : docs/specs/client.md §« Cadrage & proportions » (R10-R13).
+ *
+ * Une seule dépendance, et c'est un CHIFFRE D'ÉQUILIBRAGE (`BALANCE`) : l'épaisseur d'une
+ * bande de mur appartient à /sim — le rendu la LIT, il ne la choisit pas.
  */
+import { BALANCE } from '@ashes/sim'
 
 /** Taille CANONIQUE d'une tuile à l'écran, en px (art placeholder 16×16).
  * Les fonctions de ce module la prennent en paramètre (testabilité) ; le
@@ -192,6 +196,16 @@ export function structureDepth(ty: number, tilePx: number): number {
  * son bord sud descend d'autant chez le voisin). Une bande VERTICALE (est/ouest), elle, court
  * sur toute la hauteur de sa tuile : ses pieds restent `ty + 1`.
  */
+/**
+ * LA DEMI-ÉPAISSEUR D'UNE BANDE, EN TUILES — dérivée de l'équilibrage, jamais écrite.
+ *
+ * Elle vivait en privé dans `snapshot-view`. Depuis R23, le FANTÔME de pose doit trier à la
+ * même profondeur que le mur qu'il annonce : deux définitions et le fantôme passerait devant
+ * un mur derrière lequel la pose le mettra — un fantôme qui mentirait d'un rang, ce qui ne se
+ * voit qu'au moment où c'est trop tard. Elle est donc ici, à côté de son unique consommateur.
+ */
+export const DEMI_BANDE_TUILES = BALANCE.WALL_EDGE_SUB / 2 / BALANCE.SUBTILES_PER_TILE
+
 export function barriereDepth(ty: number, edges: number, tilePx: number, demiTuiles: number, tie = TIE_STRUCTURE): number {
   const SUD = 4, EST = 2, OUEST = 8
   const feetY = (edges & (SUD | EST | OUEST)) !== 0 ? ty + 1 : ty + demiTuiles

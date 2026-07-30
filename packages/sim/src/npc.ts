@@ -95,7 +95,17 @@ export const TICKS_PER_HOUR = TICKS_PER_CYCLE / 24
 // ─── Aides ────────────────────────────────────────────────────────────────
 
 function moveWorldFor(state: SimState, villageId: number): MoveWorld {
-  return { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: villageId }
+  // `opensDoors` — LES PNJ DU VILLAGE ACTIONNENT SES PORTES (spec construction R26).
+  //
+  // Depuis que la porte a un ÉTAT, une porte close ne laisse plus passer personne — pas même les
+  // siens : c'est ce qui donne un sens à l'ouvrir. Sans cette capacité, fermer sa porte
+  // ENFERMERAIT ses propres PNJ : leurs corvées s'arrêteraient (bois, baies, eau, feu) sans qu'un
+  // seul message ne le dise, et le village s'éteindrait pendant qu'on croit l'avoir protégé.
+  //
+  // On ne simule pas le battant qu'ils poussent : ils ouvrent et referment derrière eux, et
+  // l'état que le JOUEUR a réglé n'est jamais touché — sinon les villageois laisseraient la porte
+  // ouverte et défairaient sa décision, la seule chose qu'une porte serve à exprimer.
+  return { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: villageId, opensDoors: true }
 }
 
 /**
