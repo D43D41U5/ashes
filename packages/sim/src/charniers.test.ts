@@ -153,6 +153,9 @@ describe('le charnier est un lieu comme les autres', () => {
   it('il se pose sur un sol praticable, jamais sur une sente, jamais dans un autre lieu', () => {
     const { map } = CARTE
     const autres = lieuxDe(map)
+    // Le carré de l'écart, multiplié EXPLICITEMENT : `**` (comme Math.pow) n'est pas garanti
+    // au bit près d'un moteur JS à l'autre, et le lint de /sim l'interdit — jusque dans les tests.
+    const ecart2 = MORTS.CHARNIER_ECART_LIEU * MORTS.CHARNIER_ECART_LIEU
     for (const z of charniersDe(map)) {
       const tx = Math.floor(z.x + z.w / 2)
       const ty = Math.floor(z.y + z.h / 2)
@@ -164,7 +167,7 @@ describe('le charnier est un lieu comme les autres', () => {
       }
       for (const a of autres) {
         const d2 = distSq(tx, ty, a.x + a.w / 2, a.y + a.h / 2)
-        expect(d2, `${z.name} est dans l’empreinte de ${a.name}`).toBeGreaterThanOrEqual(MORTS.CHARNIER_ECART_LIEU ** 2)
+        expect(d2, `${z.name} est dans l’empreinte de ${a.name}`).toBeGreaterThanOrEqual(ecart2)
       }
     }
   })
