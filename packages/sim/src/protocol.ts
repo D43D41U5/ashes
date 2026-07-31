@@ -16,6 +16,7 @@ import type { ResourceNode } from './economy'
 import type { SimEvent } from './events'
 import type { WorldMap } from './map'
 import type { Monster } from './monsters'
+import type { Reveil } from './morts'
 import type { Npc } from './npc'
 import type { Entity, PlayerAction, RefugeeGroup } from './sim'
 import type { GameTime } from './time'
@@ -209,6 +210,10 @@ export interface SnapshotMessage {
   npcs: Npc[]
   monsters: Monster[]
   corpses: Corpse[]
+  /** LES SOLS QUI TRAVAILLENT (spec `cendreux.md` R21) : le client peint le sol qui se
+   *  soulève, et son extinction sans `cendreux_risen` DIT que le feu a gagné. Quatre nombres
+   *  par entrée, une poignée d'entrées à la fois — le plafond de l'acte les borne. */
+  reveils: Reveil[]
   /** LES RÉFUGIÉS (V2-25) : les groupes de survivants sur les routes, que le client dessine
    *  et rend interactables (recruter/nourrir/dépouiller). */
   refugeeGroups: RefugeeGroup[]

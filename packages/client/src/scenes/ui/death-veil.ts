@@ -41,7 +41,7 @@ export function deathLine(cause: DeathCause, byEntityId: number, killerType: str
   if (killerType === 'wolf') return 'Un loup vous a abattu.'
   if (killerType === 'boar') return 'Un sanglier vous a encorné.'
   if (killerType === 'cendreux') return 'Un Cendreux vous a repris.'
-  if (killerType !== null) return 'Vous avez été abattu.' // zombie, ou tout autre monstre
+  if (killerType !== null) return 'Vous avez été abattu.' // toute bête sans réplique à elle
   return 'Vous êtes tombé, sans témoin.' // tueur disparu / PNJ / joueur non nommable
 }
 

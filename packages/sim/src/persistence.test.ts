@@ -85,6 +85,28 @@ describe('persistance de la Veillée', () => {
     expect([...SAVE_REQUIRED_KEYS].sort()).toEqual(Object.keys(makeSim()).sort())
   })
 
+  /**
+   * L'AUTRE BRANCHE DU MÊME ARBITRAGE (spec `cendreux.md` R21). Le garde ci-dessus oblige à
+   * trancher ; voici le cas où l'on a tranché « repli » plutôt que « bosser la version ».
+   *
+   * `reveils` — les sols qui travaillent — dure QUATRE SECONDES. Rendre illisibles toutes les
+   * vallées en cours pour un champ pareil serait absurde : on le recolle à vide, et le joueur
+   * perd un réveil qu'il n'aurait de toute façon pas fini de voir. Ce test protège la
+   * distinction : un champ éphémère se comble, un champ qui compte fait toujours refuser.
+   */
+  it('un champ ÉPHÉMÈRE absent se comble ; un champ qui compte fait toujours refuser', () => {
+    const sim = makeSim()
+    const sansReveils = JSON.parse(serializeSim(sim)) as { v: number; sim: Record<string, unknown> }
+    delete sansReveils.sim.reveils
+    const relu = deserializeSim(JSON.stringify(sansReveils))
+    expect(relu.reveils).toEqual([]) // recollé, pas refusé
+
+    // …et la porte ne s'est pas ouverte pour autant : un champ NON éphémère manque toujours.
+    const sansMonstres = JSON.parse(serializeSim(sim)) as { v: number; sim: Record<string, unknown> }
+    delete sansMonstres.sim.monsters
+    expect(() => deserializeSim(JSON.stringify(sansMonstres))).toThrow(/monsters/)
+  })
+
   it('…et elle la colle QUELLES QUE SOIENT les options du monde', () => {
     // Le piège du garde lui-même : une liste tirée d'un `createSim` MINIMAL rejetterait
     // une sauvegarde légitime le jour où une option ajoute un champ. On confronte donc

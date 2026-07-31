@@ -67,6 +67,12 @@ const ART: Record<string, { fp: number; w: number; h: number; crown?: number }> 
   epave: { fp: 2, w: 44, h: 36 },
   fondriere: { fp: 3, w: 58, h: 16 },
   crevasses: { fp: 4, w: 68, h: 20 },
+  // LE CHARNIER : une TRACE, pas un monument (règle 1). Il reste au ras du sol — ce qu'on lit de
+  // loin, c'est une longue butte pelée où rien ne pousse, pas une silhouette contre le ciel.
+  // Plus large que la tanière et deux fois plus basse : on n'a pas creusé un terrier, on a POUSSÉ
+  // la terre sur ce qu'on ne voulait plus voir. Aucune ouverture, et c'est la différence qui doit
+  // se lire à l'ombre chinoise : la tanière a un trou, le charnier est FERMÉ.
+  charnier: { fp: 2, w: 54, h: 22 },
   // ── LES ONZE LIEUX CHARGÉS ──
   // Le GRAND CHÊNE : le plus haut de la plaine. 92 px pour une canopée à 44 → il la perce de
   // moitié et se voit de loin par-dessus les bosquets. C'est l'unique horizon de la Racine.
@@ -310,6 +316,22 @@ export function makePoiTextures(scene: Phaser.Scene): void {
     g.fillStyle(RUST.deep).fillEllipse(c + 2, b - 12, 21, 6) // sa lèvre supérieure
     g.fillStyle(0x6a5a48).fillCircle(c - 18, b - 6, 2) // des os, autour
     g.fillStyle(0x6a5a48).fillRect(c + 19, b - 5, 5, 2)
+  })
+  tex('charnier', (w, b) => {
+    const c = w / 2
+    g.fillStyle(SHADOW, 0.22).fillEllipse(c, b - 2, w - 4, 7)
+    // LA BUTTE — longue, basse, et le sol autour est mort : rien ne repousse sur une fosse.
+    g.fillStyle(RUST.deep).fillEllipse(c, b - 4, w - 2, 11) // la terre retournée s'étale
+    g.fillStyle(RUST.dark).fillEllipse(c, b - 8, w - 10, 14) // le dos du tertre
+    g.fillStyle(RUST.mid).fillEllipse(c - 8, b - 11, 22, 8) // lumière NO
+    g.fillStyle(RUST.deep).fillEllipse(c + 11, b - 6, 20, 7) // ombre SE
+    // CE QUI DÉPASSE. Trois signes, pas plus : à seize pixels la tuile, c'est la SILHOUETTE
+    // dentelée qui dit « des corps », pas le détail d'un os.
+    g.fillStyle(0xc9c1b0).fillEllipse(c - 15, b - 12, 6, 5) // un crâne, à moitié sorti
+    g.fillStyle(RUST.deep).fillRect(c - 17, b - 12, 2, 2)
+    g.fillStyle(0xb8b0a0).fillRect(c + 4, b - 15, 2, 6) // deux côtes plantées de travers
+    g.fillStyle(0xb8b0a0).fillRect(c + 9, b - 14, 2, 5)
+    g.fillStyle(0x9a9284).fillRect(c - 4, b - 11, 7, 2) // un long os couché
   })
   tex('repaire', (w, b) => {
     ground(w, b, 0.9)

@@ -62,6 +62,7 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): voi
   const bLight = mkBtn()
   const bSpeed = mkBtn()
   const bNight = mkBtn()
+  const bReveil = mkBtn()
 
   // Un toggle actif s'allume en ambre ; inactif, il reste terne.
   const paint = (b: HTMLButtonElement, label: string, active: boolean): void => {
@@ -80,6 +81,7 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): voi
     const sp = getHud(reg, 'debugSpeed') ?? 1
     paint(bSpeed, `Cadence ×${sp}`, sp !== 1)
     paint(bNight, deps.isNight() ? 'Passer au JOUR' : 'Passer à la NUIT', false)
+    paint(bReveil, 'Réveiller le sol  ·F6', false)
   }
 
   bGod.onclick = () => {
@@ -101,6 +103,12 @@ export function createDebugPanel(scene: Phaser.Scene, deps: DebugPanelDeps): voi
   }
   bNight.onclick = () => {
     deps.sendAction({ type: 'debug_set_hour', hour: deps.isNight() ? HOUR_DAY : HOUR_NIGHT })
+    render()
+  }
+  // LE SOL SE RÉVEILLE (spec `cendreux.md` R21bis). Pas un toggle : un GESTE, qu'on rejoue à
+  // chaque clic — d'où l'absence d'état allumé/éteint.
+  bReveil.onclick = () => {
+    deps.sendAction({ type: 'debug_reveil' })
     render()
   }
 

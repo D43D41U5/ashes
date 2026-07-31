@@ -72,6 +72,11 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
       return { wave: 'triangle', freq: 180, freqEnd: 90, dur: 0.22, gain: 0.1 }
     case 'wolf_howl':
       return { wave: 'sine', freq: 520, freqEnd: 240, dur: 0.7, gain: 0.09 }
+    // LES MORTS N'ONT PAS DE VOIX. Là où le loup lance une note qui PORTE (sinus haut, longue),
+    // le Cendreux racle : du bruit filtré bas, sourd, sans hauteur. Deux dangers, deux signes —
+    // le joueur doit savoir laquelle des deux parades il prépare sans regarder l'écran.
+    case 'cendreux_prowl':
+      return { wave: 'noise', freq: 0, dur: 0.9, gain: 0.08, lowpass: 420 }
 
     // ── LA PLAIE ─────────────────────────────────────────────────────────────────────────
     case 'entity_bandaged':
@@ -132,6 +137,12 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     // bataille plusieurs mûrissent ensemble — c'est le seul son de la table qui risque le mur.
     case 'cendreux_risen':
       return { wave: 'triangle', freq: 98, freqEnd: 147, dur: 0.3, gain: 0.05, lowpass: 800 }
+    // LE FEU A ÉTOUFFÉ UN RÉVEIL — l'exact CONTRAIRE du précédent, et il doit s'entendre comme
+    // tel : `cendreux_risen` monte (98 → 147), celui-ci DESCEND (147 → 98). Même timbre, même
+    // filtre, chemin inverse — le joueur n'a pas un second son à apprendre, il entend le même
+    // fait joué à l'envers. C'est la récompense de la parade : le sol se tait.
+    case 'reveil_etouffe':
+      return { wave: 'triangle', freq: 147, freqEnd: 98, dur: 0.35, gain: 0.05, lowpass: 800 }
     case 'horde_spawned':
       return { wave: 'sawtooth', freq: 147, freqEnd: 110, dur: 0.8, gain: 0.085, lowpass: 900 }
     case 'alarm_raised':

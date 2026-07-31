@@ -48,7 +48,8 @@ import {
 import { MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
 import { calibreLeFront, computeCendreField } from './cendre'
 import { distSq } from './geometry'
-import { placePois } from './poi'
+import { placeCharniers, placePois } from './poi'
+import { densiteDeBase } from './morts'
 import { fbm2, hash2 } from './noise'
 import { masqueDesSeuils, paintWaterRacine } from './zonegen-water'
 import {
@@ -549,10 +550,19 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   }
 
   // ── PASSE 5 : LES LIEUX — et ils ont désormais une ADRESSE ────────────────
-  placePois(map, seed, (tx, ty) => {
+  const zoneDe = (tx: number, ty: number): string | undefined => {
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return undefined
     return g.zones[zone[ty * width + tx]!]!.def.slug
-  })
+  }
+  placePois(map, seed, zoneDe)
+
+  // ── PASSE 6 : LES CHARNIERS — l'adresse n'est plus une zone, c'est une DENSITÉ ────
+  //
+  // Ils ne passent pas par la loterie (`horsSemis`) : leur abondance est commandée par le champ
+  // des morts, celui-là même que la nuit lit pour savoir combien de rôdeurs ce sol peut porter.
+  // `poi.ts` ne connaît toujours pas `morts.ts` — il reçoit un accesseur, exactement comme pour
+  // les zones. (spec `cendreux.md` R20 ; décision d'Alexis du 2026-07-31.)
+  placeCharniers(map, seed, (tx, ty) => densiteDeBase(map, tx, ty), zoneDe)
 
   return carte
 }

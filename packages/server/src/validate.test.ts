@@ -139,6 +139,7 @@ describe('validate — la forme du fond d\'une action (les payloads hostiles mes
     expect(sanitizeAction(env({ type: 'debug_set_season_day', day: 59 }))).toBeNull()
     expect(sanitizeAction(env({ type: 'debug_grant', item: 'wood' }))).toBeNull()
     expect(sanitizeAction(env({ type: 'debug_set_hour', hour: 3 }))).toBeNull()
+    expect(sanitizeAction(env({ type: 'debug_reveil' }))).toBeNull()
   })
 
   it('ne laisse passer QUE les champs déclarés (ni clé parasite, ni __proto__)', () => {

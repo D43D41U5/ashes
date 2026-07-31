@@ -53,7 +53,7 @@ describe("la Vallée de la Veillée — critères d'acceptation", () => {
   it('R2bis — les sites (spawn, villages, monstres) sont sur des tuiles marchables atteignables', () => {
     const sites = [
       VEILLEE_SITES.spawn, VEILLEE_SITES.foyer, VEILLEE_SITES.meute, VEILLEE_SITES.neutre,
-      ...VEILLEE_SITES.boars, ...VEILLEE_SITES.zombies,
+      ...VEILLEE_SITES.boars, ...VEILLEE_SITES.cendreux,
     ]
     for (const s of sites) {
       expect(from.has(Math.floor(s.y) * map.width + Math.floor(s.x))).toBe(true)

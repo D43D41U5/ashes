@@ -178,6 +178,7 @@ function tick(): void {
     npcs: sim.npcs,
     monsters: sim.monsters,
     corpses: sim.corpses,
+    reveils: sim.reveils,
     refugeeGroups: sim.refugeeGroups,
     // LE SANG, LE VENT, LES PILES (spec chasse C9/C17/C18). Trois listes bornées
     // (BLOOD_CAP, un vecteur, des piles qui périssent) : le snapshot ne grossit pas.

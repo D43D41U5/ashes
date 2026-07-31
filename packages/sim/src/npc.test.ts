@@ -697,7 +697,7 @@ describe('anti-livelock des besoins : la cible est inatteignable', () => {
     const zx = 17
     const zy = 12
     wallIn(sim, zx, zy)
-    spawnMonster(sim, 'zombie', zx + 0.5, zy + 0.5)
+    spawnMonster(sim, 'cendreux', zx + 0.5, zy + 0.5)
     drainEvents(sim)
 
     let famine = 0
@@ -810,7 +810,7 @@ describe('le PNJ arme sa main tout seul (A6/A9 côté PNJ)', () => {
   it('la milice frappe avec sa LANCE (le PNJ naît armé — worldgen), pas au poing', () => {
     const sim = npcVillageSim(2)
     granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 })
-    spawnMonster(sim, 'zombie', 15, 12) // dans le DEFEND_RADIUS du Feu (12,12)
+    spawnMonster(sim, 'cendreux', 15, 12) // dans le DEFEND_RADIUS du Feu (12,12)
     run(sim, 5)
 
     const e = npcEntity(sim)

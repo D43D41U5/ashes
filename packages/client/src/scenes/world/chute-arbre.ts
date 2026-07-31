@@ -32,7 +32,7 @@
  */
 import Phaser from 'phaser'
 import { TIE_CLUTTER, TIE_NODE, TILE_PX, ySortDepth } from '../../render/framing'
-import { ancrageHouppierPx, type VarianteArbre } from '../../render/arbre-art'
+import { ancrageHouppierPx, cleHouppier, type VarianteArbre } from '../../render/arbre-art'
 
 /** La chute elle-même (ms) : le temps que met le fût à toucher le sol. */
 export const CHUTE_MS = 760
@@ -151,7 +151,7 @@ export class ChuteArbre {
    * UN ARBRE S'ABAT. `px/py` : le PIED du fût, tel que la boucle de nœuds le posait
    * (relief compris). `dx/dy` : la direction de chute — celle qui l'éloigne du bûcheron.
    */
-  tomber(px: number, py: number, variante: VarianteArbre, lit: boolean, dx: number, dy: number, now: number): void {
+  tomber(px: number, py: number, variante: VarianteArbre, lit: boolean, dx: number, dy: number, now: number, cime = 0): void {
     if (this.chutes.length >= MAX_CHUTES) {
       const vieille = this.chutes.shift()
       vieille?.fut.destroy()
@@ -167,7 +167,10 @@ export class ChuteArbre {
     // LE HOUPPIER SORT DE LA BANDE CANOPÉE dès la première image (voir l'en-tête) : couché,
     // il doit passer SOUS les acteurs, pas coiffer le monde.
     const houppier = this.scene.add
-      .image(px, py - ancrageHouppierPx(m), `nd-${variante.slug}_crown${lit ? '_lit' : ''}`)
+      // LA CIME EST CELLE DE L'ARBRE DEBOUT, passée par l'appelant : la reconstruire ici la
+      // tirerait d'une tuile déduite de `px/py`, qui portent déjà le tressaillement et le
+      // décalage d'arbre — l'arbre changerait de houppier À L'INSTANT où il tombe.
+      .image(px, py - ancrageHouppierPx(m), cleHouppier(variante.slug, lit, cime))
       .setOrigin(0.5, 1)
       .setDepth(ySortDepth(py / TILE_PX, TILE_PX, TIE_CLUTTER))
     houppier.setLighting(lit)

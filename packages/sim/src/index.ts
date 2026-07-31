@@ -33,6 +33,7 @@ export { POI,
   HUNT,
   LOOT_VALUES,
   MONSTER_DEFS,
+  MORTS,
   NIGHT_HUNT,
   NODE_DEFS,
   RECIPES,
@@ -139,6 +140,9 @@ export type { Monster } from './monsters'
 export { isPrey, isPredator, isWild, activityAt, predatorBias, sentinelOf, wolfVigor } from './faune'
 export { placeHuntingGrounds } from './faune' // hôte/scénario : le semis des coins de chasse
 export { advanceCendreux, willRiseAsCendreux } from './cendreux'
+/** LE SOL QUI TRAVAILLE (spec `cendreux.md` R21) — le client le PEINT : il lui faut le type
+ *  des entrées du snapshot, et la durée du réveil pour en tirer l'avancement de sa rampe. */
+export type { Reveil } from './morts'
 export { POI_CHARGES, poiFamily, advancePois } from './poi-discovery'
 export type { PoiCharge } from './poi-discovery'
 export { advanceWorldEvents } from './worldevents'

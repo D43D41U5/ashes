@@ -14,7 +14,10 @@
  *   sont capturées par le replay log : une partie où l'on a triché se rejoue
  *   quand même à l'identique.
  */
+import { MORTS, NIGHT_HUNT } from './balance'
+import { emitEvent } from './events'
 import { addItems, type ItemId } from './items'
+import { densiteDesMorts, siteDansLaCouronne } from './morts'
 import type { Entity, SimState } from './sim'
 import { cycleOffsetForStartHour, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 
@@ -49,6 +52,27 @@ export type DebugAction =
    * pas atteindre ne garde rien.
    */
   | { type: 'debug_grant'; item: ItemId }
+  /**
+   * RÉVEILLER LE SOL ICI ET MAINTENANT (spec `cendreux.md` R21bis).
+   *
+   * Sans lui, voir le sol travailler demandait de réunir TROIS conditions à la fois — acte III
+   * (le jour de saison n'a ni touche ni bouton, il fallait la console), la nuit, et se tenir
+   * hors de la bulle de tout feu — puis d'attendre un tirage à la minute, à 55 %. Et le
+   * plafond de l'acte sature après un ou deux réveils : MESURÉ, **2 sur une nuit entière**.
+   * Le geste le plus caractéristique du monstre qui donne son nom au jeu était, en pratique,
+   * inobservable — et une mécanique qu'on ne peut pas ATTEINDRE est une mécanique morte
+   * (même raison que `debug_set_season_day`, même remède).
+   *
+   * ON PLANTE UN VRAI RÉVEIL, PAS UNE ANIMATION. Même couronne, mêmes constantes, même
+   * `state.reveils` : il travaille ses quatre secondes, un feu à portée l'ÉTOUFFE (la parade
+   * de R21 se teste donc par ce chemin aussi), et il rend un Cendreux qui porte les trois
+   * marques du rôdeur. Ce qu'on voit est ce que le jeu fait — un raccourci qui aurait joué
+   * l'animation sans passer par la sim n'aurait rien prouvé du tout.
+   *
+   * Ce qu'il court-circuite, et c'est tout : le TIRAGE de `advanceNightHunt` (l'acte, l'heure,
+   * la chance, le plafond). Le reste de la chaîne est intact.
+   */
+  | { type: 'debug_reveil' }
 
 export function isDebugAction(action: { type: string }): action is DebugAction {
   return action.type.startsWith('debug_')
@@ -88,6 +112,30 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     const jour = Math.max(1, Math.round(action.day))
     const premierTick = Math.round(((jour - 1) * TICKS_PER_SEASON_DAY) / state.calendarScale)
     state.tick = Math.max(0, premierTick - 1)
+  } else if (action.type === 'debug_reveil') {
+    // Le site se cherche EXACTEMENT comme la nuit le cherche (`nighthunt.ts`) : la couronne
+    // serrée du mort, pondérée par le champ des morts, sur un sol qui mène à la proie. Rien
+    // ne convient tout autour → on ne plante rien, comme la nuit qui passe son tour.
+    //
+    // AUCUN TIRAGE CONSOMMÉ, et ce n'est pas un détail : appuyer sur une touche de debug ne
+    // doit pas décaler le flux seedé du monde entier. Le `tirage` vient donc du TICK — la
+    // seule horloge de la sim (`monde.md` R1) — ce qui reste déterministe et rejouable
+    // (l'action passe par le canal `PlayerAction`, donc par le replay-log), tout en variant
+    // d'un appui à l'autre. C'est la même exigence qu'à l'étouffement et à l'émergence, où
+    // R21 interdit déjà le moindre tirage.
+    const site = siteDansLaCouronne(
+      state, entity.x, entity.y, (state.tick % 997) / 997,
+      (tx, ty) => densiteDesMorts(state, tx, ty),
+      { dist: NIGHT_HUNT.SPAWN_DIST_UNDEAD, ring: NIGHT_HUNT.SPAWN_RING_UNDEAD },
+    )
+    if (!site) return
+    state.reveils.push({ x: site.x, y: site.y, at: state.tick + MORTS.REVEIL_TICKS, preyId: entity.id })
+    // ÇA S'ANNONCE, comme toujours : le bandeau et le son du raclement font partie de ce
+    // qu'on vient vérifier. Les taire aurait fait tester une demi-chaîne.
+    const enCours = state.reveils.filter((r) => r.preyId === entity.id).length
+    emitEvent(state, {
+      type: 'cendreux_prowl', tick: state.tick, targetEntityId: entity.id, count: enCours, x: site.x, y: site.y,
+    })
   } else if (action.type === 'debug_grant') {
     // On le met EN MAIN, pas juste dans le sac : c'est la main qui décide de tout
     // (spec inventaire R9), et un objet au fond du sac ne prouve rien à l'écran.

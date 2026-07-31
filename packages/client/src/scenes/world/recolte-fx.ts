@@ -234,8 +234,11 @@ export function nuance(ton: number, valeur: number): number {
 
 /** Un PRNG minuscule (xorshift32). Le hasard du rendu n'a aucune contrainte de
  *  déterminisme inter-moteurs (on n'est pas dans /sim) — mais SEMÉ, une gerbe est
- *  reproductible, donc testable et stable d'une frame à l'autre. */
-function semis(graine: number): () => number {
+ *  reproductible, donc testable et stable d'une frame à l'autre.
+ *
+ *  EXPORTÉ pour la terre du réveil (`reveil-fx.ts`) : deux générateurs de hasard de rendu
+ *  auraient été deux nombres à retrouver le jour où une gerbe se met à clignoter. */
+export function semis(graine: number): () => number {
   let s = graine | 0
   if (s === 0) s = 0x9e3779b9
   return () => {

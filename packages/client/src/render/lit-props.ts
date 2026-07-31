@@ -62,6 +62,8 @@ function drawChampignon(ctx: CanvasRenderingContext2D): void {
   for (const [x, y, w, h, col] of CHAMPIGNON_RECTS) { ctx.fillStyle = col; ctx.fillRect(x, y, w, h) }
 }
 
+
+
 // Silhouettes = celles de `BootScene.makeClutter` (À GARDER EN PHASE : deux backends de dessin,
 // Phaser Graphics là-bas, Canvas2D ici). L'ombrage directionnel peint est retiré ; les couleurs
 // qui sont un MATÉRIAU (corolle, feuillage) restent. La normale se lit sur l'alpha seul.

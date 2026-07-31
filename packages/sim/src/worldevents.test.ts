@@ -35,7 +35,7 @@ describe('le flow field (A1)', () => {
     // Et une horde la remonte jusqu'au Feu.
     const sim = createSim(3, { map })
     foundNpcVillage(sim, 10, 2, 0) // village sans PNJ : personne ne défend
-    const z = spawnMonster(sim, 'zombie', 10.5, 18.5)
+    const z = spawnMonster(sim, 'cendreux', 10.5, 18.5)
     sim.hordes.push({ id: 1, targetVillageId: sim.villages[0]!.id, memberEntityIds: [z] })
     sim.nextHordeId = 2
     for (let t = 0; t < 3000; t++) {
@@ -54,7 +54,7 @@ describe('les murs face à la horde (A2)', () => {
     const sim = createSim(4, { map })
     foundNpcVillage(sim, 10, 5, 0)
     // Un mur barre le couloir sud (le seul accès n'est pas muré ailleurs,
-    // mais le gradient passe par lui : le zombie frappe ce qui le bloque).
+    // mais le gradient passe par lui : la bête frappe ce qui la bloque).
     const owner = spawnEntity(sim, 10.5, 6.5)
     sim.villages[0]!.memberIds.push(owner)
     // Marteau EN MAIN : bâtir l'exige désormais (spec recolte.md G12).
@@ -67,9 +67,17 @@ describe('les murs face à la horde (A2)', () => {
     return { sim, owner }
   }
 
-  it('les zombies frappent le mur qui bloque, il casse, la horde passe', () => {
-    const { sim } = walledSim()
-    const z = spawnMonster(sim, 'zombie', 10.5, 12.5)
+  it('les Cendreux frappent le mur qui bloque, il casse, la horde passe', () => {
+    const { sim, owner } = walledSim()
+    // LE BÂTISSEUR SORT DU CADRE une fois son mur posé. Sans ça le test ne mesure plus ce
+    // qu'il croit : le Cendreux voit l'homme (`aggroRange`), lâche la descente de gradient
+    // pour le CHASSER, et **contourne** le mur par l'est — qui n'enferme rien (« le seul
+    // accès n'est pas muré ailleurs »). Mesuré : il arrivait au but sans toucher la paroi.
+    // Le zombie qu'il remplace ne le faisait pas, mais lui non plus n'aurait pas dû : ce
+    // test parle de la HORDE qui coule vers le Feu, pas d'une bête qui poursuit un homme.
+    sim.entities.find((e) => e.id === owner)!.x = 2.5
+    sim.entities.find((e) => e.id === owner)!.y = 17.5
+    const z = spawnMonster(sim, 'cendreux', 10.5, 12.5)
     sim.hordes.push({ id: 1, targetVillageId: sim.villages[0]!.id, memberEntityIds: [z] })
     drainEvents(sim)
     const wall = structureAt(sim.structures, 10, 8)!
@@ -100,7 +108,7 @@ describe('l’alarme (A3)', () => {
       npc.sleeping = true
     }
     drainEvents(sim)
-    spawnMonster(sim, 'zombie', 21, 15) // dans le rayon de 10
+    spawnMonster(sim, 'cendreux', 21, 15) // dans le rayon de 10
     run(sim, 30)
     const alarms = collect(sim, ['alarm_raised'])
     expect(alarms).toHaveLength(1)
@@ -171,6 +179,41 @@ describe('la carcasse de convoi (A6)', () => {
     const player = spawnEntity(sim, corpse.x, corpse.y)
     step(sim, [{ entityId: player, dx: 0, dy: 0, action: { type: 'loot_corpse', corpseId: corpse.id } }])
     expect(countOf(sim.entities.find((e) => e.id === player)!.inventory, 'iron_ingot')).toBe(3)
+  })
+
+  /**
+   * LA FUITE DES GARDES (corrigée le 2026-07-31). `spawnConvoy` posait deux gardes tous les
+   * deux jours de saison et **rien ne les retirait jamais** — ni dissipation d'ambiant, ni
+   * décantation avec la carcasse, qui disparaît pourtant en deux cycles. MESURÉ avant : la
+   * vallée passait de 5 à 39 Cendreux au jour 36, puis 75 en fin de saison, par ce seul
+   * canal. Le bug était antérieur (les gardes étaient des zombies, tout aussi éternels) mais
+   * il PORTAIT depuis que le Cendreux converge sur les feux et frappe les murs.
+   */
+  it('les gardes partent avec leur carcasse — et jamais sous les yeux de quelqu’un', () => {
+    const map = createEmptyMap(30, 30, TERRAIN_GRASS)
+    for (let tx = 0; tx < 30; tx++) map.terrain[15 * 30 + tx] = TERRAIN_ROAD
+    const sim = createSim(3, { map })
+    spawnConvoy(sim)
+    const gardes = sim.monsters.filter((m) => m.expiresAt !== undefined)
+    expect(gardes.length).toBe(WORLD_EVENTS.CONVOY_GUARDS)
+    const quand = gardes[0]!.expiresAt!
+
+    // ① UN TÉMOIN SUR PLACE : l'heure passe, ils restent. Une bête qui s'évapore devant
+    //    vous, c'est le décor qui avoue.
+    const garde = sim.entities.find((e) => e.id === gardes[0]!.entityId)!
+    const temoin = spawnEntity(sim, garde.x, garde.y)
+    sim.tick = quand
+    step(sim, [])
+    expect(sim.monsters.filter((m) => m.expiresAt !== undefined).length).toBe(WORLD_EVENTS.CONVOY_GUARDS)
+
+    // ② PLUS PERSONNE : ils s'en vont, eux et leurs entités.
+    const t = sim.entities.find((e) => e.id === temoin)!
+    t.x = 1.5
+    t.y = 1.5
+    const avant = sim.entities.length
+    step(sim, [])
+    expect(sim.monsters.filter((m) => m.expiresAt !== undefined).length).toBe(0)
+    expect(sim.entities.length).toBe(avant - WORLD_EVENTS.CONVOY_GUARDS) // aucune entité orpheline
   })
 })
 

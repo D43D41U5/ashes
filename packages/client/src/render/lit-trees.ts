@@ -18,10 +18,12 @@
 import type Phaser from 'phaser'
 import { newCanvas, normalFromCanvas, registerLit as register } from './normal-map'
 import {
-  colonneX, houppierLargeur, houppierOpaqueDe, TOUTES_VARIANTES, TONS_HOUPPIER_VIEUX,
+  assiseDe, cleHouppier, colonneX, houppierLargeur, houppierOpaqueDe, CIMES_PAR_ARBRE,
+  TOUTES_VARIANTES, TONS_HOUPPIER_VIEUX,
   type MesuresArbre, type TonsFut,
 } from './arbre-art'
 import { champDeHauteur, ecorceDe, facteurPied, type Ecorce, type GrainFut } from './ecorce'
+import { champDeFeuillage, feuillageDe, type GrainHouppier } from './feuillage'
 
 /* LES COULEURS NE SONT PLUS RÉÉCRITES ICI NON PLUS. Elles étaient recopiées de l'art peint —
  * la garde de palette a fini par le voir (trois fichiers pour un même brun sans nom). C'est
@@ -34,17 +36,23 @@ function rgb(hex: string): [number, number, number] {
   return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]
 }
 
-/** Albédo UNIFORME d'un houppier : sa silhouette, à plat. La boîte n'est plus forcément carrée
- *  (le saule et le parasol du vieux pin sont plus larges que hauts). */
-function crownAlbedo(W: number, S: number, opaque: (x: number, y: number) => boolean, ton: string): HTMLCanvasElement {
-  const [r, g, b] = rgb(ton)
+/** Albédo d'un houppier : ses TOUFFES, aux tons du champ de feuillage (`feuillage.ts`). La boîte
+ *  n'est plus forcément carrée (le saule et le parasol du vieux pin sont plus larges que hauts).
+ *
+ *  Il remplissait la silhouette d'une seule couleur — MESURÉ, écart entre pixels voisins 0,00 sur
+ *  les onze variantes : c'est pour ça qu'il n'y avait aucune texture à voir sur une cime. Le fût
+ *  a reçu le même traitement le 2026-07-29, et pour la même raison. */
+function crownAlbedo(W: number, S: number, grain: GrainHouppier): HTMLCanvasElement {
   const { c, ctx } = newCanvas(W, S)
   const d = ctx.createImageData(W, S)
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < W; x++) {
-      if (!opaque(x, y)) continue
+      const t = grain.ton[y * W + x]
+      if (t === null || t === undefined) continue
+      const m = /rgb\((\d+),(\d+),(\d+)\)/.exec(t)
+      if (!m) continue
       const i = (y * W + x) * 4
-      d.data[i] = r; d.data[i + 1] = g; d.data[i + 2] = b; d.data[i + 3] = 255
+      d.data[i] = Number(m[1]); d.data[i + 1] = Number(m[2]); d.data[i + 2] = Number(m[3]); d.data[i + 3] = 255
     }
   }
   ctx.putImageData(d, 0, 0)
@@ -109,8 +117,29 @@ function futAlbedo(m: MesuresArbre, tons: TonsFut, e: Ecorce, grain: GrainFut): 
 export function generateLitTrees(scene: Phaser.Scene): void {
   for (const v of TOUTES_VARIANTES) {
     const m = v.mesures
-    const crown = crownAlbedo(houppierLargeur(m), m.houppierS, houppierOpaqueDe(v), v.tons.lumiere)
-    register(scene, `nd-${v.slug}_crown_lit`, crown, normalFromCanvas(crown, 7, 3.2, 4))
+    // LE HOUPPIER — ses touffes, et le relief qu'elles portent. Le champ est passé À LA CARTE DE
+    // NORMALES (dernier paramètre, le chemin qu'empruntait déjà le fût) : chaque touffe reçoit
+    // donc sa vraie normale et se fait éclairer par le soleil du jeu. On ne peint pas de l'ombre,
+    // on donne de la FORME à la lumière. Le lissage reste à 6 passes (il valait 7 sur une
+    // silhouette nue) : descendu à 2, il FACETTAIT durement chaque touffe — second contributeur
+    // au contraste dont Alexis s'est plaint le 2026-07-30. Six passes gardent le volume des
+    // masses sans en tailler les arêtes.
+    // CINQ CIMES PAR VARIANTE (demande d'Alexis, 2026-07-30) — cinq graines du même champ. Une
+    // futaie pure ne montre plus douze fois la même cime au pixel près. Les graines sont
+    // espacées d'un nombre premier : deux graines voisines donneraient deux cimes cousines, et
+    // on aurait payé cinq textures pour une seule variation perceptible.
+    const W = houppierLargeur(m)
+    for (let cime = 0; cime < CIMES_PAR_ARBRE; cime++) {
+      const feuilles = champDeFeuillage(
+        feuillageDe(v.slug), W, m.houppierS, houppierOpaqueDe(v), assiseDe(v),
+        v.tons.corps, v.tons.lumiere, 11 + cime * 7919,
+      )
+      const crown = crownAlbedo(W, m.houppierS, feuilles)
+      register(
+        scene, cleHouppier(v.slug, true, cime), crown,
+        normalFromCanvas(crown, 6, 3.2, 4, false, [], feuilles.relief),
+      )
+    }
 
     // LE FÛT — même recette que tout le reste du pipeline, sur un champ de hauteur d'écorce.
     // Les cadrans sont ceux du « cube franc » du 24/07 : `passes:1`, `k:3,5`, facettes de 2 px.

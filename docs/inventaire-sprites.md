@@ -88,7 +88,7 @@ symétrie, pas un second dessin. Les compter comme des sprites doublerait l'inve
 | `it-` | 49 | — | — | icônes d'objets, une par `ItemId` | `render/item-art.ts` |
 | `poi-` | 48 | 55 | 1 | 32 lieux + 16 couronnes | `scenes/world/poi-art.ts` + `render/poi-lit.ts` / `poi-lit-defs.ts` |
 | `fx-` | 37 | — | — | effets : sang, terrier, plouf, poissons, feuilles, bancs de brume, halos | `BootScene.ts`, `eau-fx.ts`, `poissons-ombres.ts`, `feuilles-derive.ts`, `mist-banks.ts`, `fire-fx.ts`, `night-veil.ts`, `fire-ground-glow.ts`, `contact-shadow.ts` |
-| `spr-` | 24 | 2 | — | acteurs : avatar, PNJ, zombie, Cendreux, faune et ses poses | `BootScene.ts` (`makeSprite`, `makeFauna`) |
+| `spr-` | 23 | 2 | — | acteurs : avatar, PNJ, Cendreux, faune et ses poses | `BootScene.ts` (`makeSprite`, `makeFauna`) |
 | `cl-` | 23 | 22 | 22 | *clutter* : touffes, buissons, troncs, cailloux, fleurs, lichen | `render/lit-props.ts` |
 | `nd-` | 20 | 15 | — | nœuds récoltables : arbres, roche, filons, buissons à baies | `BootScene.ts` + `render/lit-trees.ts` |
 | `cf-` | 16 | — | — | falaise vue de dessus : 8 masques × 2 variantes | `render/cliff-art.ts` |
@@ -114,7 +114,7 @@ cave, réserve, parcelle, serre, terroir, maison, feu (`st-fire`), plus le mobil
 `poi-lit.ts` ajoute des sujets qui n'ont pas d'albédo autonome : les trois erratiques (`poi-erratique-0..2`,
 chacun avec sa `-curl`) et les couronnes de `poi-cabane` / `poi-ferme_ruinee`.
 
-**`spr-` (24)** — 5 sujets debout (`player`, `npc`, `zombie`, `cendreux`, `corpse`) et 19 clés de faune, qui
+**`spr-` (23)** — 4 sujets debout (`player`, `npc`, `cendreux`, `corpse`) et 19 clés de faune, qui
 sont des **poses** : cerf (debout, broute, fuit, couché), lapin (debout, broute, fuit), sanglier (debout,
 fouille, charge), loup (debout, traque, mange, alpha), oiseau (posé, picore, alerte, envol, en vol). Tailles de
 12×9 à 36×28 px. Seuls `spr-player` et `spr-npc` ont un `_lit`.

@@ -27,10 +27,10 @@ export class BootScene extends Phaser.Scene {
   create(): void {
     this.makeSprite('spr-player', 0xf0e6c8, 0x8a6f3c)
     this.makeSprite('spr-npc', 0x9aa4b5, 0x4a5364)
-    this.makeSprite('spr-zombie', 0x7fa05a, 0x3d5230)
     // Le Cendreux : cendre et braise. Il était rendu comme un SANGLIER (tout ce
     // qui n'était pas zombie tombait sur spr-boar) — une bête à 34 dégâts
-    // déguisée en gibier. Il a désormais son propre visage.
+    // déguisée en gibier. Il a désormais son propre visage — et depuis qu'il a
+    // absorbé le zombie (spec `cendreux.md` R1), c'est le seul mort-vivant.
     this.makeSprite('spr-cendreux', 0xb8b0a4, 0x6b3a20)
     this.makeFauna()
 
@@ -762,6 +762,8 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('fx-burrow', 15, 13)
     g.clear()
 
+    this.makeReveilMounds(g)
+
     // LA GOUTTE DE SANG (spec chasse C9). La piste que le chasseur suit — et que
     // les loups suivent aussi. Une éclaboussure, pas un rond : elle a un SENS, et
     // c'est ce qui permet de lire la direction de la course d'un coup d'œil.
@@ -884,5 +886,82 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(fill).fillRect(1, 1, 10, 22)
     g.generateTexture(key, 12, 24)
     g.destroy()
+  }
+
+  /**
+   * LE SOL QUI TRAVAILLE (spec `cendreux.md` R21) — les quatre crans du tertre.
+   *
+   * Le Cendreux ne naît pas, il SE RÉVEILLE : le sol se soulève quatre secondes avant qu'il
+   * n'en sorte, et c'est ce préavis qui achète le droit de naître à SEPT tuiles (R22). Il
+   * était invisible — le mort poppait. Quatre crans francs, parce que l'art de ce jeu est
+   * quantifié : le sol se ROMPT, il ne se dilate pas.
+   *
+   * ═══ PEINTS EN VALEURS, TEINTÉS PAR LE TERRAIN ═══
+   *
+   * Aucune couleur de terre ici : rien que des GRIS. `reveil-fx` applique en teinte la
+   * couleur du terrain de la tuile, assombrie (`TERRE_FRAICHE` — ce qu'on déterre n'a pas vu
+   * le jour). Un réveil dans la neige soulève donc de la neige, un réveil sur l'éboulis
+   * soulève du gravier, et personne n'a de seconde table de couleurs à tenir à jour. C'est
+   * la règle de la maison : la couleur se lit sur la chose, elle ne se tabule jamais.
+   *
+   * Toutes à 24 × 18 : les quatre partagent leur centre, donc les crans se succèdent sans
+   * que le tertre ne saute d'un côté.
+   */
+  private makeReveilMounds(g: Phaser.GameObjects.Graphics): void {
+    const CLAIR = 0xffffff // la crête, là où la terre remuée prend la lumière
+    const CORPS = 0xcfcfcf
+    const OMBRE = 0x8e8e8e // le pied du tertre
+    const TROU = 0x2a2a2a // le noir du dessous — presque éteint une fois teinté
+    const MOTTE = 0xe6e6e6
+    const W = 24
+    const H = 18
+    const cx = 12
+    const cy = 9
+
+    // CRAN 0 — LE SOL FRÉMIT. Une fêlure, deux grains soulevés. Presque rien : c'est le
+    // premier instant du préavis, et il doit être vu sans crier.
+    g.fillStyle(OMBRE).fillEllipse(cx, cy, 10, 4)
+    g.fillStyle(TROU).fillRect(cx - 3, cy, 6, 1) // la fêlure
+    g.fillStyle(MOTTE).fillRect(cx - 6, cy + 1, 1, 1).fillRect(cx + 5, cy - 1, 1, 1)
+    g.generateTexture('fx-reveil-0', W, H)
+    g.clear()
+
+    // CRAN 1 — LA FENTE S'OUVRE. Le tertre existe, la fêlure devient une entaille.
+    g.fillStyle(OMBRE).fillEllipse(cx, cy + 1, 16, 7)
+    g.fillStyle(CORPS).fillEllipse(cx, cy, 14, 6)
+    g.fillStyle(CLAIR).fillEllipse(cx, cy - 1, 9, 3) // la crête
+    g.fillStyle(TROU).fillRect(cx - 4, cy, 8, 2) // l'entaille
+    g.fillStyle(MOTTE).fillRect(cx - 8, cy + 2, 2, 1).fillRect(cx + 7, cy + 1, 2, 1)
+    g.generateTexture('fx-reveil-1', W, H)
+    g.clear()
+
+    // CRAN 2 — LE TERTRE MONTE ET LE TROU S'OUVRE. On voit qu'il y a un DESSOUS.
+    g.fillStyle(OMBRE).fillEllipse(cx, cy + 1, 21, 10)
+    g.fillStyle(CORPS).fillEllipse(cx, cy, 19, 9)
+    g.fillStyle(CLAIR).fillEllipse(cx, cy - 2, 14, 4)
+    g.fillStyle(TROU).fillEllipse(cx, cy + 1, 9, 5) // le trou
+    g.fillStyle(MOTTE)
+      .fillRect(cx - 10, cy + 3, 2, 2)
+      .fillRect(cx + 9, cy + 2, 2, 2)
+      .fillRect(cx - 6, cy - 5, 2, 1)
+      .fillRect(cx + 5, cy - 5, 2, 1)
+    g.generateTexture('fx-reveil-2', W, H)
+    g.clear()
+
+    // CRAN 3 — LE SOL EST OUVERT. La couronne est ROMPUE (deux brèches) : un anneau plein
+    // lirait comme un puits maçonné ; ce qui vient de céder n'a pas de bord net.
+    g.fillStyle(OMBRE).fillEllipse(cx, cy + 1, 24, 13)
+    g.fillStyle(CORPS).fillEllipse(cx, cy, 22, 12)
+    g.fillStyle(CLAIR).fillEllipse(cx, cy - 3, 17, 5)
+    g.fillStyle(TROU).fillEllipse(cx, cy + 1, 14, 7) // la gueule
+    g.fillStyle(TROU).fillRect(cx - 12, cy + 3, 4, 2).fillRect(cx + 8, cy - 2, 4, 2) // les brèches
+    g.fillStyle(MOTTE)
+      .fillRect(cx - 11, cy + 5, 3, 2)
+      .fillRect(cx + 10, cy + 4, 2, 2)
+      .fillRect(cx - 8, cy - 7, 2, 2)
+      .fillRect(cx + 7, cy - 7, 3, 2)
+      .fillRect(cx - 1, cy - 8, 2, 1)
+    g.generateTexture('fx-reveil-3', W, H)
+    g.clear()
   }
 }

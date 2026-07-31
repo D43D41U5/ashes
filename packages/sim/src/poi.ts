@@ -9,14 +9,14 @@ import { terrainAt, isBlockingTile, type WorldMap, type Zone } from './map'
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
 import { setTile } from './valleygen-primitives'
-import { FAUNA, TERRAIN_ROAD, TERRAIN_SCREE } from './balance'
+import { FAUNA, MORTS, TERRAIN_ROAD, TERRAIN_SCREE } from './balance'
 import { distSq } from './geometry'
 import { type CarveField, carveDistanceToMain, walkableComponents } from './connectivity'
 
 // ids terrain (balance.ts) — repris localement pour lisibilité de la table.
 const SCREE = 9, ROCK = 5, SNOW = 10, BOULDERS = 16, GLACIER = 15, BURNT = 21, PEAT = 18, REED = 19,
   AL_MEADOW = 12, AL_FLOWERS = 20, OLD_GROWTH = 22, HEATH = 11, PINE = 13, FLOWER = 17,
-  FOREST = 3, GRASS = 1
+  FOREST = 3, GRASS = 1, MARSH = 8, LARCH = 14
 
 export interface PoiType {
   slug: string
@@ -68,6 +68,19 @@ export interface PoiType {
    * `cap: 1` rendait bel et bien 2 exemplaires sur une carte de production (attrapé par un test).
    */
   unique?: boolean
+  /**
+   * CE TYPE A SON PROPRE SEMIS — il ne joue PAS la loterie des lieux (spec `cendreux.md` R20).
+   *
+   * Le tirage général est adressé par ZONE et à SOMME NULLE : le semis borne le total, donc tout
+   * type qui s'y ajoute en affame un autre. Un lieu qui doit se poser *partout* mais *pondéré par
+   * autre chose que sa zone* n'y a donc rien à faire — il affamerait les vingt-six autres, et son
+   * abondance serait décidée par un poids qui ne sait rien de ce qui la commande vraiment.
+   *
+   * Un type marqué ainsi est invisible à `candidatesFor` et à `reserveCharged` : la loterie est
+   * BIT À BIT celle d'avant (une garde le vérifie). Il se pose dans une passe à lui, après elle —
+   * `placeCharniers` pour le seul type qui porte ce drapeau aujourd'hui.
+   */
+  horsSemis?: boolean
   minElev?: number
   maxElev?: number
   footprint: number
@@ -186,6 +199,26 @@ export const POI_TYPES: PoiType[] = [
   { slug: 'repaire', zones: ['brule', 'cendriere'], name: 'le Repaire de Cendrés', family: 'danger', biomes: [BURNT, ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 3, monster: 'cendreux' },
   { slug: 'epave', zones: ['aiguilles', 'glacier'], name: "l'Épave d'avalanche", family: 'danger', biomes: [SCREE, BOULDERS], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 2 },
   { slug: 'fondriere', zones: ['tourbiere', 'lac_mort'], name: 'la Fondrière', family: 'danger', biomes: [PEAT, REED], weight: 3, cap: 3, reserve: 1, footprint: 3 },
+  /**
+   * LE CHARNIER — le pic du champ des morts, rendu VISIBLE (spec `cendreux.md` R20).
+   *
+   * Ni `zones` ni `weight` ni `reserve` : il ne joue pas la loterie (`horsSemis`), donc aucun de
+   * ces trois champs ne le concerne. Son adresse n'est pas une zone, c'est une DENSITÉ — un point
+   * sur quatre accepté dans les Prés Bas, un sur deux dans la ceinture, trois sur quatre aux
+   * marges (`densiteDeBase`). C'est ce qui le met « un peu partout » sans mentir sur où la vallée
+   * a le plus enterré (décision d'Alexis, 2026-07-31).
+   *
+   * SES BIOMES SONT TOUS CEUX OÙ L'ON PEUT CREUSER, la neige et l'éboulis compris — et ce n'est
+   * pas de la générosité, c'est la leçon de R16 mesurée trois fois : le Névé, le Glacier, le
+   * Gouffre et les Aiguilles n'ont QUE de la neige, de l'éboulis et des blocs. Les écarter aurait
+   * vidé de charniers les quatre cinquièmes du tier 2 — le pire sol de la vallée serait le seul
+   * sans fosse. Seule l'eau est exclue : on n'y creuse rien.
+   *
+   * `cap` est large à dessein : ce qui borne le nombre est le SEMIS et le champ, pas un plafond.
+   * Il ne reste ici que comme garde-fou contre une carte dégénérée.
+   */
+  { slug: 'charnier', name: 'le Charnier', family: 'danger', horsSemis: true, weight: 0, cap: 80, footprint: 2,
+    biomes: [GRASS, FOREST, HEATH, FLOWER, AL_MEADOW, AL_FLOWERS, OLD_GROWTH, PINE, LARCH, BURNT, PEAT, REED, MARSH, SCREE, BOULDERS, SNOW] },
   /**
    * LE CHAMP DE CREVASSES — était une LIGNE MORTE (mesuré 2026-07-13) : biome
    * `GLACIER` seul, or le glacier est `walkable: false` et se cache derrière la
@@ -415,7 +448,11 @@ function tropPres(map: WorldMap, tx: number, ty: number, radius: number): boolea
 function candidatesFor(
   map: WorldMap, field: CarveField, tx: number, ty: number, used: Map<string, number>, zoneDe?: ZoneLookup,
 ): PoiType[] {
-  return POI_TYPES.filter((t) => isEligible(map, field, t, tx, ty, used, zoneDe))
+  // `horsSemis` D'ABORD, et pas seulement par économie : le tirage pondéré retombe sur
+  // `cands[cands.length - 1]` quand la somme des poids ne couvre pas le tirage, donc un type de
+  // poids 0 laissé dans la liste FINIRAIT par être choisi. Le drapeau doit l'écarter ici, à la
+  // source — une garde le vérifie sur toute la table.
+  return POI_TYPES.filter((t) => t.horsSemis !== true && isEligible(map, field, t, tx, ty, used, zoneDe))
 }
 
 /**
@@ -493,6 +530,7 @@ function reserveCharged(
   // Ordre déterministe : celui de POI_TYPES. Les premiers servis ont priorité
   // sur les points contestés — c'est la table qui arbitre, pas le hasard.
   for (const t of POI_TYPES) {
+    if (t.horsSemis === true) continue // il a son propre semis : il ne réserve rien ici
     const want = Math.min(t.reserve ?? 0, capFor(map, t))
     let got = 0
     for (let i = 0; i < pts.length && got < want; i++) {
@@ -662,8 +700,120 @@ export function placePois(map: WorldMap, seed: number, zoneDe?: ZoneLookup): voi
   }
 }
 
-const ROMANS = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV']
-function roman(n: number): string { return ROMANS[n] ?? String(n) }
+/**
+ * LES CHARNIERS — « là où la densité culmine, on pose un lieu visible » (spec `cendreux.md` R20),
+ * mais posé PARTOUT, en penchant vers les pics (décision d'Alexis, 2026-07-31 : *« une
+ * distribution logique, mais en mettre un peu partout quand même »*).
+ *
+ * ═══ POURQUOI UNE PASSE À PART, ET PAS UNE LIGNE DE PLUS DANS LA TABLE ═══
+ *
+ * La loterie des lieux est adressée par ZONE et à SOMME NULLE. Un charnier adressé au tier 2 y
+ * aurait été juste — MESURÉ, il n'aurait pourtant existé QUE dans la Cendrière à portée du joueur
+ * (513 pas de marche), les cinq autres zones de tier 2 étant à 2 166-3 360 pas. Et adressé
+ * partout, il aurait affamé les vingt-six autres types. Son adresse n'est ni une zone ni un
+ * biome : c'est une DENSITÉ, celle-là même que la nuit lit pour savoir combien de morts dorment
+ * ici. D'où un semis à lui, comme `placeHuntingGrounds` en a un.
+ *
+ * ═══ UN QUOTA PAR ZONE, ET NON UN TIRAGE PAR POINT (R16) ═══
+ *
+ * La première version acceptait chaque point avec une probabilité égale à sa densité. C'était
+ * juste en espérance et FAUX en pratique — MESURÉ sur la seed du jeu : les Prés Bas ne recevaient
+ * **aucun charnier**. Leurs quatorze points de semis étaient tous éligibles (plain-pied, bon
+ * biome, loin de tout lieu) ; ils avaient simplement tous raté un tirage à 0,25, ce qui arrive
+ * une fois sur cinquante-cinq. Zéro charnier là où le joueur habite, c'est l'interrupteur
+ * déguisé que R16 interdit — et la quatrième fois que la géographie rend le jeu muet chez soi.
+ *
+ * Le quota le rend impossible PAR CONSTRUCTION plutôt que par chance : chaque zone reçoit
+ * `somme des densités de ses points`, arrondi, avec un **plancher de `CHARNIER_MIN_PAR_ZONE`**.
+ * C'est exactement `rodeursPortes` (plafond × densité, borné par `MIN_RODEURS`) transposé au
+ * placement — la même idée, appliquée au même champ, une fois de plus.
+ *
+ * Le quota répare aussi le silence des rejets : un point écarté (route, biome, empreinte d'un
+ * autre lieu) ne consomme plus le quota, on descend la liste. Une zone difficile reçoit donc
+ * autant qu'une zone facile, ce qui est le sens du mot.
+ *
+ * ═══ PUR, ET SANS FLUX ═══
+ *
+ * Aucun tirage n'est consommé : le mélange (`shuffled`) est un Fisher-Yates déterministe, et
+ * c'est lui qui décide QUELS points d'une zone servent — spatialement neutre, reproductible.
+ * Deux cartes de même seed portent les mêmes charniers.
+ *
+ * ═══ ET UNE CARTE SANS ZONES GARDE SON COMPORTEMENT (R17) ═══
+ *
+ * `zoneDe` absent, tout tombe dans un groupe unique de densité plancher : la carte reçoit son
+ * quota uniforme, sans géographie. Même précédent que `zoneTierAt` qui rend 0.
+ *
+ * ═══ IL NE PERCE RIEN ═══
+ *
+ * Contrairement aux lieux du semis, un charnier exige d'être DE PLAIN-PIED sur le monde
+ * (`field.dist === 0`) au lieu de percer son seuil : une fosse n'a pas de porte, et surtout la
+ * passe ne doit modifier AUCUNE tuile — la carte reste bit à bit celle d'avant, en dehors des
+ * zones ajoutées. C'est ce qui rend la garde de non-régression possible.
+ */
+export function placeCharniers(
+  map: WorldMap,
+  seed: number,
+  densite: (tx: number, ty: number) => number,
+  zoneDe?: ZoneLookup,
+): void {
+  const t = POI_TYPES.find((p) => p.slug === 'charnier')
+  if (!t) return
+  const field = carveDistanceToMain(map, walkableComponents(map), POI_PLACEMENT.MAX_CARVE_TILES)
+  const pts = shuffled(poissonPoints(map.width, map.height, seed ^ 0x43484152 /* 'CHAR' */, MORTS.CHARNIER_ESPACEMENT), seed)
+
+  // UN GROUPE PAR ZONE. L'ordre d'insertion d'une Map suit celui de `pts`, déjà mélangé de façon
+  // déterministe : l'ordre des groupes ne dépend donc ni du hasard, ni de la géométrie.
+  const groupes = new Map<string, { x: number; y: number }[]>()
+  for (const p of pts) {
+    const cle = zoneDe?.(Math.floor(p.x), Math.floor(p.y)) ?? ''
+    const g = groupes.get(cle)
+    if (g) g.push(p)
+    else groupes.set(cle, [p])
+  }
+
+  const used = new Map<string, number>()
+  for (const groupe of groupes.values()) {
+    // LE QUOTA — la somme des densités, pas la moyenne fois le compte : si le champ gagne un jour
+    // un terme qui varie DANS une zone, la formule tient toujours.
+    let somme = 0
+    for (const p of groupe) somme += densite(Math.floor(p.x), Math.floor(p.y))
+    const quota = Math.max(MORTS.CHARNIER_MIN_PAR_ZONE, Math.round(somme))
+
+    let poses = 0
+    for (const p of groupe) {
+      if (poses >= quota) break
+      const tx = Math.floor(p.x)
+      const ty = Math.floor(p.y)
+      // De plain-pied sur le monde : ni percement, ni poche murée (voir l'en-tête).
+      if (field.dist[ty * map.width + tx] !== 0) continue
+      // Pas DANS l'empreinte d'un autre lieu — mais le voisinage est permis, et c'est voulu : un
+      // charnier au pied des Ruines est une histoire. L'écart entre charniers, lui, est déjà tenu
+      // par le semis de Poisson ; ce rayon-ci ne le borne jamais.
+      if (tropPres(map, tx, ty, MORTS.CHARNIER_ECART_LIEU)) continue
+      if (!isEligible(map, field, t, tx, ty, used, zoneDe)) continue
+      placeOne(map, field, t, tx, ty, used)
+      poses += 1
+    }
+  }
+}
+
+/**
+ * Le numéro d'un lieu, en chiffres romains. La table figée s'arrêtait à XIV et retombait sur des
+ * chiffres arabes au-delà — inoffensif tant qu'aucun type ne dépassait quatorze exemplaires, ce
+ * que les charniers font (leur plafond est large à dessein). Rend l'identique de I à XIV.
+ */
+const ROMANS: readonly (readonly [number, string])[] = [
+  [1000, 'M'], [900, 'CM'], [500, 'D'], [400, 'CD'], [100, 'C'], [90, 'XC'],
+  [50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I'],
+]
+function roman(n: number): string {
+  let reste = n
+  let out = ''
+  for (const [valeur, signe] of ROMANS) {
+    while (reste >= valeur) { out += signe; reste -= valeur }
+  }
+  return out
+}
 
 /**
  * Tuiles marchables de l'empreinte de la zone [z.x, z.x+z.w) × [z.y, z.y+z.h).

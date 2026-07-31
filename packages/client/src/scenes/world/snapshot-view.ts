@@ -32,7 +32,7 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@ashes/sim'
-import { fireStateAt, type WorldMap } from '@ashes/sim'
+import { fireStateAt, terrainAt, type WorldMap } from '@ashes/sim'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
 import { windSway } from '../../render/wind'
@@ -55,12 +55,12 @@ import {
   TILE_PX,
   type ActorFootprint,
 } from '../../render/framing'
-import { ancrageHouppierPx, houppierLargeur, hauteurTuiles, TOUTES_VARIANTES, VARIANTES } from '../../render/arbre-art'
+import { ancrageHouppierPx, cleHouppier, houppierLargeur, hauteurTuiles, TOUTES_VARIANTES, VARIANTES } from '../../render/arbre-art'
 
 /** Le débord de fenêtre, en TUILES : la hauteur du plus haut arbre de la table. Dérivé une fois
  *  au chargement — un arbre qui grandit l'emporte avec lui, sans qu'on ait à y penser. */
 const MARGE_CIMES = Math.ceil(Math.max(...TOUTES_VARIANTES.map((v) => hauteurTuiles(v.mesures))))
-import { varianteArbre } from '../../render/arbre-peuplement'
+import { cimeDe, varianteArbre } from '../../render/arbre-peuplement'
 import { warmthColor } from '../../render/lighting'
 import { LIT_NODE_TYPES } from '../../render/lit-props'
 import { BATI_LIT_TYPES, COUPE_DE, EDGE_ORIGIN_Y } from '../../render/bati-art'
@@ -70,6 +70,7 @@ import { LIT_STRUCTURE_TYPES } from '../../render/lit-structures'
 import { shakeOffset, type HitFx } from './hit-fx'
 import type { RecolteFx } from './recolte-fx'
 import type { ChuteArbre } from './chute-arbre'
+import type { ReveilFx } from './reveil-fx'
 import { createContactShadow, positionShadow, SHADOW_ALPHA } from './contact-shadow'
 import { riveAt, type RiveField } from '../../render/water-field'
 
@@ -113,7 +114,10 @@ const ACTOR_FOOTPRINTS: Record<string, ActorFootprint & { facesRight?: boolean }
   'spr-player_lit': { widthTiles: 0.75, heightTiles: 1.5 }, // même emprise que la version peinte
   'spr-npc': { widthTiles: 0.75, heightTiles: 1.5 },
   'spr-npc_lit': { widthTiles: 0.75, heightTiles: 1.5 },
-  'spr-zombie': { widthTiles: 0.75, heightTiles: 1.5 },
+  // Le Cendreux : une silhouette d'HOMME, parce que c'en était un — c'est tout le lore.
+  // Il n'avait aucune emprise déclarée et tombait donc sur le repli, alors qu'il hérite du
+  // rôle du zombie (spec `cendreux.md` R1) : même gabarit que celui qu'il remplace.
+  'spr-cendreux': { widthTiles: 0.75, heightTiles: 1.5 },
   // Le gibier (spec faune) : sa TAILLE est la première information, et sa
   // POSTURE est la seconde (R9bis/C19) — tête au sol elle broute, tête dressée
   // elle a vu quelque chose, corps tendu elle fuit. Le lapin rase le sol, le
@@ -153,7 +157,6 @@ const SAPLING_WIND_TAKE = 0.4
 /** Chaque type de monstre a sa texture — exhaustif, donc un nouveau type ne
  * peut pas se glisser dans le monde déguisé en sanglier. */
 const MONSTER_TEXTURES: Record<MonsterType, string> = {
-  zombie: 'spr-zombie',
   cendreux: 'spr-cendreux',
   boar: 'spr-boar',
   deer: 'spr-deer',
@@ -460,6 +463,9 @@ export class SnapshotView {
   private recolteFx?: RecolteFx
   /** LES ARBRES QUI S'ABATTENT (G15). Posée par WorldScene, comme la gerbe. */
   private chuteArbre?: ChuteArbre
+  /** LE SOL QUI TRAVAILLE et le corps qui s'en extrait (spec `cendreux.md` R21/R22). Posé
+   *  par WorldScene ; `syncActor` lui demande l'enfouissement de chaque acteur. */
+  private reveilFx?: ReveilFx
   /**
    * LES NŒUDS MORTS CETTE FRAME, à leur ANCIENNE tuile — la seule que la dérive va leur
    * prendre, et donc la seule où l'animation a un sens. Consignés par `applyNodeDeltas`
@@ -483,6 +489,18 @@ export class SnapshotView {
 
   setChuteArbre(fx: ChuteArbre): void {
     this.chuteArbre = fx
+  }
+
+  /**
+   * LE SOL QUI TRAVAILLE (spec `cendreux.md` R21). Posé par WorldScene, comme la gerbe.
+   *
+   * On lui branche aussitôt son accès au TERRAIN : ce qui sort du trou dépend de ce qu'il y a
+   * sous les pieds, et la carte ne vit que dans cette vue (`setPeuplement`). Sans carte, `null`
+   * — la terre nue, jamais une couleur devinée : un banc headless ne peint pas un sol faux.
+   */
+  setReveilFx(fx: ReveilFx): void {
+    this.reveilFx = fx
+    fx.setTerrainSous((x, y) => (this.carte !== null ? terrainAt(this.carte, Math.floor(x), Math.floor(y)) : null))
   }
   nodes: ResourceNode[] = []
   corpses: Corpse[] = []
@@ -559,6 +577,9 @@ export class SnapshotView {
   private bloodPool: Phaser.GameObjects.Image[] = []
   /** Les terriers de lapin (C16), poolés. */
   private burrowPool: Phaser.GameObjects.Image[] = []
+  /** LES SOLS QUI TRAVAILLENT (spec `cendreux.md` R21) : les tertres, poolés comme les
+   *  terriers — même couche, même problème (une poignée de trous à même le sol). */
+  private reveilPool: Phaser.GameObjects.Image[] = []
   /** Les piles jetées au sol (C18). */
   private groundSprites = new Map<number, Phaser.GameObjects.Image>()
   /** Relief continu (Task 3) — soulève chaque billboard du sol sous ses pieds. */
@@ -630,6 +651,10 @@ export class SnapshotView {
     this.blood = msg.blood
     this.wind = msg.wind
     this.groundItems = msg.groundItems
+    // LES SOLS QUI TRAVAILLENT (spec `cendreux.md` R21) : le snapshot les portait déjà et
+    // le client les jetait. Ils se recalent sur l'horloge du RENDU ici, une fois par
+    // message ; la rampe, elle, avance à chaque frame (voir `reveil-fx`).
+    this.reveilFx?.suivre(msg.reveils, msg.tick, now)
     // La position (autoritative) de l'avatar local — le FADE des toits en dépend (R24).
     const self = msg.entities.find((e) => e.id === playerId)
     this.syncStructures(msg.structures, self ? { x: self.x, y: self.y } : undefined)
@@ -716,6 +741,40 @@ export class SnapshotView {
     for (let i = used; i < this.burrowPool.length; i++) this.burrowPool[i]!.setVisible(false)
   }
 
+  /**
+   * LE SOL QUI TRAVAILLE (spec `cendreux.md` R14/R21) — le tertre qui enfle et se fend.
+   *
+   * C'est la MOITIÉ VISIBLE du préavis que R22 achète en rapprochant le mort à sept tuiles.
+   * Sans elle, le Cendreux poppait : la sim tenait ses quatre secondes, l'écran n'en montrait
+   * aucune.
+   *
+   * Poolé et trié comme les terriers, une marche PLUS BAS qu'eux : c'est le trou d'où sort le
+   * corps, il doit passer sous lui — et le corps, lui, est trié avec les acteurs. Le tertre
+   * ne se peint donc jamais par-dessus ce qu'il laisse sortir.
+   */
+  renderReveils(now: number): void {
+    let used = 0
+    for (const m of this.reveilFx?.monticules(now) ?? []) {
+      let g = this.reveilPool[used]
+      if (!g) {
+        g = this.scene.add.image(0, 0, 'fx-reveil-0').setOrigin(0.5, 0.5)
+        this.reveilPool[used] = g
+      }
+      const lift = this.warp?.lift(m.x, m.y) ?? 0
+      g.setTexture(`fx-reveil-${m.stade}`)
+      g.setPosition(m.x * TILE_PX, m.y * TILE_PX - lift)
+      g.setDepth(corpseDepth(m.y, TILE_PX) - 3) // sous les terriers, sous les gouttes, sous tout
+      g.setScale(m.echelle)
+      g.setAlpha(m.alpha)
+      // LA TERRE EST CELLE DU SOL : la texture est peinte en VALEURS, la teinte lui donne
+      // sa matière. C'est ce qui fait qu'un réveil dans la neige soulève de la neige.
+      g.setTint(m.teinte)
+      g.setVisible(true)
+      used++
+    }
+    for (let i = used; i < this.reveilPool.length; i++) this.reveilPool[i]!.setVisible(false)
+  }
+
   /** LES PILES AU SOL (C18) : ce qu'on a jeté existe, et ça se voit. */
   private syncGroundItems(): void {
     const seen = new Set<number>()
@@ -745,9 +804,13 @@ export class SnapshotView {
    *  retard (fluide, ~0 latence) ; multi : ~100 ms (absorbe la gigue réseau). */
   interpolate(now: number): void {
     const target = now - this.interpDelayMs
-    for (const o of this.others.values()) {
+    for (const [id, o] of this.others) {
       const p = sampleAt(o.buffer, target) ?? latest(o.buffer)
-      this.syncActor(o.sprite, p.x, p.y, o.textureKey, o.crouch)
+      // L'EXTRACTION SE PEINT ICI et nulle part ailleurs : c'est le seul passage qui repasse
+      // sur chaque acteur À CHAQUE FRAME. La rampe de sortie est en millisecondes (elle dure
+      // moins d'une seconde), la rendre au rythme des snapshots l'aurait fait monter par
+      // marches de trois images.
+      this.syncActor(o.sprite, p.x, p.y, o.textureKey, o.crouch, this.reveilFx?.enfouissementDe(id, now) ?? 0)
     }
   }
 
@@ -756,8 +819,20 @@ export class SnapshotView {
    * déduite de la texture. `setDisplaySize` dépend de la frame courante : le
    * rappeler ici, chaque frame, couvre aussi les changements de texture.
    * `crouch` (spec chasse C19) : la silhouette se TASSE, les pieds ne bougent pas
-   * (origine (0.5, 1)) — le tri en profondeur et l'emprise logique non plus. */
-  syncActor(sprite: Phaser.GameObjects.Image, x: number, y: number, textureKey: string, crouch = false): void {
+   * (origine (0.5, 1)) — le tri en profondeur et l'emprise logique non plus.
+   *
+   * `enfoui` (spec `cendreux.md` R21/R22) : la part de sa hauteur encore SOUS TERRE, pendant
+   * qu'un Cendreux s'extrait du sol. Même géométrie exactement que l'immersion dans l'eau,
+   * et c'est délibéré : un corps qui entre dans l'eau et un corps qui sort de terre se
+   * découpent pareil — on ne lui apprend pas une deuxième règle. */
+  syncActor(
+    sprite: Phaser.GameObjects.Image,
+    x: number,
+    y: number,
+    textureKey: string,
+    crouch = false,
+    enfoui = 0,
+  ): void {
     const footprint = ACTOR_FOOTPRINTS[textureKey] ?? DEFAULT_FOOTPRINT
     const p = actorPlacement(x, y, footprint, TILE_PX, BALANCE.AVATAR_HITBOX_DEPTH_TILES)
     const feetY = y + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
@@ -776,7 +851,15 @@ export class SnapshotView {
     // lapin y disparaît presque, le cerf y trempe les pattes, l'avatar y entre aux genoux —
     // la taille de chacun raconte la profondeur. L'eau est rendue SOUS les acteurs
     // (WATER_DEPTH < 0) : la découpe RÉVÈLE la nappe, aucun raccord à faire.
-    const coupe = immersion > 0.02 ? Math.min(7 * immersion, displayH * 0.45) : 0
+    const coupeEau = immersion > 0.02 ? Math.min(7 * immersion, displayH * 0.45) : 0
+    // ═══ ET LE CORPS QUI SORT DE TERRE (spec `cendreux.md` R21/R22) ═══
+    // Le MAX, jamais la somme : l'eau et la terre décrivent toutes deux « à partir d'où le
+    // corps est caché », pas deux enfouissements à cumuler. Les additionner aurait fait
+    // disparaître sous le sol un Cendreux qui sort les pieds dans une mare.
+    // Et la coupe de terre est une FRACTION de la hauteur, pas des pixels constants comme
+    // l'eau : l'eau a UNE profondeur (chaque bête y trempe selon sa taille), la terre les
+    // recouvre TOUS entièrement — c'est ce qui doit rester vrai du lapin au cerf.
+    const coupe = Math.max(coupeEau, displayH * enfoui)
     // Le corps descend de la coupe (+2 px d'enfoncement) : la ligne de flottaison est aux pieds.
     sprite.setPosition(p.px, p.py - lift + coupe + 2 * immersion)
     sprite.setDepth(p.depth)
@@ -797,7 +880,10 @@ export class SnapshotView {
     const shadow = sprite.getData('shadow') as Phaser.GameObjects.Image | undefined
     if (shadow) {
       positionShadow(shadow, p.px, p.py, p.displayW, p.depth)
-      shadow.setAlpha(SHADOW_ALPHA * (1 - immersion))
+      // ELLE SE FOND AUSSI SOUS TERRE. Sans `enfoui` ici, un corps encore aux trois quarts
+      // enfoui projetait l'ombre de contact d'un CORPS ENTIER autour du tertre — une ombre
+      // pleine sous une tête qui perce, et le trou perdait toute sa profondeur.
+      shadow.setAlpha(SHADOW_ALPHA * (1 - Math.max(immersion, enfoui)))
     }
     this.syncFlottaison(sprite, p.px, p.py - lift, p.displayW, p.depth, immersion)
     // LES ÉVÉNEMENTS D'EAU (R3/R7) : la gerbe au franchissement, les pas mouillés en sortant.
@@ -878,7 +964,11 @@ export class SnapshotView {
         const sprite = this.scene.add.image(0, 0, 'spr-npc').setOrigin(0.5, 1)
         const shadow = createContactShadow(this.scene)
         sprite.setData('shadow', shadow) // `syncActor` la retrouve par là
-        this.syncActor(sprite, entity.x, entity.y, 'spr-npc')
+        // L'ENFOUISSEMENT DÈS LA PREMIÈRE POSE. Un Cendreux qui sort du sol NAÎT ici — c'est
+        // le snapshot de son émergence qui crée son sprite — et le poser à pleine hauteur
+        // pour se reposer sur `interpolate` à la frame suivante ferait dépendre la géométrie
+        // d'un ordre d'appels. Elle doit être juste par construction.
+        this.syncActor(sprite, entity.x, entity.y, 'spr-npc', false, this.reveilFx?.enfouissementDe(entity.id, now) ?? 0)
         record = { sprite, shadow, textureKey: 'spr-npc', crouch: false, buffer: [{ at: now, x: entity.x, y: entity.y }] }
         this.others.set(entity.id, record)
       }
@@ -918,6 +1008,10 @@ export class SnapshotView {
         ;(o.sprite.getData('flottaison') as Phaser.GameObjects.Image | undefined)?.destroy()
         o.sprite.destroy()
         this.others.delete(id)
+        // Abattu ou dissipé pendant qu'il s'extrayait : son extraction n'a plus de corps.
+        // Sans cet oubli, l'id resterait dans la table jusqu'à ce que sa rampe expire — et
+        // un id d'entité se recycle.
+        this.reveilFx?.oublier(id)
       }
     }
   }
@@ -1431,7 +1525,7 @@ export class SnapshotView {
             const m = variante.mesures
             this.recolteFx?.feuillage(
               n.id, coup.at, now,
-              `nd-${variante.slug}_crown${litTree ? '_lit' : ''}`,
+              cleHouppier(variante.slug, litTree, cimeDe(n.tx, n.ty)),
               // La HAUTEUR d'où les feuilles tombent suit la hauteur du houppier ; leur
               // dispersion suit sa LARGEUR, qui n'est plus la même depuis `houppierW` (le saule
               // et le parasol du vieux pin sont plus larges que hauts). Les feuilles d'un saule
@@ -1476,14 +1570,18 @@ export class SnapshotView {
         const mesures = variante.mesures
         let crown = this.crownPool[crownsUsed]
         if (!crown) {
-          crown = this.scene.add.image(0, 0, `nd-${variante.slug}_crown`).setOrigin(0.5, 1)
+          crown = this.scene.add.image(0, 0, cleHouppier(variante.slug, false, 0)).setOrigin(0.5, 1)
           this.crownPool[crownsUsed] = crown
         }
         // LE POOL RÉUTILISE LES SPRITES : la texture doit être reposée à CHAQUE image, sinon un
         // houppier de gros bois se retrouve sur un arbre ordinaire (et l'inverse) selon l'ordre
         // dans lequel le pool a été servi. Le tronc le faisait déjà ; le houppier, non.
         // Albédo UNIFORME `_lit` quand éclairé (relief calculé par la normal map cubique).
-        crown.setTexture(`nd-${variante.slug}_crown${this.lighting ? '_lit' : ''}`)
+        // LA CIME EST TIRÉE DE LA TUILE, comme la variante : cinq par type d'arbre depuis le
+        // 2026-07-30, sinon une futaie pure remontre douze fois la même au pixel près. Sur la
+        // tuile ENTIÈRE du nœud (`n.tx`), jamais sur les coordonnées tressaillées — celles-ci
+        // sont fractionnaires, et deux consommateurs du même arbre en tireraient deux cimes.
+        crown.setTexture(cleHouppier(variante.slug, this.lighting, cimeDe(n.tx, n.ty)))
         crown.setLighting(this.lighting) // pooled : réarmé chaque frame (cf. le tronc)
         // L'ANCRAGE SE DÉRIVE, il ne s'écrit plus. C'était `py − 16` pour LES DEUX arbres alors
         // que leurs fûts n'ont pas la même hauteur : le houppier mordait 6 px sur l'un et 8 sur
@@ -1543,7 +1641,7 @@ export class SnapshotView {
         const variante = this.carte !== null
           ? varianteArbre(this.carte, e.tx, e.ty, this.worldSeed, e.type === 'old_tree')
           : VARIANTES[e.type === 'old_tree' ? 'old_tree' : 'tree']!
-        this.chuteArbre?.tomber(px, py, variante, this.lighting, dir.dx, dir.dy, now)
+        this.chuteArbre?.tomber(px, py, variante, this.lighting, dir.dx, dir.dy, now, cimeDe(e.tx, e.ty))
       } else {
         // LA PIERRE S'EFFONDRE, LE VÉGÉTAL LÂCHE SES FEUILLES : une gerbe à 360°, de la
         // couleur du nœud — la même texture que celle qu'il affichait, donc la même

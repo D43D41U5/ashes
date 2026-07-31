@@ -624,6 +624,51 @@ export function assiseHouppier(v: VarianteArbre): { bas: number; requis: number 
 }
 
 /**
+ * COMBIEN DE CIMES PAR TYPE D'ARBRE (demande d'Alexis, 2026-07-30 : « il faut prévoir 5
+ * houppiers différents pour chaque type d'arbre »).
+ *
+ * Le peuplement avait déjà réglé le même problème un cran plus haut : *« un seul sprite pour
+ * tous les arbres ordinaires de la carte : douze exemplaires par écran, identiques au pixel
+ * près — ça ne fait pas un bois, ça fait une grille »*. Les variantes ont cassé la grille entre
+ * ESPÈCES ; il restait celle qui se voit dans une futaie pure, où douze hêtres portent la même
+ * cime. Cinq cimes par variante, tirées du même champ de feuillage avec cinq graines.
+ */
+export const CIMES_PAR_ARBRE = 5
+
+/**
+ * LA CLÉ D'UNE CIME — et elle est CENTRALISÉE parce que trois consommateurs la construisaient
+ * chacun de son côté : l'arbre debout (`snapshot-view`), l'arbre qui s'abat (`chute-arbre`) et
+ * les feuilles qui en tombent (`recolte-fx`). Trois écritures d'une même clé, et un arbre
+ * changerait de cime EN TOMBANT.
+ *
+ * L'art PEINT (hors éclairage) n'a qu'une cime : il est composé de rects, pas du champ de
+ * feuillage, et c'est le chemin de repli — le jeu tourne éclairé.
+ */
+export function cleHouppier(slug: string, lit: boolean, cime: number): string {
+  return lit ? `nd-${slug}_crown_lit-${cime}` : `nd-${slug}_crown`
+}
+
+/**
+ * L'ASSISE — la zone par laquelle la cime REPOSE sur le fût, et qu'aucune découpe n'a le droit
+ * d'ajourer (spec da-feeling §8 bis ; le feuillage creuse le contour, `feuillage.ts`).
+ *
+ * Elle se DÉDUIT des deux mesures qui existent déjà — la colonne du fût et le recouvrement — au
+ * lieu d'être un troisième nombre à tenir à jour : c'est la leçon du 2026-07-28, où la hauteur
+ * d'un arbre vivait en trois exemplaires dans deux fichiers et avait dérivé. Sa largeur est celle
+ * de la colonne élargie d'un pixel de part et d'autre (le feuillage mord un peu sur le tronc),
+ * et elle couvre la bande basse que `assiseHouppier` exige d'atteindre.
+ */
+export function assiseDe(v: VarianteArbre): (x: number, y: number) => boolean {
+  const W = houppierLargeur(v.mesures)
+  const H = v.mesures.houppierS
+  const demi = v.mesures.colonneW / 2 + 1
+  const x0 = W / 2 - demi
+  const x1 = W / 2 + demi
+  const haut = H - v.mesures.recouvrementPx - 2 // la bande basse, seuil de `assiseHouppier` inclus
+  return (x, y) => y >= haut && x >= x0 && x < x1
+}
+
+/**
  * Les rects PEINTS du fût d'une variante. Même géométrie que `futRects` (arêtes à 0,4 et 0,22 de
  * la colonne, cœur en bout quand la famille en déclare un) — mais lue sur la variante, pour que
  * le bouleau ait son fût pâle et le saule le sien sans qu'aucun appelant ne le sache.

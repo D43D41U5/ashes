@@ -1,9 +1,12 @@
 /**
- * Les monstres — zombie et sanglier (spec combat R11-R12).
+ * Les monstres — aiguillage d'IA par espèce, et les outils que toutes partagent
+ * (`moveToward`, `nearestPrey`, le champ de flux des hordes, le coup porté à ce qui barre).
  *
- * Le zombie est l'école de guerre : lent, télégraphié long, on apprend à
- * lire les wind-ups contre lui. Le sanglier est la chasse : neutre, fuit,
- * charge parfois blessé. IA dans /sim, aléa via le PRNG de la sim.
+ * Le CENDREUX est l'école de guerre : lent, télégraphié long, on apprend à lire les wind-ups
+ * contre lui — et depuis qu'il a absorbé le zombie (spec `cendreux.md` R1), c'est le seul
+ * mort-vivant du monde ; son IA vit dans `cendreux.ts`. Le sanglier est la chasse : neutre,
+ * fuit, charge parfois blessé. Le gibier et le loup vivent dans `faune.ts`. IA dans /sim,
+ * aléa via le PRNG de la sim.
  */
 import { BALANCE, COMBAT, FAUNA, HUNT, MONSTER_DEFS, NODE_DEFS, TICK_DT_S, type MonsterType } from './balance'
 // Type seul : `economy` importe `monsters`, un import de valeur fermerait le cycle.
@@ -11,7 +14,6 @@ import type { ResourceNode } from './economy'
 import { startAttack } from './combat'
 import { moveAvatar } from './collision'
 import { distSq } from './geometry'
-import { rngRoll } from './rng'
 import { spawnEntity, type Entity, type SimState } from './sim'
 import { computeFlowField } from './pathfinding'
 import { structureBlocks } from './village'
@@ -51,6 +53,14 @@ export interface Monster {
    * brisé quelque chose. Un rôdeur de nuit, lui, n'a pas été croisé : il a été ENVOYÉ.
    */
   nightHunter?: boolean
+  /**
+   * POUR QUI il a été envoyé (spec `cendreux.md` R11). Distinct de `targetId`, qui est la
+   * cible VOLATILE que l'IA se redonne à chaque tick de décision : le Cendreux, lui, réécrit
+   * la sienne toutes les demi-secondes (une proie en vue, sinon un feu), si bien que compter
+   * les rôdeurs d'une proie sur `targetId` aurait rendu un nombre qui clignote — et un
+   * plafond qui ne plafonne rien. Posé à la naissance, jamais retouché.
+   */
+  huntTargetId?: number
   /** Tick où la fuite a commencé — cadence les à-coups (-1 = ne fuit pas). */
   fleeSince: number
   /**
@@ -200,18 +210,58 @@ export interface Monster {
    * son lieu la fait revenir. Absent = bête ambiante ou posée à la main.
    */
   homePoi?: number
+  /**
+   * ELLE N'A PLUS DE RAISON D'ÊTRE LÀ après ce tick (absent = elle reste).
+   *
+   * Posé sur les gardes d'une carcasse de convoi, qui n'appartiennent pas au monde mais à
+   * un ÉVÉNEMENT : la carcasse décante au bout de `CONVOY_DECAY_TICKS`, ses gardes doivent
+   * partir avec elle. Sans ça c'était une fuite pure — `spawnConvoy` posait deux gardes tous
+   * les deux jours de saison et **rien ne les retirait jamais** : MESURÉ, la vallée passait
+   * de 5 à 39 Cendreux au jour 36, puis 75 en fin de saison, par ce seul canal.
+   *
+   * Le retrait n'a jamais lieu SOUS LES YEUX de quelqu'un (`DEN_SPAWN_CLEARANCE`) : une bête
+   * qui s'évapore devant vous, c'est le décor qui avoue — la règle exacte que `advanceDens`
+   * applique déjà au sens inverse (on ne fait pas non plus naître une bête devant témoin).
+   */
+  expiresAt?: number
+  /**
+   * IL EST NÉ D'UN CADAVRE (spec `cendreux.md` R8). Seuls ces Cendreux-là comptent dans
+   * `CENDREUX.MAX_ALIVE` : le plafond existe pour borner la CONTAGION, pas pour recompter des
+   * populations que leurs propres systèmes bornent déjà (les Repaires ont leur `cap`, les
+   * hordes leur `HORDE_SIZE` et leur dissipation à l'aube).
+   *
+   * MESURÉ sans cette distinction : la vallée comptait 24 Cendreux dès le jour 21 — le
+   * plafond — rien qu'avec les Repaires et les gardes de convoi, et la levée qu'on venait
+   * d'ouvrir se refermait pour les deux tiers de la saison.
+   */
+  risen?: true
 }
 
-export function spawnMonster(state: SimState, type: MonsterType, x: number, y: number): number {
+export function spawnMonster(
+  state: SimState,
+  type: MonsterType,
+  x: number,
+  y: number,
+  /**
+   * Sac EXCEPTIONNEL, en cases. Un seul appelant s'en sert : la levée (`cendreux.ts`), pour
+   * le Cendreux qui hérite du butin d'un cadavre entier. Tous les autres — repaires, hordes,
+   * carcasses de convoi — naissent avec le sac de leur espèce, c'est-à-dire ZÉRO.
+   */
+  sacOverride?: number,
+): number {
   // LE SAC EST DÉCLARÉ PAR ESPÈCE (`MONSTER_DEFS[type].sac`), et il vaut ZÉRO pour cinq
   // espèces sur six. Toutes naissaient avec le sac d'un PNJ (40 cases) pour une seule
   // raison, vraie mais pour UNE bête : le Cendreux levé hérite du butin d'un cadavre
   // entier et ne doit pas en perdre une miette. Les autres ne portent rien — leur butin
   // vient de `MONSTER_DEFS[type].loot`, versé dans le cadavre à la mort (`combat.ts`).
+  // Depuis que le Cendreux fait aussi les HORDES (spec `cendreux.md` R1-R2), « une bête »
+  // ne suffit plus à décrire l'exception : une horde d'acte III en lève 12, la méga-horde 16,
+  // et AUCUN de ces morts-là n'hérite d'un cadavre. Le sac de l'espèce est donc revenu à
+  // ZÉRO, et c'est la levée seule qui demande ses 40 cases (`sacOverride`).
   // MESURÉ, ce détail coûtait cher : un lapin pesait 574 octets de JSON dont 201 pour son
   // sac vide — plus gros que celui d'un humain —, répété pour ~600 bêtes, dans le snapshot
   // de chaque client, vingt fois par seconde.
-  const id = spawnEntity(state, x, y, MONSTER_DEFS[type].sac)
+  const id = spawnEntity(state, x, y, sacOverride ?? MONSTER_DEFS[type].sac)
   const entity = state.entities.find((e) => e.id === id)!
   entity.hp = MONSTER_DEFS[type].hp
   state.monsters.push({
@@ -227,12 +277,6 @@ export function spawnMonster(state: SimState, type: MonsterType, x: number, y: n
     suspicion: 0,
   })
   return id
-}
-
-function roll(state: SimState): number {
-  const { value, next } = rngRoll(state.rngState)
-  state.rngState = next
-  return value
 }
 
 /** Les proies : avatars (joueurs et PNJ), pas les autres monstres. */
@@ -357,7 +401,7 @@ export function moveToward(
  */
 const VOISINS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const
 
-interface CacheFlux {
+export interface CacheFlux {
   /** Un entier par nœud : sa tuile et son caractère bloquant. Voir `signerLesNoeuds`. */
   signature: Int32Array
   /** Le nombre de nœuds au moment de la signature — un ajout ou un retrait invalide. */
@@ -414,7 +458,7 @@ function cacheDeFlux(state: SimState): CacheFlux {
  * meilleure tuile est bouchée par une structure, on la frappe. Retourne
  * true si le monstre appartient à une horde (et a donc agi).
  */
-function hordeStep(state: SimState, monster: Monster, entity: Entity, flux: CacheFlux | null): boolean {
+export function hordeStep(state: SimState, monster: Monster, entity: Entity, flux: CacheFlux | null): boolean {
   const horde = state.hordes.find((h) => h.memberEntityIds.includes(monster.entityId))
   if (!horde) return false
   const village = state.villages.find((v) => v.id === horde.targetVillageId)
@@ -477,7 +521,7 @@ function hordeStep(state: SimState, monster: Monster, entity: Entity, flux: Cach
 }
 
 /** Frappe la structure qui bloque la direction de chasse, s'il y en a une. */
-function attackBlockingStructure(state: SimState, monster: Monster, entity: Entity, tx: number, ty: number): void {
+export function attackBlockingStructure(state: SimState, monster: Monster, entity: Entity, tx: number, ty: number): void {
   const ex = Math.floor(entity.x)
   const ey = Math.floor(entity.y)
   const dx = tx - entity.x
@@ -578,11 +622,12 @@ export function advanceMonsters(state: SimState): void {
   for (const monster of [...state.monsters]) {
     const entity = byId.get(monster.entityId)
     if (!entity) continue
-    const def = MONSTER_DEFS[monster.type]
     if (entity.windup) continue // en train de frapper : immobile
 
     if (monster.type === 'cendreux') {
-      cendreuxStep(state, monster, entity)
+      // Le champ de flux lui est passé : depuis R1/R2 c'est LUI qui fait les hordes, et la
+      // convergence de masse se paie en BFS partagé, jamais en A* par bête (spec R5).
+      cendreuxStep(state, monster, entity, flux)
       continue
     }
 
@@ -596,37 +641,6 @@ export function advanceMonsters(state: SimState): void {
       continue
     }
 
-    if (monster.type === 'zombie') {
-      if (state.tick >= monster.thinkAt) {
-        monster.thinkAt = state.tick + def.thinkEveryTicks
-        const prey = nearestPrey(state, entity, def.aggroRange)
-        monster.targetId = prey?.id ?? null
-        if (!prey && roll(state) < def.wanderChance) {
-          monster.wanderDx = (Math.floor(roll(state) * 3) - 1) as -1 | 0 | 1
-          monster.wanderDy = (Math.floor(roll(state) * 3) - 1) as -1 | 0 | 1
-        }
-      }
-      const target = monster.targetId !== null ? state.entities.find((e) => e.id === monster.targetId) : undefined
-      if (target) {
-        const d2 = distSq(entity.x, entity.y, target.x, target.y)
-        if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
-          if (startAttack(state, entity, target.x - entity.x, target.y - entity.y, { windupTicks: def.windupTicks, damage: def.damage })) {
-            entity.cooldownUntil = state.tick + def.attackCooldownTicks
-          }
-        } else {
-          moveToward(state, monster, entity, target.x, target.y, false)
-          // Bloqué en chasse par une structure (mur, porte) : on la frappe.
-          if (!entity.moved && !entity.windup && state.tick >= entity.cooldownUntil) {
-            attackBlockingStructure(state, monster, entity, target.x, target.y)
-          }
-        }
-      } else if (hordeStep(state, monster, entity, flux)) {
-        // membre de horde sans proie : il coule vers le Feu (flow field)
-      } else if (monster.wanderDx !== 0 || monster.wanderDy !== 0) {
-        moveToward(state, monster, entity, entity.x + monster.wanderDx, entity.y + monster.wanderDy, false)
-      }
-      continue
-    }
   }
 }
 

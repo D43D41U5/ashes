@@ -20,8 +20,8 @@ describe('deathLine — nommer la chute, du vrai flux (P1)', () => {
   it('le Cendreux', () => {
     expect(deathLine(null, 42, 'cendreux')).toBe('Un Cendreux vous a repris.')
   })
-  it('tout autre monstre (zombie…) → abattu', () => {
-    expect(deathLine(null, 42, 'zombie')).toBe('Vous avez été abattu.')
+  it('une bête sans réplique à elle (cerf, lapin…) → abattu', () => {
+    expect(deathLine(null, 42, 'deer')).toBe('Vous avez été abattu.')
   })
   it('un tueur non résoluble (disparu du snapshot) → sans témoin', () => {
     // byEntityId non nul (donc pas un saignement) mais aucun type connu.

@@ -622,9 +622,10 @@ export function die(state: SimState, entity: Entity, byEntityId: number, cause?:
   // Les CASES passent au cadavre (spec inventaire R11), pas un sac reconstruit :
   // sinon la mort réparerait les outils qu'on portait (l'usure vit dans la case).
   for (const slot of entity.inventory) if (slot !== null) addSlot(loot, slot)
-  // La levée des Cendreux (spec 2026-07-08) : mort de froid, seul, loin d'un
-  // feu → le cadavre est marqué et ne décante pas avant la levée.
-  const willRise = !monster && cause === 'cold' && willRiseAsCendreux(state, entity)
+  // La levée des Cendreux (spec `cendreux.md` R6) : mort SEUL et loin d'un feu → le cadavre
+  // est marqué et ne décante pas avant la levée. La cause ne compte plus — elle valait `cold`
+  // seul, ce qui n'ouvrait la porte qu'en acte III et n'a produit qu'une mort par saison.
+  const willRise = !monster && willRiseAsCendreux(state, entity)
   if (willRise) {
     state.corpses.push({
       id: state.nextCorpseId,

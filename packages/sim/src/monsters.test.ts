@@ -10,9 +10,10 @@ import { countOf, isEmpty } from './items'
  * LE SAC D'UNE BÊTE — une bête n'est pas un porteur, et la donnée le dit enfin.
  *
  * Toutes les espèces naissaient avec le sac d'un PNJ (40 cases). La raison écrite était
- * vraie, mais pour UNE seule d'entre elles : le Cendreux levé hérite du butin d'un cadavre
- * entier. Les cinq autres ne portent rien — leur butin vient de `MONSTER_DEFS[type].loot`,
- * versé dans le CADAVRE à la mort.
+ * vraie, mais pour UN seul individu : le Cendreux LEVÉ, qui hérite du butin d'un cadavre
+ * entier. Toutes les bêtes, Cendreux compris, ne portent rien — leur butin vient de
+ * `MONSTER_DEFS[type].loot`, versé dans le CADAVRE à la mort ; et les 40 cases se demandent
+ * à la levée (`sacOverride`), le seul endroit où un cadavre est là pour les remplir.
  *
  * Le prix était MESURÉ : un lapin pesait **574 octets de JSON dont 201 pour son sac vide**,
  * soit un sac plus GROS que celui d'un humain (18 cases, 91 o) — répété pour ~600 bêtes,
@@ -29,10 +30,17 @@ function monde(): SimState {
 const entiteDe = (sim: SimState, id: number): Entity => sim.entities.find((e) => e.id === id)!
 
 describe('le sac des bêtes — déclaré par espèce, et nul pour presque toutes', () => {
-  it('seul le Cendreux porte un sac ; toutes les autres espèces en ont zéro', () => {
+  /**
+   * PLUS AUCUNE ESPÈCE ne porte de sac (spec `cendreux.md` A11, 2026-07-31). Le Cendreux
+   * était la seule exception, et elle est tombée quand il a absorbé le zombie : depuis, une
+   * horde d'acte III en lève 12 et la méga-horde 16, dont AUCUN n'hérite d'un cadavre. Le
+   * sac de 40 cases se demande maintenant à la LEVÉE seule (`spawnMonster(..., SLOTS.NPC)`),
+   * garde vérifiée dans `cendreux.test.ts` — sans quoi c'étaient 12 à 16 inventaires vides
+   * de plus dans chaque snapshot, vingt fois par seconde.
+   */
+  it('aucune espèce ne porte de sac — pas même le Cendreux', () => {
     const porteurs = TYPES.filter((t) => MONSTER_DEFS[t].sac > 0)
-    expect(porteurs).toEqual(['cendreux'])
-    expect(MONSTER_DEFS.cendreux.sac).toBe(SLOTS.NPC) // il doit tenir un cadavre entier
+    expect(porteurs).toEqual([])
   })
 
   it('une bête naît donc les mains vides, sans un octet de sac', () => {
@@ -55,7 +63,7 @@ describe('le sac des bêtes — déclaré par espèce, et nul pour presque toute
     let verifiees = 0
     for (const t of TYPES) {
       const attendu = MONSTER_DEFS[t].loot
-      if (Object.keys(attendu).length === 0) continue // le zombie ne laisse rien
+      if (Object.keys(attendu).length === 0) continue // le Cendreux ne laisse rien (il PORTE)
       const avant = sim.corpses.length
       const bete = entiteDe(sim, spawnMonster(sim, t, 20, 20))
       applyDamage(sim, bete, 9_999, chasseur)
@@ -69,10 +77,16 @@ describe('le sac des bêtes — déclaré par espèce, et nul pour presque toute
     expect(verifiees, 'aucune espèce à butin : le test ne garde rien').toBeGreaterThan(2)
   })
 
-  it("le Cendreux garde de quoi hériter d'un cadavre entier", () => {
-    // C'est LA raison d'être du grand sac : `cendreux.ts` y verse le contenu du cadavre
-    // dont il se lève. Un sac rétréci ferait tomber le butin par terre à chaque levée.
-    expect(MONSTER_DEFS.cendreux.sac).toBeGreaterThanOrEqual(SLOTS.NPC)
+  it("le Cendreux LEVÉ garde de quoi hériter d'un cadavre entier", () => {
+    // C'est LA raison d'être du grand sac : `cendreux.ts` y verse le contenu du cadavre dont
+    // il se lève. Il ne vient plus de l'espèce mais de l'appel — on vérifie donc le CHEMIN
+    // et non la table, sinon la garde ne garde plus rien.
+    const sim = monde()
+    const leve = entiteDe(sim, spawnMonster(sim, 'cendreux', 10, 10, SLOTS.NPC))
+    expect(leve.inventory.length).toBeGreaterThanOrEqual(SLOTS.NPC)
+    // …et celui d'une horde, lui, naît les mains vides.
+    const deHorde = entiteDe(sim, spawnMonster(sim, 'cendreux', 12, 10))
+    expect(deHorde.inventory.length).toBe(0)
   })
 
   it("une bête pèse désormais moins qu'un humain sur le fil (le gain, chiffré)", () => {

@@ -144,6 +144,13 @@ export const DEBUG_KEYMAP = {
   cycleDayNight: ['F3'],
   /** Cadence de l'hôte : ×1 → ×2 → ×4 → ×8 → ×1. */
   cycleSpeed: ['F4'],
+  /**
+   * RÉVEILLER LE SOL à côté de soi (spec `cendreux.md` R21bis).
+   *
+   * F5 est pris par le navigateur (il recharge la page — c'est déjà pour ça que
+   * l'éclairage dynamique n'a pas de touche), donc F6.
+   */
+  reveil: ['F6'],
 } as const
 
 /** La CEINTURE : touches 1-6 → case active 0-5 (spec inventaire R17). */

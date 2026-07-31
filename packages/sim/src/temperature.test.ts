@@ -97,7 +97,7 @@ describe('dérive thermostat', () => {
     const state = createSim(1)
     flatMap(state, 15)
     const e = spawn(state, 5, 5)
-    state.monsters.push({ entityId: e.id, type: 'zombie' } as never)
+    state.monsters.push({ entityId: e.id, type: 'cendreux' } as never)
     const before = e.temperature
     advanceTemperature(state)
     expect(e.temperature).toBe(before)

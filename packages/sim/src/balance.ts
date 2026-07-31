@@ -1366,7 +1366,12 @@ export const WEAPON_DAMAGE: Partial<Record<import('./items').ItemId, number>> = 
   crude_spear: WEAPON_PROFILES.crude_spear.light.damage,
 }
 
-export type MonsterType = 'zombie' | 'boar' | 'cendreux' | 'rabbit' | 'deer' | 'wolf'
+/**
+ * UN SEUL MORT-VIVANT (spec `cendreux.md` R1, décision 2026-07-31). Le `zombie` a été retiré
+ * du bestiaire : le monde ne porte pas deux morts-vivants avec deux lores — celui du GDD et
+ * le Cendreux de la direction A×C. Partout où une horde marchait, ce sont des Cendreux.
+ */
+export type MonsterType = 'boar' | 'cendreux' | 'rabbit' | 'deer' | 'wolf'
 
 /**
  * Le RYTHME d'une bête (spec faune R10). C'est ce qui donne une identité à
@@ -1469,13 +1474,6 @@ export interface MonsterDef {
 }
 
 export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
-  zombie: {
-    hp: 40, damage: 12, speed: 2.4,
-    windupTicks: ticksFor(0.6), attackCooldownTicks: ticksFor(2), aggroRange: 6,
-    thinkEveryTicks: ticksFor(0.5), wanderChance: 0.3, chargeChance: 0,
-    loot: {},
-    sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
-  },
   boar: {
     hp: 30, damage: 8, speed: 3.6,
     windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0,
@@ -1492,7 +1490,13 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     windupTicks: ticksFor(0.7), attackCooldownTicks: ticksFor(2.5), aggroRange: 5,
     thinkEveryTicks: ticksFor(0.5), wanderChance: 0, chargeChance: 0,
     loot: {}, // il porte celui du cadavre (voir levée)
-    sac: SLOTS.NPC, // il hérite du butin d'un cadavre entier (cendreux.ts) — le SEUL porteur
+    // ZÉRO comme toutes les bêtes. Le Cendreux LEVÉ hérite du butin d'un cadavre entier et
+    // réclame ses 40 cases — mais il les demande à la levée (`spawnMonster(..., SLOTS.NPC)`
+    // dans `cendreux.ts`), pas ici : depuis R1-R2, l'écrasante majorité des Cendreux naissent
+    // en HORDE ou en garde de convoi, et ceux-là ne portent rien. Un sac d'espèce à 40 cases
+    // aurait mis 201 octets de JSON vide dans chaque snapshot, par bête, vingt fois par
+    // seconde (voir la note de `spawnMonster`).
+    sac: 0,
   },
   // Le petit gibier (GDD §8bis) : il détale avant qu'on l'ait vu. L'école de l'approche.
   rabbit: {
@@ -2243,6 +2247,22 @@ export const CENDREUX = {
    *  feu ALLUMÉ même de JOUR (spec feu-station S5). La nuit attire déjà toujours ; ce seuil ajoute
    *  les biomes froids (neige/glacier) et le Grand Froid (actes II-III). À calibrer. */
   COLD_ATTRACT_THRESHOLD: 55,
+  /**
+   * LE PLAFOND DE LA LEVÉE (spec `cendreux.md` R8, décision 2026-07-31). Au-delà de ce nombre
+   * de Cendreux VIVANTS dans la vallée, plus aucune mort ne se relève — la porte se rouvre
+   * dès qu'on en abat un.
+   *
+   * C'est T15 de `tension.md` appliqué à la lettre : « on peut perdre, on ne doit pas être
+   * submergé ». Depuis que la contagion existe (R7 — la victime d'un Cendreux se relève à son
+   * tour), une nuit qui tourne mal pourrait s'emballer sans jamais retomber ; bornée, elle
+   * fabrique une histoire au lieu de fermer la porte.
+   *
+   * L'ordre de grandeur se lit contre les deux autres sources : la carte solo porte déjà 9
+   * Repaires résidents (mesuré, 3,75 M tuiles), et une horde d'acte III en lève 12. 24 laisse
+   * donc respirer une horde pleine plus la contagion d'une mauvaise nuit, sans permettre à la
+   * vallée de se remplir jusqu'à l'étouffement. À calibrer en playtest.
+   */
+  MAX_ALIVE: 24,
 }
 
 /** Le combat (GDD §7, spec combat) — lent, positionnel, gagné avant l'échange. */
@@ -2451,6 +2471,18 @@ export const WORLD_EVENTS = {
   HORDE_CHANCE_PER_NIGHT: [0.35, 0.6, 0.9],
   /** Taille de horde par acte. */
   HORDE_SIZE: [4, 8, 12],
+  /**
+   * OÙ NAÎT UNE HORDE — en distance de MARCHE au Feu visé (le champ de flux la donne), et
+   * non plus sur un bord de carte : la vallée est ceinte de roche, et zéro tuile de bord
+   * n'était marchable (MESURÉ). Les hordes naissaient dans le mur et n'ont jamais marché.
+   *
+   * `HORDE_APPROACH_FRACTION` est la part d'une nuit qu'on leur laisse pour la traversée —
+   * le reste est le temps du SIÈGE. À 0,5, une horde arrive à mi-nuit : on la voit venir, et
+   * il reste la moitié de la nuit pour tenir. `HORDE_MIN_DIST` empêche l'autre excès, une
+   * horde qui se matérialise sur le camp : le décor avouerait.
+   */
+  HORDE_APPROACH_FRACTION: 0.5,
+  HORDE_MIN_DIST: 60,
   /** Une carcasse de convoi tous les N jours de saison. */
   CONVOY_PERIOD_DAYS: 2,
   CONVOY_GUARDS: 2,
@@ -2602,6 +2634,179 @@ export const NIGHT_HUNT = {
   MAX_ALIVE: 2,
   /** Ils naissent à cette distance : hors de vue, mais on les voit VENIR. */
   SPAWN_DIST: 15,
+
+  /* ── LE BASCULEMENT D'ESPÈCE (spec `cendreux.md` R11, décision 2026-07-31) ─────────── */
+
+  /**
+   * LA PART DE MORTS dans ce que la nuit envoie, par acte. Acte I : que des loups. Acte II :
+   * une nuit sur deux appartient déjà aux Cendreux. Acte III : le vivant a quitté la vallée.
+   *
+   * C'est ICI que vit la tension croissante, et pas dans la horde — MESURÉ : une saison de
+   * Veillée ne compte que **six nuits**, et la horde ne se tire qu'UNE fois par nuit
+   * (`HORDE_CHANCE_PER_NIGHT`), soit **3 hordes sur toute la partie**. Une échelle à trois
+   * actes ne se sent pas en trois événements. La nuit qui chasse, elle, se tire à la MINUTE
+   * (~18 fois par nuit) et son taux quadruple d'un bout à l'autre : c'est la seule machine
+   * dont la montée soit perceptible, et la seule qui naisse AUTOUR du joueur.
+   */
+  UNDEAD_SHARE: [0, 0.5, 1],
+  /**
+   * Plafond de Cendreux rôdeurs simultanés sur une même proie, par acte — distinct de celui
+   * des loups, et plus haut, parce que les deux dangers ne se jouent pas pareil. Un loup court
+   * PLUS VITE que vous : deux, c'est déjà la mort, et le nombre n'y ajoute rien de lisible. Un
+   * Cendreux avance à 1,3 tuile/s contre 4 : on le distance toujours. Se faire encercler par
+   * eux est une faute de POSITION, pas de vitesse — donc leur danger EST le nombre (R10), et
+   * le borner à deux le rendrait inoffensif. À calibrer en playtest.
+   */
+  UNDEAD_MAX_ALIVE: [0, 3, 5],
+
+  /* ── LE RÉVEIL : LA COURONNE (spec `cendreux.md` R18) ─────────────────────────────── */
+
+  /**
+   * L'ÉPAISSEUR de la couronne de naissance, autour de `SPAWN_DIST`.
+   *
+   * Il n'y avait PAS de couronne. `ox` et `oy` valaient tous deux ±`SPAWN_DIST`, donc chaque
+   * rôdeur naissait sur l'une de QUATRE diagonales, à 21,2 tuiles — jamais 15, jamais de côté.
+   * Le commentaire de `SPAWN_DIST` disait « à cette distance » ; c'était faux depuis toujours.
+   *
+   * Une vraie couronne rend deux choses. Le tour complet, d'abord : le danger peut venir de
+   * n'importe où, et le joueur ne peut plus apprendre quatre angles. Et de la MATIÈRE à
+   * pondérer, ensuite — sur quatre points, un champ de densité n'aurait rien à dire ; sur
+   * ~200 tuiles d'anneau, il choisit vraiment (R16).
+   */
+  SPAWN_RING: 3,
+
+  /**
+   * LA COURONNE DU MORT — plus SERRÉE que celle du loup, et c'est le réveil qui la paie.
+   *
+   * *Décision d'Alexis, 2026-07-31 : le réveil dure, il est jouable, et il naît PRÈS.*
+   *
+   * À 15 tuiles et 1,3 tuile/s, un Cendreux met **16 secondes** à joindre une proie IMMOBILE,
+   * contre 5 pour un loup ; face à un joueur qui se déplace à 4 t/s, il n'atteint jamais rien.
+   * Le rapprocher est la seule chose qui rende ce monstre dangereux sans toucher à sa vitesse —
+   * et c'est aussi ce qui rend l'encerclement de l'acte III possible, alors que R10 fonde tout
+   * son danger sur le NOMBRE.
+   *
+   * Naître à 7 tuiles serait injuste SANS PRÉAVIS ; c'est exactement ce que le réveil achète.
+   * Le sol se soulève, ça s'annonce (`cendreux_prowl`), et le joueur a `MORTS.REVEIL_TICKS`
+   * pour rallumer son feu, s'éloigner, ou tenir la position.
+   *
+   * DEUX DANGERS, DEUX DISTANCES — le pendant de R11bis. Le loup GARDE ses 15 tuiles : il court
+   * à 4-5 t/s, il les couvre en trois secondes, et le rapprocher n'ajouterait rien qu'une mort
+   * sans recours. On ne rapproche que ce qui est lent.
+   */
+  SPAWN_DIST_UNDEAD: 7,
+  SPAWN_RING_UNDEAD: 2,
+} as const
+
+/**
+ * LE CHAMP DES MORTS (spec `cendreux.md` R14-R17) — « combien de morts dorment ici ».
+ *
+ * Ces nombres décident de l'INTENSITÉ de la nuit, jamais de son existence. C'est une leçon
+ * mesurée, pas une préférence : autour de là où le joueur vit réellement, il n'y a ni cendre
+ * (le front n'arrive qu'au jour 60), ni sol brûlé (le plus proche à 74 tuiles), ni Repaire
+ * (110 tuiles). Tout seuil géographique qui pourrait rendre `false` rend la nuit MUETTE
+ * pendant cinquante-cinq jours. D'où le plancher, qui n'est pas une précaution mais la règle.
+ */
+export const MORTS = {
+  /**
+   * LE PLANCHER — partout, à toute heure, sous n'importe quel ciel.
+   *
+   * C'est lui qui garantit qu'une couronne rend toujours un site, et c'est lui qui interdit
+   * structurellement au champ de devenir un interrupteur. Sur une carte sans zones (banc
+   * headless), le champ ne vaut QUE ça, uniformément — même précédent que `zoneTierAt` qui
+   * rend 0 : on n'impose pas une géographie à qui n'en a pas demandé (R17).
+   */
+  PLANCHER: 0.15,
+  /**
+   * CE QUE LE TIER DE ZONE AJOUTE. Mesuré sur la carte de production : t0 = 18 % de la carte
+   * (les Prés Bas — et c'est LÀ, et nulle part ailleurs, que le joueur habite), t1 = 44 %,
+   * t2 = 38 %. Le signal est donc réel et il épouse déjà la pression de migration du GDD.
+   *
+   * Chez soi 0,25 ; dans la ceinture 0,50 ; aux marges 0,75. Un rapport de trois entre le pré
+   * de son village et l'alpage : assez pour que l'endroit où l'on dort soit une décision, pas
+   * assez pour que quitter la racine soit un suicide.
+   */
+  PART_TIER: [0.1, 0.35, 0.6],
+  /**
+   * CE QUE LA CENDRE AJOUTE. Sous le front, le sol EST fait de morts — et comme le front
+   * avance d'acte en acte, la montée de l'acte III arrive par la GÉOGRAPHIE en plus d'arriver
+   * par `UNDEAD_SHARE`. Les deux racontent la même histoire, chacun à sa manière.
+   *
+   * Aux marges et sous la cendre, le champ sature à 1 : c'est le pire sol de la vallée, et il
+   * doit se sentir comme tel.
+   */
+  PART_CENDRE: 0.35,
+  /**
+   * COMBIEN LE CHAMP FAIT VARIER LE NOMBRE DE RÔDEURS. Le plafond de l'acte
+   * (`NIGHT_HUNT.UNDEAD_MAX_ALIVE`) reste le toit ; la densité dit quelle part on en atteint,
+   * avec un plancher de UN — le champ module (R16), il n'interdit pas.
+   *
+   * Acte III (plafond 5) : deux rôdeurs chez soi, cinq aux marges sous la cendre. Le joueur ne
+   * lit pas un nombre, il lit un LIEU — et c'est ça qu'on voulait.
+   */
+  MIN_RODEURS: 1,
+  /**
+   * COMBIEN DE TUILES DE LA COURONNE ON TESTE À L'A\* AVANT DE RENONCER.
+   *
+   * Le repli parcourt l'anneau (~200 tuiles) ; écarter une tuile BLOQUÉE est gratuit, mais
+   * vérifier qu'elle mène à la proie coûte un A\*, et un A\* qui ÉCHOUE coûte son budget entier
+   * (`maxExplored` = 4 096). MESURÉ sans ce plafond, sur une proie ceinte d'un anneau de roche :
+   * **1 593 ms pour un seul réveil** — trente-deux fois le budget d'un tick à 20 Hz. Ce n'est
+   * pas un cas d'école : c'est exactement le montage du siège (A4), le joueur qui s'enclot.
+   *
+   * Douze essais suffisent parce qu'ils sont dispersés — le tirage pondéré part d'un point
+   * quelconque de l'anneau, et les tuiles bloquées défilent sans en consommer. Épuisés, on
+   * REFUSE : la nuit passe son tour, ce qui est la réponse loyale (A22bis) et celle que
+   * l'ancien code ne savait pas donner — il gardait son dernier essai, bloqué ou non.
+   */
+  ESSAIS_MAX: 12,
+  /**
+   * COMBIEN DE TEMPS LE SOL SE SOULÈVE avant que le Cendreux n'en sorte.
+   *
+   * C'est ce délai qui achète le droit de naître PRÈS (`NIGHT_HUNT.SPAWN_DIST_UNDEAD`), et
+   * c'est lui qui rend le réveil JOUABLE plutôt que décoratif : pendant qu'il dure, un feu à
+   * portée l'ANNULE (R21). La parade de S4 — *« on veille ses morts au feu, ou ils
+   * reviennent »* — cesse d'être la règle du seul cadavre pour devenir le geste de chaque nuit.
+   *
+   * Le compte, en secondes : l'annonce part au tick 0, le sol travaille 4 s, puis il sort à
+   * 7 tuiles et met 5,4 s à joindre une proie immobile — **9,4 s de préavis** contre 16 s de
+   * marche auparavant. C'est plus court, et c'est bien plus tendu : la menace est ARRIVÉE,
+   * elle ne s'approche plus.
+   *
+   * *Ordre de grandeur, à calibrer en playtest (GDD §15).*
+   */
+  REVEIL_TICKS: ticksFor(4),
+  /**
+   * L'ESPACEMENT DU SEMIS DES CHARNIERS, en tuiles (spec `cendreux.md` R20).
+   *
+   * Les charniers ont leur PROPRE semis — ils ne jouent pas la loterie des lieux (`horsSemis`),
+   * parce que celle-ci est à somme nulle et adressée par ZONE : y entrer aurait affamé les
+   * vingt-six autres types et rendu le charnier absent d'où le joueur habite. C'est le précédent
+   * exact de `placeHuntingGrounds` — un semis à soi quand l'adresse ne se dit pas en zones.
+   *
+   * 160 contre 96 pour les lieux : plus rare qu'un lieu ordinaire, mais présent PARTOUT. C'est la
+   * décision d'Alexis du 2026-07-31 — *« une distribution logique, mais en mettre un peu partout
+   * quand même »* : le champ décide du COMBIEN (un point sur quatre accepté chez soi, trois sur
+   * quatre aux marges), le semis décide de l'écart minimal. *Ordre de grandeur, à calibrer.*
+   */
+  CHARNIER_ESPACEMENT: 160,
+  /**
+   * DISTANCE MINIMALE À UN LIEU DÉJÀ POSÉ. Bien plus petite que l'espacement des lieux entre eux
+   * (96) : un charnier au pied des Ruines ou contre un Repaire est une HISTOIRE, pas une faute —
+   * on veut seulement qu'il ne se pose pas DANS l'empreinte d'un autre. L'écart entre charniers,
+   * lui, est déjà garanti par leur semis de Poisson : ce rayon-ci ne le borne jamais.
+   */
+  CHARNIER_ECART_LIEU: 32,
+  /**
+   * LE PLANCHER DU QUOTA — aucune zone de la vallée sans son charnier.
+   *
+   * C'est `MIN_RODEURS` au niveau du placement, et il vient de la même mesure, refaite : un
+   * tirage indépendant par point laissait les **Prés Bas à zéro** sur la seed du jeu (quatorze
+   * points éligibles, quatorze échecs à 0,25 — une chance sur cinquante-cinq, et elle est tombée
+   * là où le joueur habite). Le champ MODULE (R16) ; un champ qui peut rendre zéro quelque part
+   * est un interrupteur, qu'il le soit par règle ou par malchance.
+   */
+  CHARNIER_MIN_PAR_ZONE: 1,
 } as const
 
 /** L'IA des PNJ (spec pnj, alignement R13-R14) — les seuils de décision. */

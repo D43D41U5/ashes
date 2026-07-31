@@ -95,6 +95,7 @@ import {
   publishTimeAndVillage,
 } from './world/hud-bridge'
 import { ClutterLayer } from './world/clutter-layer'
+import { familleDe, moyenneFamille, profilDe } from '../render/grain-sol'
 import { GroundLayer } from './world/ground-layer'
 import { ambianceDe, moduler } from '../render/zone-ambiance'
 import { TERRAIN_COLORS } from '../render/terrain-colors'
@@ -152,6 +153,7 @@ import { FlankGlow } from './world/flank-glow'
 import { HitFx } from './world/hit-fx'
 import { RecolteFx } from './world/recolte-fx'
 import { ChuteArbre } from './world/chute-arbre'
+import { ReveilFx } from './world/reveil-fx'
 import { createAttackFx, type AttackFx, type Zone } from './world/attack-fx'
 import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
@@ -222,6 +224,7 @@ const BUILD_STEPS = BUILD_PHASES.length
 
 /** Fenêtre de la sonde de coût (un échantillon par seconde de jeu) — ~10 min, puis on oublie. */
 const PERF_ECHANTILLONS_MAX = 600
+
 
 
 /** Les événements retenus pour la chronique de saison. */
@@ -420,6 +423,8 @@ export class WorldScene extends Phaser.Scene {
   private recolteFx!: RecolteFx
   /** LES ARBRES QUI S'ABATTENT quand le fût est vidé (spec recolte.md G15). */
   private chuteArbre!: ChuteArbre
+  /** LE SOL QUI TRAVAILLE, et le Cendreux qui s'en extrait (spec `cendreux.md` R21/R22). */
+  private reveilFx!: ReveilFx
   /** La silhouette de ce qu'on va poser, quand le mode construction est armé. */
   private buildGhost!: BuildGhost
   /** La jauge d'abattage au-dessus de l'arbre qu'on charge (spec recolte-maitrise). */
@@ -550,6 +555,8 @@ export class WorldScene extends Phaser.Scene {
     this.view.setHitFx(this.hitFx) // elle seule dessine les nœuds : à elle le tressaillement
     this.view.setRecolteFx(this.recolteFx) // …et la gerbe d'éclats, qui a besoin des mêmes px
     this.view.setChuteArbre(this.chuteArbre) // …et la chute, qui a besoin de la MÊME tuile qu'avant la dérive
+    this.reveilFx = new ReveilFx(this)
+    this.view.setReveilFx(this.reveilFx) // …et le sol qui travaille, qui a besoin du TERRAIN de la tuile
     this.buildGhost = new BuildGhost(this)
     this.fellGauge = new FellGauge(this)
     this.flankGlow = new FlankGlow(this)
@@ -744,6 +751,7 @@ export class WorldScene extends Phaser.Scene {
       bake: () => this.bakeMapTexture(),
       ground: () => {
         this.ground = new GroundLayer(this, this.map, this.warp, 'map-demo')
+        this.ground.poserMatiere(this.worldSeed)
       },
       water: () => {
         // L'eau, par-dessus le sol : un shader qui défait le cisaillement du relief et
@@ -1044,6 +1052,9 @@ export class WorldScene extends Phaser.Scene {
     // et les arbres qu'un dernier coup vient d'abattre.
     this.recolteFx.update(time, deltaMs)
     this.chuteArbre.update(time)
+    // LA TERRE DU RÉVEIL vole, retombe et se pose (spec `cendreux.md` R21) — même horloge et
+    // même `dt` borné que la gerbe de récolte : l'horloge headless saute.
+    this.reveilFx.update(time, deltaMs)
     // LE SANG AU SOL (spec chasse C9) : la piste, et son horloge — les gouttes
     // fraîches sont vives, les vieilles pâlissent. C'est tout ce que le chasseur
     // a pour savoir s'il suit une bête ou un souvenir.
@@ -1052,6 +1063,10 @@ export class WorldScene extends Phaser.Scene {
     // lapin qui s'y engouffre s'évapore — et la géométrie de la chasse au lapin
     // (couper la ligne du terrier) resterait une règle invisible.
     this.view.renderBurrows(time)
+    // LE SOL QUI TRAVAILLE (spec `cendreux.md` R14/R21) : le tertre enfle et se fend quatre
+    // secondes avant que le Cendreux n'en sorte. C'est la contrepartie VISIBLE du
+    // rapprochement à sept tuiles (R22) — sans elle, le mort poppait.
+    this.view.renderReveils(time)
     // L'OVERLAY DES FONCTIONS (spec construction R22) : « Forge · N2 » au-dessus de
     // chaque amas reconnu, doré + ✦ quand l'enceinte donne son bonus.
     this.view.renderFunctions()
@@ -1849,6 +1864,25 @@ export class WorldScene extends Phaser.Scene {
         // pis-aller assumé, la vraie place de cette ligne est un cor dans le noir.
         const meute = event.packSize > 1 ? `${event.packSize} loups` : 'Un loup'
         publishError(this.registry, `Un hurlement, tout près. ${meute} vous ont choisi.`, this.time.now)
+      } else if (event.type === 'cendreux_prowl' && event.targetEntityId === this.playerId) {
+        // LE PENDANT DU HURLEMENT, pour les morts (spec `cendreux.md` R11). La nuit bascule
+        // d'espèce avec les actes, et son avertissement bascule avec elle : le joueur doit
+        // savoir CE QUI vient, parce qu'on ne distance pas un loup et qu'on distance un
+        // Cendreux — la parade n'est pas la même.
+        const combien = event.count > 1 ? `${event.count} Cendreux` : 'Un Cendreux'
+        publishError(this.registry, `Un raclement dans le noir. ${combien} vous ont senti.`, this.time.now)
+      } else if (event.type === 'cendreux_risen') {
+        // IL SORT DE TERRE (spec `cendreux.md` R21). `cendreux_risen` a DEUX émetteurs — la
+        // levée d'un cadavre, qui est déjà couché sur le sol et ne creuse rien, et
+        // l'émergence d'un réveil. `emerger` les distingue sur le SITE (il rend `false` pour
+        // la levée) : la sim n'a pas à porter un second nom pour un seul fait, et on ne
+        // touche pas à /sim pour une question de rendu.
+        this.reveilFx.emerger(event.x, event.y, event.entityId, this.time.now)
+      } else if (event.type === 'reveil_etouffe') {
+        // LE FEU A GAGNÉ (R21). Le tertre s'affaisse et se tait : c'est le RETOUR DE GESTE
+        // du joueur qui a rallumé. Sans lui, « on veille ses morts au feu » n'aurait aucune
+        // preuve à l'écran — la parade marcherait sans qu'on sache qu'elle a marché.
+        this.reveilFx.etouffer(event.x, event.y, this.time.now)
       } else if (event.type === 'prey_escaped') {
         // LE LAPIN RENTRE CHEZ LUI (spec chasse C16). Il disparaît — mais le TROU,
         // lui, reste un moment : sans ça, la bête s'évaporerait et ce serait le
@@ -2109,8 +2143,19 @@ export class WorldScene extends Phaser.Scene {
    *  La couleur d'une tuile = biome × grain (bruit par tuile). Le RELIEF n'est PLUS
    *  cuit ici : l'ombre du versant est dynamique (ShadeLayer, suit le soleil).
    *  Le facteur reste CONSTANT PAR TUILE : c'est ce qui autorise le bake à 1 px/tuile.
-   *  Grain gardé faible (nearest) sinon le damier par tuile masque l'ombre. */
-  private bakeMapTexture(): void {
+   *  Grain gardé faible (nearest) sinon le damier par tuile masque l'ombre.
+   *
+   *  LA MATIÈRE (2026-07-30, spec da-feeling §8) ajoute ici TROIS choses, la passe de grain
+   *  elle-même vivant dans `ground-layer` :
+   *  (a) une variation macro (fbm ~10 tuiles, ±6 %) qui casse l'aplat à l'échelle de l'écran ;
+   *  (b) LE DAMIER DE LA FAMILLE à la place du damier global — sur un biome clair, ±3,5 % par
+   *  tuile ne se lit pas comme de la matière mais comme une GRILLE de 16 px (R20) ;
+   *  (c) LA COMPENSATION DU MULTIPLY. La passe de grain ne peut qu'assombrir — de 1 % sur la
+   *  neige à 6,6 % sur le minéral. Sans contrepartie, la matière ferait foncer le monde en
+   *  silence, inégalement selon le biome. Chaque tuile est donc relevée de
+   *  `1 / moyenneFamille`, mesurée sur le bloc RÉELLEMENT cuit — une seule vérité, donc
+   *  l'atlas et sa compensation ne peuvent pas diverger. */
+  private bakeMapTexture(key = 'map-demo'): void {
     const { width, height } = this.map
     const N = width * height
     const g = this.add.graphics()
@@ -2226,12 +2271,41 @@ export class WorldScene extends Phaser.Scene {
             }
           }
         }
-        const grain = 0.96 + 0.07 * hash2(tx, ty)
-        g.fillStyle(shade(moduler(base, sol), grain))
+        // LE FACTEUR DE LUMINANCE DE LA TUILE. Sans matière : le damier global, tel qu'il a
+        // toujours été. Avec : le damier DE LA FAMILLE (MESURÉ — sur la neige, le damier global
+        // se lisait comme une grille de 16 px et écrasait le grain sous-tuile), les taches
+        // macro, et la contrepartie du MULTIPLY. Un seul chemin par cas, aucun facteur défait
+        // après coup.
+        const famille = bio[i] ? familleDe(this.map.terrain[i] ?? 0) : null
+        let grain: number
+        if (famille) {
+          const d = profilDe(famille).damier // de moyenne 1 : aucune compensation propre
+          grain = (1 - d / 2 + d * hash2(tx, ty)) / moyenneFamille(famille, this.worldSeed)
+          // Les taches macro : la seconde échelle, celle qui se lit à l'écran entier.
+          grain *= 1 + (fbm2(tx, ty, 10, 0x7ac3) - 0.5) * 0.12
+        } else {
+          // Aucune matière au-dessus (eau, falaise, mur, vide) : le damier historique, seul.
+          grain = 0.96 + 0.07 * hash2(tx, ty)
+        }
+        const couleur = moduler(base, sol)
+        if (famille) {
+          // LE PLAFOND, ET IL PRÉSERVE LA TEINTE. MESURÉ le 2026-07-30 : la neige (0xeef2f8)
+          // écrête DÉJÀ un canal sur 42 % de ses tuiles, et la matière portait ça à 70 %. Or
+          // `shade` clampe canal par canal — le bleu bute avant le vert, le rouge jamais : les
+          // taches macro s'y écrasent ET la neige vire au chaud. On borne donc le facteur au
+          // plus grand qui ne fasse buter AUCUN canal : l'échelle reste uniforme, donc la
+          // teinte est intacte. Ce qu'on y perd (≈ 1 % de compensation sur la neige seule) est
+          // sans commune mesure avec une dérive de couleur sur 11 % de la carte.
+          // (L'écrêtage PRÉEXISTANT du sol, lui, n'est pas touché : le corriger éclaircirait
+          // le Névé, donc c'est un choix de direction artistique, à Alexis.)
+          const maxCanal = Math.max((couleur >> 16) & 0xff, (couleur >> 8) & 0xff, couleur & 0xff)
+          if (maxCanal > 0) grain = Math.min(grain, 255 / maxCanal)
+        }
+        g.fillStyle(shade(couleur, grain))
         g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
       }
     }
-    g.generateTexture('map-demo', width, height)
+    g.generateTexture(key, width, height)
     g.destroy()
   }
 }

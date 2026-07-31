@@ -118,7 +118,7 @@ export const VEILLEE_SITES = {
   boars: [
     { x: 36, y: 66 }, { x: 60, y: 84 }, { x: 46, y: 74 },
   ],
-  zombies: [
+  cendreux: [
     { x: 90, y: 142 }, { x: 86, y: 148 },          // le Hameau
     { x: 100, y: 158 }, { x: 118, y: 172 },        // le Marais
     { x: 40, y: 20 }, { x: 65, y: 17 },            // le Plateau

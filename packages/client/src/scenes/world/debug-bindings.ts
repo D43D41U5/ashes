@@ -2,6 +2,7 @@
  * Le mode DEBUG (dev uniquement) — P l'arme et ouvre le PANNEAU cliquable
  * (debug-panel.ts) ; les touches restent en accélérateurs :
  *   P   fermer     F2  invulnérabilité     F3  jour ↔ nuit     F4  cadence ×1/2/4/8
+ *   F6  réveiller le sol à côté de soi (spec `cendreux.md` R21bis)
  *   (l'éclairage dynamique n'a pas de touche — voir le panneau ; clic carte M : TP)
  *
  * Tout est ISOLÉ ici, et l'unique appelant (WorldScene) garde l'import derrière
@@ -71,6 +72,15 @@ export function bindDebugKeys(scene: Phaser.Scene, deps: DebugDeps): void {
   onDown(DEBUG_KEYMAP.cycleDayNight, () => {
     if (!isOn()) return
     deps.sendAction({ type: 'debug_set_hour', hour: deps.isNight() ? HOUR_DAY : HOUR_NIGHT })
+  })
+
+  // LE SOL SE RÉVEILLE, ICI (spec `cendreux.md` R21bis). Ni acte III, ni nuit, ni attente
+  // d'un tirage à la minute : c'est le seul moyen d'ATTEINDRE le geste le plus caractéristique
+  // du Cendreux. Le réveil planté est un vrai (mêmes constantes, même `state.reveils`), donc
+  // un feu à portée l'étouffera — c'est aussi comme ça qu'on teste la parade.
+  onDown(DEBUG_KEYMAP.reveil, () => {
+    if (!isOn()) return
+    deps.sendAction({ type: 'debug_reveil' })
   })
 
   onDown(DEBUG_KEYMAP.cycleSpeed, () => {

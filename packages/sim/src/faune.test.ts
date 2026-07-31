@@ -115,11 +115,11 @@ describe('le gradient RICHESSE ↔ DANGER (V2-19, tension.md T11bis)', () => {
 })
 
 describe('les définitions (R8 — trois étages de gibier)', () => {
-  it('lapin, cerf et sanglier sont du GIBIER ; zombie et cendreux n’en sont pas', () => {
+  it('lapin, cerf et sanglier sont du GIBIER ; le Cendreux n’en est pas', () => {
     expect(isPrey('rabbit')).toBe(true)
     expect(isPrey('deer')).toBe(true)
     expect(isPrey('boar')).toBe(true)
-    expect(isPrey('zombie')).toBe(false)
+    expect(isPrey('cendreux')).toBe(false)
     expect(isPrey('cendreux')).toBe(false)
   })
 
@@ -518,8 +518,8 @@ describe('le rythme jour/nuit (A11 — R10)', () => {
     expect(activityAt('rabbit', 13)).toBe(0) // le plein jour : terré
 
     // Un mort-vivant n'a pas d'heures : il est toujours d'attaque.
-    expect(activityAt('zombie', 3)).toBe(1)
-    expect(activityAt('zombie', 15)).toBe(1)
+    expect(activityAt('cendreux', 3)).toBe(1)
+    expect(activityAt('cendreux', 15)).toBe(1)
   })
 
   it('A11 — la NUIT appartient aux loups et aux sangliers : le peuplement bascule', () => {

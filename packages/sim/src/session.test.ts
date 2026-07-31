@@ -182,11 +182,21 @@ describe('LA SESSION SOLO — le jeu est-il jouable ?', () => {
       }
     }
 
-    // Il a mangé — beaucoup —, et il a quand même souffert : les buissons se vident,
+    // Il a mangé — plusieurs fois —, et il a quand même souffert : les buissons se vident,
     // ils repoussent lentement, et les baies POURRISSENT dans son sac. La cueillette
     // est un dépannage, pas un mode de vie. (On n'exige pas qu'il MEURE : on exige
     // que ça ne soit plus une promenade.)
-    expect(baiesMangees).toBeGreaterThan(5)
+    //
+    // LE COMPTE DE REPAS A BAISSÉ (6 → 5) le 2026-07-31, et pas par un adoucissement : la
+    // cueillette pure est désormais INTERROMPUE. Mesuré sur ce montage exact — le loup de
+    // la nuit le tue, il respawne, et depuis que toute mort seule et loin d'un feu se relève
+    // (spec `cendreux.md` R6), **ses propres cadavres reviennent le chasser** : deux
+    // Cendreux `risen` sur ses talons, 100 → 50 PV en deux cycles. Le seuil exact du compte
+    // n'a jamais été la règle ; on l'assouplit d'un cran et on affirme à la place ce qui
+    // porte vraiment la démonstration — il mange en boucle, il n'est jamais rassasié, et il
+    // a RASÉ ses buissons pour en arriver là.
+    expect(baiesMangees).toBeGreaterThan(3)
     expect(me(sim).hunger).toBeLessThan(60) // il vit sur le fil, jamais rassasié
+    expect(sim.nodes.filter((n) => n.type === 'berry_bush').reduce((s, n) => s + n.stock, 0)).toBe(0)
   })
 })

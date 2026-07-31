@@ -2144,6 +2144,129 @@ const SCENARIOS = {
   },
 
   /**
+   * LA MATIÈRE DU SOL — les cinq familles sont-elles VRAIMENT posées (spec da-feeling §8) ?
+   *
+   * Ce que seul le navigateur prouve : que l'atlas est cuit à la bonne largeur, que la passe
+   * émet des quads, et surtout que le SAUT TUILE-À-TUILE du bake est retombé — c'est-à-dire
+   * que la grille de 16 px ne se lit plus (R20). On mesure DANS LE BAKE et non à l'écran :
+   * les couches supérieures (éclairage, décor) sont identiques quoi qu'on fasse et ne
+   * feraient que masquer ce qu'on juge.
+   *
+   * Deux pièges appris à la dure, tous deux consignés dans le code ci-dessous : `getPixel`
+   * prend `(x, y, clé)` — la clé en premier rend `null` en silence ; et un `evaluate` qui
+   * balaie longtemps BLOQUE la page, laisse enfler le tampon CDP et tue l'outil sur
+   * ERR_STRING_TOO_LONG. Tout balayage est donc borné.
+   *
+   * Exige `--dev` (TP + heure).
+   */
+  async matiere(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('mapData')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    const FAM = {
+      1: 'herbe', 2: 'mineral', 3: 'litiere', 5: 'mineral', 8: 'humide', 9: 'mineral',
+      10: 'neige', 11: 'herbe', 12: 'herbe', 13: 'litiere', 14: 'litiere', 15: 'neige',
+      16: 'mineral', 17: 'herbe', 18: 'humide', 19: 'humide', 20: 'herbe', 21: 'litiere',
+      22: 'litiere',
+    }
+
+    const etat = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      // L'atlas porte le seed dans sa clé (sinon une 2e Veillée hérite du motif de la 1re).
+      const cles = sc.textures.getTextureKeys().filter((k) => k.startsWith('grain-sol-'))
+      const t = cles.length ? sc.textures.get(cles[0]).getSourceImage() : null
+      return { cles, largeur: t ? t.width : 0, hauteur: t ? t.height : 0 }
+    })
+    console.log(`atlas : ${JSON.stringify(etat)}`)
+    if (etat.cles.length !== 1) console.error(`!! ${etat.cles.length} atlas de matière (1 attendu)`)
+    // 5 familles × 64 cellules de côté.
+    if (etat.largeur !== 320 || etat.hauteur !== 64) console.error('!! l\'atlas n\'a pas 5 blocs de 64×64')
+
+    // LE SAUT TUILE-À-TUILE dans le bake, famille par famille. Balayage BORNÉ (voir en-tête).
+    const sauts = await page.evaluate((FAM) => {
+      const sc = window.__BRAISES__.scene
+      const m = sc.registry.get('mapData')
+      const W = m.width, H = m.height
+      const lum = (x, y) => {
+        const c = sc.textures.getPixel(x, y, 'map-demo') // (x, y, CLÉ) — l'ordre compte
+        return c ? 0.2126 * c.red + 0.7152 * c.green + 0.0722 * c.blue : null
+      }
+      // AU CŒUR D'UN PAYS, et c'est la condition qui fait que la mesure porte sur la MATIÈRE.
+      // Au BORD, le tramage de lisière (le mélange par tuile des teintes de deux pays voisins)
+      // saute à 13 en luminance contre 5 au cœur — 2,6× ce que la matière fait. Il est
+      // délibéré et hors périmètre (spec da-feeling R22) : le mesurer ici ne jugerait pas le
+      // sol mais lui, et ferait rougir la garde pour une raison étrangère.
+      const pas = m.zonePas ?? 0
+      const cols = Math.ceil(W / pas)
+      const rows = Math.ceil(H / pas)
+      const zoneA = (x, y) => (m.zoneGrid && pas
+        ? (m.zoneGrid[Math.min(cols - 1, Math.max(0, Math.floor(x / pas)))
+          + Math.min(rows - 1, Math.max(0, Math.floor(y / pas))) * cols] ?? -1)
+        : 0)
+      const auCoeur = (x, y) => {
+        if (!m.zoneGrid || !pas) return true
+        const z0 = zoneA(x, y)
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+          if (zoneA(x + dx * pas, y + dy * pas) !== z0) return false
+        }
+        return true
+      }
+      const out = {}
+      for (const fam of ['mineral', 'litiere', 'herbe', 'neige', 'humide']) {
+        let site = null
+        let vus = 0
+        for (let y = 60; y < H - 60 && !site; y += 11) {
+          for (let x = 60; x < W - 60; x += 11) {
+            if (FAM[m.terrain[y * W + x]] !== fam) continue
+            if (++vus > 20000) break
+            if (!auCoeur(x, y)) continue
+            let pur = true
+            for (let dy = -6; dy <= 6 && pur; dy += 3) for (let dx = -6; dx <= 6 && pur; dx += 3) {
+              if (FAM[m.terrain[(y + dy) * W + (x + dx)]] !== fam) pur = false
+            }
+            if (pur) { site = { x, y }; break }
+          }
+        }
+        if (!site) { out[fam] = null; continue }
+        const v = []
+        for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) v.push(lum(site.x + dx, site.y + dy))
+        if (v.some((z) => z === null)) { out[fam] = null; continue }
+        let s = 0, n = 0
+        for (let dy = 0; dy < 13; dy++) for (let dx = 0; dx < 12; dx++) { s += Math.abs(v[dy * 13 + dx] - v[dy * 13 + dx + 1]); n++ }
+        out[fam] = { pos: [site.x, site.y], lum: +(v.reduce((a, b) => a + b, 0) / v.length).toFixed(1), saut: +(s / n).toFixed(2) }
+      }
+      return out
+    }, FAM)
+
+    for (const [fam, r] of Object.entries(sauts)) {
+      if (!r) { console.log(`  ${fam.padEnd(8)} — pas de coin franc sur cette carte`); continue }
+      console.log(`  ${fam.padEnd(8)} lum ${String(r.lum).padStart(5)}  saut ${String(r.saut).padStart(5)}  @(${r.pos[0]}, ${r.pos[1]})`)
+    }
+    // A11 : la neige est le juge. Elle valait 5,02 avant la matière au cœur d'un pays ; le
+    // seuil laisse la marge du site (le tramage de lisière saute, lui, à 13 — voir R22).
+    const neige = sauts.neige
+    if (neige && neige.saut > 3.5) {
+      console.error(`!! la grille de 16 px se lit encore sur la neige (saut ${neige.saut}, ≤ 3,5 attendu)`)
+    } else if (neige) {
+      console.log(`   ✓ la grille a lâché sur la neige (saut ${neige.saut})`)
+    }
+
+    // La passe émet-elle vraiment des quads ? (Une famille `null` partout donnerait 0.)
+    const quads = await page.evaluate(() => {
+      const g = window.__BRAISES__.scene.ground
+      return g && g.grainQuads ? g.grainQuads() : -1
+    })
+    console.log(quads > 0
+      ? `   ✓ la passe de matière émet ${quads} quads sur la vue courante`
+      : `!! la passe de matière n'émet RIEN (${quads})`)
+
+    await page.screenshot({ path: `${OUT}/matiere-sol.png` })
+  },
+
+  /**
    * LA CENDRE AVANCE — et la vallée recule.
    *
    * On saute au dernier jour de la saison et on regarde. Sans cet outil, personne ne verrait
@@ -8636,6 +8759,294 @@ const SCENARIOS = {
     console.log(`   textures héritées, tour complet : ${clesReprises.length === 0 ? '0 ✔' : `!! ${[...new Set(clesReprises)].join(', ')}`}`)
 
     return { auMenu, seconde, reprise, erreurs }
+  },
+
+  /**
+   * LE RÉVEIL DU SOL (spec `cendreux.md` R14/R21/R22) — le sol creuse vers le haut, puis le
+   * Cendreux s'en extrait.
+   *
+   * CE QU'IL PROUVE, et qu'aucun test headless ne peut prouver : que ça SE VOIT. Le reste —
+   * la reconnaissance d'une émergence, les rampes, l'oubli des sites — est affirmé dans
+   * `reveil-fx.test.ts`, où c'est vérifiable ; ici on regarde.
+   *
+   * IL APPUIE SUR LA TOUCHE, il n'attend plus la nuit — et c'est ce qui rend ce scénario
+   * utilisable. La première version réunissait les trois conditions de `advanceNightHunt`
+   * (acte III, `isNight`, hors bulle de feu) puis attendait un tirage à la minute, à 55 % :
+   * **jusqu'à cinq minutes par tour**, et le plafond de l'acte sature après un ou deux
+   * réveils (MESURÉ headless : 2 sur une nuit entière). `debug_reveil` plante un VRAI réveil
+   * — mêmes constantes, même `state.reveils`, même chaîne jusqu'au Cendreux — et ne
+   * court-circuite que le tirage. On ne fabrique donc toujours aucun état : la sim plante,
+   * le harnais LIT.
+   *
+   * ON FIGE PAR UN CROCHET SUR LA FABRIQUE, jamais par un sondage : le réveil dure 4 s et le
+   * rendu logiciel affame un `setInterval` (voir plus bas, c'est mesuré). Puis on avance par
+   * `game.step` — la boucle DORT, seules de vraies frames redessinent.
+   *
+   * Exige `--dev` : `debug_reveil`, `debug_set_hour` et `debug_god` sont inertes en production.
+   */
+  async reveil(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 90000 })
+
+    // LA NUIT, parce que c'est là que ça se joue et que la lumière fait partie de ce qu'on
+    // juge. L'acte, lui, n'a plus d'importance : on ne passe plus par le tirage de la nuit.
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      s.sendAction({ type: 'debug_god', on: true }) // on vient REGARDER, pas mourir
+      s.sendAction({ type: 'debug_set_hour', hour: 1 })
+    })
+    await page.waitForTimeout(800)
+
+    // LE FEU RESTE LA SEULE PORTE QUI COMPTE : `advanceReveils` étouffe un réveil dès qu'un
+    // feu actif est à `HEARTH_WARD_RADIUS` (12 t), touche de debug ou pas. On le mesure, pour
+    // ne pas se retrouver à chercher pourquoi rien ne sort alors que la parade a gagné.
+    const etat = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const px = s.predicted.x
+      const py = s.predicted.y
+      let best = null
+      for (const st of s.view.structures) {
+        if (st.type !== 'fire') continue
+        const d = Math.hypot(st.tx - px, st.ty - py)
+        if (!best || d < best.d) best = { d: +d.toFixed(1), tx: st.tx, ty: st.ty }
+      }
+      const t = s.lastTime
+      return {
+        joueur: { x: Math.round(px), y: Math.round(py) },
+        feuLePlusProche: best,
+        ...(t ? { acte: t.act, jour: t.seasonDay, heure: +t.hourOfCycle.toFixed(1), nuit: t.isNight } : {}),
+      }
+    })
+    console.log(`cadre : ${JSON.stringify(etat)}`)
+    if (!etat.nuit) console.log(`   ⓘ il fait jour (${etat.heure}h) — le réveil marchera, mais on le verra mal`)
+    if (etat.feuLePlusProche && etat.feuLePlusProche.d < 12) {
+      console.log(`   ✗ un feu à ${etat.feuLePlusProche.d} t : il ÉTOUFFERA le réveil (HEARTH_WARD_RADIUS)`)
+    }
+
+    // ── LE CROCHET, PAS LE GUET ───────────────────────────────────────────────────────
+    //
+    // PREMIÈRE VERSION, ET POURQUOI ELLE A ÉCHOUÉ : un `setInterval(16 ms)` dans la page,
+    // qui sondait `solsAuTravail`. MESURÉ sur 352 s, il n'a rendu que TROIS relevés — à 8 s,
+    // 52 s et 352 s : le rendu logiciel l'affamait. Un réveil dure quatre secondes ; un guet
+    // qui s'éveille trois fois en six minutes ne peut structurellement pas l'attraper, et
+    // son silence se lit exactement comme « la sim n'a rien planté ».
+    //
+    // On s'accroche donc à la FABRIQUE — l'idiome de `chute` et d'`eclats`. `suivre` est
+    // appelée par `view.apply`, SYNCHRONEMENT avec le snapshot qui porte le réveil : le
+    // crochet ne peut pas manquer la fenêtre, quelle que soit la charge du rendu. Il fige
+    // sur-le-champ, et Node n'a plus qu'à ramasser à son rythme.
+    //
+    // ET ON GARDE LA VITESSE NORMALE : la fenêtre à attraper est le réveil lui-même, et
+    // accélérer l'hôte ne ferait que la rétrécir.
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      window.__PROBE__ = { sol: null, sortie: null }
+      const vraiSuivre = s.reveilFx.suivre.bind(s.reveilFx)
+      s.reveilFx.suivre = (reveils, tick, now) => {
+        vraiSuivre(reveils, tick, now)
+        if (reveils.length > 0 && !window.__PROBE__.sol) {
+          window.__PROBE__.sol = { sols: reveils.length, tick, x: reveils[0].x, y: reveils[0].y, at: reveils[0].at }
+          s.reveilFx.suivre = vraiSuivre
+          s.game.loop.sleep() // FIGÉ au premier snapshot qui le porte
+        }
+      }
+      // Le second crochet arme la SORTIE, pour la même raison : l'extraction ne dure que
+      // 900 ms, et elle arrive pendant qu'on photographie le tertre.
+      const vraiEmerger = s.reveilFx.emerger.bind(s.reveilFx)
+      s.reveilFx.emerger = (x, y, id, now) => {
+        const r = vraiEmerger(x, y, id, now)
+        if (r && !window.__PROBE__.sortie) {
+          window.__PROBE__.sortie = { id, x, y }
+          s.reveilFx.emerger = vraiEmerger
+          s.game.loop.sleep()
+          // ET ON REMET LE MONDE EN PAUSE. Sans ça, la sim continue de tourner pendant qu'on
+          // photographie : CONSTATÉ, le Cendreux avait MARCHÉ de quatre tuiles entre la
+          // première et la deuxième image — on le voyait sortir à côté de son propre trou.
+          // La boucle de rendu, elle, dort déjà : ce sont deux horloges, il faut les deux.
+          s.send({ type: 'pause' })
+        }
+        return r
+      }
+    })
+
+    // ── ON APPUIE ─────────────────────────────────────────────────────────────────────
+    // La touche F6 du mode debug, par son action. Le réveil est planté au tick suivant, et
+    // le crochet fige dessus.
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_reveil' }))
+
+    const debut = Date.now()
+    let attrape = null
+    while (Date.now() - debut < 20000 && !attrape) {
+      await page.waitForTimeout(200)
+      attrape = await page.evaluate(() => window.__PROBE__?.sol ?? null)
+    }
+
+    if (!attrape) {
+      console.log('   ✗ `debug_reveil` n’a rien planté — sim pas en debug (--dev ?), ou aucun sol praticable autour')
+      return { attrape: null }
+    }
+    console.log(`   ✓ le sol travaille : ${JSON.stringify(attrape)}`)
+
+    // ON CADRE PAR LA CAMÉRA, PAS PAR LE JOUEUR — et c'est la deuxième leçon de cet
+    // instrument.
+    //
+    // ① Une première version téléportait l'avatar sur le tertre APRÈS avoir mis la sim en
+    //    pause : `debug_teleport` est une action de SIM (`debug.ts` — « la sim est
+    //    autoritative »), un hôte en pause ne l'applique jamais, et la capture montrait une
+    //    forêt vide à cinq tuiles du sujet.
+    // ② Téléporter AVANT la pause marchait, mais coûtait un aller-retour de snapshot :
+    //    MESURÉ, **1,9 s de rampe consommée** pendant l'attente, soit deux des quatre crans
+    //    déjà passés avant la première photo. Le tertre était bien là, et on en ratait la
+    //    moitié.
+    //
+    // La caméra, elle, est PUREMENT du rendu : `stopFollow` + `centerOn` sont immédiats, ne
+    // traversent pas la sim et ne consomment pas un millième de la rampe.
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const p = window.__PROBE__.sol
+      const cam = s.cameras.main
+      cam.stopFollow()
+      cam.setZoom(4) // un tertre fait 24 px : à l'échelle du jeu, de nuit, il n'y a rien à juger
+      cam.centerOn(p.x * 16, p.y * 16)
+      s.send({ type: 'pause' }) // le monde s'arrête : le Cendreux ne sortira pas pendant la séance
+      // ON PREND LA MAIN SUR L'HORLOGE. La boucle dort, mais `s.time.now` continue de suivre
+      // le temps RÉEL — et chaque capture d'écran en coûte plusieurs centaines. Sans horloge
+      // à nous, la rampe avancerait entre deux photos et on sauterait des crans sans le voir.
+      // `game.step(t, dt)` POSE le temps de la boucle : à partir d'ici, il n'avance que
+      // lorsqu'on le décide.
+      window.__PROBE__.t = s.time.now
+      // UNE FRAME POUR QUE LE RECADRAGE EXISTE. `setZoom`/`centerOn` ne changent rien tant
+      // que rien n'est redessiné, et la boucle dort. Sans elle, une capture prise avant le
+      // premier `step` rendait l'image d'AVANT — cadre large, sujet à cinq tuiles : le cran 0
+      // a été photographié comme ça, et il ne montrait rien.
+      s.game.step((window.__PROBE__.t += 16), 16)
+    })
+    const site = await page.evaluate(() => {
+      const p = window.__PROBE__.sol
+      return { x: p.x, y: p.y, tick: p.tick, at: p.at }
+    })
+    console.log(`   site : ${JSON.stringify(site)}`)
+
+    // ── LES CRANS DU SOL, PUIS LA SORTIE ──────────────────────────────────────────────
+    //
+    // ON PART DU CRAN OÙ L'ON EST, PAS DE ZÉRO — et il faut le dire franchement : entre le
+    // snapshot qui porte le réveil et l'instant où l'on prend la main sur l'horloge, il passe
+    // des allers-retours Playwright et un `pause`. MESURÉ : **~1,2 s des 4 s de rampe**, soit
+    // le premier cran déjà consommé. C'est une limite de l'INSTRUMENT, pas du jeu — que les
+    // quatre crans existent et se suivent est affirmé par `reveil-fx.test.ts`, qui les balaie
+    // tous. Ici on photographie ce qui reste, et on annonce ce qu'on a manqué.
+    const depart = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const m = s.reveilFx.monticules(window.__PROBE__.t)[0]
+      return m ? m.stade : null
+    })
+    if (depart > 0) console.log(`   ⓘ crans 0→${depart - 1} consommés par la latence du harnais (~${(depart * 1000) / 4} ms) — voir reveil-fx.test.ts`)
+    const crans = []
+    for (let cible = depart; cible < 4; cible++) {
+      const releve = await page.evaluate((cible) => {
+        const s = window.__BRAISES__.scene
+        // De VRAIES frames, sur NOTRE horloge, jusqu'au cran visé (ou l'épuisement).
+        for (let i = 0; i < 400; i++) {
+          const m = s.reveilFx.monticules(window.__PROBE__.t)[0]
+          if (m && m.stade >= cible) {
+            return { stade: m.stade, echelle: +m.echelle.toFixed(3), alpha: +m.alpha.toFixed(2), grains: s.reveilFx.grainsVivants }
+          }
+          s.game.step((window.__PROBE__.t += 40), 40)
+        }
+        return null
+      }, cible)
+      crans.push(releve)
+      if (releve) {
+        await page.screenshot({ path: `${OUT}/reveil-cran-${cible}.png` })
+        console.log(`   · cran ${cible} : ${JSON.stringify(releve)} → ${OUT}/reveil-cran-${cible}.png`)
+      } else {
+        console.log(`   ✗ cran ${cible} : jamais atteint`)
+      }
+    }
+    const vus = crans.filter(Boolean)
+    const echelles = vus.map((c) => c.echelle)
+    console.log(vus.length >= 2 && echelles.every((e, i) => i === 0 || e > echelles[i - 1])
+      ? `   ✓ le tertre POUSSE sans pulser, sur ${vus.length} crans : ${echelles.join(' → ')}`
+      : `   ✗ l’échelle du tertre ne monte pas : ${echelles.join(' → ')}`)
+    console.log(crans.some((c) => c && c.grains > 0)
+      ? `   ✓ la terre est projetée (${Math.max(...crans.filter(Boolean).map((c) => c.grains))} grains au plus fort)`
+      : `   ✗ aucun grain de terre : le sol se fend en silence`)
+
+    // ── IL SORT ───────────────────────────────────────────────────────────────────────
+    // On rend la main au MONDE (la sim était en pause) et à l'horloge du rendu. Le crochet
+    // posé sur `emerger` refigera de lui-même : l'extraction ne dure que 900 ms, et c'est la
+    // même raison qui interdisait le sondage pour le tertre.
+    //
+    // ON RETIENT L'ID, PAS LE COMPTE : à l'acte III il y a jusqu'à cinq Cendreux autour de la
+    // proie (`UNDEAD_MAX_ALIVE[2]`), et « le dernier `spr-cendreux` de la boucle » n'est pas
+    // celui qui sort du sol — le relevé aurait porté sur un corps qui marche depuis
+    // longtemps.
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      s.game.loop.wake()
+      s.send({ type: 'resume' })
+    })
+    let sortie = null
+    const debutSortie = Date.now()
+    while (Date.now() - debutSortie < 30000 && !sortie) {
+      await page.waitForTimeout(500)
+      sortie = await page.evaluate(() => window.__PROBE__?.sortie ?? null)
+    }
+    if (!sortie) {
+      console.log('   ✗ personne n’est sorti du sol en 30 s')
+      return { attrape, site, crans }
+    }
+    console.log(`   ✓ il sort : entité ${sortie.id} en ${sortie.x.toFixed(1)},${sortie.y.toFixed(1)}`)
+
+    // TROIS INSTANTS DE L'EXTRACTION — enfoui, à mi-corps, posé. On lit la COUPE réelle du
+    // sprite (`isCropped` + la hauteur de la découpe), pas la seule valeur d'enfouissement :
+    // une rampe juste qui n'atteindrait pas le sprite ne se verrait pas davantage.
+    const releves = []
+    // Les `dt` sont CUMULATIFS (chaque relevé repart de l'instant courant) : 40 → 440 → 940 ms
+    // après la sortie. Le premier n'est pas à ZÉRO, et c'est délibéré : à dt = 0 aucune frame
+    // n'a été rendue depuis l'émergence, donc le sprite porte encore l'état que `syncEntities`
+    // lui a donné à sa CRÉATION — on lirait le cadre d'avant, pas l'extraction.
+    for (const [nom, dt] of [['enfoui', 40], ['mi-corps', 400], ['sorti', 500]]) {
+      const r = await page.evaluate(({ dt, id }) => {
+        const s = window.__BRAISES__.scene
+        // On se recale sur le temps réel UNE SEULE FOIS — le monde vient de tourner pour
+        // faire sortir le Cendreux. Ensuite l'horloge est de nouveau la nôtre, sans quoi les
+        // captures d'écran (des centaines de ms chacune) mangeraient l'extraction entre deux
+        // relevés : c'est exactement ce qui avait dévoré deux crans du tertre.
+        if (!window.__PROBE__.tSortie) window.__PROBE__.t = window.__PROBE__.tSortie = s.time.now
+        let t = 0
+        while (t < dt) { t += 40; s.game.step((window.__PROBE__.t += 40), 40) }
+        const o = s.view.others.get(id)
+        if (!o) return { id, absent: true }
+        const f = o.sprite.frame
+        // ON LIT LA COUPE RÉELLE DU SPRITE, pas la seule valeur d'enfouissement : une rampe
+        // juste qui n'atteindrait pas le sprite ne se verrait pas davantage. Les deux
+        // nombres bruts sont rendus aussi — un arrondi à zéro texel doit se voir comme tel,
+        // pas se déguiser en « il est sorti ».
+        return {
+          id,
+          enfoui: +s.reveilFx.sols.enfouissementDe(id, window.__PROBE__.t).toFixed(3),
+          texture: o.textureKey,
+          cropH: o.sprite.isCropped ? o.sprite._crop.height : null,
+          frameH: f.height,
+          coupe: o.sprite.isCropped ? +(1 - o.sprite._crop.height / f.height).toFixed(3) : 0,
+          ombre: +(o.shadow?.alpha ?? -1).toFixed(3),
+          y: Math.round(o.sprite.y),
+        }
+      }, { dt, id: sortie.id })
+      releves.push({ nom, ...r })
+      await page.screenshot({ path: `${OUT}/reveil-sortie-${nom}.png` })
+      console.log(`   · ${nom} : ${JSON.stringify(r)} → ${OUT}/reveil-sortie-${nom}.png`)
+    }
+    const [a, b, c] = releves
+    console.log(a?.coupe > 0.8 && b?.coupe > 0.2 && b?.coupe < 0.8 && (c?.coupe ?? 1) < 0.05
+      ? `   ✓ le corps SORT du sol : coupe ${a.coupe} → ${b.coupe} → ${c.coupe}`
+      : `   ✗ la coupe ne suit pas l’extraction : ${releves.map((r) => `${r.nom}=${r.coupe}`).join(' ')}`)
+    console.log(a?.ombre >= 0 && a.ombre < (c?.ombre ?? 0)
+      ? `   ✓ l’ombre de contact se fond sous terre puis revient (${a.ombre} → ${c.ombre})`
+      : `   ✗ l’ombre ne suit pas l’enfouissement (${a?.ombre} → ${c?.ombre})`)
+
+    return { attrape, site, crans, sortie, releves }
   },
 }
 

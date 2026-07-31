@@ -29,7 +29,7 @@
  * qui rend le changement gratuit côté simulation, et réversible côté client.
  */
 import { hash2, zoneSlugAt, TERRAIN_GRASS, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_PINE, type WorldMap } from '@ashes/sim'
-import { VARIANTES, type VarianteArbre } from './arbre-art'
+import { CIMES_PAR_ARBRE, VARIANTES, type VarianteArbre } from './arbre-art'
 
 /** Un mélange : des slugs de variante et leurs poids RELATIFS (ils n'ont pas à sommer à 1). */
 type Melange = readonly (readonly [string, number])[]
@@ -204,3 +204,22 @@ export function variantesAtteignables(): readonly string[] {
   }
   return [...out].sort()
 }
+
+/**
+ * LAQUELLE DES CINQ CIMES — même geste que le choix de variante, un cran plus fin.
+ *
+ * Les mélanges cassent la grille entre ESPÈCES ; celle-ci se voit encore dans une futaie PURE,
+ * où douze hêtres portent la même cime au pixel près. On tire donc la cime au même endroit et
+ * de la même façon : un `hash2` sur la tuile, avec son propre sel pour ne pas se corréler au
+ * tirage de variante — sinon toutes les hêtraies prendraient la même cime, et on aurait déplacé
+ * la grille sans la casser.
+ *
+ * Aussi PUR et aussi gratuit que le reste du module : rien ne transite, rien ne se mémorise, et
+ * `/sim` ignore que ces cimes existent — aucun `NODE_DEFS`, aucun protocole, aucun flux RNG.
+ */
+const SEL_CIME = 0x3f5a1d7b
+
+export function cimeDe(tx: number, ty: number, seed = 0): number {
+  return Math.min(CIMES_PAR_ARBRE - 1, Math.floor(hash2(tx, ty, (seed ^ SEL_CIME) | 0) * CIMES_PAR_ARBRE))
+}
+

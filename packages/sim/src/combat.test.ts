@@ -462,37 +462,39 @@ describe('la mort (A5)', () => {
 })
 
 describe('les monstres (A6)', () => {
-  it('le zombie aggro, télégraphe, frappe — et meurt à la lance', () => {
+  it('le Cendreux aggro, télégraphe, frappe — et meurt à la lance', () => {
     const sim = makeSim()
     const a = spawnEntity(sim, 10, 10)
     grantHeld(sim, a, 'spear')
-    const z = spawnMonster(sim, 'zombie', 14, 10)
+    const z = spawnMonster(sim, 'cendreux', 14, 10)
     drainEvents(sim)
 
     // Il approche et frappe : le joueur immobile finit par prendre des dégâts.
     for (let t = 0; t < 400 * (BALANCE.TICK_RATE_HZ / 12) && entity(sim, a).hp === 100; t++) tick(sim)
     expect(entity(sim, a).hp).toBeLessThan(100)
 
-    // On le tue : 3 coups de lance (40 PV / 16).
-    const zombie = entity(sim, z)
+    // On le tue : 2 coups de lance (20 PV / 16) — il est plus fragile que le zombie qu'il
+    // remplace (40 PV), et c'est le profil voulu (spec R10 : glass cannon lent, le danger
+    // est la densité). On laisse la même marge de sécurité qu'avant.
+    const cendreux = entity(sim, z)
     for (let i = 0; i < 4 && sim.entities.some((e) => e.id === z); i++) {
-      strike(sim, a, zombie.x - entity(sim, a).x, zombie.y - entity(sim, a).y)
+      strike(sim, a, cendreux.x - entity(sim, a).x, cendreux.y - entity(sim, a).y)
     }
     expect(sim.entities.some((e) => e.id === z)).toBe(false)
-    expect(drainEvents(sim).some((e) => e.type === 'monster_slain' && e.monsterType === 'zombie')).toBe(true)
+    expect(drainEvents(sim).some((e) => e.type === 'monster_slain' && e.monsterType === 'cendreux')).toBe(true)
   })
 
   it('une attaque refusée (à bout de souffle) ne consomme pas le cooldown', () => {
     const sim = makeSim()
     spawnEntity(sim, 10.5, 10.5) // la proie, adjacente
-    const z = spawnMonster(sim, 'zombie', 11.5, 10.5)
-    const zombie = entity(sim, z)
-    zombie.stamina = 0 // startAttack refusera (ATTACK_STAMINA)
+    const z = spawnMonster(sim, 'cendreux', 11.5, 10.5)
+    const bete = entity(sim, z)
+    bete.stamina = 0 // startAttack refusera (ATTACK_STAMINA)
     tick(sim)
     // Le coup n'est pas parti : pas de wind-up — et le cooldown ne doit pas
     // être posé pour un coup qui n'a jamais eu lieu.
-    expect(zombie.windup).toBeUndefined()
-    expect(zombie.cooldownUntil).toBe(0)
+    expect(bete.windup).toBeUndefined()
+    expect(bete.cooldownUntil).toBe(0)
   })
 
   it('la peau brute récompense le coup PROPRE, jamais le coup sale (V0-4)', () => {
@@ -783,12 +785,12 @@ describe('l’arme TENUE (A9, spec inventaire R9)', () => {
 })
 
 describe('la milice (A7)', () => {
-  it('trois zombies marchent sur le village : la milice tient, personne ne meurt', { timeout: 30_000 }, () => {
+  it('trois Cendreux marchent sur le village : la milice tient, personne ne meurt', { timeout: 30_000 }, () => {
     const sim = createSim(9, { map: createEmptyMap(40, 40, TERRAIN_GRASS) })
     foundNpcVillage(sim, 20, 20, 4)
-    spawnMonster(sim, 'zombie', 27, 20)
-    spawnMonster(sim, 'zombie', 20, 27)
-    spawnMonster(sim, 'zombie', 14, 15)
+    spawnMonster(sim, 'cendreux', 27, 20)
+    spawnMonster(sim, 'cendreux', 20, 27)
+    spawnMonster(sim, 'cendreux', 14, 15)
 
     for (let t = 0; t < 300 * BALANCE.TICK_RATE_HZ && sim.monsters.length > 0; t++) tick(sim) // ~5 min de marge
     expect(sim.monsters).toHaveLength(0) // tous abattus
@@ -803,7 +805,7 @@ describe('le déterminisme (A8)', () => {
       spawnEntity(state, 10, 10)
       grantItems(state, 1, { spear: 1, fiber: 6 })
       state.entities[0]!.activeSlot = 0 // la lance est EN MAIN (spec inventaire R9)
-      spawnMonster(state, 'zombie', 14, 10)
+      spawnMonster(state, 'cendreux', 14, 10)
       spawnMonster(state, 'boar', 8, 12)
     }
     const live = createSim(33, options)

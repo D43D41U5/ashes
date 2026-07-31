@@ -140,6 +140,14 @@ export type SimEvent =
    * seule fois par meute et par proie.
    */
   | { type: 'wolf_howl'; tick: number; targetEntityId: number; packSize: number; x: number; y: number }
+  /**
+   * ILS T'ONT SENTI (spec `cendreux.md` R11) — le pendant du hurlement pour les morts.
+   *
+   * La nuit bascule d'espèce avec les actes, et l'avertissement doit basculer avec elle :
+   * un Cendreux ne hurle pas. Émettre `wolf_howl` pour lui aurait fait jouer un cor de meute
+   * sur une chose qui traîne les pieds — le joueur aurait préparé la mauvaise parade.
+   */
+  | { type: 'cendreux_prowl'; tick: number; targetEntityId: number; count: number; x: number; y: number }
   | { type: 'corpse_looted'; tick: number; corpseId: number; byEntityId: number }
   | { type: 'structure_repaired'; tick: number; structureId: number; byEntityId: number }
   /** LE POTAGER (agriculture voie A) : semé, puis récolté quand mûr. */
@@ -169,6 +177,16 @@ export type SimEvent =
   | { type: 'refugees_robbed'; tick: number; groupId: number; byEntityId: number }
   | { type: 'refugees_left'; tick: number; groupId: number }
   | { type: 'cendreux_risen'; tick: number; entityId: number; x: number; y: number }
+  /**
+   * LE FEU A ÉTOUFFÉ UN RÉVEIL (spec `cendreux.md` R21) — la parade de S4, enfin quotidienne.
+   *
+   * *« On veille ses morts au feu, ou ils reviennent »* ne servait jusqu'ici qu'un seul canal,
+   * la levée d'un cadavre — et sur une saison Veillée entière, MESURÉ, il ne s'est déclenché
+   * qu'UNE fois. Le réveil lui donne sa fréquence : le sol travaille à sept tuiles, le joueur
+   * rallume, et le mort ne sort pas. C'est un fait de jeu discret et signifiant, donc il est
+   * ici et pas déduit après coup.
+   */
+  | { type: 'reveil_etouffe'; tick: number; x: number; y: number }
   | {
       type: 'season_ended'
       tick: number

@@ -27,6 +27,38 @@ import { appliqueDiffNoeuds, diffNoeuds, type BaseNoeuds, type DiffNoeuds } from
 export const SAVE_FORMAT_VERSION = 1
 
 /**
+ * LES CHAMPS ÉPHÉMÈRES QU'UNE SAUVEGARDE D'AVANT PEUT NE PAS PORTER — et leur valeur de repli.
+ *
+ * `SAVE_REQUIRED_KEYS` pose la bonne question à l'auteur d'un champ neuf : incrémenter la
+ * version, ou donner un repli ? Bosser la version rend TOUTES les vallées en cours illisibles.
+ * Ça se justifie pour un champ dont l'absence change la partie ; ça ne se justifie pas pour un
+ * champ dont la durée de vie se compte en secondes.
+ *
+ * `reveils` (spec `cendreux.md` R21) est de ce genre : un sol qui travaille dure quatre
+ * secondes. Le perdre à la relecture, c'est perdre un réveil que le joueur n'aurait de toute
+ * façon pas fini de voir — et un tableau vide est un état parfaitement cohérent, pas une
+ * amputation. On le recolle donc au lieu de refuser la vallée.
+ *
+ * La liste reste DÉLIBÉRÉE : y inscrire un champ est une décision, exactement comme bosser la
+ * version. Ce qui n'y est pas continue de faire échouer la relecture, franchement.
+ */
+const REPLIS_EPHEMERES: Readonly<Record<string, () => unknown>> = {
+  reveils: () => [],
+}
+
+/** Recolle les champs éphémères absents d'une sauvegarde antérieure. Rend les clés manquantes. */
+function comblerEphemeres(brut: Record<string, unknown>): string[] {
+  const restants: string[] = []
+  for (const k of Object.keys(REPLIS_EPHEMERES)) {
+    if (Object.hasOwn(brut, k)) continue
+    const repli = REPLIS_EPHEMERES[k]
+    if (repli) brut[k] = repli()
+    else restants.push(k)
+  }
+  return restants
+}
+
+/**
  * LES CHAMPS QU'UN ÉTAT REPRENABLE DOIT PORTER — et pourquoi cette liste existe.
  *
  * Le numéro de version ne protégeait RIEN tout seul. Il faut se souvenir de
@@ -51,7 +83,7 @@ export const SAVE_REQUIRED_KEYS: readonly string[] = [
   'functions', 'groundItems', 'grounds', 'home', 'hordes', 'lastConvoyDay', 'lastRefugeeDay',
   'map', 'megaHordeSpawned', 'monsters', 'nextCorpseId', 'nextEntityId', 'nextGroundItemId',
   'nextHerdId', 'nextHordeId', 'nextRefugeeGroupId', 'nextStructureId', 'nextVillageId',
-  'nodes', 'npcs', 'refugeeGroups', 'rngState', 'seasonEnded', 'seed', 'structures', 'tick',
+  'nodes', 'npcs', 'refugeeGroups', 'reveils', 'rngState', 'seasonEnded', 'seed', 'structures', 'tick',
   'villages', 'visitedPois', 'wind', 'worldEvents',
 ]
 
@@ -92,6 +124,7 @@ export function deserializeSim(text: string): SimState {
   if (typeof env.sim !== 'object' || env.sim === null) {
     throw new Error('Veillée illisible : état absent')
   }
+  comblerEphemeres(env.sim as unknown as Record<string, unknown>)
   const manquants = SAVE_REQUIRED_KEYS.filter((k) => !Object.hasOwn(env.sim, k))
   if (manquants.length > 0) {
     throw new Error(`Veillée d'un format antérieur : ${manquants.length} champ(s) manquant(s) — ${manquants.join(', ')}`)
@@ -288,6 +321,7 @@ export function deserializePartie(text: string, carte: CarteSauvee): SimState {
   // sont présentes (à `null`), donc la liste des champs requis s'y confronte telle quelle.
   // L'ordre compte : une enveloppe amputée doit se faire refuser POUR CE QU'ELLE EST, et non
   // se voir reprocher un recollage de nœuds qui n'avait aucune chance d'aboutir.
+  comblerEphemeres(env.partie as unknown as Record<string, unknown>)
   const manquants = SAVE_REQUIRED_KEYS.filter((k) => !Object.hasOwn(env.partie, k))
   if (manquants.length > 0) {
     throw new Error(`Veillée d'un format antérieur : ${manquants.length} champ(s) manquant(s) — ${manquants.join(', ')}`)

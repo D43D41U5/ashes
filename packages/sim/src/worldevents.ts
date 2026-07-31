@@ -6,9 +6,9 @@
  * calendrier — la pression monte avec les actes (GDD §2).
  */
 import { isThreatTo } from './alignment'
-import { BALANCE, COMBAT, CONVOY_LOOT, LOOT_VALUES, SEASON, SLOTS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
-import { isBlockedAt } from './collision'
+import { BALANCE, COMBAT, CONVOY_LOOT, FAUNA, LOOT_VALUES, MONSTER_DEFS, SEASON, SLOTS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
 import { distSq } from './geometry'
+import { computeFlowField } from './pathfinding'
 import { inventoryOf, toBag } from './items'
 import { rngRoll } from './rng'
 import { spawnMonster } from './monsters'
@@ -29,39 +29,75 @@ function roll(state: SimState): number {
 }
 
 
-/** Fait apparaître une horde en bord de carte, ciblant le village le plus proche. */
+/**
+ * Fait apparaître une horde en marche vers un village — hors de vue, mais SUR UN SOL QUI Y MÈNE.
+ *
+ * ═══ ELLE NAISSAIT DANS LA FALAISE ═══
+ *
+ * Le point d'entrée se cherchait sur un BORD DE CARTE, en 40 essais, **sans garde en cas
+ * d'échec** : `ex, ey` gardaient le dernier essai, bloqué ou non. Or la vallée est ceinte de
+ * roche — MESURÉ sur la carte du banc : **zéro tuile de bord marchable**, sur les quatre
+ * bords et pour les trois villages. Chaque horde naissait donc DANS le mur, hors du champ de
+ * flux (`field = -1`), et `hordeStep` concluait « au but ou coincé hors champ ».
+ *
+ * Le résultat, mesuré sur une saison entière : **0 horde sur 3 n'a atteint son village**, et
+ * elles n'ont pas parcouru 1 à 3 tuiles — la méga-horde du Grand Froid, le climax de la
+ * saison, a bougé de **3 tuiles** en une nuit, quand un Cendreux en couvre 1 400.
+ *
+ * On tire donc le point d'entrée du CHAMP DE FLUX lui-même, qui sait exactement quelles
+ * tuiles mènent au Feu visé : parmi celles à bonne distance de marche, on en prend une. La
+ * cible se choisit d'abord (le village, au hasard), le lieu ensuite — l'ordre inverse de
+ * l'ancien, qui devait deviner un village depuis un bord qu'il n'atteignait jamais.
+ */
 export function spawnHorde(state: SimState, size: number): Horde | null {
   if (state.villages.length === 0) return null
-  const { width, height } = state.map
-  // Un point d'entrée sur un bord, marchable.
-  let ex = 1
-  let ey = 1
-  for (let tries = 0; tries < 40; tries++) {
-    const side = Math.floor(roll(state) * 4)
-    const along = 2 + Math.floor(roll(state) * (Math.max(width, height) - 4))
-    ex = side === 0 ? 1 : side === 1 ? width - 2 : Math.min(along, width - 2)
-    ey = side === 0 || side === 1 ? Math.min(along, height - 2) : side === 2 ? 1 : height - 2
-    if (!isBlockedAt({ map: state.map, nodes: state.nodes }, ex, ey)) break
-  }
 
-  let target = state.villages[0]!
-  let bestD = Infinity
-  for (const v of state.villages) {
-    const d = distSq(v.fireTx, v.fireTy, ex, ey)
-    if (d < bestD) {
-      target = v
-      bestD = d
-    }
+  const target = state.villages[Math.floor(roll(state) * state.villages.length)] ?? state.villages[0]!
+  const { width } = state.map
+  const champ = computeFlowField(state.map, state.nodes, target.fireTx, target.fireTy)
+
+  // ELLE DOIT POUVOIR ARRIVER. Le champ donne la distance de MARCHE au Feu : on ne retient
+  // que la couronne qu'une bête à `speed` tuiles/s franchit dans une nuit, avec de la marge
+  // pour le combat. Assez loin pour qu'on la voie venir, assez près pour qu'elle vienne.
+  const nuit = Math.round(
+    MONSTER_DEFS.cendreux.speed * 60 * BALANCE.CYCLE_REAL_MINUTES * (1 - BALANCE.CYCLE_DAY_FRACTION) * WORLD_EVENTS.HORDE_APPROACH_FRACTION,
+  )
+  // LA COURONNE SE MESURE CONTRE LA CARTE, pas en tuiles absolues. Écrit en dur, `HORDE_MIN_DIST`
+  // vidait la couronne de toute carte plus petite que lui — et le repli sur « la tuile la plus
+  // lointaine » posait la horde dans un COIN, où son bloc de naissance déborde sur des tuiles
+  // hors champ. On borne donc les deux bouts par ce que la carte offre réellement.
+  let dMax = 0
+  for (let i = 0; i < champ.length; i++) if (champ[i]! > dMax) dMax = champ[i]!
+  if (dMax === 0) return null // le Feu ne mène nulle part : rien à faire marcher
+  const portee = Math.min(nuit, dMax)
+  const mini = Math.min(WORLD_EVENTS.HORDE_MIN_DIST, Math.floor(portee / 2))
+  const candidates: number[] = []
+  for (let i = 0; i < champ.length; i++) {
+    const d = champ[i]!
+    if (d >= mini && d <= portee) candidates.push(i)
   }
+  if (candidates.length === 0) return null
+  const key = candidates[Math.floor(roll(state) * candidates.length)]!
+  const ex = key % width
+  const ey = Math.floor(key / width)
 
   const horde: Horde = { id: state.nextHordeId, targetVillageId: target.id, memberEntityIds: [] }
   state.nextHordeId += 1
   for (let i = 0; i < size; i++) {
     const ox = ex + (i % 3) - 1
     const oy = ey + Math.floor(i / 3) - 1
-    const sx = Math.max(1, Math.min(state.map.width - 2, ox))
-    const sy = Math.max(1, Math.min(state.map.height - 2, oy))
-    horde.memberEntityIds.push(spawnMonster(state, 'zombie', sx + 0.5, sy + 0.5))
+    let sx = Math.max(1, Math.min(state.map.width - 2, ox))
+    let sy = Math.max(1, Math.min(state.map.height - 2, oy))
+    // CHAQUE MEMBRE SUR UN SOL QUI MÈNE AU FEU. Le bloc de naissance est un carré aveugle :
+    // au bord d'une paroi, une partie de ses cases tombe hors du champ (`-1`) et ces
+    // membres-là resteraient plantés toute la nuit — le bug d'origine, en plus petit.
+    if (champ[sy * width + sx]! === -1) {
+      sx = ex
+      sy = ey
+    }
+    // R1/R2 : la horde est faite de CENDREUX. Le Grand Froid devient littéralement
+    // « les morts qui reviennent au feu » — un seul mort-vivant, un seul lore.
+    horde.memberEntityIds.push(spawnMonster(state, 'cendreux', sx + 0.5, sy + 0.5))
   }
   state.hordes.push(horde)
   emitEvent(state, {
@@ -93,8 +129,13 @@ export function spawnConvoy(state: SimState): void {
     diedAt: state.tick,
   })
   state.nextCorpseId += 1
+  // LES GARDES PARTENT AVEC LEUR CARCASSE. Ils appartiennent à l'événement, pas au monde :
+  // même horloge que la décantation du butin qu'ils veillent (voir `Monster.expiresAt`).
+  const expiresAt = state.tick + WORLD_EVENTS.CONVOY_DECAY_TICKS
   for (let i = 0; i < WORLD_EVENTS.CONVOY_GUARDS; i++) {
-    spawnMonster(state, 'zombie', tx + 0.5 + (i === 0 ? 1 : -1), ty + 1.5)
+    const id = spawnMonster(state, 'cendreux', tx + 0.5 + (i === 0 ? 1 : -1), ty + 1.5)
+    const garde = state.monsters.find((m) => m.entityId === id)
+    if (garde) garde.expiresAt = expiresAt
   }
   emitEvent(state, { type: 'convoy_spawned', tick: state.tick, tx, ty })
 }
@@ -125,6 +166,28 @@ export function advanceWorldEvents(state: SimState): void {
       emitEvent(state, { type: 'horde_dispersed', tick: state.tick, hordeId: horde.id })
     }
     state.hordes = []
+  }
+
+  // CE QUE LE MONDE REPREND. Une bête d'événement dont l'heure est passée s'en va — mais
+  // jamais sous les yeux de quelqu'un : on attend qu'on ne la regarde plus, exactement comme
+  // `advanceDens` attend pour en faire NAÎTRE une. Sans ce balayage, les gardes de convoi
+  // s'empilaient sans fin (mesuré : 5 → 75 Cendreux sur une saison, par ce seul canal).
+  if (state.monsters.some((m) => m.expiresAt !== undefined && state.tick >= m.expiresAt)) {
+    const monsterIds = new Set(state.monsters.map((m) => m.entityId))
+    const avatars = state.entities.filter((e) => !monsterIds.has(e.id) && e.hp > 0)
+    const clearance = FAUNA.DEN_SPAWN_CLEARANCE * FAUNA.DEN_SPAWN_CLEARANCE
+    const partis = new Set<number>()
+    for (const m of state.monsters) {
+      if (m.expiresAt === undefined || state.tick < m.expiresAt) continue
+      const e = state.entities.find((en) => en.id === m.entityId)
+      if (!e) continue
+      if (avatars.some((a) => distSq(a.x, a.y, e.x, e.y) <= clearance)) continue // on la regarde
+      partis.add(m.entityId)
+    }
+    if (partis.size > 0) {
+      state.monsters = state.monsters.filter((m) => !partis.has(m.entityId))
+      state.entities = state.entities.filter((e) => !partis.has(e.id))
+    }
   }
 
   // La carcasse de convoi, tous les N jours de saison (spec R6).

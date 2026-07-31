@@ -47,6 +47,7 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   entity_died: { voix: 'voix', famille: 'registre', quoi: 'quelqu’un tombe (le froid et la faim tuent aussi)' },
   monster_slain: { voix: 'voix', famille: 'registre', quoi: 'une bête est abattue' },
   wolf_howl: { voix: 'voix', famille: 'registre', quoi: 'une meute a choisi un homme — le seul avertissement' },
+  cendreux_prowl: { voix: 'voix', famille: 'registre', quoi: 'les morts ont senti un homme — l’avertissement des actes II-III' },
 
   // ── LE FEU — l'organe vital : 4 voix sur 5, seul le geste répété se tait ─────────
   fire_fed: { voix: 'muet', famille: 'feu', quoi: 'on donne du bois au Feu' },
@@ -78,6 +79,7 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   season_ended: { voix: 'voix', famille: 'saison', quoi: 'la saison s’achève, les verdicts tombent' },
   cendre_avance: { voix: 'voix', famille: 'saison', quoi: 'la Cendre a mangé un morceau de la vallée' },
   cendreux_risen: { voix: 'voix', famille: 'saison', quoi: 'un cendreux se relève' },
+  reveil_etouffe: { voix: 'voix', famille: 'saison', quoi: 'le feu a étouffé un réveil — le sol se tait' },
   horde_spawned: { voix: 'voix', famille: 'saison', quoi: 'une horde se forme et marche sur un village' },
   horde_dispersed: { voix: 'muet', famille: 'saison', quoi: 'la horde se dissipe à l’aube' },
   convoy_spawned: { voix: 'muet', famille: 'saison', quoi: 'une carcasse de convoi apparaît sur la route' },

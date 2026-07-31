@@ -14,6 +14,7 @@ import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type Str
 import { moveAvatar } from './collision'
 import { advanceCombat, applyCombatAction, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
+import { advanceReveils, type Reveil } from './morts'
 import { advanceFire } from './fire'
 import { applyDebugAction, isDebugAction, refreshGodMode, type DebugAction } from './debug'
 import {
@@ -203,6 +204,15 @@ export interface SimState {
   monsters: Monster[]
   corpses: Corpse[]
   nextCorpseId: number
+  /**
+   * LES SOLS QUI TRAVAILLENT (spec `cendreux.md` R14, R21) — les réveils en cours.
+   *
+   * Le SEUL état neuf du chantier du réveil, et il est minimal : quatre nombres par entrée,
+   * une poignée d'entrées à la fois (le plafond de l'acte les borne), JSON-sérialisable. Le
+   * CHAMP des morts, lui, n'y est pas et n'y sera jamais : il se dérive de la carte et du
+   * tick (R15), comme le front de cendre.
+   */
+  reveils: Reveil[]
   hordes: Horde[]
   nextHordeId: number
   lastConvoyDay: number
@@ -369,6 +379,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     npcs: [],
     monsters: [],
     corpses: [],
+    reveils: [],
     nextCorpseId: 1,
     hordes: [],
     refugeeGroups: [],
@@ -637,6 +648,11 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceNpcs(state)
   advanceMonsters(state)
   advanceCendreux(state)
+  // LE SOL QUI TRAVAILLE rend son mort — ou le feu l'en empêche (R21). Juste après la levée
+  // d'un cadavre : c'est le même geste, à deux échelles de temps, et les deux se laissent
+  // annuler par la même garde de feu. Aucun tirage : le site et l'instant ont été décidés à
+  // la plantation, donc allumer un feu ne décale pas le flux du PRNG.
+  advanceReveils(state)
   advanceCombat(state)
   advanceAlignment(state)
   // L'UPKEEP DU FEU (spec construction R16) : le Feu brûle son combustible, et à sec les
