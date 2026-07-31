@@ -167,7 +167,16 @@ describe('le charnier est un lieu comme les autres', () => {
       }
       for (const a of autres) {
         const d2 = distSq(tx, ty, a.x + a.w / 2, a.y + a.h / 2)
-        expect(d2, `${z.name} est dans l’empreinte de ${a.name}`).toBeGreaterThanOrEqual(ecart2)
+        expect(d2, `${z.name} est trop près du centre de ${a.name}`).toBeGreaterThanOrEqual(ecart2)
+        // ET LA PROPRIÉTÉ QUI COMPTE VRAIMENT — aucun recouvrement de RECTANGLES.
+        // `tropPres` ne connaît que les CENTRES, or les set-pieces sont vastes : le Bois Noir
+        // fait 48 tuiles de large, soit une demi-diagonale de 33,9 — plus que l'écart de 32.
+        // Un charnier posé en diagonale à 32 tuiles de son centre tomberait donc DANS son coin,
+        // et `poisAt` rendrait deux lieux pour ces tuiles : le « Cairn au milieu du Cercle de
+        // pierres » que `tropPres` existe pour empêcher. Vérifié à 0 sur la seed du jeu, mais
+        // par chance et non par construction — c'est donc ici que la garde doit vivre.
+        const recouvre = z.x < a.x + a.w && a.x < z.x + z.w && z.y < a.y + a.h && a.y < z.y + z.h
+        expect(recouvre, `${z.name} recouvre ${a.name}`).toBe(false)
       }
     }
   })

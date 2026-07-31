@@ -664,8 +664,15 @@ export function poiSemis(width: number, height: number, seed: number): { x: numb
   return shuffled(bruts, seed)
 }
 
-/** Pose les POIs comme Zones nommées dans map.zones (pur, déterministe). */
-export function placePois(map: WorldMap, seed: number, zoneDe?: ZoneLookup): void {
+/**
+ * Pose les POIs comme Zones nommées dans map.zones (pur, déterministe).
+ *
+ * REND SON CHAMP DE CREUSEMENT — la passe des charniers a besoin du même, et le recalculer
+ * coûtait **2,5 s** sur la carte de production (MESURÉ : génération de 4,8 s passée à 7,4 s ;
+ * un test de la Veillée dépassait son budget de 30 s). C'est un balayage de 3,75 M tuiles, deux
+ * fois, pour la même réponse.
+ */
+export function placePois(map: WorldMap, seed: number, zoneDe?: ZoneLookup): CarveField {
   const radius = poiSpacing(map.width, map.height)
   const pts = poiSemis(map.width, map.height, seed)
   const used = new Map<string, number>()
@@ -698,6 +705,7 @@ export function placePois(map: WorldMap, seed: number, zoneDe?: ZoneLookup): voi
     }
     placeOne(map, field, picked, tx, ty, used)
   }
+  return field
 }
 
 /**
@@ -755,10 +763,15 @@ export function placeCharniers(
   seed: number,
   densite: (tx: number, ty: number) => number,
   zoneDe?: ZoneLookup,
+  champ?: CarveField,
 ): void {
   const t = POI_TYPES.find((p) => p.slug === 'charnier')
   if (!t) return
-  const field = carveDistanceToMain(map, walkableComponents(map), POI_PLACEMENT.MAX_CARVE_TILES)
+  // LE CHAMP DE `placePois`, quand il nous est passé — le recalculer coûtait 2,5 s pour la même
+  // réponse. Il est ANTÉRIEUR aux percements de la passe précédente, exactement comme lui-même
+  // l'est aux siens (voir la note d'ordre de `placeOne`) : un charnier ne se posera donc jamais
+  // sur le seuil qu'une Grotte vient d'ouvrir, ce qui est la lecture prudente et la bonne.
+  const field = champ ?? carveDistanceToMain(map, walkableComponents(map), POI_PLACEMENT.MAX_CARVE_TILES)
   const pts = shuffled(poissonPoints(map.width, map.height, seed ^ 0x43484152 /* 'CHAR' */, MORTS.CHARNIER_ESPACEMENT), seed)
 
   // UN GROUPE PAR ZONE. L'ordre d'insertion d'une Map suit celui de `pts`, déjà mélangé de façon
