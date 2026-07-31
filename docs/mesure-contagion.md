@@ -67,53 +67,96 @@ PNJ) tué seul, loin d'un feu, par un Cendreux qui reste planté sur le corps. C
 cas nominal que la spec R6-R7 décrit — la contagion, « le lore pris au mot ». Le montage mortel ne
 fabrique pas le défaut : il le rend **statistiquement visible** en le répétant.
 
-## 4. Une conséquence de design, pas seulement un bug
+## 4. Une conséquence de design, pas seulement un bug *(corrigé — voir §5)*
 
 La levée est **la** promesse du monstre qui donne son nom au jeu : *on veille ses morts au feu, ou
-ils reviennent*. Aujourd'hui, dans le cas le plus dramatique — mourir seul, dans le noir, sous les
-coups d'un Cendreux — **ce qui se relève est détruit avant d'avoir bougé d'un pixel**, par son
-propre meurtrier. Le joueur ne voit rien, n'apprend rien, et la vallée ne garde aucune trace.
+ils reviennent*. Dans le cas le plus dramatique — mourir seul, dans le noir, sous les coups d'un
+Cendreux — **ce qui se relevait était détruit avant d'avoir bougé d'un pixel**, par son propre
+meurtrier. Le joueur ne voyait rien, n'apprenait rien, et la vallée ne gardait aucune trace.
+C'est ce qui fait que ce n'était pas un bug de comptage, et que la réponse d'Alexis — *« TOUS les
+cendreux sont alliés entre eux »* — est une règle de jeu, pas un rustinage.
 
-## 5. Ce qui reste à TRANCHER (Alexis)
+## 5. L'arbitrage — Q1 tranchée et livrée, Q2 re-mesurée
 
-Le correctif change le jeu : une vallée qui comptait **0 levé vivant** peut en compter **jusqu'à
-24**. Ce n'est pas une décision technique. Trois questions, dans l'ordre où elles se posent.
+**Q1 — Les Cendreux se frappent-ils entre eux ? → TRANCHÉE (Alexis, 2026-07-31) : « TOUS les
+cendreux sont alliés entre eux », par ESPÈCE.** Livré : spec `cendreux.md` **R23**, critères **A34**
+et **A35**, une garde dans `resolveStrike`. Le levé sort désormais intact du coup en cours de son
+meurtrier, et `CENDREUX.MAX_ALIVE` peut enfin mordre.
 
-**Q1 — Les Cendreux se frappent-ils entre eux ?** C'est la racine, et elle a une réponse déjà
-écrite ailleurs dans le code : la **harde** existe précisément pour ça (« les loups se placent de
-part et d'autre de la proie ; l'arc attrapait le frère d'en face, et la meute se décimait toute
-seule »). Le même remède s'applique — mais faut-il l'appliquer à **l'espèce** (aucun Cendreux ne
-blesse un Cendreux : ils deviennent une faction) ou seulement au **couple tueur→levé** (le
-meurtrier épargne ce qu'il vient de créer, le reste continue de se gêner) ? *Ma recommandation :
-l'espèce.* Les morts-vivants qui s'entretuent ne racontent rien, et la version étroite laisserait
-le défaut revenir dès qu'un TROISIÈME Cendreux passe par là.
+*Quatre effets de bord, tous mesurés :*
 
-**Q2 — Le plafond compte-t-il la promesse ou la consommation ?** (la question déjà posée par la
-note). `risenAlive` compte les levés VIVANTS ; on a mesuré **180 cadavres marqués simultanément**
-contre un plafond de 24. **MAIS CE 180 NE PROUVE RIEN AUJOURD'HUI** : il est fabriqué par les 493
-morts du témoin, et ce montage n'existera plus une fois Q1 corrigée — un levé qui survit occupe
-une place, donc le plafond se refermera de lui-même bien avant d'accumuler 180 promesses. **Q2 se
-re-mesure APRÈS Q1**, elle ne se trancie pas sur le chiffre de cette nuit. *Ma recommandation :
-ne rien changer maintenant*, relancer `diag-contagion` une fois Q1 posée, et ne compter la
-promesse que si le pic de marqués dépasse encore le plafond dans un montage nominal.
+1. **Aucune régression de déterminisme.** `replay`, `events` et `sim` — les trois contrats —
+   passent. C'était le vrai risque : un coup qui ne porte plus est un tirage de blessure qui n'est
+   plus tiré, donc un flux seedé décalé. **966 verts** ; seuls les tests de nuit ci-dessous ont
+   bougé.
+2. **Aucun coût par tick mesurable.** Trois relevés du code livré (**0,761 · 0,771 · 0,852
+   ms/tick**, `profil-tick 8 4000`) encadrent le témoin sans l'alliance (**0,810**) : l'écart entre
+   deux relevés du MÊME code dépasse l'écart au témoin. La garde fait même *moins* de `find`
+   qu'avant — un seul relevé du monstre-cible sert les deux alliances et la mise à mort propre, et
+   il n'est payé que sur ce qui est réellement dans l'arc.
+3. **Le montage des tests A13 était contaminé, et ça s'est vu.** Ils laissaient leur proie mourir —
+   or une proie morte **n'est plus une proie** (`preys()` filtre `hp > 0`) : ils mesuraient une nuit
+   éteinte, et chaque mort semait un cadavre qui se levait (jusqu'à **119 levés**, d'où leur
+   débordement des 30 s). Proie maintenue en vie — comme le fait déjà `recensement-cendreux.mts`,
+   pour la même raison —, le nouvel étalon est **22 hurlements / 0 raclements → 29 / 6 → 0 / 16**.
+4. **Et ça a découvert un fait de calibrage** (§7).
 
-**Q3 — Faut-il un dégât de zone entre monstres du tout ?** Hors sujet immédiat, mais c'est la
-généralisation : aujourd'hui, deux zombies d'une même horde « se gênent » par conception assumée.
-Rien à changer sans une raison de jeu — je le signale pour que Q1 ne l'ouvre pas par accident.
+**Q2 — Le plafond compte-t-il la promesse ou la consommation ? → RE-MESURÉE, TOUJOURS OUVERTE, et
+je recommande de NE RIEN FAIRE aujourd'hui.**
 
-## 6. Le garde
+Le plafond est lu **à la mort** (`willRiseAsCendreux`) et **jamais à la levée** : une rafale de
+morts marque plus de promesses que le plafond n'en autorise, et toutes se lèvent. Post-Q1, dans le
+montage à témoin mortel : **184 levés vivants pour un plafond de 24**, pic de 161 cadavres marqués.
 
-`cendreux.test.ts` — **A34** verrouille le fait mesuré : dans un tick COMPLET, le levé meurt à son
-tick de naissance sous le coup de son meurtrier.
+**Mais ce chiffre n'est pas une raison d'agir, et voici le critère exact.** Déborder exige **plus de
+24 morts à l'intérieur d'une seule fenêtre `RISE_DELAY`** — soit **5 minutes de jeu**. Or la vallée
+de la Veillée porte **une quinzaine de vivants au total** : le débordement est **inatteignable en
+solo aujourd'hui**, et les 184 ne sortent que d'un témoin qui meurt 493 fois dans la nuit. Toucher
+au plafond maintenant, ce serait régler un nombre sur un montage.
+
+**Ce qui le rendra atteignable — quand rouvrir Q2 :**
+- **`saison-sans-fin`** : la pression monte sans borne, donc le taux de mortalité aussi. C'est le
+  premier chantier qui peut franchir les 24 morts / 5 minutes.
+- **La LAN** : n × joueurs, donc n × le rythme des morts, sur la même fenêtre.
+
+Le test à relancer le jour venu est écrit : `node --import tsx tools/diag-contagion.mts`, colonnes
+« levées » et « marqués (pic) ».
+
+**Q3 — Faut-il généraliser l'alliance aux autres espèces ? → NON, et Q1 ne l'a pas ouverte.**
+R23 nomme les Cendreux et rien d'autre ; la harde (spec faune R11) reste l'alliance LOCALE des bêtes
+qui chassent ensemble. Deux loups de meutes différentes continuent de se gêner, et A35 le garde.
+À rouvrir seulement sur une raison de jeu.
+
+## 6. Les gardes
+
+`cendreux.test.ts` — **A34** joue des ticks **COMPLETS** et affirme que le levé sort **intact** du
+coup en cours de son meurtrier (`risenAlive` vaut 1). Il a d'abord été écrit à l'ENVERS, verrouillant
+le défaut ; la décision d'Alexis l'a inversé — c'est donc le même test qui a mesuré le mal puis
+prouvé le remède. **A35** en balaye les bords : sous le coup d'un Cendreux, le Cendreux est intact
+*et le vivant encaisse* (le coup porte, il n'est pas annulé) ; sous le coup d'un **loup**, le même
+Cendreux encaisse ; et le joueur l'abat à la hache comme avant — l'alliance n'est pas un bouclier.
 
 **Pourquoi la suite ne l'avait pas vu, compté :** avant A34, le fichier appelait `advanceCendreux`
 **seul, hors du tick, à sept endroits**, et ne jouait un tick complet qu'à **deux**. Hors du tick,
 aucun wind-up ne se résout — le levé survit toujours. Ce n'est pas un oubli de cas, c'est un banc
 d'essai qui ne pouvait structurellement pas produire le phénomène.
 
-**Contre-épreuve jouée** (pour que le test ne passe pas par accident) : à `hp` 100 au lieu de 20,
-le levé encaisse les 34 et survit — A34 échoue. Il mesure donc bien « un coup, un mort », pas une
-coïncidence d'ordonnancement.
+**Contre-épreuve jouée** (pour qu'A34 ne passe pas par accident) : à `hp` 100 au lieu de 20, le levé
+encaisse les 34 et survit **même sans l'alliance** — le test échoue alors. Il mesure donc bien
+« un coup, un mort », pas une coïncidence d'ordonnancement.
 
-Le jour où Q1 est tranchée, **l'assertion s'inverse** : c'est le même test qui prouvera le
-correctif.
+## 7. Un fait de calibrage tombé du correctif (pour Alexis)
+
+En décontaminant A13, la montée acte I → acte III cesse d'être ce que le test affirmait. L'ancienne
+assertion opposait les *raclements* d'acte III aux *hurlements* d'acte I — deux événements que deux
+espèces n'émettent pas au même rythme — et elle ne passait (38 > 19) que grâce à la fontaine à
+cadavres. Sur une proie qui SURVIT, elle s'inverse : **16 raclements contre 22 hurlements**.
+
+La montée existe quand on la mesure sur ce qui se compare, **les chasseurs envoyés : 10 → 11 → 16**
+— c'est ce qu'affirme désormais le test. Mais c'est **×1,6**, quand le taux par minute, lui,
+**quadruple** (0,12 → 0,55) : le plafond `UNDEAD_MAX_ALIVE` de l'acte mange toute la différence.
+
+C'est exactement le défaut nommé en ouvrant `saison-sans-fin` — *« l'escalade est une table de trois
+valeurs, et une table est plate »*. Le voici chiffré **sur la nuit**, qui est pourtant le canal
+censé porter la tension (R11). **Décision d'Alexis, pas la mienne** : c'est posé là comme chiffre
+d'entrée pour la loi qui remplacera la table.

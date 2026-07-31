@@ -405,17 +405,39 @@ function resolveStrike(state: SimState, attacker: Entity): void {
   // était sans conséquence tant que les monstres arrivaient en file. Depuis
   // l'encerclement (spec faune R11), les loups se placent de part et d'autre de
   // la proie : l'arc de 90° attrapait le frère d'en face, et la meute se décimait
-  // toute seule (attrapé par le test de dispersion). La harde/meute est la SEULE
-  // exception, et elle est étroite : deux zombies d'une même horde n'ont pas de
-  // `herdId`, et continuent donc de se gêner comme avant.
-  const herdOf = (id: number): number | undefined => state.monsters.find((m) => m.entityId === id)?.herdId
-  const attackerHerd = herdOf(attacker.id)
+  // toute seule (attrapé par le test de dispersion).
+  //
+  // DEUX ALLIANCES, PAS UNE (décision d'Alexis, 2026-07-31 : « TOUS les cendreux sont
+  // alliés entre eux »). La harde/meute est LOCALE — elle ne lie que ceux qui chassent
+  // ensemble. Les Cendreux, eux, sont alliés PAR ESPÈCE, sans harde ni voisinage : un
+  // mort-vivant ne détruit pas un mort-vivant, jamais.
+  //
+  // Ce n'est pas une commodité, c'est la réparation d'un défaut MESURÉ
+  // (`docs/mesure-contagion.md`) : le Cendreux qui se lève naît EXACTEMENT sur le cadavre,
+  // donc sous le meurtrier qui s'y tient encore — et comme un Cendreux frappe à 34 pour
+  // 20 PV, il l'abattait dans le tick même de sa levée. 313 levées, 313 abattues en une
+  // nuit ; `risenAlive` restait à 0, donc `CENDREUX.MAX_ALIVE` ne mordait jamais et la
+  // contagion ne blessait personne. La promesse du jeu — *on veille ses morts au feu, ou
+  // ils reviennent* — était détruite par son propre exécutant.
+  //
+  // La règle est de l'ESPÈCE et non du couple tueur→levé : la version étroite laissait le
+  // défaut revenir dès qu'un TROISIÈME Cendreux passait par là (mesuré : deux rôdeurs
+  // suffisaient à eux seuls pour les 313).
+  const monsterOf = (id: number) => state.monsters.find((m) => m.entityId === id)
+  const attackerMonster = monsterOf(attacker.id)
+  const attackerHerd = attackerMonster?.herdId
+  const attackerIsCendreux = attackerMonster?.type === 'cendreux'
 
   let struck = false
   for (const target of state.entities) {
     if (target.id === attacker.id || target.hp <= 0) continue
-    if (attackerHerd !== undefined && herdOf(target.id) === attackerHerd) continue
     if (!inStrikeZone(strike, attacker.x, attacker.y, windup.dx, windup.dy, target.x, target.y)) continue
+    // UN SEUL relevé du monstre-cible sert les deux alliances ET la mise à mort propre
+    // plus bas : c'était deux `find` sur `state.monsters` par cible, c'en est un — et il
+    // ne se paye plus que sur ce qui est réellement dans l'arc.
+    const targetMonster = monsterOf(target.id)
+    if (attackerHerd !== undefined && targetMonster?.herdId === attackerHerd) continue
+    if (attackerIsCendreux && targetMonster?.type === 'cendreux') continue
     const tx = target.x - attacker.x
     const ty = target.y - attacker.y
     const dist = Math.sqrt(tx * tx + ty * ty)
@@ -430,7 +452,7 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     // qui frémit PENDANT le wind-up ne rend pas sale un coup déjà lancé — et,
     // symétriquement, l'alerte gagnée pendant qu'on TENAIT la charge (avant le
     // relâchement) compte, elle, comme un raté d'approche.
-    const wildTarget = state.monsters.find((m) => m.entityId === target.id)
+    const wildTarget = targetMonster
     if (wildTarget && (MONSTER_DEFS[wildTarget.type].habitat?.length ?? 0) > 0) {
       // Le wind-up naît au tick T avec `ticksLeft = windupTicks` et se décrémente
       // DÈS ce tick (advanceCombat court après les actions) : il se résout donc à

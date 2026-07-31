@@ -77,6 +77,28 @@ de S5/S6.
   à l'aube). Les compter aussi **refermait la levée qu'on venait d'ouvrir** — MESURÉ : 24
   vivants, le plafond pile, dès le **jour 21**, rien qu'avec les 5 Repaires et les gardes de
   convoi accumulés, donc plus une seule levée sur les deux tiers de la saison.
+- **R23 — TOUS LES CENDREUX SONT ALLIÉS ENTRE EUX** *(décision d'Alexis, 2026-07-31 ; livré)*.
+  Un Cendreux ne blesse jamais un Cendreux. L'alliance est de l'**ESPÈCE** : ni la harde, ni le
+  voisinage, ni le lien tueur→levé — n'importe lesquels, n'importe où. `resolveStrike` écarte la
+  cible de l'arc, il n'annule pas le geste (le coup part, il porte sur tout le reste).
+
+  **Pourquoi la règle existe.** Sans elle, R7-R8 étaient MORTS, et le détail est cruel : la levée
+  pose le Cendreux **exactement sur le cadavre**, c'est-à-dire sous le meurtrier qui s'y tient
+  encore ; `advanceCendreux` court avant `advanceCombat` ; et un Cendreux frappe à 34 pour 20 PV
+  (R10). Le levé était donc abattu **dans le tick même de sa levée**, par celui qui l'avait fait.
+  MESURÉ sur une nuit d'acte III : **313 levées, 313 abattues dans leur tick**, `risenAlive` à 0
+  en permanence — donc le plafond de R8 ne mordait jamais et la contagion ne blessait personne.
+  La promesse *on veille ses morts au feu, ou ils reviennent* était détruite par son exécutant.
+  Détail complet et mesures : `docs/mesure-contagion.md`.
+
+  **Pourquoi l'espèce et pas le couple tueur→levé.** La version étroite laissait le défaut revenir
+  dès qu'un TROISIÈME Cendreux passait par là — et c'est le cas nominal, pas le cas rare : sur la
+  nuit mesurée, **deux** rôdeurs suffisaient à eux seuls pour les 313.
+
+  **Ce que la règle ne fait pas** : elle ne rend pas le Cendreux invulnérable. Un loup, un PNJ, le
+  joueur le frappent comme avant (A35). Et elle ne touche pas la harde, qui reste l'alliance
+  LOCALE des bêtes qui chassent ensemble (spec faune R11) — les deux coexistent.
+
 - **R9 — Le feu veille les morts, et c'est LE geste.** Inchangé (S4) : un cadavre près d'un feu
   allumé ou en braises ne se relève pas, et l'annulation est **revérifiée au réveil**. La règle
   ne bouge pas d'un iota — mais avec R6-R7 elle cesse d'être une ligne de lore pour devenir la
@@ -395,6 +417,17 @@ mesure qui donne leur forme aux règles ci-dessous.
   terrain assombri (le tertre se lisait comme un buisson de plus). La part de la surface vient
   des familles de sol de `grain-sol`, déjà exhaustives : sous la neige il y a de la neige,
   sous l'herbe il y a de la terre. Aucune table de couleurs de plus.
+- **A34 — Le levé survit à son meurtrier** (R23). Dans un tick **COMPLET** (et non
+  `advanceCendreux` appelé seul, ce que faisait le reste du fichier à sept endroits contre deux —
+  hors du tick aucun wind-up ne se résout, et le banc ne pouvait donc pas produire le phénomène),
+  un Cendreux se lève sous le coup en cours de son meurtrier : il en sort **intact**, et
+  `risenAlive` vaut 1. **Mesure de référence : 313 levées / 313 abattues avant, 0 après.**
+  *(Contre-épreuve jouée : à `hp` 100, le test échoue — il mesure bien « un coup, un mort », pas
+  une coïncidence d'ordonnancement.)*
+- **A35 — L'alliance est de l'espèce, et elle est étroite** (R23). Même géométrie, deux cibles
+  dans le même arc : sous le coup d'un Cendreux le Cendreux est intact **et le vivant encaisse**
+  (le coup porte, il n'est pas annulé) ; sous le coup d'un **loup**, le même Cendreux encaisse ;
+  et le joueur l'abat à la hache comme avant.
 - **A9 — Le rempart tient toujours.** Un feu allumé ou en braises à portée empêche la levée, à la
   mort comme au réveil. (Non-régression S4 — c'est la parade, elle ne doit jamais céder.)
 - **A10 — Déterminisme et pureté.** Même seed + mêmes inputs → même flux d'événements ;

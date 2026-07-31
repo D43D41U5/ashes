@@ -237,7 +237,18 @@ describe('la nuit bascule d\'espèce (R11) — la tension croissante', () => {
    * horde : une saison de Veillée ne fait que SIX NUITS et la horde ne se tire qu'une fois
    * par nuit (3 hordes sur toute la partie, mesuré). La nuit qui chasse se tire à la MINUTE.
    *
-   * Mesuré sur 8 nuits par acte : 19 hurlements / 0 raclements → 18 / 10 → 0 / 38.
+   * ═══ LA PROIE NE MEURT PAS, ET C'EST LA MOITIÉ DE LA MESURE ═══
+   *
+   * Une proie tuée **cesse d'être une proie** (`preys()` filtre `hp > 0`) : le montage d'origine
+   * laissait le témoin mourir, donc il mesurait une nuit ÉTEINTE dès la première mort — et pire,
+   * chaque mort semait un cadavre qui se levait. MESURÉ après l'alliance des Cendreux (A34) :
+   * cette fontaine à cadavres portait la vallée à **119 levés** et faisait déborder le test de ses
+   * 30 s. On maintient donc le témoin en vie, comme le fait déjà `tools/recensement-cendreux.mts`
+   * pour la même raison. C'est un PLAFOND du terme « nuit » : un joueur qui ne rend jamais un coup
+   * et ne fait jamais de feu.
+   *
+   * Étalon sur 8 nuits par acte, proie maintenue : **22 hurlements / 0 raclements → 29 / 6 → 0 / 16**,
+   * et 10 → 11 → 16 chasseurs envoyés.
    */
   const NUITS = 8 // le tirage est par MINUTE et par acte : une seule nuit est un pile ou face
 
@@ -252,9 +263,12 @@ describe('la nuit bascule d\'espèce (R11) — la tension croissante', () => {
       // On se place au jour de saison voulu sans jouer 55 jours : le calendrier dérive du tick.
       state.tick = (jourDeSaison - 1) * TICKS_PER_SEASON_DAY
       state.tick -= state.tick % TICKS_PER_CYCLE // aligner sur le début du cycle (minuit)
-      humanAt(state, 32.5, 32.5)
+      const proie = humanAt(state, 32.5, 32.5)
       drainEvents(state)
-      for (let t = 0; t < 18 * 60 * BALANCE.TICK_RATE_HZ; t++) tick(state) // une nuit entière
+      for (let t = 0; t < 18 * 60 * BALANCE.TICK_RATE_HZ; t++) {
+        tick(state) // une nuit entière
+        proie.hp = 100 // elle tient debout toute la nuit — voir le bandeau ci-dessus
+      }
       const events = drainEvents(state)
       cumul.loups += state.monsters.filter((m) => m.type === 'wolf' && m.nightHunter === true).length
       cumul.morts += state.monsters.filter((m) => m.type === 'cendreux' && m.nightHunter === true).length
@@ -279,9 +293,22 @@ describe('la nuit bascule d\'espèce (R11) — la tension croissante', () => {
   })
 
   it('A13 — et la nuit d\'acte III pèse PLUS que celle d\'acte I (la montée se mesure)', () => {
-    // Le taux par minute quadruple (0,12 → 0,55) : la dernière nuit doit envoyer davantage,
-    // sinon « croissante » n'est qu'un mot dans une spec.
-    expect(nuits(55).raclements).toBeGreaterThan(nuits(5).hurlements)
+    // ON COMPARE CE QUI SE COMPARE : le nombre de CHASSEURS que la nuit envoie.
+    //
+    // L'assertion d'origine opposait les *raclements* d'acte III aux *hurlements* d'acte I —
+    // deux événements que deux espèces n'émettent pas au même rythme, donc un rapport qui ne
+    // dit rien. Elle passait (38 > 19) grâce à la fontaine à cadavres du montage mortel : le
+    // champ des morts qu'elle creusait appelait plus de rôdeurs. Témoin maintenu en vie, elle
+    // s'inverse (16 < 22) alors que la nuit d'acte III envoie bel et bien PLUS de monde.
+    //
+    // CE QUE ÇA LAISSE OUVERT, ET QUI EST UNE QUESTION DE CALIBRAGE (Alexis) : la montée
+    // mesurée sur les chasseurs envoyés est de 10 → 16, soit ×1,6, quand le taux par minute,
+    // lui, quadruple (0,12 → 0,55). Le plafond `UNDEAD_MAX_ALIVE` de l'acte mange la
+    // différence. C'est exactement le défaut que `docs/specs/saison-sans-fin.md` nomme — « une
+    // table de trois valeurs, et une table est plate ».
+    const acteI = nuits(5)
+    const acteIII = nuits(55)
+    expect(acteIII.loups + acteIII.morts).toBeGreaterThan(acteI.loups + acteI.morts)
   })
 
   it('A14 — un rôdeur mort ne HURLE pas : il a son propre signe', () => {
@@ -464,36 +491,30 @@ describe('tuer un Cendreux : 2 coups d\'arme basique, cadavre + loot redéposé 
 })
 
 /**
- * A34 — **ANOMALIE MESURÉE, À ARBITRER** (docs/mesure-contagion.md, `decisions.md` 2026-07-31).
+ * A34 — **LE LEVÉ SURVIT À SON MEURTRIER** (spec `cendreux.md` R7, `docs/mesure-contagion.md`).
  *
- * ═══ CE QUE CE TEST AFFIRME EST UN DÉFAUT, PAS UNE RÈGLE ═══
+ * ═══ CE QU'IL GARDE, ET POURQUOI IL EXISTE ═══
  *
- * Le Cendreux qui vient de se lever est ABATTU par celui qui l'a fait, dans le tick même de sa
- * levée. Trois faits se rejoignent : un Cendreux frappe à `damage` 34 et n'a que `hp` 20 (**un
- * seul coup en tue un**) ; `resolveStrike` « ne connaît pas les camps et frappe TOUT ce qui est
- * dans la zone », la harde (`herdId`) exceptée — que le levé ne partage pas ; et la levée pose le
- * corps EXACTEMENT sur le cadavre, c'est-à-dire sous le meurtrier qui s'y tient. L'ordre du tick
- * scelle le tout : `advanceCendreux` court AVANT `advanceCombat`.
+ * Ce test a d'abord été écrit à l'ENVERS : il verrouillait le défaut. Le Cendreux qui se lève naît
+ * EXACTEMENT sur le cadavre, donc sous le meurtrier qui s'y tient encore — et comme un Cendreux
+ * frappe à 34 pour 20 PV, il l'abattait dans le tick même de sa levée. MESURÉ sur une nuit d'acte
+ * III : **313 levées, 313 abattues dans leur tick**, `risenAlive` à 0 en permanence, donc
+ * `CENDREUX.MAX_ALIVE` qui ne mord jamais et une contagion qui ne blesse personne. La promesse du
+ * jeu — *on veille ses morts au feu, ou ils reviennent* — était détruite par son propre exécutant.
  *
- * Conséquence mesurée sur une nuit d'acte III : **313 levées, 313 abattues dans leur tick**,
- * `risenAlive` à 0 en permanence — donc `CENDREUX.MAX_ALIVE` ne mord jamais, et la contagion ne
- * blesse jamais personne. Les deux défauts de la note n'ont qu'une racine.
+ * Décision d'Alexis (2026-07-31) : **TOUS les Cendreux sont alliés entre eux**, par ESPÈCE et non
+ * par harde ni par couple tueur→levé. L'assertion s'est donc inversée, et c'est le même test qui
+ * prouve le correctif.
  *
- * ═══ POURQUOI ÇA A ÉCHAPPÉ AUX AUTRES TESTS ═══
+ * ═══ POURQUOI ÇA AVAIT ÉCHAPPÉ AU RESTE DU FICHIER ═══
  *
- * Avant A34, ce fichier appelait `advanceCendreux(state)` **seul, hors du tick, à SEPT endroits**
- * (A7 en tête) et ne jouait un tick complet qu'à DEUX. Hors du tick, aucun wind-up ne se résout :
- * le levé survit toujours. Le banc d'essai ne pouvait structurellement pas produire le phénomène.
- * Ce test-ci joue des ticks COMPLETS — c'est toute la différence.
- *
- * ═══ IL S'INVERSERA ═══
- *
- * Le jour où Q1 est tranchée (les Cendreux cessent-ils de se frapper entre eux ?), l'assertion
- * `mortMemeTick` devient `toBeUndefined()`. C'est le même test qui prouvera le correctif. On ne
- * le `skip` pas : un test sauté ne prouve rien.
+ * Il appelait `advanceCendreux(state)` **seul, hors du tick, à SEPT endroits** (A7 en tête) et ne
+ * jouait un tick complet qu'à DEUX. Hors du tick, aucun wind-up ne se résout : le levé survit
+ * toujours, et le banc d'essai ne pouvait structurellement pas produire le phénomène. Ce test-ci
+ * joue des ticks COMPLETS — c'est toute la différence, et c'est ce qu'il faut garder.
  */
-describe('A34 — ANOMALIE (à arbitrer) : le levé meurt sous le coup de son meurtrier', () => {
-  it('dans un tick COMPLET, le Cendreux levé est tué le tick même, par le Cendreux qui l\'a fait', () => {
+describe('A34 — le Cendreux levé survit au coup de celui qui l\'a fait', () => {
+  it('dans un tick COMPLET, le levé naît sous le coup de son meurtrier et n\'en meurt PAS', () => {
     const state = createSim(1)
     state.cycleOffset = cycleOffsetForStartHour(0) // minuit : le Cendreux ne cherche pas d'abri
 
@@ -510,9 +531,10 @@ describe('A34 — ANOMALIE (à arbitrer) : le levé meurt sous le coup de son me
     // l'IA du Cendreux emprunte) plutôt que de laisser l'IA choisir son moment : le test doit
     // mesurer une géométrie et des dégâts, pas un ordonnancement.
     const def = MONSTER_DEFS.cendreux
-    // La racine, affirmée avant d'être exploitée : UN SEUL coup de Cendreux tue un Cendreux.
-    // Contre-épreuve jouée : à `hp` 100, le levé survit et ce test échoue — il mesure donc bien
-    // la géométrie et les dégâts, pas une coïncidence d'ordonnancement.
+    // LA PRÉMISSE DU TEST, AFFIRMÉE AVANT D'ÊTRE EXPLOITÉE : sans l'alliance, un seul coup de
+    // Cendreux tuerait un Cendreux. Si ce rapport s'inversait un jour (PV montés au-dessus des
+    // dégâts), le test passerait pour la mauvaise raison — il ne prouverait plus l'alliance, juste
+    // que 34 ne suffit pas. C'est ce qu'a montré la contre-épreuve jouée à `hp` 100.
     expect(def.damage).toBeGreaterThanOrEqual(def.hp)
     const lance = startAttack(state, tueur, corpse.x - tueur.x, corpse.y - tueur.y, {
       windupTicks: def.windupTicks,
@@ -539,8 +561,69 @@ describe('A34 — ANOMALIE (à arbitrer) : le levé meurt sous le coup de son me
     }
 
     expect(levee).toBeDefined() // il s'est bien levé…
-    expect(mortMemeTick).toBeDefined() // …et il est mort dans le tick même de sa levée
-    expect(mortMemeTick!.byEntityId).toBe(tueurId) // abattu par celui qui l'a fait
-    expect(risenAlive(state)).toBe(0) // symptôme aval : le plafond ne peut jamais mordre
+    expect(mortMemeTick).toBeUndefined() // …et RIEN ne l'a tué dans le tick de sa levée
+    // Il est vivant, et il COMPTE — c'est ce qui rend `CENDREUX.MAX_ALIVE` capable de mordre.
+    expect(risenAlive(state)).toBe(1)
+    // …et il est INTACT : l'alliance écarte la cible, elle ne se contente pas de lui laisser
+    // un PV. (On ne dit RIEN du wind-up du meurtrier : son IA en relance un dès qu'il peut, et
+    // affirmer quoi que ce soit là-dessus reviendrait à tester un ordonnancement.)
+    const leve = state.entities.find((e) => e.id === levee!.entityId)!
+    expect(leve.hp).toBe(MONSTER_DEFS.cendreux.hp)
+  })
+})
+
+/**
+ * A35 — L'ALLIANCE EST DE L'ESPÈCE, ET ELLE EST ÉTROITE.
+ *
+ * A34 prouve le cas qui a motivé la règle (le levé sous son meurtrier). Celui-ci en balaye les
+ * BORDS, parce qu'une alliance mal bornée est un bouclier : elle protégerait les Cendreux du
+ * joueur, ou tout le bestiaire les uns des autres.
+ *
+ * Un seul montage, une seule géométrie : deux cibles côte à côte dans le MÊME arc — un Cendreux
+ * et un vivant. Ce qui change d'un cas à l'autre est uniquement QUI frappe.
+ */
+describe('A35 — l\'alliance des Cendreux : par espèce, et rien de plus', () => {
+  /** Pose deux cibles dans le même arc, frappe depuis `attaquant`, et rend leurs PV. */
+  function coupSurDeuxCibles(attaquantEstCendreux: boolean): { cendreux: number; vivant: number } {
+    const state = createSim(1)
+    state.cycleOffset = cycleOffsetForStartHour(0)
+    const def = MONSTER_DEFS.cendreux
+    // Les deux cibles se touchent presque, droit devant l'attaquant : l'arc les prend toutes deux.
+    const cibleCendreuxId = spawnMonster(state, 'cendreux', 41, 39.7)
+    const cibleVivant = humanAt(state, 41, 40.3)
+    const attaquantId = attaquantEstCendreux
+      ? spawnMonster(state, 'cendreux', 40, 40)
+      : spawnMonster(state, 'wolf', 40, 40)
+    const attaquant = state.entities.find((e) => e.id === attaquantId)!
+    startAttack(state, attaquant, 1, 0, { windupTicks: def.windupTicks, damage: def.damage })
+    for (let t = 0; t < def.windupTicks + 1; t++) step(state, [])
+    const cendreuxEnt = state.entities.find((e) => e.id === cibleCendreuxId)
+    return {
+      // Retiré de `entities` = mort d'un seul coup : on le compte 0 PV.
+      cendreux: cendreuxEnt?.hp ?? 0,
+      vivant: state.entities.find((e) => e.id === cibleVivant.id)?.hp ?? 0,
+    }
+  }
+
+  it('un Cendreux dans l\'arc d\'un Cendreux est ÉPARGNÉ — le vivant, lui, encaisse', () => {
+    const r = coupSurDeuxCibles(true)
+    expect(r.cendreux).toBe(MONSTER_DEFS.cendreux.hp) // intact : pas une égratignure
+    expect(r.vivant).toBeLessThan(100) // et le coup a bel et bien porté : ce n'est pas un coup mort
+  })
+
+  it('LE MÊME Cendreux, dans l\'arc d\'un loup, encaisse — l\'alliance ne le rend pas invulnérable', () => {
+    const r = coupSurDeuxCibles(false)
+    expect(r.cendreux).toBeLessThan(MONSTER_DEFS.cendreux.hp)
+  })
+
+  it('le joueur garde son verbe : un avatar abat un Cendreux comme avant', () => {
+    const state = createSim(1)
+    const cendreuxId = spawnMonster(state, 'cendreux', 41, 40)
+    const joueur = humanAt(state, 40, 40)
+    grantItems(state, joueur.id, { iron_axe: 1 })
+    joueur.activeSlot = 0
+    strike(state, joueur.id, 1, 0)
+    const ent = state.entities.find((e) => e.id === cendreuxId)!
+    expect(ent.hp).toBe(MONSTER_DEFS.cendreux.hp - WEAPON_PROFILES.iron_axe.light.damage)
   })
 })
