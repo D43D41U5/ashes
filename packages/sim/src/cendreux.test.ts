@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { BALANCE, COMBAT, MONSTER_DEFS, CENDREUX, NIGHT_HUNT, SLOTS, TERRAIN_GRASS, WEAPON_PROFILES } from './balance'
 import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
 import { countOf, inventoryOf } from './items'
-import { die } from './combat'
+import { die, startAttack } from './combat'
 import { advanceCendreux, risenAlive } from './cendreux'
 import { spawnMonster, advanceMonsters } from './monsters'
 import { createEmptyMap } from './map'
@@ -460,5 +460,87 @@ describe('tuer un Cendreux : 2 coups d\'arme basique, cadavre + loot redéposé 
     // Le loot hérité du cadavre d'origine est redéposé dans un nouveau cadavre.
     const lootCorpse = state.corpses.find((c) => c.id !== originalCorpse.id && countOf(c.inventory, 'berries') === 3)
     expect(lootCorpse).toBeDefined()
+  })
+})
+
+/**
+ * A34 — **ANOMALIE MESURÉE, À ARBITRER** (docs/mesure-contagion.md, `decisions.md` 2026-07-31).
+ *
+ * ═══ CE QUE CE TEST AFFIRME EST UN DÉFAUT, PAS UNE RÈGLE ═══
+ *
+ * Le Cendreux qui vient de se lever est ABATTU par celui qui l'a fait, dans le tick même de sa
+ * levée. Trois faits se rejoignent : un Cendreux frappe à `damage` 34 et n'a que `hp` 20 (**un
+ * seul coup en tue un**) ; `resolveStrike` « ne connaît pas les camps et frappe TOUT ce qui est
+ * dans la zone », la harde (`herdId`) exceptée — que le levé ne partage pas ; et la levée pose le
+ * corps EXACTEMENT sur le cadavre, c'est-à-dire sous le meurtrier qui s'y tient. L'ordre du tick
+ * scelle le tout : `advanceCendreux` court AVANT `advanceCombat`.
+ *
+ * Conséquence mesurée sur une nuit d'acte III : **313 levées, 313 abattues dans leur tick**,
+ * `risenAlive` à 0 en permanence — donc `CENDREUX.MAX_ALIVE` ne mord jamais, et la contagion ne
+ * blesse jamais personne. Les deux défauts de la note n'ont qu'une racine.
+ *
+ * ═══ POURQUOI ÇA A ÉCHAPPÉ AUX AUTRES TESTS ═══
+ *
+ * Avant A34, ce fichier appelait `advanceCendreux(state)` **seul, hors du tick, à SEPT endroits**
+ * (A7 en tête) et ne jouait un tick complet qu'à DEUX. Hors du tick, aucun wind-up ne se résout :
+ * le levé survit toujours. Le banc d'essai ne pouvait structurellement pas produire le phénomène.
+ * Ce test-ci joue des ticks COMPLETS — c'est toute la différence.
+ *
+ * ═══ IL S'INVERSERA ═══
+ *
+ * Le jour où Q1 est tranchée (les Cendreux cessent-ils de se frapper entre eux ?), l'assertion
+ * `mortMemeTick` devient `toBeUndefined()`. C'est le même test qui prouvera le correctif. On ne
+ * le `skip` pas : un test sauté ne prouve rien.
+ */
+describe('A34 — ANOMALIE (à arbitrer) : le levé meurt sous le coup de son meurtrier', () => {
+  it('dans un tick COMPLET, le Cendreux levé est tué le tick même, par le Cendreux qui l\'a fait', () => {
+    const state = createSim(1)
+    state.cycleOffset = cycleOffsetForStartHour(0) // minuit : le Cendreux ne cherche pas d'abri
+
+    // Une victime seule, loin de tout feu — les trois conditions de `willRiseAsCendreux`.
+    const victime = humanAt(state, 40, 40)
+    const tueurId = spawnMonster(state, 'cendreux', 41, 40)
+    const tueur = state.entities.find((e) => e.id === tueurId)!
+    die(state, victime, tueurId)
+    const corpse = state.corpses.find((c) => c.risesAt !== undefined)!
+    expect(corpse).toBeDefined()
+
+    // LE MEURTRIER RESTE PLANTÉ SUR LE CORPS ET REFRAPPE — c'est ce que fait le rôdeur de la
+    // nuit, qui garde sa proie. On lance le coup par le VRAI chemin (`startAttack`, celui que
+    // l'IA du Cendreux emprunte) plutôt que de laisser l'IA choisir son moment : le test doit
+    // mesurer une géométrie et des dégâts, pas un ordonnancement.
+    const def = MONSTER_DEFS.cendreux
+    // La racine, affirmée avant d'être exploitée : UN SEUL coup de Cendreux tue un Cendreux.
+    // Contre-épreuve jouée : à `hp` 100, le levé survit et ce test échoue — il mesure donc bien
+    // la géométrie et les dégâts, pas une coïncidence d'ordonnancement.
+    expect(def.damage).toBeGreaterThanOrEqual(def.hp)
+    const lance = startAttack(state, tueur, corpse.x - tueur.x, corpse.y - tueur.y, {
+      windupTicks: def.windupTicks,
+      damage: def.damage,
+    })
+    expect(lance).toBe(true)
+
+    // Le wind-up naît avec `ticksLeft = windupTicks` et se décrémente dès le premier `step` :
+    // il se résout donc au tick `départ + windupTicks − 1`. On CALE la levée dessus — c'est la
+    // coïncidence que la nuit produit d'elle-même, ici rendue exacte.
+    const tickResolution = state.tick + def.windupTicks - 1
+    corpse.risesAt = tickResolution
+
+    let levee: { entityId: number; tick: number } | undefined
+    let mortMemeTick: { byEntityId: number } | undefined
+    for (let t = 0; t < def.windupTicks + 2; t++) {
+      step(state, [])
+      for (const e of drainEvents(state)) {
+        if (e.type === 'cendreux_risen') levee = { entityId: e.entityId, tick: e.tick }
+        if (e.type === 'entity_died' && levee && e.entityId === levee.entityId && e.tick === levee.tick) {
+          mortMemeTick = { byEntityId: e.byEntityId }
+        }
+      }
+    }
+
+    expect(levee).toBeDefined() // il s'est bien levé…
+    expect(mortMemeTick).toBeDefined() // …et il est mort dans le tick même de sa levée
+    expect(mortMemeTick!.byEntityId).toBe(tueurId) // abattu par celui qui l'a fait
+    expect(risenAlive(state)).toBe(0) // symptôme aval : le plafond ne peut jamais mordre
   })
 })
