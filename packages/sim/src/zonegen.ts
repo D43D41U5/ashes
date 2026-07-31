@@ -554,7 +554,7 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return undefined
     return g.zones[zone[ty * width + tx]!]!.def.slug
   }
-  placePois(map, seed, zoneDe)
+  const champDeCreusement = placePois(map, seed, zoneDe)
 
   // ── PASSE 6 : LES CHARNIERS — l'adresse n'est plus une zone, c'est une DENSITÉ ────
   //
@@ -562,7 +562,7 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   // des morts, celui-là même que la nuit lit pour savoir combien de rôdeurs ce sol peut porter.
   // `poi.ts` ne connaît toujours pas `morts.ts` — il reçoit un accesseur, exactement comme pour
   // les zones. (spec `cendreux.md` R20 ; décision d'Alexis du 2026-07-31.)
-  placeCharniers(map, seed, (tx, ty) => densiteDeBase(map, tx, ty), zoneDe)
+  placeCharniers(map, seed, (tx, ty) => densiteDeBase(map, tx, ty), zoneDe, champDeCreusement)
 
   return carte
 }

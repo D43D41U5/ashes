@@ -901,6 +901,48 @@ export const POI_LIT_DEFS_DATA: readonly PoiLitDef[] = [
     ],
   },
   {
+    /**
+     * LE CHARNIER — la butte est FERMÉE, et c'est ce qui le sépare de la tanière : elle a un
+     * trou noir au milieu (on y entre), lui n'en a pas (on n'en sort pas). Trois blocs de terre
+     * qui s'étagent, plats et larges ; ce qui dépasse est PÂLE, et c'est le seul contraste fort
+     * de la forme — à cette taille, ce sont les os qu'on lit, pas la terre.
+     */
+    slug: 'charnier',
+    w: 54,
+    h: 22,
+    // QUATRE MARCHES, PAS TROIS — et l'écart entre elles décroît vers le haut. Vu à l'écran, la
+    // version à trois blocs dont le dernier était étroit ne lisait pas une butte : elle lisait un
+    // BANC (un plateau posé sur un socle, avec deux vides sous les épaules). Une butte se
+    // reconnaît à ce que chaque marche déborde franchement la suivante, et à ce qu'aucun gradin
+    // ne soit plus haut que large.
+    blocks: [
+      { rect: [1, 16, 52, 5], tone: '#35271f' }, //  la terre poussée s'étale au sol
+      { rect: [4, 11, 46, 6], tone: '#503c30' }, //  le pied du tertre
+      { rect: [11, 7, 32, 5], tone: '#6e5344' }, //  son corps
+      { rect: [20, 4, 15, 4], tone: '#6e5344' }, //  sa crête, éclairée
+    ],
+    accents: [
+      { rect: [6, 17, 42, 2], color: '#1d1512' }, // l'ombre au pied, côté sud
+      { rect: [40, 12, 9, 4], color: '#35271f' }, // et le flanc SE, dans l'ombre
+    ],
+    details: [
+      { rect: [8, 8, 5, 4], color: '#c9c1b0' }, //   un crâne, à demi sorti du flanc
+      { rect: [9, 9, 2, 1], color: '#35271f' }, //   son orbite
+      // Les côtes empruntent LICHEN, le pâle neutre de la table des matières : à seize pixels la
+      // tuile, un os et une pierre décolorée sont le même ton — et le hasard voulait que la
+      // teinte crue que j'avais posée soit déjà employée par deux écrans d'UI (garde `palette`).
+      { rect: [33, 5, 2, 5], color: LICHEN }, //     deux côtes plantées de travers
+      { rect: [38, 6, 2, 4], color: LICHEN },
+      { rect: [22, 12, 7, 2], color: '#9a9284' }, // un long os couché
+      { rect: [45, 17, 4, 2], color: '#6a5a48' }, // et ce que la pluie a redescendu
+      { rect: [4, 18, 3, 2], color: '#6a5a48' },
+    ],
+    cracks: [
+      { path: [[10, 20], [11, 16], [12, 12]], crevasse: true },
+      { path: [[44, 20], [43, 16], [42, 13]], crevasse: true },
+    ],
+  },
+  {
     slug: 'taniere',
     w: 56,
     h: 30,

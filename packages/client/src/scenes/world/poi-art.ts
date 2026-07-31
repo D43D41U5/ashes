@@ -324,13 +324,17 @@ export function makePoiTextures(scene: Phaser.Scene): void {
     g.fillStyle(RUST.deep).fillEllipse(c, b - 4, w - 2, 11) // la terre retournée s'étale
     g.fillStyle(RUST.dark).fillEllipse(c, b - 8, w - 10, 14) // le dos du tertre
     g.fillStyle(RUST.mid).fillEllipse(c - 8, b - 11, 22, 8) // lumière NO
-    g.fillStyle(RUST.deep).fillEllipse(c + 11, b - 6, 20, 7) // ombre SE
+    // L'ombre SE reste RASANTE et claire d'un ton : creusée comme elle l'était (RUST.deep sur
+    // 20×7), elle se lisait comme un TROU — c'est-à-dire comme une tanière, l'exact contresens.
+    g.fillStyle(RUST.dark).fillEllipse(c + 13, b - 6, 18, 5)
     // CE QUI DÉPASSE. Trois signes, pas plus : à seize pixels la tuile, c'est la SILHOUETTE
     // dentelée qui dit « des corps », pas le détail d'un os.
     g.fillStyle(0xc9c1b0).fillEllipse(c - 15, b - 12, 6, 5) // un crâne, à moitié sorti
     g.fillStyle(RUST.deep).fillRect(c - 17, b - 12, 2, 2)
-    g.fillStyle(0xb8b0a0).fillRect(c + 4, b - 15, 2, 6) // deux côtes plantées de travers
-    g.fillStyle(0xb8b0a0).fillRect(c + 9, b - 14, 2, 5)
+    // Le même pâle que la forme `_lit` (LICHEN, `matiere.ts`) : le swap peint↔basculé doit être
+    // sans couture, donc les deux dessins tiennent la même teinte.
+    g.fillStyle(0xa8a493).fillRect(c + 4, b - 15, 2, 6) // deux côtes plantées de travers
+    g.fillStyle(0xa8a493).fillRect(c + 9, b - 14, 2, 5)
     g.fillStyle(0x9a9284).fillRect(c - 4, b - 11, 7, 2) // un long os couché
   })
   tex('repaire', (w, b) => {
