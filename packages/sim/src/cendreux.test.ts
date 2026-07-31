@@ -535,6 +535,12 @@ describe('A34 — le Cendreux levé survit au coup de celui qui l\'a fait', () =
     // Cendreux tuerait un Cendreux. Si ce rapport s'inversait un jour (PV montés au-dessus des
     // dégâts), le test passerait pour la mauvaise raison — il ne prouverait plus l'alliance, juste
     // que 34 ne suffit pas. C'est ce qu'a montré la contre-épreuve jouée à `hp` 100.
+    //
+    // DEUX CONTRE-ÉPREUVES, PARCE QUE LE TEST A CHANGÉ DE SENS. Un test qui affirme une SURVIE
+    // passe aussi quand le coup n'arrive jamais (mauvais calage du tick, `startAttack` refusé,
+    // cible hors de l'arc) — il serait alors décoratif. Vérifié en retirant la seule garde
+    // d'espèce de `resolveStrike` : A34 vire au rouge sur `mortMemeTick`, tué par `byEntityId`
+    // = le meurtrier. Le coup arrive donc bien, et c'est l'alliance qui l'écarte.
     expect(def.damage).toBeGreaterThanOrEqual(def.hp)
     const lance = startAttack(state, tueur, corpse.x - tueur.x, corpse.y - tueur.y, {
       windupTicks: def.windupTicks,

@@ -349,7 +349,23 @@ mesure qui donne leur forme aux règles ci-dessous.
   fois par seconde — la régression exacte que la note de `spawnMonster` documente.
 - **A13 — Le basculement.** Sur des nuits entières jouées à l'acte I, II puis III : acte I
   **que des loups**, acte III **que des Cendreux**, acte II les deux. **Mesuré sur 8 nuits par
-  acte : 19 hurlements / 0 raclements → 18 / 10 → 0 / 38.**
+  acte, PROIE MAINTENUE EN VIE : 22 hurlements / 0 raclements → 29 / 6 → 0 / 16.**
+
+  **Le montage a été corrigé le 2026-07-31, et l'ancien étalon (19/0 → 18/10 → 0/38) est CADUC.**
+  Le banc laissait sa proie mourir — or une proie morte **n'est plus une proie** (`preys()` filtre
+  `hp > 0`) : il mesurait une nuit éteinte, et chaque mort semait un cadavre qui se levait (jusqu'à
+  **119 levés** une fois R23 posée). On la maintient désormais en vie, comme le fait déjà
+  `tools/recensement-cendreux.mts` pour la même raison.
+
+  **Et la MESURE DE LA MONTÉE a changé de grandeur avec lui.** L'assertion opposait les
+  *raclements* d'acte III aux *hurlements* d'acte I — deux événements que deux espèces n'émettent
+  pas au même rythme, donc un rapport qui ne dit rien ; il ne passait (38 > 19) que grâce à la
+  fontaine à cadavres. Le test compare maintenant ce qui se compare : **les chasseurs envoyés,
+  10 → 11 → 16**. ⚠ **CHIFFRE DE CALIBRAGE OUVERT (Alexis)** : c'est **×1,6**, quand le taux par
+  minute, lui, **quadruple** (0,12 → 0,55) — le plafond `UNDEAD_MAX_ALIVE` de l'acte mange la
+  différence. C'est le défaut que `saison-sans-fin.md` nomme (« une table de trois valeurs, et une
+  table est plate »), ici chiffré sur la nuit, qui est pourtant le canal censé porter la tension
+  (R11). Voir `docs/mesure-contagion.md` §7.
 - **A14 — Deux signes.** Un rôdeur mort émet `cendreux_prowl`, jamais `wolf_howl`.
 - **A16 — Les gardes partent avec leur carcasse.** À l'heure dite, un témoin sur place les
   garde en vie ; personne alentour, ils s'en vont — **et leurs entités avec** (aucune orpheline).
