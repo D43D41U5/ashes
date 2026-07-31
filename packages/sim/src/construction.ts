@@ -10,7 +10,15 @@
  * type}`, `{x,y,hp}`) plutôt que les types `Structure`/`Entity` — pour rester
  * découplé de `village.ts`/`sim.ts` (aucun cycle d'import) et directement testable.
  */
-import { BALANCE, COMPONENT_TYPES, FUNCTIONS, TERRAINS, type ComponentType, type FunctionId } from './balance'
+import {
+  BALANCE,
+  COMPONENT_TYPES,
+  FUNCTIONS,
+  TERRAIN_SHALLOW_WATER,
+  TERRAINS,
+  type ComponentType,
+  type FunctionId,
+} from './balance'
 import { emitEvent } from './events'
 import { chebyshev, edgeBits, edgeStep, oppositeEdge } from './geometry'
 import { terrainAt, type WorldMap } from './map'
@@ -39,6 +47,47 @@ export interface PlacedStructure {
  */
 export function blocksNavigation(type: StructureType): boolean {
   return type !== 'door' && type !== 'floor' && type !== 'roof' && type !== 'house'
+}
+
+/**
+ * ═══ CE QU'ON BÂTIT SUR L'EAU LIBRE — une LISTE, pas une exception ═══
+ *
+ * Décision d'Alexis (2026-07-31) : l'eau peu profonde est INCONSTRUCTIBLE, sauf le sol.
+ *
+ * Elle ne l'était pas. Le gué est `walkable` (on le traverse à mi-jambes, à vitesse 0,5) et
+ * toutes les portes de pose ne demandaient QUE ça — si bien qu'on plantait son feu de camp
+ * dans la rivière, qu'on y fondait son Foyer, qu'on y posait sa forge et sa parcelle de
+ * ferme. Les deux sites qui portaient le test l'écrivaient pourtant noir sur blanc,
+ * `// eau, roche…` : l'intention était là, seule l'eau PROFONDE la recevait.
+ *
+ * Et c'est une LISTE parce que la question va se rouvrir : le pont, le ponton, la passerelle
+ * sont des pièces dont le sens même est de se poser sur l'eau. Le jour où elles arrivent,
+ * elles s'ajoutent ici — on ne rouvre pas la porte de terrain.
+ *
+ * Le SOL y est déjà : c'est la seule pièce qui porte sa propre assise (des planches sur
+ * l'eau), et la seule qui ne bloque rien.
+ */
+export const POSABLE_SUR_EAU: readonly StructureType[] = ['floor']
+
+/**
+ * L'UNIQUE PORTE DE TERRAIN de la construction (spec construction R5).
+ *
+ * Les quatre gestes de pose du joueur — `place_campfire`, `build`, `place_component`,
+ * `light_fire` — la traversent, et le fantôme du client la partage : une seule vérité,
+ * donc aucun fantôme vert là où la sim refuse.
+ *
+ * NB : `walkable` reste le premier filtre, donc l'eau PROFONDE refuse tout, sol compris —
+ * c'est le comportement d'avant, inchangé. Le jour où un PONT doit enjamber la rivière
+ * profonde, c'est cette ligne-ci qu'on rouvre, et elle seule.
+ *
+ * NB2 : le marais, la tourbière et la roselière (terrains 8/18/19) restent constructibles.
+ * Ils sont mouillés, mais ce sont des SOLS — le rendu les peint au grain de sol, quand le
+ * gué, lui, passe au shader d'eau. On ne bâtit pas dans ce qu'on voit couler.
+ */
+export function terrainConstructible(terrain: number, type: StructureType): boolean {
+  if (!TERRAINS[terrain]?.walkable) return false // roche, falaise, glacier, eau profonde, vide
+  if (terrain !== TERRAIN_SHALLOW_WATER) return true // terre ferme (marais compris)
+  return POSABLE_SUR_EAU.includes(type)
 }
 
 /**

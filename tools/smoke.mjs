@@ -8095,6 +8095,234 @@ const SCENARIOS = {
    *
    * Exige `--dev` : `debug_grant`/`debug_teleport`/`light_fire` n'agissent qu'en debug.
    */
+  /**
+   * LE GUÉ NE PORTE QUE LE SOL (spec construction R4/A24, décision d'Alexis 2026-07-31).
+   *
+   * Ce qui ne se prouve qu'au navigateur : que le refus SE VOIT AVANT le clic. La sim est
+   * gardée par 5 tests headless ; ce qu'ils ne peuvent pas dire, c'est de quelle couleur est
+   * le fantôme sous le curseur — et c'était tout le défaut : il s'affichait VERT dans l'eau,
+   * donc le joueur n'avait aucun signal jusqu'au rejet.
+   *
+   * LA MESURE EST EN TRIPLET, jamais en point isolé — « le fantôme est rouge » ne distingue
+   * pas un refus de terrain d'un fantôme cassé ou hors de portée :
+   *   ① MUR dans le gué        → doit être ROUGE
+   *   ② SOL dans le gué, MÊME TUILE, même instant → doit être VERT (le terrain n'est pas
+   *     la seule cause ; c'est la PIÈCE qui décide, et la sonde le prouve en changeant
+   *     uniquement elle)
+   *   ③ MUR sur la BERGE d'à côté → doit être VERT (témoin : la sonde discrimine)
+   *
+   * ATTENTION AU SERVEUR QU'ON MESURE. `--dev` pointe sur `http://ashes.test/` — la stack
+   * DOCKER, donc le build du dépôt principal. Depuis un worktree, ça mesure le code des
+   * AUTRES : ce scénario a rendu « ① VERT ✗ » sur un correctif pourtant en place. Lancer son
+   * propre `pnpm dev` et passer `SMOKE_URL=http://localhost:3000/`.
+   */
+  async gue(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    // UN GUÉ AVEC SA BERGE — on cherche une tuile d'eau peu profonde (id 4) dont un voisin
+    // est de la TERRE FERME marchable et sèche : il faut les deux pour poser le témoin.
+    const site = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const at = (x, y) => m.terrain[y * m.width + x]
+      const SEC = new Set([1, 2, 3, 11, 12, 17, 20]) // herbe, route, forêt, lande, prairies, fleurs
+      for (let y = 2; y < m.height - 2; y++) {
+        for (let x = 2; x < m.width - 2; x++) {
+          if (at(x, y) !== 4) continue
+          for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+            if (SEC.has(at(x + dx, y + dy))) return { eau: { tx: x, ty: y }, berge: { tx: x + dx, ty: y + dy } }
+          }
+        }
+      }
+      return null
+    })
+    if (!site) {
+      console.error('!! aucun gué bordé de terre ferme sur cette carte — rien à mesurer')
+      return
+    }
+    console.log(`site : gué en (${site.eau.tx}, ${site.eau.ty}), berge en (${site.berge.tx}, ${site.berge.ty})`)
+
+    // On se poste SUR LA BERGE : à portée de bâti (6 tuiles) des deux tuiles visées.
+    await page.evaluate(({ tx, ty }) => {
+      window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: tx + 0.5, y: ty + 0.5 })
+    }, site.berge)
+    await page.waitForTimeout(500)
+
+    // LE MARTEAU EN MAIN, ET DANS LA CASE ACTIVE — `UIScene` n'ouvre le menu de pose que si
+    // `inv[activeSlot].item === 'hammer'`, et il REÉCRIT `selected` à chaque frame depuis ce
+    // menu. Armer par le registry ne tient donc pas un souffle : on arme par le vrai geste.
+    await page.evaluate(() => { window.__BRAISES__.scene.sendAction({ type: 'debug_grant', item: 'hammer' }) })
+    await page.waitForTimeout(300)
+    await page.evaluate(() => { window.__BRAISES__.scene.sendAction({ type: 'debug_grant', item: 'wood' }) })
+    await page.waitForTimeout(300)
+    const slotMarteau = await page.evaluate(() => (window.__BRAISES__.scene.registry.get('inv') ?? []).findIndex((s) => s?.item === 'hammer'))
+    await page.evaluate((slot) => { window.__BRAISES__.scene.sendAction({ type: 'set_active_slot', slot }) }, slotMarteau)
+    await page.waitForTimeout(500)
+    const menuOuvert = await page.evaluate(() => {
+      const el = document.querySelector('.bmn')
+      return Boolean(el) && el.querySelectorAll('.bmn-row').length
+    })
+    console.log(`marteau en case ${slotMarteau} → menu de pose : ${menuOuvert ? `${menuOuvert} pièces` : 'ABSENT ✗'}`)
+    if (!menuOuvert) {
+      console.error('!! le menu du marteau ne s’ouvre pas — rien ne peut être armé, la mesure serait vide')
+      return
+    }
+
+    const versEcran = (t) =>
+      page.evaluate(({ tx, ty }) => {
+        const scene = window.__BRAISES__.scene
+        const cam = scene.cameras.main
+        const gx = ((tx + 0.5) * 16 - cam.worldView.x) * cam.zoom
+        const gy = ((ty + 0.5) * 16 - cam.worldView.y) * cam.zoom
+        const c = scene.scale.canvas.getBoundingClientRect()
+        return { x: c.left + gx * (c.width / scene.scale.width), y: c.top + gy * (c.height / scene.scale.height) }
+      }, t)
+
+    // ARMER PAR LE MENU : `BUILDABLES = ['wall','door','floor','roof']`, une rangée chacune.
+    const RANG = { wall: 0, door: 1, floor: 2, roof: 3 }
+    const armer = async (piece) => {
+      // Désarmer d'abord (la rangée BASCULE : recliquer l'armée la désarme).
+      await page.evaluate(() => {
+        const a = document.querySelector('.bmn-row.bmn-armed')
+        if (a) a.click()
+      })
+      await page.waitForTimeout(150)
+      await page.evaluate((i) => { document.querySelectorAll('.bmn-row')[i]?.click() }, RANG[piece])
+      await page.waitForTimeout(250)
+      return page.evaluate(() => window.__BRAISES__.scene.registry.get('selected') ?? null)
+    }
+
+    /**
+     * Arme, vise, et rend ce que le fantôme MONTRE. Elle prouve sa prémisse : `armed` dit ce
+     * que l'UI a réellement armé et `texture` ce que le fantôme peint — sans quoi un fantôme
+     * ÉTEINT (sprite au repos, `st-wall`, teinte blanche) se lirait « ni vert ni rouge » et
+     * les trois lignes du rapport sortiraient fausses ensemble.
+     */
+    const sonde = async (piece, tuile) => {
+      const armed = await armer(piece)
+      const c = await versEcran(tuile)
+      await page.mouse.move(c.x - 30, c.y - 30) // un vrai déplacement d'abord : le pointermove doit partir
+      await page.mouse.move(c.x, c.y, { steps: 4 })
+      await page.waitForTimeout(250)
+      const g = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const s = sc.buildGhost?.sprite
+        if (!s) return null
+        // LA TUILE RÉELLEMENT VISÉE, et le terrain dessous : sans ça, on juge une couleur
+        // sur une tuile qu'on n'a peut-être jamais atteinte (la conversion tuile→écran est
+        // une hypothèse, pas une mesure).
+        const a = sc.inputs?.aim?.(sc.input.activePointer) ?? null
+        const m = sc.map
+        return {
+          tint: s.tintTopLeft, visible: s.visible, texture: s.texture?.key ?? null,
+          vise: a ? { tx: a.tx, ty: a.ty } : null,
+          terrain: a ? m.terrain[a.ty * m.width + a.tx] : null,
+          // OÙ LE FANTÔME EST PEINT, en pixels d'écran — pour aller lire sa couleur RÉELLE.
+          // `tintTopLeft` dit l'INTENTION ; seul le pixel composé dit ce que le joueur voit.
+          ecran: (() => {
+            const cam = sc.cameras.main
+            const c = sc.scale.canvas.getBoundingClientRect()
+            const kx = c.width / sc.scale.width
+            const ky = c.height / sc.scale.height
+            return {
+              x: c.left + (s.x - cam.worldView.x) * cam.zoom * kx,
+              y: c.top + (s.y - cam.worldView.y) * cam.zoom * ky,
+              h: s.displayHeight * cam.zoom * ky,
+            }
+          })(),
+        }
+      })
+      return g === null ? null : { ...g, armed, viseeEcran: { x: Math.round(c.x), y: Math.round(c.y) } }
+    }
+    const VERT = 0x9adf7a
+    const ROUGE = 0xd9614f
+    const dis = (r) => (r === null ? 'PAS DE FANTÔME' : r.tint === VERT ? 'VERT' : r.tint === ROUGE ? 'ROUGE' : `teinte ${r.tint?.toString(16)}`)
+
+    // ① le MUR dans le gué — doit rougir.
+    const murEau = await sonde('wall', site.eau)
+    // ② le SOL, MÊME TUILE — doit verdir : c'est la pièce qui décide, pas le terrain seul.
+    const solEau = await sonde('floor', site.eau)
+    // ③ le MUR sur la berge — le TÉMOIN : sans lui, un fantôme cassé rougirait partout.
+    const murBerge = await sonde('wall', site.berge)
+
+    const ligne = (n, quoi, r, attendu) =>
+      `${n} ${quoi.padEnd(18)} → ${dis(r)} ${r?.tint === attendu ? '✓' : '✗'}  [armé ${r?.armed ?? '?'} · fantôme ${r?.visible ? 'visible' : 'ÉTEINT ✗'} · ${r?.texture} · visé (${r?.vise?.tx}, ${r?.vise?.ty}) terrain ${r?.terrain}]`
+    console.log(ligne('①', 'mur dans le gué', murEau, ROUGE))
+    console.log(ligne('②', 'sol dans le gué', solEau, VERT))
+    console.log(ligne('③', 'mur sur la berge', murBerge, VERT) + ' — témoin')
+    for (const [nom, r] of [['①', murEau], ['②', solEau], ['③', murBerge]]) {
+      if (!r?.visible) console.error(`!! ${nom} : le fantôme est ÉTEINT — la couleur lue ne veut rien dire`)
+    }
+    if (murEau?.tint !== ROUGE) console.error('!! le fantôme reste VERT dans le gué — le joueur n’a aucun signal')
+    if (solEau?.tint !== VERT) console.error('!! le SOL est refusé dans le gué — l’exception ne passe pas jusqu’à l’écran')
+    if (murBerge?.tint !== VERT) console.error('!! le témoin de berge est rouge — la sonde ne mesure pas ce qu’elle croit')
+
+    /**
+     * ═══ CE QUE LE JOUEUR VOIT, ET NON CE QUE LE CODE A VOULU ═══
+     *
+     * `tintTopLeft` est une INTENTION. Le pixel composé est le fait — et il faut le mesurer
+     * DIFFÉRENTIELLEMENT, fantôme allumé contre fantôme ÉTEINT sur la même tuile : c'est la
+     * seule façon de savoir OÙ le sprite tombe (mon premier jet échantillonnait le fond et
+     * rendait « R−V = 1 contre 3 », deux mesures du décor). La différence localise le
+     * fantôme ; sa teinte se lit sur les pixels qui ont bougé, et sur eux seuls.
+     */
+    const desarmer = async () => {
+      await page.evaluate(() => {
+        const a = document.querySelector('.bmn-row.bmn-armed')
+        if (a) a.click()
+      })
+      await page.waitForTimeout(250)
+    }
+    const echelle = async (ref) => {
+      const pts = []
+      for (let i = 1; i <= 14; i++) {
+        const px = await pixelAt(page, Math.round(ref.x), Math.round(ref.y - (ref.h * i) / 15))
+        pts.push(px)
+      }
+      return pts
+    }
+    /** La teinte du fantôme sur cette tuile : médiane de R−V sur les pixels QUI ONT CHANGÉ. */
+    const teinteVue = async (tuile, nomCapture) => {
+      const r = await sonde('wall', tuile)
+      if (!r?.ecran) return null
+      const allume = await echelle(r.ecran)
+      if (nomCapture) await page.screenshot({ path: `${OUT}/${nomCapture}` })
+      await desarmer()
+      const eteint = await echelle(r.ecran)
+      const bouges = []
+      for (let i = 0; i < allume.length; i++) {
+        const a = allume[i]
+        const b = eteint[i]
+        if (!a || !b) continue
+        const d = Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])
+        if (d > 20) bouges.push(a)
+      }
+      if (bouges.length === 0) return { n: 0, rv: null }
+      const ecarts = bouges.map(([rr, vv]) => rr - vv).sort((x, y) => x - y)
+      // Le pixel le plus TEINTÉ, en plus de la médiane : le fantôme est à 55 % d'alpha, donc
+      // tout refus du jeu (roche, falaise, tuile occupée) est dilué de la même façon — la
+      // médiane sous-estime ce qu'on voit sur les pixels pleins.
+      const extreme = ecarts[ecarts.length - 1]
+      return { n: bouges.length, rv: ecarts[Math.floor(ecarts.length / 2)], min: ecarts[0], max: extreme }
+    }
+
+    const vuEau = await teinteVue(site.eau, 'gue-fantome-mur-eau.png')
+    const vuBerge = await teinteVue(site.berge, 'gue-fantome-mur-berge.png')
+    console.log(`OPTIQUE — même mur, pixels QUI ONT CHANGÉ : eau ${vuEau?.n} px, R−V médian ${vuEau?.rv} (${vuEau?.min}…${vuEau?.max}) · berge ${vuBerge?.n} px, R−V médian ${vuBerge?.rv} (${vuBerge?.min}…${vuBerge?.max})`)
+    if (!vuEau?.n || !vuBerge?.n) {
+      console.error('!! la sonde optique n’a trouvé AUCUN pixel de fantôme — elle mesure le décor, pas le fantôme')
+    } else if (!(vuEau.rv > vuBerge.rv)) {
+      console.error('!! le mur sur l’eau n’est pas plus ROUGE que le même mur sur la berge — le refus ne se VOIT pas')
+    } else {
+      console.log(`→ le refus SE VOIT : ${vuEau.rv - vuBerge.rv} points de R−V d'écart entre les deux tuiles`)
+    }
+    // Et la capture large, armée sur l'eau, pour l'œil.
+    await sonde('wall', site.eau)
+    await page.screenshot({ path: `${OUT}/gue-fantome-mur.png` })
+  },
+
   async construction(page) {
     await page.goto(URL)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })

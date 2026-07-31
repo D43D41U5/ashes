@@ -16,8 +16,8 @@ import {
   FIRE_UPKEEP,
   TEMPERATURE,
   TERRAIN_FOREST,
-  TERRAINS,
   terrainAt,
+  terrainConstructible,
   clairiereForet,
   createPrediction,
   decayRenderOffset,
@@ -391,16 +391,18 @@ export class WorldScene extends Phaser.Scene {
   }
   /**
    * Miroir client des règles de POSE (place_campfire / build) : à portée de BÂTI, sur
-   * terrain marchable, hors landmark. L'occupation de la tuile, elle, est vérifiée par
+   * terrain constructible, hors landmark. L'occupation de la tuile, elle, est vérifiée par
    * le fantôme (il a les structures). La sim revalide tout — ceci ne fait que colorer
    * le fantôme juste, pour ne pas afficher « perdu » là où la pose passe (et l'inverse).
    */
-  private placeable(tx: number, ty: number, placing: Placeable | null, edge: number): boolean {
+  private placeable(tx: number, ty: number, placing: Placeable, edge: number): boolean {
     const p = this.predicted
     const r = BALANCE.BUILD_RANGE
     if ((tx + 0.5 - p.x) ** 2 + (ty + 0.5 - p.y) ** 2 > r * r) return false
     if (zoneAt(this.map, tx + 0.5, ty + 0.5)) return false
-    if (TERRAINS[terrainAt(this.map, tx, ty)]?.walkable !== true) return false // eau, roche…
+    // La porte de terrain de /sim, MOT POUR MOT — elle juge par pièce depuis que l'eau peu
+    // profonde ne porte que le sol. La réimplémenter ferait vert ici et refusé là-bas.
+    if (!terrainConstructible(terrainAt(this.map, tx, ty), placing)) return false
     // ═══ SUR UNE ARÊTE, C'EST L'ARÊTE QUI DOIT ÊTRE LIBRE (spec construction R23) ═══
     //
     // Un mur mince ne prend pas sa tuile : il court sur le trait. Exiger la tuile vide rougirait

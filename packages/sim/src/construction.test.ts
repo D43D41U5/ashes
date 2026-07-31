@@ -10,12 +10,12 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, STRUCTURE_COSTS, STRUCTURE_HP, WALL_TIERS } from './balance'
 import { drainEvents } from './events'
-import { countOf } from './items'
+import { countOf, type StructureType } from './items'
 import { createEmptyMap } from './map'
-import { TERRAIN_GRASS, TERRAIN_DEEP_WATER } from './balance'
+import { TERRAIN_GRASS, TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_SHALLOW_WATER } from './balance'
 import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
-import { recognizeFunctions, type ComponentType } from './index'
+import { POSABLE_SUR_EAU, recognizeFunctions, terrainConstructible, type ComponentType } from './index'
 import { advanceSpoilage } from './economy'
 import { addStructure, applyStructureDamage, buildPlacementValid, evaluateBuild, fireRadius, getVillageOf, structureAt } from './village'
 import { grantItems } from './village'
@@ -691,5 +691,127 @@ describe('evaluateBuild — verdict pur de pose (fantôme + serveur, source uniq
     expect(evaluateBuild(sim, id, 'wall', 42, 40).ok).toBe(true)
     act(sim, id, { type: 'build', structure: 'wall', tx: 42, ty: 40 })
     expect(structureAt(sim.structures, 42, 40)?.type).toBe('wall')
+  })
+})
+
+/**
+ * ═══ L'EAU PEU PROFONDE NE PORTE QUE LE SOL (décision d'Alexis, 2026-07-31) ═══
+ *
+ * Le gué est `walkable` — on le traverse à mi-jambes — et les quatre gestes de pose ne
+ * demandaient que ça. On y plantait donc son feu de camp, on y fondait son Foyer, on y
+ * posait sa forge et sa parcelle de ferme, et le fantôme du client s'affichait VERT.
+ *
+ * L'eau PROFONDE, elle, refusait déjà tout : elle n'est pas `walkable`. Ce qui suit
+ * affirme les deux moitiés — le gué refuse tout sauf le sol, et rien n'a bougé ailleurs.
+ */
+describe('l’eau peu profonde est inconstructible, sauf le sol', () => {
+  /**
+   * LA TABLE EST EXHAUSTIVE PAR CONSTRUCTION, et c'est tout son intérêt : `Record<
+   * StructureType, boolean>` ne compile que si CHAQUE pièce de l'union y figure. Ajouter
+   * un `pont` demain sans dire s'il tient sur l'eau casse `pnpm check`, pas un test.
+   */
+  const SUR_LE_GUE: Record<StructureType, boolean> = {
+    floor: true, // la seule : des planches sur l'eau, elle porte sa propre assise
+    fire: false,
+    wall: false,
+    door: false,
+    roof: false,
+    chest: false,
+    workshop: false,
+    furnace: false,
+    house: false,
+    enclume: false,
+    four_acier: false,
+    tour_meca: false,
+    atelier_lourd: false,
+    silo: false,
+    cave: false,
+    reserve: false,
+    parcelle: false,
+    serre: false,
+    terroir: false,
+    table: false,
+    banc: false,
+    paillasse: false,
+    etagere: false,
+    tonneau: false,
+    friche: false,
+    terre: false,
+    cloture: false,
+    abreuvoir: false,
+    meule: false,
+    encadrement: false,
+    atre: false,
+    poutre: false,
+    mur_bas: false,
+  }
+  const TOUS = Object.keys(SUR_LE_GUE) as StructureType[]
+
+  it('A24 : chaque type de structure, sur le gué — seul le sol passe', () => {
+    for (const type of TOUS) {
+      expect([type, terrainConstructible(TERRAIN_SHALLOW_WATER, type)]).toEqual([type, SUR_LE_GUE[type]])
+    }
+    // Et la liste des exceptions dit la même chose que la table (une seule vérité).
+    expect(TOUS.filter((t) => SUR_LE_GUE[t])).toEqual([...POSABLE_SUR_EAU])
+  })
+
+  it('A24 : la terre ferme porte tout, l’eau profonde ne porte rien — sol compris', () => {
+    for (const type of TOUS) {
+      expect([type, terrainConstructible(TERRAIN_GRASS, type)]).toEqual([type, true])
+      expect([type, terrainConstructible(TERRAIN_DEEP_WATER, type)]).toEqual([type, false])
+      // Le MARAIS reste constructible : c'est un sol détrempé, pas de l'eau libre.
+      expect([type, terrainConstructible(TERRAIN_MARSH, type)]).toEqual([type, true])
+    }
+  })
+
+  /** Une mare de gué à l'est du Feu, dans le carré : (43..46, 38..42). */
+  function simAvecGue(): { sim: SimState; id: number } {
+    const sim = makeSim()
+    for (let ty = 38; ty <= 42; ty++) {
+      for (let tx = 43; tx <= 46; tx++) sim.map.terrain[ty * sim.map.width + tx] = TERRAIN_SHALLOW_WATER
+    }
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    return { sim, id }
+  }
+
+  it('A24 : le feu de camp ne se plante plus dans le gué', () => {
+    const sim = makeSim()
+    sim.map.terrain[40 * sim.map.width + 42] = TERRAIN_SHALLOW_WATER
+    const id = settler(sim, 41, 40)
+    act(sim, id, { type: 'set_active_slot', slot: slotOf(sim, id, 'campfire') })
+    drainEvents(sim)
+    act(sim, id, { type: 'place_campfire', tx: 42, ty: 40 })
+    expect(rejections(sim)).toEqual(['terrain inconstructible'])
+    expect(sim.structures.filter((s) => s.type === 'fire')).toHaveLength(0)
+  })
+
+  it('A24 : au marteau, le gué refuse mur/porte/toit et accepte le sol', () => {
+    const { sim, id } = simAvecGue()
+    equipHammer(sim, id)
+    for (const piece of ['wall', 'door', 'roof'] as const) {
+      const ev = evaluateBuild(sim, id, piece, 43, 40, piece === 'roof' ? undefined : 'wood')
+      expect([piece, ev.ok, ev.reason]).toEqual([piece, false, 'unbuildable'])
+    }
+    expect(evaluateBuild(sim, id, 'floor', 43, 40).ok).toBe(true)
+    // …et la pose réelle suit le verdict (parité handler/fantôme).
+    act(sim, id, { type: 'build', structure: 'floor', tx: 43, ty: 40 })
+    expect(structureAt(sim.structures, 43, 40)?.type).toBe('floor')
+  })
+
+  it('A24 : ni composant ni coffre dans le gué', () => {
+    const { sim, id } = simAvecGue()
+    drainEvents(sim)
+    placeComp(sim, id, 'enclume', 44, 40)
+    expect(structureAt(sim.structures, 44, 40)).toBeUndefined()
+    // Le coffre passe par la même porte (`place_component`), sans être un composant.
+    const e = sim.entities.find((x) => x.id === id)!
+    e.inventory[0] = { item: 'chest', count: 1 }
+    e.activeSlot = 0
+    e.x = 45.5
+    e.y = 43.5
+    act(sim, id, { type: 'place_component', tx: 45, ty: 42 })
+    expect(structureAt(sim.structures, 45, 42)).toBeUndefined()
+    expect(rejections(sim)).toEqual(['terrain inconstructible', 'terrain inconstructible'])
   })
 })

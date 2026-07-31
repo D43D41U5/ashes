@@ -23,7 +23,6 @@ import {
   SLOTS,
   STRUCTURE_COSTS,
   STRUCTURE_HP,
-  TERRAINS,
   VILLAGE_NAMES,
   WALL_MATERIAL_ORDER,
   WALL_TIERS,
@@ -32,7 +31,14 @@ import {
   type WallMaterial,
 } from './balance'
 import { isCropMature, isPlot } from './agriculture'
-import { blocksNavigation, edgeBarrierAt, fullTileAt, placementKeepsNavigable, refreshFunctions } from './construction'
+import {
+  blocksNavigation,
+  edgeBarrierAt,
+  fullTileAt,
+  placementKeepsNavigable,
+  refreshFunctions,
+  terrainConstructible,
+} from './construction'
 import { emitEvent } from './events'
 import { chebyshev, distSq, isSingleEdge } from './geometry'
 import {
@@ -442,7 +448,9 @@ export function evaluateBuild(
   if (!Number.isInteger(tx) || !Number.isInteger(ty)) return fail('bad_tile')
   if (chebyshev(village.fireTx, village.fireTy, tx, ty) > fireRadius(village.tier)) return fail('out_of_square')
   if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) return fail('too_far')
-  if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return fail('unbuildable')
+  // Le terrain juge PAR PIÈCE depuis que l'eau peu profonde refuse tout sauf le sol
+  // (`terrainConstructible`) : le gué porte des planches, pas un mur ni une porte.
+  if (!terrainConstructible(terrainAt(state.map, tx, ty), structure)) return fail('unbuildable')
   // L'ARÊTE VISÉE (R23) : mur/porte seulement, et UN SEUL bit. Sol et toit sont MOUS — ils
   // prennent la tuile et n'ont pas d'arête à porter ; leur en donner une les rendrait
   // invisibles à `floorAt`/`roofAt` (qui ne regardent pas `edges`) et on en empilerait dix.
@@ -855,7 +863,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (getVillageOf(state, actorId)) return reject('déjà membre d’un village')
       if (!hasItems(actor.inventory, STRUCTURE_COSTS.fire)) return reject('matériaux insuffisants')
       if (zoneAt(state.map, actor.x, actor.y)) return reject('les landmarks sont inconstructibles')
-      if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible')
+      if (!terrainConstructible(terrainAt(state.map, tx, ty), 'fire')) return reject('terrain inconstructible')
       if (structureAt(state.structures, tx, ty)) return reject('tuile occupée')
       const min = BALANCE.FIRE_MIN_DISTANCE
       if (state.villages.some((v) => chebyshev(v.fireTx, v.fireTy, tx, ty) < min)) {
@@ -889,7 +897,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // braises. On le plante devant soi, jamais dessous.
       if (Math.floor(actor.x) === tx && Math.floor(actor.y) === ty) return reject('pas sous ses pieds')
       if (zoneAt(state.map, tx + 0.5, ty + 0.5)) return reject('les landmarks sont inconstructibles')
-      if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible') // eau, roche…
+      // Roche, falaise, eau — le gué compris : on ne plante pas son feu dans la rivière.
+      if (!terrainConstructible(terrainAt(state.map, tx, ty), 'fire')) return reject('terrain inconstructible')
       // TUILE LIBRE, au sens LARGE (décision utilisateur) : ni structure, ni ressource
       // (arbre, filon, buisson…), ni personne (animal, PNJ, autre joueur) dessus. On ne
       // pose pas un foyer sur ce qui est déjà là. « Prise ENTIÈRE », depuis R23 : un mur
@@ -976,7 +985,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (distSq(actor.x, actor.y, tx + 0.5, ty + 0.5) > BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE) return reject('trop loin')
       // Un composant/coffre BLOQUE : pas sous ses pieds (on s'y emmurerait), comme le Feu.
       if (Math.floor(actor.x) === tx && Math.floor(actor.y) === ty) return reject('pas sous ses pieds')
-      if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) return reject('terrain inconstructible')
+      if (!terrainConstructible(terrainAt(state.map, tx, ty), placeType)) return reject('terrain inconstructible')
       // « Prise ENTIÈRE » (R23) : un mur d'arête borde la tuile sans l'occuper — on ADOSSE
       // donc son four à son propre mur, ce que `solidAt` refusait dès la première arête posée.
       if (fullTileAt(state.structures, tx, ty)) return reject('tuile occupée')
