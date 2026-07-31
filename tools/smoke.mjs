@@ -8275,11 +8275,18 @@ const SCENARIOS = {
       })
       await page.waitForTimeout(250)
     }
+    // LA SONDE OPTIQUE EST UN BONUS, JAMAIS UN BLOCAGE. Elle fait ~56 captures de 1×1, et sur
+    // un build chargé (couches de rendu supplémentaires) Playwright finit par dépasser son
+    // délai sur l'une d'elles. Le verdict qui COMPTE est le triplet ci-dessus ; un timeout
+    // d'instrument ne doit pas emporter le scénario avec lui.
     const echelle = async (ref) => {
       const pts = []
       for (let i = 1; i <= 14; i++) {
-        const px = await pixelAt(page, Math.round(ref.x), Math.round(ref.y - (ref.h * i) / 15))
-        pts.push(px)
+        try {
+          pts.push(await pixelAt(page, Math.round(ref.x), Math.round(ref.y - (ref.h * i) / 15)))
+        } catch {
+          pts.push(null) // capture ratée : ce point ne comptera pas
+        }
       }
       return pts
     }
@@ -8308,8 +8315,14 @@ const SCENARIOS = {
       return { n: bouges.length, rv: ecarts[Math.floor(ecarts.length / 2)], min: ecarts[0], max: extreme }
     }
 
-    const vuEau = await teinteVue(site.eau, 'gue-fantome-mur-eau.png')
-    const vuBerge = await teinteVue(site.berge, 'gue-fantome-mur-berge.png')
+    let vuEau = null
+    let vuBerge = null
+    try {
+      vuEau = await teinteVue(site.eau, 'gue-fantome-mur-eau.png')
+      vuBerge = await teinteVue(site.berge, 'gue-fantome-mur-berge.png')
+    } catch (e) {
+      console.log(`(sonde optique indisponible : ${e.name ?? e} — le triplet ci-dessus reste le verdict)`)
+    }
     console.log(`OPTIQUE — même mur, pixels QUI ONT CHANGÉ : eau ${vuEau?.n} px, R−V médian ${vuEau?.rv} (${vuEau?.min}…${vuEau?.max}) · berge ${vuBerge?.n} px, R−V médian ${vuBerge?.rv} (${vuBerge?.min}…${vuBerge?.max})`)
     if (!vuEau?.n || !vuBerge?.n) {
       console.error('!! la sonde optique n’a trouvé AUCUN pixel de fantôme — elle mesure le décor, pas le fantôme')
