@@ -1,5 +1,12 @@
 # La saison — trois actes, la Cendre, la chronique
 
+> **⚠ CADRE SUPERSÉDÉ le 2026-07-31 — lire `saison-sans-fin.md` avant les chiffres de ce document.**
+> Décision d'Alexis : le jeu ne se termine plus au bout de soixante jours, la pression monte
+> indéfiniment, et la saison devient un *réglage* (jamais en solo, une période de wipe en jours
+> IRL en multi). **R1** (courbe en trois actes), **R3** (évacuation au jour 55) et **R4** (fin au
+> jour 61) ci-dessous sont donc caducs dans leur ancrage. **R2** (méga-horde), **R5** (noms de
+> village) et **R6** (chronique) restent valables tels quels.
+
 *Source : GDD §2 (60 jours, trois actes, wipe, Mémoires + chronique), §8 (robinets et éviers par acte). Statut : **implémenté** (2026-07-05, décisions prises en autonomie — révisables). Jalon : V9.*
 
 ## Objectif de design
