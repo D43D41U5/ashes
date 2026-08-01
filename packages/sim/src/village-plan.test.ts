@@ -197,6 +197,29 @@ describe('la prospérité attire (R9)', () => {
   })
 })
 
+describe('la palissade au marteau du joueur (décision 2026-08-01)', () => {
+  it('se pose sur une arête ; la pose pleine-tuile est refusée avec son motif', () => {
+    const sim = createSim(3, { map: createEmptyMap(32, 32, TERRAIN_GRASS) })
+    const player = spawnEntity(sim, 15.5, 15.5)
+    const e = sim.entities.find((x) => x.id === player)!
+    addItems(e.inventory, { wood: 20, hammer: 1 })
+    e.activeSlot = e.inventory.findIndex((s) => s?.item === 'hammer')
+    step(sim, [{ entityId: player, dx: 0, dy: 0, action: { type: 'light_fire' } }])
+    drainEvents(sim)
+
+    step(sim, [{ entityId: player, dx: 0, dy: 0, action: { type: 'build', structure: 'palissade', tx: 17, ty: 15, edges: 1 } }])
+    const posee = sim.structures.find((s) => s.type === 'palissade')
+    expect(posee).toBeDefined()
+    expect(posee!.edges).toBe(1)
+    expect(posee!.ownerId).toBe(player)
+
+    step(sim, [{ entityId: player, dx: 0, dy: 0, action: { type: 'build', structure: 'palissade', tx: 18, ty: 15 } }])
+    const evs = drainEvents(sim)
+    expect(evs.some((ev) => ev.type === 'action_rejected' && ev.reason === 'la palissade se pose sur une arête')).toBe(true)
+    expect(sim.structures.filter((s) => s.type === 'palissade')).toHaveLength(1)
+  })
+})
+
 describe('le déterminisme (R10)', () => {
   it('deux runs identiques, chantier compris, rendent le même état', () => {
     const world = (): SimState => {

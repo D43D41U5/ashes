@@ -420,6 +420,9 @@ export type BuildReject =
   | 'edge_taken'
   /** Sol et toit ne se posent PAS sur une arête : ils sont mous et prennent la tuile. */
   | 'no_edge'
+  /** La palissade vit SUR l'arête, toujours : née après R23, elle n'a aucune forme
+   *  pleine-tuile historique à honorer — et le rendu n'en connaît aucune. */
+  | 'edge_required'
 
 /** Le verdict d'une pose au marteau. `cost` est TOUJOURS renseigné (palier appliqué),
  *  même sur refus de placement — le panneau affiche le coût quoi qu'il arrive. */
@@ -490,6 +493,7 @@ export function evaluateBuild(
   // rendrait invisibles à `floorAt`/`roofAt` (qui ne regardent pas `edges`).
   const surArete = edges !== undefined
   if (surArete && !isWallLike && structure !== 'palissade') return fail('no_edge')
+  if (!surArete && structure === 'palissade') return fail('edge_required')
   if (surArete && !isSingleEdge(edges)) return fail('bad_tile')
   // Occupation PAR COUCHE : seul un doublon de la MÊME couche (sol/toit/solide/arête) refuse.
   const occupant = surArete
@@ -538,6 +542,7 @@ const BUILD_REJECT_REASON: Record<BuildReject, string> = {
   unaffordable: 'matériaux insuffisants',
   edge_taken: 'cette arête porte déjà un mur',
   no_edge: 'cette pièce prend la tuile, pas une arête',
+  edge_required: 'la palissade se pose sur une arête',
 }
 
 /**

@@ -188,7 +188,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     // une porte (R23), et non plus « la première structure de la tuile ». Un coin de pièce porte
     // déjà un mur au nord ; le lire améliorerait celui-là au lieu de poser celui de l'ouest, et
     // fermer un angle — le geste le plus courant de la construction — deviendrait impossible.
-    const s = armed === 'wall' || armed === 'door'
+    const s = armed === 'wall' || armed === 'door' || armed === 'palissade'
       ? edgeBarrierAt(deps.structures(), aim.tx, aim.ty, edge) ?? null
       : deps.structures().find((st) => st.tx === aim.tx && st.ty === aim.ty) ?? null
     return { material, edge, onTile: s ? { id: s.id, type: s.type } : null }

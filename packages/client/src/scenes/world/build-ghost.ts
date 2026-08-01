@@ -90,7 +90,7 @@ export class BuildGhost {
     // `st-<fam>-e<bit>`, même ancrage `EDGE_ORIGIN_Y` (le sprite déborde sous sa tuile, le mur
     // étant à cheval). Les deux formules ne sont pas recopiées de `snapshot-view` : elles sont
     // lues là où elles vivent. Seule la PROFONDEUR diffère, et exprès (`GHOST_DEPTH`).
-    const surArete = placing === 'wall' || placing === 'door'
+    const surArete = placing === 'wall' || placing === 'door' || placing === 'palissade'
     // ET L'OCCUPATION SE LIT SUR L'ARÊTE. « Une structure sur la tuile » rougissait le coin
     // d'une pièce dès son premier mur — or c'est exactement là qu'il faut poser le second.
     const occupied = surArete

@@ -282,6 +282,11 @@ export function clickToAction(
         edges: build?.edge ?? EDGE_N,
       }
     }
+    // La PALISSADE se pose sur arête comme un mur — mais SANS matériau (pas de palier :
+    // le bois est son essence, décision d'Alexis 2026-08-01).
+    if (placing === 'palissade') {
+      return { type: 'build', structure: placing, tx: target.tx, ty: target.ty, edges: build?.edge ?? EDGE_N }
+    }
     // Il ne reste que les pièces MOLLES du marteau (sol/toit) — le reste (composants,
     // coffre, feu) a déjà été traité au-dessus.
     if (placing === 'floor' || placing === 'roof') {

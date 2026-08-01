@@ -15,7 +15,7 @@ import type { Brouillard } from './render/fog'
  * d'Alexis) : les SEULES choses qu'on pose au marteau. Le coffre, le four et
  * l'établi n'en sont PAS — ce sont des objets qu'on tient et pose (flux feu de camp).
  */
-export type Buildable = 'wall' | 'door' | 'floor' | 'roof'
+export type Buildable = 'wall' | 'palissade' | 'door' | 'floor' | 'roof'
 
 /** Ce qu'un clic gauche peut POSER au sol : une PIÈCE STRUCTURELLE (marteau en main),
  *  le FEU DE CAMP (`'fire'`), un COMPOSANT (enclume, four…) ou le COFFRE qu'on tient.

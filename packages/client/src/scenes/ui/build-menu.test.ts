@@ -8,9 +8,11 @@ import { BUILDABLES, pieceCost } from './build-menu'
  */
 describe('le menu du marteau', () => {
   it('R20 : les pièces sont les BARRIÈRES structurelles seules (décision d’Alexis)', () => {
-    // Mur, porte, sol, toit — et RIEN d'autre : le coffre, le four, l'établi et les
-    // composants se tiennent et se posent (flux feu de camp), pas au marteau.
-    expect([...BUILDABLES]).toEqual(['wall', 'door', 'floor', 'roof'])
+    // Mur, palissade, porte, sol, toit — et RIEN d'autre : le coffre, le four, l'établi
+    // et les composants se tiennent et se posent (flux feu de camp), pas au marteau.
+    // La palissade a rejoint la liste le 2026-08-01 (« garde la palissade pour le
+    // joueur aussi ») — l'enceinte n'est pas un mur de bâtiment, chez le joueur non plus.
+    expect([...BUILDABLES]).toEqual(['wall', 'palissade', 'door', 'floor', 'roof'])
   })
 
   it('R8 : le matériau change le coût des murs/portes, pas celui des pièces molles', () => {

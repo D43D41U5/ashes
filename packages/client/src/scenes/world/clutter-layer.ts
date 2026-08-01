@@ -23,7 +23,7 @@ const FLAT_PROPS = new Set<PropKind>(['pebbles', 'lichen', 'sphagnum'])
 /** Le BÂTI qui gomme le décor de SA tuile (décision d'Alexis) : mur, porte, sol,
  *  toit. Un plancher est net, un mur sans fougère qui le traverse. Le feu, les
  *  composants (four, enclume) et le coffre, eux, se posent dans l'herbe : elle reste. */
-const DECOR_CLEARING_STRUCTURES = new Set(['wall', 'door', 'floor', 'roof'])
+const DECOR_CLEARING_STRUCTURES = new Set(['wall', 'palissade', 'door', 'floor', 'roof'])
 const CLUTTER_TINT = 0xbfc4bd // léger assombrissement/désaturation (INV-2)
 /** LA TOUFFE PREND LA GAMME DE SON BIOME (demande d'Alexis, 2026-07-29) — une teinte par terrain,
  *  dérivée de la palette de sol (`render/clutter-teinte.ts`). Mémoïsée : la règle est une

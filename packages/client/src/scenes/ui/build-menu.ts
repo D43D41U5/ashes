@@ -18,9 +18,12 @@ import { STRUCTURE_COSTS, WALL_TIERS, hasItems, type Inventory, type ItemBag, ty
 import type { Buildable } from '../../hud-state'
 
 /** Les pièces structurelles du menu du marteau (spec construction R20). */
-export const BUILDABLES = ['wall', 'door', 'floor', 'roof'] as const
+export const BUILDABLES = ['wall', 'palissade', 'door', 'floor', 'roof'] as const
 export const BUILDABLE_LABEL: Record<Buildable, string> = {
   wall: 'Mur',
+  // La palissade au marteau du joueur : décision d'Alexis, 2026-08-01 (« garde la
+  // palissade pour le joueur aussi »). Sans palier de matériau — le bois est son essence.
+  palissade: 'Palissade',
   door: 'Porte',
   floor: 'Sol',
   roof: 'Toit',
