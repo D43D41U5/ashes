@@ -10,6 +10,7 @@ import { createSim, spawnEntity, step, type PlayerAction, type SimState } from '
 import { MORTS, NIGHT_HUNT, TERRAIN_GRASS } from './balance'
 import { drainEvents } from './events'
 import { getGameTime } from './time'
+import { foundNpcVillage } from './worldgen'
 
 function makeSim(debug: boolean): { sim: SimState; player: number } {
   const sim = createSim(1, { map: createEmptyMap(64, 64, TERRAIN_GRASS), debug })
@@ -186,5 +187,32 @@ describe('debug — réveiller le sol', () => {
     const { sim, player } = makeSim(false)
     act(sim, player, { type: 'debug_reveil' })
     expect(sim.reveils).toHaveLength(0)
+  })
+})
+
+describe('debug — tamponner le palier de bâti (spec village-pnj-evolution)', () => {
+  it('palier 3 : le plan directeur entier est posé, pierre et stations comprises', () => {
+    const { sim, player } = makeSim(true)
+    const village = foundNpcVillage(sim, 32, 32, 3)
+    act(sim, player, { type: 'debug_village_stage', villageId: village.id, stage: 3 })
+    const du = sim.structures.filter((s) => s.villageId === village.id)
+    const n = (t: string): number => du.filter((s) => s.type === t).length
+    expect(n('floor')).toBe(27) //          3 logis × 9 sols
+    expect(n('wall')).toBeGreaterThanOrEqual(80) // 3 × 11 + ~50 d'enceinte (terrain nu)
+    expect(n('door')).toBe(5) //            3 logis + la porte charretière (2 vantaux)
+    expect(n('workshop') + n('furnace') + n('silo')).toBe(3)
+    // L'enceinte est en PIERRE (les montées du plan), les logis restent en bois.
+    const pierres = du.filter((s) => (s.type === 'wall' || s.type === 'door') && s.material === 'stone')
+    expect(pierres.length).toBeGreaterThanOrEqual(50)
+    expect(du.some((s) => s.type === 'house')).toBe(false)
+  })
+
+  it('inerte hors debug, et inerte sur un village à chef humain', () => {
+    const { sim, player } = makeSim(false)
+    const village = foundNpcVillage(sim, 32, 32, 2)
+    const avant = sim.structures.length
+    act(sim, player, { type: 'debug_village_stage', villageId: village.id, stage: 3 })
+    expect(sim.structures.length).toBe(avant)
+    expect(village.buildTier).toBe(1)
   })
 })

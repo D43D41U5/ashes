@@ -357,6 +357,19 @@ function wallMask(tiles: ReadonlySet<string>, tx: number, ty: number): number {
   return m
 }
 
+/**
+ * La teinte DOUCE d'une barrière d'ARÊTE selon son matériau — à mi-chemin entre le
+ * blanc de l'ancienne teinte fixe et les tons pleins de `wallTint` : la texture garde
+ * ses aplats, le matériau se lit quand même. Sans elle, un bourg de PIERRE était
+ * indiscernable d'un hameau de BOIS (mesuré au pixel sur les captures smoke
+ * `village-pnj` : Δ ≤ 3 sur les trois canaux entre les deux paliers).
+ */
+const EDGE_MATERIAL_RGB: Record<WallMaterial, readonly [number, number, number]> = {
+  wood: [224, 202, 180],
+  stone: [212, 214, 224],
+  metal: [208, 221, 240],
+}
+
 /** La teinte d'un mur selon son PALIER DE MATÉRIAU (les textures d'autotuile sont
  *  neutres) et ses DÉGÂTS (elle s'assombrit). Bois chaud, pierre froide, métal acier. */
 function wallTint(material: WallMaterial | undefined, ratio: number): number {
@@ -1170,12 +1183,19 @@ export class SnapshotView {
         // La teinte reste douce : la texture porte déjà ses aplats et ses tons. La réassombrir
         // autant qu'un mur endommagé écraserait ce travail. (Le mur COUPÉ ne se teinte pas : son
         // empreinte est déjà une ombre, une teinte de matériau n'y voudrait rien dire.)
+        //
+        // MAIS ELLE PORTE LE MATÉRIAU (spec construction R8) : bois chaud, pierre froide —
+        // sinon l'amélioration d'un mur d'arête ne se voyait nulle part. Les RUINES gardent
+        // leur presque-blanc : leur texture porte son propre appareil, et la DA de la Ferme
+        // est calibrée dessus. La clôture n'a pas de palier — presque blanche aussi.
         const ratio = Math.max(0, Math.min(1, s.hp / (maxHp || 1)))
         const dim = 0.82 + 0.18 * ratio
         if (cacheLaSalle) sprite.clearTint()
         else {
+          const rgb: readonly [number, number, number] =
+            ruine || s.type === 'cloture' ? [248, 250, 255] : EDGE_MATERIAL_RGB[s.material ?? 'wood']
           sprite.setTint(Phaser.Display.Color.GetColor(
-            Math.floor(248 * dim), Math.floor(250 * dim), Math.floor(255 * dim),
+            Math.floor(rgb[0] * dim), Math.floor(rgb[1] * dim), Math.floor(rgb[2] * dim),
           ))
         }
         sprite.setAlpha(1)

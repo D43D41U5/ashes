@@ -14,12 +14,14 @@
  *   sont capturées par le replay log : une partie où l'on a triché se rejoue
  *   quand même à l'identique.
  */
-import { MORTS, NIGHT_HUNT } from './balance'
+import { MORTS, NIGHT_HUNT, WALL_TIERS } from './balance'
 import { emitEvent } from './events'
 import { addItems, type ItemId } from './items'
 import { densiteDesMorts, siteDansLaCouronne } from './morts'
 import type { Entity, SimState } from './sim'
-import { cycleOffsetForStartHour, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { cycleOffsetForStartHour, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { addStructure } from './village'
+import { desiredOrders } from './village-plan'
 
 export type DebugAction =
   /** Poser l'avatar sur une tuile, sans se soucier des obstacles ni de la distance. */
@@ -73,6 +75,20 @@ export type DebugAction =
    * la chance, le plafond). Le reste de la chaîne est intact.
    */
   | { type: 'debug_reveil' }
+  /**
+   * TAMPONNER LE PALIER DE BÂTI D'UN VILLAGE PNJ (spec `village-pnj-evolution.md`).
+   *
+   * Sans lui, VOIR un hameau ou un bourg exige des jours de Veillée : la cadence du
+   * chantier (`BUILD_PACE_TICKS`) étale exprès la construction sur un arc de saison.
+   * Une mécanique qu'on ne peut pas ATTEINDRE est une mécanique morte (même remède
+   * que `debug_set_season_day`) — le playtest et le smoke doivent pouvoir regarder
+   * chaque palier MAINTENANT.
+   *
+   * On tamponne le PLAN DIRECTEUR, pas un décor : `desiredOrders` — la même vérité
+   * que le tableau du village — posée pièce à pièce par `addStructure`. Ce qu'on
+   * court-circuite, et c'est tout : la main-d'œuvre et le coût. Aucun tirage.
+   */
+  | { type: 'debug_village_stage'; villageId: number; stage: number }
 
 export function isDebugAction(action: { type: string }): action is DebugAction {
   return action.type.startsWith('debug_')
@@ -136,6 +152,37 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     emitEvent(state, {
       type: 'cendreux_prowl', tick: state.tick, targetEntityId: entity.id, count: enCours, x: site.x, y: site.y,
     })
+  } else if (action.type === 'debug_village_stage') {
+    const village = state.villages.find((v) => v.id === action.villageId && v.chiefId === 0)
+    if (!village) return // les villages à chef humain ne se tamponnent pas
+    village.buildTier = clamp(Math.round(action.stage), 1, 3)
+    // Le plan se recalcule après chaque passe : les montées en pierre ne se voient
+    // qu'une fois les murs de bois posés. Quatre passes suffisent ; huit est un
+    // garde-fou, pas une attente.
+    for (let passe = 0; passe < 8; passe++) {
+      const orders = desiredOrders(state, village)
+      if (orders.length === 0) break
+      for (const order of orders) {
+        if (order.action === 'pose') {
+          addStructure(state, order.structure, order.tx, order.ty, village.id, 0, undefined, order.material, order.edges)
+        } else if (order.action === 'place') {
+          addStructure(state, order.component, order.tx, order.ty, village.id, 0)
+        } else {
+          const s = state.structures.find((st) => st.id === order.structureId)
+          if (s && (s.type === 'wall' || s.type === 'door')) {
+            s.material = 'stone'
+            s.hp = WALL_TIERS.stone[s.type].hp
+          }
+        }
+      }
+    }
+    // Les portes suivent le rituel (R7) : tamponnées en plein jour, elles naissent OUVERTES
+    // — sinon la photo d'un village « ouvert le jour » montrerait un fort barricadé à midi.
+    if (!getGameTime(state).isNight) {
+      for (const s of state.structures) {
+        if (s.type === 'door' && s.villageId === village.id) s.open = true
+      }
+    }
   } else if (action.type === 'debug_grant') {
     // On le met EN MAIN, pas juste dans le sac : c'est la main qui décide de tout
     // (spec inventaire R9), et un objet au fond du sac ne prouve rien à l'écran.

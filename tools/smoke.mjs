@@ -226,7 +226,10 @@ const SCENARIOS = {
       if (v.paillasses < 3) console.error(`!! le village ${v.id} n'a que ${v.paillasses} paillasse(s) — le campement manque`)
     }
 
-    // Plein jour, puis on va regarder le premier campement.
+    // Plein jour, puis on va regarder le premier village — À CHAQUE PALIER : le
+    // campement tel qu'il naît, puis le hameau et le bourg TAMPONNÉS par
+    // `debug_village_stage` (le plan directeur posé d'un coup — la cadence du vrai
+    // chantier étale ça sur un arc de saison, invisible en smoke).
     await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
     await page.waitForTimeout(400)
     const v = etat[0]
@@ -235,8 +238,36 @@ const SCENARIOS = {
         window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: x + 0.5, y: y + 2.5 })
       }, v)
       await page.waitForTimeout(1500)
-      await page.screenshot({ path: `${OUT}/village-pnj-campement.png` })
-      console.log(`   → campement du village ${v.id} @(${v.x}, ${v.y}), palier ${v.buildTier}`)
+      await page.screenshot({ path: `${OUT}/village-pnj-1-campement.png` })
+      console.log(`   → palier 1 (campement) du village ${v.id} @(${v.x}, ${v.y})`)
+
+      for (const [stage, nom] of [[2, 'hameau'], [3, 'bourg']]) {
+        await page.evaluate(({ id, s }) => {
+          window.__BRAISES__.scene.sendAction({ type: 'debug_village_stage', villageId: id, stage: s })
+        }, { id: v.id, s: stage })
+        await page.waitForTimeout(2000) // le tampon puis le snapshot qui le montre
+        const compte = await page.evaluate((id) => {
+          const st = window.__BRAISES__.scene.view?.structures ?? []
+          const du = st.filter((q) => q.villageId === id)
+          const n = (t) => du.filter((q) => q.type === t).length
+          return {
+            walls: n('wall'), doors: n('door'), floors: n('floor'),
+            pierre: du.filter((q) => (q.type === 'wall' || q.type === 'door') && q.material === 'stone').length,
+            stations: n('workshop') + n('furnace') + n('silo'),
+          }
+        }, v.id)
+        console.log(`   palier ${stage} : ${JSON.stringify(compte)}`)
+        if (stage === 2 && (compte.walls < 40 || compte.floors < 20)) {
+          console.error(`!! palier 2 : le hameau manque de pièces (${compte.walls} murs, ${compte.floors} sols)`)
+        }
+        // ≥ 2 stations et pas 3 : le plan SAUTE honnêtement un emplacement pris (un
+        // lieu bâti voisin, un nœud qui a dérivé) — c'est la règle faisable-ou-sauté.
+        if (stage === 3 && (compte.stations < 2 || compte.pierre < 40)) {
+          console.error(`!! palier 3 : stations ou pierre manquantes (${compte.stations} stations, ${compte.pierre} pierres)`)
+        }
+        await page.screenshot({ path: `${OUT}/village-pnj-${stage}-${nom}.png` })
+        console.log(`   → palier ${stage} (${nom})`)
+      }
     }
   },
 
