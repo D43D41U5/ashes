@@ -37,6 +37,7 @@ import { advanceRefugees } from './refugees'
 import { rngNext } from './rng'
 import { advanceNightHunt } from './nighthunt'
 import { advanceNpcs, type Npc } from './npc'
+import { advanceVillageGrowth } from './village-growth'
 import { advancePois } from './poi-discovery'
 import { advanceDens } from './poi'
 import { avancerLaCendre } from './cendre'
@@ -645,6 +646,11 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     // demandé de loups.
     advanceNightHunt(state)
   }
+  // LES VILLAGES PNJ VIVENT AUX BORDS DU CYCLE (spec village-pnj-evolution) : à
+  // l'aube la porte s'ouvre, le palier monte au surplus, la prospérité attire un
+  // colon ; au crépuscule la porte se ferme. Avant la passe PNJ : le village se
+  // réveille, PUIS ses habitants agissent. Aucun tirage RNG (patron refugees).
+  advanceVillageGrowth(state)
   advanceNpcs(state)
   advanceMonsters(state)
   advanceCendreux(state)

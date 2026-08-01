@@ -70,7 +70,9 @@ describe('le tableau du village (A1)', () => {
 
   it('grenier plein → pas de tâches de récolte', () => {
     const sim = npcVillageSim(1)
-    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 })
+    // « Plein » au sens des cibles d'un village PNJ (spec village-pnj-evolution R3) :
+    // le bois vise désormais la barre du palier 2 (40), pas seulement l'upkeep (20).
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 45, fiber: 5, stew: 5 })
     run(sim, BALANCE.BOARD_REFRESH_TICKS + 1)
     expect(sim.villages[0]!.tasks).toHaveLength(0)
   })
@@ -94,9 +96,12 @@ describe('les besoins (A2, A3)', () => {
     run(sim, 60) // assignation des maisons
     const [a, b] = [sim.npcs[0]!, sim.npcs[1]!]
     expect(a.homeId).not.toBeNull()
-    // b dormira au Feu : on retire sa maison ET les maisons libres (sinon
-    // l'assignation automatique lui en redonne une au tick suivant).
-    sim.structures = sim.structures.filter((s) => s.type !== 'house' || s.id === a.homeId)
+    // b dormira au Feu : on retire son lit ET les couchages libres (sinon
+    // l'assignation automatique lui en redonne un au tick suivant). Le domicile
+    // d'un campement est une PAILLASSE (spec village-pnj-evolution R1-R2).
+    sim.structures = sim.structures.filter(
+      (s) => (s.type !== 'house' && s.type !== 'paillasse') || s.id === a.homeId,
+    )
     b.homeId = null
     // Avancer jusqu'à la nuit, fatigués.
     sim.tick = DAY_TICKS_PER_CYCLE - 1
@@ -187,13 +192,16 @@ describe('le peuplement (A6)', () => {
     for (const npc of sim.npcs) expect(village.memberIds).toContain(npc.entityId)
   })
 
-  it('foundNpcVillage crée un village complet', () => {
+  it('foundNpcVillage crée un village complet — le campement, plus aucune house', () => {
     const sim = npcVillageSim(3)
     expect(sim.villages).toHaveLength(1)
     expect(sim.npcs).toHaveLength(3)
     expect(structureAt(sim.structures, 12, 12)?.type).toBe('fire')
     expect(granary(sim).access).toBe('village')
-    expect(sim.structures.filter((s) => s.type === 'house')).toHaveLength(3)
+    // Le palier 1 (spec village-pnj-evolution R1) : une paillasse par habitant,
+    // et la `house` (le chip d'une tuile) ne se pose plus nulle part.
+    expect(sim.structures.filter((s) => s.type === 'paillasse')).toHaveLength(3)
+    expect(sim.structures.filter((s) => s.type === 'house')).toHaveLength(0)
   })
 })
 
@@ -472,8 +480,8 @@ describe('le sac plein du PNJ (livelock du retrait)', () => {
   it('réparer, sac plein : il ne re-réclame pas la même tâche à chaque tick', () => {
     const sim = npcVillageSim(1)
     granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5, stew: 5 })
-    const house = sim.structures.find((s) => s.type === 'house')!
-    house.hp = 1 // sous REPAIR_TASK_THRESHOLD → le tableau veut une réparation
+    const bed = sim.structures.find((s) => s.type === 'paillasse')!
+    bed.hp = 1 // sous REPAIR_TASK_THRESHOLD → le tableau veut une réparation
     const e = npcEntity(sim)
     e.inventory = saturated()
     e.hunger = 100
@@ -491,7 +499,7 @@ describe('le sac plein du PNJ (livelock du retrait)', () => {
   // c'est le test « la traversée » plus bas.
   it('cuisiner, sac déjà saturé au tableau : TASK_INTAKE l’écarte, il ne réclame pas', () => {
     const sim = npcVillageSim(1)
-    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5 })
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 45, wood: 30, fiber: 5 })
     const e = npcEntity(sim)
     // 40/40 cases : 38 de pierre, 1 de baies (6 ≥ la recette), 1 de fibre (19 ≥ 1).
     // Il a de quoi cuisiner — mais retirer 4 baies et 1 fibre ne VIDE aucune case.
@@ -509,7 +517,7 @@ describe('le sac plein du PNJ (livelock du retrait)', () => {
   it('cuisiner, sac plein : pas de boucle sèche sur le stade « fetch »', () => {
     const sim = npcVillageSim(1)
     // stew 0 → le tableau veut du ragoût ; tout le reste est au-dessus des cibles.
-    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5 })
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 45, wood: 30, fiber: 5 })
     const e = npcEntity(sim)
     e.inventory = saturated()
     e.hunger = 100
@@ -518,7 +526,7 @@ describe('le sac plein du PNJ (livelock du retrait)', () => {
     for (let t = 0; t < 300; t++) step(sim, [])
 
     expect(rejects(sim, e.id)).toEqual([])
-    expect(countOf(granary(sim).inventory!, 'berries')).toBe(30)
+    expect(countOf(granary(sim).inventory!, 'berries')).toBe(45)
   })
 })
 
@@ -583,7 +591,7 @@ describe('le sac qui se remplit PENDANT la corvée (la traversée)', () => {
   it('cuisiner : le sac se ferme APRÈS la réclamation → il n’enfile RIEN, et lâche la corvée', () => {
     const sim = npcVillageSim(1)
     // stew 0 (et de quoi cuisiner) → le tableau ne veut QUE du ragoût.
-    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 5 })
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 45, wood: 30, fiber: 5 })
     const e = npcEntity(sim)
     // 37 cases de pierre + baies 6 + fibre 19 = 39 cases, UNE libre : il a de quoi
     // cuisiner sans passer par le grenier, et TASK_INTAKE le laisse réclamer.
@@ -617,7 +625,7 @@ describe('le sac qui se remplit PENDANT la corvée (la traversée)', () => {
     // CONSERVATION : ses ingrédients n'ont même pas été touchés.
     expect(countOf(e.inventory, 'berries')).toBe(6)
     expect(countOf(e.inventory, 'fiber')).toBe(19)
-    expect(countOf(granary(sim).inventory!, 'berries')).toBe(30)
+    expect(countOf(granary(sim).inventory!, 'berries')).toBe(45)
     // PROGRESSION : il a lâché la corvée, et il ne la reprend pas en boucle.
     expect(stages).toContain(null)
     expect(stages.slice(-200).every((s) => s === null)).toBe(true)

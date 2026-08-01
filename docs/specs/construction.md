@@ -91,7 +91,8 @@ Le seul acquis qui change de nature : `build` devient une pose **de barrière ou
 
 ## 5. La construction et l'entretien — le contrat temporel
 
-- **R15 — Pose instantanée.** Payer les matériaux → barrière/composant posé au tick suivant (V3). **Pas de chantier**, donc **pas de PNJ bâtisseurs** (dette) : la construction est joueur seul ; les PNJ récoltent/cuisinent/**réparent**/défendent. La **friction est d'acquérir les matériaux** (le fer/l'acier des paliers hauts vivent dans le sauvage/la mine — la construction pousse dehors).
+- **R15 — Pose instantanée.** Payer les matériaux → barrière/composant posé au tick suivant (V3). **Pas de chantier** : la construction reste sans état intermédiaire ; la **friction est d'acquérir les matériaux** (le fer/l'acier des paliers hauts vivent dans le sauvage/la mine — la construction pousse dehors).
+> ⚠ **AMENDÉ** (2026-07-31, décision d'Alexis) : « pas de PNJ bâtisseurs » **tombe pour les villages PNJ** — spec `village-pnj-evolution.md` (tâche `build`, pipeline joueur, coût au grenier). La pose reste instantanée : le « chantier » d'un village PNJ, c'est le temps de RÉCOLTER le coût, pas un état de structure. Chez les joueurs, rien ne change (pas de chantier, pas d'aide PNJ).
 > ✅ **LIVRÉ** (2026-07-22, décision V1-11) : `advanceUpkeep` (`village.ts`) brûle `village.fuel` au tick et dégrade les murs à sec ; on nourrit via `feed_fire`. Le combustible du feu **LIBRE** vit désormais sur la structure et le feu peut **s'éteindre** (braises → éteint) — spec `feu-station.md` (S1-S2, S12), 2026-07-25. La migration de l'upkeep du Foyer vers ce modèle unifié reste différée (S16).
 
 - **R16 — Upkeep centralisé au Feu (comme la Tool Cupboard).** On **approvisionne le Feu** en matériaux ; il les **consomme lentement** pour tenir sa zone. Stock plein → les **murs/barrières** de la zone ne se dégradent pas. À sec → dégradation, puis le village tombe en **ruine** (cycle de vie). Le stock qui dure **~3-4 jours** *est* la règle « survit à l'abandon » (§6ter). « **Nourrir le Feu** » = la tâche communautaire zéro (tâche PNJ). Plus vite consommé au Grand Froid.
@@ -197,7 +198,7 @@ Chaque tranche verte (`check`/`test`/`lint` + smoke) avant la suivante.
 ## 11. Hors périmètre / dette (et où ça revient)
 
 - **Catalogue : tranché** (§4bis). L'**implémentation** est priorisée (§10) : le socle **marteau**, puis **Forge → Atelier → Grenier → Ferme** ; les fonctions restantes (**Infirmerie, Fumoir, Dortoir**), l'**upkeep** (R16-R17) et le **comportement passif** (R12) viennent après.
-- **PNJ bâtisseurs** + **renseignement « en construction »** : l'instantané (R15) les supprime ; ils exigeraient un chantier léger (dette).
+- ~~**PNJ bâtisseurs**~~ **LIVRÉS pour les villages PNJ** (2026-07-31, spec `village-pnj-evolution.md`) — sans chantier : la pose reste instantanée, la friction est la récolte du coût. Le **renseignement « en construction »** (jauge visible) reste une dette.
 - **Auras passives** (vision) : attendent un système de fog (R12).
 - **Ouvrages de terrain hors-zone** (guet, pont, piège, cache), **empreintes multi-tuiles**, **bonus de terrain doux** : différés.
 - **Cycle de vie complet** (mort → ruine pillable → refondable) : amorcé par l'upkeep (R16), complété en Phase Vallée (Va2).

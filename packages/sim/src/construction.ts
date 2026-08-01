@@ -46,7 +46,9 @@ export interface PlacedStructure {
  * dépend du déplaceur (une porte s'ouvre pour les membres) ; ici la vue est absolue.
  */
 export function blocksNavigation(type: StructureType): boolean {
-  return type !== 'door' && type !== 'floor' && type !== 'roof' && type !== 'house'
+  // La paillasse s'ENJAMBE (un couchage au ras du sol, `structureBlocks`) : elle ne
+  // ferme rien, donc elle ne pèse pas non plus dans le verdict de navigabilité.
+  return type !== 'door' && type !== 'floor' && type !== 'roof' && type !== 'house' && type !== 'paillasse'
 }
 
 /**

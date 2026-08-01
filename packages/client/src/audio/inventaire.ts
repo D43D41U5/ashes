@@ -1,5 +1,5 @@
 /**
- * L'INVENTAIRE DU SILENCE — les 61 faits de domaine, ce qu'ils veulent dire, et qui sonne.
+ * L'INVENTAIRE DU SILENCE — les 66 faits de domaine, ce qu'ils veulent dire, et qui sonne.
  *
  * Cette table vivait dans `sound.test.ts` : elle était donc invisible au runtime, alors que
  * c'est précisément ce qu'il faut donner à ENTENDRE. Elle monte ici pour que le banc d'écoute
@@ -38,7 +38,7 @@ export interface Fait {
 }
 
 /**
- * LES 62 FAITS. Exhaustif par le compilateur ; l'ordre d'écriture suit les familles pour
+ * LES 66 FAITS. Exhaustif par le compilateur ; l'ordre d'écriture suit les familles pour
  * qu'une relecture à l'œil reste possible.
  */
 export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
@@ -67,6 +67,9 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   village_fell: { voix: 'voix', famille: 'social', quoi: 'un village TOMBE — il n’est plus qu’une ruine pillable' },
   village_archetype_changed: { voix: 'voix', famille: 'social', quoi: 'un Feu vire au bleu ou au rouge — Foyer, Meute' },
   member_joined: { voix: 'muet', famille: 'social', quoi: 'quelqu’un rejoint le village' },
+  // Muet comme `member_joined`, qu'il accompagne toujours : l'arrivée du colon se VOIT
+  // (il entre au village à l'aube, sa paillasse apparaît) — un son la redirait.
+  settler_arrived: { voix: 'muet', famille: 'social', quoi: 'la prospérité attire un colon (village PNJ)' },
   member_banished: { voix: 'voix', famille: 'social', quoi: 'quelqu’un est BANNI du village' },
 
   // ── LES BATTEMENTS DE LA SAISON — le temps qui serre, et la menace ────────────────
@@ -89,6 +92,9 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   resource_harvested: { voix: 'voix', famille: 'batir', quoi: 'un coup de récolte rapporte (moi seul)' },
   structure_built: { voix: 'voix', famille: 'batir', quoi: 'une pièce est posée' },
   structure_upgraded: { voix: 'muet', famille: 'batir', quoi: 'un mur passe au matériau suivant' },
+  // LE PALIER DE BÂTI d'un village PNJ (spec village-pnj-evolution R6) : rare, et c'est LE
+  // fait saillant du chantier — un hameau devient un bourg. Le jumeau grave de `fire_upgraded`.
+  village_stage_up: { voix: 'voix', famille: 'batir', quoi: 'un village PNJ monte de palier — le bâti suit' },
   // LA PORTE : le seul geste de bâtisseur qu'on refait dix fois par jour, et le SEUL retour qu'on
   // en ait — rien ne bouge à l'écran d'une porte close à une porte ouverte de plus d'un liseré.
   // C'est donc un son qui PORTE l'information, pas qui l'accompagne.

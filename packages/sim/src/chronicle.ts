@@ -44,6 +44,8 @@ export function formatChronicleLine(e: ChronicleEntry): string {
  * exactement ce qui privait `poi_first_visit` de chronique côté client). */
 export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
   'village_founded',
+  'village_stage_up',
+  'settler_arrived',
   'village_fell',
   'act_started',
   'village_archetype_changed',
@@ -77,6 +79,15 @@ export function chronicleFromEvents(
     switch (e.type) {
       case 'village_founded':
         push(`Un Feu s'est allumé : ${name(e.villageId)}.`, 'recit')
+        break
+      // L'ÉVOLUTION DES VILLAGES PNJ (spec village-pnj-evolution R6/R9) : la montée
+      // d'un palier de bâti est un grand fait de saison — le paysage change.
+      case 'village_stage_up':
+        if (e.stage >= 3) push(`${name(e.villageId)} s'est fait bourg : la pierre remplace le bois.`, 'battement')
+        else push(`${name(e.villageId)} s'est fait hameau : les logis montent, l'enceinte suit.`, 'battement')
+        break
+      case 'settler_arrived':
+        push(`Un colon, attiré par la prospérité, s'est installé à ${name(e.villageId)}.`, 'recit')
         break
       case 'village_fell':
         // Le village a quitté l'état : on lit le nom PORTÉ par l'événement, pas la

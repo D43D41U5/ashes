@@ -98,6 +98,11 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
       return { wave: 'triangle', freq: 220, freqEnd: 330, dur: 0.26, gain: 0.07, lowpass: 1800 } // ça reprend
     case 'fire_upgraded':
       return { wave: 'sine', freq: 262, freqEnd: 392, dur: 0.55, gain: 0.085 } // une quinte : le village grandit
+    // LE PALIER DE BÂTI d'un village PNJ (spec village-pnj-evolution R6) : le jumeau de
+    // `fire_upgraded`, une octave sous lui et plus long — c'est le VILLAGE qui monte, pas
+    // un feu qu'on paie ; plus rare, plus large, même famille de sens (ça grandit).
+    case 'village_stage_up':
+      return { wave: 'sine', freq: 131, freqEnd: 196, dur: 0.9, gain: 0.09 }
     // `fire_fed` reste MUET : geste répété bûche après bûche, et la flamme qui monte le dit déjà.
 
     // ── LE SOCIAL — l'axe d'alignement, rendu audible ────────────────────────────────────

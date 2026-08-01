@@ -19,12 +19,14 @@ import {
   NODE_DEFS,
   FIRE_UPKEEP,
   NPC_AI,
+  RECIPES,
   SLOTS,
   STRUCTURE_HP,
   TICK_DT_S,
   WEAPON_DAMAGE,
   WORLD_EVENTS,
   type NodeType,
+  type RecipeId,
 } from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { engageRange, startAttack, weaponProfile } from './combat'
@@ -38,8 +40,10 @@ import { assignErrands, handleErrand } from './npc-errands'
 import { pathToward } from './pathfinding'
 import { spawnEntity, type Entity, type SimState } from './sim'
 import { TICKS_PER_CYCLE } from './time'
-import { applyVillageAction, type TaskKind, type Village, type VillageAction } from './village'
+import { edgeBarrierAt, fullTileAt } from './construction'
+import { applyVillageAction, floorAt, type BuildOrder, type TaskKind, type Village, type VillageAction } from './village'
 import { granaries, refreshBoard } from './village-board'
+import { orderCost } from './village-plan'
 
 export interface NpcTaskState {
   id: number
@@ -81,12 +85,17 @@ export interface Npc {
 }
 
 const TASK_DEFS: Record<
-  Exclude<TaskKind, 'cook_stew' | 'repair' | 'feed_fire'>,
+  Exclude<TaskKind, 'cook_stew' | 'repair' | 'feed_fire' | 'build'>,
   { nodeType: NodeType; item: ItemId; carry: number }
 > = {
   gather_berries: { nodeType: 'berry_bush', item: 'berries', carry: BALANCE.NPC_CARRY_TARGETS.berries },
   gather_wood: { nodeType: 'tree', item: 'wood', carry: BALANCE.NPC_CARRY_TARGETS.wood },
   gather_fiber: { nodeType: 'fiber_plant', item: 'fiber', carry: BALANCE.NPC_CARRY_TARGETS.fiber },
+  // Le chantier des villages PNJ (spec village-pnj-evolution R8) : la pierre à mains
+  // nues (`rock`, minTool none) ; le bloc taillé à la carrière — pioche d'atelier requise
+  // (minTool basic, garde DURE), que `ensurePickaxe` fournit avant de frapper.
+  gather_stone: { nodeType: 'rock', item: 'stone', carry: BALANCE.NPC_CARRY_TARGETS.stone },
+  gather_cut_stone: { nodeType: 'quarry', item: 'cut_stone', carry: BALANCE.NPC_CARRY_TARGETS.cut_stone },
 }
 
 const RANGE = BALANCE.INTERACT_RANGE - 0.2 // marge : on agit un peu en dedans de la portée
@@ -337,9 +346,13 @@ const TASK_INTAKE: Record<TaskKind, ItemId[]> = {
   gather_berries: ['berries'],
   gather_wood: ['wood'],
   gather_fiber: ['fiber'],
+  gather_stone: ['stone'],
+  gather_cut_stone: ['cut_stone'],
   cook_stew: ['berries', 'fiber', 'stew'],
   repair: ['wood'],
   feed_fire: ['wood'],
+  // Le chantier fait entrer le marteau ET le coût de la pièce (retirés du grenier).
+  build: ['hammer', 'wood', 'stone', 'cut_stone', 'fiber'],
 }
 
 /** Le sac peut-il recevoir ce que cette corvée va y mettre ? (conservateur : tout ou rien) */
@@ -353,8 +366,9 @@ function claimTask(village: Village, npc: Npc, entity: Entity): void {
     .sort((a, b) => b.priority - a.priority || a.id - b.id)[0]
   if (!free) return
   free.claimedBy = npc.entityId
-  const stage = free.kind === 'cook_stew' || free.kind === 'repair' || free.kind === 'feed_fire' ? 'fetch' : 'work'
-  npc.task = { id: free.id, kind: free.kind, stage, nodeId: null }
+  const fetchFirst =
+    free.kind === 'cook_stew' || free.kind === 'repair' || free.kind === 'feed_fire' || free.kind === 'build'
+  npc.task = { id: free.id, kind: free.kind, stage: fetchFirst ? 'fetch' : 'work', nodeId: null }
   npc.path = []
 }
 
@@ -390,7 +404,15 @@ function canAct(state: SimState, entity: Entity): boolean {
 
 function executeGather(state: SimState, village: Village, npc: Npc, entity: Entity): void {
   const task = npc.task!
-  const def = TASK_DEFS[task.kind as Exclude<TaskKind, 'cook_stew' | 'repair' | 'feed_fire'>]
+  const def = TASK_DEFS[task.kind as Exclude<TaskKind, 'cook_stew' | 'repair' | 'feed_fire' | 'build'>]
+
+  // LA CARRIÈRE EXIGE LA PIOCHE D'ATELIER (minTool basic, garde DURE — economy.ts) :
+  // sans elle, chaque coup serait refusé à 20 Hz. On l'assure AVANT de viser le nœud.
+  if (task.kind === 'gather_cut_stone') {
+    const r = ensurePickaxe(state, village, npc, entity)
+    if (r === 'failed') return dropTask(village, npc, false)
+    if (r !== 'ready') return
+  }
 
   if (task.stage === 'work') {
     if (countOf(entity.inventory, def.item) >= def.carry) {
@@ -479,6 +501,206 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
     dropTask(village, npc, false)
     return
   }
+  followPath(state, npc, entity)
+}
+
+// ─── Le chantier (spec village-pnj-evolution R4-R5) ───────────────────────
+
+/** Empoigne une case précise par item (le marteau, le composant à poser). */
+function equipItem(entity: Entity, item: ItemId): boolean {
+  for (let i = 0; i < entity.inventory.length; i++) {
+    const slot = entity.inventory[i]
+    if (slot && slot.item === item) {
+      entity.activeSlot = liftIntoBelt(entity, i)
+      return true
+    }
+  }
+  return false
+}
+
+type CraftProgress = 'ready' | 'busy' | 'failed'
+
+/**
+ * FAIT AVANCER un artisanat d'une recette : intrants retirés du grenier, enfilage à
+ * la station du VILLAGE (le Feu, l'établi), attente SUR PLACE — s'éloigner mettrait
+ * la file en pause (spec craft-file F7). 'ready' = l'objet est dans le sac ;
+ * 'busy' = le geste a consommé le tick ; 'failed' = impossible ici et maintenant
+ * (station absente, grenier à sec, sac plein) — l'appelant lâche sa corvée.
+ */
+function progressCraft(state: SimState, village: Village, npc: Npc, entity: Entity, recipeId: RecipeId): CraftProgress {
+  const recipe = RECIPES[recipeId]
+  if (countOf(entity.inventory, recipe.output) > 0) return 'ready'
+  const station =
+    recipe.station === null
+      ? undefined
+      : state.structures.find((s) => s.type === recipe.station && s.villageId === village.id)
+  if (recipe.station !== null && station === undefined) return 'failed'
+  if (entity.craftQueue.some((o) => o.recipeId === recipeId)) {
+    // La file travaille : on reste à portée de la station, on ne fait rien d'autre.
+    if (station && !near(entity, station.tx, station.ty)) {
+      if (npc.path.length === 0 && !setPathTo(state, npc, entity, station.tx, station.ty)) return 'failed'
+      followPath(state, npc, entity)
+    }
+    return 'busy'
+  }
+  if (freeRoomFor(entity.inventory, recipe.output) === 0) return 'failed'
+  // Les intrants manquants, du grenier vers le sac — un aller par coffre.
+  for (const item of Object.keys(recipe.inputs) as ItemId[]) {
+    const need = (recipe.inputs[item] ?? 0) - countOf(entity.inventory, item)
+    if (need <= 0) continue
+    const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], item) > 0)
+    if (!chest) return 'failed'
+    if (near(entity, chest.tx, chest.ty)) {
+      if (withdraw(state, entity, chest.id, item, Math.min(need, countOf(chest.inventory ?? [], item))) === 0) {
+        return 'failed'
+      }
+      return 'busy'
+    }
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return 'failed'
+    followPath(state, npc, entity)
+    return 'busy'
+  }
+  // Tout est en poche : à la station, et on enfile.
+  if (station && !near(entity, station.tx, station.ty)) {
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, station.tx, station.ty)) return 'failed'
+    followPath(state, npc, entity)
+    return 'busy'
+  }
+  applyEconomyAction(state, entity.id, { type: 'craft', recipeId })
+  return entity.craftQueue.some((o) => o.recipeId === recipeId) ? 'busy' : 'failed'
+}
+
+/** Le marteau du chantier : en poche, sinon au grenier, sinon FORGÉ au Feu (R5). */
+function ensureHammer(state: SimState, village: Village, npc: Npc, entity: Entity): CraftProgress {
+  if (countOf(entity.inventory, 'hammer') > 0) return 'ready'
+  const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], 'hammer') > 0)
+  if (chest) {
+    if (near(entity, chest.tx, chest.ty)) {
+      return withdraw(state, entity, chest.id, 'hammer', 1) > 0 ? 'busy' : 'failed'
+    }
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return 'failed'
+    followPath(state, npc, entity)
+    return 'busy'
+  }
+  return progressCraft(state, village, npc, entity, 'hammer')
+}
+
+/** La pioche de la carrière (minTool basic, garde dure) : portée, au grenier, ou
+ *  façonnée à l'ÉTABLI du village — c'est pour ça que l'établi précède la pierre. */
+const QUARRY_PICKS: readonly ItemId[] = ['pickaxe', 'iron_pickaxe', 'steel_pickaxe']
+function ensurePickaxe(state: SimState, village: Village, npc: Npc, entity: Entity): CraftProgress {
+  if (QUARRY_PICKS.some((p) => countOf(entity.inventory, p) > 0)) return 'ready'
+  for (const p of QUARRY_PICKS) {
+    const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], p) > 0)
+    if (!chest) continue
+    if (near(entity, chest.tx, chest.ty)) {
+      return withdraw(state, entity, chest.id, p, 1) > 0 ? 'busy' : 'failed'
+    }
+    if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return 'failed'
+    followPath(state, npc, entity)
+    return 'busy'
+  }
+  return progressCraft(state, village, npc, entity, 'pickaxe')
+}
+
+/** La pièce de cet ordre est-elle déjà dans le monde ? (le verdict d'accompli) */
+function orderDone(state: SimState, order: BuildOrder): boolean {
+  if (order.action === 'pose') {
+    if (order.structure === 'floor') return floorAt(state.structures, order.tx, order.ty) !== undefined
+    if (order.edges !== undefined) return edgeBarrierAt(state.structures, order.tx, order.ty, order.edges) !== undefined
+    return fullTileAt(state.structures, order.tx, order.ty) !== undefined
+  }
+  if (order.action === 'place') return fullTileAt(state.structures, order.tx, order.ty)?.type === order.component
+  const s = state.structures.find((st) => st.id === order.structureId)
+  return s === undefined || (s.material ?? 'wood') !== 'wood' // tombée ou déjà montée : accompli
+}
+
+/**
+ * BÂTIR (spec village-pnj-evolution R4) : fetch (marteau/composant + coût, retirés
+ * du grenier) → le site → LE GESTE, par le pipeline joueur (`applyVillageAction`,
+ * pnj R1). Un refus de pose ne se retente pas à 20 Hz : la corvée QUITTE le tableau
+ * — le rafraîchissement la repostera si le plan la veut toujours.
+ */
+function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entity): void {
+  const task = npc.task!
+  const order = village.tasks.find((t) => t.id === task.id)?.build
+  if (!order) return dropTask(village, npc, true)
+  if (orderDone(state, order)) return dropTask(village, npc, true) // un autre a fini, ou le monde a bougé
+
+  if (task.stage !== 'work') {
+    // 1. L'OUTIL : le marteau pour poser/monter — un composant se pose à la main.
+    if (order.action !== 'place') {
+      const r = ensureHammer(state, village, npc, entity)
+      if (r === 'failed') return dropTask(village, npc, false)
+      if (r !== 'ready') return
+    }
+    // 2. LE COMPOSANT à poser s'assemble au Feu (recette existante, coût du grenier).
+    if (order.action === 'place') {
+      const r = progressCraft(state, village, npc, entity, order.component)
+      if (r === 'failed') return dropTask(village, npc, false)
+      if (r !== 'ready') return
+    }
+    // 3. LE COÛT de la pose/montée, retiré du grenier.
+    if (order.action !== 'place') {
+      const cost = orderCost(order)
+      for (const item of Object.keys(cost) as ItemId[]) {
+        const need = (cost[item] ?? 0) - countOf(entity.inventory, item)
+        if (need <= 0) continue
+        const chest = granaries(state, village.id).find((c) => countOf(c.inventory ?? [], item) > 0)
+        // Le grenier s'est vidé depuis que le tableau a jugé le coût couvert : empêchement
+        // de VILLAGE, pas de PNJ — la corvée quitte le tableau, il la repostera garni.
+        if (!chest) return dropTask(village, npc, true)
+        if (near(entity, chest.tx, chest.ty)) {
+          if (withdraw(state, entity, chest.id, item, Math.min(need, countOf(chest.inventory ?? [], item))) === 0) {
+            return dropTask(village, npc, false) // sac plein : propre à CE PNJ
+          }
+          return
+        }
+        if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) {
+          return dropTask(village, npc, false)
+        }
+        followPath(state, npc, entity)
+        return
+      }
+    }
+    task.stage = 'work'
+    npc.path = []
+  }
+
+  // ── Le site, puis le geste. ──
+  const target = order.action === 'upgrade' ? state.structures.find((s) => s.id === order.structureId) : undefined
+  const tx = order.action === 'upgrade' ? target!.tx : order.tx // orderDone garantit la cible
+  const ty = order.action === 'upgrade' ? target!.ty : order.ty
+  if (near(entity, tx, ty, BALANCE.BUILD_RANGE - 0.5)) {
+    // Un composant BLOQUE et refuse « pas sous ses pieds » : on s'écarte d'un pas.
+    if (order.action === 'place' && Math.floor(entity.x) === tx && Math.floor(entity.y) === ty) {
+      const sx = (village.fireTx + 0.5 > entity.x ? 1 : -1) as -1 | 1
+      const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, 0, TICK_DT_S)
+      entity.moved = moved.x !== entity.x || moved.y !== entity.y
+      entity.x = moved.x
+      entity.y = moved.y
+      return
+    }
+    equipItem(entity, order.action === 'place' ? order.component : 'hammer')
+    if (order.action === 'pose') {
+      applyVillageAction(state, entity.id, {
+        type: 'build',
+        structure: order.structure,
+        tx: order.tx,
+        ty: order.ty,
+        ...(order.material !== undefined ? { material: order.material } : {}),
+        ...(order.edges !== undefined ? { edges: order.edges } : {}),
+      })
+    } else if (order.action === 'place') {
+      applyVillageAction(state, entity.id, { type: 'place_component', tx: order.tx, ty: order.ty })
+    } else {
+      applyVillageAction(state, entity.id, { type: 'upgrade_structure', structureId: order.structureId })
+    }
+    // Accompli ou refusé : la corvée quitte le tableau dans les deux cas — un refus
+    // retenté à 20 Hz serait un livelock sec, et le tableau SAIT reposer.
+    return dropTask(village, npc, true)
+  }
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, tx, ty)) return dropTask(village, npc, true)
   followPath(state, npc, entity)
 }
 
@@ -741,10 +963,13 @@ export function advanceNpcs(state: SimState): void {
     if (!npc.sleeping) {
       npc.energy = Math.max(0, npc.energy - BALANCE.ENERGY_AWAKE_PER_CYCLE_HOUR / TICKS_PER_HOUR)
     }
-    // Assignation de maison : première maison libre du village (spec R7).
+    // Assignation du domicile : première maison OU paillasse libre du village
+    // (spec R7 ; village-pnj-evolution R2 — le campement loge sur des paillasses).
     if (npc.homeId === null) {
       const taken = new Set(state.npcs.map((n) => n.homeId))
-      const home = state.structures.find((s) => s.type === 'house' && s.villageId === village.id && !taken.has(s.id))
+      const home = state.structures.find(
+        (s) => (s.type === 'house' || s.type === 'paillasse') && s.villageId === village.id && !taken.has(s.id),
+      )
       if (home) npc.homeId = home.id
     }
 
@@ -768,6 +993,7 @@ export function advanceNpcs(state: SimState): void {
     if (npc.task.kind === 'cook_stew') executeCook(state, village, npc, entity)
     else if (npc.task.kind === 'repair') executeRepair(state, village, npc, entity)
     else if (npc.task.kind === 'feed_fire') executeFeedFire(state, village, npc, entity)
+    else if (npc.task.kind === 'build') executeBuild(state, village, npc, entity)
     else executeGather(state, village, npc, entity)
   }
 }

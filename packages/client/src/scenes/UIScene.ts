@@ -33,9 +33,12 @@ const TASK_LABELS: Record<VillageTask['kind'], string> = {
   gather_berries: 'récolter des baies',
   gather_wood: 'couper du bois',
   gather_fiber: 'ramasser des fibres',
+  gather_stone: 'ramasser de la pierre',
+  gather_cut_stone: 'tailler à la carrière',
   cook_stew: 'cuisiner',
   repair: 'réparer',
   feed_fire: 'nourrir le Feu',
+  build: 'bâtir',
 }
 
 /** Carte plein écran : bornes et pas du zoom (1 = carte ajustée, 8 = gros plan). */

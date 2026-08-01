@@ -1,19 +1,25 @@
 /**
- * Le peuplement du monde — villages 100 % PNJ (spec pnj R10).
+ * Le peuplement du monde — villages 100 % PNJ (spec pnj R10, village-pnj-evolution R1).
  *
  * L'outil du mode Veillée, des tests et du monde-gen : il fonde un village
- * complet (Feu, grenier approvisionné, maisons, villageois armés) par les
- * mêmes briques que le jeu (createVillage, addStructure, spawnNpcsAround) —
- * son seul privilège de monde-gen est de faire place nette dans les nœuds.
+ * complet par les mêmes briques que le jeu (createVillage, addStructure,
+ * spawnNpcsAround) — son seul privilège de monde-gen est de faire place nette.
+ *
+ * Depuis `village-pnj-evolution` : le village naît au PALIER 1, le CAMPEMENT —
+ * Feu, grenier approvisionné, une paillasse par habitant (aux emplacements des
+ * futurs logis : le lit du colon deviendra sa chambre au palier 2), le mobilier
+ * autour du grenier. Plus AUCUNE `house` (le chip d'une tuile qui lisait comme
+ * une image posée) : le type survit pour les parties sauvées, plus rien n'en pose.
  */
 import { addItems } from './items'
 import { RING_OFFSETS, spawnNpcsAround } from './npc'
 import type { SimState } from './sim'
 import { addStructure, createVillage, type Village } from './village'
+import { HUT_SPOTS } from './village-plan'
 
 /**
  * Crée un village 100 % PNJ complet (spec R10) : Feu, grenier approvisionné,
- * maisons et villageois. L'outil du mode Veillée, des tests et du peuplement.
+ * campement et villageois. L'outil du mode Veillée, des tests et du peuplement.
  */
 export function foundNpcVillage(
   state: SimState,
@@ -22,10 +28,15 @@ export function foundNpcVillage(
   count: number,
   disposition: 'foyer' | 'meute' | 'neutre' = 'neutre',
 ): Village {
-  // Le monde-gen a le droit de faire place nette.
-  const reserved = [[0, 0], [0, -2], ...RING_OFFSETS.slice(0, count + 2)].map(([dx, dy]) => [tx + dx, ty + dy])
-  const houseSpots = ([[-3, 0], [3, 0], [-3, 2], [3, 2], [0, 3], [0, -3]] as const).slice(0, count)
-  reserved.push(...houseSpots.map(([dx, dy]) => [tx + dx, ty + dy]))
+  // Le monde-gen a le droit de faire place nette — mais SEULEMENT sous le campement
+  // (Feu, grenier, anneau d'accueil, les 8 emplacements de logis, le mobilier) : le
+  // chantier du palier 2, lui, n'a pas besoin de terrain vierge — les arêtes et les
+  // sols se posent en ignorant les nœuds (spec construction R23), et le plan SAUTE
+  // les emplacements pris. Raser tout le disque de l'enceinte affamerait les tests
+  // (et les villages) dont les buissons vivent à six tuiles du Feu.
+  const reserved = [[0, 0], [0, -2], ...RING_OFFSETS.slice(0, count + 2), ...HUT_SPOTS].map(
+    ([dx, dy]) => [tx + dx, ty + dy],
+  )
   state.nodes = state.nodes.filter((n) => !reserved.some(([rx, ry]) => n.tx === rx && n.ty === ry))
 
   const village = createVillage(state, { chiefId: 0, tx, ty, npcsArrived: true }) // on peuple nous-mêmes
@@ -34,7 +45,9 @@ export function foundNpcVillage(
   // défaut `private` du coffre) et naît approvisionné.
   const chest = addStructure(state, 'chest', tx, ty - 2, village.id, 0, 'village')
   addItems(chest.inventory!, { berries: 10, wood: 10, fiber: 2 })
-  for (const [dx, dy] of houseSpots) addStructure(state, 'house', tx + dx, ty + dy, village.id, 0)
+  // LE CAMPEMENT (palier 1) : une paillasse par habitant, aux emplacements des futurs
+  // logis. Pas de mobilier : il ferait COUVERTURE dans la mêlée (voir village-plan.ts).
+  for (const [dx, dy] of HUT_SPOTS.slice(0, count)) addStructure(state, 'paillasse', tx + dx, ty + dy, village.id, 0)
   spawnNpcsAround(state, village, count)
   // Un village PNJ naît armé (spec combat R13) et avec son caractère
   // ensemencé (spec alignement R12) — l'archétype ÉMERGE ensuite des actes.

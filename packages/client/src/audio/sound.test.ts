@@ -66,7 +66,7 @@ describe('la table de routage audio (soundForEvent)', () => {
     expect(desaccords).toEqual([])
   })
 
-  it("l'inventaire tranché de GATE 1 : 64 faits, 38 voix", () => {
+  it("l'inventaire tranché de GATE 1 : 66 faits, 39 voix", () => {
     // Un compte, pas un jugement. S'il bouge, c'est qu'un fait de domaine est né ou qu'une
     // voix a changé — dans les deux cas, quelqu'un doit le savoir.
     const total = Object.keys(VOIX).length
@@ -75,12 +75,15 @@ describe('la table de routage audio (soundForEvent)', () => {
     // le feu qui étouffe un réveil est LA PARADE, et une parade muette ne s'apprend pas. Il se
     // joue comme `cendreux_risen` à l'ENVERS (147→98 au lieu de 98→147) : même timbre, chemin
     // inverse — le joueur n'a pas un second son à apprendre, il entend le même fait annulé.
-    expect(total).toBe(64)
+    // 64 → 66 faits et 38 → 39 voix le 2026-07-31 : `village_stage_up` (une voix — le fait
+    // saillant du chantier villages-PNJ, le jumeau grave de `fire_upgraded`) et
+    // `settler_arrived` (muet, comme le `member_joined` qu'il accompagne toujours).
+    expect(total).toBe(66)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
     // le pendant du hurlement pour les morts, quand la nuit bascule d'espèce avec les actes.
-    expect(voix).toBe(38)
+    expect(voix).toBe(39)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

@@ -193,6 +193,54 @@ async function mesurerContraste(page, a, b) {
 
 const SCENARIOS = {
   /**
+   * VILLAGE-PNJ (2026-07-31) — le campement du palier 1 SE VOIT (spec village-pnj-evolution R1).
+   *
+   * Ce qui ne se prouve qu'au navigateur : le spawn n'est plus « 1 feu + 3 chips house + 1
+   * coffre », c'est un CAMPEMENT — des paillasses autour d'un Feu et d'un grenier. On lit
+   * l'état (villages PNJ du snapshot, zéro `house`), puis on va REGARDER. Les pièces des
+   * paliers 2-3 (murs d'arêtes, portes, stations) sont celles du joueur, déjà rendues par
+   * le même pipeline — le neuf visible à la fondation, c'est le camp. Exige `--dev` (TP).
+   */
+  async 'village-pnj'(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1000)
+
+    const etat = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const villages = (sc.view?.villages ?? []).filter((v) => v.chiefId === 0)
+      const structures = sc.view?.structures ?? []
+      return villages.map((v) => ({
+        id: v.id,
+        buildTier: v.buildTier ?? 1,
+        x: v.fireTx,
+        y: v.fireTy,
+        paillasses: structures.filter((s) => s.type === 'paillasse' && s.villageId === v.id).length,
+        houses: structures.filter((s) => s.type === 'house' && s.villageId === v.id).length,
+      }))
+    })
+    console.log(`villages PNJ : ${JSON.stringify(etat)}`)
+    if (etat.length === 0) console.error('!! aucun village PNJ dans le snapshot')
+    for (const v of etat) {
+      if (v.houses !== 0) console.error(`!! le village ${v.id} a encore ${v.houses} house (chip d'une tuile)`)
+      if (v.paillasses < 3) console.error(`!! le village ${v.id} n'a que ${v.paillasses} paillasse(s) — le campement manque`)
+    }
+
+    // Plein jour, puis on va regarder le premier campement.
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+    const v = etat[0]
+    if (v) {
+      await page.evaluate(({ x, y }) => {
+        window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: x + 0.5, y: y + 2.5 })
+      }, v)
+      await page.waitForTimeout(1500)
+      await page.screenshot({ path: `${OUT}/village-pnj-campement.png` })
+      console.log(`   → campement du village ${v.id} @(${v.x}, ${v.y}), palier ${v.buildTier}`)
+    }
+  },
+
+  /**
    * T0-EXPLORATION (2026-07-25) — la Racine donne envie de marcher (spec t0-exploration).
    *
    * Ce qui ne se prouve qu'au navigateur : que les nouveautés SE VOIENT. On lit d'abord l'état

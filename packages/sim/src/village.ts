@@ -165,7 +165,29 @@ export interface Structure {
   cookOut?: Inventory
 }
 
-export type TaskKind = 'gather_berries' | 'gather_wood' | 'gather_fiber' | 'cook_stew' | 'repair' | 'feed_fire'
+export type TaskKind =
+  | 'gather_berries'
+  | 'gather_wood'
+  | 'gather_fiber'
+  | 'gather_stone'
+  | 'gather_cut_stone'
+  | 'cook_stew'
+  | 'repair'
+  | 'feed_fire'
+  | 'build'
+
+/**
+ * UN ORDRE DE CONSTRUCTION (spec `village-pnj-evolution.md` R3-R4) — la charge d'une
+ * tâche `build`. Trois gestes, chacun rejoué par le PIPELINE JOUEUR (pnj R1) :
+ *   · `pose`    → `build` au marteau (mur/porte/sol, arête ou tuile) ;
+ *   · `place`   → l'objet-composant, assemblé au Feu puis posé (`place_component`) ;
+ *   · `upgrade` → `upgrade_structure` au marteau (bois → pierre).
+ * JSON-plat : il voyage dans la tâche, le snapshot et la sauvegarde.
+ */
+export type BuildOrder =
+  | { action: 'pose'; structure: BarrierType; tx: number; ty: number; edges?: number; material?: WallMaterial }
+  | { action: 'place'; component: ComponentType; tx: number; ty: number }
+  | { action: 'upgrade'; structureId: number }
 
 /** Une tâche du tableau du village (spec pnj R5). */
 export interface VillageTask {
@@ -175,6 +197,8 @@ export interface VillageTask {
   claimedBy: number | null
   /** Cible, pour les tâches localisées (réparer telle structure). */
   structureId?: number
+  /** L'ordre de construction, pour les tâches `build` (spec village-pnj-evolution R3). */
+  build?: BuildOrder
 }
 
 export interface Village {
@@ -207,6 +231,15 @@ export interface Village {
   warmth: number
   engagement: number
   archetype: 'foyer' | 'meute' | 'neutre'
+  /**
+   * LE PALIER DE BÂTI d'un village PNJ (spec `village-pnj-evolution.md`) : 1 le
+   * campement → 2 le hameau de bois → 3 le bourg de pierre. DISTINCT du palier du
+   * Feu (`tier`, actions joueur) : le palier 3 du Feu exige la chaîne du fer, hors
+   * de portée d'une IA de corvées. Monte à l'aube, au surplus (décision n°2).
+   * Absent (parties sauvées d'avant) = 1. Ne bouge jamais sur un village à chef
+   * humain.
+   */
+  buildTier?: number
 }
 
 export type VillageAction =
@@ -554,8 +587,11 @@ export function structureBlocks(s: Structure, moverVillageId: number | null, ope
   if (s.type === 'floor' || s.type === 'roof') return false
   // Les pièces BASSES du monde bâti : on les ENJAMBE. Un banc, une poutre tombée, un
   // carré de friche ne ferment rien — et une ruine dont chaque débris bloque devient un
-  // labyrinthe où l'on se coince, pas un lieu où l'on entre.
+  // labyrinthe où l'on se coince, pas un lieu où l'on entre. La PAILLASSE est de la même
+  // famille : un couchage au ras du sol, pas un meuble — le dormeur s'y tient DESSUS, et
+  // un campement dont chaque lit bloque ferait de l'anneau du Feu un piège à hordes.
   if (s.type === 'banc' || s.type === 'poutre' || s.type === 'friche' || s.type === 'mur_bas') return false
+  if (s.type === 'paillasse') return false
   if (s.type === 'terre') return false // un sol ne bloque pas — c'est un sol
   // L'ENCADREMENT NE BLOQUE PAS — c'est un trou dans le mur, on passe DEDANS. S'il bloquait,
   // il serait un mur de plus, et le bâtiment n'aurait pas d'entrée. (Une `door`, elle, bloque
@@ -793,6 +829,7 @@ export function createVillage(state: SimState, opts: CreateVillageOptions): Vill
     warmth: 0,
     engagement: 0,
     archetype: 'neutre',
+    buildTier: 1,
   }
   state.villages.push(village)
   emitEvent(state, {

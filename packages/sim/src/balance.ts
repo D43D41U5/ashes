@@ -505,7 +505,67 @@ export const BALANCE = {
   VILLAGE_STEW_TARGET: 3,
 
   /** Quantités visées par sortie de récolte PNJ, par item. */
-  NPC_CARRY_TARGETS: { berries: 6, wood: 8, fiber: 3 },
+  NPC_CARRY_TARGETS: { berries: 6, wood: 8, fiber: 3, stone: 6, cut_stone: 4 },
+} as const
+
+/**
+ * L'ÉVOLUTION DES VILLAGES PNJ (spec `village-pnj-evolution.md`, décisions d'Alexis
+ * 2026-07-31). PUREMENT ÉCONOMIQUE : aucune clé de jour — le palier de bâti monte à
+ * l'aube quand le grenier porte la barre, la prospérité attire les colons. MESURÉ
+ * avant chantier : les greniers plafonnaient sur les CIBLES du tableau (bois cloué à
+ * 24), pas sur la capacité des bras — ces barres sont donc atteignables dès que le
+ * tableau les demande. Magnitudes à calibrer au banc (R11).
+ */
+export const VILLAGE_GROWTH = {
+  /** Rayon (Chebyshev) du DISQUE de l'enceinte — les murs se dérivent sur l'anneau
+   *  extérieur (rayon+1), dans le carré du Feu palier 1 (rayon 10). */
+  ENCEINTE_RADIUS: 6,
+  /**
+   * Les BARRES DE SURPLUS au grenier qui ouvrent chaque palier de bâti (index =
+   * palier visé − 2). Nourriture = score baies + 3×ragoût. C'est la SEULE porte :
+   * pas de seuil de jour (décision n°2) — le pivot saison-sans-fin ne périme rien.
+   */
+  STAGE_BARS: [
+    { food: 15, wood: 40 }, //           → palier 2 : le hameau de bois
+    { food: 25, wood: 30, stone: 20 }, // → palier 3 : le bourg de pierre
+  ] as { food: number; wood?: number; stone?: number }[],
+  /** Nourriture au grenier qui ATTIRE un colon à l'aube (décision n°3). 18 puis 30 aux
+   *  premiers jets — MESURÉ (sonde 12 j, seed 42, deux fois) : à 18 les colons arrivaient
+   *  à la simple subsistance et les villages mouraient à J5 ; à 30, un pic de ragoûts
+   *  (31-33) suffisait encore à faire entrer une bouche qui mangeait exactement la marge
+   *  (mort à J11, quand le témoin sans chantier tient J12 à nourriture 15-20). La
+   *  prospérité qui attire est un GRAS que seule une zone riche soutient — la géographie
+   *  module la croissance, l'accueil de réfugiés reste le levier fiable partout. */
+  ATTRACT_FOOD: 40,
+  /** Effectif maximal par palier de bâti — un campement ne loge pas huit personnes. */
+  POP_CAP: [3, 6, 8],
+  /** Récolteurs de bois simultanés quand le chantier a un gros déficit. */
+  BIG_DEFICIT_WOOD: 30,
+  /**
+   * ON NE BÂTIT PAS LE VENTRE VIDE, ET ON NE BRÛLE PAS LA RÉSERVE DU FEU — les deux
+   * planchers du chantier, MESURÉS (sonde 12 j, seed 42) : sans eux, la construction
+   * siphonnait le grenier jusqu'à `bois 0` (le Feu tombait à sec pendant que les murs
+   * montaient) et occupait des bras pendant la famine — trois villages morts à J5.
+   * Le tableau ne poste une tâche `build` que si le grenier garde CES planchers
+   * APRÈS le coût de la pièce.
+   */
+  BUILD_FOOD_FLOOR: 16,
+  BUILD_WOOD_RESERVE: 12,
+  /**
+   * LA CADENCE DU CHANTIER — une pièce au plus par fenêtre. MESURÉ (sonde 12 j) :
+   * sans cadence, une pièce par rafraîchissement du tableau (~12/min) bâtissait le
+   * hameau entier en une matinée — ~250 bois prélevés en deux jours sur une zone
+   * qui en régénère ~30, toutes les mains au chantier, la nourriture à zéro, trois
+   * villages morts à J5. Deuxième leçon (mesurée aussi, économie pure vs témoin) :
+   * à 16 pièces/cycle les villages tenaient 8 jours puis ÉPUISAIENT leur zone
+   * (~25-30 bois/jour prélevés en continu > la régénération) — mort à J11 quand le
+   * témoin sans chantier tient indéfiniment. À ~7 pièces par cycle, le prélèvement
+   * passe sous le débit de la zone et le hameau se monte sur une vingtaine de
+   * jours : un ARC DE SAISON, qui est exactement le rythme voulu (« qu'ils
+   * évoluent au fur et à mesure du temps »). Multiple de BOARD_REFRESH_TICKS
+   * (la fenêtre se teste au rafraîchissement).
+   */
+  BUILD_PACE_TICKS: ticksFor(420),
 } as const
 
 export interface TerrainDef {
