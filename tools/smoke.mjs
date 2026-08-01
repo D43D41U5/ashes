@@ -8849,6 +8849,14 @@ const SCENARIOS = {
       { nom: 'crete-matin', heure: 8, conifere: true, quoi: 'le même bois, au soleil levant' },
       { nom: 'feu-nuit', heure: 22, feu: true, quoi: 'un feu dans le noir' },
       { nom: 'feu-aube', heure: 5, feu: true, garde: true, quoi: 'le même feu, avant le jour' },
+      // LE FEU DU VILLAGE (2026-08-01). Le worldgen ne pose plus les tentes du campement
+      // (villages-PNJ, `village-plan.ts`) : à la minute 1, un feu fondé près du spawn est NU —
+      // la prise `feu-aube` a perdu son camp. On photographie donc le feu DU VILLAGE, et le
+      // hameau est TAMPONNÉ par `debug_village_stage` (comme dans le scénario village-pnj) :
+      // un état que le vrai chantier atteint en cours de saison, donc que l'accueil peut
+      // promettre. La prise RETENUE du carrousel est `feu-village-hameau` → `feu-hameau.jpg`.
+      { nom: 'feu-village-camp', heure: 5, village: true, stage: 1, quoi: 'le feu du campement PNJ, avant le jour' },
+      { nom: 'feu-village-hameau', heure: 5, village: true, stage: 2, quoi: 'le feu du hameau de bois, avant le jour' },
     ]
 
     let prises = 0
@@ -8859,7 +8867,21 @@ const SCENARIOS = {
       // LE FEU N'EST PAS UN LIEU : on le FONDE. Il exige du bois et un endroit loin des POI
       // (règle R1 de la construction), d'où les décalages successifs autour du point courant.
       let cible = null
-      if (p.conifere) {
+      if (p.village) {
+        // LE FEU DU VILLAGE, pas un feu fondé : chaque village PNJ naît autour du sien
+        // (fireTx/fireTy), et il brûle la nuit. L'avatar se pose 4,5 tuiles sous le feu :
+        // à cette hauteur les deux logis latéraux du hameau entrent en entier dans le cadre
+        // et la porte charretière du sud tient au tiers bas.
+        cible = await page.evaluate((stage) => {
+          const sc = window.__BRAISES__.scene
+          const v = (sc.view?.villages ?? []).filter((q) => q.chiefId === 0)[0]
+          if (!v) return null
+          if (stage > 1) sc.sendAction({ type: 'debug_village_stage', villageId: v.id, stage })
+          return { x: v.fireTx + 0.5, y: v.fireTy + 4.5, kind: 'village', name: `le village PNJ ${v.id} (palier ${stage})` }
+        }, p.stage)
+        if (!cible) { console.error(`   ✗ ${p.nom.padEnd(11)} aucun village PNJ dans le snapshot — prise SAUTÉE`); continue }
+        await page.waitForTimeout(1500) // le tampon s'applique au tick suivant
+      } else if (p.conifere) {
         // LE PLUS GROS AMAS DE CONIFÈRE **DE LA RACINE**. Le filtre de zone n'est pas un luxe :
         // `solDe` peint aussi du pin dans les zones du nord, et sans lui le balayage part
         // huit cents tuiles trop haut (erreur commise, et vue à l'ordonnée de la capture).

@@ -9,9 +9,14 @@
  * bouge, on RELANCE l'atelier et on remplace ces cinq fichiers — la fraîcheur des images est à
  * une commande, pas à une séance de photo.
  *
- * ET C'EST ARRIVÉ DEUX FOIS : le 2026-07-28 quand les arbres ont changé de taille, le 2026-07-29
- * quand ils sont passés de deux sprites à dix (conifères et feuillus, `arbre-peuplement.ts`).
- * Les cinq images de cette liste sont de la seconde série.
+ * ET C'EST ARRIVÉ TROIS FOIS : le 2026-07-28 quand les arbres ont changé de taille, le
+ * 2026-07-29 quand ils sont passés de deux sprites à dix (conifères et feuillus,
+ * `arbre-peuplement.ts`), le 2026-08-01 quand le worldgen a cessé de poser les tentes du
+ * campement (villages-PNJ, `village-plan.ts`) — à la minute 1 d'une partie neuve, le feu est
+ * nu. La prise du feu vient depuis du HAMEAU TAMPONNÉ (`feu-village-hameau` : le feu du
+ * village, palier 2 posé par `debug_village_stage`) — un état que le vrai chantier atteint
+ * en cours de saison, donc que l'accueil peut promettre. Les cinq images sont de la
+ * troisième série.
  *
  * POURQUOI PAS SIX. L'atelier tire désormais une prise du BOIS SEC des crêtes — et elle n'est
  * pas retenue. Vu de l'INTÉRIEUR d'un bois, le disque de découvert (`crownAlpha`) efface les
@@ -26,7 +31,7 @@
  * IMPORTÉES ET NON CODÉES EN DUR : Vite les empreinte (hash) et les copie au build ; une URL
  * écrite à la main dans le HTML casserait au premier `pnpm build`. ~344 Ko pour les cinq.
  */
-import feuAube from '../../assets/vitrine/feu-aube.jpg'
+import feuHameau from '../../assets/vitrine/feu-hameau.jpg'
 import sylveMatin from '../../assets/vitrine/sylve-matin.jpg'
 import cercle from '../../assets/vitrine/cercle.jpg'
 import gueOr from '../../assets/vitrine/gue-or.jpg'
@@ -39,7 +44,7 @@ export interface Vue {
 }
 
 export const VITRINE: Vue[] = [
-  { src: feuAube, alt: "Un feu de camp allumé dans la nuit, ses tentes autour, au milieu d'une clairière" },
+  { src: feuHameau, alt: 'Un hameau de bois endormi autour de son feu, sa palissade close, avant le jour' },
   { src: sylveMatin, alt: 'Une futaie dense au soleil levant, champignons et sous-bois' },
   { src: cercle, alt: 'Un cercle de menhirs dans une prairie fleurie, une lisière de conifères au loin' },
   { src: gueOr, alt: 'Un gué de galets sur une rivière, à la lumière du soir' },
