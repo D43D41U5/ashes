@@ -365,7 +365,9 @@ function wallMask(tiles: ReadonlySet<string>, tx: number, ty: number): number {
  * `village-pnj` : Δ ≤ 3 sur les trois canaux entre les deux paliers).
  */
 const EDGE_MATERIAL_RGB: Record<WallMaterial, readonly [number, number, number]> = {
-  wood: [224, 202, 180],
+  // Le bois est presque blanc : sa famille de texture (`wall-bois`) porte déjà ses tons
+  // en aplat (retour d'Alexis, 2026-08-01 — une teinte seule ne se lisait pas).
+  wood: [248, 250, 255],
   stone: [212, 214, 224],
   metal: [208, 221, 240],
 }
@@ -1074,7 +1076,7 @@ export class SnapshotView {
                 // le bas, on passe derrière lui (cf. `barriereDepth`). Et LE SEUIL APRÈS LE MUR :
                 // une bande de mur déborde d'une demi-épaisseur chez ses voisins, et sa pierre
                 // mordait le bois de la porte (constaté par Alexis).
-                : s.edges !== undefined && (s.type === 'wall' || s.type === 'cloture' || s.type === 'encadrement' || s.type === 'door')
+                : s.edges !== undefined && (s.type === 'wall' || s.type === 'palissade' || s.type === 'cloture' || s.type === 'encadrement' || s.type === 'door')
                   // LE SEUIL **ET LA PORTE** APRÈS LE MUR (`TIE_SEUIL`). Une bande de mur déborde
                   // d'une demi-épaisseur chez ses voisins pour se recoudre ; à pieds égaux et
                   // départage identique, l'ordre tombait sur l'ordre de POSE, et la pierre du mur
@@ -1114,7 +1116,7 @@ export class SnapshotView {
           const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
           sprite.setTint(warmthColor(warmth))
         }
-      } else if (s.edges !== undefined && (s.type === 'wall' || s.type === 'cloture' || s.type === 'door')) {
+      } else if (s.edges !== undefined && (s.type === 'wall' || s.type === 'palissade' || s.type === 'cloture' || s.type === 'door')) {
         // ═══ LA BARRIÈRE SUR ARÊTE — la forme est PORTÉE, plus devinée ═══
         //
         // L'autotuilage lisait le voisinage ; ici `edges` dit tout. Seize masques suffisent, et
@@ -1128,7 +1130,16 @@ export class SnapshotView {
         // LA PORTE A SA FAMILLE (R23) : elle bloque l'étranger, donc elle se dessine FERMÉE —
         // l'`encadrement` du bâti généré, lui, est une huisserie percée. Pas de variante ruinée :
         // le monde bâti n'en pose pas, et une porte de joueur abandonnée n'existe pas encore.
-        const fam = s.type === 'door' ? 'door' : s.type === 'cloture' ? 'cloture' : ruine ? 'wall-ruine' : 'wall'
+        // LE MUR DE BOIS A SA FAMILLE aussi (retour d'Alexis, 2026-08-01) : les tons du
+        // matériau vivent dans la TEXTURE (aplats de madriers), plus dans une teinte que
+        // personne ne lisait. La pierre et le métal gardent la maçonnerie neutre + teinte.
+        const fam =
+          s.type === 'door' ? 'door'
+          : s.type === 'cloture' ? 'cloture'
+          : s.type === 'palissade' ? 'palissade'
+          : ruine ? 'wall-ruine'
+          : (s.material ?? 'wood') === 'wood' ? 'wall-bois'
+          : 'wall'
         // ═══ LA DÉCOUPE DE FAÇADE (à la Zomboid — décision d'Alexis, 2026-07-27) ═══
         //
         // QUEL MUR CACHE LA PIÈCE ? Celui qui est DEVANT elle, entre elle et la caméra — donc
@@ -1193,7 +1204,9 @@ export class SnapshotView {
         if (cacheLaSalle) sprite.clearTint()
         else {
           const rgb: readonly [number, number, number] =
-            ruine || s.type === 'cloture' ? [248, 250, 255] : EDGE_MATERIAL_RGB[s.material ?? 'wood']
+            ruine || s.type === 'cloture' || s.type === 'palissade'
+              ? [248, 250, 255]
+              : EDGE_MATERIAL_RGB[s.material ?? 'wood']
           sprite.setTint(Phaser.Display.Color.GetColor(
             Math.floor(rgb[0] * dim), Math.floor(rgb[1] * dim), Math.floor(rgb[2] * dim),
           ))

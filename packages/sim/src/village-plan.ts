@@ -68,21 +68,43 @@ export function foodScoreOf(stocks: GranaryStocks): number {
 
 // ─── La géométrie du village (offsets depuis le Feu) ──────────────────────
 //
-// Tout tient dans le carré du Feu palier 1 (rayon 10) : logis à ±4, enceinte en
-// anneau 7. Les bandes de murs des logis montent à 6 — l'anneau de l'enceinte ne
-// les touche jamais. Le coffre-grenier vit en (0,−2) depuis toujours (worldgen).
+// Tout tient dans le carré du Feu palier 1 (rayon 10) : logis 4×4 en deux colonnes
+// et un pignon nord, enceinte de PALISSADE en anneau 9 (disque 8). Les bandes de
+// murs des logis montent à ±8 — l'anneau ne les touche jamais — et la ruelle
+// centrale (x ∈ [0,1]) reste LIBRE du Feu à la porte charretière, au sud. Le
+// coffre-grenier vit en (0,−2) depuis toujours (worldgen).
 
-/** Les emplacements de logis (centre du 3×3), dans l'ordre d'installation. */
+/** Le côté intérieur d'un logis (4×4 : « un peu trop petites », Alexis 2026-08-01). */
+export const HUT_W = 4
+
+/** Les emplacements de logis (COIN nord-ouest de l'intérieur), dans l'ordre
+ *  d'installation — les flancs de la ruelle d'abord, les angles ensuite. */
 export const HUT_SPOTS: readonly (readonly [number, number])[] = [
-  [-4, 0],
-  [4, 0],
-  [0, 4],
-  [0, -4],
-  [-4, -4],
-  [4, -4],
-  [-4, 4],
-  [4, 4],
+  [-7, -2],
+  [3, -2],
+  [-2, -7],
+  [3, 3],
+  [-7, 3],
+  [3, -7],
+  [-7, -7],
 ]
+
+/** L'ANCRE d'un logis — la tuile du lit : la paillasse s'y pose, le logis se bâtit autour. */
+export function bedAnchor(fx: number, fy: number, spot: readonly [number, number]): [number, number] {
+  return [fx + spot[0] + 1, fy + spot[1] + 1]
+}
+
+/**
+ * LA PORTE D'UN LOGIS REGARDE LE FEU : côté est pour la colonne ouest, ouest pour la
+ * colonne est, sud pour le pignon nord. Rendue en adresse d'arête EXTÉRIEURE
+ * `[tx, ty, bit]`, comme les murs du contour.
+ */
+function hutDoor(spot: readonly [number, number]): [number, number, number] {
+  const [x0, y0] = spot
+  if (x0 <= -3) return [x0 + HUT_W, y0 + 2, 8] // porte à l'EST, bit O : elle regarde le logis
+  if (x0 >= 3) return [x0 - 1, y0 + 2, 2] //     porte à l'OUEST, bit E
+  return y0 < 0 ? [x0 + 2, y0 + HUT_W, 1] : [x0 + 2, y0 - 1, 4] // pignon : vers le Feu
+}
 
 // PAS DE MOBILIER AU CAMPEMENT — et c'est mesuré, pas esthétique : un tonneau et une
 // étagère flanquant le grenier faisaient COUVERTURE dans la mêlée (repro seed 15 :
@@ -161,10 +183,12 @@ export function desiredOrders(state: SimState, village: Village): BuildOrder[] {
   const poseFeasible = (tx: number, ty: number, type: StructureType): boolean =>
     onMap(tx, ty) && terrainConstructible(terrainAt(map, tx, ty), type)
 
-  const wantEdge = (tx: number, ty: number, bit: number, structure: 'wall' | 'door'): void => {
+  const wantEdge = (tx: number, ty: number, bit: number, structure: 'wall' | 'door' | 'palissade'): void => {
     if (!poseFeasible(tx, ty, structure)) return
     if (edgeBarrierAt(state.structures, tx, ty, bit)) return // déjà fermée (par nous ou un autre)
-    orders.push({ action: 'pose', structure, tx, ty, edges: bit, material: 'wood' })
+    // Le matériau ne vaut que pour mur/porte (R8) — la palissade n'a pas de palier.
+    if (structure === 'palissade') orders.push({ action: 'pose', structure, tx, ty, edges: bit })
+    else orders.push({ action: 'pose', structure, tx, ty, edges: bit, material: 'wood' })
   }
   const wantFloor = (tx: number, ty: number): void => {
     if (!poseFeasible(tx, ty, 'floor')) return
@@ -173,29 +197,33 @@ export function desiredOrders(state: SimState, village: Village): BuildOrder[] {
   }
 
   // ── Les logis : autour de chaque paillasse posée (le lit devient une chambre). ──
-  for (const [hx, hy] of HUT_SPOTS) {
-    const cx = fx + hx
-    const cy = fy + hy
-    const bed = state.structures.find((s) => s.type === 'paillasse' && s.tx === cx && s.ty === cy)
+  const hutRegion = (dx: number, dy: number): boolean => dx >= 0 && dx < HUT_W && dy >= 0 && dy < HUT_W
+  const hutEdges = contourEdges(hutRegion, -1, HUT_W)
+  for (const spot of HUT_SPOTS) {
+    const [ax, ay] = bedAnchor(fx, fy, spot)
+    const bed = state.structures.find((s) => s.type === 'paillasse' && s.tx === ax && s.ty === ay)
     if (!bed) continue
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) wantFloor(cx + dx, cy + dy)
-    const hut = (dx: number, dy: number): boolean => Math.abs(dx) <= 1 && Math.abs(dy) <= 1
-    for (const [ex, ey, bit] of contourEdges(hut, -1, 1)) {
-      // La porte du logis : l'arête sud du milieu. Une vraie porte — le PNJ ouvre la
-      // sienne, la horde doit la casser, et le rituel de l'aube l'ouvre au monde.
-      const isDoor = ex === 0 && ey === 2
-      wantEdge(cx + ex, cy + ey, bit, isDoor ? 'door' : 'wall')
+    const x0 = fx + spot[0]
+    const y0 = fy + spot[1]
+    for (let dy = 0; dy < HUT_W; dy++) for (let dx = 0; dx < HUT_W; dx++) wantFloor(x0 + dx, y0 + dy)
+    const [px, py, pbit] = hutDoor(spot)
+    for (const [ex, ey, bit] of hutEdges) {
+      // La porte du logis regarde le Feu. Une vraie porte — le PNJ ouvre la sienne,
+      // la horde doit la casser, et le rituel de l'aube l'ouvre au monde.
+      const isDoor = spot[0] + ex === px && spot[1] + ey === py && bit === pbit
+      wantEdge(x0 + ex, y0 + ey, bit, isDoor ? 'door' : 'wall')
     }
   }
 
-  // ── L'enceinte : l'anneau dérivé du disque, percé de la porte charretière. ──
+  // ── L'enceinte : la PALISSADE dérivée du disque, percée de la porte charretière
+  //    (décision d'Alexis, 2026-08-01 : l'enceinte n'est pas un mur de bâtiment). ──
   const r = VILLAGE_GROWTH.ENCEINTE_RADIUS
   const disk = (dx: number, dy: number): boolean => Math.max(Math.abs(dx), Math.abs(dy)) <= r
   const gate = (ex: number, ey: number): boolean => ey === r + 1 && (ex === 0 || ex === 1)
   const enceinte = contourEdges(disk, -r, r)
   for (const [ex, ey, bit] of enceinte) {
     if (gate(ex, ey)) continue // les vantaux se posent en dernier : l'anneau d'abord
-    wantEdge(fx + ex, fy + ey, bit, 'wall')
+    wantEdge(fx + ex, fy + ey, bit, 'palissade')
   }
   for (const [ex, ey, bit] of enceinte) {
     if (gate(ex, ey)) wantEdge(fx + ex, fy + ey, bit, 'door')
@@ -203,7 +231,9 @@ export function desiredOrders(state: SimState, village: Village): BuildOrder[] {
 
   if (tier < 3) return orders
 
-  // ── Le bourg : les stations (assemblées au Feu, posées), puis la pierre. ──
+  // ── Le bourg : les stations (assemblées au Feu, posées), puis LA PIERRE DES LOGIS
+  //    (« tout en pierre » visait les bâtiments — la palissade reste du bois, c'est
+  //    son essence ; un logis de pierre dans sa palissade lit très bien). ──
   for (const [sx, sy, component] of STATION_SPOTS) {
     const tx = fx + sx
     const ty = fy + sy
@@ -213,23 +243,21 @@ export function desiredOrders(state: SimState, village: Village): BuildOrder[] {
     if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) continue // un buisson a dérivé là
     orders.push({ action: 'place', component, tx, ty })
   }
-  // La pierre de l'enceinte : chaque mur/porte de l'anneau encore en bois.
-  for (const [ex, ey] of enceinte) {
-    const s = state.structures.find(
-      (st) =>
-        st.tx === fx + ex && st.ty === fy + ey && (st.type === 'wall' || st.type === 'door') &&
-        st.villageId === village.id && st.edges !== undefined,
-    )
-    if (s && (s.material ?? 'wood') === 'wood') orders.push({ action: 'upgrade', structureId: s.id })
+  // Chaque mur et porte de LOGIS encore en bois monte en pierre. La porte charretière
+  // de la palissade, elle, reste du bois — on ne maçonne pas un vantail de rondins.
+  for (const s of state.structures) {
+    if (s.villageId !== village.id || s.edges === undefined) continue
+    if (s.type !== 'wall' && s.type !== 'door') continue
+    if (Math.max(Math.abs(s.tx - fx), Math.abs(s.ty - fy)) > r) continue // la porte de l'anneau
+    if ((s.material ?? 'wood') === 'wood') orders.push({ action: 'upgrade', structureId: s.id })
   }
   return orders
 }
 
-/** Le premier emplacement de logis SANS paillasse ni occupant — pour le colon qui arrive. */
+/** Le premier LIT libre (l'ancre d'un logis sans paillasse) — pour le colon qui arrive. */
 export function freeBedSpot(state: SimState, village: Village): { tx: number; ty: number } | null {
-  for (const [hx, hy] of HUT_SPOTS) {
-    const tx = village.fireTx + hx
-    const ty = village.fireTy + hy
+  for (const spot of HUT_SPOTS) {
+    const [tx, ty] = bedAnchor(village.fireTx, village.fireTy, spot)
     if (tx < 0 || ty < 0 || tx >= state.map.width || ty >= state.map.height) continue
     if (!terrainConstructible(terrainAt(state.map, tx, ty), 'paillasse')) continue
     if (fullTileAt(state.structures, tx, ty)) continue

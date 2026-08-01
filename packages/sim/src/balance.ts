@@ -517,9 +517,10 @@ export const BALANCE = {
  * tableau les demande. Magnitudes à calibrer au banc (R11).
  */
 export const VILLAGE_GROWTH = {
-  /** Rayon (Chebyshev) du DISQUE de l'enceinte — les murs se dérivent sur l'anneau
-   *  extérieur (rayon+1), dans le carré du Feu palier 1 (rayon 10). */
-  ENCEINTE_RADIUS: 6,
+  /** Rayon (Chebyshev) du DISQUE de l'enceinte — la PALISSADE se dérive sur l'anneau
+   *  extérieur (rayon+1), dans le carré du Feu palier 1 (rayon 10). 8 depuis que les
+   *  logis font 4×4 (retour d'Alexis, 2026-08-01) : leurs bandes montent à ±8. */
+  ENCEINTE_RADIUS: 8,
   /**
    * Les BARRES DE SURPLUS au grenier qui ouvrent chaque palier de bâti (index =
    * palier visé − 2). Nourriture = score baies + 3×ragoût. C'est la SEULE porte :
@@ -537,8 +538,10 @@ export const VILLAGE_GROWTH = {
    *  prospérité qui attire est un GRAS que seule une zone riche soutient — la géographie
    *  module la croissance, l'accueil de réfugiés reste le levier fiable partout. */
   ATTRACT_FOOD: 40,
-  /** Effectif maximal par palier de bâti — un campement ne loge pas huit personnes. */
-  POP_CAP: [3, 6, 8],
+  /** Effectif maximal par palier de bâti — un campement ne loge pas sept personnes.
+   *  7 au plafond : c'est le nombre de logis 4×4 que l'enceinte loge en gardant la
+   *  ruelle centrale LIBRE du Feu à la porte charretière. */
+  POP_CAP: [3, 6, 7],
   /** Récolteurs de bois simultanés quand le chantier a un gros déficit. */
   BIG_DEFICIT_WOOD: 30,
   /**
@@ -667,6 +670,8 @@ export const TERRAIN_CLIFF = 23
 export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./items').ItemBag> = {
   fire: { wood: 10 },
   wall: { wood: 2 },
+  // La palissade (2026-08-01) : des rondins — un peu plus de bois qu'un mur, aucun palier.
+  palissade: { wood: 3 },
   door: { wood: 3 },
   // Pièces MOLLES (spec construction R14) — pas de collision, coût léger.
   floor: { wood: 1 },
@@ -2408,6 +2413,9 @@ export const STRUCTURE_HP: Record<import('./items').StructureType, number> = {
   // `wall`/`door` : PV du palier de matériau de BASE (bois). Les paliers pierre/métal
   // montent via `WALL_TIERS` (spec construction R8) — `addStructure` les applique.
   wall: 200,
+  // La palissade : plus dure qu'un mur de bois (des rondins pleins), loin de la pierre —
+  // une horde l'enfonce en s'y mettant, un village vivant la répare (spec village-pnj R8).
+  palissade: 300,
   door: 150,
   // Pièces MOLLES (spec construction R14) : peu de PV, jamais bloquantes.
   floor: 60,

@@ -174,7 +174,7 @@ const clef = (table: Readonly<Record<string, unknown>>): Genre => ({ g: 'clef', 
  * compile plus. Une liste recopiée, elle, aurait laissé passer le nouveau membre en
  * silence — et le silence est le défaut qu'on corrige ici.
  */
-const BARRIERES: Record<BarrierType, true> = { wall: true, door: true, floor: true, roof: true }
+const BARRIERES: Record<BarrierType, true> = { wall: true, palissade: true, door: true, floor: true, roof: true }
 const ACCES: Record<AccessLevel, true> = { private: true, village: true, public: true }
 const ZONES_FEU: Record<FireZone, true> = { fuel: true, cookIn: true, cookOut: true }
 const COTES: Record<SlotRef['side'], true> = { player: true, container: true }

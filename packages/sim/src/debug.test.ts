@@ -197,13 +197,15 @@ describe('debug — tamponner le palier de bâti (spec village-pnj-evolution)', 
     act(sim, player, { type: 'debug_village_stage', villageId: village.id, stage: 3 })
     const du = sim.structures.filter((s) => s.villageId === village.id)
     const n = (t: string): number => du.filter((s) => s.type === t).length
-    expect(n('floor')).toBe(27) //          3 logis × 9 sols
-    expect(n('wall')).toBeGreaterThanOrEqual(80) // 3 × 11 + ~50 d'enceinte (terrain nu)
+    expect(n('floor')).toBe(48) //          3 logis × 16 sols (intérieur 4×4)
+    expect(n('wall')).toBe(45) //           3 logis × 15 murs — l'enceinte n'est PAS un mur
+    expect(n('palissade')).toBe(66) //      l'anneau 9, moins la porte charretière
     expect(n('door')).toBe(5) //            3 logis + la porte charretière (2 vantaux)
     expect(n('workshop') + n('furnace') + n('silo')).toBe(3)
-    // L'enceinte est en PIERRE (les montées du plan), les logis restent en bois.
+    // LES LOGIS sont en pierre (murs et portes) ; la palissade et la porte charretière
+    // restent du bois — c'est leur essence (décision d'Alexis, 2026-08-01).
     const pierres = du.filter((s) => (s.type === 'wall' || s.type === 'door') && s.material === 'stone')
-    expect(pierres.length).toBeGreaterThanOrEqual(50)
+    expect(pierres.length).toBe(48) // 45 murs + 3 portes de logis ; les 2 vantaux : bois
     expect(du.some((s) => s.type === 'house')).toBe(false)
   })
 

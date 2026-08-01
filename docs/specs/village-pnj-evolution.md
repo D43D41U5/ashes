@@ -66,8 +66,8 @@ ventre vide), `BUILD_WOOD_RESERVE` (la part du Feu est intouchable), et
 | Palier | Nom | Contenu ajouté |
 |---|---|---|
 | 1 | le campement | Feu, grenier, 1 **paillasse** par habitant (aux emplacements des futurs logis). Plus aucune `house` — et **pas de mobilier** : MESURÉ (seed 15), un tonneau et une étagère près du grenier font couverture et retournent le combat calibré « horde de 10 contre 2 » ; le mobilier-couverture sera un choix exprès, pas un effet de bord. |
-| 2 | le hameau de bois | Un **logis 3×3** par habitant (sol, murs bois en arêtes, encadrement) bâti AUTOUR de sa paillasse ; l'**enceinte** de bois (murs d'arêtes, carré de rayon `ENCEINTE_RADIUS`) percée d'une **porte charretière de 2 arêtes** au sud. |
-| 3 | le bourg de pierre | Les **stations** (établi, four, silo — accès `village`) assemblées au Feu et posées ; les murs et portes de l'enceinte **améliorés en pierre** (`upgrade_structure`, `cut_stone`). |
+| 2 | le hameau de bois | Un **logis 4×4** par habitant (sol, murs de bois — famille `wall-bois`, tons de madriers en aplat —, porte tournée vers le Feu) bâti AUTOUR de sa paillasse ; l'**enceinte en PALISSADE** (pièce à part entière : rondins sur arête, sans palier de matériau — l'enceinte d'un village n'est PAS le mur d'un bâtiment, décision d'Alexis 2026-08-01) percée d'une **porte charretière de 2 vantaux** au sud, la ruelle centrale libre du Feu à la porte. |
+| 3 | le bourg de pierre | Les **stations** (établi, four, silo — accès `village`) assemblées au Feu et posées ; les murs et portes **des LOGIS** améliorés en pierre (`upgrade_structure`, `cut_stone`) — « tout en pierre » vise les bâtiments : la palissade et sa porte charretière restent du bois, c'est leur essence. |
 
 ## Règles
 
@@ -103,10 +103,11 @@ ventre vide), `BUILD_WOOD_RESERVE` (la part du Feu est intouchable), et
   ferme ; une porte de village joueur ne bouge pas.*
 - **R8 — La pierre se récolte.** Dès le palier 2, le tableau veut de la pierre
   (`gather_stone`, nœud `rock`, mains nues) vers la barre du palier 3 ; le palier 3
-  veut du `cut_stone` (`gather_cut_stone`, nœud `quarry`) — le PNJ fabrique une
-  `crude_pickaxe` (corde comprise) si le village n'en porte pas. *(Si la chaîne
-  pioche déborde du chantier : différer `gather_cut_stone` explicitement ici — le
-  palier 3 pose alors ses stations et garde ses murs de bois.)*
+  veut du `cut_stone` (`gather_cut_stone`, nœud `quarry`). La carrière exige une
+  pioche d'ATELIER (`minTool: basic`, garde DURE — la pioche de fortune ne l'ouvre
+  pas) : le PNJ la prend au grenier, sinon la façonne à l'ÉTABLI du village — c'est
+  pourquoi l'établi précède la pierre, et le tableau ne poste `gather_cut_stone`
+  qu'un établi debout.
 - **R9 — La prospérité attire.** À l'aube, si la nourriture du grenier ≥
   `ATTRACT_FOOD` et l'effectif vivant < `POP_CAP[buildTier]`, un colon arrive
   (`spawnNpcsAround` +1, `settler_arrived`). Le plan exige alors un logis de plus →

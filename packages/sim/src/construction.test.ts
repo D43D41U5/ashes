@@ -714,6 +714,7 @@ describe('l’eau peu profonde est inconstructible, sauf le sol', () => {
     floor: true, // la seule : des planches sur l'eau, elle porte sa propre assise
     fire: false,
     wall: false,
+    palissade: false,
     door: false,
     roof: false,
     chest: false,

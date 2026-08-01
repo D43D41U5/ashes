@@ -77,13 +77,15 @@ describe('la fondation au campement (R1-R2)', () => {
 })
 
 describe('le plan directeur (R3)', () => {
-  it('au palier 2, il veut les logis PUIS l’enceinte — et rien deux fois', () => {
+  it('au palier 2, il veut les logis PUIS la palissade — et rien deux fois', () => {
     const sim = npcVillageSim(3)
     village(sim).buildTier = 2
     const orders = desiredOrders(sim, village(sim))
-    // 3 logis : 9 sols + 11 murs + 1 porte chacun ; enceinte : 50 murs + 2 vantaux.
-    expect(orders.filter((o) => o.action === 'pose' && o.structure === 'floor')).toHaveLength(27)
-    expect(orders.filter((o) => o.action === 'pose' && o.structure === 'wall')).toHaveLength(33 + 50)
+    // 3 logis 4×4 : 16 sols + 15 murs + 1 porte chacun ; l'enceinte est une PALISSADE
+    // (66 rondins sur l'anneau 9) percée d'une porte charretière de 2 vantaux.
+    expect(orders.filter((o) => o.action === 'pose' && o.structure === 'floor')).toHaveLength(48)
+    expect(orders.filter((o) => o.action === 'pose' && o.structure === 'wall')).toHaveLength(45)
+    expect(orders.filter((o) => o.action === 'pose' && o.structure === 'palissade')).toHaveLength(66)
     expect(orders.filter((o) => o.action === 'pose' && o.structure === 'door')).toHaveLength(3 + 2)
     expect(orders[0]).toMatchObject({ action: 'pose', structure: 'floor' }) // le chantier commence au sol
   })
@@ -119,9 +121,10 @@ describe('les PNJ bâtissent (R4-R5)', () => {
     // le chemin dur (pose d'arête, matériau). La cadence (`BUILD_PACE_TICKS`, une
     // pièce par fenêtre) fait qu'on ne vérifie pas un volume ici : le volume et la
     // survie se mesurent au banc (R11), pas en unitaire.
+    // L'intérieur 4×4 s'étend du lit (l'ancre, à +1,+1 du coin) : sols de −1 à +2.
     for (const s of sim.structures.filter((st) => st.type === 'paillasse')) {
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) addStructure(sim, 'floor', s.tx + dx, s.ty + dy, village(sim).id, 0)
+      for (let dy = -1; dy <= 2; dy++) {
+        for (let dx = -1; dx <= 2; dx++) addStructure(sim, 'floor', s.tx + dx, s.ty + dy, village(sim).id, 0)
       }
     }
     const events: SimEvent[] = []

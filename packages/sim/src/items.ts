@@ -163,6 +163,13 @@ export type ItemBag = Partial<Record<ItemId, number>>
 export type StructureType =
   | 'fire'
   | 'wall'
+  /**
+   * LA PALISSADE (décision d'Alexis, 2026-08-01) — l'enceinte d'un village n'est PAS
+   * le mur d'un bâtiment : des rondins dressés, sur arête comme le mur, sans palier
+   * de matériau (le bois est son essence — la pierre, c'est un mur). C'est la pièce
+   * des enceintes de villages PNJ, et une barrière du marteau comme les autres.
+   */
+  | 'palissade'
   | 'door'
   | 'floor'
   | 'roof'
@@ -235,7 +242,7 @@ export type StructureType =
  * 2026-07-18) : les SEULES choses qu'on pose au marteau. Le coffre, le four et
  * l'établi n'en sont PAS — ce sont des objets qu'on tient et pose (`place_component`).
  */
-export type BarrierType = 'wall' | 'door' | 'floor' | 'roof'
+export type BarrierType = 'wall' | 'palissade' | 'door' | 'floor' | 'roof'
 
 export type AccessLevel = 'private' | 'village' | 'public'
 

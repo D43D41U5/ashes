@@ -251,14 +251,17 @@ const SCENARIOS = {
           const du = st.filter((q) => q.villageId === id)
           const n = (t) => du.filter((q) => q.type === t).length
           return {
-            walls: n('wall'), doors: n('door'), floors: n('floor'),
+            walls: n('wall'), palissades: n('palissade'), doors: n('door'), floors: n('floor'),
             pierre: du.filter((q) => (q.type === 'wall' || q.type === 'door') && q.material === 'stone').length,
             stations: n('workshop') + n('furnace') + n('silo'),
           }
         }, v.id)
         console.log(`   palier ${stage} : ${JSON.stringify(compte)}`)
-        if (stage === 2 && (compte.walls < 40 || compte.floors < 20)) {
-          console.error(`!! palier 2 : le hameau manque de pièces (${compte.walls} murs, ${compte.floors} sols)`)
+        // Les seuils tolèrent les trous HONNÊTES du plan (terrain refusé, arête déjà
+        // fermée par une ruine voisine) — le compte exact sur terrain nu vit dans
+        // debug.test.ts ; ici on vérifie que le palier SE VOIT, pas qu'il est parfait.
+        if (stage === 2 && (compte.walls < 30 || compte.palissades < 40 || compte.floors < 40)) {
+          console.error(`!! palier 2 : le hameau manque de pièces (${compte.walls} murs, ${compte.palissades} palissades, ${compte.floors} sols)`)
         }
         // ≥ 2 stations et pas 3 : le plan SAUTE honnêtement un emplacement pris (un
         // lieu bâti voisin, un nœud qui a dérivé) — c'est la règle faisable-ou-sauté.

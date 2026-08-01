@@ -319,6 +319,7 @@ export type VillageAction =
 const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = {
   fire: 'village',
   wall: 'village',
+  palissade: 'village',
   door: 'village',
   floor: 'village',
   roof: 'village',
@@ -484,11 +485,11 @@ export function evaluateBuild(
   // Le terrain juge PAR PIÈCE depuis que l'eau peu profonde refuse tout sauf le sol
   // (`terrainConstructible`) : le gué porte des planches, pas un mur ni une porte.
   if (!terrainConstructible(terrainAt(state.map, tx, ty), structure)) return fail('unbuildable')
-  // L'ARÊTE VISÉE (R23) : mur/porte seulement, et UN SEUL bit. Sol et toit sont MOUS — ils
-  // prennent la tuile et n'ont pas d'arête à porter ; leur en donner une les rendrait
-  // invisibles à `floorAt`/`roofAt` (qui ne regardent pas `edges`) et on en empilerait dix.
+  // L'ARÊTE VISÉE (R23) : mur/palissade/porte seulement, et UN SEUL bit. Sol et toit sont
+  // MOUS — ils prennent la tuile et n'ont pas d'arête à porter ; leur en donner une les
+  // rendrait invisibles à `floorAt`/`roofAt` (qui ne regardent pas `edges`).
   const surArete = edges !== undefined
-  if (surArete && !isWallLike) return fail('no_edge')
+  if (surArete && !isWallLike && structure !== 'palissade') return fail('no_edge')
   if (surArete && !isSingleEdge(edges)) return fail('bad_tile')
   // Occupation PAR COUCHE : seul un doublon de la MÊME couche (sol/toit/solide/arête) refuse.
   const occupant = surArete
@@ -780,9 +781,12 @@ export function advanceUpkeep(state: SimState): void {
       emitEvent(state, { type: 'fire_starved', tick: state.tick, villageId: village.id })
     }
     if (village.fuel > 0) continue
-    // À sec : les murs/barrières cèdent. On COLLECTE d'abord — `applyStructureDamage`
+    // À sec : les murs/barrières cèdent — la palissade avec eux (c'est l'enceinte,
+    // exactement ce que l'upkeep protège). On COLLECTE d'abord — `applyStructureDamage`
     // filtre `state.structures` à la destruction, on ne l'itère donc pas en le mutant.
-    const walls = state.structures.filter((s) => s.villageId === village.id && (s.type === 'wall' || s.type === 'door'))
+    const walls = state.structures.filter(
+      (s) => s.villageId === village.id && (s.type === 'wall' || s.type === 'door' || s.type === 'palissade'),
+    )
     for (const w of walls) applyStructureDamage(state, w.id, FIRE_UPKEEP.WALL_DECAY_PER_TICK, 0)
   }
 }

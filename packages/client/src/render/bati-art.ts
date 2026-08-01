@@ -1228,6 +1228,33 @@ function dessinerFriche(variante: number): HTMLCanvasElement {
 const T_MUR = { top: '#8f8f99', face: '#5e5e68', pied: '#4a4a54', arete: '#3a3a43' }
 const T_RUINE = { top: '#6d6d77', face: '#4a4a54', pied: '#3a3a43', arete: '#2e2e36' }
 const T_CLOT = { top: '#8a6438', face: '#5a3f24', pied: '#3a2818', arete: '#2e2016' }
+/**
+ * LE MUR DE BOIS A SA FAMILLE (retour d'Alexis, 2026-08-01 : « on ne voit pas la texture
+ * bois ») — et elle reste UNIE, fidèle à la décision du 2026-07-27 : à 16 px de tuile un
+ * grain lit comme du bruit, c'est la COULEUR en aplat qui dit le matériau. Une teinte
+ * douce sur texture neutre ne suffisait pas (mesuré : Δ ≤ 3 au pixel entre bois et
+ * pierre) ; des tons pleins de madriers, si. La pierre garde T_MUR, le gris de la
+ * maçonnerie.
+ */
+const T_BOIS = { top: '#a5825a', face: '#6d5232', pied: '#523c22', arete: '#3f2f1c' }
+/**
+ * LA PALISSADE — l'enceinte d'un village n'est PAS le mur d'un bâtiment (décision
+ * d'Alexis, 2026-08-01) : des rondins dressés, plus sombres et plus hauts qu'une
+ * clôture, moins qu'un mur porteur. Son grain est des POTEAUX espacés (4 px), pas un
+ * appareil : à cette échelle, des marques rares lisent « rondins », pas « bruit ».
+ */
+const T_PALIS = { top: '#93744a', face: '#5f462a', pied: '#40301c', arete: '#33261a' }
+const PALIS_HT = 24 // entre la clôture (8) et le mur (32) : défensive, mais on lit le dedans
+
+/** Les poteaux de la palissade : une marque sombre tous les 4 px LE LONG de la bande. */
+function grainPalissade(g: Ctx, b: Bande, bit: number): void {
+  g.fillStyle = T_PALIS.face
+  if (bit === N_B || bit === S_B) {
+    for (let x = b.x + 3; x < b.x + b.w - 1; x += 4) g.fillRect(x, b.y, 1, b.h)
+  } else {
+    for (let y = b.y + 3; y < b.y + b.h - 1; y += 4) g.fillRect(b.x, y, b.w, 1)
+  }
+}
 
 /**
  * LES MURS SONT UNIS (décision d'Alexis, 2026-07-27) — plus d'appareil de pierre.
@@ -1255,8 +1282,10 @@ function generateEdgeBarrieres(scene: Phaser.Scene): void {
   for (let mask = 1; mask < 16; mask++) {
     for (const [nom, ht, tons, grain] of [
       ['wall', MUR_HT, T_MUR, undefined],
+      ['wall-bois', MUR_HT, T_BOIS, undefined],
       ['wall-ruine', MUR_HT, T_RUINE, undefined],
       ['cloture', CLOT_HT, T_CLOT, undefined],
+      ['palissade', PALIS_HT, T_PALIS, grainPalissade],
     ] as [string, number, typeof T_MUR, ((g: Ctx, b: Bande, bit: number) => void) | undefined][]) {
       const { albedo, joints } = dessinerBarriere(mask, ht, tons, grain)
       poser(scene, `st-${nom}-e${mask}`, albedo, normalFromCanvas(albedo, 1, 3.2, 2, false, joints))
@@ -1283,6 +1312,9 @@ function generateEdgeBarrieres(scene: Phaser.Scene): void {
     for (const [nom, ht, sol, fil] of [
       ['wall-coupe', MUR_HT, COUPE_SOL, COUPE_LISERE],
       ['cloture-coupe', CLOT_HT, BOIS.nuit, BOIS.sombre],
+      // La palissade d'une enceinte ne front jamais une salle couverte : elle ne se
+      // tranche pas (absente de COUPE_DE, comme la porte). Le mur de BOIS, lui, se
+      // tranche comme les autres murs — une empreinte au sol n'a pas d'essence.
     ] as const) {
       const cle = `st-${nom}-e${mask}`
       if (scene.textures.exists(cle)) scene.textures.remove(cle)
@@ -1304,20 +1336,24 @@ function generateEdgeBarrieres(scene: Phaser.Scene): void {
  */
 export const EDGE_SPRITE: Readonly<Record<string, { hauteurPx: number; largeurPx: number }>> = {
   wall: { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
+  'wall-bois': { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
   'wall-ruine': { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
   encadrement: { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
   door: { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
   cloture: { hauteurPx: CLOT_HT, largeurPx: T + 2 * M },
+  palissade: { hauteurPx: PALIS_HT, largeurPx: T + 2 * M },
 }
 
 export const EDGE_ORIGIN_Y: Readonly<Record<string, number>> = {
   wall: originY(MUR_HT),
+  'wall-bois': originY(MUR_HT),
   'wall-ruine': originY(MUR_HT),
   'wall-coupe': originY(MUR_HT),
   'cloture-coupe': originY(CLOT_HT),
   door: originYPorte(),
   encadrement: originY(MUR_HT),
   cloture: originY(CLOT_HT),
+  palissade: originY(PALIS_HT),
 }
 
 /**
@@ -1339,13 +1375,16 @@ export const EDGE_ORIGIN_Y: Readonly<Record<string, number>> = {
  */
 export const COUPE_DE: Readonly<Record<string, string>> = {
   wall: 'wall-coupe',
+  'wall-bois': 'wall-coupe', //    une empreinte au sol n'a pas d'essence
   'wall-ruine': 'wall-coupe', //   une empreinte au sol n'a ni appareil ni usure
   cloture: 'cloture-coupe',
+  // La PALISSADE est absente À DESSEIN (comme la porte) : l'enceinte d'un village ne
+  // front jamais une salle couverte — elle reste debout, toujours.
 }
 
 /** Toutes les clés d'arête — la surface testable, jamais recopiée. */
 export const EDGE_BARRIER_KEYS: readonly string[] = [
-  ...['wall', 'wall-ruine', 'cloture'].flatMap((nom) =>
+  ...['wall', 'wall-bois', 'wall-ruine', 'cloture', 'palissade'].flatMap((nom) =>
     Array.from({ length: 15 }, (_, i) => [`st-${nom}-e${i + 1}`, `st-${nom}-e${i + 1}_lit`]).flat()),
   ...['wall-coupe', 'cloture-coupe'].flatMap((nom) =>
     Array.from({ length: 15 }, (_, i) => `st-${nom}-e${i + 1}`)),
