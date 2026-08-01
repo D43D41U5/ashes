@@ -16,7 +16,7 @@
  * invariant §3). Un fantôme vert n'est PAS une promesse — c'est « rien ici ne
  * l'interdit *de ce que le client peut voir* ».
  */
-import { COMPONENT_TYPES, EDGE_N, edgeBarrierAt, recognizeFunctions, type RecognizedFunction, type Structure } from '@ashes/sim'
+import { COMPONENT_TYPES, doorPairs, EDGE_N, edgeBarrierAt, recognizeFunctions, type RecognizedFunction, type Structure } from '@ashes/sim'
 import { tileFeetAnchor } from '../../render/framing'
 import { TILE_PX } from '../../render/framing'
 import { EDGE_ORIGIN_Y } from '../../render/bati-art'
@@ -98,12 +98,17 @@ export class BuildGhost {
       : structures.some((s) => s.tx === tx && s.ty === ty)
     const a = tileFeetAnchor(tx, ty, TILE_PX)
     const lift = warp?.lift(tx + 0.5, ty + 1) ?? 0
+    // LA PORTE DOUBLE SE PRÉDIT (R27) : si l'arête armée complète une paire colinéaire avec une
+    // porte déjà là, le fantôme montre la MOITIÉ de cadre qui sera vraiment dessinée. C'est
+    // l'affordance qui APPREND la règle au joueur — deux portes mitoyennes fusionnent — avant
+    // qu'il ne paie la seconde, et par le même moteur que la sim (`doorPairs`, R22 : il ne ment pas).
+    const fam = placing === 'door' && !occupied ? famillePorte(structures, tx, ty, edge) : placing
     this.sprite
       // LA PORTE PORTE SA FRAME (R26) : sa famille est indexée, `st-door-e<bit>` n'existe plus.
       // Le fantôme montre la frame 0 — CLOSE, ce qu'on va effectivement poser. Sans ce suffixe,
       // armer « Porte » affichait un damier magenta : une texture manquante ne lève pas.
-      .setTexture(surArete ? `st-${placing}-e${edge}${placing === 'door' ? '-f0' : ''}` : `st-${placing}`)
-      .setOrigin(0.5, surArete ? EDGE_ORIGIN_Y[placing] ?? 1 : 1)
+      .setTexture(surArete ? `st-${fam}-e${edge}${placing === 'door' ? '-f0' : ''}` : `st-${placing}`)
+      .setOrigin(0.5, surArete ? EDGE_ORIGIN_Y[fam] ?? 1 : 1)
       .setPosition(a.px, a.py - lift)
       .setDepth(GHOST_DEPTH)
       .setTint(inRange && !occupied ? OK_TINT : BAD_TINT)
@@ -119,6 +124,17 @@ export class BuildGhost {
       this.predict.setVisible(false)
     }
   }
+}
+
+/**
+ * La FAMILLE que prendrait une porte posée là (R27) : `door2a`/`door2b` si l'arête armée
+ * complète une paire colinéaire — la même dérivation que la sim et que `snapshot-view`
+ * (`doorPairs`), rejouée avec la porte hypothétique — `door` sinon.
+ */
+function famillePorte(structures: readonly Structure[], tx: number, ty: number, edge: number): string {
+  const hypo = [...structures, { id: -1, type: 'door', tx, ty, villageId: 0, edges: edge } as Structure]
+  const paire = doorPairs(hypo).get(-1)
+  return paire === undefined ? 'door' : paire.premiere ? 'door2a' : 'door2b'
 }
 
 /**

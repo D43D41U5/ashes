@@ -33,6 +33,7 @@ import {
 import { isCropMature, isPlot } from './agriculture'
 import {
   blocksNavigation,
+  doorPairs,
   edgeBarrierAt,
   fullTileAt,
   placementKeepsNavigable,
@@ -1165,9 +1166,20 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // `open` reste ABSENT quand elle se referme : `undefined` EST « close » (voir `Structure`),
       // et un `false` explicite alourdirait chaque snapshot d'un champ qui ne dit rien de neuf.
       const ouverte = s.open !== true
-      if (ouverte) s.open = true
-      else delete s.open
-      emitEvent(state, { type: 'door_toggled', tick: state.tick, structureId: s.id, open: ouverte, byEntityId: actorId })
+      // LA PORTE DOUBLE (R27) : le vantail apparié SUIT — on applique l'état RÉSULTANT du visé
+      // aux deux (une synchronisation, pas une double bascule : deux battants désaccordés se
+      // réalignent), si l'acteur a aussi le droit sur l'apparié. La portée ne se revérifie pas
+      // sur lui : le cadre est un seul objet, on ne pousse pas ses deux battants à deux endroits.
+      const apparie = doorPairs(state.structures).get(s.id)?.pair
+      const battants = apparie !== undefined && hasAccess(state, actorId, apparie) ? [s, apparie] : [s]
+      for (const b of battants) {
+        // Un événement par battant qui CHANGE : un fait par fait — l'apparié déjà dans l'état
+        // visé ne bouge pas, donc ne dit rien.
+        if ((b.open === true) === ouverte) continue
+        if (ouverte) b.open = true
+        else delete b.open
+        emitEvent(state, { type: 'door_toggled', tick: state.tick, structureId: b.id, open: ouverte, byEntityId: actorId })
+      }
       return
     }
 

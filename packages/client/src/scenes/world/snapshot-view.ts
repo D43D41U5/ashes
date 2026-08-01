@@ -9,6 +9,7 @@ import {
   activityAt,
   BALANCE,
   cropStage,
+  doorPairs,
   isPlot,
   FAUNA,
   HUNT,
@@ -1049,6 +1050,10 @@ export class SnapshotView {
     // l'ouest et à l'est — le montant tombe de ce côté-là, et la porte devient une ouverture.
     const seuilTiles = new Set<string>()
     for (const s of structures) if (s.type === 'encadrement') seuilTiles.add(`${s.tx},${s.ty}`)
+    // LA PORTE DOUBLE SE LIT ICI (spec construction R27) : l'appariement est DÉRIVÉ du snapshot
+    // à chaque passage, jamais stocké — la même dérivation que la sim (`doorPairs`, une seule
+    // vérité pour « ces deux vantaux font un cadre »), recalculée comme la nappe et les pans.
+    const doubles = doorPairs(structures)
     this.nappe = calculerNappe(structures, self)
     // LES PANS — l'unité d'effacement du bâti. Recalculés à chaque snapshot comme la nappe :
     // dérivé pur, jamais stocké. C'est ici que se décide QUEL mur s'efface, et le pourquoi vit
@@ -1133,8 +1138,12 @@ export class SnapshotView {
         // LE MUR DE BOIS A SA FAMILLE aussi (retour d'Alexis, 2026-08-01) : les tons du
         // matériau vivent dans la TEXTURE (aplats de madriers), plus dans une teinte que
         // personne ne lisait. La pierre et le métal gardent la maçonnerie neutre + teinte.
+        // ET LE VANTAIL APPARIÉ CHANGE DE FAMILLE (R27) : la moitié ouest/nord du cadre prend
+        // `door2a`, l'autre `door2b` — un seul jambage chacune, les battants se rejoignent au
+        // centre. Non apparié, il reste une porte simple ; démolir son jumeau l'y ramène seul.
+        const paire = s.type === 'door' ? doubles.get(s.id) : undefined
         const fam =
-          s.type === 'door' ? 'door'
+          s.type === 'door' ? (paire === undefined ? 'door' : paire.premiere ? 'door2a' : 'door2b')
           : s.type === 'cloture' ? 'cloture'
           : s.type === 'palissade' ? 'palissade'
           : ruine ? 'wall-ruine'
