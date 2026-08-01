@@ -51,6 +51,7 @@ import {
   RECIPES,
   WALL_TIERS,
   type AccessLevel,
+  BARRIER_TYPES,
   type BarrierType,
   type FireZone,
   type PlayerAction,
@@ -169,12 +170,16 @@ const opt = (genre: Genre): Champ => ({ genre, requis: false })
 const clef = (table: Readonly<Record<string, unknown>>): Genre => ({ g: 'clef', table })
 
 /**
- * `Record<Union, true>` plutôt qu'un tableau de littéraux : si `BarrierType`,
- * `AccessLevel`, `FireZone` ou le `side` d'une `SlotRef` gagne un membre, CE fichier ne
- * compile plus. Une liste recopiée, elle, aurait laissé passer le nouveau membre en
- * silence — et le silence est le défaut qu'on corrige ici.
+ * `Record<Union, true>` plutôt qu'un tableau de littéraux : si `AccessLevel`, `FireZone`
+ * ou le `side` d'une `SlotRef` gagne un membre, CE fichier ne compile plus. Une liste
+ * recopiée, elle, aurait laissé passer le nouveau membre en silence — et le silence est
+ * le défaut qu'on corrige ici.
+ *
+ * Les BARRIÈRES vont plus loin depuis le registre (2026-08-01) : elles se DÉRIVENT de
+ * `pieces.ts` (les pièces dont le geste de pose est le marteau). Une barrière neuve entre
+ * ici toute seule — il n'y a plus rien à ne pas oublier.
  */
-const BARRIERES: Record<BarrierType, true> = { wall: true, palissade: true, door: true, floor: true, roof: true }
+const BARRIERES = Object.fromEntries(BARRIER_TYPES.map((t) => [t, true])) as Record<BarrierType, true>
 const ACCES: Record<AccessLevel, true> = { private: true, village: true, public: true }
 const ZONES_FEU: Record<FireZone, true> = { fuel: true, cookIn: true, cookOut: true }
 const COTES: Record<SlotRef['side'], true> = { player: true, container: true }

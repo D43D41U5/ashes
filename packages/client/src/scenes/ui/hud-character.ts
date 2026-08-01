@@ -33,6 +33,7 @@ import {
   durabilityOf,
   hasItems,
   RECIPES,
+  nomExigence,
   skillLevel,
   type CarryTier,
   type Inventory,
@@ -44,9 +45,10 @@ import {
   type SlotRef,
 } from '@ashes/sim'
 import type Phaser from 'phaser'
-import type { CharacterTab, OpenContainerView, StationId } from '../../hud-state'
+import type { Exigence, RecipeId as RecipeIdType } from '@ashes/sim'
+import type { CapacitesEnPortee, CharacterTab, OpenContainerView } from '../../hud-state'
 import { ITEM_LABELS, itemIconKey } from '../../render/item-art'
-import { costLine, craftRows, type CraftRow } from './craft-panel'
+import { coutJetons, craftRows, etatRecette, fonctionsAbsentes, type CraftRow } from './craft-panel'
 import { dragIntentFrom, dragToAction, quickMoveToAction } from './inventory-panel'
 import { SKILL_LABELS } from './skill-labels'
 import { skillGuides, type SkillGuide } from './skill-guide'
@@ -67,13 +69,9 @@ const TIER_LABEL: Record<CarryTier, string> = {
   heavy: 'LOURD',
   overloaded: 'SURCHARGÉ',
 }
-const STATION_LABEL: Record<StationId, string> = {
-  fire: 'au Feu',
-  workshop: "à l'atelier",
-  furnace: 'au four',
-  four_acier: "au four d'acier",
-  atelier_lourd: "à l'atelier lourd",
-}
+/** « à la main », « au Feu », « à un Atelier N1 » — dérivé de l'exigence, pas d'une table. */
+const ouFaire = (besoin: Exigence | null): string =>
+  besoin === null ? 'à la main' : besoin.fonction === 'feu' ? 'au Feu' : nomExigence(besoin)
 
 /** Les 4 métiers, à gauche : emblème (une icône d'objet du métier), libellé, niveau, barre.
  *  Le niveau vient de `skillLevel` (/sim) — l'écran montre la règle, il ne la refait pas. */
@@ -106,7 +104,8 @@ export interface HudCharacter {
     tab: CharacterTab
     inv: Inventory
     activeSlot: number
-    stations: readonly StationId[]
+    stations: CapacitesEnPortee
+    seen: readonly RecipeIdType[]
     container: OpenContainerView | null
     skills: Partial<Record<SkillId, number>>
   }): void
@@ -221,7 +220,8 @@ export function createHudCharacter(
   // ── État courant (relu à chaque geste : la vérité vient du snapshot) ──
   let inv: Inventory = []
   let activeSlot = -1
-  let stations: readonly StationId[] = []
+  let stations: CapacitesEnPortee = {}
+  let seen: readonly RecipeIdType[] = []
   let container: OpenContainerView | null = null
   let activeTab: CharacterTab = 'perso'
 
@@ -416,14 +416,14 @@ export function createHudCharacter(
   let lastSig = ''
   const invSig = (): string => inv.map((s) => (s ? `${s.item}:${s.count}` : '-')).join(',')
   const syncList = (): void => {
-    const sig = `${search.value}|${stations.join(',')}|${invSig()}`
+    const sig = `${search.value}|${JSON.stringify(stations)}|${seen.length}|${invSig()}`
     if (sig === lastSig) return
     lastSig = sig
     drawList()
   }
 
   const drawList = (): void => {
-    const rows = craftRows(stations, search.value)
+    const rows = craftRows(seen, search.value)
     const keepScroll = listEl.scrollTop // le geste de défilement survit à la reconstruction
     listEl.innerHTML = ''
     let group: HTMLElement | null = null
@@ -431,17 +431,19 @@ export function createHudCharacter(
       if (row.kind === 'header') {
         group = document.createElement('div')
         group.className = 'hch-grp'
-        group.innerHTML = `<div class="hch-cat">${row.label}</div><div class="hch-recs"></div>`
+        group.innerHTML = `<div class="hch-cat"></div><div class="hch-recs"></div>`
+        group.querySelector<HTMLElement>('.hch-cat')!.textContent = row.label
         listEl.appendChild(group)
       } else if (group) {
         group.querySelector('.hch-recs')!.appendChild(recipeRow(row))
       }
     }
-    // Note « station absente » : les stations connues qu'on n'a PAS à portée.
-    const ALL: StationId[] = ['furnace', 'workshop', 'fire']
-    const absent = ALL.filter((s) => !stations.includes(s))
+    // Note « fonction absente » : DÉRIVÉE des recettes (2026-08-01). L'ancienne liste
+    // écrite à la main en comptait trois quand la sim en avait cinq — le four d'acier et
+    // l'atelier lourd ne pouvaient pas être annoncés absents. Il n'y a plus de liste.
+    const absent = fonctionsAbsentes(stations)
     stationNote.textContent = absent.length
-      ? `RECETTES DE ${absent.map((s) => (s === 'furnace' ? 'FOUR' : s === 'workshop' ? 'FORGE' : 'FEU')).join(' & DE ')} — ABSENTES (aucune station à portée)`
+      ? `STATIONS ABSENTES ICI — ${absent.map((b) => nomExigence(b).toUpperCase()).join(' · ')}`
       : ''
     stationNote.style.display = absent.length ? '' : 'none'
     listEl.scrollTop = keepScroll
@@ -449,16 +451,30 @@ export function createHudCharacter(
 
   const recipeRow = (row: Extract<CraftRow, { kind: 'recipe' }>): HTMLElement => {
     const recipe = RECIPES[row.id]
-    const ready = hasItems(inv, recipe.inputs)
+    // TROIS ÉTATS, et le troisième est le nouveau (D2) : VERROUILLÉ, avec sa raison en
+    // toutes lettres. Avant, une recette dont la station manquait n'était pas grisée —
+    // elle n'était PAS LÀ, et rien ne disait au joueur ce qu'il devait bâtir.
+    const { etat, raison } = etatRecette(stations, hasItems(inv, recipe.inputs), row.id, nomExigence)
     const el = document.createElement('div')
-    el.className = ready ? 'hch-rec hud-click' : 'hch-rec-off' // grisé = pas de survol, pas de clic
-    const station = recipe.station
+    el.className = etat === 'faisable' ? 'hch-rec hud-click' : 'hch-rec-off'
+    const droite = etat === 'verrouille' ? `EXIGE ${raison}` : etat === 'manque' ? 'MANQUE' : 'FAISABLE'
+    el.classList.add(`hch-rec-${etat}`)
     el.innerHTML =
       `<div class="hch-rec-ic"><img alt="" src="${iconUrl(recipe.output)}"></div>` +
-      `<div class="hch-rec-mid"><div class="hch-rec-name">${ITEM_LABELS[recipe.output]}</div>` +
-      `<div class="hch-rec-cost">${costLine(row.id)} — ${station === null ? 'à la main' : STATION_LABEL[station]}</div></div>` +
-      `<div class="hch-rec-state">${ready ? 'FAISABLE' : 'MANQUE'}</div>`
-    if (ready) el.addEventListener('click', () => hooks.queue({ type: 'craft', recipeId: row.id as RecipeId }))
+      `<div class="hch-rec-mid"><div class="hch-rec-name"></div><div class="hch-rec-cost"></div></div>` +
+      `<div class="hch-rec-state"></div>`
+    el.querySelector<HTMLElement>('.hch-rec-name')!.textContent = ITEM_LABELS[recipe.output]
+    const cout = el.querySelector<HTMLElement>('.hch-rec-cost')!
+    for (const [i, j] of coutJetons(recipe.inputs, inv).entries()) {
+      if (i > 0) cout.append(' · ')
+      const bout = document.createElement('span')
+      if (j.manque) bout.className = 'hch-miss'
+      bout.textContent = j.texte
+      cout.append(bout)
+    }
+    cout.append(` — ${ouFaire(recipe.requiert)}`)
+    el.querySelector<HTMLElement>('.hch-rec-state')!.textContent = droite
+    if (etat === 'faisable') el.addEventListener('click', () => hooks.queue({ type: 'craft', recipeId: row.id as RecipeId }))
     return el
   }
 
@@ -477,6 +493,7 @@ export function createHudCharacter(
       inv = s.inv
       activeSlot = s.activeSlot
       stations = s.stations
+      seen = s.seen
       container = s.container
 
       // Un conteneur qui S'OUVRE ramène à PERSONNAGE : on loote, on ne lit pas ses stats. Sur
@@ -641,6 +658,12 @@ function markup(): string {
     .hch-rec-off .hch-rec-cost{color:#8b8474;}
     .hch-rec-state{font-size:13px;color:#8a9a4a;letter-spacing:1px;flex:0 0 auto;}
     .hch-rec-off .hch-rec-state{color:#e05a4a;}
+    /* GRAMMAIRE DE PALETTE (palette.ts) : le rouge porte ce qui BLOQUE (la bourse vide),
+       le GEL ce qui est CONDITIONNEL — ici, un lieu qu'il reste à bâtir. Les deux états ne
+       demandent pas le même geste (aller chercher vs aller bâtir) : ils ne peuvent pas
+       porter la même couleur, ou la liste ne dit plus quoi faire. */
+    .hch-rec-off.hch-rec-verrouille .hch-rec-state{color:#6f93a0;}
+    .hch-miss{color:#e05a4a;}
     .hch-note{font-size:12px;color:#8b8474;letter-spacing:1px;margin-top:12px;padding-top:12px;border-top:1px solid #2a2a34;}
     .hch-ghost{position:fixed;width:44px;height:44px;image-rendering:pixelated;pointer-events:none;z-index:60;transform:translate(-50%,-50%);opacity:.85;}
 

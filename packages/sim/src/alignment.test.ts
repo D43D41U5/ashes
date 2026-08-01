@@ -93,7 +93,13 @@ describe('le premier sang (A2)', () => {
 })
 
 describe('l’inertie (A3)', () => {
-  it('la chaleur revient linéairement vers 0 (le paquebot)', () => {
+  // 288 000 ticks (cinq jours de saison à 20 Hz) : c'est le test le plus long de la suite, et
+  // il tient à sa durée — c'est l'inertie qu'il mesure. Il frôlait son plafond de 30 s ; un
+  // correctif de faune (2026-08-01) a décalé le flux de tirages, ce monde-ci a tiré une bête
+  // de plus, et 14 s sont devenues 24. Ce n'est PAS un coût de tick : le banc de scénario —
+  // vrai worldgen, des milliers de ticks — n'a pas bougé d'une seconde (54,2 s → 53,4 s).
+  // Un test qui tient à 80 % de son plafond n'est pas un test : on lui donne de la marge.
+  it('la chaleur revient linéairement vers 0 (le paquebot)', { timeout: 90_000 }, () => {
     const sim = makeSim(TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE) // 1 cycle = 1 jour
     const a = spawnEntity(sim, 10.5, 10.5)
     entity(sim, a).warmth = 40

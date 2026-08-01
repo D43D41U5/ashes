@@ -788,8 +788,25 @@ export function advanceCombat(state: SimState): void {
   // TENIR UNE CHARGE COÛTE : le souffle ne revient pas tant que le clic est enfoncé.
   // C'est le seul frein à se promener indéfiniment « prêt à frapper fort » — sans
   // lui, la charge serait gratuite dès qu'on ne se bat pas.
+  //
+  // ET COURIR NE RÉGÉNÈRE PAS (A1bis, 2026-08-01). Les deux moitiés du sprint vivaient
+  // dans le MÊME tick à deux phases de distance : `step` ponctionnait 8/s dans la boucle
+  // de mouvement, puis on recréditait ici 6,25/s (repu) — la garde ne connaissait que le
+  // wind-up, la parade et la charge. Net : 57 s de course au lieu des 12,5 s sur lesquels
+  // `PURSUIT_RANGE` calibre la meute ; et DE FAIT illimitée sitôt qu'un obstacle arrêtait
+  // le pas, puisque `moved` retombe alors à faux et fait passer la régén au taux REPOS
+  // (12,5/s, soit PLUS que la ponction : on reprenait son souffle en s'usant sur un mur).
+  // La fuite était gratuite — c'est la règle « on ne distance pas des loups » qui était
+  // morte, pas le loup. On teste `gait`, pas `moved` : c'est l'allure du tick, elle vaut
+  // aussi pour le sprint stoppé net, et elle voyage déjà dans le snapshot.
   for (const entity of state.entities) {
-    if (entity.windup || entity.blocking || entity.charge) continue
+    // LE VERROU D'ÉPUISEMENT SUIT LA BARRE, PAS SA CAUSE (R1ter) : il se pose dès qu'elle
+    // touche 0, qu'on l'ait vidée en courant, en frappant ou en parant. Le poser dans la
+    // seule branche de sprint laissait un trou — qui arrivait à 0 autrement gardait droit
+    // à UN tick de course (mesuré : 0,1 tuile de trop), et par ce trou l'oscillation
+    // rentrait. AVANT le saut ci-dessous : un bloqueur à bout doit être verrouillé lui aussi.
+    if (entity.stamina <= 0) entity.exhausted = true
+    if (entity.windup || entity.blocking || entity.charge || entity.gait === 'sprint') continue
     let perS = entity.moved ? COMBAT.STAMINA_REGEN_MOVING_PER_S : COMBAT.STAMINA_REGEN_IDLE_PER_S
     // SURCHARGÉ, ON NE FUIT PAS (spec portage.md P7) : l'endurance ne revient
     // presque plus. Un porteur surchargé est une PROIE — il ne se bat pas, il ne
@@ -802,7 +819,21 @@ export function advanceCombat(state: SimState): void {
       else if (entity.hunger <= 0) perS *= COMBAT.STARVED_REGEN_MALUS
       if (state.tick < entity.exhaustedUntil) perS *= COMBAT.EXHAUSTED_REGEN_FACTOR
     }
+    const avant = entity.stamina
     entity.stamina = Math.min(100, entity.stamina + perS / BALANCE.TICK_RATE_HZ)
+    // LE SOUFFLE SE PAIE EN VENTRE (décision Alexis, 2026-08-01, spec R2). Ce qu'on
+    // facture est ce qui a été RÉELLEMENT crédité — après le clamp à 100 — sinon une
+    // barre déjà pleine draine la faim à l'arrêt. Les monstres n'ont pas faim : leur
+    // jauge n'est jamais drainée ailleurs, la débiter ici la ferait tomber à 0 et
+    // les rangerait parmi les affamés.
+    if (!monsterIds.has(entity.id)) {
+      entity.hunger = Math.max(0, entity.hunger - (entity.stamina - avant) * COMBAT.STAMINA_REGEN_HUNGER_COST)
+    }
+    // ON RESSORT D'ÉPUISEMENT (R1ter) — et seulement ici. Le verrou s'est posé à 0 dans la
+    // boucle de mouvement ; le rendre au premier point regagné ferait osciller la course à
+    // 10 Hz (mesuré : une tuile sur deux courue, indéfiniment). `delete` plutôt que
+    // `= false` : le champ est optionnel, un frais ne le porte pas dans le snapshot.
+    if (entity.exhausted && entity.stamina >= COMBAT.SPRINT_RECOVER_STAMINA) delete entity.exhausted
   }
 
   // Un cadavre marqué (levée à venir) ne décante pas avant sa levée.

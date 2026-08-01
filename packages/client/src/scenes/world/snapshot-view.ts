@@ -6,11 +6,9 @@
  * AUCUNE logique de jeu ici — uniquement du rendu d'état reçu (spec client R4).
  */
 import {
-  activityAt,
   BALANCE,
   cropStage,
   isPlot,
-  FAUNA,
   HUNT,
   NODE_DEFS,
   forageRichness,
@@ -22,7 +20,6 @@ import {
   type Entity,
   type Monster,
   type FunctionId,
-  type MonsterType,
   type Npc,
   type RefugeeGroup,
   type ResourceNode,
@@ -37,6 +34,20 @@ import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
 import { windSway } from '../../render/wind'
 import { pushSample, sampleAt, type Sample } from './interp'
+// LA POSTURE ET LA TEINTE D'UNE BÊTE vivent à part (`beast-posture`) : sans Phaser, donc
+// jouables headless. C'est ce qui permet à `tools/diag-cerf.mts` de compter ce que l'ÉCRAN
+// montre, au lieu d'en garder une copie qui dérive.
+import {
+  beastTexture,
+  beastTint,
+  majMiroir,
+  majRepos,
+  nouveauMiroir,
+  nouveauRepos,
+  type MiroirLatch,
+  type ReposLatch,
+} from './beast-posture'
+export { BEAST_TINTS } from './beast-posture'
 import {
   actorPlacement,
   corpseDepth,
@@ -77,6 +88,17 @@ import { riveAt, type RiveField } from '../../render/water-field'
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
 const AIM_TINT = 0xffe9a8
 const AIM_TINT_FAR = 0x8a8a92
+/**
+ * LE ROUGE DE LA DÉMOLITION — plus CHAUD que le rouge d'interface du fantôme refusé (#d9614f),
+ * et il le faut : il se pose sur du BOIS, qui est déjà orange.
+ *
+ * MESURÉ au navigateur (2026-08-01), silhouette à 0,72 d'alpha sur un mur de bois debout :
+ * #d9614f rendait (219,114,84) là où le mur non visé rend (223,156,97) — 44 d'écart euclidien,
+ * soit deux planches presque identiques. À #ff3a2a et 0,8, le même mur rend (248,78,53) : 93
+ * d'écart, et la teinte quitte la famille du bois au lieu d'y ajouter une nuance.
+ * Hors de portée, elle retombe sur le gris de visée : le geste est perdu d'avance.
+ */
+const DEMOLISH_TINT = 0xff3a2a
 
 /** Plafond de morts consignées en une frame. Un front qui rase un bosquet ne doit pas
  *  jeter mille chutes à l'écran — et au-delà, plus personne ne les distingue. */
@@ -154,77 +176,6 @@ const CROWN_WIND_TAKE = 0.5
 const NODE_WIND_TAKE: Record<string, number> = { fiber_plant: 1, berry_bush: 0.45 }
 const SAPLING_WIND_TAKE = 0.4
 
-/** Chaque type de monstre a sa texture — exhaustif, donc un nouveau type ne
- * peut pas se glisser dans le monde déguisé en sanglier. */
-const MONSTER_TEXTURES: Record<MonsterType, string> = {
-  cendreux: 'spr-cendreux',
-  boar: 'spr-boar',
-  deer: 'spr-deer',
-  rabbit: 'spr-rabbit',
-  wolf: 'spr-wolf',
-}
-
-/**
- * LA COULEUR DIT L'INTENTION. Les règles les plus intéressantes de la faune sont
- * des ÉTATS — le sanglier qui fouge est approchable, celui qui menace est sur le
- * point de charger, le loup qui rampe ne vous a pas encore vu. Sans un signal
- * visible, ces règles n'existent pas pour le joueur : il se fait encorner sans
- * comprendre, et le jeu passe pour injuste.
- *
- * L'art est provisoire (tout est généré au boot), donc le signal l'est aussi :
- * une teinte. Quand la direction artistique arrivera, ce sera une posture — tête
- * baissée, échine hérissée, ventre au sol — et cette fonction disparaîtra.
- */
-/**
- * La palette des ÉTATS de bête — exportée pour que le smoke test (`--scenario
- * chasse`) lise la même vérité que l'écran, au lieu de recopier des hexas.
- */
-export const BEAST_TINTS = {
-  bleeding: 0xc4523f, // ELLE SAIGNE (chasse C8) : suivez le sang — elle est à vous
-  menace: 0xff6a4a, // il MENACE : reculez — dernière seconde
-  winded: 0x9aa8b4, // il souffle : frappez
-  rooting: 0x8a7a5a, // il fouge, groin au sol : approchez
-  eating: 0x8a7a5a, // il mange, tête dans la carcasse (ou l'appât) : la fenêtre
-  stalking: 0x7a8290, // le loup rampe : il ne vous a pas encore choisi
-  alert: 0xff9d54, // ALERTÉE : tendue, prête à partir — plus de coup propre (C6)
-  curious: 0xffe9a0, // CURIEUSE : tête levée, elle vous regarde — figez-vous
-  grazing: 0xdddddd,
-} as const
-
-function beastTint(monster: Monster | undefined, windup: boolean, isNpc: boolean, tick: number): number {
-  if (!monster) return windup ? 0xff8866 : isNpc ? 0xe8d9a0 : 0xffffff
-
-  // LE SANG PRIME SUR TOUT (spec chasse C8). Une bête qui saigne est une bête
-  // qu'on TRAQUE : c'est l'information la plus chère de l'écran, elle passe
-  // devant l'humeur. (Et la posture, elle, dit déjà si elle fuit ou si elle est
-  // tapie — les deux signaux ne se marchent pas dessus.)
-  if (monster.bleedMortal || (monster.bleedUntil !== undefined && tick < monster.bleedUntil)) {
-    return BEAST_TINTS.bleeding
-  }
-
-  // Le sanglier (spec faune R14) — les trois secondes qui décident de tout.
-  if (monster.threatSince !== undefined) return BEAST_TINTS.menace
-  if (monster.windedUntil !== undefined) return BEAST_TINTS.winded
-  if (monster.rootUntil !== undefined) return BEAST_TINTS.rooting
-
-  // Le repas (R15/C18) : tête dans la carcasse — ou dans l'appât qu'on vient de
-  // lui poser. Depuis la mise à mort propre (C6), c'est une fenêtre qui se paie.
-  if (monster.eatingUntil !== undefined || monster.baitUntil !== undefined) return BEAST_TINTS.eating
-
-  // Le loup en traque (R11) : tapi, il se fond dans le sous-bois. On le distingue
-  // mal — c'est le propos, et c'est loyal : il est là, à qui sait regarder.
-  if (monster.stalking) return BEAST_TINTS.stalking
-
-  // LA MÉFIANCE (spec chasse C1/C19) : la bête EST la jauge. Pas de barre
-  // flottante — trois teintes, dérivées des seuils de BALANCE. CURIEUSE dit
-  // « figez-vous » (la jauge redescendra) ; ALERTÉE dit « trop tard pour le
-  // coup propre » — c'est l'information que le chasseur paie de son approche.
-  if (monster.suspicion >= HUNT.SUSPICION_ALERT) return BEAST_TINTS.alert
-  if (monster.suspicion >= HUNT.SUSPICION_CURIOUS) return BEAST_TINTS.curious
-
-  return windup ? 0xffffff : BEAST_TINTS.grazing
-}
-
 /**
  * LA SILHOUETTE TASSÉE (spec chasse C19). Qui se fait discret se PLIE : le
  * rampeur (`gait: sneak`) perd un quart de sa hauteur — les pieds ne bougent
@@ -237,41 +188,6 @@ export const CROUCH_FACTOR = 0.72
 function isCrouched(monster: Monster | undefined, entity: Entity): boolean {
   if (!monster) return entity.gait === 'sneak'
   return monster.alpha === true && (monster.stalking === true || monster.eatingUntil !== undefined)
-}
-
-/**
- * LA POSTURE DIT L'ÉTAT (spec faune R9bis / chasse C19). Avant la teinte, avant
- * tout : la SILHOUETTE. Tête au sol = elle broute (approchez) ; tête dressée =
- * elle a vu quelque chose (figez-vous) — c'est aussi la posture de la
- * SENTINELLE ; corps tendu à l'horizontale = elle fuit ; couchée = elle dort
- * (réveillable, R10). Le sanglier fouge ou charge, le loup rampe ou mange.
- */
-function beastTexture(monster: Monster, sentinel: boolean, hour: number): string {
-  if (monster.type === 'boar') {
-    if (monster.chargeUntil !== undefined) return 'spr-boar-charge'
-    if (monster.rootUntil !== undefined) return 'spr-boar-root'
-    return 'spr-boar'
-  }
-  if (monster.type === 'wolf') {
-    if (monster.alpha) return 'spr-wolf-alpha' // sa silhouette EST son identité : on n'y touche pas
-    if (monster.eatingUntil !== undefined) return 'spr-wolf-eat'
-    if (monster.stalking) return 'spr-wolf-stalk'
-    return 'spr-wolf'
-  }
-  if (monster.type === 'deer' || monster.type === 'rabbit') {
-    const base = monster.type === 'deer' ? 'spr-deer' : 'spr-rabbit'
-    if (monster.fleeSince >= 0) return `${base}-flee`
-    // LA BÊTE TAPIE (spec chasse C11) : à bout de sang, couchée dans un fourré.
-    // Même posture que le sommeil — mais la teinte, elle, dira le sang.
-    if (monster.bedded && monster.type === 'deer') return 'spr-deer-bed'
-    // Tête dressée : la garde, ou une bête qui a repéré quelque chose. Celle qui
-    // MANGE un appât (C18), elle, a la tête dans l'herbe : posture de broutage.
-    if (monster.baitUntil === undefined && (sentinel || monster.suspicion >= HUNT.SUSPICION_CURIOUS)) return base
-    // Hors de ses heures, le cerf se COUCHE (le lapin tassé broute pareil).
-    if (monster.type === 'deer' && activityAt('deer', hour) < FAUNA.REST_BELOW) return 'spr-deer-bed'
-    return `${base}-graze`
-  }
-  return MONSTER_TEXTURES[monster.type]
 }
 
 /** Clé d'index tuile→nœud : `tx * STRIDE + ty`. STRIDE > toute coordonnée de
@@ -325,6 +241,11 @@ export interface InterpolatedSprite {
   crouch: boolean
   /** Relevés de position datés — `interpolate` y rend à `now - interpDelayMs` (tampon de gigue). */
   buffer: Sample[]
+  /** DEPUIS QUAND ELLE NE BOUGE PLUS — décide du couché (voir `beast-posture`). Une bête
+   *  qui marche est debout, quelle que soit l'heure. */
+  repos: ReposLatch
+  /** LE SENS DESSINÉ, et depuis quand elle penche de l'autre côté (voir `majMiroir`). */
+  miroir: MiroirLatch
 }
 
 /** Le dernier relevé connu d'un tampon (position autoritative la plus récente). */
@@ -469,6 +390,11 @@ export class SnapshotView {
   /** Le nœud sous le curseur (spec recolte.md G4), et s'il est à portée de bras. */
   private aimedNodeId: number | null = null
   private aimedInRange = false
+  /** La structure que le mode DÉMOLIR détruirait, et si elle est à portée de bâti. */
+  private demolishTargetId: number | null = null
+  private demolishInRange = false
+  /** La silhouette rouge posée dessus — une seule, recyclée (voir `peindreHalo`). */
+  private demolishHalo: Phaser.GameObjects.Image | undefined
   /** La mémoire des coups reçus — pour le tressaillement. Posée par WorldScene. */
   private hitFx?: HitFx
   /** LA GERBE D'ÉCLATS. Elle naît ICI et nulle part ailleurs : cette boucle est la seule
@@ -492,6 +418,25 @@ export class SnapshotView {
   setAim(nodeId: number | null, inRange: boolean): void {
     this.aimedNodeId = nodeId
     this.aimedInRange = inRange
+  }
+
+  /**
+   * CE QUE LE MARTEAU DÉTRUIRAIT (décision d'Alexis, 2026-08-01) — l'id de la structure que
+   * le mode DÉMOLIR vise, et si elle est à portée de bâti. Rouge = ce clic la détruit ; gris
+   * = trop loin. `null` = mode éteint, ou rien à moi sous le curseur.
+   *
+   * Une tuile porte jusqu'à trois couches et quatre arêtes : sans ce surlignage, le joueur
+   * détruirait à l'aveugle. C'est LUI qui rend la règle de visée (`demolishTargetAt`) lisible
+   * — les deux lisent la même fonction, aux mêmes arguments.
+   */
+  setDemolishTarget(id: number | null, inRange: boolean): void {
+    this.demolishTargetId = id
+    this.demolishInRange = inRange
+    // ON ÉTEINT ICI, PAS SEULEMENT AU RENDU. `renderStructures` ne tourne qu'à l'arrivée d'un
+    // SNAPSHOT ; cette méthode, elle, est appelée à chaque frame. Sans ça, ranger le marteau
+    // ou ouvrir le menu pause (l'hôte se fige, plus un seul snapshot) laisserait la silhouette
+    // rouge posée sur le monde, désignant un geste que plus rien ne peut déclencher.
+    if (id === null) this.demolishHalo?.setVisible(false)
   }
 
   setHitFx(fx: HitFx): void {
@@ -984,7 +929,12 @@ export class SnapshotView {
         // pour se reposer sur `interpolate` à la frame suivante ferait dépendre la géométrie
         // d'un ordre d'appels. Elle doit être juste par construction.
         this.syncActor(sprite, entity.x, entity.y, 'spr-npc', false, this.reveilFx?.enfouissementDe(entity.id, now) ?? 0)
-        record = { sprite, shadow, textureKey: 'spr-npc', crouch: false, buffer: [{ at: now, x: entity.x, y: entity.y }] }
+        record = {
+          sprite, shadow, textureKey: 'spr-npc', crouch: false,
+          buffer: [{ at: now, x: entity.x, y: entity.y }],
+          repos: nouveauRepos(now),
+          miroir: nouveauMiroir(false, now),
+        }
         this.others.set(entity.id, record)
       }
       // Les villageois se distinguent des errants et des monstres ; un
@@ -993,9 +943,12 @@ export class SnapshotView {
       const monster = monsterByEntity.get(entity.id)
       // LA POSTURE dit l'état (R9bis/C19) — et l'alpha garde sa silhouette
       // propre (spec faune R12) : le joueur doit pouvoir le désigner d'un coup
-      // d'œil, c'est LUI qu'il faut abattre.
+      // d'œil, c'est LUI qu'il faut abattre. Le PAS de l'entité (`moved`, dans le
+      // snapshot) décide du couché : une bête qui marche est debout, fût-il 3 h
+      // du matin (« ils bougent allongés », Alexis, 2026-08-01).
+      const posee = majRepos(record.repos, entity.moved, now)
       const key = monster
-        ? beastTexture(monster, sentinels.has(entity.id), this.hour)
+        ? beastTexture(monster, sentinels.has(entity.id), this.hour, posee)
         : this.lighting ? 'spr-npc_lit' : 'spr-npc' // l'humain bascule (R9) ; la bête reste peinte (consigné)
       if (record.textureKey !== key) {
         // setTexture réinitialise la frame : ne le rappeler que si la texture
@@ -1008,10 +961,14 @@ export class SnapshotView {
       // LE REGARD (R9bis) : le sprite se met dans le sens où la bête regarde —
       // la sim oriente déjà `facing` (marche, gel qui fixe, sentinelle qui
       // balaie). On ne bascule qu'au-delà d'un seuil : un regard plein nord ne
-      // fait pas claquer le miroir à chaque frame.
+      // fait pas claquer le miroir à chaque frame. Et le sens doit TENIR
+      // (`majMiroir`) : le pas est rangé en huit directions, une visée qui rase
+      // une frontière de secteur alternait sinon d'un côté à l'autre à chaque
+      // tick — le sprite entier se retournait, et ça se lisait comme un
+      // tremblement (Alexis, 2026-08-01).
       if (monster && Math.abs(entity.facing.x) > 0.25) {
         const facesRight = ACTOR_FOOTPRINTS[key]?.facesRight === true
-        record.sprite.setFlipX(facesRight ? entity.facing.x < 0 : entity.facing.x > 0)
+        record.sprite.setFlipX(majMiroir(record.miroir, facesRight ? entity.facing.x < 0 : entity.facing.x > 0, now))
       }
       record.crouch = isCrouched(monster, entity)
       record.sprite.setTint(beastTint(monster, entity.windup !== undefined, npc !== undefined, this.tick))
@@ -1056,6 +1013,9 @@ export class SnapshotView {
     const pans = calculerPans(structures)
     const tombes = pansTombes(pans, self, PAN_DISTANCE_TUILES)
     const seen = new Set<number>()
+    /** La cible de démolition a-t-elle été VUE cette frame ? Sinon le halo s'éteint — sans
+     *  ça, il resterait accroché à un mur qu'on vient justement de détruire. */
+    let haloVu = false
     for (const s of structures) {
       seen.add(s.id)
       const isRoof = s.type === 'roof'
@@ -1294,6 +1254,12 @@ export class SnapshotView {
         // c'est ce que le disque des cimes ne savait pas faire.
         sprite.setAlpha(this.dedansAvec(s.tx, s.ty) ? 0.12 : 1)
       }
+      // CE QUE LE MARTEAU VA DÉTRUIRE — en DERNIER, quand le sprite a fini de se peindre :
+      // le halo en recopie l'état exact (texture, frame, ancre, échelle, profondeur).
+      if (s.id === this.demolishTargetId) {
+        this.peindreHalo(sprite)
+        haloVu = true
+      }
     }
     for (const [id, sprite] of this.structureSprites) {
       if (!seen.has(id)) {
@@ -1301,6 +1267,41 @@ export class SnapshotView {
         this.structureSprites.delete(id)
       }
     }
+    if (!haloVu) this.demolishHalo?.setVisible(false)
+  }
+
+  /**
+   * LE HALO DE DÉMOLITION — une SILHOUETTE PLEINE rouge, calquée sur la pièce visée.
+   *
+   * Pourquoi pas une simple teinte sur le sprite (premier jet, 2026-08-01) : une teinte
+   * MULTIPLIE. Sur un mur COUPÉ — et un mur qu'on s'approche de démolir est presque toujours
+   * coupé, son pan tombe à 2 tuiles alors qu'on démolit à 6 — la texture n'est plus le mur
+   * debout mais son EMPREINTE, sombre par construction. MESURÉ au navigateur : le mur visé
+   * rendait RGB(26,11,10), quasi noir, quand son voisin non visé rendait (227,158,98). Rouge
+   * dans le code, invisible à l'écran.
+   *
+   * `TintModes.FILL` peint la silhouette d'UNE couleur, quelle que soit la texture dessous :
+   * c'est la seule façon d'être aussi lisible sur une empreinte que sur un mur debout. Le halo
+   * recopie tout du sprite (texture, frame, ancre, échelle, miroir) — il ne peut donc pas se
+   * décaler de ce qu'il désigne, même quand la porte s'anime ou que le mur se recoud.
+   */
+  private peindreHalo(sprite: Phaser.GameObjects.Image): void {
+    const h = (this.demolishHalo ??= this.scene.add
+      .image(0, 0, sprite.texture.key)
+      .setTintMode(Phaser.TintModes.FILL))
+    h.setTexture(sprite.texture.key, sprite.frame.name)
+      .setOrigin(sprite.originX, sprite.originY)
+      .setPosition(sprite.x, sprite.y)
+      .setScale(sprite.scaleX, sprite.scaleY)
+      .setFlipX(sprite.flipX)
+      // JUSTE AU-DESSUS de ce qu'il désigne, jamais plus haut : +1 sauterait par-dessus le toit
+      // voisin (les toits se trient sur `ROOF_DEPTH + ty`, de un en un).
+      .setDepth(sprite.depth + 0.5)
+      .setTint(this.demolishInRange ? DEMOLISH_TINT : AIM_TINT_FAR)
+      // On laisse transparaître la pièce : on doit reconnaître CE QU'ON casse, pas seulement
+      // sa silhouette. Et un toit au-dessus de soi (alpha 0,12) redevient visible par le halo.
+      .setAlpha(0.8)
+      .setVisible(true)
   }
 
   /**

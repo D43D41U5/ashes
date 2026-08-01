@@ -249,6 +249,97 @@ describe('A6 — l’invariant de navigabilité (R7)', () => {
     expect(structureAt(sim.structures, 42, 40)).toBeUndefined()
   })
 
+  it('une ruine de POUTRES ne scelle rien — on les ENJAMBE, R7 doit le savoir (2026-08-01)', () => {
+    // ═══ LA CONSÉQUENCE du champ `bloque`, et le test qui manquait ═══
+    //
+    // `blocksNavigation` était une liste de quatre exceptions écrite AVANT les pièces
+    // basses du monde bâti : le banc, la friche, la terre battue, l'encadrement, la
+    // poutre et le mur bas y comptaient pour des MURS, alors que le joueur les enjambe.
+    // Rien ne l'attrapait — 1571 tests passaient avec le défaut EN PLACE.
+    //
+    // Ici, trois poutres tombées bordent le Feu. Elles ne ferment rien : on passe dessus.
+    // Le quatrième côté doit donc rester bâtissable. Si quelqu'un rétablit « enjambe
+    // compte comme un obstacle », le Feu paraît scellé et cette pose est refusée.
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    equipHammer(sim, id)
+    const village = getVillageOf(sim, id)!
+    const e = sim.entities.find((x) => x.id === id)!
+    e.x = 43.5
+    e.y = 40.5
+    // Le monde a laissé trois poutres autour du Feu (le worldgen pose, il ne paie pas).
+    for (const [tx, ty] of [[40, 40], [41, 39], [41, 41]] as const) {
+      addStructure(sim, 'poutre', tx, ty, village.id, 0)
+    }
+    drainEvents(sim)
+    act(sim, id, { type: 'build', structure: 'wall', tx: 42, ty: 40 })
+    expect(rejections(sim), 'une poutre tombée n’est pas un mur').toHaveLength(0)
+    expect(structureAt(sim.structures, 42, 40)?.type).toBe('wall')
+  })
+
+  it('… et le TÉMOIN : les mêmes trois côtés en MURS font bien refuser le quatrième', () => {
+    // Sans lui, le test précédent passerait aussi avec une navigabilité cassée dans
+    // l'autre sens (« plus rien ne bloque jamais ») — il ne prouverait rien.
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    equipHammer(sim, id)
+    const village = getVillageOf(sim, id)!
+    const e = sim.entities.find((x) => x.id === id)!
+    e.x = 43.5
+    e.y = 40.5
+    for (const [tx, ty] of [[40, 40], [41, 39], [41, 41]] as const) {
+      addStructure(sim, 'wall', tx, ty, village.id, 0)
+    }
+    drainEvents(sim)
+    act(sim, id, { type: 'build', structure: 'wall', tx: 42, ty: 40 })
+    expect(rejections(sim)).toContain('cela couperait le passage')
+    expect(structureAt(sim.structures, 42, 40)).toBeUndefined()
+  })
+
+  it('D1 : la CLÔTURE et l’ENCADREMENT se bâtissent vraiment — pas seulement dans le type', () => {
+    // Les deux ont rejoint le marteau par UNE ligne de registre (`pose: 'marteau'`). Le
+    // type a suivi partout tout seul — ce test-ci vérifie que le GESTE marche : la pose
+    // aboutit, le coût est débité, et la garde du nœud (R5) s'applique comme aux autres
+    // pièces pleine tuile. Sans lui, on aurait prouvé que la donnée circule, pas qu'on bâtit.
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    equipHammer(sim, id)
+    const e = sim.entities.find((x) => x.id === id)!
+    e.x = 43.5
+    e.y = 40.5
+    drainEvents(sim)
+    const boisAvant = countOf(e.inventory, 'wood')
+    act(sim, id, { type: 'build', structure: 'cloture', tx: 42, ty: 41 })
+    act(sim, id, { type: 'build', structure: 'encadrement', tx: 42, ty: 39 })
+    expect(rejections(sim)).toHaveLength(0)
+    expect(structureAt(sim.structures, 42, 41)?.type).toBe('cloture')
+    expect(structureAt(sim.structures, 42, 39)?.type).toBe('encadrement')
+    // Coût débité : 1 bois pour la clôture, 4 pour l'encadrement (registre).
+    expect(countOf(e.inventory, 'wood')).toBe(boisAvant - 1 - 4)
+    // Et les PV viennent du registre, pas d'un défaut.
+    expect(structureAt(sim.structures, 42, 41)!.hp).toBe(STRUCTURE_HP.cloture)
+  })
+
+  it('D1 : récolter = défricher vaut AUSSI pour les pièces neuves (R5)', () => {
+    // La clôture prend la tuile ENTIÈRE (`occupe: 'tuile'`), donc la garde du nœud
+    // s'applique — c'est la conséquence du champ, et elle doit se voir.
+    const sim = makeSim()
+    const id = settler(sim, 40, 40)
+    foundVillage(sim, id, 41, 40)
+    equipHammer(sim, id)
+    const e = sim.entities.find((x) => x.id === id)!
+    e.x = 43.5
+    e.y = 40.5
+    sim.nodes.push({ id: 9001, type: 'tree', tx: 42, ty: 41, stock: 5, regrowAt: 0 })
+    drainEvents(sim)
+    act(sim, id, { type: 'build', structure: 'cloture', tx: 42, ty: 41 })
+    expect(rejections(sim)).toContain('un nœud occupe la tuile')
+    expect(structureAt(sim.structures, 42, 41)).toBeUndefined()
+  })
+
   it('une PORTE (pièce passante) referme la boucle sans casser la navigabilité', () => {
     const sim = makeSim()
     const id = settler(sim, 40, 40)

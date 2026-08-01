@@ -175,6 +175,30 @@ export {
 } from './items'
 export type { ItemId, ItemBag, Slot, Inventory, SpoilTier, StructureType, BarrierType, AccessLevel, SkillId } from './items'
 
+// ─── LE REGISTRE DES PIÈCES (2026-08-01) ──────────────────────────────────
+// La source unique de tout ce qui décrit une pièce. `STRUCTURE_COSTS`, `STRUCTURE_HP`,
+// `COMPONENTS`, `FUNCTIONS` et les libellés n'en sont plus que des VUES. Le client y lit
+// ses menus (rayon, libellé, coût, geste de pose) au lieu de tenir ses propres listes.
+export {
+  PIECES,
+  STRUCTURE_TYPES,
+  BARRIER_TYPES,
+  FONCTION_LABEL,
+  FONCTION_NOM,
+  nomExigence,
+  piece,
+  parPiece,
+  palierDe,
+  coutObjet,
+  bloqueNavigation,
+  capaciteStation,
+  sertExigence,
+  libelleExigence,
+  matieresDe,
+  matiereChiffre,
+} from './pieces'
+export type { PieceDef, Famille, Pose, Occupe, Arete, Bloque, Exigence, StationFonction, Matiere } from './pieces'
+
 // ─── L'inventaire : la case active, ce qu'on tient VRAIMENT en main (R8-R9) ─
 export { applyInventoryAction, heldSlot, wearHeld, isInventoryAction } from './inventory-actions'
 export type { InventoryAction, SlotRef } from './inventory-actions'

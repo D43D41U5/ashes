@@ -1,4 +1,4 @@
-import { STRUCTURE_COSTS, WALL_TIERS } from '@ashes/sim'
+import { BARRIER_TYPES, STRUCTURE_COSTS, WALL_TIERS, piece } from '@ashes/sim'
 import { describe, expect, it } from 'vitest'
 import { BUILDABLES, pieceCost } from './build-menu'
 
@@ -7,12 +7,17 @@ import { BUILDABLES, pieceCost } from './build-menu'
  * coût selon le matériau — se prouve ici. Le Phaser autour ne fait que placer.
  */
 describe('le menu du marteau', () => {
-  it('R20 : les pièces sont les BARRIÈRES structurelles seules (décision d’Alexis)', () => {
-    // Mur, palissade, porte, sol, toit — et RIEN d'autre : le coffre, le four, l'établi
-    // et les composants se tiennent et se posent (flux feu de camp), pas au marteau.
-    // La palissade a rejoint la liste le 2026-08-01 (« garde la palissade pour le
-    // joueur aussi ») — l'enceinte n'est pas un mur de bâtiment, chez le joueur non plus.
-    expect([...BUILDABLES]).toEqual(['wall', 'palissade', 'door', 'floor', 'roof'])
+  it('D1 : le menu du marteau se DÉRIVE du registre — plus une liste écrite ici', () => {
+    // La règle (décision d'Alexis, 2026-08-01) : « ce qui EST le bâtiment se bâtit au
+    // marteau ; ce qui est DANS le bâtiment se fabrique puis se pose ». Le menu n'est plus
+    // une liste : c'est la lecture d'un champ (`pose`), donc une pièce structurelle neuve y
+    // apparaît d'elle-même, avec son nom français et son coût.
+    expect([...BUILDABLES]).toEqual(BARRIER_TYPES)
+    // Ce que ça donne aujourd'hui : les cinq d'origine, plus la clôture et l'encadrement,
+    // qui avaient coût, PV et dessin depuis le monde bâti sans aucune route vers le joueur.
+    expect([...BUILDABLES]).toEqual(['wall', 'palissade', 'door', 'floor', 'roof', 'cloture', 'encadrement'])
+    // Et RIEN qui se tienne en main : ni le coffre, ni un composant.
+    for (const p of BUILDABLES) expect(piece(p).pose).toBe('marteau')
   })
 
   it('R8 : le matériau change le coût des murs/portes, pas celui des pièces molles', () => {

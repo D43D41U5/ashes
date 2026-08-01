@@ -112,6 +112,13 @@ export type SimEvent =
   | { type: 'craft_queued'; tick: number; entityId: number; recipeId: RecipeId }
   | { type: 'craft_cancelled'; tick: number; entityId: number; recipeId: RecipeId; count: number }
   | { type: 'item_crafted'; tick: number; entityId: number; recipeId: RecipeId; item: ItemId }
+  /**
+   * UNE RECETTE SE DÉCOUVRE (D2, 2026-08-01) — en touchant sa matière, ou en approchant
+   * la station qui la sert. Un fait de jeu discret, donc un événement : le bandeau qui
+   * l'annonce et la chronique s'y branchent sans qu'on instrumente la découverte après
+   * coup. Émis UNE fois par entité et par recette — ce qui est appris ne se reprend pas.
+   */
+  | { type: 'recipe_revealed'; tick: number; entityId: number; recipeId: RecipeId }
   | { type: 'meal_eaten'; tick: number; entityId: number; item: ItemId }
   | { type: 'skill_level_up'; tick: number; entityId: number; skill: SkillId; level: number }
   | { type: 'entity_damaged'; tick: number; entityId: number; byEntityId: number; amount: number }

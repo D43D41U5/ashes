@@ -19,7 +19,7 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
-import { COMPONENT_TYPES, EDGE_N, FOOD_VALUES, STRUCTURE_HP, WEAPON_DAMAGE, isCropMature, isPlot, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
+import { COMPONENT_TYPES, EDGE_E, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, STRUCTURE_HP, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
 import type { Placeable } from '../../hud-state'
 import type { Corpse, PlayerAction, ResourceNode } from '@ashes/sim'
 
@@ -41,8 +41,108 @@ export interface BuildContext {
    * la tuile ferait qu'un coin de pièce, qui porte déjà un mur au nord, améliorerait ce mur-là
    * au lieu de poser celui de l'ouest — le geste le plus courant de la construction (fermer un
    * angle) deviendrait impossible, et l'inventaire se viderait en améliorations non demandées.
+   *
+   * EN MODE DÉMOLIR, c'est la cible de la DESTRUCTION — résolue par `demolishTargetAt`, qui
+   * ne rend que ce qui est À MOI. Une seule notion (« ce que ce clic touche »), donc un seul
+   * champ : le surlignage rouge et l'action lisent la même chose ou l'on détruirait ailleurs
+   * que là où on voit.
    */
   onTile: { id: number; type: StructureType } | null
+  /**
+   * LE MODE DÉMOLIR est-il armé au menu du marteau (décision d'Alexis, 2026-08-01) ? Armé, le
+   * clic DÉTRUIT `onTile` — et ne fait rien d'autre : ni poser, ni récolter, ni frapper « en
+   * passant ». C'est la règle des modes (voir plus bas) appliquée au geste destructeur, et
+   * c'est ce qui empêche un marteau de casser un mur au milieu d'une coupe de bois.
+   */
+  demolir?: boolean
+}
+
+/**
+ * CE QUE LE MODE DÉMOLIR DÉTRUIRAIT sur la tuile visée — `undefined` = rien, et « rien »
+ * est une réponse fréquente : on ne démolit QUE SES PROPRES constructions (décision
+ * d'Alexis, 2026-08-01). Le mur d'un voisin n'a donc aucune affordance ici.
+ *
+ * La sim, elle, garde sa règle (propriétaire OU Chef, spec village R9/A5) : ce filtre est
+ * l'AFFORDANCE du joueur, pas le droit. Il ne relâche rien — il resserre.
+ *
+ * TROIS COUCHES ET QUATRE ARÊTES PEUVENT SE PARTAGER UNE TUILE (spec construction §116, R23) :
+ * un sol, un toit, un coffre, et jusqu'à quatre barrières d'arête — « le coin d'une pièce porte
+ * deux murs distincts… deux démolitions ». « La première structure de la tuile » détruirait
+ * donc au hasard, et la sim ne peut pas rattraper ça : elle accepte tout `structureId` valide.
+ *
+ * C'EST LE CURSEUR QUI DÉSIGNE, PAS L'ARÊTE ARMÉE (mesuré au navigateur le 2026-08-01 : sur un
+ * coin, `A`/`E` armées sur une arête vide ne surlignaient RIEN et le clic restait muet — un
+ * mode invisible, puisque le fantôme de pose est éteint pendant qu'on démolit). On prend donc
+ * la position EXACTE du curseur dans la tuile et l'on sert l'arête la PLUS PROCHE qui porte
+ * quelque chose à moi : viser le mur qu'on veut casser suffit, et le surlignage rouge saute
+ * d'un mur à l'autre à mesure qu'on glisse. L'ordre :
+ *
+ *   1. les ARÊTES, de la plus proche du curseur à la plus lointaine — par `edgeBarrierAt`, qui
+ *      trouve la barrière DES DEUX CÔTÉS du trait : un mur du coin peut être déclaré sur la
+ *      tuile voisine (bit opposé), et il serait alors indémolissable depuis celle qu'on vise ;
+ *   2. les COUCHES de la tuile, dans l'ordre où l'on démonte une maison : ce qui se tient
+ *      DEBOUT (coffre, four, feu libre), puis ce qui COUVRE (toit), puis ce qui PORTE (sol).
+ */
+export function demolishTargetAt<S extends DemolishStructure>(
+  structures: readonly S[],
+  /** Position du curseur en TUILES, fraction comprise (c'est elle qui désigne l'arête). */
+  wx: number,
+  wy: number,
+  playerId: number,
+): S | undefined {
+  // JE NE SAIS PAS ENCORE QUI JE SUIS → RIEN N'EST À MOI. Les ids d'entité commencent à 1
+  // (`nextEntityId`), donc 0 ne désigne personne : c'est la valeur d'attente de `WorldScene`
+  // avant le `ready`. Or `ownerId === 0` veut dire « au village / au monde » — sans cette
+  // garde, un snapshot arrivé trop tôt rendrait tout le bâti de POI démolissable d'un clic.
+  if (playerId === 0) return undefined
+  const tx = Math.floor(wx)
+  const ty = Math.floor(wy)
+  const u = wx - tx
+  const v = wy - ty
+  const mien = (s: S | undefined): s is S => s !== undefined && s.ownerId === playerId && demolissable(s)
+  // Les quatre arêtes triées par distance au curseur. Tri STABLE (ES2019) : à égalité parfaite
+  // — le curseur pile au centre — l'ordre déclaré tranche, donc la visée ne vacille jamais.
+  const aretes = [
+    { bit: EDGE_N, d: v },
+    { bit: EDGE_E, d: 1 - u },
+    { bit: EDGE_S, d: 1 - v },
+    { bit: EDGE_O, d: u },
+  ].sort((a, b) => a.d - b.d)
+  for (const { bit } of aretes) {
+    const b = edgeBarrierAt(structures, tx, ty, bit)
+    if (mien(b)) return b
+  }
+  const couche = (pred: (s: S) => boolean): S | undefined =>
+    structures.find(
+      (s) => s.tx === tx && s.ty === ty && (s.edges === undefined || s.edges === 0) && mien(s) && pred(s),
+    )
+  return (
+    couche((s) => s.type !== 'floor' && s.type !== 'roof') ??
+    couche((s) => s.type === 'roof') ??
+    couche((s) => s.type === 'floor')
+  )
+}
+
+/** Ce qu'il faut savoir d'une structure pour dire si le marteau la détruit — un SOUS-ENSEMBLE
+ *  du `Structure` du snapshot (même patron qu'`AimStructure`) : le résolveur reste pur et se
+ *  teste sans fabriquer une structure complète. */
+export interface DemolishStructure {
+  id: number
+  tx: number
+  ty: number
+  type: StructureType
+  /** À QUI elle est. C'est TOUT le filtre « seules ses propres constructions ». */
+  ownerId: number
+  /** 0 = pièce libre (hors village) — ce qui distingue un feu de camp d'un Foyer. */
+  villageId: number
+  /** Le(s) bit(s) d'arête d'une barrière ; absent = la pièce prend sa tuile entière. */
+  edges?: number
+}
+
+/** Ce que la sim refuserait de toute façon : le Feu D'UN VILLAGE ne s'éteint pas (village.ts,
+ *  spec village R9). Un feu de camp LIBRE, lui, se démonte — c'est un objet de survie. */
+function demolissable(s: DemolishStructure): boolean {
+  return !(s.type === 'fire' && s.villageId !== 0)
 }
 
 /** Ce qu'il y a sous le curseur, et si c'est à portée de bras. */
@@ -248,6 +348,11 @@ export function clickToAction(
   hand?: HandContext,
   build?: BuildContext,
 ): PlayerAction | null {
+  // DÉMOLIR PRIME SUR TOUT (décision d'Alexis, 2026-08-01) : c'est un MODE, armé au menu du
+  // marteau, et un mode dit ce que le clic fait. Sans cible — rien à moi sous le curseur —
+  // le clic ne fait RIEN : il ne retombe ni sur la récolte ni sur la frappe. Le marteau armé
+  // pour détruire ne doit pas se mettre à couper du bois parce qu'on a visé à côté.
+  if (build?.demolir) return build.onTile ? { type: 'demolish', structureId: build.onTile.id } : null
   // POSER prime sur tout : quand on tient un feu de camp (ou qu'une pièce est armée),
   // le clic POSE, il ne récolte ni ne frappe « en passant ». Le mode dit ce que le
   // clic fait — c'est ce qui le rend prévisible (même règle que le fantôme).

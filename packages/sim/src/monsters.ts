@@ -124,6 +124,15 @@ export interface Monster {
    */
   suspicion: number
   /**
+   * ELLE VOUS A REPÉRÉ (verrou de `SUSPICION_CURIOUS`). L'état « curieuse » ne se
+   * relit PAS de la jauge : la jauge suit son stimulus tick par tick et rase le
+   * seuil, or trois choses en dépendent — le GEL (elle s'arrête et regarde), la
+   * POSTURE (tête haute) et la TEINTE. Comparées au seuil nu, les trois battaient
+   * à quinze fois par seconde (mesuré 2026-08-01). Levé à `SUSPICION_CURIOUS`, il
+   * ne lâche qu'à `SUSPICION_CALM` — et c'est LUI que le client lit.
+   */
+  wary?: true
+  /**
    * LA NERVOSITÉ : multiplie la LENTEUR de la décrue (absent = 1, plafonné). Une
    * bête qui a déjà donné l'alerte ne se rassure plus aussi vite — on ne refait
    * pas indéfiniment la même approche ratée sur la même bête.
@@ -156,6 +165,13 @@ export interface Monster {
   separating?: true
   /** ELLE RENTRE CHEZ ELLE (hors habitat) — et elle s'engage jusqu'au cœur de sa tuile. */
   homing?: true
+  /**
+   * ELLE REGAGNE SON CANTON (R17) — sortie de son coin de chasse, elle y retourne
+   * au trot, et elle ne lâche qu'une fois BIEN dedans (`GROUND_COMFORT`). Sans ce
+   * verrou, elle dansait sur la frontière : un pas de trot dedans, deux pas de
+   * broutage dehors, à trois ticks de période (mesuré 2026-08-01).
+   */
+  ranging?: true
   /**
    * Le loup RAMPE vers son poste d'encerclement (spec faune R11). Tant que c'est
    * vrai, la proie ne le repère que de bien plus près — et le client peut le
@@ -326,8 +342,34 @@ export function moveToward(
     dx = -dx
     dy = -dy
   }
-  const sx = (dx > ZONE_MORTE ? 1 : dx < -ZONE_MORTE ? -1 : 0) as -1 | 0 | 1
-  const sy = (dy > ZONE_MORTE ? 1 : dy < -ZONE_MORTE ? -1 : 0) as -1 | 0 | 1
+  const scale = gait * (def.speed / BALANCE.WALK_SPEED_TILES_PER_S) * (entity.wounds.leg ? COMBAT.LEG_WOUND_SPEED : 1)
+
+  // ═══ ELLE NE PEUT PAS ÊTRE PLUS ÉTROITE QUE LE PAS QU'ELLE AMORTIT ═══
+  //
+  // `ZONE_MORTE` se dérive du CORPS (marge d'alignement dans un couloir). C'est
+  // juste, et insuffisant : une zone morte plus étroite que le déport latéral d'UN
+  // PAS ne peut pas empêcher l'oscillation qu'elle vise — la bête corrige, DÉPASSE,
+  // et corrige en sens inverse au tick suivant.
+  //
+  // MESURÉ (2026-08-01, `tools/diag-loup.mts`, 4 graines) : le pas latéral d'un loup
+  // lancé vaut 0,17 tuile contre 0,10 de zone morte. Une meute en chasse alternait
+  // donc nord-est / nord-ouest à chaque tick — VINGT retournements de sprite dans la
+  // pire seconde, sur quatre bancs ; avec la zone morte dérivée du pas, UN.
+  //
+  // Ce qu'on a CHERCHÉ et NON trouvé, faute de quoi on l'affirmerait : la perte de
+  // vitesse utile qu'on attendait du pas diagonal normalisé (×0,707) ne se mesure
+  // PAS — un loup seul lancé sur un promeneur rend 4,80 / 4,75 / 4,68 tuiles/s selon
+  // son déport initial, avec ou sans ce correctif, et le temps jusqu'à la première
+  // morsure d'une meute ne bouge pas (22,2 s dans les deux cas). Le défaut est un
+  // FRÉTILLEMENT, pas un frein : c'est un correctif de lisibilité.
+  //
+  // La zone morte prend donc le plus large des deux : la marge du corps, ou le
+  // déport d'un pas. Une bête lente garde son alignement fin (la chicane du
+  // zombie, mesurée en son temps) ; une bête lancée cesse de scier son cap.
+  const pasLateral = BALANCE.WALK_SPEED_TILES_PER_S * TICK_DT_S * scale * Math.SQRT1_2
+  const zone = Math.max(ZONE_MORTE, pasLateral)
+  const sx = (dx > zone ? 1 : dx < -zone ? -1 : 0) as -1 | 0 | 1
+  const sy = (dy > zone ? 1 : dy < -zone ? -1 : 0) as -1 | 0 | 1
   // Le pas ORIENTE la bête (spec chasse C4) : sa perception est directionnelle,
   // il faut donc que son regard suive sa marche — sans quoi « dans le dos » ne
   // voudrait rien dire pour une bête née face à l'est et jamais tournée.
@@ -335,7 +377,6 @@ export function moveToward(
     const len = Math.sqrt(sx * sx + sy * sy)
     entity.facing = { x: sx / len, y: sy / len }
   }
-  const scale = gait * (def.speed / BALANCE.WALK_SPEED_TILES_PER_S) * (entity.wounds.leg ? COMBAT.LEG_WOUND_SPEED : 1)
   const moved = moveAvatar(
     { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null },
     entity.x,

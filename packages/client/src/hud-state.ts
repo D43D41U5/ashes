@@ -6,7 +6,7 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { ChronicleEntry, ComponentType, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@ashes/sim'
+import type { BarrierType, ChronicleEntry, ComponentType, RecipeId, StationFonction, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@ashes/sim'
 import type Phaser from 'phaser'
 import type { Brouillard } from './render/fog'
 
@@ -14,16 +14,30 @@ import type { Brouillard } from './render/fog'
  * LES PIÈCES STRUCTURELLES du MENU DU MARTEAU (spec construction R20, décision
  * d'Alexis) : les SEULES choses qu'on pose au marteau. Le coffre, le four et
  * l'établi n'en sont PAS — ce sont des objets qu'on tient et pose (flux feu de camp).
+ *
+ * DÉRIVÉ du registre de /sim depuis le 2026-08-01 (`BarrierType` = les pièces dont le
+ * geste de pose est le marteau) : le client ne tient plus sa propre copie de la liste.
  */
-export type Buildable = 'wall' | 'palissade' | 'door' | 'floor' | 'roof'
+export type Buildable = BarrierType
 
 /** Ce qu'un clic gauche peut POSER au sol : une PIÈCE STRUCTURELLE (marteau en main),
  *  le FEU DE CAMP (`'fire'`), un COMPOSANT (enclume, four…) ou le COFFRE qu'on tient.
  *  Le fantôme et le résolveur de clic en dérivent — une notion, deux consommateurs. */
 export type Placeable = Buildable | 'fire' | ComponentType | 'chest'
 
-/** Les stations d'artisanat (les recettes `station: null` n'en demandent aucune). */
-export type StationId = 'fire' | 'workshop' | 'furnace' | 'four_acier' | 'atelier_lourd'
+/**
+ * CE QUE LE LIEU OFFRE — le meilleur palier de chaque fonction à portée de bras.
+ *
+ * Remplace la liste `StationId[]` (2026-08-01). Elle nommait des OBJETS (`'workshop'`,
+ * `'four_acier'`), donc toute station neuve obligeait à venir l'y inscrire — et la note
+ * « stations absentes » de l'écran perso en tenait une SECONDE copie, restée à trois
+ * entrées quand la sim en comptait cinq : le four d'acier et l'atelier lourd ne pouvaient
+ * structurellement pas être annoncés absents. Ici on publie une CAPACITÉ, que la recette
+ * interroge par `requiert` — plus rien à recopier.
+ *
+ * Absent = aucune station de cette fonction à portée.
+ */
+export type CapacitesEnPortee = Partial<Record<StationFonction, number>>
 
 /** Les onglets de l'écran personnage : ce qu'on PORTE (sac, artisanat, paperdoll), ce
  *  qu'on MAÎTRISE (métiers), et où l'on EST (la carte, qui s'ouvre aussi à M). */
@@ -113,7 +127,12 @@ export interface HudState {
   /** Les stations à portée d'interaction. MIROIR du client (comme le surlignage de
    *  visée) : il grise les recettes qu'on ne peut pas lancer ici. La sim reste seule
    *  juge — si elle refuse malgré le miroir, c'est elle qui a raison. */
-  stationsInRange: StationId[]
+  stationsInRange: CapacitesEnPortee
+  /**
+   * LES RECETTES DÉCOUVERTES (D2) — lues du snapshot, jamais calculées ici. Le catalogue
+   * n'affiche que ça : ce qu'on n'a jamais rencontré n'existe pas encore pour le joueur.
+   */
+  seen: RecipeId[]
   hunger: number
   /** Température du corps de l'avatar (0-100 ; sous 20, le froid mord). */
   temperature: number
@@ -128,6 +147,16 @@ export interface HudState {
   /** Le palier de matériau choisi pour mur/porte (spec construction R8) : bois par
    *  défaut. La pose neuve le prend ; cliquer un mur existant l'améliore vers lui. */
   buildMaterial: WallMaterial
+  /**
+   * LE MODE DÉMOLIR du menu du marteau (décision d'Alexis, 2026-08-01). Armé, le clic
+   * DÉTRUIT au lieu de poser — et seulement MES constructions (`demolishTargetAt`).
+   *
+   * EXCLUSIF de `selected` : armer une pièce éteint la démolition, et l'inverse. On ne
+   * peut donc jamais être « en train de poser un mur » et « en train de casser » à la
+   * fois — le fantôme et le surlignage rouge ne se disputent pas le clic. Éteint dès
+   * qu'on range le marteau (R21), comme la pièce armée.
+   */
+  demolir: boolean
   /**
    * L'ARÊTE ARMÉE (spec construction R23) : le bit N/E/S/O sur lequel le prochain mur ou la
    * prochaine porte se posera, que `A`/`E` font tourner. Sol et toit l'ignorent — ils prennent
@@ -317,8 +346,8 @@ export function getHud<K extends keyof HudState>(registry: Registry, key: K): Hu
 export const CLES_HUD: Record<keyof HudState, true> = {
   worldReady: true, loadProgress: true, time: true, zone: true, village: true,
   tasks: true, archetype: true, villageWarmth: true, inv: true, activeSlot: true,
-  craftQueue: true, stationsInRange: true, hunger: true, temperature: true, skills: true,
-  hp: true, stamina: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true,
+  craftQueue: true, stationsInRange: true, seen: true, hunger: true, temperature: true, skills: true,
+  hp: true, stamina: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true, demolir: true,
   foundableFire: true, refugeesNearby: true, upgradableFire: true, deathMoment: true, corpseHint: true,
   characterMenuOpen: true, characterTab: true, uiTyping: true, chatTyping: true, chatLog: true,
   chatDraft: true, openContainer: true, openContainerView: true, openFire: true, openFireView: true,

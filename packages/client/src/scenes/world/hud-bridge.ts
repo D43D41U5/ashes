@@ -4,6 +4,7 @@
  * reste du câblage et que la liste des clés publiées se lise d'un coup d'œil.
  */
 import {
+  capaciteStation,
   BALANCE,
   chronicleFromEvents,
   COOK_SLOT,
@@ -23,11 +24,12 @@ import {
   type SimEvent,
   type RefugeeGroup,
   type SkillId,
+  type StationFonction,
   type Structure,
   type Village,
 } from '@ashes/sim'
 import type Phaser from 'phaser'
-import { getHud, setHud, type FireView, type SeasonVerdict, type StationId } from '../../hud-state'
+import { getHud, setHud, type CapacitesEnPortee, type FireView, type SeasonVerdict } from '../../hud-state'
 
 type Registry = Phaser.Data.DataManager
 
@@ -52,6 +54,8 @@ export function publishPlayerVitals(registry: Registry, me: Entity): void {
   setHud(registry, 'wounds', me.wounds)
   setHud(registry, 'knownPois', me.knownPois)
   setHud(registry, 'craftQueue', me.craftQueue)
+  // LA DÉCOUVERTE (D2) vient du snapshot : le client ne décide jamais de ce qui est connu.
+  setHud(registry, 'seen', me.seen ?? [])
 }
 
 /**
@@ -66,27 +70,26 @@ export function publishStationsInRange(
   structures: Structure[],
 ): void {
   const r = BALANCE.INTERACT_RANGE
-  const near = new Set<StationId>()
+  // LE MEILLEUR PALIER DE CHAQUE FONCTION à portée. On ne teste plus une liste de types
+  // écrite ici (elle avait déjà deux entrées de retard sur la sim) : le registre dit ce
+  // que chaque pièce OFFRE, et on garde le maximum par fonction — un atelier lourd sert
+  // donc aussi les recettes d'établi, comme la sim le décide de son côté.
+  const caps: CapacitesEnPortee = {}
   for (const s of structures) {
-    if (
-      s.type !== 'fire' &&
-      s.type !== 'workshop' &&
-      s.type !== 'furnace' &&
-      s.type !== 'four_acier' &&
-      s.type !== 'atelier_lourd'
-    )
-      continue
+    const offre = capaciteStation(s.type)
+    if (offre === null) continue
     const dx = s.tx + 0.5 - me.x
     const dy = s.ty + 0.5 - me.y
-    if (dx * dx + dy * dy <= r * r) near.add(s.type)
+    if (dx * dx + dy * dy > r * r) continue
+    if ((caps[offre.fonction] ?? 0) < offre.niveau) caps[offre.fonction] = offre.niveau
   }
-  const stations = [...near]
-  // On ne republie QUE si ça change : `setHud` réveille les lecteurs du registry,
-  // et cette fonction tourne à chaque frame (la position bouge en continu).
-  const before = getHud(registry, 'stationsInRange') ?? []
-  if (before.length !== stations.length || stations.some((s) => !before.includes(s))) {
-    setHud(registry, 'stationsInRange', stations)
-  }
+  // On ne republie QUE si ça change : `setHud` réveille les lecteurs du registry, et
+  // cette fonction tourne à chaque frame (la position bouge en continu).
+  const before = getHud(registry, 'stationsInRange') ?? {}
+  const memes =
+    Object.keys(caps).length === Object.keys(before).length &&
+    (Object.keys(caps) as StationFonction[]).every((f) => before[f] === caps[f])
+  if (!memes) setHud(registry, 'stationsInRange', caps)
 }
 
 /**

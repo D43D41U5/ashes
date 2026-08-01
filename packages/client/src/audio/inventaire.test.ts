@@ -7,7 +7,7 @@ import { FAMILLES, INVENTAIRE, SONORES, faitsDeFamille, type FamilleId } from '.
  * le trou que ce chantier vient boucher. Les gardes balaient tout l'espace (62 faits), elles
  * ne piochent pas des cas.
  */
-describe('l’inventaire des 66 faits', () => {
+describe('l’inventaire des 67 faits', () => {
   const ids = new Set<string>(FAMILLES.map((f) => f.id))
 
   it('AUCUN fait ne tombe dans une famille non déclarée (sinon il sort du banc en silence)', () => {
@@ -18,12 +18,12 @@ describe('l’inventaire des 66 faits', () => {
     expect(orphelins).toEqual([])
   })
 
-  it('les familles PARTITIONNENT les 66 faits — chacune en porte, aucune n’est vide', () => {
+  it('les familles PARTITIONNENT les 67 faits — chacune en porte, aucune n’est vide', () => {
     const comptes = FAMILLES.map((f) => ({ id: f.id, n: faitsDeFamille(f.id).length }))
     expect(comptes.filter((c) => c.n === 0)).toEqual([]) // pas de section vide à l'écran
     const somme = comptes.reduce((t, c) => t + c.n, 0)
     expect(somme).toBe(Object.keys(INVENTAIRE).length)
-    expect(somme).toBe(66)
+    expect(somme).toBe(67)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -35,7 +35,7 @@ describe('l’inventaire des 66 faits', () => {
     expect(muets).toEqual([])
   })
 
-  it('l’état publié est bien l’état ACTUEL : 39 voix, 27 silences décidés', () => {
+  it('l’état publié est bien l’état ACTUEL : 39 voix, 28 silences décidés', () => {
     // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 38 sonnent
     // VRAIMENT (et que les 26 se taisent vraiment) — ici on garde seulement la proportion.
     // 34 → 35 le 2026-07-29 : `node_depleted` sort du silence (l'arbre qui tombe craque).
@@ -49,8 +49,12 @@ describe('l’inventaire des 66 faits', () => {
     // 64 → 66 faits et 38 → 39 voix le 2026-07-31 : `village_stage_up` (voix — le fait
     // saillant du chantier villages-PNJ, jumeau grave de `fire_upgraded`) et
     // `settler_arrived` (muet, comme le `member_joined` qu'il accompagne toujours).
+    // 66 → 67 faits et 27 → 28 SILENCES le 2026-08-01 : `recipe_revealed` naît MUET (D2).
+    // Une matière ramassée ouvre souvent plusieurs recettes d'un coup, et poser une station
+    // en révèle une poignée dans le même tick : un son par ligne ferait une rafale. Si la
+    // découverte doit s'entendre, ce sera d'UNE voix par salve — une décision à part.
     expect(SONORES.length).toBe(39)
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(27)
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(28)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

@@ -8,6 +8,7 @@ import { spawnMonster } from './monsters'
 import { foundNpcVillage } from './worldgen'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type MoveInput, type SimState } from './sim'
+import { TICKS_PER_CYCLE } from './time'
 import { grantItems } from './village'
 
 function makeSim(): SimState {
@@ -89,6 +90,135 @@ describe('l’endurance (A1)', () => {
     const sprinted = entity(sim, a).x - 10 - normal
     expect(sprinted / normal).toBeCloseTo(COMBAT.SPRINT_FACTOR, 2)
     expect(entity(sim, a).stamina).toBeLessThan(before)
+  })
+
+  /**
+   * LE SOUFFLE NE REVIENT PAS EN COURANT (A1bis, 2026-08-01). La ponction du sprint
+   * et la régén vivaient dans le MÊME tick, à deux phases de distance : `step` drainait
+   * 8/s dans la boucle de mouvement, puis `advanceCombat` recréditait 5/s (×1.25 repu)
+   * — jamais gardé contre le sprint, seulement contre le wind-up, la parade et la charge.
+   * Net : 1,75/s repu, soit **57 s** de course au lieu des 12,5 s sur lesquels
+   * `PURSUIT_RANGE` calibre le loup. La meute était insemable sur le papier seul.
+   *
+   * D'où le test sur `step()` entier : chaque phase prise à part était juste, le défaut
+   * ne vivait que dans l'espace entre les deux.
+   */
+  it('sprinter ne régénère pas : la barre pleine dure ce que la ponction dit', () => {
+    // 12,5 s à 6 t/s = 75 tuiles parcourues : il faut de la place, sinon le mur
+    // arrête l'avatar et c'est l'autre moitié du défaut qu'on mesurerait.
+    const sim = createSim(5, { map: createEmptyMap(200, 200, TERRAIN_GRASS) })
+    const a = spawnEntity(sim, 10, 100)
+    entity(sim, a).hunger = 100 // le cas le PLUS favorable (régén ×1.25 si elle s'appliquait)
+    let ticks = 0
+    while (entity(sim, a).stamina > 0 && ticks < 60 * BALANCE.TICK_RATE_HZ) {
+      tick(sim, [{ entityId: a, dx: 1, dy: 0, sprint: true }])
+      ticks++
+    }
+    const attendu = (100 / COMBAT.SPRINT_STAMINA_PER_S) * BALANCE.TICK_RATE_HZ
+    expect(ticks).toBeGreaterThanOrEqual(attendu - 2)
+    expect(ticks).toBeLessThanOrEqual(attendu + 2)
+  })
+
+  it('sprinter contre un mur ne fait pas MONTER l’endurance', () => {
+    // `entity.moved` reste faux quand la collision annule le pas — la régén repassait
+    // alors au taux REPOS (10/s), plus haut que la ponction : on reprenait son souffle
+    // en s'usant sur un mur.
+    const sim = makeSim()
+    const a = spawnEntity(sim, 1, 10)
+    entity(sim, a).hunger = 100
+    const ouest: MoveInput[] = [{ entityId: a, dx: -1, dy: 0, sprint: true }]
+    for (let t = 0; t < 20; t++) tick(sim, ouest) // plein ouest, jusqu'à se tasser dans le bord
+    const xPinne = entity(sim, a).x
+    const souffle = entity(sim, a).stamina
+    for (let t = 0; t < 20; t++) tick(sim, ouest)
+    expect(entity(sim, a).x).toBe(xPinne) // il est bien bloqué : c'est CE cas-là qu'on mesure
+    expect(entity(sim, a).stamina).toBeLessThan(souffle)
+  })
+
+  /**
+   * À BOUT DE SOUFFLE, ON MARCHE — ET ON N'OSCILLE PAS (A1quater, 2026-08-01).
+   *
+   * Le défaut que la garde `gait === 'sprint'` a CRÉÉ, et qui rendait tout le correctif
+   * vain : à 0 d'endurance, `speedScaleFor` refuse la course (il exige `stamina > 0`),
+   * donc l'allure retombe à `walk`, donc la régén crédite — et au tick suivant il reste
+   * assez pour repartir en sprint, qui reponctionne à 0. **Un cycle de deux ticks à
+   * 10 Hz**, touche SHIFT jamais relâchée : une tuile sur deux courue, soit 5 t/s en
+   * moyenne, indéfiniment. Le loup court à 4,8 — le joueur le semait ENCORE, à endurance
+   * nulle, ce qui est très exactement la plainte d'origine.
+   *
+   * C'est la quatrième fois que ce dépôt l'apprend (cohésion et séparation dans
+   * `faune.ts`, le verrou `wary`) : **un seuil qui commande un mouvement veut son
+   * hystérésis**. On sort d'épuisement à `SPRINT_RECOVER_STAMINA`, pas au premier point
+   * regagné.
+   */
+  it('à 0 d’endurance, SHIFT tenu ne fait plus que MARCHER — aucune oscillation', () => {
+    const sim = createSim(5, { map: createEmptyMap(200, 200, TERRAIN_GRASS) })
+    const a = spawnEntity(sim, 10, 100)
+    entity(sim, a).stamina = 0
+    entity(sim, a).hunger = 100 // le cas le plus favorable à la régén, donc à l'oscillation
+    const est: MoveInput[] = [{ entityId: a, dx: 1, dy: 0, sprint: true }]
+
+    // LES RAFALES DE COURSE, pas leur nombre. Ce qui définissait le défaut, ce n'est pas
+    // « il court trop » — c'est qu'il courait UN TICK SUR DEUX. On relève donc la longueur
+    // de chaque salve d'allure `sprint` : la version cassée n'en produisait QUE des salves
+    // de 1 tick. Compter les ticks totaux ne l'aurait pas distingué d'une vraie reprise.
+    const salves: number[] = []
+    let courante = 0
+    const TICKS = 400 // 20 s : bien au-delà des 4 s qu'il faut pour ressortir d'épuisement
+    for (let t = 0; t < TICKS; t++) {
+      tick(sim, est)
+      if (entity(sim, a).gait === 'sprint') courante++
+      else if (courante > 0) { salves.push(courante); courante = 0 }
+    }
+    if (courante > 0) salves.push(courante)
+
+    // L'ÉPUISÉ RESSORT : passé `SPRINT_RECOVER_STAMINA` il recourt — sans quoi ce test
+    // passerait au vert sur un sprint définitivement mort, ce qui n'est pas la règle.
+    expect(salves.length).toBeGreaterThan(0)
+    // ET C'EST LA PROPRIÉTÉ : aucune salve ne dure un battement. La plus courte doit tenir
+    // au moins une seconde — l'oscillation en produisait de 1 tick, soit 50 ms.
+    expect(Math.min(...salves)).toBeGreaterThanOrEqual(BALANCE.TICK_RATE_HZ)
+
+    // ET LA CONSÉQUENCE DE JEU, mesurée contre un TÉMOIN plutôt qu'un nombre écrit à la
+    // main : les deux premières secondes à 0 d'endurance sont STRICTEMENT celles d'un
+    // marcheur. L'oscillation en rendait 1,25× — c'est ce facteur-là qui semait la meute.
+    const marcheur = (sprint: boolean): number => {
+      const s = createSim(5, { map: createEmptyMap(200, 200, TERRAIN_GRASS) })
+      const id = spawnEntity(s, 10, 100)
+      entity(s, id).stamina = 0
+      entity(s, id).hunger = 100
+      const x0 = entity(s, id).x
+      for (let t = 0; t < 40; t++) tick(s, [{ entityId: id, dx: 1, dy: 0, ...(sprint ? { sprint: true } : {}) }])
+      return entity(s, id).x - x0
+    }
+    expect(marcheur(true)).toBeCloseTo(marcheur(false), 6)
+  })
+
+  /**
+   * LE SOUFFLE SE PAIE EN VENTRE (R2, décision Alexis 2026-08-01). Deux avatars dans
+   * la MÊME sim, sur les MÊMES ticks : l'un a une barre à refaire, l'autre l'a pleine.
+   * L'écart de faim entre eux est donc EXACTEMENT le prix de la récupération — la faim
+   * passive, elle, les frappe pareil et s'annule dans la soustraction.
+   */
+  it('récupérer de l’endurance coûte de la faim — et seulement ce qui est crédité', () => {
+    const sim = makeSim()
+    const vide = spawnEntity(sim, 10, 10)
+    const plein = spawnEntity(sim, 30, 30)
+    entity(sim, vide).stamina = 0
+    entity(sim, plein).stamina = 100
+    entity(sim, vide).hunger = 100
+    entity(sim, plein).hunger = 100
+    // Le temps qu'il faut pour refaire la barre à l'arrêt, et un peu plus : la fin du
+    // test se joue barre pleine, où le clamp ne crédite plus rien.
+    for (let t = 0; t < 15 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+
+    expect(entity(sim, vide).stamina).toBe(100)
+    const prix = entity(sim, plein).hunger - entity(sim, vide).hunger
+    expect(prix).toBeCloseTo(100 * COMBAT.STAMINA_REGEN_HUNGER_COST, 5)
+    // …et la barre pleine, elle, n'a rien payé de plus que sa faim passive : c'est ce
+    // que garantit la facturation sur les points RÉELLEMENT crédités (après le clamp).
+    const passive = (BALANCE.HUNGER_PER_CYCLE_HOUR / (TICKS_PER_CYCLE / 24)) * 15 * BALANCE.TICK_RATE_HZ
+    expect(100 - entity(sim, plein).hunger).toBeCloseTo(passive, 5)
   })
 })
 

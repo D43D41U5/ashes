@@ -538,6 +538,17 @@ function updateSuspicion(
   } else if (monster.suspicion < HUNT.SUSPICION_ALERT && monster.alertSince !== undefined) {
     delete monster.alertSince
   }
+
+  // LE VERROU DE LA CURIOSITÉ (hystérésis) — en DERNIER, quand la jauge du tick
+  // est arrêtée (le plancher de menace ci-dessus la relève encore). La jauge
+  // POURSUIT son stimulus : à distance de seuil, elle le franchit dans les deux
+  // sens plusieurs fois par seconde — et le gel, la posture et la teinte
+  // battaient avec elle. L'état se lève donc à `SUSPICION_CURIOUS` et ne retombe
+  // qu'à `SUSPICION_CALM`. Il ne se calcule qu'ICI : `wary` est la seule lecture
+  // autorisée de ce seuil, sim comme client — un `>= SUSPICION_CURIOUS` recopié
+  // ailleurs recréerait le battement à côté du verrou.
+  if (monster.suspicion >= HUNT.SUSPICION_CURIOUS) monster.wary = true
+  else if (monster.suspicion < HUNT.SUSPICION_CALM) delete monster.wary
 }
 
 /* ── Le peuplement ────────────────────────────────────────────────────────── */
@@ -1348,8 +1359,69 @@ function separationPush(
   }
   if (n === 0) return { push: null, nearestSq }
   const l = Math.sqrt(px * px + py * py)
-  if (l < 0.001) return { push: null, nearestSq }
+  // LA ZONE MORTE DE L'ÉQUILIBRE (mesuré 2026-08-01 — c'est LE tremblement).
+  //
+  // La somme des répulsions est NORMALISÉE : elle garde toute sa force jusqu'au
+  // point d'équilibre, et le pas, lui, a une longueur fixe. Une bête coincée
+  // entre deux voisines dépassait donc l'équilibre à chaque pas, trouvait la
+  // somme inversée au tick suivant, et repartait en sens inverse — 0,081 tuile
+  // à l'ouest, 0,081 à l'est, VINGT FOIS PAR SECONDE, avec le sprite qui se
+  // retourne à chaque fois. L'hystérésis de `separating` n'y pouvait rien : la
+  // bête ne quitte jamais l'état, elle oscille DEDANS.
+  //
+  // En dessous de ce déséquilibre, on ne bouge donc plus : la bête est aussi
+  // bien là qu'ailleurs, et un pas ne ferait que la renvoyer d'où elle vient.
+  // (Le seuil se lit en unités de poids `radius/d` : une voisine pile au rayon
+  // pèse 1. Un pas de broutage déplace le déséquilibre d'environ 0,14 — la zone
+  // morte est le double, pour qu'aucun pas ne puisse traverser l'équilibre.)
+  if (l < FAUNA.SEPARATION_DEADBAND) return { push: null, nearestSq }
   return { push: { x: px / l, y: py / l }, nearestSq }
+}
+
+/**
+ * LA BORNE DU HUITIÈME : sin(22,5°). Une direction unitaire dont la composante
+ * dépasse ça sur un axe a bien ce sens-là dans le découpage en huit. Littéral et
+ * non calculé — `Math.sin` n'est pas garanti au bit près d'un moteur à l'autre
+ * (invariant §2).
+ */
+const OCTANT_SIN = 0.3827
+
+/**
+ * VISER LOIN QUAND ON DONNE UN CAP, ET NON UN POINT (en tuiles).
+ *
+ * `moveToward` prend une CIBLE, et sa zone morte est une tolérance de POSITION : « ne corrige
+ * pas un désalignement plus petit que ça ». Deux branches lui passent pourtant un VECTEUR
+ * UNITAIRE (la fuite, la charge) — « va par là ». Sur un vecteur unitaire, une tolérance en
+ * tuiles devient un couperet ANGULAIRE, et depuis que la zone morte se dérive du pas, cet
+ * angle dépend de la VITESSE : une bête lancée perdait la finesse de son cap au moment précis
+ * où elle en a le plus besoin. Attrapé par le banc A20 — les deux moitiés d'une harde qui se
+ * fend cessaient de tenir (9,9 tuiles d'écart contre 8 tolérées), parce que l'infléchissement
+ * de cohésion (19°) passait sous le couperet.
+ *
+ * Viser QUATRE TUILES dans le cap rend au geste sa précision, à toute allure — et ne change
+ * rien à ce qu'il veut dire : c'est une direction, pas un rendez-vous.
+ */
+const CAP_VISEE = 4
+
+/**
+ * LE HUITIÈME LE PLUS PROCHE d'une direction (unitaire ou non) : chaque composante
+ * vaut -1, 0 ou 1, et le secteur retenu est bien celui dont l'axe est le plus proche
+ * — bornes à 22,5°, comme un compas.
+ *
+ * Il existe parce que `moveToward` ne peut PAS le faire : sa zone morte se mesure en
+ * TUILES (une tolérance d'alignement vers une cible lointaine, ce qui est juste), et
+ * appliquée à un VECTEUR UNITAIRE elle devient un couperet angulaire à 6°. Une
+ * poussée qui rase un axe basculait alors d'un secteur à l'autre à chaque tick.
+ */
+export function octantOf(x: number, y: number): { x: -1 | 0 | 1; y: -1 | 0 | 1 } {
+  const l = Math.sqrt(x * x + y * y)
+  if (l < 0.0001) return { x: 0, y: 0 }
+  const ux = x / l
+  const uy = y / l
+  return {
+    x: ux > OCTANT_SIN ? 1 : ux < -OCTANT_SIN ? -1 : 0,
+    y: uy > OCTANT_SIN ? 1 : uy < -OCTANT_SIN ? -1 : 0,
+  }
 }
 
 /** Le centre de gravité de la harde — sans compter la bête elle-même. */
@@ -1416,7 +1488,7 @@ function graze(
       delete monster.regrouping
     }
     if (monster.regrouping) {
-      const pace = monster.suspicion >= HUNT.SUSPICION_CURIOUS ? FAUNA.WARY_SPEED : FAUNA.GRAZE_SPEED
+      const pace = monster.wary ? FAUNA.WARY_SPEED : FAUNA.GRAZE_SPEED
       moveToward(state, monster, entity, center.x, center.y, false, pace)
       return
     }
@@ -1688,12 +1760,24 @@ export function faunaStep(
   // LA CONTAGION D'ALARME (R9). Il suffit qu'UNE bête de la harde vous repère
   // pour que toutes partent — même celles qui n'ont rien vu. Et elle transmet
   // LE POINT DE PEUR (R9bis) : toute la harde fuira le même lieu, ensemble.
+  //
+  // C'EST UN CRI, PAS UN ÉTAT (mesuré 2026-08-01, plainte « parfois ils
+  // tremblent »). Alarmer sur « une sœur COURT en ce moment » rendait l'alarme
+  // permanente tant qu'une seule bête tenait sa course : celle qui avait fini la
+  // sienne — donc déjà à FLEE_GOAL du point de peur — se faisait relever, voyait
+  // sa fuite s'achever DANS LE MÊME TICK, retombait, et se faisait relever au
+  // suivant. Un tick de sprint (0,34 tuile), un tick de trot en sens inverse
+  // (0,11), vingt fois par seconde : la bête vibrait sur place en clignotant
+  // entre deux silhouettes. On n'écoute donc que les cris FRAIS. La vague se
+  // propage toujours de proche en proche (chaque bête levée devient à son tour
+  // un cri frais) — c'est la levée en chaîne de R9, et elle est intacte.
   let alarmed = false
   let alarmFromX: number | undefined
   let alarmFromY: number | undefined
   if (herd) {
     for (const other of herd) {
       if (other.entityId === monster.entityId || other.fleeSince < 0) continue
+      if (state.tick - other.fleeSince > FAUNA.HERD_ALARM_TICKS) continue
       const oe = byId.get(other.entityId)
       if (!oe) continue
       if (distSq(entity.x, entity.y, oe.x, oe.y) <= FAUNA.HERD_ALARM_RADIUS * FAUNA.HERD_ALARM_RADIUS) {
@@ -1861,7 +1945,7 @@ export function faunaStep(
         }
         // LA BÊTE DIMINUÉE (chasse C10) : le sang lui coûte sa vitesse. C'est ce
         // qui rend la traque gagnable — l'écart se referme à mesure qu'elle s'épuise.
-        moveToward(state, monster, entity, entity.x + dx, entity.y + dy, false, FAUNA.FLEE_SPRINT * woundedSlow(monster, entity))
+        moveToward(state, monster, entity, entity.x + dx * CAP_VISEE, entity.y + dy * CAP_VISEE, false, FAUNA.FLEE_SPRINT * woundedSlow(monster, entity))
       }
       return
     }
@@ -1888,7 +1972,7 @@ export function faunaStep(
   // LE COUCHÉ (chasse C11) : à bout de sang et qu'on ne presse plus, elle gagne
   // le meilleur couvert et s'y tapit. On la retrouve PAR LE SANG — et attendre
   // devient l'autre stratégie du chasseur. (Mais le sang appelle d'autres nez.)
-  const threatened = hunted || (seen !== undefined && monster.suspicion >= HUNT.SUSPICION_CURIOUS)
+  const threatened = hunted || (seen !== undefined && monster.wary === true)
   if (bedStep(state, monster, entity, threatened)) return
 
   // L'APPÂT (chasse C18) : la nourriture qu'un chasseur a POSÉE. Elle y va, elle
@@ -1915,7 +1999,7 @@ export function faunaStep(
   // de plus fera monter la jauge — « annoncés, pas surprises » (GDD §9bis).
   // C'est ici que le STOP-AND-GO se joue : se figer maintenant fait redescendre
   // la jauge, et l'approche peut reprendre.
-  if (seen && monster.suspicion >= HUNT.SUSPICION_CURIOUS) {
+  if (seen && monster.wary) {
     monster.wanderDx = 0
     monster.wanderDy = 0
     const d = Math.sqrt(distSq(entity.x, entity.y, seen.x, seen.y))
@@ -1932,9 +2016,19 @@ export function faunaStep(
   // HORS de son coin de chasse. Elle y revient — au trot, et sans traîner : un
   // gibier qui déserterait son canton à chaque frayeur ferait de la carte un
   // brouillard mouvant, et le chasseur ne pourrait rien apprendre.
+  //
+  // ET LE RETOUR EST COLLANT (`ranging`) — la troisième fois qu'on apprend cette
+  // leçon dans ce fichier, après la cohésion et le retour au pays. Rendre la main
+  // au franchissement exact de `GROUND_RADIUS` lâchait la bête PILE sur la
+  // frontière : un pas de trot (WARY_SPEED, deux fois plus long) la faisait
+  // rentrer, deux pas de broutage la ressortaient, et ça vibrait à un cycle de
+  // trois ticks — avec le sprite qui se retourne à chaque fois. Elle rentre donc
+  // jusqu'à `GROUND_COMFORT`, et la frontière redevient franchissable.
   if (monster.groundX !== undefined && monster.groundY !== undefined) {
     const away = distSq(entity.x, entity.y, monster.groundX, monster.groundY)
-    if (away > FAUNA.GROUND_RADIUS * FAUNA.GROUND_RADIUS) {
+    if (!monster.ranging && away > FAUNA.GROUND_RADIUS * FAUNA.GROUND_RADIUS) monster.ranging = true
+    else if (monster.ranging && away < FAUNA.GROUND_COMFORT * FAUNA.GROUND_COMFORT) delete monster.ranging
+    if (monster.ranging) {
       moveToward(state, monster, entity, monster.groundX, monster.groundY, false, FAUNA.WARY_SPEED)
       return
     }
@@ -1948,8 +2042,18 @@ export function faunaStep(
     monster.wanderDx = 0
     monster.wanderDy = 0
     const center = herd ? herdCenter(herd, monster, byId) : null
-    if (center && distSq(entity.x, entity.y, center.x, center.y) > FAUNA.REST_SPREAD * FAUNA.REST_SPREAD) {
-      moveToward(state, monster, entity, center.x, center.y, false, FAUNA.GRAZE_SPEED)
+    // COLLANT, comme tout le reste : le centre de la harde se déplace dès qu'une
+    // dormeuse se recale, donc celle qui vient de rentrer sous REST_SPREAD s'en
+    // retrouvait dehors au tick suivant. Elle vise le CONFORT, et ne relâche que
+    // là. (Même verrou que la cohésion de pâture : les deux branches s'excluent —
+    // on broute OU on dort — et c'est le même geste, recoller aux siens.)
+    if (center) {
+      const d2 = distSq(entity.x, entity.y, center.x, center.y)
+      if (!monster.regrouping && d2 > FAUNA.REST_SPREAD * FAUNA.REST_SPREAD) monster.regrouping = true
+      else if (monster.regrouping && d2 < FAUNA.REST_COMFORT * FAUNA.REST_COMFORT) delete monster.regrouping
+      if (monster.regrouping) moveToward(state, monster, entity, center.x, center.y, false, FAUNA.GRAZE_SPEED)
+    } else {
+      delete monster.regrouping
     }
     return
   }
@@ -1975,8 +2079,36 @@ export function faunaStep(
     } else if (monster.separating && nearestSq >= FAUNA.HERD_SEPARATION_COMFORT * FAUNA.HERD_SEPARATION_COMFORT) {
       delete monster.separating
     }
-    if (push && monster.separating) {
-      moveToward(state, monster, entity, entity.x + push.x, entity.y + push.y, false, FAUNA.GRAZE_SPEED)
+    if (monster.separating) {
+      if (push) {
+        // LE PAS SE RANGE EN HUIT — et il faut le ranger ICI (mesuré 2026-08-01).
+        //
+        // `moveToward` découpe la direction avec sa ZONE MORTE, qui vaut un
+        // dixième de tuile : pour une VISÉE (« la tuile là-bas »), c'est une
+        // tolérance d'alignement, et c'est juste. Pour un VECTEUR UNITAIRE comme
+        // la poussée, c'est un couperet ANGULAIRE à 6° au lieu de 22,5° — le
+        // secteur « plein nord » ne fait plus que 11° de large. Or une poussée
+        // équilibrée pointe justement le long d'un axe : elle rasait donc la
+        // frontière, et la bête alternait nord-ouest / nord-est à chaque tick en
+        // montant droit. Elle frissonnait, et son sprite se retournait avec elle.
+        //
+        // On quantifie donc la poussée AVANT, aux vraies bornes du huitième
+        // (sin 22,5° ≈ 0,3827), et on vise une tuile entière dans ce sens-là.
+        const q = octantOf(push.x, push.y)
+        moveToward(state, monster, entity, entity.x + q.x, entity.y + q.y, false, FAUNA.GRAZE_SPEED)
+        return
+      }
+      // ÉQUILIBRÉE ENTRE SES VOISINES (zone morte de `separationPush`) : elle
+      // reste où elle est. Rendre la main au broutage ici rouvrait le
+      // tremblement par l'autre bout — le cap d'errance la ramenait AUSSITÔT
+      // sur la voisine dont elle venait de s'écarter, la somme des répulsions
+      // repassait le seuil, et elle repartait : un aller-retour par tick, la
+      // zone morte franchie dans les deux sens. Serrée entre deux congénères,
+      // une bête ne broute pas À TRAVERS elles — elle attend qu'on lui fasse
+      // de la place. (Ses voisines, elles, continuent de penser : le nœud se
+      // défait tout seul.)
+      monster.wanderDx = 0
+      monster.wanderDy = 0
       return
     }
   }
@@ -2027,7 +2159,7 @@ function boarStep(
   if (monster.chargeUntil !== undefined && state.tick < monster.chargeUntil) {
     const dx = monster.chargeDx ?? 0
     const dy = monster.chargeDy ?? 0
-    moveToward(state, monster, entity, entity.x + dx, entity.y + dy, false, FAUNA.CHARGE_SPEED)
+    moveToward(state, monster, entity, entity.x + dx * CAP_VISEE, entity.y + dy * CAP_VISEE, false, FAUNA.CHARGE_SPEED)
     if (!monster.chargeHit && threat) {
       const reach = COMBAT.MELEE_ENGAGE_RANGE
       if (distSq(entity.x, entity.y, threat.x, threat.y) <= reach * reach) {
@@ -2344,7 +2476,7 @@ export function wolfStep(
     //
     // LA RUÉE. Quand tout le monde est en place — ou que la proie a compris et
     // détale — le camouflage tombe et la meute se rue à pleine vitesse.
-    const aware = targetAware(target, monsterByEntity)
+    const aware = targetAware(entity, target, monsterByEntity, isAvatar)
     const ready = packInPlace(pack, target, byId)
 
     if (ready || aware || d2 <= FAUNA.COMMIT_RANGE * FAUNA.COMMIT_RANGE) {
@@ -2378,21 +2510,74 @@ export function wolfStep(
 }
 
 /**
- * La proie a-t-elle COMPRIS ? Une bête qui détale n'est plus à surprendre : le
- * camouflage n'a plus d'objet, c'est une course. (Un joueur, lui, est réputé
- * toujours averti dès que la meute se rue — on ne lit pas dans sa tête.)
+ * LA PROIE A COMPRIS — et le camouflage n'a plus d'objet (R11) : c'est une course.
+ *
+ * Pour une BÊTE, c'est écrit dans son état : elle est levée, elle détale.
+ *
+ * Pour un HOMME, ça ne l'était NULLE PART — `monsterByEntity` ne contient pas les
+ * avatars, donc ce test rendait toujours faux et la branche « la meute se rue »
+ * n'a jamais pu s'exécuter contre un joueur. MESURÉ (2026-08-01, `diag-loup.mts`,
+ * 4 graines) : une meute de quatre rampait à 2,0 tuiles/s derrière un homme qui
+ * marche à 4 — de 12 à 26 tuiles en six secondes, puis elle perdait sa cible et
+ * se rendormait. ZÉRO morsure sur TOUS les bancs, cercle jamais bouclé. « On ne
+ * sème pas des loups » (R13) se démentait au pas de promenade.
+ *
+ * DÉCISION (Alexis, 2026-08-01) : **l'homme qui S'ÉLOIGNE lève la meute.** Figé,
+ * ou venant vers elle, il est TRAQUÉ — elle rampe, elle boucle son cercle, puis
+ * elle se rue. Se figer devient un vrai choix (gagner du temps contre être
+ * encerclé), symétrique du stop-and-go que le joueur apprend déjà à la chasse.
+ *
+ * Le sens de marche se lit sur `facing`, que le pas d'input pose lui-même
+ * (`sim.ts`) : aucun état neuf, rien de plus dans le snapshot. Et `moved` interdit
+ * qu'un homme à l'arrêt soit déclaré fuyard sur un vieux cap.
+ *
+ * RÉSERVÉ AUX AVATARS, et c'est une condition de justesse, pas une préférence :
+ * SEUL le pas d'input pose `facing`. Un PNJ ne le pose JAMAIS (vérifié : aucune
+ * écriture dans `npc.ts`) — il garde donc éternellement le cap de sa naissance,
+ * plein est. Le lire sur un villageois aurait rendu un verdict tiré au sort par la
+ * GÉOGRAPHIE : le loup posté à l'ouest l'aurait cru en fuite, celui posté à l'est
+ * l'aurait cru immobile, quoi que le villageois fasse. Une proie qui n'est ni bête
+ * ni joueur reste donc TRAQUÉE — l'encerclement de R11, exactement comme avant.
  */
-function targetAware(target: Entity, monsterByEntity: Map<number, Monster>): boolean {
-  const m = monsterByEntity.get(target.id)
-  return m !== undefined && m.fleeSince >= 0
+function preyFleeing(hunter: Entity, prey: Entity): boolean {
+  if (!prey.moved) return false
+  const dx = prey.x - hunter.x
+  const dy = prey.y - hunter.y
+  const l = Math.sqrt(dx * dx + dy * dy)
+  if (l < 0.001) return false
+  return (prey.facing.x * dx + prey.facing.y * dy) / l > FAUNA.FLEEING_DOT
 }
 
-/** Toute la meute vivante est-elle arrivée à portée de son poste ? */
+function targetAware(
+  hunter: Entity,
+  target: Entity,
+  monsterByEntity: Map<number, Monster>,
+  isAvatar: (id: number) => boolean,
+): boolean {
+  const m = monsterByEntity.get(target.id)
+  if (m !== undefined) return m.fleeSince >= 0
+  return isAvatar(target.id) && preyFleeing(hunter, target)
+}
+
+/**
+ * TOUT LE MONDE EST EN PLACE ? — mais « tout le monde », c'est la meute qui chasse
+ * CETTE proie, pas la meute au grand complet.
+ *
+ * Compter les absents fait dépendre la ruée d'un loup qui n'a rien à voir avec
+ * l'affaire : un frère resté au loin — occupé ailleurs, ou parti mourir — retient
+ * tous les autres à ramper en l'attendant. MESURÉ (homme figé, un frère à cent
+ * tuiles, 3 graines) : première morsure à 5,8 s et 72 % du temps passé à ramper,
+ * contre 4,7 s et 60 % quand seuls les encercleurs comptent. Ils finissaient par
+ * mordre — non pas parce que le cercle se fermait, mais parce qu'un loup dont le
+ * poste est de l'autre côté finit par PASSER sur la proie et s'engage au contact.
+ * L'encerclement est l'affaire de ceux qui encerclent.
+ */
 function packInPlace(pack: Monster[] | undefined, target: Entity, byId: Map<number, Entity>): boolean {
   if (!pack) return true // un loup seul n'a personne à attendre
   const reach = FAUNA.ENCIRCLE_RADIUS + FAUNA.POST_TOLERANCE
   let alive = 0
   for (const w of pack) {
+    if (w.targetId !== target.id) continue // il chasse autre chose : il ne compte pas
     const e = byId.get(w.entityId)
     if (!e || e.hp <= 0) continue
     alive++

@@ -476,7 +476,9 @@ describe('l’artisanat (A3)', () => {
     // Loin des stations : rejeté avec le nom de la station.
     me(sim).x = 25.5
     act(sim, id, { type: 'craft', recipeId: 'iron_ingot' })
-    expect(rejections(sim)).toEqual(['station requise hors de portée : furnace'])
+    // LE REFUS NOMME LA CAPACITÉ, plus l'objet (2026-08-01) : plusieurs stations répondent
+    // à la même exigence, et « furnace » ne disait pas au joueur ce qu'il lui manque.
+    expect(rejections(sim)).toEqual(['station requise hors de portée : une Forge N2'])
   })
 
   it('la chaîne T3 (V2-17) : l’acier au four d’acier, les outils d’acier à l’atelier lourd', () => {
@@ -507,7 +509,7 @@ describe('l’artisanat (A3)', () => {
     // Loin des stations : rejeté avec le nom de la station du T3.
     me(sim).x = 25.5
     act(sim, id, { type: 'craft', recipeId: 'steel_ingot' })
-    expect(rejections(sim)).toEqual(['station requise hors de portée : four_acier'])
+    expect(rejections(sim)).toEqual(['station requise hors de portée : une Forge N3'])
   })
 
   it('bonus d’enceinte VITESSE : un atelier CLOS+TOITÉ façonne plus vite (construction.md R13)', () => {
@@ -613,7 +615,7 @@ describe('l’artisanat de fortune (craft-fortune A1-A5)', () => {
     // veut toujours son atelier. Sinon la couche 1 aurait dissous tout l'établi.
     act(sim, id, { type: 'craft', recipeId: 'axe' })
     expect(countOf(me(sim).inventory, 'axe')).toBe(0)
-    expect(rejections(sim)).toEqual(['station requise hors de portée : workshop'])
+    expect(rejections(sim)).toEqual(['station requise hors de portée : un Atelier N1'])
   })
 
   it('A3 : le pic de fortune N’OUVRE PAS le filon — seul l’outil forgé entame le fer', () => {

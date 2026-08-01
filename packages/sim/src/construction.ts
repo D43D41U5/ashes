@@ -10,15 +10,8 @@
  * type}`, `{x,y,hp}`) plutôt que les types `Structure`/`Entity` — pour rester
  * découplé de `village.ts`/`sim.ts` (aucun cycle d'import) et directement testable.
  */
-import {
-  BALANCE,
-  COMPONENT_TYPES,
-  FUNCTIONS,
-  TERRAIN_SHALLOW_WATER,
-  TERRAINS,
-  type ComponentType,
-  type FunctionId,
-} from './balance'
+import { BALANCE, FUNCTIONS, TERRAIN_SHALLOW_WATER, TERRAINS, type ComponentType, type FunctionId } from './balance'
+import { STRUCTURE_TYPES, bloqueNavigation, isComponent, piece } from './pieces'
 import { emitEvent } from './events'
 import { chebyshev, edgeBits, edgeStep, oppositeEdge } from './geometry'
 import { terrainAt, type WorldMap } from './map'
@@ -46,9 +39,7 @@ export interface PlacedStructure {
  * dépend du déplaceur (une porte s'ouvre pour les membres) ; ici la vue est absolue.
  */
 export function blocksNavigation(type: StructureType): boolean {
-  // La paillasse s'ENJAMBE (un couchage au ras du sol, `structureBlocks`) : elle ne
-  // ferme rien, donc elle ne pèse pas non plus dans le verdict de navigabilité.
-  return type !== 'door' && type !== 'floor' && type !== 'roof' && type !== 'house' && type !== 'paillasse'
+  return bloqueNavigation(type)
 }
 
 /**
@@ -69,7 +60,7 @@ export function blocksNavigation(type: StructureType): boolean {
  * Le SOL y est déjà : c'est la seule pièce qui porte sa propre assise (des planches sur
  * l'eau), et la seule qui ne bloque rien.
  */
-export const POSABLE_SUR_EAU: readonly StructureType[] = ['floor']
+export const POSABLE_SUR_EAU: readonly StructureType[] = STRUCTURE_TYPES.filter((t) => piece(t).eau)
 
 /**
  * L'UNIQUE PORTE DE TERRAIN de la construction (spec construction R5).
@@ -119,9 +110,9 @@ export interface EdgeAware {
 
 /** La structure qui prend cette tuile ENTIÈRE — ni sol, ni toit, ni mur d'arête. */
 export function fullTileAt<T extends EdgeAware>(structures: readonly T[], tx: number, ty: number): T | undefined {
-  return structures.find(
-    (s) => s.tx === tx && s.ty === ty && s.type !== 'floor' && s.type !== 'roof' && s.edges === undefined,
-  )
+  // « Prend la tuile ENTIÈRE » = la COUCHE déclarée au registre est `tuile` (ni sol, ni toit),
+  // et la pièce ne vit pas sur une arête.
+  return structures.find((s) => s.tx === tx && s.ty === ty && piece(s.type).occupe === 'tuile' && s.edges === undefined)
 }
 
 /**
@@ -363,13 +354,8 @@ export function placementKeepsNavigable(
   return true
 }
 
-/** L'ensemble des types de COMPOSANTS (dérivé de `COMPONENTS`, source unique). */
-const COMPONENT_SET = new Set<StructureType>(COMPONENT_TYPES)
-
-/** Cette structure est-elle un COMPOSANT ? (les barrières et le Feu n'en sont pas). */
-export function isComponent(type: StructureType): boolean {
-  return COMPONENT_SET.has(type)
-}
+/** Cette structure est-elle un COMPOSANT ? La famille le dit (registre `pieces.ts`). */
+export { isComponent } from './pieces'
 
 // ─── LA RECONNAISSANCE D'AMAS & DE FONCTIONS (spec construction R9-R10, R14) ──
 
@@ -445,18 +431,14 @@ function clusterComponents(components: readonly RecogStructure[]): RecogStructur
  * peut porter PLUSIEURS fonctions (une forge ET un atelier se touchent, R9) ; deux
  * amas distincts = deux fonctions (pas d'unicité, R11).
  */
-/**
- * QUELLE FONCTION une station de craft sert-elle (`furnace`/`four_acier` → forge ;
- * `workshop`/`tour_meca`/`atelier_lourd` → atelier), ou `null` (le Feu, ou rien). Dérivé de
- * `FUNCTIONS.recipeByTier` — une seule source de vérité. Sert aux bonus d'enceinte : savoir
- * si une recette relève d'une fonction dont l'amas ENCLOS confère un bonus.
+/*
+ * `functionForStation` A DISPARU (2026-08-01). Elle re-balayait `FUNCTIONS.recipeByTier` à
+ * l'envers pour retrouver la fonction depuis un NOM DE STATION — un détour qui n'existait
+ * que parce que `Recipe.station` aplatissait l'exigence en un type d'objet. La recette
+ * déclare désormais sa fonction elle-même (`requiert.fonction`) : il n'y a plus rien à
+ * retrouver.
  */
-export function functionForStation(station: string): FunctionId | null {
-  for (const fid of Object.keys(FUNCTIONS) as FunctionId[]) {
-    if (FUNCTIONS[fid].recipeByTier.some((tier) => (tier as readonly string[]).includes(station))) return fid
-  }
-  return null
-}
+
 
 export function recognizeFunctions(structures: readonly RecogStructure[]): RecognizedFunction[] {
   const components = structures.filter((s) => isComponent(s.type))

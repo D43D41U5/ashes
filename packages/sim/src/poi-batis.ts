@@ -28,6 +28,7 @@
 import { hash2 } from './noise'
 import { isBlockingTile } from './map'
 import { NODE_DEFS, type NodeType } from './balance'
+import { STRUCTURE_TYPES, piece } from './pieces'
 import type { StructureType } from './items'
 import type { SimState } from './sim'
 import { addStructure } from './village'
@@ -188,7 +189,7 @@ export const BUILT_KINDS: readonly string[] = Object.keys(PLANS)
  * les assombrit d'autant, et la ruine se voit. Une meule de foin ou un carré de friche,
  * non : « à 30 % de PV » n'y veut rien dire, et les assombrir les rendrait juste sales.
  */
-const USURABLE = new Set<StructureType>(['wall', 'mur_bas', 'floor', 'roof', 'table', 'banc', 'etagere', 'tonneau', 'atre', 'poutre', 'abreuvoir', 'cloture'])
+const USURABLE = new Set<StructureType>(STRUCTURE_TYPES.filter((t) => piece(t).usurable))
 
 /**
  * LE PLAN EST CARRÉ, ET SON CÔTÉ EST L'EMPREINTE DU LIEU.

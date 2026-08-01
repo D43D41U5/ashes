@@ -760,7 +760,8 @@ export class UIScene extends Phaser.Scene {
       tab: characterTab,
       inv,
       activeSlot,
-      stations: getHud(this.registry, 'stationsInRange') ?? [],
+      stations: getHud(this.registry, 'stationsInRange') ?? {},
+      seen: getHud(this.registry, 'seen') ?? [],
       container: getHud(this.registry, 'openContainerView') ?? null,
       skills: getHud(this.registry, 'skills') ?? {},
     })
@@ -776,6 +777,9 @@ export class UIScene extends Phaser.Scene {
     // pose au clic. L'UI décide, la scène du monde exécute.
     setHud(this.registry, 'selected', building ? this.buildMenu.armed() : null)
     setHud(this.registry, 'buildMaterial', this.buildMenu.material())
+    // …et le MODE DÉMOLIR avec eux (décision d'Alexis, 2026-08-01) : WorldScene en tire le
+    // surlignage rouge de ce qu'on détruirait, et le clic l'action. Faux hors marteau en main.
+    setHud(this.registry, 'demolir', building && this.buildMenu.demolir())
     this.refugeePrompt.update(getHud(this.registry, 'refugeesNearby') ?? null)
     // LE MODAL DU FEU (spec feu-station S18) : WorldScene a résolu `openFireView` contre le
     // snapshot (état, combustible, cuisson, bouton) ; l'UI n'a qu'à le montrer avec le sac.

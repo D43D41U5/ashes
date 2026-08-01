@@ -11,7 +11,19 @@
  * Changer TICK_RATE_HZ (ou CYCLE_REAL_MINUTES) recalcule tout automatiquement —
  * ne jamais coller un nombre de ticks en dur ailleurs dans /sim ou les tests ;
  * dériver de BALANCE.TICK_RATE_HZ (voir docs/decisions.md, 2026-07-05).
+ *
+ * ── LE REGISTRE DES PIÈCES (2026-08-01) ──
+ * Tout ce qui décrit une PIÈCE (coût, PV, accès, capacité, palier, fonction) vit
+ * désormais dans `pieces.ts`, et ce fichier n'en garde que des PROJECTIONS dérivées :
+ * `STRUCTURE_COSTS`, `STRUCTURE_HP`, `COMPONENTS`, `FUNCTIONS.recipeByTier`. Elles
+ * existent pour que leurs ~30 lecteurs ne changent pas d'import — ce sont des VUES,
+ * pas des tables : on ne les édite jamais, on édite le registre.
+ * `pieces.ts` n'importe aucune valeur : le graphe reste sans cycle (items → balance → pieces).
  */
+import { CAPACITE_COFFRE, CAPACITE_GRENIER, COMPONENT_TYPES, FUNCTION_IDS, coutObjet, palierDe, parPiece, piece, type ComponentType, type FunctionId, type StructureType } from './pieces'
+
+export { COMPONENT_TYPES }
+export type { ComponentType, FunctionId }
 
 /** Fréquence de la simulation, en ticks par seconde (GDD §11 : 10-15 Hz ;
  * dérogation actée à 20 Hz le 2026-07-05, voir docs/decisions.md). */
@@ -664,52 +676,13 @@ export const TERRAIN_BURNT_FOREST = 21
 export const TERRAIN_OLD_GROWTH = 22
 export const TERRAIN_CLIFF = 23
 
-/** Coûts de construction (spec village R3 : réels dès V3).
- *  Pour `wall`/`door`, c'est le coût du palier de matériau de BASE (bois) —
- *  les paliers pierre/métal vivent dans `WALL_TIERS` (spec construction R8). */
-export const STRUCTURE_COSTS: Record<import('./items').StructureType, import('./items').ItemBag> = {
-  fire: { wood: 10 },
-  wall: { wood: 2 },
-  // La palissade (2026-08-01) : des rondins — un peu plus de bois qu'un mur, aucun palier.
-  palissade: { wood: 3 },
-  door: { wood: 3 },
-  // Pièces MOLLES (spec construction R14) — pas de collision, coût léger.
-  floor: { wood: 1 },
-  roof: { wood: 1 },
-  chest: { wood: 4 },
-  workshop: { wood: 6, stone: 4 },
-  furnace: { stone: 8 },
-  house: { wood: 8 },
-  // COMPOSANTS : coût de remboursement à la démolition (posés via `place_component`,
-  // qui consomme l'objet fabriqué au coût `COMPONENTS[type].cost`).
-  enclume: { stone: 6, iron_ore: 2 },
-  four_acier: { cut_stone: 8, iron_ingot: 5 },
-  tour_meca: { wood: 8, iron_ingot: 3 },
-  atelier_lourd: { cut_stone: 6, iron_ingot: 6 },
-  silo: { wood: 8, fiber: 4 },
-  cave: { stone: 8, cut_stone: 4 },
-  reserve: { cut_stone: 8, iron_ingot: 3 },
-  parcelle: { wood: 4, fiber: 4 },
-  serre: { wood: 8, fiber: 6 },
-  terroir: { cut_stone: 6, hardwood: 4 },
-  // LES PIÈCES DU MONDE BÂTI (`poi-batis.ts`) — coûts posés pour le jour où l'Atelier
-  // les fabriquera (catalogue §4bis). Aujourd'hui inertes : le monde les pose sans payer,
-  // et personne ne les démolit (une pièce sans village n'a ni propriétaire ni Chef).
-  table: { wood: 4 },
-  banc: { wood: 2 },
-  paillasse: { fiber: 6, wood: 2 },
-  etagere: { wood: 3 },
-  tonneau: { wood: 5 },
-  friche: { fiber: 2 },
-  terre: { stone: 1 },
-  cloture: { wood: 1 },
-  abreuvoir: { stone: 4 },
-  meule: { fiber: 8 },
-  encadrement: { wood: 4 },
-  atre: { stone: 8 },
-  poutre: { wood: 3 },
-  mur_bas: { stone: 2 },
-}
+/**
+ * VUE DÉRIVÉE du registre (`pieces.ts`) — ce que coûte chaque pièce : pose au marteau,
+ * chantier d'un village PNJ, remboursement à la démolition. Pour `wall`/`door`, c'est le
+ * coût du palier de matériau de BASE (bois) — les paliers pierre/métal vivent dans
+ * `WALL_TIERS` (spec construction R8). NE PAS ÉDITER : éditer `PIECES`.
+ */
+export const STRUCTURE_COSTS: Record<StructureType, import('./items').ItemBag> = parPiece((t) => piece(t).cout)
 
 export type WallMaterial = 'wood' | 'stone' | 'metal'
 
@@ -742,39 +715,23 @@ export const WALL_MATERIAL_ORDER: readonly WallMaterial[] = ['wood', 'stone', 'm
  * a un objet-jumeau du même nom (`ItemId`) qu'on fabrique et pose. Les tranches
  * suivantes (Atelier, Grenier, Ferme) étendent ce type.
  */
-export type ComponentType =
-  | 'enclume'
-  | 'furnace'
-  | 'four_acier'
-  | 'workshop'
-  | 'tour_meca'
-  | 'atelier_lourd'
-  | 'silo'
-  | 'cave'
-  | 'reserve'
-  | 'parcelle'
-  | 'serre'
-  | 'terroir'
+
 
 /** Coût (recette de l'objet à poser), palier du Feu qui débloque (R6) et PV. À calibrer. */
-export const COMPONENTS: Record<ComponentType, { cost: import('./items').ItemBag; unlockTier: number; hp: number }> = {
-  // Forge : enclume (fer de récup, dès P1) → four → four d'acier (exige P3).
-  enclume: { cost: { stone: 6, iron_ore: 2 }, unlockTier: 1, hp: 120 },
-  furnace: { cost: { stone: 10 }, unlockTier: 1, hp: 100 },
-  four_acier: { cost: { cut_stone: 8, iron_ingot: 5 }, unlockTier: 3, hp: 150 },
-  // Atelier : établi (= `workshop`, héritage V3) → tour méca → atelier lourd (P3).
-  workshop: { cost: { wood: 6, stone: 4 }, unlockTier: 1, hp: 100 },
-  tour_meca: { cost: { wood: 8, iron_ingot: 3 }, unlockTier: 2, hp: 120 },
-  atelier_lourd: { cost: { cut_stone: 6, iron_ingot: 6 }, unlockTier: 3, hp: 150 },
-  // Grenier : des CONTENEURS anti-pourriture. Silo → cave (passe l'hiver) → réserve.
-  silo: { cost: { wood: 8, fiber: 4 }, unlockTier: 1, hp: 100 },
-  cave: { cost: { stone: 8, cut_stone: 4 }, unlockTier: 2, hp: 130 },
-  reserve: { cost: { cut_stone: 8, iron_ingot: 3 }, unlockTier: 3, hp: 160 },
-  // Ferme : parcelle (de saison) → serre (cultures d'hiver) → terroir (Ermitage). Plein air.
-  parcelle: { cost: { wood: 4, fiber: 4 }, unlockTier: 1, hp: 60 },
-  serre: { cost: { wood: 8, fiber: 6 }, unlockTier: 2, hp: 80 },
-  terroir: { cost: { cut_stone: 6, hardwood: 4 }, unlockTier: 3, hp: 100 },
-}
+/**
+ * VUE DÉRIVÉE du registre (`pieces.ts`) — les COMPOSANTS, l'atome ACTIF d'une fonction
+ * (spec construction R8, §4bis). `cost` est le coût de l'OBJET qu'on fabrique et qu'on
+ * pose (`coutObjet`, qui ne diffère du coût de la pièce que pour le four — voir la
+ * dérive documentée dans le registre). NE PAS ÉDITER : éditer `PIECES`.
+ */
+export const COMPONENTS: Record<ComponentType, { cost: import('./items').ItemBag; unlockTier: number; hp: number }> =
+  (() => {
+    const table = {} as Record<ComponentType, { cost: import('./items').ItemBag; unlockTier: number; hp: number }>
+    for (const t of COMPONENT_TYPES) {
+      table[t] = { cost: coutObjet(t), unlockTier: piece(t).unlockTier ?? 1, hp: piece(t).pv }
+    }
+    return table
+  })()
 
 /**
  * LE GRENIER (spec construction §4bis) : la CONSERVATION anti-pourriture, branchée
@@ -795,34 +752,49 @@ export const GRENIER = {
  * fonction — identité stable quand on enrichit/appauvrit l'amas). `enclosureBonus` =
  * le bonus thématique quand l'amas est muré + toité (R13) ; `null` = plein air.
  */
-export type FunctionId = 'forge' | 'atelier' | 'grenier' | 'ferme'
 
+
+/** Le BONUS D'ENCEINTE de chaque fonction (R13) — le seul trait qui ne soit pas
+ *  déductible des pièces : il appartient à la fonction, pas à un composant.
+ *  `null` = plein air (la Ferme n'en a aucun ; la reconnaissance ne la déclare jamais close). */
+const ENCLOSURE_BONUS: Record<FunctionId, string | null> = {
+  forge: 'durabilite',
+  atelier: 'vitesse',
+  grenier: 'conservation',
+  ferme: null,
+}
+
+/**
+ * VUE DÉRIVÉE : `recipeByTier` se CALCULE du registre. Chaque composant y déclare la
+ * fonction qu'il sert et le palier auquel il la porte (`fonction` + `palier`), donc le
+ * cumulatif « pour atteindre T, il faut tout ce qui est de palier ≤ T » n'a plus à être
+ * recopié — et le composant PRIMAIRE (celui de palier 1) tombe en tête tout seul.
+ *
+ * C'est ce qui rend la promesse de D4 tenable : déclarer `fonction: 'dortoir', palier: 1`
+ * sur la paillasse fera émerger le Dortoir sans une ligne de logique neuve.
+ */
 export const FUNCTIONS: Record<
   FunctionId,
   { recipeByTier: readonly (readonly ComponentType[])[]; enclosureBonus: string | null }
-> = {
-  forge: {
-    recipeByTier: [['enclume'], ['enclume', 'furnace'], ['enclume', 'furnace', 'four_acier']],
-    enclosureBonus: 'durabilite',
-  },
-  atelier: {
-    recipeByTier: [['workshop'], ['workshop', 'tour_meca'], ['workshop', 'tour_meca', 'atelier_lourd']],
-    enclosureBonus: 'vitesse',
-  },
-  grenier: {
-    recipeByTier: [['silo'], ['silo', 'cave'], ['silo', 'cave', 'reserve']],
-    enclosureBonus: 'conservation',
-  },
-  ferme: {
-    recipeByTier: [['parcelle'], ['parcelle', 'serre'], ['parcelle', 'serre', 'terroir']],
-    // PLEIN AIR (spec construction §4bis) : la Ferme n'a AUCUN bonus d'enceinte —
-    // `null` fait que la reconnaissance ne la déclare jamais `enclosed`.
-    enclosureBonus: null,
-  },
-}
+> = (() => {
+  const table = {} as Record<
+    FunctionId,
+    { recipeByTier: readonly (readonly ComponentType[])[]; enclosureBonus: string | null }
+  >
+  for (const fid of FUNCTION_IDS) {
+    // Triés par palier : le composant PRIMAIRE (palier 1) tombe donc en tête tout seul,
+    // et `recognizeFunctions` y lit l'ancre de la fonction sans rien recopier.
+    const membres = COMPONENT_TYPES.filter((t) => piece(t).fonction === fid).sort((a, b) => palierDe(a) - palierDe(b))
+    const paliers = [...new Set(membres.map(palierDe))].sort((a, b) => a - b)
+    table[fid] = {
+      recipeByTier: paliers.map((p) => membres.filter((t) => palierDe(t) <= p)),
+      enclosureBonus: ENCLOSURE_BONUS[fid],
+    }
+  }
+  return table
+})()
 
-/** Tous les types de composants connus, dérivés de `COMPONENTS` (source unique). */
-export const COMPONENT_TYPES = Object.keys(COMPONENTS) as ComponentType[]
+
 
 /**
  * LES TROIS CERCLES (GDD §8bis). Le cercle DOMESTIQUE — le rayon du camp — est
@@ -1091,13 +1063,28 @@ export type RecipeId =
   | 'chest'
 
 export interface Recipe {
-  /** `null` = À LA MAIN : nulle part, donc partout (spec craft-fortune C1). Les stations
-   *  du T3 (`four_acier`, `atelier_lourd`) exigent le palier 3 du village pour être POSÉES
-   *  (STRUCTURE_DEFS.unlockTier=3) — c'est là que le couplage « forge N3 = l'acier » de la
-   *  spec construction R10 se paie, via la portée de la station (comme le fer via `furnace`). */
-  station: 'fire' | 'workshop' | 'furnace' | 'four_acier' | 'atelier_lourd' | null
+  /**
+   * CE QUE LE LIEU DOIT OFFRIR — une CAPACITÉ, plus un objet précis (2026-08-01).
+   *
+   * `null` = À LA MAIN : nulle part, donc partout (spec craft-fortune C1). Sinon une
+   * fonction et son palier minimal : `{fonction:'atelier', niveau:1}` se lit « il me faut
+   * un Atelier, au moins N1 », et n'importe quelle station de l'Atelier de rang ≥ 1 y
+   * répond. Avant, la recette nommait `'workshop'` : poser une station neuve obligeait
+   * alors à revenir éditer les recettes, le libellé client et la liste des stations
+   * connues — trois listes pour une seule notion.
+   *
+   * Le palier haut reste payé par la POSE : le four d'acier et l'atelier lourd exigent le
+   * palier 3 du village (`unlockTier`, registre), donc « forge N3 = l'acier » (R10) tient
+   * toujours, sans qu'aucune recette n'ait à le savoir.
+   */
+  requiert: import('./pieces').Exigence | null
   inputs: import('./items').ItemBag
   output: import('./items').ItemId
+  /* ⚠ PAS DE `count` (lot) — retiré avant livraison, exprès. Le catalogue de décoration en
+   * aura besoin (« quatre tuiles », « deux planches »), mais AUCUNE des 34 recettes
+   * actuelles n'en produit : le champ n'aurait eu que des lecteurs, jamais d'auteur, et ses
+   * deux branches seraient mortes — précisément ce que le registre est venu supprimer.
+   * Il revient avec la première recette par lot, et pas avant (3 petites éditions). */
   /**
    * Le TEMPS DE TRAVAIL d'une unité, en secondes (spec craft-file F5). Le craft
    * n'est plus instantané : il entre dans une file, et le tick la fait descendre.
@@ -1107,70 +1094,81 @@ export interface Recipe {
   seconds: number
 }
 
+/**
+ * LES CINQ EXIGENCES DE LIEU, nommées une fois. Ce sont les seules qu'un catalogue de
+ * trente-quatre recettes emploie, et les nommer rend la table LISIBLE : on lit « il faut
+ * un Atelier N1 », pas un objet de mobilier dont il faudrait connaître le rang.
+ */
+const FEU = { fonction: 'feu', niveau: 1 } as const
+const FORGE_N2 = { fonction: 'forge', niveau: 2 } as const
+const FORGE_N3 = { fonction: 'forge', niveau: 3 } as const
+const ATELIER_N1 = { fonction: 'atelier', niveau: 1 } as const
+const ATELIER_N3 = { fonction: 'atelier', niveau: 3 } as const
+
 /** Chaînes ≤ 3 étapes, stations distinctes (GDD §8, spec R10-R11). */
 export const RECIPES: Record<RecipeId, Recipe> = {
   /**
    * LE FEU DE CAMP — un OBJET qu'on fabrique à mains nues, puis qu'on pose au sol
    * (action `place_campfire`). Même prix que l'ancien `light_fire` (10 bois) : on
    * n'a pas rendu le feu plus cher, on a séparé le fabriquer/porter/poser de
-   * l'allumer-ici. `station: null` — le survivant nu doit pouvoir se chauffer.
+   * l'allumer-ici. `requiert: null` — le survivant nu doit pouvoir se chauffer.
    */
-  campfire: { station: null, inputs: { wood: 10 }, output: 'campfire', seconds: 6 },
+  campfire: { requiert: null, inputs: { wood: 10 }, output: 'campfire', seconds: 6 },
   // LE COFFRE EN OBJET (décision d'Alexis) : fabriqué à la main, posé comme un
   // composant — plus jamais au marteau. Coût inchangé (`STRUCTURE_COSTS.chest`).
-  chest: { station: null, inputs: { wood: 4 }, output: 'chest', seconds: 6 },
+  chest: { requiert: null, inputs: { wood: 4 }, output: 'chest', seconds: 6 },
 
   // ── La couche 1 : à mains nues, sans poste, dès la minute 0 (spec craft-fortune).
   // Tout y passe par la CORDE : le goulot est volontaire (C8) — la fibre cesse
   // d'être ce qu'on ramasse sans y penser, et le cueilleur a un client tout de suite.
-  rope: { station: null, inputs: { fiber: 3 }, output: 'rope', seconds: 3 },
-  crude_axe: { station: null, inputs: { wood: 2, stone: 3, rope: 1 }, output: 'crude_axe', seconds: 5 },
-  crude_pickaxe: { station: null, inputs: { wood: 3, stone: 2, rope: 1 }, output: 'crude_pickaxe', seconds: 5 },
-  crude_spear: { station: null, inputs: { wood: 3, stone: 1, rope: 1 }, output: 'crude_spear', seconds: 5 },
+  rope: { requiert: null, inputs: { fiber: 3 }, output: 'rope', seconds: 3 },
+  crude_axe: { requiert: null, inputs: { wood: 2, stone: 3, rope: 1 }, output: 'crude_axe', seconds: 5 },
+  crude_pickaxe: { requiert: null, inputs: { wood: 3, stone: 2, rope: 1 }, output: 'crude_pickaxe', seconds: 5 },
+  crude_spear: { requiert: null, inputs: { wood: 3, stone: 1, rope: 1 }, output: 'crude_spear', seconds: 5 },
 
-  stew: { station: 'fire', inputs: { berries: 4, fiber: 1 }, output: 'stew', seconds: 8 },
+  stew: { requiert: FEU, inputs: { berries: 4, fiber: 1 }, output: 'stew', seconds: 8 },
   // LA GRAINE (agriculture voie A) : des baies deviennent une semence, au Feu. L'amorçage du
   // potager — cueillir une fois, semer ensuite. Se pose ensuite dans une parcelle (`plant`).
-  graine: { station: 'fire', inputs: { berries: AGRICULTURE.SEED_FROM_BERRIES }, output: 'graine', seconds: 4 },
-  axe: { station: 'workshop', inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'axe', seconds: 8 },
-  pickaxe: { station: 'workshop', inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'pickaxe', seconds: 8 },
-  iron_ingot: { station: 'furnace', inputs: { iron_ore: 2, coal: 1 }, output: 'iron_ingot', seconds: 10 },
-  iron_axe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_axe', seconds: 12 },
-  iron_pickaxe: { station: 'workshop', inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_pickaxe', seconds: 12 },
+  graine: { requiert: FEU, inputs: { berries: AGRICULTURE.SEED_FROM_BERRIES }, output: 'graine', seconds: 4 },
+  axe: { requiert: ATELIER_N1, inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'axe', seconds: 8 },
+  pickaxe: { requiert: ATELIER_N1, inputs: { wood: 5, stone: 3, fiber: 2 }, output: 'pickaxe', seconds: 8 },
+  iron_ingot: { requiert: FORGE_N2, inputs: { iron_ore: 2, coal: 1 }, output: 'iron_ingot', seconds: 10 },
+  iron_axe: { requiert: ATELIER_N1, inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_axe', seconds: 12 },
+  iron_pickaxe: { requiert: ATELIER_N1, inputs: { iron_ingot: 2, wood: 2 }, output: 'iron_pickaxe', seconds: 12 },
   // L'ACIER (V2-17, spec construction R10, GDD §372) — le T3, ce qui PAIE le palier 3 :
   // le lingot se fond au FOUR D'ACIER (forge N3), les outils se façonnent à l'ATELIER LOURD
   // (atelier N3). Chaque station exige le palier 3 du village pour être posée (unlockTier 3),
   // donc l'acier est bien « l'événement pour tout le village » (GDD §220). Plus cher, plus long.
-  steel_ingot: { station: 'four_acier', inputs: { iron_ingot: 2, coal: 2 }, output: 'steel_ingot', seconds: 16 },
-  steel_axe: { station: 'atelier_lourd', inputs: { steel_ingot: 2, wood: 2 }, output: 'steel_axe', seconds: 16 },
-  steel_pickaxe: { station: 'atelier_lourd', inputs: { steel_ingot: 2, wood: 2 }, output: 'steel_pickaxe', seconds: 16 },
-  spear: { station: 'workshop', inputs: { wood: 4, stone: 2, fiber: 1 }, output: 'spear', seconds: 8 },
+  steel_ingot: { requiert: FORGE_N3, inputs: { iron_ingot: 2, coal: 2 }, output: 'steel_ingot', seconds: 16 },
+  steel_axe: { requiert: ATELIER_N3, inputs: { steel_ingot: 2, wood: 2 }, output: 'steel_axe', seconds: 16 },
+  steel_pickaxe: { requiert: ATELIER_N3, inputs: { steel_ingot: 2, wood: 2 }, output: 'steel_pickaxe', seconds: 16 },
+  spear: { requiert: ATELIER_N1, inputs: { wood: 4, stone: 2, fiber: 1 }, output: 'spear', seconds: 8 },
   // LE MARTEAU SE FORGE AU FEU, PAS À L'ATELIER — et ce n'est pas un détail : bâtir
   // exige déjà un village, donc un Feu allumé. Le mettre à l'atelier créerait un
   // blocage circulaire (il faudrait bâtir l'atelier pour pouvoir bâtir). Au Feu, il
   // n'ajoute AUCUNE porte : qui peut bâtir peut le forger.
-  hammer: { station: 'fire', inputs: { wood: 4, stone: 2, fiber: 2 }, output: 'hammer', seconds: 8 },
-  cooked_meat: { station: 'fire', inputs: { raw_meat: 1 }, output: 'cooked_meat', seconds: 5 },
+  hammer: { requiert: FEU, inputs: { wood: 4, stone: 2, fiber: 2 }, output: 'hammer', seconds: 8 },
+  cooked_meat: { requiert: FEU, inputs: { raw_meat: 1 }, output: 'cooked_meat', seconds: 5 },
   // LA CHAÎNE DU CUIR (spec cuir) — au Feu, pas de station neuve (réutilise le Feu).
   // Le tannage sèche la peau brute ; la couture assemble la tenue d'hiver, la seule
   // protection contre le froid létal d'acte III. La chasse propre irrigue la survie.
-  leather: { station: 'fire', inputs: { raw_hide: 1, fiber: 1 }, output: 'leather', seconds: 8 },
-  tenue_hiver: { station: 'fire', inputs: { leather: 3, fiber: 2 }, output: 'tenue_hiver', seconds: 12 },
+  leather: { requiert: FEU, inputs: { raw_hide: 1, fiber: 1 }, output: 'leather', seconds: 8 },
+  tenue_hiver: { requiert: FEU, inputs: { leather: 3, fiber: 2 }, output: 'tenue_hiver', seconds: 12 },
   // Les COMPOSANTS EN OBJET (spec construction R20) : assemblés AU FEU, coût =
   // `COMPONENTS[type].cost`. On les pose ensuite (`place_component`) pour faire émerger
   // une fonction. Le four garde sa station-jumelle de fusion (`furnace`) à la pose.
-  enclume: { station: 'fire', inputs: COMPONENTS.enclume.cost, output: 'enclume', seconds: 12 },
-  furnace: { station: 'fire', inputs: COMPONENTS.furnace.cost, output: 'furnace', seconds: 12 },
-  four_acier: { station: 'fire', inputs: COMPONENTS.four_acier.cost, output: 'four_acier', seconds: 16 },
-  workshop: { station: 'fire', inputs: COMPONENTS.workshop.cost, output: 'workshop', seconds: 12 },
-  tour_meca: { station: 'fire', inputs: COMPONENTS.tour_meca.cost, output: 'tour_meca', seconds: 14 },
-  atelier_lourd: { station: 'fire', inputs: COMPONENTS.atelier_lourd.cost, output: 'atelier_lourd', seconds: 16 },
-  silo: { station: 'fire', inputs: COMPONENTS.silo.cost, output: 'silo', seconds: 10 },
-  cave: { station: 'fire', inputs: COMPONENTS.cave.cost, output: 'cave', seconds: 14 },
-  reserve: { station: 'fire', inputs: COMPONENTS.reserve.cost, output: 'reserve', seconds: 16 },
-  parcelle: { station: 'fire', inputs: COMPONENTS.parcelle.cost, output: 'parcelle', seconds: 8 },
-  serre: { station: 'fire', inputs: COMPONENTS.serre.cost, output: 'serre', seconds: 12 },
-  terroir: { station: 'fire', inputs: COMPONENTS.terroir.cost, output: 'terroir', seconds: 16 },
+  enclume: { requiert: FEU, inputs: COMPONENTS.enclume.cost, output: 'enclume', seconds: 12 },
+  furnace: { requiert: FEU, inputs: COMPONENTS.furnace.cost, output: 'furnace', seconds: 12 },
+  four_acier: { requiert: FEU, inputs: COMPONENTS.four_acier.cost, output: 'four_acier', seconds: 16 },
+  workshop: { requiert: FEU, inputs: COMPONENTS.workshop.cost, output: 'workshop', seconds: 12 },
+  tour_meca: { requiert: FEU, inputs: COMPONENTS.tour_meca.cost, output: 'tour_meca', seconds: 14 },
+  atelier_lourd: { requiert: FEU, inputs: COMPONENTS.atelier_lourd.cost, output: 'atelier_lourd', seconds: 16 },
+  silo: { requiert: FEU, inputs: COMPONENTS.silo.cost, output: 'silo', seconds: 10 },
+  cave: { requiert: FEU, inputs: COMPONENTS.cave.cost, output: 'cave', seconds: 14 },
+  reserve: { requiert: FEU, inputs: COMPONENTS.reserve.cost, output: 'reserve', seconds: 16 },
+  parcelle: { requiert: FEU, inputs: COMPONENTS.parcelle.cost, output: 'parcelle', seconds: 8 },
+  serre: { requiert: FEU, inputs: COMPONENTS.serre.cost, output: 'serre', seconds: 12 },
+  terroir: { requiert: FEU, inputs: COMPONENTS.terroir.cost, output: 'terroir', seconds: 16 },
 }
 
 /**
@@ -1465,10 +1463,11 @@ export const SLOTS = {
    *  sinon un sac plein les figerait. Une DONNÉE, pas une règle à part : la sim
    *  n'a qu'un seul jeu de règles. */
   NPC: 40,
-  CHEST: 24,
+  /** La taille d'un coffre est une propriété de la PIÈCE : elle vit dans le registre. */
+  CHEST: CAPACITE_COFFRE,
   /** Le conteneur d'un composant de Grenier (silo/cave/réserve) : plus grand qu'un
    *  coffre — c'est une réserve de village, pas une malle (spec construction §4bis). */
-  GRENIER: 36,
+  GRENIER: CAPACITE_GRENIER,
   /** Assez grand pour que le cadavre ne tronque JAMAIS le butin (spec R11). */
   CORPSE: 48,
 } as const
@@ -1729,6 +1728,23 @@ export const FAUNA = {
    */
   GROUND_SPACING: 200, // deux coins ne se touchent jamais (semis de Poisson)
   GROUND_RADIUS: 46, // le territoire : hors de ce disque, rien ne naît
+  /**
+   * …ET ELLE NE REDEVIENT UNE BROUTEUSE QU'ICI (hystérésis — même leçon que la
+   * cohésion, la séparation et le retour au pays : TOUT SEUIL QUI COMMANDE UN
+   * MOUVEMENT VEUT SON HYSTÉRÉSIS).
+   *
+   * MESURÉ (`tools/diag-cerf.mts`, 2026-08-01, plainte « parfois ils tremblent »)
+   * : une harde dont la dérive avait atteint la frontière de son canton vibrait à
+   * un cycle de TROIS TICKS — un pas de trot vers l'intérieur (WARY_SPEED, donc
+   * DEUX fois plus long qu'un pas de broutage), qui la faisait repasser dedans,
+   * puis deux pas de broutage qui la ressortaient. Le sprite se retournait sept
+   * fois par seconde. Onze demi-tours dans la pire seconde, sur une bête.
+   *
+   * Quatre tuiles de marge : la bête rentre franchement (≈ 25 ticks de trot) et
+   * il lui faut le double pour re-dériver dehors. La frontière redevient une
+   * limite qu'on franchit, au lieu d'un fil sur lequel on danse.
+   */
+  GROUND_COMFORT: 42,
   GROUND_SNAP: 30, // depuis le point tiré, on cherche la bonne tuile dans ce rayon
   GROUND_WATER_NEAR: 40, // « à portée d'eau » : le gibier boit tous les jours
   GROUND_WATER_CELL: 8, // maille de la grille d'eau (précalcul du worldgen)
@@ -1831,6 +1847,16 @@ export const FAUNA = {
    * difficile — il suffit qu'UNE bête vous repère pour que tout parte.
    */
   HERD_ALARM_RADIUS: 12,
+  /**
+   * …et l'alarme est un CRI : on n'entend une sœur que pendant ce délai après SA
+   * levée, pas pendant toute sa course. Sans cette péremption, une bête qui avait
+   * fini sa fuite se faisait relever par la sœur qui courait encore, sa fuite
+   * s'achevait dans le même tick (elle était déjà loin du point de peur), et elle
+   * repartait au suivant : un aller-retour PAR TICK. Deux secondes laissent
+   * largement le temps à la vague de traverser une harde — chaque bête levée
+   * devient elle-même un cri frais pour ses voisines.
+   */
+  HERD_ALARM_TICKS: ticksFor(2),
   /** Au-delà de cet écart au centre de sa harde, la bête revient vers les siens. */
   HERD_SPREAD: 5,
   /**
@@ -1857,6 +1883,16 @@ export const FAUNA = {
    */
   HERD_SEPARATION_COMFORT: 1.9,
   /**
+   * LA ZONE MORTE DE L'ÉQUILIBRE. En dessous de ce déséquilibre (en unités de
+   * poids `radius/d` — une voisine pile au rayon pèse 1), la bête ne s'écarte
+   * plus : coincée entre deux voisines, chaque pas la faisait DÉPASSER le point
+   * d'équilibre et repartir en sens inverse au tick suivant. Vingt demi-tours
+   * par seconde, mesurés — le tremblement qu'Alexis voyait. Un pas de broutage
+   * déplace le déséquilibre d'environ 0,14 : la zone morte le double, pour
+   * qu'aucun pas ne puisse traverser l'équilibre.
+   */
+  SEPARATION_DEADBAND: 0.3,
+  /**
    * LA DÉRIVE DE PÂTURE. La harde a un cap de broutage partagé qui tourne à
    * cette cadence (dérivé de `herdId` + tranche de temps par `hash2` — pur,
    * zéro état, zéro tirage) : le troupeau TRAVERSE le paysage en broutant au
@@ -1867,6 +1903,14 @@ export const FAUNA = {
   DRIFT_BIAS: 0.6,
   /** LE REPOS GROUPÉ : hors de ses heures, la harde se couche resserrée sous ça. */
   REST_SPREAD: 2.5,
+  /**
+   * …et le rappel du dormeur est COLLANT lui aussi. Le centre de la harde bouge
+   * dès qu'une dormeuse se recale : sans second seuil, celle qui vient tout juste
+   * de rentrer sous 2,5 en ressortait au tick suivant et repartait d'un pas. Une
+   * bête couchée qui pas-à-pas indéfiniment, c'est un tremblement — et de nuit,
+   * c'est le seul mouvement de l'écran.
+   */
+  REST_COMFORT: 1.5,
   /**
    * LA SENTINELLE (spec chasse C13, livrée ici — R9bis). Dans une harde de
    * gibier ≥ 3, UNE bête à la fois est de garde : tête haute, immobile, regard
@@ -1934,6 +1978,21 @@ export const FAUNA = {
    * pour que les traînards aient pris leur place avant que le premier ne morde.
    */
   COMMIT_RANGE: 2.6,
+  /**
+   * L'HOMME QUI S'ÉLOIGNE EST LEVÉ (décision d'Alexis, 2026-08-01 — voir
+   * `preyFleeing`). Produit scalaire minimal entre son sens de marche et la
+   * direction « dos au loup » : 0,5 vaut 60°, donc il faut vraiment s'en aller.
+   * Passer DEVANT une meute en la longeant ne la lève pas — elle vous traque, et
+   * c'est le moment où l'on voit des loups se placer.
+   */
+  FLEEING_DOT: 0.5,
+  /* Ce seuil commande DEUX choses — l'allure (rampe 2,0 ↔ course 4,8) et la silhouette
+   * (`stalking`, deux hauteurs de sprite) — donc la question se pose : lui faut-il son
+   * hystérésis, comme à tous les autres ? MESURÉ exprès sur les régimes qui le font
+   * retraverser (zigzag à 0,75 s et à 2 s, et un homme qui TOURNE autour de la meute, où
+   * chaque loup voit un cap différent) : DEUX bascules dans la pire seconde, au pire — le
+   * même ordre que les bancs les plus calmes. Le verrou n'a pas lieu d'être ; si un
+   * battement apparaît un jour, c'est ici qu'il faudra le poser. */
   /**
    * LA TRAQUE. Allure du loup qui gagne son poste (× sa vitesse). Il RAMPE — et
    * c'est la condition même de l'encerclement : une meute qui charge à pleine
@@ -2105,6 +2164,22 @@ export const HUNT = {
   PERCEIVE_FACTOR: 1.25,
   /** CURIEUSE : elle s'arrête et REGARDE. Le joueur sait qu'il a été vu (R5). */
   SUSPICION_CURIOUS: 0.35,
+  /**
+   * …ET ELLE NE S'EN REMET QU'ICI (verrou `Monster.wary`). La curiosité est un
+   * ÉTAT, pas une comparaison : sans seuil de sortie, la jauge — qui SUIT son
+   * stimulus tick par tick — rasait 0,35 et le franchissait dans les deux sens
+   * plusieurs fois par seconde.
+   *
+   * MESURÉ (`tools/diag-cerf.mts`, 2026-08-01, approche stop-and-go à 14 tuiles)
+   * : QUINZE bascules dans la pire seconde. Chacune fait trois choses à l'écran
+   * — la silhouette passe de 1,8 à 1,4 tuile, la teinte saute du jaune curieux au
+   * gris broutage, et le gel lâche d'un pas. Le cerf grelottait.
+   *
+   * 0,25 : la bête reste curieuse ≈ 0,8 s de plus qu'avant (à décrue nominale)
+   * avant de rebrouter. Le stop-and-go (C1) tient — c'est la MÊME jauge, la même
+   * décrue ; seule la sortie est franche.
+   */
+  SUSPICION_CALM: 0.25,
   /** ALERTÉE : fixée, tendue, prête à partir — et un coup n'est plus PROPRE (C6). */
   SUSPICION_ALERT: 0.7,
   /** À stimulus plein, la jauge sature en ce temps (secondes). Près = bien plus vite. */
@@ -2340,6 +2415,41 @@ export const COMBAT = {
   /** Modulateurs de régén : bien nourri (faim > 70) / affamé (faim 0). */
   FED_REGEN_BONUS: 1.25,
   STARVED_REGEN_MALUS: 0.5,
+  /**
+   * LE SOUFFLE SE PAIE EN VENTRE (décision Alexis, 2026-08-01) : chaque point
+   * d'endurance REGAGNÉ coûte ce nombre de points de faim. Facturé sur les points
+   * réellement CRÉDITÉS (après le clamp à 100) — sinon une barre pleine draine la
+   * faim à l'arrêt, pour rien.
+   *
+   * L'ordre de grandeur se lit contre la faim passive, ~2 points par minute réelle
+   * (jauge pleine ≈ 50 min, un cycle) : refaire une barre entière coûte 2 de faim,
+   * soit ~1 minute de survie. Une fuite qui vide la barre trois fois brûle donc une
+   * demi-heure de ventre en deux minutes. Ça se sent sans dominer — la faim reste
+   * réglée par les repas, la course l'accélère. Ne s'applique PAS aux monstres
+   * (leur faim n'est jamais drainée) ni à l'acte de saison (le coût est par point
+   * récupéré, pas par saison : c'est ACT_HUNGER_FACTOR qui porte le Grand Froid).
+   */
+  STAMINA_REGEN_HUNGER_COST: 0.02,
+  /**
+   * ON RESSORT D'ÉPUISEMENT ICI, PAS AU PREMIER POINT REGAGNÉ — l'hystérésis du souffle.
+   *
+   * Sans elle, la garde « la course ne régénère pas » se retourne contre elle-même : à 0
+   * d'endurance la course est refusée, donc l'allure retombe à `walk`, donc la régén
+   * crédite, donc au tick suivant il reste de quoi repartir — qui reponctionne à 0.
+   * MESURÉ : **200 ticks de sprint sur 400**, un cycle de deux ticks à 10 Hz, SHIFT jamais
+   * relâchée. Une tuile sur deux courue, soit 5 t/s en moyenne et pour toujours — quand le
+   * loup court à 4,8. Le joueur semait ENCORE la meute, à endurance nulle : très
+   * exactement la plainte qui a ouvert le chantier.
+   *
+   * C'est la quatrième fois que ce dépôt l'apprend (cohésion et séparation de `faune.ts`,
+   * verrou `wary`) : **un seuil qui commande un mouvement veut son hystérésis**. Le
+   * verrou vit dans `Entity.exhausted` ; il se pose à 0 et ne se lève qu'ici.
+   *
+   * 25 : ~2,5 s de récupération à l'arrêt (10/s), ~4 s en marchant. Assez pour qu'un
+   * essoufflement se PAIE — on ne repart pas en courant, on souffle d'abord — sans clouer
+   * le joueur au sol le temps d'une barre entière. À calibrer en playtest.
+   */
+  SPRINT_RECOVER_STAMINA: 25,
   /** UNE PLAIE NON SOIGNÉE FREINE LA GUÉRISON (V1-14, GDD §6bis) — c'est ce qui fait
    *  exister le médecin : le bandage clôt la plaie et rend la régén pleine. On ne coupe
    *  pas à zéro (sans soin PNJ autonome, les villageois spiraleraient) : on freine fort,
@@ -2407,53 +2517,13 @@ export const COMBAT = {
  * Feu nourri est un totem inviolable). À sec, ces PV finis peuvent tomber sous un
  * assaut soutenu → la RUINE. Assez haut pour qu'un joueur seul ne perde pas en un
  * souffle, assez bas pour qu'une horde vienne à bout d'un village abandonné.
+ *
+ * VUE DÉRIVÉE du registre (`pieces.ts`) — NE PAS ÉDITER : éditer `PIECES`. Ce sont
+ * aussi les PV de RÉFÉRENCE de l'usure : `poi-batis.ts` pose une ruine à une fraction
+ * de ce nombre, et le client l'assombrit d'autant. Pour `wall`/`door`, c'est le palier
+ * de matériau de BASE (bois) ; les paliers montent via `WALL_TIERS`.
  */
-export const STRUCTURE_HP: Record<import('./items').StructureType, number> = {
-  fire: 900,
-  // `wall`/`door` : PV du palier de matériau de BASE (bois). Les paliers pierre/métal
-  // montent via `WALL_TIERS` (spec construction R8) — `addStructure` les applique.
-  wall: 200,
-  // La palissade : plus dure qu'un mur de bois (des rondins pleins), loin de la pierre —
-  // une horde l'enfonce en s'y mettant, un village vivant la répare (spec village-pnj R8).
-  palissade: 300,
-  door: 150,
-  // Pièces MOLLES (spec construction R14) : peu de PV, jamais bloquantes.
-  floor: 60,
-  roof: 60,
-  chest: 100,
-  workshop: 100,
-  furnace: 100,
-  house: 100,
-  // COMPOSANTS (spec construction R8) : ils ne se dégradent jamais (R17), mais ont
-  // des PV — ils sont une adresse RAIDABLE (R6). PV dérivés de `COMPONENTS`.
-  enclume: COMPONENTS.enclume.hp,
-  four_acier: COMPONENTS.four_acier.hp,
-  tour_meca: COMPONENTS.tour_meca.hp,
-  atelier_lourd: COMPONENTS.atelier_lourd.hp,
-  silo: COMPONENTS.silo.hp,
-  cave: COMPONENTS.cave.hp,
-  reserve: COMPONENTS.reserve.hp,
-  parcelle: COMPONENTS.parcelle.hp,
-  serre: COMPONENTS.serre.hp,
-  terroir: COMPONENTS.terroir.hp,
-  // LES PIÈCES DU MONDE BÂTI — du mobilier, pas de la fortification : ça casse.
-  // Ce sont aussi les PV de RÉFÉRENCE de leur usure : `poi-batis.ts` pose une ruine à
-  // une fraction de ce nombre, et le client l'assombrit d'autant.
-  table: 60,
-  banc: 40,
-  paillasse: 40,
-  etagere: 50,
-  tonneau: 60,
-  friche: 30,
-  terre: 40,
-  cloture: 80,
-  abreuvoir: 120,
-  meule: 40,
-  encadrement: 120, // deux jambages et un linteau : ça tient quand le reste tombe
-  atre: 250, // la pierre du foyer tient quand tout le reste est tombé
-  poutre: 60,
-  mur_bas: 150,
-}
+export const STRUCTURE_HP: Record<StructureType, number> = parPiece((t) => piece(t).pv)
 
 /**
  * L'UPKEEP DU FEU (spec construction R16-R17) — le seul évier PERMANENT de

@@ -130,7 +130,7 @@ import {
   type Brouillard,
   type IdentiteMonde,
 } from '../render/fog'
-import { fireStateAt, POI_CHARGES, TERRAIN_SHALLOW_WATER } from '@ashes/sim'
+import { fireStateAt, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER } from '@ashes/sim'
 
 /**
  * Le rayon qu'un lieu dévoile, LU DANS LA TABLE DE LA SIM (`POI_CHARGES`) et jamais recopié :
@@ -152,11 +152,13 @@ import { FellGauge, type FellCharge } from './world/fell-gauge'
 import { FlankGlow } from './world/flank-glow'
 import { HitFx } from './world/hit-fx'
 import { RecolteFx } from './world/recolte-fx'
+import { SprintFx } from './world/sprint-fx'
 import { ChuteArbre } from './world/chute-arbre'
 import { ReveilFx } from './world/reveil-fx'
 import { createAttackFx, type AttackFx, type Zone } from './world/attack-fx'
 import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
+import { demolishTargetAt } from './world/aim'
 import { INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 import { DEATH_FADE_MS, DEATH_VEIL_MS } from './ui/death-veil'
 import { nextOnboardingHint, type OnboardingHintId } from './ui/onboarding'
@@ -423,6 +425,14 @@ export class WorldScene extends Phaser.Scene {
   private hitFx!: HitFx
   /** LES ÉCLATS arrachés au nœud — 3e signe de la récolte (spec recolte.md G10). */
   private recolteFx!: RecolteFx
+  /** LA COURSE SE VOIT (Alexis, 2026-08-01) : la foulée, le souffle, et le mur. */
+  private sprintFx!: SprintFx
+  /** Les terrains qui ne LÈVENT pas de poussière : on n'y a pas de sol sous le pied. */
+  private static readonly EAU = new Set([TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER])
+  /** Le dernier cap tenu — il sert quand on ne bouge plus (la bouffée du mur part
+   *  DERRIÈRE soi, et « derrière » n'a pas de sens sans un devant). Vers le bas de
+   *  l'écran par défaut : le seul repli qui reste visible face à la caméra. */
+  private dernierCap = { x: 0, y: 1 }
   /** LES ARBRES QUI S'ABATTENT quand le fût est vidé (spec recolte.md G15). */
   private chuteArbre!: ChuteArbre
   /** LE SOL QUI TRAVAILLE, et le Cendreux qui s'en extrait (spec `cendreux.md` R21/R22). */
@@ -470,6 +480,8 @@ export class WorldScene extends Phaser.Scene {
   private evacMarker: Phaser.GameObjects.Arc | null = null
   private myWounds: Entity['wounds'] = {}
   private myStamina = 100
+  /** À bout de souffle (R1ter) — absent tant qu'on ne l'est pas. */
+  private myExhausted: true | undefined = undefined
   private myTemperature = 100
   /** Mon avatar télégraphie : la sim l'immobilise — la prédiction aussi. */
   private myWindup = false
@@ -553,6 +565,7 @@ export class WorldScene extends Phaser.Scene {
     // Sous le télégraphe : l'arme se pose SUR le corps, la zone se peint AU SOL.
     this.handWeapons = createHandWeapons(this, OVERLAY_DEPTH - 12)
     this.recolteFx = new RecolteFx(this)
+    this.sprintFx = new SprintFx(this)
     this.chuteArbre = new ChuteArbre(this)
     this.view.setHitFx(this.hitFx) // elle seule dessine les nœuds : à elle le tressaillement
     this.view.setRecolteFx(this.recolteFx) // …et la gerbe d'éclats, qui a besoin des mêmes px
@@ -586,6 +599,7 @@ export class WorldScene extends Phaser.Scene {
     this.inputs = bindInputs(this, {
       sendAction: (action) => this.sendAction(action),
       predicted: () => this.predicted,
+      playerId: () => this.playerId,
       structures: () => this.view.structures,
       nodes: () => this.view.nodes,
       corpses: () => this.view.corpses,
@@ -925,6 +939,23 @@ export class WorldScene extends Phaser.Scene {
     // récolter, pas pour poser (sinon un feu posable à 3 tuiles s'affiche « perdu »).
     const placing = overlay ? null : this.inputs.placing()
     const edgeArme = getHud(this.registry, 'buildEdge') ?? EDGE_BITS[0]!
+    // CE QUE LE MARTEAU DÉTRUIRAIT (décision d'Alexis, 2026-08-01) : le mode DÉMOLIR armé,
+    // on surligne en rouge MA construction sous le curseur — la MÊME que le clic enverra
+    // (`demolishTargetAt`, mêmes arguments : structures, tuile, arête armée, moi). Deux
+    // résolutions différentes détruiraient ailleurs que là où on voit.
+    const demolir = !overlay && getHud(this.registry, 'demolir') === true
+    const curseur = demolir ? this.inputs.curseur(this.input.activePointer) : null
+    const cible = curseur
+      ? demolishTargetAt(this.view.structures, curseur.x, curseur.y, this.playerId)
+      : undefined
+    this.view.setDemolishTarget(
+      cible?.id ?? null,
+      // La portée du BÂTI (6 tuiles), pas celle du bras : c'est celle que la sim exige pour
+      // démolir. Hors d'elle, le surlignage se grise — l'action serait refusée.
+      cible !== undefined &&
+        (cible.tx + 0.5 - this.predicted.x) ** 2 + (cible.ty + 0.5 - this.predicted.y) ** 2 <=
+          BALANCE.BUILD_RANGE * BALANCE.BUILD_RANGE,
+    )
     this.buildGhost.update(
       placing,
       aim.tx,
@@ -1322,11 +1353,12 @@ export class WorldScene extends Phaser.Scene {
     // seconde formule divergerait au premier ajustement, et une divergence de
     // vitesse fait se téléporter l'avatar à chaque réconciliation.
     const carried = getHud(this.registry, 'inv') ?? []
-    const { scale } = speedScaleFor(
+    const { scale, sprinting } = speedScaleFor(
       {
         hunger: this.myHunger,
         wounds: this.myWounds,
         stamina: this.myStamina,
+        exhausted: this.myExhausted,
         temperature: this.myTemperature,
         inventory: carried,
       },
@@ -1348,6 +1380,44 @@ export class WorldScene extends Phaser.Scene {
     // La silhouette du rampeur se TASSE (spec chasse C19) — la sienne aussi :
     // le joueur doit SENTIR sa posture sans regarder une jauge.
     this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player', sneak)
+    // LA COURSE SE VOIT (Alexis, 2026-08-01) — la foulée soulève le sol, le souffle qui
+    // manque tasse la silhouette, et le mur la fait broncher. APRÈS `syncActor` : c'est
+    // lui qui vient de poser les pieds (relief du warp compris), et c'est sa hauteur
+    // d'affichage que le tassement corrige. La poussière est celle du SOL foulé — la
+    // tourbière et la steppe ne lèvent pas la même chose.
+    const solIdx = Math.floor(render.y) * this.map.width + Math.floor(render.x)
+    const course = Math.hypot(dx, dy)
+    const affaissement = this.sprintFx.frame({
+      now: time,
+      dtMs: deltaMs,
+      x: this.playerSprite.x,
+      y: this.playerSprite.y,
+      // La direction de la COURSE, pas du regard : c'est le pas qui soulève la poussière.
+      // Immobile (relâchement, bronchée), on garde le dernier cap plutôt qu'un vecteur
+      // nul, qui enverrait la bouffée du mur dans un coin arbitraire.
+      dirX: course > 0 ? dx / course : this.dernierCap.x,
+      dirY: course > 0 ? dy / course : this.dernierCap.y,
+      // `sprinting` vient de `speedScaleFor` — la formule de la SIM, celle-là même qui
+      // refuse la course à bout de souffle ou trop chargé. Une seconde règle écrite ici
+      // ferait fumer les pieds d'un porteur surchargé qui n'a pas le droit de courir.
+      sprinting,
+      stamina: this.myStamina,
+      exhausted: this.myExhausted,
+      // L'EAU N'EST PAS DU SOL. Au bord d'un lac la tuile sous les pieds est souvent de
+      // l'eau peu profonde : la bouffée en sortait BLEUE (vu sur capture agrandie ×5) et
+      // se lisait comme une éclaboussure, pas comme un pas. On retombe alors sur le ton
+      // de poussière neutre — on ne devine jamais une couleur qui n'est pas un sol.
+      teinteSol: WorldScene.EAU.has(this.map.terrain[solIdx] ?? 0)
+        ? undefined
+        : TERRAIN_COLORS[this.map.terrain[solIdx] ?? 0],
+    })
+    if (course > 0) this.dernierCap = { x: dx / course, y: dy / course }
+    // Le tassement se pose SUR la hauteur que `syncActor` vient de calculer (emprise,
+    // rampement compris) : on la corrige, on ne la remplace pas. L'origine du sprite est
+    // aux pieds (0.5/1) — le coureur s'enfonce dans ses jambes, il ne flotte pas.
+    if (affaissement > 0) {
+      this.playerSprite.setDisplaySize(this.playerSprite.displayWidth, this.playerSprite.displayHeight * (1 - affaissement))
+    }
     // LE REGARD (audit UI/UX P3-11) : on POSE le pion au bord de l'avatar, du côté du
     // `facing` autoritatif (la sim le règle sur le déplacement ET sur la visée d'attaque —
     // il dit donc « où je regarde », pas seulement « où je vais »). Sa position encode les
@@ -1599,6 +1669,11 @@ export class WorldScene extends Phaser.Scene {
       this.myHunger = me.hunger
       this.myWounds = me.wounds
       this.myStamina = me.stamina
+      // LE VERROU D'ÉPUISEMENT (spec combat R1ter) voyage dans le snapshot, et la
+      // prédiction DOIT le lire : sans lui le client se croirait en train de courir
+      // pendant que la sim le fait marcher, et la réconciliation téléporterait l'avatar
+      // à chaque tick d'une course refusée.
+      this.myExhausted = me.exhausted
       this.myTemperature = me.temperature
       this.myWindup = me.windup !== undefined
       this.myCharging = me.charge !== undefined

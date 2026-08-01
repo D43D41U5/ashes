@@ -22,19 +22,9 @@
  * faisable ici, elle est juste hors de portée de bourse — une invitation à aller
  * chercher les trois fibres qui manquent.
  */
-import {
-  RECIPES,
-  hasItems,
-  type Inventory,
-  type ItemBag,
-  type ItemId,
-  type PlayerAction,
-  type RecipeId,
-} from '@ashes/sim'
-import type Phaser from 'phaser'
-import type { StationId } from '../../hud-state'
-import { ITEM_ICON_PX, ITEM_LABELS, itemIconKey } from '../../render/item-art'
-import { INK, SECTION_TITLE, textStyle } from './typography'
+import { RECIPES, countOf, libelleExigence, type Exigence, type Inventory, type ItemBag, type ItemId, type RecipeId } from '@ashes/sim'
+import type { CapacitesEnPortee } from '../../hud-state'
+import { ITEM_LABELS } from '../../render/item-art'
 
 // ─── La logique (pure, testée — craft-panel.test.ts) ─────────────────────────
 
@@ -122,11 +112,14 @@ function fold(s: string): string {
  *
  * Une catégorie vide ne pose pas d'en-tête : un rayon sans article n'est pas un rayon.
  */
-export function craftRows(stations: readonly StationId[], query: string): CraftRow[] {
+export function craftRows(seen: readonly RecipeId[], query: string): CraftRow[] {
   const q = fold(query.trim())
   const visible = (Object.keys(RECIPES) as RecipeId[]).filter((id) => {
-    const station = RECIPES[id].station
-    if (station !== null && !stations.includes(station)) return false // LE CONTEXTE
+    // LA DÉCOUVERTE décide de l'APPARITION (D2) — plus le lieu. Une recette qu'on a
+    // rencontrée garde sa ligne où qu'on soit ; ce qu'on n'a jamais croisé n'existe pas
+    // encore. C'est ce qui rend le catalogue proportionnel à la progression au lieu de
+    // présenter deux cents lignes grises à la minute zéro.
+    if (!seen.includes(id)) return false
     if (q === '') return true
     return fold(ITEM_LABELS[RECIPES[id].output]).includes(q) // LA RECHERCHE
   })
@@ -141,203 +134,90 @@ export function craftRows(stations: readonly StationId[], query: string): CraftR
   return rows
 }
 
+/**
+ * L'ÉTAT D'UNE LIGNE, et sa RAISON — le remplacement du filtre qui cachait (D2).
+ *
+ * L'ancienne règle (13 juillet) faisait disparaître ce que le lieu ne permettait pas :
+ * excellente à 33 recettes, elle empêchait à 200 de savoir que le contenu existe. On
+ * montre désormais, grisé, avec la raison en toutes lettres — « exige un Atelier N2 » —
+ * parce que c'est la raison elle-même qui donne envie de bâtir la station suivante.
+ */
+export function etatRecette(
+  caps: CapacitesEnPortee,
+  aLesMateriaux: boolean,
+  id: RecipeId,
+  /** Comment nommer l'exigence. Défaut : la forme AVEC article, pour une phrase. Une puce
+   *  étroite passe `nomExigence` (la forme nue) — sinon « EXIGE un Atelier N1 » passe à la
+   *  ligne et double la hauteur de la ligne, ce que le navigateur a montré. */
+  nommer: (b: Exigence) => string = libelleExigence,
+): { etat: 'faisable' | 'manque' | 'verrouille'; raison?: string } {
+  const besoin = RECIPES[id].requiert
+  if (!lieuPermet(caps, besoin)) return { etat: 'verrouille', raison: nommer(besoin!) }
+  return { etat: aLesMateriaux ? 'faisable' : 'manque' }
+}
+
+/**
+ * Le lieu répond-il à l'exigence ? `null` = à la main, donc toujours oui (spec
+ * craft-fortune C1). Sinon la fonction doit être à portée AU MOINS à ce palier — c'est le
+ * même verdict que `sertExigence` côté sim, lu sur la capacité publiée par le pont.
+ */
+export function lieuPermet(caps: CapacitesEnPortee, besoin: Exigence | null): boolean {
+  return besoin === null || (caps[besoin.fonction] ?? 0) >= besoin.niveau
+}
+
+/**
+ * LES FONCTIONS QUI MANQUENT ICI — dérivé, plus écrit à la main.
+ *
+ * La note « stations absentes » de l'écran perso lisait une liste de trois entrées
+ * (`['furnace','workshop','fire']`) quand la sim en comptait cinq : le four d'acier et
+ * l'atelier lourd ne pouvaient STRUCTURELLEMENT pas être annoncés absents. On dérive
+ * désormais des recettes elles-mêmes — une exigence qu'aucune recette ne porte n'a pas à
+ * être annoncée, et une exigence neuve entre toute seule.
+ */
+export function fonctionsAbsentes(caps: CapacitesEnPortee): Exigence[] {
+  const besoins: Exigence[] = []
+  for (const id of Object.keys(RECIPES) as RecipeId[]) {
+    const b = RECIPES[id].requiert
+    if (b === null || lieuPermet(caps, b)) continue
+    // On ne garde que le palier le PLUS BAS manquant par fonction : annoncer « Forge N2 et
+    // Forge N3 absentes » quand on n'a aucune forge dit deux fois la même chose.
+    const vu = besoins.find((x) => x.fonction === b.fonction)
+    if (vu === undefined) besoins.push(b)
+    else if (b.niveau < vu.niveau) vu.niveau = b.niveau
+  }
+  return besoins
+}
+
 /** Le coût, en une ligne : « bois 2 · pierre 3 · corde 1 ». */
 export function costLine(id: RecipeId): string {
   return bagLine(RECIPES[id].inputs)
+}
+
+/** Un jeton de coût : ce qu'on lit, et s'il manque à la bourse. */
+export interface CoutJeton {
+  texte: string
+  manque: boolean
+}
+
+/**
+ * LE COÛT, JETON PAR JETON — « bois 2 » d'un côté, « fibre 2 (0) » de l'autre, et celui
+ * qui manque le DIT.
+ *
+ * Il vit ici, pur, parce que les DEUX menus en ont besoin et qu'ils ne l'écrivaient pas
+ * pareil : le marteau nommait ses items en anglais brut (« wood 2 ») et rougissait le
+ * manquant ; l'artisanat les nommait en français et ne rougissait rien. Deux menus voisins,
+ * deux vérités — exactement ce que le composant partagé est venu supprimer.
+ */
+export function coutJetons(inputs: ItemBag, inv: Inventory): CoutJeton[] {
+  return (Object.keys(inputs) as ItemId[]).map((item) => {
+    const need = inputs[item] ?? 0
+    const ai = countOf(inv, item)
+    return { texte: ai >= need ? `${ITEM_LABELS[item].toLowerCase()} ${need}` : `${ITEM_LABELS[item].toLowerCase()} ${need} (${ai})`, manque: ai < need }
+  })
 }
 
 export function bagLine(inputs: ItemBag): string {
   return (Object.keys(inputs) as ItemId[])
     .map((item) => `${ITEM_LABELS[item].toLowerCase()} ${inputs[item]}`)
     .join(' · ')
-}
-
-// ─── Le rendu Phaser (placement seulement) ───────────────────────────────────
-
-/** Largeur du panneau, et les marges qui le décollent des bords de l'écran. */
-export const CRAFT_PANEL_W = 300
-/** Marge haute/basse : le panneau prend TOUTE la hauteur, mais ne touche pas les bords. */
-export const CRAFT_PANEL_MARGIN_Y = 28
-const PANEL_W = CRAFT_PANEL_W
-const ROW_H = 46
-const HEADER_H = 26
-const SEARCH_H = 30
-const PANEL_DEPTH = 900 // même plan que l'inventaire
-
-const TITLE = SECTION_TITLE
-const HEADER = textStyle('label', 'dim')
-const NAME = textStyle('body', 'body', false)
-const COST = textStyle('small', 'dim', false)
-const SEARCH = textStyle('label', 'body', false)
-
-const STATION_LABEL: Record<StationId, string> = {
-  fire: 'au Feu',
-  workshop: "à l'atelier",
-  furnace: 'au four',
-  four_acier: "au four d'acier",
-  atelier_lourd: "à l'atelier lourd",
-}
-
-export interface CraftPanel {
-  update(inv: Inventory, stations: StationId[]): void
-  setVisible(v: boolean): void
-  /** Le champ de recherche a-t-il le clavier ? (le déplacement se coupe alors) */
-  isTyping(): boolean
-  /** Une frappe pour le champ de recherche. `true` = elle a été consommée. */
-  handleKey(key: string): boolean
-}
-
-export function createCraftPanel(
-  scene: Phaser.Scene,
-  send: (a: PlayerAction) => void,
-  bounds: { left: number; top: number; bottom: number },
-): CraftPanel {
-  const x = bounds.left
-  const top = bounds.top
-  const height = bounds.bottom - bounds.top
-  const listTop = SEARCH_H + 10
-  const viewH = height - listTop
-
-  let query = ''
-  let typing = false
-  let scroll = 0
-  let rows: CraftRow[] = []
-  let inv: Inventory = []
-  let stations: StationId[] = []
-
-  const title = scene.add.text(x, top - 26, 'ARTISANAT', TITLE).setOrigin(0, 0).setScrollFactor(0).setDepth(PANEL_DEPTH)
-
-  const searchBg = scene.add
-    .rectangle(x + PANEL_W / 2, top + SEARCH_H / 2, PANEL_W, SEARCH_H, 0x14141a, 0.9)
-    .setStrokeStyle(1, 0x3a3a44)
-    .setScrollFactor(0)
-    .setDepth(PANEL_DEPTH)
-    .setInteractive({ useHandCursor: true })
-  const searchText = scene.add
-    .text(x + 10, top + SEARCH_H / 2, '', SEARCH)
-    .setOrigin(0, 0.5)
-    .setScrollFactor(0)
-    .setDepth(PANEL_DEPTH)
-
-  const drawSearch = (): void => {
-    searchText.setText(query === '' ? (typing ? '|' : 'rechercher…') : query + (typing ? '|' : ''))
-    searchText.setColor(query === '' && !typing ? INK.faint : INK.body)
-    searchBg.setStrokeStyle(1, typing ? 0x6b5a3a : 0x3a3a44)
-  }
-  searchBg.on('pointerdown', () => {
-    typing = true
-    drawSearch()
-  })
-
-  const listRoot = scene.add.container(x, top + listTop).setScrollFactor(0).setDepth(PANEL_DEPTH)
-  const maskShape = scene.make.graphics({}, false)
-  maskShape.fillStyle(0xffffff).fillRect(x, top + listTop, PANEL_W, viewH)
-  listRoot.setMask(maskShape.createGeometryMask())
-
-  const POOL = 24
-  const pool = Array.from({ length: POOL }, () => {
-    const bg = scene.add.rectangle(PANEL_W / 2, 0, PANEL_W, ROW_H - 4, 0x1b1b22, 0.9).setStrokeStyle(1, 0x3a3a44)
-    const icon = scene.add.image(24, 0, itemIconKey('wood')).setDisplaySize(ITEM_ICON_PX * 1.6, ITEM_ICON_PX * 1.6)
-    const name = scene.add.text(48, 0, '', NAME).setOrigin(0, 0)
-    const cost = scene.add.text(48, 0, '', COST).setOrigin(0, 0)
-    const header = scene.add.text(0, 0, '', HEADER).setOrigin(0, 0)
-    bg.setInteractive({ useHandCursor: true })
-    bg.on('pointerover', () => {
-      if (bg.getData('recipe')) bg.setFillStyle(0x2a2a34, 0.95)
-    })
-    bg.on('pointerout', () => bg.setFillStyle(0x1b1b22, 0.9))
-    bg.on('pointerdown', () => {
-      // Un clic qui part se faire refuser pollue le flux d'événements : sans les
-      // matériaux, on ne tire pas.
-      if (bg.getData('ready') !== true) return
-      const id = bg.getData('recipe') as RecipeId | undefined
-      if (id) send({ type: 'craft', recipeId: id })
-    })
-    listRoot.add([bg, icon, name, cost, header])
-    return { bg, icon, name, cost, header }
-  })
-
-  const contentHeight = (): number => rows.reduce((h, r) => h + (r.kind === 'header' ? HEADER_H : ROW_H), 0)
-
-  const draw = (): void => {
-    const maxScroll = Math.max(0, contentHeight() - viewH)
-    scroll = Math.max(0, Math.min(scroll, maxScroll))
-
-    let y = -scroll
-    rows.forEach((row, i) => {
-      const slot = pool[i]
-      if (!slot) return
-      const h = row.kind === 'header' ? HEADER_H : ROW_H
-      if (row.kind === 'header') {
-        slot.bg.setVisible(false).setData('recipe', undefined)
-        slot.icon.setVisible(false)
-        slot.name.setVisible(false)
-        slot.cost.setVisible(false)
-        slot.header.setVisible(true).setText(row.label).setY(y + 8)
-      } else {
-        const recipe = RECIPES[row.id]
-        const ready = hasItems(inv, recipe.inputs)
-        const station = recipe.station
-        slot.header.setVisible(false)
-        slot.bg.setVisible(true).setY(y + h / 2).setData('recipe', row.id).setData('ready', ready)
-        slot.bg.setStrokeStyle(1, ready ? 0x6b5a3a : 0x3a3a44)
-        slot.icon.setVisible(true).setTexture(itemIconKey(recipe.output)).setY(y + h / 2).setAlpha(ready ? 1 : 0.35)
-        slot.name.setVisible(true).setText(ITEM_LABELS[recipe.output]).setY(y + 8).setColor(ready ? INK.body : INK.faint)
-        slot.cost
-          .setVisible(true)
-          .setText(`${costLine(row.id)}  —  ${station === null ? 'à la main' : STATION_LABEL[station]}`)
-          .setY(y + 26)
-          .setColor(ready ? INK.dim : INK.faint)
-      }
-      y += h
-    })
-    for (let i = rows.length; i < POOL; i++) {
-      const slot = pool[i]!
-      slot.bg.setVisible(false).setData('recipe', undefined)
-      slot.icon.setVisible(false)
-      slot.name.setVisible(false)
-      slot.cost.setVisible(false)
-      slot.header.setVisible(false)
-    }
-  }
-
-  scene.input.on('wheel', (p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
-    if (!title.visible) return
-    if (p.x < x || p.x > x + PANEL_W || p.y < top || p.y > bounds.bottom) return
-    scroll += dy > 0 ? ROW_H : -ROW_H
-    draw()
-  })
-
-  const nodes = [title, searchBg, searchText]
-  drawSearch()
-
-  return {
-    isTyping: () => typing,
-    handleKey(key) {
-      if (!typing) return false
-      if (key === 'Escape' || key === 'Enter') typing = false
-      else if (key === 'Backspace') query = query.slice(0, -1)
-      else if (key.length === 1 && query.length < 18) query += key
-      else return false
-      drawSearch()
-      scroll = 0
-      rows = craftRows(stations, query)
-      draw()
-      return true
-    },
-    update(nextInv, nextStations) {
-      inv = nextInv
-      stations = nextStations
-      rows = craftRows(stations, query)
-      draw()
-    },
-    setVisible(v) {
-      for (const n of nodes) n.setVisible(v)
-      listRoot.setVisible(v)
-      if (!v) {
-        typing = false
-        drawSearch()
-      }
-    },
-  }
 }

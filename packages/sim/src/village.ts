@@ -59,6 +59,7 @@ import {
   type StructureType,
 } from './items'
 import { heldSlot } from './inventory-actions'
+import { matiereChiffre, matieresDe, parPiece, piece } from './pieces'
 import { terrainAt, zoneAt } from './map'
 import { actForDay, seasonDayAtTick } from './time'
 import type { SimState } from './sim'
@@ -315,55 +316,13 @@ export type VillageAction =
   | { type: 'invite'; targetEntityId: number }
   | { type: 'banish'; targetEntityId: number }
 
-/** Défauts d'accès (spec village R10) : le coffre est à moi, la porte au village. */
-const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = {
-  fire: 'village',
-  wall: 'village',
-  palissade: 'village',
-  door: 'village',
-  floor: 'village',
-  roof: 'village',
-  chest: 'private',
-  workshop: 'village',
-  furnace: 'village',
-  house: 'village',
-  enclume: 'village',
-  four_acier: 'village',
-  tour_meca: 'village',
-  atelier_lourd: 'village',
-  // Le Grenier est la réserve COMMUNE : dépôt ouvert à tous, retrait aux membres.
-  silo: 'village',
-  cave: 'village',
-  reserve: 'village',
-  parcelle: 'village',
-  serre: 'village',
-  terroir: 'village',
-  // LES PIÈCES DU MONDE BÂTI : `village` comme le reste du mobilier. Les vestiges du
-  // pays d'avant sont posés en `public` explicite par `poi-batis.ts` — une ruine
-  // n'appartient à personne, donc elle s'ouvre à qui la trouve.
-  table: 'village',
-  banc: 'village',
-  paillasse: 'village',
-  etagere: 'private', // un rangement personnel, comme le coffre
-  tonneau: 'village',
-  friche: 'village',
-  terre: 'village',
-  cloture: 'village',
-  abreuvoir: 'village',
-  meule: 'village',
-  encadrement: 'village',
-  atre: 'village',
-  poutre: 'village',
-  mur_bas: 'village',
-}
+/** Défauts d'accès (spec village R10) : le coffre est à moi, la porte au village.
+ *  VUE DÉRIVÉE du registre — le défaut d'une pièce se déclare avec elle. */
+const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = parPiece((t) => piece(t).acces)
 
-/** Les CONTENEURS (spec construction §4bis) : coffre + les conteneurs du Grenier. */
-const CONTAINER_TYPES: Partial<Record<StructureType, number>> = {
-  chest: SLOTS.CHEST,
-  silo: SLOTS.GRENIER,
-  cave: SLOTS.GRENIER,
-  reserve: SLOTS.GRENIER,
-}
+/** Les CONTENEURS (spec construction §4bis) : coffre + les conteneurs du Grenier.
+ *  VUE DÉRIVÉE : la capacité est une propriété de la pièce (`capacite`). */
+const CONTAINER_TYPES: Record<StructureType, number | undefined> = parPiece((t) => piece(t).capacite)
 
 export function structureAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
   return structures.find((s) => s.tx === tx && s.ty === ty)
@@ -465,9 +424,11 @@ export function evaluateBuild(
 ): BuildEval {
   // Le coût ne dépend que de la pièce et du palier (mur/porte seulement, R8) : calculé
   // d'emblée et renvoyé dans TOUS les cas, y compris les refus de placement.
-  const isWallLike = structure === 'wall' || structure === 'door'
-  const mat = isWallLike ? material : undefined
-  const cost = mat && isWallLike ? WALL_TIERS[mat][structure].cost : STRUCTURE_COSTS[structure]
+  // LA MATIÈRE CHANGE-T-ELLE LES CHIFFRES ? La PIÈCE le dit (D3, registre) — plus une
+  // condition écrite ici, qu'une pièce structurelle neuve aurait dû venir rejoindre.
+  const chiffree = matiereChiffre(structure)
+  const mat = chiffree ? material : undefined
+  const cost = mat !== undefined && estPalierMur(structure) ? WALL_TIERS[mat][structure].cost : STRUCTURE_COSTS[structure]
   // `exactOptionalPropertyTypes` : on n'AJOUTE `material` que s'il est défini (mur/porte).
   const make = (ok: boolean, reason?: BuildReject): BuildEval => {
     const r: BuildEval = { ok, cost }
@@ -488,25 +449,29 @@ export function evaluateBuild(
   // Le terrain juge PAR PIÈCE depuis que l'eau peu profonde refuse tout sauf le sol
   // (`terrainConstructible`) : le gué porte des planches, pas un mur ni une porte.
   if (!terrainConstructible(terrainAt(state.map, tx, ty), structure)) return fail('unbuildable')
-  // L'ARÊTE VISÉE (R23) : mur/palissade/porte seulement, et UN SEUL bit. Sol et toit sont
-  // MOUS — ils prennent la tuile et n'ont pas d'arête à porter ; leur en donner une les
-  // rendrait invisibles à `floorAt`/`roofAt` (qui ne regardent pas `edges`).
+  // L'ARÊTE VISÉE (R23), et c'est LA PIÈCE qui dit ce qu'elle en fait (`arete`, registre) :
+  // `possible` pour le mur et la porte, `requise` pour la palissade (née après R23, elle n'a
+  // aucune forme pleine-tuile historique à honorer), `interdite` pour le sol et le toit, MOUS —
+  // leur donner une arête les rendrait invisibles à `floorAt`/`roofAt`, qui ne lisent pas `edges`.
+  const arete = piece(structure).arete
   const surArete = edges !== undefined
-  if (surArete && !isWallLike && structure !== 'palissade') return fail('no_edge')
-  if (!surArete && structure === 'palissade') return fail('edge_required')
+  if (surArete && arete === 'interdite') return fail('no_edge')
+  if (!surArete && arete === 'requise') return fail('edge_required')
   if (surArete && !isSingleEdge(edges)) return fail('bad_tile')
   // Occupation PAR COUCHE : seul un doublon de la MÊME couche (sol/toit/solide/arête) refuse.
+  // La couche, elle aussi, est une propriété déclarée (`occupe`).
+  const couche = piece(structure).occupe
   const occupant = surArete
     ? edgeBarrierAt(state.structures, tx, ty, edges)
-    : structure === 'floor'
+    : couche === 'sol'
       ? floorAt(state.structures, tx, ty)
-      : structure === 'roof'
+      : couche === 'toit'
         ? roofAt(state.structures, tx, ty)
         : fullTileAt(state.structures, tx, ty)
   if (occupant) return fail(surArete ? 'edge_taken' : 'occupied')
   // Récolter = défricher (R5) : pas de mur/porte PLEINE TUILE sur un nœud (le sol/toit mou, si ;
   // et l'ARÊTE aussi — elle court sur le trait, elle ne prend pas le buisson).
-  if (!surArete && structure !== 'floor' && structure !== 'roof' && state.nodes.some((n) => n.tx === tx && n.ty === ty)) {
+  if (!surArete && couche === 'tuile' && state.nodes.some((n) => n.tx === tx && n.ty === ty)) {
     return fail('node')
   }
   // Invariant de navigabilité (R7), AVANT le coût : un rejet ne débite rien. L'arête part au
@@ -584,33 +549,27 @@ function poiSpecificInSquare(state: SimState, cx: number, cy: number): boolean {
  * lui-même), les monstres, et les membres d'un autre village.
  */
 export function structureBlocks(s: Structure, moverVillageId: number | null, opensDoors: boolean): boolean {
-  // La MAISON, on en franchit le seuil (on y entre). Le FEU, lui, a désormais un
-  // hitbox : un foyer de braises sous les pieds, ça se CONTOURNE (décision
-  // utilisateur) — on cuisine et on se chauffe en se tenant à côté, pas dessus.
-  if (s.type === 'house') return false
-  // Pièces MOLLES (spec construction R14) : sol et toit ne bloquent JAMAIS —
-  // seuls les murs comptent, ce qui garde l'invariant de navigabilité simple.
-  if (s.type === 'floor' || s.type === 'roof') return false
-  // Les pièces BASSES du monde bâti : on les ENJAMBE. Un banc, une poutre tombée, un
-  // carré de friche ne ferment rien — et une ruine dont chaque débris bloque devient un
-  // labyrinthe où l'on se coince, pas un lieu où l'on entre. La PAILLASSE est de la même
-  // famille : un couchage au ras du sol, pas un meuble — le dormeur s'y tient DESSUS, et
-  // un campement dont chaque lit bloque ferait de l'anneau du Feu un piège à hordes.
-  if (s.type === 'banc' || s.type === 'poutre' || s.type === 'friche' || s.type === 'mur_bas') return false
-  if (s.type === 'paillasse') return false
-  if (s.type === 'terre') return false // un sol ne bloque pas — c'est un sol
-  // L'ENCADREMENT NE BLOQUE PAS — c'est un trou dans le mur, on passe DEDANS. S'il bloquait,
-  // il serait un mur de plus, et le bâtiment n'aurait pas d'entrée. (Une `door`, elle, bloque
-  // et s'ouvre pour les siens : ce sont deux objets différents, pas deux réglages du même.)
-  if (s.type === 'encadrement') return false
-  if (s.type === 'door') {
-    // OUVERTE : tout le monde passe — ami comme pillard. C'est le prix de l'avoir laissée ouverte.
-    if (s.open === true) return false
-    // CLOSE : plus personne, SAUF qui l'actionne — et seulement sur les portes de SON village.
-    // Sans la seconde condition, un PNJ franchirait les portes closes d'un village rival.
-    return !(opensDoors && s.villageId === moverVillageId)
+  // CE QU'ELLE FAIT AU PASSAGE est une PROPRIÉTÉ DE LA PIÈCE, déclarée au registre
+  // (`pieces.ts`, champ `bloque`) — plus une chaîne de `if` dont le défaut, silencieux,
+  // était « ça bloque ». Une pièce neuve qu'on oubliait ici devenait un mur.
+  switch (piece(s.type).bloque) {
+    // Pièces MOLLES (R14) : le sol et le toit ne s'opposent à rien. La MAISON aussi (on en
+    // franchit le seuil), et les pièces BASSES du monde bâti : on les ENJAMBE. Une ruine dont
+    // chaque débris bloque devient un labyrinthe où l'on se coince, pas un lieu où l'on entre.
+    case 'non':
+    case 'enjambe':
+      return false
+    case 'porte':
+      // OUVERTE : tout le monde passe — ami comme pillard. C'est le prix de l'avoir laissée ouverte.
+      if (s.open === true) return false
+      // CLOSE : plus personne, SAUF qui l'actionne — et seulement sur les portes de SON village.
+      // Sans la seconde condition, un PNJ franchirait les portes closes d'un village rival.
+      return !(opensDoors && s.villageId === moverVillageId)
+    default:
+      // Le FEU a un hitbox : un foyer de braises sous les pieds, ça se CONTOURNE (décision
+      // utilisateur) — on cuisine et on se chauffe en se tenant à côté, pas dessus.
+      return true
   }
-  return true
 }
 
 /** A-t-on accès à une structure ? La propriété prime sur tout (spec R10-R12). */
@@ -1408,6 +1367,17 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
  * `access` permet aux villages PNJ d'ouvrir leur grenier (`village` au lieu
  * du défaut `private` du coffre) — sinon DEFAULT_ACCESS (spec R10).
  */
+/**
+ * CETTE PIÈCE A-T-ELLE UNE ENTRÉE DANS `WALL_TIERS` ? Le régime chiffré (D3) dit QUE la
+ * matière compte ; ce barème-là dit COMBIEN, et il ne couvre aujourd'hui que le mur et la
+ * porte. Les deux questions sont distinctes : une pièce structurelle peut déclarer son
+ * régime avant que son barème n'existe, et elle retombe alors sur son coût de base au
+ * lieu de déréférencer `undefined`.
+ */
+function estPalierMur(type: StructureType): type is 'wall' | 'door' {
+  return type === 'wall' || type === 'door'
+}
+
 export function addStructure(
   state: SimState,
   type: StructureType,
@@ -1427,8 +1397,8 @@ export function addStructure(
   // Le Foyer bâtit plus solide (spec alignement R8).
   const village = state.villages.find((v) => v.id === villageId)
   const hpBonus = village?.archetype === 'foyer' ? ALIGNMENT.FOYER_STRUCTURE_HP_BONUS : 1
-  const isWallLike = type === 'wall' || type === 'door'
-  const baseHp = material && isWallLike ? WALL_TIERS[material][type].hp : STRUCTURE_HP[type]
+  const chiffree = matiereChiffre(type)
+  const baseHp = material !== undefined && estPalierMur(type) ? WALL_TIERS[material][type].hp : STRUCTURE_HP[type]
   const structure: Structure = {
     id,
     type,
@@ -1441,7 +1411,11 @@ export function addStructure(
   }
   // On ne stocke le matériau que s'il n'est pas le défaut (bois) : snapshot léger,
   // et `s.material ?? 'wood'` fait foi partout (upgrade, démolition, PV).
-  if (material && material !== 'wood' && isWallLike) structure.material = material
+  // On ne stocke le matériau que s'il n'est pas le défaut (bois) ET que la pièce en
+  // accepte un : snapshot léger, et `s.material ?? 'wood'` fait foi partout.
+  if (material !== undefined && material !== 'wood' && (chiffree || matieresDe(type).includes(material))) {
+    structure.material = material
+  }
   // On n'écrit `edges` que s'il y en a : `undefined` EST le comportement historique, et un
   // `edges: 0` posé par mégarde ferait un mur qui ne bloque plus rien nulle part.
   if (edges !== undefined && edges !== 0) structure.edges = edges

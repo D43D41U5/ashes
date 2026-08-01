@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { STRUCTURE_HP } from './balance'
+import { PIECES } from './pieces'
 import { blocksNavigation } from './construction'
 import { structureBlocks, type Structure } from './village'
 import type { StructureType } from './items'
@@ -48,30 +49,26 @@ const piece = (type: StructureType): Structure =>
 const DIVERGENCES_VOULUES: readonly StructureType[] = ['door']
 
 /**
- * LES SIX ÉCARTS QUI SONT DES BUGS — nommés, pas corrigés ici, et voici pourquoi.
+* ═══ LES SIX ÉCARTS SONT REFERMÉS (2026-08-01) — et la liste reste, VIDE ═══
  *
- * Ce sont les pièces BASSES du monde bâti (`poi-batis.ts`). `structureBlocks` les exempte
- * avec sa raison écrite : « on les ENJAMBE — un banc, une poutre tombée, un carré de
- * friche ne ferment rien, et une ruine dont chaque débris bloque devient un labyrinthe où
- * l'on se coince, pas un lieu où l'on entre ». `blocksNavigation`, elle, est une liste de
- * QUATRE exceptions (`door`, `floor`, `roof`, `house`) écrite AVANT que ces types
- * n'existent : elle les compte donc comme des murs, par simple péremption.
+ * Elle nommait six pièces basses du monde bâti — `banc`, `friche`, `terre`, `encadrement`,
+ * `poutre`, `mur_bas` — que `structureBlocks` laissait ENJAMBER et que `blocksNavigation`
+ * comptait pour des MURS, par simple péremption : sa liste de quatre exceptions (`door`,
+ * `floor`, `roof`, `house`) avait été écrite avant que ces pièces n'existent.
  *
- * CE QUE ÇA COÛTE quand ça mordra : le remplissage de R7 verrait un « dehors » plus petit
- * que la réalité, donc REFUSERAIT MOINS qu'il ne doit (l'échec est ouvert, pas fermé), et
- * un PNJ debout sur une de ces tuiles ne serait jamais protégé. Côté R13-R14, un banc
- * pourrait clore une enceinte et offrir le bonus de conservation à un espace ouvert.
+ * Le remède prescrit ici a été appliqué mot pour mot : la géométrie est désormais une
+ * DONNÉE déclarée une fois par pièce (`pieces.ts`, champ `bloque`), et les deux prédicats
+ * n'en sont plus que des lectures. `bloqueNavigation` tient en une ligne — `bloque ===
+ * 'oui'` — donc la divergence n'est plus seulement corrigée : elle est devenue
+ * INEXPRIMABLE, sauf pour la porte, dont le cas est porté par le champ lui-même.
  *
- * POURQUOI PAS CORRIGÉ ICI : la correction juste n'est pas « faire s'accorder les deux »
- * (`door` prouve que ce serait faux) mais faire de la géométrie une donnée déclarée UNE
- * fois par type — un `Record<StructureType, { bloque, clôt, couvre }>` dont les trois
- * lecteurs (`structureBlocks`, `blocksNavigation`, `isEnclosed`) ne seraient plus que des
- * lectures. C'est un chantier de coût moyen dans trois fichiers, à faire À FROID : le
- * défaut est aujourd'hui LATENT (ces six types ne sont posés que par le worldgen, et les
- * zones de lieu sont écartées du carré d'un Feu), mais `items.ts` annonce la tranche qui
- * les rendra posables au marteau. C'est AVANT celle-là qu'il faut refermer.
+ * MESURÉ : sur les 34 pièces, la refonte du registre ne change EXACTEMENT que ces six
+ * verdicts de navigabilité (relevé avant/après, tranche T1). Rien d'autre n'a bougé.
+ *
+ * La liste reste, VIDE, pour que le test garde sa forme : si un écart réapparaît, c'est
+ * ici qu'il se déclare — et il faudra alors une raison écrite, comme en a la porte.
  */
-const ECARTS_A_CORRIGER: readonly StructureType[] = ['banc', 'friche', 'terre', 'encadrement', 'poutre', 'mur_bas']
+const ECARTS_A_CORRIGER: readonly StructureType[] = []
 
 describe('« ça bloque ? » — les deux réponses du dépôt, et leurs écarts nommés', () => {
   it('les deux prédicats s\'accordent partout, sauf sur les écarts nommés', () => {
@@ -102,10 +99,15 @@ describe('« ça bloque ? » — les deux réponses du dépôt, et leurs écarts
     expect(blocksNavigation('door')).toBe(false)
   })
 
-  it('les pièces basses du monde bâti s\'ENJAMBENT — côté déplacement, c\'est déjà vrai', () => {
-    // La vérité que le joueur ressent est la bonne ; c'est `blocksNavigation` qui doit la rejoindre.
-    for (const t of ECARTS_A_CORRIGER) {
-      expect(structureBlocks(piece(t), null, false), `${t} devrait s'enjamber`).toBe(false)
+  it('tout ce qui s\'ENJAMBE est transparent aux DEUX questions — plus de péremption possible', () => {
+    // La vérité que le joueur ressent est la bonne, et `blocksNavigation` l'a rejointe : les
+    // deux lisent le même champ. On balaie donc l'espace ENTIER plutôt qu'une liste choisie —
+    // une pièce basse ajoutée demain tombe dans ce test sans qu'on ait à l'y inscrire.
+    const enjambables = TYPES.filter((t) => PIECES[t].bloque === 'enjambe')
+    expect(enjambables.length, 'le test doit voir de vraies pièces basses').toBeGreaterThan(5)
+    for (const t of enjambables) {
+      expect(structureBlocks(piece(t), null, false), `${t} s'enjambe (déplacement)`).toBe(false)
+      expect(blocksNavigation(t), `${t} s'enjambe (navigabilité R7)`).toBe(false)
     }
   })
 

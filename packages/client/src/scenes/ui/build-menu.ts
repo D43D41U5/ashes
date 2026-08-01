@@ -14,27 +14,37 @@
  * Le fantôme, lui, reste dans le monde (Phaser) : il est ancré à la TUILE. Comme tout
  * le HUD, ce panneau ne DÉCIDE rien : il arme une intention, la sim revalide la pose.
  */
-import { STRUCTURE_COSTS, WALL_TIERS, hasItems, type Inventory, type ItemBag, type ItemId, type WallMaterial } from '@ashes/sim'
+import { BARRIER_TYPES, STRUCTURE_COSTS, WALL_TIERS, hasItems, matiereChiffre, matieresDe, piece, type Famille, type Inventory, type ItemBag, type Matiere, type WallMaterial } from '@ashes/sim'
+import { createCatalogue } from './catalogue'
+import { coutJetons } from './craft-panel'
 import type { Buildable } from '../../hud-state'
 
-/** Les pièces structurelles du menu du marteau (spec construction R20). */
-export const BUILDABLES = ['wall', 'palissade', 'door', 'floor', 'roof'] as const
-export const BUILDABLE_LABEL: Record<Buildable, string> = {
-  wall: 'Mur',
-  // La palissade au marteau du joueur : décision d'Alexis, 2026-08-01 (« garde la
-  // palissade pour le joueur aussi »). Sans palier de matériau — le bois est son essence.
-  palissade: 'Palissade',
-  door: 'Porte',
-  floor: 'Sol',
-  roof: 'Toit',
-}
+/**
+ * Les pièces du menu du marteau (spec construction R20) — DÉRIVÉES du registre
+ * (`pieces.ts`, geste de pose `marteau`), plus écrites ici.
+ *
+ * C'était l'une des « six listes écrites à la main que le compilateur ne gardait pas »
+ * du commit de la palissade : ajouter une barrière obligeait à venir la nommer ici, et
+ * à lui redonner un libellé français qui vivait déjà à côté de son coût. Une barrière
+ * neuve apparaît désormais toute seule, avec son nom.
+ */
+export const BUILDABLES = BARRIER_TYPES
+export const BUILDABLE_LABEL: Record<Buildable, string> = Object.fromEntries(
+  BARRIER_TYPES.map((t) => [t, piece(t).label]),
+) as Record<Buildable, string>
 const MATERIALS: readonly WallMaterial[] = ['wood', 'stone', 'metal']
 const MATERIAL_LABEL: Record<WallMaterial, string> = { wood: 'BOIS', stone: 'PIERRE', metal: 'MÉTAL' }
 
-/** Le coût d'une pièce, matériau compris pour mur/porte (spec construction R8). */
-export function pieceCost(piece: Buildable, material: WallMaterial): ItemBag {
-  if (piece === 'wall' || piece === 'door') return WALL_TIERS[material][piece].cost
-  return STRUCTURE_COSTS[piece]
+/**
+ * Le coût d'une pièce, matière comprise (spec construction R8, D3).
+ *
+ * C'EST LA PIÈCE QUI DIT si sa matière compte (`matiereChiffre`, registre) — plus une
+ * condition écrite ici. Le sol, le toit et la palissade retombent donc sur leur coût de
+ * base sans être nommés, et une pièce structurelle neuve à paliers entre toute seule.
+ */
+export function pieceCost(p: Buildable, material: Matiere): ItemBag {
+  if (matiereChiffre(p) && (p === 'wall' || p === 'door')) return WALL_TIERS[material][p].cost
+  return STRUCTURE_COSTS[p]
 }
 
 export interface BuildMenu {
@@ -45,12 +55,15 @@ export interface BuildMenu {
   armed(): Buildable | null
   /** Le palier de matériau choisi pour mur/porte. */
   material(): WallMaterial
+  /** LE MODE DÉMOLIR est-il armé ? Exclusif de `armed()` (l'un éteint l'autre). */
+  demolir(): boolean
   /** Ranger le marteau : désarme et referme (R21). */
   disarm(): void
 }
 
 export function createBuildMenu(board: HTMLElement): BuildMenu {
   let armed: Buildable | null = null
+  let demolir = false
   let materialIdx = 0
   let inv: Inventory = []
 
@@ -59,16 +72,32 @@ export function createBuildMenu(board: HTMLElement): BuildMenu {
   root.innerHTML = markup()
   board.appendChild(root)
 
-  const rows = BUILDABLES.map((piece) => {
-    const el = document.createElement('div')
-    el.className = 'bmn-row hud-click'
-    el.innerHTML = `<div class="bmn-head"><span class="bmn-name"></span><span class="bmn-arm">◤</span></div><div class="bmn-cost"></div>`
-    el.addEventListener('click', () => {
+  // LE CATALOGUE PARTAGÉ (2026-08-01) : le marteau y gagne d'un coup les rayons, la
+  // recherche et le défilement, qui n'existaient que côté artisanat. Sans eux, un
+  // catalogue de housing (des dizaines de pièces) serait injouable — et il arrive.
+  const cat = createCatalogue(root.querySelector<HTMLElement>('.bmn-cat')!, {
+    titre: 'CONSTRUCTION',
+    sousTitre: 'RANGER LE MARTEAU POUR DÉSARMER',
+
+    // ON ARME MÊME CE QU'ON NE PEUT PAS PAYER : le fantôme montre alors ce qui manque, et
+    // c'est la façon la plus courte d'apprendre le coût d'une pièce.
+    clicSiIndisponible: true,
+    onChoix: (cle) => {
+      const piece = cle as Buildable
       armed = armed === piece ? null : piece // bascule : recliquer désarme
+      demolir = false // les deux modes s'excluent : armer une pièce éteint la démolition
       draw()
-    })
-    root.querySelector('.bmn-rows')!.appendChild(el)
-    return { piece, el, name: el.querySelector<HTMLElement>('.bmn-name')!, cost: el.querySelector<HTMLElement>('.bmn-cost')! }
+    },
+  })
+
+  // LE MODE DÉMOLIR (décision d'Alexis, 2026-08-01) : le marteau défait ce qu'il a fait.
+  // Un BOUTON, pas une touche ni un clic droit — le geste doit se VOIR (le clic droit avait
+  // justement été débranché le 2026-07-12 avec tous les verbes invisibles, cf. `keymap.ts`).
+  const dem = root.querySelector<HTMLElement>('.bmn-dem')!
+  dem.addEventListener('click', () => {
+    demolir = !demolir
+    if (demolir) armed = null // …et l'inverse : on ne pose pas en cassant
+    draw()
   })
 
   const tabs = MATERIALS.map((mat, i) => {
@@ -84,29 +113,33 @@ export function createBuildMenu(board: HTMLElement): BuildMenu {
   })
   const palier = root.querySelector<HTMLElement>('.bmn-palier')!
 
-  const have = (item: ItemId): number => inv.reduce((n, s) => n + (s && s.item === item ? s.count : 0), 0)
-
   const draw = (): void => {
     const material = MATERIALS[materialIdx]!
-    for (const row of rows) {
-      const cost = pieceCost(row.piece, material)
-      const ready = hasItems(inv, cost)
-      const isArmed = armed === row.piece
-      row.el.classList.toggle('bmn-armed', isArmed)
-      row.el.classList.toggle('bmn-off', !ready && !isArmed)
-      row.name.innerHTML = isArmed
-        ? `${BUILDABLE_LABEL[row.piece]} <span class="bmn-tag">— ARMÉ</span>`
-        : BUILDABLE_LABEL[row.piece]
-      // Coût par matériau, le manquant en rouge (maquette : « fibre 2 (0) »).
-      row.cost.innerHTML = (Object.entries(cost) as [ItemId, number][])
-        .map(([item, need]) => {
-          const enough = have(item) >= need
-          return enough ? `${item} ${need}` : `<span class="bmn-miss">${item} ${need} (${have(item)})</span>`
-        })
-        .join(' · ')
-    }
+    cat.update(
+      BUILDABLES.map((p) => {
+        const cost = pieceCost(p, material)
+        const ready = hasItems(inv, cost)
+        return {
+          cle: p,
+          nom: piece(p).label,
+          // LE RAYON VIENT DU REGISTRE (`fam`) : un lot de pièces neuves apporte son
+          // propre rayon sans qu'on touche à cette UI.
+          rayon: RAYON_LABEL[piece(p).fam] ?? piece(p).fam.toUpperCase(),
+          couts: coutJetons(cost, inv),
+          detail: piece(p).arete === 'requise' ? 'sur une arête' : undefined,
+          etat: ready ? ('faisable' as const) : ('manque' as const),
+          armee: armed === p,
+        }
+      }),
+    )
     tabs.forEach((t, i) => t.classList.toggle('bmn-tab-on', i === materialIdx))
-    palier.textContent = `PALIER ${materialIdx + 1} / ${MATERIALS.length} · Mur & Porte suivent le palier`
+    dem.classList.toggle('bmn-dem-on', demolir)
+    dem.innerHTML = `<div class="bmn-dem-t">⛏ DÉMOLIR${demolir ? ' — ARMÉ' : ''}</div>
+      <div class="bmn-dem-s">${demolir ? 'CLIQUER MA CONSTRUCTION POUR LA DÉTRUIRE' : 'DÉFAIRE MES CONSTRUCTIONS · MOITIÉ RENDUE'}</div>`
+    // QUI SUIT LE PALIER se LIT du registre : la barre nomme les pièces concernées au
+    // lieu de les supposer, donc une pièce neuve à paliers s'y annonce d'elle-même.
+    const suivent = BUILDABLES.filter((p) => matieresDe(p).length > 1).map((p) => piece(p).label)
+    palier.textContent = `PALIER ${materialIdx + 1} / ${MATERIALS.length} · ${suivent.join(' & ')} ${suivent.length > 1 ? 'suivent' : 'suit'} le palier`
   }
   draw()
 
@@ -121,49 +154,64 @@ export function createBuildMenu(board: HTMLElement): BuildMenu {
     },
     armed: () => armed,
     material: () => MATERIALS[materialIdx]!,
+    demolir: () => demolir,
     disarm() {
       armed = null
+      // RANGER LE MARTEAU ÉTEINT AUSSI LA DÉMOLITION (R21) : un mode destructeur qui
+      // survivrait à l'outil se rallumerait au prochain marteau en main, sans qu'on l'ait
+      // demandé — et le premier clic casserait quelque chose.
+      demolir = false
       draw()
     },
   }
 }
 
+/** Le nom d'un rayon à l'écran. Une famille absente retombe sur son identifiant en capitales. */
+const RAYON_LABEL: Partial<Record<Famille, string>> = {
+  ancre: 'LE FEU',
+  structure: 'STRUCTURE',
+  composant: 'COMPOSANTS',
+  mobilier: 'MOBILIER',
+  ferme: 'FERME',
+  vestige: 'VESTIGES',
+  heritage: 'ANCIEN',
+}
+
 function markup(): string {
   return `
   <style>
-    .bmn{position:absolute;left:0;top:0;bottom:150px;width:340px;background:rgba(20,16,12,.86);
+    /* SOUS LE BANDEAU DE JOUR (MESURÉ, 2026-08-01) : le titre du panneau et « JOUR 1 —
+       ACTE I — 09H » tombaient tous deux à y=56, l'un par-dessus l'autre, et « VILLAGE :
+       4 MEMBRES » sous « RANGER LE MARTEAU ». Deux textes superposés ne se lisent ni l'un
+       ni l'autre. Le décalage part du BAS mesuré du bandeau (67 px dans le repère du
+       plateau), pas d'un nombre choisi à l'œil. */
+    .bmn{position:absolute;left:0;top:72px;bottom:150px;width:340px;background:rgba(20,16,12,.86);
       border-right:3px solid #14141a;border-bottom:3px solid #14141a;padding:24px 20px;display:none;flex-direction:column;pointer-events:auto;}
-    .bmn-title{display:flex;align-items:center;gap:10px;margin-bottom:4px;}
-    .bmn-title .bmn-hammer{font-size:20px;filter:grayscale(1) brightness(1.4);}
-    .bmn-title .bmn-t{font-size:15px;font-weight:700;color:#ffffff;letter-spacing:1px;}
-    .bmn-sub{font-size:11px;color:#8b8474;letter-spacing:1px;margin-bottom:22px;}
-    .bmn-rows{display:flex;flex-direction:column;gap:8px;}
-    .bmn-row{border:2px solid #6b5a3a;background:rgba(107,90,58,.08);padding:11px 13px;transition:border-color .12s,background .12s;}
-    .bmn-row.bmn-armed{border-color:#e8c66a;background:rgba(232,198,106,.1);}
-    .bmn-row.bmn-off{border-color:#3a3a44;background:rgba(27,27,34,.4);}
-    .bmn-head{display:flex;justify-content:space-between;align-items:center;}
-    .bmn-name{font-size:14px;color:#e8e0c8;}
-    .bmn-row.bmn-armed .bmn-name{color:#ffffff;}
-    .bmn-row.bmn-off .bmn-name{color:#8b8474;}
-    .bmn-tag{color:#e8c66a;letter-spacing:1px;}
-    .bmn-arm{font-size:11px;color:#e8c66a;opacity:0;}
-    .bmn-row.bmn-armed .bmn-arm{opacity:1;}
-    .bmn-cost{font-size:12px;color:#9a8f78;margin-top:4px;}
-    .bmn-row.bmn-off .bmn-cost{color:#8b8474;}
-    .bmn-miss{color:#e05a4a;}
-    .bmn-mat{margin-top:auto;border:2px solid #6b5a3a;background:rgba(107,90,58,.12);padding:13px;}
+    .bmn-cat{flex:1;min-height:0;display:flex;flex-direction:column;}
+    .bmn-mat{margin-top:16px;border:2px solid #6b5a3a;background:rgba(107,90,58,.12);padding:13px;flex:0 0 auto;}
     .bmn-mat-h{font-size:11px;color:#9a8f78;letter-spacing:1px;margin-bottom:10px;}
     .bmn-tabs{display:flex;gap:0;border:2px solid #14141a;}
     .bmn-tab{flex:1;text-align:center;font-size:12px;padding:8px 0;background:#1b1b22;color:#8b8474;letter-spacing:1px;}
     .bmn-tab.bmn-tab-on{background:#e8c66a;color:#14100c;font-weight:700;}
     .bmn-palier{font-size:11px;color:#8b8474;letter-spacing:1px;margin-top:8px;}
+    /* LE MODE DÉMOLIR — bloc FRÈRE du matériau, pas une vignette du catalogue : le catalogue
+       liste ce qu'on POSE, et il se dérive du registre (une entrée factice y salirait la
+       liste). Rouge éteint tant qu'il dort, plein quand il est armé — un mode destructeur
+       doit se voir d'un coup d'œil, de la même façon que l'onglet de matériau actif. */
+    .bmn-dem{margin-top:12px;border:2px solid #7a3b32;background:rgba(217,97,79,.10);padding:11px 13px;flex:0 0 auto;cursor:pointer;}
+    .bmn-dem-t{font-size:12px;color:#d98a7a;letter-spacing:1px;font-weight:700;}
+    .bmn-dem-s{font-size:11px;color:#8b8474;letter-spacing:1px;margin-top:5px;}
+    .bmn-dem.bmn-dem-on{background:#d9614f;border-color:#d9614f;}
+    .bmn-dem.bmn-dem-on .bmn-dem-t{color:#14100c;}
+    /* #2a0f0a et pas #3b1a14 : sur le rouge plein, le second ne tenait que 4,3:1 — sous les
+       4,5:1 exigés d'un petit texte. Celui-ci monte à 4,9:1. */
+    .bmn-dem.bmn-dem-on .bmn-dem-s{color:#2a0f0a;}
   </style>
-  <div class="bmn-title"><span class="bmn-hammer">🔨</span><span class="bmn-t">CONSTRUCTION</span></div>
-  <div class="bmn-sub">RANGER LE MARTEAU POUR DÉSARMER</div>
-  <div class="bmn-rows"></div>
+  <div class="bmn-cat"></div>
   <div class="bmn-mat">
     <div class="bmn-mat-h">MATÉRIAU — CLIQUER POUR CYCLER</div>
     <div class="bmn-tabs"></div>
     <div class="bmn-palier"></div>
-  </div>`
+  </div>
+  <div class="bmn-dem hud-click"></div>`
 }

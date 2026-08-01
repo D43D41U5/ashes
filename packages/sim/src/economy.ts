@@ -41,7 +41,6 @@ import {
 } from './balance'
 import { harvestFactor } from './alignment'
 import { die } from './combat'
-import { functionForStation } from './construction'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { heldSlot, wearHeld } from './inventory-actions'
@@ -57,6 +56,7 @@ import {
   type SkillId,
 } from './items'
 import { poiClearings, terrainAt, zoneAt, type WorldMap } from './map'
+import { libelleExigence, sertExigence } from './pieces'
 import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
 import { actForDay, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
@@ -315,11 +315,12 @@ export function effectiveTier(held: ToolTier, level: number): ToolTier {
  * divergeraient — et la file se figerait sur une station qui avait accepté l'ordre.
  */
 function stationFor(state: SimState, actor: Entity, recipe: Recipe): Structure | undefined {
-  if (recipe.station === null) return undefined
+  const besoin = recipe.requiert
+  if (besoin === null) return undefined
   const range = BALANCE.INTERACT_RANGE
   return state.structures.find(
     (s: Structure) =>
-      s.type === recipe.station &&
+      sertExigence(s.type, besoin) &&
       distSq(actor.x, actor.y, s.tx + 0.5, s.ty + 0.5) <= range * range &&
       hasAccess(state, actor.id, s),
   )
@@ -343,7 +344,7 @@ export type RecipeState = 'feasible' | 'missing' | 'no_station'
 export function recipeState(state: SimState, actor: Entity, recipeId: RecipeId): RecipeState {
   const recipe = RECIPES[recipeId]
   if (!recipe) return 'no_station'
-  if (recipe.station !== null && stationFor(state, actor, recipe) === undefined) return 'no_station'
+  if (recipe.requiert !== null && stationFor(state, actor, recipe) === undefined) return 'no_station'
   if (!hasItems(actor.inventory, recipe.inputs)) return 'missing'
   return 'feasible'
 }
@@ -371,8 +372,8 @@ function craftTicks(state: SimState, actor: Entity, recipe: Recipe): number {
  * toité de cette fonction, à portée, couvre la station tenue. Pur, déterministe.
  */
 function enclosedCraftSpeedup(state: SimState, actor: Entity, recipe: Recipe): boolean {
-  if (recipe.station === null) return false
-  const fid = functionForStation(recipe.station)
+  if (recipe.requiert === null) return false
+  const fid = recipe.requiert.fonction === 'feu' ? null : recipe.requiert.fonction
   if (fid === null || FUNCTIONS[fid].enclosureBonus !== 'vitesse') return false
   const station = stationFor(state, actor, recipe)
   if (!station) return false
@@ -684,8 +685,8 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       // `station: null` = À LA MAIN (spec craft-fortune C1) : nulle part, donc
       // partout — sans structure, sans village, sans Feu. C'est la rampe du
       // survivant nu : elle n'ajoute AUCUNE autre porte (C2).
-      if (recipe.station !== null && stationFor(state, actor, recipe) === undefined) {
-        return reject(`station requise hors de portée : ${recipe.station}`)
+      if (recipe.requiert !== null && stationFor(state, actor, recipe) === undefined) {
+        return reject(`station requise hors de portée : ${libelleExigence(recipe.requiert)}`)
       }
       // Les clics répétés se GROUPENT (F3) : cinq cordes = une ligne « ×5 ». Sinon
       // la file déborde de l'écran au premier lot, et son bouton d'annulation
@@ -792,7 +793,7 @@ export function advanceCraft(state: SimState): void {
     if (order === undefined) continue
     const recipe = RECIPES[order.recipeId]
 
-    order.paused = recipe.station !== null && stationFor(state, entity, recipe) === undefined
+    order.paused = recipe.requiert !== null && stationFor(state, entity, recipe) === undefined
     if (order.paused) continue
 
     if (order.remainingTicks > 0) {

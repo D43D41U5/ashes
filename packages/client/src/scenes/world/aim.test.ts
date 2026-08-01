@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Corpse, ResourceNode } from '@ashes/sim'
-import { AGRICULTURE, EDGE_N, EDGE_O, STRUCTURE_HP } from '@ashes/sim'
-import { aimAt, clickToAction, holdHarvest, type AimStructure } from './aim'
+import { AGRICULTURE, EDGE_N, EDGE_O, EDGE_S, STRUCTURE_HP } from '@ashes/sim'
+import { aimAt, clickToAction, demolishTargetAt, holdHarvest, type AimStructure, type DemolishStructure } from './aim'
 
 const RANGE = 1.5
 const node = (id: number, tx: number, ty: number, stock = 10): ResourceNode =>
@@ -414,5 +414,126 @@ describe('clickToAction — le potager : semer & récolter (agriculture voie A)'
     const t = aimAt(10, 10, PLAYER, [], [], RANGE, [], [abimee], 0)
     expect(t.repairableId).toBe(8)
     expect(clickToAction(t, null, wood)).toEqual({ type: 'repair', structureId: 8 })
+  })
+})
+
+/**
+ * DÉMOLIR AU MARTEAU (décision d'Alexis, 2026-08-01) : « on doit pouvoir détruire une
+ * structure construite avec le marteau — seules ses propres constructions ».
+ *
+ * La sim sait démolir depuis V3 (spec village R9/A5) ; ce qui manquait, c'est la VISÉE.
+ * Elle se prouve ici parce qu'une tuile n'est pas une structure : elle porte jusqu'à trois
+ * couches (sol, toit, solide) ET quatre arêtes. « La première structure de la tuile »
+ * détruirait au hasard, et la sim ne peut pas rattraper ça — elle accepte tout `structureId`
+ * valide. Le seul garde-fou possible est ici.
+ */
+describe('demolishTargetAt — ce que le marteau détruirait', () => {
+  const MOI = 7
+  const AUTRE = 9
+  /** Une structure du snapshot, réduite à ce que la visée regarde. */
+  const bati = (over: Partial<DemolishStructure> & { id: number }): DemolishStructure =>
+    ({ tx: 10, ty: 10, type: 'wall', ownerId: MOI, villageId: 1, ...over })
+  /** LE BALAYAGE : 81 positions de curseur dans la tuile (10,10) — pas un cas choisi.
+   *  Une règle de géométrie s'affirme sur tout l'espace, sinon on ne teste que sa moitié. */
+  const CURSEURS: [number, number][] = []
+  for (let i = 1; i <= 9; i++) for (let j = 1; j <= 9; j++) CURSEURS.push([10 + i / 10, 10 + j / 10])
+
+  it('ne vise QUE mes constructions — le mur du voisin n’a aucune affordance', () => {
+    const murs = [bati({ id: 1, ownerId: AUTRE, edges: EDGE_N }), bati({ id: 2, ownerId: MOI, edges: EDGE_S })]
+    for (const [wx, wy] of CURSEURS) {
+      expect(demolishTargetAt(murs, wx, wy, MOI)?.ownerId).not.toBe(AUTRE)
+      // Et SEUL sur la tuile, il ne devient pas une cible pour autant : depuis aucune position
+      // du curseur le marteau ne peut mordre le mur d'autrui.
+      expect(demolishTargetAt([murs[0]!], wx, wy, MOI)).toBeUndefined()
+    }
+  })
+
+  it('un COIN porte deux murs : c’est LE CURSEUR qui tranche — le trait le plus proche', () => {
+    // Le défaut que la pose a déjà connu (R23) : lire la tuile désigne un mur au hasard. Ici la
+    // propriété tient sur TOUTE la tuile — le mur nord gagne exactement là où le trait nord est
+    // le plus proche (v < u), l'ouest partout ailleurs. Aucune position ne rend « rien ».
+    const coin = [bati({ id: 1, edges: EDGE_N }), bati({ id: 2, edges: EDGE_O })]
+    for (const [wx, wy] of CURSEURS) {
+      const u = wx - 10
+      const v = wy - 10
+      // Sur la DIAGONALE (v === u) les deux traits sont à égalité parfaite : c'est l'ordre
+      // déclaré (N, E, S, O) qui tranche, toujours dans le même sens. Une visée qui vacillerait
+      // là serait pire qu'un choix arbitraire — le surlignage clignoterait entre deux murs.
+      expect(demolishTargetAt(coin, wx, wy, MOI)?.id).toBe(v <= u ? 1 : 2)
+    }
+  })
+
+  it('une SEULE barrière : elle est visée depuis n’importe où dans la tuile', () => {
+    // Sans ambiguïté à lever, exiger de viser le bon trait ferait rater le clic pour rien.
+    const seul = [bati({ id: 1, edges: EDGE_O })]
+    for (const [wx, wy] of CURSEURS) expect(demolishTargetAt(seul, wx, wy, MOI)?.id).toBe(1)
+  })
+
+  it('le mur du VOISIN D’EN FACE compte : une arête se lit des DEUX côtés', () => {
+    // Un trait est partagé. Le mur nord de ma tuile peut être déclaré comme le mur SUD de la
+    // tuile au-dessus, selon d'où on l'a posé — et il serait alors indémolissable depuis la
+    // tuile qu'on vise. C'est `edgeBarrierAt` qui règle ça pour la pose ; même dette ici.
+    const enFace = [bati({ id: 1, ty: 9, edges: EDGE_S })]
+    expect(demolishTargetAt(enFace, 10.5, 10.1, MOI)?.id).toBe(1)
+  })
+
+  it('LES TROIS COUCHES se démontent de haut en bas : le solide, puis le toit, puis le sol', () => {
+    // La tuile la plus chargée que le jeu produise : deux murs d'arête, un coffre, un toit, un
+    // sol. Une seule propriété affirmée — l'ordre de démontage — et sur tout le balayage.
+    const pile = [
+      bati({ id: 1, type: 'floor' }),
+      bati({ id: 2, type: 'roof' }),
+      bati({ id: 3, type: 'chest' }),
+      bati({ id: 4, type: 'wall', edges: EDGE_N }),
+      bati({ id: 5, type: 'wall', edges: EDGE_O }),
+    ]
+    // Les murs priment partout (on vise forcément un trait de plus près qu'autre chose)…
+    for (const [wx, wy] of CURSEURS) expect([4, 5]).toContain(demolishTargetAt(pile, wx, wy, MOI)?.id)
+    // …et sans eux, on descend : coffre, puis toit, puis sol — depuis n'importe où.
+    const sansMurs = pile.filter((s) => s.edges === undefined)
+    for (const [wx, wy] of CURSEURS) {
+      expect(demolishTargetAt(sansMurs, wx, wy, MOI)?.id).toBe(3)
+      expect(demolishTargetAt(sansMurs.filter((s) => s.id !== 3), wx, wy, MOI)?.id).toBe(2)
+      expect(demolishTargetAt(sansMurs.filter((s) => s.type === 'floor'), wx, wy, MOI)?.id).toBe(1)
+    }
+  })
+
+  it('le FEU d’un village ne se vise pas ; le feu de camp LIBRE, si', () => {
+    // La sim refuse le premier (« un Feu ne s’éteint pas ») : ne pas l'offrir du tout.
+    expect(demolishTargetAt([bati({ id: 1, type: 'fire', villageId: 3 })], 10.5, 10.5, MOI)).toBeUndefined()
+    expect(demolishTargetAt([bati({ id: 1, type: 'fire', villageId: 0 })], 10.5, 10.5, MOI)?.id).toBe(1)
+  })
+
+  it('tant que je ne sais pas QUI je suis, rien n’est à moi', () => {
+    // `playerId` vaut 0 dans WorldScene jusqu'au `ready`. Or `ownerId === 0` = « au village,
+    // au monde » : sans garde, un snapshot arrivé trop tôt offrirait tout le bâti de POI.
+    const poi = [bati({ id: 1, ownerId: 0, type: 'chest' }), bati({ id: 2, ownerId: 0, edges: EDGE_N })]
+    for (const [wx, wy] of CURSEURS) expect(demolishTargetAt(poi, wx, wy, 0)).toBeUndefined()
+  })
+
+  it('une tuile vide, ou une autre tuile, ne rend rien', () => {
+    expect(demolishTargetAt([], 10.5, 10.5, MOI)).toBeUndefined()
+    // Une pièce PLEINE TUILE d'à côté ne déborde pas sur la mienne (les arêtes, elles, si).
+    expect(demolishTargetAt([bati({ id: 1, tx: 12, type: 'chest' })], 10.5, 10.5, MOI)).toBeUndefined()
+  })
+})
+
+describe('clickToAction — le mode DÉMOLIR est un mode : il dit ce que le clic fait', () => {
+  const ctx = (onTile: { id: number; type: 'wall' } | null) =>
+    ({ material: 'wood' as const, edge: EDGE_N, demolir: true, onTile })
+
+  it('une cible sous le curseur → `demolish`, et rien d’autre', () => {
+    const t = aimAt(10, 10, PLAYER, [], [], RANGE)
+    expect(clickToAction(t, null, undefined, ctx({ id: 42, type: 'wall' }))).toEqual({
+      type: 'demolish',
+      structureId: 42,
+    })
+  })
+
+  it('SANS cible, le clic ne fait RIEN — il ne retombe ni sur la récolte ni sur la frappe', () => {
+    // Le piège qu'on refuse : marteau armé pour casser, on vise à côté, et l'on se met à
+    // couper du bois (ou à frapper mains nues). Un mode qui fuit n'est pas un mode.
+    const surArbre = aimAt(10, 10, PLAYER, [node(7, 10, 10)], [], RANGE)
+    expect(clickToAction(surArbre, null, { held: null, dx: 1, dy: 0 }, ctx(null))).toBeNull()
   })
 })

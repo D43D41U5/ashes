@@ -31,6 +31,7 @@ import {
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { engageRange, startAttack, weaponProfile } from './combat'
 import { applyEconomyAction, toolRank, type ResourceNode } from './economy'
+import { sertExigence } from './pieces'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { zoneIdAt } from './map'
@@ -530,11 +531,12 @@ type CraftProgress = 'ready' | 'busy' | 'failed'
 function progressCraft(state: SimState, village: Village, npc: Npc, entity: Entity, recipeId: RecipeId): CraftProgress {
   const recipe = RECIPES[recipeId]
   if (countOf(entity.inventory, recipe.output) > 0) return 'ready'
+  // LA STATION DU VILLAGE qui sert l'exigence de la recette (2026-08-01) : on ne cherche
+  // plus un TYPE d'objet mais une CAPACITÉ, donc un four d'acier fait aussi bien qu'un four.
+  const besoin = recipe.requiert
   const station =
-    recipe.station === null
-      ? undefined
-      : state.structures.find((s) => s.type === recipe.station && s.villageId === village.id)
-  if (recipe.station !== null && station === undefined) return 'failed'
+    besoin === null ? undefined : state.structures.find((s) => sertExigence(s.type, besoin) && s.villageId === village.id)
+  if (besoin !== null && station === undefined) return 'failed'
   if (entity.craftQueue.some((o) => o.recipeId === recipeId)) {
     // La file travaille : on reste à portée de la station, on ne fait rien d'autre.
     if (station && !near(entity, station.tx, station.ty)) {

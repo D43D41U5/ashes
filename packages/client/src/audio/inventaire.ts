@@ -112,6 +112,14 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   skill_level_up: { voix: 'voix', famille: 'progres', quoi: 'un métier monte d’un niveau' },
   poi_first_visit: { voix: 'voix', famille: 'progres', quoi: 'on FOULE un lieu pour la première fois' },
   poi_discovered: { voix: 'muet', famille: 'progres', quoi: 'un lieu entre dans la carte' },
+  /**
+   * MUET, et c'est un choix : une matière ramassée ouvre souvent PLUSIEURS recettes d'un
+   * coup (un lingot de fer en annonce trois), et poser une station en révèle une poignée
+   * dans le même tick. Un son par recette ferait une rafale à chaque ramassage — le
+   * contraire de ce que la découverte doit être. Si elle doit s'entendre un jour, c'est
+   * d'UNE voix par salve, pas par ligne : une décision à part entière.
+   */
+  recipe_revealed: { voix: 'muet', famille: 'progres', quoi: 'une recette se découvre — sa matière, ou sa station' },
 
   // ── LA PLAIE — refermée : on entend désormais qu'une plaie s'ouvre, pas seulement ─
   entity_bandaged: { voix: 'voix', famille: 'plaie', quoi: 'une plaie est pansée' },

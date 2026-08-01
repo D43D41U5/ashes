@@ -10,11 +10,12 @@
  * que snapshot = JSON.stringify et que le transport Worker/réseau soit
  * trivial.
  */
-import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type Strike } from './balance'
+import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type RecipeId, type Strike } from './balance'
 import { moveAvatar } from './collision'
 import { advanceCombat, applyCombatAction, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
 import { advanceReveils, type Reveil } from './morts'
+import { advanceDecouverte } from './decouverte'
 import { advanceFire } from './fire'
 import { applyDebugAction, isDebugAction, refreshGodMode, type DebugAction } from './debug'
 import {
@@ -83,6 +84,12 @@ export interface Entity {
    * qui divergerait. Seule la TÊTE travaille : un artisan fait une chose à la fois.
    */
   craftQueue: CraftOrder[]
+  /**
+   * LES RECETTES DÉCOUVERTES (D2, `decouverte.ts`). Absent = rien encore. Un TABLEAU et
+   * non un `Set` (invariant §3 : l'état de sim voyage en JSON), alimenté dans un ordre
+   * fixe, donc identique au rejeu. Ce qui est appris ne se reprend jamais.
+   */
+  seen?: RecipeId[]
   /** Combat (spec combat R1-R7). */
   hp: number
   stamina: number
@@ -99,6 +106,15 @@ export interface Entity {
    * pour les bêtes. Posée par le pas d'input ; les PNJ restent à `walk` (bruit 1).
    */
   gait: 'still' | 'sneak' | 'walk' | 'sprint'
+  /**
+   * À BOUT DE SOUFFLE — le verrou d'hystérésis de la course (spec combat R1ter). Posé
+   * quand le sprint vide la barre, levé seulement à `SPRINT_RECOVER_STAMINA`. Sans lui,
+   * refuser la course à 0 la rend au tick suivant (l'allure retombe à `walk`, la régén
+   * crédite) et l'avatar oscille sprint/marche à 10 Hz — mesuré, il courait encore une
+   * tuile sur deux, indéfiniment. Absent = frais : un booléen optionnel ne salit le
+   * snapshot que de ceux qui sont VRAIMENT à bout.
+   */
+  exhausted?: true
   exhaustedUntil: number
   /** LE COÛT DE MORT CROISSANT (V2-21) : morts RAPPROCHÉES → épuisement plus long
    *  (plafonné). Une longue survie fait OUBLIER le compte (`lastDeathAt`), pas de
@@ -526,7 +542,7 @@ export function carrySpeedFactor(ratio: number): number {
  * chose que le joueur sent, avant même de regarder une jauge.
  */
 export function speedScaleFor(
-  entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina' | 'temperature' | 'inventory'>,
+  entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina' | 'temperature' | 'inventory'> & { exhausted?: true | undefined },
   input: { sprint: boolean; block: boolean; moving: boolean; charging?: boolean; sneak?: boolean },
 ): { scale: number; sprinting: boolean; sneaking: boolean } {
   let scale = 1
@@ -548,7 +564,11 @@ export function speedScaleFor(
   // Il se COMBINE à la charge (× les deux facteurs) : ramper lance armée est
   // exactement l'approche que la mise à mort propre récompense (C6).
   const sneaking = (input.sneak ?? false) && !blocking
-  const sprinting = !blocking && !charging && !sneaking && input.sprint && entity.stamina > 0 && input.moving && canSprint
+  // À BOUT DE SOUFFLE, ON MARCHE — et on le reste jusqu'à `SPRINT_RECOVER_STAMINA`
+  // (R1ter). `stamina > 0` seul rendait la course DÈS le premier point regagné, d'où une
+  // oscillation sprint/marche à 10 Hz qui laissait fuir à 5 t/s pour toujours.
+  const sprinting =
+    !blocking && !charging && !sneaking && input.sprint && entity.stamina > 0 && !entity.exhausted && input.moving && canSprint
   if (blocking) scale *= COMBAT.BLOCK_MOVE_FACTOR
   else if (sprinting) scale *= COMBAT.SPRINT_FACTOR
   else if (sneaking) scale *= HUNT.SNEAK_SPEED_FACTOR
@@ -675,6 +695,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     avancerLaCendre(state)
   }
   advanceCraft(state)
+  // LA DÉCOUVERTE (D2) après le craft : ce qu'on vient de fabriquer révèle la suite au
+  // tick même, sans attendre le suivant.
+  advanceDecouverte(state)
   advanceSpoilage(state)
   advanceEconomy(state)
   advanceTemperature(state)

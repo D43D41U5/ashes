@@ -21,7 +21,7 @@ import { BALANCE, COMPONENT_TYPES, EDGE_BITS, NODE_DEFS, SLOTS, edgeBarrierAt, t
 import Phaser from 'phaser'
 import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
-import { aimAt, clickToAction, holdHarvest, type AimTarget, type BuildContext, type HandContext } from './aim'
+import { aimAt, clickToAction, demolishTargetAt, holdHarvest, type AimTarget, type BuildContext, type HandContext } from './aim'
 import { BELT_BINDINGS } from './keymap'
 import { keymapEffectif } from './keymap-perso'
 
@@ -39,6 +39,9 @@ export interface InputDeps {
   unproject(px: number, py: number): { x: number; y: number }
   /** Le tick du dernier snapshot — pour juger la maturité d'une parcelle (agriculture). */
   simTick(): number
+  /** L'id de MON avatar — ce qui décide de ce que le mode DÉMOLIR peut viser : mes
+   *  constructions, et elles seules (décision d'Alexis, 2026-08-01). */
+  playerId(): number
 }
 
 /** Les touches de déplacement, lues chaque frame par `WorldScene.update`. */
@@ -56,6 +59,8 @@ export interface MovementBindings {
   cancelHold(): void
   /** Ce que vise le curseur MAINTENANT — pour le surlignage et le fantôme. */
   aim(pointer: Phaser.Input.Pointer): AimTarget
+  /** Le curseur en TUILES, fraction comprise — ce qui désigne l'ARÊTE visée en mode démolir. */
+  curseur(pointer: Phaser.Input.Pointer): { x: number; y: number }
   /** Ce que le clic gauche POSERAIT maintenant : une construction armée au panneau
    *  (marteau en main), ou `'fire'` si l'on tient un feu de camp dans la ceinture.
    *  `null` = rien à poser. Le fantôme et le résolveur de clic le lisent ici. */
@@ -180,10 +185,18 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
 
   /** Le contexte de POSE (spec construction R8) : le palier de matériau choisi au
    *  menu du marteau, et la structure DÉJÀ sur la tuile visée (pour l'améliorer). */
-  const buildCtx = (aim: AimTarget): BuildContext => {
+  const buildCtx = (aim: AimTarget, curseur: { x: number; y: number }): BuildContext => {
     const material = getHud(scene.registry, 'buildMaterial') ?? 'wood'
     const edge = getHud(scene.registry, 'buildEdge') ?? EDGE_BITS[0]!
     const armed = getHud(scene.registry, 'selected') ?? null
+    // MODE DÉMOLIR : la cible n'est plus « ce qu'on améliorerait » mais ce qu'on DÉTRUIRAIT
+    // — mes constructions seules, désignées AU CURSEUR (l'arête armée est invisible tant que
+    // le fantôme est éteint). Même fonction que le surlignage rouge de WorldScene, mêmes
+    // arguments : les deux ne peuvent pas désigner deux pièces différentes.
+    if (getHud(scene.registry, 'demolir') === true) {
+      const cible = demolishTargetAt(deps.structures(), curseur.x, curseur.y, deps.playerId())
+      return { material, edge, demolir: true, onTile: cible ? { id: cible.id, type: cible.type } : null }
+    }
     // CE QU'ON AMÉLIORE D'UN CLIC : la barrière qui porte l'ARÊTE VISÉE quand on tient un mur ou
     // une porte (R23), et non plus « la première structure de la tuile ». Un coin de pièce porte
     // déjà un mur au nord ; le lire améliorerait celui-là au lieu de poser celui de l'ouest, et
@@ -293,6 +306,16 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   /** La tuile sous le curseur, et ce qu'elle porte. Recalculée à la demande : le
    *  curseur bouge, le nœud s'épuise, et la caméra GLISSE ENCORE après la course
    *  — une visée mémorisée au `pointerdown` viserait déjà ailleurs (recolte.md G8). */
+  /**
+   * LE CURSEUR EN TUILES, FRACTION COMPRISE — la tuile visée ne suffit pas au mode DÉMOLIR :
+   * une tuile porte jusqu'à quatre arêtes, et c'est la position DANS la tuile qui dit laquelle
+   * on montre. Un seul accesseur pour les deux lecteurs (le surlignage de WorldScene et le
+   * résolveur de clic) : deux calculs désigneraient deux murs différents.
+   */
+  const curseurTuile = (pointer: Phaser.Input.Pointer): { x: number; y: number } => {
+    const world = pointerToWorld(pointer)
+    return { x: world.x / TILE_PX, y: world.y / TILE_PX }
+  }
   const aimNow = (pointer: Phaser.Input.Pointer): AimTarget => {
     const world = pointerToWorld(pointer)
     return aimAt(
@@ -507,8 +530,17 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     // Le résolveur PUR tranche (aim.ts) : MANGER, FRAPPER, récolter, fouiller,
     // POSER/AMÉLIORER — selon CE QU'ON TIENT. C'est la seule règle d'interaction.
     const aim = aimNow(pointer)
-    const action = clickToAction(aim, placing(), handAt(pointer), buildCtx(aim))
+    const action = clickToAction(aim, placing(), handAt(pointer), buildCtx(aim, curseurTuile(pointer)))
     holding = true
+    // LE MODE DÉMOLIR NE SE RÉPÈTE PAS AU MAINTIEN, et n'a AUCUNE porte de sortie : une
+    // destruction est un acte, pas une cadence — tenir le clic ne rase pas une rangée de
+    // murs. Et sans ce retour, `tickHold` (qui ne connaît pas le mode) se remettrait à
+    // RÉCOLTER l'arbre sous le curseur dès que le marteau ne vise rien à moi.
+    if (getHud(scene.registry, 'demolir') === true) {
+      holding = false
+      if (action) deps.sendAction(action)
+      return
+    }
     if (action?.type === 'attack') {
       // FRAPPER, c'est ARMER. Le clic bref donne le coup simple (la charge n'aura pas
       // eu le temps de mûrir), le clic tenu donne le coup lourd — un seul bouton,
@@ -658,5 +690,5 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     holding = false
   }
 
-  return { keys, sprintKeys, sneakKeys, blockKeys, tickHold, cancelHold, aim: aimNow, placing }
+  return { keys, sprintKeys, sneakKeys, blockKeys, tickHold, cancelHold, aim: aimNow, curseur: curseurTuile, placing }
 }

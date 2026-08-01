@@ -152,98 +152,19 @@ export type Inventory = (Slot | null)[]
 export type ItemBag = Partial<Record<ItemId, number>>
 
 /**
- * LES STRUCTURES (spec construction R8). Deux familles :
- *  · BARRIÈRES — passives, statiques, posées librement en nombre : `wall`, `door`,
- *    `floor`, `roof`, `chest`. Murs/portes BLOQUENT (ou closent) ; sols/toits sont
- *    des pièces MOLLES (sans collision, R14).
- *  · COMPOSANTS — les atomes actifs (enclume, four…), qui GROUPÉS font émerger une
- *    fonction (R9). Ils s'ajoutent au fil des tranches (Forge, Atelier, Grenier…).
- * `fire` reste l'ancre sui generis (R1). `workshop`/`furnace`/`house` : héritage V3.
+ * ═══ LES STRUCTURES — LA LISTE A DÉMÉNAGÉ (2026-08-01) ═══
+ *
+ * `StructureType` n'est plus une union écrite à la main : elle DÉRIVE du registre
+ * `pieces.ts` (`keyof typeof PIECES`), où chaque pièce déclare d'un seul tenant son
+ * coût, ses PV, son accès, ce qu'elle fait au passage, sa couche et son geste de pose.
+ *
+ * Elle est réexportée ICI pour que les ~40 fichiers qui l'importent depuis `./items`
+ * ne bougent pas d'une ligne — la migration est silencieuse, comme celle des arêtes.
+ * Pour AJOUTER une pièce, c'est `pieces.ts` et lui seul.
  */
-export type StructureType =
-  | 'fire'
-  | 'wall'
-  /**
-   * LA PALISSADE (décision d'Alexis, 2026-08-01) — l'enceinte d'un village n'est PAS
-   * le mur d'un bâtiment : des rondins dressés, sur arête comme le mur, sans palier
-   * de matériau (le bois est son essence — la pierre, c'est un mur). C'est la pièce
-   * des enceintes de villages PNJ, et une barrière du marteau comme les autres.
-   */
-  | 'palissade'
-  | 'door'
-  | 'floor'
-  | 'roof'
-  | 'chest'
-  | 'workshop'
-  | 'furnace'
-  | 'house'
-  // ── LES COMPOSANTS (atomes actifs, R8). Groupés, ils font émerger une fonction. ──
-  | 'enclume'
-  | 'four_acier'
-  | 'tour_meca'
-  | 'atelier_lourd'
-  // Le Grenier : des CONTENEURS anti-pourriture (silo → cave → réserve).
-  | 'silo'
-  | 'cave'
-  | 'reserve'
-  // La Ferme : parcelle → serre (cultures d'hiver) → terroir. En plein air (pas d'enceinte).
-  | 'parcelle'
-  | 'serre'
-  | 'terroir'
-  /**
-   * ── LES PIÈCES DU MONDE BÂTI (`poi-batis.ts`) ──
-   *
-   * Le vocabulaire qui manquait pour dire RUINE et FERME. Ce ne sont ni des barrières
-   * (elles ne closent rien) ni des composants (elles ne font émerger aucune fonction) :
-   * ce sont des pièces ORDINAIRES, du même bois que le reste — un mur du pays d'avant
-   * et un mur qu'on pose sont le même objet, et c'est tout le propos.
-   *
-   * Elles ne sont pas encore posables au marteau (aucun objet-jumeau à fabriquer) : le
-   * catalogue de la construction §4bis les promet déjà au joueur par l'Atelier
-   * (« mobilier/charrettes ») et le Dortoir (« Lit(s) ») — cette tranche pose les
-   * pièces, la suivante posera les recettes.
-   */
-  // Mobilier — ce qui dit qu'on VIVAIT là.
-  | 'table'
-  | 'banc'
-  | 'paillasse'
-  | 'etagere'
-  | 'tonneau'
-  // Ferme — ce qui dit qu'on CULTIVAIT là.
-  | 'friche'
-  /**
-   * LA TERRE BATTUE — le sol d'une cour. Sans elle, un enclos n'était qu'une clôture posée dans
-   * l'herbe : rien ne disait qu'on avait piétiné là pendant des années. Elle fait de la cour une
-   * PIÈCE du bâtiment, et non un bout de pré qu'on a entouré.
-   */
-  | 'terre'
-  | 'cloture'
-  | 'abreuvoir'
-  | 'meule'
-  /**
-   * L'ENCADREMENT DE PORTE, SANS PORTE — l'entrée d'un bâtiment.
-   *
-   * Ce n'est PAS une `door` : la porte est une barrière à serrure, qui bloque et qui s'ouvre
-   * pour les siens. L'encadrement, lui, ne ferme rien — c'est un TROU DANS LE MUR, tenu par
-   * deux jambages et un linteau. Il dit « on entre ici » sans rien interdire.
-   *
-   * Et c'est ce dont le monde bâti a besoin : une `door` sans village bloque TOUT LE MONDE
-   * (bug vivant sur les ruines de villages tombés), donc aucune ruine ne peut en porter. Un
-   * encadrement le peut, et il donne au bâtiment son seuil.
-   */
-  | 'encadrement'
-  // Ruine — ce qui dit que c'est TOMBÉ.
-  | 'atre'
-  | 'poutre'
-  | 'mur_bas'
+export type { StructureType, BarrierType, ComponentType, FunctionId, PieceDef, Famille } from './pieces'
 
-/**
- * LES PIÈCES STRUCTURELLES du marteau (spec construction R20, décision d'Alexis
- * 2026-07-18) : les SEULES choses qu'on pose au marteau. Le coffre, le four et
- * l'établi n'en sont PAS — ce sont des objets qu'on tient et pose (`place_component`).
- */
-export type BarrierType = 'wall' | 'palissade' | 'door' | 'floor' | 'roof'
-
+/** Qui a le droit d'ouvrir, de déposer, de retirer (spec village R10). */
 export type AccessLevel = 'private' | 'village' | 'public'
 
 /** Les quatre métiers V4 (spec économie R12). */

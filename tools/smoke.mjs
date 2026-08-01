@@ -870,6 +870,170 @@ const SCENARIOS = {
   },
 
   /**
+   * LE SPRINT (2026-08-01) — la course SE VOIT, et l'endurance dure ce qu'elle doit durer.
+   *
+   * Deux choses que seul le navigateur prouve, et elles se tiennent :
+   *
+   *   1. LA DURÉE. On tient SHIFT+W et on chronomètre la barre : elle doit tomber à 0 en
+   *      ~12,5 s (100 / 8 par seconde), pas en 57 — la régén ne doit plus recréditer
+   *      pendant la course. C'est la mesure de bout en bout, à travers le vrai Worker,
+   *      là où le test unitaire ne juge que `step()`.
+   *   2. LA POUSSIÈRE. Compteur `sprintFx.vivants` en chemin (le rendu headless traîne :
+   *      on somme le max), puis on FIGE la boucle pour la capturer — une bouffée vit
+   *      620 ms et l'horloge headless l'enjambe.
+   *
+   * Trois captures qui se REGARDENT : la foulée fraîche, la foulée à bout (bouffées plus
+   * denses, silhouette tassée), et le MUR (la bronchée + sa bouffée large). Exige `--dev`.
+   */
+  async sprint(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1000)
+    // Plein jour : la poussière est une valeur claire sur le sol, la nuit la mangerait.
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    const sonde = () => page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const me = (sc.lastEntities ?? []).find((e) => e.id === sc.playerId)
+      return {
+        s: sc.myStamina ?? -1,
+        t: sc.lastSnapshotTick ?? -1,
+        g: sc.sprintFx?.vivants ?? -1,
+        // L'ALLURE QUE LA SIM A RETENUE — pas celle qu'on croit tenir au clavier. C'est
+        // elle qui commande la garde de régén, donc c'est sur elle que la propriété se
+        // formule : deux relevés d'affilée en `sprint`, l'endurance ne peut qu'avoir baissé.
+        a: me?.gait ?? '?',
+      }
+    })
+
+    const debut = await sonde()
+    console.log(`endurance au départ : ${debut.s}`)
+
+    // LE MUR NE S'ATTEND PAS, IL SE PIÈGE. La bronchée dure 420 ms et sa bouffée 620 ms ;
+    // le headless de cette machine (SwiftShader, pas de GPU) tourne à quelques images par
+    // seconde, si bien qu'entre la sonde qui voit la barre à 0 et la capture, la poussière
+    // a toujours fini de retomber. On s'accroche donc à la FABRIQUE de la bouffée et on
+    // fige la boucle au moment MÊME où le mur la crée — recette de la gerbe de récolte.
+    // Le même crochet SERT DEUX FOIS : il piège le mur, et il relève au passage la taille
+    // de CHAQUE bouffée avec l'endurance qui l'a produite. Compter les grains vivants à la
+    // sonde ne prouverait rien de la pente — c'est un maximum tiré au sort par le moment
+    // de l'échantillon, et sur une machine à quelques images par seconde il rate les pics.
+    // À la source, le nombre est exact.
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      window.__PROBE__ = { mur: 0, bouffees: [] }
+      const vrai = s.sprintFx.bouffee.bind(s.sprintFx)
+      s.sprintFx.bouffee = (now, x, y, dx, dy, combien, force, teinte) => {
+        const r = vrai(now, x, y, dx, dy, combien, force, teinte)
+        window.__PROBE__.bouffees.push({ n: combien, force, s: s.myStamina })
+        // La bouffée du MUR se reconnaît à sa force (1,6 ; la foulée vaut 1).
+        if (force > 1) { window.__PROBE__.mur++; s.sprintFx.bouffee = vrai; s.game.loop.sleep() }
+        return r
+      }
+    })
+
+    // ── 1. LA COURSE ────────────────────────────────────────────────────────────────
+    // CE QUI SE JUGE ICI, et ce qui NE s'y juge pas. Le headless ne pousse pas un input à
+    // chaque tick : les ticks non servis ne drainent pas (mais ne régénèrent pas non plus,
+    // `gait` restant à `sprint`), et le coureur bute en plus dans le décor — un chrono,
+    // mural ou en ticks, mesurerait donc la MACHINE. La durée exacte (100 / 8 = 12,5 s)
+    // est prouvée là où chaque tick est servi : `combat.test.ts`, critère A1bis, sur
+    // `step()`. Ce que le navigateur prouve, lui, c'est le DÉFAUT tel qu'il se vivait :
+    // **l'endurance ne remonte JAMAIS tant qu'on court**. C'était faux avant — elle
+    // remontait en marchant sur un obstacle, et net, elle montait plus qu'elle ne
+    // descendait. Cette propriété-là est insensible au débit d'inputs.
+    let grainsFrais = 0
+    let grainsABout = 0
+    let remontees = 0
+    let pire = 0
+    let horsCourse = 0
+    let precedent = debut.s
+    let allurePrec = debut.a
+    let tickPrec = debut.t
+    let vide = false
+    await page.keyboard.down('ShiftLeft')
+    await page.keyboard.down('KeyW')
+    for (let k = 0; k < 300; k++) {
+      await page.waitForTimeout(200)
+      const { s, g, a, t } = await sonde()
+      if (s > 60) grainsFrais = Math.max(grainsFrais, g)
+      else if (s > 0) grainsABout = Math.max(grainsABout, g)
+      if (s > precedent + 0.01) {
+        // Une remontée n'accuse la RÈGLE qu'à DEUX conditions. ① la sim a vu courir aux
+        // deux bouts (un relevé où l'allure a lâché — le headless rate un input — accuse
+        // la MACHINE : là, la régén a le droit de créditer). ② les deux relevés sont
+        // PROCHES EN TICKS : le headless avale les snapshots par paquets, si bien que
+        // deux lectures « à 200 ms » peuvent enjamber des secondes de jeu entières — donc
+        // toute une phase de récupération, verrou d'épuisement compris. Deux bouts en
+        // `sprint` ne prouvent alors rien du milieu.
+        if (a === 'sprint' && allurePrec === 'sprint' && t - tickPrec <= 6) {
+          remontees++
+          pire = Math.max(pire, s - precedent)
+        } else horsCourse++
+      }
+      precedent = s
+      allurePrec = a
+      tickPrec = t
+      if (k === 4) await page.screenshot({ path: `${OUT}/sprint-1-foulee-fraiche.png` })
+      // La barre à bout, silhouette tassée et foulée traînante : on fige pour la capture.
+      if (s > 0 && s < 25 && grainsABout > 0) {
+        await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+        await page.screenshot({ path: `${OUT}/sprint-2-foulee-a-bout.png` })
+        // ON NE RÉVEILLE PAS SI LE PIÈGE A DÉJÀ CLAQUÉ : le mur a pu tomber pendant cette
+        // capture, et réveiller la boucle ferait retomber sa poussière avant la photo
+        // suivante — c'est exactement comme ça qu'on a mesuré « au mur 0 » deux fois.
+        await page.evaluate(() => { if (window.__PROBE__.mur === 0) window.__BRAISES__.scene.game.loop.wake() })
+      }
+      // LE PIÈGE A CLAQUÉ = la barre a touché 0 : le verrou d'épuisement ne se pose QUE
+      // là. Et la boucle dort désormais, donc `myStamina` ne bougera plus — continuer à
+      // la sonder ne relèverait que des valeurs gelées. C'est ici qu'on s'arrête.
+      if (s <= 0 || (await page.evaluate(() => window.__PROBE__.mur > 0))) { vide = true; break }
+    }
+
+    console.log(`endurance : ${remontees} remontée(s) allure SPRINT tenue (attendu 0) · pire +${pire.toFixed(2)} · ${horsCourse} remontée(s) sur un relevé où l'allure avait lâché (le harnais, pas la règle)`)
+    if (!vide) console.error('!! l’endurance n’est PAS tombée à 0 de toute la course')
+    if (remontees > 0) console.error(`!! l’endurance REMONTE en courant (${remontees} fois, jusqu'à +${pire.toFixed(2)}) — la régén recrédite pendant le sprint`)
+
+    // ── 2. LE MUR, saisi au vol par le piège posé plus haut ──────────────────────────
+    const piege = await page
+      .waitForFunction(() => window.__PROBE__.mur > 0, null, { timeout: 15000 })
+      .then(() => true)
+      .catch(() => false)
+    let grainsMur = 0
+    if (!piege) console.error('!! la bronchée du mur n’a JAMAIS été déclenchée')
+    else {
+      // La boucle DORT : les grains sont figés à leur naissance, tous au point d'émission.
+      // On les fait voler NOUS-MÊMES par `game.step` (et non `fx.update`, qui ne redessine
+      // pas) — une vraie frame, sur une horloge qu'on tient.
+      grainsMur = await page.evaluate(() => {
+        const s = window.__BRAISES__.scene
+        const t0 = s.time.now
+        for (let i = 1; i <= 5; i++) s.game.step(t0 + i * 40, 40)
+        return s.sprintFx.vivants
+      })
+      await page.screenshot({ path: `${OUT}/sprint-3-le-mur.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    }
+    await page.keyboard.up('ShiftLeft')
+    await page.keyboard.up('KeyW')
+
+    console.log(`poussière EN VOL — foulée fraîche max ${grainsFrais} ${grainsFrais >= 1 ? '✓' : '✗'} · à bout max ${grainsABout} ${grainsABout >= 1 ? '✓' : '✗'} · au mur ${grainsMur} ${grainsMur >= 1 ? '✓' : '✗'}`)
+    if (grainsFrais < 1) console.error('!! aucune poussière sous les pieds du coureur frais')
+    if (grainsABout < 1) console.error('!! aucune poussière sous les pieds du coureur à bout')
+
+    // ── 3. LA PENTE, relevée À LA SOURCE ────────────────────────────────────────────
+    const bouffees = await page.evaluate(() => window.__PROBE__.bouffees)
+    const foulees = bouffees.filter((b) => b.force === 1)
+    const moy = (t) => (t.length === 0 ? 0 : t.reduce((a, b) => a + b.n, 0) / t.length)
+    const hautes = moy(foulees.filter((b) => b.s > 60))
+    const basses = moy(foulees.filter((b) => b.s > 0 && b.s <= 25))
+    console.log(`pente de la foulée — ${foulees.length} bouffées : ${hautes.toFixed(2)} grains au-dessus de 60 d'endurance → ${basses.toFixed(2)} en dessous de 25`)
+    if (foulees.length < 5) console.error(`!! seulement ${foulees.length} foulée(s) sur toute la course`)
+    else if (!(basses > hautes)) console.error(`!! la foulée ne s'épaissit PAS avec la fatigue (${hautes.toFixed(2)} → ${basses.toFixed(2)} grains)`)
+  },
+
+  /**
    * L'EAU VIVANTE (spec eau-vivante, chantier du 2026-07-26) — les sondes des dix gestes.
    *
    * Le smoke LIT l'état : l'immersion (crop du sprite dans l'eau, zéro sur terre), la gerbe

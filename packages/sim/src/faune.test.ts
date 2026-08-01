@@ -18,7 +18,7 @@ import { createEmptyMap, type WorldMap } from './map'
 import { createSim, spawnEntity, snapshot, step, type Entity, type MoveInput, type SimState } from './sim'
 import { cycleOffsetForStartHour } from './time'
 import { spawnMonster, type Monster } from './monsters'
-import { activityAt, isPredator, isPrey, placeHuntingGrounds, predatorBias, sentinelOf, wolfVigor } from './faune'
+import { activityAt, isPredator, isPrey, octantOf, placeHuntingGrounds, predatorBias, sentinelOf, wolfVigor } from './faune'
 import { drainEvents } from './events'
 import { applyDamage, die } from './combat'
 import { spawnPoiMonsters } from './poi'
@@ -158,8 +158,19 @@ describe('le peuplement (A1-A3)', () => {
     const sim = makeSim(10)
     spawnEntity(sim, 80.5, 80.5)
     spawnEntity(sim, 100.5, 100.5)
-    for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
-    expect(ambientCount(sim)).toBe(10)
+    // ON LIT LE PLAFOND SUR TOUTE LA MINUTE, pas sur un tick choisi. La population
+    // RESPIRE : une bête qui s'éloigne des deux avatars se dissipe et le semeur la
+    // remplace à la demi-seconde qui suit, si bien qu'un instantané peut tomber sur
+    // un creux d'un tick (mesuré : 8 pile à la 60ᵉ seconde, 10 partout autour). Ce
+    // que la règle promet, c'est un plafond ATTEINT et JAMAIS dépassé, deux avatars
+    // ou un seul — et ça, ça se lit à chaque tick.
+    let plafond = 0
+    for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim)
+      plafond = Math.max(plafond, ambientCount(sim))
+      expect(ambientCount(sim)).toBeLessThanOrEqual(10)
+    }
+    expect(plafond).toBe(10)
   })
 
   it('A1 — un monde sans plafond (banc de test) ne peuple rien et ne tire RIEN au PRNG', () => {
@@ -720,6 +731,148 @@ describe('la meute de loups (A12 — R11)', () => {
     expect(m.fleeSince).toBeGreaterThanOrEqual(0) // et le cerf, lui, l'a vu
   })
 
+  /**
+   * ═══ LA POURSUITE (R13) — « on ne sème pas des loups » ═══
+   *
+   * Le camouflage tombe « quand la proie a compris et détale » (R11) — mais ce test ne
+   * lisait que l'état d'un ANIMAL, donc il était toujours faux pour un homme, et la meute
+   * rampait derrière lui À 2,0 TUILES/S pendant qu'il marchait à 4. MESURÉ avant correctif
+   * (`tools/diag-loup.mts`, 4 graines) : parti à 12 tuiles, l'homme finissait à 87, jamais
+   * touché, sur TOUS les bancs. Décision d'Alexis (2026-08-01) : l'homme qui S'ÉLOIGNE lève
+   * la meute.
+   */
+  it('A12bis — un homme qui MARCHE ne sème pas une meute : elle le rattrape', () => {
+    const { sim } = makePack(4, 80.5, 80.5) // `makePack` pose la nuit : l'heure du loup
+    const a = spawnEntity(sim, 80.5, 92.5)
+    entity(sim, a).hp = 100
+
+    let mordu = -1
+    for (let t = 0; t < 40 * BALANCE.TICK_RATE_HZ && mordu < 0; t++) {
+      tick(sim, [{ entityId: a, dx: 0, dy: 1 }]) // il s'en va, plein sud, sans jamais courir
+      if (entity(sim, a).hp < 100) mordu = t
+    }
+    expect(mordu).toBeGreaterThanOrEqual(0)
+    expect(mordu).toBeLessThan(35 * BALANCE.TICK_RATE_HZ)
+    // (L'ENCERCLEMENT ne se juge pas ici : une meute qui court APRÈS un homme le prend
+    // par-derrière, en file — c'est le banc du figé, plus bas, qui montre le cercle.)
+  })
+
+  /**
+   * L'homme qui NE fuit PAS est TRAQUÉ : la meute rampe vers ses postes et n'en finit
+   * qu'une fois le cercle bouclé. C'est l'autre moitié de la décision — et le moment de jeu
+   * que la traque existe pour produire.
+   */
+  it('A12bis — un homme qui se FIGE est traqué, pas chargé : la meute rampe d’abord', () => {
+    const { sim, pack } = makePack(4, 80.5, 80.5)
+    const a = spawnEntity(sim, 80.5, 92.5)
+    entity(sim, a).hp = 100
+
+    // Trois secondes de marche : elle le repère et hurle. Puis il ne bouge plus.
+    for (let t = 0; t < 3 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 1 }])
+    expect(pack.some((w) => w.targetId === a)).toBe(true)
+
+    let rampe = 0
+    let ticks = 0
+    for (let t = 0; t < 10 * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+      for (const w of pack) {
+        ticks++
+        if (w.stalking) rampe++
+      }
+    }
+    expect(rampe / ticks).toBeGreaterThan(0.1) // elle a VRAIMENT rampé
+
+    // …et le cercle s'est fermé AUTOUR de lui : au moins deux côtés tenus.
+    const proie = entity(sim, a)
+    const cotes = new Set<string>()
+    for (const w of pack) {
+      const e = entity(sim, w.entityId)
+      if (dist(e, proie) <= FAUNA.ENCIRCLE_RADIUS + FAUNA.POST_TOLERANCE + 1) {
+        cotes.add(`${e.x < proie.x ? 'O' : 'E'}${e.y < proie.y ? 'N' : 'S'}`)
+      }
+    }
+    expect(cotes.size).toBeGreaterThanOrEqual(2)
+  })
+
+  /**
+   * UN TRAÎNARD NE CONDAMNE PAS LA MEUTE. `packInPlace` comptait TOUS les frères vivants :
+   * un loup resté à quarante tuiles — occupé ailleurs, ou parti mourir — empêchait la ruée
+   * pour toujours, et les autres rampaient jusqu'à perdre la cible. L'encerclement est
+   * l'affaire de ceux qui encerclent.
+   */
+  it('A12bis — un frère resté au loin ne fait plus traîner la meute', () => {
+    const { sim, pack } = makePack(4, 80.5, 80.5)
+    for (const w of pack) {
+      w.groundX = 80.5
+      w.groundY = 80.5
+    }
+    const a = spawnEntity(sim, 80.5, 92.5)
+    entity(sim, a).hp = 100
+
+    // Il marche assez pour être repéré, PUIS il se fige : il n'est plus fuyard, donc la
+    // ruée ne peut venir que du cercle bouclé — c'est `packInPlace`, et rien d'autre, qu'on
+    // mesure ici. Puis un frère s'en va à cent tuiles.
+    for (let t = 0; t < 3 * BALANCE.TICK_RATE_HZ; t++) tick(sim, [{ entityId: a, dx: 0, dy: 1 }])
+    entity(sim, pack[3]!.entityId).x = 180.5
+    entity(sim, pack[3]!.entityId).y = 180.5
+
+    let mordu = -1
+    for (let t = 0; t < 30 * BALANCE.TICK_RATE_HZ && mordu < 0; t++) {
+      tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+      if (entity(sim, a).hp < 100) mordu = t
+    }
+    expect(mordu).toBeGreaterThanOrEqual(0)
+    // MESURÉ : 4,7 s quand seuls les encercleurs comptent, 5,8 s quand l'absent compte aussi
+    // (les autres rampent en l'attendant, et n'en finissent qu'en le croisant par hasard).
+    expect(mordu).toBeLessThan(5.3 * BALANCE.TICK_RATE_HZ)
+  })
+
+  /**
+   * LE CAP NE SE SCIE PAS. La zone morte du pas se dérivait du CORPS (0,10 tuile) alors que
+   * le déport latéral d'un loup lancé vaut 0,17 : elle ne pouvait pas amortir le pas qu'elle
+   * visait. Un loup qui poursuit droit devant alternait nord-est / nord-ouest à CHAQUE TICK
+   * — et comme le pas diagonal est normalisé (×0,707), sa vitesse utile tombait de 4,8 à
+   * 3,4 tuiles/s, SOUS les 4,0 d'un homme qui marche. Il ne pouvait pas rattraper.
+   */
+  it('A12bis — une meute lancée ne SCIE PAS son cap', () => {
+    const { sim, pack } = makePack(4, 80.5, 80.5)
+    // AVEC LEUR CANTON, comme toute meute du monde réel (R17) : c'est lui qui les met en
+    // patrouille quand la cible échappe, et c'est là que le cap se sciait.
+    for (const w of pack) {
+      w.groundX = 80.5
+      w.groundY = 80.5
+    }
+    const a = spawnEntity(sim, 80.5, 92.5)
+    entity(sim, a).hp = 100
+
+    // La PIRE SECONDE de retournements du regard, par loup : c'est ce que l'écran montre, et
+    // c'est le symptôme du cap scié — VINGT par seconde avant correctif (banc `diag-loup`),
+    // dix-sept ici. C'est un défaut de LISIBILITÉ : la vitesse utile de la meute, elle, ne
+    // bouge pas (vérifié : même temps jusqu'à la morsure avec et sans).
+    let pire = 0
+    const suivi = pack.map(() => ({ flip: false, fenetre: 0, n: 0 }))
+    for (let t = 0; t < 40 * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim, [{ entityId: a, dx: 0, dy: 1 }])
+      const fenetre = Math.floor(t / BALANCE.TICK_RATE_HZ)
+      pack.forEach((w, i) => {
+        const s = suivi[i]!
+        if (fenetre !== s.fenetre) {
+          pire = Math.max(pire, s.n)
+          s.fenetre = fenetre
+          s.n = 0
+        }
+        const e = entity(sim, w.entityId)
+        if (Math.abs(e.facing.x) > 0.25) {
+          const f = e.facing.x < 0
+          if (f !== s.flip) s.n++
+          s.flip = f
+        }
+      })
+    }
+    for (const s of suivi) pire = Math.max(pire, s.n)
+    expect(pire).toBeLessThanOrEqual(4)
+  })
+
   it('A12 — L’APPEL : un loup dont un frère chasse converge sur la MÊME proie', () => {
     const { sim, pack } = makePack(3, 80.5, 80.5)
     // Une proie hors de l'aggro (13) du dernier loup, mais dans le rayon d'appel.
@@ -1206,8 +1359,17 @@ describe('la pression de chasse (A17 — R16) — ni farm, ni désert', () => {
   it('A17 — LE FARM EST FERMÉ : plus une seule naissance autour d’une mise à mort', () => {
     const sim = makeSim(BENCH_CAP, 12)
     const a = spawnEntity(sim, 80.5, 80.5)
-    for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
-    expect(ambientCount(sim)).toBe(BENCH_CAP)
+    // La PRÉCONDITION se lit sur toute la minute, pas sur le tick d'arrivée : la population
+    // RESPIRE (une bête qui s'éloigne se dissipe, le semeur la remplace à la demi-seconde),
+    // si bien qu'un instantané tombe parfois sur un creux d'une unité. Ce qu'il faut ici,
+    // c'est que l'anneau soit PLEIN avant qu'on tue — donc que le plafond ait été atteint.
+    let plafond = 0
+    for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim)
+      plafond = Math.max(plafond, ambientCount(sim))
+    }
+    expect(plafond).toBe(BENCH_CAP)
+    expect(ambientCount(sim)).toBeGreaterThan(BENCH_CAP - 3)
 
     // Le chasseur REJOINT sa proie et l'abat — c'est la situation réelle : on ne
     // tue pas du gibier à trente tuiles, on va le chercher. Le silence se pose
@@ -1855,7 +2017,252 @@ describe('les seuils qui commandent un mouvement veulent leur hystérésis (R9/R
     // au pire (le trajet de retour lui-même en compte quelques-uns).
     expect(flips).toBeLessThan(30 * herd.length)
   })
+
+  /**
+   * ═══ LA PIRE SECONDE — la bonne unité de mesure du tremblement ═══
+   *
+   * « Parfois ils tremblent » (Alexis, 2026-08-01) est une plainte de POINTE, pas
+   * de moyenne : une bête qui fait vingt demi-tours en une seconde puis se tient
+   * tranquille une minute rend une moyenne rassurante et un écran qui vibre. On
+   * mesure donc le PIRE, par bête et par seconde — et un demi-tour, c'est le pas
+   * de ce tick qui renverse celui d'avant.
+   */
+  function pireDemiTours(sim: SimState, herd: Monster[], secondes: number): number {
+    let pire = 0
+    const suivi = herd.map((m) => {
+      const e = entity(sim, m.entityId)
+      return { x: e.x, y: e.y, capX: 0, capY: 0, fenetre: 0, n: 0 }
+    })
+    for (let t = 0; t < secondes * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim)
+      const fenetre = Math.floor(t / BALANCE.TICK_RATE_HZ)
+      herd.forEach((m, i) => {
+        const s = suivi[i]!
+        if (fenetre !== s.fenetre) {
+          pire = Math.max(pire, s.n)
+          s.fenetre = fenetre
+          s.n = 0
+        }
+        const e = entity(sim, m.entityId)
+        const dx = e.x - s.x
+        const dy = e.y - s.y
+        if (dx * dx + dy * dy > 1e-9) {
+          if (dx * s.capX + dy * s.capY < 0) s.n++
+          s.capX = dx
+          s.capY = dy
+        }
+        s.x = e.x
+        s.y = e.y
+      })
+    }
+    for (const s of suivi) pire = Math.max(pire, s.n)
+    return pire
+  }
+
+  /**
+   * LA BÊTE COINCÉE ENTRE DEUX VOISINES. La somme des répulsions est NORMALISÉE :
+   * pleine force jusqu'au point d'équilibre, et un pas de longueur fixe. Serrée
+   * entre deux congénères, la bête dépassait donc l'équilibre à chaque pas et
+   * repartait en sens inverse au tick suivant — MESURÉ : vingt demi-tours dans la
+   * pire seconde, le sprite se retournant à chaque fois. Une zone morte au
+   * voisinage de l'équilibre, et l'immobilité plutôt que le retour au broutage
+   * (qui la renvoyait aussitôt sur sa voisine), ramènent ça au bruit de fond.
+   */
+  it('une harde qui broute au coude à coude ne vibre pas sur place', () => {
+    // La configuration MESURÉE (`tools/diag-cerf.mts`, banc « harde · midi · groupée ») :
+    // cinq bêtes en ligne à 2,5 tuiles, dans leur canton. C'est le voisinage qui produit
+    // l'équilibre — chacune tiraillée entre deux voisines — et il faut le laisser
+    // s'installer : deux minutes, pas dix secondes.
+    const sim = makeSim(0)
+    const herd = poserHarde(sim, [[80.5, 80.5], [83.0, 80.5], [85.5, 80.5], [88.0, 80.5], [90.5, 80.5]])
+    for (const m of herd) {
+      m.groundX = 80.5
+      m.groundY = 80.5
+    }
+    // Avant correctif : 20 demi-tours dans la pire seconde — un aller-retour PAR TICK.
+    expect(pireDemiTours(sim, herd, 120)).toBeLessThanOrEqual(8)
+  })
+
+  /**
+   * LA FRONTIÈRE DU CANTON (R17). Le retour au territoire rendait la main au
+   * franchissement EXACT de `GROUND_RADIUS` : un pas de trot vers l'intérieur
+   * (WARY_SPEED, deux fois plus long qu'un pas de broutage) faisait rentrer la
+   * bête, deux pas de broutage la ressortaient — un cycle de TROIS TICKS, mesuré.
+   * Elle rentre maintenant jusqu'à `GROUND_COMFORT`.
+   */
+  it('une bête sortie de son canton y rentre FRANCHEMENT — pas jusqu’à la frontière', () => {
+    const sim = makeSim(0)
+    const [m] = poserHarde(sim, [[80.5, 127.2]])
+    m!.groundX = 80.5
+    m!.groundY = 80.5
+    const loin = () => Math.sqrt(distSq(entity(sim, m!.entityId).x, entity(sim, m!.entityId).y, 80.5, 80.5))
+    expect(loin()).toBeGreaterThan(FAUNA.GROUND_RADIUS) // elle est bien dehors
+
+    // On la suit jusqu'à ce qu'elle LÂCHE le retour : c'est là que tout se joue.
+    let t = 0
+    while (t < 60 * BALANCE.TICK_RATE_HZ && (t === 0 || m!.ranging)) {
+      tick(sim)
+      t++
+    }
+    expect(m!.ranging).toBeUndefined() // elle a fini de rentrer
+    // …et elle a rendu la main BIEN dedans. Lâchée pile sur la frontière, le premier
+    // pas de broutage la ressortait et le trot la ramenait : trois ticks de période,
+    // le sprite se retournant à chaque fois (mesuré 2026-08-01). La marge est écrite
+    // EN DUR — une garde qui se relit sur `GROUND_COMFORT` passerait même si le
+    // confort valait le rayon, c'est-à-dire même sans hystérésis du tout.
+    expect(FAUNA.GROUND_RADIUS - loin()).toBeGreaterThanOrEqual(2)
+  })
+
+  /**
+   * LE REPOS GROUPÉ (R10 × R9bis). Le rappel du dormeur n'avait pas d'hystérésis :
+   * le centre de la harde bouge dès qu'une dormeuse se recale, donc celle qui
+   * venait de rentrer sous `REST_SPREAD` s'en retrouvait dehors au tick suivant et
+   * repartait d'un pas. De nuit, c'est le seul mouvement de l'écran.
+   */
+  it('une dormeuse rappelée revient jusqu’au CONFORT, et se rendort pour de bon', () => {
+    const sim = makeSim(FAUNA.GROUND_CAP, 21) // 21 h : hors des heures du cerf
+    const herd = poserHarde(sim, [[80.5, 80.5], [84.5, 80.5], [80.5, 84.5]])
+    const ecartee = herd[0]!
+    const centre = () => {
+      const e = entity(sim, ecartee.entityId)
+      let sx = 0
+      let sy = 0
+      for (const m of herd.slice(1)) {
+        sx += entity(sim, m.entityId).x
+        sy += entity(sim, m.entityId).y
+      }
+      return Math.sqrt(distSq(e.x, e.y, sx / (herd.length - 1), sy / (herd.length - 1)))
+    }
+    expect(centre()).toBeGreaterThan(FAUNA.REST_SPREAD) // elle dort trop loin des siennes
+
+    let t = 0
+    while (t < 60 * BALANCE.TICK_RATE_HZ && (t === 0 || ecartee.regrouping)) {
+      tick(sim)
+      t++
+    }
+    expect(ecartee.regrouping).toBeUndefined()
+    // Marge EN DUR, pour la même raison qu'au canton : relue sur `REST_COMFORT`, la
+    // garde passerait même sans hystérésis.
+    expect(FAUNA.REST_SPREAD - centre()).toBeGreaterThanOrEqual(0.5)
+
+    // Et la harde couchée finit immobile : plus un pas dans la dernière seconde.
+    for (let k = 0; k < 30 * BALANCE.TICK_RATE_HZ; k++) tick(sim)
+    const avant = herd.map((m) => ({ x: entity(sim, m.entityId).x, y: entity(sim, m.entityId).y }))
+    for (let k = 0; k < BALANCE.TICK_RATE_HZ; k++) tick(sim)
+    herd.forEach((m, i) => {
+      expect(entity(sim, m.entityId).x).toBe(avant[i]!.x)
+      expect(entity(sim, m.entityId).y).toBe(avant[i]!.y)
+    })
+  })
 })
+
+describe('la curiosité est un VERROU, pas une comparaison (chasse C1)', () => {
+  /**
+   * La jauge de méfiance POURSUIT son stimulus, tick par tick. Comparer sa valeur
+   * NUE à `SUSPICION_CURIOUS` faisait donc battre, au ras du seuil, les trois
+   * choses qui en dépendent : le gel (elle s'arrête et regarde), la silhouette et
+   * la teinte. MESURÉ : quinze bascules dans la pire seconde d'une approche
+   * stop-and-go. L'état se lève à `SUSPICION_CURIOUS` et ne retombe qu'à
+   * `SUSPICION_CALM` — et c'est `wary`, jamais la jauge, que tout le monde lit.
+   */
+  it('le verrou tient sous le seuil de montée, et lâche au seuil de calme', () => {
+    const sim = makeSim()
+    const id = spawnMonster(sim, 'deer', 80.5, 80.5)
+    const m = sim.monsters.find((mm) => mm.entityId === id)!
+    m.thinkAt = Number.MAX_SAFE_INTEGER // elle ne broute pas : on mesure la jauge
+
+    // Personne autour : la jauge ne monte pas, le verrou reste ouvert.
+    tick(sim)
+    expect(m.wary).toBeUndefined()
+
+    // On la pose au-dessus du seuil : le verrou se lève. (Au-dessus AVEC de la
+    // marge : sans stimulus la jauge décroît, et le tick la ferait passer dessous.)
+    m.suspicion = HUNT.SUSPICION_CURIOUS + 0.05
+    tick(sim)
+    expect(m.wary).toBe(true)
+
+    // Elle redescend SOUS le seuil de montée — le verrou TIENT (c'est tout le sujet).
+    m.suspicion = (HUNT.SUSPICION_CURIOUS + HUNT.SUSPICION_CALM) / 2
+    tick(sim)
+    expect(m.wary).toBe(true)
+
+    // …et il ne lâche qu'au seuil de calme.
+    m.suspicion = HUNT.SUSPICION_CALM - 0.01
+    tick(sim)
+    expect(m.wary).toBeUndefined()
+  })
+
+  /**
+   * L'ALARME EST UN CRI, PAS UN ÉTAT (R9). Alarmer sur « une sœur COURT en ce
+   * moment » rendait l'alarme permanente tant qu'une bête tenait sa course :
+   * celle qui avait fini la sienne se faisait relever, voyait sa fuite s'achever
+   * DANS LE MÊME TICK (elle était déjà à FLEE_GOAL du point de peur), retombait,
+   * et se faisait relever au suivant — une levée par tick.
+   */
+  it('une bête qui a fini sa fuite ne se fait pas relever à chaque tick par sa harde', () => {
+    const sim = makeSim(0) // sans peuplement ambiant : on mesure CETTE harde, pas le monde
+    const herdId = sim.nextHerdId++
+    const herd: Monster[] = []
+    for (const [x, y] of [[80.5, 80.5], [83.0, 80.5], [85.5, 80.5]] as const) {
+      const id = spawnMonster(sim, 'deer', x, y)
+      const m = sim.monsters.find((mm) => mm.entityId === id)!
+      m.herdId = herdId
+      herd.push(m)
+    }
+    // L'APPROCHE STOP-AND-GO (C1) : deux secondes de pas, trois de gel. C'est le
+    // régime où une sœur tient sa course pendant que les autres ont fini la leur —
+    // et c'est exactement là que l'alarme permanente relevait une bête déjà rentrée.
+    const a = spawnEntity(sim, 82.5, 94.5)
+
+    // On compte les BASCULES de l'état « levée », par bête et par seconde : la pire
+    // seconde est la mesure (avant correctif : 5 à 13 selon la graine ; après : 1).
+    let pire = 0
+    const etat = herd.map(() => false)
+    const parSeconde = herd.map(() => 0)
+    for (let t = 0; t < 120 * BALANCE.TICK_RATE_HZ; t++) {
+      tick(sim, [{ entityId: a, dx: 0, dy: sim.tick % 100 < 40 ? -1 : 0 }])
+      if (t % BALANCE.TICK_RATE_HZ === 0) {
+        pire = Math.max(pire, ...parSeconde)
+        parSeconde.fill(0)
+      }
+      herd.forEach((m, i) => {
+        const fuit = m.fleeSince >= 0
+        if (fuit !== etat[i]) parSeconde[i]!++
+        etat[i] = fuit
+      })
+    }
+    expect(pire).toBeLessThanOrEqual(2)
+  })
+
+  /**
+   * LE PAS SE RANGE EN HUIT, ET AU BON ENDROIT. La zone morte de `moveToward` se
+   * mesure en TUILES : appliquée à un vecteur unitaire, elle coupe l'axe à 6° au
+   * lieu de 22,5°, et le secteur « plein nord » ne fait plus que 11° de large. Une
+   * poussée de séparation équilibrée pointe justement le long d'un axe : elle
+   * alternait donc nord-ouest / nord-est à chaque tick.
+   */
+  it('octantOf rend TOUJOURS le secteur le plus proche — balayé sur tout le tour', () => {
+    // Balayage EXHAUSTIF des directions (le périmètre d'un grand carré : 1 600 caps,
+    // tout le tour), et une seule propriété affirmée — le secteur rendu est celui qui
+    // maximise le produit scalaire, c'est-à-dire le plus proche. Pas de trigonométrie :
+    // le lint l'interdit jusque dans les bancs de /sim, et elle n'apporte rien ici.
+    const HUIT = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]] as const
+    const caps: [number, number][] = []
+    for (let i = -200; i < 200; i++) {
+      caps.push([i, 200], [i, -200], [200, i], [-200, i])
+    }
+    for (const [x, y] of caps) {
+      const q = octantOf(x, y)
+      expect(q.x === 0 && q.y === 0).toBe(false) // une direction a toujours son secteur
+      const score = (ax: number, ay: number) => (x * ax + y * ay) / Math.sqrt(ax * ax + ay * ay)
+      let best = -Infinity
+      for (const [ax, ay] of HUIT) best = Math.max(best, score(ax, ay))
+      expect(score(q.x, q.y)).toBeGreaterThanOrEqual(best - 1e-9)
+    }
+  })
+})
+
+
 
 describe('les coins de chasse (A24 — R17)', () => {
   /**
