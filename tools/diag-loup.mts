@@ -31,11 +31,53 @@ const secondes = Number(process.argv[2] ?? 45)
 const TICKS = Math.round(secondes * BALANCE.TICK_RATE_HZ)
 const GRAINES = [1234, 77, 2026, 909]
 
+/**
+ * LA MOLETTE D'EXPÉRIENCE — pour mesurer une hypothèse AVANT de toucher au jeu.
+ *
+ *   DIAG_LOUP_SET="PURSUIT_RANGE=100000,wolf.speed=5.4" node --import tsx tools/diag-loup.mts
+ *
+ * On surcharge les constantes EN MÉMOIRE, le temps du banc : rien n'est écrit dans `/sim`,
+ * donc aucune suite ne bouge et aucun flux déterministe n'est décalé pour les autres.
+ * `FAUNA.X` et `MONSTER_DEFS.wolf.X` sont lus à chaque tick par la sim — surcharger l'objet
+ * suffit, et c'est le SEUL moyen honnête de répondre à « et si… ? » sans commit d'abord.
+ */
+const surcharge = process.env.DIAG_LOUP_SET
+if (surcharge) {
+  for (const paire of surcharge.split(',')) {
+    const [cle, valeur] = paire.split('=')
+    if (cle === undefined || valeur === undefined) continue
+    const v = Number(valeur)
+    if (cle.startsWith('wolf.')) (MONSTER_DEFS.wolf as unknown as Record<string, number>)[cle.slice(5)] = v
+    else (FAUNA as unknown as Record<string, number>)[cle] = v
+    console.log(`⚙ surcharge : ${cle} = ${v}`)
+  }
+}
+
+/**
+ * LA CARTE DOIT ÊTRE PLUS LONGUE QUE LA FUITE — sinon ce banc mesure un MUR.
+ *
+ * Elle faisait 200×200. Un homme qui part de y=112 et marche à 4 t/s touche le bord
+ * en 22 secondes ; celui qui sprinte, en 15. Or les bancs courent 45 s. Tout ce que
+ * la table appelait « morsure » après ce moment-là était une meute qui rattrapait un
+ * homme PLAQUÉ CONTRE LE BORD DU MONDE — pas une poursuite. La colonne « 1ʳᵉ morsure
+ * 22,2 s » de l'homme qui marche valait exactement le temps qu'il mettait à s'écraser
+ * dessus. Sur une carte assez longue, elle vaut JAMAIS.
+ *
+ * 1400 de haut = 320 tuiles de course à 4 t/s pendant 80 s, et le garde `auBord`
+ * ci-dessous crie si une seule graine touche encore le bord.
+ */
 function makeMap(): WorldMap {
-  const map = createEmptyMap(200, 200, TERRAIN_GRASS)
+  const map = createEmptyMap(200, 1400, TERRAIN_GRASS)
   for (let ty = 10; ty < 50; ty++) for (let tx = 10; tx < 50; tx++) map.terrain[ty * map.width + tx] = TERRAIN_FOREST
   return map
 }
+
+/**
+ * L'ORIGINE DES BANCS, posée au MILIEU de la carte haute. Les bancs sont écrits autour
+ * de y≈100 (l'homme part à 112, la meute à 100) ; sans ce décalage, celui qui MARCHE VERS
+ * la meute et la dépasse sort par le bas — et c'est reparti pour un mur.
+ */
+const Y0 = 600
 
 /** 3 h du matin : l'heure du loup (R10bis), sa pleine vigueur. */
 function makeSim(seed: number, hour = 3): SimState {
@@ -88,6 +130,15 @@ interface Compte {
   hurlements: number
   /** Distance finale de l'homme aux loups. */
   finale: number
+  /**
+   * Les coups ARMÉS (wind-ups commencés). Sans cette colonne, `MORSURES` à zéro se lit
+   * « la meute n'a pas engagé » — alors qu'elle peut avoir armé trois cents coups et
+   * fendu l'air à chaque fois. Ce sont deux pannes opposées, et elles ne se réparent pas
+   * au même endroit : l'une est un problème d'APPROCHE, l'autre de MORSURE.
+   */
+  armes: number
+  /** L'homme a touché le bord du monde : le banc ne mesure plus une poursuite. */
+  auBord: boolean
 }
 
 /** Le relèvement (huitième) d'un loup autour de l'homme — pour compter les CÔTÉS tenus. */
@@ -105,8 +156,9 @@ function releve(sim: SimState, pack: Monster[], avatarId: number, ticks: number,
   const c: Compte = {
     ticks: 0, auPlusPres: Infinity, premiereMorsure: -1, morsures: 0, rampe: 0, loupTicks: 0,
     cotes: 0, pirePostures: 0, pireDemiTours: 0, pireMiroirs: 0, retours: 0, abandons: 0,
-    hurlements: 0, finale: 0,
+    hurlements: 0, finale: 0, armes: 0, auBord: false,
   }
+  const bord = 6
   const ent = (id: number) => sim.entities.find((e) => e.id === id)
   const avatar = ent(avatarId)!
   let hpAvant = avatar.hp
@@ -115,7 +167,7 @@ function releve(sim: SimState, pack: Monster[], avatarId: number, ticks: number,
     return [w.entityId, {
       stalk: w.stalking === true, avaitCible: false, etaitRompu: false, flip: false,
       x: e.x, y: e.y, capX: 0, capY: 0,
-      fenetre: 0, fPost: 0, fDemi: 0, fMir: 0,
+      fenetre: 0, fPost: 0, fDemi: 0, fMir: 0, armait: false,
     }]
   }))
 
@@ -133,6 +185,9 @@ function releve(sim: SimState, pack: Monster[], avatarId: number, ticks: number,
       if (c.premiereMorsure < 0) c.premiereMorsure = t
       hpAvant = a.hp
     }
+    // LE BORD DU MONDE. Une fois dedans, l'homme ne fuit plus : il est tenu par la carte,
+    // et tout ce qu'on mesure après est le mur, pas la meute.
+    if (a.x < bord || a.y < bord || a.x > sim.map.width - bord || a.y > sim.map.height - bord) c.auBord = true
     const cotesTenus = new Set<number>()
     const fenetre = Math.floor(t / BALANCE.TICK_RATE_HZ)
     for (const w of pack) {
@@ -167,6 +222,12 @@ function releve(sim: SimState, pack: Monster[], avatarId: number, ticks: number,
         s.fDemi = 0
         s.fMir = 0
       }
+      // UN COUP ARMÉ : le front du wind-up. Le loup se fige pendant 0,45 s pour l'armer
+      // (monsters.ts, « en train de frapper : immobile ») — c'est là que la proie prend
+      // ses 1,8 tuile d'avance, pour une morsure qui n'en porte que 1,2.
+      const arme = e.windup !== undefined
+      if (arme && !s.armait) c.armes++
+      s.armait = arme
       if ((w.stalking === true) !== s.stalk) s.fPost++
       s.stalk = w.stalking === true
       const dx = e.x - s.x
@@ -215,10 +276,12 @@ function rapporte(nom: string, cs: Compte[]): void {
       moy(cs, (c) => c.finale === Infinity ? 99 : c.finale).toFixed(1).padStart(7),
       `${(100 * moy(cs, (c) => (c.loupTicks ? c.rampe / c.loupTicks : 0))).toFixed(0)}%`.padStart(6),
       moy(cs, (c) => c.cotes).toFixed(1).padStart(6),
+      moy(cs, (c) => c.armes).toFixed(0).padStart(6),
       moy(cs, (c) => c.morsures).toFixed(1).padStart(8),
       moy(cs, (c) => c.hurlements).toFixed(1).padStart(6),
       moy(cs, (c) => c.retours).toFixed(0).padStart(8),
       `${moy(cs, (c) => c.pirePostures).toFixed(1)}/${moy(cs, (c) => c.pireDemiTours).toFixed(1)}/${moy(cs, (c) => c.pireMiroirs).toFixed(1)}`.padStart(15),
+      cs.some((c) => c.auBord) ? '  ⚠ BORD' : '',
     ].join(' '),
   )
 }
@@ -250,8 +313,8 @@ for (const [nom, faire, n] of [
     nom,
     GRAINES.map((g) => {
       const sim = makeSim(g)
-      const pack = makePack(sim, n, 100.5, 100.5)
-      const homme = poseHomme(sim, 100.5, 112.5)
+      const pack = makePack(sim, n, 100.5, Y0 + 100.5)
+      const homme = poseHomme(sim, 100.5, Y0 + 112.5)
       return releve(sim, pack, homme, TICKS, faire(homme))
     }),
   )
@@ -263,11 +326,11 @@ rapporte(
   'meute de 4 · traînard à 40t',
   GRAINES.map((g) => {
     const sim = makeSim(g)
-    const pack = makePack(sim, 4, 100.5, 100.5)
+    const pack = makePack(sim, 4, 100.5, Y0 + 100.5)
     const retard = sim.entities.find((q) => q.id === pack[3]!.entityId)!
     retard.x = 140.5
-    retard.y = 100.5
-    const homme = poseHomme(sim, 100.5, 112.5)
+    retard.y = Y0 + 100.5
+    const homme = poseHomme(sim, 100.5, Y0 + 112.5)
     return releve(sim, pack, homme, TICKS, MARCHE(homme))
   }),
 )
@@ -279,8 +342,8 @@ rapporte(
   'meute de 4 · homme qui VIENT',
   GRAINES.map((g) => {
     const sim = makeSim(g)
-    const pack = makePack(sim, 4, 100.5, 100.5)
-    const homme = poseHomme(sim, 100.5, 118.5)
+    const pack = makePack(sim, 4, 100.5, Y0 + 100.5)
+    const homme = poseHomme(sim, 100.5, Y0 + 118.5)
     return releve(sim, pack, homme, TICKS, () => ({ entityId: homme, dx: 0, dy: -1 }))
   }),
 )
@@ -291,12 +354,12 @@ rapporte(
   'meute de 4 · tous BLESSÉS (35 %)',
   GRAINES.map((g) => {
     const sim = makeSim(g)
-    const pack = makePack(sim, 4, 100.5, 100.5)
+    const pack = makePack(sim, 4, 100.5, Y0 + 100.5)
     for (const w of pack) {
       const e = sim.entities.find((q) => q.id === w.entityId)!
       e.hp = Math.max(1, Math.floor(MONSTER_DEFS.wolf.hp * FAUNA.PACK_BREAK_HP) - 1)
     }
-    const homme = poseHomme(sim, 100.5, 108.5)
+    const homme = poseHomme(sim, 100.5, Y0 + 108.5)
     return releve(sim, pack, homme, TICKS, IMMOBILE(homme))
   }),
 )
@@ -312,8 +375,8 @@ for (const [nom, faire] of [['immobile', IMMOBILE], ['qui marche', MARCHE], ['qu
     let pris = 0
     for (const g of GRAINES) {
       const sim = makeSim(g)
-      const pack = makePack(sim, 4, 100.5, 100.5)
-      const homme = poseHomme(sim, 100.5, 100.5 + d)
+      const pack = makePack(sim, 4, 100.5, Y0 + 100.5)
+      const homme = poseHomme(sim, 100.5, Y0 + 100.5 + d)
       const faireInput = faire(homme)
       let acquis = false
       for (let t = 0; t < 10 * BALANCE.TICK_RATE_HZ && !acquis; t++) {
@@ -334,8 +397,8 @@ rapporte(
   'meute de 4 · marche puis SE FIGE',
   GRAINES.map((g) => {
     const sim = makeSim(g)
-    const pack = makePack(sim, 4, 100.5, 100.5)
-    const homme = poseHomme(sim, 100.5, 112.5)
+    const pack = makePack(sim, 4, 100.5, Y0 + 100.5)
+    const homme = poseHomme(sim, 100.5, Y0 + 112.5)
     return releve(sim, pack, homme, TICKS, (t) => ({
       entityId: homme,
       dx: 0,
@@ -354,8 +417,8 @@ for (const [nom, periode] of [['zigzag 0,75 s', 15], ['zigzag 2 s', 40]] as cons
     `meute de 4 · ${nom}`,
     GRAINES.map((g) => {
       const sim = makeSim(g)
-      const pack = makePack(sim, 4, 100.5, 100.5)
-      const homme = poseHomme(sim, 100.5, 112.5)
+      const pack = makePack(sim, 4, 100.5, Y0 + 100.5)
+      const homme = poseHomme(sim, 100.5, Y0 + 112.5)
       return releve(sim, pack, homme, TICKS, (t) => ({
         entityId: homme,
         dx: (Math.floor(t / periode) % 2 === 0 ? 1 : -1) as -1 | 1,
@@ -371,8 +434,8 @@ rapporte(
   'meute de 4 · homme qui TOURNE',
   GRAINES.map((g) => {
     const sim = makeSim(g)
-    const pack = makePack(sim, 4, 100.5, 100.5)
-    const homme = poseHomme(sim, 100.5, 110.5)
+    const pack = makePack(sim, 4, 100.5, Y0 + 100.5)
+    const homme = poseHomme(sim, 100.5, Y0 + 110.5)
     // Un carré de 3 s de côté autour de la meute : les quatre caps, tour à tour.
     const CAPS = [[1, 0], [0, -1], [-1, 0], [0, 1]] as const
     return releve(sim, pack, homme, TICKS, (t) => {
@@ -389,6 +452,7 @@ const enTete = [
   'FINALE'.padStart(7),
   'RAMPE'.padStart(6),
   'CÔTÉS'.padStart(6),
+  'ARMÉS'.padStart(6),
   'MORSURES'.padStart(8),
   'HURL.'.padStart(6),
   'RETOURS'.padStart(8),

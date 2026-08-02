@@ -2567,3 +2567,258 @@ describe('la clairière et la souille (A27 — R17)', () => {
     expect(bois.length).toBeGreaterThan(0) // ET des souilles
   })
 })
+
+describe('LE BOND (A28-A29 — R19) — un loup ne peut pas mordre ce qui avance', () => {
+  /** Une meute complète (alpha + 3), posée où on veut. */
+  function meute(sim: SimState, x: number, y: number): Monster[] {
+    const herdId = sim.nextHerdId++
+    const alphaId = spawnMonster(sim, 'wolf', x, y)
+    const chef = sim.monsters.find((m) => m.entityId === alphaId)!
+    chef.alpha = true
+    chef.alphaId = alphaId
+    chef.herdId = herdId
+    entity(sim, alphaId).hp = MONSTER_DEFS.wolf.hp * FAUNA.ALPHA_HP
+    const out = [chef]
+    for (let i = 1; i <= 3; i++) {
+      const id = spawnMonster(sim, 'wolf', x + i * 1.2, y)
+      const m = sim.monsters.find((z) => z.entityId === id)!
+      m.herdId = herdId
+      m.alphaId = alphaId
+      out.push(m)
+    }
+    return out
+  }
+
+  /**
+   * A28 — AFFIRMÉ COMME UNE PROPRIÉTÉ, SUR TOUT L'ESPACE.
+   *
+   * On ne choisit pas une direction de fuite : on les prend TOUTES (les huit du
+   * compas), et on affirme UNE chose — la meute finit par entamer l'homme. Un banc
+   * sur un seul cap aurait pu passer par la géométrie de ce cap-là (la meute
+   * naissant en ligne, elle est mieux placée pour couper vers l'est que vers le
+   * nord). C'est une règle de mouvement : elle se prouve sur tout le cercle.
+   */
+  it('A28 — la meute entame un homme qui MARCHE, par quelque relèvement qu’il parte', () => {
+    const HUIT: readonly (readonly [-1 | 0 | 1, -1 | 0 | 1])[] = [
+      [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1],
+    ]
+    for (const [dx, dy] of HUIT) {
+      const sim = makeSim(0, 2) // 2 h du matin : l'heure du loup, pleine vigueur
+      const l = Math.sqrt(dx * dx + dy * dy)
+      // La meute DANS SON DOS, à 3,2 tuiles : à portée de bond, hors de portée de crocs.
+      meute(sim, 80.5 - (dx / l) * 3.2, 80.5 - (dy / l) * 3.2)
+      const a = spawnEntity(sim, 80.5, 80.5)
+      const pv = entity(sim, a).hp
+
+      let entame = false
+      // 8 s : il parcourt 32 tuiles au plus, la carte en fait 160 — jamais le bord.
+      for (let t = 0; t < 8 * BALANCE.TICK_RATE_HZ && !entame; t++) {
+        tick(sim, [{ entityId: a, dx, dy }])
+        if (entity(sim, a).hp < pv) entame = true
+      }
+      expect(entame, `relèvement ${dx},${dy}`).toBe(true)
+    }
+  })
+
+  /**
+   * LE CONTRE-TEST, et il est ARITHMÉTIQUE — c'est la raison d'être de R19, et elle
+   * doit lever si quelqu'un raccourcit un jour le wind-up ou rallonge la portée.
+   *
+   * La morsure PLANTÉE fige le loup le temps de son wind-up ; pendant ce temps un
+   * homme qui marche parcourt PLUS que la portée de la morsure. Elle ne peut donc
+   * pas, par construction, atteindre une proie qui avance — MESURÉ avant le bond :
+   * 46 coups armés, zéro dégât, sur quatre loups collés à une tuile.
+   */
+  it('A28 (contre-test) — la morsure plantée ne PEUT pas rattraper un homme qui marche', () => {
+    const parcouru = BALANCE.WALK_SPEED_TILES_PER_S * (MONSTER_DEFS.wolf.windupTicks / BALANCE.TICK_RATE_HZ)
+    expect(parcouru).toBeGreaterThan(COMBAT.MELEE_ENGAGE_RANGE)
+    // Et le bond, lui, couvre plus que ce que la proie gagne pendant qu'il s'engage.
+    const vol = MONSTER_DEFS.wolf.speed * FAUNA.LEAP_SPEED * (FAUNA.LEAP_TICKS / BALANCE.TICK_RATE_HZ)
+    const fuite = BALANCE.WALK_SPEED_TILES_PER_S * (FAUNA.LEAP_TICKS / BALANCE.TICK_RATE_HZ)
+    expect(vol - fuite).toBeGreaterThan(FAUNA.LEAP_RANGE - COMBAT.MELEE_ENGAGE_RANGE)
+  })
+
+  /**
+   * A29 — on ARME le bond à la main. C'est délibéré : les trois clauses testées ici
+   * (cap verrouillé, un coup par bond, retombée) sont des propriétés du GESTE, pas
+   * de la décision de bondir — que A28 couvre déjà de bout en bout. Les isoler rend
+   * chaque clause lisible, et le test cesse de dépendre du courage, de l'heure et
+   * de la géométrie de la meute.
+   */
+  function armeUnBond(sim: SimState, wolfEntityId: number, dx: number, dy: number): Monster {
+    const m = sim.monsters.find((z) => z.entityId === wolfEntityId)!
+    m.leapUntil = sim.tick + FAUNA.LEAP_TICKS
+    m.leapDx = dx
+    m.leapDy = dy
+    m.leapHit = false
+    return m
+  }
+
+  it('A29 — le cap est VERROUILLÉ : le pas de côté esquive, tout droit non', () => {
+    // Tout droit : il est touché.
+    const droit = makeSim(0, 2)
+    const loupD = spawnMonster(droit, 'wolf', 80.5, 80.5)
+    // À la distance où le bond part VRAIMENT : c'est elle qui décide de l'esquive.
+    const aD = spawnEntity(droit, 80.5 + FAUNA.LEAP_RANGE, 80.5)
+    const pvD = entity(droit, aD).hp
+    armeUnBond(droit, loupD, 1, 0)
+    for (let t = 0; t < FAUNA.LEAP_TICKS; t++) tick(droit, [{ entityId: aD, dx: 1, dy: 0 }])
+    expect(entity(droit, aD).hp).toBeLessThan(pvD)
+
+    // MÊME bond, même départ : il se décale LATÉRALEMENT. Le loup passe à côté.
+    const cote = makeSim(0, 2)
+    const loupC = spawnMonster(cote, 'wolf', 80.5, 80.5)
+    // À la distance où le bond part VRAIMENT : c'est elle qui décide de l'esquive.
+    const aC = spawnEntity(cote, 80.5 + FAUNA.LEAP_RANGE, 80.5)
+    const pvC = entity(cote, aC).hp
+    armeUnBond(cote, loupC, 1, 0)
+    for (let t = 0; t < FAUNA.LEAP_TICKS; t++) tick(cote, [{ entityId: aC, dx: 0, dy: 1 }])
+    expect(entity(cote, aC).hp).toBe(pvC)
+  })
+
+  it('A29 — UN coup par bond, même s’il reste au contact plusieurs ticks', () => {
+    const sim = makeSim(0, 2)
+    const loup = spawnMonster(sim, 'wolf', 80.5, 80.5)
+    const a = spawnEntity(sim, 82.0, 80.5) // devant lui : il va le traverser
+    entity(sim, a).hp = 1000 // increvable : on compte les coups, pas la mort
+    armeUnBond(sim, loup, 1, 0)
+
+    let pv = entity(sim, a).hp
+    let coups = 0
+    let ticksAuContact = 0
+    for (let t = 0; t < FAUNA.LEAP_TICKS; t++) {
+      tick(sim, [{ entityId: a, dx: 0, dy: 0 }])
+      const e = entity(sim, a)
+      const w = entity(sim, loup)
+      if (distSq(e.x, e.y, w.x, w.y) <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) ticksAuContact++
+      if (e.hp < pv) {
+        coups++
+        pv = e.hp
+      }
+    }
+    expect(ticksAuContact).toBeGreaterThan(1) // la garde a bien quelque chose à garder
+    expect(coups).toBe(1)
+  })
+
+  it('A29 — il RETOMBE : immobile et offert après son bond', () => {
+    const sim = makeSim(0, 2)
+    const loup = spawnMonster(sim, 'wolf', 80.5, 80.5)
+    spawnEntity(sim, 120.5, 120.5) // un homme au loin : il ne redécide rien de sitôt
+    const m = armeUnBond(sim, loup, 1, 0)
+    for (let t = 0; t < FAUNA.LEAP_TICKS + 1; t++) tick(sim)
+
+    expect(m.leapUntil).toBeUndefined()
+    expect(m.windedUntil).toBeDefined()
+    const pose = { x: entity(sim, loup).x, y: entity(sim, loup).y }
+    for (let t = 0; t < FAUNA.LEAP_RECOVER_TICKS - 1; t++) {
+      tick(sim)
+      expect(entity(sim, loup).x).toBe(pose.x)
+      expect(entity(sim, loup).y).toBe(pose.y)
+    }
+  })
+})
+
+describe('LE PASSAGE (A30-A31 — R20) — un trouve, les autres suivent', () => {
+  /** Une barre de roche en travers, avec UNE ouverture de 3 tuiles à `ouvertureX`. */
+  function barre(sim: SimState, ouvertureX: number): void {
+    for (let tx = 0; tx < sim.map.width; tx++) {
+      if (tx >= ouvertureX && tx < ouvertureX + 3) continue
+      for (let ty = 86; ty < 89; ty++) sim.map.terrain[ty * sim.map.width + tx] = TERRAIN_ROCK
+    }
+  }
+
+  function meute(sim: SimState, x: number, y: number): Monster[] {
+    const herdId = sim.nextHerdId++
+    const out: Monster[] = []
+    for (let i = 0; i < 4; i++) {
+      const id = spawnMonster(sim, 'wolf', x + i * 1.5, y)
+      const m = sim.monsters.find((z) => z.entityId === id)!
+      m.herdId = herdId
+      m.groundX = x
+      m.groundY = y
+      out.push(m)
+    }
+    return out
+  }
+
+  /**
+   * L'homme FAIT LES CENT PAS. Il ne peut pas rester immobile : à l'arrêt il n'est
+   * repéré qu'à 3 tuiles (furtivité C5) et la meute ne le chasserait jamais — le banc
+   * mesurerait la discrétion, pas le passage. Il ne peut pas fuir non plus : il
+   * mesurerait une course. Il va donc et vient sur place, vu et à sa portée.
+   */
+  function centPas(sim: SimState, id: number, secondes: number, pack: Monster[]): { mordu: boolean; recherches: number; copies: number } {
+    const pv = entity(sim, id).hp
+    let mordu = false
+    let recherches = 0
+    let copies = 0
+    const vuPathAt = new Map<number, number>()
+    const avaitChemin = new Map<number, boolean>()
+    for (let t = 0; t < secondes * BALANCE.TICK_RATE_HZ; t++) {
+      const va = Math.floor(t / (2 * BALANCE.TICK_RATE_HZ)) % 2 === 0 ? 1 : -1
+      tick(sim, [{ entityId: id, dx: va as 1 | -1, dy: 0 }])
+      if (entity(sim, id).hp < pv) mordu = true
+      // UNE RECHERCHE PAYÉE se lit à `pathAt` qui change — il est écrit sur TOUTE la
+      // meute d'un coup. UNE COPIE, c'est un loup qui acquiert un chemin sans que
+      // personne n'ait payé ce tick-là. C'est exactement la distinction à garder.
+      let paye = false
+      for (const w of pack) {
+        if (w.pathAt !== undefined && vuPathAt.get(w.entityId) !== w.pathAt) {
+          paye = true
+          vuPathAt.set(w.entityId, w.pathAt)
+        }
+      }
+      if (paye) recherches++
+      for (const w of pack) {
+        const a = (w.path?.length ?? 0) > 0
+        if (a && avaitChemin.get(w.entityId) !== true && !paye) copies++
+        avaitChemin.set(w.entityId, a)
+      }
+    }
+    return { mordu, recherches, copies }
+  }
+
+  it('A30 — un mur dont le trou n’est PAS en face n’annule plus la meute', () => {
+    const sim = makeSim(0, 2)
+    barre(sim, 95) // ouverture à 15 tuiles sur la droite
+    const pack = meute(sim, 80.5, 80.5)
+    const a = spawnEntity(sim, 80.5, 92.5) // de l'autre côté, à 12 tuiles
+    expect(centPas(sim, a, 30, pack).mordu).toBe(true)
+  })
+
+  it('A30 — UN SEUL paie la recherche, les autres COPIENT (la meute est intelligente, pas le loup)', () => {
+    const sim = makeSim(0, 2)
+    barre(sim, 95)
+    const pack = meute(sim, 80.5, 80.5)
+    const a = spawnEntity(sim, 80.5, 92.5)
+    const r = centPas(sim, a, 30, pack)
+    // La transmission a EU LIEU : des loups sont partis sur un chemin que personne
+    // n'a payé pour eux.
+    expect(r.copies).toBeGreaterThan(0)
+    // ET LE CONTRAT DE COÛT TIENT : la MEUTE paie au plus une recherche par palier de
+    // refroidissement — pas un loup, pas quatre. Sans le partage, quatre loups coincés
+    // en paieraient quatre par palier, et c'est exactement le défaut que le Cendreux en
+    // horde a déjà coûté une fois (`cendreux.ts` : un A* par bête et par demi-seconde).
+    const fenetres = Math.ceil((30 * BALANCE.TICK_RATE_HZ) / FAUNA.PATH_COOLDOWN_TICKS)
+    expect(r.recherches).toBeLessThanOrEqual(fenetres)
+    expect(r.recherches).toBeLessThan(fenetres * pack.length)
+  })
+
+  it('A31 — il reste une BÊTE : un détour de 40 tuiles le dépasse', () => {
+    const sim = makeSim(0, 2)
+    barre(sim, 120) // ouverture à 40 tuiles : au-delà de ce qu'il sait comprendre
+    const pack = meute(sim, 80.5, 80.5)
+    const a = spawnEntity(sim, 80.5, 92.5)
+    expect(centPas(sim, a, 30, pack).mordu).toBe(false)
+  })
+
+  it('A31 — EN PLAINE il ne cherche RIEN : pas de chemin sans obstacle', () => {
+    const sim = makeSim(0, 2) // aucune roche : la voie est libre
+    const pack = meute(sim, 80.5, 80.5)
+    const a = spawnEntity(sim, 80.5, 92.5)
+    const r = centPas(sim, a, 30, pack)
+    expect(r.mordu).toBe(true) // il se fait bien attraper, lui
+    expect(r.recherches).toBe(0) // …sans qu'un seul A* ait été payé
+    expect(r.copies).toBe(0)
+  })
+})

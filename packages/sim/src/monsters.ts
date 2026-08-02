@@ -212,6 +212,45 @@ export interface Monster {
   /** Tick jusqu'auquel il souffle après sa charge — immobile, offert (absent = non). */
   windedUntil?: number
 
+  /* ── LE BOND du loup (spec faune R19) ───────────────────────────────────── */
+  /**
+   * Tick jusqu'auquel il BONDIT, cap verrouillé (absent = non).
+   *
+   * Des champs À LUI, et non `chargeUntil` réutilisé : le client peint `chargeUntil`
+   * en `spr-boar-charge` (beast-posture) — un loup qui bondirait sur les champs du
+   * sanglier serait DESSINÉ en sanglier. Le `windedUntil` de la retombée, lui, est
+   * bien partagé : c'est le même fait (« la bête souffle, offerte ») et la teinte
+   * qu'il donne est exactement le signal qu'on veut rendre au joueur.
+   */
+  leapUntil?: number
+  /** La direction du bond — prise au départ, jamais corrigée : c'est ce qui l'esquive. */
+  leapDx?: number
+  leapDy?: number
+  /** A-t-il déjà touché pendant CE bond ? (Un coup par bond, quoi qu'il traverse.) */
+  leapHit?: boolean
+
+  /* ── LE PASSAGE (spec faune R20) — un A* par MEUTE, pas par loup ─────────── */
+  /**
+   * Depuis quel tick il n'a plus GAGNÉ DE TERRAIN sur sa proie (absent = il progresse).
+   * C'est le seul déclencheur d'une recherche de chemin : un loup ne cherche pas un
+   * itinéraire, il se cogne — puis il cherche. La seconde qu'il passe à pousser contre
+   * l'obstacle N'EST PAS un défaut, c'est ce qui le fait lire comme une bête.
+   *
+   * « GAGNER DU TERRAIN », et non « avoir bougé » : MESURÉ, un loup qui bute sur un mur
+   * GLISSE le long (la collision sépare les axes), donc `Entity.moved` reste vrai et il
+   * ne se serait jamais cru coincé — la meute longeait la roche indéfiniment.
+   */
+  stuckSince?: number
+  /** Sa distance à la proie à l'ouverture de la fenêtre — la référence du progrès. */
+  stuckD?: number
+  /**
+   * Tick de la dernière recherche PAYÉE — écrit sur TOUTE la meute, pas sur le seul
+   * chercheur. C'est ce qui fait qu'une meute coûte un A* et non quatre : les autres
+   * ne cherchent pas, ils COPIENT le chemin trouvé (décision d'Alexis : « si l'un
+   * d'entre eux trouve un chemin, il peut le communiquer aux autres »).
+   */
+  pathAt?: number
+
   /* ── La satiété du prédateur (spec faune R15) ───────────────────────────── */
   /** Tick jusqu'auquel il est REPU : il ne chasse plus (mais il se défend). */
   satedUntil?: number

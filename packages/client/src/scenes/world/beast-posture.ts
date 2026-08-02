@@ -60,6 +60,13 @@ export function beastTint(monster: Monster | undefined, windup: boolean, isNpc: 
     return BEAST_TINTS.bleeding
   }
 
+  // LE BOND DU LOUP (R19) — et cette teinte n'est pas une décoration : c'est la
+  // règle rendue visible. Le bond part cap VERROUILLÉ, donc il s'esquive d'un pas
+  // de côté — mais on n'esquive que ce qu'on voit venir. Un loup qui double sa
+  // vitesse et fonce en ligne droite est déjà un signal ; la teinte de MENACE le
+  // rend franc, et c'est la même qu'un sanglier lancé : « ça vient sur toi. »
+  if (monster.leapUntil !== undefined) return BEAST_TINTS.menace
+
   // Le sanglier (spec faune R14) — les trois secondes qui décident de tout.
   if (monster.threatSince !== undefined) return BEAST_TINTS.menace
   if (monster.windedUntil !== undefined) return BEAST_TINTS.winded

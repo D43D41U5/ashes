@@ -40,7 +40,7 @@ import {
   TICK_DT_S,
   type MonsterType,
 } from './balance'
-import { isBlockedAt } from './collision'
+import { isBlockedAt, makeIndexedIsBlockedAt } from './collision'
 import { applyDamage, die, startAttack } from './combat'
 import { emitEvent } from './events'
 import { fireState } from './fire'
@@ -48,6 +48,7 @@ import { distSq } from './geometry'
 import { carryRatio, carryTier, countOf, isEmpty, removeItems, type ItemId } from './items'
 import { terrainAt, zoneTierAt, type WorldMap } from './map'
 import { moveToward, spawnMonster, type Monster } from './monsters'
+import { pathToward } from './pathfinding'
 import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
 import { rngRoll } from './rng'
@@ -2214,6 +2215,261 @@ function boarStep(
   return true
 }
 
+/**
+ * LE BOND, une fois lancé (spec faune R19) — et sa retombée.
+ *
+ * Rend `true` tant que le loup est PRIS par le geste : en vol, ou immobile à
+ * reprendre pied. Il ne décide de rien ; il exécute ce que `startLeap` a engagé.
+ *
+ * Trois choses s'y jouent, et chacune paie une dette mesurée :
+ *  — LE CAP EST VERROUILLÉ. On vise `leapDx/Dy` pris au départ, jamais la position
+ *    courante de la proie : c'est l'esquive latérale, la même leçon que la charge
+ *    du sanglier (R14), et la seule raison pour laquelle une meute reste jouable.
+ *  — UN COUP PAR BOND (`leapHit`). Un loup qui traverse trois corps n'en encorne
+ *    qu'un — sinon le bond deviendrait une tondeuse.
+ *  — LA RETOMBÉE (`windedUntil`, partagé avec le souffle du sanglier : c'est le
+ *    même fait, et le client en tire déjà la teinte « offerte »).
+ */
+function leapStep(
+  state: SimState,
+  monster: Monster,
+  entity: Entity,
+  byId: Map<number, Entity>,
+  monsterByEntity: Map<number, Monster>,
+): boolean {
+  if (monster.windedUntil !== undefined && state.tick < monster.windedUntil) return true
+  delete monster.windedUntil
+
+  if (monster.leapUntil === undefined) return false
+
+  if (state.tick < monster.leapUntil) {
+    const dx = monster.leapDx ?? 0
+    const dy = monster.leapDy ?? 0
+    moveToward(state, monster, entity, entity.x + dx * CAP_VISEE, entity.y + dy * CAP_VISEE, false, FAUNA.LEAP_SPEED)
+    if (monster.leapHit !== true) {
+      // CE QU'IL TOUCHE EN PASSANT, et non « sa cible » : un bond est un corps
+      // lancé. La proie visée qui s'est écartée n'est pas touchée ; le malchanceux
+      // qui se trouvait sur la trajectoire l'est.
+      //
+      // MAIS JAMAIS UN FRÈRE DE MEUTE — et ce n'est pas une politesse, c'est ce qui
+      // décide si la règle marche. Sans cette ligne, MESURÉ : les loups se blessaient
+      // les uns les autres à chaque bond (ils chassent épaule contre épaule), passaient
+      // sous le seuil de la ROMPUE, décrochaient — et l'homme qui marche finissait à
+      // CENT tuiles, intact. Le bond se retournait contre la meute qu'il devait armer.
+      // L'ORDRE DE `byId` DÉCIDE QUI ENCAISSE quand deux corps sont à portée — c'est
+      // donc du flux déterministe. Il est sûr, et il faut le savoir : l'index est
+      // reconstruit à chaque tick depuis `state.entities`, un TABLEAU sérialisé tel
+      // quel. Même ordre dans le Worker et sur Node, et après un rechargement.
+      const reach = COMBAT.MELEE_ENGAGE_RANGE
+      for (const other of byId.values()) {
+        if (other.id === entity.id || other.hp <= 0) continue
+        const om = monsterByEntity.get(other.id)
+        if (om !== undefined && om.herdId !== undefined && om.herdId === monster.herdId) continue
+        if (distSq(entity.x, entity.y, other.x, other.y) > reach * reach) continue
+        monster.leapHit = true
+        applyDamage(state, other, damageOf(monster), entity.id)
+        break
+      }
+    }
+    return true
+  }
+
+  delete monster.leapUntil
+  delete monster.leapHit
+  monster.windedUntil = state.tick + FAUNA.LEAP_RECOVER_TICKS
+  return true
+}
+
+/**
+ * LE DÉPART DU BOND (R19) — cap pris ICI et MAINTENANT, puis verrouillé.
+ *
+ * On vise la proie telle qu'elle est à cet instant, sans anticipation : le loup
+ * n'est pas un artilleur. C'est le fait que le bond COUVRE plus de terrain que la
+ * proie n'en gagne (voir le dimensionnement dans `balance.ts`) qui le fait porter,
+ * pas une prédiction — et c'est ce qui laisse le pas de côté marcher.
+ */
+function startLeap(state: SimState, monster: Monster, entity: Entity, target: Entity, cooldownTicks: number): void {
+  const dx = target.x - entity.x
+  const dy = target.y - entity.y
+  const l = Math.sqrt(dx * dx + dy * dy)
+  if (l < 0.001) return
+  // IL N'EST PLUS TAPI, et ce n'est pas cosmétique. `stalking` commande DEUX choses
+  // hors d'ici : la silhouette (`beast-posture` peint un loup tapi accroupi — un loup
+  // en plein vol l'aurait été aussi) et sa VISIBILITÉ (`STALK_STEALTH`, 0,42 : une
+  // proie n'aurait vu qu'à moitié le corps qui lui arrive dessus). La branche de la
+  // ruée l'éteint déjà pour exactement ces raisons ; le bond est une ruée.
+  monster.stalking = false
+  monster.leapUntil = state.tick + FAUNA.LEAP_TICKS
+  monster.leapDx = dx / l
+  monster.leapDy = dy / l
+  monster.leapHit = false
+  entity.facing = { x: dx / l, y: dy / l }
+  // Le bond COMPTE comme le coup du loup : il paie la même cadence qu'une morsure,
+  // sans quoi il en serait un second, gratuit, par-dessus.
+  entity.cooldownUntil = state.tick + cooldownTicks
+}
+
+/**
+ * LA CHASSE EST FINIE : IL OUBLIE SON DÉTOUR (R20).
+ *
+ * Un chemin est fait POUR une proie. Gardé au-delà, il est SÉRIALISÉ dans la sauvegarde
+ * et resservirait à la chasse suivante : `PATH_STALE` rattrape le gros des cas, mais pas
+ * une proie neuve qui passe près du bout de l'ancien itinéraire — le loup partirait
+ * alors sur une route qu'il n'a pas cherchée, vers un lieu qui ne veut plus rien dire.
+ * On le jette partout où la cible tombe : la rompue, la satiété, la patrouille.
+ */
+function oublieLeChemin(monster: Monster): void {
+  if (monster.path !== undefined && monster.path.length > 0) monster.path = []
+  delete monster.stuckSince
+  delete monster.stuckD
+}
+
+/**
+ * SUIVRE LE PASSAGE (R20) — rend `true` si le loup a un chemin et l'a joué ce tick.
+ *
+ * Il ne le suit que tant qu'il en a un : dès qu'il est épuisé, il retombe sur sa
+ * course droite. C'est ce qui le garde ANIMAL — il ne longe pas un itinéraire quand
+ * la voie est libre, il fonce ; le chemin n'est qu'un détour qu'on lui a soufflé.
+ */
+function pathStep(state: SimState, monster: Monster, entity: Entity, target: Entity): boolean {
+  const path = monster.path
+  if (!path || path.length === 0) return false
+
+  // PÉRIMÉ : la proie n'est plus au bout. Un chemin qu'on suit vers un lieu que la
+  // proie a quitté est pire que pas de chemin — c'est une bête qui court après hier.
+  const fin = path[path.length - 1]!
+  if (distSq(fin.tx + 0.5, fin.ty + 0.5, target.x, target.y) > FAUNA.PATH_STALE * FAUNA.PATH_STALE) {
+    monster.path = []
+    return false
+  }
+
+  // On consomme d'un coup tous les jalons déjà atteints : les traiter un par tick
+  // ferait piétiner la bête à chaque virage serré (le pas vaut 0,24 tuile, un jalon
+  // en vaut 1 — trois jalons empilés lui coûtaient trois ticks d'immobilité).
+  while (path.length > 0) {
+    const wp = path[0]!
+    const dx = wp.tx + 0.5 - entity.x
+    const dy = wp.ty + 0.5 - entity.y
+    if (dx * dx + dy * dy >= 0.45 * 0.45) {
+      monster.stalking = false
+      moveToward(state, monster, entity, wp.tx + 0.5, wp.ty + 0.5, false)
+      return true
+    }
+    path.shift()
+  }
+  return false
+}
+
+/**
+ * IL SE COGNE, PUIS IL DEMANDE (R20). Appelé après chaque pas de chasse : c'est le
+ * PAS REFUSÉ qui déclenche tout, jamais un raisonnement sur la géométrie.
+ *
+ * Deux voies, et l'ordre est la décision d'Alexis — « ils n'ont aucune raison d'être
+ * trop malins, SAUF si l'un d'entre eux trouve un chemin : il peut le communiquer » :
+ *
+ *  1. UN FRÈRE SAIT DÉJÀ → on copie son chemin. Coût nul, et c'est la meute qui
+ *     devient intelligente, pas le loup. Visuellement, ils s'enfilent par le même
+ *     trou l'un derrière l'autre — ce que fait une vraie meute.
+ *  2. PERSONNE NE SAIT → il cherche, UNE fois, et la meute entière porte la dépense
+ *     (`pathAt` écrit sur tous) : quatre loups coincés coûtent UN A*, pas quatre.
+ */
+function noteBlocked(
+  state: SimState,
+  monster: Monster,
+  entity: Entity,
+  target: Entity,
+  /**
+   * LE POINT QU'IL VISE VRAIMENT — la proie quand il se rue, son POSTE quand il rampe.
+   * Ce n'est pas un détail : un rampeur va vers le cercle à 2 t/s pendant que la proie
+   * marche à 4, donc il ne gagne JAMAIS de terrain sur elle. MESURÉ en mesurant la
+   * mauvaise distance : HUIT recherches par minute en pleine plaine, sans obstacle.
+   */
+  butX: number,
+  butY: number,
+  pack: Monster[] | undefined,
+  byId: Map<number, Entity>,
+): void {
+  // LE PROGRÈS, pas le mouvement. Un loup qui bute sur un mur GLISSE le long (la
+  // collision sépare les axes) : `moved` reste vrai et il longerait la roche pour
+  // toujours. On mesure donc ce qui compte — s'est-il RAPPROCHÉ ?
+  const d = Math.sqrt(distSq(entity.x, entity.y, butX, butY))
+  // ARRIVÉ N'EST PAS COINCÉ. Un loup au contact d'une proie qui tourne ne gagne plus
+  // de terrain — par définition, il n'en a plus à gagner. MESURÉ sans cette garde :
+  // SIX recherches et vingt-six chemins copiés en une minute sur un terrain SANS
+  // AUCUN obstacle, la meute se mettant à suivre des itinéraires en pleine plaine.
+  // Au-delà de la portée de bond, en revanche, se rapprocher est tout son métier.
+  //
+  // ELLE SE JUGE SUR LA PROIE, JAMAIS SUR LE BUT. Le but d'un rampeur est son POSTE,
+  // à 3,5 tuiles de la proie : comparé à la portée de bond, il est TOUJOURS « arrivé »,
+  // et le rampeur bloqué derrière un mur ne cherchait donc jamais rien — la meute qui
+  // vient se poster restait plantée, exactement le cas que cette ligne existe pour
+  // servir. Le PROGRÈS se mesure sur le but ; la PERTINENCE, sur la proie.
+  if (Math.sqrt(distSq(entity.x, entity.y, target.x, target.y)) <= FAUNA.LEAP_RANGE) {
+    delete monster.stuckSince
+    delete monster.stuckD
+    return
+  }
+  if (monster.stuckSince === undefined || monster.stuckD === undefined) {
+    monster.stuckSince = state.tick
+    monster.stuckD = d
+    return
+  }
+  if (state.tick - monster.stuckSince < FAUNA.STUCK_TICKS) return
+  // La fenêtre est écoulée : un loup lancé couvre 4,8 tuiles en une seconde. S'il n'a
+  // pas gagné ne serait-ce que `STUCK_PROGRESS`, quelque chose le retient.
+  if (d < monster.stuckD - FAUNA.STUCK_PROGRESS) {
+    monster.stuckSince = state.tick
+    monster.stuckD = d
+    return
+  }
+  delete monster.stuckSince
+  delete monster.stuckD
+
+  // QUELQUE CHOSE BARRE-T-IL, VRAIMENT ? Ne pas gagner de terrain a d'autres causes
+  // que les murs : un poste d'encerclement qui bascule de l'autre côté quand la proie
+  // fait demi-tour suffit à figer la distance. MESURÉ sans cette garde : SEPT
+  // recherches par minute sur un terrain SANS obstacle, et des loups qui suivent un
+  // itinéraire en pleine plaine au lieu de courir droit.
+  //
+  // On échantillonne la droite loup→proie de tuile en tuile. C'est une douzaine de
+  // lectures sur l'index d'occupation (caché par carte), soit mille fois moins qu'un
+  // A* — et c'est la question exacte que le chemin existe pour résoudre.
+  const world = { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null }
+  const bloque = makeIndexedIsBlockedAt(world)
+  const vx = target.x - entity.x
+  const vy = target.y - entity.y
+  const pas = Math.max(1, Math.floor(Math.sqrt(vx * vx + vy * vy)))
+  let barre = false
+  for (let i = 1; i <= pas && !barre; i++) {
+    const sx = entity.x + (vx * i) / pas
+    const sy = entity.y + (vy * i) / pas
+    if (bloque(Math.floor(sx), Math.floor(sy))) barre = true
+  }
+  if (!barre) return
+
+  if (pack) {
+    for (const other of pack) {
+      if (other.entityId === monster.entityId) continue
+      const chemin = other.path
+      if (!chemin || chemin.length === 0) continue
+      const oe = byId.get(other.entityId)
+      if (!oe || oe.hp <= 0) continue
+      if (distSq(entity.x, entity.y, oe.x, oe.y) > FAUNA.PACK_CALL_RADIUS * FAUNA.PACK_CALL_RADIUS) continue
+      // Copie profonde : deux loups qui partagent le MÊME tableau se le consomment
+      // mutuellement — le second suivrait les jalons que le premier a déjà mangés.
+      monster.path = chemin.map((p) => ({ tx: p.tx, ty: p.ty }))
+      return
+    }
+  }
+
+  if (monster.pathAt !== undefined && state.tick - monster.pathAt < FAUNA.PATH_COOLDOWN_TICKS) return
+  monster.pathAt = state.tick
+  if (pack) for (const o of pack) o.pathAt = state.tick // la meute a payé, pas lui seul
+
+  monster.path =
+    pathToward(world, entity.x, entity.y, Math.floor(target.x), Math.floor(target.y), FAUNA.PATH_EXPLORE) ?? []
+}
+
 /* ── Le prédateur : la meute de loups (spec faune R11) ────────────────────── */
 
 /** Les frères de meute vivants, à portée de cohésion — la mesure du courage. */
@@ -2350,6 +2606,12 @@ export function wolfStep(
   const def = MONSTER_DEFS.wolf
   const pack = monster.herdId !== undefined ? herds.get(monster.herdId) : undefined
 
+  // 0. LE BOND EN COURS (R19). Il est ENGAGÉ : plus rien ne le fait dévier, ni une
+  //    cible qui change, ni une blessure. C'est ce qui le rend esquivable — un bond
+  //    qui se corrigerait en vol ne serait qu'une morsure téléguidée, et le pas de
+  //    côté du joueur ne vaudrait plus rien.
+  if (leapStep(state, monster, entity, byId, monsterByEntity)) return
+
   // 1. LA ROMPUE. Blessé au-delà du seuil — ou en déroute — il décroche, et rien
   //    ne le ramène tant qu'il n'est pas loin. Un loup ne se sacrifie pas.
   const broken = entity.hp < maxHpOf(monster) * FAUNA.PACK_BREAK_HP
@@ -2358,6 +2620,7 @@ export function wolfStep(
     if (monster.alertSince === undefined) monster.alertSince = state.tick
     monster.targetId = null
     monster.stalking = false
+    oublieLeChemin(monster)
     const attacker = monster.lastAttackerId !== null ? byId.get(monster.lastAttackerId) : undefined
     const from = attacker ?? nearestOf(quarry, entity, FAUNA.SAFE_RANGE)
     if (from) {
@@ -2388,6 +2651,7 @@ export function wolfStep(
       // entière : on la VOIT, on la contourne, et rien n'arrive.
       monster.targetId = null
       monster.stalking = false
+      oublieLeChemin(monster)
       delete monster.alertSince // repu et tranquille : il baisse la garde (C6)
       if (goHome(state, monster, entity)) return
       if (isResting('wolf', hour)) {
@@ -2457,6 +2721,32 @@ export function wolfStep(
       return
     }
 
+    // LE PASSAGE (R20) — il a un détour en tête : il le joue, et il ne bondit pas
+    // dans un mur en chemin. Mais si la proie est à portée de crocs (il vient de
+    // franchir la porte), la morsure passe d'abord : on ne longe pas un itinéraire
+    // avec la gorge de sa proie sous le nez.
+    if (d2 > COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE && pathStep(state, monster, entity, target)) return
+
+    // LE BOND (R19) — ON BONDIT SUR CE QUI AVANCE, ON MORD CE QUI EST ARRÊTÉ.
+    //
+    // C'est `target.moved` qui départage, et c'est tout le correctif : la morsure
+    // plantée marche depuis toujours contre une proie immobile (banc « il s'arrête » :
+    // 17 morsures) et n'a JAMAIS porté contre une proie qui avance (bancs marche,
+    // zigzag, tour de meute : 46 à 72 coups armés, zéro dégât), parce que son wind-up
+    // fige le loup pendant que la proie prend 1,8 tuile.
+    //
+    // Le bond part depuis le POSTE (`LEAP_RANGE` = `ENCIRCLE_RADIUS`) : le loup n'a plus
+    // besoin de se coller d'abord — se coller était précisément ce qui ne servait à rien.
+    if (
+      target.moved &&
+      d2 <= FAUNA.LEAP_RANGE * FAUNA.LEAP_RANGE &&
+      state.tick >= entity.cooldownUntil &&
+      entity.windup === undefined
+    ) {
+      startLeap(state, monster, entity, target, def.attackCooldownTicks)
+      return
+    }
+
     // À portée de crocs : il mord. Plus rien à calculer. (L'alpha mord plus fort.)
     if (d2 <= COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
       if (startAttack(state, entity, target.x - entity.x, target.y - entity.y, { windupTicks: def.windupTicks, damage: damageOf(monster) })) {
@@ -2482,17 +2772,23 @@ export function wolfStep(
     if (ready || aware || d2 <= FAUNA.COMMIT_RANGE * FAUNA.COMMIT_RANGE) {
       monster.stalking = false
       moveToward(state, monster, entity, target.x, target.y, false)
+      noteBlocked(state, monster, entity, target, target.x, target.y, pack, byId)
       return
     }
 
     monster.stalking = true
     const post = encirclePost(pack, monster, target)
     moveToward(state, monster, entity, post.x, post.y, false, FAUNA.STALK_SPEED)
+    // Un rampeur bloqué cherche aussi : sinon la meute qui vient se POSTER derrière
+    // un mur reste plantée là, et l'encerclement n'a jamais lieu. Son but est son
+    // POSTE — c'est sur lui qu'on juge s'il avance.
+    noteBlocked(state, monster, entity, target, post.x, post.y, pack, byId)
     return
   }
   monster.stalking = false
 
   monster.targetId = null
+  oublieLeChemin(monster)
   // Retour à la patrouille : la garde retombe — un loup qui ne chasse rien
   // redevient approchable (C6), et c'est toute la décision n°1 de la spec :
   // la mise à mort propre vaut aussi sur les prédateurs.

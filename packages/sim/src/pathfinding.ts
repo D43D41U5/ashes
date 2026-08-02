@@ -224,6 +224,15 @@ export function pathToward(
   fromY: number,
   tx: number,
   ty: number,
+  /**
+   * Le BUDGET d'exploration — et pour la faune, c'est un bouton de DESIGN, pas une
+   * soupape de perf (spec faune R20). Un chercheur qui explore 4 096 tuiles résout
+   * un labyrinthe ; un loup ne doit pas. MESURÉ, tuiles explorées nécessaires :
+   * ouverture en face 200 · décalée de 15 tuiles 700 · palissade 20×20 dont la porte
+   * est à l'opposé 1 200 · détour de 40 tuiles, grande enceinte, labyrinthe : 4 096.
+   * Le budget CHOISIT donc ce que la bête est capable de comprendre.
+   */
+  maxExplored?: number,
 ): { tx: number; ty: number }[] | null {
   const from = { tx: Math.floor(fromX), ty: Math.floor(fromY) }
   const targets = isBlockedAt(world, tx, ty)
@@ -237,7 +246,7 @@ export function pathToward(
         .sort((a, b) => distSq(a[0] + 0.5, a[1] + 0.5, fromX, fromY) - distSq(b[0] + 0.5, b[1] + 0.5, fromX, fromY))
     : [[tx, ty] as const]
   for (const [gx, gy] of targets) {
-    const path = findPath(world, from, { tx: gx, ty: gy })
+    const path = findPath(world, from, { tx: gx, ty: gy }, maxExplored)
     if (path) return path
   }
   return null

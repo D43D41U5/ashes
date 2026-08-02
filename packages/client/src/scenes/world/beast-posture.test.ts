@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { Monster } from '@ashes/sim'
-import { COUCHER_DELAI_MS, MIROIR_DELAI_MS, beastTexture, majMiroir, majRepos, nouveauMiroir, nouveauRepos } from './beast-posture'
+import { BEAST_TINTS, COUCHER_DELAI_MS, MIROIR_DELAI_MS, beastTexture, beastTint, majMiroir, majRepos, nouveauMiroir, nouveauRepos } from './beast-posture'
 
 /** Un cerf nu : ni levé, ni tapi, ni méfiant. */
 function cerf(patch: Partial<Monster> = {}): Monster {
@@ -111,5 +111,28 @@ describe('le miroir ne claque pas', () => {
 
   it('une bête qui APPARAÎT tournée à gauche est dessinée à gauche, sans délai', () => {
     expect(majMiroir(nouveauMiroir(false, 0), true, 0)).toBe(true)
+  })
+})
+
+describe('le bond du loup se VOIT (R19)', () => {
+  /** Un loup nu, ni rampant ni alpha. */
+  function loup(patch: Partial<Monster> = {}): Monster {
+    return { ...cerf(), type: 'wolf', ...patch }
+  }
+
+  it('un loup en plein bond porte la teinte de MENACE — un bond qu’on ne voit pas ne s’esquive pas', () => {
+    expect(beastTint(loup({ leapUntil: 100 }), false, false, 50)).toBe(BEAST_TINTS.menace)
+  })
+
+  it('…et il RETOMBE en teinte de souffle : la fenêtre pour le frapper', () => {
+    expect(beastTint(loup({ windedUntil: 100 }), false, false, 50)).toBe(BEAST_TINTS.winded)
+  })
+
+  it('le bond prime sur la traque : un loup qui bondit n’est plus tapi', () => {
+    expect(beastTint(loup({ leapUntil: 100, stalking: true }), false, false, 50)).toBe(BEAST_TINTS.menace)
+  })
+
+  it('…mais le SANG prime sur le bond : ce qu’on traque reste l’information la plus chère', () => {
+    expect(beastTint(loup({ leapUntil: 100, bleedMortal: true }), false, false, 50)).toBe(BEAST_TINTS.bleeding)
   })
 })

@@ -2081,6 +2081,75 @@ export const FAUNA = {
   CHARGE_TICKS: ticksFor(1.3), // il court tout droit pendant ce temps, sans dévier
   WINDED_TICKS: ticksFor(1.7), // puis il souffle, immobile — la fenêtre pour frapper
   /**
+   * LE BOND DU LOUP (spec faune R19, décision d'Alexis 2026-08-01). Ces quatre
+   * nombres ne sont pas un goût : ils sortent de l'arithmétique de la panne qu'ils
+   * réparent.
+   *
+   * LA PANNE : le wind-up de la morsure dure 0,45 s et FIGE le loup ; l'homme y
+   * parcourt 1,8 tuile quand la morsure n'en porte que 1,2. MESURÉ — quatre loups
+   * collés à UNE tuile d'un homme qui marche, 46 coups armés, ZÉRO dégât.
+   *
+   * LA PORTÉE EST DICTÉE PAR L'ESQUIVE, ET C'EST TOUT L'INVERSE DE L'INTUITION :
+   * un bond COURT n'est pas esquivable, il est seulement plus proche. Ce qui rend
+   * un bond évitable, c'est le TEMPS DE VOL — l'homme se décale à 4 t/s pendant que
+   * le loup, cap verrouillé, ne se corrige plus. MESURÉ sur la première version
+   * (portée 3,5, vol 0,5 s) : le pas de côté passait à **1,17 tuile** du loup, sous
+   * la portée de morsure — 14 dégâts gratuits, sans recours. Ce n'est pas une
+   * rencontre, c'est un impôt.
+   *
+   * À 5 tuiles et 0,8 s de vol : l'homme qui va TOUT DROIT est rejoint à 0,68 s
+   * (dans le vol, avec la marge) ; celui qui se DÉCALE passe à **1,93 tuile** — hors
+   * de portée, franchement. Le même geste, deux issues, décidées par le joueur :
+   * c'est la leçon que le sanglier enseigne déjà (R14), et c'est pourquoi son bond
+   * est LONG. Contre un homme qui SPRINTE (6 t/s) le bond ne rattrape pas — mais il
+   * n'a jamais été à 5 tuiles d'un sprinteur (dit dans R19 : la fuite au sprint est
+   * un problème d'APPROCHE, pas de morsure).
+   *
+   * LA RETOMBÉE est le PRIX du bond, et c'est elle qui garde le combat jouable :
+   * un loup qui a manqué est parti CINQ TUILES trop loin, puis reste immobile et
+   * offert. Plus courte que le souffle du sanglier (1,7 s) — un sanglier est une
+   * rencontre, une meute est un combat : à quatre loups, 1,7 s de gel chacun
+   * rendrait l'encerclement inoffensif. Sur le cycle complet (vol + retombée) le
+   * loup avance encore à 4,8 t/s : bondir ne le fait pas perdre du terrain sur un
+   * homme qui marche — un correctif qui ralentirait la meute n'en serait pas un.
+   */
+  /**
+   * LE PASSAGE (spec faune R20, décision d'Alexis : « les loups n'ont aucune raison
+   * d'être trop malins, sauf si l'un d'entre eux trouve un chemin — il peut le
+   * communiquer aux autres »).
+   *
+   * CE QU'ON RÉPARE, MESURÉ : une barre de roche avec UNE ouverture de trois tuiles.
+   * En face, la meute mord (3/3 graines). Décalée de quinze tuiles — le tour d'une
+   * palissade de village — elle ne mord **JAMAIS** : elle pousse contre la roche à
+   * 6,7 tuiles pendant soixante secondes. Un mur dont le trou n'est pas en face
+   * annulait une meute entière.
+   *
+   * CE QUE ÇA COÛTE, ET POURQUOI C'EST NÉGLIGEABLE. Un A* vaut ~1,6 ms à l'échelle
+   * de production (3,75 M tuiles, 125 000 nœuds) contre 50 ms de budget de tick.
+   * Le coût ne vient donc pas du chemin, il vient de sa FRÉQUENCE : quatre loups qui
+   * chercheraient chacun deux fois par seconde, ce sont 13 ms/tick — le défaut que
+   * le Cendreux en horde a déjà payé une fois (voir `cendreux.ts`). Ici : **UNE
+   * recherche par meute et par `PATH_COOLDOWN_TICKS`**, les autres copiant le chemin
+   * trouvé. Soit ~0,03 ms/tick, six cents fois moins.
+   *
+   * `PATH_EXPLORE` EST UN BOUTON DE DESIGN, PAS DE PERF — c'est lui qui décide de ce
+   * que la bête est capable de comprendre. Budget minimal mesuré pour trouver :
+   * ouverture en face **200** · décalée de 15 tuiles **700** · palissade 20×20 dont la
+   * porte est à l'opposé **1 200** · détour de 40 tuiles, enceinte 40×40, LABYRINTHE
+   * **4 096**. À 1 200, le loup fait le tour d'un obstacle et **ne résout pas un plan
+   * de village** : il reste une bête. Conséquence de jeu assumée et signalée : une
+   * petite enceinte ne protège plus par sa FORME, une grande si.
+   */
+  STUCK_TICKS: ticksFor(1), // une seconde à se cogner avant de chercher
+  STUCK_PROGRESS: 1, // gagné moins d'une tuile en une seconde (il en couvre 4,8) = retenu
+  PATH_COOLDOWN_TICKS: ticksFor(3), // une recherche par meute et par 3 s
+  PATH_EXPLORE: 1200, // ce qu'une bête peut comprendre — pas un labyrinthe
+  PATH_STALE: 6, // la proie a bougé de tant : le chemin ne mène plus à elle
+  LEAP_RANGE: 5, // il part de LOIN : c'est la distance qui rend l'esquive possible
+  LEAP_SPEED: 2.0, // × son allure (4,8 → 9,6 t/s)
+  LEAP_TICKS: ticksFor(0.8), // le temps de vol, cap verrouillé
+  LEAP_RECOVER_TICKS: ticksFor(0.8), // il retombe, immobile — la fenêtre pour frapper
+  /**
    * LE FEU. Aucun loup n'approche à moins de ça d'un Feu allumé : il rompt, il
    * s'écarte, il attend dans le noir. C'est la seule vraie issue d'une poursuite,
    * et elle donne à la fuite une DESTINATION plutôt qu'une direction.
