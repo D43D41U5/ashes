@@ -1,5 +1,15 @@
 # Handoff — la Vallée (état au 2026-07-07)
 
+> ⚠ **DOCUMENT HISTORIQUE — LE CODE QU'IL DÉCRIT N'EXISTE PLUS (2026-08-02).** Toute la pile
+> `valleygen.ts` / `valleygen-water.ts` / `valleygen-mines.ts` / `valleygen-primitives.ts` /
+> `valley-veillee.ts` a été SUPPRIMÉE : la carte jouée vient de `zonegen.ts` (worldgen
+> graphe-de-zones, spec `docs/specs/worldgen.md`) depuis le pivot de juillet, et plus personne
+> n'appelait `generateValley`. Les commandes de test citées plus bas
+> (`vitest src/valleygen.test.ts src/valley-veillee.test.ts`) ne passent donc plus.
+> `setTile` et `isWater`, seules survivantes, vivent dans `map.ts`. Ce fichier reste pour
+> l'INTENTION de design (squelette déclaratif + chair procédurale) — pas comme carte du code.
+> Voir `docs/decisions.md` 2026-08-02.
+
 Pour reprendre le travail sur la carte dans une future session. Deux sous-projets livrés, un lot différé.
 
 ## Livré et mergé sur `main`
