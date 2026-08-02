@@ -30,6 +30,7 @@
  * (invariant n°2).
  */
 import { TERRAINS, TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_SHALLOW_WATER } from './balance'
+import { isWater } from './map'
 import { hash2 } from './noise'
 import { CREUX, altitudeAt, celluleDe, type Creux } from './racine-relief'
 import type { GrapheZones } from './zonegraph'
@@ -707,7 +708,7 @@ function peindreSegment(
       const i = y * width + x
       if (zone[i] !== racineId) continue
       const cur = terrain[i]!
-      if (cur === TERRAIN_SHALLOW_WATER || cur === TERRAIN_DEEP_WATER) continue
+      if (isWater(cur)) continue
       if (TERRAINS[cur]?.walkable !== true) continue
       terrain[i] = TERRAIN_SHALLOW_WATER
       eaux.push(i)
@@ -861,7 +862,7 @@ function tracerLaRiviere(
     const i = by * width + bx
     if (zone[i] !== racineId) return // la rivière ne sort JAMAIS de la Racine
     const cur = terrain[i]!
-    if (cur === TERRAIN_SHALLOW_WATER || cur === TERRAIN_DEEP_WATER) return // eau existante : intacte
+    if (isWater(cur)) return // eau existante : intacte
     if (TERRAINS[cur]?.walkable !== true) return // on ne noie pas un mur
     terrain[i] = TERRAIN_SHALLOW_WATER
     litNeuf.add(i)
@@ -963,7 +964,7 @@ function frangeDeMarais(
         const j = y * width + x
         if (zone[j] !== racineId) continue
         const cur = terrain[j]
-        if (cur === TERRAIN_SHALLOW_WATER || cur === TERRAIN_DEEP_WATER || cur === TERRAIN_MARSH) continue
+        if (isWater(cur!) || cur === TERRAIN_MARSH) continue
         if (TERRAINS[cur!]?.walkable !== true) continue
         // Gate quantifié au motif : toute la plaque de 8 partage le verdict.
         if (hash2(Math.floor(x / M), Math.floor(y / M), sel) < EAU.MARAIS_COUVERTURE) {

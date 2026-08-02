@@ -21,6 +21,7 @@
  * Pur et déterministe : `hash2`, `+ - * / abs sign min max floor round` (invariant n°2).
  */
 import { TERRAINS, TERRAIN_DEEP_WATER, TERRAIN_ROAD, TERRAIN_SHALLOW_WATER } from './balance'
+import { isWater } from './map'
 import { hash2 } from './noise'
 import type { Riviere } from './zonegen-water'
 import type { GrapheZones } from './zonegraph'
@@ -87,8 +88,7 @@ export function tracerLesSentes(
     if (dansSetPiece(x, y)) return false
     const i = y * width + x
     if (zone[i] !== racineId || !marchable(i)) return false
-    const t = terrain[i]!
-    return t !== TERRAIN_SHALLOW_WATER && t !== TERRAIN_DEEP_WATER
+    return !isWater(terrain[i]!)
   }
   let hubX = Math.round(r.x + r.w / 2)
   let hubY = Math.round(r.y + r.h / 2)
@@ -135,7 +135,7 @@ export function tracerLesSentes(
       const t = terrain[i]!
       // L'eau ne se pave pas : une sente TRAVERSE l'eau peu profonde (le pas ralentit, c'est
       // le prix du gué) et son terrain reste de l'eau. Seule la terre ferme devient route.
-      if (t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER) continue
+      if (isWater(t)) continue
       terrain[i] = TERRAIN_ROAD
     }
   }

@@ -27,7 +27,8 @@
  *
  * Pur et déterministe : `hash2`, arithmétique entière (invariant n°2).
  */
-import { TERRAINS, TERRAIN_DEEP_WATER, TERRAIN_FLOWER_MEADOW, TERRAIN_MARSH, TERRAIN_OLD_GROWTH, TERRAIN_REED_MARSH, TERRAIN_ROAD, TERRAIN_SHALLOW_WATER } from './balance'
+import { TERRAINS, TERRAIN_FLOWER_MEADOW, TERRAIN_MARSH, TERRAIN_OLD_GROWTH, TERRAIN_REED_MARSH, TERRAIN_ROAD, TERRAIN_SHALLOW_WATER } from './balance'
+import { isWater } from './map'
 import { hash2 } from './noise'
 import type { GrapheZones } from './zonegraph'
 
@@ -87,7 +88,7 @@ export function placerLesSetPieces(
         if (zone[i] !== racineId) return false
         const t = terrain[i]!
         if (!TERRAINS[t]?.walkable) return false
-        if (t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER || t === TERRAIN_ROAD) return false
+        if (isWater(t) || t === TERRAIN_ROAD) return false
       }
     }
     return out.every((p) => {

@@ -45,7 +45,7 @@ import {
   TERRAIN_SHALLOW_WATER,
   TERRAIN_SNOW,
 } from './balance'
-import { MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
+import { isWater, MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
 import { calibreLeFront, computeCendreField } from './cendre'
 import { distSq } from './geometry'
 import { placeCharniers, placePois } from './poi'
@@ -609,7 +609,7 @@ function assainirLeProfond(
         if (terrain[i] !== TERRAIN_DEEP_WATER || zone[i] !== racineId) continue
         for (const j of [i - 1, i + 1, i - width, i + width]) {
           const t = terrain[j]!
-          if (t === TERRAIN_DEEP_WATER || t === TERRAIN_SHALLOW_WATER) continue
+          if (isWater(t)) continue
           if (TERRAINS[t]?.walkable !== true) continue
           if (memeZone && zone[j] !== racineId) continue
           terrain[i] = TERRAIN_SHALLOW_WATER
@@ -664,8 +664,7 @@ function peindreLaVegetationRacine(
     if (x < 0 || y < 0 || x >= width || y >= height) return false
     const i = y * width + x
     if (zone[i] !== g.racine) return false
-    const t = terrain[i]!
-    return t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER
+    return isWater(terrain[i]!)
   })
   composerLHumidite(creux, seed)
 

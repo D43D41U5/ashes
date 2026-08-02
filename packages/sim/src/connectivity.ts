@@ -19,7 +19,7 @@
  * Pur et déterministe : balayage row-major, pile explicite, aucun aléa.
  */
 import { MARCHABLE, type WorldMap } from './map'
-import { isWater } from './valleygen-primitives'
+import { isWater } from './map'
 
 /** Voisinage à 4 — le seul qui dise la vérité sur ce monde (cf. en-tête). */
 const N4X = [1, -1, 0, 0]

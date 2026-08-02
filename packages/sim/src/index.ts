@@ -233,9 +233,14 @@ export { spawnMonster } from './monsters'
 export { spawnHorde, spawnConvoy } from './worldevents'
 export { applyDamage } from './combat'
 export { advanceUpkeep, applyStructureDamage, grantItems } from './village'
-export { generateValley } from './valleygen'
 
-// ── LA NOUVELLE VALLÉE — un graphe de zones, un terrain qui en découle (spec `worldgen.md`) ──
+// ── LA VALLÉE — un graphe de zones, un terrain qui en découle (spec `worldgen.md`) ──
+// (L'ANCIENNE pile `valleygen` — squelette déclaratif + chair procédurale, juillet 2026 — a été
+//  SUPPRIMÉE le 2026-08-02 : `scenario.ts` avait migré vers `generateZonedTerrain`, plus personne
+//  ne l'appelait. C'est l'item 18 de `docs/audit-gameplay-phase1.md` — « deux stacks de génération
+//  de carte », dont le banc calibrait sur une carte que le joueur ne voyait jamais — refermé par
+//  la suppression plutôt que par la vigilance. Elle reste dans git si le squelette déclaratif
+//  redevenait un jour la bonne idée.)
 export {
   deriveGrapheZones, echantillonAt, MONDE, tailleCarte, ZONES,
   type GrapheZones, type Seuil, type Tier, type Zone as ZoneDef,
@@ -259,8 +264,6 @@ export {
   type CarveField,
   type WalkableComponents,
 } from './connectivity'
-export type { ValleySkeleton, ValleyRegion, ValleyPoint } from './valleygen'
-export { VEILLEE_SKELETON, VEILLEE_SITES } from './valley-veillee'
 
 // ─── Protocole hôte ⇄ client (transport-agnostique — Worker ou serveur) ───
 export { PROTOCOL_VERSION, CHAT_RADIUS_TILES, CHAT_MAX_LEN } from './protocol'

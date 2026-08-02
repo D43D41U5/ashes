@@ -5,7 +5,7 @@
  * que le décor. La tuile est l'unité de distance de /sim — le rendu en pixels
  * est une affaire de /client.
  */
-import { POI, TERRAINS } from './balance'
+import { POI, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, TERRAINS } from './balance'
 
 /** Rectangle nommé — landmark de chronique, future zone interdite, futur room. */
 export interface Zone {
@@ -174,10 +174,37 @@ export function terrainAt(map: WorldMap, tx: number, ty: number): number {
   return map.terrain[ty * map.width + tx] ?? 0
 }
 
+/**
+ * Écrit un id de terrain. Le MIROIR exact de `terrainAt` — même borne, même
+ * indexation —, et c'est pourquoi il vit ici : une lecture et une écriture qui
+ * ne partagent pas leur garde de bord finissent toujours par diverger.
+ * Hors carte : sans effet (on ne peint pas le vide).
+ */
+export function setTile(map: WorldMap, tx: number, ty: number, id: number): void {
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return
+  map.terrain[ty * map.width + tx] = id
+}
+
 /** Une tuile bloque-t-elle le déplacement ? Hors carte et terrain inconnu bloquent. */
 export function isBlockingTile(map: WorldMap, tx: number, ty: number): boolean {
   const def = TERRAINS[terrainAt(map, tx, ty)]
   return def === undefined || !def.walkable
+}
+
+/**
+ * CE QUI EST DE L'EAU — la définition, en un seul endroit.
+ *
+ * Elle était recopiée en clair (`t === SHALLOW || t === DEEP`) sur sept sites du
+ * worldgen. Tant que l'eau n'a que deux terrains, sept copies se valent ; le jour
+ * où un troisième apparaît (un gué, une eau saumâtre), six d'entre elles
+ * cesseraient silencieusement de le voir — et l'eau qui commande la faune
+ * (spec faune R17) déciderait juste ici et faux là.
+ *
+ * ⚠ `TERRAIN_MARSH` n'en est PAS : le marais se traverse. Les sites qui veulent
+ * les deux écrivent `isWater(t) || t === TERRAIN_MARSH`, et ça se lit.
+ */
+export function isWater(t: number): boolean {
+  return t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER
 }
 
 /** Première zone nommée contenant le point (x, y), ou undefined. */
