@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { SEASON, WORLD_EVENTS } from './balance'
 import { chronicleFromEvents, formatChronicleLine, type ChronicleWeight } from './chronicle'
 import type { SimEvent } from './events'
 import { TICKS_PER_SEASON_DAY } from './time'
@@ -104,5 +105,35 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     expect(entries[0]!.text).toBe("Le monde s'est éteint. Ce qu'on retiendra :")
     expect(entries[1]!.text).toBe('le Foyer de la Rivière a tenu jusqu’au bout.')
     expect(entries.every((e) => e.day === 48)).toBe(true)
+  })
+
+  /**
+   * LE MOT « MÉGA-HORDE » NE SE DÉPENSE QU'UNE FOIS PAR SAISON (décision d'Alexis,
+   * 2026-08-02). Le seuil valait `12` écrit en clair — soit exactement la taille d'une
+   * horde d'ACTE III ORDINAIRE : la chronique criait donc au loup toutes les nuits de
+   * l'acte III, et le mot ne pesait plus rien quand la vraie tombait.
+   *
+   * On balaie TOUTES les tailles que le jeu produit vraiment — les trois hordes d'acte
+   * (`HORDE_SIZE`) plus la méga — au lieu de piquer deux cas : c'est la propriété qu'on
+   * affirme (« seule `MEGA_HORDE_SIZE` porte le nom »), pas un échantillon.
+   */
+  it('« méga-horde » est réservé à SEASON.MEGA_HORDE_SIZE — une horde d’acte III n’y a pas droit', () => {
+    // `''` quand la chronique ne dit RIEN — une petite horde (acte I) n'a pas de ligne du
+    // tout, et c'est le comportement voulu : la chronique n'est pas un journal d'événements.
+    const texteDe = (size: number): string =>
+      chronicleFromEvents([at(30, { type: 'horde_spawned', hordeId: 1, size, targetVillageId: 1 })], SCALE, NAMES)[0]
+        ?.text ?? ''
+
+    for (const size of WORLD_EVENTS.HORDE_SIZE) {
+      expect(size, 'une taille de horde d’acte ne doit jamais atteindre le seuil de la méga').toBeLessThan(
+        SEASON.MEGA_HORDE_SIZE,
+      )
+      expect(texteDe(size), `horde de ${size}`).not.toContain('méga-horde')
+    }
+    expect(texteDe(SEASON.MEGA_HORDE_SIZE)).toContain('méga-horde')
+
+    // Et le palier « grande horde » tient toujours, des deux côtés de sa borne.
+    expect(texteDe(WORLD_EVENTS.HORDE_SIZE[1]!)).toContain('grande horde')
+    expect(texteDe(WORLD_EVENTS.HORDE_SIZE[1]! - 1)).not.toContain('grande horde')
   })
 })

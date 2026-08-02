@@ -13,7 +13,7 @@
  * une entrée structurée `{ jour, texte, poids }` — le jour est SÉPARÉ du texte
  * (gouttière de dates de la maquette), et le mapping type→poids vit ici, pur.
  */
-import { WORLD_EVENTS } from './balance'
+import { SEASON, WORLD_EVENTS } from './balance'
 import type { SimEvent } from './events'
 import { POI_CHARGES } from './poi-discovery'
 import { TICKS_PER_SEASON_DAY } from './time'
@@ -104,13 +104,16 @@ export function chronicleFromEvents(
         else push(`Le Feu de « ${name(e.villageId)} » est redevenu neutre.`, 'recit')
         break
       case 'horde_spawned':
-        // Les deux seuils SE DÉRIVENT des tailles de horde par acte (`HORDE_SIZE`, [4, 8, 12]) :
-        // recopiés en chiffres, un rééquilibrage des hordes aurait laissé la chronique raconter
-        // « une grande horde » pour une petite, sans que rien ne le signale.
-        // ⚠ À TRANCHER : `WORLD_EVENTS.MEGA_HORDE_SIZE` vaut 16, pas 12 — une horde d'acte III
-        // ordinaire se fait donc annoncer « méga-horde ». Comportement INCHANGÉ ici (même
-        // valeur qu'avant) ; c'est un choix de texte, pas un correctif à prendre tout seul.
-        if (e.size >= WORLD_EVENTS.HORDE_SIZE[2]!) push(`La méga-horde a déferlé sur ${name(e.targetVillageId)} (${e.size} goules).`, 'battement')
+        // LA MÉGA-HORDE EST *LA* MÉGA-HORDE — celle du premier crépuscule de la Cendre, et
+        // aucune autre (décision d'Alexis, 2026-08-02). Le seuil était `12`, écrit en clair :
+        // or 12 est la taille d'une horde d'ACTE III ORDINAIRE (`HORDE_SIZE[2]`), si bien que
+        // la chronique annonçait « la méga-horde a déferlé » pour une nuit d'acte III banale —
+        // et le mot ne voulait plus rien dire le jour où la vraie tombait. Il se dérive
+        // désormais de `SEASON.MEGA_HORDE_SIZE` (16), la taille de celle qu'on nomme.
+        //
+        // Les deux seuils SE DÉRIVENT, jamais recopiés : un rééquilibrage des hordes ferait
+        // sinon raconter « une grande horde » pour une petite, sans que rien ne le signale.
+        if (e.size >= SEASON.MEGA_HORDE_SIZE) push(`La méga-horde a déferlé sur ${name(e.targetVillageId)} (${e.size} goules).`, 'battement')
         else if (e.size >= WORLD_EVENTS.HORDE_SIZE[1]!) push(`Une grande horde a marché sur ${name(e.targetVillageId)}.`, 'battement')
         break
       case 'convoy_spawned':
