@@ -601,7 +601,7 @@ export function applyDamage(state: SimState, target: Entity, damage: number, byE
     if (before > threshold && target.hp <= threshold && target.hp > 0) {
       const { value: roll, next } = rngRoll(state.rngState)
       state.rngState = next
-      const wound = roll < 0.34 ? 'leg' : roll < 0.67 ? 'arm' : 'bleeding'
+      const wound = roll < COMBAT.WOUND_ROLL_LEG ? 'leg' : roll < COMBAT.WOUND_ROLL_ARM ? 'arm' : 'bleeding'
       if (wound === 'bleeding' && wildTarget2) continue // sa plaie est celle de la chasse
       target.wounds[wound] = true
       emitEvent(state, { type: 'wound_inflicted', tick: state.tick, entityId: target.id, wound })
@@ -772,7 +772,7 @@ export function advanceCombat(state: SimState): void {
     // ci-dessous dépasse le PV max propre de la plupart des types
     // (MONSTER_DEFS[type].hp) — sans cette garde un monstre entamé regrimpe
     // passivement au-delà de son max.
-    if (!monsterIds.has(entity.id) && entity.hp > 0 && entity.hp < 100 && entity.hunger > 50) {
+    if (!monsterIds.has(entity.id) && entity.hp > 0 && entity.hp < 100 && entity.hunger > COMBAT.HP_REGEN_HUNGER_MIN) {
       // GDD §6bis : une PLAIE non soignée (saignement/jambe/bras) freine fort la guérison
       // — c'est ce qui fait exister le médecin. Le bandage clôt la plaie → régén pleine.
       const wounded = entity.wounds.bleeding === true || entity.wounds.leg === true || entity.wounds.arm === true
@@ -815,7 +815,7 @@ export function advanceCombat(state: SimState): void {
     perS *= coldStaminaRegenFactor(entity.temperature)
     perS *= staminaPoiFactor(state, entity.x, entity.y) // le Tarn est une halte
     if (!monsterIds.has(entity.id)) {
-      if (entity.hunger > 70) perS *= COMBAT.FED_REGEN_BONUS
+      if (entity.hunger > COMBAT.FED_REGEN_HUNGER) perS *= COMBAT.FED_REGEN_BONUS
       else if (entity.hunger <= 0) perS *= COMBAT.STARVED_REGEN_MALUS
       if (state.tick < entity.exhaustedUntil) perS *= COMBAT.EXHAUSTED_REGEN_FACTOR
     }

@@ -20,6 +20,7 @@
  */
 import { COMPONENTS, STRUCTURE_COSTS, VILLAGE_GROWTH, WALL_TIERS, type ComponentType } from './balance'
 import { edgeBarrierAt, fullTileAt, terrainConstructible } from './construction'
+import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { countOf, type Inventory, type ItemBag, type StructureType } from './items'
 import { terrainAt } from './map'
 import type { SimState } from './sim'
@@ -101,9 +102,14 @@ export function bedAnchor(fx: number, fy: number, spot: readonly [number, number
  */
 function hutDoor(spot: readonly [number, number]): [number, number, number] {
   const [x0, y0] = spot
-  if (x0 <= -3) return [x0 + HUT_W, y0 + 2, 8] // porte à l'EST, bit O : elle regarde le logis
-  if (x0 >= 3) return [x0 - 1, y0 + 2, 2] //     porte à l'OUEST, bit E
-  return y0 < 0 ? [x0 + 2, y0 + HUT_W, 1] : [x0 + 2, y0 - 1, 4] // pignon : vers le Feu
+  // Les bits viennent de `geometry.ts`, jamais écrits en chiffres. Ils y ont été rassemblés
+  // EXPRÈS (voir son en-tête : « une inversion N/S dans une seule des copies donnerait un mur
+  // qui se voit ici et arrête là ») — et cette fonction était la CINQUIÈME copie, celle qui a
+  // échappé au rassemblement. La pire : ses commentaires disaient « bit O » et son code disait
+  // `8`, donc la faute d'accord entre les deux ne se voyait nulle part.
+  if (x0 <= -3) return [x0 + HUT_W, y0 + 2, EDGE_O] // porte à l'EST, bit O : elle regarde le logis
+  if (x0 >= 3) return [x0 - 1, y0 + 2, EDGE_E] //      porte à l'OUEST, bit E
+  return y0 < 0 ? [x0 + 2, y0 + HUT_W, EDGE_N] : [x0 + 2, y0 - 1, EDGE_S] // pignon : vers le Feu
 }
 
 // PAS DE MOBILIER AU CAMPEMENT — et c'est mesuré, pas esthétique : un tonneau et une

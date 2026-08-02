@@ -304,13 +304,19 @@ export function activityAt(type: MonsterType, hour: number): number {
   const profile = MONSTER_DEFS[type].activity
   if (!profile) return 1 // sans rythme déclaré : toujours d'attaque (zombie, cendreux)
 
-  if (profile === 'diurnal') return ramp(hour, 6, 9, 17, 20)
+  if (profile === 'diurnal') return rampe(hour, FAUNA.ACTIVITY_DIURNAL)
   if (profile === 'nocturnal') {
     // La nuit enjambe minuit : on la lit sur deux rampes, et on garde la plus forte.
-    return Math.max(ramp(hour, 19, 22, 28, 31) /* 19h→7h du lendemain */, ramp(hour + 24, 19, 22, 28, 31))
+    const n = FAUNA.ACTIVITY_NOCTURNAL
+    return Math.max(rampe(hour, n) /* 19h→7h du lendemain */, rampe(hour + 24, n))
   }
   // Crépusculaire : deux bosses, l'aube et le soir.
-  return Math.max(ramp(hour, 4, 5.5, 8, 9.5), ramp(hour, 17, 18.5, 21, 22.5))
+  return Math.max(rampe(hour, FAUNA.ACTIVITY_CREPUSCULAR_DAWN), rampe(hour, FAUNA.ACTIVITY_CREPUSCULAR_DUSK))
+}
+
+/** `ramp` appliqué à un trapèze déclaré `[up0, up1, down0, down1]` (voir `FAUNA.ACTIVITY_*`). */
+function rampe(x: number, t: readonly [number, number, number, number]): number {
+  return ramp(x, t[0], t[1], t[2], t[3])
 }
 
 /**
@@ -1670,7 +1676,7 @@ function burrowRun(state: SimState, monster: Monster, entity: Entity, threatX: n
   const ml = Math.sqrt(mx * mx + my * my)
   if (ml > 0.001) {
     const dot = (mx / ml) * hx + (my / ml) * hy
-    if (dot > 0.6 && ml < hl) return false // le chasseur COUPE la ligne : détour
+    if (dot > HUNT.BURROW_BLOCKED_DOT && ml < hl) return false // le chasseur COUPE la ligne : détour
   }
 
   // Il y est : il rentre. Le client dessine le trou — ce n'est pas le décor qui
@@ -1937,8 +1943,8 @@ export function faunaStep(
           const cy = center.y - entity.y
           if (cx * cx + cy * cy > FAUNA.HERD_SPREAD * FAUNA.HERD_SPREAD) {
             const cl = Math.sqrt(cx * cx + cy * cy)
-            dx += (cx / cl) * 0.35
-            dy += (cy / cl) * 0.35
+            dx += (cx / cl) * FAUNA.HERD_COHESION_WEIGHT
+            dy += (cy / cl) * FAUNA.HERD_COHESION_WEIGHT
             const l2 = Math.max(0.001, Math.sqrt(dx * dx + dy * dy))
             dx /= l2
             dy /= l2
@@ -2350,7 +2356,7 @@ function pathStep(state: SimState, monster: Monster, entity: Entity, target: Ent
     const wp = path[0]!
     const dx = wp.tx + 0.5 - entity.x
     const dy = wp.ty + 0.5 - entity.y
-    if (dx * dx + dy * dy >= 0.45 * 0.45) {
+    if (dx * dx + dy * dy >= BALANCE.WAYPOINT_RADIUS * BALANCE.WAYPOINT_RADIUS) {
       monster.stalking = false
       moveToward(state, monster, entity, wp.tx + 0.5, wp.ty + 0.5, false)
       return true
@@ -2713,7 +2719,7 @@ export function wolfStep(
 
     if (!brave) {
       // Il rôde : il se maintient juste hors de portée, sans jamais engager.
-      const prowl = COMBAT.MELEE_ENGAGE_RANGE * 2.5
+      const prowl = COMBAT.MELEE_ENGAGE_RANGE * FAUNA.PROWL_RANGE_FACTOR
       if (d2 > prowl * prowl) moveToward(state, monster, entity, target.x, target.y, false)
       else if (d2 < COMBAT.MELEE_ENGAGE_RANGE * COMBAT.MELEE_ENGAGE_RANGE) {
         moveToward(state, monster, entity, target.x, target.y, true) // trop près : il se retire

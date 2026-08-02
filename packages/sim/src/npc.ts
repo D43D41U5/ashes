@@ -185,16 +185,17 @@ export function followPath(state: SimState, npc: Npc, entity: Entity): boolean {
   const wy = waypoint.ty + 0.5
   const dx = wx - entity.x
   const dy = wy - entity.y
-  // Waypoints intermédiaires : rayon large (> pas par tick, sinon le PNJ
-  // orbite sans jamais « atteindre »). Dernier waypoint : rayon précis —
-  // 0.2 > pas/2, donc l'oscillation converge toujours en ≤ 2 ticks.
-  const radius = npc.path.length > 1 ? 0.45 : 0.2
+  // Waypoints intermédiaires : rayon large. Dernier waypoint : rayon précis.
+  // Le POURQUOI (le rayon doit rester > pas par tick, sinon on orbite) vit avec les
+  // constantes — il valait pour la faune et les Cendreux autant que pour les PNJ.
+  const radius = npc.path.length > 1 ? BALANCE.WAYPOINT_RADIUS : BALANCE.WAYPOINT_RADIUS_LAST
   if (dx * dx + dy * dy < radius * radius) {
     npc.path.shift()
     return npc.path.length > 0
   }
-  const sx = (dx > 0.05 ? 1 : dx < -0.05 ? -1 : 0) as -1 | 0 | 1
-  const sy = (dy > 0.05 ? 1 : dy < -0.05 ? -1 : 0) as -1 | 0 | 1
+  const zm = NPC_AI.STEP_DEADZONE
+  const sx = (dx > zm ? 1 : dx < -zm ? -1 : 0) as -1 | 0 | 1
+  const sy = (dy > zm ? 1 : dy < -zm ? -1 : 0) as -1 | 0 | 1
   const speedScale = entity.hunger <= 0 ? BALANCE.HUNGER_SPEED_MALUS : 1
   const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, sy, TICK_DT_S, speedScale)
   if (moved.x === entity.x && moved.y === entity.y) {
@@ -909,8 +910,9 @@ function handleDefense(state: SimState, village: Village, npc: Npc, entity: Enti
   }
   // Marche GLOUTONNE vers la menace — sans pathfinding. Le commentaire d'origine
   // disait « le village est un terrain ouvert » : la vallée, elle, ne l'est pas.
-  const sx = (threat.x - entity.x > 0.2 ? 1 : threat.x - entity.x < -0.2 ? -1 : 0) as -1 | 0 | 1
-  const sy = (threat.y - entity.y > 0.2 ? 1 : threat.y - entity.y < -0.2 ? -1 : 0) as -1 | 0 | 1
+  const zm = NPC_AI.STEP_DEADZONE_COARSE
+  const sx = (threat.x - entity.x > zm ? 1 : threat.x - entity.x < -zm ? -1 : 0) as -1 | 0 | 1
+  const sy = (threat.y - entity.y > zm ? 1 : threat.y - entity.y < -zm ? -1 : 0) as -1 | 0 | 1
   const moved = moveAvatar(moveWorldFor(state, npc.villageId), entity.x, entity.y, sx, sy, TICK_DT_S)
   entity.moved = moved.x !== entity.x || moved.y !== entity.y
   entity.x = moved.x

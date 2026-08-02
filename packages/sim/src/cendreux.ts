@@ -1,7 +1,7 @@
 /**
  * La levée des Cendreux (spec 2026-07-08). Critère de mort, réveil, IA. Pur/déterministe.
  */
-import { CENDREUX, COMBAT, MONSTER_DEFS, SLOTS } from './balance'
+import { BALANCE, CENDREUX, COMBAT, MONSTER_DEFS, SLOTS } from './balance'
 import { startAttack } from './combat'
 import { distSq } from './geometry'
 import { emitEvent } from './events'
@@ -220,7 +220,7 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
   if (wp) {
     const dx = wp.tx + 0.5 - entity.x
     const dy = wp.ty + 0.5 - entity.y
-    if (dx * dx + dy * dy < 0.45 * 0.45) {
+    if (dx * dx + dy * dy < BALANCE.WAYPOINT_RADIUS * BALANCE.WAYPOINT_RADIUS) {
       monster.path!.shift()
       return
     }

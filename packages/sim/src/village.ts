@@ -1279,7 +1279,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const foodValue = FOOD_VALUES[action.item]
       if (foodValue !== undefined && isOutsider(state, actorId, target.id)) {
         const useful = Math.min(foodValue * given, 100 - target.hunger)
-        const need = target.hunger < 30 ? ALIGNMENT.NEED_FACTOR : 1
+        const need = target.hunger < ALIGNMENT.NEED_HUNGER ? ALIGNMENT.NEED_FACTOR : 1
         recordAct(state, actorId, useful * ALIGNMENT.GIVE_WARMTH_PER_HUNGER * need * seasonActFactor(state))
         const toVillage = getVillageOf(state, target.id)
         emitEvent(state, {

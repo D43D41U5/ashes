@@ -11,6 +11,7 @@
  * autour du grenier. Plus AUCUNE `house` (le chip d'une tuile qui lisait comme
  * une image posée) : le type survit pour les parties sauvées, plus rien n'en pose.
  */
+import { ALIGNMENT, VILLAGE_GROWTH } from './balance'
 import { addItems } from './items'
 import { RING_OFFSETS, spawnNpcsAround } from './npc'
 import type { SimState } from './sim'
@@ -47,7 +48,7 @@ export function foundNpcVillage(
   // Le grenier d'un village PNJ est ouvert aux siens (accès `village`, pas le
   // défaut `private` du coffre) et naît approvisionné.
   const chest = addStructure(state, 'chest', tx, ty - 2, village.id, 0, 'village')
-  addItems(chest.inventory!, { berries: 10, wood: 10, fiber: 2 })
+  addItems(chest.inventory!, VILLAGE_GROWTH.STOCK_INITIAL)
   // LE CAMPEMENT (palier 1) : une paillasse par habitant, sur l'ANCRE des futurs
   // logis. Pas de mobilier : il ferait COUVERTURE dans la mêlée (voir village-plan.ts).
   for (const spot of HUT_SPOTS.slice(0, count)) {
@@ -57,16 +58,14 @@ export function foundNpcVillage(
   spawnNpcsAround(state, village, count)
   // Un village PNJ naît armé (spec combat R13) et avec son caractère
   // ensemencé (spec alignement R12) — l'archétype ÉMERGE ensuite des actes.
-  const seedWarmth = disposition === 'foyer' ? 60 : disposition === 'meute' ? -60 : 0
+  const seedWarmth = disposition === 'foyer' ? ALIGNMENT.SEED_WARMTH : disposition === 'meute' ? -ALIGNMENT.SEED_WARMTH : 0
   for (const npc of state.npcs) {
     if (npc.villageId !== village.id) continue
     const entity = state.entities.find((e) => e.id === npc.entityId)
     if (entity) {
       addItems(entity.inventory, { spear: 1 })
       entity.warmth = seedWarmth
-      // 60 : assez d'inertie pour que le caractère survive à la décroissance
-      // (DECAY_PER_DAY) le temps que les actes (dons, raids) prennent le relais.
-      entity.engagement = disposition === 'neutre' ? 0 : 60
+      entity.engagement = disposition === 'neutre' ? 0 : ALIGNMENT.SEED_ENGAGEMENT
     }
   }
   return village

@@ -2,6 +2,24 @@
  * Tous les nombres d'équilibrage du jeu vivent ici, et seulement ici.
  *
  * Règle du projet : jamais de nombre d'équilibrage en dur dans la logique.
+ *
+ * ── OÙ VIT QUOI, EXACTEMENT (audit du 2026-08-02) ──
+ * « Ici et seulement ici » a UNE exception, et elle est délibérée : **le réglage d'un
+ * générateur de carte vit à côté de son générateur**. `MONDE` (zonegraph) · `RELIEF`
+ * (zonegen) · `EAU` (zonegen-water) · `SENTES` · `SET_PIECES` · `CREUX` (racine-relief) ·
+ * `CONTENU` (zone-content) · `POI_PLACEMENT` (poi) · `CENDRE`.
+ *
+ * La ligne de partage n'est pas le sujet, c'est **comment on calibre** :
+ *   • ce fichier = ce qui se règle EN JOUANT (vitesses, dégâts, faim, portées, prix) ;
+ *   • les blocs du worldgen = ce qui se règle EN REGARDANT UNE CARTE (densité de lacs,
+ *     largeur d'une sente, taille d'un set-piece). Les rapatrier ici les éloignerait de
+ *     la seule chose qui permet de les juger — le générateur qui les lit.
+ *
+ * Ce qui n'a JAMAIS d'excuse, en revanche, c'est un nombre d'équilibrage **en clair dans
+ * un corps de fonction** : personne ne peut le trouver sans lire le code. L'audit en a
+ * remonté une douzaine (heures d'éveil de la faune, répartition des plaies, seuils de
+ * faim, rayon d'atteinte d'un jalon…) ; s'il en reste, ils vont ici, pas à côté.
+ *
  * Le GDD (§15) précise que tous les chiffres sont des ordres de grandeur à
  * calibrer en playtest — les centraliser rend le tuning diffable en une
  * ligne et testable par bots headless sans toucher aux systèmes.
@@ -178,6 +196,29 @@ export const BALANCE = {
 
   /** Vitesse de marche d'un avatar, en tuiles par seconde. */
   WALK_SPEED_TILES_PER_S: 4,
+
+  /**
+   * ═══ ATTEINDRE UN JALON — le rayon, et POURQUOI il ne peut pas rétrécir ═══
+   *
+   * Tout ce qui suit un chemin (PNJ, bête qui contourne, Cendreux qui se replie) avance
+   * vers `path[0]` et le retire quand il est « atteint ». Ce rayon dit atteint.
+   *
+   * **IL DOIT RESTER PLUS GRAND QUE LE PAS D'UN TICK**, sinon le suiveur enjambe le jalon
+   * sans jamais entrer dedans : il fait demi-tour, l'enjambe en sens inverse, et ORBITE
+   * indéfiniment. À 20 Hz, une bête à 4,8 t/s couvre 0,24 tuile par tick — 0,45 laisse
+   * donc une marge d'environ ×1,9. Toucher à `TICK_RATE_HZ` ou accélérer une bête EXIGE de
+   * revenir ici : c'est le rapport des deux qui compte, jamais la valeur seule.
+   *
+   * Le rayon FIN (`WAYPOINT_RADIUS_LAST`) sert au DERNIER jalon, où l'on veut arriver
+   * précisément et non « dans le coin » ; il reste > pas/2, donc l'oscillation converge
+   * en ≤ 2 ticks.
+   *
+   * *(Ce nombre était écrit en clair dans `npc.ts`, `faune.ts` ET `cendreux.ts` — trois
+   * copies, et le raisonnement ci-dessus n'existait que dans la première. Les deux autres
+   * se seraient mises à tourner en silence le jour d'un changement de cadence.)*
+   */
+  WAYPOINT_RADIUS: 0.45,
+  WAYPOINT_RADIUS_LAST: 0.2,
 
   /** Durée du cycle jour/nuit diégétique, en minutes réelles (non accéléré). */
   CYCLE_REAL_MINUTES,
@@ -529,6 +570,13 @@ export const BALANCE = {
  * tableau les demande. Magnitudes à calibrer au banc (R11).
  */
 export const VILLAGE_GROWTH = {
+  /**
+   * LE GRENIER D'UN VILLAGE PNJ À SA NAISSANCE (`foundNpcVillage`). De quoi tenir les
+   * premiers cycles sans avoir déjà travaillé — c'est ce qui fait qu'un village
+   * d'accueil EXISTE au tick 0 au lieu d'être un chantier affamé. Écrit en clair dans
+   * `worldgen.ts`, où aucun calibrage ne l'aurait trouvé.
+   */
+  STOCK_INITIAL: { berries: 10, wood: 10, fiber: 2 } as const,
   /** Rayon (Chebyshev) du DISQUE de l'enceinte — la PALISSADE se dérive sur l'anneau
    *  extérieur (rayon+1), dans le carré du Feu palier 1 (rayon 10). 8 depuis que les
    *  logis font 4×4 (retour d'Alexis, 2026-08-01) : leurs bandes montent à ±8. */
@@ -1860,6 +1908,13 @@ export const FAUNA = {
   /** Au-delà de cet écart au centre de sa harde, la bête revient vers les siens. */
   HERD_SPREAD: 5,
   /**
+   * LE POIDS DU RAPPEL EN FUITE : combien la direction du centre de la harde pèse dans
+   * le cap d'une bête qui court (mêlée à sa direction de fuite, puis renormalisée). Bas
+   * = chacun sauve sa peau, haut = le troupeau reste soudé quitte à courir vers la
+   * menace. Écrit en clair dans `faunaStep`, où aucun réglage ne pouvait le trouver.
+   */
+  HERD_COHESION_WEIGHT: 0.35,
+  /**
    * …ET ELLE NE LÂCHE QU'ICI. Le rappel est COLLANT (hystérésis), comme la peur :
    * elle se déclenche à `flightRange` et ne retombe qu'à `SAFE_RANGE`.
    *
@@ -1929,6 +1984,29 @@ export const FAUNA = {
    * approche fuit quand même. Ce n'est pas un interrupteur, c'est un seuil.
    */
   REST_BELOW: 0.25,
+  /**
+   * ═══ LES HEURES D'ÉVEIL, PAR PROFIL (spec faune R10) ═══
+   *
+   * Chaque profil est un TRAPÈZE `[up0, up1, down0, down1]` en heures murales, lu par
+   * `ramp` : 0 avant `up0`, plein éveil de `up1` à `down0`, retombé à 0 en `down1`.
+   * Des rampes et non des sinusoïdes — `Math.sin` n'est pas garanti au bit près d'un
+   * moteur JS à l'autre, et cette valeur décide de QUI NAÎT (invariant n°2).
+   *
+   *   diurne      ▁▁▁▃▇███▇▃▁▁▁    plein éveil 9h-17h
+   *   nocturne    ██▇▃▁▁▁▁▁▃▇██    plein éveil 22h-4h  (enjambe minuit : lu sur deux
+   *                                 rampes décalées de 24 h, on garde la plus forte —
+   *                                 d'où des bornes qui dépassent 24)
+   *   crépuscule  ▁▃█▇▃▁▁▁▃▇█▃▁    deux bosses : 5h-8h et 18h-21h
+   *
+   * C'est de l'ÉQUILIBRAGE (quand le gibier est dehors décide de quand on chasse), et
+   * ça vivait en clair dans `activityAt` — vingt nombres qu'aucun playtest ne pouvait
+   * trouver sans ouvrir le code.
+   */
+  ACTIVITY_DIURNAL: [6, 9, 17, 20] as const,
+  ACTIVITY_NOCTURNAL: [19, 22, 28, 31] as const,
+  /** Les deux bosses du crépusculaire : l'aube, puis le soir. */
+  ACTIVITY_CREPUSCULAR_DAWN: [4, 5.5, 8, 9.5] as const,
+  ACTIVITY_CREPUSCULAR_DUSK: [17, 18.5, 21, 22.5] as const,
   /**
    * Plancher de peuplement d'une espèce hors de ses heures : elle ne disparaît
    * jamais tout à fait. Sans ce plancher, le monde se recomposerait d'un coup à
@@ -2009,6 +2087,14 @@ export const FAUNA = {
    * tombe : c'est la course, plus la traque.
    */
   STALK_STEALTH: 0.42,
+  /**
+   * LA DISTANCE DE RÔDAILLE, en multiples de `COMBAT.MELEE_ENGAGE_RANGE` : un prédateur
+   * qui n'ose PAS engager (meute trop maigre, proie trop verte) se maintient à ce
+   * multiple de sa portée de morsure — assez près pour peser, trop loin pour mordre.
+   * Exprimé en MULTIPLE et non en tuiles : c'est « juste hors de portée » qu'on veut
+   * dire, donc ça doit suivre la portée si elle bouge.
+   */
+  PROWL_RANGE_FACTOR: 2.5,
   /** À cette distance de son poste, un loup est « en place ». */
   POST_TOLERANCE: 1.3,
 
@@ -2420,6 +2506,13 @@ export const HUNT = {
    */
   BURROW_RANGE: 1.2, // il y entre à cette distance
   /**
+   * LE CHASSEUR COUPE-T-IL LA ROUTE DU TERRIER ? Cosinus entre « vers mon terrier » et
+   * « vers la menace » : au-dessus, la menace est GROSSO MODO dans l'axe du terrier, et
+   * le lapin renonce à y foncer (il détourne plutôt que courir dans les bras). 0,6 ≈ 53°
+   * de demi-cône. Monter la valeur rend le lapin plus téméraire.
+   */
+  BURROW_BLOCKED_DOT: 0.6,
+  /**
    * LE VENT (C17). Il tourne lentement, au PRNG de l'état. L'ODEUR DESCEND LE
    * VENT : une menace au vent d'une bête (alignement > SCENT_COS, dans
    * SCENT_RANGE_FACTOR × sa portée) fait monter sa méfiance QUELS QUE SOIENT
@@ -2481,9 +2574,18 @@ export const COMBAT = {
   BLOCK_STAMINA_BASE: 10,
   STAMINA_REGEN_IDLE_PER_S: 10,
   STAMINA_REGEN_MOVING_PER_S: 5,
-  /** Modulateurs de régén : bien nourri (faim > 70) / affamé (faim 0). */
+  /** Modulateurs de régén : bien nourri (faim > `FED_REGEN_HUNGER`) / affamé (faim 0). */
   FED_REGEN_BONUS: 1.25,
   STARVED_REGEN_MALUS: 0.5,
+  /** Au-dessus de cette faim, le souffle revient plus vite (`FED_REGEN_BONUS`). */
+  FED_REGEN_HUNGER: 70,
+  /**
+   * ON NE CICATRISE PAS LE VENTRE VIDE : en-dessous de cette faim, les PV ne remontent
+   * plus du tout. Distinct de `FED_REGEN_HUNGER` (qui module le SOUFFLE, pas les PV) —
+   * deux jauges, deux seuils, et ils étaient tous les deux écrits en clair dans
+   * `advanceCombat`.
+   */
+  HP_REGEN_HUNGER_MIN: 50,
   /**
    * LE SOUFFLE SE PAIE EN VENTRE (décision Alexis, 2026-08-01) : chaque point
    * d'endurance REGAGNÉ coûte ce nombre de points de faim. Facturé sur les points
@@ -2556,6 +2658,16 @@ export const COMBAT = {
   SPRINT_FACTOR: 1.5,
   UNARMED_DAMAGE: 6,
   WOUND_THRESHOLDS: [66, 33],
+  /**
+   * QUELLE PLAIE TOMBE — les bornes du tirage, dans l'ordre `jambe · bras · saignement`.
+   * `roll < 0.34` → jambe ; `< 0.67` → bras ; sinon saignement. Soit trois tiers, à un
+   * cheveu près. Ce sont des NOMBRES D'ÉQUILIBRAGE (la jambe coûte la vitesse, le bras
+   * les dégâts ET le travail, le saignement le temps) et ils vivaient en clair dans
+   * `applyDamage` : on ne pouvait pas rendre les plaies de jambe plus rares sans aller
+   * lire le code.
+   */
+  WOUND_ROLL_LEG: 0.34,
+  WOUND_ROLL_ARM: 0.67,
   LEG_WOUND_SPEED: 0.6,
   ARM_WOUND_DAMAGE: 0.6,
   BLEED_HP_PER_S: 1.5,
@@ -2772,8 +2884,23 @@ export const VILLAGE_NAMES = [
 export const ALIGNMENT = {
   /** Chaleur par point de faim utile donné (spec R2). */
   GIVE_WARMTH_PER_HUNGER: 0.2,
-  /** Multiplicateur si le receveur est affamé (< 30). */
+  /** Multiplicateur si le receveur est affamé (< `NEED_HUNGER`). */
   NEED_FACTOR: 3,
+  /** En-dessous de cette faim, le receveur est AFFAMÉ : le don répond à un vrai besoin
+   *  et vaut `NEED_FACTOR` fois plus. Le seuil vivait en clair dans `applyVillageAction`,
+   *  alors que le facteur qu'il commande était ici, deux lignes plus haut. */
+  NEED_HUNGER: 30,
+  /**
+   * LE CARACTÈRE ENSEMENCÉ d'un village PNJ à sa fondation (spec alignement R12) — la
+   * chaleur de départ d'un Foyer, et son opposée pour une Meute. L'archétype ÉMERGE
+   * ensuite des actes ; ceci n'est qu'une inclination initiale.
+   *
+   * `SEED_ENGAGEMENT` : assez d'inertie pour que le caractère survive à la décroissance
+   * (`DECAY_PER_DAY`) le temps que les actes — dons, raids — prennent le relais. Un
+   * village neutre part à 0 : il n'a pas encore d'avis.
+   */
+  SEED_WARMTH: 60,
+  SEED_ENGAGEMENT: 60,
   /** Multiplicateur par acte de la saison (le Grand Froid vaut cher). */
   ACT_FACTOR: [1, 2, 3],
   /** Dépôt de nourriture au grenier d'autrui : chaleur par point de valeur. */
@@ -3026,6 +3153,38 @@ export const NPC_AI = {
   EAT_BERRIES_WITHDRAW: 3,
   /** Cible de fibres au grenier (tableau du village). */
   VILLAGE_FIBER_TARGET: 2,
+  /**
+   * L'ORDRE DANS LEQUEL UN VILLAGE PNJ TRAVAILLE — priorité de chaque tâche du tableau,
+   * la plus haute d'abord. C'est le CARACTÈRE économique du village : nourrir le Feu
+   * prime sur tout (sans combustible, la ruine — construction R16), réparer avant
+   * bâtir (le chantier attend, pas les murs percés), et la cueillette avant l'extraction.
+   *
+   * Ces neuf nombres décident de ce que fait un village quand il a le choix, et ils
+   * vivaient dans le corps de `refreshBoard` — on ne pouvait pas rééquilibrer la
+   * diligence d'un village sans ouvrir le code de son tableau.
+   */
+  TASK_PRIORITIES: {
+    feed_fire: 5,
+    repair: 4,
+    build: 3, // bâtir avant de cuisiner, après réparer
+    cook_stew: 3,
+    gather_berries: 2,
+    gather_fiber: 2,
+    gather_wood: 1,
+    gather_stone: 1,
+    gather_cut_stone: 1,
+  } as const,
+  /**
+   * LA ZONE MORTE D'UN PAS DE PNJ — en-deçà de cet écart sur un axe, il ne pousse pas
+   * dans cette direction. Sans elle, un PNJ à 0,001 tuile de sa cible pousse quand même
+   * et tremble sur place.
+   *
+   * DEUX valeurs, et la différence est voulue : en SUIVANT UN CHEMIN on veut le jalon
+   * précisément (fine), en MARCHANT SUR UNE MENACE on veut une trajectoire franche et
+   * pas un zigzag de correction (large).
+   */
+  STEP_DEADZONE: 0.05,
+  STEP_DEADZONE_COARSE: 0.2,
   /** Cuisiner exige la recette + une marge de baies, et la fibre de la recette. */
   COOK_MIN_BERRIES: 5,
   COOK_MIN_FIBER: 1,
@@ -3036,6 +3195,14 @@ export const NPC_AI = {
   RAIDERS_PER_RAID: 2,
   /** Rayon de fouille des cadavres autour d'un raider, en tuiles. */
   CORPSE_SEARCH_RANGE: 2,
+  /**
+   * ÊTRE À SON GÎTE : à quelle distance d'un lit (ou du Feu) un PNJ est considéré
+   * ARRIVÉ — il s'y couche, et c'est de là qu'il récupère au tarif « chez soi »
+   * (`SLEEP_RECOVERY_HOME_PER_HOUR`) plutôt qu'au tarif « près du feu ». Rien à voir
+   * avec `BALANCE.WAYPOINT_RADIUS`, qui fait avancer un chemin : celui-ci décide d'un
+   * ÉTAT, et c'est pourquoi il est plus large.
+   */
+  HOME_ARRIVAL_RANGE: 1.0,
 
   /* ── LA DÉFENSE NE DOIT PAS TUER SON DÉFENSEUR (correctif 2026-07-12) ────────
    * `handleDefense` prime sur TOUT (sommeil, froid, faim) et ne renonçait jamais.

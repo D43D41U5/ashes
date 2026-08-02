@@ -71,7 +71,7 @@ export function handleSleep(state: SimState, npc: Npc, entity: Entity): boolean 
   const night = getGameTime(state).isNight
   if (npc.sleeping) {
     const home = npc.homeId !== null ? state.structures.find((s) => s.id === npc.homeId) : undefined
-    const atHome = home !== undefined && near(entity, home.tx, home.ty, 1.0)
+    const atHome = home !== undefined && near(entity, home.tx, home.ty, NPC_AI.HOME_ARRIVAL_RANGE)
     const perHour = atHome ? BALANCE.SLEEP_RECOVERY_HOME_PER_HOUR : BALANCE.SLEEP_RECOVERY_FIRE_PER_HOUR
     npc.energy = Math.min(100, npc.energy + perHour / TICKS_PER_HOUR)
     if (!night) npc.sleeping = false
@@ -82,7 +82,7 @@ export function handleSleep(state: SimState, npc: Npc, entity: Entity): boolean 
     const village = state.villages.find((v) => v.id === npc.villageId)
     const target = home ?? state.structures.find((s) => s.type === 'fire' && s.villageId === village?.id)
     if (!target) return false
-    if (near(entity, target.tx, target.ty, 1.0)) {
+    if (near(entity, target.tx, target.ty, NPC_AI.HOME_ARRIVAL_RANGE)) {
       npc.sleeping = true
       npc.path = []
       return true

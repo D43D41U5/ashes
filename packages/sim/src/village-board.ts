@@ -89,18 +89,9 @@ export function refreshBoard(state: SimState, village: Village): void {
     cook_stew:
       stocks.stew < BALANCE.VILLAGE_STEW_TARGET && stocks.berries >= NPC_AI.COOK_MIN_BERRIES && stocks.fiber >= NPC_AI.COOK_MIN_FIBER ? 1 : 0,
   }
-  const priorities: Record<TaskKind, number> = {
-    // Nourrir le Feu prime sur tout : sans combustible, le village finit en ruine (R16).
-    feed_fire: 5,
-    repair: 4,
-    build: 3, //  bâtir avant de cuisiner, après réparer : le chantier attend, pas les murs percés
-    cook_stew: 3,
-    gather_berries: 2,
-    gather_fiber: 2,
-    gather_wood: 1,
-    gather_stone: 1,
-    gather_cut_stone: 1,
-  }
+  // L'ordre dans lequel le village travaille vit avec les constantes (`NPC_AI.TASK_PRIORITIES`) :
+  // c'est du caractère économique, ça se rééquilibre, ça n'a rien à faire dans un corps de fonction.
+  const priorities: Record<TaskKind, number> = NPC_AI.TASK_PRIORITIES
 
   // Réparer (spec événements R2) : une tâche par structure sous le seuil.
   for (const s of state.structures) {
