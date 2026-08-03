@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Corpse, ResourceNode } from '@ashes/sim'
 import { AGRICULTURE, EDGE_N, EDGE_O, EDGE_S, STRUCTURE_HP } from '@ashes/sim'
-import { aimAt, clickToAction, demolishTargetAt, holdHarvest, type AimStructure, type DemolishStructure } from './aim'
+import { aimAt, clickToAction, demolishTargetAt, holdHarvest, interactTargetAt, type AimStructure, type DemolishStructure } from './aim'
 
 const RANGE = 1.5
 const node = (id: number, tx: number, ty: number, stock = 10): ResourceNode =>
@@ -537,5 +537,59 @@ describe('clickToAction — le mode DÉMOLIR est un mode : il dit ce que le clic
     // couper du bois (ou à frapper mains nues). Un mode qui fuit n'est pas un mode.
     const surArbre = aimAt(10, 10, PLAYER, [node(7, 10, 10)], [], RANGE)
     expect(clickToAction(surArbre, null, { held: null, dx: 1, dy: 0 }, ctx(null))).toBeNull()
+  })
+})
+
+/**
+ * LA TOUCHE D'INTERACTION ET SON CONTOUR (2026-08-03) — un seul résolveur pour deux
+ * lecteurs : le handler de `F`, qui AGIT, et le contour blanc, qui MONTRE. Ce qui se
+ * teste ici, c'est justement ce qu'aucun des deux ne peut vérifier seul : que la
+ * cascade rende UNE cible, la même pour les deux.
+ */
+describe('interactTargetAt — ce que `F` prendrait sous le curseur', () => {
+  const feu = (id: number, tx: number, ty: number): AimStructure => ({ id, tx, ty, type: 'fire', hp: STRUCTURE_HP.fire })
+  const buisson = (id: number, tx: number, ty: number): ResourceNode =>
+    ({ id, tx, ty, stock: 6, type: 'berry_bush', regrowAt: 0 }) as ResourceNode
+  /** La cueillette, ici, c'est le buisson (id 7) — le prédicat que fournit `input-bindings`
+   *  lit le MÉTIER du nœud (`NODE_DEFS[...].skill === 'foraging'`). */
+  const cueillette = (id: number) => id === 7
+
+  it('un buisson de cueillette visé → c’est lui, et il est à portée', () => {
+    const t = aimAt(10, 10, PLAYER, [buisson(7, 10, 10)], [], RANGE)
+    expect(interactTargetAt(t, cueillette)).toEqual({ kind: 'node', id: 7, inRange: true })
+  })
+
+  it('un ARBRE visé ne se souligne PAS : son geste est le clic, pas `F`', () => {
+    const t = aimAt(10, 10, PLAYER, [node(9, 10, 10)], [], RANGE)
+    expect(interactTargetAt(t, cueillette)).toBeNull()
+  })
+
+  it('le FEU prime sur le buisson de sa tuile (son modal s’ouvre)', () => {
+    const t = aimAt(10, 10, PLAYER, [buisson(7, 10, 10)], [], RANGE, [], [feu(5, 10, 10)])
+    expect(interactTargetAt(t, cueillette)).toEqual({ kind: 'fire', id: 5, inRange: true })
+  })
+
+  it('le buisson prime sur la pile posée à son pied (le potager clos reste récoltable)', () => {
+    const t = aimAt(10, 10, PLAYER, [buisson(7, 10, 10)], [], RANGE, [], [], 0, [{ id: 3, x: 10.5, y: 10.5 }])
+    expect(interactTargetAt(t, cueillette)).toEqual({ kind: 'node', id: 7, inRange: true })
+  })
+
+  it('un tas au pied d’un ARBRE se ramasse : l’arbre ne mange pas le geste', () => {
+    // Le nœud non-cueillette ne doit pas COUPER la cascade — sinon une flèche retombée
+    // sous un arbre serait irrécupérable, et c'est exactement la fuite que `pick_up` ferme.
+    const t = aimAt(10, 10, PLAYER, [node(9, 10, 10)], [], RANGE, [], [], 0, [{ id: 3, x: 10.5, y: 10.5 }])
+    expect(interactTargetAt(t, cueillette)).toEqual({ kind: 'pile', id: 3, inRange: true })
+  })
+
+  it('HORS DE PORTÉE, la cible existe toujours — c’est `inRange` qui tombe', () => {
+    // C'est ce qui permet au contour de se GRISER au lieu de disparaître : l'objet est bien
+    // interactif, la touche ne peut simplement pas l'atteindre d'ici. Si la cascade rendait
+    // `null`, le joueur n'aurait aucun moyen d'apprendre qu'il doit s'approcher.
+    const t = aimAt(20, 20, PLAYER, [buisson(7, 20, 20)], [], RANGE)
+    expect(interactTargetAt(t, cueillette)).toEqual({ kind: 'node', id: 7, inRange: false })
+  })
+
+  it('une tuile vide ne rend rien — le contour s’éteint', () => {
+    expect(interactTargetAt(aimAt(11, 11, PLAYER, [], [], RANGE), cueillette)).toBeNull()
   })
 })

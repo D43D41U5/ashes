@@ -21,7 +21,7 @@ import { BALANCE, COMPONENT_TYPES, EDGE_BITS, NODE_DEFS, SLOTS, edgeBarrierAt, i
 import Phaser from 'phaser'
 import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
-import { aimAt, clickToAction, demolishTargetAt, holdHarvest, type AimTarget, type BuildContext, type HandContext } from './aim'
+import { aimAt, clickToAction, demolishTargetAt, holdHarvest, interactTargetAt, type AimTarget, type BuildContext, type HandContext, type InteractTarget } from './aim'
 import { BELT_BINDINGS } from './keymap'
 import { keymapEffectif } from './keymap-perso'
 import { corpsSousCurseur, directionDeVisee, surSilhouette, type CorpsVisable } from './visee-corps'
@@ -73,6 +73,13 @@ export interface MovementBindings {
   cancelHold(): void
   /** Ce que vise le curseur MAINTENANT — pour le surlignage et le fantôme. */
   aim(pointer: Phaser.Input.Pointer): AimTarget
+  /**
+   * CE QUE LA TOUCHE D'INTERACTION (`F`) FERAIT SI ON L'ENFONÇAIT À CETTE FRAME — feu,
+   * buisson de cueillette ou pile au sol sous le curseur ; `null` = rien (ou un overlay
+   * mange la touche). C'est ce que le contour blanc entoure : le geste et sa promesse
+   * lisent le MÊME résolveur, aux mêmes gardes, ou le contour finirait par mentir.
+   */
+  interactTarget(pointer: Phaser.Input.Pointer): InteractTarget | null
   /**
    * VERS OÙ ON VISE, MAINTENANT — la direction EXACTE que `attack_release` enverrait si le
    * doigt tombait à cette frame (verrou de visée-corps compris). C'est la cible du lissage
@@ -476,6 +483,25 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   }
   const isClickForage = (a: PlayerAction | null): boolean => a?.type === 'harvest' && isForageNode(a.nodeId)
 
+  /**
+   * CE QUE LA TOUCHE D'INTERACTION FERAIT MAINTENANT — la source UNIQUE du geste `F` et du
+   * contour blanc qui l'annonce (2026-08-03, demande d'Alexis). La cascade elle-même est
+   * pure et testée (`interactTargetAt`) ; ce qu'on ajoute ici, ce sont les GARDES, et elles
+   * comptent autant : un overlay ouvert MANGE la touche, donc il doit éteindre le contour.
+   * Sinon le monde reste souligné sous le sac, la carte, le menu pause ou le modal du feu —
+   * un contour qui désigne un geste que rien ne peut déclencher.
+   *
+   * `overlayOpen()` couvre les quatre, `openFire` compris : la touche y REFERME le modal
+   * au lieu d'agir sur ce qu'on survole (voir le handler).
+   *
+   * ⚠ DÉCLARÉ APRÈS `overlayOpen`, `aimNow` ET `isForageNode`, exprès : cette closure SORT
+   * d'ici (elle est rendue au caller sous le nom `interactTarget`), donc un appelant futur
+   * pourrait la joindre pendant le montage des bindings — et un `const` joint avant sa ligne
+   * lève un `ReferenceError` que `tsc` ne voit pas. L'ordre de déclaration est la seule garde.
+   */
+  const interactCible = (pointer: Phaser.Input.Pointer): InteractTarget | null =>
+    typing() || overlayOpen() ? null : interactTargetAt(aimNow(pointer), isForageNode)
+
   /** La position MONDE (en tuiles) du curseur — la visée du minage. La sim en déduit le
    *  flanc frappé (spec verbe 2). Attachée à tout `harvest` ; ignorée hors nœud de minage. */
   const cursorAim = (pointer: Phaser.Input.Pointer): { aimX: number; aimY: number } => {
@@ -637,31 +663,14 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     ) {
       return
     }
-    const aim = aimNow(scene.input.activePointer)
-    // VISER UN FEU + E → ouvrir SON modal (spec S17 : E = interagir avec ce qu'on vise).
-    if (aim.inRange && aim.fireId !== null) {
-      setHud(scene.registry, 'openFire', { structureId: aim.fireId })
-      return
-    }
-    // LA CUEILLETTE PASSE D'ABORD (comportement d'avant) : un buisson visé + F le récolte d'un
-    // coup. Elle prime sur la porte, et c'est un ORDRE, pas un hasard — dans un jardin clos, un
-    // buisson pousse à un pas du seuil, et on VISE le buisson au curseur alors que la porte est
-    // simplement à côté de nous. Une porte qui volerait le geste rendrait ce potager irrécoltable.
-    if (aim.inRange && aim.nodeId !== null && isForageNode(aim.nodeId)) {
-      deps.sendAction({ type: 'harvest', nodeId: aim.nodeId, whole: true })
-      return
-    }
-    // RAMASSER UNE PILE AU SOL (spec chasse C18, `tir.md` T6). L'action existait dans /sim
-    // depuis les piles au sol, mais AUCUN geste ne l'atteignait : ce qu'on jetait était
-    // perdu, et l'appât était un aller simple. Le tir l'a rendu intenable — une flèche
-    // qu'on ne peut pas reprendre n'est pas un coût, c'est une fuite.
-    //
-    // ELLE PASSE APRÈS LA CUEILLETTE et avant la porte : un tas posé au pied d'un buisson
-    // ne doit pas voler le geste du buisson (c'est l'ordre déjà arbitré au-dessus), mais il
-    // doit primer sur une porte qui se trouve simplement à côté — on VISE le tas, on ne
-    // vise jamais la porte.
-    if (aim.inRange && aim.pileId !== null) {
-      deps.sendAction({ type: 'pick_up', pileId: aim.pileId })
+    // CE QU'ON SURVOLE, RÉSOLU UNE SEULE FOIS (`interactTargetAt`) — la même réponse que
+    // celle qu'entoure le contour blanc à l'écran. L'ORDRE (feu → cueillette → pile) et sa
+    // motivation vivent maintenant dans le résolveur ; on ne fait plus ici que DISPATCHER.
+    const cible = interactCible(scene.input.activePointer)
+    if (cible !== null && cible.inRange) {
+      if (cible.kind === 'fire') setHud(scene.registry, 'openFire', { structureId: cible.id })
+      else if (cible.kind === 'node') deps.sendAction({ type: 'harvest', nodeId: cible.id, whole: true })
+      else deps.sendAction({ type: 'pick_up', pileId: cible.id })
       return
     }
     // SINON LA PORTE LA PLUS PROCHE, À PORTÉE DE BRAS (spec construction R26).
@@ -914,5 +923,5 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     holding = false
   }
 
-  return { keys, sprintKeys, sneakKeys, blockKeys, tickHold, cancelHold, aim: aimNow, visee: viseeCourante, curseur: curseurTuile, placing }
+  return { keys, sprintKeys, sneakKeys, blockKeys, tickHold, cancelHold, aim: aimNow, interactTarget: interactCible, visee: viseeCourante, curseur: curseurTuile, placing }
 }

@@ -80,6 +80,7 @@ import { creerPortesAnimees } from '../../render/porte-anim'
 import { calculerPans, pansTombes } from '../../render/pans'
 import { LIT_STRUCTURE_TYPES } from '../../render/lit-structures'
 import { shakeOffset, type HitFx } from './hit-fx'
+import type { InteractTarget } from './aim'
 import type { RecolteFx } from './recolte-fx'
 import type { ChuteArbre } from './chute-arbre'
 import type { ReveilFx } from './reveil-fx'
@@ -100,6 +101,33 @@ const AIM_TINT_FAR = 0x8a8a92
  * Hors de portée, elle retombe sur le gris de visée : le geste est perdu d'avance.
  */
 const DEMOLISH_TINT = 0xff3a2a
+
+/**
+ * LE CONTOUR DE CE AVEC QUOI ON PEUT INTERAGIR (demande d'Alexis, 2026-08-03) — blanc, et
+ * blanc PUR : c'est la seule couleur que le monde n'a pas. Le jeu est fait de bruns, d'ocres
+ * et de verts sourds, et ses deux affordances existantes tiennent déjà la famille chaude (l'or
+ * de visée, le rouge de démolition). Le blanc ne s'y confond avec rien, de jour comme de nuit.
+ * Hors de portée, il retombe sur le gris de visée : le geste ne partirait pas.
+ */
+const CONTOUR_TINT = 0xffffff
+
+/**
+ * L'ÉPAISSEUR DU CONTOUR : UN pixel d'ART, jamais un pixel d'écran (règle maison — un FX
+ * se quantifie sur la grille de l'art). Le zoom suit la hauteur de la fenêtre
+ * (`zoomForFraming` : 20 tuiles de 16 px à l'image), donc ce pixel vaut 2,25 px d'écran au
+ * cadrage du smoke et davantage sur un grand écran — il garde en toute résolution le GRAIN
+ * du sprite qu'il souligne. Le déclarer en pixels d'écran l'aurait fait maigrir en montant
+ * en résolution, jusqu'à ne plus border qu'un sous-multiple de l'art.
+ */
+const CONTOUR_PX = 1
+
+/** Les huit voisins : les quatre côtés ET les diagonales. À quatre, une silhouette courbe
+ *  (un buisson, une flèche de biais) laisse des trous dans son propre contour. */
+const CONTOUR_DECALAGES: readonly (readonly [number, number])[] = [
+  [-1, -1], [0, -1], [1, -1],
+  [-1, 0], [1, 0],
+  [-1, 1], [0, 1], [1, 1],
+]
 
 /** Plafond de morts consignées en une frame. Un front qui rase un bosquet ne doit pas
  *  jeter mille chutes à l'écran — et au-delà, plus personne ne les distingue. */
@@ -396,6 +424,14 @@ export class SnapshotView {
   private demolishInRange = false
   /** La silhouette rouge posée dessus — une seule, recyclée (voir `peindreHalo`). */
   private demolishHalo: Phaser.GameObjects.Image | undefined
+  /** CE QUE LA TOUCHE D'INTERACTION FERAIT (voir `setInteractTarget`) — la cible du contour. */
+  private interactTarget: InteractTarget | null = null
+  /** Les huit copies décalées qui forment le contour — recyclées (voir `peindreContour`). */
+  private contourPool: Phaser.GameObjects.Image[] = []
+  /** Le sprite du NŒUD survolé, relevé au passage de `renderNodes` : le pool des nœuds est
+   *  indexé par SLOT (pas par id) et se réattribue chaque frame — seule cette boucle sait
+   *  quel sprite porte quel nœud, et le savoir coûte alors une comparaison, pas une table. */
+  private contourNodeSprite: Phaser.GameObjects.Image | null = null
   /** La mémoire des coups reçus — pour le tressaillement. Posée par WorldScene. */
   private hitFx?: HitFx
   /** LA GERBE D'ÉCLATS. Elle naît ICI et nulle part ailleurs : cette boucle est la seule
@@ -438,6 +474,24 @@ export class SnapshotView {
     // ou ouvrir le menu pause (l'hôte se fige, plus un seul snapshot) laisserait la silhouette
     // rouge posée sur le monde, désignant un geste que plus rien ne peut déclencher.
     if (id === null) this.demolishHalo?.setVisible(false)
+  }
+
+  /**
+   * CE QUE LA TOUCHE D'INTERACTION FERAIT (demande d'Alexis, 2026-08-03) — le feu, le buisson
+   * de cueillette ou la pile au sol que `F` prendrait si on l'enfonçait MAINTENANT. Le contour
+   * blanc l'entoure ; `null` l'éteint.
+   *
+   * La cible vient de `interactTargetAt` — la MÊME fonction, aux mêmes gardes, que le handler
+   * de la touche (`input-bindings`). Rien n'est re-résolu ici : un contour qui désignerait
+   * autre chose que ce que la touche déclenche promettrait un geste qui n'existe pas.
+   *
+   * ON ÉTEINT DANS LE SETTER, comme le halo de démolition : le contour se peint dans la passe
+   * de rendu, or elle ne tourne pas quand l'hôte est figé (menu pause) — un survol laissé
+   * allumé resterait posé sur le monde sous l'overlay.
+   */
+  setInteractTarget(target: InteractTarget | null): void {
+    this.interactTarget = target
+    if (target === null) this.eteindreContour()
   }
 
   setHitFx(fx: HitFx): void {
@@ -1328,6 +1382,81 @@ export class SnapshotView {
   }
 
   /**
+   * LE CONTOUR DE L'INTERACTION (demande d'Alexis, 2026-08-03) — un liseré blanc d'un pixel
+   * autour de ce que la touche `F` prendrait si on l'enfonçait maintenant.
+   *
+   * À CHAQUE FRAME, et pas à l'arrivée d'un snapshot : le curseur bouge entre deux ticks, le
+   * nœud s'épuise, la caméra glisse encore après la course. Un contour posé au snapshot
+   * traînerait derrière le survol.
+   *
+   * TROIS FAMILLES, TROIS FAÇONS DE RETROUVER LE SPRITE — parce que les trois ne se dessinent
+   * pas pareil : le nœud vit dans un POOL réattribué chaque frame (relevé au passage par
+   * `renderNodes`), la pile et la structure dans des tables par id, stables. Un sprite
+   * introuvable (hors écran, snapshot pas encore arrivé) éteint le contour : on ne souligne
+   * jamais un objet qu'on ne dessine pas.
+   */
+  renderContourInteraction(): void {
+    const t = this.interactTarget
+    if (t === null) return void this.eteindreContour()
+    const sprite =
+      t.kind === 'node'
+        ? this.contourNodeSprite
+        : t.kind === 'pile'
+          ? (this.groundSprites.get(t.id) ?? null)
+          : (this.structureSprites.get(t.id) ?? null)
+    if (sprite === null || !sprite.visible) return void this.eteindreContour()
+    this.peindreContour(sprite, t.inRange)
+  }
+
+  /**
+   * LE LISERÉ — huit copies de la SILHOUETTE, décalées d'un pixel, peintes DERRIÈRE le sprite.
+   *
+   * C'est la seule construction qui donne un trait net ici. Une lueur de shader (glow) est
+   * LISSÉE par nature — elle bave sur trois pixels et trahit le grain de l'art ; et cette
+   * machine rend sous SwiftShader, sans GPU. Huit images plates ne coûtent rien et se voient
+   * partout pareil.
+   *
+   * `TintModes.FILL` remplace la couleur du sprite au lieu de la multiplier : le contour est
+   * BLANC quelle que soit la texture dessous — un albédo `_lit` normal-mappé, une empreinte
+   * sombre, un buisson vidé. C'est la même raison qu'au halo de démolition (mesuré là-bas :
+   * une teinte multiplicative rendait quasi noir un rouge écrit dans le code).
+   *
+   * DERRIÈRE (`depth - 0.5`), et c'est tout le principe : le sprite recouvre l'intérieur des
+   * copies, seul dépasse le pixel de franges. Devant, on obtiendrait une silhouette pleine —
+   * un objet blanc, pas un objet souligné.
+   *
+   * IL RECOPIE TOUT DU SPRITE, rotation comprise : une flèche plantée au sol est inclinée
+   * (±32°, `syncGroundItems`), et un contour qui ne tournerait pas avec elle serait une croix.
+   */
+  private peindreContour(sprite: Phaser.GameObjects.Image, inRange: boolean): void {
+    const teinte = inRange ? CONTOUR_TINT : AIM_TINT_FAR
+    for (let i = 0; i < CONTOUR_DECALAGES.length; i++) {
+      const [dx, dy] = CONTOUR_DECALAGES[i]!
+      let c = this.contourPool[i]
+      if (!c) {
+        c = this.scene.add.image(0, 0, sprite.texture.key).setTintMode(Phaser.TintModes.FILL)
+        this.contourPool[i] = c
+      }
+      c.setTexture(sprite.texture.key, sprite.frame.name)
+        .setOrigin(sprite.originX, sprite.originY)
+        .setPosition(sprite.x + dx * CONTOUR_PX, sprite.y + dy * CONTOUR_PX)
+        .setScale(sprite.scaleX, sprite.scaleY)
+        .setRotation(sprite.rotation)
+        .setFlipX(sprite.flipX)
+        .setDepth(sprite.depth - 0.5)
+        .setTint(teinte)
+        // OPAQUE, contrairement au halo de démolition : lui doit laisser reconnaître ce qu'on
+        // casse, celui-ci ne recouvre rien — il n'a aucune raison d'être délavé.
+        .setAlpha(1)
+        .setVisible(true)
+    }
+  }
+
+  private eteindreContour(): void {
+    for (const c of this.contourPool) c.setVisible(false)
+  }
+
+  /**
    * L'OVERLAY DES FONCTIONS (spec construction R22) : une étiquette flottante
    * « Forge · N2 » au-dessus de chaque fonction reconnue ; dorée + ✦ si l'amas est
    * clos+toité (le bonus d'enceinte). Poolée (jamais recréée) — appelée chaque frame.
@@ -1477,6 +1606,11 @@ export class SnapshotView {
     const feetY = playerY + BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2
     let used = 0
     let crownsUsed = 0
+    // LE NŒUD SURVOLÉ N'A PAS ENCORE DE SPRITE À CETTE FRAME : le pool se réattribue ici. On
+    // repart donc de rien — sinon un nœud sorti de l'écran laisserait son contour posé sur le
+    // sprite qui a hérité de son slot, c'est-à-dire sur un autre nœud.
+    this.contourNodeSprite = null
+    const idSurvole = this.interactTarget?.kind === 'node' ? this.interactTarget.id : -1
     for (let ty = ty0; ty <= ty1; ty++) {
       for (let tx = tx0; tx <= tx1; tx++) {
         const n = this.nodeByTile.get(tx * NODE_TILE_STRIDE + ty)
@@ -1549,6 +1683,12 @@ export class SnapshotView {
         // sont POOLÉS — d'où le `clearTint` systématique sur les autres.
         if (n.id === this.aimedNodeId) sprite.setTint(this.aimedInRange ? AIM_TINT : AIM_TINT_FAR)
         else sprite.clearTint()
+        // LE SPRITE DU NŒUD QUE `F` PRENDRAIT — relevé ici, où l'on sait à quel nœud ce slot de
+        // pool appartient CETTE frame. La teinte ci-dessus et le contour sont deux affordances
+        // distinctes : la teinte dit « c'est ce que je vise » (tout nœud, arbre compris), le
+        // contour dit « `F` agit dessus » (la cueillette seule). Elles se superposent sans se
+        // gêner — un buisson visé à portée est à la fois doré et cerné de blanc.
+        if (n.id === idSurvole) this.contourNodeSprite = sprite
         // Plus de fantôme à 25 % (spec recolte-vivante D2) : un nœud est TOUJOURS opaque.
         // Épuisé, il n'est pas « à moitié là » — il REPOUSSE, et c'est son échelle qui le dit.
         sprite.setAlpha(1)

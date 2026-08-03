@@ -531,3 +531,52 @@ export function holdHarvest(
   if (!target.inRange || target.nodeId === null) return null
   return { type: 'harvest', nodeId: target.nodeId }
 }
+
+/** Ce que la touche d'INTERACTION désigne sous le curseur. Trois familles, trois sprites. */
+export type InteractKind = 'fire' | 'node' | 'pile'
+
+/** CE QUE `F` FERAIT DE CE QU'ON SURVOLE — la cible, sa famille, et si elle est à portée. */
+export interface InteractTarget {
+  kind: InteractKind
+  id: number
+  /** À portée de bras ? Hors portée, la touche ne fait rien : le contour se GRISE. */
+  inRange: boolean
+}
+
+/**
+ * CE QUE LA TOUCHE D'INTERACTION (`F`) VISE SOUS LE CURSEUR — la MÊME cascade que le
+ * handler, extraite ici pour qu'il n'y en ait qu'une (2026-08-03, demande d'Alexis :
+ * un contour blanc sur ce avec quoi on peut interagir).
+ *
+ * Deux lecteurs, une seule résolution : le handler de `F` (qui AGIT) et le contour de
+ * `snapshot-view` (qui MONTRE). Deux cascades recopiées finiraient par diverger d'un
+ * cran — et un contour qui désigne autre chose que ce que la touche déclenche est pire
+ * que pas de contour du tout : il PROMET. C'est la leçon déjà payée par le surlignage
+ * de démolition (voir `demolishTargetAt`).
+ *
+ * L'ORDRE EST CELUI DU HANDLER, et il est motivé là-bas :
+ *   ① le FEU visé (→ son modal) ;
+ *   ② le nœud de CUEILLETTE visé (→ `harvest whole`) — il prime sur la pile : dans un
+ *     jardin clos, un tas posé au pied d'un buisson ne doit pas voler le geste ;
+ *   ③ la PILE au sol visée (→ `pick_up`).
+ *
+ * LA PORTE N'EST PAS ICI, et c'est délibéré : depuis R26 elle se prend par PROXIMITÉ,
+ * pas au curseur (une porte vit sur une arête — le joueur est DEVANT elle, il ne la
+ * vise pas). Elle n'a donc pas de survol à souligner, et le contour ne la connaît pas.
+ *
+ * `inRange` est rendu même hors de portée : la cible existe, la touche ne peut juste
+ * pas l'atteindre. C'est ce qui permet au contour de se griser au lieu de disparaître
+ * — même grammaire que la teinte de visée et que le halo de démolition.
+ */
+export function interactTargetAt(
+  target: AimTarget,
+  /** Le nœud est-il de la CUEILLETTE (métier `foraging`) ? Un arbre ou un rocher se
+   *  récolte au CLIC, pas à `F` — ils ne sont donc pas des cibles d'interaction. */
+  estCueillette: (nodeId: number) => boolean,
+): InteractTarget | null {
+  if (target.fireId !== null) return { kind: 'fire', id: target.fireId, inRange: target.inRange }
+  if (target.nodeId !== null && estCueillette(target.nodeId))
+    return { kind: 'node', id: target.nodeId, inRange: target.inRange }
+  if (target.pileId !== null) return { kind: 'pile', id: target.pileId, inRange: target.inRange }
+  return null
+}

@@ -992,6 +992,11 @@ export class WorldScene extends Phaser.Scene {
     const aim = this.inputs.aim(this.input.activePointer)
     const overlay = Boolean(getHud(this.registry, 'mapOpen')) || Boolean(getHud(this.registry, 'characterMenuOpen'))
     this.view.setAim(overlay ? null : aim.nodeId, aim.inRange)
+    // CE QUE `F` PRENDRAIT SOUS LE CURSEUR (demande d'Alexis, 2026-08-03) → le contour blanc.
+    // On ne résout RIEN ici : `interactTarget` est le résolveur de la touche elle-même, gardes
+    // comprises (il rend `null` sous un overlay, le modal du feu compris — d'où l'absence de
+    // `overlay` dans cette ligne, contrairement à la visée juste au-dessus).
+    this.view.setInteractTarget(this.inputs.interactTarget(this.input.activePointer))
     // Le fantôme de pose VIRE AU VERT selon les VRAIES règles de pose (portée de
     // BÂTI, terrain, landmark) — pas la portée de bras `aim.inRange`, qui vaut pour
     // récolter, pas pour poser (sinon un feu posable à 3 tuiles s'affiche « perdu »).
@@ -1191,6 +1196,10 @@ export class WorldScene extends Phaser.Scene {
     this.clutter?.setBarriers(this.view.structures)
     this.clutter?.update(this.cameras.main, time) // le vent : le décor plie
     this.view.renderNodes(this.cameras.main, this.predicted.x, this.predicted.y, time)
+    // LE CONTOUR DE L'INTERACTION — APRÈS la boucle de nœuds, et c'est un ORDRE : le pool des
+    // nœuds se réattribue à chaque frame, et c'est cette boucle qui relève le sprite du nœud
+    // survolé. Peint avant, le contour soulignerait la position d'hier.
+    this.view.renderContourInteraction()
     // LA MÉMOIRE DES COUPS S'OUBLIE **APRÈS** LA BOUCLE DE NŒUDS, JAMAIS AVANT.
     //
     // Elle s'oubliait avant, et ça rendait le retour de frappe MUET dès que la frame

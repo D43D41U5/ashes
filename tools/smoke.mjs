@@ -182,6 +182,64 @@ async function pixelAt(page, x, y) {
   return [brut[1], brut[2], brut[3]]
 }
 
+/**
+ * UNE RÉGION ENTIÈRE DE L'ÉCRAN, DÉCODÉE — `{ w, h, px(x, y) → [r,v,b] }`, coordonnées
+ * RELATIVES au découpage.
+ *
+ * `pixelAt` ne sait lire qu'un point, et c'est assez pour comparer deux surfaces. Ça ne l'est
+ * plus pour un TRAIT : un contour d'un pixel d'art (2,5 px d'écran au zoom du jeu) ne se prouve
+ * pas en visant un point — on ne sait pas d'avance OÙ tombe la frange, puisqu'elle épouse la
+ * silhouette du sprite et non son cadre. Il faut donc COMPTER sur une surface.
+ *
+ * Le décodage est complet ici (là où `pixelAt` s'en tire avec le premier pixel) : filtres PNG
+ * des cinq types, appliqués ligne à ligne. Chromium écrit du RGBA 8 bits non entrelacé ; on
+ * refuse tout le reste plutôt que de rendre des couleurs fausses.
+ */
+async function regionAt(page, clip) {
+  const png = await page.screenshot({ clip })
+  const w = png.readUInt32BE(16)
+  const h = png.readUInt32BE(20)
+  if (png[24] !== 8 || (png[25] !== 6 && png[25] !== 2) || png[28] !== 0) return null
+  const canaux = png[25] === 6 ? 4 : 3
+  let i = 8
+  const morceaux = []
+  while (i + 8 <= png.length) {
+    const len = png.readUInt32BE(i)
+    if (png.toString('ascii', i + 4, i + 8) === 'IDAT') morceaux.push(png.subarray(i + 8, i + 8 + len))
+    if (png.toString('ascii', i + 4, i + 8) === 'IEND') break
+    i += 12 + len
+  }
+  if (morceaux.length === 0) return null
+  const brut = inflateSync(Buffer.concat(morceaux))
+  const pas = w * canaux
+  const out = Buffer.alloc(h * pas)
+  let p = 0
+  for (let y = 0; y < h; y++) {
+    const filtre = brut[p++]
+    for (let k = 0; k < pas; k++) {
+      const x = brut[p + k]
+      const a = k >= canaux ? out[y * pas + k - canaux] : 0
+      const b = y > 0 ? out[(y - 1) * pas + k] : 0
+      const c = k >= canaux && y > 0 ? out[(y - 1) * pas + k - canaux] : 0
+      let v
+      if (filtre === 0) v = x
+      else if (filtre === 1) v = x + a
+      else if (filtre === 2) v = x + b
+      else if (filtre === 3) v = x + ((a + b) >> 1)
+      else if (filtre === 4) {
+        const q = a + b - c
+        const da = Math.abs(q - a)
+        const db = Math.abs(q - b)
+        const dc = Math.abs(q - c)
+        v = x + (da <= db && da <= dc ? a : db <= dc ? b : c)
+      } else return null
+      out[y * pas + k] = v & 255
+    }
+    p += pas
+  }
+  return { w, h, px: (x, y) => [out[y * pas + x * canaux], out[y * pas + x * canaux + 1], out[y * pas + x * canaux + 2]] }
+}
+
 /** L'écart de LUMINANCE entre deux points de l'écran — le nombre qui tranche « on le voit ». */
 async function mesurerContraste(page, a, b) {
   const pa = await pixelAt(page, a.x, a.y)
@@ -7799,6 +7857,379 @@ const SCENARIOS = {
       ? `   ✓ GATE : au niveau 0, aucun bonus de maîtrise (ni graine ni champignon)`
       : `   ✗ un bonus est tombé au niveau 0 — le gate ne tient pas (Δ=${bonus})`)
     return { halo, before, after }
+  },
+
+  /**
+   * LE CONTOUR DE L'INTERACTION (demande d'Alexis, 2026-08-03) — un liseré blanc d'un pixel
+   * d'art autour de ce que la touche `F` prendrait sous le curseur.
+   *
+   * CE QUI NE SE PROUVE QU'AU NAVIGATEUR : le résolveur, lui, est pur et testé
+   * (`aim.test.ts` — quelle cible, dans quel ordre). Ce qu'aucun test unitaire ne peut dire,
+   * c'est si le trait EXISTE À L'ÉCRAN. Il est fait de huit copies de la silhouette peintes
+   * DERRIÈRE le sprite : une erreur de profondeur (devant au lieu de derrière) donne une
+   * silhouette blanche pleine et non un contour, et une teinte multiplicative au lieu de
+   * `FILL` le rendrait invisible sur les textures sombres. Les deux se voient en pixels, en
+   * comptant le BLANC autour de la cible — jamais en lisant du code.
+   *
+   * ⚠ LE COMPTE SE FAIT SUR UN ANNEAU, PAS SUR UN CARRÉ : le blanc qu'on cherche est DEHORS,
+   * contre la silhouette. Compter le rectangle entier compterait aussi l'intérieur du sprite,
+   * où il n'y a rien à voir, et noierait le signal.
+   *
+   * Exige `--dev` (téléportation, dons).
+   */
+  async contour(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    /** L'état du contour, lu DANS le jeu : la cible résolue, les copies allumées, leur teinte
+     *  et leur profondeur par rapport au sprite qu'elles cernent. */
+    const etat = () => page.evaluate(() => {
+      const v = window.__BRAISES__.scene.view
+      const pool = v.contourPool ?? []
+      const vus = pool.filter((c) => c.visible)
+      return {
+        cible: v.interactTarget === null ? null : { ...v.interactTarget },
+        copies: vus.length,
+        teinte: vus[0]?.tintTopLeft ?? null,
+        derriere: vus.length > 0 && v.contourNodeSprite !== null ? vus[0].depth < v.contourNodeSprite.depth : null,
+      }
+    })
+
+    /**
+     * LE CADRE DU SPRITE VISÉ, EN COORDONNÉES DE PAGE — l'ancre de toute mesure optique.
+     *
+     * ⚠ LE CANVAS N'EST PAS LA PAGE. Phaser le cadre en « FIT » : à 1280×800 pour 20 tuiles
+     * de 16 px, le jeu tourne au zoom 2,25 et le canvas est CENTRÉ dans la fenêtre, bandes
+     * noires comprises — ~38 px de décalage vertical, MESURÉ. La conversion naïve
+     * `(monde - worldView) × zoom` rend une coordonnée de CANVAS ; la donner telle quelle à
+     * une capture (ou à la souris) vise 38 px trop haut, et l'on photographie l'herbe à côté
+     * de l'objet en croyant photographier l'objet. On passe donc par le rectangle réel du
+     * canvas, échelle CSS comprise.
+     *
+     * On lit le sprite RÉEL (position, échelle, ancre), jamais la tuile : un nœud est décalé
+     * dans sa tuile, et son ancre est aux pieds.
+     */
+    const cadre = (cible = null) => page.evaluate((c) => {
+      const s = window.__BRAISES__.scene
+      const v = s.view
+      // LA CIBLE EXPLICITE SERT LES MESURES TÉMOINS : elle donne le cadre de l'objet MÊME
+      // quand le contour est éteint (sinon le témoin n'aurait aucun cadre où compter, et
+      // « 0 px blanc » ne vaudrait rien). Sans elle, on retombe sur le sprite souligné.
+      const sp = (c === null
+        ? null
+        : c.kind === 'pile'
+          ? v.groundSprites.get(c.id)
+          : c.kind === 'fire'
+            ? v.structureSprites.get(c.id)
+            : v.contourNodeSprite)
+        ?? v.contourNodeSprite ?? (v.contourPool ?? []).find((k) => k.visible)
+      if (!sp) return null
+      const cam = s.cameras.main
+      const cv = s.game.canvas
+      const r = cv.getBoundingClientRect()
+      const ex = r.width / cv.width
+      const ey = r.height / cv.height
+      // `getBounds` ET PAS (x − w·originX) : une FLÈCHE PLANTÉE est inclinée de ±32° autour
+      // d'un pivot bas (0,5 / 0,85), et la boîte naïve tombe alors à 10 px monde de l'objet —
+      // MESURÉ : elle photographiait l'herbe à côté et concluait « le trait ne se voit pas ».
+      // `getBounds` intègre rotation, échelle et ancre, donc il vaut pour les trois familles.
+      const b = sp.getBounds()
+      return {
+        x: r.left + (b.x - cam.worldView.x) * cam.zoom * ex,
+        y: r.top + (b.y - cam.worldView.y) * cam.zoom * ey,
+        w: b.width * cam.zoom * ex,
+        h: b.height * cam.zoom * ey,
+      }
+    }, cible)
+
+    /**
+     * COMBIEN DE PIXELS BLANCS SUR LE CADRE DU SPRITE (plus 6 px de marge).
+     *
+     * TOUT le cadre, intérieur compris — et c'est une correction : le premier jet ne comptait
+     * qu'un anneau extérieur, en croyant que le contour bordait le CADRE. Il borde la
+     * SILHOUETTE, qui est bien plus petite que son cadre (un buisson ne remplit pas ses
+     * 16×16), donc les trois quarts du trait tombaient dans la zone exclue. On compte tout :
+     * rien d'autre n'est blanc ici, et la mesure témoin (sans survol) le prouve à chaque fois.
+     *
+     * Blanc = trois canaux hauts ET neutres : l'or de visée (#ffe9a8) et le feu sont recalés.
+     *
+     * `seuil` / `dNeutre` s'ASSOUPLISSENT AU CONTACT D'UNE SOURCE DE LUMIÈRE, et il le faut :
+     * la lueur d'un feu réchauffe tout ce qui l'entoure, contour compris — MESURÉ, un liseré
+     * parfaitement net autour d'un feu de camp ne rendait que 4 px « blancs neutres » alors
+     * qu'il se voit à l'œil sur la capture. Un filtre neutre ne survit pas à côté d'une flamme.
+     * C'est le TÉMOIN (même cadre, survol éteint) qui garde alors la mesure honnête.
+     */
+    const blancsAutour = async (c, seuil = 235, dNeutre = 12) => {
+      const M = 6
+      const clip = {
+        x: Math.max(0, Math.round(c.x - M)),
+        y: Math.max(0, Math.round(c.y - M)),
+        width: Math.round(c.w + 2 * M),
+        height: Math.round(c.h + 2 * M),
+      }
+      const r = await regionAt(page, clip)
+      if (!r) return null
+      let n = 0
+      for (let y = 0; y < r.h; y++) {
+        for (let x = 0; x < r.w; x++) {
+          const [rr, vv, bb] = r.px(x, y)
+          if (rr >= seuil && vv >= seuil && bb >= seuil && Math.max(rr, vv, bb) - Math.min(rr, vv, bb) <= dNeutre) n++
+        }
+      }
+      return n
+    }
+
+    /**
+     * FIGER L'IMAGE AVANT DE LA MESURER (règle maison) — et ici pour une raison précise : la
+     * CAMÉRA NE S'ARRÊTE JAMAIS. Elle glisse vers l'avatar après une téléportation, et elle
+     * décale encore vers le curseur (le « lookahead » façon Foxhole, `framing.ts` R11). Une
+     * souris immobile vise donc une tuile MOUVANTE : MESURÉ, la cible passait de la pile à la
+     * tuile voisine PENDANT la seconde que prennent les captures, et le contour s'éteignait
+     * entre l'état relevé et l'image photographiée. Ce n'est pas un défaut du jeu — en main,
+     * la souris suit — c'est le prix d'un banc qui ne bouge pas.
+     */
+    const figer = () => page.evaluate(() => void window.__BRAISES__.scene.game.loop.sleep())
+    const degeler = () => page.evaluate(() => void window.__BRAISES__.scene.game.loop.wake())
+
+    /**
+     * POSER LE CURSEUR SUR LE CENTRE D'UNE TUILE — et VÉRIFIER qu'il y est.
+     *
+     * Le premier jet projetait la tuile une fois et croyait la viser. Il visait à côté, et
+     * les sept mesures suivantes lisaient un survol qui n'avait jamais eu lieu : après une
+     * téléportation la CAMÉRA GLISSE encore vers l'avatar, donc l'écran bouge sous une
+     * souris qui, elle, ne bouge plus. La projection était juste à l'instant du calcul et
+     * périmée 200 ms plus tard.
+     *
+     * On demande donc au jeu ce qu'il vise VRAIMENT (`inputs.aim`, le résolveur de la
+     * touche) et l'on corrige le tir de l'écart mesuré, jusqu'à trois fois. C'est la seule
+     * façon d'être sûr que ce qu'on mesure ensuite parle de la bonne tuile.
+     */
+    const viser = async (tx, ty) => {
+      // LA CAMÉRA D'ABORD : elle GLISSE vers l'avatar après une téléportation, et viser
+      // pendant qu'elle glisse revient à viser l'écran d'il y a 200 ms.
+      let avant = null
+      for (let i = 0; i < 25; i++) {
+        const s = await page.evaluate(() => {
+          const c = window.__BRAISES__.scene.cameras.main
+          return { x: Math.round(c.scrollX), y: Math.round(c.scrollY) }
+        })
+        if (avant && s.x === avant.x && s.y === avant.y) break
+        avant = s
+        await page.waitForTimeout(120)
+      }
+      let p = null
+      for (let essai = 0; essai < 3; essai++) {
+        const r = await page.evaluate(({ tx, ty, p }) => {
+          const s = window.__BRAISES__.scene
+          const cam = s.cameras.main
+          // Coordonnées de PAGE (le canvas est centré, bandes noires comprises — voir `cadre`).
+          const cv = s.game.canvas
+          const rc = cv.getBoundingClientRect()
+          const vise = p ?? {
+            x: rc.left + ((tx + 0.5) * 16 - cam.worldView.x) * cam.zoom * (rc.width / cv.width),
+            y: rc.top + ((ty + 0.5) * 16 - cam.worldView.y) * cam.zoom * (rc.height / cv.height),
+          }
+          // UN PIXEL DE PAGE, EN TUILES — le facteur qui convertit un écart mesuré dans le
+          // monde en correction de souris. La correction se fait dans le repère où l'on AGIT.
+          return { vise, parTuile: { x: 16 * cam.zoom * (rc.width / cv.width), y: 16 * cam.zoom * (rc.height / cv.height) } }
+        }, { tx, ty, p })
+        p = r.vise
+        await page.mouse.move(p.x, p.y, { steps: 4 })
+        await page.waitForTimeout(240)
+        const ou = await page.evaluate(() => {
+          const v = window.__BRAISES__.scene.inputs.aim(window.__BRAISES__.scene.input.activePointer)
+          return { tx: v.tx, ty: v.ty }
+        })
+        if (ou.tx === tx && ou.ty === ty) return p
+        p = { x: p.x + (tx - ou.tx) * r.parTuile.x, y: p.y + (ty - ou.ty) * r.parTuile.y }
+      }
+      await page.mouse.move(p.x, p.y, { steps: 2 })
+      await page.waitForTimeout(240)
+      return p
+    }
+
+    // ── ① UN BUISSON DE CUEILLETTE SURVOLÉ S'ENTOURE ────────────────────────────────
+    const buisson = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const b = s.view.nodes.find((n) => n.type === 'berry_bush' && n.stock > 0)
+      if (!b) return null
+      // À L'OUEST, PAS AU SUD : planté sous le buisson, l'avatar le RECOUVRE (il fait 24 px de
+      // haut pour 16 au buisson, et il se trie devant) — la capture montrait alors le contour
+      // de dos, autour d'un objet invisible. De côté, à 1,1 tuile, on garde la portée de bras
+      // (1,5) et le buisson reste entier à l'image.
+      s.sendAction({ type: 'debug_teleport', x: b.tx - 0.6, y: b.ty + 0.55 })
+      return { id: b.id, tx: b.tx, ty: b.ty }
+    })
+    if (!buisson) { console.log('   ✗ aucun buisson à baies sur cette carte'); return {} }
+    await page.waitForTimeout(600)
+    await viser(buisson.tx, buisson.ty)
+    const surBuisson = await etat()
+    console.log(surBuisson.cible?.kind === 'node' && surBuisson.cible.id === buisson.id && surBuisson.copies === 8
+      ? `   ✓ buisson survolé : cible « node ${buisson.id} », ${surBuisson.copies} copies allumées`
+      : `   ✗ buisson survolé : ${JSON.stringify(surBuisson)}`)
+    console.log(surBuisson.teinte === 0xffffff
+      ? `   ✓ le liseré est BLANC (${surBuisson.teinte?.toString(16)})`
+      : `   ✗ teinte inattendue : ${surBuisson.teinte?.toString(16)}`)
+    console.log(surBuisson.derriere === true
+      ? `   ✓ les copies sont DERRIÈRE le sprite — donc un contour, pas une silhouette pleine`
+      : `   ✗ profondeur : les copies ne sont pas derrière (${surBuisson.derriere})`)
+
+    // ── ② IL SE VOIT : du blanc apparaît autour de la silhouette, et lui seul ───────
+    await figer() // l'image ne bougera plus pendant la seconde que prennent les captures
+    const c = await cadre()
+    const avecBlanc = c ? await blancsAutour(c) : null
+    await page.screenshot({ path: `${OUT}/contour-buisson.png` })
+    await degeler()
+    await viser(buisson.tx + 4, buisson.ty + 4) // le curseur s'en va : le contour doit s'éteindre
+    const eteint = await etat()
+    await figer()
+    const sansBlanc = c ? await blancsAutour(c) : null
+    await degeler()
+    console.log(eteint.cible === null && eteint.copies === 0
+      ? `   ✓ curseur ailleurs → contour éteint (0 copie)`
+      : `   ✗ le contour survit au départ du curseur : ${JSON.stringify(eteint)}`)
+    console.log(avecBlanc !== null && sansBlanc !== null && avecBlanc > 40 && avecBlanc > sansBlanc * 5 + 20
+      ? `   ✓ OPTIQUE : ${avecBlanc} px blancs autour du buisson survolé, ${sansBlanc} sans survol`
+      : `   ✗ OPTIQUE : ${avecBlanc} px blancs survolé vs ${sansBlanc} sans — le trait ne se voit pas`)
+
+    // ── ③ UN ARBRE NE S'ENTOURE PAS : son geste est le CLIC, pas `F` ────────────────
+    const arbre = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const p = s.predicted
+      const a = s.view.nodes
+        .filter((n) => n.type === 'tree' || n.type === 'old_tree')
+        .map((n) => ({ n, d: (n.tx + 0.5 - p.x) ** 2 + (n.ty + 0.5 - p.y) ** 2 }))
+        .sort((x, y) => x.d - y.d)[0]
+      if (!a) return null
+      s.sendAction({ type: 'debug_teleport', x: a.n.tx + 0.5, y: a.n.ty + 1.4 })
+      return { tx: a.n.tx, ty: a.n.ty }
+    })
+    if (arbre) {
+      await page.waitForTimeout(600)
+      await viser(arbre.tx, arbre.ty)
+      const surArbre = await etat()
+      console.log(surArbre.cible === null && surArbre.copies === 0
+        ? `   ✓ arbre survolé : aucun contour (il se coupe au clic, la touche ne le prend pas)`
+        : `   ✗ un arbre s'entoure alors que la touche ne fait rien dessus : ${JSON.stringify(surArbre)}`)
+    }
+
+    // ── ④ UNE PILE AU SOL S'ENTOURE (spec chasse C18 : `F` la ramasse) ──────────────
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_grant', item: 'arrow' }))
+    await page.waitForTimeout(220)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'drop_held' }))
+    await page.waitForTimeout(500)
+    const pile = await page.evaluate(() => {
+      const p = window.__BRAISES__.scene.view.groundItems?.[0]
+      return p ? { id: p.id, tx: Math.floor(p.x), ty: Math.floor(p.y) } : null
+    })
+    if (pile) {
+      // ON S'ÉCARTE D'ABORD : la pile tombe SOUS nos pieds, et l'avatar (24 px de haut, trié
+      // devant) la recouvre — contour compris. C'est le tri qui veut ça, pas un défaut ; mais
+      // une mesure optique prise de là ne prouverait rien. À 1,1 tuile on la voit et on
+      // l'atteint encore (portée de bras : 1,5).
+      await page.evaluate((p) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: p.tx - 0.6, y: p.ty + 0.55 }), pile)
+      await page.waitForTimeout(500)
+      await viser(pile.tx, pile.ty)
+      const surPile = await etat()
+      await figer()
+      const cPile = await cadre({ kind: 'pile', id: pile.id })
+      const blancPile = cPile ? await blancsAutour(cPile) : null
+      await page.screenshot({ path: `${OUT}/contour-pile.png` })
+      await degeler()
+      console.log(surPile.cible?.kind === 'pile' && surPile.copies === 8
+        ? `   ✓ pile au sol survolée : cible « pile ${surPile.cible.id} », entourée`
+        : `   ✗ la pile ne s'entoure pas : ${JSON.stringify(surPile)}`)
+      console.log(blancPile !== null && blancPile > 20
+        ? `   ✓ OPTIQUE : le trait de la pile se voit (${blancPile} px blancs)`
+        : `   ✗ OPTIQUE : la pile est cernée dans l'état mais pas à l'écran (${blancPile} px)`)
+    } else {
+      console.log('   ✗ rien n’est tombé au sol — la pile n’a pas pu être survolée')
+    }
+
+    // ── ⑤ UN FEU S'ENTOURE (spec feu-station S17 : `F` ouvre son modal) ─────────────
+    const feu = await page.evaluate(() => {
+      const p = window.__BRAISES__.scene.predicted
+      // À CÔTÉ DE SOI, PAS SOUS SES PIEDS : un feu occupe sa tuile pleine et emmurerait
+      // l'avatar centré dessus (leçon `place_component`).
+      return { tx: Math.floor(p.x) + 1, ty: Math.floor(p.y) }
+    })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_grant', item: 'campfire' }))
+    await page.waitForTimeout(300)
+    await page.evaluate((f) => window.__BRAISES__.scene.sendAction({ type: 'place_campfire', tx: f.tx, ty: f.ty }), feu)
+    await page.waitForTimeout(700)
+    const feuPose = await page.evaluate((f) => {
+      const s = window.__BRAISES__.scene.view.structures.find((st) => st.type === 'fire' && st.tx === f.tx && st.ty === f.ty)
+      return s ? s.id : null
+    }, feu)
+    if (feuPose !== null) {
+      await viser(feu.tx, feu.ty)
+      const surFeu = await etat()
+      // AUTOUR D'UNE FLAMME, on compte le TRÈS CLAIR (≥200) sans exiger la neutralité — la
+      // lueur réchauffe le trait —, et c'est le TÉMOIN qui tranche : même cadre, curseur
+      // ailleurs. Le cadre se lit sur la STRUCTURE elle-même, pas sur le contour, sans quoi
+      // le témoin (contour éteint) n'aurait rien à cadrer.
+      const CIBLE_FEU = { kind: 'fire', id: feuPose }
+      await figer()
+      const cFeu = await cadre(CIBLE_FEU)
+      const blancFeu = cFeu ? await blancsAutour(cFeu, 200, 70) : null
+      await page.screenshot({ path: `${OUT}/contour-feu.png` })
+      await degeler()
+      await viser(feu.tx + 3, feu.ty + 3)
+      await figer()
+      const cFeu2 = await cadre(CIBLE_FEU)
+      const sansFeu = cFeu2 ? await blancsAutour(cFeu2, 200, 70) : null
+      await degeler()
+      console.log(surFeu.cible?.kind === 'fire' && surFeu.cible.id === feuPose && surFeu.copies === 8
+        ? `   ✓ feu survolé : cible « fire ${feuPose} », entourée`
+        : `   ✗ le feu ne s'entoure pas : ${JSON.stringify(surFeu)}`)
+      console.log(blancFeu !== null && sansFeu !== null && blancFeu > 40 && blancFeu > sansFeu * 3 + 20
+        ? `   ✓ OPTIQUE : ${blancFeu} px très clairs autour du feu survolé, ${sansFeu} sans survol`
+        : `   ✗ OPTIQUE : ${blancFeu} px survolé vs ${sansFeu} sans — le trait du feu ne se voit pas`)
+
+      // ── ⑥ SOUS UN OVERLAY, RIEN : la touche est mangée, le contour doit l'être aussi ──
+      //
+      // ON RALLUME D'ABORD (le témoin du feu vient d'emmener le curseur ailleurs) : sans ce
+      // retour sur la cible, « éteint sous le sac » serait vrai de toute façon, et le test ne
+      // vérifierait plus que lui-même.
+      await viser(feu.tx, feu.ty)
+      const avantSac = await etat()
+      await page.keyboard.press('Tab')
+      await page.waitForTimeout(320)
+      const sousSac = await etat()
+      console.log(avantSac.cible !== null && sousSac.cible === null && sousSac.copies === 0
+        ? `   ✓ sac ouvert → contour éteint (allumé juste avant : la touche y est mangée)`
+        : `   ✗ le sac n'éteint pas le contour : avant ${JSON.stringify(avantSac.cible)} → sous le sac ${JSON.stringify(sousSac)}`)
+      await page.keyboard.press('Tab')
+      await page.waitForTimeout(320)
+
+      // ── ⑦ HORS DE PORTÉE, LA CIBLE TIENT ET LE TRAIT SE GRISE ─────────────────────
+      await page.evaluate((f) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: f.tx + 0.5, y: f.ty + 6 }), feu)
+      await page.waitForTimeout(600)
+      await viser(feu.tx, feu.ty)
+      const loin = await etat()
+      console.log(loin.cible !== null && loin.cible.inRange === false && loin.teinte !== 0xffffff
+        ? `   ✓ hors de portée : la cible tient, le trait se grise (${loin.teinte?.toString(16)})`
+        : `   ✗ hors de portée : ${JSON.stringify(loin)}`)
+    }
+
+    // ── ⑧ LA NUIT, LE TRAIT RESTE BLANC (il est peint en FILL, hors éclairage) ──────
+    await page.evaluate((b) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: b.tx - 0.6, y: b.ty + 0.55 }), buisson)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 0 }))
+    await page.waitForTimeout(900)
+    await viser(buisson.tx, buisson.ty)
+    const nuit = await etat()
+    await figer()
+    const cn = await cadre()
+    const blancNuit = cn ? await blancsAutour(cn) : null
+    await page.screenshot({ path: `${OUT}/contour-nuit.png` })
+    await degeler()
+    console.log(nuit.teinte === 0xffffff && blancNuit !== null && blancNuit > 40
+      ? `   ✓ la nuit, le trait reste blanc et se voit (${blancNuit} px)`
+      : `   ✗ la nuit, le trait s'éteint ou se teinte : ${JSON.stringify(nuit)} / ${blancNuit} px`)
+
+    return { surBuisson, avecBlanc, sansBlanc, blancNuit }
   },
 
   /**
