@@ -5766,6 +5766,246 @@ const SCENARIOS = {
     return { close: close.cle, ouvert: ouvert.cle }
   },
 
+  /**
+   * PORTE-DOUBLE (2026-08-01) — R27 : deux vantaux mitoyens font UN cadre.
+   *
+   * Ce que `pnpm test` ne peut pas voir : que les FAMILLES sont câblées de bout en bout
+   * (l'appariement du snapshot choisit `st-door2a/door2b`, pas `st-door`), que pousser UN
+   * vantail ouvre l'autre À L'ÉCRAN, que la collision suit sur la tuile du vantail qu'on n'a
+   * PAS poussé, et que démolir un vantail rend l'autre à sa famille simple. En horizontal ET
+   * en vertical — c'est la demande. Exige `--dev` (TP).
+   */
+  async 'porte-double'(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(300)
+
+    const agir = async (action, ms = 320) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const slotDe = (item) => page.evaluate((it) => (window.__BRAISES__.scene.registry.get('inv') ?? [])
+      .findIndex((s) => s?.item === it), item)
+    const pos = () => page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+
+    // ── FONDER, loin des landmarks (recette éprouvée de `porte`).
+    const p0 = await pos()
+    let feu = null
+    let bx = 0
+    let by = 0
+    for (const [ox, oy] of [[0, 0], [-24, 0], [24, 0], [0, -24], [0, 24], [-48, 0], [48, 0]]) {
+      const tx = Math.round(p0.x) + ox
+      const ty = Math.round(p0.y) + oy
+      await agir({ type: 'debug_teleport', x: tx + 0.5, y: ty + 0.5 }, 220)
+      await agir({ type: 'debug_grant', item: 'campfire' }, 160)
+      const cslot = await slotDe('campfire')
+      if (cslot < 0 || cslot >= 6) continue
+      await agir({ type: 'set_active_slot', slot: cslot }, 140)
+      await agir({ type: 'place_campfire', tx: tx + 1, ty }, 320)
+      const id = await page.evaluate(({ x, y }) => {
+        const f = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.villageId === 0 && q.tx === x && q.ty === y)
+        return f ? f.id : null
+      }, { x: tx + 1, y: ty })
+      if (id === null) continue
+      await agir({ type: 'found_village', structureId: id }, 420)
+      if (await page.evaluate(() => (window.__BRAISES__.scene.registry.get('village') ?? 0) > 0)) {
+        feu = id
+        bx = tx
+        by = ty
+        break
+      }
+    }
+    if (feu === null) { console.error('!! aucun village fondé — la porte double n’est pas bâtissable'); return }
+
+    for (let i = 0; i < 14; i++) await agir({ type: 'debug_grant', item: 'wood' }, 90)
+    await agir({ type: 'debug_grant', item: 'hammer' }, 180)
+    const hslot = await slotDe('hammer')
+    if (hslot < 0 || hslot >= 6) { console.error(`!! marteau hors ceinture (case ${hslot})`); return }
+    await agir({ type: 'set_active_slot', slot: hslot }, 300)
+
+    const porteEn = (x, y) => page.evaluate(({ px, py }) => {
+      const s = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'door' && q.tx === px && q.ty === py)
+      return s ? { id: s.id, open: s.open === true } : null
+    }, { px: x, py: y })
+    const cleDe = (id) => page.evaluate((sid) =>
+      window.__BRAISES__.scene.view.structureSprites?.get(sid)?.texture?.key ?? null, id)
+    /** Pousse vers le SUD depuis (tx+0.5, ligne−0.5) et rend la position finale (cf. `porte`). */
+    const pousserSud = async (tx, ligne) => {
+      let place = false
+      for (let essai = 0; essai < 10; essai++) {
+        await agir({ type: 'debug_teleport', x: tx + 0.5, y: ligne - 0.5 }, 340)
+        const q = await pos()
+        if (Math.abs(q.x - (tx + 0.5)) < 0.3 && Math.abs(q.y - (ligne - 0.5)) < 0.3) { place = true; break }
+      }
+      if (!place) { console.error(`!! placement impossible en (${tx + 0.5}, ${ligne - 0.5})`); return null }
+      await page.keyboard.down('KeyS')
+      let q = await pos()
+      let stable = 0
+      for (let i = 0; i < 40 && stable < 4; i++) {
+        await page.waitForTimeout(220)
+        const r2 = await pos()
+        stable = Math.abs(r2.y - q.y) < 0.002 ? stable + 1 : 0
+        q = r2
+      }
+      await page.keyboard.up('KeyS')
+      await page.waitForTimeout(250)
+      return pos()
+    }
+    const presserF = async (x, y) => {
+      for (let essai = 0; essai < 10; essai++) {
+        await agir({ type: 'debug_teleport', x, y }, 340)
+        const q = await pos()
+        if (Math.abs(q.x - x) < 0.3 && Math.abs(q.y - y) < 0.3) break
+      }
+      await page.keyboard.press('KeyF')
+      await page.waitForTimeout(700)
+    }
+    const cadrer = async (wx, wy) => {
+      await page.evaluate(({ x, y }) => {
+        const cam = window.__BRAISES__.scene.cameras.main
+        cam.stopFollow()
+        cam.setZoom(8)
+        cam.centerOn(x * 16, y * 16)
+      }, { x: wx, y: wy })
+      await page.waitForTimeout(700)
+    }
+
+    // ═══ HORIZONTAL : deux vantaux bit SUD, côte à côte en X ═══
+    const S = 4
+    const ligne = by + 3
+    let ax = null
+    for (const dx of [0, 1, -1, 2, -2]) {
+      const tx = bx + dx
+      // DEUX tuiles propres de chaque côté de l'arête : un nœud ferait la mesure à notre place.
+      const propre = await page.evaluate(({ x, y }) => (window.__BRAISES__.scene.view.nodes ?? [])
+        .every((n) => !((n.tx >= x && n.tx <= x + 1) && (n.ty === y || n.ty === y + 1))), { x: tx, y: ligne - 1 })
+      if (!propre) continue
+      await agir({ type: 'debug_teleport', x: tx + 0.5, y: ligne - 0.5 }, 300)
+      await agir({ type: 'build', structure: 'door', tx, ty: ligne - 1, material: 'wood', edges: S }, 320)
+      await agir({ type: 'debug_teleport', x: tx + 1.5, y: ligne - 0.5 }, 300)
+      await agir({ type: 'build', structure: 'door', tx: tx + 1, ty: ligne - 1, material: 'wood', edges: S }, 500)
+      const ok = await page.evaluate(({ x, y }) => {
+        const st = window.__BRAISES__.scene.view.structures
+        return st.some((q) => q.type === 'door' && q.tx === x && q.ty === y)
+          && st.some((q) => q.type === 'door' && q.tx === x + 1 && q.ty === y)
+      }, { x: tx, y: ligne - 1 })
+      if (ok) { ax = tx; break }
+    }
+    if (ax === null) { console.error('!! les deux vantaux ne sont pas posés — rien à mesurer'); return }
+    const vantailA = await porteEn(ax, ligne - 1)
+    const vantailB = await porteEn(ax + 1, ligne - 1)
+
+    // ① LES FAMILLES : l'appariement du snapshot choisit les MOITIÉS de cadre, ouest puis est.
+    const cleA0 = await cleDe(vantailA.id)
+    const cleB0 = await cleDe(vantailB.id)
+    console.log(`   cadre horizontal en (${ax},${ligne - 1})+(${ax + 1},${ligne - 1}), arête sud — ${cleA0} · ${cleB0}`)
+    if (!String(cleA0).startsWith('st-door2a-e4')) console.error(`!! le vantail OUEST n'est pas la moitié a du cadre : ${cleA0}`)
+    if (!String(cleB0).startsWith('st-door2b-e4')) console.error(`!! le vantail EST n'est pas la moitié b du cadre : ${cleB0}`)
+    const frameDe = (cle) => {
+      const m = String(cle).match(/-f(\d+)(?:_lit)?$/)
+      return m ? Number(m[1]) : null
+    }
+    if (frameDe(cleA0) !== 0 || frameDe(cleB0) !== 0) console.error(`!! un vantail neuf n'est pas à la frame 0 (${cleA0} · ${cleB0})`)
+
+    // La photo du cadre CLOS, avant d'y toucher.
+    await agir({ type: 'debug_teleport', x: ax + 1, y: ligne + 2.5 }, 320)
+    await cadrer(ax + 1, ligne - 0.2)
+    await page.screenshot({ path: `${OUT}/porte-double-h-close.png` })
+
+    // ② CLOSE, la tuile du vantail B m'arrête aussi (le cadre est un tout).
+    const bloqueB = await pousserSud(ax + 1, ligne)
+    // ③ POUSSER LE VANTAIL A OUVRE LES DEUX — état, frames, et le passage PAR B.
+    await presserF(ax + 0.5, ligne - 0.5)
+    const apresA = await porteEn(ax, ligne - 1)
+    const apresB = await porteEn(ax + 1, ligne - 1)
+    const cleA1 = await cleDe(vantailA.id)
+    const cleB1 = await cleDe(vantailB.id)
+    if (apresA.open !== true) console.error('!! la touche n’a pas ouvert le vantail poussé')
+    if (apresB.open !== true) console.error('!! LE VANTAIL APPARIÉ NE SUIT PAS : b reste clos')
+    if (frameDe(cleA1) !== 4 || frameDe(cleB1) !== 4) console.error(`!! les battants ouverts ne sont pas à la dernière frame (${cleA1} · ${cleB1})`)
+    const sortiParB = await pousserSud(ax + 1, ligne)
+    // La photo du cadre OUVERT, au même cadrage.
+    await agir({ type: 'debug_teleport', x: ax + 1, y: ligne + 2.5 }, 320)
+    await cadrer(ax + 1, ligne - 0.2)
+    await page.screenshot({ path: `${OUT}/porte-double-h-ouverte.png` })
+    // ④ REFERMER PAR B referme A — la symétrie du geste.
+    await presserF(ax + 1.5, ligne - 0.5)
+    const refermeA = await porteEn(ax, ligne - 1)
+    const refermeB = await porteEn(ax + 1, ligne - 1)
+    const rebloqueB = await pousserSud(ax + 1, ligne)
+    const y = (p2) => (p2 === null ? 'NON MESURÉ' : p2.y.toFixed(2))
+    console.log(`   close → y=${y(bloqueB)} par B · F sur A ouvre les deux (${cleA1} · ${cleB1}) → y=${y(sortiParB)} par B · F sur B referme → y=${y(rebloqueB)}`)
+    if (bloqueB && bloqueB.y > ligne) console.error(`!! CLOSE, LE VANTAIL B NE M'ARRÊTE PAS : sorti en y=${bloqueB.y.toFixed(2)}`)
+    if (sortiParB && sortiParB.y <= ligne) console.error(`!! OUVERTE PAR A, LA TUILE DE B NE LIVRE PAS PASSAGE : arrêté en y=${sortiParB.y.toFixed(2)}`)
+    if (refermeA.open !== false || refermeB.open !== false) console.error('!! refermer par B n’a pas refermé les deux vantaux')
+    if (rebloqueB && rebloqueB.y > ligne) console.error(`!! REFERMÉE, ELLE NE M'ARRÊTE PLUS : sorti en y=${rebloqueB.y.toFixed(2)}`)
+
+    // ═══ VERTICAL : deux vantaux bit EST, empilés en Y — même règle, autre axe ═══
+    const E = 2
+    const vx = bx - 2
+    const vy = by
+    await agir({ type: 'debug_teleport', x: vx + 0.5, y: vy + 0.5 }, 300)
+    await agir({ type: 'build', structure: 'door', tx: vx, ty: vy, material: 'wood', edges: E }, 320)
+    await agir({ type: 'debug_teleport', x: vx + 0.5, y: vy + 1.5 }, 300)
+    await agir({ type: 'build', structure: 'door', tx: vx, ty: vy + 1, material: 'wood', edges: E }, 500)
+    const hautV = await porteEn(vx, vy)
+    const basV = await porteEn(vx, vy + 1)
+    if (hautV === null || basV === null) {
+      console.error('!! cadre vertical non posé (terrain ?) — l’axe vertical n’est pas mesuré')
+    } else {
+      const cleH = await cleDe(hautV.id)
+      const cleB2 = await cleDe(basV.id)
+      console.log(`   cadre vertical en (${vx},${vy})+(${vx},${vy + 1}), arête est — ${cleH} · ${cleB2}`)
+      if (!String(cleH).startsWith('st-door2a-e2')) console.error(`!! le vantail NORD n'est pas la moitié a du cadre : ${cleH}`)
+      if (!String(cleB2).startsWith('st-door2b-e2')) console.error(`!! le vantail SUD n'est pas la moitié b du cadre : ${cleB2}`)
+      await agir({ type: 'debug_teleport', x: vx - 1.5, y: vy + 1 }, 320)
+      await cadrer(vx + 1, vy + 1)
+      await page.screenshot({ path: `${OUT}/porte-double-v-close.png` })
+      await presserF(vx + 0.5, vy + 0.5)
+      const hautOuvert = await porteEn(vx, vy)
+      const basOuvert = await porteEn(vx, vy + 1)
+      if (hautOuvert.open !== true || basOuvert.open !== true) console.error('!! en vertical, pousser un vantail n’ouvre pas les deux')
+      await agir({ type: 'debug_teleport', x: vx - 1.5, y: vy + 1 }, 320)
+      await cadrer(vx + 1, vy + 1)
+      await page.screenshot({ path: `${OUT}/porte-double-v-ouverte.png` })
+    }
+
+    // ═══ DÉMOLIR UN VANTAIL REND L'AUTRE SIMPLE — la dérivation suit, sans rien à nettoyer ═══
+    await agir({ type: 'debug_teleport', x: ax + 0.5, y: ligne - 0.5 }, 340)
+    await agir({ type: 'demolish', structureId: vantailB.id }, 700)
+    const survivant = await cleDe(vantailA.id)
+    const disparu = await porteEn(ax + 1, ligne - 1)
+    console.log(`   après démolition du vantail b : le survivant lit ${survivant}`)
+    if (disparu !== null) console.error('!! le vantail démoli est toujours là — la mesure ne prouve rien')
+    else if (!String(survivant).startsWith('st-door-e4')) console.error(`!! LE SURVIVANT NE REDEVIENT PAS UNE PORTE SIMPLE : ${survivant}`)
+
+    // ═══ L'ART DES MOITIÉS, texture par texture — la silhouette DEBOUT, que l'ouvreur ne voit
+    // jamais (il est au contact, pan tombé) : close et grande ouverte, deux axes. ═══
+    for (const [fam, bit, f] of [
+      ['door2a', 4, 0], ['door2b', 4, 0], ['door2a', 4, 4], ['door2b', 4, 4],
+      ['door2a', 2, 0], ['door2b', 2, 0], ['door2a', 2, 4], ['door2b', 2, 4],
+    ]) {
+      const b64 = await page.evaluate(({ cle }) => {
+        const src = window.__BRAISES__.scene.textures.get(cle)?.getSourceImage()
+        if (!src || !src.toDataURL) return null
+        const c2 = document.createElement('canvas')
+        c2.width = src.width * 6
+        c2.height = src.height * 6
+        const g = c2.getContext('2d')
+        g.imageSmoothingEnabled = false
+        g.fillStyle = '#5c7a3f'
+        g.fillRect(0, 0, c2.width, c2.height)
+        g.drawImage(src, 0, 0, c2.width, c2.height)
+        return c2.toDataURL('image/png').split(',')[1]
+      }, { cle: `st-${fam}-e${bit}-f${f}` })
+      if (b64 === null) { console.error(`!! texture st-${fam}-e${bit}-f${f} illisible`); continue }
+      await writeFile(`${OUT}/porte-double-art-${fam}-e${bit}-f${f}.png`, Buffer.from(b64, 'base64'))
+    }
+    console.log('   art : 2 moitiés × 2 arêtes × 2 positions exportées')
+    return { horizontal: [cleA0, cleB0], demolition: survivant }
+  },
+
   async 'arete'(page) {
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1200)

@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { BALANCE } from '@ashes/sim'
-import { BATI_KEYS, BATI_LIT_TYPES, COUPE_DE, EDGE_BARRIER_KEYS, ENCADREMENT_POST, PORTE_FRAMES, passageDePorte, piecesDePorte, profilDeCrete } from './bati-art'
+import { BATI_KEYS, BATI_LIT_TYPES, COUPE_DE, EDGE_BARRIER_KEYS, ENCADREMENT_POST, PORTE_FRAMES, passageDePorte, passageDePorteDouble, piecesDePorte, piecesDePorteDouble, profilDeCrete } from './bati-art'
 
 const N = 1, E = 2, S = 4, O = 8
 
@@ -230,6 +230,183 @@ describe('la porte du joueur, sur arête', () => {
       if (m === N || m === E || m === S || m === O) continue
       expect(EDGE_BARRIER_KEYS.some((k) => k.startsWith(`st-door-e${m}-`)), `masque ${m} posé pour rien`).toBe(false)
     }
+  })
+})
+
+/**
+ * LA PORTE DOUBLE (spec construction R27, demande d'Alexis 2026-08-01) — « un seul cadre,
+ * 2 battants se rejoignant au centre ».
+ *
+ * Les gardes relisent celles de la porte simple, sur les DEUX moitiés : le plan est pur
+ * (`piecesDePorteDouble`), le passage est une définition (`passageDePorteDouble` — du jambage
+ * extérieur à la LIMITE de tuile, là où les battants se rejoignent), et c'est leur confrontation
+ * qui s'affirme, jamais une image. Ce que la porte simple ne pouvait pas dire et qui se dit ici :
+ * le cadre est UN — chaque moitié n'a qu'un montant, et il est du côté extérieur.
+ */
+describe('la porte double — deux moitiés, un seul cadre (R27)', () => {
+  const BITS = [N, E, S, O]
+  const NOM: Record<number, string> = { 1: 'nord', 2: 'est', 4: 'sud', 8: 'ouest' }
+  const MOITIES: readonly { premiere: boolean; nom: string }[] = [
+    { premiere: true, nom: 'moitié a (ouest/nord)' },
+    { premiere: false, nom: 'moitié b (est/sud)' },
+  ]
+  const OUVERTE = PORTE_FRAMES.length - 1
+
+  const couverture = (bit: number, frame: number, premiere: boolean): number => {
+    const p = passageDePorteDouble(bit, premiere)
+    const pieces = piecesDePorteDouble(bit, PORTE_FRAMES[frame]!, premiere)
+    let dedans = 0
+    let total = 0
+    for (let y = p.y + 0.5; y < p.y + p.h; y += 1) {
+      for (let x = p.x + 0.5; x < p.x + p.w; x += 1) {
+        total += 1
+        if (pieces.some((q) => x >= q.x && x <= q.x + q.w && y >= q.y && y <= q.y + q.h)) dedans += 1
+      }
+    }
+    return total === 0 ? 0 : dedans / total
+  }
+  const recouvre = (
+    a: { x: number; y: number; w: number; h: number },
+    b: { x: number; y: number; w: number; h: number },
+  ): boolean => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+
+  it('le passage d’une moitié gagne exactement UN montant sur la porte simple', () => {
+    // C'est la définition du cadre unique : là où la porte simple retranche deux jambages de sa
+    // tuile, une moitié n'en retranche qu'un — l'autre bout est la limite de tuile, le centre.
+    for (const bit of BITS) {
+      const simple = passageDePorte(bit)
+      for (const { premiere, nom } of MOITIES) {
+        const p = passageDePorteDouble(bit, premiere)
+        const leLong = bit === N || bit === S ? p.w : p.h
+        const simpleLeLong = bit === N || bit === S ? simple.w : simple.h
+        expect(leLong, `arête ${NOM[bit]}, ${nom}`).toBe(simpleLeLong + ENCADREMENT_POST)
+      }
+    }
+  })
+
+  it('FERMÉE, chaque moitié BOUCHE jusqu’au CENTRE : tout le passage est couvert', () => {
+    // Le battant va jusqu'à la limite de tuile — c'est « se rejoignant au centre » : côté centre,
+    // c'est LUI qui couvre, puisqu'aucun montant n'y existe (garde suivante).
+    for (const bit of BITS) {
+      for (const { premiere, nom } of MOITIES) {
+        expect(couverture(bit, 0, premiere), `arête ${NOM[bit]}, ${nom}`).toBe(1)
+      }
+    }
+  })
+
+  it('OUVERTE, le passage ENTIER est libre — donc AUCUN montant au centre', () => {
+    // La garde du cadre unique : le passage inclut la bande où une porte simple dresse son
+    // second jambage. S'il en restait un — deux montants dos à dos au milieu du cadre, le
+    // défaut des deux portes simples mitoyennes — cette assertion le verrait mordre.
+    for (const bit of BITS) {
+      for (const { premiere, nom } of MOITIES) {
+        const passage = passageDePorteDouble(bit, premiere)
+        expect(passage.w, `arête ${NOM[bit]}, ${nom} : le passage a une largeur`).toBeGreaterThan(0)
+        expect(passage.h, `arête ${NOM[bit]}, ${nom} : le passage a une hauteur`).toBeGreaterThan(0)
+        for (const p of piecesDePorteDouble(bit, PORTE_FRAMES[OUVERTE]!, premiere)) {
+          expect(recouvre(p, passage), `arête ${NOM[bit]}, ${nom} : ${p.x},${p.y} ${p.w}×${p.h} mord le passage`).toBe(false)
+        }
+      }
+    }
+  })
+
+  it('UN SEUL support vertical par moitié — et les deux moitiés ont chacune le leur', () => {
+    // Sur une arête horizontale, le jambage se reconnaît à sa signature (largeur `POST`, toute
+    // la hauteur sous le linteau) ; la porte simple en dresse DEUX, une moitié UN seul.
+    for (const bit of [N, S]) {
+      const jambages = (pieces: readonly { w: number; h: number }[]): number =>
+        pieces.filter((p) => p.w === ENCADREMENT_POST && p.h > 8).length
+      expect(jambages(piecesDePorte(bit, 0)), `arête ${NOM[bit]} : la simple a deux jambages`).toBe(2)
+      for (const { premiere, nom } of MOITIES) {
+        expect(jambages(piecesDePorteDouble(bit, 0, premiere)), `arête ${NOM[bit]}, ${nom}`).toBe(1)
+      }
+    }
+    // Sur une verticale, même chose avec les dormants du ruban. Leur signature au repos : plus
+    // d'un pixel de haut — la feuillure et les tranches du battant à plat font 1 px chacune, et
+    // les DEUX dormants n'ont pas la même hauteur (le nord porte l'élévation du mur, le sud le
+    // seul débord de bande) : un plancher plus haut raterait le sud.
+    for (const bit of [E, O]) {
+      const dormants = (pieces: readonly { w: number; h: number }[]): number =>
+        pieces.filter((p) => p.h > 1).length
+      expect(dormants(piecesDePorte(bit, 0)), `arête ${NOM[bit]} : la simple a deux dormants`).toBe(2)
+      for (const { premiere, nom } of MOITIES) {
+        expect(dormants(piecesDePorteDouble(bit, 0, premiere)), `arête ${NOM[bit]}, ${nom}`).toBe(1)
+      }
+    }
+  })
+
+  it('le montant restant est du côté EXTÉRIEUR — jamais au centre', () => {
+    // La moitié `a` (ouest/nord) garde son support AVANT le passage, la `b` APRÈS — dans l'axe
+    // de l'arête. Un montant qui glisserait au centre inverserait ces positions.
+    for (const bit of BITS) {
+      const horizontal = bit === N || bit === S
+      for (const { premiere, nom } of MOITIES) {
+        const passage = passageDePorteDouble(bit, premiere)
+        const support = horizontal
+          ? piecesDePorteDouble(bit, 0, premiere).find((p) => p.w === ENCADREMENT_POST && p.h > 8)!
+          : piecesDePorteDouble(bit, 0, premiere).find((p) => p.h > 1)!
+        const avant = horizontal ? support.x + support.w <= passage.x : support.y + support.h <= passage.y
+        const apres = horizontal ? support.x >= passage.x + passage.w : support.y >= passage.y + passage.h
+        expect(premiere ? avant : apres, `arête ${NOM[bit]}, ${nom} : montant côté extérieur`).toBe(true)
+      }
+    }
+  })
+
+  it('ÇA S’ANIME VRAIMENT, en miroir : chaque moitié bouge à chaque frame et dégage en s’ouvrant', () => {
+    const silhouette = (bit: number, f: number, premiere: boolean): string =>
+      piecesDePorteDouble(bit, PORTE_FRAMES[f]!, premiere)
+        .map((q) => `${q.x},${q.y},${q.w},${q.h},${q.ton}`)
+        .sort()
+        .join('|')
+    for (const bit of BITS) {
+      for (const { premiere, nom } of MOITIES) {
+        const parts = PORTE_FRAMES.map((_, f) => couverture(bit, f, premiere))
+        for (let f = 1; f < PORTE_FRAMES.length; f++) {
+          expect(silhouette(bit, f, premiere), `arête ${NOM[bit]}, ${nom} : la frame ${f} est identique à la ${f - 1}`)
+            .not.toBe(silhouette(bit, f - 1, premiere))
+          expect(parts[f]!, `arête ${NOM[bit]}, ${nom} : le passage se rebouche (${parts.join(' → ')})`)
+            .toBeLessThanOrEqual(parts[f - 1]!)
+          if (parts[f - 1]! > 0) {
+            expect(parts[f]!, `arête ${NOM[bit]}, ${nom} : frame ${f} ne dégage rien (${parts.join(' → ')})`)
+              .toBeLessThan(parts[f - 1]!)
+          }
+        }
+      }
+    }
+  })
+
+  it('les deux battants sont de vrais MIROIRS : jamais la même silhouette sur une frame ouverte', () => {
+    // Deux moitiés identiques (un copier-coller de la `a`) passeraient toutes les gardes
+    // précédentes — et à l'écran les deux battants pivoteraient du MÊME côté, l'un à travers
+    // l'ouverture de l'autre. Le miroir se prouve par la différence.
+    for (const bit of BITS) {
+      for (let f = 1; f < PORTE_FRAMES.length; f++) {
+        const a = piecesDePorteDouble(bit, PORTE_FRAMES[f]!, true).map((q) => `${q.x},${q.y},${q.w},${q.h}`).sort().join('|')
+        const b = piecesDePorteDouble(bit, PORTE_FRAMES[f]!, false).map((q) => `${q.x},${q.y},${q.w},${q.h}`).sort().join('|')
+        expect(a, `arête ${NOM[bit]}, frame ${f}`).not.toBe(b)
+      }
+    }
+  })
+
+  it('CHAQUE frame des DEUX familles est POSÉE — debout et éclairée, sans masque composite', () => {
+    for (const fam of ['door2a', 'door2b']) {
+      for (const bit of BITS) {
+        for (let f = 0; f < PORTE_FRAMES.length; f++) {
+          for (const cle of [`st-${fam}-e${bit}-f${f}`, `st-${fam}-e${bit}-f${f}_lit`]) {
+            expect(EDGE_BARRIER_KEYS, `${cle} manque`).toContain(cle)
+          }
+        }
+      }
+      for (let m = 0; m < 16; m++) {
+        if (m === N || m === E || m === S || m === O) continue
+        expect(EDGE_BARRIER_KEYS.some((k) => k.startsWith(`st-${fam}-e${m}-`)), `masque ${m} posé pour rien`).toBe(false)
+      }
+    }
+  })
+
+  it('une moitié de porte double ne se TRANCHE pas non plus (R26/R27)', () => {
+    expect(COUPE_DE.door2a, 'la moitié a resterait un battant invisible').toBeUndefined()
+    expect(COUPE_DE.door2b, 'la moitié b resterait un battant invisible').toBeUndefined()
   })
 })
 

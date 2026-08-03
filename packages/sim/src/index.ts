@@ -123,8 +123,8 @@ export type { TiledMapFile, TiledImportResult } from './tiled'
 // ─── Actions & systèmes (l'hôte les applique, les requêtes sont pures) ────
 export { applyVillageAction, structureAt, solidAt, floorAt, roofAt, structureBlocks, getVillageOf, hasAccess, fireRadius, evaluateBuild, buildPlacementValid } from './village'
 export type { Structure, Village, VillageAction, TaskKind, VillageTask, BuildEval, BuildReject } from './village'
-export { blocksNavigation, placementKeepsNavigable, isComponent, recognizeFunctions, refreshFunctions, fullTileAt, edgeBarrierAt, crossingBlocker, terrainConstructible, POSABLE_SUR_EAU } from './construction'
-export type { PlacedStructure, RecogStructure, RecognizedFunction, EdgeAware } from './construction'
+export { blocksNavigation, placementKeepsNavigable, isComponent, recognizeFunctions, refreshFunctions, fullTileAt, edgeBarrierAt, crossingBlocker, doorPairs, terrainConstructible, POSABLE_SUR_EAU } from './construction'
+export type { PlacedStructure, RecogStructure, RecognizedFunction, EdgeAware, DoorPairing } from './construction'
 /** LE VOCABULAIRE DES ARÊTES (spec construction R23) — la même valeur traverse le fantôme du
  *  client, le protocole, la validation du serveur et la collision : une seule définition. */
 export { EDGE_N, EDGE_E, EDGE_S, EDGE_O, EDGE_BITS, edgeBits, edgeStep, oppositeEdge, isSingleEdge } from './geometry'

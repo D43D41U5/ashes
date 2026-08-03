@@ -13,7 +13,7 @@
 import { BALANCE, FUNCTIONS, TERRAIN_SHALLOW_WATER, TERRAINS, type ComponentType, type FunctionId } from './balance'
 import { STRUCTURE_TYPES, bloqueNavigation, isComponent, piece } from './pieces'
 import { emitEvent } from './events'
-import { chebyshev, edgeBits, edgeStep, oppositeEdge } from './geometry'
+import { chebyshev, EDGE_E, EDGE_N, EDGE_S, edgeBits, edgeStep, isSingleEdge, oppositeEdge } from './geometry'
 import { terrainAt, type WorldMap } from './map'
 import type { StructureType } from './items'
 import type { SimState } from './sim'
@@ -141,6 +141,75 @@ export function edgeBarrierAt<T extends EdgeAware>(
     if (s.tx === nx && s.ty === ny && (s.edges & oppose) !== 0) return s
   }
   return undefined
+}
+
+/**
+ * ═══ LA PORTE DOUBLE — une DÉRIVATION, pas une pièce (spec construction R27) ═══
+ *
+ * « Un seul cadre, 2 battants se rejoignant au centre » (Alexis, 2026-08-01). Le modèle n'a ni
+ * largeur ni multi-tuile — une structure est `{tx,ty}` + `edges`, et la porte charretière des
+ * villages PNJ est DÉJÀ deux vantaux adjacents (`village-plan.ts`). La porte double n'est donc
+ * pas un type qu'on pose : elle se LIT — deux `door` sur des arêtes colinéaires adjacentes
+ * forment une paire, que le rendu dessine en un seul cadre et que `toggle_door` pousse ensemble.
+ *
+ * L'ADRESSE CANONIQUE, d'abord : une arête a deux adresses (voir `edgeBarrierAt`), donc deux
+ * vantaux mitoyens peuvent s'écrire « (x,y)+S » et « (x+1,y+1)+N » — même ligne physique, aucune
+ * tuile commune. On ramène chaque porte au COIN NORD-OUEST de son arête (S → la tuile du
+ * dessous, E → la tuile de droite) : deux arêtes sont colinéaires adjacentes si leurs adresses
+ * canoniques se suivent le long de leur propre axe — X pour une arête horizontale (bits N/S),
+ * Y pour une verticale (bits E/O). C'est ce qui rend l'horizontal et le vertical symétriques.
+ *
+ * LA FILE DOIT COMPTER EXACTEMENT DEUX PORTES. À trois vantaux colinéaires, quel couple forme le
+ * cadre ? N'importe quelle réponse serait un choix silencieux qui déciderait qui s'ouvre avec
+ * qui — toutes restent donc simples, et la règle se dit en une phrase. Ni le matériau ni le
+ * village n'entrent dans l'appariement : la géométrie seule décide (c'est `toggle_door` qui
+ * vérifie le DROIT sur chaque battant, comme toujours).
+ *
+ * Rendu en UNE passe sur le tableau (le client la refait à chaque snapshot) ; la `Map` rendue
+ * n'entre jamais dans `SimState` — c'est un dérivé, comme la reconnaissance d'amas.
+ */
+export interface DoorPairing<T> {
+  /** L'autre vantail du cadre. */
+  pair: T
+  /** `true` = la moitié OUEST (cadre horizontal) ou NORD (vertical) : son vantail s'accroche au
+   *  jambage extérieur de ce côté-là. Le rendu en tire la famille (`door2a`/`door2b`). */
+  premiere: boolean
+}
+
+export function doorPairs<T extends EdgeAware & { id: number }>(
+  structures: readonly T[],
+): Map<number, DoorPairing<T>> {
+  const cle = (x: number, y: number, h: boolean): string => `${h ? 'h' : 'v'}${x},${y}`
+  const parArete = new Map<string, T[]>()
+  const canon = new Map<number, { x: number; y: number; h: boolean }>()
+  for (const s of structures) {
+    if (s.type !== 'door' || s.edges === undefined || !isSingleEdge(s.edges)) continue
+    const h = s.edges === EDGE_N || s.edges === EDGE_S
+    const c = { x: s.tx + (s.edges === EDGE_E ? 1 : 0), y: s.ty + (s.edges === EDGE_S ? 1 : 0), h }
+    canon.set(s.id, c)
+    const k = cle(c.x, c.y, h)
+    const deja = parArete.get(k)
+    if (deja) deja.push(s)
+    else parArete.set(k, [s])
+  }
+  const paires = new Map<number, DoorPairing<T>>()
+  for (const [id, c] of canon) {
+    // Deux portes sur la MÊME arête : hors contrat de pose (`edge_taken`) — personne ne s'apparie.
+    if (parArete.get(cle(c.x, c.y, c.h))!.length !== 1) continue
+    const dx = c.h ? 1 : 0
+    const dy = c.h ? 0 : 1
+    const avant = parArete.get(cle(c.x - dx, c.y - dy, c.h))
+    const apres = parArete.get(cle(c.x + dx, c.y + dy, c.h))
+    // La file d'exactement deux : UN voisin colinéaire, sain, et rien au-delà de lui.
+    if (avant !== undefined && apres === undefined) {
+      if (avant.length !== 1 || parArete.has(cle(c.x - 2 * dx, c.y - 2 * dy, c.h))) continue
+      paires.set(id, { pair: avant[0]!, premiere: false })
+    } else if (apres !== undefined && avant === undefined) {
+      if (apres.length !== 1 || parArete.has(cle(c.x + 2 * dx, c.y + 2 * dy, c.h))) continue
+      paires.set(id, { pair: apres[0]!, premiere: true })
+    }
+  }
+  return paires
 }
 
 /**

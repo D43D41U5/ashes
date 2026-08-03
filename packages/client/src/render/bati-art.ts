@@ -626,24 +626,26 @@ const originYPorte = (): number => (MUR_HT + T + M + PORTE_MARGE) / formatPorte(
  * ce sont donc des `Piece2` comme les autres, et **les gardes du passage continuent de les lire
  * sans rien savoir de la rotation**.
  */
-function vantailPivotant(bit: number, ouverture: number, hauteur: number): Piece2[] {
+function vantailPivotant(bit: number, ouverture: number, hauteur: number, moitie?: 'a' | 'b'): Piece2[] {
   const b = bande(bit, MUR_HT)
   const t = tuileDans(MUR_HT)
   const POST = ENCADREMENT_POST
-  const L = T - 2 * POST //   la longueur du battant : l'ouverture qu'il doit boucher
-  const horizontal0 = bit === N_B || bit === S_B
+  // LA LONGUEUR DU BATTANT : l'ouverture qu'il doit boucher. Une porte SIMPLE court d'un jambage
+  // à l'autre ; une MOITIÉ de porte double (R27) n'a qu'un jambage, l'extérieur, et son battant
+  // court jusqu'à la LIMITE de tuile — le centre du cadre, où il rejoint sa jumelle.
+  const L = moitie === undefined ? T - 2 * POST : T - POST
+  const horizontal = bit === N_B || bit === S_B
   // SON ÉPAISSEUR — et elle n'est pas la même selon l'axe, ce que la garde a dû m'apprendre.
   //
   // Vu de TROIS QUARTS (arête horizontale), on regarde sa FACE : deux pixels suffisent à ce qu'il
   // ne disparaisse pas quand il se met en travers. Vu de DESSUS (arête verticale), son épaisseur
   // EST sa largeur apparente, et elle doit remplir le ruban — sinon la porte close ne bouche que
   // la moitié de son ouverture. MESURÉ par la garde : couverture 0,5 au lieu de 1.
-  const EPAIS = horizontal0 ? 2 : EP
+  const EPAIS = horizontal ? 2 : EP
   const o = Math.max(0, Math.min(1, ouverture))
   const angle = (o * Math.PI) / 2
   const cos = Math.cos(angle)
   const sin = Math.sin(angle)
-  const horizontal = bit === N_B || bit === S_B
   const pieces: Piece2[] = []
 
   /**
@@ -667,20 +669,30 @@ function vantailPivotant(bit: number, ouverture: number, hauteur: number): Piece
    */
   const OBLIQUE = { x: -0.55, y: 0.83 }
 
+  // LE MIROIR (R27) : la moitié `b` d'une porte double s'accroche au jambage D'EN FACE, et son
+  // battant est le symétrique exact de l'autre. Les deux s'ouvrent vers le même côté VISIBLE
+  // (le bas de l'écran pour une arête horizontale, l'est pour une verticale — la règle de
+  // visibilité ci-dessus vaut pour chacun), mais chacun se range contre SA maçonnerie, dos au
+  // centre : c'est ce qui fait lire « deux battants qui se rejoignent » et non deux copies.
+  const miroir = moitie === 'b'
+
   // LE GOND, et les deux axes du battant : `u` le long de sa longueur, `n` en travers (épaisseur).
   // LE GOND est sur le BORD du battant, jamais en son milieu : c'est un axe de rotation, pas un
   // centre. Au repos, le panneau doit donc couvrir l'ouverture ENTIÈRE à partir de là.
   const gond = horizontal
-    ? { x: t.x + POST, y: b.y + b.h / 2 }
-    : { x: b.x, y: t.y + POST }
+    ? { x: miroir ? t.x + T - POST : t.x + POST, y: b.y + b.h / 2 }
+    : { x: b.x, y: miroir ? t.y + T - POST : t.y + POST }
   // `u` — la longueur du battant, du gond vers son bord libre. HORIZONTAL : elle glisse de l'axe
   // du mur (1,0) vers l'axe oblique qui en sort. VERTICAL : vu de dessus, la planche sort droit
   // vers l'est — il n'y a rien à obliquer, la caméra voit déjà le sol en vraie grandeur.
   const u = horizontal
-    ? { x: cos + sin * OBLIQUE.x, y: sin * OBLIQUE.y }
-    : { x: sin, y: cos }
-  // `n` — son épaisseur, perpendiculaire à `u` dans le plan de l'écran.
-  const n = horizontal ? { x: -u.y, y: u.x } : { x: cos, y: -sin }
+    ? { x: (cos + sin * OBLIQUE.x) * (miroir ? -1 : 1), y: sin * OBLIQUE.y }
+    : { x: sin, y: miroir ? -cos : cos }
+  // `n` — son épaisseur, perpendiculaire à `u` dans le plan de l'écran. Le signe suit le miroir :
+  // au repos, l'épaisseur doit tomber DANS la bande pour les deux moitiés.
+  const n = horizontal
+    ? miroir ? { x: u.y, y: -u.x } : { x: -u.y, y: u.x }
+    : { x: cos, y: miroir ? sin : -sin }
 
   // L'EMPREINTE : quatre coins, dans l'ordre du contour.
   const coins = [0, 1].flatMap((k) =>
@@ -855,6 +867,100 @@ export function passageDePorte(bit: number): { x: number; y: number; w: number; 
 }
 
 /**
+ * ═══ LA MOITIÉ D'UNE PORTE DOUBLE (spec construction R27, demande d'Alexis 2026-08-01) ═══
+ *
+ * « Un seul cadre, 2 battants se rejoignant au centre. » La porte double n'est pas une pièce :
+ * elle se DÉRIVE — deux `door` sur des arêtes colinéaires adjacentes s'apparient (`doorPairs`,
+ * /sim), et chaque vantail change alors de famille (`door2a`/`door2b`). Une moitié reprend la
+ * porte simple à deux différences près, et rien d'autre :
+ *
+ *   • UN SEUL JAMBAGE, l'extérieur. Au centre du cadre, AUCUN montant : c'est cette absence qui
+ *     dit « un seul cadre » — deux portes simples mitoyennes y dressaient deux montants dos à
+ *     dos, le défaut exact que l'encadrement du bâti généré corrige déjà en se liant à son
+ *     voisin (`dessinerEncadrement`, décision d'Alexis : une porte de DEUX CASES) ;
+ *   • le battant court du jambage à la LIMITE DE TUILE (`T − POST`), où il rejoint sa jumelle —
+ *     et la moitié `b` est le MIROIR de la `a` (`vantailPivotant`), pour que les deux s'ouvrent
+ *     en s'écartant du centre.
+ *
+ * La crête et le linteau, eux, traversent INCHANGÉS : ils débordent de `M` à chaque bout comme
+ * toute bande de mur, donc les deux moitiés se recouvrent au centre et le haut du cadre se lit
+ * d'un seul tenant — c'est la couture des murs (`bande`), réemployée telle quelle.
+ *
+ * `premiere` = la moitié OUEST (arête horizontale) ou NORD (verticale), le `premiere` de
+ * `doorPairs` : une seule vérité pour « de quel côté tombe le jambage restant ».
+ */
+export function piecesDePorteDouble(bit: number, ouverture: number, premiere: boolean): readonly Piece2[] {
+  const b = bande(bit, MUR_HT)
+  const t = tuileDans(MUR_HT)
+  const POST = ENCADREMENT_POST
+  const horizontal = bit === N_B || bit === S_B
+  const CRETE = b.y - MUR_HT
+  const o = Math.max(0, Math.min(1, ouverture))
+  const moitie = premiere ? 'a' : 'b'
+  if (horizontal) {
+    const PIED = b.y + b.h
+    const hautJambage = CRETE + EP + PORTE_LINTEAU
+    const xJambage = premiere ? t.x : t.x + T - POST
+    const pieces: Piece2[] = [
+      // LA CRÊTE et LE LINTEAU, d'un bout à l'autre — identiques à la porte simple.
+      { x: b.x, y: CRETE, w: b.w, h: EP, ton: BOIS.mid },
+      { x: b.x, y: CRETE, w: b.w, h: 1, ton: BOIS.clair },
+      { x: b.x, y: CRETE + EP, w: b.w, h: PORTE_LINTEAU, ton: BOIS.sombre },
+      { x: b.x, y: CRETE + EP + PORTE_LINTEAU - 1, w: b.w, h: 1, ton: BOIS.nuit },
+      // LE SEUL JAMBAGE — l'extérieur. Au centre : rien, les battants s'y rejoignent.
+      { x: xJambage, y: hautJambage, w: POST, h: PIED - hautJambage, ton: BOIS.sombre },
+      { x: xJambage, y: PIED - 3, w: POST, h: 3, ton: BOIS.nuit },
+    ]
+    pieces.push(...vantailPivotant(bit, o, PIED - hautJambage, moitie))
+    // LA POIGNÉE, au bord libre du battant — donc CÔTÉ CENTRE au repos, et en miroir : sur une
+    // porte double, les deux poignées se font face, c'est elles qu'on saisit pour ouvrir.
+    const ang = (o * Math.PI) / 2
+    const lg = T - POST
+    const bout = {
+      x: (premiere ? t.x + POST : t.x + T - POST) + lg * (Math.cos(ang) - Math.sin(ang) * 0.55) * (premiere ? 1 : -1),
+      y: PIED - 11 + lg * Math.sin(ang) * 0.83,
+    }
+    pieces.push({ x: Math.round(bout.x) + (premiere ? -3 : 1), y: Math.round(bout.y), w: 2, h: 2, ton: BOIS.clair })
+    return pieces
+  }
+  // ARÊTE VERTICALE — le ruban vu de dessus (voir `piecesDePorte` : aucun linteau n'y est
+  // possible). Un seul DORMANT, l'extérieur, avec sa feuillure côté ouverture ; le battant
+  // à plat court jusqu'à la limite de tuile.
+  const hautRuban = CRETE
+  const basRuban = b.y + b.h
+  const finHaut = t.y + POST
+  const debutBas = t.y + T - POST
+  const pieces: Piece2[] = premiere
+    ? [
+        { x: b.x, y: hautRuban, w: b.w, h: finHaut - hautRuban, ton: BOIS.sombre },
+        { x: b.x, y: finHaut - 1, w: b.w, h: 1, ton: BOIS.clair },
+      ]
+    : [
+        { x: b.x, y: debutBas, w: b.w, h: basRuban - debutBas, ton: BOIS.sombre },
+        { x: b.x, y: debutBas, w: b.w, h: 1, ton: BOIS.clair },
+      ]
+  pieces.push(...vantailPivotant(bit, o, 0, moitie))
+  return pieces
+}
+
+/**
+ * LE PASSAGE D'UNE MOITIÉ de porte double : du jambage extérieur à la LIMITE de tuile — la
+ * même définition que `passageDePorte`, avec un seul montant à retrancher. Les gardes le
+ * lisent frame par frame : couvert à la première, libre à la dernière.
+ */
+export function passageDePorteDouble(bit: number, premiere: boolean): { x: number; y: number; w: number; h: number } {
+  const b = bande(bit, MUR_HT)
+  const t = tuileDans(MUR_HT)
+  const POST = ENCADREMENT_POST
+  const CRETE = b.y - MUR_HT
+  if (bit === N_B || bit === S_B) {
+    const haut = CRETE + EP + PORTE_LINTEAU
+    return { x: premiere ? t.x + POST : t.x, y: haut, w: T - POST, h: b.y + b.h - haut }
+  }
+  return { x: b.x, y: premiere ? t.y + POST : t.y, w: b.w, h: T - POST }
+}
+
+/**
  * ═══ LA PORTE NE SE TRANCHE PAS (décision d'Alexis, 2026-07-30) ═══
  *
  * Il y avait ici une `dessinerPorteCoupee` : l'empreinte au sol d'une porte, jambages gardés,
@@ -897,6 +1003,31 @@ function dessinerPorte(mask: number, ouverture: number): { albedo: HTMLCanvasEle
       for (const y of [t.y + ENCADREMENT_POST, t.y + T - ENCADREMENT_POST]) {
         joints.push({ path: [[b.x, y], [b.x + b.w, y]], crevasse: true })
       }
+    }
+  }
+  return { albedo: c, joints }
+}
+
+/** Le dessin d'une MOITIÉ de porte double (R27) — peint `piecesDePorteDouble`, comme
+ *  `dessinerPorte` peint `piecesDePorte` ; les sillons suivent le seul jambage restant. */
+function dessinerPorteDouble(mask: number, ouverture: number, premiere: boolean): { albedo: HTMLCanvasElement; joints: Crack[] } {
+  const f = formatPorte()
+  const { c, ctx: g } = newCanvas(f.w, f.h)
+  g.translate(PORTE_MARGE, PORTE_MARGE)
+  const joints: Crack[] = []
+  for (const bit of [N_B, E_B, S_B, O_B].filter((b) => (mask & b) !== 0)) {
+    for (const p of piecesDePorteDouble(bit, ouverture, premiere)) rect(g, p.ton, p.x, p.y, p.w, p.h)
+    const b = bande(bit, MUR_HT)
+    const t = tuileDans(MUR_HT)
+    const CRETE = b.y - MUR_HT
+    if (bit === N_B || bit === S_B) {
+      const haut = CRETE + EP + PORTE_LINTEAU
+      joints.push({ path: [[b.x, haut], [b.x + b.w, haut]], crevasse: true })
+      const x = premiere ? t.x + ENCADREMENT_POST / 2 : t.x + T - ENCADREMENT_POST / 2
+      joints.push({ path: [[x, b.y + b.h], [x, haut]], crevasse: true })
+    } else {
+      const y = premiere ? t.y + ENCADREMENT_POST : t.y + T - ENCADREMENT_POST
+      joints.push({ path: [[b.x, y], [b.x + b.w, y]], crevasse: true })
     }
   }
   return { albedo: c, joints }
@@ -1303,6 +1434,15 @@ function generateEdgeBarrieres(scene: Phaser.Scene): void {
         const { albedo, joints } = dessinerPorte(mask, PORTE_FRAMES[f]!)
         poser(scene, `st-door-e${mask}-f${f}`, albedo, normalFromCanvas(albedo, 1, 3.2, 2, false, joints))
       }
+      // LES MOITIÉS DE PORTE DOUBLE (R27) — mêmes quatre masques, mêmes cinq frames. Les deux
+      // familles sont posées d'avance : c'est l'APPARIEMENT (`doorPairs`, lu par `snapshot-view`)
+      // qui décide au snapshot si un vantail les porte, pas la génération.
+      for (const [fam, premiere] of [['door2a', true], ['door2b', false]] as const) {
+        for (let f = 0; f < PORTE_FRAMES.length; f++) {
+          const { albedo, joints } = dessinerPorteDouble(mask, PORTE_FRAMES[f]!, premiere)
+          poser(scene, `st-${fam}-e${mask}-f${f}`, albedo, normalFromCanvas(albedo, 1, 3.2, 2, false, joints))
+        }
+      }
     }
     // LES COUPÉS — une seule famille de mur pour le neuf comme pour la ruine (une empreinte au
     // sol n'a ni appareil ni usure), et une pour la clôture, qui garde son bois. PLATS (aucune
@@ -1340,6 +1480,8 @@ export const EDGE_SPRITE: Readonly<Record<string, { hauteurPx: number; largeurPx
   'wall-ruine': { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
   encadrement: { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
   door: { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
+  door2a: { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
+  door2b: { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
   cloture: { hauteurPx: CLOT_HT, largeurPx: T + 2 * M },
   palissade: { hauteurPx: PALIS_HT, largeurPx: T + 2 * M },
 }
@@ -1351,6 +1493,8 @@ export const EDGE_ORIGIN_Y: Readonly<Record<string, number>> = {
   'wall-coupe': originY(MUR_HT),
   'cloture-coupe': originY(CLOT_HT),
   door: originYPorte(),
+  door2a: originYPorte(),
+  door2b: originYPorte(),
   encadrement: originY(MUR_HT),
   cloture: originY(CLOT_HT),
   palissade: originY(PALIS_HT),
@@ -1390,9 +1534,11 @@ export const EDGE_BARRIER_KEYS: readonly string[] = [
     Array.from({ length: 15 }, (_, i) => `st-${nom}-e${i + 1}`)),
   // LA PORTE : quatre arêtes uniques × cinq frames, DEBOUT — et debout seulement, elle ne se
   // tranche plus (voir `COUPE_DE`). Pas de masque composite non plus : une porte n'en porte
-  // jamais (R25), et la table doit dire ce qui EXISTE, pas ce qu'on imagine.
+  // jamais (R25), et la table doit dire ce qui EXISTE, pas ce qu'on imagine. Les MOITIÉS de
+  // porte double (R27) suivent le même contrat, en deux familles — une par côté du cadre.
   ...[1, 2, 4, 8].flatMap((bit) =>
-    PORTE_FRAMES.flatMap((_, f) => [`st-door-e${bit}-f${f}`, `st-door-e${bit}-f${f}_lit`])),
+    PORTE_FRAMES.flatMap((_, f) =>
+      ['door', 'door2a', 'door2b'].flatMap((fam) => [`st-${fam}-e${bit}-f${f}`, `st-${fam}-e${bit}-f${f}_lit`]))),
 ]
 
 export function generateBatiArt(scene: Phaser.Scene): void {

@@ -2015,10 +2015,18 @@ export class WorldScene extends Phaser.Scene {
     // avant ce premier snapshot) : on force UNE republication ici, puis on désarme.
     let chronicleDirty = this.chronicleReseedPending
     this.chronicleReseedPending = false
+    // LES DEUX BATTANTS D'UNE PORTE DOUBLE GRINCENT D'UNE SEULE VOIX (R27) : `toggle_door` émet
+    // un fait PAR VANTAIL qui change, donc un cadre apparié en émet deux au même tick. On ne joue
+    // que le premier — deux oscillateurs identiques superposés ne font pas une seconde porte,
+    // ils font la même porte trop fort. Seul le SON est dédoublonné : le battant, lui, pivote
+    // par `structureId` (`porte-anim`), chacun le sien.
+    let grincementTick = -1
     for (const event of msg.events) {
       // LE SON (échafaudage) : chaque fait de domaine peut sonner (table pure `soundForEvent`),
       // « sur moi » ou non selon l'entité concernée. Muet si coupé / contexte pas réveillé.
-      this.audioFx.play(soundForEvent(event, this.eventConcernsMe(event)))
+      const grincementDouble = event.type === 'door_toggled' && event.tick === grincementTick
+      if (event.type === 'door_toggled') grincementTick = event.tick
+      if (!grincementDouble) this.audioFx.play(soundForEvent(event, this.eventConcernsMe(event)))
       // LE BATTANT PIVOTE SUR LE FAIT (`door_toggled`), jamais sur la différence d'état — c'est
       // ce qui empêche tout un village de s'ouvrir en fanfare à la reconnexion. Il ne se déplie
       // PLUS ici : `SnapshotView.apply` le lit en tête, avant de peindre quoi que ce soit. D'ici,
