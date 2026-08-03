@@ -748,6 +748,20 @@ export class SnapshotView {
           .setOrigin(0.5, 0.5)
           .setDepth(corpseDepth(p.y, TILE_PX))
           .setScale(0.8)
+        // ═══ UNE FLÈCHE EST PLANTÉE, ELLE N'EST PAS POSÉE (décision d'Alexis) ═══
+        //
+        // Couchée à plat comme les autres piles, elle lisait comme une icône d'inventaire
+        // tombée sur l'herbe. PLANTÉE, elle raconte le tir : elle est fichée là où le trait
+        // a fini sa course, de biais, et l'on va la RECHERCHER. L'inclinaison vient de
+        // l'identifiant de la pile — chacune la sienne, stable d'une frame à l'autre, et
+        // sans un seul tirage (le client ne tire jamais : il dessine ce que la sim rend).
+        if (p.item === 'arrow') {
+          const biais = ((p.id * 47) % 60) / 60 // 0…1, déterministe par pile
+          sprite
+            .setOrigin(0.5, 0.85) // le pivot descend à la POINTE : elle entre dans le sol
+            .setRotation(-0.55 + biais * 1.1) // ±32° autour de la verticale
+            .setScale(0.95)
+        }
         this.groundSprites.set(p.id, sprite)
       }
     }

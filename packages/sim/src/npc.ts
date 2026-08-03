@@ -24,6 +24,7 @@ import {
   STRUCTURE_HP,
   TICK_DT_S,
   WEAPON_DAMAGE,
+  isRangedWeapon,
   WORLD_EVENTS,
   type NodeType,
   type RecipeId,
@@ -287,9 +288,23 @@ export function equipBestTool(entity: Entity, family: 'axe' | 'pickaxe' | null):
   equipBest(entity, (item) => toolRank(item, family)) // 0 = ce n'est pas un outil d'ici
 }
 
-/** L'arme la plus dangereuse PORTÉE (le barème vient de `WEAPON_DAMAGE`). */
+/**
+ * L'arme la plus dangereuse PORTÉE (le barème vient de `WEAPON_DAMAGE`).
+ *
+ * ⚠ LES ARCS EN SONT EXCLUS, ET CE N'EST PAS UN CLASSEMENT — C'EST UNE GARDE
+ * (spec `tir.md` T11). Depuis qu'un arc NE FRAPPE PAS (T2, décision d'Alexis), un PNJ
+ * qui en empoignerait un n'aurait plus aucune réponse au contact : la milice de
+ * `combat.md` R13 marcherait au Cendreux les mains vides. Et un mauvais rang n'y
+ * suffirait pas — à 8, l'arc long passe déjà sous l'épieu taillé (10), donc un PNJ ne
+ * le prendrait QUE s'il n'a rien d'autre, c'est-à-dire précisément dans le cas où le
+ * prendre le désarme.
+ *
+ * C'est une règle d'IA, pas un privilège de camp : le pipeline de résolution continue
+ * de ne connaître personne (« personne ne triche »). Elle tombe le jour où une IA sait
+ * TIRER — ce qui demande une manœuvre de maintien de distance, l'inverse d'`engageRange`.
+ */
 export function equipBestWeapon(entity: Entity): void {
-  equipBest(entity, (item) => WEAPON_DAMAGE[item] ?? 0)
+  equipBest(entity, (item) => (isRangedWeapon(item) ? 0 : (WEAPON_DAMAGE[item] ?? 0)))
 }
 
 // ─── Les transferts du PNJ, MESURÉS (spec inventaire R11) ─────────────────

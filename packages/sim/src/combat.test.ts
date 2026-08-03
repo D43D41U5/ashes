@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { BALANCE, COMBAT, MONSTER_DEFS, SLOTS, TERRAIN_GRASS, WEAPON_DAMAGE, WEAPON_PROFILES } from './balance'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { BALANCE, COMBAT, MONSTER_DEFS, SLOTS, TERRAIN_GRASS, TERRAIN_ROCK, WEAPON_DAMAGE, WEAPON_PROFILES } from './balance'
 import { drainEvents } from './events'
 import { countOf, inventoryOf, makeInventory, stackSize, type Inventory, type ItemBag, type ItemId } from './items'
 import { die, weaponDamage } from './combat'
@@ -957,5 +957,204 @@ describe('le déterminisme (A8)', () => {
     }
     const replayed = runReplay(log, setup)
     expect(snapshot(replayed)).toBe(snapshot(live))
+  })
+})
+
+/**
+ * A15 — LE CORPS COMPTE, PAS SON SEUL CENTRE (décision d'Alexis, 2026-08-02).
+ *
+ * La promesse tenue ici est celle du JOUEUR, pas celle de l'implémentation : « si le
+ * corps de la bête baigne dans la zone que je vois, le coup porte ». On l'affirme donc
+ * sur la géométrie du CORPS (un disque de `HIT_BODY_RADIUS`) confrontée au cône NOMINAL
+ * de l'arme — jamais sur la formule d'élargissement, qu'on ne ferait que recopier.
+ *
+ * Balayée sur tout le tour : une garde de géométrie se balaie, elle ne se choisit pas.
+ */
+describe('le corps de la cible, et non son centre (A15)', () => {
+  /**
+   * Le disque de la cible chevauche-t-il le cône NOMINAL de l'arme ?
+   *
+   * Échantillonné sur un TREILLIS CARRÉ inscrit dans le disque, et non sur un cercle de
+   * points : `Math.cos`/`Math.sin` sont interdits jusque dans les tests de `/sim`
+   * (invariant §2 — le garde-fou ESLint ne fait pas d'exception, et il a raison : un
+   * helper de test finit toujours par migrer dans le code). L'échantillon est donc un
+   * SOUS-ENSEMBLE du corps, ce qui tire l'affirmation du bon côté — on exige que la sim
+   * touche moins de cellules que le corps n'en couvre vraiment, jamais plus.
+   */
+  function corpsDansLeCone(range: number, arcCos: number, ox: number, oy: number, dx: number, dy: number): boolean {
+    const r = COMBAT.HIT_BODY_RADIUS
+    const N = 4
+    for (let i = -N; i <= N; i++) {
+      for (let j = -N; j <= N; j++) {
+        const ex = (i / N) * r
+        const ey = (j / N) * r
+        if (ex * ex + ey * ey > r * r) continue
+        const px = ox + ex
+        const py = oy + ey
+        const d2 = px * px + py * py
+        if (d2 === 0 || d2 > range * range) continue
+        if ((px * dx + py * dy) / Math.sqrt(d2) >= arcCos) return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * Un coup de HACHE joué pour de vrai. La hache parce qu'elle ne TRESSE pas
+   * (`weave: false`) : son pas d'armement va tout droit dans l'axe de la visée, donc
+   * l'apex du cône résolu est simplement `lunge` devant le corps — un décalage qu'on
+   * peut écrire en une ligne. Les poings, eux, dévient de 25° à chaque coup, et le
+   * modèle de référence devrait alors recopier `advanceLunge` pour rien.
+   */
+  function porte(cx: number, cy: number, dx: number, dy: number): boolean {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 20, 20)
+    const c = spawnEntity(sim, cx, cy)
+    entity(sim, a).stamina = 100
+    entity(sim, c).hp = 1000
+    grantHeld(sim, a, 'iron_axe')
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx, dy } }])
+    for (let t = 0; t < WEAPON_PROFILES.iron_axe.light.windupTicks + 2; t++) tick(sim)
+    return entity(sim, c).hp < 1000
+  }
+
+  it('un corps qui BAIGNE dans le cône prend le coup — tout autour du joueur', () => {
+    const { range, arcCos, lunge } = WEAPON_PROFILES.iron_axe.light
+    let manqués = 0
+    let éprouvés = 0
+    // TREILLIS CARRÉ plutôt qu'anneau de points : pas de trigonométrie dans `/sim`,
+    // tests compris. Il balaie de toute façon TOUT le tour du frappeur, ce qui est la
+    // propriété qu'on veut — une garde de géométrie se balaie, elle ne se choisit pas.
+    for (let ox = -2; ox <= 2.0001; ox += 0.1) {
+      for (let oy = -2; oy <= 2.0001; oy += 0.1) {
+        // La visée est droite devant (l'est) ; le coup se résout depuis la position
+        // d'ARRIVÉE, `lunge` plus loin — c'est de là que se juge le cône.
+        if (!corpsDansLeCone(range, arcCos, ox - lunge, oy, 1, 0)) continue
+        éprouvés += 1
+        if (!porte(20 + ox, 20 + oy, 1, 0)) manqués += 1
+      }
+    }
+    expect(éprouvés).toBeGreaterThan(50) // la garde a bien de quoi mordre
+    expect(manqués).toBe(0)
+  })
+
+  it('…et un corps ENTIÈREMENT hors de la zone reste épargné', () => {
+    const { range, lunge } = WEAPON_PROFILES.iron_axe.light
+    // Deux fois le rayon du corps au-delà de la portée utile (pas d'armement compris) :
+    // aucune indulgence ne doit atteindre là.
+    expect(porte(20 + range + lunge + 2 * COMBAT.HIT_BODY_RADIUS + 0.01, 20, 1, 0)).toBe(false)
+    // Et dans le DOS, à bout touchant : la portée n'est pas une excuse pour l'arc.
+    expect(porte(20 - 0.9, 20, 1, 0)).toBe(false)
+  })
+})
+
+/**
+ * A16 — LE COUP REPOUSSE (demande d'Alexis, 2026-08-02).
+ *
+ * Le knockback est RADIAL (frappeur → frappé), il passe par la collision, et il
+ * n'interrompt rien. On l'affirme sur la position, jamais sur la constante.
+ */
+describe('le coup repousse (A16)', () => {
+  // LA RÈGLE EST LIVRÉE À ZÉRO (voir `COMBAT.KNOCKBACK_TILES` : le recul défait
+  // l'encerclement de la meute, mesuré sur 6 graines — l'arbitrage revient à Alexis).
+  // La garde, elle, reste VIVANTE : on ARME la constante le temps de ce bloc, pour que
+  // le jour où l'on remonte le nombre, la règle qu'il commande soit déjà prouvée. Sans
+  // ça on livrerait du code jamais éprouvé, qui se découvrirait cassé au playtest.
+  const repos = COMBAT.KNOCKBACK_TILES
+  beforeAll(() => {
+    ;(COMBAT as { KNOCKBACK_TILES: number }).KNOCKBACK_TILES = 0.25
+  })
+  afterAll(() => {
+    ;(COMBAT as { KNOCKBACK_TILES: number }).KNOCKBACK_TILES = repos
+  })
+
+  /**
+   * Frappe une cible immobile à `dist` à l'est, et rend de combien elle a reculé —
+   * la NORME du déplacement, pas sa composante en x. Le recul est radial depuis la
+   * position d'ARRIVÉE du frappeur (qui a fait son pas d'armement, en zigzag pour les
+   * poings) : l'axe frappeur→frappé n'est donc pas tout à fait l'est, et mesurer sur x
+   * seul mesurerait le pas de l'attaquant plutôt que la poussée.
+   */
+  function recul(dist: number, held?: ItemId, holdTicks = 0): number {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 20, 20)
+    const c = spawnEntity(sim, 20 + dist, 20)
+    entity(sim, a).stamina = 100
+    entity(sim, c).hp = 1000
+    if (held) grantHeld(sim, a, held)
+    const avant = { x: entity(sim, c).x, y: entity(sim, c).y }
+    if (holdTicks > 0) chargedStrike(sim, a, 1, 0, holdTicks)
+    else {
+      tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
+      for (let t = 0; t < COMBAT.WINDUP_TICKS + 2; t++) tick(sim)
+    }
+    const après = entity(sim, c)
+    const ex = après.x - avant.x
+    const ey = après.y - avant.y
+    return Math.sqrt(ex * ex + ey * ey)
+  }
+
+  it('la cible frappée RECULE, d’exactement la poussée du coup simple', () => {
+    expect(recul(1)).toBeCloseTo(COMBAT.KNOCKBACK_TILES, 5)
+  })
+
+  it('elle recule EN S’ÉLOIGNANT du frappeur, jamais vers lui', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 20, 20)
+    const c = spawnEntity(sim, 21, 20)
+    entity(sim, a).stamina = 100
+    entity(sim, c).hp = 1000
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
+    for (let t = 0; t < COMBAT.WINDUP_TICKS + 2; t++) tick(sim)
+    const frappeur = entity(sim, a)
+    const frappé = entity(sim, c)
+    const ax = 21 - frappeur.x
+    const ay = 20 - frappeur.y
+    const bx = frappé.x - frappeur.x
+    const by = frappé.y - frappeur.y
+    const avant = Math.sqrt(ax * ax + ay * ay)
+    const après = Math.sqrt(bx * bx + by * by)
+    expect(après).toBeGreaterThan(avant)
+  })
+
+  it('le coup CHARGÉ repousse plus loin que le coup simple', () => {
+    // La hache : son coup chargé est un tourbillon (360°), donc la cible est dans la
+    // zone quelle que soit la finesse de la visée — on éprouve le POIDS, pas l'adresse.
+    const simple = recul(1.2, 'iron_axe')
+    const lourd = recul(1.2, 'iron_axe', WEAPON_PROFILES.iron_axe.chargeTicks + 2)
+    expect(lourd).toBeGreaterThan(simple)
+    expect(lourd).toBeCloseTo(simple * COMBAT.KNOCKBACK_CHARGED_FACTOR, 5)
+  })
+
+  it('un MUR arrête le recul — c’est un pas, pas une téléportation', () => {
+    const sim = makeSim()
+    const a = spawnEntity(sim, 20, 20)
+    const c = spawnEntity(sim, 21, 20)
+    entity(sim, a).stamina = 100
+    entity(sim, c).hp = 1000
+    // Le sol devient roche juste derrière la cible : le recul bute dessus.
+    sim.map.terrain[20 * sim.map.width + 22] = TERRAIN_ROCK
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } }])
+    for (let t = 0; t < COMBAT.WINDUP_TICKS + 2; t++) tick(sim)
+    expect(entity(sim, c).x).toBeLessThan(21 + COMBAT.KNOCKBACK_TILES)
+  })
+
+  it('le recul n’INTERROMPT pas le coup de celui qui le prend', () => {
+    // Deux corps qui s'arment en même temps : le premier résolu repousse le second,
+    // et le second frappe QUAND MÊME. Sans cette retenue, marteler verrouillerait tout.
+    const sim = makeSim()
+    const a = spawnEntity(sim, 20, 20)
+    const b = spawnEntity(sim, 20.9, 20)
+    entity(sim, a).stamina = 100
+    entity(sim, b).stamina = 100
+    entity(sim, a).hp = 1000
+    entity(sim, b).hp = 1000
+    tick(sim, [
+      { entityId: a, dx: 0, dy: 0, action: { type: 'attack', dx: 1, dy: 0 } },
+      { entityId: b, dx: 0, dy: 0, action: { type: 'attack', dx: -1, dy: 0 } },
+    ])
+    for (let t = 0; t < COMBAT.WINDUP_TICKS + 2; t++) tick(sim)
+    expect(entity(sim, b).hp).toBeLessThan(1000) // b a bien encaissé…
+    expect(entity(sim, a).hp).toBeLessThan(1000) // …et a rendu son coup malgré le recul
   })
 })

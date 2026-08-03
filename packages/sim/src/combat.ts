@@ -19,17 +19,18 @@ import {
   SLOTS,
   WEAPON_DAMAGE,
   WEAPON_PROFILES,
+  isRangedWeapon,
   type Strike,
   type WeaponKind,
   type WeaponProfile,
 } from './balance'
 import { willRiseAsCendreux } from './cendreux'
-import { resolveMove } from './collision'
+import { ligneDegagee, resolveMove, traitLibre } from './collision'
 import { isInvulnerable } from './debug'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
-import { heldSlot, wearHeld } from './inventory-actions'
-import { addItems, addSlot, isEmpty, makeInventory, pourInto, removeItems, carryRatio } from './items'
+import { heldSlot, poserAuSol, wearHeld } from './inventory-actions'
+import { addItems, addSlot, countOf, isEmpty, makeInventory, pourInto, removeItems, carryRatio } from './items'
 import { staminaPoiFactor } from './poi-discovery'
 import { rngRoll } from './rng'
 import type { Entity, SimState } from './sim'
@@ -67,6 +68,16 @@ export type CombatAction =
   | { type: 'attack_charge'; dx: number; dy: number; hold?: boolean }
   /** JE RELÂCHE : le coup part — simple ou chargé, selon ce que la sim a compté. */
   | { type: 'attack_release'; dx: number; dy: number }
+  /**
+   * JE RENONCE : la charge tombe SANS coup ni consommation (spec `tir.md` T2).
+   *
+   * Elle naît pour l'arc — clic droit relâché sans avoir décoché, l'arc se rabaisse et
+   * la flèche reste au carquois — mais elle RÉPARE UN DÉFAUT QUI LA PRÉCÈDE : jusqu'ici
+   * la seule sortie d'une charge était de FRAPPER, si bien qu'ouvrir son sac en pleine
+   * charge de hache envoyait un coup dans le vide (`input-bindings.ts` appelait
+   * `releaseCharge`, faute d'avoir mieux). Elle vaut donc pour toutes les armes.
+   */
+  | { type: 'attack_cancel' }
   | { type: 'bandage'; targetEntityId?: number }
   | { type: 'loot_corpse'; corpseId: number }
 
@@ -87,6 +98,20 @@ export function weaponProfile(entity: Entity): WeaponProfile {
   return WEAPON_PROFILES[weaponKind(entity)]
 }
 
+/**
+ * TIENT-IL UN ARC ? (spec `tir.md` T1-T2) — la question que se posent le geste, la
+ * munition, la ligne de vue, le recul, et la perception des bêtes (`faune.ts`, T7).
+ * Elle se lit d'un seul endroit, sinon cinq copies dériveront au premier arc de plus.
+ */
+export function tientUnArc(entity: Entity): boolean {
+  return isRangedWeapon(weaponKind(entity))
+}
+
+/** Combien de flèches au sac. Zéro = on ne bande pas (T6). */
+export function fleches(entity: Entity): number {
+  return countOf(entity.inventory, 'arrow')
+}
+
 /** Dégâts du coup SIMPLE de l'arme tenue (le coup chargé, lui, fait bien plus mal). */
 export function weaponDamage(entity: Entity): number {
   return weaponProfile(entity).light.damage
@@ -99,7 +124,29 @@ export function weaponDamage(entity: Entity): number {
  */
 export function pendingStrike(entity: Entity): Strike {
   const profile = weaponProfile(entity)
-  return isChargeFull(entity, profile) ? profile.charged : profile.light
+  if (isChargeFull(entity, profile)) return profile.charged
+  return profile.ranged === true && entity.charge !== undefined ?
+      { ...profile.light, range: porteeBandee(profile, entity.charge.ticks) }
+    : profile.light
+}
+
+/**
+ * LA PORTÉE CROÎT AVEC LA BANDE, LINÉAIREMENT (décision d'Alexis, 2026-08-02).
+ *
+ * Les deux `range` du profil ne sont plus deux valeurs mais les DEUX BOUTS D'UNE PENTE :
+ * corde molle → `light.range`, pleine bande → `charged.range`, et tout ce qui est entre
+ * s'interpole. C'est ce qui donne à la bande une lecture CONTINUE — on ne choisit plus
+ * entre deux coups, on choisit une DISTANCE.
+ *
+ * ELLE EST CONTINUE AU RACCORD, et c'est ce qui la rend honnête : à maturité la pente
+ * atteint exactement `charged.range`, qui est la portée du coup chargé. Rien ne saute.
+ * Seuls les dégâts et le coût basculent d'un cran — c'est le contrat de R4ter, inchangé.
+ *
+ * Vaut pour les armes de TIR seulement : une lance chargée n'allonge pas son manche.
+ */
+export function porteeBandee(profile: WeaponProfile, ticks: number): number {
+  const r = Math.min(1, Math.max(0, ticks / Math.max(1, profile.chargeTicks)))
+  return profile.light.range + (profile.charged.range - profile.light.range) * r
 }
 
 /**
@@ -152,21 +199,55 @@ function beastStrike(damage: number, windupTicks: number): Strike {
 /**
  * LA ZONE, TESTÉE. Deux primitives, et le cas 360° tombe tout seul (`arcCos = -1` :
  * tout cosinus lui est supérieur, donc tout ce qui est à portée est touché).
+ *
+ * ═══ ET LA CIBLE EST UN CORPS, PAS UN POINT (décision d'Alexis, 2026-08-02) ═══
+ *
+ * Elle a longtemps été un point : `target.x/target.y`, sans épaisseur. Un loup dont la
+ * moitié du flanc baignait dans l'arc, mais dont le centre en dépassait d'un cheveu, ne
+ * prenait RIEN — et c'est là que naissait la plainte « le télégraphe est sur la cible
+ * mais le coup ne connecte pas ». MESURÉ (`tools/mesure-touche.mts`) : de +16 % (lance)
+ * à +36 % (poings) de surface réellement touchée une fois le corps compté.
+ *
+ * On n'ajoute pas une forme : on ÉLARGIT les deux qu'on a, du rayon du corps
+ * (`COMBAT.HIT_BODY_RADIUS`). Le disque grossit d'autant ; le cône grossit en portée ET
+ * EN ANGLE, parce qu'un corps de rayon r vu à distance d couvre un demi-angle φ avec
+ * sin φ = r/d. Le cône utile devient (θ + φ), dont seul le cosinus nous intéresse :
+ *
+ *     cos(θ + φ) = cos θ · cos φ − sin θ · sin φ
+ *
+ * Tout se calcule en `+ − × ÷` et `sqrt` — les fonctions trigonométriques sont
+ * INTERDITES ici (invariant §2 : la spec ECMAScript ne garantit pas leur résultat d'un
+ * moteur JS à l'autre, or un replay enregistré au navigateur doit rejouer sur Node).
+ *
+ * Le pipeline ne connaît toujours pas les camps : bêtes, PNJ et joueurs y gagnent
+ * ensemble (« personne ne triche »). La nuit mord donc plus fort, et c'est assumé.
  */
 function inStrikeZone(strike: Strike, ax: number, ay: number, dx: number, dy: number, tx: number, ty: number): boolean {
+  const corps = COMBAT.HIT_BODY_RADIUS
   if (strike.shape === 'disc') {
     // Le disque est posé DEVANT le corps, à `range` : l'overhead s'écrase au sol.
     const ox = tx - (ax + dx * strike.range)
     const oy = ty - (ay + dy * strike.range)
-    return ox * ox + oy * oy <= strike.radius * strike.radius
+    const rayon = strike.radius + corps
+    return ox * ox + oy * oy <= rayon * rayon
   }
   const rx = tx - ax
   const ry = ty - ay
   const d2 = rx * rx + ry * ry
-  if (d2 > strike.range * strike.range || d2 === 0) return false
+  // Deux corps CONFONDUS n'ont pas de direction l'un vers l'autre : le cas reste refusé,
+  // comme avant. C'est une dégénérescence, pas une portée.
+  if (d2 === 0) return false
+  const portée = strike.range + corps
+  if (d2 > portée * portée) return false
   if (strike.arcCos <= -1) return true // le tourbillon : tout le tour
+  // Le corps de la cible ENGLOBE le frappeur : il n'est plus « devant » ou « derrière »,
+  // il est autour. Aucune direction ne l'épargne — et `sin φ = r/d` déborderait de 1.
+  if (d2 <= corps * corps) return true
   const dist = Math.sqrt(d2)
-  return (rx * dx + ry * dy) / dist >= strike.arcCos
+  const sinPhi = corps / dist
+  const cosPhi = Math.sqrt(Math.max(0, 1 - sinPhi * sinPhi))
+  const sinTheta = Math.sqrt(Math.max(0, 1 - strike.arcCos * strike.arcCos))
+  return (rx * dx + ry * dy) / dist >= strike.arcCos * cosPhi - sinTheta * sinPhi
 }
 
 export function applyCombatAction(state: SimState, actorId: number, action: CombatAction): void {
@@ -200,12 +281,24 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
       if (actor.charge) {
         actor.charge.dx = action.dx / len
         actor.charge.dy = action.dy / len
+        // LE CORPS SUIT LA VISÉE (décision d'Alexis, 2026-08-02). Il ne la suivait qu'au
+        // PREMIER appui : on armait vers l'est, on pivotait le curseur au nord, et le
+        // corps restait tourné à l'est pendant que la zone, elle, montrait le nord. Le
+        // télégraphe disait donc vrai et la silhouette mentait — or c'est la silhouette
+        // qu'un adversaire lit de loin, et c'est elle qui porte l'arc dessiné.
+        actor.facing = { x: actor.charge.dx, y: actor.charge.dy }
         return
       }
       // Le coup SIMPLE doit être payable pour seulement commencer à armer : sans
       // cette garde, un joueur à bout de souffle chargerait dans le vide et ne
       // comprendrait le refus qu'au relâchement — un demi-tour trop tard.
       if (actor.stamina < weaponProfile(actor).light.stamina) return plainte('à bout de souffle')
+      // ON NE BANDE PAS UN ARC SANS FLÈCHE (spec `tir.md` T6, décision d'Alexis).
+      // Le refus se pose ICI, au LEVER, et pas au décochage — exactement pour la même
+      // raison que la garde d'endurance juste au-dessus : un arc qui se tend pour rien
+      // puis refuse au clic ferait douter le joueur de son GESTE, quand le problème est
+      // dans son SAC. À sec, l'arc ne se lève pas ; c'est immédiat et ça se voit.
+      if (tientUnArc(actor) && fleches(actor) <= 0) return plainte('carquois vide')
       actor.charge = { dx: action.dx / len, dy: action.dy / len, ticks: 0 }
       actor.facing = { x: action.dx / len, y: action.dy / len }
       return
@@ -223,7 +316,25 @@ export function applyCombatAction(state: SimState, actorId: number, action: Comb
       const len = Math.sqrt(action.dx * action.dx + action.dy * action.dy)
       const dx = len < 0.0001 ? charge.dx : action.dx
       const dy = len < 0.0001 ? charge.dy : action.dy
-      startAttack(state, actor, dx, dy, { reject, strike: charged ? profile.charged : profile.light, charged })
+      // LA PORTÉE ATTEINTE, pas la nominale : une corde à moitié tirée envoie à
+      // mi-distance (décision d'Alexis). Continu au raccord — à maturité la pente vaut
+      // exactement `charged.range`.
+      const sec =
+        profile.ranged === true ? { ...profile.light, range: porteeBandee(profile, charge.ticks) } : profile.light
+      startAttack(state, actor, dx, dy, { reject, strike: charged ? profile.charged : sec, charged })
+      return
+    }
+
+    /**
+     * JE RENONCE : la corde se relâche, l'arc se rabaisse, RIEN ne part (spec T2).
+     *
+     * Muet quand il n'y a rien d'armé — comme `attack_release`. Renoncer à un geste
+     * qu'on n'a pas commencé n'est pas un refus, c'est un non-événement : le flux que
+     * l'alignement et la chronique consomment n'est pas une poubelle (recolte.md G6),
+     * et le client émet ce message à chaque perte de focus.
+     */
+    case 'attack_cancel': {
+      delete actor.charge
       return
     }
 
@@ -321,6 +432,24 @@ export function startAttack(
     reject?.('direction invalide')
     return false
   }
+  // ═══ LE DÉCOCHAGE CONSOMME LA FLÈCHE (spec `tir.md` T6) ═══
+  //
+  // ICI et nulle part ailleurs : c'est le seul passage obligé de tout coup porté — le
+  // clic, le relâchement d'une charge, un bot, une IA. Une consommation posée dans le
+  // handler d'action aurait laissé un chemin gratuit ouvert au premier appelant suivant.
+  //
+  // ET APRÈS TOUS LES REFUS, jamais avant : un coup refusé (déjà en train de frapper,
+  // trop tôt, à bout de souffle, direction nulle) ne doit pas coûter une flèche. La
+  // garde du carquois vide au LEVER de l'arc rend ce refus-ci rare — il reste pour le
+  // cas de bord où l'on jette sa dernière flèche arc levé.
+  const ranged = tientUnArc(actor)
+  if (ranged) {
+    if (fleches(actor) <= 0) {
+      reject?.('carquois vide')
+      return false
+    }
+    removeItems(actor.inventory, { arrow: 1 })
+  }
   // Renormalisation côté sim : vraisemblance (GDD §11).
   const nx = dx / len
   const ny = dy / len
@@ -338,6 +467,7 @@ export function startAttack(
     side,
     ...(charged ? { charged: true as const } : {}),
     ...(structureId !== undefined ? { structureId } : {}),
+    ...(ranged ? { ranged: true as const } : {}),
   }
   return true
 }
@@ -381,6 +511,68 @@ function advanceLunge(state: SimState, entity: Entity): void {
   const moved = resolveMove(world, entity.x, entity.y, dx * step, dy * step)
   entity.x = moved.x
   entity.y = moved.y
+}
+
+/**
+ * LE COUP REPOUSSE (demande d'Alexis, 2026-08-02 : « un petit knockback »).
+ *
+ * RADIAL, jamais dans l'axe de la visée : le corps part le long de frappeur→frappé.
+ * C'est la seule direction qui ait un sens pour le tourbillon (qui n'a pas d'axe), et
+ * c'est celle que l'œil attend — « il recule », pas « il glisse de côté ».
+ *
+ * Il passe par `resolveMove` : un mur l'arrête, exactement comme un pas. Et il
+ * n'INTERROMPT RIEN — une bête repoussée en plein wind-up frappera quand même. Sans
+ * cette retenue, marteler suffirait à verrouiller n'importe quoi sur place, et le
+ * combat de coût du GDD §7 deviendrait un combat de cadence.
+ *
+ * IL SE JOUE AVANT LES DÉGÂTS, et c'est une correction payée d'une mesure. Placé après,
+ * il poussait le RESSUSCITÉ : `die()` ne retire pas un joueur de `state.entities`, il le
+ * renvoie à son Feu avec `RESPAWN_HP` — la garde « un mort ne recule pas » (`hp <= 0`)
+ * ne mordait donc jamais sur un joueur, et le premier geste de sa nouvelle vie était de
+ * se faire bousculer par le coup qui l'avait tué. Avant les dégâts, la cible est vivante
+ * par construction, et le cadavre tombe là où le coup l'a jeté.
+ */
+function knockback(
+  state: SimState,
+  attacker: Entity,
+  target: Entity,
+  tx: number,
+  ty: number,
+  dist: number,
+  charged: boolean,
+): void {
+  const poussée = COMBAT.KNOCKBACK_TILES * (charged ? COMBAT.KNOCKBACK_CHARGED_FACTOR : 1)
+  if (poussée <= 0) return
+  // ═══ UNE HORDE NE CATAPULTE PAS : UN SEUL RECUL PAR TICK ═══
+  //
+  // Le recul se paie PAR COUP, et rien n'empêchait dix coups d'atterrir dans le même
+  // tick : un corps cerné partait alors de DIX FOIS la poussée en un seul tick, et
+  // traversait la mêlée d'un coup. Ce qui doit rester borné, c'est la distance par
+  // UNITÉ DE TEMPS — exactement comme un pas — d'où un verrou de tick et non un
+  // compteur de coups.
+  //
+  // (Honnêteté de mesure : ce verrou a été posé en CROYANT qu'il expliquait l'emballement
+  // d'un banc — 208 morts devenues 19 164. Il ne l'expliquait PAS : le banc n'a pas bougé
+  // d'un pouce une fois le verrou en place. La cause était ailleurs, dans un plafond de
+  // Cendreux qui ne bornait rien — voir `cendreux.md` R8bis. Le verrou reste parce que la
+  // catapulte est réelle en géométrie, pas parce qu'il a réparé ce qu'on lui prêtait.)
+  //
+  // Le champ est optionnel (un corps qu'on n'a jamais poussé ne le porte pas dans le
+  // snapshot) et sérialisable.
+  if (target.knockedAt === state.tick) return
+  target.knockedAt = state.tick
+  // Corps confondus : faute d'axe, on pousse dans le sens du coup.
+  const kx = dist > 0 ? tx / dist : attacker.windup!.dx
+  const ky = dist > 0 ? ty / dist : attacker.windup!.dy
+  const world = {
+    map: state.map,
+    structures: state.structures,
+    nodes: state.nodes,
+    moverVillageId: getVillageOf(state, target.id)?.id ?? null,
+  }
+  const poussé = resolveMove(world, target.x, target.y, kx * poussée, ky * poussée)
+  target.x = poussé.x
+  target.y = poussé.y
 }
 
 /** Résout le coup à la fin du wind-up : la ZONE du `strike` porté (spec R4). */
@@ -428,7 +620,26 @@ function resolveStrike(state: SimState, attacker: Entity): void {
   const attackerHerd = attackerMonster?.herdId
   const attackerIsCendreux = attackerMonster?.type === 'cendreux'
 
-  let struck = false
+  // ═══ LE TRAIT NE PREND QU'UN CORPS, ET IL LUI FAUT UNE LIGNE (spec `tir.md` T4-T5) ═══
+  //
+  // On RELÈVE d'abord, on frappe ensuite. La boucle appliquait les dégâts au fil de la
+  // rencontre, ce qui suffisait tant que tout ce qui était dans la zone était touché ;
+  // « le plus proche du tireur » est une question qu'on ne peut pas répondre avant
+  // d'avoir tout vu. L'ordre de `state.entities` est conservé de bout en bout — c'est
+  // lui qui rend le tick reproductible (invariant §2).
+  const ranged = windup.ranged === true
+  const monde = ranged
+    ? { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null }
+    : null
+
+  interface Cible {
+    target: Entity
+    monster: ReturnType<typeof monsterOf>
+    tx: number
+    ty: number
+    dist: number
+  }
+  const cibles: Cible[] = []
   for (const target of state.entities) {
     if (target.id === attacker.id || target.hp <= 0) continue
     if (!inStrikeZone(strike, attacker.x, attacker.y, windup.dx, windup.dy, target.x, target.y)) continue
@@ -438,10 +649,28 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     const targetMonster = monsterOf(target.id)
     if (attackerHerd !== undefined && targetMonster?.herdId === attackerHerd) continue
     if (attackerIsCendreux && targetMonster?.type === 'cendreux') continue
+    // LA LIGNE se juge par corps, et seulement sur ce que la zone a déjà retenu : un
+    // balayage de sous-tuiles par entité de la carte serait ruineux, alors qu'il n'y a
+    // jamais qu'une poignée de corps dans un cône.
+    if (monde !== null && !ligneDegagee(monde, attacker.x, attacker.y, target.x, target.y)) continue
     const tx = target.x - attacker.x
     const ty = target.y - attacker.y
-    const dist = Math.sqrt(tx * tx + ty * ty)
+    cibles.push({ target, monster: targetMonster, tx, ty, dist: Math.sqrt(tx * tx + ty * ty) })
+  }
 
+  // LE PLUS PROCHE DU TIREUR, et pas le plus proche de l'axe : un allié planté DEVANT
+  // mange le trait. C'est la seule lecture qui rende une ligne de tir « dégagée »
+  // signifiante — et c'est ce qui fait qu'on ne tire pas dans une mêlée à l'aveugle.
+  // Égalité : la première entité rencontrée gagne (ordre de `state.entities`).
+  if (strike.single === true && cibles.length > 1) {
+    let plusProche = cibles[0]!
+    for (const c of cibles) if (c.dist < plusProche.dist) plusProche = c
+    cibles.length = 0
+    cibles.push(plusProche)
+  }
+
+  let struck = false
+  for (const { target, monster: targetMonster, tx, ty, dist } of cibles) {
     let dealt = damage * damageModifier(state, attacker.id, target.id)
 
     // LA MISE À MORT PROPRE (spec chasse C6). Un coup sur une bête sauvage qui
@@ -475,8 +704,48 @@ function resolveStrike(state: SimState, attacker: Entity): void {
         target.stamina = Math.max(0, target.stamina - (COMBAT.BLOCK_STAMINA_BASE + damage / 2))
       }
     }
+    // LE TRAIT NE REPOUSSE PAS (spec `tir.md` T10) : une flèche ne pousse pas un
+    // sanglier. La règle est indépendante de l'arbitrage en cours sur `KNOCKBACK_TILES`
+    // — quel que soit le nombre qu'il fixera, il ne vaudra que pour la mêlée.
+    if (!ranged) knockback(state, attacker, target, tx, ty, dist, windup.charged === true)
     applyDamage(state, target, dealt, attacker.id)
     struck = true
+  }
+
+  // ═══ UNE FLÈCHE SUR DEUX SE PERD (décision d'Alexis, 2026-08-02) ═══
+  //
+  // La première version rendait TOUTE flèche décochée, et le coût de la munition n'était
+  // que le temps d'aller la reprendre. À une chance sur deux, le carquois se VIDE pour de
+  // bon : tirer devient une dépense, et fabriquer des flèches une corvée qui revient. La
+  // récupération cesse d'être un aller-retour garanti pour devenir un pari qui vaut le
+  // détour — c'est ce qui donne du poids au lot de cinq.
+  //
+  // ON PASSE PAR LE PRNG DE L'ÉTAT (`rngRoll`), et pas par un hachage de commodité : la
+  // hasard du jeu vit là, et lui seul est rejoué à l'identique par le replay. Le tirage
+  // n'a lieu QU'À un tir — aucun banc sans archer n'en consomme, donc le flux des
+  // scénarios existants ne bouge pas d'un cran (empreinte à l'appui).
+  if (ranged) {
+    const { value, next } = rngRoll(state.rngState)
+    state.rngState = next
+    if (value < COMBAT.ARROW_RECOVERY) {
+      const touche = cibles[0]
+      let ax = attacker.x + windup.dx * strike.range
+      let ay = attacker.y + windup.dy * strike.range
+      if (struck && touche !== undefined) {
+        // Plantée dans le corps : elle tombe SOUS lui, et le suivra donc au sol si le
+        // corps s'écroule ailleurs — c'est la position du coup qui compte, pas la chute.
+        ax = touche.target.x
+        ay = touche.target.y
+      } else if (monde !== null) {
+        // Au bout de sa course, ou au pied de ce qui l'a arrêtée : `traitLibre` rend le
+        // point d'arrêt, JAMAIS l'intérieur du mur — une flèche qu'on VOIT et qu'on ne
+        // peut pas atteindre serait un bug, pas un coût.
+        const fin = traitLibre(monde, attacker.x, attacker.y, ax, ay)
+        ax = fin.x
+        ay = fin.y
+      }
+      poserAuSol(state, ax, ay, 'arrow', 1)
+    }
   }
 
   // L'arme s'use au contact — dans SA case (spec inventaire R6). Une bête ne tient

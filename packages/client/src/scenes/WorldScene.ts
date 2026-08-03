@@ -22,7 +22,9 @@ import {
   createPrediction,
   decayRenderOffset,
   fbm2,
+  SLOTS,
   hash2,
+  isRangedWeapon,
   predictFrame,
   reconcile as reconcilePrediction,
   renderPosition,
@@ -34,6 +36,7 @@ import {
   zoneAt,
   type Entity,
   type GameTime,
+  type ItemId,
   type PlayerAction,
   type PredictInput,
   type PredictionState,
@@ -160,6 +163,8 @@ import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { demolishTargetAt } from './world/aim'
 import { INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
+import { silhouetteDepuisSprite } from './world/visee-corps'
+import { suivreAngle } from './world/visee-lissee'
 import { DEATH_FADE_MS, DEATH_VEIL_MS } from './ui/death-veil'
 import { nextOnboardingHint, type OnboardingHintId } from './ui/onboarding'
 import { cendreTelegraphForDay } from './world/cendre-telegraph'
@@ -181,6 +186,14 @@ const zoneOf = (strike: Strike): Zone => ({
   arcCos: strike.arcCos,
   radius: strike.radius * TILE_PX,
 })
+/**
+ * LE TÉLÉGRAPHE PART DU CENTRE DU CORPS, PAS DE SOUS LES PIEDS. Les sprites sont ancrés
+ * PIEDS (`actorPlacement` : pieds à `y + AVATAR_HITBOX_DEPTH_TILES/2`), or la sim fait
+ * partir la zone du CENTRE logique — `sprite.y` est donc trois pixels trop bas pour
+ * l'apex d'un cône. Trois pixels sur une portée de poing qui en fait dix-sept, c'est un
+ * cinquième de la portée : le même petit mensonge que l'écrasement, en plus discret.
+ */
+const ANCRE_SOL_PX = (BALANCE.AVATAR_HITBOX_DEPTH_TILES / 2) * TILE_PX
 /** Caméra « Foxhole » (R11) : force du décalage vers le curseur (px écran → px monde). */
 const LOOKAHEAD_STRENGTH = 0.18
 /** Borne radiale du décalage caméra, en tuiles. */
@@ -500,10 +513,26 @@ export class WorldScene extends Phaser.Scene {
     strike: Strike
     side: 1 | -1
     charged: boolean
+    /** C'est un TIR (spec `tir.md`) : le client peint un TRAIT, pas un moulinet. */
+    ranged: boolean
   }[] = []
   /** LES CHARGES du dernier snapshot : qui maintient son clic, et où en est le coup.
    *  `strike` = ce qui partirait MAINTENANT (la sim tranche — `pendingStrike`). */
-  private charges: { id: number; dx: number; dy: number; ratio: number; strike: Strike }[] = []
+  private charges: { id: number; dx: number; dy: number; ratio: number; strike: Strike; ranged: boolean }[] = []
+  /**
+   * LA VISÉE D'ARC DESSINÉE, par entité (radians) : `angle` = ce que la ligne montre,
+   * `cible` = ce qu'elle rejoint — l'état du lissage réactif du télégraphe
+   * (`visee-lissee.ts`). Purement visuel : rien ici n'entre dans une action, la sim ne le
+   * voit jamais. Vidé dès qu'une corde se détend.
+   *
+   * `cible` n'est là que pour être LU par le harnais (même raison d'être qu'`enBande` :
+   * le smoke lit l'état, il ne le fabrique pas). Recalculer la cible au moment du relevé
+   * mesurerait autre chose — entre deux frames du banc (~333 ms), la caméra de visée a
+   * glissé et le point de sol sous un curseur immobile a bougé : MESURÉ, 4,1° d'écart
+   * fantôme après trois secondes de curseur posé. Les deux nombres doivent venir de la
+   * MÊME frame ou l'on mesure la caméra.
+   */
+  private viseeLissee = new Map<number, { angle: number; cible: number }>()
   /** CE QUE CHACUN TIENT, et où il regarde — l'arme dessinée dans la main. */
   private hands: { id: number; kind: WeaponKind; fx: number; fy: number }[] = []
   /** LES JAUGES D'ABATTAGE du dernier snapshot : qui charge une frappe sur un arbre,
@@ -511,8 +540,16 @@ export class WorldScene extends Phaser.Scene {
   private fells: FellCharge[] = []
   private attackFx!: AttackFx
   private handWeapons!: HandWeapons
+  /** LES TIRS ARMÉS au dernier snapshot (spec `tir.md` T3) — relevés à 20 Hz, jamais à la
+   *  frame : un armement de trait dure 0,25 s et une frame lente l'enjambe en entier. */
+  private tirsArmes = new Map<number, { dx: number; dy: number; portee: number; charged: boolean }>()
+  /** Les traits PARTIS depuis la dernière frame, en attente d'être peints. */
+  private tirsPartis: { id: number; dx: number; dy: number; portee: number; charged: boolean }[] = []
   /** Qui armait un coup à la frame précédente, et sa zone — pour savoir quand il PART. */
-  private armes = new Map<number, { x: number; y: number; dx: number; dy: number; zone: Zone; charged: boolean }>()
+  private armes = new Map<
+    number,
+    { x: number; y: number; dx: number; dy: number; zone: Zone; charged: boolean; ranged: boolean; portee: number }
+  >()
   /** DEV : dernière demande de TP consommée (horodatage de la carte) — évite de la rejouer. */
   private lastTeleportAt = 0
   /** Relief continu (Y-shear vertical) — source du rendu et du picking, créé au boot. */
@@ -603,6 +640,14 @@ export class WorldScene extends Phaser.Scene {
       structures: () => this.view.structures,
       nodes: () => this.view.nodes,
       corpses: () => this.view.corpses,
+      // LES PILES AU SOL (spec chasse C18) : ce qu'on a jeté, et les flèches retombées
+      // (`tir.md` T6). Elles étaient DÉJÀ dessinées et déjà dans le snapshot ; il ne
+      // manquait que le fil jusqu'au geste qui les ramasse.
+      piles: () => this.view.groundItems,
+      // L'ACCUSÉ DE RÉCEPTION DU DÉCOCHAGE : ma charge telle que le dernier SNAPSHOT la
+      // connaît. Tant qu'elle est là, la sim n'a pas vu l'`attack_release` — et rebander
+      // l'écraserait (une seule action par tick).
+      chargeEnCours: () => this.myCharging,
       // Les autres ENTITÉS vivantes pour le DON — SANS soi ni les monstres (la sim les
       // refuse de toute façon). Position LOGIQUE (tuiles), depuis le dernier snapshot.
       others: () => {
@@ -613,6 +658,19 @@ export class WorldScene extends Phaser.Scene {
           // seulement de lui donner. Le snapshot les porte déjà — il ne manquait que le fil.
           .map((e) => ({ id: e.id, x: e.x, y: e.y, wounds: e.wounds }))
       },
+      // TOUS LES CORPS, avec la silhouette qu'ils occupent VRAIMENT à l'écran — bêtes
+      // comprises, cette fois : c'est la cible d'un coup, pas d'un don. La position
+      // reste LOGIQUE (du snapshot), la silhouette est RENDUE (le sprite interpolé) :
+      // on vise ce que l'œil montre, vers ce que la sim connaît (voir `visee-corps.ts`).
+      corps: () =>
+        this.lastEntities.flatMap((e) => {
+          if (e.id === this.playerId || e.hp <= 0) return []
+          const sprite = this.view.others.get(e.id)?.sprite
+          if (!sprite) return []
+          return [
+            silhouetteDepuisSprite(e.id, e.x, e.y, sprite.x, sprite.y, sprite.displayWidth, sprite.displayHeight, TILE_PX),
+          ]
+        }),
       // Les handlers d'input sont posés dès `create`, mais `this.warp` n'existe
       // qu'après `onReady` (génération de carte). Avant, on renvoie le point plat :
       // de toute façon les actions sont des no-op sur structures/nodes vides.
@@ -1005,20 +1063,51 @@ export class WorldScene extends Phaser.Scene {
     // LA CHARGE : le clic est enfoncé quelque part, et le coup mûrit. On peint la zone
     // qui partirait MAINTENANT — elle change de forme à maturité, et ce basculement
     // est le seul « c'est prêt » dont le joueur ait besoin.
+    //
+    // ET POUR L'ARC, LA LIGNE SE POSE AU LIEU DE SAUTER (demande d'Alexis, 2026-08-02) : la
+    // direction du snapshot ne bouge qu'aux 100 ms de la re-visée, donc l'aiguille de seize
+    // tuiles restait figée six frames puis basculait d'un bloc. On la fait REJOINDRE sa cible
+    // par un lissage réactif (`visee-lissee.ts`) : les petits ajustements glissent, un
+    // revirement claque. La MIENNE vise le curseur — c'est lui que `attack_release` enverra à
+    // la sim, donc c'est lui la vérité du « si je relâchais maintenant » ; celle des autres
+    // vise l'écho du snapshot, faute de mieux, et le lissage n'y efface que l'escalier.
+    //
+    // ⚠ La LONGUEUR de la ligne n'est PAS lissée : elle vaut la portée que la sim interpole
+    // (`porteeBandee`), et c'est une promesse sur le point de chute — on ne la retarde pas.
+    const visees = new Map<number, { dx: number; dy: number }>()
     for (const c of this.charges) {
       const sprite = spriteOf(c.id)
       if (!sprite) continue
+      let dx = c.dx
+      let dy = c.dy
+      if (c.ranged) {
+        const cible = c.id === this.playerId ? this.inputs.visee() : c
+        const vers = Math.atan2(cible.dy, cible.dx)
+        // À LA PREMIÈRE FRAME D'UNE BANDE, on part DE la cible : sinon chaque lever d'arc
+        // ferait balayer la ligne depuis la direction d'un tir précédent, ou depuis l'est.
+        const angle = suivreAngle(this.viseeLissee.get(c.id)?.angle ?? vers, vers, deltaMs)
+        this.viseeLissee.set(c.id, { angle, cible: vers })
+        dx = Math.cos(angle)
+        dy = Math.sin(angle)
+        visees.set(c.id, { dx, dy })
+      }
       this.attackFx.charge(
         sprite.x,
-        sprite.y,
-        c.dx,
-        c.dy,
+        sprite.y - ANCRE_SOL_PX,
+        dx,
+        dy,
         c.ratio,
         zoneOf(c.strike),
         c.id === this.playerId,
         time,
+        c.ranged,
+        sprite, // c'est LE CORPS qui clignote (spec `tir.md` T2ter)
       )
     }
+    // On n'entretient une visée lissée que tant que la corde est tendue : sans cet oubli, la
+    // carte enflerait d'une entrée par archer croisé, et une corde reprise trois secondes plus
+    // tard repartirait d'une direction périmée.
+    for (const id of this.viseeLissee.keys()) if (!visees.has(id)) this.viseeLissee.delete(id)
 
     const encore = new Set<number>()
     for (const w of this.windups) {
@@ -1027,17 +1116,30 @@ export class WorldScene extends Phaser.Scene {
       encore.add(w.id)
       const progress = Math.max(0, Math.min(1, 1 - w.ticksLeft / Math.max(1, w.strike.windupTicks)))
       const zone = zoneOf(w.strike)
-      this.attackFx.telegraph(sprite.x, sprite.y, w.dx, w.dy, progress, zone, w.id === this.playerId, w.side, w.charged)
-      this.armes.set(w.id, { x: sprite.x, y: sprite.y, dx: w.dx, dy: w.dy, zone, charged: w.charged })
+      const ay = sprite.y - ANCRE_SOL_PX
+      this.attackFx.telegraph(sprite.x, ay, w.dx, w.dy, progress, zone, w.id === this.playerId, w.side, w.charged, w.ranged)
+      this.armes.set(w.id, { x: sprite.x, y: ay, dx: w.dx, dy: w.dy, zone, charged: w.charged, ranged: w.ranged, portee: w.strike.range * TILE_PX })
     }
     // UN WIND-UP QUI DISPARAÎT = LE COUP EST PARTI. La zone claque — y compris dans le
     // vide : un coup manqué coûte de l'endurance ET cloue sur place (récupération
     // punitive, spec R4). Le joueur doit le SENTIR.
     for (const [id, a] of this.armes) {
       if (encore.has(id)) continue
-      this.attackFx.slash(a.x, a.y, a.dx, a.dy, a.zone, time, a.charged)
+      // UN TIR NE CLAQUE PAS SA ZONE — il envoie un TRAIT, et il est peint plus bas, depuis
+      // le relevé fait AU SNAPSHOT. Peindre le cône d'un arc bandé (onze tuiles, ±3°)
+      // ferait clignoter une aiguille de 176 px en travers de l'écran : elle dirait « il a
+      // tiré » aussi mal que possible, alors que la flèche le dit exactement.
+      if (!a.ranged) this.attackFx.slash(a.x, a.y, a.dx, a.dy, a.zone, time, a.charged)
       this.armes.delete(id)
     }
+    // LES TRAITS PARTIS DEPUIS LA DERNIÈRE FRAME (relevés au snapshot). On les peint depuis
+    // la position du tireur MAINTENANT — sa flèche est déjà partie, mais l'œil attend qu'elle
+    // sorte de l'arc qu'il voit, pas d'un fantôme de la frame d'avant.
+    for (const t of this.tirsPartis) {
+      const sprite = spriteOf(t.id)
+      if (sprite) this.attackFx.trait(sprite.x, sprite.y - ANCRE_SOL_PX, t.dx, t.dy, t.portee, time, t.charged)
+    }
+    this.tirsPartis.length = 0
     this.attackFx.update(time)
 
     // LA GARDE SE VOIT (V0-1). Tout corps qui pare — le mien comme celui d'un PNJ ou
@@ -1048,14 +1150,34 @@ export class WorldScene extends Phaser.Scene {
       if (!e.blocking) continue
       const sprite = spriteOf(e.id)
       if (!sprite) continue
-      this.attackFx.guard(sprite.x, sprite.y, e.facing.x, e.facing.y)
+      this.attackFx.guard(sprite.x, sprite.y - ANCRE_SOL_PX, e.facing.x, e.facing.y)
     }
 
     // L'ARME EN MAIN, sur chaque corps : ce qui dit CE QUI PEUT arriver (hand-weapon.ts).
     this.handWeapons.render(
       this.hands.flatMap((h) => {
         const sprite = spriteOf(h.id)
-        return sprite ? [{ x: sprite.x, y: sprite.y, fx: h.fx, fy: h.fy, kind: h.kind }] : []
+        if (!sprite) return []
+        // LA CORDE SE TEND AVEC LA MÊME JAUGE QUE LE TÉLÉGRAPHE (spec `tir.md` T2) : on
+        // rebranche `charges` plutôt que de recompter la bande — deux comptes finiraient
+        // par diverger, et c'est la corde que l'adversaire regarde pour savoir quand
+        // s'abriter. Absent = arc au repos, corde molle.
+        const draw = this.charges.find((c) => c.id === h.id)?.ratio
+        // ET L'ARC SUIT LA MÊME LIGNE. Il s'oriente d'ordinaire sur le `facing` du snapshot —
+        // mais pendant une bande, ce facing EST la direction de la charge (T2quater), donc il
+        // saute aux mêmes 100 ms que le télégraphe. Une ligne qui glisse à côté d'un arc qui
+        // cliquette se lit comme un défaut : les deux prennent la visée lissée.
+        const v = visees.get(h.id)
+        return [
+          {
+            x: sprite.x,
+            y: sprite.y,
+            fx: v?.dx ?? h.fx,
+            fy: v?.dy ?? h.fy,
+            kind: h.kind,
+            ...(draw !== undefined ? { draw } : {}),
+          },
+        ]
       }),
     )
 
@@ -1362,7 +1484,18 @@ export class WorldScene extends Phaser.Scene {
         temperature: this.myTemperature,
         inventory: carried,
       },
-      { sprint, block, moving: dx !== 0 || dy !== 0, charging: this.myCharging, sneak },
+      {
+        sprint,
+        block,
+        moving: dx !== 0 || dy !== 0,
+        charging: this.myCharging,
+        sneak,
+        // BANDER CHASSE LE PAS LENT (spec `tir.md` T2bis) — et la prédiction DOIT le
+        // savoir : la vitesse d'un accroupi qui bande n'est pas celle d'un accroupi, et
+        // une formule de vitesse qui diverge d'un cheveu fait se téléporter l'avatar à
+        // chaque réconciliation. On lit la main comme la sim la lit.
+        drawing: this.myCharging && isRangedWeapon(this.itemTenu() ?? 'unarmed'),
+      },
     )
     const speedScale = this.myWindup ? 0 : scale
     // `sneak` n'entre pas dans PredictInput : la prédiction rejoue le
@@ -1458,6 +1591,15 @@ export class WorldScene extends Phaser.Scene {
 
     // Interpolation des autres entités (R4) : vers le dernier snapshot, sur un tick.
     this.view.interpolate(this.time.now)
+    // …ET LE RECUL SE PEINT PAR-DESSUS, jamais avant : `interpolate` vient de reposer la
+    // position autoritative de chaque corps, et elle repasse à chaque frame. Un écart
+    // appliqué plus haut (dans le bloc de combat) serait effacé dans la même frame — on
+    // aurait un recul qui ne se voit pas, et l'on chercherait le défaut dans l'effet.
+    this.attackFx.peindreRecul(this.time.now)
+    // …ET LE CLIGNOTEMENT DE BANDE AVEC LUI, pour la même raison : `syncActor` vient de
+    // reposer la teinte de chaque acteur. Un flash appliqué plus haut dans la frame était
+    // effacé DANS la même frame — mesuré au banc, ΔL de 0 sur le torse de l'archer.
+    this.attackFx.peindreBande()
 
     setHud(this.registry, 'zone', zoneAt(this.map, this.predicted.x, this.predicted.y)?.name)
     // Le marqueur « tu es ici » de la carte plein écran suit l'ancre autorité.
@@ -1625,10 +1767,32 @@ export class WorldScene extends Phaser.Scene {
               strike: e.windup.strike,
               side: e.windup.side ?? 1,
               charged: e.windup.charged === true,
+              ranged: e.windup.ranged === true,
             },
           ]
         : [],
     )
+    // ═══ LE TRAIT SE DÉTECTE AU SNAPSHOT, PAS À LA FRAME ═══
+    //
+    // Le départ d'un coup se lisait jusqu'ici d'une frame à l'autre (`armes`) : on notait
+    // qui armait, et l'on peignait quand le wind-up disparaissait. Ça tient pour la mêlée
+    // (0,3 à 0,55 s d'armement) et ça CASSE pour le tir — MESURÉ au smoke : l'armement d'un
+    // trait dure 0,25 s, et une frame lente (le rendu logiciel du banc tourne à ~3 im/s,
+    // mais un simple hoquet suffit) enjambe le wind-up ENTIER. Le coup partait, la flèche
+    // sortait du carquois et retombait au sol — et rien ne se voyait.
+    //
+    // Les snapshots, eux, arrivent à 20 Hz quoi qu'il arrive : c'est là que la disparition
+    // se lit sans jamais être ratée. On empile ce qui est PARTI ; la prochaine frame le
+    // peint depuis la position du sprite. (Même leçon que le timer en niveau plutôt qu'en
+    // front : ce qui DOIT partir ne se pend pas à la cadence d'affichage.)
+    for (const [id, w] of this.tirsArmes) {
+      if (this.windups.some((x) => x.id === id)) continue
+      this.tirsPartis.push({ id, ...w })
+      this.tirsArmes.delete(id)
+    }
+    for (const w of this.windups) {
+      if (w.ranged) this.tirsArmes.set(w.id, { dx: w.dx, dy: w.dy, portee: w.strike.range * TILE_PX, charged: w.charged })
+    }
     // QUI CHARGE — et où en est son coup. `pendingStrike` (de /sim) répond à la seule
     // question qui compte : « qu'est-ce qui partirait s'il relâchait maintenant ? ».
     // C'est la sim qui tranche, pas une règle recopiée ici — la seule façon que la
@@ -1643,6 +1807,10 @@ export class WorldScene extends Phaser.Scene {
           dy: e.charge.dy,
           ratio: Math.min(1, e.charge.ticks / max),
           strike: pendingStrike(e),
+          // UN ARC ne se lit pas comme une hache : sa forme ne CHANGE PAS à maturité
+          // (un cône qui se resserre, pas un tourbillon), donc rien ne dit « c'est prêt »
+          // sans un signal à part. Voir `attack-fx.charge`.
+          ranged: isRangedWeapon(weaponKind(e)),
         },
       ]
     })
@@ -1911,15 +2079,28 @@ export class WorldScene extends Phaser.Scene {
         const now = this.time.now
         const onMe = event.entityId === this.playerId
         const cible = onMe ? this.playerSprite : (this.view.others.get(event.entityId)?.sprite ?? null)
+        // D'OÙ LE COUP EST VENU : la gerbe part à l'opposé du frappeur (attack-fx).
+        // `byEntityId` vaut 0 pour ce qui n'a pas d'auteur (un saignement qui achève) —
+        // il n'y a alors ni frappeur ni axe, et la gerbe se tait.
+        const frappeur =
+          event.byEntityId === this.playerId
+            ? this.playerSprite
+            : (this.view.others.get(event.byEntityId)?.sprite ?? null)
         if (cible) {
-          this.attackFx.impact(cible, now)
-          this.attackFx.spark(cible.x, cible.y, event.amount, onMe, now)
+          this.attackFx.impact(cible, now, frappeur?.x, frappeur?.y)
+          this.attackFx.spark(cible.x, cible.y, event.amount, onMe, now, frappeur?.x, frappeur?.y)
         }
         if (onMe) {
           this.attackFx.hurt(now) // l'écran saigne…
           // …et la caméra encaisse. PUREMENT visuel : la position reste autoritative,
           // rien de ce qui suit ne touche la simulation (multi).
           this.cameras.main.shake(90, 0.006)
+        } else if (event.byEntityId === this.playerId) {
+          // MON COUP A PORTÉ. Une secousse BRÈVE et trois fois plus faible que celle
+          // qu'on encaisse : elle doit confirmer le contact, jamais le disputer au coup
+          // reçu — sinon frapper et être frappé se ressentent pareil, et la seule
+          // information qui compte vraiment dans une mêlée (« qui prend ? ») se noie.
+          this.cameras.main.shake(60, 0.002)
         }
       } else if (event.type === 'monster_slain') {
         // LA MISE À MORT claque : deux étincelles là où la bête est tombée. C'est le
@@ -2210,6 +2391,19 @@ export class WorldScene extends Phaser.Scene {
 
   private send(msg: ClientToHost): void {
     this.host.send(msg)
+  }
+
+  /**
+   * CE QU'ON TIENT, tel que la sim le lirait — la ceinture, jamais le sac (spec
+   * inventaire R8/R9). La borne de ceinture est revalidée ici comme `heldSlot` la
+   * revalide dans /sim : sans elle, une case active hors ceinture ferait dire au client
+   * qu'il tient une arme que la sim ne lui reconnaît pas.
+   */
+  private itemTenu(): ItemId | null {
+    const inv = getHud(this.registry, 'inv') ?? []
+    const slot = getHud(this.registry, 'activeSlot') ?? -1
+    if (slot < 0 || slot >= SLOTS.BELT) return null
+    return inv[slot]?.item ?? null
   }
 
   private sendAction(action: PlayerAction): void {

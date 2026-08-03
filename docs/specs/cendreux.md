@@ -77,6 +77,24 @@ de S5/S6.
   à l'aube). Les compter aussi **refermait la levée qu'on venait d'ouvrir** — MESURÉ : 24
   vivants, le plafond pile, dès le **jour 21**, rien qu'avec les 5 Repaires et les gardes de
   convoi accumulés, donc plus une seule levée sur les deux tiers de la saison.
+
+  **R8bis — LE PLAFOND SE LIT À LA LEVÉE, PAS SEULEMENT À LA MORT** *(correctif 2026-08-02)*.
+  Il n'était consulté que dans `willRiseAsCendreux`, c'est-à-dire à la MORT — or un cadavre ne se
+  lève que `RISE_DELAY` plus tard. Entre les deux, une nuit qui tourne mal marque des CENTAINES de
+  cadavres alors que pas un seul ne marche encore : le plafond ne bornait donc **rien**.
+  **MESURÉ** : **460 Cendreux vivants pour un `MAX_ALIVE` de 24** (banc : un avatar sans village
+  qui remeurt sur place, `tools/mesure-touche.mts` en marge). Ça ne se voyait pas parce qu'une
+  DEUXIÈME béquille tenait le compte : le nouveau-né naît sur le cadavre, donc sous ce qui vient
+  d'y tuer — un loup, le meurtrier — et se faisait abattre dans le tick de sa levée. R23 avait
+  réparé la version cendreux-contre-cendreux ; la version loup-contre-levé survivait. Le **recul**
+  de combat (spec combat R4sexies, 2026-08-02) écarte les corps d'un quart de tuile, l'exécution à
+  la naissance a cessé, et la contagion est partie à 460. Le recul n'a rien cassé : il a retiré la
+  béquille qui masquait un plafond mort.
+  **Plein, la vallée ne relève plus personne** — le cadavre redevient un cadavre et se décompose.
+  Il ne fait PAS la queue : une file de quatre cents morts qui se viderait à mesure qu'on abat
+  rendrait le plafond à son inutilité. Conséquence à connaître : « abattre un levé rouvre une
+  place » vaut pour les morts À VENIR, pas pour un cadavre déjà arrivé à son heure pendant que le
+  plafond était plein.
 - **R23 — TOUS LES CENDREUX SONT ALLIÉS ENTRE EUX** *(décision d'Alexis, 2026-07-31 ; livré)*.
   Un Cendreux ne blesse jamais un Cendreux. L'alliance est de l'**ESPÈCE** : ni la harde, ni le
   voisinage, ni le lien tueur→levé — n'importe lesquels, n'importe où. `resolveStrike` écarte la

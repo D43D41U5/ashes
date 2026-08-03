@@ -12,7 +12,7 @@
  */
 import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type RecipeId, type Strike } from './balance'
 import { moveAvatar } from './collision'
-import { advanceCombat, applyCombatAction, type CombatAction, type Corpse } from './combat'
+import { advanceCombat, applyCombatAction, tientUnArc, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
 import { advanceReveils, type Reveil } from './morts'
 import { advanceDecouverte } from './decouverte'
@@ -115,6 +115,15 @@ export interface Entity {
    * snapshot que de ceux qui sont VRAIMENT à bout.
    */
   exhausted?: true
+  /**
+   * LE TICK DU DERNIER RECUL (spec combat R4sexies) — le verrou qui interdit à une horde
+   * de catapulter. Un coup repousse ; dix coups dans le même tick repoussaient dix fois,
+   * et un corps cerné traversait la carte. Ce qui doit rester borné est la distance PAR
+   * UNITÉ DE TEMPS, exactement comme un pas — d'où un tick et non un compteur de coups.
+   * Absent tant qu'on n'a jamais été poussé : le snapshot ne s'en salit que pour ceux
+   * qui ont encaissé.
+   */
+  knockedAt?: number
   exhaustedUntil: number
   /** LE COÛT DE MORT CROISSANT (V2-21) : morts RAPPROCHÉES → épuisement plus long
    *  (plafonné). Une longue survie fait OUBLIER le compte (`lastDeathAt`), pas de
@@ -128,7 +137,14 @@ export interface Entity {
    * pour les deux apprendrait une règle qui n'existe pas (voir `attack-fx.ts`).
    * `side` : le pied qui part (les poings alternent). `charged` : le coup est lourd.
    */
-  windup?: { dx: number; dy: number; ticksLeft: number; strike: Strike; side?: 1 | -1; charged?: true; structureId?: number }
+  /**
+   * `ranged` : ce wind-up est un TIR (spec `tir.md`). Relevé au décochage plutôt que
+   * redemandé à l'arme à la résolution — changer de case de ceinture pendant les 0,25 s
+   * d'armement ne doit pas transformer une flèche partie en coup de hache. Et le client
+   * le lit pour peindre un TRAIT au lieu d'un moulinet : sans lui, il devrait deviner
+   * l'arme du tireur pour savoir ce qu'il regarde.
+   */
+  windup?: { dx: number; dy: number; ticksLeft: number; strike: Strike; side?: 1 | -1; charged?: true; structureId?: number; ranged?: true }
   /**
    * LE CLIC MAINTENU (spec combat R4ter). La sim COMPTE — le client ne fait que
    * dire « j'appuie, et je vise par là ». À maturité (`WeaponProfile.chargeTicks`),
@@ -543,7 +559,7 @@ export function carrySpeedFactor(ratio: number): number {
  */
 export function speedScaleFor(
   entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina' | 'temperature' | 'inventory'> & { exhausted?: true | undefined },
-  input: { sprint: boolean; block: boolean; moving: boolean; charging?: boolean; sneak?: boolean },
+  input: { sprint: boolean; block: boolean; moving: boolean; charging?: boolean; sneak?: boolean; drawing?: boolean },
 ): { scale: number; sprinting: boolean; sneaking: boolean } {
   let scale = 1
   if (entity.hunger <= 0) scale *= BALANCE.HUNGER_SPEED_MALUS
@@ -563,7 +579,21 @@ export function speedScaleFor(
   // accroupi, et des deux touches tenues, c'est l'intention délibérée qui gagne.
   // Il se COMBINE à la charge (× les deux facteurs) : ramper lance armée est
   // exactement l'approche que la mise à mort propre récompense (C6).
-  const sneaking = (input.sneak ?? false) && !blocking
+  //
+  // ═══ SAUF L'ARC : ON NE BANDE PAS ACCROUPI ═══
+  // (décision d'Alexis, 2026-08-02 : « lorsqu'on bande on est forcément debout »)
+  //
+  // Tirer à l'arc demande de se PLANTER sur ses appuis et d'ouvrir la poitrine — la
+  // posture même qu'on abandonne en rampant. La bande CHASSE donc le pas lent, elle ne
+  // s'y ajoute pas ; c'est la seule exception à la ligne du dessus, et elle vaut pour
+  // les armes de tir seulement (une lance s'arme très bien à quatre pattes).
+  //
+  // ET ELLE A DES DENTS, parce qu'elle croise `tir.md` T7 : perdre le pas lent fait
+  // passer la visibilité de `VIS_SNEAK` (0,55) à `VIS_WALK` (1) — puis la bande la
+  // majore encore. Ramper vers une bête EN BANDANT n'est donc pas seulement interdit :
+  // c'est le plus mauvais des choix. La parade tient en un geste — s'arrêter, se
+  // relever, bander, décocher — et c'est exactement le stop-and-go de chasse C1.
+  const sneaking = (input.sneak ?? false) && !blocking && !(input.drawing ?? false)
   // À BOUT DE SOUFFLE, ON MARCHE — et on le reste jusqu'à `SPRINT_RECOVER_STAMINA`
   // (R1ter). `stamina > 0` seul rendait la course DÈS le premier point regagné, d'où une
   // oscillation sprint/marche à 10 Hz qui laissait fuir à 5 t/s pour toujours.
@@ -606,6 +636,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
         action.type === 'attack' ||
         action.type === 'attack_charge' ||
         action.type === 'attack_release' ||
+        action.type === 'attack_cancel' ||
         action.type === 'bandage' ||
         action.type === 'loot_corpse'
       ) {
@@ -617,7 +648,11 @@ export function step(state: SimState, inputs: MoveInput[]): void {
 
     // Postures (spec combat) : bloquer, viser, sprinter.
     entity.blocking = (input.block ?? false) && entity.stamina > 0
-    if (input.dx !== 0 || input.dy !== 0) {
+    // LE PAS ORIENTE — SAUF QUAND ON ARME (décision d'Alexis, 2026-08-02). Pendant une
+    // charge, c'est la VISÉE qui tient le corps : reculer en bandant ne doit pas faire
+    // pivoter l'archer dos à sa cible, alors que la zone, elle, continue de la montrer.
+    // Un corps qui regarde ailleurs que son propre télégraphe est un mensonge de plus.
+    if ((input.dx !== 0 || input.dy !== 0) && entity.charge === undefined) {
       const len = Math.sqrt(input.dx * input.dx + input.dy * input.dy)
       entity.facing = { x: input.dx / len, y: input.dy / len }
     }
@@ -633,6 +668,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
       moving: input.dx !== 0 || input.dy !== 0,
       charging: entity.charge !== undefined,
       sneak: input.sneak ?? false,
+      // BANDER, c'est se tenir DEBOUT (décision d'Alexis) : seule une arme de TIR chasse
+      // le pas lent — une lance s'arme très bien accroupi.
+      drawing: entity.charge !== undefined && tientUnArc(entity),
     })
     // L'ALLURE du tick (spec chasse C2) — ce que la faune entendra de ce pas.
     const moving = input.dx !== 0 || input.dy !== 0

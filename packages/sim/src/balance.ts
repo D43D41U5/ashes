@@ -1079,6 +1079,9 @@ export type RecipeId =
   | 'crude_axe'
   | 'crude_pickaxe'
   | 'crude_spear'
+  | 'crude_bow'
+  | 'bow'
+  | 'arrow'
   | 'stew'
   | 'graine'
   | 'axe'
@@ -1128,11 +1131,16 @@ export interface Recipe {
   requiert: import('./pieces').Exigence | null
   inputs: import('./items').ItemBag
   output: import('./items').ItemId
-  /* ⚠ PAS DE `count` (lot) — retiré avant livraison, exprès. Le catalogue de décoration en
-   * aura besoin (« quatre tuiles », « deux planches »), mais AUCUNE des 34 recettes
-   * actuelles n'en produit : le champ n'aurait eu que des lecteurs, jamais d'auteur, et ses
-   * deux branches seraient mortes — précisément ce que le registre est venu supprimer.
-   * Il revient avec la première recette par lot, et pas avant (3 petites éditions). */
+  /**
+   * LE LOT — combien d'unités une exécution rend. Absent = 1.
+   *
+   * Le champ avait été RETIRÉ avant livraison, exprès : aucune des 34 recettes n'en
+   * produisait, il n'aurait eu que des lecteurs et jamais d'auteur. La note d'alors
+   * disait « il revient avec la première recette par lot, et pas avant » —
+   * **c'est la FLÈCHE** (spec `tir.md` T9). On ne taille pas une flèche, on en taille
+   * cinq : un consommable qui se fabrique à l'unité serait une corvée, pas une économie.
+   */
+  count?: number
   /**
    * Le TEMPS DE TRAVAIL d'une unité, en secondes (spec craft-file F5). Le craft
    * n'est plus instantané : il entre dans une file, et le tick la fait descendre.
@@ -1173,6 +1181,17 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   crude_axe: { requiert: null, inputs: { wood: 2, stone: 3, rope: 1 }, output: 'crude_axe', seconds: 5 },
   crude_pickaxe: { requiert: null, inputs: { wood: 3, stone: 2, rope: 1 }, output: 'crude_pickaxe', seconds: 5 },
   crude_spear: { requiert: null, inputs: { wood: 3, stone: 1, rope: 1 }, output: 'crude_spear', seconds: 5 },
+  // ── LE TIR (spec `tir.md` T9) ──
+  // L'ARC DE FORTUNE est de la couche 1 : une branche et deux cordes, sans poste. Il coûte
+  // DEUX cordes quand l'épieu n'en coûte qu'une — la corde est le goulot volontaire de la
+  // couche 1 (craft-fortune C8), et c'est là que se paie l'allonge.
+  crude_bow: { requiert: null, inputs: { wood: 2, rope: 2 }, output: 'crude_bow', seconds: 6 },
+  // L'ARC LONG à l'atelier : il PAIE l'installation, au rang de la lance.
+  bow: { requiert: ATELIER_N1, inputs: { wood: 4, rope: 2, fiber: 2 }, output: 'bow', seconds: 10 },
+  // LA FLÈCHE RESTE COUCHE 1, ET PAR LOT DE CINQ : on en fabrique en boucle, quel que soit
+  // l'arc, et toute flèche décochée se ramasse (T6) — le stock est un investissement qu'on
+  // va rechercher sur le terrain, pas un consommable qui s'évapore.
+  arrow: { requiert: null, inputs: { wood: 1, stone: 1, fiber: 1 }, output: 'arrow', count: 5, seconds: 4 },
 
   stew: { requiert: FEU, inputs: { berries: 4, fiber: 1 }, output: 'stew', seconds: 8 },
   // LA GRAINE (agriculture voie A) : des baies deviennent une semence, au Feu. L'amorçage du
@@ -1261,6 +1280,16 @@ export interface Strike {
   lunge: number
   /** Le pas DÉVIE, gauche/droite/gauche… (les poings dansent). `false` = tout droit. */
   weave: boolean
+  /**
+   * LE TRAIT NE PREND QU'UN CORPS (spec `tir.md` T4). Un cône qui embroche quatre loups
+   * n'est pas une flèche : la cible est LA PLUS PROCHE DU TIREUR parmi celles de la zone,
+   * et un allié planté dans l'axe la mange. C'est ce qui rend une ligne de tir *dégagée*
+   * signifiante.
+   *
+   * Porté par le `Strike` et non par l'arme : rien n'interdit demain une volée qui ne le
+   * porte pas, ni un coup de mêlée qui ne prendrait qu'un corps.
+   */
+  single?: true
 }
 
 /** Les deux coups d'une arme, et le temps de maintien qui bascule de l'un à l'autre. */
@@ -1269,12 +1298,26 @@ export interface WeaponProfile {
   charged: Strike
   /** Ticks de maintien du clic à partir desquels le coup part CHARGÉ. */
   chargeTicks: number
+  /**
+   * ARME DE TIR (spec `tir.md` T1). Trois conséquences, et elles tiennent toutes à ce
+   * seul booléen — c'est pourquoi il vit sur l'ARME et non sur le coup :
+   *   · le geste est au clic DROIT (lever l'arc), le clic gauche décoche (T2) ;
+   *   · elle consomme une `arrow` et ne se bande pas sans (T6) ;
+   *   · **elle ne frappe pas** (décision d'Alexis, T2) : pas de coup de crosse, aucun
+   *     corps à corps. Un archer serré de près a la ceinture, pas un bouton.
+   * Elle exige aussi une ligne dégagée, et ne repousse rien (T5, T10).
+   */
+  ranged?: true
 }
 
-export type WeaponKind = 'unarmed' | 'crude_spear' | 'spear' | 'iron_axe' | 'steel_axe'
+export type WeaponKind = 'unarmed' | 'crude_spear' | 'spear' | 'iron_axe' | 'steel_axe' | 'crude_bow' | 'bow'
 
 /** Cosinus tabulés — `Math.cos` est interdit dans /sim (invariant §2, moteurs JS). */
+const COS_3 = 0.9986
+const COS_7 = 0.9925
+const COS_8 = 0.9903
 const COS_10 = 0.9848
+const COS_12 = 0.9781
 const COS_22 = 0.9272
 const COS_24 = 0.9135
 const COS_50 = 0.6428
@@ -1460,6 +1503,122 @@ export const WEAPON_PROFILES: Record<WeaponKind, WeaponProfile> = {
     },
     chargeTicks: ticksFor(0.8),
   },
+
+  // ═══ LES DEUX ARCS (spec `tir.md` T9, décision d'Alexis) ═══
+  //
+  // L'archerie a une progression, comme les haches. Et les deux arcs suivent la MÊME
+  // grammaire que le reste (`light` = le tir sec, `charged` = le tir bandé, `chargeTicks`
+  // bascule) : le clic bref est une corde à peine tirée, le maintien est la bande pleine.
+  //
+  // Ce qui les distingue de toute autre arme tient en deux champs — `ranged` et `single` —
+  // et non en une mécanique de plus. Le reste (endurance, armement, récupération, blessures,
+  // sang, usure, coup propre) tombe des règles déjà écrites.
+  //
+  // LA GÉOMÉTRIE FAIT L'IDENTITÉ (R4bis) : le tir bandé n'est pas « le tir sec en plus
+  // fort », c'est un cône QUI SE RESSERRE (±8° → ±3°) en s'allongeant (6 → 16,5 tuiles).
+  // Viser devient un problème de géométrie, jamais un jet de dé.
+  //
+  // ═══ ET LA PORTÉE MONTE AVEC LA BANDE, LINÉAIREMENT (décision d'Alexis, 2026-08-02) ═══
+  //
+  // Les deux `range` ci-dessous ne sont plus deux valeurs mais les DEUX BOUTS D'UNE PENTE :
+  // à corde molle on porte à `light.range`, à pleine bande à `charged.range`, et tout ce
+  // qui est entre les deux s'interpole (`porteeBandee`, combat.ts). C'est ce qui donne à la
+  // bande une lecture CONTINUE : on ne choisit plus entre deux coups, on choisit une
+  // DISTANCE — et le télégraphe, qui dessine la zone réelle, la montre s'allonger.
+  //
+  // LA PORTÉE A ÉTÉ HALVÉE le 2026-08-02 (décision d'Alexis, « diminue la distance de tir
+  // de moitié ») : elle était montée à 12/33, elle redescend à 6/16,5. Le nombre qui compte
+  // est 16,5 — c'est très exactement CE QU'ON PEUT VOIR : le demi-écran vertical vaut 10
+  // tuiles et la caméra de visée en ajoute jusqu'à 6 (`LOOKAHEAD_MAX_TILES`). À pleine
+  // bande, le point de chute arrive donc au BORD du champ visible, et non deux écrans plus
+  // loin. On tire au bout de son regard, ce qui est le bon endroit pour un arc.
+  crude_bow: {
+    // L'ARC DE FORTUNE — une branche et de la corde, dès la première nuit.
+    //
+    // IL EST SOUS L'ÉPIEU TAILLÉ EN DÉGÂTS (8 contre 10) et très au-dessus en portée
+    // (5 contre 1,9) : c'est un ÉCHANGE, pas une domination — sans quoi le premier soir
+    // changerait d'arme et tout le calibrage de la nuit 1 serait à refaire. Le sanglier
+    // (30 PV) ne tombe PAS d'un tir de fortune, même propre (8 × 3 = 24) : il tombe
+    // blessé et SAIGNANT. L'arc de fortune n'abat pas — il OUVRE une traque (chasse C8).
+    light: {
+      shape: 'cone',
+      range: 3,
+      arcCos: COS_12,
+      radius: 0,
+      damage: 3,
+      stamina: 4,
+      windupTicks: ticksFor(0.15),
+      recoveryHit: ticksFor(0.45),
+      recoveryWhiff: ticksFor(0.6),
+      lunge: 0,
+      weave: false,
+      single: true,
+    },
+    charged: {
+      shape: 'cone',
+      range: 7.5,
+      arcCos: COS_7,
+      radius: 0,
+      damage: 8,
+      stamina: 10,
+      windupTicks: ticksFor(0.2),
+      recoveryHit: ticksFor(0.6),
+      recoveryWhiff: ticksFor(0.95),
+      lunge: 0,
+      weave: false,
+      single: true,
+    },
+    // TRÈS LENT À BANDER — c'est de la ficelle et une branche verte. 1,3 s : à 1,3 t/s,
+    // un Cendreux couvre les 5 tuiles en 3,8 s, soit DEUX tirs placés avant le contact
+    // pour 20 PV et 8 de dégâts. Il ne le solde pas ; la première nuit reste dure.
+    chargeTicks: ticksFor(1.3),
+    ranged: true,
+  },
+  bow: {
+    // L'ARC LONG (palier 2) — ce qui PAIE l'installation, au moment où le grenier
+    // réclame du gros gibier.
+    //
+    // ONZE TUILES, ET C'EST DÉLIBÉRÉMENT PLUS LOIN QU'ON NE VOIT : le demi-écran vertical
+    // vaut 10 tuiles (`VISIBLE_TILES_TALL` = 20). Tirer à pleine portée EXIGE donc la
+    // caméra de visée (client R11, jusqu'à 6 tuiles de décalage) — la portée et le geste
+    // sont calibrés l'un sur l'autre, ce n'est pas un débordement.
+    //
+    // Le loup (35 PV, 4,8 t/s) NE TOMBE PAS d'un tir bandé (26) : il couvre les 11 tuiles
+    // en ~2,3 s, soit un bandé plus un sec avant le contact, et un raté coûte 1,1 s —
+    // presque la moitié de sa course. L'arc donne une ouverture, il ne rend pas la meute
+    // décorative. Le cerf (45), lui, tombe d'un tir bandé PROPRE (78) : la promesse de
+    // chasse C6, portée à distance.
+    light: {
+      shape: 'cone',
+      range: 6,
+      arcCos: COS_8,
+      radius: 0,
+      damage: 8,
+      stamina: 6,
+      windupTicks: ticksFor(0.15),
+      recoveryHit: ticksFor(0.4),
+      recoveryWhiff: ticksFor(0.5),
+      lunge: 0,
+      weave: false,
+      single: true,
+    },
+    charged: {
+      shape: 'cone',
+      range: 16.5,
+      arcCos: COS_3,
+      radius: 0,
+      damage: 26,
+      stamina: 18,
+      windupTicks: ticksFor(0.25),
+      recoveryHit: ticksFor(0.6),
+      recoveryWhiff: ticksFor(1.1),
+      lunge: 0,
+      weave: false,
+      single: true,
+    },
+    chargeTicks: ticksFor(0.9),
+    ranged: true,
+  },
 }
 
 /**
@@ -1475,6 +1634,28 @@ export const WEAPON_DAMAGE: Partial<Record<import('./items').ItemId, number>> = 
   // réponse au loup et au sanglier dès la première nuit, sans rendre la lance
   // inutile — elle frappe 60 % plus fort et tient cinq fois plus (spec C9).
   crude_spear: WEAPON_PROFILES.crude_spear.light.damage,
+  // LES ARCS Y FIGURENT, et c'est ce qui leur donne l'USURE au tir (`combat.ts`, la
+  // garde `WEAPON_DAMAGE[held.item] !== undefined`) : une corde se fatigue.
+  //
+  // ⚠ MAIS LE NOMBRE INSCRIT EST UN CHIFFRE DE TIR, PAS DE MÊLÉE, et cette table sert
+  // aussi de BARÈME DE DANGEROSITÉ à `equipBestWeapon` (npc.ts). Un PNJ qui n'aurait
+  // qu'un arc s'en équiperait — et, puisqu'un arc ne frappe pas (spec `tir.md` T2), il
+  // marcherait au Cendreux SANS DÉFENSE. L'exclusion est posée là-bas, dans le barème,
+  // pas ici : tant qu'aucune IA ne sait tirer, aucune IA ne s'arme d'un arc.
+  crude_bow: WEAPON_PROFILES.crude_bow.light.damage,
+  bow: WEAPON_PROFILES.bow.light.damage,
+}
+
+/**
+ * Une arme de TIR ? (spec `tir.md` T1) — la question se pose partout, elle se lit ici.
+ *
+ * Elle accepte un objet QUELCONQUE et non le seul `WeaponKind` : ses deux appelants sont
+ * le combat (qui tient un `WeaponKind`) et le barème d'équipement du PNJ (qui balaie un
+ * sac entier, tourbe comprise). Un `?.` plutôt qu'un `!` — sans lui, demander « ce
+ * caillou est-il un arc ? » ferait planter le tri d'inventaire d'un PNJ.
+ */
+export function isRangedWeapon(item: WeaponKind | import('./items').ItemId): boolean {
+  return WEAPON_PROFILES[item as WeaponKind]?.ranged === true
 }
 
 /**
@@ -2391,6 +2572,21 @@ export const HUNT = {
   NOISE_SPRINT: 1.6,
   /** L'ouïe porte un peu moins loin que la vue (× les portées de l'espèce). */
   HEARING_FACTOR: 0.8,
+  /**
+   * BANDER SE VOIT (spec `tir.md` T7, décision d'Alexis) — le prix de la visée.
+   *
+   * Ce sont les deux nombres qui empêchent l'arc de SUPPRIMER le jeu d'approche : sans
+   * eux, à douze tuiles le stimulus de méfiance est nul, donc tout tir long serait
+   * automatiquement propre et `chasse.md` C1-C7 deviendrait du décor.
+   *
+   * L'ORDRE DE GRANDEUR SE LIT CONTRE L'ALLURE : bander vaut à peu près « passer du pas
+   * lent à la marche » côté vue (0,55 → 0,88 : la silhouette figée redevient un corps
+   * qui remue), et beaucoup moins côté ouïe — une corde qu'on tire n'est pas un pas.
+   * C'est délibérément un COUP DE POUCE, pas un mur : à douze tuiles il ne change rien,
+   * à cinq ou six il fait lever la tête. Se calibre en JOUANT, pas en lisant.
+   */
+  DRAW_VISIBILITY: 1.6,
+  DRAW_NOISE: 1.3,
   /** Le pas lent (input `sneak`) : discret, et lent — c'est le prix. */
   SNEAK_SPEED_FACTOR: 0.5,
 
@@ -2652,6 +2848,68 @@ export const COMBAT = {
   /** Temps d'immobilisation des mains après un bandage. */
   BANDAGE_COOLDOWN_TICKS: ticksFor(1),
   ATTACK_ARC_COS: 0.7071, // cos(45°) — arc total de 90°
+  /**
+   * LE CORPS COMPTE, PAS SON SEUL CENTRE (décision d'Alexis, 2026-08-02).
+   *
+   * `inStrikeZone` a longtemps testé le POINT `target.x/target.y` : un loup dont la
+   * moitié du corps baignait dans l'arc, mais dont le centre en dépassait d'un cheveu,
+   * ne prenait rien. MESURÉ (`tools/mesure-touche.mts`) : compter un corps de ce rayon
+   * ajoute de +16 % (lance) à +36 % (poings) de surface réellement touchée — c'est la
+   * part du combat qui avait l'air de porter sans porter.
+   *
+   * Le rayon est celui du corps en profondeur (`AVATAR_HITBOX_DEPTH_TILES / 2`), la
+   * plus PETITE des deux mesures d'un avatar : la plus prudente. Et il vaut pour TOUT
+   * LE MONDE — joueurs, PNJ, bêtes — parce que c'est le même pipeline de résolution qui
+   * les sert tous (« personne ne triche »). Conséquence assumée : les loups et les
+   * Cendreux touchent aussi plus souvent, donc la nuit mord plus fort.
+   *
+   * À 0, on retrouve exactement l'ancien test au point.
+   */
+  HIT_BODY_RADIUS: 0.1875,
+  /**
+   * LE COUP REPOUSSE (demande d'Alexis, 2026-08-02 : « un petit knockback ») — en tuiles,
+   * pour un coup SIMPLE. La règle est ÉCRITE, TESTÉE (A16) et SPÉCIFIÉE (combat R4sexies).
+   *
+   * ═══ ELLE EST LIVRÉE À ZÉRO, ET C'EST UNE MESURE QUI LE DIT ═══
+   *
+   * Le recul et la MEUTE sont incompatibles. Mécanisme : un coup qui porte pousse la proie
+   * hors du cône DÉJÀ ARMÉ du loup suivant — celui-ci fend l'air, mange sa récupération de
+   * raté (longue, exprès), et une seule morsure protège ainsi des trois d'après. La
+   * pression de meute s'effondre en cascade.
+   *
+   * MESURÉ (`tools/diag-recul.mts`, 6 graines, banc de `faune.test.ts`, 2 h du matin) :
+   *
+   *     recul   encerclement (≥ 2 côtés tenus)   l'homme désarmé MEURT
+   *     0                6/6                            6/6   (2,5 à 3,7 s)
+   *     0,10             0/6                            4/6
+   *     0,25             0/6                            3/6
+   *
+   * **Dès 0,10 tuile — un pixel et demi — le cercle ne se ferme plus sur AUCUNE graine.**
+   * C'est l'encerclement construit le 2026-08-01, et R13 (« la mort doit être l'issue
+   * probable ») avec lui. Un recul qu'on sent est un « sortez de prison » contre les loups :
+   * ce n'est pas un réglage, c'est un arbitrage entre deux règles, et il revient à Alexis.
+   *
+   * Le remonter est UN SEUL NOMBRE. Ce qui l'accompagne est déjà en place : la poussée est
+   * radiale, passe par `resolveMove` (un mur l'arrête), se joue AVANT les dégâts, n'interrompt
+   * rien, et se verrouille à un recul par tick (une horde ne catapulte pas).
+   *
+   * En attendant, le coup se SENT quand même : le recul du corps frappé est peint côté
+   * client (`attack-fx.ts`), sans toucher à la position — donc sans rien coûter à la meute.
+   */
+  /**
+   * UNE FLÈCHE SUR DEUX SE RAMASSE (décision d'Alexis, 2026-08-02) — la probabilité qu'un
+   * trait décoché retombe en pile ramassable ; sinon il est PERDU.
+   *
+   * La première version rendait tout, et le coût de la munition n'était que le temps
+   * d'aller la reprendre. À une chance sur deux, le carquois se vide pour de bon : tirer
+   * devient une dépense, fabriquer des flèches une corvée qui revient, et le lot de cinq
+   * prend son sens. C'est le seul tirage de PRNG que le tir ajoute — il n'a lieu qu'à un
+   * tir, donc aucun banc sans archer n'en consomme.
+   */
+  ARROW_RECOVERY: 0.5,
+  KNOCKBACK_TILES: 0,
+  /** Le coup CHARGÉ repousse le double : le poids du geste se lit au sol. */
+  KNOCKBACK_CHARGED_FACTOR: 2,
   BLOCK_ARC_COS: 0.5, // cos(60°) — arc frontal de 120°
   BLOCK_REDUCTION: 0.7,
   BLOCK_MOVE_FACTOR: 0.3,
@@ -3296,6 +3554,12 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   crude_axe: 2,
   crude_pickaxe: 2.5,
   crude_spear: 1.5,
+  // LE TIR : les arcs sont LÉGERS (du bois et de la corde, pas de tête de pierre), et
+  // la flèche presque rien à l'unité — mais on en porte vingt. C'est le POIDS DU STOCK
+  // qui devient l'arbitrage de l'archer, comme la hotte de minerai pour le mineur.
+  crude_bow: 1.2,
+  bow: 1.8,
+  arrow: 0.1,
   axe: 2,
   pickaxe: 3,
   iron_axe: 3.5,

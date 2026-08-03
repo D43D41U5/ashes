@@ -77,6 +77,23 @@ export type ItemId =
   | 'iron_axe'
   | 'iron_pickaxe'
   | 'spear'
+  /** ── LE TIR (spec `tir.md`) — la troisième jambe du chasseur, que le GDD §8bis
+   *  promet depuis toujours : pister, approcher, TIRER. Un arc n'est pas une arme de
+   *  mêlée qui porte loin — c'est une arme QUI NE FRAPPE PAS (T2, décision d'Alexis) :
+   *  elle achète la portée et la paie en corps à corps. ── */
+  /** L'ARC DE FORTUNE : une branche et de la corde, dès la première nuit. Court (5
+   *  tuiles), très lent à bander, et SOUS l'épieu taillé en dégâts (8 contre 10) — il
+   *  ne lui vole rien, il ouvre une piste de sang là où l'épieu conclut au contact. */
+  | 'crude_bow'
+  /** L'ARC LONG (palier 2, atelier) : ce qui PAIE l'installation. Onze tuiles, un cône
+   *  de trois degrés, et le coup propre qui couche un cerf — la promesse de chasse C6,
+   *  portée à distance. */
+  | 'bow'
+  /** LA FLÈCHE : le consommable du tir, et le seul du jeu qui se RAMASSE. Toute flèche
+   *  décochée retombe au sol (`groundItems`) sur une tuile marchable, qu'elle porte ou
+   *  qu'elle rate : son coût n'est pas une probabilité, c'est le terrain qu'il faut
+   *  traverser pour aller la reprendre — souvent là où était la meute. */
+  | 'arrow'
   /** Le MARTEAU DE CONSTRUCTION : sans lui EN MAIN, on ne bâtit rien (spec recolte.md G12). */
   | 'hammer'
   | 'raw_meat'

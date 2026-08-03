@@ -228,7 +228,14 @@ describe('LE scénario (A7) — tient ou casse', () => {
   })
 
   it('(b) horde de 10 contre 2 PNJ : le village casse', { timeout: 30_000 }, () => {
-    const sim = createSim(15, { map: createEmptyMap(40, 40, TERRAIN_GRASS) })
+    // Graine 17 (était 15), 2026-08-02 — le CORPS-CIBLE (spec combat R4quinquies) rend un
+    // peu de tranchant à la milice, et la graine 15 est passée du côté « le village tient ».
+    // Vérifié avant de la changer, sur 12 graines (`tools/diag-horde.mts`) : (b) CASSE
+    // **9/12 → 7/12**, et (a) « le village tient » ne bouge pas (11/12 → 11/12). La
+    // propriété survit largement ; c'est bien la graine qui a tourné, pas la promesse —
+    // à la différence du raid d'alignement A7(b), où le taux s'est effondré (5/12 → 1/12)
+    // et où le commentaire le dit.
+    const sim = createSim(17, { map: createEmptyMap(40, 40, TERRAIN_GRASS) })
     foundNpcVillage(sim, 20, 20, 2)
     spawnHorde(sim, 10)
     for (let t = 0; t < 8000 && sim.npcs.length > 0 && sim.monsters.length > 0; t++) step(sim, [])

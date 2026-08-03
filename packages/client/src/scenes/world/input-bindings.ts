@@ -17,13 +17,14 @@
  * nœuds, cadavres et position prédite changent à chaque snapshot ou frame —
  * chaque handler lit l'état AU MOMENT de la frappe.
  */
-import { BALANCE, COMPONENT_TYPES, EDGE_BITS, NODE_DEFS, SLOTS, edgeBarrierAt, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@ashes/sim'
+import { BALANCE, COMPONENT_TYPES, EDGE_BITS, NODE_DEFS, SLOTS, edgeBarrierAt, isRangedWeapon, type Corpse, type PlayerAction, type ResourceNode, type Structure } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud, type Placeable } from '../../hud-state'
 import { TILE_PX } from '../../render/framing'
 import { aimAt, clickToAction, demolishTargetAt, holdHarvest, type AimTarget, type BuildContext, type HandContext } from './aim'
 import { BELT_BINDINGS } from './keymap'
 import { keymapEffectif } from './keymap-perso'
+import { corpsSousCurseur, directionDeVisee, surSilhouette, type CorpsVisable } from './visee-corps'
 
 export interface InputDeps {
   sendAction(action: PlayerAction): void
@@ -32,9 +33,22 @@ export interface InputDeps {
   structures(): Structure[]
   nodes(): ResourceNode[]
   corpses(): Corpse[]
+  /** LES PILES AU SOL (spec chasse C18) — ce qu'on a jeté, et les flèches retombées
+   *  (`tir.md` T6). Cibles de `pick_up`, à la touche « interagir ». */
+  piles(): readonly { id: number; x: number; y: number }[]
+  /** MA charge, telle que le DERNIER SNAPSHOT la connaît — l'accusé de réception du
+   *  décochage. Voir `decocher` : on ne rebande pas tant que la sim n'a pas pris le tir. */
+  chargeEnCours(): boolean
   /** Les autres ENTITÉS (PNJ/joueurs) — SANS soi ni les monstres : les cibles d'un DON.
    *  Position LOGIQUE (tuiles), pour viser dans le même repère que les nœuds. */
   others(): { id: number; x: number; y: number }[]
+  /**
+   * TOUS LES CORPS VIVANTS, silhouette RENDUE comprise — bêtes incluses, contrairement à
+   * `others()`. C'est ce qui permet de viser CE QU'ON VOIT et non le sol derrière : le
+   * curseur tombe sur un billboard debout, la sim recevait une direction vers le sol
+   * (voir `visee-corps.ts` — 23 à 28 % des coups atteignables se perdaient là).
+   */
+  corps(): CorpsVisable[]
   /** Corrige un point monde PLAT (positionToCamera) en point monde vrai, selon le relief. */
   unproject(px: number, py: number): { x: number; y: number }
   /** Le tick du dernier snapshot — pour juger la maturité d'une parcelle (agriculture). */
@@ -59,6 +73,14 @@ export interface MovementBindings {
   cancelHold(): void
   /** Ce que vise le curseur MAINTENANT — pour le surlignage et le fantôme. */
   aim(pointer: Phaser.Input.Pointer): AimTarget
+  /**
+   * VERS OÙ ON VISE, MAINTENANT — la direction EXACTE que `attack_release` enverrait si le
+   * doigt tombait à cette frame (verrou de visée-corps compris). C'est la cible du lissage
+   * du télégraphe de l'arc (`visee-lissee.ts`) : la sim tire avec la direction du
+   * DÉCOCHAGE, pas avec l'écho de la dernière re-visée, donc c'est celle-là que la ligne
+   * doit rejoindre. Non normalisée — comme partout, la sim renormalise.
+   */
+  visee(): { dx: number; dy: number }
   /** Le curseur en TUILES, fraction comprise — ce qui désigne l'ARÊTE visée en mode démolir. */
   curseur(pointer: Phaser.Input.Pointer): { x: number; y: number }
   /** Ce que le clic gauche POSERAIT maintenant : une construction armée au panneau
@@ -328,6 +350,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       deps.others(),
       deps.structures(), // Feu (feed_fire), structure abîmée (repair), parcelle (agriculture) visés
       deps.simTick(), // pour juger la maturité d'une parcelle
+      deps.piles(), // les tas au sol : flèches retombées, appâts, charge larguée
     )
   }
   /** L'overlay (carte, sac, menu pause) mange le clic : il ne doit pas agir dans le monde. */
@@ -353,7 +376,51 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     const heldCount = slot >= 0 ? (inv[slot]?.count ?? 1) : 1
     const world = pointerToWorld(pointer)
     const p = deps.predicted()
-    return { held, slot, wounded, heldCount, dx: world.x / TILE_PX - p.x, dy: world.y / TILE_PX - p.y }
+    // ON VISE LE CORPS QU'ON MONTRE, pas le sol derrière lui (voir `visee-corps.ts`).
+    const wx = world.x / TILE_PX
+    const wy = world.y / TILE_PX
+    return { held, slot, wounded, heldCount, ...directionDeVisee(p, wx, wy, corpsVisé(wx, wy)) }
+  }
+
+  /**
+   * LA VISÉE SEULE, sans le reste de la main — ce que le rendu lit à CHAQUE frame pour poser
+   * la ligne de tir (le télégraphe de l'arc la rejoint par un lissage, `visee-lissee.ts`).
+   *
+   * Elle passe par `corpsVisé`, comme `handAt` : il faut que la ligne se pose exactement là
+   * où le décochage enverra le trait — verrou de visée-corps compris. Deux calculs différents
+   * finiraient par diverger, et l'écart tomberait pile sur le bord d'une silhouette, là où le
+   * joueur regarde le plus.
+   */
+  const viseeCourante = (): { dx: number; dy: number } => {
+    const world = pointerToWorld(scene.input.activePointer)
+    const wx = world.x / TILE_PX
+    const wy = world.y / TILE_PX
+    return directionDeVisee(deps.predicted(), wx, wy, corpsVisé(wx, wy))
+  }
+
+  /**
+   * LA MARGE DU VERROU DE VISÉE, en tuiles. Une fois le coup ARMÉ sur un corps, le
+   * curseur peut frôler son bord sans que la visée retombe au sol : la charge se
+   * re-vise toutes les `CHARGE_AIM_MS`, et une visée qui vacille enverrait une
+   * direction différente à chaque rafraîchissement — le télégraphe tremblerait, et
+   * le coup partirait où le curseur se trouvait au mauvais dixième de seconde.
+   * (Même leçon que l'épuisement, spec combat R1ter : un seuil qui commande un
+   * geste veut son hystérésis.)
+   */
+  const MARGE_VERROU_TUILES = 0.35
+  /** Le corps sur lequel le coup en cours est armé — `null` hors charge. */
+  let corpsVerrou: number | null = null
+
+  /** Le corps que le curseur désigne, VERROUILLÉ tant qu'un coup s'arme dessus. */
+  const corpsVisé = (wx: number, wy: number): CorpsVisable | null => {
+    const corps = deps.corps()
+    if (charging && corpsVerrou !== null) {
+      const tenu = corps.find((c) => c.id === corpsVerrou)
+      if (tenu && surSilhouette(tenu, wx, wy, MARGE_VERROU_TUILES)) return tenu
+    }
+    const c = corpsSousCurseur(corps, wx, wy)
+    corpsVerrou = c === null ? null : c.id
+    return c
   }
 
   /**
@@ -433,12 +500,87 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   let lastAimAt = -Infinity
   const CHARGE_AIM_MS = 100
 
+  /**
+   * ═══ L'ARC : LE DROIT LÈVE, LE GAUCHE DÉCOCHE, LE RELÂCHEMENT RABAISSE ═══
+   * (spec `tir.md` T2, décision d'Alexis, 2026-08-02)
+   *
+   * Deux faits mesurés ont décidé de cette grammaire, et aucun n'est une affaire de
+   * confort du doigt :
+   *
+   * ① L'ARC LONG TIRE PLUS LOIN QU'ON NE VOIT — 11 tuiles de portée pour 10 de demi-écran
+   *   (`VISIBLE_TILES_TALL` = 20). Sans le décalage caméra du clic droit (client R11), une
+   *   cible plein nord à portée maximale est HORS DE L'ÉCRAN. Viser et bander ne pouvaient
+   *   donc pas être deux gestes indépendants.
+   *
+   * ② IL N'EXISTAIT AUCUNE ANNULATION DE CHARGE. Le clic droit sert à REGARDER AU LOIN :
+   *   une grammaire où relâcher TIRE ferait payer une flèche à chaque coup d'œil à
+   *   l'horizon. Et on ne peut pas la sauver par un seuil minimal de bande — la bande
+   *   courte EST le tir sec, les deux se confondraient.
+   *
+   * D'où `attack_cancel`, qui répare au passage un défaut plus ancien : ouvrir son sac en
+   * pleine charge de HACHE envoyait un coup dans le vide (voir `tickHold`).
+   *
+   * `aiming` est le pendant droit de `charging` : deux drapeaux et non un, parce que les
+   * deux gestes n'ont ni le même bouton de sortie ni la même issue par défaut.
+   */
+  let aiming = false
+  /**
+   * ON A DÉCOCHÉ ET LA SIM NE L'A PAS ENCORE PRIS — on ne rebande pas tant que c'est vrai.
+   *
+   * ⚠ CE DRAPEAU A REMPLACÉ UN DÉLAI EN MILLISECONDES, ET LA LEÇON VAUT D'ÊTRE ÉCRITE.
+   * L'hôte ne garde qu'UNE action par tick (`pendingAction`) : un `attack_charge` émis trop
+   * tôt ÉCRASE l'`attack_release` qui le précède, et le tir n'a jamais lieu. Le premier
+   * remède était « attendre 250 ms » — MESURÉ au smoke, il n'a rien changé : le
+   * ré-armement partait **2 ms** après le décochage. Le handler de clic et `tickHold`
+   * s'exécutent l'un derrière l'autre dans la MÊME frame, mais `scene.time.now` a déjà
+   * bondi d'une seconde entre les deux (la frame précédente à 1 im/s) — un garde sur
+   * l'horloge d'affichage ne dit RIEN du temps réel écoulé.
+   *
+   * On attend donc la seule chose qui prouve que le tir est passé : que la SIM ne nous
+   * connaisse plus de charge. C'est vrai à n'importe quelle cadence d'image.
+   */
+  let attenteDecochage = false
+  const tientUnArc = (): boolean => isRangedWeapon(handAt(scene.input.activePointer).held ?? 'unarmed')
+
   /** Le coup part (ou la charge s'annule si le curseur a fini sur un overlay). */
   const releaseCharge = (pointer: Phaser.Input.Pointer): void => {
     if (!charging) return
     charging = false
     const hand = handAt(pointer)
     deps.sendAction({ type: 'attack_release', dx: hand.dx, dy: hand.dy })
+  }
+
+  /** L'arc se RABAISSE : rien ne part, la flèche reste au carquois. */
+  const baisserArc = (): void => {
+    if (!aiming) return
+    aiming = false
+    deps.sendAction({ type: 'attack_cancel' })
+  }
+
+  /**
+   * LE TRAIT PART, avec la bande atteinte à cet instant (tôt = sec, mûr = bandé).
+   *
+   * ET ON REBANDE DIRECT si le doigt n'a pas quitté le bouton droit (décision d'Alexis,
+   * 2026-08-02). Le clic droit veut dire « arc LEVÉ », pas « une flèche » : rabaisser
+   * l'arc après chaque tir pour le relever aussitôt serait un geste que personne ne fait.
+   *
+   * On n'envoie RIEN de plus ici — on garde seulement `aiming`, et c'est `tickHold` qui
+   * ré-arme à la cadence de re-visée. La sim le sait déjà faire : `attack_charge` avec
+   * `hold` est SILENCIEUX quand il tombe pendant une récupération, et « la charge démarre
+   * toute seule à la seconde où la récupération s'achève » (combat.ts). Le carquois vide
+   * se refuse de la même façon, sans un mot. Rien à ajouter, donc : il suffit de ne pas
+   * baisser l'arc.
+   */
+  const decocher = (pointer: Phaser.Input.Pointer): void => {
+    if (!aiming) return
+    const hand = handAt(pointer)
+    deps.sendAction({ type: 'attack_release', dx: hand.dx, dy: hand.dy })
+    aiming = pointer.rightButtonDown() && tientUnArc()
+    // ⚠ ON NE RÉ-ARME PAS AVANT QUE LA SIM AIT PRIS LE TIR — voir `attenteDecochage`.
+    if (aiming) {
+      lastAimAt = scene.time.now
+      attenteDecochage = true
+    }
   }
 
   /**
@@ -509,6 +651,19 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       deps.sendAction({ type: 'harvest', nodeId: aim.nodeId, whole: true })
       return
     }
+    // RAMASSER UNE PILE AU SOL (spec chasse C18, `tir.md` T6). L'action existait dans /sim
+    // depuis les piles au sol, mais AUCUN geste ne l'atteignait : ce qu'on jetait était
+    // perdu, et l'appât était un aller simple. Le tir l'a rendu intenable — une flèche
+    // qu'on ne peut pas reprendre n'est pas un coût, c'est une fuite.
+    //
+    // ELLE PASSE APRÈS LA CUEILLETTE et avant la porte : un tas posé au pied d'un buisson
+    // ne doit pas voler le geste du buisson (c'est l'ordre déjà arbitré au-dessus), mais il
+    // doit primer sur une porte qui se trouve simplement à côté — on VISE le tas, on ne
+    // vise jamais la porte.
+    if (aim.inRange && aim.pileId !== null) {
+      deps.sendAction({ type: 'pick_up', pileId: aim.pileId })
+      return
+    }
     // SINON LA PORTE LA PLUS PROCHE, À PORTÉE DE BRAS (spec construction R26).
     //
     // ELLE NE SE VISE PAS AU CURSEUR, et c'est délibéré : depuis R25 une porte vit sur une ARÊTE,
@@ -522,11 +677,33 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   scene.input.mouse?.disableContextMenu()
   scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
     if (overlayOpen()) return
-    // Le clic DROIT ne fait plus rien (démolir et désarmer sont débranchés) — et
-    // il sort AVANT le résolveur : sans cette garde, il retomberait sur le clic
-    // gauche et se mettrait à récolter. Un bouton qu'on retire doit devenir muet,
-    // pas hériter du comportement du voisin.
-    if (pointer.rightButtonDown()) return
+    // LE CLIC DROIT LÈVE L'ARC — et lui seul (spec `tir.md` T2). Sans arme de tir en
+    // main il ne fait toujours RIEN (démolir et désarmer sont débranchés) : il reste le
+    // simple coup d'œil au loin, et c'est ce qui évite d'entrer en posture à chaque
+    // regard. Il sort AVANT le résolveur dans les deux cas : un bouton qu'on retire doit
+    // devenir muet, pas hériter du comportement du voisin.
+    //
+    // ON LIT LE BOUTON QUI VIENT DE S'ENFONCER (`pointer.button`), PAS L'ÉTAT DES BOUTONS
+    // (`rightButtonDown()`). MESURÉ au smoke : avec le droit MAINTENU — c'est-à-dire tout
+    // le temps où l'on vise —, `rightButtonDown()` reste vrai pendant l'appui du GAUCHE.
+    // Ce garde avalait donc le décochage, et l'arc ne tirait jamais. Un état ne dit pas
+    // quel geste vient d'avoir lieu ; seul l'événement le dit.
+    if (pointer.button === 2) {
+      if (!aiming && tientUnArc()) {
+        aiming = true
+        lastAimAt = scene.time.now
+        const hand = handAt(pointer)
+        deps.sendAction({ type: 'attack_charge', dx: hand.dx, dy: hand.dy })
+      }
+      return
+    }
+    // LE CLIC GAUCHE DÉCOCHE — arc levé, et rien d'autre ne le devance. C'est pourquoi ce
+    // test précède le résolveur : celui-ci rendrait `null` pour un porteur d'arc (T2), et
+    // le tir ne partirait jamais.
+    if (aiming) {
+      decocher(pointer)
+      return
+    }
     // Le résolveur PUR tranche (aim.ts) : MANGER, FRAPPER, récolter, fouiller,
     // POSER/AMÉLIORER — selon CE QU'ON TIENT. C'est la seule règle d'interaction.
     const aim = aimNow(pointer)
@@ -584,6 +761,10 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     }
   })
   scene.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+    // LE BOUTON DROIT SE LÈVE : l'arc se rabaisse, gratuitement (T2). On ne teste PAS
+    // `rightButtonReleased()` mais l'absence du bouton — un `pointerup` du gauche pendant
+    // qu'on tient le droit ne doit rien rabaisser, et c'est déjà `decocher` qui a répondu.
+    if (aiming && !pointer.rightButtonDown()) baisserArc()
     holding = false
     mining = false
     releaseCharge(pointer)
@@ -593,10 +774,48 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   /** Appelée à chaque frame par WorldScene : entretient le clic maintenu. */
   const tickHold = (): void => {
     const pointer = scene.input.activePointer
-    // L'overlay s'ouvre pendant qu'on charge (le sac, la carte) : on RELÂCHE. Sans ça,
-    // la sim garderait une charge éternelle — endurance gelée, avatar au ralenti, et
-    // aucun moyen de comprendre pourquoi.
-    if (charging && (overlayOpen() || !pointer.leftButtonDown())) {
+    // ═══ L'ARC LEVÉ ═══ Il se rabaisse dès que le bouton droit se lève ou qu'un overlay
+    // s'ouvre — et il se RABAISSE, il ne décoche pas : la flèche reste au carquois. C'est
+    // toute la raison d'être d'`attack_cancel`.
+    // …ou dès qu'on n'a PLUS d'arc en main. Sans cette dernière condition, changer de case
+    // de ceinture en pleine visée (touches 1-6, molette) laissait `aiming` armé : le clic
+    // gauche suivant partait en `attack_release` et la sim le résolvait avec le profil de
+    // CE QU'ON TIENT MAINTENANT — une charge d'arc convertie en coup de lance, sans qu'une
+    // flèche ait jamais quitté le carquois. On ne garde pas bandé un arc qu'on a rangé.
+    if (aiming && (overlayOpen() || !pointer.rightButtonDown() || !tientUnArc())) {
+      baisserArc()
+      return
+    }
+    // LE DÉCOCHAGE DOIT PASSER D'ABORD : tant que la sim nous connaît une charge, elle n'a
+    // pas encore vu l'`attack_release`, et tout ré-armement l'écraserait.
+    if (aiming && attenteDecochage) {
+      if (!deps.chargeEnCours()) attenteDecochage = false
+      return
+    }
+    if (aiming) {
+      // ON RE-VISE, cadencé, SUR LE BOUTON DROIT. Sous l'ancienne grammaire cette boucle
+      // s'arrêtait au relâchement du GAUCHE : c'est précisément la régression qu'un smoke
+      // du tir doit attraper — un télégraphe qui cesse de suivre le curseur arc levé.
+      if (scene.time.now - lastAimAt >= CHARGE_AIM_MS) {
+        lastAimAt = scene.time.now
+        const hand = handAt(pointer)
+        deps.sendAction({ type: 'attack_charge', dx: hand.dx, dy: hand.dy, hold: true })
+      }
+      return
+    }
+    // L'OVERLAY S'OUVRE PENDANT QU'ON CHARGE (le sac, la carte) : on ANNULE. Il envoyait
+    // le coup, faute d'avoir mieux — un moulinet de hache dans le vide, récupération
+    // punitive comprise, parce qu'on avait ouvert son sac. `attack_cancel` est arrivé
+    // avec l'arc ; la mêlée en profite (spec `tir.md` T2).
+    if (charging && overlayOpen()) {
+      charging = false
+      deps.sendAction({ type: 'attack_cancel' })
+      holding = false
+      return
+    }
+    // Le doigt se lève : là, le coup PART. Sans ça la sim garderait une charge éternelle —
+    // endurance gelée, avatar au ralenti, et aucun moyen de comprendre pourquoi.
+    if (charging && !pointer.leftButtonDown()) {
       releaseCharge(pointer)
       holding = false
       return
@@ -685,10 +904,15 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
    */
   const cancelHold = (): void => {
     charging = false
+    // L'ARC AUSSI (spec `tir.md` T2), et il pèse plus lourd que les autres : un drapeau
+    // `aiming` survivant à la mort ferait décocher au réveil — une flèche du carquois,
+    // sur qui se trouve là. On coupe le drapeau sans émettre : la sim, elle, a déjà tout
+    // remis à plat en nous faisant renaître.
+    aiming = false
     felling = false
     mining = false
     holding = false
   }
 
-  return { keys, sprintKeys, sneakKeys, blockKeys, tickHold, cancelHold, aim: aimNow, curseur: curseurTuile, placing }
+  return { keys, sprintKeys, sneakKeys, blockKeys, tickHold, cancelHold, aim: aimNow, visee: viseeCourante, curseur: curseurTuile, placing }
 }

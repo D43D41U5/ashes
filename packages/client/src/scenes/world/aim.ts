@@ -19,7 +19,7 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
-import { COMPONENT_TYPES, EDGE_E, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, STRUCTURE_HP, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
+import { COMPONENT_TYPES, EDGE_E, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, STRUCTURE_HP, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, isRangedWeapon, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
 import type { Placeable } from '../../hud-state'
 import type { Corpse, PlayerAction, ResourceNode } from '@ashes/sim'
 
@@ -173,6 +173,14 @@ export interface AimTarget {
   plantableId: number | null
   /** Une PARCELLE mûre sur la tuile visée — la cible de `harvest_crop` (clic, mains libres). */
   harvestableId: number | null
+  /**
+   * LA PILE AU SOL visée — la cible de `pick_up` (spec chasse C18, `tir.md` T6).
+   *
+   * L'action existe dans /sim depuis les piles au sol, mais AUCUN geste ne l'atteignait :
+   * ce qu'on jetait était perdu. Le tir l'a rendu intenable — une flèche qui retombe et
+   * qu'on ne peut pas reprendre n'est pas un coût, c'est une fuite.
+   */
+  pileId: number | null
   /** Distance ≤ `range` entre le joueur et le CENTRE de la tuile visée. */
   inRange: boolean
 }
@@ -208,8 +216,14 @@ export function aimAt(
   structures: readonly AimStructure[] = [],
   /** Le tick courant (dernier snapshot) — pour juger la MATURITÉ d'une parcelle (harvest_crop). */
   tick = 0,
+  /** Les piles au sol (spec chasse C18) — la cible de `pick_up`. Vide par défaut : un
+   *  appelant qui ne vise que le don n'a pas à les fournir. */
+  piles: readonly { id: number; x: number; y: number }[] = [],
 ): AimTarget {
   const corpse = corpses.find((c) => Math.floor(c.x) === tx && Math.floor(c.y) === ty)
+  // LA PILE de la tuile visée. Comme le cadavre : on la cherche à la TUILE, parce qu'une
+  // pile n'a pas d'emprise — c'est un tas posé, et le joueur désigne un carreau de sol.
+  const pile = piles.find((p) => Math.floor(p.x) === tx && Math.floor(p.y) === ty)
   const node = nodes.find((n) => n.tx === tx && n.ty === ty && n.stock > 0)
   // Une seule passe sur les structures de la tuile : le Feu se NOURRIT (feed_fire, jamais
   // « réparé ») ; toute structure abîmée se RÉPARE ; une parcelle se SÈME (vide) ou se RÉCOLTE
@@ -270,6 +284,7 @@ export function aimAt(
     repairableId: damaged?.id ?? null,
     plantableId: plantable?.id ?? null,
     harvestableId: harvestable?.id ?? null,
+    pileId: pile?.id ?? null,
     inRange: dx * dx + dy * dy <= range * range,
   }
 }
@@ -447,6 +462,16 @@ export function clickToAction(
   // portée → on la met en terre. La pousse se dérive ensuite du tick (pur). La sim revalide.
   if (hand && hand.held === 'graine' && target.plantableId !== null && target.inRange)
     return { type: 'plant', structureId: target.plantableId }
+
+  // UN ARC NE FRAPPE PAS, ET NE RÉCOLTE PAS NON PLUS (spec `tir.md` T2, décision
+  // d'Alexis). Le clic gauche reste le bouton du TIR (il décoche, arc levé — voir
+  // input-bindings) ; arc BAISSÉ, il est inerte.
+  //
+  // Inerte, et surtout PAS « il retombe sur la règle du dessous » : laisser un porteur
+  // d'arc glisser jusqu'à `harvest` ferait exactement ce que la règle ci-dessous existe
+  // pour empêcher — un clic de panique qui part cueillir un buisson pendant qu'un loup
+  // arrive. Une arme en main reste une arme en main, même quand elle ne peut rien de près.
+  if (hand && isRangedWeapon(hand.held ?? 'unarmed')) return null
 
   // FRAPPER : une arme en main frappe TOUJOURS — on ne coupe pas du bois avec une
   // lance, et surtout on ne veut pas qu'un clic de panique parte récolter un buisson

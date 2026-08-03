@@ -193,6 +193,494 @@ async function mesurerContraste(page, a, b) {
 
 const SCENARIOS = {
   /**
+   * LE TIR (2026-08-02, spec `tir.md`) — l'arc, la corde qui se tend, le trait qui part.
+   *
+   * Ce qui ne se prouve qu'au navigateur, et que /sim ne peut pas dire :
+   *   ① l'arc a une SILHOUETTE d'arc dans la main (pas un bâton de plus) ;
+   *   ② la corde SE TEND quand on maintient le clic droit — c'est le seul télégraphe du
+   *     tir, et c'est sur lui qu'un adversaire décide de s'abriter ;
+   *   ③ le télégraphe au sol SUIT le curseur arc levé (la re-visée est passée du bouton
+   *     GAUCHE au DROIT : c'est LA régression que ce pas attrape) ;
+   *   ④ le TRAIT traverse l'écran au décochage — peint, jamais simulé (T3) ;
+   *   ⑤ la flèche RETOMBE au sol et le carquois a baissé d'exactement une.
+   *
+   * Exige `--dev` : on se donne l'arc et les flèches par `debug_grant`.
+   */
+  async tir(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(800)
+    await canopeePleine(page)
+
+    // L'ARC ET LE CARQUOIS. Deux pièges, tous deux payés d'une passe à blanc :
+    //   · `debug_grant` donne UNE unité et la MET EN MAIN — les flèches d'abord, l'arc en
+    //     dernier, sinon c'est une flèche qu'on tiendrait au poing ;
+    //   · l'hôte ne garde qu'UNE action par tick (`pendingAction`, sim-worker) — neuf
+    //     `debug_grant` dans le même `evaluate` n'en laissent passer qu'un seul, le dernier.
+    //     On les ESPACE d'un tick, et c'est le smoke qui l'a dit (carquois à 0).
+    for (let i = 0; i < 8; i++) {
+      await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_grant', item: 'arrow' }))
+      await page.waitForTimeout(90)
+    }
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_grant', item: 'bow' }))
+    await page.waitForTimeout(600)
+
+    const main = await page.evaluate(() => {
+      const reg = window.__BRAISES__.scene.registry
+      const inv = reg.get('inv') ?? []
+      const slot = reg.get('activeSlot') ?? -1
+      return {
+        tenu: slot >= 0 ? (inv[slot]?.item ?? null) : null,
+        fleches: inv.reduce((n, c) => n + (c && c.item === 'arrow' ? c.count : 0), 0),
+      }
+    })
+    console.log(main.tenu === 'bow'
+      ? `   ✓ l'arc est EN MAIN, ${main.fleches} flèches au carquois`
+      : `   ✗ ce qu'on tient : ${main.tenu} (attendu bow) — le reste du scénario ne veut rien dire`)
+
+    // Le curseur à HUIT TUILES à l'est : dans la portée de l'arc long (11), hors de toute
+    // portée de mêlée. C'est là que l'arc dit quelque chose que les autres armes ne disent pas.
+    const versEst = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const cam = s.cameras.main
+      const p = s.registry.get('playerPos')
+      const gx = ((p.x + 8) * 16 - cam.worldView.x) * cam.zoom
+      const gy = (p.y * 16 - cam.worldView.y) * cam.zoom
+      const c = s.scale.canvas.getBoundingClientRect()
+      return { x: c.left + gx * (c.width / s.scale.width), y: c.top + gy * (c.height / s.scale.height) }
+    })
+
+    // ── ② LA CORDE SE TEND ── clic DROIT maintenu, une seconde : de quoi passer `chargeTicks`.
+    await page.mouse.move(versEst.x, versEst.y)
+    // ── LES ÉCLATS DE BANDE (demande d'Alexis) ──
+    //
+    // ON ARME LE GUET AVANT D'APPUYER. Tout aller-retour vers Node coûte au moins une frame
+    // (≈333 ms ici) et la bande n'en dure que 900 : mesuré, le guet posé APRÈS l'appui
+    // trouvait déjà le ratio à 1 une fois sur deux. On s'accroche donc à
+    // `requestAnimationFrame` et on endort la boucle à la frame MÊME où la charge apparaît
+    // — elle y est jeune, et figée le temps du comptage.
+    //
+    // ON NE MESURE PAS LA PENTE ICI, et c'est délibéré : chaque pas coûte un rendu entier,
+    // donc trois relevés ne tiennent pas dans les 0,9 s d'une bande. La pente est prouvée
+    // à part, sur la fonction pure `periodeEclat` (`bande.test.ts`). Ici on constate que
+    // les éclats sont bien LÀ, et qu'ils claquent (crête proche de 1).
+    const armerGuetEclats = () => page.evaluate(() => new Promise((resolve) => {
+      const s = window.__BRAISES__.scene
+      const g = s.game
+      const t0 = performance.now()
+      const guetter = () => {
+        const c = (s.charges ?? []).find((x) => x.id === s.playerId)
+        if (c) {
+          g.loop.sleep()
+          const ratio = c.ratio
+          let t = g.loop.time
+          let fronts = 0
+          let avant = 0
+          let sommet = 0
+          for (let i = 0; i < 40; i++) {
+            t += 12
+            g.step(t, 12)
+            const e = s.attackFx.enBande().eclat
+            sommet = Math.max(sommet, e)
+            if (e > 0.05 && avant <= 0.05) fronts++
+            avant = e
+          }
+          // On RESTE endormi sur une crête, pour que Node ait quelque chose à photographier.
+          for (let i = 0; i < 40 && s.attackFx.enBande().eclat < 0.8; i++) {
+            t += 6
+            g.step(t, 6)
+          }
+          resolve({ fronts, sommet: Number(sommet.toFixed(2)), ratio: Number(ratio.toFixed(2)) })
+          return
+        }
+        if (performance.now() - t0 > 12000) {
+          resolve({ fronts: 0, sommet: 0, ratio: -1 })
+          return
+        }
+        requestAnimationFrame(guetter)
+      }
+      requestAnimationFrame(guetter)
+    }))
+    // TROIS TENTATIVES AU PLUS. La bande dure 900 ms et une frame en coûte ~333 ici : selon
+    // le nombre de frames que met l'aller-retour de l'action, la première charge OBSERVÉE
+    // peut déjà être pleine (mesuré, une fois sur trois). On relâche alors et on recommence,
+    // plutôt que de laisser un contrôle rouge une fois sur trois pour une raison de banc.
+    let eclats = { fronts: 0, sommet: 0, ratio: -1 }
+    for (let essai = 0; essai < 3; essai++) {
+      const guet = armerGuetEclats()
+      await page.mouse.down({ button: 'right' })
+      eclats = await guet
+      if (eclats.ratio >= 0 && eclats.ratio < 0.9) break
+      await page.evaluate(() => void window.__BRAISES__.scene.game.loop.wake())
+      await page.mouse.up({ button: 'right' })
+      await page.waitForTimeout(900) // la récupération, puis on recommence
+      // ⚠ ET SI L'ON ABANDONNE, ON REPOSE LE DOIGT. Toute la suite du scénario suppose
+      // l'arc LEVÉ ; sortir de cette boucle bouton relâché rendait tout le reste rouge en
+      // cascade — « la corde n'est pas tendue », « la visée n'a pas suivi » — pour une
+      // raison qui n'avait rien à voir avec ce qu'on mesure.
+      if (essai === 2) {
+        await page.mouse.down({ button: 'right' })
+        await page.waitForTimeout(2200)
+      }
+    }
+    await page.screenshot({ timeout: 90000, path: `${OUT}/tir-0-eclat.png` })
+    // LE FLASH SE VOIT-IL VRAIMENT SUR CE CORPS ? L'avatar est déjà crème : blanchir un
+    // corps clair peut ne rien donner. On MESURE plutôt que de supposer — la boucle est
+    // encore figée sur la crête, on relève le pixel du torse, puis on avance jusqu'au
+    // creux de l'éclat et on relève le même pixel. L'écart de luminance tranche.
+    const surLeCorps = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const cam = s.cameras.main
+      const p = s.registry.get('playerPos')
+      const gx = (p.x * 16 - cam.worldView.x) * cam.zoom
+      // ON VISE LA TÊTE, PAS LE TORSE. Le torse de l'avatar est déjà crème (255,244,195) :
+      // le blanchir n'y change presque rien, et la première sonde a mesuré ΔL 9,7 — un
+      // faux négatif sur l'effet, pas une mesure de l'effet. Le remplissage blanc efface
+      // les détails SOMBRES du sprite, et c'est là qu'il se lit.
+      const gy = (p.y * 16 - cam.worldView.y - 11) * cam.zoom
+      const c = s.scale.canvas.getBoundingClientRect()
+      return { x: Math.round(c.left + gx * (c.width / s.scale.width)), y: Math.round(c.top + gy * (c.height / s.scale.height)) }
+    })
+    // TROIS POINTS SUR LE CORPS, et l'on garde le meilleur écart. Un seul pixel est une
+    // sonde fragile : selon la frame exacte, il tombe sur un bord du sprite ou sur une
+    // zone déjà crème, et l'on mesure alors la sonde plutôt que l'effet (mesuré : 22,7 une
+    // fois, 8,9 la suivante, pour le même effet).
+    const points = [-11, -6, -2].map((dy) => ({ x: surLeCorps.x, y: surLeCorps.y + dy }))
+    const cretes = []
+    for (const pt of points) cretes.push(await pixelAt(page, pt.x, pt.y))
+    await page.evaluate(() => {
+      const g = window.__BRAISES__.scene.game
+      let t = g.loop.time
+      for (let i = 0; i < 60 && window.__BRAISES__.scene.attackFx.enBande().eclat > 0.05; i++) {
+        t += 8
+        g.step(t, 8)
+      }
+    })
+    const creux = []
+    for (const pt of points) creux.push(await pixelAt(page, pt.x, pt.y))
+    const lum = (c) => (c ? 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] : 0)
+    const ecarts = cretes.map((c, i) => Number((lum(c) - lum(creux[i])).toFixed(1)))
+    const dLum = Math.max(...ecarts.map(Math.abs))
+    console.log(dLum >= 12
+      ? `   ✓ le CORPS clignote pour de bon : ΔL ${dLum} sur le meilleur des trois points (${ecarts.join(' / ')})`
+      : `   ✗ le flash ne se lit pas sur le corps : ΔL ${dLum} au mieux (${ecarts.join(' / ')})`)
+    await page.evaluate(() => void window.__BRAISES__.scene.game.loop.wake())
+    console.log(eclats.fronts > 0
+      ? `   ✓ la bande ÉCLATE en montant : ${eclats.fronts} front(s) sur 0,48 s à ratio ${eclats.ratio} (crête ${eclats.sommet})`
+      : `   ✗ aucun éclat pendant la bande (ratio ${eclats.ratio})`)
+    // ON TIENT LARGEMENT PLUS QUE `chargeTicks` (0,9 s) : le rendu logiciel de cette
+    // machine tourne à quelques images par seconde, et la boucle qui RE-VISE est cadencée
+    // sur la frame — mesuré, 1,2 s de mur ne donnaient qu'une demi-bande.
+    await page.waitForTimeout(3000)
+    const bande = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const moi = s.playerId
+      const c = (s.charges ?? []).find((x) => x.id === moi)
+      return { ratio: c ? Number(c.ratio.toFixed(2)) : null, portee: c ? c.strike.range : null }
+    })
+    console.log(bande.ratio !== null && bande.ratio >= 1
+      ? `   ✓ l'arc est bandé à fond (ratio ${bande.ratio}), zone de ${bande.portee} tuiles`
+      : `   ✗ la corde n'est pas tendue (ratio ${bande.ratio}) — le clic droit n'arme pas`)
+    // GROS PLAN SUR L'ARCHER : à l'échelle du jeu, la corde tendue fait quelques pixels, on
+    // ne peut pas juger une silhouette sur une capture plein cadre.
+    // ON POUSSE LE ZOOM DE LA CAMÉRA pour la photo, puis on le rend. À l'échelle de jeu,
+    // l'arc fait une vingtaine de pixels : un découpage ne fait qu'agrandir le grain, pas
+    // le dessin. On regarde le MÊME rendu, de plus près — rien n'est fabriqué.
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      window.__ZOOM__ = s.cameras.main.zoom
+      s.cameras.main.setZoom(window.__ZOOM__ * 4)
+      return true
+    })
+    await page.waitForTimeout(600)
+    const centre = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const cam = s.cameras.main
+      const p = s.registry.get('playerPos')
+      const gx = (p.x * 16 - cam.worldView.x) * cam.zoom
+      const gy = (p.y * 16 - cam.worldView.y) * cam.zoom
+      const c = s.scale.canvas.getBoundingClientRect()
+      return { x: c.left + gx * (c.width / s.scale.width), y: c.top + gy * (c.height / s.scale.height) }
+    })
+    await page.screenshot({
+      path: `${OUT}/tir-1b-arc-de-pres.png`,
+      clip: { x: Math.max(0, centre.x - 170), y: Math.max(0, centre.y - 200), width: 380, height: 320 },
+      // Un rendu logiciel à ×4 de zoom, c'est seize fois les pixels : 30 s ne suffisent pas.
+      timeout: 90000,
+    })
+    // `void` : `setZoom` rend la CAMÉRA (API chaînable), et Playwright sérialiserait tout
+    // le graphe Phaser au retour — mesuré, ça fait exploser le transport (ERR_STRING_TOO_LONG).
+    await page.evaluate(() => void window.__BRAISES__.scene.cameras.main.setZoom(window.__ZOOM__))
+    await page.waitForTimeout(400)
+
+    // ── À FOND, LES ÉCLATS CESSENT ──
+    //
+    // ON NE FIGE PAS ICI, et c'est une leçon payée : `sleep()` puis `wake()` dans le MÊME
+    // bloc synchrone laisse la boucle sans plus produire d'image, et la capture suivante
+    // attend un frame qui ne vient jamais (90 s de timeout, « fonts loaded » puis rien).
+    // On n'en a pas besoin : ce qu'on affirme ici est une ABSENCE, et une absence se
+    // constate très bien sur les frames naturelles.
+    const pleine = await page.evaluate(() => new Promise((resolve) => {
+      const s = window.__BRAISES__.scene
+      const t0 = performance.now()
+      let fronts = 0
+      let avant = 0
+      let vuePleine = false
+      const voir = () => {
+        const b = s.attackFx.enBande()
+        if (b.pleine) vuePleine = true
+        if (b.eclat > 0.05 && avant <= 0.05) fronts++
+        avant = b.eclat
+        if (performance.now() - t0 > 1600) {
+          resolve({ fronts, pleine: vuePleine })
+          return
+        }
+        requestAnimationFrame(voir)
+      }
+      requestAnimationFrame(voir)
+    }))
+    console.log(pleine.pleine && pleine.fronts === 0
+      ? `   ✓ à fond, les éclats CESSENT et la garde se pose (0 front sur 1,6 s, pleine=true)`
+      : `   ✗ l'état « à fond » ne se distingue pas (fronts ${pleine.fronts}, pleine ${pleine.pleine})`)
+    await page.screenshot({ timeout: 90000, path: `${OUT}/tir-1-bande.png` })
+    // ── ③ LE TÉLÉGRAPHE SUIT LE CURSEUR, arc levé (la re-visée est sur le bouton DROIT) ──
+    await page.mouse.move(versEst.x, versEst.y - 120, { steps: 6 })
+    await page.waitForTimeout(400)
+    const suivi = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const c = (s.charges ?? []).find((x) => x.id === s.playerId)
+      return c ? { dx: Number(c.dx.toFixed(3)), dy: Number(c.dy.toFixed(3)) } : null
+    })
+    console.log(suivi && suivi.dy < -0.15
+      ? `   ✓ la visée a suivi le curseur vers le nord (dy ${suivi.dy})`
+      : `   ✗ la visée n'a pas suivi (${JSON.stringify(suivi)}) — la re-visée est restée sur le bouton gauche`)
+    await page.screenshot({ timeout: 90000, path: `${OUT}/tir-2-suivi.png` })
+
+    // ── ③bis LA LIGNE REJOINT LA VISÉE (le lissage réactif, `visee-lissee.ts`) ──
+    //
+    // CE QUI SE VÉRIFIE ICI, ET CE QUI NE PEUT PAS : la PENTE du lissage se prouve sur la
+    // fonction pure (`visee-lissee.test.ts`) — une frame de ce banc coûte un rendu logiciel
+    // entier, elle enjambe donc toute la course. Ce que le navigateur seul peut dire, c'est
+    // que le lissage ARRIVE : qu'il ne reste AUCUN décalage permanent entre la ligne
+    // DESSINÉE et la direction où le trait partira une fois le curseur reposé. Un lissage qui
+    // ne converge pas est un télégraphe qui ment en continu — et c'est un mensonge qu'aucun
+    // test pur ne peut attraper, puisqu'il naîtrait du CÂBLAGE (une cible branchée sur le
+    // mauvais bout : l'écho du snapshot au lieu du curseur).
+    //
+    // On ne FIGE rien et on ne FABRIQUE rien : le curseur revient à l'est par un vrai geste,
+    // et l'on LIT ce que la scène a dessiné (« le smoke lit l'état, il ne le fabrique pas »).
+    //
+    // ⚠ ON ATTEND TROIS SECONDES POUR UNE POSE QUI PREND 200 ms DANS LE JEU, et c'est le BANC
+    // qui l'exige : le pas de temps du lissage est borné à 50 ms (une frame qui saute ne doit
+    // pas téléporter la ligne), donc à trois images par seconde chaque frame ne comble que
+    // ~57 % de l'écart quoi qu'il arrive. MESURÉ : 600 ms — deux frames d'ici — laissaient
+    // encore 7,9° sur un écart de 40°, et ce n'est pas un décalage permanent, c'est le banc.
+    //
+    // ⚠ ET LES DEUX NOMBRES VIENNENT DE LA MÊME FRAME (`viseeLissee` porte sa cible). Cible
+    // recalculée au relevé, on mesure la CAMÉRA : elle glisse encore entre deux frames d'ici,
+    // donc le point de sol sous un curseur immobile bouge — 4,1° de résidu fantôme, mesuré.
+    //
+    // ⚠ ET L'ON AFFIRME QUE ÇA SE REFERME, PAS QUE C'EST ARRIVÉ. Même curseur posé, la cible
+    // BOUGE encore ici : le lerp de suivi de la caméra (0,16 par frame) met des SECONDES à
+    // s'asseoir quand une frame dure un tiers de seconde — relevé, la cible dérivait encore
+    // de −2,85° à −0,94° pendant que la ligne la suivait de −7,46° à −2,05°. Exiger un zéro
+    // reviendrait à exiger que la caméra du banc ait fini de glisser. La monotonie, elle, dit
+    // exactement ce qu'on veut savoir : la ligne se referme et ne rouvre jamais.
+    await page.mouse.move(versEst.x, versEst.y, { steps: 6 })
+    await page.waitForTimeout(3000)
+    const lissage = await page.evaluate(() => new Promise((resolve) => {
+      const s = window.__BRAISES__.scene
+      const serie = []
+      let n = 0
+      const voir = () => {
+        const v = s.viseeLissee.get(s.playerId)
+        if (v !== undefined) {
+          let e = (v.cible - v.angle) % (Math.PI * 2)
+          if (e > Math.PI) e -= Math.PI * 2
+          if (e <= -Math.PI) e += Math.PI * 2
+          serie.push({
+            e: Number(Math.abs((e * 180) / Math.PI).toFixed(2)),
+            c: Number(((v.cible * 180) / Math.PI).toFixed(2)),
+            a: Number(((v.angle * 180) / Math.PI).toFixed(2)),
+          })
+        }
+        if (++n >= 10) {
+          resolve({ serie, ecartDeg: serie.length ? serie[serie.length - 1].e : null })
+          return
+        }
+        requestAnimationFrame(voir)
+      }
+      requestAnimationFrame(voir)
+    }))
+    const ferme = lissage.serie.length >= 3 && lissage.serie.every((p, i, t) => i === 0 || p.e < t[i - 1].e)
+    console.log(ferme && lissage.ecartDeg < 3
+      ? `   ✓ la ligne SE REFERME sur sa visée : ${lissage.serie[0].e}° → ${lissage.ecartDeg}° sur dix frames, sans jamais rouvrir`
+      : `   ✗ le lissage ne rejoint pas sa cible : ${lissage.serie.map((p) => p.e).join('° → ')}°`)
+
+    // ── ④ LE TRAIT ── clic GAUCHE (le droit reste enfoncé), puis on FIGE la boucle : un vol
+    // peint dure 200 ms et l'horloge headless galope — sans le gel, la photo arrive après.
+    // ON ARME LE GUET AVANT DE TIRER — et c'est la leçon de ce scénario : posé APRÈS le
+    // clic, il regardait après la bataille (le trait part 250 ms plus tard, la boucle
+    // d'aller-retour Node↔page en met autant). Il s'accroche à `requestAnimationFrame`,
+    // enregistré APRÈS celui de Phaser : notre rappel s'exécute donc une fois la frame
+    // DESSINÉE. Dès qu'un trait est peint, on endort la boucle — le canvas garde alors sa
+    // dernière image, celle qui le porte. Sans ce gel, un vol de 200 ms meurt entre deux
+    // frames (le rendu logiciel de cette machine tourne à quelques images par seconde).
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      window.__VOL__ = null
+      const t0 = performance.now()
+      const guetter = () => {
+        const n = s.attackFx.enVol()
+        if (n > 0) {
+          s.game.loop.sleep()
+          window.__VOL__ = { vus: n, ms: Math.round(performance.now() - t0) }
+          return
+        }
+        if (performance.now() - t0 > 10000) {
+          window.__VOL__ = { vus: 0, ms: -1 }
+          return
+        }
+        requestAnimationFrame(guetter)
+      }
+      requestAnimationFrame(guetter)
+    })
+    await page.mouse.down({ button: 'left' })
+    await page.mouse.up({ button: 'left' })
+    await page.waitForFunction(() => window.__VOL__ !== null, null, { timeout: 20000 })
+    const vol = await page.evaluate(() => window.__VOL__)
+    console.log(vol.vus > 0
+      ? `   ✓ le trait est EN VOL (${vol.vus}), attrapé ${vol.ms} ms après le décochage`
+      : `   ✗ aucun trait peint : le tir ne se voit pas partir`)
+    // LA BOUCLE EST ENDORMIE, LE TRAIT VIENT DE NAÎTRE — donc il est encore DANS l'arc.
+    // On avance la boucle À LA MAIN de deux fois 45 ms pour le prendre en pleine course :
+    // `game.step` refait une frame complète (update + rendu), ce que `fx.update` seul ne
+    // ferait pas. C'est le seul moyen de PHOTOGRAPHIER un effet plus court qu'une frame.
+    await page.evaluate(() => {
+      const g = window.__BRAISES__.scene.game
+      let t = g.loop.time
+      t += 45; g.step(t, 45)
+      t += 45; g.step(t, 45)
+    })
+    await page.screenshot({ timeout: 90000, path: `${OUT}/tir-3-trait.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+
+    // ── ⑤ LA FLÈCHE RETOMBE, ET LE CARQUOIS A BAISSÉ D'UNE ──
+    await page.mouse.up({ button: 'right' })
+    await page.waitForTimeout(900)
+    const apres = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const inv = s.registry.get('inv') ?? []
+      return {
+        fleches: inv.reduce((n, c) => n + (c && c.item === 'arrow' ? c.count : 0), 0),
+        piles: (s.view?.groundItems ?? []).filter((p) => p.item === 'arrow').length,
+        charge: (s.charges ?? []).some((x) => x.id === s.playerId),
+      }
+    })
+    console.log(apres.fleches === main.fleches - 1
+      ? `   ✓ le carquois a baissé d'exactement une (${main.fleches} → ${apres.fleches})`
+      : `   ✗ carquois ${main.fleches} → ${apres.fleches} : le décompte du tir ne tient pas`)
+    // UNE FLÈCHE SUR DEUX SE PERD (décision d'Alexis) : un tir donné ne laisse plus
+    // forcément un tas. On en décoche donc jusqu'à en voir un — et c'est justement le
+    // geste qu'on veut montrer, puisque c'est celui qu'on ira ramasser.
+    let piles = apres.piles
+    for (let essai = 0; essai < 6 && piles === 0; essai++) {
+      await page.mouse.down({ button: 'right' })
+      await page.waitForTimeout(1400)
+      await page.mouse.down({ button: 'left' })
+      await page.mouse.up({ button: 'left' })
+      await page.waitForTimeout(400)
+      await page.mouse.up({ button: 'right' })
+      await page.waitForTimeout(900)
+      piles = await page.evaluate(
+        () => (window.__BRAISES__.scene.view?.groundItems ?? []).filter((p) => p.item === 'arrow').length,
+      )
+    }
+    console.log(piles >= 1
+      ? `   ✓ une flèche a fini par retomber, ramassable (${piles} pile)`
+      : `   ✗ six tirs et aucune flèche au sol : la récupération ne rend jamais rien`)
+    // LA FLÈCHE AU SOL, DE PRÈS : c'est elle qui ferme la boucle de l'économie de munition
+    // (T6). Elle fait quelques pixels à l'échelle de jeu — on pousse la caméra pour la voir.
+    if (piles >= 1) {
+      const surLaPile = await page.evaluate(() => {
+        const s = window.__BRAISES__.scene
+        const cam = s.cameras.main
+        const pile = (s.view?.groundItems ?? []).find((p) => p.item === 'arrow')
+        if (!pile) return null
+        window.__ZOOM__ = cam.zoom
+        // ON DÉTACHE LE SUIVI D'ABORD : la caméra suit l'avatar, et elle ANNULE tout
+        // `centerOn` à la frame suivante — la première photo n'a montré que du gazon.
+        cam.stopFollow()
+        cam.setZoom(window.__ZOOM__ * 4)
+        cam.centerOn(pile.x * 16, pile.y * 16)
+        return { x: s.scale.width / 2, y: s.scale.height / 2 }
+      })
+      if (surLaPile) {
+        await page.waitForTimeout(900)
+        await page.screenshot({
+          timeout: 90000,
+          path: `${OUT}/tir-5-au-sol.png`,
+          clip: { x: Math.max(0, surLaPile.x - 170), y: Math.max(0, surLaPile.y - 140), width: 380, height: 300 },
+        })
+        await page.evaluate(() => {
+          const cam = window.__BRAISES__.scene.cameras.main
+          cam.setZoom(window.__ZOOM__)
+          cam.startFollow(window.__BRAISES__.scene.playerSprite, false, 0.16, 0.16)
+        })
+        await page.waitForTimeout(500)
+      }
+    }
+    console.log(!apres.charge
+      ? `   ✓ l'arc est rabaissé après le relâchement du clic droit`
+      : `   ✗ la corde est restée tendue : le rabaissement ne part pas`)
+
+    // ── ⑦ ON REBANDE DIRECT (décision d'Alexis) ── clic droit TOUJOURS enfoncé, on
+    // décoche au gauche : l'arc ne doit pas se rabaisser, il doit repartir tout seul dès
+    // que la récupération s'achève. Le clic droit veut dire « arc levé », pas « une flèche ».
+    await page.mouse.move(versEst.x, versEst.y)
+    await page.mouse.down({ button: 'right' })
+    await page.waitForTimeout(2500)
+    await page.mouse.down({ button: 'left' })
+    await page.mouse.up({ button: 'left' })
+    // On laisse passer l'armement PUIS la récupération (1,1 s au tir bandé) : c'est APRÈS
+    // elle que la corde doit être repartie toute seule, sans qu'un doigt ait bougé.
+    await page.waitForTimeout(3500)
+    const rebande = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const c = (s.charges ?? []).find((x) => x.id === s.playerId)
+      return { charge: c !== undefined, ratio: c ? Number(c.ratio.toFixed(2)) : -1 }
+    })
+    await page.mouse.up({ button: 'right' })
+    await page.waitForTimeout(600)
+    console.log(rebande.charge
+      ? `   ✓ le doigt n'a pas bougé et l'arc S'EST REBANDÉ tout seul (ratio ${rebande.ratio})`
+      : `   ✗ l'arc est resté baissé après le tir : il faut relâcher le droit pour rebander`)
+
+    // ── ⑥ RABAISSER NE COÛTE RIEN ── on relève, on tient, on relâche SANS décocher.
+    // ON RELIT LE CARQUOIS D'ABORD : les tirs de rattrapage (une flèche sur deux se perd)
+    // ont vidé le compte de référence, et comparer à un chiffre périmé rendrait ce
+    // contrôle rouge pour une raison qui n'a rien à voir avec l'annulation.
+    const avantRepos = await page.evaluate(() => {
+      const inv = window.__BRAISES__.scene.registry.get('inv') ?? []
+      return inv.reduce((n, c) => n + (c && c.item === 'arrow' ? c.count : 0), 0)
+    })
+    await page.mouse.move(versEst.x, versEst.y)
+    await page.mouse.down({ button: 'right' })
+    await page.waitForTimeout(900)
+    await page.mouse.up({ button: 'right' })
+    await page.waitForTimeout(600)
+    const gratuit = await page.evaluate(() => {
+      const inv = window.__BRAISES__.scene.registry.get('inv') ?? []
+      return inv.reduce((n, c) => n + (c && c.item === 'arrow' ? c.count : 0), 0)
+    })
+    console.log(gratuit === avantRepos
+      ? `   ✓ lever puis rabaisser l'arc ne coûte AUCUNE flèche (${gratuit})`
+      : `   ✗ le rabaissement a coûté ${avantRepos - gratuit} flèche(s) — attack_cancel ne passe pas`)
+    await page.screenshot({ timeout: 90000, path: `${OUT}/tir-4-repos.png` })
+  },
+
+  /**
    * VILLAGE-PNJ (2026-07-31) — le campement du palier 1 SE VOIT (spec village-pnj-evolution R1).
    *
    * Ce qui ne se prouve qu'au navigateur : le spawn n'est plus « 1 feu + 3 chips house + 1

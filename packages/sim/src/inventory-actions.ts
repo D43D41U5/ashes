@@ -27,6 +27,7 @@ import {
   moveSlotWithin,
   pourOntoSlot,
   type Inventory,
+  type ItemId,
   type Slot,
 } from './items'
 import type { Entity, SimState } from './sim'
@@ -101,6 +102,31 @@ export function isInventoryAction(action: { type: string }): action is Inventory
   // `hasOwn` et pas `in` : `'toString' in table` est vrai sur tout objet, et le `type`
   // vient parfois du réseau.
   return Object.hasOwn(INVENTORY_ACTION_TYPES, action.type)
+}
+
+/**
+ * POSER DES CHOSES AU SOL — le seul chemin (spec chasse C18).
+ *
+ * Les piles FUSIONNENT si l'on pose deux fois le même item au même endroit : sans ça,
+ * dix baies jetées feraient dix piles superposées, et dix bêtes convergeraient sur dix
+ * appâts qui n'en sont qu'un. Depuis le tir (`tir.md` T6) l'enjeu a doublé : vingt
+ * flèches décochées sur le même loup feraient vingt tas d'une flèche, à ramasser un
+ * par un — la récupération, qui doit être le geste simple qui paie l'économie de
+ * munition, deviendrait une corvée de vingt clics.
+ *
+ * N'ÉMET AUCUN ÉVÉNEMENT : jeter est un fait de domaine (`item_dropped`, que
+ * l'alignement consomme), une flèche qui retombe n'en est pas un. C'est à l'appelant
+ * de dire si son geste compte, pas à la pile de le supposer.
+ */
+export function poserAuSol(state: SimState, x: number, y: number, item: ItemId, count: number): void {
+  const near = state.groundItems.find((p) => p.item === item && distSq(x, y, p.x, p.y) <= 0.5 * 0.5)
+  if (near) {
+    near.count += count
+    near.expiresAt = state.tick + HUNT.GROUND_TTL // le tas se renouvelle
+    return
+  }
+  state.groundItems.push({ id: state.nextGroundItemId, x, y, item, count, expiresAt: state.tick + HUNT.GROUND_TTL })
+  state.nextGroundItemId += 1
 }
 
 /**
@@ -280,33 +306,13 @@ export function applyInventoryAction(state: SimState, actorId: number, action: I
      * JE JETTE CE QUE JE TIENS (spec chasse C18). Une unité de la case active
      * tombe au sol. Ce geste, et lui seul, rend exécutables l'appât, le jet de
      * viande à une meute et l'allègement du porteur en fuite.
-     *
-     * Les piles FUSIONNENT si l'on jette deux fois le même item au même endroit :
-     * sans ça, dix baies posées feraient dix piles superposées — et dix bêtes
-     * convergeraient sur dix appâts qui n'en sont qu'un.
      */
     case 'drop_held': {
       const held = heldSlot(actor)
       if (held === null) return reject('rien en main')
       const item = held.item
 
-      const near = state.groundItems.find(
-        (p) => p.item === item && distSq(actor.x, actor.y, p.x, p.y) <= 0.5 * 0.5,
-      )
-      if (near) {
-        near.count += 1
-        near.expiresAt = state.tick + HUNT.GROUND_TTL // le tas se renouvelle
-      } else {
-        state.groundItems.push({
-          id: state.nextGroundItemId,
-          x: actor.x,
-          y: actor.y,
-          item,
-          count: 1,
-          expiresAt: state.tick + HUNT.GROUND_TTL,
-        })
-        state.nextGroundItemId += 1
-      }
+      poserAuSol(state, actor.x, actor.y, item, 1)
 
       held.count -= 1
       if (held.count <= 0) actor.inventory[actor.activeSlot] = null

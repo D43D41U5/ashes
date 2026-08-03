@@ -62,6 +62,11 @@ export const RECIPE_CATEGORY: Record<RecipeId, CraftCategory> = {
   chest: 'campement',
   crude_axe: 'outils',
   crude_pickaxe: 'outils',
+  // LE TIR (spec `tir.md`) : les arcs sont des ARMES, la flèche est leur munition —
+  // elle se range avec eux, parce qu'on vient les chercher dans le même geste.
+  crude_bow: 'armes',
+  bow: 'armes',
+  arrow: 'armes',
   axe: 'outils',
   pickaxe: 'outils',
   iron_axe: 'outils',

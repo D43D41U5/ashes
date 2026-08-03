@@ -88,6 +88,30 @@ export function advanceCendreux(state: SimState): void {
       corpse.decayAt = state.tick + COMBAT.CORPSE_TICKS
       continue
     }
+    // ═══ LE PLAFOND SE LIT AUSSI ICI, ET C'EST TOUT LE POINT (R8) ═══
+    //
+    // Il n'était consulté qu'à la MORT (`willRiseAsCendreux`), or un cadavre ne se lève
+    // que `RISE_DELAY` plus tard : entre les deux, une nuit qui tourne mal marque des
+    // CENTAINES de cadavres alors que pas un seul ne marche encore. Le plafond ne bornait
+    // donc rien du tout — MESURÉ le 2026-08-02 : **460 Cendreux vivants pour un
+    // MAX_ALIVE de 24**, dans un banc où un joueur sans village remeurt sur place.
+    //
+    // Ça ne se voyait pas, et voici pourquoi : le nouveau-né naît EXACTEMENT sur le
+    // cadavre, donc sous ce qui vient d'y tuer — un loup, le meurtrier — et se faisait
+    // abattre dans le tick de sa levée. C'était un ACCIDENT qui tenait lieu de règle
+    // (`docs/mesure-contagion.md` avait déjà attrapé sa version cendreux-contre-cendreux).
+    // Le recul du 2026-08-02 écarte les corps d'un quart de tuile : l'exécution à la
+    // naissance a cessé, et la contagion est partie à 460. Le recul n'a rien cassé — il a
+    // retiré la béquille qui masquait un plafond mort.
+    //
+    // Plein, la vallée « ne relève plus personne » (le mot de R8) : le cadavre redevient
+    // un cadavre et se décompose. Il ne fait pas la queue — une file de quatre cents morts
+    // qui se videraient à mesure qu'on abat rendrait le plafond à son inutilité.
+    if (risenAlive(state) >= CENDREUX.MAX_ALIVE) {
+      delete corpse.risesAt
+      corpse.decayAt = state.tick + COMBAT.CORPSE_TICKS
+      continue
+    }
     // Levée : le cadavre devient le Cendreux, portant son loot.
     // LES 40 CASES SE DEMANDENT ICI, et nulle part ailleurs. C'est le seul Cendreux qui
     // hérite d'un cadavre entier ; ceux des hordes et des convois naissent les mains vides

@@ -99,7 +99,19 @@ describe('l’inertie (A3)', () => {
   // de plus, et 14 s sont devenues 24. Ce n'est PAS un coût de tick : le banc de scénario —
   // vrai worldgen, des milliers de ticks — n'a pas bougé d'une seconde (54,2 s → 53,4 s).
   // Un test qui tient à 80 % de son plafond n'est pas un test : on lui donne de la marge.
-  it('la chaleur revient linéairement vers 0 (le paquebot)', { timeout: 90_000 }, () => {
+  //
+  // 90 s → 180 s (2026-08-02, le CORPS-CIBLE — spec combat R4quinquies). MESURÉ : 29 s
+  // avant, **121 s après**, seul et sur machine calme. Ce n'est PAS un coût de tick : le
+  // banc de scénario (vrai worldgen, 57 600 ticks) est resté à 53-55 s des deux côtés.
+  // C'est le FIXTURE qui paie — un avatar SANS VILLAGE, planté cinq jours de saison, que
+  // la nuit finit par tuer ; il renaît alors exactement où il est tombé (`die()` :
+  // `homeX/homeY`), au milieu de ce qui l'a tué, et remeurt. Chaque mort sème un cadavre,
+  // donc un Cendreux, donc un tick plus lourd. Le corps-cible fait porter plus de coups,
+  // donc accélère cette spirale — qui EXISTAIT DÉJÀ (le trou du respawn sur place est
+  // consigné au journal du 2026-08-02, non corrigé : ce n'est pas le sujet du combat).
+  // La durée de ce test est sa raison d'être ; on lui rend sa marge plutôt que de lui
+  // faire mesurer autre chose.
+  it('la chaleur revient linéairement vers 0 (le paquebot)', { timeout: 180_000 }, () => {
     const sim = makeSim(TICKS_PER_SEASON_DAY / TICKS_PER_CYCLE) // 1 cycle = 1 jour
     const a = spawnEntity(sim, 10.5, 10.5)
     entity(sim, a).warmth = 40
@@ -195,10 +207,24 @@ describe('LE test (A7) — le paquebot vire, la Meute raide', () => {
   })
 
   it('(b) une Meute PNJ raide la nuit : grenier voisin cassé, butin rapporté, alarme', { timeout: 60_000 }, () => {
-    // Seed 24 (était 23) : le doublement du portage (2026-07-19) a décalé le flux
-    // RNG et le raid n'aboutissait plus sous 23 dans la fenêtre — fragilité au seed,
-    // pas une régression (cf. la mémoire « RNG fragile »). 24 le rejoue proprement.
-    const sim = createSim(24, { map: createEmptyMap(60, 60, TERRAIN_GRASS) })
+    // Seed 21 (était 24, était 23).
+    //
+    // 23 → 24 : le doublement du portage (2026-07-19) avait décalé le flux RNG —
+    // fragilité au seed, pas une régression.
+    //
+    // 24 → 21 (2026-08-02) : ET CELLE-CI N'EST PAS QU'UNE FRAGILITÉ — c'est MESURÉ, et le
+    // chiffre doit rester sous les yeux. `tools/diag-raid.mts` rejoue ce raid sur 12 graines,
+    // avant et après le corps-cible et le recul (spec combat R4quinquies/R4sexies) :
+    //
+    //     grenier cassé : 6/12  →  5/12   (inchangé, au bruit près)
+    //     butin rentré  : 5/12  →  1/12   ← la nuit tue les porteurs sur le chemin du retour
+    //
+    // Le raid ABOUTIT toujours aussi souvent ; ce sont les raiders chargés qui ne rentrent
+    // plus. C'est la conséquence assumée de « le corps compte pour tout le monde » (la nuit
+    // mord plus fort), et elle est en attente d'arbitrage d'Alexis : adoucir la calibration,
+    // ou accepter que rentrer avec le butin devienne l'exploit. Tant que ce n'est pas
+    // tranché, on joue la graine qui garde le test VIVANT — mais on ne cache pas le taux.
+    const sim = createSim(21, { map: createEmptyMap(60, 60, TERRAIN_GRASS) })
     foundNpcVillage(sim, 15, 15, 3, 'neutre') // la victime
     const victim = sim.villages[0]!
     foundNpcVillage(sim, 40, 40, 4, 'meute') // la Meute

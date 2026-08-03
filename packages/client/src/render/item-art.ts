@@ -34,6 +34,9 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   steel_axe: "Hache d'acier",
   steel_pickaxe: "Pioche d'acier",
   spear: 'Lance',
+  crude_bow: 'Arc de fortune',
+  bow: 'Arc long',
+  arrow: 'Flèche',
   hammer: 'Marteau de construction',
   raw_meat: 'Viande crue',
   quartier: 'Quartier',
@@ -346,6 +349,39 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x7c7c86).fillTriangle(4, 5, 10, 5, 7, 0) // pointe de pierre
     g.fillStyle(0x9a9aa4).fillTriangle(4, 5, 6, 5, 6, 2) // arête claire NO
     g.fillStyle(0xb89a52).fillRect(5, 5, 4, 2) // la ligature
+  },
+
+  // ── LE TIR ── En ombre chinoise, un arc est UN ARC : la courbe du bois et la corde
+  // droite qui la ferme. C'est la seule silhouette du sac qui ne soit pas un bâton —
+  // elle se distingue de la lance et de la hache sans qu'on lise la couleur.
+  crude_bow: (g) => {
+    // Le bois : trois segments qui font le galbe (pas de courbe à 16 px, des marches).
+    g.fillStyle(0x6a4c2c)
+    g.fillRect(5, 2, 2, 3)
+    g.fillRect(4, 5, 2, 6)
+    g.fillRect(5, 11, 2, 3)
+    g.fillStyle(0x8d6b40).fillRect(4, 5, 1, 6) // la face claire, au nord-ouest
+    g.fillStyle(0xcfc4a4).fillRect(6, 2, 1, 12) // la corde, tendue et droite
+  },
+  bow: (g) => {
+    // L'ARC LONG : plus haut (il déborde de la case), plus galbé, corde plus claire.
+    g.fillStyle(0x7a5a34)
+    g.fillRect(6, 0, 2, 3)
+    g.fillRect(4, 3, 2, 4)
+    g.fillRect(3, 7, 2, 2)
+    g.fillRect(4, 9, 2, 4)
+    g.fillRect(6, 13, 2, 3)
+    g.fillStyle(0x9d7a4c).fillRect(3, 7, 1, 2)
+    g.fillStyle(0xb89a52).fillRect(4, 7, 3, 2) // la poignée, ligaturée
+    g.fillStyle(0xe6dcc0).fillRect(7, 0, 1, 16) // la corde
+  },
+  arrow: (g) => {
+    g.fillStyle(0x8d6b40).fillRect(7, 3, 2, 11) // la hampe
+    g.fillStyle(0x6a4c2c).fillRect(8, 3, 1, 11)
+    g.fillStyle(0x9a9aa4).fillTriangle(5, 4, 11, 4, 8, 0) // la pointe de pierre
+    g.fillStyle(0xc4c4ce).fillTriangle(5, 4, 8, 4, 8, 1) // arête claire NO
+    g.fillStyle(0xd8d2c0).fillTriangle(7, 14, 4, 16, 7, 11) // l'empenne
+    g.fillStyle(0xb5ad98).fillTriangle(9, 14, 12, 16, 9, 11)
   },
 
   // Hache : manche bois + fer triangulaire.

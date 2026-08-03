@@ -254,6 +254,10 @@ const FORMES: { [T in ActionJouable]: FormeDe<Extract<PlayerAction, { type: T }>
   attack: { dx: req(AXE), dy: req(AXE) },
   attack_charge: { dx: req(AXE), dy: req(AXE), hold: opt({ g: 'booleen' }) },
   attack_release: { dx: req(AXE), dy: req(AXE) },
+  // RENONCER À LA CHARGE (spec `tir.md` T2) : sans charge utile — on ne renonce pas
+  // « dans une direction ». Le client l'émet à chaque perte de focus, la sim est muette
+  // s'il n'y a rien d'armé.
+  attack_cancel: {},
   bandage: { targetEntityId: opt(ID) },
   loot_corpse: { corpseId: req(ID) },
 

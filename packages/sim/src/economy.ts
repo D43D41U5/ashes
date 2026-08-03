@@ -812,8 +812,13 @@ export function advanceCraft(state: SimState): void {
     // Échéance : on livre — ou on attend une case (F10). Tant qu'on attend, RIEN
     // n'est crédité : ni XP, ni `item_crafted`. L'événement suivrait l'objet, or
     // l'objet n'est pas encore là — la chronique ne doit pas mentir.
-    if (freeRoomFor(entity.inventory, recipe.output) <= 0) continue
-    addItems(entity.inventory, { [recipe.output]: 1 })
+    // LE LOT (spec `tir.md` T9 — la flèche est la première recette à en produire un).
+    // On exige la place du lot ENTIER : livrer trois flèches sur cinq et garder la
+    // commande en cours ferait diverger le compte de la file de ce qui est sorti.
+    // Sac plein = la file attend, exactement comme à l'unité (F10).
+    const lot = recipe.count ?? 1
+    if (freeRoomFor(entity.inventory, recipe.output) < lot) continue
+    addItems(entity.inventory, { [recipe.output]: lot })
     gainXp(state, entity, 'crafting', BALANCE.XP_PER_CRAFT)
     emitEvent(state, {
       type: 'item_crafted',

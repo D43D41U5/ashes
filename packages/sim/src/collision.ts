@@ -325,6 +325,95 @@ function blockedSubAt(world: MoveWorld, sx: number, sy: number): boolean {
   return false
 }
 
+/**
+ * ═══ LA LIGNE DÉGAGÉE — CE QUI BLOQUE LE PAS BLOQUE LE TRAIT (spec `tir.md` T5) ═══
+ *
+ * Le trait d'un arc exige un chemin libre entre le tireur et sa cible. La question est
+ * exactement celle que la collision se pose déjà, et c'est pourquoi elle passe par
+ * `blockedSubAt` plutôt que par une nouvelle notion d'obstacle : un mur MINCE n'existe
+ * qu'à la résolution SOUS-TUILE (une bande de `WALL_EDGE_SUB/2` de part et d'autre de
+ * l'arête). Interroger `isBlockedAt` tuile par tuile aurait laissé passer les flèches à
+ * travers toute enceinte de murs d'arête — le piège même que `crossingBlocker` a dû
+ * réparer pour les bêtes, et que « le premier solide » a déjà tendu une fois ici.
+ *
+ * BALAYAGE EXACT, PAS ÉCHANTILLONNAGE : un DDA de grille (Amanatides & Woo) visite
+ * TOUTES les sous-tuiles que le segment traverse, donc rien ne se faufile entre deux
+ * points de mesure. Le nombre de pas vaut exactement la distance de Manhattan en
+ * sous-tuiles — 176 au pire pour la portée de l'arc long. Tout est en `+ − × ÷`,
+ * `abs` et `floor` : aucune trigonométrie (invariant §2).
+ *
+ * DEUX SOUS-TUILES SONT EXEMPTÉES, aux deux bouts :
+ *   · celle du TIREUR — un archer collé à son mur tire quand même ;
+ *   · celle de la CIBLE — si un corps s'y tient, ce n'est pas l'obstacle qui la couvre.
+ *     Sans cette exemption, une bête chevauchant le carré bloquant d'un arbre rendrait
+ *     le tir muet, et l'on chercherait le défaut dans la visée.
+ *
+ * Le monde est interrogé SANS village ni clé (`moverVillageId: null`, `opensDoors: false`) :
+ * une flèche n'appartient à personne et n'ouvre aucune porte. Une porte CLOSE l'arrête,
+ * la même porte OUVERTE la laisse passer.
+ */
+export interface Trait {
+  /** Le chemin était-il libre de bout en bout ? */
+  degage: boolean
+  /** Où le trait s'arrête : la cible si dégagé, sinon juste devant l'obstacle. */
+  x: number
+  y: number
+}
+
+/**
+ * Le trait, ET OÙ IL S'ARRÊTE — la méthode est dans l'en-tête ci-dessus.
+ *
+ * Rendre le point d'arrêt, et pas seulement un booléen, est ce qui permet à la flèche
+ * de RETOMBER quelque part de ramassable (spec T6) : au pied du mur qu'elle a frappé,
+ * pas dans le mur. Le point est reculé d'une demi-sous-tuile en deçà de la frontière
+ * franchie — la sous-tuile d'avant a été vérifiée libre, donc ce point l'est aussi.
+ */
+export function traitLibre(world: MoveWorld, x0: number, y0: number, x1: number, y1: number): Trait {
+  const INF = Number.POSITIVE_INFINITY
+  const ax = x0 * SUB
+  const ay = y0 * SUB
+  const bx = x1 * SUB
+  const by = y1 * SUB
+  let sx = Math.floor(ax)
+  let sy = Math.floor(ay)
+  const sxEnd = Math.floor(bx)
+  const syEnd = Math.floor(by)
+  const dx = bx - ax
+  const dy = by - ay
+  const stepX = dx > 0 ? 1 : dx < 0 ? -1 : 0
+  const stepY = dy > 0 ? 1 : dy < 0 ? -1 : 0
+  const dtX = stepX === 0 ? INF : Math.abs(1 / dx)
+  const dtY = stepY === 0 ? INF : Math.abs(1 / dy)
+  let tX = stepX === 0 ? INF : (stepX > 0 ? sx + 1 - ax : sx - ax) / dx
+  let tY = stepY === 0 ? INF : (stepY > 0 ? sy + 1 - ay : sy - ay) / dy
+  const pas = Math.abs(sxEnd - sx) + Math.abs(syEnd - sy)
+  // La longueur du segment en sous-tuiles : ce qui convertit un recul en tuiles.
+  const long = Math.sqrt(dx * dx + dy * dy)
+  for (let i = 0; i < pas; i++) {
+    // `t` PARAMÈTRE le segment (0 au tireur, 1 à la cible) : c'est la frontière qu'on
+    // s'apprête à franchir, donc le point d'arrêt si ce qui est derrière bloque.
+    const t = tX < tY ? tX : tY
+    if (tX < tY) {
+      sx += stepX
+      tX += dtX
+    } else {
+      sy += stepY
+      tY += dtY
+    }
+    if (sx === sxEnd && sy === syEnd) break // la sous-tuile de la cible : exemptée
+    if (blockedSubAt(world, sx, sy)) {
+      const recul = long > 0 ? Math.max(0, t - 0.5 / long) : 0
+      return { degage: false, x: x0 + (x1 - x0) * recul, y: y0 + (y1 - y0) * recul }
+    }
+  }
+  return { degage: true, x: x1, y: y1 }
+}
+
+/** Le chemin est-il libre ? — `traitLibre` sans son point d'arrêt (UNE seule marche). */
+export function ligneDegagee(world: MoveWorld, x0: number, y0: number, x1: number, y1: number): boolean {
+  return traitLibre(world, x0, y0, x1, y1).degage
+}
+
 /** Plage de SOUS-TUILES recouvertes par l'intervalle [min, max) donné en sous-tuiles. */
 function subSpan(min: number, max: number): [number, number] {
   return [Math.floor(min + EPS_SUB), Math.floor(max - EPS_SUB)]

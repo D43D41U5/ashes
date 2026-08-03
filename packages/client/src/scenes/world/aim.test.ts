@@ -259,8 +259,10 @@ describe('viser un feu → fireId (pour ouvrir le modal à E, spec feu-station S
 })
 
 describe('la main décide du clic', () => {
-  const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
-  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, inRange: true }
+  const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
+  pileId: null, inRange: true }
+  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
+  pileId: null, inRange: true }
   const versLest = { dx: 1, dy: 0 }
 
   it('DE LA NOURRITURE EN MAIN → on mange (et le maintien répète)', () => {

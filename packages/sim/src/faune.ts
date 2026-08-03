@@ -38,10 +38,11 @@ import {
   TERRAIN_REED_MARSH,
   TERRAIN_SHALLOW_WATER,
   TICK_DT_S,
+  isRangedWeapon,
   type MonsterType,
 } from './balance'
 import { isBlockedAt, makeIndexedIsBlockedAt } from './collision'
-import { applyDamage, die, startAttack } from './combat'
+import { applyDamage, die, startAttack, weaponKind } from './combat'
 import { emitEvent } from './events'
 import { fireState } from './fire'
 import { distSq } from './geometry'
@@ -399,12 +400,35 @@ export function coverAt(state: SimState, x: number, y: number): number {
   return TERRAINS[terrainAt(state.map, Math.floor(x), Math.floor(y))]?.cover ?? 1
 }
 
+/**
+ * ═══ BANDER SE VOIT (spec `tir.md` T7, décision d'Alexis) ═══
+ *
+ * Sans cette règle, l'arc SUPPRIMAIT le jeu d'approche au lieu de s'y ajouter : la
+ * méfiance dérive de la distance PERÇUE (C1), donc à douze tuiles le stimulus est nul,
+ * donc TOUT tir long aurait été automatiquement propre — le vent, le couvert, le pas
+ * lent et la posture de la bête auraient cessé de payer quoi que ce soit.
+ *
+ * La parade ne touche PAS C6, et c'est ce qui la rend juste : elle ne fait qu'ajouter
+ * un corps qui BOUGE là où il n'y en avait pas. Un homme qui tire sur sa corde n'est
+ * plus un rocher — il se voit un peu plus, et il s'entend un peu.
+ *
+ * Ce que ça donne, et c'est délibérément asymétrique : à douze tuiles, RIEN (le
+ * stimulus y est déjà quasi nul, et le tir long reste propre — c'est le fantasme du
+ * chasseur) ; à cinq ou six, bander pleinement fait lever la tête à la bête PENDANT
+ * qu'on vise. Le stop-and-go de C1 ne survit pas seulement, il gagne une phase :
+ * *je bande — elle fixe — je tire MAINTENANT, ou je relâche et j'attends.*
+ */
+function drawTell(e: Entity): boolean {
+  return e.charge !== undefined && isRangedWeapon(weaponKind(e))
+}
+
 /** La menace qu'un avatar OPPOSE, entrée une fois (spec chasse C5) : vue + ouïe. */
 export function avatarThreat(state: SimState, e: Entity): Threat {
+  const bande = drawTell(e)
   return {
     e,
-    vision: gaitVisibility(e) * coverAt(state, e.x, e.y),
-    noise: gaitNoise(e) * HUNT.HEARING_FACTOR,
+    vision: gaitVisibility(e) * coverAt(state, e.x, e.y) * (bande ? HUNT.DRAW_VISIBILITY : 1),
+    noise: gaitNoise(e) * HUNT.HEARING_FACTOR * (bande ? HUNT.DRAW_NOISE : 1),
   }
 }
 
