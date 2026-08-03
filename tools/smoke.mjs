@@ -191,6 +191,75 @@ async function mesurerContraste(page, a, b) {
   return { fantome: pa, fond: pb, dLum: Number((lum(pa) - lum(pb)).toFixed(1)) }
 }
 
+/**
+ * FONDER UN VILLAGE PRÈS DE SOI, ET RENDRE LE FEU QU'ON A VRAIMENT ALLUMÉ.
+ *
+ * Quatre scénarios recopiaient cette recette (`finale`, `porte`, `porte-double`, `arete`) ;
+ * elle n'a plus qu'une définition, parce que la copie portait une COURSE — mesurée le
+ * 2026-08-03, elle faisait rougir `porte-double` deux fois sur trois.
+ *
+ * ── LE PIÈGE, ET POURQUOI IL NE SE VOYAIT PAS ──
+ *
+ * La fondation se déclarait réussie sur `registry.get('village') > 0`, lu après une attente
+ * FIXE de 420 ms. Or cette clé est le NOMBRE DE MEMBRES du village auquel j'appartiens —
+ * pas « MA fondation, à CET offset, a pris ». Quand le snapshot arrivait en retard, la
+ * boucle croyait avoir échoué et passait à l'offset suivant, 24 tuiles plus loin, où elle
+ * posait un SECOND feu ; `found_village` y était un non-événement (on est déjà membre),
+ * mais le compte avait rattrapé son retard entre-temps — donc la boucle sortait, satisfaite,
+ * avec les coordonnées du MAUVAIS site. Tout ce qu'on bâtissait ensuite tombait « hors du
+ * carré du Feu » sans qu'aucune trace ne le dise, et le scénario mourait sur un « rien à
+ * mesurer » qui accusait la porte double alors que le fautif était la fondation.
+ *
+ * ── DEUX VERROUS, ET IL FAUT LES DEUX ──
+ *
+ * ① **ON ATTEND LE VILLAGE AU LIEU DE DORMIR** : scrutation jusqu'à 3 s, au lieu d'un pari
+ *    sur 420 ms. C'est ce qui évite d'aller allumer un feu inutile à 24 tuiles.
+ * ② **L'ADRESSE VIENT DE LA SIM, JAMAIS DE CE QU'ON VISAIT** : `bx,by` se dérive du feu que
+ *    la sim me reconnaît (`memberIds.includes(playerId)`), pas de l'offset qu'on essayait.
+ *    Seul ce verrou-là rend l'erreur IMPOSSIBLE plutôt que rare — ① ne fait que rétrécir la
+ *    fenêtre, et une fenêtre rétrécie est une course qui reviendra sur une machine chargée.
+ *
+ * Rend `{ village, bx, by }` — le feu occupe `(bx + 1, by)`, l'ancre que les quatre
+ * appelants attendent — ou `null` si aucun des sept sites n'a pris.
+ *
+ * ⚠ LES TROIS CHAMPS VIENNENT DE LA MÊME SOURCE, et c'est délibéré : rendre l'id du feu
+ * qu'on vient de POSER à côté de coordonnées lues sur le village REconnu rouvrirait la
+ * même faille d'un cran plus bas — si la scrutation expire au premier site alors que la
+ * fondation y avait pris, le second site pose un feu qui n'appartient à personne, et on
+ * rendrait son id avec l'adresse de l'autre. Un seul témoin, donc : `v`.
+ */
+const SITES_FONDATION = [[0, 0], [-24, 0], [24, 0], [0, -24], [0, 24], [-48, 0], [48, 0]]
+
+async function fonderPres(page, agir, slotDe, p0, sites = SITES_FONDATION) {
+  const monFeu = () => page.evaluate(() => {
+    const sc = window.__BRAISES__.scene
+    const v = (sc.view.villages ?? []).find((q) => q.memberIds.includes(sc.playerId))
+    return v ? { id: v.id, tx: v.fireTx, ty: v.fireTy } : null
+  })
+  for (const [ox, oy] of sites) {
+    const tx = Math.round(p0.x) + ox
+    const ty = Math.round(p0.y) + oy
+    await agir({ type: 'debug_teleport', x: tx + 0.5, y: ty + 0.5 }, 220)
+    await agir({ type: 'debug_grant', item: 'campfire' }, 160)
+    const cslot = await slotDe('campfire')
+    if (cslot < 0 || cslot >= 6) continue
+    await agir({ type: 'set_active_slot', slot: cslot }, 140)
+    await agir({ type: 'place_campfire', tx: tx + 1, ty }, 320)
+    const id = await page.evaluate(({ x, y }) => {
+      const f = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.villageId === 0 && q.tx === x && q.ty === y)
+      return f ? f.id : null
+    }, { x: tx + 1, y: ty })
+    if (id === null) continue
+    await agir({ type: 'found_village', structureId: id }, 200)
+    for (let essai = 0; essai < 20; essai++) {
+      const v = await monFeu()
+      if (v) return { village: v.id, bx: v.tx - 1, by: v.ty }
+      await page.waitForTimeout(150)
+    }
+  }
+  return null
+}
+
 const SCENARIOS = {
   /**
    * LE TIR (2026-08-02, spec `tir.md`) — l'arc, la corde qui se tend, le trait qui part.
@@ -4840,29 +4909,14 @@ const SCENARIOS = {
     // ── UN VRAI FEU, parce que la stèle COURONNE le village du joueur : sans village, on ne
     // vérifierait que la moitié de l'écran (les voisins) et pas le verdict qui le regarde, lui.
     const spawn = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
-    let feu = null
-    for (const [ox, oy] of [[0, 0], [-24, 0], [24, 0], [0, -24], [0, 24], [-48, 0], [48, 0]]) {
-      const bx = Math.round(spawn.x) + ox, by = Math.round(spawn.y) + oy
-      await doAction({ type: 'debug_teleport', x: bx + 0.5, y: by + 0.5 }, 200)
-      await doAction({ type: 'debug_grant', item: 'campfire' })
-      const cslot = await page.evaluate(() => (window.__BRAISES__.scene.registry.get('inv') ?? []).findIndex((s) => s?.item === 'campfire'))
-      if (cslot < 0 || cslot >= 6) continue
-      await doAction({ type: 'set_active_slot', slot: cslot }, 120)
-      await doAction({ type: 'place_campfire', tx: bx + 1, ty: by }, 300)
-      const fireId = await page.evaluate(({ x, y }) => {
-        const f = window.__BRAISES__.scene.view.structures.find((s) => s.type === 'fire' && s.villageId === 0 && s.tx === x && s.ty === y)
-        return f ? f.id : null
-      }, { x: bx + 1, y: by })
-      if (fireId === null) continue
-      await doAction({ type: 'found_village', structureId: fireId }, 400)
-      if (await page.evaluate(() => (window.__BRAISES__.scene.registry.get('village') ?? 0) > 0)) { feu = { bx, by, fireId }; break }
-    }
-    // L'ID DU VILLAGE FONDÉ, lu sur le Feu qu'on vient de poser. C'est lui qui rend
-    // l'assertion finale non tautologique : sans ça, on ne saurait pas distinguer « la stèle
-    // couronne MON village » de « la stèle couronne un village PNJ » — les deux affichent un nom.
-    const monVillageId = feu
-      ? await page.evaluate((id) => window.__BRAISES__.scene.view.structures.find((s) => s.id === id)?.villageId ?? null, feu.fireId)
-      : null
+    const slotDe = (item) => page.evaluate((it) => (window.__BRAISES__.scene.registry.get('inv') ?? [])
+      .findIndex((s) => s?.item === it), item)
+    const feu = await fonderPres(page, doAction, slotDe, spawn)
+    // L'ID DU VILLAGE FONDÉ, tel que la sim me le reconnaît (`fonderPres` le rend avec
+    // l'adresse : un seul témoin, cf. sa note). C'est lui qui rend l'assertion finale non
+    // tautologique — sans ça, on ne saurait pas distinguer « la stèle couronne MON village »
+    // de « la stèle couronne un village PNJ », les deux affichant un nom.
+    const monVillageId = feu ? feu.village : null
     console.log(`fondation : ${feu ? `Feu en (${feu.bx + 1}, ${feu.by}) → village ${monVillageId}` : 'ABSENTE — la stèle ne couronnera personne'}`)
 
     // ── ON POUSSE LE CALENDRIER, PAS L'ÉCRAN. `SEASON_DAYS` vaut 60 ; la fin tombe à `day > 60`.
@@ -5298,34 +5352,10 @@ const SCENARIOS = {
       .findIndex((s) => s?.item === it), item)
     const pos = () => page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
 
-    // ── FONDER, loin des landmarks (recette éprouvée de `finale`).
-    const p0 = await pos()
-    let feu = null
-    let bx = 0
-    let by = 0
-    for (const [ox, oy] of [[0, 0], [-24, 0], [24, 0], [0, -24], [0, 24], [-48, 0], [48, 0]]) {
-      const tx = Math.round(p0.x) + ox
-      const ty = Math.round(p0.y) + oy
-      await agir({ type: 'debug_teleport', x: tx + 0.5, y: ty + 0.5 }, 220)
-      await agir({ type: 'debug_grant', item: 'campfire' }, 160)
-      const cslot = await slotDe('campfire')
-      if (cslot < 0 || cslot >= 6) continue
-      await agir({ type: 'set_active_slot', slot: cslot }, 140)
-      await agir({ type: 'place_campfire', tx: tx + 1, ty }, 320)
-      const id = await page.evaluate(({ x, y }) => {
-        const f = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.villageId === 0 && q.tx === x && q.ty === y)
-        return f ? f.id : null
-      }, { x: tx + 1, y: ty })
-      if (id === null) continue
-      await agir({ type: 'found_village', structureId: id }, 420)
-      if (await page.evaluate(() => (window.__BRAISES__.scene.registry.get('village') ?? 0) > 0)) {
-        feu = id
-        bx = tx
-        by = ty
-        break
-      }
-    }
-    if (feu === null) { console.error('!! aucun village fondé — la porte n’est pas bâtissable'); return }
+    // ── FONDER, loin des landmarks (`fonderPres` : l'adresse vient de la sim, pas de l'offset).
+    const assise = await fonderPres(page, agir, slotDe, await pos())
+    if (assise === null) { console.error('!! aucun village fondé — la porte n’est pas bâtissable'); return }
+    const { bx, by } = assise
 
     for (let i = 0; i < 10; i++) await agir({ type: 'debug_grant', item: 'wood' }, 90)
     await agir({ type: 'debug_grant', item: 'hammer' }, 180)
@@ -5789,34 +5819,10 @@ const SCENARIOS = {
       .findIndex((s) => s?.item === it), item)
     const pos = () => page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
 
-    // ── FONDER, loin des landmarks (recette éprouvée de `porte`).
-    const p0 = await pos()
-    let feu = null
-    let bx = 0
-    let by = 0
-    for (const [ox, oy] of [[0, 0], [-24, 0], [24, 0], [0, -24], [0, 24], [-48, 0], [48, 0]]) {
-      const tx = Math.round(p0.x) + ox
-      const ty = Math.round(p0.y) + oy
-      await agir({ type: 'debug_teleport', x: tx + 0.5, y: ty + 0.5 }, 220)
-      await agir({ type: 'debug_grant', item: 'campfire' }, 160)
-      const cslot = await slotDe('campfire')
-      if (cslot < 0 || cslot >= 6) continue
-      await agir({ type: 'set_active_slot', slot: cslot }, 140)
-      await agir({ type: 'place_campfire', tx: tx + 1, ty }, 320)
-      const id = await page.evaluate(({ x, y }) => {
-        const f = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire' && q.villageId === 0 && q.tx === x && q.ty === y)
-        return f ? f.id : null
-      }, { x: tx + 1, y: ty })
-      if (id === null) continue
-      await agir({ type: 'found_village', structureId: id }, 420)
-      if (await page.evaluate(() => (window.__BRAISES__.scene.registry.get('village') ?? 0) > 0)) {
-        feu = id
-        bx = tx
-        by = ty
-        break
-      }
-    }
-    if (feu === null) { console.error('!! aucun village fondé — la porte double n’est pas bâtissable'); return }
+    // ── FONDER, loin des landmarks (`fonderPres` : l'adresse vient de la sim, pas de l'offset).
+    const assise = await fonderPres(page, agir, slotDe, await pos())
+    if (assise === null) { console.error('!! aucun village fondé — la porte double n’est pas bâtissable'); return }
+    const { bx, by } = assise
 
     for (let i = 0; i < 14; i++) await agir({ type: 'debug_grant', item: 'wood' }, 90)
     await agir({ type: 'debug_grant', item: 'hammer' }, 180)
@@ -5892,7 +5898,15 @@ const SCENARIOS = {
       }, { x: tx, y: ligne - 1 })
       if (ok) { ax = tx; break }
     }
-    if (ax === null) { console.error('!! les deux vantaux ne sont pas posés — rien à mesurer'); return }
+    if (ax === null) {
+      // LE REFUS DE LA SIM, PAS SEULEMENT LE CONSTAT. Sans lui, l'échec accusait la porte
+      // double alors que le fautif était la FONDATION (course de 2026-08-03) : le message
+      // disait « pas posés », la sim disait « hors du carré du Feu », et les deux ne
+      // désignent pas le même coupable.
+      const pourquoi = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? null)
+      console.error(`!! les deux vantaux ne sont pas posés (refus de la sim : ${pourquoi ?? 'aucun'}) — rien à mesurer`)
+      return
+    }
     const vantailA = await porteEn(ax, ligne - 1)
     const vantailB = await porteEn(ax + 1, ligne - 1)
 
@@ -6027,32 +6041,9 @@ const SCENARIOS = {
     // POI, et `found_village` refuse un carré qui en contient un) puis on se dote sur place :
     // c'est la recette éprouvée du scénario `finale`, et il n'y a aucune raison d'en avoir deux.
     const p0 = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
-    let feu = null
-    let bx = 0
-    let by = 0
-    for (const [ox, oy] of [[0, 0], [-24, 0], [24, 0], [0, -24], [0, 24], [-48, 0], [48, 0]]) {
-      const tx = Math.round(p0.x) + ox
-      const ty = Math.round(p0.y) + oy
-      await agir({ type: 'debug_teleport', x: tx + 0.5, y: ty + 0.5 }, 220)
-      await agir({ type: 'debug_grant', item: 'campfire' }, 160)
-      const cslot = await slotDe('campfire')
-      if (cslot < 0 || cslot >= 6) continue
-      await agir({ type: 'set_active_slot', slot: cslot }, 140)
-      await agir({ type: 'place_campfire', tx: tx + 1, ty }, 320)
-      const id = await page.evaluate(({ x, y }) => {
-        const f = window.__BRAISES__.scene.view.structures.find((s) => s.type === 'fire' && s.villageId === 0 && s.tx === x && s.ty === y)
-        return f ? f.id : null
-      }, { x: tx + 1, y: ty })
-      if (id === null) continue
-      await agir({ type: 'found_village', structureId: id }, 420)
-      if (await page.evaluate(() => (window.__BRAISES__.scene.registry.get('village') ?? 0) > 0)) {
-        feu = id
-        bx = tx
-        by = ty
-        break
-      }
-    }
-    if (feu === null) {
+    const assise = await fonderPres(page, agir, slotDe, p0)
+    const { bx, by } = assise ?? { bx: 0, by: 0 }
+    if (assise === null) {
       const pourquoi = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error') ?? null)
       console.error(`!! aucun village fondé (${JSON.stringify(pourquoi)}) — la pose au marteau serait refusée`)
       return
@@ -9501,24 +9492,13 @@ const SCENARIOS = {
     // ne vient se faire piéger quand on ferme les murs, et la Forge sera bien ENCLOSE.
     const spawn = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
     await grant('wood', 40)
-    let feu = null
-    for (const [ox, oy] of [[0, 0], [-24, 0], [24, 0], [0, -24], [0, 24], [-24, 24], [24, -24], [-48, 0], [48, 0]]) {
-      const bx = Math.round(spawn.x) + ox, by = Math.round(spawn.y) + oy
-      await doAction({ type: 'debug_teleport', x: bx + 0.5, y: by + 0.5 }, 180)
-      await grant('campfire')
-      const cslot = await page.evaluate(() => (window.__BRAISES__.scene.registry.get('inv') ?? []).findIndex((s) => s?.item === 'campfire'))
-      if (cslot < 0 || cslot >= 6) continue
-      await doAction({ type: 'set_active_slot', slot: cslot }, 120)
-      await doAction({ type: 'place_campfire', tx: bx + 1, ty: by }, 250)
-      const fireId = await page.evaluate(({ x, y }) => {
-        const f = window.__BRAISES__.scene.view.structures.find((s) => s.type === 'fire' && s.villageId === 0 && s.tx === x && s.ty === y)
-        return f ? f.id : null
-      }, { x: bx + 1, y: by })
-      if (fireId === null) continue
-      await doAction({ type: 'found_village', structureId: fireId }, 300)
-      const members = await page.evaluate(() => window.__BRAISES__.scene.registry.get('village') ?? 0)
-      if (members > 0) { feu = { tx: bx + 1, ty: by }; break }
-    }
+    const slotDe = (item) => page.evaluate((it) => (window.__BRAISES__.scene.registry.get('inv') ?? [])
+      .findIndex((s) => s?.item === it), item)
+    // La clairière se cherche plus large ici qu'ailleurs (deux diagonales de plus) : la Forge
+    // doit finir ENCLOSE, donc il faut de la place autour, pas seulement sous le Feu.
+    const assise = await fonderPres(page, doAction, slotDe, spawn,
+      [[0, 0], [-24, 0], [24, 0], [0, -24], [0, 24], [-24, 24], [24, -24], [-48, 0], [48, 0]])
+    const feu = assise && { tx: assise.bx + 1, ty: assise.by }
     if (!feu) {
       console.log('fondation → ABSENTE ✗ (aucune clairière trouvée)')
       await page.screenshot({ path: `${OUT}/village.png` })
