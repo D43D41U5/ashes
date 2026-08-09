@@ -52,14 +52,18 @@ import { placeCharniers, placePois } from './poi'
 import { densiteDeBase } from './morts'
 import { fbm2, hash2 } from './noise'
 import { masqueDesSeuils, paintWaterRacine } from './zonegen-water'
+import { assainirLeProfondHorsRacine, peindreLesEauxDesZones } from './zonegen-eaux-zones'
 import {
+  CREUX,
+  celluleDe,
   coifferLesCretes,
   composerLHumidite,
   mesurerLaDistanceALEau,
-  releverLeCreux,
+  seuilParQuantile,
   vegetationAt,
   type Creux,
 } from './racine-relief'
+import { batirLeSocle, type Socle } from './socle'
 import { forcerLesGues, tracerLesSentes } from './zonegen-sentes'
 import { placerLesSetPieces } from './zonegen-setpieces'
 import {
@@ -228,6 +232,9 @@ function blocDe(b: Blocs, x: number, y: number): number {
  * zone dont le fond bloque serait une zone où le seuil débouche sur un mur — et la garde de
  * connexité (A2) le dirait, mais trop tard : on l'aurait construite.
  */
+/** Où une matière se pose, quand elle est DÉRIVÉE du socle (spec stratigraphie S-R10). */
+type SelonLeChamp = 'humide' | 'sec' | 'haut' | 'bas'
+
 interface Palette {
   sol: number
   taches: number
@@ -246,6 +253,23 @@ interface Palette {
    * clairières). C'est ce chiffre qui décide si la zone est un couvert ou une étendue.
    */
   seuilTaches: number
+  /**
+   * ═══ LE SOL DÉRIVÉ (spec stratigraphie S-R10) — la zone lit le SOCLE au lieu de deux bruits ═══
+   *
+   * Si `partTaches` est déclaré, la zone quitte le tirage à deux bruits indépendants : ses
+   * taches se posent dans la BANDE du champ (`tachesSelon` : l'humide, le sec, le haut, le bas),
+   * découpée par QUANTILE PAR ZONE pour que la part soit un CONTRAT sur toute seed (le patron
+   * `seuilParQuantile`). Idem pour l'accent. Les parts ci-dessous sont les parts EMPIRIQUES
+   * mesurées sur l'ancien tirage (3 seeds, 2026-08-09) : la composition de chaque zone est
+   * PRÉSERVÉE — seul l'ORDRE change. Ce qui se lit comme logique est DÉRIVÉ.
+   *
+   * Sans `partTaches` : le chemin historique (les Prés Bas, repeints de toute façon par leurs
+   * propres passes ; le Névé, qui est de la neige quel que soit le chemin).
+   */
+  partTaches?: number
+  tachesSelon?: SelonLeChamp
+  partAccent?: number
+  accentSelon?: SelonLeChamp
 }
 
 const PALETTES: Record<string, Palette> = {
@@ -255,16 +279,25 @@ const PALETTES: Record<string, Palette> = {
 
   // ── T1 : la ceinture. Chacune enseigne une leçon différente. ──
   // La Sylve est le CONTRAIRE des Prés Bas : un couvert fermé, percé de rares clairières.
-  sylve: { sol: TERRAIN_OLD_GROWTH, taches: TERRAIN_FOREST, accent: TERRAIN_GRASS, rarete: 0.1, seuilTaches: 0.44 },
-  karst: { sol: TERRAIN_SCREE, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.14, seuilTaches: 0.55 },
-  tourbiere: { sol: TERRAIN_PEAT_BOG, taches: TERRAIN_REED_MARSH, accent: TERRAIN_SHALLOW_WATER, rarete: 0.18, seuilTaches: 0.5 },
-  alpages: { sol: TERRAIN_ALPINE_MEADOW, taches: TERRAIN_ALPINE_FLOWERS, accent: TERRAIN_SCREE, rarete: 0.14, seuilTaches: 0.6 },
-  brule: { sol: TERRAIN_BURNT_FOREST, taches: TERRAIN_HEATH, accent: TERRAIN_BOULDERS, rarete: 0.1, seuilTaches: 0.62 },
-  ruines: { sol: TERRAIN_HEATH, taches: TERRAIN_GRASS, accent: TERRAIN_BOULDERS, rarete: 0.16, seuilTaches: 0.58 },
+  // Dérivée : la vieille futaie tient les FONDS humides, pin et mélèze prennent les hauteurs
+  // sèches, les clairières s'ouvrent sur le sec — la forêt raconte son eau.
+  sylve: { sol: TERRAIN_OLD_GROWTH, taches: TERRAIN_FOREST, accent: TERRAIN_GRASS, rarete: 0.1, seuilTaches: 0.44, partTaches: 0.6, tachesSelon: 'haut', partAccent: 0.015, accentSelon: 'sec' },
+  // Le Karst : les affleurements couronnent les dos, l'éboulis tapisse le reste.
+  karst: { sol: TERRAIN_SCREE, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.14, seuilTaches: 0.55, partTaches: 0.32, tachesSelon: 'haut', partAccent: 0.02, accentSelon: 'haut' },
+  // La Tourbière : la roselière suit l'HUMIDE — et l'eau libre (couche II, `zonegen-eaux-zones`)
+  // arrive exactement là où la roselière l'annonce : deux lectures du même champ. L'accent d'eau
+  // POSÉ est mort (S-R9) : ses mares sont désormais des cuvettes inondées, avec rive et drainage.
+  tourbiere: { sol: TERRAIN_PEAT_BOG, taches: TERRAIN_REED_MARSH, accent: TERRAIN_SHALLOW_WATER, rarete: 0.18, seuilTaches: 0.5, partTaches: 0.54, tachesSelon: 'humide' },
+  // Les Alpages : les combes humides fleurissent, l'éboulis couronne.
+  alpages: { sol: TERRAIN_ALPINE_MEADOW, taches: TERRAIN_ALPINE_FLOWERS, accent: TERRAIN_SCREE, rarete: 0.14, seuilTaches: 0.6, partTaches: 0.285, tachesSelon: 'humide', partAccent: 0.02, accentSelon: 'haut' },
+  // Le Versant Brûlé : la lande REPREND par les creux humides — la première esquisse de la
+  // succession (couche IV) : là où l'eau stagne, la vie revient d'abord.
+  brule: { sol: TERRAIN_BURNT_FOREST, taches: TERRAIN_HEATH, accent: TERRAIN_BOULDERS, rarete: 0.1, seuilTaches: 0.62, partTaches: 0.27, tachesSelon: 'humide', partAccent: 0.014, accentSelon: 'haut' },
+  ruines: { sol: TERRAIN_HEATH, taches: TERRAIN_GRASS, accent: TERRAIN_BOULDERS, rarete: 0.16, seuilTaches: 0.58, partTaches: 0.27, tachesSelon: 'humide', partAccent: 0.018, accentSelon: 'haut' },
 
   // ── T2 : les marges. ──
-  cendriere: { sol: TERRAIN_BURNT_FOREST, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.16, seuilTaches: 0.62 },
-  glacier: { sol: TERRAIN_SNOW, taches: TERRAIN_SCREE, accent: TERRAIN_ROCK, rarete: 0.12, seuilTaches: 0.68 },
+  cendriere: { sol: TERRAIN_BURNT_FOREST, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.16, seuilTaches: 0.62, partTaches: 0.264, tachesSelon: 'haut', partAccent: 0.027, accentSelon: 'haut' },
+  glacier: { sol: TERRAIN_SNOW, taches: TERRAIN_SCREE, accent: TERRAIN_ROCK, rarete: 0.12, seuilTaches: 0.68, partTaches: 0.176, tachesSelon: 'haut', partAccent: 0.024, accentSelon: 'haut' },
 
   // ── LE NÉVÉ BLANC — un SEUIL, pas une zone. Il ne nourrit rien (spec R10.3) ──
   //
@@ -277,17 +310,87 @@ const PALETTES: Record<string, Palette> = {
   // On y court à demi-vitesse (`snow`, speedFactor 0,5) : la traversée se PAIE, en temps et en
   // chaleur. C'est le seul gardien dont il ait besoin.
   neve: { sol: TERRAIN_SNOW, taches: TERRAIN_SNOW, accent: TERRAIN_SNOW, rarete: 0, seuilTaches: 0.99 },
-  aiguilles: { sol: TERRAIN_SCREE, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.2, seuilTaches: 0.52 },
-  gouffre: { sol: TERRAIN_BOULDERS, taches: TERRAIN_SCREE, accent: TERRAIN_ROCK, rarete: 0.18, seuilTaches: 0.5 },
-  // Le Lac Mort : une eau trop claire. Le cœur est PROFOND (donc un mur — l'eau profonde ne se
-  // nage pas, spec R5), et il est ceint de marais. On n'y entre pas, on en fait le tour — et
-  // c'est très bien : sa case fantastique est réservée, on lui laisse sa forme.
-  lac_mort: { sol: TERRAIN_MARSH, taches: TERRAIN_REED_MARSH, accent: TERRAIN_DEEP_WATER, rarete: 0.3, seuilTaches: 0.5 },
+  aiguilles: { sol: TERRAIN_SCREE, taches: TERRAIN_BOULDERS, accent: TERRAIN_ROCK, rarete: 0.2, seuilTaches: 0.52, partTaches: 0.51, tachesSelon: 'haut', partAccent: 0.034, accentSelon: 'haut' },
+  // Le Gouffre : l'éboulis ROULE — il s'accumule dans les creux, pas sur les dos.
+  gouffre: { sol: TERRAIN_BOULDERS, taches: TERRAIN_SCREE, accent: TERRAIN_ROCK, rarete: 0.18, seuilTaches: 0.5, partTaches: 0.48, tachesSelon: 'bas', partAccent: 0.03, accentSelon: 'haut' },
+  // Le Lac Mort : il a ENFIN son lac (couche II, `zonegen-eaux-zones` — la grande cuvette de la
+  // zone, cœur profond ceint de haut-fond et de marais). L'accent d'eau POSÉ est mort (S-R9).
+  // Le cœur reste un mur (R5) : on n'y entre pas, on en fait le tour — sa case fantastique est
+  // réservée, on lui laisse sa forme.
+  lac_mort: { sol: TERRAIN_MARSH, taches: TERRAIN_REED_MARSH, accent: TERRAIN_DEEP_WATER, rarete: 0.3, seuilTaches: 0.5, partTaches: 0.49, tachesSelon: 'humide' },
 }
 
 /** Le Névé : les hauteurs de la Tourbière et de la Sylve gardent leurs mélèzes et leurs pins —
  *  un thème n'est pas un aplat. On y reviendra à la passe d'ambiance. */
 const HAUT_BOIS = [TERRAIN_PINE, TERRAIN_LARCH]
+
+/**
+ * ═══ LES RÈGLES DU SOL DÉRIVÉ — les seuils de quantile par zone (S-R10) ═══
+ *
+ * Calculées UNE fois après le socle : pour chaque zone qui déclare `partTaches`, la bande du
+ * champ (altitude grainée ou mouille) qui recevra ses taches et son accent. Le quantile porte
+ * sur les cellules de LA zone (hors vide) : la part est un contrat par zone, sur toute seed.
+ *
+ * `champAlt` reçoit son grain ('ASOL') pour la même raison que l'humidité du Creux : sans lui,
+ * une bande d'altitude est une COURBE DE NIVEAU — propre et morte. L'ordre vient du champ, la
+ * texture vient du bruit.
+ */
+interface RegleSol {
+  tacheSeuil: number
+  tacheHaut: boolean
+  tacheAlt: boolean
+  partAccent: number
+  accentSeuil: number
+  accentHaut: boolean
+  accentAlt: boolean
+}
+interface ReglesSol {
+  parZone: (RegleSol | null)[]
+  champAlt: Float64Array
+  champHum: Float64Array
+}
+
+function reglesDuSol(g: GrapheZones, socle: Socle | null, seed: number): ReglesSol | null {
+  if (!socle) return null
+  const n = socle.cols * socle.rows
+  const M = RELIEF.MOTIF
+  const sel = (seed ^ 0x41534f4c) | 0 /* 'ASOL' */
+  const champAlt = new Float64Array(n)
+  for (let k = 0; k < n; k++) {
+    const kx = k % socle.cols
+    const ky = (k - kx) / socle.cols
+    champAlt[k] = socle.altLarge[k]!
+      + (fbm2(kx * M + M / 2, ky * M + M / 2, CREUX.ECHELLE_BRUIT, sel) - 0.5) * 0.2
+  }
+  const champHum = socle.mouille
+
+  const parZone = g.zones.map((z): RegleSol | null => {
+    const p = PALETTES[z.def.slug]
+    if (p?.partTaches === undefined) return null
+    const actives = new Uint8Array(n)
+    let compte = 0
+    for (let k = 0; k < n; k++) {
+      if (socle.zoneCell[k] === z.id && socle.videCell[k] === 0) {
+        actives[k] = 1
+        compte++
+      }
+    }
+    if (compte === 0) return null
+    const bande = (selon: SelonLeChamp, part: number): { seuil: number; haut: boolean; alt: boolean } => {
+      const alt = selon === 'haut' || selon === 'bas'
+      const haut = selon === 'haut' || selon === 'humide'
+      const champ = alt ? champAlt : champHum
+      return { seuil: seuilParQuantile(champ, actives, haut ? 1 - part : part, -1, 2), haut, alt }
+    }
+    const t = bande(p.tachesSelon ?? 'humide', p.partTaches)
+    const a = bande(p.accentSelon ?? 'haut', p.partAccent ?? 0)
+    return {
+      tacheSeuil: t.seuil, tacheHaut: t.haut, tacheAlt: t.alt,
+      partAccent: p.partAccent ?? 0, accentSeuil: a.seuil, accentHaut: a.haut, accentAlt: a.alt,
+    }
+  })
+  return { parZone, champAlt, champHum }
+}
 
 export interface CarteZonee {
   map: WorldMap
@@ -337,6 +440,30 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
    * d'une RANGÉE de motifs, puisque `my` ne dépend que de `y` : un tableau plat, vidé au changement
    * de rangée. `solDe` étant pure, le terrain est BIT À BIT le même (invariant n°2).
    */
+  // ── PASSE 1a : LES ZONES ET LA ROCHE DU VIDE ──
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      const k = blocDe(blocs, x, y)
+      zone[i] = blocs.zone[k]! // même dans le vide : la cendre et l'ambiance ont besoin d'une région de rattachement
+      if (blocs.vide[k]) terrain[i] = TERRAIN_ROCK
+    }
+  }
+
+  // ── PASSE 1b : LE SOCLE — le micro-relief muet devenu MONDE (spec stratigraphie, couche I) ──
+  //
+  // Décision d'Alexis, 2026-08-09 (Stratigraphie) : le champ d'ordre de la Racine (2026-07-29)
+  // s'étend à la carte entière, et il gagne un passé physique — uplift par tier, érosion
+  // stream-power, drainage, accumulation de flux, mouille (voir `socle.ts`). La Racine y est le
+  // NIVEAU DE BASE : elle garde son champ historique, le reste du monde s'érode vers elle. Le
+  // champ reste INVISIBLE — la carte reste plate (pivot RimWorld) — et ne vit que le temps de
+  // la génération : il ne va ni dans `WorldMap`, ni dans `SimState`. AVANT le sol depuis la
+  // couche II : c'est lui que `solDe` lit.
+  const creux = batirLeSocle(g, seed, zone, width, height,
+    (x, y) => blocs.vide[blocDe(blocs, x, y)] === 1)
+  const regles = reglesDuSol(g, creux, seed)
+
+  // ── PASSE 1c : LE SOL — chaque zone compose selon sa palette, DÉRIVÉE du socle (S-R10) ──
   const M_SOL = RELIEF.MOTIF
   const colsMotif = Math.ceil(width / M_SOL)
   const solCache = new Int16Array(colsMotif * g.zones.length).fill(-1)
@@ -348,29 +475,17 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
     for (let x = 0; x < width; x++) {
       const i = y * width + x
       const k = blocDe(blocs, x, y)
+      if (blocs.vide[k]) continue // la roche du vide est déjà posée
       const z = blocs.zone[k]!
-      zone[i] = z // même dans le vide : la cendre et l'ambiance ont besoin d'une région de rattachement
-      if (blocs.vide[k]) {
-        terrain[i] = TERRAIN_ROCK
-        continue
-      }
       const kc = Math.floor(x / M_SOL) * g.zones.length + z
       let sol = solCache[kc]!
       if (sol < 0) {
-        sol = solDe(g, z, x, y)
+        sol = solDe(g, z, x, y, creux, regles)
         solCache[kc] = sol
       }
       terrain[i] = sol
     }
   }
-
-  // ── PASSE 1.45 : LE MICRO-RELIEF MUET DE LA RACINE (voir `racine-relief.ts`) ──────────────
-  //
-  // Décision d'Alexis, 2026-07-29 : les Prés Bas cessent d'être trois hasards indépendants
-  // (deux bruits pour le sol, un tirage-rejet pour l'eau) et reçoivent UNE variable d'ordre.
-  // Le champ est INVISIBLE — la carte reste plate (pivot RimWorld) — et ne vit que le temps de
-  // la génération : il ne va ni dans `WorldMap`, ni dans `SimState`.
-  const creux = releverLeCreux(g, seed, zone, width, height)
 
   // ── PASSE 1.5 : L'EAU DE LA RACINE — lacs, LA RIVIÈRE, ruisseaux et marais des Prés Bas ──
   //
@@ -383,6 +498,14 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   // Les lacs sont désormais des CUVETTES INONDÉES (le creux commande) : ils épousent le fond du
   // pays au lieu d'être des rectangles tirés au sort.
   const riviere = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux)
+
+  // ── PASSE 1.52 : LES EAUX DES ZONES — l'eau dérivée hors Racine (stratigraphie, couche II) ──
+  //
+  // Mares-cuvettes et rus de la Tourbière, LE lac du Lac Mort, ruisseaux de la Sylve — inondés
+  // et tracés sur les champs du socle (altitude, récepteurs D8), là où `solDe` a déjà posé la
+  // roselière : l'eau arrive exactement où le sol l'annonçait. Avant les seuils (la porte gagne)
+  // et avant le murage (l'assainissement R45 interne au module précède la déduction des arêtes).
+  peindreLesEauxDesZones(terrain, zone, g, width, height, creux)
 
   // ── PASSE 1.55 : LA VÉGÉTATION DE LA RACINE — dérivée de l'eau qu'on vient de poser ───────
   //
@@ -411,13 +534,16 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   // passe ne coiffe que l'herbe et la fleuraie, or la lisière a déjà pris ce qui lui revient.
   peindreLesBosquetsDeCrete(terrain, zone, g, width, height, seed, creux)
 
+  // ── PASSE 1.595 : LES LISIÈRES — l'écotone pré/bois entrelacé, hors Racine (S-R11) ──
+  entrelacerLesLisieres(terrain, zone, g, width, height, seed)
+
   // ── PASSE 1.6 : LES SET-PIECES — trois endroits à grande empreinte (spec t0-exploration R9) ──
   const setPieces = placerLesSetPieces(terrain, zone, g, width, height, seed)
 
   // ── PASSE 1.7 : LES SENTES — les routes du pays d'avant, et leurs gués (R17, R7) ──
   // Elles CONTOURNENT les set-pieces (R18 : un lieu se poste au bord du chemin) ; et la
   // garantie « au moins deux gués » vit à part, indépendante des aléas du traceur.
-  const gues = tracerLesSentes(terrain, zone, g, width, height, seed, riviere, setPieces)
+  const gues = tracerLesSentes(terrain, zone, g, width, height, seed, riviere, setPieces, creux)
   forcerLesGues(terrain, riviere, gues, width, height)
 
   // ── PASSE 1.8 : L'ASSAINISSEMENT DU PROFOND — l'anneau de R45, CONSTATÉ ──
@@ -436,7 +562,7 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
 
   // ── PASSE 2 : les seuils — on perce tout droit un couloir PLAT dans la frontière ──
   for (const s of g.seuils) {
-    percerSeuil(g, blocs, s, terrain, zone, rampe, width, height)
+    percerSeuil(g, blocs, s, terrain, zone, rampe, width, height, creux, regles)
   }
 
   // ── PASSE 3 : LES ARÊTES — le mur, DÉDUIT. Puis on garantit qu'on circule. ─
@@ -448,7 +574,7 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
 
   for (let tour = 0; tour < 2; tour++) {
     murerLesAretes(terrain, zone, rampe, width, height)
-    garantirLaConnexite(g, terrain, zone, rampe, width, height)
+    garantirLaConnexite(g, terrain, zone, rampe, width, height, creux, regles)
   }
 
   // ── PASSE 3.5 : LA REPRISE D'ASSAINISSEMENT, INTRA-ZONE SEULEMENT ──
@@ -459,6 +585,9 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   // mur légitime (R5), et le convertir ici ROUVRIRAIT une frontière que `murerLesAretes` ne
   // repassera plus (mesuré : 137 ouvertures quand la passe pleine tournait à cette place).
   assainirLeProfond(terrain, zone, g.racine, width, height, true)
+  // Et son pendant HORS Racine (stratigraphie, couche II) : un couloir de connexité qui a percé
+  // du profond de zone laisse le même défaut — même point fixe, même restriction intra-zone.
+  assainirLeProfondHorsRacine(terrain, zone, g.racine, width, height, true)
 
   // ── PASSE 4 : l'anneau de bordure. La vallée est CLOSE ────────────────────
   for (let y = 0; y < height; y++) {
@@ -762,6 +891,95 @@ function peindreLesBosquetsDeCrete(
   }
 }
 
+/**
+ * ═══ LES LISIÈRES — l'écotone pré/bois, en entrelacs de motifs (S-R11) ═══
+ *
+ * Une frontière de quantile est déjà organique (le grain du champ la déchiquette), mais elle
+ * reste BINAIRE : pré d'un côté, bois de l'autre, au motif près. La lisière l'ENTRELACE : au
+ * contact des deux classes, des motifs basculent de l'autre côté (hash positionnel 'LISI'),
+ * SYMÉTRIQUEMENT — autant de pré qui s'avance que de bois qui recule, la composition par zone
+ * reste son contrat. R32 tient : l'entrelacs est un damier irrégulier de carrés de 8, pas un
+ * dégradé.
+ *
+ * HORS Racine (son écotone est déjà l'affaire de son champ réglé) et hors Névé. Seul le THÈME
+ * cède : eau, marais, roche, routes, et tout ce que d'autres passes ont posé gardent leur
+ * nature — la règle de toutes les passes de ce fichier.
+ */
+const LISIERE = {
+  /** La chance qu'un motif de bord bascule de l'autre côté. */
+  PART_BASCULE: 0.34,
+} as const
+
+const CLASSE_BOIS = new Set([TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH])
+const CLASSE_PRE = new Set([TERRAIN_GRASS, TERRAIN_FLOWER_MEADOW, TERRAIN_HEATH, TERRAIN_ALPINE_MEADOW, TERRAIN_ALPINE_FLOWERS])
+
+function entrelacerLesLisieres(
+  terrain: number[],
+  zone: Int32Array,
+  g: GrapheZones,
+  width: number,
+  height: number,
+  seed: number,
+): void {
+  const M = RELIEF.MOTIF
+  const cols = Math.ceil(width / M)
+  const rows = Math.ceil(height / M)
+  const sel = (seed ^ 0x4c495349) | 0 /* 'LISI' */
+  const neve = g.zones.find((z) => z.def.slug === 'neve')?.id ?? -1
+
+  // La classe de chaque motif, lue à son centre — une passe, AVANT toute bascule (sinon une
+  // bascule en amont ferait boule de neige sur ses voisines : la lisière deviendrait une marée).
+  const classe = new Int8Array(cols * rows) // 0 = ni l'un ni l'autre, 1 = pré, 2 = bois
+  const centre = new Int32Array(cols * rows)
+  for (let my = 0; my < rows; my++) {
+    for (let mx = 0; mx < cols; mx++) {
+      const cx = Math.min(width - 1, mx * M + M / 2)
+      const cy = Math.min(height - 1, my * M + M / 2)
+      const i = cy * width + cx
+      centre[my * cols + mx] = i
+      if (zone[i] === g.racine || zone[i] === neve) continue
+      const t = terrain[i]!
+      classe[my * cols + mx] = CLASSE_PRE.has(t) ? 1 : CLASSE_BOIS.has(t) ? 2 : 0
+    }
+  }
+
+  for (let my = 0; my < rows; my++) {
+    for (let mx = 0; mx < cols; mx++) {
+      const k = my * cols + mx
+      const c = classe[k]!
+      if (c === 0) continue
+      // Un voisin cardinal de l'AUTRE classe, dans la MÊME zone ? (l'écotone est interne — une
+      // frontière de zones reste un mur, pas une lisière.)
+      const iCentre = centre[k]!
+      let voisinAutre = -1
+      for (const v of [mx > 0 ? k - 1 : -1, mx + 1 < cols ? k + 1 : -1, my > 0 ? k - cols : -1, my + 1 < rows ? k + cols : -1]) {
+        if (v < 0) continue
+        const cv = classe[v]!
+        if (cv === 0 || cv === c) continue
+        if (zone[centre[v]!] !== zone[iCentre]) continue
+        voisinAutre = v
+        break
+      }
+      if (voisinAutre < 0) continue
+      if (hash2(mx, my, sel) >= LISIERE.PART_BASCULE) continue
+      // La bascule : les tuiles de CE motif qui portent SA classe prennent le terrain du voisin.
+      const de = terrain[iCentre]!
+      const vers = terrain[centre[voisinAutre]!]!
+      for (let dy = 0; dy < M; dy++) {
+        const y = my * M + dy
+        if (y >= height) break
+        for (let dx = 0; dx < M; dx++) {
+          const x = mx * M + dx
+          if (x >= width) break
+          const i = y * width + x
+          if (zone[i] !== zone[iCentre]) continue
+          if (terrain[i] === de) terrain[i] = vers
+        }
+      }
+    }
+  }
+}
+
 function peindreLisiereSud(
   terrain: number[],
   zone: Int32Array,
@@ -800,13 +1018,40 @@ function peindreLisiereSud(
  * de carrés, un affleurement de roche un rectangle. C'est le grain « pixel-art assumé » de la
  * nouvelle direction artistique — et c'est la même quantification que les zones, un cran plus fin.
  */
-function solDe(g: GrapheZones, id: number, x: number, y: number): number {
+function solDe(
+  g: GrapheZones,
+  id: number,
+  x: number,
+  y: number,
+  socle: Socle | null = null,
+  regles: ReglesSol | null = null,
+): number {
   const z = g.zones[id]!
   const p = PALETTES[z.def.slug]!
   // Le centre du MOTIF qui contient la tuile : tout le carré partage son verdict.
   const M = RELIEF.MOTIF
   const mx = Math.floor(x / M) * M + M / 2
   const my = Math.floor(y / M) * M + M / 2
+
+  // ═══ LE CHEMIN DÉRIVÉ (S-R10) : la zone lit le socle, l'accent gagne sur la tache ═══
+  const r = regles?.parZone[id]
+  if (socle && regles && r) {
+    const k = celluleDe(socle, x, y)
+    if (k >= 0) {
+      const va = r.accentAlt ? regles.champAlt[k]! : regles.champHum[k]!
+      if (r.partAccent > 0 && (r.accentHaut ? va >= r.accentSeuil : va < r.accentSeuil)) return p.accent
+      const vt = r.tacheAlt ? regles.champAlt[k]! : regles.champHum[k]!
+      if (r.tacheHaut ? vt >= r.tacheSeuil : vt < r.tacheSeuil) {
+        if (p.taches === TERRAIN_FOREST && z.def.tier > 0) {
+          return HAUT_BOIS[Math.floor(hash2(mx, my, g.seed ^ 0x5b) * HAUT_BOIS.length)]!
+        }
+        return p.taches
+      }
+      return p.sol
+    }
+  }
+
+  // ═══ LE CHEMIN HISTORIQUE — les Prés Bas (repeints par leurs passes), le Névé, le hors-grille ═══
   const n = fbm2(mx, my, RELIEF.ECHELLE_TERRAIN, (g.seed ^ (id * 0x9e37)) | 0)
   const t = fbm2(mx, my, RELIEF.ECHELLE_TACHES, (g.seed ^ (id * 0x2545)) | 0)
 
@@ -850,6 +1095,8 @@ function percerSeuil(
   rampe: Uint8Array,
   width: number,
   height: number,
+  socle: Socle | null,
+  regles: ReglesSol | null,
 ): void {
   // L'AXE DE TRAVERSÉE vient du SEUIL, et c'est une leçon. Les régions se chevauchent (spec R40) :
   // leurs formes sont des polygones en L, et la normale à la frontière ne se déduit plus de quatre
@@ -880,7 +1127,7 @@ function percerSeuil(
       const i = y * width + x
       // ON DÉGAGE TOUT CE QUI BLOQUE — le vide comme le rocher. **Une porte est une porte.**
       if (TERRAINS[terrain[i]!]?.walkable !== true) {
-        terrain[i] = solMarchableDe(g, vers, x, y)
+        terrain[i] = solMarchableDe(g, vers, x, y, socle, regles)
         zone[i] = vers
       }
       rampe[i] = 1
@@ -890,8 +1137,15 @@ function percerSeuil(
 
 /** Le sol d'une zone, mais GARANTI marchable : dans un couloir de seuil, l'accent bloquant
  *  d'une zone (le rocher, l'eau profonde) n'a rien à faire — il boucherait la porte. */
-function solMarchableDe(g: GrapheZones, id: number, x: number, y: number): number {
-  const t = solDe(g, id, x, y)
+function solMarchableDe(
+  g: GrapheZones,
+  id: number,
+  x: number,
+  y: number,
+  socle: Socle | null,
+  regles: ReglesSol | null,
+): number {
+  const t = solDe(g, id, x, y, socle, regles)
   if (TERRAINS[t]?.walkable === true) return t
   return PALETTES[g.zones[id]!.def.slug]!.sol
 }
@@ -1013,6 +1267,8 @@ function garantirLaConnexite(
   rampe: Uint8Array,
   width: number,
   height: number,
+  socle: Socle | null,
+  regles: ReglesSol | null,
 ): void {
   const N = width * height
   const walk = (i: number): boolean => MARCHABLE[terrain[i]!] === 1
@@ -1077,7 +1333,7 @@ function garantirLaConnexite(
       }
       if (poche.length < POCHE_MIN) continue // du décor, pas un défaut
 
-      if (percerVersLeMonde(g, poche, monde, terrain, zone, rampe, width, height)) ouvert = true
+      if (percerVersLeMonde(g, poche, monde, terrain, zone, rampe, width, height, socle, regles)) ouvert = true
     }
 
     if (!ouvert) break
@@ -1101,6 +1357,8 @@ function percerVersLeMonde(
   rampe: Uint8Array,
   width: number,
   height: number,
+  socle: Socle | null,
+  regles: ReglesSol | null,
 ): boolean {
   const N = width * height
   const zid = zone[poche[0]!]!
@@ -1153,7 +1411,7 @@ function percerVersLeMonde(
         }
         const i = y * width + x
         if (zone[i] !== zid) continue // on ne déborde jamais chez le voisin
-        if (TERRAINS[terrain[i]!]?.walkable !== true) terrain[i] = solMarchableDe(g, zid, x, y)
+        if (TERRAINS[terrain[i]!]?.walkable !== true) terrain[i] = solMarchableDe(g, zid, x, y, socle, regles)
         rampe[i] = 1
       }
     }

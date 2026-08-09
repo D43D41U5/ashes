@@ -60,7 +60,6 @@
  * uniquement (invariant n°2).
  */
 import { fbm2 } from './noise'
-import type { GrapheZones } from './zonegraph'
 
 export const CREUX = {
   /** Le quantum de décision, en tuiles — le MOTIF de `zonegen.ts`. Tout est rectiligne (R32) :
@@ -208,24 +207,20 @@ export interface Creux {
   seuilFleuraie: number
 }
 
-/** LA GRANDE ONDULATION — la forme du fond de vallée, sans le grain. Pure. */
-function ondulation(x: number, y: number, seed: number): number {
-  return fbm2(x, y, CREUX.ECHELLE_LARGE, (seed ^ 0x43524555) | 0 /* 'CREU' */)
-}
-
-/** Le vallonnement de détail, qui s'ajoute à l'ondulation. Pure. */
-function grain(x: number, y: number, seed: number): number {
-  return fbm2(x, y, CREUX.ECHELLE_FINE, (seed ^ 0x66696e65) | 0 /* 'fine' */)
-}
+// (`ondulation` et `grain` vivent désormais dans `socle.ts` — mêmes sels, mêmes valeurs : le
+// socle recompose le champ historique de la Racine à l'identique, puis l'épingle comme niveau
+// de base de l'érosion. `releverLeCreux` — la version confinée au rectangle de la Racine — est
+// remplacé par `batirLeSocle` depuis la Stratigraphie, 2026-08-09.)
 
 /**
  * LE SEUIL PAR QUANTILE — par HISTOGRAMME, jamais par tri.
  *
  * Rend la valeur T telle qu'environ `part` des cellules actives soient sous T. Mille vingt-quatre
  * seaux d'entiers : déterministe au bit près sans rien devoir à la stabilité du tri du moteur JS
- * (invariant n°2), et une seule passe.
+ * (invariant n°2), et une seule passe. Exporté : le socle (couche I) et les compositions par
+ * zone (couche II) contractualisent leurs parts avec le même instrument.
  */
-function seuilParQuantile(vals: Float64Array, actifs: Uint8Array, part: number, lo: number, hi: number): number {
+export function seuilParQuantile(vals: Float64Array, actifs: Uint8Array, part: number, lo: number, hi: number): number {
   const SEAUX = 1024
   const hist = new Int32Array(SEAUX)
   let n = 0
@@ -246,56 +241,6 @@ function seuilParQuantile(vals: Float64Array, actifs: Uint8Array, part: number, 
     if (cum > cible) return lo + ((b + 1) / SEAUX) * etendue
   }
   return hi
-}
-
-/**
- * RELÈVE LE CREUX — le champ d'altitude de la Racine, et le seuil des bassins.
- *
- * `zone` doit déjà être rempli (passe 1 de `generateZonedTerrain`) : c'est lui qui dit quelles
- * cellules appartiennent vraiment à la Racine — le rectangle n'est qu'une boîte englobante, les
- * zones de la ceinture lui ont mordu le haut (priorité du squelette).
- */
-export function releverLeCreux(
-  g: GrapheZones,
-  seed: number,
-  zone: Int32Array,
-  width: number,
-  height: number,
-): Creux | null {
-  const r = g.zones[g.racine]!.rect
-  if (!r) return null
-  const M = CREUX.MOTIF
-  const mx0 = Math.floor(r.x / M)
-  const my0 = Math.floor(r.y / M)
-  const cols = Math.ceil((r.x + r.w) / M) - mx0
-  const rows = Math.ceil((r.y + r.h) / M) - my0
-  if (cols <= 0 || rows <= 0) return null
-
-  const n = cols * rows
-  const alt = new Float64Array(n)
-  const altLarge = new Float64Array(n)
-  const dedans = new Uint8Array(n)
-  const distEau = new Int32Array(n).fill(-1)
-  const hum = new Float64Array(n)
-
-  for (let my = 0; my < rows; my++) {
-    for (let mx = 0; mx < cols; mx++) {
-      // Le CENTRE du motif : tout le carré de 8 partage son verdict (R32).
-      const tx = (mx0 + mx) * M + M / 2
-      const ty = (my0 + my) * M + M / 2
-      const k = my * cols + mx
-      const large = ondulation(tx, ty, seed)
-      altLarge[k] = large
-      alt[k] = large * (1 - CREUX.POIDS_FINE) + grain(tx, ty, seed) * CREUX.POIDS_FINE
-      if (tx >= 0 && ty >= 0 && tx < width && ty < height && zone[ty * width + tx] === g.racine) {
-        dedans[k] = 1
-      }
-    }
-  }
-
-  // Le seuil des bassins se lit sur la GRANDE ondulation — c'est elle qu'on inonde.
-  const seuilBassin = seuilParQuantile(altLarge, dedans, CREUX.PART_BASSIN, 0, 1)
-  return { mx0, my0, cols, rows, alt, altLarge, dedans, distEau, hum, seuilBassin, seuilBois: 1, seuilFleuraie: 0 }
 }
 
 /** L'index de la cellule qui contient la tuile (x, y) — ou −1 hors grille. */

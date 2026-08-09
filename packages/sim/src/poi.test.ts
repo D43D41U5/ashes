@@ -15,7 +15,7 @@ import { generateZonedTerrain } from './zonegen'
  */
 const CARTE = generateZonedTerrain(5)
 const MAP = CARTE.map
-import { POI_TYPES, poiSemis, poiSpacing, spawnPoiMonsters, placePois } from './poi'
+import { POI_TYPES, capFor, poiSemis, poiSpacing, spawnPoiMonsters, placePois } from './poi'
 import { terrainAt, createEmptyMap, zoneSlugAt } from './map'
 import { poissonPoints } from './poisson'
 import { POI, TERRAINS, TERRAIN_DEEP_WATER } from './balance'
@@ -47,7 +47,10 @@ describe('placePois', () => {
     const map = MAP
     const count = (slug: string) => map.zones.filter((z) => z.kind === slug).length
     const gis = POI_TYPES.find((t) => t.slug === 'gisement')!
-    expect(count('gisement')).toBeLessThanOrEqual(gis.cap)
+    // Le plafond APPLIQUÉ est `capFor` (densité ∝ surface), pas le nombre brut de la table —
+    // la garde comparait au brut et ne tenait que par pénurie de tuiles éligibles : le sol
+    // dérivé du socle (S-R10) a ouvert des emplacements, la garde teste désormais le contrat.
+    expect(count('gisement')).toBeLessThanOrEqual(capFor(map, gis))
   })
   it('la RACINE a SON Grand Chêne — la zone de départ cesse d’être sans horizon', () => {
     // La Racine était la SEULE zone du jeu sans repère perçant la canopée (44 px) : ses cinq
