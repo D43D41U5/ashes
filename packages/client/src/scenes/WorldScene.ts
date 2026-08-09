@@ -58,6 +58,11 @@ import {
   EDGE_BITS,
   edgeBarrierAt,
   fullTileAt,
+  poseLibre,
+  chebyshev,
+  fireRadius,
+  piece,
+  type Village,
 } from '@ashes/sim'
 import Phaser from 'phaser'
 import { createColyseusHost, createWorkerHost, type HostConnection } from '../host-connection'
@@ -76,7 +81,7 @@ import {
   VISIBLE_TILES_TALL,
   zoomForFraming,
 } from '../render/framing'
-import { ambientTint, daylight, fireGlow, lerpColor } from '../render/lighting'
+import { ambientTint, daylight, fireGlow, fireHoleRadius, lerpColor } from '../render/lighting'
 import { createWarp, type Warp } from '../render/warp'
 import {
   drainQueuedActions,
@@ -151,6 +156,7 @@ import { bindDebugKeys } from './world/debug-bindings'
 import { createDebugPanel } from './world/debug-panel'
 import { syncDebug } from './world/debug-overlay'
 import { BuildGhost } from './world/build-ghost'
+import { CarreVillage } from './world/carre-village'
 import { FellGauge, type FellCharge } from './world/fell-gauge'
 import { FlankGlow } from './world/flank-glow'
 import { HitFx } from './world/hit-fx'
@@ -405,16 +411,29 @@ export class WorldScene extends Phaser.Scene {
     return this.prediction.base
   }
   /**
-   * Miroir client des règles de POSE (place_campfire / build) : à portée de BÂTI, sur
-   * terrain constructible, hors landmark. L'occupation de la tuile, elle, est vérifiée par
-   * le fantôme (il a les structures). La sim revalide tout — ceci ne fait que colorer
-   * le fantôme juste, pour ne pas afficher « perdu » là où la pose passe (et l'inverse).
+   * Miroir client des règles de POSE (place_campfire / build) : à portée de BÂTI, DANS LE
+   * CARRÉ du Feu, sur terrain constructible, hors landmark pour le feu de camp. La sim
+   * revalide tout — ceci ne fait que colorer le fantôme juste, pour ne pas afficher
+   * « perdu » là où la pose passe (et l'inverse).
+   *
+   * ═══ DEUX MENSONGES CORRIGÉS le 2026-08-04 (demande d'Alexis) ═══
+   *
+   *  1. LE CARRÉ MANQUAIT. `evaluateBuild` refuse en `out_of_square` toute pose hors du
+   *     domaine du Feu (village.ts) — ce miroir ne le testait pas. Le fantôme restait donc
+   *     VERT hors du carré, on cliquait, et la sim refusait sans que rien à l'écran ne
+   *     l'ait annoncé. C'est le défaut qui a motivé toute la couche `carre-village`.
+   *  2. LE LANDMARK VALAIT POUR TOUT. `zoneAt` refusait ici n'importe quelle pièce dans un
+   *     toponyme, quand la sim ne le teste QUE pour le feu de camp (`place_campfire` /
+   *     `light_fire`, les deux seuls appels de `zoneAt` dans village.ts). Or R1 autorise
+   *     expressément un village dans une zone-région : le carré entier devenait rouge, et
+   *     pas un mur n'y était posable — au fantôme seulement, la sim les acceptait tous.
    */
   private placeable(tx: number, ty: number, placing: Placeable, edge: number): boolean {
     const p = this.predicted
     const r = BALANCE.BUILD_RANGE
     if ((tx + 0.5 - p.x) ** 2 + (ty + 0.5 - p.y) ** 2 > r * r) return false
-    if (zoneAt(this.map, tx + 0.5, ty + 0.5)) return false
+    if (!this.dansMonCarre(tx, ty, placing)) return false
+    if (placing === 'fire' && zoneAt(this.map, tx + 0.5, ty + 0.5)) return false
     // La porte de terrain de /sim, MOT POUR MOT — elle juge par pièce depuis que l'eau peu
     // profonde ne porte que le sol. La réimplémenter ferait vert ici et refusé là-bas.
     if (!terrainConstructible(terrainAt(this.map, tx, ty), placing)) return false
@@ -424,13 +443,39 @@ export class WorldScene extends Phaser.Scene {
     // tout ce qu'on veut justement pouvoir faire — fermer un COIN (la tuile porte déjà l'autre
     // arête), longer une haie de buissons, ceindre son propre four. La seule question qui reste
     // est « ce trait porte-t-il déjà un mur ? », et elle se pose des DEUX côtés.
-    if (placing === 'wall' || placing === 'door') {
+    //
+    // LU AU REGISTRE (2026-08-04), plus écrit en toutes lettres : la liste disait `wall || door`
+    // et OUBLIAIT LA PALISSADE, née après R23 avec `arete: 'requise'`. Le fantôme d'une palissade
+    // au-dessus d'un buisson rougissait donc — alors que le fantôme (`build-ghost`) et la sim la
+    // jugeaient tous deux sur l'arête, et l'acceptaient. C'est la sixième « liste écrite à la
+    // main que le compilateur ne garde pas » ; elle se dérive.
+    if (piece(placing).arete !== 'interdite') {
       return edgeBarrierAt(this.view.structures, tx, ty, edge) === undefined
     }
     // Tuile LIBRE : ni structure PLEINE, ni ressource, ni personne dessus (miroir du sim).
     if (fullTileAt(this.view.structures, tx, ty)) return false
-    if (this.view.nodes.some((n) => n.tx === tx && n.ty === ty)) return false
+    if (!poseLibre(this.view.villages, this.view.nodes, tx, ty)) return false
     return !this.lastEntities.some((e) => e.hp > 0 && Math.floor(e.x) === tx && Math.floor(e.y) === ty)
+  }
+  /** MON village dans le dernier snapshot, ou `undefined`. La couche du carré et le
+   *  miroir de pose le lisent tous les deux — une seule résolution, jamais deux. */
+  private monVillage(): Village | undefined {
+    return this.myVillageId === null ? undefined : this.view.villages.find((v) => v.id === this.myVillageId)
+  }
+  /**
+   * La tuile est-elle dans le carré de MON Feu ? (spec construction R2, `evaluateBuild`
+   * et `place_component` — même `chebyshev`, importé de /sim et jamais réécrit.)
+   *
+   * LE FEU DE CAMP EN EST EXEMPT, et c'est la règle, pas une tolérance : `place_campfire`
+   * est le geste qu'on fait SANS village, pour en fonder un. Le soumettre au carré rendrait
+   * toute fondation impossible — et, pour qui a déjà un village, interdirait le second feu
+   * libre que la sim autorise hors du domaine.
+   */
+  private dansMonCarre(tx: number, ty: number, placing: Placeable): boolean {
+    if (placing === 'fire') return true
+    const v = this.monVillage()
+    if (!v) return false // sans village, le marteau et les composants n'ont nulle part où poser
+    return chebyshev(v.fireTx, v.fireTy, tx, ty) <= fireRadius(v.tier)
   }
   /** Les sprites-miroirs du snapshot (structures, nœuds, cadavres, autres entités). */
   private view!: SnapshotView
@@ -452,6 +497,8 @@ export class WorldScene extends Phaser.Scene {
   private reveilFx!: ReveilFx
   /** La silhouette de ce qu'on va poser, quand le mode construction est armé. */
   private buildGhost!: BuildGhost
+  /** Le carré du Feu : liseré, tapis, extinction du dehors (spec construction R2). */
+  private carreVillage!: CarreVillage
   /** La jauge d'abattage au-dessus de l'arbre qu'on charge (spec recolte-maitrise). */
   private fellGauge!: FellGauge
   /** La lueur du bon flanc sur les rochers à portée (spec recolte-maitrise, verbe 2). */
@@ -610,6 +657,9 @@ export class WorldScene extends Phaser.Scene {
     this.reveilFx = new ReveilFx(this)
     this.view.setReveilFx(this.reveilFx) // …et le sol qui travaille, qui a besoin du TERRAIN de la tuile
     this.buildGhost = new BuildGhost(this)
+    // LA FRONTIÈRE DE CONSTRUCTION SE VOIT (demande d'Alexis, 2026-08-04) : le liseré du
+    // carré, le tapis de constructibilité et l'extinction du dehors — marteau en main.
+    this.carreVillage = new CarreVillage(this)
     this.fellGauge = new FellGauge(this)
     this.flankGlow = new FlankGlow(this)
 
@@ -1028,6 +1078,20 @@ export class WorldScene extends Phaser.Scene {
       this.warp,
       edgeArme,
     )
+    // LA FRONTIÈRE DU DOMAINE (demande d'Alexis, 2026-08-04). Elle s'allume au MARTEAU EN
+    // MAIN — pas à la pièce armée : la question « jusqu'où puis-je bâtir ? » se pose avant
+    // d'avoir choisi quoi poser. Le TAPIS, lui, attend la pièce (son verdict en dépend).
+    //
+    this.carreVillage.update({
+      marteau: !overlay && getHud(this.registry, 'marteau') === true,
+      village: this.monVillage(),
+      placing,
+      map: this.map,
+      structures: this.view.structures,
+      nodes: this.view.nodes,
+      corps: this.lastEntities,
+      camera: this.cameras.main,
+    })
     // La jauge d'abattage flotte au-dessus de l'arbre qu'on charge (spec recolte-maitrise).
     this.fellGauge.update(this.fells, this.view.nodes, this.warp)
     // La lueur du bon flanc sur les rochers à portée — dimensionnée à MON niveau de minage,
@@ -1276,7 +1340,7 @@ export class WorldScene extends Phaser.Scene {
           // NULLE éteint — la flaque au sol, le trou du voile et le reflet sur l'eau s'éteignent ensemble.
           const st = fireStateAt(this.lastSnapshotTick, s)
           const factor = st === 'lit' ? 1 : st === 'ember' ? 0.4 : 0
-          return { s, g: { ...g, alpha: g.alpha * factor } }
+          return { s, factor, g: { ...g, alpha: g.alpha * factor } }
         })
       // LES REMOUS (spec da-feeling R11) : qui MARCHE dans le haut-fond ? Suivi léger par
       // entité — la force s'éteint ~0,7 s après le dernier pas : un avatar immobile ne remue
@@ -1435,11 +1499,15 @@ export class WorldScene extends Phaser.Scene {
       // sinon il coiffe toute la scène. Et le Feu le CREUSE — sauf en mode éclairé, où la vraie
       // pipeline fait déjà la lumière (on ne troue pas deux fois).
       const ambientDepth = lit ? AMBIENT_DEPTH_LIT : AMBIENT_DEPTH
-      // MÊME `litFires`/`fireGlow` que l'eau et la flaque ambre → le trou du voile bat EN PHASE.
-      const veilFires = litFires.map(({ s, g }) => ({
+      // LA CLAIRIÈRE. Portée CONSTANTE (`fireHoleRadius` — décision Alexis 2026-08-03 : le trou
+      // ne suit plus `fireGlow.radius`, qui double avec l'alignement et effaçait la nuit à
+      // 25 tuiles ; l'engagement se lit à la flamme, que `warmthColor` teinte déjà). MÊME graine
+      // et même `time` que le halo et la flaque → les trois battent EN PHASE. Le `factor` éteint
+      // la clairière avec le foyer (braises atténuées, feu mort : rien).
+      const veilFires = litFires.map(({ s, factor }) => ({
         worldX: (s.tx + 0.5) * TILE_PX,
         worldY: (s.ty + 0.5) * TILE_PX,
-        radiusTiles: g.radius,
+        radiusTiles: fireHoleRadius(time, s.id * 1.7) * factor,
       }))
       this.nightVeil?.update(
         { color: amb.color, alpha: amb.alpha },
@@ -1447,7 +1515,11 @@ export class WorldScene extends Phaser.Scene {
         veilFires,
         this.cameras.main,
         ambientDepth,
-        !lit,
+        // TOUJOURS creusé, y compris en mode éclairé : le SOL n'est pas sur la pipeline Light2D
+        // (mesuré, le point-light ne lui apporte que ~+8 de rouge), donc personne d'autre ne lui
+        // rend la nuit qu'il a prise. Le paramètre reste — le mode à plat, lui, n'a pas été
+        // remesuré ; qui voudra le retirer devra d'abord le regarder.
+        true,
       )
       this.dynLight?.update(lit, this.cameras.main, this.view.structures, this.view.villages, hour, day, time)
       // La vie ambiante : les oiseaux traversent, les lucioles ne sortent qu'à la nuit.

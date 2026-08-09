@@ -31,6 +31,7 @@ import {
   type WallMaterial,
 } from './balance'
 import { isCropMature, isPlot } from './agriculture'
+import { poseLibre, rayonEmprise } from './defriche'
 import {
   blocksNavigation,
   doorPairs,
@@ -358,11 +359,10 @@ export function fireRadius(tier: number): number {
   return byTier[Math.min(Math.max(tier, 1), byTier.length) - 1]!
 }
 
-/** Le rayon MAX du carré (palier 3) — celui que la fondation réserve (R1-R2). */
-function fireRadiusMax(): number {
-  const byTier = BALANCE.FIRE_RADIUS_BY_TIER
-  return byTier[byTier.length - 1]!
-}
+// Le rayon MAX du carré (palier 3) — celui que la fondation réserve (R1-R2) — s'appelle
+// `rayonEmprise` et vit dans `defriche.ts` : c'est le MÊME nombre que celui du défrichement,
+// et c'est voulu (on défriche ce que la fondation a retenu). Une seconde dérivation ici
+// aurait fait deux vérités pour un seul carré.
 
 /** Pourquoi une pose au marteau est refusée (spec construction R2/R5/R7). */
 export type BuildReject =
@@ -471,8 +471,10 @@ export function evaluateBuild(
         : fullTileAt(state.structures, tx, ty)
   if (occupant) return fail(surArete ? 'edge_taken' : 'occupied')
   // Récolter = défricher (R5) : pas de mur/porte PLEINE TUILE sur un nœud (le sol/toit mou, si ;
-  // et l'ARÊTE aussi — elle court sur le trait, elle ne prend pas le buisson).
-  if (!surArete && couche === 'tuile' && state.nodes.some((n) => n.tx === tx && n.ty === ty)) {
+  // et l'ARÊTE aussi — elle court sur le trait, elle ne prend pas le buisson). Un nœud
+  // DÉFRICHÉ, lui, ne compte plus (`poseLibre`) : il n'en reste qu'une souche, et récolter
+  // POUR bâtir là est tout le sens de la règle — la tuile doit se libérer pour de bon.
+  if (!surArete && couche === 'tuile' && !poseLibre(state.villages, state.nodes, tx, ty)) {
     return fail('node')
   }
   // Invariant de navigabilité (R7), AVANT le coût : un rejet ne débite rien. L'arête part au
@@ -519,7 +521,7 @@ const BUILD_REJECT_REASON: Record<BuildReject, string> = {
  * s'installe ENTRE eux. Test d'intersection de rectangles en tuiles.
  */
 function poiSpecificInSquare(state: SimState, cx: number, cy: number): boolean {
-  const r = fireRadiusMax()
+  const r = rayonEmprise()
   const sx0 = cx - r
   const sx1 = cx + r
   const sy0 = cy - r
@@ -910,7 +912,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // pose pas un foyer sur ce qui est déjà là. « Prise ENTIÈRE », depuis R23 : un mur
       // d'arête borde la tuile sans l'occuper — on plante son feu contre sa clôture.
       if (fullTileAt(state.structures, tx, ty)) return reject('tuile occupée')
-      if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) return reject('tuile occupée')
+      if (!poseLibre(state.villages, state.nodes, tx, ty)) return reject('tuile occupée')
       if (state.entities.some((e) => e.id !== actorId && e.hp > 0 && Math.floor(e.x) === tx && Math.floor(e.y) === ty)) {
         return reject('tuile occupée')
       }
@@ -995,7 +997,7 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       // « Prise ENTIÈRE » (R23) : un mur d'arête borde la tuile sans l'occuper — on ADOSSE
       // donc son four à son propre mur, ce que `solidAt` refusait dès la première arête posée.
       if (fullTileAt(state.structures, tx, ty)) return reject('tuile occupée')
-      if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) return reject('un nœud occupe la tuile')
+      if (!poseLibre(state.villages, state.nodes, tx, ty)) return reject('un nœud occupe la tuile')
       // Invariant de navigabilité (R7) : un composant/coffre bloque, comme un mur.
       const ok = placementKeepsNavigable(
         state.map,

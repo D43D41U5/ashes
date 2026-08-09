@@ -12,6 +12,7 @@ import {
   isPlot,
   HUNT,
   NODE_DEFS,
+  noeudDefriche,
   forageRichness,
   sentinelOf,
   STRUCTURE_HP,
@@ -1576,7 +1577,14 @@ export class SnapshotView {
         this.nodeByTile.set(n.tx * NODE_TILE_STRIDE + n.ty, n)
       }
       n.stock = 0
-      if (d.regrowAt !== undefined) this.depleted.set(d.id, { since: this.tick, until: d.regrowAt })
+      // `regrowAt > 0`, comme `setNodes` : à 0 la sim dit « aucune repousse en cours » — le
+      // nœud défriché en porte la marque, et l'inscrire ici le ferait « grandir » sur une
+      // fenêtre vide (`until - since` négatif).
+      if (d.regrowAt !== undefined && d.regrowAt > 0) this.depleted.set(d.id, { since: this.tick, until: d.regrowAt })
+      // DÉFRICHÉ : le nœud ne sera plus dessiné (`renderNodes` l'écarte), mais un tronc qui
+      // s'évapore ne raconte rien. On pose la SOUCHE — le même transitoire que la dérive, à
+      // sa propre tuile puisqu'il n'a pas bougé : la trace de ce qu'on vient de dégager.
+      else if (noeudDefriche(this.villages, n)) this.stumps.push({ tx: n.tx, ty: n.ty, type: n.type, at: now })
     }
   }
 
@@ -1615,6 +1623,12 @@ export class SnapshotView {
       for (let tx = tx0; tx <= tx1; tx++) {
         const n = this.nodeByTile.get(tx * NODE_TILE_STRIDE + ty)
         if (n === undefined) continue
+        // DÉFRICHÉ : la sim ne le fera jamais repousser (`defriche.ts`), donc on ne le
+        // dessine plus — le sol est dégagé, et c'est ce que le joueur vient de faire. Le
+        // client APPLIQUE la règle, on ne la lui transmet pas : même leçon que la Cendre
+        // (`majCendre`), et c'est ce qui garantit qu'il ne reste pas un arbre fantôme
+        // contre lequel la prédiction locale irait se cogner.
+        if (noeudDefriche(this.villages, n)) continue
         // LE GROS BOIS EST UN ARBRE : deux sprites (tronc + houppier), un décalage dans sa tuile,
         // et le houppier s'efface autour du joueur. Sans cette ligne, il naissait sans houppier —
         // un fût nu au milieu d'une futaie, ce qui est exactement ce qu'il n'est pas.

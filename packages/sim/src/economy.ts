@@ -61,6 +61,7 @@ import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
 import { actForDay, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
 import { hasAccess, structureAt, type Structure } from './village'
+import { dansEmprise, noeudDefrichable } from './defriche'
 
 export interface ResourceNode {
   id: number
@@ -124,12 +125,14 @@ export type EconomyAction =
   | { type: 'cancel_craft'; index: number }
   | { type: 'eat'; item: ItemId; slot?: number }
 
-// Index tuile→nœud MÉMOÏSÉ par référence de tableau. Le NOMBRE de nœuds ne change
-// jamais au runtime, mais un nœud de bois/plante peut se DÉPLACER à l'épuisement
-// (spec recolte-vivante, dérive du bosquet) : l'index est construit une fois (O(N))
+// Index tuile→nœud MÉMOÏSÉ par référence de tableau. Un nœud de bois/plante peut se
+// DÉPLACER à l'épuisement (spec recolte-vivante, dérive du bosquet) et un nœud DÉFRICHÉ
+// disparaît (`nodeDefriche`) : l'index est construit une fois (O(N))
 // puis réutilisé — `nodeAt` devient O(1), condition des cartes denses (~140k nœuds)
 // où collision et récolte l'appellent souvent — et PATCHÉ en O(1) à chaque
-// relocalisation (`relocateInIndex`), jamais reconstruit. Dérivé EXTERNE (WeakMap,
+// relocalisation (`relocateInIndex`) ou retrait (`removeNode`), jamais reconstruit.
+// (La Cendre, elle, REMPLACE le tableau : le nouvel index naît à jour tout seul.)
+// Dérivé EXTERNE (WeakMap,
 // jamais dans SimState → invariant d'état sérialisable préservé, GC avec le tableau).
 // Même sémantique que l'ancien `find` : ≤1 nœud par tuile, premier gagnant.
 const NODE_INDEX_STRIDE = 1_000_000 // > toute coordonnée de tuile
@@ -160,6 +163,7 @@ function relocateInIndex(nodes: ResourceNode[], node: ResourceNode, oldTx: numbe
   idx.delete(oldTx * NODE_INDEX_STRIDE + oldTy)
   idx.set(node.tx * NODE_INDEX_STRIDE + node.ty, node)
 }
+
 
 // Tuiles des clairières de lieux, MÉMOÏSÉES par référence de carte (comme l'index
 // des nœuds) : les calculer à chaque relocalisation coûterait ~170 M comparaisons
@@ -205,6 +209,11 @@ function relocateNode(state: SimState, node: ResourceNode): void {
     if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue
     if (terrainAt(map, tx, ty) !== originTerrain) continue
     if (cleared.has(ty * map.width + tx)) continue
+    // ON NE DÉRIVE PAS CHEZ LES GENS. La dérive porte à 12 tuiles et l'emprise d'un village
+    // en fait 16 : sans ce refus, un arbre abattu DEHORS, à huit tuiles du bord, ressortirait
+    // DEDANS — le village se reboiserait par son voisinage, et geler la repousse sur place
+    // n'y changerait rien. C'est le vecteur principal, pas un cas limite.
+    if (dansEmprise(state.villages, tx, ty)) continue
     if (nodeAt(state.nodes, tx, ty) !== undefined) continue // couvre aussi la tuile d'origine
     if (structureAt(state.structures, tx, ty) !== undefined) continue
     const oldTx = node.tx
@@ -543,18 +552,40 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
   node.stock -= yielded
   if (node.stock <= 0) {
     const day = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
-    node.depletions = Math.min(BALANCE.DEPLETION_MAX, (node.depletions ?? 0) + 1)
-    node.forgetAt = state.tick + BALANCE.DEPLETION_FORGET_TICKS
-    const usure = 1 + BALANCE.DEPLETION_REGROW_PENALTY * (node.depletions - 1)
-    node.regrowAt =
-      state.tick + Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR[day - 1]! * usure)
-    // LA DÉRIVE (spec recolte-vivante D1/R1) : un nœud de bois/fibre meurt sur sa tuile
-    // et rouvre AILLEURS, dans le même bosquet. La pierre/le minéral reste sur place.
-    // À `stock = 0` : le client peint la souche à l'ancien coin et fait grandir la pousse
-    // au nouveau sur la durée `[tick, regrowAt]`. La pierre, elle, se reforme sur place.
-    // LE BUISSON À BAIES est VIVACE (demande d'Alexis 2026-07-19) : comme un arbre fruitier,
-    // il RESTE sur sa tuile, vidé de ses baies, et celles-ci repoussent DESSUS — pas de dérive.
-    if (def.skill !== 'mining' && node.type !== 'berry_bush') relocateNode(state, node)
+    // LE DÉFRICHEMENT (`defriche.ts`, décision d'Alexis 2026-08-06) : chez soi, ce qui
+    // s'extrait ne revient pas. `stock 0` + `regrowAt 0` est la MARQUE, et elle est
+    // PERSISTANTE — le client la lit pour ne pas animer une repousse qui n'arrivera jamais
+    // (`setNodes` teste déjà `regrowAt > 0`), la boucle de repousse pour passer son chemin en
+    // O(1), et la sauvegarde la porte telle quelle. On ne compte pas non plus les épuisements
+    // d'un nœud qui n'en connaîtra pas d'autre : `depletions`/`forgetAt` n'ont plus d'objet.
+    if (noeudDefrichable(state.villages, node)) {
+      node.regrowAt = 0
+      delete node.depletions
+      delete node.forgetAt
+    } else {
+      node.depletions = Math.min(BALANCE.DEPLETION_MAX, (node.depletions ?? 0) + 1)
+      node.forgetAt = state.tick + BALANCE.DEPLETION_FORGET_TICKS
+      const usure = 1 + BALANCE.DEPLETION_REGROW_PENALTY * (node.depletions - 1)
+      node.regrowAt =
+        state.tick + Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR[day - 1]! * usure)
+      // LA DÉRIVE (spec recolte-vivante D1/R1) : un nœud de bois/fibre meurt sur sa tuile
+      // et rouvre AILLEURS, dans le même bosquet. La pierre/le minéral reste sur place.
+      // À `stock = 0` : le client peint la souche à l'ancien coin et fait grandir la pousse
+      // au nouveau sur la durée `[tick, regrowAt]`. La pierre, elle, se reforme sur place.
+      // LE BUISSON À BAIES est VIVACE (demande d'Alexis 2026-07-19) : comme un arbre fruitier,
+      // il RESTE sur sa tuile, vidé de ses baies, et celles-ci repoussent DESSUS — pas de dérive.
+      //
+      // ET RIEN NE DÉRIVE DEPUIS L'INTÉRIEUR D'UNE EMPRISE. La fibre et les champignons y
+      // repoussent (ils sont `renewable`) — mais SUR PLACE, comme les baies. Sans cette
+      // garde, un plant de lin à une tuile du bord sortait du village à chaque cueillette et
+      // le potager spontané migrait vers l'extérieur au fil de la saison. `relocateNode`
+      // refuse déjà les tuiles d'emprise, donc au CŒUR du carré il dégradait tout seul vers
+      // « reste sur place » — le défaut ne se voyait qu'au BORD, là où une sonde sur huit
+      // tombe dehors. Le dire ici plutôt que de compter sur huit sondes qui échouent.
+      if (def.skill !== 'mining' && node.type !== 'berry_bush' && !dansEmprise(state.villages, node.tx, node.ty)) {
+        relocateNode(state, node)
+      }
+    }
     emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id, nodeType: node.type })
   }
   if (held) {
@@ -917,12 +948,34 @@ export function advanceEconomy(state: SimState): void {
       harvestStrike(state, entity, entity.id, node!, false)
     }
   }
+  // Le prédicat de défrichement coûte un balayage des villages : on ne le paie que s'il
+  // y a un village, et que sur les nœuds VIDES (les seuls candidats à la repousse).
+  const desVillages = state.villages.length > 0
   for (const node of state.nodes) {
-    if (node.stock <= 0 && state.tick >= node.regrowAt) {
-      // Un bon coin de cueillette repousse RICHE (la richesse est une propriété du lieu,
-      // pas un stock ponctuel) — sans effet sur les autres nœuds (spec verbe 3).
-      node.stock = withForageRichness(node.type, node.id, NODE_DEFS[node.type].stock)
-      node.regrowAt = 0
+    if (node.stock <= 0) {
+      // DÉFRICHÉ : `stock 0` + `regrowAt 0`, et c'est une signature UNIQUE — hors emprise, un
+      // nœud vidé porte toujours un `regrowAt` futur, et un nœud repoussé a du stock. On sort
+      // en O(1), sans balayer les villages : sinon chacune des quelques centaines de souches
+      // d'un carré paierait ce balayage vingt fois par seconde jusqu'à la fin de la saison.
+      // Conséquence assumée : une souche reste une souche même si le village disparaît — on
+      // a défriché, et une clairière ne se referme pas parce que le Feu s'est éteint.
+      if (node.regrowAt === 0) continue
+      if (state.tick >= node.regrowAt) {
+        // LE DÉFRICHEMENT PASSE AVANT (`defriche.ts`). Cette garde-ci n'est pas un doublon de
+        // celle de la récolte : elle rattrape le nœud vidé AVANT que le village n'existe — on
+        // fonde sur une clairière qu'on venait d'ouvrir, et l'emprise l'attrape rétroactivement.
+        // Sans elle, la repousse en cours arriverait à terme au milieu du village.
+        if (desVillages && noeudDefrichable(state.villages, node)) {
+          node.regrowAt = 0 // la marque, pour le client comme pour la sauvegarde
+          delete node.depletions
+          delete node.forgetAt
+          continue
+        }
+        // Un bon coin de cueillette repousse RICHE (la richesse est une propriété du lieu,
+        // pas un stock ponctuel) — sans effet sur les autres nœuds (spec verbe 3).
+        node.stock = withForageRichness(node.type, node.id, NODE_DEFS[node.type].stock)
+        node.regrowAt = 0
+      }
     }
     // Le monde OUBLIE : un coin qu'on laisse tranquille se refait une santé. Sans
     // ça, une carte finirait par se fermer partout — et un monde mort n'est pas un

@@ -9,12 +9,27 @@
  * style pixel du jeu »). La texture fait un texel par cellule de 4 px et se rend en NEAREST →
  * des carrés durs, calés sur cette grille. Aucun dégradé lissé qui baverait entre deux styles.
  *
+ * ═══ ELLE A CESSÉ D'ÊTRE LA LUMIÈRE DU FEU (2026-08-03) ═══
+ *
+ * Elle l'a été, faute de mieux : le trou du voile était débranché en mode éclairé, et toute la
+ * chaleur du sol reposait sur cette flaque. Un additif ne peut pourtant que DÉLAVER — ajouter
+ * de la lumière monte les trois canaux, l'écart entre eux se referme, et le sol perd sa couleur
+ * propre. Mesuré à 1,5 tuile d'un feu de camp à minuit : un sol vert (33,38,31) devenait
+ * (65,62,54), un kaki plat. Et comme elle est peinte SOUS le voile — un multiplicateur BLEU
+ * (mesuré : il remonte le rapport B/R de 1,27×) —, l'ambre y perdait encore son ambre.
+ * C'est le « sol tout jaune » qu'Alexis a rapporté.
+ *
+ * La PORTÉE appartient désormais au trou dans le voile (`night-veil`), qui multiplie au lieu
+ * d'ajouter et rend donc au sol sa propre teinte. Il reste ici un CŒUR : deux ou trois tuiles
+ * d'incandescence sur les braises, là où un vrai foyer cuit la terre. D'où `POOL_RADIUS_TILES`
+ * ramené de 5 à 3 et `GLOW_ALPHA_SCALE` de 1,2 à 0,75.
+ *
  * Trois partis pris qui la distinguent des tentatives jetées :
  *   • ADD AMBRE, jamais blanc. L'additif blanc délavait le sol en disque de projecteur ;
  *     une couleur chaude ajoutée à un sol de nuit sombre donne une braise, pas un néon.
- *   • AU-DESSUS DU VOILE DE NUIT (`FIRE_GROUND_DEPTH`). La nuit est un cache plat identique
- *     partout ; pour que le Feu la « creuse » localement, la flaque doit vivre par-dessus,
- *     comme les étincelles — sinon le voile l'éteindrait avec le reste.
+ *   • SOUS le voile de nuit (`FIRE_GROUND_DEPTH` = 4, le voile éclairé à 8) : elle est POSÉE
+ *     sur la terre, elle n'est pas une lucarne. Ce n'est plus à elle de percer la nuit —
+ *     le trou s'en charge, et c'est pourquoi son gain d'alpha a pu redescendre sous 1.
  *   • COSMÉTIQUE. Intensité ∝ nuit (via `fireGlow`) : de jour elle s'efface, on voit
  *     partout comme avant ; la nuit elle réchauffe les abords du foyer. Elle ne masque
  *     rien, ne conditionne aucune visibilité — pure ambiance.
@@ -40,18 +55,19 @@ const EDGE_COLOR: readonly [number, number, number] = [0xff, 0x5a, 0x14]
 /** LE PIXEL DE LUMIÈRE : 4×4 px monde (demande d'Alexis) — un grain franc, multiple de la
  *  grille de 2 px de l'art. */
 const LIGHT_PX = 4
-/** Rayon de la flaque EN TUILES (fixe : c'est la grille de pixels). ~la flaque d'un feu de
- *  camp ; les Feux engagés respirent en alpha/teinte, pas en taille (grille stable). */
-const POOL_RADIUS_TILES = 5
+/** Rayon du CŒUR EN TUILES (fixe : c'est la grille de pixels). Les Feux engagés respirent en
+ *  alpha/teinte, pas en taille (grille stable). Ramené de 5 à 3 le 2026-08-03 : au-delà de
+ *  ~3 tuiles ce n'est plus une braise qui cuit la terre, c'est un délavage (voir l'en-tête). */
+const POOL_RADIUS_TILES = 3
 /** Rayon en CELLULES de 2 px, et côté de la texture (impair → un texel centré sur le foyer). */
 const POOL_RADIUS_CELLS = (POOL_RADIUS_TILES * TILE_PX) / LIGHT_PX
 const TEX_SIDE = POOL_RADIUS_CELLS * 2 + 1
-/** Gain d'alpha du centre. Relevé (>1) parce que la flaque vit SOUS le voile de nuit (elle est
- *  posée sur le sol, cf. `FIRE_GROUND_DEPTH`) : le voile la multiplie vers le bas, on redonne du
- *  punch pour qu'elle porte encore la nuit. Plafonné à 1 au final. Volontairement MODÉRÉ (~1,2) :
- *  au-delà, le cœur se plaque à alpha 1 et l'ADD LAVE le sol au lieu de le teinter (demande
- *  d'Alexis : une chaleur qui colore, pas un projecteur qui délave). */
-const GLOW_ALPHA_SCALE = 1.2
+/** Gain d'alpha du centre. Il valait 1,2 — RELEVÉ au-dessus de 1 pour que la flaque « perce » le
+ *  voile qui la multiplie vers le bas. C'était le nœud du défaut : pousser l'alpha à saturation,
+ *  c'est pousser le terme additif au maximum, donc le délavage au maximum. Depuis que le trou du
+ *  voile porte la portée, la flaque n'a plus rien à percer — 0,75 la ramène à ce qu'elle doit
+ *  être, une teinte de braise et non un projecteur. Plafonné à 1 au final. */
+const GLOW_ALPHA_SCALE = 0.75
 
 /** Texture PIXEL : un texel par cellule de 4 px. La COULEUR va du cœur cuit vers l'ambre (chaleur
  *  concentrée au centre), l'ALPHA suit un smoothstep. NEAREST → carrés durs calés sur l'art. On

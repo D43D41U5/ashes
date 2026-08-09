@@ -4,6 +4,7 @@ import {
   brumeDuMatin,
   daylight,
   fireGlow,
+  fireHoleRadius,
   frontDeBrume,
   warmthColor,
   FRONT_BRUME_MAX_TILES,
@@ -95,6 +96,51 @@ describe('fireGlow (halo des Feux)', () => {
   })
   it('un Feu plus engagé rayonne plus loin', () => {
     expect(fireGlow(90, daylight(0)).radius).toBeGreaterThan(fireGlow(10, daylight(0)).radius)
+  })
+})
+
+/**
+ * LA CLAIRIÈRE — portée CONSTANTE (décision Alexis, 2026-08-03).
+ *
+ * Ce banc garde une décision, pas une formule. `fireHoleRadius` ne prend pas `warmth` : c'est
+ * le compilateur qui interdit de la recoupler à l'alignement, et ces cas-là gardent le RESTE —
+ * qu'elle batte, et qu'elle reste dans une plage où la nuit survit à côté du camp.
+ *
+ * D'où vient la borne haute — et l'histoire vaut d'être écrite, parce qu'un premier chiffre a
+ * été faux. On avait mesuré « à warmth 100, le sol se relève jusqu'à 25 tuiles du foyer » et
+ * conclu que le couplage à l'alignement était seul en cause. Il ne l'était pas : le voile de
+ * nuit, cru collé à l'écran, était en réalité AGRANDI de 2,25 par le zoom de la caméra
+ * (`night-veil.ts`), ce qui gonflait toutes les portées d'autant. Les 25 tuiles en venaient
+ * pour l'essentiel.
+ *
+ * La conclusion tient quand même, sur des chiffres propres : l'ancien couplage donnait 12,8
+ * tuiles de portée à warmth 100, quand la vue n'en montre que ~8,6 vers le haut au zoom du
+ * jeu — un Feu engagé chassait bel et bien la nuit de l'écran. Et c'est cette limite du CADRE,
+ * pas un goût, qui borne la portée ici.
+ */
+describe('fireHoleRadius (le trou du Feu dans la nuit)', () => {
+  it("ne prend PAS l'alignement en argument — le halo si, elle non", () => {
+    // Le halo cosmétique grandit avec l'engagement : c'est CE couplage-là qui effaçait la nuit.
+    expect(fireGlow(100, daylight(0)).radius).toBeGreaterThan(fireGlow(0, daylight(0)).radius)
+    // La clairière, elle, n'a qu'un temps et une graine. Deux Feux d'alignements opposés, même
+    // instant, même graine : rigoureusement la même portée — il n'y a pas d'autre entrée.
+    expect(fireHoleRadius(1234, 5)).toBe(fireHoleRadius(1234, 5))
+  })
+
+  it('elle PULSE avec la flamme (jamais un disque mort)', () => {
+    const echantillons = [0, 120, 240, 360, 480, 600, 720].map((t) => fireHoleRadius(t, 3))
+    expect(Math.max(...echantillons)).toBeGreaterThan(Math.min(...echantillons))
+  })
+
+  it('reste dans une plage où la nuit survit à côté du camp', () => {
+    // Balayage d'une minute entière, deux graines : on prend les EXTRÊMES, pas un point.
+    const rayons: number[] = []
+    for (const seed of [0, 7.3]) for (let t = 0; t < 60000; t += 37) rayons.push(fireHoleRadius(t, seed))
+    expect(Math.min(...rayons)).toBeGreaterThan(4) // en deçà, le foyer n'a plus de clairière
+    // La borne haute vient du CADRE, pas du goût : au zoom du jeu (2,25) la vue ne porte qu'à
+    // ~8,6 tuiles au-dessus et au-dessous du joueur. Une clairière qui dépasse ce rayon ne
+    // laisse plus de nuit à l'écran — elle ne se lit plus comme une clairière.
+    expect(Math.max(...rayons)).toBeLessThan(8.6)
   })
 })
 

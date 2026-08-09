@@ -25,8 +25,18 @@ import type Phaser from 'phaser'
 import type { Warp } from '../../render/warp'
 import { FONT } from '../ui/typography'
 
-const OK_TINT = 0x9adf7a
-const BAD_TINT = 0xd9614f
+/**
+ * LE VERT ET LE ROUGE DE LA POSE. EXPORTÉS (2026-08-04) parce qu'ils ont un second
+ * lecteur : le TAPIS de constructibilité (`carre-village.ts`) dit la même chose que le
+ * fantôme, une tuile plus loin. Deux verts différents pour un seul « ça passe », et
+ * l'œil chercherait une distinction qui n'existe pas.
+ *
+ * Ils ne vivent pas dans `ui/palette.ts` par un choix de grammaire : la palette du jeu
+ * est ENCRE + 2 ACCENTS (braise, alerte) et n'a pas de vert. Le vert de la pose est un
+ * code de FANTÔME, pas une couleur d'interface.
+ */
+export const OK_TINT = 0x9adf7a
+export const BAD_TINT = 0xd9614f
 const GHOST_ALPHA = 0.55
 
 /**

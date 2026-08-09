@@ -20,6 +20,7 @@
  */
 import { COMPONENTS, STRUCTURE_COSTS, VILLAGE_GROWTH, WALL_TIERS, type ComponentType } from './balance'
 import { edgeBarrierAt, fullTileAt, terrainConstructible } from './construction'
+import { poseLibre } from './defriche'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { countOf, type Inventory, type ItemBag, type StructureType } from './items'
 import { terrainAt } from './map'
@@ -246,7 +247,7 @@ export function desiredOrders(state: SimState, village: Village): BuildOrder[] {
     if (!poseFeasible(tx, ty, component)) continue
     const occupant = fullTileAt(state.structures, tx, ty)
     if (occupant) continue // à nous (posée) ou pris par autre chose : dans les deux cas, acquis
-    if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) continue // un buisson a dérivé là
+    if (!poseLibre(state.villages, state.nodes, tx, ty)) continue // un buisson a poussé là
     orders.push({ action: 'place', component, tx, ty })
   }
   // Chaque mur et porte de LOGIS encore en bois monte en pierre. La porte charretière
@@ -267,7 +268,7 @@ export function freeBedSpot(state: SimState, village: Village): { tx: number; ty
     if (tx < 0 || ty < 0 || tx >= state.map.width || ty >= state.map.height) continue
     if (!terrainConstructible(terrainAt(state.map, tx, ty), 'paillasse')) continue
     if (fullTileAt(state.structures, tx, ty)) continue
-    if (state.nodes.some((n) => n.tx === tx && n.ty === ty)) continue
+    if (!poseLibre(state.villages, state.nodes, tx, ty)) continue
     return { tx, ty }
   }
   return null

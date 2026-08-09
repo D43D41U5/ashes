@@ -128,9 +128,16 @@ export type { PlacedStructure, RecogStructure, RecognizedFunction, EdgeAware, Do
 /** LE VOCABULAIRE DES ARÊTES (spec construction R23) — la même valeur traverse le fantôme du
  *  client, le protocole, la validation du serveur et la collision : une seule définition. */
 export { EDGE_N, EDGE_E, EDGE_S, EDGE_O, EDGE_BITS, edgeBits, edgeStep, oppositeEdge, isSingleEdge } from './geometry'
+/** La distance de Chebyshev — celle, et pas une autre, qui décrit le CARRÉ du Feu (spec
+ *  construction R2). Exportée pour que le client dessine et teste la MÊME frontière que
+ *  `evaluateBuild` : une seconde formule au client, c'est un liseré qui ment d'une tuile. */
+export { chebyshev } from './geometry'
 export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel, recipeState, fellGreenWidth, isCleanFell, flankOfAim, mineGoodFlank, mineTolerance, isCleanMine, forageRichness, forageBounty, maxTierByLevel, effectiveTier } from './economy'
 export type { ResourceNode, EconomyAction, CraftOrder, RecipeState } from './economy'
 export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame
+// LE DÉFRICHEMENT (`defriche.ts`) : le client applique le MÊME prédicat que la sim — c'est
+// ce qui lui évite de dessiner un arbre que la sim a déjà rendu à l'état de souche.
+export { dansEmprise, noeudDefrichable, noeudDefriche, poseLibre, rayonEmprise } from './defriche'
 export { cropStage, isCropMature, isPlot } from './agriculture' // le potager (voie A) : maturité PURE, lue par le rendu
 export { applyCombatAction, advanceCombat, weaponDamage, weaponKind, weaponProfile, pendingStrike } from './combat'
 export type { CombatAction, Corpse } from './combat'

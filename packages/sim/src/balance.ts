@@ -936,6 +936,20 @@ export interface NodeDef {
    * mais on ne sait reconnaître les bons qu'expert. Absent = aucun palier de savoir (le défaut).
    */
   minForageLevel?: number
+  /**
+   * CE QUI EST VIVANT REPOUSSE, CE QUI S'EXTRAIT NE REVIENT PAS (décision d'Alexis,
+   * 2026-08-06) — et ça ne se lit QUE dans l'emprise d'un village (`nodeDefriche`).
+   *
+   * Dehors, rien ne change : tout repousse comme avant. Mais on ne défriche pas deux
+   * fois le même carré : un tronc abattu, une pierre cassée, un filon vidé chez soi ne
+   * reviennent JAMAIS — le bois d'un village vient du dehors, définitivement, et le Feu
+   * (évier permanent, `advanceUpkeep`) fait sortir. Les plantes du quotidien, elles,
+   * restent : baies, fibre, champignons repoussent sur place, jusque dans le village.
+   * C'est le potager qui vient tout seul, et ça ne dispute rien au bois.
+   *
+   * Absent = le nœud s'extrait (bois, pierre, minerai, tourbe, cendre, gravats).
+   */
+  renewable?: true
 }
 
 export const NODE_DEFS: Record<NodeType, NodeDef> = {
@@ -943,11 +957,11 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   // la largeur de la colonne dessinée (`client/render/arbre-art.ts`, qui confronte les deux).
   tree: { item: 'wood', stock: 10, blockHalfSub: 1.5, skill: 'woodcutting', tool: 'axe', minTool: 'none' },
   rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'none' },
-  fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
-  berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
+  fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true },
+  berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true },
   // LE PATCH DE CHAMPIGNONS : cueilli à mains nues (E), mais gaté par le SAVOIR — on ne récolte
   // les bons qu'à `FORAGE_QUALITY_LEVEL` (le novice les voit sans savoir les prendre). Humide/ombre.
-  champignon: { item: 'champignons', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', minForageLevel: BALANCE.FORAGE_QUALITY_LEVEL },
+  champignon: { item: 'champignons', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', minForageLevel: BALANCE.FORAGE_QUALITY_LEVEL, renewable: true },
   iron_vein: { item: 'iron_ore', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
   coal_seam: { item: 'coal', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
 

@@ -776,6 +776,10 @@ export class UIScene extends Phaser.Scene {
     // La pièce ARMÉE et son matériau partent au monde : WorldScene peint le fantôme,
     // pose au clic. L'UI décide, la scène du monde exécute.
     setHud(this.registry, 'selected', building ? this.buildMenu.armed() : null)
+    // …et le MARTEAU LUI-MÊME, qui allume la frontière du carré dans le monde. Il part
+    // d'ici et pas de WorldScene pour que la condition n'existe qu'une fois : le liseré
+    // s'éteint donc exactement quand le menu se referme (TAB, carte, outil rangé).
+    setHud(this.registry, 'marteau', building)
     setHud(this.registry, 'buildMaterial', this.buildMenu.material())
     // …et le MODE DÉMOLIR avec eux (décision d'Alexis, 2026-08-01) : WorldScene en tire le
     // surlignage rouge de ce qu'on détruirait, et le clic l'action. Faux hors marteau en main.

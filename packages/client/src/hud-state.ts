@@ -158,6 +158,19 @@ export interface HudState {
    */
   demolir: boolean
   /**
+   * LE MARTEAU EST-IL EN MAIN ? (demande d'Alexis, 2026-08-04.)
+   *
+   * DISTINCT de `selected`, qui ne vaut que si une PIÈCE est armée : on tient le marteau
+   * bien avant d'avoir choisi quoi poser, et c'est précisément à ce moment-là qu'on se
+   * demande jusqu'où le domaine va. C'est ce drapeau qui allume la frontière du carré
+   * (`carre-village.ts`) — pas la pièce armée, qui n'allume que le tapis.
+   *
+   * Il vaut la MÊME condition que l'ouverture du menu du marteau (UIScene) : outil en
+   * main, hors menu personnage, hors carte. Une seconde condition écrite ailleurs
+   * laisserait le liseré allumé sous la carte ouverte.
+   */
+  marteau: boolean
+  /**
    * L'ARÊTE ARMÉE (spec construction R23) : le bit N/E/S/O sur lequel le prochain mur ou la
    * prochaine porte se posera, que `A`/`E` font tourner. Sol et toit l'ignorent — ils prennent
    * la tuile.
@@ -348,6 +361,7 @@ export const CLES_HUD: Record<keyof HudState, true> = {
   tasks: true, archetype: true, villageWarmth: true, inv: true, activeSlot: true,
   craftQueue: true, stationsInRange: true, seen: true, hunger: true, temperature: true, skills: true,
   hp: true, stamina: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true, demolir: true,
+  marteau: true,
   foundableFire: true, refugeesNearby: true, upgradableFire: true, deathMoment: true, corpseHint: true,
   characterMenuOpen: true, characterTab: true, uiTyping: true, chatTyping: true, chatLog: true,
   chatDraft: true, openContainer: true, openContainerView: true, openFire: true, openFireView: true,

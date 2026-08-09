@@ -21,7 +21,7 @@
  */
 import Phaser from 'phaser'
 import { fireStateAt, type Structure } from '@ashes/sim'
-import { SPARK_DEPTH, TILE_PX } from '../../render/framing'
+import { TILE_PX, structureDepth } from '../../render/framing'
 
 /** Une braise en PIXEL — un CARRÉ PLEIN et UNIFORME (demande d'Alexis : plus rond du
  *  tout). Pas de dégradé, pas de cœur brillant qui arrondit à l'œil : un aplat blanc à
@@ -82,7 +82,7 @@ export class FireFx {
       if (!unit) {
         const cx = s.tx * TILE_PX + TILE_PX / 2
         const cy = s.ty * TILE_PX + TILE_PX / 2
-        unit = this.spawn(cx, cy)
+        unit = this.spawn(cx, cy, structureDepth(s.ty, TILE_PX))
         this.units.set(s.id, unit)
       }
       // Les particules suivent l'ÉTAT (spec feu-station S1/S3) : allumé → flammes + braises + fumée ;
@@ -104,7 +104,23 @@ export class FireFx {
     }
   }
 
-  private spawn(cx: number, cy: number): FireUnit {
+  /**
+   * ═══ LES FLAMMES TRIENT EN Y COMME LE FOYER (rapporté par Alexis, corrigé le 2026-08-03) ═══
+   *
+   * Elles vivaient à `SPARK_DEPTH` (1 250 000) — au-dessus de la canopée, du voile, et de TOUS
+   * les acteurs. Une flamme passait donc par-dessus l'avatar planté devant son feu : le foyer,
+   * lui, triait bien, mais son feu lui passait au travers.
+   *
+   * `SPARK_DEPTH` a sa raison — les lucioles doivent survivre au voile de nuit — mais elle ne
+   * vaut pas ici : la flamme appartient à une STRUCTURE, qui a une place dans le tri. Les trois
+   * couches prennent donc la profondeur du foyer (`structureDepth`, pieds sur `ty + 1`), la
+   * fumée juste dessous et les braises juste dessus, pour que leur ordre entre elles tienne.
+   *
+   * En mode éclairé le voile de nuit est SOUS les sprites (profondeur 8) : la flamme reste donc
+   * au-dessus de lui, comme avant. Elle ne s'assombrit qu'en mode à plat, avec le reste — ce
+   * qui est le sens même de ce mode.
+   */
+  private spawn(cx: number, cy: number, depth: number): FireUnit {
     // LES FLAMMES : de petites braises chaudes qui montent POSÉMENT (montée ralentie —
     // elles fusaient) en s'écartant un peu et se resserrent en pointe. Additif.
     const flame = this.scene.add
@@ -119,7 +135,7 @@ export class FireFx {
         tint: [0xffe27a, 0xffa842, 0xf05a1e],
         blendMode: 'ADD',
       })
-      .setDepth(SPARK_DEPTH)
+      .setDepth(depth)
 
     // LES BRAISES : rares, vives, minuscules — elles filent vers le haut et meurent vite.
     const ember = this.scene.add
@@ -134,7 +150,7 @@ export class FireFx {
         tint: [0xffe9a0, 0xffc258],
         blendMode: 'ADD',
       })
-      .setDepth(SPARK_DEPTH + 1)
+      .setDepth(depth + 0.2)
 
     // LA FUMÉE : de petites volutes grises qui montent et se dissipent VITE (décision
     // utilisateur). Fondu normal, alpha faible, grain menu : elle n'OFFUSQUE rien.
@@ -150,7 +166,7 @@ export class FireFx {
         tint: [0x5a554d, 0x6f6a61],
         blendMode: 'NORMAL',
       })
-      .setDepth(SPARK_DEPTH - 1)
+      .setDepth(depth - 0.2)
 
     return { flame, ember, smoke }
   }

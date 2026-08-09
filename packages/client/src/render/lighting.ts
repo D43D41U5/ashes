@@ -220,3 +220,30 @@ export function fireGlow(
   const radius = (GLOW_MIN_RADIUS_TILES + GLOW_SPAN_TILES * engage) * beat
   return { color: warmthColor(warmth), radius, alpha }
 }
+
+/**
+ * LA CLAIRIÈRE — la portée, en tuiles, du trou que le Feu creuse dans le voile de nuit.
+ *
+ * ═══ POURQUOI CE N'EST PAS `fireGlow.radius` ═══
+ *
+ * Ça l'était, et c'était le défaut. `fireGlow.radius` va de 3 à 8 tuiles avec l'engagement du
+ * village : c'est le rayon d'un halo COSMÉTIQUE, calibré pour une lueur qu'on additionne. Le
+ * trou du voile, lui, ne colore rien — il RETIRE de la nuit. Le faire monter sur ce rayon-là
+ * donnait, MESURÉ à minuit sur un Feu à warmth 100, un sol relevé de (17,15,18) à (30,23,24)
+ * à VINGT-CINQ tuiles du foyer, et jusque dans les coins de l'écran : la nuit disparaissait de
+ * la vallée dès qu'un village s'engageait.
+ *
+ * D'où la décision d'Alexis (2026-08-03, `docs/decisions.md`) : **portée CONSTANTE — l'engagement
+ * se lit à la flamme**, où il se lit déjà (le sprite du Feu est teinté par `warmthColor` : bleu
+ * Foyer, rouge Meute). Cette fonction ne prend donc PAS `warmth` en argument, et c'est le fond
+ * de l'affaire : ce qui n'est pas paramétrable ne peut pas se recoupler par distraction.
+ *
+ * Elle PULSE, en revanche — même `flicker`, même graine que le halo et la flaque : les trois
+ * battent en phase avec la flamme, sinon la clairière respirerait à contretemps du feu qui la
+ * creuse. L'appelant module encore par l'ÉTAT du foyer (braises, éteint).
+ */
+const HOLE_RADIUS_TILES = 6
+
+export function fireHoleRadius(timeMs = 0, seed = 0): number {
+  return HOLE_RADIUS_TILES * flicker(timeMs, seed)
+}
