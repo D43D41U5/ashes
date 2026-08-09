@@ -32,6 +32,7 @@ import { STRUCTURE_TYPES, piece } from './pieces'
 import type { StructureType } from './items'
 import type { SimState } from './sim'
 import { addStructure } from './village'
+import { SORT_DES_LIEUX, type SortDuLieu, sortDuLieu, usureSelonSort } from './sort-des-lieux'
 
 export interface Plan {
   /**
@@ -285,6 +286,12 @@ export function buildPoiStructures(state: SimState, seed: number): void {
     const plan = PLANS[z.kind]
     if (plan === undefined) continue
 
+    // LE SORT DU LIEU (spec stratigraphie S-R17) : brûlé, pillé ou intact — dérivé de la carte,
+    // le MÊME verdict que celui du toponyme (`placeOne` nomme d'après lui). Il module l'usure,
+    // le mobilier et la fouille ; le plan, lui, ne bouge pas.
+    const sort = sortDuLieu(map, z.x, z.y, z.w, z.h)
+    const usure = usureSelonSort(plan.usure, sort)
+
     // L'ORIENTATION, tirée de la position — positionnelle et salée, jamais du PRNG partagé.
     // Sauf pour un plan `fixe`, qui se pose dans le sens où il est écrit (cf. `Plan.fixe`).
     const quart = plan.fixe ? 0 : Math.min(3, Math.floor(hash2(z.x, z.y, seed ^ 0x42415449) * 4)) // 'BATI'
@@ -329,12 +336,15 @@ export function buildPoiStructures(state: SimState, seed: number): void {
         // CHAQUE RÉGION A SON SOL, et c'est ce qui la fait lire comme une PIÈCE : le dallage
         // pour la salle, la terre battue pour la cour. Sans sol, un enclos n'était qu'une
         // clôture posée dans l'herbe.
-        if (c.region === 'salle') poser(state, 'floor', tx, ty, plan.usure)
-        else if (c.region === 'cour') poser(state, 'terre', tx, ty, plan.usure)
-        if (c.toit) poser(state, 'roof', tx, ty, plan.usure)
-        if (c.piece) poser(state, c.piece, tx, ty, plan.usure)
+        if (c.region === 'salle') poser(state, 'floor', tx, ty, usure)
+        else if (c.region === 'cour') poser(state, 'terre', tx, ty, usure)
+        // LE FEU A PRIS LE TOIT ET LE MOBILIER : un lieu brûlé ne garde que la pierre — l'âtre
+        // debout au milieu des murs calcinés, l'image même de la ferme incendiée. Les pillards,
+        // eux, n'emportent que les CONTENANTS (coffre, tonneau, étagère) : le reste se regarde.
+        if (c.toit && sort !== 'brule') poser(state, 'roof', tx, ty, usure)
+        if (c.piece && !pieceRetiree(c.piece, sort)) poser(state, c.piece, tx, ty, usure)
         // Le nœud vient APRÈS le sol : il se pose SUR la terre battue, il ne la remplace pas.
-        if (c.noeud) semer(state, c.noeud, tx, ty)
+        if (c.noeud) semer(state, c.noeud, tx, ty, sort)
       }
     }
 
@@ -373,9 +383,19 @@ export function buildPoiStructures(state: SimState, seed: number): void {
         ? addStructure(state, 'wall', a.tx, a.ty, 0, 0, 'public', 'stone')
         : addStructure(state, a.type, a.tx, a.ty, 0, 0, 'public')
       s.edges = a.bits
-      if (USURABLE.has(a.type)) s.hp = Math.max(1, Math.floor(s.hp * plan.usure))
+      if (USURABLE.has(a.type)) s.hp = Math.max(1, Math.floor(s.hp * usure))
     }
   }
+}
+
+/**
+ * CE QUE LE SORT RETIRE DU PLAN. Le feu ne laisse que la pierre (l'âtre) ; les pillards
+ * n'emportent que ce qui se porte et se vide — les contenants. L'oubli ne retire rien.
+ */
+function pieceRetiree(type: StructureType, sort: SortDuLieu): boolean {
+  if (sort === 'brule') return type !== 'atre'
+  if (sort === 'pille') return type === 'chest' || type === 'tonneau' || type === 'etagere'
+  return false
 }
 
 /** Pose une pièce du monde : sans village, publique, et usée si elle peut l'être. */
@@ -385,10 +405,17 @@ export function buildPoiStructures(state: SimState, seed: number): void {
  * un compteur reparti de zéro ferait deux nœuds avec le même id, et le premier ramassage
  * viderait les deux.
  */
-function semer(state: SimState, type: NodeType, tx: number, ty: number): void {
+function semer(state: SimState, type: NodeType, tx: number, ty: number, sort: SortDuLieu): void {
   let id = 1
   for (const nd of state.nodes) if (nd.id >= id) id = nd.id + 1
-  state.nodes.push({ id, type, tx, ty, stock: NODE_DEFS[type].stock, regrowAt: 0 })
+  // LE SORT PORTE LE COMBIEN, JAMAIS LE SI (spec stratigraphie S-R18) : une ruine pillée garde
+  // un fond de fouille (plancher à 1), une ruine intacte garde TOUT — la règle de lecture
+  // « loin des routes = riche » que le joueur peut apprendre, puis transmettre.
+  const base = NODE_DEFS[type].stock
+  const stock = sort === 'pille'
+    ? Math.max(1, Math.floor(base * SORT_DES_LIEUX.STOCK_PILLE))
+    : sort === 'intact' ? base * SORT_DES_LIEUX.STOCK_INTACT : base
+  state.nodes.push({ id, type, tx, ty, stock, regrowAt: 0 })
 }
 
 function poser(state: SimState, type: StructureType, tx: number, ty: number, usure: number): void {

@@ -12,6 +12,7 @@ import { setTile } from './map'
 import { FAUNA, MORTS, TERRAIN_ROAD, TERRAIN_SCREE } from './balance'
 import { distSq } from './geometry'
 import { type CarveField, carveDistanceToMain, walkableComponents } from './connectivity'
+import { nomSelonSort, sortDuLieu } from './sort-des-lieux'
 
 // ids terrain (balance.ts) — repris localement pour lisibilité de la table.
 const SCREE = 9, ROCK = 5, SNOW = 10, BOULDERS = 16, GLACIER = 15, BURNT = 21, PEAT = 18, REED = 19,
@@ -476,7 +477,11 @@ function placeOne(
   const count = (used.get(t.slug) ?? 0) + 1
   used.set(t.slug, count)
   const z = footprintAt(map, t, tx, ty)
-  map.zones.push({ name: `${t.name} ${roman(count)}`, ...z, kind: t.slug })
+  // LE NOM DIT LE SORT (spec stratigraphie S-R19) : un lieu bâti est nommé d'après ce que la
+  // Cendre et les routes ont fait de lui — dérivé, jamais tiré. Le champ de cendre est posé
+  // avant tout POI (zonegen passe 4), le sort est donc lisible ici.
+  const nom = nomSelonSort(t.slug, t.name, sortDuLieu(map, z.x, z.y, z.w, z.h))
+  map.zones.push({ name: `${nom} ${roman(count)}`, ...z, kind: t.slug })
 
   const entry = entryTile(map, field, z)
   if (entry === undefined || entry.cost === 0) return // déjà de plain-pied sur le monde
