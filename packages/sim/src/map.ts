@@ -18,12 +18,35 @@ export interface Zone {
   kind?: string
 }
 
+/**
+ * UN FAIT DE GÉNÉRATION (spec `stratigraphie.md` S-R16) — une ligne de l'état civil du monde
+ * d'avant. Méthode Caves of Qud : des faits ESTAMPILLÉS par les passes qui les créent, jamais
+ * d'agents simulés. Les toponymes les lisent déjà (le sort des lieux bâtis) ; les stèles, les
+ * rumeurs et la chronique des couches suivantes les liront demain. JSON-sérialisable, comme
+ * tout ce qui vit dans `WorldMap`.
+ */
+export interface FaitDeGeneration {
+  /** L'ère : 1 = l'implantation (on s'installe), 2 = les routes (on circule),
+   *  3 = la Cendre (on meurt ou l'on fuit). */
+  ere: 1 | 2 | 3
+  type: 'fondation' | 'gue' | 'sort'
+  x: number
+  y: number
+  /** Le kind du lieu concerné (fondation, sort). */
+  lieu?: string
+  /** La cause LISIBLE : 'eau' ou 'route' (pourquoi on s'est installé là),
+   *  'brule' | 'pille' | 'intact' (ce que la Cendre en a fait). */
+  cause?: string
+}
+
 export interface WorldMap {
   width: number
   height: number
   /** Id de terrain par tuile, row-major (index = y * width + x). */
   terrain: number[]
   zones: Zone[]
+  /** LES ANNALES — les faits de génération, dans l'ordre d'émission (S-R16). */
+  annales?: FaitDeGeneration[]
   /**
    * LE CHAMP DE CENDRE — distance de chaque tuile à la frontière de la Cendrière, en tuiles.
    * Négative DEDANS, positive dehors. **Donnée STATIQUE** : calculée une fois, jamais modifiée.

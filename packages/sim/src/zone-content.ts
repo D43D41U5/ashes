@@ -172,7 +172,10 @@ export const CONTENUS: Record<string, ContenuZone> = {
   brule: {
     structurant: { type: 'ash_heap', part: 0.34 },
     liaison: [{ type: 'coal_seam', part: 0.16 }],
-    commun: { tree: 0.32, rock: 0.1, fiber_plant: 0.08 },
+    // `berry_bush` : les baies des PIONNIERS (stratigraphie S-R20) — `terrainAdmet` les refuse
+    // au calciné et les donne à la lande et à l'herbe des stades : la reprise se RÉCOLTE, le
+    // gradient de succession est aussi un gradient de garde-manger.
+    commun: { tree: 0.28, rock: 0.1, fiber_plant: 0.08, berry_bush: 0.12 },
   },
   ruines: { structurant: { type: 'rubble', part: 0.3 }, commun: { rock: 0.34, fiber_plant: 0.2, tree: 0.16 } },
 

@@ -631,6 +631,10 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   // seed à l'autre pour qu'un nombre de tuiles fixe tienne la promesse. On calibre donc ICI.
   const cendreMax = calibreLeFront(champCendre, (i) => zone[i] === g.racine && rampe[i] === 0)
 
+  // ── LES STADES DU VERSANT BRÛLÉ (stratigraphie, couche IV) : la reprise, datée par le champ
+  //    de cendre qu'on vient de poser. AVANT les lieux — le semis lit le terrain des stades.
+  peindreLesStadesDuBrule(terrain, zone, g, champCendre, width, height, seed)
+
   /**
    * LA ZONE, POUR LE CLIENT — et elle est désormais EXACTE, gratuitement.
    *
@@ -676,6 +680,9 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   }
   for (const q2 of gues) {
     map.zones.push({ name: 'le Gué', x: q2.x - 3, y: q2.y - 3, w: 7, h: 7 })
+    // Les annales (S-R16) : un gué est un fait de l'ère des routes — le point où le pays
+    // d'avant a choisi de franchir son eau.
+    ;(map.annales ??= []).push({ ere: 2, type: 'gue', x: q2.x, y: q2.y })
   }
 
   // ── PASSE 5 : LES LIEUX — et ils ont désormais une ADRESSE ────────────────
@@ -976,6 +983,107 @@ function entrelacerLesLisieres(
           if (terrain[i] === de) terrain[i] = vers
         }
       }
+    }
+  }
+}
+
+/**
+ * ═══ LES STADES DU VERSANT BRÛLÉ — la reprise, datée par le feu (stratigraphie S-R20) ═══
+ *
+ * « C'est là que ça a commencé » (worldgen §3) : le Versant Brûlé n'est pas uniformément mort —
+ * il MEURT PRÈS DU FEU ET REVIT LOIN DE LUI. La distance à la Cendrière (le champ de cendre,
+ * déjà calculé) devient l'ÂGE de la perturbation, et la zone se compose par stades de
+ * succession écologique, du plus jeune au plus vieux :
+ *
+ *   cendre stérile → lande (mousses, épilobes — et les premières baies) → pionniers (l'herbe
+ *   revient, les premiers mélèzes s'y risquent) → jeune futaie serrée
+ *
+ * Les parts sont des QUANTILES de la distance réellement tirée sur les tuiles de la zone
+ * (patron `seuilParQuantile`) : le gradient est un contrat sur toute seed, quelle que soit la
+ * forme de la zone. Le dither par motif (le patron de la lisière sud — le seul bord que
+ * l'audit visuel ait jugé vivant) déchiquette les fronts de bande : des marches irrégulières,
+ * jamais une courbe de niveau. Les NŒUDS suivent tout seuls : `terrainAdmet` donne les baies
+ * à la lande, le bois aux mélèzes — chaque stade porte sa table, par construction.
+ */
+const STADES_BRULE = {
+  /** Les parts cumulées des stades, du plus proche du feu au plus loin. */
+  PART_STERILE: 0.36,
+  PART_LANDE: 0.66, //   stérile + lande
+  PART_PIONNIER: 0.86, // + pionniers ; le reste : jeune futaie
+  /** Amplitude du dither par motif (± la moitié), en tuiles de distance au front. */
+  DITHER: 26,
+  /** La part de mélèzes semés PAR MOTIF dans la bande pionnière — les éclaireurs du bois. */
+  MELEZES_PIONNIERS: 0.16,
+} as const
+
+function peindreLesStadesDuBrule(
+  terrain: number[],
+  zone: Int32Array,
+  g: GrapheZones,
+  champCendre: readonly number[],
+  width: number,
+  height: number,
+  seed: number,
+): void {
+  const brule = g.zones.find((z) => z.def.slug === 'brule')
+  if (!brule) return
+  const sel = (seed ^ 0x53544144) | 0 /* 'STAD' */
+  const M = RELIEF.MOTIF
+
+  // Les quantiles de la distance au front, sur les tuiles de la zone (histogramme, en motifs).
+  const dists: number[] = []
+  for (let y = 0; y < height; y += M) {
+    for (let x = 0; x < width; x += M) {
+      const i = y * width + x
+      if (zone[i] === brule.id) dists.push(champCendre[i]!)
+    }
+  }
+  if (dists.length < 32) return
+  let lo = Infinity
+  let hi = -Infinity
+  for (const d of dists) {
+    if (d < lo) lo = d
+    if (d > hi) hi = d
+  }
+  const etendue = hi - lo || 1
+  const SEAUX = 1024
+  const hist = new Int32Array(SEAUX)
+  for (const d of dists) {
+    let b = Math.floor(((d - lo) / etendue) * SEAUX)
+    if (b < 0) b = 0
+    if (b >= SEAUX) b = SEAUX - 1
+    hist[b]!++
+  }
+  const quantile = (part: number): number => {
+    const cible = Math.floor(dists.length * part)
+    let cum = 0
+    for (let b = 0; b < SEAUX; b++) {
+      cum += hist[b]!
+      if (cum > cible) return lo + ((b + 1) / SEAUX) * etendue
+    }
+    return hi
+  }
+  const qSterile = quantile(STADES_BRULE.PART_STERILE)
+  const qLande = quantile(STADES_BRULE.PART_LANDE)
+  const qPionnier = quantile(STADES_BRULE.PART_PIONNIER)
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      if (zone[i] !== brule.id) continue
+      const t = terrain[i]!
+      // Seul le THÈME cède (calciné, lande, herbe) : l'eau, la roche, les routes et tout ce
+      // que d'autres passes ont posé gardent leur nature — la règle de toutes les passes.
+      if (t !== TERRAIN_BURNT_FOREST && t !== TERRAIN_HEATH && t !== TERRAIN_GRASS && t !== TERRAIN_LARCH) continue
+      const mx = Math.floor(x / M)
+      const my = Math.floor(y / M)
+      const d = champCendre[i]! + (hash2(mx, my, sel) - 0.5) * STADES_BRULE.DITHER
+      if (d < qSterile) terrain[i] = TERRAIN_BURNT_FOREST
+      else if (d < qLande) terrain[i] = TERRAIN_HEATH
+      else if (d < qPionnier) {
+        terrain[i] = hash2(mx, my, sel ^ 0x504e) < STADES_BRULE.MELEZES_PIONNIERS
+          ? TERRAIN_LARCH : TERRAIN_GRASS
+      } else terrain[i] = TERRAIN_LARCH
     }
   }
 }

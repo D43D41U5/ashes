@@ -67,14 +67,15 @@ describe('la loterie des lieux ne bouge pas', () => {
     expect(map.terrain).toEqual(avantTerrain)
   })
 
-  it('la vallée de production porte toujours ses 136 autres lieux', () => {
+  it('la vallée de production porte toujours ses 134 autres lieux', () => {
     // Non-régression grossière mais parlante : si `horsSemis` fuyait dans la loterie, les autres
     // types en perdraient — le tirage est à somme nulle.
-    // RÉ-ÉPINGLÉ 138 → 136 (Stratigraphie, 2026-08-09) : la grille du socle devenue globale
-    // re-tire la lame des lacs de la Racine (dérive assumée, en-tête de `socle.ts`), ce qui
-    // cascade dans la loterie de toute la carte. Le mécanisme est intact (les réservations
-    // et `capFor` sont verts) — c'est la SORTIE qui a changé, avec l'aval de la direction.
-    expect(lieuxDe(CARTE.map).length).toBe(136)
+    // RÉ-ÉPINGLÉ 138 → 136 → 134 (Stratigraphie, 2026-08-09) : la grille du socle devenue
+    // globale re-tire la lame des lacs (dérive assumée, en-tête de `socle.ts`), puis le
+    // prédicat `pres` des lieux humains (S-R14) déplace des points du semis — deux cascades
+    // dans une loterie à somme nulle. Le mécanisme est intact (réservations et `capFor`
+    // verts) — c'est la SORTIE qui a changé, avec l'aval de la direction.
+    expect(lieuxDe(CARTE.map).length).toBe(134)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'repaire').length).toBe(9)
   })
 })

@@ -5,7 +5,7 @@
  */
 import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
-import { terrainAt, isBlockingTile, type WorldMap, type Zone } from './map'
+import { isWater, terrainAt, isBlockingTile, type WorldMap, type Zone } from './map'
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
 import { setTile } from './map'
@@ -13,6 +13,7 @@ import { FAUNA, MORTS, TERRAIN_ROAD, TERRAIN_SCREE } from './balance'
 import { distSq } from './geometry'
 import { type CarveField, carveDistanceToMain, walkableComponents } from './connectivity'
 import { nomSelonSort, sortDuLieu } from './sort-des-lieux'
+import { BUILT_KINDS } from './poi-batis'
 
 // ids terrain (balance.ts) — repris localement pour lisibilité de la table.
 const SCREE = 9, ROCK = 5, SNOW = 10, BOULDERS = 16, GLACIER = 15, BURNT = 21, PEAT = 18, REED = 19,
@@ -87,7 +88,22 @@ export interface PoiType {
   footprint: number
   nodeKind?: 'gisement' | 'carriere'
   monster?: 'boar' | 'cendreux'
+  /**
+   * CE LIEU EST HUMAIN, ET IL S'EST INSTALLÉ POUR UNE RAISON (stratigraphie S-R13/S-R14).
+   *
+   * `'eau'` : le lieu exige de l'eau à portée (une ferme s'installe au bord de l'eau douce) ;
+   * `'route'` : il exige une sente (une charrette s'abandonne sur le chemin, pas dans un pré).
+   * Le prédicat filtre les points du MÊME semis de Poisson — la causalité choisit PARMI les
+   * candidats neutres, elle ne fabrique pas de points : la garde de neutralité spatiale reste
+   * vraie du pool, et le filet de réservation (qui balaie la carte) garantit l'existence.
+   */
+  pres?: 'eau' | 'route'
 }
+
+/** La portée du prédicat `pres`, en tuiles (Chebyshev). À 26, le semis n'offrait plus qu'UNE
+ *  ferme par carte (mesuré) : la cause devenait une pénurie. 40 — deux écrans — reste une
+ *  ferme « au bord de l'eau », et le semis respire. */
+const PRES_RAYON = 40
 
 export const POI_PLACEMENT = {
   /**
@@ -300,8 +316,13 @@ export const POI_TYPES: PoiType[] = [
   // ═══ LES RUINES BASSES DU PAYS D'AVANT (spec t0-exploration R19) ═══
   // Des abris au sens des shelters existants, AUCUN butin (lieux.md A9). Avec la Tour, le pré
   // raconte : on vivait ici, on guettait le sud, on est partis.
-  { slug: 'ferme_ruinee', zones: ['pres_bas'], name: 'la Ferme ruinée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH], weight: 3, cap: 2, reserve: 1, footprint: 18 },
-  { slug: 'charrette', zones: ['pres_bas'], name: 'la Charrette abandonnée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH, FOREST], weight: 3, cap: 3, reserve: 1, footprint: 2 },
+  // La ferme AU bord de l'eau, la charrette SUR le chemin (S-R14) : le pays d'avant s'est
+  // installé pour des raisons qu'on peut lire.
+  // `reserve: 2` : le prédicat d'eau raréfie les points qualifiés du semis, et la loterie
+  // diluait la ferme à UN exemplaire (mesuré) — or c'est LA grande ruine explorable du T0.
+  // La réservation garantit l'existence ; le semis garde l'abondance.
+  { slug: 'ferme_ruinee', zones: ['pres_bas'], name: 'la Ferme ruinée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH], weight: 3, cap: 2, reserve: 2, footprint: 18, pres: 'eau' },
+  { slug: 'charrette', zones: ['pres_bas'], name: 'la Charrette abandonnée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH, FOREST], weight: 3, cap: 3, reserve: 1, footprint: 2, pres: 'route' },
   // ═══ LES SET-PIECES — des lieux HORS SEMIS (spec t0-exploration R9-R10) ═══
   // `biomes: []` : jamais éligibles au tirage — ils se posent en passe dédiée du worldgen
   // (`zonegen-setpieces.ts`), leur corps est leur TERRAIN. Ils figurent ici pour que la garde
@@ -421,6 +442,8 @@ function isEligible(
     if (z === undefined || !t.zones.includes(z)) return false
   }
   if ((used.get(t.slug) ?? 0) >= capFor(map, t)) return false // le plafond suit la SURFACE
+  // LA RAISON D'ÊTRE d'un lieu humain (S-R14) : la ferme exige son eau, la charrette sa route.
+  if (t.pres !== undefined && !aProximite(map, tx, ty, t.pres)) return false
   const fp = footprintAt(map, t, tx, ty)
   if (touchesBorderRing(map, fp)) return false
   // AUCUN LIEU À CHEVAL SUR UNE SENTE (spec t0-exploration R18) : un lieu se poste AU BORD du
@@ -432,6 +455,23 @@ function isEligible(
     }
   }
   return entryTile(map, field, fp) !== undefined
+}
+
+/** Y a-t-il de l'eau (toute eau : `isWater`) ou une route à portée de (tx,ty) ? — le
+ *  prédicat de `pres`. */
+function aProximite(map: WorldMap, tx: number, ty: number, quoi: 'eau' | 'route'): boolean {
+  const r = PRES_RAYON
+  const y0 = Math.max(0, ty - r)
+  const y1 = Math.min(map.height - 1, ty + r)
+  const x0 = Math.max(0, tx - r)
+  const x1 = Math.min(map.width - 1, tx + r)
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const t = map.terrain[y * map.width + x]!
+      if (quoi === 'route' ? t === TERRAIN_ROAD : isWater(t)) return true
+    }
+  }
+  return false
 }
 
 /**
@@ -480,8 +520,18 @@ function placeOne(
   // LE NOM DIT LE SORT (spec stratigraphie S-R19) : un lieu bâti est nommé d'après ce que la
   // Cendre et les routes ont fait de lui — dérivé, jamais tiré. Le champ de cendre est posé
   // avant tout POI (zonegen passe 4), le sort est donc lisible ici.
-  const nom = nomSelonSort(t.slug, t.name, sortDuLieu(map, z.x, z.y, z.w, z.h))
+  const sort = sortDuLieu(map, z.x, z.y, z.w, z.h)
+  const nom = nomSelonSort(t.slug, t.name, sort)
   map.zones.push({ name: `${nom} ${roman(count)}`, ...z, kind: t.slug })
+  // LES ANNALES (S-R16) : un lieu HUMAIN écrit sa fondation (et sa raison), puis ce que la
+  // Cendre en a fait. Les lieux naturels n'ont pas d'état civil — un tarn ne se fonde pas.
+  if (t.pres !== undefined || BUILT_KINDS.includes(t.slug)) {
+    const cx = Math.floor(z.x + z.w / 2)
+    const cy = Math.floor(z.y + z.h / 2)
+    const annales = (map.annales ??= [])
+    annales.push({ ere: 1, type: 'fondation', x: cx, y: cy, lieu: t.slug, ...(t.pres ? { cause: t.pres } : {}) })
+    annales.push({ ere: 3, type: 'sort', x: cx, y: cy, lieu: t.slug, cause: sort })
+  }
 
   const entry = entryTile(map, field, z)
   if (entry === undefined || entry.cost === 0) return // déjà de plain-pied sur le monde

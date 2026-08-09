@@ -42,6 +42,7 @@ const CHAMPS_HACHES = ['terrain', 'cendre'] as const
 /** Le reste de la carte — quelques dizaines de ko, couverts par leur JSON. */
 const CHAMPS_JSON = [
   'width', 'height', 'zones', 'cendreMax', 'zoneGrid', 'zonePas', 'zoneDefs', 'seuils', 'fil',
+  'annales', // l'état civil du monde d'avant (stratigraphie S-R16) — immuable comme le reste
 ] as const
 
 /**
