@@ -438,6 +438,7 @@ function areteLaPlusProche(u: number, v: number): 'N' | 'E' | 'S' | 'O' {
 function clicCarte(fx: number, fy: number, droit: boolean, alt: boolean): void {
   const b = etat.brouillon
   if (!b) return
+  if (trait.actif) return //  un clic (droit compris) au MILIEU d'un trait ne le scinde pas
   if (etat.quart !== 0) {
     message('l’édition se fait en orientation 0 — repasse quart à 0')
     return
@@ -567,16 +568,25 @@ function survolCarte(fx: number, fy: number): void {
 
 // ═══ COPIER / COUPER / COLLER / TRANSFORMER (P-B) ═══
 
+/** LA GARDE D'ORIENTATION vaut AUSSI pour la sélection (revue du 2026-08-10) : Suppr et les
+ *  miroirs contournaient `clicCarte` — ils mutaient le repère du plan sous une vue TOURNÉE,
+ *  l'erreur du quart de tour que l'invariant d'en-tête promet d'empêcher. */
+function editionPermise(): boolean {
+  if (etat.quart === 0) return true
+  message('l’édition se fait en orientation 0 — repasse quart à 0')
+  return false
+}
+
 function copierSelection(): void {
   const b = etat.brouillon
-  if (!b || !etat.selection) return
+  if (!b || !etat.selection || !editionPermise()) return
   etat.pressePapier = extraire(b, bornerZone(etat.selection, b.grille.length))
   message(`copié : ${etat.pressePapier.w}×${etat.pressePapier.h} — Ctrl+V pour coller, « + tampon » pour garder`)
 }
 
 function couperSelection(): void {
   const b = etat.brouillon
-  if (!b || !etat.selection) return
+  if (!b || !etat.selection || !editionPermise()) return
   copierSelection()
   effacer(b, bornerZone(etat.selection, b.grille.length))
   rafraichir()
@@ -585,7 +595,7 @@ function couperSelection(): void {
 
 function supprimerSelection(): void {
   const b = etat.brouillon
-  if (!b || !etat.selection) return
+  if (!b || !etat.selection || !editionPermise()) return
   effacer(b, bornerZone(etat.selection, b.grille.length))
   rafraichir()
   pousserHistoire()
@@ -613,9 +623,16 @@ function transformer(op: (f: Fragment) => Fragment): void {
     etat.pressePapier = op(etat.pressePapier)
     return
   }
-  if (!b || !etat.selection) return
+  if (!b || !etat.selection || !editionPermise()) return
   const zone = bornerZone(etat.selection, b.grille.length)
   const f = op(extraire(b, zone))
+  // UNE TRANSFORMATION NE DÉTRUIT PAS EN SILENCE (revue du 2026-08-10) : la rotation d'une
+  // sélection non carrée au bord déborderait — `coller` rognerait les cases sorties. On
+  // refuse, avec le pourquoi, plutôt que d'exécuter une perte qu'aucun écran n'annonce.
+  if (zone.x0 + f.w > b.grille.length || zone.y0 + f.h > b.grille.length) {
+    message('la transformation déborderait de la grille — déplace la sélection vers l’intérieur')
+    return
+  }
   effacer(b, zone)
   coller(b, f, zone.x0, zone.y0)
   // Un quart de tour échange w et h : la sélection suit, bornée au plan.
@@ -689,11 +706,12 @@ function rafraichirPlanche(): void {
       etat.quart = v.quart
       $<HTMLSelectElement>('sort').value = v.sort
       $<HTMLSelectElement>('quart').value = String(v.quart)
-      if (v.heure !== 12) {
-        etat.heure = v.heure
-        $<HTMLInputElement>('heure').value = String(Math.max(6, Math.min(18, v.heure)))
-        $('heure-v').textContent = `${etat.heure}h`
-      }
+      // L'heure de la variante s'applique TOUJOURS (revue du 2026-08-10) : promouvoir la
+      // nuit puis un « 90° » de midi doit rendre midi, pas un 90° nocturne — et le curseur
+      // couvre 0-23, il ne ment plus sur la nuit.
+      etat.heure = v.heure
+      $<HTMLInputElement>('heure').value = String(v.heure)
+      $('heure-v').textContent = `${etat.heure}h`
       rafraichir()
     },
     (texte) => { $('planche-cout').textContent = texte },
@@ -761,8 +779,14 @@ async function chargerHistorique(): Promise<void> {
       ligne.title = 'cliquer : diff de cette version vers le brouillon courant'
       ligne.addEventListener('click', () => {
         void fetch(`/atelier/api/plans/version?kind=${etat.kind}&rev=${rev}`)
-          .then((rep) => rep.json())
-          .then((v) => montrerDiff((v as { texte: string }).texte, texteCourant(), `${rev} (${date}) → brouillon`))
+          .then(async (rep) => {
+            const v = (await rep.json()) as { texte?: string; erreur?: string }
+            // Un échec SE MONTRE (revue du 2026-08-10) : la version peut manquer (fichier
+            // renommé — un brouillon promu) — avant, le .then muet avalait le TypeError.
+            if (!rep.ok || typeof v.texte !== 'string') throw new Error(v.erreur ?? `HTTP ${rep.status}`)
+            montrerDiff(v.texte, texteCourant(), `${rev} (${date}) → brouillon`)
+          })
+          .catch((e: Error) => message(`✗ version ${rev} : ${e.message}`))
       })
       conteneur.appendChild(ligne)
     }
@@ -789,7 +813,7 @@ async function creerBrouillon(base: string | null): Promise<void> {
     const r = await fetch('/atelier/api/plans', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-atelier': '1' },
-      body: JSON.stringify({ kind: nom, texte, brouillon: true }),
+      body: JSON.stringify({ kind: nom, texte, brouillon: true, creer: true }),
     })
     const rep = (await r.json()) as { ok?: boolean; erreur?: string }
     if (!r.ok || !rep.ok) throw new Error(rep.erreur ?? `HTTP ${r.status}`)
@@ -916,6 +940,10 @@ async function charger(): Promise<void> {
           $<HTMLInputElement>('fixe').checked = m.brouillon.fixe
           message('brouillon NON SAUVÉ restauré après rechargement')
           rafraichir()
+          // LE BROUILLON RESTAURÉ ENTRE DANS L'HISTORIQUE (revue du 2026-08-10) : sans cette
+          // entrée, le premier Ctrl+Z après une retouche sautait DIRECTEMENT à l'état du
+          // disque — le filet de sauvetage jetait ce qu'il venait de sauver.
+          pousserHistoire()
         } else if (sauve) message(`✓ ${sauve}.plan sauvé, module régénéré — la page a rechargé avec lui`)
         return
       }
@@ -938,6 +966,10 @@ function choisir(kind: string, opts?: { force?: boolean }): void {
   const texte = etat.textes.get(kind)!
   etat.brouillon = versBrouillon(parserPlan(texte))
   histoireDe(kind) //  la pile naît avec l'état du disque
+  // LA PILE SE RESSYNCHRONISE (revue du 2026-08-10) : au retour sur un lieu ABANDONNÉ, elle
+  // pointait le dernier état édité alors que l'écran montre le disque — « annuler »
+  // APPLIQUAIT des éditions au lieu d'en défaire. L'état affiché redevient le sommet.
+  pousserHistoire()
   $<HTMLInputElement>('usure').value = String(etat.brouillon.usure)
   $<HTMLInputElement>('fixe').checked = etat.brouillon.fixe
   message(etat.brouillons.has(kind) ? 'BROUILLON hors-monde — la naissance passe par POI_TYPES + déplacer le fichier' : '')
@@ -1001,6 +1033,7 @@ $<HTMLSelectElement>('sort').addEventListener('change', (e) => {
 })
 $<HTMLSelectElement>('quart').addEventListener('change', (e) => {
   etat.quart = Number((e.target as HTMLSelectElement).value)
+  toutDeposer() //  la sélection ne survit pas à la rotation de la vue (repère du plan)
   rafraichir()
 })
 $<HTMLInputElement>('dedans').addEventListener('change', (e) => {
@@ -1043,6 +1076,8 @@ $<HTMLButtonElement>('tampon-plus').addEventListener('click', () => {
   if (!etat.pressePapier) { message('rien à tamponner — sélectionne puis Ctrl+C'); return }
   const nom = window.prompt('Nom du tampon :')
   if (!nom) return
+  // Un nom de PROPRIÉTÉ d'objet : « __proto__ » muterait le prototype et disparaîtrait.
+  if (!/^[a-z0-9 _-]{1,24}$/i.test(nom)) { message(`✗ nom de tampon invalide : « ${nom} »`); return }
   const t = lireTampons()
   t[nom] = etat.pressePapier
   localStorage.setItem('atelier-tampons', JSON.stringify(t))

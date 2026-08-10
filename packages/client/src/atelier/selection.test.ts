@@ -49,6 +49,15 @@ describe('extraire / effacer / coller', () => {
     expect(p.breches).toEqual(['1,1,E']) //  le triplet du fragment visait (4,4) : dehors
   })
 
+  it('coller ENTIÈREMENT hors grille ne touche à RIEN (revue 2026-08-10 : le clamp effaçait le bord)', () => {
+    const f: Fragment = { w: 2, h: 2, grille: ['TT', 'oo'], breches: [], seuils: [], passages: [] }
+    for (const [x, y] of [[-5, 1], [20, 0], [1, -9], [0, 20]] as const) {
+      const p = plan()
+      coller(p, f, x, y)
+      expect(p, `coller en (${x},${y})`).toEqual(plan())
+    }
+  })
+
   it('bornerZone rogne une sélection tirée hors de la grille', () => {
     expect(bornerZone({ x0: -2, y0: 3, w: 10, h: 4 }, 4)).toEqual({ x0: 0, y0: 3, w: 4, h: 1 })
   })

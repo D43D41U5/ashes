@@ -128,7 +128,11 @@ export class AtelierScene extends Phaser.Scene {
       if (p.isDown && p.button === 0) this.surGlisse?.(fx, fy) //  le TRAIT continue
       this.surSurvol?.(fx, fy)
     })
+    // LE RELÂCHER SE VOIT MÊME HORS CANVAS (revue du 2026-08-10) : finir un glisser
+    // au-dessus de la palette ou de l'inspecteur est le geste ORDINAIRE — sans
+    // `pointerupoutside`, le trait restait armé et son entrée d'historique ne partait pas.
     this.input.on('pointerup', () => this.surRelache?.())
+    this.input.on('pointerupoutside', () => this.surRelache?.())
 
     // LE ZOOM À LA MOLETTE, centré sur le curseur (le standard des éditeurs : on zoome
     // VERS ce qu'on regarde). Grille et badges se redessinent — leur épaisseur est en

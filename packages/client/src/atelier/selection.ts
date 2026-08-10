@@ -83,7 +83,15 @@ export function effacer(p: PlanMutable, z: Zone): void {
  *  fragment entrent — bornés au plan, jamais d'arête orpheline hors grille. */
 export function coller(p: PlanMutable, f: Fragment, x0: number, y0: number): void {
   const cote = p.grille.length
-  const zone = bornerZone({ x0, y0, w: f.w, h: f.h }, cote)
+  // L'INTERSECTION VRAIE, pas un clamp : un fragment ENTIÈREMENT hors grille ne touche à
+  // RIEN — le clamp de `bornerZone` le rabattait sur la colonne de bord, que `effacer`
+  // vidait sans que le collage ne pose une seule case (revue du 2026-08-10, mesuré).
+  const ix0 = Math.max(0, x0)
+  const iy0 = Math.max(0, y0)
+  const ix1 = Math.min(cote - 1, x0 + f.w - 1)
+  const iy1 = Math.min(cote - 1, y0 + f.h - 1)
+  if (ix0 > ix1 || iy0 > iy1) return
+  const zone: Zone = { x0: ix0, y0: iy0, w: ix1 - ix0 + 1, h: iy1 - iy0 + 1 }
   effacer(p, zone)
   for (let y = 0; y < f.h; y++) {
     const py = y0 + y

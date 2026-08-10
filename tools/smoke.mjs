@@ -7305,9 +7305,17 @@ const SCENARIOS = {
     // ── P-E : CRÉER UN BROUILLON (hors-monde) — dialogues acceptés, fichier vérifié puis
     //    nettoyé. Sur un dépôt en lecture seule, la création échoue proprement : toléré. ──
     const reponses = ['essai_bac', '4']
-    page.on('dialog', (d) => { void d.accept(reponses.shift() ?? '') })
+    const surDialogue = (d) => { void d.accept(reponses.shift() ?? '') }
+    page.on('dialog', surDialogue)
     await page.click('#nouveau')
     await page.waitForTimeout(600)
+    // Le handler ne survit PAS à la création : il avalerait ensuite tout confirm() en
+    // l'ACCEPTANT — la garde « éditions non sauvées » deviendrait invisible au smoke.
+    page.off('dialog', surDialogue)
+    page.on('dialog', (d) => {
+      console.error(`!! dialogue inattendu : ${d.type()} « ${d.message().slice(0, 80)} »`)
+      void d.dismiss()
+    })
     const creation = await page.evaluate(() => ({
       la: window.__ATELIER__.etat.brouillons.has('essai_bac'),
       etat: document.getElementById('etat').textContent,

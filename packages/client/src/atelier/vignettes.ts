@@ -84,14 +84,26 @@ export const dernieresVignettes = new Map<string, string>()
  * RENDRE LA PLANCHE : chaque variante bâtie par l'appelant (le vrai moteur), montrée au
  * mini-jeu, capturée, posée dans `conteneur`. Rend la durée MESURÉE de la passe (ms).
  */
+/** LE VERROU DE PASSE (revue du 2026-08-10) : deux passes sur le MÊME mini-renderer
+ *  s'entrelaçaient (vignettes sous la mauvaise étiquette, snapshot écrasé → passe pendue).
+ *  Une seule passe à la fois ; une demande pendant la passe se REJOUE à la fin. */
+let passeEnCours = false
+let repasse: (() => void) | null = null
+
 export async function rendrePlanche(
   conteneur: HTMLElement,
   bati: (sort: SortDuLieu, quart: number) => { sim: SimState; playerId: number },
   surPromouvoir: (v: Variante) => void,
   afficherCout: (texte: string) => void,
 ): Promise<number> {
+  if (passeEnCours) {
+    repasse = () => { void rendrePlanche(conteneur, bati, surPromouvoir, afficherCout) }
+    return 0
+  }
+  passeEnCours = true
   const boot = mini === null
   const sc = await assurerMini()
+  mini!.loop.wake() //  le mini-jeu dort entre deux passes — pas de RAF permanente hors écran
   const t0 = performance.now()
   conteneur.innerHTML = ''
   dernieresVignettes.clear()
@@ -121,6 +133,13 @@ export async function rendrePlanche(
     afficherCout(`${duree} ms — LENT : l'auto-rafraîchissement se coupe, bouton « rafraîchir »`)
   } else {
     afficherCout(`${duree} ms${boot ? ' (boot du mini-jeu compris)' : ''}${autoCoupe ? ' · auto coupé' : ''}`)
+  }
+  mini!.loop.sleep()
+  passeEnCours = false
+  if (repasse) {
+    const relance = repasse
+    repasse = null
+    relance() //  la dernière demande arrivée pendant la passe gagne
   }
   return duree
 }

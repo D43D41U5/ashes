@@ -176,7 +176,7 @@ function atelierPlansPlugin(): Plugin {
         //    de git) : 501 propre, jamais un crash. ──
         if (req.method === 'GET' && (chemin === '/historique' || chemin === '/version')) {
           const kind = params.get('kind') ?? ''
-          if (!/^[a-z_]+$/.test(kind)) { repondre(400, { erreur: 'kind invalide' }); return }
+          if (!/^[a-z_]{1,40}$/.test(kind)) { repondre(400, { erreur: 'kind invalide' }); return }
           const relatif = existsSync(`${brouillons}/${kind}.plan`)
             ? `packages/sim/src/plans/brouillons/${kind}.plan`
             : `packages/sim/src/plans/${kind}.plan`
@@ -208,6 +208,15 @@ function atelierPlansPlugin(): Plugin {
           repondre(403, { erreur: 'en-tête x-atelier requis (le POST vient de la page atelier)' })
           return
         }
+        // L'ÉCRITURE EST LOCALE (revue du 2026-08-10) : le serveur dev écoute au-delà de
+        // localhost (host: true, un VPS) et l'en-tête ne bloque ni un client réseau direct
+        // ni un rebinding DNS. Le POST n'est servi qu'à la boucle locale — la stack Docker,
+        // elle, monte le dépôt :ro et n'écrit de toute façon jamais.
+        const distante = (req as unknown as { socket?: { remoteAddress?: string } }).socket?.remoteAddress
+        if (distante !== '127.0.0.1' && distante !== '::1' && distante !== '::ffff:127.0.0.1') {
+          repondre(403, { erreur: 'écriture depuis la machine locale seulement' })
+          return
+        }
         // `setEncoding` : un caractère multi-octets (« · », l'accent d'une prose) à cheval sur
         // deux chunks deviendrait U+FFFD en décodant chaque Buffer isolément.
         req.setEncoding('utf8')
@@ -217,22 +226,25 @@ function atelierPlansPlugin(): Plugin {
           if (corps.length > 300_000) { corps = ''; req.destroy() }
         })
         req.on('end', () => {
-          let json: { kind?: unknown; texte?: unknown; brouillon?: unknown }
+          let json: { kind?: unknown; texte?: unknown; brouillon?: unknown; creer?: unknown }
           try {
-            json = JSON.parse(corps) as { kind?: unknown; texte?: unknown; brouillon?: unknown }
+            json = JSON.parse(corps) as { kind?: unknown; texte?: unknown; brouillon?: unknown; creer?: unknown }
           } catch {
             repondre(400, { erreur: 'corps JSON illisible' })
             return
           }
           try {
             const { kind, texte } = json
-            if (typeof kind !== 'string' || !/^[a-z_]+$/.test(kind)) { repondre(400, { erreur: 'kind invalide' }); return }
+            if (typeof kind !== 'string' || !/^[a-z_]{1,40}$/.test(kind)) { repondre(400, { erreur: 'kind invalide' }); return }
             if (typeof texte !== 'string' || texte.length > 100_000) { repondre(400, { erreur: 'texte invalide' }); return }
             if (json.brouillon === true) {
               // LE BROUILLON, HORS-MONDE (décision d'Alexis) : création LIBRE dans
               // plans/brouillons/, jamais compilé — la naissance d'un kind reste un acte de
-              // code (déplacer le fichier + POI_TYPES). Un kind du MONDE ne se masque pas.
+              // code (déplacer le fichier + POI_TYPES). Un kind du MONDE ne se masque pas,
+              // et une CRÉATION (`creer`) n'écrase pas un brouillon existant — un second
+              // onglet à la liste périmée perdait le travail du premier (revue du 2026-08-10).
               if (existsSync(`${dossier}/${kind}.plan`)) { repondre(409, { erreur: `« ${kind} » existe déjà dans le monde` }); return }
+              if (json.creer === true && existsSync(`${brouillons}/${kind}.plan`)) { repondre(409, { erreur: `le brouillon « ${kind} » existe déjà` }); return }
               mkdirSync(brouillons, { recursive: true })
               writeFileSync(`${brouillons}/${kind}.plan`, texte)
               repondre(200, { ok: true })
