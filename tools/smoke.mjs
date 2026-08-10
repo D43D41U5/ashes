@@ -7189,7 +7189,8 @@ const SCENARIOS = {
 
     const cibles = await page.evaluate(() => {
       const m = window.__BRAISES__.scene.map
-      const KINDS = ['ferme_ruinee', 'ruines', 'cabane', 'oratoire']
+      // Les NEUF lieux bâtis (étage 1, spec lieux-batis.md) : la planche couvre tout BUILT_KINDS.
+      const KINDS = ['ferme_ruinee', 'cabane', 'ruines', 'abri', 'mine', 'oratoire', 'bivouac', 'charrette', 'epave']
       const out = []
       for (const k of KINDS) {
         const z = (m.zones ?? []).find((q) => q.kind === k)
@@ -7232,10 +7233,17 @@ const SCENARIOS = {
     const etiquette = process.env.SMOKE_TAG ?? 'avant'
     for (const c of cibles) {
       for (const [nom, zoom] of [['large', 1.3], ['moyen', 2.6], ['serre', 4.5]]) {
-        await page.evaluate(({ x, y, z }) => {
+        // L'avatar se pose SOUS le lieu, pas dessus : téléporté au centre, il masquait la
+        // pièce maîtresse des petits plans (l'autel, la charrette) — la capture mentait.
+        // Et la caméra se DÉCOUPLE du corps (stopFollow + centerOn, le patron du harnais) :
+        // elle cadre le lieu, pas celui qui le regarde.
+        await page.evaluate(({ x, y, cy, z }) => {
           window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
-          window.__BRAISES__.scene.cameras.main.setZoom(z)
-        }, { x: c.x, y: c.y, z: zoom })
+          const cam = window.__BRAISES__.scene.cameras.main
+          cam.setZoom(z)
+          cam.stopFollow()
+          cam.centerOn(x * 16, cy * 16)
+        }, { x: c.x, y: c.y + c.h / 2 + 2, cy: c.y, z: zoom })
         await page.waitForTimeout(1400)
         await page.screenshot({ path: `${OUT}/batis-${etiquette}-${c.kind}-${nom}.png` })
       }
