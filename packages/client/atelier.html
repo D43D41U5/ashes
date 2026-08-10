@@ -6,66 +6,107 @@
     <title>ASHES — l'Atelier des plans</title>
     <style>
       /* L'Atelier est un OUTIL DE DEV (spec atelier-plans.md A5) : il vit à côté du banc
-         d'écoute, servi par `pnpm dev` seulement — le build de prod ne le connaît pas. */
-      html, body { margin: 0; padding: 0; background: #14110d; color: #d8d2c6; font: 13px/1.45 ui-monospace, monospace; }
-      #atelier { display: flex; min-height: 100vh; }
-      aside { width: 340px; flex: none; padding: 12px 14px; background: #1b1712; border-right: 1px solid #2e2820; overflow-y: auto; max-height: 100vh; box-sizing: border-box; }
-      main { flex: 1; display: grid; place-items: center; padding: 16px; }
-      h1 { font-size: 15px; margin: 0 0 10px; color: #e8b34a; }
-      h2 { font-size: 12px; margin: 14px 0 6px; color: #b8a888; text-transform: uppercase; letter-spacing: 0.06em; }
+         d'écoute, servi par `pnpm dev` seulement — le build de prod ne le connaît pas.
+         LE LAYOUT EST L'ÉTABLI (décision d'Alexis) : barre d'outils, gauche (lieux +
+         palette), viewport, inspecteur, barre d'état — tout visible, rien de modal. */
+      html, body { margin: 0; padding: 0; background: #14110d; color: #d8d2c6; font: 13px/1.45 ui-monospace, monospace; height: 100%; }
+      #app { display: grid; height: 100vh; box-sizing: border-box;
+        grid-template-columns: 300px 1fr 252px;
+        grid-template-rows: auto 1fr auto;
+        grid-template-areas: "tb tb tb" "gauche centre droite" "sb sb sb"; }
+      #toolbar { grid-area: tb; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 12px; background: #1b1712; border-bottom: 1px solid #2e2820; }
+      #gauche { grid-area: gauche; padding: 10px 14px; background: #1b1712; border-right: 1px solid #2e2820; overflow-y: auto; }
+      #centre { grid-area: centre; display: grid; place-items: center; overflow: auto; padding: 10px; }
+      #droite { grid-area: droite; padding: 10px 14px; background: #1b1712; border-left: 1px solid #2e2820; overflow-y: auto; }
+      #statusbar { grid-area: sb; display: flex; gap: 18px; align-items: center; padding: 5px 14px; background: #1b1712; border-top: 1px solid #2e2820; color: #948a76; font-size: 12px; min-height: 18px; }
+      #statusbar .ok { color: #7aa35a; } #statusbar .faute { color: #e06c5a; }
+
+      h1 { font-size: 14px; margin: 0 8px 0 0; color: #e8b34a; }
+      h2 { font-size: 11px; margin: 12px 0 6px; color: #b8a888; text-transform: uppercase; letter-spacing: 0.06em; }
+      h2:first-child { margin-top: 0; }
       select, input[type="number"], button { background: #241f18; color: #d8d2c6; border: 1px solid #3a3226; border-radius: 3px; padding: 3px 6px; font: inherit; }
       button { cursor: pointer; }
       button:disabled { opacity: 0.45; cursor: not-allowed; }
       button.principal { background: #4a3a1a; border-color: #6a5426; color: #f0d9a0; padding: 6px 12px; }
-      label { display: inline-flex; align-items: center; gap: 5px; margin-right: 10px; }
-      /* LE RENDU EST LE JEU (décision d'Alexis) : un Phaser.Game se monte dans #jeu —
-         BootScene y génère les vraies textures puis l'AtelierScene rend par SnapshotView. */
+      label { display: inline-flex; align-items: center; gap: 5px; }
+      kbd { font-size: 10px; color: #948a76; border: 1px dashed #3a3226; border-radius: 3px; padding: 0 4px; }
+      .sep { width: 1px; align-self: stretch; background: #2e2820; margin: 0 2px; }
+
+      #toolbar .outil-groupe { display: flex; gap: 2px; }
+      #toolbar .outil-groupe label { border: 1px solid #3a3226; border-radius: 3px; padding: 3px 8px; cursor: pointer; background: #201c15; }
+      #toolbar .outil-groupe label:has(input:checked) { border-color: #e8b34a; color: #e8b34a; }
+      #toolbar .outil-groupe input { display: none; }
+      #toolbar .calques label { margin-right: 8px; color: #b8a888; }
+
       #jeu { border: 1px solid #2e2820; cursor: crosshair; line-height: 0; }
       #jeu canvas { display: block; }
+
       #palette { display: flex; flex-wrap: wrap; gap: 4px; }
-      #palette .tuile { width: 40px; padding: 3px 0 2px; text-align: center; border: 1px solid #3a3226; border-radius: 3px; cursor: pointer; background: #201c15; }
+      #palette .tuile { width: 44px; padding: 3px 0 2px; text-align: center; border: 1px solid #3a3226; border-radius: 3px; cursor: pointer; background: #201c15; position: relative; }
       #palette .tuile.actif { border-color: #e8b34a; background: #2c2416; }
       #palette canvas { image-rendering: pixelated; display: block; margin: 0 auto 1px; }
       #palette .car { color: #e8b34a; }
       #palette .nom { font-size: 9px; color: #948a76; display: block; }
+      #palette .kbd { position: absolute; top: 1px; right: 2px; font-size: 9px; color: #948a76; }
       #validation .faute { color: #e06c5a; }
       #validation .ok { color: #7aa35a; }
       #validation .note { color: #948a76; }
-      #manquantes { color: #948a76; font-size: 11px; }
-      .rangee { margin: 4px 0; }
-      #etat { font-size: 11px; color: #948a76; min-height: 16px; }
-      #outils label { display: block; margin: 1px 0; }
+      .rangee { margin: 5px 0; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+      #etat { font-size: 11px; color: #948a76; min-height: 28px; margin-top: 8px; }
     </style>
   </head>
   <body>
-    <div id="atelier">
-      <aside>
-        <h1>L'Atelier des plans</h1>
-        <div class="rangee"><select id="lieux"></select></div>
+    <div id="app">
+      <div id="toolbar">
+        <h1>L'Atelier</h1>
+        <div class="outil-groupe">
+          <label><input type="radio" name="outil" value="peindre" checked />✏ peindre <kbd>B</kbd></label>
+          <label><input type="radio" name="outil" value="gommer" />⌫ gommer <kbd>E</kbd></label>
+          <label><input type="radio" name="outil" value="breche" />◫ brèche</label>
+          <label><input type="radio" name="outil" value="seuil" />◫ seuil</label>
+          <label><input type="radio" name="outil" value="passage" />◫ passage</label>
+        </div>
+        <span class="sep"></span>
+        <button id="annuler" title="Ctrl+Z">↶ annuler</button>
+        <button id="refaire" title="Ctrl+Y">↷ refaire</button>
+        <span class="sep"></span>
+        <span id="zoom-v">100 %</span>
+        <button id="recadrer" title="le plan entier dans la fenêtre">ajuster</button>
+        <kbd>molette = zoom · Espace/milieu = pan · clic droit = gomme · Alt = pipette</kbd>
+        <span class="sep"></span>
+        <span class="calques">
+          <label><input id="c-toits" type="checkbox" checked /> toits</label>
+          <label><input id="c-aretes" type="checkbox" checked /> arêtes</label>
+          <label><input id="c-regions" type="checkbox" /> régions</label>
+          <label><input id="c-grille" type="checkbox" checked /> grille</label>
+        </span>
+      </div>
+
+      <aside id="gauche">
         <h2>Le lieu</h2>
+        <div class="rangee"><select id="lieux"></select></div>
+        <h2>La palette <kbd>1…9, 0</kbd></h2>
+        <div id="palette"></div>
+      </aside>
+
+      <main id="centre"><div id="jeu"></div></main>
+
+      <aside id="droite">
+        <h2>Inspecteur</h2>
         <div class="rangee">
-          <label>usure <input id="usure" type="number" min="0.05" max="1" step="0.05" /></label>
+          <label>usure <input id="usure" type="number" min="0.05" max="1" step="0.05" style="width:64px" /></label>
           <label><input id="fixe" type="checkbox" /> fixe</label>
         </div>
         <div class="rangee">
           <label>sort <select id="sort"><option value="intact">intact</option><option value="pille">pillé</option><option value="brule">brûlé</option></select></label>
           <label>quart <select id="quart"><option>0</option><option>1</option><option>2</option><option>3</option></select></label>
+        </div>
+        <div class="rangee">
           <label><input id="dedans" type="checkbox" /> avatar dedans</label>
         </div>
         <div class="rangee">
-          <label>heure <input id="heure" type="range" min="6" max="18" step="1" value="12" style="width:120px" /> <span id="heure-v">12h</span></label>
+          <label>heure <input id="heure" type="range" min="6" max="18" step="1" value="12" style="width:110px" /> <span id="heure-v">12h</span></label>
         </div>
-        <h2>L'outil</h2>
-        <div id="outils">
-          <label><input type="radio" name="outil" value="peindre" checked /> peindre (palette)</label>
-          <label><input type="radio" name="outil" value="breche" /> brèche (arête)</label>
-          <label><input type="radio" name="outil" value="seuil" /> seuil (arête)</label>
-          <label><input type="radio" name="outil" value="passage" /> passage (arête)</label>
-          <label><input type="radio" name="outil" value="gommer" /> gommer (ou clic droit)</label>
-          <label style="margin-top:4px"><input id="grille" type="checkbox" checked /> grille</label>
-        </div>
-        <h2>La palette</h2>
-        <div id="palette"></div>
         <h2>Validation</h2>
         <div id="validation"></div>
         <div class="rangee" style="margin-top:12px">
@@ -74,7 +115,12 @@
         </div>
         <div id="etat"></div>
       </aside>
-      <main><div id="jeu"></div></main>
+
+      <div id="statusbar">
+        <span id="sb-pos"></span>
+        <span id="sb-fautes" class="ok"></span>
+        <span id="sb-modifie"></span>
+      </div>
     </div>
     <script type="module" src="/src/atelier/main.ts"></script>
   </body>

@@ -1,13 +1,21 @@
 /**
  * L'ATELIER DES PLANS — l'éditeur graphique du bâti (spec `atelier-plans.md`, décisions
- * d'Alexis du 2026-08-10 : P2, page autonome sans Phaser).
+ * d'Alexis du 2026-08-10 : le rendu est LE JEU, et l'interface est L'ÉTABLI).
  *
- * LE PRINCIPE QUI NE SE NÉGOCIE PAS (A7) : l'éditeur ne dérive rien. Chaque édition rebâtit
- * le lieu par le VRAI moteur — `/sim` est pur, il tourne ici même : `createSim` +
- * `batirLieu` sur une carte d'essai, et l'aperçu ne fait que PEINDRE ces structures
- * (`apercu.ts`, albédos réels de `bati-art`). La validation est la même loi que la suite
- * (`verifierPlan`), la traversabilité passe par `crossingBlocker`/`structureBlocks` — les
- * fonctions du jeu, jamais une copie.
+ * LE PRINCIPE QUI NE SE NÉGOCIE PAS : l'éditeur ne dérive rien. Chaque édition rebâtit le
+ * lieu par le VRAI moteur — `/sim` est pur, il tourne ici même (`createSim` + `batirLieu`)
+ * — et le RENDU est celui du jeu (`scene.ts` : BootScene + SnapshotView + lumière). La
+ * validation est la même loi que la suite (`verifierPlan`), la traversabilité passe par
+ * `crossingBlocker`/`structureBlocks` — les fonctions du jeu, jamais une copie.
+ *
+ * ═══ LE GESTE (P-A) — ce qui fait « pro » ═══
+ *
+ *  · ANNULER/REFAIRE par lieu (Ctrl+Z / Ctrl+Y) — une entrée par TRAIT de pinceau ;
+ *  · GLISSER-peindre et glisser-gommer ; PIPETTE (Alt+clic) ; raccourcis (chiffres =
+ *    palette, B/E = outils, Espace = pan) ;
+ *  · les BADGES d'arêtes posées, permanents (on ne gomme plus à l'aveugle) ;
+ *  · zoom molette + pan, l'auteur garde SA caméra pendant qu'il édite ;
+ *  · la barre d'état dit la tuile, la faute, et le ● modifié.
  *
  * ÉDITION EN ORIENTATION 0 SEULEMENT : les triplets d'arête (`x,y,D`) sont écrits dans le
  * repère du plan — les éditer sous rotation inviterait l'erreur d'un quart de tour. Les
@@ -21,11 +29,11 @@
 import Phaser from 'phaser'
 import {
   BUILT_KINDS, LEGENDE, POI_TYPES, TERRAIN_GRASS, batirLieu, createEmptyMap, createSim,
-  crossingBlocker, parserPlan, serialiserPlan, spawnEntity, structureBlocks, verifierPlan,
+  crossingBlocker, parserPlan, regionDe, serialiserPlan, spawnEntity, structureBlocks, verifierPlan,
 } from '@ashes/sim'
 import type { Plan, SimState, SortDuLieu } from '@ashes/sim'
 import { BootScene } from '../scenes/BootScene'
-import { AtelierScene } from './scene'
+import { AtelierScene, type Arete, type Region } from './scene'
 import { vignette } from './apercu'
 
 /** La marge d'herbe autour du plan sur la carte d'essai — les murs du pourtour vivent sur
@@ -54,13 +62,13 @@ const etat = {
    *  règles du jeu (nappe, pans) qui décident alors de ce qui s'efface — pas une bascule. */
   dedans: false,
   heure: 12,
-  grille: true,
+  calques: { toits: true, aretes: true, regions: false, grille: true },
   outil: 'peindre' as 'peindre' | 'breche' | 'seuil' | 'passage' | 'gommer',
   car: '.',
   fautes: [] as string[],
 }
 
-/** La couleur du liseré de fantôme, par outil d'arête — celles du panneau de validation. */
+/** Les couleurs d'arête (fantôme ET badges) — brèche rouge, seuil ambre, passage vert. */
 const COULEUR_OUTIL = { breche: 0xe06c5a, seuil: 0xc9a227, passage: 0x7aa35a } as const
 
 function versBrouillon(plan: Plan): Brouillon {
@@ -84,6 +92,53 @@ function versPlan(b: Brouillon): Plan {
 }
 
 const footprintDe = (kind: string): number | undefined => POI_TYPES.find((t) => t.slug === kind)?.footprint
+
+// ═══ L'HISTORIQUE — annuler/refaire PAR LIEU (P-A, non négociable) ═══
+//
+// La pile porte des ÉTATS (le brouillon figé en JSON), l'index pointe le courant. Un TRAIT
+// de pinceau (enfoncé → relâché) ne fait qu'UNE entrée : annuler défait le geste, pas la
+// case — c'est ce qui distingue un éditeur d'un formulaire.
+interface Histoire { pile: string[]; index: number }
+const histoires = new Map<string, Histoire>()
+
+function histoireDe(kind: string): Histoire {
+  let h = histoires.get(kind)
+  if (!h) {
+    h = { pile: [JSON.stringify(etat.brouillon)], index: 0 }
+    histoires.set(kind, h)
+  }
+  return h
+}
+
+/** À appeler APRÈS une mutation aboutie (fin de trait, bascule d'arête, usure…). */
+function pousserHistoire(): void {
+  if (!etat.brouillon) return
+  const h = histoireDe(etat.kind)
+  const instantane = JSON.stringify(etat.brouillon)
+  if (h.pile[h.index] === instantane) return //  rien n'a changé : pas d'entrée vide
+  h.pile.length = h.index + 1 //  refaire s'oublie dès qu'on repart ailleurs
+  h.pile.push(instantane)
+  if (h.pile.length > 200) h.pile.shift()
+  h.index = h.pile.length - 1
+  majBoutonsHistoire()
+}
+
+function restaurerHistoire(direction: -1 | 1): void {
+  const h = histoireDe(etat.kind)
+  const cible = h.index + direction
+  if (cible < 0 || cible >= h.pile.length) return
+  h.index = cible
+  etat.brouillon = JSON.parse(h.pile[cible]!) as Brouillon
+  $<HTMLInputElement>('usure').value = String(etat.brouillon.usure)
+  $<HTMLInputElement>('fixe').checked = etat.brouillon.fixe
+  rafraichir()
+}
+
+function majBoutonsHistoire(): void {
+  const h = histoires.get(etat.kind)
+  $<HTMLButtonElement>('annuler').disabled = !h || h.index === 0
+  $<HTMLButtonElement>('refaire').disabled = !h || h.index >= h.pile.length - 1
+}
 
 /** Le compteur de GÉNÉRATIONS d'aperçu : chaque rebâti décale ses ids — sans quoi le
  *  `SnapshotView` (sprites clefs par id, position figée à la création) garderait le sprite
@@ -154,19 +209,53 @@ const jeu = new Phaser.Game({
   scene: [BootScene, AtelierScene],
 })
 
+const laScene = (): AtelierScene | null => {
+  const sc = jeu.scene.getScene('menu') as AtelierScene | null
+  return sc?.pret ? sc : null
+}
+
+/** Recadrer au prochain rendu — armé au changement de lieu, jamais pendant une édition :
+ *  le zoom et le pan appartiennent à l'auteur. */
+let recadrer = true
+
 /** La scène, quand elle est prête — le boot (génération des textures) prend quelques
  *  instants : on re-tente, et le DERNIER état demandé gagne. */
 function rendre(sim: SimState, playerId: number): void {
-  const sc = jeu.scene.getScene('menu') as AtelierScene | null
-  if (!sc || !sc.pret) {
+  const sc = laScene()
+  if (!sc) {
     window.setTimeout(() => rendre(sim, playerId), 120) // attente de boot seulement — pas un timing de jeu
     return
   }
-  sc.surClic = (fx, fy, droit) => clicCarte(fx - MARGE, fy - MARGE, droit)
+  sc.surClic = (fx, fy, droit, alt) => clicCarte(fx - MARGE, fy - MARGE, droit, alt)
+  sc.surGlisse = (fx, fy) => glisseCarte(fx - MARGE, fy - MARGE)
+  sc.surRelache = () => finDeTrait()
   sc.surSurvol = (fx, fy) => survolCarte(fx - MARGE, fy - MARGE)
+  sc.surZoom = (zoom) => { $('zoom-v').textContent = `${Math.round(zoom * 100)} %` }
   sc.heure = etat.heure
-  sc.grilleVisible = etat.grille
-  sc.montrer(sim, playerId)
+  sc.calques = etat.calques
+  const b = etat.brouillon
+  // LES BADGES : les triplets POSÉS, visibles en permanence — en orientation 0 seulement
+  // (ils sont écrits dans le repère du plan ; sous rotation, l'aperçu reste nu).
+  const aretes: Arete[] = []
+  const regions: Region[] = []
+  if (b && etat.quart === 0) {
+    for (const [liste, couleur] of [
+      [b.breches, COULEUR_OUTIL.breche], [b.seuils, COULEUR_OUTIL.seuil], [b.passages, COULEUR_OUTIL.passage],
+    ] as const) {
+      for (const t of liste) {
+        const [x, y, d] = t.split(',')
+        aretes.push({ tx: Number(x) + MARGE, ty: Number(y) + MARGE, dir: d as Arete['dir'], couleur })
+      }
+    }
+    for (let ry = 0; ry < b.grille.length; ry++) {
+      for (let rx = 0; rx < b.grille.length; rx++) {
+        const reg = regionDe(b.grille[ry]![rx]!)
+        if (reg) regions.push({ tx: rx + MARGE, ty: ry + MARGE, teinte: reg === 'salle' ? 0xe8b34a : 0x7aa35a })
+      }
+    }
+  }
+  sc.montrer(sim, playerId, aretes, regions, !recadrer)
+  recadrer = false
 }
 
 /**
@@ -177,8 +266,14 @@ function rendre(sim: SimState, playerId: number): void {
  */
 function memoriser(): void {
   sessionStorage.setItem('atelier', JSON.stringify({
-    kind: etat.kind, brouillon: etat.brouillon, sort: etat.sort, quart: etat.quart, dedans: etat.dedans, heure: etat.heure,
+    kind: etat.kind, brouillon: etat.brouillon, sort: etat.sort, quart: etat.quart,
+    dedans: etat.dedans, heure: etat.heure, calques: etat.calques,
   }))
+}
+
+/** Le brouillon diffère-t-il du disque ? — le ● de la barre d'état et de la liste des lieux. */
+function modifie(): boolean {
+  return etat.brouillon !== undefined && etat.kind !== '' && texteCourant() !== etat.textes.get(etat.kind)
 }
 
 function rafraichir(): void {
@@ -211,7 +306,7 @@ function rafraichir(): void {
     const div = document.createElement('div')
     div.className = 'faute'
     div.textContent = `✗ la tuile (${t}) est ENFERMÉE — aucun chemin depuis le dehors`
-  validation.appendChild(div)
+    validation.appendChild(div)
   }
   if (valide && enfermees.length === 0) {
     const div = document.createElement('div')
@@ -228,19 +323,31 @@ function rafraichir(): void {
   // Une faute BLOQUE la sauvegarde (A8) — l'enfermement avertit, il ne bloque pas : une
   // ruine scellée est peut-être voulue un jour, la garde de la suite tranchera.
   $<HTMLButtonElement>('sauver').disabled = !valide
+  // ── La barre d'état : la faute et le ● modifié se lisent sans chercher. ──
+  const sbFautes = $('sb-fautes')
+  sbFautes.textContent = valide ? '✓ 0 faute' : `✗ ${etat.fautes.length} faute(s)`
+  sbFautes.className = valide ? 'ok' : 'faute'
+  const sale = modifie()
+  $('sb-modifie').textContent = sale ? '● modifié' : '— enregistré'
+  const opt = document.querySelector<HTMLOptionElement>(`#lieux option[value="${etat.kind}"]`)
+  if (opt) opt.textContent = sale ? `${etat.kind} ●` : etat.kind
+  majBoutonsHistoire()
 }
 
 function message(texte: string): void {
   $('etat').textContent = texte
 }
 
-// ── LA PALETTE, DÉRIVÉE DE LA LÉGENDE (A6) — l'effaceur d'abord, puis chaque caractère. ──
+// ── LA PALETTE, DÉRIVÉE DE LA LÉGENDE (A6) — l'effaceur d'abord, puis chaque caractère.
+//    Les DIX premières cases portent leur raccourci (1…9, 0). ──
+const ordrePalette = (): string[] => ['·', ...Object.keys(LEGENDE)]
+
 function construirePalette(): void {
   const palette = $('palette')
   palette.innerHTML = ''
   const entrees: [string, { piece?: string; noeud?: string; region?: string }][] =
     [['·', {}], ...Object.entries(LEGENDE)]
-  for (const [car, def] of entrees) {
+  for (const [i, [car, def]] of entrees.entries()) {
     const tuile = document.createElement('div')
     tuile.className = 'tuile' + (car === etat.car ? ' actif' : '')
     tuile.appendChild(vignette(def.piece, def.region))
@@ -252,6 +359,12 @@ function construirePalette(): void {
     nom.className = 'nom'
     nom.textContent = def.piece ?? def.noeud ?? def.region ?? (car === '·' ? 'rien' : '?')
     tuile.appendChild(nom)
+    if (i < 10) {
+      const kbd = document.createElement('span')
+      kbd.className = 'kbd'
+      kbd.textContent = String((i + 1) % 10)
+      tuile.appendChild(kbd)
+    }
     tuile.addEventListener('click', () => {
       etat.car = car
       construirePalette()
@@ -260,10 +373,11 @@ function construirePalette(): void {
   }
 }
 
-// ── LES CLICS SUR LA SCÈNE : peinture par palette, arêtes au plus près (le tri des quatre
-//    distances — le patron de la visée du jeu). ──
-/** PEINDRE UNE CASE — LE chemin, unique : la souris ET la sonde du smoke passent ici
- *  (mêmes bornes, même garde d'orientation — la promesse « pas de chemin privé » tenue). */
+// ═══ LE TRAIT — peindre et gommer au GLISSER, une entrée d'historique par geste ═══
+const trait = { actif: false, sale: false, derniere: '' }
+
+/** PEINDRE UNE CASE — LE chemin, unique (souris, glisser, sonde du smoke) : mêmes bornes,
+ *  même garde d'orientation. Ne pousse PAS l'historique — le trait s'en charge à la fin. */
 function peindreCase(rx: number, ry: number, car: string): boolean {
   const b = etat.brouillon
   if (!b) return false
@@ -273,6 +387,7 @@ function peindreCase(rx: number, ry: number, car: string): boolean {
   }
   const n = b.grille.length
   if (rx < 0 || ry < 0 || rx >= n || ry >= n) return false
+  if (b.grille[ry]![rx] === car) return true //  déjà cette case : rien à repeindre
   const rangee = [...b.grille[ry]!]
   rangee[rx] = car
   b.grille[ry] = rangee.join('')
@@ -289,9 +404,9 @@ function areteLaPlusProche(u: number, v: number): 'N' | 'E' | 'S' | 'O' {
   ].sort((p, q) => p.dist - q.dist)[0]!.d
 }
 
-/** LE CLIC SUR LA CARTE — remonté par la scène (`surClic`), en coordonnées de PLAN
- *  (fraction comprise, la marge déjà soustraite). Peinture, arête, ou GOMME. */
-function clicCarte(fx: number, fy: number, droit = false): void {
+/** LE CLIC — début de trait (peindre/gommer), bascule d'arête, PIPETTE (Alt+clic),
+ *  gomme rapide (clic droit). Coordonnées de PLAN, fraction comprise. */
+function clicCarte(fx: number, fy: number, droit: boolean, alt: boolean): void {
   const b = etat.brouillon
   if (!b) return
   if (etat.quart !== 0) {
@@ -302,8 +417,15 @@ function clicCarte(fx: number, fy: number, droit = false): void {
   const ry = Math.floor(fy)
   const n = b.grille.length
   if (rx < 0 || ry < 0 || rx >= n || ry >= n) return
-  // LA GOMME (l'outil, ou le clic DROIT depuis n'importe quel outil — demande d'Alexis) :
-  // le triplet de l'arête visée s'il y en a un, sinon la case redevient `·`.
+  // LA PIPETTE (P-A) : Alt+clic prend le caractère sous le curseur — la main ne voyage plus.
+  if (alt) {
+    etat.car = b.grille[ry]![rx]!
+    construirePalette()
+    message(`pipette : « ${etat.car} »`)
+    return
+  }
+  // LA GOMME (l'outil, ou le clic DROIT depuis n'importe quel outil) : le triplet de
+  // l'arête visée s'il y en a un, sinon la case redevient `·` — et le glisser continue.
   if (droit || etat.outil === 'gommer') {
     const triplet = `${rx},${ry},${areteLaPlusProche(fx - rx, fy - ry)}`
     for (const liste of [b.breches, b.seuils, b.passages]) {
@@ -311,14 +433,19 @@ function clicCarte(fx: number, fy: number, droit = false): void {
       if (i >= 0) {
         liste.splice(i, 1)
         rafraichir()
+        pousserHistoire()
         return
       }
     }
-    peindreCase(rx, ry, '·')
+    trait.actif = true
+    trait.sale = peindreCase(rx, ry, '·')
+    trait.derniere = `${rx},${ry}`
     return
   }
   if (etat.outil === 'peindre') {
-    peindreCase(rx, ry, etat.car)
+    trait.actif = true
+    trait.sale = peindreCase(rx, ry, etat.car)
+    trait.derniere = `${rx},${ry}`
     return
   }
   {
@@ -329,21 +456,46 @@ function clicCarte(fx: number, fy: number, droit = false): void {
     else liste.push(triplet)
   }
   rafraichir()
+  pousserHistoire()
 }
 
-/** LE SURVOL — le FANTÔME de ce que le clic ferait (demande d'Alexis) : la pièce translucide
- *  pour la peinture, le liseré coloré sur l'arête visée, le contour rouge de la gomme. */
+/** LE GLISSER — la suite du trait, case par case (peindre ou gommer selon l'outil du début). */
+function glisseCarte(fx: number, fy: number): void {
+  if (!trait.actif) return
+  const rx = Math.floor(fx)
+  const ry = Math.floor(fy)
+  const cle = `${rx},${ry}`
+  if (cle === trait.derniere) return
+  trait.derniere = cle
+  const car = etat.outil === 'gommer' ? '·' : etat.car
+  if (peindreCase(rx, ry, etat.outil === 'gommer' || etat.outil === 'peindre' ? car : etat.car)) trait.sale = true
+}
+
+/** LA FIN DU TRAIT : UNE entrée d'historique pour tout le geste. */
+function finDeTrait(): void {
+  if (!trait.actif) return
+  trait.actif = false
+  if (trait.sale) pousserHistoire()
+  trait.sale = false
+  trait.derniere = ''
+}
+
+/** LE SURVOL — le FANTÔME de ce que le clic ferait, et la barre d'état (tuile + caractère). */
 function survolCarte(fx: number, fy: number): void {
-  const sc = jeu.scene.getScene('menu') as AtelierScene | null
-  if (!sc?.pret) return
+  const sc = laScene()
+  if (!sc) return
   const b = etat.brouillon
   const rx = Math.floor(fx)
   const ry = Math.floor(fy)
   const n = b?.grille.length ?? 0
   if (!b || etat.quart !== 0 || rx < 0 || ry < 0 || rx >= n || ry >= n) {
     sc.majFantome(null)
+    $('sb-pos').textContent = ''
     return
   }
+  const car = b.grille[ry]![rx]!
+  const def = LEGENDE[car]
+  $('sb-pos').textContent = `(${rx}, ${ry}) · « ${car} » ${def?.piece ?? def?.noeud ?? def?.region ?? (car === '·' ? 'rien' : '?')}`
   const tx = rx + MARGE
   const ty = ry + MARGE
   if (etat.outil === 'peindre') sc.majFantome({ tuile: { tx, ty, texture: textureDeCar(etat.car) } })
@@ -359,6 +511,54 @@ function textureDeCar(car: string): string | null {
   if (def.piece) return `st-${def.piece}`
   if (def.noeud) return `nd-${def.noeud}`
   return def.region === 'salle' ? 'st-floor' : def.region === 'cour' ? 'st-terre-0' : null
+}
+
+// ═══ LES RACCOURCIS (P-A) — au DOM, qui sait quand un champ a le focus ═══
+function champActif(): boolean {
+  const a = document.activeElement
+  return a instanceof HTMLInputElement || a instanceof HTMLSelectElement || a instanceof HTMLTextAreaElement
+}
+
+window.addEventListener('keydown', (e) => {
+  if (champActif()) return
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+    e.preventDefault()
+    restaurerHistoire(e.shiftKey ? 1 : -1)
+    return
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+    e.preventDefault()
+    restaurerHistoire(1)
+    return
+  }
+  if (e.key === ' ') {
+    e.preventDefault() //  Espace = PAN, pas le défilement de page
+    const sc = laScene()
+    if (sc) sc.espace = true
+    return
+  }
+  if (e.key === 'b' || e.key === 'B') choisirOutil('peindre')
+  else if (e.key === 'e' || e.key === 'E') choisirOutil('gommer')
+  else if (/^[0-9]$/.test(e.key)) {
+    const i = e.key === '0' ? 9 : Number(e.key) - 1
+    const car = ordrePalette()[i]
+    if (car !== undefined) {
+      etat.car = car
+      construirePalette()
+    }
+  }
+})
+window.addEventListener('keyup', (e) => {
+  if (e.key === ' ') {
+    const sc = laScene()
+    if (sc) sc.espace = false
+  }
+})
+
+function choisirOutil(outil: typeof etat.outil): void {
+  etat.outil = outil
+  const radio = document.querySelector<HTMLInputElement>(`input[name="outil"][value="${outil}"]`)
+  if (radio) radio.checked = true
 }
 
 // ── CHARGEMENT : les .plan par l'endpoint dev (la PROSE arrive avec — c'est elle que la
@@ -387,17 +587,24 @@ async function charger(): Promise<void> {
   sessionStorage.removeItem('atelier-sauve')
   if (memoire) {
     try {
-      const m = JSON.parse(memoire) as { kind: string; brouillon: Brouillon; sort: SortDuLieu; quart: number; dedans?: boolean; heure?: number }
+      const m = JSON.parse(memoire) as {
+        kind: string; brouillon: Brouillon; sort: SortDuLieu; quart: number
+        dedans?: boolean; heure?: number; calques?: typeof etat.calques
+      }
       if (etat.textes.has(m.kind)) {
         etat.sort = m.sort
         etat.quart = m.quart
         etat.dedans = m.dedans === true
         etat.heure = m.heure ?? 12
+        if (m.calques) etat.calques = m.calques
         $<HTMLSelectElement>('sort').value = m.sort
         $<HTMLSelectElement>('quart').value = String(m.quart)
         $<HTMLInputElement>('dedans').checked = etat.dedans
         $<HTMLInputElement>('heure').value = String(etat.heure)
         $('heure-v').textContent = `${etat.heure}h`
+        for (const [id, cle] of [['c-toits', 'toits'], ['c-aretes', 'aretes'], ['c-regions', 'regions'], ['c-grille', 'grille']] as const) {
+          $<HTMLInputElement>(id).checked = etat.calques[cle]
+        }
         choisir(m.kind, { force: true })
         const disque = versBrouillon(parserPlan(etat.textes.get(m.kind)!))
         if (JSON.stringify(m.brouillon) !== JSON.stringify(disque)) {
@@ -415,8 +622,9 @@ async function charger(): Promise<void> {
 }
 
 function choisir(kind: string, opts?: { force?: boolean }): void {
-  // UN BROUILLON NON SAUVÉ NE SE JETTE PAS EN SILENCE (revue du 2026-08-10).
-  if (!opts?.force && etat.brouillon && etat.kind && texteCourant() !== etat.textes.get(etat.kind)) {
+  // UN BROUILLON NON SAUVÉ NE SE JETTE PAS EN SILENCE (revue du 2026-08-10) — mais il reste
+  // dans l'HISTORIQUE de son lieu : y revenir retrouve la pile d'annulation.
+  if (!opts?.force && etat.brouillon && etat.kind && modifie()) {
     if (!window.confirm(`Des éditions non sauvées sur « ${etat.kind} » — les abandonner ?`)) {
       $<HTMLSelectElement>('lieux').value = etat.kind
       return
@@ -426,9 +634,11 @@ function choisir(kind: string, opts?: { force?: boolean }): void {
   $<HTMLSelectElement>('lieux').value = kind
   const texte = etat.textes.get(kind)!
   etat.brouillon = versBrouillon(parserPlan(texte))
+  histoireDe(kind) //  la pile naît avec l'état du disque
   $<HTMLInputElement>('usure').value = String(etat.brouillon.usure)
   $<HTMLInputElement>('fixe').checked = etat.brouillon.fixe
   message('')
+  recadrer = true //  un NOUVEAU lieu se recadre ; une édition, jamais
   rafraichir()
 }
 
@@ -466,10 +676,18 @@ async function sauver(): Promise<void> {
 // ── Le câblage des contrôles. ──
 $<HTMLSelectElement>('lieux').addEventListener('change', (e) => choisir((e.target as HTMLSelectElement).value))
 $<HTMLInputElement>('usure').addEventListener('change', (e) => {
-  if (etat.brouillon) { etat.brouillon.usure = Number((e.target as HTMLInputElement).value); rafraichir() }
+  if (etat.brouillon) {
+    etat.brouillon.usure = Number((e.target as HTMLInputElement).value)
+    rafraichir()
+    pousserHistoire()
+  }
 })
 $<HTMLInputElement>('fixe').addEventListener('change', (e) => {
-  if (etat.brouillon) { etat.brouillon.fixe = (e.target as HTMLInputElement).checked; rafraichir() }
+  if (etat.brouillon) {
+    etat.brouillon.fixe = (e.target as HTMLInputElement).checked
+    rafraichir()
+    pousserHistoire()
+  }
 })
 $<HTMLSelectElement>('sort').addEventListener('change', (e) => {
   etat.sort = (e.target as HTMLSelectElement).value as SortDuLieu
@@ -488,8 +706,8 @@ $<HTMLInputElement>('dedans').addEventListener('change', (e) => {
 $<HTMLInputElement>('heure').addEventListener('input', (e) => {
   etat.heure = Number((e.target as HTMLInputElement).value)
   $('heure-v').textContent = `${etat.heure}h`
-  const sc = jeu.scene.getScene('menu') as AtelierScene | null
-  if (sc?.pret) sc.heure = etat.heure //  la lumière suit à la frame — pas besoin de rebâtir
+  const sc = laScene()
+  if (sc) sc.heure = etat.heure //  la lumière suit à la frame — pas besoin de rebâtir
   memoriser()
 })
 for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="outil"]')) {
@@ -497,10 +715,15 @@ for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="out
     etat.outil = radio.value as typeof etat.outil
   })
 }
-$<HTMLInputElement>('grille').addEventListener('change', (e) => {
-  etat.grille = (e.target as HTMLInputElement).checked
-  rafraichir() //  la grille se redessine avec l'aperçu
-})
+for (const [id, cle] of [['c-toits', 'toits'], ['c-aretes', 'aretes'], ['c-regions', 'regions'], ['c-grille', 'grille']] as const) {
+  $<HTMLInputElement>(id).addEventListener('change', (e) => {
+    etat.calques[cle] = (e.target as HTMLInputElement).checked
+    rafraichir()
+  })
+}
+$<HTMLButtonElement>('annuler').addEventListener('click', () => restaurerHistoire(-1))
+$<HTMLButtonElement>('refaire').addEventListener('click', () => restaurerHistoire(1))
+$<HTMLButtonElement>('recadrer').addEventListener('click', () => laScene()?.recadrer())
 $<HTMLButtonElement>('sauver').addEventListener('click', () => { void sauver() })
 $<HTMLButtonElement>('copier').addEventListener('click', () => {
   void navigator.clipboard.writeText(texteCourant()).then(() => message('texte du .plan copié'))
@@ -510,15 +733,22 @@ construirePalette()
 void charger().catch((e: Error) => message(`✗ chargement : ${e.message} — l'Atelier exige le serveur de dev (pnpm dev)`))
 
 // LA SONDE DU SMOKE (A9) : l'état se LIT, et « peindre » passe par le même chemin que la
-// souris (la grille du brouillon + rafraichir) — le harnais n'a pas de chemin privé.
+// souris — le harnais n'a pas de chemin privé. `peindre` clôt son trait (une entrée
+// d'historique), comme un clic isolé.
 declare global { interface Window { __ATELIER__?: unknown } }
 window.__ATELIER__ = {
   pret: (): boolean => etat.brouillon !== undefined,
   /** Le RENDU est-il debout ? (le boot Phaser génère les textures avant la scène) */
-  rendu: (): boolean => (jeu.scene.getScene('menu') as AtelierScene | null)?.pret === true,
+  rendu: (): boolean => laScene() !== null,
   kinds: (): string[] => [...etat.textes.keys()].sort(),
   choisir,
   etat,
-  peindre: peindreCase,
+  peindre: (rx: number, ry: number, car: string): boolean => {
+    const ok = peindreCase(rx, ry, car)
+    if (ok) pousserHistoire()
+    return ok
+  },
+  annuler: (): void => restaurerHistoire(-1),
+  refaire: (): void => restaurerHistoire(1),
   texteCourant,
 }

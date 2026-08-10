@@ -80,3 +80,33 @@ grille:
 - **A9 — la boucle complète.** POST → le `.plan` réécrit + le module régénéré (le MÊME
   émetteur que `pnpm plans`) → HMR du jeu en dev. Un smoke `atelier` charge la page, vérifie
   la liste (= `BUILT_KINDS`), peint une case, lit la validation, capture.
+
+## L'Atelier PRO — l'Établi et les paquets (décisions d'Alexis, 2026-08-10)
+
+Direction retenue sur maquettes : **l'Établi** (trois zones + barre d'outils + barre d'état,
+école LDtk) avec les vignettes de variantes dans l'inspecteur, et tous les paquets. Critères
+par étage — chaque étage se livre VÉRIFIÉ (smoke + captures) avant d'ouvrir le suivant :
+
+- **P-A — le geste (l'étage 1, non négociable).** Annuler/refaire illimité par lieu
+  (Ctrl+Z / Ctrl+Y, une entrée par TRAIT de pinceau, pas par case) ; glisser-peindre (et
+  glisser-gommer) ; pipette (Alt+clic) ; raccourcis (chiffres = palette, B/E = outils) ;
+  badges d'arêtes PERMANENTS (brèche rouge, seuil ambre, passage vert — visibles en
+  orientation 0, commutables) ; zoom molette + pan (Espace ou bouton du milieu) avec
+  recadrage ; indicateur ● modifié (barre d'état + liste des lieux).
+- **P-Établi — le layout.** Barre d'outils (outils + raccourcis affichés, annuler/refaire,
+  zoom, calques : toits / régions / arêtes / grille) ; gauche : lieux + palette (raccourcis
+  affichés) ; centre : viewport ; droite : inspecteur (métadonnées, sort, avatar, heure,
+  validation) ; bas : barre d'état (tuile + caractère sous le curseur, fautes, ● modifié).
+  Le calque « toits » filtre les toits du snapshot montré — jamais un état de sim.
+- **P-B — la sélection.** Rectangle ; copier/couper/coller/déplacer ; miroir H/V ; tampons
+  nommés. GARDE : les triplets d'arête se transforment AVEC la sélection (N↔S, E↔O au
+  miroir, rotation par quart) — testé à froid, le patron de `rotate()`.
+- **P-C — les variantes.** Bande rotations/sorts/nuit en vignettes VIVANTES dans
+  l'inspecteur + export PNG de planche. Le coût des rendus multiples se MESURE d'abord
+  (patron A9 : pire seconde au décompte réel) ; au-delà du budget, re-rendus séquentiels
+  en texture plutôt que vues simultanées.
+- **P-D — le monde.** « Tester en jeu » (Veillée dev + téléport au premier exemplaire du
+  kind) ; diff brouillon ↔ disque ; historique git du `.plan` (lecture seule).
+- **P-E — la création.** Nouveau lieu, duplication, redimensionnement d'empreinte — côté
+  ÉDITEUR seulement une fois la décision de jeu prise (la naissance d'un kind touche
+  `POI_TYPES`, le recensement A7 et le semis : décision d'équilibrage à trancher à part).

@@ -7239,6 +7239,20 @@ const SCENARIOS = {
     const bloquee = await page.evaluate(() => document.getElementById('sauver').disabled)
     if (!bloquee) console.error('!! la sauvegarde devrait être BLOQUÉE sur une faute')
     await page.screenshot({ path: `${OUT}/atelier-cabane-faute.png` })
+
+    // ── L'ANNULATION (P-A) : deux pas en arrière (le L, puis le Z) ramènent le .plan du
+    //    disque AU CARACTÈRE PRÈS — c'est la garde de l'historique entier. ──
+    await page.evaluate(() => { window.__ATELIER__.annuler(); window.__ATELIER__.annuler() })
+    await page.waitForTimeout(400)
+    const revenu = await page.evaluate(() => window.__ATELIER__.texteCourant() === window.__ATELIER__.etat.textes.get('cabane'))
+    console.log(`annuler ×2 : ${revenu ? 'le .plan du disque est revenu' : 'ÉCART'}`)
+    if (!revenu) console.error('!! l’annulation ne ramène pas l’état d’origine')
+
+    // ── LES BADGES D'ARÊTES (P-A) : la ferme porte brèches, seuils ET passages — les trois
+    //    couleurs doivent se voir en permanence, plus seulement au survol. ──
+    await page.evaluate(() => window.__ATELIER__.choisir('ferme_ruinee'))
+    await page.waitForTimeout(1400)
+    await page.screenshot({ path: `${OUT}/atelier-etabli-ferme.png` })
   },
 
   /**
