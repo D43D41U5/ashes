@@ -138,6 +138,16 @@ const originY = (ht: number): number => (ht + T + M) / (ht + T + 2 * M)
 export const MUR_HT = 32
 
 /**
+ * EN DEÇÀ DE CE TAUX DE PV, une pièce du monde (`villageId 0`) bascule sur sa texture
+ * RUINÉE. Ce n'est pas un seuil de dégâts : c'est le seuil au-delà duquel une chose a
+ * cessé d'être entretenue. `poi-batis.ts` pose la Ferme à 0,45 et la Cabane à 1 — la
+ * première tombe donc du bon côté, la seconde jamais, et c'est tout le contraste.
+ * ICI (et plus dans `snapshot-view`) depuis l'Atelier : le choix de texture ruinée
+ * appartient à l'art, et l'éditeur le lit au même endroit que le jeu.
+ */
+export const RUINE_SEUIL = 0.8
+
+/**
  * LA LARGEUR D'UN JAMBAGE — DÉRIVÉE, jamais choisie.
  *
  * Le passage libre d'un encadrement vaut `T − 2·POST`. Il doit laisser entrer l'avatar, dont la
@@ -1494,15 +1504,19 @@ type Bande = { x: number; y: number; w: number; h: number }
  * structure (`Structure.edges`). L'autotuilage cesse d'exister — et avec lui la question des
  * coins rentrants, qui s'expriment désormais directement.
  */
+/** LES FAMILLES D'ARÊTE — une seule table, lue par le jeu (`generateEdgeBarrieres`) ET par
+ *  l'Atelier (`albedosAtelier`) : deux listes finiraient par diverger en silence. */
+const FAMILLES_BARRIERE = [
+  ['wall', MUR_HT, T_MUR, undefined],
+  ['wall-bois', MUR_HT, T_BOIS, undefined],
+  ['wall-ruine', MUR_HT, T_RUINE, undefined],
+  ['cloture', CLOT_HT, T_CLOT, undefined],
+  ['palissade', PALIS_HT, T_PALIS, grainPalissade],
+] as [string, number, typeof T_MUR, ((g: Ctx, b: Bande, bit: number) => void) | undefined][]
+
 function generateEdgeBarrieres(scene: Phaser.Scene): void {
   for (let mask = 1; mask < 16; mask++) {
-    for (const [nom, ht, tons, grain] of [
-      ['wall', MUR_HT, T_MUR, undefined],
-      ['wall-bois', MUR_HT, T_BOIS, undefined],
-      ['wall-ruine', MUR_HT, T_RUINE, undefined],
-      ['cloture', CLOT_HT, T_CLOT, undefined],
-      ['palissade', PALIS_HT, T_PALIS, grainPalissade],
-    ] as [string, number, typeof T_MUR, ((g: Ctx, b: Bande, bit: number) => void) | undefined][]) {
+    for (const [nom, ht, tons, grain] of FAMILLES_BARRIERE) {
       const { albedo, joints } = dessinerBarriere(mask, ht, tons, grain)
       poser(scene, `st-${nom}-e${mask}`, albedo, normalFromCanvas(albedo, 1, 3.2, 2, false, joints))
     }
@@ -1625,6 +1639,36 @@ export const EDGE_BARRIER_KEYS: readonly string[] = [
     PORTE_FRAMES.flatMap((_, f) =>
       ['door', 'door2a', 'door2b'].flatMap((fam) => [`st-${fam}-e${bit}-f${f}`, `st-${fam}-e${bit}-f${f}_lit`]))),
 ]
+
+/**
+ * L'ALBÉDO DU BÂTI, SANS PHASER — pour l'ATELIER (spec `atelier-plans.md` A6).
+ *
+ * Les MÊMES dessins que le jeu — pièces, barrières d'arête, huisseries, sols et toits ruinés —
+ * rendus en canvas nus : `bati-art` n'importe Phaser qu'en type, et l'éditeur compose son
+ * aperçu avec les vraies textures plutôt qu'avec des carrés de couleur. Ni normales ni `_lit`
+ * ici : l'aperçu est un albédo, et il le DIT — le juge de la lumière reste le jeu.
+ */
+export function albedosAtelier(): ReadonlyMap<string, HTMLCanvasElement> {
+  const sortie = new Map<string, HTMLCanvasElement>()
+  for (const p of PIECES) {
+    const { c, ctx } = newCanvas(p.largeur ?? T, p.hauteur ?? T)
+    p.dessiner(ctx)
+    sortie.set(`st-${p.type}`, c)
+  }
+  for (let mask = 1; mask < 16; mask++) {
+    for (const [nom, ht, tons, grain] of FAMILLES_BARRIERE) {
+      sortie.set(`st-${nom}-e${mask}`, dessinerBarriere(mask, ht, tons, grain).albedo)
+    }
+  }
+  for (let m = 0; m < 4; m++) sortie.set(`st-encadrement-${m}`, dessinerEncadrement(m).albedo)
+  for (let v = 0; v < 4; v++) {
+    sortie.set(`st-friche-${v}`, dessinerFriche(v))
+    sortie.set(`st-terre-${v}`, dessinerTerre(v))
+  }
+  sortie.set('st-floor-ruine', dessinerSolRuine())
+  sortie.set('st-roof-ruine', dessinerToitRuine())
+  return sortie
+}
 
 export function generateBatiArt(scene: Phaser.Scene): void {
   generateEdgeBarrieres(scene)

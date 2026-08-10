@@ -126,9 +126,19 @@ const USURABLE = new Set<StructureType>(STRUCTURE_TYPES.filter((t) => piece(t).u
  */
 export function verifierPlans(footprintDe: (kind: string) => number | undefined): string[] {
   const fautes: string[] = []
-  for (const [kind, plan] of Object.entries(PLANS)) {
+  for (const [kind, plan] of Object.entries(PLANS)) fautes.push(...verifierPlan(kind, plan, footprintDe(kind)))
+  return fautes
+}
+
+/**
+ * LA GARDE D'UN SEUL PLAN — extraite pour l'Atelier (spec `atelier-plans.md` A8) : l'éditeur
+ * la fait tourner sur le plan EN COURS D'ÉDITION, à chaque frappe — la même loi que la suite,
+ * jamais une copie.
+ */
+export function verifierPlan(kind: string, plan: Plan, fp: number | undefined): string[] {
+  const fautes: string[] = []
+  {
     const n = plan.grille.length
-    const fp = footprintDe(kind)
     if (fp !== undefined && fp !== n) fautes.push(`${kind} : plan ${n}×${n}, empreinte ${fp}`)
     for (const [i, row] of plan.grille.entries()) {
       if (row.length !== n) fautes.push(`${kind} : rangée ${i} fait ${row.length} caractères, pas ${n}`)
@@ -156,7 +166,15 @@ export function verifierPlans(footprintDe: (kind: string) => number | undefined)
         if (off === undefined) { fautes.push(`${kind} : ${nom} « ${k} » — direction inconnue`); continue }
         const reg = regionAt(x, y)
         if (reg === undefined) { fautes.push(`${kind} : ${nom} « ${k} » — (${x},${y}) n'est pas une région`); continue }
-        if (regionAt(x + off[0], y + off[1]) === reg) fautes.push(`${kind} : ${nom} « ${k} » — ne perce aucun contour`)
+        if (regionAt(x + off[0], y + off[1]) === reg) { fautes.push(`${kind} : ${nom} « ${k} » — ne perce aucun contour`); continue }
+        // LE TRIPLET CÔTÉ COUR D'UN MUR DE SALLE EST MORT (revue du 2026-08-10) : là où la
+        // cour touche la salle, c'est le mur DE LA SALLE qui ferme (« on ne clôture pas
+        // contre son propre mur ») — le poseur saute l'arête AVANT de lire les exceptions.
+        // Un tel triplet était donc validé ici et ignoré là-bas : le silence même que cette
+        // garde promet d'empêcher.
+        if (reg === 'cour' && regionAt(x + off[0], y + off[1]) === 'salle') {
+          fautes.push(`${kind} : ${nom} « ${k} » — sans effet côté cour (le mur appartient à la salle : déclare l'arête côté salle)`)
+        }
       }
     }
   }

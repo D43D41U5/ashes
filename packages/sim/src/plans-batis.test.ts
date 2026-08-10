@@ -5,8 +5,8 @@
  * une seule grammaire, lue trois fois.
  */
 import { describe, expect, it } from 'vitest'
-import { BUILT_KINDS, PLANS } from './poi-batis'
-import { parserPlan, serialiserPlan } from './plan-format'
+import { BUILT_KINDS, LEGENDE, PLANS } from './poi-batis'
+import { CLES, parserPlan, serialiserPlan } from './plan-format'
 
 const SOURCES = import.meta.glob('./plans/*.plan', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
 
@@ -41,6 +41,27 @@ describe('parserPlan — les fautes parlent, jamais un silence', () => {
     expect(() => parserPlan('usure: 0.5\nportes: 1,1,N\ngrille:\n··\n··')).toThrowError(/clé inconnue/)
     expect(() => parserPlan('usure: 2\ngrille:\n··\n··')).toThrowError(/usure/)
     expect(() => parserPlan('usure: 0.5')).toThrowError(/grille/)
+  })
+
+  it('refuse les doublons, la clé après la grille et le nombre déguisé (revue 2026-08-10)', () => {
+    // Un doublon avalé gagnait sans bruit ; deux blocs grille se CONCATÉNAIENT.
+    expect(() => parserPlan('usure: 0.5\nusure: 0.9\ngrille:\n··\n··')).toThrowError(/deux fois/)
+    expect(() => parserPlan('usure: 0.5\ngrille:\n··\ngrille:\n··')).toThrowError(/deux fois|après la grille/)
+    // La grammaire dit « grille en dernier » — le parseur le fait respecter, plus seulement le dire.
+    expect(() => parserPlan('usure: 0.5\ngrille:\n··\n··\nfixe: oui')).toThrowError(/après la grille/)
+    // « grille: » ne porte pas de valeur, et Number n'avale plus l'hexa.
+    expect(() => parserPlan('usure: 0.5\ngrille: POUBELLE\n··\n··')).toThrowError(/valeur/)
+    expect(() => parserPlan('usure: 0x1\ngrille:\n··\n··')).toThrowError(/décimal/)
+  })
+
+  it('aucune CLÉ n’est épelable avec la légende : une rangée ne peut pas passer pour une métadonnée', () => {
+    // L'invariant que le parseur suppose (« motminuscule: » n'est jamais une rangée) se GARDE :
+    // si un jour la légende gagne les minuscules d'une clé (le « f » de fixe…), ce test rougit
+    // avant que le premier plan ne perde une rangée en silence.
+    const minuscules = new Set(Object.keys(LEGENDE).filter((c) => /^[a-z]$/.test(c)))
+    for (const cle of CLES) {
+      expect([...cle].some((c) => !minuscules.has(c)), `« ${cle} » est épelable en légende`).toBe(true)
+    }
   })
 
   it('une donnée retirée disparaît du fichier, une nouvelle s’insère avant la grille', () => {

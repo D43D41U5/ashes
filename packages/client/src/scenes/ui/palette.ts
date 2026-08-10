@@ -35,6 +35,13 @@ export const HEX = {
    */
   bodyWarm: '#c0a074',
   /**
+   * LE LISERÉ SOMBRE — la bordure des éléments en RETRAIT : le champ de recherche du
+   * catalogue, la croix de fermeture et le reset des options du menu, et la tuile neutre
+   * de l'Atelier (le repli « sans albédo »). NOMMÉE le 2026-08-10 : trois écrans la
+   * portaient en dur, la garde des teintes partagées a compté.
+   */
+  bordSombre: '#3a3a44',
+  /**
    * L'encre la plus discrète — RELEVÉE de #6f6a60 à #8b8474 le 2026-07-24 (décision d'Alexis).
    *
    * L'ancienne valeur échouait au contraste WCAG AA partout où elle portait une PHRASE : 3,52:1

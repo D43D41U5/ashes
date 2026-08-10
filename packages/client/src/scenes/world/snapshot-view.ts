@@ -76,7 +76,7 @@ const MARGE_CIMES = Math.ceil(Math.max(...TOUTES_VARIANTES.map((v) => hauteurTui
 import { cimeDe, varianteArbre } from '../../render/arbre-peuplement'
 import { warmthColor } from '../../render/lighting'
 import { LIT_NODE_TYPES } from '../../render/lit-props'
-import { BATI_LIT_TYPES, COUPE_DE, EDGE_ORIGIN_Y, MUR_HT } from '../../render/bati-art'
+import { BATI_LIT_TYPES, COUPE_DE, EDGE_ORIGIN_Y, MUR_HT, RUINE_SEUIL } from '../../render/bati-art'
 import { creerPortesAnimees } from '../../render/porte-anim'
 import { calculerNappe, calculerPans, pansTombes } from '../../render/pans'
 import { LIT_STRUCTURE_TYPES } from '../../render/lit-structures'
@@ -331,13 +331,8 @@ function wallTint(material: WallMaterial | undefined, ratio: number): number {
   return Phaser.Display.Color.GetColor(Math.floor(rgb[0]! * dim), Math.floor(rgb[1]! * dim), Math.floor(rgb[2]! * dim))
 }
 
-/**
- * EN DEÇÀ DE CE TAUX DE PV, une pièce du monde (`villageId 0`) bascule sur sa texture
- * RUINÉE. Ce n'est pas un seuil de dégâts : c'est le seuil au-delà duquel une chose a
- * cessé d'être entretenue. `poi-batis.ts` pose la Ferme à 0,45 et la Cabane à 1 — la
- * première tombe donc du bon côté, la seconde jamais, et c'est tout le contraste.
- */
-const RUINE_SEUIL = 0.8
+// LE SEUIL DE RUINE (`RUINE_SEUIL`) vit dans `bati-art` depuis l'Atelier (2026-08-10) : le
+// choix de texture ruinée appartient à l'art, et l'éditeur le lit au même endroit que nous.
 
 /**
  * ⚙ CALIBRATION — À QUELLE DISTANCE UN PAN DE MUR TOMBE (décision d'Alexis, 2026-07-27).

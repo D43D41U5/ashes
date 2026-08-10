@@ -7,7 +7,7 @@
  * dedans où l'on n'entre pas se voit de loin, se contourne, et ne se comprend jamais.
  */
 import { describe, expect, it } from 'vitest'
-import { BUILT_KINDS, PLANS, buildPoiStructures, regionDe, verifierPlans } from './poi-batis'
+import { BUILT_KINDS, PLANS, buildPoiStructures, regionDe, verifierPlan, verifierPlans } from './poi-batis'
 import { POI_TYPES } from './poi'
 import { createEmptyMap } from './map'
 import { TERRAIN_GRASS } from './balance'
@@ -23,6 +23,18 @@ describe('les plans', () => {
   it('n’ont de plan que pour des lieux qui existent', () => {
     const slugs = new Set(POI_TYPES.map((t) => t.slug))
     for (const kind of BUILT_KINDS) expect(slugs.has(kind), `${kind} n’est pas un lieu`).toBe(true)
+  })
+
+  it('rejettent un triplet déclaré CÔTÉ COUR d’un mur de salle (revue 2026-08-10)', () => {
+    // Le mur entre la cour et la salle appartient à la SALLE (« on ne clôture pas contre son
+    // propre mur ») : le poseur saute l'arête AVANT de lire les brèches. Un triplet côté cour
+    // était donc validé ici et IGNORÉ là-bas — un pan qu'on croit percé et qui reste debout.
+    const grille = ['····', '·.··', '·,··', '····']
+    expect(verifierPlan('essai', { usure: 0.5, grille, breches: ['1,2,N'] }, undefined))
+      .toContainEqual(expect.stringContaining('sans effet côté cour'))
+    // Déclarée du bon côté (la salle), la même arête passe.
+    expect(verifierPlan('essai', { usure: 0.5, grille, breches: ['1,1,S'] }, undefined))
+      .not.toContainEqual(expect.stringContaining('sans effet'))
   })
 
   /**

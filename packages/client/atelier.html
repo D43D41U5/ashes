@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ASHES — l'Atelier des plans</title>
+    <style>
+      /* L'Atelier est un OUTIL DE DEV (spec atelier-plans.md A5) : il vit à côté du banc
+         d'écoute, servi par `pnpm dev` seulement — le build de prod ne le connaît pas. */
+      html, body { margin: 0; padding: 0; background: #14110d; color: #d8d2c6; font: 13px/1.45 ui-monospace, monospace; }
+      #atelier { display: flex; min-height: 100vh; }
+      aside { width: 340px; flex: none; padding: 12px 14px; background: #1b1712; border-right: 1px solid #2e2820; overflow-y: auto; max-height: 100vh; box-sizing: border-box; }
+      main { flex: 1; display: grid; place-items: center; padding: 16px; }
+      h1 { font-size: 15px; margin: 0 0 10px; color: #e8b34a; }
+      h2 { font-size: 12px; margin: 14px 0 6px; color: #b8a888; text-transform: uppercase; letter-spacing: 0.06em; }
+      select, input[type="number"], button { background: #241f18; color: #d8d2c6; border: 1px solid #3a3226; border-radius: 3px; padding: 3px 6px; font: inherit; }
+      button { cursor: pointer; }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      button.principal { background: #4a3a1a; border-color: #6a5426; color: #f0d9a0; padding: 6px 12px; }
+      label { display: inline-flex; align-items: center; gap: 5px; margin-right: 10px; }
+      #scene { image-rendering: pixelated; background: #23282013; border: 1px solid #2e2820; cursor: crosshair; }
+      #palette { display: flex; flex-wrap: wrap; gap: 4px; }
+      #palette .tuile { width: 40px; padding: 3px 0 2px; text-align: center; border: 1px solid #3a3226; border-radius: 3px; cursor: pointer; background: #201c15; }
+      #palette .tuile.actif { border-color: #e8b34a; background: #2c2416; }
+      #palette canvas { image-rendering: pixelated; display: block; margin: 0 auto 1px; }
+      #palette .car { color: #e8b34a; }
+      #palette .nom { font-size: 9px; color: #948a76; display: block; }
+      #validation .faute { color: #e06c5a; }
+      #validation .ok { color: #7aa35a; }
+      #validation .note { color: #948a76; }
+      #manquantes { color: #948a76; font-size: 11px; }
+      .rangee { margin: 4px 0; }
+      #etat { font-size: 11px; color: #948a76; min-height: 16px; }
+      #outils label { display: block; margin: 1px 0; }
+    </style>
+  </head>
+  <body>
+    <div id="atelier">
+      <aside>
+        <h1>L'Atelier des plans</h1>
+        <div class="rangee"><select id="lieux"></select></div>
+        <h2>Le lieu</h2>
+        <div class="rangee">
+          <label>usure <input id="usure" type="number" min="0.05" max="1" step="0.05" /></label>
+          <label><input id="fixe" type="checkbox" /> fixe</label>
+        </div>
+        <div class="rangee">
+          <label>sort <select id="sort"><option value="intact">intact</option><option value="pille">pillé</option><option value="brule">brûlé</option></select></label>
+          <label>quart <select id="quart"><option>0</option><option>1</option><option>2</option><option>3</option></select></label>
+          <label><input id="toits" type="checkbox" checked /> toits</label>
+        </div>
+        <h2>L'outil</h2>
+        <div id="outils">
+          <label><input type="radio" name="outil" value="peindre" checked /> peindre (palette)</label>
+          <label><input type="radio" name="outil" value="breche" /> brèche (arête)</label>
+          <label><input type="radio" name="outil" value="seuil" /> seuil (arête)</label>
+          <label><input type="radio" name="outil" value="passage" /> passage (arête)</label>
+        </div>
+        <h2>La palette</h2>
+        <div id="palette"></div>
+        <h2>Validation</h2>
+        <div id="validation"></div>
+        <h2>Sans albédo (tuile neutre)</h2>
+        <div id="manquantes"></div>
+        <div class="rangee" style="margin-top:12px">
+          <button id="sauver" class="principal">Sauver le .plan</button>
+          <button id="copier">Copier</button>
+        </div>
+        <div id="etat"></div>
+      </aside>
+      <main><canvas id="scene"></canvas></main>
+    </div>
+    <script type="module" src="/src/atelier/main.ts"></script>
+  </body>
+</html>

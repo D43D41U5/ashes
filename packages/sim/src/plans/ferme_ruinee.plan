@@ -25,10 +25,12 @@ breches: 11,4,E 11,5,E
 # LE SEUIL FAIT DEUX CASES (décision d'Alexis, 2026-07-27) : deux arêtes mitoyennes. Le
 # client les reconnaît voisines et supprime les montants du MILIEU — sinon une porte de
 # deux cases lit comme deux portes d'une case, dos à dos.
+# (Le seuil encadré, entre la salle et la cour.)
 seuils: 4,7,S 5,7,S
 # LE PASSAGE DE LA CLÔTURE FAIT DEUX CASES lui aussi (demande d'Alexis, 2026-07-27) : une
 # ouverture d'une seule tuile est un goulot pour un corps qui en fait une — on la franchit
 # au pixel près, et on s'y coince dès qu'on arrive en biais.
+# (Le passage nu de la clôture.)
 passages: 4,12,S 5,12,S
 grille:
 ··················

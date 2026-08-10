@@ -15,6 +15,9 @@ pnpm dev          # client Vite SUR L'HÔTE (jeu jouable sur http://localhost:30
 pnpm --filter @ashes/server dev   # zone LAN Colyseus sur ws://localhost:2567
                                   # le client s'y branche par VITE_SERVER_URL
 pnpm scenario     # banc d'équilibrage : le vrai worldgen joué sur des milliers de ticks
+pnpm plans        # régénère plans-batis.genere.ts depuis packages/sim/src/plans/*.plan
+                  # L'ATELIER des plans (éditeur graphique du bâti, spec atelier-plans.md) :
+                  # pnpm dev → http://localhost:3000/atelier.html (dev seulement, hors dist)
 # Stack Docker : `docker compose up -d` → jeu sur http://ashes.test via le proxy Traefik
 # PARTAGÉ (~/projects/proxy, à lancer d'abord : cd ~/projects/proxy && docker compose up -d)
 pnpm build        # build web statique → packages/client/dist

@@ -52,8 +52,11 @@ export interface Plan {
   readonly fixe?: boolean
 }
 
-/** Les clés de métadonnées connues — tout le reste est une faute, jamais un silence. */
-const CLES = new Set(['usure', 'breches', 'seuils', 'passages', 'fixe', 'grille'])
+/** Les clés de métadonnées connues — tout le reste est une faute, jamais un silence.
+ *  EXPORTÉES pour la garde d'ÉPELLATION (`plans-batis.test.ts`) : aucune clé ne doit être
+ *  épelable avec les caractères minuscules de la LÉGENDE, sinon une rangée de grille
+ *  pourrait passer pour une métadonnée. */
+export const CLES = new Set(['usure', 'breches', 'seuils', 'passages', 'fixe', 'grille'])
 
 /** Une ligne de MÉTADONNÉE connue (`usure: …`) — et jamais une rangée de grille : les
  *  caractères de légende ne forment pas `motminuscule:`. */
@@ -83,6 +86,7 @@ export function parserPlan(texte: string): Plan {
   let passages: readonly string[] | undefined
   let fixe = false
   const grille: string[] = []
+  const vues = new Set<string>()
   let dansGrille = false
   for (const brute of lignes) {
     const ligne = brute.replace(/\r$/, '')
@@ -90,9 +94,21 @@ export function parserPlan(texte: string): Plan {
     const m = LIGNE_CLE.exec(ligne)
     if (m && CLES.has(m[1]!)) {
       const [, cle, valeur] = m as unknown as [string, string, string]
-      dansGrille = false
-      if (cle === 'grille') { dansGrille = true; continue }
+      // UNE CLÉ NE SE DIT QU'UNE FOIS, ET LA GRILLE FERME LA MARCHE (revue du 2026-08-10) :
+      // un doublon avalé en silence gagnait sans bruit, et deux blocs `grille:` se
+      // CONCATÉNAIENT — très exactement le genre d'entrée douteuse que ce module promet
+      // de refuser.
+      if (vues.has(cle)) throw new Error(`« ${cle} » déclarée deux fois`)
+      if (dansGrille) throw new Error(`« ${cle} » après la grille — la grille se déclare en dernier`)
+      vues.add(cle)
+      if (cle === 'grille') {
+        if (valeur.trim() !== '') throw new Error(`« grille: » ne porte pas de valeur (« ${valeur} ») — les rangées viennent aux lignes suivantes`)
+        dansGrille = true
+        continue
+      }
       if (cle === 'usure') {
+        // Un NOMBRE ÉCRIT EN CLAIR, pas ce que `Number` veut bien avaler (« 0x1 » passait).
+        if (!/^\d+(\.\d+)?$/.test(valeur)) throw new Error(`« usure » : « ${valeur} » n'est pas un nombre décimal simple`)
         usure = Number(valeur)
         if (!Number.isFinite(usure) || usure <= 0 || usure > 1) throw new Error(`« usure » : « ${valeur} » n'est pas une fraction dans ]0, 1]`)
       } else if (cle === 'fixe') {
@@ -158,6 +174,9 @@ export function serialiserPlan(texteOriginal: string, plan: Plan): string {
         grilleEmise = true
         continue
       }
+      // Une clé ne s'émet qu'UNE fois — un doublon du texte original (que `parserPlan`
+      // refuse désormais) partirait ici plutôt que de se dupliquer à chaque sauvegarde.
+      if (vues.has(cle)) continue
       vues.add(cle)
       const valeur = valeurs.get(cle)
       if (valeur !== undefined) sorties.push(`${cle}: ${valeur}`)

@@ -22,6 +22,16 @@ declare module 'node:child_process' {
   ): string
 }
 import { execSync } from 'node:child_process'
+// Les accès fichiers de l'ATELIER (plugin plus bas) — déclarés localement, même règle que
+// `child_process` ci-dessus : ce fichier tourne sur Node, le paquet n'embarque pas ses types.
+declare module 'node:fs' {
+  export function readdirSync(chemin: string): string[]
+  export function readFileSync(chemin: string, encodage: 'utf8'): string
+  export function writeFileSync(chemin: string, contenu: string): void
+}
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
+// (Pas de `node:path` : son module ne se laisse pas augmenter ici — les chemins se collent
+// à la main, on est sur Linux des deux côtés, hôte comme conteneur.)
 
 function buildId(): string {
   const d = new Date()
@@ -120,8 +130,91 @@ function fullReloadOnSimChange(): Plugin {
 declare const process: { env: Record<string, string | undefined> }
 const SCRUTE = process.env.BRAISES_POLL === '1'
 
+/**
+ * L'ENDPOINT DE L'ATELIER (spec `atelier-plans.md` A5/A9) — `apply: 'serve'` : il n'existe
+ * qu'en dev, le build de prod ne le connaît pas (comme `atelier.html`, hors de `dist`).
+ *
+ * GET  /atelier/api/plans          → [{ kind, texte }] — les .plan, prose comprise.
+ * POST /atelier/api/plans          → réécrit `<kind>.plan` PUIS relance le compilateur
+ *      (`tools/plans-compile.mts` — le MÊME émetteur que `pnpm plans`, jamais un deuxième).
+ *      S'il refuse, le .plan est RESTAURÉ : le disque reste cohérent avec le module généré.
+ *
+ * Borné : kinds `[a-z_]+` et lieux DÉJÀ existants (pas de création de fichier par HTTP) —
+ * l'endpoint édite le dossier des plans, il n'écrit rien d'autre. Sur la stack Docker le
+ * dépôt est monté `:ro` : l'écriture échoue proprement, l'Atelier propose le presse-papier.
+ */
+function atelierPlansPlugin(): Plugin {
+  return {
+    name: 'braises:atelier-plans',
+    apply: 'serve',
+    configureServer(server) {
+      const racine = `${server.config.root}/../..`
+      const dossier = `${racine}/packages/sim/src/plans`
+      server.middlewares.use('/atelier/api/plans', (req, res) => {
+        const repondre = (code: number, corps: unknown): void => {
+          res.statusCode = code
+          res.setHeader('content-type', 'application/json')
+          res.end(JSON.stringify(corps))
+        }
+        if (req.method === 'GET') {
+          const fichiers = readdirSync(dossier).filter((f) => f.endsWith('.plan')).sort()
+          repondre(200, fichiers.map((f) => ({ kind: f.slice(0, -'.plan'.length), texte: readFileSync(`${dossier}/${f}`, 'utf8') })))
+          return
+        }
+        if (req.method !== 'POST') {
+          repondre(405, { erreur: 'méthode inconnue' })
+          return
+        }
+        // L'EN-TÊTE `x-atelier` FORCE UN PREFLIGHT (revue du 2026-08-10) : sans lui, un POST
+        // « simple request » partait de n'importe quelle page web pendant que `pnpm dev`
+        // tourne — et le serveur écoute au-delà de localhost (`host: true`).
+        if (req.headers['x-atelier'] !== '1') {
+          repondre(403, { erreur: 'en-tête x-atelier requis (le POST vient de la page atelier)' })
+          return
+        }
+        // `setEncoding` : un caractère multi-octets (« · », l'accent d'une prose) à cheval sur
+        // deux chunks deviendrait U+FFFD en décodant chaque Buffer isolément.
+        req.setEncoding('utf8')
+        let corps = ''
+        req.on('data', (morceau) => {
+          corps += String(morceau)
+          if (corps.length > 300_000) { corps = ''; req.destroy() }
+        })
+        req.on('end', () => {
+          let json: { kind?: unknown; texte?: unknown }
+          try {
+            json = JSON.parse(corps) as { kind?: unknown; texte?: unknown }
+          } catch {
+            repondre(400, { erreur: 'corps JSON illisible' })
+            return
+          }
+          try {
+            const { kind, texte } = json
+            if (typeof kind !== 'string' || !/^[a-z_]+$/.test(kind)) { repondre(400, { erreur: 'kind invalide' }); return }
+            if (typeof texte !== 'string' || texte.length > 100_000) { repondre(400, { erreur: 'texte invalide' }); return }
+            const chemin = `${dossier}/${kind}.plan`
+            let avant: string
+            try { avant = readFileSync(chemin, 'utf8') } catch { repondre(404, { erreur: `${kind}.plan n'existe pas — la création passe par le dépôt` }); return }
+            writeFileSync(chemin, texte)
+            try {
+              execSync(`node --import tsx ${racine}/tools/plans-compile.mts`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+            } catch (e) {
+              writeFileSync(chemin, avant) //  le disque reste cohérent avec le généré
+              repondre(422, { erreur: `le compilateur refuse : ${String((e as { stderr?: string }).stderr ?? e).slice(0, 400)}` })
+              return
+            }
+            repondre(200, { ok: true })
+          } catch (e) {
+            repondre(500, { erreur: String(e).slice(0, 400) })
+          }
+        })
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [fullReloadOnSimChange(), buildIdPlugin()],
+  plugins: [fullReloadOnSimChange(), buildIdPlugin(), atelierPlansPlugin()],
   // `allowedHosts: true` : le serveur de dev est derrière Traefik, qui lui
   // transmet le Host demandé par le navigateur (ashes.test, l'IP nue du VPS…).
   // Les lister ici reviendrait à figer l'adresse de la machine dans le dépôt.

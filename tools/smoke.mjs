@@ -7180,6 +7180,51 @@ const SCENARIOS = {
   },
 
   /**
+   * L'ATELIER DES PLANS (spec `atelier-plans.md` A9) — la page charge, la liste des lieux est
+   * celle des `.plan`, la cabane se peint PAR LE MÊME CHEMIN que la souris, et la validation
+   * parle (une faute bloque la sauvegarde). Exige un serveur de DEV — l'atelier n'existe pas
+   * en build : `--dev` (stack Docker), ou `SMOKE_URL=http://localhost:3000/ … --dev` (hôte).
+   */
+  async 'atelier'(page) {
+    const base = BASE_URL.split('?')[0]
+    await page.goto(`${base}${base.endsWith('/') ? '' : '/'}atelier.html`, { waitUntil: 'networkidle', timeout: 30000 })
+    await page.waitForFunction(() => window.__ATELIER__?.pret?.(), null, { timeout: 30000 })
+    const kinds = await page.evaluate(() => window.__ATELIER__.kinds())
+    console.log(`lieux chargés : ${kinds.join(' ')}`)
+    if (kinds.length < 9) console.error(`!! ${kinds.length} lieux — les 9 .plan attendus`)
+
+    await page.evaluate(() => window.__ATELIER__.choisir('cabane'))
+    await page.waitForTimeout(300)
+    const avant = await page.evaluate(() => ({
+      fautes: window.__ATELIER__.etat.fautes.length,
+      manquantes: window.__ATELIER__.etat.manquantes,
+    }))
+    console.log(`cabane : ${avant.fautes} faute(s) · sans albédo : ${avant.manquantes.join(' ') || 'rien'}`)
+    if (avant.fautes > 0) console.error('!! la cabane du dépôt ne devrait porter AUCUNE faute')
+    await page.screenshot({ path: `${OUT}/atelier-cabane.png` })
+
+    // ── ON PEINT une paillasse en (3,1), par le même chemin que la souris, et le TEXTE du
+    //    .plan la porte (c'est lui qu'on sauvera — la preuve va jusqu'au format). ──
+    await page.evaluate(() => window.__ATELIER__.peindre(3, 1, 'L'))
+    await page.waitForTimeout(200)
+    const texte = await page.evaluate(() => window.__ATELIER__.texteCourant())
+    const rangee1 = (texte.split('grille:')[1] ?? '').trim().split('\n')[1] ?? ''
+    console.log(`rangée peinte : ${rangee1} (attendu ·::L·)`)
+    if (rangee1 !== '·::L·') console.error('!! la peinture n’a pas atteint le texte du .plan')
+    await page.screenshot({ path: `${OUT}/atelier-cabane-peinte.png` })
+
+    // ── UNE FAUTE PARLE et BLOQUE : un caractère inconnu rougit, la sauvegarde se ferme. ──
+    await page.evaluate(() => window.__ATELIER__.peindre(3, 1, 'Z'))
+    await page.waitForTimeout(200)
+    const fautes = await page.evaluate(() => window.__ATELIER__.etat.fautes)
+    console.log(`après un « Z » : ${fautes.length} faute(s) — ${fautes[0] ?? ''}`)
+    if (fautes.length === 0) console.error('!! le caractère inconnu ne rougit pas')
+    const bloquee = await page.evaluate(() => document.getElementById('sauver').disabled)
+    if (!bloquee) console.error('!! la sauvegarde devrait être BLOQUÉE sur une faute')
+    await page.screenshot({ path: `${OUT}/atelier-cabane-faute.png` })
+  },
+
+  /**
    * LES TOITS ET LE DEDANS/DEHORS (calage instrumenté, spec construction R24 — 2026-08-10).
    *
    * On ne cale pas un toit à l'œil : on MESURE, sur les vrais sprites du jeu, quatre choses

@@ -18,6 +18,7 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parserPlan, type Plan } from '../packages/sim/src/plan-format'
+import { POI_TYPES, verifierPlan } from '../packages/sim/src/index'
 
 const RACINE = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const DOSSIER = resolve(RACINE, 'packages/sim/src/plans')
@@ -38,6 +39,12 @@ for (const fichier of fichiers) {
   } catch (e) {
     throw new Error(`${fichier} : ${(e as Error).message}`)
   }
+  // LA GÉOMÉTRIE AUSSI, pas que la grammaire (revue du 2026-08-10) : un plan carré au mauvais
+  // côté, une région au bord, une brèche sur du vide COMPILAIENT — et l'endpoint de l'Atelier,
+  // qui prend ce compilateur pour porte, les aurait laissés atterrir sur disque. Le design dit
+  // « un seul émetteur » : c'est donc ici, au point d'étranglement, que la garde du jeu tourne.
+  const fautes = verifierPlan(kind, plan, POI_TYPES.find((t) => t.slug === kind)?.footprint)
+  if (fautes.length) throw new Error(`${fichier} : ${fautes.join(' · ')}`)
   const lignes: string[] = [`  ${kind}: {`]
   lignes.push(`    usure: ${plan.usure},`)
   if (plan.fixe) lignes.push('    fixe: true,')
