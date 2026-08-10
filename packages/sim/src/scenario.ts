@@ -18,7 +18,7 @@
  * `worker/veillee.ts` (Veillée solo) et `server/scenario.ts` (zone LAN) :
  *
  *     generateZonedTerrain → placeZoneNodes → emplacementsDeVillage
- *                          → placeHuntingGrounds → spawnPoiMonsters
+ *                          → placeHuntingGrounds → spawnPoiMonsters → buildPoiStructures
  *
  * ═══ LA TAILLE EST UN BOUTON, PAS UNE AUTRE CARTE ═══
  *
@@ -37,6 +37,7 @@ import { drainEvents, type SimEvent } from './events'
 import { placeHuntingGrounds } from './faune'
 import { countOf } from './items'
 import { spawnPoiMonsters } from './poi'
+import { buildPoiStructures } from './poi-batis'
 import { createSim, step, type SimState } from './sim'
 import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { FAUNA } from './balance'
@@ -80,6 +81,12 @@ export interface ScenarioReport {
     nodes: number
     /** Coins de chasse posés. À zéro, le rapport parle de la faim dans un monde sans gibier. */
     huntingGrounds: number
+    /**
+     * Structures posées par les LIEUX BÂTIS (`buildPoiStructures`), comptées AVANT la fondation
+     * des villages. À zéro, le banc jouerait un monde où la Ferme ruinée n'a pas de murs — les
+     * PNJ y traceraient des chemins qu'aucun joueur ne peut prendre (parité d'amorce, A5).
+     */
+    structuresBaties: number
     /** Écart minimal entre deux villages, en tuiles. Informatif. */
     ecartMinVillages: number
     /**
@@ -181,6 +188,13 @@ export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEU
     home: { x: base.tx + 0.5, y: base.ty + 0.5 },
   })
   spawnPoiMonsters(sim, seed)
+  // LES LIEUX BÂTIS — même moment, même seed, même ordre que `worker/veillee.ts` et
+  // `server/scenario.ts` (parité d'amorce, spec lieux-batis A5). Sans cet appel, le banc
+  // mesurait des PNJ qui traversent la Ferme ruinée comme un pré — pas le monde qu'on joue.
+  buildPoiStructures(sim, seed)
+  // Le compte AVANT les villages : à cet instant, toute structure vient des lieux — le
+  // rapport inscrit ce que le monde porte de bâti, comme il inscrit ses coins de chasse.
+  const structuresBaties = sim.structures.length
 
   // Trois villages, comme avant — mais posés sur les emplacements que le générateur PROPOSE,
   // jamais sur des coordonnées écrites à la main.
@@ -214,6 +228,7 @@ export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEU
       height: map.height,
       nodes: nodes.length,
       huntingGrounds: grounds.length,
+      structuresBaties,
       ecartMinVillages: Math.round(ecartMinVillages),
       margeDeCible: Math.round(margeDeCible * 10) / 10,
     },

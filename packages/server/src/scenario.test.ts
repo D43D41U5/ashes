@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { avanceeDuFront, estCendre, seasonDayAtTick, TICKS_PER_SEASON_DAY, zoneSlugAt } from '@ashes/sim'
-import { baseDeNaissance, createZone, MAX_PLAYERS, nextSpawnNear } from './scenario'
+import {
+  avanceeDuFront,
+  buildPoiStructures,
+  createSim,
+  estCendre,
+  seasonDayAtTick,
+  spawnPoiMonsters,
+  TICKS_PER_SEASON_DAY,
+  zoneSlugAt,
+} from '@ashes/sim'
+import { baseDeNaissance, createZone, LAN_SEED, MAX_PLAYERS, nextSpawnNear } from './scenario'
 
 /**
  * OÙ LA VALLÉE LAN FAIT-ELLE NAÎTRE SES JOUEURS ?
@@ -47,6 +56,24 @@ describe('la vallée LAN — le monde de production', () => {
   it('le monde porte de quoi jouer (garde de non-vacuité)', () => {
     expect(monde.sim.nodes.length).toBeGreaterThan(10_000)
     expect(monde.sim.grounds.length).toBeGreaterThan(0)
+  })
+
+  /**
+   * LA PARITÉ D'AMORCE (spec lieux-batis A5). La Veillée bâtit ses lieux à l'amorce
+   * (`worker/veillee.ts` : createSim → spawnPoiMonsters → buildPoiStructures) ; la zone
+   * LAN doit porter LES MÊMES MURS. Elle ne les portait pas : en multi, la Ferme ruinée
+   * était un sprite traversant — les joueurs LAN ne jouaient pas le monde du solo.
+   *
+   * On rejoue ici l'amorce de RÉFÉRENCE sur la même carte, dans le même ordre, avec le
+   * même seed. Les deux peuplements sont POSITIONNELS (hash de la carte, jamais le PRNG
+   * partagé — contrat A6) : les structures doivent être identiques au bit près, ids compris.
+   */
+  it("porte les mêmes murs qu'un monde solo — la parité d'amorce", () => {
+    const ref = createSim(LAN_SEED, { map: monde.carte.map })
+    spawnPoiMonsters(ref, LAN_SEED)
+    buildPoiStructures(ref, LAN_SEED)
+    expect(ref.structures.length, 'la référence ne bâtit rien : ce test ne garderait rien').toBeGreaterThan(0)
+    expect(monde.sim.structures).toEqual(ref.structures)
   })
 
   /**

@@ -46,6 +46,10 @@ describe('le banc de test', () => {
     // Sans gibier, tout chiffre sur la faim est un artefact. C'est LE défaut d'origine.
     expect(monde.huntingGrounds, 'aucun coin de chasse : le banc mesurerait la faim sans gibier').toBeGreaterThan(0)
     expect(monde.nodes, 'une vallée sans nœuds est une carte dégénérée').toBeGreaterThan(1000)
+    // LA PARITÉ D'AMORCE (spec lieux-batis A5) : la Veillée bâtit ses lieux (`buildPoiStructures`),
+    // le banc doit jouer les mêmes murs. Sans cette garde, le banc a mesuré des PNJ qui traversent
+    // la Ferme ruinée comme un pré — la même classe de dérive que la carte sans gibier.
+    expect(monde.structuresBaties, 'aucun lieu bâti : le banc jouerait un monde sans murs de POI').toBeGreaterThan(0)
     // L'IA de raid de la Meute vise le village le plus proche À VOL D'OISEAU : à quasi-égalité,
     // elle raide le même chaque nuit jusqu'à destruction mutuelle, et le banc mesure une guerre
     // au lieu d'une économie. C'est arrivé (marge de 0,4 % sur l'ancienne carte, corrigée à la
@@ -82,7 +86,7 @@ describe('le banc de test', () => {
     const m = report.monde
     console.log(
       `  monde : ${m.width}×${m.height} (${(m.width * m.height) / 1000 | 0}k tuiles, ${m.joueurs} joueurs cibles)` +
-        ` · ${m.nodes} nœuds · ${m.huntingGrounds} coins de chasse` +
+        ` · ${m.nodes} nœuds · ${m.huntingGrounds} coins de chasse · ${m.structuresBaties} structures de lieux` +
         ` · villages écartés de ${m.ecartMinVillages} tuiles, marge de ciblage ${m.margeDeCible} %`,
     )
     for (const v of report.villages) {

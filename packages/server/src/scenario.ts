@@ -9,6 +9,7 @@
  */
 import {
   avanceeDuFront,
+  buildPoiStructures,
   createSim,
   cycleOffsetForStartHour,
   emplacementsDeVillage,
@@ -89,6 +90,10 @@ export function createZone(): LanWorld {
     debug: false,
   })
   spawnPoiMonsters(sim, LAN_SEED)
+  // LES LIEUX BÂTIS — même moment, même seed, même ordre que `worker/veillee.ts` (parité
+  // d'amorce, spec lieux-batis A5). Sans cet appel, la zone LAN servait une Ferme ruinée
+  // SANS MURS : les joueurs multi ne jouaient pas le monde que le solo joue.
+  buildPoiStructures(sim, LAN_SEED)
   return { sim, base: { tx: base.tx, ty: base.ty }, spawns, carte, emplacements }
 }
 
