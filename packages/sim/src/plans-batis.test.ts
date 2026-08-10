@@ -54,6 +54,14 @@ describe('parserPlan — les fautes parlent, jamais un silence', () => {
     expect(() => parserPlan('usure: 0x1\ngrille:\n··\n··')).toThrowError(/décimal/)
   })
 
+  it('« # » n’entre jamais en légende : une rangée qui commence par lui disparaît au parse', () => {
+    // parserPlan traite « # » en tête de ligne comme de la PROSE — même au milieu de la
+    // grille. S'il devenait un caractère de légende, la première rangée qui commencerait par
+    // lui partirait en silence, et verifierPlan ne verrait qu'un plan trop court.
+    expect(Object.keys(LEGENDE)).not.toContain('#')
+    expect(parserPlan('usure: 1\ngrille:\n#·\n··').grille).toEqual(['··'])
+  })
+
   it('aucune CLÉ n’est épelable avec la légende : une rangée ne peut pas passer pour une métadonnée', () => {
     // L'invariant que le parseur suppose (« motminuscule: » n'est jamais une rangée) se GARDE :
     // si un jour la légende gagne les minuscules d'une clé (le « f » de fixe…), ce test rougit

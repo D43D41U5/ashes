@@ -70,7 +70,7 @@ export interface Pans {
 
 const N = 1, E = 2, S = 4, O = 8
 /** Les sols qui font un DEDANS. Deux types différents = deux régions, même s'ils se touchent. */
-const SOLS = new Set(['floor', 'terre', 'roof'])
+const SOLS = new Set(['floor', 'terre', 'roof', 'roc']) //  le roc fait un DEDANS (étage 2)
 /**
  * Ce qui porte une arête, donc ce qui APPARTIENT à un pan — la porte du joueur (`door`, R23) et
  * le seuil du bâti généré (`encadrement`) compris : sans eux, un mur percé se scinderait en deux
@@ -81,7 +81,7 @@ const SOLS = new Set(['floor', 'terre', 'roof'])
  * Ce module décide de l'EMPRISE ; ce qui se dessine à la place se lit dans `bati-art` (`COUPE_DE`,
  * où l'absence d'une famille vaut « ne se tranche pas »).
  */
-const BARRIERES = new Set(['wall', 'cloture', 'encadrement', 'door'])
+const BARRIERES = new Set(['wall', 'cloture', 'encadrement', 'door', 'paroi']) //  la paroi tombe en pan (étage 2)
 
 /**
  * Le bit déclaré, la direction où il regarde, et le côté de la région qu'il borde — DES DEUX

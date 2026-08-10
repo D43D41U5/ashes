@@ -337,16 +337,19 @@ export function structureAt(structures: readonly Structure[], tx: number, ty: nu
  * que la collision et l'occupation regardent. `floorAt`/`roofAt` = les couches
  * molles, une de chaque au plus par tuile. Sol au ras du sol, toit au-dessus.
  */
+// Les trois couches se LISENT AU REGISTRE (`occupe`) depuis l'étage 2 du vocabulaire
+// (2026-08-10) : le `roc` est un second SOL — écrit en toutes lettres, il aurait été compté
+// SOLIDE par `solidAt` et invisible à `floorAt`, et un dallage se serait empilé dessus.
 export function solidAt(structures: readonly Structure[], tx: number, ty: number): Structure | undefined {
-  return structures.find((s) => s.tx === tx && s.ty === ty && s.type !== 'floor' && s.type !== 'roof')
+  return structures.find((s) => s.tx === tx && s.ty === ty && piece(s.type).occupe === 'tuile')
 }
 
 export function floorAt(structures: readonly Structure[], tx: number, ty: number): Structure | undefined {
-  return structures.find((s) => s.tx === tx && s.ty === ty && s.type === 'floor')
+  return structures.find((s) => s.tx === tx && s.ty === ty && piece(s.type).occupe === 'sol')
 }
 
 export function roofAt(structures: readonly Structure[], tx: number, ty: number): Structure | undefined {
-  return structures.find((s) => s.tx === tx && s.ty === ty && s.type === 'roof')
+  return structures.find((s) => s.tx === tx && s.ty === ty && piece(s.type).occupe === 'toit')
 }
 
 export function getVillageOf(state: SimState, entityId: number): Village | undefined {

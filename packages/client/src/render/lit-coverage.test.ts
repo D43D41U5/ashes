@@ -56,7 +56,7 @@ describe('la couverture _lit (garde A1)', () => {
     // Le COFFRE a sa `_lit` — peu importe lequel des deux modules la produit.
     expect(tous.has('chest'), 'le coffre a perdu sa bascule').toBe(true)
     // Les exceptions consignées ne se glissent dans AUCUN des deux whitelists par accident.
-    for (const exclu of ['wall', 'door', 'fire', 'floor', 'roof', 'parcelle', 'terroir']) {
+    for (const exclu of ['wall', 'door', 'fire', 'floor', 'roof', 'parcelle', 'terroir', 'roc']) {
       expect(tous.has(exclu), `${exclu} est consigné hors bascule`).toBe(false)
     }
   })

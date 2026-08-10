@@ -81,3 +81,48 @@ sente sera presque toujours « pillée » — c'est voulu, c'est la règle de le
 - **A8** — rendu : `charrette` et `autel` ont leur art `bati-art` (albédo + `_lit`) ; aucun sprite-corps ne double un `BUILT_KIND` (dérivé, automatique).
 - **A9** — perf : coût client (syncStructures, clone snapshot) MESURÉ au décompte projeté (~1 000-1 500 structures), pire seconde et pas moyenne ; le pooling/culling (patron des nœuds) ne s'implémente QUE si la mesure le justifie.
 - **A10** — le banc avant/après (≥ 3 seeds) : deltas rapportés, famine jugée au seuil absolu.
+
+## Étage 2 — le vocabulaire naturel (décision d'Alexis, 2026-08-10)
+
+La grammaire des plans gagne le MINÉRAL et le VÉGÉTAL — pour que les ébauches de lieux
+naturels (grotte, carrière…) aient autre chose que de la maçonnerie. Le souterrain reste
+différé : l'`antre` est une poche À CIEL OUVERT (pas de toit).
+
+### Le contrat
+
+| pièce | nature | pose | bloque | usage |
+|---|---|---|---|---|
+| `roc` | sol (molle) | monde | non | le plancher de pierre nue d'un antre |
+| `paroi` | barrière d'ARÊTE | monde | oui | la roche dressée — dérivée du pourtour de l'antre, hauteur `MUR_HT` |
+| `rocher` | plein-tuile | monde | oui | le bloc erratique de poche — on le contourne |
+| `eboulis` | plein-tuile basse | monde | enjambe | les pierres croulées — on passe par-dessus |
+
+**Région neuve `antre`** : sol `roc`, contour `paroi` (le patron `CLOTURE_DE`) — brèches,
+seuils et passages du contour valent comme pour la salle. **Végétal = NŒUDS réels** (jamais
+du décor) : la légende gagne `Y` (nœud `tree`) et `B` (nœud `berry_bush`), semés par le
+plan et modulés par le sort (le patron des gravats). Légende : `r` roc/antre, `R` rocher,
+`e` éboulis. (`#` est INTERDIT comme caractère de grille — il ouvre un commentaire `.plan`.)
+
+### Critères d'acceptation
+
+- **N1** — les quatre pièces au registre (`pieces.ts`), `StructureType` suit (dérivé) ; la
+  paroi est une barrière d'arête au rendu (`FAMILLES_BARRIERE`) mais PAS dans `BARRIER_TYPES`,
+  qui dérive de `pose: 'marteau'` (le menu de construction — la paroi ne se bâtit pas) ;
+  collision et navigation passent par le registre
+  (`bloque`), zéro liste nouvelle.
+- **N2** — la région `antre` : `verifierPlans` la traite comme les autres (bord interdit,
+  triplets côté région) ; `batirLieu` pose `roc` + dérive `paroi` ; PAS de toit sur antre.
+- **N3** — l'art : `st-paroi-e<masque>` par le MÊME moteur de barrières (tons roche),
+  empreinte de coupe au tableau `COUPE_DE`, ancrages `EDGE_ORIGIN_Y`/`EDGE_SPRITE` ;
+  `st-roc` au sol ; `rocher`/`eboulis` en chips `_lit` (la recette cubique). Les gardes de
+  couverture d'art existantes restent vertes.
+- **N4** — le rendu : `snapshot-view` traite la paroi comme une barrière d'arête (branche,
+  fam, teinte presque blanche comme la clôture) et `roc` comme un sol (FLOOR_DEPTH) — pans
+  et nappe suivent sans cas nouveau.
+- **N5** — déterminisme : aucun tirage neuf ; double génération identique ; parité d'amorce
+  intacte ; le généré ne bouge pas tant qu'aucun plan n'emploie le vocabulaire neuf.
+- **N6** — le picker par THÈMES (éditorial) : Construction, Minéraux, Végétaux, Stations &
+  mobilier — table char→thème explicite dans l'Atelier, GARDÉE par un test de couverture
+  (tout caractère de légende a un thème ET une aide) ; les raccourcis suivent l'ordre lu.
+- **N7** — un plan d'essai (brouillon) mêlant antre, rochers, éboulis et nœuds végétaux se
+  bâtit, se valide, se rend — capturé au smoke.

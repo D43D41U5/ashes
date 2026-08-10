@@ -7357,10 +7357,11 @@ const SCENARIOS = {
     // Le handler ne survit PAS à la création : il avalerait ensuite tout confirm() en
     // l'ACCEPTANT — la garde « éditions non sauvées » deviendrait invisible au smoke.
     page.off('dialog', surDialogue)
-    page.on('dialog', (d) => {
+    const dialogueInattendu = (d) => {
       console.error(`!! dialogue inattendu : ${d.type()} « ${d.message().slice(0, 80)} »`)
       void d.dismiss()
-    })
+    }
+    page.on('dialog', dialogueInattendu)
     const creation = await page.evaluate(() => ({
       la: window.__ATELIER__.etat.brouillons.has('essai_bac'),
       etat: document.getElementById('etat').textContent,
@@ -7382,6 +7383,49 @@ const SCENARIOS = {
     await page.evaluate(() => window.__ATELIER__.choisir('ferme_ruinee'))
     await page.waitForTimeout(1400)
     await page.screenshot({ path: `${OUT}/atelier-etabli-ferme.png` })
+
+    // ── LE VOCABULAIRE NATUREL (spec lieux-batis N7) : un brouillon mêle un ANTRE (sol roc,
+    //    parois dérivées du pourtour, jamais de toit), des ROCHERS, un ÉBOULIS et de VRAIS
+    //    nœuds (arbre, baies) — il se valide, se bâtit, se capture. En dernier : il laisse
+    //    des éditions non sauvées, aucun probe ne doit passer derrière. ──
+    page.off('dialog', dialogueInattendu)
+    const reponsesN7 = ['essai_antre', '9']
+    const surDialogueN7 = (d) => { void d.accept(reponsesN7.shift() ?? '') }
+    page.on('dialog', surDialogueN7)
+    await page.click('#nouveau')
+    await page.waitForTimeout(600)
+    page.off('dialog', surDialogueN7)
+    page.on('dialog', dialogueInattendu)
+    const laN7 = await page.evaluate(() => window.__ATELIER__.etat.brouillons.has('essai_antre'))
+    if (laN7) {
+      // Le fichier est SUR LE DISQUE dès la création (endpoint dev) : le nettoyage vit dans
+      // un finally — un probe qui casse ne doit pas laisser un .plan orphelin non gitignoré.
+      try {
+        await page.evaluate(() => {
+          const A = window.__ATELIER__
+          for (let y = 2; y <= 4; y++) for (let x = 2; x <= 4; x++) A.peindre(x, y, 'r')
+          A.peindre(6, 2, 'R')
+          A.peindre(6, 3, 'e')
+          A.peindre(6, 5, 'Y')
+          A.peindre(2, 6, 'B')
+        })
+        await page.waitForTimeout(1200)
+        const n7 = await page.evaluate(() => ({
+          fautes: window.__ATELIER__.etat.fautes.length,
+          texte: window.__ATELIER__.texteCourant(),
+        }))
+        console.log(`antre 3×3 + rocher + éboulis + arbre + baies : ${n7.fautes} faute(s) (attendu 0)`)
+        if (n7.fautes > 0) console.error('!! le vocabulaire naturel ne se valide pas dans un brouillon sain')
+        if (!n7.texte.includes('rrr') || !n7.texte.includes('Y') || !n7.texte.includes('B')) console.error('!! le texte du plan ne porte pas le vocabulaire peint')
+        await page.screenshot({ path: `${OUT}/atelier-antre.png` })
+      } finally {
+        const { unlinkSync: rmN7, existsSync: ilYaN7 } = await import('node:fs')
+        const planN7 = resolve(ROOT, 'packages/sim/src/plans/brouillons/essai_antre.plan')
+        if (ilYaN7(planN7)) rmN7(planN7)
+      }
+    } else {
+      console.log('brouillon N7 : création refusée (dépôt en lecture seule ? toléré)')
+    }
   },
 
   /**

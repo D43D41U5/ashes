@@ -300,6 +300,9 @@ export class AtelierScene extends Phaser.Scene {
     // L'herbe d'essai, sous tout — un aplat à la teinte du jeu (le vrai sol est un système).
     this.fond ??= this.add.rectangle(0, 0, 1, 1, 0xa9cd93).setOrigin(0, 0).setDepth(-10)
     this.fond.setDisplaySize(cote, cote)
+    // Les arbres du jeu se rendent par ESSENCE (fût + houppier tirés du peuplement de la
+    // carte) : sans lui, un nœud `tree` n'a pas de silhouette. Graine fixe = aperçu stable.
+    this.view.setPeuplement(sim.map, 7)
     this.view.setNodes(sim.nodes)
     this.view.apply(msg, playerId, this.time.now)
     if (!garderCamera) this.recadrer()

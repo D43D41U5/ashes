@@ -16,7 +16,7 @@
  * invariant §3). Un fantôme vert n'est PAS une promesse — c'est « rien ici ne
  * l'interdit *de ce que le client peut voir* ».
  */
-import { COMPONENT_TYPES, doorPairs, EDGE_N, edgeBarrierAt, floorAt, piece, recognizeFunctions, roofAt, structureAt, type RecognizedFunction, type Structure } from '@ashes/sim'
+import { COMPONENT_TYPES, doorPairs, EDGE_N, edgeBarrierAt, floorAt, fullTileAt, piece, recognizeFunctions, roofAt, type RecognizedFunction, type Structure } from '@ashes/sim'
 import { tileFeetAnchor } from '../../render/framing'
 import { TILE_PX } from '../../render/framing'
 import { EDGE_ORIGIN_Y, MUR_HT } from '../../render/bati-art'
@@ -115,7 +115,10 @@ export class BuildGhost {
         ? roofAt(structures, tx, ty) !== undefined
         : couche === 'sol'
           ? floorAt(structures, tx, ty) !== undefined
-          : structureAt(structures, tx, ty) !== undefined
+          // PLEIN-TUILE : `fullTileAt`, comme `evaluateBuild` — pas `solidAt`, qui compte
+          // aussi les barrières d'ARÊTE déclarées sur la tuile : le fantôme rougirait le
+          // geste normal d'ADOSSER un four à son propre mur, que la sim accepte.
+          : fullTileAt(structures, tx, ty) !== undefined
     const a = tileFeetAnchor(tx, ty, TILE_PX)
     const lift = warp?.lift(tx + 0.5, ty + 1) ?? 0
     // LA PORTE DOUBLE SE PRÉDIT (R27) : si l'arête armée complète une paire colinéaire avec une

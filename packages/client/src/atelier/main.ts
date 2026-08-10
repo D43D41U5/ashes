@@ -41,6 +41,7 @@ import {
 } from './selection'
 import { autoPermis, exporterPlanche, rendrePlanche, type Variante } from './vignettes'
 import { aidePalette, brancherAide, montrerAide, reposAide } from './aide'
+import { THEMES, THEME_DE } from './palette'
 
 /** La marge d'herbe autour du plan sur la carte d'essai — les murs du pourtour vivent sur
  *  la tuile EXTÉRIEURE, il leur faut au moins une rangée, et l'œil respire avec deux. */
@@ -266,7 +267,7 @@ function rendre(sim: SimState, playerId: number): void {
     for (let ry = 0; ry < b.grille.length; ry++) {
       for (let rx = 0; rx < b.grille.length; rx++) {
         const reg = regionDe(b.grille[ry]![rx]!)
-        if (reg) regions.push({ tx: rx + MARGE, ty: ry + MARGE, teinte: reg === 'salle' ? 0xe8b34a : 0x7aa35a })
+        if (reg) regions.push({ tx: rx + MARGE, ty: ry + MARGE, teinte: reg === 'salle' ? 0xe8b34a : reg === 'cour' ? 0x7aa35a : 0x9aa4ad })
       }
     }
   }
@@ -362,27 +363,17 @@ function message(texte: string): void {
   $('etat').textContent = texte
 }
 
-// ── LA PALETTE, DÉRIVÉE DE LA LÉGENDE (A6) — par CATÉGORIES (demande d'Alexis), et la
-//    catégorie se DÉRIVE des champs de la légende (region/piece/noeud), jamais d'une liste
-//    recopiée qui divergerait à la première pièce neuve. ──
+// ── LA PALETTE PAR THÈMES (spec lieux-batis N6, décision d'Alexis) : Construction,
+//    Minéraux, Végétaux, Stations & mobilier — la table char→thème est ÉDITORIALE
+//    (palette.ts), gardée par un test de couverture : elle ne prend pas de retard. ──
 
 type EntreePalette = [string, { piece?: string; noeud?: string; region?: string }]
 
-const CATEGORIES = ['Sols & régions', 'La salle', 'La cour', 'Hors région'] as const
-
-function categorieDe(car: string, def: EntreePalette[1]): (typeof CATEGORIES)[number] {
-  if (car === '·' || def.piece === 'friche') return 'Sols & régions' //  le vide, et le champ
-  if (def.region && !def.piece && !def.noeud) return 'Sols & régions' //  les dallages, la terre
-  if (def.region === 'salle') return 'La salle'
-  if (def.region === 'cour') return 'La cour'
-  return 'Hors région' //  les pièces éparses des petits lieux (charrette, autel, mur bas…)
-}
-
-/** L'ordre d'AFFICHAGE, catégorie par catégorie — les raccourcis 1…9, 0 suivent CET ordre
+/** L'ordre d'AFFICHAGE, thème par thème — les raccourcis 1…9, 0 suivent CET ordre
  *  (le même que l'œil lit), pas l'ordre interne de la légende. */
 function entreesPalette(): EntreePalette[] {
   const toutes: EntreePalette[] = [['·', {}], ...Object.entries(LEGENDE)]
-  return CATEGORIES.flatMap((cat) => toutes.filter(([car, def]) => categorieDe(car, def) === cat))
+  return THEMES.flatMap((th) => toutes.filter(([car]) => THEME_DE[car] === th))
 }
 
 const ordrePalette = (): string[] => entreesPalette().map(([car]) => car)
@@ -391,8 +382,8 @@ function construirePalette(): void {
   const palette = $('palette')
   palette.innerHTML = ''
   let i = 0
-  for (const cat of CATEGORIES) {
-    const groupe = entreesPalette().filter(([car, def]) => categorieDe(car, def) === cat)
+  for (const cat of THEMES) {
+    const groupe = entreesPalette().filter(([car]) => THEME_DE[car] === cat)
     if (groupe.length === 0) continue
     const titre = document.createElement('div')
     titre.className = 'cat-titre'
@@ -403,7 +394,7 @@ function construirePalette(): void {
     for (const [car, def] of groupe) {
       const tuile = document.createElement('div')
       tuile.className = 'tuile' + (car === etat.car ? ' actif' : '')
-      tuile.appendChild(vignette(def.piece, def.region))
+      tuile.appendChild(vignette(def.piece, def.region, def.noeud))
       const carEl = document.createElement('span')
       carEl.className = 'car'
       carEl.textContent = car
@@ -749,8 +740,12 @@ function textureDeCar(car: string): string | null {
   const def = LEGENDE[car]
   if (!def) return null
   if (def.piece) return `st-${def.piece}`
+  // Tous les nœuds n'ont pas une clé `nd-<type>` : l'arbre est DEUX sprites (on montre le
+  // fût), le buisson se décline par baies dessinées (on montre le plein).
+  if (def.noeud === 'tree') return 'nd-tree_trunk'
+  if (def.noeud === 'berry_bush') return 'nd-berry_bush-3'
   if (def.noeud) return `nd-${def.noeud}`
-  return def.region === 'salle' ? 'st-floor' : def.region === 'cour' ? 'st-terre-0' : null
+  return def.region === 'salle' ? 'st-floor' : def.region === 'cour' ? 'st-terre-0' : def.region === 'antre' ? 'st-roc' : null
 }
 
 // ═══ LA PLANCHE (P-C) — auto tant que la MESURE le permet, débranchée sinon ═══

@@ -7,7 +7,7 @@
  * dedans où l'on n'entre pas se voit de loin, se contourne, et ne se comprend jamais.
  */
 import { describe, expect, it } from 'vitest'
-import { BUILT_KINDS, PLANS, buildPoiStructures, regionDe, verifierPlan, verifierPlans } from './poi-batis'
+import { BUILT_KINDS, PLANS, batirLieu, buildPoiStructures, regionDe, verifierPlan, verifierPlans } from './poi-batis'
 import { POI_TYPES } from './poi'
 import { createEmptyMap } from './map'
 import { TERRAIN_GRASS } from './balance'
@@ -50,7 +50,7 @@ describe('les plans', () => {
   it('laissent le dedans rejoindre le dehors', () => {
     for (const [kind, plan] of Object.entries(PLANS)) {
       const n = plan.grille.length
-      const reg = (x: number, y: number): 'salle' | 'cour' | undefined =>
+      const reg = (x: number, y: number): 'salle' | 'cour' | 'antre' | undefined =>
         (x < 0 || y < 0 || x >= n || y >= n ? undefined : regionDe(plan.grille[y]![x]!))
       const ouvertes = new Set([...(plan.breches ?? []), ...(plan.seuils ?? []), ...(plan.passages ?? [])])
       const DIRS: readonly [string, number, number][] = [['N', 0, -1], ['E', 1, 0], ['S', 0, 1], ['O', -1, 0]]
@@ -125,8 +125,42 @@ describe('buildPoiStructures', () => {
     const sim = monde('ferme_ruinee')
     buildPoiStructures(sim, 7)
     for (const s of sim.structures) {
-      if (s.type !== 'wall' && s.type !== 'cloture' && s.type !== 'encadrement') continue
+      if (s.type !== 'wall' && s.type !== 'cloture' && s.type !== 'encadrement' && s.type !== 'paroi') continue
       expect(s.edges, `${s.type} en (${s.tx},${s.ty}) n’a pas d’arêtes`).toBeGreaterThan(0)
+    }
+  })
+
+  /**
+   * L'ANTRE (étage 2) : sol de ROC, contour de PAROIS à arêtes — et JAMAIS de toit, même
+   * dans un plan couvert : le « : » de la salle ne déborde pas sur la poche minérale (le
+   * souterrain reste différé — un antre est à ciel ouvert).
+   */
+  it('l’antre : sol roc, contour paroi à arêtes — et JAMAIS de toit, même dans un plan couvert', () => {
+    const sim = createSim(7, { map: createEmptyMap(32, 32, TERRAIN_GRASS) })
+    const plan = { usure: 1, grille: ['······', '·::···', '······', '······', '···rr·', '······'] }
+    batirLieu(sim, plan, 10, 10, 'intact', 0)
+    const rocs = sim.structures.filter((s) => s.type === 'roc')
+    expect(rocs.length, 'chaque case d’antre porte son sol').toBe(2)
+    const parois = sim.structures.filter((s) => s.type === 'paroi')
+    expect(parois.length).toBeGreaterThan(0)
+    for (const p of parois) expect(p.edges, `paroi en (${p.tx},${p.ty}) sans arêtes`).toBeGreaterThan(0)
+    const toits = new Set(sim.structures.filter((s) => s.type === 'roof').map((s) => `${s.tx},${s.ty}`))
+    expect(toits.size, 'la salle couverte a bien son toit').toBeGreaterThan(0)
+    for (const r of rocs) expect(toits.has(`${r.tx},${r.ty}`), 'un antre couvert par erreur').toBe(false)
+  })
+
+  /** Y et B sèment de VRAIS nœuds (étage 2) — le sort porte le combien, jamais le si (S-R18). */
+  it('Y et B sèment de VRAIS nœuds (tree, berry_bush) — le sort module le stock, il ne retire jamais', () => {
+    const plan = { usure: 1, grille: ['Y··', '·B·', '···'] }
+    for (const sort of ['intact', 'pille', 'brule'] as const) {
+      const sim = createSim(7, { map: createEmptyMap(16, 16, TERRAIN_GRASS) })
+      batirLieu(sim, plan, 4, 4, sort, 0)
+      const arbre = sim.nodes.find((n) => n.type === 'tree')
+      const baies = sim.nodes.find((n) => n.type === 'berry_bush')
+      expect(arbre, `${sort} : pas d’arbre semé`).toBeDefined()
+      expect(baies, `${sort} : pas de buisson semé`).toBeDefined()
+      expect(arbre!.stock, `${sort} : plancher S-R18`).toBeGreaterThanOrEqual(1)
+      expect(baies!.stock).toBeGreaterThanOrEqual(1)
     }
   })
 
@@ -192,7 +226,7 @@ describe('buildPoiStructures', () => {
     buildPoiStructures(sim, 7)
     const parTuile = new Map<string, number>()
     for (const s of sim.structures) {
-      if (s.type !== 'wall' && s.type !== 'cloture' && s.type !== 'encadrement') continue
+      if (s.type !== 'wall' && s.type !== 'cloture' && s.type !== 'encadrement' && s.type !== 'paroi') continue
       const k = `${s.tx},${s.ty}`
       parTuile.set(k, (parTuile.get(k) ?? 0) + 1)
     }

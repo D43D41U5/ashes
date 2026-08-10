@@ -461,6 +461,30 @@ export const PIECES = {
     label: 'Autel', fam: 'mobilier', pose: 'monde', occupe: 'tuile', arete: 'interdite',
     bloque: 'oui', pv: 250, cout: { stone: 6 }, acces: 'village', eau: false, usurable: true,
   },
+  // ── LE VOCABULAIRE NATUREL (spec lieux-batis, étage 2 — décision d'Alexis 2026-08-10) ──
+  // Le minéral ne VIEILLIT pas (`usurable: false`) : « à 30 % de PV » n'y veut rien dire —
+  // l'argument de la meule — et l'usure du sort ne mord pas le roc.
+  roc: {
+    // Le plancher de pierre nue d'un antre. Un SOL (R14) : occupe 'sol' — fullTileAt
+    // l'ignore, la couche sol le juge, le rendu le couche à FLOOR_DEPTH.
+    label: 'Roc', fam: 'structure', pose: 'monde', occupe: 'sol', arete: 'interdite',
+    bloque: 'non', pv: 60, cout: { stone: 1 }, acces: 'village', eau: false, usurable: false,
+  },
+  paroi: {
+    // La roche dressée d'un antre — dérivée du pourtour (poi-batis), jamais au marteau.
+    label: 'Paroi', fam: 'structure', pose: 'monde', occupe: 'tuile', arete: 'requise',
+    bloque: 'oui', pv: 500, cout: { stone: 3 }, acces: 'village', eau: false, usurable: false,
+  },
+  rocher: {
+    // Le bloc erratique de poche : plein-tuile, on le CONTOURNE — le corps solide du minéral.
+    label: 'Rocher', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    bloque: 'oui', pv: 250, cout: { stone: 6 }, acces: 'village', eau: false, usurable: false,
+  },
+  eboulis: {
+    // Les pierres croulées : basses, on passe PAR-DESSUS — le mur_bas du minéral.
+    label: 'Éboulis', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    bloque: 'enjambe', pv: 150, cout: { stone: 2 }, acces: 'village', eau: false, usurable: false,
+  },
 } as const satisfies Record<string, PieceDef>
 
 /** LE TYPE, DÉRIVÉ. C'est tout le propos : la liste ne se tient plus à la main. */

@@ -30,17 +30,17 @@ describe('les clés', () => {
       expect(BATI_KEYS, `st-${type}_lit manque`).toContain(`st-${type}_lit`)
     }
     // Le mobilier au complet — la liste est ici pour qu'un oubli se VOIE, pas pour décorer.
-    for (const t of ['table', 'banc', 'paillasse', 'etagere', 'tonneau', 'atre', 'abreuvoir', 'meule', 'poutre', 'mur_bas', 'charrette', 'autel', 'cloture', 'encadrement']) {
+    for (const t of ['table', 'banc', 'paillasse', 'etagere', 'tonneau', 'atre', 'abreuvoir', 'meule', 'poutre', 'mur_bas', 'charrette', 'autel', 'rocher', 'eboulis', 'cloture', 'encadrement']) {
       expect(BATI_LIT_TYPES.has(t), `${t} n'a pas de _lit`).toBe(true)
     }
   })
 
   it('laissent PLATES les pièces au ras du sol — une normale y ferait un coussin par tuile', () => {
-    for (const plat of ['st-friche', 'st-friche-0', 'st-friche-3', 'st-terre', 'st-terre-2', 'st-floor-ruine', 'st-roof-ruine']) {
+    for (const plat of ['st-friche', 'st-friche-0', 'st-friche-3', 'st-terre', 'st-terre-2', 'st-roc', 'st-roc-0', 'st-roc-3', 'st-floor-ruine', 'st-roof-ruine']) {
       expect(BATI_KEYS).toContain(plat)
       expect(BATI_KEYS, `${plat} ne doit PAS avoir de _lit`).not.toContain(`${plat}_lit`)
     }
-    for (const plat of ['friche', 'terre', 'floor', 'roof']) expect(BATI_LIT_TYPES.has(plat)).toBe(false)
+    for (const plat of ['friche', 'terre', 'roc', 'floor', 'roof']) expect(BATI_LIT_TYPES.has(plat)).toBe(false)
   })
 
   it('n’ont aucun doublon', () => {

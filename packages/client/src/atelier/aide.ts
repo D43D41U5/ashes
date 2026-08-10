@@ -38,7 +38,7 @@ export const AIDE_CONTROLES: Record<string, string> = {
   heure: 'L’heure de l’éclairage (le soleil et la lune du jeu). Ne change que le rendu — 2 h pour juger un lieu de nuit, 7 h ou 18 h pour le soleil rasant qui révèle le relief.',
   'c-toits': 'Calque : montre/cache les TOITS. Un filtre d’affichage — la sim d’aperçu les garde (utile pour peindre l’intérieur d’une salle couverte).',
   'c-aretes': 'Calque : les BADGES des arêtes posées — brèche rouge, seuil ambre, passage vert. Sans eux, on gomme à l’aveugle.',
-  'c-regions': 'Calque : teinte les cases par RÉGION — salle en ambre, cour en vert. Les murs se dérivent du pourtour de ces régions.',
+  'c-regions': 'Calque : teinte les cases par RÉGION — salle en ambre, cour en vert, antre en gris roche. Les barrières se dérivent du pourtour de ces régions.',
   'c-grille': 'Calque : le quadrillage des tuiles, par-dessus tout — on vise une case même sous un toit plein.',
   annuler: 'Annuler (Ctrl+Z) — une entrée par GESTE : un trait entier de pinceau, un collage, une transformation se défont d’un coup.',
   refaire: 'Refaire (Ctrl+Y ou Ctrl+Maj+Z) — tant qu’on n’a pas repris une édition ailleurs.',
@@ -86,6 +86,11 @@ export const AIDE_PALETTE: Record<string, string> = {
   F: 'ÂTRE froid d’un camp (hors salle) — s’il est brûlé, le feu ne laisse que lui.',
   t: 'TONNEAU abandonné dehors — contenant : part au pillage.',
   G: 'GRAVATS hors cour — la fouille des petits lieux (ruines, mine, épave).',
+  r: 'ROC — le sol d’ANTRE : la troisième région. Ses PAROIS se dérivent de son pourtour, comme les murs d’une salle — mais jamais de toit.',
+  R: 'ROCHER — un bloc plein-tuile : il BLOQUE, on le contourne. La pierre posée là depuis toujours.',
+  e: 'ÉBOULIS — la pierraille : on l’ENJAMBE, elle raconte l’effondrement sans jamais barrer le pas.',
+  Y: 'ARBRE — un VRAI nœud (hache) : bois réel, silhouette d’essence du jeu. À poser HORS des régions : dans une salle, il troue le dallage et le pourtour se referme — l’arbre finit EMMURÉ, irrécoltable.',
+  B: 'BUISSON À BAIES — un VRAI nœud (cueillette) : des baies qu’on mange. Hors des régions, comme l’arbre — emmuré s’il troue une salle.',
 }
 
 /** LA RÉFÉRENCE — le contenu du panneau « ? », par sections. */

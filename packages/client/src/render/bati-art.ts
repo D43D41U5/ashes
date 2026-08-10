@@ -445,6 +445,59 @@ const PIECES: readonly Piece[] = [
       ]
     },
   },
+  // ── LE ROCHER : le bloc erratique de poche (étage 2) — PAS une boîte : un erratique n'a
+  //    pas d'angles droits. Silhouette arrondie-facettée, la recette cubique du clutter. ──
+  {
+    type: 'rocher',
+    k: 3.5,
+    dessiner: (g) => {
+      // La masse, épaulée : plus large au pied qu'au sommet, décalée — rien de symétrique.
+      rect(g, PIERRE_T.pied, 1, 4, 14, 11) //   la silhouette pleine, en ombre
+      rect(g, PIERRE_T.pied, 3, 2, 9, 2) //     l'épaule haute
+      rect(g, PIERRE_T.face, 2, 7, 12, 7) //    la face
+      rect(g, PIERRE_T.faceO, 2, 7, 3, 7) //    le flanc à l'ombre
+      rect(g, PIERRE_T.haut, 3, 4, 10, 3) //    le dessus, foreshortené
+      rect(g, PIERRE_T.haut, 4, 2, 8, 2)
+      rect(g, PIERRE_T.hautH, 4, 2, 8, 1) //    l'arête qui prend la lumière
+      rect(g, PIERRE_T.pied, 1, 13, 14, 2) //   le pied enterré
+      rect(g, MOUSSE, 2, 13, 4, 1) //           la mousse — la pierre est là depuis longtemps
+      rect(g, MOUSSE, 11, 14, 3, 1)
+      return [
+        { path: [[3, 7], [13, 7]], crevasse: true }, //   l'arête dessus/face — le volume
+        { path: [[5.5, 13], [4.5, 4]], crevasse: true }, // la fracture oblique, du sol à l'épaule
+        { path: [[10, 12], [11, 8]] }, //                 une facette secondaire
+      ]
+    },
+  },
+  // ── L'ÉBOULIS : les pierres croulées (étage 2) — bas comme le mur_bas, mais en TAS,
+  //    pas en assises : des blocs inégaux qui débordent la ligne. ──
+  {
+    type: 'eboulis',
+    dessiner: (g) => {
+      const { yh } = boite(g, 3, PIERRE_T)
+      // Les blocs, par-dessus la ligne : tailles et tons tirés du hash positionnel.
+      let x = -1
+      let i = 0
+      while (x < T) {
+        const w = 3 + Math.floor(h(7, i, 13) * 3)
+        const haut = 1 + Math.floor(h(3, i, 5) * 3)
+        const x0 = Math.max(0, x)
+        const x1 = Math.min(T, x + w)
+        if (x1 > x0) {
+          rect(g, h(i, x, 11) > 0.5 ? PIERRE_T.face : PIERRE_T.haut, x0, yh - haut, x1 - x0, haut + 2)
+          rect(g, PIERRE_T.hautH, x0, yh - haut, x1 - x0, 1)
+        }
+        x += w
+        i += 1
+      }
+      rect(g, MOUSSE, 3, T - 2, 3, 1)
+      return [
+        { path: [[4.5, T - 2], [4.5, yh - 2]] }, //  les joints entre blocs
+        { path: [[9.5, T - 2], [9.5, yh - 1]] },
+        { path: [[13, T - 2], [13, yh - 3]] },
+      ]
+    },
+  },
 ]
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1412,6 +1465,7 @@ export const BATI_KEYS: readonly string[] = [
   'st-encadrement', 'st-encadrement_lit',
   'st-friche', 'st-friche-0', 'st-friche-1', 'st-friche-2', 'st-friche-3',
   'st-terre', 'st-terre-0', 'st-terre-1', 'st-terre-2', 'st-terre-3',
+  'st-roc', 'st-roc-0', 'st-roc-1', 'st-roc-2', 'st-roc-3', //  étage 2 — plat, comme la terre
   'st-floor-ruine', 'st-roof-ruine',
 ]
 
@@ -1429,6 +1483,21 @@ const FRICHE_TOUFFES: readonly (readonly [number, number, number, number, number
   [[2, 9, 3, 6, 1], [8, 4, 3, 8, 0], [13, 11, 3, 5, 1], [0, 12, 3, 4, 0]],
   [[3, 2, 4, 5, 0], [10, 6, 3, 5, 1], [1, 10, 2, 6, 1], [6, 12, 5, 4, 0]],
 ]
+
+/** LE ROC (étage 2) — le plancher de pierre nue d'un antre. PLAT (aucune `_lit`, règle de
+ *  `lit-structures`), plus sombre que la face du mur : un sol se tient SOUS les chips
+ *  PIERRE_T, il ne doit pas les manger. */
+function dessinerRoc(variante: number): HTMLCanvasElement {
+  const { c, ctx: g } = newCanvas(T, T)
+  rect(g, '#4e4e58', 0, 0, T, T) //         la dalle, froide
+  rect(g, '#575761', 1, 1, T - 2, T - 2) // le poli du passage
+  for (let k = 0; k < 6; k++) { //          fissures et éclats, décalés par variante
+    const x = Math.floor(h(variante + 4, k, 3) * T)
+    const y = Math.floor(h(variante + 4, k, 11) * T)
+    rect(g, k % 2 === 0 ? '#3e3e48' : '#63636d', x, y, 1 + (k % 2), 1)
+  }
+  return c
+}
 
 function dessinerFriche(variante: number): HTMLCanvasElement {
   const { c, ctx: g } = newCanvas(T, T)
@@ -1454,6 +1523,9 @@ function dessinerFriche(variante: number): HTMLCanvasElement {
 const T_MUR = { top: '#8f8f99', face: '#5e5e68', pied: '#4a4a54', arete: '#3a3a43' }
 const T_RUINE = { top: '#6d6d77', face: '#4a4a54', pied: '#3a3a43', arete: '#2e2e36' }
 const T_CLOT = { top: '#8a6438', face: '#5a3f24', pied: '#3a2818', arete: '#2e2016' }
+/** La PAROI (étage 2) — la roche dressée d'un antre : l'ardoise froide de la falaise, pas
+ *  la maçonnerie (T_MUR est un appareil de pierres taillées ; la paroi est le monde). */
+const T_PAROI = { top: '#7d8288', face: '#4f545c', pied: '#3d4148', arete: '#31343b' }
 /**
  * LE MUR DE BOIS A SA FAMILLE (retour d'Alexis, 2026-08-01 : « on ne voit pas la texture
  * bois ») — et elle reste UNIE, fidèle à la décision du 2026-07-27 : à 16 px de tuile un
@@ -1512,6 +1584,7 @@ const FAMILLES_BARRIERE = [
   ['wall-ruine', MUR_HT, T_RUINE, undefined],
   ['cloture', CLOT_HT, T_CLOT, undefined],
   ['palissade', PALIS_HT, T_PALIS, grainPalissade],
+  ['paroi', MUR_HT, T_PAROI, undefined], //  étage 2 — un grain de strates viendra par le même canal
 ] as [string, number, typeof T_MUR, ((g: Ctx, b: Bande, bit: number) => void) | undefined][]
 
 function generateEdgeBarrieres(scene: Phaser.Scene): void {
@@ -1583,6 +1656,7 @@ export const EDGE_SPRITE: Readonly<Record<string, { hauteurPx: number; largeurPx
   door2b: { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
   cloture: { hauteurPx: CLOT_HT, largeurPx: T + 2 * M },
   palissade: { hauteurPx: PALIS_HT, largeurPx: T + 2 * M },
+  paroi: { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
 }
 
 export const EDGE_ORIGIN_Y: Readonly<Record<string, number>> = {
@@ -1597,6 +1671,7 @@ export const EDGE_ORIGIN_Y: Readonly<Record<string, number>> = {
   encadrement: originY(MUR_HT),
   cloture: originY(CLOT_HT),
   palissade: originY(PALIS_HT),
+  paroi: originY(MUR_HT),
 }
 
 /**
@@ -1620,6 +1695,7 @@ export const COUPE_DE: Readonly<Record<string, string>> = {
   wall: 'wall-coupe',
   'wall-bois': 'wall-coupe', //    une empreinte au sol n'a pas d'essence
   'wall-ruine': 'wall-coupe', //   une empreinte au sol n'a ni appareil ni usure
+  paroi: 'wall-coupe', //          le même collapse : une empreinte n'a pas d'essence (étage 2)
   cloture: 'cloture-coupe',
   // La PALISSADE est absente À DESSEIN (comme la porte) : l'enceinte d'un village ne
   // front jamais une salle couverte — elle reste debout, toujours.
@@ -1627,7 +1703,7 @@ export const COUPE_DE: Readonly<Record<string, string>> = {
 
 /** Toutes les clés d'arête — la surface testable, jamais recopiée. */
 export const EDGE_BARRIER_KEYS: readonly string[] = [
-  ...['wall', 'wall-bois', 'wall-ruine', 'cloture', 'palissade'].flatMap((nom) =>
+  ...['wall', 'wall-bois', 'wall-ruine', 'cloture', 'palissade', 'paroi'].flatMap((nom) =>
     Array.from({ length: 15 }, (_, i) => [`st-${nom}-e${i + 1}`, `st-${nom}-e${i + 1}_lit`]).flat()),
   ...['wall-coupe', 'cloture-coupe'].flatMap((nom) =>
     Array.from({ length: 15 }, (_, i) => `st-${nom}-e${i + 1}`)),
@@ -1664,7 +1740,9 @@ export function albedosAtelier(): ReadonlyMap<string, HTMLCanvasElement> {
   for (let v = 0; v < 4; v++) {
     sortie.set(`st-friche-${v}`, dessinerFriche(v))
     sortie.set(`st-terre-${v}`, dessinerTerre(v))
+    sortie.set(`st-roc-${v}`, dessinerRoc(v))
   }
+  sortie.set('st-roc', dessinerRoc(0))
   sortie.set('st-floor-ruine', dessinerSolRuine())
   sortie.set('st-roof-ruine', dessinerToitRuine())
   return sortie
@@ -1693,7 +1771,7 @@ export function generateBatiArt(scene: Phaser.Scene): void {
 
   // Les pièces AU RAS DU SOL restent PLATES (aucune `_lit`) — règle de `lit-structures`.
   for (let v = 0; v < 4; v++) {
-    for (const [prefixe, dessin] of [['st-friche', dessinerFriche], ['st-terre', dessinerTerre]] as const) {
+    for (const [prefixe, dessin] of [['st-friche', dessinerFriche], ['st-terre', dessinerTerre], ['st-roc', dessinerRoc]] as const) {
       const cle = `${prefixe}-${v}`
       if (scene.textures.exists(cle)) scene.textures.remove(cle)
       scene.textures.addCanvas(cle, dessin(v))
@@ -1707,6 +1785,7 @@ export function generateBatiArt(scene: Phaser.Scene): void {
   for (const [cle, canvas] of [
     ['st-friche', dessinerFriche(0)],
     ['st-terre', dessinerTerre(0)],
+    ['st-roc', dessinerRoc(0)],
     ['st-floor-ruine', dessinerSolRuine()],
     ['st-roof-ruine', dessinerToitRuine()],
   ] as const) {

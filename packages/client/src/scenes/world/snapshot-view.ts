@@ -1071,13 +1071,13 @@ export class SnapshotView {
             ? GROUND_FIRE_DEPTH
             : isRoof
               ? ROOF_DEPTH + s.ty
-              : s.type === 'floor' || s.type === 'friche' || s.type === 'terre'
+              : s.type === 'floor' || s.type === 'friche' || s.type === 'terre' || s.type === 'roc'
                 ? FLOOR_DEPTH // friche et terre battue SONT le sol : un champ ne se dresse pas
                 // UNE BARRIÈRE TRIE SUR SA BANDE, pas sur sa tuile : sinon, collé à un mur par
                 // le bas, on passe derrière lui (cf. `barriereDepth`). Et LE SEUIL APRÈS LE MUR :
                 // une bande de mur déborde d'une demi-épaisseur chez ses voisins, et sa pierre
                 // mordait le bois de la porte (constaté par Alexis).
-                : s.edges !== undefined && (s.type === 'wall' || s.type === 'palissade' || s.type === 'cloture' || s.type === 'encadrement' || s.type === 'door')
+                : s.edges !== undefined && (s.type === 'wall' || s.type === 'palissade' || s.type === 'cloture' || s.type === 'encadrement' || s.type === 'door' || s.type === 'paroi')
                   // LE SEUIL **ET LA PORTE** APRÈS LE MUR (`TIE_SEUIL`). Une bande de mur déborde
                   // d'une demi-épaisseur chez ses voisins pour se recoudre ; à pieds égaux et
                   // départage identique, l'ordre tombait sur l'ordre de POSE, et la pierre du mur
@@ -1123,7 +1123,7 @@ export class SnapshotView {
           const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
           sprite.setTint(warmthColor(warmth))
         }
-      } else if (s.edges !== undefined && (s.type === 'wall' || s.type === 'palissade' || s.type === 'cloture' || s.type === 'door')) {
+      } else if (s.edges !== undefined && (s.type === 'wall' || s.type === 'palissade' || s.type === 'cloture' || s.type === 'door' || s.type === 'paroi')) {
         // ═══ LA BARRIÈRE SUR ARÊTE — la forme est PORTÉE, plus devinée ═══
         //
         // L'autotuilage lisait le voisinage ; ici `edges` dit tout. Seize masques suffisent, et
@@ -1148,6 +1148,9 @@ export class SnapshotView {
           s.type === 'door' ? (paire === undefined ? 'door' : paire.premiere ? 'door2a' : 'door2b')
           : s.type === 'cloture' ? 'cloture'
           : s.type === 'palissade' ? 'palissade'
+          // LA PAROI AVANT la ruine et le bois (étage 2) : villageId 0 et sans matériau, elle
+          // prendrait sinon la maçonnerie ruinée — ou pire, un mur de BOIS.
+          : s.type === 'paroi' ? 'paroi'
           : ruine ? 'wall-ruine'
           : (s.material ?? 'wood') === 'wood' ? 'wall-bois'
           : 'wall'
@@ -1215,7 +1218,7 @@ export class SnapshotView {
         if (cacheLaSalle) sprite.clearTint()
         else {
           const rgb: readonly [number, number, number] =
-            ruine || s.type === 'cloture' || s.type === 'palissade'
+            ruine || s.type === 'cloture' || s.type === 'palissade' || s.type === 'paroi'
               ? [248, 250, 255]
               : EDGE_MATERIAL_RGB[s.material ?? 'wood']
           sprite.setTint(Phaser.Display.Color.GetColor(
@@ -1251,7 +1254,7 @@ export class SnapshotView {
         // teinte ne fait pas un TROU. Un chaume ruiné laisse voir dessous, un dallage percé
         // laisse voir la terre — c'est ce qui distingue « tombé » de « à l'ombre ».
         sprite.setTexture(`st-${s.type}-ruine`)
-      } else if (s.type === 'friche' || s.type === 'terre') {
+      } else if (s.type === 'friche' || s.type === 'terre' || s.type === 'roc') {
         // La friche tire sa variante de sa POSITION — un champ de vingt tuiles ne peut pas
         // porter vingt fois le même carré. Déterministe des deux côtés, sans une donnée de plus.
         sprite.setTexture(`st-${s.type}-${(((s.tx * 7 + s.ty * 13) % 4) + 4) % 4}`)

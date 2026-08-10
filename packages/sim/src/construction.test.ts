@@ -838,6 +838,12 @@ describe('l’eau peu profonde est inconstructible, sauf le sol', () => {
     mur_bas: false,
     charrette: false,
     autel: false,
+    // Le vocabulaire naturel (étage 2) : la pierre ne se pose pas sur l'eau — et personne
+    // ne la pose au marteau, mais le Record est exhaustif par construction.
+    roc: false,
+    paroi: false,
+    rocher: false,
+    eboulis: false,
   }
   const TOUS = Object.keys(SUR_LE_GUE) as StructureType[]
 

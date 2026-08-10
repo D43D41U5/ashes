@@ -49,7 +49,7 @@ export type { Plan } from './plan-format'
  * `·` (rien) n'y figure pas : c'est l'absence, et dans une ruine l'absence est la moitié du
  * sujet. Le contenu implique sa région : une table est forcément dans la salle.
  */
-export interface Case { region?: 'salle' | 'cour'; piece?: StructureType; toit?: boolean; noeud?: NodeType }
+export interface Case { region?: 'salle' | 'cour' | 'antre'; piece?: StructureType; toit?: boolean; noeud?: NodeType }
 /** EXPORTÉE pour l'Atelier (spec `atelier-plans.md` A6) : la palette de l'éditeur se DÉRIVE
  *  d'elle — jamais une liste recopiée qui divergerait en silence. */
 export const LEGENDE: Record<string, Case> = {
@@ -88,6 +88,14 @@ export const LEGENDE: Record<string, Case> = {
   F: { piece: 'atre' }, //        le feu froid d'un camp (A : l'âtre en salle)
   t: { piece: 'tonneau' }, //     le tonneau abandonné dehors (o : en salle)
   G: { noeud: 'rubble' }, //      les gravats hors cour — la fouille des petits lieux
+  // ── ÉTAGE 2 — LE VOCABULAIRE NATUREL (spec lieux-batis, décision d'Alexis 2026-08-10) ──
+  // (`#` n'entrera JAMAIS ici : il ouvre un commentaire `.plan` — une rangée qui commence
+  // par lui disparaîtrait au parse. Gardé par `plans-batis.test.ts`.)
+  r: { region: 'antre' }, //      la poche minérale À CIEL OUVERT : sol roc, contour dérivé en PAROI
+  R: { piece: 'rocher' }, //      le bloc erratique de poche — il bloque, on le contourne
+  e: { piece: 'eboulis' }, //     les pierres croulées — plein-tuile bas, on l'enjambe
+  Y: { noeud: 'tree' }, //        un VRAI arbre récoltable, semé par le plan (jamais du décor)
+  B: { noeud: 'berry_bush' }, //  un vrai buisson à baies — le sort module son stock (patron g/G)
 }
 
 /**
@@ -95,10 +103,10 @@ export const LEGENDE: Record<string, Case> = {
  * recopier. Une garde qui recopie sa référence ne garde plus la référence : elle garde sa copie,
  * et se tait le jour où les deux divergent.
  */
-export const regionDe = (c: string): 'salle' | 'cour' | undefined => LEGENDE[c]?.region
+export const regionDe = (c: string): 'salle' | 'cour' | 'antre' | undefined => LEGENDE[c]?.region
 
 /** La barrière que porte le pourtour de chaque région. */
-const CLOTURE_DE: Record<'salle' | 'cour', StructureType> = { salle: 'wall', cour: 'cloture' }
+const CLOTURE_DE: Record<'salle' | 'cour' | 'antre', StructureType> = { salle: 'wall', cour: 'cloture', antre: 'paroi' }
 
 /**
  * LES PLANS habitent « packages/sim/src/plans/<kind>.plan » — leur prose comprise — et
@@ -143,7 +151,10 @@ export function verifierPlan(kind: string, plan: Plan, fp: number | undefined): 
     for (const [i, row] of plan.grille.entries()) {
       if (row.length !== n) fautes.push(`${kind} : rangée ${i} fait ${row.length} caractères, pas ${n}`)
       for (const [j, c] of [...row].entries()) {
-        if (c !== '·' && LEGENDE[c] === undefined) fautes.push(`${kind} : caractère inconnu « ${c} »`)
+        // « # » ne sera JAMAIS un caractère de grille : il ouvre un commentaire `.plan` — une
+        // rangée qui commence par lui disparaît au parse, avant même d'arriver ici.
+        if (c === '#') fautes.push(`${kind} : « # » en grille — il ouvre un commentaire .plan (interdit, étage 2)`)
+        else if (c !== '·' && LEGENDE[c] === undefined) fautes.push(`${kind} : caractère inconnu « ${c} »`)
         // UNE RÉGION NE TOUCHE JAMAIS LE BORD DU PLAN : ses murs se posent sur la tuile
         // EXTÉRIEURE — au bord, ils tomberaient hors de la Zone qui dégage et protège le lieu.
         if (LEGENDE[c]?.region !== undefined && (i === 0 || j === 0 || i === n - 1 || j === n - 1)) {
@@ -174,6 +185,21 @@ export function verifierPlan(kind: string, plan: Plan, fp: number | undefined): 
         // garde promet d'empêcher.
         if (reg === 'cour' && regionAt(x + off[0], y + off[1]) === 'salle') {
           fautes.push(`${kind} : ${nom} « ${k} » — sans effet côté cour (le mur appartient à la salle : déclare l'arête côté salle)`)
+        }
+      }
+    }
+    // L'ANTRE NE CÔTOIE PAS LA MAÇONNERIE (étage 2) : seule la paire cour/salle a sa règle de
+    // préséance (« on ne clôture pas contre son propre mur ») — antre contre salle ou cour,
+    // chacune poserait sa barrière DANS l'autre, dos à dos. Une tuile de « rien » les sépare ;
+    // la faute le dit, plutôt qu'un bâti absurde qu'on ne verrait qu'en jeu.
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        if (regionAt(x, y) !== 'antre') continue
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+          const r2 = regionAt(x + dx, y + dy)
+          if (r2 !== undefined && r2 !== 'antre') {
+            fautes.push(`${kind} : l'antre en (${x},${y}) touche la ${r2} — barrières dos à dos (sépare-les d'une tuile)`)
+          }
         }
       }
     }
@@ -265,7 +291,7 @@ export function batirLieu(state: SimState, plan: Plan, x0: number, y0: number, s
 
     const caseAt = (rx: number, ry: number): Case =>
       (rx < 0 || ry < 0 || rx >= n || ry >= n ? {} : (LEGENDE[g[ry]![rx]!] ?? {}))
-    const region = (rx: number, ry: number): 'salle' | 'cour' | undefined => caseAt(rx, ry).region
+    const region = (rx: number, ry: number): 'salle' | 'cour' | 'antre' | undefined => caseAt(rx, ry).region
     const libre = (tx: number, ty: number): boolean =>
       tx >= 0 && ty >= 0 && tx < map.width && ty < map.height && !isBlockingTile(map, tx, ty)
 
@@ -302,6 +328,7 @@ export function batirLieu(state: SimState, plan: Plan, x0: number, y0: number, s
         // clôture posée dans l'herbe.
         if (c.region === 'salle') poser(state, 'floor', tx, ty, usure)
         else if (c.region === 'cour') poser(state, 'terre', tx, ty, usure)
+        else if (c.region === 'antre') poser(state, 'roc', tx, ty, usure) //  la pierre nue (étage 2)
         // LE FEU A PRIS LE TOIT ET LE MOBILIER : un lieu brûlé ne garde que la pierre — l'âtre
         // debout au milieu des murs calcinés, l'image même de la ferme incendiée. Les pillards,
         // eux, n'emportent que les CONTENANTS (coffre, tonneau, étagère) : le reste se regarde.
@@ -356,7 +383,8 @@ export function batirLieu(state: SimState, plan: Plan, x0: number, y0: number, s
  * bas ; les pillards n'emportent que ce qui se porte et se vide — les contenants. L'oubli
  * ne retire rien.
  */
-const SURVIT_AU_FEU = new Set<StructureType>(['atre', 'autel', 'mur_bas'])
+// Le MINÉRAL survit au feu (étage 2) : sans quoi un antre brûlé perdrait ses blocs de pierre.
+const SURVIT_AU_FEU = new Set<StructureType>(['atre', 'autel', 'mur_bas', 'rocher', 'eboulis'])
 function pieceRetiree(type: StructureType, sort: SortDuLieu): boolean {
   if (sort === 'brule') return !SURVIT_AU_FEU.has(type)
   if (sort === 'pille') return type === 'chest' || type === 'tonneau' || type === 'etagere'
