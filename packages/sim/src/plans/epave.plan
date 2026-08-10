@@ -1,0 +1,11 @@
+# ═══ L'ÉPAVE D'AVALANCHE — le convoi pris par la montagne (aiguilles, glacier) ═══
+#
+# La même charrette que le bord des routes, mais disloquée (usure 0.35) : les poutres
+# du chargement éparpillées dans la pente, deux tas de gravats. Pas de tonneau — ce qui
+# roulait a fini plus bas.
+usure: 0.35
+grille:
+····
+·Cp·
+·pG·
+G···

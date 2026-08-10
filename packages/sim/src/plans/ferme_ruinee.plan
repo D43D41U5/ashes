@@ -1,0 +1,51 @@
+# ═══ LA FERME RUINÉE (t0-exploration R19) — « on vivait ici, on est partis » ═══
+#
+# Une SALLE de 11×6 et sa COUR de 11×5, dans une emprise de 18 (décision d'Alexis,
+# 2026-07-27 : « c'est tout rikiki », puis deux tuiles de large en plus). Le 6×4 d'origine
+# tenait dans un écran de vingt tuiles de haut comme une cabane — on entrait, on ressortait,
+# sans jamais avoir traversé quoi que ce soit. À 11×6, la salle vaut 66 tuiles au lieu de 24 :
+# elle a un fond, des angles morts, et une distance entre la porte et l'âtre. Le mobilier
+# reste plaqué aux murs — au milieu, un meuble flotte ; contre un mur, il s'appuie, et le
+# centre reste ce qu'il doit être : un espace où l'on circule (il y en a maintenant assez pour
+# que ça se remarque). L'emprise, elle, ne bouge pas : c'est la friche de l'est qui cède ses
+# deux colonnes — un champ se resserre sans qu'on le remarque, une salle non.
+#
+# AUCUN TOIT (décision d'Alexis) : une ferme ruinée est à ciel ouvert. C'est ce qui la
+# sépare d'une maison entretenue, et ça permet d'en voir le dedans sans rien escamoter.
+#
+# ELLE NE TOURNE PAS (décision d'Alexis, 2026-07-27) : la cour est au SUD dans le plan,
+# donc VERS LE BAS de l'écran — on arrive par l'enclos, la salle est derrière, et le seuil
+# qui les sépare se lit de face. Le quart de tour aléatoire la présentait de profil ou de
+# dos une fois sur deux. Prix payé : toutes les fermes d'une carte se ressemblent.
+usure: 0.45
+fixe: oui
+# LE PAN EST ÉCROULÉ : deux arêtes du pourtour sans mur. C'est la seconde entrée, et c'est
+# là que la ruine se dit — dans le contour percé, pas dans une tuile retirée.
+breches: 11,4,E 11,5,E
+# LE SEUIL FAIT DEUX CASES (décision d'Alexis, 2026-07-27) : deux arêtes mitoyennes. Le
+# client les reconnaît voisines et supprime les montants du MILIEU — sinon une porte de
+# deux cases lit comme deux portes d'une case, dos à dos.
+seuils: 4,7,S 5,7,S
+# LE PASSAGE DE LA CLÔTURE FAIT DEUX CASES lui aussi (demande d'Alexis, 2026-07-27) : une
+# ouverture d'une seule tuile est un goulot pour un corps qui en fait une — on la franchit
+# au pixel près, et on s'y coince dès qu'on arrive en biais.
+passages: 4,12,S 5,12,S
+grille:
+··················
+··················
+·.A....E....·xxx··
+·L.........o·xxxx·
+·L..Tb......·xxxx·
+·...Tb.....K·xxx··
+·..P.......E··xxx·
+·...........·xxxx·
+·,M,,,,a,,,,·xxx··
+·,,g,,,,,,,,··xx··
+·,,,,,,,g,,,···x··
+·,,,,,,,,,,,······
+·,,,,,,,,,,,······
+··················
+···xxxxx··········
+··xxxxxx··········
+···xxxx···········
+··················

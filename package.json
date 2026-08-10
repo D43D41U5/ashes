@@ -13,6 +13,7 @@
     "dev": "pnpm --filter @ashes/client dev",
     "build": "pnpm --filter @ashes/client build",
     "scenario": "pnpm --filter @ashes/sim run test:scenario",
+    "plans": "node --import tsx tools/plans-compile.mts",
     "smoke:install": "PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium",
     "smoke": "PLAYWRIGHT_BROWSERS_PATH=0 node tools/smoke.mjs"
   },

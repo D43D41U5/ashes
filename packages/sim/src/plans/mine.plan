@@ -1,0 +1,15 @@
+# ═══ LA MINE ABANDONNÉE — le carreau condamné, pas le souterrain ═══
+#
+# (Le souterrain est différé, cf. décision 2026-07-27 « souterrain multi-couche ».)
+#
+# Une petite salle de pierre (le bâtiment du carreau), son seuil encadré — la seule entrée
+# de mine qui se lise comme une porte — et les poutres du chevalement tombées dehors. La
+# fouille la plus riche du périmètre : TROIS tas de gravats, les haldes autour du puits.
+usure: 0.55
+seuils: 1,2,S
+grille:
+·····
+·..·G
+·.P··
+····p
+·G·G·

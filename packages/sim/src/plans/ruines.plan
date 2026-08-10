@@ -1,0 +1,15 @@
+# ═══ LES RUINES — des pans de murs très usés, à ciel ouvert, et c'est tout ce qui reste ═══
+#
+# La plus abîmée des salles (usure 0.25 : les murs tiennent à peine debout, le client les
+# assombrit d'autant). DEUX brèches — on entre par l'est en enjambant le pan écroulé (le
+# mur_bas couché exactement là où le mur manque), ou par le sud, où les gravats se sont
+# répandus dans l'ouverture. La poutre au milieu de la salle est ce qui reste de la charpente.
+usure: 0.25
+breches: 4,2,E 2,4,S
+grille:
+······
+·....·
+·.P..m
+·....·
+·....·
+··G··G

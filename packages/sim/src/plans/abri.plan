@@ -1,0 +1,13 @@
+# ═══ L'ABRI SOUS ROCHE — un couvert minéral adossé, ouvert au sud ═══
+#
+# La seule salle COUVERTE du périmètre (`:`) : c'est un toit qu'on cherche, pas une maison.
+# Tout le côté sud est brèche — un abri n'a pas de porte, il a un surplomb. La paillasse dit
+# que quelqu'un y a dormi ; les gravats dans l'ouverture, que personne n'est revenu.
+# (NB : comme la cabane, il tourne — « adossé » se lit dans le mur plein, où qu'il regarde.)
+usure: 0.8
+breches: 1,2,S 2,2,S
+grille:
+····
+·::·
+·L:·
+·G··

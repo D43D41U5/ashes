@@ -33,42 +33,15 @@ import type { StructureType } from './items'
 import type { SimState } from './sim'
 import { addStructure } from './village'
 import { SORT_DES_LIEUX, type SortDuLieu, sortDuLieu, usureSelonSort } from './sort-des-lieux'
+import type { Plan } from './plan-format'
+import { PLANS } from './plans-batis.genere'
 
-export interface Plan {
-  /**
-   * LE PLAN NE DÉCRIT QUE DES RÉGIONS ET LEUR CONTENU — les murs se DÉRIVENT du pourtour.
-   *
-   * C'est la conséquence directe du modèle d'arête : un mur n'est plus une tuile qu'on pose,
-   * c'est une propriété du contour d'une salle. Une salle de 6×4 s'écrit donc 6×4, et ses
-   * vingt-quatre tuiles sont TOUTES praticables — là où l'ancien plan en réclamait 8×6 pour en
-   * rendre quinze.
-   */
-  readonly grille: readonly string[]
-  /**
-   * L'USURE — la fraction de PV que gardent les murs. Elle n'est pas cosmétique : le client
-   * assombrit à mesure, et bascule sol et toit sur leurs textures ruinées. 1 = neuf.
-   */
-  readonly usure: number
-  /**
-   * LES BRÈCHES — des arêtes du pourtour SANS mur (`"x,y,D"`). **C'est ici que vit la ruine.**
-   * Elle ne se dit plus en tuiles retirées mais en contour percé : le pan est écroulé, et c'est
-   * par là qu'on entre.
-   */
-  readonly breches?: readonly string[]
-  /** LES SEUILS — les arêtes qui portent un encadrement (l'entrée du bâtiment). */
-  readonly seuils?: readonly string[]
-  /** LES PASSAGES — les arêtes de clôture laissées nues : on entre dans la cour sans porte. */
-  readonly passages?: readonly string[]
-  /**
-   * L'ORIENTATION FIXE — le lieu se pose TEL QU'IL EST ÉCRIT, sans quart de tour.
-   *
-   * Par défaut un bâti tourne (`hash2` sur sa position) : deux fermes ne se ressemblent pas, et
-   * on ne lit pas le monde comme un catalogue. Mais quand la LECTURE d'un plan dépend de son
-   * orientation à l'écran, la variété coûte plus qu'elle ne rapporte — le plan le déclare ici,
-   * et il est alors écrit dans le sens où on le verra.
-   */
-  readonly fixe?: boolean
-}
+/**
+ * LE TYPE `Plan` ET SA GRAMMAIRE vivent dans `plan-format.ts` (spec `atelier-plans.md`) :
+ * les plans s'écrivent en fichiers `.plan` (prose comprise) et arrivent ici par le module
+ * GÉNÉRÉ. Ce module-ci reste le MOTEUR — la légende, les gardes, le poseur.
+ */
+export type { Plan } from './plan-format'
 
 /**
  * LA LÉGENDE — un caractère, une tuile. Deux RÉGIONS (la salle, la cour), et du contenu.
@@ -76,8 +49,10 @@ export interface Plan {
  * `·` (rien) n'y figure pas : c'est l'absence, et dans une ruine l'absence est la moitié du
  * sujet. Le contenu implique sa région : une table est forcément dans la salle.
  */
-interface Case { region?: 'salle' | 'cour'; piece?: StructureType; toit?: boolean; noeud?: NodeType }
-const LEGENDE: Record<string, Case> = {
+export interface Case { region?: 'salle' | 'cour'; piece?: StructureType; toit?: boolean; noeud?: NodeType }
+/** EXPORTÉE pour l'Atelier (spec `atelier-plans.md` A6) : la palette de l'éditeur se DÉRIVE
+ *  d'elle — jamais une liste recopiée qui divergerait en silence. */
+export const LEGENDE: Record<string, Case> = {
   '.': { region: 'salle' }, //                      le dallage
   // UN SEUL `:` COUVRE TOUTE LA SALLE (calage du 2026-08-10) : la couverture est une affaire
   // de PLAN, pas de case — une salle ne se couvre pas à moitié autour de son mobilier. Mesuré
@@ -125,197 +100,11 @@ export const regionDe = (c: string): 'salle' | 'cour' | undefined => LEGENDE[c]?
 /** La barrière que porte le pourtour de chaque région. */
 const CLOTURE_DE: Record<'salle' | 'cour', StructureType> = { salle: 'wall', cour: 'cloture' }
 
-export const PLANS: Record<string, Plan> = {
-  /**
-   * LA FERME RUINÉE (t0-exploration R19) — « on vivait ici, on est partis ».
-   *
-   * Une SALLE de 11×6 et sa COUR de 11×5, dans une emprise de 18 (décision d'Alexis,
-   * 2026-07-27 : « c'est tout rikiki », puis deux tuiles de large en plus). Le 6×4 d'origine
-   * tenait dans un écran de vingt tuiles de haut comme une cabane — on entrait, on ressortait,
-   * sans jamais avoir traversé quoi que ce soit. À 11×6, la salle vaut 66 tuiles au lieu de 24 :
-   * elle a un fond, des angles morts, et une distance entre la porte et l'âtre. Le mobilier
-   * reste plaqué aux murs — au milieu, un meuble flotte ; contre un mur, il s'appuie, et le
-   * centre reste ce qu'il doit être : un espace où l'on circule (il y en a maintenant assez pour
-   * que ça se remarque). L'emprise, elle, ne bouge pas : c'est la friche de l'est qui cède ses
-   * deux colonnes — un champ se resserre sans qu'on le remarque, une salle non.
-   *
-   * **AUCUN TOIT** (décision d'Alexis) : une ferme ruinée est à ciel ouvert. C'est ce qui la
-   * sépare d'une maison entretenue, et ça permet d'en voir le dedans sans rien escamoter.
-   *
-   * **ELLE NE TOURNE PAS** (décision d'Alexis, 2026-07-27) : la cour est au SUD dans le plan,
-   * donc VERS LE BAS de l'écran — on arrive par l'enclos, la salle est derrière, et le seuil
-   * qui les sépare se lit de face. Le quart de tour aléatoire la présentait de profil ou de
-   * dos une fois sur deux. Prix payé : toutes les fermes d'une carte se ressemblent.
-   */
-  ferme_ruinee: {
-    usure: 0.45,
-    fixe: true,
-    grille: [
-      '··················',
-      '··················',
-      '·.A....E....·xxx··',
-      '·L.........o·xxxx·',
-      '·L..Tb......·xxxx·',
-      '·...Tb.....K·xxx··',
-      '·..P.......E··xxx·',
-      '·...........·xxxx·',
-      '·,M,,,,a,,,,·xxx··',
-      '·,,g,,,,,,,,··xx··',
-      '·,,,,,,,g,,,···x··',
-      '·,,,,,,,,,,,······',
-      '·,,,,,,,,,,,······',
-      '··················',
-      '···xxxxx··········',
-      '··xxxxxx··········',
-      '···xxxx···········',
-      '··················',
-    ],
-    // LE PAN EST ÉCROULÉ : deux arêtes du pourtour sans mur. C'est la seconde entrée, et c'est
-    // là que la ruine se dit — dans le contour percé, pas dans une tuile retirée.
-    breches: ['11,4,E', '11,5,E'],
-    // LE SEUIL FAIT DEUX CASES (décision d'Alexis, 2026-07-27) : deux arêtes mitoyennes. Le
-    // client les reconnaît voisines et supprime les montants du MILIEU — sinon une porte de
-    // deux cases lit comme deux portes d'une case, dos à dos.
-    seuils: ['4,7,S', '5,7,S'], //  le seuil encadré, entre la salle et la cour
-    // LE PASSAGE DE LA CLÔTURE FAIT DEUX CASES lui aussi (demande d'Alexis, 2026-07-27) : une
-    // ouverture d'une seule tuile est un goulot pour un corps qui en fait une — on la franchit
-    // au pixel près, et on s'y coince dès qu'on arrive en biais.
-    passages: ['4,12,S', '5,12,S'], // le passage nu de la clôture
-  },
-  /**
-   * LA CABANE DE BERGER — DEBOUT, elle (`usure: 1`), et c'est tout le contraste : la même
-   * grammaire dit « ruine » et « entretenu » en changeant un nombre. Couverte, elle.
-   */
-  cabane: {
-    usure: 1,
-    grille: [
-      '·····',
-      '·:::·',
-      '·L:K·',
-      '·:::·',
-      '·····',
-    ],
-    seuils: ['2,3,S'],
-  },
-  /**
-   * LES RUINES — des pans de murs très usés, à ciel ouvert, et c'est tout ce qui reste.
-   *
-   * La plus abîmée des salles (`usure: 0.25` : les murs tiennent à peine debout, le client les
-   * assombrit d'autant). DEUX brèches — on entre par l'est en enjambant le pan écroulé (le
-   * `mur_bas` couché exactement là où le mur manque), ou par le sud, où les gravats se sont
-   * répandus dans l'ouverture. La poutre au milieu de la salle est ce qui reste de la charpente.
-   */
-  ruines: {
-    usure: 0.25,
-    grille: [
-      '······',
-      '·....·',
-      '·.P..m',
-      '·....·',
-      '·....·',
-      '··G··G',
-    ],
-    breches: ['4,2,E', '2,4,S'],
-  },
-  /**
-   * L'ABRI SOUS ROCHE — un couvert minéral adossé, ouvert au sud.
-   *
-   * La seule salle COUVERTE du périmètre (`:`) : c'est un toit qu'on cherche, pas une maison.
-   * Tout le côté sud est brèche — un abri n'a pas de porte, il a un surplomb. La paillasse dit
-   * que quelqu'un y a dormi ; les gravats dans l'ouverture, que personne n'est revenu.
-   * (NB : comme la cabane, il tourne — « adossé » se lit dans le mur plein, où qu'il regarde.)
-   */
-  abri: {
-    usure: 0.8,
-    grille: [
-      '····',
-      '·::·',
-      '·L:·',
-      '·G··',
-    ],
-    breches: ['1,2,S', '2,2,S'],
-  },
-  /**
-   * LA MINE ABANDONNÉE — le carreau condamné, pas le souterrain (différé, cf. décision
-   * 2026-07-27 « souterrain multi-couche »).
-   *
-   * Une petite salle de pierre (le bâtiment du carreau), son seuil encadré — la seule entrée
-   * de mine qui se lise comme une porte — et les poutres du chevalement tombées dehors. La
-   * fouille la plus riche du périmètre : TROIS tas de gravats, les haldes autour du puits.
-   */
-  mine: {
-    usure: 0.55,
-    grille: [
-      '·····',
-      '·..·G',
-      '·.P··',
-      '····p',
-      '·G·G·',
-    ],
-    seuils: ['1,2,S'],
-  },
-  /**
-   * L'ORATOIRE — l'édicule alpin : la pierre dressée et son enclos ruiné.
-   *
-   * Aucune salle : l'autel tient debout au centre (il ne tombe pas, il s'oublie), et l'enclos
-   * n'existe plus qu'en pans de mur bas éboulés aux coins. Un seul tas de gravats — on ne
-   * pille pas grand-chose à un lieu qui n'a jamais rien possédé.
-   */
-  oratoire: {
-    usure: 0.6,
-    grille: [
-      'm·m',
-      '·U·',
-      'm·G',
-    ],
-  },
-  /**
-   * LE VIEUX BIVOUAC — le feu froid de ceux qui sont partis.
-   *
-   * Aucune salle, aucun mur : un âtre éteint, le couchage à la belle étoile, le tonneau
-   * qu'on n'a pas porté plus loin. Le camp se lit en un coup d'œil — et s'il est BRÛLÉ,
-   * le feu ne laisse que l'âtre, ce qui est exactement l'histoire qu'il faut.
-   */
-  bivouac: {
-    usure: 0.8,
-    grille: [
-      'l··',
-      '·Ft',
-      '·G·',
-    ],
-  },
-  /**
-   * LA CHARRETTE ABANDONNÉE — échouée sur le bord du chemin (elle naît `pres: 'route'`).
-   *
-   * Le corps du lieu est la charrette elle-même : elle BLOQUE, on la contourne. Le tonneau a
-   * roulé à côté, les gravats disent ce que le chargement est devenu. Née près d'une sente,
-   * elle sera presque toujours « pillée » — c'est voulu, c'est la règle de lecture S-R17.
-   */
-  charrette: {
-    usure: 0.7,
-    grille: [
-      '··G',
-      '·C·',
-      '·t·',
-    ],
-  },
-  /**
-   * L'ÉPAVE D'AVALANCHE — le convoi pris par la montagne (aiguilles, glacier).
-   *
-   * La même charrette que le bord des routes, mais disloquée (`usure: 0.35`) : les poutres
-   * du chargement éparpillées dans la pente, deux tas de gravats. Pas de tonneau — ce qui
-   * roulait a fini plus bas.
-   */
-  epave: {
-    usure: 0.35,
-    grille: [
-      '····',
-      '·Cp·',
-      '·pG·',
-      'G···',
-    ],
-  },
-}
+/**
+ * LES PLANS habitent « packages/sim/src/plans/<kind>.plan » — leur prose comprise — et
+ * arrivent ici par le module GÉNÉRÉ (`pnpm plans`, gardé par `plans-batis.test.ts`).
+ */
+export { PLANS }
 
 /** Les kinds qui ont un plan — le client y lit quels lieux n'ont PAS de sprite de corps. */
 export const BUILT_KINDS: readonly string[] = Object.keys(PLANS)
@@ -432,15 +221,26 @@ export function buildPoiStructures(state: SimState, seed: number): void {
     // le MÊME verdict que celui du toponyme (`placeOne` nomme d'après lui). Il module l'usure,
     // le mobilier et la fouille ; le plan, lui, ne bouge pas.
     const sort = sortDuLieu(map, z.x, z.y, z.w, z.h)
-    const usure = usureSelonSort(plan.usure, sort)
 
     // L'ORIENTATION, tirée de la position — positionnelle et salée, jamais du PRNG partagé.
     // Sauf pour un plan `fixe`, qui se pose dans le sens où il est écrit (cf. `Plan.fixe`).
     const quart = plan.fixe ? 0 : Math.min(3, Math.floor(hash2(z.x, z.y, seed ^ 0x42415449) * 4)) // 'BATI'
+
+    batirLieu(state, plan, z.x, z.y, sort, quart)
+  }
+}
+
+/**
+ * BÂTIR UN LIEU — le corps du poseur, extrait pour l'Atelier (spec `atelier-plans.md` A4/A7) :
+ * l'éditeur l'appelle avec le plan EN COURS D'ÉDITION, dans un SimState d'aperçu — le même
+ * moteur, jamais une réimplémentation. `sort` et `quart` sont DÉCIDÉS par l'appelant
+ * (`buildPoiStructures` les dérive de la carte ; l'Atelier les fait basculer à la main).
+ */
+export function batirLieu(state: SimState, plan: Plan, x0: number, y0: number, sort: SortDuLieu, quart: number): void {
+    const map = state.map
+    const usure = usureSelonSort(plan.usure, sort)
     const g = rotate(plan.grille, quart)
     const n = g.length
-    const x0 = z.x
-    const y0 = z.y
 
     // PLACE NETTE sous le bâti (le worldgen a le droit — cf. `foundNpcVillage`).
     state.nodes = state.nodes.filter((nd) => nd.tx < x0 || nd.tx >= x0 + n || nd.ty < y0 || nd.ty >= y0 + n)
@@ -531,7 +331,6 @@ export function buildPoiStructures(state: SimState, seed: number): void {
       s.edges = a.bits
       if (USURABLE.has(a.type)) s.hp = Math.max(1, Math.floor(s.hp * usure))
     }
-  }
 }
 
 /**

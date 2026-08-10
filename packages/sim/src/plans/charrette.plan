@@ -1,0 +1,11 @@
+# ═══ LA CHARRETTE ABANDONNÉE — échouée sur le bord du chemin ═══
+#
+# (Elle naît `pres: 'route'`.) Le corps du lieu est la charrette elle-même : elle BLOQUE,
+# on la contourne. Le tonneau a roulé à côté, les gravats disent ce que le chargement est
+# devenu. Née près d'une sente, elle sera presque toujours « pillée » — c'est voulu, c'est
+# la règle de lecture S-R17.
+usure: 0.7
+grille:
+··G
+·C·
+·t·

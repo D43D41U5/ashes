@@ -1,0 +1,12 @@
+# ═══ LA CABANE DE BERGER ═══
+#
+# DEBOUT, elle (usure 1), et c'est tout le contraste : la même grammaire dit « ruine » et
+# « entretenu » en changeant un nombre. Couverte, elle.
+usure: 1
+seuils: 2,3,S
+grille:
+·····
+·:::·
+·L:K·
+·:::·
+·····
