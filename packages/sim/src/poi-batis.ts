@@ -96,6 +96,18 @@ const LEGENDE: Record<string, Case> = {
   // ligne neuve. C'est aussi le seul contenu du plan qu'on EMPORTE : le reste se regarde.
   g: { region: 'cour', noeud: 'rubble' },
   x: { piece: 'friche' }, //                        le champ retourné au sauvage, hors région
+  // ── HORS RÉGION (étage 1, spec lieux-batis) — les pièces éparses des petits lieux ──
+  // Pas de salle, pas de cour : AUCUN mur ne se dérive de ces cases (le précédent est `x`).
+  // Convention : la minuscule est la variante hors-salle d'un caractère que la salle connaît
+  // déjà (p/P, l/L), et `G` est le gravats hors cour (le `g` de la cour tirerait une clôture).
+  C: { piece: 'charrette' }, //   échouée là où on l'a laissée (la Charrette, l'Épave)
+  U: { piece: 'autel' }, //       la pierre dressée d'un oratoire — debout, elle
+  m: { piece: 'mur_bas' }, //     le pan écroulé : on l'enjambe, il raconte l'enclos
+  p: { piece: 'poutre' }, //      la poutre tombée hors salle (P : la même, en salle)
+  l: { piece: 'paillasse' }, //   le couchage à la belle étoile (L : en salle)
+  F: { piece: 'atre' }, //        le feu froid d'un camp (A : l'âtre en salle)
+  t: { piece: 'tonneau' }, //     le tonneau abandonné dehors (o : en salle)
+  G: { noeud: 'rubble' }, //      les gravats hors cour — la fouille des petits lieux
 }
 
 /**
@@ -180,6 +192,124 @@ export const PLANS: Record<string, Plan> = {
     ],
     seuils: ['2,3,S'],
   },
+  /**
+   * LES RUINES — des pans de murs très usés, à ciel ouvert, et c'est tout ce qui reste.
+   *
+   * La plus abîmée des salles (`usure: 0.25` : les murs tiennent à peine debout, le client les
+   * assombrit d'autant). DEUX brèches — on entre par l'est en enjambant le pan écroulé (le
+   * `mur_bas` couché exactement là où le mur manque), ou par le sud, où les gravats se sont
+   * répandus dans l'ouverture. La poutre au milieu de la salle est ce qui reste de la charpente.
+   */
+  ruines: {
+    usure: 0.25,
+    grille: [
+      '······',
+      '·....·',
+      '·.P..m',
+      '·....·',
+      '·....·',
+      '··G··G',
+    ],
+    breches: ['4,2,E', '2,4,S'],
+  },
+  /**
+   * L'ABRI SOUS ROCHE — un couvert minéral adossé, ouvert au sud.
+   *
+   * La seule salle COUVERTE du périmètre (`:`) : c'est un toit qu'on cherche, pas une maison.
+   * Tout le côté sud est brèche — un abri n'a pas de porte, il a un surplomb. La paillasse dit
+   * que quelqu'un y a dormi ; les gravats dans l'ouverture, que personne n'est revenu.
+   * (NB : comme la cabane, il tourne — « adossé » se lit dans le mur plein, où qu'il regarde.)
+   */
+  abri: {
+    usure: 0.8,
+    grille: [
+      '····',
+      '·::·',
+      '·L:·',
+      '·G··',
+    ],
+    breches: ['1,2,S', '2,2,S'],
+  },
+  /**
+   * LA MINE ABANDONNÉE — le carreau condamné, pas le souterrain (différé, cf. décision
+   * 2026-07-27 « souterrain multi-couche »).
+   *
+   * Une petite salle de pierre (le bâtiment du carreau), son seuil encadré — la seule entrée
+   * de mine qui se lise comme une porte — et les poutres du chevalement tombées dehors. La
+   * fouille la plus riche du périmètre : TROIS tas de gravats, les haldes autour du puits.
+   */
+  mine: {
+    usure: 0.55,
+    grille: [
+      '·····',
+      '·..·G',
+      '·.P··',
+      '····p',
+      '·G·G·',
+    ],
+    seuils: ['1,2,S'],
+  },
+  /**
+   * L'ORATOIRE — l'édicule alpin : la pierre dressée et son enclos ruiné.
+   *
+   * Aucune salle : l'autel tient debout au centre (il ne tombe pas, il s'oublie), et l'enclos
+   * n'existe plus qu'en pans de mur bas éboulés aux coins. Un seul tas de gravats — on ne
+   * pille pas grand-chose à un lieu qui n'a jamais rien possédé.
+   */
+  oratoire: {
+    usure: 0.6,
+    grille: [
+      'm·m',
+      '·U·',
+      'm·G',
+    ],
+  },
+  /**
+   * LE VIEUX BIVOUAC — le feu froid de ceux qui sont partis.
+   *
+   * Aucune salle, aucun mur : un âtre éteint, le couchage à la belle étoile, le tonneau
+   * qu'on n'a pas porté plus loin. Le camp se lit en un coup d'œil — et s'il est BRÛLÉ,
+   * le feu ne laisse que l'âtre, ce qui est exactement l'histoire qu'il faut.
+   */
+  bivouac: {
+    usure: 0.8,
+    grille: [
+      'l··',
+      '·Ft',
+      '·G·',
+    ],
+  },
+  /**
+   * LA CHARRETTE ABANDONNÉE — échouée sur le bord du chemin (elle naît `pres: 'route'`).
+   *
+   * Le corps du lieu est la charrette elle-même : elle BLOQUE, on la contourne. Le tonneau a
+   * roulé à côté, les gravats disent ce que le chargement est devenu. Née près d'une sente,
+   * elle sera presque toujours « pillée » — c'est voulu, c'est la règle de lecture S-R17.
+   */
+  charrette: {
+    usure: 0.7,
+    grille: [
+      '··G',
+      '·C·',
+      '·t·',
+    ],
+  },
+  /**
+   * L'ÉPAVE D'AVALANCHE — le convoi pris par la montagne (aiguilles, glacier).
+   *
+   * La même charrette que le bord des routes, mais disloquée (`usure: 0.35`) : les poutres
+   * du chargement éparpillées dans la pente, deux tas de gravats. Pas de tonneau — ce qui
+   * roulait a fini plus bas.
+   */
+  epave: {
+    usure: 0.35,
+    grille: [
+      '····',
+      '·Cp·',
+      '·pG·',
+      'G···',
+    ],
+  },
 }
 
 /** Les kinds qui ont un plan — le client y lit quels lieux n'ont PAS de sprite de corps. */
@@ -208,7 +338,14 @@ export function verifierPlans(footprintDe: (kind: string) => number | undefined)
     if (fp !== undefined && fp !== n) fautes.push(`${kind} : plan ${n}×${n}, empreinte ${fp}`)
     for (const [i, row] of plan.grille.entries()) {
       if (row.length !== n) fautes.push(`${kind} : rangée ${i} fait ${row.length} caractères, pas ${n}`)
-      for (const c of row) if (c !== '·' && LEGENDE[c] === undefined) fautes.push(`${kind} : caractère inconnu « ${c} »`)
+      for (const [j, c] of [...row].entries()) {
+        if (c !== '·' && LEGENDE[c] === undefined) fautes.push(`${kind} : caractère inconnu « ${c} »`)
+        // UNE RÉGION NE TOUCHE JAMAIS LE BORD DU PLAN : ses murs se posent sur la tuile
+        // EXTÉRIEURE — au bord, ils tomberaient hors de la Zone qui dégage et protège le lieu.
+        if (LEGENDE[c]?.region !== undefined && (i === 0 || j === 0 || i === n - 1 || j === n - 1)) {
+          fautes.push(`${kind} : la région en (${j},${i}) touche le bord — ses murs déborderaient du plan`)
+        }
+      }
     }
     // LES EXCEPTIONS DU CONTOUR DOIVENT DÉSIGNER UNE VRAIE ARÊTE. Une brèche sur une tuile qui
     // n'est pas une région, ou vers un voisin de la même région, ne percerait RIEN — et le
@@ -389,11 +526,13 @@ export function buildPoiStructures(state: SimState, seed: number): void {
 }
 
 /**
- * CE QUE LE SORT RETIRE DU PLAN. Le feu ne laisse que la pierre (l'âtre) ; les pillards
- * n'emportent que ce qui se porte et se vide — les contenants. L'oubli ne retire rien.
+ * CE QUE LE SORT RETIRE DU PLAN. Le feu ne laisse que la pierre — l'âtre, l'autel, le mur
+ * bas ; les pillards n'emportent que ce qui se porte et se vide — les contenants. L'oubli
+ * ne retire rien.
  */
+const SURVIT_AU_FEU = new Set<StructureType>(['atre', 'autel', 'mur_bas'])
 function pieceRetiree(type: StructureType, sort: SortDuLieu): boolean {
-  if (sort === 'brule') return type !== 'atre'
+  if (sort === 'brule') return !SURVIT_AU_FEU.has(type)
   if (sort === 'pille') return type === 'chest' || type === 'tonneau' || type === 'etagere'
   return false
 }

@@ -181,14 +181,41 @@ describe('buildPoiStructures', () => {
     expect(murRuine.hp).toBeLessThan(murCabane.hp)
   })
 
-  it('est déterministe : deux générations posent exactement les mêmes pièces', () => {
-    const a = monde('ferme_ruinee')
-    const b = monde('ferme_ruinee')
-    buildPoiStructures(a, 7)
-    buildPoiStructures(b, 7)
-    const cle = (s: { type: string; tx: number; ty: number; hp: number; edges?: number }) =>
-      `${s.type}@${s.tx},${s.ty}:${s.hp}:${s.edges ?? '-'}`
-    expect(a.structures.map(cle)).toEqual(b.structures.map(cle))
+  it('est déterministe : deux générations posent exactement les mêmes pièces — sur TOUS les plans', () => {
+    for (const kind of BUILT_KINDS) {
+      const a = monde(kind)
+      const b = monde(kind)
+      buildPoiStructures(a, 7)
+      buildPoiStructures(b, 7)
+      const cle = (s: { type: string; tx: number; ty: number; hp: number; edges?: number }) =>
+        `${s.type}@${s.tx},${s.ty}:${s.hp}:${s.edges ?? '-'}`
+      expect(a.structures.map(cle), kind).toEqual(b.structures.map(cle))
+      expect(
+        a.nodes.map((n) => `${n.type}@${n.tx},${n.ty}:${n.stock}`),
+        kind,
+      ).toEqual(b.nodes.map((n) => `${n.type}@${n.tx},${n.ty}:${n.stock}`))
+    }
+  })
+
+  /**
+   * LA FOUILLE EXISTE PARTOUT (spec lieux-batis A3) : chaque plan de l'étage 1 sème au moins
+   * un nœud `rubble` — le lieu ne DONNE rien, mais il y a toujours quelque chose à y fouiller.
+   * Sur le vrai objet (les nœuds semés), pas sur les caractères du plan.
+   */
+  it('chaque plan de l’étage 1 sème au moins un nœud rubble', () => {
+    for (const kind of ['ferme_ruinee', 'ruines', 'abri', 'mine', 'oratoire', 'bivouac', 'charrette', 'epave']) {
+      const sim = monde(kind)
+      buildPoiStructures(sim, 7)
+      const rubble = sim.nodes.filter((n) => n.type === 'rubble')
+      expect(rubble.length, `${kind} ne sème aucun rubble`).toBeGreaterThan(0)
+    }
+  })
+
+  /** Et la fouille la plus riche est celle de la mine (spec lieux-batis, tableau des plans). */
+  it('la mine porte trois tas de gravats — la fouille la plus riche du périmètre', () => {
+    const sim = monde('mine')
+    buildPoiStructures(sim, 7)
+    expect(sim.nodes.filter((n) => n.type === 'rubble').length).toBe(3)
   })
 
   /**

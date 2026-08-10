@@ -6,7 +6,8 @@
  * avec la terre battue de la cour, et la collision recevait la terre. Un cas de plus n'aurait
  * rien changé : c'est l'exhaustivité qui manquait.
  *
- * Cette garde-ci prend donc le problème par l'autre bout. Elle bâtit la VRAIE Ferme, relève
+ * Cette garde-ci prend donc le problème par l'autre bout. Elle bâtit le VRAI lieu (la Ferme,
+ * puis chaque plan muré de l'étage 1 qui rejoint la table `CAS`), relève
  * TOUTES les bandes que le moteur déclare bloquantes, puis lance un marcheur depuis des
  * centaines de départs, dans les HUIT directions, et vérifie une seule chose : à aucun moment
  * la hitbox de l'avatar ne recouvre une bande. Aucune direction privilégiée, aucun mur choisi à
@@ -62,22 +63,33 @@ function dedans(bs: readonly Bande[], x: number, y: number): Bande | undefined {
     y + DEMI_Y > b.y0 + EPS && y - DEMI_Y < b.y1 - EPS)
 }
 
-function fermeBatie(): { map: ReturnType<typeof createEmptyMap>; structures: Structure[] } {
-  const fp = POI_TYPES.find((t) => t.slug === 'ferme_ruinee')!.footprint
+function lieuBati(kind: string): { map: ReturnType<typeof createEmptyMap>; structures: Structure[] } {
+  const fp = POI_TYPES.find((t) => t.slug === kind)!.footprint
   const map = createEmptyMap(fp + 12, fp + 12, TERRAIN_GRASS)
-  map.zones.push({ name: 'essai', x: 6, y: 6, w: fp, h: fp, kind: 'ferme_ruinee' })
+  map.zones.push({ name: 'essai', x: 6, y: 6, w: fp, h: fp, kind })
   const sim = createSim(7, { map })
   buildPoiStructures(sim, 7)
   return { map, structures: sim.structures }
 }
 
-describe('la Ferme bâtie ne se traverse pas', () => {
-  const { map, structures } = fermeBatie()
+/**
+ * LA MÊME GARDE POUR CHAQUE PLAN MURÉ. La Ferme est la référence (le bug d'origine y vivait) ;
+ * les Ruines sont le premier plan muré de l'étage 1 — TRÈS usées (`usure: 0.25`), et c'est le
+ * point à garder : un mur à 25 % de ses PV bloque exactement comme un mur neuf. Les seuils
+ * (`minBandes`, `minDeparts`) suivent la taille du lieu — celle du balayage en dépend.
+ */
+const CAS: readonly { kind: string; minBandes: number; minDeparts: number }[] = [
+  { kind: 'ferme_ruinee', minBandes: 30, minDeparts: 500 },
+  { kind: 'ruines', minBandes: 10, minDeparts: 150 },
+]
+
+describe.each(CAS)('$kind bâti ne se traverse pas', ({ kind, minBandes, minDeparts }) => {
+  const { map, structures } = lieuBati(kind)
   const world = { map, structures }
   const bs = bandes(structures)
 
   it('déclare bien des bandes (sinon la garde ne garde rien)', () => {
-    expect(bs.length).toBeGreaterThan(30)
+    expect(bs.length).toBeGreaterThan(minBandes)
   })
 
   /**
@@ -115,7 +127,7 @@ describe('la Ferme bâtie ne se traverse pas', () => {
         }
       }
     }
-    expect(departs, 'le balayage doit partir de quelque part').toBeGreaterThan(500)
+    expect(departs, 'le balayage doit partir de quelque part').toBeGreaterThan(minDeparts)
     expect(fautes).toEqual([])
   })
 

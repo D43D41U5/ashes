@@ -204,17 +204,19 @@ export const POI_TYPES: PoiType[] = [
   { slug: 'carriere', zones: ['alpages', 'aiguilles', 'karst'], name: 'la Carrière', family: 'eco', biomes: [SCREE, BOULDERS], weight: 3, cap: 4, reserve: 1, footprint: 4, nodeKind: 'carriere' },
   { slug: 'saline', zones: ['alpages', 'ruines'], name: 'la Saline', family: 'eco', biomes: [AL_MEADOW, AL_FLOWERS, HEATH], weight: 2, cap: 3, reserve: 1, footprint: 3 },
   { slug: 'verger', zones: ['pres_bas', 'sylve'], name: 'le Verger sauvage', family: 'eco', biomes: [FLOWER, GRASS, AL_MEADOW], weight: 3, cap: 4, reserve: 1, footprint: 3 },
-  // Abris
-  { slug: 'ruines', zones: ['ruines'], name: 'les Ruines', family: 'shelter', biomes: [OLD_GROWTH, FOREST, GRASS], weight: 3, cap: 4, reserve: 1, footprint: 4 },
+  // Abris — les empreintes des lieux BÂTIS (étage 1) sont dimensionnées pour leur PLAN
+  // (`poi-batis.ts` : côté du plan = empreinte, garde `verifierPlans`), plus pour un sprite.
+  // Élargies le 2026-08-10 sous garde de recensement A7 (chaque type doit continuer de naître).
+  { slug: 'ruines', zones: ['ruines'], name: 'les Ruines', family: 'shelter', biomes: [OLD_GROWTH, FOREST, GRASS], weight: 3, cap: 4, reserve: 1, footprint: 6 },
   { slug: 'cabane', zones: ['alpages'], name: 'la Cabane de berger', family: 'shelter', biomes: [AL_MEADOW, AL_FLOWERS], weight: 4, cap: 5, reserve: 1, footprint: 5 },
-  { slug: 'abri', zones: ['karst', 'aiguilles', 'gouffre', 'ruines'], name: "l'Abri sous roche", family: 'shelter', biomes: [ROCK, BOULDERS, SCREE], weight: 5, cap: 6, reserve: 1, footprint: 2 },
-  { slug: 'mine', zones: ['karst', 'gouffre'], name: 'la Mine abandonnée', family: 'shelter', biomes: [SCREE, ROCK], minElev: 0.5, weight: 3, cap: 3, reserve: 1, footprint: 3 },
-  { slug: 'oratoire', zones: ['alpages', 'karst'], name: 'l’Oratoire', family: 'shelter', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 2 },
-  { slug: 'bivouac', name: 'le Vieux bivouac', family: 'shelter', biomes: [GRASS, AL_MEADOW, HEATH, FOREST, SCREE, FLOWER, OLD_GROWTH, PINE], weight: 4, cap: 4, reserve: 1, footprint: 2 },
+  { slug: 'abri', zones: ['karst', 'aiguilles', 'gouffre', 'ruines'], name: "l'Abri sous roche", family: 'shelter', biomes: [ROCK, BOULDERS, SCREE], weight: 5, cap: 6, reserve: 1, footprint: 4 },
+  { slug: 'mine', zones: ['karst', 'gouffre'], name: 'la Mine abandonnée', family: 'shelter', biomes: [SCREE, ROCK], minElev: 0.5, weight: 3, cap: 3, reserve: 1, footprint: 5 },
+  { slug: 'oratoire', zones: ['alpages', 'karst'], name: 'l’Oratoire', family: 'shelter', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 3 },
+  { slug: 'bivouac', name: 'le Vieux bivouac', family: 'shelter', biomes: [GRASS, AL_MEADOW, HEATH, FOREST, SCREE, FLOWER, OLD_GROWTH, PINE], weight: 4, cap: 4, reserve: 1, footprint: 3 },
   // Danger
   { slug: 'taniere', zones: ['sylve', 'pres_bas'], name: 'la Tanière', family: 'danger', biomes: [FOREST, PINE, GRASS], weight: 6, cap: 8, reserve: 1, footprint: 3, monster: 'boar' },
   { slug: 'repaire', zones: ['brule', 'cendriere'], name: 'le Repaire de Cendrés', family: 'danger', biomes: [BURNT, ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 3, monster: 'cendreux' },
-  { slug: 'epave', zones: ['aiguilles', 'glacier'], name: "l'Épave d'avalanche", family: 'danger', biomes: [SCREE, BOULDERS], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 2 },
+  { slug: 'epave', zones: ['aiguilles', 'glacier'], name: "l'Épave d'avalanche", family: 'danger', biomes: [SCREE, BOULDERS], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 4 },
   { slug: 'fondriere', zones: ['tourbiere', 'lac_mort'], name: 'la Fondrière', family: 'danger', biomes: [PEAT, REED], weight: 3, cap: 3, reserve: 1, footprint: 3 },
   /**
    * LE CHARNIER — le pic du champ des morts, rendu VISIBLE (spec `cendreux.md` R20).
@@ -322,7 +324,7 @@ export const POI_TYPES: PoiType[] = [
   // diluait la ferme à UN exemplaire (mesuré) — or c'est LA grande ruine explorable du T0.
   // La réservation garantit l'existence ; le semis garde l'abondance.
   { slug: 'ferme_ruinee', zones: ['pres_bas'], name: 'la Ferme ruinée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH], weight: 3, cap: 2, reserve: 2, footprint: 18, pres: 'eau' },
-  { slug: 'charrette', zones: ['pres_bas'], name: 'la Charrette abandonnée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH, FOREST], weight: 3, cap: 3, reserve: 1, footprint: 2, pres: 'route' },
+  { slug: 'charrette', zones: ['pres_bas'], name: 'la Charrette abandonnée', family: 'shelter', biomes: [GRASS, FLOWER, HEATH, FOREST], weight: 3, cap: 3, reserve: 1, footprint: 3, pres: 'route' },
   // ═══ LES SET-PIECES — des lieux HORS SEMIS (spec t0-exploration R9-R10) ═══
   // `biomes: []` : jamais éligibles au tirage — ils se posent en passe dédiée du worldgen
   // (`zonegen-setpieces.ts`), leur corps est leur TERRAIN. Ils figurent ici pour que la garde

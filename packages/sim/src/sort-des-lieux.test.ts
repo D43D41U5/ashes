@@ -75,6 +75,23 @@ describe('ce que le sort fait au bâti', () => {
     }
   })
 
+  it('le feu ne prend pas la pierre des petits lieux : l’autel et le mur bas restent, la charrette brûle', () => {
+    const map = createEmptyMap(64, 64, TERRAIN_GRASS)
+    const fpO = POI_TYPES.find((t) => t.slug === 'oratoire')!.footprint
+    const fpC = POI_TYPES.find((t) => t.slug === 'charrette')!.footprint
+    map.zones.push({ name: 'o', x: 10, y: 10, w: fpO, h: fpO, kind: 'oratoire' })
+    map.zones.push({ name: 'c', x: 40, y: 40, w: fpC, h: fpC, kind: 'charrette' })
+    map.cendreMax = 100
+    map.cendre = new Array(64 * 64).fill(0) // tout le monde a brûlé
+    const sim = createSim(7, { map })
+    buildPoiStructures(sim, 7)
+    const types = new Set(sim.structures.map((st) => st.type))
+    expect(types.has('autel'), 'un autel de pierre ne brûle pas').toBe(true)
+    expect(types.has('mur_bas'), 'un mur bas de pierre ne brûle pas').toBe(true)
+    expect(types.has('charrette'), 'une charrette de bois brûle').toBe(false)
+    expect(types.has('tonneau')).toBe(false)
+  })
+
   it('les pillards prennent les contenants, pas les meubles', () => {
     const s = pillee()
     const types = new Set(s.structures.map((st) => st.type))
@@ -116,6 +133,17 @@ describe('le toponyme dit le sort', () => {
     expect(nomSelonSort('ferme_ruinee', 'la Ferme ruinée', 'pille')).toBe('la Ferme pillée')
     expect(nomSelonSort('ferme_ruinee', 'la Ferme ruinée', 'intact')).toBe('la Ferme muette')
     expect(nomSelonSort('grotte', 'la Grotte', 'brule')).toBe('la Grotte')
+  })
+
+  it('les lieux de l’étage 1 aussi — et seulement là où le sort veut dire quelque chose', () => {
+    expect(nomSelonSort('ruines', 'les Ruines', 'brule')).toBe('les Ruines brûlées')
+    expect(nomSelonSort('ruines', 'les Ruines', 'intact')).toBe('les Ruines muettes')
+    expect(nomSelonSort('epave', "l'Épave d'avalanche", 'pille')).toBe("l'Épave pillée")
+    // L'oratoire de pierre ne brûle pas, l'épave d'avalanche non plus : le nom de table reste.
+    expect(nomSelonSort('oratoire', 'l’Oratoire', 'brule')).toBe('l’Oratoire')
+    expect(nomSelonSort('epave', "l'Épave d'avalanche", 'brule')).toBe("l'Épave d'avalanche")
+    // Et « abandonnée » dit déjà l'intact : pas de nom d'oubli en double.
+    expect(nomSelonSort('charrette', 'la Charrette abandonnée', 'intact')).toBe('la Charrette abandonnée')
   })
 
   it('l’usure ne dépasse jamais le neuf : une cabane debout intacte reste à 1', () => {

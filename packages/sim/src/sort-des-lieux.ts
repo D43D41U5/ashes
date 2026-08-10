@@ -80,6 +80,17 @@ export function usureSelonSort(usureDuPlan: number, sort: SortDuLieu): number {
 const NOMS_PAR_SORT: Record<string, Partial<Record<SortDuLieu, string>>> = {
   ferme_ruinee: { brule: 'la Ferme brûlée', pille: 'la Ferme pillée', intact: 'la Ferme muette' },
   cabane: { brule: 'la Cabane brûlée', pille: 'la Cabane pillée' },
+  // Les sept lieux bâtis de l'étage 1 (spec lieux-batis). On ne déclare que ce qui a un SENS :
+  // l'oratoire de pierre ne brûle pas, l'épave d'avalanche non plus (sa cause est la montagne) ;
+  // et « abandonnée », « d'avalanche » disent déjà l'intact — seuls les Ruines gagnent un nom
+  // d'oubli, comme la Ferme.
+  ruines: { brule: 'les Ruines brûlées', pille: 'les Ruines pillées', intact: 'les Ruines muettes' },
+  abri: { brule: "l'Abri brûlé", pille: "l'Abri pillé" },
+  mine: { brule: 'la Mine brûlée', pille: 'la Mine pillée' },
+  oratoire: { pille: "l'Oratoire pillé" },
+  bivouac: { brule: 'le Bivouac brûlé', pille: 'le Bivouac pillé' },
+  charrette: { brule: 'la Charrette brûlée', pille: 'la Charrette pillée' },
+  epave: { pille: "l'Épave pillée" },
 }
 
 export function nomSelonSort(slug: string, nomDeTable: string, sort: SortDuLieu): string {
