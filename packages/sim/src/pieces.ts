@@ -449,6 +449,18 @@ export const PIECES = {
     label: 'Mur bas', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
     bloque: 'enjambe', pv: 150, cout: { stone: 2 }, acces: 'village', eau: false, usurable: true,
   },
+  charrette: {
+    // Échouée là où on l'a laissée : le corps de la Charrette abandonnée et des épaves.
+    // Elle BLOQUE — un chariot n'est pas un débris qu'on enjambe, c'est un obstacle qu'on
+    // contourne, et c'est ce qui donne enfin un corps solide à un lieu qui n'était qu'un sprite.
+    label: 'Charrette', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    bloque: 'oui', pv: 80, cout: { wood: 4 }, acces: 'village', eau: false, usurable: true,
+  },
+  autel: {
+    // La pierre dressée d'un oratoire. Debout, elle — un autel ne tombe pas, il s'oublie.
+    label: 'Autel', fam: 'mobilier', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    bloque: 'oui', pv: 250, cout: { stone: 6 }, acces: 'village', eau: false, usurable: true,
+  },
 } as const satisfies Record<string, PieceDef>
 
 /** LE TYPE, DÉRIVÉ. C'est tout le propos : la liste ne se tient plus à la main. */

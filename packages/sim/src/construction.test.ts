@@ -836,6 +836,8 @@ describe('l’eau peu profonde est inconstructible, sauf le sol', () => {
     atre: false,
     poutre: false,
     mur_bas: false,
+    charrette: false,
+    autel: false,
   }
   const TOUS = Object.keys(SUR_LE_GUE) as StructureType[]
 
