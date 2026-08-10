@@ -79,6 +79,9 @@ const etat = {
   collage: false,
   /** Les lieux BROUILLONS (hors-monde, plans/brouillons/ — décision d'Alexis). */
   brouillons: new Set<string>(),
+  /** Le lieu NATUREL affiché (grotte, erratique… — sans plan) : APERÇU seulement, avec
+   *  « ébaucher » pour lui ouvrir un brouillon pré-dimensionné à son empreinte. */
+  naturel: null as string | null,
 }
 
 /** Les couleurs d'arête (fantôme ET badges) — brèche rouge, seuil ambre, passage vert. */
@@ -967,6 +970,20 @@ async function charger(): Promise<void> {
     opt.textContent = etat.brouillons.has(k) ? `${k} (brouillon)` : k
     select.appendChild(opt)
   }
+  // ── LES LIEUX NATURELS (demande d'Alexis) : grotte, erratique, arche… — tout kind de
+  //    POI_TYPES sans plan. APERÇU (le vrai sprite du jeu) + « ébaucher un plan ». ──
+  const naturels = POI_TYPES.map((t) => t.slug).filter((s) => !etat.textes.has(s)).sort()
+  if (naturels.length) {
+    const groupe = document.createElement('optgroup')
+    groupe.label = 'naturels (sans plan)'
+    for (const s of naturels) {
+      const opt = document.createElement('option')
+      opt.value = s
+      opt.textContent = s
+      groupe.appendChild(opt)
+    }
+    select.appendChild(groupe)
+  }
   // ── LA SÉANCE REPREND OÙ ELLE EN ÉTAIT : le lieu, les bascules, et le BROUILLON s'il
   //    différait du disque — le full-reload (chaque sauvegarde en déclenche un) ne mange
   //    plus le travail en cours. ──
@@ -1022,6 +1039,12 @@ function choisir(kind: string, opts?: { force?: boolean }): void {
       return
     }
   }
+  // UN LIEU NATUREL (pas de .plan) : l'aperçu, pas l'édition — voir `rendreNaturel`.
+  if (!etat.textes.has(kind)) {
+    rendreNaturel(kind)
+    return
+  }
+  etat.naturel = null
   etat.kind = kind
   $<HTMLSelectElement>('lieux').value = kind
   const texte = etat.textes.get(kind)!
@@ -1039,6 +1062,99 @@ function choisir(kind: string, opts?: { force?: boolean }): void {
   $('historique').innerHTML = ''
   recadrer = true //  un NOUVEAU lieu se recadre ; une édition, jamais
   rafraichir()
+}
+
+/**
+ * L'APERÇU D'UN LIEU NATUREL (demande d'Alexis) — grotte, erratique, arche… : pas de plan,
+ * son corps est le SPRITE du jeu. On le montre tel quel (mêmes clés de texture, lumière
+ * comprise) avec son empreinte `POI_TYPES`, l'avatar pour l'échelle, et « ébaucher » ouvre
+ * un brouillon pré-dimensionné — promu un jour (fichier déplacé dans `plans/`), ce plan
+ * deviendrait son corps bâti et le sprite tomberait (BUILT_KINDS est dérivé). C'est la
+ * décision différée « corps solide des POI naturels » : l'Atelier PRÉPARE, le code décide.
+ */
+function rendreNaturel(kind: string): void {
+  etat.naturel = kind
+  etat.kind = kind
+  etat.brouillon = undefined
+  etat.fautes = []
+  $<HTMLSelectElement>('lieux').value = kind
+  toutDeposer()
+  $('diff').style.display = 'none'
+  $('historique').innerHTML = ''
+  $('planche').innerHTML = '' //  la planche appartient aux PLANS — pas de variantes d'un sprite
+  $('planche-cout').textContent = ''
+  const t = POI_TYPES.find((q) => q.slug === kind)
+  const fp = t?.footprint ?? 3
+  const sc = laScene()
+  if (!sc) {
+    window.setTimeout(() => { if (etat.naturel === kind) rendreNaturel(kind) }, 120)
+    return
+  }
+  // La carte d'essai vide, l'avatar pour l'ÉCHELLE, puis le vrai sprite par-dessus.
+  const cote = fp + 2 * MARGE
+  const map = createEmptyMap(cote, cote, TERRAIN_GRASS)
+  const sim = createSim(7, { map })
+  generation += 1
+  const playerId = spawnEntity(sim, MARGE + fp / 2, MARGE + fp + 1.5)
+  sc.majSelection(null)
+  sc.montrer(sim, playerId, [], [], false)
+  sc.poserNaturel(kind, fp, MARGE)
+  // Le panneau : l'identité du lieu, et l'ébauche.
+  const validation = $('validation')
+  validation.innerHTML = ''
+  for (const ligne of [
+    `${t?.name ?? kind} — famille ${t?.family ?? '?'}`,
+    `empreinte ${fp}×${fp} · zones : ${(t?.zones ?? []).join(', ') || '—'}`,
+  ]) {
+    const div = document.createElement('div')
+    div.className = 'note'
+    div.textContent = ligne
+    validation.appendChild(div)
+  }
+  const note = document.createElement('div')
+  note.className = 'note'
+  note.textContent = 'Lieu NATUREL : pas de plan — son corps est le sprite du jeu. « Ébaucher » crée un brouillon à son empreinte ; promu (fichier déplacé dans plans/), il deviendrait son corps bâti et le sprite tomberait.'
+  validation.appendChild(note)
+  const bouton = document.createElement('button')
+  bouton.textContent = `ébaucher un plan ${fp}×${fp}`
+  bouton.title = 'un brouillon hors-monde, pré-dimensionné à l’empreinte POI_TYPES'
+  bouton.addEventListener('click', () => { void creerEbauche(kind, fp) })
+  validation.appendChild(bouton)
+  $<HTMLButtonElement>('sauver').disabled = true
+  $('voir-diff').style.display = 'none'
+  $('sb-fautes').textContent = ''
+  $('sb-fautes').className = ''
+  $('sb-modifie').textContent = '— aperçu naturel'
+  message('')
+  majBoutonsHistoire()
+}
+
+/** L'ÉBAUCHE d'un lieu naturel : le brouillon porte EXACTEMENT son slug et son empreinte —
+ *  la promotion ne sera qu'un déplacement de fichier (POI_TYPES le connaît déjà). */
+async function creerEbauche(kind: string, cote: number): Promise<void> {
+  const texte = `# ═══ ${kind.toUpperCase()} — ébauche d'Atelier pour un lieu NATUREL ═══\n#\n# Promu (déplacé dans plans/), ce plan deviendra le CORPS du lieu et son sprite tombera\n# (BUILT_KINDS est dérivé). C'est la décision différée « corps solide des POI naturels »\n# (S-R13 : leur grammaire actée est le sprite/terrain) — l'Atelier prépare, le code décide.\nusure: 1\ngrille:\n${Array.from({ length: cote }, () => '·'.repeat(cote)).join('\n')}\n`
+  try {
+    const r = await fetch('/atelier/api/plans', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-atelier': '1' },
+      body: JSON.stringify({ kind, texte, brouillon: true, creer: true }),
+    })
+    const rep = (await r.json()) as { ok?: boolean; erreur?: string }
+    if (!r.ok || !rep.ok) throw new Error(rep.erreur ?? `HTTP ${r.status}`)
+    etat.textes.set(kind, texte)
+    etat.brouillons.add(kind)
+    const select = $<HTMLSelectElement>('lieux')
+    select.querySelector(`optgroup option[value="${kind}"]`)?.remove()
+    const opt = document.createElement('option')
+    opt.value = kind
+    opt.textContent = `${kind} (brouillon)`
+    select.insertBefore(opt, select.querySelector('optgroup'))
+    etat.naturel = null
+    choisir(kind, { force: true })
+    message(`✓ ébauche « ${kind} » créée (${cote}×${cote}, plans/brouillons/) — hors-monde tant qu'elle n'est pas promue`)
+  } catch (e) {
+    message(`✗ ébauche impossible : ${(e as Error).message}`)
+  }
 }
 
 /** Le texte à sauver : le .plan ORIGINAL patché chirurgicalement — la prose survit. */
@@ -1126,6 +1242,7 @@ $<HTMLButtonElement>('refaire').addEventListener('click', () => restaurerHistoir
 $<HTMLButtonElement>('recadrer').addEventListener('click', () => laScene()?.recadrer())
 $<HTMLButtonElement>('sauver').addEventListener('click', () => { void sauver() })
 $<HTMLButtonElement>('copier').addEventListener('click', () => {
+  if (!etat.brouillon) return //  aperçu naturel : rien à copier
   void navigator.clipboard.writeText(texteCourant()).then(() => message('texte du .plan copié'))
 })
 // ── P-B : transformations et tampons. ──
@@ -1149,6 +1266,7 @@ $<HTMLButtonElement>('planche-maj').addEventListener('click', () => rafraichirPl
 $<HTMLButtonElement>('exporter').addEventListener('click', () => { void exporterPlanche(etat.kind, jeu) })
 // ── P-D : le diff, l'historique, tester en jeu. ──
 $<HTMLButtonElement>('voir-diff').addEventListener('click', () => {
+  if (!etat.brouillon) return
   const pre = $('diff')
   if (pre.style.display !== 'none') { pre.style.display = 'none'; return }
   montrerDiff(etat.textes.get(etat.kind) ?? '', texteCourant(), 'disque → brouillon')

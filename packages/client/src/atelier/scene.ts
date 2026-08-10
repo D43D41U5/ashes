@@ -32,6 +32,8 @@ import type { SimState, SnapshotMessage } from '@ashes/sim'
 import { SnapshotView } from '../scenes/world/snapshot-view'
 import { DynamicLighting } from '../scenes/world/dynamic-lighting'
 import { createContactShadow } from '../scenes/world/contact-shadow'
+import { poiTextureKey } from '../scenes/world/poi-art'
+import { erratiqueVariantFor, litErratiqueKey, POI_LIT_KINDS, poiLitKey } from '../render/poi-lit'
 import { TILE_PX } from '../render/framing'
 
 /** Les couches de l'éditeur, au-dessus de tout le monde rendu (crowns ≈ 900k) :
@@ -63,6 +65,8 @@ export class AtelierScene extends Phaser.Scene {
   private dyn!: DynamicLighting
   private avatar!: Phaser.GameObjects.Image
   private fond?: Phaser.GameObjects.Rectangle
+  private naturel?: Phaser.GameObjects.Image
+  private naturelG?: Phaser.GameObjects.Graphics
   private grilleG!: Phaser.GameObjects.Graphics
   private badgesG!: Phaser.GameObjects.Graphics
   private regionsG!: Phaser.GameObjects.Graphics
@@ -289,6 +293,9 @@ export class AtelierScene extends Phaser.Scene {
     this.cote = sim.map.width
     this.aretes = aretes
     this.regions = regions
+    // Retour à une vue de PLAN : le sprite d'un lieu naturel montré avant s'efface.
+    this.naturel?.setVisible(false)
+    this.naturelG?.clear()
     const cote = this.cote * TILE_PX
     // L'herbe d'essai, sous tout — un aplat à la teinte du jeu (le vrai sol est un système).
     this.fond ??= this.add.rectangle(0, 0, 1, 1, 0xa9cd93).setOrigin(0, 0).setDepth(-10)
@@ -297,6 +304,33 @@ export class AtelierScene extends Phaser.Scene {
     this.view.apply(msg, playerId, this.time.now)
     if (!garderCamera) this.recadrer()
     else this.redessinerCalques()
+  }
+
+  /**
+   * UN LIEU NATUREL (grotte, erratique, arche…) — pas de plan : son corps est le SPRITE du
+   * jeu. On le montre TEL QUE LE JEU LE CHOISIT (mêmes clés que `poi-layer`, copie de trois
+   * lignes documentée : `_lit` par table, l'erratique par variante), avec son empreinte —
+   * l'aperçu d'où partirait une ÉBAUCHE de plan. À appeler APRÈS `montrer` (la carte vide).
+   */
+  poserNaturel(kind: string, footprint: number, marge: number): void {
+    const T = TILE_PX
+    const lit = kind === 'erratique' || POI_LIT_KINDS.has(kind)
+    const cle = kind === 'erratique'
+      ? litErratiqueKey(erratiqueVariantFor(0))
+      : POI_LIT_KINDS.has(kind) ? poiLitKey(kind) : poiTextureKey(kind)
+    if (!this.textures.exists(cle)) return
+    this.naturel ??= this.add.image(0, 0, cle).setOrigin(0.5, 1).setDepth(50_000)
+    this.naturel
+      .setTexture(cle)
+      .setPosition((marge + footprint / 2) * T, (marge + footprint) * T)
+      .setVisible(true)
+    this.naturel.setLighting(lit)
+    // L'EMPREINTE (POI_TYPES) : le carré que le lieu occupe sur la carte — le côté qu'aurait
+    // son plan.
+    this.naturelG ??= this.add.graphics().setDepth(BADGES_DEPTH)
+    this.naturelG.clear()
+    this.naturelG.lineStyle(2 / this.cameras.main.zoom, 0xe8b34a, 0.7)
+      .strokeRect(marge * T, marge * T, footprint * T, footprint * T)
   }
 
   override update(time: number): void {

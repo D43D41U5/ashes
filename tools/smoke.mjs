@@ -7333,6 +7333,20 @@ const SCENARIOS = {
     const histo = await page.evaluate(() => document.getElementById('historique').textContent)
     console.log(`historique : ${(histo ?? '').split('\n')[0].slice(0, 80) || '(vide)'}`)
 
+    // ── LES LIEUX NATURELS (demande d'Alexis) : la grotte s'ouvre en APERÇU — le vrai
+    //    sprite du jeu, l'empreinte, et « ébaucher un plan » proposé. ──
+    await page.evaluate(() => window.__ATELIER__.choisir('grotte'))
+    await page.waitForTimeout(900)
+    const naturel = await page.evaluate(() => ({
+      mode: window.__ATELIER__.etat.naturel,
+      info: document.getElementById('validation').textContent ?? '',
+    }))
+    console.log(`naturel : ${naturel.mode} — ${naturel.info.slice(0, 60)}…`)
+    if (naturel.mode !== 'grotte' || !naturel.info.includes('empreinte')) console.error('!! l’aperçu naturel de la grotte ne se monte pas')
+    await page.screenshot({ path: `${OUT}/atelier-naturel.png` })
+    await page.evaluate(() => window.__ATELIER__.choisir('cabane'))
+    await page.waitForTimeout(600)
+
     // ── P-E : CRÉER UN BROUILLON (hors-monde) — dialogues acceptés, fichier vérifié puis
     //    nettoyé. Sur un dépôt en lecture seule, la création échoue proprement : toléré. ──
     const reponses = ['essai_bac', '4']
