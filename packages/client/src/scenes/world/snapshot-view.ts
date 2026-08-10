@@ -1302,13 +1302,15 @@ export class SnapshotView {
           sprite.setTint(Phaser.Display.Color.GetColor(255, shade, shade))
         }
       }
-      // LE TOIT SE RÉVÈLE COMME UNE CIME (décision d'Alexis) : effacé quand on est
-      // dessous/près, opaque quand on est loin — même disque de découvert (`crownAlpha`).
+      // LE TOIT S'EFFACE COMME UN PAN DE MUR (décision d'Alexis, 2026-08-10 : « fais comme
+      // les murs, ils disparaissent complètement lorsqu'on rentre dans un bâtiment ») :
+      // dedans, le couvert disparaît TOUT À FAIT — le voile à 0,12 laissait un fantôme de
+      // chaume au-dessus de la pièce qu'on habite.
       if (isRoof) {
         // PAR PIÈCE, PAS PAR DISQUE : le couvert de la pièce où l'on est s'efface d'un coup,
         // les autres restent pleins. Hors bâtiment, `nappe` est nul et tout reste opaque —
         // c'est ce que le disque des cimes ne savait pas faire.
-        sprite.setAlpha(this.dedansAvec(s.tx, s.ty) ? 0.12 : 1)
+        sprite.setAlpha(this.dedansAvec(s.tx, s.ty) ? 0 : 1)
       }
       // CE QUE LE MARTEAU VA DÉTRUIRE — en DERNIER, quand le sprite a fini de se peindre :
       // le halo en recopie l'état exact (texture, frame, ancre, échelle, profondeur).
@@ -1355,7 +1357,8 @@ export class SnapshotView {
       .setDepth(sprite.depth + 0.5)
       .setTint(this.demolishInRange ? DEMOLISH_TINT : AIM_TINT_FAR)
       // On laisse transparaître la pièce : on doit reconnaître CE QU'ON casse, pas seulement
-      // sa silhouette. Et un toit au-dessus de soi (alpha 0,12) redevient visible par le halo.
+      // sa silhouette. Et un toit au-dessus de soi (EFFACÉ, alpha 0) redevient visible par
+      // le halo — le halo est un sprite à part, l'alpha du toit ne le touche pas.
       .setAlpha(0.8)
       .setVisible(true)
   }

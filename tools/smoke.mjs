@@ -7333,8 +7333,9 @@ const SCENARIOS = {
       await cadrer(cx, cy, 4.5)
       await page.waitForTimeout(900)
       const dedans = await mesurer(z)
-      console.log(`   alphas dedans : ${JSON.stringify(dedans.alphas)} (attendu [0.12])`)
-      if (dedans.alphas.length !== 1 || dedans.alphas[0] !== 0.12) console.error('!! le toit ne fond pas (ou pas entier) quand on est dessous')
+      // Décision du 2026-08-10 : dedans, le toit disparaît COMPLÈTEMENT (comme les pans).
+      console.log(`   alphas dedans : ${JSON.stringify(dedans.alphas)} (attendu [0])`)
+      if (dedans.alphas.length !== 1 || dedans.alphas[0] !== 0) console.error('!! le toit ne s’efface pas (ou pas entier) quand on est dessous')
       await page.screenshot({ path: `${OUT}/toits-${tag}-${z.kind}-dedans.png` })
 
       // ── RESSORTI : le couvert se referme ──
