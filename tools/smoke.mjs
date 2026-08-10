@@ -7209,11 +7209,23 @@ const SCENARIOS = {
     const aideRepos = await page.evaluate(() => document.getElementById('aide').textContent)
     console.log(`bande d'aide (repos) : ${(aideRepos ?? '').slice(0, 60)}…`)
     if (!(aideRepos ?? '').startsWith('PEINDRE')) console.error('!! la bande d’aide ne décrit pas l’outil actif')
-    await page.hover('#palette .tuile:nth-child(11)') // le coffre K — « part au pillage »
+    // Le picker est en CATÉGORIES (demande d'Alexis) : quatre titres, et l'infobulle
+    // immédiate au survol d'une pièce.
+    const cats = await page.evaluate(() => [...document.querySelectorAll('#palette .cat-titre')].map((c) => c.textContent))
+    console.log(`catégories du picker : ${cats.join(' · ')}`)
+    if (cats.length < 4) console.error('!! le picker devrait avoir ses quatre catégories')
+    await page.hover('#palette .tuile:has-text("chest")') // le coffre K — « part au pillage »
     await page.waitForTimeout(200)
     const aideK = await page.evaluate(() => document.getElementById('aide').textContent)
     if (!(aideK ?? '').includes('pillage')) console.error(`!! le survol de palette n’explique pas la pièce (« ${(aideK ?? '').slice(0, 50)} »)`)
     else console.log(`survol du coffre : ${(aideK ?? '').slice(0, 60)}…`)
+    const bulle = await page.evaluate(() => {
+      const b = document.getElementById('infobulle')
+      return { visible: b.style.display !== 'none', texte: b.textContent ?? '' }
+    })
+    if (!bulle.visible || !bulle.texte.includes('pillage')) console.error('!! l’infobulle du picker ne se montre pas au survol')
+    else console.log(`infobulle : ${bulle.texte.slice(0, 60)}…`)
+    await page.screenshot({ path: `${OUT}/atelier-picker.png` })
     await page.mouse.move(10, 400) // on quitte la palette
     await page.keyboard.press('?')
     await page.waitForTimeout(200)

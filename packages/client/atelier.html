@@ -48,7 +48,13 @@
       #jeu { border: 1px solid #2e2820; cursor: crosshair; line-height: 0; }
       #jeu canvas { display: block; }
 
-      #palette { display: flex; flex-wrap: wrap; gap: 4px; }
+      #palette .cat-titre { font-size: 10px; color: #948a76; text-transform: uppercase; letter-spacing: 0.06em; margin: 8px 0 4px; }
+      #palette .cat-titre:first-child { margin-top: 0; }
+      #palette .cat-rangee { display: flex; flex-wrap: wrap; gap: 4px; }
+      /* L'INFOBULLE du picker : immédiate au survol, près du curseur — le title natif est
+         lent et se rate ; la bande du bas reste l'écho persistant. */
+      #infobulle { position: fixed; z-index: 20; display: none; max-width: 330px; background: #241f18; border: 1px solid #6a5426; border-radius: 4px; padding: 7px 10px; font-size: 11.5px; line-height: 1.45; color: #d8d2c6; box-shadow: 0 6px 18px rgba(0,0,0,0.5); pointer-events: none; }
+      #infobulle b { color: #e8b34a; }
       #palette .tuile { width: 44px; padding: 3px 0 2px; text-align: center; border: 1px solid #3a3226; border-radius: 3px; cursor: pointer; background: #201c15; position: relative; }
       #palette .tuile.actif { border-color: #e8b34a; background: #2c2416; }
       #palette canvas { image-rendering: pixelated; display: block; margin: 0 auto 1px; }
@@ -178,6 +184,7 @@
       </div>
     </div>
     <div id="aide-panneau" style="display:none"></div>
+    <div id="infobulle"></div>
     <script type="module" src="/src/atelier/main.ts"></script>
   </body>
 </html>

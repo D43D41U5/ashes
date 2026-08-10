@@ -359,43 +359,99 @@ function message(texte: string): void {
   $('etat').textContent = texte
 }
 
-// ── LA PALETTE, DÉRIVÉE DE LA LÉGENDE (A6) — l'effaceur d'abord, puis chaque caractère.
-//    Les DIX premières cases portent leur raccourci (1…9, 0). ──
-const ordrePalette = (): string[] => ['·', ...Object.keys(LEGENDE)]
+// ── LA PALETTE, DÉRIVÉE DE LA LÉGENDE (A6) — par CATÉGORIES (demande d'Alexis), et la
+//    catégorie se DÉRIVE des champs de la légende (region/piece/noeud), jamais d'une liste
+//    recopiée qui divergerait à la première pièce neuve. ──
+
+type EntreePalette = [string, { piece?: string; noeud?: string; region?: string }]
+
+const CATEGORIES = ['Sols & régions', 'La salle', 'La cour', 'Hors région'] as const
+
+function categorieDe(car: string, def: EntreePalette[1]): (typeof CATEGORIES)[number] {
+  if (car === '·' || def.piece === 'friche') return 'Sols & régions' //  le vide, et le champ
+  if (def.region && !def.piece && !def.noeud) return 'Sols & régions' //  les dallages, la terre
+  if (def.region === 'salle') return 'La salle'
+  if (def.region === 'cour') return 'La cour'
+  return 'Hors région' //  les pièces éparses des petits lieux (charrette, autel, mur bas…)
+}
+
+/** L'ordre d'AFFICHAGE, catégorie par catégorie — les raccourcis 1…9, 0 suivent CET ordre
+ *  (le même que l'œil lit), pas l'ordre interne de la légende. */
+function entreesPalette(): EntreePalette[] {
+  const toutes: EntreePalette[] = [['·', {}], ...Object.entries(LEGENDE)]
+  return CATEGORIES.flatMap((cat) => toutes.filter(([car, def]) => categorieDe(car, def) === cat))
+}
+
+const ordrePalette = (): string[] => entreesPalette().map(([car]) => car)
 
 function construirePalette(): void {
   const palette = $('palette')
   palette.innerHTML = ''
-  const entrees: [string, { piece?: string; noeud?: string; region?: string }][] =
-    [['·', {}], ...Object.entries(LEGENDE)]
-  for (const [i, [car, def]] of entrees.entries()) {
-    const tuile = document.createElement('div')
-    tuile.className = 'tuile' + (car === etat.car ? ' actif' : '')
-    tuile.appendChild(vignette(def.piece, def.region))
-    const carEl = document.createElement('span')
-    carEl.className = 'car'
-    carEl.textContent = car
-    tuile.appendChild(carEl)
-    const nom = document.createElement('span')
-    nom.className = 'nom'
-    nom.textContent = def.piece ?? def.noeud ?? def.region ?? (car === '·' ? 'rien' : '?')
-    tuile.appendChild(nom)
-    if (i < 10) {
-      const kbd = document.createElement('span')
-      kbd.className = 'kbd'
-      kbd.textContent = String((i + 1) % 10)
-      tuile.appendChild(kbd)
+  let i = 0
+  for (const cat of CATEGORIES) {
+    const groupe = entreesPalette().filter(([car, def]) => categorieDe(car, def) === cat)
+    if (groupe.length === 0) continue
+    const titre = document.createElement('div')
+    titre.className = 'cat-titre'
+    titre.textContent = cat
+    palette.appendChild(titre)
+    const rangee = document.createElement('div')
+    rangee.className = 'cat-rangee'
+    for (const [car, def] of groupe) {
+      const tuile = document.createElement('div')
+      tuile.className = 'tuile' + (car === etat.car ? ' actif' : '')
+      tuile.appendChild(vignette(def.piece, def.region))
+      const carEl = document.createElement('span')
+      carEl.className = 'car'
+      carEl.textContent = car
+      tuile.appendChild(carEl)
+      const nom = document.createElement('span')
+      nom.className = 'nom'
+      nom.textContent = def.piece ?? def.noeud ?? def.region ?? (car === '·' ? 'rien' : '?')
+      tuile.appendChild(nom)
+      if (i < 10) {
+        const kbd = document.createElement('span')
+        kbd.className = 'kbd'
+        kbd.textContent = String((i + 1) % 10)
+        tuile.appendChild(kbd)
+      }
+      // L'AIDE de la pièce : l'INFOBULLE au curseur (immédiate — le title natif se rate),
+      // et la bande du bas en écho.
+      tuile.addEventListener('mouseenter', () => {
+        montrerAide(aidePalette(car))
+        montrerInfobulle(tuile, `${car} — ${def.piece ?? def.noeud ?? def.region ?? 'rien'}`, aidePalette(car))
+      })
+      tuile.addEventListener('mouseleave', () => {
+        reposAide()
+        cacherInfobulle()
+      })
+      tuile.addEventListener('click', () => {
+        etat.car = car
+        construirePalette()
+      })
+      rangee.appendChild(tuile)
+      i += 1
     }
-    // L'AIDE de la pièce : son sens EN JEU, dans la bande au survol, en bulle au repos.
-    tuile.title = aidePalette(car)
-    tuile.addEventListener('mouseenter', () => montrerAide(aidePalette(car)))
-    tuile.addEventListener('mouseleave', reposAide)
-    tuile.addEventListener('click', () => {
-      etat.car = car
-      construirePalette()
-    })
-    palette.appendChild(tuile)
+    palette.appendChild(rangee)
   }
+}
+
+// ── L'INFOBULLE — une seule, repositionnée au survol, jamais sous le curseur. ──
+function montrerInfobulle(pres: HTMLElement, titre: string, texte: string): void {
+  const bulle = $('infobulle')
+  bulle.innerHTML = ''
+  const t = document.createElement('b')
+  t.textContent = titre
+  bulle.appendChild(t)
+  bulle.appendChild(document.createTextNode(texte ? ` — ${texte}` : ''))
+  const cadre = pres.getBoundingClientRect()
+  bulle.style.display = 'block'
+  bulle.style.left = `${Math.min(cadre.right + 8, window.innerWidth - 340)}px`
+  bulle.style.top = `${Math.min(cadre.top, window.innerHeight - 90)}px`
+}
+
+function cacherInfobulle(): void {
+  $('infobulle').style.display = 'none'
 }
 
 // ═══ LE TRAIT — peindre et gommer au GLISSER, une entrée d'historique par geste ═══
