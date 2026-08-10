@@ -498,6 +498,102 @@ const PIECES: readonly Piece[] = [
       ]
     },
   },
+  // ── LE VOCABULAIRE MINIER (étage 3 revu — « tout en pièces, partout ») ───
+  // Le CHEVALEMENT : la tour du puits, en chèvre — deux jambes, une traverse, la molette.
+  // C'est la silhouette qui disait « mine » quand la mine était un sprite : elle revient
+  // en PIÈCE haute (40 px, l'échelle d'un fût d'arbre), et c'est le tri Y qui la couche.
+  {
+    type: 'chevalement',
+    hauteur: 40,
+    dessiner: (g) => {
+      // Les JAMBES, en A : larges au sol, serrées au sommet — trois marches de retrait
+      // chacune (le cubique n'a pas de diagonale : il a des gradins).
+      for (const [x0, pas] of [[1, 1], [12, -1]] as const) {
+        rect(g, BOIS.sombre, x0 + pas * 0, 30, 3, 10)
+        rect(g, BOIS.sombre, x0 + pas * 1, 20, 3, 11)
+        rect(g, BOIS.sombre, x0 + pas * 2, 10, 3, 11)
+        rect(g, BOIS.nuit, x0 + pas * 0, 38, 3, 2) //  le pied, dans son ombre de contact
+      }
+      rect(g, BOIS.mid, 2, 24, 12, 2) //    l'entretoise basse
+      rect(g, BOIS.mid, 4, 14, 8, 2) //     l'entretoise haute
+      rect(g, BOIS.sombre, 5, 4, 6, 6) //   le beffroi, au sommet
+      rect(g, BOIS.clair, 5, 4, 6, 1) //    son chant, qui prend la lumière
+      disque(g, PIERRE_T.pied, 8, 7, 3) //  la MOLETTE — la roue du câble
+      disque(g, PIERRE_T.haut, 8, 7, 1.8)
+      rect(g, PIERRE_T.pied, 7.5, 10, 1, 20) // le câble, qui tombe dans le puits
+      return [
+        { path: [[2.5, 40], [3.5, 30], [4.5, 20], [5.5, 10]], crevasse: true }, //  la jambe ouest
+        { path: [[13.5, 40], [12.5, 30], [11.5, 20], [10.5, 10]], crevasse: true }, // la jambe est
+        { path: [[2, 25], [14, 25]] }, //   l'entretoise
+        { path: [[5, 10], [11, 10]] }, //   l'assise du beffroi
+      ]
+    },
+  },
+  // La BOUCHE DE GALERIE : deux montants, un linteau, et le NOIR — le seul vrai noir du
+  // bâti, c'est lui qui dit « ça s'enfonce ». Posée devant le passage d'un antre, elle est
+  // l'entrée qu'on lit comme une porte. MOLLE : le dessin promet le franchissement.
+  {
+    type: 'galerie',
+    hauteur: 24,
+    dessiner: (g) => {
+      rect(g, '#101014', 3, 8, 10, 16) //     la nuit de la galerie
+      rect(g, BOIS.sombre, 1, 8, 3, 16) //    le montant ouest
+      rect(g, BOIS.sombre, 12, 8, 3, 16) //   le montant est
+      rect(g, BOIS.nuit, 1, 22, 3, 2) //      leurs pieds
+      rect(g, BOIS.nuit, 12, 22, 3, 2)
+      rect(g, BOIS.mid, 0, 4, 16, 4) //       le LINTEAU, débordant — il porte la montagne
+      rect(g, BOIS.clair, 0, 4, 16, 1) //     son chant éclairé
+      rect(g, BOIS.nuit, 0, 8, 16, 1) //      son ombre portée sur la bouche
+      rect(g, MOUSSE, 0, 4, 3, 1) //          la mousse a pris le bois
+      return [
+        { path: [[0, 4.5], [16, 4.5]], crevasse: true }, //  l'arête du linteau
+        { path: [[3.5, 24], [3.5, 9]] }, //                  les montants, gravés
+        { path: [[12.5, 24], [12.5, 9]] },
+      ]
+    },
+  },
+  // L'ÉTAI : un poteau de boisage et son chapeau — planté là où le toit menaçait. Bas
+  // dans le monde (on enjambe ses calages), haut dans le dessin (24 px : un poteau).
+  {
+    type: 'etai',
+    hauteur: 24,
+    dessiner: (g) => {
+      rect(g, BOIS.mid, 4, 2, 8, 2) //        le CHAPEAU, débordant
+      rect(g, BOIS.clair, 4, 2, 8, 1)
+      rect(g, BOIS.sombre, 6, 4, 3, 18) //    le poteau
+      rect(g, BOIS.nuit, 6, 20, 3, 2) //      son pied
+      rect(g, PIERRE_T.face, 3, 21, 3, 3) //  les CALAGES de pierre, qu'on enjambe
+      rect(g, PIERRE_T.haut, 3, 21, 3, 1)
+      rect(g, PIERRE_T.face, 10, 22, 3, 2)
+      rect(g, PIERRE_T.haut, 10, 22, 3, 1)
+      return [
+        { path: [[6.5, 22], [6.5, 4]], crevasse: true }, //  le fil du bois
+        { path: [[4, 3.5], [12, 3.5]] }, //                  l'assise du chapeau
+      ]
+    },
+  },
+  // Le WAGONNET : la caisse ferrée sur ses deux roues, échouée à jamais — la charrette du
+  // sous-sol. Le minerai qui dépasse dit ce qu'on n'a jamais fini de sortir.
+  {
+    type: 'wagonnet',
+    dessiner: (g) => {
+      const { yh, yf } = boite(g, 7, PIERRE_T) //  la caisse, en tôle grise
+      rect(g, PIERRE_T.pied, 0, yf, 1, 7 - 2) //   les cornières, aux angles
+      rect(g, PIERRE_T.pied, T - 1, yf, 1, 7 - 2)
+      // Le MINERAI, en tas par-dessus le bord : des blocs sombres, un éclat de fer.
+      rect(g, PIERRE_T.faceO, 2, yh - 2, 5, 3)
+      rect(g, PIERRE_T.face, 8, yh - 1, 5, 2)
+      rect(g, '#8a8a96', 6, yh - 1, 2, 1) //       l'éclat qui accroche la lumière
+      // Les ROUES, sous la caisse — pleines, à ras de sol.
+      disque(g, BOIS.nuit, 4, 14.5, 2)
+      disque(g, BOIS.nuit, 12, 14.5, 2)
+      return [
+        ARETE(yf),
+        { path: [[0, yh + 2.5], [T, yh + 2.5]] }, //  la ceinture de la caisse
+        { path: [[8, T - 1], [8, yf]] }, //           le joint des deux tôles
+      ]
+    },
+  },
 ]
 
 // ═══════════════════════════════════════════════════════════════════════════

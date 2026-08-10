@@ -255,14 +255,6 @@ export interface PieceDef {
    */
   fonction?: FunctionId
   palier?: number
-  /**
-   * OÙ VIT SON DESSIN côté client. Absent = la table de `bati-art` (`st-<type>`), la voie
-   * normale d'une pièce. `'poi'` = le SPRITE DE LIEU déjà peint (`poi-<slug>`, poi-art et
-   * poi-lit) : le corps d'un POI devenu pièce garde son art — on ne redessine pas une
-   * grotte en 16 px. La sim n'en fait RIEN (pure donnée) ; le client DÉRIVE de ce champ
-   * la liste des pièces à texture POI, jamais une liste locale recopiée.
-   */
-  art?: 'poi'
 }
 
 /**
@@ -493,107 +485,30 @@ export const PIECES = {
     label: 'Éboulis', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
     bloque: 'enjambe', pv: 150, cout: { stone: 2 }, acces: 'village', eau: false, usurable: false,
   },
-  // ── LES CORPS DE LIEUX (spec lieux-batis, étage 3 — décision d'Alexis 2026-08-10) ──
-  // Chaque sprite de POI devient une pièce posable : son ANCRE occupe une tuile, son art
-  // (`art: 'poi'`) reste le sprite du lieu — le débord se traverse, la masse au-delà de
-  // l'ancre se complète aux rochers/parois du plan. SOLIDITÉ PAR NATURE (décision
-  // d'Alexis) : les masses debout bloquent, les traces au sol s'enjambent. Rien ne
-  // vieillit ici — la nature ne s'use pas à l'échelle d'une saison (`usurable: false`).
-  gisement: {
-    label: 'Gisement', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'enjambe', pv: 200, cout: { stone: 4 }, acces: 'village', eau: false, usurable: false, art: 'poi',
+  // ── LE VOCABULAIRE MINIER (spec lieux-batis, étage 3 REVU — décision d'Alexis
+  // 2026-08-10 : « tout en pièces, partout ») : la mine se construit de A à Z comme un
+  // bâtiment. Du BOIS d'œuvre qui vieillit et brûle — rien de tout ça ne survit au feu.
+  chevalement: {
+    // La tour du puits — la silhouette qui dit « mine » de loin, en PIÈCE haute.
+    label: 'Chevalement', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    bloque: 'oui', pv: 400, cout: { wood: 8 }, acces: 'village', eau: false, usurable: true,
   },
-  carriere: {
-    label: 'Carrière', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 500, cout: { stone: 10 }, acces: 'village', eau: false, usurable: false, art: 'poi',
+  galerie: {
+    // La bouche boisée d'une galerie — MOLLE : c'est un porche, on la franchit. Posée
+    // devant le passage d'un antre, elle est l'entrée qu'on lit comme une porte.
+    label: 'Entrée de galerie', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    bloque: 'non', pv: 300, cout: { wood: 4, stone: 2 }, acces: 'village', eau: false, usurable: true,
   },
-  saline: {
-    label: 'Saline', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'enjambe', pv: 100, cout: { stone: 2 }, acces: 'village', eau: false, usurable: false, art: 'poi',
+  etai: {
+    // Le poteau de boisage : bas, on passe PAR-DESSUS ses calages — le mur_bas du mineur.
+    label: 'Étai', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    bloque: 'enjambe', pv: 80, cout: { wood: 2 }, acces: 'village', eau: false, usurable: true,
   },
-  verger: {
-    label: 'Verger', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'enjambe', pv: 150, cout: { wood: 4 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  taniere: {
-    label: 'Tanière', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'enjambe', pv: 120, cout: { stone: 2 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  repaire: {
-    label: 'Repaire', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 180, cout: { wood: 5 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  fondriere: {
-    label: 'Fondrière', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'enjambe', pv: 100, cout: { stone: 2 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  crevasses: {
-    label: 'Crevasses', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'enjambe', pv: 300, cout: { stone: 4 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  charnier: {
-    label: 'Charnier', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'enjambe', pv: 100, cout: { stone: 2 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  filon: {
-    label: 'Filon', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 400, cout: { stone: 8 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  chene: {
-    label: 'Chêne ancien', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 600, cout: { wood: 12 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  tour_guet: {
-    label: 'Tour de guet', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 600, cout: { stone: 12 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  pierre_levee: {
-    label: 'Pierre levée', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 300, cout: { stone: 8 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  belvedere: {
-    label: 'Belvédère', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 400, cout: { stone: 8 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  grotte: {
-    label: 'Grotte', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 800, cout: { stone: 14 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  cascade: {
-    label: 'Cascade', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 600, cout: { stone: 10 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  erratique: {
-    label: 'Bloc erratique', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 400, cout: { stone: 8 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  arbre: {
-    label: 'Vieil arbre', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 500, cout: { wood: 10 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  cairn: {
-    label: 'Cairn', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 120, cout: { stone: 3 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  sanctuaire: {
-    label: 'Sanctuaire', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 500, cout: { stone: 10 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  source_chaude: {
-    label: 'Source chaude', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 300, cout: { stone: 6 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  arche: {
-    label: 'Arche', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 600, cout: { stone: 12 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  tarn: {
-    label: 'Tarn', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'enjambe', pv: 100, cout: { stone: 2 }, acces: 'village', eau: false, usurable: false, art: 'poi',
-  },
-  petroglyphes: {
-    label: 'Pétroglyphes', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
-    bloque: 'oui', pv: 300, cout: { stone: 6 }, acces: 'village', eau: false, usurable: false, art: 'poi',
+  wagonnet: {
+    // La berline échouée sur son bout de voie : elle BLOQUE, on la contourne (la
+    // charrette du sous-sol).
+    label: 'Wagonnet', fam: 'vestige', pose: 'monde', occupe: 'tuile', arete: 'interdite',
+    bloque: 'oui', pv: 120, cout: { wood: 2, iron_ingot: 1 }, acces: 'village', eau: false, usurable: true,
   },
 } as const satisfies Record<string, PieceDef>
 
@@ -620,13 +535,6 @@ export type ComponentType = KeysWhere<'fam', 'composant'>
 
 export const BARRIER_TYPES = STRUCTURE_TYPES.filter((t) => PIECES[t].pose === 'marteau') as BarrierType[]
 
-/**
- * LES CORPS DE LIEUX (étage 3) — les pièces dont l'art est le SPRITE DE POI du même nom,
- * dérivées de `art: 'poi'`. Le client (clé de texture, couronne, calque de clairière) et
- * l'Atelier (fantôme, vignette) lisent CETTE liste — jamais une recopie locale.
- */
-export type PoiBodyType = KeysWhere<'art', 'poi'>
-export const POI_BODY_TYPES = STRUCTURE_TYPES.filter((t) => (PIECES[t] as PieceDef).art === 'poi') as PoiBodyType[]
 
 /**
  * L'ORDRE CANONIQUE DES FONCTIONS — celui du catalogue (§4bis), et il porte du sens :

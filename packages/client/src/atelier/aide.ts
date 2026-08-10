@@ -91,32 +91,11 @@ export const AIDE_PALETTE: Record<string, string> = {
   e: 'ÉBOULIS — la pierraille : on l’ENJAMBE, elle raconte l’effondrement sans jamais barrer le pas.',
   Y: 'ARBRE — un VRAI nœud (hache) : bois réel, silhouette d’essence du jeu. À poser HORS des régions : dans une salle, il troue le dallage et le pourtour se referme — l’arbre finit EMMURÉ, irrécoltable.',
   B: 'BUISSON À BAIES — un VRAI nœud (cueillette) : des baies qu’on mange. Hors des régions, comme l’arbre — emmuré s’il troue une salle.',
-  // ── Les CORPS DE LIEUX (étage 3) : l'ancre occupe SA tuile, le sprite déborde — la
-  //    masse au-delà se complète aux rochers/parois. Le minéral survit au feu.
-  n: 'GROTTE — le corps du lieu : la masse rocheuse et sa gueule. L’ancre BLOQUE, le sprite déborde (3×3 tuiles) — complète la masse aux rochers.',
-  Z: 'BLOC ERRATIQUE — le bloc égaré loin de sa montagne. BLOQUE. Trois gueules possibles, choisies par la position.',
-  k: 'CAIRN — le tas de pierres qui marque le chemin. BLOQUE sa tuile, et survit au feu.',
-  I: 'PIERRE LEVÉE — le menhir seul, la chaîne des pierres. Debout, il BLOQUE et survit à tout.',
-  N: 'ARCHE — deux piédroits, une voûte. L’ancre BLOQUE ; le sprite monte haut (couronne au-dessus des cimes).',
-  z: 'CREVASSES — les fentes dans la roche. On les ENJAMBE — elles racontent le sol qui s’ouvre.',
-  y: 'PÉTROGLYPHES — la pierre gravée aux bonshommes. Elle BLOQUE, on la lit de face.',
-  d: 'BELVÉDÈRE — les dalles en gradins qui font grimper. L’ancre BLOQUE.',
-  J: 'GISEMENT — les déblais jetés en tas. On les ENJAMBE — la fouille à ciel ouvert.',
-  Q: 'CARRIÈRE — le front de taille. BLOQUE : un mur de roche éventré.',
-  V: 'FILON — la veine de fer qui affleure. BLOQUE sa tuile.',
-  D: 'TOUR DE GUET — le donjon effondré qui se voit de loin. BLOQUE ; sa couronne dépasse les cimes.',
-  H: 'SANCTUAIRE — le trilithe : deux montants, un linteau. BLOQUE, et survit au feu.',
-  h: 'REPAIRE — la hutte de peaux. BLOQUE — et c’est du cuir : le feu la PREND.',
-  X: 'CHARNIER — la fosse aux os croisés. On l’ENJAMBE — on préférerait pas.',
-  c: 'CHÊNE ANCIEN — seul et immense. Son tronc BLOQUE ; c’est du bois vif : le feu le prend.',
-  W: 'VIEIL ARBRE — cinq tuiles d’envergure. Le tronc BLOQUE, le houppier coiffe (couronne).',
-  f: 'VERGER — les fruitiers retournés au sauvage. On passe DESSOUS : il s’enjambe.',
-  S: 'SALINE — la croûte de sel au sol. S’ENJAMBE — une trace, pas un volume.',
-  u: 'TANIÈRE — le tertre de terre remuée. S’ENJAMBE ; la terre survit au feu.',
-  v: 'FONDRIÈRE — la vase qui happe le pas. S’ENJAMBE (pour l’instant sans coût — la boue viendra).',
-  j: 'CASCADE — le jet qui tombe de haut. La paroi BLOQUE ; le sprite ne crée PAS d’eau (l’eau est du terrain).',
-  w: 'SOURCE CHAUDE — la vasque qui frémit. BLOQUE sa tuile ; la vapeur déborde.',
-  O: 'TARN — l’œil d’eau rond. S’ENJAMBE ; comme la cascade, il ne crée pas d’eau de terrain.',
+  // ── Le vocabulaire minier (étage 3 revu : « tout en pièces, partout ») ──
+  D: 'CHEVALEMENT — la tour du puits, qui dit « mine » de loin. BLOQUE sa tuile ; du bois d’œuvre : il vieillit, et le feu le prend.',
+  n: 'ENTRÉE DE GALERIE — la bouche boisée, MOLLE : c’est un porche, on le franchit. À poser devant le PASSAGE d’un antre : l’entrée qu’on lit comme une porte.',
+  I: 'ÉTAI — le poteau de boisage et son chapeau. On ENJAMBE ses calages ; il raconte le toit qui menaçait.',
+  w: 'WAGONNET — la berline échouée sur son bout de voie. BLOQUE, on la contourne — la charrette du sous-sol.',
 }
 
 /** LA RÉFÉRENCE — le contenu du panneau « ? », par sections. */

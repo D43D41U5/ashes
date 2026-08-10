@@ -1,16 +1,15 @@
-# ═══ LA GROTTE — la masse rocheuse et sa gueule ═══
+# ═══ LA GROTTE — l'antre creusé dans la roche, TOUT en pièces ═══
 #
-# Le PREMIER lieu promu de l'étage 3 : son corps est son SPRITE (`n`, pièce `art: 'poi'`),
-# l'ancre bloque la tuile de la gueule. La masse au-delà se complète aux ROCHERS — cachés
-# sous le grand art (le sprite déborde et les recouvre : ils donnent la COLLISION, lui donne
-# la silhouette). La gueule est AU PIED du plan : les pieds du sprite retombent au bas de
-# l'empreinte (l'assise qu'avait le sprite de poi-layer), et les rochers — rangées nord,
-# donc DERRIÈRE au tri Y — disparaissent sous le grand art. Les COINS restent vides : la
-# masse est ARRONDIE, un rocher d'angle perçait par les coins transparents du sprite — et
-# un coin visuellement vide qui bloque serait un mur invisible. On arrive devant la gueule,
-# au sud, jamais dedans — le souterrain reste différé (décision 2026-07-27).
+# Décision d'Alexis (2026-08-10, « tout en pièces, partout ») : plus de corps-sprite. La
+# grotte EST son antre — sol de roc, parois dérivées du pourtour, et la gueule est le
+# PASSAGE du contour sud, nue comme la roche. On y entre, on y bâtit (une porte sur le
+# passage, du mobilier sur le roc — les règles normales du marteau). Les éboulis au seuil
+# racontent ce que la montagne recrache. Le souterrain reste différé (décision 2026-07-27).
 usure: 1
+passages: 2,2,S
 grille:
-·R·
-RRR
-·n·
+·····
+·rrr·
+·rrr·
+·e·e·
+·····

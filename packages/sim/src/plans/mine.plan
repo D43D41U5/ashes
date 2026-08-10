@@ -1,15 +1,17 @@
-# ═══ LA MINE ABANDONNÉE — le carreau condamné, pas le souterrain ═══
+# ═══ LA MINE ABANDONNÉE — le carreau construit de A à Z, comme un bâtiment ═══
 #
-# (Le souterrain est différé, cf. décision 2026-07-27 « souterrain multi-couche ».)
+# (Décision d'Alexis, 2026-08-10 : la mine se COMPOSE en pièces — le vocabulaire minier
+# est né pour elle. Le souterrain reste différé, cf. décision 2026-07-27.)
 #
-# Une petite salle de pierre (le bâtiment du carreau), son seuil encadré — la seule entrée
-# de mine qui se lise comme une porte — et les poutres du chevalement tombées dehors. La
-# fouille la plus riche du périmètre : TROIS tas de gravats, les haldes autour du puits.
+# L'ANTRE est le bout de galerie effondré — on y entre par la BOUCHE BOISÉE (`n`, molle,
+# posée devant le passage), sous l'œil du CHEVALEMENT qui dit « mine » de loin. Le
+# WAGONNET est resté dehors, les ÉTAIS n'attendent plus personne, et les haldes (trois
+# tas de gravats) restent la fouille la plus riche du périmètre.
 usure: 0.55
-seuils: 1,2,S
+passages: 2,2,S
 grille:
 ·····
-·..·G
-·.P··
-····p
-·G·G·
+·rr·D
+·rrIG
+··n·w
+·G·Gp

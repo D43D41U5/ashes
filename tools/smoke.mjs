@@ -7408,10 +7408,10 @@ const SCENARIOS = {
           A.peindre(6, 3, 'e')
           A.peindre(6, 5, 'Y')
           A.peindre(2, 6, 'B')
-          // Les CORPS DE LIEUX (étage 3) : le sprite du POI posé comme une pièce.
-          A.peindre(4, 7, 'n') //  la grotte
-          A.peindre(6, 7, 'Z') //  le bloc erratique
-          A.peindre(7, 5, 'k') //  le cairn
+          // Le VOCABULAIRE MINIER (étage 3 revu) : la mine se compose en pièces.
+          A.peindre(4, 7, 'n') //  l'entrée de galerie
+          A.peindre(6, 7, 'D') //  le chevalement
+          A.peindre(7, 5, 'w') //  le wagonnet
         })
         await page.waitForTimeout(1200)
         const n7 = await page.evaluate(() => ({
@@ -7420,11 +7420,11 @@ const SCENARIOS = {
           //  la GRILLE seule — la prose d'en-tête contient tous les « n » qu'on veut
           grille: window.__ATELIER__.texteCourant().split('grille:')[1] ?? '',
         }))
-        console.log(`antre 3×3 + rocher + éboulis + arbre + baies + grotte/erratique/cairn : ${n7.fautes} faute(s) (attendu 0)`)
+        console.log(`antre 3×3 + rocher + éboulis + arbre + baies + galerie/chevalement/wagonnet : ${n7.fautes} faute(s) (attendu 0)`)
         if (n7.fautes > 0) console.error('!! le vocabulaire naturel ne se valide pas dans un brouillon sain')
         if (!n7.texte.includes('rrr') || !n7.texte.includes('Y') || !n7.texte.includes('B')) console.error('!! le texte du plan ne porte pas le vocabulaire peint')
-        for (const corps of ['n', 'Z', 'k']) {
-          if (!n7.grille.includes(corps)) console.error(`!! le corps de lieu « ${corps} » manque à la grille du plan`)
+        for (const corps of ['n', 'D', 'w']) {
+          if (!n7.grille.includes(corps)) console.error(`!! la pièce minière « ${corps} » manque à la grille du plan`)
         }
         await page.screenshot({ path: `${OUT}/atelier-antre.png` })
       } finally {

@@ -5,7 +5,7 @@
  * le trou : la planche smoke jugeait le rendu, mais aucune garde texte ne tenait le compte.
  */
 import { describe, expect, it } from 'vitest'
-import { POI, POI_BODY_TYPES } from '@ashes/sim'
+import { POI } from '@ashes/sim'
 import { POI_ART } from '../scenes/world/poi-art'
 import { ERRATIQUES, POI_LIT_DEFS, POI_LIT_KINDS, POI_LIT_MIRRORED } from './poi-lit'
 import { LIT_STRUCTURE_KEYS, LIT_STRUCTURE_TYPES } from './lit-structures'
@@ -58,30 +58,6 @@ describe('la couverture _lit (garde A1)', () => {
     // Les exceptions consignées ne se glissent dans AUCUN des deux whitelists par accident.
     for (const exclu of ['wall', 'door', 'fire', 'floor', 'roof', 'parcelle', 'terroir', 'roc']) {
       expect(tous.has(exclu), `${exclu} est consigné hors bascule`).toBe(false)
-    }
-    // LES CORPS DE LIEUX (étage 3) non plus — leur `_lit` est `poi-*`, jamais `st-*` : les
-    // y inscrire ferait demander une texture `st-<type>_lit` qui n'existe pas.
-    for (const type of POI_BODY_TYPES) {
-      expect(tous.has(type), `${type} : un corps de lieu ne bascule jamais via st-*`).toBe(false)
-    }
-  })
-
-  /**
-   * LES CORPS DE LIEUX ONT LEUR ART, ET LEUR NUIT (étage 3) : chaque pièce `art: 'poi'` du
-   * registre a son sprite dans POI_ART (la clé de naissance `poi-<slug>` existe), sa `_lit`
-   * (poi-lit — ou les trois variantes pour l'erratique), et si l'ART déclare une couronne,
-   * la def _lit la déclare AUSSI — sinon la couronne de nuit serait le damier magenta.
-   */
-  it('chaque corps de lieu a son sprite, sa _lit, et sa couronne alignée', () => {
-    const art = new Map(POI_ART.map((a) => [a.slug, a]))
-    for (const type of POI_BODY_TYPES) {
-      const a = art.get(type)
-      expect(a, `${type} : une pièce-corps sans sprite POI ne peut pas naître`).toBeDefined()
-      expect(POI_LIT_KINDS.has(type) || type === 'erratique', `${type} : pas de _lit`).toBe(true)
-      if (a!.crown !== undefined) {
-        const def = POI_LIT_DEFS.find((d) => d.slug === type)
-        expect(def?.crown, `${type} : couronne d'ART sans couronne _lit`).toBeDefined()
-      }
     }
   })
 

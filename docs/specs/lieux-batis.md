@@ -127,50 +127,45 @@ plan et modulés par le sort (le patron des gravats). Légende : `r` roc/antre, 
 - **N7** — un plan d'essai (brouillon) mêlant antre, rochers, éboulis et nœuds végétaux se
   bâtit, se valide, se rend — capturé au smoke.
 
-## Étage 3 — les corps de lieux (décision d'Alexis, 2026-08-10)
+## Étage 3 — tout en pièces, partout (décision d'Alexis, 2026-08-10, RÉVISÉE le soir même)
 
-« Transforme tous les sprites de POI en structures posables comme les autres structures. »
-C'est la décision différée « corps solide des POI naturels » (S-R13) qui s'ouvre — et elle
-s'ouvre par la CAPACITÉ, pas par le monde : chaque sprite-corps devient une pièce du registre
-(`art: 'poi'`), posable dans les `.plan` par un caractère de légende. Le monde, lui, ne bouge
-pas tant qu'aucun plan n'emploie ces caractères (le registre et la légende sont inertes —
-`buildPoiStructures` ne bâtit que `PLANS[kind]`, et `poi-batis` ne tire rien sur le PRNG).
+**L'histoire tient en deux temps.** L'après-midi : « transforme tous les sprites de POI en
+structures posables » — 24 pièces `art: 'poi'` (le sprite du lieu comme corps, couronne
+portée, massif qui s'efface comme un toit) ont été construites et la Grotte promue ainsi.
+Le soir, Alexis tranche autrement en voyant le résultat : **« retire le corps sprite — il
+faut que la mine soit construite de A à Z avec des éléments, comme un bâtiment »**, et au
+choix des trois périmètres proposés : **tout en pièces, partout**. Les pièces-sprites sont
+RETIRÉES ; un lieu naturel se COMPOSE, avec le vocabulaire des pièces — c'est la ligne
+« le monde n'est pas décoré, il est construit » poussée à son terme.
 
 ### Le contrat
 
-- **24 pièces** (les kinds de `POI_ART` moins `BUILT_KINDS` moins les set-pieces), toutes
-  `pose: 'monde'`, `occupe: 'tuile'`, `usurable: false` — la nature ne s'use pas à l'échelle
-  d'une saison. `StructureType` suit (dérivé), `POI_BODY_TYPES` est la projection exportée.
-- **Solidité PAR NATURE** (décision d'Alexis) : les masses debout bloquent leur ancre
-  (grotte, erratique, arche, pierre levée, tour de guet, belvédère, sanctuaire, chêne,
-  arbre, cairn, filon, carrière, cascade, pétroglyphes, source chaude, repaire) ; les traces
-  au sol s'enjambent (saline, tarn, fondrière, charnier, gisement, tanière, crevasses,
-  verger). L'ANCRE occupe UNE tuile : le sprite déborde et le débord se traverse — la masse
-  au-delà se complète aux rochers/parois du plan (précédent : la charrette).
-- **L'art reste le sprite du lieu** : la clé de naissance est `poi-<slug>` (poi-art), la
-  nuit `poi-<slug>_lit` (poi-lit ; l'erratique tire une de ses trois variantes par sa
-  position), la partie haute est portée en COURONNE (bande houppier — sans elle un sprite
-  de plus de ~44 px se fait recouvrir par les cimes voisines et les toits). Jamais de
-  redessin `st-<slug>` dans bati-art — gardé par test.
-- **Le feu** : le minéral, la terre et l'eau survivent (`SURVIT_AU_FEU`) ; brûlent le bois
-  vif (verger, chêne, arbre) et la hutte de peaux (repaire).
-- **La légende** : un caractère par pièce, mnémonique français, jamais `#`, jamais les
-  minuscules `s`/`i` (garde d'épellation), un seul code-unit UTF-16.
-- **L'Atelier** : thème « Terres & eaux » ajouté au picker ; vignettes par les albédos
-  poi-lit extraits en canvas pur (`albedosPoiAtelier`) ; le fantôme montre `poi-<slug>` ;
-  l'ébauche d'un lieu naturel PRÉ-POSE son caractère-corps au centre — la promotion ne
-  change plus la silhouette.
+- **Plus aucune pièce `art: 'poi'`** : le champ, la projection `POI_BODY_TYPES`, le rendu
+  poi-* des structures, les couronnes de structures et l'effacement de massif sont retirés.
+  Le grand art poi-* reste ce qu'il était avant : le corps PEINT des lieux sans plan
+  (poi-layer), qui tombe kind par kind à mesure que les plans arrivent (`BUILT_KINDS`).
+- **Le VOCABULAIRE MINIER** ouvre le programme (la mine d'abord) : `chevalement` (D — la
+  tour du puits, 40 px, bloque), `galerie` (n — la bouche boisée, MOLLE : un porche à poser
+  devant le passage d'un antre), `etai` (I — le boisage, s'enjambe), `wagonnet` (w — la
+  berline, bloque). Du bois d'œuvre : usurable, et le feu le prend (hors `SURVIT_AU_FEU`).
+- **La MINE est le premier lieu composé de A à Z** : antre 2×2 (le bout de galerie), bouche
+  boisée sur le passage, chevalement, étai, wagonnet, poutre — et ses TROIS tas de gravats
+  (la fouille la plus riche, garde existante). **La GROTTE suit le même régime** : son plan
+  est son antre (3×2, gueule = passage nu, éboulis au seuil) — plus de sprite, plus de
+  `fixe` (les pièces tournent).
+- **Entrable = les règles normales du marteau** : porte sur le passage, mobilier sur le roc
+  — rien de spécial, c'était le but (« dans les limites de construction de POI »).
+- **Les lieux suivants** (erratique, arche, cairn…) se composeront au même régime, chacun
+  avec les pièces qu'il exige — chantier d'art au long cours, lieu par lieu, dans l'Atelier.
 
 ### Critères d'acceptation
 
-- **C1** — chaque pièce `art: 'poi'` a exactement UN caractère de légende et désigne un
-  lieu de `POI_TYPES` (garde sim) ; elle a son sprite `POI_ART`, sa `_lit`, et sa couronne
-  alignée art↔lit (garde client).
-- **C2** — aucun corps de lieu dans `BATI_KEYS` ni `BATI_LIT_TYPES` (le grand art, pas un
-  chip 16 px) — gardé.
-- **C3** — le registre seul est INERTE : mêmes cartes, même flux RNG, mêmes événements
-  tant qu'aucun plan n'emploie les caractères (les suites seedées passent inchangées).
-- **C4** — un brouillon mêlant corps de lieux et vocabulaire naturel se valide, se bâtit,
-  se rend — capturé au smoke (probe N7 étendu).
-- **C5** — au premier PLAN promu employant un corps : recensement A7 et passe de tests
+- **C1** — plus aucune référence `art: 'poi'`/`POI_BODY_TYPES` dans /sim ni le client ;
+  les caractères de légende retirés ne valident plus (faute « caractère inconnu »).
+- **C2** — les quatre pièces minières au registre, leurs `_lit` dérivées (bati-art), leurs
+  caractères en légende avec thème ET aide (garde N6).
+- **C3** — la mine se bâtit : antre joignable par la gueule, trois `rubble`, déterminisme
+  double-génération — et se JUGE à l'œil (capture smoke).
+- **C4** — la grotte composée : antre joignable, massif de parois, entrée praticable.
+- **C5** — le probe N7 du smoke peint galerie/chevalement/wagonnet et valide à zéro faute.
   complète (le monde change à ce moment-là, pas avant).
