@@ -350,6 +350,87 @@ const PIECES: readonly Piece[] = [
       return [...joints, ARETE(yf)]
     },
   },
+  // ── LA CHARRETTE : échouée, pas stationnée ───────────────────────────────
+  // Le corps de la Charrette abandonnée et de l'Épave (lieux-batis, étage 1). Ce qui dit
+  // « échouée » : le plateau piqué du nez (la diagonale du vestige — le langage de la POUTRE,
+  // en plus large), une roue encore debout à l'arrière, l'AUTRE à plat sur le sol — une
+  // charrette qui a perdu sa roue ne repart pas. Et l'herbe a pris le plateau.
+  {
+    type: 'charrette',
+    dessiner: (g) => {
+      // LE PLATEAU, en travers : l'arrière tient sur sa roue, l'avant touche terre.
+      g.fillStyle = BOIS.nuit
+      g.beginPath(); g.moveTo(2, 4); g.lineTo(12, 11); g.lineTo(9, 14); g.lineTo(0, 7); g.closePath(); g.fill()
+      g.fillStyle = BOIS.sombre
+      g.beginPath(); g.moveTo(2.5, 4.6); g.lineTo(11.4, 10.9); g.lineTo(9.2, 13.3); g.lineTo(0.8, 7.2); g.closePath(); g.fill()
+      g.fillStyle = BOIS.mid
+      g.beginPath(); g.moveTo(2.6, 4.9); g.lineTo(11, 10.8); g.lineTo(9.8, 12.2); g.lineTo(1.6, 6.4); g.closePath(); g.fill()
+      rect(g, MOUSSE, 9, 11, 2, 1) //   l'herbe sur le plateau : personne ne reviendra le vider
+      // LA ROUE TOMBÉE, à plat sous le nez — un disque écrasé par la vue, son moyeu en trou.
+      rect(g, BOIS.nuit, 6, 13, 6, 3)
+      rect(g, BOIS.sombre, 7, 13, 4, 2)
+      rect(g, BOIS.nuit, 8, 14, 2, 1)
+      // LA ROUE DEBOUT, à l'arrière : PLEINE (une roue de ferme, pas de rayons à cette échelle).
+      disque(g, BOIS.nuit, 3.5, 12, 3.8)
+      disque(g, BOIS.sombre, 3.5, 12, 2.7)
+      rect(g, BOIS.nuit, 3, 11, 2, 2) // le moyeu
+      // LES BRANCARDS, tombés à l'avant : un couché, un qui pointe encore en l'air —
+      // la bête est partie depuis longtemps (l'écho du sprite de lieu, même histoire).
+      // Le couché part UN PIXEL après la roue à plat : collé à elle, il prolongeait sa
+      // rangée basse et le bas du sprite devenait une seule barre sombre (vu à l'aperçu).
+      rect(g, BOIS.nuit, 13, 15, 3, 1)
+      rect(g, BOIS.sombre, 12, 12, 1, 2)
+      rect(g, BOIS.sombre, 13, 9, 1, 3)
+      rect(g, BOIS.nuit, 13, 9, 1, 1) // le bout cassé, dans son ombre
+      rect(g, MOUSSE, 0, 15, 2, 1)
+      return [
+        { path: [[2.2, 4.6], [11.6, 11]], crevasse: true }, //  le plat-bord, l'arête qui porte la lumière
+        { path: [[2.4, 6.2], [11, 12.2]] }, //                  le joint des planches du plateau
+        { path: [[11.7, 11.3], [9.8, 13.2]] }, //               le chant arrière, là où la caisse finit
+        // La jante de la roue debout, en octogone : le canvas ne grave pas de cercle, et à
+        // cette taille huit segments SONT un cercle — quantifié sur la grille de l'art.
+        { path: [[3.5, 8.9], [5.7, 9.8], [6.6, 12], [5.7, 14.2], [3.5, 15.1], [1.3, 14.2], [0.4, 12], [1.3, 9.8], [3.5, 8.9]] },
+        { path: [[0.9, 12], [6.1, 12]] }, //                    la couture des madriers de la roue pleine
+        { path: [[6, 13], [12, 13]] }, //                       le bord de la roue à plat
+      ]
+    },
+  },
+  // ── L'AUTEL : la pierre dressée d'un oratoire alpin ──────────────────────
+  // TAILLÉE, et elle le prouve trois fois : des arêtes VERTICALES d'aplomb (un erratique n'a
+  // pas d'angles droits), un SOCLE (une marche — quelqu'un l'a érigée là), et une NICHE creusée
+  // dans la face — vide : l'oratoire sans son saint, c'est l'abandon qui se lit. Elle se
+  // distingue du mur_bas par la silhouette même : lui ne se dresse plus, elle n'a jamais cessé.
+  // Plus haute que large (16 px sur 8), la plus haute silhouette du mobilier.
+  {
+    type: 'autel',
+    dessiner: (g) => {
+      // LE SOCLE — la marche taillée sur laquelle la pierre pose.
+      rect(g, PIERRE_T.pied, 2, 13, 12, 3)
+      rect(g, PIERRE_T.face, 2, 13, 12, 2)
+      rect(g, PIERRE_T.haut, 2, 13, 12, 1)
+      // LA PIERRE DEBOUT : un bloc, pas un galet — la même caméra que le reste (dessus
+      // foreshortené sur face), le dessus réduit à 3 px parce que la stèle est MINCE.
+      rect(g, PIERRE_T.pied, 4, 0, 8, 14) //   la silhouette pleine, en ombre
+      rect(g, PIERRE_T.face, 4, 3, 8, 10) //   la face avant
+      rect(g, PIERRE_T.faceO, 11, 3, 1, 10) // le flanc droit, dans l'ombre : le bloc tourne
+      rect(g, PIERRE_T.faceO, 4, 12, 8, 1) //  le pied de la pierre, sur sa marche
+      rect(g, PIERRE_T.haut, 4, 0, 8, 3) //    le dessus, taillé PLAT
+      rect(g, PIERRE_T.hautH, 4, 0, 8, 1) //   son arête, qui prend la lumière
+      // LA NICHE, vide, et sa tablette — le seul ornement, et il suffit.
+      rect(g, '#26262e', 6, 5, 4, 4)
+      rect(g, PIERRE_T.hautH, 6, 9, 4, 1)
+      rect(g, MOUSSE, 2, 15, 3, 1)
+      rect(g, MOUSSE, 12, 14, 2, 1)
+      return [
+        { path: [[4.5, 13], [4.5, 0.5]], crevasse: true }, //   les arêtes verticales, DROITES —
+        { path: [[11.5, 13], [11.5, 0.5]], crevasse: true }, // c'est ça, la taille
+        { path: [[4, 3], [12, 3]], crevasse: true }, //         l'arête du sommet plat
+        { path: [[6, 5], [10, 5]] }, //                         la niche, creusée dans la masse
+        { path: [[6, 9], [10, 9]] },
+        { path: [[2, 13], [14, 13]] }, //                       le joint pierre/socle
+      ]
+    },
+  },
 ]
 
 // ═══════════════════════════════════════════════════════════════════════════

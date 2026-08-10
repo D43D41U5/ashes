@@ -30,7 +30,7 @@ describe('les clés', () => {
       expect(BATI_KEYS, `st-${type}_lit manque`).toContain(`st-${type}_lit`)
     }
     // Le mobilier au complet — la liste est ici pour qu'un oubli se VOIE, pas pour décorer.
-    for (const t of ['table', 'banc', 'paillasse', 'etagere', 'tonneau', 'atre', 'abreuvoir', 'meule', 'poutre', 'mur_bas', 'cloture', 'encadrement']) {
+    for (const t of ['table', 'banc', 'paillasse', 'etagere', 'tonneau', 'atre', 'abreuvoir', 'meule', 'poutre', 'mur_bas', 'charrette', 'autel', 'cloture', 'encadrement']) {
       expect(BATI_LIT_TYPES.has(t), `${t} n'a pas de _lit`).toBe(true)
     }
   })
