@@ -76,9 +76,9 @@ const MARGE_CIMES = Math.ceil(Math.max(...TOUTES_VARIANTES.map((v) => hauteurTui
 import { cimeDe, varianteArbre } from '../../render/arbre-peuplement'
 import { warmthColor } from '../../render/lighting'
 import { LIT_NODE_TYPES } from '../../render/lit-props'
-import { BATI_LIT_TYPES, COUPE_DE, EDGE_ORIGIN_Y } from '../../render/bati-art'
+import { BATI_LIT_TYPES, COUPE_DE, EDGE_ORIGIN_Y, MUR_HT } from '../../render/bati-art'
 import { creerPortesAnimees } from '../../render/porte-anim'
-import { calculerPans, pansTombes } from '../../render/pans'
+import { calculerNappe, calculerPans, pansTombes } from '../../render/pans'
 import { LIT_STRUCTURE_TYPES } from '../../render/lit-structures'
 import { shakeOffset, type HitFx } from './hit-fx'
 import type { InteractTarget } from './aim'
@@ -329,34 +329,6 @@ function wallTint(material: WallMaterial | undefined, ratio: number): number {
   const dim = 0.5 + 0.5 * Math.max(0, Math.min(1, ratio))
   const rgb = material === 'stone' ? [176, 178, 192] : material === 'metal' ? [168, 192, 224] : [200, 154, 104]
   return Phaser.Display.Color.GetColor(Math.floor(rgb[0]! * dim), Math.floor(rgb[1]! * dim), Math.floor(rgb[2]! * dim))
-}
-
-/**
- * LA NAPPE SOUS LAQUELLE ON SE TIENT — remplissage sur les tuiles COUVERTES, jamais sur les murs.
- *
- * Le piège est connu et documenté chez Project Zomboid : leur découpe casse quand un mur est
- * détruit, parce qu'elle teste une ENCEINTE close. Or nos ruines ont des trous par conception.
- * On inonde donc sur ce qui fait le DEDANS — un dallage ou un toit — et jamais sur ce qui le
- * borde. Robuste aux brèches, et plus simple.
- */
-function calculerNappe(structures: readonly Structure[], self?: { x: number; y: number }): Set<string> | null {
-  if (!self) return null
-  const dedans = new Set<string>()
-  for (const s of structures) if (s.type === 'floor' || s.type === 'roof') dedans.add(`${s.tx},${s.ty}`)
-  const depart = `${Math.floor(self.x)},${Math.floor(self.y)}`
-  if (!dedans.has(depart)) return null
-  const vus = new Set([depart])
-  const file = [depart]
-  for (let h = 0; h < file.length; h++) {
-    const [x, y] = file[h]!.split(',').map(Number) as [number, number]
-    for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
-      const k = `${x + dx},${y + dy}`
-      if (vus.has(k) || !dedans.has(k)) continue
-      vus.add(k)
-      file.push(k)
-    }
-  }
-  return vus
 }
 
 /**
@@ -1121,7 +1093,13 @@ export class SnapshotView {
                   : s.type === 'encadrement'
                     ? seuilDepth(s.ty, TILE_PX)
                     : structureDepth(s.ty, TILE_PX)
-        sprite = this.scene.add.image(a.px, a.py - lift, `st-${s.type}`).setOrigin(0.5, 1).setDepth(depth)
+        // LE TOIT SE DESSINE À LA CRÊTE DU MUR (calage mesuré, smoke `toits` 2026-08-10) :
+        // levé de `MUR_HT`, son bord bas rejoint la crête de la façade sud à −2 px (le demi-
+        // débord de bande) et son plan coiffe la face du mur nord. Ancré au sol, il était un
+        // TAPIS : couture mesurée à −34 px — le toit recouvrait la façade au lieu de la
+        // coiffer, et la face grise du mur nord dominait le lieu.
+        const leve = isRoof ? MUR_HT : 0
+        sprite = this.scene.add.image(a.px, a.py - lift - leve, `st-${s.type}`).setOrigin(0.5, 1).setDepth(depth)
         this.structureSprites.set(s.id, sprite)
       }
       sprite.setLighting(this.lighting) // couche 1 : murs, portes, ateliers… éclairés (pooled → chaque frame)

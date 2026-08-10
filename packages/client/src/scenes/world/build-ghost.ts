@@ -16,10 +16,10 @@
  * invariant §3). Un fantôme vert n'est PAS une promesse — c'est « rien ici ne
  * l'interdit *de ce que le client peut voir* ».
  */
-import { COMPONENT_TYPES, doorPairs, EDGE_N, edgeBarrierAt, recognizeFunctions, type RecognizedFunction, type Structure } from '@ashes/sim'
+import { COMPONENT_TYPES, doorPairs, EDGE_N, edgeBarrierAt, floorAt, piece, recognizeFunctions, roofAt, structureAt, type RecognizedFunction, type Structure } from '@ashes/sim'
 import { tileFeetAnchor } from '../../render/framing'
 import { TILE_PX } from '../../render/framing'
-import { EDGE_ORIGIN_Y } from '../../render/bati-art'
+import { EDGE_ORIGIN_Y, MUR_HT } from '../../render/bati-art'
 import type { Placeable } from '../../hud-state'
 import type Phaser from 'phaser'
 import type { Warp } from '../../render/warp'
@@ -103,9 +103,19 @@ export class BuildGhost {
     const surArete = placing === 'wall' || placing === 'door' || placing === 'palissade'
     // ET L'OCCUPATION SE LIT SUR L'ARÊTE. « Une structure sur la tuile » rougissait le coin
     // d'une pièce dès son premier mur — or c'est exactement là qu'il faut poser le second.
+    // SUR UNE TUILE, ELLE SE LIT PAR COUCHE (R14, comme `evaluateBuild`) : seul un doublon de
+    // la MÊME couche occupe. « N'importe quelle structure » rougissait le fantôme de toit sur
+    // chaque case dallée ou meublée — couvrir une pièce est pourtant le geste normal du toit
+    // (relevé à la revue du calage des toits, 2026-08-10). Trois lectures de couche, toutes
+    // importées de /sim — jamais recopiées.
+    const couche = piece(placing).occupe
     const occupied = surArete
       ? edgeBarrierAt(structures, tx, ty, edge) !== undefined
-      : structures.some((s) => s.tx === tx && s.ty === ty)
+      : couche === 'toit'
+        ? roofAt(structures, tx, ty) !== undefined
+        : couche === 'sol'
+          ? floorAt(structures, tx, ty) !== undefined
+          : structureAt(structures, tx, ty) !== undefined
     const a = tileFeetAnchor(tx, ty, TILE_PX)
     const lift = warp?.lift(tx + 0.5, ty + 1) ?? 0
     // LA PORTE DOUBLE SE PRÉDIT (R27) : si l'arête armée complète une paire colinéaire avec une
@@ -113,13 +123,16 @@ export class BuildGhost {
     // l'affordance qui APPREND la règle au joueur — deux portes mitoyennes fusionnent — avant
     // qu'il ne paie la seconde, et par le même moteur que la sim (`doorPairs`, R22 : il ne ment pas).
     const fam = placing === 'door' && !occupied ? famillePorte(structures, tx, ty, edge) : placing
+    // LE TOIT SE POSE À LA CRÊTE, ET SON FANTÔME AUSSI (calage du 2026-08-10) : même levage
+    // que la pièce posée (`snapshot-view`) — un fantôme au sol mentirait de deux tuiles.
+    const leve = placing === 'roof' ? MUR_HT : 0
     this.sprite
       // LA PORTE PORTE SA FRAME (R26) : sa famille est indexée, `st-door-e<bit>` n'existe plus.
       // Le fantôme montre la frame 0 — CLOSE, ce qu'on va effectivement poser. Sans ce suffixe,
       // armer « Porte » affichait un damier magenta : une texture manquante ne lève pas.
       .setTexture(surArete ? `st-${fam}-e${edge}${placing === 'door' ? '-f0' : ''}` : `st-${placing}`)
       .setOrigin(0.5, surArete ? EDGE_ORIGIN_Y[fam] ?? 1 : 1)
-      .setPosition(a.px, a.py - lift)
+      .setPosition(a.px, a.py - lift - leve)
       .setDepth(GHOST_DEPTH)
       .setTint(inRange && !occupied ? OK_TINT : BAD_TINT)
       .setVisible(true)

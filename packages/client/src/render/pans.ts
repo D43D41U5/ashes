@@ -203,6 +203,45 @@ export function calculerPans(structures: readonly StructureLike[]): Pans {
 }
 
 /**
+ * LA NAPPE SOUS LAQUELLE ON SE TIENT — remplissage sur les tuiles COUVERTES, jamais sur les murs.
+ *
+ * Le piège est connu et documenté chez Project Zomboid : leur découpe casse quand un mur est
+ * détruit, parce qu'elle teste une ENCEINTE close. Or nos ruines ont des trous par conception.
+ * On inonde donc sur ce qui fait le DEDANS — un dallage ou un toit — et jamais sur ce qui le
+ * borde. Robuste aux brèches, et plus simple.
+ *
+ * ═══ ET « DEDANS » VEUT DIRE SOUS UN TOIT (calage du 2026-08-10) ═══
+ *
+ * La nappe s'armait dès qu'on POSAIT LE PIED sur un sol bâti — donc aussi sur le dallage d'une
+ * cour à ciel ouvert, où l'on est dehors de plein droit. Le DÉPART exige maintenant un toit
+ * au-dessus de la tête ; le remplissage, lui, traverse toujours sol ET toit — c'est lui qui
+ * porte la robustesse aux brèches, pas le départ.
+ */
+export function calculerNappe(structures: readonly StructureLike[], self?: { x: number; y: number }): Set<string> | null {
+  if (!self) return null
+  const dedans = new Set<string>()
+  const toits = new Set<string>()
+  for (const s of structures) {
+    if (s.type === 'floor' || s.type === 'roof') dedans.add(`${s.tx},${s.ty}`)
+    if (s.type === 'roof') toits.add(`${s.tx},${s.ty}`)
+  }
+  const depart = `${Math.floor(self.x)},${Math.floor(self.y)}`
+  if (!toits.has(depart)) return null
+  const vus = new Set([depart])
+  const file = [depart]
+  for (let h = 0; h < file.length; h++) {
+    const [x, y] = file[h]!.split(',').map(Number) as [number, number]
+    for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
+      const k = `${x + dx},${y + dy}`
+      if (vus.has(k) || !dedans.has(k)) continue
+      vus.add(k)
+      file.push(k)
+    }
+  }
+  return vus
+}
+
+/**
  * LES PANS QUI TOMBENT, pour cette position de joueur. `D` en tuiles (2 par décision).
  *
  * `regionJoueur` : la région sous ses pieds, ou −1 — c'est elle qui arme la règle du DEDANS.

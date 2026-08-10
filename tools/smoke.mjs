@@ -7179,6 +7179,172 @@ const SCENARIOS = {
     return bati
   },
 
+  /**
+   * LES TOITS ET LE DEDANS/DEHORS (calage instrumenté, spec construction R24 — 2026-08-10).
+   *
+   * On ne cale pas un toit à l'œil : on MESURE, sur les vrais sprites du jeu, quatre choses
+   * pour chaque lieu à salle couverte (cabane, abri) —
+   *   1. TROUS — toute case de salle couverte porte un toit, le mobilier compris (la paillasse
+   *      et le coffre perçaient le chaume) ;
+   *   2. COUTURE — le bord bas du plan de toit rejoint la crête du mur sud : écart SIGNÉ en px
+   *      entre deux bords MESURÉS (jamais une constante recopiée). Négatif = recouvrement
+   *      (attendu : le demi-débord de bande), positif = jour entre toit et mur ;
+   *   3. OCCLUSION — depuis DEHORS, le mobilier de la cabane est entièrement sous l'union
+   *      toits opaques + façade sud (échantillonné au pas de 2 px sur les rects des sprites).
+   *      L'abri n'est PAS asservi : son côté ouvert MONTRE l'intérieur, c'est le design ;
+   *   4. DEDANS — téléporté sous le toit, tous les toits du lieu fondent (alpha 0,12) ;
+   *      ressorti, ils redeviennent pleins.
+   * Exige `--dev` (TP + heure). Captures dehors/dedans par lieu, étiquetées SMOKE_TAG.
+   */
+  async 'toits'(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+
+    const tp = async (x, y) => {
+      for (let essai = 0; essai < 6; essai++) {
+        await page.evaluate(({ x, y }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y }), { x, y })
+        await page.waitForTimeout(380)
+        const q = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+        if (q && Math.abs(q.x - x) < 0.7 && Math.abs(q.y - y) < 0.7) return
+      }
+      console.error(`!! TP raté vers (${x}, ${y}) — le debug est-il armé ? (ce scénario exige --dev)`)
+    }
+    const cadrer = (x, y, z) => page.evaluate(({ x, y, z }) => {
+      const cam = window.__BRAISES__.scene.cameras.main
+      cam.stopFollow()
+      cam.setZoom(z)
+      cam.centerOn(x * 16, y * 16)
+    }, { x, y, z })
+    /** Toutes les sondes d'un lieu, d'un coup, dans la page — sur les sprites RÉELS. */
+    const mesurer = (z) => page.evaluate((z) => {
+      const vue = window.__BRAISES__.scene.view
+      const dans = (s) => s.tx >= z.x - 1 && s.tx <= z.x + z.w && s.ty >= z.y - 1 && s.ty <= z.y + z.h
+      const tous = (vue?.structures ?? []).filter(dans)
+      const rect = (s) => {
+        const sp = vue?.structureSprites?.get(s.id)
+        if (!sp) return null
+        const l = sp.x - sp.originX * sp.displayWidth
+        const t = sp.y - sp.originY * sp.displayHeight
+        return { l, t, r: l + sp.displayWidth, b: t + sp.displayHeight, alpha: sp.alpha, key: sp.texture ? sp.texture.key : '' }
+      }
+      const toits = tous.filter((s) => s.type === 'roof')
+      const sols = tous.filter((s) => s.type === 'floor')
+      // 1. LES TROUS — le sim fait foi : une case dallée d'une salle couverte sans toit dessus.
+      const aToit = new Set(toits.map((s) => `${s.tx},${s.ty}`))
+      const trous = sols.filter((s) => !aToit.has(`${s.tx},${s.ty}`)).map((s) => `${s.tx},${s.ty}`)
+      // 2. LA COUTURE SUD — deux bords mesurés : bas du plan de toit, crête de la façade sud
+      //    (les murs qui bordent la salle par le sud vivent sur la tuile EXTÉRIEURE, une rangée
+      //    sous la dernière rangée dallée ; leur sprite commence à la crête, on lit son top).
+      const rangs = [...toits, ...sols].map((s) => s.ty)
+      const bas = Math.max(...rangs)
+      const rToits = toits.map(rect).filter(Boolean)
+      const planToit = rToits.length
+        ? {
+            t: Math.min(...rToits.map((r) => r.t)), b: Math.max(...rToits.map((r) => r.b)),
+            l: Math.min(...rToits.map((r) => r.l)), r: Math.max(...rToits.map((r) => r.r)),
+          }
+        : null
+      const facadeSud = tous
+        .filter((s) => s.ty === bas + 1 && (s.type === 'wall' || s.type === 'door' || s.type === 'encadrement'))
+        .map((s) => ({ type: s.type, r: rect(s) }))
+        .filter((f) => f.r)
+      const creteSud = facadeSud.length ? Math.min(...facadeSud.map((f) => f.r.t)) : null
+      const couture = planToit && creteSud !== null ? creteSud - planToit.b : null
+      // 3. L'OCCLUSION DU MOBILIER — chaque sprite de mobilier, échantillonné au pas de 2 px,
+      //    doit tomber dans l'union de ce qui est vraiment OPAQUE (revue du 2026-08-10 : un
+      //    cadre de sprite n'est pas de la couverture). Sont donc écartés : les bandes E/O
+      //    (cadre surtout transparent), la porte et l'ENCADREMENT (huisserie PERCÉE — compter
+      //    leur cadre couvrirait ce qu'on voit à travers), et le toit RUINÉ (`st-roof-ruine`,
+      //    troué par construction). La mesure n'en devient que plus stricte, jamais plus lâche.
+      const MOBILIER = new Set(['atre', 'table', 'banc', 'paillasse', 'etagere', 'tonneau', 'chest', 'poutre'])
+      const couvre = [
+        ...rToits.filter((r) => r.alpha === 1 && !r.key.includes('ruine')),
+        ...facadeSud.filter((f) => f.type === 'wall').map((f) => f.r),
+      ]
+      const decouverts = {}
+      for (const s of tous) {
+        if (!MOBILIER.has(s.type)) continue
+        const r = rect(s)
+        if (!r) continue
+        let nus = 0
+        for (let px = r.l + 1; px < r.r; px += 2) {
+          for (let py = r.t + 1; py < r.b; py += 2) {
+            if (!couvre.some((c) => px >= c.l && px < c.r && py >= c.t && py < c.b)) nus++
+          }
+        }
+        if (nus > 0) decouverts[`${s.type}@${s.tx},${s.ty}`] = nus
+      }
+      // 4. LE FADE — l'alpha de chaque toit, réduit à l'ensemble de ses valeurs distinctes.
+      const alphas = [...new Set(rToits.map((r) => Math.round(r.alpha * 100) / 100))].sort()
+      return { nToits: toits.length, trous, planToit, creteSud, couture, decouverts, alphas }
+    }, z)
+
+    const lieux = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const out = []
+      for (const k of ['cabane', 'abri']) {
+        const z = (m.zones ?? []).find((q) => q.kind === k)
+        if (z) out.push({ kind: k, x: z.x, y: z.y, w: z.w, h: z.h })
+      }
+      return out
+    })
+    if (lieux.length < 2) console.error(`!! ${lieux.length} lieu(x) couvert(s) trouvé(s) — il faut la cabane ET l'abri`)
+
+    const tag = process.env.SMOKE_TAG ?? 'avant'
+    for (const z of lieux) {
+      const cx = z.x + z.w / 2
+      const cy = z.y + z.h / 2
+      // ── DEHORS : l'avatar au sud dans l'herbe, la caméra sur le lieu ──
+      await tp(cx, z.y + z.h + 3)
+      await cadrer(cx, cy, 4.5)
+      await page.waitForTimeout(900)
+      const dehors = await mesurer(z)
+      console.log(`\n── ${z.kind} (${z.w}×${z.h}) — ${dehors.nToits} toits ──`)
+      if (dehors.nToits === 0) {
+        // Un lieu BRÛLÉ ne pose légitimement aucun toit (le feu l'a pris) : sur une telle
+        // seed, les mesures de couverture n'ont pas d'objet — on le DIT au lieu de rougir.
+        console.log('   aucun toit — lieu brûlé sur cette seed : mesures de couverture sans objet')
+        continue
+      }
+      console.log(`   trous de couverture : ${dehors.trous.length ? dehors.trous.join(' ') : 'aucun'}`)
+      if (dehors.trous.length) console.error(`!! ${dehors.trous.length} case(s) de salle couverte SANS toit — le mobilier perce le chaume`)
+      if (dehors.couture !== null) {
+        console.log(`   couture sud : crête ${dehors.creteSud} − bas du toit ${dehors.planToit.b} = ${dehors.couture} px (attendu ∈ [−6, 0])`)
+        if (dehors.couture > 0) console.error(`!! JOUR entre le toit et la crête du mur sud (${dehors.couture} px) — le plan de toit est trop haut`)
+        else if (dehors.couture < -6) console.error(`!! le toit RECOUVRE la façade sud de ${-dehors.couture} px — un tapis au sol, pas un toit`)
+      } else {
+        // Une mesure qui n'existe pas se DIT (l'abri tourné, côté ouvert au sud : pas de
+        // façade sous le toit) — sinon son absence passerait pour un vert.
+        console.log('   couture sud : non mesurable — pas de façade au sud (côté ouvert ou lieu tourné)')
+      }
+      const nus = Object.entries(dehors.decouverts)
+      console.log(`   mobilier à découvert (dehors) : ${nus.length ? nus.map(([k, v]) => `${k} (${v} pts)`).join(' · ') : 'aucun'}`)
+      if (z.kind === 'cabane' && nus.length) console.error('!! ON VOIT LE MOBILIER DE LA CABANE DEPUIS DEHORS — le toit ne couvre pas son volume')
+      if (dehors.alphas.some((a) => a !== 1)) console.error(`!! toits non opaques depuis dehors : alphas ${JSON.stringify(dehors.alphas)}`)
+      await page.screenshot({ path: `${OUT}/toits-${tag}-${z.kind}-dehors.png` })
+      await cadrer(cx, cy, 2.6)
+      await page.waitForTimeout(500)
+      await page.screenshot({ path: `${OUT}/toits-${tag}-${z.kind}-dehors-moyen.png` })
+
+      // ── DEDANS : sous le toit, le couvert fond d'un coup ──
+      await tp(cx, cy)
+      await cadrer(cx, cy, 4.5)
+      await page.waitForTimeout(900)
+      const dedans = await mesurer(z)
+      console.log(`   alphas dedans : ${JSON.stringify(dedans.alphas)} (attendu [0.12])`)
+      if (dedans.alphas.length !== 1 || dedans.alphas[0] !== 0.12) console.error('!! le toit ne fond pas (ou pas entier) quand on est dessous')
+      await page.screenshot({ path: `${OUT}/toits-${tag}-${z.kind}-dedans.png` })
+
+      // ── RESSORTI : le couvert se referme ──
+      await tp(cx, z.y + z.h + 3)
+      await page.waitForTimeout(900)
+      const retour = await mesurer(z)
+      if (retour.alphas.some((a) => a !== 1)) console.error(`!! ressorti, le toit reste fondu : alphas ${JSON.stringify(retour.alphas)}`)
+    }
+  },
+
   async 'lieux-batis'(page) {
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
     await page.waitForTimeout(1200)

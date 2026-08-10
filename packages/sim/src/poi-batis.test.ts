@@ -119,6 +119,53 @@ describe('buildPoiStructures', () => {
   })
 
   /**
+   * LA SALLE COUVERTE L'EST ENTIÈREMENT — le toit se superpose au composant (la règle du jeu :
+   * « entièrement toité, l'enclume comprise »).
+   *
+   * Mesuré au navigateur avant la règle (smoke `toits`, 2026-08-10) : la paillasse et le
+   * coffre PERÇAIENT le chaume — 2 trous sur la cabane, 1 sur l'abri — et le coffre de la
+   * cabane se voyait depuis dehors, à travers son trou. La garde balaie des emplacements
+   * jusqu'à voir, pour CHAQUE plan couvert, un lieu au toit posé (le sort brûlé n'en a pas) :
+   * chaque case dallée porte alors un toit. Et un plan SANS `:` n'en pose jamais un seul —
+   * la règle ne déborde pas sur les lieux à ciel ouvert.
+   */
+  it('couvre toute la salle d’un plan couvert — et jamais un plan à ciel ouvert', () => {
+    const couvert = (plan: { grille: readonly string[] }): boolean => plan.grille.some((l) => l.includes(':'))
+    for (const [kind, plan] of Object.entries(PLANS)) {
+      let vuAvecToit = false
+      for (let pos = 10; pos <= 40 && !vuAvecToit; pos += 3) {
+        const map = createEmptyMap(64, 64, TERRAIN_GRASS)
+        const fp = footprintDe(kind)!
+        map.zones.push({ name: 'essai', x: pos, y: 10, w: fp, h: fp, kind })
+        const sim = createSim(7, { map })
+        buildPoiStructures(sim, 7)
+        const toits = new Set(sim.structures.filter((s) => s.type === 'roof').map((s) => `${s.tx},${s.ty}`))
+        if (!couvert(plan)) {
+          expect(toits.size, `${kind} est à ciel ouvert et pose ${toits.size} toit(s)`).toBe(0)
+          break // indépendant du sort : un seul emplacement suffit
+        }
+        // CEINTURE anti-brûlé : sur une carte vide, `sortDuLieu` rend toujours 'intact'
+        // (pas de cendre, pas de route) — cette branche ne joue donc jamais AUJOURD'HUI.
+        // Elle reste : si le sort venait à jouer ici, la garde chercherait plus loin au
+        // lieu d'échouer sur un lieu légitimement sans toit.
+        if (toits.size === 0) continue
+        vuAvecToit = true
+        const dallees = new Set(sim.structures.filter((s) => s.type === 'floor').map((s) => `${s.tx},${s.ty}`))
+        for (const s of sim.structures) {
+          if (s.type !== 'floor') continue
+          expect(toits.has(`${s.tx},${s.ty}`), `${kind} : la case dallée (${s.tx},${s.ty}) n’a pas de toit`).toBe(true)
+        }
+        // …et la RÉCIPROQUE (garde des deux sens) : un toit n'existe QUE sur une case dallée
+        // de la salle — jamais sur la cour (terre battue) ni hors du lieu. Sans elle, une
+        // règle qui déborderait sur l'enclos passerait au vert.
+        for (const t of toits) expect(dallees.has(t), `${kind} : un toit sans dallage sous lui en (${t})`).toBe(true)
+      }
+      // La garde prouve sa prémisse : si elle n'a vu que des lieux brûlés, elle n'a rien gardé.
+      if (couvert(plan)) expect(vuAvecToit, `${kind} : aucun emplacement essayé n’a donné un toit`).toBe(true)
+    }
+  })
+
+  /**
    * UNE SEULE BARRIÈRE PAR TUILE — l'invariant qui protège `structureAt` (appelé à 35 endroits)
    * et, avec lui, toute la collision indexée. Un angle est un mur à deux BITS, jamais deux murs
    * empilés.

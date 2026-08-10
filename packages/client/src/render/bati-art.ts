@@ -130,8 +130,12 @@ const originY = (ht: number): number => (ht + T + M) / (ht + T + 2 * M)
  *
  * Déclarée ICI, avant `PIECES` : l'encadrement de porte s'aligne dessus, et une `const` lue à la
  * construction du tableau ne pardonne pas d'être déclarée plus bas.
+ *
+ * EXPORTÉE (calage du 2026-08-10) : le LEVAGE du plan de toit (`snapshot-view`) se dérive
+ * d'elle — un toit se dessine à la crête du mur, donc exactement `MUR_HT` au-dessus de sa
+ * tuile. Si la hauteur des murs change, les toits suivent, ou rien ne se recoud.
  */
-const MUR_HT = 32
+export const MUR_HT = 32
 
 /**
  * LA LARGEUR D'UN JAMBAGE — DÉRIVÉE, jamais choisie.

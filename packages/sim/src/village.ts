@@ -326,7 +326,7 @@ const DEFAULT_ACCESS: Record<StructureType, AccessLevel> = parPiece((t) => piece
  *  VUE DÉRIVÉE : la capacité est une propriété de la pièce (`capacite`). */
 const CONTAINER_TYPES: Record<StructureType, number | undefined> = parPiece((t) => piece(t).capacite)
 
-export function structureAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
+export function structureAt(structures: readonly Structure[], tx: number, ty: number): Structure | undefined {
   return structures.find((s) => s.tx === tx && s.ty === ty)
 }
 
@@ -337,15 +337,15 @@ export function structureAt(structures: Structure[], tx: number, ty: number): St
  * que la collision et l'occupation regardent. `floorAt`/`roofAt` = les couches
  * molles, une de chaque au plus par tuile. Sol au ras du sol, toit au-dessus.
  */
-export function solidAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
+export function solidAt(structures: readonly Structure[], tx: number, ty: number): Structure | undefined {
   return structures.find((s) => s.tx === tx && s.ty === ty && s.type !== 'floor' && s.type !== 'roof')
 }
 
-export function floorAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
+export function floorAt(structures: readonly Structure[], tx: number, ty: number): Structure | undefined {
   return structures.find((s) => s.tx === tx && s.ty === ty && s.type === 'floor')
 }
 
-export function roofAt(structures: Structure[], tx: number, ty: number): Structure | undefined {
+export function roofAt(structures: readonly Structure[], tx: number, ty: number): Structure | undefined {
   return structures.find((s) => s.tx === tx && s.ty === ty && s.type === 'roof')
 }
 

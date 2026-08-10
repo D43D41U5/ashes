@@ -89,6 +89,11 @@ export function demolishTargetAt<S extends DemolishStructure>(
   wx: number,
   wy: number,
   playerId: number,
+  /** LE LEVAGE DU PLAN DE TOIT, EN TUILES (calage du 2026-08-10) : le sprite d'un toit se
+   *  dessine à la crête du mur, `MUR_HT` au-dessus de sa tuile — le toit qu'on VOIT sous le
+   *  curseur est donc celui de la tuile d'en dessous (`ty + leveToitTuiles`). L'appelant passe
+   *  la valeur DÉRIVÉE (`MUR_HT / TILE_PX`), jamais un nombre à lui ; 0 = couches au sol. */
+  leveToitTuiles = 0,
 ): S | undefined {
   // JE NE SAIS PAS ENCORE QUI JE SUIS → RIEN N'EST À MOI. Les ids d'entité commencent à 1
   // (`nextEntityId`), donc 0 ne désigne personne : c'est la valeur d'attente de `WorldScene`
@@ -116,9 +121,19 @@ export function demolishTargetAt<S extends DemolishStructure>(
     structures.find(
       (s) => s.tx === tx && s.ty === ty && (s.edges === undefined || s.edges === 0) && mien(s) && pred(s),
     )
+  // LE TOIT SE VISE OÙ IL SE VOIT. Son sprite étant levé, la tuile qu'il recouvre à l'écran est
+  // `leveToitTuiles` plus HAUT que la sienne — on résout donc le toit de la tuile d'en dessous.
+  // Sans ça, cliquer le chaume visible sélectionnait le toit deux rangées plus au sud, et le
+  // halo s'allumait 32 px au-dessus du curseur (revue du 2026-08-10 — le défaut « le curseur
+  // vise un billboard », réintroduit pour les toits par le levage). Le solide garde la main :
+  // dedans, le toit fond (alpha 0,12) et c'est bien le coffre qu'on voit et qu'on vise.
+  const toitVisible = (): S | undefined =>
+    structures.find(
+      (s) => s.tx === tx && s.ty === ty + leveToitTuiles && (s.edges === undefined || s.edges === 0) && mien(s) && s.type === 'roof',
+    )
   return (
     couche((s) => s.type !== 'floor' && s.type !== 'roof') ??
-    couche((s) => s.type === 'roof') ??
+    toitVisible() ??
     couche((s) => s.type === 'floor')
   )
 }

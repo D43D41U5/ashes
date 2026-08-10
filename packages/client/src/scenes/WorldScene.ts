@@ -57,8 +57,10 @@ import {
   type PerfMessage,
   EDGE_BITS,
   edgeBarrierAt,
+  floorAt,
   fullTileAt,
   poseLibre,
+  roofAt,
   chebyshev,
   fireRadius,
   piece,
@@ -81,6 +83,7 @@ import {
   VISIBLE_TILES_TALL,
   zoomForFraming,
 } from '../render/framing'
+import { MUR_HT } from '../render/bati-art'
 import { ambientTint, daylight, fireGlow, fireHoleRadius, lerpColor } from '../render/lighting'
 import { createWarp, type Warp } from '../render/warp'
 import {
@@ -452,6 +455,16 @@ export class WorldScene extends Phaser.Scene {
     if (piece(placing).arete !== 'interdite') {
       return edgeBarrierAt(this.view.structures, tx, ty, edge) === undefined
     }
+    // ═══ LES PIÈCES MOLLES SE SUPERPOSENT (R14, miroir d'`evaluateBuild`) ═══
+    //
+    // Le sol et le toit ne s'opposent qu'à un doublon de leur COUCHE — jamais au solide qu'ils
+    // coiffent (« entièrement toité, l'enclume comprise »), ni à un nœud (R5 : le mou passe),
+    // ni à quelqu'un dessous (couvrir une pièce habitée est le geste NORMAL du toit). Le miroir
+    // plein-tuile qui suit rougissait le fantôme de toit sur chaque case dallée ou meublée,
+    // alors que la sim acceptait la pose — relevé à la revue du calage des toits (2026-08-10).
+    const couche = piece(placing).occupe
+    if (couche === 'toit') return roofAt(this.view.structures, tx, ty) === undefined
+    if (couche === 'sol') return floorAt(this.view.structures, tx, ty) === undefined
     // Tuile LIBRE : ni structure PLEINE, ni ressource, ni personne dessus (miroir du sim).
     if (fullTileAt(this.view.structures, tx, ty)) return false
     if (!poseLibre(this.view.villages, this.view.nodes, tx, ty)) return false
@@ -1059,7 +1072,8 @@ export class WorldScene extends Phaser.Scene {
     const demolir = !overlay && getHud(this.registry, 'demolir') === true
     const curseur = demolir ? this.inputs.curseur(this.input.activePointer) : null
     const cible = curseur
-      ? demolishTargetAt(this.view.structures, curseur.x, curseur.y, this.playerId)
+      // Le levage du plan de toit, DÉRIVÉ (`MUR_HT / TILE_PX`) : le toit se vise où il se voit.
+      ? demolishTargetAt(this.view.structures, curseur.x, curseur.y, this.playerId, MUR_HT / TILE_PX)
       : undefined
     this.view.setDemolishTarget(
       cible?.id ?? null,

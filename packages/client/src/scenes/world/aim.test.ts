@@ -500,6 +500,16 @@ describe('demolishTargetAt — ce que le marteau détruirait', () => {
     }
   })
 
+  it('LE TOIT LEVÉ se vise où il se VOIT : `leveToitTuiles` au-dessus de sa tuile', () => {
+    // Un toit seul en (10,10). Levé de 2 tuiles, son chaume recouvre l'écran de la tuile
+    // (10,8) : c'est LÀ qu'on le vise — et plus sur sa tuile de sol, où l'on ne voit rien.
+    const toitSeul = [bati({ id: 7, type: 'roof' })]
+    expect(demolishTargetAt(toitSeul, 10.5, 8.5, MOI, 2)?.id).toBe(7)
+    expect(demolishTargetAt(toitSeul, 10.5, 10.5, MOI, 2)).toBeUndefined()
+    // Sans levage (la valeur par défaut), le comportement d'avant : sa propre tuile.
+    expect(demolishTargetAt(toitSeul, 10.5, 10.5, MOI)?.id).toBe(7)
+  })
+
   it('le FEU d’un village ne se vise pas ; le feu de camp LIBRE, si', () => {
     // La sim refuse le premier (« un Feu ne s’éteint pas ») : ne pas l'offrir du tout.
     expect(demolishTargetAt([bati({ id: 1, type: 'fire', villageId: 3 })], 10.5, 10.5, MOI)).toBeUndefined()

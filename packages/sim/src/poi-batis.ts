@@ -79,6 +79,11 @@ export interface Plan {
 interface Case { region?: 'salle' | 'cour'; piece?: StructureType; toit?: boolean; noeud?: NodeType }
 const LEGENDE: Record<string, Case> = {
   '.': { region: 'salle' }, //                      le dallage
+  // UN SEUL `:` COUVRE TOUTE LA SALLE (calage du 2026-08-10) : la couverture est une affaire
+  // de PLAN, pas de case — une salle ne se couvre pas à moitié autour de son mobilier. Mesuré
+  // au navigateur avant la règle : la paillasse et le coffre PERÇAIENT le chaume (2 trous sur
+  // la cabane, 1 sur l'abri, smoke `toits`). Le toit se superpose au composant — c'est la
+  // règle du jeu (construction : « entièrement toité, l'enclume comprise »).
   ':': { region: 'salle', toit: true }, //          le dallage, encore couvert
   ',': { region: 'cour' }, //                       l'enclos, plein air
   A: { region: 'salle', piece: 'atre' },
@@ -463,6 +468,10 @@ export function buildPoiStructures(state: SimState, seed: number): void {
     const seuils = new Set((plan.seuils ?? []).map(tournee))
     const passages = new Set((plan.passages ?? []).map(tournee))
 
+    // LA SALLE EST-ELLE COUVERTE ? Un seul `:` dans la grille le dit (cf. LEGENDE) : chaque
+    // case de la salle portera alors son toit, le mobilier compris. `.` seul = à ciel ouvert.
+    const couverte = plan.grille.some((ligne) => ligne.includes(':'))
+
     // ── 1. LE SOL ET LE CONTENU ──
     for (let ry = 0; ry < n; ry++) {
       for (let rx = 0; rx < n; rx++) {
@@ -478,7 +487,7 @@ export function buildPoiStructures(state: SimState, seed: number): void {
         // LE FEU A PRIS LE TOIT ET LE MOBILIER : un lieu brûlé ne garde que la pierre — l'âtre
         // debout au milieu des murs calcinés, l'image même de la ferme incendiée. Les pillards,
         // eux, n'emportent que les CONTENANTS (coffre, tonneau, étagère) : le reste se regarde.
-        if (c.toit && sort !== 'brule') poser(state, 'roof', tx, ty, usure)
+        if ((c.toit || (couverte && c.region === 'salle')) && sort !== 'brule') poser(state, 'roof', tx, ty, usure)
         if (c.piece && !pieceRetiree(c.piece, sort)) poser(state, c.piece, tx, ty, usure)
         // Le nœud vient APRÈS le sol : il se pose SUR la terre battue, il ne la remplace pas.
         if (c.noeud) semer(state, c.noeud, tx, ty, sort)
