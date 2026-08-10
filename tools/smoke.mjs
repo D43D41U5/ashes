@@ -7203,6 +7203,25 @@ const SCENARIOS = {
     if (avant.fautes > 0) console.error('!! la cabane du dépôt ne devrait porter AUCUNE faute')
     await page.screenshot({ path: `${OUT}/atelier-cabane.png` })
 
+    // ── L'AIDE CONTEXTUELLE (demande d'Alexis) : la bande explique l'outil actif, le
+    //    survol d'une pièce de palette la remplace par le sens EN JEU, « ? » ouvre la
+    //    référence complète. ──
+    const aideRepos = await page.evaluate(() => document.getElementById('aide').textContent)
+    console.log(`bande d'aide (repos) : ${(aideRepos ?? '').slice(0, 60)}…`)
+    if (!(aideRepos ?? '').startsWith('PEINDRE')) console.error('!! la bande d’aide ne décrit pas l’outil actif')
+    await page.hover('#palette .tuile:nth-child(11)') // le coffre K — « part au pillage »
+    await page.waitForTimeout(200)
+    const aideK = await page.evaluate(() => document.getElementById('aide').textContent)
+    if (!(aideK ?? '').includes('pillage')) console.error(`!! le survol de palette n’explique pas la pièce (« ${(aideK ?? '').slice(0, 50)} »)`)
+    else console.log(`survol du coffre : ${(aideK ?? '').slice(0, 60)}…`)
+    await page.mouse.move(10, 400) // on quitte la palette
+    await page.keyboard.press('?')
+    await page.waitForTimeout(200)
+    const panneauVisible = await page.evaluate(() => document.getElementById('aide-panneau').style.display !== 'none')
+    if (!panneauVisible) console.error('!! « ? » n’ouvre pas la référence')
+    await page.screenshot({ path: `${OUT}/atelier-aide.png` })
+    await page.keyboard.press('Escape')
+
     // ── L'AVATAR DEDANS : les VRAIES règles (nappe, pans) effacent toit et façade. ──
     await page.click('#dedans')
     await page.waitForTimeout(900)

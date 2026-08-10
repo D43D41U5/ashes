@@ -12,8 +12,15 @@
       html, body { margin: 0; padding: 0; background: #14110d; color: #d8d2c6; font: 13px/1.45 ui-monospace, monospace; height: 100%; }
       #app { display: grid; height: 100vh; box-sizing: border-box;
         grid-template-columns: 300px 1fr 252px;
-        grid-template-rows: auto 1fr auto;
-        grid-template-areas: "tb tb tb" "gauche centre droite" "sb sb sb"; }
+        grid-template-rows: auto 1fr auto auto;
+        grid-template-areas: "tb tb tb" "gauche centre droite" "aide aide aide" "sb sb sb"; }
+      /* LA BANDE D'AIDE (demande d'Alexis) : ce qui est sous la main, expliqué en continu —
+         l'outil actif par défaut, le contrôle ou la pièce survolés sinon. */
+      #aide { grid-area: aide; padding: 5px 14px; background: #191510; border-top: 1px solid #2e2820; color: #b8a888; font-size: 12px; min-height: 17px; }
+      #aide-panneau { position: fixed; inset: 8% 18%; z-index: 10; overflow-y: auto; background: #1b1712; border: 1px solid #6a5426; border-radius: 8px; padding: 18px 26px; box-shadow: 0 12px 40px rgba(0,0,0,0.6); cursor: pointer; }
+      #aide-panneau h3 { color: #e8b34a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; margin: 14px 0 4px; }
+      #aide-panneau h3:first-child { margin-top: 0; }
+      #aide-panneau p { margin: 3px 0; color: #d8d2c6; max-width: 90ch; }
       #toolbar { grid-area: tb; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 12px; background: #1b1712; border-bottom: 1px solid #2e2820; }
       #gauche { grid-area: gauche; padding: 10px 14px; background: #1b1712; border-right: 1px solid #2e2820; overflow-y: auto; }
       #centre { grid-area: centre; display: grid; place-items: center; overflow: auto; padding: 10px; }
@@ -98,6 +105,8 @@
           <label><input id="c-regions" type="checkbox" /> régions</label>
           <label><input id="c-grille" type="checkbox" checked /> grille</label>
         </span>
+        <span style="margin-left:auto"></span>
+        <button id="aide-btn" title="la référence complète de l'éditeur (touche ?)">? aide</button>
       </div>
 
       <aside id="gauche">
@@ -158,6 +167,7 @@
         <div id="etat"></div>
       </aside>
 
+      <div id="aide"></div>
       <div id="statusbar">
         <span id="sb-pos"></span>
         <span id="sb-fautes" class="ok"></span>
@@ -167,6 +177,7 @@
         <button id="tester" title="ouvre la Veillée dev et téléporte au premier exemplaire du lieu">▶ tester en jeu</button>
       </div>
     </div>
+    <div id="aide-panneau" style="display:none"></div>
     <script type="module" src="/src/atelier/main.ts"></script>
   </body>
 </html>

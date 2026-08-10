@@ -40,6 +40,7 @@ import {
   type Fragment, type Zone,
 } from './selection'
 import { autoPermis, exporterPlanche, rendrePlanche, type Variante } from './vignettes'
+import { aidePalette, brancherAide, montrerAide, reposAide } from './aide'
 
 /** La marge d'herbe autour du plan sur la carte d'essai — les murs du pourtour vivent sur
  *  la tuile EXTÉRIEURE, il leur faut au moins une rangée, et l'œil respire avec deux. */
@@ -385,6 +386,10 @@ function construirePalette(): void {
       kbd.textContent = String((i + 1) % 10)
       tuile.appendChild(kbd)
     }
+    // L'AIDE de la pièce : son sens EN JEU, dans la bande au survol, en bulle au repos.
+    tuile.title = aidePalette(car)
+    tuile.addEventListener('mouseenter', () => montrerAide(aidePalette(car)))
+    tuile.addEventListener('mouseleave', reposAide)
     tuile.addEventListener('click', () => {
       etat.car = car
       construirePalette()
@@ -1116,6 +1121,7 @@ for (const bouton of document.querySelectorAll<HTMLButtonElement>('[data-redim]'
 
 construirePalette()
 construireTampons()
+brancherAide(() => etat.outil) //  la bande d'aide : l'outil actif au repos, le survolé sinon
 void charger().catch((e: Error) => message(`✗ chargement : ${e.message} — l'Atelier exige le serveur de dev (pnpm dev)`))
 
 // LA SONDE DU SMOKE (A9) : l'état se LIT, et « peindre » passe par le même chemin que la
