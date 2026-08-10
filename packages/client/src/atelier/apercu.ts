@@ -8,11 +8,14 @@
  * aperçu, et c'est le seul endroit où un dessin hors-Phaser reste honnête.
  */
 import { albedosAtelier } from '../render/bati-art'
+import { albedosPoiAtelier } from '../render/poi-lit'
 
 const T = 16
 
 /** Les albédos, dessinés UNE fois par page. */
 const ALBEDOS = albedosAtelier()
+/** Ceux des CORPS DE LIEUX (étage 3) — le grand art poi-*, écrasé en icône. */
+const ALBEDOS_POI = albedosPoiAtelier()
 
 /** La vignette d'un caractère de palette : l'albédo de sa pièce s'il en a un, la teinte de
  *  sa région sinon — la palette montre ce que la case DONNERA, pas un aplat arbitraire.
@@ -27,7 +30,8 @@ export function vignette(piece: string | undefined, region: string | undefined, 
   g.fillStyle = region === 'salle' ? '#4a3a28' : region === 'cour' ? '#54452e' : region === 'antre' ? '#4e4e58' : '#2a2e26'
   g.fillRect(0, 0, T, T)
   if (piece) {
-    const a = ALBEDOS.get(`st-${piece}`)
+    // Le bâti d'abord (st-*), le corps de lieu en repli (poi-*) — même écrasement.
+    const a = ALBEDOS.get(`st-${piece}`) ?? ALBEDOS_POI.get(piece)
     if (a) {
       const k = Math.min(T / a.width, T / a.height)
       g.drawImage(a, (T - a.width * k) / 2, T - a.height * k, a.width * k, a.height * k)

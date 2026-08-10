@@ -270,7 +270,9 @@ export const POI_TYPES: PoiType[] = [
    * était inatteignable sous ce `minElev` — une ligne qui mentait.
    */
   { slug: 'belvedere', zones: ['alpages', 'aiguilles'], name: 'le Belvédère', family: 'reward', biomes: [SCREE, ROCK], minElev: 0.66, weight: 3, cap: 4, reserve: 1, footprint: 2 },
-  { slug: 'grotte', zones: ['karst', 'gouffre'], name: 'la Grotte', family: 'reward', biomes: [ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 2 },
+  // Élargie 2→3 à la promotion en plan (étage 3, le précédent des sept de l'étage 1) —
+  // sous garde de recensement : si la Grotte cesse de naître (A19), on resserre.
+  { slug: 'grotte', zones: ['karst', 'gouffre'], name: 'la Grotte', family: 'reward', biomes: [ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 3 },
   { slug: 'cascade', zones: ['alpages', 'karst', 'aiguilles'], name: 'la Cascade', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.4, weight: 2, cap: 4, reserve: 1, footprint: 2 },
   { slug: 'erratique', zones: ['pres_bas', 'alpages', 'ruines'], name: 'le Bloc erratique', family: 'reward', biomes: [BOULDERS, AL_MEADOW, GRASS, FLOWER], weight: 4, cap: 5, reserve: 1, footprint: 2 },
   { slug: 'arbre', zones: ['sylve'], name: "l'Arbre remarquable", family: 'reward', biomes: [OLD_GROWTH], weight: 2, cap: 3, reserve: 1, footprint: 2 },

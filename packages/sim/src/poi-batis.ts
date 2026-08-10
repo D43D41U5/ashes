@@ -96,6 +96,35 @@ export const LEGENDE: Record<string, Case> = {
   e: { piece: 'eboulis' }, //     les pierres croulées — plein-tuile bas, on l'enjambe
   Y: { noeud: 'tree' }, //        un VRAI arbre récoltable, semé par le plan (jamais du décor)
   B: { noeud: 'berry_bush' }, //  un vrai buisson à baies — le sort module son stock (patron g/G)
+  // ── ÉTAGE 3 — LES CORPS DE LIEUX (spec lieux-batis, décision d'Alexis 2026-08-10) ──
+  // Chaque sprite de POI est une pièce posable (`art: 'poi'` au registre) : l'ancre occupe
+  // sa tuile, le sprite déborde. CHARSET : jamais `#` ; jamais les minuscules `s` ni `i`
+  // (garde d'épellation — `usure`/`sort` et `grille`/`fixe` deviendraient épelables) ;
+  // un seul code-unit UTF-16 (rotate() et l'Atelier indexent par unité).
+  J: { piece: 'gisement' }, //      les déblais Jetés en tas — la fouille à ciel ouvert
+  Q: { piece: 'carriere' }, //      le front de taille éQuarri
+  S: { piece: 'saline' }, //        la croûte de Sel au sol
+  f: { piece: 'verger' }, //        les arbres Fruitiers retournés au sauvage
+  u: { piece: 'taniere' }, //       le terrier — le troU de terre remuée
+  h: { piece: 'repaire' }, //       la Hutte de peaux d'un repaire
+  v: { piece: 'fondriere' }, //     la Vase qui happe le pas
+  z: { piece: 'crevasses' }, //     le Zigzag des fentes dans la roche
+  X: { piece: 'charnier' }, //      les os croisés d'une fosse
+  V: { piece: 'filon' }, //         la Veine de fer qui affleure
+  c: { piece: 'chene' }, //         le Chêne ancien, seul et immense
+  D: { piece: 'tour_guet' }, //     le Donjon effondré d'une tour de guet
+  I: { piece: 'pierre_levee' }, //  le menhir — la silhouette même du I
+  d: { piece: 'belvedere' }, //     les Dalles en gradins d'un belvédère
+  n: { piece: 'grotte' }, //        le porche — la forme même du n
+  j: { piece: 'cascade' }, //       le Jet qui tombe
+  Z: { piece: 'erratique' }, //     le bloc égaré — la dernière lettre, loin de sa montagne
+  W: { piece: 'arbre' }, //         le vieil arbre aux maîtresses branches en W
+  k: { piece: 'cairn' }, //         le tas de « kailloux » qui marque le chemin
+  H: { piece: 'sanctuaire' }, //    le trilithe — deux montants, un linteau : un H
+  w: { piece: 'source_chaude' }, // les vaguelettes de l'eau qui frémit
+  N: { piece: 'arche' }, //         deux piédroits, une voûte — le grand n
+  O: { piece: 'tarn' }, //          l'œil d'eau rond
+  y: { piece: 'petroglyphes' }, //  le bonhomme gravé aux bras levés
 }
 
 /**
@@ -384,7 +413,14 @@ export function batirLieu(state: SimState, plan: Plan, x0: number, y0: number, s
  * ne retire rien.
  */
 // Le MINÉRAL survit au feu (étage 2) : sans quoi un antre brûlé perdrait ses blocs de pierre.
-const SURVIT_AU_FEU = new Set<StructureType>(['atre', 'autel', 'mur_bas', 'rocher', 'eboulis'])
+const SURVIT_AU_FEU = new Set<StructureType>([
+  'atre', 'autel', 'mur_bas', 'rocher', 'eboulis',
+  // Les corps de lieux (étage 3) : le minéral, la terre et l'eau restent après le feu —
+  // seuls brûlent le bois vif (verger, chene, arbre) et la hutte de peaux (repaire).
+  'gisement', 'carriere', 'saline', 'taniere', 'fondriere', 'crevasses', 'charnier', 'filon',
+  'tour_guet', 'pierre_levee', 'belvedere', 'grotte', 'cascade', 'erratique', 'cairn',
+  'sanctuaire', 'source_chaude', 'arche', 'tarn', 'petroglyphes',
+])
 function pieceRetiree(type: StructureType, sort: SortDuLieu): boolean {
   if (sort === 'brule') return !SURVIT_AU_FEU.has(type)
   if (sort === 'pille') return type === 'chest' || type === 'tonneau' || type === 'etagere'

@@ -15,6 +15,7 @@ import {
   noeudDefriche,
   forageRichness,
   sentinelOf,
+  POI_BODY_TYPES,
   STRUCTURE_HP,
   WALL_TIERS,
   treeJitter,
@@ -80,6 +81,8 @@ import { BATI_LIT_TYPES, COUPE_DE, EDGE_ORIGIN_Y, MUR_HT, RUINE_SEUIL } from '..
 import { creerPortesAnimees } from '../../render/porte-anim'
 import { calculerNappe, calculerPans, pansTombes } from '../../render/pans'
 import { LIT_STRUCTURE_TYPES } from '../../render/lit-structures'
+import { POI_ART, poiCrownKey, poiTextureKey } from './poi-art'
+import { erratiqueVariantFor, litErratiqueKey, POI_LIT_KINDS, poiLitCrownKey, poiLitKey } from '../../render/poi-lit'
 import { shakeOffset, type HitFx } from './hit-fx'
 import type { InteractTarget } from './aim'
 import type { RecolteFx } from './recolte-fx'
@@ -102,6 +105,26 @@ const AIM_TINT_FAR = 0x8a8a92
  * Hors de portée, elle retombe sur le gris de visée : le geste est perdu d'avance.
  */
 const DEMOLISH_TINT = 0xff3a2a
+
+/**
+ * LES CORPS DE LIEUX (spec lieux-batis, étage 3) — les pièces dont l'art est le SPRITE DE
+ * POI du même nom, DÉRIVÉES du registre (`art: 'poi'`), jamais recopiées ici. Leur clé de
+ * naissance est `poi-<slug>`, pas `st-<slug>` : on ne redessine pas une grotte en 16 px.
+ */
+const POI_BODY = new Set<string>(POI_BODY_TYPES)
+/** Les corps à COURONNE (partie haute triée en bande houppier) — dérivés de l'ART. */
+const POI_BODY_CROWN = new Map(POI_ART.filter((a) => POI_BODY.has(a.slug) && a.crown !== undefined).map((a) => [a.slug, a]))
+
+/**
+ * La clé de texture d'un corps de lieu — le pendant structure de ce que `poi-layer` fait
+ * pour les lieux du monde. L'erratique n'a pas de `_lit` unique : trois VARIANTES, choisies
+ * par la POSITION (patron de la friche) — deux blocs d'un même plan ne se ressemblent pas.
+ */
+function poiBodyKey(s: { type: string; tx: number; ty: number }, lighting: boolean): string {
+  if (lighting && s.type === 'erratique') return litErratiqueKey(erratiqueVariantFor(s.tx * 31 + s.ty * 131))
+  if (lighting && POI_LIT_KINDS.has(s.type)) return poiLitKey(s.type)
+  return poiTextureKey(s.type)
+}
 
 /**
  * LE CONTOUR DE CE AVEC QUOI ON PEUT INTERAGIR (demande d'Alexis, 2026-08-03) — blanc, et
@@ -350,6 +373,7 @@ const PAN_DISTANCE_TUILES = 2
 /** La demi-épaisseur d'une bande d'arête, en tuiles — DÉRIVÉE de l'équilibrage, comme le
  *  dessin (`bati-art`) et la collision (`collision.ts`). Trois lectures, une seule source. */
 
+
 export class SnapshotView {
   /** Dernier état reçu — lu par la prédiction (collisions) et les inputs. */
   structures: Structure[] = []
@@ -502,6 +526,9 @@ export class SnapshotView {
   interpDelayMs = INTERP_DELAY_DEFAULT_MS
 
   private structureSprites = new Map<number, Phaser.GameObjects.Image>()
+  /** Les COURONNES des corps de lieux (étage 3) — la partie haute d'une grotte ou d'une
+   *  arche, triée en bande houppier pour n'être recouverte ni par un toit ni par une cime. */
+  private poiCrownSprites = new Map<number, Phaser.GameObjects.Image>()
   /** Pool d'étiquettes flottantes « Forge · N2 » (spec construction R22). */
   private functionLabels: Phaser.GameObjects.Text[] = []
   /** Sprites de nœuds POOLÉS, culled à la vue : la carte porte ~60k nœuds, on
@@ -1094,7 +1121,10 @@ export class SnapshotView {
         // TAPIS : couture mesurée à −34 px — le toit recouvrait la façade au lieu de la
         // coiffer, et la face grise du mur nord dominait le lieu.
         const leve = isRoof ? MUR_HT : 0
-        sprite = this.scene.add.image(a.px, a.py - lift - leve, `st-${s.type}`).setOrigin(0.5, 1).setDepth(depth)
+        // Un CORPS DE LIEU naît avec sa clé POI — `st-grotte` n'existe pas, et Phaser
+        // rendrait le damier magenta dès la première frame.
+        const cle = POI_BODY.has(s.type) ? poiBodyKey(s, this.lighting) : `st-${s.type}`
+        sprite = this.scene.add.image(a.px, a.py - lift - leve, cle).setOrigin(0.5, 1).setDepth(depth)
         this.structureSprites.set(s.id, sprite)
       }
       sprite.setLighting(this.lighting) // couche 1 : murs, portes, ateliers… éclairés (pooled → chaque frame)
@@ -1102,6 +1132,30 @@ export class SnapshotView {
       // la porte (autotile re-texturé plus bas) et le feu (swap dédié) ont leurs propres chemins.
       if (LIT_STRUCTURE_TYPES.has(s.type) || BATI_LIT_TYPES.has(s.type)) {
         sprite.setTexture(this.lighting ? `st-${s.type}_lit` : `st-${s.type}`)
+      }
+      // Le CORPS DE LIEU bascule sur ses clés poi-* — jamais via BATI_LIT_TYPES, qui
+      // demanderait un `st-<type>_lit` que ce chantier existe à ne pas dessiner.
+      if (POI_BODY.has(s.type)) {
+        sprite.setTexture(poiBodyKey(s, this.lighting))
+        const art = POI_BODY_CROWN.get(s.type)
+        if (art !== undefined) {
+          let cr = this.poiCrownSprites.get(s.id)
+          if (!cr) {
+            const a = tileFeetAnchor(s.tx, s.ty, TILE_PX)
+            const lift = this.warp?.lift(s.tx + 0.5, s.ty + 1) ?? 0
+            // La couronne coiffe le corps : origin (0.5, 0) posée au SOMMET du sprite
+            // (gabarit poi-layer), DANS la bande des cimes (CROWN_BASE 900 000, triée au
+            // même Y qu'elles) — sous peine d'être mangée par les toits (800 000) et les
+            // houppiers voisins. (Le halo de démolition ne la recopie pas : inatteignable
+            // aujourd'hui — un corps naît ownerId 0, la visée de démolition l'exclut — à
+            // reprendre si un corps devient jamais démolissable.)
+            cr = this.scene.add.image(a.px, a.py - lift - art.h, poiCrownKey(s.type))
+              .setOrigin(0.5, 0).setDepth(crownDepth(s.ty + 1, TILE_PX))
+            this.poiCrownSprites.set(s.id, cr)
+          }
+          cr.setLighting(this.lighting)
+          cr.setTexture(this.lighting && POI_LIT_KINDS.has(s.type) ? poiLitCrownKey(s.type) : poiCrownKey(s.type))
+        }
       }
       if (s.type === 'cloture') {
         // La clôture prend la texture qui CONNECTE ses voisines : poteau au centre, lisses
@@ -1265,6 +1319,12 @@ export class SnapshotView {
         const stage = cropStage(s, this.tick) // -1 = vide, 0 → 1 en pousse
         if (stage < 0) sprite.clearTint()
         else sprite.setTint(Phaser.Display.Color.GetColor(Math.floor(150 - 44 * stage), Math.floor(150 + 95 * stage), Math.floor(90 - 30 * stage)))
+      } else if (POI_BODY.has(s.type)) {
+        // LE CORPS D'UN LIEU N'EST NI « VIEUX » NI « ENDOMMAGÉ » : son albédo poi-lit est
+        // calibré par la DA, et PoiLayer ne l'a jamais teinté — la teinte « vieille »
+        // (villageId 0, assombrie et délavée) l'écraserait. Non-usurable, il resterait à
+        // PV pleins de toute façon ; une garde LISIBLE vaut mieux qu'un accident de plein-PV.
+        sprite.clearTint()
       } else {
         // LE SEUIL NE SUIT PLUS SON MUR — il reste DEBOUT (décision d'Alexis, 2026-07-30 :
         // « idem pour un encadrement de porte sans porte »). Il tombait avec son pan, comme la
@@ -1321,6 +1381,12 @@ export class SnapshotView {
       if (!seen.has(id)) {
         sprite.destroy()
         this.structureSprites.delete(id)
+      }
+    }
+    for (const [id, cr] of this.poiCrownSprites) {
+      if (!seen.has(id)) {
+        cr.destroy()
+        this.poiCrownSprites.delete(id)
       }
     }
     if (!haloVu) this.demolishHalo?.setVisible(false)

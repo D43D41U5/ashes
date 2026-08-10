@@ -191,6 +191,7 @@ export {
   PIECES,
   STRUCTURE_TYPES,
   BARRIER_TYPES,
+  POI_BODY_TYPES,
   FONCTION_LABEL,
   FONCTION_NOM,
   nomExigence,
@@ -205,7 +206,7 @@ export {
   matieresDe,
   matiereChiffre,
 } from './pieces'
-export type { PieceDef, Famille, Pose, Occupe, Arete, Bloque, Exigence, StationFonction, Matiere } from './pieces'
+export type { PieceDef, Famille, Pose, Occupe, Arete, Bloque, Exigence, StationFonction, Matiere, PoiBodyType } from './pieces'
 
 // ─── L'inventaire : la case active, ce qu'on tient VRAIMENT en main (R8-R9) ─
 export { applyInventoryAction, heldSlot, wearHeld, isInventoryAction } from './inventory-actions'

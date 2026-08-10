@@ -16,6 +16,7 @@
  * grosses qu'un caillou de 16 px, sinon la normale grouille) y est intégré.
  */
 import type Phaser from 'phaser'
+import { POI_BODY_TYPES } from '@ashes/sim'
 // LA RECETTE VIT DANS normal-map.ts (spec da-feeling R1) — la recopie « volontaire » de
 // l'en-tête est morte : l'A/B de lit-props est tranché et commité, on importe.
 import { type Crack, mirrorCanvas, newCanvas, normalFromCanvas, registerLit as register, walkPath } from './normal-map'
@@ -226,6 +227,30 @@ export function generateLitPois(scene: Phaser.Scene): void {
       register(scene, poiLitCrownKey(d.slug), crop(alb.c), crop(nrm))
     }
   }
+}
+
+/**
+ * LES ALBÉDOS POUR L'ATELIER — canvas PURS, zéro Phaser : la vignette 16 px du picker en a
+ * besoin AVANT que le mini-jeu ne tourne (le pendant poi-* de `albedosAtelier` côté bâti).
+ * Pas de normale ici (une icône ne s'éclaire pas), l'ombre de contact si — c'est elle qui
+ * assoit la silhouette. L'erratique n'a pas de def : sa première variante fait l'icône.
+ */
+export function albedosPoiAtelier(): Map<string, HTMLCanvasElement> {
+  const corps = new Set<string>(POI_BODY_TYPES)
+  const m = new Map<string, HTMLCanvasElement>()
+  for (const d of POI_LIT_DEFS) {
+    if (!corps.has(d.slug)) continue //  les kinds bâtis ont leur pièce bati-art : hors sujet ici
+    const alb = newCanvas(d.w, d.h)
+    drawErratic(alb.ctx, d)
+    shadeErratic(alb.ctx, d)
+    m.set(d.slug, alb.c)
+  }
+  const v = ERRATIQUES[0]!
+  const alb = newCanvas(ERRATIQUE_SIZE, ERRATIQUE_SIZE)
+  drawErratic(alb.ctx, v)
+  shadeErratic(alb.ctx, v)
+  m.set('erratique', alb.c)
+  return m
 }
 
 const SHADOW = { color: '#000000', alpha: 0.26, h: 2, overhang: 1, minW: 5 } as const

@@ -844,6 +844,32 @@ describe('l’eau peu profonde est inconstructible, sauf le sol', () => {
     paroi: false,
     rocher: false,
     eboulis: false,
+    // Les corps de lieux (étage 3) : aucun ne porte sa propre assise — même le tarn est
+    // une pièce POSÉE SUR terre ferme, pas une pièce qui tient sur l'eau libre.
+    gisement: false,
+    carriere: false,
+    saline: false,
+    verger: false,
+    taniere: false,
+    repaire: false,
+    fondriere: false,
+    crevasses: false,
+    charnier: false,
+    filon: false,
+    chene: false,
+    tour_guet: false,
+    pierre_levee: false,
+    belvedere: false,
+    grotte: false,
+    cascade: false,
+    erratique: false,
+    arbre: false,
+    cairn: false,
+    sanctuaire: false,
+    source_chaude: false,
+    arche: false,
+    tarn: false,
+    petroglyphes: false,
   }
   const TOUS = Object.keys(SUR_LE_GUE) as StructureType[]
 

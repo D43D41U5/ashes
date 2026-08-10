@@ -1,0 +1,16 @@
+# ═══ LA GROTTE — la masse rocheuse et sa gueule ═══
+#
+# Le PREMIER lieu promu de l'étage 3 : son corps est son SPRITE (`n`, pièce `art: 'poi'`),
+# l'ancre bloque la tuile de la gueule. La masse au-delà se complète aux ROCHERS — cachés
+# sous le grand art (le sprite déborde et les recouvre : ils donnent la COLLISION, lui donne
+# la silhouette). La gueule est AU PIED du plan : les pieds du sprite retombent au bas de
+# l'empreinte (l'assise qu'avait le sprite de poi-layer), et les rochers — rangées nord,
+# donc DERRIÈRE au tri Y — disparaissent sous le grand art. Les COINS restent vides : la
+# masse est ARRONDIE, un rocher d'angle perçait par les coins transparents du sprite — et
+# un coin visuellement vide qui bloque serait un mur invisible. On arrive devant la gueule,
+# au sud, jamais dedans — le souterrain reste différé (décision 2026-07-27).
+usure: 1
+grille:
+·R·
+RRR
+·n·

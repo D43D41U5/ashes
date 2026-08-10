@@ -126,3 +126,51 @@ plan et modulés par le sort (le patron des gravats). Légende : `r` roc/antre, 
   (tout caractère de légende a un thème ET une aide) ; les raccourcis suivent l'ordre lu.
 - **N7** — un plan d'essai (brouillon) mêlant antre, rochers, éboulis et nœuds végétaux se
   bâtit, se valide, se rend — capturé au smoke.
+
+## Étage 3 — les corps de lieux (décision d'Alexis, 2026-08-10)
+
+« Transforme tous les sprites de POI en structures posables comme les autres structures. »
+C'est la décision différée « corps solide des POI naturels » (S-R13) qui s'ouvre — et elle
+s'ouvre par la CAPACITÉ, pas par le monde : chaque sprite-corps devient une pièce du registre
+(`art: 'poi'`), posable dans les `.plan` par un caractère de légende. Le monde, lui, ne bouge
+pas tant qu'aucun plan n'emploie ces caractères (le registre et la légende sont inertes —
+`buildPoiStructures` ne bâtit que `PLANS[kind]`, et `poi-batis` ne tire rien sur le PRNG).
+
+### Le contrat
+
+- **24 pièces** (les kinds de `POI_ART` moins `BUILT_KINDS` moins les set-pieces), toutes
+  `pose: 'monde'`, `occupe: 'tuile'`, `usurable: false` — la nature ne s'use pas à l'échelle
+  d'une saison. `StructureType` suit (dérivé), `POI_BODY_TYPES` est la projection exportée.
+- **Solidité PAR NATURE** (décision d'Alexis) : les masses debout bloquent leur ancre
+  (grotte, erratique, arche, pierre levée, tour de guet, belvédère, sanctuaire, chêne,
+  arbre, cairn, filon, carrière, cascade, pétroglyphes, source chaude, repaire) ; les traces
+  au sol s'enjambent (saline, tarn, fondrière, charnier, gisement, tanière, crevasses,
+  verger). L'ANCRE occupe UNE tuile : le sprite déborde et le débord se traverse — la masse
+  au-delà se complète aux rochers/parois du plan (précédent : la charrette).
+- **L'art reste le sprite du lieu** : la clé de naissance est `poi-<slug>` (poi-art), la
+  nuit `poi-<slug>_lit` (poi-lit ; l'erratique tire une de ses trois variantes par sa
+  position), la partie haute est portée en COURONNE (bande houppier — sans elle un sprite
+  de plus de ~44 px se fait recouvrir par les cimes voisines et les toits). Jamais de
+  redessin `st-<slug>` dans bati-art — gardé par test.
+- **Le feu** : le minéral, la terre et l'eau survivent (`SURVIT_AU_FEU`) ; brûlent le bois
+  vif (verger, chêne, arbre) et la hutte de peaux (repaire).
+- **La légende** : un caractère par pièce, mnémonique français, jamais `#`, jamais les
+  minuscules `s`/`i` (garde d'épellation), un seul code-unit UTF-16.
+- **L'Atelier** : thème « Terres & eaux » ajouté au picker ; vignettes par les albédos
+  poi-lit extraits en canvas pur (`albedosPoiAtelier`) ; le fantôme montre `poi-<slug>` ;
+  l'ébauche d'un lieu naturel PRÉ-POSE son caractère-corps au centre — la promotion ne
+  change plus la silhouette.
+
+### Critères d'acceptation
+
+- **C1** — chaque pièce `art: 'poi'` a exactement UN caractère de légende et désigne un
+  lieu de `POI_TYPES` (garde sim) ; elle a son sprite `POI_ART`, sa `_lit`, et sa couronne
+  alignée art↔lit (garde client).
+- **C2** — aucun corps de lieu dans `BATI_KEYS` ni `BATI_LIT_TYPES` (le grand art, pas un
+  chip 16 px) — gardé.
+- **C3** — le registre seul est INERTE : mêmes cartes, même flux RNG, mêmes événements
+  tant qu'aucun plan n'emploie les caractères (les suites seedées passent inchangées).
+- **C4** — un brouillon mêlant corps de lieux et vocabulaire naturel se valide, se bâtit,
+  se rend — capturé au smoke (probe N7 étendu).
+- **C5** — au premier PLAN promu employant un corps : recensement A7 et passe de tests
+  complète (le monde change à ce moment-là, pas avant).

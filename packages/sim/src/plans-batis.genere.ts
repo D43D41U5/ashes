@@ -81,6 +81,14 @@ export const PLANS: Record<string, Plan> = {
     seuils: ['4,7,S', '5,7,S'],
     passages: ['4,12,S', '5,12,S'],
   },
+  grotte: {
+    usure: 1,
+    grille: [
+      '·R·',
+      'RRR',
+      '·n·',
+    ],
+  },
   mine: {
     usure: 0.55,
     grille: [

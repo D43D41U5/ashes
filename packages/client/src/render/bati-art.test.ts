@@ -9,7 +9,7 @@
  *     d'enclos affiche une texture manquante, quelque part, une fois.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE } from '@ashes/sim'
+import { BALANCE, POI_BODY_TYPES } from '@ashes/sim'
 import { BATI_KEYS, BATI_LIT_TYPES, COUPE_DE, EDGE_BARRIER_KEYS, ENCADREMENT_POST, PORTE_FRAMES, passageDePorte, passageDePorteDouble, piecesDePorte, piecesDePorteDouble, profilDeCrete } from './bati-art'
 
 const N = 1, E = 2, S = 4, O = 8
@@ -45,6 +45,20 @@ describe('les clés', () => {
 
   it('n’ont aucun doublon', () => {
     expect(new Set(BATI_KEYS).size).toBe(BATI_KEYS.length)
+  })
+
+  /**
+   * LES CORPS DE LIEUX NE SE REDESSINENT PAS ICI (étage 3) : leur art est le sprite POI
+   * (`poi-<slug>`, poi-art/poi-lit). Le jour où quelqu'un « répare » une texture manquante
+   * en dessinant `st-grotte` dans la table PIECES, cette garde crie — la pièce entrerait
+   * dans BATI_LIT_TYPES et le rendu demanderait un `st-grotte_lit` qui trahit tout le
+   * chantier (on garde le grand art, pas un chip 16 px).
+   */
+  it('aucun corps de lieu ne se glisse dans les clés du bâti', () => {
+    for (const type of POI_BODY_TYPES) {
+      expect(BATI_KEYS, `st-${type} : le corps d'un lieu vit en poi-*, pas en st-*`).not.toContain(`st-${type}`)
+      expect(BATI_LIT_TYPES.has(type), `${type} ne bascule jamais via bati-art`).toBe(false)
+    }
   })
 })
 

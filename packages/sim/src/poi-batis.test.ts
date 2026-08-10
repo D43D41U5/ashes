@@ -7,7 +7,8 @@
  * dedans où l'on n'entre pas se voit de loin, se contourne, et ne se comprend jamais.
  */
 import { describe, expect, it } from 'vitest'
-import { BUILT_KINDS, PLANS, batirLieu, buildPoiStructures, regionDe, verifierPlan, verifierPlans } from './poi-batis'
+import { BUILT_KINDS, LEGENDE, PLANS, batirLieu, buildPoiStructures, regionDe, verifierPlan, verifierPlans } from './poi-batis'
+import { POI_BODY_TYPES } from './pieces'
 import { POI_TYPES } from './poi'
 import { createEmptyMap } from './map'
 import { TERRAIN_GRASS } from './balance'
@@ -23,6 +24,24 @@ describe('les plans', () => {
   it('n’ont de plan que pour des lieux qui existent', () => {
     const slugs = new Set(POI_TYPES.map((t) => t.slug))
     for (const kind of BUILT_KINDS) expect(slugs.has(kind), `${kind} n’est pas un lieu`).toBe(true)
+  })
+
+  /**
+   * LES CORPS DE LIEUX SONT POSABLES (étage 3) : chaque pièce `art: 'poi'` du registre a
+   * EXACTEMENT un caractère de légende, et chacun de ces caractères désigne un vrai lieu
+   * de POI_TYPES — une pièce-corps sans caractère serait un sprite qu'on ne peut pas poser,
+   * ce que le chantier existe précisément à empêcher.
+   */
+  it('chaque corps de lieu a son caractère de légende, et un seul', () => {
+    const parPiece = new Map<string, string[]>()
+    for (const [car, def] of Object.entries(LEGENDE)) {
+      if (def.piece !== undefined) parPiece.set(def.piece, [...(parPiece.get(def.piece) ?? []), car])
+    }
+    const slugs = new Set(POI_TYPES.map((t) => t.slug))
+    for (const type of POI_BODY_TYPES) {
+      expect(parPiece.get(type) ?? [], `${type} : une pièce-corps sans caractère ne se pose pas`).toHaveLength(1)
+      expect(slugs.has(type), `${type} : un corps de lieu doit désigner un lieu de POI_TYPES`).toBe(true)
+    }
   })
 
   it('rejettent un triplet déclaré CÔTÉ COUR d’un mur de salle (revue 2026-08-10)', () => {

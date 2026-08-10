@@ -5,7 +5,7 @@
  * ici on ne fait que du pooling Phaser et du placement.
  */
 import Phaser from 'phaser'
-import { poiClearings, type Structure, type WorldMap } from '@ashes/sim'
+import { POI_BODY_TYPES, poiClearings, type Structure, type WorldMap } from '@ashes/sim'
 import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
 import { clutterAt, type PropKind, type SampleTerrain } from '../../render/clutter'
 import { teinteTouffe } from '../../render/clutter-teinte'
@@ -23,7 +23,9 @@ const FLAT_PROPS = new Set<PropKind>(['pebbles', 'lichen', 'sphagnum'])
 /** Le BÂTI qui gomme le décor de SA tuile (décision d'Alexis) : mur, porte, sol,
  *  toit. Un plancher est net, un mur sans fougère qui le traverse. Le feu, les
  *  composants (four, enclume) et le coffre, eux, se posent dans l'herbe : elle reste. */
-const DECOR_CLEARING_STRUCTURES = new Set(['wall', 'palissade', 'door', 'floor', 'roof', 'paroi', 'roc'])
+// Les CORPS DE LIEUX (étage 3) dégagent aussi leur tuile : une touffe d'herbe qui perce
+// une grotte trahirait le sprite. Dérivés du registre, jamais recopiés.
+const DECOR_CLEARING_STRUCTURES = new Set(['wall', 'palissade', 'door', 'floor', 'roof', 'paroi', 'roc', ...POI_BODY_TYPES])
 const CLUTTER_TINT = 0xbfc4bd // léger assombrissement/désaturation (INV-2)
 /** LA TOUFFE PREND LA GAMME DE SON BIOME (demande d'Alexis, 2026-07-29) — une teinte par terrain,
  *  dérivée de la palette de sol (`render/clutter-teinte.ts`). Mémoïsée : la règle est une

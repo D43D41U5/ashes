@@ -7408,15 +7408,24 @@ const SCENARIOS = {
           A.peindre(6, 3, 'e')
           A.peindre(6, 5, 'Y')
           A.peindre(2, 6, 'B')
+          // Les CORPS DE LIEUX (étage 3) : le sprite du POI posé comme une pièce.
+          A.peindre(4, 7, 'n') //  la grotte
+          A.peindre(6, 7, 'Z') //  le bloc erratique
+          A.peindre(7, 5, 'k') //  le cairn
         })
         await page.waitForTimeout(1200)
         const n7 = await page.evaluate(() => ({
           fautes: window.__ATELIER__.etat.fautes.length,
           texte: window.__ATELIER__.texteCourant(),
+          //  la GRILLE seule — la prose d'en-tête contient tous les « n » qu'on veut
+          grille: window.__ATELIER__.texteCourant().split('grille:')[1] ?? '',
         }))
-        console.log(`antre 3×3 + rocher + éboulis + arbre + baies : ${n7.fautes} faute(s) (attendu 0)`)
+        console.log(`antre 3×3 + rocher + éboulis + arbre + baies + grotte/erratique/cairn : ${n7.fautes} faute(s) (attendu 0)`)
         if (n7.fautes > 0) console.error('!! le vocabulaire naturel ne se valide pas dans un brouillon sain')
         if (!n7.texte.includes('rrr') || !n7.texte.includes('Y') || !n7.texte.includes('B')) console.error('!! le texte du plan ne porte pas le vocabulaire peint')
+        for (const corps of ['n', 'Z', 'k']) {
+          if (!n7.grille.includes(corps)) console.error(`!! le corps de lieu « ${corps} » manque à la grille du plan`)
+        }
         await page.screenshot({ path: `${OUT}/atelier-antre.png` })
       } finally {
         const { unlinkSync: rmN7, existsSync: ilYaN7 } = await import('node:fs')
@@ -7603,10 +7612,13 @@ const SCENARIOS = {
     await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
     await page.waitForTimeout(400)
 
-    const cibles = await page.evaluate(() => {
+    // SMOKE_KIND=grotte : ne cadrer qu'UN lieu — la boucle des dix prend du temps quand on
+    // ne juge qu'une promotion.
+    const seulKind = process.env.SMOKE_KIND ?? null
+    const toutes = await page.evaluate(() => {
       const m = window.__BRAISES__.scene.map
-      // Les NEUF lieux bâtis (étage 1, spec lieux-batis.md) : la planche couvre tout BUILT_KINDS.
-      const KINDS = ['ferme_ruinee', 'cabane', 'ruines', 'abri', 'mine', 'oratoire', 'bivouac', 'charrette', 'epave']
+      // Les lieux bâtis (étages 1 et 3, spec lieux-batis.md) : la planche couvre tout BUILT_KINDS.
+      const KINDS = ['ferme_ruinee', 'cabane', 'ruines', 'abri', 'mine', 'oratoire', 'bivouac', 'charrette', 'epave', 'grotte']
       const out = []
       for (const k of KINDS) {
         const z = (m.zones ?? []).find((q) => q.kind === k)
@@ -7614,6 +7626,7 @@ const SCENARIOS = {
       }
       return out
     })
+    const cibles = seulKind === null ? toutes : toutes.filter((c) => c.kind === seulKind)
     console.log(`lieux trouvés : ${JSON.stringify(cibles)}`)
     if (cibles.length === 0) console.error('!! aucun lieu bâti sur la carte — rien à comparer')
 
@@ -7661,7 +7674,9 @@ const SCENARIOS = {
           cam.centerOn(x * 16, cy * 16)
         }, { x: c.x, y: c.y + c.h / 2 + 2, cy: c.y, z: zoom })
         await page.waitForTimeout(1400)
-        await page.screenshot({ path: `${OUT}/batis-${etiquette}-${c.kind}-${nom}.png` })
+        // SwiftShader au zoom LARGE sur un biome dense (karst) dépasse les 30 s du défaut
+        // Playwright — mesuré le 2026-08-10 : le budget se déclare, il ne se subit pas.
+        await page.screenshot({ path: `${OUT}/batis-${etiquette}-${c.kind}-${nom}.png`, timeout: 90000 })
       }
       console.log(`   → ${c.kind} (${c.w}×${c.h}) @(${Math.round(c.x)}, ${Math.round(c.y)})`)
     }

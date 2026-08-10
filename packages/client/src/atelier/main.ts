@@ -28,7 +28,7 @@
  */
 import Phaser from 'phaser'
 import {
-  BUILT_KINDS, LEGENDE, POI_TYPES, TERRAIN_GRASS, batirLieu, createEmptyMap, createSim,
+  BUILT_KINDS, LEGENDE, POI_BODY_TYPES, POI_TYPES, TERRAIN_GRASS, batirLieu, createEmptyMap, createSim,
   crossingBlocker, parserPlan, regionDe, serialiserPlan, spawnEntity, structureBlocks, verifierPlan,
 } from '@ashes/sim'
 import type { Plan, SimState, SortDuLieu } from '@ashes/sim'
@@ -46,6 +46,9 @@ import { THEMES, THEME_DE } from './palette'
 /** La marge d'herbe autour du plan sur la carte d'essai — les murs du pourtour vivent sur
  *  la tuile EXTÉRIEURE, il leur faut au moins une rangée, et l'œil respire avec deux. */
 const MARGE = 2
+
+/** Les CORPS DE LIEUX (étage 3) — dérivés du registre (`art: 'poi'`), jamais recopiés. */
+const CORPS_DE_LIEU = new Set<string>(POI_BODY_TYPES)
 
 /** Le plan de travail, MUTABLE — `versPlan()` le fige au format du moteur. */
 interface Brouillon {
@@ -739,6 +742,8 @@ function construireTampons(): void {
 function textureDeCar(car: string): string | null {
   const def = LEGENDE[car]
   if (!def) return null
+  // Un CORPS DE LIEU (étage 3) vit en poi-*, jamais en st-* — dérivé du registre.
+  if (def.piece && CORPS_DE_LIEU.has(def.piece)) return `poi-${def.piece}`
   if (def.piece) return `st-${def.piece}`
   // Tous les nœuds n'ont pas une clé `nd-<type>` : l'arbre est DEUX sprites (on montre le
   // fût), le buisson se décline par baies dessinées (on montre le plein).
@@ -1127,7 +1132,16 @@ function rendreNaturel(kind: string): void {
 /** L'ÉBAUCHE d'un lieu naturel : le brouillon porte EXACTEMENT son slug et son empreinte —
  *  la promotion ne sera qu'un déplacement de fichier (POI_TYPES le connaît déjà). */
 async function creerEbauche(kind: string, cote: number): Promise<void> {
-  const texte = `# ═══ ${kind.toUpperCase()} — ébauche d'Atelier pour un lieu NATUREL ═══\n#\n# Promu (déplacé dans plans/), ce plan deviendra le CORPS du lieu et son sprite tombera\n# (BUILT_KINDS est dérivé). C'est la décision différée « corps solide des POI naturels »\n# (S-R13 : leur grammaire actée est le sprite/terrain) — l'Atelier prépare, le code décide.\nusure: 1\ngrille:\n${Array.from({ length: cote }, () => '·'.repeat(cote)).join('\n')}\n`
+  // L'ÉBAUCHE PORTE DÉJÀ SON CORPS (étage 3) : si le kind a une pièce-corps au registre,
+  // son caractère se pose au CENTRE — la promotion ne change plus la silhouette du lieu,
+  // elle ne fait qu'y ajouter ce que le designer compose autour.
+  const carCorps = Object.entries(LEGENDE).find(([, d]) => d.piece === kind)?.[0]
+  const grille = Array.from({ length: cote }, (_, y) => {
+    if (carCorps === undefined || y !== Math.floor(cote / 2)) return '·'.repeat(cote)
+    const x = Math.floor(cote / 2)
+    return '·'.repeat(x) + carCorps + '·'.repeat(cote - x - 1)
+  }).join('\n')
+  const texte = `# ═══ ${kind.toUpperCase()} — ébauche d'Atelier pour un lieu NATUREL ═══\n#\n# Promu (déplacé dans plans/), ce plan deviendra le CORPS du lieu et son sprite tombera\n# (BUILT_KINDS est dérivé) — le caractère du corps posé ici garde la même silhouette.\nusure: 1\ngrille:\n${grille}\n`
   try {
     const r = await fetch('/atelier/api/plans', {
       method: 'POST',
