@@ -7248,6 +7248,82 @@ const SCENARIOS = {
     console.log(`annuler ×2 : ${revenu ? 'le .plan du disque est revenu' : 'ÉCART'}`)
     if (!revenu) console.error('!! l’annulation ne ramène pas l’état d’origine')
 
+    // ── P-B : LA SÉLECTION À LA VRAIE SOURIS — tirer, copier, coller ailleurs, annuler
+    //    d'UN coup (une entrée d'historique par collage). ──
+    const boiteJeu = await page.locator('#jeu canvas').boundingBox()
+    const ecran = async (rx, ry) => {
+      const p = await page.evaluate(([a, b]) => window.__ATELIER__.ecran(a, b), [rx, ry])
+      return { x: boiteJeu.x + p.x, y: boiteJeu.y + p.y }
+    }
+    await page.click('#toolbar label:has(input[value="selection"])')
+    const de = await ecran(1, 1)
+    const jusqua = await ecran(3, 2)
+    await page.mouse.move(de.x, de.y)
+    await page.mouse.down()
+    await page.mouse.move(jusqua.x, jusqua.y, { steps: 4 })
+    await page.mouse.up()
+    await page.keyboard.press('Control+c')
+    await page.keyboard.press('Control+v')
+    const cible = await ecran(0, 0)
+    await page.mouse.move(cible.x, cible.y)
+    await page.mouse.down()
+    await page.mouse.up()
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(400)
+    const fautesColle = await page.evaluate(() => window.__ATELIER__.etat.fautes.length)
+    console.log(`sélection 3×2 collée en (0,0) : ${fautesColle} faute(s) (attendu > 0 — la région touche le bord)`)
+    if (fautesColle === 0) console.error('!! le collage n’a rien changé, ou la garde du bord s’est tue')
+    await page.evaluate(() => window.__ATELIER__.annuler())
+    await page.waitForTimeout(300)
+    const defait = await page.evaluate(() => window.__ATELIER__.texteCourant() === window.__ATELIER__.etat.textes.get('cabane'))
+    console.log(`annuler ×1 : ${defait ? 'le collage entier est défait' : 'ÉCART'}`)
+    if (!defait) console.error('!! un coup d’annuler ne défait pas le collage entier')
+    await page.click('#toolbar label:has(input[value="peindre"])')
+
+    // ── P-C : LA PLANCHE arrive seule (auto, 900 ms après la dernière édition) — six
+    //    vignettes rendues par le mini-jeu, coût MESURÉ affiché. ──
+    await page.waitForFunction(() => document.querySelectorAll('#planche img').length >= 6, null, { timeout: 60000 })
+    const cout = await page.evaluate(() => document.getElementById('planche-cout').textContent)
+    console.log(`planche : 6 vignettes — ${cout}`)
+    await page.screenshot({ path: `${OUT}/atelier-pro.png` })
+
+    // ── P-D : LE DIFF (une édition → « voir le diff » → des lignes + et −) et
+    //    L'HISTORIQUE GIT (sur l'hôte ; le conteneur répond 501, toléré). ──
+    await page.evaluate(() => window.__ATELIER__.peindre(1, 1, 'o'))
+    await page.waitForTimeout(300)
+    await page.click('#voir-diff')
+    const dPlus = await page.evaluate(() => document.querySelectorAll('#diff .plus').length)
+    const dMoins = await page.evaluate(() => document.querySelectorAll('#diff .moins').length)
+    console.log(`diff : +${dPlus} / −${dMoins} ligne(s) (attendu 1/1 — une rangée changée)`)
+    if (dPlus !== 1 || dMoins !== 1) console.error('!! le diff ne montre pas la rangée changée')
+    await page.evaluate(() => window.__ATELIER__.annuler())
+    await page.click('#historique-maj')
+    await page.waitForTimeout(1500)
+    const histo = await page.evaluate(() => document.getElementById('historique').textContent)
+    console.log(`historique : ${(histo ?? '').split('\n')[0].slice(0, 80) || '(vide)'}`)
+
+    // ── P-E : CRÉER UN BROUILLON (hors-monde) — dialogues acceptés, fichier vérifié puis
+    //    nettoyé. Sur un dépôt en lecture seule, la création échoue proprement : toléré. ──
+    const reponses = ['essai_bac', '4']
+    page.on('dialog', (d) => { void d.accept(reponses.shift() ?? '') })
+    await page.click('#nouveau')
+    await page.waitForTimeout(600)
+    const creation = await page.evaluate(() => ({
+      la: window.__ATELIER__.etat.brouillons.has('essai_bac'),
+      etat: document.getElementById('etat').textContent,
+    }))
+    if (creation.la) {
+      console.log('brouillon « essai_bac » créé (plans/brouillons/, hors-monde)')
+      const { unlinkSync, existsSync } = await import('node:fs')
+      const brouillon = resolve(ROOT, 'packages/sim/src/plans/brouillons/essai_bac.plan')
+      if (existsSync(brouillon)) {
+        unlinkSync(brouillon)
+        console.log('   …et nettoyé (le smoke ne laisse pas de trace)')
+      }
+    } else {
+      console.log(`création de brouillon : ${creation.etat} (dépôt en lecture seule ? toléré)`)
+    }
+
     // ── LES BADGES D'ARÊTES (P-A) : la ferme porte brèches, seuils ET passages — les trois
     //    couleurs doivent se voir en permanence, plus seulement au survol. ──
     await page.evaluate(() => window.__ATELIER__.choisir('ferme_ruinee'))

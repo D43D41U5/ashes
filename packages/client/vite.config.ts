@@ -28,8 +28,10 @@ declare module 'node:fs' {
   export function readdirSync(chemin: string): string[]
   export function readFileSync(chemin: string, encodage: 'utf8'): string
   export function writeFileSync(chemin: string, contenu: string): void
+  export function existsSync(chemin: string): boolean
+  export function mkdirSync(chemin: string, options?: { recursive?: boolean }): void
 }
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 // (Pas de `node:path` : son module ne se laisse pas augmenter ici — les chemins se collent
 // à la main, on est sur Linux des deux côtés, hôte comme conteneur.)
 
@@ -156,9 +158,43 @@ function atelierPlansPlugin(): Plugin {
           res.setHeader('content-type', 'application/json')
           res.end(JSON.stringify(corps))
         }
-        if (req.method === 'GET') {
-          const fichiers = readdirSync(dossier).filter((f) => f.endsWith('.plan')).sort()
-          repondre(200, fichiers.map((f) => ({ kind: f.slice(0, -'.plan'.length), texte: readFileSync(`${dossier}/${f}`, 'utf8') })))
+        const brouillons = `${dossier}/brouillons`
+        const [chemin, requete] = (req.url ?? '').split('?') as [string, string | undefined]
+        const params = new URLSearchParams(requete ?? '')
+        if (req.method === 'GET' && (chemin === '' || chemin === '/')) {
+          // LE MONDE ET LES BROUILLONS (décision d'Alexis : brouillons HORS-MONDE) — les
+          // seconds vivent dans plans/brouillons/, rendus par l'Atelier, JAMAIS compilés.
+          const lire = (d: string, drapeau: boolean): { kind: string; texte: string; brouillon: boolean }[] =>
+            (existsSync(d) ? readdirSync(d) : [])
+              .filter((f) => f.endsWith('.plan'))
+              .sort()
+              .map((f) => ({ kind: f.slice(0, -'.plan'.length), texte: readFileSync(`${d}/${f}`, 'utf8'), brouillon: drapeau }))
+          repondre(200, [...lire(dossier, false), ...lire(brouillons, true)])
+          return
+        }
+        // ── L'HISTORIQUE GIT (P-D), en lecture seule — indisponible dans le conteneur (pas
+        //    de git) : 501 propre, jamais un crash. ──
+        if (req.method === 'GET' && (chemin === '/historique' || chemin === '/version')) {
+          const kind = params.get('kind') ?? ''
+          if (!/^[a-z_]+$/.test(kind)) { repondre(400, { erreur: 'kind invalide' }); return }
+          const relatif = existsSync(`${brouillons}/${kind}.plan`)
+            ? `packages/sim/src/plans/brouillons/${kind}.plan`
+            : `packages/sim/src/plans/${kind}.plan`
+          try {
+            if (chemin === '/historique') {
+              const brut = execSync(`git -C ${racine} log --follow -n 20 --format=%h%x09%ad%x09%s --date=short -- ${relatif}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+              repondre(200, brut.trim().split('\n').filter(Boolean).map((l) => {
+                const [rev, date, ...sujet] = l.split('\t')
+                return { rev, date, sujet: sujet.join('\t') }
+              }))
+            } else {
+              const rev = params.get('rev') ?? ''
+              if (!/^[0-9a-f]{4,40}$/.test(rev)) { repondre(400, { erreur: 'rev invalide' }); return }
+              repondre(200, { texte: execSync(`git -C ${racine} show ${rev}:${relatif}`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }) })
+            }
+          } catch {
+            repondre(501, { erreur: 'git indisponible ici (conteneur ?) — l’historique se lit sur l’hôte' })
+          }
           return
         }
         if (req.method !== 'POST') {
@@ -181,9 +217,9 @@ function atelierPlansPlugin(): Plugin {
           if (corps.length > 300_000) { corps = ''; req.destroy() }
         })
         req.on('end', () => {
-          let json: { kind?: unknown; texte?: unknown }
+          let json: { kind?: unknown; texte?: unknown; brouillon?: unknown }
           try {
-            json = JSON.parse(corps) as { kind?: unknown; texte?: unknown }
+            json = JSON.parse(corps) as { kind?: unknown; texte?: unknown; brouillon?: unknown }
           } catch {
             repondre(400, { erreur: 'corps JSON illisible' })
             return
@@ -192,9 +228,19 @@ function atelierPlansPlugin(): Plugin {
             const { kind, texte } = json
             if (typeof kind !== 'string' || !/^[a-z_]+$/.test(kind)) { repondre(400, { erreur: 'kind invalide' }); return }
             if (typeof texte !== 'string' || texte.length > 100_000) { repondre(400, { erreur: 'texte invalide' }); return }
+            if (json.brouillon === true) {
+              // LE BROUILLON, HORS-MONDE (décision d'Alexis) : création LIBRE dans
+              // plans/brouillons/, jamais compilé — la naissance d'un kind reste un acte de
+              // code (déplacer le fichier + POI_TYPES). Un kind du MONDE ne se masque pas.
+              if (existsSync(`${dossier}/${kind}.plan`)) { repondre(409, { erreur: `« ${kind} » existe déjà dans le monde` }); return }
+              mkdirSync(brouillons, { recursive: true })
+              writeFileSync(`${brouillons}/${kind}.plan`, texte)
+              repondre(200, { ok: true })
+              return
+            }
             const chemin = `${dossier}/${kind}.plan`
             let avant: string
-            try { avant = readFileSync(chemin, 'utf8') } catch { repondre(404, { erreur: `${kind}.plan n'existe pas — la création passe par le dépôt` }); return }
+            try { avant = readFileSync(chemin, 'utf8') } catch { repondre(404, { erreur: `${kind}.plan n'existe pas — la création passe par « nouveau » (brouillon) ou par le dépôt` }); return }
             writeFileSync(chemin, texte)
             try {
               execSync(`node --import tsx ${racine}/tools/plans-compile.mts`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })

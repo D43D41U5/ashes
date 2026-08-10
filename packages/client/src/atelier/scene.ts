@@ -38,6 +38,7 @@ import { TILE_PX } from '../render/framing'
  *  régions sous les badges, badges sous le fantôme, la grille par-dessus tout. */
 const REGIONS_DEPTH = 1_480_000
 const BADGES_DEPTH = 1_485_000
+const SELECTION_DEPTH = 1_488_000
 const FANTOME_DEPTH = 1_490_000
 const GRILLE_DEPTH = 1_500_000
 
@@ -49,6 +50,7 @@ export type Fantome =
   | { tuile: { tx: number; ty: number; texture: string | null } }
   | { arete: { tx: number; ty: number; dir: 'N' | 'E' | 'S' | 'O'; couleur: number } }
   | { contour: { tx: number; ty: number; couleur: number } }
+  | { zone: { tx: number; ty: number; w: number; h: number; couleur: number } }
 
 /** Un badge d'arête (triplet posé) ou une tuile de région, dessinés en calques. */
 export interface Arete { tx: number; ty: number; dir: 'N' | 'E' | 'S' | 'O'; couleur: number }
@@ -64,6 +66,8 @@ export class AtelierScene extends Phaser.Scene {
   private grilleG!: Phaser.GameObjects.Graphics
   private badgesG!: Phaser.GameObjects.Graphics
   private regionsG!: Phaser.GameObjects.Graphics
+  private selectionG!: Phaser.GameObjects.Graphics
+  private selection: { tx: number; ty: number; w: number; h: number } | null = null
   private fantomeImg!: Phaser.GameObjects.Image
   private fantomeG!: Phaser.GameObjects.Graphics
   private courant: SnapshotMessage | null = null
@@ -99,6 +103,7 @@ export class AtelierScene extends Phaser.Scene {
     this.avatar.setData('shadow', createContactShadow(this))
     this.regionsG = this.add.graphics().setDepth(REGIONS_DEPTH)
     this.badgesG = this.add.graphics().setDepth(BADGES_DEPTH)
+    this.selectionG = this.add.graphics().setDepth(SELECTION_DEPTH)
     this.fantomeImg = this.add.image(0, 0, '__WHITE').setVisible(false).setDepth(FANTOME_DEPTH)
     this.fantomeG = this.add.graphics().setDepth(FANTOME_DEPTH)
     this.grilleG = this.add.graphics().setDepth(GRILLE_DEPTH)
@@ -179,10 +184,21 @@ export class AtelierScene extends Phaser.Scene {
       }
     } else if ('arete' in spec) {
       this.traceArete(this.fantomeG, spec.arete, 3 / this.cameras.main.zoom, 0.9)
-    } else {
+    } else if ('contour' in spec) {
       const { tx, ty, couleur } = spec.contour
       this.fantomeG.lineStyle(2 / this.cameras.main.zoom, couleur, 0.95).strokeRect(tx * T + 0.5, ty * T + 0.5, T - 1, T - 1)
+    } else {
+      // Le COLLAGE armé : l'emprise du fragment suit le curseur — on voit où ça tombera.
+      const { tx, ty, w, h, couleur } = spec.zone
+      this.fantomeG.fillStyle(couleur, 0.12).fillRect(tx * T, ty * T, w * T, h * T)
+      this.fantomeG.lineStyle(2 / this.cameras.main.zoom, couleur, 0.9).strokeRect(tx * T, ty * T, w * T, h * T)
     }
+  }
+
+  /** LA SÉLECTION (P-B) — persistante, redessinée au zoom (épaisseur en pixels écran). */
+  majSelection(z: { tx: number; ty: number; w: number; h: number } | null): void {
+    this.selection = z
+    this.redessinerCalques()
   }
 
   private traceArete(g: Phaser.GameObjects.Graphics, a: Arete, e: number, alpha: number): void {
@@ -222,6 +238,12 @@ export class AtelierScene extends Phaser.Scene {
     this.regionsG.clear()
     if (this.calques.regions) {
       for (const r of this.regions) this.regionsG.fillStyle(r.teinte, 0.28).fillRect(r.tx * T, r.ty * T, T, T)
+    }
+    this.selectionG.clear()
+    if (this.selection) {
+      const s = this.selection
+      this.selectionG.fillStyle(0xe8b34a, 0.10).fillRect(s.tx * T, s.ty * T, s.w * T, s.h * T)
+      this.selectionG.lineStyle(2 / zoom, 0xe8b34a, 0.95).strokeRect(s.tx * T, s.ty * T, s.w * T, s.h * T)
     }
   }
 

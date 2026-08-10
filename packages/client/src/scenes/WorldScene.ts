@@ -953,6 +953,17 @@ export class WorldScene extends Phaser.Scene {
         this.input.enabled = true
         if (this.input.keyboard) this.input.keyboard.enabled = true
         this.send({ type: 'resume' })
+        // ═══ « TESTER EN JEU » (l'Atelier, spec atelier-plans P-D) ═══
+        //
+        // `?atelier=<kind>` : la Veillée dev s'ouvre TÉLÉPORTÉ au premier exemplaire du
+        // lieu qu'on édite — la boucle édite → sauve → HMR → juge en marchant. DEV
+        // seulement par construction : `debug_teleport` est inerte hors `import.meta.env.DEV`
+        // (veillee.ts), le paramètre ne fait donc rien dans un build de prod.
+        const kindAtelier = new URLSearchParams(window.location.search).get('atelier')
+        if (kindAtelier) {
+          const z = (this.map.zones ?? []).find((q) => q.kind === kindAtelier)
+          if (z) this.sendAction({ type: 'debug_teleport', x: z.x + z.w / 2, y: z.y + z.h + 2 })
+        }
       },
     }
     this.buildQueue = BUILD_PHASES.map((p) => [p, steps[p]])

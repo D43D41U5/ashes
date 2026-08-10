@@ -52,6 +52,7 @@ describe('la typographie du jeu', () => {
     // Justifiées, et seulement celles-là : elles montent sur `body` sans porter de texte.
     const SANS_TEXTE = [
       'vignette.ts', // un dégradé, pas un mot
+      'vignettes.ts', // l'Atelier : le conteneur HORS ÉCRAN du mini-jeu de la planche — un canvas, pas un mot
       'hud-character.ts', // n'y met qu'un <img> (le fantôme de glisser-déposer) ; sa racine est sur la planche
       'fire-panel.ts', // idem : seul le fantôme de drag va sur `body` ; le modal monte sur la planche
       'inventory-grid.ts', // idem : le composant sac/ceinture partagé ne met sur `body` que son fantôme de drag

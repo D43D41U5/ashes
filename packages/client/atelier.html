@@ -53,6 +53,19 @@
       #validation .note { color: #948a76; }
       .rangee { margin: 5px 0; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
       #etat { font-size: 11px; color: #948a76; min-height: 28px; margin-top: 8px; }
+      .redim { color: #948a76; margin-right: 4px; }
+      .redim button { padding: 1px 5px; }
+      #tampons .tampon { display: inline-flex; align-items: center; gap: 4px; border: 1px solid #3a3226; border-radius: 3px; padding: 2px 6px; margin: 2px 3px 2px 0; cursor: pointer; background: #201c15; }
+      #tampons .tampon .x { color: #948a76; cursor: pointer; }
+      #tampons .tampon .x:hover { color: #e06c5a; }
+      #planche { display: flex; flex-wrap: wrap; gap: 4px; }
+      #planche figure { margin: 0; text-align: center; cursor: pointer; }
+      #planche img { width: 104px; height: 104px; image-rendering: pixelated; border: 1px solid #3a3226; border-radius: 3px; display: block; }
+      #planche figcaption { font-size: 9px; color: #948a76; }
+      #historique div { font-size: 11px; color: #948a76; margin: 2px 0; cursor: pointer; }
+      #historique div:hover { color: #d8d2c6; }
+      #diff { background: #14110d; border: 1px solid #2e2820; border-radius: 3px; padding: 8px; font-size: 11px; line-height: 1.4; overflow-x: auto; max-height: 240px; overflow-y: auto; }
+      #diff .plus { color: #7aa35a; } #diff .moins { color: #e06c5a; } #diff .ctx { color: #948a76; }
     </style>
   </head>
   <body>
@@ -62,6 +75,7 @@
         <div class="outil-groupe">
           <label><input type="radio" name="outil" value="peindre" checked />✏ peindre <kbd>B</kbd></label>
           <label><input type="radio" name="outil" value="gommer" />⌫ gommer <kbd>E</kbd></label>
+          <label><input type="radio" name="outil" value="selection" />▦ sélection <kbd>M</kbd></label>
           <label><input type="radio" name="outil" value="breche" />◫ brèche</label>
           <label><input type="radio" name="outil" value="seuil" />◫ seuil</label>
           <label><input type="radio" name="outil" value="passage" />◫ passage</label>
@@ -69,6 +83,10 @@
         <span class="sep"></span>
         <button id="annuler" title="Ctrl+Z">↶ annuler</button>
         <button id="refaire" title="Ctrl+Y">↷ refaire</button>
+        <span class="sep"></span>
+        <button id="miroir-h" title="miroir horizontal — sur la sélection, ou le collage armé">⇋ H</button>
+        <button id="miroir-v" title="miroir vertical">⇅ V</button>
+        <button id="tourner-frag" title="quart de tour horaire">⟳ 90°</button>
         <span class="sep"></span>
         <span id="zoom-v">100 %</span>
         <button id="recadrer" title="le plan entier dans la fenêtre">ajuster</button>
@@ -85,8 +103,15 @@
       <aside id="gauche">
         <h2>Le lieu</h2>
         <div class="rangee"><select id="lieux"></select></div>
+        <div class="rangee">
+          <button id="nouveau" title="un brouillon vierge, HORS-MONDE (plans/brouillons/)">+ nouveau</button>
+          <button id="dupliquer" title="dupliquer le lieu courant en brouillon">⧉ dupliquer</button>
+        </div>
         <h2>La palette <kbd>1…9, 0</kbd></h2>
         <div id="palette"></div>
+        <h2>Tampons <kbd>Ctrl+C puis +</kbd></h2>
+        <div id="tampons"></div>
+        <div class="rangee"><button id="tampon-plus" title="mémoriser le presse-papier comme tampon nommé">+ tampon</button></div>
       </aside>
 
       <main id="centre"><div id="jeu"></div></main>
@@ -107,8 +132,25 @@
         <div class="rangee">
           <label>heure <input id="heure" type="range" min="6" max="18" step="1" value="12" style="width:110px" /> <span id="heure-v">12h</span></label>
         </div>
+        <div class="rangee">
+          empreinte
+          <span class="redim">N <button data-redim="N" data-delta="1">+</button><button data-redim="N" data-delta="-1">−</button></span>
+          <span class="redim">S <button data-redim="S" data-delta="1">+</button><button data-redim="S" data-delta="-1">−</button></span>
+          <span class="redim">O <button data-redim="O" data-delta="1">+</button><button data-redim="O" data-delta="-1">−</button></span>
+          <span class="redim">E <button data-redim="E" data-delta="1">+</button><button data-redim="E" data-delta="-1">−</button></span>
+        </div>
         <h2>Validation</h2>
         <div id="validation"></div>
+        <h2>La planche <span id="planche-cout" style="color:#948a76;font-size:10px"></span></h2>
+        <div id="planche"></div>
+        <div class="rangee">
+          <button id="planche-maj">rafraîchir</button>
+          <button id="exporter" title="la planche en PNG (vue + variantes)">PNG</button>
+        </div>
+        <h2>Historique</h2>
+        <div class="rangee"><button id="historique-maj">charger l'historique git</button></div>
+        <div id="historique"></div>
+        <pre id="diff" style="display:none"></pre>
         <div class="rangee" style="margin-top:12px">
           <button id="sauver" class="principal">Sauver le .plan</button>
           <button id="copier">Copier</button>
@@ -120,6 +162,9 @@
         <span id="sb-pos"></span>
         <span id="sb-fautes" class="ok"></span>
         <span id="sb-modifie"></span>
+        <button id="voir-diff" style="display:none">voir le diff</button>
+        <span style="margin-left:auto"></span>
+        <button id="tester" title="ouvre la Veillée dev et téléporte au premier exemplaire du lieu">▶ tester en jeu</button>
       </div>
     </div>
     <script type="module" src="/src/atelier/main.ts"></script>

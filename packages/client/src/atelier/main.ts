@@ -35,6 +35,11 @@ import type { Plan, SimState, SortDuLieu } from '@ashes/sim'
 import { BootScene } from '../scenes/BootScene'
 import { AtelierScene, type Arete, type Region } from './scene'
 import { vignette } from './apercu'
+import {
+  bornerZone, coller, effacer, extraire, miroirH, miroirV, redimensionner, tournerFragment,
+  type Fragment, type Zone,
+} from './selection'
+import { autoPermis, exporterPlanche, rendrePlanche, type Variante } from './vignettes'
 
 /** La marge d'herbe autour du plan sur la carte d'essai — les murs du pourtour vivent sur
  *  la tuile EXTÉRIEURE, il leur faut au moins une rangée, et l'œil respire avec deux. */
@@ -63,9 +68,16 @@ const etat = {
   dedans: false,
   heure: 12,
   calques: { toits: true, aretes: true, regions: false, grille: true },
-  outil: 'peindre' as 'peindre' | 'breche' | 'seuil' | 'passage' | 'gommer',
+  outil: 'peindre' as 'peindre' | 'breche' | 'seuil' | 'passage' | 'gommer' | 'selection',
   car: '.',
   fautes: [] as string[],
+  /** LA SÉLECTION (P-B), en cases de PLAN — et le presse-papier qu'on colle, tamponne, reflète. */
+  selection: null as Zone | null,
+  pressePapier: null as Fragment | null,
+  /** Le mode COLLAGE : le fragment suit le curseur, chaque clic l'estampe, Échap le pose. */
+  collage: false,
+  /** Les lieux BROUILLONS (hors-monde, plans/brouillons/ — décision d'Alexis). */
+  brouillons: new Set<string>(),
 }
 
 /** Les couleurs d'arête (fantôme ET badges) — brèche rouge, seuil ambre, passage vert. */
@@ -254,6 +266,7 @@ function rendre(sim: SimState, playerId: number): void {
       }
     }
   }
+  sc.majSelection(etat.selection ? { tx: etat.selection.x0 + MARGE, ty: etat.selection.y0 + MARGE, w: etat.selection.w, h: etat.selection.h } : null)
   sc.montrer(sim, playerId, aretes, regions, !recadrer)
   recadrer = false
 }
@@ -329,9 +342,16 @@ function rafraichir(): void {
   sbFautes.className = valide ? 'ok' : 'faute'
   const sale = modifie()
   $('sb-modifie').textContent = sale ? '● modifié' : '— enregistré'
+  $('voir-diff').style.display = sale ? '' : 'none'
   const opt = document.querySelector<HTMLOptionElement>(`#lieux option[value="${etat.kind}"]`)
-  if (opt) opt.textContent = sale ? `${etat.kind} ●` : etat.kind
+  if (opt) {
+    const base = etat.brouillons.has(etat.kind) ? `${etat.kind} (brouillon)` : etat.kind
+    opt.textContent = sale ? `${base} ●` : base
+  }
+  const transformable = etat.selection !== null || (etat.collage && etat.pressePapier !== null)
+  for (const id of ['miroir-h', 'miroir-v', 'tourner-frag'] as const) $<HTMLButtonElement>(id).disabled = !transformable
   majBoutonsHistoire()
+  if (valide) planifierPlanche() //  P-C : la planche suit, tant que la mesure le permet
 }
 
 function message(texte: string): void {
@@ -375,6 +395,15 @@ function construirePalette(): void {
 
 // ═══ LE TRAIT — peindre et gommer au GLISSER, une entrée d'historique par geste ═══
 const trait = { actif: false, sale: false, derniere: '' }
+/** Le coin de départ d'une sélection en cours de tirage (P-B). */
+let selDepart: { x: number; y: number } | null = null
+
+/** Pousser la sélection courante vers la scène — sans rebâtir le monde. */
+function majSelectionScene(): void {
+  laScene()?.majSelection(etat.selection
+    ? { tx: etat.selection.x0 + MARGE, ty: etat.selection.y0 + MARGE, w: etat.selection.w, h: etat.selection.h }
+    : null)
+}
 
 /** PEINDRE UNE CASE — LE chemin, unique (souris, glisser, sonde du smoke) : mêmes bornes,
  *  même garde d'orientation. Ne pousse PAS l'historique — le trait s'en charge à la fin. */
@@ -416,7 +445,24 @@ function clicCarte(fx: number, fy: number, droit: boolean, alt: boolean): void {
   const rx = Math.floor(fx)
   const ry = Math.floor(fy)
   const n = b.grille.length
+  // LE COLLAGE ARMÉ (P-B) : chaque clic estampe le fragment — Échap pour reposer l'outil.
+  if (etat.collage && etat.pressePapier) {
+    coller(b, etat.pressePapier, rx, ry)
+    rafraichir()
+    pousserHistoire()
+    return
+  }
   if (rx < 0 || ry < 0 || rx >= n || ry >= n) return
+  // LA SÉLECTION (P-B) : le rectangle se tire au glisser ; les opérations viennent après
+  // (Ctrl+C/X/V, Suppr, miroirs, tourner).
+  if (etat.outil === 'selection') {
+    trait.actif = true
+    trait.derniere = `${rx},${ry}`
+    selDepart = { x: rx, y: ry }
+    etat.selection = { x0: rx, y0: ry, w: 1, h: 1 }
+    majSelectionScene()
+    return
+  }
   // LA PIPETTE (P-A) : Alt+clic prend le caractère sous le curseur — la main ne voyage plus.
   if (alt) {
     etat.car = b.grille[ry]![rx]!
@@ -459,7 +505,8 @@ function clicCarte(fx: number, fy: number, droit: boolean, alt: boolean): void {
   pousserHistoire()
 }
 
-/** LE GLISSER — la suite du trait, case par case (peindre ou gommer selon l'outil du début). */
+/** LE GLISSER — la suite du trait : la sélection s'étire, la peinture et la gomme suivent
+ *  la main, case par case. */
 function glisseCarte(fx: number, fy: number): void {
   if (!trait.actif) return
   const rx = Math.floor(fx)
@@ -467,14 +514,26 @@ function glisseCarte(fx: number, fy: number): void {
   const cle = `${rx},${ry}`
   if (cle === trait.derniere) return
   trait.derniere = cle
-  const car = etat.outil === 'gommer' ? '·' : etat.car
-  if (peindreCase(rx, ry, etat.outil === 'gommer' || etat.outil === 'peindre' ? car : etat.car)) trait.sale = true
+  if (etat.outil === 'selection' && selDepart) {
+    const n = etat.brouillon?.grille.length ?? 1
+    const cx = Math.max(0, Math.min(rx, n - 1))
+    const cy = Math.max(0, Math.min(ry, n - 1))
+    etat.selection = {
+      x0: Math.min(selDepart.x, cx), y0: Math.min(selDepart.y, cy),
+      w: Math.abs(cx - selDepart.x) + 1, h: Math.abs(cy - selDepart.y) + 1,
+    }
+    majSelectionScene()
+    return
+  }
+  if (etat.outil !== 'peindre' && etat.outil !== 'gommer') return
+  if (peindreCase(rx, ry, etat.outil === 'gommer' ? '·' : etat.car)) trait.sale = true
 }
 
-/** LA FIN DU TRAIT : UNE entrée d'historique pour tout le geste. */
+/** LA FIN DU TRAIT : UNE entrée d'historique pour tout le geste (la sélection n'en fait pas). */
 function finDeTrait(): void {
   if (!trait.actif) return
   trait.actif = false
+  selDepart = null
   if (trait.sale) pousserHistoire()
   trait.sale = false
   trait.derniere = ''
@@ -498,9 +557,109 @@ function survolCarte(fx: number, fy: number): void {
   $('sb-pos').textContent = `(${rx}, ${ry}) · « ${car} » ${def?.piece ?? def?.noeud ?? def?.region ?? (car === '·' ? 'rien' : '?')}`
   const tx = rx + MARGE
   const ty = ry + MARGE
-  if (etat.outil === 'peindre') sc.majFantome({ tuile: { tx, ty, texture: textureDeCar(etat.car) } })
+  if (etat.collage && etat.pressePapier) {
+    sc.majFantome({ zone: { tx, ty, w: etat.pressePapier.w, h: etat.pressePapier.h, couleur: 0xe8b34a } })
+  } else if (etat.outil === 'selection') sc.majFantome({ contour: { tx, ty, couleur: 0xe8b34a } })
+  else if (etat.outil === 'peindre') sc.majFantome({ tuile: { tx, ty, texture: textureDeCar(etat.car) } })
   else if (etat.outil === 'gommer') sc.majFantome({ contour: { tx, ty, couleur: 0xe06c5a } })
   else sc.majFantome({ arete: { tx, ty, dir: areteLaPlusProche(fx - rx, fy - ry), couleur: COULEUR_OUTIL[etat.outil] } })
+}
+
+// ═══ COPIER / COUPER / COLLER / TRANSFORMER (P-B) ═══
+
+function copierSelection(): void {
+  const b = etat.brouillon
+  if (!b || !etat.selection) return
+  etat.pressePapier = extraire(b, bornerZone(etat.selection, b.grille.length))
+  message(`copié : ${etat.pressePapier.w}×${etat.pressePapier.h} — Ctrl+V pour coller, « + tampon » pour garder`)
+}
+
+function couperSelection(): void {
+  const b = etat.brouillon
+  if (!b || !etat.selection) return
+  copierSelection()
+  effacer(b, bornerZone(etat.selection, b.grille.length))
+  rafraichir()
+  pousserHistoire()
+}
+
+function supprimerSelection(): void {
+  const b = etat.brouillon
+  if (!b || !etat.selection) return
+  effacer(b, bornerZone(etat.selection, b.grille.length))
+  rafraichir()
+  pousserHistoire()
+}
+
+function armerCollage(): void {
+  if (!etat.pressePapier) return
+  etat.collage = true
+  message('collage armé : chaque clic estampe le fragment — Échap pour reposer')
+}
+
+function toutDeposer(): void {
+  etat.collage = false
+  etat.selection = null
+  selDepart = null
+  majSelectionScene()
+  laScene()?.majFantome(null)
+}
+
+/** MIROIR/ROTATION : sur le presse-papier si le collage est armé, sinon SUR PLACE dans la
+ *  sélection — extraire, transformer, recoller au même coin (une entrée d'historique). */
+function transformer(op: (f: Fragment) => Fragment): void {
+  const b = etat.brouillon
+  if (etat.collage && etat.pressePapier) {
+    etat.pressePapier = op(etat.pressePapier)
+    return
+  }
+  if (!b || !etat.selection) return
+  const zone = bornerZone(etat.selection, b.grille.length)
+  const f = op(extraire(b, zone))
+  effacer(b, zone)
+  coller(b, f, zone.x0, zone.y0)
+  // Un quart de tour échange w et h : la sélection suit, bornée au plan.
+  etat.selection = bornerZone({ x0: zone.x0, y0: zone.y0, w: f.w, h: f.h }, b.grille.length)
+  rafraichir()
+  pousserHistoire()
+}
+
+// ═══ LES TAMPONS (P-B) — des fragments NOMMÉS, gardés en localStorage, entre lieux. ═══
+
+function lireTampons(): Record<string, Fragment> {
+  try {
+    return JSON.parse(localStorage.getItem('atelier-tampons') ?? '{}') as Record<string, Fragment>
+  } catch {
+    return {}
+  }
+}
+
+function construireTampons(): void {
+  const tampons = lireTampons()
+  const conteneur = $('tampons')
+  conteneur.innerHTML = ''
+  for (const [nom, f] of Object.entries(tampons)) {
+    const puce = document.createElement('span')
+    puce.className = 'tampon'
+    puce.textContent = `${nom} ${f.w}×${f.h}`
+    puce.title = 'cliquer = armer le collage'
+    puce.addEventListener('click', () => {
+      etat.pressePapier = f
+      armerCollage()
+    })
+    const x = document.createElement('span')
+    x.className = 'x'
+    x.textContent = '✕'
+    x.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const t = lireTampons()
+      delete t[nom]
+      localStorage.setItem('atelier-tampons', JSON.stringify(t))
+      construireTampons()
+    })
+    puce.appendChild(x)
+    conteneur.appendChild(puce)
+  }
 }
 
 /** La texture de fantôme d'un caractère de palette — la VRAIE clé du jeu, jamais un dessin
@@ -513,10 +672,145 @@ function textureDeCar(car: string): string | null {
   return def.region === 'salle' ? 'st-floor' : def.region === 'cour' ? 'st-terre-0' : null
 }
 
-// ═══ LES RACCOURCIS (P-A) — au DOM, qui sait quand un champ a le focus ═══
+// ═══ LA PLANCHE (P-C) — auto tant que la MESURE le permet, débranchée sinon ═══
+
+let plancheTimer = 0
+
+function rafraichirPlanche(): void {
+  const b = etat.brouillon
+  if (!b || etat.fautes.length > 0) return
+  const plan = versPlan(b)
+  void rendrePlanche(
+    $('planche'),
+    (sort, quart) => batir(plan, sort, quart, false),
+    (v: Variante) => {
+      // PROMOUVOIR une vignette : ses réglages deviennent ceux de la vue principale.
+      etat.sort = v.sort
+      etat.quart = v.quart
+      $<HTMLSelectElement>('sort').value = v.sort
+      $<HTMLSelectElement>('quart').value = String(v.quart)
+      if (v.heure !== 12) {
+        etat.heure = v.heure
+        $<HTMLInputElement>('heure').value = String(Math.max(6, Math.min(18, v.heure)))
+        $('heure-v').textContent = `${etat.heure}h`
+      }
+      rafraichir()
+    },
+    (texte) => { $('planche-cout').textContent = texte },
+  )
+}
+
+function planifierPlanche(): void {
+  if (!autoPermis()) return //  la mesure a coupé l'auto : bouton « rafraîchir » seulement
+  window.clearTimeout(plancheTimer)
+  plancheTimer = window.setTimeout(rafraichirPlanche, 900) //  après la dernière frappe
+}
+
+// ═══ LE MONDE (P-D) — le diff, l'historique git, « tester en jeu » ═══
+
+/** Un diff de LIGNES (LCS) — un .plan fait quelques dizaines de lignes, l'O(n·m) est libre. */
+function differ(avant: string[], apres: string[]): { t: '+' | '-' | ' '; l: string }[] {
+  const n = avant.length
+  const m = apres.length
+  const lcs: number[][] = Array.from({ length: n + 1 }, () => Array<number>(m + 1).fill(0))
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i]![j] = avant[i] === apres[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!)
+    }
+  }
+  const sortie: { t: '+' | '-' | ' '; l: string }[] = []
+  let i = 0
+  let j = 0
+  while (i < n && j < m) {
+    if (avant[i] === apres[j]) { sortie.push({ t: ' ', l: avant[i]! }); i++; j++ }
+    else if (lcs[i + 1]![j]! >= lcs[i]![j + 1]!) { sortie.push({ t: '-', l: avant[i]! }); i++ }
+    else { sortie.push({ t: '+', l: apres[j]! }); j++ }
+  }
+  while (i < n) { sortie.push({ t: '-', l: avant[i]! }); i++ }
+  while (j < m) { sortie.push({ t: '+', l: apres[j]! }); j++ }
+  return sortie
+}
+
+function montrerDiff(avant: string, apres: string, titre: string): void {
+  const pre = $('diff')
+  pre.style.display = 'block'
+  pre.innerHTML = ''
+  const entete = document.createElement('div')
+  entete.className = 'ctx'
+  entete.textContent = `── ${titre} ──`
+  pre.appendChild(entete)
+  for (const { t, l } of differ(avant.split('\n'), apres.split('\n'))) {
+    const ligne = document.createElement('div')
+    ligne.className = t === '+' ? 'plus' : t === '-' ? 'moins' : 'ctx'
+    ligne.textContent = `${t} ${l}`
+    pre.appendChild(ligne)
+  }
+}
+
+async function chargerHistorique(): Promise<void> {
+  const conteneur = $('historique')
+  conteneur.textContent = '…'
+  try {
+    const r = await fetch(`/atelier/api/plans/historique?kind=${etat.kind}`)
+    const data = (await r.json()) as { rev: string; date: string; sujet: string }[] | { erreur: string }
+    if (!r.ok || !Array.isArray(data)) throw new Error((data as { erreur: string }).erreur ?? `HTTP ${r.status}`)
+    conteneur.innerHTML = ''
+    for (const { rev, date, sujet } of data) {
+      const ligne = document.createElement('div')
+      ligne.textContent = `${date} ${rev} — ${sujet}`
+      ligne.title = 'cliquer : diff de cette version vers le brouillon courant'
+      ligne.addEventListener('click', () => {
+        void fetch(`/atelier/api/plans/version?kind=${etat.kind}&rev=${rev}`)
+          .then((rep) => rep.json())
+          .then((v) => montrerDiff((v as { texte: string }).texte, texteCourant(), `${rev} (${date}) → brouillon`))
+      })
+      conteneur.appendChild(ligne)
+    }
+    if (!conteneur.childElementCount) conteneur.textContent = 'aucune entrée (fichier jamais commité ?)'
+  } catch (e) {
+    conteneur.textContent = `✗ ${(e as Error).message}`
+  }
+}
+
+// ═══ LA CRÉATION (P-E) — des BROUILLONS, hors-monde (décision d'Alexis) ═══
+
+async function creerBrouillon(base: string | null): Promise<void> {
+  const nom = window.prompt('Nom du nouveau lieu (minuscules et _ seulement) :', base ? `${base}_bis` : 'mon_lieu')
+  if (!nom) return
+  if (!/^[a-z_]+$/.test(nom)) { message(`✗ « ${nom} » : minuscules et _ seulement`); return }
+  if (etat.textes.has(nom)) { message(`✗ « ${nom} » existe déjà`); return }
+  let texte: string
+  if (base) texte = texteCourant()
+  else {
+    const cote = Math.max(3, Math.min(24, Number(window.prompt('Côté de la grille :', '5') ?? 5) || 5))
+    texte = `# ═══ ${nom.toUpperCase()} — brouillon d'Atelier (HORS-MONDE tant que POI_TYPES l'ignore) ═══\nusure: 1\ngrille:\n${Array.from({ length: cote }, () => '·'.repeat(cote)).join('\n')}\n`
+  }
+  try {
+    const r = await fetch('/atelier/api/plans', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-atelier': '1' },
+      body: JSON.stringify({ kind: nom, texte, brouillon: true }),
+    })
+    const rep = (await r.json()) as { ok?: boolean; erreur?: string }
+    if (!r.ok || !rep.ok) throw new Error(rep.erreur ?? `HTTP ${r.status}`)
+    etat.textes.set(nom, texte)
+    etat.brouillons.add(nom)
+    const opt = document.createElement('option')
+    opt.value = nom
+    opt.textContent = `${nom} (brouillon)`
+    $<HTMLSelectElement>('lieux').appendChild(opt)
+    choisir(nom, { force: true })
+    message(`✓ brouillon « ${nom} » créé (plans/brouillons/) — hors-monde tant que POI_TYPES l'ignore`)
+  } catch (e) {
+    message(`✗ création impossible : ${(e as Error).message}`)
+  }
+}
 function champActif(): boolean {
   const a = document.activeElement
-  return a instanceof HTMLInputElement || a instanceof HTMLSelectElement || a instanceof HTMLTextAreaElement
+  if (a instanceof HTMLSelectElement || a instanceof HTMLTextAreaElement) return true
+  // Un radio, une case, un curseur ou un bouton ne CAPTURENT pas les raccourcis — cliquer
+  // l'outil « sélection » puis Ctrl+C doit copier, pas se taire (le focus reste sur le radio).
+  return a instanceof HTMLInputElement && !['radio', 'checkbox', 'range', 'button'].includes(a.type)
 }
 
 window.addEventListener('keydown', (e) => {
@@ -531,6 +825,11 @@ window.addEventListener('keydown', (e) => {
     restaurerHistoire(1)
     return
   }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') { e.preventDefault(); copierSelection(); return }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'x') { e.preventDefault(); couperSelection(); return }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') { e.preventDefault(); armerCollage(); return }
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); supprimerSelection(); return }
+  if (e.key === 'Escape') { toutDeposer(); return }
   if (e.key === ' ') {
     e.preventDefault() //  Espace = PAN, pas le défilement de page
     const sc = laScene()
@@ -539,6 +838,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.key === 'b' || e.key === 'B') choisirOutil('peindre')
   else if (e.key === 'e' || e.key === 'E') choisirOutil('gommer')
+  else if (e.key === 'm' || e.key === 'M') choisirOutil('selection')
   else if (/^[0-9]$/.test(e.key)) {
     const i = e.key === '0' ? 9 : Number(e.key) - 1
     const car = ordrePalette()[i]
@@ -566,8 +866,11 @@ function choisirOutil(outil: typeof etat.outil): void {
 async function charger(): Promise<void> {
   const r = await fetch('/atelier/api/plans')
   if (!r.ok) throw new Error(`endpoint plans : ${r.status}`)
-  const data = (await r.json()) as { kind: string; texte: string }[]
-  for (const { kind, texte } of data) etat.textes.set(kind, texte)
+  const data = (await r.json()) as { kind: string; texte: string; brouillon?: boolean }[]
+  for (const { kind, texte, brouillon } of data) {
+    etat.textes.set(kind, texte)
+    if (brouillon) etat.brouillons.add(kind)
+  }
   const kinds = [...etat.textes.keys()].sort()
   const absents = BUILT_KINDS.filter((k) => !etat.textes.has(k))
   if (absents.length) message(`⚠ module généré en avance sur les .plan : ${absents.join(', ')}`)
@@ -576,7 +879,7 @@ async function charger(): Promise<void> {
   for (const k of kinds) {
     const opt = document.createElement('option')
     opt.value = k
-    opt.textContent = k
+    opt.textContent = etat.brouillons.has(k) ? `${k} (brouillon)` : k
     select.appendChild(opt)
   }
   // ── LA SÉANCE REPREND OÙ ELLE EN ÉTAIT : le lieu, les bascules, et le BROUILLON s'il
@@ -637,7 +940,10 @@ function choisir(kind: string, opts?: { force?: boolean }): void {
   histoireDe(kind) //  la pile naît avec l'état du disque
   $<HTMLInputElement>('usure').value = String(etat.brouillon.usure)
   $<HTMLInputElement>('fixe').checked = etat.brouillon.fixe
-  message('')
+  message(etat.brouillons.has(kind) ? 'BROUILLON hors-monde — la naissance passe par POI_TYPES + déplacer le fichier' : '')
+  toutDeposer() //  la sélection et le collage ne voyagent pas d'un lieu à l'autre
+  $('diff').style.display = 'none'
+  $('historique').innerHTML = ''
   recadrer = true //  un NOUVEAU lieu se recadre ; une édition, jamais
   rafraichir()
 }
@@ -655,7 +961,7 @@ async function sauver(): Promise<void> {
       // `x-atelier` force un PREFLIGHT : sans lui, n'importe quelle page visitée pendant que
       // `pnpm dev` tourne pouvait poster en « simple request » (revue du 2026-08-10).
       headers: { 'content-type': 'application/json', 'x-atelier': '1' },
-      body: JSON.stringify({ kind: etat.kind, texte }),
+      body: JSON.stringify({ kind: etat.kind, texte, ...(etat.brouillons.has(etat.kind) ? { brouillon: true } : {}) }),
     })
     const rep = (await r.json()) as { ok?: boolean; erreur?: string }
     if (!r.ok || !rep.ok) {
@@ -728,8 +1034,53 @@ $<HTMLButtonElement>('sauver').addEventListener('click', () => { void sauver() }
 $<HTMLButtonElement>('copier').addEventListener('click', () => {
   void navigator.clipboard.writeText(texteCourant()).then(() => message('texte du .plan copié'))
 })
+// ── P-B : transformations et tampons. ──
+$<HTMLButtonElement>('miroir-h').addEventListener('click', () => transformer(miroirH))
+$<HTMLButtonElement>('miroir-v').addEventListener('click', () => transformer(miroirV))
+$<HTMLButtonElement>('tourner-frag').addEventListener('click', () => transformer(tournerFragment))
+$<HTMLButtonElement>('tampon-plus').addEventListener('click', () => {
+  if (!etat.pressePapier && etat.selection) copierSelection()
+  if (!etat.pressePapier) { message('rien à tamponner — sélectionne puis Ctrl+C'); return }
+  const nom = window.prompt('Nom du tampon :')
+  if (!nom) return
+  const t = lireTampons()
+  t[nom] = etat.pressePapier
+  localStorage.setItem('atelier-tampons', JSON.stringify(t))
+  construireTampons()
+})
+// ── P-C : la planche. ──
+$<HTMLButtonElement>('planche-maj').addEventListener('click', () => rafraichirPlanche())
+$<HTMLButtonElement>('exporter').addEventListener('click', () => { void exporterPlanche(etat.kind, jeu) })
+// ── P-D : le diff, l'historique, tester en jeu. ──
+$<HTMLButtonElement>('voir-diff').addEventListener('click', () => {
+  const pre = $('diff')
+  if (pre.style.display !== 'none') { pre.style.display = 'none'; return }
+  montrerDiff(etat.textes.get(etat.kind) ?? '', texteCourant(), 'disque → brouillon')
+})
+$<HTMLButtonElement>('historique-maj').addEventListener('click', () => { void chargerHistorique() })
+$<HTMLButtonElement>('tester').addEventListener('click', () => {
+  // La Veillée dev s'ouvre TÉLÉPORTÉE au lieu (WorldScene lit `?atelier=`) — un brouillon
+  // hors-monde n'y existe pas : on prévient au lieu d'ouvrir un onglet pour rien.
+  if (etat.brouillons.has(etat.kind)) { message('un BROUILLON n’existe pas dans le monde — promeus-le d’abord (POI_TYPES)'); return }
+  if (modifie()) message('⚠ éditions non sauvées : le jeu montrera la version du DISQUE')
+  window.open(`/?solo&atelier=${etat.kind}`, '_blank')
+})
+// ── P-E : création et redimensionnement. ──
+$<HTMLButtonElement>('nouveau').addEventListener('click', () => { void creerBrouillon(null) })
+$<HTMLButtonElement>('dupliquer').addEventListener('click', () => { void creerBrouillon(etat.kind) })
+for (const bouton of document.querySelectorAll<HTMLButtonElement>('[data-redim]')) {
+  bouton.addEventListener('click', () => {
+    const b = etat.brouillon
+    if (!b) return
+    redimensionner(b, bouton.dataset.redim as 'N' | 'S' | 'E' | 'O', Number(bouton.dataset.delta) as 1 | -1)
+    toutDeposer() //  la sélection ne survit pas à un décalage de grille
+    rafraichir()
+    pousserHistoire()
+  })
+}
 
 construirePalette()
+construireTampons()
 void charger().catch((e: Error) => message(`✗ chargement : ${e.message} — l'Atelier exige le serveur de dev (pnpm dev)`))
 
 // LA SONDE DU SMOKE (A9) : l'état se LIT, et « peindre » passe par le même chemin que la
@@ -751,4 +1102,15 @@ window.__ATELIER__ = {
   annuler: (): void => restaurerHistoire(-1),
   refaire: (): void => restaurerHistoire(1),
   texteCourant,
+  /** Tuile de PLAN → pixels ÉCRAN du canvas (lecture seule) : le harnais pilote la VRAIE
+   *  souris — sélection tirée, collage estampé — sans recopier la caméra. */
+  ecran: (rx: number, ry: number): { x: number; y: number } | null => {
+    const sc = laScene()
+    if (!sc) return null
+    const cam = sc.cameras.main
+    return {
+      x: ((rx + MARGE + 0.5) * 16 - cam.worldView.x) * cam.zoom,
+      y: ((ry + MARGE + 0.5) * 16 - cam.worldView.y) * cam.zoom,
+    }
+  },
 }
