@@ -18,17 +18,19 @@
  * dépôt est monté en LECTURE SEULE : l'endpoint échoue proprement et le bouton « Copier »
  * reste la voie (le texte est le même — `serialiserPlan`, chirurgical, prose préservée).
  */
+import Phaser from 'phaser'
 import {
   BUILT_KINDS, LEGENDE, POI_TYPES, TERRAIN_GRASS, batirLieu, createEmptyMap, createSim,
-  crossingBlocker, parserPlan, serialiserPlan, structureBlocks, verifierPlan,
+  crossingBlocker, parserPlan, serialiserPlan, spawnEntity, structureBlocks, verifierPlan,
 } from '@ashes/sim'
 import type { Plan, SimState, SortDuLieu } from '@ashes/sim'
-import { composerApercu, vignette } from './apercu'
+import { BootScene } from '../scenes/BootScene'
+import { AtelierScene } from './scene'
+import { vignette } from './apercu'
 
 /** La marge d'herbe autour du plan sur la carte d'essai — les murs du pourtour vivent sur
  *  la tuile EXTÉRIEURE, il leur faut au moins une rangée, et l'œil respire avec deux. */
 const MARGE = 2
-const T = 16
 
 /** Le plan de travail, MUTABLE — `versPlan()` le fige au format du moteur. */
 interface Brouillon {
@@ -48,12 +50,18 @@ const etat = {
   brouillon: undefined as Brouillon | undefined,
   sort: 'intact' as SortDuLieu,
   quart: 0,
-  montrerToits: true,
-  outil: 'peindre' as 'peindre' | 'breche' | 'seuil' | 'passage',
+  /** L'avatar fictif DEDANS (au centre de la salle) ou DEHORS (au sud) : ce sont les VRAIES
+   *  règles du jeu (nappe, pans) qui décident alors de ce qui s'efface — pas une bascule. */
+  dedans: false,
+  heure: 12,
+  grille: true,
+  outil: 'peindre' as 'peindre' | 'breche' | 'seuil' | 'passage' | 'gommer',
   car: '.',
   fautes: [] as string[],
-  manquantes: [] as string[],
 }
+
+/** La couleur du liseré de fantôme, par outil d'arête — celles du panneau de validation. */
+const COULEUR_OUTIL = { breche: 0xe06c5a, seuil: 0xc9a227, passage: 0x7aa35a } as const
 
 function versBrouillon(plan: Plan): Brouillon {
   return {
@@ -77,13 +85,23 @@ function versPlan(b: Brouillon): Plan {
 
 const footprintDe = (kind: string): number | undefined => POI_TYPES.find((t) => t.slug === kind)?.footprint
 
-/** LE VRAI MOTEUR, dans la page : la carte d'essai, la sim, le poseur — rien d'autre. */
-function batir(plan: Plan, sort: SortDuLieu, quart: number): SimState {
-  const cote = plan.grille.length + 2 * MARGE
+/** Le compteur de GÉNÉRATIONS d'aperçu : chaque rebâti décale ses ids — sans quoi le
+ *  `SnapshotView` (sprites clefs par id, position figée à la création) garderait le sprite
+ *  d'une vie antérieure sur une structure qui a changé de tuile. */
+let generation = 0
+
+/** LE VRAI MOTEUR, dans la page : la carte d'essai, la sim, le poseur, l'avatar — rien d'autre. */
+function batir(plan: Plan, sort: SortDuLieu, quart: number, dedans: boolean): { sim: SimState; playerId: number } {
+  const n = plan.grille.length
+  const cote = n + 2 * MARGE
   const map = createEmptyMap(cote, cote, TERRAIN_GRASS)
   const sim = createSim(7, { map })
   batirLieu(sim, plan, MARGE, MARGE, sort, quart)
-  return sim
+  generation += 1
+  for (const s of sim.structures) s.id += generation * 100_000
+  for (const nd of sim.nodes) nd.id += generation * 100_000
+  const playerId = spawnEntity(sim, MARGE + n / 2, dedans ? MARGE + n / 2 : MARGE + n + 1.5)
+  return { sim, playerId }
 }
 
 /**
@@ -119,7 +137,37 @@ function tuilesEnfermees(sim: SimState): string[] {
   return enfermees
 }
 
-const scene = $<HTMLCanvasElement>('scene')
+// ═══ LE JEU, DANS LA PAGE (décision d'Alexis : « le même rendu que ingame ») ═══
+//
+// Le VRAI BootScene génère toutes les textures puis démarre l'AtelierScene (clé `menu`).
+// Config calquée sur `main.ts` du jeu — mêmes réglages de rendu, mêmes lumières.
+const jeu = new Phaser.Game({
+  type: Phaser.AUTO,
+  width: 960,
+  height: 660,
+  parent: $('jeu'),
+  backgroundColor: '#181d15',
+  antialias: true,
+  roundPixels: true,
+  render: { maxLights: 40 },
+  scale: { mode: Phaser.Scale.NONE },
+  scene: [BootScene, AtelierScene],
+})
+
+/** La scène, quand elle est prête — le boot (génération des textures) prend quelques
+ *  instants : on re-tente, et le DERNIER état demandé gagne. */
+function rendre(sim: SimState, playerId: number): void {
+  const sc = jeu.scene.getScene('menu') as AtelierScene | null
+  if (!sc || !sc.pret) {
+    window.setTimeout(() => rendre(sim, playerId), 120) // attente de boot seulement — pas un timing de jeu
+    return
+  }
+  sc.surClic = (fx, fy, droit) => clicCarte(fx - MARGE, fy - MARGE, droit)
+  sc.surSurvol = (fx, fy) => survolCarte(fx - MARGE, fy - MARGE)
+  sc.heure = etat.heure
+  sc.grilleVisible = etat.grille
+  sc.montrer(sim, playerId)
+}
 
 /**
  * LE BROUILLON SURVIT AU RECHARGEMENT (revue du 2026-08-10) : chaque sauvegarde régénère
@@ -129,7 +177,7 @@ const scene = $<HTMLCanvasElement>('scene')
  */
 function memoriser(): void {
   sessionStorage.setItem('atelier', JSON.stringify({
-    kind: etat.kind, brouillon: etat.brouillon, sort: etat.sort, quart: etat.quart, montrerToits: etat.montrerToits,
+    kind: etat.kind, brouillon: etat.brouillon, sort: etat.sort, quart: etat.quart, dedans: etat.dedans, heure: etat.heure,
   }))
 }
 
@@ -147,13 +195,9 @@ function rafraichir(): void {
   const valide = etat.fautes.length === 0
   let enfermees: string[] = []
   if (valide) {
-    const sim = batir(plan, etat.sort, etat.quart)
-    const apercu = composerApercu(scene, sim.structures, sim.nodes, sim.map.width, etat.montrerToits)
-    etat.manquantes = [...apercu.manquantes]
+    const { sim, playerId } = batir(plan, etat.sort, etat.quart, etat.dedans)
     enfermees = tuilesEnfermees(sim)
-    const echelle = Math.max(2, Math.min(5, Math.floor(880 / scene.width)))
-    scene.style.width = `${scene.width * echelle}px`
-    scene.style.height = `${scene.height * echelle}px`
+    rendre(sim, playerId) //  LE RENDU EST LE JEU : SnapshotView, lumière, vraies règles
   }
   const validation = $('validation')
   validation.innerHTML = ''
@@ -181,7 +225,6 @@ function rafraichir(): void {
     div.textContent = 'quart ≠ 0 : aperçu seulement, l’édition se fait en orientation 0'
     validation.appendChild(div)
   }
-  $('manquantes').textContent = etat.manquantes.length ? etat.manquantes.join(' · ') : 'rien — tout l’aperçu est en vrai albédo'
   // Une faute BLOQUE la sauvegarde (A8) — l'enfermement avertit, il ne bloque pas : une
   // ruine scellée est peut-être voulue un jour, la garde de la suite tranchera.
   $<HTMLButtonElement>('sauver').disabled = !valide
@@ -237,38 +280,86 @@ function peindreCase(rx: number, ry: number, car: string): boolean {
   return true
 }
 
-scene.addEventListener('mousedown', (e) => {
+/** L'ARÊTE LA PLUS PROCHE du point (u,v) dans sa tuile — le tri des quatre distances,
+ *  le patron de la visée du jeu (`aim.ts`). Stable : à égalité, l'ordre déclaré tranche. */
+function areteLaPlusProche(u: number, v: number): 'N' | 'E' | 'S' | 'O' {
+  return [
+    { d: 'N' as const, dist: v }, { d: 'E' as const, dist: 1 - u },
+    { d: 'S' as const, dist: 1 - v }, { d: 'O' as const, dist: u },
+  ].sort((p, q) => p.dist - q.dist)[0]!.d
+}
+
+/** LE CLIC SUR LA CARTE — remonté par la scène (`surClic`), en coordonnées de PLAN
+ *  (fraction comprise, la marge déjà soustraite). Peinture, arête, ou GOMME. */
+function clicCarte(fx: number, fy: number, droit = false): void {
   const b = etat.brouillon
   if (!b) return
   if (etat.quart !== 0) {
     message('l’édition se fait en orientation 0 — repasse quart à 0')
     return
   }
-  const cadre = scene.getBoundingClientRect()
-  const fx = ((e.clientX - cadre.left) / cadre.width) * (scene.width / T) - MARGE
-  const fy = ((e.clientY - cadre.top) / cadre.height) * (scene.height / T) - MARGE
   const rx = Math.floor(fx)
   const ry = Math.floor(fy)
   const n = b.grille.length
   if (rx < 0 || ry < 0 || rx >= n || ry >= n) return
+  // LA GOMME (l'outil, ou le clic DROIT depuis n'importe quel outil — demande d'Alexis) :
+  // le triplet de l'arête visée s'il y en a un, sinon la case redevient `·`.
+  if (droit || etat.outil === 'gommer') {
+    const triplet = `${rx},${ry},${areteLaPlusProche(fx - rx, fy - ry)}`
+    for (const liste of [b.breches, b.seuils, b.passages]) {
+      const i = liste.indexOf(triplet)
+      if (i >= 0) {
+        liste.splice(i, 1)
+        rafraichir()
+        return
+      }
+    }
+    peindreCase(rx, ry, '·')
+    return
+  }
   if (etat.outil === 'peindre') {
     peindreCase(rx, ry, etat.car)
     return
   }
   {
-    const u = fx - rx
-    const v = fy - ry
-    const dir = [
-      { d: 'N', dist: v }, { d: 'E', dist: 1 - u }, { d: 'S', dist: 1 - v }, { d: 'O', dist: u },
-    ].sort((p, q) => p.dist - q.dist)[0]!.d
-    const triplet = `${rx},${ry},${dir}`
+    const triplet = `${rx},${ry},${areteLaPlusProche(fx - rx, fy - ry)}`
     const liste = b[etat.outil === 'breche' ? 'breches' : etat.outil === 'seuil' ? 'seuils' : 'passages']
     const i = liste.indexOf(triplet)
     if (i >= 0) liste.splice(i, 1)
     else liste.push(triplet)
   }
   rafraichir()
-})
+}
+
+/** LE SURVOL — le FANTÔME de ce que le clic ferait (demande d'Alexis) : la pièce translucide
+ *  pour la peinture, le liseré coloré sur l'arête visée, le contour rouge de la gomme. */
+function survolCarte(fx: number, fy: number): void {
+  const sc = jeu.scene.getScene('menu') as AtelierScene | null
+  if (!sc?.pret) return
+  const b = etat.brouillon
+  const rx = Math.floor(fx)
+  const ry = Math.floor(fy)
+  const n = b?.grille.length ?? 0
+  if (!b || etat.quart !== 0 || rx < 0 || ry < 0 || rx >= n || ry >= n) {
+    sc.majFantome(null)
+    return
+  }
+  const tx = rx + MARGE
+  const ty = ry + MARGE
+  if (etat.outil === 'peindre') sc.majFantome({ tuile: { tx, ty, texture: textureDeCar(etat.car) } })
+  else if (etat.outil === 'gommer') sc.majFantome({ contour: { tx, ty, couleur: 0xe06c5a } })
+  else sc.majFantome({ arete: { tx, ty, dir: areteLaPlusProche(fx - rx, fy - ry), couleur: COULEUR_OUTIL[etat.outil] } })
+}
+
+/** La texture de fantôme d'un caractère de palette — la VRAIE clé du jeu, jamais un dessin
+ *  à part : la pièce, le nœud, ou le sol de la région. `·` n'a rien à montrer (case vide). */
+function textureDeCar(car: string): string | null {
+  const def = LEGENDE[car]
+  if (!def) return null
+  if (def.piece) return `st-${def.piece}`
+  if (def.noeud) return `nd-${def.noeud}`
+  return def.region === 'salle' ? 'st-floor' : def.region === 'cour' ? 'st-terre-0' : null
+}
 
 // ── CHARGEMENT : les .plan par l'endpoint dev (la PROSE arrive avec — c'est elle que la
 //    sauvegarde chirurgicale préserve). ──
@@ -296,14 +387,17 @@ async function charger(): Promise<void> {
   sessionStorage.removeItem('atelier-sauve')
   if (memoire) {
     try {
-      const m = JSON.parse(memoire) as { kind: string; brouillon: Brouillon; sort: SortDuLieu; quart: number; montrerToits: boolean }
+      const m = JSON.parse(memoire) as { kind: string; brouillon: Brouillon; sort: SortDuLieu; quart: number; dedans?: boolean; heure?: number }
       if (etat.textes.has(m.kind)) {
         etat.sort = m.sort
         etat.quart = m.quart
-        etat.montrerToits = m.montrerToits
+        etat.dedans = m.dedans === true
+        etat.heure = m.heure ?? 12
         $<HTMLSelectElement>('sort').value = m.sort
         $<HTMLSelectElement>('quart').value = String(m.quart)
-        $<HTMLInputElement>('toits').checked = m.montrerToits
+        $<HTMLInputElement>('dedans').checked = etat.dedans
+        $<HTMLInputElement>('heure').value = String(etat.heure)
+        $('heure-v').textContent = `${etat.heure}h`
         choisir(m.kind, { force: true })
         const disque = versBrouillon(parserPlan(etat.textes.get(m.kind)!))
         if (JSON.stringify(m.brouillon) !== JSON.stringify(disque)) {
@@ -385,15 +479,28 @@ $<HTMLSelectElement>('quart').addEventListener('change', (e) => {
   etat.quart = Number((e.target as HTMLSelectElement).value)
   rafraichir()
 })
-$<HTMLInputElement>('toits').addEventListener('change', (e) => {
-  etat.montrerToits = (e.target as HTMLInputElement).checked
+$<HTMLInputElement>('dedans').addEventListener('change', (e) => {
+  // L'avatar CHANGE DE PLACE (dedans/dehors) : on rebâtit — nappe et pans, les vraies
+  // règles, décident alors seules de ce qui s'efface.
+  etat.dedans = (e.target as HTMLInputElement).checked
   rafraichir()
+})
+$<HTMLInputElement>('heure').addEventListener('input', (e) => {
+  etat.heure = Number((e.target as HTMLInputElement).value)
+  $('heure-v').textContent = `${etat.heure}h`
+  const sc = jeu.scene.getScene('menu') as AtelierScene | null
+  if (sc?.pret) sc.heure = etat.heure //  la lumière suit à la frame — pas besoin de rebâtir
+  memoriser()
 })
 for (const radio of document.querySelectorAll<HTMLInputElement>('input[name="outil"]')) {
   radio.addEventListener('change', () => {
     etat.outil = radio.value as typeof etat.outil
   })
 }
+$<HTMLInputElement>('grille').addEventListener('change', (e) => {
+  etat.grille = (e.target as HTMLInputElement).checked
+  rafraichir() //  la grille se redessine avec l'aperçu
+})
 $<HTMLButtonElement>('sauver').addEventListener('click', () => { void sauver() })
 $<HTMLButtonElement>('copier').addEventListener('click', () => {
   void navigator.clipboard.writeText(texteCourant()).then(() => message('texte du .plan copié'))
@@ -407,6 +514,8 @@ void charger().catch((e: Error) => message(`✗ chargement : ${e.message} — l'
 declare global { interface Window { __ATELIER__?: unknown } }
 window.__ATELIER__ = {
   pret: (): boolean => etat.brouillon !== undefined,
+  /** Le RENDU est-il debout ? (le boot Phaser génère les textures avant la scène) */
+  rendu: (): boolean => (jeu.scene.getScene('menu') as AtelierScene | null)?.pret === true,
   kinds: (): string[] => [...etat.textes.keys()].sort(),
   choisir,
   etat,

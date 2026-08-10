@@ -7193,15 +7193,32 @@ const SCENARIOS = {
     console.log(`lieux chargés : ${kinds.join(' ')}`)
     if (kinds.length < 9) console.error(`!! ${kinds.length} lieux — les 9 .plan attendus`)
 
+    // LE RENDU EST LE JEU : on attend que le boot Phaser (génération des textures) soit
+    // passé et que la scène ait appliqué au moins un snapshot avant de photographier.
+    await page.waitForFunction(() => window.__ATELIER__.rendu(), null, { timeout: 60000 })
     await page.evaluate(() => window.__ATELIER__.choisir('cabane'))
-    await page.waitForTimeout(300)
-    const avant = await page.evaluate(() => ({
-      fautes: window.__ATELIER__.etat.fautes.length,
-      manquantes: window.__ATELIER__.etat.manquantes,
-    }))
-    console.log(`cabane : ${avant.fautes} faute(s) · sans albédo : ${avant.manquantes.join(' ') || 'rien'}`)
+    await page.waitForTimeout(1200)
+    const avant = await page.evaluate(() => ({ fautes: window.__ATELIER__.etat.fautes.length }))
+    console.log(`cabane : ${avant.fautes} faute(s)`)
     if (avant.fautes > 0) console.error('!! la cabane du dépôt ne devrait porter AUCUNE faute')
     await page.screenshot({ path: `${OUT}/atelier-cabane.png` })
+
+    // ── L'AVATAR DEDANS : les VRAIES règles (nappe, pans) effacent toit et façade. ──
+    await page.click('#dedans')
+    await page.waitForTimeout(900)
+    await page.screenshot({ path: `${OUT}/atelier-dedans.png` })
+    await page.click('#dedans')
+    await page.waitForTimeout(600)
+
+    // ── LE FANTÔME : au survol d'une case du plan, la pièce ARMÉE se montre translucide
+    //    (la paillasse — distinctive sur le chaume comme sur l'herbe). ──
+    await page.evaluate(() => { window.__ATELIER__.etat.car = 'L' })
+    const boite = await page.locator('#jeu canvas').boundingBox()
+    if (boite) {
+      await page.mouse.move(boite.x + boite.width / 2, boite.y + boite.height / 2)
+      await page.waitForTimeout(400)
+      await page.screenshot({ path: `${OUT}/atelier-fantome.png` })
+    }
 
     // ── ON PEINT une paillasse en (3,1), par le même chemin que la souris, et le TEXTE du
     //    .plan la porte (c'est lui qu'on sauvera — la preuve va jusqu'au format). ──

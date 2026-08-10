@@ -18,7 +18,10 @@
       button:disabled { opacity: 0.45; cursor: not-allowed; }
       button.principal { background: #4a3a1a; border-color: #6a5426; color: #f0d9a0; padding: 6px 12px; }
       label { display: inline-flex; align-items: center; gap: 5px; margin-right: 10px; }
-      #scene { image-rendering: pixelated; background: #23282013; border: 1px solid #2e2820; cursor: crosshair; }
+      /* LE RENDU EST LE JEU (décision d'Alexis) : un Phaser.Game se monte dans #jeu —
+         BootScene y génère les vraies textures puis l'AtelierScene rend par SnapshotView. */
+      #jeu { border: 1px solid #2e2820; cursor: crosshair; line-height: 0; }
+      #jeu canvas { display: block; }
       #palette { display: flex; flex-wrap: wrap; gap: 4px; }
       #palette .tuile { width: 40px; padding: 3px 0 2px; text-align: center; border: 1px solid #3a3226; border-radius: 3px; cursor: pointer; background: #201c15; }
       #palette .tuile.actif { border-color: #e8b34a; background: #2c2416; }
@@ -47,7 +50,10 @@
         <div class="rangee">
           <label>sort <select id="sort"><option value="intact">intact</option><option value="pille">pillé</option><option value="brule">brûlé</option></select></label>
           <label>quart <select id="quart"><option>0</option><option>1</option><option>2</option><option>3</option></select></label>
-          <label><input id="toits" type="checkbox" checked /> toits</label>
+          <label><input id="dedans" type="checkbox" /> avatar dedans</label>
+        </div>
+        <div class="rangee">
+          <label>heure <input id="heure" type="range" min="6" max="18" step="1" value="12" style="width:120px" /> <span id="heure-v">12h</span></label>
         </div>
         <h2>L'outil</h2>
         <div id="outils">
@@ -55,20 +61,20 @@
           <label><input type="radio" name="outil" value="breche" /> brèche (arête)</label>
           <label><input type="radio" name="outil" value="seuil" /> seuil (arête)</label>
           <label><input type="radio" name="outil" value="passage" /> passage (arête)</label>
+          <label><input type="radio" name="outil" value="gommer" /> gommer (ou clic droit)</label>
+          <label style="margin-top:4px"><input id="grille" type="checkbox" checked /> grille</label>
         </div>
         <h2>La palette</h2>
         <div id="palette"></div>
         <h2>Validation</h2>
         <div id="validation"></div>
-        <h2>Sans albédo (tuile neutre)</h2>
-        <div id="manquantes"></div>
         <div class="rangee" style="margin-top:12px">
           <button id="sauver" class="principal">Sauver le .plan</button>
           <button id="copier">Copier</button>
         </div>
         <div id="etat"></div>
       </aside>
-      <main><canvas id="scene"></canvas></main>
+      <main><div id="jeu"></div></main>
     </div>
     <script type="module" src="/src/atelier/main.ts"></script>
   </body>
