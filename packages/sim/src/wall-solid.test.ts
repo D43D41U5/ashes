@@ -81,6 +81,12 @@ function lieuBati(kind: string): { map: ReturnType<typeof createEmptyMap>; struc
 const CAS: readonly { kind: string; minBandes: number; minDeparts: number }[] = [
   { kind: 'ferme_ruinee', minBandes: 30, minDeparts: 500 },
   { kind: 'ruines', minBandes: 10, minDeparts: 150 },
+  // La ROCHE des antres (2026-08-11) : le massif est une PLEINE-TUILE (rect entier, pas une
+  // bande d'arête) — « non traversable sur au moins une tuile complète » se prouve ici, par
+  // le même balayage exhaustif que les murs. Mine : 11 massifs + chevalement + wagonnet ;
+  // grotte : 15 massifs.
+  { kind: 'mine', minBandes: 12, minDeparts: 150 },
+  { kind: 'grotte', minBandes: 14, minDeparts: 150 },
 ]
 
 describe.each(CAS)('$kind bâti ne se traverse pas', ({ kind, minBandes, minDeparts }) => {

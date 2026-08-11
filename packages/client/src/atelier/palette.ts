@@ -29,7 +29,8 @@ export const THEME_DE: Record<string, Theme> = {
   n: 'Construction', //    entrée de galerie — la bouche boisée
   I: 'Construction', //    étai — le poteau de boisage
   // ── Minéraux : la pierre nue — sol, blocs, fouille, et les corps de lieux de roche. ──
-  r: 'Minéraux', //        roc (sol d'antre — les PAROIS se dérivent de son pourtour)
+  r: 'Minéraux', //        roc (sol d'antre — sa clôture se PEINT en massif)
+  H: 'Minéraux', //        massif — la roche en masse, incassable (2026-08-11)
   R: 'Minéraux', //        rocher
   e: 'Minéraux', //        éboulis
   g: 'Minéraux', //        gravats (cour)

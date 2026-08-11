@@ -129,7 +129,26 @@ export function deserializeSim(text: string): SimState {
   if (manquants.length > 0) {
     throw new Error(`Veillée d'un format antérieur : ${manquants.length} champ(s) manquant(s) — ${manquants.join(', ')}`)
   }
+  migrerParoiEnMassif(env.sim)
   return env.sim
+}
+
+/**
+ * MIGRATION `paroi` → `massif` (révision du 2026-08-11) — on n'orpheline JAMAIS une
+ * sauvegarde (la philosophie des clés `braises`). Les Veillées du 2026-08-10 portent des
+ * structures `paroi` — la barrière d'arête d'antre, morte avec la révision : son type
+ * n'existe plus au registre, et le premier `structureBlocks` d'un pathfinding jetterait
+ * (MESURÉ : TypeError au premier tick). Elle devient du `massif` PLEIN (les arêtes
+ * tombent — la roche est une masse, pas un trait) : la géométrie diffère du généré neuf,
+ * mais le lieu reste clos, infranchissable et incassable — la promesse tenue.
+ */
+function migrerParoiEnMassif(sim: SimState): void {
+  for (const s of sim.structures) {
+    if ((s.type as string) === 'paroi') {
+      s.type = 'massif'
+      delete s.edges
+    }
+  }
 }
 
 /* ─── LA CARTE À PART — ce qui ne bouge pas ne se réécrit pas ────────────────────── */
@@ -330,5 +349,7 @@ export function deserializePartie(text: string, carte: CarteSauvee): SimState {
   // remplit SANS les déplacer — l'ordre des clés, donc `snapshot()`, reste celui d'un monde
   // jamais sauvé. `appliqueDiffNoeuds` JETTE si le recollage ne rend pas la liste attendue.
   const nodes = appliqueDiffNoeuds(carte.nodes, env.noeuds)
-  return { ...env.partie, map, nodes } as SimState
+  const sim = { ...env.partie, map, nodes } as SimState
+  migrerParoiEnMassif(sim) //  les parties du 2026-08-10 portent des `paroi` (cf. la migration)
+  return sim
 }

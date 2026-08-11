@@ -31,7 +31,8 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@ashes/sim'
-import { fireStateAt, terrainAt, type WorldMap } from '@ashes/sim'
+import { fireStateAt, hash2, TERRAIN_CLIFF, terrainAt, type WorldMap } from '@ashes/sim'
+import { cliffKey } from '../../render/cliff-art'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
 import { windSway } from '../../render/wind'
@@ -1045,6 +1046,10 @@ export class SnapshotView {
     // ne se raccorde pas à une maçonnerie : elle bute dessus).
     const clotureTiles = new Set<string>()
     for (const s of structures) if (s.type === 'cloture') clotureTiles.add(`${s.tx},${s.ty}`)
+    // LE MASSIF S'AUTOTUILE SUR LA ROCHE (étage 2 révisé, 2026-08-11) : ses semblables,
+    // le terrain falaise et le hors-carte — le masque du liseré se lit là-dessus.
+    const massifTiles = new Set<string>()
+    for (const s of structures) if (s.type === 'massif') massifTiles.add(`${s.tx},${s.ty}`)
     // LE SEUIL SE LIE À SON VOISIN (porte de deux cases) : il ne connaît que ses semblables à
     // l'ouest et à l'est — le montant tombe de ce côté-là, et la porte devient une ouverture.
     const seuilTiles = new Set<string>()
@@ -1079,11 +1084,15 @@ export class SnapshotView {
               ? ROOF_DEPTH + s.ty
               : s.type === 'floor' || s.type === 'friche' || s.type === 'terre' || s.type === 'roc'
                 ? FLOOR_DEPTH // friche et terre battue SONT le sol : un champ ne se dresse pas
+                // LE MASSIF EST PLAT comme la falaise (pivot RimWorld) : au-dessus des sols,
+                // sous tout ce qui a des pieds — la poche derrière lui reste visible.
+                : s.type === 'massif'
+                  ? FLOOR_DEPTH + 0.5
                 // UNE BARRIÈRE TRIE SUR SA BANDE, pas sur sa tuile : sinon, collé à un mur par
                 // le bas, on passe derrière lui (cf. `barriereDepth`). Et LE SEUIL APRÈS LE MUR :
                 // une bande de mur déborde d'une demi-épaisseur chez ses voisins, et sa pierre
                 // mordait le bois de la porte (constaté par Alexis).
-                : s.edges !== undefined && (s.type === 'wall' || s.type === 'palissade' || s.type === 'cloture' || s.type === 'encadrement' || s.type === 'door' || s.type === 'paroi')
+                : s.edges !== undefined && (s.type === 'wall' || s.type === 'palissade' || s.type === 'cloture' || s.type === 'encadrement' || s.type === 'door')
                   // LE SEUIL **ET LA PORTE** APRÈS LE MUR (`TIE_SEUIL`). Une bande de mur déborde
                   // d'une demi-épaisseur chez ses voisins pour se recoudre ; à pieds égaux et
                   // départage identique, l'ordre tombait sur l'ordre de POSE, et la pierre du mur
@@ -1116,6 +1125,26 @@ export class SnapshotView {
         const m = wallMask(clotureTiles, s.tx, s.ty)
         sprite.setTexture(this.lighting ? `st-cloture-${m}_lit` : `st-cloture-${m}`)
       }
+      if (s.type === 'massif') {
+        // ═══ LE MASSIF EMPRUNTE L'ART DE LA FALAISE (révision d'Alexis, 2026-08-11) ═══
+        //
+        // La roche d'un antre EST la roche du monde : même ardoise plate vue de dessus, même
+        // liseré éclairé sur les bords ouverts — et PLATE (profondeur sous les acteurs), pour
+        // que l'intérieur de la poche reste visible : « il faut que ça respire ». Le masque
+        // lit les massifs voisins, le terrain falaise ET le hors-carte : au flanc d'un vrai
+        // escarpement, la couture disparaît — deux roches, un seul dessin.
+        const roche = (tx: number, ty: number): boolean => {
+          if (massifTiles.has(`${tx},${ty}`)) return true
+          if (this.carte === null) return false
+          if (tx < 0 || ty < 0 || tx >= this.carte.width || ty >= this.carte.height) return true
+          return terrainAt(this.carte, tx, ty) === TERRAIN_CLIFF
+        }
+        const nOuvert = !roche(s.tx, s.ty - 1)
+        const eOuvert = !roche(s.tx + 1, s.ty)
+        const oOuvert = !roche(s.tx - 1, s.ty)
+        const variant = hash2(s.tx, s.ty) < 0.5 ? 0 : 1
+        sprite.setTexture(cliffKey('top', (nOuvert ? 1 : 0) | (eOuvert ? 2 : 0) | (oOuvert ? 4 : 0), variant))
+      }
       if (s.type === 'fire') {
         // Les BÛCHES normal-mappées : bois mat `_lit` quand l'éclairage est armé (relief
         // calculé par la normal map cylindrique), sinon le sprite ombré simple.
@@ -1129,7 +1158,7 @@ export class SnapshotView {
           const warmth = this.villages.find((v) => v.id === s.villageId)?.warmth ?? 0
           sprite.setTint(warmthColor(warmth))
         }
-      } else if (s.edges !== undefined && (s.type === 'wall' || s.type === 'palissade' || s.type === 'cloture' || s.type === 'door' || s.type === 'paroi')) {
+      } else if (s.edges !== undefined && (s.type === 'wall' || s.type === 'palissade' || s.type === 'cloture' || s.type === 'door')) {
         // ═══ LA BARRIÈRE SUR ARÊTE — la forme est PORTÉE, plus devinée ═══
         //
         // L'autotuilage lisait le voisinage ; ici `edges` dit tout. Seize masques suffisent, et
@@ -1154,9 +1183,6 @@ export class SnapshotView {
           s.type === 'door' ? (paire === undefined ? 'door' : paire.premiere ? 'door2a' : 'door2b')
           : s.type === 'cloture' ? 'cloture'
           : s.type === 'palissade' ? 'palissade'
-          // LA PAROI AVANT la ruine et le bois (étage 2) : villageId 0 et sans matériau, elle
-          // prendrait sinon la maçonnerie ruinée — ou pire, un mur de BOIS.
-          : s.type === 'paroi' ? 'paroi'
           : ruine ? 'wall-ruine'
           : (s.material ?? 'wood') === 'wood' ? 'wall-bois'
           : 'wall'
@@ -1224,7 +1250,7 @@ export class SnapshotView {
         if (cacheLaSalle) sprite.clearTint()
         else {
           const rgb: readonly [number, number, number] =
-            ruine || s.type === 'cloture' || s.type === 'palissade' || s.type === 'paroi'
+            ruine || s.type === 'cloture' || s.type === 'palissade'
               ? [248, 250, 255]
               : EDGE_MATERIAL_RGB[s.material ?? 'wood']
           sprite.setTint(Phaser.Display.Color.GetColor(

@@ -61,7 +61,7 @@ import {
   type StructureType,
 } from './items'
 import { heldSlot } from './inventory-actions'
-import { matiereChiffre, matieresDe, parPiece, piece } from './pieces'
+import { estIncassable, matiereChiffre, matieresDe, parPiece, piece } from './pieces'
 import { terrainAt, zoneAt } from './map'
 import { actForDay, seasonDayAtTick } from './time'
 import type { SimState } from './sim'
@@ -673,6 +673,11 @@ export function creditForeignDeposit(
 export function applyStructureDamage(state: SimState, structureId: number, damage: number, byEntityId = 0): void {
   const s = state.structures.find((st) => st.id === structureId)
   if (!s) return
+  // L'INCASSABLE EST DU MONDE AU SENS FORT (décision d'Alexis, 2026-08-11) : le massif
+  // d'un antre est de la roche, pas du bâti — AUCUN dégât ne l'entame, d'où qu'il vienne.
+  // Le siège ne le désigne jamais (monsters/cendreux le sautent) ; cette garde-ci est la
+  // porte unique des dégâts, elle ferme tous les chemins d'un coup.
+  if (estIncassable(s.type)) return
   // LE FEU EST TUABLE SEULEMENT À SEC (V1-12) : nourri (`fuel > 0`), il ignore tout
   // dégât — un totem inviolable. C'est l'upkeep (R16) qui ouvre l'endgame : un Feu
   // qu'on alimente ne tombe jamais ; un Feu abandonné, si.

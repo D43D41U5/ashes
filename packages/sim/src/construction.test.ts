@@ -841,7 +841,7 @@ describe('l’eau peu profonde est inconstructible, sauf le sol', () => {
     // Le vocabulaire naturel (étage 2) : la pierre ne se pose pas sur l'eau — et personne
     // ne la pose au marteau, mais le Record est exhaustif par construction.
     roc: false,
-    paroi: false,
+    massif: false,
     rocher: false,
     eboulis: false,
     // Le vocabulaire minier (étage 3 revu) : du bois d'œuvre — rien ne tient sur l'eau.

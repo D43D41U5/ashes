@@ -1,17 +1,21 @@
 # ═══ LA MINE ABANDONNÉE — le carreau construit de A à Z, comme un bâtiment ═══
 #
 # (Décision d'Alexis, 2026-08-10 : la mine se COMPOSE en pièces — le vocabulaire minier
-# est né pour elle. Le souterrain reste différé, cf. décision 2026-07-27.)
+# est né pour elle. RÉVISION du 2026-08-11 : « il faut que ça respire » — l'antre se clôt
+# en MASSIF (H), la roche en masse, épaisse d'une tuile pleine et incassable ; plus de
+# paroi-mur dérivée. Le souterrain reste différé, cf. décision 2026-07-27.)
 #
-# L'ANTRE est le bout de galerie effondré — on y entre par la BOUCHE BOISÉE (`n`, molle,
-# posée devant le passage), sous l'œil du CHEVALEMENT qui dit « mine » de loin. Le
-# WAGONNET est resté dehors, les ÉTAIS n'attendent plus personne, et les haldes (trois
-# tas de gravats) restent la fouille la plus riche du périmètre.
+# L'ANTRE est le bout de galerie effondré, serré dans sa masse rocheuse — on y entre par
+# la BOUCHE BOISÉE (`n`, molle, posée devant le passage), sous l'œil du CHEVALEMENT qui
+# dit « mine » de loin. Le WAGONNET est resté dehors, l'ÉTAI n'attend plus personne, et
+# les haldes (trois tas de gravats) restent la fouille la plus riche du périmètre.
 usure: 0.55
-passages: 2,2,S
+passages: 3,2,S
 grille:
-·····
-·rr·D
-·rrIG
-··n·w
-·G·Gp
+·HHHH··
+·HrrH··
+·HrrH·D
+·HHnH·w
+··G··I·
+·G··G·p
+·······

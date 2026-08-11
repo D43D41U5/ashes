@@ -91,7 +91,12 @@ export const LEGENDE: Record<string, Case> = {
   // ── ÉTAGE 2 — LE VOCABULAIRE NATUREL (spec lieux-batis, décision d'Alexis 2026-08-10) ──
   // (`#` n'entrera JAMAIS ici : il ouvre un commentaire `.plan` — une rangée qui commence
   // par lui disparaîtrait au parse. Gardé par `plans-batis.test.ts`.)
-  r: { region: 'antre' }, //      la poche minérale À CIEL OUVERT : sol roc, contour dérivé en PAROI
+  r: { region: 'antre' }, //      la poche minérale À CIEL OUVERT : sol roc — sa clôture se PEINT en massif
+  // LE MASSIF (révision du 2026-08-11, décision d'Alexis : « de vraies parois rocheuses,
+  // épaisses et non traversables sur au moins une tuile complète ») : la roche en masse,
+  // pleine-tuile et INCASSABLE — l'épaisseur qui clôt un antre. Jamais dérivé : il se peint,
+  // et la garde de clôture (verifierPlan) exige qu'il ceigne tout pourtour d'antre.
+  H: { piece: 'massif' },
   R: { piece: 'rocher' }, //      le bloc erratique de poche — il bloque, on le contourne
   e: { piece: 'eboulis' }, //     les pierres croulées — plein-tuile bas, on l'enjambe
   Y: { noeud: 'tree' }, //        un VRAI arbre récoltable, semé par le plan (jamais du décor)
@@ -112,8 +117,10 @@ export const LEGENDE: Record<string, Case> = {
  */
 export const regionDe = (c: string): 'salle' | 'cour' | 'antre' | undefined => LEGENDE[c]?.region
 
-/** La barrière que porte le pourtour de chaque région. */
-const CLOTURE_DE: Record<'salle' | 'cour' | 'antre', StructureType> = { salle: 'wall', cour: 'cloture', antre: 'paroi' }
+/** La barrière que porte le pourtour de chaque région. L'ANTRE n'y est plus (révision du
+ *  2026-08-11) : sa clôture ne se dérive pas, elle se PEINT en massif — la roche n'est pas
+ *  un mur qu'on tire au cordeau, c'est une masse que le plan dessine. */
+const CLOTURE_DE: Record<'salle' | 'cour', StructureType> = { salle: 'wall', cour: 'cloture' }
 
 /**
  * LES PLANS habitent « packages/sim/src/plans/<kind>.plan » — leur prose comprise — et
@@ -184,6 +191,10 @@ export function verifierPlan(kind: string, plan: Plan, fp: number | undefined): 
         if (off === undefined) { fautes.push(`${kind} : ${nom} « ${k} » — direction inconnue`); continue }
         const reg = regionAt(x, y)
         if (reg === undefined) { fautes.push(`${kind} : ${nom} « ${k} » — (${x},${y}) n'est pas une région`); continue }
+        // LA ROCHE NE S'ÉCROULE PAS EN PAN ET NE PORTE PAS D'ENCADREMENT (2026-08-11) : sur
+        // un antre, seule la GUEULE (`passage`) a un sens — brèche et seuil sont des mots de
+        // maçonnerie, et les accepter bâtirait un contour que le poseur ne sait plus dériver.
+        if (reg === 'antre' && nom !== 'passage') { fautes.push(`${kind} : ${nom} « ${k} » — pas de ${nom} sur un antre (la roche ne connaît que le passage)`); continue }
         if (regionAt(x + off[0], y + off[1]) === reg) { fautes.push(`${kind} : ${nom} « ${k} » — ne perce aucun contour`); continue }
         // LE TRIPLET CÔTÉ COUR D'UN MUR DE SALLE EST MORT (revue du 2026-08-10) : là où la
         // cour touche la salle, c'est le mur DE LA SALLE qui ferme (« on ne clôture pas
@@ -210,8 +221,53 @@ export function verifierPlan(kind: string, plan: Plan, fp: number | undefined): 
         }
       }
     }
+    // ═══ LA GARDE DE CLÔTURE (révision du 2026-08-11) ═══
+    // « Non traversable sur au moins une tuile complète » se PROUVE ici, sur TOUT le
+    // pourtour — jamais des cas choisis : chaque arête d'antre donne sur une tuile MASSIF
+    // (ou une autre tuile d'antre), ou porte un `passage` explicite — la gueule. Et une
+    // gueule qui donne dans la roche n'ouvre rien : la faute le dit, plutôt qu'une poche
+    // scellée qu'on ne verrait qu'en jeu.
+    const pieceAt = (x: number, y: number): string | undefined =>
+      (x < 0 || y < 0 || x >= n || y >= n ? undefined : LEGENDE[plan.grille[y]![x]!]?.piece)
+    const passagesBruts = new Set(plan.passages ?? [])
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        if (regionAt(x, y) !== 'antre') continue
+        for (const [d, off] of Object.entries(OFF)) {
+          const vx = x + off[0]
+          const vy = y + off[1]
+          if (regionAt(vx, vy) === 'antre') continue
+          if (passagesBruts.has(`${x},${y},${d}`)) {
+            if (pieceAt(vx, vy) === 'massif') fautes.push(`${kind} : le passage « ${x},${y},${d} » donne dans la roche — la gueule doit ouvrir sur du praticable`)
+            continue
+          }
+          if (pieceAt(vx, vy) !== 'massif') {
+            fautes.push(`${kind} : l'antre en (${x},${y}) n'est pas clos côté ${d} — massif (H) ou passage exigé`)
+          }
+        }
+      }
+    }
   }
   return fautes
+}
+
+/** Les quatre directions d'arête — une seule table pour la garde, le poseur et l'orientation. */
+const OFF_DIR: Record<string, readonly [number, number]> = { N: [0, -1], E: [1, 0], S: [0, 1], O: [-1, 0] }
+
+/**
+ * TOURNER UN TRIPLET « x,y,D » d'un quart à la fois — la même loi que `rotate` pour la
+ * grille : une brèche déclarée au nord d'une tuile reste au nord de CETTE tuile.
+ */
+function tournerTriplet(k: string, quart: number, n: number): string {
+  const [rx, ry, d] = [Number(k.split(',')[0]), Number(k.split(',')[1]), k.split(',')[2]!]
+  let x = rx, y = ry, dir = d
+  for (let i = 0; i < quart; i++) {
+    const nx = n - 1 - y
+    const ny = x
+    x = nx; y = ny
+    dir = { N: 'E', E: 'S', S: 'O', O: 'N' }[dir as 'N']!
+  }
+  return `${x},${y},${dir}`
 }
 
 function rotate(plan: readonly string[], n: number): string[] {
@@ -273,12 +329,60 @@ export function buildPoiStructures(state: SimState, seed: number): void {
     // le mobilier et la fouille ; le plan, lui, ne bouge pas.
     const sort = sortDuLieu(map, z.x, z.y, z.w, z.h)
 
-    // L'ORIENTATION, tirée de la position — positionnelle et salée, jamais du PRNG partagé.
-    // Sauf pour un plan `fixe`, qui se pose dans le sens où il est écrit (cf. `Plan.fixe`).
-    const quart = plan.fixe ? 0 : Math.min(3, Math.floor(hash2(z.x, z.y, seed ^ 0x42415449) * 4)) // 'BATI'
+    // L'ORIENTATION — positionnelle et salée, jamais du PRNG partagé ; et depuis le
+    // 2026-08-11, la GUEULE S'ORIENTE (voir `choisirQuart`). Un plan `fixe` se pose
+    // dans le sens où il est écrit (cf. `Plan.fixe`).
+    const quart = plan.fixe ? 0 : choisirQuart(plan, map, z.x, z.y, seed)
 
     batirLieu(state, plan, z.x, z.y, sort, quart)
   }
+}
+
+/** Jusqu'où la gueule regarde pour juger son souffle. Réglage worldgen (se calibre en
+ *  REGARDANT une carte, cf. balance.ts en-tête) : 4 tuiles suffisent à distinguer « donne
+ *  sur l'ouvert » de « donne sur un massif ou l'anneau de bordure ». */
+const SOUFFLE_MAX = 4
+
+/**
+ * LE QUART DE TOUR D'UN LIEU — et la GUEULE S'ORIENTE (révision du 2026-08-11).
+ *
+ * Un plan sans passage tourne comme avant : `hash2` positionnel salé ('BATI'), jamais le
+ * PRNG partagé. Un plan À PASSAGE (l'antre et sa gueule) choisit parmi les quatre quarts
+ * celui qui donne à ses passages le plus de SOUFFLE — de tuiles praticables devant, sur le
+ * terrain FIGÉ (les structures n'existent pas encore à l'amorce). Sous roche incassable,
+ * une gueule tournée vers un côté scellé n'est pas un défaut de lecture, c'est une poche
+ * morte (le problème du 2026-07-13). Le tirage positionnel reste le DÉPART du parcours :
+ * à souffle égal, deux lieux ne se ressemblent pas.
+ */
+function choisirQuart(plan: Plan, map: SimState['map'], x0: number, y0: number, seed: number): number {
+  const base = Math.min(3, Math.floor(hash2(x0, y0, seed ^ 0x42415449) * 4)) // 'BATI'
+  const passages = plan.passages ?? []
+  if (passages.length === 0) return base
+  const n = plan.grille.length
+  let meilleur = base
+  let meilleurSouffle = -1
+  for (let i = 0; i < 4; i++) {
+    const q = (base + i) % 4
+    let souffle = 0
+    for (const k of passages) {
+      const [sx, sy, d] = tournerTriplet(k, q, n).split(',')
+      const off = OFF_DIR[d!]!
+      let tx = x0 + Number(sx) + off[0]
+      let ty = y0 + Number(sy) + off[1]
+      for (let pas = 0; pas < SOUFFLE_MAX; pas++) {
+        if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) break
+        if (isBlockingTile(map, tx, ty)) break
+        souffle += 1
+        tx += off[0]
+        ty += off[1]
+      }
+    }
+    if (souffle > meilleurSouffle) {
+      meilleurSouffle = souffle
+      meilleur = q
+    }
+  }
+  return meilleur
 }
 
 /**
@@ -304,17 +408,7 @@ export function batirLieu(state: SimState, plan: Plan, x0: number, y0: number, s
 
     // Les exceptions du contour, tournées avec le plan : une brèche déclarée au nord d'une
     // tuile reste au nord de CETTE tuile, quel que soit le quart de tour du bâtiment.
-    const tournee = (k: string): string => {
-      const [rx, ry, d] = [Number(k.split(',')[0]), Number(k.split(',')[1]), k.split(',')[2]!]
-      let x = rx, y = ry, dir = d
-      for (let i = 0; i < quart; i++) {
-        const nx = n - 1 - y
-        const ny = x
-        x = nx; y = ny
-        dir = { N: 'E', E: 'S', S: 'O', O: 'N' }[dir as 'N']!
-      }
-      return `${x},${y},${dir}`
-    }
+    const tournee = (k: string): string => tournerTriplet(k, quart, n)
     const breches = new Set((plan.breches ?? []).map(tournee))
     const seuils = new Set((plan.seuils ?? []).map(tournee))
     const passages = new Set((plan.passages ?? []).map(tournee))
@@ -354,6 +448,9 @@ export function batirLieu(state: SimState, plan: Plan, x0: number, y0: number, s
       for (let rx = 0; rx < n; rx++) {
         const reg = region(rx, ry)
         if (reg === undefined) continue
+        // L'ANTRE NE DÉRIVE RIEN (révision du 2026-08-11) : sa clôture est le MASSIF peint
+        // dans la grille — la garde de clôture (verifierPlan) a déjà exigé qu'il y soit.
+        if (reg === 'antre') continue
         for (const [d, dx, dy, bitVoisin] of DIRS) {
           const voisine = region(rx + dx, ry + dy)
           if (voisine === reg) continue //                     même pièce : rien à fermer
@@ -391,7 +488,7 @@ export function batirLieu(state: SimState, plan: Plan, x0: number, y0: number, s
  * ne retire rien.
  */
 // Le MINÉRAL survit au feu (étage 2) : sans quoi un antre brûlé perdrait ses blocs de pierre.
-const SURVIT_AU_FEU = new Set<StructureType>(['atre', 'autel', 'mur_bas', 'rocher', 'eboulis'])
+const SURVIT_AU_FEU = new Set<StructureType>(['atre', 'autel', 'mur_bas', 'rocher', 'eboulis', 'massif'])
 function pieceRetiree(type: StructureType, sort: SortDuLieu): boolean {
   if (sort === 'brule') return !SURVIT_AU_FEU.has(type)
   if (sort === 'pille') return type === 'chest' || type === 'tonneau' || type === 'etagere'

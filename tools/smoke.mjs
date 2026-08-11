@@ -7333,16 +7333,18 @@ const SCENARIOS = {
     const histo = await page.evaluate(() => document.getElementById('historique').textContent)
     console.log(`historique : ${(histo ?? '').split('\n')[0].slice(0, 80) || '(vide)'}`)
 
-    // ── LES LIEUX NATURELS (demande d'Alexis) : la grotte s'ouvre en APERÇU — le vrai
-    //    sprite du jeu, l'empreinte, et « ébaucher un plan » proposé. ──
-    await page.evaluate(() => window.__ATELIER__.choisir('grotte'))
+    // ── LES LIEUX NATURELS (demande d'Alexis) : un kind SANS plan s'ouvre en APERÇU — le
+    //    vrai sprite du jeu, l'empreinte, et « ébaucher un plan » proposé. C'était la grotte,
+    //    PROMUE depuis (étage 3, 2026-08-10 : son plan est son antre) — la sonde suit le
+    //    monde : l'erratique est le naturel de référence tant qu'il n'a pas de plan. ──
+    await page.evaluate(() => window.__ATELIER__.choisir('erratique'))
     await page.waitForTimeout(900)
     const naturel = await page.evaluate(() => ({
       mode: window.__ATELIER__.etat.naturel,
       info: document.getElementById('validation').textContent ?? '',
     }))
     console.log(`naturel : ${naturel.mode} — ${naturel.info.slice(0, 60)}…`)
-    if (naturel.mode !== 'grotte' || !naturel.info.includes('empreinte')) console.error('!! l’aperçu naturel de la grotte ne se monte pas')
+    if (naturel.mode !== 'erratique' || !naturel.info.includes('empreinte')) console.error('!! l’aperçu naturel de l’erratique ne se monte pas')
     await page.screenshot({ path: `${OUT}/atelier-naturel.png` })
     await page.evaluate(() => window.__ATELIER__.choisir('cabane'))
     await page.waitForTimeout(600)
@@ -7403,15 +7405,21 @@ const SCENARIOS = {
       try {
         await page.evaluate(() => {
           const A = window.__ATELIER__
+          // L'ANNEAU DE MASSIF D'ABORD (révision du 2026-08-11) : la garde de clôture exige
+          // que tout le pourtour d'un antre soit massif (H) ou passage — un antre nu est
+          // désormais une FAUTE, et c'est le contrat qu'on vérifie à zéro faute plus bas.
+          for (let y = 1; y <= 5; y++) for (let x = 1; x <= 5; x++) {
+            if (y === 1 || y === 5 || x === 1 || x === 5) A.peindre(x, y, 'H')
+          }
           for (let y = 2; y <= 4; y++) for (let x = 2; x <= 4; x++) A.peindre(x, y, 'r')
-          A.peindre(6, 2, 'R')
-          A.peindre(6, 3, 'e')
-          A.peindre(6, 5, 'Y')
-          A.peindre(2, 6, 'B')
+          A.peindre(7, 2, 'R')
+          A.peindre(7, 3, 'e')
+          A.peindre(6, 6, 'Y')
+          A.peindre(2, 7, 'B')
           // Le VOCABULAIRE MINIER (étage 3 revu) : la mine se compose en pièces.
           A.peindre(4, 7, 'n') //  l'entrée de galerie
-          A.peindre(6, 7, 'D') //  le chevalement
-          A.peindre(7, 5, 'w') //  le wagonnet
+          A.peindre(6, 8, 'D') //  le chevalement
+          A.peindre(8, 5, 'w') //  le wagonnet
         })
         await page.waitForTimeout(1200)
         const n7 = await page.evaluate(() => ({
@@ -7420,11 +7428,11 @@ const SCENARIOS = {
           //  la GRILLE seule — la prose d'en-tête contient tous les « n » qu'on veut
           grille: window.__ATELIER__.texteCourant().split('grille:')[1] ?? '',
         }))
-        console.log(`antre 3×3 + rocher + éboulis + arbre + baies + galerie/chevalement/wagonnet : ${n7.fautes} faute(s) (attendu 0)`)
+        console.log(`antre 3×3 ceint de massif + rocher + éboulis + arbre + baies + galerie/chevalement/wagonnet : ${n7.fautes} faute(s) (attendu 0)`)
         if (n7.fautes > 0) console.error('!! le vocabulaire naturel ne se valide pas dans un brouillon sain')
         if (!n7.texte.includes('rrr') || !n7.texte.includes('Y') || !n7.texte.includes('B')) console.error('!! le texte du plan ne porte pas le vocabulaire peint')
-        for (const corps of ['n', 'D', 'w']) {
-          if (!n7.grille.includes(corps)) console.error(`!! la pièce minière « ${corps} » manque à la grille du plan`)
+        for (const corps of ['n', 'D', 'w', 'H']) {
+          if (!n7.grille.includes(corps)) console.error(`!! la pièce « ${corps} » manque à la grille du plan`)
         }
         await page.screenshot({ path: `${OUT}/atelier-antre.png` })
       } finally {

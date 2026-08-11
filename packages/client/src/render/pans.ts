@@ -81,7 +81,7 @@ const SOLS = new Set(['floor', 'terre', 'roof', 'roc']) //  le roc fait un DEDAN
  * Ce module décide de l'EMPRISE ; ce qui se dessine à la place se lit dans `bati-art` (`COUPE_DE`,
  * où l'absence d'une famille vaut « ne se tranche pas »).
  */
-const BARRIERES = new Set(['wall', 'cloture', 'encadrement', 'door', 'paroi']) //  la paroi tombe en pan (étage 2)
+const BARRIERES = new Set(['wall', 'cloture', 'encadrement', 'door']) //  le massif d'antre est PLAT : jamais de pan (2026-08-11)
 
 /**
  * Le bit déclaré, la direction où il regarde, et le côté de la région qu'il borde — DES DEUX

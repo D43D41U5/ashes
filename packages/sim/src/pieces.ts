@@ -221,6 +221,14 @@ export interface PieceDef {
    * de friche, non : « à 30 % de PV » n'y veut rien dire.
    */
   usurable: boolean
+  /**
+   * DU MONDE AU SENS FORT (décision d'Alexis, 2026-08-11) : la même loi que la falaise,
+   * portée par une structure. `applyStructureDamage` est inerte sur elle, le siège ne la
+   * désigne jamais, le flow field et la joignabilité des spawns la traitent comme la
+   * roche. Réservée aux pièces `pose: 'monde'` posées à l'amorce — un état qui ne bouge
+   * jamais, c'est ce qui autorise ces trois lectures à la considérer comme du terrain.
+   */
+  incassable?: boolean
   /** Nombre de cases si c'est un CONTENEUR ; absent = elle ne contient rien. */
   capacite?: number
   /** Le palier du FEU qui la débloque (R6). Absent = libre dès le palier 1. */
@@ -470,10 +478,13 @@ export const PIECES = {
     label: 'Roc', fam: 'structure', pose: 'monde', occupe: 'sol', arete: 'interdite',
     bloque: 'non', pv: 60, cout: { stone: 1 }, acces: 'village', eau: false, usurable: false,
   },
-  paroi: {
-    // La roche dressée d'un antre — dérivée du pourtour (poi-batis), jamais au marteau.
-    label: 'Paroi', fam: 'structure', pose: 'monde', occupe: 'tuile', arete: 'requise',
+  massif: {
+    // La roche en masse — l'épaisseur qui clôt un antre (≥ 1 tuile pleine, peinte `H`
+    // dans la grille, jamais dérivée). INCASSABLE : de la vraie roche, pas un mur — les
+    // hordes la contournent, rien ne la mâche, rien ne naît derrière.
+    label: 'Massif rocheux', fam: 'structure', pose: 'monde', occupe: 'tuile', arete: 'interdite',
     bloque: 'oui', pv: 500, cout: { stone: 3 }, acces: 'village', eau: false, usurable: false,
+    incassable: true,
   },
   rocher: {
     // Le bloc erratique de poche : plein-tuile, on le CONTOURNE — le corps solide du minéral.
@@ -534,6 +545,18 @@ export type BarrierType = KeysWhere<'pose', 'marteau'>
 export type ComponentType = KeysWhere<'fam', 'composant'>
 
 export const BARRIER_TYPES = STRUCTURE_TYPES.filter((t) => PIECES[t].pose === 'marteau') as BarrierType[]
+
+/**
+ * LES SOLIDES ÉTERNELS (décision d'Alexis, 2026-08-11) — les pièces `incassable`, dérivées
+ * du registre. Trois lectures les traitent comme de la ROCHE et non comme du bâti : les
+ * dégâts (inertes), le flow field (le gradient contourne au lieu de traverser) et la
+ * joignabilité des spawns (« la roche disqualifie, le mur non » — le massif est roche).
+ * UNE table dérivée, jamais trois listes.
+ */
+export const INCASSABLE_TYPES = new Set<StructureType>(
+  STRUCTURE_TYPES.filter((t) => (PIECES[t] as PieceDef).incassable === true),
+)
+export const estIncassable = (t: StructureType): boolean => INCASSABLE_TYPES.has(t)
 
 
 /**

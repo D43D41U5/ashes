@@ -34,7 +34,7 @@ import { fireActive } from './fire'
 import { distSq } from './geometry'
 import { zoneTierAt, type WorldMap } from './map'
 import { spawnMonster } from './monsters'
-import { pathToward } from './pathfinding'
+import { pathToward, solidesEternels } from './pathfinding'
 import type { SimState } from './sim'
 
 /**
@@ -168,8 +168,11 @@ export function siteDansLaCouronne(
   couronne?: { dist: number; ring: number },
 ): { x: number; y: number } | undefined {
   const world = { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null }
-  // Le monde tel que la ROCHE le voit : ni murs ni portes. Voir la note de joignabilité plus bas.
-  const terrainSeul = { map: state.map, nodes: state.nodes, moverVillageId: null }
+  // Le monde tel que la ROCHE le voit : ni murs ni portes — MAIS les SOLIDES ÉTERNELS
+  // (le massif d'un antre, 2026-08-11) y sont : ils SONT de la roche. « La roche
+  // disqualifie, le mur non » — un mort né derrière un massif ne serait pas une menace,
+  // ce serait un décor, très exactement comme derrière une falaise.
+  const terrainSeul = { map: state.map, nodes: state.nodes, structures: solidesEternels(state.structures), moverVillageId: null }
   const dist = couronne?.dist ?? NIGHT_HUNT.SPAWN_DIST
   const ring = couronne?.ring ?? NIGHT_HUNT.SPAWN_RING
   const dMin = dist - ring

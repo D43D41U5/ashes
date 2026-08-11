@@ -8,7 +8,7 @@
 import { isThreatTo } from './alignment'
 import { BALANCE, COMBAT, CONVOY_LOOT, FAUNA, LOOT_VALUES, MONSTER_DEFS, SEASON, SLOTS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
 import { distSq } from './geometry'
-import { computeFlowField } from './pathfinding'
+import { computeFlowField, solidesEternels } from './pathfinding'
 import { inventoryOf, toBag } from './items'
 import { rngRoll } from './rng'
 import { spawnMonster } from './monsters'
@@ -54,7 +54,7 @@ export function spawnHorde(state: SimState, size: number): Horde | null {
 
   const target = state.villages[Math.floor(roll(state) * state.villages.length)] ?? state.villages[0]!
   const { width } = state.map
-  const champ = computeFlowField(state.map, state.nodes, target.fireTx, target.fireTy)
+  const champ = computeFlowField(state.map, state.nodes, solidesEternels(state.structures), target.fireTx, target.fireTy)
 
   // ELLE DOIT POUVOIR ARRIVER. Le champ donne la distance de MARCHE au Feu : on ne retient
   // que la couronne qu'une bête à `speed` tuiles/s franchit dans une nuit, avec de la marge

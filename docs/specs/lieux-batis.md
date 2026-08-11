@@ -82,45 +82,70 @@ sente sera presque toujours « pillée » — c'est voulu, c'est la règle de le
 - **A9** — perf : coût client (syncStructures, clone snapshot) MESURÉ au décompte projeté (~1 000-1 500 structures), pire seconde et pas moyenne ; le pooling/culling (patron des nœuds) ne s'implémente QUE si la mesure le justifie.
 - **A10** — le banc avant/après (≥ 3 seeds) : deltas rapportés, famine jugée au seuil absolu.
 
-## Étage 2 — le vocabulaire naturel (décision d'Alexis, 2026-08-10)
+## Étage 2 — le vocabulaire naturel (décision d'Alexis, 2026-08-10 ; **RÉVISÉ le
+2026-08-11 : la paroi d'arête meurt, le MASSIF naît**)
 
 La grammaire des plans gagne le MINÉRAL et le VÉGÉTAL — pour que les ébauches de lieux
 naturels (grotte, carrière…) aient autre chose que de la maçonnerie. Le souterrain reste
 différé : l'`antre` est une poche À CIEL OUVERT (pas de toit).
+
+**Révision du 2026-08-11 (directive d'Alexis : « il faut que ça respire — de vraies parois
+rocheuses, épaisses et non traversables sur au moins une tuile complète, il faut qu'on y
+croie »).** La `paroi` — barrière d'ARÊTE au patron du mur, hauteur `MUR_HT` — est RETIRÉE :
+un antre n'est pas un bâtiment. Sa clôture est désormais le **`massif`** : une pièce
+PLEINE-TUILE **incassable**, PEINTE dans la grille (`H`), épaisse d'au moins une tuile.
+Alexis a tranché « pièce structure pleine tuile mais incassable » contre l'option
+terrain-falaise stampé.
 
 ### Le contrat
 
 | pièce | nature | pose | bloque | usage |
 |---|---|---|---|---|
 | `roc` | sol (molle) | monde | non | le plancher de pierre nue d'un antre |
-| `paroi` | barrière d'ARÊTE | monde | oui | la roche dressée — dérivée du pourtour de l'antre, hauteur `MUR_HT` |
+| `massif` | plein-tuile **INCASSABLE** | monde | oui | la roche en masse — l'épaisseur qui clôt un antre |
 | `rocher` | plein-tuile | monde | oui | le bloc erratique de poche — on le contourne |
 | `eboulis` | plein-tuile basse | monde | enjambe | les pierres croulées — on passe par-dessus |
 
-**Région neuve `antre`** : sol `roc`, contour `paroi` (le patron `CLOTURE_DE`) — brèches,
-seuils et passages du contour valent comme pour la salle. **Végétal = NŒUDS réels** (jamais
-du décor) : la légende gagne `Y` (nœud `tree`) et `B` (nœud `berry_bush`), semés par le
-plan et modulés par le sort (le patron des gravats). Légende : `r` roc/antre, `R` rocher,
-`e` éboulis. (`#` est INTERDIT comme caractère de grille — il ouvre un commentaire `.plan`.)
+**Région `antre`** : sol `roc`, et PLUS AUCUN contour dérivé (`CLOTURE_DE` ne connaît plus
+l'antre). La clôture se PEINT en `massif`, et une **garde de clôture** l'exige : toute arête
+du pourtour d'un antre donne sur une tuile `massif` (ou une autre tuile d'antre) ou porte un
+`passage` explicite — sinon faute de plan. Brèches et seuils n'ont pas de sens sur un antre
+(faute : la roche ne s'écroule pas en pan et ne porte pas d'encadrement). **Végétal = NŒUDS
+réels** (jamais du décor) : la légende gagne `Y` (nœud `tree`) et `B` (nœud `berry_bush`),
+semés par le plan et modulés par le sort (le patron des gravats). Légende : `r` roc/antre,
+`H` massif, `R` rocher, `e` éboulis. (`#` est INTERDIT comme caractère de grille — il ouvre
+un commentaire `.plan`.)
+
+**L'incassable est du MONDE au sens fort** — la même loi que la falaise, portée par une
+structure : `applyStructureDamage` est inerte sur lui ; le siège ne le désigne JAMAIS comme
+cible (un monstre bloqué re-route au lieu de mâcher) ; le flow field le contourne comme il
+contourne le terrain 23 ; et la joignabilité des spawns de morts le DISQUALIFIE comme la
+roche (« la roche disqualifie, le mur non » — le massif est roche, pas mur). Un seul helper
+(« solides éternels », dérivé des pièces `incassable` posées à l'amorce) nourrit ces trois
+lectures — jamais trois listes.
 
 ### Critères d'acceptation
 
-- **N1** — les quatre pièces au registre (`pieces.ts`), `StructureType` suit (dérivé) ; la
-  paroi est une barrière d'arête au rendu (`FAMILLES_BARRIERE`) mais PAS dans `BARRIER_TYPES`,
-  qui dérive de `pose: 'marteau'` (le menu de construction — la paroi ne se bâtit pas) ;
-  collision et navigation passent par le registre
-  (`bloque`), zéro liste nouvelle.
+- **N1** — les quatre pièces au registre (`pieces.ts`), `StructureType` suit (dérivé) ; le
+  massif porte `incassable` au registre et n'est PAS dans `BARRIER_TYPES` (qui dérive de
+  `pose: 'marteau'` — la roche ne se bâtit ni ne se démolit) ; collision et navigation
+  passent par le registre (`bloque`), zéro liste nouvelle.
 - **N2** — la région `antre` : `verifierPlans` la traite comme les autres (bord interdit,
-  triplets côté région) ; `batirLieu` pose `roc` + dérive `paroi` ; PAS de toit sur antre.
-- **N3** — l'art : `st-paroi-e<masque>` par le MÊME moteur de barrières (tons roche),
-  empreinte de coupe au tableau `COUPE_DE`, ancrages `EDGE_ORIGIN_Y`/`EDGE_SPRITE` ;
-  `st-roc` au sol ; `rocher`/`eboulis` en chips `_lit` (la recette cubique). Les gardes de
-  couverture d'art existantes restent vertes.
-- **N4** — le rendu : `snapshot-view` traite la paroi comme une barrière d'arête (branche,
-  fam, teinte presque blanche comme la clôture) et `roc` comme un sol (FLOOR_DEPTH) — pans
-  et nappe suivent sans cas nouveau.
+  triplets côté région) PLUS la garde de clôture (chaque arête du pourtour : massif, antre
+  ou passage — exhaustive, jamais des cas choisis) ; `batirLieu` pose `roc` et ne dérive
+  plus RIEN ; PAS de toit sur antre.
+- **N3** — l'art : le `massif` emprunte l'ART DE LA FALAISE (autotuilage par masque de
+  voisinage qui lit massifs + terrain 23 + hors-carte — la roche du plan se raccorde à la
+  roche du monde) ; `st-roc` au sol ; `rocher`/`eboulis` en chips `_lit` (la recette
+  cubique). La famille `st-paroi-e<masque>`, son empreinte `COUPE_DE` et sa branche de coupe
+  sont RETIRÉES. Les gardes de couverture d'art restantes restent vertes.
+- **N4** — le rendu : `snapshot-view` pose le massif à PROFONDEUR PLATE (le patron falaise :
+  sous les acteurs, l'intérieur de la poche reste visible — « ça respire ») ; `roc` reste un
+  sol (FLOOR_DEPTH) ; pans et nappe ne connaissent plus la paroi — aucun fondu n'est
+  nécessaire puisque rien n'occlut.
 - **N5** — déterminisme : aucun tirage neuf ; double génération identique ; parité d'amorce
-  intacte ; le généré ne bouge pas tant qu'aucun plan n'emploie le vocabulaire neuf.
+  intacte ; les « solides éternels » dérivent des seules structures d'amorce (un état qui ne
+  bouge jamais), jamais d'un recalcul en cours de partie.
 - **N6** — le picker par THÈMES (éditorial) : Construction, Minéraux, Végétaux, Stations &
   mobilier — table char→thème explicite dans l'Atelier, GARDÉE par un test de couverture
   (tout caractère de légende a un thème ET une aide) ; les raccourcis suivent l'ordre lu.
@@ -148,11 +173,17 @@ RETIRÉES ; un lieu naturel se COMPOSE, avec le vocabulaire des pièces — c'es
   tour du puits, 40 px, bloque), `galerie` (n — la bouche boisée, MOLLE : un porche à poser
   devant le passage d'un antre), `etai` (I — le boisage, s'enjambe), `wagonnet` (w — la
   berline, bloque). Du bois d'œuvre : usurable, et le feu le prend (hors `SURVIT_AU_FEU`).
-- **La MINE est le premier lieu composé de A à Z** : antre 2×2 (le bout de galerie), bouche
-  boisée sur le passage, chevalement, étai, wagonnet, poutre — et ses TROIS tas de gravats
-  (la fouille la plus riche, garde existante). **La GROTTE suit le même régime** : son plan
-  est son antre (3×2, gueule = passage nu, éboulis au seuil) — plus de sprite, plus de
-  `fixe` (les pièces tournent).
+- **La MINE est le premier lieu composé de A à Z** : antre ceint de MASSIF (révision du
+  2026-08-11 — plan 7×7, empreinte `POI_TYPES` 5→7, l'anneau d'une tuile pleine + un antre
+  qui respire ne tiennent pas en 5×5 avec la cour), bouche boisée sur le passage,
+  chevalement, étai, wagonnet, poutre — et ses TROIS tas de gravats (la fouille la plus
+  riche, garde existante). **La GROTTE suit le même régime** : son plan est son antre ceint
+  de massif (7×7, gueule = passage nu, éboulis au seuil) — plus de sprite.
+- **La gueule s'ORIENTE** (révision du 2026-08-11) : le quart de tour d'un lieu à antre
+  n'est plus le seul `hash2` — il tourne le PASSAGE vers l'entrée percée au placement
+  (dérivé du terrain figé, `hash2` en départage d'égalité). Sous roche incassable, une
+  gueule tournée vers un côté scellé n'est pas un défaut de lecture, c'est une poche morte
+  (le problème du 2026-07-13) — l'orientation devient une contrainte de correction.
 - **Entrable = les règles normales du marteau** : porte sur le passage, mobilier sur le roc
   — rien de spécial, c'était le but (« dans les limites de construction de POI »).
 - **Les lieux suivants** (erratique, arche, cairn…) se composeront au même régime, chacun
@@ -166,6 +197,12 @@ RETIRÉES ; un lieu naturel se COMPOSE, avec le vocabulaire des pièces — c'es
   caractères en légende avec thème ET aide (garde N6).
 - **C3** — la mine se bâtit : antre joignable par la gueule, trois `rubble`, déterminisme
   double-génération — et se JUGE à l'œil (capture smoke).
-- **C4** — la grotte composée : antre joignable, massif de parois, entrée praticable.
-- **C5** — le probe N7 du smoke peint galerie/chevalement/wagonnet et valide à zéro faute.
-  complète (le monde change à ce moment-là, pas avant).
+- **C4** — la grotte composée : antre joignable, ceinture de massif, entrée praticable.
+- **C5** — le probe N7 du smoke peint galerie/chevalement/wagonnet ET l'anneau de massif
+  (garde de clôture oblige) et valide à zéro faute.
+- **C6** — le siège respecte la roche (2026-08-11) : un monstre dont le gradient traverse
+  l'antre ne frappe JAMAIS un `massif` (testé : dégâts inertes, cible jamais désignée) et
+  re-route par la gueule ; la garde de non-pénétration (`wall-solid`) balaie mine et grotte.
+- **C7** — recensement A7/A19 re-mesuré (≥ 4 seeds) après le passage des empreintes à 7 :
+  mine et grotte naissent partout, effectifs rapportés MESURÉS ; s'ils s'effondrent, on
+  resserre (la loi écrite de l'élargissement).

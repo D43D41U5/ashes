@@ -26,8 +26,8 @@ describe('le flow field (A1)', () => {
     // Deux murs de roche en chicane.
     for (let tx = 0; tx < 15; tx++) map.terrain[6 * 20 + tx] = TERRAIN_ROCK
     for (let tx = 5; tx < 20; tx++) map.terrain[12 * 20 + tx] = TERRAIN_ROCK
-    const a = computeFlowField(map, [], 10, 2)
-    const b = computeFlowField(map, [], 10, 2)
+    const a = computeFlowField(map, [], [], 10, 2)
+    const b = computeFlowField(map, [], [], 10, 2)
     expect(a).toEqual(b)
     // Depuis le sud (10, 18), la distance existe et dépasse largement la ligne droite.
     expect(a[18 * 20 + 10]).toBeGreaterThan(20)

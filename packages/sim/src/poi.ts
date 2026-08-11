@@ -210,7 +210,10 @@ export const POI_TYPES: PoiType[] = [
   { slug: 'ruines', zones: ['ruines'], name: 'les Ruines', family: 'shelter', biomes: [OLD_GROWTH, FOREST, GRASS], weight: 3, cap: 4, reserve: 1, footprint: 6 },
   { slug: 'cabane', zones: ['alpages'], name: 'la Cabane de berger', family: 'shelter', biomes: [AL_MEADOW, AL_FLOWERS], weight: 4, cap: 5, reserve: 1, footprint: 5 },
   { slug: 'abri', zones: ['karst', 'aiguilles', 'gouffre', 'ruines'], name: "l'Abri sous roche", family: 'shelter', biomes: [ROCK, BOULDERS, SCREE], weight: 5, cap: 6, reserve: 1, footprint: 4 },
-  { slug: 'mine', zones: ['karst', 'gouffre'], name: 'la Mine abandonnée', family: 'shelter', biomes: [SCREE, ROCK], minElev: 0.5, weight: 3, cap: 3, reserve: 1, footprint: 5 },
+  // Mine et grotte : 5→7 le 2026-08-11 (l'anneau de MASSIF d'une tuile pleine + un antre qui
+  // respire ne tiennent pas en 5×5) — même garde de recensement A7/A19 que l'élargissement
+  // du 2026-08-10 : si le type cesse de naître, on resserre.
+  { slug: 'mine', zones: ['karst', 'gouffre'], name: 'la Mine abandonnée', family: 'shelter', biomes: [SCREE, ROCK], minElev: 0.5, weight: 3, cap: 3, reserve: 1, footprint: 7 },
   { slug: 'oratoire', zones: ['alpages', 'karst'], name: 'l’Oratoire', family: 'shelter', biomes: [SCREE, ROCK, AL_MEADOW], minElev: 0.55, weight: 3, cap: 3, reserve: 1, footprint: 3 },
   { slug: 'bivouac', name: 'le Vieux bivouac', family: 'shelter', biomes: [GRASS, AL_MEADOW, HEATH, FOREST, SCREE, FLOWER, OLD_GROWTH, PINE], weight: 4, cap: 4, reserve: 1, footprint: 3 },
   // Danger
@@ -273,7 +276,7 @@ export const POI_TYPES: PoiType[] = [
   // Élargie 2→5 à la promotion en plan (étage 3, le précédent des sept de l'étage 1) : la
   // grotte est ENTRABLE — son plan creuse un antre derrière la gueule, et un antre exige la
   // marge des régions. Sous garde de recensement : si la Grotte cesse de naître, on resserre.
-  { slug: 'grotte', zones: ['karst', 'gouffre'], name: 'la Grotte', family: 'reward', biomes: [ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 5 },
+  { slug: 'grotte', zones: ['karst', 'gouffre'], name: 'la Grotte', family: 'reward', biomes: [ROCK, SCREE], weight: 4, cap: 5, reserve: 1, footprint: 7 },
   { slug: 'cascade', zones: ['alpages', 'karst', 'aiguilles'], name: 'la Cascade', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.4, weight: 2, cap: 4, reserve: 1, footprint: 2 },
   { slug: 'erratique', zones: ['pres_bas', 'alpages', 'ruines'], name: 'le Bloc erratique', family: 'reward', biomes: [BOULDERS, AL_MEADOW, GRASS, FLOWER], weight: 4, cap: 5, reserve: 1, footprint: 2 },
   { slug: 'arbre', zones: ['sylve'], name: "l'Arbre remarquable", family: 'reward', biomes: [OLD_GROWTH], weight: 2, cap: 3, reserve: 1, footprint: 2 },
@@ -403,10 +406,42 @@ function touchesBorderRing(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>):
 function entryTile(
   map: WorldMap, field: CarveField, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>,
 ): { index: number; cost: number } | undefined {
+  // L'ENTRÉE DOIT MENER AU CŒUR (2026-08-11). À empreinte 7, le carré d'une île de roche
+  // enjambe son anneau d'eau et TOUCHE la rive : la rive (dist 0) devenait tuile d'entrée
+  // d'un lieu dont le cœur reste inaccessible — la Mine naissait sur l'île, à cheval sur
+  // le lac. On n'accepte donc que les tuiles d'entrée RELIÉES au centre de l'empreinte
+  // sans franchir une tuile scellée (l'eau, la bordure — la même loi que le creusement :
+  // la roche se perce, l'eau jamais). Flood 4-connexe borné à l'empreinte : ≤ 49 tuiles.
+  const scellee = (tx: number, ty: number): boolean =>
+    tx <= 0 || ty <= 0 || tx >= map.width - 1 || ty >= map.height - 1 || isWater(map.terrain[ty * map.width + tx] ?? 0)
+  const cx = z.x + Math.floor(z.w / 2)
+  const cy = z.y + Math.floor(z.h / 2)
+  const relie = new Set<number>()
+  if (!scellee(cx, cy)) {
+    const file: number[] = [cy * map.width + cx]
+    relie.add(file[0]!)
+    let tete = 0
+    while (tete < file.length) {
+      const k = file[tete]!
+      tete += 1
+      const kx = k % map.width
+      const ky = Math.floor(k / map.width)
+      for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]] as const) {
+        const nx = kx + dx
+        const ny = ky + dy
+        if (nx < z.x || ny < z.y || nx >= z.x + z.w || ny >= z.y + z.h) continue
+        const nk = ny * map.width + nx
+        if (relie.has(nk) || scellee(nx, ny)) continue
+        relie.add(nk)
+        file.push(nk)
+      }
+    }
+  }
   let best: { index: number; cost: number } | undefined
   for (let ty = z.y; ty < z.y + z.h; ty++) {
     for (let tx = z.x; tx < z.x + z.w; tx++) {
       const i = ty * map.width + tx
+      if (!relie.has(i)) continue // séparée du cœur (une île dans l'empreinte)
       const d = field.dist[i]!
       if (d > field.limit) continue // hors d'atteinte, ou séparé par de l'eau
       if (best === undefined || d < best.cost) best = { index: i, cost: d }

@@ -7,7 +7,8 @@
  * dedans où l'on n'entre pas se voit de loin, se contourne, et ne se comprend jamais.
  */
 import { describe, expect, it } from 'vitest'
-import { BUILT_KINDS, PLANS, batirLieu, buildPoiStructures, regionDe, verifierPlan, verifierPlans } from './poi-batis'
+import { BUILT_KINDS, LEGENDE, PLANS, batirLieu, buildPoiStructures, regionDe, verifierPlan, verifierPlans } from './poi-batis'
+import { PIECES } from './pieces'
 import { POI_TYPES } from './poi'
 import { createEmptyMap } from './map'
 import { TERRAIN_GRASS } from './balance'
@@ -66,6 +67,15 @@ describe('les plans', () => {
         if (la !== undefined) return !ouvertes.has(`${x + dx},${y + dy},${INV[d]}`)
         return false //                                       dehors ↔ dehors : libre
       }
+      // UNE PIÈCE PLEINE-TUILE QUI BLOQUE NE SE TRAVERSE PAS (2026-08-11) : le massif d'un
+      // antre, le wagonnet garé devant la gueule — sans cette lecture, une ceinture de roche
+      // qui scellerait le lieu laisserait la garde verte (elle ne voyait que les barrières
+      // dérivées des régions). La légende et le registre décident, jamais une liste locale.
+      const tuileBloquee = (x: number, y: number): boolean => {
+        if (x < 0 || y < 0 || x >= n || y >= n) return false
+        const p = LEGENDE[plan.grille[y]![x]!]?.piece
+        return p !== undefined && PIECES[p].bloque === 'oui' && PIECES[p].occupe === 'tuile'
+      }
       // Depuis le coin (−1,−1), qui est forcément dehors.
       const vus = new Set(['-1,-1'])
       const file: [number, number][] = [[-1, -1]]
@@ -76,7 +86,7 @@ describe('les plans', () => {
           const ny = y + dy
           if (nx < -1 || ny < -1 || nx > n || ny > n) continue
           const k = `${nx},${ny}`
-          if (vus.has(k) || barre(x, y, d, dx, dy)) continue
+          if (vus.has(k) || barre(x, y, d, dx, dy) || tuileBloquee(nx, ny)) continue
           vus.add(k)
           file.push([nx, ny])
         }
@@ -84,6 +94,10 @@ describe('les plans', () => {
       for (let y = 0; y < n; y++) {
         for (let x = 0; x < n; x++) {
           if (reg(x, y) === undefined) continue
+          // Une tuile de région OCCUPÉE par une pièce pleine-tuile (le coffre de la cabane)
+          // n'est pas murée : on ne se tient pas dessus, la pièce se contourne — c'est le
+          // reste de la salle qui doit rester joignable.
+          if (tuileBloquee(x, y)) continue
           expect(vus.has(`${x},${y}`), `${kind} : la tuile (${x},${y}) est murée — un dedans injoignable`).toBe(true)
         }
       }
@@ -125,25 +139,32 @@ describe('buildPoiStructures', () => {
     const sim = monde('ferme_ruinee')
     buildPoiStructures(sim, 7)
     for (const s of sim.structures) {
-      if (s.type !== 'wall' && s.type !== 'cloture' && s.type !== 'encadrement' && s.type !== 'paroi') continue
+      if (s.type !== 'wall' && s.type !== 'cloture' && s.type !== 'encadrement') continue
       expect(s.edges, `${s.type} en (${s.tx},${s.ty}) n’a pas d’arêtes`).toBeGreaterThan(0)
     }
   })
 
   /**
-   * L'ANTRE (étage 2) : sol de ROC, contour de PAROIS à arêtes — et JAMAIS de toit, même
-   * dans un plan couvert : le « : » de la salle ne déborde pas sur la poche minérale (le
-   * souterrain reste différé — un antre est à ciel ouvert).
+   * L'ANTRE (étage 2, RÉVISÉ le 2026-08-11) : sol de ROC, clôture en MASSIF peint — le
+   * poseur ne dérive plus RIEN du pourtour d'un antre (la roche n'est pas un mur qu'on
+   * tire au cordeau). Et JAMAIS de toit, même dans un plan couvert : le « : » de la salle
+   * ne déborde pas sur la poche minérale (le souterrain reste différé — un antre est à
+   * ciel ouvert).
    */
-  it('l’antre : sol roc, contour paroi à arêtes — et JAMAIS de toit, même dans un plan couvert', () => {
+  it('l’antre : sol roc, massifs peints, AUCUNE barrière dérivée — et JAMAIS de toit, même dans un plan couvert', () => {
     const sim = createSim(7, { map: createEmptyMap(32, 32, TERRAIN_GRASS) })
-    const plan = { usure: 1, grille: ['······', '·::···', '······', '······', '···rr·', '······'] }
+    const plan = { usure: 1, grille: ['······', '·::···', '·HHHH·', '·HrrH·', '·HHHH·', '······'] }
     batirLieu(sim, plan, 10, 10, 'intact', 0)
     const rocs = sim.structures.filter((s) => s.type === 'roc')
     expect(rocs.length, 'chaque case d’antre porte son sol').toBe(2)
-    const parois = sim.structures.filter((s) => s.type === 'paroi')
-    expect(parois.length).toBeGreaterThan(0)
-    for (const p of parois) expect(p.edges, `paroi en (${p.tx},${p.ty}) sans arêtes`).toBeGreaterThan(0)
+    const massifs = sim.structures.filter((s) => s.type === 'massif')
+    expect(massifs.length, 'les massifs peints sont posés').toBe(10)
+    for (const m of massifs) expect(m.edges, `massif en (${m.tx},${m.ty}) : une masse n’a pas d’arêtes`).toBeUndefined()
+    // AUCUNE barrière ne se dérive du pourtour d'un antre — la clôture est le massif peint.
+    // (ty ≥ 13 : les murs de la salle du haut s'arrêtent à ty 12 ; ceux qu'un antre
+    // dériverait à tort seraient sur son pourtour, ty 13-14.)
+    const derivees = sim.structures.filter((s) => s.type === 'wall' || s.type === 'cloture' || s.type === 'encadrement')
+    expect(derivees.filter((s) => s.ty >= 13).length, 'le pourtour de l’antre a dérivé une barrière').toBe(0)
     const toits = new Set(sim.structures.filter((s) => s.type === 'roof').map((s) => `${s.tx},${s.ty}`))
     expect(toits.size, 'la salle couverte a bien son toit').toBeGreaterThan(0)
     for (const r of rocs) expect(toits.has(`${r.tx},${r.ty}`), 'un antre couvert par erreur').toBe(false)
@@ -226,7 +247,7 @@ describe('buildPoiStructures', () => {
     buildPoiStructures(sim, 7)
     const parTuile = new Map<string, number>()
     for (const s of sim.structures) {
-      if (s.type !== 'wall' && s.type !== 'cloture' && s.type !== 'encadrement' && s.type !== 'paroi') continue
+      if (s.type !== 'wall' && s.type !== 'cloture' && s.type !== 'encadrement') continue
       const k = `${s.tx},${s.ty}`
       parTuile.set(k, (parTuile.get(k) ?? 0) + 1)
     }

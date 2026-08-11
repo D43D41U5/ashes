@@ -9,6 +9,8 @@ import { isBlockedAt, makeIndexedIsBlockedAt, type MoveWorld } from './collision
 import type { ResourceNode } from './economy'
 import { distSq } from './geometry'
 import type { WorldMap } from './map'
+import { estIncassable } from './pieces'
+import type { Structure } from './village'
 
 interface HeapNode {
   f: number
@@ -253,15 +255,28 @@ export function pathToward(
 }
 
 /**
+ * LES SOLIDES ÉTERNELS (décision d'Alexis, 2026-08-11) : les structures `incassable`
+ * du monde — le massif d'un antre. Le gradient de la horde et la joignabilité des
+ * spawns les traitent comme de la ROCHE, jamais comme du bâti : ils ne tomberont
+ * jamais, un chemin qui compte sur leur chute n'existera jamais. Posés à l'amorce et
+ * immuables — c'est ce qui autorise ces lectures.
+ */
+export function solidesEternels(structures: Structure[]): Structure[] {
+  return structures.filter((s) => estIncassable(s.type))
+}
+
+/**
  * Champ de flux (spec R3) : distances BFS depuis le Feu, sur terrain + nœuds
- * (les STRUCTURES sont ignorées : le gradient traverse les murs, et le
- * zombie qui bute dessus les frappe — c'est le siège naturel).
+ * (les STRUCTURES du bâti sont ignorées : le gradient traverse les murs, et le
+ * zombie qui bute dessus les frappe — c'est le siège naturel). Les SOLIDES
+ * ÉTERNELS (`solidesEternels`), eux, bloquent le gradient comme la falaise :
+ * la roche ne tombe jamais, la horde la contourne (2026-08-11).
  * Recalculé à la demande, dérivé pur de l'état : rien à sérialiser.
  */
-export function computeFlowField(map: WorldMap, nodes: ResourceNode[], targetTx: number, targetTy: number): Int32Array {
+export function computeFlowField(map: WorldMap, nodes: ResourceNode[], solides: Structure[], targetTx: number, targetTy: number): Int32Array {
   const { width, height } = map
   const field = new Int32Array(width * height).fill(-1)
-  const world: MoveWorld = { map, nodes } // sans structures
+  const world: MoveWorld = { map, nodes, structures: solides, moverVillageId: null } // la roche seule, jamais le bâti
   // Index d'occupation bâti une fois : le BFS balaie toute la carte.
   const isBlocked = makeIndexedIsBlockedAt(world)
   const queue: number[] = []

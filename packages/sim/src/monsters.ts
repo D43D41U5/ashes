@@ -9,13 +9,14 @@
  * aléa via le PRNG de la sim.
  */
 import { BALANCE, COMBAT, FAUNA, HUNT, MONSTER_DEFS, NODE_DEFS, TICK_DT_S, type MonsterType } from './balance'
+import { estIncassable } from './pieces'
 // Type seul : `economy` importe `monsters`, un import de valeur fermerait le cycle.
 import type { ResourceNode } from './economy'
 import { startAttack } from './combat'
 import { moveAvatar } from './collision'
 import { distSq } from './geometry'
 import { spawnEntity, type Entity, type SimState } from './sim'
-import { computeFlowField } from './pathfinding'
+import { computeFlowField, solidesEternels } from './pathfinding'
 import { structureBlocks } from './village'
 import { crossingBlocker } from './construction'
 import { cendreuxStep } from './cendreux'
@@ -548,7 +549,7 @@ export function hordeStep(state: SimState, monster: Monster, entity: Entity, flu
   const cleDuFoyer = village.fireTy * state.map.width + village.fireTx
   let field = flux.champs.get(cleDuFoyer)
   if (!field) {
-    field = computeFlowField(state.map, state.nodes, village.fireTx, village.fireTy)
+    field = computeFlowField(state.map, state.nodes, solidesEternels(state.structures), village.fireTx, village.fireTy)
     flux.champs.set(cleDuFoyer, field)
   }
 
@@ -581,7 +582,10 @@ export function hordeStep(state: SimState, monster: Monster, entity: Entity, flu
   // est vide. La bête ne trouvait alors rien à frapper, avançait, butait sur la bande et
   // **restait là** : une enceinte de murs minces aurait été une défense que les pillards
   // ignorent. `crossingBlocker` regarde les deux côtés de l'arête, comme la collision.
-  const blocker = crossingBlocker(state.structures, tx, ty, bestTx - tx, bestTy - ty, (s) => structureBlocks(s, null, false))
+  // L'INCASSABLE N'EST PAS UNE CIBLE (2026-08-11) : le massif d'un antre est de la roche —
+  // le flow field le contourne déjà comme la falaise, et une bête qui le frapperait
+  // mâcherait l'éternité. On ne désigne que ce qui peut tomber.
+  const blocker = crossingBlocker(state.structures, tx, ty, bestTx - tx, bestTy - ty, (s) => structureBlocks(s, null, false) && !estIncassable(s.type))
   if (blocker) {
     if (!entity.windup && state.tick >= entity.cooldownUntil) {
       const def = MONSTER_DEFS[monster.type]
@@ -622,7 +626,8 @@ export function attackBlockingStructure(state: SimState, monster: Monster, entit
     // qui me barre la route peut être déclaré chez moi. `Math.sign` rend 0 quand l'axe est
     // aligné : ce « voisin » est ma propre tuile, il n'y a pas d'arête à franchir.
     if (cx === ex && cy === ey) continue
-    const s = crossingBlocker(state.structures, ex, ey, cx - ex, cy - ey, (st) => structureBlocks(st, null, false))
+    // Même loi qu'au gradient : l'incassable n'est jamais désigné — on ne mâche pas la roche.
+    const s = crossingBlocker(state.structures, ex, ey, cx - ex, cy - ey, (st) => structureBlocks(st, null, false) && !estIncassable(st.type))
     if (s) {
       const def = MONSTER_DEFS[monster.type]
       if (startAttack(state, entity, cx + 0.5 - entity.x, cy + 0.5 - entity.y, { windupTicks: def.windupTicks, damage: def.damage, structureId: s.id })) {

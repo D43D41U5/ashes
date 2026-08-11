@@ -498,6 +498,24 @@ const PIECES: readonly Piece[] = [
       ]
     },
   },
+  // ── LE MASSIF : la roche en masse qui clôt un antre (révision du 2026-08-11) — l'ardoise
+  //    PLATE de la falaise, vue de dessus, PAS un volume : dans le monde, `snapshot-view`
+  //    le re-texture à l'art falaise autotuilé (`cliffKey`) ; ce chip-ci est le repli du
+  //    boot, le fantôme de l'Atelier et sa vignette — même palette, mêmes mouchetures. ──
+  {
+    type: 'massif',
+    dessiner: (g) => {
+      rect(g, '#4b4852', 0, 0, T, T) //  l'ardoise de la falaise — la palette constante
+      for (const [x, y] of [[3, 4], [9, 2], [13, 7], [5, 11], [11, 13], [7, 8]] as const) rect(g, '#3e3b46', x, y, 2, 1)
+      for (const [x, y] of [[6, 5], [12, 3], [2, 10], [10, 11], [14, 14]] as const) rect(g, '#5b5765', x, y, 1, 1)
+      rect(g, '#3e3b46', 5, 6, 3, 1) //  la fissure en équerre — angles droits, jamais de diagonale
+      rect(g, '#3e3b46', 8, 6, 1, 2)
+      return [
+        { path: [[5, 6.5], [8, 6.5]], crevasse: true }, //  la fissure, gravée dans la normale
+        { path: [[8.5, 6], [8.5, 8]], crevasse: true },
+      ]
+    },
+  },
   // ── LE VOCABULAIRE MINIER (étage 3 revu — « tout en pièces, partout ») ───
   // Le CHEVALEMENT : la tour du puits, en chèvre — deux jambes, une traverse, la molette.
   // C'est la silhouette qui disait « mine » quand la mine était un sprite : elle revient
@@ -1619,9 +1637,9 @@ function dessinerFriche(variante: number): HTMLCanvasElement {
 const T_MUR = { top: '#8f8f99', face: '#5e5e68', pied: '#4a4a54', arete: '#3a3a43' }
 const T_RUINE = { top: '#6d6d77', face: '#4a4a54', pied: '#3a3a43', arete: '#2e2e36' }
 const T_CLOT = { top: '#8a6438', face: '#5a3f24', pied: '#3a2818', arete: '#2e2016' }
-/** La PAROI (étage 2) — la roche dressée d'un antre : l'ardoise froide de la falaise, pas
- *  la maçonnerie (T_MUR est un appareil de pierres taillées ; la paroi est le monde). */
-const T_PAROI = { top: '#7d8288', face: '#4f545c', pied: '#3d4148', arete: '#31343b' }
+// (La PAROI d'antre est morte le 2026-08-11 — révision d'Alexis : la clôture d'un antre
+// est le MASSIF pleine-tuile, rendu à l'art de la falaise. Sa famille de barrière, son
+// empreinte de coupe et ses tons `T_PAROI` sont retirés avec elle.)
 /**
  * LE MUR DE BOIS A SA FAMILLE (retour d'Alexis, 2026-08-01 : « on ne voit pas la texture
  * bois ») — et elle reste UNIE, fidèle à la décision du 2026-07-27 : à 16 px de tuile un
@@ -1680,7 +1698,6 @@ const FAMILLES_BARRIERE = [
   ['wall-ruine', MUR_HT, T_RUINE, undefined],
   ['cloture', CLOT_HT, T_CLOT, undefined],
   ['palissade', PALIS_HT, T_PALIS, grainPalissade],
-  ['paroi', MUR_HT, T_PAROI, undefined], //  étage 2 — un grain de strates viendra par le même canal
 ] as [string, number, typeof T_MUR, ((g: Ctx, b: Bande, bit: number) => void) | undefined][]
 
 function generateEdgeBarrieres(scene: Phaser.Scene): void {
@@ -1752,7 +1769,6 @@ export const EDGE_SPRITE: Readonly<Record<string, { hauteurPx: number; largeurPx
   door2b: { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
   cloture: { hauteurPx: CLOT_HT, largeurPx: T + 2 * M },
   palissade: { hauteurPx: PALIS_HT, largeurPx: T + 2 * M },
-  paroi: { hauteurPx: MUR_HT, largeurPx: T + 2 * M },
 }
 
 export const EDGE_ORIGIN_Y: Readonly<Record<string, number>> = {
@@ -1767,7 +1783,6 @@ export const EDGE_ORIGIN_Y: Readonly<Record<string, number>> = {
   encadrement: originY(MUR_HT),
   cloture: originY(CLOT_HT),
   palissade: originY(PALIS_HT),
-  paroi: originY(MUR_HT),
 }
 
 /**
@@ -1791,7 +1806,6 @@ export const COUPE_DE: Readonly<Record<string, string>> = {
   wall: 'wall-coupe',
   'wall-bois': 'wall-coupe', //    une empreinte au sol n'a pas d'essence
   'wall-ruine': 'wall-coupe', //   une empreinte au sol n'a ni appareil ni usure
-  paroi: 'wall-coupe', //          le même collapse : une empreinte n'a pas d'essence (étage 2)
   cloture: 'cloture-coupe',
   // La PALISSADE est absente À DESSEIN (comme la porte) : l'enceinte d'un village ne
   // front jamais une salle couverte — elle reste debout, toujours.
@@ -1799,7 +1813,7 @@ export const COUPE_DE: Readonly<Record<string, string>> = {
 
 /** Toutes les clés d'arête — la surface testable, jamais recopiée. */
 export const EDGE_BARRIER_KEYS: readonly string[] = [
-  ...['wall', 'wall-bois', 'wall-ruine', 'cloture', 'palissade', 'paroi'].flatMap((nom) =>
+  ...['wall', 'wall-bois', 'wall-ruine', 'cloture', 'palissade'].flatMap((nom) =>
     Array.from({ length: 15 }, (_, i) => [`st-${nom}-e${i + 1}`, `st-${nom}-e${i + 1}_lit`]).flat()),
   ...['wall-coupe', 'cloture-coupe'].flatMap((nom) =>
     Array.from({ length: 15 }, (_, i) => `st-${nom}-e${i + 1}`)),

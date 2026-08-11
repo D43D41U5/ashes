@@ -1,15 +1,19 @@
 # ═══ LA GROTTE — l'antre creusé dans la roche, TOUT en pièces ═══
 #
 # Décision d'Alexis (2026-08-10, « tout en pièces, partout ») : plus de corps-sprite. La
-# grotte EST son antre — sol de roc, parois dérivées du pourtour, et la gueule est le
-# PASSAGE du contour sud, nue comme la roche. On y entre, on y bâtit (une porte sur le
-# passage, du mobilier sur le roc — les règles normales du marteau). Les éboulis au seuil
-# racontent ce que la montagne recrache. Le souterrain reste différé (décision 2026-07-27).
+# grotte EST son antre — et depuis la RÉVISION du 2026-08-11 (« il faut qu'on y croie »),
+# sa roche est un MASSIF (H) : la masse pleine-tuile, incassable, épaisse d'au moins une
+# tuile — plus une paroi-mur dérivée. La gueule est le PASSAGE du contour sud, nue comme
+# la roche. On y entre, on y bâtit (une porte sur le passage, du mobilier sur le roc —
+# les règles normales du marteau). Les éboulis au seuil racontent ce que la montagne
+# recrache. Le souterrain reste différé (décision 2026-07-27).
 usure: 1
-passages: 2,2,S
+passages: 3,3,S
 grille:
-·····
-·rrr·
-·rrr·
-·e·e·
-·····
+·HHHHH·
+·HrrrH·
+·HrrrH·
+·HrrrH·
+·HH·HH·
+··e·e··
+·······
