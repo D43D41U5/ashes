@@ -2722,6 +2722,14 @@ export const HUNT = {
   JINK_SIN: 0.6428,
   JINK_OPEN_COVER: 0.85, // au-dessus de ce couvert, le terrain est « découvert »
   /**
+   * LE CŒUR DU MASSIF COUVRE MIEUX (spec t0-exploration §2quater R41) : facteur appliqué au
+   * couvert du terrain quand la tuile est au CŒUR d'un massif boisé (et encore boisée — le
+   * bonus meurt avec l'arbre). Une seule fonction le porte (`couvertEffectif`) pour ses trois
+   * lecteurs : la détectabilité du chasseur, le rôdeur qui traque, le choix de couche du
+   * gibier. < 1 = mieux caché.
+   */
+  COVER_COEUR: 0.8,
+  /**
    * LE TERRIER (C16). Le lapin naît avec le sien (sa tuile de naissance, hors
    * champ par construction). Levé, il fuit VERS lui — sauf à devoir traverser la
    * menace — et il y DISPARAÎT. La chasse au lapin devient une géométrie :

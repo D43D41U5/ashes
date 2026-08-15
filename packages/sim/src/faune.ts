@@ -50,7 +50,8 @@ import { emitEvent } from './events'
 import { fireState } from './fire'
 import { distSq } from './geometry'
 import { carryRatio, carryTier, countOf, isEmpty, removeItems, type ItemId } from './items'
-import { terrainAt, zoneTierAt, type WorldMap } from './map'
+import { profondeurAt, terrainAt, zoneTierAt, type WorldMap } from './map'
+import { estCoeur, TERRAINS_BOISES_MASSIF } from './profondeur'
 import { moveToward, spawnMonster, type Monster } from './monsters'
 import { pathToward } from './pathfinding'
 import { hash2 } from './noise'
@@ -403,9 +404,25 @@ function gaitVisibility(e: Entity): number {
     : HUNT.VIS_WALK
 }
 
+/**
+ * LE COUVERT EFFECTIF d'une tuile (spec chasse C3 + §2quater R41) : le couvert du terrain,
+ * MODULÉ par la profondeur — au cœur d'un massif encore boisé, on est mieux caché
+ * (`HUNT.COVER_COEUR`). UNE seule fonction pour les trois lecteurs (détectabilité, traque,
+ * couchage) : un couvert que la chasse voit et que le gibier ignore — ou l'inverse — serait
+ * deux jeux. Sans champ de profondeur (banc, carte d'avant), elle rend le nominal : inerte.
+ */
+export function couvertEffectif(state: SimState, tx: number, ty: number): number {
+  const t = terrainAt(state.map, tx, ty)
+  const base = TERRAINS[t]?.cover ?? 1
+  if (TERRAINS_BOISES_MASSIF.includes(t) && estCoeur(profondeurAt(state.map, tx, ty))) {
+    return base * HUNT.COVER_COEUR
+  }
+  return base
+}
+
 /** LE COUVERT (spec chasse C3) : ce qui reste de la visibilité sur cette tuile. */
 export function coverAt(state: SimState, x: number, y: number): number {
-  return TERRAINS[terrainAt(state.map, Math.floor(x), Math.floor(y))]?.cover ?? 1
+  return couvertEffectif(state, Math.floor(x), Math.floor(y))
 }
 
 /**
@@ -1119,7 +1136,9 @@ function bedStep(state: SimState, monster: Monster, entity: Entity, threatened: 
       if (nx < 0 || ny < 0 || nx >= state.map.width || ny >= state.map.height) continue
       const terrain = terrainAt(state.map, nx, ny)
       if (!TERRAINS[terrain]?.walkable) continue
-      const c = TERRAINS[terrain]?.cover ?? 1
+      // Le couvert EFFECTIF (§2quater R41) — la table brute donnerait à la bête un couvert
+      // que la chasse ne voit pas : elle se coucherait à côté du cœur qui l'abrite.
+      const c = couvertEffectif(state, nx, ny)
       if (c < bestCover) {
         bestCover = c
         bestX = nx

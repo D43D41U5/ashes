@@ -119,7 +119,7 @@ export class ClutterLayer {
           if (this.cleared.has(idx)) continue // la clairière d'un lieu : rien n'y pousse
           if (this.barriers.has(idx)) continue // un mur/sol posé ici : la tuile est nette
           const terrain = this.map.terrain[idx] ?? -1
-          const props = clutterAt(tx, ty, terrain, this.seed, this.sample)
+          const props = clutterAt(tx, ty, terrain, this.seed, this.sample, this.map.profondeur?.[idx] ?? 0)
           for (const p of props) {
             if (used >= MAX_SPRITES) break
             const slot = used++

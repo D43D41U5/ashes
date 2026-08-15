@@ -40,7 +40,9 @@ import {
 import { estCendre } from './cendre'
 import type { ResourceNode } from './economy'
 import { distSq } from './geometry'
+import { profondeurAt, terrainAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
+import { estCoeur, estLisiere, TERRAINS_BOISES_MASSIF } from './profondeur'
 import { RELIEF, type CarteZonee } from './zonegen'
 import { MONDE } from './zonegraph'
 
@@ -115,6 +117,18 @@ export const CONTENU = {
    * table `CONTENUS` n'est pas touchée, aucun nœud existant ne bouge. Chance par tuile libre.
    */
   FIBRE_PRAIRIE: 0.03,
+
+  /**
+   * LA PROFONDEUR PORTE DU JEU (spec t0-exploration §2quater R40). Le VIEUX FÛT : facteur de
+   * stock des arbres du cœur (`stockDArbre` — fonction pure de la position, appliquée au
+   * semis ET réappliquée à la repousse). Les CHAMPIGNONS DU CŒUR ('COEU') et les BAIES DE
+   * LISIÈRE ('LISI') : chance par tuile libre, passes appendues en queue — patron 'FIBR'.
+   * CHAMPIGNON_COEUR se lit contre CHAMPIGNON_FORET (0.006) : le cœur est ×5 le régime
+   * commun, sans atteindre l'humide franc (0.06).
+   */
+  VIEUX_FUT_FACTEUR: 1.5,
+  CHAMPIGNON_COEUR: 0.03,
+  BAIES_LISIERE: 0.015,
 
   /**
    * UN EMPLACEMENT DE VILLAGE : ce qu'il lui faut sous la main, et sur quel rayon.
@@ -267,7 +281,9 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
 
       const type = tirerType(c, c.zone[i]!, t, tx, ty, seed)
       if (!type) continue
-      nodes.push({ id, type, tx, ty, stock: NODE_DEFS[type].stock, regrowAt: 0 })
+      // Le stock d'un ARBRE passe par `stockDArbre` (§2quater R40) : au cœur d'un massif,
+      // le vieux fût — partout ailleurs, le défaut du type, à l'identique d'avant.
+      nodes.push({ id, type, tx, ty, stock: type === 'tree' ? stockDArbre(c.map, tx, ty) : NODE_DEFS[type].stock, regrowAt: 0 })
       id += 1
     }
   }
@@ -302,7 +318,14 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
 
   // ── LE TEASER DU BOIS NOIR — le patron du Filon, appliqué au gros bois ────
   const vieux = teaserDuBoisNoir(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
-  if (vieux) nodes.push(vieux)
+  if (vieux) { nodes.push(vieux); id += 1 }
+
+  // ── LA PROFONDEUR PORTE DU JEU (spec §2quater R40) — en QUEUE : aucun nœud d'avant ne bouge ──
+  const baies = baiesDeLisiere(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  for (const b of baies) nodes.push(b)
+  id += baies.length
+  const coeurs = champignonsDuCoeur(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  for (const m of coeurs) nodes.push(m)
   return nodes
 }
 
@@ -365,6 +388,75 @@ function teaserDuBoisNoir(c: CarteZonee, occupees: Set<number>, id: number): Res
  * Tirage POSITIONNEL (`hash2` salé de 'MUSH'), aucun PRNG partagé, sur tuile LIBRE (hors seuil, hors
  * tuile déjà occupée). Pur et déterministe.
  */
+/**
+ * LE STOCK DE NAISSANCE D'UN ARBRE (spec §2quater R40) — le VIEUX FÛT du cœur : stock majoré
+ * `×VIEUX_FUT_FACTEUR`. FONCTION PURE de la position, appliquée au semis ET réappliquée à la
+ * repousse (`economy.ts` : la repousse remet le stock au défaut du type — une donnée
+ * d'instance mourrait au premier épuisement, le patron `withForageRichness`). Jamais en
+ * futaie ancienne : le Bois Noir garde sa doctrine du teaser (« le gros bois existe. Pas
+ * ici. ») — le cœur majore l'ORDINAIRE, il n'importe jamais une structurante. Et le bonus
+ * MEURT AVEC L'ARBRE (R38) : la tuile déboisée depuis l'amorce rend le défaut, l'étiquette
+ * de profondeur restant inerte.
+ */
+export function stockDArbre(map: WorldMap, tx: number, ty: number): number {
+  const base = NODE_DEFS.tree.stock
+  const t = terrainAt(map, tx, ty)
+  if (t === TERRAIN_OLD_GROWTH || !TERRAINS_BOISES_MASSIF.includes(t)) return base
+  return estCoeur(profondeurAt(map, tx, ty)) ? Math.round(base * CONTENU.VIEUX_FUT_FACTEUR) : base
+}
+
+/**
+ * LES BAIES DE LISIÈRE (spec §2quater R40 — sel 'LISI'). Le bois se CUEILLE au bord : la
+ * bande de lisière (1 ≤ d ≤ PROF_LISIERE) porte des buissons à baies. Passe appendue en
+ * queue, tirage positionnel — patron 'FIBR' : la table `CONTENUS` n'est pas touchée, aucun
+ * nœud existant ne bouge, le flux de génération n'est pas décalé.
+ */
+function baiesDeLisiere(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
+  const { width, height, terrain } = c.map
+  const out: ResourceNode[] = []
+  let id = idStart
+  const salt = (c.graphe.seed ^ 0x4c495349) | 0 // 'LISI'
+  for (let ty = 0; ty < height; ty++) {
+    for (let tx = 0; tx < width; tx++) {
+      const i = ty * width + tx
+      if (c.rampe[i] || occupees.has(i)) continue // le seuil ne nourrit rien ; tuile prise
+      if (!estLisiere(profondeurAt(c.map, tx, ty))) continue // prof ≥ 1 ⇒ boisé, Racine
+      if (!terrainAdmet('berry_bush', terrain[i]!)) continue
+      if (hash2(tx, ty, salt) >= CONTENU.BAIES_LISIERE) continue
+      out.push({ id, type: 'berry_bush', tx, ty, stock: NODE_DEFS.berry_bush.stock, regrowAt: 0 })
+      occupees.add(i)
+      id += 1
+    }
+  }
+  return out
+}
+
+/**
+ * LES CHAMPIGNONS DU CŒUR (spec §2quater R40 — sel 'COEU'). Le cœur DONNE : un régime ×5 le
+ * sol des forêts communes (`CHAMPIGNON_COEUR` vs `CHAMPIGNON_FORET`), là où seuls les grands
+ * massifs mènent. `terrainAdmet` reste la loi : pin et mélèze n'en portent pas (verbe 3 —
+ * l'humide et l'ombre), un cœur de bosquet de crête reste sec.
+ */
+function champignonsDuCoeur(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
+  const { width, height, terrain } = c.map
+  const out: ResourceNode[] = []
+  let id = idStart
+  const salt = (c.graphe.seed ^ 0x434f4555) | 0 // 'COEU'
+  for (let ty = 0; ty < height; ty++) {
+    for (let tx = 0; tx < width; tx++) {
+      const i = ty * width + tx
+      if (c.rampe[i] || occupees.has(i)) continue
+      if (!estCoeur(profondeurAt(c.map, tx, ty))) continue
+      if (!terrainAdmet('champignon', terrain[i]!)) continue
+      if (hash2(tx, ty, salt) >= CONTENU.CHAMPIGNON_COEUR) continue
+      out.push({ id, type: 'champignon', tx, ty, stock: NODE_DEFS.champignon.stock, regrowAt: 0 })
+      occupees.add(i)
+      id += 1
+    }
+  }
+  return out
+}
+
 function champignonsRares(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
   const { width, height, terrain } = c.map
   const out: ResourceNode[] = []
@@ -470,7 +562,6 @@ function arbresDeLaRacine(c: CarteZonee, occupees: Set<number>, idStart: number)
   const seed = (c.graphe.seed ^ 0x51ab3f77) | 0
   const out: ResourceNode[] = []
   let id = idStart
-  const stock = NODE_DEFS.tree.stock
   for (let ty = 0; ty < height; ty++) {
     for (let tx = 0; tx < width; tx++) {
       const i = ty * width + tx
@@ -511,7 +602,9 @@ function arbresDeLaRacine(c: CarteZonee, occupees: Set<number>, idStart: number)
       const chance = (1 / pas) * (socle + ampli * bosquet)
       if (hash2(tx, ty, (seed ^ 0x3d7a) | 0) >= chance) continue
 
-      out.push({ id, type: 'tree', tx, ty, stock, regrowAt: 0 })
+      // Le cœur d'un massif pose des VIEUX FÛTS (§2quater R40) — `stockDArbre`, la même loi
+      // que le semis commun et la repousse.
+      out.push({ id, type: 'tree', tx, ty, stock: stockDArbre(c.map, tx, ty), regrowAt: 0 })
       id += 1
     }
   }

@@ -28,6 +28,7 @@ import {
 } from './balance'
 import { createEmptyMap } from './map'
 import { capFor, POI_TYPES } from './poi'
+import { estCoeur, TERRAINS_BOISES_MASSIF } from './profondeur'
 import { CREUX } from './racine-relief'
 import { CONTENU, placeZoneNodes } from './zone-content'
 import { generateZonedTerrain, type CarteZonee } from './zonegen'
@@ -770,4 +771,51 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
     }
   })
 
+})
+
+describe('A19 (§2quater) — la profondeur intra-massif se dérive et se mérite', () => {
+  it('garde EXHAUSTIVE : boisé-Racine ⇒ d ≥ 1 et la récurrence d\'érosion tient ; 0 partout ailleurs ; des cœurs existent', () => {
+    // La récurrence (d = 1 + min des 8 voisins, hors-masque = 0, plafonné à PROF_CAP) est
+    // affirmée sur TOUTE la grille — pas un échantillon. Elle implique à elle seule que le
+    // cœur se mérite : d ≥ PROF_COEUR exige une boule de Chebyshev pleine de rayon
+    // PROF_COEUR − 1, soit (2·PROF_COEUR − 1)² tuiles de masse au moins.
+    for (const { c } of mondes) {
+      const seed = c.graphe.seed
+      const { width, height, terrain } = c.map
+      const prof = c.map.profondeur
+      expect(prof, `seed ${seed} : la carte ne porte pas son champ de profondeur`).toBeDefined()
+      expect(prof!.length).toBe(width * height)
+      const boise = (x: number, y: number): boolean =>
+        x >= 0 && y >= 0 && x < width && y < height
+        && c.zone[y * width + x] === c.graphe.racine
+        && TERRAINS_BOISES_MASSIF.includes(terrain[y * width + x]!)
+      let fautes = 0
+      let premiere = ''
+      let coeurs = 0
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const d = prof![y * width + x]!
+          let attendu = 0
+          if (boise(x, y)) {
+            let minV = Infinity
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue
+                const v = boise(x + dx, y + dy) ? prof![(y + dy) * width + (x + dx)]! : 0
+                if (v < minV) minV = v
+              }
+            }
+            attendu = Math.min(minV + 1, CREUX.PROF_CAP)
+          }
+          if (d !== attendu) {
+            fautes += 1
+            if (!premiere) premiere = `seed ${seed} (${x},${y}) : ${d} au lieu de ${attendu}`
+          }
+          if (estCoeur(d)) coeurs += 1
+        }
+      }
+      expect(fautes, premiere).toBe(0)
+      expect(coeurs, `seed ${seed} : aucun massif assez grand pour un cœur`).toBeGreaterThan(0)
+    }
+  })
 })

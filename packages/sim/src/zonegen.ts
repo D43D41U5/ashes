@@ -54,6 +54,7 @@ import { distSq } from './geometry'
 import { placeCharniers, placePois } from './poi'
 import { densiteDeBase } from './morts'
 import { fbm2, hash2 } from './noise'
+import { deriverProfondeur } from './profondeur'
 import { masqueDesSeuils, paintWaterRacine, type Riviere } from './zonegen-water'
 import { assainirLeProfondHorsRacine, peindreLesEauxDesZones } from './zonegen-eaux-zones'
 import {
@@ -669,6 +670,9 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
     // coule. Le client en dérive le courant (feuilles qui dérivent) ; demain, un courant
     // qui pousse serait une décision de design à part (consignée, pas ouverte).
     ...(riviere ? { fil: riviere.fil.slice() } : {}),
+    // LA PROFONDEUR INTRA-MASSIF (spec §2quater R38) — dérivée du terrain FINAL (les sentes
+    // qui coupent un bois y creusent leur lisière), gelée à l'amorce, statique ensuite.
+    profondeur: deriverProfondeur(terrain, zone, g.racine, width, height),
   }
   const carte: CarteZonee = { map, graphe: g, zone, rampe }
 

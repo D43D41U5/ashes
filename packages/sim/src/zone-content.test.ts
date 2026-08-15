@@ -6,9 +6,11 @@
  * franchi.
  */
 import { describe, expect, it } from 'vitest'
-import { NODE_DEFS, TERRAINS } from './balance'
+import { NODE_DEFS, TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAINS } from './balance'
 import { distSq } from './geometry'
-import { CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
+import { profondeurAt } from './map'
+import { estCoeur, estLisiere } from './profondeur'
+import { CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, stockDArbre } from './zone-content'
 import { generateZonedTerrain, type CarteZonee } from './zonegen'
 import { MONDE, VRAIES_ZONES, ZONES } from './zonegraph'
 
@@ -248,4 +250,74 @@ describe('le contenu, sur la vraie carte', () => {
     const b = generateZonedTerrain(42)
     expect(placeZoneNodes(a)).toEqual(placeZoneNodes(b))
   }, 60_000)
+})
+
+describe('A20 (§2quater) — le cœur donne, la lisière cueille', () => {
+  it('les VIEUX FÛTS : chaque arbre porte EXACTEMENT le stock de sa position, majoré au cœur seulement', () => {
+    for (const { c, nodes } of mondes) {
+      const seed = c.graphe.seed
+      const base = NODE_DEFS.tree.stock
+      let fautes = 0
+      let premiere = ''
+      let vieux = 0
+      for (const n of nodes) {
+        if (n.type !== 'tree') continue
+        const attendu = stockDArbre(c.map, n.tx, n.ty)
+        if (n.stock !== attendu) {
+          fautes += 1
+          if (!premiere) premiere = `seed ${seed} arbre #${n.id} (${n.tx},${n.ty}) : stock ${n.stock} au lieu de ${attendu}`
+        }
+        if (n.stock > base) {
+          vieux += 1
+          // Majoré ⇒ au cœur, et jamais en futaie ancienne (la doctrine du teaser).
+          expect(estCoeur(profondeurAt(c.map, n.tx, n.ty)), `seed ${seed} : vieux fût hors cœur en (${n.tx},${n.ty})`).toBe(true)
+          expect(c.map.terrain[n.ty * c.map.width + n.tx], `seed ${seed} : vieux fût en futaie ancienne`).not.toBe(TERRAIN_OLD_GROWTH)
+        }
+      }
+      expect(fautes, premiere).toBe(0)
+      expect(vieux, `seed ${seed} : aucun vieux fût — le cœur ne donne pas`).toBeGreaterThan(0)
+    }
+  })
+
+  it('les BAIES DE LISIÈRE existent, et les champignons du cœur sont PLUS denses que la forêt commune', () => {
+    for (const { c, nodes } of mondes) {
+      const seed = c.graphe.seed
+      const { width, height, terrain } = c.map
+
+      const baiesEnLisiere = nodes.filter((n) =>
+        n.type === 'berry_bush' && estLisiere(profondeurAt(c.map, n.tx, n.ty))).length
+      expect(baiesEnLisiere, `seed ${seed} : la lisière ne se cueille pas`).toBeGreaterThan(0)
+
+      // Densité par tuile de FORÊT (id commun aux deux bandes) : cœur vs hors cœur.
+      let tuilesCoeur = 0
+      let tuilesHors = 0
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (terrain[y * width + x] !== TERRAIN_FOREST) continue
+          if (estCoeur(profondeurAt(c.map, x, y))) tuilesCoeur += 1
+          else tuilesHors += 1
+        }
+      }
+      const champisSur = (coeur: boolean): number => nodes.filter((n) =>
+        n.type === 'champignon' && terrain[n.ty * width + n.tx] === TERRAIN_FOREST
+        && estCoeur(profondeurAt(c.map, n.tx, n.ty)) === coeur).length
+      expect(tuilesCoeur, `seed ${seed} : pas de cœur de forêt à mesurer`).toBeGreaterThan(0)
+      const densiteCoeur = champisSur(true) / tuilesCoeur
+      const densiteHors = champisSur(false) / Math.max(1, tuilesHors)
+      expect(densiteCoeur, `seed ${seed} : cœur ${densiteCoeur.toFixed(4)} ≤ commun ${densiteHors.toFixed(4)}`).toBeGreaterThan(densiteHors)
+    }
+  })
+
+  it('A7 étendu — aucun nœud des passes de profondeur sur une sente ou une rampe', () => {
+    for (const { c, nodes } of mondes) {
+      const seed = c.graphe.seed
+      const { width, terrain } = c.map
+      for (const n of nodes) {
+        if (n.type !== 'berry_bush' && n.type !== 'champignon') continue
+        const i = n.ty * width + n.tx
+        expect(terrain[i], `seed ${seed} : ${n.type} sur une sente en (${n.tx},${n.ty})`).not.toBe(2)
+        expect(c.rampe[i], `seed ${seed} : ${n.type} sur une rampe en (${n.tx},${n.ty})`).toBeFalsy()
+      }
+    }
+  })
 })

@@ -273,6 +273,12 @@ export function deserializeCarte(text: string): CarteSauvee {
   if (c.cendre !== undefined && (!Array.isArray(c.cendre) || c.cendre.length !== attendu)) {
     throw new Error(`Champ de cendre tronqué : ${Array.isArray(c.cendre) ? c.cendre.length : 'absent'} pour ${attendu} tuiles`)
   }
+  // `profondeur` (§2quater) est optionnelle (carte d'avant l'étage 2) — mais si elle est là,
+  // elle couvre toute la carte. Même loi que `cendre` : tronquée, on jette — une profondeur
+  // fausse donnerait des vieux fûts et un couvert au mauvais endroit, en silence.
+  if (c.profondeur !== undefined && (!Array.isArray(c.profondeur) || c.profondeur.length !== attendu)) {
+    throw new Error(`Champ de profondeur tronqué : ${Array.isArray(c.profondeur) ? c.profondeur.length : 'absent'} pour ${attendu} tuiles`)
+  }
   if (typeof env.seed !== 'number') {
     throw new Error("Carte illisible : elle ne dit pas de quel monde elle est (seed absente)")
   }

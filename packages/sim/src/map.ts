@@ -99,6 +99,15 @@ export interface WorldMap {
    * jour où le courant POUSSE (objets, nage), ce sera une décision de design à part.
    */
   fil?: number[]
+  /**
+   * LA PROFONDEUR INTRA-MASSIF (spec t0-exploration §2quater R38) : par tuile, la distance au
+   * bord de son massif boisé de la Racine (érosion 8-connexe, plafonnée à `CREUX.PROF_CAP`),
+   * 0 partout ailleurs. **Donnée STATIQUE, gelée à l'amorce** — comme `cendre` : calculée une
+   * fois, jamais mutée (`carte-immuable` la garde). Le feu qui ronge un bord ne recalcule
+   * rien ; un bonus ne s'applique jamais sur une tuile qui n'est plus boisée (le bonus meurt
+   * avec l'arbre, l'étiquette survit, inerte). Additive : une carte d'avant se relit sans.
+   */
+  profondeur?: number[]
 }
 
 /**
@@ -195,6 +204,17 @@ export const MARCHABLE: Uint8Array = ((): Uint8Array => {
 export function terrainAt(map: WorldMap, tx: number, ty: number): number {
   if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return 0
   return map.terrain[ty * map.width + tx] ?? 0
+}
+
+/**
+ * LA PROFONDEUR INTRA-MASSIF d'une tuile (spec §2quater). **0 sans le champ** — carte d'avant
+ * l'étage 2, banc de test, hors carte : un consommateur qui module par la profondeur reste
+ * inerte là, comme `zoneTierAt` sans zones — on n'impose pas une géographie à qui ne l'a pas.
+ */
+export function profondeurAt(map: WorldMap, tx: number, ty: number): number {
+  const p = map.profondeur
+  if (!p || tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return 0
+  return p[ty * map.width + tx] ?? 0
 }
 
 /**

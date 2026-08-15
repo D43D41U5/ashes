@@ -99,6 +99,88 @@ Deux terrains savaient où était l'eau ; les autres étaient tous à la même d
 
 *Réglages : dans `CREUX` (`racine-relief.ts`), patron des autres blocs worldgen — `PART_PRAIRIE`, `PART_LANDE`, et les portées `RIPI_*` de la saulaie. Étages 2 et 3 : décisions à venir, une à une.*
 
+## §2quater — LA PROFONDEUR INTRA-MASSIF : lisière, corps, cœur (étage 2)
+
+*Décision d'Alexis, 2026-08-15 (« go pour le jeu dès l'étage 2 ») : la profondeur porte du JEU
+dès sa naissance — nœuds, habitat et couvert par bande, pas seulement le rendu. Constat : à
+l'intérieur d'un mot, seul le rendu variait (taillis d'amas, sous-bois de lisière ×1,35,
+gradients de berge) — rien dans la sim ne savait « je suis au cœur de ce massif » : pas de
+variable de profondeur, couvert plat par terrain, entrelacement de lisières sauté sur la Racine.*
+
+- **R38 — LA PROFONDEUR SE DÉRIVE, elle ne se sème pas.** `map.profondeur` : par tuile, la
+  distance (érosion entière 8-connexe, Chebyshev — le voisinage du reste du worldgen) au bord
+  de son massif BOISÉ de la Racine, plafonnée à `PROF_CAP`. Boisé = forêt, futaie ancienne,
+  pin, mélèze, saulaie ; zéro partout ailleurs (autres zones, terrains ouverts, eau). Aucun
+  bruit : deux érosions du même terrain donnent le même champ. Les clairières ne percent PAS
+  la profondeur (terrain encore boisé) : ce sont des chambres DANS la masse, pas des trouées
+  de lisière. **Le champ est GELÉ à l'amorce et persiste avec l'état** (le patron des solides
+  éternels : un état qui ne bouge jamais) — le feu qui ronge un bord ne recalcule rien, mais
+  un bonus ne s'applique JAMAIS sur une tuile qui n'est plus boisée : l'étiquette survit,
+  inerte ; le bonus meurt avec l'arbre.
+- **R39 — TROIS BANDES, ET LE CŒUR SE MÉRITE PAR LA TAILLE.** Bandes dérivées du champ, jamais
+  stockées à part : lisière (`d ≤ PROF_LISIERE`), cœur (`d ≥ PROF_COEUR`), corps entre les
+  deux. Un massif trop petit pour atteindre `PROF_COEUR` n'a pas de cœur — par construction,
+  sans liste ni exception : la hiérarchie des bois vient de la géométrie que la carte possède
+  déjà. La saulaie, galerie étroite, sera presque toute lisière — c'est sa nature.
+- **R40 — CHAQUE BANDE PORTE DU JEU RÉEL, rien de neuf au registre.** Passes appendues salées
+  (le patron 'FIBR'), tirage positionnel, aucun décalage du flux : ① la LISIÈRE porte les
+  baies (`berry_bush`, sel `'LISI'`) — le bois se cueille au bord ; ② le CŒUR porte les
+  champignons du cœur (`champignon`, sel `'COEU'`, plus dense que le régime forêt commun) et
+  les VIEUX FÛTS : les arbres du cœur portent un stock MAJORÉ (`×VIEUX_FUT_FACTEUR`) — par une
+  FONCTION PURE de la position, appliquée à la naissance ET réappliquée à la repousse (le
+  patron `withForageRichness` : la repousse remet le stock au défaut du type, une donnée
+  d'instance mourrait au premier épuisement). SAUF en futaie ancienne : le Bois Noir garde sa
+  doctrine du teaser (« le gros bois existe. Pas ici. ») — le cœur majore l'ORDINAIRE, il
+  n'importe jamais une structurante. A7 s'étend (rien sur sente ni rampe).
+- **R41 — LA FAUNE ET LA CHASSE SENTENT LA PROFONDEUR, par le COUVERT — un seul canal.** Le
+  couvert effectif se module par bande : au cœur, mieux couvert (facteur `COVER_COEUR`,
+  appliqué SEULEMENT si la tuile est encore boisée — R38) ; la lisière garde le nominal. UNE
+  seule fonction (`couvertEffectif`) nourrit les TROIS lecteurs : la détectabilité du chasseur
+  (`coverAt`), le rôdeur qui traque, ET le choix de couche du gibier (`bedStep` lisait la
+  table brute — il lirait un couvert que la chasse ne voit pas) — c'est le couchage qui envoie
+  le gibier au cœur, pas la roulette de repeuplement : y peser une tuile déjà tirée serait
+  inerte, et la rejeter décalerait le flux RNG (leçon consignée). S'enfoncer = plus caché,
+  plus de valeur, moins de visibilité : le risque/récompense est spatial.
+- **R42 — LE RENDU LIT LA PROFONDEUR EN PENTE CONTINUE.** Le sol s'assombrit continûment avec
+  `d` (0 → `PROF_CAP`), jamais par paliers — les BANDES sont des règles de jeu, pas des
+  marches visuelles. Le clutter suit les bandes (lisière : le sous-bois dense existant ;
+  cœur : sous-bois plus nu, champignons au sol). Le client LIT `map.profondeur` reçu au
+  `ready` (le canal existe : `WorldMap` part entier, champ additif optionnel — patron
+  `map.fil`, `PROTOCOL_VERSION` ne bouge pas) — il ne re-dérive JAMAIS : un client qui
+  rejoint après un feu dériverait un autre champ que celui, gelé, de la sim. Coût assumé et
+  consigné : ~+10 Mo sur l'enregistrement carte (écrit UNE fois, zéro impact autosave) et
+  autant sur le fil d'un join LAN (la carte y part déjà entière).
+
+**Critères** *(seeds de garde, taille de production)* :
+
+- **A19** — LA PROFONDEUR SE DÉRIVE ET SE MÉRITE : garde EXHAUSTIVE (toute la grille, pas un
+  échantillon) — toute tuile boisée de la Racine porte `d ≥ 1` ; toute tuile non boisée ou
+  hors Racine porte 0 ; une tuile de lisière a un voisin 8-connexe hors du masque ; aucun
+  massif de moins de `(2·PROF_COEUR−1)²` tuiles ne porte de cœur ; sur chaque seed de garde,
+  au moins un massif EN porte un.
+- **A20** — LE CŒUR DONNE, LA LISIÈRE CUEILLE : baies présentes en lisière de bosquet ;
+  champignons du cœur présents et PLUS denses au cœur que le régime forêt commun ; vieux fûts
+  (`stock > NODE_DEFS.tree.stock`) présents UNIQUEMENT au cœur et JAMAIS en futaie ancienne ;
+  rien sur sente ni rampe.
+- **A21** — LE COUVERT SUIT, PARTOUT PAREIL : pour un même terrain boisé, le couvert effectif
+  au cœur est STRICTEMENT meilleur qu'en corps/lisière ; sur une tuile déboisée après l'amorce
+  (le feu), le bonus est mort ; le GIBIER SE COUCHE au cœur (une bête qui choisit sa couche
+  avec un cœur à portée le prend — testé en unitaire) ; et le VIEUX FÛT SURVIT À LA REPOUSSE
+  (le stock majoré est une fonction pure de la position, réappliquée à la repousse — jamais
+  une donnée d'instance qui meurt au premier épuisement).
+- **A22** — LE RENDU MONTRE LA PROFONDEUR : capture smoke lisière → cœur du même massif ; la
+  luminance moyenne du sol décroît de la lisière au cœur (pente continue, mesurée sur la
+  capture) ; les clairières restent lisibles (elles ne s'assombrissent pas).
+- **A23** — DÉTERMINISME ET COÛT : double génération identique champ compris ; parité
+  Veillée/LAN (même fonction, même amorce) ; coût de la dérivation MESURÉ à la génération et
+  impact CHIFFRÉ sur la taille de sauvegarde — si l'un des deux déborde, on encode plus petit
+  avant de livrer, pas après.
+
+*Réglages : `PROF_LISIERE`, `PROF_COEUR`, `PROF_CAP` dans `CREUX` (géométrie — se règle en
+regardant une carte) ; `VIEUX_FUT_FACTEUR`, `CHAMPIGNON_COEUR`, `BAIES_LISIERE` dans `CONTENU`
+et `COVER_COEUR` dans `balance.ts` (jeu — se règle en jouant). Étage 3 (la couronne — les
+set-pieces dérivés, la mort des tampons) : décision à venir.*
+
 ---
 
 ## §3 — Les set-pieces : des ENDROITS, pas des timbres

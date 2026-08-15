@@ -57,6 +57,7 @@ import {
 } from './items'
 import { poiClearings, terrainAt, zoneAt, type WorldMap } from './map'
 import { libelleExigence, sertExigence } from './pieces'
+import { stockDArbre } from './zone-content'
 import { fbm2, hash2 } from './noise'
 import type { Entity, SimState } from './sim'
 import { actForDay, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
@@ -972,8 +973,11 @@ export function advanceEconomy(state: SimState): void {
           continue
         }
         // Un bon coin de cueillette repousse RICHE (la richesse est une propriété du lieu,
-        // pas un stock ponctuel) — sans effet sur les autres nœuds (spec verbe 3).
-        node.stock = withForageRichness(node.type, node.id, NODE_DEFS[node.type].stock)
+        // pas un stock ponctuel) — sans effet sur les autres nœuds (spec verbe 3). Et un
+        // arbre repousse par `stockDArbre` (§2quater R40) : le vieux fût du cœur SURVIT à
+        // la repousse — la même fonction pure de la position qu'au semis.
+        const base = node.type === 'tree' ? stockDArbre(state.map, node.tx, node.ty) : NODE_DEFS[node.type].stock
+        node.stock = withForageRichness(node.type, node.id, base)
         node.regrowAt = 0
       }
     }

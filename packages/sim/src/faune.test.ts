@@ -14,7 +14,8 @@ import {
   SLOTS,
 } from './balance'
 import { countOf, inventoryOf } from './items'
-import { createEmptyMap, type WorldMap } from './map'
+import { createEmptyMap, profondeurAt, type WorldMap } from './map'
+import { deriverProfondeur, estCoeur } from './profondeur'
 import { createSim, spawnEntity, snapshot, step, type Entity, type MoveInput, type SimState } from './sim'
 import { cycleOffsetForStartHour } from './time'
 import { spawnMonster, type Monster } from './monsters'
@@ -573,6 +574,29 @@ describe('le rythme jour/nuit (A11 — R10)', () => {
     const avant = dist(entity(dormeur, id), entity(dormeur, a))
     for (let t = 0; t < 2 * BALANCE.TICK_RATE_HZ; t++) tick(dormeur)
     expect(dist(entity(dormeur, id), entity(dormeur, a))).toBeGreaterThan(avant)
+  })
+
+  it('A21 (§2quater) — la bête à bout de sang se COUCHE AU CŒUR : la meilleure couche est la plus profonde', () => {
+    // Le couché C11, sur une carte qui a un CŒUR : le bois 40×40 de makeMap, champ de
+    // profondeur dérivé. La couche se choisit au couvert EFFECTIF (§2quater R41) — le cœur
+    // (couvert × COVER_COEUR) bat la lisière, et la bête blessée va mourir AU FOND du bois :
+    // on la retrouve par le sang, pas en battant la carte.
+    const sim = makeSim()
+    const zone = new Int32Array(sim.map.width * sim.map.height) // une seule « zone » : id 0
+    sim.map.profondeur = deriverProfondeur(sim.map.terrain, zone, 0, sim.map.width, sim.map.height)
+    const id = spawnMonster(sim, 'deer', 48.5, 30.5) // lisière est du bois (d = 2)
+    expect(estCoeur(profondeurAt(sim.map, 48, 30))).toBe(false)
+    const m = sim.monsters.find((mm) => mm.entityId === id)!
+    const a = spawnEntity(sim, 55.5, 120.5) // très loin : aucune menace perçue
+    applyDamage(sim, entity(sim, id), MONSTER_DEFS.deer.hp - 22, a) // mortelle, elle tient debout
+    expect(m.bleedMortal).toBe(true)
+    for (let t = 0; t < 40 * BALANCE.TICK_RATE_HZ && !m.bedded; t++) tick(sim)
+    expect(m.bedded).toBe(true)
+    const e = entity(sim, id)
+    expect(
+      estCoeur(profondeurAt(sim.map, Math.floor(e.x), Math.floor(e.y))),
+      `couchée en (${e.x.toFixed(1)}, ${e.y.toFixed(1)}), profondeur ${profondeurAt(sim.map, Math.floor(e.x), Math.floor(e.y))}`,
+    ).toBe(true)
   })
 })
 

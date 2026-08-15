@@ -107,7 +107,10 @@ export type {
 // ─── Monde : carte, temps, collision, navigation ──────────────────────────
 export {
   createEmptyMap, terrainAt, isBlockingTile, zoneAt, poisAt, poiCenter, poiClearings,
+  profondeurAt,
 } from './map'
+export { deriverProfondeur, estCoeur, estLisiere, TERRAINS_BOISES_MASSIF } from './profondeur'
+export { CREUX } from './racine-relief'
 export type { WorldMap, Zone } from './map'
 export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'

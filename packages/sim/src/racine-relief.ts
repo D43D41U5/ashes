@@ -167,6 +167,19 @@ export const CREUX = {
    *  `RELIEF.MOTIF` (voir `zonegen.ts`), pas par tuile : la frange s'effiloche par touffes. */
   RIPI_BASCULE: 0.45,
 
+  // ══ LA PROFONDEUR INTRA-MASSIF — lisière, corps, cœur (spec §2quater R38-R39) ════════════
+  //
+  // La distance au bord de son massif boisé (érosion 8-connexe, `profondeur.ts`), et les
+  // trois bandes qui s'en dérivent. Géométrie : se règle en REGARDANT une carte — combien de
+  // rangs fait une lisière, à partir d'où un bois devient un cœur.
+  /** Bande de LISIÈRE : 1 ≤ d ≤ ce seuil. */
+  PROF_LISIERE: 2,
+  /** Bande de CŒUR : d ≥ ce seuil. Le cœur se MÉRITE par la taille : un massif plus petit
+   *  que (2·PROF_COEUR−1)² tuiles n'en a pas, par construction. */
+  PROF_COEUR: 5,
+  /** Plafond du champ stocké — le rendu veut une pente continue un peu au-delà du cœur. */
+  PROF_CAP: 8,
+
   // ══ LES BOSQUETS DE CRÊTE — le bois SEC, et le seul repère du haut pays ═══════════════════
   //
   // *Demande d'Alexis, 2026-07-29 : « il faudrait quelques patchs de forêt déposés de manière

@@ -29,6 +29,7 @@ import {
   TERRAIN_WILLOW,
   TERRAIN_WET_MEADOW,
   TERRAIN_JUNIPER_HEATH,
+  CREUX,
 } from '@ashes/sim'
 
 export type PropKind =
@@ -108,6 +109,9 @@ export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
 }
 
 const CLUTTER_MEAN_SQ = 0.30 // ≈ E[fbm2²] — normalise le champ d'amas (moyenne ≈ 1)
+/** Dénuement du sous-bois au plafond de profondeur (§2quater R42) : à PROF_CAP, le sol du
+ *  cœur ne garde que 60 % de son sous-bois — la masse se lit au sol nu entre les fûts. */
+const PROFONDEUR_NU = 0.4
 const WATER = new Set<number>([TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER])
 // La saulaie est des DEUX côtés (REEDY ∩ WOODED) : un bois DE BERGE — ses buissons et roseaux
 // trempent au bord comme ceux du marais (décision d'Alexis, 2026-08-15 : « habille la berge »),
@@ -189,6 +193,7 @@ export function clutterAt(
   terrain: number,
   seed: number,
   sample: SampleTerrain,
+  prof = 0,
 ): PropInstance[] {
   const cfg = BIOME_CLUTTER[terrain]
   if (!cfg) return []
@@ -215,9 +220,13 @@ export function clutterAt(
 
   // Champ d'amas (moyenne ≈ 1) → massifs pleins troués de clairières (INV-6).
   const field = fbm2(tx, ty, cfg.scale, (seed ^ 0x2b1c9f0d) | 0)
+  // LE SOUS-BOIS SE DÉNUDE AVEC LA PROFONDEUR (spec §2quater R42) : au fond d'un massif, le
+  // sol se fait nu — en PENTE CONTINUE sur `prof` (0 → PROF_CAP), jamais par bande : les
+  // bandes sont des règles de jeu, pas des marches visuelles. Sans champ (prof = 0) : inerte.
+  const nu = 1 - PROFONDEUR_NU * Math.min(prof, CREUX.PROF_CAP) / CREUX.PROF_CAP
   const local = Math.min(
     1,
-    cfg.density * ((field * field) / CLUTTER_MEAN_SQ) * affinity(terrain, tx, ty, sample),
+    cfg.density * ((field * field) / CLUTTER_MEAN_SQ) * affinity(terrain, tx, ty, sample) * nu,
   )
   const u = hash2(tx, ty, (seed ^ 0x77aa1133) | 0)
   if (u < local) {

@@ -38,7 +38,9 @@ import { baseDepuisNoeuds } from './node-baseline'
  * LES CHAMPS PAR TUILE — trop gros pour un JSON, hachés élément par élément.
  * Ce sont eux qui font 60 des 69,7 Mo, et donc eux qu'on a sortis de l'autosave.
  */
-const CHAMPS_HACHES = ['terrain', 'cendre'] as const
+// `profondeur` (§2quater R38) est par tuile comme eux — et la hacher ici PROUVE R38 :
+// le champ est gelé à l'amorce, mille ticks de monde vivant n'en bougent pas un bit.
+const CHAMPS_HACHES = ['terrain', 'cendre', 'profondeur'] as const
 /** Le reste de la carte — quelques dizaines de ko, couverts par leur JSON. */
 const CHAMPS_JSON = [
   'width', 'height', 'zones', 'cendreMax', 'zoneGrid', 'zonePas', 'zoneDefs', 'seuils', 'fil',

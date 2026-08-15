@@ -141,7 +141,11 @@ import {
   type Brouillard,
   type IdentiteMonde,
 } from '../render/fog'
-import { fireStateAt, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER } from '@ashes/sim'
+import { fireStateAt, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF } from '@ashes/sim'
+
+/** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
+ *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
+const PROFONDEUR_ASSOMBRIT = 0.14
 
 /**
  * Le rayon qu'un lieu dévoile, LU DANS LA TABLE DE LA SIM (`POI_CHARGES`) et jamais recopié :
@@ -2672,6 +2676,16 @@ export class WorldScene extends Phaser.Scene {
           grain = (1 - d / 2 + d * hash2(tx, ty)) / moyenneFamille(famille, this.worldSeed)
           // Les taches macro : la seconde échelle, celle qui se lit à l'écran entier.
           grain *= 1 + (fbm2(tx, ty, 10, 0x7ac3) - 0.5) * 0.12
+          // LA PROFONDEUR (spec §2quater R42) : le sol d'un massif s'assombrit en PENTE
+          // CONTINUE avec la distance au bord — le cœur se LIT au sol, jamais par paliers.
+          // Gardé sur le terrain ENCORE boisé (une tuile brûlée garde son étiquette de
+          // profondeur, pas son ombre), et les CLAIRIÈRES restent claires : la trouée est
+          // une chambre de lumière DANS la masse — l'assombrir la refermerait.
+          const dProf = this.map.profondeur?.[i] ?? 0
+          if (dProf > 0 && TERRAINS_BOISES_MASSIF.includes(this.map.terrain[i] ?? 0)
+            && clairiereForet(this.worldSeed, tx, ty) === 0) {
+            grain *= 1 - PROFONDEUR_ASSOMBRIT * Math.min(dProf, CREUX.PROF_CAP) / CREUX.PROF_CAP
+          }
         } else {
           // Aucune matière au-dessus (eau, falaise, mur, vide) : le damier historique, seul.
           grain = 0.96 + 0.07 * hash2(tx, ty)

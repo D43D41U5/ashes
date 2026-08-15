@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TERRAIN_FOREST, TERRAIN_DEEP_WATER, TERRAIN_REED_MARSH, TERRAIN_WILLOW } from '@ashes/sim'
+import { CREUX, TERRAIN_FOREST, TERRAIN_DEEP_WATER, TERRAIN_REED_MARSH, TERRAIN_WILLOW } from '@ashes/sim'
 import { BIOME_CLUTTER, clutterAt, distToWater, type SampleTerrain } from './clutter'
 
 const allForest: SampleTerrain = () => TERRAIN_FOREST
@@ -98,6 +98,17 @@ describe('la berge de la saulaie (décision d\'Alexis, 2026-08-15 : « habille l
       far += clutterAt(12, ty, TERRAIN_WILLOW, SEED, bergeSaulaie).length
     }
     expect(near).toBeGreaterThan(far)
+  })
+
+  it('la profondeur DÉNUDE le sous-bois (§2quater R42) : au plafond, moins de props — jamais zéro', () => {
+    let plein = 0
+    let nu = 0
+    for (let ty = 0; ty < 400; ty++) {
+      plein += clutterAt(20, ty, TERRAIN_FOREST, SEED, allForest).length
+      nu += clutterAt(20, ty, TERRAIN_FOREST, SEED, allForest, CREUX.PROF_CAP).length
+    }
+    expect(nu).toBeGreaterThan(0) //   le cœur n'est pas STÉRILE, il est clairsemé
+    expect(nu).toBeLessThan(plein) //  mais il se dénude, mesurablement
   })
 
   it('la frange au sec ne fond PAS : loin de l\'eau, la saulaie garde son régime de bois', () => {
