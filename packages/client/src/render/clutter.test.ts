@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { TERRAIN_FOREST, TERRAIN_DEEP_WATER, TERRAIN_REED_MARSH } from '@ashes/sim'
+import { TERRAIN_FOREST, TERRAIN_DEEP_WATER, TERRAIN_REED_MARSH, TERRAIN_WILLOW } from '@ashes/sim'
 import { BIOME_CLUTTER, clutterAt, distToWater, type SampleTerrain } from './clutter'
 
 const allForest: SampleTerrain = () => TERRAIN_FOREST
@@ -68,5 +68,46 @@ describe('distToWater (affinité réaliste, INV-6)', () => {
       far += clutterAt(12, ty, TERRAIN_REED_MARSH, SEED, grid).length
     }
     expect(near).toBeGreaterThan(far)
+  })
+})
+
+describe('la berge de la saulaie (décision d\'Alexis, 2026-08-15 : « habille la berge »)', () => {
+  // Colonne d'eau en x = 0 ; le reste saulaie (resp. forêt, pour le contre-cas).
+  const bergeSaulaie: SampleTerrain = (tx) => (tx <= 0 ? TERRAIN_DEEP_WATER : TERRAIN_WILLOW)
+  const bergeForet: SampleTerrain = (tx) => (tx <= 0 ? TERRAIN_DEEP_WATER : TERRAIN_FOREST)
+
+  it('la saulaie au contact de l\'eau porte des props — la forêt, elle, garde sa berge nue', () => {
+    let saulaie = 0
+    let foret = 0
+    for (let ty = 0; ty < 60; ty++) {
+      saulaie += clutterAt(1, ty, TERRAIN_WILLOW, SEED, bergeSaulaie).length
+      foret += clutterAt(1, ty, TERRAIN_FOREST, SEED, bergeForet).length
+    }
+    expect(saulaie).toBeGreaterThan(0) // la berge est habillée
+    expect(foret).toBe(0) //              la règle de berge nue tient pour un bois ordinaire
+  })
+
+  it('plus dense au bord qu\'au loin — le régime de berge des roseaux', () => {
+    // 800 rangées et pas 60 : le gradient de la saulaie est doux (×1,35 au contact contre
+    // ×1,86 pour les roseaux) et le champ d'amas basse fréquence l'enterre sur un petit
+    // échantillon (MESURÉ : ratio 0,95 à N=60, 1,27 à N=800).
+    let near = 0
+    let far = 0
+    for (let ty = 0; ty < 800; ty++) {
+      near += clutterAt(1, ty, TERRAIN_WILLOW, SEED, bergeSaulaie).length
+      far += clutterAt(12, ty, TERRAIN_WILLOW, SEED, bergeSaulaie).length
+    }
+    expect(near).toBeGreaterThan(far)
+  })
+
+  it('la frange au sec ne fond PAS : loin de l\'eau, la saulaie garde son régime de bois', () => {
+    // Tuile à tuile : à distance plafonnée de l'eau (tx=12), le semis est IDENTIQUE à celui
+    // d'une saulaie sans eau du tout — le fondu 0.7 des roseaux ne s'applique jamais (la
+    // frange est déjà effilochée côté sim par le hash 'RIPI', on ne la vide pas deux fois).
+    const sansEau: SampleTerrain = () => TERRAIN_WILLOW
+    for (let ty = 0; ty < 60; ty++) {
+      expect(clutterAt(12, ty, TERRAIN_WILLOW, SEED, bergeSaulaie))
+        .toEqual(clutterAt(12, ty, TERRAIN_WILLOW, SEED, sansEau))
+    }
   })
 })

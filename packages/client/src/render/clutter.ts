@@ -109,7 +109,10 @@ export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
 
 const CLUTTER_MEAN_SQ = 0.30 // ≈ E[fbm2²] — normalise le champ d'amas (moyenne ≈ 1)
 const WATER = new Set<number>([TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER])
-const REEDY = new Set<number>([TERRAIN_MARSH, TERRAIN_REED_MARSH, TERRAIN_PEAT_BOG, TERRAIN_WET_MEADOW])
+// La saulaie est des DEUX côtés (REEDY ∩ WOODED) : un bois DE BERGE — ses buissons et roseaux
+// trempent au bord comme ceux du marais (décision d'Alexis, 2026-08-15 : « habille la berge »),
+// et sa frange au sec reste un sous-bois.
+const REEDY = new Set<number>([TERRAIN_MARSH, TERRAIN_REED_MARSH, TERRAIN_PEAT_BOG, TERRAIN_WET_MEADOW, TERRAIN_WILLOW])
 const WOODED = new Set<number>([TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_WILLOW])
 
 /** Distance de Chebyshev à la tuile d'eau la plus proche, plafonnée à `cap`. */
@@ -146,7 +149,12 @@ function isForestEdge(tx: number, ty: number, sample: SampleTerrain): boolean {
 function affinity(terrain: number, tx: number, ty: number, sample: SampleTerrain): number {
   if (REEDY.has(terrain)) {
     const d = distToWater(tx, ty, sample, 3)
-    return d === 0 ? 1.6 : d === 1 ? 1.3 : d === 2 ? 1.0 : 0.7 // roseaux collés à l'eau
+    const berge = d === 0 ? 1.6 : d === 1 ? 1.3 : d === 2 ? 1.0 : 0.7 // roseaux collés à l'eau
+    // Le bois de berge (la saulaie) tient des deux régimes : la densité de berge près de
+    // l'eau, le sous-bois ailleurs — JAMAIS le fondu 0.7 des roseaux : sa frange est déjà
+    // effilochée côté sim (hash 'RIPI'), la vider deux fois la rendrait pelée.
+    if (WOODED.has(terrain)) return Math.max(berge, isForestEdge(tx, ty, sample) ? 1.35 : 1.0)
+    return berge
   }
   if (WOODED.has(terrain)) return isForestEdge(tx, ty, sample) ? 1.35 : 1.0 // sous-bois de lisière
   return 1
@@ -188,7 +196,8 @@ export function clutterAt(
   // PAS DE DÉCOR "DANS L'EAU". Le bord de l'eau (masque du shader en filtrage linéaire) déborde
   // d'environ un dixième de tuile sur la terre voisine, et un prop porte un décalage jusqu'à ±0,4
   // tuile : une fleur ou une touffe de BERGE finit donc plantée dans l'eau. On laisse une tuile de
-  // berge NUE au contact de l'eau — SAUF les ROSEAUX (REEDY), qui ont justement le droit d'y tremper.
+  // berge NUE au contact de l'eau — SAUF les ROSEAUX (REEDY, saulaie comprise), qui ont
+  // justement le droit d'y tremper.
   if (!REEDY.has(terrain) && touchesWater(tx, ty, sample)) return []
 
   const props: PropInstance[] = []
