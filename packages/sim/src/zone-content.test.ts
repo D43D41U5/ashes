@@ -63,7 +63,10 @@ describe('le contenu, sur la vraie carte', () => {
     // Le bug d'origine : les champignons n'étaient posés que par `generateNodes` (générique/tests),
     // alors que la Veillée joue `placeZoneNodes` — donc AUCUN champignon en jeu. Cette garde vit sur
     // le VRAI générateur. (La densité forêt≪humide est prouvée à part, sur `generateNodes`.)
-    const OK = new Set(['marsh', 'peat_bog', 'reed_marsh', 'old_growth', 'forest'])
+    // + les deux mots MOUILLÉS du vocabulaire du pré (spec t0-exploration §2ter R34,
+    // 2026-08-15) : la saulaie et la prairie humide portent le champignon — la lande à
+    // genévriers, sèche, n'y a toujours pas droit, et cette garde le tient.
+    const OK = new Set(['marsh', 'peat_bog', 'reed_marsh', 'old_growth', 'forest', 'willow', 'wet_meadow'])
     for (const { c, nodes } of mondes) {
       const champs = nodes.filter((n) => n.type === 'champignon')
       expect(champs.length).toBeGreaterThan(0) // la carte réelle en porte

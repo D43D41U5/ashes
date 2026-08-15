@@ -26,6 +26,9 @@ import {
   TERRAIN_SNOW,
   TERRAIN_SHALLOW_WATER,
   TERRAIN_DEEP_WATER,
+  TERRAIN_WILLOW,
+  TERRAIN_WET_MEADOW,
+  TERRAIN_JUNIPER_HEATH,
 } from '@ashes/sim'
 
 export type PropKind =
@@ -95,12 +98,19 @@ export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
   [TERRAIN_SCREE]: { density: 0.4, scale: 16, understory: false, props: ['pebbles', 'lichen'] },
   [TERRAIN_BOULDERS]: { density: 0.5, scale: 16, understory: false, props: ['boulder', 'lichen'] },
   [TERRAIN_SNOW]: { density: 0.2, scale: 18, understory: false, props: ['snowdrift', 'pebbles'] },
+  // LE VOCABULAIRE DU PRÉ (spec t0-exploration §2ter). La saulaie : un sous-bois de berge —
+  // buissons et roseaux entre les troncs (les saules eux-mêmes sont de VRAIS nœuds, posés
+  // côté sim). La prairie humide : des joncs — l'herbe y pèse double, le roseau signe l'eau
+  // proche. La lande : des boules de genévrier (low_bush) sur un sol caillouteux.
+  [TERRAIN_WILLOW]: { density: 0.3, scale: 18, understory: false, props: ['bush', 'reed', 'grass_tuft'] },
+  [TERRAIN_WET_MEADOW]: { density: 0.55, scale: 14, understory: false, props: ['grass_tuft', 'grass_tuft', 'reed', 'flower'] },
+  [TERRAIN_JUNIPER_HEATH]: { density: 0.42, scale: 14, understory: false, props: ['low_bush', 'low_bush', 'pebbles', 'grass_tuft'] },
 }
 
 const CLUTTER_MEAN_SQ = 0.30 // ≈ E[fbm2²] — normalise le champ d'amas (moyenne ≈ 1)
 const WATER = new Set<number>([TERRAIN_SHALLOW_WATER, TERRAIN_DEEP_WATER])
-const REEDY = new Set<number>([TERRAIN_MARSH, TERRAIN_REED_MARSH, TERRAIN_PEAT_BOG])
-const WOODED = new Set<number>([TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_LARCH])
+const REEDY = new Set<number>([TERRAIN_MARSH, TERRAIN_REED_MARSH, TERRAIN_PEAT_BOG, TERRAIN_WET_MEADOW])
+const WOODED = new Set<number>([TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_WILLOW])
 
 /** Distance de Chebyshev à la tuile d'eau la plus proche, plafonnée à `cap`. */
 export function distToWater(tx: number, ty: number, sample: SampleTerrain, cap: number): number {

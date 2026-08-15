@@ -21,10 +21,14 @@ import {
   TERRAIN_REED_MARSH,
   TERRAIN_ROAD,
   TERRAIN_SHALLOW_WATER,
+  TERRAIN_WILLOW,
+  TERRAIN_WET_MEADOW,
+  TERRAIN_JUNIPER_HEATH,
   TERRAINS,
 } from './balance'
 import { createEmptyMap } from './map'
 import { capFor, POI_TYPES } from './poi'
+import { CREUX } from './racine-relief'
 import { CONTENU, placeZoneNodes } from './zone-content'
 import { generateZonedTerrain, type CarteZonee } from './zonegen'
 import { EAU, estUnCoude } from './zonegen-water'
@@ -537,7 +541,7 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
     return moy
   }
 
-  it('A11 — le RANG à l’eau est le même sur toute seed : marais < roselière < bosquet < herbe < fleuraie', () => {
+  it('A11+A16 — le RANG à l’eau commande les SEPT mots : marais < roselière < prairie < bosquet < herbe < fleuraie < lande', () => {
     for (const { c } of mondes) {
       const seed = c.graphe.seed
       const d = distancesALEau(c)
@@ -548,14 +552,25 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
       }
       const marais = de(TERRAIN_MARSH, 'marais')
       const roseliere = de(TERRAIN_REED_MARSH, 'roselière')
+      const prairie = de(TERRAIN_WET_MEADOW, 'prairie humide')
       const bosquet = de(TERRAIN_FOREST, 'bosquet')
       const herbe = de(TERRAIN_GRASS, 'herbe')
       const fleuraie = de(TERRAIN_FLOWER_MEADOW, 'fleuraie')
+      const lande = de(TERRAIN_JUNIPER_HEATH, 'lande à genévriers')
+      const saulaie = de(TERRAIN_WILLOW, 'saulaie')
 
       expect(marais, `seed ${seed} : marais < roselière`).toBeLessThan(roseliere)
-      expect(roseliere, `seed ${seed} : roselière < bosquet`).toBeLessThan(bosquet)
+      expect(roseliere, `seed ${seed} : roselière < prairie humide`).toBeLessThan(prairie)
+      expect(prairie, `seed ${seed} : prairie humide < bosquet`).toBeLessThan(bosquet)
       expect(bosquet, `seed ${seed} : bosquet < herbe`).toBeLessThan(herbe)
       expect(herbe, `seed ${seed} : herbe < fleuraie`).toBeLessThan(fleuraie)
+      // Le lien du bout sec est SERRÉ (seed 42 : 170,9 contre 171,1) et c'est attendu : loin
+      // de l'eau, c'est le CREUX qui domine l'humidité — la distance à l'eau y est un proxy
+      // qui sature. Le rang en HUMIDITÉ, lui, tient par construction (quantiles ordonnés).
+      // Si un recalibrage retourne ce lien, c'est cette ligne qui doit crier — pas se taire.
+      expect(fleuraie, `seed ${seed} : fleuraie < lande à genévriers`).toBeLessThan(lande)
+      // La saulaie ne sort pas de l'échelle : elle DÉRIVE du réseau — collée à l'eau (§2ter).
+      expect(saulaie, `seed ${seed} : saulaie < bosquet`).toBeLessThan(bosquet)
 
       // A11a — LA PRÉMISSE : les rangs ne valent que si les terrains sont VRAIMENT séparés.
       // Sur l'ancienne carte, ces cinq nombres tenaient dans une trentaine de tuiles et leur
@@ -577,13 +592,28 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
         cpt.set(terrain[i]!, (cpt.get(terrain[i]!) ?? 0) + 1)
       }
       const part = (t: number): number => (100 * (cpt.get(t) ?? 0)) / tot
-      expect(part(TERRAIN_FOREST), `seed ${seed} : bosquet`).toBeGreaterThanOrEqual(9)
-      expect(part(TERRAIN_FOREST), `seed ${seed} : bosquet`).toBeLessThanOrEqual(16)
-      expect(part(TERRAIN_FLOWER_MEADOW), `seed ${seed} : fleuraie`).toBeGreaterThanOrEqual(10)
-      expect(part(TERRAIN_FLOWER_MEADOW), `seed ${seed} : fleuraie`).toBeLessThanOrEqual(18)
-      // Les Prés Bas restent un PRÉ : on s'y reconnaît à son CIEL (worldgen R7).
-      expect(part(TERRAIN_GRASS), `seed ${seed} : herbe`).toBeGreaterThanOrEqual(50)
-      expect(part(TERRAIN_GRASS), `seed ${seed} : herbe`).toBeLessThanOrEqual(62)
+      // Fourchettes RÉ-ÉPINGLÉES le 2026-08-15 (vocabulaire du pré, spec §2ter A17) : les
+      // trois mots neufs prennent ~13 points, surtout sur l'herbe. MESURÉ sur les trois
+      // seeds de garde : bosquet 14-16, fleuraie 12-14,5, herbe 38-40, saulaie 1,6-2,1,
+      // prairie 5,1-6, lande 5,4-7,3 — marges d'une composition qui reste un contrat.
+      expect(part(TERRAIN_FOREST), `seed ${seed} : bosquet`).toBeGreaterThanOrEqual(12)
+      expect(part(TERRAIN_FOREST), `seed ${seed} : bosquet`).toBeLessThanOrEqual(18)
+      expect(part(TERRAIN_FLOWER_MEADOW), `seed ${seed} : fleuraie`).toBeGreaterThanOrEqual(9)
+      expect(part(TERRAIN_FLOWER_MEADOW), `seed ${seed} : fleuraie`).toBeLessThanOrEqual(17)
+      expect(part(TERRAIN_GRASS), `seed ${seed} : herbe`).toBeGreaterThanOrEqual(33)
+      expect(part(TERRAIN_GRASS), `seed ${seed} : herbe`).toBeLessThanOrEqual(47)
+      expect(part(TERRAIN_WILLOW), `seed ${seed} : saulaie`).toBeGreaterThanOrEqual(1)
+      expect(part(TERRAIN_WILLOW), `seed ${seed} : saulaie`).toBeLessThanOrEqual(4)
+      expect(part(TERRAIN_WET_MEADOW), `seed ${seed} : prairie humide`).toBeGreaterThanOrEqual(3)
+      expect(part(TERRAIN_WET_MEADOW), `seed ${seed} : prairie humide`).toBeLessThanOrEqual(9)
+      expect(part(TERRAIN_JUNIPER_HEATH), `seed ${seed} : lande à genévriers`).toBeGreaterThanOrEqual(3)
+      expect(part(TERRAIN_JUNIPER_HEATH), `seed ${seed} : lande à genévriers`).toBeLessThanOrEqual(9)
+      // Les Prés Bas restent un PRÉ : on s'y reconnaît à son CIEL (worldgen R7). L'herbe
+      // seule ne porte plus ce contrat — c'est l'OUVERT qui le porte : herbe + fleuraie +
+      // prairie humide + lande, tout ce qui laisse voir l'horizon.
+      const ouvert = part(TERRAIN_GRASS) + part(TERRAIN_FLOWER_MEADOW)
+        + part(TERRAIN_WET_MEADOW) + part(TERRAIN_JUNIPER_HEATH)
+      expect(ouvert, `seed ${seed} : le pré reste OUVERT (le ciel se voit)`).toBeGreaterThanOrEqual(55)
     }
   })
 
@@ -684,6 +714,59 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
         if (eau(terrain[i]!)) mouillees++
       }
       expect(mouillees, `seed ${c.graphe.seed} : un couloir de seuil a les pieds dans l’eau`).toBe(0)
+    }
+  })
+
+  it('A15 (§2ter) — chaque mot du vocabulaire EXISTE, et la saulaie DÉRIVE : toute tuile colle à l’eau', () => {
+    // La portée maximale de l'estampe ('RIPI') : au-delà, une tuile de saulaie n'a pas pu
+    // naître de la dérivation — ce serait un semis déguisé.
+    const PORTEE = Math.max(CREUX.RIPI_FIL_FRANGE, CREUX.RIPI_RU_FRANGE)
+    for (const { c } of mondes) {
+      const seed = c.graphe.seed
+      const { width, height, terrain } = c.map
+      // Présence : un mot qui ne trouve pas ses tuiles est une ligne morte (patron d'A19).
+      const cpt = new Map<number, number>()
+      const saules: number[] = []
+      for (let i = 0; i < width * height; i++) {
+        if (c.zone[i] !== c.graphe.racine) continue
+        const t = terrain[i]!
+        cpt.set(t, (cpt.get(t) ?? 0) + 1)
+        if (t === TERRAIN_WILLOW) saules.push(i)
+      }
+      expect(cpt.get(TERRAIN_WILLOW) ?? 0, `seed ${seed} : saulaie`).toBeGreaterThanOrEqual(2000)
+      expect(cpt.get(TERRAIN_WET_MEADOW) ?? 0, `seed ${seed} : prairie humide`).toBeGreaterThanOrEqual(2000)
+      expect(cpt.get(TERRAIN_JUNIPER_HEATH) ?? 0, `seed ${seed} : lande à genévriers`).toBeGreaterThanOrEqual(2000)
+
+      // GARDE EXHAUSTIVE (mémoire de projet : balayer tout le domaine, une seule propriété) :
+      // TOUTE tuile de saulaie est à ≤ PORTEE (Chebyshev) d'une tuile d'eau. C'est la
+      // dérivation elle-même qu'on affirme, pas sa moyenne.
+      for (const i of saules) {
+        const x = i % width
+        const y = (i - x) / width
+        let proche = false
+        for (let dy = -PORTEE; dy <= PORTEE && !proche; dy++) {
+          for (let dx = -PORTEE; dx <= PORTEE; dx++) {
+            const nx = x + dx
+            const ny = y + dy
+            if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+            if (eau(terrain[ny * width + nx]!)) { proche = true; break }
+          }
+        }
+        if (!proche) expect.fail(`seed ${seed} : saulaie orpheline en (${x}, ${y}) — à plus de ${PORTEE} tuiles de toute eau`)
+      }
+    }
+  })
+
+  it('A18 (§2ter) — les nœuds suivent les mots : futaie de saules, fibre et champignons des prairies, baies de la lande', () => {
+    for (const { c, nodes } of mondes) {
+      const seed = c.graphe.seed
+      const { width, terrain } = c.map
+      const sur = (t: number, type: string): number =>
+        nodes.filter((n) => terrain[n.ty * width + n.tx] === t && n.type === type).length
+      expect(sur(TERRAIN_WILLOW, 'tree'), `seed ${seed} : la saulaie est une FUTAIE — de vrais arbres à couper`).toBeGreaterThanOrEqual(200)
+      expect(sur(TERRAIN_WET_MEADOW, 'fiber_plant'), `seed ${seed} : la prairie humide est LA place à fibre`).toBeGreaterThanOrEqual(300)
+      expect(sur(TERRAIN_WET_MEADOW, 'champignon'), `seed ${seed} : la prairie humide porte des champignons`).toBeGreaterThanOrEqual(100)
+      expect(sur(TERRAIN_JUNIPER_HEATH, 'berry_bush'), `seed ${seed} : la lande porte les baies du genévrier`).toBeGreaterThanOrEqual(50)
     }
   })
 

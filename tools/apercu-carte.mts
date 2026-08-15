@@ -24,6 +24,7 @@ import {
   TERRAIN_HEATH, TERRAIN_ALPINE_MEADOW, TERRAIN_PINE, TERRAIN_LARCH,
   TERRAIN_BOULDERS, TERRAIN_FLOWER_MEADOW, TERRAIN_PEAT_BOG, TERRAIN_REED_MARSH,
   TERRAIN_ALPINE_FLOWERS, TERRAIN_BURNT_FOREST, TERRAIN_OLD_GROWTH, TERRAIN_CLIFF,
+  TERRAIN_WILLOW, TERRAIN_WET_MEADOW, TERRAIN_JUNIPER_HEATH,
 } from '../packages/sim/src/index'
 
 const args = process.argv.slice(2)
@@ -67,6 +68,11 @@ const PAL: Record<number, [number, number, number]> = {
   [TERRAIN_BURNT_FOREST]: [74, 63, 58],
   [TERRAIN_OLD_GROWTH]: [31, 74, 40],
   [TERRAIN_CLIFF]: [22, 22, 26],
+  // Le vocabulaire du pré (spec t0-exploration §2ter) : saulaie argentée, prairie bleutée,
+  // lande ocre pâle — trois teintes qui ne se confondent ni entre elles ni avec leurs voisines.
+  [TERRAIN_WILLOW]: [118, 156, 122],
+  [TERRAIN_WET_MEADOW]: [86, 152, 118],
+  [TERRAIN_JUNIPER_HEATH]: [172, 162, 106],
 }
 
 const img = Buffer.alloc(W * H * 3)
@@ -176,6 +182,7 @@ const NOMS: Record<number, string> = {
   [TERRAIN_FLOWER_MEADOW]: 'flower', [TERRAIN_PEAT_BOG]: 'peat', [TERRAIN_REED_MARSH]: 'reed',
   [TERRAIN_ALPINE_FLOWERS]: 'alp_flowers', [TERRAIN_BURNT_FOREST]: 'burnt',
   [TERRAIN_OLD_GROWTH]: 'old_growth', [TERRAIN_CLIFF]: 'cliff',
+  [TERRAIN_WILLOW]: 'willow', [TERRAIN_WET_MEADOW]: 'wet_meadow', [TERRAIN_JUNIPER_HEATH]: 'juniper',
 }
 console.log(`seed ${seed} — ${W}×${H} (${(W * H / 1e6).toFixed(2)} M tuiles) → ${out}${crop ? ` (crop ${crop.join(',')} ×${zoom})` : ''}`)
 console.log('terrains %:', Object.entries(compte).sort((a, b) => b[1] - a[1])

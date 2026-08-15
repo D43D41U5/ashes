@@ -18,7 +18,7 @@ import { BUILT_KINDS } from './poi-batis'
 // ids terrain (balance.ts) — repris localement pour lisibilité de la table.
 const SCREE = 9, ROCK = 5, SNOW = 10, BOULDERS = 16, GLACIER = 15, BURNT = 21, PEAT = 18, REED = 19,
   AL_MEADOW = 12, AL_FLOWERS = 20, OLD_GROWTH = 22, HEATH = 11, PINE = 13, FLOWER = 17,
-  FOREST = 3, GRASS = 1, MARSH = 8, LARCH = 14
+  FOREST = 3, GRASS = 1, MARSH = 8, LARCH = 14, WILLOW = 24, WET_MEADOW = 25, JUNIPER = 26
 
 export interface PoiType {
   slug: string
@@ -343,6 +343,20 @@ export const POI_TYPES: PoiType[] = [
   { slug: 'tarn', zones: ['alpages', 'glacier'], name: 'le Tarn', family: 'reward', biomes: [AL_MEADOW, SCREE, AL_FLOWERS], minElev: 0.45, weight: 3, cap: 3, reserve: 1, footprint: 3 },
   { slug: 'petroglyphes', zones: ['karst', 'gouffre', 'aiguilles'], name: 'les Pétroglyphes', family: 'reward', biomes: [ROCK, SCREE], minElev: 0.55, weight: 2, cap: 2, reserve: 1, footprint: 2 },
 ]
+
+/**
+ * L'HÉRITAGE D'ÉLIGIBILITÉ (spec t0-exploration §2ter, 2026-08-15) : les mots neufs du pré
+ * sont des ÉTAGES du même thème, pas des biomes étrangers — un lieu qui acceptait l'herbe
+ * accepte ses héritiers (la prairie humide, la lande à genévriers), un lieu qui acceptait le
+ * bosquet accepte la saulaie. Déclaré ICI, en un point, pour que le repeint du vocabulaire
+ * n'APPAUVRISSE jamais le semis (mesuré sans cette règle : 134 → 132 lieux sur la seed de
+ * production) — et pour qu'un futur lieu l'obtienne sans y penser. Hors T0, c'est un no-op :
+ * ces terrains n'existent nulle part ailleurs.
+ */
+for (const t of POI_TYPES) {
+  if (t.biomes.includes(GRASS)) t.biomes.push(WET_MEADOW, JUNIPER)
+  if (t.biomes.includes(FOREST)) t.biomes.push(WILLOW)
+}
 
 /**
  * Empreinte qu'aurait la Zone d'un type de POI centrée sur (tx,ty) — même calcul

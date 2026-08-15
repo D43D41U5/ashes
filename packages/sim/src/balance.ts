@@ -83,8 +83,8 @@ export const TEMPERATURE = {
    * et le Glacier mortellement froids sans aucune hauteur. Ordres de grandeur, à calibrer en playtest.
    */
   BIOME_OFFSET: {
-    3: 5, 13: 5, 14: 5, 22: 5, // forêts (couvert)
-    8: -5, 18: -5, 19: -5, // marais/tourbière/roselière (mouillé)
+    3: 5, 13: 5, 14: 5, 22: 5, 24: 5, // forêts (couvert — la saulaie aussi)
+    8: -5, 18: -5, 19: -5, 25: -5, // marais/tourbière/roselière/prairie humide (mouillé)
     10: -40, // neige — un seuil qu'on paie en froid (le Névé)
     15: -75, // glacier — glacial, une gate de froid (le Glacier)
   } as Record<number, number>,
@@ -696,6 +696,16 @@ export const TERRAINS: Record<number, TerrainDef> = {
    * VERTICALITÉ que le faux-relief (`elevation × RELIEF_H`) n'a jamais su rendre.
    */
   23: { name: 'cliff', walkable: false, speedFactor: 0, cover: 1 },
+  /**
+   * LE VOCABULAIRE DU PRÉ (spec t0-exploration §2ter, décision d'Alexis 2026-08-15) — trois
+   * terrains DÉRIVÉS du socle de la Racine : la saulaie longe l'eau qui coule, la prairie
+   * humide est le quantile mouillé de l'humidité, la lande à genévriers son quantile sec.
+   * `juniper_heath` est un id NEUF exprès : `heath` reste le mot du gradient sud (« le feu
+   * approche ») et du sol des Ruines — deux landes, deux sens (R36).
+   */
+  24: { name: 'willow', walkable: true, speedFactor: 1, cover: 0.7 },
+  25: { name: 'wet_meadow', walkable: true, speedFactor: 0.9, cover: 0.9 },
+  26: { name: 'juniper_heath', walkable: true, speedFactor: 1, cover: 0.85 },
 }
 
 export const TERRAIN_VOID = 0
@@ -723,6 +733,9 @@ export const TERRAIN_ALPINE_FLOWERS = 20
 export const TERRAIN_BURNT_FOREST = 21
 export const TERRAIN_OLD_GROWTH = 22
 export const TERRAIN_CLIFF = 23
+export const TERRAIN_WILLOW = 24
+export const TERRAIN_WET_MEADOW = 25
+export const TERRAIN_JUNIPER_HEATH = 26
 
 /**
  * VUE DÉRIVÉE du registre (`pieces.ts`) — ce que coûte chaque pièce : pose au marteau,
@@ -1788,7 +1801,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     loot: { raw_meat: 3 },
     sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
     // Le sanglier tient sa forêt. Il laisse approcher — et c'est le piège.
-    habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH],
+    habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_WILLOW],
     alertRange: 7, flightRange: 0,
     activity: 'nocturnal', // il fouge de nuit — le vrai sanglier aussi
   },
@@ -1812,7 +1825,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     thinkEveryTicks: ticksFor(0.6), wanderChance: 0.4, chargeChance: 0,
     loot: { raw_meat: 1 },
     sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
-    habitat: [TERRAIN_GRASS, TERRAIN_HEATH, TERRAIN_FLOWER_MEADOW, TERRAIN_ALPINE_MEADOW, TERRAIN_ALPINE_FLOWERS],
+    habitat: [TERRAIN_GRASS, TERRAIN_HEATH, TERRAIN_FLOWER_MEADOW, TERRAIN_ALPINE_MEADOW, TERRAIN_ALPINE_FLOWERS, TERRAIN_WET_MEADOW, TERRAIN_JUNIPER_HEATH],
     alertRange: 11, flightRange: 7,
     activity: 'crepuscular', // à l'aube et au crépuscule : les heures du lapin
     jink: 1, // il crochète À FOND : on ne l'attrape pas en courant droit (chasse C15)
@@ -1824,7 +1837,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     thinkEveryTicks: ticksFor(1.2), wanderChance: 0.2, chargeChance: 0,
     loot: { quartier: 2 }, // V0-5 : le gros gibier rend des QUARTIERS lourds (portage)
     sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
-    habitat: [TERRAIN_ALPINE_MEADOW, TERRAIN_HEATH, TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_LARCH],
+    habitat: [TERRAIN_ALPINE_MEADOW, TERRAIN_HEATH, TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_LARCH, TERRAIN_WILLOW, TERRAIN_WET_MEADOW],
     alertRange: 14, flightRange: 9,
     herdSize: [3, 5], // la harde : ils broutent ensemble et détalent ensemble
     activity: 'diurnal', // le grand gibier du plein jour

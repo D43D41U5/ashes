@@ -32,6 +32,8 @@ import {
   TERRAIN_OLD_GROWTH,
   TERRAIN_PINE,
   TERRAIN_ROAD,
+  TERRAIN_WET_MEADOW,
+  TERRAIN_WILLOW,
   TERRAINS,
   type NodeType,
 } from './balance'
@@ -105,6 +107,14 @@ export const CONTENU = {
    */
   CHAMPIGNON_HUMIDE: 0.06,
   CHAMPIGNON_FORET: 0.006,
+
+  /**
+   * LA FIBRE DES PRAIRIES HUMIDES (spec t0-exploration §2ter R34) — la prairie humide est LA
+   * place à fibre de la T0 : la ressource des bandages a un endroit, au lieu d'un saupoudrage
+   * uniforme. Passe appendue, positionnelle ('FIBR'), même patron que les champignons : la
+   * table `CONTENUS` n'est pas touchée, aucun nœud existant ne bouge. Chance par tuile libre.
+   */
+  FIBRE_PRAIRIE: 0.03,
 
   /**
    * UN EMPLACEMENT DE VILLAGE : ce qu'il lui faut sous la main, et sur quel rayon.
@@ -196,7 +206,7 @@ function terrainAdmet(type: NodeType, terrain: number): boolean {
   switch (type) {
     case 'tree':
     case 'old_tree':
-      return n === 'forest' || n === 'old_growth' || n === 'pine' || n === 'larch' || n === 'burnt_forest'
+      return n === 'forest' || n === 'old_growth' || n === 'pine' || n === 'larch' || n === 'burnt_forest' || n === 'willow'
     case 'berry_bush':
       return n !== 'snow' && n !== 'scree' && n !== 'boulders' && n !== 'shallow_water'
     case 'fiber_plant':
@@ -212,9 +222,11 @@ function terrainAdmet(type: NodeType, terrain: number): boolean {
     case 'ash_heap':
       return n === 'burnt_forest' || n === 'heath'
     case 'champignon':
-      // L'humide et l'ombre : marais, tourbière, roselière, sous-bois de vieille sylve, et le sol
-      // des forêts ordinaires (là, très rare — voir `champignonsRares`).
+      // L'humide et l'ombre : marais, tourbière, roselière, sous-bois de vieille sylve, le sol
+      // des forêts ordinaires (là, très rare — voir `champignonsRares`) — et les deux mots
+      // mouillés du pré (spec t0-exploration §2ter R34) : saulaie et prairie humide.
       return n === 'marsh' || n === 'peat_bog' || n === 'reed_marsh' || n === 'old_growth' || n === 'forest'
+        || n === 'willow' || n === 'wet_meadow'
     default:
       return true
   }
@@ -278,6 +290,11 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   const mush = champignonsRares(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
   for (const m of mush) nodes.push(m)
   id += mush.length
+
+  // ── LA FIBRE DES PRAIRIES HUMIDES — la place à fibre de la T0 (spec §2ter R34) ──
+  const fibres = fibresDesPrairies(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  for (const f of fibres) nodes.push(f)
+  id += fibres.length
 
   // ── LE TEASER — un seul filon, dans la racine, et il est dérisoire ────────
   const t = poserLeTeaser(c, id)
@@ -362,12 +379,41 @@ function champignonsRares(c: CarteZonee, occupees: Set<number>, idStart: number)
       const n = def.name
       const prob =
         n === 'marsh' || n === 'peat_bog' || n === 'reed_marsh' || n === 'old_growth'
+          || n === 'willow' || n === 'wet_meadow' // les mots mouillés du pré (spec §2ter R34)
           ? CONTENU.CHAMPIGNON_HUMIDE
           : n === 'forest'
             ? CONTENU.CHAMPIGNON_FORET
             : -1 // tout autre terrain : jamais de champignon
       if (prob < 0 || hash2(tx, ty, salt) >= prob) continue
       out.push({ id, type: 'champignon', tx, ty, stock: NODE_DEFS.champignon.stock, regrowAt: 0 })
+      occupees.add(i)
+      id += 1
+    }
+  }
+  return out
+}
+
+/**
+ * LA FIBRE DES PRAIRIES HUMIDES (spec t0-exploration §2ter R34, décision d'Alexis 2026-08-15).
+ *
+ * La prairie humide est LA place à fibre de la T0 — joncs et laîches : la ressource des
+ * bandages a un ENDROIT lisible, au lieu d'un saupoudrage uniforme sur tout le pré. Même
+ * patron que `champignonsRares` : passe séparée, appendue, tirage POSITIONNEL (`hash2` salé
+ * 'FIBR'), aucune tuile de seuil ni de tuile déjà prise, aucun PRNG partagé — le flux de
+ * génération n'est pas décalé (leçon RNG).
+ */
+function fibresDesPrairies(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
+  const { width, height, terrain } = c.map
+  const out: ResourceNode[] = []
+  let id = idStart
+  const salt = (c.graphe.seed ^ 0x46494252) | 0 // 'FIBR'
+  for (let ty = 0; ty < height; ty++) {
+    for (let tx = 0; tx < width; tx++) {
+      const i = ty * width + tx
+      if (c.rampe[i] || occupees.has(i)) continue // le seuil ne nourrit rien ; tuile déjà prise
+      if (terrain[i] !== TERRAIN_WET_MEADOW) continue
+      if (hash2(tx, ty, salt) >= CONTENU.FIBRE_PRAIRIE) continue
+      out.push({ id, type: 'fiber_plant', tx, ty, stock: NODE_DEFS.fiber_plant.stock, regrowAt: 0 })
       occupees.add(i)
       id += 1
     }
@@ -440,7 +486,7 @@ function arbresDeLaRacine(c: CarteZonee, occupees: Set<number>, idStart: number)
       let ampli: number
       if (t === TERRAIN_GRASS) {
         pas = CONTENU.ARBRES_PRE_PAS; socle = 0.5; ampli = 1.2
-      } else if (t === TERRAIN_FOREST || t === TERRAIN_OLD_GROWTH || t === TERRAIN_PINE || t === TERRAIN_LARCH) {
+      } else if (t === TERRAIN_FOREST || t === TERRAIN_OLD_GROWTH || t === TERRAIN_PINE || t === TERRAIN_LARCH || t === TERRAIN_WILLOW) {
         // LES CLAIRIÈRES : décidées par BLOC (cf. `clairiereForet`) → des trouées RECTANGULAIRES.
         // Le MÊME champ sert au rendu du sol (qui y verdit) : une source unique, sinon les
         // clairières des arbres et celles du sol divergeraient.

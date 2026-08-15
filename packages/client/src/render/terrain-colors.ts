@@ -44,4 +44,11 @@ export const TERRAIN_COLORS: Record<number, number> = {
    * ni le mur (0x4a4038). À l'écran, on ne doit pas pouvoir hésiter une seconde.
    */
   23: 0x4b4852, // falaise — le 1 px cuit SOUS les sprites de paroi : la teinte du dessus d'ardoise
+  // Le vocabulaire du pré (spec t0-exploration §2ter) — trois teintes qui ne se confondent
+  // ni entre elles ni avec leurs voisines : la saulaie plus claire et plus froide que la
+  // forêt, la prairie humide bleutée entre l'herbe et le marais, la lande à genévriers en
+  // ocre pâle — SANS parenté avec la lande du sud (0x8a7078) : deux landes, deux sens (R36).
+  24: 0x4f7d55, // saulaie (willow) — vert argenté de berge
+  25: 0x3a7154, // prairie humide (wet_meadow) — l'herbe qui a les pieds dans l'eau
+  26: 0x8f8a58, // lande à genévriers (juniper_heath) — le dos sec
 }

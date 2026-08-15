@@ -123,6 +123,9 @@ export const FAMILLE_PAR_TERRAIN: Record<number, Famille | null> = {
   21: 'litiere', // burnt_forest
   22: 'litiere', // old_growth
   23: null, // cliff — la paroi
+  24: 'litiere', // willow — un sous-bois de berge
+  25: 'humide', // wet_meadow — le moucheté du détrempé
+  26: 'herbe', // juniper_heath — une lande rase, sœur de heath
 }
 
 /** L'index de bloc d'une famille dans l'atlas (son UV horizontal). */

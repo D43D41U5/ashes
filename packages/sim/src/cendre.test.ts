@@ -139,7 +139,12 @@ describe('ce que la cendre DÉTRUIT', () => {
       ).toBe(false)
     }
     // Et le refuge s'est DÉPLACÉ : la vallée a reculé, le point de naissance avec elle.
-    expect(auDernier.length).toBeLessThan(auJour1.length)
+    // (On affirmait « la liste MAIGRIT » — mais ce compte ne prouvait la règle que par
+    // accident de rareté : depuis le vocabulaire du pré (2026-08-15), la Racine porte assez
+    // d'emplacements pour servir les 17 spawns même amputée de 60 %. La règle R30, c'est le
+    // DÉPLACEMENT : le front mange le SUD, les naissances remontent au NORD — on mesure ça.)
+    const moyY = (pts: readonly { ty: number }[]): number => pts.reduce((s, p) => s + p.ty, 0) / pts.length
+    expect(moyY(auDernier), 'les naissances remontent au nord devant le feu').toBeLessThan(moyY(auJour1))
   }, 120_000)
 
   it('la cendre BRÛLE LES NŒUDS — et le village s\'appauvrit avant de mourir', () => {

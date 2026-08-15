@@ -37,6 +37,9 @@ import {
   TERRAIN_PINE,
   TERRAIN_REED_MARSH,
   TERRAIN_SHALLOW_WATER,
+  TERRAIN_WET_MEADOW,
+  TERRAIN_WILLOW,
+  TERRAIN_JUNIPER_HEATH,
   TICK_DT_S,
   isRangedWeapon,
   type MonsterType,
@@ -128,6 +131,10 @@ const OPEN_TERRAINS: readonly number[] = [
   TERRAIN_ALPINE_MEADOW,
   TERRAIN_ALPINE_FLOWERS,
   TERRAIN_HEATH,
+  // Les mots ouverts du pré (spec t0-exploration §2ter R35) : la prairie humide est de
+  // l'HABITAT, pas de l'eau — elle n'entre PAS dans WATER_TERRAINS, l'eau réelle commande.
+  TERRAIN_WET_MEADOW,
+  TERRAIN_JUNIPER_HEATH,
 ]
 
 /**
@@ -147,6 +154,7 @@ const WOOD_TERRAINS: readonly number[] = [
   TERRAIN_PINE,
   TERRAIN_LARCH,
   TERRAIN_OLD_GROWTH,
+  TERRAIN_WILLOW, // la saulaie est un bois — et près de l'eau par construction (§2ter R35)
 ]
 
 /** …ET OÙ IL BOIT. Tous les jours, et c'est ce qui fixe les troupeaux. */

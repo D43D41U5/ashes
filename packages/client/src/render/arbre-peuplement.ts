@@ -28,7 +28,7 @@
  * `tree`, pas des nœuds : aucun `NODE_DEFS`, aucun protocole, aucun flux RNG touché. C'est ce
  * qui rend le changement gratuit côté simulation, et réversible côté client.
  */
-import { hash2, zoneSlugAt, TERRAIN_GRASS, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_PINE, type WorldMap } from '@ashes/sim'
+import { hash2, zoneSlugAt, TERRAIN_GRASS, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_WILLOW, type WorldMap } from '@ashes/sim'
 import { CIMES_PAR_ARBRE, VARIANTES, type VarianteArbre } from './arbre-art'
 
 /** Un mélange : des slugs de variante et leurs poids RELATIFS (ils n'ont pas à sommer à 1). */
@@ -140,6 +140,13 @@ const MELANGE_MELEZE: Melange = [['meleze', 62], ['sapin', 22], ['pin', 16]]
  */
 const MELANGE_PRE: Melange = [['chene_pre', 46], ['saule', 16], ['bouleau', 14], ['baliveau', 24]]
 
+/**
+ * LA SAULAIE (spec t0-exploration §2ter R34) — la galerie de berge : le saule DOMINE, c'est
+ * lui qui dit « ici, l'eau coule ». Le bouleau l'accompagne (l'autre arbre des sols frais),
+ * le baliveau fait la relève. Ni chêne ni hêtre : ce sont les arbres du sec et de la futaie.
+ */
+const MELANGE_SAULAIE: Melange = [['saule', 58], ['bouleau', 22], ['baliveau', 20]]
+
 /** Tire dans un mélange, en fonction d'un hachage [0,1). Total pré-calculé à chaque appel :
  *  cinq additions, contre une table à maintenir en parallèle qui finirait par diverger. */
 function tirer(m: Melange, h: number): string {
@@ -180,6 +187,10 @@ export function varianteArbre(map: WorldMap, tx: number, ty: number, seed: numbe
   if (sol === TERRAIN_OLD_GROWTH) {
     return VARIANTES[tirer(MELANGE_FUTAIE, hash2(tx, ty, (seed ^ SEL) | 0))] ?? VARIANTES.tree!
   }
+  // ②ter LA SAULAIE : le sol de berge a son mélange — le saule domine (spec §2ter R34).
+  if (sol === TERRAIN_WILLOW) {
+    return VARIANTES[tirer(MELANGE_SAULAIE, hash2(tx, ty, (seed ^ SEL) | 0))] ?? VARIANTES.tree!
+  }
   // ②bis LE PRÉ : à 4,12 tuiles entre deux troncs, l'arbre pousse en PLEIN CHAMP — fût court,
   // cime large. C'est la même lecture du sol que pour le conifère et la futaie, appliquée à
   // l'autre bout de l'échelle de concurrence.
@@ -199,7 +210,7 @@ export const ZONES_PEUPLEES: readonly string[] = Object.keys(MELANGE_PAR_ZONE)
 /** Les variantes qu'un mélange peut rendre — pour la garde d'exhaustivité des textures. */
 export function variantesAtteignables(): readonly string[] {
   const out = new Set<string>(['old_tree'])
-  for (const m of [...Object.values(MELANGE_PAR_ZONE), DEFAUT, MELANGE_FUTAIE, MELANGE_PRE, MELANGE_PIN, MELANGE_MELEZE]) {
+  for (const m of [...Object.values(MELANGE_PAR_ZONE), DEFAUT, MELANGE_FUTAIE, MELANGE_PRE, MELANGE_SAULAIE, MELANGE_PIN, MELANGE_MELEZE]) {
     for (const [slug] of m) out.add(slug)
   }
   return [...out].sort()

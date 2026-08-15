@@ -126,13 +126,46 @@ export const CREUX = {
   // tiers de la zone en un seul aplat. On rééquilibre SANS fermer le ciel : le bois monte à 14 %
   // (il était à 9-10 %, mais il était partout ; il est désormais quelque part), et la fleuraie
   // triple — sur les DOS SECS, qui sont la partie la plus ouverte du pays.
-  /** Part de bosquet — le quantile HAUT de l'humidité. Visé un peu HAUT à dessein : le quantile
-   *  porte sur toutes les cellules de la Racine, mais la passe ne repeint que le thème du pré —
-   *  or les cellules les plus humides sont justement celles que l'eau et le marais occupent déjà.
-   *  0,18 de quantile rend ~13 % de bosquet réel (MESURÉ). */
+  /**
+   * L'ÉCHELLE À CINQ ÉTAGES (spec t0-exploration §2ter R32, décision d'Alexis 2026-08-15) :
+   * prairie humide (le plus mouillé) → bosquet → herbe → fleuraie → lande à genévriers (le
+   * plus sec). Même champ, mêmes quantiles, un seul ordre — les deux mots neufs sont des
+   * étages de la même échelle, pas des bruits de plus.
+   */
+  /** Part de PRAIRIE HUMIDE — le quantile le PLUS humide : les fonds mal drainés, l'auréole
+   *  des eaux au-delà du marais franc. Comme `PART_BOIS`, visée un peu haut : les cellules les
+   *  plus mouillées sont souvent déjà de l'eau ou du marais, que la passe ne repeint pas. */
+  PART_PRAIRIE: 0.1,
+  /** Part de bosquet — le quantile HAUT de l'humidité, SOUS la prairie humide. Visé un peu
+   *  HAUT à dessein : le quantile porte sur toutes les cellules de la Racine, mais la passe ne
+   *  repeint que le thème du pré — or les cellules les plus humides sont justement celles que
+   *  l'eau et le marais occupent déjà. 0,18 de quantile rend ~13 % de bosquet réel (MESURÉ). */
   PART_BOIS: 0.18,
-  /** Part de fleuraie — le quantile BAS. Les dos secs et ensoleillés. */
+  /** Part de fleuraie — le quantile BAS, AU-DESSUS de la lande. Les dos secs et ensoleillés. */
   PART_FLEURAIE: 0.16,
+  /** Part de LANDE À GENÉVRIERS — le quantile le PLUS sec : les dos hauts, l'écrin des
+   *  conifères de crête. Id neuf (`juniper_heath`) : `heath` reste le mot du gradient sud. */
+  PART_LANDE: 0.08,
+
+  // ══ LA SAULAIE — le bois de l'eau qui COULE (spec §2ter R33) ═══════════════════════════
+  //
+  // Elle ne sort pas de l'échelle d'humidité : elle DÉRIVE du réseau — le fil de la rivière
+  // et les chenaux entre lacs, publiés par le module d'eau. Cœur plein contre la berge,
+  // frange effilochée au hash positionnel ('RIPI') : une galerie d'arbres qui dessine le
+  // réseau à travers le pré, pas un ruban au cordeau.
+  /** Rayon PLEIN autour du fil de LA rivière, en tuiles (Chebyshev). Le lit fait 7 tuiles de
+   *  large (demi-largeur 3) : 7 couvre l'eau + ~4 tuiles de berge boisée de chaque côté. */
+  RIPI_FIL_PLEIN: 7,
+  /** Rayon de FRANGE du fil — entre plein et frange, un motif sur deux environ bascule.
+   *  11 (et non 9) : à 9, la saulaie sortait à 1,4 % de la Racine pour une cible de 2-6 —
+   *  une galerie se voit de loin ou n'est pas (MESURÉ, seed 2026). */
+  RIPI_FIL_FRANGE: 11,
+  /** Rayons des CHENAUX entre lacs (filets d'eau étroits) : une galerie plus modeste. */
+  RIPI_RU_PLEIN: 4,
+  RIPI_RU_FRANGE: 8,
+  /** Chance qu'un bloc de MOTIF de la frange bascule en saulaie — haché par bloc de
+   *  `RELIEF.MOTIF` (voir `zonegen.ts`), pas par tuile : la frange s'effiloche par touffes. */
+  RIPI_BASCULE: 0.45,
 
   // ══ LES BOSQUETS DE CRÊTE — le bois SEC, et le seul repère du haut pays ═══════════════════
   //
@@ -201,10 +234,14 @@ export interface Creux {
   hum: Float64Array
   /** Altitude sous laquelle une cellule peut porter un lac (quantile `PART_BASSIN`). */
   seuilBassin: number
-  /** Humidité au-dessus de laquelle : bosquet (quantile `1 − PART_BOIS`). */
+  /** Humidité au-dessus de laquelle : PRAIRIE HUMIDE (quantile `1 − PART_PRAIRIE`). */
+  seuilPrairie: number
+  /** Humidité au-dessus de laquelle : bosquet (quantile `1 − PART_PRAIRIE − PART_BOIS`). */
   seuilBois: number
-  /** Humidité en dessous de laquelle : fleuraie (quantile `PART_FLEURAIE`). */
+  /** Humidité en dessous de laquelle : fleuraie (quantile `PART_LANDE + PART_FLEURAIE`). */
   seuilFleuraie: number
+  /** Humidité en dessous de laquelle : LANDE À GENÉVRIERS (quantile `PART_LANDE`). */
+  seuilLande: number
 }
 
 // (`ondulation` et `grain` vivent désormais dans `socle.ts` — mêmes sels, mêmes valeurs : le
@@ -336,21 +373,28 @@ export function composerLHumidite(c: Creux, seed: number): void {
   }
   // Les seuils sont des quantiles du champ RÉELLEMENT tiré : la composition est un contrat.
   // Bornes larges (l'humidité peut sortir de [0,1] par le bruit) — l'histogramme les clampe.
-  c.seuilBois = seuilParQuantile(c.hum, c.dedans, 1 - CREUX.PART_BOIS, -0.5, 1.5)
-  c.seuilFleuraie = seuilParQuantile(c.hum, c.dedans, CREUX.PART_FLEURAIE, -0.5, 1.5)
+  // Cinq étages, quatre seuils, UN champ (spec §2ter R32) : l'ordre est garanti par
+  // construction, un quantile plus haut rend toujours un seuil plus haut.
+  c.seuilPrairie = seuilParQuantile(c.hum, c.dedans, 1 - CREUX.PART_PRAIRIE, -0.5, 1.5)
+  c.seuilBois = seuilParQuantile(c.hum, c.dedans, 1 - CREUX.PART_PRAIRIE - CREUX.PART_BOIS, -0.5, 1.5)
+  c.seuilFleuraie = seuilParQuantile(c.hum, c.dedans, CREUX.PART_LANDE + CREUX.PART_FLEURAIE, -0.5, 1.5)
+  c.seuilLande = seuilParQuantile(c.hum, c.dedans, CREUX.PART_LANDE, -0.5, 1.5)
 }
 
 /**
- * LE VERDICT DE VÉGÉTATION en une tuile : −1 fleuraie (sec), 0 herbe, 1 bosquet (humide).
+ * LE VERDICT DE VÉGÉTATION en une tuile — l'échelle à CINQ étages (spec §2ter R32) :
+ * 2 prairie humide (le plus mouillé), 1 bosquet, 0 herbe, −1 fleuraie, −2 lande (le plus sec).
  *
- * Trois terrains, UN ordre. C'est toute la réparation : avant, deux bruits indépendants
- * décidaient chacun le leur, et rien ne rangeait l'un par rapport à l'autre.
+ * Cinq terrains, UN ordre. C'est toute la réparation de §2bis, étendue : un seul champ range
+ * tous les mots du pré les uns par rapport aux autres.
  */
-export function vegetationAt(c: Creux, x: number, y: number): -1 | 0 | 1 {
+export function vegetationAt(c: Creux, x: number, y: number): -2 | -1 | 0 | 1 | 2 {
   const k = celluleDe(c, x, y)
   if (k < 0) return 0
   const h = c.hum[k]!
+  if (h >= c.seuilPrairie) return 2
   if (h >= c.seuilBois) return 1
+  if (h < c.seuilLande) return -2
   if (h < c.seuilFleuraie) return -1
   return 0
 }

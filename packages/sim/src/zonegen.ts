@@ -44,6 +44,9 @@ import {
   TERRAIN_SCREE,
   TERRAIN_SHALLOW_WATER,
   TERRAIN_SNOW,
+  TERRAIN_WILLOW,
+  TERRAIN_WET_MEADOW,
+  TERRAIN_JUNIPER_HEATH,
 } from './balance'
 import { isWater, MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
 import { calibreLeFront, computeCendreField } from './cendre'
@@ -51,7 +54,7 @@ import { distSq } from './geometry'
 import { placeCharniers, placePois } from './poi'
 import { densiteDeBase } from './morts'
 import { fbm2, hash2 } from './noise'
-import { masqueDesSeuils, paintWaterRacine } from './zonegen-water'
+import { masqueDesSeuils, paintWaterRacine, type Riviere } from './zonegen-water'
 import { assainirLeProfondHorsRacine, peindreLesEauxDesZones } from './zonegen-eaux-zones'
 import {
   CREUX,
@@ -497,7 +500,7 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   //
   // Les lacs sont désormais des CUVETTES INONDÉES (le creux commande) : ils épousent le fond du
   // pays au lieu d'être des rectangles tirés au sort.
-  const riviere = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux)
+  const { riviere, chenaux } = paintWaterRacine(terrain, zone, g, width, height, seed, RELIEF.BORDURE, creux)
 
   // ── PASSE 1.52 : LES EAUX DES ZONES — l'eau dérivée hors Racine (stratigraphie, couche II) ──
   //
@@ -512,7 +515,7 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   // APRÈS l'eau, et c'est tout le renversement de ce chantier : la végétation ne peut suivre
   // l'humidité que si l'eau existe déjà. Bosquet dans les creux humides et le long des rives,
   // fleuraie sur les dos secs, herbe entre les deux.
-  peindreLaVegetationRacine(terrain, zone, g, width, height, seed, creux)
+  peindreLaVegetationRacine(terrain, zone, g, width, height, seed, creux, riviere, chenaux)
 
   // ── PASSE 1.58 : LA LISIÈRE SUD — le seul gradient de la carte (spec t0-exploration R13-R15) ──
   //
@@ -789,6 +792,8 @@ function peindreLaVegetationRacine(
   height: number,
   seed: number,
   creux: Creux | null,
+  riviere: Riviere | null,
+  chenaux: readonly number[],
 ): void {
   if (!creux) return
   const r = g.zones[g.racine]!.rect
@@ -815,10 +820,55 @@ function peindreLaVegetationRacine(
       const t = terrain[i]!
       // Seul le thème du pré cède. Tout le reste est le fait d'une autre passe : on n'y touche pas.
       if (t !== TERRAIN_GRASS && t !== TERRAIN_FOREST && t !== TERRAIN_FLOWER_MEADOW) continue
+      // L'ÉCHELLE À CINQ ÉTAGES (spec §2ter R32) : prairie humide → bosquet → herbe →
+      // fleuraie → lande à genévriers. Un champ, un ordre.
       const v = vegetationAt(creux, x, y)
-      terrain[i] = v === 1 ? TERRAIN_FOREST : v === -1 ? TERRAIN_FLOWER_MEADOW : TERRAIN_GRASS
+      terrain[i] =
+        v === 2 ? TERRAIN_WET_MEADOW
+        : v === 1 ? TERRAIN_FOREST
+        : v === -1 ? TERRAIN_FLOWER_MEADOW
+        : v === -2 ? TERRAIN_JUNIPER_HEATH
+        : TERRAIN_GRASS
     }
   }
+
+  // ═══ LA SAULAIE — le bois de l'eau qui COULE (spec §2ter R33) ═══
+  //
+  // Dérivée du réseau que le module d'eau publie : le fil de LA rivière (galerie large) et
+  // les chenaux entre lacs (galerie modeste). Cœur plein contre la berge, frange effilochée
+  // par motif ('RIPI', quantifié au bloc). Elle ne cède que le thème du pré, cinq
+  // étages compris (les étages de R32) : l'eau, le marais, la roselière, la roche gardent leur nature. Les
+  // passes ultérieures gardent leur priorité — set-pieces (1.6), sentes et gués (1.7) et la
+  // lisière sud (1.58) la traversent ou la convertissent.
+  //
+  // Les CHENAUX s'estampent HORS du `if (riviere)` : une Racine dégénérée sans rivière garde
+  // ses ruisseaux entre lacs — et leur saulaie (les chenaux sont publiés par construction,
+  // voir `EauxDeLaRacine`).
+  const selRipi = (seed ^ 0x52495049) | 0 /* 'RIPI' */
+  const M = RELIEF.MOTIF
+  const cede = (t: number): boolean =>
+    t === TERRAIN_GRASS || t === TERRAIN_FOREST || t === TERRAIN_FLOWER_MEADOW ||
+    t === TERRAIN_WET_MEADOW || t === TERRAIN_JUNIPER_HEATH
+  const estamper = (sources: readonly number[], plein: number, frange: number): void => {
+    for (const i0 of sources) {
+      const cx = i0 % width
+      const cy = (i0 - cx) / width
+      for (let dy = -frange; dy <= frange; dy++) {
+        for (let dx = -frange; dx <= frange; dx++) {
+          const x = cx + dx
+          const y = cy + dy
+          if (x < x0 || y < y0 || x >= x1 || y >= y1) continue
+          const i = y * width + x
+          if (zone[i] !== g.racine || !cede(terrain[i]!)) continue
+          const d = Math.max(Math.abs(dx), Math.abs(dy))
+          if (d > plein && hash2(Math.floor(x / M), Math.floor(y / M), selRipi) >= CREUX.RIPI_BASCULE) continue
+          terrain[i] = TERRAIN_WILLOW
+        }
+      }
+    }
+  }
+  if (riviere) estamper(riviere.fil, CREUX.RIPI_FIL_PLEIN, CREUX.RIPI_FIL_FRANGE)
+  estamper(chenaux, CREUX.RIPI_RU_PLEIN, CREUX.RIPI_RU_FRANGE)
 }
 
 /**
@@ -855,13 +905,16 @@ function peindreLesBosquetsDeCrete(
 ): void {
   if (!creux) return
   const M = RELIEF.MOTIF
-  /** Une TUILE accepte-t-elle d'être boisée ? Seuls le pré et la fleuraie cèdent. */
+  /** Une TUILE accepte-t-elle d'être boisée ? Le pré, la fleuraie — et la lande à genévriers
+   *  (spec §2ter R37) : le mot sec s'installe précisément là où naissent les conifères de
+   *  crête, l'exclure les affamerait. La prairie humide, elle, reste nue : un fond mouillé
+   *  ne porte pas le bois sec. */
   const tuileLibre = (x: number, y: number): boolean => {
     if (x < 0 || y < 0 || x >= width || y >= height) return false
     const i = y * width + x
     if (zone[i] !== g.racine) return false
     const t = terrain[i]!
-    return t === TERRAIN_GRASS || t === TERRAIN_FLOWER_MEADOW
+    return t === TERRAIN_GRASS || t === TERRAIN_FLOWER_MEADOW || t === TERRAIN_JUNIPER_HEATH
   }
   /**
    * Un MOTIF ENTIER accepte-t-il d'être boisé ? On exige les 64 tuiles, pas une majorité — et
@@ -1107,9 +1160,11 @@ function peindreLisiereSud(
       const i = y * width + x
       if (zone[i] !== g.racine) continue
       const t = terrain[i]!
-      // Seul le THÈME du pré cède : herbe, bosquets, fleuraie. L'eau, le marais, la roche
-      // et tout ce que les autres passes poseront gardent leur nature.
-      if (t !== TERRAIN_GRASS && t !== TERRAIN_FOREST && t !== TERRAIN_FLOWER_MEADOW) continue
+      // Seul le THÈME du pré cède : les cinq étages de l'échelle ET la saulaie (spec §2ter
+      // R36 — dans la bande du gradient, rien ne perce l'annonce du feu). L'eau, le marais,
+      // la roche et tout ce que les autres passes poseront gardent leur nature.
+      if (t !== TERRAIN_GRASS && t !== TERRAIN_FOREST && t !== TERRAIN_FLOWER_MEADOW
+        && t !== TERRAIN_WILLOW && t !== TERRAIN_WET_MEADOW && t !== TERRAIN_JUNIPER_HEATH) continue
       const mx = Math.floor(x / M)
       const my = Math.floor(y / M)
       const v = sud - y + (hash2(mx, my, sel) - 0.5) * LISIERE_SUD.DITHER

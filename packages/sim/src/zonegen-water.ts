@@ -149,6 +149,16 @@ export interface Riviere {
   coeur: Set<number>
 }
 
+/** Ce que le module d'eau PUBLIE — la rivière (si la Racine en a une) et, TOUJOURS, les
+ *  chenaux entre lacs : la saulaie longe l'eau qui coule, fil ET chenaux (spec §2ter R33).
+ *  Les chenaux vivent HORS de `Riviere` par construction : une Racine sans rivière garde
+ *  ses ruisseaux — et sa saulaie. */
+export interface EauxDeLaRacine {
+  riviere: Riviere | null
+  /** Les tuiles d'eau des CHENAUX entre lacs (les ruisseaux du drainage). */
+  chenaux: number[]
+}
+
 /**
  * Le fil TOURNE-T-IL en `fil[k]` ? — LA définition du coude, et il n'y en a qu'une.
  *
@@ -220,7 +230,7 @@ export function paintWaterRacine(
   seed: number,
   bordure: number,
   creux: Creux | null,
-): Riviere | null {
+): EauxDeLaRacine {
   const N = width * height
   const racineId = g.racine
 
@@ -229,7 +239,7 @@ export function paintWaterRacine(
   for (let i = 0; i < N; i++) {
     if (zone[i] === racineId && TERRAINS[terrain[i]!]?.walkable === true) surface++
   }
-  if (surface === 0) return null
+  if (surface === 0) return { riviere: null, chenaux: [] }
 
   const nLacs = Math.round(surface * EAU.DENSITE_LACS)
   const s = seed ^ 0x45415500 /* 'EAU' */
@@ -252,9 +262,10 @@ export function paintWaterRacine(
   // elle qui porte désormais le titre — la « plus longue liaison » de l'ancien réseau redevient
   // un simple ruisseau (le titre se GAGNE en traversant, pas en étant long).
   const riviere = tracerLaRiviere(terrain, zone, g, width, height, s, lacs, eaux, creux)
-  relierLesLacs(terrain, zone, racineId, width, height, lacs, eaux, creux, horsSeuils)
+  const chenaux: number[] = []
+  relierLesLacs(terrain, zone, racineId, width, height, lacs, eaux, creux, horsSeuils, chenaux)
   frangeDeMarais(terrain, zone, racineId, width, height, s, eaux)
-  return riviere
+  return { riviere, chenaux }
 }
 
 /**
@@ -494,6 +505,7 @@ function relierLesLacs(
   eaux: number[],
   creux: Creux | null,
   horsSeuils: Uint8Array,
+  chenaux: number[],
 ): void {
   if (!creux) return // sans relief, aucune pente : la rivière reste seule (repli honnête)
   const M = CREUX.MOTIF
@@ -541,7 +553,7 @@ function relierLesLacs(
 
     // ── LA PEINTURE — deux cellules consécutives sont 4-adjacentes : on relie leurs centres. ──
     for (let k = 0; k + 1 < chemin.length; k++) {
-      peindreSegment(terrain, zone, racineId, width, height, creux, chemin[k]!, chemin[k + 1]!, eaux)
+      peindreSegment(terrain, zone, racineId, width, height, creux, chemin[k]!, chemin[k + 1]!, eaux, chenaux)
     }
   }
 }
@@ -686,6 +698,7 @@ function peindreSegment(
   a: number,
   b: number,
   eaux: number[],
+  chenaux: number[],
 ): void {
   const M = CREUX.MOTIF
   const demi = EAU.RUISSEAU_DEMI_LARGEUR
@@ -712,6 +725,7 @@ function peindreSegment(
       if (TERRAINS[cur]?.walkable !== true) continue
       terrain[i] = TERRAIN_SHALLOW_WATER
       eaux.push(i)
+      chenaux.push(i)
     }
   }
 }
