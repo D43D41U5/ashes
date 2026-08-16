@@ -2737,7 +2737,9 @@ export class WorldScene extends Phaser.Scene {
           const i = coulees[j]!
           if (this.map.terrain[i] === TERRAIN_ROAD_COULEE) continue // la sente reste une sente
           const t = (j - debut) / Math.max(1, fin - 1 - debut)
-          const usure = 0.35 + 0.35 * t // l'aval se dénude
+          // REGARDÉ le 2026-08-16 : à 0,35-0,7 le chemin ne se LISAIT pas sous le grain du
+          // sol — un décal illisible est un décal qui ment par omission. Renforcé.
+          const usure = 0.6 + 0.3 * t // l'aval se dénude
           const sol = TERRE_BATTUE_COULEE
           const cx = i % width
           const cy = (i - cx) / width
