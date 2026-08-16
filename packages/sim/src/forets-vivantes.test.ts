@@ -174,7 +174,7 @@ describe('A6 (§4 R5quater) — la harde emprunte sa coulée : la trace ne ment 
   }
 
   it('au crépuscule, elle rejoint le chemin, le DESCEND dans l\'ordre, et BOIT au bout', () => {
-    const { sim, chemin } = simAvecCoulee(6) // l'aube
+    const { sim } = simAvecCoulee(6) // l'aube
     const id = spawnMonster(sim, 'deer', 62.5, 92.5) // près du départ du chemin
     const m = sim.monsters.find((mm) => mm.entityId === id)!
     m.groundX = 60
