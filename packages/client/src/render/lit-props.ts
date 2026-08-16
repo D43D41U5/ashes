@@ -62,6 +62,23 @@ function drawChampignon(ctx: CanvasRenderingContext2D): void {
   for (const [x, y, w, h, col] of CHAMPIGNON_RECTS) { ctx.fillStyle = col; ctx.fillRect(x, y, w, h) }
 }
 
+/** LE TAS DE FEUILLES (forêts-vivantes §1) — même contrat que `CHAMPIGNON_RECTS` : la
+ *  silhouette partagée des deux backends (BootScene en Phaser Graphics, ici en Canvas2D).
+ *  Un monticule de feuilles mortes à gradins, tons roux d'automne sur ombre brune —
+ *  cubique, jamais un dôme. */
+export const LEAF_PILE_RECTS: readonly (readonly [number, number, number, number, string])[] = [
+  [2, 12, 12, 3, '#4e3a24'],  // l'assise sombre (l'humus)
+  [3, 10, 10, 2, '#7a5a30'],  // la masse basse
+  [4, 8, 8, 2, '#96703a'],    // le gradin médian
+  [6, 7, 4, 1, '#b08948'],    // la crête éclairée
+  [3, 9, 2, 1, '#a86a38'],    // une feuille rousse qui dépasse (O)
+  [11, 8, 2, 1, '#8a5028'],   // une feuille brune (E)
+  [7, 6, 2, 1, '#c29a56'],    // reflet NO
+]
+function drawLeafPile(ctx: CanvasRenderingContext2D): void {
+  for (const [x, y, w, h, col] of LEAF_PILE_RECTS) { ctx.fillStyle = col; ctx.fillRect(x, y, w, h) }
+}
+
 
 
 // Silhouettes = celles de `BootScene.makeClutter` (À GARDER EN PHASE : deux backends de dessin,
@@ -130,6 +147,7 @@ const PROPS: LitProp[] = [
   { key: 'nd-scar', w: 16, h: 16, passes: 1, k: 3.5, draw: (c) => { c.fillStyle = '#3a2f22'; c.fillRect(4, 11, 8, 3) } },
   // Le nœud CHAMPIGNON — cubique (arêtes franches, `passes:1`/`k:3.5`), silhouette partagée avec BootScene.
   { key: 'nd-champignon', w: 16, h: 16, passes: 1, k: 3.5, draw: drawChampignon },
+  { key: 'nd-leaf_pile', w: 16, h: 16, passes: 1, k: 3.5, draw: drawLeafPile },
 ]
 
 /** LES VARIÉTÉS DE FLEUR (demande d'Alexis 2026-07-24 : « un peu de variation, forme ET couleur —
@@ -262,7 +280,7 @@ export const LIT_CLUTTER_KINDS: ReadonlySet<string> = new Set([
  *  types de nœud (`nd-tree_trunk`, `nd-tree_crown`, `nd-berry_bush-2`, `nd-rubble`, `nd-fiber_plant`…).
  *  Dériver de `nd-*` polluerait ce whitelist et ferait demander à SnapshotView un `nd-<type>_lit`
  *  inexistant. On ne met ici QUE des `n.type` réels (test : chacun a bien sa texture générée). */
-export const LIT_NODE_TYPES: ReadonlySet<string> = new Set(['rock', 'champignon', 'fiber_plant', 'rubble'])
+export const LIT_NODE_TYPES: ReadonlySet<string> = new Set(['rock', 'champignon', 'fiber_plant', 'rubble', 'leaf_pile'])
 /** Toutes les clés de texture RÉELLEMENT générées par `generateLitProps` — surface testable du
  *  câblage (le clutter a `_lit` + `_lit_m` ; les nœuds, `_lit` seul ; chaque variété de fleur, les deux). */
 export const LIT_PROP_KEYS: ReadonlySet<string> = new Set([

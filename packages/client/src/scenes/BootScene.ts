@@ -9,7 +9,7 @@ import { generateVitalIcons } from '../render/vital-art'
 import { generateLitTrees } from '../render/lit-trees'
 import { generateLitStructures } from '../render/lit-structures'
 import { generateBatiArt } from '../render/bati-art'
-import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS } from '../render/lit-props'
+import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS, LEAF_PILE_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
 import { makePoiTextures } from './world/poi-art'
 import { makeBorneTextures } from './world/borne-layer'
@@ -387,6 +387,12 @@ export class BootScene extends Phaser.Scene {
     // (partagée avec `lit-props`), rejouée ici en Phaser Graphics : flat et `_lit` ne peuvent pas diverger.
     for (const [x, y, w, h, col] of CHAMPIGNON_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
     g.generateTexture('nd-champignon', 16, 16)
+    g.clear()
+
+    // TAS DE FEUILLES (forêts-vivantes §1) — la fouille du sous-bois. Silhouette partagée
+    // `LEAF_PILE_RECTS` (même contrat que le champignon : flat et `_lit` ne peuvent pas diverger).
+    for (const [x, y, w, h, col] of LEAF_PILE_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
+    g.generateTexture('nd-leaf_pile', 16, 16)
     g.clear()
 
     // BUISSON À BAIES — MÊME silhouette que le buisson normal (`cl-bush`), au vert de feuillage

@@ -42,7 +42,8 @@ import type { ResourceNode } from './economy'
 import { distSq } from './geometry'
 import { profondeurAt, terrainAt, type WorldMap } from './map'
 import { fbm2, hash2 } from './noise'
-import { estCoeur, estLisiere, TERRAINS_BOISES_MASSIF } from './profondeur'
+import { estCoeur, estLisiere, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeur'
+import { CREUX } from './racine-relief'
 import { RELIEF, type CarteZonee } from './zonegen'
 import { MONDE } from './zonegraph'
 
@@ -129,6 +130,13 @@ export const CONTENU = {
   VIEUX_FUT_FACTEUR: 1.5,
   CHAMPIGNON_COEUR: 0.03,
   BAIES_LISIERE: 0.015,
+
+  /**
+   * LES TAS DE FEUILLES (forêts-vivantes §1 R1 — sel 'FEUI') : la fouille du sous-bois,
+   * dans la bande du CORPS des feuillus — la seule bande sans objet propre (la lisière a
+   * ses baies, le cœur ses champignons). Chance par tuile libre, passe appendue en queue.
+   */
+  TAS_FEUILLES: 0.02,
 
   /**
    * UN EMPLACEMENT DE VILLAGE : ce qu'il lui faut sous la main, et sur quel rayon.
@@ -235,6 +243,9 @@ function terrainAdmet(type: NodeType, terrain: number): boolean {
       return n !== 'shallow_water' && n !== 'peat_bog' && n !== 'reed_marsh'
     case 'ash_heap':
       return n === 'burnt_forest' || n === 'heath'
+    case 'leaf_pile':
+      // La litière des FEUILLUS (forêts-vivantes §1) : le sec ne fait pas de tas.
+      return n === 'forest' || n === 'old_growth' || n === 'willow'
     case 'champignon':
       // L'humide et l'ombre : marais, tourbière, roselière, sous-bois de vieille sylve, le sol
       // des forêts ordinaires (là, très rare — voir `champignonsRares`) — et les deux mots
@@ -326,6 +337,9 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   id += baies.length
   const coeurs = champignonsDuCoeur(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
   for (const m of coeurs) nodes.push(m)
+  id += coeurs.length
+  const feuilles = tasDeFeuilles(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  for (const f of feuilles) nodes.push(f)
   return nodes
 }
 
@@ -450,6 +464,33 @@ function champignonsDuCoeur(c: CarteZonee, occupees: Set<number>, idStart: numbe
       if (!terrainAdmet('champignon', terrain[i]!)) continue
       if (hash2(tx, ty, salt) >= CONTENU.CHAMPIGNON_COEUR) continue
       out.push({ id, type: 'champignon', tx, ty, stock: NODE_DEFS.champignon.stock, regrowAt: 0 })
+      occupees.add(i)
+      id += 1
+    }
+  }
+  return out
+}
+
+/**
+ * LES TAS DE FEUILLES (forêts-vivantes §1 R1 — sel 'FEUI'). La bande du CORPS
+ * (`PROF_LISIERE < d < PROF_COEUR`) des feuillus gagne sa fouille : des vers sous les
+ * feuilles — le premier appât qui n'est pas de la nourriture. Patron 'FIBR' : passe
+ * appendue en queue, tirage positionnel, aucun nœud existant ne bouge.
+ */
+function tasDeFeuilles(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
+  const { width, height, terrain } = c.map
+  const out: ResourceNode[] = []
+  let id = idStart
+  const salt = (c.graphe.seed ^ 0x46455549) | 0 // 'FEUI'
+  for (let ty = 0; ty < height; ty++) {
+    for (let tx = 0; tx < width; tx++) {
+      const i = ty * width + tx
+      if (c.rampe[i] || occupees.has(i)) continue
+      if (!TERRAINS_FEUILLUS.includes(terrain[i]!)) continue
+      const d = profondeurAt(c.map, tx, ty)
+      if (d <= CREUX.PROF_LISIERE || d >= CREUX.PROF_COEUR) continue // la bande du CORPS
+      if (hash2(tx, ty, salt) >= CONTENU.TAS_FEUILLES) continue
+      out.push({ id, type: 'leaf_pile', tx, ty, stock: NODE_DEFS.leaf_pile.stock, regrowAt: 0 })
       occupees.add(i)
       id += 1
     }

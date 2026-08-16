@@ -39,6 +39,11 @@ export type ItemId =
    *  verbe 3). Un aliment de valeur qu'on TROUVE sur les meilleurs coins à haut `foraging` : sink
    *  immédiat (se mange, 2× les baies). Périssable, comme tout ce qui se cueille. */
   | 'champignons'
+  /** LES VERS (forêts-vivantes §1) — grattés dans les tas de feuilles du sous-bois. Le
+   *  premier APPÂT qui n'est pas de la nourriture : le gibier vient les manger au sol
+   *  (`BAIT_ITEMS`), le chasseur ne les mange pas (aucune valeur de faim), et ça périt
+   *  vite — un appât se pose frais. */
+  | 'worms'
   /** LE LÉGUME du potager (agriculture voie A) — « nourriture de base » (GDD §8), modeste,
    *  au niveau des baies. Récolté sur une parcelle mûre. */
   | 'legume'

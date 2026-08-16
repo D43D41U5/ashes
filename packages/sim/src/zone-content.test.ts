@@ -9,7 +9,8 @@ import { describe, expect, it } from 'vitest'
 import { NODE_DEFS, TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAINS } from './balance'
 import { distSq } from './geometry'
 import { profondeurAt } from './map'
-import { estCoeur, estLisiere } from './profondeur'
+import { estCoeur, estLisiere, TERRAINS_FEUILLUS } from './profondeur'
+import { CREUX } from './racine-relief'
 import { CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, stockDArbre } from './zone-content'
 import { generateZonedTerrain, type CarteZonee } from './zonegen'
 import { MONDE, VRAIES_ZONES, ZONES } from './zonegraph'
@@ -317,6 +318,25 @@ describe('A20 (§2quater) — le cœur donne, la lisière cueille', () => {
         const i = n.ty * width + n.tx
         expect(terrain[i], `seed ${seed} : ${n.type} sur une sente en (${n.tx},${n.ty})`).not.toBe(2)
         expect(c.rampe[i], `seed ${seed} : ${n.type} sur une rampe en (${n.tx},${n.ty})`).toBeFalsy()
+      }
+    }
+  })
+})
+
+describe('A1 (forêts-vivantes §1) — les tas de feuilles : la fouille du CORPS des feuillus', () => {
+  it('des tas existent ; TOUS sur feuillu, dans la bande du corps, jamais sur sente ni rampe', () => {
+    for (const { c, nodes } of mondes) {
+      const seed = c.graphe.seed
+      const { width, terrain } = c.map
+      const tas = nodes.filter((n) => n.type === 'leaf_pile')
+      expect(tas.length, `seed ${seed} : aucun tas de feuilles`).toBeGreaterThan(0)
+      for (const n of tas) {
+        const i = n.ty * width + n.tx
+        expect(TERRAINS_FEUILLUS.includes(terrain[i]!), `seed ${seed} : tas sur terrain ${terrain[i]} en (${n.tx},${n.ty})`).toBe(true)
+        const d = profondeurAt(c.map, n.tx, n.ty)
+        expect(d, `seed ${seed} : tas hors bande du corps (d=${d}) en (${n.tx},${n.ty})`).toBeGreaterThan(CREUX.PROF_LISIERE)
+        expect(d, `seed ${seed} : tas au cœur (d=${d}) en (${n.tx},${n.ty})`).toBeLessThan(CREUX.PROF_COEUR)
+        expect(c.rampe[i], `seed ${seed} : tas sur une rampe`).toBeFalsy()
       }
     }
   })

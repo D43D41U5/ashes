@@ -887,6 +887,10 @@ export type NodeType =
   /** Le PATCH DE CHAMPIGNONS (cueillette à maîtrise verbe 3) — pousse à l'humide/l'ombre.
    *  Visible de tous (un TRAJET), mais on ne sait le récolter qu'expert (`minForageLevel`). */
   | 'champignon'
+  /** Le TAS DE FEUILLES (forêts-vivantes §1) — la fouille du sous-bois, dans la bande du
+   *  CORPS des feuillus (la lisière a ses baies, le cœur ses champignons). Se gratte à
+   *  mains nues ; les feuilles retombent (renewable). Il donne les VERS — l'appât dédié. */
+  | 'leaf_pile'
   | 'iron_vein'
   | 'coal_seam'
   // ── LES NŒUDS STRUCTURANTS DES ZONES (spec worldgen R9) — chacun n'existe QUE chez lui ──
@@ -975,6 +979,7 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   // LE PATCH DE CHAMPIGNONS : cueilli à mains nues (E), mais gaté par le SAVOIR — on ne récolte
   // les bons qu'à `FORAGE_QUALITY_LEVEL` (le novice les voit sans savoir les prendre). Humide/ombre.
   champignon: { item: 'champignons', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', minForageLevel: BALANCE.FORAGE_QUALITY_LEVEL, renewable: true },
+  leaf_pile: { item: 'worms', stock: 4, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true },
   iron_vein: { item: 'iron_ore', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
   coal_seam: { item: 'coal', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
 
@@ -1082,6 +1087,7 @@ export const AGRICULTURE = {
  * La durée est en CYCLES (jours). Un objet absent de cette table ne pourrit pas.
  */
 export const SPOIL_CYCLES: Partial<Record<import('./items').ItemId, number>> = {
+  worms: 1, // l'appât se pose FRAIS — plus périssable que tout ce qui se mange
   berries: 2,
   champignons: 2, // périssable comme les baies — la trouvaille ne se thésaurise pas
   raw_meat: 1.5, // la viande crue est une bombe à retardement : on la cuit, ou on la perd
@@ -2730,6 +2736,14 @@ export const HUNT = {
    */
   COVER_COEUR: 0.8,
   /**
+   * LA LITIÈRE QUI CRAQUE (forêts-vivantes §2 R3) : sur le sol des FEUILLUS, le bruit d'un
+   * pas se multiplie en PENTE CONTINUE de 1 (lisière) à ce plafond (au PROF_CAP de
+   * l'érosion). L'arbitrage spatial de la chasse : le cœur cache mieux (COVER_COEUR) mais
+   * s'y déplacer s'entend mieux — et le bruit est omnidirectionnel, ni le fourré ni le dos
+   * tourné ne le masquent. Un seul lecteur (`bruitDuSol`, dans `avatarThreat`).
+   */
+  LITIERE_BRUIT_COEUR: 1.5,
+  /**
    * LE TERRIER (C16). Le lapin naît avec le sien (sa tuile de naissance, hors
    * champ par construction). Levé, il fuit VERS lui — sauf à devoir traverser la
    * menace — et il y DISPARAÎT. La chasse au lapin devient une géométrie :
@@ -3556,6 +3570,7 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   fiber: 0.2,
   berries: 0.2,
   champignons: 0.2, // léger comme les baies
+  worms: 0.1, // une poignée de vers dans la mousse, presque rien
   legume: 0.2, // le potager : léger comme les baies
   graine: 0.1, // une poignée de graines, presque rien
   stew: 0.5,

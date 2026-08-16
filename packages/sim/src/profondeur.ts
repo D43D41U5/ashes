@@ -30,6 +30,11 @@ export const TERRAINS_BOISES_MASSIF: readonly number[] = [
   TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_WILLOW,
 ]
 
+/** Les FEUILLUS qui font la LITIÈRE — forêt, futaie ancienne, saulaie ; jamais le pin ni le
+ *  mélèze : le sec ne fait pas de tas (forêts-vivantes §1-§2). Une seule liste, deux
+ *  lecteurs : la passe 'FEUI' (zone-content) et `bruitDuSol` (faune). */
+export const TERRAINS_FEUILLUS: readonly number[] = [TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAIN_WILLOW]
+
 /** 1 ≤ d ≤ PROF_LISIERE — le bord pénétrable du bois. */
 export function estLisiere(d: number): boolean {
   return d >= 1 && d <= CREUX.PROF_LISIERE

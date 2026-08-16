@@ -74,6 +74,8 @@ export const FAMILLE_DE_NOEUD: Record<NodeType, Famille> = {
   fiber_plant: 'feuille',
   berry_bush: 'feuille',
   champignon: 'feuille',
+  leaf_pile: 'feuille', // le tas éclate en feuilles — ce qu'il est
+
   // La bêche dans la tourbe et le râteau dans la cendre lèvent une POUSSIÈRE : elle monte.
   peat_cut: 'poussiere',
   ash_heap: 'poussiere',

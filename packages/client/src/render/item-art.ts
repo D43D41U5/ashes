@@ -16,6 +16,7 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   fiber: 'Fibre',
   berries: 'Baies',
   champignons: 'Champignons',
+  worms: 'Vers',
   legume: 'Légume',
   graine: 'Graine',
   stew: 'Ragoût',
@@ -264,6 +265,14 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0xe8dcc0).fillRect(10, 6, 2, 8) // pied droit (plus grand)
     g.fillStyle(0x9c6636).fillEllipse(11, 6, 8, 5) // chapeau droit
     g.fillStyle(0xb98a58).fillCircle(9, 5, 1) // reflet NO
+  },
+
+  // Vers : deux vers rosés qui se tordent sur un fond de terre — l'appât du sous-bois.
+  worms: (g) => {
+    g.fillStyle(0x4a3626).fillRect(3, 10, 10, 4) // la poignée de terre
+    g.fillStyle(0xc98a7a).fillRect(4, 6, 2, 2).fillRect(5, 7, 2, 2).fillRect(6, 8, 2, 2) // ver gauche, en diagonale
+    g.fillStyle(0xb87466).fillRect(9, 5, 2, 2).fillRect(10, 6, 2, 2).fillRect(10, 8, 2, 2).fillRect(11, 9, 2, 2) // ver droit, en S
+    g.fillStyle(0xe0a898).fillRect(4, 6, 1, 1).fillRect(9, 5, 1, 1) // reflets NO
   },
 
   // Légume du potager : une racine ocre à fanes vertes (nourriture de base).

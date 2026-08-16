@@ -51,7 +51,8 @@ import { fireState } from './fire'
 import { distSq } from './geometry'
 import { carryRatio, carryTier, countOf, isEmpty, removeItems, type ItemId } from './items'
 import { profondeurAt, terrainAt, zoneTierAt, type WorldMap } from './map'
-import { estCoeur, TERRAINS_BOISES_MASSIF } from './profondeur'
+import { estCoeur, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeur'
+import { CREUX } from './racine-relief'
 import { moveToward, spawnMonster, type Monster } from './monsters'
 import { pathToward } from './pathfinding'
 import { hash2 } from './noise'
@@ -447,13 +448,31 @@ function drawTell(e: Entity): boolean {
   return e.charge !== undefined && isRangedWeapon(weaponKind(e))
 }
 
+/**
+ * LA LITIÈRE QUI CRAQUE (forêts-vivantes §2 R3) : le multiplicateur de BRUIT du sol.
+ * 1 partout — et sur le sol des FEUILLUS, une PENTE CONTINUE de 1 (lisière, d = 1) au
+ * plafond `HUNT.LITIERE_BRUIT_COEUR` (au PROF_CAP de l'érosion) : s'enfoncer cache mieux
+ * (`COVER_COEUR`) mais s'entend mieux. UN SEUL lecteur (`avatarThreat`) — le patron
+ * `couvertEffectif` : un bruit que la chasse entendrait et que la bête ignorerait serait
+ * deux jeux. Sans champ de profondeur (banc, carte d'avant) : 1, inerte au bit près.
+ */
+export function bruitDuSol(state: SimState, tx: number, ty: number): number {
+  const t = terrainAt(state.map, tx, ty)
+  if (!TERRAINS_FEUILLUS.includes(t)) return 1
+  const d = profondeurAt(state.map, tx, ty)
+  if (d <= 1) return 1
+  const pente = (Math.min(d, CREUX.PROF_CAP) - 1) / (CREUX.PROF_CAP - 1)
+  return 1 + (HUNT.LITIERE_BRUIT_COEUR - 1) * pente
+}
+
 /** La menace qu'un avatar OPPOSE, entrée une fois (spec chasse C5) : vue + ouïe. */
 export function avatarThreat(state: SimState, e: Entity): Threat {
   const bande = drawTell(e)
   return {
     e,
     vision: gaitVisibility(e) * coverAt(state, e.x, e.y) * (bande ? HUNT.DRAW_VISIBILITY : 1),
-    noise: gaitNoise(e) * HUNT.HEARING_FACTOR * (bande ? HUNT.DRAW_NOISE : 1),
+    noise: gaitNoise(e) * bruitDuSol(state, Math.floor(e.x), Math.floor(e.y))
+      * HUNT.HEARING_FACTOR * (bande ? HUNT.DRAW_NOISE : 1),
   }
 }
 
@@ -1632,8 +1651,9 @@ function graze(
 
 /* ── L'APPÂT et LES PILES AU SOL (spec chasse C18) ────────────────────────── */
 
-/** Ce que le GIBIER vient manger au sol (l'appât du chasseur). */
-const BAIT_ITEMS: readonly ItemId[] = ['berries', 'raw_meat', 'cooked_meat', 'stew']
+/** Ce que le GIBIER vient manger au sol (l'appât du chasseur). Les VERS (forêts-vivantes
+ *  §1) sont le premier appât DÉDIÉ : appâter cesse de coûter des points de faim. */
+const BAIT_ITEMS: readonly ItemId[] = ['berries', 'raw_meat', 'cooked_meat', 'stew', 'worms']
 /** Ce qu'un PRÉDATEUR vient manger au sol — la viande, et rien d'autre. */
 const CARRION_ITEMS: readonly ItemId[] = ['raw_meat', 'cooked_meat']
 
