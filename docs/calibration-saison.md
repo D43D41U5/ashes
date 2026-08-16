@@ -65,6 +65,11 @@ Foyer, un tirage RNG par réouverture, chronique inondée. Verrou `arkDeparted` 
 au dossier. Au passage : `season_ended` tombe au jour 61 — un banc de 60 jours s'arrête une
 journée trop tôt pour les verdicts ; les prochains runs vont à 62.
 
+**Contre-vérifié in situ** (2026 rejoué à 62 jours avec le verrou) : `evacuation_opened` 1,
+`ark_departed` 1, `season_ended` ×1 au jour 61 — et les cycles 1-57 sont **au bit près**
+identiques au run pré-fix (hors temps mural) : le verrou est prouvé inerte avant le départ,
+sur données réelles et pas seulement en revue.
+
 ## Ce qui MARCHE, mesuré au même banc
 
 - L'économie de subsistance : greniers positifs, Feux nourris, `village_stage_up` ×5-6 par
