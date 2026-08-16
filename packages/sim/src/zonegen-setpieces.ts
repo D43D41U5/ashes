@@ -1,55 +1,71 @@
 /**
- * LES SET-PIECES DE LA RACINE — des ENDROITS, pas des timbres (spec t0-exploration R9-R12).
+ * LES SET-PIECES DE LA RACINE — des ENDROITS, pas des timbres (spec t0-exploration R9-R12) ;
+ * et depuis l'étage 3 (§2quinquies, 2026-08-16), ils se DÉRIVENT : LA COURONNE.
  *
- * Le grief qu'on répare : les lieux de la Racine font 2 à 4 tuiles d'empreinte — on ne peut
- * pas ENTRER dedans, donc ils ne produisent aucune émotion. Don't Starve le fait depuis dix
- * ans : par carte, quelques morceaux de bravoure à grande empreinte, nommés, garantis — le
- * garanti structure la mémoire de la carte (« on campe au Bois Noir »).
+ * L'ancien régime était un tirage par rejet salé ('SETP') qui POSAIT trois rectangles — la
+ * signature mesurée du tampon : « la forêt ancienne de la T0 tient en UN massif de 1 920
+ * tuiles = 48×40 exactement ». Or la doctrine du chantier (§2bis) dit : « ce qui se lit
+ * comme logique, c'est ce qui est DÉRIVÉ ; ce qui se lit comme arbitraire, c'est ce qui est
+ * POSÉ. » Le tirage meurt donc, et chaque set-piece végétal COURONNE la plus grande
+ * composante réelle de sa famille :
  *
- * Trois, un de chaque, et leur corps est leur TERRAIN (aucun sprite-centre : le sol parle) :
+ *   • le BOIS NOIR — la couronne du plus grand massif de FORÊT : ses tuiles les plus
+ *     profondes (érosion 8-connexe) deviennent `old_growth`, à BUDGET (`COURONNE_BOIS`) —
+ *     jamais le massif entier : la composition A12/A17 est un contrat. La conversion le rend
+ *     au passage ignifuge à la lisière sud (le prédicat des cédants ignore la futaie
+ *     ancienne) — et ses VIEUX FÛTS meurent en devenant futaie (la doctrine du teaser
+ *     s'étend d'elle-même : le plus grand massif troque ses vieux fûts contre LE teaser).
+ *   • la COMBE BRUMEUSE — la couronne du marais au plus grand CŒUR : la roselière au
+ *     profond, la MARE (haut-fond seulement — R45 et la connexité ne bougent pas) au plus
+ *     profond encore. On élit par le cœur, pas par la taille brute : un ruban de frange n'a
+ *     pas de dedans, une combe en a un.
+ *   • le CERCLE DE PIERRES — AUCUNE peinture : le monument (rect inchangé, décor client
+ *     dérivé) se centre sur la tuile la plus profonde de la plus grande fleuraie de la bande
+ *     NORD (il doit survivre à la saison, lui). Les menhirs se posent sur le pré fleuri qui
+ *     existait — ils ne le fabriquent plus.
  *
- *   • le BOIS NOIR — une mini-sylve (sol `old_growth`) : sombre, dense, trouée de clairières
- *     par les règles existantes. Il murmure ce que la Vieille Sylve promet — et il porte UN
- *     vieil arbre au stock dérisoire (le patron du Filon : « le gros bois existe. Pas ici. »).
- *   • le CERCLE DE PIERRES — une couronne de pierres levées sur la fleuraie. La destination
- *     de la chaîne des menhirs (les pierres se répondent — R2) ; sa charge est un RÉCIT.
- *   • la COMBE BRUMEUSE — un creux de marais et de roselière autour d'une mare. Champignons
- *     et fibre y abondent PAR LES RÈGLES EXISTANTES d'admission de terrain, pas par une
- *     table neuve — on peint le sol, le contenu suit.
+ * L'élection lit le terrain FINAL de la passe 1.6 : ce que la lisière sud a déjà converti
+ * n'est plus candidat — le sud s'évite par NATURE (l'ancien `EVITE_SUD` meurt), et le Bois
+ * Noir comme la Combe restent PERDABLES au front de cendre, comme avant, exprès.
  *
- * Le placement est un tirage par rejet, salé, positionnel : au cœur de la zone (marge aux
- * frontières — l'eau et les seuils vivent aux bords), hors de l'eau, hors de la lisière sud
- * (le gradient a son propre langage), écartés entre eux. LE CERCLE VA AU NORD : le front de
- * cendre mangera ~60 % du sud de la Racine (worldgen R29) — le bout de la chaîne des pierres
- * doit survivre à la saison, sinon les joueurs de fin de saison suivent des menhirs vers un
- * trou de cendre. Le Bois Noir et la Combe, eux, sont PERDABLES — et c'est voulu : regarder
- * la cendre avaler un endroit qu'on aimait, c'est la saison qui raconte.
+ * LE CORPS EST LE TERRAIN (R45bis) : la zone publiée porte la bbox COMPACTE du couronnement
+ * — culling, nom, contournement des sentes, écart des charniers — mais toute question
+ * d'APPARTENANCE se lit au sol (doctrine `arbre-peuplement`).
  *
- * Pur et déterministe : `hash2`, arithmétique entière (invariant n°2).
+ * Pur et déterministe : AUCUN tirage — érosion + composantes + tris à départage stable
+ * (taille, puis première tuile row-major : le patron du Lac Mort). La garde A12 de zonegen
+ * (double génération, zones comprises) l'exige.
  */
-import { TERRAINS, TERRAIN_FLOWER_MEADOW, TERRAIN_MARSH, TERRAIN_OLD_GROWTH, TERRAIN_REED_MARSH, TERRAIN_ROAD, TERRAIN_SHALLOW_WATER } from './balance'
-import { isWater } from './map'
-import { hash2 } from './noise'
+import { TERRAIN_FLOWER_MEADOW, TERRAIN_FOREST, TERRAIN_MARSH, TERRAIN_OLD_GROWTH, TERRAIN_REED_MARSH, TERRAIN_SHALLOW_WATER, TERRAIN_WET_MEADOW } from './balance'
+import { composantesDeMasque, eroderMasque } from './profondeur'
 import type { GrapheZones } from './zonegraph'
 
 export const SET_PIECES = {
-  /** Dimensions, en tuiles — quantifiées au motif de 8, comme toute forme de carte (R32). */
-  BOIS: { w: 48, h: 40 },
+  /** Budget de la couronne du Bois Noir, en tuiles — l'ordre de grandeur du tampon d'hier
+   *  (48×40 = 1 920), la forme du monde d'aujourd'hui. La couronne CROÎT depuis le pic
+   *  d'érosion du massif élu, par profondeur décroissante et en restant connexe, jusqu'au
+   *  budget : compacte, organique, exacte (MESURÉ : les ensembles de niveau d'un massif
+   *  réel se fragmentent en lobes — un seuil global rendait 448 tuiles sur la seed 2026). */
+  COURONNE_BOIS: 1920,
+  /** Budget de la couronne de la Combe, sur le masque du PAYS HUMIDE (marais ∪ roselière ∪
+   *  prairie humide — MESURÉ : le plus grand marais nu fait 11 à 83 tuiles de cœur, le seul
+   *  « marais-endroit » était le tampon ; les grandes auréoles humides des lacs, elles,
+   *  existent). Conversion par PRÉFIXES d'adoption : mare, puis roselière, puis marais. */
+  COURONNE_COMBE: 1280,
+  /** Le préfixe roselière de la Combe (mare comprise) — l'ordre de grandeur des anneaux du
+   *  tampon d'hier (528 + 117). */
+  ROSELIERE_BUDGET: 640,
+  /** Le préfixe mare (haut-fond seulement — R45 et la connexité ne bougent pas). */
+  MARE_BUDGET: 120,
+  /** Le monument, lui, garde ses dimensions : un cercle de pierres a une taille. */
   CERCLE: { w: 24, h: 24 },
-  COMBE: { w: 40, h: 32 },
-  /** Marge aux bords du rectangle de la Racine : un set-piece vit au cœur, pas au mur. */
-  MARGE: 24,
-  /** Écart minimal entre deux set-pieces — deux morceaux de bravoure ne se marchent pas dessus. */
-  ECART_MIN: 200,
-  /** La lisière sud (le gradient vers la Cendrière) reste à elle : aucun set-piece à moins de
-   *  N tuiles du bord sud de la Racine. */
-  EVITE_SUD: 70,
   /** Le Cercle vit dans la part de la Racine qui SURVIT à la saison (le nord). */
   CERCLE_NORD_FRAC: 0.38,
-  /** Tentatives de rejet par set-piece. */
-  ESSAIS: 120,
-  /** La mare de la Combe, en demi-étendues. */
-  MARE: { hw: 6, hh: 4 },
+  /** Le Cercle s'écarte des deux couronnes (Manhattan des centres) : un monument choisit sa
+   *  place — la nature, elle, met ses massifs où elle veut. */
+  ECART_MIN: 200,
+  /** Plafond du champ d'érosion du couronnement — assez pour ordonner un très grand massif. */
+  CAP_EROSION: 24,
 } as const
 
 export interface SetPiece {
@@ -61,102 +77,186 @@ export interface SetPiece {
   h: number
 }
 
-/** Pose les trois set-pieces (terrain EN PLACE) et rend leurs zones à enregistrer. */
+interface Couronne {
+  /** Les tuiles de la couronne, DANS L'ORDRE D'ADOPTION (du pic vers le bord) : les préfixes
+   *  de cette liste sont connexes par construction — la mare et la roselière de la Combe en
+   *  sont des tranches. */
+  tuiles: number[]
+  bbox: { x: number; y: number; w: number; h: number }
+}
+
+/** La bbox (en tuiles) d'un ensemble d'index. */
+function bboxDe(tuiles: readonly number[], width: number): Couronne['bbox'] {
+  let x0 = Infinity
+  let y0 = Infinity
+  let x1 = -Infinity
+  let y1 = -Infinity
+  for (const i of tuiles) {
+    const x = i % width
+    const y = (i - x) / width
+    if (x < x0) x0 = x
+    if (y < y0) y0 = y
+    if (x > x1) x1 = x
+    if (y > y1) y1 = y
+  }
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 }
+}
+
+/**
+ * COURONNER un masque : érosion, élection de la composante au plus grand CŒUR (compte de
+ * tuiles à d ≥ profMin ; égalité : plus petite étiquette = première tuile plus tôt), puis
+ * CROISSANCE DEPUIS LE PIC : partant de la tuile la plus profonde de l'élue (égalité :
+ * premier index row-major), on adopte à chaque pas la tuile de la frontière la plus PROFONDE
+ * (égalité : ordre d'arrivée dans son godet — FIFO, déterministe), jusqu'au budget. La
+ * couronne est CONNEXE par construction, compacte (elle épouse la dorsale du massif), et
+ * chaque préfixe de l'ordre d'adoption l'est aussi. MESURÉ avant cette forme : un seuil de
+ * niveau global se fragmentait en lobes (448 tuiles au lieu de 1 920 sur la seed 2026).
+ */
+function couronner(
+  masque: Uint8Array,
+  width: number,
+  height: number,
+  budget: number,
+  profMin: number,
+): Couronne | null {
+  const prof = eroderMasque(masque, width, height, SET_PIECES.CAP_EROSION)
+  const comp = composantesDeMasque(masque, width, height)
+  if (comp.tailles.length === 0) return null
+
+  // L'élection : la composante au plus grand cœur (d ≥ profMin).
+  const coeurs = new Array<number>(comp.tailles.length).fill(0)
+  for (let i = 0; i < prof.length; i++) {
+    if (comp.label[i] !== -1 && prof[i]! >= profMin) coeurs[comp.label[i]!]! += 1
+  }
+  let elu = -1
+  for (let c = 0; c < coeurs.length; c++) {
+    if (elu === -1 || coeurs[c]! > coeurs[elu]!) elu = c
+  }
+  if (elu === -1 || coeurs[elu]! === 0) return null
+
+  // Le pic : la tuile la plus profonde de l'élue, première en row-major.
+  let pic = -1
+  for (let i = 0; i < prof.length; i++) {
+    if (comp.label[i] !== elu) continue
+    if (pic === -1 || prof[i]! > prof[pic]!) pic = i
+  }
+  if (pic === -1) return null
+
+  // La croissance : godets par profondeur (1..CAP), curseur FIFO par godet.
+  const godets: number[][] = Array.from({ length: SET_PIECES.CAP_EROSION + 1 }, () => [])
+  const curseurs = new Array<number>(SET_PIECES.CAP_EROSION + 1).fill(0)
+  const vu = new Uint8Array(width * height)
+  godets[prof[pic]!]!.push(pic)
+  vu[pic] = 1
+  const tuiles: number[] = []
+  while (tuiles.length < budget) {
+    let d = SET_PIECES.CAP_EROSION
+    while (d >= 1 && curseurs[d]! >= godets[d]!.length) d -= 1
+    if (d < 1) break // le massif est épuisé avant le budget
+    const i = godets[d]![curseurs[d]!]!
+    curseurs[d]! += 1
+    tuiles.push(i)
+    const x = i % width
+    const y = (i - x) / width
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue
+        const nx = x + dx
+        const ny = y + dy
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue
+        const j = ny * width + nx
+        if (vu[j] || comp.label[j] !== elu) continue
+        vu[j] = 1
+        godets[prof[j]!]!.push(j)
+      }
+    }
+  }
+  if (tuiles.length === 0) return null
+  return { tuiles, bbox: bboxDe(tuiles, width) }
+}
+
+/** Couronne les set-pieces (terrain EN PLACE) et rend leurs zones à enregistrer. */
 export function placerLesSetPieces(
   terrain: number[],
   zone: Int32Array,
   g: GrapheZones,
   width: number,
   height: number,
-  seed: number,
 ): SetPiece[] {
   const racineId = g.racine
   const r = g.zones[racineId]!.rect
   if (!r) return []
-  const sel = (seed ^ 0x53455450) | 0 /* 'SETP' */
+  const N = width * height
   const out: SetPiece[] = []
 
-  // Un rectangle est posable si TOUTES ses tuiles sont de la Racine, marchables, sèches et
-  // sans route — un set-piece ne s'assied ni sur un lac, ni sur la rivière, ni sur un mur.
-  const posable = (x0: number, y0: number, w: number, h: number): boolean => {
-    if (x0 < r.x + SET_PIECES.MARGE || y0 < r.y + SET_PIECES.MARGE) return false
-    if (x0 + w > r.x + r.w - SET_PIECES.MARGE || y0 + h > r.y + r.h - SET_PIECES.MARGE) return false
-    if (r.y + r.h - (y0 + h) < SET_PIECES.EVITE_SUD) return false // la lisière sud reste à elle
-    for (let y = y0; y < y0 + h; y++) {
-      for (let x = x0; x < x0 + w; x++) {
+  const masqueDe = (garde: (t: number, x: number, y: number) => boolean): Uint8Array => {
+    const m = new Uint8Array(N)
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
         const i = y * width + x
-        if (zone[i] !== racineId) return false
-        const t = terrain[i]!
-        if (!TERRAINS[t]?.walkable) return false
-        if (isWater(t) || t === TERRAIN_ROAD) return false
+        if (zone[i] === racineId && garde(terrain[i]!, x, y)) m[i] = 1
       }
     }
-    return out.every((p) => {
-      const dx = Math.abs(p.x + p.w / 2 - (x0 + w / 2))
-      const dy = Math.abs(p.y + p.h / 2 - (y0 + h / 2))
-      return dx + dy >= SET_PIECES.ECART_MIN
-    })
+    return m
   }
 
-  const q = (v: number): number => Math.round(v / 8) * 8 // le motif : toute forme s'y aligne
-
-  const tirer = (
-    kind: SetPiece['kind'],
-    nom: string,
-    dims: { w: number; h: number },
-    salt: number,
-    nordFrac?: number,
-  ): SetPiece | null => {
-    for (let essai = 0; essai < SET_PIECES.ESSAIS; essai++) {
-      const maxY = nordFrac !== undefined ? r.y + nordFrac * r.h - dims.h : r.y + r.h - dims.h
-      const x0 = q(r.x + hash2(essai, salt, sel) * (r.w - dims.w))
-      const y0 = q(r.y + hash2(essai, salt + 1, sel) * Math.max(1, maxY - r.y))
-      if (!posable(x0, y0, dims.w, dims.h)) continue
-      return { kind, nom, x: x0, y: y0, w: dims.w, h: dims.h }
-    }
-    return null // une Racine trop pleine d'eau peut refuser — la garde A19 le dira
-  }
-
-  // ── LE BOIS NOIR : le sol devient vieille futaie ; les arbres suivront (zone-content) ──
-  const bois = tirer('bois_noir', 'le Bois Noir', SET_PIECES.BOIS, 10)
+  // ── LE BOIS NOIR : la couronne du plus grand massif de forêt devient futaie ancienne ──
+  const bois = couronner(
+    masqueDe((t) => t === TERRAIN_FOREST),
+    width, height, SET_PIECES.COURONNE_BOIS, 2,
+  )
   if (bois) {
-    out.push(bois)
-    for (let y = bois.y; y < bois.y + bois.h; y++) {
-      for (let x = bois.x; x < bois.x + bois.w; x++) {
-        terrain[y * width + x] = TERRAIN_OLD_GROWTH
-      }
-    }
+    for (const i of bois.tuiles) terrain[i] = TERRAIN_OLD_GROWTH
+    out.push({ kind: 'bois_noir', nom: 'le Bois Noir', ...bois.bbox })
   }
 
-  // ── LE CERCLE DE PIERRES : la fleuraie — les pierres elles-mêmes sont un décor client,
-  //    dérivé du rect (déterministe des deux côtés sans une donnée de plus). ──
-  const cercle = tirer('cercle_pierres', 'le Cercle de pierres', SET_PIECES.CERCLE, 20, SET_PIECES.CERCLE_NORD_FRAC)
-  if (cercle) {
-    out.push(cercle)
-    for (let y = cercle.y; y < cercle.y + cercle.h; y++) {
-      for (let x = cercle.x; x < cercle.x + cercle.w; x++) {
-        terrain[y * width + x] = TERRAIN_FLOWER_MEADOW
-      }
-    }
-  }
-
-  // ── LA COMBE BRUMEUSE : anneaux rectilignes — marais, roselière, marais, et la mare. ──
-  const combe = tirer('combe_brumeuse', 'la Combe brumeuse', SET_PIECES.COMBE, 30)
+  // ── LA COMBE BRUMEUSE : la couronne du PAYS HUMIDE — mare au pic, roselière autour,
+  //    marais en jupe. Les trois sont des PRÉFIXES de l'ordre d'adoption : connexes, nichés. ──
+  const combe = couronner(
+    masqueDe((t) => t === TERRAIN_MARSH || t === TERRAIN_REED_MARSH || t === TERRAIN_WET_MEADOW),
+    width, height, SET_PIECES.COURONNE_COMBE, 2,
+  )
   if (combe) {
-    out.push(combe)
-    for (let y = combe.y; y < combe.y + combe.h; y++) {
-      for (let x = combe.x; x < combe.x + combe.w; x++) {
-        const d = Math.min(x - combe.x, combe.x + combe.w - 1 - x, y - combe.y, combe.y + combe.h - 1 - y)
-        terrain[y * width + x] = d < 4 ? TERRAIN_MARSH : d < 10 ? TERRAIN_REED_MARSH : TERRAIN_MARSH
-      }
+    for (let k = 0; k < combe.tuiles.length; k++) {
+      const i = combe.tuiles[k]!
+      terrain[i] = k < SET_PIECES.MARE_BUDGET ? TERRAIN_SHALLOW_WATER
+        : k < SET_PIECES.ROSELIERE_BUDGET ? TERRAIN_REED_MARSH
+          : TERRAIN_MARSH
     }
-    const cx = combe.x + combe.w / 2
-    const cy = combe.y + combe.h / 2
-    for (let y = cy - SET_PIECES.MARE.hh; y <= cy + SET_PIECES.MARE.hh; y++) {
-      for (let x = cx - SET_PIECES.MARE.hw; x <= cx + SET_PIECES.MARE.hw; x++) {
-        terrain[y * width + x] = TERRAIN_SHALLOW_WATER
-      }
+    out.push({ kind: 'combe_brumeuse', nom: 'la Combe brumeuse', ...combe.bbox })
+  }
+
+  // ── LE CERCLE DE PIERRES : le monument sur la plus grande fleuraie du NORD, sans peinture ──
+  const nordMax = r.y + SET_PIECES.CERCLE_NORD_FRAC * r.h
+  const fleuraies = masqueDe((t, _x, y) => t === TERRAIN_FLOWER_MEADOW && y < nordMax)
+  const profFleur = eroderMasque(fleuraies, width, height, SET_PIECES.CAP_EROSION)
+  const compFleur = composantesDeMasque(fleuraies, width, height)
+  const loin = (cx: number, cy: number): boolean => out.every((p) => {
+    const dx = Math.abs(p.x + p.w / 2 - cx)
+    const dy = Math.abs(p.y + p.h / 2 - cy)
+    return dx + dy >= SET_PIECES.ECART_MIN
+  })
+  // Les candidates, grandes d'abord (égalité : étiquette plus petite) — la première dont le
+  // pic est assez loin des couronnes gagne.
+  const ordre = compFleur.tailles.map((taille, c) => ({ taille, c }))
+    .sort((a, b) => (b.taille - a.taille) || (a.c - b.c))
+  for (const { c } of ordre) {
+    // Le pic de la composante : la tuile la plus profonde, première en row-major.
+    let pic = -1
+    for (let i = 0; i < N; i++) {
+      if (compFleur.label[i] !== c) continue
+      if (pic === -1 || profFleur[i]! > profFleur[pic]!) pic = i
     }
+    if (pic === -1) continue
+    const cx = pic % width
+    const cy = (pic - cx) / width
+    if (!loin(cx, cy)) continue
+    const { w, h } = SET_PIECES.CERCLE
+    // Clampé au rect de la RACINE (pas de la carte) : un monument ne chevauche pas le mur.
+    const x = Math.min(Math.max(r.x, cx - w / 2), r.x + r.w - w)
+    const y = Math.min(Math.max(r.y, cy - h / 2), r.y + r.h - h)
+    out.push({ kind: 'cercle_pierres', nom: 'le Cercle de pierres', x, y, w, h })
+    break
   }
 
   return out

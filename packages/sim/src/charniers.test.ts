@@ -67,7 +67,7 @@ describe('la loterie des lieux ne bouge pas', () => {
     expect(map.terrain).toEqual(avantTerrain)
   })
 
-  it('la vallée de production porte toujours ses 135 autres lieux', () => {
+  it('la vallée de production porte toujours ses 133 autres lieux', () => {
     // Non-régression grossière mais parlante : si `horsSemis` fuyait dans la loterie, les autres
     // types en perdraient — le tirage est à somme nulle.
     // RÉ-ÉPINGLÉ 138 → 136 → 134 (Stratigraphie, 2026-08-09) : la grille du socle devenue
@@ -79,7 +79,10 @@ describe('la loterie des lieux ne bouge pas', () => {
     // l'héritage d'éligibilité (`poi.ts` — sans lui : 132) rebrassent la loterie et les
     // set-pieces. MESURÉ par kind (seed 2026) : verger, pierre levée et source chaude +1,
     // arche et tanière −1 — net +1, aucun type ne meurt.
-    expect(lieuxDe(CARTE.map).length).toBe(135)
+    // RE-ÉPINGLÉ 135 → 133 (La couronne §2quinquies, 2026-08-16) : les set-pieces ÉLUS (plus
+    // posés) déplacent leurs bbox, l'écartement du semis suit. MESURÉ par kind (seed 2026) :
+    // tanière et verger −1, tout le reste identique — aucun type ne meurt.
+    expect(lieuxDe(CARTE.map).length).toBe(133)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'repaire').length).toBe(9)
   })
 })

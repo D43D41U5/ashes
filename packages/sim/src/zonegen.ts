@@ -541,8 +541,9 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
   // ── PASSE 1.595 : LES LISIÈRES — l'écotone pré/bois entrelacé, hors Racine (S-R11) ──
   entrelacerLesLisieres(terrain, zone, g, width, height, seed)
 
-  // ── PASSE 1.6 : LES SET-PIECES — trois endroits à grande empreinte (spec t0-exploration R9) ──
-  const setPieces = placerLesSetPieces(terrain, zone, g, width, height, seed)
+  // ── PASSE 1.6 : LES SET-PIECES — trois endroits à grande empreinte, COURONNÉS et non plus
+  //    posés (spec t0-exploration R9, révisé §2quinquies : élection pure, aucun tirage) ──
+  const setPieces = placerLesSetPieces(terrain, zone, g, width, height)
 
   // ── PASSE 1.7 : LES SENTES — les routes du pays d'avant, et leurs gués (R17, R7) ──
   // Elles CONTOURNENT les set-pieces (R18 : un lieu se poste au bord du chemin) ; et la

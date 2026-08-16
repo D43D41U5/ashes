@@ -178,12 +178,97 @@ variable de profondeur, couvert plat par terrain, entrelacement de lisières sau
 
 *Réglages : `PROF_LISIERE`, `PROF_COEUR`, `PROF_CAP` dans `CREUX` (géométrie — se règle en
 regardant une carte) ; `VIEUX_FUT_FACTEUR`, `CHAMPIGNON_COEUR`, `BAIES_LISIERE` dans `CONTENU`
-et `COVER_COEUR` dans `balance.ts` (jeu — se règle en jouant). Étage 3 (la couronne — les
-set-pieces dérivés, la mort des tampons) : décision à venir.*
+et `COVER_COEUR` dans `balance.ts` (jeu — se règle en jouant).*
+
+## §2quinquies — LA COURONNE : les set-pieces se DÉRIVENT, les tampons meurent (étage 3)
+
+*Décision d'Alexis, 2026-08-16 (« enchaîne sur la couronne ») — l'étage 3 réservé par §2ter,
+dans la direction actée du chantier : « ce qui se lit comme logique, c'est ce qui est DÉRIVÉ ;
+ce qui se lit comme arbitraire, c'est ce qui est POSÉ » (§2bis). Le constat mesuré qui le
+commande : la forêt ancienne de la T0 tenait en UN massif de 1 920 tuiles = 48×40 EXACTEMENT
+— la signature d'un tampon, quand le socle produit des massifs feuillus de 28 000 tuiles. Ce
+paragraphe RÉVISE le placement de §3 (R9-R12) : les corps restent, la naissance change.*
+
+- **R43 — L'ÉLECTION REMPLACE LE TIRAGE.** Plus aucun tirage par rejet, plus de sel `'SETP'`,
+  plus de rectangle posé : chaque set-piece végétal COURONNE la plus grande composante réelle
+  de sa famille (composantes 8-connexes — le voisinage de l'érosion —, tri par taille puis
+  par première tuile row-major : le départage STABLE de `zonegen-eaux-zones`, la garde de
+  déterminisme des zones l'exige). Le Bois Noir élit le plus grand massif de FORÊT de la
+  Racine ; la Combe brumeuse le plus grand PAYS HUMIDE (marais ∪ roselière ∪ prairie humide
+  — MESURÉ : le plus grand marais nu fait 11 à 83 tuiles de cœur, le seul « marais-endroit »
+  était le tampon lui-même ; les grandes auréoles humides des lacs, elles, existent — la
+  Combe naît donc ADOSSÉE à ses eaux, et c'est sa nature) ; le Cercle de pierres la plus
+  grande fleuraie de la bande nord (`CERCLE_NORD_FRAC` — le monument doit survivre à la
+  saison, lui). Les COURONNES (bois, combe) s'élisent au plus grand CŒUR (d ≥ 2 — un ruban
+  de frange n'a pas de dedans) ; le Cercle, qui ne peint rien, élit par TAILLE et n'a besoin
+  que d'un point (son pic). L'élection lit le terrain FINAL de la passe 1.6 : ce que la lisière sud a déjà converti
+  n'est plus candidat — le sud s'évite par NATURE, `EVITE_SUD` meurt avec le tampon (et la
+  doctrine « le Bois Noir et la Combe sont PERDABLES » est intacte : le front mange les
+  nœuds, jamais le sol).
+- **R44 — LE COURONNEMENT CROÎT DEPUIS LE PIC, à budget exact.** On ne convertit JAMAIS le
+  massif entier (la fourchette de composition A12/A17 est un contrat), et on ne SEUILLE pas
+  un niveau d'érosion global (MESURÉ : les ensembles de niveau d'un massif réel se
+  fragmentent en lobes — 448 tuiles au lieu de 1 920 sur la seed 2026) : partant du PIC
+  d'érosion du massif élu, la couronne adopte à chaque pas la tuile de frontière la plus
+  profonde (départages FIFO déterministes), jusqu'au budget — connexe par construction,
+  compacte, elle épouse la dorsale du massif, et chaque PRÉFIXE de l'ordre d'adoption est
+  connexe aussi. Bois Noir : `COURONNE_BOIS` tuiles de forêt → `old_growth` (ce qui le rend
+  ignifuge à la lisière sud : le prédicat des cédants ne connaît pas la futaie ancienne).
+  Combe : `COURONNE_COMBE` tuiles du pays humide, converties PAR PRÉFIXES nichés — la MARE
+  (`MARE_BUDGET`, haut-fond seulement : R45 et la connexité A13 ne bougent pas) au pic, la
+  roselière (`ROSELIERE_BUDGET`) autour, le marais en jupe. Cercle : AUCUNE peinture — le
+  monument (rect 24×24 inchangé, décor client dérivé) se centre sur la tuile la plus
+  profonde de la fleuraie élue : les menhirs se posent sur le pré fleuri qui existait, ils
+  ne le fabriquent plus.
+- **R45bis — LE CORPS EST LE TERRAIN, la boîte n'est qu'une étiquette.** La zone publiée
+  (`map.zones`) porte la bbox COMPACTE du couronnement (pas du massif élu) : c'est elle que
+  lisent le culling, le nom, les sentes qui contournent, l'écart des charniers — et elle
+  reste du même ordre que les tampons d'hier. Toute question d'APPARTENANCE se lit au SOL
+  (doctrine `arbre-peuplement` : « lire le sol est plus juste que d'énumérer les
+  set-pieces ») — le teaser, les champignons, la brume matinale le font déjà. `ECART_MIN` ne
+  contraint plus que le Cercle (un monument s'écarte) : si la nature met le grand bois contre
+  le grand marais, c'est le monde, pas un défaut.
+- **R46 — CE QUI SUIT GRATUITEMENT, ET CE QU'ON PERD EXPRÈS.** L'art de la futaie
+  (`MELANGE_FUTAIE`) suit le sol ; la profondeur de §2quater est INVARIANTE à la conversion
+  (forêt et futaie ancienne sont du même masque — le champ ne bouge pas d'un bit) ; le
+  teaser du Bois Noir suit le rect élu (son sel positionnel se déplace avec — consigné) ; la
+  doctrine du gros bois s'étend d'elle-même : les VIEUX FÛTS du cœur couronné MEURENT en
+  devenant futaie ancienne (`stockDArbre` exclut `old_growth`) — le plus grand massif troque
+  ses vieux fûts contre LE teaser, et c'est la hiérarchie voulue. Les sentes contournent la
+  bbox comme avant ; la brume de la Combe reste calée sur la bbox (compacte désormais —
+  l'affiner au sol est consigné, pas exigé).
+
+**Critères** *(seeds de garde, taille de production)* :
+
+- **A24** — LA MORT DES TAMPONS : plus aucun `48×40` posé — la forme du Bois Noir est
+  ORGANIQUE (sa bbox n'est pas remplie à 100 %, et elle varie d'une seed à l'autre), le sel
+  `'SETP'` a disparu, et chaque set-piece naît UNE fois sur chaque seed de garde (A1 tient).
+- **A25** — LE BUDGET EST UN CONTRAT EXACT : la futaie ancienne de la Racine fait
+  EXACTEMENT `COURONNE_BOIS` tuiles (la croissance est exacte, pas approchée) ; les
+  fourchettes A17 re-mesurées restent tenues (MESURÉ : forêt 13,3-14,1 pour 12-18).
+- **A26** — LA COURONNE EST UNE MASSE, AU BON ENDROIT : le Bois Noir est UNE composante
+  8-connexe (jamais deux lobes reliés par rien) ; la mare (`≥ MARE_BUDGET` tuiles de
+  haut-fond) est nichée dans la bbox de la Combe — le PROFOND d'un lac voisin a le droit d'y
+  paraître, la couronne humide grandit AUTOUR des eaux et l'anneau de R45 est gardé par
+  A2bis ; le centre du Cercle est une tuile de fleuraie dans la bande nord ; la mare
+  n'enclave personne (A13 vert).
+- **A27** — DÉTERMINISME ET GARDES D'AVAL : double génération identique zones comprises
+  (l'élection est pure, tri stable) ; A7bis (aucune route dans la bbox) tient ; le compte de
+  la loterie ré-épinglé à la MESURE s'il bouge ; smoke t0 : les captures visent le CENTROÏDE
+  des tuiles couronnées, plus le centre d'une boîte.
+
+*Réglages : `COURONNE_BOIS`, `COURONNE_COMBE`, `ROSELIERE_BUDGET`, `MARE_BUDGET` dans
+`SET_PIECES` (worldgen — se règle en regardant une carte). Consigné pour plus tard, pas
+exigé ici : la brume de la Combe échantillonnée au sol plutôt qu'à la boîte ; un fait
+d'annales « naturel » pour le couronnement (les annales n'ont aujourd'hui que des faits
+humains).*
 
 ---
 
 ## §3 — Les set-pieces : des ENDROITS, pas des timbres
+
+*(RÉVISÉ le 2026-08-16 — étage 3, §2quinquies : les corps et les charges de R9-R12 restent,
+mais la NAISSANCE change — élection et couronnement, plus jamais un tampon posé.)*
 
 Un « Verger sauvage » de 3×3 tuiles ne peut pas produire d'émotion : on n'entre jamais *dedans*. Don't Starve le fait depuis dix ans : quelques morceaux de bravoure par carte, grands, nommés, qui ne ressemblent qu'à eux-mêmes.
 

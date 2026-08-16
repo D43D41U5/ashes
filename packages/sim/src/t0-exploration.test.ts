@@ -17,6 +17,7 @@ import {
   TERRAIN_HEATH,
   TERRAIN_LARCH,
   TERRAIN_MARSH,
+  TERRAIN_OLD_GROWTH,
   TERRAIN_PINE,
   TERRAIN_REED_MARSH,
   TERRAIN_ROAD,
@@ -28,8 +29,9 @@ import {
 } from './balance'
 import { createEmptyMap } from './map'
 import { capFor, POI_TYPES } from './poi'
-import { estCoeur, TERRAINS_BOISES_MASSIF } from './profondeur'
+import { composantesDeMasque, estCoeur, TERRAINS_BOISES_MASSIF } from './profondeur'
 import { CREUX } from './racine-relief'
+import { SET_PIECES } from './zonegen-setpieces'
 import { CONTENU, placeZoneNodes } from './zone-content'
 import { generateZonedTerrain, type CarteZonee } from './zonegen'
 import { EAU, estUnCoude } from './zonegen-water'
@@ -816,6 +818,76 @@ describe('A19 (§2quater) — la profondeur intra-massif se dérive et se mérit
       }
       expect(fautes, premiere).toBe(0)
       expect(coeurs, `seed ${seed} : aucun massif assez grand pour un cœur`).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('A24-A26 (§2quinquies) — la couronne : élue, budgétée, d\'une seule masse', () => {
+  it('A24 — la mort des tampons : la forme du Bois Noir est ORGANIQUE et varie d\'une seed à l\'autre', () => {
+    const formes: string[] = []
+    for (const { c } of mondes) {
+      const seed = c.graphe.seed
+      const bois = c.map.zones.find((z) => z.kind === 'bois_noir')!
+      expect(bois, `seed ${seed} : pas de Bois Noir`).toBeDefined()
+      formes.push(`${bois.w}x${bois.h}`)
+      // Une bbox de tampon serait pleine à 100 % : l'organique ne l'est jamais.
+      let corps = 0
+      for (let y = bois.y; y < bois.y + bois.h; y++) {
+        for (let x = bois.x; x < bois.x + bois.w; x++) {
+          if (c.map.terrain[y * c.map.width + x] === TERRAIN_OLD_GROWTH) corps += 1
+        }
+      }
+      const taux = corps / (bois.w * bois.h)
+      expect(taux, `seed ${seed} : bbox pleine à ${(100 * taux).toFixed(0)} % — un tampon ?`).toBeLessThan(0.95)
+      expect(taux, `seed ${seed} : bbox presque vide — la couronne s'est éparpillée`).toBeGreaterThan(0.2)
+    }
+    expect(new Set(formes).size, `les trois seeds rendent la même forme ${formes[0]} — un tampon déguisé`).toBeGreaterThan(1)
+  })
+
+  it('A25 — le budget est un CONTRAT : la futaie ancienne de la Racine fait exactement COURONNE_BOIS tuiles', () => {
+    for (const { c } of mondes) {
+      const seed = c.graphe.seed
+      const { width, height, terrain } = c.map
+      let futaie = 0
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = y * width + x
+          if (c.zone[i] === c.graphe.racine && terrain[i] === TERRAIN_OLD_GROWTH) futaie += 1
+        }
+      }
+      expect(futaie, `seed ${seed} : ${futaie} tuiles de futaie ancienne`).toBe(SET_PIECES.COURONNE_BOIS)
+    }
+  })
+
+  it('A26 — UNE seule masse ; la mare est un haut-fond niché dans la Combe ; le Cercle est sur la fleuraie du nord', () => {
+    for (const { c } of mondes) {
+      const seed = c.graphe.seed
+      const { width, height, terrain } = c.map
+      // Le Bois Noir est UNE composante 8-connexe (jamais deux lobes reliés par rien).
+      const masque = new Uint8Array(width * height)
+      for (let i = 0; i < masque.length; i++) {
+        if (c.zone[i] === c.graphe.racine && terrain[i] === TERRAIN_OLD_GROWTH) masque[i] = 1
+      }
+      const comp = composantesDeMasque(masque, width, height)
+      expect(comp.tailles.length, `seed ${seed} : le Bois Noir est en ${comp.tailles.length} morceaux`).toBe(1)
+      // La mare : du haut-fond DANS la bbox de la Combe. (Le PROFOND d'un lac voisin a le
+      // droit d'y paraître : la couronne humide grandit AUTOUR des eaux — c'est sa nature —
+      // et l'anneau de R45 est déjà gardé par A2bis sur toute la Racine.)
+      const combe = c.map.zones.find((z) => z.kind === 'combe_brumeuse')!
+      let mare = 0
+      for (let y = combe.y; y < combe.y + combe.h; y++) {
+        for (let x = combe.x; x < combe.x + combe.w; x++) {
+          if (terrain[y * width + x] === TERRAIN_SHALLOW_WATER) mare += 1
+        }
+      }
+      expect(mare, `seed ${seed} : ${mare} tuiles de mare`).toBeGreaterThanOrEqual(SET_PIECES.MARE_BUDGET)
+      // Le Cercle : centré sur la fleuraie, dans la bande nord.
+      const cercle = c.map.zones.find((z) => z.kind === 'cercle_pierres')!
+      const cx = Math.floor(cercle.x + cercle.w / 2)
+      const cy = Math.floor(cercle.y + cercle.h / 2)
+      const r = c.graphe.zones[c.graphe.racine]!.rect!
+      expect(terrain[cy * width + cx], `seed ${seed} : le centre du Cercle n'est pas une fleuraie`).toBe(TERRAIN_FLOWER_MEADOW)
+      expect(cy, `seed ${seed} : le Cercle hors de la bande nord`).toBeLessThan(r.y + SET_PIECES.CERCLE_NORD_FRAC * r.h + cercle.h)
     }
   })
 })

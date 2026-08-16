@@ -1333,13 +1333,29 @@ const SCENARIOS = {
         const z = (m.zones ?? []).find((q) => q.kind === k)
         return z ? { x: z.x + z.w / 2, y: z.y + z.h / 2 } : null
       }
+      // Les COURONNES (§2quinquies A27) sont organiques : le centre de leur bbox peut être
+      // hors du corps (un massif en croissant). On vise le CENTROÏDE des tuiles du corps.
+      const centroide = (k, ids) => {
+        const z = (m.zones ?? []).find((q) => q.kind === k)
+        if (!z) return null
+        let sx = 0
+        let sy = 0
+        let n = 0
+        for (let y = z.y; y < z.y + z.h; y++) {
+          for (let x = z.x; x < z.x + z.w; x++) {
+            if (ids.includes(m.terrain[y * m.width + x])) { sx += x; sy += y; n += 1 }
+          }
+        }
+        return n ? { x: sx / n + 0.5, y: sy / n + 0.5 } : { x: z.x + z.w / 2, y: z.y + z.h / 2 }
+      }
       const gue = (m.zones ?? []).find((q) => q.name === 'le Gué')
       // Le seuil le plus proche du Bois Noir, pour voir des bornes ENTIÈRES (pas un secours).
       const s = (m.seuils ?? []).find((q) => !q.secours) ?? (m.seuils ?? [])[0]
       return {
         seuil: s ? { x: s.x, y: s.y } : null,
         gue: gue ? { x: gue.x + 3.5, y: gue.y + 3.5 } : null,
-        bois: centre('bois_noir'), cercle: centre('cercle_pierres'), combe: centre('combe_brumeuse'),
+        bois: centroide('bois_noir', [22]), cercle: centre('cercle_pierres'),
+        combe: centroide('combe_brumeuse', [19, 8, 4]), // roselière, marais, haut-fond
         tour: centre('tour_guet'), ferme: centre('ferme_ruinee'),
       }
     })
