@@ -83,23 +83,32 @@ describe('l’évacuation (A3)', () => {
     expect(sim.evacuation).toEqual({ tx, ty })
   })
 
-  it('l’arche LÈVE L’ANCRE au jour 58 : l’embarqué est sauvé, le marqueur disparaît (V2-24)', () => {
+  it('l’arche LÈVE L’ANCRE au jour 58 — et UNE SEULE FOIS : partie, elle ne revient pas', () => {
     const sim = makeSim()
     sim.tick = (SEASON.EVAC_DAY - 1) * TICKS_PER_CYCLE - 5
-    runTo(sim, sim.tick + 20) // ouverture (jour 55)
+    const events: SimEvent[] = []
+    runTo(sim, sim.tick + 20, events) // ouverture (jour 55)
     const evac = sim.evacuation
     expect(evac).not.toBeNull()
     // Un survivant monte À BORD (dans le rayon), un autre reste au loin.
     const aboard = spawnEntity(sim, evac!.tx + 0.5, evac!.ty + 0.5)
     const ashore = spawnEntity(sim, evac!.tx + 20, evac!.ty + 20)
-    // On pousse jusqu'au départ (EVAC_DAY + EVAC_DEPART_DAYS = 58).
+    // On pousse jusqu'au départ (EVAC_DAY + EVAC_DEPART_DAYS = 58), PUIS BIEN AU-DELÀ.
+    // L'ancien test s'arrêtait 30 ticks après et demandait `some(ark_departed)` : il était
+    // AVEUGLE à la boucle ouvre→part émise à chaque tick (57 600 événements/jour mesurés au
+    // banc de saison, 2026-08-16) — la présence était vraie, l'unicité était fausse.
     sim.tick = (SEASON.EVAC_DAY + SEASON.EVAC_DEPART_DAYS - 1) * TICKS_PER_CYCLE - 5
-    const events: SimEvent[] = []
-    runTo(sim, sim.tick + 30, events)
+    runTo(sim, sim.tick + 200, events)
+    // Et le LENDEMAIN du départ ne rouvre rien non plus.
+    sim.tick = (SEASON.EVAC_DAY + SEASON.EVAC_DEPART_DAYS) * TICKS_PER_CYCLE + 5
+    runTo(sim, sim.tick + 20, events)
     expect(sim.evacuatedIds).toContain(aboard) // sauvé
     expect(sim.evacuatedIds).not.toContain(ashore) // laissé
     expect(sim.evacuation).toBeNull() // l'arche est partie, le marqueur disparaît
-    expect(events.some((e) => e.type === 'ark_departed')).toBe(true)
+    expect(events.filter((e) => e.type === 'ark_departed')).toHaveLength(1)
+    expect(events.filter((e) => e.type === 'evacuation_opened')).toHaveLength(1)
+    // Un embarqué compte UNE fois au verdict — pas une fois par tick de boucle.
+    expect(new Set(sim.evacuatedIds).size).toBe(sim.evacuatedIds.length)
   })
 })
 

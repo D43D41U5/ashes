@@ -44,6 +44,11 @@ export const SAVE_FORMAT_VERSION = 1
  */
 const REPLIS_EPHEMERES: Readonly<Record<string, () => unknown>> = {
   reveils: () => [],
+  // Pas éphémère, mais un repli HONNÊTE existe : une sauvegarde d'avant le champ (2026-08-16)
+  // n'a jamais vu l'Arche partir — `false` est la vérité de ce monde-là. Une vallée d'avant
+  // sauvée APRÈS le jour 58 portait la boucle ouvre→part du bug : recollée à `false`, l'Arche
+  // y repart une dernière fois puis se verrouille — l'état guérit de lui-même.
+  arkDeparted: () => false,
 }
 
 /** Recolle les champs éphémères absents d'une sauvegarde antérieure. Rend les clés manquantes. */
@@ -78,7 +83,7 @@ function comblerEphemeres(brut: Record<string, unknown>): string[] {
  * de repli. C'est la décision qui manquait ; elle n'est plus contournable en silence.
  */
 export const SAVE_REQUIRED_KEYS: readonly string[] = [
-  'aggressions', 'blood', 'calendarScale', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
+  'aggressions', 'arkDeparted', 'blood', 'calendarScale', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
   'dens', 'entities', 'evacuatedIds', 'evacuation', 'events', 'faunaCap', 'faunaQuiet',
   'functions', 'groundItems', 'grounds', 'home', 'hordes', 'lastConvoyDay', 'lastRefugeeDay',
   'map', 'megaHordeSpawned', 'monsters', 'nextCorpseId', 'nextEntityId', 'nextGroundItemId',

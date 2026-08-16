@@ -222,8 +222,10 @@ export function advanceWorldEvents(state: SimState): void {
     h.memberEntityIds.some((id) => state.entities.some((e) => e.id === id)),
   )
 
-  // L'évacuation s'ouvre (spec saison R3).
-  if (state.evacuation === null && day >= SEASON.EVAC_DAY) {
+  // L'évacuation s'ouvre (spec saison R3) — une fois par saison : partie, l'Arche ne
+  // revient pas (`arkDeparted`), sinon ce bloc rouvrait l'évacuation au tick suivant
+  // le départ et la boucle ouvre→part inondait le flux (mesuré au banc de saison).
+  if (state.evacuation === null && !state.arkDeparted && day >= SEASON.EVAC_DAY) {
     const roadTiles: number[] = []
     for (let i = 0; i < state.map.terrain.length; i++) {
       if (state.map.terrain[i] === TERRAIN_ROAD) roadTiles.push(i)
@@ -249,6 +251,7 @@ export function advanceWorldEvents(state: SimState): void {
     }
     emitEvent(state, { type: 'ark_departed', tick: state.tick, tx: evac.tx, ty: evac.ty, saved: state.evacuatedIds.length })
     state.evacuation = null // partie : le marqueur disparaît
+    state.arkDeparted = true // et elle ne repart pas — le verrou de la réouverture
   }
 
   // La fin de saison : les verdicts (spec saison R4).

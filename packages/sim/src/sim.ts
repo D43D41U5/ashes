@@ -261,6 +261,13 @@ export interface SimState {
   /** La saison (spec saison) : méga-horde tirée, évacuation ouverte, fin émise. */
   megaHordeSpawned: boolean
   evacuation: { tx: number; ty: number } | null
+  /** L'ARCHE EST PARTIE — le verrou une-seule-fois, comme `megaHordeSpawned`. Sans lui,
+   *  `evacuation = null` au départ re-remplissait la condition d'ouverture au tick suivant :
+   *  ouvre→part→ouvre→part À CHAQUE TICK dès le jour 58 (57 600 événements/jour mesurés au
+   *  banc de saison le 2026-08-16, `evacuatedIds` regonflé en boucle, un tirage RNG par
+   *  réouverture). Absent d'une vieille sauvegarde : `undefined` vaut `false`, l'Arche n'y
+   *  était jamais partie. */
+  arkDeparted: boolean
   /** L'ARCHE (V2-24) : les entités montées à bord AVANT le départ (dans le rayon à l'heure du
    *  départ). L'évacuation n'est plus un marqueur passif — elle LÈVE L'ANCRE : seuls les
    *  embarqués comptent au verdict Foyer, pas ceux qui traînent près à la fin. */
@@ -432,6 +439,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     aggressions: [],
     megaHordeSpawned: false,
     evacuation: null,
+    arkDeparted: false,
     evacuatedIds: [],
     visitedPois: [],
     seasonEnded: false,
