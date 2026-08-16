@@ -79,7 +79,7 @@ sente sera presque toujours « pillée » — c'est voulu, c'est la règle de le
 - **A6** — déterminisme : double génération identique sur TOUS les plans ; aucun tirage sur le PRNG partagé dans `poi-batis` (hash positionnel seulement).
 - **A7** — recensement : sur ≥ 4 seeds, chaque type du périmètre naît (A19) et les effectifs avant/après élargissement d'empreinte sont rapportés MESURÉS.
 - **A8** — rendu : `charrette` et `autel` ont leur art `bati-art` (albédo + `_lit`) ; aucun sprite-corps ne double un `BUILT_KIND` (dérivé, automatique).
-- **A9** — perf : coût client (syncStructures, clone snapshot) MESURÉ au décompte projeté (~1 000-1 500 structures), pire seconde et pas moyenne ; le pooling/culling (patron des nœuds) ne s'implémente QUE si la mesure le justifie.
+- **A9** — perf : coût client (syncStructures, clone snapshot) MESURÉ au décompte projeté (~1 000-1 500 structures), pire seconde et pas moyenne ; le pooling/culling (patron des nœuds) ne s'implémente QUE si la mesure le justifie. **MESURÉ le 2026-08-16** (772 structures réelles — le monde n'atteint pas encore la projection, coûts linéaires extrapolés ; prod + SwiftShader, 3 runs × 30 s) : avant 2,6-2,8 ms/snap, pire seconde 78-169 ms/s ; le **mémo du bâti** (dérivations pures mémoïsées sur `id/type/tx/ty/edges`, `snapshot-view.ts`) ramène à 1,2-1,3 ms/snap, pire seconde 50-58 ms/s, coût du mémo 0,03 ms/snap. **Pooling/culling NON justifié à ce décompte** ; seuil de reprise nommé : > ~1 500 structures → séparer statique/dynamique dans la boucle de sprites (détail au journal, 2026-08-16).
 - **A10** — le banc avant/après (≥ 3 seeds) : deltas rapportés, famine jugée au seuil absolu.
 
 ## Étage 2 — le vocabulaire naturel (décision d'Alexis, 2026-08-10 ; **RÉVISÉ le

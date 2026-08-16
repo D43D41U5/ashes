@@ -356,6 +356,41 @@ const PAN_DISTANCE_TUILES = 2
 /** La demi-épaisseur d'une bande d'arête, en tuiles — DÉRIVÉE de l'équilibrage, comme le
  *  dessin (`bati-art`) et la collision (`collision.ts`). Trois lectures, une seule source. */
 
+/**
+ * ═══ LE MÉMO DU BÂTI (mesure A9, lieux-batis — 2026-08-16) ═══
+ *
+ * Les dérivations PURES du tableau de structures — index d'autotuile, `doorPairs`,
+ * `calculerPans` — coûtaient ~1,3 ms par snapshot à 772 structures, recalculées 20 fois par
+ * seconde sur un bâti qui ne change presque jamais. Elles sont désormais mémoïsées sur le
+ * tableau reçu, et la clé de comparaison est EXACTEMENT l'ensemble des champs que ces
+ * dérivations lisent : `id, type, tx, ty, edges` — rien d'autre. Si une dérivation ajoutée
+ * ici se met à lire un champ de plus (`hp`, `open`…), la comparaison DOIT l'apprendre, sinon
+ * elle servira du périmé. La nappe et `pansTombes`, qui dépendent de la position de
+ * l'avatar, restent recalculées à chaque snapshot.
+ */
+interface DerivesBati {
+  /** Le tableau pour lequel tout le reste a été calculé — la clé du mémo. */
+  pour: Structure[]
+  wallTiles: Set<string>
+  clotureTiles: Set<string>
+  massifTiles: Set<string>
+  seuilTiles: Set<string>
+  doubles: ReturnType<typeof doorPairs>
+  pans: ReturnType<typeof calculerPans>
+}
+
+/** Le bâti est-il inchangé AU SENS DES DÉRIVATIONS ? (mêmes champs lus, même ordre — la sim
+ *  n'y touche que par push/splice, l'ordre est stable entre deux changements). */
+function memeBati(a: Structure[], b: Structure[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]!
+    const y = b[i]!
+    if (x.id !== y.id || x.type !== y.type || x.tx !== y.tx || x.ty !== y.ty || x.edges !== y.edges) return false
+  }
+  return true
+}
 
 export class SnapshotView {
   /** Dernier état reçu — lu par la prédiction (collisions) et les inputs. */
@@ -373,6 +408,9 @@ export class SnapshotView {
    * laisse les autres pleins. C'est ce que font Project Zomboid et RimWorld.
    */
   private nappe: Set<string> | null = null
+
+  /** Le mémo des dérivations pures du bâti — voir `DerivesBati` (mesure A9). */
+  private derives: DerivesBati | null = null
 
   /** L'avatar est-il sous le même couvert que cette tuile ? */
   private dedansAvec(tx: number, ty: number): boolean {
@@ -1034,8 +1072,13 @@ export class SnapshotView {
 
   /** Synchronise les sprites de structures avec le snapshot. `self` = position de
    *  l'avatar local, pour la RÉVÉLATION des toits (comme la cime des arbres, R24). */
-  private syncStructures(structures: Structure[], self?: { x: number; y: number }): void {
-    this.structures = structures
+  /** Les dérivations pures du bâti, servies par le mémo (voir `DerivesBati`) : recalculées
+   *  SEULEMENT quand le tableau change au sens de `memeBati`. */
+  private derivesDe(structures: Structure[]): DerivesBati {
+    if (this.derives !== null && memeBati(this.derives.pour, structures)) {
+      this.derives.pour = structures // des deux tableaux égaux on garde le neuf — l'ancien se libère
+      return this.derives
+    }
     // MURS CONTINUS (décision d'Alexis) : un mur s'autotuile sur ses voisins (murs
     // ET portes) pour former une paroi, pas des carrés juxtaposés. On indexe d'abord.
     const wallTiles = new Set<string>()
@@ -1054,15 +1097,28 @@ export class SnapshotView {
     // l'ouest et à l'est — le montant tombe de ce côté-là, et la porte devient une ouverture.
     const seuilTiles = new Set<string>()
     for (const s of structures) if (s.type === 'encadrement') seuilTiles.add(`${s.tx},${s.ty}`)
-    // LA PORTE DOUBLE SE LIT ICI (spec construction R27) : l'appariement est DÉRIVÉ du snapshot
-    // à chaque passage, jamais stocké — la même dérivation que la sim (`doorPairs`, une seule
-    // vérité pour « ces deux vantaux font un cadre »), recalculée comme la nappe et les pans.
-    const doubles = doorPairs(structures)
+    // LA PORTE DOUBLE SE LIT ICI (spec construction R27) : l'appariement est DÉRIVÉ du snapshot,
+    // jamais posé en état — la même dérivation que la sim (`doorPairs`, une seule vérité pour
+    // « ces deux vantaux font un cadre »). LES PANS — l'unité d'effacement du bâti — sont un
+    // dérivé pur du même tableau : ici se calcule QUEL côté de bâtiment PEUT s'effacer (le
+    // pourquoi vit dans `render/pans.ts`) ; quel pan est effectivement TOMBÉ suit l'avatar,
+    // donc vit hors mémo (`pansTombes`, à chaque snapshot).
+    this.derives = {
+      pour: structures,
+      wallTiles,
+      clotureTiles,
+      massifTiles,
+      seuilTiles,
+      doubles: doorPairs(structures),
+      pans: calculerPans(structures),
+    }
+    return this.derives
+  }
+
+  private syncStructures(structures: Structure[], self?: { x: number; y: number }): void {
+    this.structures = structures
+    const { wallTiles, clotureTiles, massifTiles, seuilTiles, doubles, pans } = this.derivesDe(structures)
     this.nappe = calculerNappe(structures, self)
-    // LES PANS — l'unité d'effacement du bâti. Recalculés à chaque snapshot comme la nappe :
-    // dérivé pur, jamais stocké. C'est ici que se décide QUEL mur s'efface, et le pourquoi vit
-    // dans `render/pans.ts` (un côté de bâtiment, brèches comprises, à 2 tuiles).
-    const pans = calculerPans(structures)
     const tombes = pansTombes(pans, self, PAN_DISTANCE_TUILES)
     const seen = new Set<number>()
     /** La cible de démolition a-t-elle été VUE cette frame ? Sinon le halo s'éteint — sans
