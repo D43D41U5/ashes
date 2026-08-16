@@ -114,8 +114,13 @@ describe('les tables de balance se répondent (pas de trou silencieux)', () => {
     }
   })
 
-  it('rien ne périme sans être un aliment (une table ne déborde pas sur l\'autre)', () => {
+  it('rien ne périme sans être un aliment — sauf les exceptions NOMMÉES', () => {
+    // LES VERS (forêts-vivantes §1) sont la première exception : un APPÂT périssable qui
+    // n'est pas de la nourriture — c'est précisément son design (appâter cesse de coûter
+    // des points de faim, et un appât se pose frais). Toute exception future se nomme ici.
+    const APPATS_PERISSABLES: ItemId[] = ['worms']
     for (const i of Object.keys(SPOIL_CYCLES) as ItemId[]) {
+      if (APPATS_PERISSABLES.includes(i)) continue
       expect(FOOD_VALUES[i], `${i} périme mais ne nourrit pas`).toBeDefined()
     }
   })

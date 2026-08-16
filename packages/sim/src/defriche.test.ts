@@ -149,7 +149,8 @@ describe('D1 — la repousse ne se rouvre pas dans l’emprise', () => {
       .filter(([, d]) => d.renewable)
       .map(([t]) => t)
       .sort()
-    expect(vivants).toEqual(['berry_bush', 'champignon', 'fiber_plant'])
+    // + leaf_pile le 2026-08-16 (forêts-vivantes §1) : les feuilles retombent.
+    expect(vivants).toEqual(['berry_bush', 'champignon', 'fiber_plant', 'leaf_pile'])
   })
 })
 
