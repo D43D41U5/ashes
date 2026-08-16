@@ -100,6 +100,16 @@ export interface Monster {
   /** La pile qu'elle mange (`state.groundItems`). */
   baitId?: number
 
+  /** LA COULÉE DE LA HARDE (forêts-vivantes §4 R5quater) : l'offset du DÉBUT de « sa »
+   *  coulée dans `map.coulees` (−1 : aucune à portée de son coin) — mémorisé une fois,
+   *  pure fonction du coin et de la carte. */
+  couleeDebut?: number
+  /** Le pas courant le long du chemin (index absolu dans la liste) ; −1 : elle a bu, la
+   *  descente est faite pour cette fenêtre. Purgé à la sortie du crépuscule. */
+  couleePas?: number
+  /** Elle BOIT : tête baissée (la fenêtre du chasseur, ouverte par la géographie). */
+  drinkUntil?: number
+
   /** LE CROCHET (spec chasse C15) : le cap tiré pour ce burst — il tient jusqu'au suivant. */
   jinkDx?: number
   jinkDy?: number

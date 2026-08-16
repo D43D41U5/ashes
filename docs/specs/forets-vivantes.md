@@ -93,11 +93,24 @@ géographie module et n'autorise jamais, feel en pente continue, FX quantifiés 
   à la PREMIÈRE lecture, fonction pure de la position : zéro coût par tick, déterministe et
   rejouable) — la géographie module le combien, jamais le si.
 - **R5ter** — Le rendu : un décal de terre battue (NEAREST) sur les tuiles de coulée, usure
-  en PENTE CONTINUE (plus marquée vers l'eau où les pas convergent) ; le clutter s'y tait.
-  HONNÊTETÉ CONSIGNÉE : en v1 le trajet quotidien de la harde est une fiction lisible (la
-  coulée dit vrai sur la géographie — couche, eau — pas sur un déplacement simulé) ; la
-  version où la harde l'emprunte aux heures crépusculaires est un chantier faune à part.
-  Racine seulement en v1 (le champ de profondeur y vit) — la Sylve suivra avec lui.
+  en PENTE CONTINUE (plus marquée vers l'eau où les pas convergent — REGARDÉ et renforcé le
+  2026-08-16 : 0,6-0,9, l'illisible ment par omission) ; le clutter s'y tait. Racine
+  seulement en v1 (le champ de profondeur y vit) — la Sylve suivra avec lui.
+- **R5quater** — LA HARDE EMPRUNTE SA COULÉE (décision d'Alexis, 2026-08-16 : « t'as fait
+  en sorte que les hardes suivent les coulées ? ») — la trace ne ment plus. Aux heures
+  CRÉPUSCULAIRES (aube `COULEE_AUBE_*`, soir `COULEE_SOIR_*`), le gibier dont le coin est à
+  ≤ `COULEE_ATTACHE` d'une fin de coulée rejoint le chemin et le DESCEND, pas à pas dans
+  l'ordre du tracé, jusqu'à l'eau — où il BOIT `COULEE_BOIRE_TICKS`, TÊTE BAISSÉE
+  (`drinkUntil` → la fenêtre `BAIT_ALERTNESS` de l'appât) : l'affût au bout de la coulée à
+  l'aube est la leçon que la géographie enseigne. UNE descente par fenêtre ; la priorité de
+  la peur est intacte (fuite, sanglier, couché et appât passent avant) ; AUCUN tirage —
+  l'attache est une fonction pure du coin et de la carte, mémorisée sur la bête (champs
+  JSON optionnels) ; sur une carte sans coulées, la passe est inerte au bit près.
+- **A6** — LA DESCENTE SE PROUVE : en headless sur une coulée posée à la main — au
+  crépuscule, la bête attachée rejoint le chemin, le parcourt DANS L'ORDRE, atteint la
+  dernière tuile et boit (`drinkUntil` posé, tête baissée) ; à midi, rien ; menacée, elle
+  fuit (la priorité tient) ; une seule descente par fenêtre ; sans coulées, aucun champ
+  n'apparaît sur la bête.
 - **A4** — Sur les seeds de garde : ≥ 1 coulée ; chaque coulée relie un cœur (d ≥
   PROF_COEUR − 1 au départ) à une tuile ADJACENTE à l'eau (la liste dit le chemin entier,
   son bout est toujours enregistré) ; toute tuile de chemin est MARCHABLE, dans la Racine,

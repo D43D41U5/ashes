@@ -161,3 +161,64 @@ describe('A3 (§3) — l\'envol de la lisière : la forêt répond au bruit', ()
     expect(m.suspicion).toBeGreaterThanOrEqual(avant + HUNT.ENVOL_SUSPICION - 0.01)
   })
 })
+
+describe('A6 (§4 R5quater) — la harde emprunte sa coulée : la trace ne ment plus', () => {
+  /** Une coulée posée à la main : une ligne de (60,90) vers (60,79) — la « fin » au nord. */
+  function simAvecCoulee(hour: number): { sim: SimState; chemin: number[] } {
+    const map = carteAvecMassif()
+    const chemin: number[] = []
+    for (let y = 90; y >= 79; y--) chemin.push(y * map.width + 60)
+    map.coulees = chemin
+    const sim = createSim(1234, { map, faunaCap: 0, worldEvents: false, cycleOffset: cycleOffsetForStartHour(hour) })
+    return { sim, chemin }
+  }
+
+  it('au crépuscule, elle rejoint le chemin, le DESCEND dans l\'ordre, et BOIT au bout', () => {
+    const { sim, chemin } = simAvecCoulee(6) // l'aube
+    const id = spawnMonster(sim, 'deer', 62.5, 92.5) // près du départ du chemin
+    const m = sim.monsters.find((mm) => mm.entityId === id)!
+    m.groundX = 60
+    m.groundY = 78 // son coin, contre la FIN (l'eau)
+    let sommetAtteint = false
+    for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ && m.drinkUntil === undefined; t++) {
+      tick(sim)
+      const e = sim.entities.find((x) => x.id === id)!
+      if (Math.floor(e.x) === 60 && Math.floor(e.y) === 79) sommetAtteint = true
+    }
+    expect(m.drinkUntil, 'elle n\'a jamais bu').toBeDefined()
+    expect(sommetAtteint, 'elle a bu sans avoir suivi le chemin jusqu\'au bout').toBe(true)
+    expect(m.couleePas).toBe(-1) // une seule descente par fenêtre
+    const e = sim.entities.find((x) => x.id === id)!
+    expect(Math.abs(e.x - 60.5) + Math.abs(e.y - 79.5), 'elle boit ailleurs qu\'au bout').toBeLessThan(2)
+  })
+
+  it('à MIDI, rien — et sans coulées, aucun champ n\'apparaît sur la bête', () => {
+    const { sim } = simAvecCoulee(12)
+    const id = spawnMonster(sim, 'deer', 62.5, 92.5)
+    const m = sim.monsters.find((mm) => mm.entityId === id)!
+    m.groundX = 60
+    m.groundY = 78
+    for (let t = 0; t < 5 * BALANCE.TICK_RATE_HZ; t++) tick(sim)
+    expect(m.couleePas).toBeUndefined()
+    expect(m.drinkUntil).toBeUndefined()
+
+    const nu = makeSim(0, 6) // aube, mais pas de coulées sur cette carte
+    const id2 = spawnMonster(nu, 'deer', 62.5, 92.5)
+    const m2 = nu.monsters.find((mm) => mm.entityId === id2)!
+    m2.groundX = 60
+    m2.groundY = 78
+    for (let t = 0; t < 5 * BALANCE.TICK_RATE_HZ; t++) tick(nu)
+    expect(m2.couleeDebut).toBeUndefined()
+  })
+
+  it('menacée, elle FUIT — la priorité de la peur est intacte', () => {
+    const { sim } = simAvecCoulee(6)
+    const id = spawnMonster(sim, 'deer', 62.5, 92.5)
+    const m = sim.monsters.find((mm) => mm.entityId === id)!
+    m.groundX = 60
+    m.groundY = 78
+    spawnEntity(sim, 62.5, 94.5) // un marcheur dans sa flightRange
+    for (let t = 0; t < 6 * BALANCE.TICK_RATE_HZ && m.fleeSince < 0; t++) tick(sim)
+    expect(m.fleeSince, 'elle a préféré sa promenade à sa peur').toBeGreaterThanOrEqual(0)
+  })
+})

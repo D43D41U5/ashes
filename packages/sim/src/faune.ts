@@ -1754,6 +1754,106 @@ function nearestPile(
  *
  * Rend `true` s'il a consommé son tick.
  */
+/** Les heures où la harde descend boire (forêts-vivantes §4 R5quater) : l'aube et le soir. */
+function crepuscule(hour: number): boolean {
+  return (hour >= HUNT.COULEE_AUBE_DE && hour < HUNT.COULEE_AUBE_A)
+    || (hour >= HUNT.COULEE_SOIR_DE && hour < HUNT.COULEE_SOIR_A)
+}
+
+/**
+ * LA HARDE EMPRUNTE SA COULÉE (forêts-vivantes §4 R5quater) — la trace ne ment plus. Aux
+ * heures crépusculaires, le gibier dont le COIN est proche d'une fin de coulée rejoint le
+ * chemin et le DESCEND, pas à pas dans l'ordre du tracé, jusqu'à l'eau — où il BOIT, tête
+ * baissée (`drinkUntil` → BAIT_ALERTNESS : la fenêtre d'affût que la géographie enseigne).
+ * UNE descente par fenêtre (couleePas = −1 après avoir bu), purge à la sortie du crépuscule.
+ * AUCUN tirage : l'attache est une fonction pure du coin et de la carte (mémorisée), le pas
+ * suit l'ordre de la liste — sur une carte sans coulées, la passe est inerte au bit près.
+ */
+function couleeStep(state: SimState, monster: Monster, entity: Entity, hour: number): boolean {
+  const coulees = state.map.coulees
+  if (!coulees || coulees.length === 0 || !isPrey(monster.type)) return false
+  if (!crepuscule(hour)) {
+    if (monster.couleePas !== undefined) delete monster.couleePas
+    if (monster.drinkUntil !== undefined) delete monster.drinkUntil
+    return false
+  }
+
+  // Elle boit : immobile, tête baissée — puis la vie normale reprend jusqu'à l'autre fenêtre.
+  if (monster.drinkUntil !== undefined) {
+    if (state.tick < monster.drinkUntil) {
+      monster.wanderDx = 0
+      monster.wanderDy = 0
+      return true
+    }
+    delete monster.drinkUntil
+    return false
+  }
+  if (monster.couleePas === -1) return false // elle a bu cette fenêtre
+
+  // L'ATTACHE, mémorisée UNE fois : « sa » coulée = celle dont la FIN (l'eau) est la plus
+  // proche de son coin, à ≤ COULEE_ATTACHE. Fonction pure du coin et de la carte.
+  const width = state.map.width
+  if (monster.couleeDebut === undefined) {
+    monster.couleeDebut = -1
+    if (monster.groundX !== undefined && monster.groundY !== undefined) {
+      let debut = 0
+      let meilleure = HUNT.COULEE_ATTACHE * HUNT.COULEE_ATTACHE
+      for (let k = 0; k <= coulees.length; k++) {
+        if (k < coulees.length && coulees[k]! >= 0) continue
+        if (k > debut) {
+          const finIdx = coulees[k - 1]!
+          const fx = finIdx % width
+          const d2 = distSq(monster.groundX + 0.5, monster.groundY + 0.5, fx + 0.5, (finIdx - fx) / width + 0.5)
+          if (d2 < meilleure) {
+            meilleure = d2
+            monster.couleeDebut = debut
+          }
+        }
+        debut = k + 1
+      }
+    }
+  }
+  if (monster.couleeDebut < 0) return false
+
+  // La borne du chemin, puis le raccord : au premier tick de la fenêtre, elle rejoint la
+  // tuile du chemin la plus PROCHE d'elle (près de l'eau où elle vit), et descend depuis là.
+  let fin = monster.couleeDebut
+  while (fin < coulees.length && coulees[fin]! >= 0) fin += 1
+  if (monster.couleePas === undefined) {
+    let pas = -1
+    let meilleure = HUNT.COULEE_ATTACHE * HUNT.COULEE_ATTACHE
+    for (let k = monster.couleeDebut; k < fin; k++) {
+      const i = coulees[k]!
+      const x = i % width
+      const d2 = distSq(entity.x, entity.y, x + 0.5, (i - x) / width + 0.5)
+      if (d2 < meilleure) {
+        meilleure = d2
+        pas = k
+      }
+    }
+    if (pas < 0) return false // trop écartée du chemin : pas de descente forcée
+    monster.couleePas = pas
+  }
+
+  const cible = coulees[Math.min(monster.couleePas, fin - 1)]!
+  const cx = (cible % width) + 0.5
+  const cy = (cible - (cible % width)) / width + 0.5
+  if (distSq(entity.x, entity.y, cx, cy) <= 0.6 * 0.6) {
+    if (monster.couleePas >= fin - 1) {
+      // Le bout du chemin : l'eau. Elle boit — et ne redescendra pas cette fenêtre.
+      monster.drinkUntil = state.tick + HUNT.COULEE_BOIRE_TICKS
+      monster.couleePas = -1
+      monster.wanderDx = 0
+      monster.wanderDy = 0
+      return true
+    }
+    monster.couleePas += 1
+    return true
+  }
+  moveToward(state, monster, entity, cx, cy, false, FAUNA.WARY_SPEED)
+  return true
+}
+
 function baitStep(state: SimState, monster: Monster, entity: Entity): boolean {
   // Il mange : il ne fait rien d'autre, et il est parfaitement approchable.
   if (monster.baitUntil !== undefined) {
@@ -1887,6 +1987,7 @@ export function faunaStep(
     monster.rootUntil !== undefined ? FAUNA.ROOT_ALERTNESS
     : monster.bedded ? HUNT.BED_ALERTNESS
     : monster.baitUntil !== undefined ? HUNT.BAIT_ALERTNESS
+    : monster.drinkUntil !== undefined ? HUNT.BAIT_ALERTNESS // elle BOIT (§4 R5quater) — même fenêtre
     : 1
   const alertness = headDown * watch
   const alertRange = (def.alertRange ?? 0) * alertness
@@ -2126,6 +2227,11 @@ export function faunaStep(
   // L'APPÂT (chasse C18) : la nourriture qu'un chasseur a POSÉE. Elle y va, elle
   // mange, elle ne voit plus rien — la fenêtre du chasseur, ouverte de sa main.
   if (!threatened && baitStep(state, monster, entity)) return
+
+  // LA COULÉE (forêts-vivantes §4 R5quater) : au crépuscule, la harde descend SON chemin
+  // et boit — la fenêtre d'affût que la géographie enseigne. Après l'appât (une pile posée
+  // prime : c'est la main du chasseur), avant l'impatience et le repos.
+  if (!threatened && couleeStep(state, monster, entity, hour)) return
 
   // L'IMPATIENCE (R6bis) : alertée trop longtemps face à une menace plantée là,
   // la bête ne reste pas statue — elle tape du sabot, fixe, puis S'ÉCARTE au

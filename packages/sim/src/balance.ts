@@ -2766,6 +2766,18 @@ export const HUNT = {
    *  amène le nez dessus. Multiplie BAIT_SEEK pour les piles posées sur un chemin. */
   BAIT_COULEE_FACTEUR: 1.5,
   /**
+   * LA HARDE EMPRUNTE SA COULÉE (forêts-vivantes §4 R5quater) : aux heures crépusculaires,
+   * le gibier attaché à un coin proche d'une fin de coulée DESCEND le chemin et BOIT — tête
+   * baissée (BAIT_ALERTNESS), la fenêtre d'affût que la géographie enseigne. Une descente
+   * par fenêtre, jamais un tirage : la trace ne ment plus.
+   */
+  COULEE_AUBE_DE: 5,
+  COULEE_AUBE_A: 8,
+  COULEE_SOIR_DE: 17,
+  COULEE_SOIR_A: 20,
+  COULEE_ATTACHE: 28, //     coin → fin de coulée, en tuiles (et bête → chemin, au raccord)
+  COULEE_BOIRE_TICKS: 200, // 10 s tête baissée au bord de l'eau
+  /**
    * LE TERRIER (C16). Le lapin naît avec le sien (sa tuile de naissance, hors
    * champ par construction). Levé, il fuit VERS lui — sauf à devoir traverser la
    * menace — et il y DISPARAÎT. La chasse au lapin devient une géométrie :
