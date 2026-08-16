@@ -250,6 +250,8 @@ describe('le contenu, sur la vraie carte', () => {
     const a = generateZonedTerrain(42)
     const b = generateZonedTerrain(42)
     expect(placeZoneNodes(a)).toEqual(placeZoneNodes(b))
+    // Les coulées voyagent avec la carte (forêts-vivantes §4) : mêmes chemins, au bit près.
+    expect(a.map.coulees).toEqual(b.map.coulees)
   }, 60_000)
 })
 

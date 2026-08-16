@@ -146,6 +146,11 @@ import { fireStateAt, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CR
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
 const PROFONDEUR_ASSOMBRIT = 0.14
+/** La terre battue des coulées (forêts-vivantes §4) : un brun de sol nu, posé en alpha
+ *  croissant vers l'eau — l'usure des pas qui convergent. */
+const TERRE_BATTUE_COULEE = 0x7a6238
+/** L'id de la sente (balance TERRAIN_ROAD = 2) — le décal de coulée s'interrompt dessus. */
+const TERRAIN_ROAD_COULEE = 2
 
 /**
  * Le rayon qu'un lieu dévoile, LU DANS LA TABLE DE LA SIM (`POI_CHARGES`) et jamais recopié :
@@ -2710,6 +2715,30 @@ export class WorldScene extends Phaser.Scene {
         }
         g.fillStyle(shade(couleur, grain))
         g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
+      }
+    }
+    // LES COULÉES (forêts-vivantes §4 R5ter) : le décal de terre battue, par-dessus le sol.
+    // L'usure est une PENTE CONTINUE le long du chemin (les pas convergent vers l'eau :
+    // l'aval est plus battu que l'amont), jamais un trait uniforme — et 1 px/tuile = NEAREST
+    // par construction. La sente n'est pas dans la liste : le décal s'interrompt dessus.
+    const coulees = this.map.coulees
+    if (coulees) {
+      let debut = 0
+      for (let k = 0; k <= coulees.length; k++) {
+        if (k < coulees.length && coulees[k]! >= 0) continue
+        const fin = k // [debut, fin) : un chemin, couche → eau
+        for (let j = debut; j < fin; j++) {
+          const i = coulees[j]!
+          if (this.map.terrain[i] === TERRAIN_ROAD_COULEE) continue // la sente reste une sente
+          const t = (j - debut) / Math.max(1, fin - 1 - debut)
+          const usure = 0.35 + 0.35 * t // l'aval se dénude
+          const sol = TERRE_BATTUE_COULEE
+          const cx = i % width
+          const cy = (i - cx) / width
+          g.fillStyle(sol, usure)
+          g.fillRect(cx, cy, 1, 1)
+        }
+        debut = k + 1
       }
     }
     g.generateTexture(key, width, height)

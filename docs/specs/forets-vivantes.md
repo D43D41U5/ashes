@@ -81,15 +81,17 @@ géographie module et n'autorise jamais, feel en pente continue, FX quantifiés 
   pas de gibier, pas de chemin : la grammaire humide/giboyeux vs sec/silencieux gagne un
   lecteur au sol. Tracé au moindre coût sur l'altitude du socle (le patron des sentes —
   fond de vallon, jamais la ligne droite), quantifié, borné, départages stables.
-- **R5bis** — La coulée est un CHAMP ADDITIF (`map.coulees: number[]`, patron `map.fil`),
+- **R5bis** — La coulée est un CHAMP ADDITIF (`map.coulees: number[]`, patron `map.fil` —
+  chemins séparés par -1, et la liste dit le chemin ENTIER, sentes comprises : c'est le
+  DÉCAL qui s'interrompt sur la route, jamais le fait),
   JAMAIS une repeinture de terrain : une ligne non boisée percerait l'érosion et tuerait le
   cœur qui l'a fait naître (A19 de §2quater est la garde). Elle s'enregistre dans les
   champs de `carte-immuable` (statique, gelée). Conséquences de jeu : ① couloir SANS
   nœuds — le prédicat de stérilité (rampe) devient un helper PARTAGÉ (`tuileSterile`) que
   toutes les passes lisent — une passe future ne peut plus l'oublier ; ② un appât posé
-  près d'une coulée porte plus loin (`BAIT_SEEK` majoré — la distance se calcule UNE fois
-  à la pose, stockée sur la pile : zéro coût par tick) — la géographie module le combien,
-  jamais le si.
+  près d'une coulée porte plus loin (`BAIT_SEEK` majoré — le fait est mémorisé sur la pile
+  à la PREMIÈRE lecture, fonction pure de la position : zéro coût par tick, déterministe et
+  rejouable) — la géographie module le combien, jamais le si.
 - **R5ter** — Le rendu : un décal de terre battue (NEAREST) sur les tuiles de coulée, usure
   en PENTE CONTINUE (plus marquée vers l'eau où les pas convergent) ; le clutter s'y tait.
   HONNÊTETÉ CONSIGNÉE : en v1 le trajet quotidien de la harde est une fiction lisible (la
@@ -97,10 +99,10 @@ géographie module et n'autorise jamais, feel en pente continue, FX quantifiés 
   version où la harde l'emprunte aux heures crépusculaires est un chantier faune à part.
   Racine seulement en v1 (le champ de profondeur y vit) — la Sylve suivra avec lui.
 - **A4** — Sur les seeds de garde : ≥ 1 coulée ; chaque coulée relie un cœur (d ≥
-  PROF_COEUR au départ) à une tuile adjacente à l'eau ; AUCUNE tuile de coulée n'est
-  route/rampe/eau/massif de roche ; aucun massif SEC (cœur à plus de `COULEE_PORTEE_EAU`
-  de l'eau) n'en porte ; aucun nœud sur une coulée ; double génération identique champ
-  compris ; `carte-immuable` la hache.
+  PROF_COEUR − 1 au départ) à une tuile ADJACENTE à l'eau (la liste dit le chemin entier,
+  son bout est toujours enregistré) ; toute tuile de chemin est MARCHABLE, dans la Racine,
+  jamais de l'eau (une sente peut en être — le décal s'y interrompt) ; aucun nœud sur une
+  coulée ; double génération identique champ compris ; `carte-immuable` la hache.
 
 ## §5 — LES TACHES DE SOLEIL : la lumière du sous-bois
 

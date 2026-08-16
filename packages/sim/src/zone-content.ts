@@ -267,6 +267,13 @@ function terrainAdmet(type: NodeType, terrain: number): boolean {
 export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   const { width, height, terrain } = c.map
   const nodes: ResourceNode[] = []
+  // LES COULÉES SONT STÉRILES (forêts-vivantes §4 R5bis) : un couloir où l'on circule et
+  // où l'on voit venir. Le prédicat vit ICI, en un point : le semis principal le teste, et
+  // TOUTES les passes appendues l'héritent par l'ensemencement de leurs `occupees` — une
+  // passe future ne peut pas l'oublier.
+  const steriles = (c.map.coulees ?? []).filter((i) => i >= 0)
+  const sterileSet = new Set(steriles)
+  const occupeesPlus = (): Set<number> => new Set([...nodes.map((n) => n.ty * width + n.tx), ...steriles])
   const seed = (c.graphe.seed ^ 0x51ab3f77) | 0
   let id = 1
 
@@ -274,6 +281,7 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
     for (let tx = 0; tx < width; tx++) {
       const i = ty * width + tx
       if (c.rampe[i]) continue // le seuil ne nourrit rien
+      if (sterileSet.has(i)) continue // la coulée non plus (forêts-vivantes §4)
       const t = terrain[i]!
       if (t === TERRAIN_ROAD) continue // rien ne pousse sur une sente (t0-exploration R18)
       if (!TERRAINS[t]?.walkable) continue
@@ -303,23 +311,23 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   // Une seconde passe, à part : sur l'herbe, ces arbres ne sortent pas de la table de la zone
   // (l'herbe n'admet pas le bois, `terrainAdmet`), ils s'y AJOUTENT ; en forêt, ils DENSIFIENT ce
   // que la table donnait déjà. Dans les deux cas ce sont de vrais nœuds à couper — pas du décor.
-  const occupees = new Set(nodes.map((n) => n.ty * width + n.tx))
+  const occupees = occupeesPlus()
   const arbres = arbresDeLaRacine(c, occupees, id)
   for (const a of arbres) nodes.push(a)
   id += arbres.length
 
   // ── LES VERGERS SAUVAGES — le lieu qui portait un NOM et rien d'autre ─────
-  const vergers = vergersSauvages(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  const vergers = vergersSauvages(c, occupeesPlus(), id)
   for (const v of vergers) nodes.push(v)
   id += vergers.length
 
   // ── LES CHAMPIGNONS — abondants à l'humide/l'ombre, TRÈS RARES en forêt (verbe 3) ──
-  const mush = champignonsRares(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  const mush = champignonsRares(c, occupeesPlus(), id)
   for (const m of mush) nodes.push(m)
   id += mush.length
 
   // ── LA FIBRE DES PRAIRIES HUMIDES — la place à fibre de la T0 (spec §2ter R34) ──
-  const fibres = fibresDesPrairies(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  const fibres = fibresDesPrairies(c, occupeesPlus(), id)
   for (const f of fibres) nodes.push(f)
   id += fibres.length
 
@@ -328,17 +336,17 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   if (t) { nodes.push(t); id += 1 }
 
   // ── LE TEASER DU BOIS NOIR — le patron du Filon, appliqué au gros bois ────
-  const vieux = teaserDuBoisNoir(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  const vieux = teaserDuBoisNoir(c, occupeesPlus(), id)
   if (vieux) { nodes.push(vieux); id += 1 }
 
   // ── LA PROFONDEUR PORTE DU JEU (spec §2quater R40) — en QUEUE : aucun nœud d'avant ne bouge ──
-  const baies = baiesDeLisiere(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  const baies = baiesDeLisiere(c, occupeesPlus(), id)
   for (const b of baies) nodes.push(b)
   id += baies.length
-  const coeurs = champignonsDuCoeur(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  const coeurs = champignonsDuCoeur(c, occupeesPlus(), id)
   for (const m of coeurs) nodes.push(m)
   id += coeurs.length
-  const feuilles = tasDeFeuilles(c, new Set(nodes.map((n) => n.ty * width + n.tx)), id)
+  const feuilles = tasDeFeuilles(c, occupeesPlus(), id)
   for (const f of feuilles) nodes.push(f)
   return nodes
 }

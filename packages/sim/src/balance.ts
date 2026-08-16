@@ -2756,6 +2756,9 @@ export const HUNT = {
   ENVOL_SUSPICION: 0.35,
   ENVOL_COOLDOWN_RAYON: 24,
   ENVOL_COOLDOWN_TICKS: 900, // 45 s à 20 Hz
+  /** L'APPÂT SUR UNE COULÉE porte plus loin (forêts-vivantes §4) : le chemin du gibier
+   *  amène le nez dessus. Multiplie BAIT_SEEK pour les piles posées sur un chemin. */
+  BAIT_COULEE_FACTEUR: 1.5,
   /**
    * LE TERRIER (C16). Le lapin naît avec le sien (sa tuile de naissance, hors
    * champ par construction). Levé, il fuit VERS lui — sauf à devoir traverser la

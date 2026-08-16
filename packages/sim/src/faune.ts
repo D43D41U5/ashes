@@ -1706,6 +1706,22 @@ const BAIT_ITEMS: readonly ItemId[] = ['berries', 'raw_meat', 'cooked_meat', 'st
 const CARRION_ITEMS: readonly ItemId[] = ['raw_meat', 'cooked_meat']
 
 /** La pile au sol la plus proche qui porte un de ces items. */
+/** Une pile est-elle POSÉE SUR UNE COULÉE (à ≤ 2 tuiles d'une tuile de chemin) ? Balayage
+ *  de la liste — elle fait quelques centaines d'entrées, et on ne la lit qu'aux piles. */
+function surUneCoulee(state: SimState, px: number, py: number): boolean {
+  const coulees = state.map.coulees
+  if (!coulees) return false
+  const tx = Math.floor(px)
+  const ty = Math.floor(py)
+  const width = state.map.width
+  for (const i of coulees) {
+    if (i < 0) continue
+    const x = i % width
+    if (Math.abs(x - tx) <= 2 && Math.abs((i - x) / width - ty) <= 2) return true
+  }
+  return false
+}
+
 function nearestPile(
   state: SimState,
   entity: Entity,
@@ -1713,10 +1729,16 @@ function nearestPile(
   wanted: readonly ItemId[],
 ): { id: number; x: number; y: number } | undefined {
   let best: { id: number; x: number; y: number } | undefined
-  let bestD = range * range
+  let bestD = Infinity
   for (const p of state.groundItems) {
     if (p.count <= 0 || !wanted.includes(p.item)) continue
+    // L'APPÂT SUR UNE COULÉE PORTE PLUS LOIN (forêts-vivantes §4 R5bis) : le chemin amène
+    // le nez dessus. La géographie module le COMBIEN, jamais le si — le plancher est la
+    // portée nominale, partout. Mémorisé sur la pile à la première lecture (fonction pure
+    // de la position : même tick, même valeur, sur tous les moteurs).
+    const portee = range * ((p.surCoulee ??= surUneCoulee(state, p.x, p.y)) ? HUNT.BAIT_COULEE_FACTEUR : 1)
     const d = distSq(entity.x, entity.y, p.x, p.y)
+    if (d > portee * portee) continue
     if (d < bestD || (d === bestD && best && p.id < best.id)) {
       best = { id: p.id, x: p.x, y: p.y }
       bestD = d

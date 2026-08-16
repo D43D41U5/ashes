@@ -45,6 +45,7 @@ const CHAMPS_HACHES = ['terrain', 'cendre', 'profondeur'] as const
 const CHAMPS_JSON = [
   'width', 'height', 'zones', 'cendreMax', 'zoneGrid', 'zonePas', 'zoneDefs', 'seuils', 'fil',
   'annales', // l'état civil du monde d'avant (stratigraphie S-R16) — immuable comme le reste
+  'coulees', // les chemins du gibier (forêts-vivantes §4) — gelés à l'amorce, comme le fil
 ] as const
 
 /**

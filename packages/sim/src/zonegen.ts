@@ -55,6 +55,7 @@ import { placeCharniers, placePois } from './poi'
 import { densiteDeBase } from './morts'
 import { fbm2, hash2 } from './noise'
 import { deriverProfondeur } from './profondeur'
+import { tracerLesCoulees } from './zonegen-coulees'
 import { masqueDesSeuils, paintWaterRacine, type Riviere } from './zonegen-water'
 import { assainirLeProfondHorsRacine, peindreLesEauxDesZones } from './zonegen-eaux-zones'
 import {
@@ -675,6 +676,10 @@ export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE
     // qui coupent un bois y creusent leur lisière), gelée à l'amorce, statique ensuite.
     profondeur: deriverProfondeur(terrain, zone, g.racine, width, height),
   }
+  // LES COULÉES (forêts-vivantes §4) — dérivées après la profondeur (elles lisent le pic) :
+  // couche → eau, pour chaque massif à cœur qui boit. Champ additif, patron `fil`.
+  const coulees = tracerLesCoulees(terrain, zone, g, width, height, map.profondeur!, creux)
+  if (coulees.length > 0) map.coulees = coulees
   const carte: CarteZonee = { map, graphe: g, zone, rampe }
 
   // ── PASSE 4.5 : LES SET-PIECES ET LES GUÉS ENTRENT DANS LA CARTE ──────────

@@ -108,6 +108,14 @@ export interface WorldMap {
    * avec l'arbre, l'étiquette survit, inerte). Additive : une carte d'avant se relit sans.
    */
   profondeur?: number[]
+  /**
+   * LES COULÉES (forêts-vivantes §4 R5) : les chemins de terre du gibier, couche → eau.
+   * Index de tuile DANS L'ORDRE du tracé, chemins séparés par -1. Donnée STATIQUE, gelée à
+   * l'amorce (hachée par `carte-immuable`), additive : une carte d'avant se relit sans. Le
+   * rendu en dérive le décal d'usure (pente continue sur la position), les passes de nœuds
+   * la lisent comme stérilité (via les `occupees` de `placeZoneNodes`).
+   */
+  coulees?: number[]
 }
 
 /**

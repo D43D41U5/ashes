@@ -60,6 +60,8 @@ export class ClutterLayer {
    *  `DECOR_CLEARING_STRUCTURES`). Rafraîchi par `setBarriers` à chaque snapshot,
    *  car on bâtit et on démolit en jeu : c'est un état vivant, pas figé à la génération. */
   private barriers: Set<number> = new Set()
+  /** Les tuiles de coulée (forêts-vivantes §4) : la terre battue ne porte pas de décor. */
+  private coulees: Set<number> = new Set()
   private warned = false
 
   constructor(
@@ -73,6 +75,7 @@ export class ClutterLayer {
       return map.terrain[ty * map.width + tx] ?? -1
     }
     this.cleared = poiClearings(map)
+    this.coulees = new Set((map.coulees ?? []).filter((i) => i >= 0))
   }
 
   /** LE VENT DE LA SIM (spec chasse C17) : les herbes se couchent dans SON sens —
@@ -118,6 +121,7 @@ export class ClutterLayer {
           const idx = ty * this.map.width + tx
           if (this.cleared.has(idx)) continue // la clairière d'un lieu : rien n'y pousse
           if (this.barriers.has(idx)) continue // un mur/sol posé ici : la tuile est nette
+          if (this.coulees.has(idx)) continue // la terre battue d'une coulée : le pas a tout usé
           const terrain = this.map.terrain[idx] ?? -1
           const props = clutterAt(tx, ty, terrain, this.seed, this.sample, this.map.profondeur?.[idx] ?? 0)
           for (const p of props) {

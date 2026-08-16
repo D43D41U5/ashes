@@ -27,7 +27,7 @@ import {
   TERRAIN_JUNIPER_HEATH,
   TERRAINS,
 } from './balance'
-import { createEmptyMap } from './map'
+import { createEmptyMap, profondeurAt } from './map'
 import { capFor, POI_TYPES } from './poi'
 import { composantesDeMasque, estCoeur, TERRAINS_BOISES_MASSIF } from './profondeur'
 import { CREUX } from './racine-relief'
@@ -888,6 +888,47 @@ describe('A24-A26 (§2quinquies) — la couronne : élue, budgétée, d\'une seu
       const r = c.graphe.zones[c.graphe.racine]!.rect!
       expect(terrain[cy * width + cx], `seed ${seed} : le centre du Cercle n'est pas une fleuraie`).toBe(TERRAIN_FLOWER_MEADOW)
       expect(cy, `seed ${seed} : le Cercle hors de la bande nord`).toBeLessThan(r.y + SET_PIECES.CERCLE_NORD_FRAC * r.h + cercle.h)
+    }
+  })
+})
+
+describe('A4 (forêts-vivantes §4) — les coulées : couche → eau, dérivées, stériles', () => {
+  it('≥ 1 coulée par seed ; chaque chemin part d\'un CŒUR et finit contre l\'eau ; toute tuile est saine', () => {
+    for (const { c, nodes } of mondes) {
+      const seed = c.graphe.seed
+      const { width, terrain } = c.map
+      const coulees = c.map.coulees
+      expect(coulees, `seed ${seed} : aucune coulée`).toBeDefined()
+      // Découpe en chemins (séparés par -1).
+      const chemins: number[][] = [[]]
+      for (const i of coulees!) {
+        if (i < 0) chemins.push([])
+        else chemins[chemins.length - 1]!.push(i)
+      }
+      expect(chemins[0]!.length, `seed ${seed} : liste vide`).toBeGreaterThan(0)
+      const occupes = new Set(nodes.map((n) => n.ty * width + n.tx))
+      for (const chemin of chemins) {
+        // Le DÉPART touche le cœur : la première tuile est voisine du pic (d élevé).
+        const d0 = profondeurAt(c.map, chemin[0]! % width, Math.floor(chemin[0]! / width))
+        expect(d0, `seed ${seed} : un chemin part de d=${d0}`).toBeGreaterThanOrEqual(CREUX.PROF_COEUR - 1)
+        // L'ARRIVÉE est contre l'eau : la dernière tuile (toujours enregistrée — la liste
+        // dit le chemin entier) a une eau voisine orthogonale.
+        const fin = chemin[chemin.length - 1]!
+        const fx = fin % width
+        const fy = Math.floor(fin / width)
+        const boitLa = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => {
+          const t = terrain[(fy + dy!) * width + (fx + dx!)]
+          return t === TERRAIN_SHALLOW_WATER || t === TERRAIN_DEEP_WATER
+        })
+        expect(boitLa, `seed ${seed} : un chemin meurt loin de l'eau en (${fx},${fy})`).toBe(true)
+        for (const i of chemin) {
+          const t = terrain[i]!
+          expect(TERRAINS[t]?.walkable, `seed ${seed} : coulée sur du non-marchable`).toBe(true)
+          // (une tuile de SENTE peut être du chemin — le décal s'y interrompt, le fait reste)
+          expect(c.zone[i], `seed ${seed} : coulée hors Racine`).toBe(c.graphe.racine)
+          expect(occupes.has(i), `seed ${seed} : un nœud pousse sur la coulée (${i})`).toBe(false)
+        }
+      }
     }
   })
 })

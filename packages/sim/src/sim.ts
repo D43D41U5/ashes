@@ -324,7 +324,9 @@ export interface SimState {
    * qu'on JETTE : appât pour le gibier, viande pour détourner une meute, charge
    * larguée en fuite. Périssables — le monde ne se jonche pas.
    */
-  groundItems: { id: number; x: number; y: number; item: ItemId; count: number; expiresAt: number }[]
+  /** `surCoulee` (forêts-vivantes §4) : mémorisé à la PREMIÈRE lecture d'appât — fonction
+   *  pure de la position, même tick même valeur partout : déterministe et rejouable. */
+  groundItems: { id: number; x: number; y: number; item: ItemId; count: number; expiresAt: number; surCoulee?: boolean }[]
   nextGroundItemId: number
   /**
    * Les LIEUX que l'hôte a peuplés d'une bête (index de `map.zones`). Le
