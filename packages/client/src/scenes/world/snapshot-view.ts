@@ -1681,10 +1681,20 @@ export class SnapshotView {
     this.worldSeed = seed
   }
 
+  /**
+   * LA VERSION DE LA CANOPÉE — s'incrémente quand le JEU D'ARBRES change (peuplement
+   * initial, abattage, repousse, dérive, front de cendre). Les taches de soleil en
+   * dépendent : leur masque se bâtit sur les couronnes RÉELLES (spec §5 R6 amendée,
+   * 2026-08-16) et doit se rebâtir quand elles bougent. WorldScene la LIT à la frame
+   * (un entier) et ne rebâtit que sur changement, throttlé — jamais par frame.
+   */
+  versionCouvert = 0
+
   private reindexer(nodes: ResourceNode[]): void {
     this.nodes = nodes
     this.nodeById = new Map(nodes.map((n) => [n.id, n]))
     this.nodeByTile = new Map(nodes.map((n) => [n.tx * NODE_TILE_STRIDE + n.ty, n]))
+    this.versionCouvert++
   }
 
   /**
@@ -1726,6 +1736,9 @@ export class SnapshotView {
     for (const d of deltas) {
       const n = this.nodeById.get(d.id)
       if (!n) continue
+      // La CANOPÉE bouge ? Un arbre qui tombe à 0 (abattage/dérive) ou qui repousse
+      // plein change la couverture réelle — les taches de soleil doivent suivre.
+      if ((n.type === 'tree' || n.type === 'old_tree') && (d.stock > 0) !== (n.stock > 0)) this.versionCouvert++
       if (d.stock > 0) {
         n.stock = d.stock
         this.depleted.delete(d.id)

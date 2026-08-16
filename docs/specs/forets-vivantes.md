@@ -119,15 +119,24 @@ géographie module et n'autorise jamais, feel en pente continue, FX quantifiés 
 
 ## §5 — LES TACHES DE SOLEIL : la lumière du sous-bois
 
-- **R6** — Le jour, le sol des bois se mouchette de taches de lumière : DENSES en lisière,
-  éteintes vers le cœur (pente continue sur d — le canal existant de l'assombrissement,
-  renforcé, jamais un second langage), PLEINES dans les clairières (les chambres de lumière
-  que A22 protège déjà de l'assombrissement). Recette au patron des brumes : quantifié au
+- **R6** *(amendée le 2026-08-16 — décision d'Alexis : la v1 sur `d` seul posait des
+  taches sous les couronnes et éteignait les trous de canopée — « incohérent avec la
+  couverture réelle des arbres »)* — Le jour, le sol des bois se mouchette de taches de
+  lumière, et LA LUMIÈRE EST CE QUE LA CANOPÉE RÉELLE LAISSE PASSER : chaque couronne
+  peinte (arbres `stock > 0`, la variante du rendu) tamponne son emprise au sol en
+  retombée continue — les TROUS donnent les taches, le pied d'un tronc est éteint.
+  L'ambiance lisière→cœur survit en PÉNOMBRE multiplicative douce (pente continue sur d,
+  1 en lisière → 0,7 au PROF_CAP) qui n'éteint jamais un trou ; les clairières (A22) y
+  échappent : chambres de lumière PLEINES. Le masque se REBÂTIT quand la canopée change
+  (peuplement, abattage — la trouée s'éclaire —, dérive, front de cendre), throttlé,
+  jamais par frame. Recette d'affichage inchangée, au patron des brumes : quantifié au
   grain 4 px NEAREST, frémissement au vent par ALPHA (jamais par taille — la leçon des
   halos), nuit = éteint (fenêtre pure sur l'heure, pente continue aux crépuscules).
-- **A5** — Ambiance assumée : vérification à l'ŒIL sur capture (lisière mouchetée, cœur
-  éteint, clairière pleine, midi vs nuit) + le coût par frame MESURÉ (patron mist-layer —
-  un quad/shader, jamais des sprites par tuile).
+- **A5** — Ambiance assumée : vérification à l'ŒIL sur capture (trouées mouchetées, pieds
+  de couronnes éteints, clairière pleine, midi vs nuit) + les propriétés du masque
+  TESTÉES en headless (`soleil-masque.test.ts` : trou-au-cœur éclairé, pente de pénombre
+  continue, abattage qui éclaire) + le coût par frame MESURÉ (patron mist-layer — un
+  quad/shader, jamais des sprites par tuile).
 
 ---
 

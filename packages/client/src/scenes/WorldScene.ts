@@ -173,6 +173,9 @@ import { MeteoLayer } from './world/meteo-layer'
 import { GelLayer } from './world/gel-layer'
 import { creerEtatGel, majEtatGel, type EtatGel } from './world/etat-gel'
 import { SoleilLayer } from './world/soleil-layer'
+import type { ArbreCouvert } from './world/soleil-masque'
+import { varianteArbre } from '../render/arbre-peuplement'
+import { houppierLargeur } from '../render/arbre-art'
 import { bindDebugKeys } from './world/debug-bindings'
 import { createDebugPanel } from './world/debug-panel'
 import { syncDebug } from './world/debug-overlay'
@@ -358,6 +361,26 @@ export class WorldScene extends Phaser.Scene {
   /** LA FAÇADE D'ÉTAT que les fonctions de gel de /sim attendent — allouée une fois, remise
    *  à jour en place (voir `etat-gel.ts`, qui nomme aussi ce que le snapshot ne porte pas). */
   private etatGel: EtatGel | null = null
+  /** La version de canopée déjà PEINTE dans le masque des taches, et quand — le throttle. */
+  private couvertPeint = -1
+  private couvertPeintAt = -Infinity
+
+  /**
+   * LES COURONNES RÉELLES, pour le masque des taches : chaque arbre VIVANT (stock > 0 —
+   * une souche ni une repousse naissante n'ombragent) avec le rayon au sol de son
+   * houppier, lu sur la MÊME variante que le rendu (`varianteArbre`) — deux sources se
+   * seraient contredites au premier saule.
+   */
+  private arbresCouvert(): ArbreCouvert[] {
+    const out: ArbreCouvert[] = []
+    if (!this.map) return out
+    for (const n of this.view.nodes) {
+      if ((n.type !== 'tree' && n.type !== 'old_tree') || n.stock <= 0) continue
+      const v = varianteArbre(this.map, n.tx, n.ty, this.worldSeed, n.type === 'old_tree')
+      out.push({ tx: n.tx, ty: n.ty, rayonTuiles: houppierLargeur(v.mesures) / (2 * TILE_PX) })
+    }
+    return out
+  }
   private lastTime: GameTime | null = null
   /** Couvert de canopée lissé autour de l'avatar — piloté vers la valeur échantillonnée. */
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
@@ -1642,6 +1665,14 @@ export class WorldScene extends Phaser.Scene {
       // Les FEUILLUS SE DÉNUDENT (G6) — la vue des nœuds choisit la cime nue ou feuillue en
       // interrogeant `feuillageDenude` tuile par tuile, sur cette même façade.
       this.view.setEtatGel(this.etatGel)
+      // LA CANOPÉE A BOUGÉ (peuplement, abattage, dérive, cendre) → le masque des taches
+      // se rebâtit sur les couronnes réelles (spec §5 R6 amendée). Throttlé : la version
+      // est un entier lu à la frame, le rebâti (un balayage de carte) attend son tour.
+      if (this.soleilLayer && this.view.versionCouvert !== this.couvertPeint && time - this.couvertPeintAt > 2000) {
+        this.couvertPeint = this.view.versionCouvert
+        this.couvertPeintAt = time
+        this.soleilLayer.majArbres(this.arbresCouvert())
+      }
     }
 
     // ON NE MARCHE PAS EN TAPANT. Le champ de recherche du panneau de craft prend

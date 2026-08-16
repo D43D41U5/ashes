@@ -17,8 +17,9 @@
  *   • sortie PRÉMULTIPLIÉE — le contrat du pipeline, le même que la brume.
  */
 import Phaser from 'phaser'
-import { CREUX, clairiereForet, type WorldMap } from '@ashes/sim'
+import type { WorldMap } from '@ashes/sim'
 import { TILE_PX } from '../../render/framing'
+import { masqueSoleil, type ArbreCouvert } from './soleil-masque'
 
 /** Sur le sol, sous tout ce qui se pose dessus (FIRE_GROUND_DEPTH 4 < ici < FLOOR_DEPTH 6). */
 export const SOLEIL_DEPTH = 5
@@ -98,29 +99,20 @@ export class SoleilLayer {
   private souffle = 0
   private lastMs: number | null = null
 
-  constructor(scene: Phaser.Scene, map: WorldMap, seed: number) {
-    // ── LE MASQUE : la densité de lumière par tuile, bâtie UNE fois. ──
+  private canvas: Phaser.Textures.CanvasTexture | null = null
+
+  constructor(scene: Phaser.Scene, private readonly map: WorldMap, private readonly seed: number) {
+    // ── LE MASQUE : la densité de lumière par tuile. Il naît ÉTEINT (aucun arbre connu :
+    // on ne peint pas une forêt entièrement trouée le temps d'un snapshot) — c'est
+    // `majArbres`, au premier peuplement puis à chaque changement (abattage, dérive,
+    // front de cendre), qui le bâtit depuis la CANOPÉE RÉELLE (`soleil-masque`). ──
     const { width, height } = map
     const canvas = scene.textures.createCanvas('soleil-mask', width, height)
     if (!canvas) return
+    this.canvas = canvas
     const ctx = canvas.getContext()
     const img = ctx.createImageData(width, height)
-    const prof = map.profondeur
-    for (let ty = 0; ty < height; ty++) {
-      for (let tx = 0; tx < width; tx++) {
-        const i = ty * width + tx
-        const d = prof?.[i] ?? 0
-        let dens = 0
-        if (d >= 1) {
-          // Sous le couvert : la lisière est trouée de lumière, le cœur presque éteint…
-          dens = Math.max(0, 1 - (d - 1) / (CREUX.PROF_CAP - 1)) * 0.85
-          // …et la CLAIRIÈRE est une chambre de lumière pleine (A22 la garde déjà claire).
-          if (clairiereForet(seed, tx, ty) > 0) dens = 1
-        }
-        img.data[i * 4] = Math.round(dens * 255)
-        img.data[i * 4 + 3] = 255
-      }
-    }
+    for (let i = 0; i < width * height; i++) img.data[i * 4 + 3] = 255
     ctx.putImageData(img, 0, 0)
     canvas.refresh()
     canvas.setFilter(Phaser.Textures.FilterMode.NEAREST)
@@ -152,6 +144,24 @@ export class SoleilLayer {
   }
 
   private day = 1
+
+  /**
+   * LA CANOPÉE A CHANGÉ (premier peuplement, abattage, dérive, cendre) : le masque se
+   * REBÂTIT depuis les couronnes réelles. Coût : un balayage de la carte plus un tampon
+   * par arbre — à réserver aux CHANGEMENTS (l'appelant throttle), jamais à la frame.
+   */
+  majArbres(arbres: readonly ArbreCouvert[]): void {
+    if (!this.canvas) return
+    const dens = masqueSoleil(this.map, this.seed, arbres)
+    const ctx = this.canvas.getContext()
+    const img = ctx.createImageData(this.map.width, this.map.height)
+    for (let i = 0; i < dens.length; i++) {
+      img.data[i * 4] = dens[i]!
+      img.data[i * 4 + 3] = 255
+    }
+    ctx.putImageData(img, 0, 0)
+    this.canvas.refresh()
+  }
 
   /** Chaque frame : la respiration avance (repliée — pas d'uptime qui déborde), le jour décide. */
   update(nowMs: number, day: number): void {

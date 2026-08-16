@@ -13639,6 +13639,96 @@ const SCENARIOS = {
   },
 
   /**
+   * LES TACHES DE SOLEIL SUIVENT LA CANOPÉE RÉELLE (2026-08-16, R6 amendée) — la preuve
+   * se lit dans le MASQUE lui-même (`soleil-mask`, un canvas 2D : il se relit, lui),
+   * pas dans une luminance d'écran : les taches sont subtiles (alpha ≤ 0,30) et le
+   * moutonnement du sol les noierait. Trois propriétés, sur le monde RÉEL :
+   *   • au PIED d'un arbre vivant, le masque est ÉTEINT (la couronne tamponne) ;
+   *   • dans une TROUÉE de bois (aucun arbre à portée de couronne, profondeur ≥ 1),
+   *     il est ALLUMÉ — pénombre comprise, jamais sous 0,5 ;
+   *   • HORS des bois (profondeur 0), rien.
+   * Plus la capture d'ambiance (A5) : une lisière zoomée, à l'œil.
+   */
+  async soleil(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(2500) // le premier peuplement + le premier rebâti du masque
+
+    const lu = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const map = s.map
+      const tex = s.textures.get('soleil-mask')
+      if (!map || !tex || !map.profondeur) return { erreur: 'carte ou masque introuvable' }
+      const ctx = tex.getContext()
+      const img = ctx.getImageData(0, 0, map.width, map.height).data
+      const dens = (tx, ty) => img[(ty * map.width + tx) * 4] / 255
+      const prof = (tx, ty) => map.profondeur[ty * map.width + tx] ?? 0
+
+      const arbres = s.view.nodes.filter((n) => (n.type === 'tree' || n.type === 'old_tree') && n.stock > 0)
+      if (arbres.length === 0) return { erreur: 'aucun arbre vivant' }
+      // Le pied de N troncs EN FORÊT (profondeur ≥ 1 — un arbre de pré n'a pas de sous-bois).
+      const pieds = arbres.filter((n) => prof(n.tx, n.ty) >= 1).slice(0, 200).map((n) => dens(n.tx, n.ty))
+      // Les TROUÉES : des tuiles de bois à ≥ 4 tuiles de tout arbre vivant (Chebyshev).
+      const trouees = []
+      for (let ty = 2; ty < map.height - 2 && trouees.length < 60; ty += 3) {
+        for (let tx = 2; tx < map.width - 2 && trouees.length < 60; tx += 3) {
+          if (prof(tx, ty) < 2) continue
+          let libre = true
+          for (const a of arbres) {
+            if (Math.max(Math.abs(a.tx - tx), Math.abs(a.ty - ty)) < 4) { libre = false; break }
+          }
+          if (libre) trouees.push(dens(tx, ty))
+        }
+      }
+      // HORS bois : profondeur 0.
+      const dehors = []
+      for (let ty = 2; ty < map.height - 2 && dehors.length < 60; ty += 5) {
+        for (let tx = 2; tx < map.width - 2 && dehors.length < 60; tx += 5) {
+          if (prof(tx, ty) === 0) dehors.push(dens(tx, ty))
+        }
+      }
+      // Une lisière à REGARDER : le premier arbre de forêt qui a une trouée à 5 tuiles.
+      let cadre = null
+      for (const a of arbres) {
+        if (prof(a.tx, a.ty) < 1) continue
+        if (dens(a.tx + 5, a.ty) > 0.5) { cadre = { tx: a.tx, ty: a.ty }; break }
+      }
+      const moyenne = (l) => (l.length === 0 ? -1 : l.reduce((s2, v) => s2 + v, 0) / l.length)
+      return {
+        nPieds: pieds.length, piedMoyen: moyenne(pieds), piedMax: Math.max(...pieds),
+        nTrouees: trouees.length, troueeMin: trouees.length ? Math.min(...trouees) : -1,
+        nDehors: dehors.length, dehorsMax: dehors.length ? Math.max(...dehors) : -1,
+        cadre,
+      }
+    })
+    if (lu.erreur) {
+      console.log(`   ✗ ${lu.erreur}`)
+      return
+    }
+    console.log(`MESURÉ — masque lu en jeu : ${lu.nPieds} pieds d'arbre (moyenne ${lu.piedMoyen.toFixed(2)}, max ${lu.piedMax.toFixed(2)}) · ${lu.nTrouees} trouées (min ${lu.troueeMin.toFixed(2)}) · ${lu.nDehors} tuiles hors bois (max ${lu.dehorsMax.toFixed(2)})`)
+    console.log(lu.piedMax < 0.15 ? '   ✓ au pied d\'un tronc, la canopée éteint la tache' : '   ✗ des taches percent au pied des troncs')
+    console.log(lu.nTrouees > 0 && lu.troueeMin > 0.5 ? '   ✓ une trouée de bois est ALLUMÉE (pénombre comprise)' : `   ✗ des trouées éteintes (min ${lu.troueeMin})`)
+    console.log(lu.dehorsMax === 0 ? '   ✓ hors des bois, rien — le sous-bois seulement' : `   ✗ des taches hors des bois (max ${lu.dehorsMax})`)
+
+    // L'AMBIANCE (A5), à l'œil : une lisière zoomée — taches dans les trouées, rien sous
+    // les couronnes. La boucle dort pour une frame stable (rendu logiciel).
+    if (lu.cadre) {
+      await page.evaluate((c) => {
+        const s = window.__BRAISES__.scene
+        s.cameras.main.stopFollow()
+        s.cameras.main.centerOn((c.tx + 2.5) * 16, c.ty * 16)
+        s.cameras.main.setZoom(4)
+        const g = s.game
+        g.loop.sleep()
+        g.step(g.loop.time + 16, 16)
+        g.step(g.loop.time + 16, 16)
+      }, lu.cadre)
+      await page.screenshot({ timeout: 90000, path: `${OUT}/soleil-lisiere.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      console.log(`→ ${OUT}/soleil-lisiere.png`)
+    }
+  },
+
+  /**
    * LE SANG REND (2026-08-16) — trois défauts corrigés, trois preuves, et AUCUNE action
    * de sim : tout est peint côté client, le scénario tourne sur le build de production.
    *
