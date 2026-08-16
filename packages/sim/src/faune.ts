@@ -51,7 +51,7 @@ import { fireState } from './fire'
 import { distSq } from './geometry'
 import { carryRatio, carryTier, countOf, isEmpty, removeItems, type ItemId } from './items'
 import { profondeurAt, terrainAt, zoneTierAt, type WorldMap } from './map'
-import { estCoeur, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeur'
+import { estCoeur, estLisiere, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeur'
 import { CREUX } from './racine-relief'
 import { moveToward, spawnMonster, type Monster } from './monsters'
 import { pathToward } from './pathfinding'
@@ -463,6 +463,54 @@ export function bruitDuSol(state: SimState, tx: number, ty: number): number {
   if (d <= 1) return 1
   const pente = (Math.min(d, CREUX.PROF_CAP) - 1) / (CREUX.PROF_CAP - 1)
   return 1 + (HUNT.LITIERE_BRUIT_COEUR - 1) * pente
+}
+
+/**
+ * L'ENVOL DE LA LISIÈRE (forêts-vivantes §3 R4) : un pas BRUYANT (bruit effectif ≥
+ * `ENVOL_SEUIL` — la marche oui, le pas lent non, le portage lourd toujours) sur une tuile
+ * de LISIÈRE fait gicler les oiseaux : fait de domaine `bird_flush` émis AU MOMENT du
+ * geste, et le gibier dans le rayon d'alarme prend un coup de méfiance — la forêt prévient
+ * avant la bête. Les perchoirs se REPOSENT (R4bis) : `state.envols`, liste bornée purgée
+ * ici même — un envol par zone de `ENVOL_COOLDOWN_RAYON` tous les `ENVOL_COOLDOWN_TICKS`.
+ * Avatars seulement : ni les bêtes ni les villageois ne déclenchent (la forêt connaît les
+ * siens). Aucun tirage : la passe est une pure lecture de l'état.
+ */
+export function advanceEnvols(state: SimState): void {
+  for (const e of state.entities) {
+    if (e.hp <= 0) continue
+    // Les tests bon marché d'abord : l'allure, puis la tuile — le balayage des bêtes en dernier.
+    const tx = Math.floor(e.x)
+    const ty = Math.floor(e.y)
+    if (gaitNoise(e) * bruitDuSol(state, tx, ty) < HUNT.ENVOL_SEUIL) continue
+    if (!estLisiere(profondeurAt(state.map, tx, ty))) continue
+    if (state.monsters.some((m) => m.entityId === e.id)) continue
+    if (state.npcs.some((n) => n.entityId === e.id)) continue
+
+    const envols = (state.envols ??= [])
+    let bloque = false
+    for (let i = envols.length - 1; i >= 0; i--) {
+      const v = envols[i]!
+      if (state.tick - v.t >= HUNT.ENVOL_COOLDOWN_TICKS) {
+        envols.splice(i, 1)
+        continue
+      }
+      if (Math.max(Math.abs(v.x - tx), Math.abs(v.y - ty)) < HUNT.ENVOL_COOLDOWN_RAYON) bloque = true
+    }
+    if (bloque) continue
+
+    envols.push({ x: tx, y: ty, t: state.tick })
+    emitEvent(state, { type: 'bird_flush', tick: state.tick, x: tx, y: ty })
+    const rayon2 = HUNT.ENVOL_ALARME_RAYON * HUNT.ENVOL_ALARME_RAYON
+    for (const m of state.monsters) {
+      if (!isPrey(m.type)) continue
+      const em = state.entities.find((x) => x.id === m.entityId)
+      if (!em || em.hp <= 0) continue
+      const dx = em.x - (tx + 0.5)
+      const dy = em.y - (ty + 0.5)
+      if (dx * dx + dy * dy > rayon2) continue
+      m.suspicion = Math.min(1, m.suspicion + HUNT.ENVOL_SUSPICION)
+    }
+  }
 }
 
 /** La menace qu'un avatar OPPOSE, entrée une fois (spec chasse C5) : vue + ouïe. */

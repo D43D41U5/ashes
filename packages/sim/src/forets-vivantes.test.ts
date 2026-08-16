@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { BALANCE, HUNT, NODE_DEFS, TERRAIN_FOREST, TERRAIN_GRASS } from './balance'
+import { drainEvents } from './events'
 import { countOf } from './items'
 import { createEmptyMap, profondeurAt, type WorldMap } from './map'
 import { spawnMonster } from './monsters'
@@ -114,8 +115,49 @@ describe('A2 (§2) — la litière qui craque : le bruit du sol', () => {
       for (; t < 30 * BALANCE.TICK_RATE_HZ && m.suspicion < HUNT.SUSPICION_ALERT; t++) tick(sim)
       return t
     }
-    const auCoeur = mesurer(71.5, 63.5) //     le cerf au cœur, l'homme dessous (d élevé)
-    const enLisiere = mesurer(61.5, 63.5) //   la même géométrie, collée à la lisière ouest
-    expect(auCoeur, `cœur ${auCoeur} ticks vs lisière ${enLisiere}`).toBeLessThan(enLisiere)
+    // Les DEUX colonnes vivent hors lisière (d ≥ 3) : sur la lisière même, c'est L'ENVOL
+    // qui alerte le cerf — plus fort que la litière, et c'est voulu (§3). Ici on isole le
+    // canal du BRUIT : le bord du corps (d ≈ 4) contre le cœur (d au plafond).
+    const auCoeur = mesurer(71.5, 63.5)
+    const auCorps = mesurer(63.5, 63.5)
+    expect(auCoeur, `cœur ${auCoeur} ticks vs corps ${auCorps}`).toBeLessThan(auCorps)
+  })
+})
+
+describe('A3 (§3) — l\'envol de la lisière : la forêt répond au bruit', () => {
+  const surLisiere = { x: 60.5, y: 72.5 } // d = 1 : la lisière ouest du massif
+
+  it('MARCHER sur la lisière émet bird_flush ; le PAS LENT passe sans un cri', () => {
+    const sim = makeSim()
+    spawnEntity(sim, surLisiere.x, surLisiere.y) // gait walk au spawn
+    tick(sim)
+    const faits = drainEvents(sim).filter((e) => e.type === 'bird_flush')
+    expect(faits, 'la marche sur la lisière doit lever la nuée').toHaveLength(1)
+
+    const discret = makeSim()
+    const b = spawnEntity(discret, surLisiere.x, surLisiere.y)
+    const eb = discret.entities.find((x) => x.id === b)!
+    eb.gait = 'sneak' // il rampe — et l'allure persiste sans input
+    tick(discret)
+    const rien = drainEvents(discret).filter((e) => e.type === 'bird_flush')
+    expect(rien, 'le pas lent ne lève rien').toHaveLength(0)
+  })
+
+  it('les perchoirs se REPOSENT : deux passages dans le cooldown, UN seul envol', () => {
+    const sim = makeSim()
+    spawnEntity(sim, surLisiere.x, surLisiere.y)
+    for (let t = 0; t < 40; t++) tick(sim) // il piétine la lisière 2 secondes
+    const faits = drainEvents(sim).filter((e) => e.type === 'bird_flush')
+    expect(faits).toHaveLength(1)
+  })
+
+  it('le gibier alentour prend l\'alarme — la méfiance monte d\'un coup', () => {
+    const sim = makeSim(6)
+    const id = spawnMonster(sim, 'deer', 66.5, 72.5) // à 6 tuiles du perchoir, dans le bois
+    const m = sim.monsters.find((mm) => mm.entityId === id)!
+    const avant = m.suspicion
+    spawnEntity(sim, surLisiere.x, surLisiere.y)
+    tick(sim)
+    expect(m.suspicion).toBeGreaterThanOrEqual(avant + HUNT.ENVOL_SUSPICION - 0.01)
   })
 })

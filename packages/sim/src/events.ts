@@ -205,6 +205,13 @@ export type SimEvent =
         outcome: string
       }[]
     }
+  /**
+   * L'ENVOL DE LA LISIÈRE (forêts-vivantes §3 R4) : un pas bruyant sur une lisière de bois
+   * fait gicler les oiseaux — la forêt prévient AVANT que la bête entende. Le client rend
+   * la nuée et le cri DEPUIS ce fait (jamais une information que la sim n'a pas émise) ;
+   * l'alarme du gibier alentour, elle, est jouée côté sim au moment de l'émission.
+   */
+  | { type: 'bird_flush'; tick: number; x: number; y: number }
   | { type: 'poi_discovered'; tick: number; poiId: number; kind: string; byEntityId: number }
   | { type: 'poi_first_visit'; tick: number; poiId: number; kind: string; name: string; byEntityId: number }
   /**

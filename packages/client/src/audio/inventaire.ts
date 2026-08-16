@@ -47,6 +47,7 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   entity_died: { voix: 'voix', famille: 'registre', quoi: 'quelqu’un tombe (le froid et la faim tuent aussi)' },
   monster_slain: { voix: 'voix', famille: 'registre', quoi: 'une bête est abattue' },
   wolf_howl: { voix: 'voix', famille: 'registre', quoi: 'une meute a choisi un homme — le seul avertissement' },
+  bird_flush: { voix: 'voix', famille: 'registre', quoi: 'la nuée gicle de la lisière — la forêt dénonce un pas bruyant' },
   cendreux_prowl: { voix: 'voix', famille: 'registre', quoi: 'les morts ont senti un homme — l’avertissement des actes II-III' },
 
   // ── LE FEU — l'organe vital : 4 voix sur 5, seul le geste répété se tait ─────────

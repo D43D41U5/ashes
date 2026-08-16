@@ -137,6 +137,34 @@ export class AmbientLife {
     }
   }
 
+  /**
+   * L'ENVOL DE LA LISIÈRE (forêts-vivantes §3) — le SEUL cas où des oiseaux naissent à
+   * l'écran, et c'est le point : ils giclent DES arbres, au fait de domaine `bird_flush`
+   * que la sim vient d'émettre (l'en-tête de ce fichier promettait exactement cette
+   * évolution). La nuée éclate du perchoir vers le haut, en éventail, puis les oiseaux
+   * rejoignent le régime commun (dérive, culling) — rien d'autre à gérer.
+   */
+  envol(tx: number, ty: number): void {
+    for (let i = 0; i < BIRDS_PER_FLOCK + 2; i++) {
+      const angle = -Math.PI / 2 + (i / (BIRDS_PER_FLOCK + 1) - 0.5) * 1.6 // l'éventail vers le haut
+      const vitesse = BIRD_SPEED * (1.6 + Math.random() * 0.8) //             plus vif qu'un vol de croisière
+      const sprite = this.scene.add
+        .image(0, 0, 'fx-bird')
+        .setDepth(FLYER_DEPTH)
+        .setAlpha(0.9)
+        .setFlipX(Math.cos(angle) < 0)
+        .setDisplaySize(TILE_PX * 0.55, TILE_PX * 0.35)
+      this.birds.push({
+        sprite,
+        x: tx + (Math.random() - 0.5) * 1.5,
+        y: ty + (Math.random() - 0.5) * 1.5,
+        vx: Math.cos(angle) * vitesse,
+        vy: Math.sin(angle) * vitesse * 0.6,
+        phase: Math.random() * Math.PI * 2,
+      })
+    }
+  }
+
   /** Un vol entre par un bord et sort par l'autre, en diagonale molle. */
   private launchFlock(camera: Phaser.Cameras.Scene2D.Camera): void {
     const v = camera.worldView

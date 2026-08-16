@@ -2744,6 +2744,19 @@ export const HUNT = {
    */
   LITIERE_BRUIT_COEUR: 1.5,
   /**
+   * L'ENVOL DE LA LISIÈRE (forêts-vivantes §3 R4) : franchir une lisière de bois à un
+   * bruit effectif ≥ ENVOL_SEUIL fait gicler les oiseaux. 0,9 : la marche (1) déclenche,
+   * le pas lent (0,4) passe — et le PORTAGE LOURD, qui rehausse tout pas au niveau de la
+   * marche, trahit même le prudent : le retour de chasse fait lever les nuées. Le gibier
+   * dans le rayon d'alarme prend un coup de méfiance ; les perchoirs se REPOSENT (un envol
+   * par zone de COOLDOWN_RAYON tous les COOLDOWN_TICKS) — la forêt n'est pas une sirène.
+   */
+  ENVOL_SEUIL: 0.9,
+  ENVOL_ALARME_RAYON: 14,
+  ENVOL_SUSPICION: 0.35,
+  ENVOL_COOLDOWN_RAYON: 24,
+  ENVOL_COOLDOWN_TICKS: 900, // 45 s à 20 Hz
+  /**
    * LE TERRIER (C16). Le lapin naît avec le sien (sa tuile de naissance, hors
    * champ par construction). Levé, il fuit VERS lui — sauf à devoir traverser la
    * menace — et il y DISPARAÎT. La chasse au lapin devient une géométrie :

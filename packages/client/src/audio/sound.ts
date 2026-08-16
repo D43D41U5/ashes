@@ -72,6 +72,10 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
       return { wave: 'triangle', freq: 180, freqEnd: 90, dur: 0.22, gain: 0.1 }
     case 'wolf_howl':
       return { wave: 'sine', freq: 520, freqEnd: 240, dur: 0.7, gain: 0.09 }
+    // L'ENVOL (forêts-vivantes §3) : un battement aigu qui MONTE — la nuée qui gicle. Un
+    // signal (square) court : la forêt vous a dénoncé, et tout le monde l'a entendu.
+    case 'bird_flush':
+      return { wave: 'square', freq: 1400, freqEnd: 2200, dur: 0.28, gain: 0.05 }
     // LES MORTS N'ONT PAS DE VOIX. Là où le loup lance une note qui PORTE (sinus haut, longue),
     // le Cendreux racle : du bruit filtré bas, sourd, sans hauteur. Deux dangers, deux signes —
     // le joueur doit savoir laquelle des deux parades il prépare sans regarder l'écran.

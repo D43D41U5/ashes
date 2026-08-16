@@ -2146,7 +2146,11 @@ export class WorldScene extends Phaser.Scene {
       // PLUS ici : `SnapshotView.apply` le lit en tête, avant de peindre quoi que ce soit. D'ici,
       // on arrivait UN SNAPSHOT trop tard et la porte se montrait ouverte avant de s'ouvrir
       // (constaté par Alexis le 2026-07-30 ; le pourquoi est écrit sur `pousserPorte`).
-      if (event.type === 'action_rejected' && event.entityId === this.playerId) {
+      if (event.type === 'bird_flush') {
+        // LA NUÉE (forêts-vivantes §3) : rendue DEPUIS le fait — jamais une information
+        // que la sim n'a pas émise. Le cri, lui, part par la table `soundForEvent`.
+        this.ambientLife?.envol(event.x + 0.5, event.y + 0.5)
+      } else if (event.type === 'action_rejected' && event.entityId === this.playerId) {
         publishError(this.registry, event.reason, this.time.now)
       } else if (event.type === 'resource_harvested' && event.entityId === this.playerId) {
         // LE COUP A PORTÉ — et on ne le sait QUE parce que la sim le dit (G9). Rien

@@ -12,6 +12,7 @@
  */
 import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type RecipeId, type Strike } from './balance'
 import { moveAvatar } from './collision'
+import { advanceEnvols } from './faune'
 import { advanceCombat, applyCombatAction, tientUnArc, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
 import { advanceReveils, type Reveil } from './morts'
@@ -246,6 +247,12 @@ export interface SimState {
    * tick (R15), comme le front de cendre.
    */
   reveils: Reveil[]
+  /**
+   * LES ENVOLS RÉCENTS (forêts-vivantes §3 R4bis) : les perchoirs se reposent — un envol
+   * par zone tous les `ENVOL_COOLDOWN_TICKS`. Liste BORNÉE (purgée à chaque déclenchement),
+   * JSON-sérialisable. Optionnelle : une sauvegarde d'avant reprend sans, et se la crée.
+   */
+  envols?: { x: number; y: number; t: number }[]
   hordes: Horde[]
   nextHordeId: number
   lastConvoyDay: number
@@ -711,6 +718,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceVillageGrowth(state)
   advanceNpcs(state)
   advanceMonsters(state)
+  // L'ENVOL DE LA LISIÈRE (forêts-vivantes §3) — après les bêtes : l'alarme qu'il pose se
+  // lit au tick suivant, comme tout stimulus de méfiance.
+  advanceEnvols(state)
   advanceCendreux(state)
   // LE SOL QUI TRAVAILLE rend son mort — ou le feu l'en empêche (R21). Juste après la levée
   // d'un cadavre : c'est le même geste, à deux échelles de temps, et les deux se laissent
