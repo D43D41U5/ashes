@@ -164,6 +164,7 @@ import { NightVeil } from './world/night-veil'
 import { DynamicLighting } from './world/dynamic-lighting'
 import { WaterLayer, type WaterWader } from './world/water-layer'
 import { AmbientLife } from './world/ambient-life'
+import { SoleilLayer } from './world/soleil-layer'
 import { bindDebugKeys } from './world/debug-bindings'
 import { createDebugPanel } from './world/debug-panel'
 import { syncDebug } from './world/debug-overlay'
@@ -336,6 +337,7 @@ export class WorldScene extends Phaser.Scene {
   private water: WaterLayer | null = null
   /** Oiseaux et lucioles — décor pur, hors sim (voir world/ambient-life.ts). */
   ambientLife: AmbientLife | null = null
+  soleilLayer: SoleilLayer | null = null
   private lastTime: GameTime | null = null
   /** Couvert de canopée lissé autour de l'avatar — piloté vers la valeur échantillonnée. */
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
@@ -944,6 +946,9 @@ export class WorldScene extends Phaser.Scene {
         this.ambientLife = new AmbientLife(this, (tx, ty) =>
           tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height ? -1 : (this.map.terrain[ty * this.map.width + tx] ?? -1),
         )
+        // LES TACHES DE SOLEIL (forêts-vivantes §5) : la lumière du sous-bois, dérivée du
+        // champ de profondeur reçu au ready — lisière trouée, cœur éteint, clairières pleines.
+        this.soleilLayer = new SoleilLayer(this, this.map, this.worldSeed)
         this.cameras.main.setBounds(0, 0, worldW, worldH)
         this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
         this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
@@ -1562,6 +1567,7 @@ export class WorldScene extends Phaser.Scene {
       this.dynLight?.update(lit, this.cameras.main, this.view.structures, this.view.villages, hour, day, time)
       // La vie ambiante : les oiseaux traversent, les lucioles ne sortent qu'à la nuit.
       this.ambientLife?.update(this.cameras.main, time / 1000, deltaMs / 1000, 1 - day)
+      this.soleilLayer?.update(time, day)
     }
 
     // ON NE MARCHE PAS EN TAPANT. Le champ de recherche du panneau de craft prend
