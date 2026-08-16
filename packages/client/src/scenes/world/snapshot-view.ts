@@ -47,9 +47,12 @@ import {
   majRepos,
   nouveauMiroir,
   nouveauRepos,
+  saigneBete,
   type MiroirLatch,
   type ReposLatch,
 } from './beast-posture'
+import { decorerSang, SANG_TEXTURES, teinteSechage, type DecorSang } from './sang-sol'
+import { GOUTTE_CADENCE_MS, type SangFx } from './sang-fx'
 export { BEAST_TINTS } from './beast-posture'
 import {
   actorPlacement,
@@ -542,6 +545,28 @@ export class SnapshotView {
     this.recolteFx = fx
   }
 
+  /** LE SANG QUI TOMBE (`sang-fx`) — posé par WorldScene, comme la gerbe de récolte.
+   *  C'est CETTE vue qui l'alimente : elle seule tient ensemble l'état qui saigne
+   *  (monstre `bleedMortal`/`bleedUntil`, entité `wounds.bleeding`) et le sprite
+   *  d'où la goutte doit se détacher. */
+  setSangFx(fx: SangFx): void {
+    this.sangFx = fx
+  }
+  private sangFx?: SangFx
+  /** La prochaine goutte de chaque acteur qui saigne (ms client) — cadence lente,
+   *  désynchronisée par identité : deux bêtes ne gouttent pas en chœur. */
+  private prochaineGoutte = new Map<number, number>()
+
+  /** Une goutte se détache du corps de l'acteur `id` s'il est l'heure — `x/y` : le
+   *  pied de son sprite, en px monde (relief compris). */
+  private goutteDe(id: number, x: number, y: number, now: number): void {
+    if (!this.sangFx) return
+    const prochaine = this.prochaineGoutte.get(id)
+    if (prochaine !== undefined && now < prochaine) return
+    this.prochaineGoutte.set(id, now + GOUTTE_CADENCE_MS * (0.75 + ((Math.imul(id, 2654435761) >>> 16) % 100) / 200))
+    this.sangFx.goutter(x, y, now, id)
+  }
+
   setChuteArbre(fx: ChuteArbre): void {
     this.chuteArbre = fx
   }
@@ -718,6 +743,14 @@ export class SnapshotView {
     this.reveilFx?.suivre(msg.reveils, msg.tick, now)
     // La position (autoritative) de l'avatar local — le FADE des toits en dépend (R24).
     const self = msg.entities.find((e) => e.id === playerId)
+    // MON SANG TOMBE AUSSI (combat R7 : le sang est le sang). L'avatar local n'est pas
+    // dans `others` (prédit par la scène) : sa goutte part de sa position autoritative —
+    // un demi-pas derrière le sprite en pleine course, et c'est juste : le sang tombe
+    // où l'on était.
+    if (self?.wounds.bleeding === true) {
+      const lift = this.warp?.lift(self.x, self.y) ?? 0
+      this.goutteDe(playerId, self.x * TILE_PX, self.y * TILE_PX - lift, now)
+    }
     this.syncStructures(msg.structures, self ? { x: self.x, y: self.y } : undefined)
     this.applyNodeDeltas(msg.nodeDeltas, now)
     this.syncCorpses(msg.corpses)
@@ -726,27 +759,50 @@ export class SnapshotView {
     this.syncGroundItems()
   }
 
+  /** Le décor (variante/angle/échelle) de chaque goutte, calculé UNE fois par snapshot
+   *  (`decorerSang` s'apparie aux gouttes précédentes — pas un travail de frame) et
+   *  invalidé par la référence du tableau. */
+  private bloodDecor: DecorSang[] = []
+  private bloodDecorSource: SnapshotMessage['blood'] | undefined
+
   /**
    * LES GOUTTES (spec chasse C9). Une piste qu'on SUIT : les fraîches sont vives,
    * les vieilles pâlissent — c'est la seule horloge que le chasseur ait, et elle
    * doit se lire d'un coup d'œil. Poolé : le plafond de la sim (BLOOD_CAP) borne
    * ce que l'on dessine, et le pool ne grandit jamais au-delà.
+   *
+   * Chaque goutte a sa FORME (l'allure de la bête), son ANGLE (le sens de la
+   * course) et son ÉCHELLE — tout dérivé de la donnée dans `sang-sol`, stable
+   * frame après frame. Et le sang est ÉCLAIRÉ comme le reste du monde : sans
+   * `setLighting`, le voile d'ambiance passant SOUS la bande de tri, une goutte
+   * restait pleine couleur en pleine nuit — un décal fluorescent sur un monde
+   * éteint (constaté par Alexis le 2026-08-16).
    */
   renderBlood(): void {
+    if (this.bloodDecorSource !== this.blood) {
+      this.bloodDecor = decorerSang(this.blood, HUNT.BLOOD_EVERY_TICKS)
+      this.bloodDecorSource = this.blood
+    }
     let used = 0
-    for (const b of this.blood) {
+    for (let i = 0; i < this.blood.length; i++) {
+      const b = this.blood[i]!
+      const d = this.bloodDecor[i]!
       let g = this.bloodPool[used]
       if (!g) {
         g = this.scene.add.image(0, 0, 'fx-blood').setOrigin(0.5, 0.5)
         this.bloodPool[used] = g
       }
       const lift = this.warp?.lift(b.x, b.y) ?? 0
+      g.setTexture(SANG_TEXTURES[d.variante]!)
       g.setPosition(b.x * TILE_PX, b.y * TILE_PX - lift)
+      g.setRotation(d.angle)
       g.setDepth(corpseDepth(b.y, TILE_PX) - 1) // au sol, sous tout le reste
-      // Elle sèche : de l'écarlate au brun, et elle s'efface.
+      // Elle sèche : de l'écarlate au brun (la teinte), et elle s'efface (l'alpha).
       const age = Math.max(0, Math.min(1, (this.tick - b.tick) / HUNT.BLOOD_TTL))
       g.setAlpha(0.85 * (1 - age * 0.8))
-      g.setScale(1 - age * 0.25)
+      g.setScale(d.echelle * (1 - age * 0.25))
+      g.setTint(teinteSechage(age))
+      g.setLighting(this.lighting) // pooled : réarmé chaque frame, comme les nœuds
       g.setVisible(true)
       used++
     }
@@ -1088,6 +1144,12 @@ export class SnapshotView {
       record.crouch = isCrouched(monster, entity)
       record.sprite.setTint(beastTint(monster, entity.windup !== undefined, npc !== undefined, this.tick))
       record.sprite.setAlpha(npc?.sleeping ? 0.45 : 1)
+      // LA PLAIE GOUTTE. L'état qui saigne (la même vérité que la teinte ci-dessus :
+      // `saigneBete`, ou `wounds.bleeding` pour un humain) laisse TOMBER son sang —
+      // la piste au sol, elle, reste l'affaire de la sim (C9) : ici on peint la chute.
+      if (monster ? saigneBete(monster, this.tick) : entity.wounds.bleeding === true) {
+        this.goutteDe(entity.id, record.sprite.x, record.sprite.y, now)
+      }
     }
     for (const [id, o] of this.others) {
       if (!seen.has(id)) {
@@ -1099,6 +1161,7 @@ export class SnapshotView {
         // Sans cet oubli, l'id resterait dans la table jusqu'à ce que sa rampe expire — et
         // un id d'entité se recycle.
         this.reveilFx?.oublier(id)
+        this.prochaineGoutte.delete(id) // même raison : un id d'entité se recycle
       }
     }
   }

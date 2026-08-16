@@ -39,6 +39,16 @@ export const BEAST_TINTS = {
 } as const
 
 /**
+ * ELLE SAIGNE — la réplique client de `isBleeding` (faune.ts) : ce module n'importe
+ * de @ashes/sim que types et constantes (jouable headless), la logique est donc
+ * recopiée à l'identique. Partagée entre la TEINTE (ci-dessous) et le GOUTTE-À-GOUTTE
+ * (`snapshot-view` → `sang-fx`) : deux lecteurs, une seule vérité client.
+ */
+export function saigneBete(monster: Monster, tick: number): boolean {
+  return monster.bleedMortal === true || (monster.bleedUntil !== undefined && tick < monster.bleedUntil)
+}
+
+/**
  * LA COULEUR DIT L'INTENTION. Les règles les plus intéressantes de la faune sont
  * des ÉTATS — le sanglier qui fouge est approchable, celui qui menace est sur le
  * point de charger, le loup qui rampe ne vous a pas encore vu. Sans un signal
@@ -56,7 +66,7 @@ export function beastTint(monster: Monster | undefined, windup: boolean, isNpc: 
   // qu'on TRAQUE : c'est l'information la plus chère de l'écran, elle passe
   // devant l'humeur. (Et la posture, elle, dit déjà si elle fuit ou si elle est
   // tapie — les deux signaux ne se marchent pas dessus.)
-  if (monster.bleedMortal || (monster.bleedUntil !== undefined && tick < monster.bleedUntil)) {
+  if (saigneBete(monster, tick)) {
     return BEAST_TINTS.bleeding
   }
 

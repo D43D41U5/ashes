@@ -164,7 +164,9 @@ async function frapperJusquAMort(page, nodeId, action, intervalle, coups, sonde,
  * filtres PNG se réduisent tous au brut (aucun voisin à gauche ni au-dessus).
  */
 async function pixelAt(page, x, y) {
-  const png = await page.screenshot({ clip: { x: Math.max(0, x), y: Math.max(0, y), width: 1, height: 1 } })
+  // 90 s comme toute capture : le rendu logiciel de cette machine met parfois
+  // au-delà des 30 s par défaut à composer une frame stable (mesuré, scénario sang).
+  const png = await page.screenshot({ timeout: 90000, clip: { x: Math.max(0, x), y: Math.max(0, y), width: 1, height: 1 } })
   // ON RECOLLE TOUS LES `IDAT` AVANT D'INFLATER : le flux deflate est UN seul flux, mais rien
   // n'oblige l'encodeur à le mettre dans un seul chunk — Chromium le découpe, et inflater le
   // premier morceau seul lève `Z_BUF_ERROR` (« unexpected end of file »).
@@ -196,7 +198,7 @@ async function pixelAt(page, x, y) {
  * refuse tout le reste plutôt que de rendre des couleurs fausses.
  */
 async function regionAt(page, clip) {
-  const png = await page.screenshot({ clip })
+  const png = await page.screenshot({ timeout: 90000, clip }) // 90 s : cf. pixelAt
   const w = png.readUInt32BE(16)
   const h = png.readUInt32BE(20)
   if (png[24] !== 8 || (png[25] !== 6 && png[25] !== 2) || png[28] !== 0) return null
@@ -13634,6 +13636,238 @@ const SCENARIOS = {
       out.berge = { ...berge, gel: e.gel }
     } else console.error('!! aucune berge gué/eau libre trouvée')
     return out
+  },
+
+  /**
+   * LE SANG REND (2026-08-16) — trois défauts corrigés, trois preuves, et AUCUNE action
+   * de sim : tout est peint côté client, le scénario tourne sur le build de production.
+   *
+   *  ① LA PISTE N'EST PLUS UN TAMPON — on injecte des pistes FABRIQUÉES dans la vue
+   *     (verrouillées par getter, le motif de `feuNuit` sur `warmth` : le snapshot
+   *     réécrirait le champ au tick suivant) et on lit ce que le POOL affiche :
+   *     textures distinctes, rotations distinctes — et l'orientation SUIT la course
+   *     injectée (une piste plein est pointe plein est, une piste plein sud plein sud).
+   *  ② LA GICLÉE SE POSE — `sangFx.gicler`, boucle figée, avancée à la main
+   *     (`game.step`, le motif de `tir`) : des gouttelettes EN L'AIR, puis AU SOL.
+   *  ③ LE SANG EST ÉCLAIRÉ — luminance des MÊMES gouttes au jour puis sous le
+   *     préréglage nuit (gel de `dynLight.update`, le motif d'`erratique`) : elle doit
+   *     CHUTER. Avant le correctif, le voile d'ambiance passait SOUS la bande de tri
+   *     et une goutte restait pleine couleur en pleine nuit — le ratio ferait ~1.
+   *
+   * La cadence des pistes est recopiée en littéral (16 ticks = HUNT.BLOOD_EVERY_TICKS,
+   * C9) — un témoin extérieur, comme les seuils recopiés de `chasse` : si la cadence de
+   * la sim bouge, l'appariement du rendu doit suivre, et ce scénario le dira.
+   */
+  async sang(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1500)
+
+    // ── ① LES PISTES INJECTÉES : trois allures + des orphelines ──
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const v = s.view
+      const T = 16 // TILE_PX
+      // UNE CLAIRIÈRE D'ABORD. Le spawn est souvent sous canopée (le Bois Noir) : une
+      // piste au sol y dort SOUS les houppiers — la capture ne montre rien et la mesure
+      // de luminance vise une frondaison (vécu à la première passe : ratio 1,00 pile,
+      // la région ne contenait aucun pixel de sang). On cherche donc, autour du joueur,
+      // la tuile la plus loin de tout arbre (et à deux tuiles de tout autre nœud), on y
+      // pose les pistes, et la caméra s'y ancre.
+      const px0 = s.playerSprite.x / T
+      const py0 = s.playerSprite.y / T
+      const arbres = v.nodes.filter((n) => n.type === 'tree' || n.type === 'old_tree')
+      const autres = v.nodes.filter((n) => n.type !== 'tree' && n.type !== 'old_tree')
+      let px = px0
+      let py = py0
+      let mieux = -1
+      for (let dy = -14; dy <= 14; dy += 2) {
+        for (let dx = -14; dx <= 14; dx += 2) {
+          const cx = px0 + dx
+          const cy = py0 + dy
+          let dArbre = 1e9
+          for (const a of arbres) dArbre = Math.min(dArbre, Math.max(Math.abs(a.tx - cx), Math.abs(a.ty - cy)))
+          let dAutre = 1e9
+          for (const a of autres) dAutre = Math.min(dAutre, Math.max(Math.abs(a.tx - cx), Math.abs(a.ty - cy)))
+          const score = Math.min(dArbre, 12) + Math.min(dAutre, 2)
+          if (score > mieux) {
+            mieux = score
+            px = cx
+            py = cy
+          }
+        }
+      }
+      s.cameras.main.stopFollow()
+      s.cameras.main.centerOn(px * T, py * T)
+      window.__SANG__ = { px, py }
+      const CAD = 16 // HUNT.BLOOD_EVERY_TICKS — témoin recopié (C9)
+      const t0 = v.tick - CAD * 12
+      const drops = []
+      // 0..7 — la piste au TROT, plein EST (1,2 tuile par intervalle)
+      for (let i = 0; i < 8; i++) drops.push({ x: px - 5 + 1.2 * i, y: py + 2.5, tick: t0 + CAD * i })
+      // 8..12 — la piste LANCÉE, plein SUD (3 tuiles par intervalle)
+      for (let i = 0; i < 5; i++) drops.push({ x: px - 7, y: py - 6 + 3 * i, tick: t0 + 3 + CAD * i })
+      // 13..17 — la bête qui STAGNE (à peine un pas entre deux gouttes) → flaques
+      for (let i = 0; i < 5; i++) drops.push({ x: px + 5 + 0.15 * i, y: py - 3, tick: t0 + 7 + CAD * i })
+      // 18..23 — six orphelines HORS cadence : le hachage oriente, et il doit varier
+      for (let i = 0; i < 6; i++) drops.push({ x: px - 4 + i * 1.7, y: py + 5.2, tick: t0 + 11 + 5 * i })
+      Object.defineProperty(v, 'blood', { get: () => drops, set: () => {}, configurable: true })
+    })
+    await page.waitForTimeout(700) // quelques frames : le pool se peuple
+
+    const piste = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const v = s.view
+      const vis = v.bloodPool.filter((g) => g.visible)
+      return {
+        vis: vis.length,
+        textures: [...new Set(vis.map((g) => g.texture.key))],
+        rotations: new Set(vis.map((g) => Math.round(g.rotation * 20))).size,
+        echelles: new Set(vis.map((g) => Math.round(g.scaleX * 50))).size,
+        lit: vis.every((g) => g.lighting === true),
+        est: v.bloodDecor.slice(1, 8), // la piste EST, gouttes appariées (la 0 n'a pas de précédente)
+        sud: v.bloodDecor.slice(9, 13),
+        flaques: v.bloodDecor.slice(14, 18).map((d) => d.variante),
+      }
+    })
+    console.log(`INJECTÉ — ${piste.vis} gouttes peintes · textures : ${piste.textures.join(', ')} · ${piste.rotations} rotations · ${piste.echelles} échelles`)
+    console.log(piste.textures.length >= 3 && piste.rotations >= 6
+      ? '   ✓ la piste VARIE : plusieurs formes, plusieurs angles — plus un tampon'
+      : `   ✗ la piste se répète encore (${piste.textures.length} texture(s), ${piste.rotations} rotation(s))`)
+    const estOk = piste.est.every((d) => Math.abs(d.angle) < 0.01 && (d.variante === 1 || d.variante === 3))
+    const sudOk = piste.sud.every((d) => Math.abs(d.angle - Math.PI / 2) < 0.01 && d.variante === 2)
+    const flaquesOk = piste.flaques.every((va) => va === 0)
+    console.log(estOk ? '   ✓ la piste plein EST pointe plein est (éclaboussures/gouttelettes)' : `   ✗ piste est : ${JSON.stringify(piste.est)}`)
+    console.log(sudOk ? '   ✓ la piste LANCÉE plein SUD pointe plein sud (traînées)' : `   ✗ piste sud : ${JSON.stringify(piste.sud)}`)
+    console.log(flaquesOk ? '   ✓ la bête qui stagne laisse des FLAQUES' : `   ✗ flaques : ${JSON.stringify(piste.flaques)}`)
+    console.log(piste.lit ? '   ✓ chaque goutte est en setLighting (le monde l’éclaire)' : '   ✗ des gouttes échappent à l’éclairage')
+    await page.screenshot({ timeout: 90000, path: `${OUT}/sang-1-pistes-jour.png` })
+
+    // ── ② LA GICLÉE : en l'air, puis posée ──
+    const vol = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const T = 16
+      const c = window.__SANG__
+      // Un coup de 18 sur un corps au centre de la clairière, frappé depuis l'ouest :
+      // la giclée part vers l'est, en terrain dégagé — elle se VOIT sur la capture.
+      s.sangFx.gicler(c.px * T, c.py * T, 18, s.time.now, c.px * T - 32, c.py * T)
+      const g = s.game
+      g.loop.sleep()
+      let t = g.loop.time
+      t += 40; g.step(t, 40)
+      t += 40; g.step(t, 40)
+      return { air: s.sangFx.enAir, sol: s.sangFx.auSol }
+    })
+    await page.screenshot({ timeout: 90000, path: `${OUT}/sang-2-giclee-vol.png` })
+    const pose = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const g = s.game
+      let t = g.loop.time
+      for (let i = 0; i < 12; i++) { t += 45; g.step(t, 45) }
+      return { air: s.sangFx.enAir, sol: s.sangFx.auSol }
+    })
+    await page.screenshot({ timeout: 90000, path: `${OUT}/sang-3-giclee-posee.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(vol.air >= 4
+      ? `   ✓ la giclée VOLE (${vol.air} gouttelettes en l'air à 80 ms)`
+      : `   ✗ pas de giclée en vol (air=${vol.air}, sol=${vol.sol})`)
+    console.log(pose.sol >= 4 && pose.air === 0
+      ? `   ✓ puis SE POSE (${pose.sol} taches au sol à 620 ms, plus rien en l'air)`
+      : `   ✗ la giclée ne se pose pas (air=${pose.air}, sol=${pose.sol})`)
+
+    // ── ③ LE GOUTTE-À-GOUTTE d'une plaie, si une bête vit au voisinage (best effort :
+    // un monde frais n'en garantit pas près du spawn — l'émission est aussi unitaire) ──
+    const betes = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const v = s.view
+      const liste = v.monsters
+      if (!liste || liste.length === 0) return 0
+      for (const m of liste) m.bleedUntil = 1e9 // plaie client SEULEMENT — rien n'entre dans la sim
+      Object.defineProperty(v, 'monsters', { get: () => liste, set: () => {}, configurable: true })
+      return liste.length
+    })
+    if (betes > 0) {
+      let vu = 0
+      for (let i = 0; i < 8 && vu === 0; i++) {
+        await page.waitForTimeout(350)
+        vu = await page.evaluate(() => window.__BRAISES__.scene.sangFx.enAir + window.__BRAISES__.scene.sangFx.auSol)
+      }
+      console.log(vu > 0
+        ? `   ✓ ${betes} bête(s) en plaie → le goutte-à-goutte TOMBE (${vu} goutte(s) vue(s))`
+        : `   ✗ ${betes} bête(s) en plaie et AUCUNE goutte émise`)
+    } else {
+      console.log('   (aucune bête au voisinage du spawn — émission testée en unitaire seulement)')
+    }
+
+    // ── ④ LA NUIT : les mêmes gouttes doivent S'ÉTEINDRE avec le monde ──
+    const cible = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const cam = s.cameras.main
+      const wv = cam.worldView
+      const T = 16
+      // Le centre de la grappe de flaques (drops 13..17) : le blob le plus large.
+      const fx = (window.__SANG__.px + 5.3) * T
+      const fy = (window.__SANG__.py - 3) * T
+      return { x: Math.round((fx - wv.x) * cam.zoom), y: Math.round((fy - wv.y) * cam.zoom), zoom: cam.zoom }
+    })
+    // LA MESURE EST SPÉCIFIQUE AU SANG, pas à la région : le préréglage nuit ne pilote
+    // que le LightsManager (les sprites lit) — le SOL, lui, tient son jour/nuit du voile
+    // d'ambiance, que ce scénario ne touche pas. Moyenner toute la région diluerait donc
+    // la chute dans de l'herbe immuable (vécu : ratio 1,00, la région avait raté le blob
+    // d'un demi-tuile). On repère les pixels ROUGES DOMINANTS au jour — le sang — et on
+    // relit la luminance de CES pixels-là, aux mêmes coordonnées, sous la nuit.
+    const clip = { x: Math.max(0, cible.x - 24), y: Math.max(0, cible.y - 24), width: 48, height: 48 }
+    const jour = await regionAt(page, clip)
+    const rouges = []
+    if (jour) {
+      for (let y = 0; y < jour.h; y++) for (let x = 0; x < jour.w; x++) {
+        const [rr, vv, bb] = jour.px(x, y)
+        if (rr > vv + 10 && rr > bb + 10) rouges.push([x, y])
+      }
+    }
+    const lumSur = (r, points) => {
+      let somme = 0
+      for (const [x, y] of points) {
+        const [rr, vv, bb] = r.px(x, y)
+        somme += 0.2126 * rr + 0.7152 * vv + 0.0722 * bb
+      }
+      return somme / Math.max(1, points.length)
+    }
+    const nuit0 = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const dl = s.dynLight
+      if (!dl) return false
+      dl.update = () => {} // GEL : sinon il réécrit l'ambiante chaque frame depuis l'heure in-world
+      const v = s.cameras.main.worldView
+      s.lights.setAmbientColor(0x33415f) // AMBIENT_NIGHT
+      dl.sun.intensity = 0
+      dl.moon.intensity = 0.32 // MOON_INTENSITY
+      dl.moon.x = v.x + v.width / 2
+      dl.moon.y = v.y - 1600 // au NORD, au-dessus de la vue
+      // ET ON REND LA FRAME À LA MAIN (le motif de `feuNuit`) : attendre ne suffit pas —
+      // ce rendu logiciel peut ne produire AUCUNE frame en une demi-seconde, et la
+      // capture montrerait alors le JOUR d'avant (mesuré : ratio 1,00 pile).
+      const g = s.game
+      g.loop.sleep()
+      g.step(g.loop.time + 16, 16)
+      g.step(g.loop.time + 16, 16)
+      return true
+    })
+    const nuit = await regionAt(page, clip)
+    // La capture pleine page AVANT de réveiller : la boucle dort, la frame de nuit tient.
+    await page.screenshot({ timeout: 90000, path: `${OUT}/sang-4-pistes-nuit.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    if (jour && nuit && nuit0 && rouges.length >= 15) {
+      const lJour = lumSur(jour, rouges)
+      const lNuit = lumSur(nuit, rouges)
+      const ratio = lJour > 1 ? lNuit / lJour : 1
+      console.log(`MESURÉ — luminance du sang (${rouges.length} px rouges de la flaque) : jour ${lJour.toFixed(1)} → nuit ${lNuit.toFixed(1)} (ratio ${ratio.toFixed(2)})`)
+      console.log(ratio < 0.65
+        ? '   ✓ le sang s\'éteint avec le monde : il est ÉCLAIRÉ, plus un décal fluorescent'
+        : '   ✗ le sang reste allumé la nuit — setLighting ne porte pas')
+    } else {
+      console.log(`   ✗ mesure de nuit impossible (dynLight/capture indisponible, ou flaque hors région : ${rouges.length} px rouges)`)
+    }
+    console.log(`→ ${OUT}/sang-1-pistes-jour.png · sang-2-giclee-vol.png · sang-3-giclee-posee.png · sang-4-pistes-nuit.png`)
   },
 }
 

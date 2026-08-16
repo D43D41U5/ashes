@@ -69,6 +69,10 @@ const NUMBER_MS = 620
 const BLADE = 0xf0e6d2
 const IMPACT_TINT = 0xff8877
 const BLEED = 0xc0503e
+/** LE CENDREUX S'EFFRITE — il n'a pas de sang à donner (la sim ne le fait jamais
+ *  saigner au sol : pas d'`habitat`, pas de plaie de chasse). Sa gerbe est sa
+ *  matière, lue sur son sprite : la cendre claire, son ombre, la braise morte. */
+export const BRISURES_CENDRE: readonly number[] = [0xb8b0a4, 0x8a8378, 0x6b3a20]
 const SPARK = 0xffe9b0
 /** L'arc d'un ENNEMI : rouge. Celui qui vient vers vous ne se lit pas comme le vôtre. */
 const THREAT = 0xe0553f
@@ -141,8 +145,13 @@ export interface AttackFx {
    * projetée vers lui, elle se tasserait sur son sprite et l'on ne verrait rien
    * (leçon déjà payée sur les éclats de récolte). Sans elle, pas de gerbe : un coup
    * dont on ignore l'origine n'a pas de sens de projection à inventer.
+   *
+   * `brisures` : LA MATIÈRE de la cible. Absent = le rouge sombre historique ;
+   * une palette = ses éclats (le Cendreux s'effrite en cendre et braise morte,
+   * `BRISURES_CENDRE`) ; `null` = PAS de brisures — la chair, elle, SAIGNE, et son
+   * jet balistique vit dans `sang-fx` (deux gerbes superposées liraient double).
    */
-  spark(x: number, y: number, amount: number, onMe: boolean, now: number, fromX?: number, fromY?: number): void
+  spark(x: number, y: number, amount: number, onMe: boolean, now: number, fromX?: number, fromY?: number, brisures?: readonly number[] | null): void
   /**
    * LA ZONE qu'une entité s'apprête à frapper (lue du snapshot, `windup.strike`).
    * `mine` : la MIENNE se peint en crème, celle d'un ENNEMI en ROUGE. Ce n'est pas
@@ -484,10 +493,12 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
      * monte. Le chiffre n'est pas du bruit — c'est la seule façon de savoir si son
      * épieu vaut mieux que ses poings, et si le loup est à trois coups ou à dix.
      */
-    spark(x, y, amount, onMe, now, fromX, fromY) {
+    spark(x, y, amount, onMe, now, fromX, fromY, brisures) {
       // LA GERBE D'ABORD (elle part sous l'étincelle). Elle exige de savoir d'où vient
       // le coup : sans origine, on ne projette rien plutôt que de projeter au hasard.
-      if (fromX !== undefined && fromY !== undefined) {
+      // `brisures === null` : la cible est de CHAIR — son sang gicle dans `sang-fx`,
+      // les brisures de matière n'ont rien à faire là.
+      if (brisures !== null && fromX !== undefined && fromY !== undefined) {
         const ex = x - fromX
         const ey = y - fromY
         const len = Math.sqrt(ex * ex + ey * ey)
@@ -495,6 +506,7 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
         if (len > 0.001) {
           const base = Math.atan2(ey / len, ex / len)
           const n = gerbeCount(amount)
+          const palette = brisures ?? [BLEED]
           for (let i = 0; i < n; i++) {
             const sh = shards[nextShard]!
             nextShard = (nextShard + 1) % GERBE_POOL
@@ -507,6 +519,7 @@ export function createAttackFx(scene: Phaser.Scene, depth: number): AttackFx {
             sh.y0 = y - 8
             sh.vx = Math.cos(a) * v
             sh.vy = Math.sin(a) * v
+            sh.g.setFillStyle(palette[i % palette.length]!)
             sh.g.setPosition(sh.x0, sh.y0).setVisible(true).setAlpha(1)
           }
         }

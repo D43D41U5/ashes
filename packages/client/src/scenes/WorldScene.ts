@@ -145,7 +145,7 @@ import {
   type Brouillard,
   type IdentiteMonde,
 } from '../render/fog'
-import { fireStateAt, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF } from '@ashes/sim'
+import { fireStateAt, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -185,7 +185,8 @@ import { RecolteFx } from './world/recolte-fx'
 import { SprintFx } from './world/sprint-fx'
 import { ChuteArbre } from './world/chute-arbre'
 import { ReveilFx } from './world/reveil-fx'
-import { createAttackFx, type AttackFx, type Zone } from './world/attack-fx'
+import { BRISURES_CENDRE, createAttackFx, type AttackFx, type Zone } from './world/attack-fx'
+import { SangFx } from './world/sang-fx'
 import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { demolishTargetAt } from './world/aim'
@@ -629,6 +630,8 @@ export class WorldScene extends Phaser.Scene {
    *  et où en est la jauge (spec recolte-maitrise, verbe 1). */
   private fells: FellCharge[] = []
   private attackFx!: AttackFx
+  /** LE SANG QUI QUITTE LE CORPS (`sang-fx`) : la giclée du coup, la goutte de la plaie. */
+  private sangFx!: SangFx
   private handWeapons!: HandWeapons
   /** LES TIRS ARMÉS au dernier snapshot (spec `tir.md` T3) — relevés à 20 Hz, jamais à la
    *  frame : un armement de trait dure 0,25 s et une frame lente l'enjambe en entier. */
@@ -699,6 +702,8 @@ export class WorldScene extends Phaser.Scene {
     this.view.setChuteArbre(this.chuteArbre) // …et la chute, qui a besoin de la MÊME tuile qu'avant la dérive
     this.reveilFx = new ReveilFx(this)
     this.view.setReveilFx(this.reveilFx) // …et le sol qui travaille, qui a besoin du TERRAIN de la tuile
+    this.sangFx = new SangFx(this)
+    this.view.setSangFx(this.sangFx) // …et le goutte-à-goutte des plaies, qui a besoin du sprite qui saigne
     this.buildGhost = new BuildGhost(this)
     // LA FRONTIÈRE DE CONSTRUCTION SE VOIT (demande d'Alexis, 2026-08-04) : le liseré du
     // carré, le tapis de constructibilité et l'extinction du dehors — marteau en main.
@@ -1355,6 +1360,8 @@ export class WorldScene extends Phaser.Scene {
     // LA TERRE DU RÉVEIL vole, retombe et se pose (spec `cendreux.md` R21) — même horloge et
     // même `dt` borné que la gerbe de récolte : l'horloge headless saute.
     this.reveilFx.update(time, deltaMs)
+    // LE SANG vole, retombe et s'écrase — même horloge, même `dt` borné.
+    this.sangFx.update(time, deltaMs)
     // LE SANG AU SOL (spec chasse C9) : la piste, et son horloge — les gouttes
     // fraîches sont vives, les vieilles pâlissent. C'est tout ce que le chasseur
     // a pour savoir s'il suit une bête ou un souvenir.
@@ -2318,7 +2325,15 @@ export class WorldScene extends Phaser.Scene {
             : (this.view.others.get(event.byEntityId)?.sprite ?? null)
         if (cible) {
           this.attackFx.impact(cible, now, frappeur?.x, frappeur?.y)
-          this.attackFx.spark(cible.x, cible.y, event.amount, onMe, now, frappeur?.x, frappeur?.y)
+          // LA MATIÈRE DE LA CIBLE décide de ce qui jaillit — la MÊME frontière que la
+          // sim, qui ne fait saigner au sol que ce qui a du sang (`habitat` non vide,
+          // combat.ts) : la chair GICLE (sang-fx, balistique, ça se pose), le Cendreux
+          // s'EFFRITE (brisures de cendre et de braise morte). Un humain — avatar ou
+          // PNJ, donc sans fiche de monstre — est de chair.
+          const monstre = this.view.monsters.find((m) => m.entityId === event.entityId)
+          const chair = monstre === undefined || (MONSTER_DEFS[monstre.type].habitat?.length ?? 0) > 0
+          this.attackFx.spark(cible.x, cible.y, event.amount, onMe, now, frappeur?.x, frappeur?.y, chair ? null : BRISURES_CENDRE)
+          if (chair) this.sangFx.gicler(cible.x, cible.y, event.amount, now, frappeur?.x, frappeur?.y)
         }
         if (onMe) {
           this.attackFx.hurt(now) // l'écran saigne…

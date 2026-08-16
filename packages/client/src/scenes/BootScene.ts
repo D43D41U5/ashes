@@ -790,13 +790,46 @@ export class BootScene extends Phaser.Scene {
 
     this.makeReveilMounds(g)
 
-    // LA GOUTTE DE SANG (spec chasse C9). La piste que le chasseur suit — et que
-    // les loups suivent aussi. Une éclaboussure, pas un rond : elle a un SENS, et
-    // c'est ce qui permet de lire la direction de la course d'un coup d'œil.
-    g.fillStyle(0x8e2318).fillEllipse(5, 5, 7, 5) // la flaque (contour sombre)
-    g.fillStyle(0xc4372a).fillEllipse(5, 5, 5, 3) // le cœur, plus vif
-    g.fillStyle(0x8e2318).fillCircle(9, 3, 1).fillCircle(1, 7, 1) // deux éclats
-    g.generateTexture('fx-blood', 11, 10)
+    // LE SANG AU SOL (spec chasse C9). La piste que le chasseur suit — et que
+    // les loups suivent aussi. QUATRE formes, pas une : une seule texture répétée
+    // lisait comme un tampon (Alexis, 2026-08-16). Toutes dessinées ORIENTÉES +X —
+    // le rendu les tourne dans le sens de la course (`sang-sol.ts` : la goutte
+    // précédente d'une piste est à une cadence exacte de là, on l'apparie) — et
+    // c'est la VITESSE entre deux gouttes qui choisit la forme : flaque à l'arrêt,
+    // éclaboussure au trot, traînée en pleine course, gouttelettes en éclats.
+    // Palette commune : 0x8e2318 (le sombre du bord), 0xc4372a (le cœur vif).
+    //
+    // 0 — LA FLAQUE : la bête a stagné, le sang s'est massé. Bords irréguliers
+    // (deux lobes décalés) : une flaque ronde répétée redeviendrait un tampon.
+    g.fillStyle(0x8e2318).fillEllipse(6, 5, 9, 7)
+    g.fillStyle(0x8e2318).fillEllipse(9, 7, 5, 4) // le lobe qui déborde
+    g.fillStyle(0xc4372a).fillEllipse(6, 5, 6, 4) // le cœur, plus vif
+    g.fillStyle(0x8e2318).fillCircle(1, 8, 1) // la goutte satellite
+    g.generateTexture('fx-blood', 13, 11)
+    g.clear()
+    // 1 — L'ÉCLABOUSSURE : le corps masse derrière, les éclats DEVANT (+X) — c'est
+    // elle qui donne son sens à la piste au trot.
+    g.fillStyle(0x8e2318).fillEllipse(4, 4, 7, 5)
+    g.fillStyle(0xc4372a).fillEllipse(4, 4, 5, 3)
+    g.fillStyle(0x8e2318).fillCircle(9, 3, 1).fillCircle(11, 5, 1) // les éclats, devant
+    g.fillStyle(0xc4372a).fillCircle(8, 5, 1)
+    g.generateTexture('fx-blood-1', 13, 9)
+    g.clear()
+    // 2 — LA TRAÎNÉE : la bête est LANCÉE — le sang file, s'étire, s'amincit vers
+    // l'avant. La queue est derrière (−X), la pointe devant.
+    g.fillStyle(0x8e2318).fillEllipse(4, 4, 6, 4) // la masse, en queue
+    g.fillStyle(0x8e2318).fillEllipse(8, 3, 5, 3)
+    g.fillStyle(0x8e2318).fillEllipse(11, 3, 4, 2)
+    g.fillStyle(0xc4372a).fillEllipse(5, 4, 4, 2) // le cœur vif reste en queue
+    g.fillStyle(0x8e2318).fillCircle(14, 2, 1) // la goutte détachée, en pointe
+    g.generateTexture('fx-blood-2', 16, 7)
+    g.clear()
+    // 3 — LES GOUTTELETTES : le sang a giclé en éclats épars — le plus gros porte
+    // le cœur vif, les autres sont déjà sombres.
+    g.fillStyle(0x8e2318).fillEllipse(4, 6, 5, 4)
+    g.fillStyle(0xc4372a).fillEllipse(4, 6, 3, 2)
+    g.fillStyle(0x8e2318).fillCircle(8, 3, 1).fillCircle(10, 7, 1).fillCircle(7, 9, 1)
+    g.generateTexture('fx-blood-3', 12, 11)
     g.clear()
 
     // Loup qui MANGE : tête dans la carcasse, garde baissée (R15) — la fenêtre
