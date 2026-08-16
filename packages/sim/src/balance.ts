@@ -681,7 +681,13 @@ export const TERRAINS: Record<number, TerrainDef> = {
   19: { name: 'reed_marsh', walkable: true, speedFactor: 0.55, cover: 0.5 },
   20: { name: 'alpine_flowers', walkable: true, speedFactor: 1, cover: 0.85 },
   21: { name: 'burnt_forest', walkable: true, speedFactor: 0.9, cover: 0.9 },
-  22: { name: 'old_growth', walkable: true, speedFactor: 0.7, cover: 0.5 },
+  // La futaie ancienne à PLEIN RÉGIME (décision d'Alexis, 2026-08-16 : « il ne faudrait pas
+  // que les déplacements soient ralentis à l'intérieur ») — révise la parenthèse du
+  // 2026-07-18 qui la laissait à 0,7 : depuis la couronne, le Bois Noir EST de la futaie
+  // ancienne, et son intérieur doit se parcourir. Le coût d'y être reste réel, mais il est
+  // ailleurs : le couvert (0,5), la litière qui craque, la profondeur. Pins/mélèzes gardent
+  // leur 0,85 — Alexis n'a parlé que du dedans des feuillus.
+  22: { name: 'old_growth', walkable: true, speedFactor: 1, cover: 0.5 },
   /**
    * LA FALAISE — le mur qui SÉPARE, et le squelette de toute la carte (spec worldgen R2).
    *
