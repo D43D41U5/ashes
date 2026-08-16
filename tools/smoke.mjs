@@ -5828,7 +5828,10 @@ const SCENARIOS = {
     const SPRITE = 0.75 / 2 //  demi-LARGEUR du dessin (12 px) — désormais celle du corps
     for (const [nom, dx, dy, touche, bordX] of [
       ['ouest', 3, 5.5, 'KeyQ', 1], //  le pan ouest de la salle : sa ligne est en x0 + 1
-      ['est', 9, 5.5, 'KeyD', 12], //   le pan est : sa ligne est en x0 + 12
+      // Le pan est : sa ligne est en x0 + 12 — MAIS ses rangées 4 et 5 sont la BRÈCHE du plan
+      // (`breches: 11,4,E 11,5,E`, la seconde entrée) : pousser à 5,5 sortait par le trou et
+      // la sonde criait « hitbox » sur un passage voulu. On pousse rangée 6, où le mur existe.
+      ['est', 9, 6.5, 'KeyD', 12],
     ]) {
       await page.evaluate(({ x, y }) => {
         window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x, y })
