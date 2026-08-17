@@ -10,6 +10,11 @@ import { createEmptyMap } from './map'
 import { advanceRefugees } from './refugees'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { applyVillageAction, getVillageOf, grantItems } from './village'
+import { foundNpcVillage } from './worldgen'
+import { rngNext } from './rng'
+
+/** L'événement de recrutement, tel que les tests R12 le lisent. */
+type Recrutement = { villageId: number; byEntityId: number; count: number }
 
 /** Une carte avec une route (bande) pour que les réfugiés aient où arriver. */
 function roadSim(): SimState {
@@ -81,5 +86,87 @@ describe('les réfugiés (V2-25)', () => {
     const id = spawnEntity(sim, g.tx + 20, g.ty + 20) // hors de portée
     step(sim, [{ entityId: id, dx: 0, dy: 0, action: { type: 'rob_refugees', groupId: g.id } }])
     expect(sim.refugeeGroups).toHaveLength(1) // toujours là
+  })
+})
+
+/**
+ * R12 (village-pnj-evolution) — LE VILLAGE SE RÉPARE AUX RÉFUGIÉS (décision d'Alexis,
+ * 2026-08-17). Le groupe arrive au tick 12000 ; la fenêtre du joueur court un demi-séjour
+ * (NPC_CLAIM_TICKS = 28800 à l'échelle du banc) : le premier tick de recrutement PNJ est
+ * donc 40800 — un jour de saison (17) qui n'est PAS un multiple de PERIOD_DAYS, aucun
+ * groupe neuf ne vient brouiller le compte.
+ */
+describe('R12 — le village PNJ se répare aux réfugiés', () => {
+  const CLAIM_TICK = 12000 + REFUGEES.NPC_CLAIM_TICKS
+
+  /** Un village PNJ de 3, amputé de `blesses` membres (hp 0 — `vivants` les voit morts). */
+  function villagePnj(sim: SimState, tx: number, ty: number, blesses: number) {
+    const v = foundNpcVillage(sim, tx, ty, 3)
+    for (const id of v.memberIds.slice(0, blesses)) {
+      sim.entities.find((e) => e.id === id)!.hp = 0
+    }
+    return v
+  }
+  const vivants = (sim: SimState, v: { memberIds: number[] }) =>
+    sim.entities.filter((e) => v.memberIds.includes(e.id) && e.hp > 0).length
+
+  it('à mi-séjour, le village amputé prend CE QU\'IL LUI MANQUE — le reliquat attend, et le flux RNG ne bouge pas', () => {
+    const sim = roadSim()
+    const g = spawnAGroup(sim)
+    const v = villagePnj(sim, 60, 60, 1) // 2 vivants pour une fondation à 3 → manque 1
+    drainEvents(sim)
+
+    sim.tick = CLAIM_TICK - 1 // la fenêtre du joueur court encore
+    advanceRefugees(sim)
+    expect(vivants(sim, v)).toBe(2)
+    expect(g.count).toBe(REFUGEES.COUNT)
+
+    sim.tick = CLAIM_TICK
+    const rngAvant = sim.rngState
+    advanceRefugees(sim)
+    // R10 : la DÉCISION ne tire rien — le seul pas de PRNG est celui, délibéré, de
+    // `spawnEntity` (« le spawn fait partie de l'histoire déterministe »), un par recrue.
+    expect(sim.rngState).toBe(rngNext(rngAvant))
+    expect(vivants(sim, v)).toBe(3) // réparé à l'effectif de fondation…
+    expect(g.count).toBe(REFUGEES.COUNT - 1) // …et pas plus : le reliquat attend
+    expect(sim.refugeeGroups.some((x) => x.id === g.id)).toBe(true)
+    const evt = drainEvents(sim).find((e) => e.type === 'refugees_recruited') as Recrutement | undefined
+    expect(evt).toBeDefined()
+    expect(evt!.villageId).toBe(v.id)
+    expect(evt!.byEntityId).toBe(0) // c'est le village qui agit
+    expect(evt!.count).toBe(1)
+
+    sim.tick = CLAIM_TICK + 1 // au complet : plus rien, le groupe reste disponible
+    advanceRefugees(sim)
+    expect(vivants(sim, v)).toBe(3)
+    expect(g.count).toBe(REFUGEES.COUNT - 1)
+  })
+
+  it('un village de JOUEUR amputé ne recrute jamais tout seul — la règle est PNJ-seulement', () => {
+    const sim = roadSim()
+    const g = spawnAGroup(sim)
+    const id = spawnEntity(sim, 60.5, 60.5)
+    grantItems(sim, id, { wood: 30, stone: 20 })
+    applyVillageAction(sim, id, { type: 'light_fire' })
+    sim.entities.find((e) => e.id === id)!.hp = 0 // le fondateur est à terre : village « en manque »
+    drainEvents(sim)
+    sim.tick = CLAIM_TICK
+    advanceRefugees(sim)
+    expect(g.count).toBe(REFUGEES.COUNT) // personne n'a été pris
+    expect(drainEvents(sim).some((e) => e.type === 'refugees_recruited')).toBe(false)
+  })
+
+  it('deux villages en manque : le plus PROCHE du groupe gagne', () => {
+    const sim = roadSim()
+    const g = spawnAGroup(sim)
+    const loin = villagePnj(sim, 88, 88, 1)
+    const pres = villagePnj(sim, g.tx + 8, Math.min(90, g.ty + 8), 1)
+    drainEvents(sim)
+    sim.tick = CLAIM_TICK
+    advanceRefugees(sim)
+    const evt = drainEvents(sim).find((e) => e.type === 'refugees_recruited') as Recrutement | undefined
+    expect(evt!.villageId).toBe(pres.id)
+    expect(vivants(sim, pres)).toBe(3)
+    expect(vivants(sim, loin)).toBe(2) // il attendra le prochain tick / le reliquat
   })
 })

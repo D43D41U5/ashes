@@ -36,10 +36,67 @@ export function advanceRefugees(state: SimState): void {
     state.lastRefugeeDay = day
     spawnRefugees(state, day)
   }
+  reparerVillagesPnj(state)
   for (const g of state.refugeeGroups) {
     if (state.tick >= g.until) emitEvent(state, { type: 'refugees_left', tick: state.tick, groupId: g.id })
   }
   state.refugeeGroups = state.refugeeGroups.filter((g) => state.tick < g.until)
+}
+
+/**
+ * LE VILLAGE SE RÉPARE AUX RÉFUGIÉS (spec village-pnj-evolution R12, décision d'Alexis
+ * 2026-08-17). Le banc de saison a mesuré le cliquet démographique : 10 groupes par saison,
+ * 0 recrutés (verbe joueur-seulement), et tout village PNJ mort d'attrition avant le j36.
+ *
+ * Un groupe qui a attendu `NPC_CLAIM_TICKS` (un demi-séjour — LA FENÊTRE DU JOUEUR, qui
+ * garde la main s'il agit d'abord) est recruté par le village PNJ le plus PROCHE encore
+ * sous son effectif de fondation. Le village prend CE QU'IL LUI MANQUE : le plafond fait
+ * une réparation, pas une croissance (la croissance est R9). Le reliquat continue
+ * d'attendre — un autre village, ou le joueur, peut le prendre au tick suivant.
+ *
+ * Aucun `recordAct` : se réparer n'est pas un acte moral qui teinte le Feu — les verbes
+ * d'alignement restent au joueur. La DÉCISION ne tire rien sur `state.rng` (R10 : distance
+ * et état) — chaque recrue consomme le seul pas délibéré de `spawnEntity`, comme le colon R9.
+ */
+function reparerVillagesPnj(state: SimState): void {
+  const attente = REFUGEES.STAY_TICKS - REFUGEES.NPC_CLAIM_TICKS
+  for (const g of state.refugeeGroups) {
+    if (state.tick < g.until - attente || g.count <= 0) continue
+    let elu: Village | null = null
+    let manqueElu = 0
+    let meilleureD = Infinity
+    for (const v of state.villages) {
+      if (v.chiefId !== 0) continue // village de joueur : la règle ne s'applique jamais
+      // Vieille sauvegarde sans effectif de fondation : figé ICI à l'effectif courant —
+      // un village amputé d'avant la règle se maintient, il ne ressuscite pas.
+      v.foundedSize ??= v.memberIds.length
+      const vivants = state.entities.filter((e) => v.memberIds.includes(e.id) && e.hp > 0).length
+      if (vivants >= v.foundedSize) continue
+      const dx = v.fireTx - g.tx
+      const dy = v.fireTy - g.ty
+      const d = dx * dx + dy * dy
+      if (d < meilleureD) { // à égalité, le premier au tableau (id croissant) garde la main
+        meilleureD = d
+        elu = v
+        manqueElu = v.foundedSize - vivants
+      }
+    }
+    if (elu === null) continue
+    const avant = state.npcs.length
+    spawnNpcsAround(state, elu, Math.min(g.count, manqueElu))
+    const pris = state.npcs.length - avant
+    if (pris <= 0) continue // l'anneau du Feu était bloqué : on réessaie au tick suivant
+    g.count -= pris
+    emitEvent(state, {
+      type: 'refugees_recruited',
+      tick: state.tick,
+      groupId: g.id,
+      villageId: elu.id,
+      byEntityId: 0, // c'est le village qui agit (patron porte rituelle R7)
+      count: pris,
+    })
+    if (g.count <= 0) removeGroup(state, g.id)
+  }
 }
 
 /** Pose un groupe sur une route, position dérivée du JOUR (`hash2`) — déterministe, sans RNG. */

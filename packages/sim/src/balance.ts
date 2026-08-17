@@ -3163,6 +3163,11 @@ export const REFUGEES = {
   COUNT: 3,
   /** Ils stationnent ~1 cycle, puis repartent (refouler = ne rien faire). */
   STAY_TICKS: ticksForCycles(1),
+  /** LA FENÊTRE DU JOUEUR (spec village-pnj-evolution R12) : passé ce délai d'attente
+   *  (un demi-séjour), un village PNJ sous son effectif de fondation recrute le groupe —
+   *  le joueur garde la main s'il agit d'abord. Décision d'Alexis, 2026-08-17 : le banc
+   *  de saison a montré 10 groupes/saison, 0 recrutés, et des villages morts d'attrition. */
+  NPC_CLAIM_TICKS: ticksForCycles(0.5),
   /** Chaleur (Foyer) à les recruter/nourrir ; froid (Meute) à les dépouiller. */
   WARMTH_SAVE: 12,
   WARMTH_ROB: -12,

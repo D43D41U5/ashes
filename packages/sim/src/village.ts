@@ -228,6 +228,13 @@ export interface Village {
   nextTaskId: number
   /** Les PNJ d'accueil sont-ils déjà arrivés ? (spec pnj R9) */
   npcsArrived: boolean
+  /** L'EFFECTIF DE FONDATION (spec village-pnj-evolution R12) — le plafond de la
+   *  réparation aux réfugiés : le village se répare jusqu'à lui, jamais au-delà (la
+   *  croissance est l'affaire de R9). Posé par `foundNpcVillage` ; absent d'une vieille
+   *  sauvegarde, il se fige au premier passage à l'effectif courant (`??=` dans
+   *  `advanceRefugees`) — un village amputé d'avant la règle se maintient, il ne
+   *  ressuscite pas. Villages de joueur : jamais lu (la règle est PNJ-seulement). */
+  foundedSize?: number
   /** Dernière alarme (spec événements R4 : une par vague) — TICK_NEVER si jamais. */
   lastAlarmAt: number
   /** Le Feu : agrégat des membres, recalculé périodiquement (spec alignement R5). */

@@ -123,6 +123,30 @@ ventre vide), `BUILD_WOOD_RESERVE` (la part du Feu est intouchable), et
   géographie module la croissance, le recrutement de réfugiés reste le levier
   fiable partout. *(Calibrage des barres — c'est le critère qui remplace tout
   seuil de jour.)*
+- **R12 — Le village se RÉPARE aux réfugiés (décision d'Alexis, 2026-08-17).** Le
+  constat fondateur est celui du banc de saison (`docs/calibration-saison.md`) : les
+  villages PNJ meurent d'un cliquet démographique — 10 groupes de réfugiés passent
+  par saison, 0 recrutés, le verbe étant joueur-seulement. Désormais : un groupe qui
+  a attendu `REFUGEES.NPC_CLAIM_TICKS` (un demi-séjour — la FENÊTRE DU JOUEUR, qui
+  garde la main s'il agit d'abord) sans être pris en charge est recruté par le
+  village PNJ (`chiefId === 0`) le plus PROCHE dont l'effectif VIVANT est sous son
+  **effectif de fondation** (`village.foundedSize`, posé par `foundNpcVillage`) —
+  départage par distance² puis id croissant. Le village prend CE QU'IL LUI MANQUE,
+  jamais plus : le plafond fait de la règle une réparation, pas une croissance (la
+  croissance reste R9 et sa prospérité). Le RESTE du groupe continue d'attendre —
+  un autre village (ou le joueur) peut le prendre, sinon il repart à `until` comme
+  avant. `byEntityId: 0` sur l'événement (patron porte rituelle : c'est le village
+  qui agit) et **aucun `recordAct`** : la réparation d'un village n'est pas un acte
+  moral qui teinte son Feu — les verbes d'alignement restent au joueur. La DÉCISION ne tire rien sur
+  `state.rng` (R10 tient : distance et état seulement) — chaque recrue consomme le
+  seul pas délibéré de `spawnEntity` (« le spawn fait partie de l'histoire
+  déterministe »), exactement comme le colon de R9. Vieille sauvegarde sans
+  `foundedSize` : figé au premier passage à l'effectif COURANT (`??=`) — un village
+  déjà amputé d'avant la règle ne ressuscite pas, il se maintient. *Critères : le
+  village amputé recrute à mi-séjour jusqu'à `foundedSize` pas au-delà ; village
+  joueur jamais ; au complet, rien et le groupe repart ; le plus proche gagne ; le
+  reliquat reste disponible ; avant mi-séjour, rien ; un pas de PRNG par recrue
+  (celui de `spawnEntity`), zéro tirage de décision.*
 
 ## Hors périmètre (assumé)
 
