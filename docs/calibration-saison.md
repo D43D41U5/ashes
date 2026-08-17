@@ -111,6 +111,17 @@ fondation** (R12, commit `ddd4833`). Re-mesuré à 62 jours sur 2026 et 7 :
    « pas de recrutement dans un grenier vide » (le piège à réfugiés est observé : 3 recrues
    au j24, mortes de faim au j25) ; (γ) le PNJ blessé se panse au village (fibre du grenier),
    sinon 1 mort sur 5 reste inévitable quelle que soit la règle de siège.
+
+   **α précisée par la sonde de siège (2026-08-17, `diag-siege`, 23 sièges).** Trois régimes
+   mesurés : sans murs (j1-5), entrée libre ; logis debout sans anneau (j6-19), les cendreux
+   passent ENTRE les maisons — points d'entrée fixes, 0 PV de dégâts aux murs sur 17 sièges
+   (on ne bat pas ce qu'on contourne) ; Feu affamé + acte II (j20+), les murs fondus par
+   l'entretien sont battus et rasés, le Feu tué — la mécanique de brèche EXISTE et marche.
+   **Le fait décisif : l'enceinte du plan n'est jamais fermée de son vivant** — logis
+   d'abord, ~2,3 arêtes/jour de chantier, l'anneau en veut ~50 ; première palissade au j25,
+   rasée le soir même. Les leviers d'α deviennent : **α1** l'ordre du chantier (l'anneau
+   avant/avec les logis) ; **α2** le repli nocturne des oisifs (les morts hors murs à
+   7-8 t) ; **α3** la calibration chantier/rayon/cadence.
 3. **Un village qui naît sous un Repaire / dans une zone sans baies est-il un sort voulu**
    (« cette vallée était maudite ») **ou un défaut de placement** (écarter les sites à portée
    de POI hostile / exiger un minimum de baies en zone, comme `emplacementsDeVillage` sait
