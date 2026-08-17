@@ -126,7 +126,7 @@ export function refreshBoard(state: SimState, village: Village): void {
     (t) => t.kind !== 'build' || t.claimedBy !== null || JSON.stringify(t.build) === firstKey,
   )
   // L'ENCEINTE À SA CADENCE (spec R15) : l'anneau ET ses vantaux sont la défense, pas le
-  // décor — ils se posent 3,5× plus vite que le hameau, qui garde son arc de saison.
+  // décor — ils se posent 1,75× plus vite que le hameau, qui garde son arc de saison.
   const pace = first !== undefined && first.action === 'pose' && first.enceinte === true
     ? VILLAGE_GROWTH.BUILD_PACE_TICKS_ENCEINTE
     : VILLAGE_GROWTH.BUILD_PACE_TICKS

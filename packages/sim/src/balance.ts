@@ -613,7 +613,11 @@ export const VILLAGE_GROWTH = {
    * APRÈS le coût de la pièce.
    */
   BUILD_FOOD_FLOOR: 16,
-  BUILD_WOOD_RESERVE: 12,
+  /** 12 → 18 avec l'enceinte-d'abord (R15, calibré au banc) : à 12, le chantier de
+   *  l'anneau mangeait la part du Feu ; à 24, l'équilibre de bois d'un village pauvre
+   *  (~20-40 au grenier) ne payait plus UNE palissade — l'anneau gelait, tout l'objet
+   *  de R15 mourait. 18 laisse le Feu sa marge ET l'anneau son droit de passage. */
+  BUILD_WOOD_RESERVE: 18,
   /**
    * LA CADENCE DU CHANTIER — une pièce au plus par fenêtre. MESURÉ (sonde 12 j) :
    * sans cadence, une pièce par rafraîchissement du tableau (~12/min) bâtissait le
@@ -632,9 +636,12 @@ export const VILLAGE_GROWTH = {
   /** LA CADENCE DE L'ENCEINTE (spec R15) — la palissade n'est pas de l'esthétique, c'est
    *  la DÉFENSE : à la cadence commune (420 s), l'anneau de 66 rondins prenait ~10 jours
    *  de plafond théorique et n'était JAMAIS fermé du vivant du village (sonde de siège,
-   *  2026-08-17). 3,5× plus vite pour elle seule ; le hameau, lui, garde son arc de
-   *  saison. Multiple de BOARD_REFRESH_TICKS, comme la cadence commune. */
-  BUILD_PACE_TICKS_ENCEINTE: ticksFor(120),
+   *  2026-08-17). Plus vite pour elle seule ; le hameau, lui, garde son arc de saison.
+   *  CALIBRÉ AU BANC : 120 s asphyxiait l'économie du départ (le chantier dévorait ~130
+   *  bois en 3 jours, évinçait la cueillette — Feu affamé au j6, famine, graine 7) ;
+   *  240 s laisse l'anneau fermer avant la fenêtre des sièges meurtriers (j13-19) sans
+   *  étrangler le bois. Multiple de BOARD_REFRESH_TICKS, comme la cadence commune. */
+  BUILD_PACE_TICKS_ENCEINTE: ticksFor(240),
 } as const
 
 export interface TerrainDef {

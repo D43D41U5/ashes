@@ -160,7 +160,11 @@ ventre vide), `BUILD_WOOD_RESERVE` (la part du Feu est intouchable), et
   `entity_bandaged`) : fibre en poche d'abord, sinon retrait au grenier (patron
   `handleHunger`, mêmes anti-livelocks). Priorité : LE SANG CÈDE LA DÉFENSE (doctrine
   `DEFENSE_YIELD_HUNGER` — un défenseur qui se vide ne défend rien) et passe avant
-  l'expédition, le sommeil et la faim. Périmètre assumé : le saignement seul déclenche
+  l'expédition, le sommeil et la faim — **mais seulement si un bandage EXISTE** (fibre
+  en poche ou au grenier, ≥ coût) : céder sans fibre nulle part est une désertion, pas
+  un soin — MESURÉ au banc (graine 2026 : la milice blessée quittait le front sans
+  pouvoir se panser, 10 morts aux j6-12 greniers pleins). Sans bandage possible, on se
+  bat en saignant. Périmètre assumé : le saignement seul déclenche
   (c'est lui qui tue) — jambe et bras restent des gênes non soignées ; sans fibre nulle
   part, on saigne en travaillant (la mort était déjà le défaut). *Critères : fibre en
   poche → plaie fermée au tick, fibre décomptée, événement émis sur soi ; fibre au
@@ -185,7 +189,8 @@ ventre vide), `BUILD_WOOD_RESERVE` (la part du Feu est intouchable), et
   palissade en attendant les chambres ; ② l'anneau — VANTAUX de la porte charretière
   compris (drapeau `enceinte` sur l'ordre ; attrapé en revue : sans lui la porte traînait
   14 min derrière son anneau fermé, une brèche fixe de 2 tuiles) — se pose à SA cadence
-  (`BUILD_PACE_TICKS_ENCEINTE`, 3,5× la commune) — c'est la défense, pas le décor ; le
+  (`BUILD_PACE_TICKS_ENCEINTE`, 1,75× la commune — calibrée au banc : 3,5× asphyxiait
+  l'économie du bois au départ) — c'est la défense, pas le décor ; le
   hameau garde son arc de saison (la cadence commune reste la loi de tout le reste).
   *Critères : `desiredOrders` au palier 2 rend tout l'anneau avant le premier sol de
   logis ; un ordre de palissade en tête ouvre la fenêtre de pose à la cadence enceinte ;

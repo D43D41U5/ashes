@@ -96,6 +96,39 @@ fondation** (R12, commit `ddd4833`). Re-mesuré à 62 jours sur 2026 et 7 :
 - Le verrou de l'Arche tient in situ (1 ouverture, 1 départ, `season_ended` au j61, deux
   graines).
 
+## Passe 2 — les quatre règles, la boucle mesure→règle→mesure (2026-08-17/18, « fais tout »)
+
+Les quatre remèdes du diagnostic (β-garde, γ pansement, α2 la-nuit-rassemble, α1+α3
+l'enceinte-d'abord) ont été livrés, et le banc a piloté DEUX itérations de calibrage :
+
+- **Itération 1 attrapée par le banc** : la cadence enceinte à 120 s asphyxiait l'économie
+  du bois (Feu affamé au j6) → 240 s, réserve de bois 12 → 18.
+- **Itération 2, le vrai coupable** : un LIVELOCK préexistant du chantier — l'échec de la
+  forge du marteau (`dropTask(false)`) rendait la tâche re-réclamable au tick suivant par
+  le même PNJ ; R15, en mettant un ordre de chantier en tête de tableau AVANT l'économie
+  de pierre, l'a rendu fatal (réclame→échoue→lâche à 20 Hz, 122 récoltes/6 j contre 436,
+  village mort au j3 — et 67 % d'oisiveté mesurée sur le monde d'AVANT : la boucle mordait
+  déjà). Corrigé (`dropTask(true)`, la doctrine écrite du fichier) — et le monde d'avant
+  s'en trouve AUSSI amélioré (462 récoltes/6 j après fix, > 436).
+- **Itération 3, le raffinement de γ** : céder la défense sans fibre nulle part est une
+  désertion, pas un soin (graine 2026 : 10 morts aux j6-12, greniers pleins, 2 fibres pour
+  un bandage à 3) → le sang ne cède la défense que si un bandage EXISTE.
+
+**AVANT → APRÈS (62 jours, graines 2026 et 7)** :
+
+| mesure | avant le paquet | après |
+|---|---|---|
+| famine (relevés d'affamés) | cause n°1 — 46 % des morts, jusqu'à 298 relevés | quasi éteinte (27 sur 2026) |
+| acte I | saignée dès j5-9, greniers pleins | effectif PLEIN jusqu'à j12-18 (sauf le Foyer 2026, broyé par ses monstres ambiants — l'accélérateur de placement, question ③) |
+| enceinte | jamais commencée du vivant du village | montée dès j1,5 — 28 arêtes à j4,5, gated par le bois ensuite |
+| réparation démographique | 0 recrutement, 0 pansement | 1-4 recrutements + 5-7 pansements par saison |
+| dernière chute | j24-36 | **j38-39** |
+
+**La frontière restante est l'acte II** : hordes à 8, cadence accrue — la récolte se fait
+épingler, la nourriture s'effondre en quelques jours (greniers 0 avec Feux pleins), et les
+villages tombent entre j21 et j39. Ce n'est plus un bug ni un cliquet : c'est LA courbe de
+difficulté voulue ou non — la question ④ ci-dessous, désormais seule en jeu avec la ③.
+
 ## Les décisions que ce relevé pose (à Alexis, une à la fois)
 
 1. ~~**Les villages PNJ doivent-ils recruter les réfugiés ?**~~ **✅ TRANCHÉ ET LIVRÉ

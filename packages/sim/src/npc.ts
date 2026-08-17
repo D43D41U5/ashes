@@ -647,15 +647,29 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
 
   if (task.stage !== 'work') {
     // 1. L'OUTIL : le marteau pour poser/monter — un composant se pose à la main.
+    //
+    // L'ÉCHEC QUITTE LE TABLEAU (drop TRUE) — la doctrine du coût (étape 3) : ne pas
+    // pouvoir forger le marteau (pas de pierre au grenier) vaut pour N'IMPORTE QUI.
+    // Rendue LIBRE (drop false), la tâche — tête de tableau par priorité — était
+    // re-réclamée par le MÊME PNJ au tick suivant : réclame→échoue→lâche à 20 Hz,
+    // AUCUNE corvée de rang inférieur ne passait, le village entier s'affamait.
+    // MESURÉ (graine 7, R15 : l'anneau en tête AVANT l'économie de pierre) : 122
+    // récoltes en 6 jours contre 436, Foyer mort au j3 — et 67 % d'oisiveté sur le
+    // monde d'AVANT R15 : la boucle mordait déjà, R15 l'a rendue fatale. Le repost
+    // attend la PROCHAINE FENÊTRE de cadence (240 s enceinte / 420 s hameau) — c'est
+    // le prix d'une fenêtre, assumé : entre-temps, on cueille (dont la pierre qui
+    // manquait). Grain perdu assumé aussi : un échec PROPRE AU PNJ (sac plein au
+    // retrait du marteau) retire la tâche pareil — borné à une fenêtre, strictement
+    // mieux que le livelock ; un CraftProgress qui porte sa cause serait le fin mot.
     if (order.action !== 'place') {
       const r = ensureHammer(state, village, npc, entity)
-      if (r === 'failed') return dropTask(village, npc, false)
+      if (r === 'failed') return dropTask(village, npc, true)
       if (r !== 'ready') return
     }
     // 2. LE COMPOSANT à poser s'assemble au Feu (recette existante, coût du grenier).
     if (order.action === 'place') {
       const r = progressCraft(state, village, npc, entity, order.component)
-      if (r === 'failed') return dropTask(village, npc, false)
+      if (r === 'failed') return dropTask(village, npc, true)
       if (r !== 'ready') return
     }
     // 3. LE COÛT de la pose/montée, retiré du grenier.
@@ -1000,7 +1014,16 @@ export function advanceNpcs(state: SimState): void {
     const starving = entity.hunger <= NPC_AI.DEFENSE_YIELD_HUNGER
     // LE SANG CÈDE LA DÉFENSE, comme la faim (même doctrine que DEFENSE_YIELD_HUNGER) :
     // un défenseur qui se vide (1,5 PV/s) ne défend rien — il se panse d'abord (R13).
-    const bleeding = entity.wounds.bleeding === true
+    // …MAIS SEULEMENT SI UN BANDAGE EXISTE. Céder sans fibre nulle part n'est pas un
+    // repli de soin, c'est une désertion : MESURÉ au banc (graine 2026, grenier de
+    // fondation à 2 fibres pour un coût de 3) — la milice blessée quittait le front
+    // sans pouvoir se panser, 10 morts aux j6-12 greniers pleins. Sans bandage
+    // possible, on se bat en saignant — la mort au front vaut mieux que la mort en
+    // errant, et la fibre récoltée demain rouvrira le repli de soin.
+    const bleeding =
+      entity.wounds.bleeding === true &&
+      (countOf(entity.inventory, 'fiber') >= COMBAT.BANDAGE_FIBER_COST ||
+        granaries(state, village.id).some((c) => countOf(c.inventory ?? [], 'fiber') >= COMBAT.BANDAGE_FIBER_COST))
     if (!starving && !bleeding && handleDefense(state, village, npc, entity)) continue
     // LE SANG AVANT TOUT LE RESTE (R13) : l'expédition, le sommeil et la faim attendent —
     // aucun n'est aussi pressé qu'une hémorragie.
@@ -1018,11 +1041,18 @@ export function advanceNpcs(state: SimState): void {
         // pas loin du Feu — l'autopsie du banc de saison l'a mesuré cueilli seul à 7-8
         // tuiles pendant les sièges. Il se replie près du Feu, où la milice se concentre.
         // Anti-livelock (patron handleSleep) : Feu inatteignable → oisif sur place.
-        if (getGameTime(state).isNight) {
-          const dFeu = Math.max(Math.abs(entity.x - (village.fireTx + 0.5)), Math.abs(entity.y - (village.fireTy + 0.5)))
-          if (dFeu > NPC_AI.NIGHT_RALLY_TILES && (npc.path.length > 0 || setPathTo(state, npc, entity, village.fireTx, village.fireTy))) {
+        const dFeu = Math.max(Math.abs(entity.x - (village.fireTx + 0.5)), Math.abs(entity.y - (village.fireTy + 0.5)))
+        if (getGameTime(state).isNight && dFeu > NPC_AI.NIGHT_RALLY_TILES) {
+          if (npc.path.length > 0 || setPathTo(state, npc, entity, village.fireTx, village.fireTy)) {
             followPath(state, npc, entity)
           }
+        } else {
+          // UN OISIF NE GARDE PAS DE CHEMIN. Le reliquat du repli (arrivé au Feu, ou le
+          // jour revenu) serait suivi par la PROCHAINE corvée AVANT son propre trajet —
+          // tous les exécuteurs commencent par `path.length === 0`. MESURÉ (graine 7) :
+          // le Foyer entier marchait au Feu au lieu de ses buissons — 11 cueillettes en
+          // six jours contre 92, mort de faim au j3. On lâche le chemin, toujours.
+          npc.path = []
         }
         continue // rien à faire (ou plus une case pour le faire) : oisif
       }
