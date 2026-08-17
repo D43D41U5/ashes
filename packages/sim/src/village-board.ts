@@ -125,7 +125,12 @@ export function refreshBoard(state: SimState, village: Village): void {
   village.tasks = village.tasks.filter(
     (t) => t.kind !== 'build' || t.claimedBy !== null || JSON.stringify(t.build) === firstKey,
   )
-  const paceOpen = state.tick % VILLAGE_GROWTH.BUILD_PACE_TICKS < BALANCE.BOARD_REFRESH_TICKS
+  // L'ENCEINTE À SA CADENCE (spec R15) : l'anneau ET ses vantaux sont la défense, pas le
+  // décor — ils se posent 3,5× plus vite que le hameau, qui garde son arc de saison.
+  const pace = first !== undefined && first.action === 'pose' && first.enceinte === true
+    ? VILLAGE_GROWTH.BUILD_PACE_TICKS_ENCEINTE
+    : VILLAGE_GROWTH.BUILD_PACE_TICKS
+  const paceOpen = state.tick % pace < BALANCE.BOARD_REFRESH_TICKS
   if (first !== undefined && paceOpen && affordable(stocks, foodScore, orderCost(first)) && !village.tasks.some((t) => t.kind === 'build')) {
     village.tasks.push({
       id: village.nextTaskId,

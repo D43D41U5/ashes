@@ -146,7 +146,50 @@ ventre vide), `BUILD_WOOD_RESERVE` (la part du Feu est intouchable), et
   village amputé recrute à mi-séjour jusqu'à `foundedSize` pas au-delà ; village
   joueur jamais ; au complet, rien et le groupe repart ; le plus proche gagne ; le
   reliquat reste disponible ; avant mi-séjour, rien ; un pas de PRNG par recrue
-  (celui de `spawnEntity`), zéro tirage de décision.*
+  (celui de `spawnEntity`), zéro tirage de décision.* **β-garde (2026-08-17, « fais
+  tout ») : un village dont le grenier ne peut pas nourrir** (`foodScoreOf` <
+  `REFUGEES.NPC_CLAIM_MIN_FOOD`) **ne recrute pas** — le piège mesuré au banc (trois
+  recrues au j24 dans un grenier vide, mortes de faim au j25) est fermé : les réfugiés
+  attendent un village qui peut les nourrir, ou repartent. *Critère : grenier vidé →
+  pas de recrutement ; regarni au seuil → recrute.*
+
+- **R13 — Le PNJ blessé se panse (décision d'Alexis, 2026-08-17 « fais tout »).** L'autopsie
+  (`diag-mort-pnj`) a mesuré 1 mort de PNJ sur 5 à l'hémorragie jamais pansée — le bandage
+  était joueur-seulement. Un PNJ dont la plaie SAIGNE se panse en rejouant l'action
+  `bandage` réelle (mêmes coût `BANDAGE_FIBER_COST`, cooldown, priorité de plaie,
+  `entity_bandaged`) : fibre en poche d'abord, sinon retrait au grenier (patron
+  `handleHunger`, mêmes anti-livelocks). Priorité : LE SANG CÈDE LA DÉFENSE (doctrine
+  `DEFENSE_YIELD_HUNGER` — un défenseur qui se vide ne défend rien) et passe avant
+  l'expédition, le sommeil et la faim. Périmètre assumé : le saignement seul déclenche
+  (c'est lui qui tue) — jambe et bras restent des gênes non soignées ; sans fibre nulle
+  part, on saigne en travaillant (la mort était déjà le défaut). *Critères : fibre en
+  poche → plaie fermée au tick, fibre décomptée, événement émis sur soi ; fibre au
+  grenier seulement → il y va, retire, se panse ; ni l'une ni l'autre → aucun figeage,
+  la plaie demeure.*
+
+- **R14 — La nuit rassemble (décision d'Alexis, 2026-08-17 « fais tout »).** L'autopsie a
+  mesuré les oisifs de nuit cueillis SEULS à 7-8 tuiles du Feu pendant les sièges. Un PNJ
+  SANS tâche la nuit, à plus de `NPC_AI.NIGHT_RALLY_TILES` (Chebyshev) du Feu, se replie
+  vers lui — la milice se concentre là où la horde frappe. La règle ne vit que dans la
+  branche oisive : la défense, l'expédition, le sommeil, le froid, la faim et le
+  pansement (R13) priment tous ; anti-livelock du patron `handleSleep` (Feu inatteignable
+  → oisif sur place). *Critères : oisif de nuit à 8 tuiles → converge vers le Feu ; le
+  même à MIDI → ne bouge pas ; un PNJ à tâche n'est pas concerné.*
+
+- **R15 — L'enceinte d'abord, et à sa cadence (décision d'Alexis, 2026-08-17 « fais
+  tout »).** La sonde de siège a établi qu'aucun village ne fermait JAMAIS son anneau de
+  son vivant : les logis passaient d'abord (≈ 60 ordres), la cadence commune plafonne à
+  ~6,9 ordres/jour (2,3 exécutés mesurés), et les cendreux passaient entre les maisons.
+  Deux amendements : ① le plan directeur veut la PALISSADE (anneau + porte charretière)
+  AVANT les logis — on s'abrite avant de se loger, on dort sur sa paillasse derrière la
+  palissade en attendant les chambres ; ② l'anneau — VANTAUX de la porte charretière
+  compris (drapeau `enceinte` sur l'ordre ; attrapé en revue : sans lui la porte traînait
+  14 min derrière son anneau fermé, une brèche fixe de 2 tuiles) — se pose à SA cadence
+  (`BUILD_PACE_TICKS_ENCEINTE`, 3,5× la commune) — c'est la défense, pas le décor ; le
+  hameau garde son arc de saison (la cadence commune reste la loi de tout le reste).
+  *Critères : `desiredOrders` au palier 2 rend tout l'anneau avant le premier sol de
+  logis ; un ordre de palissade en tête ouvre la fenêtre de pose à la cadence enceinte ;
+  l'effet réel (anneau fermé avant les jours de siège) se juge au banc de saison.*
 
 ## Hors périmètre (assumé)
 

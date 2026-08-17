@@ -20,6 +20,7 @@ import { inventoryOf, pourInto, removeItems } from './items'
 import { hash2 } from './noise'
 import { spawnNpcsAround } from './npc'
 import { seasonDayAtTick } from './time'
+import { foodScoreOf, granaryStocks } from './village-plan'
 import type { Entity, RefugeeGroup, SimState } from './sim'
 import type { Village } from './village'
 
@@ -72,6 +73,10 @@ function reparerVillagesPnj(state: SimState): void {
       v.foundedSize ??= v.memberIds.length
       const vivants = state.entities.filter((e) => v.memberIds.includes(e.id) && e.hp > 0).length
       if (vivants >= v.foundedSize) continue
+      // LA β-GARDE (R12) : un grenier qui ne peut pas nourrir ne recrute pas — sinon la
+      // recrue meurt de faim le lendemain (mesuré au banc : j24 → j25). Les réfugiés
+      // attendent un village qui peut les nourrir, ou repartent.
+      if (foodScoreOf(granaryStocks(state, v.id)) < REFUGEES.NPC_CLAIM_MIN_FOOD) continue
       const dx = v.fireTx - g.tx
       const dy = v.fireTy - g.ty
       const d = dx * dx + dy * dy

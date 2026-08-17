@@ -37,11 +37,11 @@ import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { zoneIdAt } from './map'
 import { countOf, freeRoomFor, moveSlotWithin, type ItemId } from './items'
-import { handleCold, handleHunger, handleSleep } from './npc-needs'
+import { handleCold, handleHunger, handleSleep, handleWounds } from './npc-needs'
 import { assignErrands, handleErrand } from './npc-errands'
 import { pathToward } from './pathfinding'
 import { spawnEntity, type Entity, type SimState } from './sim'
-import { TICKS_PER_CYCLE } from './time'
+import { getGameTime, TICKS_PER_CYCLE } from './time'
 import { edgeBarrierAt, fullTileAt } from './construction'
 import { applyVillageAction, floorAt, type BuildOrder, type TaskKind, type Village, type VillageAction } from './village'
 import { granaries, refreshBoard } from './village-board'
@@ -998,7 +998,13 @@ export function advanceNpcs(state: SimState): void {
     // baies en poche, ou le grenier à trois pas). Sans cette porte, un zombie
     // posté hors d'atteinte affamait tout le village, grenier plein.
     const starving = entity.hunger <= NPC_AI.DEFENSE_YIELD_HUNGER
-    if (!starving && handleDefense(state, village, npc, entity)) continue
+    // LE SANG CÈDE LA DÉFENSE, comme la faim (même doctrine que DEFENSE_YIELD_HUNGER) :
+    // un défenseur qui se vide (1,5 PV/s) ne défend rien — il se panse d'abord (R13).
+    const bleeding = entity.wounds.bleeding === true
+    if (!starving && !bleeding && handleDefense(state, village, npc, entity)) continue
+    // LE SANG AVANT TOUT LE RESTE (R13) : l'expédition, le sommeil et la faim attendent —
+    // aucun n'est aussi pressé qu'une hémorragie.
+    if (handleWounds(state, village, npc, entity)) continue
     // Puis l'expédition en cours (raid ou don, spec alignement R13-R14).
     if (handleErrand(state, village, npc, entity)) continue
     if (handleSleep(state, npc, entity)) continue
@@ -1007,7 +1013,19 @@ export function advanceNpcs(state: SimState): void {
 
     if (!npc.task) {
       claimTask(village, npc, entity)
-      if (!npc.task) continue // rien à faire (ou plus une case pour le faire) : oisif
+      if (!npc.task) {
+        // LA NUIT RASSEMBLE (spec village-pnj-evolution R14) : un oisif de nuit ne traîne
+        // pas loin du Feu — l'autopsie du banc de saison l'a mesuré cueilli seul à 7-8
+        // tuiles pendant les sièges. Il se replie près du Feu, où la milice se concentre.
+        // Anti-livelock (patron handleSleep) : Feu inatteignable → oisif sur place.
+        if (getGameTime(state).isNight) {
+          const dFeu = Math.max(Math.abs(entity.x - (village.fireTx + 0.5)), Math.abs(entity.y - (village.fireTy + 0.5)))
+          if (dFeu > NPC_AI.NIGHT_RALLY_TILES && (npc.path.length > 0 || setPathTo(state, npc, entity, village.fireTx, village.fireTy))) {
+            followPath(state, npc, entity)
+          }
+        }
+        continue // rien à faire (ou plus une case pour le faire) : oisif
+      }
     }
     if (npc.task.kind === 'cook_stew') executeCook(state, village, npc, entity)
     else if (npc.task.kind === 'repair') executeRepair(state, village, npc, entity)

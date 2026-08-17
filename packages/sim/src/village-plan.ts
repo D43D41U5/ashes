@@ -190,17 +190,38 @@ export function desiredOrders(state: SimState, village: Village): BuildOrder[] {
   const poseFeasible = (tx: number, ty: number, type: StructureType): boolean =>
     onMap(tx, ty) && terrainConstructible(terrainAt(map, tx, ty), type)
 
-  const wantEdge = (tx: number, ty: number, bit: number, structure: 'wall' | 'door' | 'palissade'): void => {
+  const wantEdge = (tx: number, ty: number, bit: number, structure: 'wall' | 'door' | 'palissade', enceinte?: true): void => {
     if (!poseFeasible(tx, ty, structure)) return
     if (edgeBarrierAt(state.structures, tx, ty, bit)) return // déjà fermée (par nous ou un autre)
     // Le matériau ne vaut que pour mur/porte (R8) — la palissade n'a pas de palier.
-    if (structure === 'palissade') orders.push({ action: 'pose', structure, tx, ty, edges: bit })
-    else orders.push({ action: 'pose', structure, tx, ty, edges: bit, material: 'wood' })
+    if (structure === 'palissade') orders.push({ action: 'pose', structure, tx, ty, edges: bit, ...(enceinte && { enceinte }) })
+    else orders.push({ action: 'pose', structure, tx, ty, edges: bit, material: 'wood', ...(enceinte && { enceinte }) })
   }
   const wantFloor = (tx: number, ty: number): void => {
     if (!poseFeasible(tx, ty, 'floor')) return
     if (floorAt(state.structures, tx, ty)) return
     orders.push({ action: 'pose', structure: 'floor', tx, ty })
+  }
+
+  // ── L'ENCEINTE D'ABORD (spec R15, décision d'Alexis 2026-08-17 « fais tout ») : la
+  //    PALISSADE dérivée du disque, percée de la porte charretière (décision 2026-08-01 :
+  //    l'enceinte n'est pas un mur de bâtiment). Elle passait APRÈS les logis — et la
+  //    sonde de siège a montré qu'aucun village n'avait JAMAIS fermé son anneau de son
+  //    vivant : les cendreux passaient entre les maisons. On s'abrite avant de se loger ;
+  //    en attendant les chambres, on dort sur sa paillasse à la belle étoile — derrière
+  //    la palissade. ──
+  const r = VILLAGE_GROWTH.ENCEINTE_RADIUS
+  const disk = (dx: number, dy: number): boolean => Math.max(Math.abs(dx), Math.abs(dy)) <= r
+  const gate = (ex: number, ey: number): boolean => ey === r + 1 && (ex === 0 || ex === 1)
+  const enceinte = contourEdges(disk, -r, r)
+  for (const [ex, ey, bit] of enceinte) {
+    if (gate(ex, ey)) continue // les vantaux se posent en dernier : l'anneau d'abord
+    wantEdge(fx + ex, fy + ey, bit, 'palissade', true)
+  }
+  for (const [ex, ey, bit] of enceinte) {
+    // Les vantaux PORTENT le drapeau eux aussi : à la cadence lente, la porte traînait
+    // 14 minutes réelles derrière son anneau fermé — une brèche fixe de 2 tuiles (revue).
+    if (gate(ex, ey)) wantEdge(fx + ex, fy + ey, bit, 'door', true)
   }
 
   // ── Les logis : autour de chaque paillasse posée (le lit devient une chambre). ──
@@ -220,20 +241,6 @@ export function desiredOrders(state: SimState, village: Village): BuildOrder[] {
       const isDoor = spot[0] + ex === px && spot[1] + ey === py && bit === pbit
       wantEdge(x0 + ex, y0 + ey, bit, isDoor ? 'door' : 'wall')
     }
-  }
-
-  // ── L'enceinte : la PALISSADE dérivée du disque, percée de la porte charretière
-  //    (décision d'Alexis, 2026-08-01 : l'enceinte n'est pas un mur de bâtiment). ──
-  const r = VILLAGE_GROWTH.ENCEINTE_RADIUS
-  const disk = (dx: number, dy: number): boolean => Math.max(Math.abs(dx), Math.abs(dy)) <= r
-  const gate = (ex: number, ey: number): boolean => ey === r + 1 && (ex === 0 || ex === 1)
-  const enceinte = contourEdges(disk, -r, r)
-  for (const [ex, ey, bit] of enceinte) {
-    if (gate(ex, ey)) continue // les vantaux se posent en dernier : l'anneau d'abord
-    wantEdge(fx + ex, fy + ey, bit, 'palissade')
-  }
-  for (const [ex, ey, bit] of enceinte) {
-    if (gate(ex, ey)) wantEdge(fx + ex, fy + ey, bit, 'door')
   }
 
   if (tier < 3) return orders

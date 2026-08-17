@@ -5,7 +5,8 @@
  * mange (inventaire, puis grenier), un PNJ épuisé dort la nuit (chez lui,
  * sinon au Feu). Chaque handler retourne true s'il a consommé le tick.
  */
-import { BALANCE, NPC_AI } from './balance'
+import { BALANCE, COMBAT, NPC_AI } from './balance'
+import { applyCombatAction } from './combat'
 import { applyEconomyAction } from './economy'
 import { countOf, freeRoomFor, type ItemId } from './items'
 import { followPath, near, setPathTo, TICKS_PER_HOUR, withdraw, type Npc } from './npc'
@@ -14,6 +15,41 @@ import { fireBubble, isSheltered } from './temperature'
 import { getGameTime } from './time'
 import type { Structure, Village } from './village'
 import { granaries } from './village-board'
+
+/**
+ * LE PANSEMENT (spec village-pnj-evolution R13, décision d'Alexis 2026-08-17 « fais tout »).
+ *
+ * L'autopsie du banc de saison a mesuré 1 mort de PNJ sur 5 à l'HÉMORRAGIE jamais pansée :
+ * le bandage était un verbe joueur-seulement, et une plaie `bleeding` (1,5 PV/s) était une
+ * condamnation différée. Un PNJ qui saigne se panse désormais — fibre en poche d'abord,
+ * sinon il va la retirer au grenier — en REJOUANT l'action `bandage` réelle (mêmes coût,
+ * cooldown, priorité de plaie, événement : une seule vérité, patron `handleHunger`/`eat`).
+ *
+ * PÉRIMÈTRE ASSUMÉ : le saignement SEUL déclenche (c'est lui qui tue) — la jambe et le
+ * bras restent des gênes non soignées chez le PNJ. Et ni fibre en poche ni au grenier :
+ * on saigne en TRAVAILLANT (anti-livelock, comme la faim) — la mort était déjà le défaut.
+ */
+export function handleWounds(state: SimState, village: Village, npc: Npc, entity: Entity): boolean {
+  if (entity.wounds.bleeding !== true) return false
+  if (state.tick < entity.cooldownUntil) return false // le geste attendra la fin du coup
+  if (countOf(entity.inventory, 'fiber') >= COMBAT.BANDAGE_FIBER_COST) {
+    applyCombatAction(state, entity.id, { type: 'bandage' })
+    return true
+  }
+  // La fibre du grenier — mêmes anti-livelocks que la faim : un sac plein ne retire
+  // rien, un grenier inatteignable ne fige pas.
+  if (freeRoomFor(entity.inventory, 'fiber') <= 0) return false
+  const chest = granaries(state, village.id).find(
+    (c) => countOf(c.inventory ?? [], 'fiber') >= COMBAT.BANDAGE_FIBER_COST,
+  )
+  if (!chest) return false
+  if (near(entity, chest.tx, chest.ty)) {
+    return withdraw(state, entity, chest.id, 'fiber', COMBAT.BANDAGE_FIBER_COST) > 0
+  }
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, chest.tx, chest.ty)) return false
+  followPath(state, npc, entity)
+  return true
+}
 
 /** Retourne true si le besoin a consommé le tick. */
 export function handleHunger(state: SimState, village: Village, npc: Npc, entity: Entity): boolean {

@@ -77,7 +77,7 @@ describe('la fondation au campement (R1-R2)', () => {
 })
 
 describe('le plan directeur (R3)', () => {
-  it('au palier 2, il veut les logis PUIS la palissade — et rien deux fois', () => {
+  it('au palier 2, il veut la PALISSADE puis les logis — et rien deux fois (R15)', () => {
     const sim = npcVillageSim(3)
     village(sim).buildTier = 2
     const orders = desiredOrders(sim, village(sim))
@@ -87,7 +87,21 @@ describe('le plan directeur (R3)', () => {
     expect(orders.filter((o) => o.action === 'pose' && o.structure === 'wall')).toHaveLength(45)
     expect(orders.filter((o) => o.action === 'pose' && o.structure === 'palissade')).toHaveLength(66)
     expect(orders.filter((o) => o.action === 'pose' && o.structure === 'door')).toHaveLength(3 + 2)
-    expect(orders[0]).toMatchObject({ action: 'pose', structure: 'floor' }) // le chantier commence au sol
+    // L'ENCEINTE D'ABORD (R15, décision d'Alexis 2026-08-17) : la sonde de siège a montré
+    // qu'aucun village ne fermait jamais son anneau de son vivant — les cendreux passaient
+    // entre les maisons. On s'abrite avant de se loger.
+    expect(orders[0]).toMatchObject({ action: 'pose', structure: 'palissade' })
+    const premierSol = orders.findIndex((o) => o.action === 'pose' && o.structure === 'floor')
+    const dernierePalissade = orders.map((o) => o.action === 'pose' && o.structure === 'palissade').lastIndexOf(true)
+    expect(dernierePalissade).toBeLessThan(premierSol) // tout l'anneau avant la première chambre
+    // Et TOUT l'anneau — vantaux de la porte charretière COMPRIS — porte le drapeau de
+    // cadence : sans lui sur les vantaux, la porte traînait 14 min derrière son anneau
+    // fermé, une brèche fixe de 2 tuiles (revue déterminisme, 2026-08-17).
+    for (const [i, o] of orders.entries()) {
+      if (o.action !== 'pose') continue
+      if (i <= dernierePalissade + 2) expect(o.enceinte, `ordre ${i} (${o.structure})`).toBe(true)
+      else expect(o.enceinte).toBeUndefined()
+    }
   })
 
   it('le tableau porte UNE tâche build, seulement si le grenier paie', () => {
@@ -113,20 +127,13 @@ describe('le plan directeur (R3)', () => {
 })
 
 describe('les PNJ bâtissent (R4-R5)', () => {
-  it('sans marteau au village, ils le forgent et posent des murs — par le pipeline', () => {
+  it('sans marteau au village, ils le forgent et posent l\'enceinte — par le pipeline', () => {
     const sim = npcVillageSim(2)
     village(sim).buildTier = 2
     addItems(granary(sim).inventory!, { wood: 200, berries: 40, fiber: 10, stone: 10 })
-    // Les sols des deux logis sont déjà là : le plan attaque directement les MURS —
-    // le chemin dur (pose d'arête, matériau). La cadence (`BUILD_PACE_TICKS`, une
-    // pièce par fenêtre) fait qu'on ne vérifie pas un volume ici : le volume et la
-    // survie se mesurent au banc (R11), pas en unitaire.
-    // L'intérieur 4×4 s'étend du lit (l'ancre, à +1,+1 du coin) : sols de −1 à +2.
-    for (const s of sim.structures.filter((st) => st.type === 'paillasse')) {
-      for (let dy = -1; dy <= 2; dy++) {
-        for (let dx = -1; dx <= 2; dx++) addStructure(sim, 'floor', s.tx + dx, s.ty + dy, village(sim).id, 0)
-      }
-    }
+    // Le chemin dur (pose d'arête, matériau) est désormais l'ANNEAU (R15 : l'enceinte
+    // d'abord) — la palissade est une arête comme le mur l'était. La cadence fait qu'on
+    // ne vérifie pas un volume ici : le volume et la survie se mesurent au banc (R11).
     const events: SimEvent[] = []
     run(sim, 11000, events)
     const forged = events.filter((e) => e.type === 'item_crafted' && e.recipeId === 'hammer')
@@ -137,10 +144,10 @@ describe('les PNJ bâtissent (R4-R5)', () => {
         e.type === 'structure_built' && npcIds.has(e.ownerId),
     )
     expect(built.length).toBeGreaterThanOrEqual(2)
-    expect(built.every((e) => e.structure === 'wall')).toBe(true) // les sols étant posés, tout est mur
+    expect(built.every((e) => e.structure === 'palissade')).toBe(true) // l'anneau avant tout (R15)
     // …et la pièce est bien une ARÊTE de bois du plan (pas une pose pleine tuile).
-    const wall = sim.structures.find((s) => s.id === built[0]!.structureId)!
-    expect(wall.edges).toBeDefined()
+    const palissade = sim.structures.find((s) => s.id === built[0]!.structureId)!
+    expect(palissade.edges).toBeDefined()
   })
 })
 

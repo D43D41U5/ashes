@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE, SLOTS, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
+import { BALANCE, COMBAT, SLOTS, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
 import { drainEvents } from './events'
 import { countOf, freeRoomFor, inventoryOf, makeInventory } from './items'
 import { createEmptyMap } from './map'
@@ -120,6 +120,79 @@ describe('les besoins (A2, A3)', () => {
     sim.tick = TICKS_PER_CYCLE - 2
     run(sim, 4)
     expect(sim.npcs[0]!.sleeping).toBe(false)
+  })
+})
+
+describe('le pansement (R13, village-pnj-evolution)', () => {
+  it('fibre en poche : la plaie ferme, la fibre se décompte, l\'événement se signe LUI-MÊME', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30 }) // pas de fibre ICI
+    const entity = npcEntity(sim)
+    entity.wounds.bleeding = true
+    grantItems(sim, entity.id, { fiber: COMBAT.BANDAGE_FIBER_COST })
+    drainEvents(sim)
+    run(sim, 5)
+    expect(entity.wounds.bleeding).toBeUndefined()
+    expect(countOf(entity.inventory, 'fiber')).toBe(0)
+    const evts = drainEvents(sim)
+    expect(evts.some((e) => e.type === 'entity_bandaged' && e.entityId === entity.id && e.byEntityId === entity.id)).toBe(true)
+  })
+
+  it('la fibre est au grenier : il y va, retire, se panse', () => {
+    const sim = npcVillageSim(1)
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30, fiber: 6 })
+    const entity = npcEntity(sim)
+    entity.wounds.bleeding = true
+    run(sim, 600) // le temps d'aller au coffre et de faire le geste
+    expect(entity.wounds.bleeding).toBeUndefined()
+  })
+
+  it('ni poche ni grenier : AUCUN figeage — la plaie demeure, on saigne en travaillant', () => {
+    const sim = npcVillageSim(1)
+    sim.nodes = sim.nodes.filter((n) => n.type !== 'fiber_plant') // pas de fibre au monde
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 30, wood: 30 })
+    const entity = npcEntity(sim)
+    entity.wounds.bleeding = true
+    run(sim, 100)
+    expect(entity.wounds.bleeding).toBe(true) // rien pour se panser : le défaut d'avant demeure…
+    expect(entity.hp).toBeGreaterThan(0) // …mais on ne mesure ici que l'absence de figeage/crash
+  })
+})
+
+describe('la nuit rassemble (R14, village-pnj-evolution)', () => {
+  /** Un oisif VÉRIFIÉ (grenier SATURÉ — 30 de bois laissaient un poste `gather_wood` au
+   *  tableau, et le chemin vers l'arbre passait devant le Feu : les deux tests mesuraient
+   *  une corvée, sondé le 2026-08-17), énergie pleine (pas de sommeil), température pleine
+   *  au départ (2 s de sim — le froid ne peut pas signer à la place du repli : on isole
+   *  la variable, leçon `aLAbriDeLaNuit`). */
+  function oisifA8Tuiles(sim: SimState): Entity2 {
+    granary(sim).inventory = inventoryOf(SLOTS.CHEST, { berries: 90, wood: 220, fiber: 30, stew: 8, stone: 80, cut_stone: 30 })
+    const entity = npcEntity(sim)
+    sim.npcs[0]!.energy = 100
+    entity.temperature = 100
+    entity.x = 12.5 + 8
+    entity.y = 12.5
+    return entity
+  }
+  type Entity2 = ReturnType<typeof npcEntity>
+  const dFeu = (e: Entity2): number => Math.max(Math.abs(e.x - 12.5), Math.abs(e.y - 12.5))
+
+  it('un oisif de nuit à 8 tuiles du Feu converge vers lui', () => {
+    const sim = npcVillageSim(1)
+    const entity = oisifA8Tuiles(sim)
+    sim.tick = DAY_TICKS_PER_CYCLE + 200 // la nuit vient de tomber
+    const avant = dFeu(entity)
+    run(sim, 40) // 2 s : le repli démarre tout de suite
+    expect(dFeu(entity)).toBeLessThan(avant - 1)
+  })
+
+  it('le même oisif à MIDI ne bouge pas', () => {
+    const sim = npcVillageSim(1)
+    const entity = oisifA8Tuiles(sim)
+    sim.tick = Math.floor(DAY_TICKS_PER_CYCLE / 2) // plein jour
+    const avant = dFeu(entity)
+    run(sim, 40)
+    expect(Math.abs(dFeu(entity) - avant)).toBeLessThan(0.5)
   })
 })
 

@@ -629,6 +629,12 @@ export const VILLAGE_GROWTH = {
    * (la fenêtre se teste au rafraîchissement).
    */
   BUILD_PACE_TICKS: ticksFor(420),
+  /** LA CADENCE DE L'ENCEINTE (spec R15) — la palissade n'est pas de l'esthétique, c'est
+   *  la DÉFENSE : à la cadence commune (420 s), l'anneau de 66 rondins prenait ~10 jours
+   *  de plafond théorique et n'était JAMAIS fermé du vivant du village (sonde de siège,
+   *  2026-08-17). 3,5× plus vite pour elle seule ; le hameau, lui, garde son arc de
+   *  saison. Multiple de BOARD_REFRESH_TICKS, comme la cadence commune. */
+  BUILD_PACE_TICKS_ENCEINTE: ticksFor(120),
 } as const
 
 export interface TerrainDef {
@@ -3168,6 +3174,12 @@ export const REFUGEES = {
    *  le joueur garde la main s'il agit d'abord. Décision d'Alexis, 2026-08-17 : le banc
    *  de saison a montré 10 groupes/saison, 0 recrutés, et des villages morts d'attrition. */
   NPC_CLAIM_TICKS: ticksForCycles(0.5),
+  /** LE GRENIER QUI PEUT NOURRIR (R12, β-garde) : un village sous ce score de nourriture
+   *  ne recrute pas — le piège MESURÉ au banc de saison (2026-08-17) : trois recrues
+   *  arrivées au j24 dans un grenier vide, mortes de faim au j25. Deux baies par tête
+   *  de groupe : de quoi tenir le premier jour, pas un label de prospérité (ça, c'est
+   *  ATTRACT_FOOD). */
+  NPC_CLAIM_MIN_FOOD: 6,
   /** Chaleur (Foyer) à les recruter/nourrir ; froid (Meute) à les dépouiller. */
   WARMTH_SAVE: 12,
   WARMTH_ROB: -12,
@@ -3578,6 +3590,10 @@ export const NPC_AI = {
    * Un dormeur mort de faim ne se réveille pas. Manger prend UN tick, puis il se rendort.
    */
   SLEEP_YIELD_HUNGER: 15,
+  /** LA NUIT RASSEMBLE (spec village-pnj-evolution R14) : un oisif de nuit se replie à
+   *  cette distance (Chebyshev) du Feu. L'autopsie du banc de saison (2026-08-17) l'a
+   *  mesuré cueilli SEUL à 7-8 tuiles — se serrer au Feu concentre aussi la milice. */
+  NIGHT_RALLY_TILES: 3,
   /** Ticks sans le moindre PROGRÈS vers la menace (jamais plus près qu'avant) au
    *  bout desquels on LÂCHE la garde : on ne fige pas une vie devant un rocher. */
   DEFENSE_GIVE_UP_TICKS: ticksFor(3),

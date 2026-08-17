@@ -188,7 +188,11 @@ export type TaskKind =
  * JSON-plat : il voyage dans la tâche, le snapshot et la sauvegarde.
  */
 export type BuildOrder =
-  | { action: 'pose'; structure: BarrierType; tx: number; ty: number; edges?: number; material?: WallMaterial }
+  /** `enceinte` (spec R15) : l'ordre appartient à l'ANNEAU — palissade OU vantail de la
+   *  porte charretière — et se pose à la cadence de défense (`BUILD_PACE_TICKS_ENCEINTE`),
+   *  pas à l'arc de saison du hameau. Sans le drapeau sur les vantaux, l'anneau se fermait
+   *  vite et sa porte traînait à la cadence lente : une brèche fixe de 2 tuiles (revue). */
+  | { action: 'pose'; structure: BarrierType; tx: number; ty: number; edges?: number; material?: WallMaterial; enceinte?: true }
   | { action: 'place'; component: ComponentType; tx: number; ty: number }
   | { action: 'upgrade'; structureId: number }
 

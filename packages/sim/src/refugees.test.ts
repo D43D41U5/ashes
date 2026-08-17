@@ -3,9 +3,9 @@
  * Foyer), nourrir (Foyer), refouler (ils repartent), dépouiller (Meute). Headless, sim-first.
  */
 import { describe, expect, it } from 'vitest'
-import { REFUGEES, TERRAIN_GRASS, TERRAIN_ROAD } from './balance'
+import { REFUGEES, SLOTS, TERRAIN_GRASS, TERRAIN_ROAD } from './balance'
 import { drainEvents } from './events'
-import { countOf } from './items'
+import { countOf, inventoryOf } from './items'
 import { createEmptyMap } from './map'
 import { advanceRefugees } from './refugees'
 import { createSim, spawnEntity, step, type SimState } from './sim'
@@ -154,6 +154,23 @@ describe('R12 — le village PNJ se répare aux réfugiés', () => {
     advanceRefugees(sim)
     expect(g.count).toBe(REFUGEES.COUNT) // personne n'a été pris
     expect(drainEvents(sim).some((e) => e.type === 'refugees_recruited')).toBe(false)
+  })
+
+  it('β-garde : un grenier qui ne peut pas nourrir ne recrute pas — regarni, il recrute', () => {
+    const sim = roadSim()
+    const g = spawnAGroup(sim)
+    const v = villagePnj(sim, 60, 60, 1)
+    const grenier = sim.structures.find((s) => s.type === 'chest' && s.villageId === v.id)!
+    grenier.inventory = inventoryOf(SLOTS.CHEST, {}) // le piège du j24-25 : rien à manger
+    drainEvents(sim)
+    sim.tick = CLAIM_TICK
+    advanceRefugees(sim)
+    expect(vivants(sim, v)).toBe(2) // personne ne rejoint une table vide
+    expect(g.count).toBe(REFUGEES.COUNT)
+    grenier.inventory = inventoryOf(SLOTS.CHEST, { berries: REFUGEES.NPC_CLAIM_MIN_FOOD })
+    sim.tick = CLAIM_TICK + 1
+    advanceRefugees(sim)
+    expect(vivants(sim, v)).toBe(3) // la table remise, le village se répare
   })
 
   it('deux villages en manque : le plus PROCHE du groupe gagne', () => {
