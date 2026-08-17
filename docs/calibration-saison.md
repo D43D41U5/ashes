@@ -79,11 +79,27 @@ sur données réelles et pas seulement en revue.
 - Le coût : ~2 min/jour simulé à monde vivant (60 j ≈ 1 h 45 par graine) — les optimisations
   de horde de juillet-août tiennent sur la durée.
 
+## Passe 1bis — l'effet du R12 (2026-08-17, décision ① tranchée et livrée)
+
+Alexis a tranché la question ① : **les villages PNJ recrutent, plafonné à l'effectif de
+fondation** (R12, commit `ddd4833`). Re-mesuré à 62 jours sur 2026 et 7 :
+
+- **Le mécanisme marche** : 4 recrutements/saison (un par groupe survenu avant la fin du
+  monde — la cadence de 6 jours est la borne), les villages tiennent à effectif PLEIN
+  nettement plus longtemps (2026 : Foyer et Meute pleins au j12 contre une saignée dès le
+  j5 ; 7 : Foyer plein jusqu'au j24 contre une chute au j22), la population se renouvelle
+  (20 morts au lieu de 10 sur 2026 — deux générations).
+- **L'issue ne change pas : effondrement vers j26-30 sur les deux graines.** L'arithmétique
+  est chiffrée : réparation ~0,17 membre/jour (1 groupe de 3 tous les 6 jours, pour TROIS
+  villages) contre ~0,4/jour de pertes aux hordes. **La contrainte liante est le taux
+  d'échange milice/horde — la question ② devient décisive.**
+- Le verrou de l'Arche tient in situ (1 ouverture, 1 départ, `season_ended` au j61, deux
+  graines).
+
 ## Les décisions que ce relevé pose (à Alexis, une à la fois)
 
-1. **Les villages PNJ doivent-ils recruter les réfugiés ?** Le mécanisme passe sous leurs murs
-   dix fois par saison et n'est branché que côté joueur. C'est le levier le plus direct contre
-   le cliquet — et il change le récit (des voisins qui durent, une vallée peuplée en acte III).
+1. ~~**Les villages PNJ doivent-ils recruter les réfugiés ?**~~ **✅ TRANCHÉ ET LIVRÉ
+   (2026-08-17, R12)** — voir la passe 1bis ci-dessus.
 2. **La milice doit-elle pouvoir GAGNER contre une horde sans perte ?** Aujourd'hui chaque
    vague coûte ~1 membre définitif ; la question est le taux d'échange voulu.
 3. **Un village qui naît sous un Repaire / dans une zone sans baies est-il un sort voulu**
