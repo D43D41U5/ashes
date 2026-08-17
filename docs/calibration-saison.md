@@ -100,8 +100,17 @@ fondation** (R12, commit `ddd4833`). Re-mesuré à 62 jours sur 2026 et 7 :
 
 1. ~~**Les villages PNJ doivent-ils recruter les réfugiés ?**~~ **✅ TRANCHÉ ET LIVRÉ
    (2026-08-17, R12)** — voir la passe 1bis ci-dessus.
-2. **La milice doit-elle pouvoir GAGNER contre une horde sans perte ?** Aujourd'hui chaque
-   vague coûte ~1 membre définitif ; la question est le taux d'échange voulu.
+2. **Le siège cendreux — reformulée après autopsie (2026-08-17, `diag-mort-pnj`, 37 morts).**
+   Ce n'est PAS un taux d'échange au combat : 33/37 meurent DANS le carré du village, 30/37
+   la nuit, et la première cause est **la faim au grenier VIDE (46 %)** — le siège étrangle
+   la récolte (137 → 9 gestes/jour) et la famine achève ; les cendreux ne tuent directement
+   que 32 % (dans l'enceinte — comment ils entrent reste à sonder) ; **19 % saignent à mort
+   faute de bandage** (verbe joueur-seulement) ; 1 seul mort en corvée lointaine. Trois
+   leviers, un par cause : (α) l'enceinte compte — la horde bute sur les murs et les attaque,
+   elle n'entre que par la brèche ; (β) casser la spirale famine — dont le garde-fou R12
+   « pas de recrutement dans un grenier vide » (le piège à réfugiés est observé : 3 recrues
+   au j24, mortes de faim au j25) ; (γ) le PNJ blessé se panse au village (fibre du grenier),
+   sinon 1 mort sur 5 reste inévitable quelle que soit la règle de siège.
 3. **Un village qui naît sous un Repaire / dans une zone sans baies est-il un sort voulu**
    (« cette vallée était maudite ») **ou un défaut de placement** (écarter les sites à portée
    de POI hostile / exiger un minimum de baies en zone, comme `emplacementsDeVillage` sait
