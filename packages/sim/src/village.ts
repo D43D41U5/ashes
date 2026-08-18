@@ -61,8 +61,10 @@ import {
   type StructureType,
 } from './items'
 import { heldSlot } from './inventory-actions'
+import { meteoMouille } from './meteo'
 import { estIncassable, matiereChiffre, matieresDe, parPiece, piece } from './pieces'
 import { terrainAt, zoneAt } from './map'
+import { isSheltered } from './temperature'
 import { actForDay, seasonDayAtTick } from './time'
 import type { SimState } from './sim'
 
@@ -883,6 +885,9 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
      * fabrique l'OBJET feu de camp, qu'on POSE (`place_campfire` → un feu libre)
      * puis qu'on peut PROMOUVOIR en foyer (`found_village`, SANS PNJ). Le panneau
      * d'artisanat n'émet plus `light_fire` — il reste hors de portée du joueur.
+     * PAS de garde météo R5 ici : le refus « feu neuf sous la pluie » vit sur la pose
+     * JOUEUR (`place_campfire`) ; un raccourci de test/worldgen qui fonde ne doit pas
+     * dépendre du ciel (et `foundNpcVillage` ne passe pas par un input du tout).
      */
     case 'light_fire': {
       const tx = Math.floor(actor.x)
@@ -926,6 +931,16 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (zoneAt(state.map, tx + 0.5, ty + 0.5)) return reject('les landmarks sont inconstructibles')
       // Roche, falaise, eau — le gué compris : on ne plante pas son feu dans la rivière.
       if (!terrainConstructible(terrainAt(state.map, tx, ty), 'fire')) return reject('terrain inconstructible')
+      // R5 MÉTÉO — un feu NEUF ne prend pas sous l'eau qui tombe : refusé à découvert sous
+      // front mouillé, au point de POSE (l'abri d'`isSheltered` — maison, grotte — lève le
+      // refus). SEULE la naissance est gardée : nourrir, rallumer ou charger un feu
+      // EXISTANT (`feed_fire`, `transfer`) ne passe jamais par ici — l'ancre de respawn se
+      // rallume sous l'orage. NB : les deux abris d'`isSheltered` (maison, grotte) refusent
+      // AUJOURD'HUI la pose par d'autres portes (tuile occupée, landmark) — l'échappée
+      // abritée est du contrat R5, elle s'ouvrira avec eux.
+      if (meteoMouille(state, tx, ty) && !isSheltered(state, tx, ty)) {
+        return reject('un feu neuf ne prend pas sous la pluie')
+      }
       // TUILE LIBRE, au sens LARGE (décision utilisateur) : ni structure, ni ressource
       // (arbre, filon, buisson…), ni personne (animal, PNJ, autre joueur) dessus. On ne
       // pose pas un foyer sur ce qui est déjà là. « Prise ENTIÈRE », depuis R23 : un mur

@@ -5,7 +5,10 @@
  * front EXISTE et se LIT (`meteoIntensity`, la surface unique que les tranches d'effets
  * consomment) ; la TRANCHE 2 branche LE FROID (`meteoCold`, spec R4) sur `temperature.ts` ;
  * la TRANCHE 3 fait taire LA FAUNE (`meteoQuiet`, spec R6) dans le gate de naissance de
- * `faune.ts`. Restent à venir : Feu/vitesse/perception (T4+), et les événements d'annonce (T7).
+ * `faune.ts` ; la TRANCHE 4 met LE FEU SOUS LA PLUIE (`meteoMouille`/`meteoFeuConso`,
+ * spec R5) : la consommation des feux accélère dans `fire.ts`, la pose d'un feu neuf à
+ * découvert se refuse dans `village.ts` — jamais d'extinction. Restent à venir :
+ * vitesse/perception (T5+), et les événements d'annonce (T7).
  *
  * ═══ ZÉRO TIRAGE SUR LE PRNG D'ÉTAT ═══
  *
@@ -160,6 +163,37 @@ export function meteoQuiet(state: SimState, x: number, y: number): boolean {
   if (!front) return false
   if (!METEO.QUIET[front.type]) return false
   return meteoIntensity(state, x, y) > 0
+}
+
+/**
+ * R5 — LE FRONT MOUILLE-T-IL (x, y) ? Vrai sous l'empreinte active (`meteoIntensity > 0` —
+ * dès la rampe) d'un front de type `MOUILLE` : l'eau qui tombe. Table SÉPARÉE de `QUIET`
+ * (mêmes valeurs aujourd'hui, deux axes sémantiques — voir `balance.ts`). C'est la porte
+ * du REFUS de pose d'un feu NEUF à découvert (`village.ts`, `place_campfire`) ; le
+ * RALLUMAGE d'un feu existant ne passe JAMAIS par ici — l'ancre de respawn est sacrée.
+ */
+export function meteoMouille(state: SimState, x: number, y: number): boolean {
+  const front = state.meteo
+  if (!front) return false
+  if (!METEO.MOUILLE[front.type]) return false
+  return meteoIntensity(state, x, y) > 0
+}
+
+/**
+ * R5 — LE MULTIPLICATEUR DE CONSOMMATION du feu en (x, y) : `1 + (FEU_CONSO[type] − 1) ×
+ * meteoIntensity` pour un type mouillé, exactement 1 sinon. La pluie qui arrive accélère
+ * la faim du feu en RAMPE (le gradient de `meteoIntensity` : une pente continue, jamais
+ * un mur) et ne l'éteint JAMAIS — la pression, pas la spirale de mort ; `fire.ts` le
+ * consomme au point du FEU, pas de l'observateur. Hors front, type sec ou hors bande :
+ * 1 au bit près — le feu d'à côté ne sait rien.
+ */
+export function meteoFeuConso(state: SimState, x: number, y: number): number {
+  const front = state.meteo
+  if (!front) return 1
+  if (!METEO.MOUILLE[front.type]) return 1
+  const plein: number = METEO.FEU_CONSO[front.type]
+  if (plein === 1) return 1
+  return 1 + (plein - 1) * meteoIntensity(state, x, y)
 }
 
 /**

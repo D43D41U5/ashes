@@ -15,18 +15,20 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, CENDREUX, FAUNA, METEO, TEMPERATURE, TERRAIN_GRASS } from './balance'
 import { brumeJourEligible } from './brume'
-import { fireActive } from './fire'
+import { drainEvents } from './events'
+import { fireActive, fireState, fireWarmthFactor, fuelTicksRemaining } from './fire'
+import { countOf } from './items'
 import { createEmptyMap } from './map'
 import {
-  advanceMeteo, frontMeteoPos, meteoIntensity, meteoJourEligible, meteoQuiet, meteoTypeBrut,
-  type BandeMeteo, type MeteoFront, type MeteoType,
+  advanceMeteo, frontMeteoPos, meteoFeuConso, meteoIntensity, meteoJourEligible, meteoMouille, meteoQuiet,
+  meteoTypeBrut, type BandeMeteo, type MeteoFront, type MeteoType,
 } from './meteo'
-import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
-import { advanceTemperature, ambientTemperature, baselineTemperature } from './temperature'
+import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimState } from './sim'
+import { advanceTemperature, ambientTemperature, baselineTemperature, isSheltered } from './temperature'
 import {
   actForDay, calendarScaleForSeasonCycles, cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE,
 } from './time'
-import { grantItems } from './village'
+import { addStructure, applyVillageAction, grantItems, structureAt } from './village'
 import { foundNpcVillage } from './worldgen'
 
 /** 1 jour de saison = 1 cycle : l'aube du cycle c est le jour c+1. */
@@ -631,5 +633,301 @@ describe('R6 — la faune se terre (A5)', () => {
     for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) step(sim, [])
     expect(sim.monsters.filter((m) => m.ambient && !avantRetour.has(m.entityId)).length).toBeGreaterThan(0)
     expect(ambients()).toBeGreaterThan(bloque)
+  })
+})
+
+describe('R5 — le Feu sous la pluie (A4)', () => {
+  /** Fenêtre très ÉTIRÉE : la bande est quasi immobile pendant une mesure de combustion
+   *  (~0,001 tuile/tick) — la géométrie est pure, la durée est un choix d'ÉLECTION, pas de
+   *  géométrie (patron « fenêtre compressée » de R6, dans l'autre sens). */
+  const D_LENT = 400000
+
+  /** Plaine nue au midi du jour 25 (patron des sections R4/R6), SANS front — les feux se
+   *  posent à sec, la pluie arrive ensuite. `worldEvents: false` : un banc de FEU mesure
+   *  le feu. Le tick est à mi-cycle : aucun bord d'élection dans les fenêtres mesurées. */
+  function simCalme(): SimState {
+    const sim = createSim(7, {
+      map: createEmptyMap(400, 40, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true, worldEvents: false,
+    })
+    sim.tick = 24 * TICKS_PER_CYCLE + Math.floor(DAY_TICKS_PER_CYCLE / 2)
+    return sim
+  }
+
+  /** Pose un front (bord ouest, fenêtre `D`) pour que sa bande, au tick COURANT, commence
+   *  en `lo` — et le prouve (l'arrondi du startTick la décale d'un millième de tuile). */
+  function poseFront(sim: SimState, type: MeteoType, lo: number, D = D_LENT): BandeMeteo {
+    const largeur = METEO.LARGEUR[type]
+    const u = (lo + largeur) / (sim.map.width + largeur)
+    const startTick = sim.tick - Math.round(u * D)
+    sim.meteo = { type, day: 25, edge: 0, startTick, endTick: startTick + D }
+    const bande = frontMeteoPos(sim.meteo, sim.tick, sim.map.width, sim.map.height)!
+    expect(Math.abs(bande.lo - lo)).toBeLessThan(0.05)
+    return bande
+  }
+
+  function act(sim: SimState, id: number, action: PlayerAction): void {
+    step(sim, [{ entityId: id, dx: 0, dy: 0, action }])
+  }
+
+  function refus(sim: SimState): string[] {
+    return drainEvents(sim).flatMap((e) => (e.type === 'action_rejected' ? [e.reason] : []))
+  }
+
+  /** Un poseur muni de feux de camp (en main) et de bois. Il posera par l'INPUT
+   *  (`place_campfire`), jamais par `addStructure` — le chemin que le replay rejoue. */
+  function poseur(sim: SimState, x: number, y: number, feux: number): number {
+    const id = spawnEntity(sim, x + 0.5, y + 0.5)
+    grantItems(sim, id, { campfire: feux, wood: 20 })
+    const e = sim.entities.find((en) => en.id === id)!
+    e.activeSlot = e.inventory.findIndex((s) => s?.item === 'campfire')
+    return id
+  }
+
+  /** Se poste une tuile au sud de (tx,ty) et y pose le feu de camp tenu — en reprenant
+   *  un feu de camp en main d'abord (ils ne s'empilent pas : chaque pose vide sa case). */
+  function poseFeu(sim: SimState, id: number, tx: number, ty: number): void {
+    const e = sim.entities.find((en) => en.id === id)!
+    e.activeSlot = e.inventory.findIndex((s) => s?.item === 'campfire')
+    e.x = tx + 0.5
+    e.y = ty + 1.5
+    act(sim, id, { type: 'place_campfire', tx, ty })
+  }
+
+  it('A4 conso — cœur : ×FEU_CONSO.pluie EXACTEMENT ; hors bande : rien ; rampe : strictement entre — et zéro tirage', () => {
+    // Le jumeau à sec (même seed, mêmes gestes) est le témoin : la mesure ET la garde RNG.
+    const avec = simCalme()
+    const sans = simCalme()
+    for (const sim of [avec, sans]) {
+      const id = poseur(sim, 125, 20, 3)
+      poseFeu(sim, id, 125, 21) // futur CŒUR de bande
+      poseFeu(sim, id, 100, 21) // future RAMPE (bord arrière + rampe/2)
+      poseFeu(sim, id, 300, 21) // hors bande, DEVANT le front — le feu de l'observateur lointain
+      expect(refus(sim)).toEqual([]) // à sec, les trois poses passent
+    }
+    const chaud = structureAt(avec.structures, 125, 21)!
+    const tiede = structureAt(avec.structures, 100, 21)!
+    const froid = structureAt(avec.structures, 300, 21)!
+
+    // La pluie arrive sur `avec` : bande [95.5, 155.5], cœur [104.5, 146.5], rampe de 9.
+    poseFront(avec, 'pluie', 95.5)
+    // Les prémisses, AU POINT DU FEU (fire.ts lit s.tx, s.ty) : trois régimes distincts.
+    expect(meteoIntensity(avec, chaud.tx, chaud.ty)).toBe(1)
+    expect(meteoIntensity(avec, froid.tx, froid.ty)).toBe(0)
+    const iTiede = meteoIntensity(avec, tiede.tx, tiede.ty)
+    expect(iTiede).toBeGreaterThan(0)
+    expect(iTiede).toBeLessThan(1)
+
+    const N = 600 // < BURN_TICKS même accéléré : la mesure ne traverse aucun rollover de bûche
+    const b0 = {
+      chaud: fuelTicksRemaining(avec.tick, chaud),
+      tiede: fuelTicksRemaining(avec.tick, tiede),
+      froid: fuelTicksRemaining(avec.tick, froid),
+    }
+    for (let t = 0; t < N; t++) {
+      step(avec, [])
+      step(sans, [])
+    }
+    // Le CŒUR consume ×FEU_CONSO.pluie, au bit près (1 + 0.5×1 par tick, halves binaires exactes).
+    expect(b0.chaud - fuelTicksRemaining(avec.tick, chaud)).toBe(N * METEO.FEU_CONSO.pluie)
+    // Le feu HORS bande ne sait RIEN : le multiplicateur s'évalue au point du FEU.
+    expect(b0.froid - fuelTicksRemaining(avec.tick, froid)).toBe(N)
+    // La RAMPE : strictement entre 1× et le plein — la pente continue, jamais un mur.
+    const dTiede = b0.tiede - fuelTicksRemaining(avec.tick, tiede)
+    expect(dTiede).toBeGreaterThan(N)
+    expect(dTiede).toBeLessThan(N * METEO.FEU_CONSO.pluie)
+    // Et le jumeau à sec confirme les deux contrats : ses feux consument N tout court…
+    expect(b0.chaud - fuelTicksRemaining(sans.tick, structureAt(sans.structures, 125, 21)!)).toBe(N)
+    // …et le flux RNG est BIT-IDENTIQUE : la pluie sur les feux ne tire rien (spec R10).
+    expect(avec.rngState).toBe(sans.rngState)
+  })
+
+  it('A4 brouillard — les feux sont BIT-IDENTIQUES à sans front : MOUILLE.brouillard est faux', () => {
+    expect(METEO.MOUILLE.brouillard).toBe(false)
+    const avec = simCalme()
+    const sans = simCalme()
+    for (const sim of [avec, sans]) {
+      const id = poseur(sim, 125, 20, 1)
+      poseFeu(sim, id, 125, 21)
+    }
+    poseFront(avec, 'brouillard', 95.5)
+    expect(meteoIntensity(avec, 125, 21)).toBe(1) // le front est bien LÀ, plein cœur…
+    for (let t = 0; t < 400; t++) {
+      step(avec, [])
+      step(sans, [])
+    }
+    // …et pas UN octet des structures ne diffère : ni ancre de bûche, ni budget, ni état.
+    expect(JSON.stringify(avec.structures)).toBe(JSON.stringify(sans.structures))
+    expect(avec.rngState).toBe(sans.rngState)
+  })
+
+  it('meteoFeuConso — balayage perpendiculaire exhaustif : 1 dehors, le plein au cœur, entre les deux dans la rampe, pente bornée, pur', () => {
+    const sim = simCalme()
+    const bande = poseFront(sim, 'pluie', 170)
+    const rampe = METEO.RAMPE * METEO.LARGEUR.pluie
+    const plein = METEO.FEU_CONSO.pluie
+    const avant = snapshot(sim)
+    const pas = 0.05
+    let prev = 1
+    for (let k = 0; k <= Math.round(sim.map.width / pas); k++) {
+      const x = k * pas
+      const c = meteoFeuConso(sim, x, 20)
+      expect(c).toBe(meteoFeuConso(sim, x, 20)) // pur : deux appels, même réponse
+      if (x <= bande.lo || x >= bande.hi) expect(c).toBe(1)
+      if (x >= bande.lo + rampe && x <= bande.hi - rampe) expect(c).toBe(plein)
+      if (x > bande.lo + 0.1 && x < bande.lo + rampe - 0.1) {
+        expect(c).toBeGreaterThan(1) // la rampe : strictement entre 1 et le plein
+        expect(c).toBeLessThan(plein)
+      }
+      // Jamais un mur : la pente est bornée par (plein−1)/rampe sur TOUT le domaine.
+      expect(Math.abs(c - prev)).toBeLessThanOrEqual((plein - 1) * (pas / rampe) + 1e-9)
+      prev = c
+      // `meteoMouille` suit l'empreinte, exactement — la porte du refus lit la même bande.
+      if (k % 100 === 0) expect(meteoMouille(sim, x, 20)).toBe(x > bande.lo && x < bande.hi)
+    }
+    expect(snapshot(sim)).toBe(avant) // zéro mutation d'état sur tout le balayage
+  })
+
+  it('A4 jamais d’extinction — un feu nourri SOUS blizzard reste chaud sur toute la traversée ; au cœur il consume ×2, il ne meurt pas', () => {
+    const sim = simCalme()
+    const id = poseur(sim, 200, 20, 1)
+    poseFeu(sim, id, 200, 21)
+    const feu = structureAt(sim.structures, 200, 21)!
+    // Blizzard COMPRESSÉ (D = 4000) posé à mi-traversée : le cœur couvre déjà le feu, la
+    // fenêtre restante (~2000 ticks) se joue en entier — « toute la traversée ».
+    const D = 4000
+    poseFront(sim, 'blizzard', -600, D)
+    const finDeFenetre = sim.meteo!.endTick
+    expect(meteoIntensity(sim, feu.tx, feu.ty)).toBe(1)
+    drainEvents(sim)
+
+    // Phase 1, encore au CŒUR (la bande avance de 0,5 tuile/tick) : ×FEU_CONSO.blizzard exact.
+    const b0 = fuelTicksRemaining(sim.tick, feu)
+    const N = 700
+    for (let t = 0; t < N; t++) {
+      step(sim, [])
+      expect(fireState(sim, feu)).toBe('lit') // JAMAIS éteint par la météo
+      expect(fireWarmthFactor(sim, feu)).toBeGreaterThan(0)
+    }
+    expect(meteoIntensity(sim, feu.tx, feu.ty)).toBe(1) // le cœur couvrait toute la phase mesurée
+    expect(b0 - fuelTicksRemaining(sim.tick, feu)).toBe(N * METEO.FEU_CONSO.blizzard)
+
+    // Phase 2 : le RESTE de la fenêtre — rampe de fuite comprise — jusqu'après la sortie.
+    while (sim.tick < finDeFenetre) {
+      step(sim, [])
+      expect(fireState(sim, feu)).toBe('lit')
+      expect(fireWarmthFactor(sim, feu)).toBeGreaterThan(0)
+    }
+    expect(meteoIntensity(sim, feu.tx, feu.ty)).toBe(0) // le front est passé…
+    expect(fireState(sim, feu)).toBe('lit') // …le feu est toujours là
+    expect(drainEvents(sim).some((e) => e.type === 'fire_extinguished')).toBe(false)
+  })
+
+  it('R5 refus — feu neuf à découvert sous la pluie : refusé, observable, l’objet reste en main, zéro tirage ; le front parti, la même pose passe', () => {
+    const sim = simCalme()
+    const id = poseur(sim, 125, 20, 1)
+    poseFront(sim, 'pluie', 95.5)
+    expect(meteoMouille(sim, 125, 21)).toBe(true) // la prémisse : la tuile visée est mouillée
+    drainEvents(sim)
+    // L'action SEULE d'abord (la garde chirurgicale) : le refus ne tire RIEN sur le PRNG.
+    const rng0 = sim.rngState
+    applyVillageAction(sim, id, { type: 'place_campfire', tx: 125, ty: 21 })
+    expect(sim.rngState).toBe(rng0)
+    expect(refus(sim)).toEqual(['un feu neuf ne prend pas sous la pluie'])
+    expect(structureAt(sim.structures, 125, 21)).toBeUndefined()
+    const e = sim.entities.find((en) => en.id === id)!
+    expect(countOf(e.inventory, 'campfire')).toBe(1) // l'objet n'est PAS consommé par un refus
+    // Par l'INPUT aussi — le chemin réel, celui que le replay rejoue.
+    act(sim, id, { type: 'place_campfire', tx: 125, ty: 21 })
+    expect(refus(sim)).toEqual(['un feu neuf ne prend pas sous la pluie'])
+    // Le front parti : la MÊME pose, au même endroit, passe.
+    sim.meteo = null
+    act(sim, id, { type: 'place_campfire', tx: 125, ty: 21 })
+    expect(refus(sim)).toEqual([])
+    expect(structureAt(sim.structures, 125, 21)?.type).toBe('fire')
+  })
+
+  it('R5 abri — sur une tuile abritée le refus météo ne mord JAMAIS : maison et grotte le prouvent chacune par sa porte', () => {
+    // Les deux abris d'`isSheltered` (maison, grotte) refusent AUJOURD'HUI la pose par des
+    // portes pré-existantes (tuile occupée, landmark) : l'échappée abritée du contrat R5
+    // est dormante. Ces gardes épinglent qu'elle CÈDE — le motif météo ne sort jamais sur
+    // une tuile abritée — et le jour où ces portes s'ouvrent, elles tiendront telles quelles.
+    const MOTIF = 'un feu neuf ne prend pas sous la pluie'
+
+    // LA MAISON — la plus probante : le refus météo est évalué AVANT « tuile occupée »,
+    // donc s'il ne cédait pas à l'abri, c'est SON motif qui sortirait. (`addStructure`
+    // direct : un décor d'héritage, pas un geste de jeu à rejouer — le worldgen fait pareil.)
+    const simM = simCalme()
+    const idM = poseur(simM, 125, 20, 1)
+    addStructure(simM, 'house', 125, 21, 0, 0)
+    poseFront(simM, 'pluie', 95.5)
+    expect(meteoMouille(simM, 125, 21)).toBe(true)
+    expect(isSheltered(simM, 125, 21)).toBe(true)
+    drainEvents(simM)
+    act(simM, idM, { type: 'place_campfire', tx: 125, ty: 21 })
+    expect(refus(simM)).toEqual(['tuile occupée'])
+
+    // LA GROTTE — même contrat, porte landmark.
+    const simG = simCalme()
+    simG.map.zones.push({ name: 'la Grotte I', x: 125, y: 21, w: 1, h: 1, kind: 'grotte' })
+    const idG = poseur(simG, 125, 20, 1)
+    poseFront(simG, 'pluie', 95.5)
+    expect(meteoMouille(simG, 125, 21)).toBe(true)
+    expect(isSheltered(simG, 125, 21)).toBe(true)
+    drainEvents(simG)
+    act(simG, idG, { type: 'place_campfire', tx: 125, ty: 21 })
+    const raisons = refus(simG)
+    expect(raisons).not.toContain(MOTIF)
+    expect(raisons).toEqual(['les landmarks sont inconstructibles'])
+  })
+
+  it('R5 ciblé — le refus ne fuit pas sur les murs : le marteau bâtit sous la pluie', () => {
+    const sim = simCalme()
+    const id = poseur(sim, 125, 20, 1)
+    grantItems(sim, id, { hammer: 1, wood: 20 })
+    // Fonder À SEC (la fondation passe par la pose d'un feu, gardée par R5)…
+    poseFeu(sim, id, 125, 21)
+    const feu = structureAt(sim.structures, 125, 21)!
+    act(sim, id, { type: 'found_village', structureId: feu.id })
+    expect(sim.villages).toHaveLength(1)
+    // …puis la pluie arrive, et le marteau continue de bâtir : R5 ne garde QUE le feu neuf.
+    poseFront(sim, 'pluie', 95.5)
+    expect(meteoMouille(sim, 127, 21)).toBe(true)
+    const e = sim.entities.find((en) => en.id === id)!
+    e.activeSlot = e.inventory.findIndex((s) => s?.item === 'hammer')
+    drainEvents(sim)
+    act(sim, id, { type: 'build', structure: 'wall', tx: 127, ty: 21 })
+    expect(refus(sim)).toEqual([])
+    expect(structureAt(sim.structures, 127, 21)?.type).toBe('wall')
+  })
+
+  it('R5 rallumage sacré — un feu ÉTEINT se réalimente et se rallume SOUS l’orage au cœur de bande', () => {
+    const sim = simCalme()
+    const id = poseur(sim, 125, 20, 1)
+    poseFeu(sim, id, 125, 21)
+    const feu = structureAt(sim.structures, 125, 21)!
+    // On l'ÉPUISE : plus une bûche, braises échues — état « out », chaleur nulle.
+    for (let i = 0; i < feu.fuel!.length; i++) feu.fuel![i] = null
+    delete feu.burnAt
+    delete feu.burnSlot
+    feu.emberUntil = sim.tick
+    expect(fireState(sim, feu)).toBe('out')
+    expect(fireWarmthFactor(sim, feu)).toBe(0)
+    // L'orage arrive, plein cœur sur le feu — là où la POSE d'un feu neuf serait refusée.
+    poseFront(sim, 'orage', 95.5)
+    expect(meteoMouille(sim, feu.tx, feu.ty)).toBe(true)
+    expect(meteoIntensity(sim, feu.tx, feu.ty)).toBe(1)
+    drainEvents(sim)
+    // `feed_fire` — la RÉALIMENTATION, un chemin distinct de la pose : il passe, toujours.
+    act(sim, id, { type: 'feed_fire', structureId: feu.id })
+    const evts = drainEvents(sim)
+    expect(evts.some((e2) => e2.type === 'action_rejected')).toBe(false)
+    expect(evts.some((e2) => e2.type === 'fire_relit')).toBe(true) // l'ancre de respawn s'est rallumée
+    expect(fireState(sim, feu)).toBe('lit')
+    expect(fireWarmthFactor(sim, feu)).toBe(1)
+    // Et il brûle au rythme de l'orage : la pression continue — jamais la mort.
+    const b0 = fuelTicksRemaining(sim.tick, feu)
+    for (let t = 0; t < 200; t++) step(sim, [])
+    expect(b0 - fuelTicksRemaining(sim.tick, feu)).toBe(200 * METEO.FEU_CONSO.orage)
+    expect(fireState(sim, feu)).toBe('lit')
   })
 })

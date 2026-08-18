@@ -3252,6 +3252,13 @@ export const METEO = {
   /** R5 — multiplicateur de consommation des feux sous l'empreinte d'un front mouillé.
    *  JAMAIS d'extinction : la pression, pas la spirale de mort. */
   FEU_CONSO: { pluie: 1.5, neige: 1.5, orage: 1.5, blizzard: 2, brouillard: 1 },
+  /** R5 — les types MOUILLÉS : l'eau qui tombe. Porte le refus de pose d'un feu NEUF à
+   *  découvert et arme `FEU_CONSO` (`meteoMouille`/`meteoFeuConso`). Cette table COÏNCIDE
+   *  aujourd'hui avec `QUIET` — et ce n'est PAS une redondance à fusionner : deux axes
+   *  sémantiques distincts. QUIET dit le silence du GIBIER (comportement de faune),
+   *  MOUILLE dit l'EAU qui tombe (physique du feu) ; un futur type peut mouiller sans
+   *  faire taire, ou l'inverse — on calibre chaque axe sans toucher l'autre. */
+  MOUILLE: { pluie: true, brouillard: false, neige: true, orage: true, blizzard: true },
   /** R6 — la faune se terre : les types qui FONT TAIRE les naissances ambiantes sous leur
    *  empreinte (prédicat pur `meteoQuiet` — un front MOBILE ne sème pas de points
    *  `faunaQuiet`, on interroge sa bande du tick). Le BROUILLARD ne fait pas taire le

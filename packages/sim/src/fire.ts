@@ -13,6 +13,7 @@
 import { COOK_SLOT, FIRE } from './balance'
 import { emitEvent } from './events'
 import { addItems, countOf, makeInventory, type Inventory, type ItemId } from './items'
+import { meteoFeuConso } from './meteo'
 import type { SimState } from './sim'
 import type { Structure } from './village'
 
@@ -89,6 +90,14 @@ export function advanceFire(state: SimState): void {
         s.burnAt = state.tick
         s.burnSlot = firstFuelSlot(s.fuel)
       }
+      // R5 MÉTÉO — la pluie ACCÉLÈRE la faim du feu, jamais ne l'éteint : sous empreinte
+      // mouillée, la bûche en cours vieillit de `meteoFeuConso` par tick au lieu de 1. On
+      // recule l'ANCRE plutôt que de compter à part : tout ce qui se dérive de `burnAt`
+      // (état, budget `fuelTicksRemaining`, indicateur de slot) voit la même accélération,
+      // client compris. Évalué au point du FEU (s.tx, s.ty), pas de l'observateur ; vaut
+      // exactement 1 hors front mouillé — à sec ou sous brouillard, pas UN octet ne bouge.
+      const conso = meteoFeuConso(state, s.tx, s.ty)
+      if (conso > 1) s.burnAt -= conso - 1
       if (state.tick >= s.burnAt + FIRE.BURN_TICKS) {
         const burning = s.fuel[s.burnSlot] // la bûche EN COURS est entièrement consommée
         if (burning) {
