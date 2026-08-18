@@ -66,6 +66,7 @@ export const FAMILLE_DE_NOEUD: Record<NodeType, Famille> = {
   tree: 'bois',
   old_tree: 'bois',
   rock: 'pierre',
+  bloc: 'pierre',
   quarry: 'pierre',
   iron_vein: 'pierre',
   coal_seam: 'pierre',

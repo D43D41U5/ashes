@@ -85,26 +85,6 @@ function drawLeafPile(ctx: CanvasRenderingContext2D): void {
  * Cubique franc (`passes:1`/`k:3.5`), les couleurs sont des MATÉRIAUX : la rouille du fer et
  * la strate de houille restent sous l'éclairage, seul le hillshade cuit n'existe pas.
  */
-/** LA DALLE FERREUSE — une marche de roche griffée d'oxyde : la coulure descend le flanc,
- *  la bavure tache la marche. Le vrai signe de surface d'un gisement (gossan). */
-export const DALLE_FER_RECTS: readonly (readonly [number, number, number, number, string])[] = [
-  [2, 11, 12, 3, '#6e6862'],  // l'assise
-  [3, 8, 10, 3, '#8b847b'],   // la marche
-  [4, 7, 8, 1, '#a29a90'],    // le dessus clair
-  [3, 8, 3, 1, '#9a5a36'],    // bavure d'oxyde sur la marche (O)
-  [9, 11, 4, 1, '#8a4e2e'],   // rouille sur l'assise (E)
-  [11, 8, 1, 5, '#7a4428'],   // la coulure qui descend le flanc
-]
-/** LA DALLE CHARBONNEUSE — la strate noire pleine largeur, et l'éclat de houille. Les arêtes
- *  HORIZONTALES paient à toute heure de soleil (mesuré sur ce projet) : la strate est une ligne. */
-export const DALLE_CHARBON_RECTS: readonly (readonly [number, number, number, number, string])[] = [
-  [2, 11, 12, 3, '#585550'],  // l'assise anthracite
-  [3, 8, 10, 3, '#6b6660'],   // la marche
-  [4, 7, 8, 1, '#7c766e'],    // le dessus
-  [3, 9, 10, 1, '#2e2c29'],   // LA STRATE — noir mat, pleine largeur de la marche
-  [2, 12, 12, 1, '#26241f'],  // la strate de l'assise
-  [5, 9, 2, 1, '#141311'],    // l'éclat de houille
-]
 /** LE CHICOT FERREUX (16×32) — l'aiguille rouillée du sommet : assez haute pour accrocher
  *  l'œil en marchant, SOUS la canopée (les repères du §1 gardent le monopole de l'horizon). */
 export const CHICOT_RECTS: readonly (readonly [number, number, number, number, string])[] = [
@@ -117,6 +97,35 @@ export const CHICOT_RECTS: readonly (readonly [number, number, number, number, s
   [9, 14, 1, 8, '#8a4e2e'],   // la longue coulure de rouille
   [7, 12, 2, 1, '#aa6a40'],   // la tache vive au collet
 ]
+/**
+ * LES BLOCS D'AFFLEUREMENT (§2sexies R48bis) — « chaque bloc prend une tuile complète sans
+ * offset » (Alexis) : l'art est PLEINE LARGEUR (0→16) et calé au bord BAS de sa texture — le
+ * rendu des nœuds étant centré-tuile à l'échelle native, le bloc remplit exactement sa tuile,
+ * sur la grille. Trois TAILLES (la même `tailleDeBloc` que le stock côté sim) : bas, moyen,
+ * haut (16×24 — il dépasse sur la tuile du nord, comme un cube qui a de la hauteur).
+ */
+export const BLOC_RECTS: readonly (readonly (readonly [number, number, number, number, string])[])[] = [
+  [ // taille 0 — le bloc BAS
+    [0, 8, 16, 8, '#716c66'],   // le corps, pleine tuile
+    [0, 8, 16, 3, '#8a847c'],   // le dessus
+    [3, 12, 2, 4, '#57534e'],   // la fissure
+    [11, 11, 3, 2, '#5d5954'],  // l'écornure
+  ],
+  [ // taille 1 — le bloc MOYEN
+    [0, 4, 16, 12, '#716c66'],
+    [0, 4, 16, 3, '#8a847c'],
+    [7, 9, 2, 7, '#57534e'],
+    [2, 7, 3, 2, '#5d5954'],
+  ],
+  [ // taille 2 — le bloc HAUT (16×24)
+    [0, 5, 16, 19, '#6d6862'],
+    [0, 5, 16, 4, '#88827a'],
+    [0, 20, 16, 4, '#615c56'],  // l'assise plus sombre
+    [4, 12, 2, 10, '#544f4a'],
+    [10, 9, 3, 2, '#5d5954'],
+  ],
+]
+
 /** LA POUSSIÈRE DE HOUILLE — une tache de sol quantifiée (grain de l'art, jamais lissée),
  *  au ras des veines de la butte charbonneuse. Prop RAMPANT : elle EST le sol. */
 export const POUSSIERE_RECTS: readonly (readonly [number, number, number, number, string])[] = [
@@ -157,12 +166,16 @@ const PROPS: LitProp[] = [
   { key: 'cl-big_trunk', w: 16, h: 16, draw: (c) => { c.fillStyle = '#3a2c1a'; c.fillRect(6, 4, 4, 11); c.fillStyle = '#24401f'; disc(c, 8, 4, 5) } },
   { key: 'cl-stump', w: 16, h: 16, draw: (c) => { c.fillStyle = '#4a3826'; c.fillRect(6, 9, 4, 5) } },
   // Les BUTTES d'affleurement (§2sexies) — cubique franc, silhouettes partagées (RECTS ci-dessus).
-  { key: 'cl-dalle_fer', w: 16, h: 16, draw: drawRects(DALLE_FER_RECTS), passes: 1, k: 3.5 },
-  { key: 'cl-dalle_charbon', w: 16, h: 16, draw: drawRects(DALLE_CHARBON_RECTS), passes: 1, k: 3.5 },
+  // (Les dalles décoratives ont été PURGÉES le 2026-08-18 — « trop de cailloux-clutter » : la
+  // butte est peuplée par ses nœuds `bloc`, le décor ne garde que chicot et poussière.)
   { key: 'cl-chicot', w: 16, h: 32, draw: drawRects(CHICOT_RECTS), passes: 1, k: 3.5 },
   { key: 'cl-poussiere', w: 16, h: 16, draw: drawRects(POUSSIERE_RECTS) },
   // Le nœud roche (masse pâteuse côté SnapshotView) — pas de miroir (les nœuds ne se miroitent pas).
   { key: 'nd-rock', w: 16, h: 16, draw: (c) => { c.fillStyle = '#6a6a72'; c.fillRect(3, 6, 11, 8) } },
+  // Les BLOCS d'affleurement, trois tailles pleine tuile (RECTS partagés) — cubes francs.
+  { key: 'nd-bloc-0', w: 16, h: 16, draw: drawRects(BLOC_RECTS[0]!), passes: 1, k: 3.5 },
+  { key: 'nd-bloc-1', w: 16, h: 16, draw: drawRects(BLOC_RECTS[1]!), passes: 1, k: 3.5 },
+  { key: 'nd-bloc-2', w: 16, h: 24, draw: drawRects(BLOC_RECTS[2]!), passes: 1, k: 3.5 },
   // ═══ LES HUMAINS (da-feeling R9) — des billboards mono-frame SYMÉTRIQUES, jamais miroités :
   //     la bascule est celle d'un chip. Bord + cœur = deux MATÉRIAUX (un liseré n'est pas un
   //     ombrage), normale blocky. La FAUNE, elle, reste consignée : asymétrique, miroitée par

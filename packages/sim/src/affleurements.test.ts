@@ -18,7 +18,7 @@ import { placeHuntingGrounds } from './faune'
 import { profondeurAt } from './map'
 import { nidsAMonstre } from './poi'
 import { estCoeur } from './profondeur'
-import { CONTENU, emplacementsDeVillage, placeZoneNodes } from './zone-content'
+import { BLOC_STOCKS, CONTENU, emplacementsDeVillage, placeZoneNodes, tailleDeBloc } from './zone-content'
 import { generateZonedTerrain } from './zonegen'
 import { distAuRect, MONDE } from './zonegraph'
 import type { ResourceNode } from './economy'
@@ -103,19 +103,26 @@ describe('A29 — contenant/contenu : chaque nœud neuf est LÀ où sa dérivati
     }
   })
 
-  it('les BLOCS d\'une butte sont de vrais nœuds `rock` sur sa rocaille — jamais du décor', () => {
-    // « il faudrait que ces blocs soient non traversables » (Alexis, 2026-08-18) : la solidité
-    // vient de la boîte du nœud (`blockHalfSub`, régime commun des rochers), pas d'un peint.
+  it('les BLOCS sont des nœuds `bloc` pleine tuile, sur la rocaille, à la taille de leur stock', () => {
+    // « un bloc = une tuile pleine de non traversable… plusieurs tailles » (Alexis, 2026-08-18) :
+    // le type dédié REMPLIT sa tuile (`blockHalfSub: 4`) et n'existe QUE sur les buttes — tout
+    // `bloc` du monde vit sur une rocaille registrée, et son stock EST sa taille (`tailleDeBloc`,
+    // la même fonction pure que l'art côté client — deux lectures, une vérité).
+    expect(NODE_DEFS.bloc.blockHalfSub).toBe(4)
     for (const m of mondes) {
       const { width, terrain } = m.c.map
+      const blocs = m.nodes.filter((n) => n.type === 'bloc')
+      for (const n of blocs) {
+        expect(terrain[n.ty * width + n.tx], `seed ${m.s} : bloc hors rocaille @${n.tx},${n.ty}`).toBe(TERRAIN_SCREE)
+        const butte = m.c.affleurements.find((a) =>
+          n.tx >= a.rect.x && n.tx < a.rect.x + a.rect.w && n.ty >= a.rect.y && n.ty < a.rect.y + a.rect.h)
+        expect(butte, `seed ${m.s} : bloc hors de toute butte @${n.tx},${n.ty}`).toBeDefined()
+        expect(n.stock, `seed ${m.s} : stock ≠ taille @${n.tx},${n.ty}`).toBe(BLOC_STOCKS[tailleDeBloc(n.tx, n.ty)])
+      }
       for (const a of m.c.affleurements) {
-        // SUR LA ROCAILLE seulement : le rect en L a des coins de pré, et le semis ordinaire de
-        // la zone a le droit d'y poser ses rochers — ils ne sont pas « de la butte ».
-        const rocks = m.nodes.filter((n) => n.type === 'rock'
-          && n.tx >= a.rect.x && n.tx < a.rect.x + a.rect.w
-          && n.ty >= a.rect.y && n.ty < a.rect.y + a.rect.h
-          && terrain[n.ty * width + n.tx] === TERRAIN_SCREE)
-        expect(rocks.length, `seed ${m.s} : butte @${a.rect.x},${a.rect.y} sans chaos de blocs`).toBeGreaterThanOrEqual(4)
+        const surButte = blocs.filter((n) =>
+          n.tx >= a.rect.x && n.tx < a.rect.x + a.rect.w && n.ty >= a.rect.y && n.ty < a.rect.y + a.rect.h)
+        expect(surButte.length, `seed ${m.s} : butte @${a.rect.x},${a.rect.y} sans chaos de blocs`).toBeGreaterThanOrEqual(4)
       }
     }
   })
@@ -213,6 +220,7 @@ describe('A31 — le monde complet est INTACT : le périmètre est le monde réd
     expect(nodes.filter((n) => n.type === 'iron_vein' && enRacine(n) && n.stock !== CONTENU.TEASER_STOCK).length).toBe(0)
     expect(nodes.filter((n) => n.type === 'coal_seam' && enRacine(n)).length).toBe(0)
     expect(nodes.filter((n) => n.type === 'quarry' && enRacine(n)).length).toBe(0)
+    expect(nodes.filter((n) => n.type === 'bloc').length, 'le bloc n\'existe QUE sur une butte').toBe(0)
     expect(nodes.filter((n) => n.type === 'old_tree' && enRacine(n) && n.stock !== CONTENU.TEASER_STOCK).length).toBe(0)
   }, 60_000)
 })

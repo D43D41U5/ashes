@@ -289,14 +289,21 @@ Karst. Au retour du graphe, le récit tient sans retouche : en T0 la roche PERCE
   sèment QUE sur la rocaille élue — quelques nœuds par butte, stock et repousse STANDARD (un filet,
   pas une mine). Et **un affleurement = une identité** : ferreux OU charbonneux, jamais mixte — la
   lisibilité en trois secondes, appliquée à la géologie.
-- **R48bis — Les BLOCS d'une butte sont RÉELS, donc non traversables** (décision d'Alexis,
-  2026-08-18 : « il faudrait que ces blocs soient non traversables »). Le chaos de pierres qui
-  peuple la rocaille est fait de vrais nœuds `rock` : ils bloquent par leur boîte (`blockHalfSub`,
-  le régime commun des rochers) tant qu'ils ont du stock, et se taillent à mains nues — se frayer
-  un passage se CREUSE. Le décor client ne peint JAMAIS du solide : il ne garde que les moellons
-  bas qu'on enjambe, les dalles en gradins et la poussière (INV-1/INV-2 du rendu). **La tuile du
-  SOMMET reste nue de tout nœud** — le client y dresse le chicot du fer (deux codes, une règle :
-  la tuile de pierrier la plus proche du centre du rect).
+- **R48bis — LE BLOC : une tuile pleine de non traversable, en trois tailles** (décision
+  d'Alexis, 2026-08-18, précisée en trois temps : « non traversables », puis « pas du clutter :
+  un bloc = une tuile pleine », « il nous faut plusieurs tailles »). Le chaos de pierres est
+  fait de nœuds `bloc` dédiés : chacun REMPLIT sa tuile — boîte pleine (`blockHalfSub: 4`), art
+  pleine largeur calé sur la grille, SANS offset — et bloque tant qu'il a du stock ; il se
+  taille à mains nues (se frayer un passage se CREUSE), puis repousse. **Trois tailles par la
+  même fonction pure des deux côtés** (`tailleDeBloc`) : le sim en fait le STOCK (8/12/18 — un
+  gros bloc résiste plus longtemps), le client en fait l'ART (`nd-bloc-0/1/2`, le haut fait
+  deux tuiles d'écran) — deux lectures, une vérité. Les blocs s'agrègent en MASSES de 1-3
+  tuiles. **Et le décor pierreux est PURGÉ des buttes** (« trop de cailloux-clutter », même
+  jour) : la butte est peuplée par SES BLOCS, personne d'autre — le décor ne garde que la
+  poussière de houille (charbon, au sol) et le chicot ; le sol teinté fait le reste. Le peint
+  ne dessine JAMAIS du solide (INV-1/INV-2 du rendu). **La tuile du SOMMET reste nue de tout
+  nœud** — le client y dresse le chicot du fer (deux codes, une règle : la tuile de pierrier
+  la plus proche du centre du rect).
 - **R49 — La pierre de taille se taille À LA PAROI.** Les nœuds `quarry` se posent au pied de
   l'enceinte de roche, sur des postes écartés entre eux, hors des couloirs de seuil, et là où le
   front de cendre n'arrive JAMAIS (champ de cendre > `cendreMax`) : une carrière est une paroi

@@ -912,6 +912,11 @@ export type NodeType =
   | 'leaf_pile'
   | 'iron_vein'
   | 'coal_seam'
+  /** LE BLOC D'AFFLEUREMENT (t0-exploration §2sexies R48bis) — « un bloc = une tuile pleine de
+   *  non traversable » (Alexis, 2026-08-18). Un cube de roche qui REMPLIT sa tuile, en trois
+   *  TAILLES (`tailleDeBloc` — la taille fait le stock : un gros bloc se taille plus longtemps).
+   *  Il bloque tant qu'il a du stock — se frayer un passage se CREUSE. Monde réduit seul. */
+  | 'bloc'
   // ── LES NŒUDS STRUCTURANTS DES ZONES (spec worldgen R9) — chacun n'existe QUE chez lui ──
   /** La Vieille Sylve : un fût de trois cents ans. Il faut une hache d'atelier pour l'abattre. */
   | 'old_tree'
@@ -993,6 +998,9 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   // la largeur de la colonne dessinée (`client/render/arbre-art.ts`, qui confronte les deux).
   tree: { item: 'wood', stock: 10, blockHalfSub: 1.5, skill: 'woodcutting', tool: 'axe', minTool: 'none' },
   rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'none' },
+  // Le stock du BLOC est un DÉFAUT : la pose le remplace par celui de sa taille (`tailleDeBloc`
+  // — 8/12/18), même patron que `stockDArbre`. La boîte pleine (`blockHalfSub: 4`) fait la règle.
+  bloc: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'none' },
   fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true },
   berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true },
   // LE PATCH DE CHAMPIGNONS : cueilli à mains nues (E), mais gaté par le SAVOIR — on ne récolte

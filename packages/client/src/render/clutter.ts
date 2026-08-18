@@ -39,7 +39,7 @@ export type PropKind =
   | 'reed' | 'sphagnum' | 'lichen' | 'snowdrift'
   // Les buttes d'affleurement (t0-exploration §2sexies) — posés par CONTEXTE (voir `clutterAt`),
   // jamais par la table des biomes : le pierrier hors butte garde son décor neutre.
-  | 'dalle_fer' | 'dalle_charbon' | 'chicot' | 'poussiere'
+  | 'chicot' | 'poussiere'
 
 /** Les textures de clutter sont carrées (16×16) SAUF déclaration ici : la couche affiche
  *  `TILE_PX × TILE_PX·aspect`. Le chicot du sommet ferreux est deux tuiles de haut. */
@@ -117,27 +117,13 @@ export const BIOME_CLUTTER: Record<number, BiomeClutter> = {
 }
 
 /**
- * LE DÉCOR DES BUTTES (t0-exploration §2sexies) — par IDENTITÉ, hors de la table des biomes :
- * il ne s'applique que sur le CONTEXTE de butte (dérivé de `WorldMap.affleurements`), jamais
- * au pierrier ordinaire. Les dalles dominent le tirage (la roche affleure en bancs), le
- * lichen signe le minéral exposé ; la butte charbonneuse sème EN PLUS sa poussière (voir
- * `clutterAt` — un prop rampant, pas une strate du tirage debout).
+ * LE DÉCOR DES BUTTES (t0-exploration §2sexies) : PRESQUE RIEN, et c'est la demande — « trop
+ * de cailloux-clutter » (Alexis, 2026-08-18) a purgé dalles, moellons et frange d'éboulis. La
+ * butte est peuplée par SES BLOCS (les nœuds `bloc`, pleine tuile, côté sim) ; le décor ne
+ * garde que la POUSSIÈRE de houille (un rampant, l'identité du charbon au sol) et le CHICOT
+ * du sommet ferreux. Le sol teinté fait le reste.
  */
-export const BUTTE_CLUTTER: Record<'fer' | 'charbon', BiomeClutter> = {
-  // Dalles + pierres de toutes tailles (reco d'Alexis 2026-08-18 : « des blocs… pour populate
-  // ces affleurements ») — l'understory double le prop des tuiles denses : des CHAOS groupés,
-  // pas un semis régulier. LES GROS BLOCS NE SONT PAS ICI : « non traversables » (Alexis), ce
-  // sont de VRAIS nœuds `rock` posés côté sim (`blocsDesAffleurements`) — le décor ne peint
-  // JAMAIS du solide, il ne garde que le moellon bas qu'on enjambe (INV-1/INV-2).
-  fer: { density: 0.42, scale: 9, understory: true, props: ['dalle_fer', 'dalle_fer', 'boulder', 'pebbles', 'lichen'] },
-  charbon: { density: 0.42, scale: 9, understory: true, props: ['dalle_charbon', 'dalle_charbon', 'boulder', 'pebbles', 'lichen'] },
-}
-/** La poussière de houille : chance PAR TUILE de cœur charbonneux (prop rampant, en sus). */
 const POUSSIERE_CHANCE = 0.16
-/** La frange d'éboulis : chance de cailloux par tuile de couronne, sur sol qui les admet. */
-const FRANGE_CHANCE = 0.15
-/** Les sols que la frange éboule — le pré, la fleuraie, la lande : jamais l'eau ni une sente. */
-const FRANGE_SOLS = new Set<number>([TERRAIN_GRASS, TERRAIN_FLOWER_MEADOW, TERRAIN_JUNIPER_HEATH, TERRAIN_HEATH])
 
 const CLUTTER_MEAN_SQ = 0.30 // ≈ E[fbm2²] — normalise le champ d'amas (moyenne ≈ 1)
 /** Dénuement du sous-bois au plafond de profondeur (§2quater R42) : à PROF_CAP, le sol du
@@ -235,47 +221,16 @@ export function clutterAt(
       return [{ kind: 'chicot', ox: 0, oy: 0, scale: 1, mirror: hash2(tx, ty, (seed ^ 0x7c1c07) | 0) < 0.5, variant: 0 }]
     }
     if (butte.role === 'coeur') {
-      const bc = BUTTE_CLUTTER[butte.ressource]
-      const props: PropInstance[] = []
-      const field = fbm2(tx, ty, bc.scale, (seed ^ 0x2b1c9f0d) | 0)
-      // LA PENTE VERS LE SOMMET densifie le banc ET grossit les dalles : les gradins montent
-      // vers le haut de la bosse, en CONTINU sur `grad` — jamais par paliers écrits.
-      const local = Math.min(1, bc.density * ((field * field) / CLUTTER_MEAN_SQ) * (0.7 + 0.6 * butte.grad))
-      const u = hash2(tx, ty, (seed ^ 0x77aa1133) | 0)
-      // DES TAILLES QUI S'ÉTALENT (reco d'Alexis) : la dalle grossit vers le sommet (les
-      // gradins — pente continue sur `grad`) ; le boulder du décor reste un MOELLON BAS,
-      // toujours plus petit que le nœud `rock` qui bloque — la taille dit la solidité.
-      const tailleDeButte = (p: PropInstance): void => {
-        if (p.kind === 'dalle_fer' || p.kind === 'dalle_charbon') {
-          p.scale = 0.72 + 0.38 * butte.grad + (p.scale - 0.7) * 0.4
-        } else if (p.kind === 'boulder') {
-          p.scale = 0.4 + p.variant * 0.3
-        }
-      }
-      if (u < local) {
-        const p = makeProp(bc, tx, ty, seed, 0)
-        tailleDeButte(p)
-        props.push(p)
-        // L'UNDERSTORY du chaos : une tuile dense porte un SECOND caillou — les pierres se
-        // groupent en tas, comme la roselière groupe ses roseaux.
-        if (bc.understory && u < local * 0.45) {
-          const q = makeProp(bc, tx, ty, seed, 1)
-          tailleDeButte(q)
-          props.push(q)
-        }
-      }
+      // LA BUTTE EST PEUPLÉE PAR SES BLOCS, pas par du décor (« trop de cailloux-clutter »,
+      // purgé le 2026-08-18) : ici, SEULE la poussière de houille — un rampant qui signe le
+      // charbon au sol. Le fer n'a rien : son sol rouillé et son chicot parlent pour lui.
       if (butte.ressource === 'charbon' && hash2(tx, ty, (seed ^ 0x0d0571) | 0) < POUSSIERE_CHANCE) {
-        props.push(makePropKind('poussiere', tx, ty, seed, 3))
+        return [makePropKind('poussiere', tx, ty, seed, 3)]
       }
-      return props
+      return []
     }
-    // LA FRANGE : la rocaille déborde — des cailloux EN PLUS du décor normal du sol, sur les
-    // seuls sols qui les admettent (jamais l'eau, une sente, un bois déjà meublé de troncs).
-    const base = clutterAt(tx, ty, terrain, seed, sample, prof)
-    if (FRANGE_SOLS.has(terrain) && hash2(tx, ty, (seed ^ 0x3b0a92) | 0) < FRANGE_CHANCE) {
-      base.push(makePropKind('pebbles', tx, ty, seed, 4))
-    }
-    return base
+    // LA FRANGE : plus d'éboulis (purgés avec le reste) — le décor normal du sol, rien d'autre.
+    return clutterAt(tx, ty, terrain, seed, sample, prof)
   }
 
   const cfg = BIOME_CLUTTER[terrain]

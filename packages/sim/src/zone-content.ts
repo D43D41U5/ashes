@@ -112,10 +112,11 @@ export const CONTENU = {
    */
   /** Nœuds par affleurement. 4 × stock 8 = 32 coups par butte : un filet, pas une mine. */
   AFFL_NOEUDS: 4,
-  /** Les BLOCS d'une butte (décision d'Alexis 2026-08-18 : « non traversables ») : de VRAIS
-   *  nœuds `rock` — ils bloquent par leur boîte (`blockHalfSub`) tant qu'ils ont du stock, et
-   *  se taillent en pierre banale. Le décor client n'a plus que ce qu'on ENJAMBE. */
-  AFFL_BLOCS: 6,
+  /** Les BLOCS d'une butte (décision d'Alexis 2026-08-18 : « un bloc = une tuile pleine de
+   *  non traversable ») : de VRAIS nœuds `bloc` pleine tuile, en trois tailles — ils bloquent
+   *  tant qu'ils ont du stock et se taillent en pierre. 10 depuis la purge du décor pierreux
+   *  (« trop de cailloux-clutter ») : c'est EUX qui peuplent la butte, personne d'autre. */
+  AFFL_BLOCS: 10,
   /** Postes de carrière le long de l'enceinte, écartés au max-min. */
   CARRIERES: 3,
   /** Nœuds `quarry` par poste (stock 6 chacun). */
@@ -274,6 +275,7 @@ function terrainAdmet(type: NodeType, terrain: number): boolean {
     case 'peat_cut':
       return n === 'peat_bog' || n === 'reed_marsh' || n === 'marsh'
     case 'rock':
+    case 'bloc':
     case 'quarry':
     case 'iron_vein':
     case 'coal_seam':
@@ -486,20 +488,32 @@ function mineraisDesAffleurements(c: CarteZonee, occupees: Set<number>, id: numb
 }
 
 /**
- * ═══ LES BLOCS DES BUTTES — « non traversables » (décision d'Alexis, 2026-08-18) ═══
+ * LA TAILLE D'UN BLOC — pure fonction de la tuile, PARTAGÉE sim/client (le patron
+ * `treeJitter` : « même fonction pure que la collision, sprite et règle coïncident »).
+ * Le sim en fait le STOCK (un gros bloc se taille plus longtemps), le client en fait
+ * l'ART (`nd-bloc-<taille>`) — deux lectures, une vérité, aucune donnée transportée.
+ */
+export function tailleDeBloc(tx: number, ty: number): 0 | 1 | 2 {
+  return Math.min(2, Math.floor(hash2(tx, ty, 0x7a11e) * 3)) as 0 | 1 | 2
+}
+/** Le stock par taille de bloc — la taille EST la résistance. */
+export const BLOC_STOCKS: readonly [number, number, number] = [8, 12, 18]
+
+/**
+ * ═══ LES BLOCS DES BUTTES — « un bloc = une tuile pleine de non traversable » (Alexis) ═══
  *
- * Le chaos de pierres qui peuple une butte n'est pas du décor : ce sont de VRAIS nœuds `rock`
- * (mémoire du projet : « ajoute X » = objets de jeu réels). Ils BLOQUENT par leur boîte de
- * collision tant qu'ils ont du stock — et se taillent à mains nues en pierre banale : le
- * joueur qui veut se frayer un passage le CREUSE, la règle du jeu fait la solidité. Le décor
- * client, lui, ne garde que les moellons qu'on enjambe (INV-2 : rien de solide n'est peint).
- * Semés APRÈS les minerais (ils prennent les tuiles restantes), jamais sur le sommet.
+ * Le chaos de pierres qui peuple une butte n'est pas du décor : ce sont de VRAIS nœuds `bloc`
+ * (mémoire du projet : « ajoute X » = objets de jeu réels). Chacun REMPLIT sa tuile — boîte
+ * pleine (`blockHalfSub: 4`), art pleine tuile SANS offset côté client — et bloque tant qu'il
+ * a du stock : se frayer un passage se CREUSE, à mains nues. Trois TAILLES (`tailleDeBloc`),
+ * et la taille fait le stock. Semés APRÈS les minerais, jamais sur le sommet, agrégés en
+ * masses de 1-3 tuiles. Le décor client ne garde que les moellons qu'on enjambe (INV-2).
  */
 function blocsDesAffleurements(c: CarteZonee, occupees: Set<number>, id: number): ResourceNode[] {
   const { width, terrain } = c.map
   const out: ResourceNode[] = []
   for (const aff of c.affleurements) {
-    const libres = rocailleLibre(c, aff.rect, 'rock', occupees)
+    const libres = rocailleLibre(c, aff.rect, 'bloc', occupees)
     const n = Math.min(CONTENU.AFFL_BLOCS, libres.length)
     if (n === 0) continue
     const sel = (c.graphe.seed ^ 0x424c4f43) | 0 /* 'BLOC' */
@@ -508,7 +522,8 @@ function blocsDesAffleurements(c: CarteZonee, occupees: Set<number>, id: number)
     const pose = (i: number): void => {
       occupees.add(i)
       const tx = i % width
-      out.push({ id: id + out.length, type: 'rock', tx, ty: (i - tx) / width, stock: NODE_DEFS.rock.stock, regrowAt: 0 })
+      const ty = (i - tx) / width
+      out.push({ id: id + out.length, type: 'bloc', tx, ty, stock: BLOC_STOCKS[tailleDeBloc(tx, ty)], regrowAt: 0 })
     }
     for (let k = 0; k < n; k++) {
       const i = libres[Math.min(libres.length - 1, depart + Math.floor((k * libres.length) / n))]!

@@ -19,9 +19,9 @@ import type { PropKind } from './clutter'
  *  et le test épingle que tout membre d'ici est réellement placé. */
 export const SHADOW_PROPS = new Set<PropKind>([
   'bush', 'low_bush', 'boulder', 'big_trunk', 'pine', 'larch', 'burnt_trunk', 'snowdrift', 'flower',
-  // Les buttes d'affleurement (§2sexies) : la dalle est un banc qui POSE, le chicot se dresse.
-  // La poussière, elle, EST le sol (FLAT_PROPS) — jamais de flaque.
-  'dalle_fer', 'dalle_charbon', 'chicot',
+  // Les buttes d'affleurement (§2sexies) : le chicot se dresse, donc il pose. La poussière,
+  // elle, EST le sol (FLAT_PROPS) — jamais de flaque. (Les dalles : purgées, 2026-08-18.)
+  'chicot',
 ])
 
 /** GAP DU BAS DE L'ART, en TEXELS (mesuré sur la silhouette) — de combien elle s'arrête au-dessus
@@ -36,8 +36,8 @@ export const SHADOW_PROPS = new Set<PropKind>([
 export const SHADOW_PROP_GAP: Record<string, number> = {
   bush: 0, boulder: 1, low_bush: 2,
   big_trunk: 1, pine: 3, larch: 4, burnt_trunk: 2, snowdrift: 0, flower: 2,
-  // Mesurés sur les RECTS partagés (lit-props) : assises en rangée 13 (dalles, /16) et 29 (chicot, /32).
-  dalle_fer: 2, dalle_charbon: 2, chicot: 2,
+  // Mesuré sur les RECTS partagés (lit-props) : l'assise du chicot finit en rangée 29 (/32).
+  chicot: 2,
 }
 
 /** Surcharges de gap quand la variante `_lit` est rendue (silhouette ≠ art peint). Seul le

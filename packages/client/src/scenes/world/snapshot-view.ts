@@ -31,7 +31,7 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@ashes/sim'
-import { fireStateAt, hash2, TERRAIN_CLIFF, terrainAt, type WorldMap } from '@ashes/sim'
+import { fireStateAt, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, type WorldMap } from '@ashes/sim'
 import { cliffKey } from '../../render/cliff-art'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
@@ -259,6 +259,7 @@ function nodeArtGap(texture: string): number {
   // ombre de contact serait remontée de deux pixels — exactement le bug qu'Alexis avait vu sur
   // les arbres et la fibre, à ceci près qu'il serait revenu par la porte de derrière.
   if (/^nd-.+_trunk(_lit)?$/.test(texture)) return 0 // tronc plein jusqu'au bas
+  if (texture.startsWith('nd-bloc')) return 0 // le bloc d'affleurement est FLUSH : pleine tuile, sans offset
   if (texture.startsWith('nd-sapling') || texture.startsWith('nd-fiber_plant') || texture.startsWith('nd-stump')) return 1 // plantes fines, art bas (suffixe _lit compris — piège épinglé par la vague A)
   return 2 // blocs (roche, baies, minerais…) : l'art bombe et s'arrête ~2 texels avant le bord
 }
@@ -1729,9 +1730,14 @@ export class SnapshotView {
             ? (this.lighting ? 'nd-sapling_lit' : 'nd-sapling')
             : isTree
               ? `nd-${variante.slug}_trunk${litTree ? '_lit' : ''}`
-              : this.lighting && LIT_NODE_TYPES.has(n.type)
-                  ? `nd-${n.type}_lit` // masse pâteuse (roche…) : albédo aplati + normal map quand éclairé
-                  : `nd-${n.type}`
+              // LE BLOC D'AFFLEUREMENT a trois TAILLES — la même fonction pure que le stock
+              // côté sim (`tailleDeBloc`) : l'art et la résistance coïncident au bit près,
+              // rien ne transite. Pleine tuile, sans offset — c'est la demande, littéralement.
+              : n.type === 'bloc'
+                ? `nd-bloc-${tailleDeBloc(n.tx, n.ty)}${this.lighting ? '_lit' : ''}`
+                : this.lighting && LIT_NODE_TYPES.has(n.type)
+                    ? `nd-${n.type}_lit` // masse pâteuse (roche…) : albédo aplati + normal map quand éclairé
+                    : `nd-${n.type}`
         let sprite = this.nodePool[used]
         if (!sprite) {
           sprite = this.scene.add.image(0, 0, texture).setOrigin(0.5, 1)

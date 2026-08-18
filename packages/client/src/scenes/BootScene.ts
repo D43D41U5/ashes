@@ -9,7 +9,7 @@ import { generateVitalIcons } from '../render/vital-art'
 import { generateLitTrees } from '../render/lit-trees'
 import { generateLitStructures } from '../render/lit-structures'
 import { generateBatiArt } from '../render/bati-art'
-import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS, LEAF_PILE_RECTS, DALLE_FER_RECTS, DALLE_CHARBON_RECTS, CHICOT_RECTS, POUSSIERE_RECTS } from '../render/lit-props'
+import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS, LEAF_PILE_RECTS, CHICOT_RECTS, POUSSIERE_RECTS, BLOC_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
 import { makePoiTextures } from './world/poi-art'
 import { makeBorneTextures } from './world/borne-layer'
@@ -373,6 +373,15 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('nd-rock', 16, 16)
     g.clear()
 
+    // LES BLOCS D'AFFLEUREMENT — trois tailles pleine tuile SANS offset (§2sexies R48bis),
+    // silhouettes rejouées depuis `BLOC_RECTS` (le contrat des deux backends, comme le
+    // champignon). Le haut fait 16×24 : le cube déborde sur la tuile du nord, pas sur le sol.
+    for (let taille = 0; taille < BLOC_RECTS.length; taille++) {
+      for (const [x, y, w, h, col] of BLOC_RECTS[taille]!) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
+      g.generateTexture(`nd-bloc-${taille}`, 16, taille === 2 ? 24 : 16)
+      g.clear()
+    }
+
     g.fillStyle(0x6f9c3a) // fibres : touffe de brins verticaux
     g.fillRect(4, 8, 2, 7)
     g.fillRect(7, 6, 2, 9)
@@ -595,10 +604,7 @@ export class BootScene extends Phaser.Scene {
     // RECTS partagés de lit-props (même contrat que le champignon : flat et `_lit` ne peuvent
     // pas diverger). Le chicot est le seul prop de clutter à texture HAUTE (16×32) : son
     // aspect est déclaré dans `PROP_ASPECT` (clutter.ts), la couche l'affiche sans l'écraser.
-    for (const [x, y, w, h, col] of DALLE_FER_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
-    tex('cl-dalle_fer')
-    for (const [x, y, w, h, col] of DALLE_CHARBON_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
-    tex('cl-dalle_charbon')
+    // (Les dalles décoratives ont été purgées — « trop de cailloux-clutter », 2026-08-18.)
     for (const [x, y, w, h, col] of CHICOT_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
     g.generateTexture('cl-chicot', 16, 32)
     g.clear()
