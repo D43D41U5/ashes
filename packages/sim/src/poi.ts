@@ -743,6 +743,17 @@ export function poiSpacing(width: number, height: number): number {
 }
 
 /**
+ * LES NIDS À MONSTRE RÉSIDENT (worldgen R17bis) — les rectangles des lieux dont le type
+ * porte `monster` (tanière, repaire). DÉRIVÉ de la table : un type de nid ajouté demain est
+ * couvert d'office, sans liste de slugs à la main. Consommé par `emplacementsDeVillage`
+ * (via `DangersDePlacement`) : on ne fonde pas un village au seuil d'un nid.
+ */
+export function nidsAMonstre(map: WorldMap): { x: number; y: number; w: number; h: number }[] {
+  const kinds = new Set(POI_TYPES.filter((t) => t.monster !== undefined).map((t) => t.slug))
+  return map.zones.filter((z) => z.kind !== undefined && kinds.has(z.kind)).map((z) => ({ x: z.x, y: z.y, w: z.w, h: z.h }))
+}
+
+/**
  * Le plafond EFFECTIF d'un type sur cette carte — le plafond de la table, mis à
  * l'échelle de la surface. Voir `CAP_REFERENCE_AREA` : la rareté est une densité,
  * pas un compte. Jamais moins d'un exemplaire si la table en prévoyait au moins un.

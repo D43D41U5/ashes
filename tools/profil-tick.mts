@@ -9,7 +9,7 @@
  */
 import {
   MONDE, createSim, step, placeZoneNodes, placeHuntingGrounds, spawnPoiMonsters,
-  emplacementsDeVillage, pointsDeSpawn, generateZonedTerrain, foundNpcVillage, FAUNA,
+  emplacementsDeVillage, pointsDeSpawn, generateZonedTerrain, foundNpcVillage, FAUNA, nidsAMonstre,
 } from '../packages/sim/src/index'
 
 const joueurs = Number(process.argv[2] ?? 8)
@@ -20,7 +20,10 @@ const carte = generateZonedTerrain(2026, joueurs)
 const tGen = performance.now() - t0
 
 const nodes = placeZoneNodes(carte)
-const emplacements = emplacementsDeVillage(carte, nodes)
+const emplacements = emplacementsDeVillage(carte, nodes, {
+  coinsDeChasse: placeHuntingGrounds(carte.map, 2026),
+  nids: nidsAMonstre(carte.map),
+})
 const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
 const premier = spawns[0] ?? emplacements[0]
 if (!premier) throw new Error('carte dégénérée')

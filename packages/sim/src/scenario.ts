@@ -17,8 +17,11 @@
  * La recette est désormais celle de la production, à l'appel près — le même enchaînement que
  * `worker/veillee.ts` (Veillée solo) et `server/scenario.ts` (zone LAN) :
  *
- *     generateZonedTerrain → placeZoneNodes → emplacementsDeVillage
- *                          → placeHuntingGrounds → spawnPoiMonsters → buildPoiStructures
+ *     generateZonedTerrain → placeZoneNodes → placeHuntingGrounds → emplacementsDeVillage
+ *                          → spawnPoiMonsters → buildPoiStructures
+ *
+ * (Les coins de chasse AVANT les emplacements depuis R17bis : un site tenable se juge
+ * contre les mêmes coins que la faune jouera.)
  *
  * ═══ LA TAILLE EST UN BOUTON, PAS UNE AUTRE CARTE ═══
  *
@@ -36,7 +39,7 @@ import { chronicleFromEvents, formatChronicleLine } from './chronicle'
 import { drainEvents, type SimEvent } from './events'
 import { placeHuntingGrounds } from './faune'
 import { countOf } from './items'
-import { spawnPoiMonsters } from './poi'
+import { nidsAMonstre, spawnPoiMonsters } from './poi'
 import { buildPoiStructures } from './poi-batis'
 import { createSim, step, type SimState } from './sim'
 import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
@@ -166,7 +169,10 @@ export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEU
   const carte = generateZonedTerrain(seed, joueurs)
   const map = carte.map
   const nodes = placeZoneNodes(carte)
-  const emplacements = emplacementsDeVillage(carte, nodes)
+  // Les coins de chasse se placent AVANT les emplacements : la garde R17bis (un site tenable
+  // est hors du territoire des loups, loin des nids) lit les mêmes coins que la faune jouera.
+  const grounds = placeHuntingGrounds(map, seed)
+  const emplacements = emplacementsDeVillage(carte, nodes, { coinsDeChasse: grounds, nids: nidsAMonstre(map) })
   // LE PREMIER SITE VIENT DE `pointsDeSpawn`, comme en production — pas du premier emplacement
   // venu. C'est LUI qui vise les Prés Bas, la zone nourricière où le jeu fait naître les joueurs
   // (spec R18) ; les deux autres s'en éloignent, exactement comme `worker/veillee.ts` pose ses
@@ -178,7 +184,6 @@ export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEU
   const base = sites[0]
   if (!base) throw new Error('scenario: la vallée ne porte aucun emplacement viable — carte dégénérée')
 
-  const grounds = placeHuntingGrounds(map, seed)
   const sim = createSim(seed, {
     map,
     nodes,

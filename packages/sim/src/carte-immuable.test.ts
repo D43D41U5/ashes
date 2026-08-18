@@ -23,8 +23,11 @@
  * rouge, ce n'est PAS elle qu'il faut changer : c'est `serializePartie` qu'il faut retirer.
  */
 import { describe, expect, it } from 'vitest'
+import { NODE_DEFS, TERRAINS } from './balance'
 import { generateZonedTerrain } from './zonegen'
 import { placeZoneNodes, emplacementsDeVillage } from './zone-content'
+import { placeHuntingGrounds } from './faune'
+import { nidsAMonstre } from './poi'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { drainEvents } from './events'
 import { frontActuel } from './cendre'
@@ -89,7 +92,10 @@ function empreinte(map: WorldMap): string {
 function mondeReel(): { sim: SimState; joueur: number } {
   const carte = generateZonedTerrain(2026)
   const nodes = placeZoneNodes(carte)
-  const emplacements = emplacementsDeVillage(carte, nodes)
+  const emplacements = emplacementsDeVillage(carte, nodes, {
+    coinsDeChasse: placeHuntingGrounds(carte.map, 2026),
+    nids: nidsAMonstre(carte.map),
+  })
   const base = emplacements[0]!
   const sim = createSim(2026, {
     map: carte.map,
@@ -186,9 +192,13 @@ describe('la carte est immuable pendant la partie', () => {
     // Un nœud à portée, quel qu'il soit : on le vide. (S'il n'y en a pas dans le rayon, le
     // refus est muet et la garde reste valable — on ne teste pas la récolte ici, on teste la carte.)
     const moi = sim.entities.find((e) => e.id === joueur)!
-    // Le nœud le plus proche, et on va À LUI : sur la carte de production, rien ne garantit
-    // qu'il en pousse un sous les pieds du joueur — un `if` silencieux aurait vidé le test.
+    // Le nœud le plus proche RÉCOLTABLE À MAINS NUES, et on va À LUI : sur la carte de
+    // production, rien ne garantit ce qui pousse près du spawn — un site déplacé (R17bis a
+    // bougé les emplacements) peut mettre en premier un arbre ou une roche, que ce joueur
+    // sans outil ne peut pas mordre, et le test mesurerait alors son inventaire, pas la carte.
     const proche = sim.nodes.reduce((meilleur, n) => {
+      const def = NODE_DEFS[n.type]
+      if (def.tool !== null || def.minForageLevel !== undefined) return meilleur
       const ex = n.tx + 0.5 - moi.x
       const ey = n.ty + 0.5 - moi.y
       const d = ex * ex + ey * ey // pas `**` : /sim doit rejouer au bit près entre moteurs
@@ -202,10 +212,20 @@ describe('la carte est immuable pendant la partie', () => {
     expect(proche!.stock).toBeLessThan(stockAvant) // la récolte a bien MORDU
 
     // Le feu se fonde À CÔTÉ, jamais sous ses propres pieds : une structure pleine-tuile
-    // emmure l'acteur centré dessus (leçon `feu-piege-centre-place-component`).
+    // emmure l'acteur centré dessus (leçon `feu-piege-centre-place-component`). Et sur une
+    // tuile LIBRE, cherchée parmi les voisines : viser d'office la tuile au-dessus, c'était
+    // viser le buisson — ça ne marchait avant que parce que le nœud d'à côté se vidait et
+    // disparaissait. Un buisson renouvelable, lui, reste.
     const refus: string[] = []
-    const feuTx = Math.floor(moi.x)
-    const feuTy = Math.floor(moi.y) - 1 // à côté : une structure pleine-tuile emmure qui est dessus
+    const libre = (tx: number, ty: number): boolean =>
+      TERRAINS[sim.map.terrain[ty * sim.map.width + tx]!]?.walkable === true &&
+      !sim.nodes.some((n) => n.tx === tx && n.ty === ty) &&
+      !sim.structures.some((s) => s.tx === tx && s.ty === ty)
+    const monTx = Math.floor(moi.x)
+    const monTy = Math.floor(moi.y)
+    const voisines = [[0, 1], [1, 0], [-1, 0], [1, 1], [-1, 1], [0, -1], [1, -1], [-1, -1]]
+      .map(([dx, dy]) => [monTx + dx!, monTy + dy!] as const)
+    const [feuTx, feuTy] = voisines.find(([tx, ty]) => libre(tx, ty)) ?? voisines[0]!
     refus.push(...agir(sim, joueur, { type: 'set_active_slot', slot: slotDe('campfire') }))
     refus.push(...agir(sim, joueur, { type: 'place_campfire', tx: feuTx, ty: feuTy }))
     const feu = sim.structures.find((s) => s.tx === feuTx && s.ty === feuTy)

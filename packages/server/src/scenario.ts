@@ -18,6 +18,7 @@ import {
   generateZonedTerrain,
   isBlockingTile,
   MONDE,
+  nidsAMonstre,
   placeHuntingGrounds,
   pointsDeSpawn,
   placeZoneNodes,
@@ -62,7 +63,10 @@ export function createZone(): LanWorld {
   const carte = generateZonedTerrain(LAN_SEED)
   const map = carte.map
   const nodes = placeZoneNodes(carte)
-  const emplacements = emplacementsDeVillage(carte, nodes)
+  // Les coins de chasse se placent AVANT les emplacements : la garde R17bis (un site
+  // tenable) lit les mêmes coins que la faune jouera — parité avec veillee.ts et le banc.
+  const grounds = placeHuntingGrounds(map, LAN_SEED)
+  const emplacements = emplacementsDeVillage(carte, nodes, { coinsDeChasse: grounds, nids: nidsAMonstre(map) })
   // LE SITE VIENT DU SEMIS DE SPAWN, PAS DU PREMIER EMPLACEMENT VENU.
   //
   // C'est `pointsDeSpawn` qui vise les PRÉS BAS — la zone nourricière où le jeu fait naître
@@ -85,7 +89,7 @@ export function createZone(): LanWorld {
     nodes,
     cycleOffset: cycleOffsetForStartHour(LAN_START_HOUR),
     faunaCap: FAUNA.CAP,
-    grounds: placeHuntingGrounds(map, LAN_SEED),
+    grounds,
     home: { x: base.tx + 0.5, y: base.ty + 0.5 },
     debug: false,
   })

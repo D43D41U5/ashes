@@ -264,9 +264,9 @@ export { generateZonedTerrain, RELIEF, type CarteZonee } from './zonegen'
 export { avanceeDuFront, calibreLeFront, CENDRE, estCendre, partSousLaCendre } from './cendre'
 export { zoneSlugAt, zoneIdAt } from './map'
 export {
-  clairiereForet, CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, type Emplacement,
+  clairiereForet, CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, type DangersDePlacement, type Emplacement,
 } from './zone-content'
-export { placePois, POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
+export { nidsAMonstre, placePois, POI_TYPES, POI_PLACEMENT, spawnPoiMonsters } from './poi'
 export { buildPoiStructures, batirLieu, BUILT_KINDS, PLANS, LEGENDE, regionDe, verifierPlan, verifierPlans, type Plan, type Case } from './poi-batis'
 export { parserPlan, serialiserPlan } from './plan-format'
 export { sortDuLieu, usureSelonSort, type SortDuLieu } from './sort-des-lieux'

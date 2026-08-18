@@ -14,6 +14,7 @@ import {
   foundNpcVillage,
   generateZonedTerrain,
   MONDE,
+  nidsAMonstre,
   placeHuntingGrounds,
   placeZoneNodes,
   pointsDeSpawn,
@@ -106,7 +107,10 @@ export function createVeillee(
 
   // LE SPAWN EST ÉPARPILLÉ dans les Prés Bas (spec R18) — en solo on en prend un, mais c'est le
   // MÊME semis qu'en multi : cinquante joueurs y naîtraient sans se marcher dessus.
-  const emplacements = emplacementsDeVillage(carte, nodes)
+  // Les coins de chasse se placent AVANT : la garde R17bis (site tenable — hors du territoire
+  // des loups, loin des nids, des baies à portée) lit les mêmes coins que la faune jouera.
+  const grounds = placeHuntingGrounds(map, seed)
+  const emplacements = emplacementsDeVillage(carte, nodes, { coinsDeChasse: grounds, nids: nidsAMonstre(map) })
   const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
   const premier = spawns[0] ?? emplacements[0]
   if (!premier) throw new Error('veillee: la vallée ne porte aucun emplacement viable — carte dégénérée')
@@ -118,7 +122,7 @@ export function createVeillee(
     nodes,
     cycleOffset: cycleOffsetForStartHour(VEILLEE_START_HOUR),
     faunaCap: FAUNA.CAP,
-    grounds: placeHuntingGrounds(map, seed),
+    grounds,
     home: spawn,
     debug: import.meta.env.DEV,
   })

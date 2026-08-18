@@ -19,6 +19,7 @@ import { deflateSync } from 'node:zlib'
 import { writeFileSync } from 'node:fs'
 import {
   generateZonedTerrain, placeZoneNodes, emplacementsDeVillage, pointsDeSpawn, MONDE,
+  placeHuntingGrounds, nidsAMonstre,
   TERRAIN_VOID, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_FOREST, TERRAIN_SHALLOW_WATER,
   TERRAIN_ROCK, TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_SCREE, TERRAIN_SNOW,
   TERRAIN_HEATH, TERRAIN_ALPINE_MEADOW, TERRAIN_PINE, TERRAIN_LARCH,
@@ -115,7 +116,10 @@ for (const z of map.zones) {
   }
 }
 const nodes = placeZoneNodes(carte)
-const emplacements = emplacementsDeVillage(carte, nodes)
+const emplacements = emplacementsDeVillage(carte, nodes, {
+  coinsDeChasse: placeHuntingGrounds(carte.map, seed),
+  nids: nidsAMonstre(carte.map),
+})
 for (const e of emplacements) carre(e.tx, e.ty, 3, 255, 0, 0)
 const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
 for (const s of spawns) carre(s.tx, s.ty, 2, 255, 255, 255)

@@ -10,6 +10,8 @@ import { BALANCE, TERRAIN_ROCK } from './balance'
 import { avanceeDuFront, CENDRE, estCendre, partSousLaCendre } from './cendre'
 import { generateZonedTerrain } from './zonegen'
 import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
+import { placeHuntingGrounds } from './faune'
+import { nidsAMonstre } from './poi'
 import { MONDE } from './zonegraph'
 import { createSim, spawnEntity, step } from './sim'
 import { drainEvents } from './events'
@@ -123,7 +125,10 @@ describe('le front de cendre', () => {
 describe('ce que la cendre DÉTRUIT', () => {
   it('R30 — le SPAWN RECULE devant le feu : personne ne naît dans la cendre', () => {
     const nodes = placeZoneNodes(carte)
-    const emplacements = emplacementsDeVillage(carte, nodes)
+    const emplacements = emplacementsDeVillage(carte, nodes, {
+      coinsDeChasse: placeHuntingGrounds(carte.map, carte.graphe.seed),
+      nids: nidsAMonstre(carte.map),
+    })
     const combien = Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE)
 
     const auJour1 = pointsDeSpawn(carte, emplacements, combien, frontAu(1))

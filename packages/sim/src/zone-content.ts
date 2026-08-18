@@ -25,6 +25,7 @@
  * Pur et déterministe : `hash2`/`fbm2`, `+ - * / sqrt` (invariant n°2).
  */
 import {
+  FAUNA,
   NODE_DEFS,
   TERRAIN_FOREST,
   TERRAIN_GRASS,
@@ -153,6 +154,19 @@ export const CONTENU = {
   RAYON_VILLAGE: 40,
   BOIS_MIN: 4,
   PIERRE_MIN: 2,
+  /**
+   * UN SITE TENABLE (worldgen R17bis, question ③ de la calibration de saison) : les baies de
+   * la maille de fondation — un village PNJ n'a QU'UNE source de nourriture, il ne chasse
+   * pas — et l'écart au RECTANGLE d'un lieu à monstre résident (tanière, repaire). L'écart au
+   * coin de chasse, lui, n'a pas de constante ici : il se DÉRIVE de la faune
+   * (`GROUND_RADIUS + SPAWN_RING_MAX` — la portée exacte à laquelle la présence des
+   * villageois fait naître des loups), et il doit suivre ces constantes s'il bougent.
+   * MESURÉ (banc, 4 graines) : les villages viables portent 5-20 baies en maille ; 4 exclut
+   * le désert sans toucher un seul site sain. Tanière à 44 tuiles : village à effectif
+   * plein ; 32 est un plancher de bon sens, pas une peur.
+   */
+  BAIES_MIN: 4,
+  ECART_NID: 32,
   /**
    * PLACE NETTE autour du foyer : on ne fonde pas un village dans un couloir.
    *
@@ -770,6 +784,21 @@ export interface Emplacement {
 }
 
 /**
+ * LES DANGERS DU PLACEMENT (worldgen R17bis) — ce que la liste des emplacements ÉVITE.
+ *
+ * Le paramètre est OBLIGATOIRE, et c'est voulu : un appelant qui l'oublierait rendrait la
+ * garde muette en silence. Un monde qui n'a vraiment ni coins ni nids (carte de test) le dit
+ * en passant deux tableaux vides.
+ */
+export interface DangersDePlacement {
+  /** Les coins de chasse (`placeHuntingGrounds`) : leur territoire fait naître la faune —
+   *  loups compris — autour de quiconque y vit. */
+  coinsDeChasse: { x: number; y: number }[]
+  /** Les RECTANGLES des lieux à monstre résident (`nidsAMonstre` — tanière, repaire). */
+  nids: { x: number; y: number; w: number; h: number }[]
+}
+
+/**
  * LES EMPLACEMENTS DE VILLAGE — et **aucune règle n'en interdit un seul**.
  *
  * C'est la trouvaille du brainstorm, et elle est d'Alexis : *« on peut poser son village dès
@@ -781,8 +810,14 @@ export interface Emplacement {
  * Cette fonction ne DÉCIDE donc rien : elle CONSTATE. Elle liste les endroits où un village
  * pourrait vivre — du bois, de la pierre, de la place — et le fait qu'ils soient tous dans les
  * zones nourricières est une **conséquence**, pas une consigne.
+ *
+ * R17bis étend le CONSTAT (2026-08-18, question ③ de la calibration) : « pourrait vivre »
+ * veut aussi dire y SURVIVRE. Des baies à portée (la seule nourriture d'un village PNJ), pas
+ * de nid à monstre au seuil, et hors du territoire d'un coin de chasse — mesuré au banc :
+ * 4 fondateurs saignés à mort au JOUR 1 par la meute née de l'anneau (graine 1234). Le joueur,
+ * lui, fonde toujours où il veut : `found_village` ne lit pas cette liste (R17 intact).
  */
-export function emplacementsDeVillage(c: CarteZonee, nodes: ResourceNode[]): Emplacement[] {
+export function emplacementsDeVillage(c: CarteZonee, nodes: ResourceNode[], dangers: DangersDePlacement): Emplacement[] {
   const { width, height, terrain } = c.map
   const out: Emplacement[] = []
   const ecart2 = MONDE.ESPACEMENT_VILLAGES * MONDE.ESPACEMENT_VILLAGES
@@ -797,6 +832,7 @@ export function emplacementsDeVillage(c: CarteZonee, nodes: ResourceNode[]): Emp
   const mw = Math.ceil(width / maille)
   const bois = new Map<number, number>()
   const pierre = new Map<number, number>()
+  const baies = new Map<number, number>()
   const cle = (tx: number, ty: number, z: number): number =>
     (Math.floor(ty / maille) * mw + Math.floor(tx / maille)) * 32 + z
   for (const n of nodes) {
@@ -810,6 +846,22 @@ export function emplacementsDeVillage(c: CarteZonee, nodes: ResourceNode[]): Emp
       bois.set(k, (bois.get(k) ?? 0) + 1)
     }
     if (n.type === 'rock' || n.type === 'quarry') pierre.set(k, (pierre.get(k) ?? 0) + 1)
+    if (n.type === 'berry_bush') baies.set(k, (baies.get(k) ?? 0) + 1)
+  }
+
+  // LE TERRITOIRE D'UN COIN DE CHASSE (R17bis) — l'écart se DÉRIVE, jamais écrit : c'est la
+  // portée exacte à laquelle la faune du coin peut naître de la présence d'un villageois
+  // (le disque du coin + l'anneau autour de l'hôte). Si la faune change, la garde suit.
+  const ecartChasse = FAUNA.GROUND_RADIUS + FAUNA.SPAWN_RING_MAX
+  const ecartChasse2 = ecartChasse * ecartChasse
+  // Distance au RECTANGLE d'un nid (0 dedans) : l'empreinte d'un lieu, pas son centre.
+  const presDUnNid = (tx: number, ty: number): boolean => {
+    for (const n of dangers.nids) {
+      const dx = Math.max(n.x - tx, 0, tx - (n.x + n.w))
+      const dy = Math.max(n.y - ty, 0, ty - (n.y + n.h))
+      if (dx * dx + dy * dy < CONTENU.ECART_NID * CONTENU.ECART_NID) return true
+    }
+    return false
   }
 
   const pas = CONTENU.PAS_BALAYAGE
@@ -827,6 +879,12 @@ export function emplacementsDeVillage(c: CarteZonee, nodes: ResourceNode[]): Emp
       const k = cle(tx, ty, c.zone[i]!)
       if ((bois.get(k) ?? 0) < CONTENU.BOIS_MIN) continue
       if ((pierre.get(k) ?? 0) < CONTENU.PIERRE_MIN) continue
+      // DES BAIES (R17bis) : la seule nourriture d'un village PNJ. Le désert s'exclut ici.
+      if ((baies.get(k) ?? 0) < CONTENU.BAIES_MIN) continue
+
+      // UN SITE TENABLE (R17bis) : hors du territoire d'un coin de chasse, loin d'un nid.
+      if (dangers.coinsDeChasse.some((g) => distSq(g.x, g.y, tx, ty) < ecartChasse2)) continue
+      if (presDUnNid(tx, ty)) continue
 
       // Assez loin du village précédent : on se frotte, on ne se marche pas dessus.
       if (out.some((e) => distSq(e.tx, e.ty, tx, ty) < ecart2)) continue

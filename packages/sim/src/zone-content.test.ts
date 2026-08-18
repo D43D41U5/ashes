@@ -6,11 +6,13 @@
  * franchi.
  */
 import { describe, expect, it } from 'vitest'
-import { NODE_DEFS, TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAINS } from './balance'
+import { FAUNA, NODE_DEFS, TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAINS } from './balance'
 import { distSq } from './geometry'
 import { profondeurAt } from './map'
 import { estCoeur, estLisiere, TERRAINS_FEUILLUS } from './profondeur'
 import { CREUX } from './racine-relief'
+import { placeHuntingGrounds } from './faune'
+import { nidsAMonstre } from './poi'
 import { CONTENU, CONTENUS, emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, stockDArbre } from './zone-content'
 import { generateZonedTerrain, type CarteZonee } from './zonegen'
 import { MONDE, VRAIES_ZONES, ZONES } from './zonegraph'
@@ -19,8 +21,11 @@ const SEEDS = [2026, 7, 42]
 const mondes = SEEDS.map((s) => {
   const c: CarteZonee = generateZonedTerrain(s)
   const nodes = placeZoneNodes(c)
-  const emplacements = emplacementsDeVillage(c, nodes)
-  return { c, nodes, emplacements }
+  // Les mêmes dangers que les hôtes réels (veillee.ts, scenario.ts) : coins + nids.
+  const grounds = placeHuntingGrounds(c.map, s)
+  const nids = nidsAMonstre(c.map)
+  const emplacements = emplacementsDeVillage(c, nodes, { coinsDeChasse: grounds, nids })
+  return { c, nodes, grounds, nids, emplacements }
 })
 
 const slugDe = (c: CarteZonee, id: number) => c.graphe.zones[id]!.def.slug
@@ -204,6 +209,48 @@ describe('le contenu, sur la vraie carte', () => {
           expect(distSq(a.tx, a.ty, b.tx, b.ty)).toBeGreaterThanOrEqual(min)
         }
       }
+    }
+  }, 120_000)
+
+  it('A17bis — TOUT emplacement est TENABLE : hors territoire de chasse, loin des nids, des baies en maille (R17bis)', () => {
+    // Garde EXHAUSTIVE sur la liste rendue (pas un échantillon), avec des comptes de baies
+    // REFAITS ici — si la fonction cesse de filtrer, c'est ce test qui le dit, pas le banc.
+    const ecartChasse = FAUNA.GROUND_RADIUS + FAUNA.SPAWN_RING_MAX
+    for (const { c, nodes, grounds, nids, emplacements } of mondes) {
+      const maille = CONTENU.RAYON_VILLAGE
+      const mw = Math.ceil(c.map.width / maille)
+      const cle = (tx: number, ty: number, z: number): number =>
+        (Math.floor(ty / maille) * mw + Math.floor(tx / maille)) * 32 + z
+      const baies = new Map<number, number>()
+      for (const n of nodes) {
+        if (n.type !== 'berry_bush') continue
+        const k = cle(n.tx, n.ty, c.zone[n.ty * c.map.width + n.tx]!)
+        baies.set(k, (baies.get(k) ?? 0) + 1)
+      }
+      for (const e of emplacements) {
+        for (const g of grounds) {
+          expect(
+            distSq(g.x, g.y, e.tx, e.ty),
+            `seed ${c.graphe.seed} : emplacement (${e.tx},${e.ty}) dans le territoire du coin de chasse (${g.x},${g.y})`,
+          ).toBeGreaterThanOrEqual(ecartChasse * ecartChasse)
+        }
+        for (const n of nids) {
+          const dx = Math.max(n.x - e.tx, 0, e.tx - (n.x + n.w))
+          const dy = Math.max(n.y - e.ty, 0, e.ty - (n.y + n.h))
+          expect(
+            dx * dx + dy * dy,
+            `seed ${c.graphe.seed} : emplacement (${e.tx},${e.ty}) au seuil d'un nid (${n.x},${n.y})`,
+          ).toBeGreaterThanOrEqual(CONTENU.ECART_NID * CONTENU.ECART_NID)
+        }
+        expect(
+          baies.get(cle(e.tx, e.ty, e.zone)) ?? 0,
+          `seed ${c.graphe.seed} : emplacement (${e.tx},${e.ty}) sans ses baies`,
+        ).toBeGreaterThanOrEqual(CONTENU.BAIES_MIN)
+      }
+      // Et les nids existent bien sur ces cartes : une garde qui n'exclut jamais rien ne
+      // garde rien (il faut au moins un coin de chasse ET un nid pour que le test morde).
+      expect(grounds.length, `seed ${c.graphe.seed} : aucun coin de chasse`).toBeGreaterThan(0)
+      expect(nids.length, `seed ${c.graphe.seed} : aucun nid à monstre`).toBeGreaterThan(0)
     }
   }, 120_000)
 

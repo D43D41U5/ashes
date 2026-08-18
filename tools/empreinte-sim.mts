@@ -56,7 +56,7 @@
  */
 import {
   MONDE, createSim, step, snapshot, drainEvents, placeZoneNodes, placeHuntingGrounds,
-  spawnPoiMonsters, spawnEntity, emplacementsDeVillage, pointsDeSpawn, generateZonedTerrain,
+  spawnPoiMonsters, spawnEntity, emplacementsDeVillage, pointsDeSpawn, generateZonedTerrain, nidsAMonstre,
   foundNpcVillage, FAUNA, SLOTS, DAY_TICKS_PER_CYCLE, addItems,
   type SimState, type MoveInput,
 } from '../packages/sim/src/index'
@@ -78,7 +78,10 @@ function mix(n: number): number {
 function mondeJoue(seed: number, cycleOffset: number): { sim: SimState; avatar: number } {
   const carte = generateZonedTerrain(seed, 8)
   const nodes = placeZoneNodes(carte)
-  const emplacements = emplacementsDeVillage(carte, nodes)
+  const emplacements = emplacementsDeVillage(carte, nodes, {
+    coinsDeChasse: placeHuntingGrounds(carte.map, seed),
+    nids: nidsAMonstre(carte.map),
+  })
   const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
   const premier = spawns[0] ?? emplacements[0]
   if (!premier) throw new Error(`carte dégénérée (seed ${seed})`)

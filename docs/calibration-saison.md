@@ -129,6 +129,68 @@ l'enceinte-d'abord) ont été livrés, et le banc a piloté DEUX itérations de 
 villages tombent entre j21 et j39. Ce n'est plus un bug ni un cliquet : c'est LA courbe de
 difficulté voulue ou non — la question ④ ci-dessous, désormais seule en jeu avec la ③.
 
+## Passe 3 — la garde de placement R17bis, et ce que la contre-mesure a montré (2026-08-18, question ③ tranchée : « vas-y, enchaîne »)
+
+**La mesure a d'abord renversé l'attribution.** La sonde statique neuve (`tools/diag-placement.mts`)
+et deux autopsies dynamiques ont montré que le tueur des Foyers n'était PAS le « POI hostile » du
+récit de la passe 1 — le sanglier de la tanière à 40 tuiles n'a **aucun** mort à son compte sur
+13 jours — mais le **territoire du coin de chasse** : la faune naît en anneau autour de tout
+avatar (les PNJ de village sont des hôtes comme les joueurs, vérifié dans `advanceFauna`), donc
+un Feu à moins de `GROUND_RADIUS + SPAWN_RING_MAX` (46+42 = 88) tuiles d'un coin reçoit des
+loups à domicile. MESURÉ : graine 1234 (chasse@76), **les 4 fondateurs du Foyer saignent à mort
+au JOUR 1** après le combat contre la meute née de l'anneau (le grenier de fondation porte
+2 fibres pour un bandage à 3 — γ refuse à raison de déserter) ; graine 2026 (chasse@56), les
+corvéables blessés DEHORS (15-24 t) se vident, leurs cadavres lèvent la contagion, et les
+cendreux ambiants achèvent le village aux j11-12.
+
+**La garde livrée (worldgen R17bis/A17bis, commit de ce jour).** `emplacementsDeVillage` exige un
+site TENABLE : hors du territoire de chasse (écart DÉRIVÉ des deux constantes de la faune, jamais
+écrit), à ≥ `ECART_NID` (32) du rectangle d'un lieu à monstre résident (dérivé de
+`POI_TYPES.monster`), et ≥ `BAIES_MIN` (4) baies dans la maille de fondation. Le paramètre
+dangers est OBLIGATOIRE (le compilateur a forcé les trois hôtes et tous les outils). R17 est
+intact : `found_village` ne consulte pas la liste, le joueur fonde où il veut. Garde A17bis
+exhaustive (3 graines production), A17 reste vert, 1851 tests sur 4 suites.
+*(Limite connue du plancher de baies : la maille ALIGNÉE sous-compte le vrai bassin — mesuré
+jusqu'à ×4 (7 en maille, 30 en disque de rayon 40). Le plancher n'exclut donc que le désert
+franc, et c'est suffisant : voir plus bas, la famine de démarrage n'est PAS une pauvreté de site.)*
+
+**AVANT → APRÈS (62 jours ; « avant » = passe 2 pour 2026/7, passe 1 pré-paquet pour 31/1234)** :
+
+| graine | avant | après | verdict |
+|---|---|---|---|
+| 2026 | Foyer broyé acte I (chasse@56) ; dernière chute j38-39 | **Braises anéanties NUIT 1 par un RAID de la Meute** (autopsie : 3 morts dans le carré, 0 loup, 0 faim) ; Gué j22, Levant j26 | pire — par la géométrie, pas par la garde |
+| 7 | Foyer plein j24 ; chute vers j38-39 | **7 morts sur 7 par la FAIM, oisifs, dans le carré** (Gué j5-6, Braises j10) | pire — famine de démarrage, pas la garde |
+| 31 | chute j18, monde mort j23 | Braises j16, Levant j25, **Gué à effectif plein j36, mort j40 sous les hordes d'acte II** | nettement mieux (+17 j, record du banc) |
+| 1234 | Foyer mort j6 (loups), monde mort j33-36 | jour-1 éteint (Foyer plein j7), érosion j8-11, monde mort j31 | l'accident visé est éteint, l'issue égale |
+
+**Le point central : la garde a tué exactement ses tueurs.** Sur les trois graines autopsiées
+après garde (2026, 7, 1234), **zéro villageois tué par les loups d'anneau, un nid ou un
+désert** — les loups qui restent ne prennent plus que des réfugiés sur les routes (victimes
+« ? » des autopsies), et l'unique mort de nuit-1 sur 1234 est une hémorragie post-horde de
+siège. **La contre-mesure nomme les trois dynamiques qui portent désormais toute la
+mortalité** :
+
+1. **Le raid de la Meute, dès la nuit 1.** `npc-errands` : dès `RAID_MIN_ALIVE` (3) vivants, la
+   Meute envoie `RAIDERS_PER_RAID` (2) raiders chaque nuit sur le village le plus proche À VOL
+   D'OISEAU — un village de fondation (3 membres, 0 mur, 2 fibres) ne survit pas à sa première
+   nuit s'il est le plus proche. Avant-garde, la marge de 91 % (2026) aiguillait tout sur le
+   Foyer déjà condamné par les loups : le neutre paraissait sain par accident.
+2. **La famine de démarrage, sensible à la géométrie fine.** Graine 7 : deux villages meurent
+   oisifs, greniers à zéro en 2-5 jours, sur des sites à ~30 buissons de rayon de cueillette —
+   dont un site IDENTIQUE à celui qui survivait 24 jours sur l'ancien tirage. Ce n'est ni la
+   richesse du site ni la garde : c'est la boucle de cueillette (famille de la question ②) qui
+   décroche sur certaines géométries. À sonder (`trace-corvee` ?) avant tout réglage.
+3. **La courbe d'acte II** — la question ④, enfin isolée : sur 31, le meilleur monde jamais
+   mesuré tient à effectif plein jusqu'à j36 et tombe au j40 sous 12→19 hordes, nourriture
+   jamais en cause. C'est la mort « propre », celle dont la ④ doit décider si elle est voulue.
+
+**Leçon d'instrument, à consigner.** Le banc à trois villages est HYPER-SENSIBLE au tirage de
+placement : filtrer la liste recompose le max-min, la marge de ciblage passe de 91 % à 28,6 %
+(2026), et la doctrine du banc lui-même dit que sous une marge basse « on mesure une guerre,
+pas une économie ». Toute comparaison avant/après de graine à graine mesure donc la LOTERIE de
+géométrie autant que la règle testée. Piste (décision à part, c'est l'instrument) : asseoir la
+marge dans `troisVillages`, ou moyenner sur plusieurs tirages par graine.
+
 ## Les décisions que ce relevé pose (à Alexis, une à la fois)
 
 1. ~~**Les villages PNJ doivent-ils recruter les réfugiés ?**~~ **✅ TRANCHÉ ET LIVRÉ
@@ -155,12 +217,18 @@ difficulté voulue ou non — la question ④ ci-dessous, désormais seule en je
    rasée le soir même. Les leviers d'α deviennent : **α1** l'ordre du chantier (l'anneau
    avant/avec les logis) ; **α2** le repli nocturne des oisifs (les morts hors murs à
    7-8 t) ; **α3** la calibration chantier/rayon/cadence.
-3. **Un village qui naît sous un Repaire / dans une zone sans baies est-il un sort voulu**
-   (« cette vallée était maudite ») **ou un défaut de placement** (écarter les sites à portée
-   de POI hostile / exiger un minimum de baies en zone, comme `emplacementsDeVillage` sait
-   déjà exiger d'autres choses) ?
-4. **Un monde 100 % mort en acte III est-il un état acceptable de la Veillée ?** Le GDD veut
-   des villages qui PEUVENT tomber — tous, toujours, avant la mi-saison est une autre chose.
+3. ~~**Un village qui naît sous un Repaire / dans une zone sans baies est-il un sort voulu
+   ou un défaut de placement ?**~~ **✅ TRANCHÉ ET LIVRÉ (2026-08-18, R17bis)** — défaut de
+   placement ; voir la passe 3 ci-dessus (et la vraie cause mesurée : le territoire du coin
+   de chasse, pas le Repaire).
+4. **Un monde 100 % mort avant l'acte III est-il un état acceptable de la Veillée ?** Le GDD
+   veut des villages qui PEUVENT tomber — tous, toujours, avant la mi-saison est une autre
+   chose. **Reformulée par la passe 3 :** les accidents de naissance sont éteints, et TOUTE la
+   mortalité restante passe par trois boutons nommés — (a) le raid Meute nuit-1
+   (`RAIDERS_PER_RAID`, ciblage au plus proche dès la fondation), (b) la boucle de cueillette
+   qui décroche sur certaines géométries (à sonder avant réglage), (c) la cadence/taille des
+   hordes d'acte II (le meilleur monde meurt j40 à greniers pleins). La ④ devient : *quelle
+   courbe veut-on, et lequel de ces trois boutons la porte ?*
 
 *(Rappel : le chantier « IA-village » reste en pause et flaggé — ces questions sont des
 décisions de design sur les règles, pas une réouverture de ce chantier-là.)*
