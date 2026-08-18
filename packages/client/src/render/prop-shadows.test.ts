@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { SHADOW_PROPS, SHADOW_PROP_GAP, SHADOW_PROP_WIDTH } from './prop-shadows'
-import { BIOME_CLUTTER, type PropKind } from './clutter'
+import { BIOME_CLUTTER, BUTTE_CLUTTER, type PropKind } from './clutter'
 
 /**
  * Le câblage des OMBRES DE CONTACT du décor, en DONNÉES PURES (comme `lit-props.test.ts`). Le piège
@@ -23,6 +23,10 @@ describe('câblage des ombres de contact du décor', () => {
       for (const k of cfg.props) placed.add(k)
       if (cfg.groves) placed.add(cfg.groves.kind)
     }
+    // Les buttes d'affleurement posent HORS de la table des biomes (par contexte, §2sexies) :
+    // leurs tirages, plus le chicot que `clutterAt` plante au sommet, comptent comme posés.
+    for (const cfg of Object.values(BUTTE_CLUTTER)) for (const k of cfg.props) placed.add(k)
+    placed.add('chicot')
     for (const kind of SHADOW_PROPS) expect(placed.has(kind)).toBe(true)
   })
 

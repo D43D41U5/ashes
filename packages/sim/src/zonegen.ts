@@ -704,6 +704,12 @@ export function generateZonedTerrain(
     // coule. Le client en dérive le courant (feuilles qui dérivent) ; demain, un courant
     // qui pousse serait une décision de design à part (consignée, pas ouverte).
     ...(riviere ? { fil: riviere.fil.slice() } : {}),
+    // LES AFFLEUREMENTS (t0-exploration §2sexies), donnée de premier ordre : le client en tire
+    // teinte, dalles et chicot — patron « seuils → bornes ». Omis quand il n'y en a pas (le
+    // plan complet, les cartes d'avant) : additive, une vieille sauvegarde se relit sans.
+    ...(affleurements.length > 0
+      ? { affleurements: affleurements.map((a) => ({ ...a.rect, ressource: a.ressource })) }
+      : {}),
     // LA PROFONDEUR INTRA-MASSIF (spec §2quater R38) — dérivée du terrain FINAL (les sentes
     // qui coupent un bois y creusent leur lisière), gelée à l'amorce, statique ensuite.
     profondeur: deriverProfondeur(terrain, zone, g.racine, width, height),

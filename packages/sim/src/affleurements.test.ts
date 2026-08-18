@@ -103,6 +103,52 @@ describe('A29 — contenant/contenu : chaque nœud neuf est LÀ où sa dérivati
     }
   })
 
+  it('les BLOCS d\'une butte sont de vrais nœuds `rock` sur sa rocaille — jamais du décor', () => {
+    // « il faudrait que ces blocs soient non traversables » (Alexis, 2026-08-18) : la solidité
+    // vient de la boîte du nœud (`blockHalfSub`, régime commun des rochers), pas d'un peint.
+    for (const m of mondes) {
+      const { width, terrain } = m.c.map
+      for (const a of m.c.affleurements) {
+        // SUR LA ROCAILLE seulement : le rect en L a des coins de pré, et le semis ordinaire de
+        // la zone a le droit d'y poser ses rochers — ils ne sont pas « de la butte ».
+        const rocks = m.nodes.filter((n) => n.type === 'rock'
+          && n.tx >= a.rect.x && n.tx < a.rect.x + a.rect.w
+          && n.ty >= a.rect.y && n.ty < a.rect.y + a.rect.h
+          && terrain[n.ty * width + n.tx] === TERRAIN_SCREE)
+        expect(rocks.length, `seed ${m.s} : butte @${a.rect.x},${a.rect.y} sans chaos de blocs`).toBeGreaterThanOrEqual(4)
+      }
+    }
+  })
+
+  it('la tuile du SOMMET reste nue de tout nœud — le chicot du client s\'y dresse', () => {
+    // Deux codes, une règle (« la tuile de pierrier la plus proche du centre ») : le sim la
+    // réserve, le client y plante le chicot — cette garde répète la règle pour épingler les deux.
+    for (const m of mondes) {
+      const { width, height, terrain } = m.c.map
+      for (const a of m.c.affleurements) {
+        const cx = a.rect.x + a.rect.w / 2
+        const cy = a.rect.y + a.rect.h / 2
+        let sommet = -1
+        let bestD = Infinity
+        for (let ty = a.rect.y; ty < a.rect.y + a.rect.h; ty++) {
+          for (let tx = a.rect.x; tx < a.rect.x + a.rect.w; tx++) {
+            if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue
+            if (terrain[ty * width + tx] !== TERRAIN_SCREE) continue
+            const d = (tx + 0.5 - cx) * (tx + 0.5 - cx) + (ty + 0.5 - cy) * (ty + 0.5 - cy)
+            if (d < bestD) { bestD = d; sommet = ty * width + tx }
+          }
+        }
+        expect(sommet, `seed ${m.s} : butte sans rocaille ?`).toBeGreaterThanOrEqual(0)
+        const stx = sommet % width
+        const sty = (sommet - stx) / width
+        expect(
+          m.nodes.some((n) => n.tx === stx && n.ty === sty),
+          `seed ${m.s} : un nœud squatte le sommet @${stx},${sty}`,
+        ).toBe(false)
+      }
+    }
+  })
+
   it('et les buttes elles-mêmes sont hors d\'atteinte du front (R47)', () => {
     for (const m of mondes) {
       const { cendre, cendreMax, width } = m.c.map
@@ -145,10 +191,21 @@ describe('A30 — une identité par butte, des buttes écartées, et personne n\
   })
 })
 
+describe('la donnée de premier ordre — WorldMap.affleurements (patron « seuils → bornes »)', () => {
+  it('la carte porte EXACTEMENT le registre de génération — le client ne devinera rien', () => {
+    for (const m of mondes) {
+      expect(m.c.map.affleurements).toEqual(
+        m.c.affleurements.map((a) => ({ ...a.rect, ressource: a.ressource })),
+      )
+    }
+  })
+})
+
 describe('A31 — le monde complet est INTACT : le périmètre est le monde réduit, exactement', () => {
   it('zéro affleurement, zéro nœud neuf dans la racine du plan complet', () => {
     const c = generateZonedTerrain(2026)
     expect(c.affleurements).toEqual([])
+    expect(c.map.affleurements, 'la vallée complète ne porte pas la donnée — additive, jamais vide').toBeUndefined()
     const nodes = placeZoneNodes(c)
     const racine = c.graphe.racine
     const enRacine = (n: ResourceNode): boolean => c.zone[n.ty * c.map.width + n.tx] === racine

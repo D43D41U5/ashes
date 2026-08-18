@@ -16,6 +16,7 @@ import {
   FIRE_UPKEEP,
   TEMPERATURE,
   TERRAIN_FOREST,
+  TERRAIN_SCREE,
   terrainAt,
   terrainConstructible,
   clairiereForet,
@@ -110,6 +111,7 @@ import { familleDe, moyenneFamille, profilDe } from '../render/grain-sol'
 import { GroundLayer } from './world/ground-layer'
 import { ambianceDe, moduler } from '../render/zone-ambiance'
 import { TERRAIN_COLORS } from '../render/terrain-colors'
+import { butteAt, solDeButte } from '../render/buttes'
 import { CendreLayer } from './world/cendre-layer'
 import { CliffLayer } from './world/cliff-layer'
 import { PoiLayer } from './world/poi-layer'
@@ -2581,11 +2583,19 @@ export class WorldScene extends Phaser.Scene {
     const bg = new Uint8Array(N)
     const bb = new Uint8Array(N)
     const bio = new Uint8Array(N) // 1 = biome (participe au fondu), 0 = structurel (falaise, eau…)
+    // LES BUTTES D'AFFLEUREMENT (t0-exploration §2sexies) : le pierrier D'UNE BUTTE prend sa
+    // teinte minérale — rouille mouchetée (le chapeau de fer) ou anthracite (la strate). Par la
+    // DONNÉE `map.affleurements`, jamais par le terrain : le pierrier du Karst reste neutre.
+    const affs = this.map.affleurements
     for (let i = 0; i < N; i++) {
       const terr = this.map.terrain[i] ?? 0
-      const base = terr === TERRAIN_FOREST
-        ? solForet(i % width, (i - (i % width)) / width, this.worldSeed)
-        : (TERRAIN_COLORS[terr] ?? 0xff00ff)
+      const tx = i % width
+      const butte = terr === TERRAIN_SCREE && affs ? butteAt(affs, tx, (i - tx) / width) : null
+      const base = butte
+        ? solDeButte(butte.ressource, tx, (i - tx) / width)
+        : terr === TERRAIN_FOREST
+          ? solForet(tx, (i - tx) / width, this.worldSeed)
+          : (TERRAIN_COLORS[terr] ?? 0xff00ff)
       br[i] = (base >> 16) & 0xff
       bg[i] = (base >> 8) & 0xff
       bb[i] = base & 0xff

@@ -9,7 +9,7 @@ import { generateVitalIcons } from '../render/vital-art'
 import { generateLitTrees } from '../render/lit-trees'
 import { generateLitStructures } from '../render/lit-structures'
 import { generateBatiArt } from '../render/bati-art'
-import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS, LEAF_PILE_RECTS } from '../render/lit-props'
+import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS, LEAF_PILE_RECTS, DALLE_FER_RECTS, DALLE_CHARBON_RECTS, CHICOT_RECTS, POUSSIERE_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
 import { makePoiTextures } from './world/poi-art'
 import { makeBorneTextures } from './world/borne-layer'
@@ -590,6 +590,20 @@ export class BootScene extends Phaser.Scene {
 
     g.fillStyle(0xd8dde6).fillCircle(8, 12, 4) // congère
     tex('cl-snowdrift')
+
+    // LES BUTTES D'AFFLEUREMENT (t0-exploration §2sexies) — silhouettes rejouées depuis les
+    // RECTS partagés de lit-props (même contrat que le champignon : flat et `_lit` ne peuvent
+    // pas diverger). Le chicot est le seul prop de clutter à texture HAUTE (16×32) : son
+    // aspect est déclaré dans `PROP_ASPECT` (clutter.ts), la couche l'affiche sans l'écraser.
+    for (const [x, y, w, h, col] of DALLE_FER_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
+    tex('cl-dalle_fer')
+    for (const [x, y, w, h, col] of DALLE_CHARBON_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
+    tex('cl-dalle_charbon')
+    for (const [x, y, w, h, col] of CHICOT_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
+    g.generateTexture('cl-chicot', 16, 32)
+    g.clear()
+    for (const [x, y, w, h, col] of POUSSIERE_RECTS) g.fillStyle(parseInt(col.slice(1), 16)).fillRect(x, y, w, h)
+    tex('cl-poussiere')
 
     g.destroy()
   }

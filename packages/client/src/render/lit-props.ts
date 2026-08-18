@@ -79,6 +79,58 @@ function drawLeafPile(ctx: CanvasRenderingContext2D): void {
   for (const [x, y, w, h, col] of LEAF_PILE_RECTS) { ctx.fillStyle = col; ctx.fillRect(x, y, w, h) }
 }
 
+/**
+ * LES BUTTES D'AFFLEUREMENT (t0-exploration §2sexies) — même contrat que `CHAMPIGNON_RECTS` :
+ * la silhouette PARTAGÉE des deux backends (BootScene rejoue ces rects en Phaser Graphics).
+ * Cubique franc (`passes:1`/`k:3.5`), les couleurs sont des MATÉRIAUX : la rouille du fer et
+ * la strate de houille restent sous l'éclairage, seul le hillshade cuit n'existe pas.
+ */
+/** LA DALLE FERREUSE — une marche de roche griffée d'oxyde : la coulure descend le flanc,
+ *  la bavure tache la marche. Le vrai signe de surface d'un gisement (gossan). */
+export const DALLE_FER_RECTS: readonly (readonly [number, number, number, number, string])[] = [
+  [2, 11, 12, 3, '#6e6862'],  // l'assise
+  [3, 8, 10, 3, '#8b847b'],   // la marche
+  [4, 7, 8, 1, '#a29a90'],    // le dessus clair
+  [3, 8, 3, 1, '#9a5a36'],    // bavure d'oxyde sur la marche (O)
+  [9, 11, 4, 1, '#8a4e2e'],   // rouille sur l'assise (E)
+  [11, 8, 1, 5, '#7a4428'],   // la coulure qui descend le flanc
+]
+/** LA DALLE CHARBONNEUSE — la strate noire pleine largeur, et l'éclat de houille. Les arêtes
+ *  HORIZONTALES paient à toute heure de soleil (mesuré sur ce projet) : la strate est une ligne. */
+export const DALLE_CHARBON_RECTS: readonly (readonly [number, number, number, number, string])[] = [
+  [2, 11, 12, 3, '#585550'],  // l'assise anthracite
+  [3, 8, 10, 3, '#6b6660'],   // la marche
+  [4, 7, 8, 1, '#7c766e'],    // le dessus
+  [3, 9, 10, 1, '#2e2c29'],   // LA STRATE — noir mat, pleine largeur de la marche
+  [2, 12, 12, 1, '#26241f'],  // la strate de l'assise
+  [5, 9, 2, 1, '#141311'],    // l'éclat de houille
+]
+/** LE CHICOT FERREUX (16×32) — l'aiguille rouillée du sommet : assez haute pour accrocher
+ *  l'œil en marchant, SOUS la canopée (les repères du §1 gardent le monopole de l'horizon). */
+export const CHICOT_RECTS: readonly (readonly [number, number, number, number, string])[] = [
+  [5, 27, 8, 3, '#6e6862'],   // l'assise élargie (bas rangée 29 → gap 2)
+  [6, 22, 6, 5, '#7b746c'],   // le pied
+  [7, 12, 4, 10, '#88817a'],  // le fût
+  [7, 6, 3, 6, '#948c84'],    // l'épaule haute
+  [8, 3, 2, 3, '#9e968e'],    // la pointe
+  [8, 7, 2, 5, '#9a5a36'],    // la traînée d'oxyde sous l'épaule
+  [9, 14, 1, 8, '#8a4e2e'],   // la longue coulure de rouille
+  [7, 12, 2, 1, '#aa6a40'],   // la tache vive au collet
+]
+/** LA POUSSIÈRE DE HOUILLE — une tache de sol quantifiée (grain de l'art, jamais lissée),
+ *  au ras des veines de la butte charbonneuse. Prop RAMPANT : elle EST le sol. */
+export const POUSSIERE_RECTS: readonly (readonly [number, number, number, number, string])[] = [
+  [4, 11, 4, 2, '#26241f'],
+  [8, 12, 3, 2, '#1c1b18'],
+  [6, 9, 3, 2, '#2e2b26'],
+  [10, 10, 2, 1, '#26241f'],
+]
+function drawRects(rects: readonly (readonly [number, number, number, number, string])[]) {
+  return (ctx: CanvasRenderingContext2D): void => {
+    for (const [x, y, w, h, col] of rects) { ctx.fillStyle = col; ctx.fillRect(x, y, w, h) }
+  }
+}
+
 
 
 // Silhouettes = celles de `BootScene.makeClutter` (À GARDER EN PHASE : deux backends de dessin,
@@ -104,6 +156,11 @@ const PROPS: LitProp[] = [
   { key: 'cl-burnt_trunk', w: 16, h: 16, draw: (c) => { c.fillStyle = '#2b2b2f'; c.fillRect(7, 4, 2, 10) } },
   { key: 'cl-big_trunk', w: 16, h: 16, draw: (c) => { c.fillStyle = '#3a2c1a'; c.fillRect(6, 4, 4, 11); c.fillStyle = '#24401f'; disc(c, 8, 4, 5) } },
   { key: 'cl-stump', w: 16, h: 16, draw: (c) => { c.fillStyle = '#4a3826'; c.fillRect(6, 9, 4, 5) } },
+  // Les BUTTES d'affleurement (§2sexies) — cubique franc, silhouettes partagées (RECTS ci-dessus).
+  { key: 'cl-dalle_fer', w: 16, h: 16, draw: drawRects(DALLE_FER_RECTS), passes: 1, k: 3.5 },
+  { key: 'cl-dalle_charbon', w: 16, h: 16, draw: drawRects(DALLE_CHARBON_RECTS), passes: 1, k: 3.5 },
+  { key: 'cl-chicot', w: 16, h: 32, draw: drawRects(CHICOT_RECTS), passes: 1, k: 3.5 },
+  { key: 'cl-poussiere', w: 16, h: 16, draw: drawRects(POUSSIERE_RECTS) },
   // Le nœud roche (masse pâteuse côté SnapshotView) — pas de miroir (les nœuds ne se miroitent pas).
   { key: 'nd-rock', w: 16, h: 16, draw: (c) => { c.fillStyle = '#6a6a72'; c.fillRect(3, 6, 11, 8) } },
   // ═══ LES HUMAINS (da-feeling R9) — des billboards mono-frame SYMÉTRIQUES, jamais miroités :

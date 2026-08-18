@@ -289,6 +289,14 @@ Karst. Au retour du graphe, le récit tient sans retouche : en T0 la roche PERCE
   sèment QUE sur la rocaille élue — quelques nœuds par butte, stock et repousse STANDARD (un filet,
   pas une mine). Et **un affleurement = une identité** : ferreux OU charbonneux, jamais mixte — la
   lisibilité en trois secondes, appliquée à la géologie.
+- **R48bis — Les BLOCS d'une butte sont RÉELS, donc non traversables** (décision d'Alexis,
+  2026-08-18 : « il faudrait que ces blocs soient non traversables »). Le chaos de pierres qui
+  peuple la rocaille est fait de vrais nœuds `rock` : ils bloquent par leur boîte (`blockHalfSub`,
+  le régime commun des rochers) tant qu'ils ont du stock, et se taillent à mains nues — se frayer
+  un passage se CREUSE. Le décor client ne peint JAMAIS du solide : il ne garde que les moellons
+  bas qu'on enjambe, les dalles en gradins et la poussière (INV-1/INV-2 du rendu). **La tuile du
+  SOMMET reste nue de tout nœud** — le client y dresse le chicot du fer (deux codes, une règle :
+  la tuile de pierrier la plus proche du centre du rect).
 - **R49 — La pierre de taille se taille À LA PAROI.** Les nœuds `quarry` se posent au pied de
   l'enceinte de roche, sur des postes écartés entre eux, hors des couloirs de seuil, et là où le
   front de cendre n'arrive JAMAIS (champ de cendre > `cendreMax`) : une carrière est une paroi

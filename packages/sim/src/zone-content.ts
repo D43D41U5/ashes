@@ -112,6 +112,10 @@ export const CONTENU = {
    */
   /** Nœuds par affleurement. 4 × stock 8 = 32 coups par butte : un filet, pas une mine. */
   AFFL_NOEUDS: 4,
+  /** Les BLOCS d'une butte (décision d'Alexis 2026-08-18 : « non traversables ») : de VRAIS
+   *  nœuds `rock` — ils bloquent par leur boîte (`blockHalfSub`) tant qu'ils ont du stock, et
+   *  se taillent en pierre banale. Le décor client n'a plus que ce qu'on ENJAMBE. */
+  AFFL_BLOCS: 6,
   /** Postes de carrière le long de l'enceinte, écartés au max-min. */
   CARRIERES: 3,
   /** Nœuds `quarry` par poste (stock 6 chacun). */
@@ -306,8 +310,12 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   // TOUTES les passes appendues l'héritent par l'ensemencement de leurs `occupees` — une
   // passe future ne peut pas l'oublier.
   const steriles = (c.map.coulees ?? []).filter((i) => i >= 0)
-  const sterileSet = new Set(steriles)
-  const occupeesPlus = (): Set<number> => new Set([...nodes.map((n) => n.ty * width + n.tx), ...steriles])
+  // LA TUILE DU SOMMET d'une butte reste NUE (§2sexies R48bis) : le client y dresse le chicot.
+  // Réservée ICI, à la source — le semis principal passait AVANT les passes de butte et pouvait
+  // y poser un rocher de la table ordinaire (attrapé par la garde A29, seed 7).
+  const sommets = c.affleurements.map((a) => sommetDeButte(c, a.rect)).filter((i) => i >= 0)
+  const sterileSet = new Set([...steriles, ...sommets])
+  const occupeesPlus = (): Set<number> => new Set([...nodes.map((n) => n.ty * width + n.tx), ...steriles, ...sommets])
   const seed = (c.graphe.seed ^ 0x51ab3f77) | 0
   let id = 1
 
@@ -389,6 +397,9 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   const minerais = mineraisDesAffleurements(c, occupeesPlus(), id)
   for (const m of minerais) nodes.push(m)
   id += minerais.length
+  const blocs = blocsDesAffleurements(c, occupeesPlus(), id)
+  for (const b of blocs) nodes.push(b)
+  id += blocs.length
   const carrieres = carrieresDeLEnceinte(c, occupeesPlus(), id)
   for (const q of carrieres) nodes.push(q)
   id += carrieres.length
@@ -405,32 +416,123 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
  * Répartition par pas constant dans la liste row-major des tuiles de rocaille — l'écartement
  * sans tirage ; le départ est salé positionnel ('AFFL'), le patron canonique du worldgen.
  */
-function mineraisDesAffleurements(c: CarteZonee, occupees: Set<number>, id: number): ResourceNode[] {
+/**
+ * LE SOMMET D'UNE BUTTE — la tuile de rocaille la plus proche du centre du rect (balayage
+ * row-major, comparaison stricte : ordre total, déterministe). Elle reste NUE de tout nœud :
+ * le client y dresse le chicot du fer (render/buttes.ts calcule LA MÊME tuile — deux codes,
+ * une règle : « la tuile de pierrier la plus proche du centre »).
+ */
+function sommetDeButte(c: CarteZonee, r: { x: number; y: number; w: number; h: number }): number {
   const { width, height, terrain } = c.map
+  const cx = r.x + r.w / 2
+  const cy = r.y + r.h / 2
+  let sommet = -1
+  let bestD = Infinity
+  for (let ty = r.y; ty < r.y + r.h; ty++) {
+    for (let tx = r.x; tx < r.x + r.w; tx++) {
+      if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue
+      if (terrain[ty * width + tx] !== TERRAIN_SCREE) continue
+      const d = (tx + 0.5 - cx) * (tx + 0.5 - cx) + (ty + 0.5 - cy) * (ty + 0.5 - cy)
+      if (d < bestD) { bestD = d; sommet = ty * width + tx }
+    }
+  }
+  return sommet
+}
+
+/** Les tuiles de rocaille LIBRES d'une butte (hors rampe, hors occupées, hors sommet). */
+function rocailleLibre(c: CarteZonee, r: { x: number; y: number; w: number; h: number }, type: NodeType, occupees: Set<number>): number[] {
+  const { width, height, terrain } = c.map
+  const sommet = sommetDeButte(c, r)
+  const libres: number[] = []
+  for (let ty = r.y; ty < r.y + r.h; ty++) {
+    for (let tx = r.x; tx < r.x + r.w; tx++) {
+      if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue
+      const i = ty * width + tx
+      if (i === sommet || c.rampe[i] || occupees.has(i)) continue
+      if (terrain[i] !== TERRAIN_SCREE) continue // le contenant est la rocaille PEINTE, exactement
+      if (!terrainAdmet(type, terrain[i]!)) continue
+      libres.push(i)
+    }
+  }
+  return libres
+}
+
+/** Répartition par pas constant dans la liste row-major — l'écartement sans tirage. */
+function semerSurLaButte(
+  libres: number[], n: number, depart: number, type: NodeType,
+  width: number, occupees: Set<number>, id: number, out: ResourceNode[],
+): void {
+  for (let k = 0; k < n; k++) {
+    const i = libres[Math.min(libres.length - 1, depart + Math.floor((k * libres.length) / n))]!
+    if (occupees.has(i)) continue
+    occupees.add(i)
+    const tx = i % width
+    out.push({ id: id + out.length, type, tx, ty: (i - tx) / width, stock: NODE_DEFS[type].stock, regrowAt: 0 })
+  }
+}
+
+function mineraisDesAffleurements(c: CarteZonee, occupees: Set<number>, id: number): ResourceNode[] {
+  const { width } = c.map
   const out: ResourceNode[] = []
   for (const aff of c.affleurements) {
     const type: NodeType = aff.ressource === 'fer' ? 'iron_vein' : 'coal_seam'
-    const r = aff.rect
-    const libres: number[] = []
-    for (let ty = r.y; ty < r.y + r.h; ty++) {
-      for (let tx = r.x; tx < r.x + r.w; tx++) {
-        if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue
-        const i = ty * width + tx
-        if (c.rampe[i] || occupees.has(i)) continue
-        if (terrain[i] !== TERRAIN_SCREE) continue // le contenant est la rocaille PEINTE, exactement
-        if (!terrainAdmet(type, terrain[i]!)) continue
-        libres.push(i)
-      }
-    }
+    const libres = rocailleLibre(c, aff.rect, type, occupees)
     const n = Math.min(CONTENU.AFFL_NOEUDS, libres.length)
     if (n === 0) continue
-    const depart = Math.floor(hash2(r.x, r.y, (c.graphe.seed ^ 0x4146464c) | 0) * (libres.length / n))
+    const depart = Math.floor(hash2(aff.rect.x, aff.rect.y, (c.graphe.seed ^ 0x4146464c) | 0) * (libres.length / n))
+    semerSurLaButte(libres, n, depart, type, width, occupees, id + out.length, out)
+  }
+  return out
+}
+
+/**
+ * ═══ LES BLOCS DES BUTTES — « non traversables » (décision d'Alexis, 2026-08-18) ═══
+ *
+ * Le chaos de pierres qui peuple une butte n'est pas du décor : ce sont de VRAIS nœuds `rock`
+ * (mémoire du projet : « ajoute X » = objets de jeu réels). Ils BLOQUENT par leur boîte de
+ * collision tant qu'ils ont du stock — et se taillent à mains nues en pierre banale : le
+ * joueur qui veut se frayer un passage le CREUSE, la règle du jeu fait la solidité. Le décor
+ * client, lui, ne garde que les moellons qu'on enjambe (INV-2 : rien de solide n'est peint).
+ * Semés APRÈS les minerais (ils prennent les tuiles restantes), jamais sur le sommet.
+ */
+function blocsDesAffleurements(c: CarteZonee, occupees: Set<number>, id: number): ResourceNode[] {
+  const { width, terrain } = c.map
+  const out: ResourceNode[] = []
+  for (const aff of c.affleurements) {
+    const libres = rocailleLibre(c, aff.rect, 'rock', occupees)
+    const n = Math.min(CONTENU.AFFL_BLOCS, libres.length)
+    if (n === 0) continue
+    const sel = (c.graphe.seed ^ 0x424c4f43) | 0 /* 'BLOC' */
+    const depart = Math.floor(hash2(aff.rect.y, aff.rect.x, sel) * (libres.length / n))
+    const sommet = sommetDeButte(c, aff.rect)
+    const pose = (i: number): void => {
+      occupees.add(i)
+      const tx = i % width
+      out.push({ id: id + out.length, type: 'rock', tx, ty: (i - tx) / width, stock: NODE_DEFS.rock.stock, regrowAt: 0 })
+    }
     for (let k = 0; k < n; k++) {
       const i = libres[Math.min(libres.length - 1, depart + Math.floor((k * libres.length) / n))]!
       if (occupees.has(i)) continue
-      occupees.add(i)
+      pose(i)
+      // « DE DIFFÉRENTES TAILLES » AU NIVEAU DE LA COLLISION (précision d'Alexis : un bloc =
+      // une tuile PLEINE) : un bloc sur deux s'agrège un voisin de rocaille — des MASSES de
+      // 1 à 2 tuiles pleines (3 quand deux chaos se touchent), pas un semis de plots isolés.
       const tx = i % width
-      out.push({ id: id + out.length, type, tx, ty: (i - tx) / width, stock: NODE_DEFS[type].stock, regrowAt: 0 })
+      const ty = (i - tx) / width
+      if (hash2(tx, ty, (sel ^ 0x11) | 0) < 0.5) {
+        const dirs = [i + 1, i + width, i - 1, i - width]
+        const d0 = Math.floor(hash2(tx, ty, (sel ^ 0x22) | 0) * 4)
+        for (let d = 0; d < 4; d++) {
+          const j = dirs[(d0 + d) % 4]!
+          const jx = j % width
+          const jy = (j - jx) / width
+          if (jx < aff.rect.x || jx >= aff.rect.x + aff.rect.w || jy < aff.rect.y || jy >= aff.rect.y + aff.rect.h) continue
+          if (j === sommet || occupees.has(j) || c.rampe[j]) continue
+          if (terrain[j] !== TERRAIN_SCREE) continue
+          pose(j)
+          break
+        }
+      }
     }
   }
   return out

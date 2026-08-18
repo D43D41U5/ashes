@@ -116,6 +116,14 @@ export interface WorldMap {
    * la lisent comme stérilité (via les `occupees` de `placeZoneNodes`).
    */
   coulees?: number[]
+  /**
+   * LES AFFLEUREMENTS du monde réduit (t0-exploration §2sexies), DONNÉE DE PREMIER ORDRE —
+   * le patron « les seuils → les bornes » : le client en dérive la teinte du pierrier, les
+   * dalles et le chicot SANS deviner par le terrain (le pierrier du Karst reste neutre).
+   * Additive : une carte d'avant (ou la vallée complète) se relit sans — aucune butte, rien
+   * à teinter. Aucune règle de sim ne la lit.
+   */
+  affleurements?: { x: number; y: number; w: number; h: number; ressource: 'fer' | 'charbon' }[]
 }
 
 /**

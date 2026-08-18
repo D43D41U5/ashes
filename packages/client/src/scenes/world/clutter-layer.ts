@@ -7,7 +7,8 @@
 import Phaser from 'phaser'
 import { poiClearings, type Structure, type WorldMap } from '@ashes/sim'
 import { clutterDepth, GROUND_PROP_DEPTH, TILE_PX } from '../../render/framing'
-import { clutterAt, type PropKind, type SampleTerrain } from '../../render/clutter'
+import { clutterAt, PROP_ASPECT, type PropKind, type SampleTerrain } from '../../render/clutter'
+import { contexteDesButtes, type ButteContexte } from '../../render/buttes'
 import { teinteTouffe } from '../../render/clutter-teinte'
 import { TERRAIN_COLORS } from '../../render/terrain-colors'
 import { LIT_CLUTTER_KINDS, litClutterTextureKey, VARIANT_COUNTS, variantBase } from '../../render/lit-props'
@@ -19,7 +20,7 @@ import { createContactShadow, positionShadow } from './contact-shadow'
 const CLUTTER_MIN_ZOOM = 1.2 // en-deçà, on coupe le décor (props illisibles) : le canopy prend le relais
 /** Props RAMPANTS : des textures de sol, sans hauteur. Ils restent sous la bande
  * de tri — un caillou ne doit pas recouvrir les pieds de qui passe au nord. */
-const FLAT_PROPS = new Set<PropKind>(['pebbles', 'lichen', 'sphagnum'])
+const FLAT_PROPS = new Set<PropKind>(['pebbles', 'lichen', 'sphagnum', 'poussiere'])
 /** Le BÂTI qui gomme le décor de SA tuile (décision d'Alexis) : mur, porte, sol,
  *  toit. Un plancher est net, un mur sans fougère qui le traverse. Le feu, les
  *  composants (four, enclume) et le coffre, eux, se posent dans l'herbe : elle reste. */
@@ -62,6 +63,9 @@ export class ClutterLayer {
   private barriers: Set<number> = new Set()
   /** Les tuiles de coulée (forêts-vivantes §4) : la terre battue ne porte pas de décor. */
   private coulees: Set<number> = new Set()
+  /** Le CONTEXTE des buttes d'affleurement (§2sexies) — cœur/sommet/frange par tuile, dérivé
+   *  de `map.affleurements` une fois à l'amorce. Vide sur une carte sans buttes : coût nul. */
+  private readonly buttes: Map<number, ButteContexte>
   private warned = false
 
   constructor(
@@ -76,6 +80,7 @@ export class ClutterLayer {
     }
     this.cleared = poiClearings(map)
     this.coulees = new Set((map.coulees ?? []).filter((i) => i >= 0))
+    this.buttes = contexteDesButtes(map)
   }
 
   /** LE VENT DE LA SIM (spec chasse C17) : les herbes se couchent dans SON sens —
@@ -123,7 +128,7 @@ export class ClutterLayer {
           if (this.barriers.has(idx)) continue // un mur/sol posé ici : la tuile est nette
           if (this.coulees.has(idx)) continue // la terre battue d'une coulée : le pas a tout usé
           const terrain = this.map.terrain[idx] ?? -1
-          const props = clutterAt(tx, ty, terrain, this.seed, this.sample, this.map.profondeur?.[idx] ?? 0)
+          const props = clutterAt(tx, ty, terrain, this.seed, this.sample, this.map.profondeur?.[idx] ?? 0, this.buttes.get(idx))
           for (const p of props) {
             if (used >= MAX_SPRITES) break
             const slot = used++
@@ -156,7 +161,9 @@ export class ClutterLayer {
             // les touffes de la berge finissent par flotter sur l'eau.
             const sy = feetY * TILE_PX - this.warp.lift(feetX, feetY)
             sprite.setPosition(feetX * TILE_PX, sy)
-            sprite.setDisplaySize(TILE_PX * p.scale, TILE_PX * p.scale)
+            // Les textures hautes (le chicot : 16×32) déclarent leur aspect — sans lui, le
+            // carré par défaut ÉCRASERAIT l'aiguille en moellon.
+            sprite.setDisplaySize(TILE_PX * p.scale, TILE_PX * p.scale * (PROP_ASPECT[p.kind] ?? 1))
             // Un flip Phaser N'inverse PAS la composante X de la normal map (il tourne les normales,
             // pas le miroir) → un prop `_lit` miroité par flip s'éclairerait à l'ENVERS sur X. La
             // variété par miroir passe donc par une texture `_lit_m` PRÉ-RETOURNÉE (normale juste par
