@@ -1,10 +1,10 @@
 /**
  * LA MÉTÉO (spec `meteo.md`, décisions Alexis 2026-08-18) — TRANCHE 1, LA COLONNE
  * VERTÉBRALE : des fronts spatiaux traversent la vallée. Une BANDE cardinale par jour au
- * plus, élue par `hash2`, entre par un bord et sort par l'autre en ~une demi-journée. Dans
- * cette tranche le front EXISTE et se LIT (`meteoIntensity`, la surface unique que les
- * tranches suivantes consommeront) — il ne FAIT encore rien : aucun effet froid/Feu/faune/
- * vitesse, aucun événement émis (l'annonce est la tranche T7).
+ * plus, élue par `hash2`, entre par un bord et sort par l'autre en ~une demi-journée. Le
+ * front EXISTE et se LIT (`meteoIntensity`, la surface unique que les tranches d'effets
+ * consomment) ; la TRANCHE 2 branche LE FROID (`meteoCold`, spec R4) sur `temperature.ts`.
+ * Restent à venir : Feu/faune/vitesse/perception (T3+), et les événements d'annonce (T7).
  *
  * ═══ ZÉRO TIRAGE SUR LE PRNG D'ÉTAT ═══
  *
@@ -126,6 +126,22 @@ export function meteoIntensity(state: SimState, x: number, y: number): number {
   if (d <= 0) return 0
   const rampe = METEO.RAMPE * METEO.LARGEUR[front.type]
   return rampe <= 0 ? 1 : Math.min(1, d / rampe)
+}
+
+/**
+ * R4 — LE FROID DU FRONT en (x, y) : `METEO.COLD[type] × meteoIntensity` — 0 sans front et
+ * hors bande, le plein froid au cœur, en RAMPE continue entre les deux (le gradient de
+ * `meteoIntensity` : le froid MONTE quand le front arrive — une pente, jamais un mur).
+ * C'est une EXPOSITION, patron exact de `brumeCold` : `temperature.ts` l'amortit sous un
+ * abri (`SHELTER_FACTOR`) et la PLANCHE au feu, à la source chaude et à la tenue — toute
+ * la chaîne vitale (dérive, hypothermie, vitesse, endurance) suit par construction, zéro
+ * code neuf côté vitals. Le brouillard a COLD 0 : il ne refroidit pas, au bit près.
+ */
+export function meteoCold(state: SimState, x: number, y: number): number {
+  const front = state.meteo
+  if (!front) return 0
+  const cold: number = METEO.COLD[front.type]
+  return cold === 0 ? 0 : cold * meteoIntensity(state, x, y)
 }
 
 /**

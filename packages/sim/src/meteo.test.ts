@@ -1,6 +1,8 @@
 /**
- * LA MÉTÉO, TRANCHE 1 (spec `meteo.md`) — les critères A1, A2, A9, A10 du front inerte,
- * plus la pureté de la géométrie et la distribution des types par acte.
+ * LA MÉTÉO (spec `meteo.md`) — tranche 1 : les critères A1, A2, A9, A10 du front inerte,
+ * plus la pureté de la géométrie et la distribution des types par acte. Tranche 2 : le
+ * FROID des fronts (R4, critère A3) — section « R4 — le froid des fronts » en fin de
+ * fichier, patron des tests thermiques A4/A5 de la Brume.
  *
  * Le calendrier est couplé 1 jour = 1 cycle (`calendarScaleForSeasonCycles`) : l'aube du
  * cycle c EST le jour c+1, et on SAUTE aux bords de cycle (le tick se pose, puis `step()`
@@ -9,15 +11,19 @@
  * relevés à la sonde, pas espérés statistiquement.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, METEO, TERRAIN_GRASS } from './balance'
+import { BALANCE, CENDREUX, METEO, TEMPERATURE, TERRAIN_GRASS } from './balance'
 import { brumeJourEligible } from './brume'
+import { fireActive } from './fire'
 import { createEmptyMap } from './map'
 import {
   advanceMeteo, frontMeteoPos, meteoIntensity, meteoJourEligible, meteoTypeBrut,
-  type MeteoFront, type MeteoType,
+  type BandeMeteo, type MeteoFront, type MeteoType,
 } from './meteo'
-import { createSim, snapshot, step, type SimState } from './sim'
-import { actForDay, calendarScaleForSeasonCycles, TICKS_PER_CYCLE } from './time'
+import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
+import { advanceTemperature, ambientTemperature, baselineTemperature } from './temperature'
+import { actForDay, calendarScaleForSeasonCycles, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
+import { grantItems } from './village'
+import { foundNpcVillage } from './worldgen'
 
 /** 1 jour de saison = 1 cycle : l'aube du cycle c est le jour c+1. */
 const SCALE = calendarScaleForSeasonCycles(BALANCE.SEASON_DAYS)
@@ -294,5 +300,150 @@ describe('la distribution des types par acte (élections déterministes du jour)
       expect(acte3.length).toBeGreaterThan(0)
       expect(compte(fronts, 3, 'neige') + compte(fronts, 3, 'blizzard')).toBeGreaterThan(acte3.length / 2)
     }
+  })
+})
+
+describe('R4 — le froid des fronts (A3)', () => {
+  /**
+   * Un front posé À LA MAIN au midi du jour 25 — acte II, plein JOUR, plaine `grass`
+   * (patron de la nappe statique des tests Brume). `u` est la fraction de traversée
+   * écoulée : elle place la bande où le test la veut. Le tick ne bouge pas pendant les
+   * boucles d'`advanceTemperature` : la bande non plus.
+   */
+  function simSousFront(type: MeteoType, u: number): { sim: SimState; bande: BandeMeteo } {
+    const sim = createSim(7, { map: createEmptyMap(400, 40, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true })
+    const midi = 24 * TICKS_PER_CYCLE + Math.floor(DAY_TICKS_PER_CYCLE / 2)
+    const startTick = midi - Math.round(u * METEO.TRAVERSEE_TICKS)
+    sim.tick = midi
+    sim.meteo = { type, day: 25, edge: 0, startTick, endTick: startTick + METEO.TRAVERSEE_TICKS }
+    return { sim, bande: frontMeteoPos(sim.meteo, midi, sim.map.width, sim.map.height)! }
+  }
+
+  /** Le blizzard aux 16 % de sa traversée : son CŒUR (intensité 1) couvre l'ouest de la
+   *  carte, son bord de fuite passe vers x≈320 — l'est est encore HORS bande. Les deux
+   *  régimes coexistent sur la carte, et la prémisse se PROUVE à chaque montage. */
+  function simSousBlizzard(): { sim: SimState; coeur: number; hors: number } {
+    const { sim, bande } = simSousFront('blizzard', 0.16)
+    const coeur = 40.5
+    const hors = 380.5
+    expect(meteoIntensity(sim, coeur, 20.5)).toBe(1)
+    expect(meteoIntensity(sim, hors, 20.5)).toBe(0)
+    expect(bande.hi).toBeLessThan(hors) // le refuge est DEVANT le front, pas dans son dos
+    return { sim, coeur, hors }
+  }
+
+  it('A3 — au cœur du blizzard, la plaine de JOUR devient létale en acte II ; en sortir laisse fuir', () => {
+    const { sim, coeur, hors } = simSousBlizzard()
+    // 90 − 25 − 55 = 10 < HYPOTHERMIA (l'arithmétique de la spec R4) ; à côté, la plaine reste douce.
+    expect(baselineTemperature(sim, coeur, 20.5)).toBeLessThan(TEMPERATURE.HYPOTHERMIA)
+    expect(baselineTemperature(sim, hors, 20.5)).toBeGreaterThan(TEMPERATURE.COMFORT)
+
+    const id = spawnEntity(sim, coeur, 20.5)
+    const e = sim.entities.find((en) => en.id === id)!
+    e.temperature = 25
+    for (let i = 0; i < 2600; i++) advanceTemperature(sim)
+    expect(e.temperature).toBeLessThan(TEMPERATURE.HYPOTHERMIA) // la dérive l'a mené sous le seuil…
+    expect(e.hp).toBeLessThan(100) // …et les PV baissent
+    expect(e.hp).toBeGreaterThan(0) // mais pas un couperet : il est encore debout
+
+    // IL FUIT : hors bande la température REMONTE par la dérive, et les dégâts s'arrêtent.
+    e.x = hors
+    const tempFuite = e.temperature
+    for (let i = 0; i < 1600; i++) advanceTemperature(sim)
+    expect(e.temperature).toBeGreaterThan(tempFuite)
+    expect(e.temperature).toBeGreaterThan(TEMPERATURE.HYPOTHERMIA)
+    const pv = e.hp
+    for (let i = 0; i < 500; i++) advanceTemperature(sim)
+    expect(e.hp).toBe(pv) // réchauffé, plus un PV ne part
+  })
+
+  it('A3 planchers — la bulle d’un Feu ACTIF tient le blizzard dehors : zéro dégât au cœur', () => {
+    const { sim, coeur } = simSousBlizzard()
+    foundNpcVillage(sim, Math.floor(coeur), 20, 0)
+    const feu = sim.structures.find((s) => s.type === 'fire')!
+    expect(fireActive(sim, feu)).toBe(true) // la prémisse : le Feu du village est bien allumé
+    expect(meteoIntensity(sim, feu.tx + 0.5, feu.ty + 0.5)).toBe(1) // et il est bien au cœur
+    // Le froid de BASE reste létal (le feu ne réchauffe pas le monde)…
+    expect(baselineTemperature(sim, feu.tx + 0.5, feu.ty + 0.5)).toBeLessThan(TEMPERATURE.HYPOTHERMIA)
+    // …mais l'ambiant est PLANCHERÉ par la bulle : le max ne peut pas descendre.
+    expect(ambientTemperature(sim, feu.tx + 0.5, feu.ty + 0.5)).toBeGreaterThan(TEMPERATURE.HYPOTHERMIA)
+
+    const id = spawnEntity(sim, feu.tx + 0.5, feu.ty + 0.5)
+    const e = sim.entities.find((en) => en.id === id)!
+    for (let i = 0; i < 4000; i++) advanceTemperature(sim)
+    expect(e.temperature).toBeGreaterThan(TEMPERATURE.HYPOTHERMIA)
+    expect(e.hp).toBe(100) // aucun dégât de froid dans la bulle
+  })
+
+  it('A3 planchers — la tenue d’hiver PLANCHE : jamais sous TENUE_FLOOR, zéro dégât', () => {
+    // La calibration qui rend le plancher SÛR : au-dessus de l'hypothermie, donc sans dégât.
+    expect(TEMPERATURE.TENUE_FLOOR).toBeGreaterThan(TEMPERATURE.HYPOTHERMIA)
+    const { sim, coeur } = simSousBlizzard()
+    const id = spawnEntity(sim, coeur, 20.5)
+    const e = sim.entities.find((en) => en.id === id)!
+    grantItems(sim, id, { tenue_hiver: 1 })
+    e.temperature = 60
+    for (let i = 0; i < 8000; i++) {
+      advanceTemperature(sim)
+      expect(e.temperature).toBeGreaterThanOrEqual(TEMPERATURE.TENUE_FLOOR) // JAMAIS sous le plancher
+    }
+    expect(e.temperature).toBeLessThan(45) // le blizzard a bien mordu : c'est le plancher qui a tenu
+    expect(e.hp).toBe(100)
+  })
+
+  it('R4 gradient — traversée perpendiculaire : la température descend vers le cœur, remonte en face, jamais un mur', () => {
+    const { sim, bande } = simSousFront('neige', 0.5)
+    const rampe = METEO.RAMPE * METEO.LARGEUR.neige
+    // La bande est ENTIÈREMENT sur la carte, cœur compris : le balayage traverse bien les
+    // cinq régimes (dehors, rampe, cœur, rampe, dehors) — la prémisse de la garde exhaustive.
+    expect(bande.lo).toBeGreaterThan(10)
+    expect(bande.hi).toBeLessThan(sim.map.width - 10)
+    expect(bande.hi - bande.lo).toBeGreaterThan(2 * rampe)
+
+    const mid = (bande.lo + bande.hi) / 2
+    const pas = 0.05
+    const penteMax = METEO.COLD.neige * (pas / rampe) + 1e-9
+    let prev = baselineTemperature(sim, 0.5, 20.5)
+    const n = Math.round((sim.map.width - 1) / pas)
+    for (let k = 1; k <= n; k++) {
+      const x = 0.5 + k * pas
+      const t = baselineTemperature(sim, x, 20.5)
+      // Jamais un saut : la pente est bornée par COLD/rampe sur TOUT le domaine, pas des points choisis.
+      expect(Math.abs(t - prev)).toBeLessThanOrEqual(penteMax)
+      // Monotone : décroissante du bord au cœur, croissante du cœur au bord d'en face.
+      if (x <= mid) expect(t).toBeLessThanOrEqual(prev)
+      else expect(t).toBeGreaterThanOrEqual(prev)
+      prev = t
+    }
+    // Le cœur porte la pleine morsure, exactement COLD sous la plaine intacte.
+    expect(baselineTemperature(sim, mid, 20.5)).toBe(baselineTemperature(sim, 2.5, 20.5) - METEO.COLD.neige)
+  })
+
+  it('R4 types doux — sous brouillard, baselineTemperature est BIT-IDENTIQUE à sans front (COLD.brouillard = 0)', () => {
+    expect(METEO.COLD.brouillard).toBe(0)
+    const { sim, bande } = simSousFront('brouillard', 0.5)
+    expect(meteoIntensity(sim, (bande.lo + bande.hi) / 2, 20.5)).toBe(1) // le front est bien LÀ…
+    const front = sim.meteo ?? null
+    for (let x = 0.5; x < sim.map.width; x += 0.5) {
+      for (const y of [0.5, 20.5, 39.5]) {
+        sim.meteo = front
+        const avec = baselineTemperature(sim, x, y)
+        sim.meteo = null
+        expect(avec).toBe(baselineTemperature(sim, x, y)) // …et il ne refroidit RIEN, au bit près
+      }
+    }
+    sim.meteo = front
+  })
+
+  it('R5 Brume, même logique — le gate d’attraction des Cendreux s’allume de JOUR au cœur du blizzard, pas à côté', () => {
+    // Le gate feu-station S5 (`cendreuxStep`) lit `baselineTemperature` : au cœur d'un
+    // blizzard le froid de base tombe sous COLD_ATTRACT_THRESHOLD, et un Cendreux pris
+    // dedans peut ramper vers un feu allumé EN PLEIN JOUR — comportement assumé, le même
+    // que sous la nappe (test R5 de brume.test.ts, calqué ici). Ce test l'ÉPINGLE : si un
+    // calibrage de COLD.blizzard le faisait disparaître (ou l'étendait hors bande), on le
+    // saurait — le froid météo MODULE le gate, il ne le casse pas.
+    const { sim, coeur, hors } = simSousBlizzard()
+    expect(baselineTemperature(sim, coeur, 20.5)).toBeLessThan(CENDREUX.COLD_ATTRACT_THRESHOLD)
+    expect(baselineTemperature(sim, hors, 20.5)).toBeGreaterThanOrEqual(CENDREUX.COLD_ATTRACT_THRESHOLD)
   })
 })

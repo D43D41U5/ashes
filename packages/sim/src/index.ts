@@ -120,10 +120,10 @@ export { ambientTemperature, baselineTemperature, advanceTemperature } from './t
 export { brumeCentre, dansLaBrume, brumeJourEligible } from './brume'
 export type { Brume } from './brume'
 export { BRUME } from './balance'
-// LA MÉTÉO (spec meteo.md, tranche 1) : le client rendra le front en le RECALCULANT du tick
-// (patron Brume) — la géométrie pure, l'intensité et le bloc de calibration s'exportent,
-// l'ordonnanceur non.
-export { frontMeteoPos, meteoIntensity, meteoJourEligible, meteoTypeBrut } from './meteo'
+// LA MÉTÉO (spec meteo.md) : le client rendra le front en le RECALCULANT du tick
+// (patron Brume) — la géométrie pure, l'intensité, le froid (R4, tranche 2) et le bloc de
+// calibration s'exportent, l'ordonnanceur non.
+export { frontMeteoPos, meteoCold, meteoIntensity, meteoJourEligible, meteoTypeBrut } from './meteo'
 export type { MeteoFront, MeteoType, BandeMeteo } from './meteo'
 export { METEO } from './balance'
 // LE FEU-STATION (spec feu-station) : l'état dérivable du snapshot côté client, et la donnée des slots.
