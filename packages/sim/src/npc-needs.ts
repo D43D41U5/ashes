@@ -9,6 +9,7 @@ import { BALANCE, COMBAT, NPC_AI } from './balance'
 import { applyCombatAction } from './combat'
 import { applyEconomyAction } from './economy'
 import { countOf, freeRoomFor, type ItemId } from './items'
+import { meteoIntensity } from './meteo'
 import { followPath, near, setPathTo, TICKS_PER_HOUR, withdraw, type Npc } from './npc'
 import type { Entity, SimState } from './sim'
 import { fireBubble, isSheltered } from './temperature'
@@ -130,6 +131,42 @@ export function handleSleep(state: SimState, npc: Npc, entity: Entity): boolean 
     return true
   }
   return false
+}
+
+/**
+ * R8 — L'ORAGE POUSSE À L'ABRI (spec meteo.md, dernière phrase de R8 : « les PNJ
+ * villageois rejoignent l'abri le plus proche pendant un front d'orage »). Le geste
+ * MINIMAL ET SÛR retenu (T6) : tant que l'empreinte d'un front `orage` couvre le PNJ
+ * (`meteoIntensity > 0`), sa cible devient la tuile `house` de son village (sa maison
+ * d'abord — elle est abritée ET se franchit, `bloque: 'enjambe'`), à défaut la bulle de
+ * son Feu — le feu ne pare PAS la foudre, mais c'est le refuge lisible — et il y RESTE
+ * tant que l'orage couvre. Placé APRÈS `handleCold` (le froid mord plus vite qu'un
+ * éclair non létal) et AVANT la faim : la couverture d'un point par une bande d'orage
+ * dure des minutes, personne ne meurt de faim à l'abri. Anti-livelock (patron
+ * `handleCold`) : cible inatteignable → on rend la main, on travaille sous l'orage —
+ * la foudre n'est jamais létale à PV pleins, le figeage tue plus sûrement qu'elle.
+ */
+export function handleOrage(state: SimState, village: Village, npc: Npc, entity: Entity): boolean {
+  const front = state.meteo
+  if (!front || front.type !== 'orage') return false
+  if (meteoIntensity(state, entity.x, entity.y) <= 0) return false
+  // Déjà sur une tuile abritée (maison, grotte) : on y RESTE — la foudre n'y frappe pas.
+  if (isSheltered(state, Math.floor(entity.x), Math.floor(entity.y))) {
+    npc.path = []
+    return true
+  }
+  const home = npc.homeId !== null ? state.structures.find((s) => s.id === npc.homeId && s.type === 'house') : undefined
+  const abri = home ?? state.structures.find((s) => s.type === 'house' && s.villageId === village.id)
+  const target = abri ?? state.structures.find((s) => s.type === 'fire' && s.villageId === village.id)
+  if (!target) return false // ni maison ni Feu : on travaille sous l'orage
+  // Replié au Feu (la cible SANS tuile abritée) : arrivé dans sa bulle, on attend là.
+  if (abri === undefined && fireBubble(state, entity.x, entity.y) > 0) {
+    npc.path = []
+    return true
+  }
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, target.tx, target.ty)) return false // ANTI-LIVELOCK
+  followPath(state, npc, entity)
+  return true
 }
 
 /**

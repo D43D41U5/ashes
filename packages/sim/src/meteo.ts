@@ -10,8 +10,11 @@
  * découvert se refuse dans `village.ts` — jamais d'extinction ; la TRANCHE 5 ralentit
  * LE PAS et voile LES YEUX (`meteoSpeedFactor`/`meteoVisionFactor`, spec R7) : la vitesse
  * des avatars dans `sim.ts` (`speedScaleFor`, patron du froid), les portées de détection
- * dans leurs lois (`nearestPrey`, `chooseQuarry`, `nearestThreat`) — au point de la CIBLE.
- * Restent à venir : la foudre (R8) et les événements d'annonce (T7).
+ * dans leurs lois (`nearestPrey`, `chooseQuarry`, `nearestThreat`) — au point de la CIBLE ;
+ * la TRANCHE 6 arme LA FOUDRE (`foudreImpactAt`/`foudreTelegrapheAt`, spec R8) : l'élection
+ * pure vit ICI, la résolution des dégâts dans `foudre.ts` (une phase dédiée — ce module ne
+ * doit RIEN importer de combat), le repli des PNJ dans `npc-needs.ts` (`handleOrage`).
+ * Reste à venir : les événements d'annonce (T7).
  *
  * ═══ ZÉRO TIRAGE SUR LE PRNG D'ÉTAT ═══
  *
@@ -42,7 +45,7 @@
  * changer — et le banc d'équilibrage pourra mesurer l'économie sans le bruit météo, puis
  * avec (ses seuils de famine sont absolus). Le vrai jeu l'arme à la création du monde.
  */
-import { METEO } from './balance'
+import { BALANCE, METEO } from './balance'
 import { brumeJourEligible } from './brume'
 import { hash2 } from './noise'
 import type { SimState } from './sim'
@@ -234,6 +237,72 @@ export function meteoVisionFactor(state: SimState, x: number, y: number): number
   const plein: number = METEO.VISION[front.type]
   if (plein === 1) return 1
   return 1 - (1 - plein) * meteoIntensity(state, x, y)
+}
+
+// ═══ R8 — LA FOUDRE DE L'ORAGE : élue par créneau, télégraphiée, jamais stockée ═══
+//
+// La fenêtre d'un front `orage` se découpe en CRÉNEAUX de `60 s / FOUDRE_PAR_MIN` ; chaque
+// créneau PLEIN porte exactement UN impact, élu par `hash2(jour du front, canal du créneau)`
+// sur un sel dédié : le tick d'impact DANS le créneau, la coordonnée DANS la bande AU TICK
+// D'IMPACT (la bande BOUGE — on la recalcule à ce tick, jamais à celui de l'appelant), et
+// l'autre axe sur toute la carte. Chaque créneau est INDÉPENDANT par construction : la
+// suppression d'un impact (tuile abritée, `foudre.ts`) ne décale RIEN pour les suivants.
+// Un impact peut tomber HORS carte quand la bande entre ou sort — il n'y frappe personne.
+// Le client dessine la lueur et l'éclair depuis CES fonctions (patron « le client recalcule
+// du tick ») : rien ne transite, zéro octet d'état, zéro tirage sur le PRNG.
+
+const FOUDRE_SALT = 0x51f0a7d3
+
+/** Le créneau de foudre : `60 s / FOUDRE_PAR_MIN` en ticks — un impact par créneau PLEIN. */
+export const FOUDRE_CRENEAU_TICKS = Math.max(1, Math.round((60 * BALANCE.TICK_RATE_HZ) / METEO.FOUDRE_PAR_MIN))
+
+/** Un point d'impact de foudre, en coordonnées monde (tuiles fractionnaires). */
+export interface FoudreImpact {
+  x: number
+  y: number
+}
+
+/**
+ * L'impact qui RÉSOUT à ce tick exact — `null` tout autre tick, tout autre type de front.
+ * Fonction PURE du front et du tick, partagée sim/client : `foudre.ts` y lit la frappe,
+ * le client y dessine l'éclair. Le dernier créneau, s'il est PARTIEL, ne porte pas
+ * d'impact (son tick élu pourrait déborder la fenêtre — la cadence reste exacte :
+ * `floor(fenêtre / créneau)` impacts, soit `FOUDRE_PAR_MIN × minutes de traversée`).
+ */
+export function foudreImpactAt(front: MeteoFront, tick: number, mapWidth: number, mapHeight: number): FoudreImpact | null {
+  if (front.type !== 'orage') return null
+  if (tick < front.startTick || tick >= front.endTick) return null
+  const k = Math.floor((tick - front.startTick) / FOUDRE_CRENEAU_TICKS)
+  const creneauStart = front.startTick + k * FOUDRE_CRENEAU_TICKS
+  if (creneauStart + FOUDRE_CRENEAU_TICKS > front.endTick) return null // créneau partiel : pas d'impact
+  const impactTick = creneauStart + Math.floor(hash2(front.day, 3 * k, FOUDRE_SALT) * FOUDRE_CRENEAU_TICKS)
+  if (tick !== impactTick) return null
+  const bande = frontMeteoPos(front, impactTick, mapWidth, mapHeight)
+  if (!bande) return null // filet : jamais atteint pour un créneau plein (impactTick < endTick)
+  const c = bande.lo + hash2(front.day, 3 * k + 1, FOUDRE_SALT) * (bande.hi - bande.lo)
+  const autre = hash2(front.day, 3 * k + 2, FOUDRE_SALT) * (bande.axis === 'x' ? mapHeight : mapWidth)
+  return bande.axis === 'x' ? { x: c, y: autre } : { x: autre, y: c }
+}
+
+/**
+ * L'impact À VENIR dans les `FOUDRE_TELEGRAPHE_TICKS` prochains ticks — le plus proche
+ * d'abord, avec son compte à rebours (`ticksLeft` ∈ [1, FOUDRE_TELEGRAPHE_TICKS]). C'est
+ * LA source du télégraphe client (lueur au sol, grésillement — le patron wind-up, en plus
+ * long) : « sous l'orage on lit le sol et on se décale » (spec R8). Au tick de frappe
+ * même, elle rend `null` — c'est `foudreImpactAt` qui prend le relais pour l'éclair.
+ */
+export function foudreTelegrapheAt(
+  front: MeteoFront,
+  tick: number,
+  mapWidth: number,
+  mapHeight: number,
+): (FoudreImpact & { ticksLeft: number }) | null {
+  if (front.type !== 'orage') return null
+  for (let d = 1; d <= METEO.FOUDRE_TELEGRAPHE_TICKS; d++) {
+    const impact = foudreImpactAt(front, tick + d, mapWidth, mapHeight)
+    if (impact) return { x: impact.x, y: impact.y, ticksLeft: d }
+  }
+  return null
 }
 
 /**

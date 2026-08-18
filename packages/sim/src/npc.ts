@@ -37,7 +37,7 @@ import { emitEvent } from './events'
 import { distSq } from './geometry'
 import { zoneIdAt } from './map'
 import { countOf, freeRoomFor, moveSlotWithin, type ItemId } from './items'
-import { handleCold, handleHunger, handleSleep, handleWounds } from './npc-needs'
+import { handleCold, handleHunger, handleOrage, handleSleep, handleWounds } from './npc-needs'
 import { assignErrands, handleErrand } from './npc-errands'
 import { pathToward } from './pathfinding'
 import { spawnEntity, type Entity, type SimState } from './sim'
@@ -1032,6 +1032,9 @@ export function advanceNpcs(state: SimState): void {
     if (handleErrand(state, village, npc, entity)) continue
     if (handleSleep(state, npc, entity)) continue
     if (handleCold(state, village, npc, entity)) continue
+    // R8 — L'ORAGE POUSSE À L'ABRI (spec meteo.md) : sous l'empreinte d'un orage, on
+    // rejoint la tuile abritée du village (la foudre n'y frappe pas), à défaut le Feu.
+    if (handleOrage(state, village, npc, entity)) continue
     if (handleHunger(state, village, npc, entity)) continue
 
     if (!npc.task) {

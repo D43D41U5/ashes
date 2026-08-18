@@ -422,7 +422,7 @@ export function publishHint(registry: Registry, text: string, at: number): void 
  *  mort (le même patron que `publishError`). */
 export function publishDeath(
   registry: Registry,
-  cause: 'cold' | 'hunger' | undefined,
+  cause: 'cold' | 'hunger' | 'lightning' | undefined,
   byEntityId: number,
   killerType: string | null,
   hadLoot: boolean,

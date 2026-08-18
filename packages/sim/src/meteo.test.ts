@@ -5,9 +5,12 @@
  * tests thermiques A4/A5 de la Brume. Tranche 3 : LA FAUNE SE TERRE (R6, critère A5) —
  * section « R6 », prédicat `meteoQuiet` + le comportement calqué sur les gardes A17 de
  * faune.test.ts. Tranche 5 : VITESSE ET PERCEPTION (R7, critère A7) — section « R7 —
- * vitesse et perception (A7) » en fin de fichier : les deux lois continues, la marche
- * sous la pluie contre la marche au sec, et les trois lois de détection (loup, Cendreux,
- * gibier) voilées AU POINT DE LA CIBLE.
+ * vitesse et perception (A7) » : les deux lois continues, la marche sous la pluie contre
+ * la marche au sec, et les trois lois de détection (loup, Cendreux, gibier) voilées AU
+ * POINT DE LA CIBLE. Tranche 6 : LA FOUDRE (R8, critère A6) — section « R8 — la foudre
+ * (A6) » en fin de fichier : l'élection pure par créneau (déterminisme, cadence exacte,
+ * télégraphe), la résolution (l'abri supprime et épargne, jamais létal à PV pleins, la
+ * cause `lightning`, zéro tirage) et le repli des PNJ vers l'abri.
  *
  * Le calendrier est couplé 1 jour = 1 cycle (`calendarScaleForSeasonCycles`) : l'aube du
  * cycle c EST le jour c+1, et on SAUTE aux bords de cycle (le tick se pose, puis `step()`
@@ -23,13 +26,16 @@ import { avatarThreat, faunaStep, wolfStep, wolfVigor } from './faune'
 import { fireActive, fireState, fireWarmthFactor, fuelTicksRemaining } from './fire'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
+import { advanceFoudre } from './foudre'
+import { distSq } from './geometry'
 import {
-  advanceMeteo, frontMeteoPos, meteoFeuConso, meteoIntensity, meteoJourEligible, meteoMouille, meteoQuiet,
-  meteoSpeedFactor, meteoTypeBrut, meteoVisionFactor, type BandeMeteo, type MeteoFront, type MeteoType,
+  advanceMeteo, FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt, frontMeteoPos, meteoFeuConso,
+  meteoIntensity, meteoJourEligible, meteoMouille, meteoQuiet, meteoSpeedFactor, meteoTypeBrut, meteoVisionFactor,
+  type BandeMeteo, type MeteoFront, type MeteoType,
 } from './meteo'
 import { nearestPrey, spawnMonster, type Monster } from './monsters'
 import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimState } from './sim'
-import { advanceTemperature, ambientTemperature, baselineTemperature, isSheltered } from './temperature'
+import { advanceTemperature, ambientTemperature, baselineTemperature, fireBubble, isSheltered } from './temperature'
 import {
   actForDay, calendarScaleForSeasonCycles, cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE,
 } from './time'
@@ -1180,5 +1186,243 @@ describe('R7 — vitesse et perception (A7)', () => {
     expect(meteoIntensity(trempe.sim, 216.5, 20.5)).toBe(1)
     expect(meteoIntensity(trempe.sim, 216.5 + D, 20.5)).toBe(0)
     expect(trempe.m.suspicion).toBe(clair.m.suspicion)
+  })
+})
+
+describe('R8 — la foudre (A6)', () => {
+  const [W, H] = [400, 40]
+
+  /** L'orage du JOUR 5 (acte I, COLD.orage = 10 : aucun froid létal ne se mêle aux
+   *  mesures), fenêtre réelle posée dans son cycle — le jour est SONDÉ : ses 72 impacts
+   *  ne sont jamais à moins de FOUDRE_TELEGRAPHE_TICKS l'un de l'autre (minGap 92, relevé
+   *  à la sonde ; le jour 6 tombe à 21 — la prémisse du télégraphe exact se PROUVE plus
+   *  bas, elle ne se suppose pas). */
+  function fabriqueOrage(): MeteoFront {
+    const startTick = 4 * TICKS_PER_CYCLE + 1000
+    return { type: 'orage', day: 5, edge: 0, startTick, endTick: startTick + METEO.TRAVERSEE_TICKS }
+  }
+
+  /** Balaye TOUTE la fenêtre tick à tick et relève chaque impact résolu. */
+  function impactsDeFenetre(front: MeteoFront): { tick: number; x: number; y: number }[] {
+    const liste: { tick: number; x: number; y: number }[] = []
+    for (let t = front.startTick; t < front.endTick; t++) {
+      const p = foudreImpactAt(front, t, W, H)
+      if (p) liste.push({ tick: t, ...p })
+    }
+    return liste
+  }
+
+  /** Une sim posée AU TICK du premier impact qui tombe FRANCHEMENT sur la carte (marge 3
+   *  tuiles) — le montage des gardes de résolution : on pose des corps autour du point,
+   *  puis `advanceFoudre` (la phase seule, exacte) ou `step` (le chemin du vrai jeu). */
+  function simAuTickDImpact(): { sim: SimState; imp: { tick: number; x: number; y: number } } {
+    const sim = createSim(7, { map: createEmptyMap(W, H, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true })
+    const front = fabriqueOrage()
+    sim.meteo = { ...front }
+    const imp = impactsDeFenetre(front).find((i) => i.x > 3 && i.x < W - 3 && i.y > 3 && i.y < H - 3)!
+    expect(imp).toBeDefined() // la prémisse : la fenêtre a bien un impact en plein champ
+    sim.tick = imp.tick
+    return { sim, imp }
+  }
+
+  it('déterminisme et cadence — mêmes impacts aux deux balayages, un par créneau PLEIN, tous DANS la bande de LEUR tick', () => {
+    const front = fabriqueOrage()
+    const a = impactsDeFenetre(front)
+    expect(a).toEqual(impactsDeFenetre(front)) // pur : deux balayages, même liste
+    // LA CADENCE EXACTE, par construction : un impact par créneau plein — le dernier
+    // créneau, partiel, n'en porte pas — soit FOUDRE_PAR_MIN × minutes de traversée.
+    expect(a.length).toBe(Math.floor(METEO.TRAVERSEE_TICKS / FOUDRE_CRENEAU_TICKS))
+    const minutes = METEO.TRAVERSEE_TICKS / (60 * BALANCE.TICK_RATE_HZ)
+    expect(a.length).toBe(Math.floor(minutes * METEO.FOUDRE_PAR_MIN)) // 24 min × 3 = 72
+    expect(a.length).toBeGreaterThan(0)
+    for (let k = 0; k < a.length; k++) {
+      const imp = a[k]!
+      // Chaque créneau plein porte EXACTEMENT le sien, dans l'ordre.
+      expect(Math.floor((imp.tick - front.startTick) / FOUDRE_CRENEAU_TICKS)).toBe(k)
+      // Et l'impact est DANS l'empreinte de bande À SON tick — la bande BOUGE, on la
+      // recalcule au tick d'impact, jamais à celui de l'appelant.
+      const bande = frontMeteoPos(front, imp.tick, W, H)!
+      expect(imp.x).toBeGreaterThanOrEqual(bande.lo)
+      expect(imp.x).toBeLessThanOrEqual(bande.hi)
+      expect(imp.y).toBeGreaterThanOrEqual(0)
+      expect(imp.y).toBeLessThan(H)
+    }
+    // Hors type orage, hors fenêtre : rien — la foudre est à l'orage seul.
+    expect(foudreImpactAt({ ...front, type: 'pluie' }, a[0]!.tick, W, H)).toBeNull()
+    expect(foudreImpactAt(front, front.startTick - 1, W, H)).toBeNull()
+    expect(foudreImpactAt(front, front.endTick, W, H)).toBeNull()
+  })
+
+  it('télégraphe — chaque impact est annoncé EXACTEMENT FOUDRE_TELEGRAPHE_TICKS avant, au même point, compte à rebours tenu jusqu’au coup', () => {
+    const T = METEO.FOUDRE_TELEGRAPHE_TICKS
+    const front = fabriqueOrage()
+    const impacts = impactsDeFenetre(front)
+    // LA PRÉMISSE de l'exactitude, PROUVÉE : sur CE front, deux impacts ne sont jamais à
+    // moins de T ticks — sinon le télégraphe montrerait le plus proche (vrai aussi, mais
+    // la garde « exactement T avant » ne se lirait plus).
+    for (let i = 1; i < impacts.length; i++) expect(impacts[i]!.tick - impacts[i - 1]!.tick).toBeGreaterThan(T)
+    for (const imp of impacts) {
+      // T ticks avant : l'annonce paraît, au point EXACT, compte à rebours plein…
+      expect(foudreTelegrapheAt(front, imp.tick - T, W, H)).toEqual({ x: imp.x, y: imp.y, ticksLeft: T })
+      // …elle TIENT en descendant vers le coup (mi-course et dernier tick)…
+      for (const d of [Math.floor(T / 2), 1]) {
+        expect(foudreTelegrapheAt(front, imp.tick - d, W, H)).toEqual({ x: imp.x, y: imp.y, ticksLeft: d })
+      }
+      // …T+1 avant il n'y avait RIEN (le télégraphe ne déborde pas sa fenêtre), et au
+      // tick de frappe le relais passe à `foudreImpactAt`.
+      expect(foudreTelegrapheAt(front, imp.tick - T - 1, W, H)).toBeNull()
+      expect(foudreTelegrapheAt(front, imp.tick, W, H)).toBeNull()
+    }
+  })
+
+  it('jamais létal à PV pleins — la constante, ET l’avatar sous l’impact réel au step survit debout', () => {
+    expect(METEO.FOUDRE_DEGATS).toBeLessThan(100) // les PV pleins d'un avatar
+    const { sim, imp } = simAuTickDImpact()
+    const id = spawnEntity(sim, imp.x, imp.y)
+    const e = sim.entities.find((en) => en.id === id)!
+    expect(e.hp).toBe(100)
+    step(sim, []) // le chemin du VRAI jeu : la phase foudre dans la boucle entière
+    expect(e.hp).toBeGreaterThan(0) // frappé, jamais foudroyé à mort
+    expect(Math.abs(e.hp - (100 - METEO.FOUDRE_DEGATS))).toBeLessThan(0.5) // FOUDRE_DEGATS, à la régén du tick près
+  })
+
+  it('la résolution exacte — FOUDRE_DEGATS au corps exposé dans le rayon, rien au-delà, zéro tirage RNG', () => {
+    const { sim, imp } = simAuTickDImpact()
+    const dedansId = spawnEntity(sim, imp.x + METEO.FOUDRE_RAYON * 0.7, imp.y)
+    const dehorsId = spawnEntity(sim, imp.x + METEO.FOUDRE_RAYON + 0.2, imp.y)
+    const rng0 = sim.rngState
+    advanceFoudre(sim)
+    expect(sim.entities.find((en) => en.id === dedansId)!.hp).toBe(100 - METEO.FOUDRE_DEGATS)
+    expect(sim.entities.find((en) => en.id === dehorsId)!.hp).toBe(100) // le rayon borne, exactement
+    expect(sim.rngState).toBe(rng0) // la résolution ne touche pas UN octet du flux seedé
+  })
+
+  it('l’abri SUPPRIME — maison sur la tuile d’impact : personne ne prend rien, pas de report ; sans la maison, le même voisin est touché', () => {
+    // AVEC la maison sur la tuile visée : l'impact est supprimé ENTIÈREMENT.
+    const avec = simAuTickDImpact()
+    addStructure(avec.sim, 'house', Math.floor(avec.imp.x), Math.floor(avec.imp.y), 0, 0)
+    const vAvec = spawnEntity(avec.sim, avec.imp.x + 1, avec.imp.y) // dans le rayon, tuile VOISINE, à découvert
+    const eAvec = avec.sim.entities.find((en) => en.id === vAvec)!
+    expect(isSheltered(avec.sim, Math.floor(eAvec.x), Math.floor(eAvec.y))).toBe(false) // la prémisse : LUI n'est pas abrité
+    const liste0 = impactsDeFenetre(avec.sim.meteo!)
+    advanceFoudre(avec.sim)
+    expect(eAvec.hp).toBe(100) // supprimé : le ciel ne se venge pas ailleurs
+    // …et la suppression ne décale RIEN : chaque créneau est indépendant par hash — la
+    // liste des impacts, recalculée après coup, est identique au bit près.
+    expect(impactsDeFenetre(avec.sim.meteo!)).toEqual(liste0)
+    // SANS la maison : le même monde, le même voisin — touché. La garde a mordu.
+    const sans = simAuTickDImpact()
+    const vSans = spawnEntity(sans.sim, sans.imp.x + 1, sans.imp.y)
+    advanceFoudre(sans.sim)
+    expect(sans.sim.entities.find((en) => en.id === vSans)!.hp).toBe(100 - METEO.FOUDRE_DEGATS)
+  })
+
+  it('l’abri ÉPARGNE le corps — sous toit dans le rayon d’un impact voisin : 0 dégât ; le même corps à découvert : touché', () => {
+    const abrite = simAuTickDImpact()
+    const bx = abrite.imp.x + 1.1 // tuile voisine de celle de l'impact, toujours dans le rayon
+    const by = abrite.imp.y
+    addStructure(abrite.sim, 'house', Math.floor(bx), Math.floor(by), 0, 0)
+    const corpsId = spawnEntity(abrite.sim, bx, by)
+    const corps = abrite.sim.entities.find((en) => en.id === corpsId)!
+    // Les prémisses, PROUVÉES : le corps est dans le rayon, SA tuile est abritée, celle
+    // de l'IMPACT ne l'est pas (l'impact n'est donc PAS supprimé — c'est le corps qu'on teste).
+    expect(distSq(bx, by, abrite.imp.x, abrite.imp.y)).toBeLessThanOrEqual(METEO.FOUDRE_RAYON * METEO.FOUDRE_RAYON)
+    expect(isSheltered(abrite.sim, Math.floor(bx), Math.floor(by))).toBe(true)
+    expect(isSheltered(abrite.sim, Math.floor(abrite.imp.x), Math.floor(abrite.imp.y))).toBe(false)
+    // Le TÉMOIN exposé de l'autre côté prouve que la frappe a bien eu lieu.
+    const temoinId = spawnEntity(abrite.sim, abrite.imp.x - 1, abrite.imp.y)
+    advanceFoudre(abrite.sim)
+    expect(corps.hp).toBe(100) // sous toit : épargné — l'abri immunise, période
+    expect(abrite.sim.entities.find((en) => en.id === temoinId)!.hp).toBe(100 - METEO.FOUDRE_DEGATS)
+    // Le MÊME corps, même position, SANS le toit : touché.
+    const decouvert = simAuTickDImpact()
+    const nuId = spawnEntity(decouvert.sim, decouvert.imp.x + 1.1, decouvert.imp.y)
+    advanceFoudre(decouvert.sim)
+    expect(decouvert.sim.entities.find((en) => en.id === nuId)!.hp).toBe(100 - METEO.FOUDRE_DEGATS)
+  })
+
+  it('la mort a sa cause — à 1 PV sous l’impact : `entity_died` porte `lightning`, le respawn suit, zéro tirage même en tuant', () => {
+    const { sim, imp } = simAuTickDImpact()
+    const id = spawnEntity(sim, imp.x, imp.y)
+    sim.entities.find((en) => en.id === id)!.hp = 1
+    drainEvents(sim)
+    const rng0 = sim.rngState
+    advanceFoudre(sim)
+    const evts = drainEvents(sim)
+    const mort = evts.find((ev) => ev.type === 'entity_died')
+    expect(mort).toMatchObject({ entityId: id, byEntityId: 0, wasMonster: false, cause: 'lightning' })
+    expect(evts.some((ev) => ev.type === 'entity_respawned' && ev.entityId === id)).toBe(true) // le chemin de mort EXISTANT
+    expect(sim.rngState).toBe(rng0) // `die` ne tire rien : le flux seedé est intact jusque dans la mort
+  })
+
+  it('les monstres meurent par LEUR chemin — un cerf à 1 PV sous l’impact : `monster_slain`, retiré du monde', () => {
+    const { sim, imp } = simAuTickDImpact()
+    const cerfId = spawnMonster(sim, 'deer', imp.x, imp.y)
+    sim.entities.find((en) => en.id === cerfId)!.hp = 1
+    drainEvents(sim)
+    advanceFoudre(sim)
+    const evts = drainEvents(sim)
+    expect(evts.some((ev) => ev.type === 'entity_died' && ev.entityId === cerfId && ev.wasMonster && ev.cause === 'lightning')).toBe(true)
+    expect(evts.some((ev) => ev.type === 'monster_slain' && ev.byEntityId === 0)).toBe(true)
+    expect(sim.monsters.some((m) => m.entityId === cerfId)).toBe(false)
+    expect(sim.entities.some((en) => en.id === cerfId)).toBe(false)
+  })
+
+  /** Un village PNJ au midi du jour 5 sous un orage ÉTIRÉ (patron D_LENT de R5 : bande
+   *  quasi immobile — la couverture tient toute la mesure). `worldEvents: false` : un banc
+   *  de PNJ mesure les PNJ. */
+  function simVillageSousOrage(count: number): SimState {
+    const sim = createSim(7, {
+      map: createEmptyMap(W, H, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true, worldEvents: false,
+    })
+    sim.tick = 4 * TICKS_PER_CYCLE + Math.floor(DAY_TICKS_PER_CYCLE / 2)
+    foundNpcVillage(sim, 125, 21, count)
+    const D = 400000
+    const u = (95.5 + METEO.LARGEUR.orage) / (W + METEO.LARGEUR.orage)
+    const startTick = sim.tick - Math.round(u * D)
+    sim.meteo = { type: 'orage', day: 5, edge: 0, startTick, endTick: startTick + D }
+    expect(meteoIntensity(sim, 125.5, 21.5)).toBe(1) // la prémisse : le village est au cœur
+    return sim
+  }
+
+  it('R8 PNJ — couverts par l’orage, les villageois gagnent la tuile abritée du village et y RESTENT', () => {
+    const sim = simVillageSousOrage(3)
+    const village = sim.villages[0]!
+    addStructure(sim, 'house', 135, 21, village.id, 0) // hors de l'empreinte du campement (huts ≤ ±8), au cœur de bande
+    expect(meteoIntensity(sim, 135.5, 21.5)).toBe(1)
+    const npcs = sim.npcs.filter((n) => n.villageId === village.id)
+    expect(npcs).toHaveLength(3)
+    // La prémisse : personne n'est abrité au départ — le geste va se VOIR.
+    for (const n of npcs) {
+      const e = sim.entities.find((en) => en.id === n.entityId)!
+      expect(isSheltered(sim, Math.floor(e.x), Math.floor(e.y))).toBe(false)
+    }
+    for (let t = 0; t < 600; t++) step(sim, [])
+    for (const n of npcs) {
+      const e = sim.entities.find((en) => en.id === n.entityId)!
+      expect(e.hp).toBeGreaterThan(0)
+      expect(isSheltered(sim, Math.floor(e.x), Math.floor(e.y))).toBe(true) // au sec, hors de portée de la foudre
+    }
+    // …et ils y RESTENT tant que l'orage couvre.
+    for (let t = 0; t < 200; t++) step(sim, [])
+    for (const n of npcs) {
+      const e = sim.entities.find((en) => en.id === n.entityId)!
+      expect(isSheltered(sim, Math.floor(e.x), Math.floor(e.y))).toBe(true)
+    }
+  })
+
+  it('R8 PNJ — sans maison, le repli est la BULLE DU FEU (le refuge lisible), et il y tient', () => {
+    const sim = simVillageSousOrage(1)
+    const npc = sim.npcs[0]!
+    const e = sim.entities.find((en) => en.id === npc.entityId)!
+    // Éloigné à découvert, toujours au cœur de bande, hors bulle (FIRE_RANGE) : le geste se mesure.
+    e.x = 110.5
+    e.y = 21.5
+    expect(meteoIntensity(sim, e.x, e.y)).toBe(1)
+    expect(fireBubble(sim, e.x, e.y)).toBe(0)
+    for (let t = 0; t < 400; t++) step(sim, [])
+    expect(fireBubble(sim, e.x, e.y)).toBeGreaterThan(0) // replié dans la bulle de SON Feu…
+    for (let t = 0; t < 200; t++) step(sim, [])
+    expect(fireBubble(sim, e.x, e.y)).toBeGreaterThan(0) // …et il y tient tant que l'orage couvre
   })
 })

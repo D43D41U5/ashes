@@ -203,7 +203,7 @@ export interface HudState {
    *  `error`) : UIScene lève le voile de mort quand `at` change. `cause` : froid/faim/
    *  null (combat) ; `byEntityId` + `killerType` (le monstre du snapshot, ou null)
    *  résolvent la ligne exacte. `null` = pas de mort en attente. */
-  deathMoment: { cause: 'cold' | 'hunger' | null; byEntityId: number; killerType: string | null; hadLoot: boolean; at: number } | null
+  deathMoment: { cause: 'cold' | 'hunger' | 'lightning' | null; byEntityId: number; killerType: string | null; hadLoot: boolean; at: number } | null
   /** LE TRAQUEUR DE DÉPOUILLE (mort-suite 2) : le repère d'écran vers le sac tombé — position
    *  (px écran, HUD non zoomé), angle de la flèche, `onScreen` (la dépouille est visible →
    *  cacher la flèche), et le compte à rebours avant décantation. `null` = rien à suivre. */

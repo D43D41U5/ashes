@@ -37,6 +37,7 @@ import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde } from './worldevents'
 import { advanceRefugees } from './refugees'
 import { advanceBrume } from './brume'
+import { advanceFoudre } from './foudre'
 import { advanceMeteo, meteoSpeedFactor } from './meteo'
 import { rngNext } from './rng'
 import { advanceNightHunt } from './nighthunt'
@@ -778,6 +779,10 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // `worldEvents` — un banc peut mesurer l'économie sous la pluie sans convois ni hordes.
   // Élection au bord de cycle par hash2 (aucun tirage), bande purgée sitôt sortie.
   advanceMeteo(state)
+  // LA FOUDRE (spec meteo.md R8) : la résolution de l'impact élu — phase dédiée au même
+  // endroit (`foudre.ts` : meteo.ts reste sans import de combat). Impacts par hash2,
+  // zéro tirage ; l'abri supprime ou épargne, jamais de report.
+  advanceFoudre(state)
   // LES VILLAGES PNJ VIVENT AUX BORDS DU CYCLE (spec village-pnj-evolution) : à
   // l'aube la porte s'ouvre, le palier monte au surplus, la prospérité attire un
   // colon ; au crépuscule la porte se ferme. Avant la passe PNJ : le village se

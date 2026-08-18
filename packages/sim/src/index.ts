@@ -123,13 +123,15 @@ export { BRUME } from './balance'
 // LA MÉTÉO (spec meteo.md) : le client rendra le front en le RECALCULANT du tick
 // (patron Brume) — la géométrie pure, l'intensité, le froid (R4, tranche 2), le mouillé et
 // la faim du feu (R5, tranche 4), la vitesse et la perception (R7, tranche 5 — la
-// prédiction locale devra passer le MÊME `meteoSpeedFactor` à `speedScaleFor`) et le bloc
-// de calibration s'exportent, l'ordonnanceur non.
+// prédiction locale devra passer le MÊME `meteoSpeedFactor` à `speedScaleFor`), la foudre
+// (R8, tranche 6 — le client dessine la lueur du télégraphe depuis `foudreTelegrapheAt` et
+// l'éclair depuis `foudreImpactAt`, rien ne transite) et le bloc de calibration
+// s'exportent, l'ordonnanceur et la résolution non.
 export {
-  frontMeteoPos, meteoCold, meteoFeuConso, meteoIntensity, meteoJourEligible, meteoMouille, meteoQuiet,
-  meteoSpeedFactor, meteoTypeBrut, meteoVisionFactor,
+  FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt, frontMeteoPos, meteoCold, meteoFeuConso,
+  meteoIntensity, meteoJourEligible, meteoMouille, meteoQuiet, meteoSpeedFactor, meteoTypeBrut, meteoVisionFactor,
 } from './meteo'
-export type { MeteoFront, MeteoType, BandeMeteo } from './meteo'
+export type { MeteoFront, MeteoType, BandeMeteo, FoudreImpact } from './meteo'
 export { METEO } from './balance'
 // LE FEU-STATION (spec feu-station) : l'état dérivable du snapshot côté client, et la donnée des slots.
 export { fireState, fireStateAt, fireActive, fireWarmthFactor, advanceFire, fuelTicksRemaining, fuelBurnProgress } from './fire'

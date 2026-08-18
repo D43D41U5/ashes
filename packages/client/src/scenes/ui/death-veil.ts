@@ -25,7 +25,7 @@
 import { ensureGameFont, GAME_FONT } from './game-font'
 
 /** La cause de la chute, telle que la porte l'événement `entity_died` de la sim. */
-export type DeathCause = 'cold' | 'hunger' | null
+export type DeathCause = 'cold' | 'hunger' | 'lightning' | null
 
 /**
  * LA LIGNE DE CAUSE (pure, testée) — résolue du vrai flux d'événements. `killerType`
@@ -35,6 +35,7 @@ export type DeathCause = 'cold' | 'hunger' | null
 export function deathLine(cause: DeathCause, byEntityId: number, killerType: string | null): string {
   if (cause === 'cold') return 'Le froid vous a pris.'
   if (cause === 'hunger') return 'La faim vous a emporté.'
+  if (cause === 'lightning') return 'La foudre vous a frappé.'
   // Saignement : la sim ne pose ni cause ni tueur (byEntityId 0) — la mort la plus
   // opaque du jeu, enfin nommée. (Inféré ; exact tant que seul le saignement y mène.)
   if (byEntityId === 0) return 'Vous vous êtes vidé de votre sang.'
