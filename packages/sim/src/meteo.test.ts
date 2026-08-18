@@ -1,8 +1,10 @@
 /**
  * LA MÉTÉO (spec `meteo.md`) — tranche 1 : les critères A1, A2, A9, A10 du front inerte,
  * plus la pureté de la géométrie et la distribution des types par acte. Tranche 2 : le
- * FROID des fronts (R4, critère A3) — section « R4 — le froid des fronts » en fin de
- * fichier, patron des tests thermiques A4/A5 de la Brume.
+ * FROID des fronts (R4, critère A3) — section « R4 — le froid des fronts », patron des
+ * tests thermiques A4/A5 de la Brume. Tranche 3 : LA FAUNE SE TERRE (R6, critère A5) —
+ * section en fin de fichier, prédicat `meteoQuiet` + le comportement calqué sur les
+ * gardes A17 de faune.test.ts.
  *
  * Le calendrier est couplé 1 jour = 1 cycle (`calendarScaleForSeasonCycles`) : l'aube du
  * cycle c EST le jour c+1, et on SAUTE aux bords de cycle (le tick se pose, puis `step()`
@@ -11,17 +13,19 @@
  * relevés à la sonde, pas espérés statistiquement.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, CENDREUX, METEO, TEMPERATURE, TERRAIN_GRASS } from './balance'
+import { BALANCE, CENDREUX, FAUNA, METEO, TEMPERATURE, TERRAIN_GRASS } from './balance'
 import { brumeJourEligible } from './brume'
 import { fireActive } from './fire'
 import { createEmptyMap } from './map'
 import {
-  advanceMeteo, frontMeteoPos, meteoIntensity, meteoJourEligible, meteoTypeBrut,
+  advanceMeteo, frontMeteoPos, meteoIntensity, meteoJourEligible, meteoQuiet, meteoTypeBrut,
   type BandeMeteo, type MeteoFront, type MeteoType,
 } from './meteo'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
 import { advanceTemperature, ambientTemperature, baselineTemperature } from './temperature'
-import { actForDay, calendarScaleForSeasonCycles, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
+import {
+  actForDay, calendarScaleForSeasonCycles, cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE,
+} from './time'
 import { grantItems } from './village'
 import { foundNpcVillage } from './worldgen'
 
@@ -445,5 +449,169 @@ describe('R4 — le froid des fronts (A3)', () => {
     const { sim, coeur, hors } = simSousBlizzard()
     expect(baselineTemperature(sim, coeur, 20.5)).toBeLessThan(CENDREUX.COLD_ATTRACT_THRESHOLD)
     expect(baselineTemperature(sim, hors, 20.5)).toBeGreaterThanOrEqual(CENDREUX.COLD_ATTRACT_THRESHOLD)
+  })
+})
+
+describe('R6 — la faune se terre (A5)', () => {
+  /** Un front posé à la main au midi du jour 25, bande sur la carte à la fraction `u` de sa
+   *  traversée (patron `simSousFront` de la section R4 — chaque section porte son montage). */
+  function simSousFront(type: MeteoType, u: number): { sim: SimState; bande: BandeMeteo } {
+    const sim = createSim(7, { map: createEmptyMap(400, 40, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true })
+    const midi = 24 * TICKS_PER_CYCLE + Math.floor(DAY_TICKS_PER_CYCLE / 2)
+    const startTick = midi - Math.round(u * METEO.TRAVERSEE_TICKS)
+    sim.tick = midi
+    sim.meteo = { type, day: 25, edge: 0, startTick, endTick: startTick + METEO.TRAVERSEE_TICKS }
+    return { sim, bande: frontMeteoPos(sim.meteo, midi, sim.map.width, sim.map.height)! }
+  }
+
+  it('sous une PLUIE active, le silence couvre la bande et RIEN qu’elle — balayage des deux côtés du bord', () => {
+    const { sim, bande } = simSousFront('pluie', 0.5)
+    // La prémisse de la garde exhaustive : les DEUX dehors existent sur la carte.
+    expect(bande.lo).toBeGreaterThan(2)
+    expect(bande.hi).toBeLessThan(sim.map.width - 2)
+    for (let k = 0; k <= 4 * sim.map.width; k++) {
+      const x = 0.125 + k * 0.25 // jamais pile sur un bord de bande : le dedans/dehors est net
+      const dedans = x > bande.lo && x < bande.hi
+      for (const y of [0.5, 20.5, 39.5]) expect(meteoQuiet(sim, x, y)).toBe(dedans)
+    }
+    // Dès la RAMPE (intensité > 0), le gibier se tait — pas seulement au cœur.
+    const dansLaRampe = bande.lo + 0.5
+    expect(meteoIntensity(sim, dansLaRampe, 20.5)).toBeGreaterThan(0)
+    expect(meteoIntensity(sim, dansLaRampe, 20.5)).toBeLessThan(1)
+    expect(meteoQuiet(sim, dansLaRampe, 20.5)).toBe(true)
+  })
+
+  it('après le passage — la fenêtre close ÉTEINT le silence, et advanceMeteo purge le record', () => {
+    const { sim } = simSousFront('pluie', 0.5)
+    const front = sim.meteo!
+    sim.tick = front.endTick // la fenêtre est close : le prédicat tombe AVANT même la purge
+    for (let x = 0.5; x < sim.map.width; x += 2) expect(meteoQuiet(sim, x, 20.5)).toBe(false)
+    advanceMeteo(sim) // l'ordonnanceur passe : le record est purgé
+    expect(sim.meteo ?? null).toBeNull()
+    for (let x = 0.5; x < sim.map.width; x += 2) expect(meteoQuiet(sim, x, 20.5)).toBe(false)
+  })
+
+  it('BROUILLARD — le gate est bit-identique à sans front : QUIET.brouillard est faux', () => {
+    expect(METEO.QUIET.brouillard).toBe(false)
+    const { sim, bande } = simSousFront('brouillard', 0.5)
+    expect(meteoIntensity(sim, (bande.lo + bande.hi) / 2, 20.5)).toBe(1) // le front est bien LÀ…
+    const front = sim.meteo ?? null
+    for (let x = 0.5; x < sim.map.width; x += 0.5) {
+      for (const y of [0.5, 20.5, 39.5]) {
+        sim.meteo = front
+        const avec = meteoQuiet(sim, x, y)
+        sim.meteo = null
+        expect(avec).toBe(meteoQuiet(sim, x, y)) // …et il ne fait taire PERSONNE, au bit près
+      }
+    }
+  })
+
+  it('A5 — Brume annoncée + pluie active : les points `faunaQuiet` tiennent PENDANT et APRÈS, advanceMeteo n’y touche jamais', () => {
+    // Une carte À CENDRIÈRE (champ synthétique : distance = x, patron brume.test.ts) — la
+    // Brume en a besoin ; la météo, non.
+    const map = createEmptyMap(70, 40, TERRAIN_GRASS)
+    map.cendre = []
+    for (let y = 0; y < 40; y++) for (let x = 0; x < 70; x++) map.cendre.push(x)
+    map.cendreMax = 8
+    const sim = createSim(2026, { map, calendarScale: SCALE, meteoActive: true })
+
+    // Le premier jour d'acte II-III que la Brume élit ; son annonce tombe au crépuscule.
+    let d = 22
+    while (d <= 54 && !brumeJourEligible(d)) d++
+    sim.tick = (d - 1) * TICKS_PER_CYCLE + DAY_TICKS_PER_CYCLE
+    step(sim, [])
+    expect(sim.brume?.phase).toBe('annoncee')
+    expect(sim.faunaQuiet.length).toBeGreaterThanOrEqual(3) // les points du corridor sont posés
+    const ref = JSON.stringify(sim.faunaQuiet)
+
+    // Une pluie posée sur une fenêtre COMPRESSÉE, close avant le prochain bord de cycle :
+    // aucun échantillon ne traverse une élection (la coexistence ne dépend pas de la durée
+    // de la fenêtre — la géométrie est une fonction pure du record).
+    const debut = sim.tick
+    sim.meteo = { type: 'pluie', day: d, edge: 0, startTick: debut, endTick: debut + 14400 }
+    const front = { ...sim.meteo }
+
+    let couverts = 0
+    for (let t = debut; t <= debut + 20000; t += 720) {
+      sim.tick = t
+      advanceMeteo(sim)
+      expect(JSON.stringify(sim.faunaQuiet)).toBe(ref) // le prédicat météo ne TOUCHE pas au tableau
+      const bande = frontMeteoPos(front, t, sim.map.width, sim.map.height)
+      if (t < front.endTick && bande && bande.lo < 35 && bande.hi > 35) {
+        expect(meteoQuiet(sim, 35, 20.5)).toBe(true) // le front fait bien taire PENDANT…
+        couverts++
+      }
+    }
+    expect(couverts).toBeGreaterThan(0) // la fenêtre a bien vu la bande sur la carte : la garde a mordu
+    expect(sim.meteo ?? null).toBeNull() // …le record est purgé APRÈS…
+    // …et les points de la Brume TIENNENT : leur échéance est le RETRAIT de la nappe, bien
+    // après la fin du front — aucune purge croisée, par construction.
+    expect(JSON.stringify(sim.faunaQuiet)).toBe(ref)
+    for (const q of sim.faunaQuiet) expect(q.until).toBeGreaterThan(sim.tick)
+  })
+
+  it('LE COMPORTEMENT (calqué sur A17 de faune.test.ts) — sous le front, pas UNE naissance ; le front passé, le gibier revient', () => {
+    // Le montage des gardes « pression de chasse » : prairie 160×160, plafond GROUND_CAP,
+    // midi, `worldEvents: false` (un banc de FAUNE mesure la faune — et l'ordonnanceur
+    // météo vit derrière cet interrupteur : le front est donc POSÉ à la main, et le
+    // silence se lit par le prédicat pur, exactement comme le gate le lit en jeu). La
+    // population ambiante remplit l'anneau, on OUVRE des places, et on regarde qui naît.
+    // Ici, ce qui fait taire n'est pas une mise à mort : c'est le FRONT. (On RETIRE des
+    // bêtes au lieu de les tuer — `die()` poserait un `faunaQuiet` de pression de chasse,
+    // et le silence mesuré doit être météo et rien d'autre. Prairie pure : pas de loups —
+    // aucun habitat —, donc pas de mise à mort qui poserait le sien.)
+    const sim = createSim(1234, {
+      map: createEmptyMap(160, 160, TERRAIN_GRASS),
+      faunaCap: FAUNA.GROUND_CAP,
+      worldEvents: false,
+      cycleOffset: cycleOffsetForStartHour(12),
+    })
+    const ambients = (): number => sim.monsters.filter((m) => m.ambient).length
+    const a = spawnEntity(sim, 80.5, 80.5)
+    grantItems(sim, a, { tenue_hiver: 1 }) // le blizzard mord (T2) : la tenue PLANCHE — on mesure la faune, pas le froid
+    let plafond = 0
+    for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) {
+      step(sim, [])
+      plafond = Math.max(plafond, ambients())
+    }
+    expect(plafond).toBeGreaterThanOrEqual(FAUNA.GROUND_CAP) // l'anneau s'est rempli : la précondition du gate
+
+    // UN BLIZZARD — large comme la carte : l'anneau de naissance (±42) déborderait une
+    // bande de pluie (60). Fenêtre COMPRESSÉE : la géométrie est pure, TRAVERSEE_TICKS est
+    // le choix de l'ÉLECTION, pas de la géométrie. Posé pour couvrir TOUTE la carte
+    // pendant la phase sous front, et sortir vite.
+    const D = 2000
+    const total = sim.map.width + METEO.LARGEUR.blizzard
+    const startTick = sim.tick - Math.round((250 / total) * D) // avance ≈ 250 : carte couverte, marge aux deux bords
+    sim.meteo = { type: 'blizzard', day: 1, edge: 0, startTick, endTick: startTick + D }
+    expect(meteoQuiet(sim, 0.5, 0.5)).toBe(true)
+    expect(meteoQuiet(sim, 159.5, 159.5)).toBe(true) // prémisse : l'empreinte couvre tout
+
+    // On OUVRE des places (dissipation directe, pas une mise à mort) : la population passe
+    // sous le plafond, le semeur VOUDRAIT remplir.
+    expect(ambients()).toBeGreaterThan(FAUNA.GROUND_CAP - 6)
+    const retires = new Set(
+      sim.monsters.filter((m) => m.ambient).slice(0, ambients() - (FAUNA.GROUND_CAP - 6)).map((m) => m.entityId),
+    )
+    sim.monsters = sim.monsters.filter((m) => !retires.has(m.entityId))
+    sim.entities = sim.entities.filter((e) => !retires.has(e.id))
+    expect(sim.faunaQuiet).toHaveLength(0) // rien d'autre ne fait taire : le silence mesuré est MÉTÉO
+
+    const avant = new Set(sim.monsters.filter((m) => m.ambient).map((m) => m.entityId))
+    for (let t = 0; t < 40 * BALANCE.TICK_RATE_HZ; t++) step(sim, [])
+    expect(meteoQuiet(sim, 80.5, 80.5)).toBe(true) // l'empreinte couvre ENCORE (la bande a peu avancé)
+    expect(sim.monsters.filter((m) => m.ambient && !avant.has(m.entityId))).toHaveLength(0) // pas UNE naissance sous le front
+    const bloque = ambients() // le compte BLOQUÉ, relevé pendant le silence plein — avant que le bord de fuite n'ouvre l'ouest
+
+    // LE FRONT PASSE — la fenêtre close ÉTEINT le silence (le prédicat est une fonction
+    // pure du tick ; la purge du record par advanceMeteo est la garde « après le passage »
+    // ci-dessus) — et le gibier REVIENT : la fenêtre de chasse lisible de la spec R6.
+    while (sim.tick < startTick + D) step(sim, [])
+    step(sim, [])
+    expect(meteoQuiet(sim, 80.5, 80.5)).toBe(false)
+    const avantRetour = new Set(sim.monsters.filter((m) => m.ambient).map((m) => m.entityId))
+    for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) step(sim, [])
+    expect(sim.monsters.filter((m) => m.ambient && !avantRetour.has(m.entityId)).length).toBeGreaterThan(0)
+    expect(ambients()).toBeGreaterThan(bloque)
   })
 })

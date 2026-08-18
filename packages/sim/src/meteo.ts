@@ -3,8 +3,9 @@
  * VERTÉBRALE : des fronts spatiaux traversent la vallée. Une BANDE cardinale par jour au
  * plus, élue par `hash2`, entre par un bord et sort par l'autre en ~une demi-journée. Le
  * front EXISTE et se LIT (`meteoIntensity`, la surface unique que les tranches d'effets
- * consomment) ; la TRANCHE 2 branche LE FROID (`meteoCold`, spec R4) sur `temperature.ts`.
- * Restent à venir : Feu/faune/vitesse/perception (T3+), et les événements d'annonce (T7).
+ * consomment) ; la TRANCHE 2 branche LE FROID (`meteoCold`, spec R4) sur `temperature.ts` ;
+ * la TRANCHE 3 fait taire LA FAUNE (`meteoQuiet`, spec R6) dans le gate de naissance de
+ * `faune.ts`. Restent à venir : Feu/vitesse/perception (T4+), et les événements d'annonce (T7).
  *
  * ═══ ZÉRO TIRAGE SUR LE PRNG D'ÉTAT ═══
  *
@@ -142,6 +143,23 @@ export function meteoCold(state: SimState, x: number, y: number): number {
   if (!front) return 0
   const cold: number = METEO.COLD[front.type]
   return cold === 0 ? 0 : cold * meteoIntensity(state, x, y)
+}
+
+/**
+ * R6 — LA FAUNE SE TERRE : le silence météo en (x, y). Vrai si un front actif d'un type
+ * `QUIET` couvre le point (`meteoIntensity > 0` — dès la rampe : le gibier se tait quand la
+ * pluie arrive, pas seulement à son cœur). PRÉDICAT PUR, jamais d'état : un front MOBILE
+ * devrait semer des points `faunaQuiet` à chaque tick (une inondation d'état) — on interroge
+ * son empreinte à la place. Les points `faunaQuiet` (Brume, pression de chasse) et ce
+ * prédicat coexistent donc PAR CONSTRUCTION : aucune purge croisée possible (critère A5).
+ * Le brouillard ne fait pas taire le gibier (`QUIET.brouillard` = faux) : front tactique,
+ * pas front mouillé.
+ */
+export function meteoQuiet(state: SimState, x: number, y: number): boolean {
+  const front = state.meteo
+  if (!front) return false
+  if (!METEO.QUIET[front.type]) return false
+  return meteoIntensity(state, x, y) > 0
 }
 
 /**

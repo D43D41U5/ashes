@@ -51,6 +51,7 @@ import { fireState } from './fire'
 import { distSq } from './geometry'
 import { carryRatio, carryTier, countOf, isEmpty, removeItems, type ItemId } from './items'
 import { profondeurAt, terrainAt, zoneTierAt, type WorldMap } from './map'
+import { meteoQuiet } from './meteo'
 import { estCoeur, estLisiere, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeur'
 import { CREUX } from './racine-relief'
 import { moveToward, spawnMonster, type Monster } from './monsters'
@@ -1064,13 +1065,18 @@ function disperseLeaderless(state: SimState, byId: Map<number, Entity>): void {
  * (46) est plus large que l'anneau de naissance (42) : un chasseur qui reste sur
  * place ne voit donc plus rien venir du tout. Il faut MARCHER — et c'est
  * précisément ce que fait un chasseur.
+ *
+ * Et LA MÉTÉO fait taire les mêmes bois (spec météo R6) : sous l'empreinte d'un
+ * front mouillé, MÊME gate, mêmes conséquences exactes — mais par PRÉDICAT pur
+ * (`meteoQuiet`), jamais par points `faunaQuiet` : une bande MOBILE en sèmerait à
+ * chaque tick. Les deux silences coexistent par construction (critère A5 météo).
  */
 function isQuiet(state: SimState, x: number, y: number): boolean {
   for (const q of state.faunaQuiet) {
     if (q.until <= state.tick) continue
     if (distSq(x, y, q.x, q.y) <= FAUNA.QUIET_RADIUS * FAUNA.QUIET_RADIUS) return true
   }
-  return false
+  return meteoQuiet(state, x, y)
 }
 
 /* ── LE SANG (spec chasse C8-C12) — l'échec fécond ────────────────────────── */

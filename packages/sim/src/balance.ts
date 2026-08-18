@@ -3252,6 +3252,12 @@ export const METEO = {
   /** R5 — multiplicateur de consommation des feux sous l'empreinte d'un front mouillé.
    *  JAMAIS d'extinction : la pression, pas la spirale de mort. */
   FEU_CONSO: { pluie: 1.5, neige: 1.5, orage: 1.5, blizzard: 2, brouillard: 1 },
+  /** R6 — la faune se terre : les types qui FONT TAIRE les naissances ambiantes sous leur
+   *  empreinte (prédicat pur `meteoQuiet` — un front MOBILE ne sème pas de points
+   *  `faunaQuiet`, on interroge sa bande du tick). Le BROUILLARD ne fait pas taire le
+   *  gibier : c'est le front tactique (visibilité, R7), pas un front mouillé — la table
+   *  d'effets décidée avec Alexis lui donne « faune : néant ». */
+  QUIET: { pluie: true, brouillard: false, neige: true, orage: true, blizzard: true },
   /** R7 — multiplicateur de vitesse sous l'empreinte (pendant le front, pas après). */
   SPEED: { pluie: 0.95, brouillard: 1, neige: 0.9, orage: 0.95, blizzard: 0.8 },
   /** R7 — multiplicateur de perception des IA, évalué au point de la CIBLE (on se cache
