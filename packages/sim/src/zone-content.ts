@@ -142,8 +142,45 @@ export const CONTENU = {
    * place à fibre de la T0 : la ressource des bandages a un endroit, au lieu d'un saupoudrage
    * uniforme. Passe appendue, positionnelle ('FIBR'), même patron que les champignons : la
    * table `CONTENUS` n'est pas touchée, aucun nœud existant ne bouge. Chance par tuile libre.
+   * 0.03 → 0.08 avec R34bis : l'affinité éclaircit la fibre du pré sec, la prairie CONCENTRE
+   * en face — le total reste du même ordre, l'endroit devient lisible.
    */
-  FIBRE_PRAIRIE: 0.03,
+  FIBRE_PRAIRIE: 0.08,
+
+  /**
+   * L'AFFINITÉ DU SEMIS COMMUN DE LA RACINE (spec t0-exploration §2ter R34bis, demande
+   * d'Alexis 2026-08-18 : « équilibré mais logique »). Le saupoudrage que R34 dénonçait pour
+   * la fibre valait pour TOUT le commun du pré : baies, fibre et pierre tombaient n'importe
+   * où, et la carte des ressources était un bruit blanc (mesuré, seed 2026 : aucune structure
+   * spatiale hors champignons/feuilles). Le tirage du TYPE ne change pas — la table de la
+   * zone reste la loi — mais une ressource tirée là où elle n'a PAS de raison d'être est
+   * ÉCLAIRCIE (facteur < 1, tirage positionnel 'AFIN') :
+   *   — la FIBRE veut l'humide : plein régime aux mots mouillés et au bord de l'eau ;
+   *   — la BAIE veut le bord et la lande : plein régime en lande/bruyère et au contact des bois ;
+   *   — la PIERRE veut le relief : plein régime en lande (R34 : « sa pierre ») et au pied du rocheux.
+   * Les passes appendues CONCENTRENT en face (FIBRE_PRAIRIE, BAIES_LISIERE renforcées).
+   * RACINE SEULE : les tables des zones T1/T2 ne bougent pas d'un nœud (A14/A15 intacts).
+   */
+  /** Rayon (Chebyshev) du « au contact de » : bois, eau, rocheux. 2 = la portée d'un regard. */
+  AFFINITE_RAYON: 2,
+  /** La fibre du pré sec, loin de toute eau : ce qui reste du saupoudrage. */
+  AFFINITE_FIBRE_SEC: 0.25,
+  /** La baie de plein champ, loin des bois et hors lande. */
+  AFFINITE_BAIE_OUVERT: 0.25,
+  /** La pierre de plaine, hors pierrier et loin de tout relief. */
+  AFFINITE_PIERRE_OUVERT: 0.15,
+  /**
+   * LES PIERRIERS DU PRÉ — le pré n'a presque pas de relief à toucher : l'éclaircie seule ne
+   * dessinerait rien (mesuré : 28 % de pierre « logique », le reste en bruit). La vérité
+   * géologique d'un fond de vallée est le CHAMP DE BLOCS erratiques : un champ basse
+   * fréquence ('PIER') élit des nappes où la pierre garde plein régime — on cherche un
+   * pierrier comme on cherche un bosquet. Même grammaire que ECHELLE_BOSQUET.
+   */
+  PIERRIER_ECHELLE: 30,
+  PIERRIER_SEUIL: 0.66,
+  /** La chance par tuile libre D'UN PIERRIER (passe appendue 'PIRR') : le champ de blocs est
+   *  plus dense que ne l'était le saupoudrage — on le voit de loin, on y va, on le vide. */
+  PIERRIER_CHANCE: 0.025,
 
   /**
    * LA PROFONDEUR PORTE DU JEU (spec t0-exploration §2quater R40). Le VIEUX FÛT : facteur de
@@ -155,7 +192,9 @@ export const CONTENU = {
    */
   VIEUX_FUT_FACTEUR: 1.5,
   CHAMPIGNON_COEUR: 0.03,
-  BAIES_LISIERE: 0.015,
+  /** 0.015 → 0.03 avec R34bis : la lisière est LE bord à baies — elle concentre ce que
+   *  l'affinité retire au plein champ. */
+  BAIES_LISIERE: 0.03,
 
   /**
    * LES TAS DE FEUILLES (forêts-vivantes §1 R1 — sel 'FEUI') : la fouille du sous-bois,
@@ -297,6 +336,58 @@ function terrainAdmet(type: NodeType, terrain: number): boolean {
   }
 }
 
+/** Le voisinage Chebyshev ≤ r de la tuile contient-il un terrain qui satisfait `pred` ? */
+function voisinageA(map: WorldMap, tx: number, ty: number, r: number, pred: (t: number) => boolean): boolean {
+  for (let y = ty - r; y <= ty + r; y++) {
+    for (let x = tx - r; x <= tx + r; x++) {
+      if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue
+      if (pred(map.terrain[y * map.width + x]!)) return true
+    }
+  }
+  return false
+}
+
+// Les familles de terrain de l'affinité — par NOM, l'idiome de `terrainAdmet` : une seule
+// vérité (la table TERRAINS), pas une liste d'ids de plus à tenir synchrone.
+const nomDe = (t: number): string => TERRAINS[t]?.name ?? ''
+const estEau = (t: number): boolean => { const n = nomDe(t); return n === 'shallow_water' || n === 'deep_water' }
+const estHumide = (t: number): boolean => {
+  const n = nomDe(t)
+  return n === 'wet_meadow' || n === 'willow' || n === 'marsh' || n === 'reed_marsh' || n === 'peat_bog'
+}
+const estLande = (t: number): boolean => { const n = nomDe(t); return n === 'juniper_heath' || n === 'heath' }
+const estRocheux = (t: number): boolean => {
+  const n = nomDe(t)
+  return n === 'rock' || n === 'cliff' || n === 'scree' || n === 'boulders'
+}
+
+/**
+ * L'AFFINITÉ DU SEMIS COMMUN (§2ter R34bis) — là où la ressource tirée a une raison d'être,
+ * plein régime (1) ; ailleurs, le facteur d'éclaircie de sa famille. Fonction PURE de la
+ * position — le verdict d'une tuile ne dépend que de son voisinage de terrain.
+ */
+function affiniteDuCommun(c: CarteZonee, type: NodeType, t: number, tx: number, ty: number): number {
+  const r = CONTENU.AFFINITE_RAYON
+  switch (type) {
+    case 'fiber_plant':
+      if (estHumide(t)) return 1
+      if (voisinageA(c.map, tx, ty, r, (u) => estEau(u) || estHumide(u))) return 1
+      return CONTENU.AFFINITE_FIBRE_SEC
+    case 'berry_bush':
+      if (estLande(t)) return 1
+      if (voisinageA(c.map, tx, ty, r, (u) => TERRAINS_BOISES_MASSIF.includes(u))) return 1
+      return CONTENU.AFFINITE_BAIE_OUVERT
+    case 'rock':
+      if (estLande(t)) return 1
+      if (voisinageA(c.map, tx, ty, r, estRocheux)) return 1
+      // Le champ de blocs erratiques : une nappe élue par le champ 'PIER', pas un semis.
+      if (fbm2(tx, ty, CONTENU.PIERRIER_ECHELLE, (c.graphe.seed ^ 0x50494552) | 0) > CONTENU.PIERRIER_SEUIL) return 1
+      return CONTENU.AFFINITE_PIERRE_OUVERT
+    default:
+      return 1
+  }
+}
+
 /**
  * LE SEMIS. Un balayage, un tirage positionnel (fonction pure de la tuile : déplacer un nœud
  * d'une tuile ne remélange pas la carte), des bosquets.
@@ -344,6 +435,12 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
 
       const type = tirerType(c, c.zone[i]!, t, tx, ty, seed)
       if (!type) continue
+      // L'AFFINITÉ éclaircit l'illogique (§2ter R34bis) — RACINE SEULE : les zones dormantes
+      // gardent leur semis au nœud près. Sel neuf ('AFIN') : aucun flux existant décalé.
+      if (c.zone[i] === c.graphe.racine) {
+        const a = affiniteDuCommun(c, type, t, tx, ty)
+        if (a < 1 && hash2(tx, ty, (seed ^ 0x4146494e) | 0) >= a) continue
+      }
       // Le stock d'un ARBRE passe par `stockDArbre` (§2quater R40) : au cœur d'un massif,
       // le vieux fût — partout ailleurs, le défaut du type, à l'identique d'avant.
       nodes.push({ id, type, tx, ty, stock: type === 'tree' ? stockDArbre(c.map, tx, ty) : NODE_DEFS[type].stock, regrowAt: 0 })
@@ -393,6 +490,11 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   const feuilles = tasDeFeuilles(c, occupeesPlus(), id)
   for (const f of feuilles) nodes.push(f)
   id += feuilles.length
+
+  // ── LES PIERRIERS DU PRÉ (§2ter R34bis) — la pierre en CHAMPS DE BLOCS, pas en semis ──
+  const pierriers = pierriersDuPre(c, occupeesPlus(), id)
+  for (const p of pierriers) nodes.push(p)
+  id += pierriers.length
 
   // ── L'ÉCONOMIE DU MONDE RÉDUIT (t0-exploration §2sexies) — en QUEUE, et GATED : sur le plan
   //    complet les trois passes rendent [] — zéro nœud, zéro décalage, A14/A15bis intacts. ──
@@ -837,6 +939,42 @@ function tasDeFeuilles(c: CarteZonee, occupees: Set<number>, idStart: number): R
       if (d <= CREUX.PROF_LISIERE || d >= CREUX.PROF_COEUR) continue // la bande du CORPS
       if (hash2(tx, ty, salt) >= CONTENU.TAS_FEUILLES) continue
       out.push({ id, type: 'leaf_pile', tx, ty, stock: NODE_DEFS.leaf_pile.stock, regrowAt: 0 })
+      occupees.add(i)
+      id += 1
+    }
+  }
+  return out
+}
+
+/**
+ * LES PIERRIERS DU PRÉ (§2ter R34bis — sel 'PIRR'). Le champ 'PIER' qui garde la pierre du
+ * semis commun à plein régime CONCENTRE aussi : dans une nappe élue, la pierre est plus dense
+ * que ne l'était le saupoudrage — un champ de blocs erratiques se voit de loin, se nomme, se
+ * vide. Racine seule, patron 'FIBR' : passe appendue, tirage positionnel, aucun nœud existant
+ * ne bouge.
+ */
+function pierriersDuPre(c: CarteZonee, occupees: Set<number>, idStart: number): ResourceNode[] {
+  const { width, height, terrain } = c.map
+  const out: ResourceNode[] = []
+  let id = idStart
+  const champ = (c.graphe.seed ^ 0x50494552) | 0 // 'PIER' — LE MÊME champ que l'affinité
+  const salt = (c.graphe.seed ^ 0x50495252) | 0 // 'PIRR'
+  // Une BUTTE n'est pas un pierrier : elle est peuplée par SES blocs (§2sexies R48bis), la
+  // nappe ne doit pas y déverser de la pierre ordinaire ni décaler leur semis.
+  const dansUneButte = (tx: number, ty: number): boolean =>
+    c.affleurements.some((a) => tx >= a.rect.x && tx < a.rect.x + a.rect.w && ty >= a.rect.y && ty < a.rect.y + a.rect.h)
+  for (let ty = 0; ty < height; ty++) {
+    for (let tx = 0; tx < width; tx++) {
+      const i = ty * width + tx
+      if (c.zone[i] !== c.graphe.racine) continue
+      if (c.rampe[i] || occupees.has(i)) continue
+      const t = terrain[i]!
+      if (t === TERRAIN_ROAD || !TERRAINS[t]?.walkable) continue
+      if (!terrainAdmet('rock', t)) continue
+      if (dansUneButte(tx, ty)) continue
+      if (fbm2(tx, ty, CONTENU.PIERRIER_ECHELLE, champ) <= CONTENU.PIERRIER_SEUIL) continue
+      if (hash2(tx, ty, salt) >= CONTENU.PIERRIER_CHANCE) continue
+      out.push({ id, type: 'rock', tx, ty, stock: NODE_DEFS.rock.stock, regrowAt: 0 })
       occupees.add(i)
       id += 1
     }

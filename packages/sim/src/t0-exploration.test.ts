@@ -28,6 +28,7 @@ import {
   TERRAINS,
 } from './balance'
 import { createEmptyMap, profondeurAt } from './map'
+import { fbm2 } from './noise'
 import { capFor, POI_TYPES } from './poi'
 import { composantesDeMasque, estCoeur, TERRAINS_BOISES_MASSIF } from './profondeur'
 import { CREUX } from './racine-relief'
@@ -770,6 +771,58 @@ describe('A11/A12 — la composition des Prés Bas suit UNE variable d’ordre',
       expect(sur(TERRAIN_WET_MEADOW, 'fiber_plant'), `seed ${seed} : la prairie humide est LA place à fibre`).toBeGreaterThanOrEqual(300)
       expect(sur(TERRAIN_WET_MEADOW, 'champignon'), `seed ${seed} : la prairie humide porte des champignons`).toBeGreaterThanOrEqual(100)
       expect(sur(TERRAIN_JUNIPER_HEATH, 'berry_bush'), `seed ${seed} : la lande porte les baies du genévrier`).toBeGreaterThanOrEqual(50)
+    }
+  })
+
+  it('A18bis (R34bis) — le commun a un ENDROIT : fibre à l\'humide, baies au bord, pierre au relief et aux pierriers', () => {
+    // Seuils épinglés à la MESURE (3 seeds, vallée et monde joué) : fibre 66-69 %, baies
+    // 69-74 %, pierre 88-89 % — contre 21/32/13 AVANT R34bis : la garde mord.
+    const nom = (t: number): string => TERRAINS[t]?.name ?? ''
+    const humide = (t: number): boolean => ['wet_meadow', 'willow', 'marsh', 'reed_marsh', 'peat_bog'].includes(nom(t))
+    const lande = (t: number): boolean => ['juniper_heath', 'heath'].includes(nom(t))
+    const rocheux = (t: number): boolean => ['rock', 'cliff', 'scree', 'boulders'].includes(nom(t))
+    for (const { c, nodes } of mondes) {
+      const seed = c.graphe.seed
+      const { width, height, terrain } = c.map
+      // Rayon ÉCRIT (2 = la portée d'un regard), indépendant de la constante réglable : une
+      // garde écrite avec la constante qu'elle teste ne garde rien.
+      const voisinage = (tx: number, ty: number, pred: (t: number) => boolean): boolean => {
+        for (let y = ty - 2; y <= ty + 2; y++) {
+          for (let x = tx - 2; x <= tx + 2; x++) {
+            if (x < 0 || y < 0 || x >= width || y >= height) continue
+            if (pred(terrain[y * width + x]!)) return true
+          }
+        }
+        return false
+      }
+      const enNappe = (tx: number, ty: number): boolean =>
+        fbm2(tx, ty, CONTENU.PIERRIER_ECHELLE, (seed ^ 0x50494552) | 0) > CONTENU.PIERRIER_SEUIL
+      const part = (type: string, ok: (tx: number, ty: number, t: number) => boolean): number => {
+        const dans = nodes.filter((n) => n.type === type && c.zone[n.ty * width + n.tx] === c.graphe.racine)
+        if (dans.length === 0) return 0
+        return dans.filter((n) => ok(n.tx, n.ty, terrain[n.ty * width + n.tx]!)).length / dans.length
+      }
+      const fibre = part('fiber_plant', (tx, ty, t) => humide(t) || voisinage(tx, ty, (u) => eau(u) || humide(u)))
+      const baies = part('berry_bush', (tx, ty, t) => lande(t) || voisinage(tx, ty, (u) => TERRAINS_BOISES_MASSIF.includes(u)))
+      const pierre = part('rock', (tx, ty, t) => lande(t) || voisinage(tx, ty, rocheux) || enNappe(tx, ty))
+      expect(fibre, `seed ${seed} : ${(fibre * 100).toFixed(0)} % de fibre à l'humide/bord d'eau`).toBeGreaterThanOrEqual(0.55)
+      expect(baies, `seed ${seed} : ${(baies * 100).toFixed(0)} % de baies au bord/lande`).toBeGreaterThanOrEqual(0.55)
+      expect(pierre, `seed ${seed} : ${(pierre * 100).toFixed(0)} % de pierre au relief/lande/pierrier`).toBeGreaterThanOrEqual(0.75)
+      // Et le pierrier reste un ENDROIT : si la nappe couvrait la racine, la part de pierre
+      // « logique » serait verte par accident — « tout est pierrier » doit rougir.
+      const { r, id } = racineDe(c)
+      let nappe = 0
+      let sol = 0
+      for (let ty = Math.floor(r.y); ty < r.y + r.h; ty += 3) {
+        for (let tx = Math.floor(r.x); tx < r.x + r.w; tx += 3) {
+          if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue
+          const i = ty * width + tx
+          if (c.zone[i] !== id || !TERRAINS[terrain[i]!]?.walkable) continue
+          sol += 1
+          if (enNappe(tx, ty)) nappe += 1
+        }
+      }
+      expect(nappe / sol, `seed ${seed} : la nappe des pierriers couvre ${(100 * nappe / sol).toFixed(0)} % de la racine`).toBeLessThanOrEqual(0.35)
     }
   })
 
