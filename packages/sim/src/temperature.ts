@@ -4,6 +4,7 @@
  * par la bulle d'un feu. Aucune fonction transcendante (seul `sqrt`, autorisé).
  */
 import { POI, TEMPERATURE } from './balance'
+import { brumeCold } from './brume'
 import { fireWarmthFactor } from './fire'
 import { die } from './combat'
 import { countOf } from './items'
@@ -76,7 +77,10 @@ export function baselineTemperature(state: SimState, x: number, y: number): numb
   // La carte est plate : le froid ne vient plus de l'altitude, seulement du BIOME (la neige, le
   // glacier) et de l'heure. Le froid des zones hautes est porté par leur terrain, pas par une hauteur.
   const base = T.BASE - T.ACT_COLD[time.act - 1]! // non coupé par un toit
-  const exposed = biome - (time.isNight ? T.NIGHT_COLD : 0) // amorti par l'abri
+  // LA BRUME (spec brume.md R4) est une EXPOSITION de plus : l'abri l'amortit, et le feu
+  // comme la tenue la PLANCHENT (l'ambiant est un max) — le déni de zone tombe de ces lois,
+  // pas d'une mécanique neuve.
+  const exposed = biome - (time.isNight ? T.NIGHT_COLD : 0) - brumeCold(state, x, y) // amorti par l'abri
   const shelter = isSheltered(state, tx, ty) ? T.SHELTER_FACTOR : 1
   return clampTemp(base + shelter * exposed)
 }

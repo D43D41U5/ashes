@@ -52,6 +52,8 @@ export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
   'village_archetype_changed',
   'horde_spawned',
   'convoy_spawned',
+  'brume_annonce',
+  'filon_decouvert',
   'refugees_arrived',
   'refugees_recruited',
   'gift_given',
@@ -118,6 +120,19 @@ export function chronicleFromEvents(
         break
       case 'convoy_spawned':
         push(`Une carcasse de convoi a été signalée sur la route.`, 'recit')
+        break
+      // LA BRUME (spec brume.md) : l'annonce est LE télégraphiage (§9bis) — la chronique
+      // prévient la veille ; le retrait, lui, ne se raconte que par ce qu'il PAIE.
+      case 'brume_annonce':
+        push(`Le gibier s'est tu : une brume de cendre froide descendra sur la vallée à l'aube.`, 'recit')
+        break
+      case 'filon_decouvert':
+        push(
+          e.nodeType === 'coal_seam'
+            ? `La Brume s'est retirée sur une veine de charbon affleurante — pour qui ose.`
+            : `La Brume s'est retirée sur un filon de fer affleurant — pour qui ose.`,
+          'recit',
+        )
         break
       case 'refugees_arrived':
         push(`Des réfugiés (${e.count}) sont apparus sur une route.`, 'recit')

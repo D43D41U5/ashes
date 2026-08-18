@@ -3172,6 +3172,40 @@ export const WORLD_EVENTS = {
 } as const
 
 /**
+ * LA BRUME (spec `brume.md`, décisions Alexis 2026-08-18) — le froid mobile qui sort de la
+ * Cendrière : annoncée au crépuscule (le gibier se tait), levée de l'aube au crépuscule,
+ * elle dénie sa zone par le froid (la tenue d'hiver est « l'équipement requis » du GDD
+ * §9bis) et découvre à son retrait un filon minier gardé — la menace qui paie ceux qui la
+ * suivent. Ordres de grandeur, à calibrer en jouant.
+ */
+export const BRUME = {
+  /** Chance qu'une Brume se lève, par jour de saison et par acte (acte I : jamais). */
+  CHANCE_PER_DAY: [0, 0.35, 0.5],
+  /** Rayon de la nappe, en tuiles. */
+  RAYON: 8,
+  /** Profondeur de l'incursion dans T0, depuis le front de Cendre (tuiles). */
+  PROFONDEUR: 28,
+  /** Largeur des bandes d'élection du corridor (en tuiles de champ de Cendre). */
+  BANDE: 6,
+  /**
+   * Le froid de la nappe — une EXPOSITION (amortie par l'abri, planchée par feu et tenue).
+   * Calibré pour tuer la plaine de JOUR dès l'acte II : 90 − 25 − 55 = 10 < HYPOTHERMIA (20).
+   */
+  COLD_MALUS: 55,
+  /** Marge entre le bord de la nappe et un Feu de village (R3 : elle ne mange pas les villages). */
+  GARDE_FEU: 6,
+  /** Essais d'élection de corridor avant que la Brume ne renonce pour ce jour. */
+  ESSAIS: 8,
+  /** Le filon découvert au retrait : stock (sans repousse), part de charbon, vie en jours de saison. */
+  FILON_STOCK: 12,
+  FILON_PART_CHARBON: 0.4,
+  FILON_JOURS: 3,
+  /** Les traînards qui gardent le filon, et leur heure de départ (patron carcasse). */
+  TRAINARDS: 2,
+  TRAINARD_TTL: ticksForCycles(1),
+} as const
+
+/**
  * LES RÉFUGIÉS (V2-25, GDD §520) — « l'événement d'alignement par excellence, et la seule
  * source de PNJ supplémentaires hors paliers du Feu ». Un groupe de survivants arrive sur une
  * route ; on les RECRUTE (+PNJ, Foyer), les NOURRIT (Foyer), les refoule (rien) ou les

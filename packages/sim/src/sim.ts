@@ -36,6 +36,7 @@ import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde } from './worldevents'
 import { advanceRefugees } from './refugees'
+import { advanceBrume } from './brume'
 import { rngNext } from './rng'
 import { advanceNightHunt } from './nighthunt'
 import { advanceNpcs, type Npc } from './npc'
@@ -348,6 +349,17 @@ export interface SimState {
    * faune R16). Sans ça, un lieu tué une fois reste vide pour la saison.
    */
   denRespawns: { zone: number; at: number }[]
+  /**
+   * LA BRUME (spec `brume.md`) — la nappe en cours (annoncée ou levée), ou rien. Les trois
+   * champs sont OPTIONNELS (patron `envols`) : une sauvegarde d'avant reprend sans, et s'en
+   * crée à la prochaine annonce. La géométrie de la nappe au tick se CALCULE (`brumeCentre`),
+   * seul le corridor élu est rangé.
+   */
+  brume?: import('./brume').Brume | null
+  /** Le filon découvert par le dernier retrait de Brume — retiré vidé ou périmé. */
+  brumeFilon?: { nodeId: number; expiresDay: number } | null
+  /** Le dernier jour de saison où l'annonce de Brume a été jouée (une par jour au plus). */
+  lastBrumeDay?: number
 }
 
 export interface SimOptions {
@@ -716,6 +728,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     // LES RÉFUGIÉS (V2-25) : un événement du monde comme les convois — même interrupteur.
     // Arrivée positionnée par hash2 (aucun tirage RNG), donc pas de décalage du flux seedé.
     advanceRefugees(state)
+    // LA BRUME (spec brume.md) : même interrupteur — annonce au crépuscule (hash2, aucun
+    // tirage), nappe de l'aube au crépuscule, filon gardé au retrait.
+    advanceBrume(state)
     // LA NUIT QUI CHASSE : c'est un ÉVÉNEMENT DU MONDE, il suit donc le même
     // interrupteur — un banc de test qui n'a pas demandé de guerre n'a pas non plus
     // demandé de loups.

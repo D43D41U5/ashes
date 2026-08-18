@@ -1,0 +1,275 @@
+/**
+ * LA BRUME (spec `brume.md`, décisions Alexis 2026-08-18) — le froid mobile qui sort de la
+ * Cendrière, dénie sa zone un jour durant, et PAIE ceux qui la suivent : à son retrait, un
+ * filon minier riche et temporaire affleure, gardé par des traînards.
+ *
+ * ═══ ZÉRO TIRAGE SUR LE PRNG D'ÉTAT ═══
+ *
+ * Occurrence, corridor, type du filon : tout se dérive du JOUR DE SAISON par `hash2` (patron
+ * réfugiés) — activer la Brume ne décale aucun tirage existant, donc ne casse aucun test de
+ * déterminisme sans rapport (leçon RNG connue). Les deux seuls pas de PRNG consommés sont les
+ * pas DÉLIBÉRÉS de `spawnEntity` pour les traînards, au retrait — exactement comme les gardes
+ * de convoi.
+ *
+ * ═══ LA GÉOMÉTRIE EST CALCULÉE, JAMAIS STOCKÉE ═══
+ *
+ * L'état ne porte que le CORRIDOR élu à l'annonce (deux points, une phase, deux échéances) ;
+ * la position de la nappe à un tick donné est une fonction pure (`brumeCentre`) — patron du
+ * front de Cendre. Le client rendra la nappe en recalculant du tick, sans un octet de plus
+ * dans le snapshot.
+ *
+ * Une carte SANS champ de Cendre (bancs de test, cartes d'avant) n'a jamais de Brume : la
+ * Cendrière est son origine, pas un décor.
+ */
+import { BRUME, type NodeType } from './balance'
+import { frontActuel } from './cendre'
+import { emitEvent } from './events'
+import { distSq } from './geometry'
+import { isBlockingTile } from './map'
+import { spawnMonster } from './monsters'
+import { hash2 } from './noise'
+import type { SimState } from './sim'
+import { actForDay, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
+import { structureAt } from './village'
+
+const BRUME_SALT = 0x51a7b3d9
+
+/**
+ * L'ESPACE D'IDS DES FILONS DE BRUME — dérivé du JOUR de la nappe, jamais de `max(id)+1`.
+ *
+ * L'axiome `PART_DU_NOEUD` (node-baseline) veut un id FIXE : or `max+1` RÉUTILISAIT l'id de
+ * l'ancien filon dès qu'il portait le max (le cas normal), avec un autre type et une autre
+ * position — le `nodeById` du client aurait vu un nœud muter. Le jour est unique par nappe
+ * (une par jour au plus, `lastBrumeDay`) et croissant : l'id ne se réutilise jamais. La base
+ * laisse ~8× la marge au worldgen (~126 k nœuds mesurés).
+ */
+const FILON_ID_BASE = 1_000_000
+
+/** Le filon d'un retrait passé se vérifie à la seconde, pas au tick : son échéance est un
+ *  JOUR, et `nodes.find` en fin de tableau balaierait ~126 k nœuds vingt fois par seconde
+ *  pendant trois jours (patron `ROLL_EVERY` de nighthunt — cadence technique, pas réglage). */
+const FILON_CHECK_EVERY = 20
+
+/** La nappe en cours — annoncée au crépuscule, levée de l'aube au crépuscule suivant. */
+export interface Brume {
+  phase: 'annoncee' | 'nappe'
+  /** Le jour de saison de l'annonce — la graine de tous les `hash2` de cette nappe. */
+  day: number
+  /** L'aube où la nappe se lève, et le crépuscule où elle se retire. */
+  riseTick: number
+  retreatTick: number
+  /** Le corridor : entrée (sur le bord de la Cendrière) → point profond (où naîtra le filon). */
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+}
+
+/** Le jour tire-t-il une Brume ? Pur (`hash2`) — exposé pour les tests et les bancs. */
+export function brumeJourEligible(day: number): boolean {
+  return hash2(day, 0, BRUME_SALT) < BRUME.CHANCE_PER_DAY[actForDay(day) - 1]!
+}
+
+/**
+ * Le CENTRE de la nappe au tick donné — aller pendant la première moitié de la fenêtre,
+ * retour pendant la seconde. `null` hors de la fenêtre ou avant la levée. Fonction pure,
+ * partagée avec le client (patron `frontActuel`).
+ */
+export function brumeCentre(brume: Brume, tick: number): { x: number; y: number } | null {
+  if (brume.phase !== 'nappe' || tick < brume.riseTick || tick >= brume.retreatTick) return null
+  const u = (tick - brume.riseTick) / (brume.retreatTick - brume.riseTick)
+  const s = u < 0.5 ? u * 2 : (1 - u) * 2
+  return { x: brume.x0 + (brume.x1 - brume.x0) * s, y: brume.y0 + (brume.y1 - brume.y0) * s }
+}
+
+/** Ce point est-il sous la nappe, maintenant ? */
+export function dansLaBrume(state: SimState, x: number, y: number): boolean {
+  const brume = state.brume
+  if (!brume) return false
+  const c = brumeCentre(brume, state.tick)
+  if (!c) return false
+  return distSq(x, y, c.x, c.y) <= BRUME.RAYON * BRUME.RAYON
+}
+
+/**
+ * Le froid de la nappe en (x, y) — 0 hors de la Brume. C'est une EXPOSITION (spec R4) :
+ * `temperature.ts` l'amortit sous un abri et la PLANCHE au feu et à la tenue — le déni de
+ * zone tombe des lois vitales existantes, pas d'une mécanique neuve.
+ */
+export function brumeCold(state: SimState, x: number, y: number): number {
+  return dansLaBrume(state, x, y) ? BRUME.COLD_MALUS : 0
+}
+
+/** Distance² d'un point au segment [A,B] — la garde des Feux balaie tout le trajet de la nappe. */
+function distSqPointSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const abx = bx - ax
+  const aby = by - ay
+  const ab2 = abx * abx + aby * aby
+  const t = ab2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * abx + (py - ay) * aby) / ab2))
+  return distSq(px, py, ax + abx * t, ay + aby * t)
+}
+
+/**
+ * ÉLIT LE CORRIDOR du jour : une entrée sur le bord du front de Cendre (bande juste dehors),
+ * un point profond à `PROFONDEUR` tuiles — le plus PROCHE de l'entrée, c'est le chemin que le
+ * champ de Cendre dessine. Le point profond doit pouvoir porter le filon (tuile marchable,
+ * vierge de nœud et de structure), et AUCUN Feu de village ne doit passer sous la nappe
+ * (R3 : la Brume est un déni de zone sauvage, pas un tueur de villages). `null` si aucun
+ * des `ESSAIS` candidats ne convient — ce jour-là, la Brume renonce.
+ */
+function elireCorridor(state: SimState, day: number): { x0: number; y0: number; x1: number; y1: number } | null {
+  const champ = state.map.cendre
+  if (!champ) return null
+  const { width } = state.map
+  const front = frontActuel(state)
+
+  const occupes = new Set<number>()
+  for (const n of state.nodes) occupes.add(n.ty * width + n.tx)
+
+  const entree: number[] = []
+  const profond: number[] = []
+  for (let i = 0; i < champ.length; i++) {
+    const d = champ[i]!
+    if (d >= front + 1 && d < front + 1 + BRUME.BANDE) {
+      entree.push(i)
+    } else if (d >= front + BRUME.PROFONDEUR && d < front + BRUME.PROFONDEUR + BRUME.BANDE) {
+      const tx = i % width
+      const ty = Math.floor(i / width)
+      if (isBlockingTile(state.map, tx, ty)) continue
+      if (occupes.has(i)) continue
+      if (structureAt(state.structures, tx, ty)) continue
+      profond.push(i)
+    }
+  }
+  if (entree.length === 0 || profond.length === 0) return null
+
+  const garde = BRUME.RAYON + BRUME.GARDE_FEU
+  for (let essai = 0; essai < BRUME.ESSAIS; essai++) {
+    const e = entree[Math.floor(hash2(day, essai + 1, BRUME_SALT) * entree.length)]!
+    const x0 = (e % width) + 0.5
+    const y0 = Math.floor(e / width) + 0.5
+    let x1 = x0
+    let y1 = y0
+    let best = Infinity
+    for (const p of profond) {
+      const px = (p % width) + 0.5
+      const py = Math.floor(p / width) + 0.5
+      const dd = distSq(x0, y0, px, py)
+      if (dd < best) {
+        best = dd
+        x1 = px
+        y1 = py
+      }
+    }
+    const ok = state.villages.every(
+      (v) => distSqPointSegment(v.fireTx + 0.5, v.fireTy + 0.5, x0, y0, x1, y1) >= garde * garde,
+    )
+    if (ok) return { x0, y0, x1, y1 }
+  }
+  return null
+}
+
+/**
+ * LE RETRAIT PAIE (R7-R8) : au crépuscule, la nappe dépose un filon riche SANS repousse
+ * (un événement, pas un gisement — `advanceBrume` le retire vidé ou périmé) et deux
+ * traînards qui appartiennent à l'événement, pas au monde (patron carcasse : `expiresAt`,
+ * dissipés par `advanceWorldEvents`, jamais sous les yeux).
+ */
+function retirerLaBrume(state: SimState): void {
+  const brume = state.brume!
+  const tx = Math.floor(brume.x1)
+  const ty = Math.floor(brume.y1)
+  emitEvent(state, { type: 'brume_retiree', tick: state.tick, tx, ty })
+
+  // Un filon d'une Brume précédente encore debout : le nouveau le remplace — on n'en suit
+  // qu'un à la fois, et un nœud d'événement sans échéance serait un gisement de plus.
+  if (state.brumeFilon) retirerLeFilon(state, state.brumeFilon.nodeId, true)
+
+  // Le canal 100 est DÉCORRÉLÉ des essais de corridor (canaux 1..ESSAIS) : le type du filon
+  // ne doit pas dériver du même tirage que l'entrée élue au 2e essai.
+  const type: NodeType = hash2(brume.day, 100, BRUME_SALT) < BRUME.FILON_PART_CHARBON ? 'coal_seam' : 'iron_vein'
+  const id = FILON_ID_BASE + brume.day
+  state.nodes.push({ id, type, tx, ty, stock: BRUME.FILON_STOCK, regrowAt: 0 })
+  state.brumeFilon = { nodeId: id, expiresDay: seasonDayAtTick(state.tick, state.calendarScale) + BRUME.FILON_JOURS }
+  emitEvent(state, { type: 'filon_decouvert', tick: state.tick, nodeId: id, nodeType: type, tx, ty })
+
+  const expiresAt = state.tick + BRUME.TRAINARD_TTL
+  for (let i = 0; i < BRUME.TRAINARDS; i++) {
+    // La place du garde se contrôle au SPAWN, pas à l'élection : un jour et demi a passé
+    // depuis, et le voisinage du point profond n'a été vérifié que pour LUI. Une tuile
+    // bloquante (paroi, mur bâti entre-temps) replie le garde sur le point profond — le
+    // patron du bloc de naissance des hordes.
+    let gx = Math.max(1, Math.min(state.map.width - 2, tx + (i === 0 ? 1 : -1))) + 0.5
+    let gy = Math.max(1, Math.min(state.map.height - 2, ty + 1)) + 0.5
+    if (isBlockingTile(state.map, Math.floor(gx), Math.floor(gy))) {
+      gx = tx + 0.5
+      gy = ty + 0.5
+    }
+    const gid = spawnMonster(state, 'cendreux', gx, gy)
+    const garde = state.monsters.find((m) => m.entityId === gid)
+    if (garde) garde.expiresAt = expiresAt
+  }
+  state.brume = null
+}
+
+/** Retire le nœud du filon et, si `dire`, l'annonce (`filon_retire`). Le client matérialise
+ *  le filon depuis `filon_decouvert` ; sans ce fait-ci, un filon périmé, remplacé ou mangé
+ *  par la Cendre resterait un nœud FANTÔME à l'écran (le retrait du tableau ne produit aucun
+ *  delta). Le filon VIDÉ, lui, se retire en silence : `node_depleted` a parlé au coup final. */
+function retirerLeFilon(state: SimState, nodeId: number, dire: boolean): void {
+  state.nodes = state.nodes.filter((n) => n.id !== nodeId)
+  if (dire) emitEvent(state, { type: 'filon_retire', tick: state.tick, nodeId })
+  state.brumeFilon = null
+}
+
+/**
+ * L'ordonnanceur de la Brume — appelé chaque tick par `step()`, derrière `state.worldEvents`
+ * (un banc qui n'a pas demandé de guerre n'a pas non plus demandé de brume). L'annonce tombe
+ * au crépuscule (le même bord de cycle que la horde), la levée à l'aube suivante, le retrait
+ * au crépuscule d'après — et le filon vit ses `FILON_JOURS`, sauf à être vidé (ou mangé par
+ * la Cendre, qui ne l'épargne pas plus qu'un autre nœud).
+ */
+export function advanceBrume(state: SimState): void {
+  const filon = state.brumeFilon
+  if (filon && state.tick % FILON_CHECK_EVERY === 0) {
+    const node = state.nodes.find((n) => n.id === filon.nodeId)
+    if (!node) {
+      retirerLeFilon(state, filon.nodeId, true) // la Cendre l'a mangé — que le client le sache
+    } else if (node.stock <= 0) {
+      retirerLeFilon(state, filon.nodeId, false) // vidé : node_depleted a déjà parlé
+    } else if (seasonDayAtTick(state.tick, state.calendarScale) > filon.expiresDay) {
+      retirerLeFilon(state, filon.nodeId, true) // périmé : la fenêtre s'est refermée
+    }
+  }
+
+  const brume = state.brume
+  if (brume) {
+    if (brume.phase === 'annoncee' && state.tick >= brume.riseTick) {
+      brume.phase = 'nappe'
+      emitEvent(state, { type: 'brume_levee', tick: state.tick, tx: Math.floor(brume.x1), ty: Math.floor(brume.y1) })
+    }
+    if (brume.phase === 'nappe' && state.tick >= brume.retreatTick) retirerLaBrume(state)
+    return // une nappe à la fois : pas d'annonce tant qu'elle vit
+  }
+
+  if (state.tick % TICKS_PER_CYCLE !== DAY_TICKS_PER_CYCLE) return
+  if (!state.map.cendre) return
+  const day = seasonDayAtTick(state.tick, state.calendarScale)
+  if (state.lastBrumeDay === day) return
+  if (BRUME.CHANCE_PER_DAY[actForDay(day) - 1]! <= 0) return
+  state.lastBrumeDay = day
+  if (!brumeJourEligible(day)) return
+  const corridor = elireCorridor(state, day)
+  if (corridor === null) return
+
+  const riseTick = state.tick + (TICKS_PER_CYCLE - DAY_TICKS_PER_CYCLE)
+  state.brume = { phase: 'annoncee', day, riseTick, retreatTick: riseTick + DAY_TICKS_PER_CYCLE, ...corridor }
+  // R6 — LE GIBIER SE TAIT sur le corridor dès l'annonce : le silence EST le signe lisible
+  // in-world (QUIET_RADIUS couvre largement le segment avec trois points).
+  state.faunaQuiet.push(
+    { x: corridor.x0, y: corridor.y0, until: state.brume.retreatTick },
+    { x: (corridor.x0 + corridor.x1) / 2, y: (corridor.y0 + corridor.y1) / 2, until: state.brume.retreatTick },
+    { x: corridor.x1, y: corridor.y1, until: state.brume.retreatTick },
+  )
+  emitEvent(state, { type: 'brume_annonce', tick: state.tick, tx: Math.floor(corridor.x1), ty: Math.floor(corridor.y1) })
+}

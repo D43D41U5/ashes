@@ -172,6 +172,21 @@ export type SimEvent =
   | { type: 'horde_spawned'; tick: number; hordeId: number; size: number; targetVillageId: number }
   | { type: 'horde_dispersed'; tick: number; hordeId: number }
   | { type: 'convoy_spawned'; tick: number; tx: number; ty: number }
+  /**
+   * LA BRUME (spec `brume.md`) — le froid mobile qui sort de la Cendrière. L'ANNONCE est le
+   * télégraphiage du GDD §9bis (« annoncés, pas surprises ») : le gibier se tait sur le
+   * corridor, la chronique prévient — la nappe ne se lèvera qu'à l'aube suivante. (tx, ty)
+   * porte le POINT PROFOND du corridor : là où ça se passera, et où naîtra le filon.
+   */
+  | { type: 'brume_annonce'; tick: number; tx: number; ty: number }
+  | { type: 'brume_levee'; tick: number; tx: number; ty: number }
+  | { type: 'brume_retiree'; tick: number; tx: number; ty: number }
+  /** LA MENACE QUI PAIE CEUX QUI LA SUIVENT : au retrait, un filon riche et temporaire affleure. */
+  | { type: 'filon_decouvert'; tick: number; nodeId: number; nodeType: NodeType; tx: number; ty: number }
+  /** La fenêtre s'est refermée SANS coup de pioche final : filon périmé, remplacé, ou mangé par
+   *  la Cendre. Le client matérialise le filon depuis `filon_decouvert` — sans ce fait, il lui
+   *  resterait un nœud fantôme (le filon VIDÉ, lui, a déjà son `node_depleted`). */
+  | { type: 'filon_retire'; tick: number; nodeId: number }
   | { type: 'gift_given'; tick: number; byEntityId: number; toVillageId: number; item: ItemId; count: number }
   | { type: 'village_archetype_changed'; tick: number; villageId: number; archetype: 'foyer' | 'meute' | 'neutre' }
   | { type: 'evacuation_opened'; tick: number; tx: number; ty: number }
