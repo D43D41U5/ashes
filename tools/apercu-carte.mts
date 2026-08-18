@@ -10,6 +10,10 @@
  *
  *   node --import tsx tools/apercu-carte.mts [seed] [sortie.png]
  *   node --import tsx tools/apercu-carte.mts 2026 crop.png --crop 850,1780,400,300 --zoom 2
+ *   node --import tsx tools/apercu-carte.mts 2026 vallee.png --complet   (la vallée à 13 zones)
+ *
+ * Par défaut il rend LE MONDE JOUÉ (`MONDE_JOUE` — racine + Cendrière depuis le 2026-08-18) :
+ * l'instrument regarde ce que le joueur verra. `--complet` rend la vallée entière dormante.
  *
  * Marqueurs : seuils = croix jaunes, POI = magenta, charniers = orange,
  * set-pieces = violet, gués = cyan, villages = rouge, spawns = blanc,
@@ -18,7 +22,7 @@
 import { deflateSync } from 'node:zlib'
 import { writeFileSync } from 'node:fs'
 import {
-  generateZonedTerrain, placeZoneNodes, emplacementsDeVillage, pointsDeSpawn, MONDE,
+  generateZonedTerrain, placeZoneNodes, emplacementsDeVillage, pointsDeSpawn, MONDE, MONDE_JOUE,
   placeHuntingGrounds, nidsAMonstre,
   TERRAIN_VOID, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_FOREST, TERRAIN_SHALLOW_WATER,
   TERRAIN_ROCK, TERRAIN_DEEP_WATER, TERRAIN_MARSH, TERRAIN_SCREE, TERRAIN_SNOW,
@@ -38,9 +42,10 @@ const seed = Number(positionnels[0] ?? 2026)
 const out = positionnels[1] ?? `/tmp/carte-${seed}.png`
 const crop = option('crop')?.split(',').map(Number) // x,y,w,h en tuiles
 const zoom = Math.max(1, Number(option('zoom') ?? 1))
+const monde = args.includes('--complet') ? 'vallee' : MONDE_JOUE
 
 console.time('generation')
-const carte = generateZonedTerrain(seed, MONDE.JOUEURS_CIBLE)
+const carte = generateZonedTerrain(seed, MONDE.JOUEURS_CIBLE, monde)
 console.timeEnd('generation')
 const { map } = carte
 const { width: W, height: H, terrain } = map

@@ -18,6 +18,7 @@ import {
   generateZonedTerrain,
   isBlockingTile,
   MONDE,
+  MONDE_JOUE,
   nidsAMonstre,
   placeHuntingGrounds,
   pointsDeSpawn,
@@ -60,7 +61,8 @@ export interface LanWorld {
  * setup). Voir `nextSpawnNear`.
  */
 export function createZone(): LanWorld {
-  const carte = generateZonedTerrain(LAN_SEED)
+  // Parité avec la Veillée et le banc : le LAN sert LE MONDE JOUÉ (MONDE_JOUE, 2026-08-18).
+  const carte = generateZonedTerrain(LAN_SEED, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
   const map = carte.map
   const nodes = placeZoneNodes(carte)
   // Les coins de chasse se placent AVANT les emplacements : la garde R17bis (un site

@@ -55,7 +55,7 @@
  *     --lib ES2022,DOM tools/empreinte-sim.mts
  */
 import {
-  MONDE, createSim, step, snapshot, drainEvents, placeZoneNodes, placeHuntingGrounds,
+  MONDE, MONDE_JOUE, createSim, step, snapshot, drainEvents, placeZoneNodes, placeHuntingGrounds,
   spawnPoiMonsters, spawnEntity, emplacementsDeVillage, pointsDeSpawn, generateZonedTerrain, nidsAMonstre,
   foundNpcVillage, FAUNA, SLOTS, DAY_TICKS_PER_CYCLE, addItems,
   type SimState, type MoveInput,
@@ -76,7 +76,7 @@ function mix(n: number): number {
 
 /** Un monde JOUÉ : la recette de `tools/profil-tick.mts` (le monde réel, pas un banc nu). */
 function mondeJoue(seed: number, cycleOffset: number): { sim: SimState; avatar: number } {
-  const carte = generateZonedTerrain(seed, 8)
+  const carte = generateZonedTerrain(seed, 8, MONDE_JOUE)
   const nodes = placeZoneNodes(carte)
   const emplacements = emplacementsDeVillage(carte, nodes, {
     coinsDeChasse: placeHuntingGrounds(carte.map, seed),

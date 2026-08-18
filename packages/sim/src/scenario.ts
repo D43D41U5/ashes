@@ -46,7 +46,7 @@ import { TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { FAUNA } from './balance'
 import { foundNpcVillage } from './worldgen'
 import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn, type Emplacement } from './zone-content'
-import { MONDE } from './zonegraph'
+import { MONDE, MONDE_JOUE } from './zonegraph'
 import { generateZonedTerrain } from './zonegen'
 
 /**
@@ -166,7 +166,9 @@ export interface MondeDuBanc {
  * laissé ce banc calibrer la faim sur une carte sans gibier.
  */
 export function construireMondeDuBanc(seed: number, joueurs: number = BANC_JOUEURS): MondeDuBanc {
-  const carte = generateZonedTerrain(seed, joueurs)
+  // Le banc joue LE MONDE JOUÉ (MONDE_JOUE — racine + Cendrière depuis le 2026-08-18) : un banc
+  // qui calibrerait la vallée entière mesurerait un jeu que personne ne joue.
+  const carte = generateZonedTerrain(seed, joueurs, MONDE_JOUE)
   const map = carte.map
   const nodes = placeZoneNodes(carte)
   // Les coins de chasse se placent AVANT les emplacements : la garde R17bis (un site tenable

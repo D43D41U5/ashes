@@ -361,6 +361,13 @@ export interface GrapheZones {
   seed: number
   width: number
   height: number
+  /**
+   * Le plan qui a produit ce graphe — `'vallee'` (complet) ou `'racine'` (le monde réduit,
+   * décision 2026-08-18). Optionnel : un graphe d'avant l'option (stubs de test, données
+   * sérialisées) vaut `'vallee'`. Les helpers qui lisent le squelette (priorités, liens)
+   * le consultent — un id de zone n'indexe QUE le squelette de son propre plan.
+   */
+  monde?: MondeGen
   zones: Zone[]
   /** L'id de la racine (les Prés Bas). */
   racine: number
@@ -529,6 +536,58 @@ const LIENS: readonly (readonly [string, string])[] = [
   ['nord-centre', 'nord-est'],
 ]
 
+// ────────────────────────────────────────────────────────────────────────────
+// LES PLANS DU MONDE — la vallée entière, ou le monde réduit « pour l'instant »
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * ═══ LE MONDE RÉDUIT — décision d'Alexis, 2026-08-18 : « on ne garde que le t0 pour l'instant » ═══
+ *
+ * Le graphe complet n'est PAS supprimé : il DORT. Un plan est un sous-ensemble du squelette et de
+ * ses liens — le monde joué devient racine + Cendrière, et rien d'autre ne change de nature :
+ * mêmes rails, même jitter, mêmes passes. La Cendrière reste parce qu'elle est le MOTEUR de la
+ * saison (le front part de sa frontière) et parce qu'un T0 sans voisin n'aurait ni seuil, ni
+ * sente, ni route — donc ni convoi, ni réfugié, ni poste d'Arche.
+ *
+ * Dans ce plan, la racine est elle-même une « impasse » (une seule voisine) : c'est constaté,
+ * pas choisi, et personne ne le consomme au runtime — la règle des deux portes y gagne même
+ * ses deux seuils vers le feu.
+ */
+export type MondeGen = 'vallee' | 'racine'
+
+/**
+ * LE MONDE JOUÉ « pour l'instant ». La Veillée, le banc de scénario, le LAN et les instruments
+ * le passent EXPLICITEMENT à `generateZonedTerrain` : rebasculer sur la vallée entière, c'est
+ * changer CETTE ligne — et une seule. (Le défaut des fonctions reste `'vallee'` : les gardes du
+ * graphe complet continuent de garder le chemin complet, octet pour octet.)
+ */
+export const MONDE_JOUE: MondeGen = 'racine'
+
+/** La marge de roche au nord du monde réduit, en blocs — là où la vallée se coupe. */
+const MARGE_NORD_REDUIT = 4
+
+interface PlanDuMonde {
+  squelette: readonly Case[]
+  liens: readonly (readonly [string, string])[]
+  /** Les priorités du plan, à plat — indexées par id de zone DU PLAN (voir `PRIORITE`). */
+  priorites: readonly number[]
+}
+
+function planReduit(roles: readonly string[]): PlanDuMonde {
+  const squelette = SQUELETTE.filter((c) => roles.includes(c.role))
+  const garde = new Set(squelette.map((c) => c.role))
+  return {
+    squelette,
+    liens: LIENS.filter(([a, b]) => garde.has(a) && garde.has(b)),
+    priorites: squelette.map((c) => c.p),
+  }
+}
+
+const PLANS: Record<MondeGen, PlanDuMonde> = {
+  vallee: { squelette: SQUELETTE, liens: LIENS, priorites: PRIORITE },
+  racine: planReduit(['cendre', 'racine']),
+}
+
 /**
  * ═══ LE VIDE — une MASSE DE ROCHE PLATE, infranchissable (façon montagne RimWorld) ═══
  *
@@ -641,12 +700,13 @@ export function voisinAt(g: GrapheZones, x: number, y: number): number {
  */
 function regionProprietaire(g: GrapheZones, x: number, y: number): number {
   const n = g.zones.length
+  const prio = PLANS[g.monde ?? 'vallee'].priorites
   let zone = -1
   let best = -1
   for (let i = 0; i < n; i++) {
     const r = g.zones[i]!.rect!
     if (x < r.x || x >= r.x + r.w || y < r.y || y >= r.y + r.h) continue
-    const p = PRIORITE[i]!
+    const p = prio[i]!
     if (p > best) { best = p; zone = i }
   }
   return zone
@@ -745,10 +805,11 @@ export interface Porte {
 
 function catalogueDesPortes(g: GrapheZones): Map<string, Porte[]> {
   const B = MONDE.BLOC
+  const plan = PLANS[g.monde ?? 'vallee']
   const lies = new Set<string>()
-  for (const [ra, rb] of LIENS) {
-    const a = SQUELETTE.findIndex((c) => c.role === ra)
-    const b = SQUELETTE.findIndex((c) => c.role === rb)
+  for (const [ra, rb] of plan.liens) {
+    const a = plan.squelette.findIndex((c) => c.role === ra)
+    const b = plan.squelette.findIndex((c) => c.role === rb)
     lies.add(`${Math.min(a, b)}:${Math.max(a, b)}`)
   }
 
@@ -804,8 +865,13 @@ function catalogueDesPortes(g: GrapheZones): Map<string, Porte[]> {
  * même — sans quoi une frontière est une clôture), l'écartement des portes (250 tuiles : aucun
  * village n'en tient deux), et la garde de bi-connexité (aucune zone tenable n'est un goulot).
  */
-export function deriveGrapheZones(seed: number, joueurs = MONDE.JOUEURS_CIBLE): GrapheZones {
+export function deriveGrapheZones(
+  seed: number,
+  joueurs = MONDE.JOUEURS_CIBLE,
+  monde: MondeGen = 'vallee',
+): GrapheZones {
   const { width, height } = tailleCarte(joueurs)
+  const plan = PLANS[monde]
   const B = MONDE.BLOC
   const q = (t: number): number => Math.round(t / B) * B
 
@@ -825,13 +891,31 @@ export function deriveGrapheZones(seed: number, joueurs = MONDE.JOUEURS_CIBLE): 
   const rail = (v: number, axe: number): number =>
     v + (hash2(Math.round(v * 1000), axe, (seed ^ 0x51a1) | 0) * 2 - 1) * 0.008
 
-  const rects: Rect[] = SQUELETTE.map((c) => {
+  const rects: Rect[] = plan.squelette.map((c) => {
     const x0 = q(Math.max(0, rail(c.x0, 0)) * width)
     const y0 = q(Math.max(0, rail(c.y0, 1)) * height)
     const x1 = q(Math.min(1, rail(c.x1, 0)) * width)
     const y1 = q(Math.min(1, rail(c.y1, 1)) * height)
     return { x: x0, y: y0, w: Math.max(4 * B, x1 - x0), h: Math.max(4 * B, y1 - y0) }
   })
+
+  /**
+   * ═══ LE MONDE RÉDUIT SE COUPE AU NORD, il ne se recalcule pas ═══
+   *
+   * Les rects gardent leur géométrie ABSOLUE du monde complet — mêmes rails, même jitter, mêmes
+   * dimensions : le T0 reste calibré tuile pour tuile (espacement des villages, semis des lieux,
+   * rivière). On TRANSLATE simplement le pays vers le haut, sous une marge de roche, et la carte
+   * s'arrête là. `dy` est un multiple du BLOC (rects quantifiés + marge en blocs) : l'alignement
+   * rectiligne survit à la translation.
+   */
+  let hauteurCarte = height
+  if (plan.squelette.length < SQUELETTE.length) {
+    let nord = Infinity
+    for (const r of rects) if (r.y < nord) nord = r.y
+    const dy = nord - MARGE_NORD_REDUIT * B
+    for (const r of rects) r.y -= dy
+    hauteurCarte = height - dy
+  }
 
   // LES IDENTITÉS : imposées là où le croquis l'exige (la racine, la Cendrière, le Névé), tirées
   // dans le palier partout ailleurs. C'est là, et là seulement, que deux seeds divergent vraiment.
@@ -840,15 +924,16 @@ export function deriveGrapheZones(seed: number, joueurs = MONDE.JOUEURS_CIBLE): 
     1: melange(ZONES.filter((z) => z.tier === 1 && !estFixe(z.slug)), seed ^ 0xd11),
     2: melange(ZONES.filter((z) => z.tier === 2 && !estFixe(z.slug)), seed ^ 0xd12),
   }
-  const zones: Zone[] = SQUELETTE.map((c, id) => {
+  const zones: Zone[] = plan.squelette.map((c, id) => {
     const def = c.fixe ? ZONES.find((z) => z.slug === c.fixe)! : libres[c.tier].pop()!
     const r = rects[id]!
     return { id, def, x: r.x + r.w / 2, y: r.y + r.h / 2, poids: 0, rect: r }
   })
 
-  const racine = SQUELETTE.findIndex((c) => c.fixe === RACINE_SLUG)
+  const racine = plan.squelette.findIndex((c) => c.fixe === RACINE_SLUG)
   const g: GrapheZones = {
-    seed, width, height, zones, racine, seuils: [], voisins: [], impasses: [], gardiennes: [],
+    seed, width, height: hauteurCarte, monde, zones, racine,
+    seuils: [], voisins: [], impasses: [], gardiennes: [],
   }
 
   // L'ADJACENCE EST DÉCLARÉE (voir `LIENS`) — mais on ne la croit que si la frontière EXISTE

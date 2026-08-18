@@ -20,6 +20,7 @@ import { placeHuntingGrounds } from '../packages/sim/src/faune'
 import { FAUNA } from '../packages/sim/src/balance'
 import { emplacementsDeVillage, placeZoneNodes, CONTENU, type Emplacement } from '../packages/sim/src/zone-content'
 import { generateZonedTerrain } from '../packages/sim/src/zonegen'
+import { MONDE_JOUE } from '../packages/sim/src/zonegraph'
 
 const seeds = process.argv.slice(2).map(Number).filter(Number.isFinite)
 const SEEDS = seeds.length ? seeds : [2026, 7, 31, 1234]
@@ -36,7 +37,7 @@ const DANGERS = new Set(POI_TYPES.filter((t) => t.family === 'danger').map((t) =
 
 for (const seed of SEEDS) {
   // Le MÊME monde que le banc (6 joueurs) — c'est là que les accélérateurs ont été mesurés.
-  const carte = generateZonedTerrain(seed, BANC_JOUEURS)
+  const carte = generateZonedTerrain(seed, BANC_JOUEURS, MONDE_JOUE)
   const nodes = placeZoneNodes(carte)
   // AVANT la garde R17bis (dangers vides) — pour lire ce qu'elle a écarté.
   const emplacements = emplacementsDeVillage(carte, nodes, { coinsDeChasse: [], nids: [] })

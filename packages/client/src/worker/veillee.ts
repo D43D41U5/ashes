@@ -14,6 +14,7 @@ import {
   foundNpcVillage,
   generateZonedTerrain,
   MONDE,
+  MONDE_JOUE,
   nidsAMonstre,
   placeHuntingGrounds,
   placeZoneNodes,
@@ -92,7 +93,9 @@ export function createVeillee(
   // LA NOUVELLE VALLÉE (spec `worldgen.md`) : un GRAPHE DE ZONES d'abord, le terrain ensuite.
   // La taille se déduit du nombre de joueurs cible — on ne la règle plus à la main.
   onPhase('zones')
-  const carte = generateZonedTerrain(seed)
+  // LE MONDE JOUÉ (décision 2026-08-18) : racine + Cendrière « pour l'instant » — la constante
+  // MONDE_JOUE de /sim est le SEUL interrupteur, partagé avec le banc et le LAN.
+  const carte = generateZonedTerrain(seed, MONDE.JOUEURS_CIBLE, MONDE_JOUE)
   const map = carte.map
   onPhase('terrain')
   onPhase('seuils')

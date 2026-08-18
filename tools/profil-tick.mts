@@ -8,7 +8,7 @@
  *   node --import tsx tools/profil-tick.mts [joueurs] [ticks]
  */
 import {
-  MONDE, createSim, step, placeZoneNodes, placeHuntingGrounds, spawnPoiMonsters,
+  MONDE, MONDE_JOUE, createSim, step, placeZoneNodes, placeHuntingGrounds, spawnPoiMonsters,
   emplacementsDeVillage, pointsDeSpawn, generateZonedTerrain, foundNpcVillage, FAUNA, nidsAMonstre,
 } from '../packages/sim/src/index'
 
@@ -16,7 +16,7 @@ const joueurs = Number(process.argv[2] ?? 8)
 const ticks = Number(process.argv[3] ?? 2000)
 
 const t0 = performance.now()
-const carte = generateZonedTerrain(2026, joueurs)
+const carte = generateZonedTerrain(2026, joueurs, MONDE_JOUE)
 const tGen = performance.now() - t0
 
 const nodes = placeZoneNodes(carte)

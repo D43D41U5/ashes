@@ -77,6 +77,7 @@ import {
   MONDE,
   voisinAt,
   type GrapheZones,
+  type MondeGen,
 } from './zonegraph'
 
 /**
@@ -414,8 +415,12 @@ export interface CarteZonee {
  * de ce que les trois premières ont sculpté. Une falaise n'est plus une décision : c'est une
  * conséquence.
  */
-export function generateZonedTerrain(seed: number, joueurs = MONDE.JOUEURS_CIBLE): CarteZonee {
-  const g = deriveGrapheZones(seed, joueurs)
+export function generateZonedTerrain(
+  seed: number,
+  joueurs = MONDE.JOUEURS_CIBLE,
+  monde: MondeGen = 'vallee',
+): CarteZonee {
+  const g = deriveGrapheZones(seed, joueurs, monde)
   const { width, height } = g
   const N = width * height
 

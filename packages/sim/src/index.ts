@@ -256,8 +256,8 @@ export { advanceUpkeep, applyStructureDamage, grantItems } from './village'
 //  la suppression plutôt que par la vigilance. Elle reste dans git si le squelette déclaratif
 //  redevenait un jour la bonne idée.)
 export {
-  deriveGrapheZones, echantillonAt, MONDE, tailleCarte, ZONES,
-  type GrapheZones, type Seuil, type Tier, type Zone as ZoneDef,
+  deriveGrapheZones, echantillonAt, MONDE, MONDE_JOUE, tailleCarte, ZONES,
+  type GrapheZones, type MondeGen, type Seuil, type Tier, type Zone as ZoneDef,
 } from './zonegraph'
 export { generateZonedTerrain, RELIEF, type CarteZonee } from './zonegen'
 // LE FRONT DE CENDRE — la saison est une vallée qu'on perd (spec `worldgen.md` §7).

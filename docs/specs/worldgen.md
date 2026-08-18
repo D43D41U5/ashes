@@ -217,6 +217,19 @@ C'est le chaînon qui manquait, et il fait tenir ensemble trois choses qui flott
 
 ---
 
+## 7bis. LE MONDE RÉDUIT — racine + Cendrière, « pour l'instant » (décision d'Alexis, 2026-08-18)
+
+Le monde JOUÉ se réduit au T0 et à son feu ; **le graphe complet DORT, il n'est pas supprimé** — toutes les règles et gardes de cette spec continuent de garder le plan `'vallee'`. Un *plan de monde* (`MondeGen`, `zonegraph.ts`) est un sous-ensemble du squelette et de ses liens ; le plan `'racine'` garde les cases `racine` et `cendre` et leur unique lien. La Cendrière reste parce qu'elle est le **moteur de la saison** (§7) et parce qu'un T0 sans voisin n'aurait ni seuil, ni sente, ni route — donc ni convoi, ni réfugié, ni poste d'Arche.
+
+- **R-MR1 — Le monde joué est UNE CONSTANTE, `MONDE_JOUE`.** La Veillée, le banc de scénario, le LAN et les instruments la passent explicitement à `generateZonedTerrain` ; le défaut des fonctions reste `'vallee'` (les gardes du graphe complet gardent le chemin complet, octet pour octet). Rebasculer sur la vallée entière = changer cette ligne, une seule.
+- **R-MR2 — Le T0 réduit est LE MÊME T0.** Les rects gardent leur géométrie ABSOLUE du monde complet (mêmes rails, même jitter, mêmes dimensions) ; on TRANSLATE le pays vers le haut, sous une marge de roche, et la carte se coupe là. Toute la calibration du T0 (espacement des villages, semis, rivière, relief) survit tuile pour tuile.
+- **R-MR3 — La boucle de saison entière survit dans le plus petit monde possible.** L'impasse donne ses **2 seuils** à l'unique frontière (1 secours), les sentes partent de ces seuils, les gués existent, le front est armé, villages et spawns vivent dans la racine.
+- **R-MR4 — Le plafond économique est ASSUMÉ, pas caché.** Sans Karst/Alpages/Sylve : plus de fer/acier, de pierre de taille, de gros bois (les teasers restent, 3 de stock). Les **patchs de ressources en T0** (zones rocailleuses fer/charbon…) sont une décision de design À VENIR — consigne d'Alexis au journal du 2026-08-18.
+
+**Gardes** (`monde-reduit.test.ts`) : **A-MR1** le monde réduit tient (2 zones, 2 seuils, sentes, ≥ 2 gués, front armé, ≥ 3 villages et des spawns dans la racine, carte coupée ; + balayage 8 graines à petite échelle) ; **A-MR2** géométrie absolue des rects identique au plan complet (w×h, x, emboîtement vertical) ; **A-MR3** déterminisme au bit près du plan réduit (A12 étendu) ; **A-MR4** le banc joue `MONDE_JOUE` (parité de `construireMondeDuBanc`, quel que soit le plan courant).
+
+---
+
 ## 8. Ce qui MEURT
 
 | Ce qui saute | Pourquoi |

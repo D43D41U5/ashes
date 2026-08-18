@@ -10345,8 +10345,19 @@ const SCENARIOS = {
     const s = await page.evaluate(PROBE)
 
     console.log(`\n── A1 : la carte est-elle vierge au tick 0 ? ──`)
-    console.log(`   ${s.pois.length} lieux existent, ${s.knownPois.length} sont connus du joueur`)
-    console.log(s.knownPois.length === 0 ? '   ✓ aucune pastille — la vallée garde son secret' : `   ✗ ${s.knownPois.length} lieux déjà divulgués !`)
+    // Un repère À PORTÉE DE VUE du spawn se découvre à la naissance — c'est la mécanique
+    // (poi-discovery, SIGHT_TILES = 30), pas une fuite de brouillard. Constaté sur le monde
+    // réduit (2026-08-18) : le spawn de la seed 2026 naît à 24 tuiles d'un erratique. La
+    // sonde n'exige donc plus « zéro connu » mais « rien de connu HORS DE VUE ».
+    const SIGHT = 30
+    const enVue = new Set(s.pois
+      .filter((p) => (p.x - s.player.x) ** 2 + (p.y - s.player.y) ** 2 <= SIGHT * SIGHT)
+      .map((p) => p.poiId))
+    const fuites = s.knownPois.filter((id) => !enVue.has(id))
+    console.log(`   ${s.pois.length} lieux existent, ${s.knownPois.length} connus du joueur, ${enVue.size} en vue du spawn`)
+    console.log(fuites.length === 0
+      ? '   ✓ rien de divulgué hors de vue — la vallée garde son secret'
+      : `   ✗ ${fuites.length} lieux divulgués HORS DE VUE !`)
 
     await page.keyboard.press('m')
     await page.waitForTimeout(700)

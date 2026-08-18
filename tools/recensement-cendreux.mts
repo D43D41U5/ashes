@@ -35,6 +35,7 @@ import { drainEvents } from '../packages/sim/src/events'
 import { spawnEntity, step, type SimState } from '../packages/sim/src/sim'
 import { calendarScaleForSeasonCycles, getGameTime, seasonDayAtTick, TICKS_PER_CYCLE } from '../packages/sim/src/time'
 import { generateZonedTerrain } from '../packages/sim/src/zonegen'
+import { MONDE_JOUE } from '../packages/sim/src/zonegraph'
 import { walkableSpawn } from '../packages/sim/src/connectivity'
 import { BALANCE } from '../packages/sim/src/balance'
 
@@ -107,7 +108,7 @@ function moyenne(rs: Releve[], f: (r: Releve) => number): number {
 }
 
 function compterLieux(seed: number): Record<string, number> {
-  const carte = generateZonedTerrain(seed, joueurs)
+  const carte = generateZonedTerrain(seed, joueurs, MONDE_JOUE)
   const compte: Record<string, number> = {}
   for (const z of carte.map.zones) compte[z.kind] = (compte[z.kind] ?? 0) + 1
   return compte
