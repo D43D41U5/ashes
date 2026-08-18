@@ -37,7 +37,7 @@ import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde } from './worldevents'
 import { advanceRefugees } from './refugees'
 import { advanceBrume } from './brume'
-import { advanceMeteo } from './meteo'
+import { advanceMeteo, meteoSpeedFactor } from './meteo'
 import { rngNext } from './rng'
 import { advanceNightHunt } from './nighthunt'
 import { advanceNpcs, type Npc } from './npc'
@@ -614,10 +614,21 @@ export function carrySpeedFactor(ratio: number): number {
 export function speedScaleFor(
   entity: Pick<Entity, 'hunger' | 'wounds' | 'stamina' | 'temperature' | 'inventory'> & { exhausted?: true | undefined },
   input: { sprint: boolean; block: boolean; moving: boolean; charging?: boolean; sneak?: boolean; drawing?: boolean },
+  /** LA MÉTÉO SOUS LES PIEDS (spec meteo.md R7) : `meteoSpeedFactor(state, x, y)` du
+   *  marcheur, fourni par l'appelant — la formule reste pure d'état, la prédiction client
+   *  passera le sien (même fonction, même snapshot). Défaut 1 : ciel clair. */
+  meteoFactor = 1,
 ): { scale: number; sprinting: boolean; sneaking: boolean } {
   let scale = 1
   if (entity.hunger <= 0) scale *= BALANCE.HUNGER_SPEED_MALUS
   scale *= coldSpeedFactor(entity.temperature)
+  // LA PLUIE ALOURDIT LE PAS (spec meteo.md R7) — même chaîne, même endroit que le froid,
+  // et MÊME PÉRIMÈTRE assumé : les HUMAINS (décision d'intégrateur T5). Les monstres n'ont
+  // pas de température et ne passent pas par ici — l'asymétrie est celle du froid, déjà
+  // actée : le blizzard rend le VOYAGE plus dangereux (« voyager devient dangereux », GDD),
+  // il ne ralentit pas la meute qui vous y attend. Multiplicatif, pendant le front
+  // seulement : le facteur revient à 1 avec la bande, aucune accumulation au sol.
+  scale *= meteoFactor
   if (entity.wounds.leg) scale *= COMBAT.LEG_WOUND_SPEED
   const ratio = carryRatio(entity.inventory)
   const tier = carryTier(ratio)
@@ -725,7 +736,9 @@ export function step(state: SimState, inputs: MoveInput[]): void {
       // BANDER, c'est se tenir DEBOUT (décision d'Alexis) : seule une arme de TIR chasse
       // le pas lent — une lance s'arme très bien accroupi.
       drawing: entity.charge !== undefined && tientUnArc(entity),
-    })
+      // LE FRONT SOUS LES PIEDS (spec meteo.md R7) : évalué à la position du marcheur,
+      // ce tick — la rampe de `meteoIntensity` fait le reste (une pente, jamais un mur).
+    }, meteoSpeedFactor(state, entity.x, entity.y))
     // L'ALLURE du tick (spec chasse C2) — ce que la faune entendra de ce pas.
     const moving = input.dx !== 0 || input.dy !== 0
     entity.gait = !moving ? 'still' : sprinting ? 'sprint' : sneaking ? 'sneak' : 'walk'

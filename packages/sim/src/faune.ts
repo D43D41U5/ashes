@@ -51,7 +51,7 @@ import { fireState } from './fire'
 import { distSq } from './geometry'
 import { carryRatio, carryTier, countOf, isEmpty, removeItems, type ItemId } from './items'
 import { profondeurAt, terrainAt, zoneTierAt, type WorldMap } from './map'
-import { meteoQuiet } from './meteo'
+import { meteoQuiet, meteoVisionFactor } from './meteo'
 import { estCoeur, estLisiere, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeur'
 import { CREUX } from './racine-relief'
 import { moveToward, spawnMonster, type Monster } from './monsters'
@@ -550,8 +550,17 @@ export function avatarDetectability(state: SimState, e: Entity): number {
  *
  * `rawSq` accompagne : la PANIQUE (C1) et la géométrie (fuir, regarder) se
  * jouent sur la distance vraie, pas sur la distance perçue.
+ *
+ * LA MÉTÉO VOILE LES SENS (spec meteo.md R7) : la distance perçue se divise par
+ * `meteoVisionFactor` AU POINT DE LA MENACE regardée — on se cache dans la pluie,
+ * on n'aveugle pas la bête au soleil. Diviser la distance effective, c'est
+ * multiplier par le facteur TOUTES les portées comparées en aval (le plafond ici,
+ * `perceiveRange` et `flightRange` dans la jauge) — la modulation entre UNE fois,
+ * dans la loi, comme la furtivité. La PANIQUE et l'espace vital (`rawSq`) restent
+ * à la distance VRAIE : l'averse ne sauve pas qui marche SUR la bête.
  */
 function nearestThreat(
+  state: SimState,
   threats: Threat[],
   entity: Entity,
   range: number,
@@ -586,7 +595,10 @@ function nearestThreat(
     }
     // Trois canaux, le plus fort gagne : l'OUÏE n'a ni couvert ni secteur
     // aveugle, et le NEZ n'a rien du tout — il a juste besoin du bon côté.
-    const perceived = Math.max(t.vision * angle, t.noise, scent)
+    // Puis LA MÉTEO au point de la menace voile les trois d'un coup (R7) : c'est
+    // la PORTÉE de perception qui rétrécit, pas un canal — le rideau d'eau
+    // étouffe l'odeur et le pas comme il gomme la silhouette.
+    const perceived = Math.max(t.vision * angle, t.noise, scent) * meteoVisionFactor(state, a.x, a.y)
     const effSq = dSq / (perceived * perceived)
     if (effSq < bestD || (effSq === bestD && best && a.id < best.id)) {
       best = a
@@ -2005,6 +2017,7 @@ export function faunaStep(
   // fenêtre de recherche en conséquence, sinon la menace au vent ne serait même
   // pas EXAMINÉE — et le vent (C17) n'existerait qu'à courte portée.
   const spotted = nearestThreat(
+    state,
     threats,
     entity,
     Math.max(perceiveRange * HUNT.SCENT_RANGE_FACTOR, FAUNA.SAFE_RANGE),
@@ -3246,8 +3259,12 @@ function chooseQuarry(
     if (isAvatar(q.id) && underFireWard(state, q)) continue
 
     // La proie qu'on tient DÉJÀ se garde bien plus loin qu'on ne l'aurait prise —
-    // mais un loup somnolent lâche prise plus tôt (R10bis).
-    const reach = q.id === monster.targetId ? FAUNA.PURSUIT_RANGE * vigor : range
+    // mais un loup somnolent lâche prise plus tôt (R10bis). L'ACQUISITION se voile
+    // de météo AU POINT DE LA PROIE (spec meteo.md R7 : on se cache dans la pluie) ;
+    // la POURSUITE, elle, reste à distance vraie ET par tous les temps — même
+    // doctrine que la furtivité trois lignes plus bas : une meute qui vous a choisi
+    // ne vous perd ni parce que vous rampez, ni parce qu'il pleut sur vous.
+    const reach = q.id === monster.targetId ? FAUNA.PURSUIT_RANGE * vigor : range * meteoVisionFactor(state, q.x, q.y)
     let d = distSq(entity.x, entity.y, q.x, q.y)
     // L'ACQUISITION se fait à la distance PERÇUE (chasse C5) : un homme qui rampe
     // en fourré n'existe pour le loup que de bien plus près. C'est la symétrie qui

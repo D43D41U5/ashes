@@ -3,8 +3,11 @@
  * plus la pureté de la géométrie et la distribution des types par acte. Tranche 2 : le
  * FROID des fronts (R4, critère A3) — section « R4 — le froid des fronts », patron des
  * tests thermiques A4/A5 de la Brume. Tranche 3 : LA FAUNE SE TERRE (R6, critère A5) —
- * section en fin de fichier, prédicat `meteoQuiet` + le comportement calqué sur les
- * gardes A17 de faune.test.ts.
+ * section « R6 », prédicat `meteoQuiet` + le comportement calqué sur les gardes A17 de
+ * faune.test.ts. Tranche 5 : VITESSE ET PERCEPTION (R7, critère A7) — section « R7 —
+ * vitesse et perception (A7) » en fin de fichier : les deux lois continues, la marche
+ * sous la pluie contre la marche au sec, et les trois lois de détection (loup, Cendreux,
+ * gibier) voilées AU POINT DE LA CIBLE.
  *
  * Le calendrier est couplé 1 jour = 1 cycle (`calendarScaleForSeasonCycles`) : l'aube du
  * cycle c EST le jour c+1, et on SAUTE aux bords de cycle (le tick se pose, puis `step()`
@@ -13,16 +16,18 @@
  * relevés à la sonde, pas espérés statistiquement.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, CENDREUX, FAUNA, METEO, TEMPERATURE, TERRAIN_GRASS } from './balance'
+import { BALANCE, CENDREUX, FAUNA, METEO, MONSTER_DEFS, TEMPERATURE, TERRAIN_GRASS } from './balance'
 import { brumeJourEligible } from './brume'
 import { drainEvents } from './events'
+import { avatarThreat, faunaStep, wolfStep, wolfVigor } from './faune'
 import { fireActive, fireState, fireWarmthFactor, fuelTicksRemaining } from './fire'
 import { countOf } from './items'
 import { createEmptyMap } from './map'
 import {
   advanceMeteo, frontMeteoPos, meteoFeuConso, meteoIntensity, meteoJourEligible, meteoMouille, meteoQuiet,
-  meteoTypeBrut, type BandeMeteo, type MeteoFront, type MeteoType,
+  meteoSpeedFactor, meteoTypeBrut, meteoVisionFactor, type BandeMeteo, type MeteoFront, type MeteoType,
 } from './meteo'
+import { nearestPrey, spawnMonster, type Monster } from './monsters'
 import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimState } from './sim'
 import { advanceTemperature, ambientTemperature, baselineTemperature, isSheltered } from './temperature'
 import {
@@ -972,5 +977,208 @@ describe('R5 — le Feu sous la pluie (A4)', () => {
     for (let t = 0; t < 200; t++) step(sim, [])
     expect(b0 - fuelTicksRemaining(sim.tick, feu)).toBe(200 * METEO.FEU_CONSO.orage)
     expect(fireState(sim, feu)).toBe('lit')
+  })
+})
+
+describe('R7 — vitesse et perception (A7)', () => {
+  /**
+   * Un monde au MIDI DU JOUR 5 — acte I, plein jour, plaine `grass` (patron `simSousFront`
+   * de R4) : sous la pluie, COLD (10) laisse la température au-dessus de COMFORT — AUCUN
+   * ralentissement de froid ne se mélange aux mesures de vitesse. Le front se pose À LA
+   * MAIN à mi-traversée : bande pleinement sur la carte, cœur large, deux régimes à la fois.
+   */
+  function simR7(): SimState {
+    const sim = createSim(11, { map: createEmptyMap(400, 40, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true })
+    sim.tick = 4 * TICKS_PER_CYCLE + Math.floor(DAY_TICKS_PER_CYCLE / 2)
+    return sim
+  }
+  function poseFrontR7(sim: SimState, type: MeteoType): BandeMeteo {
+    const startTick = sim.tick - Math.round(0.5 * METEO.TRAVERSEE_TICKS)
+    sim.meteo = { type, day: 5, edge: 0, startTick, endTick: startTick + METEO.TRAVERSEE_TICKS }
+    return frontMeteoPos(sim.meteo, sim.tick, sim.map.width, sim.map.height)!
+  }
+
+  it('les LOIS — 1 sans front ; balayage perpendiculaire : 1 dehors, plein facteur au cœur, rampe continue, monotone et bornée, pur', () => {
+    const sim = createSim(3, { map: createEmptyMap(90, 200, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true })
+    // Sans front : 1 AU BIT PRÈS, partout, pour les deux lois.
+    for (const x of [-5, 0, 45, 89]) {
+      expect(meteoSpeedFactor(sim, x, 100)).toBe(1)
+      expect(meteoVisionFactor(sim, x, 100)).toBe(1)
+    }
+    sim.meteo = { type: 'pluie', day: 30, edge: 0, startTick: 0, endTick: METEO.TRAVERSEE_TICKS }
+    sim.tick = METEO.TRAVERSEE_TICKS / 2 // la bande est pleinement SUR la carte
+    const bande = frontMeteoPos(sim.meteo, sim.tick, sim.map.width, sim.map.height)!
+    expect(bande.lo).toBeGreaterThan(0)
+    expect(bande.hi).toBeLessThan(sim.map.width) // le balayage traverse les TROIS régimes
+    const rampe = METEO.RAMPE * METEO.LARGEUR.pluie
+    const avant = snapshot(sim)
+    const pas = 0.05
+    const n = Math.round((sim.map.width + 10) / pas)
+    const lois = [
+      { f: meteoSpeedFactor, plein: METEO.SPEED.pluie },
+      { f: meteoVisionFactor, plein: METEO.VISION.pluie },
+    ] as const
+    for (const { f, plein } of lois) {
+      let prev = 1
+      for (let k = 0; k <= n; k++) {
+        const x = -5 + k * pas
+        const v = f(sim, x, 100)
+        expect(v).toBe(f(sim, x, 100)) // pure : deux appels, même réponse
+        expect(v).toBeGreaterThanOrEqual(plein)
+        expect(v).toBeLessThanOrEqual(1)
+        if (x <= bande.lo || x >= bande.hi) expect(v).toBe(1)
+        if (x >= bande.lo + rampe && x <= bande.hi - rampe) expect(v).toBeCloseTo(plein, 12)
+        // Jamais un mur : la pente est bornée par (1 − plein)/rampe sur TOUT le domaine.
+        expect(Math.abs(v - prev)).toBeLessThanOrEqual(((1 - plein) * pas) / rampe + 1e-9)
+        // Monotone dans chaque rampe : le facteur DESCEND à l'entrée, REMONTE à la sortie.
+        if (x - pas >= bande.lo && x <= bande.lo + rampe) expect(v).toBeLessThanOrEqual(prev)
+        if (x - pas >= bande.hi - rampe && x <= bande.hi) expect(v).toBeGreaterThanOrEqual(prev)
+        prev = v
+      }
+    }
+    expect(snapshot(sim)).toBe(avant) // zéro mutation, zéro tirage sur tout le balayage
+  })
+
+  it('les types DOUX — brouillard : SPEED vaut 1 au bit près jusqu’au cœur, et sa VISION tombe au plein 0,5 ; pluie : VISION 0,85', () => {
+    const sim = simR7()
+    const bande = poseFrontR7(sim, 'brouillard')
+    const coeur = (bande.lo + bande.hi) / 2
+    expect(meteoIntensity(sim, coeur, 20.5)).toBe(1)
+    for (const x of [bande.lo - 1, bande.lo + 2, coeur, bande.hi - 2, bande.hi + 1]) {
+      expect(meteoSpeedFactor(sim, x, 20.5)).toBe(1) // SPEED.brouillard = 1 : le pas ne sait rien
+    }
+    expect(meteoVisionFactor(sim, coeur, 20.5)).toBeCloseTo(METEO.VISION.brouillard, 12)
+    poseFrontR7(sim, 'pluie')
+    const bp = frontMeteoPos(sim.meteo!, sim.tick, sim.map.width, sim.map.height)!
+    expect(meteoVisionFactor(sim, (bp.lo + bp.hi) / 2, 20.5)).toBeCloseTo(METEO.VISION.pluie, 12)
+  })
+
+  it('A7 vitesse — sous PLUIE au cœur, l’avatar marche SPEED.pluie × la distance du même avatar au sec ; brouillard : bit-identique ; RNG intact', () => {
+    const marche = (front: MeteoType | null): SimState => {
+      const sim = simR7()
+      if (front) poseFrontR7(sim, front)
+      const id = spawnEntity(sim, 185.5, 20.5)
+      for (let t = 0; t < 60; t++) step(sim, [{ entityId: id, dx: 1, dy: 0 }])
+      return sim
+    }
+    const sec = marche(null)
+    const pluie = marche('pluie')
+    const brouillard = marche('brouillard')
+    const eSec = sec.entities[0]!
+    const ePluie = pluie.entities[0]!
+    const eBrouillard = brouillard.entities[0]!
+    // Prémisses : le marcheur mouillé est resté AU CŒUR du départ à l'arrivée, et le froid
+    // n'a rien mordu (COLD.pluie = 10, midi d'acte I : les deux restent au-dessus de COMFORT).
+    expect(meteoIntensity(pluie, 185.5, 20.5)).toBe(1)
+    expect(meteoIntensity(pluie, ePluie.x, ePluie.y)).toBe(1)
+    expect(eSec.temperature).toBeGreaterThanOrEqual(TEMPERATURE.COMFORT)
+    expect(ePluie.temperature).toBeGreaterThanOrEqual(TEMPERATURE.COMFORT)
+    // La mesure : SPEED.pluie × la distance du sec — ni plus, ni moins, sur N ticks identiques.
+    expect(eSec.x).toBeGreaterThan(185.5) // on a bien marché
+    expect(ePluie.x - 185.5).toBeCloseTo((eSec.x - 185.5) * METEO.SPEED.pluie, 9)
+    // Brouillard (SPEED 1) : la marche est BIT-IDENTIQUE au sec.
+    expect(eBrouillard.x).toBe(eSec.x)
+    expect(eBrouillard.y).toBe(eSec.y)
+    // Zéro tirage nouveau : le flux RNG des trois mondes est le même.
+    expect(pluie.rngState).toBe(sec.rngState)
+    expect(brouillard.rngState).toBe(sec.rngState)
+  })
+
+  it('A7 perception — l’aggro du LOUP (la plus grande portée, 13) : la CIBLE au cœur du brouillard n’est acquise qu’à aggroRange × VISION.brouillard ; l’OBSERVATEUR voilé, cible au clair : portée INCHANGÉE', () => {
+    const HOUR = 3 // l'heure du loup (R10bis) : sa pleine vigueur, donc sa pleine portée
+    const vigor = wolfVigor(HOUR)
+    expect(vigor).toBeGreaterThan(0)
+    const reachClair = MONSTER_DEFS.wolf.aggroRange * vigor
+    /** Un loup et une proie posés nus, la LOI appelée directement (`wolfStep`, furtivité
+     *  neutralisée à 1) : ce qui reste dans `reach`, c'est la géométrie et la météo. */
+    const chasse = (front: boolean, wolfX: number, proieX: number): { sim: SimState; m: Monster; proieId: number } => {
+      const sim = simR7()
+      if (front) poseFrontR7(sim, 'brouillard')
+      const proieId = spawnEntity(sim, proieX, 20.5)
+      const wolfId = spawnMonster(sim, 'wolf', wolfX, 20.5)
+      const m = sim.monsters.find((mm) => mm.entityId === wolfId)!
+      const we = sim.entities.find((e) => e.id === wolfId)!
+      const proie = sim.entities.find((e) => e.id === proieId)!
+      const byId = new Map(sim.entities.map((e) => [e.id, e] as const))
+      wolfStep(sim, m, we, [proie], byId, new Map([[wolfId, m] as const]), new Map<number, Monster[]>(), HOUR,
+        (id) => id === proieId, () => 1)
+      return { sim, m, proieId }
+    }
+    // Ciel clair, presque à pleine portée : ACQUISE — l'étalon de la loi.
+    const clair = chasse(false, 200.5 - reachClair * 0.99, 200.5)
+    expect(clair.m.targetId).toBe(clair.proieId)
+    // Même distance, la cible au CŒUR du brouillard : plus rien (13 → 6,5).
+    const voile = chasse(true, 200.5 - reachClair * 0.99, 200.5)
+    expect(meteoIntensity(voile.sim, 200.5, 20.5)).toBe(1) // prémisse : le cœur, vraiment
+    expect(voile.m.targetId).toBeNull()
+    // La frontière EFFECTIVE est aggroRange × VISION.brouillard : un cheveu dedans, acquise…
+    const dedans = chasse(true, 200.5 - reachClair * METEO.VISION.brouillard * 0.99, 200.5)
+    expect(dedans.m.targetId).toBe(dedans.proieId)
+    // …un cheveu dehors, rien.
+    const dehors = chasse(true, 200.5 - reachClair * METEO.VISION.brouillard * 1.01, 200.5)
+    expect(dehors.m.targetId).toBeNull()
+    // L'OBSERVATEUR en plein brouillard, la cible AU CLAIR : la portée ne bouge PAS —
+    // la sémantique « au point de la CIBLE » (on n'aveugle pas le loup au soleil).
+    const embusque = chasse(true, 216.5, 216.5 + reachClair * 0.99)
+    expect(meteoIntensity(embusque.sim, 216.5, 20.5)).toBe(1) // le loup est dans le rideau…
+    expect(meteoIntensity(embusque.sim, 216.5 + reachClair * 0.99, 20.5)).toBe(0) // …la cible au soleil
+    expect(embusque.m.targetId).toBe(embusque.proieId)
+  })
+
+  it('R7 Cendreux — `nearestPrey`, la loi de TOUS ses consommateurs : la proie voilée n’existe qu’à portée × VISION, l’œil voilé voit la proie au clair à pleine portée ; zéro tirage', () => {
+    const sim = simR7()
+    poseFrontR7(sim, 'brouillard')
+    const obsId = spawnEntity(sim, 200.5, 20.5)
+    const preyId = spawnEntity(sim, 205, 20.5)
+    const obs = sim.entities.find((e) => e.id === obsId)!
+    const prey = sim.entities.find((e) => e.id === preyId)!
+    const R = MONSTER_DEFS.cendreux.aggroRange // 5 — la vue du Cendreux, jour comme horde
+    const rng0 = sim.rngState
+    // Les deux au cœur, à 4,5 tuiles : la pleine portée (5) la verrait — le voile (5 × 0,5) non.
+    expect(meteoIntensity(sim, prey.x, prey.y)).toBe(1)
+    expect(nearestPrey(sim, obs, R)).toBeUndefined()
+    // Sous la frontière effective (2,5) : vue.
+    prey.x = 202.9
+    expect(nearestPrey(sim, obs, R)?.id).toBe(preyId)
+    // L'œil reste au cœur, la proie sort AU CLAIR : pleine portée retrouvée — le facteur
+    // se lit au point de la PROIE, jamais de l'œil.
+    obs.x = 216.5
+    prey.x = 228.5 // 12 tuiles, hors bande
+    expect(meteoIntensity(sim, obs.x, 20.5)).toBe(1)
+    expect(meteoIntensity(sim, prey.x, 20.5)).toBe(0)
+    expect(nearestPrey(sim, obs, 12.5)?.id).toBe(preyId)
+    expect(sim.rngState).toBe(rng0) // la loi ne tire rien
+  })
+
+  it('R7 gibier — le sens INVERSE : le CHASSEUR au cœur du brouillard n’éveille plus le cerf à 12 tuiles ; le cerf trempé, chasseur au clair : jauge BIT-IDENTIQUE au sec', () => {
+    const D = 12 // sous la portée perçue du cerf (alertRange 14 × PERCEIVE_FACTOR), loin de la panique
+    const traque = (cerfX: number, front: boolean): { sim: SimState; m: Monster } => {
+      const sim = simR7()
+      if (front) poseFrontR7(sim, 'brouillard')
+      // Le chasseur à l'EST (le vent d'état souffle vers +x : il n'est jamais au vent du
+      // cerf — l'odorat ne court-circuite pas la mesure), au pas de MARCHE (gait par défaut).
+      const hunterId = spawnEntity(sim, cerfX + D, 20.5)
+      const cerfId = spawnMonster(sim, 'deer', cerfX, 20.5)
+      const m = sim.monsters.find((mm) => mm.entityId === cerfId)!
+      const ce = sim.entities.find((e) => e.id === cerfId)!
+      const hunter = sim.entities.find((e) => e.id === hunterId)!
+      const byId = new Map(sim.entities.map((e) => [e.id, e] as const))
+      faunaStep(sim, m, ce, [avatarThreat(sim, hunter)], byId, new Map<number, Monster[]>(), 12)
+      return { sim, m }
+    }
+    // Ciel clair : à 12 tuiles, un chasseur qui MARCHE fait monter la jauge dès ce tick.
+    const clair = traque(171.5, false)
+    expect(clair.m.suspicion).toBeGreaterThan(0)
+    // Chasseur au CŒUR du brouillard, cerf au clair : la distance effective double — rien ne monte.
+    const voile = traque(171.5, true)
+    expect(meteoIntensity(voile.sim, 171.5, 20.5)).toBe(0) // le cerf est au clair…
+    expect(meteoIntensity(voile.sim, 171.5 + D, 20.5)).toBe(1) // …le chasseur en plein rideau
+    expect(voile.m.suspicion).toBe(0)
+    // Le CERF sous le brouillard, chasseur au clair : ses sens à LUI ne sont pas voilés —
+    // la jauge monte EXACTEMENT comme au sec (le facteur se lit au point de la CIBLE regardée).
+    const trempe = traque(216.5, true)
+    expect(meteoIntensity(trempe.sim, 216.5, 20.5)).toBe(1)
+    expect(meteoIntensity(trempe.sim, 216.5 + D, 20.5)).toBe(0)
+    expect(trempe.m.suspicion).toBe(clair.m.suspicion)
   })
 })

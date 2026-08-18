@@ -7,8 +7,11 @@
  * la TRANCHE 3 fait taire LA FAUNE (`meteoQuiet`, spec R6) dans le gate de naissance de
  * `faune.ts` ; la TRANCHE 4 met LE FEU SOUS LA PLUIE (`meteoMouille`/`meteoFeuConso`,
  * spec R5) : la consommation des feux accélère dans `fire.ts`, la pose d'un feu neuf à
- * découvert se refuse dans `village.ts` — jamais d'extinction. Restent à venir :
- * vitesse/perception (T5+), et les événements d'annonce (T7).
+ * découvert se refuse dans `village.ts` — jamais d'extinction ; la TRANCHE 5 ralentit
+ * LE PAS et voile LES YEUX (`meteoSpeedFactor`/`meteoVisionFactor`, spec R7) : la vitesse
+ * des avatars dans `sim.ts` (`speedScaleFor`, patron du froid), les portées de détection
+ * dans leurs lois (`nearestPrey`, `chooseQuarry`, `nearestThreat`) — au point de la CIBLE.
+ * Restent à venir : la foudre (R8) et les événements d'annonce (T7).
  *
  * ═══ ZÉRO TIRAGE SUR LE PRNG D'ÉTAT ═══
  *
@@ -194,6 +197,43 @@ export function meteoFeuConso(state: SimState, x: number, y: number): number {
   const plein: number = METEO.FEU_CONSO[front.type]
   if (plein === 1) return 1
   return 1 + (plein - 1) * meteoIntensity(state, x, y)
+}
+
+/**
+ * R7 — LE MULTIPLICATEUR DE VITESSE en (x, y) : `1 − (1 − SPEED[type]) × meteoIntensity` —
+ * 1 sans front, hors bande et pour un type sans malus (brouillard), le plein `SPEED[type]`
+ * au cœur, en RAMPE continue entre les deux (le gradient de `meteoIntensity` : la pluie qui
+ * arrive ALOURDIT le pas en pente, jamais un mur). PENDANT le front, pas après : aucune
+ * accumulation au sol. La position est celle du MARCHEUR — `sim.ts` le compose dans
+ * `speedScaleFor`, la même chaîne que `coldSpeedFactor` (les avatars ; patron du froid).
+ */
+export function meteoSpeedFactor(state: SimState, x: number, y: number): number {
+  const front = state.meteo
+  if (!front) return 1
+  const plein: number = METEO.SPEED[front.type]
+  if (plein === 1) return 1
+  return 1 - (1 - plein) * meteoIntensity(state, x, y)
+}
+
+/**
+ * R7 — LE MULTIPLICATEUR DE PERCEPTION DES IA en (x, y) : `1 − (1 − VISION[type]) ×
+ * meteoIntensity` — 1 sans front et hors bande, le plein `VISION[type]` au cœur (le
+ * brouillard en est le porteur : 0,5, fort et sans froid), en rampe continue entre les deux.
+ *
+ * ═══ LA POSITION EST CELLE DE LA CIBLE — c'est la sémantique, pas un détail ═══
+ *
+ * On se cache DANS la pluie, on n'aveugle pas le loup au soleil (spec R7) : chaque loi de
+ * détection multiplie sa PORTÉE par ce facteur évalué au point de la cible REGARDÉE —
+ * l'observateur sous l'averse voit normalement ce qui est au clair, et ça coupe dans les
+ * deux sens (le raider approche couvert, l'embuscade aussi). Consommé DANS les lois
+ * (`nearestPrey`, `chooseQuarry`, `nearestThreat`), jamais aux sites d'appel.
+ */
+export function meteoVisionFactor(state: SimState, x: number, y: number): number {
+  const front = state.meteo
+  if (!front) return 1
+  const plein: number = METEO.VISION[front.type]
+  if (plein === 1) return 1
+  return 1 - (1 - plein) * meteoIntensity(state, x, y)
 }
 
 /**

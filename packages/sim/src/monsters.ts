@@ -20,6 +20,7 @@ import { computeFlowField, solidesEternels } from './pathfinding'
 import { structureBlocks } from './village'
 import { crossingBlocker } from './construction'
 import { cendreuxStep } from './cendreux'
+import { meteoVisionFactor } from './meteo'
 import { advanceFauna, avatarDetectability, avatarThreat, coverAt, faunaStep, isPredator, isPrey, wolfStep, type Threat } from './faune'
 import { getGameTime } from './time'
 
@@ -345,14 +346,24 @@ export function spawnMonster(
   return id
 }
 
-/** Les proies : avatars (joueurs et PNJ), pas les autres monstres. */
+/**
+ * Les proies : avatars (joueurs et PNJ), pas les autres monstres.
+ *
+ * LA MÉTÉO VOILE LA VUE (spec meteo.md R7) : la portée se multiplie par
+ * `meteoVisionFactor` AU POINT DE LA CIBLE — on se cache dans la pluie, on
+ * n'aveugle pas l'observateur au soleil. Dans la LOI, une fois : tous les
+ * consommateurs (l'aggro du Cendreux, le vivant qui prime dans `nearestWarmth`)
+ * en héritent. Sans front, le facteur vaut 1 : bit-identique à avant.
+ */
 export function nearestPrey(state: SimState, entity: Entity, range: number): Entity | undefined {
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
   let best: Entity | undefined
-  let bestD = range * range
+  let bestD = Infinity
   for (const e of state.entities) {
     if (e.id === entity.id || monsterIds.has(e.id) || e.hp <= 0) continue
+    const reach = range * meteoVisionFactor(state, e.x, e.y)
     const d = distSq(entity.x, entity.y, e.x, e.y)
+    if (d >= reach * reach) continue
     if (d < bestD || (d === bestD && best && e.id < best.id)) {
       best = e
       bestD = d
