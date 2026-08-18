@@ -10340,6 +10340,75 @@ const SCENARIOS = {
     return s
   },
 
+  /**
+   * L'ÉCONOMIE DU MONDE RÉDUIT SE REGARDE (t0-exploration §2sexies) : on se pose sur chaque
+   * butte d'affleurement, sur un poste de carrière et sur un vieux fût, et on photographie.
+   * Tout se DÉRIVE au runtime : les buttes sont les amas de pierrier de la carte (le terrain
+   * `scree` ne vient que de la passe des affleurements dans le monde réduit), leur identité se
+   * lit sur les nœuds qu'elles portent, carrière et fût viennent de `view.nodes`. Exige `--dev` (TP).
+   */
+  async affleurements(page) {
+    const cibles = await page.evaluate(() => {
+      const scene = window.__BRAISES__.scene
+      const map = scene.registry.get('mapData')
+      const { width, height, terrain } = map
+      const SCREE = 9 // l'id de `scree` (balance.ts) — le pierrier, la signature des buttes
+
+      // Les BUTTES : centroïdes des amas de pierrier (fusion à < 80 tuiles — deux buttes
+      // sont écartées d'au moins 150 par construction, aucun risque de fusion).
+      const amas = []
+      for (let ty = 0; ty < height; ty++) {
+        for (let tx = 0; tx < width; tx++) {
+          if (terrain[ty * width + tx] !== SCREE) continue
+          let a = amas.find((c) => {
+            const cx = c.sx / c.n
+            const cy = c.sy / c.n
+            return (tx - cx) * (tx - cx) + (ty - cy) * (ty - cy) < 80 * 80
+          })
+          if (!a) { a = { sx: 0, sy: 0, n: 0 }; amas.push(a) }
+          a.sx += tx; a.sy += ty; a.n += 1
+        }
+      }
+      const nodes = scene.view?.nodes ?? []
+      const buttes = amas.map((a) => {
+        const cx = a.sx / a.n
+        const cy = a.sy / a.n
+        const minerai = nodes.find((n) => (n.type === 'iron_vein' || n.type === 'coal_seam')
+          && (n.tx - cx) * (n.tx - cx) + (n.ty - cy) * (n.ty - cy) < 40 * 40)
+        return { x: cx, y: cy, tuiles: a.n, nom: minerai?.type === 'coal_seam' ? 'charbon' : minerai ? 'fer' : 'muette' }
+      })
+      const quarry = nodes.find((n) => n.type === 'quarry')
+      const fut = nodes.find((n) => n.type === 'old_tree' && n.stock > 3) // > teaser
+      return {
+        buttes,
+        carriere: quarry ? { x: quarry.tx, y: quarry.ty } : null,
+        fut: fut ? { x: fut.tx, y: fut.ty } : null,
+      }
+    })
+
+    console.log(`   ${cibles.buttes.length} buttes trouvées (${cibles.buttes.map((b) => `${b.nom}:${b.tuiles} tuiles`).join(', ')})`)
+    if (cibles.buttes.length === 0) console.error('!! AUCUNE BUTTE — le monde joué porte-t-il bien les affleurements ?')
+
+    // Pas de `press('P')` ici : en `--dev`, P ouvre le PANNEAU debug — il salirait chaque photo.
+    const photos = [
+      ...cibles.buttes.map((b, i) => ({ nom: `butte-${b.nom}-${i + 1}`, x: b.x, y: b.y })),
+      ...(cibles.carriere ? [{ nom: 'carriere', ...cibles.carriere }] : []),
+      ...(cibles.fut ? [{ nom: 'vieux-fut', ...cibles.fut }] : []),
+    ]
+    for (const p of photos) {
+      await page.evaluate(({ x, y }) => {
+        window.__BRAISES__.scene.registry.set('debugTeleport', { x, y, at: performance.now() })
+      }, { x: p.x, y: p.y })
+      await page.waitForTimeout(1600)
+      await canopeePleine(page) // la cime ne s'efface pas sur une photo (le fût est sous bois)
+      await page.evaluate(() => { window.__BRAISES__.scene.cameras.main.setZoom(2.2) })
+      await page.waitForTimeout(500)
+      await page.screenshot({ path: `${OUT}/affleurement-${p.nom}.png` })
+      console.log(`   ✓ (${Math.round(p.x)}, ${Math.round(p.y)}) → affleurement-${p.nom}.png`)
+    }
+    return cibles
+  },
+
   /** Les lieux (spec docs/specs/lieux.md) : la carte est-elle bien vierge au départ ? */
   async lieux(page) {
     const s = await page.evaluate(PROBE)
