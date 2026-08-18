@@ -17,7 +17,9 @@
  *
  * Marqueurs : seuils = croix jaunes, POI = magenta, charniers = orange,
  * set-pieces = violet, gués = cyan, villages = rouge, spawns = blanc,
- * fil de rivière = bleu nuit.
+ * fil de rivière = bleu nuit. L'économie du monde réduit (§2sexies) :
+ * butte ferreuse = contour rouille, charbonneuse = contour noir,
+ * postes de carrière = vert vif, vieux fûts = vert d'eau.
  */
 import { deflateSync } from 'node:zlib'
 import { writeFileSync } from 'node:fs'
@@ -129,6 +131,19 @@ for (const e of emplacements) carre(e.tx, e.ty, 3, 255, 0, 0)
 const spawns = pointsDeSpawn(carte, emplacements, Math.ceil(MONDE.JOUEURS_CIBLE / MONDE.JOUEURS_PAR_VILLAGE))
 for (const s of spawns) carre(s.tx, s.ty, 2, 255, 255, 255)
 
+// ── L'économie du monde réduit (t0-exploration §2sexies) : les buttes en CONTOUR (le
+//    contenant registré), les carrières et vieux fûts en points — [] sur --complet. ──
+for (const a of carte.affleurements) {
+  const [r, g2, b] = a.ressource === 'fer' ? [255, 64, 0] : [10, 10, 10]
+  const { x, y, w, h } = a.rect
+  for (let X = x; X < x + w; X++) { px(X, y, r, g2, b); px(X, y + h - 1, r, g2, b) }
+  for (let Y = y; Y < y + h; Y++) { px(x, Y, r, g2, b); px(x + w - 1, Y, r, g2, b) }
+}
+for (const n of nodes) {
+  if (n.type === 'quarry') carre(n.tx, n.ty, 2, 0, 255, 0)
+  else if (n.type === 'old_tree') carre(n.tx, n.ty, 2, 64, 224, 170)
+}
+
 // ── Fenêtre de sortie : carte entière, ou recadrage --crop upscalé --zoom ──
 let outW = W, outH = H, rendu = img
 if (crop && crop.length === 4) {
@@ -200,3 +215,8 @@ console.log('zones du graphe:', carte.graphe.zones.map((z) => `${z.def.slug}(T${
 console.log('seuils:', (map.seuils ?? []).length, '— vers:', (map.seuils ?? []).map((s) => `${s.vers}${s.secours ? '(secours)' : ''}`).join(', '))
 console.log('POI par kind:', Object.entries(parKind).sort().map(([k, n]) => `${k}=${n}`).join(' '))
 console.log('villages:', emplacements.length, 'spawns:', spawns.length, 'fil rivière:', map.fil?.length ?? 0, 'tuiles')
+if (carte.affleurements.length > 0) {
+  const compteNoeuds = (t: string): number => nodes.filter((n) => n.type === t).length
+  console.log('économie §2sexies —', carte.affleurements.map((a) => `${a.ressource}@${a.rect.x},${a.rect.y}`).join(' '),
+    `| iron_vein=${compteNoeuds('iron_vein')} coal_seam=${compteNoeuds('coal_seam')} quarry=${compteNoeuds('quarry')} old_tree=${compteNoeuds('old_tree')}`)
+}

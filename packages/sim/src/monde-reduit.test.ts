@@ -15,13 +15,13 @@
  *           local — un banc qui calibrerait la vallée entière mesurerait un jeu que personne ne joue.
  */
 import { describe, expect, it } from 'vitest'
-import { TERRAIN_ROAD } from './balance'
+import { TERRAIN_ROAD, TERRAINS } from './balance'
 import { placeHuntingGrounds } from './faune'
 import { nidsAMonstre } from './poi'
 import { BANC_JOUEURS, construireMondeDuBanc } from './scenario'
 import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
 import { generateZonedTerrain } from './zonegen'
-import { deriveGrapheZones, MONDE, MONDE_JOUE, tailleCarte } from './zonegraph'
+import { deriveGrapheZones, distAuRect, MONDE, MONDE_JOUE, tailleCarte } from './zonegraph'
 
 /** Les graines de production des autres gardes — le monde qu'on jouera vraiment. */
 const SEEDS = [2026, 7]
@@ -64,6 +64,31 @@ describe('A-MR1 — le monde réduit tient : la boucle de saison a tous ses orga
     for (const { s, c } of reduits) {
       expect(c.map.cendreMax, `seed ${s}`).toBeDefined()
       expect(c.map.cendreMax!, `seed ${s}`).toBeGreaterThan(0)
+    }
+  })
+
+  it('A-MR5 — le front est une marée SUD→NORD : rien ne brûle loin au nord de la Cendrière', () => {
+    // LE BUG QUE CETTE GARDE ÉPINGLE (trouvé par la dérivation des carrières, 2026-08-18) : à
+    // deux zones, « la région d'en face » est TOUJOURS la Cendrière — le champ de cendre valait
+    // la distance à SON PROPRE bord sur tout le pourtour, et 37 % de la racine « brûlait » à
+    // plus de 200 tuiles au NORD du feu. Le front avançait depuis toutes les enceintes.
+    // Depuis : la distance au front EST la distance au rect de la Cendrière (± le grain du bloc).
+    for (const { s, c } of reduits) {
+      const { width, height, cendre, cendreMax, terrain } = c.map
+      const rc = c.graphe.zones.find((z) => z.def.slug === 'cendriere')!.rect!
+      let faux = 0
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = y * width + x
+          if (c.zone[i] !== c.graphe.racine) continue
+          // Les tuiles MARCHABLES seulement : le vide (la roche) se RATTACHE à la racine pour
+          // l'ambiance, et son champ vaut |m|+1 par conception — « le vide ne brûle pas ».
+          // C'est là où le jeu se joue que la marée doit être vraie.
+          if (!TERRAINS[terrain[i]!]?.walkable) continue
+          if (cendre![i]! <= cendreMax! && distAuRect(x, y, rc) > cendreMax! + 32) faux++
+        }
+      }
+      expect(faux, `seed ${s} : des tuiles brûlent HORS DE PORTÉE du feu — le front n'est pas une marée sud→nord`).toBe(0)
     }
   })
 

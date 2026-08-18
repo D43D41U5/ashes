@@ -265,6 +265,59 @@ humains).*
 
 ---
 
+## §2sexies — LES AFFLEUREMENTS : la géologie donne le minerai (monde réduit)
+
+*Décision d'Alexis, 2026-08-18 (« suis la reco » sur sa piste « zones de production naturelle : un
+affleurement ponctuel de roches laisse apparaître du fer ou du charbon »). Contexte : le monde réduit
+(worldgen §7bis) a coupé le Karst, les Alpages et la Sylve — sans correctif, la progression solo
+plafonne au palier 2. Le correctif suit la doctrine du §2bis : DÉRIVÉ, jamais posé.*
+
+**PÉRIMÈTRE : le monde réduit SEUL (plan `'racine'`).** Le plan `'vallee'` ne change pas d'un octet —
+l'exclusivité des structurantes (worldgen R9, gardes A14/A15bis) reste entière : le VRAI fer est au
+Karst. Au retour du graphe, le récit tient sans retouche : en T0 la roche PERCE, au Karst elle RÈGNE
+(hiérarchie d'abondance ; la retaille éventuelle est une décision à repasser, consignée au journal).
+
+- **R47 — L'affleurement DÉRIVE du socle.** Sur les dos les plus hauts et les plus secs de la Racine
+  (élection par rang sur `altLarge`, sommet qualifié par la bande sèche de l'humidité — la mécanique
+  des bosquets de crête, R33), la terre s'use jusqu'à l'os : une petite rocaille de pierrier
+  (`scree`), rectiligne (union de motifs, R32), visible de loin dans le pré. Jamais sur l'eau, un
+  seuil, une sente ou un set-piece — l'affleurement ne coiffe que le pré, la fleuraie et la lande.
+  Et HORS D'ATTEINTE DU FRONT (champ de cendre > `cendreMax`, la clause de R49) : un gisement que
+  la cendre avale à mi-saison est une économie confisquée — la saison pousse au nord, le minerai
+  y est déjà.
+- **R48 — CONTENANT/CONTENU : le minerai naît DE l'affleurement.** `iron_vein` et `coal_seam` ne se
+  sèment QUE sur la rocaille élue — quelques nœuds par butte, stock et repousse STANDARD (un filet,
+  pas une mine). Et **un affleurement = une identité** : ferreux OU charbonneux, jamais mixte — la
+  lisibilité en trois secondes, appliquée à la géologie.
+- **R49 — La pierre de taille se taille À LA PAROI.** Les nœuds `quarry` se posent au pied de
+  l'enceinte de roche, sur des postes écartés entre eux, hors des couloirs de seuil, et là où le
+  front de cendre n'arrive JAMAIS (champ de cendre > `cendreMax`) : une carrière est une paroi
+  qu'on entaille, pas un tas dans un pré — et le feu ne la confisque pas.
+- **R50 — Le gros bois vit AU CŒUR.** `old_tree` (stock standard) naît dans les cellules CŒUR des
+  plus grands massifs de la Racine (§2quater) — repli au plus profond si aucune cellule cœur
+  n'existe à cette échelle. Le teaser du Bois Noir (R11) reste ce qu'il est.
+- **R51 — PLANCHERS GARANTIS (le patron des gués, R7).** Aucune seed ne naît sans : ≥ 1 affleurement
+  ferreux, ≥ 1 charbonneux, ≥ 2 postes de carrière, ≥ 1 vieux fût. Si l'élection stricte n'en donne
+  pas assez, on force au meilleur rang (la sécheresse cède avant le compte — jamais l'inverse).
+- **R52 — La butte n'est le jardin de personne.** Un emplacement de village ne se pose pas sur un
+  affleurement (exclusion dans `emplacementsDeVillage`, même famille que R17bis) : la distance fait
+  le prix. Aucun interdit joueur (worldgen R17) : fonder à côté reste permis.
+
+**Gardes** (`affleurements.test.ts`) : **A28** planchers R51 tenus sur les graines de production ET à
+l'échelle du banc ; **A29** contenant/contenu — tout `iron_vein`/`coal_seam` de la Racine réduite est
+sur la rocaille d'un affleurement enregistré (le teaser du Filon excepté, R11), tout `quarry` touche
+la roche de l'enceinte hors d'atteinte du front, tout `old_tree` neuf est en cellule cœur (ou au plus
+profond, repli constaté) ; **A30** identité unique par butte, écartement mutuel ≥ l'écart du semis
+des lieux, et aucun emplacement de village sur une butte ; **A31** le monde complet est INTACT —
+aucun de ces nœuds n'existe sur le plan `'vallee'` (A14/A15bis restent la garde de l'exclusivité).
+
+*Réglages : `AFFL_*` dans `CREUX` (élection/peinture — se règle en regardant une carte) et dans
+`CONTENU` (comptes de nœuds). Consigné pour plus tard, décisions à repasser une à une : les comptes
+exacts (calibrage à l'œil), des toponymes sur les buttes, le sort du teaser du Filon devenu
+redondant, la retaille au retour du graphe.*
+
+---
+
 ## §3 — Les set-pieces : des ENDROITS, pas des timbres
 
 *(RÉVISÉ le 2026-08-16 — étage 3, §2quinquies : les corps et les charges de R9-R12 restent,

@@ -33,6 +33,8 @@ import {
   TERRAIN_OLD_GROWTH,
   TERRAIN_PINE,
   TERRAIN_ROAD,
+  TERRAIN_ROCK,
+  TERRAIN_SCREE,
   TERRAIN_WET_MEADOW,
   TERRAIN_WILLOW,
   TERRAINS,
@@ -101,6 +103,24 @@ export const CONTENU = {
    *  un bosquet et non un mur de fruits. Calibration. */
   VERGER_DENSITE: 0.34,
   TEASER_STOCK: 3,
+
+  /**
+   * L'ÉCONOMIE DU MONDE RÉDUIT (t0-exploration §2sexies) — les comptes de nœuds des trois
+   * dérivations : minerais SUR la rocaille des affleurements (R48), carrières AU PIED de
+   * l'enceinte (R49), vieux fûts AU CŒUR des massifs (R50). Ordres de grandeur — le calibrage
+   * se fait en regardant la carte, et les planchers de R51 sont gardés par A28.
+   */
+  /** Nœuds par affleurement. 4 × stock 8 = 32 coups par butte : un filet, pas une mine. */
+  AFFL_NOEUDS: 4,
+  /** Postes de carrière le long de l'enceinte, écartés au max-min. */
+  CARRIERES: 3,
+  /** Nœuds `quarry` par poste (stock 6 chacun). */
+  CARRIERE_NOEUDS: 3,
+  /** Rayon de pose autour d'un poste de carrière, en tuiles. */
+  CARRIERE_RAYON: 6,
+  /** Vieux fûts (`old_tree`, stock standard) aux cœurs des massifs — hors Bois Noir (le
+   *  teaser R11 garde son récit : « le gros bois existe. Pas ici. »). */
+  VIEUX_FUTS: 2,
 
   /**
    * LES CHAMPIGNONS (spec recolte-maitrise verbe 3) — un patch tous les X tuiles LIBRES, par
@@ -362,7 +382,194 @@ export function placeZoneNodes(c: CarteZonee): ResourceNode[] {
   id += coeurs.length
   const feuilles = tasDeFeuilles(c, occupeesPlus(), id)
   for (const f of feuilles) nodes.push(f)
+  id += feuilles.length
+
+  // ── L'ÉCONOMIE DU MONDE RÉDUIT (t0-exploration §2sexies) — en QUEUE, et GATED : sur le plan
+  //    complet les trois passes rendent [] — zéro nœud, zéro décalage, A14/A15bis intacts. ──
+  const minerais = mineraisDesAffleurements(c, occupeesPlus(), id)
+  for (const m of minerais) nodes.push(m)
+  id += minerais.length
+  const carrieres = carrieresDeLEnceinte(c, occupeesPlus(), id)
+  for (const q of carrieres) nodes.push(q)
+  id += carrieres.length
+  const futs = vieuxFutsDesCoeurs(c, occupeesPlus(), id)
+  for (const f of futs) nodes.push(f)
   return nodes
+}
+
+/**
+ * ═══ LES MINERAIS DES AFFLEUREMENTS — le contenant donne le contenu (§2sexies R48) ═══
+ *
+ * Par le REGISTRE (`c.affleurements`), jamais en devinant le terrain : les `boulders` ordinaires
+ * du pré ne sont pas des gisements. Un affleurement = UNE identité (ferreux OU charbonneux).
+ * Répartition par pas constant dans la liste row-major des tuiles de rocaille — l'écartement
+ * sans tirage ; le départ est salé positionnel ('AFFL'), le patron canonique du worldgen.
+ */
+function mineraisDesAffleurements(c: CarteZonee, occupees: Set<number>, id: number): ResourceNode[] {
+  const { width, height, terrain } = c.map
+  const out: ResourceNode[] = []
+  for (const aff of c.affleurements) {
+    const type: NodeType = aff.ressource === 'fer' ? 'iron_vein' : 'coal_seam'
+    const r = aff.rect
+    const libres: number[] = []
+    for (let ty = r.y; ty < r.y + r.h; ty++) {
+      for (let tx = r.x; tx < r.x + r.w; tx++) {
+        if (tx < 0 || ty < 0 || tx >= width || ty >= height) continue
+        const i = ty * width + tx
+        if (c.rampe[i] || occupees.has(i)) continue
+        if (terrain[i] !== TERRAIN_SCREE) continue // le contenant est la rocaille PEINTE, exactement
+        if (!terrainAdmet(type, terrain[i]!)) continue
+        libres.push(i)
+      }
+    }
+    const n = Math.min(CONTENU.AFFL_NOEUDS, libres.length)
+    if (n === 0) continue
+    const depart = Math.floor(hash2(r.x, r.y, (c.graphe.seed ^ 0x4146464c) | 0) * (libres.length / n))
+    for (let k = 0; k < n; k++) {
+      const i = libres[Math.min(libres.length - 1, depart + Math.floor((k * libres.length) / n))]!
+      if (occupees.has(i)) continue
+      occupees.add(i)
+      const tx = i % width
+      out.push({ id: id + out.length, type, tx, ty: (i - tx) / width, stock: NODE_DEFS[type].stock, regrowAt: 0 })
+    }
+  }
+  return out
+}
+
+/**
+ * ═══ LES CARRIÈRES DE L'ENCEINTE — on taille la montagne, pas le pré (§2sexies R49) ═══
+ *
+ * Candidates : les tuiles marchables de la racine au CONTACT ORTHOGONAL de la roche, hors
+ * seuils et routes, et là où le front n'arrive JAMAIS (`cendre > cendreMax` — ce qui exclut
+ * d'office le mur de la frontière Cendrière : ses abords brûlent). Les postes s'écartent au
+ * MAX-MIN (le patron des points de spawn), départ salé ('CARR') ; autour de chaque poste,
+ * quelques nœuds `quarry` sur les candidates voisines.
+ */
+function carrieresDeLEnceinte(c: CarteZonee, occupees: Set<number>, id: number): ResourceNode[] {
+  if ((c.graphe.monde ?? 'vallee') !== 'racine') return []
+  const { width, height, terrain, cendre, cendreMax } = c.map
+  if (!cendre || cendreMax === undefined) return []
+  const candidates: number[] = []
+  for (let ty = 1; ty < height - 1; ty++) {
+    for (let tx = 1; tx < width - 1; tx++) {
+      const i = ty * width + tx
+      if (c.zone[i] !== c.graphe.racine) continue
+      if (c.rampe[i] || occupees.has(i)) continue
+      const t = terrain[i]!
+      if (t === TERRAIN_ROAD || !TERRAINS[t]?.walkable) continue
+      if (cendre[i]! <= cendreMax) continue
+      if (terrain[i - 1] !== TERRAIN_ROCK && terrain[i + 1] !== TERRAIN_ROCK
+        && terrain[i - width] !== TERRAIN_ROCK && terrain[i + width] !== TERRAIN_ROCK) continue
+      if (!terrainAdmet('quarry', t)) continue
+      candidates.push(i)
+    }
+  }
+  if (candidates.length === 0) return []
+
+  const sel = (c.graphe.seed ^ 0x43415252) | 0 /* 'CARR' */
+  const postes: number[] = [candidates[Math.min(candidates.length - 1, Math.floor(hash2(candidates.length, 0, sel) * candidates.length))]!]
+  while (postes.length < CONTENU.CARRIERES) {
+    let best = -1
+    let bestD = -1
+    for (const i of candidates) {
+      const tx = i % width
+      const ty = (i - tx) / width
+      let d = Infinity
+      for (const p of postes) {
+        const px = p % width
+        const py = (p - px) / width
+        const dd = (tx - px) * (tx - px) + (ty - py) * (ty - py)
+        if (dd < d) d = dd
+      }
+      if (d > bestD) { bestD = d; best = i }
+    }
+    if (best < 0 || bestD <= 0) break
+    postes.push(best)
+  }
+
+  const out: ResourceNode[] = []
+  const R2 = CONTENU.CARRIERE_RAYON * CONTENU.CARRIERE_RAYON
+  for (const p of postes) {
+    const px = p % width
+    const py = (p - px) / width
+    const proches = candidates.filter((i) => {
+      const tx = i % width
+      const ty = (i - tx) / width
+      return (tx - px) * (tx - px) + (ty - py) * (ty - py) <= R2
+    })
+    const n = Math.min(CONTENU.CARRIERE_NOEUDS, proches.length)
+    for (let k = 0; k < n; k++) {
+      const i = proches[Math.min(proches.length - 1, Math.floor((k * proches.length) / n))]!
+      if (occupees.has(i)) continue
+      occupees.add(i)
+      const tx = i % width
+      out.push({ id: id + out.length, type: 'quarry', tx, ty: (i - tx) / width, stock: NODE_DEFS.quarry.stock, regrowAt: 0 })
+    }
+  }
+  return out
+}
+
+/**
+ * ═══ LES VIEUX FÛTS DES CŒURS — le gros bois vit au fond des bois (§2sexies R50) ═══
+ *
+ * `old_tree` (stock standard, pas un teaser) dans les cellules CŒUR des massifs de la racine
+ * (§2quater), HORS Bois Noir — son teaser garde son récit. Repli R51 : si aucune cellule cœur
+ * n'existe à cette échelle, le tuile boisée la plus PROFONDE fait l'affaire. Postes au max-min,
+ * même patron que les carrières.
+ */
+function vieuxFutsDesCoeurs(c: CarteZonee, occupees: Set<number>, id: number): ResourceNode[] {
+  if ((c.graphe.monde ?? 'vallee') !== 'racine') return []
+  const { width, height, terrain } = c.map
+  const boisNoir = c.map.zones.find((z) => z.kind === 'bois_noir')
+  const dansBoisNoir = (tx: number, ty: number): boolean =>
+    boisNoir !== undefined && tx >= boisNoir.x && tx < boisNoir.x + boisNoir.w && ty >= boisNoir.y && ty < boisNoir.y + boisNoir.h
+  const coeurs: number[] = []
+  let repli = -1
+  let repliProf = 0
+  for (let ty = 0; ty < height; ty++) {
+    for (let tx = 0; tx < width; tx++) {
+      const i = ty * width + tx
+      if (c.zone[i] !== c.graphe.racine) continue
+      if (c.rampe[i] || occupees.has(i)) continue
+      if (!terrainAdmet('old_tree', terrain[i]!)) continue
+      if (dansBoisNoir(tx, ty)) continue
+      const d = profondeurAt(c.map, tx, ty)
+      if (estCoeur(d)) coeurs.push(i)
+      if (d > repliProf) { repliProf = d; repli = i }
+    }
+  }
+  const bassin = coeurs.length > 0 ? coeurs : repli >= 0 ? [repli] : []
+  if (bassin.length === 0) return []
+
+  const sel = (c.graphe.seed ^ 0x46555453) | 0 /* 'FUTS' */
+  const postes: number[] = [bassin[Math.min(bassin.length - 1, Math.floor(hash2(bassin.length, 1, sel) * bassin.length))]!]
+  while (postes.length < CONTENU.VIEUX_FUTS) {
+    let best = -1
+    let bestD = -1
+    for (const i of bassin) {
+      const tx = i % width
+      const ty = (i - tx) / width
+      let d = Infinity
+      for (const p of postes) {
+        const px = p % width
+        const py = (p - px) / width
+        const dd = (tx - px) * (tx - px) + (ty - py) * (ty - py)
+        if (dd < d) d = dd
+      }
+      if (d > bestD) { bestD = d; best = i }
+    }
+    if (best < 0 || bestD <= 0) break
+    postes.push(best)
+  }
+
+  const out: ResourceNode[] = []
+  for (const i of postes) {
+    if (occupees.has(i)) continue
+    occupees.add(i)
+    const tx = i % width
+    out.push({ id: id + out.length, type: 'old_tree', tx, ty: (i - tx) / width, stock: NODE_DEFS.old_tree.stock, regrowAt: 0 })
+  }
+  return out
 }
 
 /**
@@ -885,6 +1092,15 @@ export function emplacementsDeVillage(c: CarteZonee, nodes: ResourceNode[], dang
       // UN SITE TENABLE (R17bis) : hors du territoire d'un coin de chasse, loin d'un nid.
       if (dangers.coinsDeChasse.some((g) => distSq(g.x, g.y, tx, ty) < ecartChasse2)) continue
       if (presDUnNid(tx, ty)) continue
+
+      // LA BUTTE N'EST LE JARDIN DE PERSONNE (§2sexies R52) : un village ne se pose pas sur un
+      // affleurement — la distance fait le prix du minerai. Même famille de CONSTAT que R17bis ;
+      // le joueur, lui, fonde toujours où il veut (R17). `[]` sur le plan complet : no-op.
+      if (c.affleurements.some((a) => {
+        const dx = Math.max(a.rect.x - tx, 0, tx - (a.rect.x + a.rect.w))
+        const dy = Math.max(a.rect.y - ty, 0, ty - (a.rect.y + a.rect.h))
+        return dx * dx + dy * dy < CONTENU.DEGAGEMENT * CONTENU.DEGAGEMENT
+      })) continue
 
       // Assez loin du village précédent : on se frotte, on ne se marche pas dessus.
       if (out.some((e) => distSq(e.tx, e.ty, tx, ty) < ecart2)) continue

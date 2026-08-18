@@ -212,6 +212,25 @@ export const CREUX = {
   /** Taille maximale d'un bosquet, en cellules de motif (× 64 tuiles). 20 → ~1 280 tuiles,
    *  36 de côté : un bois qu'on traverse en un écran, pas une seconde Sylve. */
   CRETE_MAX_CELLULES: 20,
+
+  // ══ LES AFFLEUREMENTS — la géologie donne le minerai (spec t0-exploration §2sexies, R47) ═══
+  //
+  // MONDE RÉDUIT SEULEMENT. Même famille que les bosquets de crête — le chapeau sur la bosse —
+  // mais l'élection est PAR RANG GLOBAL (les quelques dos les plus hauts du pays, pas une
+  // couverture par grille) : un affleurement est un événement géologique, pas un semis.
+  /** L'ordre des identités, du meilleur rang au dernier : les buttes élues se nomment dans cet
+   *  ordre. Deux ferreuses, une charbonneuse — R51 fait de ce tableau le PLANCHER garanti. */
+  AFFL_IDENTITES: ['fer', 'fer', 'charbon'] as const,
+  /** Épaisseur du chapeau sous le sommet. Plus mince que `CHAPEAU` : la roche ne perce qu'au
+   *  ras de l'os, une rocaille n'est pas une colline entière. */
+  AFFL_CHAPEAU: 0.03,
+  /** Taille du chapeau, en cellules de motif (× 64 tuiles). 2 à 5 cellules ≈ 130-320 tuiles :
+   *  un genou de roche qu'on remarque dans le pré, pas un pierrier de montagne. */
+  AFFL_MIN_CELLULES: 2,
+  AFFL_MAX_CELLULES: 5,
+  /** Écart minimal entre deux buttes, en cellules de motif. 30 → 240 tuiles : deux affleurements
+   *  dans le même écran seraient un seul gisement qui ment. */
+  AFFL_ECART: 30,
 } as const
 
 /**

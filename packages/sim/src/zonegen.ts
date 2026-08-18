@@ -73,11 +73,13 @@ import { forcerLesGues, tracerLesSentes } from './zonegen-sentes'
 import { placerLesSetPieces } from './zonegen-setpieces'
 import {
   deriveGrapheZones,
+  distAuRect,
   echantillonAt,
   MONDE,
   voisinAt,
   type GrapheZones,
   type MondeGen,
+  type Rect,
 } from './zonegraph'
 
 /**
@@ -405,6 +407,13 @@ export interface CarteZonee {
   zone: Int32Array
   /** Cette tuile est-elle sur un SEUIL ? (le couloir d'un goulot) — l'exemption du murage d'arête. */
   rampe: Uint8Array
+  /**
+   * LES AFFLEUREMENTS du monde réduit (t0-exploration §2sexies) — le CONTENANT registré : le
+   * semis des minerais et l'exclusion des villages les lisent ici, jamais en devinant le
+   * terrain (les `boulders` ordinaires du pré ne sont pas des gisements). `[]` sur le plan
+   * complet. Donnée de GÉNÉRATION : elle ne va ni dans `WorldMap` ni dans `SimState`.
+   */
+  affleurements: Affleurement[]
 }
 
 /**
@@ -622,6 +631,13 @@ export function generateZonedTerrain(
    * C'est de la donnée STATIQUE : ce qui bouge est un scalaire dans le `SimState` (spec R31).
    */
   const cendriere = g.zones.find((z) => z.def.slug === 'cendriere')!
+  // LE MONDE RÉDUIT MESURE AU RECT, PAS AU VOISIN. À deux zones, « la région d'en face » est
+  // TOUJOURS la Cendrière, quel que soit le bord le plus proche : l'heuristique `voisinAt`
+  // faisait avancer le front depuis TOUTES les enceintes (MESURÉ, seed 2026 : champ = 8 au bord
+  // NORD à 520 tuiles du feu, 37 % de la racine « brûlait » à > 200 tuiles au nord). La distance
+  // au RECT de la Cendrière est la géométrie même — et le plan complet garde son calcul, octet
+  // pour octet.
+  const champAuRect = g.monde === 'racine'
   const champCendre = computeCendreField(width, height, (x, y) => {
     const k = blocDe(blocs, x, y)
     const zid = blocs.zone[k]!
@@ -632,6 +648,7 @@ export function generateZonedTerrain(
     // de vide, comptées comme siennes.
     if (blocs.vide[k]) return Math.abs(m) + 1
     if (zid === cendriere.id) return -m // DEDANS : elle brûle depuis le premier jour
+    if (champAuRect) return distAuRect(x, y, cendriere.rect!)
     // Dehors : la distance à la frontière de la Cendrière. Si le bloc ne la touche pas, on prend la
     // distance au site — une borne honnête, et le front s'arrête de toute façon bien avant.
     if (voisinAt(g, x, y) === cendriere.id) return m
@@ -641,6 +658,16 @@ export function generateZonedTerrain(
   // On vise une PART des Prés Bas (60 %), pas une distance : la forme des zones varie trop d'une
   // seed à l'autre pour qu'un nombre de tuiles fixe tienne la promesse. On calibre donc ICI.
   const cendreMax = calibreLeFront(champCendre, (i) => zone[i] === g.racine && rampe[i] === 0)
+
+  // ── LES AFFLEUREMENTS — la géologie du monde réduit (t0-exploration §2sexies) ────────────
+  //
+  // MONDE RÉDUIT SEUL : sur le plan complet la passe rend [] sans toucher UNE tuile — le fer
+  // reste l'exclusivité du Karst (worldgen R9/A14), et le chemin 'vallee' reste octet-identique.
+  // ICI et pas à la passe 1.59, parce qu'elle a besoin du champ de cendre : un gisement que le
+  // front avale à mi-saison est une économie confisquée — la roche ne perce que là où le feu
+  // n'arrive JAMAIS (même clause que les carrières, R49). Elle ne coiffe que le pré nu, donc
+  // aucune passe d'après (stades du Brûlé : hors racine) ne la repeint ni n'en dépend.
+  const affleurements = poserLesAffleurements(terrain, zone, g, width, height, creux, champCendre, cendreMax)
 
   // ── LES STADES DU VERSANT BRÛLÉ (stratigraphie, couche IV) : la reprise, datée par le champ
   //    de cendre qu'on vient de poser. AVANT les lieux — le semis lit le terrain des stades.
@@ -685,7 +712,7 @@ export function generateZonedTerrain(
   // couche → eau, pour chaque massif à cœur qui boit. Champ additif, patron `fil`.
   const coulees = tracerLesCoulees(terrain, zone, g, width, height, map.profondeur!, creux)
   if (coulees.length > 0) map.coulees = coulees
-  const carte: CarteZonee = { map, graphe: g, zone, rampe }
+  const carte: CarteZonee = { map, graphe: g, zone, rampe, affleurements }
 
   // ── PASSE 4.5 : LES SET-PIECES ET LES GUÉS ENTRENT DANS LA CARTE ──────────
   //
@@ -964,6 +991,154 @@ function peindreLesBosquetsDeCrete(
       }
     }
   }
+}
+
+/**
+ * ═══ LES AFFLEUREMENTS — la géologie donne le minerai (spec t0-exploration §2sexies) ═══
+ *
+ * MONDE RÉDUIT SEUL (plan `'racine'`). Sur les dos les plus hauts et les plus secs du pays, la
+ * terre s'use jusqu'à l'os : une petite rocaille de pierrier perce le pré. Même famille que les
+ * bosquets de crête — le chapeau sur la bosse — mais l'élection est PAR RANG GLOBAL : on prend
+ * les quelques sommets les plus hauts du pays entier, écartés entre eux, pas une couverture par
+ * grille. Un affleurement est un événement géologique, pas un semis (R47).
+ *
+ * L'identité (ferreux/charbonneux) suit le RANG : `CREUX.AFFL_IDENTITES`, du plus haut sommet au
+ * dernier — zéro tirage, la géologie décide (R48). Le PLANCHER (R51) : si la bande sèche ne
+ * fournit pas assez de sommets, on relâche la sécheresse et on force au meilleur rang — la
+ * sécheresse cède avant le compte, jamais l'inverse.
+ *
+ * Le semis des nœuds (`iron_vein`/`coal_seam` SUR la rocaille) vit dans `zone-content.ts` — ici
+ * on ne fait que la géologie, et on la REGISTRE (`CarteZonee.affleurements`) : le contenant est
+ * une donnée, pas une devinette de terrain (les `boulders` ordinaires du pré n'en sont pas).
+ */
+export interface Affleurement {
+  rect: Rect
+  ressource: 'fer' | 'charbon'
+}
+
+function poserLesAffleurements(
+  terrain: number[],
+  zone: Int32Array,
+  g: GrapheZones,
+  width: number,
+  height: number,
+  creux: Creux | null,
+  champCendre: readonly number[],
+  cendreMax: number,
+): Affleurement[] {
+  if (g.monde !== 'racine' || !creux) return []
+  const M = RELIEF.MOTIF
+  const n = creux.cols * creux.rows
+
+  // La rocaille ne coiffe que le pré, la fleuraie et la lande (R47) — motif ENTIER, la leçon
+  // des bosquets : une miette de pierrier au milieu d'un pré se lit comme une erreur. Et HORS
+  // D'ATTEINTE DU FRONT : un gisement que la cendre avale à mi-saison est une économie
+  // confisquée — même clause que les carrières (R49), dérivée du même champ.
+  const tuileLibre = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return false
+    const i = y * width + x
+    if (zone[i] !== g.racine) return false
+    if (champCendre[i]! <= cendreMax) return false
+    const t = terrain[i]!
+    return t === TERRAIN_GRASS || t === TERRAIN_FLOWER_MEADOW || t === TERRAIN_JUNIPER_HEATH
+  }
+  const peignable = (tx0: number, ty0: number): boolean => {
+    for (let dy = 0; dy < M; dy++) {
+      for (let dx = 0; dx < M; dx++) if (!tuileLibre(tx0 + dx, ty0 + dy)) return false
+    }
+    return true
+  }
+
+  // Les deux masques des bosquets de crête, à l'identique : `libre` fait la forme, `sec`
+  // qualifie le sommet (la sécheresse EST l'éloignement de l'eau, par dérivation).
+  const horsSeuils = masqueDesSeuils(creux, g, g.racine)
+  const libre = new Uint8Array(n)
+  const sec = new Uint8Array(n)
+  for (let k = 0; k < n; k++) {
+    if (creux.dedans[k] !== 1) continue
+    if (horsSeuils.length > 0 && horsSeuils[k] === 0) continue
+    const kx = k % creux.cols
+    const ky = (k - kx) / creux.cols
+    if (!peignable((creux.mx0 + kx) * M, (creux.my0 + ky) * M)) continue
+    libre[k] = 1
+    if (creux.hum[k]! < creux.seuilFleuraie) sec[k] = 1
+  }
+
+  const pris = new Uint8Array(n)
+  const sommets: { kx: number; ky: number }[] = []
+  const affs: Affleurement[] = []
+  for (const ressource of CREUX.AFFL_IDENTITES) {
+    // ── LE SOMMET : le plus haut du pays parmi les candidates écartées des buttes déjà prises.
+    //    Deux tours : la bande sèche d'abord ; si elle est vide, le plancher R51 relâche `sec`.
+    let sommet = -1
+    for (const exigeSec of [true, false]) {
+      let haut = -Infinity
+      for (let k = 0; k < n; k++) {
+        if ((exigeSec ? sec[k] : libre[k]) !== 1 || pris[k] === 1) continue
+        const kx = k % creux.cols
+        const ky = (k - kx) / creux.cols
+        let loin = true
+        for (const s of sommets) {
+          const dx = kx - s.kx
+          const dy = ky - s.ky
+          if (dx * dx + dy * dy < CREUX.AFFL_ECART * CREUX.AFFL_ECART) { loin = false; break }
+        }
+        if (!loin) continue
+        const a = creux.altLarge[k]!
+        if (a > haut || (a === haut && k < sommet)) { haut = a; sommet = k }
+      }
+      if (sommet >= 0) break
+    }
+    if (sommet < 0) continue // plus une cellule libre dans tout le pays — la garde A28 le verra
+
+    // ── LE CHAPEAU : ce qui dépasse, proche-en-proche, plafonné petit (2-5 cellules). Un
+    //    chapeau maigre est GARDÉ quand même : le plancher R51 prime sur la silhouette.
+    const haut = creux.altLarge[sommet]!
+    const plancher = haut - CREUX.AFFL_CHAPEAU
+    const cap: number[] = [sommet]
+    const vu = new Set<number>([sommet])
+    for (let t = 0; t < cap.length && cap.length < CREUX.AFFL_MAX_CELLULES; t++) {
+      const k = cap[t]!
+      const kx = k % creux.cols
+      const ky = (k - kx) / creux.cols
+      const voisines = [
+        kx > 0 ? k - 1 : -1,
+        kx + 1 < creux.cols ? k + 1 : -1,
+        ky > 0 ? k - creux.cols : -1,
+        ky + 1 < creux.rows ? k + creux.cols : -1,
+      ]
+      for (const v of voisines) {
+        if (v < 0 || vu.has(v)) continue
+        vu.add(v)
+        if (libre[v] !== 1 || pris[v] === 1 || creux.altLarge[v]! < plancher) continue
+        cap.push(v)
+        if (cap.length >= CREUX.AFFL_MAX_CELLULES) break
+      }
+    }
+
+    // ── LA PEINTURE, et le REGISTRE : la boîte englobante des motifs peints, en tuiles.
+    let x0 = Infinity
+    let y0 = Infinity
+    let x1 = -Infinity
+    let y1 = -Infinity
+    for (const k of cap) {
+      pris[k] = 1
+      const kx = k % creux.cols
+      const tx0 = (creux.mx0 + kx) * M
+      const ty0 = (creux.my0 + (k - kx) / creux.cols) * M
+      for (let dy = 0; dy < M; dy++) {
+        for (let dx = 0; dx < M; dx++) terrain[(ty0 + dy) * width + tx0 + dx] = TERRAIN_SCREE
+      }
+      if (tx0 < x0) x0 = tx0
+      if (ty0 < y0) y0 = ty0
+      if (tx0 + M > x1) x1 = tx0 + M
+      if (ty0 + M > y1) y1 = ty0 + M
+    }
+    const skx = sommet % creux.cols
+    sommets.push({ kx: skx, ky: (sommet - skx) / creux.cols })
+    affs.push({ rect: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, ressource })
+  }
+  return affs
 }
 
 /**
