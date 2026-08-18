@@ -760,6 +760,49 @@ describe('R5 — le Feu sous la pluie (A4)', () => {
     expect(avec.rngState).toBe(sans.rngState)
   })
 
+  it('A4 Foyer — l’upkeep du village sous pluie au cœur draine ×FEU_CONSO.pluie ; hors bande et sous brouillard, bit-identique', () => {
+    // Le jumeau à sec, encore : deux villages PNJ identiques dans chaque sim — l'un au
+    // futur cœur de bande, l'autre loin DEVANT le front. Fondés par le worldgen
+    // (`foundNpcVillage`, pas un input — et le Foyer est LE feu que le §8 vise :
+    // « la tâche communautaire zéro devient plus pressante »).
+    const avec = simCalme()
+    const sans = simCalme()
+    for (const sim of [avec, sans]) {
+      foundNpcVillage(sim, 125, 21, 0)
+      foundNpcVillage(sim, 300, 21, 0)
+    }
+    poseFront(avec, 'pluie', 95.5)
+    expect(meteoIntensity(avec, 125, 21)).toBe(1) // le Feu du 1er village est au cœur…
+    expect(meteoIntensity(avec, 300, 21)).toBe(0) // …celui du 2e, hors bande
+    const f0 = avec.villages.map((v) => v.fuel)
+    const N = 600
+    for (let t = 0; t < N; t++) {
+      step(avec, [])
+      step(sans, [])
+    }
+    // Au cœur, la faim du Foyer accélère de ×FEU_CONSO.pluie (ratio : l'acte se simplifie).
+    const dCoeur = f0[0]! - avec.villages[0]!.fuel
+    const dSec = f0[0]! - sans.villages[0]!.fuel
+    expect(dSec).toBeGreaterThan(0) // l'upkeep draine bien : la comparaison porte sur du vrai
+    expect(dCoeur / dSec).toBeCloseTo(METEO.FEU_CONSO.pluie, 9)
+    // Hors bande : BIT-identique au jumeau (×1 exactement — le Foyer d'à côté ne sait rien).
+    expect(avec.villages[1]!.fuel).toBe(sans.villages[1]!.fuel)
+    // Et personne n'est à sec : la pluie n'éteint rien, elle presse la tâche — c'est tout.
+    expect(avec.villages[0]!.fuel).toBeGreaterThan(0)
+
+    // BROUILLARD plein cœur : le drain du Foyer est bit-identique à sans front.
+    const avecB = simCalme()
+    const sansB = simCalme()
+    for (const sim of [avecB, sansB]) foundNpcVillage(sim, 125, 21, 0)
+    poseFront(avecB, 'brouillard', 95.5)
+    expect(meteoIntensity(avecB, 125, 21)).toBe(1)
+    for (let t = 0; t < 300; t++) {
+      step(avecB, [])
+      step(sansB, [])
+    }
+    expect(avecB.villages[0]!.fuel).toBe(sansB.villages[0]!.fuel)
+  })
+
   it('meteoFeuConso — balayage perpendiculaire exhaustif : 1 dehors, le plein au cœur, entre les deux dans la rampe, pente bornée, pur', () => {
     const sim = simCalme()
     const bande = poseFront(sim, 'pluie', 170)

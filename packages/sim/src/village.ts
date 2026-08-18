@@ -61,7 +61,7 @@ import {
   type StructureType,
 } from './items'
 import { heldSlot } from './inventory-actions'
-import { meteoMouille } from './meteo'
+import { meteoFeuConso, meteoMouille } from './meteo'
 import { estIncassable, matiereChiffre, matieresDe, parPiece, piece } from './pieces'
 import { terrainAt, zoneAt } from './map'
 import { isSheltered } from './temperature'
@@ -763,7 +763,13 @@ export function advanceUpkeep(state: SimState): void {
   const drain = FIRE_UPKEEP.DRAIN_PER_TICK * FIRE_UPKEEP.ACT_FACTOR[act - 1]!
   for (const village of state.villages) {
     const before = village.fuel
-    village.fuel = Math.max(0, village.fuel - drain)
+    // R5 MÉTÉO — la pluie accélère la faim du FOYER comme celle du feu libre (fire.ts) :
+    // le drain est multiplié par `meteoFeuConso` AU POINT DU FEU du village — même rampe
+    // continue, exactement 1 hors front mouillé (à sec ou sous brouillard, pas un octet ne
+    // bouge : x × 1 = x). Elle n'éteint RIEN : à sec c'est la famine de bois qui parle
+    // (`fire_starved`, murs qui cèdent, braises dormantes) — la météo n'a fait qu'y mener
+    // plus vite. C'est le §8 : la tâche communautaire zéro devient plus pressante.
+    village.fuel = Math.max(0, village.fuel - drain * meteoFeuConso(state, village.fireTx, village.fireTy))
     // Au PASSAGE à sec (une fois) : la chronique le raconte, la milice n'a pas à réagir.
     if (before > 0 && village.fuel <= 0) {
       emitEvent(state, { type: 'fire_starved', tick: state.tick, villageId: village.id })
