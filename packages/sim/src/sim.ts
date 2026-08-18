@@ -756,16 +756,15 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     // LA BRUME (spec brume.md) : même interrupteur — annonce au crépuscule (hash2, aucun
     // tirage), nappe de l'aube au crépuscule, filon gardé au retrait.
     advanceBrume(state)
-    // LA MÉTÉO (spec meteo.md) : derrière son interrupteur DÉDIÉ `meteoActive` (R10, faux
-    // par défaut — les bancs mesurent sans elle). Élection au bord de cycle par hash2
-    // (aucun tirage), bande purgée sitôt sortie. Tranche 1 : le front traverse et ne FAIT
-    // rien encore.
-    advanceMeteo(state)
     // LA NUIT QUI CHASSE : c'est un ÉVÉNEMENT DU MONDE, il suit donc le même
     // interrupteur — un banc de test qui n'a pas demandé de guerre n'a pas non plus
     // demandé de loups.
     advanceNightHunt(state)
   }
+  // LA MÉTÉO (spec meteo.md R10) : son interrupteur `meteoActive` est DÉDIÉ ET SÉPARÉ de
+  // `worldEvents` — un banc peut mesurer l'économie sous la pluie sans convois ni hordes.
+  // Élection au bord de cycle par hash2 (aucun tirage), bande purgée sitôt sortie.
+  advanceMeteo(state)
   // LES VILLAGES PNJ VIVENT AUX BORDS DU CYCLE (spec village-pnj-evolution) : à
   // l'aube la porte s'ouvre, le palier monte au surplus, la prospérité attire un
   // colon ; au crépuscule la porte se ferme. Avant la passe PNJ : le village se

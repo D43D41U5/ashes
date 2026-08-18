@@ -168,6 +168,24 @@ describe('A10 — l’interrupteur dédié, faux par défaut', () => {
   it('armée à la demande : `meteoActive` vient des options de l’hôte', () => {
     expect(simMeteo().meteoActive).toBe(true)
   })
+
+  it('SÉPARÉ de `worldEvents` (R10) : la pluie tombe sur un banc sans convois ni hordes', () => {
+    // Le banc d'économie veut la météo SEULE : `worldEvents: false, meteoActive: true`
+    // doit élire des fronts — l'ordonnanceur ne vit pas dans le bloc des événements.
+    const sim = createSim(2026, {
+      map: createEmptyMap(70, 40, TERRAIN_GRASS),
+      calendarScale: SCALE,
+      worldEvents: false,
+      meteoActive: true,
+    })
+    let elu = 0
+    for (let d = 1; d <= BALANCE.SEASON_DAYS; d++) {
+      sim.tick = tickAubeDuJour(d)
+      step(sim, [])
+      if (sim.meteo) elu++
+    }
+    expect(elu).toBeGreaterThan(0)
+  })
 })
 
 describe('la géométrie est pure — la bande se calcule du tick, elle n’est jamais rangée', () => {
