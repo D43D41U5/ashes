@@ -3206,6 +3206,68 @@ export const BRUME = {
 } as const
 
 /**
+ * LA MÉTÉO (spec `meteo.md`, décisions Alexis 2026-08-18) — des fronts spatiaux qui
+ * traversent la vallée : au plus une BANDE cardinale par jour, élue par `hash2`, qui met la
+ * pression sur les systèmes EXISTANTS (froid, Feu, faune, vitesse, perception) sans mécanique
+ * parallèle. La courbe de pression du GDD §8 vit dans les tables par acte : la pluie bénigne
+ * de l'Éclosion cède aux neiges puis aux blizzards du Grand Froid. Ordres de grandeur, à
+ * calibrer en jouant et au banc.
+ *
+ * ═══ CES CONSTANTES SONT DU CONTRAT DE REPLAY ═══
+ *
+ * L'occurrence, le type, le bord et la fenêtre d'un front se DÉRIVENT de ces nombres
+ * (élection `hash2` + géométrie pure du tick, `meteo.ts`) : les changer fait sauter la météo
+ * de toute sauvegarde et de tout replay EN VOL — la bande d'hier ne rejoue plus au même
+ * endroit. On les change ENTRE les saisons, pas dedans.
+ */
+export const METEO = {
+  /** Chance qu'un front se lève, par jour de saison et par acte. */
+  CHANCE_PER_DAY: [0.5, 0.65, 0.8],
+  /**
+   * La table des types par acte (poids sommant à 1) : la pluie domine l'acte I, la neige
+   * entre en II, le blizzard hante II-III, l'orage vit en I-II. L'ORDRE des clés est le
+   * découpage du tirage cumulatif — le changer rebat les élections (contrat de replay).
+   */
+  TYPES: [
+    { pluie: 0.5, brouillard: 0.25, orage: 0.25 },
+    { pluie: 0.3, neige: 0.35, brouillard: 0.15, blizzard: 0.1, orage: 0.1 },
+    { neige: 0.5, blizzard: 0.3, brouillard: 0.15, orage: 0.05 },
+  ],
+  /** Largeur de la bande, en tuiles. Le blizzard ≈ la carte jouée (~1 580 de large) :
+   *  « carte entière » par CALIBRAGE, pas par mécanisme (spec R1). */
+  LARGEUR: { pluie: 60, brouillard: 50, neige: 70, orage: 55, blizzard: 1600 },
+  /** La traversée complète (le bord AVANT entre → le bord ARRIÈRE sort), ~une demi-journée.
+   *  STRICTEMENT sous un cycle : la fenêtre élue tient dans son cycle, donc au plus un front
+   *  actif à la fois — par construction, pas par garde (voir `meteo.ts`). */
+  TRAVERSEE_TICKS: ticksForCycles(0.5),
+  /** Fraction de la LARGEUR en rampe d'intensité à CHAQUE bord de bande — un gradient
+   *  bord → cœur (`meteoIntensity` : 0 dehors, 1 au cœur), jamais un mur. */
+  RAMPE: 0.15,
+  // ── Les quatre accroches (R4-R7) et la foudre (R8) : consommées par les tranches
+  // suivantes, posées ICI dès la tranche 1 — le contrat de constantes est complet d'un coup.
+  /** R4 — le froid sous l'empreinte : une EXPOSITION de plus (patron Brume — amortie par
+   *  l'abri, planchée par le Feu et la tenue). Le blizzard est calibré létal en plaine de
+   *  jour dès l'acte II (90 − 25 − 55 = 10 < HYPOTHERMIA) ; le brouillard ne refroidit pas. */
+  COLD: { pluie: 10, brouillard: 0, neige: 25, orage: 10, blizzard: 55 },
+  /** R5 — multiplicateur de consommation des feux sous l'empreinte d'un front mouillé.
+   *  JAMAIS d'extinction : la pression, pas la spirale de mort. */
+  FEU_CONSO: { pluie: 1.5, neige: 1.5, orage: 1.5, blizzard: 2, brouillard: 1 },
+  /** R7 — multiplicateur de vitesse sous l'empreinte (pendant le front, pas après). */
+  SPEED: { pluie: 0.95, brouillard: 1, neige: 0.9, orage: 0.95, blizzard: 0.8 },
+  /** R7 — multiplicateur de perception des IA, évalué au point de la CIBLE (on se cache
+   *  dans la pluie, on n'aveugle pas le loup au soleil). Le brouillard en est le porteur
+   *  principal : fort, sans froid — équilibrable isolément. */
+  VISION: { pluie: 0.85, brouillard: 0.5, neige: 0.8, orage: 0.85, blizzard: 0.6 },
+  /** R8 — la foudre de l'orage : impacts par minute dans l'empreinte, télégraphe au point
+   *  visé (le patron wind-up, en plus long), dégâts sérieux jamais létaux à PV pleins,
+   *  rayon d'impact en tuiles. */
+  FOUDRE_PAR_MIN: 3,
+  FOUDRE_TELEGRAPHE_TICKS: ticksFor(1.5),
+  FOUDRE_DEGATS: 35,
+  FOUDRE_RAYON: 1.5,
+} as const
+
+/**
  * LES RÉFUGIÉS (V2-25, GDD §520) — « l'événement d'alignement par excellence, et la seule
  * source de PNJ supplémentaires hors paliers du Feu ». Un groupe de survivants arrive sur une
  * route ; on les RECRUTE (+PNJ, Foyer), les NOURRIT (Foyer), les refoule (rien) ou les

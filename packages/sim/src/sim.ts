@@ -37,6 +37,7 @@ import { advanceMonsters, type Monster } from './monsters'
 import { advanceWorldEvents, type Horde } from './worldevents'
 import { advanceRefugees } from './refugees'
 import { advanceBrume } from './brume'
+import { advanceMeteo } from './meteo'
 import { rngNext } from './rng'
 import { advanceNightHunt } from './nighthunt'
 import { advanceNpcs, type Npc } from './npc'
@@ -360,6 +361,18 @@ export interface SimState {
   brumeFilon?: { nodeId: number; expiresDay: number } | null
   /** Le dernier jour de saison où l'annonce de Brume a été jouée (une par jour au plus). */
   lastBrumeDay?: number
+  /**
+   * LA MÉTÉO (spec `meteo.md`) — le front en cours, ou rien. Champs OPTIONNELS (patron
+   * Brume ci-dessus) : une sauvegarde d'avant reprend sans, et s'en crée à la prochaine
+   * élection. La géométrie de la bande au tick se CALCULE (`frontMeteoPos`), seule
+   * l'élection du jour est rangée — purgée sitôt le front sorti.
+   */
+  meteo?: import('./meteo').MeteoFront | null
+  /** Le dernier jour de saison où l'élection météo a été jouée (au plus un front par jour). */
+  lastMeteoDay?: number
+  /** Fronts armés ? Interrupteur DÉDIÉ (spec meteo.md R10), absent/faux par défaut —
+   *  séparé de `worldEvents` (voir SimOptions.meteoActive). */
+  meteoActive?: boolean
 }
 
 export interface SimOptions {
@@ -405,6 +418,14 @@ export interface SimOptions {
    * (un banc de test ne veut pas d'une géographie qu'il n'a pas demandée).
    */
   home?: { x: number; y: number }
+  /**
+   * LA MÉTÉO (spec `meteo.md` R10) : fronts armés ? FAUX par défaut — l'inverse de
+   * `worldEvents`, et c'est voulu : les bancs et leurs seuils ABSOLUS (la famine du banc
+   * de scénario) ne doivent pas rougir parce qu'un front qu'ils n'ont pas demandé est
+   * passé — on mesure l'économie sans le bruit météo, puis avec. Le vrai jeu (Veillée,
+   * LAN) l'arme explicitement à la création du monde.
+   */
+  meteoActive?: boolean
 }
 
 /** Intention d'un avatar pour un tick : déplacement, postures, au plus une action. */
@@ -473,6 +494,10 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     groundItems: [],
     nextGroundItemId: 1,
   }
+  // LA MÉTÉO s'arme à la DEMANDE seulement, et la clé n'existe pas sinon (patron des
+  // champs optionnels de la Brume) : une partie sans météo garde l'empreinte d'état — donc
+  // le snapshot ET la forme attendue par la persistance — d'avant le système, au bit près.
+  if (options.meteoActive) state.meteoActive = true
   // Le tick 0 débute le jour 1 et l'acte I ; la phase du cycle dépend de
   // cycleOffset (0 = aube), donc on émet le bon franchissement jour/nuit.
   const startsAtNight = state.cycleOffset >= DAY_TICKS_PER_CYCLE
@@ -731,6 +756,11 @@ export function step(state: SimState, inputs: MoveInput[]): void {
     // LA BRUME (spec brume.md) : même interrupteur — annonce au crépuscule (hash2, aucun
     // tirage), nappe de l'aube au crépuscule, filon gardé au retrait.
     advanceBrume(state)
+    // LA MÉTÉO (spec meteo.md) : derrière son interrupteur DÉDIÉ `meteoActive` (R10, faux
+    // par défaut — les bancs mesurent sans elle). Élection au bord de cycle par hash2
+    // (aucun tirage), bande purgée sitôt sortie. Tranche 1 : le front traverse et ne FAIT
+    // rien encore.
+    advanceMeteo(state)
     // LA NUIT QUI CHASSE : c'est un ÉVÉNEMENT DU MONDE, il suit donc le même
     // interrupteur — un banc de test qui n'a pas demandé de guerre n'a pas non plus
     // demandé de loups.

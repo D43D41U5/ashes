@@ -127,6 +127,9 @@ export function createVeillee(
     faunaCap: FAUNA.CAP,
     grounds,
     home: spawn,
+    // LA MÉTÉO (spec meteo.md R10) : armée dans le VRAI jeu seulement — décision d'hôte,
+    // comme `faunaCap` ; les bancs et les tests restent sans elle (interrupteur dédié).
+    meteoActive: true,
     debug: import.meta.env.DEV,
   })
   onPhase('monsters')

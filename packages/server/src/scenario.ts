@@ -93,6 +93,9 @@ export function createZone(): LanWorld {
     faunaCap: FAUNA.CAP,
     grounds,
     home: { x: base.tx + 0.5, y: base.ty + 0.5 },
+    // LA MÉTÉO (spec meteo.md R10) : armée dans le VRAI jeu seulement — décision d'hôte,
+    // comme `faunaCap` ; parité avec `worker/veillee.ts`, les bancs restent sans elle.
+    meteoActive: true,
     debug: false,
   })
   spawnPoiMonsters(sim, LAN_SEED)
