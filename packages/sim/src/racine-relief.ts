@@ -219,8 +219,13 @@ export const CREUX = {
   // mais l'élection est PAR RANG GLOBAL (les quelques dos les plus hauts du pays, pas une
   // couverture par grille) : un affleurement est un événement géologique, pas un semis.
   /** L'ordre des identités, du meilleur rang au dernier : les buttes élues se nomment dans cet
-   *  ordre. Deux ferreuses, une charbonneuse — R51 fait de ce tableau le PLANCHER garanti. */
-  AFFL_IDENTITES: ['fer', 'fer', 'charbon'] as const,
+   *  ordre. Trois ferreuses, deux charbonneuses — R51 fait de ce tableau le PLANCHER garanti.
+   *  3+2 (décision d'Alexis 2026-08-18, « on va augmenter le nombre de buttes ») : à 2+1,
+   *  32 charbons par passage bornaient la carte à UN village équipé — mesuré contre les
+   *  recettes (1 lingot = 2 minerais + 1 charbon, l'acier consomme 1:1). Les deux identités
+   *  neuves s'APPENDENT : les trois premières buttes gardent leurs sommets sur toute seed
+   *  existante, et le charbon (le goulot) prend le meilleur des nouveaux rangs. */
+  AFFL_IDENTITES: ['fer', 'fer', 'charbon', 'charbon', 'fer'] as const,
   /** Épaisseur du chapeau sous le sommet. Plus mince que `CHAPEAU` : la roche ne perce qu'au
    *  ras de l'os, une rocaille n'est pas une colline entière. */
   AFFL_CHAPEAU: 0.03,
