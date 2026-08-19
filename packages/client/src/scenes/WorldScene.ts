@@ -169,6 +169,8 @@ import { WaterLayer, type WaterWader } from './world/water-layer'
 import { AmbientLife } from './world/ambient-life'
 import { FoudreFx } from './world/foudre-fx'
 import { MeteoLayer } from './world/meteo-layer'
+import { GelLayer } from './world/gel-layer'
+import { creerEtatGel, majEtatGel, type EtatGel } from './world/etat-gel'
 import { SoleilLayer } from './world/soleil-layer'
 import { bindDebugKeys } from './world/debug-bindings'
 import { createDebugPanel } from './world/debug-panel'
@@ -348,6 +350,12 @@ export class WorldScene extends Phaser.Scene {
   meteoLayer: MeteoLayer | null = null
   /** LA FOUDRE (R8) — le télégraphe au sol, puis l'éclair. Publique, même raison. */
   foudreFx: FoudreFx | null = null
+  /** LE PAYSAGE GELÉ (spec gel.md G5/G7) — la neige au sol et la glace. Publique : le smoke
+   *  lit sa sonde de couverture, et un rendu se juge sur ce qu'il montre. */
+  gelLayer: GelLayer | null = null
+  /** LA FAÇADE D'ÉTAT que les fonctions de gel de /sim attendent — allouée une fois, remise
+   *  à jour en place (voir `etat-gel.ts`, qui nomme aussi ce que le snapshot ne porte pas). */
+  private etatGel: EtatGel | null = null
   private lastTime: GameTime | null = null
   /** Couvert de canopée lissé autour de l'avatar — piloté vers la valeur échantillonnée. */
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
@@ -826,7 +834,7 @@ export class WorldScene extends Phaser.Scene {
       for (const couche of [
         this.nightVeil, this.water, this.combeMist, this.morningMist, this.mistBanks,
         this.fireFx, this.fireGround, this.poissons, this.feuilles, this.cendre,
-        this.meteoLayer, this.foudreFx,
+        this.meteoLayer, this.foudreFx, this.gelLayer,
       ]) couche?.destroy()
     })
 
@@ -965,6 +973,10 @@ export class WorldScene extends Phaser.Scene {
         // d'impact — se recalcule ici des fonctions pures de /sim.
         this.meteoLayer = new MeteoLayer(this, this.map.width, this.map.height)
         this.foudreFx = new FoudreFx(this)
+        // LE GEL (spec gel.md) : la neige qui tient au sol et la glace praticable. Comme la
+        // cendre, RIEN n'est transmis — le client relit les fonctions pures de /sim sur un
+        // état reconstitué du snapshot.
+        this.gelLayer = new GelLayer(this, this.map, String(this.map.width))
         this.cameras.main.setBounds(0, 0, worldW, worldH)
         this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
         this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
@@ -1604,6 +1616,24 @@ export class WorldScene extends Phaser.Scene {
         time, meteoFront, this.lastTime.tick, day, flash, this.predicted, this.cameras.main,
         this.foudreFx?.particulesReservees ?? 0,
       )
+
+      // ── LE PAYSAGE GELÉ (spec gel.md G5/G7) ──
+      // La façade porte les SEPT champs que `estGele`/`neigeAuSol` lisent, et rien d'autre ;
+      // `structures` vient du snapshot COMPLET (l'abri d'une maison ne doit pas dépendre du
+      // cadrage — le raisonnement de `ContexteFoudre`, à la lettre).
+      const source = {
+        map: this.map,
+        temps: this.lastTime,
+        calendarScale: this.calendarScale,
+        structures: this.view.structures,
+        meteo: meteoFront,
+      }
+      if (this.etatGel) majEtatGel(this.etatGel, source)
+      else this.etatGel = creerEtatGel(source)
+      this.gelLayer?.update(this.etatGel, this.lastTime.tick, this.cameras.main)
+      // Les FEUILLUS SE DÉNUDENT (G6) — la vue des nœuds choisit la cime nue ou feuillue en
+      // interrogeant `feuillageDenude` tuile par tuile, sur cette même façade.
+      this.view.setEtatGel(this.etatGel)
     }
 
     // ON NE MARCHE PAS EN TAPANT. Le champ de recherche du panneau de craft prend

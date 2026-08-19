@@ -642,11 +642,32 @@ export const CIMES_PAR_ARBRE = 5
  * changerait de cime EN TOMBANT.
  *
  * L'art PEINT (hors éclairage) n'a qu'une cime : il est composé de rects, pas du champ de
- * feuillage, et c'est le chemin de repli — le jeu tourne éclairé.
+ * feuillage, et c'est le chemin de repli — le jeu tourne éclairé. **IL N'A PAS NON PLUS DE
+ * CIME NUE**, pour la même raison : la cime nue se DÉSHABILLE d'un champ de feuillage
+ * (`grainDenude`), et l'art peint n'en a pas. Le rendu retombe alors sur la cime feuillue —
+ * `snapshot-view` teste l'existence de la texture avant de la poser, plutôt que d'afficher
+ * le carré vert d'une clé absente.
  */
-export function cleHouppier(slug: string, lit: boolean, cime: number): string {
-  return lit ? `nd-${slug}_crown_lit-${cime}` : `nd-${slug}_crown`
+export function cleHouppier(slug: string, lit: boolean, cime: number, nu = false): string {
+  const n = nu ? '_nu' : ''
+  return lit ? `nd-${slug}_crown${n}_lit-${cime}` : `nd-${slug}_crown${n}`
 }
+
+/**
+ * LES VARIANTES QUI SE DÉNUDENT (spec `gel.md` G6) — les feuillus, et EUX SEULS.
+ *
+ * `/sim` décide sur le TERRAIN (`forest`, `old_growth`, `willow` sont caducs ; `pine` et
+ * `larch` ne le sont jamais), et le peuplement n'envoie de conifère que sur `pine`/`larch`
+ * (`MELANGE_PIN`, `MELANGE_MELEZE` — aucun autre mélange ne les cite). Les deux règles
+ * coïncident donc, et la promesse de G6 tient : **la silhouette du conifère dit « il tient »**.
+ *
+ * La liste est écrite ICI, en clair, plutôt que déduite de « tout sauf les conifères » : le
+ * jour où une variante feuillue naît, elle doit ÊTRE AJOUTÉE — et une garde de `lit-trees`
+ * échouera si un slug nommé ici n'existe pas dans la table.
+ */
+export const VARIANTES_CADUQUES: readonly string[] = [
+  'tree', 'old_tree', 'chene_pre', 'hetre', 'saule', 'bouleau', 'baliveau',
+]
 
 /**
  * L'ASSISE — la zone par laquelle la cime REPOSE sur le fût, et qu'aucune découpe n'a le droit

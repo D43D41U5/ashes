@@ -13242,6 +13242,244 @@ const SCENARIOS = {
 
     return { attrape, site, crans, sortie, releves }
   },
+
+  /**
+   * LE PAYSAGE ENNEIGÉ — la neige au sol, la glace et les arbres nus (spec `gel.md` G5-G7).
+   *
+   * ═══ LE PIÈGE QUI COÛTE LA SÉANCE, ET IL EST DANS `/sim` ═══
+   *
+   * `debug_meteo` ne dépose AUCUNE neige au sol. `neigeAuSol` ne regarde pas `state.meteo` :
+   * elle rembobine `frontDuCycle`, l'ÉLECTION PURE du cycle. Un front armé à la main est
+   * invisible à ce rembobinage — on peut donc rester une heure sous un blizzard de debug sans
+   * qu'un seul pixel blanchisse. Il faut ATTERRIR SUR UN VRAI CYCLE NEIGEUX.
+   *
+   * Lesquels ? L'élection étant pure, elle se lit à l'avance sans jouer. En Veillée
+   * (`VEILLEE_SEASON_CYCLES = 6`, `calendarScale` 300), le balayage donne :
+   *   cycle 0 → orage (jours 1-6) · 4 → pluie (44-49) · **5 → NEIGE (jours 53-58)** · 6 → neige…
+   * D'où le jour visé par défaut : **59**, le lendemain de la sortie du front. La couverture
+   * y vaut encore ~0,96 (la fonte prend `FONTE_CYCLES` = 3 cycles par grand froid).
+   *
+   * ═══ DEUX HEURES, PARCE QUE LES DEUX SEUILS NE MORDENT PAS ENSEMBLE ═══
+   *
+   * Sur une tuile d'eau (biome 0), en acte III : `T = 90 − 50 = 40` de JOUR, `− 30 = 10` de
+   * NUIT. Or `SEUIL_GUE` vaut 45 et `SEUIL_PROFOND` 20. Donc **à midi seul le gué est pris ;
+   * il faut la nuit pour que le lac le soit** — et c'est le lac qui vaut une décision de jeu
+   * (il rend praticable ce qui bloquait). On photographie donc les deux : le paysage à midi,
+   * la glace profonde de nuit. Une seule prise aurait montré la moitié de la règle.
+   *
+   * ═══ ON CHERCHE UN POINT DE VUE QUI MONTRE ═══
+   *
+   * Une capture qui ne montre pas ce qu'on juge ne vaut rien. On note donc les emplacements
+   * sur ce que le CADRE contiendrait (36 × 22 tuiles) : de l'eau des deux profondeurs, des
+   * feuillus (qui se dénudent), des conifères (qui tiennent) et du sol ouvert (où la neige
+   * se lit). Le score est rendu avec la photo — une prise pauvre doit se dire pauvre.
+   *
+   * Réglages : `SMOKE_JOUR` (défaut 59), `SMOKE_HEURE` (défaut 12).
+   * Exige `--dev` : jour, heure et TP sont inertes en build de production.
+   */
+  async enneige(page) {
+    if (!dev) { console.log('\n(le paysage gelé exige --dev : le jour de saison, l’heure et le TP)'); return {} }
+    const JOUR = Number(process.env.SMOKE_JOUR ?? 59)
+    const HEURE = Number(process.env.SMOKE_HEURE ?? 12)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const etat = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      return {
+        jour: s.lastTime?.seasonDay ?? -1,
+        acte: s.lastTime?.act ?? -1,
+        heure: s.lastTime?.hourOfCycle ?? -1,
+        nuit: Boolean(s.lastTime?.isNight),
+        tick: s.lastTime?.tick ?? -1,
+        pos: s.registry.get('playerPos'),
+        map: { w: s.map.width, h: s.map.height },
+        gel: { ...(s.gelLayer?.sonde ?? {}) },
+      }
+    })
+
+    // ⓪ INVULNÉRABLE, ET CE N'EST PAS UNE COMMODITÉ. En acte III de nuit, un pré vaut
+    //    `90 − 50 − 30 = 10` de température, sous `HYPOTHERMIA` (20) : **le froid TUE**, et
+    //    c'est écrit dans `balance.ts` en toutes lettres. MESURÉ : la prise de nuit est
+    //    revenue une fois sur un écran NOIR, voile de mort et 0/60 PV — on photographiait un
+    //    cadavre en croyant photographier un lac gelé. Le froid qu'on vient montrer est
+    //    précisément celui qui empêche de le montrer.
+    await agir({ type: 'debug_god', on: true }, 200)
+
+    // ① LE JOUR DE SAISON — on ATTEND LA PREUVE (le jour publié), jamais un délai fixe : le
+    //    saut passe par le worker, et l'horloge headless galope.
+    await agir({ type: 'debug_set_season_day', day: JOUR }, 400)
+    await page.waitForFunction((j) => (window.__BRAISES__.scene.lastTime?.seasonDay ?? 0) >= j, JOUR,
+      { timeout: 30000, polling: 200 }).catch(() => {})
+    await agir({ type: 'debug_set_hour', hour: HEURE }, 700)
+    const e0 = await etat()
+    if (e0.jour < JOUR) { console.error(`!! le jour de saison est resté à ${e0.jour} (visé ${JOUR}) — relevé sans valeur`); return {} }
+    console.log(`  jour de saison ${e0.jour} (acte ${e0.acte}) à ${Math.round(e0.heure * 10) / 10} h`)
+
+    // ② LE POINT DE VUE. Noté sur ce que le CADRE contiendrait, pas sur la tuile visée.
+    const site = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const { width: W, height: H, terrain } = s.map
+      const GUE = 4, LAC = 6
+      const CADUCS = new Set([3, 22, 24]) // forest · old_growth · willow
+      const CONIF = new Set([13, 14])     // pine · larch
+      const OUVERT = new Set([1, 2, 11, 17, 12, 20, 25]) // herbe, route, lande, prés
+      // Le cadre : ~36 x 22 tuiles (VISIBLE_TILES_TALL = 20, zoom 2,25, 16:9).
+      const DX = 18, DY = 11
+      let best = null
+      for (let cy = DY; cy < H - DY; cy += 6) {
+        for (let cx = DX; cx < W - DX; cx += 6) {
+          let gue = 0, lac = 0, caduc = 0, conif = 0, ouvert = 0
+          for (let y = cy - DY; y < cy + DY; y += 2) {
+            for (let x = cx - DX; x < cx + DX; x += 2) {
+              const t = terrain[y * W + x]
+              if (t === GUE) gue++
+              else if (t === LAC) lac++
+              else if (CADUCS.has(t)) caduc++
+              else if (CONIF.has(t)) conif++
+              else if (OUVERT.has(t)) ouvert++
+            }
+          }
+          // Chaque ingrédient est PLAFONNÉ : on veut un cadre COMPLET, pas un cadre qui gagne
+          // en étant entièrement sous l'eau. Le gué et le lac pèsent double — ce sont eux
+          // qu'on ne sait pas fabriquer, et sans eux la glace n'a rien à peindre.
+          const cap = (v, m) => Math.min(v, m)
+          // LES CONIFÈRES PÈSENT LOURD, et c'est délibéré : G6 promet que le pin TIENT quand le
+          // feuillu se dénude, et cette promesse ne se photographie que si les DEUX sont dans le
+          // même cadre. Un paysage sans conifère ne montre que la moitié de la règle.
+          const score = 2 * cap(gue, 12) + 2 * cap(lac, 22) + cap(caduc, 30) + 2 * cap(conif, 24) + cap(ouvert, 40) * 0.5
+          if (!best || score > best.score) best = { x: cx, y: cy, score, gue, lac, caduc, conif, ouvert }
+        }
+      }
+      return best
+    })
+    if (!site) { console.error('!! aucun point de vue trouvé'); return {} }
+    console.log(`  point de vue (${site.x}, ${site.y}) — score ${Math.round(site.score)} :`
+      + ` gué ${site.gue} · lac ${site.lac} · feuillus ${site.caduc} · conifères ${site.conif} · sol ouvert ${site.ouvert}`)
+
+    const prendre = async (nom, heure, ou) => {
+      await agir({ type: 'debug_set_hour', hour: heure }, 500)
+      await agir({ type: 'debug_teleport', x: ou.x + 0.5, y: ou.y + 0.5 }, 1200)
+      await canopeePleine(page)
+      // LA COUCHE RECUIT SUR SEUIL (caméra d'une tuile, ou 400 ticks) : après un TP elle
+      // recuit à la première image. On attend quand même la PREUVE que sa sonde a tourné —
+      // une photo prise avant la première recuisson montrerait un monde vert.
+      await page.waitForFunction(() => (window.__BRAISES__.scene.gelLayer?.sonde?.recuissons ?? 0) > 0,
+        null, { timeout: 20000, polling: 150 }).catch(() => {})
+      await page.waitForTimeout(900)
+      const e = await etat()
+      await page.screenshot({ path: `${OUT}/${nom}.png`, timeout: 180000 })
+      const g = e.gel
+      console.log(
+        `  ${nom.padEnd(24)} ${Math.round(e.heure * 10) / 10} h${e.nuit ? ' (nuit)' : '      '}`
+        + ` · neige ${String(g.tuilesNeige).padStart(4)} tuiles (couverture max ${(g.couvertureMax ?? 0).toFixed(2)},`
+        + ` moyenne ${(g.couvertureMoyenne ?? 0).toFixed(2)})`
+        + ` · glace ${String(g.tuilesGlace).padStart(3)} dont ${g.tuilesGlaceProfonde} PROFONDE`
+        + ` · gelPossible ${g.gelPossible}`
+        + `\n${' '.repeat(26)}${g.tuilesBalayees} tuiles balayées en ${(g.msRecuisson ?? 0).toFixed(2)} ms (recuisson ${g.recuissons})`,
+      )
+      return { nom, ...e }
+    }
+
+    // ③bis LA LISIÈRE FEUILLUS / CONIFÈRES — un cadre à part, noté sur les DEUX seules.
+    //     G6 promet que le pin TIENT quand le feuillu se dénude, et cette promesse ne se
+    //     photographie que là où les deux se touchent. Le paysage, lui, est noté sur l'eau :
+    //     les deux critères ne désignent presque jamais le même endroit, et vouloir un seul
+    //     cadre qui gagne sur tout rend un cadre qui ne montre rien.
+    //
+    //     ON COMPTE DES ARBRES, PAS DU TERRAIN — et ça s'est payé. Noté sur le terrain, le
+    //     meilleur site rendait « feuillus 48 · conifères 61 » et la photo montrait un névé
+    //     de rocaille SANS UN SEUL ARBRE : un sol `forest` ne porte pas un nœud par tuile, et
+    //     `old_growth` est le couvert le plus OUVERT de la carte. On interroge donc
+    //     `view.nodes`, la liste réelle des arbres, et on classe chacun par le sol SOUS lui —
+    //     le même critère que `feuillageDenude`, donc le même verdict.
+    const lisiere = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const { width: W, terrain } = s.map
+      const CADUCS = new Set([3, 22, 24])
+      const CONIF = new Set([13, 14])
+      const DX = 17, DY = 10
+      const arbres = (s.view.nodes ?? []).filter((n) => n.type === 'tree' || n.type === 'old_tree')
+      let best = null
+      for (const a of arbres) {
+        let caduc = 0, conif = 0
+        for (const b of arbres) {
+          if (Math.abs(b.tx - a.tx) > DX || Math.abs(b.ty - a.ty) > DY) continue
+          const t = terrain[b.ty * W + b.tx]
+          if (CADUCS.has(t)) caduc++
+          else if (CONIF.has(t)) conif++
+        }
+        // Le MINIMUM des deux : c'est un ÉQUILIBRE qu'on cherche, pas un total. Une somme
+        // aurait élu une futaie pure de soixante pins et zéro feuillu.
+        const score = Math.min(caduc, conif)
+        if (!best || score > best.score) best = { x: a.tx, y: a.ty, score, caduc, conif }
+      }
+      return best
+    })
+    console.log(`  lisière feuillus/conifères (${lisiere?.x}, ${lisiere?.y}) — équilibre ${lisiere?.score}`
+      + ` : feuillus ${lisiere?.caduc} · conifères ${lisiere?.conif}`)
+
+    const out = {}
+    // LE PAYSAGE — à midi, parce qu'un paysage se regarde éclairé.
+    out.jour = await prendre('paysage-enneige', HEURE, site)
+    // LA GLACE PROFONDE — de nuit, seule heure où le lac est pris en acte III (voir l'en-tête).
+    out.nuit = await prendre('gel-nuit-lac-pris', 1, site)
+    // LA PROMESSE DE G6, EN UNE IMAGE : le feuillu nu et le conifère qui tient, côte à côte.
+    if (lisiere && lisiere.score > 0) out.lisiere = await prendre('gel-lisiere-conifere', HEURE, lisiere)
+    else console.error('!! aucune lisière feuillus/conifères sur cette carte — G6 non photographié')
+
+    // ④ LE PLAN RAPPROCHÉ. À l'échelle du jeu, une cellule de 4 px fait 9 px d'écran : la
+    //    TRAME de la neige et la moucheture du givre y sont lisibles, mais serrées. On monte
+    //    donc le zoom sur une berge — le seul endroit où les TROIS matières se touchent
+    //    (neige au sol, glace, eau libre), donc le seul cadre qui montre qu'elles se
+    //    distinguent. La caméra est décrochée du joueur : elle suit un point, pas un avatar.
+    const berge = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const { width: W, height: H, terrain } = s.map
+      let best = null
+      for (let y = 2; y < H - 2; y++) {
+        for (let x = 2; x < W - 2; x++) {
+          if (terrain[y * W + x] !== 4) continue // un gué : c'est lui qui gèle à midi
+          let libre = 0, sol = 0
+          for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
+              const t = terrain[(y + dy) * W + x + dx]
+              if (t === 6) libre++
+              else if (t !== 4) sol++
+            }
+          }
+          const score = Math.min(libre, 8) + Math.min(sol, 8)
+          if (!best || score > best.score) best = { x, y, score, libre, sol }
+        }
+      }
+      return best
+    })
+    if (berge) {
+      await agir({ type: 'debug_set_hour', hour: HEURE }, 400)
+      await agir({ type: 'debug_teleport', x: berge.x + 0.5, y: berge.y + 0.5 }, 1200)
+      await page.evaluate(({ x, y }) => {
+        const s = window.__BRAISES__.scene
+        const cam = s.cameras.main
+        cam.stopFollow()
+        cam.setZoom(6)
+        cam.centerOn(x * 16 + 8, y * 16 + 8)
+      }, berge)
+      // LE RECADRAGE N'EXISTE QUE REDESSINÉ, et la couche recuit sur la position de la
+      // caméra : sans une image de plus, on photographierait la fenêtre d'AVANT le zoom.
+      await page.waitForTimeout(1500)
+      await page.screenshot({ path: `${OUT}/gel-glace-plan-rapproche.png`, timeout: 180000 })
+      const e = await etat()
+      console.log(`  gel-glace-plan-rapproche zoom 6 sur le gué (${berge.x}, ${berge.y})`
+        + ` — eau libre ${berge.libre} · sol ${berge.sol} autour`
+        + ` · glace ${e.gel.tuilesGlace} · neige ${e.gel.tuilesNeige} (couverture moyenne ${(e.gel.couvertureMoyenne ?? 0).toFixed(2)})`)
+      out.berge = { ...berge, gel: e.gel }
+    } else console.error('!! aucune berge gué/eau libre trouvée')
+    return out
+  },
 }
 
 const run = SCENARIOS[scenario]

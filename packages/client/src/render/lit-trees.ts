@@ -19,9 +19,10 @@ import type Phaser from 'phaser'
 import { newCanvas, normalFromCanvas, registerLit as register } from './normal-map'
 import {
   assiseDe, cleHouppier, colonneX, houppierLargeur, houppierOpaqueDe, CIMES_PAR_ARBRE,
-  TOUTES_VARIANTES, TONS_HOUPPIER_VIEUX,
+  TOUTES_VARIANTES, TONS_HOUPPIER_VIEUX, VARIANTES_CADUQUES,
   type MesuresArbre, type TonsFut,
 } from './arbre-art'
+import { grainDenude } from './feuillage-nu'
 import { champDeHauteur, ecorceDe, facteurPied, type Ecorce, type GrainFut } from './ecorce'
 import { champDeFeuillage, feuillageDe, type GrainHouppier } from './feuillage'
 
@@ -129,15 +130,30 @@ export function generateLitTrees(scene: Phaser.Scene): void {
     // espacées d'un nombre premier : deux graines voisines donneraient deux cimes cousines, et
     // on aurait payé cinq textures pour une seule variation perceptible.
     const W = houppierLargeur(m)
+    const caduc = VARIANTES_CADUQUES.includes(v.slug)
     for (let cime = 0; cime < CIMES_PAR_ARBRE; cime++) {
+      const graine = 11 + cime * 7919
       const feuilles = champDeFeuillage(
         feuillageDe(v.slug), W, m.houppierS, houppierOpaqueDe(v), assiseDe(v),
-        v.tons.corps, v.tons.lumiere, 11 + cime * 7919,
+        v.tons.corps, v.tons.lumiere, graine,
       )
       const crown = crownAlbedo(W, m.houppierS, feuilles)
       register(
         scene, cleHouppier(v.slug, true, cime), crown,
         normalFromCanvas(crown, 6, 3.2, 4, false, [], feuilles.relief),
+      )
+      // ── LA CIME NUE (spec `gel.md` G6) — le même champ, déshabillé. ──
+      // Elle se cuit ICI et pas dans une seconde boucle parce que la partie CHÈRE
+      // (`champDeFeuillage`) est déjà faite : on ne repaie que l'albédo et la normale. Et
+      // seulement pour les feuillus — un conifère nu n'existe pas, c'est la promesse de G6.
+      // La normale prend 2 passes au lieu de 6 : une branche est fine, la lisser six fois en
+      // ferait une masse molle (c'est le réglage du fût, pas celui de la canopée).
+      if (!caduc) continue
+      const nues = grainDenude(feuilles, W, m.houppierS, v.fut, graine)
+      const nu = crownAlbedo(W, m.houppierS, nues)
+      register(
+        scene, cleHouppier(v.slug, true, cime, true), nu,
+        normalFromCanvas(nu, 2, 3.5, 4, false, [], nues.relief),
       )
     }
 

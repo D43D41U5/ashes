@@ -31,7 +31,7 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@ashes/sim'
-import { fireStateAt, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, type WorldMap } from '@ashes/sim'
+import { feuillageDenude, fireStateAt, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, type SimState, type WorldMap } from '@ashes/sim'
 import { cliffKey } from '../../render/cliff-art'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
@@ -573,6 +573,8 @@ export class SnapshotView {
    * ne l'appelle — le jeu joué ne peut pas tomber dessus par accident.
    */
   private canopeePleine = false
+  /** Voir `setEtatGel`. */
+  private etatGel: SimState | null = null
   /** Pool des SOUCHES/traces laissées par la dérive (spec recolte-vivante D1). */
   private stumpPool: Phaser.GameObjects.Image[] = []
   /** Index id→nœud pour appliquer les deltas de stock en O(1). */
@@ -1570,6 +1572,15 @@ export class SnapshotView {
     }
   }
 
+  /**
+   * L'ÉTAT DU GEL (spec `gel.md` G6) — posé par `WorldScene` à chaque image, `null` tant que
+   * rien n'a été reçu. C'est la façade de `etat-gel.ts` : on ne lui demande QUE
+   * `feuillageDenude`, la fonction de `/sim`, jamais un jugement local.
+   */
+  setEtatGel(etat: SimState | null): void {
+    this.etatGel = etat
+  }
+
   /** Fige la canopée à l'opacité pleine — l'atelier photo, jamais le jeu (cf. `canopeePleine`). */
   setCanopeePleine(v: boolean): void {
     this.canopeePleine = v
@@ -1869,7 +1880,20 @@ export class SnapshotView {
         // 2026-07-30, sinon une futaie pure remontre douze fois la même au pixel près. Sur la
         // tuile ENTIÈRE du nœud (`n.tx`), jamais sur les coordonnées tressaillées — celles-ci
         // sont fractionnaires, et deux consommateurs du même arbre en tireraient deux cimes.
-        crown.setTexture(cleHouppier(variante.slug, this.lighting, cimeDe(n.tx, n.ty)))
+        // LES FEUILLES TOMBENT (spec `gel.md` G6) — et c'est `/sim` qui le dit, sur le JOUR DE
+        // SAISON et pas sur la température : une feuille qui tombe ne remonte pas. Sur la tuile
+        // ENTIÈRE, comme la variante et la cime. `pine` et `larch` ne sont jamais caducs, donc
+        // aucun conifère ne se dénude — mais la texture nue peut manquer (un slug nouveau, une
+        // variante non cuite) : on retombe alors sur la cime feuillue plutôt que sur le carré
+        // vert d'une texture absente.
+        const cime = cimeDe(n.tx, n.ty)
+        const feuillu = cleHouppier(variante.slug, this.lighting, cime)
+        let cle = feuillu
+        if (this.etatGel !== null && feuillageDenude(this.etatGel, n.tx, n.ty)) {
+          const nue = cleHouppier(variante.slug, this.lighting, cime, true)
+          if (this.scene.textures.exists(nue)) cle = nue
+        }
+        crown.setTexture(cle)
         crown.setLighting(this.lighting) // pooled : réarmé chaque frame (cf. le tronc)
         // L'ANCRAGE SE DÉRIVE, il ne s'écrit plus. C'était `py − 16` pour LES DEUX arbres alors
         // que leurs fûts n'ont pas la même hauteur : le houppier mordait 6 px sur l'un et 8 sur
