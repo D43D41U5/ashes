@@ -9337,7 +9337,7 @@ const SCENARIOS = {
     const degeler = () => page.evaluate(() => {
       const s = window.__BRAISES__.scene
       s.meteoLayer.grainActif = true
-      s.foudreFx.liserFacteur = 0.45
+      s.foudreFx.liserFacteur = 0
       s.foudreFx.telegrapheActif = true
       // On REND la caméra au joueur : sans ça tout ce qui suit se jouerait hors champ.
       if (s.playerSprite) s.cameras.main.startFollow(s.playerSprite, true, 0.16, 0.16) // les réglages du jeu (WorldScene)
@@ -9376,7 +9376,7 @@ const SCENARIOS = {
         // exactement, et il ne reste que ce que la lueur AJOUTE. Croisé avec l'interrupteur
         // du rideau, ça fait quatre prises — le patron des trois étalons du voisin, avec un
         // de plus parce qu'il y a ici deux couches à isoler, pas une.
-        const LIVRE = 0.45
+        const LIVRE = 0 // ce qui est LIVRÉ (voir `foudre-fx` : le liseré mesure 0, il est éteint)
         const pas = async (i, opts) => page.evaluate(({ i, g, lf, tel }) => {
           const s = window.__BRAISES__.scene
           s.meteoLayer.grainActif = g

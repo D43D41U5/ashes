@@ -59,8 +59,10 @@
  * contact (`contact-shadow.ts`), qui a mesuré les ratés WebGL du multiply sur des pixels de
  * sol déjà ombrés. MAIS sa contribution relevée, décor éliminé (même image, `liserFacteur`
  * 0,45 contre 0), vaut **0,0 de luminance** : il ne fait rien de mesurable, et on n'a pas
- * élucidé pourquoi. Il est donc gardé pour l'instant SANS lui prêter de mérite — la lecture
- * sous averse tient toute seule sur l'anneau. À trancher : le faire marcher, ou le retirer.
+ * élucidé pourquoi. **Il est donc LIVRÉ À ZÉRO** (`liserFacteur = 0`) : on ne rend pas une
+ * couche dont on ne sait pas prouver qu'elle peint. La lecture sous averse tient toute seule
+ * sur l'anneau — les +3,7 / +5,5 ci-dessus ne lui doivent rien. À trancher : l'expliquer et
+ * le rallumer, ou retirer le mécanisme.
  *
  * ═══ LE TRAIT BAT, LE CIEL NON — ET C'EST UNE DÉCISION D'ACCESSIBILITÉ ═══
  *
@@ -385,11 +387,13 @@ export class FoudreFx {
    * épais juste dehors du rayon de dégâts finirait par se lire comme faisant PARTIE de la
    * zone marquée, et c'est la seule chose que l'anneau n'a pas le droit de faire.
    *
-   * ÉTAT MESURÉ : à 0,45 sa contribution vaut 0,0 (voir l'en-tête). Ce réglage ne repose
-   * donc sur AUCUN relevé favorable — il attend qu'on explique pourquoi le liseré ne peint
-   * rien, ou qu'on le retire.
+   * ÉTAT MESURÉ : à 0,45 sa contribution vaut 0,0 (voir l'en-tête). **Il est donc LIVRÉ À
+   * ZÉRO** — on ne rend pas une couche dont on ne sait pas prouver qu'elle peint quelque
+   * chose. Le mécanisme, la texture et ce bouton restent là pour qui saura l'expliquer ; en
+   * attendant, ce qui s'affiche est exactement ce qui a été mesuré, et le « 67 % conservés »
+   * de l'en-tête ne doit rien au liseré.
    */
-  liserFacteur = 0.45
+  liserFacteur = 0
 
   /**
    * L'INTERRUPTEUR DU TÉLÉGRAPHE — toujours vrai en jeu, BAISSÉ PAR LE SMOKE et par rien
