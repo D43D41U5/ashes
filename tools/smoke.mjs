@@ -8454,7 +8454,31 @@ const SCENARIOS = {
       // ── 1. LE MONDE NU, au MÊME endroit et à la MÊME heure : l'étalon. Sans lui, un µ
       //      de 90 ne dit rien — c'est l'ÉCART au sol nu qui dit ce que le ciel a fait. ──
       await agir({ type: 'debug_meteo', meteo: null }, 200)
-      await agir({ type: 'debug_teleport', x: coeur, y }, 500)
+    /**
+     * SE PORTER DANS LA BANDE, ET LE PROUVER — jamais un délai fixe.
+     *
+     * MESURÉ, et c'est la cause d'une planche entière de mesures FAUSSES : après un
+     * `debug_teleport`, la prédiction locale met ~1,5 s à rejoindre la sim (500 ms rendaient
+     * l'avatar TOUJOURS à son ancienne place). On mesurait donc consciencieusement un monde
+     * sans bande au-dessus de la tête : brouillard Δµ = 0,0 EXACTEMENT, neige −0,1. Un zéro
+     * parfait n'est pas un rendu discret, c'est un rendu ABSENT — la garde le dit maintenant.
+     */
+    const seRendreAuCoeur = async (x, y, cible = 0.9) => {
+      await agir({ type: 'debug_teleport', x, y }, 200)
+      try {
+        await page.waitForFunction(
+          (c) => (window.__BRAISES__.scene.meteoLayer?.intensiteAuJoueur ?? 0) >= c,
+          cible, { timeout: 15000, polling: 250 },
+        )
+        return true
+      } catch {
+        const i = await page.evaluate(() => window.__BRAISES__.scene.meteoLayer?.intensiteAuJoueur ?? 0)
+        console.error(`!! l'avatar n'est PAS entré dans la bande (intensité ${i.toFixed(2)} < ${cible}) — la mesure qui suit ne vaut rien`)
+        return false
+      }
+    }
+
+      await seRendreAuCoeur(coeur, y)
       await canopeePleine(page) // la cime au-dessus du joueur s'efface : la photo mentirait
       await page.waitForTimeout(500)
       // LA PHOTO DU MONDE NU, gardée : un Δµ de +56 ne se juge pas seul, il se REGARDE à
@@ -8464,7 +8488,7 @@ const SCENARIOS = {
 
       // ── 2. LE CŒUR (intensité 1) — le ciel plein. ──
       await agir({ type: 'debug_meteo', meteo: type, edge: 0, phase: 0.5 }, 400)
-      await agir({ type: 'debug_teleport', x: coeur, y }, 500)
+      await seRendreAuCoeur(coeur, y)
       await canopeePleine(page)
       await page.waitForTimeout(700)
       const eCoeur = await etat()

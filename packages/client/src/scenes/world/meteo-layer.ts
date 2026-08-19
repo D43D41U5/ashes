@@ -183,7 +183,12 @@ void main() {
   // pluie en pixel art, et la garantie qu'aucun grain ne grouille sur place.
   if (mouille || flocon) {
     vec2 p = floor(cell + uDrift);
-    float LX = blizzard ? 7.0 : 1.0;             // le blizzard couche ses flocons
+    // LE BLIZZARD COUCHE SES FLOCONS, il ne peint pas des BARRES. MESURÉ sur la première
+    // planche : à LX = 7 combiné au TAILLE = 2 du flocon, un grain faisait 14 cellules de
+    // large — à l'écran, des rubans blancs de ~120 px qui ne lisent plus « neige chassée »
+    // mais « bandes ». Trois cellules (× TAILLE = 6) donnent un trait court et couché : le
+    // vent se voit, le flocon reste un flocon.
+    float LX = blizzard ? 3.0 : 1.0;             // le blizzard couche ses flocons
     float LY = mouille ? 7.0 : 1.0;              // la pluie etire ses gouttes en traits
     float TAILLE = flocon ? 2.0 : 1.0;           // le flocon est plus gros que la goutte
     vec2 bloc = vec2(floor(p.x / (LX * TAILLE)), floor(p.y / (LY * TAILLE)));
