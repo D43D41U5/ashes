@@ -9032,6 +9032,91 @@ const SCENARIOS = {
     return out
   },
 
+  /**
+   * LA PLANCHE DES CIELS — une image par type, au CŒUR, à midi, l'intensité PROUVÉE.
+   *
+   * `--scenario meteo` est le juge complet (µ, σ/µ, centiles, lisière, foudre, prédiction,
+   * coût) et il coûte cher : chaque `renderer.snapshot()` traverse le rendu logiciel entier.
+   * Quand la question est « MONTRE-MOI les cinq ciels » — la seule qu'un DA pose avant de
+   * livrer — on ne veut pas payer la planche de mesure pour obtenir des photos.
+   *
+   * Ce scénario ne mesure donc RIEN : il arme, il prouve qu'il est bien SOUS le ciel qu'il
+   * photographie (intensité au joueur ≥ 0,9 relevée À L'OBTURATEUR, heure rappelée à midi),
+   * il déclenche. Il rend en plus le compte de particules vivantes de chaque prise : une
+   * photo qui montre un rideau doit pouvoir dire combien de gouttes elle contient.
+   */
+  async meteoplanche(page) {
+    if (!dev) { console.log('(la planche des ciels exige --dev)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const etat = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      return {
+        intensite: s.meteoLayer?.intensiteAuJoueur ?? 0,
+        sonde: { ...(s.meteoLayer?.sonde ?? {}) },
+        pos: s.registry.get('playerPos'),
+        map: { w: s.map.width, h: s.map.height },
+        heure: s.lastTime?.hourOfCycle ?? -1,
+      }
+    })
+    await agir({ type: 'debug_set_hour', hour: 12 }, 800)
+    const e0 = await etat()
+    const xRef = e0.map.w / 2
+    const yRef = Math.min(e0.map.h - 2, Math.max(2, e0.pos.y))
+    await agir({ type: 'debug_teleport', x: xRef, y: yRef }, 1800)
+
+    // LE TÉMOIN : même endroit, même heure, aucun front. Sans lui, une photo de pluie ne se
+    // juge pas — c'est l'ÉCART au monde nu qui dit ce que le ciel a fait.
+    await agir({ type: 'debug_meteo', meteo: null }, 300)
+    await agir({ type: 'debug_set_hour', hour: 12 }, 900)
+    await canopeePleine(page)
+    await page.screenshot({ path: `${OUT}/ciel-0-temoin-sans-meteo.png`, timeout: 180000 })
+    console.log('  témoin sans météo — pris')
+
+    const out = {}
+    // `SMOKE_CIELS=orage,blizzard` pour ne retirer que quelques prises — la planche entière
+    // coûte plusieurs minutes par ciel quand la machine est chargée, et rejouer les cinq
+    // pour en récupérer deux est du temps jeté (patron `--prise` de la vitrine).
+    const voulus = process.env.SMOKE_CIELS ? process.env.SMOKE_CIELS.split(',') : null
+    for (const type of ['pluie', 'neige', 'orage', 'blizzard', 'brouillard']) {
+      if (voulus && !voulus.includes(type)) continue
+      const arme = async () => {
+        await page.evaluate((t) => {
+          const sc = window.__BRAISES__.scene
+          sc.sendAction({ type: 'debug_set_hour', hour: 12 })
+          sc.sendAction({ type: 'debug_meteo', meteo: t, edge: 0, phase: 0.5 })
+        }, type)
+        await page.waitForFunction(
+          () => (window.__BRAISES__.scene.meteoLayer?.intensiteAuJoueur ?? 0) >= 0.9,
+          null, { timeout: 20000, polling: 150 },
+        ).catch(() => {})
+      }
+      await agir({ type: 'debug_teleport', x: xRef, y: yRef }, 700)
+      await arme()
+      await canopeePleine(page)
+      await page.waitForTimeout(700)
+      // LE RAPPEL DE DERNIÈRE SECONDE, puis la preuve : la bande avance pendant qu'on la
+      // photographie, et l'horloge headless galope. Voir `meteo` pour le prix payé.
+      await arme()
+      const e = await etat()
+      if (e.intensite < 0.9) console.error(`!! ${type} : intensité ${e.intensite.toFixed(2)} À L'OBTURATEUR — la photo ne montre pas le ciel`)
+      // 30 s (le défaut) ne suffisent PAS quand une image dure une seconde : MESURÉ, la
+      // prise de l'orage a expiré en pleine planche. L'obturateur attend le moteur.
+      await page.screenshot({ path: `${OUT}/ciel-${type}.png`, timeout: 180000 })
+      out[type] = { intensite: e.intensite, heure: e.heure, sonde: e.sonde }
+      console.log(
+        `  ${type.padEnd(11)} intensité ${e.intensite.toFixed(2)} à ${Math.round(e.heure * 10) / 10} h · ` +
+        `${e.sonde.vivantes} particules (cible ${e.sonde.cible}, budget ${e.sonde.budget}${e.sonde.plafonne ? ' PLAFONNÉ' : ''}), ` +
+        `${e.sonde.rects} rectangles, ${e.sonde.eclabsTotal ?? 0} éclaboussures écloses`,
+      )
+    }
+    return out
+  },
+
   async ombres(page) {
     await page.waitForTimeout(1500) // stabilisation (harnais a déjà navigué + attendu mapData)
     await page.screenshot({ path: `${OUT}/ombres-avatar.png` })
