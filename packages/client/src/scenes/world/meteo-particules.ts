@@ -101,7 +101,25 @@ export interface ProfilChute {
   readonly flottePuls: number
   /** Combien de SECONDES de mouvement la traînée montre. 0 = un carré (le flocon). */
   readonly trainee: number
-  /** Le côté du grain en cellules de 4 px, par cran de profondeur [lointain, proche]. */
+  /**
+   * LA GRILLE DE QUANTIFICATION DE CE CIEL, en px MONDE — et c'est ce qui sépare une goutte
+   * d'un flocon plus sûrement que sa couleur.
+   *
+   * Le grain de l'art n'est pas UN nombre, c'est DEUX (demande d'Alexis, 2026-08-19) :
+   *   • `GRAIN_PX` (4) — la grille des FX de LUMIÈRE, celle du Feu et de la foudre. Le flocon
+   *     et le blizzard y restent : leur silhouette carrée est validée, on n'y touche pas.
+   *   • **1 px monde** — la grille de l'ART LUI-MÊME, la plus fine qui existe (les tuiles sont
+   *     peintes à 16 px). La goutte y descend : c'est ce qui fait la FINESSE. Ce reste du
+   *     pixel art — bords francs, positions entières, NEAREST — simplement aligné sur une
+   *     grille plus fine, PAS un dégradé lissé ni un trait vectoriel.
+   *
+   * CE QUE ÇA COÛTE, et il fallait le mesurer avant de le choisir : la traînée inclinée se
+   * peint en ESCALIER, et un escalier sur une grille 4× plus fine a 4× plus de marches pour
+   * la même pente. Le nombre de rectangles par goutte vaut `1 + longueur × |vent/vLimite|`,
+   * en cellules — d'où la garde de `meteo-particules.test.ts`, qui le plafonne par profil.
+   */
+  readonly grainPx: number
+  /** Le côté du grain en cellules de `grainPx`, par cran de profondeur [lointain, proche]. */
   readonly taille: readonly [number, number]
   /** La densité au cœur du front, en particules par tuile carrée VISIBLE. */
   readonly densite: number
@@ -111,6 +129,13 @@ export interface ProfilChute {
   readonly alpha: readonly [number, number]
   /** La goutte éclabousse en touchant le sol ; le flocon se pose sans bruit. */
   readonly eclabousse: boolean
+  /**
+   * L'OPACITÉ DE L'ÉCLABOUSSURE — la sienne, pas celle de la goutte. Une gerbe d'impact est
+   * plus LARGE et plus DENSE que le trait qui l'a faite (c'est de l'eau projetée, pas de
+   * l'eau qui tombe) : elle garde le grain de 4 px et son propre poids. Sans ça, l'affiner
+   * avec la goutte l'aurait effacée — deux pixels de 1 px à alpha 0,12 ne se voient pas.
+   */
+  readonly alphaEclab: number
   /** La hauteur de chute tirée à la naissance, en tuiles [min, max] — voir `Particule.chute`. */
   readonly hauteur: readonly [number, number]
 }
@@ -120,37 +145,68 @@ export interface ProfilChute {
  * c'est son signalement (et c'était déjà vrai du shader). Nul ici = aucune particule.
  */
 export const PROFILS: Record<MeteoType, ProfilChute | null> = {
-  // LA PLUIE : ~9 tuiles/s, quasi verticale (le vent ne vaut qu'un douzième de la chute),
-  // un trait de 0,10 s de mouvement — soit ~4 cellules, 14 px : la goutte lue de loin
-  // (0,14 s donnait 5 cellules, soit 45 px d'ecran au zoom 2,25 : ca lisait « barre »).
+  // ═══ LA PLUIE : FINE, NOMBREUSE, DISCRÈTE (demande d'Alexis, 2026-08-19) ═══
+  //
+  // Elle a d'abord été peinte en cellules de 4 px à alpha 0,5 : MESURÉ sur les pixels rendus
+  // (planche `meteoplanche`, mediane des plages horizontales), la goutte faisait **9 px
+  // d'écran de LARGE** pour 26 de long — soit un rapport 3:1 — et 7,1 % du cadre passait
+  // AU-DESSUS de la luminance de l'herbe nue de midi. Ça ne lisait pas « pluie », ça lisait
+  // « bâtonnet de craie ». Trois nombres ont changé, et un seul principe : c'est le NOMBRE
+  // qui fait le rideau, jamais le poids d'une goutte.
+  //
+  //   • LARGEUR — 1 px MONDE (`grainPx: 1`), la grille de l'art elle-même : 2,3 px d'écran.
+  //   • LONGUEUR — 0,16 s de mouvement, soit 1,45 tuile, 23 px monde, ~53 px d'écran : le
+  //     rapport passe de 3:1 à **23:1**. Une pluie vue de haut est un trait long et ténu.
+  //     (Le vieux garde-fou « 0,14 s lisait barre » était vrai À 4 px DE LARGE ; à 1 px, la
+  //     longueur ne fait plus une barre, elle fait une aiguille.)
+  //   • OPACITÉ — 0,11 / 0,22 au lieu de 0,26 / 0,50 : une goutte isolée est à la limite du
+  //     visible, et c'est voulu.
+  //   • NOMBRE — densité 0,62 → 0,69, soit ~610 gouttes contre 550, DANS le budget partagé.
+  //     0,74 a été essayé et REJETÉ sur mesure : il visait 656 pour un plafond de 650, donc
+  //     la pluie sortait PLAFONNÉE — et un rideau plafonné ne suit plus l'intensité du front,
+  //     c'est le budget qui peint (le piège nommé sous `BUDGET_PARTICULES`).
   pluie: {
     vLimite: 9, g: 30, vent: 0.8, flotte: 0, flottePuls: 0,
-    trainee: 0.10, taille: [1, 1], densite: 0.62,
-    teinte: [178, 199, 235], alpha: [0.26, 0.5], eclabousse: true, hauteur: [5, 20],
+    trainee: 0.16, grainPx: 1, taille: [1, 1], densite: 0.69,
+    teinte: [178, 199, 235], alpha: [0.11, 0.22], eclabousse: true, alphaEclab: 0.34,
+    hauteur: [5, 20],
   },
   brouillard: null,
   // LA NEIGE : sept fois plus lente que la pluie, et ELLE FLOTTE — l'oscillation latérale
   // vaut les deux tiers de sa vitesse de chute : le flocon dérive visiblement en descendant.
+  // (INCHANGÉE — sa silhouette carrée est validée : elle garde le grain de 4 px des FX.)
   neige: {
     vLimite: 1.2, g: 6, vent: 0.35, flotte: 0.8, flottePuls: 1.7,
-    trainee: 0, taille: [1, 2], densite: 0.55,
-    teinte: [250, 252, 255], alpha: [0.42, 0.82], eclabousse: false, hauteur: [8, 26],
+    trainee: 0, grainPx: GRAIN_PX, taille: [1, 2], densite: 0.55,
+    teinte: [250, 252, 255], alpha: [0.42, 0.82], eclabousse: false, alphaEclab: 0,
+    hauteur: [8, 26],
   },
   // L'ORAGE : la pluie en plus rapide et PENCHÉE — le vent monte à trois tuiles/s, la
   // trajectoire s'incline de ~17°, et ça se voit d'un coup d'œil contre la pluie droite.
+  //
+  // IL S'AFFINE AVEC LA PLUIE — c'est la MÊME eau, et laisser le ciel le plus violent peint
+  // en bâtonnets plus gros que l'averse ordinaire aurait été une incohérence de DA. Mais IL
+  // PAIE SA PENTE, et c'est un nombre : la traînée s'escalade sur 1 px, or sa pente vaut
+  // 0,305 contre 0,089 pour la pluie — trois fois plus de marches par unité de longueur.
+  // D'où une traînée plus courte (0,11 s ≈ 19 px monde) et une densité tenue à 0,60 : ce sont
+  // les deux boutons qui gardent le compte de rectangles sous contrôle. Le chiffre exact est
+  // au journal de `meteo-layer` (MESURÉ, `smoke --scenario meteocout`).
   orage: {
     vLimite: 10.5, g: 34, vent: 3.2, flotte: 0, flottePuls: 0,
-    trainee: 0.10, taille: [1, 1], densite: 0.66,
-    teinte: [170, 192, 232], alpha: [0.3, 0.56], eclabousse: true, hauteur: [5, 18],
+    trainee: 0.11, grainPx: 1, taille: [1, 1], densite: 0.60,
+    teinte: [170, 192, 232], alpha: [0.13, 0.26], eclabousse: true, alphaEclab: 0.38,
+    hauteur: [5, 18],
   },
   // LE BLIZZARD RASE : son vent (11) dépasse sa chute (2,1) — la trajectoire est PLUS
   // HORIZONTALE QUE VERTICALE, et c'est ça qu'on lit, pas la couleur. Traînée courte
   // (0,06 s ≈ 3 cellules) : un flocon chassé reste un flocon, il ne devient pas une barre —
   // la leçon MESURÉE du shader, où LX = 7 peignait des rubans de 120 px.
+  // (INCHANGÉ — même raison que la neige : le flocon chassé reste un carré de 4 px.)
   blizzard: {
     vLimite: 2.1, g: 9, vent: 11, flotte: 0.5, flottePuls: 2.4,
-    trainee: 0.06, taille: [1, 2], densite: 0.66,
-    teinte: [252, 253, 255], alpha: [0.44, 0.86], eclabousse: false, hauteur: [10, 30],
+    trainee: 0.06, grainPx: GRAIN_PX, taille: [1, 2], densite: 0.66,
+    teinte: [252, 253, 255], alpha: [0.44, 0.86], eclabousse: false, alphaEclab: 0,
+    hauteur: [10, 30],
   },
 }
 

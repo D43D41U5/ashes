@@ -192,16 +192,68 @@ describe('la traînée', () => {
     }
   })
 
-  it('ne rend JAMAIS plus de 3 rectangles par goutte, pour les quatre profils réels', () => {
-    // Le budget de rasterisation dépend de ce nombre : à 900 particules, passer de 2 à 6
-    // rectangles multiplierait le travail par trois sans que personne ne le voie venir.
+  /**
+   * LE COMPTE DE RECTANGLES PAR GOUTTE — le nombre qui commande le budget de rastérisation,
+   * et le PRIX EXACT de la pluie fine.
+   *
+   * Il vaut `1 + longueur × |pente|`, en CELLULES du grain de ce ciel. Affiner la goutte de
+   * 4 px à 1 px multiplie la longueur en cellules par quatre — donc l'escalier aussi, à pente
+   * égale. Le plafond n'est donc plus un nombre unique : chaque profil porte le sien, écrit
+   * ici EN TOUTES LETTRES, parce que c'est lui qu'on paie et qu'un profil qui le dépasserait
+   * doit rougir avant la machine.
+   *
+   * ⚠ Le plafond est écrit À LA MAIN et non dérivé de `vent/vLimite` : une garde écrite avec
+   * la constante qu'elle teste ne garde rien.
+   */
+  it('reste sous SON plafond de rectangles par goutte, profil par profil', () => {
+    const PLAFOND = { pluie: 3, neige: 1, orage: 8, blizzard: 3 } as const
     const runs: Run[] = []
     for (const type of ['pluie', 'neige', 'orage', 'blizzard'] as const) {
       const profil = PROFILS[type]!
       const v = Math.sqrt(profil.vent ** 2 + profil.vLimite ** 2)
-      const L = profil.trainee === 0 ? 1 : Math.max(1, Math.round(v * profil.trainee * 4))
+      // `parTuile` = TILE_PX / grainPx — la conversion tuiles → cellules DE CE CIEL.
+      const parTuile = 16 / profil.grainPx
+      const L = profil.trainee === 0 ? 1 : Math.max(1, Math.round(v * profil.trainee * parTuile))
       const n = traineeEnRuns(50, 50, profil.vent, profil.vLimite, L, profil.taille[1]!, runs, 0)
-      expect(n, `${type} : ${n} rectangles`).toBeLessThanOrEqual(3)
+      expect(n, `${type} : ${n} rectangles pour L=${L} cellules de ${profil.grainPx} px`)
+        .toBeLessThanOrEqual(PLAFOND[type])
+    }
+  })
+
+  /**
+   * LA FINESSE EST UN NOMBRE, PAS UN ADJECTIF (demande d'Alexis, 2026-08-19).
+   *
+   * La goutte doit faire UN pixel d'art de large et s'étirer nettement. On l'affirme sur les
+   * profils réels : largeur = 1 cellule × `grainPx` = 1 px monde, et un rapport
+   * longueur/largeur d'au moins 15:1. La neige et le blizzard sont EXCLUS — leur silhouette
+   * carrée sur 4 px est validée, et cette garde les casserait à raison si on les affinait.
+   */
+  it('la GOUTTE fait 1 px monde de large et s’étire au moins 15 fois plus qu’elle n’est large', () => {
+    for (const type of ['pluie', 'orage'] as const) {
+      const p = PROFILS[type]!
+      expect(p.grainPx, `${type} : grain`).toBe(1)
+      expect(p.taille[0] * p.grainPx, `${type} : largeur lointaine`).toBe(1)
+      expect(p.taille[1] * p.grainPx, `${type} : largeur proche`).toBe(1)
+      const longueurPx = Math.sqrt(p.vent ** 2 + p.vLimite ** 2) * p.trainee * 16
+      expect(longueurPx / (p.taille[1] * p.grainPx), `${type} : rapport`).toBeGreaterThanOrEqual(15)
+      // Et elle est DISCRÈTE : une goutte isolée reste sous le quart d'opacité.
+      expect(p.alpha[1], `${type} : opacité proche`).toBeLessThanOrEqual(0.26)
+    }
+    // La neige et le blizzard N'ONT PAS BOUGÉ : le grain des FX de lumière, et rien d'autre.
+    for (const type of ['neige', 'blizzard'] as const) expect(PROFILS[type]!.grainPx).toBe(4)
+  })
+
+  /**
+   * LA TRAÎNÉE NE DOIT PAS DÉPASSER LA MARGE D'ÉMISSION (`MARGE_TUILES` = 1,5 tuile dans
+   * `meteo-layer`). Au-delà, une goutte née sur le bord traînerait DANS le cadre un trait
+   * dont la tête n'est pas encore entrée — et l'allonger est justement ce qu'on vient de
+   * faire. Le nombre est recopié ici À DESSEIN : la couche est du Phaser, ce fichier est pur.
+   */
+  it('aucune traînée ne dépasse la marge d’émission de 1,5 tuile', () => {
+    for (const type of ['pluie', 'neige', 'orage', 'blizzard'] as const) {
+      const p = PROFILS[type]!
+      const longueurTuiles = Math.sqrt(p.vent ** 2 + p.vLimite ** 2) * p.trainee
+      expect(longueurTuiles, `${type} : ${longueurTuiles.toFixed(2)} tuile`).toBeLessThanOrEqual(1.5)
     }
   })
 })

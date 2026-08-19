@@ -29,23 +29,46 @@
  *
  *   • CE QUE LA COUCHE PREND SUR LE FIL PRINCIPAL (`smoke --scenario meteocout`, chronomètre
  *     interne `sonde.msPhysique` / `.msPeinture`). Au budget livré (650, marge 1,5 tuile) :
- *     **la pluie tient 543 particules pour 0,775 ms/image** (0,525 de physique + 0,25 de
- *     peinture, 543 rectangles), et elle n'est PAS plafonnée. Au budget d'avant (900, marge
- *     3 tuiles), la même pluie coûtait **2,2 ms/image** — le plafond que la demande fixait —
- *     et trois types sur quatre TAPAIENT le budget, donc peignaient un rideau que le budget
- *     décidait au lieu du front. C'est ce relevé qui a fait baisser les deux constantes.
- *     (Neige 662 particules → 0,75 ms ; orage 900 → 0,60 ms pour 1 800 rectangles ;
- *     blizzard 900 → 0,25 ms — mesures prises à l'ancien budget, à refaire au besoin.)
+ *     **la pluie tient 609 particules pour 1,2 ms/image** (0,6 de physique + 0,6 de peinture,
+ *     1 827 rectangles), et elle n'est PAS plafonnée. Au budget d'avant (900, marge 3 tuiles),
+ *     la même pluie coûtait **2,2 ms/image** — le plafond que la demande fixait — et trois
+ *     types sur quatre TAPAIENT le budget, donc peignaient un rideau que le budget décidait
+ *     au lieu du front. C'est ce relevé qui a fait baisser les deux constantes.
+ *     (Neige 488 → 0,625 ms ; orage 518 → 0,7 ms pour 3 323 rectangles ; blizzard 585 →
+ *     0,2 ms — relevés du 2026-08-19, au budget courant.)
+ *
+ *     ⚠ **CE QUE LA PLUIE FINE A COÛTÉ, EN CLAIR : +0,43 ms/image** (0,775 → 1,2). La goutte
+ *     est passée d'une cellule de 4 px à un pixel d'art : sa traînée fait maintenant 23
+ *     cellules au lieu de 4, et l'escalier de la pente en rend **3 rectangles par goutte au
+ *     lieu d'un** (MESURÉ : 1 827 pour 609). Trois rectangles fins coûtent plus qu'un gros —
+ *     c'est le prix de la finesse, il est nommé, et il reste très en dessous des 2,2 ms
+ *     rejetées. L'orage paie plus cher encore (6,4 rectangles par goutte, sa pente vaut
+ *     0,305 contre 0,089) : c'est pour ça que sa traînée est plus courte et sa densité plus
+ *     basse que celles de la pluie.
  *
  *   • CE QUE ÇA DONNE À L'ÉCRAN (`smoke --scenario meteo`, TROIS étalons au même endroit et
  *     à la même heure — ciel nu / voile seul / voile + particules ; deux n'auraient pas
- *     suffi, voir le scénario). Sous la pluie, au cœur, à midi : **µ 117,7 contre 135,3 au
- *     ciel nu (Δ −17,6), σ/µ 0,266 contre 0,252** — le ciel assombrit ET contraste. Contre
- *     le VOILE SEUL, le grain pèse **Δµ +5,4** : il ÉCLAIRCIT, comme il doit (des traits
- *     pâles sur une ardoise), et c'est ce troisième étalon qui le prouve — contre le sol nu
- *     seul, les deux effets se seraient partiellement annulés, exactement le piège que la
- *     recette précédente avait payé (Δµ = −0,4, « une pluie invisible aux nombres »).
- *     La LISIÈRE se voit : marche de luminance −11,9 (−16,2 dedans, −4,3 dehors).
+ *     suffi, voir le scénario). Sous la pluie FINE, au cœur, à midi : **µ 114,9 contre 135,3
+ *     au ciel nu (Δ −20,3), σ/µ 0,294 contre 0,251** — le ciel assombrit ET contraste.
+ *     Contre le VOILE SEUL, le grain pèse **Δµ +1,1** et **σ/µ 0,294 contre 0,284** : il
+ *     éclaircit à peine et il CONTRASTE toujours. C'est ce troisième étalon qui le prouve —
+ *     contre le sol nu seul, les deux effets se seraient partiellement annulés, exactement
+ *     le piège que la recette d'avant les particules avait payé (Δµ = −0,4, « une pluie
+ *     invisible aux nombres »). La LISIÈRE se voit : marche de luminance −18,2 (−22,5
+ *     dedans, −4,3 dehors).
+ *
+ *     LA COMPARAISON QUI DIT LA FINESSE (mêmes étalons, gouttes de 4 px avant / 1 px après) :
+ *       Δµ contre le ciel nu       −17,6  →  −20,3   (elle DÉLAVE cinq fois moins)
+ *       Δµ contre le voile seul     +5,4  →   +1,1   (le grain ne blanchit presque plus)
+ *       σ/µ contre le voile seul   +0,014 →  +0,010  (il contraste toujours — c'est la garde)
+ *       marche de lisière          −11,9  →  −18,2   (le bord du front se lit MIEUX)
+ *     Et sur les pixels de la planche `meteoplanche`, à la même scène et au même témoin :
+ *     **largeur médiane d'une goutte 9 px d'écran → 2** (4 px monde → 1, au zoom 2,25), et
+ *     la part du cadre plus CLAIRE que l'herbe nue tombe de **7,11 % à 0,55 %**. La longueur,
+ *     elle, se DÉRIVE et se corrobore : `|v| × trainee × TILE_PX` = 23 px monde (52 d'écran)
+ *     contre 16 (36) — et le test « couvre EXACTEMENT L cellules » plus le relevé
+ *     `rects/vivantes` = 3,00 la pinnent, faute d'un seuil optique qui tienne sur les deux
+ *     (la goutte fine passe SOUS la luminance de l'herbe nue : voir plus bas).
  *
  * CE QU'ON N'A PAS PU MESURER ICI, et il faut le dire : le COÛT EN IMAGES PAR SECONDE. Sur
  * ce poste, pendant que d'autres sessions compilaient, un ciel NU a été relevé à **937 ms
@@ -65,15 +88,17 @@
  *
  *   • pas de post-FX (il rendrait blanc sous swiftshader, et coûterait le seul juge visuel
  *     du projet) — ni pour le voile ni pour le grain ;
- *   • TOUT est quantifié sur la grille de 4 px MONDE — le grain de l'art. Gouttes, flocons,
- *     éclaboussures et voile sont des CARRÉS DURS, jamais un dégradé lissé, jamais un
- *     rectangle tourné (qui baverait en bords lissés : la traînée inclinée se peint en
- *     ESCALIER, voir `traineeEnRuns`). CE QUE ÇA COÛTE, et c'est le nombre qui décide du
- *     budget : la pluie rend **UN** rectangle par goutte (MESURÉ : `rects` = `vivantes`,
- *     863 pour 863) parce que sa pente `vent/vLimite` vaut 0,09 — sur quatre cellules,
- *     l'escalier ne change jamais de colonne. Monter `vent` casserait ça en silence : le
- *     test `meteo-particules.test.ts` plafonne à TROIS rectangles par goutte pour les
- *     quatre profils réels, c'est là que ça se verra ;
+ *   • TOUT est quantifié sur UNE GRILLE DE PIXELS D'ART — mais elle n'est plus la même pour
+ *     tous. Les flocons, le blizzard, les éclaboussures et le voile restent sur les 4 px des
+ *     FX de lumière ; **la goutte est descendue à 1 px monde**, la grille de l'art elle-même
+ *     (`ProfilChute.grainPx`), et c'est ce qui fait sa finesse. Dans les deux cas ce sont des
+ *     CARRÉS DURS, jamais un dégradé lissé, jamais un rectangle tourné (qui baverait en bords
+ *     lissés : la traînée inclinée se peint en ESCALIER, voir `traineeEnRuns`). CE QUE ÇA
+ *     COÛTE est le nombre qui décide du budget : la pluie rend **3** rectangles par goutte
+ *     (MESURÉ : 1 827 pour 609) et l'orage **6,4** (3 323 pour 518), parce que l'escalier a
+ *     autant de marches que la pente en fait sur la longueur — et la longueur en CELLULES a
+ *     quadruplé en passant à 1 px. Monter `vent` ou `trainee` casserait ça en silence : le
+ *     test `meteo-particules.test.ts` porte un plafond PAR PROFIL, c'est là que ça se verra ;
  *   • l'opacité va par CRANS — deux, lointain et proche — jamais en rampe : le patron de la
  *     brume, qui postérise pour la même raison ;
  *   • le hash du voile est le polynôme de permutation de la brume (34x²+x mod 289), jamais un
@@ -506,7 +531,10 @@ export class MeteoLayer {
   private peindre(profil: ProfilChute, day: number): void {
     const g = this.grain.clear().setVisible(true)
     const couleur = teinteDeNuit(profil.teinte, day)
-    const parTuile = TILE_PX / GRAIN_PX
+    // LA GRILLE DE CE CIEL, pas une constante globale : la goutte tombe sur 1 px monde (la
+    // grille de l'ART), le flocon reste sur les 4 px des FX de lumière. Voir `ProfilChute.grainPx`.
+    const grain = profil.grainPx
+    const parTuile = TILE_PX / grain
     let rects = 0
     const crans: readonly (0 | 1)[] = [0, 1]
     for (const cran of crans) {
@@ -525,7 +553,7 @@ export class MeteoLayer {
         const n = traineeEnRuns(cx, cy, p.vx, p.vy, L, epaisseur, this.runs, 0)
         for (let i = 0; i < n; i++) {
           const r = this.runs[i]!
-          g.fillRect(r.cx * GRAIN_PX, r.cy * GRAIN_PX, r.w * GRAIN_PX, r.h * GRAIN_PX)
+          g.fillRect(r.cx * grain, r.cy * grain, r.w * grain, r.h * grain)
         }
         rects += n
       }
@@ -534,14 +562,21 @@ export class MeteoLayer {
     // ── L'ÉCLABOUSSURE : deux pixels qui repartent À L'OPPOSÉ du point de chute (vers lui,
     //    ils se tasseraient sur la goutte), pendant deux ou trois images. Deux crans d'âge,
     //    jamais un fondu : c'est la DA, et à 90 ms un fondu ne se verrait pas de toute façon.
+    //
+    //    ELLE GARDE LE GRAIN DE 4 px ET SON PROPRE POIDS, quand la goutte est descendue à
+    //    1 px : une gerbe d'impact est de l'eau PROJETÉE, plus large et plus dense que le
+    //    trait qui l'a faite. L'affiner avec la goutte l'aurait effacée — deux pixels de
+    //    1 px à alpha 0,11 ne se voient pas. C'est un CHOIX, pas un oubli : `alphaEclab`
+    //    porte l'un et `GRAIN_PX` l'autre.
+    const parTuileEclab = TILE_PX / GRAIN_PX
     for (const pas of [0, 1]) {
-      g.fillStyle(couleur, pas === 0 ? profil.alpha[1]! : profil.alpha[0]!)
+      g.fillStyle(couleur, pas === 0 ? profil.alphaEclab : profil.alphaEclab * 0.55)
       for (const e of this.champ.eclaboussures) {
         if (!e.vive) continue
         const jeune = e.age * 2 < ECLABOUSSURE_MS
         if ((pas === 0) !== jeune) continue
-        const cx = Math.floor(e.x * parTuile)
-        const cy = Math.floor(e.y * parTuile)
+        const cx = Math.floor(e.x * parTuileEclab)
+        const cy = Math.floor(e.y * parTuileEclab)
         // Jeune : deux gouttelettes serrées. Vieille : plus écartées et remontées — la
         // couronne s'ouvre. Deux états, pas une interpolation.
         const d = jeune ? 1 : 2
