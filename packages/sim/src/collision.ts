@@ -15,11 +15,11 @@
  * déplacement, `overlapsBlocking`) répondent « ce point est-il dans un
  * obstacle ? ». Un arbre bloque sa tuile pour l'A* et son seul tronc pour l'avatar.
  */
-import { BALANCE, NODE_DEFS, TERRAINS, TICK_DT_S } from './balance'
+import { BALANCE, NODE_DEFS, TERRAIN_DEEP_WATER, TERRAINS, TICK_DT_S } from './balance'
 import { nodeAt, treeJitter, type ResourceNode } from './economy'
-import { gelPossible, traverseeGelee, vitesseSurGlace } from './gel'
+import { estGele, gelPossible, vitesseSurGlace } from './gel'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
-import { isBlockingTile, terrainAt, type WorldMap } from './map'
+import { MARCHABLE, terrainAt, type WorldMap } from './map'
 import type { SimState } from './sim'
 import { structureBlocks, type Structure } from './village'
 
@@ -150,13 +150,20 @@ function edgeDeborde(world: MoveWorld, tx: number, ty: number, bit: number): boo
  * ⚠ COORDONNÉES DE TUILE, TOUJOURS. Les appelants sous-tuile plancher avant d'appeler.
  */
 function terrainBloque(world: MoveWorld, tx: number, ty: number): boolean {
-  if (!isBlockingTile(world.map, tx, ty)) return false
+  // UNE SEULE LECTURE DE TERRAIN, et par `MARCHABLE` plutôt que par `TERRAINS` — la table
+  // existe pour ça (« la poser à TERRAINS coûte un accès de propriété, la poser à un
+  // Uint8Array coûte une lecture », `map.ts`). L'équivalence est celle qu'annonce sa doc :
+  // `MARCHABLE[id] === 1` ⇔ `TERRAINS[id]?.walkable === true`, hors table comprise. Ce
+  // chemin est le plus chaud de la collision : `blockedSubAt` l'emprunte une fois par
+  // SOUS-TUILE balayée.
+  const t = terrainAt(world.map, tx, ty)
+  if (MARCHABLE[t] === 1) return false
+  // SEULE L'EAU PROFONDE peut cesser de bloquer. La roche, la falaise, le mur et le vide
+  // sont hors du temps : la carte tranche, et le gel n'est même pas interrogé.
+  if (t !== TERRAIN_DEEP_WATER) return true
   const etat = world.etat
-  // Hors du temps (worldgen, bancs, gardes de géométrie) : la carte seule. Et quand rien ne
-  // peut geler dans la vallée — tout l'acte I, la plupart des journées d'acte II —, la borne
-  // O(1) tranche AVANT toute lecture de terrain de plus.
-  if (etat === undefined || !gelPossible(etat)) return true
-  return !traverseeGelee(etat, tx, ty)
+  if (etat === undefined) return true // worldgen, bancs, gardes de géométrie
+  return !estGele(etat, tx, ty)
 }
 
 /** Une tuile est-elle bloquante pour ce déplaceur ? (terrain + structures + nœuds) */
@@ -314,7 +321,7 @@ export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: numbe
   const gel = world.etat !== undefined && gelPossible(world.etat)
   return (tx: number, ty: number): boolean => {
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return blockedAt(world, tx, ty)
-    if (gel ? terrainBloque(world, tx, ty) : isBlockingTile(world.map, tx, ty)) return true
+    if (gel ? terrainBloque(world, tx, ty) : MARCHABLE[terrainAt(world.map, tx, ty)] !== 1) return true
     const entry = occupancy.get(ty * width + tx)
     if (entry === undefined) return false
     if (entry.structure !== undefined && structureBlocks(entry.structure, moverVillageId, portes)) return true
