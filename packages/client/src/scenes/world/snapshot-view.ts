@@ -635,6 +635,9 @@ export class SnapshotView {
   /** LE SANG AU SOL (spec chasse C9), LE VENT (C17), LES PILES (C18). */
   blood: SnapshotMessage['blood'] = []
   wind: SnapshotMessage['wind'] = { x: 1, y: 0 }
+  /** LE FRONT MÉTÉO EN COURS (spec meteo.md), ou rien — le RECORD D'ÉLECTION, patron `wind`.
+   *  Tout le reste (bande, gradient, éclairs) se recalcule du tick par les fonctions pures. */
+  meteo: SnapshotMessage['meteo'] = null
   groundItems: SnapshotMessage['groundItems'] = []
 
   /** Applique un snapshot complet — hors avatar local (prédit par la scène). */
@@ -679,6 +682,7 @@ export class SnapshotView {
     this.hour = msg.time.hourOfCycle
     this.blood = msg.blood
     this.wind = msg.wind
+    this.meteo = msg.meteo
     this.groundItems = msg.groundItems
     // LES SOLS QUI TRAVAILLENT (spec `cendreux.md` R21) : le snapshot les portait déjà et
     // le client les jetait. Ils se recalent sur l'horloge du RENDU ici, une fois par

@@ -153,6 +153,32 @@ export function frontMeteoPos(front: MeteoFront, tick: number, mapWidth: number,
 }
 
 /**
+ * L'INTENSITÉ, SANS ÉTAT — la même loi, prise sur un front, un tick et une carte.
+ *
+ * Extraite de `meteoIntensity` pour que LE CLIENT lise la MÊME rampe que la sim (chantier
+ * de rendu, tranche 9) : le mur de pluie se dessine de son gradient, et une seconde formule
+ * écrite côté client aurait divergé au premier calibrage — c'est la doctrine de l'écrivain
+ * unique, la même qui fait de `meteoTypeDuJour` la seule élection. `meteoIntensity` n'est
+ * plus qu'elle, lue sur l'état : mêmes expressions, même ordre, au bit près.
+ */
+export function meteoIntensityAt(
+  front: MeteoFront,
+  tick: number,
+  mapWidth: number,
+  mapHeight: number,
+  x: number,
+  y: number,
+): number {
+  const bande = frontMeteoPos(front, tick, mapWidth, mapHeight)
+  if (!bande) return 0
+  const c = bande.axis === 'x' ? x : y
+  const d = Math.min(c - bande.lo, bande.hi - c)
+  if (d <= 0) return 0
+  const rampe = METEO.RAMPE * METEO.LARGEUR[front.type]
+  return rampe <= 0 ? 1 : Math.min(1, d / rampe)
+}
+
+/**
  * L'intensité du front en (x, y) — LA surface de lecture unique des tranches suivantes
  * (froid, Feu, faune, vitesse, perception : tout se lira ici). 0 hors bande, 1 au cœur,
  * rampe LINÉAIRE sur `RAMPE × LARGEUR` à chaque bord — un gradient bord → centre, jamais
@@ -161,13 +187,7 @@ export function frontMeteoPos(front: MeteoFront, tick: number, mapWidth: number,
 export function meteoIntensity(state: SimState, x: number, y: number): number {
   const front = state.meteo
   if (!front) return 0
-  const bande = frontMeteoPos(front, state.tick, state.map.width, state.map.height)
-  if (!bande) return 0
-  const c = bande.axis === 'x' ? x : y
-  const d = Math.min(c - bande.lo, bande.hi - c)
-  if (d <= 0) return 0
-  const rampe = METEO.RAMPE * METEO.LARGEUR[front.type]
-  return rampe <= 0 ? 1 : Math.min(1, d / rampe)
+  return meteoIntensityAt(front, state.tick, state.map.width, state.map.height, x, y)
 }
 
 /**
@@ -243,11 +263,31 @@ export function meteoFeuConso(state: SimState, x: number, y: number): number {
  * `speedScaleFor`, la même chaîne que `coldSpeedFactor` (les avatars ; patron du froid).
  */
 export function meteoSpeedFactor(state: SimState, x: number, y: number): number {
-  const front = state.meteo
+  return meteoSpeedFactorAt(state.meteo ?? null, state.tick, state.map.width, state.map.height, x, y)
+}
+
+/**
+ * LE MÊME MALUS DE PAS, SANS ÉTAT — pour LA PRÉDICTION LOCALE DU CLIENT (spec R7, dernière
+ * ligne du « hors périmètre » de `meteo.md`).
+ *
+ * L'autorité multiplie déjà la vitesse de l'avatar par ce facteur, au point du marcheur ;
+ * un client qui l'ignore prédit 5 à 20 % trop vite sous un front (jusqu'à ×0,8 sous
+ * blizzard) et l'avatar fait de l'élastique à chaque réconciliation. Le remède n'est pas
+ * de recopier la formule côté client — c'est de lui donner LA MÊME, appelée sur le record
+ * d'élection reçu dans le snapshot. Écrivain unique, jusqu'à la prédiction.
+ */
+export function meteoSpeedFactorAt(
+  front: MeteoFront | null | undefined,
+  tick: number,
+  mapWidth: number,
+  mapHeight: number,
+  x: number,
+  y: number,
+): number {
   if (!front) return 1
   const plein: number = METEO.SPEED[front.type]
   if (plein === 1) return 1
-  return 1 - (1 - plein) * meteoIntensity(state, x, y)
+  return 1 - (1 - plein) * meteoIntensityAt(front, tick, mapWidth, mapHeight, x, y)
 }
 
 /**

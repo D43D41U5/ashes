@@ -26,6 +26,7 @@ import {
   SLOTS,
   hash2,
   isRangedWeapon,
+  meteoSpeedFactorAt,
   predictFrame,
   reconcile as reconcilePrediction,
   renderPosition,
@@ -166,6 +167,8 @@ import { NightVeil } from './world/night-veil'
 import { DynamicLighting } from './world/dynamic-lighting'
 import { WaterLayer, type WaterWader } from './world/water-layer'
 import { AmbientLife } from './world/ambient-life'
+import { FoudreFx } from './world/foudre-fx'
+import { MeteoLayer } from './world/meteo-layer'
 import { SoleilLayer } from './world/soleil-layer'
 import { bindDebugKeys } from './world/debug-bindings'
 import { createDebugPanel } from './world/debug-panel'
@@ -340,6 +343,11 @@ export class WorldScene extends Phaser.Scene {
   /** Oiseaux et lucioles — décor pur, hors sim (voir world/ambient-life.ts). */
   ambientLife: AmbientLife | null = null
   soleilLayer: SoleilLayer | null = null
+  /** LES CINQ CIELS (spec meteo.md) — la bande du front, peinte. Publique : le smoke lit sa
+   *  sonde d'intensité, et un rendu se juge sur ce qu'il montre. */
+  meteoLayer: MeteoLayer | null = null
+  /** LA FOUDRE (R8) — le télégraphe au sol, puis l'éclair. Publique, même raison. */
+  foudreFx: FoudreFx | null = null
   private lastTime: GameTime | null = null
   /** Couvert de canopée lissé autour de l'avatar — piloté vers la valeur échantillonnée. */
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
@@ -818,6 +826,7 @@ export class WorldScene extends Phaser.Scene {
       for (const couche of [
         this.nightVeil, this.water, this.combeMist, this.morningMist, this.mistBanks,
         this.fireFx, this.fireGround, this.poissons, this.feuilles, this.cendre,
+        this.meteoLayer, this.foudreFx,
       ]) couche?.destroy()
     })
 
@@ -951,6 +960,11 @@ export class WorldScene extends Phaser.Scene {
         // LES TACHES DE SOLEIL (forêts-vivantes §5) : la lumière du sous-bois, dérivée du
         // champ de profondeur reçu au ready — lisière trouée, cœur éteint, clairières pleines.
         this.soleilLayer = new SoleilLayer(this, this.map, this.worldSeed)
+        // LA MÉTÉO (spec meteo.md) : la bande du front et la foudre. Le record d'élection
+        // arrive par le snapshot ; TOUT le reste — bande, gradient, instants et points
+        // d'impact — se recalcule ici des fonctions pures de /sim.
+        this.meteoLayer = new MeteoLayer(this, this.map.width, this.map.height)
+        this.foudreFx = new FoudreFx(this)
         this.cameras.main.setBounds(0, 0, worldW, worldH)
         this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
         this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')
@@ -1570,6 +1584,12 @@ export class WorldScene extends Phaser.Scene {
       // La vie ambiante : les oiseaux traversent, les lucioles ne sortent qu'à la nuit.
       this.ambientLife?.update(this.cameras.main, time / 1000, deltaMs / 1000, 1 - day)
       this.soleilLayer?.update(time, day)
+      // ── LA MÉTÉO (spec meteo.md) — EN DERNIER : le ciel se pose devant tout le reste. ──
+      // La foudre parle d'abord (elle rend l'embrasement que le ciel consomme le même frame ;
+      // l'inverse aurait retardé le flash d'une image sur le trait qui le cause).
+      const meteoFront = this.view.meteo
+      const flash = this.foudreFx?.update(time, meteoFront, this.lastTime.tick, this.map.width, this.map.height) ?? 0
+      this.meteoLayer?.update(time, meteoFront, this.lastTime.tick, day, flash, this.predicted)
     }
 
     // ON NE MARCHE PAS EN TAPANT. Le champ de recherche du panneau de craft prend
@@ -1623,6 +1643,20 @@ export class WorldScene extends Phaser.Scene {
         // chaque réconciliation. On lit la main comme la sim la lit.
         drawing: this.myCharging && isRangedWeapon(this.itemTenu() ?? 'unarmed'),
       },
+      // LE FRONT SOUS LES PIEDS (spec meteo.md R7) — le 3ᵉ argument, et il n'est pas
+      // décoratif : l'autorité multiplie déjà la vitesse par `meteoSpeedFactor` au point du
+      // marcheur (`sim.ts`, dans `speedScaleFor`). Sans lui ici, la prédiction courrait 5 à
+      // 20 % trop vite sous un front (jusqu'à ×0,8 sous blizzard) et l'avatar ferait de
+      // l'élastique à chaque réconciliation. On lit le MÊME front, au MÊME point, par la
+      // MÊME fonction pure — pas une seconde formule.
+      meteoSpeedFactorAt(
+        this.view.meteo,
+        this.lastSnapshotTick,
+        this.map.width,
+        this.map.height,
+        this.predicted.x,
+        this.predicted.y,
+      ),
     )
     const speedScale = this.myWindup ? 0 : scale
     // `sneak` n'entre pas dans PredictInput : la prédiction rejoue le

@@ -129,8 +129,8 @@ export { BRUME } from './balance'
 // s'exportent, l'ordonnanceur et la résolution non.
 export {
   FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt, frontMeteoPos, meteoCold, meteoFeuConso,
-  meteoIntensity, meteoJourEligible, meteoMouille, meteoQuiet, meteoSpeedFactor, meteoTypeBrut, meteoTypeDuJour,
-  meteoVisionFactor,
+  meteoIntensity, meteoIntensityAt, meteoJourEligible, meteoMouille, meteoQuiet, meteoSpeedFactor,
+  meteoSpeedFactorAt, meteoTypeBrut, meteoTypeDuJour, meteoVisionFactor,
 } from './meteo'
 export type { MeteoFront, MeteoType, BandeMeteo, FoudreImpact } from './meteo'
 export { METEO } from './balance'

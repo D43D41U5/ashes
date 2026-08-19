@@ -8262,6 +8262,500 @@ const SCENARIOS = {
     return out
   },
 
+  /**
+   * LES CINQ CIELS ET LA FOUDRE (spec `meteo.md`, tranche de rendu).
+   *
+   * Sept tranches ont rendu la météo mordante — le froid, la faim du feu, le silence du
+   * gibier, le pas alourdi, les yeux voilés, la foudre — et RIEN ne se voyait. Ce scénario
+   * ne demande pas si c'est joli : il arme un front de chaque type sur le VRAI jeu, se place
+   * dedans, et MESURE ce que la capture montre.
+   *
+   * ═══ POURQUOI IL FAUT ARMER LES FRONTS À LA MAIN ═══
+   *
+   * Pas par commodité : par NÉCESSITÉ, et c'est mesuré. En Veillée (`VEILLEE_SEASON_CYCLES`
+   * = 6, `TICKS_PER_CYCLE` = 57 600), l'élection ne tombe qu'aux bords de cycle — les jours
+   * de saison 1, 11, 21, 31, 41, 51… Balayés sur 40 cycles, ces jours-là n'élisent JAMAIS
+   * `pluie` ni `orage` : la table de l'acte III ne porte pas la pluie du tout, et l'orage y
+   * pèse 0,05. Deux des cinq ciels sont donc INOBSERVABLES en jouant. D'où `debug_meteo`,
+   * qui pose un VRAI record d'élection (toute la chaîne d'effets suit) à une PHASE choisie
+   * de sa traversée — sans quoi il faudrait regarder passer 24 minutes de bande.
+   *
+   * ═══ CE QU'IL RELÈVE ═══
+   *
+   * Pour chaque type, deux positions et le même relevé qu'`etalonnage` (µ, σ, σ/µ, centiles)
+   * sur les pixels rendus, MOINS le monde nu au même endroit à la même heure : ce que le
+   * ciel change, en nombres, pas en adjectifs.
+   *
+   *   • AU CŒUR (intensité 1) — le ciel plein ;
+   *   • SUR LA LISIÈRE (le bord AVANT de la bande, celui qui gagne du terrain) — et là on
+   *     relève un PROFIL de luminance en travers de l'écran : si la lisière se voit, la
+   *     moitié sous le front et la moitié au clair ne rendent pas le même nombre.
+   *
+   * La foudre se guette DANS LA PAGE (boucle `requestAnimationFrame`, aucun aller-retour) :
+   * la fenêtre de télégraphe dure 30 ticks (1,5 s) toutes les 400 (20 s), et l'éclair un
+   * souffle — un sondage par `waitForTimeout` les manquerait. Dès que la sonde bascule, on
+   * fige la boucle (`game.loop.sleep()`) et on photographie : l'horloge headless galope
+   * ~12× trop vite, un FX éphémère se serait éteint avant l'obturateur.
+   *
+   * Exige `--dev` (TP et `debug_meteo` sont inertes en build de production).
+   */
+  async meteo(page) {
+    if (!dev) {
+      console.log('\n(la météo exige le mode debug pour armer un front — relancer avec --dev)')
+      return {}
+    }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+
+    const agir = async (action, ms = 260) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+
+    // MIDI : le ciel se juge sur un monde ÉCLAIRÉ. La nuit assombrit tout, y compris le
+    // rideau — on ne saurait plus si c'est la pluie ou l'heure qui a fait le nombre.
+    await agir({ type: 'debug_set_hour', hour: 12 }, 900)
+    // Invulnérable : l'orage frappe pour de vrai (35 PV dans 1,5 tuile) et on va se planter
+    // sous les impacts. Un avatar mort ferait tomber le voile de mort sur la photo.
+    await agir({ type: 'debug_god', on: true }, 200)
+
+    /** Le relevé d'`etalonnage`, au mot près : µ, σ, σ/µ et centiles sur la frame rendue. */
+    const mesurer = async () =>
+      page.evaluate(async () => {
+        const s = window.__BRAISES__.scene
+        const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+        const c = document.createElement('canvas')
+        c.width = img.width
+        c.height = img.height
+        const cx = c.getContext('2d', { willReadFrequently: true })
+        cx.drawImage(img, 0, 0)
+        const d = cx.getImageData(0, 0, c.width, c.height).data
+        const lum = []
+        // On saute la bande du HUD en bas : elle ne subit aucun ciel, elle diluerait tout.
+        for (let y = 0; y < c.height - 140; y += 2) {
+          for (let x = 0; x < c.width; x += 2) {
+            const i = (y * c.width + x) * 4
+            lum.push(0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2])
+          }
+        }
+        lum.sort((a, b) => a - b)
+        const moy = lum.reduce((a, b) => a + b, 0) / lum.length
+        const ec = Math.sqrt(lum.reduce((a, b) => a + (b - moy) ** 2, 0) / lum.length)
+        const pc = (q) => lum[Math.floor(q * (lum.length - 1))]
+        return { moy, ec, cv: ec / moy, p01: pc(0.01), p50: pc(0.5), p99: pc(0.99) }
+      })
+
+    /**
+     * LE MÊME RELEVÉ, MAIS SUR UNE CAPTURE — obligatoire quand la boucle est FIGÉE.
+     *
+     * `game.renderer.snapshot()` ne rend la main qu'à la passe de rendu SUIVANTE. Boucle
+     * endormie (`game.loop.sleep()`), cette passe n'arrive jamais : l'appel ne résout pas,
+     * et le scénario reste pendu — MESURÉ, un premier jet est resté bloqué 12 minutes après
+     * le télégraphe, jusqu'à ce qu'on le tue. Or c'est PRÉCISÉMENT pour les FX éphémères
+     * qu'on fige. On lit donc l'image que Playwright, lui, sait composer sans le moteur.
+     */
+    const mesurerFige = async () => {
+      const r = await regionAt(page, { x: 0, y: 0, width: 1280, height: 660 }) // hors bande HUD
+      if (!r) return null
+      const lum = []
+      for (let y = 0; y < r.h; y += 2) {
+        for (let x = 0; x < r.w; x += 2) {
+          const [rr, vv, bb] = r.px(x, y)
+          lum.push(0.2126 * rr + 0.7152 * vv + 0.0722 * bb)
+        }
+      }
+      lum.sort((a, b) => a - b)
+      const moy = lum.reduce((a, b) => a + b, 0) / lum.length
+      const ec = Math.sqrt(lum.reduce((a, b) => a + (b - moy) ** 2, 0) / lum.length)
+      const pc = (q) => lum[Math.floor(q * (lum.length - 1))]
+      return { moy, ec, cv: ec / moy, p01: pc(0.01), p50: pc(0.5), p99: pc(0.99) }
+    }
+
+    /** La luminance moyenne de DEUX moitiés d'écran, gauche et droite — l'instrument de la
+     *  lisière : si le bord de bande se voit, les deux moitiés ne rendent pas le même nombre. */
+    const moities = async () =>
+      page.evaluate(async () => {
+        const s = window.__BRAISES__.scene
+        const img = await new Promise((ok) => s.game.renderer.snapshot((i) => ok(i)))
+        const c = document.createElement('canvas')
+        c.width = img.width
+        c.height = img.height
+        const cx = c.getContext('2d', { willReadFrequently: true })
+        cx.drawImage(img, 0, 0)
+        const d = cx.getImageData(0, 0, c.width, c.height).data
+        let sg = 0, ng = 0, sd = 0, nd = 0
+        // Une MARGE de 15 % de part et d'autre du centre : la lisière n'est pas un couteau
+        // (c'est une rampe), et moyenner jusqu'au trait mélangerait les deux régimes.
+        const marge = Math.round(c.width * 0.15)
+        for (let y = 0; y < c.height - 140; y += 2) {
+          for (let x = 0; x < c.width; x += 2) {
+            const i = (y * c.width + x) * 4
+            const l = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]
+            if (x < c.width / 2 - marge) { sg += l; ng++ } else if (x > c.width / 2 + marge) { sd += l; nd++ }
+          }
+        }
+        return { gauche: sg / Math.max(1, ng), droite: sd / Math.max(1, nd) }
+      })
+
+    const etat = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      return {
+        front: s.view.meteo,
+        bande: s.meteoLayer?.bande ?? null,
+        intensite: s.meteoLayer?.intensiteAuJoueur ?? 0,
+        pos: s.registry.get('playerPos'),
+        map: { w: s.map.width, h: s.map.height },
+      }
+    })
+
+    /**
+     * ATTENDRE QUE LE CIEL SOIT AU REPOS — sinon la photo de l'orage est celle d'un ÉCLAIR.
+     *
+     * MESURÉ, et c'est spectaculaire : une prise de l'orage tombée pendant un embrasement a
+     * rendu µ = 205,3 (Δ +69,4 contre le sol nu) et σ/µ = 0,057, c'est-à-dire un écran BLANC
+     * ET PLAT — alors que l'orage au repos rend µ = 108 (Δ −26,4). Le même ciel, deux
+     * mesures opposées, selon qu'on a appuyé sur l'obturateur pendant un éclair. On attend
+     * donc ~0,75 s sans frappe (l'embrasement en dure 0,34) avant toute prise.
+     */
+    const cielAuRepos = () => page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      if (!s.foudreFx) return
+      let n = s.foudreFx.sonde.eclairs
+      let stable = 0
+      for (let i = 0; i < 1500; i++) {
+        await new Promise((r) => requestAnimationFrame(r))
+        const m = s.foudreFx.sonde.eclairs
+        if (m !== n) { n = m; stable = 0 } else stable += 1
+        if (stable > 45) return
+      }
+    })
+
+    const TYPES = ['pluie', 'brouillard', 'neige', 'orage', 'blizzard']
+    const out = {}
+
+    for (const type of TYPES) {
+      // Le front entre par l'OUEST (bord 0) et traverse vers l'est : son bord AVANT est `hi`.
+      // Phase 0,5 → la bande est au milieu de sa course, donc au milieu de la carte.
+      await agir({ type: 'debug_meteo', meteo: type, edge: 0, phase: 0.5 }, 400)
+      // ON ATTEND QUE LA BANDE SOIT DESSINÉE, on ne la suppose pas : le record d'élection
+      // doit faire l'aller-retour worker → snapshot → couche, et au PREMIER type ce trajet
+      // n'était pas fini au bout de 400 ms (MESURÉ : `pluie` sautait, les quatre autres
+      // passaient — un délai fixe est un pari, une attente est une preuve).
+      await page.waitForFunction((t) => {
+        const s = window.__BRAISES__.scene
+        return Boolean(s.meteoLayer?.bande) && s.view.meteo?.type === t
+      }, type, { timeout: 20000 }).catch(() => {})
+      const e0 = await etat()
+      if (!e0.bande) { console.error(`!! ${type} : aucune bande dessinée — le front n'est pas arrivé au client`); continue }
+
+      const coeur = (e0.bande.lo + e0.bande.hi) / 2
+      const y = Math.min(e0.map.h - 2, Math.max(2, e0.pos.y))
+
+      // ── 1. LE MONDE NU, au MÊME endroit et à la MÊME heure : l'étalon. Sans lui, un µ
+      //      de 90 ne dit rien — c'est l'ÉCART au sol nu qui dit ce que le ciel a fait. ──
+      await agir({ type: 'debug_meteo', meteo: null }, 200)
+      await agir({ type: 'debug_teleport', x: coeur, y }, 500)
+      await canopeePleine(page) // la cime au-dessus du joueur s'efface : la photo mentirait
+      await page.waitForTimeout(500)
+      // LA PHOTO DU MONDE NU, gardée : un Δµ de +56 ne se juge pas seul, il se REGARDE à
+      // côté de son témoin — même endroit, même heure, même cadrage.
+      await page.screenshot({ path: `${OUT}/meteo-${type}-0-nu.png` })
+      const nu = await mesurer()
+
+      // ── 2. LE CŒUR (intensité 1) — le ciel plein. ──
+      await agir({ type: 'debug_meteo', meteo: type, edge: 0, phase: 0.5 }, 400)
+      await agir({ type: 'debug_teleport', x: coeur, y }, 500)
+      await canopeePleine(page)
+      await page.waitForTimeout(700)
+      const eCoeur = await etat()
+      await cielAuRepos() // pas de photo pendant un éclair — voir `cielAuRepos`
+      await page.screenshot({ path: `${OUT}/meteo-${type}-coeur.png` })
+      const coeurM = await mesurer()
+
+      // ── 3. LA LISIÈRE — le bord AVANT, celui qui gagne du terrain. On s'y plante : le
+      //      front couvre la moitié ouest de l'écran, le clair tient l'est. ──
+      //
+      // ON MESURE LES DEUX MOITIÉS AVEC **PUIS SANS** LE FRONT, ET ON SOUSTRAIT. Comparer
+      // crûment la moitié gauche à la moitié droite ne mesure PAS la lisière : elle mesure
+      // aussi le terrain, qui n'est pas le même des deux côtés — MESURÉ, le brouillard (qui
+      // ÉCLAIRCIT) rendait un écart de −4,7, c'est-à-dire du signe contraire à ce qu'il fait.
+      // La différence des différences élimine le décor : il ne reste que ce que le ciel a
+      // ajouté à gauche, et ce qu'il a ajouté à droite.
+      const e1 = await etat()
+      const bordAvant = e1.bande ? e1.bande.hi : coeur
+      await agir({ type: 'debug_teleport', x: bordAvant, y }, 500)
+      await canopeePleine(page)
+      await page.waitForTimeout(700)
+      await cielAuRepos()
+      await page.screenshot({ path: `${OUT}/meteo-${type}-lisiere.png` })
+      const lisAvec = await moities()
+      await agir({ type: 'debug_meteo', meteo: null }, 400)
+      await page.waitForTimeout(600)
+      await page.screenshot({ path: `${OUT}/meteo-${type}-lisiere-0-nu.png` })
+      const lisSans = await moities()
+      const lis = {
+        dedans: lisAvec.gauche - lisSans.gauche, // ce que le ciel a fait sous l'empreinte
+        dehors: lisAvec.droite - lisSans.droite, // …et au clair, de l'autre côté du bord
+      }
+
+      // LA LISIBILITÉ DE LA LISIÈRE EST UN RAPPORT, pas une impression : la rampe
+      // (`RAMPE × LARGEUR`, la distance sur laquelle l'intensité passe de 0 à 1) contre la
+      // largeur de l'écran en tuiles. Sous 1, le mur monte en moins d'un écran — on le voit
+      // venir. Bien au-dessus, l'intensité ne bouge presque pas d'un bord à l'autre du cadre.
+      const ecranTuiles = await page.evaluate(() => window.innerWidth / window.__BRAISES__.scene.cameras.main.zoom / 16)
+      const rampe = (e0.bande.hi - e0.bande.lo) * 0.15
+      out[type] = {
+        nu,
+        coeur: coeurM,
+        intensiteAuCoeur: Math.round(eCoeur.intensite * 1000) / 1000,
+        rampeTuiles: Math.round(rampe * 10) / 10,
+        ecranTuiles: Math.round(ecranTuiles * 10) / 10,
+        // Ce que l'intensité gagne d'un bord de l'écran à l'autre, au plus raide.
+        deltaIParEcran: Math.round(Math.min(1, ecranTuiles / rampe) * 1000) / 1000,
+        // « saut » = ce que le ciel fait dedans MOINS ce qu'il fait dehors, au bord même :
+        // c'est la MARCHE de la lisière, décor éliminé. Zéro = pas de bord visible.
+        lisiere: { ...lis, saut: lis.dedans - lis.dehors },
+      }
+      console.log(
+        `  ${type.padEnd(11)} µ ${String(Math.round(coeurM.moy * 10) / 10).padStart(6)} (nu ${String(Math.round(nu.moy * 10) / 10).padStart(6)}` +
+        `, Δ ${String(Math.round((coeurM.moy - nu.moy) * 10) / 10).padStart(6)})   σ/µ ${String(Math.round(coeurM.cv * 1000) / 1000).padStart(6)}` +
+        ` (nu ${String(Math.round(nu.cv * 1000) / 1000).padStart(6)})   lisière : dedans ${String(Math.round(lis.dedans * 10) / 10).padStart(6)}` +
+        ` / dehors ${String(Math.round(lis.dehors * 10) / 10).padStart(6)}`,
+      )
+    }
+
+    // ══ LA FOUDRE : le télégraphe au sol, puis l'éclair ══
+    //
+    // On se plante DANS l'orage et on attend, dans la page. `foudreImpactAt` n'élit qu'un
+    // impact par créneau de 400 ticks, et le télégraphe ne dure que 30 ticks avant : sondé
+    // depuis Node, on le manquerait neuf fois sur dix.
+    await agir({ type: 'debug_meteo', meteo: 'orage', edge: 0, phase: 0.5 }, 400)
+    const eo = await etat()
+    if (eo.bande) {
+      await agir({ type: 'debug_teleport', x: (eo.bande.lo + eo.bande.hi) / 2, y: Math.min(eo.map.h - 2, Math.max(2, eo.pos.y)) }, 500)
+      await canopeePleine(page)
+      await page.waitForTimeout(600)
+    }
+
+    /**
+     * IL FAUT ALLER AU-DEVANT DE LA FOUDRE — et c'est un CONSTAT, pas une commodité.
+     *
+     * `foudreImpactAt` tire la coordonnée transverse sur TOUT l'axe de la carte
+     * (`meteo.ts` : `autre = hash2(…) × mapHeight`), soit ~1 600 tuiles, quand l'écran en
+     * montre 20 de haut : moins de 2 % des frappes tombent dans le champ du joueur. Un
+     * scénario qui attendrait qu'un éclair vienne à lui attendrait des heures.
+     *
+     * On se téléporte donc SUR le point annoncé dès que le télégraphe s'allume (le geste
+     * du joueur qui court voir, en accéléré), et on photographie là. L'avatar est
+     * invulnérable — sinon il prendrait ses 35 points et le voile de mort mangerait la photo.
+     *
+     * Tout se joue DANS la page, image par image : la fenêtre de télégraphe ne dure que
+     * 30 ticks (1,5 s) et un aller-retour Node par sondage la manquerait.
+     */
+    const chasseTelegraphe = () => page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      const frame = () => new Promise((r) => requestAnimationFrame(r))
+      // 1. Guetter la PREMIÈRE lueur, et courir dessus sur-le-champ.
+      let vise = null
+      for (let i = 0; i < 6000; i++) {
+        const so = s.foudreFx.sonde
+        if (so.ticksLeft > 0) {
+          vise = { x: so.x, y: so.y }
+          s.sendAction({ type: 'debug_teleport', x: so.x, y: so.y })
+          break
+        }
+        await frame()
+      }
+      if (!vise) return { vu: false, sonde: { ...s.foudreFx.sonde } }
+      // 2. Attendre le HAUT de la rampe d'alpha — l'instant où elle doit être ÉVIDENTE —
+      //    puis figer la boucle sur l'image même qui la porte. Si on a raté cette fenêtre
+      //    (la téléportation a mangé des ticks), on prend la suivante : les créneaux
+      //    tombent toutes les 400 ticks et l'avatar est maintenant sous la bonne colonne.
+      for (let i = 0; i < 6000; i++) {
+        const so = s.foudreFx.sonde
+        if (so.ticksLeft > 0 && so.ticksLeft <= 12) {
+          s.game.loop.sleep()
+          return { vu: true, sonde: { ...s.foudreFx.sonde } }
+        }
+        // Un nouveau créneau vise ailleurs : on le suit.
+        if (so.ticksLeft > 0 && (Math.abs(so.x - vise.x) > 1 || Math.abs(so.y - vise.y) > 1)) {
+          vise = { x: so.x, y: so.y }
+          s.sendAction({ type: 'debug_teleport', x: so.x, y: so.y })
+        }
+        await frame()
+      }
+      return { vu: false, sonde: { ...s.foudreFx.sonde } }
+    })
+
+    const tel = await chasseTelegraphe()
+    let telM = null
+    if (tel.vu) {
+      console.log(`\n  télégraphe : ticksLeft=${tel.sonde.ticksLeft} alpha=${Math.round(tel.sonde.alpha * 100) / 100} visé en (${Math.round(tel.sonde.x)}, ${Math.round(tel.sonde.y)})`)
+      await page.screenshot({ path: `${OUT}/meteo-foudre-telegraphe.png` })
+      // Gros plan : l'anneau tombe sur `FOUDRE_RAYON` = 1,5 tuile, soit 48 px monde de
+      // diamètre — 108 px d'écran au zoom 2,25. Sur une planche de 1280 il se lit mal ;
+      // une capture qui ne montre pas ce qu'on juge ment.
+      const clip = await page.evaluate(({ x, y }) => {
+        const s = window.__BRAISES__.scene
+        const cam = s.cameras.main
+        const sx = (x * 16 - cam.worldView.x) * cam.zoom
+        const sy = (y * 16 - cam.worldView.y) * cam.zoom
+        const w = Math.min(window.innerWidth, 420)
+        const h = Math.min(window.innerHeight, 420)
+        return {
+          x: Math.max(0, Math.min(window.innerWidth - w, Math.round(sx - w / 2))),
+          y: Math.max(0, Math.min(window.innerHeight - h, Math.round(sy - h / 2))),
+          width: w, height: h,
+          // ON DIT SI LE POINT VISÉ EST DANS LE CADRE : hors champ, le rognage se rabat
+          // sur un bord et la « photo du télégraphe » ne montre que de l'herbe.
+          dansLeCadre: sx >= 0 && sy >= 0 && sx <= window.innerWidth && sy <= window.innerHeight,
+        }
+      }, { x: tel.sonde.x, y: tel.sonde.y })
+      if (!clip.dansLeCadre) console.error('!! le point visé est hors écran — le gros plan ne montrera pas la lueur')
+      await page.screenshot({ path: `${OUT}/meteo-foudre-telegraphe-pres.png`, clip: { x: clip.x, y: clip.y, width: clip.width, height: clip.height } })
+      telM = await mesurerFige() // boucle FIGÉE : surtout pas `mesurer()`, il ne rendrait jamais la main
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    } else {
+      console.error('!! aucun télégraphe de foudre vu')
+    }
+
+    // L'ÉCLAIR : on guette le COMPTEUR de frappes, pas un instant — il n'est vrai qu'à UN
+    // tick, et le trait ne tient que 130 ms d'horloge de scène. On est déjà SOUS la colonne
+    // (la chasse ci-dessus nous y a mis) : la frappe tombe dans le cadre.
+    const ecl = await page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      const n0 = s.foudreFx.sonde.eclairs
+      for (let i = 0; i < 6000; i++) {
+        if (s.foudreFx.sonde.eclairs > n0) {
+          s.game.loop.sleep()
+          return { vu: true, sonde: { ...s.foudreFx.sonde } }
+        }
+        await new Promise((r) => requestAnimationFrame(r))
+      }
+      return { vu: false, sonde: { ...s.foudreFx.sonde } }
+    })
+    let eclM = null
+    if (ecl.vu) {
+      await page.screenshot({ path: `${OUT}/meteo-foudre-eclair.png` })
+      eclM = await mesurerFige() // idem : l'éclair n'existe que sur l'image gelée
+      console.log(`  éclair     : ${ecl.sonde.eclairs} frappe(s) vue(s) — µ de la frame ${Math.round(eclM.moy * 10) / 10}${telM ? ` contre ${Math.round(telM.moy * 10) / 10} au télégraphe` : ''}`)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    } else {
+      console.error('!! aucun éclair vu — la frappe a été manquée')
+    }
+
+    // ══ LA PRÉDICTION LOCALE SOUS LE FRONT (spec meteo.md R7 / point D) ══
+    //
+    // L'autorité multiplie la vitesse de l'avatar par `METEO.SPEED[type]` au point du
+    // marcheur — ×0,8 sous blizzard. Un client qui l'ignore prédit 25 % trop vite, et la
+    // réconciliation le rattrape en le TIRANT en arrière à chaque snapshot : l'élastique.
+    //
+    // On le mesure DIRECTEMENT, sans croire personne : `playerPos` EST la base de prédiction
+    // (`WorldScene` : `setHud(registry, 'playerPos', this.predicted)`), `lastEntities` porte
+    // la position AUTORITATIVE. L'écart entre les deux, en marchant, est l'erreur de
+    // prédiction. On marche le même trajet à ciel clair puis sous blizzard : si le facteur
+    // est bien passé, les deux écarts se ressemblent ; s'il manquait, le second exploserait.
+    // LA GARDE PROUVE SA PRÉMISSE : un écart de 0 ne dit rien si l'avatar n'a pas MARCHÉ
+    // (MESURÉ : un premier relevé donnait « blizzard : médiane 0 » — l'avatar butait contre
+    // un obstacle après la marche précédente, et un immobile est parfaitement prédit). On
+    // relève donc la DISTANCE PARCOURUE à côté de l'écart, et le second relevé repart du
+    // même point que le premier : deux marches, même trajet, seul le ciel change.
+    const marcher = async (etiquette, depart) => {
+      await agir({ type: 'debug_teleport', x: depart.x, y: depart.y }, 450)
+      const p0 = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      await page.keyboard.down('KeyD')
+      const ech = []
+      for (let i = 0; i < 26; i++) {
+        await page.waitForTimeout(120)
+        ech.push(await page.evaluate(() => {
+          const s = window.__BRAISES__.scene
+          const p = s.registry.get('playerPos')
+          const a = s.lastEntities.find((e) => e.id === s.playerId)
+          if (!p || !a) return null
+          return Math.hypot(p.x - a.x, p.y - a.y)
+        }))
+      }
+      await page.keyboard.up('KeyD')
+      await page.waitForTimeout(400)
+      const p1 = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      const parcouru = p0 && p1 ? Math.hypot(p1.x - p0.x, p1.y - p0.y) : 0
+      const v = ech.filter((x) => typeof x === 'number')
+      v.sort((a, b) => a - b)
+      const moy = v.reduce((a, b) => a + b, 0) / Math.max(1, v.length)
+      if (parcouru < 3) console.error(`!! marche « ${etiquette} » : ${Math.round(parcouru * 100) / 100} tuile(s) parcourue(s) — l'écart mesuré ne vaut rien`)
+      return { etiquette, n: v.length, parcouru, moy, median: v[Math.floor(v.length / 2)] ?? 0, max: v[v.length - 1] ?? 0 }
+    }
+    // On arme le blizzard D'ABORD pour choisir un départ au CŒUR de sa bande, puis on joue
+    // le MÊME trajet deux fois — sans ciel, puis sous le blizzard.
+    await agir({ type: 'debug_meteo', meteo: 'blizzard', edge: 0, phase: 0.5 }, 400)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__.scene.meteoLayer?.bande), null, { timeout: 20000 }).catch(() => {})
+    const eb = await etat()
+    const depart = eb.bande
+      ? { x: Math.min(eb.map.w - 40, Math.max(4, (eb.bande.lo + eb.bande.hi) / 2 - 12)), y: Math.min(eb.map.h - 2, Math.max(2, eb.pos.y)) }
+      : eb.pos
+    await agir({ type: 'debug_meteo', meteo: null }, 400)
+    const driftClair = await marcher('ciel clair', depart)
+    await agir({ type: 'debug_meteo', meteo: 'blizzard', edge: 0, phase: 0.5 }, 400)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__.scene.meteoLayer?.bande), null, { timeout: 20000 }).catch(() => {})
+    const driftBliz = await marcher('blizzard', depart)
+    const iBliz = await page.evaluate(() => window.__BRAISES__.scene.meteoLayer?.intensiteAuJoueur ?? 0)
+    const f3 = (v) => Math.round(v * 1000) / 1000
+    console.log(
+      `\n  prédiction locale (écart prédit ↔ autorité, en tuiles — même trajet, seul le ciel change) :` +
+      `\n    ciel clair : médiane ${f3(driftClair.median)}  max ${f3(driftClair.max)}  (${f3(driftClair.parcouru)} tuiles parcourues)` +
+      `\n    blizzard   : médiane ${f3(driftBliz.median)}  max ${f3(driftBliz.max)}  (${f3(driftBliz.parcouru)} tuiles parcourues` +
+      `, intensité au marcheur ${f3(iBliz)}, SPEED 0,8)`,
+    )
+
+    // ── LE COÛT : combien coûte le ciel, en ms par image, sous le pire des cinq. On mesure
+    //    ALLUMÉ puis ÉTEINT au même endroit — l'écart est ce que la couche coûte. ──
+    const cadence = async () => page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      const t = []
+      let dernier = performance.now()
+      for (let i = 0; i < 90; i++) {
+        await new Promise((r) => requestAnimationFrame(r))
+        const n = performance.now()
+        t.push(n - dernier)
+        dernier = n
+      }
+      t.sort((a, b) => a - b)
+      void s
+      return { median: t[Math.floor(t.length / 2)], p90: t[Math.floor(t.length * 0.9)] }
+    })
+    await agir({ type: 'debug_meteo', meteo: 'blizzard', edge: 0, phase: 0.5 }, 500)
+    const avec = await cadence()
+    await agir({ type: 'debug_meteo', meteo: null }, 500)
+    const sans = await cadence()
+    console.log(
+      `\n  coût du ciel (blizzard, plein écran) : ${Math.round(avec.median * 100) / 100} ms/image contre ${Math.round(sans.median * 100) / 100} sans` +
+      ` — surcoût ${Math.round((avec.median - sans.median) * 100) / 100} ms (p90 : ${Math.round(avec.p90 * 100) / 100} contre ${Math.round(sans.p90 * 100) / 100})`,
+    )
+
+    console.log('\n  type         µ cœur    µ nu      Δµ   σ/µ cœur  σ/µ nu   marche    rampe  ΔI/écran')
+    for (const [nom, m] of Object.entries(out)) {
+      const f = (v, n = 1) => String(Math.round(v * 10 ** n) / 10 ** n).padStart(8)
+      console.log(
+        `  ${nom.padEnd(11)}${f(m.coeur.moy)}${f(m.nu.moy)}${f(m.coeur.moy - m.nu.moy)}${f(m.coeur.cv, 3)}${f(m.nu.cv, 3)}` +
+        `${f(m.lisiere.saut)}${f(m.rampeTuiles)}${f(m.deltaIParEcran, 3)}`,
+      )
+    }
+    const e0 = Object.values(out)[0]
+    if (e0) {
+      console.log(
+        `\n  (« marche » = la MARCHE de luminance au bord de la bande, décor éliminé (ce que le ciel fait dedans moins` +
+        `\n    ce qu'il fait dehors) — 0 voudrait dire aucune lisière visible.` +
+        `\n   « rampe » = les tuiles à traverser pour passer de 0 à pleine intensité ; l'écran en montre ${e0.ecranTuiles}.` +
+        `\n   « ΔI/écran » = ce que l'intensité gagne d'un bord du cadre à l'autre : 1 = le mur monte en moins d'un écran.)`,
+      )
+    }
+    return {
+      types: out,
+      telegraphe: tel.sonde, telegrapheM: telM, eclair: ecl.sonde, eclairM: eclM,
+      cout: { avec, sans }, prediction: { clair: driftClair, blizzard: driftBliz, intensite: iBliz },
+    }
+  },
+
   async ombres(page) {
     await page.waitForTimeout(1500) // stabilisation (harnais a déjà navigué + attendu mapData)
     await page.screenshot({ path: `${OUT}/ombres-avatar.png` })

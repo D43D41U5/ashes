@@ -34,8 +34,9 @@ import { advanceFoudre } from './foudre'
 import { distSq } from './geometry'
 import {
   advanceMeteo, FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt, frontMeteoPos, meteoFeuConso,
-  meteoIntensity, meteoJourEligible, meteoMouille, meteoQuiet, meteoSpeedFactor, meteoTypeBrut, meteoTypeDuJour,
-  meteoVisionFactor, type BandeMeteo, type MeteoFront, type MeteoType,
+  meteoIntensity, meteoIntensityAt, meteoJourEligible, meteoMouille, meteoQuiet, meteoSpeedFactor,
+  meteoSpeedFactorAt, meteoTypeBrut, meteoTypeDuJour, meteoVisionFactor,
+  type BandeMeteo, type MeteoFront, type MeteoType,
 } from './meteo'
 import { nearestPrey, spawnMonster, type Monster } from './monsters'
 import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimState } from './sim'
@@ -202,6 +203,51 @@ describe('A10 — l’interrupteur dédié, faux par défaut', () => {
       if (sim.meteo) elu++
     }
     expect(elu).toBeGreaterThan(0)
+  })
+})
+
+/**
+ * LES VARIANTES SANS ÉTAT (chantier de rendu) — `meteoIntensityAt` et `meteoSpeedFactorAt`
+ * sont les portes par lesquelles LE CLIENT lit la météo : il n'a pas de `SimState`, il a un
+ * record d'élection reçu dans le snapshot. Ce sont les MÊMES lois, extraites — et cette
+ * garde existe pour qu'elles le RESTENT : le jour où quelqu'un calibrera la rampe d'un seul
+ * côté, le ciel dessiné cesserait d'être le ciel simulé, et un rendu qui ment sur le froid
+ * qu'il apporte est pire qu'un rendu absent.
+ *
+ * On BALAIE (règle maison : une garde exhaustive plutôt que des cas choisis) — les cinq
+ * types, toute la traversée, tout l'axe perpendiculaire, bornes comprises.
+ */
+describe('les variantes SANS ÉTAT sont les mêmes lois, au bit près (le client lit par là)', () => {
+  const TYPES: MeteoType[] = ['pluie', 'brouillard', 'neige', 'orage', 'blizzard']
+
+  it('meteoIntensityAt et meteoSpeedFactorAt égalent EXACTEMENT leurs jumelles à état', () => {
+    const [W, H] = [140, 160]
+    let compares = 0
+    for (const type of TYPES) {
+      for (const edge of [0, 1, 2, 3] as const) {
+        const front: MeteoFront = { type, day: 12, edge, startTick: 500, endTick: 500 + METEO.TRAVERSEE_TICKS }
+        for (let k = 0; k <= 12; k++) {
+          const tick = front.startTick + Math.round((k / 12) * (METEO.TRAVERSEE_TICKS - 1))
+          // Un état MINIMAL : ces deux lois ne lisent que `meteo`, `tick` et les dimensions.
+          const state = { meteo: front, tick, map: { width: W, height: H } } as unknown as SimState
+          for (let c = -20; c <= Math.max(W, H) + 20; c += 7) {
+            const x = edge <= 1 ? c : 40
+            const y = edge <= 1 ? 40 : c
+            expect(meteoIntensityAt(front, tick, W, H, x, y)).toBe(meteoIntensity(state, x, y))
+            expect(meteoSpeedFactorAt(front, tick, W, H, x, y)).toBe(meteoSpeedFactor(state, x, y))
+            compares += 2
+          }
+        }
+      }
+    }
+    // La garde prouve sa prémisse : elle a bien comparé quelque chose, et pas zéro fois.
+    expect(compares).toBeGreaterThan(10_000)
+  })
+
+  it('sans front, les deux variantes rendent le neutre (0 et 1) — le client sans météo ne peint rien', () => {
+    for (const front of [null, undefined]) {
+      expect(meteoSpeedFactorAt(front, 1000, 100, 100, 50, 50)).toBe(1)
+    }
   })
 })
 
