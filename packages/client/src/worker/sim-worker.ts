@@ -185,6 +185,9 @@ function tick(): void {
     blood: sim.blood,
     wind: sim.wind,
     groundItems: sim.groundItems,
+    // LE FRONT MÉTÉO (spec meteo.md) : le record d'élection, cinq champs — le client en
+    // recalcule la bande, le gradient et jusqu'aux éclairs. Rien d'autre ne transite.
+    meteo: sim.meteo ?? null,
     events,
   }
   post(moi ? filtreParInteret(corps, moi) : corps)

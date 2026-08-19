@@ -287,6 +287,8 @@ export class AtelierScene extends Phaser.Scene {
       blood: [],
       wind: { x: 1, y: 0 },
       groundItems: [],
+      // L'Atelier n'a pas de ciel : on y regarde un PLAN, pas une vallée. Jamais de front.
+      meteo: null,
       events: [],
     }
     this.courant = msg

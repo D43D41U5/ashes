@@ -14,12 +14,12 @@
  *   sont capturées par le replay log : une partie où l'on a triché se rejoue
  *   quand même à l'identique.
  */
-import { MORTS, NIGHT_HUNT, WALL_TIERS } from './balance'
+import { METEO, MORTS, NIGHT_HUNT, WALL_TIERS } from './balance'
 import { emitEvent } from './events'
 import { addItems, type ItemId } from './items'
 import { densiteDesMorts, siteDansLaCouronne } from './morts'
 import type { Entity, SimState } from './sim'
-import { cycleOffsetForStartHour, getGameTime, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { cycleOffsetForStartHour, getGameTime, seasonDayAtTick, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { addStructure } from './village'
 import { desiredOrders } from './village-plan'
 
@@ -89,6 +89,27 @@ export type DebugAction =
    * court-circuite, et c'est tout : la main-d'œuvre et le coût. Aucun tirage.
    */
   | { type: 'debug_village_stage'; villageId: number; stage: number }
+  /**
+   * ARMER UN FRONT MÉTÉO ICI ET MAINTENANT (spec `meteo.md`, chantier de rendu).
+   *
+   * Sans lui, DEUX des cinq ciels sont inobservables — et ce n'est pas une conjecture,
+   * c'est un relevé : en Veillée (`VEILLEE_SEASON_CYCLES = 6`) l'élection ne tombe qu'aux
+   * bords de cycle, soit les jours de saison 1, 11, 21, 31, 41, 51… ; balayés sur 40 cycles,
+   * ces jours n'élisent JAMAIS `pluie` ni `orage` (la table de l'acte III ne porte pas la
+   * pluie du tout, et l'orage y pèse 0,05). Un rendu qu'on ne peut pas ATTEINDRE est un
+   * rendu invérifiable — même motif, même remède que `debug_set_season_day`.
+   *
+   * ON ARME UN VRAI FRONT, PAS UN DÉCOR : le record posé est exactement celui qu'une
+   * élection produirait (type, jour, bord, deux échéances), donc TOUTE la chaîne d'effets
+   * suit sans une ligne de plus — le froid mord, le feu consomme, le gibier se tait, le pas
+   * s'alourdit, la foudre s'élit dans ses créneaux. Ce qu'on court-circuite, et c'est tout :
+   * le tirage d'occurrence et de type de `advanceMeteo`. Aucun tirage consommé.
+   *
+   * `phase` place la bande dans SA traversée (0 = elle entre, 0,5 = elle est au milieu de la
+   * carte, 1 = elle sort) : sans ça il faudrait regarder passer vingt-quatre minutes de
+   * traversée pour voir la bande arriver au centre. `type: null` purge le front.
+   */
+  | { type: 'debug_meteo'; meteo: import('./meteo').MeteoType | null; edge?: 0 | 1 | 2 | 3; phase?: number }
 
 export function isDebugAction(action: { type: string }): action is DebugAction {
   return action.type.startsWith('debug_')
@@ -182,6 +203,23 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
       for (const s of state.structures) {
         if (s.type === 'door' && s.villageId === village.id) s.open = true
       }
+    }
+  } else if (action.type === 'debug_meteo') {
+    if (action.meteo === null) {
+      state.meteo = null
+      return
+    }
+    // La fenêtre est celle d'un vrai front (`TRAVERSEE_TICKS`), simplement REMONTÉE dans le
+    // temps de `phase` traversées : à `phase` = 0,5 la bande est pile au milieu de la carte
+    // au tick courant, et elle continue sa route ensuite comme n'importe quel front élu.
+    const phase = clamp(action.phase ?? 0.5, 0, 1)
+    const startTick = state.tick - Math.round(phase * METEO.TRAVERSEE_TICKS)
+    state.meteo = {
+      type: action.meteo,
+      day: seasonDayAtTick(state.tick, state.calendarScale),
+      edge: action.edge ?? 0,
+      startTick,
+      endTick: startTick + METEO.TRAVERSEE_TICKS,
     }
   } else if (action.type === 'debug_grant') {
     // On le met EN MAIN, pas juste dans le sac : c'est la main qui décide de tout

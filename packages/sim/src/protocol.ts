@@ -223,6 +223,20 @@ export interface SnapshotMessage {
   wind: { x: number; y: number }
   /** LES PILES AU SOL (C18) : l'appât posé, la viande jetée, la charge larguée. */
   groundItems: { id: number; x: number; y: number; item: string; count: number; expiresAt: number }[]
+  /**
+   * LE FRONT MÉTÉO EN COURS (spec `meteo.md` — « le contrat sim est prêt : `state.meteo`
+   * dans le snapshot »), ou `null`. CINQ champs plats, une fois par snapshot : c'est le
+   * RECORD D'ÉLECTION, jamais la géométrie.
+   *
+   * Tout le reste, le client le RECALCULE des fonctions pures partagées, du tick :
+   * la bande (`frontMeteoPos`), le gradient bord → cœur (`meteoIntensityAt`), le malus de
+   * pas de sa prédiction locale (`meteoSpeedFactor`), et jusqu'aux impacts de foudre
+   * (`foudreTelegrapheAt`/`foudreImpactAt`) — pas un octet de géométrie ne transite, pas
+   * une position d'éclair. Ce que le snapshot porte, c'est ce que le client ne peut PAS
+   * dériver : quel front l'autorité a élu. Sans lui, la pluie dessinée ne serait pas la
+   * pluie simulée — et un ciel qui ment sur le froid qu'il apporte est pire qu'un ciel vide.
+   */
+  meteo: import('./meteo').MeteoFront | null
   events: SimEvent[]
 }
 
