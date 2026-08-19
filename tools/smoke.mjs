@@ -9117,6 +9117,612 @@ const SCENARIOS = {
     return out
   },
 
+  /**
+   * LA FOUDRE — le télégraphe SOUS L'AVERSE, le trait battu, la secousse et la gerbe.
+   *
+   * Quatre questions, et chacune a son instrument. `SMOKE_FOUDRE=telegraphe` (ou `frappe`,
+   * `confort`, `cout`) ne joue qu'une partie : chaque passage coûte des minutes, et rejouer
+   * les quatre pour en régler une est du temps jeté (patron `SMOKE_CIELS` du voisin).
+   *
+   *   ① LE TÉLÉGRAPHE GAGNE-T-IL CONTRE LE RIDEAU ? C'est la couture entre deux tranches, et
+   *      c'est de l'INFORMATION DE JEU (« on lit le sol et on se décale »). On mesure le
+   *      CONTRASTE LOCAL de l'anneau contre son dehors, sous averse pleine puis sans, SUR LA
+   *      MÊME IMAGE DE TÉLÉGRAPHE GELÉE — sinon on compare deux alphas différents. Et on
+   *      BALAIE le poids du liseré sombre pour garder le plus PETIT qui gagne encore.
+   *
+   *      POURQUOI ON GÈLE LES DEUX HORLOGES. `game.loop.sleep()` endort le RENDU ; la sim,
+   *      elle, tourne sur son propre `setInterval` DANS LE WORKER (`sim-worker.ts`). Or une
+   *      capture Playwright coûte ~1 s ici, pendant laquelle le tick avance de ~20 — et
+   *      l'alpha du télégraphe est une rampe sur 30 ticks. On envoie donc `{type:'pause'}`
+   *      au worker (le message que le menu pause utilise déjà). Et on PROUVE que ça a tenu :
+   *      front, bande et `ticksLeft` relus après coup — une garde prouve sa prémisse.
+   *
+   *      LE FRONT S'ÉPUISE PENDANT LA CHASSE, et c'est MESURÉ : `debug_meteo` pose une
+   *      fenêtre de `TRAVERSEE_TICKS` dont `phase` a déjà mangé la moitié, tandis que la
+   *      fenêtre de télégraphe (30 ticks) est échantillonnée à ~1 image/s — on la manque
+   *      souvent, et chaque échec coûte un créneau entier (400 ticks). Un premier jet a
+   *      photographié un pré ENSOLEILLÉ en croyant tenir un orage. La chasse RE-ARME donc le
+   *      front dès qu'il manque — mais JAMAIS pendant un télégraphe, car réarmer réécrit
+   *      `startTick` et ré-élit tous les créneaux : la lueur sauterait ailleurs sous nos yeux.
+   *
+   *   ② LE TRAIT — photographié battement par battement. Un éclair dure 172 ms quand une
+   *      image en dure parfois 900 : impossible à prendre au vol. On endort la boucle AVANT
+   *      la frappe et on avance à la main par `game.step` (`fx.update` seul ne redessine
+   *      pas — patron maison), ce qui donne le contrôle exact de l'âge. Le temps de départ
+   *      est `game.loop.time`, JAMAIS un nombre absolu : un `step(200000)` pousserait la
+   *      scène 60 s dans le futur, plafonnerait le premier `dt` et ferait sauter l'horloge
+   *      EN ARRIÈRE au réveil — de quoi fausser tout ce qui suit.
+   *
+   *   ③ LA SECOUSSE — on lit le déplacement RÉEL de la caméra (`shakeEffect._offsetX/Y`, en
+   *      pixels d'écran), pas la constante qu'on lui a passée : l'unité de `camera.shake` est
+   *      une fraction du cadre multipliée par le zoom, et personne ne lit ça de tête.
+   *
+   *   ④ LE COÛT — le chronomètre INTERNE (`sonde.msDessin`), moyenné sur les SEULES images où
+   *      la foudre dessine. Sur ce poste le compte d'images ne mesure pas le rendu (un ciel
+   *      NU relevé à 937 ms/image par le voisin) : son constat vaut ici aussi.
+   *
+   * Exige `--dev` (TP, heure et front sont inertes en build de production).
+   */
+  async foudre(page) {
+    if (!dev) {
+      console.log('\n(la foudre exige le mode debug pour armer un orage — relancer avec --dev)')
+      return {}
+    }
+    const TILE = 16
+    const parties = process.env.SMOKE_FOUDRE ? process.env.SMOKE_FOUDRE.split(',') : null
+    const veut = (p) => !parties || parties.includes(p)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const sonde = () => page.evaluate(() => ({ ...(window.__BRAISES__.scene.foudreFx?.sonde ?? {}) }))
+
+    // MIDI : le télégraphe se juge sur un monde ÉCLAIRÉ (la nuit assombrit tout, rideau
+    // compris — on ne saurait plus si c'est la pluie ou l'heure qui a fait le nombre).
+    // INVULNÉRABLE : on va se planter SOUS les impacts, et 35 PV dans 1,5 tuile feraient
+    // tomber le voile de mort sur la photo.
+    await agir({ type: 'debug_set_hour', hour: 12 }, 900)
+    await agir({ type: 'debug_god', on: true }, 200)
+    await agir({ type: 'debug_meteo', meteo: 'orage', edge: 0, phase: 0.35 }, 500)
+
+    const etat = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      return {
+        meteo: s.view.meteo ? { type: s.view.meteo.type } : null,
+        bande: s.meteoLayer?.bande ?? null,
+        intensite: s.meteoLayer?.intensiteAuJoueur ?? 0,
+        pos: s.registry.get('playerPos'),
+        map: { w: s.map.width, h: s.map.height },
+      }
+    })
+    const e0 = await etat()
+    if (e0.bande) {
+      await agir({ type: 'debug_teleport', x: (e0.bande.lo + e0.bande.hi) / 2, y: Math.min(e0.map.h - 2, Math.max(2, e0.pos.y)) }, 600)
+      await canopeePleine(page)
+      await page.waitForTimeout(600)
+    }
+
+    /** Où est un point monde à l'écran, et la caméra qui le dit. Tout rayon en découle : on
+     *  ne code jamais un rayon en pixels à la main, il se DÉRIVE du zoom. */
+    const viseur = (x, y) => page.evaluate(({ x, y, T }) => {
+      const cam = window.__BRAISES__.scene.cameras.main
+      return {
+        sx: (x * T - cam.worldView.x) * cam.zoom,
+        sy: (y * T - cam.worldView.y) * cam.zoom,
+        zoom: cam.zoom, W: window.innerWidth, H: window.innerHeight,
+      }
+    }, { x, y, T: TILE })
+
+    /**
+     * LE CONTRASTE LOCAL DU TÉLÉGRAPHE, par bandes de rayon en TUILES.
+     *
+     * On ne juge PAS sur la luminance moyenne de l'écran : la pluie assombrit tout et un µ
+     * global mélangerait le ciel et le sol. Ce qui décide qu'un joueur VOIT l'annonce, c'est
+     * l'écart entre l'ANNEAU (posé sur `FOUDRE_RAYON` = 1,5 tuile) et ce qui l'entoure.
+     */
+    const bandesDe = async (sx, sy, zoom) => {
+      const pxParTuile = TILE * zoom
+      const R = Math.ceil(4.6 * pxParTuile)
+      const x0 = Math.round(Math.max(0, sx - R))
+      const y0 = Math.round(Math.max(0, sy - R))
+      const w = Math.round(Math.min(1280 - x0, 2 * R))
+      const h = Math.round(Math.min(660 - y0, 2 * R)) // hors bande HUD
+      if (w < 40 || h < 40) return null
+      const r = await regionAt(page, { x: x0, y: y0, width: w, height: h })
+      if (!r) return null
+      const anneau = []; const lisere = []; const dehors = []; const tout = []
+      for (let y = 0; y < r.h; y++) {
+        for (let x = 0; x < r.w; x++) {
+          const [rr, vv, bb] = r.px(x, y)
+          const l = 0.2126 * rr + 0.7152 * vv + 0.0722 * bb
+          const d = Math.hypot(x0 + x - sx, y0 + y - sy) / pxParTuile
+          tout.push(l)
+          // L'ANNEAU tombe sur le rayon de DÉGÂTS (1,5) ; le LISERÉ est le creux juste
+          // dehors ; le DEHORS de référence est pris au-delà du halo (2,5 tuiles), sinon on
+          // comparerait l'anneau à sa propre lueur.
+          if (d >= 1.3 && d <= 1.7) anneau.push(l)
+          else if (d > 1.75 && d <= 2.15) lisere.push(l)
+          else if (d >= 3.0 && d <= 4.2) dehors.push(l)
+        }
+      }
+      const stat = (a) => {
+        if (a.length === 0) return null
+        const t = [...a].sort((p, q) => p - q)
+        const moy = t.reduce((p, q) => p + q, 0) / t.length
+        const ec = Math.sqrt(t.reduce((p, q) => p + (q - moy) ** 2, 0) / t.length)
+        const pc = (k) => t[Math.floor(k * (t.length - 1))]
+        return { n: t.length, moy, ec, cv: ec / moy, p01: pc(0.01), p50: pc(0.5), p99: pc(0.99) }
+      }
+      const A = stat(anneau); const L = stat(lisere); const D = stat(dehors)
+      if (!A || !L || !D) return null
+      return {
+        anneau: A, lisere: L, dehors: D, tout: stat(tout),
+        deltaAnneau: A.moy - D.moy,
+        // LA MARCHE DE BORD — anneau clair contre liseré sombre, deux voisins immédiats.
+        // C'est elle que le rideau ne peut pas noyer : il ajoute du pâle des DEUX côtés.
+        marche: A.moy - L.moy,
+        michelsonBord: (A.moy - L.moy) / (A.moy + L.moy),
+      }
+    }
+
+    /**
+     * CHASSER LE TÉLÉGRAPHE ET GELER DESSUS. Tout se joue DANS la page, image par image : la
+     * fenêtre ne dure que 30 ticks et un aller-retour Node par sondage la manquerait. Et il
+     * faut ALLER AU-DEVANT de la foudre — `foudreImpactAt` tire la coordonnée transverse sur
+     * TOUT l'axe de la carte (~1 600 tuiles) quand l'écran en montre 20 : moins de 2 % des
+     * frappes tombent dans le champ. On court sur le point annoncé, comme le ferait un joueur.
+     */
+    const chasseEtGele = () => page.evaluate(async () => {
+      const s = window.__BRAISES__.scene
+      const frame = () => new Promise((r) => requestAnimationFrame(r))
+      const orage = () => s.view.meteo && s.view.meteo.type === 'orage'
+      const rearmer = () => {
+        if (orage()) return
+        s.sendAction({ type: 'debug_set_hour', hour: 12 })
+        s.sendAction({ type: 'debug_meteo', meteo: 'orage', edge: 0, phase: 0.35 })
+      }
+      // ON NE SE TÉLÉPORTE PAS, ON BRAQUE L'OBJECTIF. La mesure n'a pas besoin que le JOUEUR
+      // soit sous l'annonce — elle a besoin que l'annonce soit DANS L'IMAGE. Déplacer
+      // l'avatar coûtait ~1,5 s de réconciliation de prédiction, soit toute la fenêtre de
+      // télégraphe : trois tentatives de suite ont rendu « HORS CADRE » (MESURÉ). Braquer la
+      // caméra est un geste d'OBJECTIF, pas de simulation : rien de l'état n'est fabriqué.
+      const gele = (so) => {
+        // La SIM d'abord (le worker cesse de tenir `ticksLeft`), le RENDU ensuite.
+        s.send({ type: 'pause' })
+        s.game.loop.sleep()
+        const cam = s.cameras.main
+        cam.stopFollow() // sinon `preRender` recentre sur l'avatar au pas suivant
+        cam.centerOn(so.x * 16, so.y * 16)
+        // UNE IMAGE POUR QUE LE CADRE SUIVE : `centerOn` écrit `scrollX/scrollY` tout de
+        // suite, mais `worldView` — ce dont le viseur se sert pour convertir monde → écran —
+        // n'est recalculé qu'au `preRender`. Sans ce pas, le viseur lirait l'ANCIEN cadre et
+        // déclarerait « hors champ » le point qu'on vient d'amener au centre.
+        s.game.step(s.game.loop.time + 16, 16)
+        return {
+          vu: true, sonde: { ...s.foudreFx.sonde },
+          meteo: s.view.meteo ? s.view.meteo.type : null,
+          bande: s.meteoLayer?.bande ?? null,
+        }
+      }
+      // ON VISE LE HAUT DE LA RAMPE, MAIS PAS LE DERNIER TICK — et la borne basse est un
+      // correctif MESURÉ. Le haut de la rampe (`ticksLeft` petit, alpha proche de 1) est
+      // l'instant où l'annonce doit être ÉVIDENTE, donc celui qui compte. Mais un gel pris à
+      // `ticksLeft = 1` a rendu « le télégraphe a bougé (1 → 0) » et « un éclair brûlait
+      // (flash 0,362) » : le message `pause` est ASYNCHRONE, le worker finit les ticks déjà
+      // en file, et à un tick de la frappe c'est la frappe qui passe. On garde donc quatre
+      // ticks de marge — alpha ~0,90, et de quoi encaisser la latence du gel.
+      //
+      // La fenêtre visée ne dure que ~0,4 s pour un échantillonnage à ~1 image/s : on ne
+      // l'a pas à tous les créneaux. On insiste, puis on se rabat sur n'importe quelle lueur
+      // d'au moins quatre ticks — un relevé à mi-rampe est CONSERVATEUR (le télégraphe y est
+      // plus pâle qu'au moment critique), donc il ne flatte rien.
+      for (let i = 0; i < 2500; i++) {
+        rearmer()
+        const so = s.foudreFx.sonde
+        if (so.ticksLeft >= 4 && so.ticksLeft <= 12) return gele(so)
+        await frame()
+      }
+      for (let i = 0; i < 1500; i++) {
+        rearmer()
+        const so = s.foudreFx.sonde
+        if (so.ticksLeft >= 4) return gele(so)
+        await frame()
+      }
+      return { vu: false, raison: 'aucune lueur en 4000 images' }
+    })
+
+    const degeler = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      s.meteoLayer.grainActif = true
+      s.foudreFx.liserFacteur = 0
+      s.foudreFx.telegrapheActif = true
+      // On REND la caméra au joueur : sans ça tout ce qui suit se jouerait hors champ.
+      if (s.playerSprite) s.cameras.main.startFollow(s.playerSprite, true, 0.16, 0.16) // les réglages du jeu (WorldScene)
+      s.game.loop.wake()
+      s.send({ type: 'resume' })
+    })
+
+    let compare = null
+    if (veut('telegraphe')) {
+      // ── ① — jusqu'à trois tentatives : le gel peut arriver après que le tick a enjambé la
+      //    frappe (le message `pause` est asynchrone), auquel cas il n'y a plus rien à voir.
+      for (let essai = 1; essai <= 3 && !compare; essai++) {
+        const tel = await chasseEtGele()
+        if (!tel.vu) { console.error(`!! ① tentative ${essai} : ${tel.raison}`); continue }
+        // LA PRÉMISSE, PROUVÉE AVANT DE MESURER : un front d'orage, une bande, un télégraphe.
+        // Sans elle, un premier jet a mesuré un pré ensoleillé en croyant tenir un orage.
+        const vu = await viseur(tel.sonde.x, tel.sonde.y)
+        const hors = vu.sx < 0 || vu.sy < 0 || vu.sx > vu.W || vu.sy > vu.H
+        console.log(
+          `\n① LE TÉLÉGRAPHE (tentative ${essai}) — visé en (${Math.round(tel.sonde.x)}, ${Math.round(tel.sonde.y)}), ` +
+          `ticksLeft ${tel.sonde.ticksLeft}, alpha ${Math.round(tel.sonde.alpha * 100) / 100}, ` +
+          `front ${tel.meteo ?? 'AUCUN'}, bande ${tel.bande ? 'oui' : 'AUCUNE'}${hors ? ', HORS CADRE' : ''}`,
+        )
+        if (tel.meteo !== 'orage' || !tel.bande || hors) {
+          console.error('!! ① prémisse fausse (pas d’orage, pas de bande, ou point hors cadre) — on recommence')
+          await degeler(); await page.waitForTimeout(600); continue
+        }
+        // ── QUATRE ÉTALONS SUR LA MÊME IMAGE GELÉE, ET IL EN FAUT QUATRE.
+        //
+        // Comparer l'ANNEAU à ce qui l'entoure ne mesure pas le télégraphe : ça mesure le
+        // télégraphe PLUS le décor sous lui. MESURÉ, et c'est ce qui a coûté une planche —
+        // une annonce tombée en FORÊT DENSE a rendu Δ(anneau/dehors) = +3,6 sans pluie et
+        // −3,4 avec : du bruit de houppiers dans les deux cas, et la question posée (« le
+        // rideau noie-t-il l'annonce ? ») restait sans réponse parce que le SITE dominait le
+        // signal. On éteint donc le télégraphe sur la MÊME image : le décor se soustrait
+        // exactement, et il ne reste que ce que la lueur AJOUTE. Croisé avec l'interrupteur
+        // du rideau, ça fait quatre prises — le patron des trois étalons du voisin, avec un
+        // de plus parce qu'il y a ici deux couches à isoler, pas une.
+        const LIVRE = 0 // ce qui est LIVRÉ (voir `foudre-fx` : le liseré mesure 0, il est éteint)
+        const pas = async (i, opts) => page.evaluate(({ i, g, lf, tel }) => {
+          const s = window.__BRAISES__.scene
+          s.meteoLayer.grainActif = g
+          s.foudreFx.liserFacteur = lf
+          s.foudreFx.telegrapheActif = tel
+          // LA BASE EST L'HORLOGE DE LA BOUCLE, jamais un nombre absolu (voir l'en-tête).
+          s.game.step(s.game.loop.time + (i + 1) * 16, 16)
+          return {
+            gouttes: s.meteoLayer?.sonde?.vivantes ?? 0,
+            ticksLeft: s.foudreFx.sonde.ticksLeft,
+            alpha: s.foudreFx.sonde.alpha,
+            flash: s.foudreFx.sonde.flash,
+          }
+        }, { i, g: opts.grain, lf: opts.lisere, tel: opts.tel })
+
+        const prises = {}
+        const etats = {}
+        let i = 0
+        const prendre = async (nom, opts, photo) => {
+          etats[nom] = await pas(i++, opts)
+          if (photo) await page.screenshot({ path: `${OUT}/${photo}`, timeout: 180000 })
+          prises[nom] = await bandesDe(vu.sx, vu.sy, vu.zoom)
+        }
+        // Sous averse : avec le télégraphe (liseré livré), avec le télégraphe SANS liseré,
+        // et sans télégraphe du tout.
+        await prendre('pluieTel', { grain: true, lisere: LIVRE, tel: true }, 'foudre-telegraphe-sous-pluie.png')
+        await prendre('pluieSansLisere', { grain: true, lisere: 0, tel: true }, null)
+        await prendre('pluieNu', { grain: true, lisere: LIVRE, tel: false }, 'foudre-telegraphe-sous-pluie-temoin.png')
+        // Sans rideau : les deux mêmes, pour savoir ce que la pluie COÛTE au signal.
+        await prendre('secTel', { grain: false, lisere: LIVRE, tel: true }, 'foudre-telegraphe-sans-pluie.png')
+        await prendre('secNu', { grain: false, lisere: LIVRE, tel: false }, null)
+
+        // LA GARDE, sur les prises ELLES-MÊMES (et non sur la lecture d'avant le gel : le
+        // message `pause` est asynchrone, deux ticks passent toujours entre les deux).
+        const memeTel = etats.pluieTel.ticksLeft === etats.secNu.ticksLeft
+          && Math.abs(etats.pluieTel.alpha - etats.secNu.alpha) < 1e-9
+        const flashMax = Math.max(...Object.values(etats).map((e) => e.flash))
+        if (!memeTel) console.error(`!! le télégraphe a bougé ENTRE LES PRISES (${etats.pluieTel.ticksLeft} → ${etats.secNu.ticksLeft}) — planche à jeter`)
+        if (flashMax > 0.001) console.error(`!! un éclair brûlait pendant la mesure (flash ${flashMax.toFixed(3)}) — planche à jeter`)
+        if (!etats.pluieTel.gouttes) console.error('!! 0 goutte vivante sous averse — on n’a pas mesuré ce qu’on croit')
+        if (etats.secTel.gouttes) console.error(`!! ${etats.secTel.gouttes} gouttes encore vivantes au témoin sec — ce n’en est pas un`)
+        await degeler()
+        if (Object.values(prises).some((v) => !v)) { console.error('!! ① bandes non mesurables'); continue }
+
+        const f = (v, n = 1) => String(Math.round(v * 10 ** n) / 10 ** n).padStart(8)
+        // CE QUE LA LUEUR AJOUTE, décor éliminé : anneau(avec) − anneau(sans), à rideau égal.
+        const gainPluie = prises.pluieTel.anneau.moy - prises.pluieNu.anneau.moy
+        const gainSec = prises.secTel.anneau.moy - prises.secNu.anneau.moy
+        // CE QUE LE LISERÉ CREUSE, décor éliminé : liseré(avec) − liseré(sans liseré).
+        const creuxLisere = prises.pluieTel.lisere.moy - prises.pluieSansLisere.lisere.moy
+        console.log(
+          `   ${etats.pluieTel.gouttes} gouttes sous averse · 0 au témoin sec · alpha ${Math.round(etats.pluieTel.alpha * 100) / 100}` +
+          ` · télégraphe identique sur les 5 prises : ${memeTel ? 'OUI' : 'NON'} · flash max ${flashMax.toFixed(3)}\n` +
+          `   µ DE LA BANDE D'ANNEAU (rayon 1,3-1,7 tuile, le rayon de dégâts) :\n` +
+          `     sous averse   télégraphe ALLUMÉ ${f(prises.pluieTel.anneau.moy)}   ÉTEINT ${f(prises.pluieNu.anneau.moy)}` +
+          `   → LA LUEUR AJOUTE ${f(gainPluie)}\n` +
+          `     sans rideau   télégraphe ALLUMÉ ${f(prises.secTel.anneau.moy)}   ÉTEINT ${f(prises.secNu.anneau.moy)}` +
+          `   → LA LUEUR AJOUTE ${f(gainSec)}\n` +
+          `   ⇒ CE QUE LE RIDEAU COÛTE À L'ANNONCE : ${f(gainPluie - gainSec)} de luminance` +
+          ` (${Math.round((gainPluie / Math.max(0.01, gainSec)) * 100)} % du signal conservé sous l'averse la plus dense)\n` +
+          `   LE LISERÉ SOMBRE, décor éliminé : ${f(creuxLisere)} de luminance sur sa bande (négatif = il CREUSE, c'est voulu)\n` +
+          `   la zone entière sous averse : µ ${f(prises.pluieTel.tout.moy)}  σ ${f(prises.pluieTel.tout.ec)}` +
+          `  σ/µ ${f(prises.pluieTel.tout.cv, 3)}  p01 ${f(prises.pluieTel.tout.p01)}  p50 ${f(prises.pluieTel.tout.p50)}  p99 ${f(prises.pluieTel.tout.p99)}`,
+        )
+        if (gainPluie <= 0) console.error('!! LA LUEUR N’AJOUTE RIEN SOUS LA PLUIE — le télégraphe ne se voit pas')
+        compare = { gainPluie, gainSec, creuxLisere, prises, etats, memeTel, flashMax }
+      }
+      if (!compare) console.error('!! ① jamais mesuré après 3 tentatives')
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ② LE TRAIT · ③ LA SECOUSSE · ④ LA GERBE
+    // ════════════════════════════════════════════════════════════════════════
+    let battements = []
+    let secousse = null
+    let gerbe = null
+    if (veut('frappe')) {
+      // On endort la boucle AVANT la frappe et on avance À LA MAIN : sinon l'éclair (172 ms)
+      // naît et meurt entre deux images (~900 ms ici). La sim, elle, TOURNE — elle vit dans le
+      // worker, hors de la boucle : le tick d'impact finit par arriver.
+      const frappe = await page.evaluate(async () => {
+        const s = window.__BRAISES__.scene
+        const frame = () => new Promise((r) => requestAnimationFrame(r))
+        const orage = () => s.view.meteo && s.view.meteo.type === 'orage'
+        const rearmer = () => {
+          if (orage()) return
+          s.sendAction({ type: 'debug_set_hour', hour: 12 })
+          s.sendAction({ type: 'debug_meteo', meteo: 'orage', edge: 0, phase: 0.35 })
+        }
+
+        // ── PHASE 1 — SE METTRE EN PLACE, BOUCLE ÉVEILLÉE. C'est le correctif MESURÉ : un
+        //    premier jet endormait la boucle tout de suite, et la frappe est tombée à
+        //    **731 tuiles du joueur** — secousse 0, gerbe et trait hors champ. La raison :
+        //    `secousseDist` se calcule sur `predicted`, la position PRÉDITE, qui met ~1,5 s
+        //    à rejoindre la sim après un TP ; en steppant à la main on n'avançait la scène
+        //    que de 16 ms par 30 ms réelles, si bien que la réconciliation était AFFAMÉE et
+        //    ne rattrapait jamais. On laisse donc tourner le vrai temps jusqu'à ce que
+        //    l'avatar soit VRAIMENT arrivé sous l'annonce — et on ne gèle qu'après.
+        let enPlace = false
+        for (let i = 0; i < 3000 && !enPlace; i++) {
+          rearmer()
+          const so = s.foudreFx.sonde
+          const p = s.registry.get('playerPos')
+          if (so.ticksLeft > 0) {
+            const d = Math.hypot(p.x - so.x, p.y - so.y)
+            // Assez près pour que la secousse soit quasi pleine (la rampe vaut 96 % à
+            // 3,5 tuiles) et que le point tombe dans le cadre.
+            if (d < 3.5) enPlace = true
+            else s.sendAction({ type: 'debug_teleport', x: so.x, y: so.y })
+          }
+          await frame()
+        }
+        if (!enPlace) return { vu: false, raison: 'jamais arrivé sous une annonce' }
+
+        // ── PHASE 2 — GELER ET AVANCER À LA MAIN. L'éclair dure 172 ms quand une image en
+        //    dure parfois 900 : c'est la seule façon de le photographier.
+        s.game.loop.sleep()
+        const n0 = s.foudreFx.sonde.eclairs
+        let t = s.game.loop.time
+        for (let i = 0; i < 1200; i++) {
+          t += 16
+          s.game.step(t, 16)
+          if (s.foudreFx.sonde.eclairs > n0) {
+            return {
+              vu: true, t, sonde: { ...s.foudreFx.sonde },
+              joueur: { ...s.registry.get('playerPos') },
+            }
+          }
+          rearmer()
+          // On rend la main au worker : c'est LUI qui fait avancer le tick, et sans cette
+          // respiration `lastTime.tick` ne bougerait jamais.
+          await new Promise((r) => setTimeout(r, 12))
+        }
+        return { vu: false, raison: 'aucune frappe après le gel', sonde: { ...s.foudreFx.sonde } }
+      })
+
+      if (!frappe.vu) console.error(`!! aucune frappe vue (${frappe.raison ?? '?'}) — ②③④ sans mesure`)
+      else {
+        console.log(
+          `\n② LA FRAPPE — en (${Math.round(frappe.sonde.eclairX)}, ${Math.round(frappe.sonde.eclairY)}), ` +
+          `tuile abritée : ${frappe.sonde.abrite ? 'OUI (gerbe et brûlure supprimées)' : 'non'} · ` +
+          `${frappe.sonde.runs} rectangles de trait · ${frappe.sonde.gerbeVivantes} éclats de gerbe`,
+        )
+        // ── ON ÉCARTE L'AVATAR DU POINT DE FRAPPE. La chasse l'a téléporté DESSUS, et la
+        //    gerbe est au sol (profondeur 4,52) donc SOUS lui : elle serait cachée par le
+        //    corps même dont on veut voir les pieds éclaboussés. La secousse, elle, est déjà
+        //    enregistrée (elle s'est décidée AU MOMENT de la frappe), donc rien n'est perdu.
+        await page.evaluate(({ x, y }) => {
+          window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: x + 3, y: y + 3 })
+        }, { x: frappe.sonde.eclairX, y: frappe.sonde.eclairY })
+
+        // ── LES BATTEMENTS : 20 ms par pas, et on photographie CHAQUE cran distinct. C'est
+        //    la seule façon de montrer qu'un éclair BAT plutôt que de s'éteindre — une photo
+        //    unique ne le dirait pas.
+        const vus = new Set()
+        let gerbePrise = false
+        for (let k = 0; k < 11; k++) {
+          const e = await page.evaluate(({ t, k }) => {
+            const s = window.__BRAISES__.scene
+            s.game.step(t + k * 20, 20)
+            const sh = s.cameras.main.shakeEffect
+            return {
+              b: s.foudreFx.sonde.battement, visible: s.foudreFx.sonde.traitVisible,
+              gerbe: s.foudreFx.sonde.gerbeVivantes, flash: s.foudreFx.sonde.flash,
+              runs: s.foudreFx.sonde.runs,
+              offX: sh ? sh._offsetX : 0, offY: sh ? sh._offsetY : 0,
+            }
+          }, { t: frappe.t, k: k + 1 })
+          battements.push({ pas: k, age: (k + 1) * 20, ...e })
+          if (e.visible && !vus.has(e.b)) {
+            vus.add(e.b)
+            await page.screenshot({ path: `${OUT}/foudre-trait-battement-${e.b}.png`, timeout: 180000 })
+          }
+          // ── LA GERBE SE PHOTOGRAPHIE JEUNE, ET DANS CETTE BOUCLE-CI. Elle ne vit que
+          //    300 ms : une prise « après les battements » la trouve morte (MESURÉ : 0 éclat
+          //    vivant à 240 ms de la frappe, alors que la boucle en comptait encore).
+          //
+          //    MAIS PAS TROP TÔT NON PLUS, et c'est la seconde leçon : à 80 ms les éclats
+          //    n'ont parcouru que 0,3 à 0,8 tuile, or la LUEUR D'IMPACT couvre 1,5 tuile de
+          //    rayon en ADD — la gerbe était donc ENTIÈREMENT sous le halo blanc, et la
+          //    photo ne montrait qu'un dôme (MESURÉ, planche du 2026-08-19). À 180 ms la
+          //    lueur est retombée à ~13 % et la couronne a franchi la tuile : les deux se
+          //    laissent voir. On cadre sur le POINT DE FRAPPE, pas sur le télégraphe.
+          if (k === 8 && !gerbePrise) {
+            gerbePrise = true
+            const vg = await viseur(frappe.sonde.eclairX, frappe.sonde.eclairY)
+            if (vg.sx < 0 || vg.sy < 0 || vg.sx > vg.W || vg.sy > vg.H) {
+              console.error(`!! le point de frappe est HORS CADRE (${Math.round(vg.sx)}, ${Math.round(vg.sy)}) — le gros plan ne montrera rien`)
+            }
+            await page.screenshot({
+              path: `${OUT}/foudre-gerbe.png`,
+              clip: {
+                x: Math.max(0, Math.min(1280 - 340, Math.round(vg.sx - 170))),
+                y: Math.max(0, Math.min(660 - 340, Math.round(vg.sy - 170))),
+                width: 340, height: 340,
+              },
+              timeout: 180000,
+            })
+          }
+        }
+        console.log(
+          `   battements traversés (un pas = 20 ms) : [${battements.map((b) => (b.visible ? `#${b.b}` : '·')).join(' ')}]` +
+          `  → ${vus.size} cran(s) distinct(s) photographié(s)\n` +
+          `   éclats de gerbe VIVANTS le long de la salve :  ${battements.map((b) => `${b.age}ms:${b.gerbe}`).join('  ')}`,
+        )
+        if (vus.size < 2) console.error('!! un seul cran vu : le trait ne BAT pas (ou le pas de 20 ms enjambe la salve)')
+
+        // ③ LA SECOUSSE, EN PIXELS D'ÉCRAN RÉELS — lue sur l'effet, pas déduite.
+        const offs = battements.map((b) => Math.max(Math.abs(b.offX), Math.abs(b.offY)))
+        secousse = {
+          dist: frappe.sonde.secousseDist, intensite: frappe.sonde.secousse,
+          reduit: frappe.sonde.mouvementReduit, pxMax: Math.max(0, ...offs),
+        }
+        console.log(
+          `\n③ LA SECOUSSE — frappe à ${Math.round(secousse.dist * 10) / 10} tuiles du joueur → intensité ${secousse.intensite.toFixed(5)}` +
+          ` = ${Math.round(secousse.pxMax * 10) / 10} px d'écran au pic (lu sur shakeEffect, pas déduit)`,
+        )
+        // ── L'ÉTALONNAGE DU MOTEUR, à part et nommé comme tel. Ce qu'on vient de lire prouve
+        //    que la RAMPE est branchée sur la vraie position du joueur ; il reste à savoir ce
+        //    que « intensité 0,0022 » vaut EN PIXELS, et personne ne lit ça de tête —
+        //    `camera.shake` déplace de `±intensité × camera.width × zoom`. On le demande donc
+        //    au moteur directement. Ce n'est PAS le chemin de jeu (aucune frappe ici) : c'est
+        //    la conversion de l'unité, mesurée sur le moteur qui l'applique.
+        const etal = await page.evaluate(async ({ ms }) => {
+          const s = window.__BRAISES__.scene
+          const cam = s.cameras.main
+          const out = []
+          for (const inten of [0.0022, 0.0011, 0.00055]) {
+            cam.shake(ms, inten, true)
+            let pire = 0
+            let t = s.game.loop.time
+            for (let i = 0; i < 10; i++) {
+              t += 16
+              s.game.step(t, 16)
+              const sh = cam.shakeEffect
+              if (sh) pire = Math.max(pire, Math.abs(sh._offsetX), Math.abs(sh._offsetY))
+            }
+            out.push({ inten, px: pire })
+          }
+          cam.shakeEffect?.reset?.()
+          return { out, largeur: cam.width, zoom: cam.zoom }
+        }, { ms: 180 })
+        console.log(
+          `   étalonnage du moteur (cadre ${etal.largeur} px, zoom ${Math.round(etal.zoom * 100) / 100}) — ce que vaut une intensité :\n` +
+          etal.out.map((o) => `     ${o.inten.toFixed(5)} → ${String(Math.round(o.px * 10) / 10).padStart(6)} px d'écran au pic`).join('\n'),
+        )
+        secousse.etalon = etal.out
+
+        // ④ LA GERBE — photographiée JEUNE. Elle ne vit que 300 ms : la prendre à 400 ms,
+        //    c'est la prendre morte (ce que le premier jet a fait).
+        await page.screenshot({ path: `${OUT}/foudre-frappe-plein-cadre.png`, timeout: 180000 })
+        const auMax = battements.reduce((a, b) => (b.gerbe > a.gerbe ? b : a), battements[0])
+        gerbe = { max: auMax.gerbe, ageMax: auMax.age, total: frappe.sonde.gerbeTotal }
+        console.log(
+          `\n④ LA GERBE — ${gerbe.max} éclats vivants au plus fort (à ${gerbe.ageMax} ms de la frappe),` +
+          ` ${frappe.sonde.gerbeTotal} éclos depuis le début du scénario · gros plan pris à 180 ms`,
+        )
+        if (!gerbe.max && !frappe.sonde.abrite) console.error('!! aucun éclat vivant sur toute la salve — la gerbe ne vit pas')
+        await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ③bis `prefers-reduced-motion` — la convention EXISTANTE, étendue au shake
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    // Il n'y a AUCUN réglage de confort en jeu (l'écran Options ne porte que le son et les
+    // touches), mais `prefers-reduced-motion` est déjà honoré en CSS par `menu-dom`,
+    // `hud-core` et `season-veil`. On l'étend, donc on le PROUVE — sinon la vérification ne
+    // teste pas la chose. `debug_speed` accélère la sim : un créneau de foudre dure 400
+    // ticks, soit 20 s à cadence normale et ~1,3 s à ×16.
+    let calme = null
+    if (veut('confort')) {
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await page.evaluate(() => window.__BRAISES__.scene.send({ type: 'debug_speed', factor: 8 }))
+      calme = await page.evaluate(async () => {
+        const s = window.__BRAISES__.scene
+        const n0 = s.foudreFx.sonde.eclairs
+        let pire = 0
+        for (let i = 0; i < 600; i++) {
+          await new Promise((r) => requestAnimationFrame(r))
+          const sh = s.cameras.main.shakeEffect
+          if (sh) pire = Math.max(pire, Math.abs(sh._offsetX), Math.abs(sh._offsetY))
+          if (!s.view.meteo || s.view.meteo.type !== 'orage') {
+            s.sendAction({ type: 'debug_meteo', meteo: 'orage', edge: 0, phase: 0.35 })
+          }
+          if (s.foudreFx.sonde.eclairs > n0 + 1) break
+        }
+        return { frappes: s.foudreFx.sonde.eclairs - n0, sonde: { ...s.foudreFx.sonde }, pire }
+      })
+      console.log(
+        `\n③bis prefers-reduced-motion : ${calme.frappes} frappe(s) · secousse demandée ${calme.sonde.secousse}` +
+        ` · déplacement caméra max ${Math.round(calme.pire * 100) / 100} px · drapeau ${calme.sonde.mouvementReduit}`,
+      )
+      if (calme.frappes > 0 && (calme.sonde.secousse !== 0 || calme.pire > 0.001)) {
+        console.error('!! la secousse joue MALGRÉ prefers-reduced-motion')
+      }
+      if (calme.frappes === 0) console.error('!! aucune frappe pendant le relevé reduced-motion — la garde ne prouve rien')
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ④bis LE COÛT — le chronomètre interne, sur les seules images qui DESSINENT
+    // ════════════════════════════════════════════════════════════════════════
+    let cout = null
+    if (veut('cout')) {
+      // ×8 ET NON ×16 : à ×16 le relevé s'est ENLISÉ (>12 min sans rendre la main). Sous
+      // swiftshader, une image coûte déjà ~1 s ; en seize fois, chaque image doit balayer
+      // des centaines de ticks de foudre et le fil principal ne rend plus la main entre
+      // deux `page.evaluate`. ×8 suffit largement : un créneau dure 400 ticks, soit 2,5 s.
+      await page.evaluate(() => window.__BRAISES__.scene.send({ type: 'debug_speed', factor: 8 }))
+      const nAvant = (await sonde()).eclairs
+      // On laisse tomber PLUSIEURS frappes : une moyenne sur une seule image est une image
+      // heureuse, pas une mesure. Et on rallume le front s'il s'épuise pendant le relevé.
+      for (let i = 0; i < 5; i++) {
+        await page.evaluate(() => {
+          const s = window.__BRAISES__.scene
+          if (!s.view.meteo || s.view.meteo.type !== 'orage') {
+            s.sendAction({ type: 'debug_set_hour', hour: 12 })
+            s.sendAction({ type: 'debug_meteo', meteo: 'orage', edge: 0, phase: 0.35 })
+          }
+        })
+        await page.waitForTimeout(2000)
+      }
+      const fin = await sonde()
+      const meteo = await page.evaluate(() => ({ ...(window.__BRAISES__.scene.meteoLayer?.sonde ?? {}) }))
+      await page.evaluate(() => window.__BRAISES__.scene.send({ type: 'debug_speed', factor: 1 }))
+      const f3 = (v) => String(Math.round(v * 1000) / 1000).padStart(7)
+      console.log(
+        `\n④bis LE COÛT — ${fin.eclairs - nAvant} frappes pendant le relevé\n` +
+        `   LA FOUDRE sur le fil principal : ${f3(fin.msDessin)} ms/image, moyennées sur ${fin.imagesDessin} images QUI DESSINENT\n` +
+        `     (le trait, la gerbe ou la lueur ; les images de créneau vide sont exclues — elles\n` +
+        `      noieraient 340 ms de frappe dans vingt secondes de rien)\n` +
+        `   LE RIDEAU au même instant : ${meteo.vivantes} particules / cible ${meteo.cible} / budget ${meteo.budget}` +
+        `${meteo.plafonne ? ' PLAFONNÉ' : ''} · physique ${f3(meteo.msPhysique)} + peinture ${f3(meteo.msPeinture)}` +
+        ` = ${f3(meteo.msPhysique + meteo.msPeinture)} ms/image\n` +
+        `   ${fin.gerbeTotal} éclats de gerbe éclos depuis le début`,
+      )
+      if (!fin.imagesDessin) console.error('!! aucune image de dessin chronométrée — le coût relevé ne vaut rien')
+      cout = { foudre: fin, meteo }
+    }
+
+    await agir({ type: 'debug_meteo', meteo: null }, 400)
+    return { telegraphe: compare, battements, secousse, gerbe, calme, cout }
+  },
+
   async ombres(page) {
     await page.waitForTimeout(1500) // stabilisation (harnais a déjà navigué + attendu mapData)
     await page.screenshot({ path: `${OUT}/ombres-avatar.png` })

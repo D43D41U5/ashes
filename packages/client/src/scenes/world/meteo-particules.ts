@@ -346,7 +346,13 @@ export class ChampParticules {
    * UNE IMAGE. `dt` en secondes (borné par l'appelant), `dtMs` pour l'âge des éclaboussures.
    * `vue` est le cadre visible en tuiles, `bande` et `rampe` disent où il pleut.
    */
-  update(dt: number, dtMs: number, profil: ProfilChute, vue: Vue, bande: Bande, rampe: number): void {
+  update(
+    dt: number, dtMs: number, profil: ProfilChute, vue: Vue, bande: Bande, rampe: number,
+    /** Ce que d'AUTRES particules occupent déjà du budget partagé (la gerbe de la foudre) :
+     *  le plafond du rideau descend d'autant. Les 650 sont un budget de MACHINE — il se
+     *  partage, il ne s'empile pas par système. */
+    reservees = 0,
+  ): void {
     this.t += dt
     const k = profil.g / profil.vLimite // le coefficient de traînée — le même air pour les deux axes
 
@@ -365,7 +371,8 @@ export class ChampParticules {
     }
     const moyenne = somme / (NX * NY)
     const aire = Math.max(1, (vue.x1 - vue.x0) * (vue.y1 - vue.y0))
-    this.cible = Math.min(BUDGET_PARTICULES, Math.round(profil.densite * aire * moyenne))
+    const plafond = Math.max(0, BUDGET_PARTICULES - reservees)
+    this.cible = Math.min(plafond, Math.round(profil.densite * aire * moyenne))
 
     // ── L'INTÉGRATION ──
     let vivantes = 0

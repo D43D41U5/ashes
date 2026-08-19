@@ -1588,8 +1588,22 @@ export class WorldScene extends Phaser.Scene {
       // La foudre parle d'abord (elle rend l'embrasement que le ciel consomme le même frame ;
       // l'inverse aurait retardé le flash d'une image sur le trait qui le cause).
       const meteoFront = this.view.meteo
-      const flash = this.foudreFx?.update(time, meteoFront, this.lastTime.tick, this.map.width, this.map.height) ?? 0
-      this.meteoLayer?.update(time, meteoFront, this.lastTime.tick, day, flash, this.predicted, this.cameras.main)
+      const flash = this.foudreFx?.update(time, {
+        front: meteoFront,
+        tick: this.lastTime.tick,
+        map: this.map,
+        // Le tableau COMPLET du snapshot : la loi d'abri ne doit pas dépendre du cadrage.
+        structures: this.view.structures,
+        // La secousse décroît avec la distance AU JOUEUR — d'où ce paramètre, qui n'existait
+        // pas : la foudre ne savait pas qui la regardait.
+        joueur: this.predicted,
+      }) ?? 0
+      // LA GERBE S'IMPUTE SUR LE BUDGET DE PARTICULES, elle ne s'empile pas à côté : le
+      // rideau retranche de sa cible ce que les éclats occupent (au plus 48, ~7 %, 0,3 s).
+      this.meteoLayer?.update(
+        time, meteoFront, this.lastTime.tick, day, flash, this.predicted, this.cameras.main,
+        this.foudreFx?.particulesReservees ?? 0,
+      )
     }
 
     // ON NE MARCHE PAS EN TAPANT. Le champ de recherche du panneau de craft prend

@@ -401,6 +401,11 @@ export class MeteoLayer {
     flash: number,
     joueur: { x: number; y: number },
     camera: Phaser.Cameras.Scene2D.Camera,
+    /** Ce que d'AUTRES particules occupent déjà du budget (la gerbe de la foudre). Le rideau
+     *  se serre d'autant : les 650 sont un budget de MACHINE, partagé, jamais un par-système
+     *  qu'on empilerait. Conséquence nommée : sous une frappe le rideau perd au plus 48
+     *  gouttes (~7 %) pendant trois dixièmes de seconde. */
+    reservees = 0,
   ): void {
     const dtMs = this.lastMs === null ? 0 : Math.min(250, Math.max(0, nowMs - this.lastMs))
     const dt = dtMs / 1000
@@ -449,7 +454,7 @@ export class MeteoLayer {
       y1: (vue.y + vue.height) / TILE_PX + MARGE_TUILES,
     }
     const t0 = performance.now()
-    this.champ.update(dt, dtMs, profil, cadre, bande, this.rampe)
+    this.champ.update(dt, dtMs, profil, cadre, bande, this.rampe, reservees)
     const t1 = performance.now()
     this.peindre(profil, day)
     this.chronometrer(t1 - t0, performance.now() - t1, dtMs)
