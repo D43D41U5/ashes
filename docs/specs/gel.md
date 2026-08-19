@@ -25,11 +25,16 @@ La température existe déjà **en tout point** (`baselineTemperature(state, x, 
 
 ### La végétation (G6)
 
-- **G6 — Les feuillus se dénudent, les conifères tiennent.** Sous `GEL.SEUIL_FEUILLES`, les terrains à feuilles caduques (`forest`, `willow`, `old_growth`) se rendent dénudés ; `pine` et `larch` gardent leur couvert. *(Le mélèze perd ses aiguilles en vrai — on l'aligne ici sur les conifères, par lisibilité : la silhouette du conifère doit dire « il tient ».)* **PUREMENT VISUEL au v1** : le `cover` du terrain, qui commande la furtivité et l'abri de la faune, NE bouge pas. Le rendre mécanique changerait la furtivité de toute la carte en acte III — c'est une décision d'équilibrage à part.
+- **G6 — Les feuillus se dénudent, les conifères tiennent — AU RYTHME DE LA SAISON.** La feuillaison suit le JOUR DE SAISON (et donc l'acte), **jamais la température instantanée** : un arbre ne refait pas ses feuilles parce qu'un front tiède est passé, et keyer sur l'instant ferait clignoter toute la forêt à chaque nuit et à chaque lisière de front. Les terrains à feuilles caduques (`forest`, `willow`, `old_growth`) se rendent progressivement dénudés à partir de `GEL.JOUR_DEFEUILLAISON` ; `pine` et `larch` gardent leur couvert. *(Le mélèze perd ses aiguilles en vrai — on l'aligne ici sur les conifères, par lisibilité : la silhouette du conifère doit dire « il tient ».)* **PUREMENT VISUEL au v1** : le `cover` du terrain, qui commande la furtivité et l'abri de la faune, NE bouge pas.
 
 ### La neige au sol (G7)
 
 - **G7 — La neige tient après le front, puis fond.** Elle demande une MÉMOIRE, alors que la température est instantanée. Solution sans état : l'élection des fronts étant une fonction pure du cycle, `neigeAuSol(state, x, y)` rembobine les `GEL.MEMOIRE_CYCLES` derniers cycles et rend une couverture qui décroît avec le temps écoulé depuis le dernier front neigeux ayant couvert ce point — et qui fond d'autant plus vite que la température est haute. **PUREMENT VISUEL au v1** (pas de malus de vitesse : le froid ralentit déjà par `coldSpeedFactor`, et l'accumulation mécanique reste hors périmètre, cf. `meteo.md`).
+
+### Le dégel (G8)
+
+- **G8 — LE DÉGEL A DE L'HYSTÉRÉSIS, ET IL NE PIÈGE PERSONNE.** L'eau PREND sous son seuil, mais elle ne DÉGÈLE qu'au-dessus de `seuil + GEL.HYSTERESIS`. Sans cette marge, une température qui oscille autour du seuil — l'aube, le crépuscule, la lisière d'un front qui passe — ferait clignoter la glace d'un tick à l'autre. L'hystérésis se lit sur l'état PRÉCÉDENT de la tuile ; comme rien n'est stocké, on la dérive de la température d'un instant de référence proche (le tick courant contre le tick précédent de la même tuile, ou la borne du créneau) — **jamais d'un champ**. *Conséquence de jeu voulue : la carte se REFERME derrière ceux qui l'ont traversée. Une bande qui a franchi le lac dans la nuit peut se retrouver du mauvais côté au matin — le pendant exact de l'ouverture, et ce qui donne son prix à la date du gel.*
+- **G8bis — Personne ne reste emmuré.** Un acteur (avatar, PNJ, monstre) qui se trouve sur une tuile au moment où elle dégèle est REPLIÉ sur la tuile marchable la plus proche — patron du repli des traînards de la Brume. Jamais bloqué à l'intérieur d'une tuile non marchable : c'est le bug maison du feu qui emmure un acteur centré dessus. On ne fait PAS céder la glace (immersion/noyade écartées à la décision du 2026-08-19).
 
 ## Critères d'acceptation
 
@@ -42,6 +47,9 @@ La température existe déjà **en tout point** (`baselineTemperature(state, x, 
 - **A7** — Un Feu ne dégèle rien : la glace sous et autour d'un feu actif est dans le même état qu'à dix tuiles (le gel lit la baseline, pas l'ambiant).
 - **A8** — Un blizzard gèle ce qu'il traverse et le dégèle en s'éloignant (le froid météo entre bien dans la baseline).
 - **A9** — G6 : sous le seuil, `forest`/`willow`/`old_growth` se rendent dénudés, `pine`/`larch` non ; et le `cover` du terrain n'a pas bougé (le v1 est visuel).
+- **A11** — G8 hystérésis : sur un balayage exhaustif de températures qui MONTENT puis DESCENDENT autour du seuil, la glace ne change jamais d'état plus d'une fois par franchissement — zéro clignotement (garde sur le domaine, pas sur des points choisis).
+- **A12** — G8bis : un avatar debout sur une tuile d'eau profonde qui dégèle se retrouve sur une tuile MARCHABLE, jamais dans l'eau ; idem pour un PNJ et un monstre. Et il en va de même quand un front tiède efface le gel qu'un blizzard avait posé.
+- **A13** — G6 ne clignote pas : sur une saison entière jouée nuit et jour, l'état de feuillaison d'une tuile de `forest` est MONOTONE (il ne repasse jamais de dénudé à feuillu), et `pine`/`larch` ne changent jamais.
 - **A10** — G7 : après le passage d'un front de neige, la couverture au sol décroît avec le temps et disparaît ; elle est PURE (aucun état), et nulle sans météo armée.
 
 ## Hors périmètre (et où ça revient)
@@ -52,4 +60,4 @@ La température existe déjà **en tout point** (`baselineTemperature(state, x, 
 
 ## Ajouts à `balance.ts`
 
-Bloc `GEL` (ordres de grandeur, à calibrer en jouant) : `SEUIL_GUE`, `SEUIL_PROFOND` (nettement plus bas), `SEUIL_FEUILLES`, `VITESSE_GLACE` (~1,1 — on glisse un peu plus vite que sur l'herbe), `MEMOIRE_CYCLES` (~3).
+Bloc `GEL` (ordres de grandeur, à calibrer en jouant) : `SEUIL_GUE`, `SEUIL_PROFOND` (nettement plus bas), `SEUIL_FEUILLES`, `VITESSE_GLACE` (~1,1 — on glisse un peu plus vite que sur l'herbe), `MEMOIRE_CYCLES` (~3), `HYSTERESIS` (la marge de dégel), `JOUR_DEFEUILLAISON` (le jour de saison où les feuillus commencent à se dénuder).
