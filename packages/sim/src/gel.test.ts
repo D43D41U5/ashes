@@ -18,9 +18,9 @@ import { drainEvents } from './events'
 import { placeHuntingGrounds } from './faune'
 import {
   advanceDegel, estGele, feuillageDenude, gelPossible, jourDeDefeuillaison, neigeAuSol,
-  traverseeGelee, vitesseSurGlace,
+  vitesseSurGlace,
 } from './gel'
-import { createEmptyMap, isWater, setTile, terrainAt, type WorldMap } from './map'
+import { createEmptyMap, isBlockingTile, isWater, MARCHABLE, setTile, terrainAt, type WorldMap } from './map'
 import { frontDuCycle, type MeteoFront } from './meteo'
 import { spawnMonster } from './monsters'
 import { computeFlowField, findPath } from './pathfinding'
@@ -125,6 +125,32 @@ describe('G2 — deux seuils, deux promesses (la table des six régimes)', () =>
 })
 
 // ═══════════════════════════════════════════════════════════════════════════════════════
+// LE SOCLE DU CHEMIN CHAUD — la table de marchabilité que le gel a substituée
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+describe('le point unique du gel repose sur `MARCHABLE` — et cette équivalence est PROUVÉE', () => {
+  /**
+   * `terrainBloque` a remplacé `isBlockingTile` par une lecture de `MARCHABLE` sur le chemin
+   * le plus chaud de la collision (`blockedSubAt`, une fois par sous-tuile balayée). Cette
+   * substitution ne tenait jusqu'ici que sur un commentaire de `map.ts`. On la balaie donc
+   * SUR TOUT LE DOMAINE — les 256 ids possibles, pas ceux que les suites emploient — car une
+   * garde écrite avec les cas qu'on a en tête ne garde que ceux-là.
+   */
+  it('`MARCHABLE[id] !== 1` ⇔ `isBlockingTile`, pour les 256 ids ET hors carte', () => {
+    const map = createEmptyMap(4, 4, TERRAIN_GRASS)
+    for (let id = 0; id < 256; id++) {
+      setTile(map, 1, 1, id)
+      expect(MARCHABLE[id] !== 1, `id ${id}`).toBe(isBlockingTile(map, 1, 1))
+    }
+    // Hors carte : `terrainAt` rend 0 (void), les deux lois doivent bloquer pareil.
+    for (const [tx, ty] of [[-1, 0], [0, -1], [4, 0], [0, 4]] as const) {
+      expect(MARCHABLE[terrainAt(map, tx, ty)] !== 1).toBe(isBlockingTile(map, tx, ty))
+      expect(isBlockingTile(map, tx, ty)).toBe(true)
+    }
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
 // A1 — pureté
 // ═══════════════════════════════════════════════════════════════════════════════════════
 
@@ -144,7 +170,6 @@ describe('A1 — `estGele` est PURE', () => {
         if (a) gelees += 1
         feuillageDenude(sim, tx, ty)
         neigeAuSol(sim, tx, ty)
-        traverseeGelee(sim, tx, ty)
         vitesseSurGlace(sim, tx, ty)
       }
     }
@@ -781,6 +806,9 @@ describe('A11 — le dégel a de l’hystérésis, et la glace ne clignote pas (
           sim.tick = tickDe(jour, nuit)
           if (type === null) sim.meteo = null
           else poserFront(sim, type, 0, sim.tick - Math.floor(METEO.TRAVERSEE_TICKS / 2))
+          // Les régimes où le gel EST possible ne sont pas jugés ici — c'est la table de G2
+          // et le balayage de A4 qui les couvrent. Ce `continue` ne cache donc rien : la
+          // seule chose affirmée ici est l'implication « borne fausse ⇒ rien de gelé ».
           if (gelPossible(sim)) continue
           for (let ty = 0; ty < sim.map.height; ty += 3) {
             expect(estGele(sim, RIVIERE_X0, ty)).toBe(false)

@@ -136,6 +136,11 @@ export function gelPossible(state: SimState): boolean {
   // `+ HYSTERESIS` : une glace posée peut SURVIVRE jusqu'au seuil relevé (G8). Une borne qui
   // s'arrêterait au seuil nu écarterait des tuiles encore gelées — et une borne fausse, c'est
   // une tuile franchissable pour l'avatar et bloquante pour l'A*.
+  //
+  // ⚠ ELLE EST EXACTEMENT TENDUE, et c'est une dépendance à écrire. Le point le plus froid
+  // de l'acte I vaut 50, et `SEUIL_GUE + HYSTERESIS` vaut 50 : la borne ne tient que parce
+  // que `estGele` compare par `<` STRICT (à 50, elle rend faux, et ici aussi). Relâcher l'une
+  // des deux comparaisons en `<=` sans l'autre rendrait cette borne UNSOUND — en silence.
   return plancherDeLaVallee(state) < GEL.SEUIL_GUE + GEL.HYSTERESIS
 }
 
@@ -192,23 +197,6 @@ export function estGele(state: SimState, tx: number, ty: number): boolean {
   // proche — jamais avant le tick 0, où le monde n'a pas d'avant.
   const avant = Math.max(0, state.tick - GEL.RETARD_TICKS)
   return baselineTemperatureAt(state, tx, ty, avant) < seuil
-}
-
-/**
- * LA TUILE EST-ELLE UN CHEMIN GELÉ ? — vrai seulement pour l'eau que le gel rend
- * PRATICABLE alors qu'elle ne l'était pas (le lac). Le gué, lui, était déjà marchable :
- * le gel n'y change que la vitesse.
- *
- * C'est LE point unique par lequel la marchabilité du terrain se relâche ; `collision.ts`
- * l'applique à ses trois questions (tuile, sous-tuile, index) et à rien d'autre. Elle
- * DÉLÈGUE à `estGele` plutôt que de recomparer sa propre température : deux expressions du
- * même seuil finiraient par diverger, et c'est très exactement ce que G4 interdit. La
- * lecture de terrain qui la précède est là pour le coût — un test d'entier écarte la roche,
- * la falaise et le mur avant que quoi que ce soit de cher ne soit calculé.
- */
-export function traverseeGelee(state: SimState, tx: number, ty: number): boolean {
-  if (terrainAt(state.map, tx, ty) !== TERRAIN_DEEP_WATER) return false
-  return estGele(state, tx, ty)
 }
 
 /**

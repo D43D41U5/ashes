@@ -141,7 +141,7 @@ export type { MeteoFront, MeteoType, BandeMeteo, FoudreImpact } from './meteo'
 // neige au sol (G7) — aucune seconde loi côté rendu, aucun octet de plus dans le snapshot.
 // `gelPossible` est la porte d'entrée bon marché : fausse, il n'y a rien à peindre.
 export {
-  estGele, gelPossible, traverseeGelee, vitesseSurGlace,
+  estGele, gelPossible, vitesseSurGlace,
   feuillageDenude, jourDeDefeuillaison, neigeAuSol,
   bandeDuCycle, jourDuCycle, advanceDegel,
 } from './gel'
