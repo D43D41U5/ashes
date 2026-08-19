@@ -8405,6 +8405,7 @@ const SCENARIOS = {
         intensite: s.meteoLayer?.intensiteAuJoueur ?? 0,
         pos: s.registry.get('playerPos'),
         map: { w: s.map.width, h: s.map.height },
+        heure: s.lastTime?.hourOfCycle ?? -1,
       }
     })
 
@@ -8430,30 +8431,6 @@ const SCENARIOS = {
       }
     })
 
-    const TYPES = ['pluie', 'brouillard', 'neige', 'orage', 'blizzard']
-    const out = {}
-
-    for (const type of TYPES) {
-      // Le front entre par l'OUEST (bord 0) et traverse vers l'est : son bord AVANT est `hi`.
-      // Phase 0,5 → la bande est au milieu de sa course, donc au milieu de la carte.
-      await agir({ type: 'debug_meteo', meteo: type, edge: 0, phase: 0.5 }, 400)
-      // ON ATTEND QUE LA BANDE SOIT DESSINÉE, on ne la suppose pas : le record d'élection
-      // doit faire l'aller-retour worker → snapshot → couche, et au PREMIER type ce trajet
-      // n'était pas fini au bout de 400 ms (MESURÉ : `pluie` sautait, les quatre autres
-      // passaient — un délai fixe est un pari, une attente est une preuve).
-      await page.waitForFunction((t) => {
-        const s = window.__BRAISES__.scene
-        return Boolean(s.meteoLayer?.bande) && s.view.meteo?.type === t
-      }, type, { timeout: 20000 }).catch(() => {})
-      const e0 = await etat()
-      if (!e0.bande) { console.error(`!! ${type} : aucune bande dessinée — le front n'est pas arrivé au client`); continue }
-
-      const coeur = (e0.bande.lo + e0.bande.hi) / 2
-      const y = Math.min(e0.map.h - 2, Math.max(2, e0.pos.y))
-
-      // ── 1. LE MONDE NU, au MÊME endroit et à la MÊME heure : l'étalon. Sans lui, un µ
-      //      de 90 ne dit rien — c'est l'ÉCART au sol nu qui dit ce que le ciel a fait. ──
-      await agir({ type: 'debug_meteo', meteo: null }, 200)
     /**
      * SE PORTER DANS LA BANDE, ET LE PROUVER — jamais un délai fixe.
      *
@@ -8478,23 +8455,131 @@ const SCENARIOS = {
       }
     }
 
-      await seRendreAuCoeur(coeur, y)
+    /**
+     * REPOSER L'HEURE À MIDI — l'horloge DÉRIVE, exactement comme la bande.
+     *
+     * MESURÉ : `debug_set_hour 12` posé UNE FOIS avant la boucle ne tient pas la planche.
+     * Les captures de la première série datent d'elles-mêmes : pluie à 12H, brouillard à
+     * 14H, neige à 17H — trois heures et demie de course pour trois types, et le blizzard
+     * (le dernier) serait tombé au crépuscule. Or à la nuit `uDay` écrase le voile ET
+     * `teinteDeNuit` éteint chaque particule : on lirait « le blizzard ne se voit presque
+     * pas » là où on n'aurait mesuré qu'un coucher de soleil.
+     */
+    const heure12 = async (ms = 0) => {
+      await page.evaluate(() => { window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 12 }) })
+      if (ms) await page.waitForTimeout(ms)
+    }
+
+    const TYPES = ['pluie', 'brouillard', 'neige', 'orage', 'blizzard']
+    const out = {}
+
+    for (const type of TYPES) {
+      // Le front entre par l'OUEST (bord 0) et traverse vers l'est : son bord AVANT est `hi`.
+      // Phase 0,5 → la bande est au milieu de sa course, donc au milieu de la carte.
+      await agir({ type: 'debug_meteo', meteo: type, edge: 0, phase: 0.5 }, 400)
+      // ON ATTEND QUE LA BANDE SOIT DESSINÉE, on ne la suppose pas : le record d'élection
+      // doit faire l'aller-retour worker → snapshot → couche, et au PREMIER type ce trajet
+      // n'était pas fini au bout de 400 ms (MESURÉ : `pluie` sautait, les quatre autres
+      // passaient — un délai fixe est un pari, une attente est une preuve).
+      await page.waitForFunction((t) => {
+        const s = window.__BRAISES__.scene
+        return Boolean(s.meteoLayer?.bande) && s.view.meteo?.type === t
+      }, type, { timeout: 20000 }).catch(() => {})
+      const e0 = await etat()
+      if (!e0.bande) { console.error(`!! ${type} : aucune bande dessinée — le front n'est pas arrivé au client`); continue }
+
+      // LE CŒUR EST ANALYTIQUE, PAS RELEVÉ. À la phase 0,5, `debug_meteo` pose
+      // `startTick = tick − 0,5 × TRAVERSEE` : la bande est alors PILE au milieu de la carte,
+      // donc son centre vaut `map.w / 2` quel que soit le type (le bord d'entrée est l'ouest).
+      // Le relever sur la couche rendrait un centre DÉJÀ PÉRIMÉ — voir `rappeler` juste après.
+      const coeur = e0.map.w / 2
+      const largeurBande = e0.bande.hi - e0.bande.lo
+      const y = Math.min(e0.map.h - 2, Math.max(2, e0.pos.y))
+
+      /**
+       * RAPPELER LE FRONT SUR SON CENTRE — le geste qui sauve la planche.
+       *
+       * MESURÉ le 2026-08-19, et ça a coûté une planche entière de cinq types : LA BANDE
+       * TRAVERSE LA CARTE pendant qu'on la photographie, et l'horloge headless galope
+       * (9,5 tuiles de dérive en 1,4 s, relevées). Entre l'instant où l'avatar entre dans la
+       * bande (`seRendreAuCoeur`, qui PROUVE l'entrée) et l'obturateur, il s'écoule
+       * `canopeePleine` + 0,7 s + `cielAuRepos` — de quoi laisser le front passer par-dessus.
+       * Résultat : les cinq ciels sortis à intensité 0,00 exactement, µ pluie +3,3 au lieu de
+       * −27, zéro particule vivante. Une entrée PROUVÉE ne prouve rien si elle n'est pas
+       * prouvée AU MOMENT DE LA PRISE.
+       *
+       * Ré-armer à la phase 0,5 replante la bande sur le centre exact de la carte — là où
+       * l'avatar attend déjà. C'est idempotent et ça coûte un tick.
+       */
+      const rappeler = async (cible = 0.9, ms = 220) => {
+        await page.evaluate((t) => {
+          const sc = window.__BRAISES__.scene
+          sc.sendAction({ type: 'debug_set_hour', hour: 12 })
+          sc.sendAction({ type: 'debug_meteo', meteo: t, edge: 0, phase: 0.5 })
+        }, type)
+        // ON ATTEND LA PREUVE, PAS UN DÉLAI. Le record d'élection fait l'aller-retour
+        // worker → snapshot → couche ; 200 ms n'y suffisent pas (MESURÉ : la garde de
+        // l'obturateur criait « intensité 0.00 » après un rappel à délai fixe). On guette
+        // donc l'intensité elle-même — le nombre qu'on veut, chez celui qui le peint.
+        await page.waitForFunction(
+          (k) => (window.__BRAISES__.scene.meteoLayer?.intensiteAuJoueur ?? 0) >= k,
+          cible, { timeout: 10000, polling: 100 },
+        ).catch(() => {})
+        if (ms) await page.waitForTimeout(ms)
+      }
+
+      // ── 1. LE MONDE NU, au MÊME endroit et à la MÊME heure : l'étalon. Sans lui, un µ
+      //      de 90 ne dit rien — c'est l'ÉCART au sol nu qui dit ce que le ciel a fait. ──
+      await agir({ type: 'debug_meteo', meteo: null }, 200)
+      // ON NE « SE REND PAS AU CŒUR » D'UNE BANDE QUI N'EXISTE PAS : le témoin nu se prend
+      // au MÊME endroit que la prise (sinon on compare deux terrains), mais il n'y a rien à
+      // prouver ici — juste à laisser la prédiction locale rejoindre la sim (~1,5 s MESURÉ).
+      await agir({ type: 'debug_teleport', x: coeur, y }, 1700)
       await canopeePleine(page) // la cime au-dessus du joueur s'efface : la photo mentirait
-      await page.waitForTimeout(500)
+      await heure12(500) // le témoin NU se prend à MIDI, comme la prise qu'il étalonne
       // LA PHOTO DU MONDE NU, gardée : un Δµ de +56 ne se juge pas seul, il se REGARDE à
       // côté de son témoin — même endroit, même heure, même cadrage.
       await page.screenshot({ path: `${OUT}/meteo-${type}-0-nu.png` })
       const nu = await mesurer()
 
       // ── 2. LE CŒUR (intensité 1) — le ciel plein. ──
-      await agir({ type: 'debug_meteo', meteo: type, edge: 0, phase: 0.5 }, 400)
+      await rappeler()
       await seRendreAuCoeur(coeur, y)
       await canopeePleine(page)
-      await page.waitForTimeout(700)
+      await page.waitForTimeout(500)
+      // `cielAuRepos` NE SERT QUE SOUS L'ORAGE (il guette le compteur d'éclairs). Sous les
+      // quatre autres ciels il attendait 46 images pour rien — et pendant ces 46 images la
+      // bande, elle, avançait. Une attente inutile n'est pas gratuite ici : elle est fatale.
+      if (type === 'orage') await cielAuRepos()
+      await rappeler()
       const eCoeur = await etat()
-      await cielAuRepos() // pas de photo pendant un éclair — voir `cielAuRepos`
+      if (eCoeur.intensite < 0.9) {
+        console.error(`!! ${type} : intensité ${eCoeur.intensite.toFixed(2)} À L'OBTURATEUR — la photo ne montre pas le ciel`)
+      }
       await page.screenshot({ path: `${OUT}/meteo-${type}-coeur.png` })
+      // LA SONDE DU GRAIN : combien de particules VIVENT, contre quel budget. Une gerbe de
+      // deux images ne se photographie pas — elle se compte.
+      const sondeGrain = await page.evaluate(() => ({ ...(window.__BRAISES__.scene.meteoLayer?.sonde ?? {}) }))
       const coeurM = await mesurer()
+
+      // ── 2bis. LE VOILE SEUL — particules éteintes, MÊME endroit, MÊME heure. ──
+      //
+      // C'EST LE TÉMOIN QUI COMPTE, et il en fallait un troisième. Comparer le ciel plein
+      // au sol nu mélange deux choses : ce que le voile fait (il assombrit) et ce que le
+      // grain fait (il éclaircit par points durs). L'en-tête de `meteo-layer` garde la
+      // trace du piège : la première planche avait Δµ = −0,4 contre le sol nu, c'est-à-dire
+      // une pluie RIGOUREUSEMENT INVISIBLE aux nombres, parce que les deux s'annulaient.
+      // Contre le voile seul, le grain ne peut plus se cacher : σ/µ MONTE quand des carrés
+      // durs se posent sur un aplat, même si µ ne bouge pas.
+      await page.evaluate(() => { window.__BRAISES__.scene.meteoLayer.grainActif = false })
+      if (type === 'orage') await cielAuRepos()
+      await rappeler()
+      const eVoile = await etat()
+      if (eVoile.intensite < 0.9) console.error(`!! ${type} : voile seul pris à intensité ${eVoile.intensite.toFixed(2)}`)
+      await page.screenshot({ path: `${OUT}/meteo-${type}-voile-seul.png` })
+      const voileM = await mesurer()
+      await page.evaluate(() => { window.__BRAISES__.scene.meteoLayer.grainActif = true })
+      await page.waitForTimeout(400)
 
       // ── 3. LA LISIÈRE — le bord AVANT, celui qui gagne du terrain. On s'y plante : le
       //      front couvre la moitié ouest de l'écran, le clair tient l'est. ──
@@ -8505,12 +8590,16 @@ const SCENARIOS = {
       // ÉCLAIRCIT) rendait un écart de −4,7, c'est-à-dire du signe contraire à ce qu'il fait.
       // La différence des différences élimine le décor : il ne reste que ce que le ciel a
       // ajouté à gauche, et ce qu'il a ajouté à droite.
-      const e1 = await etat()
-      const bordAvant = e1.bande ? e1.bande.hi : coeur
-      await agir({ type: 'debug_teleport', x: bordAvant, y }, 500)
+      // Le bord AVANT est analytique lui aussi : centre + demi-largeur (même raison). On se
+      // plante UNE TUILE DEDANS et pas dessus : sur le bord exact, `d = 0` donc l'intensité
+      // vaut 0 par définition — il n'y aurait rien à prouver, donc rien à garder.
+      const bordAvant = coeur + largeurBande / 2 - 1
+      await agir({ type: 'debug_teleport', x: bordAvant, y }, 900)
       await canopeePleine(page)
-      await page.waitForTimeout(700)
-      await cielAuRepos()
+      if (type === 'orage') await cielAuRepos()
+      await rappeler(0.02)
+      const eLis = await etat()
+      if (eLis.intensite <= 0) console.error(`!! ${type} : lisière prise HORS du front (intensité 0)`)
       await page.screenshot({ path: `${OUT}/meteo-${type}-lisiere.png` })
       const lisAvec = await moities()
       await agir({ type: 'debug_meteo', meteo: null }, 400)
@@ -8531,6 +8620,8 @@ const SCENARIOS = {
       out[type] = {
         nu,
         coeur: coeurM,
+        voile: voileM,
+        grain: sondeGrain,
         intensiteAuCoeur: Math.round(eCoeur.intensite * 1000) / 1000,
         rampeTuiles: Math.round(rampe * 10) / 10,
         ecranTuiles: Math.round(ecranTuiles * 10) / 10,
@@ -8545,6 +8636,15 @@ const SCENARIOS = {
         `, Δ ${String(Math.round((coeurM.moy - nu.moy) * 10) / 10).padStart(6)})   σ/µ ${String(Math.round(coeurM.cv * 1000) / 1000).padStart(6)}` +
         ` (nu ${String(Math.round(nu.cv * 1000) / 1000).padStart(6)})   lisière : dedans ${String(Math.round(lis.dedans * 10) / 10).padStart(6)}` +
         ` / dehors ${String(Math.round(lis.dehors * 10) / 10).padStart(6)}`,
+      )
+      console.log(
+        `              pris à ${String(Math.round((eCoeur.heure ?? -1) * 10) / 10).padStart(4)} h (midi voulu) · intensité à l'obturateur ${(eCoeur.intensite ?? 0).toFixed(2)}` +
+        `\n              grain : ${String(sondeGrain.vivantes ?? 0).padStart(4)} particules vivantes / cible ${String(sondeGrain.cible ?? 0).padStart(4)}` +
+        ` / budget ${sondeGrain.budget ?? '?'}${sondeGrain.plafonne ? ' (PLAFONNÉ)' : ''} · ${String(sondeGrain.rects ?? 0).padStart(5)} rectangles` +
+        `, ${String(sondeGrain.eclaboussures ?? 0).padStart(3)} éclaboussures` +
+        `\n              contre le VOILE SEUL : Δµ ${String(Math.round((coeurM.moy - voileM.moy) * 10) / 10).padStart(6)}` +
+        `   σ/µ ${String(Math.round(coeurM.cv * 1000) / 1000).padStart(6)} contre ${String(Math.round(voileM.cv * 1000) / 1000).padStart(6)}` +
+        ` (Δ ${String(Math.round((coeurM.cv - voileM.cv) * 1000) / 1000).padStart(6)})`,
       )
     }
 
@@ -8747,14 +8847,78 @@ const SCENARIOS = {
       void s
       return { median: t[Math.floor(t.length / 2)], p90: t[Math.floor(t.length * 0.9)] }
     })
-    await agir({ type: 'debug_meteo', meteo: 'blizzard', edge: 0, phase: 0.5 }, 500)
-    const avec = await cadence()
-    await agir({ type: 'debug_meteo', meteo: null }, 500)
+    //
+    // TROIS ÉTALONS, PAS DEUX — et c'est la leçon de cette tranche. Le grain a quitté le
+    // fragment (il était un hash de permutation ET un vnoise par pixel, sur ~920 000
+    // fragments) pour devenir des particules. Ne mesurer que « sans ciel » contre « ciel
+    // complet » créditerait les particules du temps que la branche retirée a RENDU. On
+    // relève donc : (a) ciel nu, (b) voile seul (grain éteint par l'interrupteur de mesure),
+    // (c) voile + particules. Le coût des PARTICULES est c − b ; celui du VOILE est b − a.
+    //
+    // Et on mesure AU CŒUR de la bande à chaque fois : sur la rampe, la densité est plus
+    // basse par construction — un relevé à mi-lisière flatterait le budget.
+    const eRef = await etat()
+    const xRef = eRef.map.w / 2
+    const yRef = Math.min(eRef.map.h - 2, Math.max(2, eRef.pos.y))
+    await agir({ type: 'debug_meteo', meteo: null }, 300)
+    await agir({ type: 'debug_teleport', x: xRef, y: yRef }, 700)
     const sans = await cadence()
+    const couts = { sans }
+    for (const type of ['pluie', 'neige', 'orage', 'blizzard']) {
+      // Même rappel que pour les photos : `cadence()` compte 90 images, la bande avance
+      // pendant ce temps. On la replante sur le centre juste avant chaque relevé.
+      const arme = async (cible = 0.9) => {
+        await page.evaluate((t) => {
+          const sc = window.__BRAISES__.scene
+          sc.sendAction({ type: 'debug_set_hour', hour: 12 })
+          sc.sendAction({ type: 'debug_meteo', meteo: t, edge: 0, phase: 0.5 })
+        }, type)
+        await page.waitForFunction(
+          (k) => (window.__BRAISES__.scene.meteoLayer?.intensiteAuJoueur ?? 0) >= k,
+          cible, { timeout: 10000, polling: 100 },
+        ).catch(() => {})
+        await page.waitForTimeout(200)
+      }
+      await arme()
+      await page.waitForFunction((t) => {
+        const sc = window.__BRAISES__.scene
+        return Boolean(sc.meteoLayer?.bande) && sc.view.meteo?.type === t
+      }, type, { timeout: 20000 }).catch(() => {})
+      if (!(await seRendreAuCoeur(xRef, yRef))) { console.error(`!! coût ${type} : hors bande`); continue }
+      await page.evaluate(() => { window.__BRAISES__.scene.meteoLayer.grainActif = false })
+      await arme()
+      const voile = await cadence()
+      await page.evaluate(() => { window.__BRAISES__.scene.meteoLayer.grainActif = true })
+      await arme()
+      // LA SONDE SE LIT AVANT **ET** APRÈS LES 90 IMAGES. Sans elle, un « surcoût 0,0 ms »
+      // pourrait vouloir dire « pas de particules » ; avec une seule lecture, il pourrait
+      // vouloir dire « le rideau a fondu à mi-relevé pendant que la bande passait ». Deux
+      // comptes qui divergent invalident la médiane — une garde prouve sa prémisse.
+      const lireSonde = () => page.evaluate(() => ({ ...(window.__BRAISES__.scene.meteoLayer?.sonde ?? {}) }))
+      const sondeAvant = await lireSonde()
+      const plein = await cadence()
+      const sonde = await lireSonde()
+      if (!sonde.vivantes || !sondeAvant.vivantes) console.error(`!! coût ${type} : 0 particule vivante — le surcoût mesuré ne vaut rien`)
+      else if (Math.abs(sonde.vivantes - sondeAvant.vivantes) > sondeAvant.vivantes * 0.2) {
+        console.error(`!! coût ${type} : le rideau a fondu pendant le relevé (${sondeAvant.vivantes} → ${sonde.vivantes}) — médiane à jeter`)
+      }
+      couts[type] = { voile, plein, sonde, sondeAvant }
+    }
+    await agir({ type: 'debug_meteo', meteo: null }, 400)
+    const f2 = (v) => String(Math.round(v * 100) / 100).padStart(7)
     console.log(
-      `\n  coût du ciel (blizzard, plein écran) : ${Math.round(avec.median * 100) / 100} ms/image contre ${Math.round(sans.median * 100) / 100} sans` +
-      ` — surcoût ${Math.round((avec.median - sans.median) * 100) / 100} ms (p90 : ${Math.round(avec.p90 * 100) / 100} contre ${Math.round(sans.p90 * 100) / 100})`,
+      `\n  LE COÛT DU CIEL, en ms/image médianes — trois étalons au même endroit (au CŒUR de la bande) :` +
+      `\n    ciel nu (aucun front)          ${f2(sans.median)}   (p90 ${f2(sans.p90)})`,
     )
+    for (const [type, c] of Object.entries(couts)) {
+      if (type === 'sans') continue
+      console.log(
+        `    ${type.padEnd(9)} voile seul        ${f2(c.voile.median)}   (p90 ${f2(c.voile.p90)})   → le voile coûte ${f2(c.voile.median - sans.median)}` +
+        `\n    ${type.padEnd(9)} voile + particules${f2(c.plein.median)}   (p90 ${f2(c.plein.p90)})   → les particules coûtent ${f2(c.plein.median - c.voile.median)}` +
+        `   [${c.sondeAvant.vivantes}→${c.sonde.vivantes} vivantes, ${c.sonde.rects} rectangles]`,
+      )
+    }
+    const avec = couts.blizzard?.plein ?? sans
 
     console.log('\n  type         µ cœur    µ nu      Δµ   σ/µ cœur  σ/µ nu   marche    rampe  ΔI/écran')
     for (const [nom, m] of Object.entries(out)) {
@@ -8776,8 +8940,181 @@ const SCENARIOS = {
     return {
       types: out,
       telegraphe: tel.sonde, telegrapheM: telM, eclair: ecl.sonde, eclairM: eclM,
-      cout: { avec, sans }, prediction: { clair: driftClair, blizzard: driftBliz, intensite: iBliz },
+      cout: { avec, sans, parType: couts }, prediction: { clair: driftClair, blizzard: driftBliz, intensite: iBliz },
     }
+  },
+
+  /**
+   * LE COÛT DU CIEL, ET RIEN D'AUTRE — le relevé rapide qui fixe `BUDGET_PARTICULES`.
+   *
+   * ═══ POURQUOI IL NE COMPTE PAS LES IMAGES ═══
+   *
+   * Parce que sur ce poste, le compte d'images ne mesure PAS le rendu. MESURÉ le 2026-08-19,
+   * pendant que deux autres sessions compilaient : un ciel NU (aucun front, aucune particule)
+   * relevé à **937 ms/image**, p90 1 371 — soit une image par seconde. À ce régime, un
+   * surcoût de deux millisecondes est indiscernable, et un intervalle de mille millisecondes
+   * ne dit rien de la couche. Pire : trente images à ce rythme durent trente secondes,
+   * pendant lesquelles la bande traverse la carte et le rideau se vide sous l'instrument (le
+   * premier jet a relevé « 900 vers 0 particules vivantes » entre le début et la fin d'une
+   * seule mesure).
+   *
+   * On lit donc le CHRONOMÈTRE DE LA COUCHE — `meteoLayer.sonde.msPhysique` et
+   * `.msPeinture`, deux moyennes glissantes sur une seconde, posées de part et d'autre de
+   * l'intégration et de la peinture. C'est le temps que la météo prend sur le fil principal :
+   * il reste lisible sous charge, et c'est lui qui commande le budget. Il ne couvre pas la
+   * rastérisation (elle vit dans swiftshader, hors du fil) — la planche optique
+   * `--scenario meteo` reste le juge de ce que ça donne à l'écran.
+   *
+   * Il rapporte aussi le total CUMULÉ d'éclaboussures : une gerbe de 90 ms ne se photographie
+   * pas quand une image en dure 900, elle se COMPTE.
+   */
+  async meteocout(page) {
+    if (!dev) { console.log('(le coût du ciel exige --dev pour armer un front)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const etat = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      return {
+        intensite: s.meteoLayer?.intensiteAuJoueur ?? 0,
+        sonde: { ...(s.meteoLayer?.sonde ?? {}) },
+        pos: s.registry.get('playerPos'),
+        map: { w: s.map.width, h: s.map.height },
+        heure: s.lastTime?.hourOfCycle ?? -1,
+      }
+    })
+
+    await agir({ type: 'debug_set_hour', hour: 12 }, 800)
+    const e0 = await etat()
+    const xRef = e0.map.w / 2
+    const yRef = Math.min(e0.map.h - 2, Math.max(2, e0.pos.y))
+    const f2 = (v) => String(Math.round(v * 1000) / 1000).padStart(7)
+    const out = {}
+
+    for (const type of ['pluie', 'neige', 'orage', 'blizzard']) {
+      // L'HEURE ET LA BANDE dérivent toutes les deux : on les rappelle ensemble et on ATTEND
+      // LA PREUVE (l'intensité au joueur), jamais un délai fixe — le piège payé au scénario
+      // `meteo`, où cinq ciels sont sortis à intensité 0,00.
+      const arme = async () => {
+        await page.evaluate((t) => {
+          const sc = window.__BRAISES__.scene
+          sc.sendAction({ type: 'debug_set_hour', hour: 12 })
+          sc.sendAction({ type: 'debug_meteo', meteo: t, edge: 0, phase: 0.5 })
+        }, type)
+        await page.waitForFunction(
+          () => (window.__BRAISES__.scene.meteoLayer?.intensiteAuJoueur ?? 0) >= 0.9,
+          null, { timeout: 20000, polling: 150 },
+        ).catch(() => {})
+      }
+      await agir({ type: 'debug_teleport', x: xRef, y: yRef }, 900)
+      await arme()
+      // Laisser la fenêtre du chronomètre (1 s) se remplir DEUX fois : la première porte
+      // encore l'image de mise en place (naissance de tout le rideau d'un coup).
+      await page.waitForTimeout(2500)
+      await arme()
+      await page.waitForTimeout(2500)
+      const e = await etat()
+      if (e.intensite < 0.9) { console.error(`!! ${type} : intensité ${e.intensite.toFixed(2)} — relevé sans valeur`); continue }
+      const d = e.sonde
+      if (!d.vivantes) { console.error(`!! ${type} : 0 particule vivante — relevé sans valeur`); continue }
+      out[type] = d
+      console.log(
+        `  ${type.padEnd(9)} ${String(d.vivantes).padStart(4)} particules / cible ${String(d.cible).padStart(4)} / budget ${d.budget}${d.plafonne ? ' PLAFONNÉ' : '        '}` +
+        ` · ${String(d.rects).padStart(5)} rectangles` +
+        `\n            SUR LE FIL PRINCIPAL : physique ${f2(d.msPhysique)} + peinture ${f2(d.msPeinture)} = ${f2(d.msPhysique + d.msPeinture)} ms/image` +
+        ` (moyenne sur ${d.images} images, à ${Math.round(e.heure * 10) / 10} h, intensité ${e.intensite.toFixed(2)})` +
+        `\n            ${d.eclabsTotal} éclaboussures écloses depuis le début (${d.eclaboussures} vivantes à l'instant du relevé)`,
+      )
+    }
+    return out
+  },
+
+  /**
+   * LA PLANCHE DES CIELS — une image par type, au CŒUR, à midi, l'intensité PROUVÉE.
+   *
+   * `--scenario meteo` est le juge complet (µ, σ/µ, centiles, lisière, foudre, prédiction,
+   * coût) et il coûte cher : chaque `renderer.snapshot()` traverse le rendu logiciel entier.
+   * Quand la question est « MONTRE-MOI les cinq ciels » — la seule qu'un DA pose avant de
+   * livrer — on ne veut pas payer la planche de mesure pour obtenir des photos.
+   *
+   * Ce scénario ne mesure donc RIEN : il arme, il prouve qu'il est bien SOUS le ciel qu'il
+   * photographie (intensité au joueur ≥ 0,9 relevée À L'OBTURATEUR, heure rappelée à midi),
+   * il déclenche. Il rend en plus le compte de particules vivantes de chaque prise : une
+   * photo qui montre un rideau doit pouvoir dire combien de gouttes elle contient.
+   */
+  async meteoplanche(page) {
+    if (!dev) { console.log('(la planche des ciels exige --dev)'); return {} }
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(1200)
+    const agir = async (action, ms = 300) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const etat = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      return {
+        intensite: s.meteoLayer?.intensiteAuJoueur ?? 0,
+        sonde: { ...(s.meteoLayer?.sonde ?? {}) },
+        pos: s.registry.get('playerPos'),
+        map: { w: s.map.width, h: s.map.height },
+        heure: s.lastTime?.hourOfCycle ?? -1,
+      }
+    })
+    await agir({ type: 'debug_set_hour', hour: 12 }, 800)
+    const e0 = await etat()
+    const xRef = e0.map.w / 2
+    const yRef = Math.min(e0.map.h - 2, Math.max(2, e0.pos.y))
+    await agir({ type: 'debug_teleport', x: xRef, y: yRef }, 1800)
+
+    // LE TÉMOIN : même endroit, même heure, aucun front. Sans lui, une photo de pluie ne se
+    // juge pas — c'est l'ÉCART au monde nu qui dit ce que le ciel a fait.
+    await agir({ type: 'debug_meteo', meteo: null }, 300)
+    await agir({ type: 'debug_set_hour', hour: 12 }, 900)
+    await canopeePleine(page)
+    await page.screenshot({ path: `${OUT}/ciel-0-temoin-sans-meteo.png`, timeout: 180000 })
+    console.log('  témoin sans météo — pris')
+
+    const out = {}
+    // `SMOKE_CIELS=orage,blizzard` pour ne retirer que quelques prises — la planche entière
+    // coûte plusieurs minutes par ciel quand la machine est chargée, et rejouer les cinq
+    // pour en récupérer deux est du temps jeté (patron `--prise` de la vitrine).
+    const voulus = process.env.SMOKE_CIELS ? process.env.SMOKE_CIELS.split(',') : null
+    for (const type of ['pluie', 'neige', 'orage', 'blizzard', 'brouillard']) {
+      if (voulus && !voulus.includes(type)) continue
+      const arme = async () => {
+        await page.evaluate((t) => {
+          const sc = window.__BRAISES__.scene
+          sc.sendAction({ type: 'debug_set_hour', hour: 12 })
+          sc.sendAction({ type: 'debug_meteo', meteo: t, edge: 0, phase: 0.5 })
+        }, type)
+        await page.waitForFunction(
+          () => (window.__BRAISES__.scene.meteoLayer?.intensiteAuJoueur ?? 0) >= 0.9,
+          null, { timeout: 20000, polling: 150 },
+        ).catch(() => {})
+      }
+      await agir({ type: 'debug_teleport', x: xRef, y: yRef }, 700)
+      await arme()
+      await canopeePleine(page)
+      await page.waitForTimeout(700)
+      // LE RAPPEL DE DERNIÈRE SECONDE, puis la preuve : la bande avance pendant qu'on la
+      // photographie, et l'horloge headless galope. Voir `meteo` pour le prix payé.
+      await arme()
+      const e = await etat()
+      if (e.intensite < 0.9) console.error(`!! ${type} : intensité ${e.intensite.toFixed(2)} À L'OBTURATEUR — la photo ne montre pas le ciel`)
+      // 30 s (le défaut) ne suffisent PAS quand une image dure une seconde : MESURÉ, la
+      // prise de l'orage a expiré en pleine planche. L'obturateur attend le moteur.
+      await page.screenshot({ path: `${OUT}/ciel-${type}.png`, timeout: 180000 })
+      out[type] = { intensite: e.intensite, heure: e.heure, sonde: e.sonde }
+      console.log(
+        `  ${type.padEnd(11)} intensité ${e.intensite.toFixed(2)} à ${Math.round(e.heure * 10) / 10} h · ` +
+        `${e.sonde.vivantes} particules (cible ${e.sonde.cible}, budget ${e.sonde.budget}${e.sonde.plafonne ? ' PLAFONNÉ' : ''}), ` +
+        `${e.sonde.rects} rectangles, ${e.sonde.eclabsTotal ?? 0} éclaboussures écloses`,
+      )
+    }
+    return out
   },
 
   async ombres(page) {

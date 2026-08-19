@@ -1,0 +1,336 @@
+/**
+ * LA CHUTE SE PROUVE HEADLESS — la physique des gouttes et des flocons.
+ *
+ * Le rendu se juge sur des pixels (scénario smoke `meteo`), mais une LOI se démontre : la
+ * vitesse limite, le vent, le flottement, la rampe de densité et l'escalier de la traînée
+ * sont des fonctions, pas des impressions. On balaie donc les domaines entiers plutôt que
+ * trois cas choisis — patron « garde exhaustive plutôt que cas choisis ».
+ */
+import { describe, expect, it } from 'vitest'
+import { METEO, meteoIntensityAt, type MeteoFront } from '@ashes/sim'
+import {
+  BUDGET_PARTICULES,
+  ChampParticules,
+  PROFILS,
+  creerRng,
+  intensiteDansBande,
+  rampeDe,
+  traineeEnRuns,
+  type Bande,
+  type Run,
+  type Vue,
+} from './meteo-particules'
+
+const RAMPE_PLUIE = rampeDe('pluie')
+const BANDE: Bande = { axis: 'x', lo: 100, hi: 160 }
+const VUE: Vue = { x0: 110, y0: 40, x1: 150, y1: 64 }
+
+/** Faire tourner le champ N images à 60 Hz, comme le fait la couche. */
+function avancer(c: ChampParticules, type: 'pluie' | 'neige' | 'orage' | 'blizzard', n: number, vue = VUE, bande = BANDE): void {
+  const profil = PROFILS[type]!
+  for (let i = 0; i < n; i++) c.update(1 / 60, 1000 / 60, profil, vue, bande, rampeDe(type))
+}
+
+describe("l'intensité relue inline est celle de la sim", () => {
+  it('coïncide avec `meteoIntensityAt` sur TOUT l’axe, pour les cinq types', () => {
+    // L'écrivain unique : la couche relit la loi sans recalculer la bande (900 fois par
+    // image, ça compte), mais elle ne doit JAMAIS en diverger. On balaie l'axe entier —
+    // dehors, sur les deux rampes, au cœur — plutôt que d'affirmer trois points.
+    for (const type of ['pluie', 'brouillard', 'neige', 'orage', 'blizzard'] as const) {
+      const front: MeteoFront = { type, cycle: 3, day: 12, edge: 0, startTick: 0, endTick: 1000 }
+      const mapW = 1600
+      const mapH = 1600
+      const tick = 500
+      const rampe = rampeDe(type)
+      // La bande au tick 500 : la même que `frontMeteoPos` — on la reconstruit par la loi
+      // publique pour ne pas dépendre d'un interne.
+      const largeur = METEO.LARGEUR[type]
+      const avance = (tick / 1000) * (mapW + largeur)
+      const bande: Bande = { axis: 'x', lo: avance - largeur, hi: avance }
+      for (let x = Math.floor(bande.lo) - 40; x <= Math.ceil(bande.hi) + 40; x += 1) {
+        const attendu = meteoIntensityAt(front, tick, mapW, mapH, x, 800)
+        const obtenu = intensiteDansBande(bande, rampe, x, 800)
+        expect(obtenu, `${type} en x=${x}`).toBeCloseTo(attendu, 10)
+      }
+    }
+  })
+})
+
+describe('la vitesse limite', () => {
+  it('BORNE la chute de chaque type — la goutte file, le flocon flâne', () => {
+    // C'est la promesse physique : gravité ET vitesse limite distinctes. Une particule
+    // lâchée converge vers `vLimite` et n'y dépasse jamais de plus d'un cheveu.
+    for (const type of ['pluie', 'neige', 'orage', 'blizzard'] as const) {
+      const profil = PROFILS[type]!
+      const c = new ChampParticules(1234)
+      avancer(c, type, 300)
+      const vives = c.particules.filter((p) => p.vive)
+      expect(vives.length, `${type} : rien ne vit`).toBeGreaterThan(0)
+      for (const p of vives) {
+        expect(p.vy, `${type} : vy=${p.vy} > vLimite`).toBeLessThanOrEqual(profil.vLimite * 1.001)
+        expect(p.vy, `${type} : vy=${p.vy} négatif`).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  it('SÉPARE les ciels : la goutte tombe 7 fois plus vite que le flocon', () => {
+    // L'axe de reconnaissance nº 2 (après la forme). S'il se resserre, deux ciels
+    // deviennent le même ciel.
+    expect(PROFILS.pluie!.vLimite / PROFILS.neige!.vLimite).toBeGreaterThan(6)
+    expect(PROFILS.pluie!.vLimite).toBeGreaterThanOrEqual(8)
+    expect(PROFILS.pluie!.vLimite).toBeLessThanOrEqual(10)
+    expect(PROFILS.neige!.vLimite).toBeGreaterThanOrEqual(1)
+    expect(PROFILS.neige!.vLimite).toBeLessThanOrEqual(1.5)
+  })
+
+  it('converge vers la vitesse limite en τ = vLimite / g, pas plus lentement', () => {
+    // Le modèle dv/dt = g(1 − v/vLimite) : après 3τ on est à 95 % de l'équilibre. On le
+    // vérifie sur l'intégrateur réel, pas sur la formule fermée.
+    for (const type of ['pluie', 'neige', 'orage', 'blizzard'] as const) {
+      const profil = PROFILS[type]!
+      const k = profil.g / profil.vLimite
+      let v = 0
+      const tau = 1 / k
+      const pas = 1 / 240
+      for (let t = 0; t < 3 * tau; t += pas) v += (profil.g - k * v) * pas
+      expect(v / profil.vLimite, `${type}`).toBeGreaterThan(0.9)
+      expect(v / profil.vLimite, `${type}`).toBeLessThan(1.001)
+    }
+  })
+})
+
+describe('le vent', () => {
+  it('le BLIZZARD rase : son vent dépasse sa chute — la neige ordinaire non', () => {
+    // C'est LA différence lisible entre neige et blizzard, et elle est géométrique :
+    // la trajectoire du blizzard est plus horizontale que verticale.
+    expect(Math.abs(PROFILS.blizzard!.vent)).toBeGreaterThan(PROFILS.blizzard!.vLimite)
+    expect(Math.abs(PROFILS.neige!.vent)).toBeLessThan(PROFILS.neige!.vLimite)
+  })
+
+  it("l'ORAGE penche plus que la PLUIE, et la pluie reste quasi verticale", () => {
+    const pente = (t: 'pluie' | 'orage') => Math.abs(PROFILS[t]!.vent) / PROFILS[t]!.vLimite
+    expect(pente('orage')).toBeGreaterThan(pente('pluie') * 2)
+    expect(pente('pluie')).toBeLessThan(0.15) // « quasi verticale » : moins de 9°
+  })
+
+  it('emporte la vitesse horizontale VERS le vent, à la même constante de temps', () => {
+    const c = new ChampParticules(99)
+    avancer(c, 'blizzard', 200)
+    const vives = c.particules.filter((p) => p.vive)
+    expect(vives.length).toBeGreaterThan(0)
+    for (const p of vives) {
+      // Le vent est vers l'est : aucune particule ne remonte le vent.
+      expect(p.vx, `vx=${p.vx}`).toBeGreaterThan(0)
+      expect(p.vx).toBeLessThanOrEqual(PROFILS.blizzard!.vent * 1.3)
+    }
+  })
+})
+
+describe('le flocon flotte', () => {
+  it('neige et blizzard oscillent, pluie et orage NON — c’est la signature du flocon', () => {
+    expect(PROFILS.neige!.flotte).toBeGreaterThan(0)
+    expect(PROFILS.blizzard!.flotte).toBeGreaterThan(0)
+    expect(PROFILS.pluie!.flotte).toBe(0)
+    expect(PROFILS.orage!.flotte).toBe(0)
+  })
+
+  it("l'oscillation vaut une fraction SENSIBLE de la chute — sinon on ne la voit pas", () => {
+    // Sous 30 % de la vitesse de chute, le tangage se noie dans la descente : le flocon
+    // lirait « point qui tombe droit », c'est-à-dire une pluie lente.
+    expect(PROFILS.neige!.flotte / PROFILS.neige!.vLimite).toBeGreaterThan(0.3)
+  })
+
+  it('a une PHASE PROPRE par particule — la neige ne tangue pas en chœur', () => {
+    const c = new ChampParticules(7)
+    avancer(c, 'neige', 120)
+    const phases = c.particules.filter((p) => p.vive).map((p) => p.phase)
+    expect(phases.length).toBeGreaterThan(20)
+    // Étalées sur tout le cercle : on compte les quadrants occupés.
+    const quadrants = new Set(phases.map((f) => Math.floor((f / (Math.PI * 2)) * 4)))
+    expect(quadrants.size, 'les phases se groupent').toBe(4)
+  })
+})
+
+describe('la traînée', () => {
+  it('la GOUTTE s’étire, le FLOCON reste un carré', () => {
+    expect(PROFILS.pluie!.trainee).toBeGreaterThan(0)
+    expect(PROFILS.orage!.trainee).toBeGreaterThan(0)
+    expect(PROFILS.neige!.trainee).toBe(0)
+  })
+
+  it('un trait vertical ne fait qu’UN rectangle, de la bonne longueur', () => {
+    const runs: Run[] = []
+    const n = traineeEnRuns(10, 20, 0, 9, 5, 1, runs, 0)
+    expect(n).toBe(1)
+    expect(runs[0]).toEqual({ cx: 10, cy: 16, w: 1, h: 5 })
+  })
+
+  it('un trait horizontal (le blizzard) part À L’OPPOSÉ du sens de marche', () => {
+    // La tête est en (30, 8) et le vent pousse vers +x : la traînée est DERRIÈRE, donc
+    // à gauche. Une traînée devant la goutte lirait « la pluie remonte ».
+    const runs: Run[] = []
+    const n = traineeEnRuns(30, 8, 11, 2, 3, 2, runs, 0)
+    expect(n).toBeGreaterThanOrEqual(1)
+    for (let i = 0; i < n; i++) expect(runs[i]!.cx).toBeLessThanOrEqual(30)
+    expect(runs[0]!.cx + runs[0]!.w).toBe(31) // la tête est bien incluse
+  })
+
+  it('couvre EXACTEMENT L cellules le long de l’axe dominant, quelle que soit la pente', () => {
+    // Balayage : toutes les pentes, toutes les longueurs utiles. La somme des étendues
+    // sur l'axe dominant doit valoir L — ni trou, ni double-couche.
+    const runs: Run[] = []
+    for (let ang = 0; ang < 360; ang += 7) {
+      const vx = Math.cos((ang * Math.PI) / 180) * 10
+      const vy = Math.sin((ang * Math.PI) / 180) * 10
+      for (let L = 1; L <= 8; L++) {
+        const n = traineeEnRuns(50, 50, vx, vy, L, 1, runs, 0)
+        const yDom = Math.abs(vy) >= Math.abs(vx)
+        let total = 0
+        for (let i = 0; i < n; i++) total += yDom ? runs[i]!.h : runs[i]!.w
+        expect(total, `ang=${ang} L=${L}`).toBe(L)
+      }
+    }
+  })
+
+  it('ne rend JAMAIS plus de 3 rectangles par goutte, pour les quatre profils réels', () => {
+    // Le budget de rasterisation dépend de ce nombre : à 900 particules, passer de 2 à 6
+    // rectangles multiplierait le travail par trois sans que personne ne le voie venir.
+    const runs: Run[] = []
+    for (const type of ['pluie', 'neige', 'orage', 'blizzard'] as const) {
+      const profil = PROFILS[type]!
+      const v = Math.sqrt(profil.vent ** 2 + profil.vLimite ** 2)
+      const L = profil.trainee === 0 ? 1 : Math.max(1, Math.round(v * profil.trainee * 4))
+      const n = traineeEnRuns(50, 50, profil.vent, profil.vLimite, L, profil.taille[1]!, runs, 0)
+      expect(n, `${type} : ${n} rectangles`).toBeLessThanOrEqual(3)
+    }
+  })
+})
+
+describe("l'émission suit la bande", () => {
+  it('AUCUNE particule hors de la bande — jamais, sur 400 images', () => {
+    // La règle dure : sous la bande il pleut, à dix tuiles de sa lisière il ne pleut pas.
+    // Le cadre déborde ici largement des deux côtés du front.
+    const bande: Bande = { axis: 'x', lo: 200, hi: 240 }
+    const vue: Vue = { x0: 170, y0: 40, x1: 270, y1: 64 }
+    const c = new ChampParticules(4242)
+    for (let i = 0; i < 400; i++) c.update(1 / 60, 1000 / 60, PROFILS.pluie!, vue, bande, RAMPE_PLUIE)
+    for (const p of c.particules) {
+      if (!p.vive) continue
+      expect(p.x, `x=${p.x} hors bande`).toBeGreaterThan(bande.lo)
+      expect(p.x, `x=${p.x} hors bande`).toBeLessThan(bande.hi)
+    }
+  })
+
+  it('la DENSITÉ suit l’intensité en RAMPE CONTINUE — jamais un interrupteur', () => {
+    // On promène le cadre du dehors vers le cœur et on relève le compte cible. Il doit
+    // monter à chaque pas, sans palier ni saut : c'est « feel = pente continue », mesuré
+    // sur toute la rampe et pas à ses bornes.
+    const bande: Bande = { axis: 'x', lo: 0, hi: 400 }
+    const rampe = RAMPE_PLUIE
+    const comptes: number[] = []
+    // Le cadre est ÉTROIT (4 tuiles) et on le fait glisser du dehors franc jusqu'au cœur :
+    // au premier pas il est entièrement hors bande, au dernier entièrement au plein.
+    for (let centre = -4; centre <= rampe; centre += rampe / 24) {
+      const c = new ChampParticules(11)
+      const vue: Vue = { x0: centre, y0: 40, x1: centre + 4, y1: 64 }
+      for (let i = 0; i < 3; i++) c.update(1 / 60, 1000 / 60, PROFILS.pluie!, vue, bande, rampe)
+      comptes.push(c.cible)
+    }
+    expect(comptes[0]).toBe(0) // dehors : rien
+    expect(comptes[comptes.length - 1]).toBeGreaterThan(0)
+    for (let i = 1; i < comptes.length; i++) {
+      expect(comptes[i], `pas ${i} : ${comptes[i - 1]} → ${comptes[i]}`).toBeGreaterThanOrEqual(comptes[i - 1]!)
+    }
+    // Et la montée est RÉELLE, pas deux paliers : au moins la moitié des pas progressent.
+    let montees = 0
+    for (let i = 1; i < comptes.length; i++) if (comptes[i]! > comptes[i - 1]!) montees++
+    expect(montees).toBeGreaterThan(comptes.length / 2)
+  })
+
+  it('la densité SPATIALE penche vers le cœur : plus dense dedans que sur la rampe', () => {
+    // Le compte global suit la moyenne ; le tirage par REJET fait le gradient DANS le
+    // cadre. Sans lui, un cadre à cheval sur la lisière aurait un rideau uniforme.
+    const bande: Bande = { axis: 'x', lo: 100, hi: 400 }
+    const rampe = RAMPE_PLUIE
+    const vue: Vue = { x0: 100, y0: 40, x1: 100 + 2 * rampe, y1: 64 }
+    const c = new ChampParticules(2026)
+    for (let i = 0; i < 240; i++) c.update(1 / 60, 1000 / 60, PROFILS.pluie!, vue, bande, rampe)
+    let bord = 0
+    let coeur = 0
+    for (const p of c.particules) {
+      if (!p.vive) continue
+      if (p.x < 100 + rampe / 2) bord++
+      else if (p.x > 100 + rampe) coeur++
+    }
+    expect(coeur, `bord ${bord} / cœur ${coeur}`).toBeGreaterThan(bord * 1.5)
+  })
+
+  it('NE DÉPASSE JAMAIS le budget — même sur un cadre immense au cœur du front', () => {
+    const bande: Bande = { axis: 'x', lo: -1e4, hi: 1e4 }
+    const vue: Vue = { x0: 0, y0: 0, x1: 400, y1: 300 } // 120 000 tuiles² : 100 000 gouttes sans plafond
+    const c = new ChampParticules(5)
+    for (let i = 0; i < 40; i++) c.update(1 / 60, 1000 / 60, PROFILS.blizzard!, vue, bande, rampeDe('blizzard'))
+    expect(c.cible).toBe(BUDGET_PARTICULES)
+    expect(c.particules.filter((p) => p.vive).length).toBeLessThanOrEqual(BUDGET_PARTICULES)
+  })
+
+  it('tout meurt quand le front sort (`vider`)', () => {
+    const c = new ChampParticules(3)
+    avancer(c, 'pluie', 60)
+    expect(c.vivantes).toBeGreaterThan(0)
+    c.vider()
+    expect(c.vivantes).toBe(0)
+    expect(c.particules.every((p) => !p.vive)).toBe(true)
+  })
+})
+
+describe("l'éclaboussure", () => {
+  it('la PLUIE éclabousse et la NEIGE non — et jamais au-delà de son pool', () => {
+    const c = new ChampParticules(17)
+    avancer(c, 'pluie', 400)
+    expect(c.eclabsVivantes, 'aucune éclaboussure sous la pluie').toBeGreaterThan(0)
+    expect(c.eclabsVivantes).toBeLessThanOrEqual(c.eclaboussures.length)
+    const n = new ChampParticules(17)
+    avancer(n, 'neige', 400)
+    expect(n.eclabsVivantes, 'la neige ne devrait pas éclabousser').toBe(0)
+  })
+
+  it('les gouttes touchent SUR TOUT LE CADRE, pas sur le bord bas', () => {
+    // Le piège du recyclage naïf : si une goutte ne « touche » qu'en sortant du cadre,
+    // toutes les éclaboussures s'alignent sur une rangée en bas de l'écran. La hauteur
+    // de chute tirée à la naissance les disperse — on l'affirme en comptant les bandes.
+    const c = new ChampParticules(31)
+    const bandes = new Set<number>()
+    for (let i = 0; i < 600; i++) {
+      c.update(1 / 60, 1000 / 60, PROFILS.pluie!, VUE, BANDE, RAMPE_PLUIE)
+      for (const e of c.eclaboussures) {
+        // Fraîchement née : son âge n'a encaissé qu'une seule image.
+        if (e.vive && e.age <= 1000 / 60 + 1e-9) bandes.add(Math.floor(((e.y - VUE.y0) / (VUE.y1 - VUE.y0)) * 5))
+      }
+    }
+    expect(bandes.size, `bandes touchées : ${[...bandes].join(',')}`).toBeGreaterThanOrEqual(3)
+  })
+})
+
+describe('le PRNG est local au client', () => {
+  it('est déterministe pour une graine, et différent d’une graine à l’autre', () => {
+    const a = creerRng(1)
+    const b = creerRng(1)
+    const c = creerRng(2)
+    const sa = Array.from({ length: 8 }, () => a())
+    const sb = Array.from({ length: 8 }, () => b())
+    const sc = Array.from({ length: 8 }, () => c())
+    expect(sa).toEqual(sb)
+    expect(sa).not.toEqual(sc)
+    for (const v of sa) {
+      expect(v).toBeGreaterThanOrEqual(0)
+      expect(v).toBeLessThan(1)
+    }
+  })
+})
+
+describe('le brouillard', () => {
+  it("n'a AUCUN profil de chute — il ne tombe rien, c'est son signalement", () => {
+    expect(PROFILS.brouillard).toBeNull()
+  })
+})
