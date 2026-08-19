@@ -870,6 +870,30 @@ describe('A12 — le dégel ne laisse personne emmuré (G8bis)', () => {
     expect(marchable(sim, e.x, e.y)).toBe(true)
   })
 
+  it('le repli qui FIRE ne consomme pas un pas de PRNG — A3 tient jusque dans la passe', () => {
+    /**
+     * A3 garde les prédicats et la passe INERTE ; celle-ci garde la passe qui MORD. C'est la
+     * seule qui mute l'état, donc la seule d'où un replay pourrait diverger dans six mois —
+     * et le repli est justement du genre de code qui se met un jour à « chercher une tuile au
+     * hasard ». On compare deux mondes identiques au tick près : l'un avec quelqu'un sur la
+     * glace qui fond, l'autre sans. Le flux seedé doit être le MÊME.
+     */
+    const monde = (surLaGlace: boolean): SimState => {
+      const sim = simGel()
+      sim.tick = tickDe(JOUR_ACTE[2], true)
+      spawnEntity(sim, surLaGlace ? RIVIERE_X0 + 1.5 : 5.5, 6.5)
+      sim.tick = tickDe(JOUR_ACTE[2], false) // le dégel
+      step(sim, [])
+      drainEvents(sim)
+      return sim
+    }
+    const avec = monde(true)
+    const sans = monde(false)
+    // La prémisse : le repli a bien DÉPLACÉ quelqu'un — sans quoi on compare deux inertes.
+    expect(avec.entities[0]!.x).not.toBe(RIVIERE_X0 + 1.5)
+    expect(avec.rngState).toBe(sans.rngState)
+  })
+
   it('la glace ne CÈDE pas : personne ne perd de PV à en sortir', () => {
     const sim = simGel()
     sim.tick = tickDe(JOUR_ACTE[2], true)
