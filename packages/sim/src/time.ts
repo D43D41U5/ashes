@@ -72,18 +72,32 @@ export function cycleOffsetForStartHour(startHour: number): number {
   return Math.round((fromDawn / 24) * TICKS_PER_CYCLE)
 }
 
-export function getGameTime(state: SimState): GameTime {
-  const cycleTick = (state.tick + state.cycleOffset) % TICKS_PER_CYCLE
-  const seasonDay = seasonDayAtTick(state.tick, state.calendarScale)
+/**
+ * L'HEURE DU MONDE À UN TICK QUELCONQUE — la même loi que `getGameTime`, prise sur un tick
+ * fourni plutôt que sur celui de l'état.
+ *
+ * Elle existe pour L'HYSTÉRÉSIS DU DÉGEL (spec `gel.md` G8) : le gel doit savoir s'il faisait
+ * franchement froid ICI il y a un instant, ce qui demande de relire l'heure du passé proche.
+ * Le tick est la seule horloge (spec `monde.md` R1) — donc ce passé se RECALCULE, il ne se
+ * range pas. `getGameTime` n'est plus qu'elle, prise sur `state.tick` : mêmes expressions,
+ * même ordre, au bit près.
+ */
+export function gameTimeAt(state: SimState, tick: number): GameTime {
+  const cycleTick = (tick + state.cycleOffset) % TICKS_PER_CYCLE
+  const seasonDay = seasonDayAtTick(tick, state.calendarScale)
   // Le cycle démarre à l'aube ; on décale la phase vers une horloge murale.
   const wallHour = (cycleTick / TICKS_PER_CYCLE) * 24 + BALANCE.CYCLE_DAWN_HOUR
   return {
-    tick: state.tick,
+    tick,
     hourOfCycle: wallHour % 24,
     isNight: cycleTick >= DAY_TICKS_PER_CYCLE,
     seasonDay,
     act: actForDay(seasonDay),
   }
+}
+
+export function getGameTime(state: SimState): GameTime {
+  return gameTimeAt(state, state.tick)
 }
 
 /**

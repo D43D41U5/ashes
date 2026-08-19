@@ -507,6 +507,7 @@ function advanceLunge(state: SimState, entity: Entity): void {
     structures: state.structures,
     nodes: state.nodes,
     moverVillageId: getVillageOf(state, entity.id)?.id ?? null,
+    etat: state,
   }
   const moved = resolveMove(world, entity.x, entity.y, dx * step, dy * step)
   entity.x = moved.x
@@ -569,6 +570,7 @@ function knockback(
     structures: state.structures,
     nodes: state.nodes,
     moverVillageId: getVillageOf(state, target.id)?.id ?? null,
+    etat: state,
   }
   const poussé = resolveMove(world, target.x, target.y, kx * poussée, ky * poussée)
   target.x = poussé.x
@@ -629,7 +631,7 @@ function resolveStrike(state: SimState, attacker: Entity): void {
   // lui qui rend le tick reproductible (invariant §2).
   const ranged = windup.ranged === true
   const monde = ranged
-    ? { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null }
+    ? { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null, etat: state }
     : null
 
   interface Cible {

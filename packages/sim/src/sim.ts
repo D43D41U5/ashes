@@ -12,6 +12,7 @@
  */
 import { BALANCE, CARRY, COMBAT, HUNT, SLOTS, TERRAIN_GRASS, TICK_DT_S, type RecipeId, type Strike } from './balance'
 import { moveAvatar } from './collision'
+import { advanceDegel } from './gel'
 import { advanceEnvols } from './faune'
 import { advanceCombat, applyCombatAction, tientUnArc, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
@@ -754,6 +755,10 @@ export function step(state: SimState, inputs: MoveInput[]): void {
       structures: state.structures,
       nodes: state.nodes,
       moverVillageId: getVillageOf(state, input.entityId)?.id ?? null,
+      // LE GEL SOUS LES PIEDS (spec `gel.md` G4) : la glace ouvre le lac et change la
+      // vitesse du gué — la marchabilité et le pas se décident dans `collision.ts`, ici on
+      // ne fait que donner l'heure du monde.
+      etat: state,
     }
     const moved = moveAvatar(world, entity.x, entity.y, input.dx, input.dy, TICK_DT_S, speedScale)
     entity.moved = moved.x !== entity.x || moved.y !== entity.y
@@ -824,6 +829,11 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceSpoilage(state)
   advanceEconomy(state)
   advanceTemperature(state)
+  // LE DÉGEL NE LAISSE PERSONNE EMMURÉ (spec `gel.md` G8bis). Juste APRÈS la température :
+  // c'est elle qui vient de faire fondre la glace, on répare dans le même tick — jamais un
+  // tick de jeu passé à l'intérieur d'une tuile non marchable. Inerte dans un monde qui ne
+  // gèle pas (personne ne peut se tenir sur de l'eau profonde sans lui).
+  advanceDegel(state)
   // En DERNIER : les invulnérables retrouvent leurs jauges pleines, quoi qu'il
   // se soit passé pendant le tick (faim, froid, saignement). No-op hors debug.
   refreshGodMode(state)

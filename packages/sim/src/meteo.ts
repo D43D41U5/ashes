@@ -143,6 +143,40 @@ export function meteoTypeDuCycle(cycle: number, day: number): MeteoType | null {
 }
 
 /**
+ * LE FRONT D'UN CYCLE, EN ENTIER — type, bord et fenêtre — comme UNE fonction pure du seul
+ * numéro de cycle. `null` si ce cycle n'élit rien.
+ *
+ * ═══ POURQUOI ELLE EXISTE : LE GEL REMBOBINE (spec `gel.md` G7) ═══
+ *
+ * `neigeAuSol` doit savoir QUAND le dernier front de neige a quitté un point — donc relire
+ * des fronts DÉJÀ PURGÉS de l'état (`state.meteo` ne porte que le front courant). L'élection
+ * étant intégralement dérivée du cycle, ce passé se RECALCULE ; mais le recalculer dans
+ * `gel.ts` aurait recopié `hash2(cycle, 2)` et `hash2(cycle, 3)` ailleurs — et une seconde
+ * copie de la géométrie d'élection finit toujours par mentir, exactement comme un second
+ * chemin de type l'aurait fait (voir `meteoTypeDuCycle`). Elle est donc extraite ICI, et
+ * `advanceMeteo` la consomme : **un seul écrivain**, du type jusqu'à la fenêtre.
+ *
+ * Le tick de début de cycle est `cycle × TICKS_PER_CYCLE` — c'est exactement le tick où
+ * `advanceMeteo` élit (sa garde est `tick % TICKS_PER_CYCLE === 0`), donc le record rendu
+ * est au bit près celui que l'ordonnanceur pose.
+ *
+ * ⚠ ELLE DIT CE QUE LE CYCLE AURAIT ÉLU, pas ce qui a eu lieu : un monde dont `meteoActive`
+ * a été armé en cours de route, ou une sauvegarde reprise au milieu d'un cycle, n'ont jamais
+ * VU le front des cycles d'avant. Le seul consommateur (une couverture de neige purement
+ * visuelle) s'en accommode ; une règle mécanique, elle, ne devrait pas s'y fier.
+ */
+export function frontDuCycle(cycle: number, calendarScale: number): MeteoFront | null {
+  const debut = cycle * TICKS_PER_CYCLE
+  const day = seasonDayAtTick(debut, calendarScale)
+  const type = meteoTypeDuCycle(cycle, day)
+  if (type === null) return null
+  const edge = Math.min(3, Math.floor(hash2(cycle, 2, METEO_SALT) * 4)) as MeteoFront['edge']
+  const marge = TICKS_PER_CYCLE - METEO.TRAVERSEE_TICKS
+  const startTick = debut + Math.floor(hash2(cycle, 3, METEO_SALT) * marge)
+  return { type, cycle, day, edge, startTick, endTick: startTick + METEO.TRAVERSEE_TICKS }
+}
+
+/**
  * La bande du front au tick donné — `null` avant le `startTick` et dès le `endTick`.
  * Interpolation LINÉAIRE du bord d'entrée au bord opposé (patron `brumeCentre`) : le bord
  * avant parcourt `span + largeur` sur la fenêtre, si bien qu'à l'entrée la bande est encore
@@ -209,10 +243,23 @@ export function meteoIntensity(state: SimState, x: number, y: number): number {
  * code neuf côté vitals. Le brouillard a COLD 0 : il ne refroidit pas, au bit près.
  */
 export function meteoCold(state: SimState, x: number, y: number): number {
+  return meteoColdAt(state, x, y, state.tick)
+}
+
+/**
+ * LE MÊME FROID, À UN TICK QUELCONQUE — pour l'hystérésis du dégel (spec `gel.md` G8), qui
+ * demande la température du passé PROCHE au même point. La géométrie de la bande étant une
+ * fonction pure du tick (`meteoIntensityAt`), la relire en arrière est gratuit et exact TANT
+ * QUE c'est le même front : `startTick`/`endTick` du record bornent d'eux-mêmes la fenêtre
+ * (avant `startTick`, l'intensité est nulle — le passé d'avant l'entrée du front est donc
+ * juste). Un front DÉJÀ PURGÉ, lui, est invisible : on sous-estime alors le froid d'hier,
+ * jamais on ne le surestime.
+ */
+export function meteoColdAt(state: SimState, x: number, y: number, tick: number): number {
   const front = state.meteo
   if (!front) return 0
   const cold: number = METEO.COLD[front.type]
-  return cold === 0 ? 0 : cold * meteoIntensity(state, x, y)
+  return cold === 0 ? 0 : cold * meteoIntensityAt(front, tick, state.map.width, state.map.height, x, y)
 }
 
 /**
@@ -415,14 +462,10 @@ export function advanceMeteo(state: SimState): void {
     const cycle = Math.floor(state.tick / TICKS_PER_CYCLE)
     if (state.lastMeteoCycle !== cycle) {
       state.lastMeteoCycle = cycle
-      const day = seasonDayAtTick(state.tick, state.calendarScale)
-      const type = meteoTypeDuCycle(cycle, day)
-      if (type !== null) {
-        const edge = Math.min(3, Math.floor(hash2(cycle, 2, METEO_SALT) * 4)) as MeteoFront['edge']
-        const marge = TICKS_PER_CYCLE - METEO.TRAVERSEE_TICKS
-        const startTick = state.tick + Math.floor(hash2(cycle, 3, METEO_SALT) * marge)
-        state.meteo = { type, cycle, day, edge, startTick, endTick: startTick + METEO.TRAVERSEE_TICKS }
-      }
+      // L'élection ENTIÈRE vit dans `frontDuCycle` — écrivain unique, du type à la fenêtre
+      // (le gel rembobine les cycles passés par la même fonction, spec `gel.md` G7).
+      const elu = frontDuCycle(cycle, state.calendarScale)
+      if (elu !== null) state.meteo = elu
     }
   }
 

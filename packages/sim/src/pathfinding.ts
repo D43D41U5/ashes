@@ -9,6 +9,7 @@ import { isBlockedAt, makeIndexedIsBlockedAt, type MoveWorld } from './collision
 import type { ResourceNode } from './economy'
 import { distSq } from './geometry'
 import type { WorldMap } from './map'
+import type { SimState } from './sim'
 import { estIncassable } from './pieces'
 import type { Structure } from './village'
 
@@ -273,10 +274,25 @@ export function solidesEternels(structures: Structure[]): Structure[] {
  * la roche ne tombe jamais, la horde la contourne (2026-08-11).
  * Recalculé à la demande, dérivé pur de l'état : rien à sérialiser.
  */
-export function computeFlowField(map: WorldMap, nodes: ResourceNode[], solides: Structure[], targetTx: number, targetTy: number): Int32Array {
+export function computeFlowField(
+  map: WorldMap,
+  nodes: ResourceNode[],
+  solides: Structure[],
+  targetTx: number,
+  targetTy: number,
+  /**
+   * L'ÉTAT, POUR LE SEUL GEL (spec `gel.md` G4) — optionnel, et c'est délibéré : les gardes
+   * de géométrie qui interrogent une carte hors du temps n'ont rien à lui passer. Mais le
+   * jeu, lui, DOIT le passer : « ce qui traverse, traverse pour tout le monde » n'a de sens
+   * que si le gradient de la horde voit la même rivière gelée que l'avatar qui la franchit.
+   */
+  etat?: SimState,
+): Int32Array {
   const { width, height } = map
   const field = new Int32Array(width * height).fill(-1)
+  // `exactOptionalPropertyTypes` : un `etat: undefined` explicite n'est PAS un champ absent.
   const world: MoveWorld = { map, nodes, structures: solides, moverVillageId: null } // la roche seule, jamais le bâti
+  if (etat !== undefined) world.etat = etat
   // Index d'occupation bâti une fois : le BFS balaie toute la carte.
   const isBlocked = makeIndexedIsBlockedAt(world)
   const queue: number[] = []

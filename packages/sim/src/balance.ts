@@ -3294,6 +3294,122 @@ export const METEO = {
 } as const
 
 /**
+ * LE GEL (spec `gel.md`, décision Alexis 2026-08-19) — le monde change d'état avec sa
+ * température, sans qu'une tuile ne bouge. Tout est dérivé de `baselineTemperature` : ces
+ * quatre seuils sont des TEMPÉRATURES, lues sur la même échelle 0-100 que `TEMPERATURE`.
+ *
+ * ═══ CES NOMBRES SONT CALCULÉS, PAS CHOISIS ═══
+ *
+ * `baselineTemperature` sur une tuile d'EAU à découvert vaut, exactement :
+ *
+ *     T = BASE − ACT_COLD[acte] − (nuit ? NIGHT_COLD : 0) − brume − météo
+ *       = 90 − {0, 25, 50} − {0, 30} − {0, 55} − METEO.COLD[type]
+ *
+ * (l'eau — terrains 4 et 6 — n'a AUCUNE entrée dans `BIOME_OFFSET`, donc biome = 0 ; et
+ * une tuile d'eau n'est jamais sous un toit, donc `SHELTER_FACTOR` ne joue pas). La table
+ * complète du ciel clair, à découvert :
+ *
+ *              acte I    acte II   acte III
+ *     jour       90        65        40
+ *     nuit       60        35        10
+ *
+ * Et les fronts retranchent en plus : pluie/orage 10, neige 25, blizzard 55, Brume 55 —
+ * sachant que l'acte I ne tire NI neige NI blizzard (`METEO.TYPES[0]`) et JAMAIS de Brume
+ * (`BRUME.CHANCE_PER_DAY[0] = 0`). Le point le plus froid possible de l'acte I est donc
+ * une nuit sous l'averse : 60 − 10 = **50**.
+ *
+ * De là, la promesse G2 (« les gués prennent dès les nuits froides d'acte II, les lacs
+ * attendent l'acte III et les blizzards ») borne chaque seuil des DEUX côtés, et on prend
+ * le MILIEU de la fenêtre — la marge est ce qui fait survivre le calibrage à une retouche
+ * de `ACT_COLD` ou de `NIGHT_COLD` :
+ *
+ *     SEUIL_GUE     > 40 (le gué prend en acte III de JOUR)
+ *                   ≤ 50 (rien ne gèle en acte I, même la nuit sous l'averse)   → 45
+ *     SEUIL_PROFOND > 10 (le lac prend en acte III de nuit ET sous tout blizzard :
+ *                         65 − 55 = 10 dès l'acte II, 0 ensuite)
+ *                   ≤ 35 (le lac NE prend PAS aux nuits d'acte II à ciel clair)  → 20
+ *
+ * Ni l'un ni l'autre ne tombe sur une égalité de la table (10, 35, 40, 50, 60, 65) : un
+ * seuil posé PILE sur une valeur atteinte se déciderait au bit de flottant près.
+ *
+ * `SEUIL_PROFOND` tombe par ailleurs exactement sur `TEMPERATURE.HYPOTHERMIA` (20), et
+ * ce n'est pas un hasard qu'on garde : **le lac devient un chemin là où l'homme nu
+ * commence à mourir de froid.** C'est la lisibilité de « tard et lisible ».
+ *
+ * ═══ ET L'HYSTÉRÉSIS SE DÉDUIT DES MÊMES MARGES (G8) ═══
+ *
+ * Le dégel est décalé : l'eau prend sous `seuil`, elle ne rend la main qu'au-dessus de
+ * `seuil + HYSTERESIS`. La marge ne se choisit pas non plus — elle est la PLUS GRANDE qui
+ * ne casse aucune des deux promesses ci-dessus :
+ *
+ *     SEUIL_GUE + H     ≤ 50  (sinon un gué gelé en acte II survivrait à l'acte I d'après…
+ *                              et surtout la nuit d'acte I sous l'averse gèlerait par la
+ *                              bande morte)                              → H ≤ 5
+ *     SEUIL_PROFOND + H ≤ 35  (sinon le lac tiendrait les nuits d'acte II) → H ≤ 15
+ *
+ * La contrainte du gué est la plus serrée : **H = 5**.
+ */
+export const GEL = {
+  /** L'eau PEU PROFONDE (gué, terrain 4) gèle sous ce seuil : on ne patauge plus
+   *  (`speedFactor` 0,5), on glisse (`VITESSE_GLACE`). Elle était DÉJÀ praticable —
+   *  le gel ne change ici que la façon d'y marcher. */
+  SEUIL_GUE: 45,
+  /** L'eau PROFONDE (lac, rivière, terrain 6) gèle sous ce seuil et devient PRATICABLE :
+   *  la carte change de forme, un village protégé par une boucle d'eau perd ses douves
+   *  (G4 — la horde traverse aussi). « Nettement plus froid » : 25 points sous le gué. */
+  SEUIL_PROFOND: 20,
+  /**
+   * G8 — LA MARGE DU DÉGEL, en points de température. L'eau PREND sous son seuil ; elle ne
+   * DÉGÈLE qu'au-dessus de `seuil + HYSTERESIS`. Entre les deux s'étend une BANDE MORTE où
+   * la glace garde l'état qu'elle avait — sans quoi une température qui oscille autour du
+   * seuil (l'aube, le crépuscule, la lisière d'un front qui passe) ferait clignoter la carte
+   * d'un tick à l'autre. Conséquence de jeu VOULUE : **la vallée se referme derrière ceux
+   * qui l'ont traversée.** Valeur : la plus grande qui ne casse aucune promesse de G2 (5).
+   */
+  HYSTERESIS: 5,
+  /**
+   * G8 — LA PORTÉE DE MÉMOIRE de l'hystérésis, en ticks. Rien n'étant stocké, l'état
+   * « c'était gelé » se relit en RECALCULANT la température de ce point il y a `RETARD`
+   * ticks (`baselineTemperatureAt`). La bande morte tient donc au plus ce temps-là après le
+   * dernier froid décisif — au-delà, la glace rend la main. ~2,4 min réelles : dix fois la
+   * durée qu'une lisière de front met à balayer un point (~27 s mesurées sur la rampe d'un
+   * front de neige), et assez court pour qu'une seule lecture de plus suffise.
+   */
+  RETARD_TICKS: ticksForCycles(0.05),
+  /**
+   * G6 — LE JOUR DE SAISON où les feuillus commencent à se dénuder, et sur combien de jours
+   * la forêt entière y passe.
+   *
+   * **LA FEUILLAISON SUIT LA SAISON, JAMAIS L'INSTANT** — et c'est une correction, pas un
+   * détail. La première version keyait le dénuement sur une TEMPÉRATURE : or aucune valeur
+   * ne sépare la nuit d'acte II (40 sur un terrain boisé) du jour d'acte III (45), si bien
+   * que la forêt entière aurait repoussé ses feuilles à chaque aube et les aurait reperdues
+   * à chaque crépuscule. Une feuille qui tombe ne remonte pas : le jour de saison, lui, ne
+   * redescend jamais — la monotonie est acquise par construction.
+   *
+   * `JOUR_DEFEUILLAISON` = le dernier jour de l'acte I : **la forêt se dépouille à l'entrée
+   * du Grand Froid**, sur une semaine, tuile par tuile (un décalage par `hash2` : les arbres
+   * ne tombent pas tous le même matin).
+   */
+  JOUR_DEFEUILLAISON: BALANCE.ACT_BOUNDARIES[0],
+  DEFEUILLAISON_JOURS: 7,
+  /** On glisse un peu plus vite que sur l'herbe (le `speedFactor` d'une eau gelée,
+   *  quelle que soit sa profondeur). Il remplace 0,5 sur le gué et 0 (infranchissable)
+   *  sur le lac : le contraste AVANT/APRÈS est tout le sel de la règle. */
+  VITESSE_GLACE: 1.1,
+  /** G7 — combien de cycles en arrière `neigeAuSol` rembobine l'élection des fronts.
+   *  Trois : au-delà, la couverture a fondu de toute façon (voir `FONTE_CYCLES`), et
+   *  chaque cycle rembobiné coûte deux `hash2` par appel. */
+  MEMOIRE_CYCLES: 3,
+  /** G7 — la neige met ce nombre de CYCLES à disparaître **par grand froid** (à
+   *  `SEUIL_PROFOND` ou en dessous). Au-dessus, la fonte accélère linéairement jusqu'à
+   *  `FONTE_CYCLES_CHAUD` à `SEUIL_FEUILLES` et au-delà : la même neige tient un jour
+   *  sur le Névé et une heure au bord de l'eau. */
+  FONTE_CYCLES: 3,
+  FONTE_CYCLES_CHAUD: 0.25,
+} as const
+
+/**
  * LES RÉFUGIÉS (V2-25, GDD §520) — « l'événement d'alignement par excellence, et la seule
  * source de PNJ supplémentaires hors paliers du Feu ». Un groupe de survivants arrive sur une
  * route ; on les RECRUTE (+PNJ, Foyer), les NOURRIT (Foyer), les refoule (rien) ou les

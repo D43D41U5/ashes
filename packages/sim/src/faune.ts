@@ -821,7 +821,7 @@ function trySpawnNear(
     const ty = Math.floor(host.y) + oy
     if (tx < 0 || ty < 0 || tx >= state.map.width || ty >= state.map.height) continue
     if (!TERRAINS[terrainAt(state.map, tx, ty)]?.walkable) continue
-    if (isBlockedAt({ map: state.map, structures: state.structures, nodes: state.nodes }, tx, ty)) continue
+    if (isBlockedAt({ map: state.map, structures: state.structures, nodes: state.nodes, etat: state }, tx, ty)) continue
     // LA PRESSION DE CHASSE (R16) : le gibier a déserté ce qu'on vient de chasser.
     // Rien ne naît ici tant que les bois n'ont pas retrouvé leur calme — c'est ce
     // qui force à lever le camp au lieu de récolter sur place.
@@ -1035,7 +1035,7 @@ function herdSpot(
     const dy = ny + 0.5 - host.y
     if (dx * dx + dy * dy < minSq) continue // trop près de l'hôte : il le verrait naître
     if (!TERRAINS[terrainAt(state.map, nx, ny)]?.walkable) continue
-    if (isBlockedAt({ map: state.map, structures: state.structures, nodes: state.nodes }, nx, ny)) continue
+    if (isBlockedAt({ map: state.map, structures: state.structures, nodes: state.nodes, etat: state }, nx, ny)) continue
     if (!inHabitat(state, type, nx, ny)) continue
     return { tx: nx, ty: ny }
   }
@@ -2706,7 +2706,7 @@ function noteBlocked(
   // On échantillonne la droite loup→proie de tuile en tuile. C'est une douzaine de
   // lectures sur l'index d'occupation (caché par carte), soit mille fois moins qu'un
   // A* — et c'est la question exacte que le chemin existe pour résoudre.
-  const world = { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null }
+  const world = { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null, etat: state }
   const bloque = makeIndexedIsBlockedAt(world)
   const vx = target.x - entity.x
   const vy = target.y - entity.y
