@@ -22,10 +22,10 @@
  */
 import { BALANCE, METEO } from '../packages/sim/src/balance'
 import { drainEvents } from '../packages/sim/src/events'
-import { meteoIntensity, meteoTypeDuJour, type MeteoType } from '../packages/sim/src/meteo'
+import { meteoIntensity, meteoTypeDuCycle, type MeteoType } from '../packages/sim/src/meteo'
 import { construireMondeDuBanc } from '../packages/sim/src/scenario'
 import { step } from '../packages/sim/src/sim'
-import { actForDay, seasonDayAtTick, TICKS_PER_CYCLE } from '../packages/sim/src/time'
+import { seasonDayAtTick, TICKS_PER_CYCLE } from '../packages/sim/src/time'
 
 const SEEDS = (process.argv[2] ?? '1,7,2026').split(',').map(Number)
 const CYCLES = Number(process.argv[3] ?? 6)
@@ -118,9 +118,11 @@ function jouer(seed: number, cycles: number, meteo: boolean): Releve {
     else fuelDonne += fuelApres - fuelAvant
 
     const jour = seasonDayAtTick(sim.tick, sim.calendarScale)
-    if (jour !== dernierJourVu) {
-      dernierJourVu = jour
-      const type = meteo ? meteoTypeDuJour(jour) : null
+    // La texture se relève par CYCLE — c'est la cadence d'élection (un tirage par cycle).
+    const cycle = Math.floor(sim.tick / TICKS_PER_CYCLE)
+    if (cycle !== dernierJourVu) {
+      dernierJourVu = cycle
+      const type = meteo ? meteoTypeDuCycle(cycle, jour) : null
       r.texture.push(type)
       if (type) r.fronts[type] = (r.fronts[type] ?? 0) + 1
     }
@@ -180,7 +182,7 @@ function pourcent(a: number, b: number): string {
 
 console.log(`═══ LA MÉTÉO AU BANC — ${SEEDS.length} graine(s) × ${CYCLES} cycles ═══\n`)
 console.log(`calibrage courant : COLD ${JSON.stringify(METEO.COLD)}`)
-console.log(`                    CHANCE_PER_DAY ${JSON.stringify(METEO.CHANCE_PER_DAY)}\n`)
+console.log(`                    CHANCE_PER_CYCLE ${JSON.stringify(METEO.CHANCE_PER_CYCLE)}\n`)
 
 const tous: Releve[] = []
 for (const seed of SEEDS) {
@@ -189,7 +191,7 @@ for (const seed of SEEDS) {
   const sans = process.env.COMPARE === '1' ? jouer(seed, CYCLES, false) : null
   tous.push(avec)
 
-  const t = avec.texture.map((x, i) => `j${i + 1}(a${actForDay(i + 1)}):${x ?? '—'}`).join('  ')
+  const t = avec.texture.map((x, i) => `c${i}:${x ?? '—'}`).join('  ')
   console.log(`  texture   : ${t}`)
   console.log(`  fronts    : ${JSON.stringify(avec.fronts)}`)
   console.log(`  blizzard  : ${avec.annonces} annonce(s), ${avec.entrees} entrée(s), ${avec.passages} passage(s)`)

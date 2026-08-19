@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # ASHES
 
 *(ex-BRAISES — renommé le 2026-07-28, jusqu'aux paquets (`@ashes/*`) et au GDD (`ashes-gdd.md`). **Les clés de stockage, elles, restent en `braises`** — base IndexedDB, brouillard, son, touches : ce sont des ADRESSES, et les renommer orphelinerait toutes les sauvegardes existantes. Et « braises » reste du vocabulaire de jeu : un feu qui couve est en braises.)*
@@ -9,15 +13,19 @@ Survival multijoueur top-down 2D persistant, saisons de 60 jours, villages de jo
 ```bash
 pnpm install      # workspace complet
 pnpm check        # tsc --noEmit sur tous les packages
-pnpm test         # LES QUATRE SUITES — sim, client, serveur, banc de scénario (tools/suites.mjs)
+pnpm test         # LES QUATRE SUITES — sim, client, serveur, banc de scénario (tools/suites.mjs).
+                  # Il juge sur les COMPTES de tests Vitest, pas l'exit code (flaky « onTaskUpdate » absorbé).
+                  # Un seul fichier : pnpm --filter @ashes/sim exec vitest run src/tir.test.ts
 pnpm lint         # eslint, dont les garde-fous de pureté de /sim
 pnpm dev          # client Vite SUR L'HÔTE (jeu jouable sur http://localhost:3000)
 pnpm --filter @ashes/server dev   # zone LAN Colyseus sur ws://localhost:2567
                                   # le client s'y branche par VITE_SERVER_URL
 pnpm scenario     # banc d'équilibrage : le vrai worldgen joué sur des milliers de ticks
+                  # (SCENARIO_DAYS=60 pnpm scenario pour une saison entière)
 pnpm plans        # régénère plans-batis.genere.ts depuis packages/sim/src/plans/*.plan
                   # L'ATELIER des plans (éditeur graphique du bâti, spec atelier-plans.md) :
                   # pnpm dev → http://localhost:3000/atelier.html (dev seulement, hors dist)
+                  # LE BANC-SON (le vrai routage audio sur le vrai moteur) : /banc-son.html (idem)
 # Stack Docker : `docker compose up -d` → jeu sur http://ashes.test via le proxy Traefik
 # PARTAGÉ (~/projects/proxy, à lancer d'abord : cd ~/projects/proxy && docker compose up -d)
 pnpm build        # build web statique → packages/client/dist
@@ -43,10 +51,13 @@ packages/client   ← Phaser 4 + Vite. Rendu ISO, input, interpolation, HUD/menu
                     scenes/ (le plus gros : WorldScene + scenes/ui/ en DOM) · render/ (couches,
                     éclairage, art procédural) · worker/ (la sim en Veillée) · audio/ · assets/
 packages/server   ← Node + Colyseus. Boucle autoritative, rooms, replay-log (L1 fait). Persistance PostgreSQL encore à venir (Vallée).
-tools/            ← les instruments. `smoke.mjs` (navigateur), `suites.mjs` (les 4 suites), et les
-                    profileurs `profil-tick` / `profil-banc` / `diag-recolte` / `trace-corvee` —
-                    ils vivent ICI et non dans /sim parce que le lint y interdit `Date`/`performance`,
-                    or c'est de chronométrage qu'on a besoin. `node --import tsx tools/profil-tick.mts`.
+tools/            ← les instruments. `smoke.mjs` (navigateur), `suites.mjs` (les 4 suites),
+                    `plans-compile.mts` (= pnpm plans), et une batterie de sondes headless :
+                    profileurs (`profil-tick`, `profil-banc`, `empreinte-sim`), diagnostics par
+                    système (`diag-loup`, `diag-raid`, `diag-recolte`…), mesures (`mesure-bande`,
+                    `apercu-carte`, `trace-corvee`…). Ils vivent ICI et non dans /sim parce que le
+                    lint y interdit `Date`/`performance`, or c'est de chronométrage qu'on a
+                    besoin. `node --import tsx tools/profil-tick.mts`.
 docs/specs/       ← specs par système, extraites du GDD, avec critères d'acceptation
 docs/gate1-finition.md ← le backlog de finition solo priorisé (P0/P1/P2) — ce qui reste vraiment à construire
 docs/decisions.md ← journal des décisions (ADR léger) — à tenir à jour
@@ -70,6 +81,7 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 ## Règles de travail
 
 - **Équilibrage** : tout nombre d'équilibrage vit dans `packages/sim/src/balance.ts`, **jamais en dur dans un corps de fonction** — un nombre qu'on ne peut trouver qu'en lisant le code n'est pas réglable. Les valeurs sont des ordres de grandeur (GDD §15), calibrées en playtest. **Une exception, délibérée** : le réglage d'un générateur de carte vit à côté de son générateur (`MONDE`, `RELIEF`, `EAU`, `SENTES`, `SET_PIECES`, `CREUX`, `CONTENU`, `POI_PLACEMENT`, `CENDRE`) — la ligne de partage est *comment on calibre* : `balance.ts` = ce qui se règle en JOUANT, les blocs du worldgen = ce qui se règle en REGARDANT UNE CARTE. Détail dans l'en-tête de `balance.ts`.
+- **Catalogue du bâti** : toute pièce posable est UNE entrée du registre `PIECES` (`packages/sim/src/pieces.ts`) — `StructureType` en est dérivé (`keyof typeof PIECES`), et collision, client et Atelier en découlent. Ajouter une pièce = compléter le registre, pas toucher quinze fichiers (décision 2026-08-01 ; la palissade d'avant-registre avait coûté 19 fichiers). Les lieux (POI, grottes…) se COMPOSENT de ces pièces via les plans `packages/sim/src/plans/*.plan` — « tout en pièces, partout » (2026-08-10).
 - **Événements de domaine** : tout fait de jeu discret et signifiant (spawn, récolte, don, premier sang, pacte…) est émis comme `SimEvent` (`events.ts`) au moment où la logique l'exécute. L'alignement, la chronique de saison, le tableau du village et la réputation sont des *consommateurs* de ce flux — on n'instrumente jamais la logique après coup. Haute fréquence ≠ domaine : un déplacement n'est pas un événement.
 - **État de sim JSON-sérialisable** : pas de classes, pas de `Map`/`Set` dans `SimState` — snapshot, transport Worker et persistance en dépendent.
 - **Specs avant systèmes** : avant d'implémenter un système de jeu (combat, alignement, économie…), extraire/compléter sa spec dans `docs/specs/` avec des critères d'acceptation testables, puis implémenter contre ces critères.
@@ -82,6 +94,6 @@ Ils viennent du GDD §11 et §14 (« décisions actées »). Ne pas les rouvrir 
 
 Le plan d'implémentation complet est dans **`docs/roadmap.md`** (jalons V0-V10 → LAN → Vallée → Saison 0, avec critères de sortie et gates). Le cadre vient du GDD §13.
 
-**La Phase Veillée (V0-V10) est complète** (cœur posé le 2026-07-05, une trentaine de specs dans `docs/specs/` ; calibrage et pivots — worldgen graphe-de-zones, construction Rust, récolte vivante — poursuivis en juillet). En attente d'actions humaines : brancher Cloudflare Pages (`pnpm build` → `packages/client/dist`) et jouer le **GATE 1** (la boucle solo est-elle fun 5 sessions d'affilée ?). Ce qui reste **constructible** d'ici là est priorisé dans **`docs/gate1-finition.md`** — le lire avant de choisir un chantier solo. **Phase LAN — jalon L1 en cours** (voir roadmap — `packages/server` + Colyseus substantiellement livrés le 2026-07-18, une zone ; le protocole `packages/sim/src/protocol.ts` est déjà le protocole réseau, seul le transport change ; reste : validation à plusieurs et GATE 2). Le calibrage continue via `pnpm scenario`. *(État réel et pistes : `docs/audit-gameplay-phase1.md`, `docs/axes-amelioration-phase2.md`, `docs/direction-design.md`.)*
+**La Phase Veillée (V0-V10) est complète** (cœur posé le 2026-07-05, près de quarante specs dans `docs/specs/` ; calibrage et pivots poursuivis depuis — worldgen graphe-de-zones puis stratigraphie, construction Rust puis catalogue `PIECES`, récolte vivante, l'arc, lieux bâtis composés en pièces + Atelier des plans). En attente d'actions humaines : brancher Cloudflare Pages (`pnpm build` → `packages/client/dist`) et jouer le **GATE 1** (la boucle solo est-elle fun 5 sessions d'affilée ?). Ce qui reste **constructible** d'ici là est priorisé dans **`docs/gate1-finition.md`** — le lire avant de choisir un chantier solo. **Phase LAN — jalon L1 en cours** (voir roadmap — `packages/server` + Colyseus substantiellement livrés le 2026-07-18, une zone ; le protocole `packages/sim/src/protocol.ts` est déjà le protocole réseau, seul le transport change ; reste : validation à plusieurs et GATE 2). Le calibrage continue via `pnpm scenario`. *(État réel et pistes : `docs/audit-gameplay-phase1.md`, `docs/axes-amelioration-phase2.md`, `docs/direction-design.md`.)*
 
 MVP gouvernance (Veillée/LAN) : rang unique + Chef + propriété individuelle. MVP alignement : deux axes + Foyer/Meute seulement.

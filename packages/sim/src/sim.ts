@@ -370,10 +370,10 @@ export interface SimState {
    */
   meteo?: import('./meteo').MeteoFront | null
   /** Le dernier jour de saison où l'élection météo a été jouée (au plus un front par jour). */
-  lastMeteoDay?: number
+  lastMeteoCycle?: number
   /** Le dernier jour de saison ÉVALUÉ pour l'annonce de la veille au crépuscule (spec R9,
    *  patron `lastBrumeDay`) — au plus une annonce de blizzard par jour annoncé. */
-  lastMeteoAnnonceDay?: number
+  lastMeteoAnnonceCycle?: number
   /** Fronts armés ? Interrupteur DÉDIÉ (spec meteo.md R10), absent/faux par défaut —
    *  séparé de `worldEvents` (voir SimOptions.meteoActive). */
   meteoActive?: boolean

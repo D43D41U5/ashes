@@ -1,0 +1,77 @@
+diff --git a/packages/client/src/scenes/world/snapshot-view.ts b/packages/client/src/scenes/world/snapshot-view.ts
+index 488e9a9..99b30de 100644
+--- a/packages/client/src/scenes/world/snapshot-view.ts
++++ b/packages/client/src/scenes/world/snapshot-view.ts
+@@ -355,6 +355,41 @@ const PAN_DISTANCE_TUILES = 2
+ /** La demi-épaisseur d'une bande d'arête, en tuiles — DÉRIVÉE de l'équilibrage, comme le
+  *  dessin (`bati-art`) et la collision (`collision.ts`). Trois lectures, une seule source. */
+ 
++// ═══ INSTRUMENTATION JETABLE — MESURE A9 (docs/specs/lieux-batis.md) — NE PAS COMMITTER ═══
++// Fenêtres d'UNE SECONDE : somme et pic du coût de `syncStructures` par snapshot, sous-coûts
++// doorPairs/nappe/pans, et coûts worker (`postMessage`, clone des structures) relayés par le
++// message. Lu par `tools/perf-structures.mjs` via `window.__PERF_STRUCT__`.
++const __sousCouts = { door: 0, nappe: 0, pans: 0 }
++interface __FenetrePerf {
++  t: number; n: number; syncMs: number; maxMs: number
++  doorMs: number; nappeMs: number; pansMs: number
++  postMs: number; maxPostMs: number; cloneMs: number; maxCloneMs: number; count: number
++}
++const __fenetres: __FenetrePerf[] = []
++function __releverPerfStruct(msg: SnapshotMessage, syncMs: number): void {
++  const sec = Math.floor(performance.now() / 1000)
++  let w = __fenetres[__fenetres.length - 1]
++  if (!w || w.t !== sec) {
++    w = { t: sec, n: 0, syncMs: 0, maxMs: 0, doorMs: 0, nappeMs: 0, pansMs: 0, postMs: 0, maxPostMs: 0, cloneMs: 0, maxCloneMs: 0, count: 0 }
++    __fenetres.push(w)
++  }
++  w.n += 1
++  w.syncMs += syncMs
++  if (syncMs > w.maxMs) w.maxMs = syncMs
++  w.doorMs += __sousCouts.door
++  w.nappeMs += __sousCouts.nappe
++  w.pansMs += __sousCouts.pans
++  const wp = (msg as unknown as { __perfWorker?: { postMs: number; cloneMs: number } }).__perfWorker
++  if (wp) {
++    w.postMs += wp.postMs
++    if (wp.postMs > w.maxPostMs) w.maxPostMs = wp.postMs
++    w.cloneMs += wp.cloneMs
++    if (wp.cloneMs > w.maxCloneMs) w.maxCloneMs = wp.cloneMs
++  }
++  w.count = msg.structures.length
++  ;(window as unknown as { __PERF_STRUCT__?: unknown }).__PERF_STRUCT__ = __fenetres
++}
++// ═══ FIN DE L'INSTRUMENTATION JETABLE ═══
+ 
+ export class SnapshotView {
+   /** Dernier état reçu — lu par la prédiction (collisions) et les inputs. */
+@@ -646,7 +681,9 @@ export class SnapshotView {
+     this.reveilFx?.suivre(msg.reveils, msg.tick, now)
+     // La position (autoritative) de l'avatar local — le FADE des toits en dépend (R24).
+     const self = msg.entities.find((e) => e.id === playerId)
++    const __t0 = performance.now() // ═ JETABLE mesure A9 ═
+     this.syncStructures(msg.structures, self ? { x: self.x, y: self.y } : undefined)
++    __releverPerfStruct(msg, performance.now() - __t0) // ═ JETABLE mesure A9 ═
+     this.applyNodeDeltas(msg.nodeDeltas, now)
+     this.syncCorpses(msg.corpses)
+     this.syncRefugees(msg.refugeeGroups)
+@@ -1052,13 +1089,20 @@ export class SnapshotView {
+     // LA PORTE DOUBLE SE LIT ICI (spec construction R27) : l'appariement est DÉRIVÉ du snapshot
+     // à chaque passage, jamais stocké — la même dérivation que la sim (`doorPairs`, une seule
+     // vérité pour « ces deux vantaux font un cadre »), recalculée comme la nappe et les pans.
++    const __d0 = performance.now() // ═ JETABLE mesure A9 ═
+     const doubles = doorPairs(structures)
++    const __d1 = performance.now() // ═ JETABLE mesure A9 ═
+     this.nappe = calculerNappe(structures, self)
++    const __d2 = performance.now() // ═ JETABLE mesure A9 ═
+     // LES PANS — l'unité d'effacement du bâti. Recalculés à chaque snapshot comme la nappe :
+     // dérivé pur, jamais stocké. C'est ici que se décide QUEL mur s'efface, et le pourquoi vit
+     // dans `render/pans.ts` (un côté de bâtiment, brèches comprises, à 2 tuiles).
+     const pans = calculerPans(structures)
+     const tombes = pansTombes(pans, self, PAN_DISTANCE_TUILES)
++    const __d3 = performance.now() // ═ JETABLE mesure A9 ═
++    __sousCouts.door = __d1 - __d0 // ═ JETABLE mesure A9 ═
++    __sousCouts.nappe = __d2 - __d1
++    __sousCouts.pans = __d3 - __d2
+     const seen = new Set<number>()
+     /** La cible de démolition a-t-elle été VUE cette frame ? Sinon le halo s'éteint — sans
+      *  ça, il resterait accroché à un mur qu'on vient justement de détruire. */

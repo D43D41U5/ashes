@@ -192,7 +192,7 @@ export type SimEvent =
    * fronts s'annoncent GÉOMÉTRIQUEMENT (le mur se voit venir — position fonction pure du
    * tick, rien à dire) ; lui est trop large pour être esquivé, la réponse est PRÉPARER.
    * L'ANNONCE tombe la veille au crépuscule (patron `brume_annonce`) et dit VRAI par
-   * construction : elle lit la MÊME fonction pure d'élection (`meteoTypeDuJour`) que
+   * construction : elle lit la MÊME fonction pure d'élection (`meteoTypeDuCycle`) que
    * l'aube qui lèvera le front. `day` porte le jour de saison du front annoncé (« le
    * blizzard du jour N »). L'ENTRÉE marque le tick où la bande devient active
    * (`startTick`, pas l'élection), la SORTIE sa purge — du signal de HUD/rendu, hors

@@ -3221,8 +3221,21 @@ export const BRUME = {
  * endroit. On les change ENTRE les saisons, pas dedans.
  */
 export const METEO = {
-  /** Chance qu'un front se lève, par jour de saison et par acte. */
-  CHANCE_PER_DAY: [0.5, 0.65, 0.8],
+  /**
+   * Chance qu'un front se lève, par CYCLE et par acte.
+   *
+   * LA CADENCE EST RÉELLE, LA MIXTURE EST SAISONNIÈRE. Un front est un phénomène de temps
+   * RÉEL : il dure `TRAVERSEE_TICKS` (~une demi-heure de jeu), on le voit venir, on le
+   * traverse, il s'éloigne. Sa cadence se compte donc en CYCLES — sinon elle dépend du
+   * `calendarScale` de l'hôte, et c'est très exactement le défaut qu'on a corrigé : élire
+   * par jour de saison ne faisait ÉVALUER que 6 jours sur 60 en Veillée (qui compresse la
+   * saison en 6 cycles), toujours les mêmes, dans tous les mondes — deux fronts de neige
+   * pour une saison solo entière, et jamais un éclair ni une annonce.
+   *
+   * L'ACTE, lui, vient toujours du JOUR DE SAISON : c'est la saison qui commande la
+   * FRÉQUENCE (ici) et la MIXTURE (`TYPES`) — la courbe de pression du §8 est intacte.
+   */
+  CHANCE_PER_CYCLE: [0.5, 0.65, 0.8],
   /**
    * La table des types par acte (poids sommant à 1) : la pluie domine l'acte I, la neige
    * entre en II, le blizzard hante II-III, l'orage vit en I-II. L'ORDRE des clés est le

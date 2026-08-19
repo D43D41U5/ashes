@@ -216,6 +216,7 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     const startTick = state.tick - Math.round(phase * METEO.TRAVERSEE_TICKS)
     state.meteo = {
       type: action.meteo,
+      cycle: Math.floor(state.tick / TICKS_PER_CYCLE),
       day: seasonDayAtTick(state.tick, state.calendarScale),
       edge: action.edge ?? 0,
       startTick,
