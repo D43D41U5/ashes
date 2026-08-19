@@ -648,6 +648,35 @@ describe('A10 — la neige tient après le front, puis fond (G7)', () => {
   }
   const cycleNeigeux = (scale: number): number | null => cycleNeigeuxIsole(scale, 0)
 
+  it('G7 — LA NEIGE NE REMONTE JAMAIS : monotone dans le temps, quoi que fasse le thermomètre', () => {
+    // LA GARDE NÉE D'UN DÉFAUT MESURÉ. La vitesse de fonte dépend de la température, qui
+    // varie d'heure en heure : tant qu'on appliquait la vitesse DE L'INSTANT à tout le temps
+    // écoulé, la neige REMONTAIT au crépuscule — 0,709 le jour contre 0,842 la nuit, un saut
+    // de 0,133 quand 1 200 ticks n'en déplacent que 0,007. Dix-neuf fois. Le crépuscule est
+    // le pire cas exprès : c'est LÀ que la marche du thermomètre est la plus franche.
+    const c = cycleNeigeuxIsole(SCALE, 2)
+    expect(c).not.toBeNull()
+    const front = frontDuCycle(c!, SCALE)!
+    const sim = simGel({ meteoActive: true })
+    // Le point au BOUT de la traversée, comme le test voisin : la bande l'a quitté tôt, il
+    // reste de la neige à regarder fondre.
+    const tx = front.edge === 0 || front.edge === 2 ? 2 : sim.map.width - 3
+    const ty = 5
+    const depart = front.endTick
+    // On balaie DEUX cycles pleins au pas fin : le pas jour/nuit y passe deux fois.
+    const PAS = Math.floor(TICKS_PER_CYCLE / 64)
+    let precedent = Infinity
+    let vue = 0
+    for (let t = depart; t <= depart + 2 * TICKS_PER_CYCLE; t += PAS) {
+      sim.tick = t
+      const n = neigeAuSol(sim, tx, ty)
+      expect(n, `remontée au tick ${t}`).toBeLessThanOrEqual(precedent + 1e-9) // JAMAIS une remontée
+      precedent = n
+      if (n > 0) vue++
+    }
+    expect(vue).toBeGreaterThan(0) // la prémisse : il y avait bien de la neige à voir fondre
+  })
+
   it('nulle sans météo armée — même si le cycle aurait élu une neige', () => {
     const c = cycleNeigeux(SCALE)
     expect(c).not.toBeNull()
@@ -682,9 +711,16 @@ describe('A10 — la neige tient après le front, puis fond (G7)', () => {
       sim.tick = front.endTick + k * TICKS_PER_CYCLE
       releves.push(neigeAuSol(sim, tx, ty))
     }
+    // Décroissance STRICTE tant qu'il reste de la neige, et jamais de remontée une fois à
+    // zéro : « 0 puis 0 » est une fin de fonte, pas un défaut — l'ancienne assertion butait
+    // sur son propre plancher depuis que la fonte s'INTÈGRE (elle est plus rapide, et juste).
     for (let i = 1; i < releves.length; i++) {
-      expect(releves[i]!, `couverture au cycle +${i}`).toBeLessThan(releves[i - 1]!)
+      const avant = releves[i - 1]!
+      const apres = releves[i]!
+      if (avant > 0) expect(apres, `couverture au cycle +${i}`).toBeLessThan(avant)
+      else expect(apres, `couverture au cycle +${i}`).toBe(0)
     }
+    expect(releves[releves.length - 1]!).toBeLessThan(releves[0]!) // elle a bien fondu
     for (const v of releves) {
       expect(v).toBeGreaterThanOrEqual(0)
       expect(v).toBeLessThanOrEqual(1) // c'est une COUVERTURE, pas un compteur

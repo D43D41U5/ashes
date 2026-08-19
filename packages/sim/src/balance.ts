@@ -3407,6 +3407,14 @@ export const GEL = {
    *  sur le Névé et une heure au bord de l'eau. */
   FONTE_CYCLES: 3,
   FONTE_CYCLES_CHAUD: 0.25,
+  /** G7 — EN COMBIEN DE TRANCHES la fonte s'intègre, par cycle. La vitesse de fonte dépend
+   *  de la température, qui varie d'heure en heure : l'appliquer telle qu'elle est MAINTENANT
+   *  à tout le temps écoulé faisait REMONTER la neige au crépuscule (mesuré : +0,133 au
+   *  coucher, dix-neuf fois la dérive réelle). On somme donc la fonte par tranches, chacune
+   *  évaluée à son propre instant. Une cadence technique, pas un réglage de jeu : huit
+   *  tranches suffisent à suivre le pas jour/nuit (la seule marche du signal), et le total
+   *  reste borné par `MEMOIRE_CYCLES`. */
+  FONTE_TRANCHES_PAR_CYCLE: 8,
 } as const
 
 /**

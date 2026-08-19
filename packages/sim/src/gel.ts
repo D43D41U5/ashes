@@ -323,14 +323,34 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
     if (state.tick < sortie) {
       couverture = (state.tick - entree) / (sortie - entree) // il neige : ça monte
     } else {
-      // La fonte : `FONTE_CYCLES` par grand froid, `FONTE_CYCLES_CHAUD` au redoux, linéaire
-      // entre `SEUIL_PROFOND` (le grand froid — le lac lui-même est pris) et le CONFORT
-      // (`TEMPERATURE.COMFORT` — au-dessus, le froid ne se fait plus sentir du tout). Deux
-      // bornes déjà posées ailleurs : la fonte n'introduit aucun nombre à elle.
-      const t = baselineTemperature(state, tx, ty)
-      const u = Math.max(0, Math.min(1, (t - GEL.SEUIL_PROFOND) / (TEMPERATURE.COMFORT - GEL.SEUIL_PROFOND)))
-      const cycles = GEL.FONTE_CYCLES + (GEL.FONTE_CYCLES_CHAUD - GEL.FONTE_CYCLES) * u
-      couverture = 1 - (state.tick - sortie) / (cycles * TICKS_PER_CYCLE)
+      // ═══ LA FONTE S'INTÈGRE, ELLE NE SE RÉAPPLIQUE PAS ═══
+      //
+      // La vitesse de fonte dépend de la température, qui varie d'heure en heure : appliquer
+      // la vitesse DE L'INSTANT à tout le temps écoulé fait REMONTER la neige au crépuscule
+      // (« il fait plus froid maintenant, donc il a moins fondu hier »). MESURÉ avant
+      // correction, tick figé, en ne balayant que l'heure : 0,709 le jour contre 0,842 la
+      // nuit — un saut de 0,133 quand 1 200 ticks de temps réel n'en déplacent que 0,007,
+      // dix-neuf fois plus. C'est l'erreur que `feuillageDenude` documente avoir refusée.
+      //
+      // On SOMME donc la fonte par TRANCHES, chacune évaluée à SON propre instant
+      // (`baselineTemperatureAt`, la même loi prise à un autre tick). Chaque tranche n'ajoute
+      // qu'une quantité positive : la couverture est MONOTONE décroissante en `tick` par
+      // construction — la neige ne peut plus remonter, quoi que fasse le thermomètre.
+      // Le compte de tranches est borné par `MEMOIRE_CYCLES` (au-delà, la neige a fondu de
+      // toute façon), donc aucune boucle sans fond.
+      const PAS = TICKS_PER_CYCLE / GEL.FONTE_TRANCHES_PAR_CYCLE
+      let fondu = 0
+      for (let t0 = sortie; t0 < state.tick; t0 += PAS) {
+        const t1 = Math.min(state.tick, t0 + PAS)
+        // La température AU MILIEU de la tranche : le point le plus représentatif d'un
+        // intervalle, et le seul qui ne penche ni vers son début ni vers sa fin.
+        const t = baselineTemperatureAt(state, tx, ty, (t0 + t1) / 2)
+        const u = Math.max(0, Math.min(1, (t - GEL.SEUIL_PROFOND) / (TEMPERATURE.COMFORT - GEL.SEUIL_PROFOND)))
+        const cycles = GEL.FONTE_CYCLES + (GEL.FONTE_CYCLES_CHAUD - GEL.FONTE_CYCLES) * u
+        fondu += (t1 - t0) / (cycles * TICKS_PER_CYCLE)
+        if (fondu >= 1) break // tout est fondu : inutile de continuer à sommer
+      }
+      couverture = 1 - fondu
     }
     if (couverture > best) best = couverture
   }
