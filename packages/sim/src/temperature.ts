@@ -4,14 +4,14 @@
  * par la bulle d'un feu. Aucune fonction transcendante (seul `sqrt`, autorisé).
  */
 import { POI, TEMPERATURE } from './balance'
-import { brumeCold } from './brume'
+import { brumeColdAt } from './brume'
 import { fireWarmthFactor } from './fire'
 import { die } from './combat'
 import { countOf } from './items'
 import { terrainAt } from './map'
-import { meteoCold } from './meteo'
+import { meteoColdAt } from './meteo'
 import { isOnPoiKind } from './poi-discovery'
-import { getGameTime } from './time'
+import { gameTimeAt } from './time'
 import type { SimState } from './sim'
 
 const T = TEMPERATURE
@@ -70,9 +70,30 @@ export function naturalWarmth(state: SimState, x: number, y: number): number {
  * Cendreux qui s'approche se réchaufferait, franchirait le seuil et oscillerait à la lisière.
  */
 export function baselineTemperature(state: SimState, x: number, y: number): number {
+  return baselineTemperatureAt(state, x, y, state.tick)
+}
+
+/**
+ * LE MÊME FROID DU MONDE, À UN TICK QUELCONQUE.
+ *
+ * Elle existe pour L'HYSTÉRÉSIS DU DÉGEL (spec `gel.md` G8) : « l'eau prend sous son seuil,
+ * elle ne dégèle qu'au-dessus de `seuil + HYSTERESIS` » est une loi À MÉMOIRE, or rien du
+ * gel n'est stocké. La mémoire se RECALCULE : toutes les composantes du froid — l'heure,
+ * l'acte, la bande météo, la nappe de Brume — sont déjà des fonctions pures du tick, il
+ * suffisait de ne pas figer l'horloge sur `state.tick`.
+ *
+ * `baselineTemperature` n'est plus qu'elle, prise sur le tick courant : mêmes expressions,
+ * même ordre, au bit près.
+ *
+ * ⚠ CE QU'ELLE NE SAIT PAS : un front ou une nappe PURGÉS de l'état sont invisibles à sa
+ * relecture — elle rend alors le froid d'hier SANS eux, donc trop chaud, jamais trop froid.
+ * L'erreur va dans le sens du dégel : elle peut raccourcir une hystérésis, jamais inventer
+ * une glace qui n'a pas existé.
+ */
+export function baselineTemperatureAt(state: SimState, x: number, y: number, tick: number): number {
   const tx = Math.floor(x)
   const ty = Math.floor(y)
-  const time = getGameTime(state)
+  const time = gameTimeAt(state, tick)
   const biome = T.BIOME_OFFSET[terrainAt(state.map, tx, ty)] ?? 0
 
   // La carte est plate : le froid ne vient plus de l'altitude, seulement du BIOME (la neige, le
@@ -82,7 +103,7 @@ export function baselineTemperature(state: SimState, x: number, y: number): numb
   // de plus : l'abri les amortit, et le feu comme la tenue les PLANCHENT (l'ambiant est un
   // max) — le déni de zone tombe de ces lois, pas d'une mécanique neuve. Le froid météo
   // arrive en RAMPE (gradient bord → cœur de bande) : le front qui approche se SENT venir.
-  const exposed = biome - (time.isNight ? T.NIGHT_COLD : 0) - brumeCold(state, x, y) - meteoCold(state, x, y) // amorti par l'abri
+  const exposed = biome - (time.isNight ? T.NIGHT_COLD : 0) - brumeColdAt(state, x, y, tick) - meteoColdAt(state, x, y, tick) // amorti par l'abri
   const shelter = isSheltered(state, tx, ty) ? T.SHELTER_FACTOR : 1
   return clampTemp(base + shelter * exposed)
 }

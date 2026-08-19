@@ -439,7 +439,7 @@ export function moveToward(
     entity.facing = { x: sx / len, y: sy / len }
   }
   const moved = moveAvatar(
-    { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null },
+    { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null, etat: state },
     entity.x,
     entity.y,
     sx,
@@ -570,7 +570,7 @@ export function hordeStep(state: SimState, monster: Monster, entity: Entity, flu
   const cleDuFoyer = village.fireTy * state.map.width + village.fireTx
   let field = flux.champs.get(cleDuFoyer)
   if (!field) {
-    field = computeFlowField(state.map, state.nodes, solidesEternels(state.structures), village.fireTx, village.fireTy)
+    field = computeFlowField(state.map, state.nodes, solidesEternels(state.structures), village.fireTx, village.fireTy, state)
     flux.champs.set(cleDuFoyer, field)
   }
 

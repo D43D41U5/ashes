@@ -49,6 +49,7 @@ export { POI,
   COMPONENTS,
   COMPONENT_TYPES,
   FUNCTIONS,
+  GEL,
   GRENIER,
   TEMPERATURE,
   TERRAINS,
@@ -114,7 +115,7 @@ export { CREUX } from './racine-relief'
 export type { WorldMap, Zone } from './map'
 export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
-export { ambientTemperature, baselineTemperature, advanceTemperature } from './temperature'
+export { ambientTemperature, baselineTemperature, baselineTemperatureAt, advanceTemperature } from './temperature'
 // LA BRUME (spec brume.md) : le client rendra la nappe en la RECALCULANT du tick (patron front
 // de Cendre) — la géométrie pure et le bloc de calibration s'exportent, l'ordonnanceur non.
 export { brumeCentre, dansLaBrume, brumeJourEligible } from './brume'
@@ -130,9 +131,20 @@ export { BRUME } from './balance'
 export {
   FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt, frontMeteoPos, meteoCold, meteoFeuConso,
   meteoIntensity, meteoIntensityAt, meteoCycleEligible, meteoMouille, meteoQuiet, meteoSpeedFactor,
-  meteoSpeedFactorAt, meteoTypeBrut, meteoTypeDuCycle, meteoVisionFactor,
+  meteoSpeedFactorAt, meteoTypeBrut, meteoTypeDuCycle, meteoVisionFactor, frontDuCycle, meteoColdAt,
 } from './meteo'
 export type { MeteoFront, MeteoType, BandeMeteo, FoudreImpact } from './meteo'
+
+// LE GEL (spec gel.md) — le monde change d'état avec sa température, sans qu'une tuile ne
+// bouge. Tout est DÉRIVÉ : le client lira EXACTEMENT ces fonctions pour peindre la glace
+// (G5 : « on ne s'engage jamais sur la glace par surprise »), le feuillage nu (G6) et la
+// neige au sol (G7) — aucune seconde loi côté rendu, aucun octet de plus dans le snapshot.
+// `gelPossible` est la porte d'entrée bon marché : fausse, il n'y a rien à peindre.
+export {
+  estGele, gelPossible, traverseeGelee, vitesseSurGlace,
+  feuillageDenude, jourDeDefeuillaison, neigeAuSol,
+  bandeDuCycle, jourDuCycle, advanceDegel,
+} from './gel'
 export { METEO } from './balance'
 // LE FEU-STATION (spec feu-station) : l'état dérivable du snapshot côté client, et la donnée des slots.
 export { fireState, fireStateAt, fireActive, fireWarmthFactor, advanceFire, fuelTicksRemaining, fuelBurnProgress } from './fire'

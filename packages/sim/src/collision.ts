@@ -17,8 +17,10 @@
  */
 import { BALANCE, NODE_DEFS, TERRAINS, TICK_DT_S } from './balance'
 import { nodeAt, treeJitter, type ResourceNode } from './economy'
+import { gelPossible, traverseeGelee, vitesseSurGlace } from './gel'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { isBlockingTile, terrainAt, type WorldMap } from './map'
+import type { SimState } from './sim'
 import { structureBlocks, type Structure } from './village'
 
 const EPS = 1e-6
@@ -67,6 +69,20 @@ export interface MoveWorld {
    * s'arrêteraient sans que rien ne le dise (`npc.ts`, `moveWorldFor`).
    */
   opensDoors?: boolean
+  /**
+   * L'ÉTAT, ET POUR UNE SEULE RAISON : LE GEL (spec `gel.md` G4).
+   *
+   * La marchabilité d'une tuile d'EAU dépend de la température du monde — donc du tick, de
+   * l'acte, de l'heure, des fronts météo et de la Brume. Rien de tout cela ne tient dans une
+   * `WorldMap`, et `isBlockingTile` reste volontairement une question de CARTE : c'est ici
+   * que le temps entre, à un seul endroit, sous une seule loi.
+   *
+   * ABSENT = AUCUN GEL, et c'est le bon défaut : le worldgen, les bancs et les gardes de
+   * géométrie interrogent une carte hors du temps. Mais tout ce qui MARCHE ou CHERCHE UN
+   * CHEMIN dans le vrai jeu doit le renseigner, sans quoi la rivière serait franchissable
+   * pour l'avatar et bloquante pour la horde — la moitié exacte de G4 qui ne se voit pas.
+   */
+  etat?: SimState
 }
 
 /**
@@ -117,6 +133,32 @@ function edgeDeborde(world: MoveWorld, tx: number, ty: number, bit: number): boo
   return false
 }
 
+/**
+ * ═══ LE TERRAIN BLOQUE-T-IL ? — LE POINT UNIQUE OÙ LE GEL ENTRE (spec `gel.md` G4) ═══
+ *
+ * `isBlockingTile` répond pour la CARTE, hors du temps ; cette fonction répond pour le
+ * MONDE, à ce tick. La différence tient en une ligne : au Grand Froid, l'eau profonde gèle
+ * et devient un chemin.
+ *
+ * Elle existe pour qu'il n'y ait qu'UN endroit à corriger. Les trois questions de collision
+ * — la tuile (`blockedAt`), la sous-tuile (`blockedSubAt`), l'index des gros consommateurs
+ * (`makeIndexedIsBlockedAt`) — passent toutes par ici : l'avatar, le PNJ, la bête, l'A* et
+ * le champ de flux de la horde franchissent donc la rivière gelée ensemble, ou pas du tout.
+ * Recopier le test ailleurs, c'est rouvrir précisément le désastre que raconte le commentaire
+ * d'`isWater` — sept copies dont six cessent un jour de voir la même chose.
+ *
+ * ⚠ COORDONNÉES DE TUILE, TOUJOURS. Les appelants sous-tuile plancher avant d'appeler.
+ */
+function terrainBloque(world: MoveWorld, tx: number, ty: number): boolean {
+  if (!isBlockingTile(world.map, tx, ty)) return false
+  const etat = world.etat
+  // Hors du temps (worldgen, bancs, gardes de géométrie) : la carte seule. Et quand rien ne
+  // peut geler dans la vallée — tout l'acte I, la plupart des journées d'acte II —, la borne
+  // O(1) tranche AVANT toute lecture de terrain de plus.
+  if (etat === undefined || !gelPossible(etat)) return true
+  return !traverseeGelee(etat, tx, ty)
+}
+
 /** Une tuile est-elle bloquante pour ce déplaceur ? (terrain + structures + nœuds) */
 export function isBlockedAt(world: MoveWorld, tx: number, ty: number): boolean {
   return blockedAt(world, tx, ty)
@@ -147,7 +189,7 @@ function bloquantAt(world: MoveWorld, tx: number, ty: number, pleineTuile: boole
 }
 
 function blockedAt(world: MoveWorld, tx: number, ty: number): boolean {
-  if (isBlockingTile(world.map, tx, ty)) return true
+  if (terrainBloque(world, tx, ty)) return true
   if (world.structures) {
     // UN MUR SUR ARÊTE NE BLOQUE PAS SA TUILE : on s'y tient, on la traverse même — ce qui est
     // bloqué, c'est le FRANCHISSEMENT de l'arête, et cela ne se décide qu'en sous-tuile. À
@@ -266,9 +308,13 @@ export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: numbe
   const occupancy = occupancyOf(world)
   const moverVillageId = world.moverVillageId ?? null
   const portes = world.opensDoors ?? false
+  // LE GEL, HISSÉ HORS DE LA BOUCLE : « quelque chose peut-il geler à ce tick ? » ne dépend
+  // pas de la tuile, et un champ de flux pose la question des centaines de milliers de fois.
+  // Le tick ne bouge pas pendant un BFS : hisser la réponse ne change donc aucun résultat.
+  const gel = world.etat !== undefined && gelPossible(world.etat)
   return (tx: number, ty: number): boolean => {
     if (tx < 0 || ty < 0 || tx >= width || ty >= height) return blockedAt(world, tx, ty)
-    if (isBlockingTile(world.map, tx, ty)) return true
+    if (gel ? terrainBloque(world, tx, ty) : isBlockingTile(world.map, tx, ty)) return true
     const entry = occupancy.get(ty * width + tx)
     if (entry === undefined) return false
     if (entry.structure !== undefined && structureBlocks(entry.structure, moverVillageId, portes)) return true
@@ -286,7 +332,9 @@ export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: numbe
 function blockedSubAt(world: MoveWorld, sx: number, sy: number): boolean {
   const tx = Math.floor(sx / SUB)
   const ty = Math.floor(sy / SUB)
-  if (isBlockingTile(world.map, tx, ty)) return true
+  // Le gel se juge sur la TUILE, jamais sur la sous-tuile : `tx,ty` est déjà planché ici,
+  // et c'est ce qui garantit que le pas et l'A* lisent la même glace (spec `gel.md` G4).
+  if (terrainBloque(world, tx, ty)) return true
   if (world.structures) {
     const s = bloquantAt(world, tx, ty, false)
     if (s !== undefined) {
@@ -503,8 +551,16 @@ export function moveAvatar(
   speedScale = 1,
 ): { x: number; y: number } {
   if (dx === 0 && dy === 0) return { x, y }
-  const terrain = TERRAINS[terrainAt(world.map, Math.floor(x), Math.floor(y))]
-  const factor = terrain?.walkable ? terrain.speedFactor : 1
+  // LA GLACE COMMANDE LE PAS avant le terrain (spec `gel.md` G2) : le gué passe de 0,5 (on
+  // patauge) à `VITESSE_GLACE` (on glisse), et le lac gelé — qui n'a pas de `speedFactor`
+  // utilisable, il était infranchissable — en hérite aussi. Évalué SUR LA TUILE, comme le
+  // reste du gel : la marchabilité et la vitesse d'un même pas ne peuvent pas juger de deux
+  // points différents.
+  const tx = Math.floor(x)
+  const ty = Math.floor(y)
+  const glace = world.etat !== undefined ? vitesseSurGlace(world.etat, tx, ty) : undefined
+  const terrain = TERRAINS[terrainAt(world.map, tx, ty)]
+  const factor = glace ?? (terrain?.walkable ? terrain.speedFactor : 1)
   const speed = BALANCE.WALK_SPEED_TILES_PER_S * dtS * factor * speedScale
   const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1
   return resolveMove(world, x, y, dx * speed * norm, dy * speed * norm)

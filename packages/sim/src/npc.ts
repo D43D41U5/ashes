@@ -116,7 +116,7 @@ function moveWorldFor(state: SimState, villageId: number): MoveWorld {
   // On ne simule pas le battant qu'ils poussent : ils ouvrent et referment derrière eux, et
   // l'état que le JOUEUR a réglé n'est jamais touché — sinon les villageois laisseraient la porte
   // ouverte et défairaient sa décision, la seule chose qu'une porte serve à exprimer.
-  return { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: villageId, opensDoors: true }
+  return { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: villageId, opensDoors: true, etat: state }
 }
 
 /**

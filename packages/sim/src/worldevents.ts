@@ -54,7 +54,7 @@ export function spawnHorde(state: SimState, size: number): Horde | null {
 
   const target = state.villages[Math.floor(roll(state) * state.villages.length)] ?? state.villages[0]!
   const { width } = state.map
-  const champ = computeFlowField(state.map, state.nodes, solidesEternels(state.structures), target.fireTx, target.fireTy)
+  const champ = computeFlowField(state.map, state.nodes, solidesEternels(state.structures), target.fireTx, target.fireTy, state)
 
   // ELLE DOIT POUVOIR ARRIVER. Le champ donne la distance de MARCHE au Feu : on ne retient
   // que la couronne qu'une bête à `speed` tuiles/s franchit dans une nuit, avec de la marge

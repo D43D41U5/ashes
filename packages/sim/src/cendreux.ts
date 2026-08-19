@@ -205,7 +205,7 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
     else if (cold && !inHorde) goal = nearestWarmth(state, entity, CENDREUX.WARMTH_SEEK_RANGE)
     monster.targetId = goal?.prey?.id ?? null
     if (goal) {
-      const world = { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null }
+      const world = { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null, etat: state }
       // Le Feu bloque désormais sa tuile (hitbox) : viser À CÔTÉ, pas dessus —
       // sinon la dérive nocturne vers la chaleur ne trouve jamais de chemin.
       monster.path = pathToward(world, entity.x, entity.y, Math.floor(goal.x), Math.floor(goal.y)) ?? []

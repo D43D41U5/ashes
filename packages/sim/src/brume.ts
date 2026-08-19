@@ -84,9 +84,16 @@ export function brumeCentre(brume: Brume, tick: number): { x: number; y: number 
 
 /** Ce point est-il sous la nappe, maintenant ? */
 export function dansLaBrume(state: SimState, x: number, y: number): boolean {
+  return dansLaBrumeAu(state, x, y, state.tick)
+}
+
+/** Le même point, à un tick quelconque — pour l'hystérésis du dégel (spec `gel.md` G8), qui
+ *  relit la température du passé proche. `brumeCentre` est déjà une fonction pure du tick :
+ *  il n'y a rien à inventer, seulement à ne pas figer l'horloge sur `state.tick`. */
+export function dansLaBrumeAu(state: SimState, x: number, y: number, tick: number): boolean {
   const brume = state.brume
   if (!brume) return false
-  const c = brumeCentre(brume, state.tick)
+  const c = brumeCentre(brume, tick)
   if (!c) return false
   return distSq(x, y, c.x, c.y) <= BRUME.RAYON * BRUME.RAYON
 }
@@ -98,6 +105,11 @@ export function dansLaBrume(state: SimState, x: number, y: number): boolean {
  */
 export function brumeCold(state: SimState, x: number, y: number): number {
   return dansLaBrume(state, x, y) ? BRUME.COLD_MALUS : 0
+}
+
+/** Le même froid, à un tick quelconque (spec `gel.md` G8 — voir `dansLaBrumeAu`). */
+export function brumeColdAt(state: SimState, x: number, y: number, tick: number): number {
+  return dansLaBrumeAu(state, x, y, tick) ? BRUME.COLD_MALUS : 0
 }
 
 /** Distance² d'un point au segment [A,B] — la garde des Feux balaie tout le trajet de la nappe. */
