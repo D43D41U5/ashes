@@ -10,7 +10,10 @@
  * POINT DE LA CIBLE. Tranche 6 : LA FOUDRE (R8, critère A6) — section « R8 — la foudre
  * (A6) » en fin de fichier : l'élection pure par créneau (déterminisme, cadence exacte,
  * télégraphe), la résolution (l'abri supprime et épargne, jamais létal à PV pleins, la
- * cause `lightning`, zéro tirage) et le repli des PNJ vers l'abri.
+ * cause `lightning`, zéro tirage) et le repli des PNJ vers l'abri. Tranche 7 : L'ANNONCE
+ * (R9) — section « R9 — l'annonce (blizzard) » : l'écrivain unique (`meteoTypeDuJour`),
+ * le triplet annonce → entre → passe de chaque front blizzard, le silence des quatre
+ * autres types, la chronique (l'annonce seule y entre) et le zéro-tirage.
  *
  * Le calendrier est couplé 1 jour = 1 cycle (`calendarScaleForSeasonCycles`) : l'aube du
  * cycle c EST le jour c+1, et on SAUTE aux bords de cycle (le tick se pose, puis `step()`
@@ -21,7 +24,8 @@
 import { describe, expect, it } from 'vitest'
 import { BALANCE, CENDREUX, FAUNA, METEO, MONSTER_DEFS, TEMPERATURE, TERRAIN_GRASS } from './balance'
 import { brumeJourEligible } from './brume'
-import { drainEvents } from './events'
+import { CHRONICLE_EVENT_TYPES, chronicleFromEvents } from './chronicle'
+import { drainEvents, type SimEvent } from './events'
 import { avatarThreat, faunaStep, wolfStep, wolfVigor } from './faune'
 import { fireActive, fireState, fireWarmthFactor, fuelTicksRemaining } from './fire'
 import { countOf } from './items'
@@ -30,8 +34,8 @@ import { advanceFoudre } from './foudre'
 import { distSq } from './geometry'
 import {
   advanceMeteo, FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt, frontMeteoPos, meteoFeuConso,
-  meteoIntensity, meteoJourEligible, meteoMouille, meteoQuiet, meteoSpeedFactor, meteoTypeBrut, meteoVisionFactor,
-  type BandeMeteo, type MeteoFront, type MeteoType,
+  meteoIntensity, meteoJourEligible, meteoMouille, meteoQuiet, meteoSpeedFactor, meteoTypeBrut, meteoTypeDuJour,
+  meteoVisionFactor, type BandeMeteo, type MeteoFront, type MeteoType,
 } from './meteo'
 import { nearestPrey, spawnMonster, type Monster } from './monsters'
 import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimState } from './sim'
@@ -1424,5 +1428,163 @@ describe('R8 — la foudre (A6)', () => {
     expect(fireBubble(sim, e.x, e.y)).toBeGreaterThan(0) // replié dans la bulle de SON Feu…
     for (let t = 0; t < 200; t++) step(sim, [])
     expect(fireBubble(sim, e.x, e.y)).toBeGreaterThan(0) // …et il y tient tant que l'orage couvre
+  })
+})
+
+// ═══ R9 — L'ANNONCE (BLIZZARD) ══════════════════════════════════════════════════════════
+
+describe('R9 — l’annonce (blizzard)', () => {
+  /** La nuit : l'écart MINIMAL annonce → entrée (du crépuscule de la veille à l'aube qui élit). */
+  const NUIT_TICKS = TICKS_PER_CYCLE - DAY_TICKS_PER_CYCLE
+
+  type EvtBlizzard = Extract<SimEvent, { type: 'blizzard_annonce' | 'blizzard_entre' | 'blizzard_passe' }>
+
+  /** Le premier jour de la saison dont l'élection (fonction pure) rend un blizzard. */
+  function jourDeBlizzard(): number {
+    for (let d = 1; d <= BALANCE.SEASON_DAYS; d++) if (meteoTypeDuJour(d) === 'blizzard') return d
+    throw new Error('aucun blizzard sur la saison — la table TYPES a changé, recalibrer le test')
+  }
+
+  /**
+   * Joue les TICK-CLÉS de la saison — chaque aube (l'élection), chaque crépuscule sauf le
+   * dernier (l'annonce de demain ; le dernier annoncerait un jour 61 dont le front ne
+   * serait jamais joué ici), et l'entrée/sortie de chaque front élu — et relève les fronts
+   * et les événements blizzard. Un tick déjà joué (fin de front = aube suivante, entrée à
+   * l'aube même) n'est jamais rejoué : la marche est strictement monotone.
+   */
+  function saisonRelevee(sim: SimState, jours = BALANCE.SEASON_DAYS): { fronts: MeteoFront[]; evts: EvtBlizzard[] } {
+    const fronts: MeteoFront[] = []
+    const evts: EvtBlizzard[] = []
+    const visite = (t: number): void => {
+      if (t < sim.tick) return
+      sim.tick = t
+      step(sim, [])
+      for (const e of drainEvents(sim)) {
+        if (e.type === 'blizzard_annonce' || e.type === 'blizzard_entre' || e.type === 'blizzard_passe') evts.push(e)
+      }
+    }
+    for (let d = 1; d <= jours; d++) {
+      visite(tickAubeDuJour(d))
+      const front = sim.meteo
+      const ticks: number[] = []
+      if (front && front.day === d) {
+        fronts.push({ ...front })
+        ticks.push(front.startTick, front.endTick)
+      }
+      if (d < jours) ticks.push(tickAubeDuJour(d) + DAY_TICKS_PER_CYCLE) // le crépuscule : l'annonce de demain
+      for (const t of ticks.sort((a, b) => a - b)) visite(t)
+    }
+    return { fronts, evts }
+  }
+
+  it('UN SEUL ÉCRIVAIN : le front élu à l’aube EST `meteoTypeDuJour`, jour par jour', () => {
+    // La construction anti-mensonge (leçon « écrivain unique » du journal, 2026-08-18) :
+    // l'annonce lit la MÊME fonction que l'aube. Si cette égalité tient sur toute la
+    // saison, un deuxième chemin d'élection n'existe pas — le reste de la section en découle.
+    const sim = simMeteo()
+    for (let d = 1; d <= BALANCE.SEASON_DAYS; d++) {
+      sim.tick = tickAubeDuJour(d)
+      step(sim, [])
+      expect(sim.meteo && sim.meteo.day === d ? sim.meteo.type : null).toBe(meteoTypeDuJour(d))
+    }
+  })
+
+  it('l’acte I n’a pas de blizzard — la construction qui garantit à CHAQUE blizzard sa veille', () => {
+    // Un blizzard au jour 1 n'aurait pas de crépuscule d'avant pour s'annoncer. Il n'en
+    // existe pas : la table de l'acte I ne porte pas le type — le triplet est TOTAL.
+    expect('blizzard' in METEO.TYPES[0]!).toBe(false)
+  })
+
+  it('saison × 2 seeds : CHAQUE front blizzard a son triplet annonce → entre → passe, ordre strict — et RIEN d’autre', () => {
+    for (const seed of [7, 2026]) {
+      const { fronts, evts } = saisonRelevee(simMeteo(seed))
+      const blizzards = fronts.filter((f) => f.type === 'blizzard')
+      expect(blizzards.length).toBeGreaterThan(0) // sinon on mesure l'instrument, pas la règle
+      expect(evts.length).toBe(3 * blizzards.length) // le silence des autres types, COMPTÉ
+      for (const f of blizzards) {
+        const annonce = evts.find((e) => e.type === 'blizzard_annonce' && e.day === f.day)
+        const entre = evts.find((e) => e.type === 'blizzard_entre' && e.day === f.day)
+        const passe = evts.find((e) => e.type === 'blizzard_passe' && e.day === f.day)
+        expect(annonce, `annonce du blizzard du jour ${f.day} (seed ${seed})`).toBeTruthy()
+        expect(entre?.tick).toBe(f.startTick) // l'ENTRÉE réelle : le tick où la bande devient active
+        expect(passe?.tick).toBe(f.endTick) // la purge
+        // L'annonce précède l'entrée d'AU MOINS un crépuscule → aube (le critère R9).
+        expect(f.startTick - annonce!.tick).toBeGreaterThanOrEqual(NUIT_TICKS)
+        expect(annonce!.tick).toBeLessThan(entre!.tick)
+        expect(entre!.tick).toBeLessThan(passe!.tick)
+      }
+    }
+  })
+
+  it('les quatre autres types n’émettent RIEN — leur annonce est géométrique, on les voit venir', () => {
+    const { fronts, evts } = saisonRelevee(simMeteo())
+    expect(fronts.some((f) => f.type !== 'blizzard')).toBe(true) // le domaine balayé a bien des fronts ordinaires
+    const joursBlizzard = new Set(fronts.filter((f) => f.type === 'blizzard').map((f) => f.day))
+    for (const e of evts) expect(joursBlizzard.has(e.day), `${e.type} au jour ${e.day}`).toBe(true)
+  })
+
+  it('meteoActive=false : ZÉRO événement météo sur toute la saison', () => {
+    const { fronts, evts } = saisonRelevee(simMeteo(2026, false))
+    expect(fronts).toEqual([])
+    expect(evts).toEqual([])
+  })
+
+  it('l’annonce dit VRAI : le lendemain de chaque annonce, le front blizzard est LÀ', () => {
+    // La fonction unique rend le mensonge impossible — on l'affirme quand même.
+    const { fronts, evts } = saisonRelevee(simMeteo())
+    const annonces = evts.filter((e) => e.type === 'blizzard_annonce')
+    expect(annonces.length).toBeGreaterThan(0)
+    for (const a of annonces) {
+      expect(fronts.find((f) => f.day === a.day)?.type, `jour ${a.day}`).toBe('blizzard')
+      expect(a.tick).toBeLessThan(tickAubeDuJour(a.day)) // dite la VEILLE, avant l'aube qui élit
+    }
+  })
+
+  it('gardée par jour (patron `lastBrumeDay`) : rejouée au même crépuscule, UNE seule annonce', () => {
+    const sim = simMeteo()
+    sim.tick = tickAubeDuJour(jourDeBlizzard()) - NUIT_TICKS // le crépuscule de la veille
+    advanceMeteo(sim)
+    advanceMeteo(sim)
+    expect(drainEvents(sim).filter((e) => e.type === 'blizzard_annonce')).toHaveLength(1)
+  })
+
+  it('R9 ne tire RIEN : `rngState` intact de l’annonce à la purge', () => {
+    const sim = simMeteo()
+    drainEvents(sim) // le `day_started` de l'initialisation n'est pas à R9
+    const d = jourDeBlizzard()
+    const avant = sim.rngState
+    sim.tick = tickAubeDuJour(d) - NUIT_TICKS
+    advanceMeteo(sim) // l'annonce
+    sim.tick = tickAubeDuJour(d)
+    advanceMeteo(sim) // l'élection
+    sim.tick = sim.meteo!.startTick
+    advanceMeteo(sim) // l'entrée
+    sim.tick = sim.meteo!.endTick
+    advanceMeteo(sim) // la purge
+    expect(drainEvents(sim).map((e) => e.type)).toEqual(['blizzard_annonce', 'blizzard_entre', 'blizzard_passe'])
+    expect(sim.rngState).toBe(avant)
+    expect(sim.meteo ?? null).toBeNull()
+  })
+
+  it('la chronique : l’annonce y entre (un battement, daté de la VEILLE) — l’entrée et la sortie non, le patron Brume', () => {
+    expect(CHRONICLE_EVENT_TYPES.has('blizzard_annonce')).toBe(true)
+    expect(CHRONICLE_EVENT_TYPES.has('blizzard_entre')).toBe(false)
+    expect(CHRONICLE_EVENT_TYPES.has('blizzard_passe')).toBe(false)
+    const d = jourDeBlizzard()
+    const entrees = chronicleFromEvents(
+      [{ type: 'blizzard_annonce', tick: tickAubeDuJour(d) - NUIT_TICKS, day: d }],
+      SCALE,
+      {},
+    )
+    expect(entrees).toHaveLength(1)
+    expect(entrees[0]!.weight).toBe('battement')
+    expect(entrees[0]!.text).toContain('blizzard')
+    expect(entrees[0]!.day).toBe(d - 1) // datée du soir où on l'a su, pas du jour du front
+    // L'entrée et la sortie ne racontent rien de plus : le FORMATEUR les ignore aussi.
+    const muets: SimEvent[] = [
+      { type: 'blizzard_entre', tick: tickAubeDuJour(d), day: d },
+      { type: 'blizzard_passe', tick: tickAubeDuJour(d) + 1, day: d },
+    ]
+    expect(chronicleFromEvents(muets, SCALE, {})).toEqual([])
   })
 })

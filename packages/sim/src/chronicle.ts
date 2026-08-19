@@ -54,6 +54,7 @@ export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
   'convoy_spawned',
   'brume_annonce',
   'filon_decouvert',
+  'blizzard_annonce',
   'refugees_arrived',
   'refugees_recruited',
   'gift_given',
@@ -133,6 +134,14 @@ export function chronicleFromEvents(
             : `La Brume s'est retirée sur un filon de fer affleurant — pour qui ose.`,
           'recit',
         )
+        break
+      // LA MÉTÉO (spec meteo.md R9) : seul le blizzard est un fait mémorable — la pluie de
+      // mardi n'entre pas dans la chronique. Son annonce de la veille est L'entrée (patron
+      // Brume : le télégraphiage se raconte ; `blizzard_entre`/`blizzard_passe`, comme la
+      // levée et le retrait de la nappe, non). Un BATTEMENT, pas un récit : c'est le monde
+      // qui va serrer la vallée entière, l'étage du Grand Froid et des hordes.
+      case 'blizzard_annonce':
+        push(`Le vent du nord se lève — un blizzard couvrira la vallée demain. Rentrez le bois.`, 'battement')
         break
       case 'refugees_arrived':
         push(`Des réfugiés (${e.count}) sont apparus sur une route.`, 'recit')

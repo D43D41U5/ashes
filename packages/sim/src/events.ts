@@ -187,6 +187,20 @@ export type SimEvent =
    *  la Cendre. Le client matérialise le filon depuis `filon_decouvert` — sans ce fait, il lui
    *  resterait un nœud fantôme (le filon VIDÉ, lui, a déjà son `node_depleted`). */
   | { type: 'filon_retire'; tick: number; nodeId: number }
+  /**
+   * LA MÉTÉO (spec `meteo.md` R9) — seul le BLIZZARD fait événement : les quatre autres
+   * fronts s'annoncent GÉOMÉTRIQUEMENT (le mur se voit venir — position fonction pure du
+   * tick, rien à dire) ; lui est trop large pour être esquivé, la réponse est PRÉPARER.
+   * L'ANNONCE tombe la veille au crépuscule (patron `brume_annonce`) et dit VRAI par
+   * construction : elle lit la MÊME fonction pure d'élection (`meteoTypeDuJour`) que
+   * l'aube qui lèvera le front. `day` porte le jour de saison du front annoncé (« le
+   * blizzard du jour N »). L'ENTRÉE marque le tick où la bande devient active
+   * (`startTick`, pas l'élection), la SORTIE sa purge — du signal de HUD/rendu, hors
+   * chronique (patron Brume : l'annonce se raconte, la levée et le retrait non).
+   */
+  | { type: 'blizzard_annonce'; tick: number; day: number }
+  | { type: 'blizzard_entre'; tick: number; day: number }
+  | { type: 'blizzard_passe'; tick: number; day: number }
   | { type: 'gift_given'; tick: number; byEntityId: number; toVillageId: number; item: ItemId; count: number }
   | { type: 'village_archetype_changed'; tick: number; villageId: number; archetype: 'foyer' | 'meute' | 'neutre' }
   | { type: 'evacuation_opened'; tick: number; tx: number; ty: number }

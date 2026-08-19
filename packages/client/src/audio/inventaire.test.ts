@@ -23,7 +23,9 @@ describe('l’inventaire des 73 faits', () => {
     expect(comptes.filter((c) => c.n === 0)).toEqual([]) // pas de section vide à l'écran
     const somme = comptes.reduce((t, c) => t + c.n, 0)
     expect(somme).toBe(Object.keys(INVENTAIRE).length)
-    expect(somme).toBe(73) // 68 → 73 le 2026-08-18 : la Brume (5 faits, spec brume.md)
+    // 68 → 73 le 2026-08-18 : la Brume (5 faits, spec brume.md) ; 73 → 76 le 2026-08-19 :
+    // les trois faits du blizzard (météo R9).
+    expect(somme).toBe(76)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -61,8 +63,11 @@ describe('l’inventaire des 73 faits', () => {
     // (l'ouverture qui monte) ; le retrait de la nappe et celui du filon sont muets — une
     // menace qui s'en va ne sonne pas (le principe de `horde_dispersed`), et `filon_retire`
     // est un fait de plomberie client (dématérialiser le nœud), pas un moment.
+    // 73 → 76 faits et 30 → 33 SILENCES le 2026-08-19 : le blizzard (météo R9) naît MUET trois
+    // fois (`blizzard_annonce`/`_entre`/`_passe`) — le vent est une nappe du chantier audio
+    // météo, pas un one-shot d'événement ; sa voix se décidera au banc, avec le rendu.
     expect(SONORES.length).toBe(43)
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(30)
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(33)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {
