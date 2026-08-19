@@ -154,6 +154,21 @@ const COUVERTURE_MIN = 1 / CELLULES_PAR_TUILE
  * l'aurait effacé. Si l'effacement était voulu (une vallée que la neige rend méconnaissable),
  * c'est ce plafond qu'il faut lever, et lui seul.
  */
+/**
+ * LA COUVERTURE À LAQUELLE LE MANTEAU SE REFERME.
+ *
+ * La trame sert la TRANSITION — la première poudre, la lisière mouchetée, la fonte qui
+ * découvre. Elle ne doit PAS survivre au plein manteau : à 0,90, seize cellules moins deux
+ * laissaient encore 12 % de la surface découverte, réparties UNIFORMÉMENT — vu de haut ça
+ * lit comme du confetti vert, pas comme de la neige (relevé d'Alexis sur la planche du
+ * jour 59 : « toute la surface n'est pas complètement recouverte »). Un vrai champ à 90 %
+ * s'est refermé ; il n'y perce plus que quelques touffes.
+ *
+ * On remappe donc : la couverture atteint les seize cellules dès `COUVERTURE_PLEINE`, et
+ * la trame garde tout son domaine en dessous — là où elle raconte quelque chose.
+ */
+const COUVERTURE_PLEINE = 0.8
+
 const NEIGE_SUR_GLACE_MAX = CELLULES_PAR_TUILE / 2
 
 /**
@@ -330,9 +345,12 @@ export class GelLayer {
         // Combien de cellules blanchissent : la couverture, quantifiée sur les 16 crans de
         // la trame. Jamais une opacité continue — c'est la règle, et c'est ce qui laisse la
         // silhouette du terrain lisible dessous.
+        // Le manteau se REFERME à `COUVERTURE_PLEINE` : au-delà, plus un trou. En dessous,
+        // la trame garde tout son domaine — c'est là qu'elle dit la poudre et la lisière.
+        const pleine = Math.min(1, couverture / COUVERTURE_PLEINE)
         const cellules = gelee
-          ? Math.min(NEIGE_SUR_GLACE_MAX, Math.round(couverture * CELLULES_PAR_TUILE))
-          : Math.round(couverture * CELLULES_PAR_TUILE)
+          ? Math.min(NEIGE_SUR_GLACE_MAX, Math.round(pleine * CELLULES_PAR_TUILE))
+          : Math.round(pleine * CELLULES_PAR_TUILE)
         const glace = terrain === TERRAIN_DEEP_WATER ? GLACE_LAC : GLACE_GUE
         const bx = (tx - tx0) * SUB
         const by = (ty - ty0) * SUB
