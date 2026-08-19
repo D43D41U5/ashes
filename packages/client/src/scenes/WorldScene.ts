@@ -1589,7 +1589,7 @@ export class WorldScene extends Phaser.Scene {
       // l'inverse aurait retardé le flash d'une image sur le trait qui le cause).
       const meteoFront = this.view.meteo
       const flash = this.foudreFx?.update(time, meteoFront, this.lastTime.tick, this.map.width, this.map.height) ?? 0
-      this.meteoLayer?.update(time, meteoFront, this.lastTime.tick, day, flash, this.predicted)
+      this.meteoLayer?.update(time, meteoFront, this.lastTime.tick, day, flash, this.predicted, this.cameras.main)
     }
 
     // ON NE MARCHE PAS EN TAPANT. Le champ de recherche du panneau de craft prend
