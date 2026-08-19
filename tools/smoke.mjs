@@ -13406,22 +13406,50 @@ const SCENARIOS = {
       const arbres = (s.view.nodes ?? []).filter((n) => n.type === 'tree' || n.type === 'old_tree')
       let best = null
       for (const a of arbres) {
-        let caduc = 0, conif = 0
+        let caduc = 0, conif = 0, autres = 0
         for (const b of arbres) {
           if (Math.abs(b.tx - a.tx) > DX || Math.abs(b.ty - a.ty) > DY) continue
           const t = terrain[b.ty * W + b.tx]
           if (CADUCS.has(t)) caduc++
           else if (CONIF.has(t)) conif++
+          else autres++
         }
-        // Le MINIMUM des deux : c'est un ÉQUILIBRE qu'on cherche, pas un total. Une somme
-        // aurait élu une futaie pure de soixante pins et zéro feuillu.
+        // ZÉRO ARBRE « AUTRE », ET C'EST LA CONDITION QUI FAIT TOUT LE SENS DE LA PHOTO.
+        //
+        // Un feuillu planté sur de l'HERBE garde ses feuilles tout l'hiver — `feuillageDenude`
+        // teste le TERRAIN (forest/old_growth/willow) alors que le peuplement plante chênes et
+        // saules sur `grass` (`MELANGE_PRE`). C'est un défaut de `/sim`, au journal. Mais un
+        // cadre qui en contient un montre DEUX arbres verts dont on ne peut pas dire lequel est
+        // un conifère qui tient (la promesse) et lequel est un chêne qui rate (le défaut) :
+        // l'image démontre alors la règle ET son contre-exemple avec les mêmes pixels, donc ne
+        // démontre rien. En exigeant zéro, **toute cime verte du cadre EST un conifère par
+        // construction**, et la photo ne dit plus qu'une chose.
+        //
+        // ON GARDE QUAND MÊME UN REPLI. MESURÉ sur la seed 2026 : **aucun cadre de la carte**
+        // ne réunit feuillus et conifères sans porter aussi un arbre « autre ». Exiger zéro
+        // rendait donc `null` et ne photographiait rien — or une planche muette n'apprend
+        // rien à personne. On élit donc d'abord le PUR ; à défaut, le moins impur, et le
+        // compte est CRIÉ pour que la photo se lise avec son défaut sous les yeux. Que le
+        // repli soit toujours pris est lui-même le constat : le cas du feuillu de pré est
+        // partout.
         const score = Math.min(caduc, conif)
-        if (!best || score > best.score) best = { x: a.tx, y: a.ty, score, caduc, conif }
+        // LE MÉLANGE D'ABORD, LA PURETÉ ENSUITE — et l'ordre compte : préférer le pur AVANT
+        // d'exiger le mélange a élu un cadre à `conifères 0`, c'est-à-dire une futaie de
+        // feuillus toute seule, qui ne montre évidemment pas que le conifère tient. Un cadre
+        // sans les deux familles n'est pas candidat, point.
+        if (score === 0) continue
+        const cand = { x: a.tx, y: a.ty, score, caduc, conif, autres, pur: autres === 0 }
+        if (!best) { best = cand; continue }
+        if (cand.pur !== best.pur) { if (cand.pur) best = cand; continue }
+        if (score > best.score) best = cand
       }
       return best
     })
     console.log(`  lisière feuillus/conifères (${lisiere?.x}, ${lisiere?.y}) — équilibre ${lisiere?.score}`
-      + ` : feuillus ${lisiere?.caduc} · conifères ${lisiere?.conif}`)
+      + ` : feuillus ${lisiere?.caduc} · conifères ${lisiere?.conif}`
+      + (lisiere?.pur ? ' · cadre PUR (aucun arbre hors des deux familles)'
+        : ` · ⚠ ${lisiere?.autres} arbre(s) « AUTRE » dans le cadre — des feuillus sur un sol non caduc,`
+          + ' qui gardent leurs feuilles (défaut de /sim au journal) : toute cime verte n’est donc PAS un conifère'))
 
     const out = {}
     // LE PAYSAGE — à midi, parce qu'un paysage se regarde éclairé.
