@@ -23,7 +23,7 @@ describe('l’inventaire des 68 faits', () => {
     expect(comptes.filter((c) => c.n === 0)).toEqual([]) // pas de section vide à l'écran
     const somme = comptes.reduce((t, c) => t + c.n, 0)
     expect(somme).toBe(Object.keys(INVENTAIRE).length)
-    expect(somme).toBe(68)
+    expect(somme).toBe(71) // 68 → 71 le 2026-08-19 : les trois faits du blizzard (météo R9)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -55,8 +55,11 @@ describe('l’inventaire des 68 faits', () => {
     // Une matière ramassée ouvre souvent plusieurs recettes d'un coup, et poser une station
     // en révèle une poignée dans le même tick : un son par ligne ferait une rafale. Si la
     // découverte doit s'entendre, ce sera d'UNE voix par salve — une décision à part.
+    // 68 → 71 faits et 28 → 31 SILENCES le 2026-08-19 : le blizzard (météo R9) naît MUET trois
+    // fois (`blizzard_annonce`/`_entre`/`_passe`) — le vent est une nappe du chantier audio
+    // météo, pas un one-shot d'événement ; sa voix se décidera au banc, avec le rendu.
     expect(SONORES.length).toBe(40)
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(28)
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(31)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

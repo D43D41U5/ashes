@@ -87,6 +87,12 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   horde_spawned: { voix: 'voix', famille: 'saison', quoi: 'une horde se forme et marche sur un village' },
   horde_dispersed: { voix: 'muet', famille: 'saison', quoi: 'la horde se dissipe à l’aube' },
   convoy_spawned: { voix: 'muet', famille: 'saison', quoi: 'une carcasse de convoi apparaît sur la route' },
+  // LE BLIZZARD (spec meteo.md R9) : trois faits nés MUETS — complétion de type, pas un
+  // arbitrage de timbre. Le vent qui se lève appartient au chantier audio du rendu météo
+  // (une nappe qui monte, pas un one-shot d'événement) : la voix se décidera là, au banc.
+  blizzard_annonce: { voix: 'muet', famille: 'saison', quoi: 'le vent du nord se lève — un blizzard arrivera demain' },
+  blizzard_entre: { voix: 'muet', famille: 'saison', quoi: 'le blizzard entre sur la vallée — le froid mord' },
+  blizzard_passe: { voix: 'muet', famille: 'saison', quoi: 'le blizzard est passé — on peut ressortir' },
   ark_departed: { voix: 'voix', famille: 'saison', quoi: 'l’Arche lève l’ancre — avec ceux qui étaient à bord' },
 
   // ── BÂTIR, CRAFTER, MANGER — 4 voix : poser, perdre, finir, cuire ────────────────

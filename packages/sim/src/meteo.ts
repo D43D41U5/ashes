@@ -13,8 +13,12 @@
  * dans leurs lois (`nearestPrey`, `chooseQuarry`, `nearestThreat`) — au point de la CIBLE ;
  * la TRANCHE 6 arme LA FOUDRE (`foudreImpactAt`/`foudreTelegrapheAt`, spec R8) : l'élection
  * pure vit ICI, la résolution des dégâts dans `foudre.ts` (une phase dédiée — ce module ne
- * doit RIEN importer de combat), le repli des PNJ dans `npc-needs.ts` (`handleOrage`).
- * Reste à venir : les événements d'annonce (T7).
+ * doit RIEN importer de combat), le repli des PNJ dans `npc-needs.ts` (`handleOrage`) ;
+ * la TRANCHE 7 (spec R9) DIT LE BLIZZARD : l'élection complète devient UNE fonction pure
+ * (`meteoTypeDuJour` — le seul écrivain), l'annonce tombe la veille au crépuscule
+ * (`blizzard_annonce`, patron Brume), l'entrée réelle et la purge s'émettent
+ * (`blizzard_entre`/`blizzard_passe`) — les quatre autres types n'émettent RIEN,
+ * leur annonce est géométrique.
  *
  * ═══ ZÉRO TIRAGE SUR LE PRNG D'ÉTAT ═══
  *
@@ -47,9 +51,10 @@
  */
 import { BALANCE, METEO } from './balance'
 import { brumeJourEligible } from './brume'
+import { emitEvent } from './events'
 import { hash2 } from './noise'
 import type { SimState } from './sim'
-import { actForDay, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
+import { actForDay, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
 
 const METEO_SALT = 0x9b4de3c1
 
@@ -67,6 +72,11 @@ export interface MeteoFront {
    *  au `endTick`, le bord ARRIÈRE a quitté le bord opposé. Linéaire entre les deux. */
   startTick: number
   endTick: number
+  /** Posé (vrai) au tick où la bande devient ACTIVE — la garde d'unicité de
+   *  `blizzard_entre` (R9). Un FLAG et pas une égalité de tick exact (patron `phase` de la
+   *  Brume) : un hôte qui saute des ticks ne doit pas perdre l'entrée. Jamais posé pour
+   *  les quatre types muets — leur record reste au bit près celui d'avant la tranche 7. */
+  entre?: boolean
 }
 
 /** La bande au tick donné : l'axe de TRAVERSÉE et l'intervalle `[lo, hi]` occupé sur cet
@@ -99,6 +109,28 @@ export function meteoTypeBrut(day: number): MeteoType {
     if (roll < cumul) return type
   }
   return dernier // filet d'arrondi : les poids somment à 1 et roll < 1
+}
+
+/**
+ * R2+R3 — L'ÉLECTION COMPLÈTE DU JOUR, en UNE fonction pure : `null` si le jour n'élit
+ * pas, sinon le type APRÈS la dégradation R3 — jamais l'élu brut.
+ *
+ * ═══ UN SEUL ÉCRIVAIN — c'est le contrat, pas une commodité ═══
+ *
+ * `advanceMeteo` la consomme à l'aube ; l'annonce (R9) la lit au crépuscule de la VEILLE —
+ * l'élection de demain est une fonction pure du jour, la lire en avance est gratuit. Un
+ * deuxième chemin d'élection aurait fini par mentir (une annonce qui promet un blizzard
+ * que l'aube dégrade en neige) : c'est la leçon « surface à écrivain unique » du journal
+ * des décisions (2026-08-18, recherche RimWorld) — l'annonce qui dit vrai n'est pas une
+ * discipline, c'est une construction.
+ */
+export function meteoTypeDuJour(day: number): MeteoType | null {
+  if (!meteoJourEligible(day)) return null
+  const type = meteoTypeBrut(day)
+  // R3 — Brume × blizzard : EXCLUSIFS À L'ÉLECTION. Deux dénis de zone majeurs le même
+  // jour rendraient la journée illisible ; les deux éligibilités étant des fonctions pures
+  // du jour, l'exclusion l'est aussi — le blizzard d'un jour de Brume se dégrade en neige.
+  return type === 'blizzard' && brumeJourEligible(day) ? 'neige' : type
 }
 
 /**
@@ -308,31 +340,62 @@ export function foudreTelegrapheAt(
 /**
  * L'ordonnanceur de la météo — appelé chaque tick par `step()`, derrière l'interrupteur
  * DÉDIÉ `meteoActive` (spec R10). L'élection tombe au début de cycle, gardée par
- * `lastMeteoDay` (une par jour au plus) ; la purge est silencieuse — aucun événement dans
- * cette tranche (l'annonce est la tranche T7).
+ * `lastMeteoDay` (une par jour au plus). Et le BLIZZARD se dit (R9) — les quatre autres
+ * types restent muets, leur annonce est géométrique (on voit le mur venir) : l'annonce la
+ * veille au crépuscule (`blizzard_annonce`, le même bord de cycle que l'annonce de Brume,
+ * gardée par `lastMeteoAnnonceDay`), l'entrée réelle de la bande (`blizzard_entre`, au
+ * `startTick` — jamais à l'élection de l'aube) et la purge (`blizzard_passe`). Aucun
+ * tirage : trois lectures de fonctions pures du jour, zéro octet sur le flux seedé.
  */
 export function advanceMeteo(state: SimState): void {
   if (!state.meteoActive) return
 
   const front = state.meteo
-  if (front && state.tick >= front.endTick) state.meteo = null
+  if (front && state.tick >= front.endTick) {
+    // R9 — LA SORTIE se dit pour le seul blizzard : « il est passé » est l'autre moitié
+    // du contrat d'annonce (on a préparé, on peut ressortir). Un fait de HUD/rendu — la
+    // chronique ne le raconte pas (patron Brume : la levée et le retrait non plus).
+    if (front.type === 'blizzard') emitEvent(state, { type: 'blizzard_passe', tick: state.tick, day: front.day })
+    state.meteo = null
+  }
 
   // L'ÉLECTION, au bord de cycle. La fenêtre élue finit avant le cycle suivant
   // (TRAVERSEE_TICKS ≤ TICKS_PER_CYCLE) : le record est donc toujours libre ici.
-  if (state.tick % TICKS_PER_CYCLE !== 0) return
-  const day = seasonDayAtTick(state.tick, state.calendarScale)
-  if (state.lastMeteoDay === day) return
-  state.lastMeteoDay = day
-  if (!meteoJourEligible(day)) return
+  if (state.tick % TICKS_PER_CYCLE === 0) {
+    const day = seasonDayAtTick(state.tick, state.calendarScale)
+    if (state.lastMeteoDay !== day) {
+      state.lastMeteoDay = day
+      const type = meteoTypeDuJour(day)
+      if (type !== null) {
+        const edge = Math.min(3, Math.floor(hash2(day, 2, METEO_SALT) * 4)) as MeteoFront['edge']
+        const marge = TICKS_PER_CYCLE - METEO.TRAVERSEE_TICKS
+        const startTick = state.tick + Math.floor(hash2(day, 3, METEO_SALT) * marge)
+        state.meteo = { type, day, edge, startTick, endTick: startTick + METEO.TRAVERSEE_TICKS }
+      }
+    }
+  }
 
-  let type = meteoTypeBrut(day)
-  // R3 — Brume × blizzard : EXCLUSIFS À L'ÉLECTION. Deux dénis de zone majeurs le même
-  // jour rendraient la journée illisible ; les deux éligibilités étant des fonctions pures
-  // du jour, l'exclusion l'est aussi — le blizzard d'un jour de Brume se dégrade en neige.
-  if (type === 'blizzard' && brumeJourEligible(day)) type = 'neige'
+  // R9 — L'ENTRÉE RÉELLE du blizzard : le tick où la bande devient active (`startTick`),
+  // pas l'élection de l'aube — entre les deux il peut s'écouler des heures de ciel clair,
+  // et « il entre » dit le moment où le froid commence à mordre. Après l'élection : un
+  // front qui entre au tick même de son élection s'émet ce tick-là.
+  const actif = state.meteo
+  if (actif && actif.type === 'blizzard' && !actif.entre && state.tick >= actif.startTick) {
+    actif.entre = true
+    emitEvent(state, { type: 'blizzard_entre', tick: state.tick, day: actif.day })
+  }
 
-  const edge = Math.min(3, Math.floor(hash2(day, 2, METEO_SALT) * 4)) as MeteoFront['edge']
-  const marge = TICKS_PER_CYCLE - METEO.TRAVERSEE_TICKS
-  const startTick = state.tick + Math.floor(hash2(day, 3, METEO_SALT) * marge)
-  state.meteo = { type, day, edge, startTick, endTick: startTick + METEO.TRAVERSEE_TICKS }
+  // R9 — L'ANNONCE, la veille au CRÉPUSCULE (le même bord que l'annonce de Brume) : le
+  // blizzard est trop large pour être esquivé, la réponse est PRÉPARER — rentrer le bois,
+  // remplir le garde-manger. On lit l'élection de DEMAIN — le jour du prochain bord de
+  // cycle, jamais `day + 1` : à toute échelle de calendrier, c'est CE jour-là que l'aube
+  // élira — par `meteoTypeDuJour`, la même fonction que l'aube : le mensonge est
+  // impossible par construction. Elle précède l'entrée d'au moins un crépuscule → aube :
+  // le `startTick` du front de demain est ≥ son aube, et l'annonce tombe la nuit d'avant.
+  if (state.tick % TICKS_PER_CYCLE !== DAY_TICKS_PER_CYCLE) return
+  const demain = seasonDayAtTick(state.tick + (TICKS_PER_CYCLE - DAY_TICKS_PER_CYCLE), state.calendarScale)
+  if (state.lastMeteoAnnonceDay === demain) return
+  state.lastMeteoAnnonceDay = demain
+  if (meteoTypeDuJour(demain) !== 'blizzard') return
+  emitEvent(state, { type: 'blizzard_annonce', tick: state.tick, day: demain })
 }
