@@ -87,6 +87,15 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   horde_spawned: { voix: 'voix', famille: 'saison', quoi: 'une horde se forme et marche sur un village' },
   horde_dispersed: { voix: 'muet', famille: 'saison', quoi: 'la horde se dissipe à l’aube' },
   convoy_spawned: { voix: 'muet', famille: 'saison', quoi: 'une carcasse de convoi apparaît sur la route' },
+  // LA BRUME (spec brume.md, 2026-08-18). L'annonce et la levée SONNENT : le §9bis exige que
+  // tout se signale, et tant que la nappe n'a pas son rendu, l'oreille est le seul préavis.
+  // Le retrait est MUET par le principe des menaces qui s'en vont (`horde_dispersed`) — c'est
+  // le filon qu'il découvre qui a la voix : l'ouverture qui MONTE.
+  brume_annonce: { voix: 'voix', famille: 'saison', quoi: 'le gibier se tait — une brume froide descendra à l’aube (le préavis)' },
+  brume_levee: { voix: 'voix', famille: 'saison', quoi: 'la nappe se lève : sa zone est déniée à qui n’a pas de tenue' },
+  brume_retiree: { voix: 'muet', famille: 'saison', quoi: 'la Brume se retire (le filon qu’elle découvre a sa voix)' },
+  filon_decouvert: { voix: 'voix', famille: 'saison', quoi: 'un filon affleure au retrait de la Brume — la menace qui paie' },
+  filon_retire: { voix: 'muet', famille: 'saison', quoi: 'le filon se referme sans coup de pioche final (périmé, remplacé, ou mangé)' },
   ark_departed: { voix: 'voix', famille: 'saison', quoi: 'l’Arche lève l’ancre — avec ceux qui étaient à bord' },
 
   // ── BÂTIR, CRAFTER, MANGER — 4 voix : poser, perdre, finir, cuire ────────────────

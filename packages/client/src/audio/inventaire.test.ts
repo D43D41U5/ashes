@@ -7,7 +7,7 @@ import { FAMILLES, INVENTAIRE, SONORES, faitsDeFamille, type FamilleId } from '.
  * le trou que ce chantier vient boucher. Les gardes balaient tout l'espace (62 faits), elles
  * ne piochent pas des cas.
  */
-describe('l’inventaire des 68 faits', () => {
+describe('l’inventaire des 73 faits', () => {
   const ids = new Set<string>(FAMILLES.map((f) => f.id))
 
   it('AUCUN fait ne tombe dans une famille non déclarée (sinon il sort du banc en silence)', () => {
@@ -18,12 +18,12 @@ describe('l’inventaire des 68 faits', () => {
     expect(orphelins).toEqual([])
   })
 
-  it('les familles PARTITIONNENT les 68 faits — chacune en porte, aucune n’est vide', () => {
+  it('les familles PARTITIONNENT les 73 faits — chacune en porte, aucune n’est vide', () => {
     const comptes = FAMILLES.map((f) => ({ id: f.id, n: faitsDeFamille(f.id).length }))
     expect(comptes.filter((c) => c.n === 0)).toEqual([]) // pas de section vide à l'écran
     const somme = comptes.reduce((t, c) => t + c.n, 0)
     expect(somme).toBe(Object.keys(INVENTAIRE).length)
-    expect(somme).toBe(68)
+    expect(somme).toBe(73) // 68 → 73 le 2026-08-18 : la Brume (5 faits, spec brume.md)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -35,7 +35,7 @@ describe('l’inventaire des 68 faits', () => {
     expect(muets).toEqual([])
   })
 
-  it('l’état publié est bien l’état ACTUEL : 40 voix, 28 silences décidés', () => {
+  it('l’état publié est bien l’état ACTUEL : 43 voix, 30 silences décidés', () => {
     // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 38 sonnent
     // VRAIMENT (et que les 26 se taisent vraiment) — ici on garde seulement la proportion.
     // 34 → 35 le 2026-07-29 : `node_depleted` sort du silence (l'arbre qui tombe craque).
@@ -55,8 +55,14 @@ describe('l’inventaire des 68 faits', () => {
     // Une matière ramassée ouvre souvent plusieurs recettes d'un coup, et poser une station
     // en révèle une poignée dans le même tick : un son par ligne ferait une rafale. Si la
     // découverte doit s'entendre, ce sera d'UNE voix par salve — une décision à part.
-    expect(SONORES.length).toBe(40)
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(28)
+    // 68 → 73 faits, 40 → 43 voix et 28 → 30 silences le 2026-08-18 : LA BRUME naît (spec
+    // brume.md). L'annonce et la levée sonnent (le §9bis exige que tout se signale, et tant
+    // que la nappe n'a pas de rendu l'oreille est le seul préavis), le filon a sa voix
+    // (l'ouverture qui monte) ; le retrait de la nappe et celui du filon sont muets — une
+    // menace qui s'en va ne sonne pas (le principe de `horde_dispersed`), et `filon_retire`
+    // est un fait de plomberie client (dématérialiser le nœud), pas un moment.
+    expect(SONORES.length).toBe(43)
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(30)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

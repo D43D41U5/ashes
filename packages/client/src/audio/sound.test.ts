@@ -66,7 +66,7 @@ describe('la table de routage audio (soundForEvent)', () => {
     expect(desaccords).toEqual([])
   })
 
-  it("l'inventaire tranché de GATE 1 : 68 faits, 40 voix", () => {
+  it("l'inventaire tranché de GATE 1 : 73 faits, 43 voix", () => {
     // Un compte, pas un jugement. S'il bouge, c'est qu'un fait de domaine est né ou qu'une
     // voix a changé — dans les deux cas, quelqu'un doit le savoir.
     const total = Object.keys(VOIX).length
@@ -81,12 +81,16 @@ describe('la table de routage audio (soundForEvent)', () => {
     // 66 → 67 le 2026-08-01 : `recipe_revealed` (D2), muet par décision — voir `inventaire.ts`.
     // 67 → 68 faits et 39 → 40 voix le 2026-08-16 : `bird_flush` (forêts-vivantes §3) — l'envol
     // de la lisière, un signal square qui MONTE : la forêt vous a dénoncé.
-    expect(total).toBe(68)
+    // 68 → 73 faits et 40 → 43 voix le 2026-08-18 : LA BRUME naît (spec brume.md) — l'annonce
+    // (sine qui descend : le froid qui vient), la levée (noise sourd : la matière de la nappe)
+    // et le filon (triangle qui monte : l'ouverture). Le retrait de la nappe et `filon_retire`
+    // restent muets, par le principe des menaces qui s'en vont (`horde_dispersed`).
+    expect(total).toBe(73)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
     // le pendant du hurlement pour les morts, quand la nuit bascule d'espèce avec les actes.
-    expect(voix).toBe(40)
+    expect(voix).toBe(43)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

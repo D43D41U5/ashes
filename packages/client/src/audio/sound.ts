@@ -162,8 +162,22 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
       return { wave: 'sine', freq: 196, freqEnd: 294, dur: 1.5, gain: 0.095 } // le seul vrai départ
     case 'season_ended':
       return { wave: 'sine', freq: 147, freqEnd: 49, dur: 2.2, gain: 0.11 } // la plus longue descente du jeu
+    // ── LA BRUME (spec brume.md) — le froid qui vient, la matière qui couvre, l'ouverture ──
+    // L'ANNONCE : le monde en cérémonie (sine) qui DESCEND — le froid s'annonce, comme la
+    // nuit mais d'ailleurs. Tant que la nappe n'a pas son rendu, c'est LE préavis (§9bis).
+    case 'brume_annonce':
+      return { wave: 'sine', freq: 294, freqEnd: 147, dur: 1.0, gain: 0.08 }
+    // LA LEVÉE : la nappe est de la MATIÈRE (noise sourd, la voix de la cendre) — plus long
+    // que `cendre_avance`, car celle-ci passe et repart.
+    case 'brume_levee':
+      return { wave: 'noise', freq: 0, dur: 1.2, gain: 0.07, lowpass: 400 }
+    // LE FILON : une hauteur qui MONTE ouvre — c'est un don du monde, le jumeau minier
+    // d'`evacuation_opened`. (`brume_retiree` reste muet : une menace qui s'en va ne sonne
+    // pas — c'est le filon qui parle pour elle.)
+    case 'filon_decouvert':
+      return { wave: 'triangle', freq: 220, freqEnd: 440, dur: 0.5, gain: 0.08 }
     // MUETS : `day_started` et `season_day_started` (c'est chaque jour, et le HUD le dit),
-    // `horde_dispersed` et `convoy_spawned` (une menace qui s'en va n'est pas un fait sonore).
+    // `horde_dispersed`, `convoy_spawned` et `brume_retiree` (une menace qui s'en va n'est pas un fait sonore).
 
     // ── BÂTIR, CRAFTER, MANGER ───────────────────────────────────────────────────────────
     case 'resource_harvested':
