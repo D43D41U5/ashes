@@ -9338,6 +9338,7 @@ const SCENARIOS = {
       const s = window.__BRAISES__.scene
       s.meteoLayer.grainActif = true
       s.foudreFx.liserFacteur = 0.45
+      s.foudreFx.telegrapheActif = true
       // On REND la caméra au joueur : sans ça tout ce qui suit se jouerait hors champ.
       if (s.playerSprite) s.cameras.main.startFollow(s.playerSprite, true, 0.16, 0.16) // les réglages du jeu (WorldScene)
       s.game.loop.wake()
@@ -9364,78 +9365,84 @@ const SCENARIOS = {
           console.error('!! ① prémisse fausse (pas d’orage, pas de bande, ou point hors cadre) — on recommence')
           await degeler(); await page.waitForTimeout(600); continue
         }
-        // ── LE BALAYAGE DU LISERÉ, sur LA MÊME image gelée : on cherche le plus PETIT poids
-        //    qui garde la marche positive sous averse pleine, pas le plus gros qui gagne le
-        //    mieux. Un noir épais juste dehors du rayon de dégâts finirait par se lire comme
-        //    faisant PARTIE de la zone marquée — la seule chose que l'anneau ne peut pas faire.
+        // ── QUATRE ÉTALONS SUR LA MÊME IMAGE GELÉE, ET IL EN FAUT QUATRE.
+        //
+        // Comparer l'ANNEAU à ce qui l'entoure ne mesure pas le télégraphe : ça mesure le
+        // télégraphe PLUS le décor sous lui. MESURÉ, et c'est ce qui a coûté une planche —
+        // une annonce tombée en FORÊT DENSE a rendu Δ(anneau/dehors) = +3,6 sans pluie et
+        // −3,4 avec : du bruit de houppiers dans les deux cas, et la question posée (« le
+        // rideau noie-t-il l'annonce ? ») restait sans réponse parce que le SITE dominait le
+        // signal. On éteint donc le télégraphe sur la MÊME image : le décor se soustrait
+        // exactement, et il ne reste que ce que la lueur AJOUTE. Croisé avec l'interrupteur
+        // du rideau, ça fait quatre prises — le patron des trois étalons du voisin, avec un
+        // de plus parce qu'il y a ici deux couches à isoler, pas une.
         const LIVRE = 0.45
-        const pas = async (i, opts) => page.evaluate(({ i, g, lf }) => {
+        const pas = async (i, opts) => page.evaluate(({ i, g, lf, tel }) => {
           const s = window.__BRAISES__.scene
           s.meteoLayer.grainActif = g
           s.foudreFx.liserFacteur = lf
+          s.foudreFx.telegrapheActif = tel
           // LA BASE EST L'HORLOGE DE LA BOUCLE, jamais un nombre absolu (voir l'en-tête).
           s.game.step(s.game.loop.time + (i + 1) * 16, 16)
           return {
             gouttes: s.meteoLayer?.sonde?.vivantes ?? 0,
             ticksLeft: s.foudreFx.sonde.ticksLeft,
+            alpha: s.foudreFx.sonde.alpha,
             flash: s.foudreFx.sonde.flash,
           }
-        }, { i, g: opts.grain, lf: opts.lisere })
+        }, { i, g: opts.grain, lf: opts.lisere, tel: opts.tel })
 
-        const sweep = []
+        const prises = {}
+        const etats = {}
         let i = 0
-        for (const lf of [0, 0.2, 0.45, 0.8]) {
-          const st = await pas(i++, { grain: true, lisere: lf })
-          const m = await bandesDe(vu.sx, vu.sy, vu.zoom)
-          if (lf === LIVRE) await page.screenshot({ path: `${OUT}/foudre-telegraphe-sous-pluie.png`, timeout: 180000 })
-          sweep.push({ lisere: lf, st, m })
+        const prendre = async (nom, opts, photo) => {
+          etats[nom] = await pas(i++, opts)
+          if (photo) await page.screenshot({ path: `${OUT}/${photo}`, timeout: 180000 })
+          prises[nom] = await bandesDe(vu.sx, vu.sy, vu.zoom)
         }
-        // La référence SANS rideau, au poids livré : c'est l'écart à celle-ci qui dit ce que
-        // la pluie coûte au télégraphe.
-        const stSec = await pas(i++, { grain: false, lisere: LIVRE })
-        await page.screenshot({ path: `${OUT}/foudre-telegraphe-sans-pluie.png`, timeout: 180000 })
-        const sansPluie = await bandesDe(vu.sx, vu.sy, vu.zoom)
-        const apres = await sonde()
-        const memeTel = apres.ticksLeft === tel.sonde.ticksLeft
-          && Math.abs(apres.x - tel.sonde.x) < 1e-6 && Math.abs(apres.y - tel.sonde.y) < 1e-6
-        const pluvieux = sweep[0]?.st.gouttes ?? 0
-        if (!memeTel) console.error(`!! le télégraphe a bougé pendant la mesure (${tel.sonde.ticksLeft} → ${apres.ticksLeft}) — paire à jeter`)
-        if (apres.flash > 0.001) console.error(`!! un éclair brûlait pendant la mesure (flash ${apres.flash.toFixed(3)}) — paire à jeter`)
-        if (!pluvieux) console.error('!! 0 goutte vivante à la prise « sous pluie » — on n’a pas mesuré ce qu’on croit')
-        if (stSec.gouttes) console.error(`!! ${stSec.gouttes} gouttes encore vivantes à la prise « sans pluie » — le témoin n’en est pas un`)
+        // Sous averse : avec le télégraphe (liseré livré), avec le télégraphe SANS liseré,
+        // et sans télégraphe du tout.
+        await prendre('pluieTel', { grain: true, lisere: LIVRE, tel: true }, 'foudre-telegraphe-sous-pluie.png')
+        await prendre('pluieSansLisere', { grain: true, lisere: 0, tel: true }, null)
+        await prendre('pluieNu', { grain: true, lisere: LIVRE, tel: false }, 'foudre-telegraphe-sous-pluie-temoin.png')
+        // Sans rideau : les deux mêmes, pour savoir ce que la pluie COÛTE au signal.
+        await prendre('secTel', { grain: false, lisere: LIVRE, tel: true }, 'foudre-telegraphe-sans-pluie.png')
+        await prendre('secNu', { grain: false, lisere: LIVRE, tel: false }, null)
+
+        // LA GARDE, sur les prises ELLES-MÊMES (et non sur la lecture d'avant le gel : le
+        // message `pause` est asynchrone, deux ticks passent toujours entre les deux).
+        const memeTel = etats.pluieTel.ticksLeft === etats.secNu.ticksLeft
+          && Math.abs(etats.pluieTel.alpha - etats.secNu.alpha) < 1e-9
+        const flashMax = Math.max(...Object.values(etats).map((e) => e.flash))
+        if (!memeTel) console.error(`!! le télégraphe a bougé ENTRE LES PRISES (${etats.pluieTel.ticksLeft} → ${etats.secNu.ticksLeft}) — planche à jeter`)
+        if (flashMax > 0.001) console.error(`!! un éclair brûlait pendant la mesure (flash ${flashMax.toFixed(3)}) — planche à jeter`)
+        if (!etats.pluieTel.gouttes) console.error('!! 0 goutte vivante sous averse — on n’a pas mesuré ce qu’on croit')
+        if (etats.secTel.gouttes) console.error(`!! ${etats.secTel.gouttes} gouttes encore vivantes au témoin sec — ce n’en est pas un`)
         await degeler()
-        const livre = sweep.find((r) => r.lisere === LIVRE)
-        if (!livre?.m || !sansPluie) { console.error('!! ① bandes non mesurables'); continue }
+        if (Object.values(prises).some((v) => !v)) { console.error('!! ① bandes non mesurables'); continue }
+
         const f = (v, n = 1) => String(Math.round(v * 10 ** n) / 10 ** n).padStart(8)
+        // CE QUE LA LUEUR AJOUTE, décor éliminé : anneau(avec) − anneau(sans), à rideau égal.
+        const gainPluie = prises.pluieTel.anneau.moy - prises.pluieNu.anneau.moy
+        const gainSec = prises.secTel.anneau.moy - prises.secNu.anneau.moy
+        // CE QUE LE LISERÉ CREUSE, décor éliminé : liseré(avec) − liseré(sans liseré).
+        const creuxLisere = prises.pluieTel.lisere.moy - prises.pluieSansLisere.lisere.moy
         console.log(
-          `   ${String(pluvieux).padStart(3)} gouttes vivantes sous averse · télégraphe identique aux deux bouts : ${memeTel ? 'OUI' : 'NON'}\n` +
-          `   LE POIDS DU LISERÉ, balayé sur LA MÊME image gelée (sous averse pleine) :\n` +
-          `     poids   µ anneau  µ liseré  µ dehors    MARCHE   Michelson bord`,
+          `   ${etats.pluieTel.gouttes} gouttes sous averse · 0 au témoin sec · alpha ${Math.round(etats.pluieTel.alpha * 100) / 100}` +
+          ` · télégraphe identique sur les 5 prises : ${memeTel ? 'OUI' : 'NON'} · flash max ${flashMax.toFixed(3)}\n` +
+          `   µ DE LA BANDE D'ANNEAU (rayon 1,3-1,7 tuile, le rayon de dégâts) :\n` +
+          `     sous averse   télégraphe ALLUMÉ ${f(prises.pluieTel.anneau.moy)}   ÉTEINT ${f(prises.pluieNu.anneau.moy)}` +
+          `   → LA LUEUR AJOUTE ${f(gainPluie)}\n` +
+          `     sans rideau   télégraphe ALLUMÉ ${f(prises.secTel.anneau.moy)}   ÉTEINT ${f(prises.secNu.anneau.moy)}` +
+          `   → LA LUEUR AJOUTE ${f(gainSec)}\n` +
+          `   ⇒ CE QUE LE RIDEAU COÛTE À L'ANNONCE : ${f(gainPluie - gainSec)} de luminance` +
+          ` (${Math.round((gainPluie / Math.max(0.01, gainSec)) * 100)} % du signal conservé sous l'averse la plus dense)\n` +
+          `   LE LISERÉ SOMBRE, décor éliminé : ${f(creuxLisere)} de luminance sur sa bande (négatif = il CREUSE, c'est voulu)\n` +
+          `   la zone entière sous averse : µ ${f(prises.pluieTel.tout.moy)}  σ ${f(prises.pluieTel.tout.ec)}` +
+          `  σ/µ ${f(prises.pluieTel.tout.cv, 3)}  p01 ${f(prises.pluieTel.tout.p01)}  p50 ${f(prises.pluieTel.tout.p50)}  p99 ${f(prises.pluieTel.tout.p99)}`,
         )
-        for (const r of sweep) {
-          if (!r.m) { console.log(`     ${String(r.lisere).padStart(5)}   (non mesurable)`); continue }
-          console.log(
-            `     ${String(r.lisere).padStart(5)}${f(r.m.anneau.moy)}${f(r.m.lisere.moy)}${f(r.m.dehors.moy)}` +
-            `${f(r.m.marche)}${f(r.m.michelsonBord, 3)}${r.lisere === LIVRE ? '   ← LIVRÉ' : ''}`,
-          )
-        }
-        console.log(
-          `   AU POIDS LIVRÉ (${LIVRE}) :\n` +
-          `     sous averse pleine  µ anneau ${f(livre.m.anneau.moy)}  µ dehors ${f(livre.m.dehors.moy)}` +
-          `  Δ ${f(livre.m.deltaAnneau)}  MARCHE ${f(livre.m.marche)}\n` +
-          `     sans le rideau      µ anneau ${f(sansPluie.anneau.moy)}  µ dehors ${f(sansPluie.dehors.moy)}` +
-          `  Δ ${f(sansPluie.deltaAnneau)}  MARCHE ${f(sansPluie.marche)}\n` +
-          `     ce que la pluie COÛTE au télégraphe : Δ(anneau/dehors) ${f(livre.m.deltaAnneau - sansPluie.deltaAnneau)}` +
-          ` · MARCHE ${f(livre.m.marche - sansPluie.marche)} (${Math.round((livre.m.marche / sansPluie.marche) * 100)} % conservés)\n` +
-          `   la zone entière sous averse : µ ${f(livre.m.tout.moy)}  σ ${f(livre.m.tout.ec)}  σ/µ ${f(livre.m.tout.cv, 3)}` +
-          `  p01 ${f(livre.m.tout.p01)}  p50 ${f(livre.m.tout.p50)}  p99 ${f(livre.m.tout.p99)}`,
-        )
-        if (livre.m.marche <= 0) console.error('!! LA MARCHE EST NULLE OU INVERSÉE SOUS LA PLUIE — le télégraphe ne gagne pas')
-        const sans = sweep.find((r) => r.lisere === 0)
-        if (sans?.m) {
-          console.log(`   ce que le LISERÉ apporte sous averse : marche ${f(sans.m.marche)} sans lui → ${f(livre.m.marche)} avec (×${Math.round((livre.m.marche / Math.max(0.01, sans.m.marche)) * 10) / 10})`)
-        }
-        compare = { sweep: sweep.map((r) => ({ lisere: r.lisere, marche: r.m?.marche ?? null, anneau: r.m?.anneau.moy ?? null, dehors: r.m?.dehors.moy ?? null })), livre: livre.m, sansPluie, gouttes: pluvieux, memeTel }
+        if (gainPluie <= 0) console.error('!! LA LUEUR N’AJOUTE RIEN SOUS LA PLUIE — le télégraphe ne se voit pas')
+        compare = { gainPluie, gainSec, creuxLisere, prises, etats, memeTel, flashMax }
       }
       if (!compare) console.error('!! ① jamais mesuré après 3 tentatives')
     }
@@ -9545,10 +9552,15 @@ const SCENARIOS = {
           }
           // ── LA GERBE SE PHOTOGRAPHIE JEUNE, ET DANS CETTE BOUCLE-CI. Elle ne vit que
           //    300 ms : une prise « après les battements » la trouve morte (MESURÉ : 0 éclat
-          //    vivant à 240 ms de la frappe, alors que la boucle en comptait encore). À 80 ms
-          //    elle est au premier cran — les éclats sont gros, clairs, et la couronne est
-          //    déjà ouverte. On cadre sur le POINT DE FRAPPE, pas sur le télégraphe.
-          if (k === 3 && !gerbePrise) {
+          //    vivant à 240 ms de la frappe, alors que la boucle en comptait encore).
+          //
+          //    MAIS PAS TROP TÔT NON PLUS, et c'est la seconde leçon : à 80 ms les éclats
+          //    n'ont parcouru que 0,3 à 0,8 tuile, or la LUEUR D'IMPACT couvre 1,5 tuile de
+          //    rayon en ADD — la gerbe était donc ENTIÈREMENT sous le halo blanc, et la
+          //    photo ne montrait qu'un dôme (MESURÉ, planche du 2026-08-19). À 180 ms la
+          //    lueur est retombée à ~13 % et la couronne a franchi la tuile : les deux se
+          //    laissent voir. On cadre sur le POINT DE FRAPPE, pas sur le télégraphe.
+          if (k === 8 && !gerbePrise) {
             gerbePrise = true
             const vg = await viseur(frappe.sonde.eclairX, frappe.sonde.eclairY)
             if (vg.sx < 0 || vg.sy < 0 || vg.sx > vg.W || vg.sy > vg.H) {
@@ -9620,7 +9632,7 @@ const SCENARIOS = {
         gerbe = { max: auMax.gerbe, ageMax: auMax.age, total: frappe.sonde.gerbeTotal }
         console.log(
           `\n④ LA GERBE — ${gerbe.max} éclats vivants au plus fort (à ${gerbe.ageMax} ms de la frappe),` +
-          ` ${frappe.sonde.gerbeTotal} éclos depuis le début du scénario · gros plan pris à 80 ms`,
+          ` ${frappe.sonde.gerbeTotal} éclos depuis le début du scénario · gros plan pris à 180 ms`,
         )
         if (!gerbe.max && !frappe.sonde.abrite) console.error('!! aucun éclat vivant sur toute la salve — la gerbe ne vit pas')
         await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())

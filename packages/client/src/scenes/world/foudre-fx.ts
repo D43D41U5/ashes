@@ -38,12 +38,29 @@
  * rayon de dégâts, ce qui est pire qu'absent) ; éclaircir la pluie (c'est le calibrage MESURÉ
  * d'une autre tranche, et il n'a pas à payer pour celle-ci).
  *
- * CE QUI MARCHE : un LISERÉ SOMBRE juste en dehors de l'anneau clair. Contre un masque pâle,
- * le contraste vient d'un voisin FONCÉ, pas d'un blanc de plus. Il est composé en NOIR ALPHA
- * NORMAL et non en `MULTIPLY` — le patron exact de l'ombre de contact (`contact-shadow.ts`),
- * qui a mesuré les ratés WebGL du multiply sur des pixels de sol déjà ombrés. Ce que ça donne
- * est relevé par `smoke --scenario foudre` (contraste local sous averse pleine contre voile
- * seul, sur la MÊME image de télégraphe figée).
+ * CE QUI EST MESURÉ (`smoke --scenario foudre --dev`, 2026-08-19, cinq prises sur LA MÊME
+ * image gelée, alpha 0,9, aucun éclair en cours, 584 gouttes sous averse contre 0 au témoin
+ * sec) : sur la bande de l'anneau (rayon 1,3-1,7 tuile, le rayon de dégâts), **la lueur
+ * ajoute +5,5 de luminance sans rideau et +3,7 sous l'averse la plus dense — l'annonce garde
+ * donc 67 % de son signal.** Elle passe, mais de peu : +5,5 sur un fond à 73,6, c'est +7,5 %
+ * en relatif. Le télégraphe est SUBTIL, et ce nombre est celui qu'il faudra remonter si un
+ * playtest dit qu'on ne le voit pas.
+ *
+ * COMMENT ON L'A MESURÉ, ET POURQUOI IL FALLAIT QUATRE ÉTALONS : comparer l'anneau à ce qui
+ * l'entoure mesure le télégraphe PLUS le décor sous lui. Une première planche est tombée en
+ * forêt dense et a rendu +3,6 sans pluie contre −3,4 avec — du bruit de houppiers, et aucune
+ * réponse à la question posée. On ÉTEINT donc le télégraphe (`telegrapheActif`) sur la même
+ * image : le décor se soustrait exactement.
+ *
+ * LE LISERÉ SOMBRE, LUI, N'EST PAS PROUVÉ — et il faut le dire. L'idée : contre un masque
+ * pâle, le contraste vient d'un voisin FONCÉ, pas d'un blanc de plus (l'anneau est en `ADD`,
+ * il ne peut pas se défendre en montant encore, il pousserait dans le sens de ce qui le
+ * noie). Il est composé en NOIR ALPHA NORMAL et non en `MULTIPLY` — patron de l'ombre de
+ * contact (`contact-shadow.ts`), qui a mesuré les ratés WebGL du multiply sur des pixels de
+ * sol déjà ombrés. MAIS sa contribution relevée, décor éliminé (même image, `liserFacteur`
+ * 0,45 contre 0), vaut **0,0 de luminance** : il ne fait rien de mesurable, et on n'a pas
+ * élucidé pourquoi. Il est donc gardé pour l'instant SANS lui prêter de mérite — la lecture
+ * sous averse tient toute seule sur l'anneau. À trancher : le faire marcher, ou le retirer.
  *
  * ═══ LE TRAIT BAT, LE CIEL NON — ET C'EST UNE DÉCISION D'ACCESSIBILITÉ ═══
  *
@@ -367,8 +384,27 @@ export class FoudreFx {
    * On garde le plus PETIT qui gagne encore, pas le plus gros qui gagne le mieux — un noir
    * épais juste dehors du rayon de dégâts finirait par se lire comme faisant PARTIE de la
    * zone marquée, et c'est la seule chose que l'anneau n'a pas le droit de faire.
+   *
+   * ÉTAT MESURÉ : à 0,45 sa contribution vaut 0,0 (voir l'en-tête). Ce réglage ne repose
+   * donc sur AUCUN relevé favorable — il attend qu'on explique pourquoi le liseré ne peint
+   * rien, ou qu'on le retire.
    */
   liserFacteur = 0.45
+
+  /**
+   * L'INTERRUPTEUR DU TÉLÉGRAPHE — toujours vrai en jeu, BAISSÉ PAR LE SMOKE et par rien
+   * d'autre. C'est le quatrième étalon, et il a fallu une planche ratée pour comprendre
+   * qu'il manquait.
+   *
+   * Comparer « anneau » à « ce qui l'entoure » ne mesure PAS le télégraphe : ça mesure le
+   * télégraphe PLUS le décor sous lui. MESURÉ le 2026-08-19 — une annonce tombée en forêt
+   * dense a rendu Δ(anneau/dehors) = +3,6 SANS pluie et −3,4 AVEC, c'est-à-dire du bruit de
+   * houppiers dans les deux cas : la question posée (« le rideau noie-t-il l'annonce ? »)
+   * était sans réponse parce que le SITE dominait le signal. En éteignant le télégraphe sur
+   * la MÊME image gelée, le décor se soustrait exactement et il ne reste que ce que la lueur
+   * ajoute. C'est le patron `grainActif` de `meteo-layer`, pour la même raison.
+   */
+  telegrapheActif = true
 
   /** LU PAR LE SMOKE, et par rien d'autre : le rendu se juge sur des pixels. */
   readonly sonde = {
@@ -490,10 +526,10 @@ export class FoudreFx {
       const u = 1 - (tel.ticksLeft - 1) / Math.max(1, METEO.FOUDRE_TELEGRAPHE_TICKS - 1)
       const px = tel.x * TILE_PX
       const py = tel.y * TILE_PX
-      this.halo.setPosition(px, py).setAlpha(u).setVisible(true)
+      this.halo.setPosition(px, py).setAlpha(u).setVisible(this.telegrapheActif)
       // Le liseré monte sur LA MÊME rampe : il est le dehors de l'anneau, pas un second
       // événement. Un peu moins fort — il défend la lecture, il ne la remplace pas.
-      this.lisere.setPosition(px, py).setAlpha(u * this.liserFacteur).setVisible(true)
+      this.lisere.setPosition(px, py).setAlpha(u * this.liserFacteur).setVisible(this.telegrapheActif)
       this.sonde.telegraphes += 1
       this.sonde.ticksLeft = tel.ticksLeft
       this.sonde.x = tel.x
