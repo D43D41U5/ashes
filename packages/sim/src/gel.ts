@@ -73,7 +73,7 @@
  * SURESTIME donc le froid partout où elle doute — présence d'une Brume plutôt que
  * `dansLaBrume`, présence d'un front plutôt que son intensité au point.
  *
- * ⚠ LA PRÉDICTION CLIENT EST ENCORE AVEUGLE AU GEL. `MoveWorld.gel` est optionnel, et le
+ * ⚠ LA PRÉDICTION CLIENT EST ENCORE AVEUGLE AU GEL. `MoveWorld.etat` est optionnel, et le
  * client bâtit ses propres `MoveWorld` (chantier de rendu, tranche suivante) : tant qu'il ne
  * le renseigne pas, il prédit la glace comme de l'eau — élastique sur les lacs gelés.
  *
