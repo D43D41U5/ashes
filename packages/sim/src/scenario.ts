@@ -39,6 +39,7 @@ import { chronicleFromEvents, formatChronicleLine } from './chronicle'
 import { drainEvents, type SimEvent } from './events'
 import { placeHuntingGrounds } from './faune'
 import { countOf } from './items'
+import { estGrenier } from './village-plan'
 import { nidsAMonstre, spawnPoiMonsters } from './poi'
 import { buildPoiStructures } from './poi-batis'
 import { createSim, step, type SimState } from './sim'
@@ -277,9 +278,9 @@ export function runScenario(seed: number, days: number, joueurs: number = BANC_J
     ticks: total,
     monde,
     villages: sim.villages.map((v) => {
-      const granary = sim.structures.find(
-        (s) => s.type === 'chest' && s.villageId === v.id && s.access === 'village',
-      )
+      // MÊME prédicat que l'économie du village et que la cible du raid (`estGrenier`) :
+      // un rapport de banc qui compte autre chose que ce dont le village vit ment au calibrage.
+      const granary = sim.structures.find((s) => estGrenier(s, v.id))
       return {
         name: v.name,
         archetype: v.archetype,

@@ -15,17 +15,19 @@ import type { Entity, SimState } from './sim'
 import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
 import type { Structure, Village } from './village'
 import { granaries } from './village-board'
+import { estGrenier } from './village-plan'
 
 /** Looter un cadavre par le pipeline standard (raid, spec alignement R13). */
 function applyCombatLoot(state: SimState, entityId: number, corpseId: number): void {
   applyCombatAction(state, entityId, { type: 'loot_corpse', corpseId })
 }
 
-/** Le grenier d'un AUTRE village (cible de raid ou de don). */
+/** Le grenier d'un AUTRE village (cible de raid ou de don).
+ *  MÊME prédicat que l'économie du village (`estGrenier`) : ce que le raid vise doit être
+ *  exactement ce que le village compte, sinon on casse un silo qui ne nourrissait personne
+ *  — ou on épargne celui dont il vit. */
 function foreignGranary(state: SimState, targetVillageId: number): Structure | undefined {
-  return state.structures.find(
-    (s) => s.type === 'chest' && s.villageId === targetVillageId && s.access === 'village',
-  )
+  return state.structures.find((s) => estGrenier(s, targetVillageId))
 }
 
 function nearestOtherVillage(state: SimState, village: Village): Village | undefined {

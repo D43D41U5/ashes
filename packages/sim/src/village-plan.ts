@@ -24,6 +24,7 @@ import { poseLibre } from './defriche'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { countOf, type Inventory, type ItemBag, type StructureType } from './items'
 import { terrainAt } from './map'
+import { piece } from './pieces'
 import type { SimState } from './sim'
 import { floorAt, type BuildOrder, type Structure, type Village } from './village'
 
@@ -32,12 +33,33 @@ export function buildTierOf(village: Village): number {
   return village.buildTier ?? 1
 }
 
+/**
+ * EST-CE UN GRENIER ? — UNE QUESTION DE FONCTION, PAS DE TYPE.
+ *
+ * Ce prédicat testait `s.type === 'chest'`, et le registre disait déjà autre chose : `silo`,
+ * `cave` et `reserve` déclarent `fonction: 'grenier'` et `capacite: 36`. Le bourg montait donc
+ * sa réserve à grand-peine — 8 bois et 4 fibres pour le silo, de la pierre taillée pour la
+ * cave — et n'en tirait RIEN : `granaryStocks` ne la comptait pas, les cibles du tableau ne la
+ * voyaient pas, aucun villageois n'y déposait ni n'y retirait. Une réserve dont le village ne
+ * se sert pas, et qui ne le sauvait pas de la perte d'un coffre à 4 bois.
+ *
+ * Le `chest` reste vrai d'office : c'est le grenier de fondation (`worldgen.ts`), et son entrée
+ * de registre porte `acces: 'private'` — c'est le champ `access` de l'INSTANCE qui en fait un
+ * bien commun, pas son type.
+ *
+ * ⚠ CE PRÉDICAT A TROIS CONSOMMATEURS et ils doivent rester d'accord : l'économie du village
+ * (ici), la CIBLE DU RAID (`npc-errands.ts`) et le rapport du banc (`scenario.ts`). Élargir
+ * l'un sans les autres ferait viser au raid autre chose que ce que le village compte.
+ */
+export function estGrenier(s: Structure, villageId: number): boolean {
+  if (s.villageId !== villageId || s.access !== 'village') return false
+  return s.type === 'chest' || piece(s.type).fonction === 'grenier'
+}
+
 /** Les coffres-greniers du village : accès `village`, dans l'ordre des ids (spec pnj R5-R6).
  *  LA définition vit ici ; `village-board` la réexporte pour ses consommateurs historiques. */
 export function granaries(state: SimState, villageId: number): Structure[] {
-  return state.structures.filter(
-    (s) => s.type === 'chest' && s.villageId === villageId && s.access === 'village',
-  )
+  return state.structures.filter((s) => estGrenier(s, villageId))
 }
 
 export interface GranaryStocks {

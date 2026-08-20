@@ -15,8 +15,9 @@ import type { ResourceNode } from './economy'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
 import { addStructure, createVillage } from './village'
-import { desiredOrders } from './village-plan'
+import { desiredOrders, granaries, granaryStocks } from './village-plan'
 import { refreshBoard } from './village-board'
+import { STRUCTURE_TYPES, piece } from './pieces'
 import { foundNpcVillage } from './worldgen'
 
 function npcVillageSim(count = 3): SimState {
@@ -242,5 +243,51 @@ describe('le déterminisme (R10)', () => {
     expect(JSON.stringify(a.structures)).toBe(JSON.stringify(b.structures))
     expect(JSON.stringify(a.villages)).toBe(JSON.stringify(b.villages))
     expect(countOf(granary(a).inventory!, 'wood')).toBe(countOf(granary(b).inventory!, 'wood'))
+  })
+})
+
+describe('le grenier est une FONCTION, pas un type (P0.3)', () => {
+  /**
+   * Le registre déclare `silo`, `cave` et `reserve` avec `fonction: 'grenier'` et
+   * `capacite: 36` ; `granaries()` ne reconnaissait que `chest`. Le bourg montait donc sa
+   * réserve — 8 bois et 4 fibres — et n'en tirait rien : elle ne comptait pas dans les stocks,
+   * les cibles du tableau ne la voyaient pas, et le village mourait quand même en perdant son
+   * coffre à 4 bois, alors qu'il avait une réserve pleine sous les yeux.
+   *
+   * La garde balaie TOUTES les pièces que le registre déclare grenier, pas le seul silo :
+   * ajouter un quatrième palier ne doit pas rouvrir ce trou.
+   */
+  const PIECES_GRENIER = STRUCTURE_TYPES.filter((t) => piece(t).fonction === 'grenier')
+
+  it('P0.3a — la garde voit ce qu’elle garde : le registre porte bien des greniers non-coffres', () => {
+    expect(PIECES_GRENIER.length).toBeGreaterThanOrEqual(3)
+    expect(PIECES_GRENIER).not.toContain('chest') // le coffre en est un par son ACCÈS, pas par sa fonction
+  })
+
+  it('P0.3b — chaque pièce à `fonction: grenier` compte dans les stocks du village', () => {
+    for (const type of PIECES_GRENIER) {
+      const sim = npcVillageSim()
+      const v = village(sim)
+      // On retire le coffre de fondation : il ne reste QUE la réserve bâtie.
+      sim.structures = sim.structures.filter((s) => s.type !== 'chest')
+      const s = addStructure(sim, type, 14, 12, v.id, 0)
+      s.access = 'village'
+      addItems(s.inventory ??= [], { berries: 9 })
+      expect(granaries(sim, v.id).map((g) => g.type)).toEqual([type])
+      expect(granaryStocks(sim, v.id).berries).toBe(9)
+    }
+  })
+
+  it('P0.3c — et le tableau ne se tait plus : un village à silo travaille encore', () => {
+    const sim = npcVillageSim()
+    const v = village(sim)
+    sim.structures = sim.structures.filter((s) => s.type !== 'chest') // le raid a cassé le coffre
+    const silo = addStructure(sim, 'silo', 14, 12, v.id, 0)
+    silo.access = 'village'
+    v.tasks = []
+    refreshBoard(sim, v)
+    // Avant le correctif : ZÉRO tâche postée, y compris `feed_fire` — « la tâche
+    // communautaire zéro, sans elle le village tombe ».
+    expect(v.tasks.length).toBeGreaterThan(0)
   })
 })
