@@ -5,7 +5,7 @@
  * le trou : la planche smoke jugeait le rendu, mais aucune garde texte ne tenait le compte.
  */
 import { describe, expect, it } from 'vitest'
-import { POI } from '@ashes/sim'
+import { POI, STRUCTURE_TYPES } from '@ashes/sim'
 import { POI_ART } from '../scenes/world/poi-art'
 import { ERRATIQUES, POI_LIT_DEFS, POI_LIT_KINDS, POI_LIT_MIRRORED } from './poi-lit'
 import { LIT_STRUCTURE_KEYS, LIT_STRUCTURE_TYPES } from './lit-structures'
@@ -56,9 +56,57 @@ describe('la couverture _lit (garde A1)', () => {
     // Le COFFRE a sa `_lit` — peu importe lequel des deux modules la produit.
     expect(tous.has('chest'), 'le coffre a perdu sa bascule').toBe(true)
     // Les exceptions consignées ne se glissent dans AUCUN des deux whitelists par accident.
-    for (const exclu of ['wall', 'door', 'fire', 'floor', 'roof', 'parcelle', 'terroir', 'roc']) {
+    for (const exclu of Object.keys(SANS_BASCULE)) {
       expect(tous.has(exclu), `${exclu} est consigné hors bascule`).toBe(false)
     }
+  })
+
+  /**
+   * ═══ LA COUVERTURE SE DÉRIVE DU REGISTRE — ELLE NE SE COMPTE PLUS ═══
+   *
+   * La garde d'à côté affirme `tous.size >= 20` : un COMPTE. Une entrée ajoutée au registre
+   * `PIECES` compilait donc, passait le lint, passait cette garde — et partait en DAMIER
+   * MAGENTA au rendu (`snapshot-view` pose `st-${'$'}{s.type}` sans repli, et aucun
+   * `Record<StructureType, …>` côté client ne ferait rougir `tsc`). C'est verbatim le mode
+   * d'échec que la décision du 2026-08-01 voulait fermer en créant le registre : le chantier
+   * s'est arrêté à la frontière de /sim et n'a pas franchi le côté art.
+   *
+   * La complétude était donc vraie PAR CHANCE. Ici elle l'est par construction : le registre
+   * est PARTITIONNÉ, chaque type est soit basculé, soit exempté AVEC SA RAISON. Ajouter une
+   * pièce force une décision explicite au lieu d'un oubli silencieux.
+   *
+   * Et la partition se garde DANS LES DEUX SENS : une exemption qui gagne sa `_lit` doit
+   * quitter cette table, sinon elle finit par documenter un monde disparu.
+   */
+  const SANS_BASCULE: Record<string, string> = {
+    wall: 'le mur se peint en PANS autotuilés, pas en sprite',
+    door: 'idem, plus son animation propre (`porte-anim`)',
+    palissade: 'chemin dédié dans snapshot-view (elle borde la tuile, elle ne l’occupe pas)',
+    fire: 'chemin dédié dans snapshot-view — le feu a son FX, pas un sprite éclairé',
+    floor: 'couche MOLLE : elle n’a pas de corps à éclairer',
+    roof: 'idem',
+    parcelle: 'le potager se rend par son stade de pousse (`cropStage`), pas par un sprite fixe',
+    terroir: 'idem',
+    friche: 'clé PLATE de BATI_KEYS, gardée par bati-art.test',
+    terre: 'idem',
+    roc: 'idem',
+  }
+
+  it('A1bis — le registre est PARTITIONNÉ : aucun type sans art, aucune exemption périmée', () => {
+    const bascules = new Set<string>([...LIT_STRUCTURE_TYPES, ...BATI_LIT_TYPES])
+    expect(STRUCTURE_TYPES.length, 'la garde doit d’abord VOIR le registre').toBeGreaterThanOrEqual(40)
+
+    // ① Aucun orphelin : un type neuf sans `_lit` doit être exempté SCIEMMENT.
+    const orphelins = STRUCTURE_TYPES.filter((t) => !bascules.has(t) && SANS_BASCULE[t] === undefined)
+    expect(orphelins, 'ces pièces du registre n’ont ni bascule _lit ni exemption motivée').toEqual([])
+
+    // ② Aucune exemption périmée : si la pièce a gagné sa `_lit`, la ligne doit partir.
+    const perimees = Object.keys(SANS_BASCULE).filter((t) => bascules.has(t))
+    expect(perimees, 'ces exemptions décrivent un monde disparu : la pièce a désormais sa _lit').toEqual([])
+
+    // ③ Aucune exemption FANTÔME : une pièce retirée du registre ne se documente plus.
+    const fantomes = Object.keys(SANS_BASCULE).filter((t) => !(STRUCTURE_TYPES as readonly string[]).includes(t))
+    expect(fantomes, 'ces exemptions ne correspondent à aucune pièce du registre').toEqual([])
   })
 
   it('les humains ont leur _lit ; le miroir des pierres est déclaré', () => {

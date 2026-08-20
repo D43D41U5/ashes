@@ -25,7 +25,7 @@ import { frontDuCycle, type MeteoFront } from './meteo'
 import { spawnMonster } from './monsters'
 import { computeFlowField, findPath } from './pathfinding'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
-import { ambientTemperature, baselineTemperature } from './temperature'
+import { ambientTemperature, baselineTemperature, climatFlore, climatMaximal } from './temperature'
 import { actForDay, calendarScaleForSeasonCycles, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
 import { addStructure } from './village'
 
@@ -939,5 +939,90 @@ describe('A12 — le dégel ne laisse personne emmuré (G8bis)', () => {
     step(sim, [])
     drainEvents(sim)
     expect(sim.entities.find((e) => e.id === joueur)!.hp).toBe(pvAvant)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// LA BORNE DE LA FLORE — tendue à ZÉRO, et jusqu'ici gardée par RIEN
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+describe('`climatMaximal` est CONSERVATRICE (la borne O(1) du gel de la flore)', () => {
+  /**
+   * `floreEntierementGelee` est un COURT-CIRCUIT DUR : vrai, `floreGelee` rend vrai sans même
+   * lire la carte. Il commande la cueillette, la repousse et le semis — c'est-à-dire, en
+   * acte III, l'économie entière.
+   *
+   * Or sa borne recopie la formule de `froidDuMonde` en majorant le biome, et la marge est
+   * EXACTEMENT ZÉRO : sur une tuile de forêt sans front ni nappe, `climatMaximal` vaut très
+   * précisément `climatFlore`. Le jour où quelqu'un ajoute un terme RÉCHAUFFANT au froid du
+   * monde — un couvert, un retour de l'altitude, un `brumeColdAt` négatif — la borne devient
+   * fausse en silence et le jeu déclare gelée la flore de TOUTE la vallée.
+   *
+   * Sa jumelle `gelPossible` porte un ⚠ ET une garde (« la borne bon marché est
+   * CONSERVATRICE », plus haut dans ce fichier). Celle-ci n'avait ni l'un ni l'autre — et
+   * l'asymétrie compte : une `gelPossible` fausse coûte de la perf, une
+   * `floreEntierementGelee` fausse change le jeu.
+   *
+   * La garde est EXHAUSTIVE sur le domaine, pas sur des points choisis : tous les terrains
+   * du registre × la saison × jour/nuit × les quatre régimes de météo × avec et sans nappe.
+   */
+  const PROBE_X = 5
+  const PROBE_Y = 5
+
+  /** Une nappe qui couvre la vallée entière : on ne teste pas la géométrie, on teste le TERME. */
+  const nappePartout = (state: SimState): void => {
+    state.brume = {
+      phase: 'nappe',
+      day: 1,
+      riseTick: 0,
+      retreatTick: Number.MAX_SAFE_INTEGER,
+      x0: 0,
+      y0: 0,
+      x1: state.map.width - 1,
+      y1: state.map.height - 1,
+    }
+  }
+
+  it('F-borne — sur tout terrain, toute heure, toute météo, sous nappe ou non : maximal ≥ lieu', () => {
+    const sim = simGel({ meteoActive: true })
+    const terrains = Object.keys(TERRAINS).map(Number)
+    expect(terrains.length, 'la garde doit d’abord VOIR le registre des terrains').toBeGreaterThan(20)
+
+    const fautes: string[] = []
+    for (const terrain of terrains) {
+      setTile(sim.map, PROBE_X, PROBE_Y, terrain)
+      for (const jour of [1, 21, 22, 42, 43, 60]) {
+        for (const nuit of [false, true]) {
+          for (const meteo of [null, 'pluie', 'neige', 'blizzard'] as const) {
+            for (const brume of [false, true]) {
+              sim.tick = tickDe(jour, nuit)
+              if (meteo === null) sim.meteo = null
+              else poserFront(sim, meteo, 0, sim.tick - Math.floor(METEO.TRAVERSEE_TICKS / 2))
+              if (brume) nappePartout(sim)
+              else sim.brume = null
+              const borne = climatMaximal(sim, sim.tick)
+              const lieu = climatFlore(sim, PROBE_X, PROBE_Y, sim.tick)
+              if (borne < lieu) {
+                fautes.push(`terrain ${terrain} j${jour}${nuit ? ' nuit' : ''} ${meteo ?? 'clair'}${brume ? ' +brume' : ''} : borne ${borne} < lieu ${lieu}`)
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(fautes.slice(0, 5)).toEqual([])
+    expect(fautes).toHaveLength(0)
+  })
+
+  it('F-borne-bis — et elle est bien TENDUE : il existe un cas où les deux se touchent', () => {
+    // Sans ce second test, la garde ci-dessus passerait tout aussi bien sur une borne
+    // grossièrement large — et on croirait avoir protégé quelque chose de fragile alors
+    // qu'on protège quelque chose d'inutile. Le ⚠ de l'en-tête tient à CE fait : marge zéro.
+    const sim = simGel({ meteoActive: true })
+    setTile(sim.map, PROBE_X, PROBE_Y, 3) // forêt : le biome le plus doux (BIOME_MAX)
+    sim.meteo = null
+    sim.brume = null
+    sim.tick = tickDe(1, false)
+    expect(climatMaximal(sim, sim.tick)).toBe(climatFlore(sim, PROBE_X, PROBE_Y, sim.tick))
   })
 })
