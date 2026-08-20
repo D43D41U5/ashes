@@ -5148,9 +5148,15 @@ const SCENARIOS = {
       menuOpen: window.__BRAISES__.scene.registry.get('menuOpen'),
     }))
     console.log(`après 2ᵉ ESC : ${JSON.stringify(closed)}`)
-    // 6 règles de clic ; les touches sont DÉRIVÉES de `ACTIONS` (14) + la ceinture = 15 lignes.
-    // Ce nombre garde surtout que le tableau se peint : vide, il tomberait à 0 sans rien dire.
-    if (open.display !== 'flex' || open.clicks !== 6 || open.keys !== 15 || closed.display !== 'none') {
+    // 6 règles de clic ; les touches sont DÉRIVÉES de `ACTIONS` + la ceinture.
+    //
+    // ⚠ ON NE FIGE PLUS LE COMPTE EXACT. Il valait 15 quand `ACTIONS` en portait 14 ; la table
+    // en peint 17 aujourd'hui, et le verdict criait au loup à chaque passage — sur un menu
+    // parfaitement fonctionnel. Un instrument qui hurle pour rien cesse d'être lu, et c'est
+    // pire que pas d'instrument : la vraie panne s'y noie. Ce que ce nombre garde est écrit
+    // dans le commentaire d'origine — « que le tableau SE PEINT, vide il tomberait à 0 » —
+    // et c'est cela qu'on affirme, pas un état du jeu de 2026-07.
+    if (open.display !== 'flex' || open.clicks !== 6 || open.keys < 10 || closed.display !== 'none') {
       console.error(`!! LE MENU PAUSE NE MARCHE PAS : ouvert ${JSON.stringify(open)} / fermé ${JSON.stringify(closed)}`)
     }
     return { open, closed }

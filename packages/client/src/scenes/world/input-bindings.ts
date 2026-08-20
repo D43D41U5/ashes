@@ -152,12 +152,25 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   const typing = (): boolean => Boolean(getHud(scene.registry, 'uiTyping')) || Boolean(getHud(scene.registry, 'chatTyping'))
 
   /** Câble un handler `down` sur chaque alias d'une action (KEYMAP). MUET tant que
-   *  le champ de recherche a le clavier. */
+   *  le champ de recherche a le clavier — ET tant qu'un panneau plein écran est ouvert.
+   *
+   *  La seconde moitié manquait : la ceinture 1-6 et `drop_held` passaient au travers du
+   *  menu pause. On changeait d'arme et on JETAIT SON SAC AU SOL, pour de vrai, pendant
+   *  qu'on croyait le jeu arrêté.
+   *
+   *  ⚠ LE MENU PAUSE SEUL, PAS `overlayOpen()`. La garde des handlers SOURIS est plus large
+   *  (carte, sac, panneau du feu) parce qu'un panneau MANGE LE CLIC : viser le monde à
+   *  travers lui n'a pas de sens. Le clavier, lui, n'est pas mangé — et presser `1`-`6` en
+   *  REGARDANT son sac est un geste normal, pas une erreur. Prendre la ligne large aurait
+   *  corrigé le trou en cassant l'usage : le seul état qui doit tout taire est celui qui
+   *  prétend que le jeu est ARRÊTÉ. Même règle que le pas (`mains-libres.ts`), et même
+   *  question laissée à Alexis pour la carte et l'écran personnage. */
+  const enPause = (): boolean => Boolean(getHud(scene.registry, 'menuOpen'))
   const onDown = (names: readonly string[], fn: () => void): void => {
     for (const n of names) {
       if (K[n] === undefined) continue
       kb.addKey(K[n]!, false).on('down', () => {
-        if (typing()) return
+        if (typing() || enPause()) return
         fn()
       })
     }
@@ -328,7 +341,13 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     setHud(scene.registry, 'openContainer', null)
   })
   // ESC : le menu PAUSE. WorldScene fige/reprend l'hôte selon `menuOpen` (le monde solo se gèle).
-  onDown(TOUCHES.toggleMenu, () => {
+  //
+  // ⚠ `onDownAlways`, POUR LA MÊME RAISON QUE TAB : une touche de SORTIE qu'on ne peut plus
+  // presser est un piège. Câblée sur `onDown` — qui se tait désormais menu ouvert, pour que la
+  // ceinture et « jeter » cessent d'agir sous le menu pause — ESC s'interdisait lui-même : on
+  // ouvrait le menu et on ne le refermait plus. Trouvé au navigateur (`smoke --scenario pause`,
+  // « après 2ᵉ ESC : menuOpen true »), et par aucun test : la scène n'en a pas.
+  onDownAlways(TOUCHES.toggleMenu, () => {
     setHud(scene.registry, 'menuOpen', !getHud(scene.registry, 'menuOpen'))
   })
 

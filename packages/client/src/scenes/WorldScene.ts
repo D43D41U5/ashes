@@ -72,6 +72,7 @@ import Phaser from 'phaser'
 import { createColyseusHost, createWorkerHost, type HostConnection } from '../host-connection'
 import { VEILLEE_SEED } from '../worker/mondes'
 import { keymapEffectif } from './world/keymap-perso'
+import { mainsLibres } from './world/mains-libres'
 import { noteMulti } from '../derniere-partie'
 import { SERVERS } from '../servers'
 import { libelleTouche } from './world/touches'
@@ -1640,17 +1641,29 @@ export class WorldScene extends Phaser.Scene {
     // le clavier ; sans cette garde, écrire « hache » enverrait Z-A-H-E au
     // déplacement — le personnage partirait en courant pendant qu'on cherche.
     const typing = Boolean(getHud(this.registry, 'uiTyping')) || Boolean(getHud(this.registry, 'chatTyping'))
-    const dx = typing ? 0 : this.axis('right', 'left')
-    const dy = typing ? 0 : this.axis('down', 'up')
-    const sprint = !typing && this.inputs.sprintKeys.some((k) => k.isDown)
+    // ON NE MARCHE PAS NON PLUS MORT, NI LE MENU OUVERT — deux trous du même mur.
+    //
+    // LA MORT : `tickHold` était déjà gardé par `this.dying` (dix lignes plus haut), le PAS
+    // ne l'était pas. On mourait donc en fuyant — le cas normal —, et la prédiction continuait
+    // d'intégrer ce cap sous l'écran noir : l'avatar réveillé au Feu s'en éloignait à l'aveugle.
+    //
+    // LE MENU PAUSE : `syncPause()` fige l'HÔTE, jamais la prédiction. Ouvrir ESC en tenant une
+    // direction faisait glisser l'avatar sur un monde immobile, puis le premier snapshot le
+    // rappelait sèchement — au-delà de `SNAP_DISTANCE_TILES` c'est un téléport franc avec
+    // recentrage caméra. Et en MULTI le serveur ignore `pause` (« le monde des autres ne
+    // s'arrête pas ») : on marchait pour de vrai. Un menu pause qui laisse jouer n'en est pas un.
+    const fige = !mainsLibres({ saisit: typing, meurt: this.dying, enPause: this.menuPaused })
+    const dx = fige ? 0 : this.axis('right', 'left')
+    const dy = fige ? 0 : this.axis('down', 'up')
+    const sprint = !fige && this.inputs.sprintKeys.some((k) => k.isDown)
     // LE PAS LENT (spec chasse C2) : il prime sur le sprint dans la sim — on
     // transmet les deux tels quels, c'est `speedScaleFor` qui arbitre.
-    const sneak = !typing && this.inputs.sneakKeys.some((k) => k.isDown)
+    const sneak = !fige && this.inputs.sneakKeys.some((k) => k.isDown)
     // LA PARADE EST REVENUE (V0-1) : une STANCE maintenue (touche `block`, cf. keymap),
     // au même rang que le sprint et le pas lent — pas un verbe de ceinture. La sim, la
     // prédiction et `speedScaleFor` la connaissent depuis toujours ; on cesse enfin de
     // la forcer à `false`. Muette quand un champ de saisie a le clavier (on écrit).
-    const block = !typing && this.inputs.blockKeys.some((k) => k.isDown)
+    const block = !fige && this.inputs.blockKeys.some((k) => k.isDown)
 
     // Prédiction locale (spec reconciliation R1-R7). `predictFrame` consomme le
     // dt de frame en sous-pas de tick fixes (rejeu exact de la suite de dt du
@@ -2478,7 +2491,18 @@ export class WorldScene extends Phaser.Scene {
       // Fin du voile : le monde réapparaît au Feu, jouable — on rend la main.
       this.dying = false
       this.input.enabled = true
-      if (this.input.keyboard) this.input.keyboard.enabled = true
+      if (this.input.keyboard) {
+        // ⚠ REMETTRE LES TOUCHES À PLAT AVANT DE RENDRE LA MAIN. Phaser vide sa file
+        // d'événements clavier à chaque POST_STEP, mais `KeyboardPlugin.update()` sort
+        // immédiatement tant que le plugin est éteint : les `keyup` survenus sous le voile
+        // sont donc JETÉS sans jamais atteindre les objets `Key`, et `isDown` reste figé sur
+        // la direction qu'on tenait en tombant. Le joueur ressuscitait en marche, jusqu'à
+        // ré-appuyer ET relâcher cette touche précise. Phaser appelle lui-même `resetKeys`
+        // sur BLUR / PAUSE / SLEEP — trois chemins que `enabled = false` court-circuite.
+        // C'est le pendant clavier de ce que `cancelHold()` fait déjà pour la souris.
+        this.input.keyboard.resetKeys()
+        this.input.keyboard.enabled = true
+      }
       // LE RÉVEIL (mort-suite 3) : un mot au réveil au Feu, sur le canal conseil (neutre,
       // pas l'alerte). Il rend LISIBLE l'épuisement croissant de V2-21 — sinon un malus de
       // régén qu'on subit sans le comprendre. Mourir en série coûte plus ; survivre l'oublie.
