@@ -31,7 +31,7 @@ import {
   type NodeDelta,
   type SnapshotMessage,
 } from '@ashes/sim'
-import { feuillageDenude, fireStateAt, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, type SimState, type WorldMap } from '@ashes/sim'
+import { feuillageDenude, fireStateAt, floreGelee, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, type SimState, type WorldMap } from '@ashes/sim'
 import { cliffKey } from '../../render/cliff-art'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
@@ -92,6 +92,32 @@ import { riveAt, type RiveField } from '../../render/water-field'
 /** Le nœud VISÉ à portée s'éclaire d'or ; hors de portée, il se grise (G4). */
 const AIM_TINT = 0xffe9a8
 const AIM_TINT_FAR = 0x8a8a92
+/**
+ * ⚠ PROVISOIRE, ASSUMÉ — la teinte de la PLANTE GELÉE (spec `flore-froid.md` F3).
+ *
+ * Le jeu refuse déjà la cueillette d'un buisson gelé ; sans un signe à l'écran, c'est un
+ * refus qui tombe du ciel — le contraire de « annoncé, pas surprise » (`gel.md` G5). Cette
+ * teinte tient le contrat EN ATTENDANT la vraie direction artistique, qui est une décision
+ * d'Alexis : givre pixellisé sur la grille de l'art, variante de texture `_givre`, ou autre.
+ *
+ * ═══ POURQUOI UN APLAT (`setTintFill`) ET PAS UNE TEINTE ═══
+ *
+ * Une teinte Phaser MULTIPLIE les canaux : elle ne peut que RETIRER de la couleur. Sur un
+ * buisson dont le vert domine largement le bleu, aucun bleu multiplié ne fera jamais passer
+ * le bleu devant le vert — mesuré le 2026-08-20 : `bleu − rouge` remontait de −20 à −2 avec
+ * un cyan franc, chiffre bien réel au smoke et illisible à l'œil, le buisson lisant
+ * simplement « un peu plus vert ». Le givre est justement CLAIR et FROID, exactement ce
+ * qu'un multiply ne sait pas faire.
+ *
+ * L'aplat, lui, remplace : la plante gelée devient une silhouette bleu pâle. C'est
+ * grossier, et c'est le but — **un MARQUEUR D'ÉTAT, pas un look.** On voit d'un coup d'œil
+ * quelles plantes sont hors service, personne ne peut le confondre avec une intention de
+ * DA, et le jour où Alexis tranche, c'est cette constante et les trois lignes qui la posent
+ * qui disparaissent — pas une couche de plus à démêler.
+ *
+ * (Perdre les baies dessinées est cohérent avec la règle : un buisson gelé ne rend rien.)
+ */
+const GIVRE_TINT = 0xa8e8ff
 /**
  * LE ROUGE DE LA DÉMOLITION — plus CHAUD que le rouge d'interface du fantôme refusé (#d9614f),
  * et il le faut : il se pose sur du BOIS, qui est déjà orange.
@@ -1783,8 +1809,23 @@ export class SnapshotView {
         // teinte le sprite plutôt que de dessiner un cadre au sol : la teinte suit
         // le billboard, donc elle reste juste quel que soit le relief. Les sprites
         // sont POOLÉS — d'où le `clearTint` systématique sur les autres.
-        if (n.id === this.aimedNodeId) sprite.setTint(this.aimedInRange ? AIM_TINT : AIM_TINT_FAR)
-        else sprite.clearTint()
+        // LA PLANTE GELÉE SE VOIT (spec `flore-froid.md` F3 ; teinte PROVISOIRE, voir
+        // `GIVRE_TINT`). La visée PRIME : elle est transitoire et répond au geste en cours,
+        // alors que le givre est un état du monde qu'on retrouvera au relâchement.
+        // Le MODE se remet À CHAQUE BRANCHE, jamais une seule fois : les sprites sont POOLÉS,
+        // et `clearTint()` ne touche pas au mode — un slot qui a peint une plante gelée en
+        // aplat repeindrait la suivante de la même façon (le piège du `clearTint` systématique
+        // deux lignes plus bas, un cran plus profond).
+        if (n.id === this.aimedNodeId) {
+          sprite.setTint(this.aimedInRange ? AIM_TINT : AIM_TINT_FAR).setTintMode(Phaser.TintModes.MULTIPLY)
+        }
+        // `floreGelee` porte SON PROPRE court-circuit O(1) (`floreEntierementGelee`), donc
+        // rien à hoister ici : quand toute la vallée gèle — l'acte III entier, les nuits dès
+        // l'acte II —, l'appel ne lit ni la carte, ni la Brume, ni le front. Et il n'est posé
+        // que sur les nœuds `gelif` : les arbres et la pierre ne le paient jamais.
+        else if (this.etatGel !== null && NODE_DEFS[n.type].gelif && floreGelee(this.etatGel, n.tx, n.ty)) {
+          sprite.setTint(GIVRE_TINT).setTintMode(Phaser.TintModes.FILL)
+        } else sprite.clearTint().setTintMode(Phaser.TintModes.MULTIPLY)
         // LE SPRITE DU NŒUD QUE `F` PRENDRAIT — relevé ici, où l'on sait à quel nœud ce slot de
         // pool appartient CETTE frame. La teinte ci-dessus et le contour sont deux affordances
         // distinctes : la teinte dit « c'est ce que je vise » (tout nœud, arbre compris), le

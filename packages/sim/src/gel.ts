@@ -81,6 +81,7 @@
  */
 import {
   BRUME,
+  FLORE,
   GEL,
   METEO,
   TEMPERATURE,
@@ -95,7 +96,7 @@ import { terrainAt } from './map'
 import { frontDuCycle, frontMeteoPos, type BandeMeteo } from './meteo'
 import { hash2 } from './noise'
 import type { SimState } from './sim'
-import { baselineTemperature, baselineTemperatureAt } from './temperature'
+import { baselineTemperature, baselineTemperatureAt, climatFlore, climatMaximal } from './temperature'
 import { actForDay, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
 
 /**
@@ -251,6 +252,46 @@ export function jourDeDefeuillaison(tx: number, ty: number): number {
 export function feuillageDenude(state: SimState, tx: number, ty: number): boolean {
   if (!CADUCS.includes(terrainAt(state.map, tx, ty))) return false
   return seasonDayAtTick(state.tick, state.calendarScale) >= jourDeDefeuillaison(tx, ty)
+}
+
+/**
+ * TOUT CE QUI VIT GÈLE-T-IL, PARTOUT, À CE TICK ? (spec `flore-froid.md`) — O(1), aucune
+ * lecture de carte. Le pendant OPTIMISTE de `gelPossible` : là où celle-ci surestime le
+ * froid pour ne jamais rater une glace, celle-ci l'écarte pour ne jamais déclarer gelé ce
+ * qui ne l'est pas. Vrai ⇒ `floreGelee` est vrai partout, on peut sauter le terrain.
+ *
+ * C'est le court-circuit du cas COÛTEUX, et il tombe pile dessus : l'acte III entier
+ * (45 au mieux) et toutes les nuits dès l'acte II (40) — précisément les moments où des
+ * milliers de nœuds sont à échéance et gelés en même temps, tick après tick.
+ */
+export function floreEntierementGelee(state: SimState): boolean {
+  return climatMaximal(state, state.tick) < FLORE.SEUIL_GEL
+}
+
+/**
+ * F2/F3/F4 — LA FLORE DE CETTE TUILE EST-ELLE GELÉE ? Le prédicat unique du froid sur les
+ * plantes : la repousse ne s'y achève pas, la cueillette n'y prend rien, la terre ne s'y
+ * sème pas.
+ *
+ * Au COIN de la tuile, en entiers, comme toutes les lois de gel (voir l'en-tête) : le client
+ * la recalcule par la même façade, et deux échantillonnages différents feraient diverger ce
+ * qu'il peint de ce que la sim applique.
+ *
+ * Ne dit RIEN de ce qui est vivant : c'est l'appelant qui lit `NodeDef.vivant` (F7). Un
+ * filon de fer sur une tuile gelée est « gelé » au sens de cette fonction, et s'en moque.
+ */
+export function floreGelee(state: SimState, tx: number, ty: number): boolean {
+  if (floreEntierementGelee(state)) return true
+  return climatFlore(state, tx, ty, state.tick) < FLORE.SEUIL_GEL
+}
+
+/**
+ * F5 — LE GEL EST-IL MORTEL SUR CETTE TUILE ? Le seul endroit où le froid DÉTRUIT au lieu
+ * de suspendre : sous ce seuil, une culture à ciel ouvert est perdue (`agriculture.ts`).
+ * Pas de court-circuit : elle n'est interrogée que sur les rares parcelles SEMÉES.
+ */
+export function gelMortel(state: SimState, tx: number, ty: number): boolean {
+  return climatFlore(state, tx, ty, state.tick) < FLORE.SEUIL_MORTEL
 }
 
 /** Les fronts qui DÉPOSENT de la neige. Le blizzard en est un (c'est une neige portée par

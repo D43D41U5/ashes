@@ -123,6 +123,8 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   meal_eaten: { voix: 'muet', famille: 'batir', quoi: 'on mange' },
   crop_planted: { voix: 'muet', famille: 'batir', quoi: 'on sème au potager' },
   crop_harvested: { voix: 'muet', famille: 'batir', quoi: 'on récolte le potager' },
+  // Le monde frappe, personne ne l'a fait : c'est un fait de SAISON, pas de bâtisseur.
+  crop_frozen: { voix: 'voix', famille: 'saison', quoi: 'le gel a TUÉ une culture de plein air' },
 
   // ── PROGRESSION ET DÉCOUVERTE ─────────────────────────────────────────────────────
   skill_level_up: { voix: 'voix', famille: 'progres', quoi: 'un métier monte d’un niveau' },

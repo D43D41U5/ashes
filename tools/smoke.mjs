@@ -3540,6 +3540,127 @@ const SCENARIOS = {
    *
    * Exige `--dev` : le debug n'est armé que là (inerte en build de production).
    */
+  /**
+   * LA PLANTE GELÉE SE VOIT-ELLE ? (spec `flore-froid.md` F3 — teinte PROVISOIRE)
+   *
+   * Le jeu REFUSE désormais la cueillette d'un buisson gelé. Un refus qu'aucun signe
+   * n'annonce est le contraire du contrat maison (« annoncé, pas surprise », `gel.md` G5) :
+   * ce scénario est là pour qu'on puisse REGARDER l'état en attendant la vraie DA.
+   *
+   * ═══ LE PIÈGE QU'IL DÉSAMORCE : L'ACTE III REPEINT TOUT ═══
+   *
+   * Sauter au jour 50 ne gèle pas que les buissons — la neige tombe au sol, les feuillus se
+   * dénudent, la lumière change. Comparer la couleur du buisson AVANT et APRÈS ne prouverait
+   * donc rien : n'importe quel bleuissement global donnerait le même verdict.
+   *
+   * On mesure en DIFFÉRENTIEL, sur DEUX nœuds de la même frame, passés par le même pipeline
+   * de rendu : le BUISSON (`gelif`) et un nœud TÉMOIN qui ne gèle jamais (pierre ou arbre).
+   * Seule la teinte du givre peut expliquer que l'un vire au bleu et pas l'autre.
+   *
+   * Et l'heure est FORCÉE à midi des deux côtés (`debug_set_hour`) : `debug_set_season_day`
+   * déplace le tick, donc la phase du cycle — sans ça, on comparerait un midi à une nuit.
+   *
+   * Exige `--dev` : tout passe par le debug, inerte dans un build de production.
+   */
+  async flore(page) {
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(3000)
+
+    const agir = async (action, attente = 600) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(attente)
+    }
+
+    // LE COUPLE À MESURER : un buisson, et le nœud non-gélif le plus proche de lui. On lit la
+    // vue du client (le smoke lit l'état, il ne le fabrique pas).
+    const couple = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const brut = s.view?.nodes
+      const tous = brut ? (Array.isArray(brut) ? brut : [...brut.values()]) : []
+      const moi = s.view?.me ?? { x: 0, y: 0 }
+      const d2 = (n) => (n.tx - moi.x) ** 2 + (n.ty - moi.y) ** 2
+      const buissons = tous.filter((n) => n.type === 'berry_bush' && n.stock > 0).sort((a, b) => d2(a) - d2(b))
+      const buisson = buissons[0]
+      if (!buisson) return null
+      const proche = (n) => (n.tx - buisson.tx) ** 2 + (n.ty - buisson.ty) ** 2
+      const temoins = tous
+        .filter((n) => (n.type === 'rock' || n.type === 'tree' || n.type === 'bloc') && n.stock > 0)
+        .sort((a, b) => proche(a) - proche(b))
+      return { buisson, temoin: temoins[0] ?? null, total: tous.length }
+    })
+    if (!couple?.buisson) { console.error('!! aucun buisson à l’écran — rien à mesurer'); return }
+    if (!couple.temoin) { console.error('!! aucun nœud témoin près du buisson — la mesure serait confondue'); return }
+    const { buisson, temoin } = couple
+    console.log(`buisson (${buisson.tx},${buisson.ty}) · témoin ${temoin.type} (${temoin.tx},${temoin.ty})`)
+
+    // On se pose entre les deux : la caméra suit l'avatar, les deux nœuds doivent tenir à l'écran.
+    await agir({ type: 'debug_teleport', x: (buisson.tx + temoin.tx) / 2 + 0.5, y: (buisson.ty + temoin.ty) / 2 + 1.5 }, 1200)
+
+    const versEcran = (tx, ty) => page.evaluate(({ x, y }) => {
+      const scene = window.__BRAISES__.scene
+      const cam = scene.cameras.main
+      const gx = (x * 16 - cam.worldView.x) * cam.zoom
+      const gy = (y * 16 - cam.worldView.y) * cam.zoom
+      const c = scene.scale.canvas.getBoundingClientRect()
+      return { x: Math.round(c.left + gx * (c.width / scene.scale.width)), y: Math.round(c.top + gy * (c.height / scene.scale.height)) }
+    }, { x: tx, y: ty })
+
+    const COTE = 24
+    /** Le FROID d'une tuile : `bleu − rouge` moyen sur le carré du sprite. Le givre bleuit ;
+     *  la nuit et la neige bleuissent AUSSI — d'où le témoin, qui les subit à l'identique. */
+    const froidDe = async (n) => {
+      const c = await versEcran(n.tx + 0.5, n.ty + 0.5)
+      const r = await regionAt(page, { x: c.x - COTE / 2, y: c.y - COTE, width: COTE, height: COTE })
+      if (!r) return null
+      let s = 0
+      for (let x = 0; x < COTE; x++) for (let y = 0; y < COTE; y++) { const p = r.px(x, y); s += p[2] - p[0] }
+      return Math.round((s / (COTE * COTE)) * 100) / 100
+    }
+
+    const releve = async (etiquette) => {
+      // Le jour de saison vient du SNAPSHOT (`lastTime`), pas d'un calcul local : c'est la
+      // sim qui dit où on en est du calendrier, et c'est elle qui décide du gel.
+      const quand = await page.evaluate(() => {
+        const t = window.__BRAISES__.scene.lastTime
+        return t ? { jour: t.seasonDay, acte: t.act, nuit: t.isNight } : null
+      })
+      const b = await froidDe(buisson)
+      const t = await froidDe(temoin)
+      await page.screenshot({ path: `${OUT}/flore-${etiquette}.png` })
+      // ET UNE VUE OÙ L'ON VOIT QUELQUE CHOSE : à l'échelle du jeu, un buisson fait une
+      // vingtaine de pixels — la capture plein écran prouve la mesure, elle ne montre rien.
+      // On zoome sur le couple buisson/témoin, le temps de la photo, puis on rend la caméra.
+      await page.evaluate((z) => {
+        const cam = window.__BRAISES__.scene.cameras.main
+        window.__ZOOM_FLORE__ = cam.zoom
+        cam.setZoom(cam.zoom * z)
+      }, 3)
+      await page.waitForTimeout(500)
+      await page.screenshot({ path: `${OUT}/flore-${etiquette}-zoom.png` })
+      await page.evaluate(() => void window.__BRAISES__.scene.cameras.main.setZoom(window.__ZOOM_FLORE__))
+      await page.waitForTimeout(300)
+      console.log(`  ${etiquette} : buisson ${b} · témoin ${t} · écart ${Math.round((b - t) * 100) / 100}` +
+        `${quand ? ` · jour ${quand.jour} acte ${quand.acte}${quand.nuit ? ' NUIT' : ''}` : ''}`)
+      return { b, t, ecart: b - t, quand }
+    }
+
+    await agir({ type: 'debug_set_hour', hour: 12 }, 900)
+    const tiede = await releve('1-tiede')
+
+    // L'ACTE III : la vallée entière passe sous le seuil de gel (45 au mieux, contre 52).
+    await agir({ type: 'debug_set_season_day', day: 50 }, 1500)
+    await agir({ type: 'debug_set_hour', hour: 12 }, 900) // le saut de tick a bougé la phase du cycle
+    const gele = await releve('2-gele')
+
+    const derive = Math.round((gele.ecart - tiede.ecart) * 100) / 100
+    console.log(`flore : écart buisson−témoin ${tiede.ecart.toFixed(2)} → ${gele.ecart.toFixed(2)} (dérive ${derive})`)
+    if (derive <= 2) {
+      console.error(`!! LE GIVRE NE SE VOIT PAS : le buisson ne bleuit pas plus que le témoin (dérive ${derive}). ` +
+        'La règle refuse la cueillette sans qu’aucun signe ne l’annonce — G5 rompu.')
+    }
+    return { tiede, gele, derive }
+  },
+
   async cendre(page) {
     await page.goto(URL)
     await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 60000 })

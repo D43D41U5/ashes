@@ -24,8 +24,8 @@ describe('l’inventaire des 73 faits', () => {
     const somme = comptes.reduce((t, c) => t + c.n, 0)
     expect(somme).toBe(Object.keys(INVENTAIRE).length)
     // 68 → 73 le 2026-08-18 : la Brume (5 faits, spec brume.md) ; 73 → 76 le 2026-08-19 :
-    // les trois faits du blizzard (météo R9).
-    expect(somme).toBe(76)
+    // les trois faits du blizzard (météo R9) ; 76 → 77 : `crop_frozen` (flore-froid F5).
+    expect(somme).toBe(77)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -37,7 +37,7 @@ describe('l’inventaire des 73 faits', () => {
     expect(muets).toEqual([])
   })
 
-  it('l’état publié est bien l’état ACTUEL : 43 voix, 30 silences décidés', () => {
+  it('l’état publié est bien l’état ACTUEL : 44 voix, 33 silences décidés', () => {
     // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 38 sonnent
     // VRAIMENT (et que les 26 se taisent vraiment) — ici on garde seulement la proportion.
     // 34 → 35 le 2026-07-29 : `node_depleted` sort du silence (l'arbre qui tombe craque).
@@ -66,7 +66,12 @@ describe('l’inventaire des 73 faits', () => {
     // 73 → 76 faits et 30 → 33 SILENCES le 2026-08-19 : le blizzard (météo R9) naît MUET trois
     // fois (`blizzard_annonce`/`_entre`/`_passe`) — le vent est une nappe du chantier audio
     // météo, pas un one-shot d'événement ; sa voix se décidera au banc, avec le rendu.
-    expect(SONORES.length).toBe(43)
+    // 76 → 77 faits et 43 → 44 voix le 2026-08-19 : `crop_frozen` naît SONORE (spec
+    // `flore-froid.md` F5) — c'est la seule PERTE que le froid inflige, et une perte
+    // silencieuse ne s'apprend pas : un joueur qui ne l'entend pas ne comprend pas
+    // pourquoi sa parcelle est vide au matin. Triangle qui descend, bref et bas (une
+    // rangée de parcelles gèle d'un coup).
+    expect(SONORES.length).toBe(44)
     expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(33)
   })
 

@@ -176,6 +176,12 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     // pas — c'est le filon qui parle pour elle.)
     case 'filon_decouvert':
       return { wave: 'triangle', freq: 220, freqEnd: 440, dur: 0.5, gain: 0.08 }
+    // LE GEL A TUÉ UNE CULTURE (spec `flore-froid.md` F5) — la seule PERTE que le froid
+    // inflige. Triangle qui DESCEND, comme `reveil_etouffe`, mais plus haut et plus court :
+    // ce n'est pas une menace qui tombe, c'est quelque chose qui casse. Bas et bref — une
+    // rangée de parcelles gèle d'un coup, et cinq d'affilée ne doivent pas faire un mur.
+    case 'crop_frozen':
+      return { wave: 'triangle', freq: 392, freqEnd: 196, dur: 0.35, gain: 0.055, lowpass: 1400 }
     // MUETS : `day_started` et `season_day_started` (c'est chaque jour, et le HUD le dit),
     // `horde_dispersed`, `convoy_spawned` et `brume_retiree` (une menace qui s'en va n'est pas un fait sonore).
 

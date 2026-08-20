@@ -66,7 +66,7 @@ describe('la table de routage audio (soundForEvent)', () => {
     expect(desaccords).toEqual([])
   })
 
-  it("l'inventaire tranché de GATE 1 : 76 faits, 43 voix", () => {
+  it("l'inventaire tranché de GATE 1 : 77 faits, 44 voix", () => {
     // Un compte, pas un jugement. S'il bouge, c'est qu'un fait de domaine est né ou qu'une
     // voix a changé — dans les deux cas, quelqu'un doit le savoir.
     const total = Object.keys(VOIX).length
@@ -87,12 +87,17 @@ describe('la table de routage audio (soundForEvent)', () => {
     // restent muets, par le principe des menaces qui s'en vont (`horde_dispersed`).
     // 73 → 76 le 2026-08-19 : le blizzard (météo R9) naît MUET trois fois (`blizzard_annonce`/
     // `_entre`/`_passe`) — le vent est une nappe du chantier audio météo, pas un one-shot.
-    expect(total).toBe(76)
+    // 76 → 77 faits et 43 → 44 voix le 2026-08-19 : `crop_frozen` naît SONORE (spec
+    // `flore-froid.md` F5) — c'est la seule PERTE que le froid inflige, et une perte
+    // silencieuse ne s'apprend pas : un joueur qui ne l'entend pas ne comprend pas
+    // pourquoi sa parcelle est vide au matin. Triangle qui descend, bref et bas (une
+    // rangée de parcelles gèle d'un coup).
+    expect(total).toBe(77)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
     // le pendant du hurlement pour les morts, quand la nuit bascule d'espèce avec les actes.
-    expect(voix).toBe(43)
+    expect(voix).toBe(44)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

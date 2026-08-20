@@ -350,6 +350,12 @@ export const BALANCE = {
    * tissu conjonctif ; elle met les joueurs sur les routes, donc dans les
    * rencontres). Modulé par l'acte (SEASON.REGROW_ACT_FACTOR) : le Grand Froid
    * contracte les sources.
+   *
+   * ⚠ CE FACTEUR S'APPLIQUE AUSSI AU MINÉRAL, et ce n'est pas une distraction : c'est un
+   * cadran d'ABONDANCE, pas une affirmation de biologie. Un filon de fer ne « pousse » pas
+   * moins vite parce qu'il gèle — les sources de la vallée se contractent à mesure que la
+   * saison serre, et le fer en fait partie. Le froid VRAI, celui qui lit la température du
+   * lieu, ne mord que sur ce qui vit (`flore-froid.md` F7) et ne passe jamais par ici.
    */
   NODE_REGROW_TICKS: ticksFor(45 * 60),
 
@@ -991,22 +997,49 @@ export interface NodeDef {
    * Absent = le nœud s'extrait (bois, pierre, minerai, tourbe, cendre, gravats).
    */
   renewable?: true
+  /**
+   * CE QUI VIT SENT LE FROID (spec `flore-froid.md` F7, décision d'Alexis 2026-08-19).
+   *
+   * Sœur de `renewable`, et DISTINCTE d'elle : `renewable` dit « ça repousse sur place, même
+   * défriché », `vivant` dit « c'est de la flore ». L'arbre est vivant SANS être `renewable`
+   * (on le défriche chez soi et il ne revient pas) ; la tourbe est `foraging` sans être
+   * vivante. Les deux ensembles se croisent, aucun ne contient l'autre.
+   *
+   * Absent = minéral ou inerte (pierre, fer, charbon, tourbe, cendre, gravats) : le gel n'a
+   * aucune prise dessus — un filon ne gèle pas, et `FLORE.SEUIL_GEL` ne le lit jamais.
+   */
+  vivant?: true
+  /**
+   * LA CUEILLETTE QUE LE GEL EMPORTE (spec `flore-froid.md` F3, décision d'Alexis
+   * 2026-08-20) — baies, champignons, vers : ce que la plante produit FRAIS, et qui n'est
+   * simplement plus là sous la neige.
+   *
+   * **LA FIBRE EN EST EXCLUE, et c'est un choix, pas un oubli.** Ce sont des tiges SÈCHES :
+   * elles ne disparaissent pas l'hiver, c'est même la saison où on les ramasse. Et la règle
+   * de jeu suit la botanique — `tenue_hiver` coûte 2 fibres, or c'est LA parade au froid
+   * d'acte III : la geler ferait fermer au froid sa propre contre-mesure, ce qui n'est pas
+   * une difficulté mais une impasse. (L'arbre non plus : le Feu est la survie de l'acte III.)
+   *
+   * Sous-ensemble strict de `vivant` — la plante, elle, reste bien vivante et sa REPOUSSE
+   * gèle comme les autres (F2). C'est son RENDEMENT qui ne gèle pas.
+   */
+  gelif?: true
 }
 
 export const NODE_DEFS: Record<NodeType, NodeDef> = {
   // LE TRONC S'ÉPAISSIT (décision d'Alexis, 2026-07-28) : 1 → 1,5, soit 0,375 tuile (6 px),
   // la largeur de la colonne dessinée (`client/render/arbre-art.ts`, qui confronte les deux).
-  tree: { item: 'wood', stock: 10, blockHalfSub: 1.5, skill: 'woodcutting', tool: 'axe', minTool: 'none' },
+  tree: { item: 'wood', stock: 10, blockHalfSub: 1.5, skill: 'woodcutting', tool: 'axe', minTool: 'none', vivant: true },
   rock: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'none' },
   // Le stock du BLOC est un DÉFAUT : la pose le remplace par celui de sa taille (`tailleDeBloc`
   // — 8/12/18), même patron que `stockDArbre`. La boîte pleine (`blockHalfSub: 4`) fait la règle.
   bloc: { item: 'stone', stock: 12, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'none' },
-  fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true },
-  berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true },
+  fiber_plant: { item: 'fiber', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true, vivant: true },
+  berry_bush: { item: 'berries', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true, vivant: true, gelif: true },
   // LE PATCH DE CHAMPIGNONS : cueilli à mains nues (E), mais gaté par le SAVOIR — on ne récolte
   // les bons qu'à `FORAGE_QUALITY_LEVEL` (le novice les voit sans savoir les prendre). Humide/ombre.
-  champignon: { item: 'champignons', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', minForageLevel: BALANCE.FORAGE_QUALITY_LEVEL, renewable: true },
-  leaf_pile: { item: 'worms', stock: 4, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true },
+  champignon: { item: 'champignons', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', minForageLevel: BALANCE.FORAGE_QUALITY_LEVEL, renewable: true, vivant: true, gelif: true },
+  leaf_pile: { item: 'worms', stock: 4, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true, vivant: true, gelif: true },
   iron_vein: { item: 'iron_ore', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
   coal_seam: { item: 'coal', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
 
@@ -1017,7 +1050,7 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   // n'a pas de décalage d'origine (un demi-entier lui décentrerait sa bande), et à 30 % de la
   // Vieille Sylve un cœur d'une demi-tuile y rendrait deux voisins infranchissables. On se
   // faufile au pied d'un géant. Voir `client/render/arbre-art.ts` pour la dérogation déclarée.
-  old_tree: { item: 'hardwood', stock: 6, blockHalfSub: 1, skill: 'woodcutting', tool: 'axe', minTool: 'basic' },
+  old_tree: { item: 'hardwood', stock: 6, blockHalfSub: 1, skill: 'woodcutting', tool: 'axe', minTool: 'basic', vivant: true },
   peat_cut: { item: 'peat', stock: 10, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
   quarry: { item: 'cut_stone', stock: 6, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
   ash_heap: { item: 'ash', stock: 8, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none' },
@@ -3415,6 +3448,60 @@ export const GEL = {
    *  tranches suffisent à suivre le pas jour/nuit (la seule marche du signal), et le total
    *  reste borné par `MEMOIRE_CYCLES`. */
   FONTE_TRANCHES_PAR_CYCLE: 8,
+} as const
+
+/**
+ * LE FROID MORD SUR LA FLORE (spec `flore-froid.md`, décision d'Alexis 2026-08-19) — « le
+ * froid SUSPEND le sauvage et TUE le cultivé ».
+ *
+ * ═══ POURQUOI DEUX SEUILS, ET PAS UN FACTEUR ═══
+ *
+ * Ce qui existait — `SEASON.REGROW_ACT_FACTOR` — est keyé sur l'ACTE : il ne peut dire ni
+ * OÙ ni À QUELLE HEURE. Le champ thermique, lui, sait déjà que le Névé est glacial, que la
+ * forêt tient mieux que le marais et qu'un blizzard traverse la vallée ; il n'était pas lu.
+ * Ces deux seuils le lisent — via `climatFlore`, le froid du monde À DÉCOUVERT (ni abri, ni
+ * feu : le feu réchauffe les hommes, pas la terre, sinon il devient une serre gratuite).
+ *
+ * ═══ CE QUE LA TABLE DONNE (climat de JOUR = 90 − ACT_COLD + biome ; la nuit ôte 30) ═══
+ *
+ *              acte I     acte II    acte III
+ *   forêt      95 / 65    70 / 40    45 / 15
+ *   plaine     90 / 60    65 / 35    40 / 10
+ *   marais     85 / 55    60 / 30    35 /  5
+ *   Névé       50 / 20    25 /  0     0 /  0
+ *   Glacier    15 /  0     0 /  0     0 /  0
+ *
+ * ═══ AUCUN DES DEUX N'EST UN MULTIPLE DE 5 ═══
+ *
+ * Hors front, la table n'atteint QUE des multiples de 5 (les trois termes le sont) : un seuil
+ * posé pile sur une valeur atteinte se déciderait au bit de flottant près — le raisonnement
+ * exact des seuils de `GEL`. Sous un front la rampe est continue et traverse le seuil : c'est
+ * un franchissement normal, pas un aléa de précision.
+ */
+export const FLORE = {
+  /**
+   * LA PLANTE EST GELÉE : sa repousse n'aboutit pas (F2), la cueillette ne lui prend rien
+   * (F3), et on ne sème pas la terre qu'elle occupe (F4).
+   *
+   * 52 se lit dans la table ci-dessus, et il tient à trois bornes :
+   *  - **l'acte I reste entièrement libre, nuit comprise** — le plus froid des trois biomes
+   *    de vallée y est à 55 la nuit. Le jeu d'aujourd'hui ne change pas d'un pouce (A4) ;
+   *  - **la nuit fige dès l'acte II** (35) : « cueille de jour » devient une règle ;
+   *  - **la vallée entière s'arrête en acte III** (45 au mieux, en forêt et de jour).
+   * Et il stérilise le Névé (50) et le Glacier dès le premier jour, sans une ligne de plus.
+   */
+  SEUIL_GEL: 52,
+  /**
+   * LE GEL TUE LA CULTURE À CIEL OUVERT (F5) — le seul endroit où le froid DÉTRUIT.
+   *
+   * 22, soit juste au-dessus de `TEMPERATURE.HYPOTHERMIA` (20) : **la culture meurt là où
+   * l'homme meurt.** Ce que ça donne, lu dans la table : l'acte I ne tue JAMAIS (son pire
+   * point de vallée est 50, et aucun blizzard n'y est tiré) ; en acte II un blizzard (−55)
+   * tue de jour comme de nuit et un front de neige (−25) tue la nuit ; en acte III toute
+   * nuit tue. Le potager de plein air devient un pari, puis n'est plus jouable — et c'est
+   * ce qui donne enfin son prix à la serre (`agriculture.md` R7).
+   */
+  SEUIL_MORTEL: 22,
 } as const
 
 /**

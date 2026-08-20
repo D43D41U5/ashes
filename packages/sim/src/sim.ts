@@ -48,6 +48,7 @@ import { advancePois } from './poi-discovery'
 import { advanceDens } from './poi'
 import { avancerLaCendre } from './cendre'
 import { advanceTime, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
+import { advanceCultures } from './agriculture'
 import { advanceTemperature, coldSpeedFactor } from './temperature'
 import { advanceUpkeep, applyVillageAction, getVillageOf, type VillageAction, type Structure, type Village } from './village'
 
@@ -828,6 +829,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   advanceDecouverte(state)
   advanceSpoilage(state)
   advanceEconomy(state)
+  advanceCultures(state) // F5 — le gel tue le potager de plein air (spec flore-froid)
   advanceTemperature(state)
   // LE DÉGEL NE LAISSE PERSONNE EMMURÉ (spec `gel.md` G8bis). Juste APRÈS la température :
   // c'est elle qui vient de faire fondre la glace, on répare dans le même tick — jamais un

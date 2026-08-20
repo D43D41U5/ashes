@@ -65,6 +65,7 @@ import { meteoFeuConso, meteoMouille } from './meteo'
 import { estIncassable, matiereChiffre, matieresDe, parPiece, piece } from './pieces'
 import { terrainAt, zoneAt } from './map'
 import { isSheltered } from './temperature'
+import { floreGelee } from './gel'
 import { actForDay, seasonDayAtTick } from './time'
 import type { SimState } from './sim'
 
@@ -1214,11 +1215,18 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       if (!s || !isPlot(s.type)) return reject('pas une parcelle')
       if (s.ownerId !== actorId && getVillageOf(state, actorId)?.id !== s.villageId) return reject('pas votre village')
       if (s.plantedAt !== undefined) return reject('déjà semé')
-      // LE FROID GÈLE LA TERRE À CIEL OUVERT (acte III, spec agriculture) : seule la SERRE
-      // (cultures d'hiver, GDD §8 « poussent quand le froid tue le reste ») laisse encore semer
-      // quand tout gèle dehors. Le payoff stratégique : bâtir des serres AVANT l'hiver, ou ne
-      // plus rien planter. (Seuil « acte III » = ordre de grandeur à calibrer.)
-      if (s.type === 'parcelle' && actForDay(seasonDayAtTick(state.tick, state.calendarScale)) >= 3) {
+      // F4 — LE FROID GÈLE LA TERRE À CIEL OUVERT (spec `flore-froid.md`, amende
+      // `agriculture.md` R7) : seule la SERRE (cultures d'hiver, GDD §8 « poussent quand le
+      // froid tue le reste ») laisse encore semer quand tout gèle dehors. Le payoff
+      // stratégique : bâtir des serres AVANT l'hiver, ou ne plus rien planter.
+      //
+      // LE SEUIL EST PASSÉ DE L'ACTE AU CLIMAT DU LIEU. Un acte est un numéro de jour : il ne
+      // sait ni que le Névé est glacial, ni qu'il fait nuit, ni qu'un blizzard traverse. Le
+      // champ thermique le sait déjà. Conséquence voulue : on ne sème plus une nuit d'acte II,
+      // et on ne sème jamais sur la neige. Serre et terroir restent hivernaux par leur TYPE
+      // (R7/R8) — `isSheltered` ne connaît que la maison et la grotte, et l'y ajouter
+      // changerait la survie humaine à l'hypothermie, ce qui n'est demandé nulle part.
+      if (s.type === 'parcelle' && floreGelee(state, s.tx, s.ty)) {
         return reject('la terre est gelée — il faut une serre')
       }
       const range = BALANCE.INTERACT_RANGE

@@ -20,6 +20,14 @@ function clampTemp(v: number): number {
   return Math.max(0, Math.min(100, v))
 }
 
+/**
+ * LE BIOME LE PLUS DOUX de la table — DÉRIVÉ, jamais écrit. `climatMaximal` s'en sert comme
+ * borne prouvablement optimiste : la poser en dur (`+5`) rendrait la borne fausse EN SILENCE
+ * le jour où quelqu'un ajoute un biome plus tiède, et des nœuds seraient déclarés gelés sans
+ * l'être. Le `0` d'amorçage est le défaut d'un terrain absent de la table (`?? 0`).
+ */
+const BIOME_MAX = Math.max(0, ...Object.values(T.BIOME_OFFSET))
+
 /** Sur l'empreinte d'une structure à toit (maison) — ou d'une Grotte → abrité. */
 export function isSheltered(state: SimState, tx: number, ty: number): boolean {
   if (state.structures.some((s) => s.tx === tx && s.ty === ty && s.type === 'house')) return true
@@ -91,6 +99,15 @@ export function baselineTemperature(state: SimState, x: number, y: number): numb
  * une glace qui n'a pas existé.
  */
 export function baselineTemperatureAt(state: SimState, x: number, y: number, tick: number): number {
+  const shelter = isSheltered(state, Math.floor(x), Math.floor(y)) ? T.SHELTER_FACTOR : 1
+  return froidDuMonde(state, x, y, tick, shelter)
+}
+
+/**
+ * LE FROID DU MONDE À DÉCOUVERT — l'écrivain unique de `baselineTemperatureAt` et de
+ * `climatFlore`, qui ne diffèrent QUE par le facteur d'abri.
+ */
+function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelter: number): number {
   const tx = Math.floor(x)
   const ty = Math.floor(y)
   const time = gameTimeAt(state, tick)
@@ -104,8 +121,51 @@ export function baselineTemperatureAt(state: SimState, x: number, y: number, tic
   // max) — le déni de zone tombe de ces lois, pas d'une mécanique neuve. Le froid météo
   // arrive en RAMPE (gradient bord → cœur de bande) : le front qui approche se SENT venir.
   const exposed = biome - (time.isNight ? T.NIGHT_COLD : 0) - brumeColdAt(state, x, y, tick) - meteoColdAt(state, x, y, tick) // amorti par l'abri
-  const shelter = isSheltered(state, tx, ty) ? T.SHELTER_FACTOR : 1
   return clampTemp(base + shelter * exposed)
+}
+
+/**
+ * LE CLIMAT D'UNE PLANTE (spec `flore-froid.md` F1) — le froid du monde SANS abri.
+ *
+ * C'est `baselineTemperatureAt` avec `shelter = 1`, et rien d'autre : **une plante est
+ * dehors.** Comme `1 × exposé === exposé` au bit près, les deux fonctions ne peuvent pas
+ * diverger sur une tuile non abritée — c'est le critère A1, et c'est ce qui autorise le
+ * client à recalculer le gel de la flore par la même façade que le gel de l'eau.
+ *
+ * ═══ NI LE FEU NI LA SOURCE CHAUDE (F1bis) ═══
+ *
+ * Même raisonnement qu'au gel (G1) et qu'au gate des Cendreux : lire `ambientTemperature`
+ * ferait d'un feu de camp une SERRE GRATUITE, et le payoff « bâtir des serres AVANT
+ * l'hiver » (`agriculture.md` R7) mourrait le jour où on pose un foyer au bord du potager.
+ * **Le feu réchauffe les hommes, pas la terre.** C'est aussi le seul terme qui coûterait un
+ * balayage des structures par nœud, sur un chemin appelé par la passe économique.
+ *
+ * Pas d'abri non plus, et c'est délibéré : `isSheltered` ne connaît que la maison et la
+ * grotte, il balaie `state.structures`, et la serre — la vraie réponse au froid pour une
+ * culture — passe par son TYPE (F4), jamais par le champ thermique.
+ */
+export function climatFlore(state: SimState, x: number, y: number, tick: number): number {
+  return froidDuMonde(state, x, y, tick, 1)
+}
+
+/**
+ * LE POINT LE PLUS DOUX QUE LA VALLÉE PUISSE ATTEINDRE À CE TICK, pour la flore — O(1),
+ * aucune lecture de carte. Patron de `gelPossible` (spec `gel.md`), à l'envers : là où
+ * `gelPossible` SURESTIME le froid pour ne jamais rater une glace, celle-ci le SOUS-ESTIME
+ * pour ne jamais déclarer gelé ce qui ne l'est pas.
+ *
+ * Sert de court-circuit à la passe économique : quand `climatMaximal < FLORE.SEUIL_GEL`,
+ * **tout ce qui vit gèle**, où que ce soit — inutile d'aller lire le terrain d'un nœud, ni
+ * la Brume, ni le front. C'est exactement le cas coûteux (l'acte III entier, et toutes les
+ * nuits dès l'acte II) : celui où des milliers de nœuds sont à échéance et gelés à la fois.
+ *
+ * `+5` est le biome le plus DOUX de la table (`BIOME_OFFSET`, le couvert forestier) ; la
+ * Brume et le front ne peuvent que refroidir, donc les ignorer ne fait que surestimer la
+ * douceur. La borne est prouvablement optimiste, jamais approchée.
+ */
+export function climatMaximal(state: SimState, tick: number): number {
+  const time = gameTimeAt(state, tick)
+  return clampTemp(T.BASE - T.ACT_COLD[time.act - 1]! + BIOME_MAX - (time.isNight ? T.NIGHT_COLD : 0))
 }
 
 /** Température ambiante cible (0-100) au lieu (x,y) : le froid de base, PLANCHERÉ par un feu / une source chaude. */

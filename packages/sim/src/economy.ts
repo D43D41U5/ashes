@@ -42,6 +42,7 @@ import {
 import { harvestFactor } from './alignment'
 import { die } from './combat'
 import { emitEvent } from './events'
+import { floreEntierementGelee, floreGelee } from './gel'
 import { distSq } from './geometry'
 import { heldSlot, wearHeld } from './inventory-actions'
 import {
@@ -501,10 +502,21 @@ export function forageBounty(nodeId: number, tick: number, richness: number, lev
  * `harvest`, `harvest_charge_start` (refus précoce), `harvest_release`/auto-frappe
  * (re-vérif silencieuse, G8 : le nœud a pu se vider ou s'éloigner pendant la charge).
  */
-function strikeRejection(actor: Entity, node: ResourceNode | undefined, range: number): string | null {
+function strikeRejection(state: SimState, actor: Entity, node: ResourceNode | undefined, range: number): string | null {
   if (!node || node.stock <= 0) return 'rien à récolter'
   if (distSq(actor.x, actor.y, node.tx + 0.5, node.ty + 0.5) > range * range) return 'trop loin'
   const def = NODE_DEFS[node.type]
+  // F3 — UNE PLANTE GELÉE NE REND RIEN (spec `flore-froid.md`). Ne mord QUE sur les nœuds
+  // `gelif` : baies, champignons, vers — ce que la plante produit FRAIS. Deux exclusions
+  // délibérées, et pour la même raison de fond (le froid ne doit pas fermer ce qui permet de
+  // lui survivre) : **l'arbre gelé donne toujours son bois** (le Feu EST la survie de l'acte
+  // III) et **la fibre sèche se ramasse encore** (`tenue_hiver` en coûte 2, et c'est la
+  // parade au froid). Le minéral, lui, n'a pas de saison (F7). Testé en dernier des gates de
+  // nœud : c'est le seul qui coûte une lecture de carte, et le seul qui puisse cesser d'être
+  // vrai sans qu'on bouge.
+  if (def.gelif && floreGelee(state, node.tx, node.ty)) {
+    return 'la plante est gelée'
+  }
   const { tier } = toolMultiplier(actor, def.tool)
   if (TOOL_RANK[tier] < TOOL_RANK[def.minTool]) {
     return tier === 'none' ? 'il faut une pioche en main' : 'il faut un outil forgé en main'
@@ -659,7 +671,7 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       // COUP n'a AUCUNE cadence (décision utilisateur 2026-07-25) — on enchaîne les buissons
       // sans attendre. Le minage et le PNJ (qui n'envoient jamais `whole`) gardent la leur.
       if (!whole && state.tick < actor.cooldownUntil) return
-      const bad = strikeRejection(actor, node, range)
+      const bad = strikeRejection(state, actor, node, range)
       if (bad) return reject(bad)
       const def = NODE_DEFS[node!.type]
       const clean =
@@ -680,7 +692,7 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       const plainte = action.hold === true ? (): void => {} : reject
       if (actor.harvestCharge) return // déjà en charge : le maintien ne relance pas
       const node = state.nodes.find((n) => n.id === action.nodeId)
-      const bad = strikeRejection(actor, node, range)
+      const bad = strikeRejection(state, actor, node, range)
       if (bad) return plainte(bad)
       actor.harvestCharge = { nodeId: action.nodeId, ticks: 0 }
       return
@@ -700,7 +712,7 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       delete actor.harvestCharge
       if (charge.ticks < BALANCE.FELL_GREEN_START_TICKS) return // relâché avant la connexion
       const node = state.nodes.find((n) => n.id === charge.nodeId)
-      if (strikeRejection(actor, node, range)) return
+      if (strikeRejection(state, actor, node, range)) return
       const level = levelOf(actor, NODE_DEFS[node!.type].skill)
       harvestStrike(state, actor, actorId, node!, isCleanFell(charge.ticks, level))
       return
@@ -945,13 +957,17 @@ export function advanceEconomy(state: SimState): void {
     }
     delete entity.harvestCharge
     const node = state.nodes.find((n) => n.id === charge.nodeId)
-    if (!strikeRejection(entity, node, BALANCE.INTERACT_RANGE)) {
+    if (!strikeRejection(state, entity, node, BALANCE.INTERACT_RANGE)) {
       harvestStrike(state, entity, entity.id, node!, false)
     }
   }
   // Le prédicat de défrichement coûte un balayage des villages : on ne le paie que s'il
   // y a un village, et que sur les nœuds VIDES (les seuls candidats à la repousse).
   const desVillages = state.villages.length > 0
+  // F2 — LE COURT-CIRCUIT DU GEL DE LA FLORE, hoisté HORS de la boucle : il ne dépend que du
+  // tick. Vrai, aucun nœud vivant n'aboutit, où qu'il soit — et c'est le cas coûteux (acte III
+  // entier, nuits d'acte II), celui où des milliers de nœuds sont à échéance et gelés à la fois.
+  const toutGele = floreEntierementGelee(state)
   for (const node of state.nodes) {
     if (node.stock <= 0) {
       // DÉFRICHÉ : `stock 0` + `regrowAt 0`, et c'est une signature UNIQUE — hors emprise, un
@@ -972,6 +988,17 @@ export function advanceEconomy(state: SimState): void {
           delete node.forgetAt
           continue
         }
+        // F2 — LA REPOUSSE N'ABOUTIT PAS SOUS LE GEL (spec `flore-froid.md`). LA DATE NE
+        // GLISSE PAS : `regrowAt` reste celle qu'on a posée à l'épuisement, et on repassera
+        // ici au tick suivant. C'est la seule forme que la règle pouvait prendre — la date
+        // VOYAGE dans le `NodeDelta` à l'épuisement (spec `recolte-vivante`, protocole v2) et
+        // le client peint la pousse sur `[tick, regrowAt]` : une date qui glisse chaque tick
+        // serait soit une inondation de deltas, soit un client qui ment. Un GATE se dérive
+        // (le client relit `floreGelee`), une INTÉGRALE ne se dérive pas — les fronts sont
+        // purgés de l'état, `baselineTemperatureAt` le dit dans son propre en-tête.
+        //
+        // Après le défrichement, délibérément : ce qui est défriché l'est, gelé ou non.
+        if (NODE_DEFS[node.type].vivant && (toutGele || floreGelee(state, node.tx, node.ty))) continue
         // Un bon coin de cueillette repousse RICHE (la richesse est une propriété du lieu,
         // pas un stock ponctuel) — sans effet sur les autres nœuds (spec verbe 3). Et un
         // arbre repousse par `stockDArbre` (§2quater R40) : le vieux fût du cœur SURVIT à

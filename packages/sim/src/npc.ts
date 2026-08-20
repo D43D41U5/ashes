@@ -34,6 +34,7 @@ import { engageRange, startAttack, weaponProfile } from './combat'
 import { applyEconomyAction, toolRank, type ResourceNode } from './economy'
 import { sertExigence } from './pieces'
 import { emitEvent } from './events'
+import { floreGelee } from './gel'
 import { distSq } from './geometry'
 import { zoneIdAt } from './map'
 import { countOf, freeRoomFor, moveSlotWithin, type ItemId } from './items'
@@ -474,6 +475,26 @@ function executeGather(state: SimState, village: Village, npc: Npc, entity: Enti
       }
       task.nodeId = node.id
       npc.path = []
+    }
+    // LE GEL N'EST PAS UN EMPÊCHEMENT PROPRE À CE PNJ (spec `flore-froid.md` F3) — c'est
+    // EXACTEMENT le raisonnement du « rien à récolter dans le monde » ci-dessus, et il faut
+    // le tenir ici aussi, sinon le remède d'à côté ne sert à rien.
+    //
+    // Sans cette garde, `applyEconomyAction` REFUSE (« la plante est gelée ») et le PNJ
+    // repart pour un tour : le nœud a encore du stock, donc on ne cherche pas ailleurs, la
+    // corvée n'est pas relâchée — **il reste planté devant le buisson**. Une nuit d'acte II,
+    // c'est une nuit perdue ; en acte III, où plus rien ne dégèle, c'est POUR TOUJOURS : le
+    // PNJ ne mange plus, ne descend jamais jusqu'au bois qu'il pourrait couper, et le village
+    // s'éteint avec lui. La même famine que celle épinglée plus haut, par une autre porte.
+    //
+    // Donc : on range ce qu'on porte, ou la corvée QUITTE LE TABLEAU — le voisin gèlerait
+    // pareil. `refreshBoard` la reposte au dégel, et la vallée entière dégèle chaque matin
+    // jusqu'à l'acte III. On teste AVANT la marche : traverser la carte pour un buisson gelé
+    // est un trajet perdu.
+    if (NODE_DEFS[node.type].gelif && floreGelee(state, node.tx, node.ty)) {
+      if (countOf(entity.inventory, def.item) > 0) task.stage = 'store'
+      else dropTask(village, npc, true)
+      return
     }
     if (near(entity, node.tx, node.ty)) {
       if (canAct(state, entity)) {

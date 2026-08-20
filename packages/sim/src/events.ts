@@ -160,6 +160,9 @@ export type SimEvent =
   /** LE POTAGER (agriculture voie A) : semé, puis récolté quand mûr. */
   | { type: 'crop_planted'; tick: number; structureId: number; byEntityId: number }
   | { type: 'crop_harvested'; tick: number; structureId: number; byEntityId: number; yield: number }
+  /** F5 — le gel a tué une culture à ciel ouvert (spec `flore-froid.md`). Sans auteur : c'est
+   *  le monde qui frappe, pas quelqu'un. La chronique de saison a là son fait de Grand Froid. */
+  | { type: 'crop_frozen'; tick: number; structureId: number }
   | {
       type: 'access_changed'
       tick: number

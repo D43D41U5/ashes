@@ -372,6 +372,17 @@ export function isWeapon(item: ItemId | null): boolean {
   return item !== null && WEAPON_DAMAGE[item] !== undefined
 }
 
+/**
+ * CE QUI SE POSE SANS MARTEAU — composants et coffre tenu.
+ *
+ * Écrit comme prédicat de type pour que le compilateur porte la suite : ce qui survit à ce
+ * test EST une pièce du marteau, et un `Placeable` neuf qui ne serait ni composant ni pièce
+ * de marteau ferait rougir `tsc` au lieu de partir en coup de poing.
+ */
+function estPosableSansMarteau(p: Placeable): p is ComponentType | 'chest' {
+  return (COMPONENT_TYPES as readonly string[]).includes(p) || p === 'chest'
+}
+
 export function clickToAction(
   target: AimTarget,
   placing: Placeable | null,

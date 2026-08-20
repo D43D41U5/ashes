@@ -115,7 +115,7 @@ export { CREUX } from './racine-relief'
 export type { WorldMap, Zone } from './map'
 export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
-export { ambientTemperature, baselineTemperature, baselineTemperatureAt, advanceTemperature } from './temperature'
+export { ambientTemperature, baselineTemperature, baselineTemperatureAt, climatFlore, climatMaximal, advanceTemperature } from './temperature'
 // LA BRUME (spec brume.md) : le client rendra la nappe en la RECALCULANT du tick (patron front
 // de Cendre) — la géométrie pure et le bloc de calibration s'exportent, l'ordonnanceur non.
 export { brumeCentre, dansLaBrume, brumeJourEligible } from './brume'
@@ -144,6 +144,9 @@ export {
   estGele, gelPossible, vitesseSurGlace,
   feuillageDenude, jourDeDefeuillaison, neigeAuSol,
   bandeDuCycle, jourDuCycle, advanceDegel,
+  // LE FROID SUR LA FLORE (spec `flore-froid.md`) : le client peint la plante gelée avec le
+  // MÊME prédicat que la sim lui applique — écrivain unique, comme la glace et le feuillage.
+  floreGelee, floreEntierementGelee, gelMortel,
 } from './gel'
 export { METEO } from './balance'
 // LE FEU-STATION (spec feu-station) : l'état dérivable du snapshot côté client, et la donnée des slots.
