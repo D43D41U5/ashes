@@ -264,6 +264,11 @@ export {
   deserializeCarte,
   serializePartie,
   deserializePartie,
+  // LA POLITIQUE DE SAUVEGARDE elle-même, pour que l'hôte cesse de la tenir à la main
+  // (et que le test cesse d'en éprouver un sosie).
+  creerCoffre,
+  type Coffre,
+  type EcritureDeSauvegarde,
   SAVE_FORMAT_VERSION,
 } from './persistence'
 export type { CarteSauvee } from './persistence'

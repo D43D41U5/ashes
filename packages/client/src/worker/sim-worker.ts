@@ -18,10 +18,9 @@ import {
   filtreParInteret,
   getGameTime,
   seedNodeShadow,
-  serializeCarte,
   baseDepuisNoeuds,
-  type BaseNoeuds,
-  serializePartie,
+  creerCoffre,
+  type Coffre,
   step,
   type MoveInput,
   type PlayerAction,
@@ -91,16 +90,16 @@ const CHRONICLE_CAP = 400
 let booting = false
 /** Une écriture disque à la fois — les sérialisations lourdes ne se chevauchent pas. */
 let saving = false
-/** La carte de CE monde est-elle déjà sur le disque ? Elle ne s'écrit qu'une fois (§ `persist`). */
-let carteEcrite = false
 /**
- * L'ÉTAT DES NŒUDS TEL QU'IL EST AU DISQUE — la référence du diff de sauvegarde.
+ * CE QUE LE DISQUE PORTE — un seul objet, parce que c'est un seul fait.
  *
- * Toujours celui de l'enregistrement de NAISSANCE, jamais celui de la dernière sauvegarde :
- * le diff est donc cumulatif et se recolle en une seule passe, sans dépendre d'une chaîne de
- * sauvegardes intermédiaires dont il suffirait d'en perdre une. Voir `node-baseline.ts`.
+ * L'hôte tenait ça en DEUX variables (`carteEcrite` et la base des nœuds) qui devaient bouger
+ * ensemble et ne le faisaient pas : une première écriture refusée puis une seconde acceptée
+ * mettait au disque une carte et un diff irrecollables, et la Veillée se rouvrait NEUVE sans
+ * un mot. La politique vit maintenant dans `/sim` (`creerCoffre`), où elle est testée pour de
+ * vrai — `persistence.test.ts` l'éprouvait jusqu'ici sur un sosie écrit à la main.
  */
-let baseNoeuds: BaseNoeuds | undefined
+let coffre: Coffre = creerCoffre()
 /** Une sauvegarde a été demandée pendant qu'une autre était en vol : on la rejoue à la fin,
  *  avec l'état le plus frais. Sans ça, la SORTIE (`pause`) qui tombe pile sur un autosave était
  *  silencieusement perdue — le trou du garde `saving` tombait exactement sur le cas à protéger. */
@@ -265,21 +264,21 @@ async function persist(): Promise<void> {
     // LA SÉRIALISATION EST SYNCHRONE, ET ELLE EST LE SUJET. Tant qu'elle tourne, ce Worker ne
     // tique pas : le monde s'arrête. On la chronomètre à part de l'écriture disque (qui, elle,
     // rend la main) pour savoir lequel des deux gèle la Veillée. Sonde de dev, coût nul sinon.
-    // LA BASE DES NŒUDS EST POSÉE AVANT LE PREMIER DIFF — et sur l'état d'AVANT la
-    // sérialisation, puisque c'est cet état-là qui part au disque dans le même geste.
-    const premiere = baseNoeuds === undefined
-    if (premiere) baseNoeuds = baseDepuisNoeuds(sim.nodes)
     const s0 = SONDE_PERF ? performance.now() : 0
     // LE TICK QU'ON EMPORTE, relevé AVANT l'attente disque : le ticker peut repartir pendant
     // qu'IndexedDB écrit, et créditer le disque d'un tick qu'il ne porte pas rendrait la garde
     // ci-dessus menteuse — elle sauterait une vraie sauvegarde.
     const tickSerialise = sim.tick
-    const texte = serializePartie(sim, baseNoeuds!)
+    // TOUT CE QUI SE SÉRIALISE PASSE PAR ICI — carte comprise. La sonde n'encadrait que la
+    // partie, si bien qu'une naissance (~60 Mo, le vrai gel) se mesurait à côté de la plaque.
+    const ecriture = coffre.prochaine(sim)
+    const texte = ecriture.partie
     if (SONDE_PERF) {
       perfSerialisationMs = performance.now() - s0
       // `length` compte des unités UTF-16, pas des octets : on rend des OCTETS, sinon la
       // sonde mentirait dès qu'un nom de village porte un accent.
-      perfOctets = new TextEncoder().encode(texte).length
+      const enc = new TextEncoder()
+      perfOctets = enc.encode(texte).length + (ecriture.quoi === 'naissance' ? enc.encode(ecriture.carte).length : 0)
     }
     const record = { sim: texte, playerId, chronicle: chronicleLog, savedAt: Date.now() }
     // LA MÉTA DE L'ÉCRAN DES MONDES — écrite dans la MÊME transaction que la partie (voir
@@ -298,14 +297,16 @@ async function persist(): Promise<void> {
     // sauvegarde et ne change jamais (garde : `carte-immuable.test.ts`) : la réécrire deux fois
     // par minute était le gel. Mais la poser dans SA transaction ouvrait une fenêtre où le
     // disque portait la carte d'un monde et la partie d'un autre — les deux clés partent donc
-    // ensemble ou pas du tout. Si l'écriture échoue, `carteEcrite` reste faux et le prochain
-    // autosave retentera : une partie sans sa carte ne se reprend pas.
-    if (carteEcrite) {
+    // ensemble ou pas du tout. Si l'écriture échoue, le coffre ne s'engage pas et le prochain
+    // autosave redemandera une naissance : une partie sans sa carte ne se reprend pas.
+    if (ecriture.quoi === 'partie') {
       await saveSlot(monde.slot, record, meta)
     } else {
-      await saveCarteEtSlot(monde.slot, serializeCarte(sim.map, sim.seed, sim.nodes), record, meta)
-      carteEcrite = true
+      await saveCarteEtSlot(monde.slot, ecriture.carte, record, meta)
     }
+    // ENGAGÉ SEULEMENT MAINTENANT : tant que l'`await` n'a pas rendu la main, le disque ne
+    // porte rien, et la base ne doit rien prétendre.
+    coffre.reussi()
     // ON LE DIT. Une sauvegarde muette laisse le joueur dans le doute — et ce doute coûte
     // cher dans un jeu où l'on peut perdre une heure de veillée.
     tickEcrit = tickSerialise
@@ -315,6 +316,10 @@ async function persist(): Promise<void> {
     // Un disque plein ou refusé ne doit pas tuer la partie : on perd la sauvegarde, pas la
     // session. (Le prochain autosave retentera.) Mais on ne le TAIT PAS : un échec silencieux
     // laisse croire au salut, ce qui est bien pire que pas d'indicateur du tout.
+    //
+    // ET ON REND LA BASE AVEC : rien n'est parti au disque, donc rien n'est engagé. Sans ça,
+    // le prochain essai diffait contre un état que le disque ne portait pas.
+    coffre.echoue()
     post({ type: 'saved', at: Date.now(), ok: false })
   } finally {
     saving = false
@@ -364,7 +369,9 @@ async function boot(slot: number, seed: number, nom: string): Promise<void> {
           state = deserializePartie(rec.sim, naissance)
           // LA BASE RESTE CELLE DE LA NAISSANCE, pas celle qu'on vient de relire : les
           // prochains diffs se comparent au même point de départ que ceux d'avant la reprise.
-          baseNoeuds = baseDepuisNoeuds(naissance.nodes)
+          // LA BASE RESTE CELLE DE LA NAISSANCE relue : les prochains diffs se comparent au
+          // même point de départ que ceux d'avant la reprise.
+          coffre = creerCoffre(baseDepuisNoeuds(naissance.nodes))
           carteEnMain = true
         } catch {
           state = undefined // on tente l'ancien format avant d'abandonner le monde
@@ -372,10 +379,10 @@ async function boot(slot: number, seed: number, nom: string): Promise<void> {
       }
       if (!state) {
         state = deserializeSim(rec.sim) // JETTE pour de bon → on tombe dans le catch
-        baseNoeuds = undefined // pas d'enregistrement de naissance : le prochain `persist` en pose un
+        coffre = creerCoffre() // pas d'enregistrement de naissance : le prochain `persist` en pose un
       }
       sim = state
-      carteEcrite = carteEnMain
+      if (!carteEnMain) coffre = creerCoffre()
       playerId = rec.playerId
       chronicleLog = rec.chronicle ?? []
       const me = state.entities.find((e) => e.id === playerId)
@@ -400,8 +407,7 @@ async function boot(slot: number, seed: number, nom: string): Promise<void> {
     // Sauvegarde absente, illisible ou d'une version incompatible : on repart à neuf.
     sim = undefined
     resumed = false
-    carteEcrite = false
-    baseNoeuds = undefined
+    coffre = creerCoffre()
   }
 
   if (!sim) {
@@ -414,8 +420,7 @@ async function boot(slot: number, seed: number, nom: string): Promise<void> {
     playerId = world.playerId
     spawn = world.spawn
     chronicleLog = []
-    carteEcrite = false
-    baseNoeuds = undefined
+    coffre = creerCoffre()
   } else if (resumed) {
     // Reprise : aucune passe de génération n'a tourné — on remplit la barre d'un coup pour
     // que le seuil de chargement se lève (il attend `worldReady`, posé au `ready`).
@@ -498,7 +503,20 @@ self.addEventListener('message', (event: MessageEvent<ClientToHost | VeilleeInit
     // dans le handler, l'erreur remonte au client, qui a un écran fatal pour ça.
     if (!monde) throw new Error('sim-worker: « join » sans configuration d’hôte (« veillee_init »)')
     booting = true
-    void boot(monde.slot, monde.seed, monde.nom)
+    // …ET ON RATTRAPE L'ASYNCHRONE, qui n'était pas gardé. Le `try/catch` de `boot()` se
+    // referme AVANT `createVeillee()` — laquelle jette pour de vrai sur une carte dégénérée
+    // (« la vallée ne porte aucun emplacement viable ») — et avant le `post('ready')`. Un
+    // `void` avale cette rejection : `booting` restait à `true`, tout second `join` était
+    // ignoré, et le joueur restait devant la barre de chargement SANS AUCUN BOUTON (le menu
+    // pause n'est même pas atteignable : `UIScene.update` sort tant que `worldReady` manque).
+    // On la rend SYNCHRONE dans un tour de boucle vide : le `onerror` du Worker la voit
+    // alors, et le client a un écran fatal pour ça (`host-connection.ts`).
+    boot(monde.slot, monde.seed, monde.nom).catch((e: unknown) => {
+      booting = false
+      setTimeout(() => {
+        throw e instanceof Error ? e : new Error(`sim-worker: boot impossible (${String(e)})`)
+      }, 0)
+    })
   } else if (msg.type === 'input') {
     playerInput = { dx: msg.dx, dy: msg.dy, sprint: msg.sprint, sneak: msg.sneak, block: msg.block }
     lastProcessedInput = msg.seq

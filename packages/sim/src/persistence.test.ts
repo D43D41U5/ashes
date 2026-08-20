@@ -18,6 +18,7 @@ import {
   serializePartie,
   SAVE_FORMAT_VERSION,
   SAVE_REQUIRED_KEYS,
+  creerCoffre,
 } from './persistence'
 import { appliqueDiffNoeuds, baseDepuisNoeuds, diffNoeuds, PART_DU_NOEUD, type DiffNoeuds } from './node-baseline'
 import type { ResourceNode } from './economy'
@@ -165,16 +166,26 @@ function makeSimNoeuds(): SimState {
 }
 
 /**
- * LE COFFRE, tel que l'hôte le tient : l'enregistrement de NAISSANCE est pris une fois, et
- * toutes les sauvegardes suivantes se diffent contre LUI — jamais contre la précédente.
- * Reproduire ça ici est le seul moyen de tester ce que `sim-worker.ts` fait vraiment.
+ * LE COFFRE, tel que l'hôte le tient — et c'est LE MÊME OBJET que l'hôte tient, désormais.
+ *
+ * Ce helper recopiait la politique de `sim-worker.ts` à la main, et le disait : « reproduire
+ * ça ici est le seul moyen de tester ce que sim-worker fait vraiment ». Un test qui éprouve
+ * un sosie ne garde pas l'original — et c'est précisément par là qu'est passée la faille de
+ * la base non reprise (voir « une écriture refusée n'engage rien » plus bas). `creerCoffre`
+ * vit maintenant dans `persistence.ts` et l'hôte l'appelle : ce qu'on teste ici est joué.
  */
 function coffre(sim: SimState) {
-  const carteTexte = serializeCarte(sim.map, sim.seed, sim.nodes)
-  const base = baseDepuisNoeuds(sim.nodes)
+  const c = creerCoffre()
+  const naissance = c.prochaine(sim)
+  if (naissance.quoi !== 'naissance') throw new Error('le premier geste d’un coffre est une naissance')
+  c.reussi()
   return {
-    naissance: () => deserializeCarte(carteTexte),
-    ecrire: (s: SimState) => serializePartie(s, base),
+    naissance: () => deserializeCarte(naissance.carte),
+    ecrire: (s: SimState) => {
+      const e = c.prochaine(s)
+      c.reussi()
+      return e.partie
+    },
   }
 }
 
@@ -442,5 +453,78 @@ describe('la table des champs d’un nœud', () => {
       if (part !== 'fixe') continue
       expect((repris[0] as unknown as Record<string, unknown>)[k], k).toEqual((nu as unknown as Record<string, unknown>)[k])
     }
+  })
+})
+
+describe('une écriture refusée n’engage rien (la Veillée perdue en silence)', () => {
+  /**
+   * LE SCÉNARIO, ET POURQUOI IL EST PLAUSIBLE. La sauvegarde de NAISSANCE est la plus lourde
+   * (elle emporte la carte, ~86,9 % du total) : c'est celle qu'un IndexedDB plein, évincé ou
+   * refusé rejette en premier. L'hôte le savait et retentait — mais il tenait DEUX drapeaux
+   * pour un seul fait : la carte n'était marquée écrite qu'au succès, la base des nœuds l'était
+   * avant toute écriture et n'était jamais reprise. Le second essai partait donc avec la carte
+   * de T2 et un diff contre la base de T1.
+   *
+   * Ce qui suit affirme les deux moitiés : que le coffre se rattrape, ET que sans ce
+   * rattrapage la reprise est bel et bien perdue — sinon la garde ne prouverait pas sa prémisse.
+   */
+  const naitUnNoeud = (sim: SimState): void => {
+    // Un nœud NÉ en cours de partie : c'est ce que fait le filon au retrait de la Brume
+    // (`brume.ts`), et ce que l'agriculture fera. C'est lui qui rend les deux états
+    // irréconciliables — un nœud absent de la base de T1 mais présent dans la carte de T2.
+    const id = Math.max(0, ...sim.nodes.map((n) => n.id)) + 1
+    sim.nodes.push({ id, type: 'iron_vein', tx: 30, ty: 30, stock: 6, regrowAt: 0 })
+  }
+
+  it('P0.5 — première écriture REFUSÉE, seconde acceptée : la reprise rend le même état', () => {
+    const sim = makeSimNoeuds()
+    spawnEntity(sim, 20.5, 20.5)
+    const c = creerCoffre()
+
+    const t1 = c.prochaine(sim)
+    expect(t1.quoi).toBe('naissance')
+    c.echoue() // le disque refuse : RIEN n'est parti
+
+    idle(sim, 20)
+    naitUnNoeud(sim)
+
+    const t2 = c.prochaine(sim)
+    // La naissance n'ayant pas abouti, le coffre en redemande une — carte comprise.
+    expect(t2.quoi).toBe('naissance')
+    c.reussi()
+    if (t2.quoi !== 'naissance') throw new Error('inatteignable')
+
+    const repris = deserializePartie(t2.partie, deserializeCarte(t2.carte))
+    expect(snapshot(repris)).toBe(snapshot(sim))
+  })
+
+  it('P0.5bis — la garde prouve sa prémisse : garder la base de T1 PERD la vallée', () => {
+    // On rejoue à la main ce que faisait l'hôte fautif : base prise à T1, carte écrite à T2.
+    const sim = makeSimNoeuds()
+    spawnEntity(sim, 20.5, 20.5)
+    const baseT1 = baseDepuisNoeuds(sim.nodes) // posée AVANT l'écriture qui va échouer
+
+    idle(sim, 20)
+    naitUnNoeud(sim)
+
+    const carteT2 = serializeCarte(sim.map, sim.seed, sim.nodes) // la seconde écriture, elle, passe
+    const partieT2 = serializePartie(sim, baseT1) // …mais diffée contre la base d'AVANT
+    expect(() => deserializePartie(partieT2, deserializeCarte(carteT2))).toThrow()
+  })
+
+  it('P0.5ter — en régime, un échec ne redemande PAS la carte (on ne réécrit pas 60 Mo pour rien)', () => {
+    const sim = makeSimNoeuds()
+    const c = creerCoffre()
+    c.prochaine(sim)
+    c.reussi() // la naissance est au disque
+
+    idle(sim, 10)
+    const a = c.prochaine(sim)
+    expect(a.quoi).toBe('partie')
+    c.echoue() // celle-ci rate
+
+    idle(sim, 10)
+    const b = c.prochaine(sim)
+    expect(b.quoi).toBe('partie') // la carte est au disque : elle n'a pas à repartir
   })
 })

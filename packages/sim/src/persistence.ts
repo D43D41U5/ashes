@@ -17,7 +17,7 @@
  */
 import type { SimState } from './sim'
 import type { ResourceNode } from './economy'
-import { appliqueDiffNoeuds, diffNoeuds, type BaseNoeuds, type DiffNoeuds } from './node-baseline'
+import { appliqueDiffNoeuds, baseDepuisNoeuds, diffNoeuds, type BaseNoeuds, type DiffNoeuds } from './node-baseline'
 
 /**
  * Version du FORMAT de sauvegarde. À INCRÉMENTER à tout changement incompatible de la
@@ -363,4 +363,82 @@ export function deserializePartie(text: string, carte: CarteSauvee): SimState {
   const sim = { ...env.partie, map, nodes } as SimState
   migrerParoiEnMassif(sim) //  les parties du 2026-08-10 portent des `paroi` (cf. la migration)
   return sim
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════
+ * LE COFFRE — LA POLITIQUE DE SAUVEGARDE, SORTIE DE L'HÔTE POUR ÊTRE TESTABLE
+ * ═══════════════════════════════════════════════════════════════════════════════════════
+ *
+ * La carte pèse 86,9 % de la sauvegarde et ne change jamais : on l'écrit UNE fois, à la
+ * NAISSANCE, et tout ce qui suit n'est qu'un diff de la partie contre l'état de ce
+ * jour-là. Cette politique vivait entière dans `worker/sim-worker.ts`, où rien ne la
+ * testait — et `persistence.test.ts` la RECOPIAIT pour pouvoir l'éprouver, en écrivant
+ * lui-même que « reproduire ça ici est le seul moyen de tester ce que sim-worker fait
+ * vraiment ». Un test qui éprouve un sosie ne garde pas l'original : c'est exactement par
+ * là qu'est passée la faille ci-dessous.
+ *
+ * ⚠ LA FAILLE QUE CETTE FORME REND IMPOSSIBLE. L'hôte tenait DEUX drapeaux pour UN SEUL
+ * fait — « ce que le disque porte » : `carteEcrite`, posé APRÈS le succès de l'écriture,
+ * et la base des nœuds, posée AVANT toute écriture et jamais reprise en cas d'échec. Un
+ * premier autosave refusé (quota, éviction, stockage interdit — et c'est la sauvegarde la
+ * plus lourde, donc la plus exposée) suivi d'un second réussi écrivait au disque la carte
+ * de T2 et un diff calculé contre la base de T1. À la reprise, `appliqueDiffNoeuds`
+ * reposait les nœuds nés entre les deux, l'empreinte des identifiants divergeait, la
+ * fonction jetait, le repli jetait à son tour — et l'hôte rouvrait une vallée NEUVE sans
+ * un mot. La Veillée perdue, en silence.
+ *
+ * Ici la base n'est ENGAGÉE qu'au succès. Tant que l'écriture n'a pas abouti, elle est
+ * « en vol » : un échec la jette, et la prochaine sauvegarde recommence une naissance.
+ * Les deux drapeaux n'en font plus qu'un, donc ils ne peuvent plus diverger.
+ */
+
+/** Ce que l'hôte doit écrire à cette sauvegarde — et donc dans quelle transaction. */
+export type EcritureDeSauvegarde =
+  /** NAISSANCE : la carte ET la partie, ensemble ou pas du tout. */
+  | { quoi: 'naissance'; carte: string; partie: string }
+  /** RÉGIME : la partie seule, diffée contre la naissance déjà au disque. */
+  | { quoi: 'partie'; partie: string }
+
+export interface Coffre {
+  /** Sérialise ce qu'il faut écrire maintenant. N'engage rien : appeler `reussi`/`echoue` après. */
+  prochaine: (state: SimState) => EcritureDeSauvegarde
+  /** L'écriture a abouti : la base devient celle que le disque porte. */
+  reussi: () => void
+  /** L'écriture a échoué : rien n'est parti, donc rien n'est engagé. */
+  echoue: () => void
+}
+
+/**
+ * @param baseAuDisque la base de la naissance déjà écrite, quand on REPREND une partie. Sans
+ * elle, le coffre considère que le disque ne porte rien et redemande une naissance — ce qui
+ * est exactement ce qu'il faut pour un monde neuf ou une sauvegarde d'ancien format.
+ */
+export function creerCoffre(baseAuDisque?: BaseNoeuds): Coffre {
+  // Ce que le DISQUE porte (undefined tant qu'aucune naissance n'a abouti).
+  let engagee: BaseNoeuds | undefined = baseAuDisque
+  // Ce que l'écriture en cours PRÉTEND poser — engagé au succès, jeté à l'échec.
+  let enVol: BaseNoeuds | undefined
+  return {
+    prochaine(state: SimState): EcritureDeSauvegarde {
+      if (engagee === undefined) {
+        // La base se prend sur l'état d'AVANT la sérialisation : c'est celui-là qui part au
+        // disque dans le même geste, et le diff des sauvegardes suivantes s'y adosse.
+        const base = baseDepuisNoeuds(state.nodes)
+        enVol = base
+        return {
+          quoi: 'naissance',
+          carte: serializeCarte(state.map, state.seed, state.nodes),
+          partie: serializePartie(state, base),
+        }
+      }
+      return { quoi: 'partie', partie: serializePartie(state, engagee) }
+    },
+    reussi(): void {
+      if (enVol !== undefined) engagee = enVol
+      enVol = undefined
+    },
+    echoue(): void {
+      enVol = undefined
+    },
+  }
 }
