@@ -19,9 +19,9 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
-import { COMPONENT_TYPES, EDGE_E, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, STRUCTURE_HP, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, isRangedWeapon, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
+import { COMPONENT_TYPES, EDGE_E, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, STRUCTURE_HP, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, isRangedWeapon, piece, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
 import type { Placeable } from '../../hud-state'
-import type { Corpse, PlayerAction, ResourceNode } from '@ashes/sim'
+import type { ComponentType, Corpse, PlayerAction, ResourceNode } from '@ashes/sim'
 
 /**
  * Le contexte de POSE (spec construction R8) : le palier de matériau choisi pour
@@ -258,7 +258,8 @@ export function aimAt(
     if (s.hp < STRUCTURE_HP[s.type]) damaged = s // toute structure hors Feu, abîmée, se répare
     if (isPlot(s.type)) {
       // Parcelle (plein air) / serre (hiver) / terroir (le meilleur) se sèment/récoltent pareil ;
-      // la sim tranche le gel de la terre à ciel ouvert (acte III) et le rendement au moment voulu.
+      // la sim tranche le gel de la terre à ciel ouvert (sur le CLIMAT DU LIEU depuis
+      // `flore-froid.md` F4, plus sur l'acte) et le rendement au moment voulu.
       if (s.plantedAt === undefined) plantable = s
       else if (isCropMature(s, tick)) harvestable = s
     }
@@ -399,7 +400,11 @@ export function clickToAction(
   // clic fait — c'est ce qui le rend prévisible (même règle que le fantôme).
   if (placing === 'fire') return { type: 'place_campfire', tx: target.tx, ty: target.ty }
   // Un COMPOSANT ou le COFFRE tenu se pose (spec construction R20, flux feu de camp).
-  if (placing !== null && ((COMPONENT_TYPES as readonly string[]).includes(placing) || placing === 'chest')) {
+  // LE TEST EST UN PRÉDICAT DE TYPE, PAS UN `includes` NU : c'est lui qui laisse le
+  // compilateur savoir qu'après ce `return`, il ne reste que des pièces du MARTEAU. La
+  // version précédente ne restreignait rien, et l'exhaustivité du bloc suivant ne tenait
+  // qu'à l'énumération à la main qui l'a fait échouer sur `cloture` et `encadrement`.
+  if (placing !== null && estPosableSansMarteau(placing)) {
     return { type: 'place_component', tx: target.tx, ty: target.ty }
   }
   if (placing !== null) {
@@ -428,16 +433,29 @@ export function clickToAction(
         edges: build?.edge ?? EDGE_N,
       }
     }
-    // La PALISSADE se pose sur arête comme un mur — mais SANS matériau (pas de palier :
-    // le bois est son essence, décision d'Alexis 2026-08-01).
-    if (placing === 'palissade') {
-      return { type: 'build', structure: placing, tx: target.tx, ty: target.ty, edges: build?.edge ?? EDGE_N }
-    }
-    // Il ne reste que les pièces MOLLES du marteau (sol/toit) — le reste (composants,
-    // coffre, feu) a déjà été traité au-dessus.
-    if (placing === 'floor' || placing === 'roof') {
-      return { type: 'build', structure: placing, tx: target.tx, ty: target.ty }
-    }
+    // ═══ LE RESTE SE DÉRIVE DU REGISTRE — IL NE S'ÉNUMÈRE PAS ═══
+    //
+    // Ce bloc listait `palissade`, puis `floor` et `roof`, et se refermait SANS branche par
+    // défaut. `cloture` et `encadrement`, passées au marteau le 2026-08-01 (D1), tombaient donc
+    // à travers et traversaient tout le bas de la fonction jusqu'à `attack` : le joueur armait
+    // sa clôture, voyait le fantôme, voyait la tuile verte — et donnait un coup de poing, sans
+    // même un `action_rejected` pour l'expliquer. Deux pièces livrées, mortes en jeu.
+    //
+    // Une garde par cas choisi ne couvre pas une union qui s'élargit. On demande donc au
+    // REGISTRE, comme `carre-village` et `WorldScene.placeable` le font déjà : ce qui n'est pas
+    // `arete: 'interdite'` se pose sur une arête, le reste prend sa tuile. La palissade y rentre
+    // sans cas particulier (`arete: 'requise'`, et pas de matériau : le bois est son essence).
+    //
+    // ⚠ CE GESTE DÉPEND MAINTENANT D'UN CHAMP QUE L'AUDIT DIT MENTEUR. `cloture` et
+    // `encadrement` déclarent `arete: 'interdite'`, et c'est bien ainsi que le joueur les pose
+    // (pleine tuile, comme `construction.test.ts` D1 l'affirme) — mais le WORLDGEN, lui, en pose
+    // sur des arêtes (mesuré sur le monde servi : 38 clôtures et 4 encadrements). Le jour où
+    // quelqu'un « corrige » le registre pour coller au worldgen, la pose du JOUEUR basculera
+    // silencieusement sur l'arête. Les deux usages doivent être démêlés avant de toucher au
+    // champ — c'est le constat `arete-ecrite-hors-registre` de l'audit du 2026-08-20.
+    return piece(placing).arete === 'interdite'
+      ? { type: 'build', structure: placing, tx: target.tx, ty: target.ty }
+      : { type: 'build', structure: placing, tx: target.tx, ty: target.ty, edges: build?.edge ?? EDGE_N }
   }
 
   // DONNER (spec alignement R2, l'acte chaud FONDAMENTAL) : de la nourriture en main ET un

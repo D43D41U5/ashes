@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Corpse, ResourceNode } from '@ashes/sim'
-import { AGRICULTURE, EDGE_N, EDGE_O, EDGE_S, STRUCTURE_HP } from '@ashes/sim'
+import { AGRICULTURE, BARRIER_TYPES, EDGE_N, EDGE_O, EDGE_S, STRUCTURE_HP, piece } from '@ashes/sim'
 import { aimAt, clickToAction, demolishTargetAt, holdHarvest, interactTargetAt, type AimStructure, type DemolishStructure } from './aim'
 
 const RANGE = 1.5
@@ -601,5 +601,44 @@ describe('interactTargetAt — ce que `F` prendrait sous le curseur', () => {
 
   it('une tuile vide ne rend rien — le contour s’éteint', () => {
     expect(interactTargetAt(aimAt(11, 11, PLAYER, [], [], RANGE), cueillette)).toBeNull()
+  })
+})
+
+describe('clickToAction — le marteau bâtit TOUT ce que le registre lui donne (D1)', () => {
+  // ═══ POURQUOI EXHAUSTIF, ET DÉRIVÉ DU REGISTRE ═══
+  //
+  // `clickToAction` énumérait les pièces à la main et se refermait sans branche par défaut.
+  // `cloture` et `encadrement`, passées au marteau le 2026-08-01, tombaient donc à travers
+  // et ressortaient en `attack` : on armait sa clôture, on cliquait, on donnait un coup de
+  // poing. Le menu, lui, les proposait (`BUILDABLES = BARRIER_TYPES`), et le fantôme les
+  // dessinait en vert — rien à l'écran ne disait que le geste ne pouvait pas aboutir.
+  //
+  // La garde balaie donc `BARRIER_TYPES` — la liste DÉRIVÉE du registre, la même que celle du
+  // menu — et non une liste écrite ici, qui vieillirait exactement comme la précédente.
+  const cible = () => aimAt(11, 11, PLAYER, [], [], RANGE)
+
+  it('A2bis — la garde voit ce qu’elle garde : le registre porte bien les pièces neuves', () => {
+    expect(BARRIER_TYPES).toContain('cloture')
+    expect(BARRIER_TYPES).toContain('encadrement')
+    expect(BARRIER_TYPES.length).toBeGreaterThanOrEqual(7)
+  })
+
+  it('A2 — chaque pièce armée émet un `build` de CETTE pièce, jamais un coup ni rien', () => {
+    const fautifs: string[] = []
+    for (const type of BARRIER_TYPES) {
+      const a = clickToAction(cible(), type)
+      if (a === null || a.type !== 'build' || a.structure !== type) {
+        fautifs.push(`${type} → ${JSON.stringify(a)}`)
+      }
+    }
+    expect(fautifs).toEqual([])
+  })
+
+  it('A2ter — l’arête suit le registre : `arete: interdite` prend la tuile, le reste prend le bord', () => {
+    for (const type of BARRIER_TYPES) {
+      const a = clickToAction(cible(), type)
+      const surArete = 'edges' in (a as object)
+      expect([type, surArete]).toEqual([type, piece(type).arete !== 'interdite'])
+    }
   })
 })
