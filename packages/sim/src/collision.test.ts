@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { BALANCE, NODE_DEFS, TERRAIN_GRASS, TERRAIN_ROAD, TERRAIN_ROCK, TICK_DT_S } from './balance'
 import { isBlockedAt, makeIndexedIsBlockedAt, moveAvatar, moveAvatarStepped, overlapsBlocking } from './collision'
 import { treeJitter, type ResourceNode } from './economy'
+import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { createEmptyMap, type WorldMap } from './map'
 import { rngRoll } from './rng'
 import { createSim, spawnEntity, step, type MoveInput } from './sim'
@@ -380,5 +381,128 @@ describe('décalage d’origine des arbres : la collision suit le tronc', () => 
     const world = treeWorld([[TX, TY]])
     expect(overlapsBlocking(world, TX + 0.5 + dx, TY + 0.5 + dy)).toBe(true) // sur le tronc décalé
     expect(overlapsBlocking(world, TX + 0.5, TY - 2)).toBe(false) // deux tuiles au nord : rien
+  })
+})
+
+describe('deux structures sur une tuile : ce qui bloque seul bloque aussi accompagné', () => {
+  // ═══ POURQUOI UNE GARDE EXHAUSTIVE, ET PAS TROIS CAS CHOISIS ═══
+  //
+  // `bloquantAt` rendait LA PREMIÈRE structure bloquante de la tuile, et le pas ne testait
+  // que celle-là. Une arête posée d'abord (le cas NOMINAL : on adosse son four à son propre
+  // mur, `village.ts` l'encourage) masquait donc entièrement la pièce pleine derrière elle —
+  // on traversait la tuile de part en part, on pouvait se tenir DANS le coffre.
+  //
+  // C'est le bug du 2026-07-27 (« le premier solide masque le mur ») revenu d'un cran plus
+  // bas : `bloquantAt` avait appris à ne plus dire « le solide », pas encore à chercher ce
+  // qui bloque CETTE SOUS-TUILE.
+  //
+  // Un cas choisi n'aurait rien prouvé : le défaut dépend de l'ORDRE de pose et de la
+  // géométrie de chaque pièce. On balaie donc tout l'espace — toutes les paires ordonnées de
+  // formes bloquantes sur la même tuile, toutes les positions au pas de la sous-tuile — et on
+  // affirme UNE SEULE propriété : poser une seconde structure n'en efface jamais une première.
+  const FORMES = [
+    { nom: 'wall plein', type: 'wall' as const, edges: undefined },
+    { nom: 'chest', type: 'chest' as const, edges: undefined },
+    { nom: 'furnace', type: 'furnace' as const, edges: undefined },
+    { nom: 'wall N', type: 'wall' as const, edges: EDGE_N },
+    { nom: 'wall E', type: 'wall' as const, edges: EDGE_E },
+    { nom: 'wall S', type: 'wall' as const, edges: EDGE_S },
+    { nom: 'wall O', type: 'wall' as const, edges: EDGE_O },
+    { nom: 'palissade N', type: 'palissade' as const, edges: EDGE_N },
+    { nom: 'palissade E', type: 'palissade' as const, edges: EDGE_E },
+  ]
+  const TX = 5
+  const TY = 5
+  const bati = (id: number, f: (typeof FORMES)[number]) => ({
+    id, type: f.type, tx: TX, ty: TY, villageId: 1, ownerId: 0, access: 'village' as const, hp: 100,
+    ...(f.edges === undefined ? {} : { edges: f.edges }),
+  })
+
+  it('A7 — aucune paire ordonnée ne perd un bloqueur, sur aucune sous-tuile', () => {
+    const map = createEmptyMap(12, 12, TERRAIN_GRASS)
+    const PAS = 1 / BALANCE.SUBTILES_PER_TILE
+    const perdus: string[] = []
+    for (const a of FORMES) {
+      for (const b of FORMES) {
+        const seulA = { map, structures: [bati(1, a)], moverVillageId: null }
+        const seulB = { map, structures: [bati(2, b)], moverVillageId: null }
+        const paire = { map, structures: [bati(1, a), bati(2, b)], moverVillageId: null }
+        for (let x = TX - 1; x < TX + 2; x += PAS) {
+          for (let y = TY - 1; y < TY + 2; y += PAS) {
+            const attendu = overlapsBlocking(seulA, x, y) || overlapsBlocking(seulB, x, y)
+            if (overlapsBlocking(paire, x, y) !== attendu) {
+              perdus.push(`${a.nom} puis ${b.nom} @ ${x.toFixed(3)},${y.toFixed(3)}`)
+            }
+          }
+        }
+      }
+    }
+    expect(perdus.slice(0, 5)).toEqual([])
+    expect(perdus).toHaveLength(0)
+  })
+
+  it('A7bis — la garde VOIT le défaut : sans les deux structures, elle ne prouve rien', () => {
+    // Une garde qui passerait sur un monde vide ne garderait rien. On affirme donc d'abord
+    // que le monde de la garde bloque VRAIMENT quelque chose (règle : une garde prouve sa prémisse).
+    const map = createEmptyMap(12, 12, TERRAIN_GRASS)
+    const arete = { map, structures: [bati(1, FORMES[3]!)], moverVillageId: null } // wall N
+    const plein = { map, structures: [bati(2, FORMES[1]!)], moverVillageId: null } // chest
+    expect(overlapsBlocking(arete, TX + 0.5, TY + 0.05)).toBe(true) // la bande nord mord
+    expect(overlapsBlocking(arete, TX + 0.5, TY + 0.5)).toBe(false) // le centre reste libre
+    expect(overlapsBlocking(plein, TX + 0.5, TY + 0.5)).toBe(true) // le coffre prend sa tuile
+  })
+})
+
+describe('les deux autorités de la tuile s’accordent', () => {
+  // `isBlockedAt` (direct) et `makeIndexedIsBlockedAt` (l'index du pathfinding et des champs
+  // de flux) répondent à LA MÊME question. Elles divergeaient sur deux points, et chacun
+  // faisait fuir la faune d'une salle praticable ou traverser une paroi :
+  //   ① l'index n'excluait pas les murs d'ARÊTE, que la version directe écarte délibérément ;
+  //   ② l'index ne gardait qu'UNE structure par tuile, donc une porte que le marcheur ouvre
+  //      masquait la pièce pleine posée derrière elle.
+  // On n'affirme donc pas des cas : on affirme l'ACCORD, sur tout l'espace des formes.
+  const FORMES = [
+    { nom: 'wall plein', type: 'wall' as const, edges: undefined },
+    { nom: 'chest', type: 'chest' as const, edges: undefined },
+    { nom: 'door', type: 'door' as const, edges: undefined },
+    { nom: 'wall N', type: 'wall' as const, edges: EDGE_N },
+    { nom: 'palissade E', type: 'palissade' as const, edges: EDGE_E },
+    { nom: 'floor (mou)', type: 'floor' as const, edges: undefined },
+  ]
+  const bati = (id: number, f: (typeof FORMES)[number], vid: number) => ({
+    id, type: f.type, tx: 5, ty: 5, villageId: vid, ownerId: 0, access: 'village' as const, hp: 100,
+    ...(f.edges === undefined ? {} : { edges: f.edges }),
+  })
+
+  it('A8 — sur toute paire de formes et tout marcheur, l’index dit la MÊME chose que le direct', () => {
+    const map = createEmptyMap(12, 12, TERRAIN_GRASS)
+    const MARCHEURS = [
+      { nom: 'étranger', moverVillageId: null, opensDoors: false },
+      { nom: 'villageois', moverVillageId: 1, opensDoors: true },
+      { nom: 'rival', moverVillageId: 2, opensDoors: true },
+    ]
+    const desaccords: string[] = []
+    for (const a of FORMES) {
+      for (const b of FORMES) {
+        for (const m of MARCHEURS) {
+          const world = { map, structures: [bati(1, a, 1), bati(2, b, 1)], ...m }
+          const direct = isBlockedAt(world, 5, 5)
+          const indexe = makeIndexedIsBlockedAt(world)(5, 5)
+          if (direct !== indexe) desaccords.push(`${a.nom} + ${b.nom} / ${m.nom} : direct=${direct} index=${indexe}`)
+        }
+      }
+    }
+    expect(desaccords.slice(0, 5)).toEqual([])
+    expect(desaccords).toHaveLength(0)
+  })
+
+  it('A8bis — la garde voit ce qu’elle garde : les deux formes changent bien la réponse', () => {
+    const map = createEmptyMap(12, 12, TERRAIN_GRASS)
+    const nu = { map, structures: [], moverVillageId: null }
+    const plein = { map, structures: [bati(1, FORMES[0]!, 1)], moverVillageId: null }
+    const arete = { map, structures: [bati(2, FORMES[3]!, 1)], moverVillageId: null }
+    expect(isBlockedAt(nu, 5, 5)).toBe(false)
+    expect(isBlockedAt(plein, 5, 5)).toBe(true) // une pleine tuile bloque SA tuile
+    expect(isBlockedAt(arete, 5, 5)).toBe(false) // un mur mince, NON — c'est le contrat
   })
 })

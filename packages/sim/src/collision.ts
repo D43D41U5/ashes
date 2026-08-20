@@ -195,6 +195,36 @@ function bloquantAt(world: MoveWorld, tx: number, ty: number, pleineTuile: boole
   return undefined
 }
 
+/**
+ * ET LA MÊME QUESTION, POSÉE À LA SOUS-TUILE — parce que « la première bloquante » n'y répond pas.
+ *
+ * `bloquantAt` rend UNE structure. À l'échelle de la TUILE c'est suffisant : dès qu'une bloque,
+ * la tuile est bloquée. À l'échelle de la SOUS-TUILE, non — et c'est le piège dans lequel le pas
+ * est tombé. Une tuile porte jusqu'à quatre murs d'arête PLUS une pièce pleine ; si la première
+ * rendue déclare des `edges` et que la sous-tuile visée n'est pas sur sa bande, on concluait
+ * « libre » sans jamais interroger les autres. Le four adossé à sa propre palissade — le geste que
+ * `place_component` ENCOURAGE (R23) — cessait donc totalement de bloquer : on le traversait, on
+ * pouvait se tenir dedans.
+ *
+ * C'est le bug du 2026-07-27 d'un cran plus bas. `bloquantAt` avait appris à ne plus chercher
+ * « le solide » ; il restait à ne plus chercher « le PREMIER ». On balaie donc toutes les
+ * bloquantes de la tuile et chacune tranche pour elle-même. Garde : `collision.test.ts` A7,
+ * exhaustive sur les paires ordonnées × toutes les sous-tuiles.
+ */
+function bloqueSousTuile(world: MoveWorld, tx: number, ty: number, sx: number, sy: number): boolean {
+  const mover = world.moverVillageId ?? null
+  const portes = world.opensDoors ?? false
+  for (const s of world.structures ?? []) {
+    if (s.tx !== tx || s.ty !== ty) continue
+    if (!structureBlocks(s, mover, portes)) continue
+    // Sans `edges`, la structure prend sa tuile entière (comportement historique) ; avec,
+    // elle ne prend que les bandes déclarées — et le reste de la tuile reste praticable.
+    if (s.edges === undefined) return true
+    if (onDeclaredEdge(s.edges, sx, sy, tx, ty)) return true
+  }
+  return false
+}
+
 function blockedAt(world: MoveWorld, tx: number, ty: number): boolean {
   if (terrainBloque(world, tx, ty)) return true
   if (world.structures) {
@@ -222,7 +252,7 @@ function blockedAt(world: MoveWorld, tx: number, ty: number): boolean {
  * jeté dans l'appel, jamais dans SimState. Hors bornes de la carte, on
  * retombe sur `blockedAt` (pas d'aliasing de clé possible).
  */
-type Occupant = { structure?: Structure; node?: ResourceNode }
+type Occupant = { structures?: Structure[]; node?: ResourceNode }
 
 /**
  * ═══ LE CACHE D'OCCUPATION — mesuré, puis corrigé ═══
@@ -288,9 +318,23 @@ function occupancyOf(world: MoveWorld): Map<number, Occupant> {
       // Le cache d'occupation sert le PATHFINDING, qui interroge ensuite par déplaceur : on
       // indexe donc large — ce qui bloque QUELQU'UN — et `makeIndexedIsBlockedAt` tranche après.
       // Une porte close y entre à ce titre, et c'est bien : elle bloque le joueur et les monstres.
+      //
+      // ⚠ LES MURS D'ARÊTE N'ENTRENT PAS. C'est le pendant exact du `pleineTuile` de
+      // `bloquantAt` : à l'échelle de la TUILE, un mur mince ne bloque pas la sienne — on s'y
+      // tient, on la traverse même, et seul le FRANCHISSEMENT de l'arête se refuse, en
+      // sous-tuile. Sans ce filtre, l'index disait « bloquée » là où `blockedAt` dit « libre » :
+      // les DEUX AUTORITÉS DE LA TUILE se contredisaient, et le pathfinding refusait toute
+      // tuile portant une palissade — « ce qui ferait fuir la faune d'une salle parfaitement
+      // praticable », dit le commentaire d'à côté, qui décrivait précisément ce qu'il subissait.
+      if (s.edges !== undefined) continue
       if (!structureBlocks(s, null, false)) continue
       const entry = entryAt(s.tx, s.ty)
-      if (entry.structure === undefined) entry.structure = s
+      // ⚠ ET ON LES GARDE TOUTES. N'en retenir qu'une rejouait « le premier occupant » un
+      // étage plus haut : une porte close est indexée (elle bloque un étranger), puis la
+      // requête d'un villageois QUI L'OUVRE répondait « libre » sans jamais voir le coffre
+      // posé sur la même tuile. Le nombre de pleines-tuiles bloquantes par tuile est de 1
+      // en pratique — le tableau ne coûte rien, et il rend l'index exact par construction.
+      ;(entry.structures ??= []).push(s)
     }
   }
   if (world.nodes) {
@@ -324,7 +368,9 @@ export function makeIndexedIsBlockedAt(world: MoveWorld): (tx: number, ty: numbe
     if (gel ? terrainBloque(world, tx, ty) : MARCHABLE[terrainAt(world.map, tx, ty)] !== 1) return true
     const entry = occupancy.get(ty * width + tx)
     if (entry === undefined) return false
-    if (entry.structure !== undefined && structureBlocks(entry.structure, moverVillageId, portes)) return true
+    if (entry.structures !== undefined) {
+      for (const s of entry.structures) if (structureBlocks(s, moverVillageId, portes)) return true
+    }
     if (entry.node !== undefined && entry.node.stock > 0 && NODE_DEFS[entry.node.type].blockHalfSub > 0) return true
     return false
   }
@@ -343,13 +389,7 @@ function blockedSubAt(world: MoveWorld, sx: number, sy: number): boolean {
   // et c'est ce qui garantit que le pas et l'A* lisent la même glace (spec `gel.md` G4).
   if (terrainBloque(world, tx, ty)) return true
   if (world.structures) {
-    const s = bloquantAt(world, tx, ty, false)
-    if (s !== undefined) {
-      // Sans `edges`, la structure prend sa tuile entière (comportement historique) ; avec,
-      // elle ne prend que les bandes déclarées — et le reste de la tuile reste praticable.
-      if (s.edges === undefined) return true
-      if (onDeclaredEdge(s.edges, sx, sy, tx, ty)) return true
-    }
+    if (bloqueSousTuile(world, tx, ty, sx, sy)) return true
     // L'AUTRE MOITIÉ : une arête déclarée par la tuile d'en face déborde ici d'autant.
     const lx = sx - tx * SUB
     const ly = sy - ty * SUB
