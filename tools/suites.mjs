@@ -43,13 +43,28 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
  * dernier — on veut le verdict des suites rapides sans attendre.
  */
 const SUITES = [
-  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'] },
-  { nom: 'client', dir: 'packages/client', args: ['run'] },
-  { nom: 'serveur', dir: 'packages/server', args: ['run'] },
+  { nom: 'sim', dir: 'packages/sim', args: ['run', '--exclude', 'src/scenario.test.ts'], plancher: 1320 },
+  { nom: 'client', dir: 'packages/client', args: ['run'], plancher: 715 },
+  { nom: 'serveur', dir: 'packages/server', args: ['run'], plancher: 36 },
   // Le banc pilote le vrai worldgen sur la carte de production : lent, et seul à porter le
   // drapeau qui ignore les erreurs non gérées (voir l'en-tête de `scenario.test.ts`).
-  { nom: 'banc', dir: 'packages/sim', args: ['run', 'src/scenario.test.ts', '--dangerouslyIgnoreUnhandledErrors'] },
+  { nom: 'banc', dir: 'packages/sim', args: ['run', 'src/scenario.test.ts', '--dangerouslyIgnoreUnhandledErrors'], plancher: 2 },
 ]
+
+/**
+ * ═══ LE PLANCHER : UN TEST QUI DISPARAÎT DOIT COÛTER AUSSI CHER QU'UN TEST QUI ÉCHOUE ═══
+ *
+ * Le total des tests était IMPRIMÉ et comparé à RIEN. On pouvait donc perdre des dizaines
+ * de tests — un fichier vidé, supprimé, ou qui ne se charge plus — et lire un compte-rendu
+ * parfaitement vert. C'est la panne la plus silencieuse qui soit : on croit garder 2 000
+ * tests, on en garde 1 700, et rien ne le dit, ni en local ni sur une PR.
+ *
+ * Le plancher n'est PAS le compte exact : il est posé quelques pourcents en dessous, parce
+ * qu'on doit pouvoir retirer un test devenu faux sans faire rougir le dépôt. Ce qu'il
+ * attrape est l'EFFONDREMENT — un fichier entier qui s'évapore. Et il vieillit dans le bon
+ * sens : une suite qui grandit le laisse simplement derrière elle, sans jamais mentir.
+ * On le relève quand la suite a franchement grossi, pas à chaque test ajouté.
+ */
 
 /** Le flaky connu, nommé — pour le distinguer d'une vraie erreur non gérée. */
 const FLAKY = /Timeout calling ["']onTaskUpdate["']/
@@ -73,20 +88,41 @@ function lance(suite) {
 }
 
 /**
- * Ce que Vitest dit de lui-même. La ligne de compte a la forme
- * `Tests  868 passed | 2 skipped (870)` — ou `| 3 failed` quand ça va mal.
- * On prend la DERNIÈRE occurrence : Vitest la réécrit au fil de l'eau.
+ * Ce que Vitest dit de lui-même. Il imprime DEUX lignes de compte, et il faut les DEUX :
+ *
+ *   Test Files  79 passed (79)          ← les FICHIERS
+ *   Tests  1339 passed | 2 skipped      ← les TESTS
+ *
+ * ⚠ LIRE « Tests » SEUL NE SUFFIT PAS, et c'est par là que la commande mentait. Un fichier
+ * qui échoue à la COLLECTE — un import cassé, un export de barrel renommé, un cycle — ne
+ * produit AUCUN test, donc `failed` y vaut 0 : la ligne « Tests » est parfaitement verte
+ * pendant que « Test Files » dit `1 failed`. Reproduit avec le vitest du dépôt. Combiné au
+ * flaky connu, ça sortait en 0 — et la CI aussi.
+ *
+ * On prend la DERNIÈRE occurrence de chaque ligne : Vitest les réécrit au fil de l'eau.
+ * (`/Tests\s+/` ne peut pas capturer « Test Files » par erreur : pas de `s` après `Test`.)
  */
 function compte(sortie) {
-  const lignes = [...sortie.matchAll(/Tests\s+(.+)$/gm)]
-  const derniere = lignes[lignes.length - 1]
-  if (!derniere) return null
-  const texte = derniere[1]
-  const nombre = (mot) => {
-    const m = texte.match(new RegExp(`(\\d+)\\s+${mot}`))
-    return m ? Number(m[1]) : 0
+  const nombresDe = (etiquette) => {
+    const lignes = [...sortie.matchAll(new RegExp(`${etiquette}\\s+(.+)$`, 'gm'))]
+    const derniere = lignes[lignes.length - 1]
+    if (!derniere) return null
+    const texte = derniere[1]
+    return (mot) => {
+      const m = texte.match(new RegExp(`(\\d+)\\s+${mot}`))
+      return m ? Number(m[1]) : 0
+    }
   }
-  return { passes: nombre('passed'), echecs: nombre('failed'), sautes: nombre('skipped') }
+  const tests = nombresDe('Tests')
+  if (!tests) return null
+  const fichiers = nombresDe('Test Files')
+  return {
+    passes: tests('passed'),
+    echecs: tests('failed'),
+    sautes: tests('skipped'),
+    // `null` quand la ligne manque : on ne fabrique pas un zéro rassurant à partir de rien.
+    fichiersEchecs: fichiers ? fichiers('failed') : null,
+  }
 }
 
 const resultats = []
@@ -107,20 +143,38 @@ for (const r of resultats) {
     continue
   }
   const detail = `${c.passes} ✓${c.echecs ? ` · ${c.echecs} ✗` : ''}${c.sautes ? ` · ${c.sautes} sautés` : ''}`
+  const nom = r.suite.nom.padEnd(8)
+  const sousLePlancher = c.passes < r.suite.plancher
   if (c.echecs > 0) {
     rouge = true
-    console.log(`  [31m✗[0m ${r.suite.nom.padEnd(8)} ${detail}`)
+    console.log(`  [31m✗[0m ${nom} ${detail}`)
+  } else if (c.fichiersEchecs === null) {
+    // La ligne « Test Files » manque alors que « Tests » est là : format inattendu. On ne
+    // devine pas — un garde-fou qui suppose est un garde-fou qui finira par se tromper.
+    rouge = true
+    console.log(`  [31m✗[0m ${nom} ${detail}  (ligne « Test Files » illisible — format de Vitest inattendu)`)
+  } else if (c.fichiersEchecs > 0) {
+    // LE CAS QUE LA PORTE DU FLAKY AVALAIT : un fichier qui ne se CHARGE plus n'apporte aucun
+    // test, donc aucun échec de test. Ce n'est pas un flake de RPC, c'est du code cassé.
+    rouge = true
+    console.log(`  [31m✗[0m ${nom} ${detail}  (${c.fichiersEchecs} FICHIER(S) EN ÉCHEC — collecte cassée, pas un flaky)`)
+  } else if (sousLePlancher) {
+    rouge = true
+    console.log(`  [31m✗[0m ${nom} ${detail}  (SOUS LE PLANCHER de ${r.suite.plancher} — des tests ont DISPARU)`)
   } else if (r.code !== 0 && r.flaky) {
     // On le DIT à chaque fois : un bruit qu'on tolère en silence finit par cacher autre chose.
-    console.log(`  [33m•[0m ${r.suite.nom.padEnd(8)} ${detail}  (sortie ${r.code} — flaky Vitest « onTaskUpdate », aucun test en échec)`)
+    // Et on n'arrive ici QU'APRÈS avoir écarté les trois cas ci-dessus : la question n'est pas
+    // « le flaky apparaît-il ? » mais « est-il la SEULE explication de cette sortie non nulle ? ».
+    console.log(`  [33m•[0m ${nom} ${detail}  (sortie ${r.code} — flaky Vitest « onTaskUpdate », aucun test ni fichier en échec)`)
   } else if (r.code !== 0) {
     rouge = true
-    console.log(`  [31m✗[0m ${r.suite.nom.padEnd(8)} ${detail}  (sortie ${r.code}, hors flaky connu — à regarder)`)
+    console.log(`  [31m✗[0m ${nom} ${detail}  (sortie ${r.code}, hors flaky connu — à regarder)`)
   } else {
-    console.log(`  [32m✓[0m ${r.suite.nom.padEnd(8)} ${detail}`)
+    console.log(`  [32m✓[0m ${nom} ${detail}`)
   }
 }
 
 const total = resultats.reduce((n, r) => n + (r.compte?.passes ?? 0), 0)
-console.log(`\n  ${total} tests passés sur ${resultats.length} suites.`)
+const planchers = SUITES.reduce((n, s) => n + s.plancher, 0)
+console.log(`\n  ${total} tests passés sur ${resultats.length} suites (plancher cumulé : ${planchers}).`)
 process.exit(rouge ? 1 : 0)

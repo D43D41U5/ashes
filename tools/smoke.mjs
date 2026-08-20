@@ -13661,12 +13661,43 @@ const browser = await chromium.launch({
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
 
 let failed = false
+
+/**
+ * ═══ LES VERDICTS COMPTENT ENFIN — LA CONVENTION `!!` DEVIENT UNE ASSERTION ═══
+ *
+ * Les 74 scénarios portent ~290 verdicts écrits `console.error('!! …')` — « G5 rompu »,
+ * « la passe de matière n'émet RIEN », « aucune lisière feuillus/conifères ». AUCUN ne
+ * touchait le code de sortie : seul `pageerror` posait `failed`. Donc
+ * `pnpm smoke --scenario gels && echo OK` affichait OK pendant que le scénario imprimait
+ * que son critère d'acceptation était rompu.
+ *
+ * Conséquence : la règle de commit de CLAUDE.md (« plus le smoke du système touché ») ne
+ * pouvait être tenue que par un humain qui LIT la sortie — pas par un script, pas par un
+ * agent, pas par la CI. Chaque verdict écrit était un test qu'on croyait avoir et qu'on
+ * n'avait pas. (Constaté en vrai : le scénario `construction` échoue sur six vérifications
+ * depuis un moment, et personne ne l'avait vu.)
+ *
+ * On ne réécrit pas 290 sites : la convention EXISTE, elle n'était pas câblée. Le préfixe
+ * `!!` est déjà la marque du verdict rompu — on le compte à la source.
+ *
+ * ⚠ CE QUI RESTE VOLONTAIREMENT HORS DU COMPTE. Les deux gestionnaires ci-dessous écrivent
+ * par `erreurBrute` : une ERREUR DE PAGE pose déjà `failed` elle-même, et une erreur de
+ * CONSOLE est signalée sans faire échouer — distinction délibérée d'origine, qu'on ne
+ * renverse pas au détour d'un correctif d'outillage.
+ */
+let verdictsRompus = 0
+const erreurBrute = console.error.bind(console)
+console.error = (...args) => {
+  if (typeof args[0] === 'string' && args[0].trimStart().startsWith('!!')) verdictsRompus += 1
+  erreurBrute(...args)
+}
+
 page.on('pageerror', (e) => {
-  console.error(`!! ERREUR DE PAGE : ${e.message}`)
+  erreurBrute(`!! ERREUR DE PAGE : ${e.message}`)
   failed = true
 })
 page.on('console', (m) => {
-  if (m.type() === 'error') console.error(`!! CONSOLE : ${m.text()}`)
+  if (m.type() === 'error') erreurBrute(`!! CONSOLE : ${m.text()}`)
 })
 
 try {
@@ -13691,7 +13722,10 @@ try {
 }
 
 console.log(`\ncaptures → ${OUT}`)
-if (failed) {
-  console.error('\n✗ le jeu a jeté une erreur — voir ci-dessus')
-  process.exit(1)
+if (verdictsRompus > 0) {
+  erreurBrute(`\n✗ ${verdictsRompus} verdict(s) rompu(s) — les lignes « !! » ci-dessus`)
 }
+if (failed) {
+  erreurBrute('\n✗ le jeu a jeté une erreur — voir ci-dessus')
+}
+if (failed || verdictsRompus > 0) process.exit(1)

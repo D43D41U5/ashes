@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "check": "pnpm -r run check",
+    "check": "pnpm -r --no-bail run check",
     "test": "node tools/suites.mjs",
     "lint": "eslint .",
     "dev": "pnpm --filter @ashes/client dev",
