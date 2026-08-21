@@ -3,6 +3,21 @@ import { assiseDe, CIMES_PAR_ARBRE, houppierLargeur, houppierOpaqueDe, TOUTES_VA
 import { champDeFeuillage, feuillageDe, FEUILLAGES } from './feuillage'
 
 /**
+ * DEUX TESTS DE CE FICHIER ONT UN BUDGET EXPLICITE (30 s), et ce n'est pas une rustine.
+ *
+ * Ils balaient TOUTES les variantes d'arbre × TOUTES les cimes — c'est leur valeur, et c'est
+ * ce que le dépôt demande (« garde exhaustive plutôt que cas choisis »). Ils coûtent ~3,3 s
+ * chacun sur cette machine, pour un budget vitest par défaut de 5 s : une marge d'un facteur
+ * 1,5 sur un banc sans GPU, partagé avec trois autres suites. Le 2026-08-20, douze tests
+ * neufs ont suffi à le faire basculer — `Test timed out in 5000ms`, sur un feuillage
+ * parfaitement correct, dans un fichier qui n'importe RIEN et que rien n'avait touché.
+ *
+ * Un instrument qui rougit pour une raison étrangère à ce qu'il garde cesse d'être lu, et la
+ * vraie panne s'y noie — c'est le constat P3 de l'audit UX, et on ne l'ajoute pas au compte.
+ * On ne touche à aucune assertion : on donne au balayage le temps qu'il prend.
+ */
+
+/**
  * TOUTES les cimes de toutes les variantes — 11 × 5 depuis le 2026-07-30.
  *
  * Les gardes balaient ce produit et non la seule cime par défaut : c'est LA leçon du chantier.
@@ -157,7 +172,7 @@ describe('le feuillage donne une forme, sans défaire la cime', () => {
         }
       }
     }
-  })
+  }, 30000)
 })
 
 describe('le feuillage porte de la MATIÈRE, pas de l\'ombrage', () => {
@@ -184,7 +199,7 @@ describe('le feuillage porte de la MATIÈRE, pas de l\'ombrage', () => {
         expect(l, `${v.slug}#${c} : ton hors de la fourchette de matière`).toBeLessThanOrEqual(haut)
       }
     }
-  })
+  }, 30000)
 
   it('l\'albédo n\'est plus UNIFORME — c\'était tout le défaut', () => {
     // MESURÉ le 2026-07-30 : l'écart entre deux pixels voisins valait 0,00 sur les onze

@@ -882,9 +882,21 @@ const SCENARIOS = {
       ? `   ✓ le CORPS clignote pour de bon : ΔL ${dLum} sur le meilleur des trois points (${ecarts.join(' / ')})`
       : `   ✗ le flash ne se lit pas sur le corps : ΔL ${dLum} au mieux (${ecarts.join(' / ')})`)
     await page.evaluate(() => void window.__BRAISES__.scene.game.loop.wake())
-    console.log(eclats.fronts > 0
-      ? `   ✓ la bande ÉCLATE en montant : ${eclats.fronts} front(s) sur 0,48 s à ratio ${eclats.ratio} (crête ${eclats.sommet})`
-      : `   ✗ aucun éclat pendant la bande (ratio ${eclats.ratio})`)
+    // ⚠ CETTE SONDE NE PEUT MESURER QUE PENDANT LA MONTÉE. À bande PLEINE, le code garantit
+    // `eclat = 0` — c'est la règle même du rendu (« à fond, les éclats CESSENT et la garde se
+    // pose »), affirmée deux lignes plus bas par un ✓. La sonde s'accroche à la charge dès
+    // qu'elle apparaît, mais l'horloge headless de cette machine va si vite que la première
+    // observation tombe souvent à `ratio = 1` : elle mesurait alors zéro éclat et criait au
+    // défaut, à l'instant précis où l'absence d'éclat est le comportement CORRECT. Un ✗ qui
+    // contredisait le ✓ d'à côté. (Audit UX 2026-08-20, I-3.)
+    //
+    // On le dit franchement plutôt que d'accuser le jeu : hors de la fenêtre de montée, la
+    // sonde est INAPPLICABLE, pas rouge.
+    console.log(eclats.ratio >= 0.95
+      ? `   (éclats de bande : non mesurable ici — la charge était déjà pleine à la première observation, ratio ${eclats.ratio}, or à fond le code garantit zéro éclat)`
+      : eclats.fronts > 0
+        ? `   ✓ la bande ÉCLATE en montant : ${eclats.fronts} front(s) sur 0,48 s à ratio ${eclats.ratio} (crête ${eclats.sommet})`
+        : `   ✗ aucun éclat pendant la bande (ratio ${eclats.ratio})`)
     // ON TIENT LARGEMENT PLUS QUE `chargeTicks` (0,9 s) : le rendu logiciel de cette
     // machine tourne à quelques images par seconde, et la boucle qui RE-VISE est cadencée
     // sur la frame — mesuré, 1,2 s de mur ne donnaient qu'une demi-bande.
@@ -1539,6 +1551,41 @@ const SCENARIOS = {
     // La sonde échantillonne EN BOUCLE pendant la marche et garde le MAX (revue eau-vivante :
     // le point unique à 900 ms ratait le marcheur — l'horloge headless va ~12× trop vite,
     // l'avatar bute au mur du profond et la force meurt AVANT la lecture ; 2 rouges sur 3).
+    // ⚠ LA SONDE DOIT D'ABORD SE METTRE LES PIEDS DANS L'EAU, ET LE PROUVER.
+    // Elle ne le faisait pas : elle héritait de la position laissée par A4 et marchait vers
+    // l'ouest en espérant. Mesuré sur `feeling-remous.png` du 2026-08-20 : l'avatar était
+    // plaqué contre le bord GAUCHE du cadre et l'eau ne commençait qu'à 31 tuiles de là. Le
+    // « ✗ marcher dans l'eau ne fait aucun remous » ne mesurait rien du tout — il n'y avait
+    // rien à photographier. (Audit UX 2026-08-20, I-4.)
+    //
+    // On se pose donc sur un HAUT-FOND franc (terrain 4, entouré de haut-fond) et on AFFIRME
+    // la prémisse. Sans eau sous les pieds, la sonde se déclare inapplicable au lieu
+    // d'accuser le jeu.
+    const hautFond = await page.evaluate(() => {
+      const m = window.__BRAISES__.scene.map
+      const terr = (tx, ty) => m.terrain[ty * m.width + tx]
+      const entoure = (tx, ty) => {
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (terr(tx + dx, ty + dy) !== 4) return false
+        return true
+      }
+      for (let ty = 1; ty < m.height - 1; ty++) for (let tx = 1; tx < m.width - 1; tx++) {
+        if (terr(tx, ty) === 4 && entoure(tx, ty)) return { tx, ty }
+      }
+      return null
+    })
+    if (!hautFond) {
+      console.log('   (A5 inapplicable : aucun haut-fond franc sur cette carte)')
+    } else {
+      await tp(hautFond.tx + 0.5, hautFond.ty + 0.5)
+      const sousLesPieds = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const p = sc.registry.get('playerPos')
+        const m = sc.map
+        return m.terrain[Math.floor(p.y) * m.width + Math.floor(p.x)]
+      })
+      if (sousLesPieds !== 4) console.error(`!! A5 : l'avatar n'est PAS dans l'eau (terrain ${sousLesPieds}) — la sonde mesurerait le vide`)
+    }
+
     await page.waitForTimeout(1200) // immobile depuis le TP : le remous doit être mort
     const wImmobile = await page.evaluate(() => window.__BRAISES__.scene.lastWaderCount)
     let wMarche = 0
@@ -3970,6 +4017,29 @@ const SCENARIOS = {
         hud: peints.length,
         // Ce qui est peint, NOMMÉ : un compte tout seul n'aide personne à corriger.
         qui: peints.map((o) => `${o.type}${o.text ? `("${String(o.text).slice(0, 24)}")` : ''}@${o.depth}`),
+        // ⚠ LE HUD N'EST PLUS DANS PHASER. Le compte ci-dessus sert à traquer ce qui FUITE
+        // sous l'écran de chargement (un conseil d'onboarding s'y peignait) — mais il ne peut
+        // pas répondre à « le HUD est-il là ? » : les vitales et la ceinture sont en DOM
+        // (`hud-core.ts`, `.hc-bl` / `.hc-belt`). La sonde exigeait 3 objets Phaser et en
+        // comptait 1 : elle rapportait « le HUD ne paraît pas » sur un HUD parfaitement
+        // debout, exactement comme R20 cherchait un menu Phaser qui vit en DOM.
+        // (Audit UX 2026-08-20, I-2 — même famille.)
+        // LES BANDEAUX SONT PASSÉS EN DOM (audit UX P0.2). Le compte Phaser ci-dessus a
+        // attrapé le conseil d'ouverture peint sous le voile de chargement — s'il ne voit
+        // plus ce canal, la garde se dégrade en silence et le défaut peut revenir sans un
+        // mot. On le suit donc là où il vit désormais.
+        bandeau: (() => {
+          const el = document.querySelector('.bnd')
+          if (!el || getComputedStyle(el).display === 'none') return ''
+          return [...el.querySelectorAll('.bnd-l')]
+            .filter((l) => getComputedStyle(l).display !== 'none' && l.textContent.trim())
+            .map((l) => l.textContent.trim().slice(0, 28))
+            .join(' | ')
+        })(),
+        hudDom: ['.hc-bl', '.hc-belt'].filter((sel) => {
+          const el = document.querySelector(sel)
+          return Boolean(el && getComputedStyle(el).display !== 'none' && Number(getComputedStyle(el).opacity) > 0)
+        }),
         // L'écran de chargement lui-même (LOADING_DEPTH = 1001) : présent ou levé ?
         ecran: ui ? ui.children.list.some((o) => o.depth === 1001) : false,
       }
@@ -3981,6 +4051,7 @@ const SCENARIOS = {
 
     const passes = []
     let hudPendant = 0
+    let bandeauPendant = ''
     let quiPendant = []
     let capture = false
     let derniereAt = Date.now()
@@ -3995,6 +4066,7 @@ const SCENARIOS = {
         hudPendant = s.hud // le PIRE vu pendant l'attente
         quiPendant = s.qui
       }
+      if (s.bandeau) bandeauPendant = s.bandeau // un seul suffit à condamner
       // Un cliché à mi-chemin : la barre en plein travail.
       if (!capture && !s.pret && s.frac >= 0.4) {
         await page.screenshot({ path: `${OUT}/chargement.png` })
@@ -4010,9 +4082,9 @@ const SCENARIOS = {
 
     console.log(`génération : ${((Date.now() - t0) / 1000).toFixed(1)} s, ${passes.length} passes annoncées`)
     for (const p of passes) console.log(`   · ${p}`)
-    console.log(hudPendant === 0
-      ? `   ✓ pendant l'attente, RIEN du HUD n'est peint (0 objet sous l'écran de chargement)`
-      : `   ✗ ${hudPendant} objet(s) du HUD peints pendant le chargement : ${quiPendant.join(', ')}`)
+    console.log(hudPendant === 0 && bandeauPendant === ''
+      ? `   ✓ pendant l'attente, RIEN du HUD n'est peint (0 objet Phaser, 0 bandeau DOM)`
+      : `   ✗ du HUD peint pendant le chargement : ${hudPendant} objet(s) Phaser [${quiPendant.join(', ')}]${bandeauPendant ? ` · bandeau « ${bandeauPendant} »` : ''}`)
     console.log(`   assemblage après la dernière passe : ~${assemblage} ms (ce que la barre ne couvre pas)`)
 
     await page.waitForTimeout(1500) // le premier snapshot peuple le HUD
@@ -4021,11 +4093,11 @@ const SCENARIOS = {
     console.log(!apres.ecran
       ? `   ✓ l'écran de chargement est levé`
       : `   ✗ l'écran de chargement colle à la vitre`)
-    console.log(apres.hud >= 3
-      ? `   ✓ le HUD est là (${apres.hud} objets peints : jauges, ceinture, bandeau)`
-      : `   ✗ le HUD ne paraît pas (${apres.hud} objets peints)`)
+    console.log(apres.hudDom.length >= 2
+      ? `   ✓ le HUD est là, en DOM (${apres.hudDom.join(' + ')})`
+      : `   ✗ le HUD ne paraît pas (DOM visible : ${apres.hudDom.join(' + ') || 'rien'} ; ${apres.hud} objet(s) Phaser)`)
 
-    return { passes: passes.length, hudPendant, assemblage, hudApres: apres.hud }
+    return { passes: passes.length, hudPendant, assemblage, hudApres: apres.hudDom.length }
   },
 
   /**
@@ -5158,7 +5230,13 @@ const SCENARIOS = {
     // pire que pas d'instrument : la vraie panne s'y noie. Ce que ce nombre garde est écrit
     // dans le commentaire d'origine — « que le tableau SE PEINT, vide il tomberait à 0 » —
     // et c'est cela qu'on affirme, pas un état du jeu de 2026-07.
-    if (open.display !== 'flex' || open.clicks !== 6 || open.keys < 10 || closed.display !== 'none') {
+    // ⚠ ET LE MÊME REMÈDE VAUT POUR LES CLICS. La garde ci-dessus a été relâchée pour les
+    // TOUCHES (« on ne fige plus le compte exact ») mais la ligne figeait encore `clicks !== 6`
+    // — la moitié du correctif. La table du clic est passée à 9 lignes le 2026-08-20 (la hache
+    // qui abat, semer, fouiller) plus 2 pour le CLIC DROIT, enfin nommé : le verdict criait au
+    // loup sur un menu qui venait d'être ENRICHI. On affirme donc la même chose qu'à côté :
+    // le tableau SE PEINT — vide, il tomberait à 0.
+    if (open.display !== 'flex' || open.clicks < 6 || open.keys < 10 || closed.display !== 'none') {
       console.error(`!! LE MENU PAUSE NE MARCHE PAS : ouvert ${JSON.stringify(open)} / fermé ${JSON.stringify(closed)}`)
     }
     return { open, closed }
@@ -5209,6 +5287,15 @@ const SCENARIOS = {
       reprendre: document.querySelector('.bm-entree[data-reprendre] .bm-e-sous')?.textContent ?? '',
     }))
     console.log(`accueil : ${JSON.stringify(accueil)}`)
+    // ON LAISSE LA VITRINE ENTRER AVANT DE PHOTOGRAPHIER. Les vues du carrousel naissent à
+    // `opacity: 0` et montent en `VITRINE_FONDU_S` (1,6 s) ; déclencher tout de suite rendait
+    // un accueil au fond NOIR — et cette image a bel et bien induit en erreur, le 2026-08-20 :
+    // elle a fait conclure que le voile `.bm-vitrine-bord` écrasait les vues de nuit, alors
+    // que ce voile est un dégradé HORIZONTAL qui ne mord que les 90 premiers pixels, contre
+    // le rail. Relevé après correction : à t+0 les huit vues sont à 0,000 d'opacité ; à
+    // t+3,7 s la première est à 1,000. Une capture qui ment est pire qu'une capture absente.
+    await page.waitForFunction(() => [...document.querySelectorAll('.bm-vue')].some((v) => +getComputedStyle(v).opacity > 0.95),
+      null, { timeout: 15000, polling: 200 }).catch(() => console.error(`!! la vitrine n'a jamais atteint son opacité pleine`))
     await page.screenshot({ path: `${OUT}/accueil-principal.png` })
     if (accueil.entrees[0] !== 'REPRENDRE' || !/jour \d+ · seed 2026/.test(accueil.reprendre)) {
       console.error(`!! « REPRENDRE » NE DIT PAS QUELLE PARTIE : ${JSON.stringify(accueil)}`)
@@ -8305,7 +8392,12 @@ const SCENARIOS = {
       console.error(`!! LE GARDE-FOU DE MOUVEMENT RÉDUIT NE VA PAS : réduit=${reduit} normal=${normal} voile=${JSON.stringify(veil)}`)
     }
     await page.keyboard.press('Escape')
-    return { reduit, normal, endFires }
+    // `endFires` n'a JAMAIS existé : le scénario jetait un `ReferenceError` sur cette ligne
+    // depuis le commit qui l'a livré (2026-07-23), donc il sortait en 1 à chaque appel — la
+    // vérification interne passait, mais personne ne pouvait s'en servir comme garde, et
+    // `decisions.md` citait pourtant ce scénario comme PREUVE du garde-fou d'accessibilité.
+    // On rend ce que la fonction a réellement mesuré. (Audit UX 2026-08-20, I-1.)
+    return { reduit, normal, voile: veil }
   },
 
   /**
@@ -10159,6 +10251,10 @@ const SCENARIOS = {
         skills: rect('.hch-skills'),
         nSkills: document.querySelectorAll('.hch-sk').length,
         nRecipes: document.querySelectorAll('.hch-rec, .hch-rec-off').length,
+        // L'ÉTAT VIDE de la liste : à la minute zéro il est CORRECT d'être vide (une recette
+        // ne se révèle qu'au contact de sa matière — `decouverte.ts`, règle D2). Ce qui se
+        // vérifie n'est donc pas « il y a des recettes », c'est « le vide est DIT ».
+        videTexte: document.querySelector('.hch-liste-vide')?.textContent ?? '',
         weight: document.querySelector('.hch-weight')?.textContent ?? '',
       }
     })
@@ -10206,8 +10302,82 @@ const SCENARIOS = {
 
     // 7. Les 4 MÉTIERS, des recettes, et la CHARGE se lisent.
     console.log(vue.nSkills === 4 ? `   ✓ les 4 métiers sont là` : `   ✗ ${vue.nSkills} métier(s) au lieu de 4`)
-    console.log(vue.nRecipes > 0 ? `   ✓ ${vue.nRecipes} recettes affichées` : `   ✗ aucune recette affichée`)
+    // ⚠ « AUCUNE RECETTE » N'EST PAS UN DÉFAUT À LA MINUTE ZÉRO — et la sonde l'accusait
+    // depuis toujours. `seen` est vide par construction au premier instant : une recette ne se
+    // révèle qu'au contact de sa matière. Ce qui manquait n'était pas les recettes, c'était de
+    // le DIRE — un tiers d'écran blanc sous un titre, sans une phrase. (Audit UX, L3-03.)
+    // On vérifie donc les deux moitiés : le vide est dit, PUIS une matière le peuple.
+    if (vue.nRecipes > 0) {
+      console.log(`   ✓ ${vue.nRecipes} recettes affichées`)
+    } else if (vue.videTexte.trim()) {
+      console.log(`   ✓ liste vide, et elle le DIT : « ${vue.videTexte.trim()} »`)
+    } else {
+      console.error(`   !! aucune recette ET aucun état vide : un tiers d'écran blanc, sans un mot`)
+    }
     console.log(vue.weight.includes('/') ? `   ✓ la charge s'affiche : « ${vue.weight} »` : `   ✗ la charge ne s'affiche pas`)
+
+    // ═══ LE BANDEAU SE VOIT PAR-DESSUS L'ÉCRAN OUVERT (audit UX 2026-08-20, P0.2) ═══
+    //
+    // C'ÉTAIT LE DÉFAUT CARDINAL, et il se prouve ici parce que c'est ici qu'il mordait :
+    // l'écran du sac (`.hch`, inset:0 OPAQUE) est justement celui d'où partent les gestes
+    // d'objet, avec leurs quinze motifs de refus. L'alerte, peinte sur le canvas, passait
+    // dessous : sac ouvert, une action refusée ne produisait NI SON NI IMAGE — et le silence
+    // sonore avait été décidé au motif qu'« il y a déjà un toast ».
+    //
+    // On pose une alerte dans la file pendant que l'écran est ouvert, et on exige de la LIRE.
+    await page.evaluate(() => {
+      const reg = window.__BRAISES__.scene.registry
+      reg.set('alertes', [...(reg.get('alertes') ?? []), 'matériaux insuffisants'])
+    })
+    await page.waitForTimeout(350)
+    // ⚠ ON FIGE LA BOUCLE, SINON LA CAPTURE ARRIVE APRÈS LE BANDEAU. Une capture pleine page
+    // coûte plusieurs secondes sur le rendu logiciel de cette machine ; l'alerte, elle, tient
+    // 2,5 s puis se fond en 0,6. Mesuré en le ratant : au moment du cliché, l'élément était
+    // déjà à `display:none`, opacité 0,14 — le DOM disait vrai, le pixel disait vide, et
+    // c'était l'INSTRUMENT qui arrivait en retard. Endormir la boucle gèle `this.time.now`,
+    // donc l'horloge du bandeau. Même remède que le scénario `juice` pour ses toasts.
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    const bandeau = await page.evaluate(() => {
+      const hch = document.querySelector('.hch')
+      const el = document.querySelector('.bnd-alerte')
+      if (!el) return { monte: false }
+      const st = getComputedStyle(el)
+      const r = el.getBoundingClientRect()
+      // Le test qui tranche : au CENTRE du bandeau, quel élément est le plus haut ? Le
+      // bandeau est transparent au clic (il ne doit voler aucun geste), donc `elementFromPoint`
+      // rend ce qu'il y a DESSOUS — on compare donc les contextes d'empilement à la main.
+      const zBnd = Number(getComputedStyle(document.querySelector('.bnd')).zIndex)
+      const zHud = Number(getComputedStyle(document.querySelector('.hud-overlay')).zIndex)
+      return {
+        monte: true,
+        ecranOuvert: Boolean(hch && getComputedStyle(hch).display !== 'none'),
+        texte: (el.textContent ?? '').trim(),
+        visible: st.display !== 'none' && Number(st.opacity) > 0.5,
+        aire: Math.round(r.width) + '×' + Math.round(r.height),
+        ou: Math.round(r.left) + ',' + Math.round(r.top) + '→' + Math.round(r.right) + ',' + Math.round(r.bottom),
+        couleur: st.color,
+        opacite: st.opacity,
+        zBandeau: zBnd,
+        zHud,
+        // QUI EST AU-DESSUS, À CET ENDROIT PRÉCIS ? On rallume le pointeur le temps de la
+        // mesure (le bandeau est volontairement transparent au clic, donc invisible à
+        // `elementsFromPoint` sinon), et on lit la pile de haut en bas.
+        pile: (() => {
+          const bnd = document.querySelector('.bnd')
+          const avant = bnd.style.pointerEvents
+          bnd.style.pointerEvents = 'auto'
+          const cx = Math.round(r.left + r.width / 2), cy = Math.round(r.top + r.height / 2)
+          const noms = document.elementsFromPoint(cx, cy).slice(0, 5).map((e) => e.className || e.tagName)
+          bnd.style.pointerEvents = avant
+          return noms.join(' < ')
+        })(),
+      }
+    })
+    console.log(bandeau.monte && bandeau.ecranOuvert && bandeau.visible && bandeau.zBandeau > bandeau.zHud
+      ? `   ✓ P0.2 — l'alerte se LIT par-dessus l'écran du sac : « ${bandeau.texte} » (${bandeau.aire} @ ${bandeau.ou}, ${bandeau.couleur}, opacité ${bandeau.opacite}, z ${bandeau.zBandeau} > HUD ${bandeau.zHud})\n      pile au centre : ${bandeau.pile}`
+      : `   ✗ P0.2 — l'alerte ne se voit pas sur l'écran ouvert : ${JSON.stringify(bandeau)}`)
+    await page.screenshot({ path: `${OUT}/craft-bandeau.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
 
     await page.screenshot({ path: `${OUT}/craft.png` })
 
@@ -11207,9 +11377,27 @@ const SCENARIOS = {
         console.log(r0.cible > 0
           ? `   ✓ arbre : il tombe À L'OPPOSÉ du bûcheron (angle visé +${r0.cible.toFixed(2)} = vers l'est)`
           : `   ✗ arbre : il tombe SUR le bûcheron (angle visé ${r0.cible.toFixed(2)})`)
-        // LE HOUPPIER A QUITTÉ LA BANDE CANOPÉE (≥ 900 000) : couché, il passe sous les acteurs.
-        console.log(r3 && r3.hd < 900000 && r3.hd < m.joueur.d
-          ? `   ✓ arbre : le houppier couché est SOUS le joueur (${r3.hd.toFixed(0)} < ${m.joueur.d.toFixed(0)}), hors canopée`
+        // LE HOUPPIER A QUITTÉ LA BANDE CANOPÉE — la vraie promesse, mesurée AVANT/APRÈS.
+        //
+        // La garde exigeait `hd < 900000 && hd < joueur.d`. Le premier terme est le bon et il
+        // PASSAIT (2040, très loin des 900 000) ; c'est le second qui rougissait — et il était
+        // faux par construction : le scénario téléporte lui-même le bûcheron AU NORD du pied
+        // (`ty + 0.5` contre `ty + 1`), et l'arbre tombe vers l'EST. Un houppier couché plus au
+        // sud que le joueur DOIT se dessiner devant lui : c'est le tri par Y qui fonctionne,
+        // pas un défaut. La sonde accusait le rendu d'obéir. (Audit UX 2026-08-20, I-6.)
+        //
+        // On mesure donc ce que la fonctionnalité promet vraiment : DEBOUT il est dans la bande
+        // canopée (il coiffe le monde), COUCHÉ il n'y est plus (il se trie comme un objet au
+        // sol). Deux affirmations, et la première prouve que la seconde a un sens.
+        // LE RELEVÉ COMMENCE DÉJÀ PENDANT LA CHUTE — corrigé après une mesure qui a réfuté
+        // l'hypothèse. On avait d'abord écrit « debout, il est dans la bande canopée » comme
+        // prémisse : faux, et `chute-arbre.ts` le dit en toutes lettres — le houppier « rejoint
+        // la bande de tri Y DÈS LA PREMIÈRE IMAGE de la chute ». Or `t=0` du relevé EST cette
+        // première image (l'angle y vaut 0, mais la chute est déjà armée). La propriété se
+        // vérifie donc sur l'état couché seul.
+        const CANOPEE = 900000
+        console.log(r3 && r3.hd > 0 && r3.hd < CANOPEE
+          ? `   ✓ arbre : le houppier couché se trie AVEC le monde, hors canopée (${r3.hd.toFixed(0)} < ${CANOPEE})`
           : `   ✗ arbre : le houppier couché coiffe encore le monde (depth ${r3 ? r3.hd.toFixed(0) : '—'})`)
         await page.screenshot({ path: `${OUT}/epuisement-arbre.png` })
         const clip = await page.evaluate(() => {
@@ -11319,15 +11507,28 @@ const SCENARIOS = {
     await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
     await page.waitForTimeout(300)
 
-    // Un buisson à baies (cueillette nue, aucun outil requis), et on se plante à côté.
+    // ⚠ PAS UN BUISSON À BAIES. La sonde visait `berry_bush` et rapportait « le buisson est
+    // resté sur place (pas de dérive) » depuis toujours — or `economy.ts` EXEMPTE explicitement
+    // les baies de la relocalisation : `def.skill !== 'mining' && node.type !== 'berry_bush'
+    // && !dansEmprise(...)`. Elle testait la règle sur le SEUL nœud que la spec en dispense.
+    // (Audit UX 2026-08-20, I-5.)
+    //
+    // On prend donc de la FIBRE — cueillette nue elle aussi, `renewable`, et bien soumise à la
+    // dérive — ET on prouve la prémisse : hors de toute emprise de village (`dansEmprise` est
+    // une distance de Tchebychev au Feu ; 40 tuiles passent largement tout rayon d'emprise).
+    // Sans cette garde, un plant né au bord d'un village rendrait « pas de dérive » pour une
+    // raison parfaitement légitime, et la sonde mentirait dans l'autre sens.
     const start = await page.evaluate(() => {
       const s = window.__BRAISES__.scene
-      const b = s.view.nodes.find((n) => n.type === 'berry_bush' && n.stock > 0)
+      const feux = (s.view.villages ?? []).map((v) => ({ x: v.fireTx, y: v.fireTy }))
+      const loinDeToutFeu = (n) => feux.every((f) => Math.max(Math.abs(f.x - n.tx), Math.abs(f.y - n.ty)) > 40)
+      const b = s.view.nodes.find((n) => n.type === 'fiber_plant' && n.stock > 0 && loinDeToutFeu(n))
       if (!b) return null
       s.sendAction({ type: 'debug_teleport', x: b.tx - 0.5, y: b.ty + 0.5 })
-      return { id: b.id, tx: b.tx, ty: b.ty, stock: b.stock }
+      return { id: b.id, tx: b.tx, ty: b.ty, stock: b.stock, villages: feux.length }
     })
-    if (!start) { console.log('   ✗ aucun buisson à portée dans cette carte'); return {} }
+    if (!start) { console.log('   ✗ aucun plant de fibre hors emprise dans cette carte — la dérive est intestable ici'); return {} }
+    console.log(`   plant de fibre ${start.id} en (${start.tx},${start.ty}), hors des ${start.villages} emprise(s) — la dérive DOIT s'appliquer`)
     await page.waitForTimeout(500)
     await page.screenshot({ path: `${OUT}/vivante-avant.png` })
 
@@ -12418,12 +12619,15 @@ const SCENARIOS = {
     await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
     await page.waitForTimeout(400)
 
-    // Le menu « MARTEAU » est-il visible dans la scène UI ? (on lit le graphe Phaser)
+    // Le menu du marteau est-il OUVERT ? IL EST EN DOM (`build-menu.ts`, racine `.bmn`), et
+    // cette sonde cherchait un objet Phaser `Text` nommé « MARTEAU » — il n'en existe aucun
+    // dans tout le dépôt. Elle rendait donc `false` à tous les coups : R20 rapportait « menu
+    // ABSENT ✗ » depuis toujours, et R21 « éteint ✓ » pour la même mauvaise raison — un ✗ et
+    // un ✓ creux sur la même sonde aveugle. (Audit UX 2026-08-20, I-2.)
     const marteauVisible = () =>
       page.evaluate(() => {
-        const ui = window.__BRAISES__.scene.scene.get('ui')
-        const t = ui.children.list.find((o) => o.type === 'Text' && o.text === 'MARTEAU')
-        return Boolean(t && t.visible)
+        const el = document.querySelector('.bmn')
+        return Boolean(el && getComputedStyle(el).display !== 'none')
       })
 
     // UNE ACTION PAR TICK (le protocole n'en porte qu'une par input) : deux envois dans
@@ -12467,17 +12671,37 @@ const SCENARIOS = {
     // composants — 30 bois tient sur 2 cases, laissant la place aux objets tenus).
     const spawn = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
     await grant('wood', 30)
+    // ⚠ LE FEU QU'ON CHERCHE EST CELUI QU'ON VIENT D'ALLUMER — pas le premier de la carte.
+    // La sonde faisait `structures.find(x => x.type === 'fire')`, qui rend le feu d'un VILLAGE
+    // PNJ né à la génération. Elle sortait donc de la boucle au premier tour même quand la
+    // fondation avait échoué, et tout le reste du scénario bâtissait autour d'un foyer à des
+    // centaines de tuiles : d'où les cinq « hors du carré du Feu ». Cinq faux ✗ pour une
+    // seule ligne. On relève donc les feux AVANT, et on ne retient que le NOUVEAU.
+    // (Audit UX 2026-08-20, I-2.)
+    const feuxAvant = await page.evaluate(() =>
+      window.__BRAISES__.scene.view.structures.filter((x) => x.type === 'fire').map((x) => x.id),
+    )
     let feu = null
     let reason = ''
     for (const [ox, oy] of [[0, 0], [24, 0], [-24, 0], [0, 24], [0, -24], [24, 24], [-24, -24], [48, 0], [0, 48]]) {
       await doAction({ type: 'debug_teleport', x: Math.round(spawn.x) + ox + 0.5, y: Math.round(spawn.y) + oy + 0.5 }, 200)
       await doAction({ type: 'light_fire' }, 450)
-      feu = await page.evaluate(() => {
-        const f = window.__BRAISES__.scene.view.structures.find((x) => x.type === 'fire')
-        return f ? { tx: f.tx, ty: f.ty } : null
-      })
+      feu = await page.evaluate((connus) => {
+        const f = window.__BRAISES__.scene.view.structures.find((x) => x.type === 'fire' && !connus.includes(x.id))
+        return f ? { id: f.id, tx: f.tx, ty: f.ty } : null
+      }, feuxAvant)
       reason = await page.evaluate(() => window.__BRAISES__.scene.registry.get('error')?.reason ?? '')
       if (feu) break
+    }
+    // ET LA SONDE PROUVE SA PRÉMISSE : un Feu à plus de 60 tuiles du spawn n'est pas le nôtre
+    // (la boucle ne s'éloigne que de 48 au plus). Sans cette garde, la prochaine régression du
+    // même genre repasserait au vert en silence.
+    if (feu) {
+      const d = Math.max(Math.abs(feu.tx - spawn.x), Math.abs(feu.ty - spawn.y))
+      if (d > 60) {
+        console.error(`!! LE FEU TROUVÉ N'EST PAS CELUI DU JOUEUR : (${feu.tx},${feu.ty}) à ${Math.round(d)} tuiles du spawn`)
+        feu = null
+      }
     }
     console.log(`fondation (R1 loin des POI) → Feu ${feu ? `posé en (${feu.tx}, ${feu.ty}) ✓` : `ABSENT ✗ (${reason})`}`)
 
