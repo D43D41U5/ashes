@@ -749,7 +749,10 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     // SATIÉTÉ, elle, se gagne sur TOUTE chair frappée, bête comprise — et elle endort son
     // porteur (décision ⑰ : « rassasié, il s'affaisse » — voir `eveilDuCendreux`).
     if (attackerIsCendreux) {
-      if (!targetMonster) target.temperature = Math.max(0, target.temperature - CENDREUX.BOIRE.COUP_TEMP)
+      // Le mode dieu (debug) garde `applyDamage`, pas la chaleur : sans cette garde, un avatar
+      // invulnérable mourait quand même de froid sous les morsures — MESURÉ au smoke `rampant`,
+      // « un Cendreux vous a repris » en mode dieu. Un outil qui ment fait perdre une journée.
+      if (!targetMonster && !isInvulnerable(state, target)) target.temperature = Math.max(0, target.temperature - CENDREUX.BOIRE.COUP_TEMP)
       attackerMonster!.satiete = Math.min(
         CENDREUX.BOIRE.SATIETE_MAX,
         (attackerMonster!.satiete ?? 0) + CENDREUX.BOIRE.SATIETE_COUP,

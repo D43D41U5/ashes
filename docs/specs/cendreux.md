@@ -477,6 +477,15 @@ faux-mort, lui, existe déjà en mieux : la carcasse torpide qui se réveille so
   partagés depuis `snapshot-view`). Depuis que la vue est honnête (R24), *où il regarde* est une
   information qui décide : passer dans son dos, ou contourner. Marcheur et rampant le portent ;
   il naît avec le sprite, disparaît avec lui, et reste caché tant que le corps s'extrait du sol.
+- **R27bis — LE REGARD S'ALLUME** *(décision d'Alexis, 2026-08-21 — cinquième question de la
+  file PZ, « le grognement d'aggro »)*. Quand le Cendreux a un VIVANT pour cible (`targetId`
+  non nul dans le snapshot), son pion de regard prend la teinte MENACE — celle du loup qui
+  bondit et du sanglier qui charge (`BEAST_TINTS.menace`) ; sans cible, il reste neutre. C'est
+  notre grognement : un mort ne respire pas, il n'a pas de voix à donner, il a un regard — et on
+  voit quand il s'est posé sur vous. Vérifier un dernier lieu (⑨, R28) ou marcher vers un feu
+  ne l'allume pas : il cherche, il n'a pas trouvé. Client seul, zéro événement, zéro voix
+  (les compteurs de la partition audio ne bougent pas). MESURÉ au smoke `rampant` : 5/5
+  morts venus pour le joueur ont le regard allumé, le sien reste neutre.
 
 ## Constantes (`balance.ts`, bloc `CENDREUX`)
 

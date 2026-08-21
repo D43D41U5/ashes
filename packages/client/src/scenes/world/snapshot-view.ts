@@ -41,6 +41,7 @@ import { pushSample, sampleAt, type Sample } from './interp'
 // jouables headless. C'est ce qui permet à `tools/diag-cerf.mts` de compter ce que l'ÉCRAN
 // montre, au lieu d'en garder une copie qui dérive.
 import {
+  BEAST_TINTS,
   beastTexture,
   beastTint,
   majMiroir,
@@ -1043,6 +1044,8 @@ export class SnapshotView {
           .setDepth(p.depth + 0.1)
           .setDisplaySize(GAZE_PX, GAZE_PX)
           .setVisible(true)
+        if (sprite.getData('aggro') === true) gaze.setTint(BEAST_TINTS.menace)
+        else gaze.clearTint()
       } else {
         gaze.setVisible(false)
       }
@@ -1150,6 +1153,13 @@ export class SnapshotView {
           record.sprite.setData('gaze', this.scene.add.image(0, 0, 'fx-gaze').setOrigin(0.5, 0.5).setVisible(false))
         }
         record.sprite.setData('facing', entity.facing)
+        // LE REGARD S'ALLUME (R27bis, décision d'Alexis) : quand il a un VIVANT pour cible,
+        // le pion prend la teinte MENACE — celle du loup qui bondit et du sanglier qui charge,
+        // « ça vient sur toi ». C'est notre grognement d'aggro : un mort ne respire pas, il
+        // n'a pas de voix à donner — il a un regard, et on voit quand il s'est posé sur vous.
+        // Aller vérifier un dernier lieu (⑨) ou marcher vers un feu ne l'allume pas : il
+        // cherche, il n'a pas trouvé.
+        record.sprite.setData('aggro', monster.targetId !== null)
       }
       // LA POSTURE dit l'état (R9bis/C19) — et l'alpha garde sa silhouette
       // propre (spec faune R12) : le joueur doit pouvoir le désigner d'un coup

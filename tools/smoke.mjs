@@ -14224,7 +14224,7 @@ const SCENARIOS = {
         corps.push({
           id, texture: o.textureKey, x: o.sprite.x, y: o.sprite.y,
           w: +o.sprite.displayWidth.toFixed(1), h: +o.sprite.displayHeight.toFixed(1),
-          gaze: g ? { visible: g.visible, x: +g.x.toFixed(1), y: +g.y.toFixed(1) } : null,
+          gaze: g ? { visible: g.visible, x: +g.x.toFixed(1), y: +g.y.toFixed(1), allume: g.isTinted } : null,
         })
       }
       return corps
@@ -14274,7 +14274,11 @@ const SCENARIOS = {
     console.log(`   ${couche ? '✓' : '✗'} la silhouette est couchée (plus large que haute : ${apres.w} × ${apres.h})`)
     console.log(`   ${regard ? '✓' : '✗'} le rampant porte son regard (R27)`)
     if (temoin) console.log(`   ${regardTemoin ? '✓' : '✗'} le marcheur aussi`)
-    return { essais, rampant: apres, temoin, couche, regard, regardTemoin }
+    // R27bis — LE REGARD S'ALLUME : venus pour le joueur (réveils `debug_reveil`, la nuit, à
+    // portée de chaleur), au moins un de ces morts a un vivant pour cible — son pion est teinté.
+    const allumes = corps.filter((c) => c.gaze?.allume === true).length
+    console.log(`   ${allumes > 0 ? '✓' : '✗'} le regard s'allume sur ${allumes}/${corps.length} morts qui ont une cible (R27bis)`)
+    return { essais, rampant: apres, temoin, couche, regard, regardTemoin, allumes }
   },
 
   /**
