@@ -41,6 +41,7 @@ import {
 } from './balance'
 import { harvestFactor } from './alignment'
 import { die } from './combat'
+import { facteurSterilite, frontActuel } from './cendre'
 import { emitEvent } from './events'
 import { floreEntierementGelee, floreGelee } from './gel'
 import { distSq } from './geometry'
@@ -579,8 +580,22 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
       node.depletions = Math.min(BALANCE.DEPLETION_MAX, (node.depletions ?? 0) + 1)
       node.forgetAt = state.tick + BALANCE.DEPLETION_FORGET_TICKS
       const usure = 1 + BALANCE.DEPLETION_REGROW_PENALTY * (node.depletions - 1)
+      // LA STÉRILITÉ (spec `cortege-cendre.md` R2) — le sens du cortège qui marche LE PLUS LOIN
+      // devant le feu. Devant le front, la repousse ralentit jusqu'à ne plus rien rendre d'utile,
+      // et le sol est **encore là, encore vert, encore marchable** : le joueur voit sa perte
+      // arriver une saison à l'avance et abandonne sa TOURNÉE avant d'abandonner son TERRAIN.
+      //
+      // Elle MULTIPLIE `REGROW_ACT_FACTOR`, elle ne le remplace pas : le facteur d'acte est un
+      // levier d'équilibrage acté, le retirer serait une décision de design distincte de ce
+      // chantier. Conséquence à ne pas taire : le patron `[acte - 1]` que **A3 de
+      // `saison-sans-fin.md`** veut voir disparaître de `/sim` SURVIT ici.
+      //
+      // Le facteur est plafonné (`CENDRE.STERILE_FACTEUR_MAX`) et vaut 1 hors bande — donc hors
+      // de la bande, `regrowAt` est identique au bit près à ce qu'il était avant ce chantier.
+      const sterile = facteurSterilite(state.map, node.tx, node.ty, frontActuel(state))
       node.regrowAt =
-        state.tick + Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR[day - 1]! * usure)
+        state.tick +
+        Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR[day - 1]! * usure * sterile)
       // LA DÉRIVE (spec recolte-vivante D1/R1) : un nœud de bois/fibre meurt sur sa tuile
       // et rouvre AILLEURS, dans le même bosquet. La pierre/le minéral reste sur place.
       // À `stock = 0` : le client peint la souche à l'ancien coin et fait grandir la pousse

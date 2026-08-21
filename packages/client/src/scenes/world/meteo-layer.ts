@@ -163,7 +163,7 @@ export const METEO_DEPTH = 1_120_000
 export const METEO_GRAIN_DEPTH = METEO_DEPTH + 500
 
 /** L'ordre des types dans l'uniforme `uType` — le fragment branche dessus. */
-const TYPE_INDEX: Record<MeteoType, number> = { pluie: 0, brouillard: 1, neige: 2, orage: 3, blizzard: 4 }
+const TYPE_INDEX: Record<MeteoType, number> = { pluie: 0, brouillard: 1, neige: 2, orage: 3, blizzard: 4, vent_de_cendre: 5 }
 
 const FRAGMENT = /* glsl */ `
 #pragma phaserTemplate(shaderName)
@@ -182,7 +182,7 @@ uniform float uAxis;    // 0 = la bande traverse en X · 1 = en Y
 uniform float uLo;      // bord bas de la bande sur cet axe, en TUILES
 uniform float uHi;      // bord haut
 uniform float uRampe;   // RAMPE x LARGEUR, en tuiles — la pente bord vers coeur
-uniform float uType;    // 0 pluie · 1 brouillard · 2 neige · 3 orage · 4 blizzard
+uniform float uType;    // 0 pluie · 1 brouillard · 2 neige · 3 orage · 4 blizzard · 5 vent de cendre
 uniform vec2 uSouffle;  // derive LENTE du voile, integree et repliee cote CPU
 uniform float uDay;     // 0 nuit · 1 plein jour
 uniform float uFlash;   // 0..1 — l'embrasement de l'eclair (l'orage seul)
@@ -223,7 +223,8 @@ void main() {
   bool brouillard = uType > 0.5 && uType < 1.5;
   bool neige = uType > 1.5 && uType < 2.5;
   bool orage = uType > 2.5 && uType < 3.5;
-  bool blizzard = uType > 3.5;
+  bool blizzard = uType > 3.5 && uType < 4.5;
+  bool cendre = uType > 4.5;
 
   // ── LE VOILE, ET RIEN QUE LUI : la matiere en suspension, propre a chaque ciel.
   //
@@ -252,6 +253,13 @@ void main() {
   } else if (neige) {
     teinte = vec3(0.80, 0.84, 0.90);
     a = (0.16 + 0.09 * houle) * I;
+  } else if (cendre) {
+    // LE VENT DE CENDRE : ni blanc ni bleu — un ocre gris, la couleur de ce qui a brule.
+    // C'est le seul ciel CHAUD de la table, et c'est tout son signalement : on le reconnait
+    // a ce qu'il ne ressemble a aucun des autres. Voile epais (il vient du sud en soufflant
+    // la poussiere du brule) mais moins que le blizzard : il aveugle, il ne tue pas.
+    teinte = vec3(0.42, 0.36, 0.30);
+    a = (0.36 + 0.16 * houle) * I;
   } else if (orage) {
     // L'ORAGE : le plus SOMBRE des cinq — l'ardoise sous laquelle la foudre se lit.
     teinte = vec3(0.11, 0.13, 0.19);

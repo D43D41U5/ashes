@@ -4,12 +4,13 @@
  * par la bulle d'un feu. Aucune fonction transcendante (seul `sqrt`, autorisé).
  */
 import { POI, TEMPERATURE } from './balance'
+import { froidDeCendre, frontAuTick } from './cendre'
 import { brumeColdAt } from './brume'
 import { fireWarmthFactor } from './fire'
 import { die } from './combat'
 import { countOf } from './items'
 import { terrainAt } from './map'
-import { meteoColdAt } from './meteo'
+import { meteoColdAt, pousseeDeCendre } from './meteo'
 import { isOnPoiKind } from './poi-discovery'
 import { gameTimeAt } from './time'
 import type { SimState } from './sim'
@@ -120,7 +121,27 @@ function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelt
   // de plus : l'abri les amortit, et le feu comme la tenue les PLANCHENT (l'ambiant est un
   // max) — le déni de zone tombe de ces lois, pas d'une mécanique neuve. Le froid météo
   // arrive en RAMPE (gradient bord → cœur de bande) : le front qui approche se SENT venir.
-  const exposed = biome - (time.isNight ? T.NIGHT_COLD : 0) - brumeColdAt(state, x, y, tick) - meteoColdAt(state, x, y, tick) // amorti par l'abri
+  // LE FROID DE LA CENDRE (spec `cortege-cendre.md` R3) est une EXPOSITION DE PLUS, au même
+  // titre que la brume et le front météo — pas une loi neuve. Il entre donc dans `exposed` :
+  // l'abri l'amortit, le feu et la tenue le PLANCHENT (l'ambiant est un `max`). La fiction est
+  // gratuite : une terre brûlée n'a plus de couvert, **le froid vient d'où plus rien ne pousse**.
+  //
+  // Et il traverse `climatFlore` (même écrivain, `shelter = 1`), donc la flore l'encaisse en
+  // entier et AUCUNE structure ne le lève — la serre gratuite que `flore-froid` F1bis interdit
+  // reste interdite. C'est la contrainte que devra respecter la future parade anti-cendre : elle
+  // repoussera le SEUIL, jamais le CLIMAT.
+  // ⚠ Le front est lu AU TICK DEMANDÉ, jamais à `state.tick` : cette fonction sert l'hystérésis
+  // du dégel (`gel.md` G8), qui relit le froid du monde à un tick passé.
+  //
+  // LE VENT DE CENDRE (R6) entre ICI, et par la seule porte qui ne ment pas : il gonfle le front
+  // QUE LE FROID REGARDE, sans toucher au front réel. La stérilité et la hantise, elles, lisent
+  // toujours `frontAuTick` — **le vent pousse, il n'avance pas** : rien ne brûle de plus, rien ne
+  // devient stérile de plus, et quand il est passé le monde est exactement où il était.
+  const frontFroid =
+    frontAuTick(state.map, state.calendarScale, tick) + pousseeDeCendre(state, x, y, tick)
+  const cendre = froidDeCendre(state.map, tx, ty, frontFroid)
+  const exposed =
+    biome - (time.isNight ? T.NIGHT_COLD : 0) - brumeColdAt(state, x, y, tick) - meteoColdAt(state, x, y, tick) - cendre // amorti par l'abri
   return clampTemp(base + shelter * exposed)
 }
 

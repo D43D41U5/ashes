@@ -1,0 +1,63 @@
+# Le cortège de la Cendre — un seul champ, plusieurs sens
+
+*Source : discussion de lore du 2026-08-21 (écrivain + scénariste invités), décision d'Alexis **« l'arc oscille »** (journal, 2026-08-21) puis **« la pression doit être appliquée par l'environnement »**. Prolonge la doctrine posée par Alexis le 2026-08-19 sur la flore (`balance.ts`, en-tête de `FLORE`) : « ce qui existait — `SEASON.REGROW_ACT_FACTOR` — est keyé sur l'ACTE : il ne peut dire ni OÙ ni À QUELLE HEURE ». Statut : **en cours**. Jalon : calibrage Veillée.*
+
+## Objectif de design
+
+L'arc oscille : le jeu n'a plus de dernier acte, il a un hiver qui revient plus dur, et le joueur doit **choisir ce qu'il abandonne** chaque année. Reste à dire **d'où vient la pression** qui l'y force. Décision d'Alexis : de l'**environnement**, pas d'un multiplicateur.
+
+Le constat qui rend la chose bon marché :
+
+> **`map.cendre` est une distance PAR TUILE, précalculée — et une seule question la lit aujourd'hui : « est-ce brûlé ? » (`cendre[i] < front`). Un champ entier, un seul sens.**
+
+On ne construit donc pas un système : on **relit un champ existant avec plusieurs sens**, chacun avec son propre seuil. C'est exactement le geste de `flore-froid` sur le champ thermique, et c'est le patron d'architecture du Gel (`gel.md`) : **TOUT EST DÉRIVÉ, RIEN N'EST STOCKÉ** — un prédicat pur remplace un champ.
+
+> **Le front n'est pas une ligne, c'est un CORTÈGE.** Devant la ligne de feu marchent la stérilité, le froid et — derrière elle — la hantise. Zéro octet dans `SimState`, zéro octet dans la sauvegarde.
+
+## La primitive — et sa convention de signe, posée UNE fois
+
+- **R1 — `margeDeCendre(map, tx, ty, front)` est la seule lecture du champ**, et elle rend une **distance signée en tuiles** :
+  - **`marge < 0`** — la tuile est **dans le brûlé**. Plus c'est négatif, plus elle a brûlé **tôt** (le front l'a dépassée depuis longtemps).
+  - **`marge ≥ 0`** — la tuile est **devant le front**, et la valeur dit de combien de tuiles.
+  - Hors carte, ou carte sans Cendrière (`map.cendre === undefined`) : rend `CENDRE.MARGE_HORS_CENDRE`, une grande valeur **finie** — toute borne du cortège retombe alors sur sa valeur neutre par simple comparaison, sans un `if` de plus chez le consommateur.
+- **R1bis — `cendre.ts` est l'écrivain unique de la convention.** Aucun consommateur ne touche `map.cendre` ni ne recalcule `d − front` : quatre sites d'appel qui inverseraient le signe chacun de leur côté, c'est le même défaut débogué trois fois.
+- **R1ter — CHAQUE COURBE VIT AVEC SON RÉGLAGE**, et c'est la règle qui a tranché en pratique. La stérilité et le froid se règlent dans `CENDRE` (géométrie du front) donc leurs fonctions sont dans `cendre.ts`, au patron de `brumeColdAt`/`meteoColdAt` ; la hantise se règle dans `MORTS` donc elle vit dans `morts.ts`. Aucun de ces trois ne touche `map.cendre` : tous passent par `margeDeCendre`.
+
+## Les bandes — et leur ordre est un invariant
+
+- **R2 — LA STÉRILITÉ MARCHE LE PLUS LOIN DEVANT (P1).** Dans `0 ≤ marge < bandeDeCendre(map, CENDRE.STERILE_PART)`, la repousse ralentit, d'autant plus que le front est proche, jusqu'à un plafond où elle ne rend plus rien d'utile. Le sol est **encore là, encore vert, encore marchable** — et il ne redonne plus. Le joueur voit sa perte arriver une saison à l'avance, et **abandonne sa tournée avant d'abandonner son terrain**.
+  - **R2bis — La stérilité ne produit JAMAIS `regrowAt === 0`.** C'est une signature portante (`economy.ts` : `stock 0` + `regrowAt 0` = défriché, ne revient pas ; `setNodes` teste `regrowAt > 0`). La stérilité **allonge un délai**, elle ne pose pas une marque. Le multiplicateur est **plafonné** (`CENDRE.STERILE_FACTEUR_MAX`) — un délai non borné franchirait `Number.MAX_SAFE_INTEGER` et `Math.floor` rendrait n'importe quoi.
+  - **R2ter — Elle MULTIPLIE le facteur d'acte, elle ne le remplace pas.** Retirer `SEASON.REGROW_ACT_FACTOR` serait une décision d'équilibrage distincte de ce chantier — elle appartient à Alexis, pas à un effet de bord. Conséquence à ne pas taire : le patron `[acte − 1]` que **A3 de `saison-sans-fin.md`** veut voir disparaître de `/sim` **survit** ici, et A3 reste non satisfaite.
+- **R3 — LA CENDRE EST FROIDE, ET SON FROID PRÉCÈDE LE FEU (P2).** Dans `marge < bandeDeCendre(map, CENDRE.FROID_PART)`, un terme de froid s'ajoute, en **rampe** (nul à la limite de la bande, maximal sur le brûlé). Fiction gratuite : *une terre brûlée n'a plus de couvert ; le froid vient d'où plus rien ne pousse.*
+  - **R3bis — C'est une EXPOSITION, pas une base.** Le terme entre dans `froidDuMonde` **à côté de `brumeColdAt` et `meteoColdAt`**, donc dans `exposed` : l'abri l'amortit, le feu et la tenue le planchent (l'ambiant est un `max`). On n'écrit pas une loi de plus, on ajoute une exposition à celles qui existent.
+  - **R3ter — Le feu réchauffe les hommes, pas la terre.** `climatFlore` passe par le même `froidDuMonde` avec `shelter = 1` : la flore encaisse le froid de cendre en entier, et **aucune structure ne le lève**. Sans quoi un foyer posé au bord du potager redeviendrait la serre gratuite que `flore-froid` F1bis interdit. Corollaire pour la parade anti-cendre à venir : **elle repoussera le SEUIL, elle ne réchauffera jamais le CLIMAT.**
+  - **R3quater — Aucun seuil de `flore-froid` ne doit tomber sur une valeur atteinte.** La table de `FLORE` est calée avec la remarque explicite qu'aucun de ses deux seuils n'est un multiple de 5, pour qu'aucune décision ne se joue au bit de flottant. Le terme de cendre doit être vérifié contre cette propriété, pas supposé inoffensif.
+- **R4 — LE VIEUX BRÛLÉ EST PLUS HANTÉ QUE LE NEUF (P3).** `densiteDesMorts` ajoute aujourd'hui `MORTS.PART_CENDRE` **à plat** sur toute tuile brûlée. Le terme devient un dégradé de `−marge` (depuis combien de temps ça a brûlé), **plafonné**.
+  - **R4bis — Le dégradé vit dans le terme de cendre, JAMAIS dans `densiteDeBase`.** `placeCharniers` appelle `densiteDeBase` **à la génération**, quand il n'y a ni tick ni front : elle doit rester rigoureusement indépendante du temps, sinon les charniers se déplacent entre un monde neuf et une sauvegarde rechargée.
+  - **Ce que ça achète** : tenir une ligne longue coûte plus de nuits que tenir une ligne courte. **Le joueur raccourcit sa ligne lui-même** — l'environnement ne lui confisque rien, il rend le trop-grand intenable.
+- **R4ter — LES BANDES SONT DES PARTS DE LA COURSE DU FRONT, JAMAIS DES DISTANCES.** *(Correction issue de la mesure, et c'est la plus importante de cette spec.)* Les trois largeurs avaient d'abord été écrites en tuiles (28, 70, 60). MESURÉ (`tools/mesure-cortege.mts`, seed 2026) : **`cendreMax` vaut 74 tuiles** — la course TOTALE du front sur une saison entière. La bande stérile en couvrait donc 95 %, et **62 % de la vallée habitable était stérile au jour 1**, avant que rien n'ait bougé. C'est EXACTEMENT la faute que `CENDRE.PART_CIBLE` documente déjà un cran plus haut (« ET C'EST UNE PART, PAS UNE DISTANCE » — une même distance couvrait 48 % des Prés Bas sur une seed et 81 % sur une autre), refaite un cran plus bas. Les trois réglages sont donc des **parts** (`STERILE_PART`, `FROID_PART`, `HANTISE_PART`), et `bandeDeCendre(map, part)` les rend en tuiles. Une carte sans Cendrière rend une bande nulle : le cortège y est intégralement neutre, au bit près.
+- **R5 — L'ORDRE DES BANDES EST UN INVARIANT, pas un réglage heureux.** `CENDRE.FROID_PART < CENDRE.STERILE_PART`. En marchant vers le sud on rencontre, dans cet ordre : le pays normal → **le stérile** → **le stérile et froid** → **le brûlé**. Trois marches, lisibles. Un réglage qui les croise rend le cortège illisible et doit échouer au test, pas à l'œil.
+- **R6 — LE VENT DE CENDRE (P4) : la poussée, pas l'avancée.** Un type météo qui vient **du sud** et pousse temporairement la bande de R3 vers le nord, le temps d'un front. Il s'annonce (§9bis : « annoncés, pas surprises »), il passe, **le front de cendre n'a pas bougé d'une tuile**. C'est ce qui donne son *battement* à une pression qui n'est sinon qu'une pente.
+  - **R6bis — LIVRÉ À PART, ET APRÈS — mais le risque n'est pas celui qu'on croyait.** R2-R4 sont des lectures pures : aucun tirage. R6 ajoute un membre à la table de `meteoTypeBrut` — or ce tirage est un **`hash2` POSITIONNEL, pas un PRNG à état** : rien ne se *désynchronise*, ce sont les **bornes cumulées** de la table qui bougent, donc la météo d'un cycle donné peut changer sur une seed existante. On limite les dégâts par construction : le type est ajouté **en fin de table** et l'on ne réduit que la **dernière** entrée, si bien que les bornes des types qui précèdent restent identiques au bit près. Il se livre néanmoins sur son propre commit, après que R2-R4 sont vertes, pour qu'un rouge reste attribuable.
+  - **R6ter — LE BORD EST FORCÉ AU SUD, jamais tiré.** Le vent vient de la Cendrière ; un vent de cendre descendant du nord raconterait le contraire de la carte. Le canal de hash du bord est **consommé quand même** avant d'être écrasé, pour que le tirage des autres fronts d'un même cycle reste identique.
+  - **R6quater — LA POUSSÉE GONFLE LE FRONT QUE SEUL LE FROID REGARDE.** `pousseeDeCendre` ne rend pas des degrés mais des **tuiles de front**, ajoutées au front avant l'appel à `froidDeCendre` — et à lui seul. La stérilité et la hantise lisent toujours le front réel : **rien ne brûle de plus, aucun nœud ne devient stérile, aucun sol ne devient plus hanté.** C'est ce qui autorise ce type à revenir chaque année sans user la carte. Son `COLD` de table reste modeste (8) précisément pour ne pas compter le froid deux fois — sinon le vent serait un blizzard déguisé.
+
+## Ce que le cortège ne règle PAS — à dire, pas à sous-entendre
+
+- **Les villages fantômes.** `fallToRuin` n'a qu'un appelant (`village.ts:745`, destruction de la structure de feu) : un village PNJ dont tous les habitants meurent reste dans `state.villages`, sans `village_fell`. Sous un arc qui dure des années, c'est **la** dépendance dure du pilier n°2. Hors périmètre de cette spec.
+- **La parade anti-cendre** (la braise qui repousse le front, idée d'Alexis du 2026-08-21) : non conçue. R3ter pose déjà sa contrainte.
+- **La profondeur disponible.** `MONDE_JOUE = 'racine'` : la carte réelle n'a que les Prés Bas et la Cendrière. Toute pression spatiale n'a que la profondeur des Prés Bas pour se déployer.
+
+## Critères d'acceptation
+
+*Balayés sur tout le domaine, jamais sur des cas choisis (« garde exhaustive plutôt que cas choisis »).*
+
+- **A1 — La primitive.** Sur un balayage de tout `map.cendre` et de tout front de 0 à `cendreMax` : `margeDeCendre` est **exactement** `cendre[i] − front` ; `marge < 0` ⟺ `estCendre(...)` est vrai. Les deux façades ne peuvent pas diverger.
+- **A2 — Monotonie de chaque sens**, balayée sur toute la plage de marge, pas échantillonnée : la stérilité **croît** quand la marge décroît vers 0 ; le froid de cendre **croît** quand la marge décroît ; la hantise **croît** quand la marge devient plus négative. Chacune atteint son plafond déclaré et **n'en bouge plus**.
+- **A3 — L'ordre des bandes tient à tout front.** Pour tout front de 0 à `cendreMax` : l'ensemble des tuiles froides est **inclus** dans l'ensemble des tuiles stériles, et l'ensemble des tuiles brûlées est inclus dans les deux. Vérifié par comptage sur la vraie carte, pas sur une grille jouet.
+- **A4 — `regrowAt` n'est jamais 0 du fait de la stérilité**, et le plafond est **atteint** (une tuile collée au front le touche) **et tenu** (elle n'y bouge plus). La signature « défriché » reste distinguable d'un nœud stérile.
+- **A5 — `densiteDeBase` est indépendante du temps, au bit près.** Même carte, même tuile : identique au tick 0 et au tick 100 000. C'est la régression qui, sinon, sortirait sous la forme de charniers déplacés entre un monde neuf et une sauvegarde rechargée.
+- **A6 — Zéro octet de plus.** `carte-immuable.test.ts` reste vert (mille ticks ne changent pas un bit de `map`), et `SimState` ne gagne aucun champ.
+- **A7 — Déterminisme.** `replay.test.ts` et `events.test.ts` restent verts : même seed, même état, **même flux d'événements**. Pour R2-R4, le flux du PRNG est en outre **inchangé** — aucun tirage n'est ajouté ni retiré.
+- **A8 — Le froid de cendre ne pose aucun seuil de `flore-froid` sur une valeur atteinte** : balayage des températures produites par le terme, aucune ne tombe exactement sur `FLORE.SEUIL_*`.
+- **A9 — Le cortège se VOIT.** Sur la carte de production, à un front de mi-course, la bande stérile et la bande froide couvrent chacune une part non nulle et non totale des Prés Bas — mesurée, pas supposée. Une bande qui couvre 0 % ou 100 % est un réglage mort.

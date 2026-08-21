@@ -88,6 +88,102 @@ export const CENDRE = {
    * entre moteurs JS, invariant n°2.)
    */
   COURBE: (t: number): number => t * t,
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  // LE CORTÈGE (spec `cortege-cendre.md`) — le front n'est pas une ligne, c'est un CORTÈGE.
+  //
+  // Ces largeurs sont la GÉOMÉTRIE DU FRONT : elles se calibrent en regardant une carte (quelle
+  // part des Prés Bas est stérile à mi-course ?), pas en jouant — d'où leur place ici, à côté de
+  // `PART_CIBLE`, et non dans `balance.ts` (règle de partage, en-tête de `balance.ts`).
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * LA VALEUR RENDUE HORS CARTE, ou sur une carte sans Cendrière — grande, et **FINIE**.
+   *
+   * Toute borne du cortège retombe alors sur sa valeur neutre par simple comparaison, sans un `if`
+   * de plus chez chaque consommateur. Finie et non `Infinity` : une valeur qui ne survit pas à un
+   * aller-retour JSON n'a rien à faire dans un paquet dont l'état doit être sérialisable, même
+   * quand elle ne transite que par un retour de fonction — on ne garde pas deux règles.
+   */
+  MARGE_HORS_CENDRE: 1e9,
+
+  /**
+   * ═══ LES BANDES SONT DES PARTS DE LA COURSE DU FRONT, JAMAIS DES DISTANCES ═══
+   *
+   * **C'est la correction que ce fichier avait DÉJÀ faite un cran plus haut**, et je l'ai refaite
+   * à l'identique un cran plus bas avant que la mesure ne me reprenne — voir `PART_CIBLE` :
+   * *« ET C'EST UNE PART, PAS UNE DISTANCE… la même valeur couvrait 48 % des Prés Bas sur une seed
+   * et 81 % sur une autre »*. Une largeur en tuiles écrite en dur ne veut rien dire : la course du
+   * front est calibrée PAR CARTE, par dichotomie.
+   *
+   * MESURÉ (`tools/mesure-cortege.mts`, seed 2026) : `cendreMax` vaut **74 tuiles** — la course
+   * TOTALE du front sur toute la saison. Une bande de 70 tuiles en aurait donc couvert 95 %, et
+   * **62 % de la vallée habitable aurait été stérile au jour 1**, avant que le front n'ait bougé
+   * d'une tuile. Le réglage se lit donc en part de `cendreMax`, et la sonde le rend en tuiles.
+   *
+   * LA BANDE STÉRILE — la plus large des deux, et le cœur du réglage. C'est le sens le plus DOUX
+   * du cortège, donc celui qui doit prévenir le plus TÔT : il ne confisque rien, il annonce. Le
+   * joueur voit sa tournée du sud rendre de moins en moins pendant qu'il a encore le temps de la
+   * déplacer. « Le monde prévient, il ne guide pas » (`worldgen.md` R21), à la lettre.
+   *
+   * ⚠ Doit rester STRICTEMENT SUPÉRIEURE à `FROID_PART` (R5, testé) : en marchant vers le sud on
+   * rencontre le stérile AVANT le froid. Deux bandes qui se croisent rendent le cortège illisible,
+   * et ça ne se voit pas à l'œil — d'où la garde.
+   */
+  STERILE_PART: 0.2,
+
+  /**
+   * LE PLAFOND DU MULTIPLICATEUR DE REPOUSSE — et il n'est PAS décoratif.
+   *
+   * Un délai non borné franchirait `Number.MAX_SAFE_INTEGER` et `Math.floor` rendrait n'importe
+   * quoi (R2bis). À 12, un nœud collé au front met douze fois le temps normal à revenir : à
+   * l'échelle d'une tournée, il ne revient plus — sans qu'on ait eu besoin d'inventer un état
+   * « stérile » à persister.
+   */
+  STERILE_FACTEUR_MAX: 12,
+
+  /**
+   * LA BANDE FROIDE, EN PART DE LA COURSE DU FRONT. Plus étroite que la stérile (R5) : le froid
+   * est le sens qui MORD, il arrive après l'avertissement.
+   */
+  FROID_PART: 0.08,
+
+  /**
+   * LE FROID MAXIMAL DE LA CENDRE, en degrés de la jauge Température (0-100), atteint sur le
+   * brûlé lui-même.
+   *
+   * L'ordre de grandeur se lit contre la table de `flore-froid` : la nuit ôte 30, l'acte II ôte
+   * 25. À 18, la bande de cendre pèse moins qu'une nuit — elle ne décide jamais seule, elle fait
+   * BASCULER ce qui était déjà limite. C'est ce qu'on veut : le sud devient invivable *la nuit*,
+   * puis invivable tout court quand l'acte descend à son tour.
+   *
+   * ⚠ Non multiple de 5, DÉLIBÉRÉMENT (R3quater) : hors front, la table de `FLORE` n'atteint que
+   * des multiples de 5, et ses deux seuils sont posés hors de ces valeurs pour qu'aucune décision
+   * de gel ne se joue au bit de flottant près. Un terme de cendre multiple de 5 remettrait toutes
+   * les sommes sur cette grille et rouvrirait exactement le défaut qu'ils avaient fermé.
+   */
+  FROID_MAX: 18,
+
+  /**
+   * LA POUSSÉE DU VENT DE CENDRE (spec `cortege-cendre.md` R6) — en part de la course du front,
+   * comme les bandes, et pour la même raison.
+   *
+   * ═══ LA POUSSÉE, PAS L'AVANCÉE ═══
+   *
+   * P1-P3 sont des PENTES : elles montent, sans à-coup, et une pente seule finit par ne plus se
+   * sentir. Le vent est le BATTEMENT — il vient du sud, il pousse la bande froide devant lui
+   * quelques heures, il passe, **et le front de cendre n'a pas bougé d'une tuile**. Rien n'est
+   * perdu ; le joueur a seulement dû lâcher quelque chose le temps d'une nuit.
+   *
+   * C'est aussi le seul des quatre sens qui puisse se répéter chaque année sans s'user : la pente
+   * s'habitue, le coup de vent non — et il porte plus loin à mesure que la course du front
+   * s'allonge, donc il durcit tout seul, sans un multiplicateur d'acte.
+   *
+   * À 0,45, un vent de cendre porte le froid à peu près trois fois plus loin que la bande froide
+   * de repos (`FROID_PART` 0,08) — assez pour qu'une tournée du sud devienne intenable pendant
+   * qu'il souffle, pas assez pour atteindre un village du nord.
+   */
+  POUSSEE_PART: 0.45,
 }
 
 /**
@@ -176,9 +272,24 @@ export function calibreLeFront(champ: readonly number[], estRacine: (i: number) 
  * exactement sans qu'on ait à le sérialiser.
  */
 export function frontActuel(state: { tick: number; calendarScale: number; map: WorldMap }): number {
-  const max = state.map.cendreMax
+  return frontAuTick(state.map, state.calendarScale, state.tick)
+}
+
+/**
+ * LE MÊME FRONT, À UN TICK QUELCONQUE — et il n'est pas un confort.
+ *
+ * `baselineTemperatureAt` existe pour L'HYSTÉRÉSIS DU DÉGEL (`gel.md` G8) : elle relit le froid
+ * du monde à un tick PASSÉ. Depuis que le froid de cendre entre dans `froidDuMonde` (R3), lire
+ * `state.tick` là-dedans rendrait le front d'AUJOURD'HUI pour une question portant sur HIER — un
+ * décalage silencieux, qui ne se verrait que sur une glace qui dégèle trop tôt ou trop tard.
+ *
+ * Sans allocation (surtout pas un objet littéral par appel) : `froidDuMonde` est sur le chemin
+ * chaud de la passe économique, appelé par nœud.
+ */
+export function frontAuTick(map: WorldMap, calendarScale: number, tick: number): number {
+  const max = map.cendreMax
   if (max === undefined) return 0 // une carte sans Cendrière : rien ne brûle
-  return avanceeDuFront(seasonDayAtTick(state.tick, state.calendarScale), max)
+  return avanceeDuFront(seasonDayAtTick(tick, calendarScale), max)
 }
 
 /** Cette tuile brûle-t-elle ? Une comparaison, rien de plus — c'est tout l'intérêt du modèle. */
@@ -187,6 +298,135 @@ export function estCendre(map: WorldMap, tx: number, ty: number, front: number):
   const d = map.cendre?.[ty * map.width + tx]
   if (d === undefined) return false
   return d < front
+}
+
+/**
+ * ═══ LE CORTÈGE — LA MARGE DE CENDRE, ET C'EST LA SEULE LECTURE DU CHAMP ═══
+ * *(spec `cortege-cendre.md` R1 ; décision d'Alexis 2026-08-21 « la pression doit être appliquée
+ * par l'environnement ».)*
+ *
+ * `map.cendre` est une distance PAR TUILE, précalculée — et jusqu'ici **une seule question la
+ * lisait** : « est-ce brûlé ? ». Un champ entier, un seul sens. Le cortège en tire les autres :
+ * la stérilité qui marche devant le feu, le froid qui le précède, la hantise qui le suit. Aucun
+ * n'ajoute un octet à l'état : ce sont des comparaisons sur un champ qui existe déjà.
+ *
+ * LA CONVENTION DE SIGNE EST POSÉE ICI, UNE FOIS, ET NULLE PART AILLEURS :
+ * - **`marge < 0`** — la tuile est **dans le brûlé**. Plus c'est négatif, plus elle a brûlé TÔT.
+ * - **`marge ≥ 0`** — la tuile est **devant le front**, à autant de tuiles.
+ *
+ * Quatre sites d'appel qui recalculeraient `d − front` chacun de leur côté, c'est le même défaut
+ * de signe débogué trois fois (R1bis). Les consommateurs appellent CECI, jamais `map.cendre`.
+ *
+ * Hors carte, ou carte sans Cendrière : `CENDRE.MARGE_HORS_CENDRE`, grande valeur **finie** — tout
+ * seuil du cortège retombe alors sur sa valeur neutre par simple comparaison, sans un `if` de plus
+ * chez le consommateur (et sans `Infinity`, qui ne survit pas à un aller-retour JSON).
+ */
+export function margeDeCendre(map: WorldMap, tx: number, ty: number, front: number): number {
+  if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) return CENDRE.MARGE_HORS_CENDRE
+  const d = map.cendre?.[ty * map.width + tx]
+  if (d === undefined) return CENDRE.MARGE_HORS_CENDRE
+  return d - front
+}
+
+/**
+ * LE FROID DE LA CENDRE (spec `cortege-cendre.md` R3) — une EXPOSITION de plus, pas une loi.
+ *
+ * Rendu POSITIF, comme `brumeColdAt` et `meteoColdAt` : c'est le nombre de degrés qu'on RETIRE.
+ * Le consommateur unique est `froidDuMonde`, qui le soustrait dans `exposed` — donc l'abri
+ * l'amortit et le feu le planche (l'ambiant est un `max`). On n'écrit pas une mécanique neuve,
+ * on ajoute une exposition à celles qui existent déjà.
+ *
+ * **La fiction est gratuite** : une terre brûlée n'a plus de couvert. *Le froid vient d'où plus
+ * rien ne pousse.* Aucune explication à écrire — c'est un fait physique, et c'est exactement
+ * l'espèce de lore que ce jeu peut porter.
+ *
+ * RAMPE, jamais marche : nul à la limite de la bande, maximal dès qu'on entre dans le brûlé. Un
+ * mur de froid à franchir d'un pas ne se sent pas venir ; une rampe, si (c'est le raisonnement
+ * du front météo, `meteo.md` R4).
+ */
+export function froidDeCendre(map: WorldMap, tx: number, ty: number, front: number): number {
+  const bande = bandeDeCendre(map, CENDRE.FROID_PART)
+  if (bande <= 0) return 0 // carte sans Cendrière : le cortège n'existe pas
+  const marge = margeDeCendre(map, tx, ty, front)
+  if (marge >= bande) return 0 // hors de la bande : rien
+  if (marge <= 0) return CENDRE.FROID_MAX // dans le brûlé : plein pot
+  // Rampe linéaire sur la bande. Division seule — aucune transcendante (invariant #2).
+  return (CENDRE.FROID_MAX * (bande - marge)) / bande
+}
+
+/**
+ * LA LARGEUR D'UNE BANDE DU CORTÈGE, EN TUILES — dérivée de la course calibrée du front.
+ *
+ * Une carte sans Cendrière (banc headless) rend 0 : **tous les sens du cortège y sont neutres**,
+ * et le comportement du banc est préservé au bit près, comme le promet R17 de `cendreux.md`.
+ */
+export function bandeDeCendre(map: WorldMap, part: number): number {
+  const max = map.cendreMax
+  if (max === undefined) return 0
+  return max * part
+}
+
+/**
+ * LA STÉRILITÉ (spec `cortege-cendre.md` R2) — le MULTIPLICATEUR du délai de repousse.
+ *
+ * Le sens qui marche LE PLUS LOIN devant le feu, et c'est délibéré : c'est le plus doux, donc
+ * celui qui doit prévenir le plus tôt. Le sol est **encore là, encore vert, encore marchable** —
+ * et il ne redonne plus. Le joueur **abandonne sa tournée avant d'abandonner son terrain**.
+ *
+ * Rend un facteur ≥ 1 : 1 hors bande (rien ne change), jusqu'à `STERILE_FACTEUR_MAX` collé au
+ * front. **Plafonné, et le plafond n'est pas décoratif** : un délai non borné franchirait
+ * `Number.MAX_SAFE_INTEGER` et `Math.floor` rendrait n'importe quoi (R2bis).
+ *
+ * Ce qu'il ne fait JAMAIS : produire `regrowAt === 0`. C'est une signature portante de
+ * `economy.ts` (`stock 0` + `regrowAt 0` = défriché, ne revient pas ; `setNodes` teste
+ * `regrowAt > 0`). **La stérilité allonge un délai, elle ne pose pas une marque.**
+ */
+export function facteurSterilite(map: WorldMap, tx: number, ty: number, front: number): number {
+  const bande = bandeDeCendre(map, CENDRE.STERILE_PART)
+  if (bande <= 0) return 1 // carte sans Cendrière : la repousse normale, au bit près
+  const marge = margeDeCendre(map, tx, ty, front)
+  if (marge >= bande) return 1 // hors bande : la repousse normale
+  if (marge <= 0) return CENDRE.STERILE_FACTEUR_MAX // brûlé : le nœud n'existe déjà plus, mais la borne tient
+  // Rampe de 1 (bord de bande) à MAX (collé au front).
+  return 1 + ((CENDRE.STERILE_FACTEUR_MAX - 1) * (bande - marge)) / bande
+}
+
+/**
+ * LA DIRECTION DE LA CENDRIÈRE depuis un point — 'nord' | 'sud' | 'est' | 'ouest', ou
+ * `undefined` sur une carte sans Cendrière ou en terrain plat de cendre.
+ *
+ * Pour les ANNALES (spec `annales.md` R3) : la Tour de guet regarde VERS la Cendrière (`guet`),
+ * la charrette fuit À L'OPPOSÉ (`fuite`). Des MOTS, jamais des degrés — le pays d'avant n'a pas
+ * de boussole graduée, et aucun lecteur n'aura à formater un angle.
+ *
+ * Lecture BRUTE du champ de distance (pas de la marge au front) : c'est une question de
+ * GÉNÉRATION — « où est la Cendrière ? » — qui ne dépend d'aucun tick. On échantillonne aux
+ * quatre cardinaux à `pas` tuiles (bornés à la carte) ; la pente la plus FORTE vers le bas du
+ * champ désigne la Cendrière. Départage : l'ordre fixe est-ouest-sud-nord (déterminisme).
+ */
+export function directionCendriere(map: WorldMap, tx: number, ty: number, pas = 24): 'nord' | 'sud' | 'est' | 'ouest' | undefined {
+  const champ = map.cendre
+  if (!champ) return undefined
+  const lire = (x: number, y: number): number => {
+    const cx = x < 0 ? 0 : x >= map.width ? map.width - 1 : x
+    const cy = y < 0 ? 0 : y >= map.height ? map.height - 1 : y
+    return champ[cy * map.width + cx]!
+  }
+  const ici = lire(tx, ty)
+  const pentes: ['est' | 'ouest' | 'sud' | 'nord', number][] = [
+    ['est', ici - lire(tx + pas, ty)],
+    ['ouest', ici - lire(tx - pas, ty)],
+    ['sud', ici - lire(tx, ty + pas)],
+    ['nord', ici - lire(tx, ty - pas)],
+  ]
+  let best = pentes[0]!
+  for (const q of pentes) if (q[1] > best[1]) best = q
+  return best[1] > 0 ? best[0] : undefined
+}
+
+/** L'opposé d'une direction — la fuite tourne le dos au guet. */
+export function directionOpposee(d: 'nord' | 'sud' | 'est' | 'ouest'): 'nord' | 'sud' | 'est' | 'ouest' {
+  return d === 'nord' ? 'sud' : d === 'sud' ? 'nord' : d === 'est' ? 'ouest' : 'est'
 }
 
 /**

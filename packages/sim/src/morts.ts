@@ -27,7 +27,7 @@
  * Pur et déterministe : `+ - * /`, `min`, `max`, `floor`, `sqrt` (invariant n°2).
  */
 import { CENDREUX, MORTS, NIGHT_HUNT } from './balance'
-import { estCendre, frontActuel } from './cendre'
+import { bandeDeCendre, frontActuel, margeDeCendre } from './cendre'
 import { isBlockedAt } from './collision'
 import { emitEvent } from './events'
 import { fireActive } from './fire'
@@ -70,9 +70,38 @@ export interface Reveil {
  * redevient exactement uniforme. Le comportement d'un banc est donc préservé au bit près (R17).
  */
 export function densiteDesMorts(state: SimState, tx: number, ty: number): number {
-  const cendre = estCendre(state.map, tx, ty, frontActuel(state)) ? MORTS.PART_CENDRE : 0
-  const d = densiteDeBase(state.map, tx, ty) + cendre
+  const d = densiteDeBase(state.map, tx, ty) + hantiseDeCendre(state.map, tx, ty, frontActuel(state))
   return d > 1 ? 1 : d
+}
+
+/**
+ * LA HANTISE (spec `cortege-cendre.md` R4) — le terme de cendre, en DÉGRADÉ et non plus à plat.
+ *
+ * Il vaut `MORTS.PART_CENDRE` sur le brûlé DE L'INSTANT et monte jusqu'à `MORTS.HANTISE_MAX` sur
+ * le vieux brûlé — profondeur que la marge de cendre donne gratuitement (elle est négative dans
+ * le brûlé, et d'autant plus que le front l'a dépassée depuis longtemps).
+ *
+ * ⚠ IL VIT ICI, ET SURTOUT PAS DANS `densiteDeBase` (R4bis) : celle-ci est appelée par
+ * `placeCharniers` à la GÉNÉRATION, sans tick ni front. Une `densiteDeBase` devenue fonction du
+ * temps déplacerait les charniers entre un monde neuf et une sauvegarde rechargée — et ce défaut
+ * ne se verrait qu'au rechargement, c'est-à-dire tard.
+ *
+ * Le repli est le comportement d'avant : hors du brûlé, zéro. Sur un banc sans Cendrière,
+ * `margeDeCendre` rend `MARGE_HORS_CENDRE` — grand et positif — donc zéro aussi, et le champ y
+ * vaut son plancher uniformément, au bit près comme avant (R17).
+ */
+export function hantiseDeCendre(map: WorldMap, tx: number, ty: number, front: number): number {
+  const marge = margeDeCendre(map, tx, ty, front)
+  if (marge >= 0) return 0 // pas brûlé : la cendre n'a rien à dire
+  // La profondeur de plafond est une PART de la course du front, jamais une distance écrite —
+  // `cendreMax` vaut 74 tuiles sur la carte de production, une profondeur en dur n'y voudrait
+  // rien dire (même correction que `CENDRE.STERILE_PART`).
+  const profondeurPlafond = bandeDeCendre(map, MORTS.HANTISE_PART)
+  if (profondeurPlafond <= 0) return MORTS.PART_CENDRE // pas de course calibrée : l'ancien terme à plat
+  const profondeur = -marge
+  if (profondeur >= profondeurPlafond) return MORTS.HANTISE_MAX
+  // Rampe linéaire du brûlé de l'instant au vieux brûlé. Division seule (invariant n°2).
+  return MORTS.PART_CENDRE + ((MORTS.HANTISE_MAX - MORTS.PART_CENDRE) * profondeur) / profondeurPlafond
 }
 
 /**

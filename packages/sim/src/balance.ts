@@ -3276,12 +3276,12 @@ export const METEO = {
    */
   TYPES: [
     { pluie: 0.5, brouillard: 0.25, orage: 0.25 },
-    { pluie: 0.3, neige: 0.35, brouillard: 0.15, blizzard: 0.1, orage: 0.1 },
-    { neige: 0.5, blizzard: 0.3, brouillard: 0.15, orage: 0.05 },
+    { pluie: 0.3, neige: 0.35, brouillard: 0.15, blizzard: 0.1, orage: 0.02, vent_de_cendre: 0.08 },
+    { neige: 0.5, blizzard: 0.3, brouillard: 0.15, orage: 0.01, vent_de_cendre: 0.04 },
   ],
   /** Largeur de la bande, en tuiles. Le blizzard ≈ la carte jouée (~1 580 de large) :
    *  « carte entière » par CALIBRAGE, pas par mécanisme (spec R1). */
-  LARGEUR: { pluie: 60, brouillard: 50, neige: 70, orage: 55, blizzard: 1600 },
+  LARGEUR: { pluie: 60, brouillard: 50, neige: 70, orage: 55, blizzard: 1600, vent_de_cendre: 420 },
   /** La traversée complète (le bord AVANT entre → le bord ARRIÈRE sort), ~une demi-journée.
    *  STRICTEMENT sous un cycle : la fenêtre élue tient dans son cycle, donc au plus un front
    *  actif à la fois — par construction, pas par garde (voir `meteo.ts`). */
@@ -3294,29 +3294,29 @@ export const METEO = {
   /** R4 — le froid sous l'empreinte : une EXPOSITION de plus (patron Brume — amortie par
    *  l'abri, planchée par le Feu et la tenue). Le blizzard est calibré létal en plaine de
    *  jour dès l'acte II (90 − 25 − 55 = 10 < HYPOTHERMIA) ; le brouillard ne refroidit pas. */
-  COLD: { pluie: 10, brouillard: 0, neige: 25, orage: 10, blizzard: 55 },
+  COLD: { pluie: 10, brouillard: 0, neige: 25, orage: 10, blizzard: 55, vent_de_cendre: 8 },
   /** R5 — multiplicateur de consommation des feux sous l'empreinte d'un front mouillé.
    *  JAMAIS d'extinction : la pression, pas la spirale de mort. */
-  FEU_CONSO: { pluie: 1.5, neige: 1.5, orage: 1.5, blizzard: 2, brouillard: 1 },
+  FEU_CONSO: { pluie: 1.5, neige: 1.5, orage: 1.5, blizzard: 2, brouillard: 1, vent_de_cendre: 1.8 },
   /** R5 — les types MOUILLÉS : l'eau qui tombe. Porte le refus de pose d'un feu NEUF à
    *  découvert et arme `FEU_CONSO` (`meteoMouille`/`meteoFeuConso`). Cette table COÏNCIDE
    *  aujourd'hui avec `QUIET` — et ce n'est PAS une redondance à fusionner : deux axes
    *  sémantiques distincts. QUIET dit le silence du GIBIER (comportement de faune),
    *  MOUILLE dit l'EAU qui tombe (physique du feu) ; un futur type peut mouiller sans
    *  faire taire, ou l'inverse — on calibre chaque axe sans toucher l'autre. */
-  MOUILLE: { pluie: true, brouillard: false, neige: true, orage: true, blizzard: true },
+  MOUILLE: { pluie: true, brouillard: false, neige: true, orage: true, blizzard: true, vent_de_cendre: false },
   /** R6 — la faune se terre : les types qui FONT TAIRE les naissances ambiantes sous leur
    *  empreinte (prédicat pur `meteoQuiet` — un front MOBILE ne sème pas de points
    *  `faunaQuiet`, on interroge sa bande du tick). Le BROUILLARD ne fait pas taire le
    *  gibier : c'est le front tactique (visibilité, R7), pas un front mouillé — la table
    *  d'effets décidée avec Alexis lui donne « faune : néant ». */
-  QUIET: { pluie: true, brouillard: false, neige: true, orage: true, blizzard: true },
+  QUIET: { pluie: true, brouillard: false, neige: true, orage: true, blizzard: true, vent_de_cendre: true },
   /** R7 — multiplicateur de vitesse sous l'empreinte (pendant le front, pas après). */
-  SPEED: { pluie: 0.95, brouillard: 1, neige: 0.9, orage: 0.95, blizzard: 0.8 },
+  SPEED: { pluie: 0.95, brouillard: 1, neige: 0.9, orage: 0.95, blizzard: 0.8, vent_de_cendre: 0.9 },
   /** R7 — multiplicateur de perception des IA, évalué au point de la CIBLE (on se cache
    *  dans la pluie, on n'aveugle pas le loup au soleil). Le brouillard en est le porteur
    *  principal : fort, sans froid — équilibrable isolément. */
-  VISION: { pluie: 0.85, brouillard: 0.5, neige: 0.8, orage: 0.85, blizzard: 0.6 },
+  VISION: { pluie: 0.85, brouillard: 0.5, neige: 0.8, orage: 0.85, blizzard: 0.6, vent_de_cendre: 0.55 },
   /** R8 — la foudre de l'orage : impacts par minute dans l'empreinte, télégraphe au point
    *  visé (le patron wind-up, en plus long), dégâts sérieux jamais létaux à PV pleins,
    *  rayon d'impact en tuiles. */
@@ -3776,6 +3776,41 @@ export const MORTS = {
    * doit se sentir comme tel.
    */
   PART_CENDRE: 0.35,
+  /**
+   * ═══ LA HANTISE : LE VIEUX BRÛLÉ EST PLUS HABITÉ QUE LE NEUF ═══
+   * *(spec `cortege-cendre.md` R4 — décision d'Alexis 2026-08-21, « la pression doit être
+   * appliquée par l'environnement ».)*
+   *
+   * `PART_CENDRE` était **à plat** : une tuile passée sous le front à l'instant valait autant
+   * qu'une tuile brûlée depuis vingt jours. Or la marge de cendre (`margeDeCendre`, négative
+   * dans le brûlé) dit GRATUITEMENT depuis combien de temps le front l'a dépassée — le champ
+   * portait déjà l'information, personne ne la lisait.
+   *
+   * CE QUE ÇA ACHÈTE, ET C'EST LE PLUS ÉLÉGANT DES QUATRE SENS : tenir une ligne longue coûte
+   * plus de nuits que tenir une ligne courte. **Le joueur raccourcit donc sa ligne lui-même.**
+   * L'environnement ne lui confisque rien — il rend le trop-grand intenable, et le sacrifice
+   * reste SON geste. C'est très exactement ce que « la pression vient de l'environnement »
+   * demandait, sans une entité de plus (R7 de `saison-sans-fin.md` : le tick diverge si
+   * l'escalade se paie en population).
+   *
+   * `HANTISE_MAX` est le terme atteint à `HANTISE_TUILES` de profondeur dans le brûlé. À 0,60,
+   * combiné au tier 2 de la Cendrière (`PART_TIER` 0,6), le champ **sature à 1** au cœur du
+   * vieux brûlé : le pire sol de la vallée, et il se sent comme tel.
+   */
+  HANTISE_MAX: 0.6,
+  /**
+   * LA PROFONDEUR À LAQUELLE LA HANTISE PLAFONNE — EN PART DE LA COURSE DU FRONT, pas en tuiles.
+   *
+   * Même correction que pour les bandes du cortège (`CENDRE.STERILE_PART`), et pour la même
+   * raison : MESURÉ sur la carte de production, `cendreMax` — la course TOTALE du front sur une
+   * saison — vaut **74 tuiles**. Une profondeur écrite « 60 tuiles » aurait couvert 80 % de tout
+   * ce que le front parcourra jamais : le dégradé n'aurait jamais atteint son plafond, et le
+   * « vieux brûlé » n'aurait pas existé.
+   *
+   * À 0,35, le plafond est atteint après un tiers de la course : le joueur traverse un dégradé
+   * complet en reculant d'une bande, et le cœur du brûlé se distingue franchement de sa lisière.
+   */
+  HANTISE_PART: 0.35,
   /**
    * COMBIEN LE CHAMP FAIT VARIER LE NOMBRE DE RÔDEURS. Le plafond de l'acte
    * (`NIGHT_HUNT.UNDEAD_MAX_ALIVE`) reste le toit ; la densité dit quelle part on en atteint,

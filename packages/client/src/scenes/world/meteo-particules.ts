@@ -208,6 +208,29 @@ export const PROFILS: Record<MeteoType, ProfilChute | null> = {
     teinte: [252, 253, 255], alpha: [0.44, 0.86], eclabousse: false, alphaEclab: 0,
     hauteur: [10, 30],
   },
+  // ═══ LE VENT DE CENDRE : ÇA NE TOMBE PAS, ÇA PASSE ═══
+  //
+  // C'est le seul des six qui ne soit pas une précipitation : rien ne tombe du ciel, c'est le
+  // sol du sud qui s'envole. Trois nombres portent tout le signalement, et aucun n'est une
+  // couleur :
+  //
+  //   • LE VENT (9) ÉCRASE LA CHUTE (1,4) — trajectoire quasi HORIZONTALE, plus encore que
+  //     le blizzard (11 contre 2,1). On lit une matière CHASSÉE, pas une matière qui descend.
+  //   • LA FLOTTE (1,1) EST LA PLUS HAUTE DE LA TABLE — une escarbille ne file pas droit,
+  //     elle tourbillonne. C'est ce qui la sépare du flocon de blizzard, à silhouette égale.
+  //   • PAS D'ÉCLABOUSSURE — c'est sec. Une particule de cendre qui ferait une gerbe en
+  //     touchant le sol raconterait de l'eau, et `MOUILLE.vent_de_cendre` est faux : les
+  //     deux tables doivent dire la même chose (le feu consomme PLUS sous ce vent, 1,8).
+  //
+  // Grain de 4 px (`GRAIN_PX`), comme la neige et le blizzard : les FX de ce jeu sont
+  // quantifiés sur la grille de l'art, jamais lissés. Densité tenue à 0,58 — sous la neige,
+  // parce que la traînée (0,09 s) coûte des rectangles et que le budget est PARTAGÉ.
+  vent_de_cendre: {
+    vLimite: 1.4, g: 7, vent: 9, flotte: 1.1, flottePuls: 2.9,
+    trainee: 0.09, grainPx: GRAIN_PX, taille: [1, 2], densite: 0.58,
+    teinte: [166, 148, 132], alpha: [0.30, 0.62], eclabousse: false, alphaEclab: 0,
+    hauteur: [6, 24],
+  },
 }
 
 /** La bande dessinée ce frame, en tuiles — telle que `frontMeteoPos` la rend. */

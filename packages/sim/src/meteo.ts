@@ -50,6 +50,7 @@
  */
 import { BALANCE, METEO } from './balance'
 import { brumeJourEligible } from './brume'
+import { CENDRE, bandeDeCendre } from './cendre'
 import { emitEvent } from './events'
 import { hash2 } from './noise'
 import type { SimState } from './sim'
@@ -57,7 +58,7 @@ import { actForDay, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from
 
 const METEO_SALT = 0x9b4de3c1
 
-export type MeteoType = 'pluie' | 'brouillard' | 'neige' | 'orage' | 'blizzard'
+export type MeteoType = 'pluie' | 'brouillard' | 'neige' | 'orage' | 'blizzard' | 'vent_de_cendre'
 
 /** Le front en cours — un record plat JSON, purgé à la sortie (patron `state.brume`). */
 export interface MeteoFront {
@@ -170,7 +171,12 @@ export function frontDuCycle(cycle: number, calendarScale: number): MeteoFront |
   const day = seasonDayAtTick(debut, calendarScale)
   const type = meteoTypeDuCycle(cycle, day)
   if (type === null) return null
-  const edge = Math.min(3, Math.floor(hash2(cycle, 2, METEO_SALT) * 4)) as MeteoFront['edge']
+  // LE VENT DE CENDRE VIENT DE LA CENDRIÈRE, DONC DU SUD (spec `cortege-cendre.md` R6) — son
+  // bord est FORCÉ, jamais tiré : un vent de cendre qui descendrait du nord raconterait le
+  // contraire de la carte. On consomme quand même le canal 2 avant de l'écraser, pour que le
+  // tirage des AUTRES fronts d'un même cycle reste identique au bit près.
+  const tire = Math.min(3, Math.floor(hash2(cycle, 2, METEO_SALT) * 4)) as MeteoFront['edge']
+  const edge: MeteoFront['edge'] = type === 'vent_de_cendre' ? 3 : tire
   const marge = TICKS_PER_CYCLE - METEO.TRAVERSEE_TICKS
   const startTick = debut + Math.floor(hash2(cycle, 3, METEO_SALT) * marge)
   return { type, cycle, day, edge, startTick, endTick: startTick + METEO.TRAVERSEE_TICKS }
@@ -272,6 +278,35 @@ export function meteoColdAt(state: SimState, x: number, y: number, tick: number)
  * Le brouillard ne fait pas taire le gibier (`QUIET.brouillard` = faux) : front tactique,
  * pas front mouillé.
  */
+/**
+ * R6 — LA POUSSÉE DU VENT DE CENDRE, en tuiles de front, au point donné.
+ * *(spec `cortege-cendre.md` R6 — décision d'Alexis 2026-08-21.)*
+ *
+ * ═══ CE QU'ELLE POUSSE, ET CE QU'ELLE NE POUSSE PAS ═══
+ *
+ * Elle ne rend PAS du froid : elle rend **des tuiles de front**, que `froidDuMonde` ajoute au
+ * front avant de demander au cortège s'il fait froid ici. Le vent avance donc la bande froide
+ * devant lui — et **rien d'autre**. Le front réel n'a pas bougé : rien ne brûle de plus, aucun
+ * nœud ne devient stérile, aucun sol ne devient plus hanté. Quand le vent est passé, le monde
+ * est exactement où il était. *La poussée, pas l'avancée.*
+ *
+ * C'est ce qui autorise ce type à revenir chaque année sans user la carte, là où une avancée
+ * supplémentaire serait un vol définitif de terrain.
+ *
+ * Nulle pour tout autre type de front, et sur une carte sans Cendrière (`bandeDeCendre` rend 0) :
+ * un banc headless ne connaît donc aucun vent de cendre, au bit près.
+ *
+ * Elle suit `meteoIntensityAt` — donc la même RAMPE bord → cœur que le froid du front lui-même :
+ * le vent se sent venir, il ne tombe pas d'un coup (patron `meteo.md` R4).
+ */
+export function pousseeDeCendre(state: SimState, x: number, y: number, tick: number): number {
+  const front = state.meteo
+  if (!front || front.type !== 'vent_de_cendre') return 0
+  const portee = bandeDeCendre(state.map, CENDRE.POUSSEE_PART)
+  if (portee <= 0) return 0
+  return portee * meteoIntensityAt(front, tick, state.map.width, state.map.height, x, y)
+}
+
 export function meteoQuiet(state: SimState, x: number, y: number): boolean {
   const front = state.meteo
   if (!front) return false
