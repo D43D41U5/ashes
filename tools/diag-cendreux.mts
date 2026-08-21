@@ -77,6 +77,8 @@ interface Releve {
   picVivants: number
   plafond: number
   plafondPlein: number
+  /** Tick (relatif au début de la nuit) où les vivants ont atteint le plafond pour la première fois — -1 jamais. */
+  pleinA: number
   rejets: Record<string, number>
   msTick: number
   msTickMax: number
@@ -139,7 +141,7 @@ function jouer(base: string, seed: number, jour: number, comportement: Comportem
     rampants: 0, rampantsPre: 0, reveilsPre: 0, rampantsMort: 0, reveilsMort: 0,
     acquisitions: [], impacts: 0, detournes: 0, distDetournes: [],
     extrapolations: 0, extrapolationsJustes: 0, morsures: 0, degats: 0, tempMin: 100,
-    picVivants: 0, plafond: plafondGlobal(sim), plafondPlein: 0, rejets: {}, msTick: 0, msTickMax: 0, coinces: 0,
+    picVivants: 0, plafond: plafondGlobal(sim), plafondPlein: 0, pleinA: -1, rejets: {}, msTick: 0, msTickMax: 0, coinces: 0,
   }
 
   // Le circuit du marcheur : un carré de 12 tuiles autour du spawn.
@@ -299,6 +301,7 @@ function jouer(base: string, seed: number, jour: number, comportement: Comportem
     }
     if (vivants > r.picVivants) r.picVivants = vivants
     if (t % 60 === 0 && vivants >= plafondGlobal(sim)) r.plafondPlein += 1
+    if (r.pleinA < 0 && vivants - 7 >= plafondGlobal(sim)) r.pleinA = t // 7 de sédiment hors plafond (Repaires, convois)
     for (const p of pointsExtrapoles) {
       if (!p.juste && sim.tick - p.tick <= 30 * BALANCE.TICK_RATE_HZ && (p.x - apres.x) ** 2 + (p.y - apres.y) ** 2 <= 4) {
         p.juste = true
@@ -336,7 +339,7 @@ for (const seed of SEEDS) {
         `    j${jour} ${c.padEnd(12)} ${f((performance.now() - t1) / 1000, 0).padStart(3)} s · réveils ${String(r.reveils).padStart(2)} (rampants ${r.rampants}) · cris ${r.cris}` +
           ` · acquis ${String(acq.length).padStart(2)} à ${f(moy(acq.map((a) => a.dist)))} t · impacts ${r.impacts} → détournés ${r.detournes}` +
           ` · extrapol. ${r.extrapolationsJustes}/${r.extrapolations} · morsures ${r.morsures} (${r.degats} PV) · T°min ${f(r.tempMin, 0)}` +
-          ` · pic ${r.picVivants}/${r.plafond} · ${f(r.msTick, 2)} ms/tick (max ${f(r.msTickMax, 0)})` +
+          ` · pic ${r.picVivants}/${r.plafond}${r.pleinA >= 0 ? ` (plein à ${f(r.pleinA / BALANCE.TICK_RATE_HZ / 60, 1)} min)` : ''} · ${f(r.msTick, 2)} ms/tick (max ${f(r.msTickMax, 0)})` +
           (r.coinces ? ` · coincé ×${r.coinces}` : '') +
           (Object.keys(r.rejets).length ? ` · rejets ${JSON.stringify(r.rejets)}` : ''),
       )

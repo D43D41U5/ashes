@@ -334,9 +334,15 @@ describe('la nuit bascule d\'espèce (R11) — la tension croissante', () => {
     // lui, quadruple (0,12 → 0,55). Le plafond `UNDEAD_MAX_ALIVE` de l'acte mange la
     // différence. C'est exactement le défaut que `docs/specs/saison-sans-fin.md` nomme — « une
     // table de trois valeurs, et une table est plate ».
+    //
+    // PAR NUIT, depuis le 2026-08-21 : la salve du cri est passée de 6 à 2 réveils en fin de
+    // saison (décision d'Alexis sur mesure — un regard remplissait le plafond en deux minutes).
+    // Le raccourci « 3 nuits de crescendo pèsent plus que 8 nuits tièdes » vivait sur cette
+    // fontaine (16-38 chasseurs en 3 nuits ; 9 désormais) ; le titre, lui, dit LA nuit — on
+    // compare donc ce qu'une nuit envoie, et la montée reste nette (≈ 3 contre ≈ 1,2).
     const acteI = nuits(5)
-    const acteIII = nuits(55, 3) // 3 nuits de crescendo pèsent déjà plus que 8 nuits tièdes
-    expect(acteIII.loups + acteIII.morts).toBeGreaterThan(acteI.loups + acteI.morts)
+    const acteIII = nuits(55, 3)
+    expect((acteIII.loups + acteIII.morts) / 3).toBeGreaterThan((acteI.loups + acteI.morts) / NUITS)
   })
 
   it('A14 — un rôdeur mort ne HURLE pas : il a son propre signe', { timeout: 120_000 }, () => {

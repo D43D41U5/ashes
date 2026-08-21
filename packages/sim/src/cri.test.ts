@@ -37,6 +37,41 @@ function stepCendreux(state: SimState, id: number, ticks: number): void {
   }
 }
 
+describe('un crieur par proie à la fois (décision sur mesure, 2026-08-21)', () => {
+  it('deux cendreux voient la même proie : UN seul cri — le second attend la fin du cooldown du premier', () => {
+    const state = nuitDuJour(55)
+    const proie = spawnEntity(state, 51.5, 33.5)
+    const a = spawnMonster(state, 'cendreux', 47.5, 32.5) // tous deux du même côté, à ~4 tuiles
+    const b = spawnMonster(state, 'cendreux', 47.5, 34.5)
+    drainEvents(state)
+    // La proie se dérobe devant les deux (kite de banc, mémoire « une phase seule n'est pas un
+    // tick » : atteinte, ils armeraient un coup que le harnais ne résout jamais) : vue, jamais prise.
+    const tenir = (ticks: number) => {
+      for (let t = 0; t < ticks; t++) {
+        state.tick += 1
+        for (const id of [a, b]) {
+          const m = state.monsters.find((x) => x.entityId === id)!
+          const e = state.entities.find((x) => x.id === id)!
+          cendreuxStep(state, m, e)
+        }
+        const ea = state.entities.find((x) => x.id === a)!
+        const eb = state.entities.find((x) => x.id === b)!
+        const p = state.entities.find((x) => x.id === proie)!
+        p.x = Math.max(ea.x, eb.x) + 4
+        p.y = 33.5
+      }
+    }
+    tenir(40)
+    const cris1 = drainEvents(state).filter((e) => e.type === 'cendreux_cri')
+    expect(cris1).toHaveLength(1) // b a vu la proie autant qu'a, et s'est tu : a la TIENT
+    expect(state.monsters.find((m) => m.entityId === a)!.criPreyId ?? state.monsters.find((m) => m.entityId === b)!.criPreyId).toBe(proie)
+    // Le cooldown du crieur expire : l'autre peut appeler à son tour.
+    tenir(CENDREUX.CRI.COOLDOWN + 20)
+    const cris2 = drainEvents(state).filter((e) => e.type === 'cendreux_cri')
+    expect(cris2.length).toBeGreaterThanOrEqual(1)
+  })
+})
+
 describe('le cri de fureur (④⑤)', () => {
   it('nuit d\'acte III (T=10 ≤ FUREUR), une proie en vue : il crie, et le SOL se lève en salve', () => {
     const state = nuitDuJour(55)
@@ -50,7 +85,7 @@ describe('le cri de fureur (④⑤)', () => {
     expect(cris[0]).toMatchObject({ x: 50.5, y: 32.5 })
     // La salve plante UN site par tick de décision — au fil des pensées, pas d'un coup.
     const k = Math.round(seasonRamp(0, CENDREUX.CRI.PLAFOND_FIN, 55))
-    expect(k).toBeGreaterThanOrEqual(5)
+    expect(k).toBeGreaterThanOrEqual(2) // 6 → 2 le 2026-08-21 (mesure) : deux réveils par cri en fin de saison
     // LA PROIE SE DÉROBE (kite de banc) : sans quoi il l'atteint, arme son coup, et le
     // harnais — qui n'appelle pas advanceCombat — le laisse en wind-up éternel, salve gelée
     // (mémoire « une phase seule n'est pas un tick »). Elle reste à 4 tuiles : vue, jamais prise.

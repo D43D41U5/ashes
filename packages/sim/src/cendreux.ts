@@ -344,11 +344,24 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
     // (FIN × jour/60), zéro en tout début de saison), et chaque plantation comme chaque
     // émergence repasse sous le plafond GLOBAL. AUCUN pas de PRNG : les sites s'élisent sur
     // `hash2` du cri lui-même — crier ne déplace pas le flux seedé du monde (le patron A28).
+    // Le cooldown expiré libère la proie : le crieur cesse de la TENIR (voir la garde ci-dessous).
+    if (monster.criPreyId !== undefined && monster.criRestants === undefined && state.tick >= (monster.criAt ?? 0)) {
+      delete monster.criPreyId
+    }
     if (seen) {
       const froidEffectif = T + ((monster.satiete ?? 0) / CENDREUX.BOIRE.SATIETE_MAX) * (CENDREUX.TORPEUR.CHAUD - CENDREUX.TORPEUR.FROID)
       if (froidEffectif <= CENDREUX.TORPEUR.FUREUR && state.tick >= (monster.criAt ?? 0)) {
         const k = Math.round(seasonRamp(0, CENDREUX.CRI.PLAFOND_FIN, seasonDayAtTick(state.tick, state.calendarScale)))
-        if (k > 0 && placeSousPlafondGlobal(state)) {
+        // UN CRIEUR PAR PROIE À LA FOIS (décision d'Alexis sur mesure, 2026-08-21) : tant qu'un
+        // autre cendreux TIENT cette proie (son cooldown de cri court encore, `criPreyId` porté
+        // jusque-là), celui-ci ne crie pas — « celui qui m'a vu appelle, les autres viennent ».
+        // Mesuré avant : des crieurs qui se superposaient par moments (46 cris en 18 min pour
+        // un cooldown de 30 s). Aucun cooldown consommé par le silence : il criera s'il la
+        // voit encore quand l'autre aura fini.
+        const tenue = state.monsters.some(
+          (o) => o !== monster && o.type === 'cendreux' && o.criPreyId === seen.id && state.tick < (o.criAt ?? 0),
+        )
+        if (k > 0 && !tenue && placeSousPlafondGlobal(state)) {
           monster.criAt = state.tick + CENDREUX.CRI.COOLDOWN
           monster.criRestants = k
           monster.criX = seen.x
@@ -375,7 +388,8 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
         delete monster.criRestants
         delete monster.criX
         delete monster.criY
-        delete monster.criPreyId
+        // `criPreyId` reste porté jusqu'à la fin du cooldown : c'est la garde « un crieur par
+        // proie » qui le lit. Il tombe au premier think après `criAt` (plus haut).
       }
     }
     if (goal) {

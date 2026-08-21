@@ -122,3 +122,25 @@ plus chargé du jeu », et il dure toute la nuit.
 6. **Perf** : un profil d'une nuit d'acte III saturée avant le GATE 1 (le spécialiste `perf`).
 7. **Instrument** : ajouter un marcheur « qui fuit en ligne puis tourne » pour mesurer R28, et
    la part des morsures dues aux rampants pour calibrer R26.
+
+## Après la décision — `CRI.PLAFOND_FIN` 6 → 2 + un crieur par proie (remesuré le soir même)
+
+Décision d'Alexis sur cette mesure : ralentir la cascade par la **quantité par regard** (deux
+réveils par cri en fin de saison, la rampe ⑥ gardant sa forme) et une garde **un crieur par
+proie à la fois** (tant qu'un Cendreux tient la proie — son cooldown de cri court — les autres
+se taisent). Même instrument, mêmes graines, jour 50 :
+
+| comportement | graine | réveils | cris | morsures | pic / plafond | plafond plein à |
+|---|---|---|---|---|---|---|
+| marche | 2026 | 61 → **86** | 40 → 44 | 245 → **184** | 59 → 59 | 2-3 min → **15,1 min** |
+| marche | 77 | 52 → **80** | 15 → 40 | 521 → **337** | 59 → 58 | 2-3 min → fin de nuit |
+| feu-immobile | 2026 | 1 → 1 | 0 → 0 | 424 → 424 | 8 → 8 | — |
+| feu-immobile | 77 | 147 → **36** | 46 → 19 | 399 → 399 | 58 → **26** | saturé → jamais |
+
+Ce que ça dit : **la pente est devenue une nuit** — le plafond se remplit en quinze minutes au
+lieu de deux, et plus de réveils au total (la nuit qui chasse continue de planter tant qu'il
+reste de la place) mais étalés ; les morsures du marcheur baissent d'un quart à un tiers. Les
+morsures de l'immobile au feu ne bougent pas : ce sont celles de SON Cendreux de contact, pas
+de la cascade — et c'est le contrat (le feu attire, il n'abrite pas ; seul le village abrite).
+La garde « un crieur par proie » a fait ce qu'elle devait sur la graine 77 (46 → 19 cris pour
+l'immobile) et peu sur la 2026 (40 → 44 : les crieurs s'y succédaient déjà sans se superposer).

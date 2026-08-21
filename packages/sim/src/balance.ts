@@ -3123,9 +3123,14 @@ export const CENDREUX = {
     /**
      * COMBIEN UN CRI LÈVE, EN FIN DE SAISON — le plafond du jour J est round(FIN × jour/60),
      * une MONTÉE CONTINUE (décision ⑥ : « un plafond qui monte en continu », le remède au
-     * défaut « une table de trois valeurs est plate »). Jour 10 : 1. Jour 30 : 3. Jour 60 : 6.
+     * défaut « une table de trois valeurs est plate »). Jour 15 : 1. Jour 45 : 2. Jour 60 : 2.
+     *
+     * 6 → 2 le 2026-08-21 (décision d'Alexis sur mesure, `docs/mesure-cendreux-2026-08-21.md`) :
+     * à 5 réveils par cri toutes les 30 s, UN regard posé sur le joueur remplissait le plafond
+     * global en 2-3 minutes (15-54 cris, 27-147 réveils, 250-520 morsures par nuit d'acte III).
+     * À 2, le plafond se remplit sur la NUIT : le crescendo reste, l'emballement part.
      */
-    PLAFOND_FIN: 6,
+    PLAFOND_FIN: 2,
   },
   /**
    * ═══ LE PLAFOND GLOBAL (hypothèse de travail actée — la question ⑳ d'Alexis reste OUVERTE) ═══

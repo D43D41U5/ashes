@@ -441,6 +441,19 @@ coûtait rien, marteler une palissade à six tuiles d'une carcasse ne la réveil
   un bosquet ne suffit plus, il en ressort sur votre trajectoire ; tourner, si. Ce n'est pas
   une traque — il se trompe dès que vous tournez, et c'est le propos.
 
+- **R29 — DEUX RÉVEILS PAR CRI, ET UN CRIEUR PAR PROIE** *(décision d'Alexis sur mesure,
+  2026-08-21 — `docs/mesure-cendreux-2026-08-21.md`)*. Mesuré à la salve de 6 : un seul regard
+  posé sur le joueur remplissait le plafond global en 2-3 minutes (15-54 cris, 27-147 réveils,
+  250-520 morsures par nuit d'acte III). `CRI.PLAFOND_FIN` passe de 6 à **2** (la rampe ⑥
+  garde sa forme : 1 au jour 15, 2 au jour 45) et **tant qu'un Cendreux tient une proie** (son
+  cooldown de cri court encore — `criPreyId` reste porté jusque-là) **les autres ne crient pas
+  pour elle** : « celui qui m'a vu appelle, les autres viennent ». Aucun cooldown consommé par
+  le silence. Remesuré : le plafond se remplit en **15 minutes au lieu de 2**, les morsures du
+  marcheur baissent d'un quart à un tiers, la cascade autour de l'homme au feu tombe de 147 à
+  36 réveils. Le crescendo reste ; l'emballement part. *(A13 « la nuit d'acte III pèse plus »
+  se lit désormais PAR NUIT — son raccourci « 3 nuits contre 8 » vivait sur la fontaine du
+  cri.)*
+
 ### 10. Le rampant — ce que le sol rend n'a pas toujours ses jambes **[2026-08-21]**
 
 *Deuxième chantier « fidélité Project Zomboid » (quatre sous-décisions d'Alexis en QCM
@@ -498,7 +511,7 @@ faux-mort, lui, existe déjà en mieux : la carcasse torpide qui se réveille so
 | `TORPEUR` (CHAUD 60, FROID 10…) | — | **[2026-08-21]** le cadran : éveil, allure, vue, `CONVERGE_SOUS` 65, `FUREUR` 12 |
 | `CONVERGE_TILES` | [20, 80, 10000] | portée de la longue marche par acte (①) |
 | `BOIRE` (CONTACT, CONSO, COUP_TEMP…) | — | **[2026-08-21]** ils boivent la chaleur (⑯⑰) — plancher : jamais les braises, Foyer ≥ 1 |
-| `CRI` (COOLDOWN 30 s, PLAFOND_FIN 6) | — | **[2026-08-21]** la fureur appelle le sol, en salve, plafond en rampe (④⑤⑥) |
+| `CRI` (COOLDOWN 30 s, PLAFOND_FIN 2) | — | **[2026-08-21]** la fureur appelle le sol, en salve, plafond en rampe (④⑤⑥) — 6 → 2 sur mesure, et un crieur par proie (R29) |
 | `GLOBAL` (12 → 60) | — | **[2026-08-21]** le plafond global de PRESSION, en rampe de saison (⑳, hypothèse) |
 | `SENS` (VIBRATION 1, CONTACT 1, COUP 8, BATIR 12) | — | **[2026-08-21]** les sens honnêtes : stimulus de chasse, plancher de contact, secousses (R24-R25) |
 | `RAMPANT` (PART_MIN 0,1, PART_MAX 0,4, ALLURE 0,2, VUE 0,6) | — | **[2026-08-21]** le rampant : part lue dans le champ des morts, allure et vue rases (R26) |
