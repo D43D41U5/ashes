@@ -1,6 +1,6 @@
 # La saison sans fin — le plan en cinq tranches
 
-*Source : `docs/specs/saison-sans-fin.md` (décidé 2026-07-31), les décisions d'Alexis du 2026-08-21 (**l'arc oscille** — « le jeu devient de plus en plus dur mais on peut survivre à plusieurs hivers » ; **la pression vient de l'environnement** — le cortège de cendre, livré), et la refonte **pression-croissante des Cendreux** (spec du 2026-08-21, 19 décisions, livrée — elle change la liste des lois, voir §1). Statut : **T1 et T2 livrées (2026-08-21) ; T3 prête — une assomption à confirmer**. Jalon : le pivot systémique d'avant GATE 1 (question O7 de la spec — tranché de fait par « continue »).*
+*Source : `docs/specs/saison-sans-fin.md` (décidé 2026-07-31), les décisions d'Alexis du 2026-08-21 (**l'arc oscille** — « le jeu devient de plus en plus dur mais on peut survivre à plusieurs hivers » ; **la pression vient de l'environnement** — le cortège de cendre, livré), et la refonte **pression-croissante des Cendreux** (spec du 2026-08-21, 19 décisions, livrée — elle change la liste des lois, voir §1). Statut : **T1, T2 et T3 livrées (2026-08-21) ; T4 ensuite — O2 et O6 à trancher**. Jalon : le pivot systémique d'avant GATE 1 (question O7 de la spec — tranché de fait par « continue »).*
 
 ---
 
@@ -37,7 +37,7 @@ Chaque table devient une **fonction totale** `loi(act)` dans son bloc de réglag
 
 `actForDay` non borné et monotone (A1) ; l'**année** = 4 actes (l'option oscillante du scénariste) ; chaque loi devient `min(plafond, socle(k) + AMPLITUDE[(acte−1) mod 4])` avec `k` = numéro de tour et `socle(k+1) = socle(k) + PAS` — additions bornées, R1bis. **A2 se réénonce sur `k`** (une loi cyclique n'est pas monotone en acte — c'est la concession assumée de l'option). A5 (10×60 jours, la sim tourne, l'acte croît). Décisions à poser une à une : **la longueur de l'année en jours** (la vitesse R6 s'en dérive), **les noms des actes ≥ 4** (le baptême des tours — bible §5), **les PAS et plafonds** des lois (O3 — calibrage banc, mais l'ordre de grandeur se décide).
 
-### T3 — Le front en escalier *(1 assomption à confirmer)*
+### T3 — Le front en escalier *(LIVRÉE — « oui » d'Alexis : il mord l'hiver, tient l'été, ne recule jamais ; bouchée 0,25 de la course de l'an 1)*
 
 Le front **mord l'hiver, tient l'été, ne recule jamais** — l'érosion irréversible qui sauve « tout est condamné » sans amender le GDD *(ma reco en séance ; la parade d'Alexis — la braise qui repousse — l'a rendue tenable ; à confirmer en une ligne)*. Bouchée d'hiver = `PART_CIBLE / TOURS_NOMINAUX` de la course calibrée ; au-delà de l'arc nominal le front continue — la vallée finit par n'être plus qu'un refuge, **sauf parade** (chantier design séparé, contrainte déjà actée : elle repousse le SEUIL, jamais ne réchauffe le CLIMAT — bible I3, `flore-froid` F1bis). Le cortège suit gratuitement (il est en parts de la course). `cendre_prend` et la hantise suivent sans une ligne.
 

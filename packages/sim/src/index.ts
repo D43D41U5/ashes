@@ -113,7 +113,7 @@ export {
 export { deriverProfondeur, estCoeur, estLisiere, TERRAINS_BOISES_MASSIF } from './profondeur'
 export { CREUX } from './racine-relief'
 export type { WorldMap, Zone } from './map'
-export { getGameTime, seasonDayAtTick, actForDay, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+export { getGameTime, seasonDayAtTick, actForDay, tourForDay, phaseForDay, YEAR_DAYS, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
 export { ambientTemperature, baselineTemperature, baselineTemperatureAt, climatFlore, climatMaximal, advanceTemperature } from './temperature'
 // LA BRUME (spec brume.md) : le client rendra la nappe en la RECALCULANT du tick (patron front

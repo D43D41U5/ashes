@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { BALANCE } from '@ashes/sim'
+import { BALANCE, YEAR_DAYS } from '@ashes/sim'
 import { cendreTelegraphForDay } from './cendre-telegraph'
 
 const CENDRE_DAY = 2 * BALANCE.ACT_DAYS + 1 // premier jour de l'acte III
@@ -18,6 +18,17 @@ describe('le télégraphe de la Cendre (GDD §536)', () => {
   it('reste MUET les autres jours (pas de bruit d’alerte quotidien)', () => {
     for (const day of [1, 10, CENDRE_DAY - 2, CENDRE_DAY, CENDRE_DAY + 5, BALANCE.SEASON_DAYS]) {
       expect(cendreTelegraphForDay(day)).toBeNull()
+    }
+  })
+
+  it('ANNUEL : l’hiver de l’an 2 est prévenu comme le premier, et le dit (T3)', () => {
+    const an2 = YEAR_DAYS + CENDRE_DAY
+    expect(cendreTelegraphForDay(an2 - 3)).toMatch(/hiver revient/i)
+    expect(cendreTelegraphForDay(an2 - 1)).toMatch(/demain/i)
+    expect(cendreTelegraphForDay(an2)).toBeNull()
+    // Et jamais « la fin » ni « la méga-horde » : l'arc oscille, la méga-horde est morte.
+    for (const d of [CENDRE_DAY - 3, CENDRE_DAY - 1, an2 - 3, an2 - 1]) {
+      expect(cendreTelegraphForDay(d)).not.toMatch(/la fin|méga-horde/i)
     }
   })
 

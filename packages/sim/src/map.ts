@@ -73,6 +73,8 @@ export interface WorldMap {
   cendre?: number[]
   /**
    * L'AVANCÉE DU FRONT au dernier jour de la saison, EN TUILES — **calibrée pour CETTE carte**.
+   * Sous la saison sans fin (T3), c'est la COURSE DE L'AN 1 : l'échelle de tout ce qui suit —
+   * les bouchées des hivers suivants et les bandes du cortège s'expriment en parts d'elle.
    *
    * Elle n'est pas une constante : la forme des zones change tout. Mesuré, à distance fixe, la
    * cendre couvrait 48 % des Prés Bas sur une seed et 81 % sur une autre. On vise donc une PART

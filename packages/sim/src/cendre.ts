@@ -41,7 +41,7 @@ import { BALANCE } from './balance'
 import { emitEvent } from './events'
 import type { WorldMap } from './map'
 import type { SimState } from './sim'
-import { seasonDayAtTick } from './time'
+import { seasonDayAtTick, YEAR_DAYS } from './time'
 
 export const CENDRE = {
   /**
@@ -88,6 +88,28 @@ export const CENDRE = {
    * entre moteurs JS, invariant n°2.)
    */
   COURBE: (t: number): number => t * t,
+
+  /**
+   * ═══ LE FRONT EN ESCALIER (saison-sans-fin T3 — décision d'Alexis 2026-08-21 : « le front mord
+   * l'hiver, tient l'été, ne recule jamais ») ═══
+   *
+   * L'an 1 garde sa morsure CALIBRÉE : `PART_CIBLE` de la vallée sur les jours 21-60, au bit
+   * près — les soixante jours que tout le monde a joués ne bougent pas. Puis le front TIENT
+   * (jours 61-84, et le printemps suivant). Chaque hiver SUIVANT mord une BOUCHÉE de plus,
+   * sur la même fenêtre de l'année (jours 21-60 du tour), avec la même courbe qui accélère —
+   * et ne rend jamais rien : ce qui a brûlé reste brûlé. « Tout est condamné » survit sans
+   * amender le GDD : la condamnation est une PENTE, pas une échéance. La seule chose qui
+   * l'arrête est la parade (chantier à part ; elle repoussera le SEUIL, jamais le climat).
+   *
+   * LA BOUCHÉE EST UNE PART DE LA COURSE DE L'AN 1 (`cendreMax`), jamais une distance écrite —
+   * la leçon du cortège, une troisième fois : une distance en dur ne veut rien dire d'une seed
+   * à l'autre, la course calibrée est la seule échelle de cette carte. À 0,25, l'hiver 2 avance
+   * d'un quart de ce que l'hiver 1 a mangé (MESURÉ sur la carte de production : 74 t → ~18 t) ;
+   * sans parade, la vallée n'est plus qu'un refuge vers le cinquième hiver — « on peut survivre
+   * à plusieurs hivers », à la lettre. C'est un bouton de calibrage : il se règle en regardant
+   * une carte (quelle part reste à l'hiver N ?), pas en jouant — d'où sa place ici.
+   */
+  BOUCHEE_HIVER: 0.25,
 
   // ═══════════════════════════════════════════════════════════════════════════════════════════
   // LE CORTÈGE (spec `cortege-cendre.md`) — le front n'est pas une ligne, c'est un CORTÈGE.
@@ -216,17 +238,35 @@ export function computeCendreField(
 }
 
 /**
- * L'AVANCÉE DU FRONT au jour de saison donné, en tuiles.
+ * L'AVANCÉE DU FRONT au jour de saison donné, en tuiles — L'ESCALIER (T3).
  *
- * Zéro pendant l'acte I : le joueur a le temps de bâtir et de s'attacher. Puis ça accélère.
+ * Chaque année, la même fenêtre : rien pendant l'acte I (le joueur a le temps de bâtir et de
+ * s'attacher), puis la morsure accélère des jours 21 à 60 du tour, puis le front TIENT jusqu'au
+ * printemps suivant. L'an 1 mord la course calibrée entière (`avanceeMax` = `cendreMax`, la part
+ * `PART_CIBLE`) ; chaque hiver suivant mord `BOUCHEE_HIVER × avanceeMax`. Monotone non décroissant
+ * PAR CONSTRUCTION : la course d'avant est acquise, la bouchée s'y ajoute, rien ne recule.
+ *
+ *     front(jour) = course(tour − 1) + taille(tour) × COURBE(t)
+ *       course(0) = 0 ; course(1) = max ; course(k) = max × (1 + (k − 1) × BOUCHEE)
+ *       taille(1) = max ; taille(k ≥ 2) = max × BOUCHEE
+ *       t = clamp((jourDansLAnnee − 21) / (60 − 21), 0, 1)
+ *
+ * Sur les jours 1-84 de l'an 1, c'est EXACTEMENT la fonction d'avant (T1/T2 : comportement
+ * identique sur l'arc nominal). Pur : `+ − × /`, `floor`, des comparaisons.
  */
 export function avanceeDuFront(jourDeSaison: number, avanceeMax: number): number {
-  // La fin de l'acte I : c'est là que la cendre s'ébranle.
-  const debut = (CENDRE.ACTE_DEPART - 1) * BALANCE.ACT_DAYS // la fin de l'acte I — inchangé (21), dérivé de la cadence (T2)
-  if (jourDeSaison <= debut) return 0
-  const t = (jourDeSaison - debut) / (BALANCE.SEASON_DAYS - debut)
+  const jour = jourDeSaison < 1 ? 1 : Math.floor(jourDeSaison)
+  const tour = Math.floor((jour - 1) / YEAR_DAYS) + 1
+  const jourDansLAnnee = ((jour - 1) % YEAR_DAYS) + 1
+  // La fin de l'acte I : c'est là que la cendre s'ébranle — chaque année.
+  const debut = (CENDRE.ACTE_DEPART - 1) * BALANCE.ACT_DAYS
+  const fin = BALANCE.SEASON_DAYS // la fin de la morsure, dans l'année (le jour 60 de l'arc nominal)
+  const t = (jourDansLAnnee - debut) / (fin - debut)
   const borne = t < 0 ? 0 : t > 1 ? 1 : t
-  return avanceeMax * CENDRE.COURBE(borne)
+  // La course ACQUISE avant ce tour, et la taille de la bouchée de ce tour.
+  const acquise = tour === 1 ? 0 : avanceeMax * (1 + (tour - 2) * CENDRE.BOUCHEE_HIVER)
+  const taille = tour === 1 ? avanceeMax : avanceeMax * CENDRE.BOUCHEE_HIVER
+  return acquise + taille * CENDRE.COURBE(borne)
 }
 
 /**

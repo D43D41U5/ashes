@@ -173,6 +173,63 @@ describe('ce que la cendre DÉTRUIT', () => {
   }, 120_000)
 })
 
+describe('le front en ESCALIER (saison-sans-fin T3) — il mord l’hiver, tient l’été, ne recule jamais', () => {
+  const MAX = 100 // une course d'an 1 ronde : les parts se lisent en tuiles
+
+  /** L'ANCIENNE fonction, recopiée en LITTÉRAUX : t² sur les jours 21..60, figée à max après. */
+  const ancienne = (jour: number): number => {
+    if (jour <= 21) return 0
+    const t = (jour - 21) / (60 - 21)
+    const b = t < 0 ? 0 : t > 1 ? 1 : t
+    return MAX * (b * b) // l’association d’origine, au bit près — MAX * b * b différerait au dernier bit
+  }
+
+  it('l’an 1 est BIT-EXACT : les jours 1..84 rendent l’ancienne courbe, tuile pour tuile', () => {
+    for (let jour = 1; jour <= 84; jour++) {
+      expect(avanceeDuFront(jour, MAX), `jour ${jour}`).toBe(ancienne(jour))
+    }
+  })
+
+  it('monotone non décroissant sur vingt ans, et il ne recule JAMAIS — balayé jour par jour', () => {
+    let precedent = -1
+    for (let jour = 1; jour <= 20 * 84; jour++) {
+      const f = avanceeDuFront(jour, MAX)
+      expect(f, `le front recule au jour ${jour}`).toBeGreaterThanOrEqual(precedent)
+      precedent = f
+    }
+  })
+
+  it('chaque hiver suivant mord EXACTEMENT une bouchée — BOUCHEE_HIVER × la course de l’an 1', () => {
+    for (let tour = 2; tour <= 6; tour++) {
+      const j21 = (tour - 1) * 84 + 21
+      const j60 = (tour - 1) * 84 + 60
+      const bouchee = avanceeDuFront(j60, MAX) - avanceeDuFront(j21, MAX)
+      expect(bouchee, `la bouchée de l'an ${tour}`).toBeCloseTo(MAX * CENDRE.BOUCHEE_HIVER, 9)
+      // Et la course acquise au début du tour est la somme de tout ce qui précède.
+      expect(avanceeDuFront(j21, MAX)).toBeCloseTo(MAX * (1 + (tour - 2) * CENDRE.BOUCHEE_HIVER), 9)
+    }
+  })
+
+  it('il TIENT hors de la morsure : du jour 61 au jour 20 de l’année suivante, pas une tuile', () => {
+    for (let tour = 1; tour <= 5; tour++) {
+      const plateau = avanceeDuFront((tour - 1) * 84 + 61, MAX)
+      for (let j = (tour - 1) * 84 + 61; j <= tour * 84 + 21; j++) {
+        expect(avanceeDuFront(j, MAX), `le front bouge hors hiver, jour ${j}`).toBe(plateau)
+      }
+    }
+  })
+
+  it('sans borne : au dixième hiver, le front a dépassé la course de l’an 1 — la vallée se referme', () => {
+    expect(avanceeDuFront(10 * 84, MAX)).toBeGreaterThan(MAX)
+    expect(avanceeDuFront(10 * 84, MAX)).toBeCloseTo(MAX * (1 + 9 * CENDRE.BOUCHEE_HIVER), 9)
+  })
+
+  it('la bouchée est une PART, dans ]0;1[ — ni morte, ni une seconde course entière', () => {
+    expect(CENDRE.BOUCHEE_HIVER).toBeGreaterThan(0)
+    expect(CENDRE.BOUCHEE_HIVER).toBeLessThan(1)
+  })
+})
+
 describe('le front, dans la BOUCLE (et non plus sur le papier)', () => {
   it('sauter à l\'acte III fait AVANCER la cendre et BRÛLER les nœuds', () => {
     // Sans le saut de jour, personne ne verrait jamais ce mécanisme : en Veillée, l'acte III
