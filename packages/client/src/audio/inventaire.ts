@@ -84,6 +84,7 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   act_started: { voix: 'voix', famille: 'saison', quoi: 'un ACTE commence — la pression change de cran' },
   season_ended: { voix: 'voix', famille: 'saison', quoi: 'la saison s’achève, les verdicts tombent' },
   cendre_avance: { voix: 'voix', famille: 'saison', quoi: 'la Cendre a mangé un morceau de la vallée' },
+  cendre_prend: { voix: 'muet', famille: 'registre', quoi: 'le front passe les ouvrages d’un village — muet : souvent lointain (les villages PNJ du sud tombent d’abord), la perte se lit dans la chronique et se voit au cortège ; une voix viendra avec le chantier audio de la Cendre si le playtest la réclame' },
   cendreux_risen: { voix: 'voix', famille: 'saison', quoi: 'un cendreux se relève' },
   reveil_etouffe: { voix: 'voix', famille: 'saison', quoi: 'le feu a étouffé un réveil — le sol se tait' },
   horde_spawned: { voix: 'voix', famille: 'saison', quoi: 'une horde se forme et marche sur un feu — village ou camp (décision ⑬)' },

@@ -132,6 +132,45 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     expect(est[0]!.text).toBe("On a atteint la Tour de guet effondrée I. Elle regardait l'est.")
   })
 
+  it('le premier MORS seulement : la Cendre se met en marche une fois, puis la carte parle', () => {
+    const entries = chronicleFromEvents(
+      [
+        at(21, { type: 'cendre_avance', jour: 21, front: 1, noeudsBrules: 0 }), // rien mangé : muet
+        at(22, { type: 'cendre_avance', jour: 22, front: 2, noeudsBrules: 3 }), // LE mors
+        at(23, { type: 'cendre_avance', jour: 23, front: 3, noeudsBrules: 8 }), // silence — 40 lignes identiques ne racontent rien
+        at(40, { type: 'cendre_avance', jour: 40, front: 12, noeudsBrules: 20 }),
+      ],
+      SCALE,
+      NAMES,
+    )
+    expect(entries).toEqual([{ day: 22, text: 'La Cendre s’est mise en marche : le sud brûle.', weight: 'battement' }])
+  })
+
+  it('la Cendre PREND : la première fois chez chacun chuchote, ensuite le constat courant', () => {
+    const entries = chronicleFromEvents(
+      [
+        at(45, { type: 'cendre_prend', jour: 45, villageId: 2, count: 3 }),
+        at(47, { type: 'cendre_prend', jour: 47, villageId: 2, count: 1 }),
+        at(50, { type: 'cendre_prend', jour: 50, villageId: 1, count: 2 }), // un AUTRE village : son intime à lui
+      ],
+      SCALE,
+      NAMES,
+    )
+    expect(entries).toEqual([
+      { day: 45, text: 'La Cendre est entrée chez « la Meute des Cendres ».', weight: 'intime' },
+      { day: 47, text: 'La Cendre a pris d’autres ouvrages à « la Meute des Cendres ».', weight: 'recit' },
+      { day: 50, text: 'La Cendre est entrée chez « le Foyer de la Rivière ».', weight: 'intime' },
+    ])
+  })
+
+  it('l’acte est TOTAL : au-delà des trois noms, un repli neutre — jamais undefined', () => {
+    const entries = chronicleFromEvents([at(70, { type: 'act_started', act: 7 })], SCALE, NAMES)
+    expect(entries).toEqual([{ day: 70, text: 'l’acte 7 a commencé.', weight: 'battement' }])
+    // Et les trois noms existants restent les leurs.
+    const grand = chronicleFromEvents([at(22, { type: 'act_started', act: 2 })], SCALE, NAMES)
+    expect(grand[0]!.text).toBe('le Grand Froid a commencé.')
+  })
+
   it('la stèle SE CITE — le seul « nous » du jeu, entre guillemets', () => {
     const entries = chronicleFromEvents(
       [at(12, { type: 'poi_first_visit', poiId: 20, kind: 'stele', name: 'la Stèle II', byEntityId: 7, stele: { lignes: ['Ici les chemins se répondaient.', 'Nous guettions le sud.'] } })],

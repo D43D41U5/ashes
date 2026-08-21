@@ -6,7 +6,9 @@
  * un endroit où naître, et celui qui rejoint au jour 40 ne joue pas au même jeu que les autres.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, TERRAIN_ROCK } from './balance'
+import { BALANCE, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
+import { createEmptyMap } from './map'
+import { foundNpcVillage } from './worldgen'
 import { avanceeDuFront, CENDRE, estCendre, partSousLaCendre } from './cendre'
 import { generateZonedTerrain } from './zonegen'
 import { emplacementsDeVillage, placeZoneNodes, pointsDeSpawn } from './zone-content'
@@ -198,5 +200,36 @@ describe('le front, dans la BOUCLE (et non plus sur le papier)', () => {
     expect(avances.length, 'la cendre a avancé en silence').toBeGreaterThanOrEqual(1)
     expect(avances[0]).toMatchObject({ type: 'cendre_avance' })
     expect((avances[0] as { noeudsBrules: number }).noeudsBrules).toBeGreaterThan(0)
+  }, 120_000)
+
+  it('la Cendre PREND les ouvrages d\u2019un village quand le front les passe — une fois, jamais le feu de camp', () => {
+    // Carte-banc : champ de cendre = x, course calibrée à 8 tuiles. Le village est fondé à
+    // x = 4 : le front (t² sur les jours 21..60) y arrive entre le jour 48 (3,83) et le
+    // jour 49 (4,12) — la fenêtre exacte que « nouvellement derrière » doit voir.
+    const map = createEmptyMap(70, 40, TERRAIN_GRASS)
+    map.cendre = []
+    for (let y = 0; y < 40; y++) for (let x = 0; x < 70; x++) map.cendre.push(x)
+    map.cendreMax = 8
+    const sim = createSim(7, { map, calendarScale: 720, debug: true, worldEvents: false })
+    const v = foundNpcVillage(sim, 4, 20, 2, 'foyer')
+    // Le TÉMOIN NÉGATIF : un feu de camp (villageId 0) à la même distance de cendre — la
+    // halte d'un homme n'est pas un foyer, elle ne mérite pas de ligne.
+    sim.structures.push({ ...sim.structures.find((s) => s.type === 'fire')!, id: 9999, villageId: 0, tx: 4, ty: 30 })
+    const joueur = spawnEntity(sim, 60.5, 20.5)
+
+    drainEvents(sim)
+    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 49 } }])
+    step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
+    const prises = drainEvents(sim).filter((e) => e.type === 'cendre_prend')
+    expect(prises.length, 'le front a passé les murs en silence').toBeGreaterThanOrEqual(1)
+    for (const e of prises) expect(e).toMatchObject({ villageId: v.id })
+    const compte = prises.reduce((t, e) => t + (e as { count: number }).count, 0)
+    // Toutes les structures du village à x=4 sont prises ce jour-là ; le feu de camp, jamais.
+    expect(compte).toBe(sim.structures.filter((s) => s.villageId === v.id && s.tx === 4).length)
+
+    // Le lendemain : rien de neuf — « nouvellement derrière » ne se redit pas.
+    step(sim, [{ entityId: joueur, dx: 0, dy: 0, action: { type: 'debug_set_season_day', day: 50 } }])
+    step(sim, [{ entityId: joueur, dx: 0, dy: 0 }])
+    expect(drainEvents(sim).filter((e) => e.type === 'cendre_prend' && e.villageId === v.id)).toHaveLength(0)
   }, 120_000)
 })

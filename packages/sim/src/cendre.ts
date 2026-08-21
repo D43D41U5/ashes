@@ -477,13 +477,44 @@ export function avancerLaCendre(state: SimState): void {
     return d === undefined || d >= front
   })
   const brules = avant - state.nodes.length
-  if (brules === 0) return
-
-  emitEvent(state, {
+  if (brules > 0) emitEvent(state, {
     type: 'cendre_avance',
     tick: state.tick,
     jour: seasonDayAtTick(state.tick, state.calendarScale),
     front: Math.round(front),
     noeudsBrules: brules,
   })
+
+  // ═══ LA CENDRE PREND (P5a — la strate du joueur, décision 2026-08-21) ═══
+  //
+  // Les nœuds meurent au filtre ci-dessus ; les STRUCTURES restent — debout dans le brûlé.
+  // Le jeu produisait donc des ruines du joueur à côté de celles d'avant, MUETTES : aucun
+  // événement ne marquait le jour où le front passait tes murs. On compare la distance de
+  // cendre de chaque structure de VILLAGE à la course du front entre hier et aujourd'hui —
+  // « nouvellement derrière » se DÉRIVE, rien n'est stocké (le patron du fichier entier).
+  //
+  // `villageId !== 0` : les ouvrages d'un village, joueur ou PNJ — jamais le feu de camp
+  // (une halte n'est pas un foyer) ni les murs du pays d'avant (poi-batis, villageId 0 :
+  // leurs ruines ont DÉJÀ leurs annales, elles n'ont pas besoin d'une seconde voix).
+  //
+  // ⚠ Cadence nominale supposée : `fHier = front(jour − 1)`. Un saut de plusieurs jours
+  // (debug_set_season_day) sous-rapporte les structures enjambées — le chemin debug n'est
+  // pas un chemin de récit, on l'assume.
+  const max = state.map.cendreMax
+  if (max === undefined) return
+  const jour = seasonDayAtTick(state.tick, state.calendarScale)
+  const fHier = avanceeDuFront(jour - 1, max)
+  if (front <= fHier) return
+  const prises = new Map<number, number>()
+  for (const s of state.structures) {
+    if (s.villageId === 0) continue
+    const d = champ[s.ty * width + s.tx]
+    if (d === undefined || d >= front || d < fHier) continue
+    prises.set(s.villageId, (prises.get(s.villageId) ?? 0) + 1)
+  }
+  // Ordre d'émission : villageId croissant — déterministe par construction, jamais par
+  // l'ordre d'insertion d'une Map.
+  for (const [villageId, count] of [...prises.entries()].sort((a, b) => a[0] - b[0])) {
+    emitEvent(state, { type: 'cendre_prend', tick: state.tick, jour, villageId, count })
+  }
 }

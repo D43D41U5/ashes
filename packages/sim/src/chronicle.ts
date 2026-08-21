@@ -49,6 +49,8 @@ export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
   'settler_arrived',
   'village_fell',
   'act_started',
+  'cendre_avance',
+  'cendre_prend',
   'village_archetype_changed',
   'horde_spawned',
   'convoy_spawned',
@@ -75,6 +77,10 @@ export function chronicleFromEvents(
   const name = (villageId: number): string => villageNames[villageId] ?? `le village ${villageId}`
   const entries: ChronicleEntry[] = []
   const giftPairs = new Set<string>()
+  // Le PREMIER mors de la Cendre, et la PREMIÈRE entrée chez chaque village : la mémoire du
+  // formateur, locale et pure — l'état vit dans la passe, jamais dans la sim.
+  let cendreDite = false
+  const cendreChez = new Set<number>()
 
   for (const e of events) {
     const d = day(e.tick)
@@ -100,7 +106,11 @@ export function chronicleFromEvents(
         push(`${e.name} est tombé : son Feu s'est éteint, il n'en reste que des cendres.`, 'battement')
         break
       case 'act_started':
-        if (e.act > 1) push(`${ACT_NAMES[e.act - 1]} a commencé.`, 'battement')
+        // TOTAL, jamais indexé à l'aveugle : sous la saison sans fin l'acte est un entier non
+        // borné, et `ACT_NAMES[3]` est `undefined` — le nom du quatrième et des suivants est
+        // une décision OUVERTE (bible §5, les noms des tours). En attendant le baptême, le
+        // repli est neutre et vrai.
+        if (e.act > 1) push(`${ACT_NAMES[e.act - 1] ?? `l’acte ${e.act}`} a commencé.`, 'battement')
         break
       case 'village_archetype_changed':
         if (e.archetype === 'foyer') push(`${name(e.villageId)} a viré au bleu : un Foyer.`, 'recit')
@@ -116,7 +126,10 @@ export function chronicleFromEvents(
         // un, sinon c'est le feu d'un homme seul que la nuit a choisi.
         const cible = e.villageId !== undefined ? name(e.villageId) : 'un feu isolé'
         const grande = (WORLD_EVENTS.HORDE_TAILLE.DEBUT + WORLD_EVENTS.HORDE_TAILLE.FIN) / 2
-        if (e.size >= WORLD_EVENTS.HORDE_TAILLE.FIN - 1) push(`La horde a déferlé sur ${cible} (${e.size} goules).`, 'battement')
+        // Ni « goules » (le Cendreux a absorbé le zombie — canon R1, un seul mort-vivant),
+        // ni compteur entre parenthèses (bible T4 : un nombre entre parenthèses, c'est la
+        // simulation qui parle en costume). La taille a déjà choisi le VERBE — ça suffit.
+        if (e.size >= WORLD_EVENTS.HORDE_TAILLE.FIN - 1) push(`La horde a déferlé sur ${cible}.`, 'battement')
         else if (e.size >= grande) push(`Une grande horde a marché sur ${cible}.`, 'battement')
         break
       }
@@ -174,6 +187,28 @@ export function chronicleFromEvents(
       case 'refugee_rumeur':
         // Le prix est dit (un repas), le reste est un constat — jamais un conseil.
         push(`Pour un repas, des réfugiés ont dit où trouver ${e.name}.`, 'recit')
+        break
+      case 'cendre_avance':
+        // LE PREMIER MORS SEULEMENT. Le front avance ensuite chaque jour — quarante lignes
+        // identiques ne raconteraient rien (le « rare se dit » des annales, appliqué au monde
+        // lui-même). La perte continue se LIT sur la carte, par le cortège ; la chronique ne
+        // retient que le basculement : le jour où la vallée a commencé à rétrécir.
+        if (!cendreDite && e.noeudsBrules > 0) {
+          cendreDite = true
+          push('La Cendre s’est mise en marche : le sud brûle.', 'battement')
+        }
+        break
+      case 'cendre_prend':
+        // P5a — LE PASSÉ DU JOUEUR ENTRE DANS LE MÊME REGISTRE : ses ouvrages pris par le
+        // front deviennent des lignes, comme ceux du pays d'avant sont devenus des annales.
+        // La première fois chez chacun CHUCHOTE — la Cendre entre chez quelqu'un — puis le
+        // constat courant. Jamais de compte : la perte se mesure sur place.
+        if (!cendreChez.has(e.villageId)) {
+          cendreChez.add(e.villageId)
+          push(`La Cendre est entrée chez « ${name(e.villageId)} ».`, 'intime')
+        } else {
+          push(`La Cendre a pris d’autres ouvrages à « ${name(e.villageId)} ».`, 'recit')
+        }
         break
       case 'poi_first_visit':
         // Le bus porte TOUTES les premières visites : c'est le FORMATEUR qui choisit,

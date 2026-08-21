@@ -29,7 +29,9 @@ describe('l’inventaire des 73 faits', () => {
     // `presage_horde`, `charnier_brule` — spec 2026-08-21).
     // 80 → 81 le 2026-08-21 : `refugee_rumeur` (annales.md R12) — MUET décidé : il tombe sur
     // le même geste que `refugees_fed`, qui parle déjà. Le renseignement se LIT.
-    expect(somme).toBe(81)
+    // 81 → 82 le 2026-08-21 : `cendre_prend` (P5a) — muet aussi : souvent lointain, la perte
+    // se lit et se voit.
+    expect(somme).toBe(82)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -41,7 +43,7 @@ describe('l’inventaire des 73 faits', () => {
     expect(muets).toEqual([])
   })
 
-  it('l’état publié est bien l’état ACTUEL : 44 voix, 34 silences décidés', () => {
+  it('l’état publié est bien l’état ACTUEL : 44 voix, 35 silences décidés', () => {
     // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 38 sonnent
     // VRAIMENT (et que les 26 se taisent vraiment) — ici on garde seulement la proportion.
     // 34 → 35 le 2026-07-29 : `node_depleted` sort du silence (l'arbre qui tombe craque).
@@ -83,7 +85,8 @@ describe('l’inventaire des 73 faits', () => {
     expect(SONORES.length).toBe(47)
     // 33 → 34 le 2026-08-21 : `refugee_rumeur` naît MUET (annales.md R12) — le geste de
     // nourrir parle déjà, le renseignement se lit dans la chronique.
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(34)
+    // 34 → 35 le 2026-08-21 : `cendre_prend` naît MUET (P5a) — la perte se lit et se voit.
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(35)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

@@ -31,7 +31,9 @@ export type SimEvent =
   | { type: 'day_started'; tick: number }
   | { type: 'night_started'; tick: number }
   | { type: 'season_day_started'; tick: number; day: number }
-  | { type: 'act_started'; tick: number; act: 1 | 2 | 3 }
+  /** L'acte est un ENTIER NON BORNÉ (saison-sans-fin R2 : il ne porte plus les chiffres, il
+   *  NOMME) — le type `1 | 2 | 3` d'origine aurait figé dans le bus ce que la spec délie. */
+  | { type: 'act_started'; tick: number; act: number }
   /**
    * LA CENDRE A AVANCÉ — et la vallée a reculé d'autant.
    *
@@ -39,6 +41,14 @@ export type SimEvent =
    * mangé un morceau de la vallée, pas qu'un buisson a grillé. Haute fréquence n'est pas domaine.
    */
   | { type: 'cendre_avance'; tick: number; jour: number; front: number; noeudsBrules: number }
+  /**
+   * LA CENDRE PREND (P5a, décision 2026-08-21 — la strate du joueur) : des ouvrages d'un
+   * VILLAGE sont passés derrière le front aujourd'hui. Les nœuds meurent (`cendre_avance`),
+   * les structures RESTENT — debout dans le brûlé : le jeu produit des ruines du joueur à
+   * côté de celles d'avant, et cet événement est ce qui les empêche d'être muettes. Un
+   * événement par village et par jour, jamais un par mur.
+   */
+  | { type: 'cendre_prend'; tick: number; jour: number; villageId: number; count: number }
   | { type: 'village_founded'; tick: number; villageId: number; chiefId: number; tx: number; ty: number }
   | {
       type: 'structure_built'

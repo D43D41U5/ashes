@@ -496,7 +496,10 @@ function computeVerdicts(state: SimState): {
         name: village.name,
         archetype: village.archetype,
         score: granaryValue,
-        outcome: `est partie les bras pleins (valeur ${granaryValue})`,
+        // Formulation INVARIANTE en genre (bible T5) : « le Clan du Levant est partie » était
+        // la faute — « a quitté la vallée » s'accorde tout seul, pour « le Clan » comme pour
+        // « la Meute ».
+        outcome: `a quitté la vallée les bras pleins (valeur ${granaryValue})`,
       }
     }
     return {

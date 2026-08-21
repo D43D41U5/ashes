@@ -1556,7 +1556,11 @@ function toponymes(g: GrapheZones): ZoneRect[] {
   for (const s of g.seuils) {
     const vers = g.zones[s.b]!
     out.push({
-      name: s.secours ? `l'autre passage vers ${vers.def.nom}` : `le seuil de ${vers.def.nom}`,
+      // « vers », jamais « de » : les noms de zone PORTENT leur article (« le Karst »,
+      // « les Aiguilles ») — « le seuil de le Karst » était la faute affichée au survol de la
+      // carte. « vers » est insensible à l'accord PAR CONSTRUCTION (bible T5), et c'est déjà
+      // la forme du passage de secours.
+      name: s.secours ? `l'autre passage vers ${vers.def.nom}` : `le seuil vers ${vers.def.nom}`,
       x: Math.max(0, Math.min(g.width - 2 * rs - 1, s.x - rs)),
       y: Math.max(0, Math.min(g.height - 2 * rs - 1, s.y - rs)),
       w: 2 * rs + 1,
