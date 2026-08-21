@@ -1550,7 +1550,7 @@ describe('R9 — l’annonce (blizzard)', () => {
   it('l’acte I n’a pas de blizzard — la construction qui garantit à CHAQUE blizzard sa veille', () => {
     // Un blizzard au jour 1 n'aurait pas de crépuscule d'avant pour s'annoncer. Il n'en
     // existe pas : la table de l'acte I ne porte pas le type — le triplet est TOTAL.
-    expect('blizzard' in METEO.TYPES[0]!).toBe(false)
+    expect('blizzard' in METEO.TYPES(1)).toBe(false)
   })
 
   it('saison × 2 seeds : CHAQUE front blizzard a son triplet annonce → entre → passe, ordre strict — et RIEN d’autre', () => {

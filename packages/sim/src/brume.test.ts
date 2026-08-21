@@ -96,7 +96,7 @@ describe('l’annonce (A3, A8)', () => {
   })
 
   it('l’acte I n’a pas de Brume (CHANCE_PER_DAY[0] = 0)', () => {
-    expect(BRUME.CHANCE_PER_DAY[0]).toBe(0)
+    expect(BRUME.CHANCE_PER_DAY(1)).toBe(0)
     for (let d = 1; d <= BALANCE.ACT_BOUNDARIES[0]!; d++) expect(brumeJourEligible(d)).toBe(false)
   })
 })

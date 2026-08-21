@@ -116,7 +116,7 @@ function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelt
 
   // La carte est plate : le froid ne vient plus de l'altitude, seulement du BIOME (la neige, le
   // glacier) et de l'heure. Le froid des zones hautes est porté par leur terrain, pas par une hauteur.
-  const base = T.BASE - T.ACT_COLD[time.act - 1]! // non coupé par un toit
+  const base = T.BASE - T.ACT_COLD(time.act) // non coupé par un toit — loi totale (saison-sans-fin T1)
   // LA BRUME (spec brume.md R4) et LE FRONT MÉTÉO (spec meteo.md R4) sont des EXPOSITIONS
   // de plus : l'abri les amortit, et le feu comme la tenue les PLANCHENT (l'ambiant est un
   // max) — le déni de zone tombe de ces lois, pas d'une mécanique neuve. Le froid météo
@@ -186,7 +186,7 @@ export function climatFlore(state: SimState, x: number, y: number, tick: number)
  */
 export function climatMaximal(state: SimState, tick: number): number {
   const time = gameTimeAt(state, tick)
-  return clampTemp(T.BASE - T.ACT_COLD[time.act - 1]! + BIOME_MAX - (time.isNight ? T.NIGHT_COLD : 0))
+  return clampTemp(T.BASE - T.ACT_COLD(time.act) + BIOME_MAX - (time.isNight ? T.NIGHT_COLD : 0))
 }
 
 /** Température ambiante cible (0-100) au lieu (x,y) : le froid de base, PLANCHERÉ par un feu / une source chaude. */

@@ -713,7 +713,7 @@ export function champDesFeux(state: SimState): Int32Array | null {
     }
     cache.champVillages = sources.length === 0
       ? null
-      : computeFlowFieldMulti(state.map, [], solidesEternels(state.structures), sources, undefined, CENDREUX.CONVERGE_TILES[acte - 1]!)
+      : computeFlowFieldMulti(state.map, [], solidesEternels(state.structures), sources, undefined, CENDREUX.CONVERGE_TILES(acte))
     cache.sigVillages = sigVillages
     refondre = true
   }
@@ -724,7 +724,7 @@ export function champDesFeux(state: SimState): Int32Array | null {
       if (fireStateAt(state.tick, s) !== 'lit') continue
       sources.push({ tx: s.tx, ty: s.ty })
     }
-    const portee = Math.min(CENDREUX.CONVERGE_TILES[acte - 1]!, CONVERGE_FEU_LIBRE)
+    const portee = Math.min(CENDREUX.CONVERGE_TILES(acte), CONVERGE_FEU_LIBRE)
     cache.champLibres = sources.length === 0
       ? null
       : computeFlowFieldMulti(state.map, [], solidesEternels(state.structures), sources, undefined, portee)

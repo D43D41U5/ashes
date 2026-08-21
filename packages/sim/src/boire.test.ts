@@ -125,7 +125,7 @@ describe('boire le Foyer d\'un village (⑯)', () => {
     advanceUpkeep(aSec)
     // La bouche s'est arrêtée au plancher — seul le drain naturel (minuscule) a parlé.
     expect(aSec.villages[0]!.fuel).toBeGreaterThan(
-      CENDREUX.BOIRE.FOYER_PLANCHER - FIRE_UPKEEP.DRAIN_PER_TICK * FIRE_UPKEEP.ACT_FACTOR[2] * 4,
+      CENDREUX.BOIRE.FOYER_PLANCHER - FIRE_UPKEEP.DRAIN_PER_TICK * FIRE_UPKEEP.ACT_FACTOR(3) * 4,
     )
   })
 })

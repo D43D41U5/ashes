@@ -67,7 +67,7 @@ export interface Brume {
 
 /** Le jour tire-t-il une Brume ? Pur (`hash2`) — exposé pour les tests et les bancs. */
 export function brumeJourEligible(day: number): boolean {
-  return hash2(day, 0, BRUME_SALT) < BRUME.CHANCE_PER_DAY[actForDay(day) - 1]!
+  return hash2(day, 0, BRUME_SALT) < BRUME.CHANCE_PER_DAY(actForDay(day))
 }
 
 /**
@@ -268,7 +268,7 @@ export function advanceBrume(state: SimState): void {
   if (!state.map.cendre) return
   const day = seasonDayAtTick(state.tick, state.calendarScale)
   if (state.lastBrumeDay === day) return
-  if (BRUME.CHANCE_PER_DAY[actForDay(day) - 1]! <= 0) return
+  if (BRUME.CHANCE_PER_DAY(actForDay(day)) <= 0) return
   state.lastBrumeDay = day
   if (!brumeJourEligible(day)) return
   const corridor = elireCorridor(state, day)

@@ -17,8 +17,8 @@
 | `T.ACT_COLD` | [0, 25, 50] | `temperature.ts` ×2 — **la maîtresse** |
 | `BALANCE.ACT_HUNGER_FACTOR` | [1, 2, 3] | `economy.ts` |
 | `SEASON.REGROW_ACT_FACTOR` | [1, 1.5, 2] | `economy.ts` |
-| `ALIGNMENT.ACT_FACTOR` | [1, 1.5, 2] | `alignment.ts` |
-| `FIRE_UPKEEP.ACT_FACTOR` | [1, 2, 3] | `village.ts` |
+| `ALIGNMENT.ACT_FACTOR` | [1, 2, 3] | `alignment.ts` |
+| `FIRE_UPKEEP.ACT_FACTOR` | [1, 1.5, 2] | `village.ts` |
 | `NIGHT_HUNT.CHANCE_PER_MIN` | [0.12, 0.3, 0.55] | `nighthunt.ts` |
 | `BRUME.CHANCE_PER_DAY` | [0, 0.35, 0.5] | `brume.ts` ×2 |
 | `METEO.CHANCE_PER_CYCLE` | [0.5, 0.65, 0.8] | `meteo.ts` |

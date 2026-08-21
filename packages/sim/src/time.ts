@@ -16,7 +16,14 @@ export const DAY_TICKS_PER_CYCLE = Math.round(TICKS_PER_CYCLE * BALANCE.CYCLE_DA
 /** Ticks par jour de saison à l'échelle 1 (un jour réel). */
 export const TICKS_PER_SEASON_DAY = 86400 * BALANCE.TICK_RATE_HZ
 
-export type Act = 1 | 2 | 3
+/**
+ * L'ACTE EST UN ENTIER NON BORNÉ (spec `saison-sans-fin.md` R2 : il ne porte plus les chiffres,
+ * il NOMME). Le type `1 | 2 | 3` d'origine figeait dans le temps ce que la spec délie — comme
+ * `act_started.act` le figeait dans le bus. Les consommateurs passent par des LOIS totales
+ * (`actLaw`, `balance.ts`), jamais par une table indexée : un acte 7 ne rend rien d'indéfini.
+ * `actForDay` plafonne ENCORE à 3 — c'est le calendrier des tours (T2) qui le libère.
+ */
+export type Act = number
 
 export interface GameTime {
   tick: number

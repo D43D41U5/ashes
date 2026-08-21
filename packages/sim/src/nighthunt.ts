@@ -57,7 +57,7 @@ export function advanceNightHunt(state: SimState): void {
   if (!getGameTime(state).isNight) return
 
   const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
-  const chance = NIGHT_HUNT.CHANCE_PER_MIN[act - 1]!
+  const chance = NIGHT_HUNT.CHANCE_PER_MIN(act)
 
   for (const prey of preys(state)) {
     if (roll(state) >= chance) continue

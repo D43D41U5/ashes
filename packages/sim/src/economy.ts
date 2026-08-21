@@ -602,7 +602,7 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
       const sterile = facteurSterilite(state.map, node.tx, node.ty, frontActuel(state))
       node.regrowAt =
         state.tick +
-        Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR[day - 1]! * usure * sterile)
+        Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR(day) * usure * sterile)
       // LA DÉRIVE (spec recolte-vivante D1/R1) : un nœud de bois/fibre meurt sur sa tuile
       // et rouvre AILLEURS, dans le même bosquet. La pierre/le minéral reste sur place.
       // À `stock = 0` : le client peint la souche à l'ancien coin et fait grandir la pousse
@@ -949,7 +949,7 @@ export function advanceSpoilage(state: SimState): void {
 export function advanceEconomy(state: SimState): void {
   const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
   const perTick =
-    (BALANCE.HUNGER_PER_CYCLE_HOUR / (TICKS_PER_CYCLE / 24)) * BALANCE.ACT_HUNGER_FACTOR[act - 1]!
+    (BALANCE.HUNGER_PER_CYCLE_HOUR / (TICKS_PER_CYCLE / 24)) * BALANCE.ACT_HUNGER_FACTOR(act)
   const starvePerTick = BALANCE.STARVE_HP_PER_MIN / (60 * BALANCE.TICK_RATE_HZ)
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
   for (const entity of [...state.entities]) {

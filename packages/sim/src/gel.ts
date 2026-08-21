@@ -120,7 +120,7 @@ function plancherDeLaVallee(state: SimState): number {
   // besoin que de deux de ses cinq champs. Mêmes expressions, même ordre, zéro allocation.
   const jour = seasonDayAtTick(state.tick, state.calendarScale)
   const cycleTick = (state.tick + state.cycleOffset) % TICKS_PER_CYCLE
-  let t = TEMPERATURE.BASE - TEMPERATURE.ACT_COLD[actForDay(jour) - 1]!
+  let t = TEMPERATURE.BASE - TEMPERATURE.ACT_COLD(actForDay(jour))
   if (cycleTick >= DAY_TICKS_PER_CYCLE) t -= TEMPERATURE.NIGHT_COLD
   if (state.brume) t -= BRUME.COLD_MALUS
   if (state.meteo) t -= METEO.COLD[state.meteo.type]

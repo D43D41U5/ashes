@@ -193,7 +193,7 @@ describe('le froid létal & la tenue d’hiver (V2-15/16, fork froid tranché)',
 
   it('LE FORK : la plaine est LÉTALE en acte III de nuit (le discours devient vrai)', () => {
     // Ambiant plaine (biome 0), acte III, nuit = BASE − ACT_COLD[2] − NIGHT_COLD.
-    const plaineActIIINuit = T.BASE - T.ACT_COLD[2] - T.NIGHT_COLD
+    const plaineActIIINuit = T.BASE - T.ACT_COLD(3) - T.NIGHT_COLD
     expect(plaineActIIINuit).toBeLessThan(T.HYPOTHERMIA) // sous le seuil : ça TUE
     expect(coldDamagePerTick(plaineActIIINuit)).toBeGreaterThan(0)
   })

@@ -183,7 +183,7 @@ describe('A4 — la stérilité n’écrase jamais la signature « défriché »
     const map = carteRampe()
     const front = 200
     // Le pire cas cumulé : facteur d'acte max, usure max, stérilité max.
-    const acteMax = Math.max(...SEASON.REGROW_ACT_FACTOR)
+    const acteMax = SEASON.REGROW_ACT_FACTOR.plafond // la loi déclare son plafond (saison-sans-fin T1)
     const usureMax = 1 + BALANCE.DEPLETION_REGROW_PENALTY * (BALANCE.DEPLETION_MAX - 1)
     for (let x = 0; x < map.width; x++) {
       const sterile = facteurSterilite(map, x, 1, front)

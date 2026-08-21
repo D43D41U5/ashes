@@ -43,6 +43,45 @@ import { CAPACITE_COFFRE, CAPACITE_GRENIER, COMPONENT_TYPES, FUNCTION_IDS, coutO
 export { COMPONENT_TYPES }
 export type { ComponentType, FunctionId }
 
+/**
+ * ═══ LES LOIS D'ACTE — totales, jamais indexées (spec `saison-sans-fin.md` R1, tranche T1) ═══
+ *
+ * Une quantité de pression n'est plus une TABLE qu'on indexe `[act - 1]` : c'est une FONCTION
+ * de l'acte, définie pour tout acte ≥ 1, sans borne supérieure d'indice. Sous la saison sans
+ * fin, l'acte est un entier non borné (R2) ; une table à trois cases y rendait `undefined` au
+ * quatrième — en silence, puis `NaN` partout en aval.
+ *
+ * T1 est à COMPORTEMENT IDENTIQUE : la loi rend exactement ses paliers sur les actes 1..3 et
+ * TIENT le dernier au-delà — le plafond provisoire. La PENTE par tour (l'arc oscillant :
+ * `socle(k) + AMPLITUDE[(acte − 1) mod 4]`) arrive en T2, et ces fonctions sont le POINT UNIQUE
+ * où elle s'écrira — un consommateur ne saura jamais qu'elle a changé.
+ *
+ * A3 se tient PAR LE COMPILATEUR, pas par grep : une loi n'est pas indexable, donc `[act - 1]`
+ * est une erreur de compilation partout. (Une garde par grep sur les sources aurait crié sur
+ * les commentaires et s'arrêterait au premier renommage.)
+ *
+ * R1bis : `min`/`max`/`floor` seulement — pas une transcendante, rien qui diverge entre moteurs.
+ */
+export type ActTable<T> = ((act: number) => T) & { readonly paliers: readonly T[] }
+export type ActLaw = ActTable<number> & { readonly plafond: number }
+
+/** Une TABLE d'acte rendue totale : le premier palier avant 1, le dernier tenu au-delà. Pour ce
+ *  qui n'est pas une pente — une mixture météo, une portée assumée — et qui doit pourtant
+ *  répondre à tout acte. */
+export function actTable<T>(paliers: readonly T[]): ActTable<T> {
+  const n = paliers.length
+  const f = (act: number): T => {
+    const i = act < 1 ? 0 : act > n ? n - 1 : Math.floor(act) - 1
+    return paliers[i]!
+  }
+  return Object.assign(f, { paliers })
+}
+
+/** Une LOI d'acte : une table totale qui déclare son plafond — la valeur tenue à l'infini. */
+export function actLaw(paliers: readonly number[]): ActLaw {
+  return Object.assign(actTable(paliers), { plafond: paliers[paliers.length - 1]! })
+}
+
 /** Fréquence de la simulation, en ticks par seconde (GDD §11 : 10-15 Hz ;
  * dérogation actée à 20 Hz le 2026-07-05, voir docs/decisions.md). */
 const TICK_RATE_HZ = 20
@@ -73,7 +112,11 @@ export const TEMPERATURE = {
   // tranché cette session, GDD « froid létal en acte III ») : plaine de nuit en acte III
   // = 90 − 50 − 30 = 10 < HYPOTHERMIA(20) → le froid TUE la plaine, comme le discours le
   // promet. La réponse est la TENUE D'HIVER (elle plafonne l'exposition, voir temperature.ts).
-  ACT_COLD: [0, 25, 50] as const,
+  /** LA LOI MAÎTRESSE depuis que « le froid est le cadran » (pression-croissante, 2026-08-21) :
+   *  l'éveil, la torpeur et l'attraction des Cendreux dérivent de la température, qui dérive
+   *  de l'acte par elle. Refroidir sans fin escalade tout le reste — c'est elle que la saison
+   *  sans fin fera monter par tour (T2). Loi totale : tient 50 au-delà de l'acte III. */
+  ACT_COLD: actLaw([0, 25, 50]),
   /**
    * Décalage signé par terrain (id de TERRAINS). Absent = 0.
    *
@@ -463,7 +506,7 @@ export const BALANCE = {
   STARVE_HP_PER_MIN: 6,
 
   /** Multiplicateur de faim par acte — le Grand Froid mord (GDD §2). */
-  ACT_HUNGER_FACTOR: [1, 2, 3],
+  ACT_HUNGER_FACTOR: actLaw([1, 2, 3]), // loi totale (saison-sans-fin T1) : tient 3 au-delà
 
   /** Facteur de vitesse le ventre vide (faim à 0). */
   HUNGER_SPEED_MALUS: 0.5,
@@ -2966,7 +3009,11 @@ export const CENDREUX = {
    * acte III, toute la vallée se referme sur les feux. La table est par ACTE et c'est assumé :
    * c'est une PORTÉE de perception, pas une intensité — le continu vit dans l'éveil.
    */
-  CONVERGE_TILES: [20, 80, 10000] as const,
+  /** TABLE ASSUMÉE, pas une loi (plan pression-croissante : « c'est une PORTÉE de perception,
+   *  pas une intensité — le continu vit dans l'éveil »). Rendue TOTALE (le dernier palier tenu
+   *  au-delà de l'acte III) pour ne jamais rendre `undefined` sous la saison sans fin — la
+   *  continuifier serait une décision d'Alexis, pas un effet de bord de T1. */
+  CONVERGE_TILES: actTable([20, 80, 10000] as const),
   /**
    * ═══ « ILS BOIVENT LA CHALEUR » (décision d'Alexis, 2026-08-21) ═══
    *
@@ -3276,7 +3323,7 @@ export const FIRE_UPKEEP = {
    *  tienne ~3,5 cycles à l'acte I (spec « 3-4 jours »). */
   DRAIN_PER_TICK: 240 / ticksForCycles(3.5),
   /** Le Grand Froid brûle plus (même montée que la faim, §2). */
-  ACT_FACTOR: [1, 1.5, 2] as const,
+  ACT_FACTOR: actLaw([1, 1.5, 2]), // loi totale (saison-sans-fin T1) : tient 2 au-delà
   /** À SEC, un mur/barrière perd tant de PV/tick — un mur neuf (200) tombe en ~1,5 cycle. */
   WALL_DECAY_PER_TICK: 200 / ticksForCycles(1.5),
   /** Sous ce stock, le tableau poste « nourrir le Feu » (la tâche communautaire zéro, R16). */
@@ -3405,7 +3452,7 @@ export const WORLD_EVENTS = {
  */
 export const BRUME = {
   /** Chance qu'une Brume se lève, par jour de saison et par acte (acte I : jamais). */
-  CHANCE_PER_DAY: [0, 0.35, 0.5],
+  CHANCE_PER_DAY: actLaw([0, 0.35, 0.5]), // loi totale (saison-sans-fin T1) : tient 0,5 au-delà
   /** Rayon de la nappe, en tuiles. */
   RAYON: 8,
   /** Profondeur de l'incursion dans T0, depuis le front de Cendre (tuiles). */
@@ -3460,17 +3507,20 @@ export const METEO = {
    * L'ACTE, lui, vient toujours du JOUR DE SAISON : c'est la saison qui commande la
    * FRÉQUENCE (ici) et la MIXTURE (`TYPES`) — la courbe de pression du §8 est intacte.
    */
-  CHANCE_PER_CYCLE: [0.5, 0.65, 0.8],
+  CHANCE_PER_CYCLE: actLaw([0.5, 0.65, 0.8]), // loi totale (saison-sans-fin T1) : tient 0,8 au-delà
   /**
    * La table des types par acte (poids sommant à 1) : la pluie domine l'acte I, la neige
    * entre en II, le blizzard hante II-III, l'orage vit en I-II. L'ORDRE des clés est le
    * découpage du tirage cumulatif — le changer rebat les élections (contrat de replay).
    */
-  TYPES: [
+  // Une MIXTURE par acte, rendue TOTALE (saison-sans-fin T1) : la troisième est tenue au-delà
+  // de l'acte III. Une mixture n'est pas une pente — ce que l'hiver N changera dans ces poids
+  // est une décision de T2, pas une extrapolation.
+  TYPES: actTable([
     { pluie: 0.5, brouillard: 0.25, orage: 0.25 },
     { pluie: 0.3, neige: 0.35, brouillard: 0.15, blizzard: 0.1, orage: 0.02, vent_de_cendre: 0.08 },
     { neige: 0.5, blizzard: 0.3, brouillard: 0.15, orage: 0.01, vent_de_cendre: 0.04 },
-  ],
+  ]),
   /** Largeur de la bande, en tuiles. Le blizzard ≈ la carte jouée (~1 580 de large) :
    *  « carte entière » par CALIBRAGE, pas par mécanisme (spec R1). */
   LARGEUR: { pluie: 60, brouillard: 50, neige: 70, orage: 55, blizzard: 1600, vent_de_cendre: 420 },
@@ -3738,7 +3788,7 @@ export const CONVOY_LOOT: import('./items').ItemBag = {
 /** La saison (GDD §2, spec saison) : la pression, la Cendre, la fin. */
 export const SEASON = {
   /** Les sources se contractent : repousse des nœuds ralentie par acte. */
-  REGROW_ACT_FACTOR: [1, 1.5, 2],
+  REGROW_ACT_FACTOR: actLaw([1, 1.5, 2]), // loi totale (saison-sans-fin T1) : tient 2 au-delà
   /* (la méga-horde scriptée du premier crépuscule de la Cendre est SUPPRIMÉE — décision ⑲,
    *  2026-08-21 : la horde est une pente continue, la dernière nuit est naturellement la pire.) */
   /** Le jour où l'évacuation s'ouvre, et son rayon de « sauvetage ». */
@@ -3800,7 +3850,7 @@ export const ALIGNMENT = {
   SEED_WARMTH: 60,
   SEED_ENGAGEMENT: 60,
   /** Multiplicateur par acte de la saison (le Grand Froid vaut cher). */
-  ACT_FACTOR: [1, 2, 3],
+  ACT_FACTOR: actLaw([1, 2, 3]), // loi totale (saison-sans-fin T1) : tient 3 au-delà
   /** Dépôt de nourriture au grenier d'autrui : chaleur par point de valeur. */
   FOREIGN_DEPOSIT_WARMTH_PER_FOOD: 0.3,
   HEAL_OUTSIDER_WARMTH: 15,
@@ -3861,7 +3911,7 @@ export const NIGHT_HUNT = {
    * nuit doit être un DANGER, pas une exécution. Le Grand Froid, lui, serre la vis —
    * mais à ce moment-là le joueur a un épieu, un feu, et il sait pourquoi.
    */
-  CHANCE_PER_MIN: [0.12, 0.3, 0.55],
+  CHANCE_PER_MIN: actLaw([0.12, 0.3, 0.55]), // loi totale (saison-sans-fin T1) : tient 0,55 au-delà
   /** Rôdeurs simultanés sur une même proie. On peut perdre ; on ne doit pas être noyé. */
   MAX_ALIVE: 2,
   /** Ils naissent à cette distance : hors de vue, mais on les voit VENIR. */

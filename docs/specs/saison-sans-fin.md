@@ -1,6 +1,6 @@
 # La saison sans fin — une loi, deux réglages
 
-*Source : décisions d'Alexis du 2026-07-31 (journal). **Supersède le cadre de `saison.md`** (60 jours, trois actes, fin au jour 61) sans en annuler les mécanismes : la méga-horde, la chronique et les verdicts survivent, ils changent d'ancrage. Statut : **décidé, non implémenté**. Jalon : à placer (avant GATE 1 ? — question ouverte O7).*
+*Source : décisions d'Alexis du 2026-07-31 (journal). **Supersède le cadre de `saison.md`** (60 jours, trois actes, fin au jour 61) sans en annuler les mécanismes : la méga-horde, la chronique et les verdicts survivent, ils changent d'ancrage. Statut : **en cours — T1 (les dix lois totales) livrée le 2026-08-21, à comportement identique ; plan en cinq tranches dans `docs/superpowers/plans/2026-08-21-saison-sans-fin-tranches.md`**. Jalon : avant GATE 1 (O7 tranchée de fait par « continue », 2026-08-21). O1 est RÉPONDUE : **l’arc oscille** (décision d’Alexis 2026-08-21) — pas de dernier acte, un hiver qui revient plus dur.*
 
 ## Objectif de design
 
@@ -11,6 +11,7 @@ Ce qui a déclenché le pivot : le recensement des Cendreux du 2026-07-31 a mesu
 ## Règles
 
 - **R1 — Une loi, pas une table.** Les dix quantités de pression deviennent des fonctions du numéro d'acte, **définies pour tout acte ≥ 1, sans borne supérieure d'indice** : `ACT_COLD`, `ACT_HUNGER_FACTOR`, `HORDE_CHANCE_PER_NIGHT`, `HORDE_SIZE`, `UNDEAD_SHARE`, `UNDEAD_MAX_ALIVE`, `NIGHT_HUNT.CHANCE_PER_MIN`, `SEASON.REGROW_ACT_FACTOR`, `FIRE_UPKEEP.ACT_FACTOR`, `ALIGNMENT.ACT_FACTOR`. Chaque loi déclare sa **pente** et son **plafond** ; aucune n'accède plus à un tableau de trois cases.
+  - **R1ter — La liste, RELEVÉE le 2026-08-21 (T1) et non plus supposée.** La refonte pression-croissante a tué `UNDEAD_SHARE` (le cadran de température le remplace) et la méga-horde, et mis `HORDE_CHANCE`/`HORDE_TAILLE` en rampes continues sur le jour. Les dix lois de T1 sont donc : `TEMPERATURE.ACT_COLD` (**la maîtresse** — depuis que « le froid est le cadran », refroidir escalade tout le reste), `ACT_HUNGER_FACTOR`, `SEASON.REGROW_ACT_FACTOR`, `ALIGNMENT.ACT_FACTOR`, `FIRE_UPKEEP.ACT_FACTOR`, `NIGHT_HUNT.CHANCE_PER_MIN`, `BRUME.CHANCE_PER_DAY`, `METEO.CHANCE_PER_CYCLE`, plus deux **tables totales** qui ne sont pas des pentes — `METEO.TYPES` (une mixture) et `CENDREUX.CONVERGE_TILES` (une portée de perception assumée par le plan pression-croissante : la continuifier est une décision d'Alexis). Bâtisseurs : `actLaw` / `actTable` (`balance.ts`). T1 tient le dernier palier au-delà de l'acte III — **le plafond provisoire** ; la pente par TOUR (l'arc oscillant) s'écrira en T2 dans ces fonctions, point unique.
 - **R1bis — Déterministe par construction.** Les lois s'écrivent en `+ - * /`, `Math.min/max/round/floor` uniquement (invariant §2 : `**`, `exp`, `pow` interdits dans `/sim`). Une croissance géométrique se calcule par multiplications répétées bornées, jamais par exponentiation.
 - **R2 — L'acte devient un marqueur de fiction.** Il ne porte plus les chiffres : il nomme (chronique, ciel, musique, bandeau). On peut en avoir quinze sans retabuler quoi que ce soit. `actForDay` cesse de rendre `1 | 2 | 3` et rend un entier non borné.
 - **R3 — Deux réglages, indépendants.** (a) la **vitesse du calendrier** — combien de jours de jeu passent par cycle jour/nuit ; (b) le **reset** — jamais, ou toutes les `SAISON_JOURS_IRL` journées réelles.
@@ -21,7 +22,7 @@ Ce qui a déclenché le pivot : le recensement des Cendreux du 2026-07-31 a mesu
 
 ## Ce qui reste ouvert
 
-- **O1 — L'arc nominal.** Combien d'actes, et surtout : **à quoi ressemble le DERNIER ?** R6 ne se calcule pas sans lui (c'est lui qui fixe la vitesse dérivée). Deux inconnues pour une équation — fixer le point d'arrivée fixe aussi la pente.
+- **O1 — L'arc nominal.** ~~Combien d'actes, et surtout : à quoi ressemble le DERNIER ?~~ **RÉPONDUE le 2026-08-21 (Alexis) : l'arc OSCILLE.** Il n'y a pas de dernier acte : un hiver qui revient plus dur — `loi(acte) = min(plafond, socle(k) + AMPLITUDE[(acte − 1) mod 4])`, `k` le tour, `socle(k+1) = socle(k) + PAS`. A2 se réénonce alors sur `k`. Restent à poser pour T2, une à une : la longueur de l'année en jours, le nom des actes ≥ 4, l'ordre de grandeur des PAS.
 - **O2 — Le sort de l'Arche.** `SEASON.EVAC_DAY = 55` / `EVAC_DEPART_DAYS = 3` (R3-R4 de `saison.md`) : l'évacuation *était* la fin. Pistes signalées, non tranchées — **solo** : sortie volontaire (« partir clôt ta partie », le geste d'extraction, ce qui donne un sens au « combien de jours as-tu tenu ») ; **multi** : événement de score en fin de saison, avant le wipe.
 - **O3 — Les pentes et plafonds des dix lois** (calibrage playtest, via `pnpm scenario` et le recensement).
 - **O4 — Le seuil de bascule nombre→létalité de R7**, et le plafond d'entités simultanées qu'il protège.
@@ -33,7 +34,7 @@ Ce qui a déclenché le pivot : le recensement des Cendreux du 2026-07-31 a mesu
 
 - **A1** — `actForDay(jour)` est défini et **monotone non décroissant pour tout jour ≥ 1**, sans borne supérieure ; balayé sur 1…10 000, il ne lance pas et ne rend jamais `undefined`.
 - **A2** — Chaque quantité de pression est **monotone non décroissante en acte** (décroissante pour celles qui doivent baisser) et **bornée** : chacune atteint son plafond déclaré et n'en bouge plus. Balayage exhaustif sur les 10 lois × 200 actes, pas des cas choisis.
-- **A3** — Aucun accès indexé à un tableau d'actes ne subsiste : `grep` sur `[act - 1]` rend zéro résultat dans `/sim`, et le lint de pureté passe.
+- **A3** — Aucun accès indexé à un tableau d'actes ne subsiste. **Tenu PAR LE COMPILATEUR depuis T1** (une loi n'est pas indexable : `[act - 1]` est une erreur de compilation partout — `pnpm check`), et non par grep, qui crierait sur les commentaires et s'arrêterait au premier renommage. Le lint de pureté passe.
 - **A4** — **LE COUPLAGE IRL, ET C'EST LA GARDE QUI A MANQUÉ EN SOLO.** Pour `SAISON_JOURS_IRL` ∈ {1, 3, 7, 30, 90} : la saison contient **exactement l'arc nominal**, le dernier acte **commence avant la fin**, et son premier crépuscule tombe **dans** la saison. C'est la reproduction du bug corrigé par `calendarScaleForSeasonCycles` (l'acte III arrivait après la fin), généralisée au réglage d'admin.
 - **A5** — Le solo ne se réinitialise jamais : à `10 × 60` jours de jeu, la sim tourne encore, et l'acte y est strictement supérieur à celui du jour 60.
 - **A6** — Déterminisme : une saison rejoue **au bit près** à toute vitesse de calendrier et à toute longueur de saison, chronique comprise.

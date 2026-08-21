@@ -99,7 +99,7 @@ export interface BandeMeteo {
  * l'acte, donc la fréquence. Voir `METEO.CHANCE_PER_CYCLE` pour le pourquoi.
  */
 export function meteoCycleEligible(cycle: number, day: number): boolean {
-  return hash2(cycle, 0, METEO_SALT) < METEO.CHANCE_PER_CYCLE[actForDay(day) - 1]!
+  return hash2(cycle, 0, METEO_SALT) < METEO.CHANCE_PER_CYCLE(actForDay(day))
 }
 
 /**
@@ -109,7 +109,7 @@ export function meteoCycleEligible(cycle: number, day: number): boolean {
  * (patron des canaux Brume).
  */
 export function meteoTypeBrut(cycle: number, day: number): MeteoType {
-  const table = METEO.TYPES[actForDay(day) - 1]!
+  const table = METEO.TYPES(actForDay(day))
   const roll = hash2(cycle, 1, METEO_SALT)
   let cumul = 0
   let dernier: MeteoType = 'pluie'

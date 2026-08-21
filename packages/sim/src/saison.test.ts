@@ -53,7 +53,7 @@ describe('la pression (A1)', () => {
     surLeNoeud()
     step(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'harvest', nodeId: 1 } }])
     const regrowAct2 = sim.nodes[0]!.regrowAt - sim.tick + 1
-    expect(regrowAct2 / regrowAct1).toBeCloseTo(SEASON.REGROW_ACT_FACTOR[1]! / SEASON.REGROW_ACT_FACTOR[0]!, 1)
+    expect(regrowAct2 / regrowAct1).toBeCloseTo(SEASON.REGROW_ACT_FACTOR(2) / SEASON.REGROW_ACT_FACTOR(1), 1)
   })
 })
 

@@ -782,7 +782,7 @@ function fallToRuin(state: SimState, villageId: number): void {
  */
 export function advanceUpkeep(state: SimState): void {
   const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
-  const drain = FIRE_UPKEEP.DRAIN_PER_TICK * FIRE_UPKEEP.ACT_FACTOR[act - 1]!
+  const drain = FIRE_UPKEEP.DRAIN_PER_TICK * FIRE_UPKEEP.ACT_FACTOR(act)
   // LES BUVEURS DU FOYER (décision ⑯) — relevés une fois si un cendreux existe. Le siège
   // du Feu de village a enfin des dents : une horde arrivée au Foyer en DRAINE le stock,
   // au même multiplicateur que la pluie multiplie le drain. AVEC UN PLANCHER (⑯) : la

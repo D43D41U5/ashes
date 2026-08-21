@@ -44,7 +44,7 @@ export function recordAct(state: SimState, entityId: number, warmthDelta: number
 /** Facteur saisonnier : nourrir pendant le Grand Froid vaut cher. */
 export function seasonActFactor(state: SimState): number {
   const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
-  return ALIGNMENT.ACT_FACTOR[act - 1]!
+  return ALIGNMENT.ACT_FACTOR(act)
 }
 
 // ─── Le premier sang (spec R4) ────────────────────────────────────────────
