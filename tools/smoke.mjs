@@ -14775,6 +14775,83 @@ const SCENARIOS = {
     }
     console.log(`→ ${OUT}/sang-1-pistes-jour.png · sang-2-giclee-vol.png · sang-3-giclee-posee.png · sang-4-pistes-nuit.png`)
   },
+
+  /**
+   * LA STÈLE (2026-08-21, spec annales.md R8) — le lecteur de pierre du pays d'avant SE VOIT.
+   *
+   * Trois choses à l'œil, aucune mesure fine : ① les stèles EXISTENT sur la carte jouée et
+   * leurs textures (jour + crown absente : elle est basse) sont générées ; ② de près, la
+   * pierre se lit — équarrie, gravée, moussue — et ne flotte pas ; ③ la nuit, sa version
+   * `_lit` tient (les gravures restent lisibles — c'est une pierre qui parle).
+   *
+   * Exige `--dev` (debug_teleport). La boucle DORT pendant chaque capture (leçon consignée :
+   * l'horloge headless fond les frames).
+   */
+  async stele(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(800)
+
+    const etat = await page.evaluate(() => {
+      const sc = window.__BRAISES__.scene
+      const steles = (sc.map.zones ?? []).filter((z) => z.kind === 'stele')
+      return {
+        steles: steles.map((z) => ({ x: z.x, y: z.y, name: z.name })),
+        tex: sc.textures?.exists?.('poi-stele') ?? false,
+      }
+    })
+    console.log(`état : ${etat.steles.length} stèle(s), texture jour ${etat.tex ? 'générée' : 'ABSENTE'}`)
+    if (etat.steles.length === 0) { console.error('!! aucune stèle sur la carte jouée — rien à voir'); return }
+    if (!etat.tex) console.error('!! la texture poi-stele n\'est pas générée')
+
+    // CHAQUE stèle, de jour — et pour chacune, le SPRITE réel (pas la zone) : où le rendu
+    // l'a posée, sur quelle texture, à quelle profondeur. La zone dit l'intention, le
+    // sprite dit le fait.
+    // Une action PAR envoi, avec son attente (patron `frontiere` — groupées dans un seul
+    // evaluate, la seconde se perdait : mesuré, la caméra restait à 22 tuiles de la cible
+    // et l'heure ne bougeait pas), puis on VÉRIFIE la position au lieu de la supposer.
+    const agir = async (action, ms) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const pos = () => page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+    await agir({ type: 'debug_set_hour', hour: 12 }, 300)
+    for (let i = 0; i < etat.steles.length; i++) {
+      const cible = etat.steles[i]
+      for (let essai = 0; essai < 3; essai++) {
+        await agir({ type: 'debug_teleport', x: cible.x + 0.5, y: cible.y + 3.5 }, 600)
+        const p = await pos()
+        if (p && Math.abs(p.x - (cible.x + 0.5)) < 3 && Math.abs(p.y - (cible.y + 3.5)) < 3) break
+        if (essai === 2) console.error(`!! TP raté vers la stèle ${i + 1} : joueur en ${p ? `${p.x.toFixed(1)},${p.y.toFixed(1)}` : '?'}`)
+      }
+      await page.waitForTimeout(900)
+      const sprite = await page.evaluate(() => {
+        const sc = window.__BRAISES__.scene
+        const trouve = []
+        const visite = (obj) => {
+          if (obj.texture?.key === 'poi-stele' || obj.texture?.key === 'poi-stele_lit') {
+            trouve.push({ key: obj.texture.key, x: Math.round(obj.x), y: Math.round(obj.y), visible: obj.visible, depth: obj.depth, alpha: obj.alpha })
+          }
+          for (const c of obj.list ?? []) visite(c)
+        }
+        for (const c of sc.children.list) visite(c)
+        const cam = sc.cameras.main
+        return { sprites: trouve, cam: { sx: Math.round(cam.scrollX), sy: Math.round(cam.scrollY), zoom: cam.zoom } }
+      })
+      console.log(`stèle ${i + 1} (${cible.name} en ${cible.x},${cible.y}) — sprites : ${JSON.stringify(sprite.sprites)} · cam ${JSON.stringify(sprite.cam)}`)
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+      await page.screenshot({ timeout: 90000, path: `${OUT}/stele-${i + 1}-jour.png` })
+      await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    }
+
+    // PAS DE CAPTURE DE NUIT ICI, et la raison est consignée : dans ce scénario, un SECOND
+    // `debug_set_hour` du même run reste sans effet (constaté deux fois — 12h passe au
+    // premier envoi, 0 comme 23 sont ignorés ensuite ; le handler sim est sain à la lecture).
+    // SUSPECTÉ : un caprice du chemin debug du harnais, non élucidé. La version _lit de la
+    // stèle passe par le pipeline commun à toutes les pierres (poi-lit) — le risque de nuit
+    // est porté par leurs gardes. Si la nuit doit se prouver ICI, élucider d'abord le refus.
+    console.log(`→ ${OUT}/stele-N-jour.png`)
+  },
 }
 
 const run = SCENARIOS[scenario]

@@ -714,25 +714,36 @@ export const POI_LIT_DEFS_DATA: readonly PoiLitDef[] = [
     ],
   },
   {
-    // LA STÈLE : la pierre gravée, basse et équarrie — même géométrie que sa texture jour
-    // (poi-art), en blocs. Les gravures sont des DÉTAILS sombres : elles se lisent la nuit
-    // aussi, c'est une pierre qui parle.
+    // LA STÈLE : la pierre gravée, basse et équarrie. MESURÉ au premier smoke (2026-08-21) :
+    // la première forme — UN grand bloc — rendait une DALLE beige plate : la normale
+    // (passes:1/k:3.5, recette des petits props) n'avait aucune arête à mordre. La silhouette
+    // se fait donc en blocs ÉTAGÉS qui rétrécissent (le patron pierre_levee, en plus droit),
+    // et les gravures sont des CRACKS — le pipeline les creuse dans la normale : des SILLONS
+    // qui prennent la lumière, pas des lignes peintes qui se noient.
     slug: 'stele',
     w: 22,
     h: 44,
     blocks: [
-      { rect: [4, 8, 14, 32], tone: STONE_A },
-      { rect: [3, 5, 16, 4], tone: STONE_B },
+      { rect: [3, 36, 16, 7], tone: STONE_A }, //  le socle, plus large — dressée par des mains
+      { rect: [4, 24, 14, 13], tone: STONE_A },
+      { rect: [5, 11, 12, 14], tone: STONE_B },
+      { rect: [4, 6, 14, 6], tone: STONE_B }, //   le chapeau équarri, en léger débord
     ],
     accents: [
-      { rect: [4, 10, 3, 26], color: QUARTZ },
-      { rect: [5, 38, 8, 3], color: MOSS },
+      { rect: [5, 13, 2, 22], color: QUARTZ }, //  l'arête qui prend le jour
+      { rect: [3, 39, 8, 4], color: MOSS }, //     le temps a passé dessus
     ],
     details: [
-      { rect: [8, 13, 6, 1], color: GRAIN_D },
-      { rect: [8, 17, 5, 1], color: GRAIN_D },
-      { rect: [8, 21, 6, 1], color: GRAIN_D },
-      { rect: [8, 25, 4, 1], color: GRAIN_D },
+      { rect: [14, 30, 4, 2], color: MOSS_DK },
+      { rect: [8, 9, 5, 1], color: GRAIN_L },
+    ],
+    cracks: [
+      // L'ÉCRITURE : quatre lignes gravées, courtes et régulières — illisibles, et c'est le
+      // point : on voit QUE ça parle. Des sillons dans la normale, lisibles jour et nuit.
+      { path: [[8, 15], [15, 15]] },
+      { path: [[8, 19], [14, 19]] },
+      { path: [[8, 23], [15, 23]] },
+      { path: [[8, 27], [13, 27]] },
     ],
   },
   {
