@@ -2916,6 +2916,32 @@ export const CENDREUX = {
     FUREUR: 12,
   },
   /**
+   * ═══ LES SENS HONNÊTES (décision d'Alexis, 2026-08-21 — spec R24-R25) ═══
+   *
+   * Le Cendreux cesse d'être un rayon nu : sa détection lit le STIMULUS de chasse (allure,
+   * couvert, météo sur la vue — `stimulusPourLesMorts`) et le sol lui PORTE les impacts
+   * (`secouerLeSol`, module `sens.ts`). Peau diégétique tranchée en QCM : la VIBRATION DU SOL —
+   * les morts du sol n'entendent pas, ils sentent ce qui l'ébranle. D'où les exclusions de
+   * R25 : la corde d'arc, la flèche, la main qui cueille et le coup dans le vide ne portent
+   * pas ; un monstre n'émet jamais (décision ⑤ : pas d'alerte goule→goule, même par le sol) ;
+   * et le brouillard voile des yeux, jamais le sol.
+   */
+  SENS: {
+    /** Facteur du canal vibration du PAS (bruit d'allure × litière × ceci). À 1, le marcheur
+     *  à découvert garde ses 5 tuiles au bit près et le sprint porte à 5 × 1,6 = 8. */
+    VIBRATION: 1,
+    /** Plancher ABSOLU de détection, en tuiles — après stimulus ET météo : marcher SUR une
+     *  carcasse la réveille TOUJOURS, même immobile sous la pluie (la garantie VUE_PLANCHER,
+     *  que le facteur météo trouait : 0,85 tuile sous la pluie, 0,5 sous le brouillard). */
+    CONTACT: 1,
+    /** Portée de secousse d'un coup qui PORTE (mêlée qui touche, coup d'OUTIL de récolte),
+     *  multipliée par l'éveil du Cendreux qui la sent. */
+    COUP: 8,
+    /** Portée de secousse d'une pose de pièce (`build`, `place_component`) — le chantier
+     *  s'entend de plus loin que le coup, comme la construction de PZ (15) devant sa marche (7). */
+    BATIR: 12,
+  },
+  /**
    * PORTÉE D'ÉLECTION DU FEU-CIBLE d'un solitaire qui converge (décision ① — « il marche, et de
    * plus en plus loin ») : acte I, ses 20 tuiles historiques (statu quo) ; acte II, la ceinture ;
    * acte III, toute la vallée se referme sur les feux. La table est par ACTE et c'est assumé :

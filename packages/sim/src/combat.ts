@@ -26,6 +26,7 @@ import {
 } from './balance'
 import { willRiseAsCendreux } from './cendreux'
 import { ligneDegagee, resolveMove, traitLibre } from './collision'
+import { secouerLeSol } from './sens'
 import { isInvulnerable } from './debug'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
@@ -587,6 +588,14 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     const s = state.structures.find((st) => st.id === windup.structureId)
     if (s && distSq(attacker.x, attacker.y, s.tx + 0.5, s.ty + 0.5) <= COMBAT.STRUCTURE_STRIKE_RANGE * COMBAT.STRUCTURE_STRIKE_RANGE) {
       applyStructureDamage(state, s.id, strike.damage, attacker.id)
+      // L'IMPACT PORTE (spec cendreux R25) : un VIVANT qui frappe du bâti — le raider qui
+      // défonce un grenier — ébranle le sol jusqu'aux morts. Jamais un monstre (décision ⑤ :
+      // pas d'alerte goule→goule, même par le sol — c'est la horde elle-même qui frappe ici),
+      // jamais un trait (aucune IA ne tire sur du bâti aujourd'hui : la garde est gratuite,
+      // et elle tient le jour où l'une le fera).
+      if (windup.ranged !== true && !state.monsters.some((m) => m.entityId === attacker.id)) {
+        secouerLeSol(state, s.tx + 0.5, s.ty + 0.5, CENDREUX.SENS.COUP)
+      }
     }
     delete attacker.windup
     return
@@ -747,6 +756,17 @@ function resolveStrike(state: SimState, attacker: Entity): void {
       )
     }
     struck = true
+  }
+
+  // L'IMPACT PORTE (spec cendreux R25) : la mêlée d'un VIVANT qui TOUCHE un corps ébranle le
+  // sol jusqu'aux morts — au LIEU DU GESTE (la position du frappeur : une zone peut toucher
+  // plusieurs corps, le pied qui se plante n'en a qu'une). Trois exclusions, et chacune est
+  // la spec : le coup dans le vide (`struck` — pas d'impact), le trait (`ranged` — la corde et
+  // la flèche ne vibrent pas le sol, T7 intact, le tir reste l'arme silencieuse), et le
+  // monstre (décision ⑤ — pas d'alerte goule→goule ; le vol de chaleur du Cendreux juste
+  // au-dessus n'émet donc rien).
+  if (struck && !ranged && !attackerMonster) {
+    secouerLeSol(state, attacker.x, attacker.y, CENDREUX.SENS.COUP)
   }
 
   // ═══ UNE FLÈCHE SUR DEUX SE PERD (décision d'Alexis, 2026-08-02) ═══

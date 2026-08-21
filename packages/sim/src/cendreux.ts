@@ -6,7 +6,7 @@ import { startAttack } from './combat'
 import { distSq } from './geometry'
 import { emitEvent } from './events'
 import { fireActive, fireState } from './fire'
-import { baselineTemperature, eveilCendreuxAt, eveilPourTemperature } from './temperature'
+import { baselineTemperature, eveilPourTemperature } from './temperature'
 import { isEmpty, pourInto } from './items'
 import {
   attackBlockingStructure,
@@ -21,7 +21,7 @@ import {
   type Monster,
 } from './monsters'
 import { densiteDesMorts, siteDansLaCouronne } from './morts'
-import { isPrey } from './faune'
+import { isPrey, stimulusPourLesMorts } from './faune'
 import { hash2 } from './noise'
 import { pathToward } from './pathfinding'
 import { seasonDayAtTick, seasonRamp } from './time'
@@ -189,21 +189,6 @@ export function nearestWarmth(
 }
 
 /**
- * L'ÉVEIL DE CE CENDREUX-LÀ : la pente de température (`eveilCendreuxAt`), atténuée par sa
- * SATIÉTÉ — la chaleur bue le réchauffe, donc l'endort (décision ⑰ : « rassasié, il
- * s'affaisse »). La satiété s'ajoute au froid du monde comme des degrés portés sur soi.
- */
-export function eveilDuCendreux(state: SimState, monster: Monster, entity: Entity): number {
-  const brut = eveilCendreuxAt(state, entity.x, entity.y, state.tick)
-  const satiete = monster.satiete ?? 0
-  if (satiete <= 0) return brut
-  // Plein (SATIETE_MAX), il porte (CHAUD − FROID) degrés de trop : amorphe partout où le
-  // monde seul ne l'aurait pas endormi — sauf au cœur du froid extrême, qui déborde l'échelle.
-  const e = brut - satiete / CENDREUX.BOIRE.SATIETE_MAX
-  return e < 0 ? 0 : e
-}
-
-/**
  * IA du Cendreux : amorphe quand il fait chaud (le cadran de température), rampe vers une
  * proie en vue, cherche la chaleur quand le froid mord, coule vers le Feu ciblé quand il
  * marche en horde — et frappe ce qui lui barre la route.
@@ -272,8 +257,16 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
     // exactement le coût que R5 existe pour éviter. Ses YEUX marchent toujours : ce qui passe
     // à `aggroRange` se fait mordre, horde ou pas.
     //
-    // SA VUE SUIT L'ÉVEIL — avec un plancher : marcher SUR une carcasse la réveille toujours.
-    const seen = nearestPrey(state, entity, def.aggroRange * Math.max(eveil, CENDREUX.TORPEUR.VUE_PLANCHER))
+    // SA VUE SUIT L'ÉVEIL — et elle est HONNÊTE (spec R24, 2026-08-21) : la portée se
+    // multiplie par le STIMULUS que la proie offre (allure × couvert, vibration du pas —
+    // `stimulusPourLesMorts`, le vocabulaire de la chasse entré UNE fois). L'accroupi longe
+    // un champ de dormeurs, le sprinteur porte au-delà de la vue nominale (5 × 1,6 = 8). Le
+    // plancher de CONTACT reste ABSOLU (R24bis) : marcher SUR une carcasse la réveille
+    // toujours — désormais même sous la pluie, que le facteur météo laissait trouer.
+    const seen = nearestPrey(state, entity, def.aggroRange * Math.max(eveil, CENDREUX.TORPEUR.VUE_PLANCHER), {
+      stimulusOf: (e, meteo) => stimulusPourLesMorts(state, e, meteo),
+      plancher: CENDREUX.SENS.CONTACT,
+    })
     if (seen) {
       goal = { x: seen.x, y: seen.y, prey: seen }
       // LE DERNIER LIEU, PAS LA PERSONNE (décision ⑨) : il retient OÙ il vous a vu. Rompre

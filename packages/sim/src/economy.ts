@@ -38,11 +38,13 @@ import {
   type Recipe,
   type RecipeId,
   type ToolTier,
+  CENDREUX,
 } from './balance'
 import { harvestFactor } from './alignment'
 import { die } from './combat'
 import { facteurSterilite, frontActuel } from './cendre'
 import { emitEvent } from './events'
+import { secouerLeSol } from './sens'
 import { floreEntierementGelee, floreGelee } from './gel'
 import { distSq } from './geometry'
 import { heldSlot, wearHeld } from './inventory-actions'
@@ -564,6 +566,11 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
   const yielded = whole ? Math.min(node.stock, room) : Math.min(node.stock, base + bonus, room)
   addItems(actor.inventory, { [def.item]: yielded })
   node.stock -= yielded
+  // L'IMPACT PORTE (spec cendreux R25) : le coup d'OUTIL ébranle le sol jusqu'aux morts — la
+  // hache et la pioche, jamais la main qui cueille (`tool: null`) ni la cueillette d'un geste
+  // (`whole`). Le PNJ bûcheron émet comme le joueur : c'est l'ACTIVITÉ qui appelle, et l'éveil
+  // module la portée — de jour au chaud, le village martèle sans réveiller personne.
+  if (!whole && def.tool !== null) secouerLeSol(state, node.tx + 0.5, node.ty + 0.5, CENDREUX.SENS.COUP)
   if (node.stock <= 0) {
     const day = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
     // LE DÉFRICHEMENT (`defriche.ts`, décision d'Alexis 2026-08-06) : chez soi, ce qui

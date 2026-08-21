@@ -17,6 +17,7 @@
  */
 import {
   BALANCE,
+  CENDREUX,
   CIRCLES,
   COMBAT,
   FAUNA,
@@ -534,6 +535,24 @@ export function avatarThreat(state: SimState, e: Entity): Threat {
 export function avatarDetectability(state: SimState, e: Entity): number {
   const t = avatarThreat(state, e)
   return Math.max(t.vision, t.noise)
+}
+
+/**
+ * LE STIMULUS QU'UN AVATAR OFFRE AUX MORTS (spec cendreux R24 — les sens honnêtes). Même
+ * patron qu'`avatarThreat` — la furtivité entre UNE fois, ici — mais la peau du sens diffère :
+ * le Cendreux n'a pas d'oreilles, il SENT le sol. Le canal VUE est celui de la chasse (allure
+ * × couvert, bander se voit — un mort a des yeux) ; le canal VIBRATION est le pas qui ébranle
+ * (bruit d'allure × litière × `SENS.VIBRATION`), SANS `DRAW_NOISE` (la corde d'arc est un truc
+ * d'oreilles — T7 intact, le tir long reste propre) et SANS le couvert : la végétation cache
+ * des yeux, jamais du sol. Le portage lourd interdit le silence pour les morts aussi (C2,
+ * via `gaitNoise`). LA MÉTÉO VOILE LA VUE SEULE (`meteo`, le facteur que `nearestPrey` a
+ * relevé au point de la proie) : le brouillard n'étouffe pas le sol — un sprint s'y sent à
+ * la même distance qu'au clair.
+ */
+export function stimulusPourLesMorts(state: SimState, e: Entity, meteo = 1): number {
+  const vue = gaitVisibility(e) * coverAt(state, e.x, e.y) * (drawTell(e) ? HUNT.DRAW_VISIBILITY : 1) * meteo
+  const vibration = gaitNoise(e) * bruitDuSol(state, Math.floor(e.x), Math.floor(e.y)) * CENDREUX.SENS.VIBRATION
+  return Math.max(vue, vibration)
 }
 
 /**

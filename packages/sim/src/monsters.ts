@@ -388,14 +388,29 @@ export function spawnMonster(
  * n'aveugle pas l'observateur au soleil. Dans la LOI, une fois : tous les
  * consommateurs (l'aggro du Cendreux, le vivant qui prime dans `nearestWarmth`)
  * en héritent. Sans front, le facteur vaut 1 : bit-identique à avant.
+ *
+ * LES SENS HONNÊTES (spec cendreux R24-R24bis) entrent par `opts`, et par lui seul —
+ * sans `opts`, la fonction est bit-identique à avant pour tous ses autres consommateurs.
+ * `stimulusOf` REMPLACE le facteur météo par ce que LA PROIE offre, et reçoit ce facteur en
+ * second argument : c'est au stimulus de dire quel canal la météo voile (la vue) et lequel
+ * elle ne touche pas (la vibration du sol) — la météo entre toujours UNE fois, ici, dans la
+ * loi. `plancher` est la garantie de CONTACT, appliquée APRÈS tout le reste — marcher sur
+ * une carcasse la réveille toujours, même immobile sous la pluie.
  */
-export function nearestPrey(state: SimState, entity: Entity, range: number): Entity | undefined {
+export function nearestPrey(
+  state: SimState,
+  entity: Entity,
+  range: number,
+  opts?: { stimulusOf?: (e: Entity, meteo: number) => number; plancher?: number },
+): Entity | undefined {
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
   let best: Entity | undefined
   let bestD = Infinity
   for (const e of state.entities) {
     if (e.id === entity.id || monsterIds.has(e.id) || e.hp <= 0) continue
-    const reach = range * meteoVisionFactor(state, e.x, e.y)
+    const meteo = meteoVisionFactor(state, e.x, e.y)
+    let reach = range * (opts?.stimulusOf !== undefined ? opts.stimulusOf(e, meteo) : meteo)
+    if (opts?.plancher !== undefined && reach < opts.plancher) reach = opts.plancher
     const d = distSq(entity.x, entity.y, e.x, e.y)
     if (d >= reach * reach) continue
     if (d < bestD || (d === bestD && best && e.id < best.id)) {

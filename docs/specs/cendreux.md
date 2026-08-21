@@ -367,6 +367,68 @@ mesure qui donne leur forme aux règles ci-dessous.
   vite, elle ne rattrape personne, et se laisser encercler tue. Le danger est la **densité**,
   purement émergent. *Les nombres restent des ordres de grandeur, calibrés en playtest.*
 
+### 9. Les sens honnêtes — la vue qui se trompe, le sol qui porte **[2026-08-21]**
+
+*Chantier acté par Alexis le 2026-08-21 (« fidélité Project Zomboid, sans dénaturer ») : le
+Cendreux gagne des SENS au lieu d'un rayon nu. Peau diégétique tranchée en QCM : **la
+VIBRATION DU SOL** — les morts du sol n'entendent pas, ils SENTENT ce qui ébranle le sol.
+Jusqu'ici, la furtivité du joueur (`chasse.md` C2-C5) n'existait que pour le gibier et les
+loups : s'accroupir ne servait à rien contre un mort, sprinter au milieu des dormeurs ne
+coûtait rien, marteler une palissade à six tuiles d'une carcasse ne la réveillait pas.*
+
+- **R24 — LA VUE EST HONNÊTE : l'allure, le couvert et la pluie comptent, enfin.** La détection
+  d'une proie (`nearestPrey` du Cendreux) se multiplie par le STIMULUS que la proie offre — le
+  même vocabulaire que la chasse lit depuis toujours, entré UNE fois (le patron
+  d'`avatarThreat`) : le max de deux canaux.
+  - **Le canal VUE** : visibilité de l'allure (`VIS_STILL` 0,25 → `VIS_SPRINT` 1,4) × couvert
+    effectif de la tuile × « bander se voit » (`DRAW_VISIBILITY`, T7 — un mort a des yeux)
+    × **la météo** (`meteoVisionFactor` au point de la proie, `meteo.md` R7 — la pluie voile
+    des yeux).
+  - **Le canal VIBRATION** : bruit d'allure (`NOISE_STILL` 0,25 → `NOISE_SPRINT` 1,6, portage
+    lourd plancher à la marche — C2 vaut pour les morts aussi) × litière du sol
+    (`bruitDuSol`) × `SENS.VIBRATION`. **Ni couvert, ni météo** : la végétation cache des
+    YEUX et le brouillard les voile, mais ni l'une ni l'autre n'étouffent le sol — au cœur des
+    feuillus la litière vous porte, et dans le brouillard un sprint se sent à la même distance
+    qu'au clair.
+  Le marcheur à découvert garde ses 5 tuiles (stimulus 1 : statu quo au bit près) ; l'accroupi
+  tombe vers 2-3 ; le sprinteur porte AU-DELÀ de la vue nominale (5 × 1,6 = 8 tuiles à plein
+  éveil — pire cas : la litière profonde, × 1,5, soit 12). **La chaleur, elle, ne se cache
+  pas** : `nearestWarmth` reste un rayon nu — au cœur du froid votre propre chaleur vous
+  trahit à 20 tuiles. La furtivité est un verbe de jour et de tiède ; la nuit profonde
+  d'acte III reste la leur (T12-T13 : la nuit chasse et elle a une parade — ils approchent,
+  mais le VERROU des yeux reste négociable).
+- **R24bis — LE CONTACT EST UN PLANCHER ABSOLU** (`SENS.CONTACT`). Quiconque à une tuile d'un
+  Cendreux est détecté, quels que soient l'allure, le couvert ET la météo : marcher SUR une
+  carcasse la réveille TOUJOURS. C'est l'ancienne garantie `VUE_PLANCHER`, désormais tenue
+  aussi sous la pluie — elle ne l'était pas (le facteur météo la trouait : 0,85 tuile sous la
+  pluie, 0,5 sous le brouillard). Le nettoyage au matin (décision ⑮) reste un geste risqué,
+  jamais gratuit.
+- **R25 — LES IMPACTS ÉBRANLENT LE SOL, et le sol porte jusqu'aux morts.** Un coup qui PORTE
+  secoue le sol (`secouerLeSol`, module feuille `sens.ts`) : tout Cendreux HORS HORDE dans
+  `portée × éveil` prend le **lieu du geste** pour **dernier lieu vu** (`lastSeenX/Y`,
+  décision ⑨ — il ira VÉRIFIER, n'y trouvera rien, reprendra sa marche ; aucun état neuf,
+  aucun tirage). Le lieu du geste : le **nœud** frappé pour la récolte, la **tuile** posée pour
+  le chantier, la **position du frappeur** pour la mêlée (une zone peut toucher plusieurs
+  corps ; le pied qui se plante n'en a qu'une — l'écart tient dans la portée de l'arme).
+  - **Ce qui porte** : la mêlée qui TOUCHE (un corps ou une structure — les raiders qui
+    défoncent un grenier ameutent les morts), le coup de récolte sur un nœud À OUTIL (hache,
+    pioche — `def.tool` non nul : c'est l'affinité du nœud qui compte, un coup à mains nues
+    sur un arbre ébranle aussi), la pose d'une pièce (`build`, `place_component`). Portées de
+    départ : `SENS.COUP` 8, `SENS.BATIR` 12.
+  - **Ce qui ne porte PAS, et c'est la peau du sens** : la corde d'arc (`DRAW_NOISE` reste un
+    truc d'oreilles — T7 intact, le tir long reste propre), la flèche qui se plante (trop
+    légère), le coup dans le vide (pas d'impact), la cueillette à la main (`tool: null`),
+    l'allumage d'un feu et la pose d'un feu de camp (pas un choc — et le feu attire déjà par
+    la chaleur : pas de double peine). **Jamais un monstre n'émet** (décision ⑤ : pas d'alerte
+    goule→goule, même par le sol — le loup non plus, une bête n'est pas un marteau).
+  - **Silences NON tranchés** (hors liste, à décider si le besoin se présente) : réparer,
+    démolir, monter une pièce d'un palier, et la croissance PNJ (`village-growth.ts`, qui pose
+    par `addStructure` direct) n'ébranlent rien aujourd'hui.
+  - **L'éveil module la portée** : de jour au chaud (éveil ≈ 0), le village martèle sans
+    réveiller personne ; la rampe de saison rend le monde de plus en plus à l'écoute,
+    gratuitement (le patron du cadran ②). Un membre de horde n'écoute pas : il a déjà son Feu
+    (R5 — pas d'A\* par bête).
+
 ## Constantes (`balance.ts`, bloc `CENDREUX`)
 
 | Constante | Départ | Rôle |
@@ -380,6 +442,7 @@ mesure qui donne leur forme aux règles ci-dessous.
 | `BOIRE` (CONTACT, CONSO, COUP_TEMP…) | — | **[2026-08-21]** ils boivent la chaleur (⑯⑰) — plancher : jamais les braises, Foyer ≥ 1 |
 | `CRI` (COOLDOWN 30 s, PLAFOND_FIN 6) | — | **[2026-08-21]** la fureur appelle le sol, en salve, plafond en rampe (④⑤⑥) |
 | `GLOBAL` (12 → 60) | — | **[2026-08-21]** le plafond global de PRESSION, en rampe de saison (⑳, hypothèse) |
+| `SENS` (VIBRATION 1, CONTACT 1, COUP 8, BATIR 12) | — | **[2026-08-21]** les sens honnêtes : stimulus de chasse, plancher de contact, secousses (R24-R25) |
 | **`MAX_ALIVE`** | **24** | **plafond de Cendreux LEVÉS vivants — la borne INTERNE de la contagion (R8)** |
 
 ## Critères d'acceptation (`cendreux.test.ts`, headless)
@@ -515,6 +578,27 @@ mesure qui donne leur forme aux règles ci-dessous.
   `pnpm lint` vert. La bascule zombie→cendreux **change la consommation du PRNG** (la branche
   zombie tirait un `roll` d'errance que le Cendreux ne tire pas) : le contrat à tenir est la
   reproductibilité, pas la compatibilité avec les seeds d'avant.
+
+*Les sens honnêtes (R24-R25) :*
+
+- **A36 — L'allure se lit** (R24). Même froid, même distance, à découvert : le marcheur est
+  acquis, l'accroupi passe. (Portées : marche 5, accroupi ~2,75 — la marge du montage vit
+  entre les deux.)
+- **A37 — Le sprint porte au-delà de la vue** (R24). À ~7 tuiles d'un Cendreux à plein éveil :
+  le sprinteur est acquis (8), le marcheur non (5) — **et dans le brouillard** (vue × 0,5) le
+  sprinteur l'est toujours : le sol ne se voile pas.
+- **A38 — Le contact ne se négocie pas** (R24bis). Immobile (stimulus 0,25), SOUS LA PLUIE
+  (vue × 0,85 — le front est FORCÉ dans le montage, et sa prémisse prouvée), à moins d'une
+  tuile d'un Cendreux amorphe : détecté ; à une tuile et demie : non. (Avant ce chantier, la
+  pluie trouait la garantie du plancher.)
+- **A39 — Le coup d'outil ameute** (R25). Un coup de hache à 6 tuiles d'un Cendreux éveillé
+  hors horde lui donne le point d'impact pour dernier lieu vu, et il marche dessus. Le même
+  coup près d'un Cendreux AMORPHE (au chaud) ne fait rien — l'éveil module la portée.
+- **A40 — La corde ne vibre pas le sol** (R25). Un tir à l'arc résolu (`ranged`) ne plante
+  aucun dernier lieu ; la pose d'une pièce (`SENS.BATIR`) en plante un.
+- **A41 — La horde n'écoute pas** (R25). Un membre de horde ignore la secousse (il a déjà son
+  Feu — R5) ; et une secousse ne consomme AUCUN tirage (`state.rngState` intact, le patron
+  A28).
 
 ## Hors périmètre
 

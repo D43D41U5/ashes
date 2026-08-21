@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { BALANCE, COMBAT, MONSTER_DEFS, CENDREUX, SLOTS, TERRAIN_GRASS, WEAPON_PROFILES } from './balance'
+import { BALANCE, COMBAT, MONSTER_DEFS, CENDREUX, METEO, SLOTS, TERRAIN_GRASS, WEAPON_PROFILES } from './balance'
+import { meteoVisionFactor } from './meteo'
 import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
 import { countOf, inventoryOf } from './items'
 import { die, startAttack } from './combat'
 import { advanceCendreux, risenAlive } from './cendreux'
+import { secouerLeSol } from './sens'
 import { spawnMonster, advanceMonsters } from './monsters'
 import { createEmptyMap } from './map'
 import { drainEvents } from './events'
@@ -669,5 +671,162 @@ describe('A35 — l\'alliance des Cendreux : par espèce, et rien de plus', () =
     strike(state, joueur.id, 1, 0)
     const ent = state.entities.find((e) => e.id === cendreuxId)!
     expect(ent.hp).toBe(MONSTER_DEFS.cendreux.hp - WEAPON_PROFILES.iron_axe.light.damage)
+  })
+})
+
+/**
+ * ═══ LES SENS HONNÊTES (spec R24-R25, 2026-08-21) ═══
+ *
+ * Le Cendreux cesse d'être un rayon nu : sa vue lit le stimulus de la chasse (allure,
+ * couvert — `stimulusPourLesMorts`), et le sol lui porte les impacts (`secouerLeSol`).
+ * Montages sur carte VIDE d'herbe (terrain déterministe : couvert nominal, litière inerte)
+ * et sur le cadran réel — acte III à minuit pour l'éveil plein, tick 0 pour l'amorphe
+ * (patron du banc `nuits`, mémoire « cadran température »).
+ */
+describe('les sens honnêtes (R24-R25)', () => {
+  /** Acte III, minuit, plaine d'herbe : température 10, éveil 1 — la vue est pleine. */
+  function nuitActeIII(): SimState {
+    const state = createSim(1, {
+      map: createEmptyMap(160, 160, TERRAIN_GRASS),
+      cycleOffset: cycleOffsetForStartHour(0),
+      calendarScale: 1,
+    })
+    state.tick = 54 * TICKS_PER_SEASON_DAY
+    state.tick -= state.tick % TICKS_PER_CYCLE // aligné à minuit
+    return state
+  }
+
+  it("A36 — l'allure se lit : le marcheur est vu à 4 tuiles, l'accroupi passe", () => {
+    // Un feu PLUS PROCHE que l'homme ancre la dérive de chaleur (`nearestWarmth` choisit le
+    // feu, donc `targetId` ne peut venir QUE des yeux) : le test isole le canal de la vue.
+    const acquis = (gait: 'walk' | 'sneak'): number | null => {
+      const state = nuitActeIII()
+      state.structures.push({ type: 'fire', tx: 5, ty: 17, villageId: 0 } as never)
+      const id = spawnMonster(state, 'cendreux', 5, 15)
+      const monster = state.monsters.find((m) => m.entityId === id)!
+      const e = humanAt(state, 9, 15) // 4 tuiles : dans la vue nominale (5), hors de la vue accroupie (~2,75)
+      e.gait = gait
+      advanceMonsters(state)
+      return monster.targetId
+    }
+    expect(acquis('walk')).not.toBeNull()
+    expect(acquis('sneak')).toBeNull()
+  })
+
+  /**
+   * Un front météo PLEIN sur la colonne x = 80 d'une carte de 160 : le front va d'ouest en
+   * est, et à mi-traversée sa bande couvre [50, 110] (pluie) ou [55, 105] (brouillard) —
+   * la rampe de bord (15 % de la largeur) laisse le cœur à pleine intensité autour de 80.
+   * Le montage PROUVE sa prémisse : le facteur de vue au point des acteurs est bien celui
+   * du type de front, pas 1.
+   */
+  function frontPlein(state: SimState, type: 'pluie' | 'brouillard', x: number, y: number): void {
+    const T = METEO.TRAVERSEE_TICKS
+    state.meteo = { type, cycle: 0, day: 30, edge: 0, startTick: state.tick - T, endTick: state.tick + T }
+    expect(meteoVisionFactor(state, x, y)).toBe(METEO.VISION[type])
+  }
+
+  it('A37 — le sprint porte au-delà de la vue : acquis à 7 tuiles, où le marcheur passe — brouillard compris', () => {
+    // Le canal VIBRATION (bruit d'allure, sans couvert ni météo) : sprint 1,6 → 5 × 1,6 = 8.
+    const acquis = (gait: 'walk' | 'sprint', brouillard = false): number | null => {
+      const state = nuitActeIII()
+      state.structures.push({ type: 'fire', tx: 80, ty: 17, villageId: 0 } as never)
+      const id = spawnMonster(state, 'cendreux', 80, 15)
+      const monster = state.monsters.find((m) => m.entityId === id)!
+      const e = humanAt(state, 87, 15) // 7 tuiles
+      e.gait = gait
+      if (brouillard) frontPlein(state, 'brouillard', e.x, e.y)
+      advanceMonsters(state)
+      return monster.targetId
+    }
+    expect(acquis('sprint')).not.toBeNull()
+    expect(acquis('walk')).toBeNull()
+    // Le brouillard voile la vue de moitié (0,5) — le sol, lui, porte le sprint comme au clair.
+    expect(acquis('sprint', true)).not.toBeNull()
+  })
+
+  it('A38 — le contact ne se négocie pas : immobile, sous la pluie, sur un Cendreux amorphe — détecté', () => {
+    // Tick 0, plaine à 90 : éveil 0, vue engourdie 1 tuile. Sans le plancher `SENS.CONTACT`,
+    // le stimulus de l'immobile (0,25) ET la pluie (0,85) la réduiraient à 0,21 tuile — et
+    // le nettoyage de jour deviendrait un pillage furtif gratuit (décision ⑮). Avant ce
+    // chantier, la pluie seule la trouait déjà à 0,85 : le plancher s'applique APRÈS tout.
+    const chaud = (dist: number): number | null => {
+      const state = createSim(1, { map: createEmptyMap(160, 160, TERRAIN_GRASS) })
+      const id = spawnMonster(state, 'cendreux', 80, 15)
+      const monster = state.monsters.find((m) => m.entityId === id)!
+      const e = humanAt(state, 80 + dist, 15)
+      e.gait = 'still'
+      frontPlein(state, 'pluie', e.x, e.y)
+      advanceMonsters(state)
+      return monster.targetId
+    }
+    expect(chaud(0.9)).not.toBeNull() // marcher sur une carcasse la réveille TOUJOURS
+    expect(chaud(1.5)).toBeNull() // le plancher est un plancher, pas une vue
+  })
+
+  it("A39 — le coup d'outil ameute : la hache à 6 tuiles donne le point d'impact pour dernier lieu vu", () => {
+    const state = nuitActeIII()
+    const id = spawnMonster(state, 'cendreux', 26.5, 15.5)
+    const monster = state.monsters.find((m) => m.entityId === id)!
+    const bucheron = humanAt(state, 20.5, 16.5)
+    state.nodes.push({ id: 9001, type: 'tree', tx: 20, ty: 15, stock: 5, regrowAt: 0 })
+    tick(state, [{ entityId: bucheron.id, dx: 0, dy: 0, action: { type: 'harvest', nodeId: 9001 } }])
+    expect(monster.lastSeenX).toBe(20.5) // le point d'IMPACT, pas le bûcheron
+    expect(monster.lastSeenY).toBe(15.5)
+    expect(monster.path?.length ?? 0).toBeGreaterThan(0) // et il marche dessus
+
+    // Le même coup, de jour au chaud : l'éveil module la portée — personne ne sent rien.
+    const jour = createSim(1, { map: createEmptyMap(160, 160, TERRAIN_GRASS) })
+    const id2 = spawnMonster(jour, 'cendreux', 26.5, 15.5)
+    const monster2 = jour.monsters.find((m) => m.entityId === id2)!
+    const b2 = humanAt(jour, 20.5, 16.5)
+    jour.nodes.push({ id: 9001, type: 'tree', tx: 20, ty: 15, stock: 5, regrowAt: 0 })
+    tick(jour, [{ entityId: b2.id, dx: 0, dy: 0, action: { type: 'harvest', nodeId: 9001 } }])
+    expect(monster2.lastSeenX).toBeUndefined()
+  })
+
+  it('A40 — la corde ne vibre pas le sol : un tir bandé résolu ne plante aucun dernier lieu', () => {
+    const state = nuitActeIII()
+    // La chaleur la plus proche du mort est un feu : il dérive vers lui, pas vers les corps.
+    state.structures.push({ type: 'fire', tx: 20, ty: 18, villageId: 0 } as never)
+    const id = spawnMonster(state, 'cendreux', 20.5, 15.5)
+    const monster = state.monsters.find((m) => m.entityId === id)!
+    const archer = humanAt(state, 10.5, 15.5)
+    grantItems(state, archer.id, { bow: 1, arrow: 5 })
+    archer.activeSlot = archer.inventory.findIndex((s) => s?.item === 'bow')
+    const cible = humanAt(state, 13.5, 15.5) // l'impact tombera à 7 tuiles du mort — sous COUP (8)
+    const pv0 = cible.hp
+    tick(state, [{ entityId: archer.id, dx: 0, dy: 0, action: { type: 'attack_charge', dx: 1, dy: 0 } }])
+    for (let t = 0; t < WEAPON_PROFILES.bow.chargeTicks + 2; t++) tick(state)
+    tick(state, [{ entityId: archer.id, dx: 0, dy: 0, action: { type: 'attack_release', dx: 1, dy: 0 } }])
+    for (let t = 0; t < 2 * BALANCE.TICK_RATE_HZ; t++) tick(state)
+    expect(cible.hp).toBeLessThan(pv0) // le trait a PORTÉ : l'impact existe bel et bien…
+    expect(monster.lastSeenX).toBeUndefined() // …et le sol n'en a rien porté (T7 intact)
+  })
+
+  it('A40bis — la pose de pièce ébranle plus loin que le coup (SENS.BATIR)', () => {
+    const state = nuitActeIII()
+    const village = foundNpcVillage(state, 12, 12, 2)
+    const id = spawnMonster(state, 'cendreux', 24.5, 12.5) // à 10 tuiles de la pose : hors COUP (8), sous BATIR (12)
+    const monster = state.monsters.find((m) => m.entityId === id)!
+    const poseur = humanAt(state, 14.5, 13.5)
+    village.memberIds.push(poseur.id)
+    poseur.inventory[0] = { item: 'chest', count: 1 }
+    poseur.activeSlot = 0
+    tick(state, [{ entityId: poseur.id, dx: 0, dy: 0, action: { type: 'place_component', tx: 14, ty: 12 } }])
+    expect(monster.lastSeenX).toBe(14.5)
+    expect(monster.lastSeenY).toBe(12.5)
+  })
+
+  it("A41 — la horde n'écoute pas le sol, et la secousse ne consomme aucun tirage", () => {
+    const state = nuitActeIII()
+    const enHorde = spawnMonster(state, 'cendreux', 8.5, 15.5)
+    const seul = spawnMonster(state, 'cendreux', 8.5, 18.5)
+    state.hordes.push({ memberEntityIds: [enHorde] } as never)
+    const rng0 = state.rngState
+    secouerLeSol(state, 10.5, 15.5, CENDREUX.SENS.COUP)
+    expect(state.monsters.find((m) => m.entityId === enHorde)!.lastSeenX).toBeUndefined() // il a déjà son Feu (R5)
+    expect(state.monsters.find((m) => m.entityId === seul)!.lastSeenX).toBe(10.5)
+    expect(state.rngState).toBe(rng0) // le patron A28 : aucun pas de PRNG
   })
 })

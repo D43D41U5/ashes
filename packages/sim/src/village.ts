@@ -33,6 +33,7 @@ import {
 } from './balance'
 import { isCropMature, isPlot } from './agriculture'
 import { poseLibre, rayonEmprise } from './defriche'
+import { secouerLeSol } from './sens'
 import {
   blocksNavigation,
   doorPairs,
@@ -1044,6 +1045,9 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       const village = getVillageOf(state, actorId)!
       removeItems(actor.inventory, ev.cost)
       addStructure(state, structure, action.tx, action.ty, village.id, actorId, DEFAULT_ACCESS[structure], ev.material, action.edges)
+      // LE CHANTIER S'ENTEND (spec cendreux R25) : poser une pièce ébranle le sol jusqu'aux
+      // morts, de plus loin qu'un coup (`SENS.BATIR`). Bâtir de nuit devient un choix.
+      secouerLeSol(state, action.tx + 0.5, action.ty + 0.5, CENDREUX.SENS.BATIR)
       return
     }
 
@@ -1092,6 +1096,8 @@ export function applyVillageAction(state: SimState, actorId: number, action: Vil
       held.count -= 1
       if (held.count <= 0) actor.inventory[actor.activeSlot] = null
       addStructure(state, placeType, tx, ty, village.id, actorId)
+      // LE CHANTIER S'ENTEND (spec cendreux R25) — même règle que `build`, même portée.
+      secouerLeSol(state, tx + 0.5, ty + 0.5, CENDREUX.SENS.BATIR)
       return
     }
 
