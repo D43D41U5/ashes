@@ -14189,6 +14189,95 @@ const SCENARIOS = {
   },
 
   /**
+   * LE RAMPANT (spec `cendreux.md` R26-R27) — ce que le sol rend n'a pas toujours ses jambes.
+   *
+   * On plante des réveils (`debug_reveil`, la vraie chaîne) jusqu'à ce que le sol en rende un
+   * COUCHÉ : la part est lue dans le champ des morts (~14 % en pré), élue par hash du réveil —
+   * on ne fabrique rien, on appuie et on LIT. On reste au jour 1 : le plafond global y vaut
+   * 12 corps — douze réveils à ~14 % laissent ~16 % de malchance, et le scénario le DIT quand
+   * elle tombe plutôt que d'accuser l'élection. (Sauter au jour 55 par `debug_set_season_day`
+   * déplace le tick : MESURÉ, l'avatar en mode dieu y est tombé — on ne mesure pas à travers
+   * un outil qu'on ne comprend pas.)
+   *
+   * Trois verdicts lus sur les sprites, pas sur l'état : la texture couchée (`beastTexture`),
+   * la silhouette plus LARGE que HAUTE (R26ter), et le pion de regard posé et visible (R27) —
+   * sur le rampant ET sur un marcheur, le même.
+   *
+   * Exige `--dev`.
+   */
+  async rampant(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 90000 })
+    await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      s.sendAction({ type: 'debug_god', on: true })
+      s.sendAction({ type: 'debug_set_hour', hour: 1 })
+    })
+    await page.waitForTimeout(800)
+
+    const lire = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const corps = []
+      for (const [id, o] of s.view.others) {
+        if (o.textureKey !== 'spr-cendreux' && o.textureKey !== 'spr-cendreux-rampant') continue
+        const g = o.sprite.getData('gaze')
+        corps.push({
+          id, texture: o.textureKey, x: o.sprite.x, y: o.sprite.y,
+          w: +o.sprite.displayWidth.toFixed(1), h: +o.sprite.displayHeight.toFixed(1),
+          gaze: g ? { visible: g.visible, x: +g.x.toFixed(1), y: +g.y.toFixed(1) } : null,
+        })
+      }
+      return corps
+    })
+
+    let rampant = null
+    let essais = 0
+    for (; essais < 12 && !rampant; essais++) {
+      await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_reveil' }))
+      const debut = Date.now()
+      // 4 s de tertre + ~1 s d'extraction, à l'horloge du rendu logiciel.
+      while (Date.now() - debut < 9000 && !rampant) {
+        await page.waitForTimeout(300)
+        const corps = await lire()
+        rampant = corps.find((c) => c.texture === 'spr-cendreux-rampant') ?? null
+        if (corps.length > essais) break // celui-ci est sorti (marcheur ou non) : au suivant
+      }
+    }
+    const corps = await lire()
+    const marcheurs = corps.filter((c) => c.texture === 'spr-cendreux')
+    console.log(`   ${essais} réveils → ${marcheurs.length} marcheurs, ${rampant ? 'UN RAMPANT' : 'aucun rampant'}`)
+    if (!rampant) {
+      console.error(`!! aucun rampant en ${essais} réveils — à ~14 % par site, (0,86)^${essais} ≈ ${(100 * 0.86 ** essais).toFixed(1)} % de malchance : relancer, ou suspecter l’élection`)
+      return { essais, rampant: null, marcheurs: marcheurs.length }
+    }
+
+    // ON CADRE PAR LA CAMÉRA ET ON FIGE LES DEUX HORLOGES (leçon du scénario `reveil`).
+    await page.evaluate((id) => {
+      const s = window.__BRAISES__.scene
+      const o = s.view.others.get(id)
+      const cam = s.cameras.main
+      cam.stopFollow()
+      cam.setZoom(4)
+      cam.centerOn(o.sprite.x, o.sprite.y - 8)
+      s.send({ type: 'pause' })
+      s.game.loop.sleep()
+      s.game.step(s.time.now + 16, 16)
+    }, rampant.id)
+    await page.screenshot({ path: `${OUT}/rampant.png` })
+    const apres = (await lire()).find((c) => c.id === rampant.id) ?? rampant
+    const temoin = marcheurs[0] ?? null
+    const couche = apres.w > apres.h
+    const regard = apres.gaze?.visible === true
+    const regardTemoin = temoin ? temoin.gaze?.visible === true : null
+    console.log(`   rampant : ${JSON.stringify(apres)} → ${OUT}/rampant.png`)
+    if (temoin) console.log(`   témoin (marcheur) : ${JSON.stringify(temoin)}`)
+    console.log(`   ${couche ? '✓' : '✗'} la silhouette est couchée (plus large que haute : ${apres.w} × ${apres.h})`)
+    console.log(`   ${regard ? '✓' : '✗'} le rampant porte son regard (R27)`)
+    if (temoin) console.log(`   ${regardTemoin ? '✓' : '✗'} le marcheur aussi`)
+    return { essais, rampant: apres, temoin, couche, regard, regardTemoin }
+  },
+
+  /**
    * LE PAYSAGE ENNEIGÉ — la neige au sol, la glace et les arbres nus (spec `gel.md` G5-G7).
    *
    * ═══ LE PIÈGE QUI COÛTE LA SÉANCE, ET IL EST DANS `/sim` ═══

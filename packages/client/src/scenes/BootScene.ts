@@ -32,6 +32,10 @@ export class BootScene extends Phaser.Scene {
     // déguisée en gibier. Il a désormais son propre visage — et depuis qu'il a
     // absorbé le zombie (spec `cendreux.md` R1), c'est le seul mort-vivant.
     this.makeSprite('spr-cendreux', 0xb8b0a4, 0x6b3a20)
+    // LE RAMPANT (spec `cendreux.md` R26ter) : le même pion, COUCHÉ — ce que le sol rend n'a
+    // pas toujours ses jambes, et un rampant dessiné debout mentirait sur sa vitesse. Première
+    // posture du bestiaire, sans art neuf : mêmes teintes, la hauteur devenue longueur.
+    this.makeSpriteCouche('spr-cendreux-rampant', 0xb8b0a4, 0x6b3a20)
     this.makeFauna()
 
     const g = this.add.graphics()
@@ -944,6 +948,15 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(border).fillRect(0, 0, 12, 24)
     g.fillStyle(fill).fillRect(1, 1, 10, 22)
     g.generateTexture(key, 12, 24)
+    g.destroy()
+  }
+
+  /** Le même pion, à plat : 24 de long sur 10 de haut — la silhouette d'un corps qui rampe. */
+  private makeSpriteCouche(key: string, fill: number, border: number): void {
+    const g = this.add.graphics()
+    g.fillStyle(border).fillRect(0, 0, 24, 10)
+    g.fillStyle(fill).fillRect(1, 1, 22, 8)
+    g.generateTexture(key, 24, 10)
     g.destroy()
   }
 

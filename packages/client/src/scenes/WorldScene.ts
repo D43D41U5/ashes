@@ -194,7 +194,7 @@ import { SangFx } from './world/sang-fx'
 import { createHandWeapons, type HandWeapons } from './world/hand-weapon'
 import { bindInputs, type MovementBindings } from './world/input-bindings'
 import { demolishTargetAt } from './world/aim'
-import { INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
+import { GAZE_PX, GAZE_REACH, INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 import { silhouetteDepuisSprite } from './world/visee-corps'
 import { suivreAngle } from './world/visee-lissee'
 import { DEATH_FADE_MS, DEATH_VEIL_FILET_MS } from './ui/death-veil'
@@ -234,11 +234,8 @@ const LOOKAHEAD_MAX_TILES = 6
 const SNAP_DISTANCE_TILES = 1.5
 /** Décroissance par frame de l'écart visuel après une correction (lissage de rendu, spec R6). */
 const RENDER_OFFSET_DECAY = 0.85
-/** LE REGARD (audit UI/UX P3-11) : à quelle distance du centre du corps se pose le pion
- *  d'orientation (px monde), et sa taille à l'écran. Calé pour affleurer le bord de
- *  l'avatar (~16 px de large) sans le quitter. */
-const GAZE_REACH = 6
-const GAZE_PX = 5
+// LE REGARD (audit UI/UX P3-11) : `GAZE_REACH`/`GAZE_PX` vivent dans `snapshot-view` depuis que
+// les Cendreux portent le même pion (R27) — un seul nombre pour l'avatar et les morts.
 
 /** À quelle distance (tuiles) un étranger déclenche le conseil du DON (ui/onboarding).
  *  Un peu plus large que la portée d'un don : on enseigne AVANT d'être à portée. */

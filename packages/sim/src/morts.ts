@@ -71,6 +71,19 @@ export interface Reveil {
  * le champ y vaut son plancher, uniformément, et le tirage pondéré qui s'appuie dessus
  * redevient exactement uniforme. Le comportement d'un banc est donc préservé au bit près (R17).
  */
+/** Le sel de l'élection du rampant — distinct du tirage de site déplacé, qui hache le même réveil. */
+const RAMPANT_SEL = 0x6a09e667
+
+/**
+ * LA PART DES RÉVEILS QUI SORTENT RAMPANTS (spec R26) : une pente du champ des morts, de
+ * `PART_MIN` (le pré) à `PART_MAX` (le cœur d'un charnier). La géographie décide, jamais le
+ * calendrier — et le marcheur reste la règle partout (la part est toujours sous 1/2).
+ */
+export function partRampante(densite: number): number {
+  const d = densite < 0 ? 0 : densite > 1 ? 1 : densite
+  return CENDREUX.RAMPANT.PART_MIN + (CENDREUX.RAMPANT.PART_MAX - CENDREUX.RAMPANT.PART_MIN) * d
+}
+
 export function densiteDesMorts(state: SimState, tx: number, ty: number): number {
   let d = densiteDeBase(state.map, tx, ty) + hantiseDeCendre(state.map, tx, ty, frontActuel(state))
   // ON A BRÛLÉ ICI (décision ⑧, 2026-08-21) : autour d'un charnier ou d'un repaire assaini,
@@ -421,6 +434,14 @@ export function advanceReveils(state: SimState): void {
       monster.nightHunter = true // il MORD : exempté d'un courage qu'il ne pourrait satisfaire
       monster.huntTargetId = r.preyId // pour QUI il est venu — stable, contrairement à `targetId`
       monster.targetId = r.preyId
+      // CE QUE LE SOL REND N'A PAS TOUJOURS SES JAMBES (spec R26, décisions d'Alexis
+      // 2026-08-21) : une part des réveils — et d'eux seuls — sort RAMPANTE, à vie. La part se
+      // lit dans le champ des morts au site même (plus le sol est mort, plus les corps sont
+      // brisés) ; l'élection est un pseudo-tirage du réveil, salé pour ne pas recopier celui
+      // du site déplacé — aucun pas de PRNG, même réveil → même corps (le patron A28).
+      if (hash2(Math.floor(r.x), Math.floor(r.y), r.at ^ RAMPANT_SEL) < partRampante(densiteDesMorts(state, Math.floor(r.x), Math.floor(r.y)))) {
+        monster.rampant = true
+      }
     }
     // On RÉUTILISE `cendreux_risen` : « un cendreux se relève » est exactement le fait qui
     // vient de se produire, et il a déjà sa voix à l'inventaire. Un second événement pour la

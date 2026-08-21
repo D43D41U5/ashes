@@ -205,6 +205,11 @@ const ACTOR_FOOTPRINTS: Record<string, ActorFootprint & { facesRight?: boolean }
   // Il n'avait aucune emprise déclarée et tombait donc sur le repli, alors qu'il hérite du
   // rôle du zombie (spec `cendreux.md` R1) : même gabarit que celui qu'il remplace.
   'spr-cendreux': { widthTiles: 0.75, heightTiles: 1.5 },
+  // LE RAMPANT (spec `cendreux.md` R26ter) : le même homme, COUCHÉ — la hauteur devenue
+  // longueur (texture 24 × 10 : pixels carrés à 1,5 × 0,625 tuile). Sans cette entrée il
+  // tombait sur le repli et se dessinait aux dimensions du marcheur, debout dans une
+  // texture à plat — MESURÉ au smoke `rampant` : 12 × 24 pour une texture de 24 × 10.
+  'spr-cendreux-rampant': { widthTiles: 1.5, heightTiles: 0.625 },
   // Le gibier (spec faune) : sa TAILLE est la première information, et sa
   // POSTURE est la seconde (R9bis/C19) — tête au sol elle broute, tête dressée
   // elle a vu quelque chose, corps tendu elle fuit. Le lapin rase le sol, le
@@ -296,6 +301,13 @@ function nodeArtGap(texture: string): number {
 /** SOUCHE : durée (ms client) pendant laquelle la marque d'un nœud qui a dérivé pâlit
  *  avant de disparaître. Purement cosmétique — la nature reprend le coin. */
 const STUMP_FADE_MS = 9000
+
+/** LE REGARD (audit UI/UX P3-11) : à quelle distance du centre du corps se pose le pion
+ *  d'orientation (px monde), et sa taille à l'écran. Calé pour affleurer le bord de
+ *  l'avatar (~16 px de large) sans le quitter. Partagé avec le regard des Cendreux (R27) :
+ *  le même pion dit la même chose, qu'il soit sur un vivant ou sur un mort. */
+export const GAZE_REACH = 6
+export const GAZE_PX = 5
 
 export interface InterpolatedSprite {
   sprite: Phaser.GameObjects.Image
@@ -1016,6 +1028,25 @@ export class SnapshotView {
       // pleine sous une tête qui perce, et le trou perdait toute sa profondeur.
       shadow.setAlpha(SHADOW_ALPHA * (1 - Math.max(immersion, enfoui)))
     }
+    // LE REGARD DU CENDREUX (demande d'Alexis, 2026-08-21 — spec `cendreux.md` R27) : le même
+    // pion d'orientation que l'avatar (`fx-gaze`), posé au bord de la tête du côté du `facing`
+    // autoritatif du dernier snapshot. Un mort qui vous a vu se lit, et celui qui regarde
+    // ailleurs aussi — c'est l'information qui décide de passer ou de contourner. Rattaché au
+    // sprite par `setData`, comme l'ombre ; caché tant que le corps s'extrait du sol.
+    const gaze = sprite.getData('gaze') as Phaser.GameObjects.Image | undefined
+    if (gaze) {
+      const f = sprite.getData('facing') as { x: number; y: number } | undefined
+      if (f && enfoui <= 0) {
+        const headY = p.py - lift + coupe - displayH * 0.6
+        gaze
+          .setPosition(p.px + f.x * GAZE_REACH, headY + f.y * GAZE_REACH)
+          .setDepth(p.depth + 0.1)
+          .setDisplaySize(GAZE_PX, GAZE_PX)
+          .setVisible(true)
+      } else {
+        gaze.setVisible(false)
+      }
+    }
     this.syncFlottaison(sprite, p.px, p.py - lift, p.displayW, p.depth, immersion)
     // LES ÉVÉNEMENTS D'EAU (R3/R7) : la gerbe au franchissement, les pas mouillés en sortant.
     if (this.rive) this.eau?.track(sprite, p.px, p.py, p.depth, dRive, this.scene.time.now, p.displayW)
@@ -1112,6 +1143,14 @@ export class SnapshotView {
       // dormeur s'estompe ; un wind-up flashe (lisibilité, spec R4).
       const npc = npcByEntity.get(entity.id)
       const monster = monsterByEntity.get(entity.id)
+      // LE REGARD DU CENDREUX (R27) : le pion naît avec son premier snapshot, et le `facing`
+      // de chaque snapshot l'accompagne — `syncActor` le pose là où il connaît la tête.
+      if (monster?.type === 'cendreux') {
+        if (!record.sprite.getData('gaze')) {
+          record.sprite.setData('gaze', this.scene.add.image(0, 0, 'fx-gaze').setOrigin(0.5, 0.5).setVisible(false))
+        }
+        record.sprite.setData('facing', entity.facing)
+      }
       // LA POSTURE dit l'état (R9bis/C19) — et l'alpha garde sa silhouette
       // propre (spec faune R12) : le joueur doit pouvoir le désigner d'un coup
       // d'œil, c'est LUI qu'il faut abattre. Le PAS de l'entité (`moved`, dans le
@@ -1155,6 +1194,7 @@ export class SnapshotView {
       if (!seen.has(id)) {
         o.shadow.destroy() // l'ombre s'en va avec son acteur — jamais orpheline
         ;(o.sprite.getData('flottaison') as Phaser.GameObjects.Image | undefined)?.destroy()
+        ;(o.sprite.getData('gaze') as Phaser.GameObjects.Image | undefined)?.destroy() // le regard aussi
         o.sprite.destroy()
         this.others.delete(id)
         // Abattu ou dissipé pendant qu'il s'extrayait : son extraction n'a plus de corps.

@@ -80,6 +80,13 @@ export interface Monster {
    */
   lastSeenX?: number
   lastSeenY?: number
+  /**
+   * LE RAMPANT (spec R26) : sorti du sol sans ses jambes, à vie. Allure × `RAMPANT.ALLURE`,
+   * vue × `RAMPANT.VUE`, pas de siège — même morsure. Posé à l'émergence d'un RÉVEIL et nulle
+   * part ailleurs ; absent du snapshot pour tous les autres (un marcheur n'en porte pas un
+   * octet).
+   */
+  rampant?: true
   /** Prochain tick où ce cendreux a le droit de CRIER (décisions ④⑤ — cooldown du cri). */
   criAt?: number
   /** Réveils restant à planter dans la SALVE du cri en cours — un par tick de décision,
@@ -820,7 +827,9 @@ export function descendreLeChamp(
   // mâcherait l'éternité. On ne désigne que ce qui peut tomber.
   const blocker = crossingBlocker(state.structures, tx, ty, bestTx - tx, bestTy - ty, (s) => structureBlocks(s, null, false) && !estIncassable(s.type))
   if (blocker) {
-    if (!entity.windup && state.tick >= entity.cooldownUntil) {
+    // UN RAMPANT N'ASSIÈGE PAS (spec cendreux R26bis) : barré, il attend devant — la clearance
+    // des réveils (`ambient`) l'enfouira quand plus personne ne le regardera.
+    if (monster.rampant !== true && !entity.windup && state.tick >= entity.cooldownUntil) {
       const def = MONSTER_DEFS[monster.type]
       const started = startAttack(state, entity, bestTx + 0.5 - entity.x, bestTy + 0.5 - entity.y, {
         windupTicks: def.windupTicks,

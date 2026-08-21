@@ -2942,6 +2942,25 @@ export const CENDREUX = {
     BATIR: 12,
   },
   /**
+   * ═══ LE RAMPANT (décisions d'Alexis, 2026-08-21 — spec R26) ═══
+   *
+   * Ce que le sol rend n'a pas toujours ses jambes : une part des RÉVEILS (et d'eux seuls —
+   * jamais une levée, jamais une horde) sort rampante, à vie. La part se LIT dans le champ des
+   * morts (géographie, jamais calendrier : un rampant n'assiège pas, en mettre plus en acte
+   * III diluerait la pression) et s'élit par `hash2` du réveil — zéro tirage. « Rien de
+   * spécial » pour sa morsure : sa lenteur est sa nature, pas un handicap compensé.
+   */
+  RAMPANT: {
+    /** Part des réveils rampants là où le champ des morts est au plancher (le pré). */
+    PART_MIN: 0.1,
+    /** …et là où il culmine (le cœur d'un charnier, le vieux brûlé). */
+    PART_MAX: 0.4,
+    /** Facteur d'ALLURE du rampant (PZ : « environ 1/5 d'un marcheur ») — 0,26 t/s nominal. */
+    ALLURE: 0.2,
+    /** Facteur de VUE : à ras du sol, il voit moins loin ; le plancher de contact reste entier. */
+    VUE: 0.6,
+  },
+  /**
    * PORTÉE D'ÉLECTION DU FEU-CIBLE d'un solitaire qui converge (décision ① — « il marche, et de
    * plus en plus loin ») : acte I, ses 20 tuiles historiques (statu quo) ; acte II, la ceinture ;
    * acte III, toute la vallée se referme sur les feux. La table est par ACTE et c'est assumé :

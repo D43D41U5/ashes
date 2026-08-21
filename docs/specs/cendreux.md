@@ -429,6 +429,43 @@ coûtait rien, marteler une palissade à six tuiles d'une carcasse ne la réveil
     gratuitement (le patron du cadran ②). Un membre de horde n'écoute pas : il a déjà son Feu
     (R5 — pas d'A\* par bête).
 
+### 10. Le rampant — ce que le sol rend n'a pas toujours ses jambes **[2026-08-21]**
+
+*Deuxième chantier « fidélité Project Zomboid » (quatre sous-décisions d'Alexis en QCM
+séquentiel). Dans PZ, le* crawler *est une VARIANTE PERMANENTE (spawn sans jambes, faux-mort),
+distincte du knockdown temporaire — c'est la variante qu'on importe, pas le knockdown. Le
+faux-mort, lui, existe déjà en mieux : la carcasse torpide qui se réveille sous vos pas (R24bis).*
+
+- **R26 — UNE PART DES RÉVEILS SORT RAMPANTE, et c'est le champ des morts qui la décide.** À
+  l'émergence d'un réveil (`advanceReveils` — la nuit qui chasse ET le cri de fureur), le corps
+  sort `rampant` avec la part `partRampante(densité)` = `PART_MIN + (PART_MAX − PART_MIN) ×
+  densiteDesMorts(site)` (ordres de grandeur : 10 % en pré, 40 % au pic d'un charnier). La
+  **géographie** décide, jamais le calendrier : un rampant n'assiège pas et court à 0,26 t/s —
+  en mettre plus en acte III diluerait la pression croissante (décisions ①-⑲). L'élection est
+  un **pseudo-tirage `hash2` du réveil** (le patron A28) : l'élection n'ajoute aucun pas de PRNG,
+  même réveil → même corps. **Les réveils seuls** : un cadavre levé a ses jambes et porte un sac (R6 — un butin qui
+  rampe serait une farce) ; une horde EST le siège et naît du sol le plus mort (⑫ — la part
+  la castrerait) ; Repaires et convois sont scénarisés.
+- **R26bis — Ce qu'est un rampant, et ce qu'il n'est pas.** Drapeau `Monster.rampant`, à vie —
+  il ne se relève jamais. Allure × `RAMPANT.ALLURE` (0,2 : 0,26 t/s, PZ « 1/5 ») — la cadence de
+  pensée suit l'éveil, pas l'allure (il pense comme les autres, il avance moins) ; **pas de
+  siège** (R3 lui échappe : un rampant ne frappe ni porte ni mur, il les contourne ou les
+  attend) ; vue × `RAMPANT.VUE` (0,6 : à ras du sol) — le plancher de contact (R24bis) reste
+  entier ; **même morsure** qu'un marcheur (34, −12°, wind-up 0,7 s) et même alliance d'espèce.
+  Il entend le sol (R25), boit la chaleur (⑯), compte dans le plafond global (il est vivant)
+  et se dissipe comme tout réveil (`ambient`). Décision d'Alexis : « rien de spécial » — sa
+  lenteur est sa nature, pas un handicap compensé.
+- **R26ter — Il se VOIT couché.** Le client dessine le pion COUCHÉ (`spr-cendreux-rampant`,
+  24 × 10, mêmes teintes, choisi par `beastTexture` sur le drapeau que le snapshot transporte
+  déjà) — la première posture du bestiaire, sans art neuf ; un vrai sprite la remplacera quand
+  la DA repassera sur le bestiaire.
+- **R27 — LE CENDREUX PORTE SON REGARD** *(demande d'Alexis, 2026-08-21 ; client)*. Le même
+  pion d'orientation que l'avatar (`fx-gaze`, audit UI/UX P3-11), posé au bord de la tête du
+  côté du `facing` autoritatif du dernier snapshot — mêmes nombres (`GAZE_REACH`, `GAZE_PX`,
+  partagés depuis `snapshot-view`). Depuis que la vue est honnête (R24), *où il regarde* est une
+  information qui décide : passer dans son dos, ou contourner. Marcheur et rampant le portent ;
+  il naît avec le sprite, disparaît avec lui, et reste caché tant que le corps s'extrait du sol.
+
 ## Constantes (`balance.ts`, bloc `CENDREUX`)
 
 | Constante | Départ | Rôle |
@@ -443,6 +480,7 @@ coûtait rien, marteler une palissade à six tuiles d'une carcasse ne la réveil
 | `CRI` (COOLDOWN 30 s, PLAFOND_FIN 6) | — | **[2026-08-21]** la fureur appelle le sol, en salve, plafond en rampe (④⑤⑥) |
 | `GLOBAL` (12 → 60) | — | **[2026-08-21]** le plafond global de PRESSION, en rampe de saison (⑳, hypothèse) |
 | `SENS` (VIBRATION 1, CONTACT 1, COUP 8, BATIR 12) | — | **[2026-08-21]** les sens honnêtes : stimulus de chasse, plancher de contact, secousses (R24-R25) |
+| `RAMPANT` (PART_MIN 0,1, PART_MAX 0,4, ALLURE 0,2, VUE 0,6) | — | **[2026-08-21]** le rampant : part lue dans le champ des morts, allure et vue rases (R26) |
 | **`MAX_ALIVE`** | **24** | **plafond de Cendreux LEVÉS vivants — la borne INTERNE de la contagion (R8)** |
 
 ## Critères d'acceptation (`cendreux.test.ts`, headless)
@@ -599,6 +637,26 @@ coûtait rien, marteler une palissade à six tuiles d'une carcasse ne la réveil
 - **A41 — La horde n'écoute pas** (R25). Un membre de horde ignore la secousse (il a déjà son
   Feu — R5) ; et une secousse ne consomme AUCUN tirage (`state.rngState` intact, le patron
   A28).
+
+*Le rampant (R26) :*
+
+- **A42 — La part est une pente du champ.** `partRampante(0)` = `PART_MIN`, `partRampante(1)`
+  = `PART_MAX`, monotone entre les deux ; et sur une carte vide (champ au plancher), une
+  centaine de réveils émergés donnent une part de rampants **non nulle et sous 1/2** — le
+  marcheur reste la règle partout.
+- **A43 — Même réveil, même corps, et l'élection n'ajoute aucun tirage.** Deux états
+  identiques émergent le même rampant ; et trente émergences laissent le PRNG exactement là
+  où trente naissances nues (`spawnMonster`, qui tire déjà un pas par corps — préexistant) le
+  laissent : l'élection est un hash, pas un tirage. *(Au passage : A28 n'attrapait pas
+  l'émergence — il appelle `advanceReveils` sur un réveil non mûri ; le pas de `spawnMonster`
+  est antérieur à ce chantier et hors de son périmètre.)*
+- **A44 — Les réveils seuls.** Un cadavre levé (`advanceCendreux`) et un membre de horde ne
+  portent jamais `rampant`.
+- **A45 — Il rampe, il ne court pas.** Sur le même montage (froid plein, proie loin), le
+  rampant couvre cinq fois moins de chemin que le marcheur ; sa vue est rase (une proie à
+  4 tuiles : vue par le marcheur, pas par le rampant — qui mord quand même au contact, R24bis).
+- **A46 — Il n'assiège pas.** Proie enclose (le montage d'A4) : le rampant ne touche pas un mur
+  en 2 500 ticks, là où le marcheur l'entame.
 
 ## Hors périmètre
 

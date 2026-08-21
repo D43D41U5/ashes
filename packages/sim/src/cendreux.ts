@@ -224,6 +224,13 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
   // L'allure d'un cendreux QUI A UN BUT : jamais sous GAIT_MIN — « presque amorphe » n'est
   // pas « statue » (l'acte I garde ses marcheurs lents, décision ① : statu quo à 20 tuiles).
   const gait = Math.max(eveil, CENDREUX.TORPEUR.GAIT_MIN)
+  // LE RAMPANT (spec R26) : sorti du sol sans ses jambes, à vie. Il PENSE au rythme de son
+  // éveil (`gait`, comme les autres) mais AVANCE à `RAMPANT.ALLURE` de l'allure — et voit à ras
+  // du sol (`RAMPANT.VUE` sur la vue, jamais sur le plancher de contact : il mord ce qui lui
+  // marche dessus). Même morsure qu'un marcheur : « rien de spécial », sa lenteur est sa nature.
+  const rampant = monster.rampant === true
+  const allure = rampant ? gait * CENDREUX.RAMPANT.ALLURE : gait
+  const vue = def.aggroRange * Math.max(eveil, CENDREUX.TORPEUR.VUE_PLANCHER) * (rampant ? CENDREUX.RAMPANT.VUE : 1)
   // Attiré par la chaleur quand le froid de BASE mord (`CONVERGE_SOUS` : toute nuit de
   // plaine, les biomes froids de jour, la plaine d'acte III à midi) — hors feu, sinon
   // oscillation à la lisière de la bulle (spec feu-station S5).
@@ -263,7 +270,7 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
     // un champ de dormeurs, le sprinteur porte au-delà de la vue nominale (5 × 1,6 = 8). Le
     // plancher de CONTACT reste ABSOLU (R24bis) : marcher SUR une carcasse la réveille
     // toujours — désormais même sous la pluie, que le facteur météo laissait trouer.
-    const seen = nearestPrey(state, entity, def.aggroRange * Math.max(eveil, CENDREUX.TORPEUR.VUE_PLANCHER), {
+    const seen = nearestPrey(state, entity, vue, {
       stimulusOf: (e, meteo) => stimulusPourLesMorts(state, e, meteo),
       plancher: CENDREUX.SENS.CONTACT,
     })
@@ -286,7 +293,7 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
     // chaude la plus proche fait l'affaire — la vallée se vide pour de bon. La bête tuée ne
     // se relève pas (le critère de levée exclut les monstres), et la chasse rassasie (⑰).
     if (!goal) {
-      const gibier = nearestGibier(state, entity, def.aggroRange * Math.max(eveil, CENDREUX.TORPEUR.VUE_PLANCHER))
+      const gibier = nearestGibier(state, entity, vue)
       if (gibier) goal = { x: gibier.x, y: gibier.y, prey: gibier }
     }
     if (!goal && cold && !inHorde) goal = nearestWarmth(state, entity, CENDREUX.WARMTH_SEEK_RANGE)
@@ -367,7 +374,7 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
   // descente de gradient du champ de flux — partagé entre toutes les bêtes qui visent le même
   // Foyer — et frappe le franchissement qui le barre. C'est là que vit le SIÈGE de masse ;
   // élargir l'A* à la place coûterait un BFS par bête et par demi-seconde.
-  if (!target && hordeStep(state, monster, entity, flux, byId, gait)) return
+  if (!target && hordeStep(state, monster, entity, flux, byId, allure)) return
 
   // Un pas vers le prochain nœud du chemin (A*) — ou, faute de chemin, DROIT sur la cible.
   // Les deux cas convergent exprès : ce qui décide du siège n'est pas « ai-je un chemin ? »
@@ -400,12 +407,12 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
       const champ = champDesFeux(state)
       if (champ) {
         const d = champ[Math.floor(entity.y) * state.map.width + Math.floor(entity.x)]
-        if (d !== undefined && d !== -1) descendreLeChamp(state, monster, entity, champ, byId, gait, null)
+        if (d !== undefined && d !== -1) descendreLeChamp(state, monster, entity, champ, byId, allure, null)
       }
     }
     return
   }
-  moveToward(state, monster, entity, goX, goY, false, gait)
+  moveToward(state, monster, entity, goX, goY, false, allure)
 
   // LE SIÈGE, SEUL (spec R3 ; S6 de `feu-station.md`, acté le 2026-07-25 et jamais livré).
   // Il a poussé et n'a pas bougé d'un pouce : quelque chose le barre. Il le frappe — porte,
@@ -416,7 +423,10 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
   // paroi sans jamais l'attaquer. Avant ce repli : cible tenue 4 000 ticks sur 4 000,
   // **0 mur touché, 0 tuile parcourue**. N'importe quelle enceinte rendait le joueur
   // intouchable, et le Cendreux ne venait même pas frapper à la porte.
-  if (!entity.moved && !entity.windup && state.tick >= entity.cooldownUntil) {
+  //
+  // UN RAMPANT N'ASSIÈGE PAS (R26bis) : sans jambes, il ne frappe ni porte ni mur — il les
+  // contourne, ou il attend. R3 lui échappe, et c'est la spec.
+  if (!rampant && !entity.moved && !entity.windup && state.tick >= entity.cooldownUntil) {
     attackBlockingStructure(state, monster, entity, goX, goY)
   }
 }

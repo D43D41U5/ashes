@@ -6,6 +6,7 @@ import { countOf, inventoryOf } from './items'
 import { die, startAttack } from './combat'
 import { advanceCendreux, risenAlive } from './cendreux'
 import { secouerLeSol } from './sens'
+import { advanceReveils, partRampante } from './morts'
 import { spawnMonster, advanceMonsters } from './monsters'
 import { createEmptyMap } from './map'
 import { drainEvents } from './events'
@@ -828,5 +829,131 @@ describe('les sens honnêtes (R24-R25)', () => {
     expect(state.monsters.find((m) => m.entityId === enHorde)!.lastSeenX).toBeUndefined() // il a déjà son Feu (R5)
     expect(state.monsters.find((m) => m.entityId === seul)!.lastSeenX).toBe(10.5)
     expect(state.rngState).toBe(rng0) // le patron A28 : aucun pas de PRNG
+  })
+})
+
+/**
+ * ═══ LE RAMPANT (spec R26, 2026-08-21) ═══
+ *
+ * Ce que le sol rend n'a pas toujours ses jambes : une part des RÉVEILS — lue dans le champ
+ * des morts, élue par hash du réveil — sort rampante, à vie : allure × 0,2, vue × 0,6, pas de
+ * siège, même morsure. Montages sur carte vide d'herbe, acte III à minuit (éveil 1).
+ */
+describe('le rampant (R26)', () => {
+  function nuitActeIII(): SimState {
+    const state = createSim(1, {
+      map: createEmptyMap(160, 160, TERRAIN_GRASS),
+      cycleOffset: cycleOffsetForStartHour(0),
+      calendarScale: 1,
+    })
+    state.tick = 54 * TICKS_PER_SEASON_DAY
+    state.tick -= state.tick % TICKS_PER_CYCLE
+    return state
+  }
+
+  /** Fait ÉMERGER `n` réveils sur des sites distincts, pour une proie posée loin, et rend les corps. */
+  function emerger(state: SimState, n: number, proieId = humanAt(state, 150.5, 150.5).id) {
+    for (let i = 0; i < n; i++) {
+      state.reveils.push({ x: 10.5 + 3 * (i % 10), y: 10.5 + 3 * Math.floor(i / 10), at: state.tick, preyId: proieId })
+    }
+    advanceReveils(state)
+    return state.monsters.filter((m) => m.type === 'cendreux')
+  }
+
+  it('A42 — la part est une pente du champ, et le marcheur reste la règle', () => {
+    expect(partRampante(0)).toBe(CENDREUX.RAMPANT.PART_MIN)
+    expect(partRampante(1)).toBe(CENDREUX.RAMPANT.PART_MAX)
+    expect(partRampante(0.5)).toBeGreaterThan(partRampante(0.25))
+    expect(partRampante(2)).toBe(CENDREUX.RAMPANT.PART_MAX) // borné
+    const sortis = emerger(nuitActeIII(), 50)
+    expect(sortis.length).toBe(50) // sous le plafond du jour 55 : tous sortent
+    const rampants = sortis.filter((m) => m.rampant === true).length
+    expect(rampants).toBeGreaterThan(0) // le sol en rend, même au plancher du champ
+    expect(rampants).toBeLessThan(25) // …mais jamais la majorité
+  })
+
+  it("A43 — même réveil, même corps, et l'élection n'ajoute aucun tirage", () => {
+    const a = nuitActeIII()
+    const b = nuitActeIII()
+    const pa = humanAt(a, 150.5, 150.5).id // la proie d'abord : c'est l'ÉMERGENCE qu'on mesure
+    const pb = humanAt(b, 150.5, 150.5).id
+    const ra = emerger(a, 30, pa).map((m) => m.rampant === true)
+    const rb = emerger(b, 30, pb).map((m) => m.rampant === true)
+    expect(ra).toEqual(rb)
+    expect(ra.some(Boolean)).toBe(true) // et il y en a : l'égalité n'est pas celle de deux vides
+    // LE FLUX SEEDÉ NE BOUGE QUE DE CE QUE LES NAISSANCES TIRENT DÉJÀ. `spawnMonster` consomme
+    // un pas par corps (préexistant) ; trente émergences, rampants compris, laissent le PRNG
+    // EXACTEMENT là où trente naissances nues le laissent : l'élection est un hash, pas un tirage.
+    const c = nuitActeIII()
+    humanAt(c, 150.5, 150.5)
+    for (let i = 0; i < 30; i++) spawnMonster(c, 'cendreux', 10.5 + 3 * (i % 10), 10.5 + 3 * Math.floor(i / 10))
+    expect(a.rngState).toBe(c.rngState)
+  })
+
+  it('A44 — les réveils seuls : un cadavre levé a ses jambes', () => {
+    const state = nuitActeIII()
+    const e = humanAt(state, 40.5, 40.5)
+    die(state, e, 0)
+    const corpse = state.corpses.find((c) => c.risesAt !== undefined)!
+    state.tick = corpse.risesAt!
+    advanceCendreux(state)
+    const leve = state.monsters.find((m) => m.type === 'cendreux')!
+    expect(leve.risen).toBe(true)
+    expect(leve.rampant).toBeUndefined()
+  })
+
+  it('A45 — il rampe, il ne court pas — et il voit à ras du sol', () => {
+    // Même montage, même but (un dernier lieu vu à 30 tuiles) : le chemin couvert en 200 ticks.
+    const parcouru = (rampant: boolean): number => {
+      const state = nuitActeIII()
+      const id = spawnMonster(state, 'cendreux', 20.5, 20.5)
+      const monster = state.monsters.find((m) => m.entityId === id)!
+      if (rampant) monster.rampant = true
+      monster.lastSeenX = 50.5
+      monster.lastSeenY = 20.5
+      const ent = state.entities.find((en) => en.id === id)!
+      for (let t = 0; t < 200; t++) advanceMonsters(state)
+      return ent.x - 20.5
+    }
+    const marche = parcouru(false)
+    const rampe = parcouru(true)
+    expect(marche).toBeGreaterThan(5)
+    expect(rampe).toBeGreaterThan(0) // il avance — « presque amorphe » n'est pas « statue »
+    expect(rampe / marche).toBeLessThan(0.3) // ~0,2 : PZ « un cinquième d'un marcheur »
+    expect(rampe / marche).toBeGreaterThan(0.1)
+
+    // LA VUE RASE : une proie à 4 tuiles, vue par le marcheur (5), pas par le rampant (3).
+    const voit = (rampant: boolean): number | null => {
+      const state = nuitActeIII()
+      state.structures.push({ type: 'fire', tx: 20, ty: 22, villageId: 0 } as never) // ancre la chaleur
+      const id = spawnMonster(state, 'cendreux', 20, 20)
+      const monster = state.monsters.find((m) => m.entityId === id)!
+      if (rampant) monster.rampant = true
+      humanAt(state, 24, 20)
+      advanceMonsters(state)
+      return monster.targetId
+    }
+    expect(voit(false)).not.toBeNull()
+    expect(voit(true)).toBeNull()
+  })
+
+  it("A46 — il n'assiège pas : proie enclose, pas un mur touché", () => {
+    // Le montage d'A4, le monstre couché.
+    const state = createSim(1, { cycleOffset: DAY_TICKS_PER_CYCLE })
+    const proie = humanAt(state, 17.5, 15.5)
+    let id = 1000
+    for (let dx = -2; dx <= 2; dx++) {
+      for (let dy = -2; dy <= 2; dy++) {
+        if (Math.abs(dx) !== 2 && Math.abs(dy) !== 2) continue
+        state.structures.push({ id: id++, type: 'wall', tx: 17 + dx, ty: 15 + dy, villageId: 0, hp: 200 } as never)
+      }
+    }
+    const pvMurs0 = state.structures.reduce((n, s) => n + ((s as { hp?: number }).hp ?? 0), 0)
+    const mid = spawnMonster(state, 'cendreux', 12.5, 15.5)
+    state.monsters.find((m) => m.entityId === mid)!.rampant = true
+    for (let t = 0; t < 2500; t++) tick(state)
+    const pvMurs1 = state.structures.reduce((n, s) => n + ((s as { hp?: number }).hp ?? 0), 0)
+    expect(pvMurs1).toBe(pvMurs0) // pas un coup au mur
+    expect(proie.hp).toBe(100) // et la proie, enclose, est intouchée
   })
 })

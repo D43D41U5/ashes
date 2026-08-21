@@ -251,5 +251,8 @@ export function beastTexture(
     }
     return `${base}-graze`
   }
+  // LE RAMPANT (spec `cendreux.md` R26ter) : sorti du sol sans ses jambes, il se dessine
+  // COUCHÉ — le drapeau voyage dans le snapshot, la posture dit la vitesse.
+  if (monster.type === 'cendreux' && monster.rampant === true) return 'spr-cendreux-rampant'
   return MONSTER_TEXTURES[monster.type]
 }

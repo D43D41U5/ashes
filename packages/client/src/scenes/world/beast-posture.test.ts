@@ -61,6 +61,13 @@ describe('la posture (R9bis / C19)', () => {
   it('la fuite prime sur tout le reste', () => {
     expect(beastTexture(cerf({ fleeSince: 4, wary: true }), true, NUIT, true)).toBe('spr-deer-flee')
   })
+
+  it('LE RAMPANT se dessine couché (cendreux.md R26ter) — le marcheur garde son pion', () => {
+    expect(beastTexture(cerf({ type: 'cendreux' }), false, NUIT, false)).toBe('spr-cendreux')
+    expect(beastTexture(cerf({ type: 'cendreux', rampant: true }), false, NUIT, false)).toBe('spr-cendreux-rampant')
+    // Posé ou non, jour ou nuit : un rampant ne se relève jamais.
+    expect(beastTexture(cerf({ type: 'cendreux', rampant: true }), true, JOUR, true)).toBe('spr-cendreux-rampant')
+  })
 })
 
 describe('le verrou du couché', () => {
