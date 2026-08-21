@@ -79,10 +79,24 @@ function census(...invs: Inventory[]): Partial<Record<ItemId, number>> {
 }
 
 describe('la case active', () => {
-  it('naît à -1 (mains nues)', () => {
+  /**
+   * NAÎT SUR LA PREMIÈRE CASE DE CEINTURE — décision d'Alexis, 2026-08-20 (question ⑨ de
+   * l'audit UX). Elle naissait à −1, et la ceinture — l'affordance qui porte « l'objet en
+   * main décide du clic », la règle centrale du jeu — démarrait donc ÉTEINTE : zéro pixel
+   * d'ambre mesuré sur deux captures. La case est vide, donc **la main reste vide** : on
+   * allume le repère, on ne donne rien.
+   */
+  it('naît sur la PREMIÈRE case de ceinture, mais les mains restent nues', () => {
     const { entity } = playerSim()
-    expect(entity.activeSlot).toBe(-1)
-    expect(heldSlot(entity)).toBeNull()
+    expect(entity.activeSlot).toBe(0)
+    expect(heldSlot(entity)).toBeNull() // la case est armée, elle est vide
+  })
+
+  /** Et l'avatar SEUL : armer la case d'un PNJ lui mettrait en main ce qui s'y trouve. */
+  it('un PNJ, lui, naît les mains rengainées', () => {
+    const { state } = playerSim()
+    const npcId = spawnEntity(state, 9, 9, SLOTS.NPC)
+    expect(state.entities.find((e) => e.id === npcId)!.activeSlot).toBe(-1)
   })
 
   it('set_active_slot désigne une case de la ceinture', () => {
@@ -96,8 +110,9 @@ describe('la case active', () => {
   it('A16 : une case hors de la CEINTURE est refusée', () => {
     const { state, entity } = playerSim()
     drainEvents(state)
+    const avant = entity.activeSlot
     applyInventoryAction(state, entity.id, { type: 'set_active_slot', slot: SLOTS.BELT }) // 1re case du sac
-    expect(entity.activeSlot).toBe(-1) // inchangé
+    expect(entity.activeSlot).toBe(avant) // INCHANGÉ — la propriété, pas une constante
     expect(drainEvents(state)).toContainEqual(
       expect.objectContaining({ type: 'action_rejected', reason: 'hors de la ceinture' }),
     )
@@ -107,8 +122,9 @@ describe('la case active', () => {
     const { state, entity } = playerSim()
     entity.inventory = entity.inventory.slice(0, 2) // un sac de 2 cases
     drainEvents(state)
+    const avant = entity.activeSlot
     applyInventoryAction(state, entity.id, { type: 'set_active_slot', slot: 4 })
-    expect(entity.activeSlot).toBe(-1)
+    expect(entity.activeSlot).toBe(avant)
     expect(drainEvents(state)).toContainEqual(
       expect.objectContaining({ type: 'action_rejected', reason: 'hors de la ceinture' }),
     )

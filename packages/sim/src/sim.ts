@@ -534,7 +534,28 @@ export function spawnEntity(state: SimState, x: number, y: number, slots: number
     hunger: 100,
     temperature: 100,
     skills: {},
-    activeSlot: -1,
+    /**
+     * UN AVATAR NAÎT AVEC SA PREMIÈRE CASE ARMÉE (décision d'Alexis, 2026-08-20, question ⑨).
+     *
+     * La ceinture est l'affordance la plus structurante du HUD — « l'objet en main décide du
+     * clic » est la règle centrale du jeu — et elle démarrait ÉTEINTE : mesuré sur deux
+     * captures de deux lots, zéro pixel d'ambre dans la bande de ceinture au premier instant.
+     * Rien ne disait qu'on peut « tenir » quelque chose, ni où ça se voit. Le rendu de l'état
+     * actif fonctionne (290 px d'anneau mesurés ailleurs) : c'est `activeSlot` qui valait −1.
+     *
+     * La case est vide au départ, donc on ne perd aucune information — on allume seulement le
+     * repère, au moment où le joueur le découvre.
+     *
+     * GARDÉ SUR LE SAC DU JOUEUR, et c'est nécessaire : `spawnEntity` sert AUSSI aux PNJ
+     * (`SLOTS.NPC`) et aux monstres (leur propre sac). Armer leur case 0 leur mettrait en main
+     * ce qui s'y trouve et changerait `equipBestWeapon` — une conséquence de combat pour une
+     * question d'interface. Seul l'avatar est concerné.
+     *
+     * ET C'EST ICI, PAS CHEZ L'HÔTE : le serveur REJOUE les arrivées par `spawnEntity`
+     * (`replay-log.ts`). Poser la case dans `veillee.ts` seulement aurait fait diverger le
+     * replay du direct. Aucun tirage RNG, aucun compte d'entité changé : même graine, même état.
+     */
+    activeSlot: slots === SLOTS.PLAYER ? 0 : -1,
     cooldownUntil: 0,
     craftQueue: [],
     hp: 100,
