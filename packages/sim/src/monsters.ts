@@ -80,6 +80,12 @@ export interface Monster {
    */
   lastSeenX?: number
   lastSeenY?: number
+  /** LA DIRECTION RETENUE (spec R28) : le tick de la dernière vue et le déplacement de la
+   *  proie entre les deux dernières (tuiles/tick) — consommés UNE fois, à la première pensée
+   *  sans elle, pour extrapoler le lieu à vérifier. Absents d'un monstre qui n'a rien vu. */
+  lastSeenAt?: number
+  lastSeenVx?: number
+  lastSeenVy?: number
   /**
    * LE RAMPANT (spec R26) : sorti du sol sans ses jambes, à vie. Allure × `RAMPANT.ALLURE`,
    * vue × `RAMPANT.VUE`, pas de siège — même morsure. Posé à l'émergence d'un RÉVEIL et nulle

@@ -278,9 +278,42 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
       goal = { x: seen.x, y: seen.y, prey: seen }
       // LE DERNIER LIEU, PAS LA PERSONNE (décision ⑨) : il retient OÙ il vous a vu. Rompre
       // le contact ne suffit plus — il viendra vérifier, puis reprendra sa marche.
+      //
+      // …ET LA DIRECTION (spec R28, 2026-08-21) : d'une pensée à la suivante, il retient aussi
+      // votre DÉPLACEMENT (tuiles/tick). Ce n'est pas une traque : c'est ce qu'un regard
+      // retient d'un corps qui passe, et il se trompe dès que vous tournez.
+      // …de LA MÊME proie : `targetId` porte encore la cible de la pensée précédente — un
+      // humain A puis un humain B ne font pas un déplacement, ils font deux corps.
+      if (monster.lastSeenAt !== undefined && monster.lastSeenX !== undefined && monster.lastSeenY !== undefined && monster.targetId === seen.id) {
+        const dt = state.tick - monster.lastSeenAt
+        if (dt > 0) {
+          monster.lastSeenVx = (seen.x - monster.lastSeenX) / dt
+          monster.lastSeenVy = (seen.y - monster.lastSeenY) / dt
+        }
+      }
       monster.lastSeenX = seen.x
       monster.lastSeenY = seen.y
+      monster.lastSeenAt = state.tick
     } else if (monster.lastSeenX !== undefined && monster.lastSeenY !== undefined) {
+      // L'EXTRAPOLATION (R28) — à la PREMIÈRE pensée sans la proie, et une seule fois : le
+      // lieu à vérifier devient « là où elle allait », dernier lieu + déplacement × quelques
+      // secondes, borné (`MEMOIRE.EXTRAPOLATION_MAX`) et retenu dans la carte. Filer droit
+      // derrière un bosquet ne suffit plus — il en ressort sur votre trajectoire ; tourner,
+      // si. Zéro tirage, zéro A* de plus : c'est le même `pathToward`, sur un autre point.
+      if (monster.lastSeenVx !== undefined && monster.lastSeenVy !== undefined) {
+        let ex = monster.lastSeenVx * CENDREUX.MEMOIRE.EXTRAPOLATION_TICKS
+        let ey = monster.lastSeenVy * CENDREUX.MEMOIRE.EXTRAPOLATION_TICKS
+        const d = Math.sqrt(ex * ex + ey * ey)
+        if (d > CENDREUX.MEMOIRE.EXTRAPOLATION_MAX) {
+          ex *= CENDREUX.MEMOIRE.EXTRAPOLATION_MAX / d
+          ey *= CENDREUX.MEMOIRE.EXTRAPOLATION_MAX / d
+        }
+        monster.lastSeenX = Math.min(state.map.width - 0.5, Math.max(0.5, monster.lastSeenX + ex))
+        monster.lastSeenY = Math.min(state.map.height - 0.5, Math.max(0.5, monster.lastSeenY + ey))
+      }
+      delete monster.lastSeenVx
+      delete monster.lastSeenVy
+      delete monster.lastSeenAt
       if (distSq(entity.x, entity.y, monster.lastSeenX, monster.lastSeenY) <= 1) {
         // Arrivé sur le lieu : personne. Il oublie — aucune traque surnaturelle.
         delete monster.lastSeenX

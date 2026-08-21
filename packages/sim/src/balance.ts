@@ -2993,6 +2993,18 @@ export const CENDREUX = {
    * III diluerait la pression) et s'élit par `hash2` du réveil — zéro tirage. « Rien de
    * spécial » pour sa morsure : sa lenteur est sa nature, pas un handicap compensé.
    */
+  /**
+   * LA MÉMOIRE EXTRAPOLE (décision d'Alexis, 2026-08-21 — spec R28). Perdue de vue, la proie
+   * est cherchée LÀ OÙ ELLE ALLAIT : dernier lieu + déplacement × quelques secondes, borné.
+   * Plus bête qu'une traque (il se trompe dès qu'on tourne), et c'est le propos : la fuite
+   * devient « rompre ET changer de direction ».
+   */
+  MEMOIRE: {
+    /** Combien de ticks de déplacement on prolonge (≈ 2 s : 8 tuiles pour un coureur). */
+    EXTRAPOLATION_TICKS: ticksFor(2),
+    /** …et jamais plus loin que ceci, en tuiles. */
+    EXTRAPOLATION_MAX: 8,
+  },
   RAMPANT: {
     /** Part des réveils rampants là où le champ des morts est au plancher (le pré). */
     PART_MIN: 0.1,

@@ -429,6 +429,18 @@ coûtait rien, marteler une palissade à six tuiles d'une carcasse ne la réveil
     gratuitement (le patron du cadran ②). Un membre de horde n'écoute pas : il a déjà son Feu
     (R5 — pas d'A\* par bête).
 
+- **R28 — LA MÉMOIRE EXTRAPOLE** *(décision d'Alexis, 2026-08-21 — quatrième question de la
+  file PZ)*. Dans PZ, le zombie qui vous perd marche vers une position PRÉDITE, pas vers
+  l'endroit où vous étiez. Ici : à chaque pensée où il vous voit, il retient aussi votre
+  déplacement depuis la pensée précédente (`lastSeenAt`, `lastSeenVx/Vy` — tuiles/tick) ; à la
+  PREMIÈRE pensée sans vous, et une seule fois, le lieu à vérifier devient `dernier lieu +
+  déplacement × MEMOIRE.EXTRAPOLATION_TICKS` (≈ 2 s), borné à `MEMOIRE.EXTRAPOLATION_MAX`
+  (8 tuiles) et retenu dans la carte — puis il y va, n'y trouve rien, oublie (⑨ intact). Une
+  secousse (R25) efface la vitesse retenue : un impact n'a pas de direction. Zéro tirage, zéro
+  A\* de plus. La fuite devient « rompre **et changer de direction** » : filer droit derrière
+  un bosquet ne suffit plus, il en ressort sur votre trajectoire ; tourner, si. Ce n'est pas
+  une traque — il se trompe dès que vous tournez, et c'est le propos.
+
 ### 10. Le rampant — ce que le sol rend n'a pas toujours ses jambes **[2026-08-21]**
 
 *Deuxième chantier « fidélité Project Zomboid » (quatre sous-décisions d'Alexis en QCM
@@ -481,6 +493,7 @@ faux-mort, lui, existe déjà en mieux : la carcasse torpide qui se réveille so
 | `GLOBAL` (12 → 60) | — | **[2026-08-21]** le plafond global de PRESSION, en rampe de saison (⑳, hypothèse) |
 | `SENS` (VIBRATION 1, CONTACT 1, COUP 8, BATIR 12) | — | **[2026-08-21]** les sens honnêtes : stimulus de chasse, plancher de contact, secousses (R24-R25) |
 | `RAMPANT` (PART_MIN 0,1, PART_MAX 0,4, ALLURE 0,2, VUE 0,6) | — | **[2026-08-21]** le rampant : part lue dans le champ des morts, allure et vue rases (R26) |
+| `MEMOIRE` (EXTRAPOLATION_TICKS `ticksFor(2)`, EXTRAPOLATION_MAX 8) | — | **[2026-08-21]** la mémoire extrapole le dernier lieu vu dans la direction de la proie (R28) |
 | **`MAX_ALIVE`** | **24** | **plafond de Cendreux LEVÉS vivants — la borne INTERNE de la contagion (R8)** |
 
 ## Critères d'acceptation (`cendreux.test.ts`, headless)
@@ -637,6 +650,11 @@ faux-mort, lui, existe déjà en mieux : la carcasse torpide qui se réveille so
 - **A41 — La horde n'écoute pas** (R25). Un membre de horde ignore la secousse (il a déjà son
   Feu — R5) ; et une secousse ne consomme AUCUN tirage (`state.rngState` intact, le patron
   A28).
+
+- **A47 — La mémoire extrapole, une fois, bornée** (R28). Une proie vue deux fois en marche
+  vers l'est puis disparue : le lieu à vérifier est À L'EST du dernier lieu vu, à
+  `EXTRAPOLATION_MAX` au plus ; une proie vue immobile puis disparue : le lieu ne bouge pas ;
+  et une secousse efface la vitesse retenue.
 
 *Le rampant (R26) :*
 

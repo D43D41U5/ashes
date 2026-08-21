@@ -59,5 +59,10 @@ export function secouerLeSol(state: SimState, x: number, y: number, portee: numb
     if (reach <= 0 || distSq(e.x, e.y, x, y) > reach * reach) continue
     m.lastSeenX = x
     m.lastSeenY = y
+    // Un impact n'a pas de direction : la vitesse retenue d'une vraie vue (R28) ne doit pas
+    // extrapoler depuis le lieu d'une secousse.
+    delete m.lastSeenAt
+    delete m.lastSeenVx
+    delete m.lastSeenVy
   }
 }

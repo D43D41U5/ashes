@@ -957,3 +957,74 @@ describe('le rampant (R26)', () => {
     expect(proie.hp).toBe(100) // et la proie, enclose, est intouchée
   })
 })
+
+/** ═══ LA MÉMOIRE EXTRAPOLE (spec R28, 2026-08-21) ═══ */
+describe('la mémoire extrapole (R28)', () => {
+  function nuitActeIII(): SimState {
+    const state = createSim(1, {
+      map: createEmptyMap(160, 160, TERRAIN_GRASS),
+      cycleOffset: cycleOffsetForStartHour(0),
+      calendarScale: 1,
+    })
+    state.tick = 54 * TICKS_PER_SEASON_DAY
+    state.tick -= state.tick % TICKS_PER_CYCLE
+    return state
+  }
+  /** Une pensée du Cendreux : on avance l'horloge d'un intervalle de décision, puis on le fait penser. */
+  function pense(state: SimState): void {
+    state.tick += MONSTER_DEFS.cendreux.thinkEveryTicks
+    advanceMonsters(state)
+  }
+
+  it('A47 — vue deux fois en marche vers l\'est puis perdue : le lieu à vérifier est devant, borné', () => {
+    const state = nuitActeIII()
+    const id = spawnMonster(state, 'cendreux', 20.5, 20.5)
+    const monster = state.monsters.find((m) => m.entityId === id)!
+    const proie = humanAt(state, 23.5, 20.5) // à 3 tuiles : vue
+    advanceMonsters(state) // pensée 1 : dernier lieu (23,5 ; 20,5)
+    expect(monster.lastSeenX).toBe(23.5)
+    proie.x = 25.5 // 2 tuiles en un intervalle de pensée : 4 t/s, la course du joueur — encore en vue
+    pense(state) // pensée 2 : vitesse retenue 0,2 tuile/tick
+    expect(monster.lastSeenVx).toBeCloseTo(2 / MONSTER_DEFS.cendreux.thinkEveryTicks, 6)
+    proie.x = 150.5 // disparue (hors de toute vue)
+    proie.y = 150.5
+    pense(state) // pensée 3 : la première sans elle — il extrapole, une fois
+    // 0,2 t/tick × 40 ticks = 8 tuiles : pile la borne. Depuis (25,5) → (33,5).
+    expect(monster.lastSeenX).toBeCloseTo(25.5 + CENDREUX.MEMOIRE.EXTRAPOLATION_MAX, 6)
+    expect(monster.lastSeenY).toBe(20.5)
+    expect(monster.lastSeenVx).toBeUndefined() // consommée
+    expect(monster.path?.length ?? 0).toBeGreaterThan(0) // et il y va
+    pense(state) // pensée 4 : rien de neuf — le lieu ne dérive pas une seconde fois
+    expect(monster.lastSeenX).toBeCloseTo(25.5 + CENDREUX.MEMOIRE.EXTRAPOLATION_MAX, 6)
+  })
+
+  it('…une proie vue IMMOBILE puis perdue : le lieu ne bouge pas', () => {
+    const state = nuitActeIII()
+    const id = spawnMonster(state, 'cendreux', 20.5, 20.5)
+    const monster = state.monsters.find((m) => m.entityId === id)!
+    const proie = humanAt(state, 24.5, 20.5)
+    advanceMonsters(state)
+    pense(state) // deux vues au même endroit : vitesse nulle
+    expect(monster.lastSeenVx).toBe(0)
+    proie.x = 150.5
+    proie.y = 150.5
+    pense(state)
+    expect(monster.lastSeenX).toBe(24.5)
+    expect(monster.lastSeenY).toBe(20.5)
+  })
+
+  it('…et une secousse efface la vitesse retenue : un impact n\'a pas de direction', () => {
+    const state = nuitActeIII()
+    const id = spawnMonster(state, 'cendreux', 20.5, 20.5)
+    const monster = state.monsters.find((m) => m.entityId === id)!
+    const proie = humanAt(state, 23.5, 20.5)
+    advanceMonsters(state)
+    proie.x = 25.5
+    pense(state)
+    expect(monster.lastSeenVx).toBeDefined()
+    secouerLeSol(state, 22.5, 25.5, CENDREUX.SENS.COUP)
+    expect(monster.lastSeenX).toBe(22.5)
+    expect(monster.lastSeenVx).toBeUndefined()
+    expect(monster.lastSeenAt).toBeUndefined()
+  })
+})
