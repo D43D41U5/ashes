@@ -15,8 +15,10 @@
  */
 import { WORLD_EVENTS, phaseOf, tourOf } from './balance'
 import type { SimEvent } from './events'
+import { faitsDuLieu } from './annales'
+import type { FaitDeGeneration, WorldMap } from './map'
 import { POI_CHARGES } from './poi-discovery'
-import { TICKS_PER_SEASON_DAY } from './time'
+import { TICKS_PER_SEASON_DAY, tourForDay } from './time'
 
 const ACT_NAMES = ['l’Éclosion', 'le Grand Froid', 'la Cendre'] as const
 const ROMAIN = ['I', 'II', 'III', 'IV'] as const
@@ -29,6 +31,20 @@ export interface ChronicleEntry {
   day: number
   text: string
   weight: ChronicleWeight
+  /** LE LIEU dont la ligne parle (un `poiId`), quand elle en a un — la clef de jointure de la
+   *  fiche par lieu (T5) : la chronique et les annales s'y interfeuillent sans jamais
+   *  fusionner en données. */
+  lieu?: number
+}
+
+/**
+ * UN VOLUME — la chronique d'UNE année (saison-sans-fin T5, décision d'Alexis 2026-08-21 :
+ * « la chronique se scelle au tour de l'année »). Relisible à jamais, plus jamais augmentée :
+ * la seule borne propre à une mémoire sans fin.
+ */
+export interface ChronicleVolume {
+  an: number
+  entrees: ChronicleEntry[]
 }
 
 /** Rendu plat « Jour N — texte » (journal simple, en attendant le rendu à 3 poids). */
@@ -85,8 +101,8 @@ export function chronicleFromEvents(
 
   for (const e of events) {
     const d = day(e.tick)
-    const push = (text: string, weight: ChronicleWeight): void => {
-      entries.push({ day: d, text, weight })
+    const push = (text: string, weight: ChronicleWeight, lieu?: number): void => {
+      entries.push({ day: d, text, weight, ...(lieu !== undefined ? { lieu } : {}) })
     }
     switch (e.type) {
       case 'village_founded':
@@ -192,7 +208,7 @@ export function chronicleFromEvents(
         break
       case 'refugee_rumeur':
         // Le prix est dit (un repas), le reste est un constat — jamais un conseil.
-        push(`Pour un repas, des réfugiés ont dit où trouver ${e.name}.`, 'recit')
+        push(`Pour un repas, des réfugiés ont dit où trouver ${e.name}.`, 'recit', e.poiId)
         break
       case 'cendre_avance':
         // LE PREMIER MORS SEULEMENT. Le front avance ensuite chaque jour — quarante lignes
@@ -231,9 +247,9 @@ export function chronicleFromEvents(
           // LA STÈLE SE CITE — le seul « nous » du jeu, entre guillemets : ce n'est pas le
           // chroniqueur qui parle, c'est la pierre. Une brisée se cite pareil : son fragment
           // EST son texte.
-          push(`On a lu ${e.name}. « ${e.stele.lignes.join(' ')} »`, 'recit')
+          push(`On a lu ${e.name}. « ${e.stele.lignes.join(' ')} »`, 'recit', e.poiId)
         } else if (POI_CHARGES[e.kind]?.devise === 'recit') {
-          push(`${e.name} a été atteint pour la première fois.`, 'recit')
+          push(`${e.name} a été atteint pour la première fois.`, 'recit', e.poiId)
         } else {
           // Précédence R7 (spec `annales.md`) : intact > fondation > guet — AU PLUS UNE
           // proposition, et SEULEMENT ces trois-là. La fosse, la gravure, la porte, la
@@ -255,15 +271,15 @@ export function chronicleFromEvents(
             // l'arrière-pays — 22 lignes intimes sur la carte du harnais, le registre qui
             // chuchote noyé sous son propre chuchotement. La doctrine « loin des routes =
             // intact = riche » fait de l'intact un décor ; le décor appartient aux stèles.
-            push(`On a atteint ${e.name}. Personne n'était revenu.`, 'intime')
+            push(`On a atteint ${e.name}. Personne n'était revenu.`, 'intime', e.poiId)
           } else if (fondation?.cause !== undefined) {
             // Le toponyme dit la FIN (brûlée, pillée) ; la chronique dit le COMMENCEMENT.
             // Deux témoins qui ne se concertent pas — c'est voulu.
-            push(`On a atteint ${e.name}. Quelqu'un vivait là, pour ${fondation.cause === 'eau' ? "l'eau" : 'la route'}.`, 'recit')
+            push(`On a atteint ${e.name}. Quelqu'un vivait là, pour ${fondation.cause === 'eau' ? "l'eau" : 'la route'}.`, 'recit', e.poiId)
           } else if (guet?.cause !== undefined) {
             // « Elle regardait le sud » — donc ils SAVAIENT. « Elle » est sûr : le fait guet
             // n'existe que sur la Tour de guet effondrée, féminine par construction.
-            push(`On a atteint ${e.name}. Elle regardait ${guet.cause === 'est' ? "l'est" : guet.cause === 'ouest' ? "l'ouest" : `le ${guet.cause}`}.`, 'recit')
+            push(`On a atteint ${e.name}. Elle regardait ${guet.cause === 'est' ? "l'est" : guet.cause === 'ouest' ? "l'ouest" : `le ${guet.cause}`}.`, 'recit', e.poiId)
           }
         }
         break
@@ -275,4 +291,79 @@ export function chronicleFromEvents(
     }
   }
   return entries
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// LES VOLUMES — la mémoire des hivers (saison-sans-fin T5)
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+/** L'année d'un événement, depuis son tick — la même horloge que le reste. */
+function anDe(e: SimEvent, calendarScale: number): number {
+  return tourForDay(Math.floor((e.tick * calendarScale) / TICKS_PER_SEASON_DAY) + 1)
+}
+
+/**
+ * LA CHRONIQUE EN VOLUMES — un par année présente dans le flux, dans l'ordre des ans.
+ *
+ * Chaque année se FORMATE SÉPARÉMENT : la mémoire du formateur (le premier mors de la Cendre,
+ * la première fois chez chaque village, les paires de dons) repart à neuf au tour de l'année —
+ * et c'est voulu : l'hiver REVIENT, donc « la Cendre s'est mise en marche » se redit chaque
+ * hiver, et « la Cendre est entrée chez X » chuchote de nouveau. L'an neuf a ses premières fois.
+ *
+ * Pur, sans état : la même fonction sert au client (l'affichage) et à l'hôte (le scellement) —
+ * l'écrivain unique, sinon les deux finiraient par raconter deux années différentes.
+ */
+export function volumesDeChronique(
+  events: SimEvent[],
+  calendarScale: number,
+  villageNames: Record<number, string>,
+): ChronicleVolume[] {
+  const parAn = new Map<number, SimEvent[]>()
+  for (const e of events) {
+    const an = anDe(e, calendarScale)
+    const liste = parAn.get(an)
+    if (liste) liste.push(e)
+    else parAn.set(an, [e])
+  }
+  return [...parAn.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([an, liste]) => ({ an, entrees: chronicleFromEvents(liste, calendarScale, villageNames) }))
+}
+
+/**
+ * LE SCELLEMENT — ce que l'hôte fait au tour de l'année : les années RÉVOLUES (strictement
+ * avant `tourCourant`) deviennent des volumes FORMATÉS, relisibles à jamais, plus jamais
+ * augmentés ; l'année courante reste un flux brut (le formateur a besoin de ses événements
+ * pour ses premières fois). La sauvegarde porte donc des textes pour le passé et des faits
+ * pour le présent — et ne grossit plus sans borne.
+ */
+export function scellerLaChronique(
+  events: SimEvent[],
+  calendarScale: number,
+  villageNames: Record<number, string>,
+  tourCourant: number,
+): { volumes: ChronicleVolume[]; courant: SimEvent[] } {
+  const revolus = events.filter((e) => anDe(e, calendarScale) < tourCourant)
+  const courant = events.filter((e) => anDe(e, calendarScale) >= tourCourant)
+  return { volumes: volumesDeChronique(revolus, calendarScale, villageNames), courant }
+}
+
+/**
+ * LA FICHE D'UN LIEU (T5, reco du scénariste) — les annales et la chronique INTERFEUILLÉES par
+ * la clef de LIEU, jamais fusionnées en données : la vallée écrit les premières lignes (les
+ * faits d'annales, ère par ère), le joueur écrit les suivantes (ses lignes de chronique, an
+ * par an) — « fondée pour l'eau · brûlée avant · atteinte par toi l'an 1 · … » — et l'on ne
+ * distingue plus qui est la strate de qui. Pur ; l'UI qui la montre est un chantier à part.
+ */
+export function registreDuLieu(
+  map: WorldMap,
+  poiId: number,
+  volumes: ChronicleVolume[],
+): { annales: FaitDeGeneration[]; lignes: { an: number; entree: ChronicleEntry }[] } {
+  const zone = map.zones[poiId]
+  const annales = zone ? faitsDuLieu(map, zone) : []
+  const lignes: { an: number; entree: ChronicleEntry }[] = []
+  for (const v of volumes) for (const entree of v.entrees) if (entree.lieu === poiId) lignes.push({ an: v.an, entree })
+  return { annales, lignes }
 }

@@ -813,9 +813,16 @@ export class UIScene extends Phaser.Scene {
     const open = Boolean(getHud(this.registry, 'journalOpen'))
     this.journalPanel.setVisible(open)
     if (open) {
-      this.journalText.setText(
-        chronicle.slice(-26).map(formatChronicleLine).join('\n') || '(rien encore — le monde est jeune)',
-      )
+      // LA MÉMOIRE DES HIVERS (T5) : les années scellées par l'hôte, puis les années vives du
+      // flux — à la suite, un en-tête par an dès qu'il y en a plus d'une. Le passé ne se perd
+      // plus au plafond du flux : il est relisible, volume par volume.
+      const volumes = [...(getHud(this.registry, 'volumesScelles') ?? []), ...(getHud(this.registry, 'volumesVifs') ?? [])]
+      const lignes: string[] = []
+      for (const v of volumes) {
+        if (volumes.length > 1) lignes.push(`— L’AN ${v.an} —`)
+        for (const e of v.entrees) lignes.push(formatChronicleLine(e))
+      }
+      this.journalText.setText(lignes.slice(-26).join('\n') || '(rien encore — le monde est jeune)')
     }
 
     // LA STÈLE DE FIN DE SAISON : levée UNE fois, au jour 61, avec les verdicts et la chronique

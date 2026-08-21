@@ -14,6 +14,7 @@ import type { Corpse } from './combat'
 import type { RecognizedFunction } from './construction'
 import type { ResourceNode } from './economy'
 import type { SimEvent } from './events'
+import type { ChronicleVolume } from './chronicle'
 import type { WorldMap } from './map'
 import type { Monster } from './monsters'
 import type { Reveil } from './morts'
@@ -139,6 +140,12 @@ export interface ReadyMessage {
    * sur un monde tout neuf (le récit se construit alors au fil de l'eau, depuis « Acte I »).
    */
   chronicle?: SimEvent[]
+  /**
+   * LES ANNÉES RÉVOLUES, SCELLÉES (saison-sans-fin T5) : un volume de chronique formatée par
+   * an, relisible à jamais. `chronicle` ne porte que l'année courante, brute. Absent sur un
+   * monde neuf, et sur une reprise qui n'a pas encore passé un tour de l'année.
+   */
+  volumes?: ChronicleVolume[]
   /**
    * QUAND CE MONDE EST NÉ — horloge murale de l'hôte à la fondation, stable pour toute la vie
    * de la vallée (relue du disque à chaque reprise). Avec la seed, elle NOMME le monde : deux

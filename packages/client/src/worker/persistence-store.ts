@@ -18,7 +18,7 @@
  * afficher deux nombres. Elle s'écrit dans LA MÊME transaction que la partie ; une méta qui
  * pourrait retarder d'une sauvegarde serait un écran qui ment sur le jour atteint.
  */
-import { seasonDayAtTick, type SimEvent } from '@ashes/sim'
+import { seasonDayAtTick, type ChronicleVolume, type SimEvent } from '@ashes/sim'
 import { SLOT_COUNT, slotValide } from './mondes'
 
 const DB_NAME = 'braises'
@@ -56,8 +56,15 @@ export interface SaveRecord {
   sim: string
   /** QUELLE entité est l'avatar — sans elle, on reprendrait le monde sans savoir qui l'on est. */
   playerId: number
-  /** Le récit déjà vécu (log borné des faits chronique-dignes) : la chronique survit à la reprise. */
+  /** Le récit de l'ANNÉE COURANTE (les faits chronique-dignes, bruts) : la chronique survit à la reprise. */
   chronicle: SimEvent[]
+  /**
+   * LES ANNÉES RÉVOLUES, SCELLÉES (saison-sans-fin T5, décision d'Alexis 2026-08-21) : un volume
+   * de chronique FORMATÉE par an — relisible à jamais, plus jamais augmenté. C'est ce qui borne
+   * la mémoire d'une Veillée sans fin : des textes pour le passé, des faits pour le présent.
+   * Absent d'une sauvegarde d'avant : l'hôte scelle au premier boot ce que `chronicle` portait.
+   */
+  volumes?: ChronicleVolume[]
   /** Horloge MURALE de la dernière sauvegarde (métadonnée d'hôte, pas de /sim). */
   savedAt: number
 }

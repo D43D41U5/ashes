@@ -945,6 +945,8 @@ export class WorldScene extends Phaser.Scene {
       this.eventLog = msg.chronicle.slice(-EVENT_LOG_CAP)
       this.chronicleReseedPending = true
     }
+    // LES ANNÉES RÉVOLUES (T5) : déjà formatées par l'hôte — rien à recalculer, on les tient.
+    setHud(this.registry, 'volumesScelles', msg.volumes ?? [])
     const worldW = this.map.width * TILE_PX
     const worldH = this.map.height * TILE_PX
 

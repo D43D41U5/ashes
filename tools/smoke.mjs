@@ -14945,6 +14945,41 @@ const SCENARIOS = {
     // est porté par leurs gardes. Si la nuit doit se prouver ICI, élucider d'abord le refus.
     console.log(`→ ${OUT}/stele-N-jour.png`)
   },
+
+  /**
+   * LE JOURNAL PAR ANNÉES (saison-sans-fin T5, 2026-08-21) — la mémoire des hivers SE VOIT.
+   *
+   * On saute au jour 100 (l'an 2) : le flux porte des faits des deux années, et le journal
+   * doit les lire à la suite avec un en-tête par an (« — L'AN 1 — », « — L'AN 2 — »). On ouvre
+   * le journal en posant `journalOpen` (la touche J passe par le même registre) et on capture,
+   * boucle endormie. Exige `--dev` (debug_set_season_day).
+   */
+  async journal(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.waitForTimeout(800)
+    const agir = async (action, ms) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    // Deux sauts, pour que l'an 1 ET l'an 2 aient chacun un fait d'acte dans le flux.
+    await agir({ type: 'debug_set_season_day', day: 45 }, 900)
+    await agir({ type: 'debug_set_season_day', day: 100 }, 1500)
+    const etat = await page.evaluate(() => {
+      const reg = window.__BRAISES__.scene.registry
+      reg.set('journalOpen', true)
+      const sc = reg.get('volumesScelles') ?? []
+      const vi = reg.get('volumesVifs') ?? []
+      return { scelles: sc.map((v) => v.an), vifs: vi.map((v) => [v.an, v.entrees.length]), time: reg.get('time'), plat: (reg.get('chronicle') ?? []).map((e) => `${e.day}:${e.text}`) }
+    })
+    await page.waitForTimeout(600)
+    console.log(`état : scellés ${JSON.stringify(etat.scelles)} · vifs ${JSON.stringify(etat.vifs)} · jour ${etat.time?.seasonDay} an ${etat.time?.tour} · plat ${JSON.stringify(etat.plat)}`)
+    if (!etat.vifs.some((v) => v[0] >= 2)) console.error('!! aucun volume de l\'an 2 — le flux ne porte pas la deuxième année')
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await page.screenshot({ timeout: 90000, path: `${OUT}/journal-annees.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    console.log(`→ ${OUT}/journal-annees.png`)
+  },
 }
 
 const run = SCENARIOS[scenario]

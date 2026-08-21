@@ -9,6 +9,10 @@
 import {
   BALANCE,
   CHRONICLE_EVENT_TYPES,
+  scellerLaChronique,
+  seasonDayAtTick,
+  tourForDay,
+  type ChronicleVolume,
   collectNodeDeltas,
   createNodeShadow,
   deserializeCarte,
@@ -85,7 +89,34 @@ let perfOctets = -1
  * disque. Borné : la persistance ne grossit pas sans fin sur une longue saison.
  */
 let chronicleLog: SimEvent[] = []
+/** Le plafond de l'ANNÉE COURANTE seulement — une sécurité, plus une mémoire : les années
+ *  révolues sont SCELLÉES en volumes (T5), elles ne comptent plus ici. */
 const CHRONICLE_CAP = 400
+/** LES ANNÉES RÉVOLUES, scellées (saison-sans-fin T5) — des textes, plus des faits. */
+let volumes: ChronicleVolume[] = []
+/** L'année dont `chronicleLog` porte les faits ; quand le monde la dépasse, on scelle. */
+let tourOuvert = 1
+
+/** Les noms des villages vivants — pour formater un volume au moment où on le scelle. */
+function nomsDesVillages(state: SimState): Record<number, string> {
+  return Object.fromEntries(state.villages.map((v) => [v.id, v.name]))
+}
+
+/**
+ * LE SCELLEMENT — au tour de l'année (décision d'Alexis 2026-08-21 : la chronique de l'hiver
+ * écoulé se scelle). Les faits des années strictement avant `tour` deviennent des volumes
+ * formatés, relisibles à jamais ; `chronicleLog` ne garde que l'année courante. Idempotent :
+ * rappelé sans nouvelle année, il ne scelle rien. Même fonction pure que l'affichage client
+ * (`volumesDeChronique`) — l'écrivain unique : l'hôte et l'écran ne peuvent pas raconter deux
+ * années différentes.
+ */
+function scellerLesAnneesRevolues(state: SimState, tour: number): void {
+  if (tour <= tourOuvert && volumes.length > 0) return
+  const r = scellerLaChronique(chronicleLog, state.calendarScale, nomsDesVillages(state), tour)
+  if (r.volumes.length > 0) volumes.push(...r.volumes)
+  chronicleLog = r.courant
+  tourOuvert = tour
+}
 /** Garde anti-double-boot : le chargement du disque est ASYNCHRONE (IndexedDB). */
 let booting = false
 /** Une écriture disque à la fois — les sérialisations lourdes ne se chevauchent pas. */
@@ -159,6 +190,9 @@ function tick(): void {
   // tient sa propre copie d'affichage — les deux filtrent sur la MÊME liste (/sim).
   for (const e of events) if (CHRONICLE_EVENT_TYPES.has(e.type)) chronicleLog.push(e)
   if (chronicleLog.length > CHRONICLE_CAP) chronicleLog.splice(0, chronicleLog.length - CHRONICLE_CAP)
+  // AU TOUR DE L'ANNÉE, on scelle (T5) : une division par tick, et un formatage par an.
+  const tour = tourForDay(seasonDayAtTick(sim.tick, sim.calendarScale))
+  if (tour > tourOuvert) scellerLesAnneesRevolues(sim, tour)
   // LA ZONE D'INTÉRÊT — le même filtre qu'en multi (voir `/sim/interest.ts`). En solo il n'y a
   // qu'un client, mais il est AU BOUT D'UN postMessage : tout ce qu'on n'envoie pas est un
   // clone structuré qu'on ne paie pas. Et surtout, l'appliquer des deux côtés garde
@@ -280,7 +314,7 @@ async function persist(): Promise<void> {
       const enc = new TextEncoder()
       perfOctets = enc.encode(texte).length + (ecriture.quoi === 'naissance' ? enc.encode(ecriture.carte).length : 0)
     }
-    const record = { sim: texte, playerId, chronicle: chronicleLog, savedAt: Date.now() }
+    const record = { sim: texte, playerId, chronicle: chronicleLog, volumes, savedAt: Date.now() }
     // LA MÉTA DE L'ÉCRAN DES MONDES — écrite dans la MÊME transaction que la partie (voir
     // `persistence-store.ts`) : le jour annoncé au menu est toujours celui de la sauvegarde
     // qu'on rouvrira, jamais celui d'avant. Elle se calcule ici parce qu'elle demande le
@@ -385,6 +419,11 @@ async function boot(slot: number, seed: number, nom: string): Promise<void> {
       if (!carteEnMain) coffre = creerCoffre()
       playerId = rec.playerId
       chronicleLog = rec.chronicle ?? []
+      volumes = rec.volumes ?? []
+      // Une sauvegarde d'AVANT le scellement porte tout son passé à plat dans `chronicle` : on
+      // scelle au boot ce qui est révolu — la migration est le mécanisme lui-même.
+      tourOuvert = 1
+      scellerLesAnneesRevolues(state, tourForDay(seasonDayAtTick(state.tick, state.calendarScale)))
       const me = state.entities.find((e) => e.id === playerId)
       if (me) spawn = { x: me.x, y: me.y }
       // LA DATE DE FONDATION SURVIT À LA REPRISE : sans ça, chaque sauvegarde ferait naître le
@@ -420,6 +459,8 @@ async function boot(slot: number, seed: number, nom: string): Promise<void> {
     playerId = world.playerId
     spawn = world.spawn
     chronicleLog = []
+    volumes = []
+    tourOuvert = 1
     coffre = creerCoffre()
   } else if (resumed) {
     // Reprise : aucune passe de génération n'a tourné — on remplit la barre d'un coup pour
@@ -454,7 +495,7 @@ async function boot(slot: number, seed: number, nom: string): Promise<void> {
     // pas à la reprise, et la carte se redécouvrirait pour rien.
     createdAt: mondeCreeA,
     // La chronique n'accompagne QUE la reprise (sur un monde neuf, le récit démarre vide).
-    ...(resumed ? { chronicle: chronicleLog } : {}),
+    ...(resumed ? { chronicle: chronicleLog, ...(volumes.length > 0 ? { volumes } : {}) } : {}),
   })
   booting = false
   // L'autosave de sécurité tourne dès qu'un monde existe (la sortie, elle, sauve sur `pause`).

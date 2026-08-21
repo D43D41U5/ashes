@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { WORLD_EVENTS } from './balance'
-import { chronicleFromEvents, formatChronicleLine, type ChronicleWeight } from './chronicle'
+import { chronicleFromEvents, formatChronicleLine, registreDuLieu, scellerLaChronique, volumesDeChronique, type ChronicleWeight } from './chronicle'
+import { createEmptyMap } from './map'
 import type { SimEvent } from './events'
 import { TICKS_PER_SEASON_DAY } from './time'
 
@@ -101,8 +102,9 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     expect(entries).toHaveLength(2)
     // Forme ACTIVE (« On a atteint ») : insensible à l'accord par construction — « la Ferme
     // brûlée a été atteint » serait la faute exacte de « le seuil de le Karst ».
-    expect(entries[0]).toEqual({ day: 9, text: "On a atteint la Ferme brûlée I. Quelqu'un vivait là, pour l'eau.", weight: 'recit' })
-    expect(entries[1]).toEqual({ day: 11, text: "On a atteint la Charrette II. Quelqu'un vivait là, pour la route.", weight: 'recit' })
+    // Et chaque ligne de lieu porte sa clef `lieu` (le poiId) — la jointure de la fiche par lieu (T5).
+    expect(entries[0]).toEqual({ day: 9, text: "On a atteint la Ferme brûlée I. Quelqu'un vivait là, pour l'eau.", weight: 'recit', lieu: 3 })
+    expect(entries[1]).toEqual({ day: 11, text: "On a atteint la Charrette II. Quelqu'un vivait là, pour la route.", weight: 'recit', lieu: 4 })
   })
 
   it('l\u2019intact CHUCHOTE, et il gagne sur la cause : personne n\u2019était revenu (poids intime)', () => {
@@ -113,7 +115,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     )
     // AU PLUS UNE proposition (règle de l'écrivain) : l'intact prime sur la cause — c'est le
     // payoff de la doctrine « loin des routes = intact = riche », et sa sobriété EST son poids.
-    expect(entries).toEqual([{ day: 14, text: "On a atteint la Ferme des Prés III. Personne n'était revenu.", weight: 'intime' }])
+    expect(entries).toEqual([{ day: 14, text: "On a atteint la Ferme des Prés III. Personne n'était revenu.", weight: 'intime', lieu: 5 }])
   })
 
   it('le GUET parle quand le lieu n\u2019a ni sort ni fondation — « Elle regardait le sud. »', () => {
@@ -122,7 +124,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       NAMES,
     )
-    expect(entries).toEqual([{ day: 6, text: 'On a atteint la Tour de guet effondrée I. Elle regardait le sud.', weight: 'recit' }])
+    expect(entries).toEqual([{ day: 6, text: 'On a atteint la Tour de guet effondrée I. Elle regardait le sud.', weight: 'recit', lieu: 8 }])
     // Et l'article se plie à la direction : « l'est », jamais « le est ».
     const est = chronicleFromEvents(
       [at(7, { type: 'poi_first_visit', poiId: 9, kind: 'tour_guet', name: 'la Tour de guet effondrée I', byEntityId: 7, faits: [{ ere: 1, type: 'guet', cause: 'est', saillant: true }] })],
@@ -184,7 +186,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       NAMES,
     )
-    expect(entries).toEqual([{ day: 12, text: 'On a lu la Stèle II. « Ici les chemins se répondaient. Nous guettions le sud. »', weight: 'recit' }])
+    expect(entries).toEqual([{ day: 12, text: 'On a lu la Stèle II. « Ici les chemins se répondaient. Nous guettions le sud. »', weight: 'recit', lieu: 20 }])
   })
 
   it('la rumeur du réfugié se raconte — le prix est dit, jamais un conseil', () => {
@@ -193,7 +195,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
       SCALE,
       NAMES,
     )
-    expect(entries).toEqual([{ day: 17, text: 'Pour un repas, des réfugiés ont dit où trouver la Ferme brûlée I.', weight: 'recit' }])
+    expect(entries).toEqual([{ day: 17, text: 'Pour un repas, des réfugiés ont dit où trouver la Ferme brûlée I.', weight: 'recit', lieu: 4 }])
   })
 
   it('un intact SANS fondation se tait — l\u2019arrière-pays intact est un décor, pas une ligne', () => {
@@ -279,5 +281,90 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     expect(texteDe(WORLD_EVENTS.HORDE_TAILLE.FIN, 1)).toContain('a déferlé')
     // Et la cible peut être un simple feu de camp (décision ⑬) : le récit le dit sans village.
     expect(texteDe(WORLD_EVENTS.HORDE_TAILLE.FIN)).toContain('un feu isolé')
+  })
+})
+
+
+// ═══ LA MÉMOIRE DES HIVERS (saison-sans-fin T5) — décision d'Alexis : la chronique se scelle ═══
+describe('les volumes — un par année, et le formateur repart à neuf au tour de l’année', () => {
+  // SCALE = un jour par tick : le jour N tombe au tick N−1 ; l'an 1 = jours 1..84, l'an 2 = 85..168.
+  it('partitionne par AN, dans l’ordre, et chaque an a ses PREMIÈRES FOIS', () => {
+    const volumes = volumesDeChronique(
+      [
+        at(22, { type: 'cendre_avance', jour: 22, front: 2, noeudsBrules: 3 }), // an 1 : le premier mors
+        at(45, { type: 'cendre_prend', jour: 45, villageId: 2, count: 3 }), //   an 1 : intime
+        at(106, { type: 'cendre_avance', jour: 106, front: 20, noeudsBrules: 5 }), // an 2 : l'hiver REVIENT
+        at(130, { type: 'cendre_prend', jour: 130, villageId: 2, count: 1 }), //  an 2 : chuchote de nouveau
+      ],
+      SCALE,
+      NAMES,
+    )
+    expect(volumes.map((v) => v.an)).toEqual([1, 2])
+    expect(volumes[0]!.entrees.map((e) => e.weight)).toEqual(['battement', 'intime'])
+    // L'an 2 redit le mors et rechuchote : la mémoire du formateur est PAR ANNÉE.
+    expect(volumes[1]!.entrees.map((e) => e.weight)).toEqual(['battement', 'intime'])
+    expect(volumes[1]!.entrees[0]!.text).toBe('La Cendre s’est mise en marche : le sud brûle.')
+  })
+
+  it('un flux vide rend zéro volume ; un an sans ligne dite n’apparaît pas', () => {
+    expect(volumesDeChronique([], SCALE, NAMES)).toEqual([])
+    // Un événement muet (un cairn, hors devise récit, sans annales) : l'an existe dans le flux
+    // mais son volume est vide — on le garde (l'an a eu lieu), ses entrées sont [].
+    const v = volumesDeChronique([at(90, { type: 'poi_first_visit', poiId: 2, kind: 'cairn', name: 'un cairn', byEntityId: 7 })], SCALE, NAMES)
+    expect(v).toEqual([{ an: 2, entrees: [] }])
+  })
+})
+
+describe('le scellement — les années révolues deviennent des textes, l’année courante reste un flux', () => {
+  it('au tour de l’an 3 : les ans 1 et 2 scellés, l’an 3 brut', () => {
+    const flux = [
+      at(22, { type: 'cendre_avance', jour: 22, front: 2, noeudsBrules: 3 }),
+      at(106, { type: 'cendre_avance', jour: 106, front: 20, noeudsBrules: 5 }),
+      at(170, { type: 'act_started', act: 9 }), // l'an 3 commence (jour 169 = acte 9)
+      at(190, { type: 'cendre_avance', jour: 190, front: 30, noeudsBrules: 2 }),
+    ]
+    const { volumes, courant } = scellerLaChronique(flux, SCALE, NAMES, 3)
+    expect(volumes.map((v) => v.an)).toEqual([1, 2])
+    expect(volumes.every((v) => v.entrees.length === 1)).toBe(true)
+    expect(courant).toHaveLength(2) // les deux événements de l'an 3, BRUTS
+    expect(courant.every((e) => e.tick >= 168)).toBe(true)
+  })
+
+  it('rien à sceller au tour de l’an 1 : tout reste courant', () => {
+    const flux = [at(22, { type: 'cendre_avance', jour: 22, front: 2, noeudsBrules: 3 })]
+    const { volumes, courant } = scellerLaChronique(flux, SCALE, NAMES, 1)
+    expect(volumes).toEqual([])
+    expect(courant).toHaveLength(1)
+  })
+})
+
+describe('la fiche par lieu — annales et chronique interfeuillées par la clef de LIEU', () => {
+  it('une ferme : ses faits d’avant, puis ce que le joueur y a fait, an par an', () => {
+    const map = createEmptyMap(60, 60, 0)
+    map.zones.push({ name: 'la Ferme brûlée I', x: 10, y: 10, w: 2, h: 2, kind: 'ferme_ruinee' }) // poiId 0
+    map.annales = [
+      { ere: 1, type: 'fondation', x: 11, y: 11, lieu: 'ferme_ruinee', cause: 'eau' },
+      { ere: 3, type: 'sort', x: 11, y: 11, lieu: 'ferme_ruinee', cause: 'brule' },
+    ]
+    const volumes = volumesDeChronique(
+      [
+        at(9, { type: 'poi_first_visit', poiId: 0, kind: 'ferme_ruinee', name: 'la Ferme brûlée I', byEntityId: 7, faits: [{ ere: 1, type: 'fondation', cause: 'eau', saillant: true }] }),
+        at(100, { type: 'refugee_rumeur', groupId: 1, byEntityId: 7, poiId: 0, kind: 'ferme_ruinee', name: 'la Ferme brûlée I' }),
+        at(101, { type: 'poi_first_visit', poiId: 1, kind: 'sanctuaire', name: 'le Sanctuaire', byEntityId: 7 }), // un AUTRE lieu
+      ],
+      SCALE,
+      NAMES,
+    )
+    const fiche = registreDuLieu(map, 0, volumes)
+    // La vallée écrit les premières lignes…
+    expect(fiche.annales.map((f) => `${f.type}:${f.cause}`)).toEqual(['fondation:eau', 'sort:brule'])
+    // …le joueur écrit les suivantes, an par an — et rien d'un autre lieu ne s'y glisse.
+    expect(fiche.lignes.map((l) => [l.an, l.entree.day])).toEqual([[1, 9], [2, 100]])
+    expect(fiche.lignes[0]!.entree.text).toContain("pour l'eau")
+    expect(fiche.lignes[1]!.entree.text).toContain('réfugiés')
+  })
+
+  it('un poiId inconnu rend une fiche vide, jamais une erreur', () => {
+    expect(registreDuLieu(createEmptyMap(10, 10, 0), 42, [])).toEqual({ annales: [], lignes: [] })
   })
 })

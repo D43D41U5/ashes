@@ -7,6 +7,7 @@ import {
   capaciteStation,
   BALANCE,
   chronicleFromEvents,
+  volumesDeChronique,
   COOK_SLOT,
   FIRE,
   FIRE_UPKEEP,
@@ -430,6 +431,9 @@ export function publishChronicle(
 ): void {
   const names = Object.fromEntries(villages.map((v) => [v.id, v.name]))
   setHud(registry, 'chronicle', chronicleFromEvents(eventLog, calendarScale, names))
+  // LES VOLUMES VIFS (T5) : le flux du client partitionné par an — quand l'année tourne sans
+  // reprise, l'an révolu et l'an neuf se lisent chacun avec leurs premières fois.
+  setHud(registry, 'volumesVifs', volumesDeChronique(eventLog, calendarScale, names))
 }
 
 /**

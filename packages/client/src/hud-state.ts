@@ -6,7 +6,7 @@
  * doivent JAMAIS appeler `registry.set/get` directement — uniquement
  * `setHud`/`getHud`.
  */
-import type { BarrierType, ChronicleEntry, ComponentType, RecipeId, StationFonction, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@ashes/sim'
+import type { BarrierType, ChronicleEntry, ChronicleVolume, ComponentType, RecipeId, StationFonction, CraftOrder, Entity, GameTime, Inventory, ItemBag, ItemId, PlayerAction, SkillId, Village, VillageTask, WallMaterial, WorldMap } from '@ashes/sim'
 import type Phaser from 'phaser'
 import type { Brouillard } from './render/fog'
 
@@ -311,8 +311,17 @@ export interface HudState {
   /** Position LOGIQUE de l'avatar (tuiles) — le marqueur « tu es ici » de la carte. */
   playerPos: { x: number; y: number }
   /** La chronique de la saison — entrées structurées `{ jour, texte, poids }`
-   *  (le rendu à 3 poids s'y appuie ; voir chronicle.ts côté /sim). */
+   *  (le rendu à 3 poids s'y appuie ; voir chronicle.ts côté /sim). Les entrées PLATES du
+   *  flux vif — la stèle de fin de saison (multi) y lit encore. */
   chronicle: ChronicleEntry[]
+  /**
+   * LA MÉMOIRE DES HIVERS (saison-sans-fin T5) : les années RÉVOLUES, scellées par l'hôte (des
+   * textes, relisibles à jamais), et les années VIVES, partitionnées par le client depuis son
+   * flux — la même fonction pure des deux côtés. Le journal les lit à la suite, avec un
+   * en-tête par an. Disjointes par construction : l'hôte scelle ce qui précède le flux.
+   */
+  volumesScelles: ChronicleVolume[]
+  volumesVifs: ChronicleVolume[]
   /**
    * LES DEUX FILES DES BANDEAUX (audit UX 2026-08-20, P0.2 — défaut cardinal).
    *
@@ -401,7 +410,7 @@ export const CLES_HUD: Record<keyof HudState, true> = {
   pickups: true, crafts: true, levelUps: true, fogVersion: true, fog: true,
   saveState: true, pendingActions: true, journalOpen: true, mapOpen: true, menuOpen: true,
   veillee: true, quitMondes: true, audioVolume: true, mapData: true, knownPois: true,
-  playerPos: true, chronicle: true, error: true, hint: true, fatal: true,
+  playerPos: true, chronicle: true, volumesScelles: true, volumesVifs: true, error: true, hint: true, fatal: true,
   alarm: true, seasonVerdicts: true, debugOn: true, debugGod: true, debugSpeed: true,
   debugLighting: true, debugInfo: true, debugTeleport: true,
 }
