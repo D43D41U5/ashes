@@ -221,6 +221,15 @@ export interface SimState {
   /** Jours de saison écoulés par jour réel (1 en multi, libre en Veillée/test). */
   calendarScale: number
   /**
+   * LE RESET (spec `saison-sans-fin.md` R3b, T4) — le jour de saison après lequel la saison
+   * FINIT (verdicts, évacuation avant), ou `null` : JAMAIS. **En solo, jamais** (R4 — décision
+   * d'Alexis 2026-08-21 : ni verdict ni Arche en Veillée, la saison ne finit pas, elle tourne) ;
+   * le multi garde le jour 61 tant que le wipe n'est pas bâti. Dans l'état, pas dans une
+   * option volatile : le replay et la sauvegarde doivent le retrouver. Absent d'une vieille
+   * sauvegarde : `undefined` vaut `null` — une Veillée d'avant le pivot ne finit plus non plus.
+   */
+  finDeSaison: number | null
+  /**
    * Décalage de PHASE du cycle jour/nuit, en ticks (0 = le cycle démarre à
    * l'aube). N'affecte QUE le cycle diégétique, jamais le calendrier de saison —
    * permet de commencer une partie à une heure donnée (ex. minuit pour tester la
@@ -388,6 +397,9 @@ export interface SimState {
 export interface SimOptions {
   map?: WorldMap
   calendarScale?: number
+  /** Le jour après lequel la saison finit, ou `null` : jamais (le solo). Défaut : le jour 60 —
+   *  la saison nominale des bancs, des tests et du multi d'aujourd'hui. */
+  finDeSaison?: number | null
   /** Nœuds de ressources — typiquement `generateNodes(map, seed)`. */
   nodes?: ResourceNode[]
   /** Décalage de phase du cycle (ticks) — voir `cycleOffsetForStartHour`. */
@@ -456,6 +468,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     seed,
     rngState: seed >>> 0,
     calendarScale: options.calendarScale ?? BALANCE.DEFAULT_CALENDAR_SCALE,
+    finDeSaison: options.finDeSaison === undefined ? BALANCE.SEASON_DAYS : options.finDeSaison,
     cycleOffset: ((options.cycleOffset ?? 0) % TICKS_PER_CYCLE + TICKS_PER_CYCLE) % TICKS_PER_CYCLE,
     // Copies profondes (JSON — l'état est JSON-sérialisable par design) :
     // les options sont des ENTRÉES immuables. Les partager par référence

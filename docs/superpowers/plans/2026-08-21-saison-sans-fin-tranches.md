@@ -1,6 +1,6 @@
 # La saison sans fin — le plan en cinq tranches
 
-*Source : `docs/specs/saison-sans-fin.md` (décidé 2026-07-31), les décisions d'Alexis du 2026-08-21 (**l'arc oscille** — « le jeu devient de plus en plus dur mais on peut survivre à plusieurs hivers » ; **la pression vient de l'environnement** — le cortège de cendre, livré), et la refonte **pression-croissante des Cendreux** (spec du 2026-08-21, 19 décisions, livrée — elle change la liste des lois, voir §1). Statut : **T1, T2 et T3 livrées (2026-08-21) ; T4 ensuite — O2 et O6 à trancher**. Jalon : le pivot systémique d'avant GATE 1 (question O7 de la spec — tranché de fait par « continue »).*
+*Source : `docs/specs/saison-sans-fin.md` (décidé 2026-07-31), les décisions d'Alexis du 2026-08-21 (**l'arc oscille** — « le jeu devient de plus en plus dur mais on peut survivre à plusieurs hivers » ; **la pression vient de l'environnement** — le cortège de cendre, livré), et la refonte **pression-croissante des Cendreux** (spec du 2026-08-21, 19 décisions, livrée — elle change la liste des lois, voir §1). Statut : **T1 à T4 livrées (2026-08-21) ; reste T5 (le scellement) et les deux questions de T2 (le nom de l'acte IV, les pentes)**. Jalon : le pivot systémique d'avant GATE 1 (question O7 de la spec — tranché de fait par « continue »).*
 
 ---
 
@@ -41,7 +41,7 @@ Chaque table devient une **fonction totale** `loi(act)` dans son bloc de réglag
 
 Le front **mord l'hiver, tient l'été, ne recule jamais** — l'érosion irréversible qui sauve « tout est condamné » sans amender le GDD *(ma reco en séance ; la parade d'Alexis — la braise qui repousse — l'a rendue tenable ; à confirmer en une ligne)*. Bouchée d'hiver = `PART_CIBLE / TOURS_NOMINAUX` de la course calibrée ; au-delà de l'arc nominal le front continue — la vallée finit par n'être plus qu'un refuge, **sauf parade** (chantier design séparé, contrainte déjà actée : elle repousse le SEUIL, jamais ne réchauffe le CLIMAT — bible I3, `flore-froid` F1bis). Le cortège suit gratuitement (il est en parts de la course). `cendre_prend` et la hantise suivent sans une ligne.
 
-### T4 — La fin qui n'en est plus une *(O2 et O6 à trancher)*
+### T4 — La fin qui n'en est plus une *(LIVRÉE — « je suis ta reco » : en solo ni verdict ni Arche ; `finDeSaison` dans l'état, `null` en Veillée, repli `null` pour les vieilles sauvegardes ; le voile client ne tombe plus jamais en solo — aucune ligne à y changer)*
 
 `season_ended` du jour 61 devient le **verdict de sortie d'hiver** (un par an — O6) ; l'Arche devient **caravane** (elle repasse, `arkDeparted` devient un compteur — O2, piste du scénariste, décision d'Alexis) ; le voile client `season-veil` cesse d'être terminal (chantier UI) ; le solo ne se réinitialise jamais (R4) et `VEILLEE_SEASON_CYCLES` devient le réglage de vitesse (R6). **Risque nommé** : `calendarScale` est FIGÉ dans les sauvegardes (`sim-worker` — « la sim garde son échelle figée ») ; une Veillée d'avant le pivot doit continuer de rejouer à l'identique — la migration est un chantier en soi, pas un détail.
 

@@ -102,6 +102,12 @@ describe('persistance de la Veillée', () => {
     const relu = deserializeSim(JSON.stringify(sansReveils))
     expect(relu.reveils).toEqual([]) // recollé, pas refusé
 
+    // LA FIN DE SAISON (saison-sans-fin T4) : une vallée d'avant le pivot n'a pas le champ —
+    // elle se relit avec « jamais », la règle du solo, au lieu d'être refusée ou de finir.
+    const sansFin = JSON.parse(serializeSim(sim)) as { v: number; sim: Record<string, unknown> }
+    delete sansFin.sim.finDeSaison
+    expect(deserializeSim(JSON.stringify(sansFin)).finDeSaison).toBeNull()
+
     // …et la porte ne s'est pas ouverte pour autant : un champ NON éphémère manque toujours.
     const sansMonstres = JSON.parse(serializeSim(sim)) as { v: number; sim: Record<string, unknown> }
     delete sansMonstres.sim.monsters

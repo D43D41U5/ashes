@@ -415,6 +415,12 @@ export function advanceWorldEvents(state: SimState): void {
     h.memberEntityIds.some((id) => state.entities.some((e) => e.id === id)),
   )
 
+  // LA FIN DE SAISON, SI ELLE EXISTE (saison-sans-fin T4) : `null` = jamais — le solo. Alors
+  // ni évacuation, ni Arche, ni verdict : la saison ne finit pas, elle tourne (R4). Un seul
+  // test, lu une fois ; une vieille sauvegarde sans le champ vaut « jamais ».
+  const fin = state.finDeSaison ?? null
+  if (fin === null) return
+
   // L'évacuation s'ouvre (spec saison R3) — une fois par saison : partie, l'Arche ne
   // revient pas (`arkDeparted`), sinon ce bloc rouvrait l'évacuation au tick suivant
   // le départ et la boucle ouvre→part inondait le flux (mesuré au banc de saison).
@@ -447,8 +453,8 @@ export function advanceWorldEvents(state: SimState): void {
     state.arkDeparted = true // et elle ne repart pas — le verrou de la réouverture
   }
 
-  // La fin de saison : les verdicts (spec saison R4).
-  if (!state.seasonEnded && day > BALANCE.SEASON_DAYS) {
+  // La fin de saison : les verdicts (spec saison R4) — au jour réglé, plus à une constante.
+  if (!state.seasonEnded && day > fin) {
     state.seasonEnded = true
     emitEvent(state, { type: 'season_ended', tick: state.tick, verdicts: computeVerdicts(state) })
   }

@@ -6,7 +6,7 @@ import { inventoryOf } from './items'
 import { createEmptyMap } from './map'
 import { foundNpcVillage } from './worldgen'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
-import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY, getGameTime } from './time'
 import type { ResourceNode } from './economy'
 
 /** 1 cycle jour/nuit = 1 jour de saison : la saison entière tient en 60 cycles. */
@@ -140,6 +140,54 @@ describe('la fin de saison (A4)', () => {
     expect(foyer.outcome).toContain('vie')
     expect(meute.score).toBeGreaterThanOrEqual(5 * 10 + 4 * 5 + 10) // composants + lingots + bois
     expect(meute.outcome).toContain('bras pleins')
+  })
+})
+
+describe('la saison SANS fin (saison-sans-fin R4, T4) — ni verdict ni Arche en solo', () => {
+  /** Le même monde, mais réglé « jamais » : c'est ce que la Veillée passe. */
+  function simSansFin(): SimState {
+    const map = createEmptyMap(40, 40, TERRAIN_GRASS)
+    for (let tx = 0; tx < 40; tx++) map.terrain[20 * 40 + tx] = TERRAIN_ROAD
+    return createSim(41, { map, calendarScale: FAST, finDeSaison: null })
+  }
+
+  it('réglé « jamais », le jour 61 n’est qu’un jour : aucune évacuation, aucune Arche, aucun verdict — jusqu’à l’an 2', () => {
+    const sim = simSansFin()
+    // Sans village : l'ouverture et la fin ne dépendent que du jour — un village ne ferait que
+    // ralentir le cycle. Par SAUTS aux deux jours-clés, un cycle chacun (le patron du test de
+    // verdict) : l'ouverture (55) et la fin (61) ; puis un tick au printemps de l'an 2.
+    const events: SimEvent[] = []
+    for (const jour of [SEASON.EVAC_DAY, BALANCE.SEASON_DAYS + 1]) {
+      sim.tick = jour * TICKS_PER_CYCLE - 5
+      runTo(sim, sim.tick + TICKS_PER_CYCLE, events)
+    }
+    sim.tick = 86 * TICKS_PER_CYCLE
+    runTo(sim, sim.tick + 2, events)
+    expect(events.filter((e) => e.type === 'evacuation_opened')).toHaveLength(0)
+    expect(events.filter((e) => e.type === 'ark_departed')).toHaveLength(0)
+    expect(events.filter((e) => e.type === 'season_ended')).toHaveLength(0)
+    expect(sim.evacuation).toBeNull()
+    expect(sim.arkDeparted).toBe(false)
+    expect(sim.seasonEnded).toBe(false)
+    // Et le monde a bien traversé l'année : l'acte a tourné.
+    expect(getGameTime(sim).tour).toBe(2)
+  }, 60_000)
+
+  it('une VIEILLE sauvegarde sans le champ vaut « jamais » — une Veillée d’avant le pivot ne finit plus non plus', () => {
+    const sim = makeSim() // le défaut (jour 60)…
+    delete (sim as Partial<SimState>).finDeSaison // …puis le champ absent, comme dans une sauvegarde d'avant
+    const events: SimEvent[] = []
+    for (const jour of [SEASON.EVAC_DAY, BALANCE.SEASON_DAYS + 1]) {
+      sim.tick = jour * TICKS_PER_CYCLE - 5
+      runTo(sim, sim.tick + TICKS_PER_CYCLE, events)
+    }
+    expect(events.some((e) => e.type === 'evacuation_opened' || e.type === 'season_ended')).toBe(false)
+  }, 60_000)
+
+  it('le DÉFAUT reste la saison nominale (jour 60) — les bancs et le multi d’aujourd’hui ne bougent pas', () => {
+    expect(makeSim().finDeSaison).toBe(BALANCE.SEASON_DAYS)
+    expect(createSim(7, { finDeSaison: 30 }).finDeSaison).toBe(30)
+    expect(createSim(7, { finDeSaison: null }).finDeSaison).toBeNull()
   })
 })
 

@@ -57,6 +57,11 @@ const REPLIS_EPHEMERES: Readonly<Record<string, () => unknown>> = {
   // sauvée APRÈS le jour 58 portait la boucle ouvre→part du bug : recollée à `false`, l'Arche
   // y repart une dernière fois puis se verrouille — l'état guérit de lui-même.
   arkDeparted: () => false,
+  // LA FIN DE SAISON (saison-sans-fin T4, 2026-08-21) : une Veillée d'avant le pivot n'a pas
+  // de réglage — et la règle du solo est « jamais » (R4). `null` est donc sa vérité : elle ne
+  // finit plus, comme toute Veillée neuve. Bosser la version pour ça aurait rendu illisibles
+  // toutes les vallées en cours, pour leur dire une chose qu'un repli dit mieux.
+  finDeSaison: () => null,
 }
 
 /** Recolle les champs éphémères absents d'une sauvegarde antérieure. Rend les clés manquantes. */
@@ -92,7 +97,7 @@ function comblerEphemeres(brut: Record<string, unknown>): string[] {
  */
 export const SAVE_REQUIRED_KEYS: readonly string[] = [
   'aggressions', 'arkDeparted', 'blood', 'calendarScale', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
-  'dens', 'entities', 'evacuatedIds', 'evacuation', 'events', 'faunaCap', 'faunaQuiet',
+  'dens', 'entities', 'evacuatedIds', 'evacuation', 'events', 'faunaCap', 'faunaQuiet', 'finDeSaison',
   'functions', 'groundItems', 'grounds', 'home', 'hordes', 'lastConvoyDay', 'lastRefugeeDay',
   'map', 'monsters', 'nextCorpseId', 'nextEntityId', 'nextGroundItemId',
   'nextHerdId', 'nextHordeId', 'nextRefugeeGroupId', 'nextStructureId', 'nextVillageId',

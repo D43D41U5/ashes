@@ -122,6 +122,9 @@ export function createVeillee(
   const sim = createSim(seed, {
     map,
     calendarScale: VEILLEE_CALENDAR_SCALE,
+    // LA SAISON NE FINIT PAS (saison-sans-fin R4, décision d'Alexis 2026-08-21) : ni verdict ni
+    // Arche en solo — l'année tourne, l'hiver revient. Le jour 61 n'est plus qu'un jour.
+    finDeSaison: null,
     nodes,
     cycleOffset: cycleOffsetForStartHour(VEILLEE_START_HOUR),
     faunaCap: FAUNA.CAP,
