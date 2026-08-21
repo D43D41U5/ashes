@@ -15,6 +15,8 @@
  *    qui est une affaire d'OUTIL, pas de niveau. La fiche ne parle que de ce que le NIVEAU
  *    change ; l'accès est une note à part.
  */
+import { keymapEffectif } from '../world/keymap-perso'
+import { libelleTouches } from '../world/touches'
 import {
   BALANCE,
   TOOL_RANK,
@@ -146,7 +148,14 @@ function foragingGuide(): SkillGuide {
   return {
     id: 'foraging',
     label: SKILL_LABELS.foraging,
-    gesture: 'Vise le buisson et presse E : il tombe ENTIER dans le sac, sans cadence.',
+    // LA TOUCHE SE DÉRIVE, ELLE NE S'ÉCRIT PLUS. Cette fiche a annoncé « presse E »
+    // pendant 23 jours après que la cueillette est passée de E à F (2026-07-27, E est
+    // devenue la rotation d'arête). Un joueur lisait une fiche officielle du jeu,
+    // pressait E devant un buisson, et n'obtenait ni geste ni refus. Le menu pause,
+    // lui, disait vrai — il dérive de `keymapEffectif`. C'était la troisième surface
+    // d'apprentissage, celle que la décision de découvrabilité n'avait pas couverte.
+    // (Audit UX 2026-08-20, D5-2 / P0.5. Gardé par `skill-guide.test`.)
+    gesture: `Vise le buisson et presse ${libelleTouches(keymapEffectif().forage)} : il tombe ENTIER dans le sac, sans cadence.`,
     paliers: [
       { level: BALANCE.FORAGE_SEED_LEVEL, text: 'Un coin riche peut rendre une SEMENCE — de quoi lancer le potager' },
       { level: BALANCE.FORAGE_QUALITY_LEVEL, text: 'Tu sais lire les patches de CHAMPIGNONS — l\'humide, l\'ombre' },

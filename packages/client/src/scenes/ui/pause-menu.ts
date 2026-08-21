@@ -38,13 +38,32 @@ function lignesDeTouches(): [string, string][] {
 /** La règle du clic gauche — « l'objet en main décide ». La moitié invisible du jeu.
  *  Colonne de droite tenue COURTE (≤ 34 signes) : en mono, au-delà, la ligne se casse en
  *  deux et le tableau perd son rythme (une ligne sur deux vaut le double de hauteur). */
-const CLICKS: [string, string][] = [
+export const CLICKS: [string, string][] = [
   ['un arbre, un rocher', 'abattre, miner (maintenu)'],
   ['une arme en main', 'frapper — maintenu : coup lourd'],
+  ['une HACHE sur un arbre', 'elle abat : l’outil prime'],
   ['de la nourriture', 'manger — ou la DONNER à un voisin'],
-  ['des fibres, et une plaie', 'se panser'],
+  // « se panser » était FAUX depuis qu'on panse AUTRUI (aim.ts, 2026-07-28) : le troisième
+  // verbe chaud du jeu était livré, testé, et enseigné par une ligne qui l'ignorait.
+  ['des fibres, et une plaie', 'panser — soi, ou un blessé'],
   ['du bois, sur le Feu', 'le NOURRIR (il tient l’upkeep)'],
   ['du bois, sur un mur abîmé', 'le RÉPARER'],
+  ['une graine, sur une parcelle', 'semer'],
+  ['un cadavre, une pile au sol', 'fouiller, ramasser'],
+]
+
+/**
+ * LE CLIC DROIT — quatre gestes que RIEN, dans tout le jeu, ne nommait (audit UX, D5-5).
+ *
+ * Le seul tableau de gestes du dépôt était borné à l'autre bouton (« LE CLIC GAUCHE — L'OBJET
+ * EN MAIN DÉCIDE »), et aucune chaîne affichée du client ne mentionnait le bouton droit : un
+ * grep n'y trouvait que des commentaires et l'Atelier, hors build. Conséquence : l'arc restait
+ * un objet mort dans le sac — sa grammaire ne se découvrait qu'en appuyant au hasard sur un
+ * bouton dont rien ne suggérait qu'il serve.
+ */
+export const CLICS_DROITS: [string, string][] = [
+  ['un ARC en main', 'lever et bander — relâcher décoche'],
+  ['l’arc levé', 'la visée suit le curseur'],
 ]
 
 export interface PauseMenu {
@@ -126,6 +145,12 @@ export function createPauseMenu({ onResume, getVolume, onVolume, onQuit }: Pause
     .pm-btn{background:rgba(201,139,58,.14);border:2px solid #c98b3a;color:#e8c66a;font-size:15px;font-weight:700;
       letter-spacing:2px;padding:13px 30px;transition:background .12s ease,color .12s ease;}
     .pm-btn:hover{background:rgba(232,198,106,.24);color:#f2ead0;}
+    /* LE PLANCHER CLAVIER (décision d'Alexis, 2026-08-20, question ⑩). Sur tout le client,
+       la pseudo-classe focus-visible n'existait QU'À l'écran d'accueil : 4 occurrences, les quatre dans
+       menu-dom.ts, zéro dans les 43 autres modules d'UI. La reco était « pas une campagne, un
+       plancher » — tout écran qui BLOQUE le jeu doit être franchissable au clavier, parce
+       qu'un écran modal sans sortie clavier n'est pas un inconfort, c'est un piège. */
+    .pm-btn:focus-visible{outline:2px solid #e8c66a;outline-offset:3px;}
     .pm-btn.pm-ghost{background:transparent;border-color:#6b5a3a;color:#9a8f78;letter-spacing:1px;font-weight:400;}
     .pm-btn.pm-ghost:hover{color:#e8e0c8;border-color:#8a7a52;background:rgba(40,34,26,.4);}
   </style>
@@ -136,6 +161,8 @@ export function createPauseMenu({ onResume, getVolume, onVolume, onQuit }: Pause
     <div class="pm-div"></div>
     <div class="pm-sect">LE CLIC GAUCHE — L’OBJET EN MAIN DÉCIDE</div>
     <div class="pm-table">${CLICKS.map((c) => row(c, 'pm-click')).join('')}</div>
+    <div class="pm-sect">LE CLIC DROIT — VISER</div>
+    <div class="pm-table">${CLICS_DROITS.map((c) => row(c, 'pm-click')).join('')}</div>
     <div class="pm-sect">LES TOUCHES</div>
     <div class="pm-table pm-keys"></div>
     <div class="pm-sect">LE SON</div>

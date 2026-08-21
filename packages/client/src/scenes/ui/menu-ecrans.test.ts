@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SlotMeta } from '../../worker/persistence-store'
 import { repriseLaPlusRecente } from './menu-ecrans'
+import { EFFACER_ARMEMENT_MS, effacerArme } from './menu-dom'
 
 const meta = (savedAt: number, nom = ''): SlotMeta => ({ nom, seed: 2026, seasonDay: 3, savedAt, createdAt: 0 })
 
@@ -53,5 +54,36 @@ describe('la partie que « REPRENDRE » rouvre', () => {
     // Le `slot` rendu sert à OUVRIR la sauvegarde : un décalage d'index ouvrirait la voisine.
     const r = repriseLaPlusRecente([null, null, meta(4000)], null)
     expect(r).toMatchObject({ genre: 'solo', slot: 2 })
+  })
+})
+
+/**
+ * LE SEUL GESTE SANS RETOUR DU JEU NE DOIT PAS SE DÉCLENCHER PAR RÉFLEXE.
+ *
+ * Mesuré au pixel sur les captures du banc : la croix ✕ d'une ligne de vallée a son centre
+ * en (327 ; 471,5) et le bouton EFFACER qui la REMPLACE occupe x[276,337] × y[468,490]. Le
+ * centre de la croix tombe donc DANS le rectangle du bouton de destruction — et le passage
+ * de l'un à l'autre est un repaint SYNCHRONE, sans délai ni garde. Un double-clic, un clic
+ * réflexe de confirmation, une souris qui rebondit : le monde est parti.
+ *
+ * On arme donc le bouton après un souffle, et on le prouve dans les deux sens — un remède
+ * qu'on ne voit jamais refuser n'est pas un remède.
+ * (Audit UX 2026-08-20, P2 ① / L1-01.)
+ */
+describe('le bouton EFFACER s’arme après un souffle', () => {
+  it('REFUSE le clic réflexe qui suit immédiatement l’apparition', () => {
+    expect(effacerArme(1000, 1000)).toBe(false) // le rebond, à 0 ms
+    expect(effacerArme(1000, 1000 + EFFACER_ARMEMENT_MS - 1)).toBe(false) // juste avant
+  })
+
+  it('ACCEPTE le clic délibéré', () => {
+    expect(effacerArme(1000, 1000 + EFFACER_ARMEMENT_MS)).toBe(true)
+    expect(effacerArme(1000, 1000 + 3000)).toBe(true) // on a lu la phrase, puis on tranche
+  })
+
+  it('le délai passe le double-clic système sans se faire sentir', () => {
+    // Au-dessus du rebond et du double-clic, sous le seuil où un bouton paraît « mou ».
+    expect(EFFACER_ARMEMENT_MS).toBeGreaterThanOrEqual(250)
+    expect(EFFACER_ARMEMENT_MS).toBeLessThanOrEqual(500)
   })
 })

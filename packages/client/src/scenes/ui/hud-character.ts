@@ -442,10 +442,37 @@ export function createHudCharacter(
     // écrite à la main en comptait trois quand la sim en avait cinq — le four d'acier et
     // l'atelier lourd ne pouvaient pas être annoncés absents. Il n'y a plus de liste.
     const absent = fonctionsAbsentes(stations)
-    stationNote.textContent = absent.length
+    // ET ELLE SE TAIT QUAND ELLE INDUIRAIT EN ERREUR : tant que rien n'est découvert, parler
+    // de stations manquantes désigne une cause qui n'est pas la bonne.
+    const noteUtile = absent.length > 0 && rows.length > 0
+    stationNote.textContent = noteUtile
       ? `STATIONS ABSENTES ICI — ${absent.map((b) => nomExigence(b).toUpperCase()).join(' · ')}`
       : ''
-    stationNote.style.display = absent.length ? '' : 'none'
+    stationNote.style.display = noteUtile ? '' : 'none'
+    // L'ÉTAT VIDE, ENFIN DESSINÉ — et il fallait le dessiner, pas le remplir.
+    //
+    // À la minute zéro, `seen` est vide PAR CONSTRUCTION : une recette ne se révèle qu'au
+    // contact de sa matière (`decouverte.ts`, règle D2 du 2026-08-01). Le vide est donc
+    // CORRECT. Mais rien ne le disait : le tutoriel promet « votre sac et l'artisanat », on
+    // pressait TAB, et un tiers de l'écran restait blanc sous un titre et un champ de
+    // recherche. Rien n'indiquait si c'était cassé, s'il manquait des ressources, ou s'il
+    // fallait débloquer quelque chose — et la seule phrase présente, « STATIONS ABSENTES
+    // ICI », orientait vers la MAUVAISE cause (on croyait qu'il manquait un atelier, alors
+    // qu'il manquait d'avoir ramassé sa première fibre). La première impasse du parcours.
+    // (Audit UX 2026-08-20, P2 ④ / L3-03.)
+    //
+    // On dit la RÈGLE, pas l'absence — et on distingue les deux vides, qui n'appellent pas
+    // le même geste : « rien de découvert » envoie ramasser, « la recherche ne rend rien »
+    // envoie corriger sa frappe. Même grammaire que `.hch-mp-none`, l'état vide que ce
+    // fichier savait déjà dessiner vingt-six lignes plus haut.
+    if (rows.length === 0) {
+      const vide = document.createElement('div')
+      vide.className = 'hch-liste-vide'
+      vide.textContent = search.value.trim()
+        ? `Aucune recette ne répond à « ${search.value.trim()} ».`
+        : 'Ramassez une matière et sa recette apparaîtra ici.'
+      listEl.appendChild(vide)
+    }
     listEl.scrollTop = keepScroll
   }
 
@@ -710,6 +737,9 @@ function markup(): string {
     .hch-mp.is-locked{color:#6f685a;}
     .hch-mp.is-locked .hch-mp-mk{color:#4a453a;}
     .hch-mp-none{font-size:13px;color:#8b8474;font-style:italic;margin-bottom:18px;}
+    /* L'état vide de la liste de recettes — même encre et même italique que son voisin
+       ci-dessus, centré parce qu'il occupe une colonne entière et non une ligne. */
+    .hch-liste-vide{font-size:13px;color:#8b8474;font-style:italic;text-align:center;padding:28px 18px;line-height:1.6;}
     .hch-met-pas{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;}
     .hch-mp-pas{font-size:13px;color:#b9b09a;line-height:1.4;padding-left:14px;text-indent:-14px;}
     .hch-mp-pas::before{content:'• ';color:#c98b3a;}

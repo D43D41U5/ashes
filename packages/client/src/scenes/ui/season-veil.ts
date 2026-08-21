@@ -108,6 +108,12 @@ export function createSeasonVeil(onReopen: () => void): SeasonVeil {
     .sv-btn{background:rgba(201,139,58,.14);border:2px solid #c98b3a;color:#e8c66a;font-size:15px;font-weight:700;
       letter-spacing:2px;padding:14px 30px;transition:background .12s ease,color .12s ease;}
     .sv-btn:hover{background:rgba(232,198,106,.24);color:#f2ead0;}
+    /* LE PLANCHER CLAVIER (décision d'Alexis, 2026-08-20, question ⑩). Sur tout le client,
+       la pseudo-classe focus-visible n'existait QU'À l'écran d'accueil : 4 occurrences, les quatre dans
+       menu-dom.ts, zéro dans les 43 autres modules d'UI. La reco était « pas une campagne, un
+       plancher » — tout écran qui BLOQUE le jeu doit être franchissable au clavier, parce
+       qu'un écran modal sans sortie clavier n'est pas un inconfort, c'est un piège. */
+    .sv-btn:focus-visible{outline:2px solid #e8c66a;outline-offset:3px;}
     .sv-btn.sv-ghost{background:transparent;border-color:#6b5a3a;color:#9a8f78;letter-spacing:1px;font-weight:400;}
     .sv-btn.sv-ghost:hover{color:#e8e0c8;border-color:#8a7a52;background:rgba(40,34,26,.4);}
     .sv-fine{font-size:11px;color:#8b8474;letter-spacing:1px;margin-top:20px;}

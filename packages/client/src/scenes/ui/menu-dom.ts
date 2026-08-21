@@ -51,6 +51,7 @@ import {
 import { libelleTouches, toucheDepuisEvenement } from '../world/touches'
 import { ecrireMute, ecrireVolume, lireReglagesSon } from '../../audio/engine'
 import { VITRINE } from './vitrine'
+import { CLICKS, CLICS_DROITS } from './pause-menu'
 
 export interface MenuHandle {
   destroy(): void
@@ -285,9 +286,23 @@ export function mountMenu(slots: (SlotMeta | null)[], multi: DerniereMulti | nul
       })
     }
 
+    // L'INSTANT OÙ LE BOUTON ROUGE EST APPARU SOUS LE CURSEUR. Voir `effacerArme`.
+    const effacerPeintA = Date.now()
     corpsEl.querySelectorAll<HTMLElement>('[data-effacer]').forEach((el) => {
       el.addEventListener('click', (e) => {
         e.stopPropagation()
+        // LE PIÈGE : la croix ✕ et le bouton EFFACER se recouvrent. Le clic sur la croix
+        // repeint la ligne SYNCHRONEMENT, et le bouton de destruction vient se poser sous
+        // un curseur qui n'a pas bougé d'un pixel (mesuré : centre de la croix (327 ; 471,5),
+        // boîte du bouton x[276,337] × y[468,490] — il tombe dedans). Un double-clic, un clic
+        // réflexe, une souris qui rebondit, et le monde est parti. C'est le SEUL geste
+        // irréversible du jeu, et c'était celui qui demandait le moins de mouvement.
+        //
+        // On n'arme donc le bouton qu'après un souffle. Le remède est GÉOMÉTRIE-INDÉPENDANT :
+        // réordonner les boutons marcherait aujourd'hui et casserait à la prochaine retouche
+        // de largeur. Invisible à l'usage — personne ne vise et clique en moins d'un tiers de
+        // seconde volontairement. (Audit UX 2026-08-20, P2 ① / L1-01.)
+        if (!effacerArme(effacerPeintA, Date.now())) return
         const slot = Number(el.dataset.effacer)
         el.setAttribute('disabled', '') // pas de second clic pendant que le disque travaille
         void cb
@@ -517,7 +532,30 @@ function ecranOptions(v: Vue): string {
   </div>
   <div class="op-sect"><span>LES TOUCHES</span><button class="op-reset-tout" data-reset-tout>tout réinitialiser</button></div>
   <div class="op-liste">${lignes}</div>
+  <div class="op-sect"><span>LA SOURIS</span></div>
+  <div class="op-souris">${souris()}</div>
   ${retour()}`
+}
+
+/**
+ * LA SOURIS, EN LECTURE SEULE (décision d'Alexis, 2026-08-20, question ⑧).
+ *
+ * « LES TOUCHES » ne parlait JAMAIS de la souris — or c'est elle qui porte tous les verbes du
+ * jeu : sur les seize lignes de l'écran, ZÉRO verbe de combat, zéro geste de récolte. Un joueur
+ * ouvre OPTIONS pour apprendre à jouer — c'est le réflexe de tout le monde — et il apprenait à
+ * marcher. L'écran mentait par omission.
+ *
+ * DÉRIVÉ, PAS RECOPIÉ : les deux tables viennent de `pause-menu`, l'unique endroit où la
+ * grammaire du clic est écrite. Deux copies auraient divergé d'un cran, et c'est exactement le
+ * défaut que cet audit a trouvé trois fois (la fiche du Cueilleur, le modal du Feu, le tableau
+ * du clic). En LECTURE SEULE : la souris ne se remappe pas encore, et promettre le contraire
+ * serait un autre mensonge.
+ */
+function souris(): string {
+  const bloc = (titre: string, table: readonly (readonly [string, string])[]): string =>
+    `<div class="op-sr-t">${esc(titre)}</div>` +
+    table.map(([g, e]) => `<div class="op-sr"><span>${esc(g)}</span><span>${esc(e)}</span></div>`).join('')
+  return bloc('CLIC GAUCHE — l’objet en main décide', CLICKS) + bloc('CLIC DROIT — viser', CLICS_DROITS)
 }
 
 // ══ LA LIGNE D'UNE VALLÉE ═══════════════════════════════════════════════════════════════════
@@ -567,7 +605,7 @@ function ligne(slot: number, meta: SlotMeta | null, mode: ModeLigne, maintenant:
 }
 
 /**
- * LA VITRINE — les cinq vues empilées, chacune avec SON retard d'animation.
+ * LA VITRINE — les vues empilées, chacune avec SON retard d'animation.
  *
  * Le retard est calculé ici et non écrit dans la feuille : il DÉPEND du nombre d'images, et
  * une liste et des retards écrits séparément se contredisent dès qu'on ajoute une vue.
@@ -816,6 +854,10 @@ function style(): string {
      VOIR : un écran tronqué qu'on croit fini, c'est la panne qu'on avait déjà eue. Ce qui le dit
      TOUJOURS, c'est le fondu de bas de liste — la barre, elle, ne se montre que si le navigateur
      lui donne de la place (mesuré à 0 px en Chromium headless : barres en surimpression). */
+  .op-sr-t{font-size:11px;color:#8b8474;letter-spacing:2px;margin:12px 0 6px;}
+  .op-sr{display:flex;justify-content:space-between;gap:18px;font-size:13px;color:#e8e0c8;
+    padding:5px 0;border-bottom:1px solid rgba(107,90,58,.28);}
+  .op-sr span:last-child{color:#9a8f78;text-align:right;}
   .op-sect{font-size:12px;color:#c98b3a;letter-spacing:4px;text-align:left;margin:22px 0 10px;
     display:flex;align-items:center;justify-content:space-between;}
   /* Le volume tient la première ligne, la sourdine la seconde : à 480 px, les trois côte à côte
@@ -872,6 +914,20 @@ function style(): string {
 
 /** Un nom de vallée vient du joueur, un nom de serveur d'une config de confiance — mais on
  *  n'injecte jamais de HTML brut dans `innerHTML` sans échapper. La règle, pas l'exception. */
+/**
+ * LE DÉLAI D'ARMEMENT DU BOUTON DESTRUCTEUR — le seul geste sans retour du jeu.
+ *
+ * 320 ms : au-dessus du double-clic système (500 ms serait plus sûr encore, mais on
+ * commencerait à sentir le bouton « mou »), et bien au-dessus du rebond d'une souris
+ * fatiguée. Un joueur qui LIT la phrase d'avertissement met plus d'une seconde.
+ */
+export const EFFACER_ARMEMENT_MS = 320
+
+/** Le bouton EFFACER accepte-t-il ce clic ? Pur, donc prouvé par un test. */
+export function effacerArme(peintA: number, maintenant: number): boolean {
+  return maintenant - peintA >= EFFACER_ARMEMENT_MS
+}
+
 function esc(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!)
 }
