@@ -49,6 +49,7 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   wolf_howl: { voix: 'voix', famille: 'registre', quoi: 'une meute a choisi un homme — le seul avertissement' },
   bird_flush: { voix: 'voix', famille: 'registre', quoi: 'la nuée gicle de la lisière — la forêt dénonce un pas bruyant' },
   cendreux_prowl: { voix: 'voix', famille: 'registre', quoi: 'les morts ont senti un homme — l’avertissement des actes II-III' },
+  cendreux_cri: { voix: 'voix', famille: 'registre', quoi: 'un cri qui n’a rien d’humain — la fureur du froid appelle le sol (décision ④⑤)' },
 
   // ── LE FEU — l'organe vital : 4 voix sur 5, seul le geste répété se tait ─────────
   fire_fed: { voix: 'muet', famille: 'feu', quoi: 'on donne du bois au Feu' },
@@ -84,7 +85,9 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   cendre_avance: { voix: 'voix', famille: 'saison', quoi: 'la Cendre a mangé un morceau de la vallée' },
   cendreux_risen: { voix: 'voix', famille: 'saison', quoi: 'un cendreux se relève' },
   reveil_etouffe: { voix: 'voix', famille: 'saison', quoi: 'le feu a étouffé un réveil — le sol se tait' },
-  horde_spawned: { voix: 'voix', famille: 'saison', quoi: 'une horde se forme et marche sur un village' },
+  horde_spawned: { voix: 'voix', famille: 'saison', quoi: 'une horde se forme et marche sur un feu — village ou camp (décision ⑬)' },
+  presage_horde: { voix: 'voix', famille: 'saison', quoi: 'le préavis de la veille — au loin, le sol travaille, la faune se tait (décision ⑱)' },
+  charnier_brule: { voix: 'voix', famille: 'saison', quoi: 'un charnier ou un repaire assaini au feu — la densité des morts tombe autour (décision ⑧)' },
   horde_dispersed: { voix: 'muet', famille: 'saison', quoi: 'la horde se dissipe à l’aube' },
   convoy_spawned: { voix: 'muet', famille: 'saison', quoi: 'une carcasse de convoi apparaît sur la route' },
   // LA BRUME (spec brume.md, 2026-08-18). L'annonce et la levée SONNENT : le §9bis exige que
@@ -144,7 +147,12 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   wound_inflicted: { voix: 'voix', famille: 'plaie', quoi: 'une BLESSURE s’ouvre — jambe, bras, saignement' },
 
   // ── MUET PAR NATURE — haute fréquence, ou pure plomberie d'interface ──────────────
-  action_rejected: { voix: 'muet', famille: 'plomberie', quoi: 'la sim refuse une action (déjà un toast)' },
+  // Le silence tient — mais sa RAISON était fausse jusqu'au 2026-08-20. « Déjà un toast »
+  // supposait que le joueur VOIT le refus : le bandeau était peint sur le canvas, donc SOUS
+  // les écrans DOM opaques d'où partent justement les gestes qui se font refuser. Sac ouvert,
+  // une action refusée ne produisait ni son ni image. Le bandeau est passé en DOM au-dessus
+  // des panneaux (audit UX P0.2) : la justification est enfin vraie.
+  action_rejected: { voix: 'muet', famille: 'plomberie', quoi: 'la sim refuse une action (le bandeau le dit, et il se voit)' },
   entity_spawned: { voix: 'muet', famille: 'plomberie', quoi: 'une entité entre dans le monde' },
   entity_despawned: { voix: 'muet', famille: 'plomberie', quoi: 'une entité quitte le monde (déconnexion)' },
   entity_respawned: { voix: 'muet', famille: 'plomberie', quoi: 'on se réveille au Feu (le voile le dit déjà)' },

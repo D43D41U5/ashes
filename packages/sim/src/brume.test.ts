@@ -249,13 +249,14 @@ describe('le froid de la nappe (A4, A5)', () => {
   })
 
   it('R5 — le gate d’attraction des Cendreux s’ALLUME de jour sous la nappe (assumé : la Brume est hantée)', () => {
-    // Le gate feu-station S5 lit `baselineTemperature` : sous la nappe le froid de base tombe
-    // sous COLD_ATTRACT_THRESHOLD, et un Cendreux pris dedans peut ramper vers un feu allumé
-    // EN PLEIN JOUR. Comportement neuf, thématiquement juste — ce test l'ÉPINGLE : si un
-    // calibrage de COLD_MALUS le faisait disparaître (ou l'étendait hors nappe), on le saurait.
+    // Le gate d'attraction (`TORPEUR.CONVERGE_SOUS`, ex-COLD_ATTRACT_THRESHOLD) lit
+    // `baselineTemperature` : sous la nappe le froid de base tombe sous le seuil, et un
+    // Cendreux pris dedans peut ramper vers un feu allumé EN PLEIN JOUR. Comportement
+    // assumé, thématiquement juste — ce test l'ÉPINGLE : si un calibrage de COLD_MALUS le
+    // faisait disparaître (ou l'étendait hors nappe), on le saurait.
     const { sim } = simSousNappe()
-    expect(baselineTemperature(sim, 40.5, 20.5)).toBeLessThan(CENDREUX.COLD_ATTRACT_THRESHOLD)
-    expect(baselineTemperature(sim, 10.5, 20.5)).toBeGreaterThanOrEqual(CENDREUX.COLD_ATTRACT_THRESHOLD)
+    expect(baselineTemperature(sim, 40.5, 20.5)).toBeLessThan(CENDREUX.TORPEUR.CONVERGE_SOUS)
+    expect(baselineTemperature(sim, 10.5, 20.5)).toBeGreaterThanOrEqual(CENDREUX.TORPEUR.CONVERGE_SOUS)
   })
 })
 

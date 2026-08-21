@@ -6,7 +6,8 @@
  *
  *   repaire  — un résident par lieu `repaire` (`populateDen` en pose UN), borné par le SEMIS
  *   convoi   — 2 gardes par carcasse, `expiresAt` = +2 CYCLES RÉELS
- *   horde    — `HORDE_SIZE[acte]` au crépuscule, dissipée à l'aube (donc nuit seulement)
+ *   horde    — taille en rampe de saison (`HORDE_TAILLE`), décidée à l'AUBE (présage), levée
+ *              au crépuscule — et l'aube suivante la FIGE en reliques au lieu de la dissiper
  *   nuit     — les rôdeurs de `advanceNightHunt`, AUTOUR D'UN AVATAR, `ambient`
  *   levée    — les morts qui se relèvent, seuls et loin du feu, bornés par `MAX_ALIVE`
  *
@@ -56,8 +57,8 @@ const PAS = 60
 /** La fenêtre « fin de saison » : les dix derniers jours (l'acte III est bien installé). */
 const FIN_DEPUIS = BALANCE.SEASON_DAYS - 9
 
-type Source = 'repaire' | 'convoi' | 'horde' | 'nuit' | 'levée' | 'autre'
-const SOURCES: Source[] = ['repaire', 'convoi', 'horde', 'nuit', 'levée', 'autre']
+type Source = 'repaire' | 'convoi' | 'horde' | 'relique' | 'nuit' | 'levée' | 'autre'
+const SOURCES: Source[] = ['repaire', 'convoi', 'horde', 'relique', 'nuit', 'levée', 'autre']
 
 /** Un échantillon : combien de Cendreux VIVANTS, par source, et sous quel ciel. */
 interface Releve {
@@ -73,7 +74,7 @@ function recenser(sim: SimState): Releve {
   const vivants = new Map<number, boolean>()
   for (const e of sim.entities) vivants.set(e.id, e.hp > 0)
 
-  const parSource = { repaire: 0, convoi: 0, horde: 0, nuit: 0, 'levée': 0, autre: 0 } as Record<Source, number>
+  const parSource = { repaire: 0, convoi: 0, horde: 0, relique: 0, nuit: 0, 'levée': 0, autre: 0 } as Record<Source, number>
   let total = 0
   for (const m of sim.monsters) {
     if (m.type !== 'cendreux') continue
@@ -85,6 +86,10 @@ function recenser(sim: SimState): Releve {
     if (m.risen === true) source = 'levée'
     else if (m.homePoi !== undefined) source = 'repaire'
     else if (enHorde.has(m.entityId)) source = 'horde'
+    // LA RELIQUE AVANT LE CONVOI (2026-08-21) : l'aube ne dissipe plus, elle FIGE — les
+    // ex-membres portent `expiresAt` COMME les gardes, et seule la marque `hordeRelic` les
+    // sépare. Sans elle, l'instrument comptait les restes de la nuit comme des convois.
+    else if (m.hordeRelic === true) source = 'relique'
     else if (m.expiresAt !== undefined) source = 'convoi'
     else if (m.ambient === true) source = 'nuit'
     else source = 'autre'

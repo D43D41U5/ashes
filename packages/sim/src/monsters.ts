@@ -8,21 +8,24 @@
  * fuit, charge parfois blessé. Le gibier et le loup vivent dans `faune.ts`. IA dans /sim,
  * aléa via le PRNG de la sim.
  */
-import { BALANCE, COMBAT, FAUNA, HUNT, MONSTER_DEFS, NODE_DEFS, TICK_DT_S, type MonsterType } from './balance'
+import { BALANCE, CENDREUX, COMBAT, FAUNA, HUNT, MONSTER_DEFS, NODE_DEFS, TICK_DT_S, WORLD_EVENTS, type MonsterType } from './balance'
 import { estIncassable } from './pieces'
 // Type seul : `economy` importe `monsters`, un import de valeur fermerait le cycle.
 import type { ResourceNode } from './economy'
 import { startAttack } from './combat'
 import { moveAvatar } from './collision'
+import { separationPush } from './ecart'
 import { distSq } from './geometry'
 import { spawnEntity, type Entity, type SimState } from './sim'
-import { computeFlowField, solidesEternels } from './pathfinding'
+import { computeFlowField, computeFlowFieldMulti, solidesEternels } from './pathfinding'
+import { fireStateAt } from './fire'
 import { structureBlocks } from './village'
 import { crossingBlocker } from './construction'
 import { cendreuxStep } from './cendreux'
 import { meteoVisionFactor } from './meteo'
+import { eveilCendreuxAt } from './temperature'
 import { advanceFauna, avatarDetectability, avatarThreat, coverAt, faunaStep, isPredator, isPrey, wolfStep, type Threat } from './faune'
-import { getGameTime } from './time'
+import { actForDay, getGameTime, seasonDayAtTick, seasonRamp } from './time'
 
 export interface Monster {
   entityId: number
@@ -63,6 +66,37 @@ export interface Monster {
    * plafond qui ne plafonne rien. Posé à la naissance, jamais retouché.
    */
   huntTargetId?: number
+  /**
+   * LA CHALEUR BUE (spec 2026-08-21, décisions ⑯⑰) — 0..`CENDREUX.BOIRE.SATIETE_MAX`.
+   * Elle se gagne au feu et au coup porté, se perd en continu, et RÉCHAUFFE son porteur :
+   * l'éveil la déduit comme des degrés portés sur soi — rassasié, il s'affaisse sur les
+   * braises qu'il vient d'éteindre. C'est ce qui fait du feu abandonné un LEURRE.
+   */
+  satiete?: number
+  /**
+   * LE DERNIER LIEU OÙ IL VOUS A VU (décision ⑨) — pas la personne : il y va, n'y trouve
+   * rien, et reprend sa marche. Deux nombres, aucune traque surnaturelle — et la fuite
+   * devient un geste : rompre le contact ET s'éloigner.
+   */
+  lastSeenX?: number
+  lastSeenY?: number
+  /** Prochain tick où ce cendreux a le droit de CRIER (décisions ④⑤ — cooldown du cri). */
+  criAt?: number
+  /** Réveils restant à planter dans la SALVE du cri en cours — un par tick de décision,
+   *  jamais K d'un coup (le pire cas mesuré d'un site coûte 33 ms, on l'étale). */
+  criRestants?: number
+  /** Le point du cri en cours (là où il a VU — la salve plante autour de ce lieu). */
+  criX?: number
+  criY?: number
+  /** Pour QUI la salve lève le sol (recopié sur les réveils plantés). */
+  criPreyId?: number
+  /**
+   * RELIQUE DE HORDE (décision ⑮) : l'aube ne l'efface plus, elle la FIGE — le jour chaud
+   * l'endort, le joueur nettoie au matin, et le balayage `expiresAt` la reprend hors regard.
+   * Le drapeau distingue la relique du garde de convoi (même `expiresAt`, autre histoire)
+   * pour le recensement ET pour le plafond global, qui compte l'une et pas l'autre.
+   */
+  hordeRelic?: boolean
   /** Tick où la fuite a commencé — cadence les à-coups (-1 = ne fuit pas). */
   fleeSince: number
   /**
@@ -556,24 +590,187 @@ function cacheDeFlux(state: SimState): CacheFlux {
 }
 
 /**
+ * ═══ LE PLAFOND GLOBAL (spec 2026-08-21 ; hypothèse de travail — la question ⑳ reste à
+ * Alexis) ═══ Combien de Cendreux de PRESSION marchent — et combien la vallée en tolère.
+ *
+ * Le compte EXCLUT les populations déjà bornées par leur propre système : les résidents de
+ * Repaire (`homePoi`, cap du lieu) et les gardes de convoi (`expiresAt` sans `hordeRelic`,
+ * balayés avec leur carcasse). Les compter aurait tué la réserve avant qu'elle serve —
+ * MESURÉ (R8bis) : 24 vivants au jour 21 par ces seuls canaux. « Un plafond compte ce qu'il
+ * borne. » Restent : les levés, les rôdeurs de la nuit, les émergences du cri, les membres
+ * de horde et leurs reliques figées.
+ */
+export function cendreuxSousPression(state: SimState): number {
+  let n = 0
+  const byId = new Map<number, Entity>()
+  for (const e of state.entities) byId.set(e.id, e)
+  for (const m of state.monsters) {
+    if (m.type !== 'cendreux') continue
+    if (m.homePoi !== undefined) continue // résident : borné par le cap de son lieu
+    if (m.expiresAt !== undefined && m.hordeRelic !== true) continue // garde d'événement : borné par son balayage
+    const e = byId.get(m.entityId)
+    if (e && e.hp > 0) n += 1
+  }
+  return n
+}
+
+/** Le toit du jour J — il MONTE avec la saison (12 → 60), clampé au jour 60. */
+export function plafondGlobal(state: SimState): number {
+  return Math.round(seasonRamp(CENDREUX.GLOBAL.DEBUT, CENDREUX.GLOBAL.FIN, seasonDayAtTick(state.tick, state.calendarScale)))
+}
+
+/** Vrai s'il reste une place sous le plafond global — TOUTE source de pression le demande. */
+export function placeSousPlafondGlobal(state: SimState): boolean {
+  return cendreuxSousPression(state) < plafondGlobal(state)
+}
+
+/* ── LE CHAMP DES FEUX — la longue marche des solitaires (décision ①, 2026-08-21) ────────── */
+
+interface CacheChampDesFeux {
+  /** Les Foyers de VILLAGE allumés + l'acte, pliés en un entier — l'ensemble STABLE. */
+  sigVillages: number
+  champVillages: Int32Array | null
+  /** Les feux LIBRES allumés + l'acte — l'ensemble VOLATIL (on les allume, on les boit). */
+  sigLibres: number
+  champLibres: Int32Array | null
+  /** min(villages, libres) par tuile — ce que les marcheurs lisent. */
+  fusion: Int32Array | null
+}
+
+const CHAMPS_DES_FEUX = new WeakMap<SimState, CacheChampDesFeux>()
+
+/** Portée du champ des feux LIBRES — bornée pour que l'invalidation fréquente reste sous le
+ *  budget du tick. MESURÉ sur la carte jouée (1581×852, acte III) : le champ PLEIN coûtait
+ *  170-187 ms par recalcul — or un feu libre naît et meurt sans cesse (on les allume, les
+ *  cendreux les BOIVENT). À 150 tuiles de marche (~2 min de traîne à 1,3 t/s), le recalcul
+ *  tient sous le tick, et les Foyers de village portent seuls la convergence à l'échelle de
+ *  la vallée (décision ① intacte : leur ensemble ne change presque jamais). */
+const CONVERGE_FEU_LIBRE = 150
+
+/**
+ * LES DISTANCES DE MARCHE AU FEU ALLUMÉ LE PLUS PROCHE — un seul tableau lu par les marcheurs,
+ * FUSION de deux champs multi-sources (min par tuile) :
+ *
+ *  - LE CHAMP DES FOYERS DE VILLAGE : la vallée entière (borne `CENDREUX.CONVERGE_TILES` de
+ *    l'acte). Son ensemble de sources est STABLE (un village fonde, tombe — quelques fois par
+ *    saison) : le BFS plein (~170 ms mesurés en acte III) se paie presque jamais.
+ *  - LE CHAMP DES FEUX LIBRES : borné à `CONVERGE_FEU_LIBRE`. Son ensemble est VOLATIL, et
+ *    c'est précisément pour ça qu'il est borné — chaque flambée ou extinction le repaie.
+ *
+ * DEUX DIFFÉRENCES avec le champ de horde, toutes deux du panel de revue : TERRAIN + SOLIDES
+ * ÉTERNELS SEULS, sans les nœuds (un cache signé par les arbres sautait toutes les ~2,5 min —
+ * 1 192 ms de BFS à chaque fois) ; et SANS l'état (donc sans le gel) : la longue marche ne
+ * compte jamais sur la glace, l'A* local si. Mémo PUR : chaque champ est une fonction de
+ * (carte, solides éternels, son ensemble de feux, acte) — identique quel que soit le moment
+ * où on le calcule, la reprise d'une sauvegarde rend exactement la partie ininterrompue.
+ */
+export function champDesFeux(state: SimState): Int32Array | null {
+  const acte = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
+  const width = state.map.width
+  let sigVillages: number = acte
+  let sigLibres: number = acte
+  for (const s of state.structures) {
+    if (s.type !== 'fire') continue
+    if (fireStateAt(state.tick, s) !== 'lit') continue
+    const key = s.ty * width + s.tx + 1
+    if (s.villageId !== 0) sigVillages = (Math.imul(sigVillages, 31) + key) | 0
+    else sigLibres = (Math.imul(sigLibres, 31) + key) | 0
+  }
+  let cache = CHAMPS_DES_FEUX.get(state)
+  if (!cache) {
+    cache = { sigVillages: 0, champVillages: null, sigLibres: 0, champLibres: null, fusion: null }
+    CHAMPS_DES_FEUX.set(state, cache)
+  }
+  let refondre = false
+  if (cache.sigVillages !== sigVillages || cache.fusion === null) {
+    const sources: { tx: number; ty: number }[] = []
+    for (const s of state.structures) {
+      if (s.type !== 'fire' || s.villageId === 0) continue
+      if (fireStateAt(state.tick, s) !== 'lit') continue
+      sources.push({ tx: s.tx, ty: s.ty })
+    }
+    cache.champVillages = sources.length === 0
+      ? null
+      : computeFlowFieldMulti(state.map, [], solidesEternels(state.structures), sources, undefined, CENDREUX.CONVERGE_TILES[acte - 1]!)
+    cache.sigVillages = sigVillages
+    refondre = true
+  }
+  if (cache.sigLibres !== sigLibres || cache.fusion === null) {
+    const sources: { tx: number; ty: number }[] = []
+    for (const s of state.structures) {
+      if (s.type !== 'fire' || s.villageId !== 0) continue
+      if (fireStateAt(state.tick, s) !== 'lit') continue
+      sources.push({ tx: s.tx, ty: s.ty })
+    }
+    const portee = Math.min(CENDREUX.CONVERGE_TILES[acte - 1]!, CONVERGE_FEU_LIBRE)
+    cache.champLibres = sources.length === 0
+      ? null
+      : computeFlowFieldMulti(state.map, [], solidesEternels(state.structures), sources, undefined, portee)
+    cache.sigLibres = sigLibres
+    refondre = true
+  }
+  if (refondre) {
+    const a = cache.champVillages
+    const b = cache.champLibres
+    if (a === null) cache.fusion = b
+    else if (b === null) cache.fusion = a
+    else {
+      // min par tuile, -1 = hors champ. La copie (~1,3 M tuiles) coûte quelques ms — payée
+      // seulement quand un des deux ensembles a changé, jamais par tick.
+      const fusion = new Int32Array(a.length)
+      for (let i = 0; i < a.length; i++) {
+        const da = a[i]!
+        const db = b[i]!
+        fusion[i] = da === -1 ? db : db === -1 ? da : da < db ? da : db
+      }
+      cache.fusion = fusion
+    }
+  }
+  return cache.fusion
+}
+
+/**
  * Descente de gradient vers le Feu ciblé (spec événements R3). Si la
  * meilleure tuile est bouchée par une structure, on la frappe. Retourne
  * true si le monstre appartient à une horde (et a donc agi).
  */
-export function hordeStep(state: SimState, monster: Monster, entity: Entity, flux: CacheFlux | null): boolean {
+/** `gait` : l'allure du cadran de température (voir `cendreuxStep`) — une horde d'acte I
+ *  marche lentement dans une nuit tiède, une horde d'acte III court le froid à plein. */
+export function hordeStep(state: SimState, monster: Monster, entity: Entity, flux: CacheFlux | null, byId: Map<number, Entity>, gait = 1): boolean {
   const horde = state.hordes.find((h) => h.memberEntityIds.includes(monster.entityId))
   if (!horde) return false
-  const village = state.villages.find((v) => v.id === horde.targetVillageId)
-  if (!village || flux === null) return true
+  if (flux === null) return true
 
-  // Indexé par la TUILE DU FEU visé : deux hordes sur le même village partagent le champ.
-  const cleDuFoyer = village.fireTy * state.map.width + village.fireTx
+  // Indexé par la TUILE DU FEU visé (décision ⑬ : la horde ne connaît qu'une braise —
+  // village ou camp, elle porte sa cible elle-même) : deux hordes sur le même feu
+  // partagent le champ.
+  const cleDuFoyer = horde.fireTy * state.map.width + horde.fireTx
   let field = flux.champs.get(cleDuFoyer)
   if (!field) {
-    field = computeFlowField(state.map, state.nodes, solidesEternels(state.structures), village.fireTx, village.fireTy, state)
+    field = computeFlowField(state.map, state.nodes, solidesEternels(state.structures), horde.fireTx, horde.fireTy, state)
     flux.champs.set(cleDuFoyer, field)
   }
 
+  descendreLeChamp(state, monster, entity, field, byId, gait, horde.memberEntityIds)
+  return true
+}
+
+/**
+ * UN PAS DE DESCENTE DE GRADIENT — le cœur commun de la HORDE et du SOLITAIRE en longue
+ * marche (décision ① : « le levé marche »). Élire la tuile voisine la plus proche du feu,
+ * frapper le franchissement qui la barre, s'écarter des congénères (horde seulement — un
+ * solitaire n'a pas de rang à tenir), avancer. Rend false si le champ ne mène nulle part
+ * d'ici (au but, ou hors champ) — l'appelant décide de ce que ce silence veut dire.
+ */
+export function descendreLeChamp(
+  state: SimState,
+  monster: Monster,
+  entity: Entity,
+  field: Int32Array,
+  byId: Map<number, Entity>,
+  gait: number,
+  hordeIds: number[] | null,
+): boolean {
   const width = state.map.width
   const height = state.map.height
   const tx = Math.floor(entity.x)
@@ -593,7 +790,7 @@ export function hordeStep(state: SimState, monster: Monster, entity: Entity, flu
       bestTy = ny
     }
   }
-  if (bestTx === tx && bestTy === ty) return true // au but ou coincé hors champ
+  if (bestTx === tx && bestTy === ty) return false // au but ou coincé hors champ
 
   // LE PASSAGE vers la tuile du gradient est-il barré ? On frappe ce qui le barre.
   //
@@ -621,7 +818,52 @@ export function hordeStep(state: SimState, monster: Monster, entity: Entity, flu
     return true
   }
 
-  moveToward(state, monster, entity, bestTx + 0.5, bestTy + 0.5, false)
+  // ═══ ELLES S'ÉCARTENT (décision d'Alexis, 2026-08-20) ═══
+  //
+  // « Les Cendreux ne doivent pas se superposer de la sorte, ils doivent se comporter comme
+  // dans Project Zomboid lorsqu'on parle de horde. » Jusqu'ici, `hordeStep` était une pure
+  // descente de gradient sur un champ de flux PARTAGÉ : seize membres au même endroit du
+  // champ élisent la même tuile suivante et marchent en file, l'un DANS l'autre. Relevé à
+  // l'écran : treize goules en vue selon la sim, deux silhouettes sur l'image.
+  //
+  // On emprunte l'écart du GIBIER — la même somme de répulsions, le même module (`ecart.ts`),
+  // la même hystérésis à deux seuils. UN seul écart dans le jeu, pas deux.
+  //
+  // MAIS IL BIAISE LA MARCHE, IL NE L'ARRÊTE PAS, et c'est la seule différence avec la bête
+  // qui broute. Le gibier serré entre deux congénères s'immobilise et attend qu'on lui fasse
+  // de la place ; une goule qui ferait ça briserait l'assaut — la horde se figerait à trente
+  // tuiles du village. On ajoute donc la poussée à la CIBLE du pas au lieu de s'y substituer :
+  // elles continuent de descendre le gradient, en s'ouvrant en front.
+  //
+  // AUCUN TIRAGE : la poussée est une fonction pure des positions, et l'égalité parfaite se
+  // tranche sur l'ordre des `entityId`. Le replay reste au bit près.
+  let cx = bestTx + 0.5
+  let cy = bestTy + 0.5
+  if (hordeIds !== null) {
+    const radius = monster.separating ? WORLD_EVENTS.HORDE_SEPARATION_COMFORT : WORLD_EVENTS.HORDE_SEPARATION
+    // PAR INDEX ET PAR L'INDEX DU TICK : `hordeIds` se lit sans fabriquer d'objets, et
+    // `byId` (déjà construit par `advanceMonsters`) évite un `find` sur `state.entities` par
+    // voisine. Le premier jet faisait les deux — seize objets et seize balayages complets par
+    // goule et par tick, soit 256 balayages par tick de nuit d'assaut : le moment le plus
+    // chargé du jeu, et précisément celui que le scénario smoke `horde` existe pour mesurer.
+    const { push, nearestSq } = separationPush(
+      hordeIds.length, (i) => hordeIds[i]!,
+      monster.entityId, entity.x, entity.y,
+      (id) => byId.get(id),
+      radius, FAUNA.SEPARATION_DEADBAND,
+    )
+    if (!monster.separating && nearestSq < WORLD_EVENTS.HORDE_SEPARATION * WORLD_EVENTS.HORDE_SEPARATION) {
+      monster.separating = true
+    } else if (monster.separating && nearestSq >= WORLD_EVENTS.HORDE_SEPARATION_COMFORT * WORLD_EVENTS.HORDE_SEPARATION_COMFORT) {
+      delete monster.separating
+    }
+    if (monster.separating && push) {
+      cx += push.x
+      cy += push.y
+    }
+  }
+
+  moveToward(state, monster, entity, cx, cy, false, gait)
   return true
 }
 
@@ -722,6 +964,14 @@ export function advanceMonsters(state: SimState): void {
     if (isPredator(m.type)) {
       const vision = (m.stalking ? FAUNA.STALK_STEALTH : 1) * coverAt(state, e.x, e.y)
       threats.push({ e, vision, noise: vision * HUNT.PREDATOR_NOISE })
+    } else if (m.type === 'cendreux') {
+      // LE GIBIER LE CRAINT — QUAND IL EST ÉVEILLÉ (décision ⑩, 2026-08-21). Un cendreux
+      // amorphe de jour n'effraie personne : le cerf broute à côté d'une carcasse — c'est
+      // l'éveil qui fait la menace, et il ne fait AUCUN bruit (noise 0 : un mort ne respire
+      // pas, il n'a pas de canal sourd). Là où les morts s'accumulent, le gibier DÉSERTE :
+      // la faim et les morts racontent enfin la même histoire.
+      const eveil = eveilCendreuxAt(state, e.x, e.y, state.tick)
+      if (eveil > 0.25) threats.push({ e, vision: eveil * coverAt(state, e.x, e.y), noise: 0 })
     } else if (isPrey(m.type)) quarry.push(e)
   }
 
@@ -733,7 +983,7 @@ export function advanceMonsters(state: SimState): void {
     if (monster.type === 'cendreux') {
       // Le champ de flux lui est passé : depuis R1/R2 c'est LUI qui fait les hordes, et la
       // convergence de masse se paie en BFS partagé, jamais en A* par bête (spec R5).
-      cendreuxStep(state, monster, entity, flux)
+      cendreuxStep(state, monster, entity, flux, byId)
       continue
     }
 

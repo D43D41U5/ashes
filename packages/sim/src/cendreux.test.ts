@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { BALANCE, COMBAT, MONSTER_DEFS, CENDREUX, NIGHT_HUNT, SLOTS, TERRAIN_GRASS, WEAPON_PROFILES } from './balance'
+import { BALANCE, COMBAT, MONSTER_DEFS, CENDREUX, SLOTS, TERRAIN_GRASS, WEAPON_PROFILES } from './balance'
 import { createSim, spawnEntity, step, type MoveInput, type SimState } from './sim'
 import { countOf, inventoryOf } from './items'
 import { die, startAttack } from './combat'
@@ -7,7 +7,7 @@ import { advanceCendreux, risenAlive } from './cendreux'
 import { spawnMonster, advanceMonsters } from './monsters'
 import { createEmptyMap } from './map'
 import { drainEvents } from './events'
-import { cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, seasonRamp, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { grantItems } from './village'
 import { foundNpcVillage } from './worldgen'
 
@@ -166,11 +166,26 @@ describe('IA cendreux (jour/nuit)', () => {
     for (let i = 0; i < 40; i++) advanceMonsters(state)
     expect(ent.x).toBe(x0); expect(ent.y).toBe(y0) // dormant
   })
-  it('jour, une proie en vue → se rapproche (chemin posé)', () => {
-    const state = createSim(1)
+  it('LE CADRAN : au chaud (jour d\'acte I), la même proie à 3 tuiles est INVISIBLE — presque amorphe', () => {
+    // Décision d'Alexis 2026-08-21 (« un cendreux doit être presque amorphe lorsqu'il fait
+    // chaud ») : à 90 de froid de base, l'éveil vaut 0 et la vue tombe à son plancher
+    // (aggroRange × 0,2 = 1 tuile). On peut passer à trois tuiles d'une carcasse en plein
+    // midi — mais marcher DESSUS la réveille toujours (le plancher existe pour ça).
+    const state = createSim(1) // tick 0 = jour, acte I : plaine à 90
     const id = spawnMonster(state, 'cendreux', 5, 5)
     const monster = state.monsters.find((m) => m.entityId === id)!
-    humanAt(state, 8, 5) // proie dans aggroRange 5
+    humanAt(state, 8, 5) // à 3 tuiles : dans l'ancienne vue (5), hors de la vue engourdie (1)
+    advanceMonsters(state)
+    expect(monster.path?.length ?? 0).toBe(0)
+    expect(monster.targetId).toBeNull()
+  })
+  it('…et dans le froid qui mord (nuit d\'acte III), il chasse à pleine vue (chemin posé)', () => {
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
+    state.tick = 54 * TICKS_PER_SEASON_DAY // jour 55 : plaine de nuit à 10 → éveil 1
+    state.tick -= state.tick % TICKS_PER_CYCLE // minuit
+    const id = spawnMonster(state, 'cendreux', 5, 5)
+    const monster = state.monsters.find((m) => m.entityId === id)!
+    humanAt(state, 8, 5) // proie dans aggroRange 5, vue pleine
     advanceMonsters(state)
     expect((monster.path?.length ?? 0)).toBeGreaterThan(0)
   })
@@ -193,7 +208,14 @@ describe('IA cendreux (jour/nuit)', () => {
    * était invisible — 0 coup, 0 dégât. Le feu du joueur devenait son meilleur bouclier.
    */
   it('A5 — arrivé au feu, il mord quand même l\'homme assis à côté (S5/S6)', () => {
-    const state = createSim(1, { cycleOffset: DAY_TICKS_PER_CYCLE }) // nuit
+    // Depuis le cadran (2026-08-21), la garde se joue LÀ OÙ LE MONSTRE EST ÉVEILLÉ : la
+    // nuit d'acte III (plaine à 10, éveil 1, vue pleine) — le cas nominal du siège. Une
+    // nuit TIÈDE d'acte I laisse désormais l'homme tranquille à trois tuiles : ce n'est
+    // plus le bug du bouclier (nearestWarmth battait l'homme), c'est la torpeur — et le
+    // monstre paiera sa venue autrement (il boira le feu, décision ⑯).
+    const state = createSim(1, { cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
+    state.tick = 54 * TICKS_PER_SEASON_DAY // acte III
+    state.tick -= state.tick % TICKS_PER_CYCLE // aligné à minuit (patron du banc `nuits`)
     state.structures.push({ type: 'fire', tx: 15, ty: 15, villageId: 0 } as never)
     const proie = humanAt(state, 17.5, 15.5) // DERRIÈRE le feu, vu du Cendreux
     spawnMonster(state, 'cendreux', 5.5, 15.5) // il vient de l'ouest
@@ -252,9 +274,9 @@ describe('la nuit bascule d\'espèce (R11) — la tension croissante', () => {
    */
   const NUITS = 8 // le tirage est par MINUTE et par acte : une seule nuit est un pile ou face
 
-  function nuits(jourDeSaison: number): { loups: number; morts: number; hurlements: number; raclements: number } {
+  function nuits(jourDeSaison: number, combien = NUITS): { loups: number; morts: number; hurlements: number; raclements: number } {
     const cumul = { loups: 0, morts: 0, hurlements: 0, raclements: 0 }
-    for (let n = 0; n < NUITS; n++) {
+    for (let n = 0; n < combien; n++) {
       const state = createSim(100 + n, {
         map: createEmptyMap(64, 64, TERRAIN_GRASS),
         cycleOffset: cycleOffsetForStartHour(0), // minuit
@@ -285,14 +307,17 @@ describe('la nuit bascule d\'espèce (R11) — la tension croissante', () => {
     expect(n.morts).toBe(0)
   })
 
-  it('A13 — acte III : le vivant a quitté la vallée, elle n\'envoie que des morts', () => {
-    const n = nuits(55)
+  it('A13 — acte III : le vivant a quitté la vallée, elle n\'envoie que des morts', { timeout: 120_000 }, () => {
+    // 3 nuits et non 8 : depuis le CRESCENDO (cris → salves, 2026-08-21), une nuit d'acte III
+    // porte des dizaines de marcheurs — 8 nuits explosaient le budget du banc pour la même
+    // vérité. Le « si » qu'on mesure (espèce) se voit dès la première salve.
+    const n = nuits(55, 3)
     expect(n.raclements).toBeGreaterThan(0)
     expect(n.hurlements).toBe(0)
     expect(n.loups).toBe(0)
   })
 
-  it('A13 — et la nuit d\'acte III pèse PLUS que celle d\'acte I (la montée se mesure)', () => {
+  it('A13 — et la nuit d\'acte III pèse PLUS que celle d\'acte I (la montée se mesure)', { timeout: 120_000 }, () => {
     // ON COMPARE CE QUI SE COMPARE : le nombre de CHASSEURS que la nuit envoie.
     //
     // L'assertion d'origine opposait les *raclements* d'acte III aux *hurlements* d'acte I —
@@ -307,21 +332,29 @@ describe('la nuit bascule d\'espèce (R11) — la tension croissante', () => {
     // différence. C'est exactement le défaut que `docs/specs/saison-sans-fin.md` nomme — « une
     // table de trois valeurs, et une table est plate ».
     const acteI = nuits(5)
-    const acteIII = nuits(55)
+    const acteIII = nuits(55, 3) // 3 nuits de crescendo pèsent déjà plus que 8 nuits tièdes
     expect(acteIII.loups + acteIII.morts).toBeGreaterThan(acteI.loups + acteI.morts)
   })
 
-  it('A14 — un rôdeur mort ne HURLE pas : il a son propre signe', () => {
-    const n = nuits(55)
+  it('A14 — un rôdeur mort ne HURLE pas : il a son propre signe', { timeout: 120_000 }, () => {
+    const n = nuits(55, 1) // une seule nuit d'acte III : ~18 tirages à 55 %, le signe est sûr
     // Un Cendreux qui émettrait `wolf_howl` ferait préparer au joueur la mauvaise parade :
     // on distance un Cendreux (1,3 t/s contre 4), jamais un loup.
     expect(n.hurlements).toBe(0)
     expect(n.raclements).toBeGreaterThan(0)
   })
 
-  it('A13 — borné par espèce : jamais plus que le plafond de l\'acte', () => {
-    const n = nuits(55)
-    expect(n.morts).toBeLessThanOrEqual(NIGHT_HUNT.UNDEAD_MAX_ALIVE[2]! * NUITS)
+  it('A13 — borné par espèce : jamais plus que le plafond GLOBAL du jour', { timeout: 120_000 }, () => {
+    // Depuis le crescendo (2026-08-21), la nuit d'acte III n'est plus le seul canal : le cri
+    // lève le sol par salves. La borne qui tient TOUT — et qu'on affirme ici — est le plafond
+    // GLOBAL du jour (rampe 12 → 60) : les morts comptés VIVANTS en fin de nuit ne peuvent
+    // jamais le dépasser. Le plafond par proie de la nuit qui chasse garde ses gardes propres
+    // (morts.test A20) ; celle-ci est la borne de T15 sur la somme.
+    const n = nuits(55, 3)
+    const jour55 = Math.round(seasonRamp(CENDREUX.GLOBAL.DEBUT, CENDREUX.GLOBAL.FIN, 55))
+    // `nuits` CUMULE trois états indépendants : la borne de T15 vaut PAR NUIT — et elle est
+    // SERRÉE (mesuré : chaque nuit de crescendo finit le plafond PILE, 56/56).
+    expect(n.morts).toBeLessThanOrEqual(jour55 * 3)
   })
 })
 
@@ -339,7 +372,11 @@ describe('la contagion et son plafond (R7-R8)', () => {
   })
 
   it('A8 — au plafond, plus rien ne se relève ; en abattre un rouvre la porte', () => {
-    const state = createSim(1)
+    const state = createSim(1, { calendarScale: 1 })
+    // AU JOUR 55 : le plafond GLOBAL (2026-08-21, en rampe 12 → 60) vaut 56 — c'est bien
+    // MAX_ALIVE (24, la borne INTERNE de la contagion, R8) que ce banc doit voir mordre.
+    // Au jour 1, le global (13) mordait AVANT lui et le test mesurait l'autre plafond.
+    state.tick = 54 * TICKS_PER_SEASON_DAY
     for (let i = 0; i < CENDREUX.MAX_ALIVE; i++) {
       const id = spawnMonster(state, 'cendreux', 100 + i * 2, 100)
       state.monsters.find((m) => m.entityId === id)!.risen = true // nés d'un cadavre
@@ -365,7 +402,8 @@ describe('la contagion et son plafond (R7-R8)', () => {
    * la saison. Ces populations-là ont déjà leurs propres bornes.
    */
   it('A8bis — Repaires, hordes et convois ne consomment pas le plafond', () => {
-    const state = createSim(1)
+    const state = createSim(1, { calendarScale: 1 })
+    state.tick = 54 * TICKS_PER_SEASON_DAY // jour 55 : le plafond global (56) laisse la place
     for (let i = 0; i < CENDREUX.MAX_ALIVE + 5; i++) spawnMonster(state, 'cendreux', 100 + i * 2, 100)
     expect(risenAlive(state)).toBe(0) // aucun n'est né d'un cadavre
     const e = humanAt(state, 40, 40)

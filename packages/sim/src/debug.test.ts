@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { applyDamage } from './combat'
 import { createEmptyMap } from './map'
 import { createSim, spawnEntity, step, type PlayerAction, type SimState } from './sim'
-import { MORTS, NIGHT_HUNT, TERRAIN_GRASS } from './balance'
+import { CENDREUX, MORTS, NIGHT_HUNT, TERRAIN_GRASS } from './balance'
 import { drainEvents } from './events'
 import { getGameTime } from './time'
 import { foundNpcVillage } from './worldgen'
@@ -169,7 +169,9 @@ describe('debug — réveiller le sol', () => {
     expect(m!.huntTargetId).toBe(player)
   })
 
-  it('LE FEU L’ÉTOUFFE QUAND MÊME — la parade se teste par ce chemin aussi', () => {
+  it('LE FEU LE REPOUSSE QUAND MÊME (décision ⑦) — la parade se teste par ce chemin aussi', () => {
+    // Depuis le 2026-08-21, le feu ne tue plus un réveil : il le DÉPLACE hors de sa bulle,
+    // timer neuf. Le chemin debug éprouve la même règle que la nuit réelle.
     const { sim, player } = makeSim(true)
     act(sim, player, { type: 'debug_reveil' })
     const r = sim.reveils[0]!
@@ -178,9 +180,12 @@ describe('debug — réveiller le sol', () => {
     } as never)
     drainEvents(sim)
     step(sim, [])
-    expect(sim.reveils).toHaveLength(0)
     expect(drainEvents(sim).some((e) => e.type === 'reveil_etouffe')).toBe(true)
-    expect(sim.monsters.some((m) => m.type === 'cendreux')).toBe(false)
+    expect(sim.reveils).toHaveLength(1) // déplacé, pas tué
+    const d2 = (sim.reveils[0]!.x - (Math.floor(r.x) + 0.5)) * (sim.reveils[0]!.x - (Math.floor(r.x) + 0.5))
+      + (sim.reveils[0]!.y - (Math.floor(r.y) + 0.5)) * (sim.reveils[0]!.y - (Math.floor(r.y) + 0.5))
+    expect(d2).toBeGreaterThan(CENDREUX.HEARTH_WARD_RADIUS * CENDREUX.HEARTH_WARD_RADIUS)
+    expect(sim.monsters.some((m) => m.type === 'cendreux')).toBe(false) // pas encore : il mûrit là-bas
   })
 
   it('ne fait RIEN si la sim n’est pas en debug', () => {

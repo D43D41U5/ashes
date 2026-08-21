@@ -3,7 +3,7 @@
  * La cible = BASE − altitude − acte + (nuit+biome amortis par l'abri), plancherée
  * par la bulle d'un feu. Aucune fonction transcendante (seul `sqrt`, autorisé).
  */
-import { POI, TEMPERATURE } from './balance'
+import { CENDREUX, POI, TEMPERATURE } from './balance'
 import { froidDeCendre, frontAuTick } from './cendre'
 import { brumeColdAt } from './brume'
 import { fireWarmthFactor } from './fire'
@@ -198,6 +198,35 @@ export function ambientTemperature(state: SimState, x: number, y: number): numbe
 /** Un pas de dérive vers l'ambiant, freiné par l'isolation. Pur. */
 export function driftStep(current: number, ambient: number, insulation: number): number {
   return current + ((ambient - current) * T.K_DRIFT) / insulation
+}
+
+/**
+ * L'ÉVEIL D'UN CENDREUX EN CE POINT, À CE TICK — le cadran unique du monstre (décisions
+ * d'Alexis 2026-08-21). 0 = amorphe (il fait chaud), 1 = plein régime (le froid mord),
+ * PENTE CONTINUE entre `TORPEUR.CHAUD` et `TORPEUR.FROID` — jamais un seuil.
+ *
+ * Lit le froid de BASE (`baselineTemperatureAt` — hors feu, sinon un cendreux qui approche
+ * d'un foyer se « réchaufferait » et oscillerait à la lisière de la bulle, la note de S5).
+ * PARAMÉTRÉ PAR TICK, et c'est structurel : le présage de horde se décide à l'AUBE pour le
+ * crépuscule à venir — dimensionné sur l'éveil du tick COURANT (le jour, chaud), aucune horde
+ * n'aurait marché avant l'acte III (constat du panel). Vit ici et non dans `cendreux.ts`
+ * parce que `monsters.ts` en a besoin sans cycle d'imports.
+ *
+ * Sur la nuit de plaine, cette pente REND l'ancienne table `UNDEAD_SHARE` au bit près
+ * (60/35/10 → 0/0,5/1) ; partout ailleurs, la géographie décide enfin (neige, glacier,
+ * brume, front, cendre). La saison refroidit la vallée : la montée tombe de la table du
+ * froid, elle n'est plus décrétée.
+ */
+export function eveilCendreuxAt(state: SimState, x: number, y: number, tick: number): number {
+  return eveilPourTemperature(baselineTemperatureAt(state, x, y, tick))
+}
+
+/** La pente seule, pour qui a déjà la température en main (un tick de `cendreuxStep` la lit
+ *  une fois et en tire l'éveil, l'allure ET le gate de convergence — un seul relevé du froid). */
+export function eveilPourTemperature(T: number): number {
+  const t = CENDREUX.TORPEUR
+  const e = (t.CHAUD - T) / (t.CHAUD - t.FROID)
+  return e < 0 ? 0 : e > 1 ? 1 : e
 }
 
 /** Dégâts PV/tick dus au froid : 0 au-dessus de HYPOTHERMIA, linéaire jusqu'à 0. */

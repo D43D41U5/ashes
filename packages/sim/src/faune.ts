@@ -54,6 +54,7 @@ import { profondeurAt, terrainAt, zoneTierAt, type WorldMap } from './map'
 import { meteoQuiet, meteoVisionFactor } from './meteo'
 import { estCoeur, estLisiere, TERRAINS_BOISES_MASSIF, TERRAINS_FEUILLUS } from './profondeur'
 import { CREUX } from './racine-relief'
+import { separationPush } from './ecart'
 import { moveToward, spawnMonster, type Monster } from './monsters'
 import { pathToward } from './pathfinding'
 import { hash2 } from './noise'
@@ -1467,60 +1468,6 @@ function migrationTarget(
  * Rend le vecteur unitaire de fuite (ou `null` si personne ne gêne), et la
  * distance au voisin le plus proche — dont dépend l'hystérésis.
  */
-function separationPush(
-  herd: Monster[],
-  monster: Monster,
-  entity: Entity,
-  byId: Map<number, Entity>,
-  radius: number,
-): { push: { x: number; y: number } | null; nearestSq: number } {
-  let px = 0
-  let py = 0
-  let n = 0
-  let nearestSq = Infinity
-  for (const other of herd) {
-    if (other.entityId === monster.entityId) continue
-    const e = byId.get(other.entityId)
-    if (!e || e.hp <= 0) continue
-    const d2 = distSq(entity.x, entity.y, e.x, e.y)
-    if (d2 < nearestSq) nearestSq = d2
-    if (d2 >= radius * radius) continue
-    const d = Math.sqrt(d2)
-    if (d < 0.001) {
-      // Deux bêtes exactement superposées : il faut bien choisir un sens, et il
-      // doit être le MÊME sur toutes les machines — l'ordre des `entityId` tranche.
-      px += monster.entityId < other.entityId ? 1 : -1
-      n++
-      continue
-    }
-    // Plus la voisine est près, plus elle pousse fort : c'est ce qui empêche la
-    // somme de s'annuler bêtement au milieu d'un groupe symétrique.
-    const w = radius / d
-    px += ((entity.x - e.x) / d) * w
-    py += ((entity.y - e.y) / d) * w
-    n++
-  }
-  if (n === 0) return { push: null, nearestSq }
-  const l = Math.sqrt(px * px + py * py)
-  // LA ZONE MORTE DE L'ÉQUILIBRE (mesuré 2026-08-01 — c'est LE tremblement).
-  //
-  // La somme des répulsions est NORMALISÉE : elle garde toute sa force jusqu'au
-  // point d'équilibre, et le pas, lui, a une longueur fixe. Une bête coincée
-  // entre deux voisines dépassait donc l'équilibre à chaque pas, trouvait la
-  // somme inversée au tick suivant, et repartait en sens inverse — 0,081 tuile
-  // à l'ouest, 0,081 à l'est, VINGT FOIS PAR SECONDE, avec le sprite qui se
-  // retourne à chaque fois. L'hystérésis de `separating` n'y pouvait rien : la
-  // bête ne quitte jamais l'état, elle oscille DEDANS.
-  //
-  // En dessous de ce déséquilibre, on ne bouge donc plus : la bête est aussi
-  // bien là qu'ailleurs, et un pas ne ferait que la renvoyer d'où elle vient.
-  // (Le seuil se lit en unités de poids `radius/d` : une voisine pile au rayon
-  // pèse 1. Un pas de broutage déplace le déséquilibre d'environ 0,14 — la zone
-  // morte est le double, pour qu'aucun pas ne puisse traverser l'équilibre.)
-  if (l < FAUNA.SEPARATION_DEADBAND) return { push: null, nearestSq }
-  return { push: { x: px / l, y: py / l }, nearestSq }
-}
-
 /**
  * LA BORNE DU HUITIÈME : sin(22,5°). Une direction unitaire dont la composante
  * dépasse ça sur un axe a bien ce sens-là dans le découpage en huit. Littéral et
@@ -2344,7 +2291,10 @@ export function faunaStep(
     // c'est l'hystérésis, et c'est elle qui fait qu'on ne relâche pas la bête à
     // un cheveu du contact.
     const radius = monster.separating ? FAUNA.HERD_SEPARATION_COMFORT : FAUNA.HERD_SEPARATION
-    const { push, nearestSq } = separationPush(herd, monster, entity, byId, radius)
+    const { push, nearestSq } = separationPush(
+      herd.length, (i) => herd[i]!.entityId,
+      monster.entityId, entity.x, entity.y, (id) => byId.get(id), radius, FAUNA.SEPARATION_DEADBAND,
+    )
     if (!monster.separating && nearestSq < FAUNA.HERD_SEPARATION * FAUNA.HERD_SEPARATION) {
       monster.separating = true
       monster.wanderDx = 0

@@ -522,14 +522,14 @@ describe('R4 — le froid des fronts (A3)', () => {
 
   it('R5 Brume, même logique — le gate d’attraction des Cendreux s’allume de JOUR au cœur du blizzard, pas à côté', () => {
     // Le gate feu-station S5 (`cendreuxStep`) lit `baselineTemperature` : au cœur d'un
-    // blizzard le froid de base tombe sous COLD_ATTRACT_THRESHOLD, et un Cendreux pris
+    // blizzard le froid de base tombe sous TORPEUR.CONVERGE_SOUS, et un Cendreux pris
     // dedans peut ramper vers un feu allumé EN PLEIN JOUR — comportement assumé, le même
     // que sous la nappe (test R5 de brume.test.ts, calqué ici). Ce test l'ÉPINGLE : si un
     // calibrage de COLD.blizzard le faisait disparaître (ou l'étendait hors bande), on le
     // saurait — le froid météo MODULE le gate, il ne le casse pas.
     const { sim, coeur, hors } = simSousBlizzard()
-    expect(baselineTemperature(sim, coeur, 20.5)).toBeLessThan(CENDREUX.COLD_ATTRACT_THRESHOLD)
-    expect(baselineTemperature(sim, hors, 20.5)).toBeGreaterThanOrEqual(CENDREUX.COLD_ATTRACT_THRESHOLD)
+    expect(baselineTemperature(sim, coeur, 20.5)).toBeLessThan(CENDREUX.TORPEUR.CONVERGE_SOUS)
+    expect(baselineTemperature(sim, hors, 20.5)).toBeGreaterThanOrEqual(CENDREUX.TORPEUR.CONVERGE_SOUS)
   })
 })
 

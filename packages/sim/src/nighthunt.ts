@@ -25,12 +25,12 @@
 import { BALANCE, MORTS, NIGHT_HUNT } from './balance'
 import { emitEvent } from './events'
 import { distSq } from './geometry'
-import { spawnMonster } from './monsters'
+import { placeSousPlafondGlobal, spawnMonster } from './monsters'
 import { densiteDesMorts, rodeursPortes, siteDansLaCouronne } from './morts'
 import { rngRoll } from './rng'
 import type { Entity, SimState } from './sim'
-import { fireBubble } from './temperature'
-import { actForDay, getGameTime, seasonDayAtTick } from './time'
+import { eveilCendreuxAt, fireBubble } from './temperature'
+import { actForDay, getGameTime, seasonDayAtTick, seasonRamp } from './time'
 
 /** Un tirage par minute réelle : la peur monte, elle ne mitraille pas. */
 const ROLL_EVERY = BALANCE.TICK_RATE_HZ * 60
@@ -60,33 +60,46 @@ export function advanceNightHunt(state: SimState): void {
   const chance = NIGHT_HUNT.CHANCE_PER_MIN[act - 1]!
 
   for (const prey of preys(state)) {
-    // AU FEU, ON EST TRANQUILLE. C'est la parade, et elle doit être limpide : la
-    // bulle de chaleur d'un feu est déjà ce que le joueur regarde pour ne pas
-    // geler — on ne lui apprend pas une deuxième règle, on en réutilise une.
-    if (fireBubble(state, prey.x, prey.y) > 0) continue
-
     if (roll(state) >= chance) continue
 
-    // QUI VIENT, CETTE NUIT-LÀ (spec `cendreux.md` R11). C'est ici que vit la tension
-    // croissante : acte I, la vallée est encore vivante et ce sont des loups ; acte III,
-    // elle ne l'est plus et ce sont les morts. Le monde animal cède au monde mort, et le
-    // joueur le SENT chaque nuit — là où la horde, tirée une seule fois par nuit sur une
-    // saison de six nuits, ne pouvait produire que trois événements en tout.
-    const undead = roll(state) < NIGHT_HUNT.UNDEAD_SHARE[act - 1]!
+    // QUI VIENT, CETTE NUIT-LÀ : LE FROID DU LIEU DÉCIDE (décision d'Alexis 2026-08-21 —
+    // le cadran de température remplace la table d'actes). Sur la nuit de plaine, l'éveil
+    // rend exactement l'ancienne table (0 / 0,5 / 1 par acte) ; ailleurs la géographie
+    // parle enfin : le Névé envoie des morts dès l'acte I, la Brume et le front météo
+    // pèsent — la nuit qui chasse reste la seule machine dont la montée soit perceptible,
+    // et elle est désormais continue.
+    const undead = roll(state) < eveilCendreuxAt(state, prey.x, prey.y, state.tick)
     const type = undead ? 'cendreux' : 'wolf'
+
+    // AU FEU, ON EST ÉPARGNÉ DU VIVANT — PLUS DU MORT (décision ⑦ : « le feu REPOUSSE,
+    // il n'annule plus »). Le loup, bête vivante, ne chasse pas dans la lumière : sa
+    // parade de `tension.md` est intacte. Le mort, lui, VIENT — et le feu lui achète de
+    // la DISTANCE et du TEMPS, jamais l'immunité : son site de réveil se plante hors de
+    // la bulle (voir `siteDansLaCouronne`), plus loin, plus tard — pas nulle part.
+    if (!undead && fireBubble(state, prey.x, prey.y) > 0) continue
+
+    // LE TIRAGE DE SITE SE CONSOMME AVANT LES PLAFONDS, ET C'EST STRUCTUREL (panel C2) :
+    // un plafond consulté AVANT sautait le tirage, donc le NOMBRE de pas de PRNG de la nuit
+    // dépendait de l'état du monde — un plafond qui bouge d'un cran décalait le flux seedé
+    // de tout l'aval. Le tirage se consomme toujours ; plafonné, le site est JETÉ.
+    const tirage = roll(state)
 
     // BORNÉ, ET PAR ESPÈCE : on compte les rôdeurs déjà lancés sur CETTE proie. On peut
     // perdre ; on ne doit pas être submergé — une meute infinie n'est pas de la tension,
-    // c'est une porte fermée. Les deux plafonds diffèrent parce que les deux dangers ne se
-    // jouent pas pareil (voir `UNDEAD_MAX_ALIVE`). Le recensement passe par `huntTargetId`
-    // et non `targetId` : l'IA du Cendreux réécrit la sienne deux fois par seconde.
+    // c'est une porte fermée. Le plafond des morts MONTE EN CONTINU avec le jour de saison
+    // (`UNDEAD_MAX_FIN` — la table de trois valeurs mangeait la montée, mesuré ×1,6 quand
+    // le taux quadruple). Le recensement passe par `huntTargetId` et non `targetId` : l'IA
+    // du Cendreux réécrit la sienne deux fois par seconde.
     //
-    // ET LE SOL A SON MOT (spec `cendreux.md` R16) : le plafond de l'acte reste le TOIT, mais
+    // ET LE SOL A SON MOT (spec `cendreux.md` R16) : le plafond du jour reste le TOIT, mais
     // le champ des morts dit quelle part on en atteint ici. Deux rôdeurs sur le pré de son
     // village, cinq aux marges sous la cendre — le joueur ne lit pas un nombre, il lit un
     // LIEU. Le loup, lui, ne sort pas du sol : son plafond ne dépend pas de la géographie.
     const plafond = undead
-      ? rodeursPortes(state, Math.floor(prey.x), Math.floor(prey.y), NIGHT_HUNT.UNDEAD_MAX_ALIVE[act - 1]!)
+      ? rodeursPortes(
+          state, Math.floor(prey.x), Math.floor(prey.y),
+          Math.round(seasonRamp(1, NIGHT_HUNT.UNDEAD_MAX_FIN, seasonDayAtTick(state.tick, state.calendarScale))),
+        )
       : NIGHT_HUNT.MAX_ALIVE
     const rodeurs = state.monsters.filter(
       (m) => m.type === type && m.ambient === true && m.huntTargetId === prey.id,
@@ -98,7 +111,9 @@ export function advanceNightHunt(state: SimState): void {
     // sortir ensemble : « on peut perdre, on ne doit pas être submergé » (T15) cesserait de
     // tenir précisément la nuit où il compte.
     const enCours = undead ? state.reveils.filter((r) => r.preyId === prey.id).length : 0
-    if (rodeurs + enCours >= plafond) continue
+    if (rodeurs + enCours >= plafond) continue // le tirage est consommé, le site est jeté
+    // LE PLAFOND GLOBAL (2026-08-21) — même règle de lecture : après le tirage, jamais avant.
+    if (undead && !placeSousPlafondGlobal(state)) continue
 
     // OÙ LE SOL SE RÉVEILLE (spec `cendreux.md` R18-R19). Ils naissent hors de vue, autour de
     // la proie — on doit pouvoir les voir VENIR, jamais collés dans le dos.
@@ -113,7 +128,7 @@ export function advanceNightHunt(state: SimState): void {
     // pleins) ; le loup vient du bois, donc uniformément. La couronne et l'exigence d'un sol
     // qui mène à la proie leur sont communes : le bug de placement n'avait pas d'espèce.
     const site = siteDansLaCouronne(
-      state, prey.x, prey.y, roll(state),
+      state, prey.x, prey.y, tirage,
       undead ? (tx, ty) => densiteDesMorts(state, tx, ty) : undefined,
       undead ? { dist: NIGHT_HUNT.SPAWN_DIST_UNDEAD, ring: NIGHT_HUNT.SPAWN_RING_UNDEAD } : undefined,
     )

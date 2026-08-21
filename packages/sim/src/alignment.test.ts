@@ -207,7 +207,13 @@ describe('LE test (A7) — le paquebot vire, la Meute raide', () => {
   })
 
   it('(b) une Meute PNJ raide la nuit : grenier voisin cassé, butin rapporté, alarme', { timeout: 60_000 }, () => {
-    // Seed 21 (était 24, était 23).
+    // Seed 23 (était 21, était 24, était… 23 — la boucle est bouclée).
+    //
+    // 21 → 23 (2026-08-21) : le chantier « pression croissante » des Cendreux décale le flux
+    // RNG (présage à l'aube, crescendo) et la graine 21 a tourné. MESURÉ au diag AVANT de la
+    // changer, et le taux va MIEUX : grenier cassé **5/12 → 8/12**, butin rentré **1/12 →
+    // 3/12** (12 graines, `tools/diag-raid.mts`) — la 3e alliance (la milice ne se fauche
+    // plus elle-même) profite aussi aux raiders entre eux. Graines vivantes : 23, 26, 29.
     //
     // 23 → 24 : le doublement du portage (2026-07-19) avait décalé le flux RNG —
     // fragilité au seed, pas une régression.
@@ -224,7 +230,7 @@ describe('LE test (A7) — le paquebot vire, la Meute raide', () => {
     // mord plus fort), et elle est en attente d'arbitrage d'Alexis : adoucir la calibration,
     // ou accepter que rentrer avec le butin devienne l'exploit. Tant que ce n'est pas
     // tranché, on joue la graine qui garde le test VIVANT — mais on ne cache pas le taux.
-    const sim = createSim(21, { map: createEmptyMap(60, 60, TERRAIN_GRASS) })
+    const sim = createSim(23, { map: createEmptyMap(60, 60, TERRAIN_GRASS) })
     foundNpcVillage(sim, 15, 15, 3, 'neutre') // la victime
     const victim = sim.villages[0]!
     foundNpcVillage(sim, 40, 40, 4, 'meute') // la Meute

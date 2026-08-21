@@ -622,6 +622,20 @@ function resolveStrike(state: SimState, attacker: Entity): void {
   const attackerHerd = attackerMonster?.herdId
   const attackerIsCendreux = attackerMonster?.type === 'cendreux'
 
+  // ═══ TROISIÈME ALLIANCE : LA MILICE NE SE FAUCHE PAS ELLE-MÊME (2026-08-21) ═══
+  //
+  // Même défaut MESURÉ, même remède que les deux premières (la harde : « l'arc de 90°
+  // attrapait le frère d'en face, et la meute se décimait toute seule » ; l'espèce cendreux :
+  // 313 levées abattues par leur propre camp). Depuis le cadran de température, un cendreux
+  // engourdi est une cible quasi STATIQUE : la milice s'agglutine dessus, et ses propres arcs
+  // fauchaient ses rangs — MESURÉ sur douze graines : 10/12 villages tenaient avant, 4/12
+  // après, trois miliciens tombés au même tick sous les coups… de leurs frères. L'alliance
+  // est ÉTROITE : deux PNJ du MÊME village, et rien d'autre — le JOUEUR frappe toujours tout
+  // ce qui est dans son arc (le PvP, la trahison et la maladresse restent des mécaniques),
+  // et deux PNJ de villages différents s'atteignent comme avant (la guerre existe).
+  const attackerIsNpc = state.npcs.some((n) => n.entityId === attacker.id)
+  const attackerVillage = attackerIsNpc ? getVillageOf(state, attacker.id) : undefined
+
   // ═══ LE TRAIT NE PREND QU'UN CORPS, ET IL LUI FAUT UNE LIGNE (spec `tir.md` T4-T5) ═══
   //
   // On RELÈVE d'abord, on frappe ensuite. La boucle appliquait les dégâts au fil de la
@@ -651,6 +665,11 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     const targetMonster = monsterOf(target.id)
     if (attackerHerd !== undefined && targetMonster?.herdId === attackerHerd) continue
     if (attackerIsCendreux && targetMonster?.type === 'cendreux') continue
+    if (
+      attackerVillage !== undefined &&
+      state.npcs.some((n) => n.entityId === target.id) &&
+      getVillageOf(state, target.id)?.id === attackerVillage.id
+    ) continue // la milice ne se fauche pas elle-même (troisième alliance, voir plus haut)
     // LA LIGNE se juge par corps, et seulement sur ce que la zone a déjà retenu : un
     // balayage de sous-tuiles par entité de la carte serait ruineux, alors qu'il n'y a
     // jamais qu'une poignée de corps dans un cône.
@@ -711,6 +730,22 @@ function resolveStrike(state: SimState, attacker: Entity): void {
     // — quel que soit le nombre qu'il fixera, il ne vaudra que pour la mêlée.
     if (!ranged) knockback(state, attacker, target, tx, ty, dist, windup.charged === true)
     applyDamage(state, target, dealt, attacker.id)
+    // ═══ IL BOIT LA CHALEUR DU CORPS (décision d'Alexis ⑯, 2026-08-21) ═══
+    //
+    // Le coup d'un cendreux ne fait pas que blesser : il PREND la chaleur. La température de
+    // la victime chute — et tout l'aval existe déjà (engourdissement sous 60, souffle qui ne
+    // revient plus, dégâts continus sous 20) : se faire toucher cesse d'être une simple
+    // perte de PV, c'est le froid qui entre. Les monstres n'ont pas de température (asymétrie
+    // actée de `advanceTemperature`) : on ne vole qu'aux vivants qui en portent une. La
+    // SATIÉTÉ, elle, se gagne sur TOUTE chair frappée, bête comprise — et elle endort son
+    // porteur (décision ⑰ : « rassasié, il s'affaisse » — voir `eveilDuCendreux`).
+    if (attackerIsCendreux) {
+      if (!targetMonster) target.temperature = Math.max(0, target.temperature - CENDREUX.BOIRE.COUP_TEMP)
+      attackerMonster!.satiete = Math.min(
+        CENDREUX.BOIRE.SATIETE_MAX,
+        (attackerMonster!.satiete ?? 0) + CENDREUX.BOIRE.SATIETE_COUP,
+      )
+    }
     struck = true
   }
 

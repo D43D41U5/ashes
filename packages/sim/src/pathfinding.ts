@@ -288,6 +288,28 @@ export function computeFlowField(
    */
   etat?: SimState,
 ): Int32Array {
+  return computeFlowFieldMulti(map, nodes, solides, [{ tx: targetTx, ty: targetTy }], etat)
+}
+
+/**
+ * LE MÊME BFS, PLUSIEURS GRAINES (spec 2026-08-21, décision ① — « le levé marche ») : toutes
+ * les sources partent à 0, et le champ rendu est la distance de marche au feu LE PLUS PROCHE —
+ * au sens de la marche, pas de l'oiseau. C'est ce qui rend « il vise le feu le plus proche »
+ * (décision ⑬) gratuit : UN tableau pour toute la vallée, quel que soit le nombre de feux,
+ * là où un champ par feu aurait coûté 15 Mo pièce.
+ *
+ * `maxDist` borne l'exploration : au-delà, la vallée rend -1 — c'est la portée de convergence
+ * d'un acte (`CENDREUX.CONVERGE_TILES`), et c'est aussi ce qui évite de payer la carte entière
+ * quand l'acte ne regarde que sa ceinture.
+ */
+export function computeFlowFieldMulti(
+  map: WorldMap,
+  nodes: ResourceNode[],
+  solides: Structure[],
+  sources: { tx: number; ty: number }[],
+  etat?: SimState,
+  maxDist = Infinity,
+): Int32Array {
   const { width, height } = map
   const field = new Int32Array(width * height).fill(-1)
   // `exactOptionalPropertyTypes` : un `etat: undefined` explicite n'est PAS un champ absent.
@@ -296,9 +318,12 @@ export function computeFlowField(
   // Index d'occupation bâti une fois : le BFS balaie toute la carte.
   const isBlocked = makeIndexedIsBlockedAt(world)
   const queue: number[] = []
-  const startKey = targetTy * width + targetTx
-  field[startKey] = 0
-  queue.push(startKey)
+  for (const s of sources) {
+    const startKey = s.ty * width + s.tx
+    if (field[startKey] === 0) continue // deux feux sur la même tuile : une seule graine
+    field[startKey] = 0
+    queue.push(startKey)
+  }
   let head = 0
   while (head < queue.length) {
     const key = queue[head]!
@@ -317,6 +342,7 @@ export function computeFlowField(
       const nk = ny * width + nx
       if (field[nk] !== -1) continue
       if (isBlocked(nx, ny)) continue
+      if (d + 1 > maxDist) continue // hors de portée : la vallée s'arrête là
       field[nk] = d + 1
       queue.push(nk)
     }

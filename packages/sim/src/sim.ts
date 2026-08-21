@@ -16,7 +16,7 @@ import { advanceDegel } from './gel'
 import { advanceEnvols } from './faune'
 import { advanceCombat, applyCombatAction, tientUnArc, type CombatAction, type Corpse } from './combat'
 import { advanceCendreux } from './cendreux'
-import { advanceReveils, type Reveil } from './morts'
+import { advanceLieuxBrules, advanceReveils, type Reveil } from './morts'
 import { advanceDecouverte } from './decouverte'
 import { advanceFire } from './fire'
 import { applyDebugAction, isDebugAction, refreshGodMode, type DebugAction } from './debug'
@@ -35,7 +35,7 @@ import { carryRatio, carryTier, makeInventory, type Inventory, type ItemId, type
 import { createEmptyMap, type WorldMap } from './map'
 import { advanceAlignment, type Aggression } from './alignment'
 import { advanceMonsters, type Monster } from './monsters'
-import { advanceWorldEvents, type Horde } from './worldevents'
+import { advanceWorldEvents, type Horde, type Presage } from './worldevents'
 import { advanceRefugees } from './refugees'
 import { advanceBrume } from './brume'
 import { advanceFoudre } from './foudre'
@@ -252,6 +252,9 @@ export interface SimState {
    * tick (R15), comme le front de cendre.
    */
   reveils: Reveil[]
+  /** LES LIEUX BRÛLÉS (décision ⑧, 2026-08-21) : charniers/repaires assainis au feu — la
+   *  densité des morts tombe autour, la respiration se suspend, jusqu'à `until`. */
+  lieuxBrules: { zone: number; until: number }[]
   /**
    * LES ENVOLS RÉCENTS (forêts-vivantes §3 R4bis) : les perchoirs se reposent — un envol
    * par zone tous les `ENVOL_COOLDOWN_TICKS`. Liste BORNÉE (purgée à chaque déclenchement),
@@ -260,11 +263,12 @@ export interface SimState {
   envols?: { x: number; y: number; t: number }[]
   hordes: Horde[]
   nextHordeId: number
+  /** LE PRÉSAGE DE LA VEILLE (décision ⑱, 2026-08-21) : la horde de ce soir, décidée à
+   *  l'aube — null la plupart des jours. La méga-horde scriptée n'existe plus (⑲). */
+  presage: Presage | null
   lastConvoyDay: number
   /** Mémoire d'agression entre villages (premier sang, spec alignement R4). */
   aggressions: Aggression[]
-  /** La saison (spec saison) : méga-horde tirée, évacuation ouverte, fin émise. */
-  megaHordeSpawned: boolean
   evacuation: { tx: number; ty: number } | null
   /** L'ARCHE EST PARTIE — le verrou une-seule-fois, comme `megaHordeSpawned`. Sans lui,
    *  `evacuation = null` au départ re-remplissait la condition d'ouverture au tick suivant :
@@ -468,6 +472,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     monsters: [],
     corpses: [],
     reveils: [],
+    lieuxBrules: [],
     nextCorpseId: 1,
     hordes: [],
     refugeeGroups: [],
@@ -476,7 +481,7 @@ export function createSim(seed: number, options: SimOptions = {}): SimState {
     nextHordeId: 1,
     lastConvoyDay: 0,
     aggressions: [],
-    megaHordeSpawned: false,
+    presage: null,
     evacuation: null,
     arkDeparted: false,
     evacuatedIds: [],
@@ -808,6 +813,7 @@ export function step(state: SimState, inputs: MoveInput[]): void {
   // annuler par la même garde de feu. Aucun tirage : le site et l'instant ont été décidés à
   // la plantation, donc allumer un feu ne décale pas le flux du PRNG.
   advanceReveils(state)
+  advanceLieuxBrules(state)
   advanceCombat(state)
   advanceAlignment(state)
   // L'UPKEEP DU FEU (spec construction R16) : le Feu brûle son combustible, et à sec les

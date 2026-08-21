@@ -92,12 +92,14 @@ describe('la table de routage audio (soundForEvent)', () => {
     // silencieuse ne s'apprend pas : un joueur qui ne l'entend pas ne comprend pas
     // pourquoi sa parcelle est vide au matin. Triangle qui descend, bref et bas (une
     // rangée de parcelles gèle d'un coup).
-    expect(total).toBe(77)
+    // 77 → 80 le 2026-08-21 : la pression croissante des Cendreux (cri, présage, brûlage).
+    expect(total).toBe(80)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
     // le pendant du hurlement pour les morts, quand la nuit bascule d'espèce avec les actes.
-    expect(voix).toBe(44)
+    // 44 → 47 le 2026-08-21 : `cendreux_cri`, `presage_horde`, `charnier_brule` — trois voix.
+    expect(voix).toBe(47)
   })
 
   it('L’AXE D’ALIGNEMENT S’ENTEND : les verbes chauds montent, les froids tombent', () => {

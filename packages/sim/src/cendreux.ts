@@ -1,24 +1,30 @@
 /**
  * La levée des Cendreux (spec 2026-07-08). Critère de mort, réveil, IA. Pur/déterministe.
  */
-import { BALANCE, CENDREUX, COMBAT, MONSTER_DEFS, SLOTS } from './balance'
+import { BALANCE, CENDREUX, COMBAT, MONSTER_DEFS, MORTS, NIGHT_HUNT, SLOTS } from './balance'
 import { startAttack } from './combat'
 import { distSq } from './geometry'
 import { emitEvent } from './events'
 import { fireActive, fireState } from './fire'
-import { baselineTemperature } from './temperature'
+import { baselineTemperature, eveilCendreuxAt, eveilPourTemperature } from './temperature'
 import { isEmpty, pourInto } from './items'
 import {
   attackBlockingStructure,
+  champDesFeux,
+  descendreLeChamp,
   hordeStep,
   moveToward,
   nearestPrey,
+  placeSousPlafondGlobal,
   spawnMonster,
   type CacheFlux,
   type Monster,
 } from './monsters'
+import { densiteDesMorts, siteDansLaCouronne } from './morts'
+import { isPrey } from './faune'
+import { hash2 } from './noise'
 import { pathToward } from './pathfinding'
-import { getGameTime } from './time'
+import { seasonDayAtTick, seasonRamp } from './time'
 import type { Entity, SimState } from './sim'
 import { spillOnGround } from './village'
 
@@ -41,6 +47,7 @@ export function risenAlive(state: SimState): number {
   return n
 }
 
+
 /**
  * Vrai si cette mort donnera un Cendreux : sous le plafond, SEUL, et LOIN D'UN FEU.
  *
@@ -55,6 +62,9 @@ export function willRiseAsCendreux(state: SimState, entity: Entity): boolean {
   // contagion n'aurait aucun point fixe — une nuit qui tourne mal fermerait la porte au lieu
   // de faire une histoire (T15 de `tension.md`). Abattre un Cendreux rouvre une place.
   if (risenAlive(state) >= CENDREUX.MAX_ALIVE) return false
+  // …ET LE PLAFOND GLOBAL PAR-DESSUS (2026-08-21) : la réserve commune de toutes les sources
+  // de pression. R8 borne la contagion entre elle ; le global borne la SOMME que le joueur subit.
+  if (!placeSousPlafondGlobal(state)) return false
   // Loin d'un feu : aucune structure feu dans HEARTH_WARD_RADIUS.
   const hearthWardR = CENDREUX.HEARTH_WARD_RADIUS
   const nearFire = state.structures.some(
@@ -107,7 +117,7 @@ export function advanceCendreux(state: SimState): void {
     // Plein, la vallée « ne relève plus personne » (le mot de R8) : le cadavre redevient
     // un cadavre et se décompose. Il ne fait pas la queue — une file de quatre cents morts
     // qui se videraient à mesure qu'on abat rendrait le plafond à son inutilité.
-    if (risenAlive(state) >= CENDREUX.MAX_ALIVE) {
+    if (risenAlive(state) >= CENDREUX.MAX_ALIVE || !placeSousPlafondGlobal(state)) {
       delete corpse.risesAt
       corpse.decayAt = state.tick + COMBAT.CORPSE_TICKS
       continue
@@ -130,6 +140,23 @@ export function advanceCendreux(state: SimState): void {
     if (!isEmpty(corpse.inventory)) spillOnGround(state, corpse.x, corpse.y, {}, corpse.inventory)
     emitEvent(state, { type: 'cendreux_risen', tick: state.tick, entityId: id, x: corpse.x, y: corpse.y })
   }
+}
+
+/** La BÊTE de gibier vivante la plus proche dans `range` (décision ⑩ — la chair est chaude). */
+function nearestGibier(state: SimState, entity: Entity, range: number): Entity | undefined {
+  let best: Entity | undefined
+  let bestD = range * range
+  for (const m of state.monsters) {
+    if (!isPrey(m.type)) continue
+    const e = state.entities.find((en) => en.id === m.entityId)
+    if (!e || e.hp <= 0) continue
+    const d = distSq(entity.x, entity.y, e.x, e.y)
+    if (d < bestD || (d === bestD && best && e.id < best.id)) {
+      best = e
+      bestD = d
+    }
+  }
+  return best
 }
 
 /** La source de chaleur la plus proche dans `range` : un feu OU un vivant. */
@@ -162,22 +189,67 @@ export function nearestWarmth(
 }
 
 /**
- * IA du Cendreux : dormant le jour (rampe vers une proie en vue), cherche la chaleur la nuit,
- * coule vers le Feu ciblé quand il marche en horde — et frappe ce qui lui barre la route.
+ * L'ÉVEIL DE CE CENDREUX-LÀ : la pente de température (`eveilCendreuxAt`), atténuée par sa
+ * SATIÉTÉ — la chaleur bue le réchauffe, donc l'endort (décision ⑰ : « rassasié, il
+ * s'affaisse »). La satiété s'ajoute au froid du monde comme des degrés portés sur soi.
  */
-export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, flux: CacheFlux | null = null): void {
+export function eveilDuCendreux(state: SimState, monster: Monster, entity: Entity): number {
+  const brut = eveilCendreuxAt(state, entity.x, entity.y, state.tick)
+  const satiete = monster.satiete ?? 0
+  if (satiete <= 0) return brut
+  // Plein (SATIETE_MAX), il porte (CHAUD − FROID) degrés de trop : amorphe partout où le
+  // monde seul ne l'aurait pas endormi — sauf au cœur du froid extrême, qui déborde l'échelle.
+  const e = brut - satiete / CENDREUX.BOIRE.SATIETE_MAX
+  return e < 0 ? 0 : e
+}
+
+/**
+ * IA du Cendreux : amorphe quand il fait chaud (le cadran de température), rampe vers une
+ * proie en vue, cherche la chaleur quand le froid mord, coule vers le Feu ciblé quand il
+ * marche en horde — et frappe ce qui lui barre la route.
+ */
+/** `byId` est l'INDEX DU TICK, construit une fois par `advanceMonsters` : l'écart de la horde
+ *  y lit ses voisines en O(1) au lieu de balayer `state.entities` pour chacune. */
+export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, flux: CacheFlux | null = null, byId: Map<number, Entity> = new Map()): void {
   const def = MONSTER_DEFS.cendreux
   if (entity.windup) return
-  const night = getGameTime(state).isNight
+
+  // LA CHALEUR BUE REFROIDIT (décision ⑰) : la satiété fond en continu — ~5 minutes réelles
+  // pour redevenir affamé. Le champ disparaît à zéro : un monstre qui n'a jamais bu ne porte
+  // pas un octet de ce chantier dans le snapshot.
+  if (monster.satiete !== undefined) {
+    monster.satiete -= CENDREUX.BOIRE.SATIETE_DECAY
+    if (monster.satiete <= 0) delete monster.satiete
+  }
+
+  // ═══ LE CADRAN UNIQUE : LA TEMPÉRATURE LOCALE (décisions d'Alexis 2026-08-21) ═══
+  //
+  // UN SEUL relevé du froid par tick, et tout en découle : l'éveil (pente continue, voir
+  // `eveilPourTemperature`) module la VUE, l'ALLURE et la cadence de décision par le même
+  // nombre ; le gate de convergence (`CONVERGE_SOUS`) lit la même température. Il fait chaud
+  // → presque amorphe (mais il mord toujours ce qui marche sur lui : la vue garde son
+  // plancher, le nettoyage de jour reste un geste risqué). Le froid mord → la vallée
+  // s'anime. La saison refroidissant la vallée, la pression MONTE sans qu'une table la
+  // décrète. La SATIÉTÉ (chaleur bue, décision ⑰) se déduit comme des degrés portés.
+  //
+  // Le froid ne le rend JAMAIS plus rapide que ses 1,3 tuile/s nominaux : on le distance
+  // toujours (R10) — l'éveil plafonne à 1, il n'est pas un multiplicateur de fureur.
+  const T = baselineTemperature(state, entity.x, entity.y)
+  const eveil = Math.max(0, eveilPourTemperature(T) - (monster.satiete ?? 0) / CENDREUX.BOIRE.SATIETE_MAX)
+  // L'allure d'un cendreux QUI A UN BUT : jamais sous GAIT_MIN — « presque amorphe » n'est
+  // pas « statue » (l'acte I garde ses marcheurs lents, décision ① : statu quo à 20 tuiles).
+  const gait = Math.max(eveil, CENDREUX.TORPEUR.GAIT_MIN)
+  // Attiré par la chaleur quand le froid de BASE mord (`CONVERGE_SOUS` : toute nuit de
+  // plaine, les biomes froids de jour, la plaine d'acte III à midi) — hors feu, sinon
+  // oscillation à la lisière de la bulle (spec feu-station S5).
+  const cold = T < CENDREUX.TORPEUR.CONVERGE_SOUS
+  const inHorde = state.hordes.length > 0 && state.hordes.some((h) => h.memberEntityIds.includes(monster.entityId))
 
   // Cible du tick de décision.
   if (state.tick >= (monster.thinkAt ?? 0)) {
-    monster.thinkAt = state.tick + def.thinkEveryTicks
+    // Un cendreux engourdi pense moins souvent — même pente que l'allure, et le CPU suit.
+    monster.thinkAt = state.tick + Math.round(def.thinkEveryTicks / gait)
     let goal: { x: number; y: number; prey?: Entity } | undefined
-    // Attirés par la chaleur quand il fait FROID (spec feu-station S5) : la nuit (comme
-    // toujours), OU quand le froid de BASE — hors feu, sinon oscillation à la lisière de la
-    // bulle — mord (biome froid, Grand Froid). Sinon, la chasse diurne.
-    const cold = night || baselineTemperature(state, entity.x, entity.y) < CENDREUX.COLD_ATTRACT_THRESHOLD
     // UN VIVANT EN VUE PRIME SUR LE FOYER — dans les deux régimes. Le Cendreux cherche la
     // chaleur ; entre celle qui brûle et celle qui SAIGNE, il prend la seconde.
     //
@@ -199,11 +271,80 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
     // deux fois par seconde) au lieu de couler dans le champ de flux PARTAGÉ. C'est
     // exactement le coût que R5 existe pour éviter. Ses YEUX marchent toujours : ce qui passe
     // à `aggroRange` se fait mordre, horde ou pas.
-    const inHorde = state.hordes.some((h) => h.memberEntityIds.includes(monster.entityId))
-    const seen = nearestPrey(state, entity, def.aggroRange)
-    if (seen) goal = { x: seen.x, y: seen.y, prey: seen }
-    else if (cold && !inHorde) goal = nearestWarmth(state, entity, CENDREUX.WARMTH_SEEK_RANGE)
+    //
+    // SA VUE SUIT L'ÉVEIL — avec un plancher : marcher SUR une carcasse la réveille toujours.
+    const seen = nearestPrey(state, entity, def.aggroRange * Math.max(eveil, CENDREUX.TORPEUR.VUE_PLANCHER))
+    if (seen) {
+      goal = { x: seen.x, y: seen.y, prey: seen }
+      // LE DERNIER LIEU, PAS LA PERSONNE (décision ⑨) : il retient OÙ il vous a vu. Rompre
+      // le contact ne suffit plus — il viendra vérifier, puis reprendra sa marche.
+      monster.lastSeenX = seen.x
+      monster.lastSeenY = seen.y
+    } else if (monster.lastSeenX !== undefined && monster.lastSeenY !== undefined) {
+      if (distSq(entity.x, entity.y, monster.lastSeenX, monster.lastSeenY) <= 1) {
+        // Arrivé sur le lieu : personne. Il oublie — aucune traque surnaturelle.
+        delete monster.lastSeenX
+        delete monster.lastSeenY
+      } else {
+        goal = { x: monster.lastSeenX, y: monster.lastSeenY }
+      }
+    }
+    // ILS DÉVORENT LE GIBIER (décision ⑩) : sans humain en vue ni lieu à vérifier, la chair
+    // chaude la plus proche fait l'affaire — la vallée se vide pour de bon. La bête tuée ne
+    // se relève pas (le critère de levée exclut les monstres), et la chasse rassasie (⑰).
+    if (!goal) {
+      const gibier = nearestGibier(state, entity, def.aggroRange * Math.max(eveil, CENDREUX.TORPEUR.VUE_PLANCHER))
+      if (gibier) goal = { x: gibier.x, y: gibier.y, prey: gibier }
+    }
+    if (!goal && cold && !inHorde) goal = nearestWarmth(state, entity, CENDREUX.WARMTH_SEEK_RANGE)
     monster.targetId = goal?.prey?.id ?? null
+
+    // ═══ LE CRI DE FUREUR (décisions d'Alexis ④⑤⑥, 2026-08-21) ═══
+    //
+    // Sous le froid EXTRÊME (`TORPEUR.FUREUR` — la plaine de nuit d'acte III, le Glacier, le
+    // cœur du vieux brûlé), un cendreux qui VOIT une proie s'appelle — et l'appel réveille LE
+    // SOL, pas les voisins : la salve plante des réveils VRAIS (tertres, préavis, feu qui
+    // repousse) autour du lieu où il l'a vue. Le froid effectif déduit la satiété : un
+    // buveur repu ne crie pas (la chaleur bue le tiédit sous le seuil de fureur).
+    //
+    // BORNÉ DEUX FOIS : le plafond du cri MONTE EN CONTINU avec le jour (décision ⑥ — round
+    // (FIN × jour/60), zéro en tout début de saison), et chaque plantation comme chaque
+    // émergence repasse sous le plafond GLOBAL. AUCUN pas de PRNG : les sites s'élisent sur
+    // `hash2` du cri lui-même — crier ne déplace pas le flux seedé du monde (le patron A28).
+    if (seen) {
+      const froidEffectif = T + ((monster.satiete ?? 0) / CENDREUX.BOIRE.SATIETE_MAX) * (CENDREUX.TORPEUR.CHAUD - CENDREUX.TORPEUR.FROID)
+      if (froidEffectif <= CENDREUX.TORPEUR.FUREUR && state.tick >= (monster.criAt ?? 0)) {
+        const k = Math.round(seasonRamp(0, CENDREUX.CRI.PLAFOND_FIN, seasonDayAtTick(state.tick, state.calendarScale)))
+        if (k > 0 && placeSousPlafondGlobal(state)) {
+          monster.criAt = state.tick + CENDREUX.CRI.COOLDOWN
+          monster.criRestants = k
+          monster.criX = seen.x
+          monster.criY = seen.y
+          monster.criPreyId = seen.id
+          emitEvent(state, { type: 'cendreux_cri', tick: state.tick, entityId: entity.id, x: seen.x, y: seen.y, count: k })
+        }
+      }
+    }
+    // LA SALVE : UN site par tick de décision, jamais K d'un coup — le pire cas mesuré d'un
+    // site coûte 33 ms (proie murée, A22ter), on l'étale au fil des pensées du crieur.
+    if ((monster.criRestants ?? 0) > 0 && monster.criX !== undefined && monster.criY !== undefined && monster.criPreyId !== undefined) {
+      monster.criRestants = monster.criRestants! - 1
+      if (placeSousPlafondGlobal(state)) {
+        const site = siteDansLaCouronne(
+          state, monster.criX, monster.criY,
+          hash2(Math.floor(monster.criX) + monster.criRestants, Math.floor(monster.criY), entity.id),
+          (tx, ty) => densiteDesMorts(state, tx, ty),
+          { dist: NIGHT_HUNT.SPAWN_DIST_UNDEAD, ring: NIGHT_HUNT.SPAWN_RING_UNDEAD },
+        )
+        if (site) state.reveils.push({ x: site.x, y: site.y, at: state.tick + MORTS.REVEIL_TICKS, preyId: monster.criPreyId })
+      }
+      if (monster.criRestants === 0) {
+        delete monster.criRestants
+        delete monster.criX
+        delete monster.criY
+        delete monster.criPreyId
+      }
+    }
     if (goal) {
       const world = { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null, etat: state }
       // Le Feu bloque désormais sa tuile (hitbox) : viser À CÔTÉ, pas dessus —
@@ -233,7 +374,7 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
   // descente de gradient du champ de flux — partagé entre toutes les bêtes qui visent le même
   // Foyer — et frappe le franchissement qui le barre. C'est là que vit le SIÈGE de masse ;
   // élargir l'A* à la place coûterait un BFS par bête et par demi-seconde.
-  if (!target && hordeStep(state, monster, entity, flux)) return
+  if (!target && hordeStep(state, monster, entity, flux, byId, gait)) return
 
   // Un pas vers le prochain nœud du chemin (A*) — ou, faute de chemin, DROIT sur la cible.
   // Les deux cas convergent exprès : ce qui décide du siège n'est pas « ai-je un chemin ? »
@@ -254,9 +395,24 @@ export function cendreuxStep(state: SimState, monster: Monster, entity: Entity, 
     goX = target.x
     goY = target.y
   } else {
+    // ═══ LA LONGUE MARCHE (décision ① — « il marche, et de plus en plus loin ») ═══
+    //
+    // Ni proie, ni chemin, ni horde : si le froid mord, il rejoint le feu allumé le plus
+    // proche PAR LE CHAMP DES FEUX (un BFS multi-sources partagé par toute l'espèce, borné
+    // par la portée de l'acte — voir `champDesFeux`). Les 24 statues de la contagion se
+    // mettent en marche : « les morts reviennent au feu » cesse d'être une ligne de lore.
+    // À moins de `WARMTH_SEEK_RANGE`, l'A* précis de `nearestWarmth` a déjà pris la main
+    // au think — le champ ne guide que le lointain.
+    if (cold && !inHorde && eveil > 0) {
+      const champ = champDesFeux(state)
+      if (champ) {
+        const d = champ[Math.floor(entity.y) * state.map.width + Math.floor(entity.x)]
+        if (d !== undefined && d !== -1) descendreLeChamp(state, monster, entity, champ, byId, gait, null)
+      }
+    }
     return
   }
-  moveToward(state, monster, entity, goX, goY, false)
+  moveToward(state, monster, entity, goX, goY, false, gait)
 
   // LE SIÈGE, SEUL (spec R3 ; S6 de `feu-station.md`, acté le 2026-07-25 et jamais livré).
   // Il a poussé et n'a pas bougé d'un pouce : quelque chose le barre. Il le frappe — porte,

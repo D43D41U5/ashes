@@ -43,6 +43,22 @@ export function actForDay(day: number): Act {
 }
 
 /**
+ * LA RAMPE DE SAISON — une pression qui monte JOUR APRÈS JOUR, pas par actes (décisions
+ * d'Alexis 2026-08-21 : « une table de trois valeurs, et une table est plate »).
+ *
+ * CLAMPÉE au jour `SEASON_DAYS`, et ce n'est pas un détail : `seasonDayAtTick` est NON BORNÉ
+ * (« peut dépasser SEASON_DAYS — la Cendre finale »), et `advanceWorldEvents` continue après
+ * `seasonEnded`. Les tables d'actes étaient clampées par construction (`actForDay` rend 3 pour
+ * toujours) ; une rampe nue aurait extrapolé — horde certaine chaque nuit du jour 75, plafonds
+ * qui grimpent sans fin — très exactement là où T15 (« on ne doit pas être submergé ») compte
+ * le plus. Le jour 60 est le sommet, la Cendre finale y RESTE.
+ */
+export function seasonRamp(debut: number, fin: number, day: number): number {
+  const frac = Math.min(day, BALANCE.SEASON_DAYS) / BALANCE.SEASON_DAYS
+  return debut + (fin - debut) * frac
+}
+
+/**
  * LE COUPLAGE VEILLÉE (V0-9) — dérive le `calendarScale` pour qu'une saison de `SEASON_DAYS`
  * jours s'étende sur EXACTEMENT `cycles` cycles jour/nuit.
  *

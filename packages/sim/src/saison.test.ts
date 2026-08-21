@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ALIGNMENT, BALANCE, SEASON, SLOTS, TERRAIN_GRASS, TERRAIN_ROAD } from './balance'
+import { ALIGNMENT, BALANCE, SEASON, SLOTS, TERRAIN_GRASS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
 import { chronicleFromEvents, formatChronicleLine } from './chronicle'
 import { drainEvents, type SimEvent } from './events'
 import { inventoryOf } from './items'
@@ -58,15 +58,21 @@ describe('la pression (A1)', () => {
 })
 
 describe('la Cendre (A2)', () => {
-  it('la méga-horde déferle au premier crépuscule de l’acte III, une seule fois', () => {
+  it('PLUS de méga-horde scriptée (décision ⑲) — la pente continue est seule au pouvoir', () => {
+    // L'ancien test affirmait « la méga-horde déferle au premier crépuscule de l'acte III » ;
+    // le script est SUPPRIMÉ : la cadence et la taille montent jour après jour (`seasonRamp`),
+    // et la dernière nuit est naturellement la pire. On affirme ici la disparition du rail —
+    // un crépuscule d'acte III SANS présage ne lève rien du tout.
     const sim = makeSim()
     foundNpcVillage(sim, 20, 10, 0)
     sim.tick = 42 * TICKS_PER_CYCLE + DAY_TICKS_PER_CYCLE - 5 // veille du crépuscule, jour 43
+    sim.presage = null
     const events: SimEvent[] = []
     runTo(sim, sim.tick + 20, events)
-    const mega = events.filter((e) => e.type === 'horde_spawned' && e.size === SEASON.MEGA_HORDE_SIZE)
-    expect(mega).toHaveLength(1)
-    expect(sim.megaHordeSpawned).toBe(true)
+    expect(events.filter((e) => e.type === 'horde_spawned')).toHaveLength(0)
+    // Et la taille du sommet de la rampe reste sous la main du plafond global : la table
+    // n'a plus de case « 16 » à part — le sommet EST la fin de la pente.
+    expect(WORLD_EVENTS.HORDE_TAILLE.FIN).toBeGreaterThan(WORLD_EVENTS.HORDE_TAILLE.DEBUT)
   })
 })
 
@@ -158,7 +164,9 @@ describe('la chronique (A5)', () => {
     expect(chronicle.length).toBeGreaterThan(4)
     expect(chronicle.some((l) => l.includes('Feu s\'est allumé'))).toBe(true)
     expect(chronicle.some((l) => l.includes('Grand Froid'))).toBe(true)
-    expect(chronicle.some((l) => l.includes('méga-horde'))).toBe(true)
+    // Plus de méga-horde nommée (décision ⑲) : le grand mot du récit est « a déferlé »,
+    // et il n'est plus GARANTI un jour fixe — la pente le rend probable, pas scripté.
+    expect(chronicle.some((l) => l.includes('méga-horde'))).toBe(false)
     expect(chronicle.some((l) => l.includes('arche'))).toBe(true) // l'évacuation est une ARCHE qui part (V2-24)
     expect(chronicle.some((l) => l.includes('éteint. Ce qu\'on retiendra'))).toBe(true)
     expect(chronicle.some((l) => l.includes(sim.villages[0]!.name))).toBe(true)

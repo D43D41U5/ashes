@@ -44,6 +44,14 @@ export const SAVE_FORMAT_VERSION = 1
  */
 const REPLIS_EPHEMERES: Readonly<Record<string, () => unknown>> = {
   reveils: () => [],
+  // LE PRÉSAGE (2026-08-21) : une vieille vallée n'a jamais vu d'aube décider sa nuit —
+  // null est sa vérité, et le prochain lever de jour en tirera un vrai. (`megaHordeSpawned`,
+  // lui, est SORTI de l'état avec la méga-horde scriptée — décision ⑲ ; la clé excédentaire
+  // d'une vieille sauvegarde est inerte, la garde ne cherche que les manquants.)
+  presage: () => null,
+  // LES LIEUX BRÛLÉS (2026-08-21) : une vieille vallée n'a jamais rien brûlé — [] est sa
+  // vérité. Les sauvegardes NEUVES, elles, portent la clé : rien ne s'y oublie.
+  lieuxBrules: () => [],
   // Pas éphémère, mais un repli HONNÊTE existe : une sauvegarde d'avant le champ (2026-08-16)
   // n'a jamais vu l'Arche partir — `false` est la vérité de ce monde-là. Une vallée d'avant
   // sauvée APRÈS le jour 58 portait la boucle ouvre→part du bug : recollée à `false`, l'Arche
@@ -86,9 +94,9 @@ export const SAVE_REQUIRED_KEYS: readonly string[] = [
   'aggressions', 'arkDeparted', 'blood', 'calendarScale', 'corpses', 'cycleOffset', 'debug', 'denRespawns',
   'dens', 'entities', 'evacuatedIds', 'evacuation', 'events', 'faunaCap', 'faunaQuiet',
   'functions', 'groundItems', 'grounds', 'home', 'hordes', 'lastConvoyDay', 'lastRefugeeDay',
-  'map', 'megaHordeSpawned', 'monsters', 'nextCorpseId', 'nextEntityId', 'nextGroundItemId',
+  'map', 'monsters', 'nextCorpseId', 'nextEntityId', 'nextGroundItemId',
   'nextHerdId', 'nextHordeId', 'nextRefugeeGroupId', 'nextStructureId', 'nextVillageId',
-  'nodes', 'npcs', 'refugeeGroups', 'reveils', 'rngState', 'seasonEnded', 'seed', 'structures', 'tick',
+  'lieuxBrules', 'nodes', 'npcs', 'presage', 'refugeeGroups', 'reveils', 'rngState', 'seasonEnded', 'seed', 'structures', 'tick',
   'villages', 'visitedPois', 'wind', 'worldEvents',
 ]
 

@@ -1,5 +1,23 @@
 # Les Cendreux — le monstre, c'est toi sans ta braise
 
+> **⚠ RÉVISION MAJEURE DU 2026-08-21 — « LA PRESSION CROISSANTE » (19 décisions d'Alexis,
+> plan détaillé : `docs/superpowers/specs/2026-08-21-cendreux-pression-croissante-design.md`).**
+> Le cadran unique du Cendreux est désormais LA TEMPÉRATURE LOCALE (« presque amorphe quand il
+> fait chaud ») : l'éveil est une pente continue (`CENDREUX.TORPEUR`, `eveilCendreuxAt`) qui
+> module vue, allure et cadence — et qui REMPLACE la bascule d'espèce par acte (R11 :
+> `UNDEAD_SHARE` n'existe plus ; sur la nuit de plaine la pente rend l'ancienne table au bit
+> près). S'y ajoutent : la LONGUE MARCHE des solitaires vers les feux (champ multi-sources SCINDÉ : Foyers de
+> village à l'échelle de la vallée — ensemble stable, ~170 ms mesurés payés une poignée de
+> fois par saison — et feux libres bornés à 150 tuiles de marche, ~10 ms par flambée),
+> la mémoire du dernier lieu vu, LE FEU QUI REPOUSSE au lieu d'annuler (A27 renversée — voir
+> plus bas), « ILS BOIVENT LA CHALEUR » (feux et corps), le CRI DE FUREUR qui réveille le sol,
+> un PLAFOND GLOBAL en rampe de saison, la horde en pente continue décidée à l'AUBE (présage)
+> et FIGÉE à l'aube suivante, la fin de la méga-horde scriptée, la milice qui ne se fauche
+> plus elle-même (3e alliance), le gibier chassé et effrayé, le repaire qui respire et le
+> charnier qui se brûle. Les sections ci-dessous restent la référence des règles NON touchées ;
+> les passages amendés sont marqués **[RÉVISÉ 2026-08-21]**.
+
+
 *Source : la direction de lore **A×C** (design `docs/superpowers/specs/2026-07-08-levee-cendreux-design.md`, livré), `feu-station.md` **S4-S6** (le feu rempart ET phare, le Foyer assiégé — actés le 2026-07-25 et **jamais livrés côté siège**), `tension.md` **T12-T15** (la nuit chasse, elle a une parade, elle est bornée), GDD §7 (le PvE école de guerre, la méga-horde du Grand Froid). Statut : **en cours** (2026-07-31). Décisions utilisateur du 2026-07-31, actées — ne pas les rouvrir : **le Cendreux absorbe le zombie**, **la levée s'ouvre à toute mort**, **la contagion existe et elle est bornée**.*
 
 ## Le constat, mesuré (2026-07-31)
@@ -40,9 +58,11 @@ de S5/S6.
   horde marchait, ce sont désormais des Cendreux. Un monde ne porte pas deux morts-vivants avec
   deux lores. *Les loups de la nuit qui chasse restent* — ce sont des bêtes, et `faune.ts` est
   fini (audit : « on n'y touche pas »).
-- **R2 — Les hordes lèvent des Cendreux.** La horde nocturne et la méga-horde du premier
-  crépuscule de la Cendre (`worldevents.ts`) naissent en `cendreux`. Le Grand Froid devient
-  littéralement *les morts qui reviennent au feu*.
+- **R2 — Les hordes lèvent des Cendreux.** La horde nocturne (`worldevents.ts`) naît en
+  `cendreux`. Le Grand Froid devient littéralement *les morts qui reviennent au feu*.
+  **[RÉVISÉ 2026-08-21, décision ⑲ : la MÉGA-HORDE scriptée du premier crépuscule de la
+  Cendre n'existe plus** — cadence et taille sont une PENTE de saison (`HORDE_TAILLE`,
+  `seasonRamp`), la dernière nuit est naturellement la pire.]
 
 ### 2. Le siège (S6, acté et jamais livré)
 
@@ -124,20 +144,25 @@ de S5/S6.
 
 ### 4. La tension croissante — c'est la NUIT qui monte, pas la horde
 
-*(décision utilisateur du 2026-07-31 : « basculement d'espèce par acte ».)*
+*(décision du 2026-07-31 « basculement d'espèce par acte », **[RÉVISÉE 2026-08-21 : le FROID
+DU LIEU décide, plus l'acte]**.)*
 
-- **R11 — La nuit change de visage avec les actes.** La part de morts dans ce que la nuit
-  envoie (`NIGHT_HUNT.UNDEAD_SHARE`) passe de **0 → 0,5 → 1** : acte I, la vallée est encore
-  vivante et ce sont des loups ; acte II, une nuit sur deux appartient déjà aux Cendreux ;
-  acte III, le vivant l'a quittée. Tout le reste de la machine est réutilisé tel quel — la
-  naissance **autour de la proie** (`SPAWN_DIST` 15), l'annonce, la parade au feu, le plafond.
+- **R11 — [RÉVISÉ 2026-08-21] La nuit change de visage avec le FROID.** La part de morts dans
+  ce que la nuit envoie est l'ÉVEIL du sol au point de la proie (`eveilCendreuxAt` —
+  `UNDEAD_SHARE` n'existe plus). Sur la nuit de plaine, la pente REND l'ancienne table au bit
+  près (60/35/10 de froid → 0 / 0,5 / 1) ; partout ailleurs la géographie parle enfin : le
+  Névé envoie des morts dès l'acte I, la Brume et le front météo pèsent. Le reste de la
+  machine est réutilisé tel quel — la naissance autour de la proie, l'annonce, le plafond.
+  **La parade au feu, elle, n'épargne plus que le VIVANT** : le loup ne chasse pas dans la
+  lumière ; le mort vient, et son site se plante hors de la bulle (décision ⑦).
 - **R11bis — Deux dangers, deux signes.** Un Cendreux ne hurle pas : il émet
   `cendreux_prowl`, pas `wolf_howl` — son propre bandeau (« un raclement dans le noir ») et
   son propre son (bruit filtré bas, sourd, sans hauteur, contre la note haute qui porte du
   loup). Le joueur doit savoir CE QUI vient, parce qu'on distance un Cendreux (1,3 tuile/s
   contre 4) et jamais un loup : **la parade n'est pas la même** (T16).
-- **R11ter — Le plafond diffère par espèce.** Les loups gardent `MAX_ALIVE` 2 ; les morts ont
-  `UNDEAD_MAX_ALIVE` **[0, 3, 5]**. Deux loups sont déjà la mort parce qu'ils courent plus
+- **R11ter — [RÉVISÉ 2026-08-21] Le plafond diffère par espèce, et celui des morts MONTE EN
+  CONTINU.** Les loups gardent `MAX_ALIVE` 2 ; les morts ont round(1 + (`UNDEAD_MAX_FIN` − 1)
+  × jour/60) — la table de trois valeurs mangeait la montée (le ×1,6 d'A13). Deux loups sont déjà la mort parce qu'ils courent plus
   vite que vous — le nombre n'y ajoute rien de lisible. Un Cendreux se distance toujours : se
   faire encercler par eux est une faute de POSITION, donc leur danger EST le nombre (R10), et
   le borner à deux les rendrait inoffensifs.
@@ -293,12 +318,23 @@ mesure qui donne leur forme aux règles ci-dessous.
   VISIBLE — qu'on apprend, qu'on évite, qu'on brûle de jour. Le champ garantit que la nuit n'est
   jamais vide où qu'on soit ; les charniers donnent au danger une adresse qu'on peut lire avant
   la nuit. *Ils suivent le précédent de `placeHuntingGrounds` : fonction pure de `(map, seed)`,
-  calculée à la génération, passée en option à `createSim` — donc, comme `grounds`, un tableau
-  dans l'état et **pas** une prétention à zéro octet.* **Étape 2 — non livré.**
+  calculée à la génération.* **[RÉVISÉ 2026-08-21 : LIVRÉ, et plus encore]** — les charniers
+  sont posés par `placeCharniers` (semis de Poisson propre, `MORTS.CHARNIER_ESPACEMENT`,
+  quota par zone) ; et depuis la décision ⑧ ils s'ASSAINISSENT : un feu libre allumé de JOUR
+  dans leur empreinte les marque *brûlés* (`state.lieuxBrules`, `charnier_brule`) — la densité
+  du champ tombe autour (`MORTS.BRULE`) pour un temps. La pression devient négociable : le
+  joueur choisit quel secteur il purge, et le paie en bois, en trajet et en jour perdu.
 
 ### 6. La horde naissait dans la falaise (bug)
 
-- **R12 — Une horde naît sur un sol qui MÈNE au Feu visé.** Le point d'entrée se cherchait sur
+- **R12 — [RÉVISÉ 2026-08-21, décisions ⑫⑬⑱] Une horde SE DÉCIDE À L'AUBE, naît du sol le
+  plus mort, et vise le feu le plus PROCHE.** Le présage (`state.presage`, `presage_horde`)
+  se tire à l'aube pour le crépuscule à venir — les signes tombent un jour d'avance (bandeau
+  directionnel, faune qui déserte l'origine). L'origine s'élit PAR LA DENSITÉ DES MORTS
+  (poids densité³) sur les anneaux de bande des feux allumés ; la cible est le feu le plus
+  proche de l'origine — **village OU simple feu de camp : « pas de village = jamais assiégé »
+  est mort**. Et l'aube suivante ne dissipe plus : elle FIGE (reliques `hordeRelic`,
+  `expiresAt`, reprises hors regard — décision ⑮). L'exigence historique demeure :* Le point d'entrée se cherchait sur
   un bord de carte en 40 essais, **sans garde en cas d'échec** : `ex, ey` gardaient le dernier
   essai, bloqué ou non. Or la vallée est ceinte de roche — MESURÉ : **zéro tuile de bord
   marchable**, sur les quatre bords et pour les trois villages. Chaque horde naissait donc
@@ -336,11 +372,15 @@ mesure qui donne leur forme aux règles ci-dessous.
 | Constante | Départ | Rôle |
 |---|---|---|
 | `WITNESS_RADIUS` | 8 | « seul » : aucun allié vivant dans ce rayon à la mort |
-| `HEARTH_WARD_RADIUS` | 12 | « loin d'un feu » : aucun feu actif (mort ET réveil) |
+| `HEARTH_WARD_RADIUS` | 12 | le ward : la couronne s'y REPOUSSE (⑦), la veillée du cadavre y annule (R9) |
 | `RISE_DELAY` | `ticksFor(300)` | délai mort→levée ; le cadavre marqué ne décante pas |
-| `WARMTH_SEEK_RANGE` | 20 | rayon d'A\* d'un Cendreux **seul** vers la chaleur |
-| `COLD_ATTRACT_THRESHOLD` | 55 | froid de base qui arme l'attraction de **jour** |
-| **`MAX_ALIVE`** | **24** | **plafond de Cendreux LEVÉS vivants ; au-delà, plus aucune levée (R8)** |
+| `WARMTH_SEEK_RANGE` | 20 | rayon d'A\* PRÉCIS d'un solitaire ; au-delà, le champ des feux (①) |
+| `TORPEUR` (CHAUD 60, FROID 10…) | — | **[2026-08-21]** le cadran : éveil, allure, vue, `CONVERGE_SOUS` 65, `FUREUR` 12 |
+| `CONVERGE_TILES` | [20, 80, 10000] | portée de la longue marche par acte (①) |
+| `BOIRE` (CONTACT, CONSO, COUP_TEMP…) | — | **[2026-08-21]** ils boivent la chaleur (⑯⑰) — plancher : jamais les braises, Foyer ≥ 1 |
+| `CRI` (COOLDOWN 30 s, PLAFOND_FIN 6) | — | **[2026-08-21]** la fureur appelle le sol, en salve, plafond en rampe (④⑤⑥) |
+| `GLOBAL` (12 → 60) | — | **[2026-08-21]** le plafond global de PRESSION, en rampe de saison (⑳, hypothèse) |
+| **`MAX_ALIVE`** | **24** | **plafond de Cendreux LEVÉS vivants — la borne INTERNE de la contagion (R8)** |
 
 ## Critères d'acceptation (`cendreux.test.ts`, headless)
 
@@ -380,8 +420,10 @@ mesure qui donne leur forme aux règles ci-dessous.
   pas au même rythme, donc un rapport qui ne dit rien ; il ne passait (38 > 19) que grâce à la
   fontaine à cadavres. Le test compare maintenant ce qui se compare : **les chasseurs envoyés,
   10 → 11 → 16**. ⚠ **CHIFFRE DE CALIBRAGE OUVERT (Alexis)** : c'est **×1,6**, quand le taux par
-  minute, lui, **quadruple** (0,12 → 0,55) — le plafond `UNDEAD_MAX_ALIVE` de l'acte mange la
-  différence. C'est le défaut que `saison-sans-fin.md` nomme (« une table de trois valeurs, et une
+  minute, lui, **quadruple** (0,12 → 0,55) — le plafond de l'acte mangeait la différence.
+  **[SOLDÉ le 2026-08-21, décision ⑥ : le plafond des morts MONTE EN CONTINU
+  (round(1 + 4 × jour/60), `UNDEAD_MAX_FIN`) — la table de trois valeurs est morte, et le cri
+  de fureur ajoute son propre canal en rampe par-dessus.]** C'est le défaut que `saison-sans-fin.md` nomme (« une table de trois valeurs, et une
   table est plate »), ici chiffré sur la nuit, qui est pourtant le canal censé porter la tension
   (R11). Voir `docs/mesure-contagion.md` §7.
 - **A14 — Deux signes.** Un rôdeur mort émet `cendreux_prowl`, jamais `wolf_howl`.
@@ -422,9 +464,14 @@ mesure qui donne leur forme aux règles ci-dessous.
   `huntTargetId`) — un réveil qui les perdrait ferait un mort errant, pas un chasseur.
 - **A26 — Il naît PRÈS.** Le site tient dans `SPAWN_DIST_UNDEAD ± SPAWN_RING_UNDEAD`, et cette
   distance est strictement inférieure à celle du loup (R22).
-- **A27 — Le feu étouffe le réveil, et rien n'en sort.** Un feu allumé à portée pendant que le
-  sol travaille annule la levée et émet `reveil_etouffe` ; on vérifie ensuite qu'**aucun**
-  Cendreux n'apparaît — une parade qui ne fait que retarder n'est pas une parade.
+- **A27 — [RÉVISÉ 2026-08-21, décision ⑦ : LE FEU REPOUSSE, IL N'ANNULE PLUS.]** L'ancienne
+  assertion (« le feu étouffe, rien n'en sort ») est renversée SCIEMMENT : un feu activé
+  pendant que le sol travaille fait s'effondrer le tertre ICI (`reveil_etouffe`, même geste à
+  l'écran) et le réveil REPREND hors de la bulle, timer remis à neuf ; à la plantation, la
+  couronne écarte les tuiles sous ward et se REPOUSSE au bord de la bulle si tout est couvert.
+  Le feu achète de la DISTANCE et du TEMPS — chaque bulle se paie en bois — jamais l'immunité
+  (c'est aussi la ligne de la bible diégétique : le Feu OCCUPE, il n'a aucune vertu propre).
+  La veillée du CADAVRE (R9/S4), elle, n'a pas bougé d'un iota.
 - **A28 — Le réveil ne consomme aucun tirage.** `advanceReveils` laisse `state.rngState`
   intact : allumer un feu est une décision de joueur, elle ne doit pas déplacer le monde.
 - **A29 — Un cadavre qui se lève ne creuse pas** (R21bis). Un `cendreux_risen` dont le site n'a
@@ -471,9 +518,10 @@ mesure qui donne leur forme aux règles ci-dessous.
 
 ## Hors périmètre
 
-- **Repaires** : leur densité (9 par carte) et le fait qu'un occupant parti ne rentre jamais —
-  `homePoi` n'est lu que pour bloquer le repeuplement (`poi.ts`), rien ne le ramène chez lui.
-  Chantier à part.
+- **Repaires** : **[RÉVISÉ 2026-08-21, décision ⑪ : IL RESPIRE]** — `advanceDens` repeuplait
+  déjà un occupant ; le repaire porte désormais un CAP DE SAISON en rampe (1 → `MORTS.RESPIRE`
+  résidents au fil des jours), suspendu quand le lieu est brûlé (décision ⑧). La densité des
+  repaires sur la carte (9) reste un chantier à part.
 - *(corrigé le 2026-07-31 — voir R13.)*
 - **Traînage de cadavre** vers un feu ; **Cendreux qui ouvrent une porte** plutôt que la casser.
 - **Rendu client** au-delà du réveil du sol. Livré le 2026-07-31 : le tertre qui travaille et

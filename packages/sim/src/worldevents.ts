@@ -6,20 +6,47 @@
  * calendrier — la pression monte avec les actes (GDD §2).
  */
 import { isThreatTo } from './alignment'
-import { BALANCE, COMBAT, CONVOY_LOOT, FAUNA, LOOT_VALUES, MONSTER_DEFS, SEASON, SLOTS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
+import { BALANCE, CENDREUX, COMBAT, CONVOY_LOOT, FAUNA, LOOT_VALUES, MONSTER_DEFS, SEASON, SLOTS, TERRAIN_ROAD, WORLD_EVENTS } from './balance'
 import { distSq } from './geometry'
 import { computeFlowField, solidesEternels } from './pathfinding'
 import { inventoryOf, toBag } from './items'
 import { rngRoll } from './rng'
-import { spawnMonster } from './monsters'
+import { cendreuxSousPression, plafondGlobal, spawnMonster } from './monsters'
 import type { SimState } from './sim'
-import { actForDay, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
-import { emitEvent } from './events'
+import { DAY_TICKS_PER_CYCLE, seasonDayAtTick, seasonRamp, TICKS_PER_CYCLE } from './time'
+import { emitEvent, type SimEvent } from './events'
+import { fireStateAt } from './fire'
+import { densiteDesMorts } from './morts'
+import { eveilCendreuxAt } from './temperature'
+import { isPrey } from './faune'
 
 export interface Horde {
   id: number
-  targetVillageId: number
+  /** LA TUILE DU FEU VISÉ (décision ⑬, 2026-08-21) — village ou simple feu de camp : la
+   *  horde ne connaît qu'une braise. Ne pas avoir de village n'est plus une immunité. */
+  fireTx: number
+  fireTy: number
+  /** Le village de ce Feu, s'il en est un — pour la chronique et le récit, jamais pour la marche. */
+  villageId?: number
   memberEntityIds: number[]
+}
+
+/**
+ * LE PRÉSAGE (décision ⑱) — la horde de ce soir se décide À L'AUBE, et les signes tombent le
+ * jour d'avant : `presage_horde` (bandeau, son), la faune qui déserte l'origine. Quatre
+ * nombres et une taille, JSON-sérialisable : il vit dans `SimState.presage` jusqu'au
+ * crépuscule qui l'exécute.
+ */
+export interface Presage {
+  /** Le tick du crépuscule où elle se lèvera. */
+  at: number
+  /** L'origine élue — le sol le plus mort de la couronne d'approche (décision ⑫). */
+  x: number
+  y: number
+  fireTx: number
+  fireTy: number
+  villageId?: number
+  size: number
 }
 
 function roll(state: SimState): number {
@@ -30,60 +57,185 @@ function roll(state: SimState): number {
 
 
 /**
- * Fait apparaître une horde en marche vers un village — hors de vue, mais SUR UN SOL QUI Y MÈNE.
- *
- * ═══ ELLE NAISSAIT DANS LA FALAISE ═══
- *
- * Le point d'entrée se cherchait sur un BORD DE CARTE, en 40 essais, **sans garde en cas
- * d'échec** : `ex, ey` gardaient le dernier essai, bloqué ou non. Or la vallée est ceinte de
- * roche — MESURÉ sur la carte du banc : **zéro tuile de bord marchable**, sur les quatre
- * bords et pour les trois villages. Chaque horde naissait donc DANS le mur, hors du champ de
- * flux (`field = -1`), et `hordeStep` concluait « au but ou coincé hors champ ».
- *
- * Le résultat, mesuré sur une saison entière : **0 horde sur 3 n'a atteint son village**, et
- * elles n'ont pas parcouru 1 à 3 tuiles — la méga-horde du Grand Froid, le climax de la
- * saison, a bougé de **3 tuiles** en une nuit, quand un Cendreux en couvre 1 400.
- *
- * On tire donc le point d'entrée du CHAMP DE FLUX lui-même, qui sait exactement quelles
- * tuiles mènent au Feu visé : parmi celles à bonne distance de marche, on en prend une. La
- * cible se choisit d'abord (le village, au hasard), le lieu ensuite — l'ordre inverse de
- * l'ancien, qui devait deviner un village depuis un bord qu'il n'atteignait jamais.
+ * LES FEUX QUE LA VALLÉE VOIT BRÛLER — les cibles possibles d'une horde (décision ⑬).
+ * L'ordre est stable (structures puis villages orphelins de structure) : l'élection qui s'y
+ * appuie est reproductible.
  */
-export function spawnHorde(state: SimState, size: number): Horde | null {
-  if (state.villages.length === 0) return null
+function feuxAllumes(state: SimState): { tx: number; ty: number; villageId?: number }[] {
+  const feux: { tx: number; ty: number; villageId?: number }[] = []
+  const vus = new Set<number>()
+  const width = state.map.width
+  for (const s of state.structures) {
+    if (s.type !== 'fire') continue
+    if (fireStateAt(state.tick, s) !== 'lit') continue
+    const key = s.ty * width + s.tx
+    if (vus.has(key)) continue
+    vus.add(key)
+    if (s.villageId !== 0) feux.push({ tx: s.tx, ty: s.ty, villageId: s.villageId })
+    else feux.push({ tx: s.tx, ty: s.ty })
+  }
+  // Un village dont le Feu n'aurait pas de structure (banc minimal) reste une cible.
+  for (const v of state.villages) {
+    const key = v.fireTy * width + v.fireTx
+    if (vus.has(key)) continue
+    vus.add(key)
+    feux.push({ tx: v.fireTx, ty: v.fireTy, villageId: v.id })
+  }
+  return feux
+}
 
-  const target = state.villages[Math.floor(roll(state) * state.villages.length)] ?? state.villages[0]!
-  const { width } = state.map
-  const champ = computeFlowField(state.map, state.nodes, solidesEternels(state.structures), target.fireTx, target.fireTy, state)
-
-  // ELLE DOIT POUVOIR ARRIVER. Le champ donne la distance de MARCHE au Feu : on ne retient
-  // que la couronne qu'une bête à `speed` tuiles/s franchit dans une nuit, avec de la marge
-  // pour le combat. Assez loin pour qu'on la voie venir, assez près pour qu'elle vienne.
-  const nuit = Math.round(
-    MONSTER_DEFS.cendreux.speed * 60 * BALANCE.CYCLE_REAL_MINUTES * (1 - BALANCE.CYCLE_DAY_FRACTION) * WORLD_EVENTS.HORDE_APPROACH_FRACTION,
+/** La marche d'une demi-nuit, À L'ALLURE DU CADRAN : l'éveil au feu, au tick du crépuscule
+ *  (C16 du panel — dimensionner sur le tick COURANT de l'aube rendait zéro horde avant
+ *  l'acte III). Une horde d'acte I marche lentement : sa couronne est proche. */
+function porteeDeNuit(state: SimState, fx: number, fy: number, atDusk: number): number {
+  const eveil = eveilCendreuxAt(state, fx + 0.5, fy + 0.5, atDusk)
+  const allure = Math.max(eveil, CENDREUX.TORPEUR.GAIT_MIN)
+  return Math.round(
+    MONSTER_DEFS.cendreux.speed * allure * 60 * BALANCE.CYCLE_REAL_MINUTES * (1 - BALANCE.CYCLE_DAY_FRACTION) * WORLD_EVENTS.HORDE_APPROACH_FRACTION,
   )
-  // LA COURONNE SE MESURE CONTRE LA CARTE, pas en tuiles absolues. Écrit en dur, `HORDE_MIN_DIST`
-  // vidait la couronne de toute carte plus petite que lui — et le repli sur « la tuile la plus
-  // lointaine » posait la horde dans un COIN, où son bloc de naissance déborde sur des tuiles
-  // hors champ. On borne donc les deux bouts par ce que la carte offre réellement.
+}
+
+/**
+ * ═══ ELLE SE DÉCIDE À L'AUBE, ET ELLE NAÎT DU SOL LE PLUS MORT (décisions ⑫⑬⑱) ═══
+ *
+ * L'origine s'élit PAR LA DENSITÉ DES MORTS, sur les anneaux de bande de chaque feu allumé —
+ * jamais sur la carte entière (le coût, mesuré par le panel : l'échantillonnage global à
+ * l'aube pesait des dizaines de ms). Poids = densité³ : « là où la densité CULMINE », pas où
+ * elle traîne. La cible est ensuite LE FEU LE PLUS PROCHE de l'origine élue — l'emplacement
+ * du camp devient la décision du joueur. UN seul tirage (élection pondérée, somme cumulée).
+ *
+ * AUCUN champ de flux ici : l'aube ne paie que des lectures O(1) du champ des morts ; le BFS
+ * attend le crépuscule, où il n'est payé qu'une fois, comme avant.
+ */
+export function planifierHorde(
+  state: SimState,
+  atDusk: number,
+  /** Pseudo-tirage [0,1) pour les chemins SANS PRNG (debug_horde) — absent : le PRNG de l'état. */
+  tirage?: number,
+): Presage | null {
+  const feux = feuxAllumes(state)
+  if (feux.length === 0) return null // rien à assiéger : la nuit n'a pas de horde
+  const { width, height } = state.map
+  const cand: { x: number; y: number; poids: number; feu: (typeof feux)[number] }[] = []
+  let somme = 0
+  for (const feu of feux) {
+    // La portée se borne par ce que la CARTE offre (le bug historique : HORDE_MIN_DIST
+    // vidait toute carte plus petite que lui) : au plus loin, le coin le plus lointain.
+    const coin = Math.max(
+      Math.sqrt(feu.tx * feu.tx + feu.ty * feu.ty),
+      Math.sqrt((width - feu.tx) * (width - feu.tx) + (height - feu.ty) * (height - feu.ty)),
+      Math.sqrt(feu.tx * feu.tx + (height - feu.ty) * (height - feu.ty)),
+      Math.sqrt((width - feu.tx) * (width - feu.tx) + feu.ty * feu.ty),
+    )
+    const portee = Math.min(porteeDeNuit(state, feu.tx, feu.ty, atDusk), Math.floor(coin))
+    if (portee <= 0) continue
+    const mini = Math.min(WORLD_EVENTS.HORDE_MIN_DIST, Math.floor(portee / 2))
+    // Grille adaptative : jamais plus de ~65 pas de large — l'aube reste bon marché.
+    const pas = Math.max(8, Math.ceil(portee / 32))
+    for (let dy = -portee; dy <= portee; dy += pas) {
+      for (let dx = -portee; dx <= portee; dx += pas) {
+        const d2 = dx * dx + dy * dy
+        if (d2 < mini * mini || d2 > portee * portee) continue
+        const x = feu.tx + dx
+        const y = feu.ty + dy
+        if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) continue
+        const dens = densiteDesMorts(state, x, y)
+        const poids = dens * dens * dens // le cube ACCENTUE les pics (jamais `**`, invariant n°2)
+        somme += poids
+        cand.push({ x, y, poids, feu })
+      }
+    }
+  }
+  if (cand.length === 0 || somme <= 0) return null
+  let cible = (tirage ?? roll(state)) * somme
+  let elu = cand[cand.length - 1]!
+  for (const c of cand) {
+    cible -= c.poids
+    if (cible <= 0) {
+      elu = c
+      break
+    }
+  }
+  // LA CIBLE EST LE FEU LE PLUS PROCHE DE L'ORIGINE (décision ⑬) — pas forcément celui dont
+  // l'anneau a élu le point : deux feux voisins partagent leurs marges.
+  let feuCible = elu.feu
+  let bestD = Infinity
+  for (const feu of feux) {
+    const d = distSq(feu.tx + 0.5, feu.ty + 0.5, elu.x + 0.5, elu.y + 0.5)
+    if (d < bestD) {
+      bestD = d
+      feuCible = feu
+    }
+  }
+  const jour = seasonDayAtTick(state.tick, state.calendarScale)
+  const size = Math.round(seasonRamp(WORLD_EVENTS.HORDE_TAILLE.DEBUT, WORLD_EVENTS.HORDE_TAILLE.FIN, jour))
+  const presage: Presage = { at: atDusk, x: elu.x, y: elu.y, fireTx: feuCible.tx, fireTy: feuCible.ty, size }
+  if (feuCible.villageId !== undefined) presage.villageId = feuCible.villageId
+  return presage
+}
+
+/**
+ * Fait apparaître une horde en marche vers un FEU — hors de vue, mais SUR UN SOL QUI Y MÈNE.
+ *
+ * Deux entrées : le CRÉPUSCULE exécute le présage décidé à l'aube (décision ⑱) ; les bancs
+ * et le debug appellent sans présage, et on en planifie un pour tout de suite (même chemin,
+ * même vérité). Le point de naissance final se prend DANS le champ de flux (le bug historique
+ * « elle naissait dans la falaise » reste réparé) : parmi les tuiles à distance de marche
+ * [mini..portée] du feu, LA PLUS PROCHE de l'origine élue par la densité — aucun tirage.
+ */
+export function spawnHorde(state: SimState, size: number, presage?: Presage, tirage?: number): Horde | null {
+  let plan = presage ?? planifierHorde(state, state.tick, tirage)
+  if (!plan) return null
+  if (presage === undefined) plan = { ...plan, size } // les bancs choisissent leur taille
+  // Le feu visé a pu mourir depuis l'aube : on re-cible le plus proche encore allumé.
+  const feux = feuxAllumes(state)
+  if (feux.length === 0) return null
+  let cibleOk = feux.find((f) => f.tx === plan!.fireTx && f.ty === plan!.fireTy)
+  if (!cibleOk) {
+    let bestD = Infinity
+    for (const feu of feux) {
+      const d = distSq(feu.tx + 0.5, feu.ty + 0.5, plan.x + 0.5, plan.y + 0.5)
+      if (d < bestD) {
+        bestD = d
+        cibleOk = feu
+      }
+    }
+  }
+  if (!cibleOk) return null
+  // LE PLAFOND GLOBAL CLAMPE LA TAILLE (2026-08-21) : la réserve commune de la pression.
+  const place = plafondGlobal(state) - cendreuxSousPression(state)
+  const taille = Math.min(plan.size, place)
+  if (taille <= 0) return null
+
+  const { width } = state.map
+  const champ = computeFlowField(state.map, state.nodes, solidesEternels(state.structures), cibleOk.tx, cibleOk.ty, state)
   let dMax = 0
   for (let i = 0; i < champ.length; i++) if (champ[i]! > dMax) dMax = champ[i]!
   if (dMax === 0) return null // le Feu ne mène nulle part : rien à faire marcher
-  const portee = Math.min(nuit, dMax)
+  const portee = Math.min(porteeDeNuit(state, cibleOk.tx, cibleOk.ty, state.tick), dMax)
   const mini = Math.min(WORLD_EVENTS.HORDE_MIN_DIST, Math.floor(portee / 2))
-  const candidates: number[] = []
+  // La tuile de naissance : à champ FINI dans la bande, la plus proche de l'origine élue.
+  let key = -1
+  let best = Infinity
   for (let i = 0; i < champ.length; i++) {
     const d = champ[i]!
-    if (d >= mini && d <= portee) candidates.push(i)
+    if (d < mini || d > portee) continue
+    const ex = i % width
+    const ey = Math.floor(i / width)
+    const e2 = (ex - plan.x) * (ex - plan.x) + (ey - plan.y) * (ey - plan.y)
+    if (e2 < best) {
+      best = e2
+      key = i
+    }
   }
-  if (candidates.length === 0) return null
-  const key = candidates[Math.floor(roll(state) * candidates.length)]!
+  if (key === -1) return null
   const ex = key % width
   const ey = Math.floor(key / width)
 
-  const horde: Horde = { id: state.nextHordeId, targetVillageId: target.id, memberEntityIds: [] }
+  const horde: Horde = { id: state.nextHordeId, fireTx: cibleOk.tx, fireTy: cibleOk.ty, memberEntityIds: [] }
+  if (cibleOk.villageId !== undefined) horde.villageId = cibleOk.villageId
   state.nextHordeId += 1
-  for (let i = 0; i < size; i++) {
+  for (let i = 0; i < taille; i++) {
     const ox = ex + (i % 3) - 1
     const oy = ey + Math.floor(i / 3) - 1
     let sx = Math.max(1, Math.min(state.map.width - 2, ox))
@@ -95,18 +247,23 @@ export function spawnHorde(state: SimState, size: number): Horde | null {
       sx = ex
       sy = ey
     }
-    // R1/R2 : la horde est faite de CENDREUX. Le Grand Froid devient littéralement
-    // « les morts qui reviennent au feu » — un seul mort-vivant, un seul lore.
+    // R1/R2 : la horde est faite de CENDREUX. Un seul mort-vivant, un seul lore.
     horde.memberEntityIds.push(spawnMonster(state, 'cendreux', sx + 0.5, sy + 0.5))
   }
   state.hordes.push(horde)
-  emitEvent(state, {
+  // (tx, ty) EST LE POINT DE NAISSANCE, la seule tuile que la sim CHOISIT.
+  const ev: SimEvent & { type: 'horde_spawned' } = {
     type: 'horde_spawned',
     tick: state.tick,
     hordeId: horde.id,
-    size,
-    targetVillageId: target.id,
-  })
+    size: taille,
+    fireTx: cibleOk.tx,
+    fireTy: cibleOk.ty,
+    tx: ex,
+    ty: ey,
+  }
+  if (cibleOk.villageId !== undefined) ev.villageId = cibleOk.villageId
+  emitEvent(state, ev)
   return horde
 }
 
@@ -142,30 +299,61 @@ export function spawnConvoy(state: SimState): void {
 
 /** L'ordonnanceur du monde (spec R8) : appelé chaque tick par step(). */
 export function advanceWorldEvents(state: SimState): void {
-  const cycleTick = state.tick % TICKS_PER_CYCLE
-  const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
+  // L'HORLOGE DU CYCLE, cycleOffset compris (le patron de gel.ts — constat C16b du panel :
+  // le tick brut mentait dès qu'une partie ne commençait pas à l'aube).
+  const cycleTick = (state.tick + state.cycleOffset) % TICKS_PER_CYCLE
+  const jour = seasonDayAtTick(state.tick, state.calendarScale)
 
-  // La nuit tombe : peut-être une horde (spec R5) — et la Cendre déferle
-  // au premier crépuscule de l'acte III (spec saison R2).
-  if (cycleTick === DAY_TICKS_PER_CYCLE && state.villages.length > 0) {
-    if (act === 3 && !state.megaHordeSpawned) {
-      state.megaHordeSpawned = true
-      spawnHorde(state, SEASON.MEGA_HORDE_SIZE)
-    } else if (roll(state) < WORLD_EVENTS.HORDE_CHANCE_PER_NIGHT[act - 1]!) {
-      spawnHorde(state, WORLD_EVENTS.HORDE_SIZE[act - 1]!)
+  // ═══ L'AUBE (décisions ⑮ et ⑱, 2026-08-21) ═══
+  if (cycleTick === 0 && state.tick > 0) {
+    // 1) LA CHALEUR LES FIGE — l'aube n'efface plus rien. Les membres survivants deviennent
+    //    des RELIQUES : le jour chaud les endort (le cadran de température fait tout le
+    //    travail), le joueur nettoie au matin ce qui reste devant sa palissade, et le
+    //    balayage `expiresAt` reprend hors regard ce que personne ne vient chercher. AUCUNE
+    //    bête ne s'évapore sous les yeux — la règle que ce fichier appliquait déjà aux
+    //    gardes de convoi, enfin appliquée à la horde elle-même (c'était le défaut).
+    if (state.hordes.length > 0) {
+      for (const horde of state.hordes) {
+        for (const id of horde.memberEntityIds) {
+          const m = state.monsters.find((x) => x.entityId === id)
+          if (m) {
+            m.expiresAt = state.tick
+            m.hordeRelic = true
+          }
+        }
+        emitEvent(state, { type: 'horde_dispersed', tick: state.tick, hordeId: horde.id })
+      }
+      state.hordes = []
+    }
+    // 2) LE PRÉSAGE DE LA VEILLE (décision ⑱) — la horde de CE SOIR se décide MAINTENANT.
+    //    Cadence en PENTE CONTINUE (décision ⑭) : le tirage a lieu chaque aube, qu'il y ait
+    //    des feux ou non — le nombre de pas de PRNG par jour ne dépend pas de l'état du monde.
+    const presage =
+      roll(state) < seasonRamp(WORLD_EVENTS.HORDE_CHANCE.DEBUT, WORLD_EVENTS.HORDE_CHANCE.FIN, jour)
+        ? planifierHorde(state, state.tick + DAY_TICKS_PER_CYCLE)
+        : null
+    if (presage) {
+      state.presage = presage
+      emitEvent(state, { type: 'presage_horde', tick: state.tick, x: presage.x, y: presage.y })
+      // LA FAUNE DÉSERTE L'ORIGINE — le signe qui se lit sans bandeau : une passe
+      // d'effarouchement, le mécanisme de fuite existant, aucun tirage.
+      for (const m of state.monsters) {
+        if (!isPrey(m.type)) continue
+        const e = state.entities.find((en) => en.id === m.entityId)
+        if (!e || e.hp <= 0) continue
+        if (distSq(e.x, e.y, presage.x + 0.5, presage.y + 0.5) > WORLD_EVENTS.PRESAGE_FUITE_RAYON * WORLD_EVENTS.PRESAGE_FUITE_RAYON) continue
+        m.fleeing = true
+        m.fleeSince = state.tick
+        m.fleeFromX = presage.x + 0.5
+        m.fleeFromY = presage.y + 0.5
+      }
     }
   }
 
-  // L'aube : les hordes survivantes se dissipent (le tick 0 n'est pas une aube).
-  if (cycleTick === 0 && state.tick > 0 && state.hordes.length > 0) {
-    for (const horde of state.hordes) {
-      for (const id of horde.memberEntityIds) {
-        state.entities = state.entities.filter((e) => e.id !== id)
-        state.monsters = state.monsters.filter((m) => m.entityId !== id)
-      }
-      emitEvent(state, { type: 'horde_dispersed', tick: state.tick, hordeId: horde.id })
-    }
-    state.hordes = []
+  // ═══ LE CRÉPUSCULE : l'exécution du présage ═══
+  if (cycleTick === DAY_TICKS_PER_CYCLE && state.presage !== null) {
+    spawnHorde(state, state.presage.size, state.presage)
+    state.presage = null
   }
 
   // CE QUE LE MONDE REPREND. Une bête d'événement dont l'heure est passée s'en va — mais
@@ -174,7 +362,12 @@ export function advanceWorldEvents(state: SimState): void {
   // s'empilaient sans fin (mesuré : 5 → 75 Cendreux sur une saison, par ce seul canal).
   if (state.monsters.some((m) => m.expiresAt !== undefined && state.tick >= m.expiresAt)) {
     const monsterIds = new Set(state.monsters.map((m) => m.entityId))
-    const avatars = state.entities.filter((e) => !monsterIds.has(e.id) && e.hp > 0)
+    // LES TÉMOINS SONT LES AVATARS RÉELS, pas les PNJ (constat C6/C31 du panel) : « jamais
+    // sous les yeux » protège le JOUEUR du décor qui avoue — un villageois posté près des
+    // reliques de la nuit ne doit pas les rendre éternelles (elles s'accumulaient au pied
+    // des villages PNJ et mangeaient le plafond global).
+    const npcIds = new Set(state.npcs.map((n) => n.entityId))
+    const avatars = state.entities.filter((e) => !monsterIds.has(e.id) && !npcIds.has(e.id) && e.hp > 0)
     const clearance = FAUNA.DEN_SPAWN_CLEARANCE * FAUNA.DEN_SPAWN_CLEARANCE
     const partis = new Set<number>()
     for (const m of state.monsters) {

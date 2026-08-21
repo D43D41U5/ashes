@@ -30,12 +30,14 @@ import { CENDREUX, MORTS, NIGHT_HUNT } from './balance'
 import { bandeDeCendre, frontActuel, margeDeCendre } from './cendre'
 import { isBlockedAt } from './collision'
 import { emitEvent } from './events'
-import { fireActive } from './fire'
+import { fireActive, fireState } from './fire'
 import { distSq } from './geometry'
 import { zoneTierAt, type WorldMap } from './map'
-import { spawnMonster } from './monsters'
+import { placeSousPlafondGlobal, spawnMonster } from './monsters'
+import { hash2 } from './noise'
 import { pathToward, solidesEternels } from './pathfinding'
 import type { SimState } from './sim'
+import { getGameTime, TICKS_PER_SEASON_DAY } from './time'
 
 /**
  * UN SOL QUI TRAVAILLE — le Cendreux n'est pas encore là, mais il arrive.
@@ -70,8 +72,57 @@ export interface Reveil {
  * redevient exactement uniforme. Le comportement d'un banc est donc préservé au bit près (R17).
  */
 export function densiteDesMorts(state: SimState, tx: number, ty: number): number {
-  const d = densiteDeBase(state.map, tx, ty) + hantiseDeCendre(state.map, tx, ty, frontActuel(state))
+  let d = densiteDeBase(state.map, tx, ty) + hantiseDeCendre(state.map, tx, ty, frontActuel(state))
+  // ON A BRÛLÉ ICI (décision ⑧, 2026-08-21) : autour d'un charnier ou d'un repaire assaini,
+  // le sol rend moins de morts — pour un temps. La liste est minuscule (quelques lieux au
+  // plus), la lecture reste O(petit) sur un chemin chaud.
+  if (state.lieuxBrules.length > 0) {
+    const r2 = MORTS.BRULE_SUPPRESSION_RAYON * MORTS.BRULE_SUPPRESSION_RAYON
+    for (const lb of state.lieuxBrules) {
+      if (state.tick >= lb.until) continue
+      const z = state.map.zones[lb.zone]
+      if (!z) continue
+      const cx = z.x + z.w / 2
+      const cy = z.y + z.h / 2
+      if (distSq(cx, cy, tx + 0.5, ty + 0.5) <= r2) {
+        d *= MORTS.BRULE_FACTEUR
+        break
+      }
+    }
+  }
   return d > 1 ? 1 : d
+}
+
+/**
+ * LE BRÛLAGE DES LIEUX (décision ⑧) — un feu LIBRE allumé de JOUR dans l'empreinte d'un
+ * charnier ou d'un repaire le marque brûlé. Cadencé (une lecture toutes les 20 ticks, pure
+ * du tick) : le geste dure des minutes, la détection n'a pas besoin du tick près.
+ */
+export function advanceLieuxBrules(state: SimState): void {
+  // Purge des échus — d'abord, pour que la relecture du champ ne paie jamais un mort.
+  if (state.lieuxBrules.length > 0 && state.lieuxBrules.some((lb) => state.tick >= lb.until)) {
+    state.lieuxBrules = state.lieuxBrules.filter((lb) => state.tick < lb.until)
+  }
+  if (state.tick % 20 !== 0) return
+  if (getGameTime(state).isNight) return // le brûlage est un geste de JOUR (décision ⑧)
+  const zones = state.map.zones
+  if (zones.length === 0) return
+  const r2 = MORTS.BRULE_RAYON * MORTS.BRULE_RAYON
+  for (const s of state.structures) {
+    if (s.type !== 'fire' || s.villageId !== 0) continue
+    if (fireState(state, s) !== 'lit') continue // il faut des FLAMMES — les braises ne brûlent pas un lieu
+    for (let zi = 0; zi < zones.length; zi++) {
+      const z = zones[zi]!
+      if (z.kind !== 'charnier' && z.kind !== 'repaire') continue
+      const cx = z.x + z.w / 2
+      const cy = z.y + z.h / 2
+      if (distSq(cx, cy, s.tx + 0.5, s.ty + 0.5) > r2) continue
+      if (state.lieuxBrules.some((lb) => lb.zone === zi && state.tick < lb.until)) continue
+      const duree = Math.round((MORTS.BRULE_DUREE_JOURS * TICKS_PER_SEASON_DAY) / state.calendarScale)
+      state.lieuxBrules.push({ zone: zi, until: state.tick + duree })
+      emitEvent(state, { type: 'charnier_brule', tick: state.tick, zone: zi, x: cx, y: cy })
+    }
+  }
 }
 
 /**
@@ -195,6 +246,8 @@ export function siteDansLaCouronne(
    * le paie en préavis — on ne rapproche que ce qui est lent.
    */
   couronne?: { dist: number; ring: number },
+  /** Vrai quand cette élection EST déjà la couronne repoussée — une seule poussée, pas une fuite. */
+  repoussee = false,
 ): { x: number; y: number } | undefined {
   const world = { map: state.map, structures: state.structures, nodes: state.nodes, moverVillageId: null, etat: state }
   // Le monde tel que la ROCHE le voit : ni murs ni portes — MAIS les SOLIDES ÉTERNELS
@@ -209,6 +262,26 @@ export function siteDansLaCouronne(
   const ptx = Math.floor(px)
   const pty = Math.floor(py)
 
+  // ═══ LE FEU REPOUSSE, IL N'ANNULE PLUS (décision d'Alexis ⑦, 2026-08-21) ═══
+  //
+  // Une tuile dans le ward d'un feu actif (braises comprises — `fireActive`, la même garde
+  // que la veillée des cadavres) est INÉLIGIBLE : le sol ne s'y lève pas. Mais l'écarter ne
+  // ferme pas la nuit — si le feu couvre la couronne ENTIÈRE (le camp du joueur), on élit
+  // dans une couronne REPOUSSÉE au bord de la bulle : le feu achète ~5 tuiles de distance et
+  // les secondes de marche qui vont avec, jamais l'immunité. A27 est renversée sciemment ;
+  // c'est aussi la ligne de la bible (L1bis : le Feu n'a aucune vertu propre, il OCCUPE).
+  const ward = CENDREUX.HEARTH_WARD_RADIUS
+  const feux: { x: number; y: number }[] = []
+  const portee = (dMax + ward + 1) * (dMax + ward + 1)
+  for (const s of state.structures) {
+    if (s.type !== 'fire' || !fireActive(state, s)) continue
+    if (distSq(s.tx + 0.5, s.ty + 0.5, px, py) <= portee) feux.push({ x: s.tx + 0.5, y: s.ty + 0.5 })
+  }
+  const dansUnWard = (x: number, y: number): boolean => {
+    for (const f of feux) if (distSq(f.x, f.y, x + 0.5, y + 0.5) <= ward * ward) return true
+    return false
+  }
+
   // L'anneau, balayé dans un ordre FIXE (row-major) : c'est lui qui rend le repli reproductible.
   const tuiles: { x: number; y: number; poids: number }[] = []
   let somme = 0
@@ -220,12 +293,18 @@ export function siteDansLaCouronne(
       const x = ptx + dx
       const y = pty + dy
       if (x < 1 || y < 1 || x >= state.map.width - 1 || y >= state.map.height - 1) continue
+      if (feux.length > 0 && dansUnWard(x, y)) continue // sous le ward : le feu repousse (⑦)
       const p = poids ? poids(x, y) : 1
       somme += p
       tuiles.push({ x, y, poids: p })
     }
   }
-  if (tuiles.length === 0) return undefined
+  if (tuiles.length === 0) {
+    // La couronne entière est sous un ward : on élit AU BORD de la bulle — une seule
+    // poussée, le même tirage (aucun pas de PRNG de plus, A23/A28 tiennent).
+    if (repoussee) return undefined
+    return siteDansLaCouronne(state, px, py, tirage, poids, { dist: ward + 1 + ring, ring }, true)
+  }
 
   // Le tirage tombe dans la somme cumulée — la tuile la plus dense a la plus grosse part.
   let cible = tirage * somme
@@ -298,19 +377,40 @@ export function advanceReveils(state: SimState): void {
   const ward = CENDREUX.HEARTH_WARD_RADIUS
   const restants: Reveil[] = []
   for (const r of state.reveils) {
-    // LE FEU VEILLE — et il veille pendant TOUT le réveil, pas seulement à l'instant de sortir.
-    // C'est ce qui en fait une parade qu'on peut JOUER : on voit le sol travailler, on rallume.
+    // LE FEU DÉPLACE — et il surveille pendant TOUT le réveil, pas seulement l'instant de
+    // sortir. C'est toujours une parade qu'on peut JOUER : on voit le sol travailler, on
+    // rallume — mais depuis la décision ⑦ (2026-08-21, A27 renversée sciemment), rallumer
+    // n'ANNULE plus : le tertre s'effondre ici (`reveil_etouffe`, le même geste à l'écran)
+    // et le sol REPREND SON TRAVAIL hors de la bulle, timer remis à neuf. Le feu achète de
+    // la distance et du temps — chaque bulle de plus se paie en bois — jamais l'immunité.
+    //
+    // AUCUN TIRAGE : le site déplacé s'élit sur un pseudo-tirage `hash2` du réveil lui-même
+    // (site + heure de terme) — allumer un feu ne déplace pas le flux seedé du monde (A28).
     const veille = state.structures.some(
       (s) => s.type === 'fire' && fireActive(state, s) && distSq(s.tx + 0.5, s.ty + 0.5, r.x, r.y) <= ward * ward,
     )
     if (veille) {
       emitEvent(state, { type: 'reveil_etouffe', tick: state.tick, x: r.x, y: r.y })
+      const prey = state.entities.find((e) => e.id === r.preyId && e.hp > 0)
+      if (prey) {
+        const site = siteDansLaCouronne(
+          state, prey.x, prey.y, hash2(Math.floor(r.x), Math.floor(r.y), r.at),
+          (tx, ty) => densiteDesMorts(state, tx, ty),
+          { dist: NIGHT_HUNT.SPAWN_DIST_UNDEAD, ring: NIGHT_HUNT.SPAWN_RING_UNDEAD },
+        )
+        if (site) restants.push({ x: site.x, y: site.y, at: state.tick + MORTS.REVEIL_TICKS, preyId: r.preyId })
+      }
       continue
     }
     if (state.tick < r.at) {
       restants.push(r)
       continue
     }
+    // LE MUR DUR DU PLAFOND GLOBAL (2026-08-21) : plein, le réveil meurt sans bruit — il ne
+    // fait PAS la queue (le mot exact de R8bis : une file qui se vide rendrait le plafond à
+    // son inutilité). La salve du cri et la nuit sont déjà gatées en amont ; ceci est la
+    // garantie de dernier ressort, celle qui tient quel que soit le chemin d'entrée.
+    if (!placeSousPlafondGlobal(state)) continue
     // IL SORT. Le sac reste à ZÉRO : celui-là n'hérite d'aucun cadavre (A11) — seule la levée
     // demande ses 40 cases, et douze inventaires vides par snapshot coûtaient cher (voir la
     // note de `spawnMonster`).

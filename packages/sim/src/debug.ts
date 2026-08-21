@@ -14,12 +14,13 @@
  *   sont capturées par le replay log : une partie où l'on a triché se rejoue
  *   quand même à l'identique.
  */
-import { METEO, MORTS, NIGHT_HUNT, WALL_TIERS } from './balance'
+import { WORLD_EVENTS, METEO, MORTS, NIGHT_HUNT, WALL_TIERS } from './balance'
 import { emitEvent } from './events'
+import { spawnHorde } from './worldevents'
 import { addItems, type ItemId } from './items'
 import { densiteDesMorts, siteDansLaCouronne } from './morts'
 import type { Entity, SimState } from './sim'
-import { cycleOffsetForStartHour, getGameTime, seasonDayAtTick, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { seasonRamp, cycleOffsetForStartHour, getGameTime, seasonDayAtTick, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { addStructure } from './village'
 import { desiredOrders } from './village-plan'
 
@@ -75,6 +76,16 @@ export type DebugAction =
    * la chance, le plafond). Le reste de la chaîne est intact.
    */
   | { type: 'debug_reveil' }
+  /**
+   * LEVER UNE HORDE MAINTENANT (2026-08-21). Depuis la pente continue (décision ⑭), plus
+   * aucune horde n'est GARANTIE une nuit donnée — or le smoke `horde` et le playtest doivent
+   * pouvoir en regarder une sans rejouer des nuits de loterie. Même philosophie que
+   * `debug_reveil` : on court-circuite le TIRAGE (la chance de l'aube), rien d'autre — la
+   * planification (origine par la densité, cible = feu le plus proche) et le spawn (champ de
+   * flux, bande de marche) sont la vraie chaîne. Aucun tirage consommé : la taille vient de
+   * la rampe du jour, l'élection d'origine du hash du tick.
+   */
+  | { type: 'debug_horde' }
   /**
    * TAMPONNER LE PALIER DE BÂTI D'UN VILLAGE PNJ (spec `village-pnj-evolution.md`).
    *
@@ -173,6 +184,13 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     emitEvent(state, {
       type: 'cendreux_prowl', tick: state.tick, targetEntityId: entity.id, count: enCours, x: site.x, y: site.y,
     })
+  } else if (action.type === 'debug_horde') {
+    // La taille du JOUR (la rampe ⑭), le chemin réel de spawn — seul le dé est court-circuité.
+    const jour = seasonDayAtTick(state.tick, state.calendarScale)
+    const taille = Math.max(1, Math.round(seasonRamp(WORLD_EVENTS.HORDE_TAILLE.DEBUT, WORLD_EVENTS.HORDE_TAILLE.FIN, jour)))
+    // Le pseudo-tirage vient du TICK (patron debug_reveil) : appuyer sur une touche de dev
+    // ne consomme pas un pas du PRNG — le contrat écrit plus haut est tenu à la lettre.
+    spawnHorde(state, taille, undefined, (state.tick % 997) / 997)
   } else if (action.type === 'debug_village_stage') {
     const village = state.villages.find((v) => v.id === action.villageId && v.chiefId === 0)
     if (!village) return // les villages à chef humain ne se tamponnent pas

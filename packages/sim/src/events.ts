@@ -155,6 +155,7 @@ export type SimEvent =
    * sur une chose qui traîne les pieds — le joueur aurait préparé la mauvaise parade.
    */
   | { type: 'cendreux_prowl'; tick: number; targetEntityId: number; count: number; x: number; y: number }
+  | { type: 'cendreux_cri'; tick: number; entityId: number; x: number; y: number; count: number }
   | { type: 'corpse_looted'; tick: number; corpseId: number; byEntityId: number }
   | { type: 'structure_repaired'; tick: number; structureId: number; byEntityId: number }
   /** LE POTAGER (agriculture voie A) : semé, puis récolté quand mûr. */
@@ -186,10 +187,16 @@ export type SimEvent =
       tick: number
       hordeId: number
       size: number
-      targetVillageId: number
+      /** Le FEU visé (décision ⑬ — village ou camp) ; `villageId` s'il est un Foyer. */
+      fireTx: number
+      fireTy: number
+      villageId?: number
       tx: number
       ty: number
     }
+  /** LE PRÉSAGE DE LA VEILLE (décision ⑱) : à l'aube, le sol de l'origine travaille — la
+   *  horde de ce soir s'annonce un jour entier à l'avance. */
+  | { type: 'presage_horde'; tick: number; x: number; y: number }
   | { type: 'horde_dispersed'; tick: number; hordeId: number }
   | { type: 'convoy_spawned'; tick: number; tx: number; ty: number }
   /**
@@ -243,6 +250,9 @@ export type SimEvent =
    * ici et pas déduit après coup.
    */
   | { type: 'reveil_etouffe'; tick: number; x: number; y: number }
+  /** ON A BRÛLÉ LE LIEU (décision ⑧, 2026-08-21) : un charnier ou un repaire assaini au feu —
+   *  la densité des morts tombe autour, pour un temps. */
+  | { type: 'charnier_brule'; tick: number; zone: number; x: number; y: number }
   | {
       type: 'season_ended'
       tick: number

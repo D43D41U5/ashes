@@ -8,7 +8,7 @@ import { spawnMonster } from './monsters'
 import { foundNpcVillage } from './worldgen'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type MoveInput, type SimState } from './sim'
-import { TICKS_PER_CYCLE } from './time'
+import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { grantItems } from './village'
 
 function makeSim(): SimState {
@@ -594,6 +594,12 @@ describe('la mort (A5)', () => {
 describe('les monstres (A6)', () => {
   it('le Cendreux aggro, télégraphe, frappe — et meurt à la lance', () => {
     const sim = makeSim()
+    // LA NUIT FROIDE (jour 55) : depuis le cadran de température (2026-08-21), un cendreux
+    // en plein jour tiède est presque amorphe (vue au plancher) — l'aggro se teste au régime
+    // où il chasse. Le cycle démarre à l'aube : on ajoute la fraction de jour pour la nuit.
+    sim.tick = 54 * TICKS_PER_SEASON_DAY
+    sim.tick -= sim.tick % TICKS_PER_CYCLE
+    sim.tick += DAY_TICKS_PER_CYCLE + 1
     const a = spawnEntity(sim, 10, 10)
     grantHeld(sim, a, 'spear')
     const z = spawnMonster(sim, 'cendreux', 14, 10)

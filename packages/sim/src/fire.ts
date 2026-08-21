@@ -10,10 +10,12 @@
  * L'upkeep du FOYER (village.fuel) reste dans `village.ts` — migration différée (S16) ; il n'a donc
  * PAS de zone combustible (`fireZoneInventory` rend `undefined`), mais garde entrées/sorties.
  */
-import { COOK_SLOT, FIRE } from './balance'
+import { CENDREUX, COOK_SLOT, FIRE } from './balance'
 import { emitEvent } from './events'
+import { distSq } from './geometry'
 import { addItems, countOf, makeInventory, type Inventory, type ItemId } from './items'
 import { meteoFeuConso } from './meteo'
+import type { Monster } from './monsters'
 import type { SimState } from './sim'
 import type { Structure } from './village'
 
@@ -74,6 +76,34 @@ export function fuelBurnProgress(tick: number, s: Structure): number {
 }
 
 /**
+ * LES CENDREUX VIVANTS ET LEUR POSITION — relevés UNE fois par tick pour toutes les bouches
+ * (les feux libres ici, le Foyer dans `advanceUpkeep`). Rendus vides sans un seul cendreux :
+ * un monde sans morts ne paie pas un octet de ce chantier.
+ */
+const BUVEURS_DU_TICK = new WeakMap<SimState, { tick: number; liste: { m: Monster; x: number; y: number }[] }>()
+
+export function cendreuxVivantsPositions(state: SimState): { m: Monster; x: number; y: number }[] {
+  // MÉMO DU TICK (pur : même état, même tick → même liste) — `advanceFire` et
+  // `advanceUpkeep` la demandent tous les deux, chaque tick ; l'index d'entités ne se
+  // construit qu'une fois. MESURÉ au profil : le chantier 2026-08-21 coûtait +14 % de tick
+  // sur le banc, et ce doublon en était la part la plus bête.
+  const memo = BUVEURS_DU_TICK.get(state)
+  if (memo && memo.tick === state.tick) return memo.liste
+  const out: { m: Monster; x: number; y: number }[] = []
+  if (state.monsters.some((m) => m.type === 'cendreux')) {
+    const byId = new Map<number, { x: number; y: number; hp: number }>()
+    for (const e of state.entities) byId.set(e.id, e)
+    for (const m of state.monsters) {
+      if (m.type !== 'cendreux') continue
+      const e = byId.get(m.entityId)
+      if (e && e.hp > 0) out.push({ m, x: e.x, y: e.y })
+    }
+  }
+  BUVEURS_DU_TICK.set(state, { tick: state.tick, liste: out })
+  return out
+}
+
+/**
  * La combustion au tick (spec S2) : chaque feu LIBRE brûle la bûche de sa case `burnSlot` ; à
  * échéance, il la consomme et allume la suivante (première case pleine). À court de bois, les
  * flammes meurent — braises (`emberUntil`) puis extinction (`fire_extinguished`). Le Foyer n'est
@@ -81,6 +111,19 @@ export function fuelBurnProgress(tick: number, s: Structure): number {
  * bûche n'est pas consumée — déposer ailleurs ne détourne pas la flamme.
  */
 export function advanceFire(state: SimState): void {
+  // ═══ ILS BOIVENT LA CHALEUR (décision d'Alexis ⑯, 2026-08-21) ═══
+  //
+  // Un cendreux au CONTACT d'un feu EN FLAMMES en consomme le bois : l'ancre `burnAt`
+  // recule de `BOIRE.CONSO` ticks par tick et par buveur — le patron exact de la pluie
+  // (`meteoFeuConso`), donc l'état, le budget affiché et l'indicateur client voient tous la
+  // même faim, sans un octet de plus. LES BRAISES NE SE BOIVENT PAS : ce bloc ne court que
+  // tant qu'il reste du bois — un feu bu tombe en braises et y reste le temps des braises,
+  // le ward tient (le plancher de la décision ⑯ : le feu achète, il ne trahit jamais tout).
+  // Et boire RASSASIE (⑰) : la chaleur bue endort son buveur — le feu abandonné est un leurre.
+  let buveurs: { m: Monster; x: number; y: number }[] | null = null
+  const lesBuveurs = (): { m: Monster; x: number; y: number }[] => (buveurs ??= cendreuxVivantsPositions(state))
+  const contact2 = CENDREUX.BOIRE.CONTACT * CENDREUX.BOIRE.CONTACT
+
   for (const s of state.structures) {
     if (s.type !== 'fire') continue
     if (s.villageId === 0 && s.fuel && countOf(s.fuel, 'wood') > 0) {
@@ -98,6 +141,14 @@ export function advanceFire(state: SimState): void {
       // exactement 1 hors front mouillé — à sec ou sous brouillard, pas UN octet ne bouge.
       const conso = meteoFeuConso(state, s.tx, s.ty)
       if (conso > 1) s.burnAt -= conso - 1
+      // La soif des buveurs — même mécanique d'ancre que la pluie, juste au-dessus.
+      let soif = 0
+      for (const b of lesBuveurs()) {
+        if (distSq(b.x, b.y, s.tx + 0.5, s.ty + 0.5) > contact2) continue
+        soif += CENDREUX.BOIRE.CONSO
+        b.m.satiete = Math.min(CENDREUX.BOIRE.SATIETE_MAX, (b.m.satiete ?? 0) + CENDREUX.BOIRE.SATIETE_FEU_PAR_TICK)
+      }
+      if (soif > 0) s.burnAt -= soif
       if (state.tick >= s.burnAt + FIRE.BURN_TICKS) {
         const burning = s.fuel[s.burnSlot] // la bûche EN COURS est entièrement consommée
         if (burning) {

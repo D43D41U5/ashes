@@ -8,7 +8,7 @@ import { foundNpcVillage } from './worldgen'
 import { computeFlowField } from './pathfinding'
 import { createReplayLog, recordAndStep, runReplay } from './replay'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
-import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
+import { cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, seasonDayAtTick, seasonRamp, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 import { grantItems, structureAt } from './village'
 import { spawnConvoy, spawnHorde } from './worldevents'
 
@@ -36,7 +36,7 @@ describe('le flow field (A1)', () => {
     const sim = createSim(3, { map })
     foundNpcVillage(sim, 10, 2, 0) // village sans PNJ : personne ne défend
     const z = spawnMonster(sim, 'cendreux', 10.5, 18.5)
-    sim.hordes.push({ id: 1, targetVillageId: sim.villages[0]!.id, memberEntityIds: [z] })
+    sim.hordes.push({ id: 1, fireTx: sim.villages[0]!.fireTx, fireTy: sim.villages[0]!.fireTy, villageId: sim.villages[0]!.id, memberEntityIds: [z] })
     sim.nextHordeId = 2
     for (let t = 0; t < 3000; t++) {
       step(sim, [])
@@ -78,7 +78,7 @@ describe('les murs face à la horde (A2)', () => {
     sim.entities.find((e) => e.id === owner)!.x = 2.5
     sim.entities.find((e) => e.id === owner)!.y = 17.5
     const z = spawnMonster(sim, 'cendreux', 10.5, 12.5)
-    sim.hordes.push({ id: 1, targetVillageId: sim.villages[0]!.id, memberEntityIds: [z] })
+    sim.hordes.push({ id: 1, fireTx: sim.villages[0]!.fireTx, fireTy: sim.villages[0]!.fireTy, villageId: sim.villages[0]!.id, memberEntityIds: [z] })
     drainEvents(sim)
     const wall = structureAt(sim.structures, 10, 8)!
     for (let t = 0; t < 6000 && structureAt(sim.structures, 10, 8); t++) step(sim, [])
@@ -131,28 +131,37 @@ describe('les hordes nocturnes (A4, A5)', () => {
       return sim
     }
 
-    // Acte I (jour 1) : on force la chance à 1 en essayant plusieurs nuits.
+    // DÉBUT DE SAISON : on force la chance en essayant plusieurs nuits. La taille est celle
+    // de la RAMPE au jour joué (décision ⑭ — plus de table d'actes).
     let sim = mkSim(0)
     let spawned: SimEvent[] = []
-    for (let night = 0; night < 8 && spawned.length === 0; night++) {
+    let nuitsJouees = 0
+    for (let night = 0; night < 12 && spawned.length === 0; night++) {
       run(sim, TICKS_PER_CYCLE)
+      nuitsJouees += 1
       spawned = [...spawned, ...collect(sim, ['horde_spawned'])]
     }
     expect(spawned.length).toBeGreaterThan(0)
     const size1 = (spawned[0] as { size: number }).size
-    expect(size1).toBe(WORLD_EVENTS.HORDE_SIZE[0])
-    // Dissipation : à l'aube suivante, plus un zombie de horde.
+    // Le jour se lit sur le tick de la DÉCISION (l'aube qui a planifié), pas sur l'horloge
+    // d'arrivée du test — les nuits jouées ont fait avancer le calendrier.
+    const jour1 = seasonDayAtTick((spawned[0] as { tick: number }).tick, sim.calendarScale)
+    expect(size1).toBe(Math.round(seasonRamp(WORLD_EVENTS.HORDE_TAILLE.DEBUT, WORLD_EVENTS.HORDE_TAILLE.FIN, jour1)))
+    void nuitsJouees
+    // L'aube ne DISSIPE plus (décision ⑮) : elle FIGE — la liste des hordes se vide, mais
+    // les corps restent (reliques, expiresAt), repris hors regard par le balayage.
     run(sim, TICKS_PER_CYCLE)
     expect(sim.hordes).toHaveLength(0)
 
-    // Acte II (jour 25) : taille supérieure.
+    // MI-SAISON (jour 25) : taille supérieure — la pente monte.
     sim = mkSim(24)
     spawned = []
-    for (let night = 0; night < 8 && spawned.length === 0; night++) {
+    for (let night = 0; night < 12 && spawned.length === 0; night++) {
       run(sim, TICKS_PER_CYCLE)
       spawned = [...spawned, ...collect(sim, ['horde_spawned'])]
     }
-    expect((spawned[0] as { size: number }).size).toBe(WORLD_EVENTS.HORDE_SIZE[1])
+    const size2 = (spawned[0] as { size: number }).size
+    expect(size2).toBeGreaterThan(size1)
   })
 })
 
@@ -219,7 +228,14 @@ describe('la carcasse de convoi (A6)', () => {
 
 describe('LE scénario (A7) — tient ou casse', () => {
   it('(a) horde de 4 contre milice armée de 4 : le village tient (≤ 1 perte)', { timeout: 30_000 }, () => {
-    const sim = createSim(14, { map: createEmptyMap(40, 40, TERRAIN_GRASS) })
+    // NUIT D'ACTE II (jour 30) depuis le cadran de température (2026-08-21) : le contrat
+    // mesure la MILICE contre l'assaut nominal — froid (les goules courent à mi-régime),
+    // HORS fureur (T = 35 > FUREUR : pas de cris, pas de salves — le climax d'acte III a
+    // ses propres gardes). Vérifié sur 12 graines avec la troisième alliance : 12/12 tiennent.
+    const sim = createSim(14, { map: createEmptyMap(40, 40, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
+    sim.tick = 29 * TICKS_PER_SEASON_DAY
+    sim.tick -= sim.tick % TICKS_PER_CYCLE
+    sim.tick += 1
     foundNpcVillage(sim, 20, 20, 4)
     spawnHorde(sim, 4)
     for (let t = 0; t < 8000 && sim.monsters.length > 0; t++) step(sim, [])
@@ -235,7 +251,13 @@ describe('LE scénario (A7) — tient ou casse', () => {
     // propriété survit largement ; c'est bien la graine qui a tourné, pas la promesse —
     // à la différence du raid d'alignement A7(b), où le taux s'est effondré (5/12 → 1/12)
     // et où le commentaire le dit.
-    const sim = createSim(17, { map: createEmptyMap(40, 40, TERRAIN_GRASS) })
+    // NUIT D'ACTE III (jour 55) : « le village casse » est un contrat d'ENDGAME — au plein
+    // régime, le froid extrême arme aussi le CRI (le cran ⑤ EST cette zone de froid), et le
+    // crescendo fait partie de la promesse. Vérifié : 4/4 graines cassent en < 400 ticks.
+    const sim = createSim(17, { map: createEmptyMap(40, 40, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
+    sim.tick = 54 * TICKS_PER_SEASON_DAY
+    sim.tick -= sim.tick % TICKS_PER_CYCLE
+    sim.tick += 1
     foundNpcVillage(sim, 20, 20, 2)
     spawnHorde(sim, 10)
     for (let t = 0; t < 8000 && sim.npcs.length > 0 && sim.monsters.length > 0; t++) step(sim, [])
@@ -263,5 +285,167 @@ describe('le déterminisme (A8)', () => {
     }
     const replayed = runReplay(log, setup)
     expect(snapshot(replayed)).toBe(snapshot(live))
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// UNE HORDE EST UNE FOULE, PAS UNE FILE (décision d'Alexis, 2026-08-20)
+//
+// « Les Cendreux ne doivent pas se superposer de la sorte, ils doivent se comporter comme dans
+// Project Zomboid lorsqu'on parle de horde. »
+//
+// `hordeStep` descendait un gradient PARTAGÉ : tous les membres au même endroit du champ
+// élisent la même tuile suivante et marchent l'un DANS l'autre. Le défaut ne se voyait pas au
+// banc — la sim comptait bien seize goules — il se voyait à l'ÉCRAN : treize goules relevées,
+// deux silhouettes visibles. La garde mesure donc ce que l'œil mesurait : l'ESPACE OCCUPÉ.
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+describe('la horde s’ouvre en marchant (décision 2026-08-20)', () => {
+  /** Les corps vivants de la horde, dans l'ordre de ses membres. */
+  const corps = (sim: SimState) => {
+    const h = sim.hordes[0]!
+    return h.memberEntityIds
+      .map((id) => sim.entities.find((e) => e.id === id))
+      .filter((e): e is NonNullable<typeof e> => e !== undefined && e.hp > 0)
+  }
+  /** Combien de TUILES distinctes la horde occupe — la mesure de l'œil, pas celle du compteur. */
+  const tuilesOccupees = (sim: SimState): number =>
+    new Set(corps(sim).map((e) => `${Math.floor(e.x)},${Math.floor(e.y)}`)).size
+  /** Un village sans milice armée : on vient regarder MARCHER, pas se battre. */
+  function hordeEnMarche(taille: number, graine = 23): SimState {
+    const sim = createSim(graine, { map: createEmptyMap(60, 60, TERRAIN_GRASS), cycleOffset: cycleOffsetForStartHour(0), calendarScale: 1 })
+    // LA NUIT FROIDE (jour 55, minuit) — depuis le cadran de température (2026-08-21), une
+    // horde de nuit tiède marche au quart de l'allure : l'écart se mesure au régime que la
+    // machine vise, la nuit d'assaut de fin de saison, pas dans une aube d'acte I.
+    sim.tick = 54 * TICKS_PER_SEASON_DAY
+    sim.tick -= sim.tick % TICKS_PER_CYCLE
+    sim.tick += 1 // pas PILE sur la frontière du cycle : l'aube de worldevents y disperserait la horde au premier pas
+    foundNpcVillage(sim, 30, 30, 1)
+    expect(spawnHorde(sim, taille)).not.toBeNull()
+    return sim
+  }
+
+  it('elle DÉFAIT un tas : douze goules sur une tuile se rangent sur douze', () => {
+    const sim = hordeEnMarche(12)
+    // ═══ LA PRÉMISSE SE PROUVE PAR CONSTRUCTION ═══
+    //
+    // Premier jet de cette garde : « au tick 0 elles naissent en bloc serré ». FAUX, et le
+    // test l'a dit — `spawnHorde` les pose sur une grille de 3 de large (`i % 3`), donc douze
+    // membres occupent DÉJÀ douze tuiles à la naissance. Elles ne naissent pas empilées :
+    // elles s'empilaient EN MARCHANT, en descendant toutes le même gradient. Partir de la
+    // naissance n'aurait donc rien prouvé — on aurait constaté un semis.
+    //
+    // On les empile nous-mêmes, toutes sur la même tuile. C'est le pire cas possible, et le
+    // seul départ dont on puisse dire que ce qui suit est l'effet de l'écart.
+    const bloc = corps(sim)[0]!
+    for (const e of corps(sim)) { e.x = bloc.x; e.y = bloc.y }
+    expect(tuilesOccupees(sim), 'la prémisse : elles partent TOUTES sur la même tuile').toBe(1)
+
+    // MESURÉ : le tas se défait en ~360 ticks (18 s) — 1 → 2 → 4 → 5 → 9 → 12. On laisse
+    // 500 ticks, une marge d'un tiers, et on s'arrête AVANT que la milice n'en tue une : à
+    // partir de là, le compte de tuiles baisse pour une raison qui n'est pas l'empilement.
+    let range = 0
+    for (let t = 0; t < 500 && corps(sim).length === 12; t++) {
+      step(sim, [])
+      if (tuilesOccupees(sim) === 12) { range = t; break }
+    }
+    expect(range, 'le tas ne s’est jamais défait').toBeGreaterThan(0)
+  })
+
+  it('et elle NE SE RETASSE PAS en marchant — mesuré sur quatre graines', () => {
+    // QUATRE GRAINES, PAS UNE. Une horde est un système chaotique : une graine choisie dirait
+    // ce qu'on veut entendre (leçon « mesurer la pire seconde » — moyenner sur ≥ 4 graines
+    // avant de comparer). On note, pour chacune, la PART des ticks de marche où les douze
+    // goules occupent douze tuiles distinctes.
+    const parts: number[] = []
+    for (const graine of [23, 7, 41, 88]) {
+      const sim = hordeEnMarche(12, graine)
+      // ON N'EXIGE RIEN DE LA NAISSANCE, et le test l'a appris en rougissant : `spawnHorde`
+      // pose ses membres sur une grille de 3 de large, MAIS rabat sur la tuile d'ancrage tout
+      // membre dont la case tombe hors du champ de flux (`champ === -1`). Près d'un obstacle,
+      // douze goules naissent donc sur TROIS tuiles. Ce qu'on garde ici est la MARCHE, pas le
+      // semis — et le test d'à côté prouve déjà qu'un tas se défait.
+      const serie: number[] = []
+      for (let t = 0; t < 1200; t++) {
+        step(sim, [])
+        if (corps(sim).length < 12) break // une goule est tombée : le dénominateur a changé
+        serie.push(tuilesOccupees(sim))
+      }
+      // LA GARDE PROUVE QU'ELLE A REGARDÉ QUELQUE CHOSE : sans ça, une horde massacrée au
+      // deuxième tick rendrait « aucune régression » par accident.
+      expect(serie.length, `graine ${graine} : la horde n'a pas marché assez pour mesurer`).toBeGreaterThan(200)
+      const tri = [...serie].sort((a, b) => a - b)
+      expect(tri[Math.floor(tri.length / 2)], `graine ${graine} : la moitié du temps, elle se tasse`).toBe(12)
+      parts.push(serie.filter((v) => v === 12).length / serie.length)
+    }
+    // LE PLANCHER EST CELUI DU PIRE CAS MESURÉ (68 %, graine 7 — sa horde s'engouffre dans la
+    // porte de l'enceinte), avec de la marge. Une régression en COLONNE le ferait tomber à
+    // zéro : c'est le seul chiffre qu'on ait besoin de séparer.
+    for (const [i, part] of parts.entries()) {
+      expect(part, `graine ${[23, 7, 41, 88][i]} : ${(100 * part).toFixed(0)} % de marche étalée`).toBeGreaterThan(0.6)
+    }
+  })
+
+  it('et elle ARRIVE quand même : s’écarter ne doit pas défaire l’assaut', () => {
+    const sim = hordeEnMarche(12)
+    const feu = { x: sim.villages[0]!.fireTx, y: sim.villages[0]!.fireTy }
+    const distanceAuFeu = (): number => {
+      const cs = corps(sim)
+      // MULTIPLICATION EXPLICITE, jamais `**` : la spec ECMAScript ne le garantit pas au bit
+      // près d'un moteur à l'autre, et un replay enregistré au navigateur doit rejouer sur
+      // Node (invariant §2). Le lint de `/sim` le refuse, y compris dans un test.
+      return Math.min(...cs.map((e) => Math.sqrt((e.x - feu.x) * (e.x - feu.x) + (e.y - feu.y) * (e.y - feu.y))))
+    }
+    const depart = distanceAuFeu()
+    for (let t = 0; t < 3000 && corps(sim).length > 0 && distanceAuFeu() > 3; t++) step(sim, [])
+    // LE POINT QUI COMPTE : le gibier serré s'IMMOBILISE et attend qu'on lui fasse de la
+    // place ; une goule qui ferait ça figerait la horde à trente tuiles du village. La
+    // poussée biaise donc la cible du pas au lieu de s'y substituer — et ça se prouve.
+    expect(depart).toBeGreaterThan(10)
+    expect(distanceAuFeu()).toBeLessThanOrEqual(3)
+  })
+})
+
+describe('le berceau de la horde — le champ (tx, ty) de `horde_spawned`', () => {
+  /**
+   * CE QUE CETTE GARDE PROTÈGE : un outil qui reçoit le fait doit pouvoir ALLER VOIR la
+   * horde. L'événement ne portait que sa cible, si bien que l'atelier de la vitrine devait
+   * l'attendre au feu du village — 301 à 481 s de temps réel MESURÉES par prise, parce
+   * qu'elle naît hors du rayon d'intérêt du client (64 tuiles).
+   *
+   * La propriété affirmée est donc CELLE DONT L'OUTIL A BESOIN, et une seule : depuis
+   * (tx, ty), le paquet ENTIER tient dans un cadre de jeu. Le cadrage large de la vitrine
+   * en montre 22 de haut, d'où la borne de 8 tuiles — assez lâche pour survivre à un
+   * changement du bloc de naissance, assez serrée pour qu'un (tx, ty) qui désignerait la
+   * cible, un coin de carte ou le barycentre d'autre chose la fasse rougir.
+   *
+   * ET ELLE EST EXHAUSTIVE : douze graines, tous les membres de chaque horde, pas un
+   * échantillon — c'est le tirage du point d'entrée qui pourrait déraper, pas la moyenne.
+   */
+  it('(tx, ty) désigne le paquet : sur douze graines, aucun membre n’est à plus de 8 tuiles', () => {
+    let nees = 0
+    for (let seed = 1; seed <= 12; seed++) {
+      const sim = createSim(seed, { map: createEmptyMap(80, 80, TERRAIN_GRASS) })
+      foundNpcVillage(sim, 40, 40, 0)
+      drainEvents(sim)
+      const horde = spawnHorde(sim, 16)
+      if (!horde) continue
+      nees += 1
+      const faits = collect(sim, ['horde_spawned'])
+      expect(faits, 'une horde qui naît émet son fait').toHaveLength(1)
+      const e = faits[0] as { hordeId: number; tx: number; ty: number }
+      expect(e.hordeId).toBe(horde.id)
+      for (const id of horde.memberEntityIds) {
+        const corps = sim.entities.find((q) => q.id === id)!
+        const dx = corps.x - (e.tx + 0.5)
+        const dy = corps.y - (e.ty + 0.5)
+        expect(
+          Math.sqrt(dx * dx + dy * dy),
+          `graine ${seed} : la goule ${id} est en (${corps.x}, ${corps.y}), le berceau dit (${e.tx}, ${e.ty})`,
+        ).toBeLessThanOrEqual(8)
+      }
+    }
+    // LA PRÉMISSE : sans horde née, la boucle ci-dessus n'affirme RIEN.
+    expect(nees, 'douze graines, douze hordes — sinon la garde ne garde rien').toBe(12)
   })
 })

@@ -10,6 +10,7 @@ import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
 import { setTile } from './map'
 import { FAUNA, MORTS, TERRAIN_FOREST, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_ROAD, TERRAIN_SCREE } from './balance'
+import { seasonDayAtTick, seasonRamp } from './time'
 import { distSq } from './geometry'
 import { type CarveField, carveDistanceToMain, walkableComponents } from './connectivity'
 import { nomSelonSort, sortDuLieu } from './sort-des-lieux'
@@ -1101,18 +1102,35 @@ export function advanceDens(state: SimState, seed: number): void {
 
   const monsterIds = new Set(state.monsters.map((m) => m.entityId))
   const avatars = state.entities.filter((e) => !monsterIds.has(e.id) && e.hp > 0)
-  const occupied = new Set<number>()
-  for (const m of state.monsters) if (m.homePoi !== undefined) occupied.add(m.homePoi)
+  // COMBIEN de résidents chaque lieu porte — un COMPTE, plus un booléen : depuis que le
+  // repaire RESPIRE (décision ⑪, 2026-08-21), son cap de saison monte au-delà de un.
+  const residents = new Map<number, number>()
+  for (const m of state.monsters) {
+    if (m.homePoi === undefined) continue
+    residents.set(m.homePoi, (residents.get(m.homePoi) ?? 0) + 1)
+  }
+  const jour = seasonDayAtTick(state.tick, state.calendarScale)
 
   for (const zone of state.dens) {
     const z = state.map.zones[zone]
     if (!z) continue
-    if (occupied.has(zone)) continue // sa bête est là : rien à faire
+    // LE CAP DU LIEU : 1 pour une tanière (le comportement historique, à l'identique) ;
+    // pour un repaire de Cendrés, la rampe de saison — il respire de plus en plus fort.
+    const t = POI_TYPES.find((p) => p.slug === z.kind)
+    const cap = t?.monster === 'cendreux'
+      ? Math.round(seasonRamp(1, MORTS.RESPIRE_CAP_FIN, jour))
+      : 1
+    if ((residents.get(zone) ?? 0) >= cap) continue // le lieu est plein : rien à faire
+    // UN LIEU BRÛLÉ NE RESPIRE PAS (décision ⑧) : l'assainissement suspend le retour.
+    if (state.lieuxBrules.some((lb) => lb.zone === zone && state.tick < lb.until)) continue
 
     const pending = state.denRespawns.find((d) => d.zone === zone)
     if (!pending) {
-      // Elle vient de tomber : on note l'heure de son retour.
-      state.denRespawns.push({ zone, at: state.tick + FAUNA.DEN_RESPAWN_TICKS })
+      // Elle vient de tomber : on note l'heure de son retour. LE REPAIRE A SA CADENCE À LUI
+      // (décision ⑪ — `MORTS.RESPIRE_CYCLES`, la respiration du lieu) ; la tanière garde le
+      // délai historique des bêtes de lieu.
+      const delai = t?.monster === 'cendreux' ? MORTS.RESPIRE_TICKS : FAUNA.DEN_RESPAWN_TICKS
+      state.denRespawns.push({ zone, at: state.tick + delai })
       continue
     }
     if (state.tick < pending.at) continue

@@ -5721,9 +5721,11 @@ const SCENARIOS = {
    * d'un facteur 2,3. Tant que ce chiffre-là n'existe pas, toucher au pathfinding serait
    * optimiser contre une baseline fausse.
    *
-   * On ne fabrique pas la horde : on met le monde dans les conditions où elle NAÎT (acte III,
-   * `HORDE_CHANCE_PER_NIGHT` = 0,9) et on laisse le tirage faire. God mode, sinon le joueur
-   * meurt avant d'avoir mesuré quoi que ce soit ; cadence ×16, sinon une nuit dure 18 minutes.
+   * (2026-08-21 : la cadence est une RAMPE tirée à l'AUBE — `HORDE_CHANCE` 0,15 → 0,95,
+   * exécution au crépuscule via le présage — et rien n'est garanti une nuit donnée. On lève
+   * donc la horde par `debug_horde` : la vraie chaîne, sans loterie — c'est le CHAMP DE FLUX
+   * qu'on mesure, pas le dé.) God mode, sinon le joueur meurt avant d'avoir mesuré ;
+   * cadence ×16, sinon une nuit dure 18 minutes.
    *
    * LA SONDE SÉPARE DÉJÀ LES DEUX GELS, et c'est tout son intérêt : l'autosave donne un grand
    * `picEcartMs` avec un `picMs` minuscule (elle tombe HORS du tick), la horde donne un grand
@@ -5736,9 +5738,12 @@ const SCENARIOS = {
     await page.evaluate(() => {
       const s = window.__BRAISES__.scene
       s.sendAction({ type: 'debug_god', on: true }) // sinon on meurt avant de mesurer
-      s.sendAction({ type: 'debug_set_season_day', day: 45 }) // acte III : 0,9 horde par nuit
+      s.sendAction({ type: 'debug_set_season_day', day: 45 }) // acte III : le froid arme la marche
       s.perfSamples.length = 0
     })
+    await page.waitForTimeout(500)
+    // La naissance GARANTIE (2026-08-21) : le tirage de l'aube ne l'est plus, la touche si.
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_horde' }))
     await page.waitForTimeout(1000)
     await page.evaluate(() => window.__BRAISES__.scene.send({ type: 'debug_speed', factor: 16 }))
 
@@ -12810,100 +12815,514 @@ const SCENARIOS = {
      * deviennent pas beaux à l'heure dorée, ils deviennent une plaine rase dorée. Ce qui
      * porte une image, ici, c'est la DENSITÉ — futaie, menhirs, berge, feu — donc la planche
      * vise ce qui encombre le cadre, jamais ce qui l'ouvre.
+     *
+     * ═══ LA DEUXIÈME MOITIÉ DE LA PLANCHE : DES ÉVÉNEMENTS, PAS DES PAYSAGES (2026-08-20) ═══
+     *
+     * Demande d'Alexis : « plus de variétés et d'epicness — combattre une horde, chasser dans
+     * la neige, un lever de soleil au bord d'un lac, un village de PNJ au crépuscule ». Les
+     * cinq premières prises restent des PAYSAGES (un lieu, une heure) ; les nouvelles sont des
+     * SCÈNES — il y faut un état du monde que le premier jour n'a pas, et un sujet qui bouge.
+     * Trois leviers de plus, tous des vrais chemins de sim :
+     *   · `jour` — `debug_set_season_day`. L'hiver et l'acte III ne se jouent pas en cinq
+     *     minutes ; la neige au sol vient du front NEIGEUX du cycle 5 (jours 51-60, relevé par
+     *     `frontDuCycle`), et la MÉGA-HORDE de seize goules est GARANTIE au premier crépuscule
+     *     de l'acte III (`advanceWorldEvents` : `!state.megaHordeSpawned`). Le jour 47 tombe à
+     *     1 440 ticks de ce crépuscule-là, le plus court chemin vers la seule horde du jeu
+     *     qu'on n'ait pas à tirer aux dés.
+     *   · `arme` + `charger` — `debug_grant` puis le clic maintenu. Ce qui se peint au sol est
+     *     le télégraphe du VRAI coup (`pendingStrike`) : la photo montre le combat que le jeu
+     *     joue, pas une pose.
+     *   · `figer` — un sujet qui MARCHE ne se photographie pas à l'aveugle (leçon du scénario
+     *     `reveil` : « le Cendreux avait MARCHÉ de quatre tuiles »). On endort les DEUX
+     *     horloges, la boucle de rendu ET la sim, juste avant de déclencher.
+     *
+     * ET L'ORDRE DE LA PLANCHE EST CONTRAINT : le calendrier est un état COLLANT. On tire donc
+     * tout le premier jour d'abord, puis l'acte III, puis l'hiver — jamais en arrière.
      */
     const PRISES = [
-      { nom: 'sylve-matin', heure: 8, ou: ['bois_noir', 'chene', 'arbre'], quoi: 'la futaie au soleil levant' },
-      { nom: 'sylve-soir', heure: 19.5, ou: ['bois_noir', 'chene', 'arbre'], quoi: 'la même futaie, au couchant' },
-      { nom: 'gue-or', heure: 18.5, ou: ['~le Gué'], quoi: "la rivière à l'heure dorée" },
-      { nom: 'gue-brume', heure: 6, ou: ['~le Gué'], quoi: 'la rivière dans la brume' },
-      { nom: 'cercle', heure: 19.5, ou: ['cercle_pierres', 'pierre_levee', 'erratique'], quoi: 'les menhirs au couchant' },
-      { nom: 'tour', heure: 19, ou: ['tour_guet', 'ferme_ruinee', 'charrette'], quoi: 'la ruine au couchant' },
+      // ═══ LE PREMIER JOUR — les paysages ═══
+      { nom: 'feu-village-hameau', heure: 5, village: 1, stage: 2, couvert: false, tuiles: 24, quoi: 'le feu du hameau de bois, avant le jour' },
+      { nom: 'sylve-matin', heure: 8, futaie: true, quoi: 'la futaie au soleil levant' },
       { nom: 'chene', heure: 7, ou: ['chene', 'arbre', 'bois_noir'], quoi: 'le gros bois au petit matin' },
-      // LE BOIS SEC (2026-07-29) — les conifères des bosquets de crête. Il n'a pas de `kind` :
-      // ce n'est pas un lieu, c'est du TERRAIN. On le vise donc au balayage, comme le Gué a dû
-      // l'être. Deux heures, parce qu'un conifère se lit à sa silhouette et qu'on ne sait pas
-      // encore laquelle des deux lumières la sert le mieux.
-      { nom: 'crete-or', heure: 19, conifere: true, quoi: 'le bois sec des crêtes, au couchant' },
-      { nom: 'crete-matin', heure: 8, conifere: true, quoi: 'le même bois, au soleil levant' },
-      { nom: 'feu-nuit', heure: 22, feu: true, quoi: 'un feu dans le noir' },
-      { nom: 'feu-aube', heure: 5, feu: true, garde: true, quoi: 'le même feu, avant le jour' },
-      // LE FEU DU VILLAGE (2026-08-01). Le worldgen ne pose plus les tentes du campement
-      // (villages-PNJ, `village-plan.ts`) : à la minute 1, un feu fondé près du spawn est NU —
-      // la prise `feu-aube` a perdu son camp. On photographie donc le feu DU VILLAGE, et le
-      // hameau est TAMPONNÉ par `debug_village_stage` (comme dans le scénario village-pnj) :
-      // un état que le vrai chantier atteint en cours de saison, donc que l'accueil peut
-      // promettre. La prise RETENUE du carrousel est `feu-village-hameau` → `feu-hameau.jpg`.
-      { nom: 'feu-village-camp', heure: 5, village: true, stage: 1, quoi: 'le feu du campement PNJ, avant le jour' },
-      { nom: 'feu-village-hameau', heure: 5, village: true, stage: 2, quoi: 'le feu du hameau de bois, avant le jour' },
+      { nom: 'cercle', heure: 19.5, ou: ['cercle_pierres', 'pierre_levee', 'erratique'], quoi: 'les menhirs au couchant' },
+      { nom: 'gue-or', heure: 18.5, ou: ['~le Gué'], quoi: "la rivière à l'heure dorée" },
+      { nom: 'tour-couchant', heure: 19, ou: ['tour_guet', 'ferme_ruinee', 'charrette'], quoi: 'la ruine au couchant' },
+      // LE LAC. Il n'a pas de `kind` — ce n'est pas un lieu, c'est du TERRAIN (comme le Gué et
+      // les bosquets de crête) : on le vise au balayage, et on se plante sur la RIVE, sinon la
+      // caméra centre un joueur au milieu de l'eau et le lac sort du cadre par les quatre côtés.
+      { nom: 'lac-aube', heure: 8.2, berge: true, tuiles: 22, quoi: 'le lever du soleil au bord du lac' },
+      // LE BOURG. `feu-hameau` montre le palier 2 (le bois) AVANT LE JOUR, feu nu et village
+      // endormi ; celle-ci montre le palier 3 (la pierre) au CRÉPUSCULE, quand les PNJ sont
+      // encore dehors. Deux villages sur cette carte : on tamponne le SECOND, pour ne pas
+      // rebâtir par-dessus la prise d'ouverture.
+      { nom: 'village-bourg', heure: 20.4, village: 2, stage: 3, couvert: false, tuiles: 26, quoi: 'le bourg PNJ au crépuscule' },
+      // L'ORAGE — la seule variété de PLEIN JOUR qui existe. Entre 10 et 15 h l'alpha
+      // d'`ambientTint` est NUL : aucune heure n'achète d'ambiance là, seul un ciel le peut.
+      // On fige sur l'EMBRASEMENT (le hook de `frapper`), pas sur la pluie.
+      { nom: 'orage-vallee', heure: 15.5, orage: true, tuiles: 26, quoi: "l'orage sur la vallée" },
+      // LA CENDRIÈRE A ÉTÉ RETIRÉE DE LA PLANCHE (2026-08-20), et les deux essais disent
+      // pourquoi. À cadrage normal, un Repaire de Cendrés ne donne qu'une plaine brune de
+      // souches avec une goule et un joueur hauts de vingt pixels : le pays du titre est,
+      // photographié seul, le plus vide de la carte. Et resserrer pour lire le combat
+      // (13 tuiles) fait apparaître un ANNEAU BLANC en travers de l'image — un rayon peint en
+      // pixels qui ne suit pas le zoom. D'où la borne de `tuiles` ci-dessous : on élargit, on
+      // ne resserre jamais. Ce que la prise cherchait — le combat, la nuit, les goules — c'est
+      // `horde-village` qui le tient, et il le tient mieux : elles y sont seize.
+      // ═══ L'ACTE III — la méga-horde ═══
+      // LA HACHE EST TENUE, PAS CHARGÉE. Son coup lourd est un TOURBILLON — un cône de 360°
+      // (`arcCos −1`) — et son télégraphe se peint donc en ANNEAU BLANC autour du joueur, en
+      // travers de toute l'image. C'est le jeu qui dit vrai (spec combat : « le joueur VOIT ce
+      // qu'il arme »), mais sur une photo d'accueil cela se lit comme un défaut d'interface.
+      // ET L'HEURE EST 20,2 — PAS MINUIT, ET C'EST TOUT LE CORRECTIF DE LA TROISIÈME PRISE.
+      // À 23 h, seize goules grises sur un sol brun, à cinquante tuiles du seul feu du secteur,
+      // ne rendent RIEN : la photo est revenue avec un paquet de seize goules dûment cadré et
+      // parfaitement invisible. Or `debug_set_hour` ne décale que la PHASE d'affichage — il ne
+      // touche pas au tick, donc pas au calendrier de `advanceWorldEvents`. On peut donc
+      // éclairer la scène au crépuscule pendant que la sim, elle, est en pleine nuit d'acte III
+      // avec sa horde debout. Le monde n'est pas truqué : c'est le même instant, regardé sous
+      // la lumière qui le montre.
+      { nom: 'horde-village', jour: 47, heure: 20.2, horde: true, arme: 'iron_axe', figer: true, couvert: false, tuiles: 22,
+        quoi: 'la horde de la rampe (~12 goules au jour 47) sur le feu le plus proche' },
+      // ═══ L'HIVER — jours 51-60, le front neigeux du cycle 5 ═══
+      // ARC EN MAIN, PAS BANDÉ. Tenir l'arc, c'est le personnage ; le BANDER peint sa ligne
+      // de tir au sol — un télégraphe, donc du HUD, donc hors cadre. Même règle que l'anneau
+      // de survol ci-dessus et que le tourbillon de la hache, qui barrait l'image d'un
+      // anneau blanc plein cadre.
+      { nom: 'chasse-neige', jour: 57, heure: 8.5, chasse: true, arme: 'bow', figer: true, neige: true,
+        quoi: 'la chasse dans la neige, arc bandé' },
+      { nom: 'lac-gele', jour: 57, heure: 6.4, berge: true, tuiles: 26, quoi: 'le lac pris par la glace, au lever du jour' },
+      // PAS DE FUTAIE D'HIVER — ESSAYÉE, RETIRÉE. Au jour 57, la même fenêtre qui rendait une
+      // futaie à trois essences (146 relevés boisés) revient en champ de neige quasi VIDE : la
+      // défeuillaison d'acte III (`jourDeDefeuillaison`) plus la couverture de neige ne
+      // laissent que des taches sombres hautes de trois pixels. Le bois d'hiver de ce jeu
+      // n'est pas un bois blanc, c'est une plaine — et `lac-gele` montre l'hiver bien mieux,
+      // parce qu'il a une RIVE, des arbres nus au premier plan et du givre qui accroche.
     ]
 
+    /* ── LES LEVIERS DES SCÈNES (2026-08-20) ─────────────────────────────────────────────
+     *
+     * Ils ne servent qu'aux prises qui montrent un ÉVÉNEMENT : le paysage n'a besoin
+     * d'aucun d'eux, et c'est pour ça qu'ils vivent ici et pas dans la queue commune. */
+
+    const agirV = async (action, ms = 350) => {
+      await page.evaluate((a) => window.__BRAISES__.scene.sendAction(a), action)
+      await page.waitForTimeout(ms)
+    }
+    /** LES DEUX HORLOGES. Endormir la boucle de rendu ne suffit pas : la sim continue, et le
+     *  sujet MARCHE pendant les quatre-vingt-dix secondes que peut durer un déclenchement
+     *  sous SwiftShader (leçon mesurée du scénario `reveil` : quatre tuiles de dérive). */
+    const figerTout = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      s.send({ type: 'pause' })
+      s.game.loop.sleep()
+    })
+    const degeler = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      s.game.loop.wake()
+      s.send({ type: 'resume' })
+    })
+    /**
+     * UN GARDE-FOU DUR SUR L'ATTENTE — `page.evaluate` N'A PAS DE TIMEOUT.
+     *
+     * Le défaut de Playwright est d'attendre INDÉFINIMENT que la boucle JS de la page rende la
+     * main. Si la page casse (un rechargement HMR, une erreur 500 sur un import), l'appel ne
+     * revient jamais — et un plafond du genre « abandonner au bout de 600 s » ne sert à rien,
+     * puisqu'il n'est relu qu'ENTRE deux tours de boucle. MESURÉ : une prise de horde est
+     * restée 27 minutes en l'air, compteur figé à 64 s, machine à 0,41 de charge. Elle n'était
+     * pas lente, elle était MORTE, et rien ne le disait.
+     */
+    const borne = async (promesse, ms, quoi) => {
+      let minuteur
+      const echu = new Promise((_, ko) => { minuteur = setTimeout(() => ko(new Error(`${quoi} : rien en ${ms} ms`)), ms) })
+      try {
+        return await Promise.race([promesse, echu])
+      } finally {
+        clearTimeout(minuteur)
+      }
+    }
+    const bestioles = (types) => borne(page.evaluate((ts) => {
+      const s = window.__BRAISES__.scene
+      const out = []
+      for (const m of s.view?.monsters ?? []) {
+        if (!ts.includes(m.type)) continue
+        const rec = s.view.others.get(m.entityId)
+        const der = rec?.buffer?.at(-1)
+        if (der) out.push({ type: m.type, x: der.x, y: der.y })
+      }
+      return out
+    }, types), 20000, 'lecture des bêtes')
+
+    /**
+     * ARMER LE FRONT SUR LE JOUEUR — et pas « quelque part sur la carte ».
+     *
+     * `debug_meteo` place la bande par sa PHASE de traversée, pas par une coordonnée : à
+     * phase 0,5 elle est au milieu de la CARTE, ce qui, mesuré, la posait à 250 tuiles du
+     * sujet — un ciel d'orage que personne ne voit. On la résout donc analytiquement (la
+     * géométrie de `neigeAuSol` : la bande couvre `coord` quand `coord/(span+largeur) ≤
+     * phase < (coord+largeur)/(span+largeur)`), largeur LUE sur la bande réelle plutôt que
+     * recopiée de `METEO.LARGEUR` — une seconde copie d'une géométrie finit toujours par
+     * mentir. Puis on VÉRIFIE sur l'intensité au joueur : c'est elle qui dit si le rideau
+     * tombe ici, et sans elle on règlerait un ciel à l'aveugle.
+     */
+    const poserFront = async (type, edge, x, y) => {
+      await agirV({ type: 'debug_meteo', meteo: type, edge, phase: 0.5 }, 600)
+      // ON ATTEND QUE LA COUCHE AIT VU LE FRONT, on ne lit pas au premier coup d'œil : `bande`
+      // est calculée dans l'`update` de la couche, et une frame dure parfois 900 ms ici. Lue
+      // trop tôt elle est nulle, et le premier jet en a conclu « aucun front » alors que la
+      // foudre tombait déjà — un ciel réglé à l'aveugle, et une prairie sans orage.
+      let a = null
+      for (let essai = 0; essai < 10 && !a?.bande; essai++) {
+        await page.waitForTimeout(500)
+        a = await page.evaluate(() => {
+          const s = window.__BRAISES__.scene
+          return { bande: s.meteoLayer?.bande ?? null, w: s.map.width, h: s.map.height }
+        })
+      }
+      if (!a?.bande) { console.error(`      !! le front ${type} n'a posé aucune bande en 5 s`); return false }
+      const largeur = a.bande.hi - a.bande.lo
+      const span = a.bande.axis === 'x' ? a.w : a.h
+      const brut = a.bande.axis === 'x' ? x : y
+      const coord = edge === 0 || edge === 2 ? brut : span - brut
+      const phase = Math.max(0.02, Math.min(0.98, (coord + largeur / 2) / (span + largeur)))
+      // ET ON ATTEND QUE LE SECOND ARMEMENT AIT PRIS, pour la même raison qu'au premier :
+      // MESURÉ, à une seconde d'attente la couche rendait encore la bande de la phase 0,5 —
+      // [758..813] au lieu de [1095..1150] — et la prise repartait avec un ciel bleu et un
+      // rideau collé au bord du cadre. On lit l'INTENSITÉ AU JOUEUR, qui est la seule chose
+      // qu'on vienne chercher : tant qu'elle est nulle, le front n'est pas là.
+      await agirV({ type: 'debug_meteo', meteo: type, edge, phase }, 400)
+      let b = null
+      for (let essai = 0; essai < 16 && !((b?.intensite ?? 0) > 0.05); essai++) {
+        await page.waitForTimeout(500)
+        b = await page.evaluate(() => {
+          const s = window.__BRAISES__.scene
+          return { bande: s.meteoLayer?.bande ?? null, intensite: s.meteoLayer?.intensiteAuJoueur ?? 0 }
+        })
+      }
+      console.log(`      front ${type} : bande ${a.bande.axis} [${b.bande?.lo?.toFixed(0)}..${b.bande?.hi?.toFixed(0)}]`
+        + ` autour de ${Math.round(brut)} — intensité au joueur ${(b.intensite ?? 0).toFixed(2)}`)
+      if ((b.intensite ?? 0) <= 0.05) console.error(`      !! le rideau ne tombe PAS sur le joueur (intensité nulle)`)
+      return (b.intensite ?? 0) > 0.05
+    }
+
     let prises = 0
-    let feuPose = null // le Feu fondé une fois sert à toutes les prises de feu
+    let jourPose = 1 // le calendrier est COLLANT : on ne le repose que quand il change
+    let frontPose = false
     const planche = prisesVoulues ? PRISES.filter((p) => prisesVoulues.has(p.nom)) : PRISES
     if (prisesVoulues) console.log(`\n── filtre : ${planche.length}/${PRISES.length} prises (${[...prisesVoulues].join(', ')}) ──`)
+    // INVULNÉRABLE POUR TOUTE LA PLANCHE. Ce n'est pas une commodité : en acte III, un pré de
+    // nuit vaut 10 de température sous un seuil d'hypothermie de 20 — le froid TUE, et le
+    // scénario `enneige` est déjà revenu une fois avec un écran noir et 0/60 PV. On
+    // photographiait un cadavre en croyant photographier un paysage.
+    await agirV({ type: 'debug_god', on: true }, 250)
     for (const p of planche) {
-      // LE FEU N'EST PAS UN LIEU : on le FONDE. Il exige du bois et un endroit loin des POI
-      // (règle R1 de la construction), d'où les décalages successifs autour du point courant.
+      await degeler() // la prise d'avant a pu endormir les deux horloges
+      // ⑥ LE CALENDRIER EST UN ÉTAT COLLANT, et il ne va QUE VERS L'AVANT. On attend la
+      //   PREUVE (le jour publié), jamais un délai : le saut passe par le worker.
+      if ((p.jour ?? 1) !== jourPose) {
+        await agirV({ type: 'debug_set_season_day', day: p.jour }, 500)
+        await page.waitForFunction((j) => (window.__BRAISES__.scene.lastTime?.seasonDay ?? 0) >= j, p.jour,
+          { timeout: 30000, polling: 200 }).catch(() => {})
+        const lu = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.seasonDay ?? -1)
+        if (lu < p.jour) { console.error(`   ✗ ${p.nom.padEnd(18)} le jour de saison est resté à ${lu} (visé ${p.jour}) — prise SAUTÉE`); continue }
+        jourPose = p.jour
+        console.log(`\n── jour de saison ${lu} ──`)
+      }
+      // ET LE CIEL AUSSI : un front laissé par la prise d'avant repeindrait celle-ci.
+      if (frontPose && !p.orage && !p.neige) { await agirV({ type: 'debug_meteo', meteo: null }, 400); frontPose = false }
+
       let cible = null
       if (p.village) {
         // LE FEU DU VILLAGE, pas un feu fondé : chaque village PNJ naît autour du sien
         // (fireTx/fireTy), et il brûle la nuit. L'avatar se pose 4,5 tuiles sous le feu :
         // à cette hauteur les deux logis latéraux du hameau entrent en entier dans le cadre
         // et la porte charretière du sud tient au tiers bas.
-        cible = await page.evaluate((stage) => {
+        // `village` est un RANG (1 = le premier), pas un booléen : la carte en porte deux, et
+        // tamponner deux fois le même écraserait la prise d'ouverture par un bourg de pierre.
+        cible = await page.evaluate(({ rang, stage }) => {
           const sc = window.__BRAISES__.scene
-          const v = (sc.view?.villages ?? []).filter((q) => q.chiefId === 0)[0]
+          const v = (sc.view?.villages ?? []).filter((q) => q.chiefId === 0)[rang - 1]
           if (!v) return null
           if (stage > 1) sc.sendAction({ type: 'debug_village_stage', villageId: v.id, stage })
           return { x: v.fireTx + 0.5, y: v.fireTy + 4.5, kind: 'village', name: `le village PNJ ${v.id} (palier ${stage})` }
-        }, p.stage)
-        if (!cible) { console.error(`   ✗ ${p.nom.padEnd(11)} aucun village PNJ dans le snapshot — prise SAUTÉE`); continue }
-        await page.waitForTimeout(1500) // le tampon s'applique au tick suivant
-      } else if (p.conifere) {
-        // LE PLUS GROS AMAS DE CONIFÈRE **DE LA RACINE**. Le filtre de zone n'est pas un luxe :
-        // `solDe` peint aussi du pin dans les zones du nord, et sans lui le balayage part
-        // huit cents tuiles trop haut (erreur commise, et vue à l'ordonnée de la capture).
+        }, { rang: p.village, stage: p.stage })
+        if (!cible) { console.error(`   ✗ ${p.nom.padEnd(18)} pas de ${p.village}ᵉ village PNJ dans le snapshot — prise SAUTÉE`); continue }
+        await page.waitForTimeout(1800) // le tampon s'applique au tick suivant, pièce par pièce
+      } else if (p.berge) {
+        // ═══ LA RIVE D'UN LAC — ON NOTE LE PIED, PAS LA NAPPE ═══
+        //
+        // La caméra CENTRE le joueur : viser le milieu de l'eau le planterait au milieu de
+        // l'eau, où le lac sort du cadre par les quatre côtés. Ce qu'on cherche n'est donc pas
+        // « le plus gros lac », c'est LA TUILE OÙ SE PLANTER : de la terre ferme qui a le
+        // demi-cadre HAUT plein d'eau (19 × 11 tuiles au-dessus du pied). La nappe remplit
+        // alors la moitié haute de l'image et la rive tient le tiers bas.
+        //
+        // PREMIÈRE VERSION, ET POURQUOI ELLE A ÉCHOUÉ : elle élisait d'abord la meilleure
+        // FENÊTRE, puis cherchait un pied dedans. La fenêtre gagnante était la plus mouillée
+        // de la carte — donc entièrement eau et falaise, sans une seule tuile où se tenir : le
+        // balayage rendait « 0 tuile d'eau devant » et la prise sautait, alors que la carte
+        // porte une nappe de 80 % d'eau à deux cents tuiles de là. On note donc les PIEDS,
+        // directement, et l'image intégrale rend les 209 tuiles du demi-cadre en quatre
+        // lectures (sans elle, 337 000 pieds × 209 = 70 M d'accès).
         cible = await page.evaluate(() => {
           const m = window.__BRAISES__.scene.map
+          const { width: W, height: H, terrain: T } = m
+          const cols = Math.ceil(W / m.zonePas)
           const idRacine = (m.zoneDefs ?? []).findIndex((d) => d.slug === 'pres_bas')
-          const cols = Math.ceil(m.width / m.zonePas)
           const dansRacine = (x, y) => m.zoneGrid[Math.floor(y / m.zonePas) * cols + Math.floor(x / m.zonePas)] === idRacine
-          let best = null
-          for (let by = 0; by < m.height - 32; by += 16) {
-            for (let bx = 0; bx < m.width - 32; bx += 16) {
-              if (!dansRacine(bx + 16, by + 16)) continue
-              let n = 0
-              for (let y = by; y < by + 32; y += 4) for (let x = bx; x < bx + 32; x += 4) {
-                const t = m.terrain[y * m.width + x]
-                if (t === 13 || t === 14) n++
-              }
-              if (!best || n > best.n) best = { n, x: bx + 16, y: by + 16, kind: '(terrain)', name: 'un bosquet de crête' }
+          const SOLIDE = new Set([5, 7, 23]) // roche, mur, falaise : on ne s'y pose pas
+          // L'IMAGE INTÉGRALE de l'eau profonde : S[y][x] = nombre de tuiles d'eau dans le
+          // rectangle (0,0)-(x-1,y-1). La somme d'un rectangle tient alors en quatre lectures.
+          const S = new Int32Array((W + 1) * (H + 1))
+          for (let y = 0; y < H; y++) {
+            let ligne = 0
+            for (let x = 0; x < W; x++) {
+              if (T[y * W + x] === 6) ligne++
+              S[(y + 1) * (W + 1) + (x + 1)] = S[y * (W + 1) + (x + 1)] + ligne
             }
           }
-          return best && best.n > 24 ? best : null
+          const somme = (x0, y0, x1, y1) => { // bornes incluses, déjà bornées à la carte
+            const a = S[y1 * (W + 1) + x1 + 1], b = S[y0 * (W + 1) + x1 + 1]
+            const c = S[y1 * (W + 1) + x0], d = S[y0 * (W + 1) + x0]
+            return a - b - c + d
+          }
+          let pose = null
+          for (let y = 12; y < H - 2; y++) {
+            for (let x = 10; x < W - 10; x++) {
+              const t = T[y * W + x]
+              if (t === 6 || t === 4 || SOLIDE.has(t)) continue
+              if (!dansRacine(x, y)) continue // la Cendrière a de l'eau, mais aucun lever de soleil
+              const devant = somme(x - 9, y - 11, x + 9, y - 1)
+              if (!pose || devant > pose.devant) pose = { x: x + 0.5, y: y + 0.5, devant }
+            }
+          }
+          if (!pose || pose.devant < 60) return { echec: `la meilleure rive n'a que ${pose ? pose.devant : 0} tuiles d'eau dans le demi-cadre haut` }
+          // ON RECULE DE SIX TUILES, et c'est le correctif de la prise ratée. Planté SUR le
+          // bord, l'eau profonde remplit plus de la moitié du cadre — or elle se rend en un
+          // aplat bleu-gris sans rive opposée : une nappe vide qui mange l'image. Reculée, la
+          // même eau devient un TIERS haut, et ce sont la grève, les fleurs et les arbres qui
+          // portent la vue. (On ne recule que si l'on retombe sur de la terre ferme.)
+          let recul = 0
+          for (let k = 1; k <= 6; k++) {
+            const t = T[Math.min(H - 1, Math.floor(pose.y) + k) * W + Math.floor(pose.x)]
+            if (t === 6 || t === 4 || SOLIDE.has(t)) break
+            recul = k
+          }
+          return { x: pose.x, y: pose.y + recul, kind: '(terrain)', name: `une rive de lac (${pose.devant}/209 tuiles d'eau devant, reculé de ${recul})` }
         })
-        if (!cible) { console.error(`   ✗ ${p.nom.padEnd(11)} aucun bosquet de crête trouvé — prise SAUTÉE`); continue }
-      } else if (p.feu && p.garde && feuPose) {
-        cible = feuPose
-      } else if (p.feu) {
-        for (let i = 0; i < 12; i++) await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_grant', item: 'wood' }))
-        const depart = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
-        for (const [ox, oy] of [[0, 0], [24, 0], [-24, 0], [0, 24], [0, -24], [40, 40]]) {
-          await page.evaluate(({ px, py }) => window.__BRAISES__.scene.sendAction({ type: 'debug_teleport', x: px, y: py }), { px: Math.round(depart.x) + ox + 0.5, py: Math.round(depart.y) + oy + 0.5 })
-          await page.waitForTimeout(250)
-          await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'light_fire' }))
-          await page.waitForTimeout(500)
-          const f = await page.evaluate(() => {
-            const x = window.__BRAISES__.scene.view.structures.find((q) => q.type === 'fire')
-            return x ? { x: x.tx + 0.5, y: x.ty + 1.5, kind: 'feu', name: 'un Feu' } : null
-          })
-          if (f) { cible = f; feuPose = f; break }
+        if (!cible || cible.echec) { console.error(`   ✗ ${p.nom.padEnd(18)} pas de rive de lac : ${cible?.echec ?? 'balayage muet'} — prise SAUTÉE`); continue }
+      } else if (p.futaie) {
+        // ═══ UNE FUTAIE SE VISE PAR SA DENSITÉ, PAS PAR LE CENTRE D'UN LIEU ═══
+        //
+        // `viser(['bois_noir'])` rendait le CENTRE de la zone — et le Bois Noir fait quarante
+        // tuiles de côté : son centre est tombé dans une clairière, et la prise a rapporté un
+        // pré bordé d'arbres là où l'accueil promet une futaie fermée. (Même piège que
+        // « old_growth est moins dense que forest » : on mesure l'espacement, on ne suppose
+        // pas la silhouette.) On note donc ce que le CADRE contiendrait, en couvert d'arbres,
+        // et on garde la fenêtre la plus fermée de la Racine.
+        cible = await page.evaluate(() => {
+          const m = window.__BRAISES__.scene.map
+          const { width: W, height: H, terrain: T } = m
+          const cols = Math.ceil(W / m.zonePas)
+          const idRacine = (m.zoneDefs ?? []).findIndex((d) => d.slug === 'pres_bas')
+          const dansRacine = (x, y) => m.zoneGrid[Math.floor(y / m.zonePas) * cols + Math.floor(x / m.zonePas)] === idRacine
+          const ARBRE = new Set([3, 13, 14, 22, 24]) // forêt, pin, mélèze, futaie ancienne, saule
+          const DX = 18, DY = 11
+          let best = null
+          for (let cy = DY; cy < H - DY; cy += 6) {
+            for (let cx = DX; cx < W - DX; cx += 6) {
+              if (!dansRacine(cx, cy)) continue
+              let arbre = 0, varietes = new Set()
+              for (let y = cy - DY; y < cy + DY; y += 2) for (let x = cx - DX; x < cx + DX; x += 2) {
+                const t = T[y * W + x]
+                if (!ARBRE.has(t)) continue
+                arbre++
+                varietes.add(t)
+              }
+              // LA VARIÉTÉ COMPTE : une futaie d'une seule essence est un mur vert. Deux
+              // essences dans le cadre, et la silhouette se lit.
+              // PLAFONNÉE : la fenêtre la plus dense de la carte est un tapis vert où plus rien
+              // ne se lit — et c'est la plus chère à rendre (le déclenchement a expiré dessus,
+              // à 90 s). On veut un couvert FERMÉ, pas maximal.
+              const score = Math.min(arbre, 150) + varietes.size * 12
+              if (!best || score > best.score) best = { x: cx + 0.5, y: cy + 0.5, score, arbre, essences: varietes.size }
+            }
+          }
+          return best && { ...best, kind: '(terrain)', name: `une futaie fermée (${best.arbre}/198 relevés boisés, ${best.essences} essences)` }
+        })
+        if (!cible) { console.error(`   ✗ ${p.nom.padEnd(18)} aucune futaie trouvée — prise SAUTÉE`); continue }
+      } else if (p.orage) {
+        // PAS UN LIEU : UN CIEL. On cherche donc ce que l'orage sert le mieux — de l'ouvert
+        // (le rideau et l'embrasement ont besoin de place) avec une lisière au fond pour la
+        // profondeur. Et LOIN de la Cendrière, dont le sol brûlé mange toute la lumière.
+        cible = await page.evaluate(() => {
+          const m = window.__BRAISES__.scene.map
+          const { width: W, height: H, terrain: T } = m
+          const cols = Math.ceil(W / m.zonePas)
+          const idRacine = (m.zoneDefs ?? []).findIndex((d) => d.slug === 'pres_bas')
+          const dansRacine = (x, y) => m.zoneGrid[Math.floor(y / m.zonePas) * cols + Math.floor(x / m.zonePas)] === idRacine
+          const OUVERT = new Set([1, 2, 11, 12, 17, 20, 25, 26])
+          const ARBRE = new Set([3, 13, 14, 22, 24])
+          const DX = 18, DY = 11
+          let best = null
+          for (let cy = DY; cy < H - DY; cy += 8) {
+            for (let cx = DX; cx < W - DX; cx += 8) {
+              if (!dansRacine(cx, cy)) continue
+              let ouvert = 0, arbre = 0, eau = 0
+              for (let y = cy - DY; y < cy + DY; y += 2) for (let x = cx - DX; x < cx + DX; x += 2) {
+                const t = T[y * W + x]
+                if (t === 17 || t === 20) ouvert += 1.4 // la prairie FLEURIE porte mieux que l'herbe rase
+                else if (OUVERT.has(t)) ouvert++
+                else if (ARBRE.has(t)) arbre++
+                else if (t === 4 || t === 6) eau++
+              }
+              // UNE LISIÈRE AU FOND, SINON RIEN. Sans arbres, la meilleure prairie de la carte
+              // est une pelouse — et l'heure dorée ne fait pas d'une plaine rase autre chose
+              // qu'une plaine rase dorée (la leçon en tête de planche). Le premier jet a rendu
+              // exactement ça : « 277 d'ouvert, 0 d'arbres ».
+              if (arbre < 10) continue
+              const score = ouvert + Math.min(arbre, 30) * 2 + Math.min(eau, 14) * 1.5
+              if (!best || score > best.score) best = { x: cx + 0.5, y: cy + 0.5, score, ouvert: Math.round(ouvert), arbre, eau }
+            }
+          }
+          return best && { ...best, kind: '(terrain)', name: `une prairie ouverte (${best.ouvert} d'ouvert, ${best.arbre} d'arbres)` }
+        })
+        if (!cible) { console.error(`   ✗ ${p.nom.padEnd(18)} aucune prairie trouvée — prise SAUTÉE`); continue }
+      } else if (p.chasse) {
+        // LE GIBIER NE SE POSE PAS, IL NAÎT — et pas n'importe où : `placeHuntingGrounds`
+        // exige de l'eau à proximité (« l'eau commande la faune »). Le seul gibier GARANTI de
+        // la carte est celui des TANIÈRES : `spawnPoiMonsters` y pose une bête au tick 0, et
+        // le relevé le confirme (les Repaires portent bien leur goule, dès le premier jour).
+        // On visite donc les tanières une à une et on garde la première qui montre une bête
+        // ET de la neige — parce qu'une chasse dans la neige sans neige n'est qu'une chasse.
+        const dens = await page.evaluate(() => (window.__BRAISES__.scene.map.zones ?? [])
+          .filter((z) => z.kind === 'taniere')
+          .map((z) => ({ x: Math.round(z.x + z.w / 2), y: Math.round(z.y + z.h / 2), name: z.name })))
+        for (const d of dens.slice(0, 6)) {
+          await agirV({ type: 'debug_teleport', x: d.x + 0.5, y: d.y + 0.5 }, 1600)
+          await canopeePleine(page)
+          await page.waitForFunction(() => (window.__BRAISES__.scene.gelLayer?.sonde?.recuissons ?? 0) > 0, null,
+            { timeout: 15000, polling: 150 }).catch(() => {})
+          await page.waitForTimeout(1400)
+          const vu = await bestioles(['boar', 'deer', 'rabbit', 'wolf'])
+          const neige = await page.evaluate(() => window.__BRAISES__.scene.gelLayer?.sonde?.couvertureMoyenne ?? 0)
+          console.log(`      ${d.name} (${d.x},${d.y}) : ${vu.length} bête(s) ${JSON.stringify(vu.map((b) => b.type))}, neige ${neige.toFixed(2)}`)
+          if (vu.length > 0 && neige > 0.25) {
+            // ON SE POSE À CINQ TUILES SOUS LA BÊTE : elle tient le tiers haut du cadre,
+            // le chasseur le centre, et l'arc pointe vers elle.
+            const b = vu[0]
+            cible = { x: b.x, y: b.y + 5, kind: 'chasse', name: `${d.name} — ${vu.length} bête(s), neige ${neige.toFixed(2)}`, viser: { x: b.x, y: b.y } }
+            break
+          }
         }
-        if (!cible) { console.error(`   ✗ ${p.nom.padEnd(11)} aucun Feu n'a pris — prise SAUTÉE`); continue }
+        if (!cible) { console.error(`   ✗ ${p.nom.padEnd(18)} aucune tanière avec bête ET neige — prise SAUTÉE`); continue }
+      } else if (p.horde) {
+        // ═══ LA HORDE DE LA RAMPE — ON VA À ELLE, ELLE NE VIENT PLUS À NOUS ═══
+        //
+        // (2026-08-21 : la méga-horde scriptée n'existe plus — décision ⑲. La horde suit une
+        // PENTE de saison, décidée à l'AUBE par présage ; au jour 47 la rampe donne ~12
+        // goules. `debug_horde`, envoyé plus bas, la lève sans loterie.)
+        //
+        // CE QUE CETTE PRISE COÛTAIT, ET POURQUOI (le journal de l'ancienne version). La
+        // horde naît entre `HORDE_MIN_DIST` (60 tuiles) et une nuit de marche de sa cible,
+        // donc TOUJOURS hors du rayon d'intérêt du client (64 tuiles) : invisible, et
+        // introuvable, puisque `horde_spawned` ne portait que sa CIBLE. On faisait donc
+        // l'inverse — on l'ATTENDAIT au feu du village, en navette entre les deux villages,
+        // à l'aveugle. MESURÉ sur trois runs : 301 s, 349 s, 481 s de temps réel pour UNE
+        // prise, avec un plafond à 600 s. Et on ne pouvait pas accélérer : `debug_speed` ×12
+        // a tué le navigateur (« No room in socket buffer ») et, mesuré, le monde avançait à
+        // ×0,2 — la sim vit dans un Worker qui inonde de snapshots un fil principal rendant
+        // déjà quelques images par seconde sous SwiftShader.
+        //
+        // L'ÉVÉNEMENT PORTE DÉSORMAIS SON BERCEAU (`tx`, `ty` — cf. `events.ts`, garde dans
+        // `worldevents.test.ts`). On lit le journal des faits du client (`eventJournal`, la
+        // surface de lecture du smoke, alimentée par `CHRONICLE_EVENT_TYPES`) et on se
+        // téléporte dessus dès qu'il tombe. L'attente n'est plus celle de la MARCHE, c'est
+        // celle du CRÉPUSCULE : ~72 s de sim, connues d'avance.
+        const feux = await page.evaluate(() => (window.__BRAISES__.scene.view?.villages ?? [])
+          .filter((v) => v.chiefId === 0).map((v) => ({ id: v.id, x: v.fireTx + 0.5, y: v.fireTy + 0.5 })))
+        if (feux.length === 0) { console.error(`   ✗ ${p.nom.padEnd(18)} aucun village PNJ — prise SAUTÉE`); continue }
+        // On endort la BOUCLE DE RENDU pendant l'attente : `view.apply` est appelée par le
+        // gestionnaire de MESSAGE (pas par l'`update`), donc le monde continue d'être suivi
+        // alors que plus rien ne se peint — et le fil principal rend la main au Worker.
+        await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+        // LE TICK DE DÉPART, ET C'EST UNE GARDE, PAS UNE TRACE. Le journal est un HISTORIQUE :
+        // en le balayant à l'envers on retiendrait une horde d'une nuit PRÉCÉDENTE, FIGÉE à
+        // l'aube depuis longtemps (`advanceWorldEvents` 2026-08-21 : l'aube ne dissipe plus,
+        // elle fige en reliques), et on irait photographier des carcasses. On n'accepte donc
+        // qu'un fait postérieur à cet instant. On le lit sur l'horloge de la SIM.
+        const tickDepart = await page.evaluate(() => window.__BRAISES__.scene.lastTime?.tick ?? 0)
+        // LA HORDE NE SE TIRE PLUS TOUTE SEULE (2026-08-21, décisions ⑭⑱⑲) : la méga-horde
+        // scriptée est morte, et la horde ordinaire se DÉCIDE À L'AUBE (présage) sur une rampe
+        // de chance — aucune nuit n'est garantie. `debug_horde` la lève MAINTENANT, par la
+        // vraie chaîne (planification par densité, cible = feu le plus proche, champ de flux),
+        // sans consommer un pas de PRNG : c'est exactement ce que la touche existe pour faire.
+        await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_horde' }))
+        const debut = Date.now()
+        let fait = null
+        // LE SPAWN EST SYNCHRONE (debug_horde) : 60 s couvrent large l'aller-retour Worker +
+        // journal. Au-delà, ce n'est plus de la lenteur — le fait ne viendra pas, on le DIT.
+        while (!fait && Date.now() - debut < 60000) {
+          try {
+            fait = await borne(page.evaluate((t0) => {
+              const j = window.__BRAISES__.scene.eventJournal ?? []
+              for (let i = j.length - 1; i >= 0; i--) if (j[i].type === 'horde_spawned' && j[i].tick >= t0) return j[i]
+              return null
+            }, tickDepart), 15000, 'lecture du journal des faits')
+          } catch (e) {
+            // LA PAGE NE RÉPOND PLUS : on le DIT, et on n'attend pas la fin des temps. Le plus
+            // souvent c'est un rechargement HMR — `--dev` sert le dépôt vivant, et toute
+            // écriture dans `packages/client` pendant un run détruit le contexte de la page.
+            console.error(`      !! la page ne répond plus (${e.message}) — attente interrompue`)
+            break
+          }
+          if (!fait) await page.waitForTimeout(3000)
+        }
+        await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake()).catch(() => {})
+        if (!fait) {
+          console.error(`   ✗ ${p.nom.padEnd(18)} aucune horde levée en ${Math.round((Date.now() - debut) / 1000)} s — prise SAUTÉE`)
+          continue
+        }
+        console.log(`      ${String(Math.round((Date.now() - debut) / 1000)).padStart(3)} s — horde ${fait.hordeId} levée au tick ${fait.tick} :`
+          + ` ${fait.size} goules en (${fait.tx}, ${fait.ty}), cap sur ${fait.villageId !== undefined ? `le village ${fait.villageId}` : 'un feu isolé'}`)
+        // ON SE POSE AU BERCEAU, ET C'EST LA CONTREPARTIE D'Y ALLER : un Cendreux qui voit le
+        // joueur à moins de `aggroRange` (5 tuiles) LÂCHE la descente de gradient (`cendreux.ts` :
+        // `if (!target && hordeStep(…))`) et vient sur lui. La horde qui marchait sur le village
+        // marche alors sur VOUS — MESURÉ au déclenchement : 7 goules sur 16 ciblaient le joueur.
+        // C'est ce que le jeu ferait pour n'importe quel joueur planté là, et c'est très
+        // exactement la prise demandée (« combattre une horde »). L'invulnérabilité est déjà
+        // armée pour toute la planche (voir `debug_god` en tête de boucle) : sans elle, seize
+        // goules mettraient un voile de mort sur la photo.
+        await agirV({ type: 'debug_teleport', x: fait.tx + 0.5, y: fait.ty + 0.5 }, 2500)
+        // LE RALLIEMENT : on les laisse se refermer quelques secondes. Elles naissent en bloc
+        // de 3 × 6 autour du berceau ; à 1,3 tuile/s, six secondes suffisent à les tasser
+        // autour de l'avatar — c'est le paquet SERRÉ qui fait l'image, pas seize points épars.
+        await page.waitForTimeout(6000)
+        const g = await bestioles(['cendreux'])
+        if (g.length < 5) {
+          console.error(`   ✗ ${p.nom.padEnd(18)} seulement ${g.length} goule(s) au berceau (${fait.tx}, ${fait.ty}) — prise SAUTÉE`)
+          continue
+        }
+        const cx = g.reduce((a, b) => a + b.x, 0) / g.length
+        const cy = g.reduce((a, b) => a + b.y, 0) / g.length
+        // ON SE PLANTE DEVANT ELLES, DU CÔTÉ DU FEU QU'ELLES VISENT — le premier jet faisait
+        // l'inverse (sept tuiles depuis le feu, vers elles) et la photo est revenue avec un
+        // joueur seul au milieu d'un pré : les goules, quarante tuiles plus loin, tenaient six
+        // pixels au bord du cadre. C'est LEUR barycentre qui fait l'image ; le village n'est
+        // qu'une direction — il est trop loin pour tenir dans les 22 tuiles du cadrage.
+        // LE FEU VISÉ EST DANS LE FAIT (décision ⑬ : `fireTx`/`fireTy` — ce peut être un
+        // simple feu de camp sans village) : on ne devine plus, on lit.
+        const feu = { id: fait.villageId ?? 'feu isolé', x: fait.fireTx + 0.5, y: fait.fireTy + 0.5 }
+        const dx = feu.x - cx, dy = feu.y - cy
+        const d = Math.max(0.001, Math.sqrt(dx * dx + dy * dy))
+        const garde = Math.min(d, 7)
+        cible = {
+          x: cx + (dx / d) * garde, y: cy + (dy / d) * garde,
+          kind: 'horde', name: `${g.length} goules à ${Math.round(d)} t du feu du village ${feu.id}`, viser: { x: cx, y: cy },
+        }
       } else {
         cible = await viser(p.ou)
         if (!cible) {
-          console.error(`   ✗ ${p.nom.padEnd(11)} AUCUN de [${p.ou.join(', ')}] sur cette carte — prise SAUTÉE`)
+          console.error(`   ✗ ${p.nom.padEnd(18)} AUCUN de [${p.ou.join(', ')}] sur cette carte — prise SAUTÉE`)
           continue
         }
       }

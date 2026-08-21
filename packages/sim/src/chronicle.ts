@@ -13,7 +13,7 @@
  * une entrée structurée `{ jour, texte, poids }` — le jour est SÉPARÉ du texte
  * (gouttière de dates de la maquette), et le mapping type→poids vit ici, pur.
  */
-import { SEASON, WORLD_EVENTS } from './balance'
+import { WORLD_EVENTS } from './balance'
 import type { SimEvent } from './events'
 import { POI_CHARGES } from './poi-discovery'
 import { TICKS_PER_SEASON_DAY } from './time'
@@ -106,19 +106,19 @@ export function chronicleFromEvents(
         else if (e.archetype === 'meute') push(`${name(e.villageId)} a viré au rouge : une Meute.`, 'recit')
         else push(`Le Feu de « ${name(e.villageId)} » est redevenu neutre.`, 'recit')
         break
-      case 'horde_spawned':
-        // LA MÉGA-HORDE EST *LA* MÉGA-HORDE — celle du premier crépuscule de la Cendre, et
-        // aucune autre (décision d'Alexis, 2026-08-02). Le seuil était `12`, écrit en clair :
-        // or 12 est la taille d'une horde d'ACTE III ORDINAIRE (`HORDE_SIZE[2]`), si bien que
-        // la chronique annonçait « la méga-horde a déferlé » pour une nuit d'acte III banale —
-        // et le mot ne voulait plus rien dire le jour où la vraie tombait. Il se dérive
-        // désormais de `SEASON.MEGA_HORDE_SIZE` (16), la taille de celle qu'on nomme.
-        //
-        // Les deux seuils SE DÉRIVENT, jamais recopiés : un rééquilibrage des hordes ferait
-        // sinon raconter « une grande horde » pour une petite, sans que rien ne le signale.
-        if (e.size >= SEASON.MEGA_HORDE_SIZE) push(`La méga-horde a déferlé sur ${name(e.targetVillageId)} (${e.size} goules).`, 'battement')
-        else if (e.size >= WORLD_EVENTS.HORDE_SIZE[1]!) push(`Une grande horde a marché sur ${name(e.targetVillageId)}.`, 'battement')
+      case 'horde_spawned': {
+        // LA HORDE EST UNE PENTE, PLUS UN SCRIPT (décisions ⑭⑲, 2026-08-21) : la méga-horde
+        // nommée n'existe plus — la dernière nuit est naturellement la pire. Les seuils du
+        // récit SE DÉRIVENT de la rampe (jamais recopiés) : « déferlé » au sommet de la
+        // table (`HORDE_TAILLE.FIN`, à un cran près), « grande » à mi-pente. Et la cible
+        // peut être un simple feu de camp (décision ⑬) : on nomme le village s'il y en a
+        // un, sinon c'est le feu d'un homme seul que la nuit a choisi.
+        const cible = e.villageId !== undefined ? name(e.villageId) : 'un feu isolé'
+        const grande = (WORLD_EVENTS.HORDE_TAILLE.DEBUT + WORLD_EVENTS.HORDE_TAILLE.FIN) / 2
+        if (e.size >= WORLD_EVENTS.HORDE_TAILLE.FIN - 1) push(`La horde a déferlé sur ${cible} (${e.size} goules).`, 'battement')
+        else if (e.size >= grande) push(`Une grande horde a marché sur ${cible}.`, 'battement')
         break
+      }
       case 'convoy_spawned':
         push(`Une carcasse de convoi a été signalée sur la route.`, 'recit')
         break

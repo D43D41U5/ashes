@@ -8,11 +8,13 @@
  * moins de 74 tuiles, zéro Repaire à moins de 110.
  */
 import { describe, it, expect } from 'vitest'
-import { BALANCE, MORTS, NIGHT_HUNT, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
+import { BALANCE, CENDREUX, MORTS, NIGHT_HUNT, TERRAIN_GRASS, TERRAIN_ROCK } from './balance'
 import { createEmptyMap } from './map'
 import { advanceReveils, densiteDesMorts, rodeursPortes, siteDansLaCouronne } from './morts'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { drainEvents } from './events'
+import { die } from './combat'
+import { advanceCendreux } from './cendreux'
 import { cycleOffsetForStartHour, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 
 /** Une carte à zones, montée à la main : trois tiers, en bandes horizontales. */
@@ -74,7 +76,7 @@ describe('le champ des morts (R15-R17)', () => {
 
   it('A20 — le champ MODULE le nombre de rôdeurs, il ne le supprime jamais', () => {
     const state = carteAZones()
-    const plafond = NIGHT_HUNT.UNDEAD_MAX_ALIVE[2]! // acte III
+    const plafond = NIGHT_HUNT.UNDEAD_MAX_FIN // le plafond continu, à son sommet (jour 60)
     const chezSoi = rodeursPortes(state, 60, 10, plafond)
     const marges = rodeursPortes(state, 60, 110, plafond)
     expect(chezSoi).toBeGreaterThanOrEqual(MORTS.MIN_RODEURS) // jamais zéro : il module (R16)
@@ -82,11 +84,13 @@ describe('le champ des morts (R15-R17)', () => {
     expect(marges).toBeLessThanOrEqual(plafond) // le plafond de l'acte reste le toit
   })
 
-  it('A20bis — un plafond de zéro reste zéro : l\'acte I n\'envoie pas de morts', () => {
-    // `UNDEAD_MAX_ALIVE[0]` vaut 0 et c'est `UNDEAD_SHARE` qui possède le « si » (R16) : le
-    // plancher du champ ne doit pas ressusciter un danger que l'acte a explicitement éteint.
+  it('A20bis — un plafond de zéro reste zéro : le plancher du champ ne ressuscite rien', () => {
+    // Depuis le cadran de température, le « si » appartient à l'ÉVEIL (une plaine tiède
+    // n'envoie pas de morts) et le plafond continu ne descend plus à zéro — mais la
+    // propriété structurelle demeure : un plafond nul doit rendre zéro, le plancher du
+    // champ ne doit jamais ressusciter un danger que l'appelant a éteint (R16).
     const state = carteAZones()
-    expect(rodeursPortes(state, 60, 110, NIGHT_HUNT.UNDEAD_MAX_ALIVE[0]!)).toBe(0)
+    expect(rodeursPortes(state, 60, 110, 0)).toBe(0)
   })
 })
 
@@ -252,10 +256,12 @@ describe('le réveil : le sol travaille, puis il rend son mort (R14, R21)', () =
     expect(NIGHT_HUNT.SPAWN_DIST_UNDEAD).toBeLessThan(NIGHT_HUNT.SPAWN_DIST)
   })
 
-  it('A27 — LE FEU ÉTOUFFE LE RÉVEIL : c\'est la parade, et elle se joue pendant qu\'il dure', () => {
-    // LA RÈGLE QUE CE TEST PROTÈGE. S4 disait déjà « on veille ses morts au feu » — mais la
-    // levée d'un cadavre ne s'est déclenchée qu'UNE fois sur une saison entière, mesuré. Le
-    // réveil lui donne sa fréquence : le geste de chaque nuit, plus une ligne de lore.
+  it('A27 (RENVERSÉE le 2026-08-21, décision ⑦) — LE FEU REPOUSSE LE RÉVEIL, il ne l\'annule plus', () => {
+    // L'ANCIENNE A27 (« le feu étouffe, rien n'en sort ») est morte SCIEMMENT : le feu qui
+    // annulait était le germe d'un ward magique — le camp au feu ne voyait jamais l'acte III.
+    // La nouvelle règle : le tertre s'effondre ici (`reveil_etouffe`, même geste à l'écran),
+    // et le sol REPREND son travail hors de la bulle, timer remis à neuf. Le feu achète de
+    // la DISTANCE et du TEMPS — chaque bulle se paie en bois — jamais l'immunité.
     const { state } = nuitAvecUnHomme()
     for (let t = 0; t < 8 * 60 * BALANCE.TICK_RATE_HZ; t++) {
       step(state, [])
@@ -267,11 +273,36 @@ describe('le réveil : le sol travaille, puis il rend son mort (R14, R21)', () =
     state.structures.push({ type: 'fire', tx: Math.floor(r.x), ty: Math.floor(r.y), villageId: 0, lit: true } as never)
     drainEvents(state)
     step(state, [])
-    expect(state.reveils.length).toBe(0) // le sol s'est tu
+    // Le tertre d'ICI s'est tu…
     expect(drainEvents(state).some((e) => e.type === 'reveil_etouffe')).toBe(true)
-    // …et surtout : RIEN n'en est sorti. Une parade qui ne fait que retarder n'est pas une parade.
+    // …mais le sol a REPRIS ailleurs : un réveil vit toujours, HORS de la bulle, timer neuf.
+    expect(state.reveils.length).toBe(1)
+    const deplace = state.reveils[0]!
+    const ddx = deplace.x - (Math.floor(r.x) + 0.5)
+    const ddy = deplace.y - (Math.floor(r.y) + 0.5)
+    expect(ddx * ddx + ddy * ddy).toBeGreaterThan(CENDREUX.HEARTH_WARD_RADIUS * CENDREUX.HEARTH_WARD_RADIUS)
+    expect(deplace.at).toBeGreaterThan(r.at - 1) // le temps est racheté : terme repoussé
+    expect(deplace.preyId).toBe(r.preyId) // c'est toujours pour LUI que le sol se lève
+    // Et il ABOUTIT : quelque chose finit par sortir — hors de la bulle. Le feu n'est plus
+    // une immunité ; c'est le renversement assumé de l'ancienne assertion.
     for (let t = 0; t < MORTS.REVEIL_TICKS * 3; t++) step(state, [])
-    expect(state.monsters.filter((m) => m.type === 'cendreux' && m.nightHunter === true)).toHaveLength(0)
+    const sorti = state.monsters.find((m) => m.type === 'cendreux' && m.nightHunter === true)
+    expect(sorti).toBeDefined()
+  })
+
+  it('R9 tient toujours — la VEILLÉE DU CADAVRE au feu, elle, n\'a pas bougé d\'un iota', () => {
+    // La décision ⑦ ne touche que le RÉVEIL du sol. Un cadavre veillé par un feu ne se
+    // relève pas, et l'annulation est revérifiée au réveil — S4 mot pour mot.
+    const state = createSim(7, { map: createEmptyMap(64, 64, TERRAIN_GRASS) })
+    const id = spawnEntity(state, 30.5, 30.5)
+    const e = state.entities.find((en) => en.id === id)!
+    die(state, e, 0, 'cold')
+    const corpse = state.corpses.find((c) => c.risesAt !== undefined)!
+    state.structures.push({ type: 'fire', tx: 30, ty: 30, villageId: 0 } as never)
+    state.tick = corpse.risesAt!
+    advanceCendreux(state)
+    expect(state.monsters.find((m) => m.type === 'cendreux')).toBeUndefined()
+    expect(state.corpses.find((c) => c.id === corpse.id)?.risesAt).toBeUndefined()
   })
 
   it('A28 — le réveil n\'ajoute AUCUN tirage : allumer un feu ne décale pas le monde', () => {

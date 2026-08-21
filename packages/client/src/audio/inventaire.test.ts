@@ -24,8 +24,10 @@ describe('l’inventaire des 73 faits', () => {
     const somme = comptes.reduce((t, c) => t + c.n, 0)
     expect(somme).toBe(Object.keys(INVENTAIRE).length)
     // 68 → 73 le 2026-08-18 : la Brume (5 faits, spec brume.md) ; 73 → 76 le 2026-08-19 :
-    // les trois faits du blizzard (météo R9) ; 76 → 77 : `crop_frozen` (flore-froid F5).
-    expect(somme).toBe(77)
+    // les trois faits du blizzard (météo R9) ; 76 → 77 : `crop_frozen` (flore-froid F5) ;
+    // 77 → 80 le 2026-08-21 : la pression croissante des Cendreux (`cendreux_cri`,
+    // `presage_horde`, `charnier_brule` — spec 2026-08-21).
+    expect(somme).toBe(80)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -71,7 +73,12 @@ describe('l’inventaire des 73 faits', () => {
     // silencieuse ne s'apprend pas : un joueur qui ne l'entend pas ne comprend pas
     // pourquoi sa parcelle est vide au matin. Triangle qui descend, bref et bas (une
     // rangée de parcelles gèle d'un coup).
-    expect(SONORES.length).toBe(44)
+    // 77 → 80 faits et 44 → 47 voix le 2026-08-21 : la pression croissante des Cendreux.
+    // `cendreux_cri` SONNE (le seul moment où un mort a une voix — un appel muet
+    // n'appellerait rien) ; `presage_horde` SONNE (le préavis de la veille est LE
+    // télégraphiage, §9bis — patron de `brume_annonce`) ; `charnier_brule` SONNE (la
+    // confirmation du geste — le principe de `reveil_etouffe`).
+    expect(SONORES.length).toBe(47)
     expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(33)
   })
 

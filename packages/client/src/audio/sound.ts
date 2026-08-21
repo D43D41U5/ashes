@@ -81,6 +81,11 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     // le joueur doit savoir laquelle des deux parades il prépare sans regarder l'écran.
     case 'cendreux_prowl':
       return { wave: 'noise', freq: 0, dur: 0.9, gain: 0.08, lowpass: 420 }
+    // LE CRI DE FUREUR (décisions ④⑤, 2026-08-21) : le seul moment où un mort a une VOIX —
+    // et elle est fausse. Plus long, plus grave et plus fort que le raclement : ce n'est pas
+    // un avertissement, c'est un appel — le sol va se lever tout autour.
+    case 'cendreux_cri':
+      return { wave: 'noise', freq: 0, dur: 1.6, gain: 0.11, lowpass: 300 }
 
     // ── LA PLAIE ─────────────────────────────────────────────────────────────────────────
     case 'entity_bandaged':
@@ -154,6 +159,14 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
       return { wave: 'triangle', freq: 147, freqEnd: 98, dur: 0.35, gain: 0.05, lowpass: 800 }
     case 'horde_spawned':
       return { wave: 'sawtooth', freq: 147, freqEnd: 110, dur: 0.8, gain: 0.085, lowpass: 900 }
+    // LE PRÉSAGE (décision ⑱) : le grondement de la horde, UN JOUR À L'AVANCE et de loin —
+    // même timbre que `horde_spawned`, plus sourd et plus bas : la même chose, pas encore là.
+    case 'presage_horde':
+      return { wave: 'sawtooth', freq: 98, freqEnd: 73, dur: 1.1, gain: 0.06, lowpass: 500 }
+    // LE LIEU BRÛLE (décision ⑧) : la confirmation du GESTE — un souffle de flamme qui monte,
+    // clair, presque une victoire : le joueur vient d'acheter des nuits plus calmes.
+    case 'charnier_brule':
+      return { wave: 'noise', freq: 0, dur: 0.7, gain: 0.07, lowpass: 2400 }
     case 'alarm_raised':
       return { wave: 'square', freq: 660, freqEnd: 660, dur: 0.18, gain: 0.1, lowpass: 2600 }
     case 'evacuation_opened':

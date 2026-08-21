@@ -2405,6 +2405,28 @@ export class WorldScene extends Phaser.Scene {
         // Cendreux — la parade n'est pas la même.
         const combien = event.count > 1 ? `${event.count} Cendreux` : 'Un Cendreux'
         publishError(this.registry, `Un raclement dans le noir. ${combien} vous ont senti.`, this.time.now)
+      } else if (event.type === 'cendreux_cri') {
+        // LE CRI DE FUREUR (décisions ④⑤, 2026-08-21). Il ne vise pas que le joueur — mais
+        // c'est toujours à lui qu'on parle : le sol va se lever là où le crieur a VU.
+        publishError(this.registry, 'Un cri qui n’a rien d’humain. Le sol se réveille tout autour.', this.time.now)
+      } else if (event.type === 'presage_horde') {
+        // LE PRÉAVIS DE LA VEILLE (décision ⑱) : la horde de CE SOIR s'annonce à l'aube —
+        // avec sa DIRECTION (huit vents, patron des bandeaux existants), pour qu'on prépare
+        // la nuit : rentrer du bois, fermer la porte, poster les siens.
+        const me = this.lastEntities.find((e) => e.id === this.playerId)
+        let dir = ''
+        if (me) {
+          const dx = event.x - me.x
+          const dy = event.y - me.y
+          const ns = dy < -8 ? 'nord' : dy > 8 ? 'sud' : ''
+          const eo = dx > 8 ? 'est' : dx < -8 ? 'ouest' : ''
+          dir = ns && eo ? `${ns}-${eo}` : ns || eo
+        }
+        publishError(this.registry, `Au loin${dir ? ' vers le ' + dir : ''}, le sol travaille — la faune s’est tue. La nuit prochaine appartiendra aux morts.`, this.time.now)
+      } else if (event.type === 'charnier_brule') {
+        // LE GESTE A PRIS (décision ⑧) : sans retour à l'écran, brûler un charnier serait un
+        // acte de foi — la parade doit prouver qu'elle a marché (le patron de `reveil_etouffe`).
+        publishError(this.registry, 'Le feu a pris dans la fosse. Les morts d’ici dormiront plus profond, un temps.', this.time.now)
       } else if (event.type === 'cendreux_risen') {
         // IL SORT DE TERRE (spec `cendreux.md` R21). `cendreux_risen` a DEUX émetteurs — la
         // levée d'un cadavre, qui est déjà couché sur le sol et ne creuse rien, et

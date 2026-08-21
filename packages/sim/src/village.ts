@@ -14,6 +14,7 @@ import {
   AGRICULTURE,
   ALIGNMENT,
   BALANCE,
+  CENDREUX,
   COMBAT,
   COMPONENTS,
   COMPONENT_TYPES,
@@ -41,6 +42,7 @@ import {
   refreshFunctions,
   terrainConstructible,
 } from './construction'
+import { cendreuxVivantsPositions } from './fire'
 import { emitEvent } from './events'
 import { chebyshev, distSq, isSingleEdge } from './geometry'
 import {
@@ -762,6 +764,13 @@ function fallToRuin(state: SimState, villageId: number): void {
 export function advanceUpkeep(state: SimState): void {
   const act = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
   const drain = FIRE_UPKEEP.DRAIN_PER_TICK * FIRE_UPKEEP.ACT_FACTOR[act - 1]!
+  // LES BUVEURS DU FOYER (décision ⑯) — relevés une fois si un cendreux existe. Le siège
+  // du Feu de village a enfin des dents : une horde arrivée au Foyer en DRAINE le stock,
+  // au même multiplicateur que la pluie multiplie le drain. AVEC UN PLANCHER (⑯) : la
+  // bouche seule ne descend JAMAIS le stock sous `FOYER_PLANCHER` — tuer un Feu reste une
+  // affaire d'attaque à sec (V1-12), pas de sangsue, et les murs ne cèdent pas à la paille.
+  const buveurs = cendreuxVivantsPositions(state)
+  const contact2 = CENDREUX.BOIRE.CONTACT * CENDREUX.BOIRE.CONTACT
   for (const village of state.villages) {
     const before = village.fuel
     // R5 MÉTÉO — la pluie accélère la faim du FOYER comme celle du feu libre (fire.ts) :
@@ -771,6 +780,17 @@ export function advanceUpkeep(state: SimState): void {
     // (`fire_starved`, murs qui cèdent, braises dormantes) — la météo n'a fait qu'y mener
     // plus vite. C'est le §8 : la tâche communautaire zéro devient plus pressante.
     village.fuel = Math.max(0, village.fuel - drain * meteoFeuConso(state, village.fireTx, village.fireTy))
+    if (buveurs.length > 0 && village.fuel > CENDREUX.BOIRE.FOYER_PLANCHER) {
+      let bouches = 0
+      for (const b of buveurs) {
+        if (distSq(b.x, b.y, village.fireTx + 0.5, village.fireTy + 0.5) > contact2) continue
+        bouches += 1
+        b.m.satiete = Math.min(CENDREUX.BOIRE.SATIETE_MAX, (b.m.satiete ?? 0) + CENDREUX.BOIRE.SATIETE_FEU_PAR_TICK)
+      }
+      if (bouches > 0) {
+        village.fuel = Math.max(CENDREUX.BOIRE.FOYER_PLANCHER, village.fuel - drain * CENDREUX.BOIRE.CONSO * bouches)
+      }
+    }
     // Au PASSAGE à sec (une fois) : la chronique le raconte, la milice n'a pas à réagir.
     if (before > 0 && village.fuel <= 0) {
       emitEvent(state, { type: 'fire_starved', tick: state.tick, villageId: village.id })

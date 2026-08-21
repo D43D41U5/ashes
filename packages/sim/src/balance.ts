@@ -2877,11 +2877,121 @@ export const CENDREUX = {
   WITNESS_RADIUS: 8, // « seul » : aucun allié vivant dans ce rayon à la mort
   HEARTH_WARD_RADIUS: 12, // « loin d'un feu » : aucune structure feu (mort ET réveil)
   RISE_DELAY: ticksFor(300), // délai mort→levée (~5 min ; le cadavre marqué ne décante pas d'ici là)
-  WARMTH_SEEK_RANGE: 20, // rayon de recherche de chaleur la nuit
-  /** Seuil de FROID DE BASE (température hors feu, 0-100) sous lequel un Cendreux rampe vers un
-   *  feu ALLUMÉ même de JOUR (spec feu-station S5). La nuit attire déjà toujours ; ce seuil ajoute
-   *  les biomes froids (neige/glacier) et le Grand Froid (actes II-III). À calibrer. */
-  COLD_ATTRACT_THRESHOLD: 55,
+  WARMTH_SEEK_RANGE: 20, // rayon de recherche de chaleur en A* précis (au-delà : champ longue portée)
+  /**
+   * ═══ LE CADRAN UNIQUE DU CENDREUX : LA TEMPÉRATURE LOCALE ═══
+   * *(décisions d'Alexis 2026-08-21, spec `2026-08-21-cendreux-pression-croissante-design.md` —
+   * « un cendreux doit être presque amorphe lorsqu'il fait chaud ».)*
+   *
+   * L'ÉVEIL est une PENTE CONTINUE : clamp01((CHAUD − T) / (CHAUD − FROID)) sur le froid de BASE
+   * (`baselineTemperatureAt` — hors feu, sinon oscillation à la lisière de la bulle, la note
+   * historique de S5). Il module la VUE, l'ALLURE et la cadence de décision — jamais de seuil qui
+   * commande un mouvement (ce dépôt a payé quatre fois l'hystérésis manquante d'un seuil).
+   *
+   * CHAUD=60 / FROID=10 ne sont pas choisis au doigt : la nuit de plaine vaut 60 / 35 / 10 selon
+   * l'acte (BASE 90 − ACT_COLD − NIGHT_COLD), donc l'éveil nocturne y vaut 0 / 0,5 / 1 — LA TABLE
+   * EXACTE de feu `UNDEAD_SHARE` [0, 0.5, 1], retrouvée par la température au lieu d'être posée
+   * par l'acte. La montée de la saison n'est plus décrétée : elle TOMBE de la table du froid, et
+   * la géographie vient gratuitement (neige −40, glacier −75, brume, front météo, froid de cendre
+   * — le Névé est dangereux dès le jour 1, et c'est voulu).
+   */
+  TORPEUR: {
+    CHAUD: 60, // à cette température et au-dessus : éveil 0 (amorphe — il mord encore au contact)
+    FROID: 10, // à cette température et en dessous : éveil 1 (plein régime)
+    /** La vue ne tombe jamais à zéro : aggroRange × max(éveil, ceci). Marcher SUR une carcasse
+     *  réveille la carcasse — le nettoyage de jour reste risqué, jamais gratuit. */
+    VUE_PLANCHER: 0.2,
+    /** L'allure d'un cendreux QUI A UN BUT ne tombe jamais sous ce facteur : « presque amorphe »
+     *  n'est pas « statue » (constat du panel : l'acte I aurait figé toute marche). Sans but, il
+     *  ne bouge pas du tout — c'est là que vit l'amorphe. */
+    GAIT_MIN: 0.25,
+    /** Sous ce froid de base, il CHERCHE la chaleur (l'ancien COLD_ATTRACT_THRESHOLD, 55, ne
+     *  couvrait pas la nuit d'acte I à 60 — or le levé d'acte I converge à 20 tuiles, statu quo
+     *  acté). 65 : toute nuit de plaine, les biomes froids de jour, la plaine d'acte III à midi. */
+    CONVERGE_SOUS: 65,
+    /** LE CRAN DE FUREUR (décisions ④⑤) : à ce froid EFFECTIF (base + satiété déduite) ou en
+     *  dessous, un cendreux qui voit une proie S'APPELLE — le cri réveille le sol. ≤ 12 et non
+     *  < 10 : la plaine de nuit d'acte III vaut EXACTEMENT 10, un strict ne tirait jamais dans
+     *  le cas-phare (constat du panel). */
+    FUREUR: 12,
+  },
+  /**
+   * PORTÉE D'ÉLECTION DU FEU-CIBLE d'un solitaire qui converge (décision ① — « il marche, et de
+   * plus en plus loin ») : acte I, ses 20 tuiles historiques (statu quo) ; acte II, la ceinture ;
+   * acte III, toute la vallée se referme sur les feux. La table est par ACTE et c'est assumé :
+   * c'est une PORTÉE de perception, pas une intensité — le continu vit dans l'éveil.
+   */
+  CONVERGE_TILES: [20, 80, 10000] as const,
+  /**
+   * ═══ « ILS BOIVENT LA CHALEUR » (décision d'Alexis, 2026-08-21) ═══
+   *
+   * Le Cendreux cherche ardemment la chaleur — feu ou vie — pour la CONSOMMER. Deux bouches :
+   * au contact d'un feu en flammes, le combustible se consume plus vite (le patron exact de
+   * `meteoFeuConso` : on recule l'ancre `burnAt`, et tout ce qui s'en dérive — état, budget,
+   * indicateur client — voit la même faim) ; au coup porté sur un vivant, la température du
+   * corps chute (l'aval existe déjà tout entier : engourdissement, souffle, dégâts sous 20).
+   *
+   * LE PLANCHER, ET C'EST LA SPEC : on boit les FLAMMES, jamais les braises. Un feu bu tombe
+   * en braises et y RESTE tant qu'elles durent — le ward tient jusqu'aux braises, et sans ce
+   * plancher un feu vidé ouvrait la spirale interdite : plus de rempart contre les réveils au
+   * moment précis où l'on ne peut plus rien (décision ⑦ : le feu achète, il ne trahit pas).
+   */
+  BOIRE: {
+    /** Distance (tuiles) feu→cendreux ou centre à centre pour boire. */
+    CONTACT: 1.5,
+    /** La bûche en cours vieillit de N ticks par tick et par buveur (patron `meteoFeuConso`). */
+    CONSO: 3,
+    /** Température volée à la victime par coup qui porte (l'aval : engourdi < 60, PV < 20). */
+    COUP_TEMP: 12,
+    /** Satiété gagnée par coup porté sur un vivant (bête comprise — la chair est chaude). */
+    SATIETE_COUP: 25,
+    /** Satiété gagnée par tick passé à boire un feu. */
+    SATIETE_FEU_PAR_TICK: 0.5,
+    /** L'échelle de la satiété. Plein = (CHAUD − FROID) degrés portés : il s'affaisse. */
+    SATIETE_MAX: 100,
+    /** Refroidissement par tick (~5 min réelles pour redevenir affamé). */
+    SATIETE_DECAY: 100 / 6000,
+    /** Le Foyer de village bu ne descend JAMAIS sous ce stock par la seule bouche d'un
+     *  cendreux : tuer un Feu reste une affaire d'attaque à sec (V1-12), pas de sangsue. */
+    FOYER_PLANCHER: 1,
+  },
+  /**
+   * ═══ LE CRI (décisions ④⑤⑥) — le cran de fureur appelle, et l'appel réveille LE SOL ═══
+   *
+   * Sous `TORPEUR.FUREUR` de froid effectif, un cendreux qui VOIT une proie crie : le sol se
+   * lève autour du lieu où il l'a vue — des réveils VRAIS (tertres, préavis, feu qui repousse),
+   * jamais des apparitions. La salve plante UN site par tick de décision, pas K d'un coup :
+   * le pire cas mesuré d'un site coûte 33 ms (proie murée), on l'étale au lieu de l'empiler.
+   */
+  CRI: {
+    /** Un cendreux ne crie pas deux fois de suite : ~30 s entre deux appels. */
+    COOLDOWN: ticksFor(30),
+    /**
+     * COMBIEN UN CRI LÈVE, EN FIN DE SAISON — le plafond du jour J est round(FIN × jour/60),
+     * une MONTÉE CONTINUE (décision ⑥ : « un plafond qui monte en continu », le remède au
+     * défaut « une table de trois valeurs est plate »). Jour 10 : 1. Jour 30 : 3. Jour 60 : 6.
+     */
+    PLAFOND_FIN: 6,
+  },
+  /**
+   * ═══ LE PLAFOND GLOBAL (hypothèse de travail actée — la question ⑳ d'Alexis reste OUVERTE) ═══
+   *
+   * Toutes les sources de PRESSION puisent dans la même réserve, qui monte avec le jour de
+   * saison : levées, réveils de la nuit, salves du cri, hordes et leurs reliques. Pleine, plus
+   * rien ne se lève nulle part ; abattre rouvre une place partout. C'est T15 tenu par
+   * construction (« on peut perdre, on ne doit pas être submergé »).
+   *
+   * IL COMPTE CE QU'IL BORNE, et rien d'autre — la loi mesurée du dépôt (R8bis : compté sur
+   * l'espèce entière, un plafond de 24 était SATURÉ au jour 21 par les seuls résidents de
+   * Repaire et gardes de convoi, et la règle qu'il protégeait était morte). Les résidents
+   * (`homePoi`) ont le cap de leur lieu ; les gardes de convoi (`expiresAt` sans relique) ont
+   * leur balayage : ils ne consomment PAS cette réserve-ci. Constat du panel (C10/C17),
+   * conforme à la mémoire « un plafond compte ce qu'il borne ».
+   */
+  GLOBAL: {
+    DEBUT: 12,
+    FIN: 60,
+  },
   /**
    * LE PLAFOND DE LA LEVÉE (spec `cendreux.md` R8, décision 2026-07-31). Au-delà de ce nombre
    * de Cendreux VIVANTS dans la vallée, plus aucune mort ne se relève — la porte se rouvre
@@ -3181,10 +3291,24 @@ export const WORLD_EVENTS = {
   REPAIR_TASK_THRESHOLD: 0.6,
   /** Une alarme par vague : cooldown d'une heure de cycle. */
   ALARM_COOLDOWN_TICKS: ticksForCycles(1 / 24),
-  /** Probabilité de horde par nuit, par acte (la pression du GDD §2). */
-  HORDE_CHANCE_PER_NIGHT: [0.35, 0.6, 0.9],
-  /** Taille de horde par acte. */
-  HORDE_SIZE: [4, 8, 12],
+  /**
+   * ═══ LA HORDE EN PENTE CONTINUE (décision d'Alexis ⑭, 2026-08-21) ═══
+   *
+   * Probabilité par nuit et taille montent JOUR APRÈS JOUR (`seasonRamp`, clampée au jour
+   * 60) au lieu de deux tables de trois valeurs — « une table de trois valeurs, et une table
+   * est plate ». Nuit 1 : une chance sur six d'une poignée de goules lentes (le cadran de
+   * température les ralentit encore) ; dernière nuit : l'assaut est presque certain et
+   * large — c'est LE climax, la méga-horde scriptée n'existe plus (décision ⑲).
+   * La taille reste clampée par le plafond global au moment du spawn.
+   */
+  HORDE_CHANCE: { DEBUT: 0.15, FIN: 0.95 },
+  HORDE_TAILLE: { DEBUT: 3, FIN: 14 },
+  /**
+   * LE PRÉAVIS DE LA VEILLE (décision ⑱) — la horde de ce soir se DÉCIDE À L'AUBE : les
+   * signes tombent le jour d'avant (`presage_horde`, la faune qui déserte l'origine), et le
+   * joueur PRÉPARE sa nuit. Le rayon est celui de l'effarouchement du gibier à l'émission.
+   */
+  PRESAGE_FUITE_RAYON: 24,
   /**
    * OÙ NAÎT UNE HORDE — en distance de MARCHE au Feu visé (le champ de flux la donne), et
    * non plus sur un bord de carte : la vallée est ceinte de roche, et zéro tuile de bord
@@ -3197,6 +3321,29 @@ export const WORLD_EVENTS = {
    */
   HORDE_APPROACH_FRACTION: 0.5,
   HORDE_MIN_DIST: 60,
+  /**
+   * L'ÉCART DES GOULES (décision d'Alexis, 2026-08-20) — « ils doivent se comporter comme
+   * dans Project Zomboid ».
+   *
+   * Sans lui, une horde est une COLONNE : ses membres descendent le même gradient du même
+   * champ de flux, calculent donc tous la même tuile suivante, et s'empilent. Constaté à
+   * l'écran — treize goules relevées par la sim, DEUX silhouettes visibles.
+   *
+   * Le mécanisme est celui du gibier (`ecart.ts`, spec faune R9bis), avec ses deux seuils
+   * pour l'hystérésis : sans elle, tout seuil qui commande un mouvement oscille.
+   *
+   * LES VALEURS SONT MESURÉES, pas devinées — balayage sur quatre graines, part des ticks de
+   * marche où douze goules occupent douze tuiles distinctes :
+   *     0,9 / 1,4 →  96 %, 63 %, 93 %, 97 %
+   *     1,1 / 1,7 → 100 %, 68 %, 100 %, 100 %
+   *     1,3 / 2,0 → 100 %, 69 %, 100 %, 100 %
+   * On prend le premier réglage qui SATURE : au-delà, on écarte davantage sans gagner un
+   * tick de plus. La graine 7 plafonne à 68 % dans tous les cas — et c'est très bien : sa
+   * horde se serre dans un GOULOT (la porte de l'enceinte). Une foule qui s'engouffre dans
+   * une porte doit se serrer ; c'est en marchant à découvert qu'elle ne doit plus le faire.
+   */
+  HORDE_SEPARATION: 1.1,
+  HORDE_SEPARATION_COMFORT: 1.7,
   /** Une carcasse de convoi tous les N jours de saison. */
   CONVOY_PERIOD_DAYS: 2,
   CONVOY_GUARDS: 2,
@@ -3547,8 +3694,8 @@ export const CONVOY_LOOT: import('./items').ItemBag = {
 export const SEASON = {
   /** Les sources se contractent : repousse des nœuds ralentie par acte. */
   REGROW_ACT_FACTOR: [1, 1.5, 2],
-  /** La méga-horde du premier crépuscule de la Cendre. */
-  MEGA_HORDE_SIZE: 16,
+  /* (la méga-horde scriptée du premier crépuscule de la Cendre est SUPPRIMÉE — décision ⑲,
+   *  2026-08-21 : la horde est une pente continue, la dernière nuit est naturellement la pire.) */
   /** Le jour où l'évacuation s'ouvre, et son rayon de « sauvetage ». */
   EVAC_DAY: 55,
   EVAC_RADIUS: 6,
@@ -3675,29 +3822,31 @@ export const NIGHT_HUNT = {
   /** Ils naissent à cette distance : hors de vue, mais on les voit VENIR. */
   SPAWN_DIST: 15,
 
-  /* ── LE BASCULEMENT D'ESPÈCE (spec `cendreux.md` R11, décision 2026-07-31) ─────────── */
+  /* ── LE BASCULEMENT D'ESPÈCE : LE FROID DÉCIDE (décision d'Alexis 2026-08-21) ─────────── */
 
   /**
-   * LA PART DE MORTS dans ce que la nuit envoie, par acte. Acte I : que des loups. Acte II :
-   * une nuit sur deux appartient déjà aux Cendreux. Acte III : le vivant a quitté la vallée.
+   * QUI VIENT, CETTE NUIT-LÀ : la part de morts est l'ÉVEIL du sol au point de la proie
+   * (`eveilAt` — voir `CENDREUX.TORPEUR`), plus une table par acte. Sur la nuit de plaine, la
+   * température rend EXACTEMENT l'ancienne table (60/35/10 → 0/0,5/1) ; partout ailleurs, la
+   * géographie parle enfin — le Névé envoie des morts dès l'acte I, et c'est voulu.
    *
-   * C'est ICI que vit la tension croissante, et pas dans la horde — MESURÉ : une saison de
-   * Veillée ne compte que **six nuits**, et la horde ne se tire qu'UNE fois par nuit
-   * (`HORDE_CHANCE_PER_NIGHT`), soit **3 hordes sur toute la partie**. Une échelle à trois
-   * actes ne se sent pas en trois événements. La nuit qui chasse, elle, se tire à la MINUTE
-   * (~18 fois par nuit) et son taux quadruple d'un bout à l'autre : c'est la seule machine
-   * dont la montée soit perceptible, et la seule qui naisse AUTOUR du joueur.
+   * C'est toujours ICI que vit la tension croissante, et pas dans la horde — MESURÉ : une
+   * saison de Veillée ne compte que six nuits, la horde ne se tire qu'une fois par nuit.
+   * La nuit qui chasse se tire à la MINUTE (~18 fois par nuit) : c'est la seule machine dont
+   * la montée soit perceptible, et la seule qui naisse AUTOUR du joueur.
    */
-  UNDEAD_SHARE: [0, 0.5, 1],
+
   /**
-   * Plafond de Cendreux rôdeurs simultanés sur une même proie, par acte — distinct de celui
-   * des loups, et plus haut, parce que les deux dangers ne se jouent pas pareil. Un loup court
-   * PLUS VITE que vous : deux, c'est déjà la mort, et le nombre n'y ajoute rien de lisible. Un
-   * Cendreux avance à 1,3 tuile/s contre 4 : on le distance toujours. Se faire encercler par
-   * eux est une faute de POSITION, pas de vitesse — donc leur danger EST le nombre (R10), et
-   * le borner à deux le rendrait inoffensif. À calibrer en playtest.
+   * Plafond de Cendreux rôdeurs simultanés sur une même proie — EN FIN de saison. Le plafond
+   * du jour J est round(1 + (FIN − 1) × jour/60) : la montée est CONTINUE, jour après jour,
+   * plus une table de trois valeurs (le défaut chiffré d'A13 : ×1,6 mesuré quand le taux
+   * quadruple — « une table de trois valeurs, et une table est plate »).
+   *
+   * Distinct du plafond des loups, et plus haut, parce que les deux dangers ne se jouent pas
+   * pareil : un loup court plus vite que vous, deux c'est déjà la mort ; un Cendreux se
+   * distance toujours, son danger EST le nombre (R10). À calibrer en playtest.
    */
-  UNDEAD_MAX_ALIVE: [0, 3, 5],
+  UNDEAD_MAX_FIN: 5,
 
   /* ── LE RÉVEIL : LA COURONNE (spec `cendreux.md` R18) ─────────────────────────────── */
 
@@ -3872,6 +4021,33 @@ export const MORTS = {
    * lui, est déjà garanti par leur semis de Poisson : ce rayon-ci ne le borne jamais.
    */
   CHARNIER_ECART_LIEU: 32,
+  /**
+   * ═══ LE REPAIRE RESPIRE (décision ⑪, 2026-08-21) ═══
+   *
+   * `advanceDens` repeuplait déjà UN occupant ; le repaire porte désormais un CAP DE SAISON
+   * en rampe — round(1 + (CAP_FIN − 1) × jour/60) résidents — et relâche à sa propre cadence.
+   * C'est une ADRESSE qu'on apprend, qu'on évite, qu'on ASSAINIT (le brûlage suspend la
+   * respiration). Ses résidents ne consomment PAS le plafond global : le cap du lieu est leur
+   * borne (« un plafond compte ce qu'il borne »).
+   */
+  RESPIRE_CAP_FIN: 3,
+  /** Le délai de retour d'un résident de repaire (2 cycles réels — la cadence du lieu,
+   *  distincte du délai des tanières : le repaire RESPIRE, la tanière repeuple). */
+  RESPIRE_TICKS: ticksForCycles(2),
+  /**
+   * ═══ ON BRÛLE LE CHARNIER (décision ⑧, 2026-08-21) — la riposte du joueur ═══
+   *
+   * Un feu LIBRE allumé de JOUR à `BRULE_RAYON` du centre d'un charnier ou d'un repaire le
+   * marque BRÛLÉ (`state.lieuxBrules`) pour `BRULE_DUREE_JOURS` jours de saison : la densité
+   * du champ des morts tombe à `BRULE_FACTEUR` dans `BRULE_SUPPRESSION_RAYON`, et la
+   * respiration du repaire se suspend. La pression devient NÉGOCIABLE : le joueur choisit
+   * quel secteur il assainit, et le paie en bois, en trajet et en jour perdu.
+   * Péremption en JOURS DE SAISON (deux horloges : c'est un effet de saison, pas de cycle).
+   */
+  BRULE_RAYON: 6,
+  BRULE_DUREE_JOURS: 15,
+  BRULE_FACTEUR: 0.25,
+  BRULE_SUPPRESSION_RAYON: 48,
   /**
    * LE PLANCHER DU QUOTA — aucune zone de la vallée sans son charnier.
    *

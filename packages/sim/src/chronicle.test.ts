@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SEASON, WORLD_EVENTS } from './balance'
+import { WORLD_EVENTS } from './balance'
 import { chronicleFromEvents, formatChronicleLine, type ChronicleWeight } from './chronicle'
 import type { SimEvent } from './events'
 import { TICKS_PER_SEASON_DAY } from './time'
@@ -30,7 +30,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     const entries = chronicleFromEvents(
       [
         at(22, { type: 'act_started', act: 2 }),
-        at(26, { type: 'horde_spawned', hordeId: 1, size: 9, targetVillageId: 1, tx: 40, ty: 40 }),
+        at(26, { type: 'horde_spawned', hordeId: 1, size: 9, fireTx: 20, fireTy: 10, villageId: 1, tx: 40, ty: 40 }),
         at(28, { type: 'gift_given', byEntityId: 7, toVillageId: 1, item: 'berries', count: 3 }),
         at(30, { type: 'entity_died', entityId: 7, byEntityId: 0, wasMonster: false }),
       ],
@@ -195,26 +195,25 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
    * l'acte III, et le mot ne pesait plus rien quand la vraie tombait.
    *
    * On balaie TOUTES les tailles que le jeu produit vraiment — les trois hordes d'acte
-   * (`HORDE_SIZE`) plus la méga — au lieu de piquer deux cas : c'est la propriété qu'on
-   * affirme (« seule `MEGA_HORDE_SIZE` porte le nom »), pas un échantillon.
+   * de la RAMPE — au lieu de piquer deux cas : c'est la propriété qu'on affirme (« seuls
+   * les sommets de la pente portent les grands mots »), pas un échantillon.
    */
-  it('« méga-horde » est réservé à SEASON.MEGA_HORDE_SIZE — une horde d’acte III n’y a pas droit', () => {
-    // `''` quand la chronique ne dit RIEN — une petite horde (acte I) n'a pas de ligne du
-    // tout, et c'est le comportement voulu : la chronique n'est pas un journal d'événements.
-    const texteDe = (size: number): string =>
-      chronicleFromEvents([at(30, { type: 'horde_spawned', hordeId: 1, size, targetVillageId: 1, tx: 40, ty: 40 })], SCALE, NAMES)[0]
-        ?.text ?? ''
+  it('les mots du récit se dérivent de la rampe : « déferlé » au sommet, « grande » à mi-pente, rien en bas', () => {
+    // `''` quand la chronique ne dit RIEN — une petite horde de début de saison n'a pas de
+    // ligne du tout, et c'est le comportement voulu : la chronique n'est pas un journal.
+    const texteDe = (size: number, villageId?: number): string =>
+      chronicleFromEvents(
+        [at(30, villageId === undefined
+          ? { type: 'horde_spawned', hordeId: 1, size, fireTx: 20, fireTy: 10, tx: 40, ty: 40 }
+          : { type: 'horde_spawned', hordeId: 1, size, fireTx: 20, fireTy: 10, villageId, tx: 40, ty: 40 })],
+        SCALE, NAMES,
+      )[0]?.text ?? ''
 
-    for (const size of WORLD_EVENTS.HORDE_SIZE) {
-      expect(size, 'une taille de horde d’acte ne doit jamais atteindre le seuil de la méga').toBeLessThan(
-        SEASON.MEGA_HORDE_SIZE,
-      )
-      expect(texteDe(size), `horde de ${size}`).not.toContain('méga-horde')
-    }
-    expect(texteDe(SEASON.MEGA_HORDE_SIZE)).toContain('méga-horde')
-
-    // Et le palier « grande horde » tient toujours, des deux côtés de sa borne.
-    expect(texteDe(WORLD_EVENTS.HORDE_SIZE[1]!)).toContain('grande horde')
-    expect(texteDe(WORLD_EVENTS.HORDE_SIZE[1]! - 1)).not.toContain('grande horde')
+    const grande = (WORLD_EVENTS.HORDE_TAILLE.DEBUT + WORLD_EVENTS.HORDE_TAILLE.FIN) / 2
+    expect(texteDe(WORLD_EVENTS.HORDE_TAILLE.DEBUT, 1)).toBe('') // le bas de la pente se tait
+    expect(texteDe(Math.ceil(grande), 1)).toContain('grande horde')
+    expect(texteDe(WORLD_EVENTS.HORDE_TAILLE.FIN, 1)).toContain('a déferlé')
+    // Et la cible peut être un simple feu de camp (décision ⑬) : le récit le dit sans village.
+    expect(texteDe(WORLD_EVENTS.HORDE_TAILLE.FIN)).toContain('un feu isolé')
   })
 })
