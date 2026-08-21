@@ -259,9 +259,12 @@ describe('viser un feu → fireId (pour ouvrir le modal à E, spec feu-station S
 })
 
 describe('la main décide du clic', () => {
-  const vide = { tx: 5, ty: 5, nodeId: null, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
+  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
   pileId: null, inRange: true }
-  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
+  // `nodeTool` porte la FAMILLE d'outil du nœud visé (lue de `NODE_DEFS[type].tool`) : un
+  // arbre appelle la hache, un filon la pioche, un buisson personne. C'est ce qui permet à la
+  // hache d'être une arme SANS cesser d'abattre (décision d'Alexis 2026-08-20).
+  const surUnArbre = { tx: 5, ty: 5, nodeId: 42, nodeTool: 'axe' as const, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null,
   pileId: null, inRange: true }
   const versLest = { dx: 1, dy: 0 }
 
@@ -291,9 +294,102 @@ describe('la main décide du clic', () => {
     expect(clickToAction(vide, null, main)).toEqual({ type: 'attack', dx: 1, dy: 0 })
   })
 
-  it('un OUTIL en main ne frappe pas : il récolte (la hache n’est pas une arme)', () => {
+  it('un OUTIL en main ne frappe pas : il récolte', () => {
     const main = { held: 'crude_axe' as const, ...versLest }
     expect(clickToAction(surUnArbre, null, main)).toEqual({ type: 'harvest', nodeId: 42 })
+  })
+})
+
+/**
+ * LA HACHE EST UNE ARME — ET ELLE ABAT QUAND MÊME (décision d'Alexis, 2026-08-20).
+ *
+ * Deux décisions actées se contredisaient : `decisions.md:250` (« la hache n'est pas une
+ * arme ») et `:468` (qui fait de `steel_axe` l'arme la plus forte du jeu). Alexis a tranché
+ * pour 468. Restait le défaut que l'arbitrage NE disait pas : `iron_axe` et `steel_axe` sont
+ * AUSSI les paliers haut de `TOOL_TIERS.axe` (rendement ×4 et ×5 contre ×3 pour l'atelier),
+ * et la branche « une arme frappe toujours » les envoyait cogner un arbre. On forgeait le
+ * meilleur outil du palier fer et on perdait la capacité de couper du bois — alors que la
+ * sim, elle, acceptait la coupe (aucune garde « arme en main » dans `case 'harvest'`).
+ *
+ * La règle est donc : une arme frappe toujours — SAUF sur un nœud de sa PROPRE famille.
+ * Ces cas la balaient dans les deux sens, y compris ce qui NE DOIT PAS changer.
+ */
+describe('la hache est une arme, et elle abat quand même', () => {
+  const versLest = { dx: 1, dy: 0 }
+  const vide = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true }
+  const surUnArbre = { ...vide, nodeId: 42, nodeTool: 'axe' as const }
+  const surUnFilon = { ...vide, nodeId: 43, nodeTool: 'pickaxe' as const }
+
+  it('HACHE DE FER sur un ARBRE → elle ABAT (le défaut : elle frappait dans le vide)', () => {
+    expect(clickToAction(surUnArbre, null, { held: 'iron_axe', ...versLest })).toEqual({ type: 'harvest', nodeId: 42 })
+  })
+  it('HACHE D’ACIER sur un ARBRE → elle abat aussi (le palier ×5 était inatteignable)', () => {
+    expect(clickToAction(surUnArbre, null, { held: 'steel_axe', ...versLest })).toEqual({ type: 'harvest', nodeId: 42 })
+  })
+  it('PIOCHE DE FER sur un FILON → elle mine (la même règle, l’autre famille)', () => {
+    expect(clickToAction(surUnFilon, null, { held: 'iron_pickaxe', ...versLest })).toEqual({ type: 'harvest', nodeId: 43 })
+  })
+
+  // ─── ET CE QUE LA RÈGLE NE DOIT PAS EMPORTER AVEC ELLE ───
+  it('HACHE DE FER dans le VIDE → elle FRAPPE : elle reste une arme', () => {
+    expect(clickToAction(vide, null, { held: 'iron_axe', ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+  it('HACHE DE FER sur un FILON → elle FRAPPE : ce n’est pas SA famille', () => {
+    expect(clickToAction(surUnFilon, null, { held: 'iron_axe', ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+  it('LANCE sur un ARBRE → elle FRAPPE : on ne coupe toujours pas du bois avec une lance', () => {
+    expect(clickToAction(surUnArbre, null, { held: 'spear', ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+  it('HACHE DE FER sur un arbre HORS DE PORTÉE → elle frappe, elle ne récolte pas à distance', () => {
+    const loin = { ...surUnArbre, inRange: false }
+    expect(clickToAction(loin, null, { held: 'iron_axe', ...versLest })).toEqual({ type: 'attack', dx: 1, dy: 0 })
+  })
+})
+
+/**
+ * LE MAINTIEN NE DOIT PAS DÉFAIRE CE QUE LE CLIC A DÉCIDÉ.
+ *
+ * `clickToAction` et `holdHarvest` sont les deux bouts du MÊME geste, et ils avaient divergé
+ * en silence sur deux points — chacun retournant une intention en son contraire. Les deux
+ * défauts venaient de la même cause : `input-bindings` arme `holding` INCONDITIONNELLEMENT à
+ * l'appui (`:739`), avant toute branche de sortie, si bien qu'un clic dont `clickToAction`
+ * ne veut rien faire retombe quand même dans le maintien. (Audit UX 2026-08-20, D4-2 et D4-4.)
+ */
+describe('le maintien ne défait pas le clic', () => {
+  const versLest = { dx: 1, dy: 0 }
+  const base = { tx: 5, ty: 5, nodeId: null, nodeTool: null, corpseId: null, entityId: null, entityWounded: false, onFire: false, fireId: null, repairableId: null, plantableId: null, harvestableId: null, pileId: null, inRange: true }
+  const surUnArbre = { ...base, nodeId: 42, nodeTool: 'axe' as const }
+
+  it('ARC en main : le clic est muet — et le MAINTIEN doit l’être aussi', () => {
+    const main = { held: 'bow' as const, ...versLest }
+    // Le clic refusait déjà, exprès (« et surtout PAS il retombe sur la règle du dessous »)…
+    expect(clickToAction(surUnArbre, null, main)).toBeNull()
+    // …mais le maintien, lui, récoltait : le clic gauche, muet en tapant, se mettait à
+    // couper du bois dès qu'on le tenait, arc en main.
+    expect(holdHarvest(surUnArbre, null, 1000, 0, 100, main)).toBeNull()
+  })
+
+  it('ARC DE FORTUNE aussi — la garde porte sur la FAMILLE, pas sur un objet', () => {
+    const main = { held: 'crude_bow' as const, ...versLest }
+    expect(holdHarvest(surUnArbre, null, 1000, 0, 100, main)).toBeNull()
+  })
+
+  it('NOURRITURE + un voisin visé : le clic DONNE — le maintien ne doit pas MANGER le don', () => {
+    const main = { held: 'berries' as const, ...versLest }
+    const surUnVoisin = { ...base, entityId: 7 }
+    expect(clickToAction(surUnVoisin, null, main)).toEqual({ type: 'give', targetEntityId: 7, item: 'berries', count: 1 })
+    // Un doigt qui s'attarde d'un dixième de seconde retournait le geste le plus généreux
+    // du jeu en son contraire, et avalait le vivre destiné au voisin.
+    expect(holdHarvest(surUnVoisin, null, 1000, 0, 100, main)).toBeNull()
+  })
+
+  it('NOURRITURE SANS personne visé : le maintien mange toujours — on ne casse pas le bandage', () => {
+    const main = { held: 'berries' as const, ...versLest }
+    expect(holdHarvest(base, null, 1000, 0, 100, main)).toEqual({ type: 'eat', item: 'berries' })
+  })
+
+  it('MAINS NUES sur un arbre : le maintien récolte toujours', () => {
+    expect(holdHarvest(surUnArbre, null, 1000, 0, 100, { held: null, ...versLest })).toEqual({ type: 'harvest', nodeId: 42 })
   })
 })
 

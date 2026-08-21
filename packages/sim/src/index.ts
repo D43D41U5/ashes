@@ -172,7 +172,11 @@ export { EDGE_N, EDGE_E, EDGE_S, EDGE_O, EDGE_BITS, edgeBits, edgeStep, opposite
  *  construction R2). Exportée pour que le client dessine et teste la MÊME frontière que
  *  `evaluateBuild` : une seconde formule au client, c'est un liseré qui ment d'une tuile. */
 export { chebyshev } from './geometry'
-export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel, recipeState, fellGreenWidth, isCleanFell, flankOfAim, mineGoodFlank, mineTolerance, isCleanMine, forageRichness, forageBounty, maxTierByLevel, effectiveTier } from './economy'
+// `toolTier` est exporté pour le RÉSOLVEUR DE CLIC du client (`aim.ts`) : depuis que la hache
+// est une arme (décision d'Alexis 2026-08-20), il doit savoir si l'objet en main est l'outil de
+// la famille du nœud visé. Il ne RECOPIE pas la règle — il appelle celle-ci, qui reste « LA règle,
+// en un seul endroit » dont `TOOL_YIELD` et `TOOL_RANK` dérivent tous les deux.
+export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel, recipeState, fellGreenWidth, isCleanFell, flankOfAim, mineGoodFlank, mineTolerance, isCleanMine, forageRichness, forageBounty, maxTierByLevel, effectiveTier, toolTier } from './economy'
 export type { ResourceNode, EconomyAction, CraftOrder, RecipeState } from './economy'
 export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame
 // LE DÉFRICHEMENT (`defriche.ts`) : le client applique le MÊME prédicat que la sim — c'est

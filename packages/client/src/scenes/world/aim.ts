@@ -19,7 +19,7 @@
  * Aucune règle de jeu n'est décidée ici — la sim revalide tout (invariant §3).
  * On ne fait qu'éviter d'ÉMETTRE une action qu'on sait perdue d'avance.
  */
-import { COMPONENT_TYPES, EDGE_E, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, STRUCTURE_HP, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, isRangedWeapon, piece, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
+import { COMPONENT_TYPES, EDGE_E, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, NODE_DEFS, STRUCTURE_HP, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, isRangedWeapon, piece, toolTier, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
 import type { Placeable } from '../../hud-state'
 import type { ComponentType, Corpse, PlayerAction, ResourceNode } from '@ashes/sim'
 
@@ -168,6 +168,16 @@ export interface AimTarget {
   corpseId: number | null
   /** Le nœud RÉCOLTABLE (stock > 0) sur la tuile. */
   nodeId: number | null
+  /**
+   * LA FAMILLE D'OUTIL de ce nœud — `'axe'`, `'pickaxe'`, ou `null` (le geste nu : fibre,
+   * baies, champignons, tourbe). Lue du registre (`NODE_DEFS[type].tool`), jamais recopiée.
+   *
+   * Elle existe pour UNE question, depuis que la hache est une arme (décision d'Alexis,
+   * 2026-08-20) : l'objet en main est-il l'outil DE CE NŒUD-CI ? C'est ce qui permet à la
+   * hache de fer d'abattre un arbre au lieu de frapper dans le vide, sans qu'une lance ne
+   * se mette pour autant à couper du bois.
+   */
+  nodeTool: 'axe' | 'pickaxe' | null
   /** L'ENTITÉ (PNJ/joueur) visée sous le curseur, à portée du joueur — la cible d'un DON
    *  ou d'un soin (spec alignement/combat). `null` = personne sous le curseur à portée. */
   entityId: number | null
@@ -293,6 +303,7 @@ export function aimAt(
     ty,
     corpseId: corpse?.id ?? null,
     nodeId: node?.id ?? null,
+    nodeTool: node ? NODE_DEFS[node.type].tool : null,
     entityId,
     entityWounded,
     onFire,
@@ -371,6 +382,25 @@ export function isFood(item: ItemId | null): boolean {
 
 export function isWeapon(item: ItemId | null): boolean {
   return item !== null && WEAPON_DAMAGE[item] !== undefined
+}
+
+/**
+ * L'OBJET EN MAIN EST-IL L'OUTIL DE CE NŒUD-CI ? (décision d'Alexis, 2026-08-20)
+ *
+ * Née d'une contradiction entre deux décisions actées : `decisions.md:250` disait « la hache
+ * n'est pas une arme », `:468` a fait de `steel_axe` l'arme la plus forte du jeu. Alexis a
+ * tranché pour 468 — **la hache EST une arme**. Mais elle reste AUSSI le palier haut de sa
+ * famille d'outil (`TOOL_TIERS.axe`, rendement fer ×4 et acier ×5 contre atelier ×3) : lire
+ * la décision comme « donc elle ne coupe plus » supprimerait les deux derniers barreaux sur
+ * cinq de la progression d'abattage et ferait de `TOOL_TIERS` une table menteuse.
+ *
+ * On ne RECOPIE pas la table : on appelle `toolTier`, « LA règle, en un seul endroit », dont
+ * `TOOL_YIELD` et `TOOL_RANK` dérivent tous les deux. Un outil de la famille rend un palier
+ * autre que `'none'` ; tout le reste (une lance, un arc, une pierre) rend `'none'`.
+ */
+export function estLOutilDuNoeud(item: ItemId | null, family: 'axe' | 'pickaxe' | null): boolean {
+  if (item === null || family === null) return false
+  return toolTier(item, family) !== 'none'
 }
 
 /**
@@ -517,6 +547,29 @@ export function clickToAction(
   // arrive. Une arme en main reste une arme en main, même quand elle ne peut rien de près.
   if (hand && isRangedWeapon(hand.held ?? 'unarmed')) return null
 
+  // L'OUTIL PRIME SUR L'ARME — MAIS SEULEMENT SUR SON PROPRE NŒUD (décision d'Alexis,
+  // 2026-08-20 : « la hache est une arme »).
+  //
+  // La hache de fer et la hache d'acier sont dans `WEAPON_DAMAGE` ET sont les paliers haut
+  // de `TOOL_TIERS.axe`. Sans cette branche, la règle du dessous les envoyait FRAPPER un
+  // arbre : on forgeait le meilleur outil du palier fer et on perdait la capacité de couper
+  // du bois — les rendements ×4 et ×5 devenaient inatteignables, alors que la sim, elle, les
+  // accordait volontiers (`case 'harvest'` n'a aucune garde « arme en main »). C'était un
+  // défaut de TRANSMISSION, pas de règle.
+  //
+  // Ce n'est PAS une exception à « l'objet en main décide du clic » : c'est son complément —
+  // quand l'objet sait faire les deux, la CIBLE tranche. Et les deux autres motifs de
+  // `decisions.md:250` tiennent toujours : une lance ne coupe rien (elle n'appartient à
+  // aucune famille d'outil, `toolTier` rend `'none'`), et le clic de panique ne peut partir
+  // récolter que si le curseur est PILE sur un nœud de sa propre famille — pas sur un buisson
+  // quelconque, pas à côté.
+  //
+  // Rien à câbler en aval : `input-bindings` route sur le TYPE rendu ici, donc un `harvest`
+  // sur un arbre arme la jauge d'abattage (`harvest_charge_start`) exactement comme avec une
+  // hache d'atelier, et sur un filon il verrouille le rocher.
+  if (hand && target.inRange && target.nodeId !== null && estLOutilDuNoeud(hand.held, target.nodeTool))
+    return { type: 'harvest', nodeId: target.nodeId }
+
   // FRAPPER : une arme en main frappe TOUJOURS — on ne coupe pas du bois avec une
   // lance, et surtout on ne veut pas qu'un clic de panique parte récolter un buisson
   // pendant qu'un loup arrive.
@@ -567,10 +620,29 @@ export function holdHarvest(
 ): PlayerAction | null {
   if (placing !== null) return null // en pose (construction ou feu de camp), le maintien ne martèle rien
   if (now - lastSentAt < cooldownMs) return null
+
+  // ⚠ LA PRÉMISSE « une ARME ne passe jamais par ici » ÉTAIT FAUSSE POUR L'ARC, et elle l'a
+  // été en silence. Elle tenait pour une arme de MÊLÉE : `input-bindings` voit partir la
+  // charge à l'appui et n'appelle plus ce résolveur tant qu'elle dure. Mais un ARC ne charge
+  // pas au clic gauche — `clickToAction` rend `null` pour lui, exprès — et `holding` est armé
+  // INCONDITIONNELLEMENT à l'appui (`input-bindings:739`, avant toutes les branches de
+  // sortie). Le maintien retombait donc ici sans garde : le clic gauche, MUET en tapant, se
+  // mettait à RÉCOLTER dès qu'on le tenait. C'est très exactement ce que le refus explicite
+  // de `clickToAction` existe pour empêcher — « et surtout PAS il retombe sur la règle du
+  // dessous ». La garde manquait à l'autre bout du geste. (Audit UX 2026-08-20, D4-2.)
+  if (hand && isRangedWeapon(hand.held ?? 'unarmed')) return null
+
+  // LE MAINTIEN NE MANGE PAS CE QU'ON VIENT DE DONNER. Le clic sur un voisin, nourriture en
+  // main, DONNE (`clickToAction`, spec alignement R2 — l'acte chaud fondamental). Le maintien,
+  // lui, tombait sur `eatHeld` : un doigt qui s'attarde d'un dixième de seconde sur le geste
+  // le plus généreux du jeu le retournait en son contraire, et avalait le vivre destiné au
+  // voisin. On ne re-DONNE pas non plus (un clic donne déjà toute la pile tenue) : viser
+  // quelqu'un, c'est dire « c'est pour toi » — le maintien n'a alors rien à ajouter.
+  // (Audit UX 2026-08-20, D4-4.)
+  if (hand && isFood(hand.held) && target.entityId !== null) return null
+
   // Le MAINTIEN nourrit : c'est le geste que l'utilisateur a demandé pour le bandage
-  // (« sélectionner dans la ceinture, maintenir le clic »), et il vaut pour ce qui se
-  // mange. Une ARME en main, elle, ne passe jamais par ici : `input-bindings` a vu
-  // partir la charge à l'appui, et n'appelle plus ce résolveur tant qu'elle dure.
+  // (« sélectionner dans la ceinture, maintenir le clic »), et il vaut pour ce qui se mange.
   if (hand && isFood(hand.held)) return eatHeld(hand)
   if (!target.inRange || target.nodeId === null) return null
   return { type: 'harvest', nodeId: target.nodeId }
