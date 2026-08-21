@@ -12937,12 +12937,12 @@ const SCENARIOS = {
    * Ce n'est pas un test : c'est un ATELIER DE PRISE DE VUE, et il est ici pour une raison
    * précise. Des captures faites à la main sont mortes le jour où l'art bouge (les arbres ont
    * changé de taille avant-hier) ; un scénario nommé rend la reprise gratuite — on relance et
-   * les six images du menu sont à jour. Ce qu'il fabrique n'entre PAS dans le dépôt tout seul :
+   * les images du menu sont à jour. Ce qu'il fabrique n'entre PAS dans le dépôt tout seul :
    * on regarde, on choisit, et on copie dans `packages/client/src/assets/vitrine/`.
    *
    *   pnpm smoke --scenario vitrine --dev        (--dev obligatoire : TP + heure)
    *
-   * Cinq règles de prise de vue, toutes apprises en ratant la première série :
+   * Sept règles de prise de vue, toutes apprises en ratant une série :
    * ① LE HUD ET LE TAMPON DE BUILD SORTENT DU CADRE — ce sont des surcouches DOM, on les
    *    masque par une feuille injectée plutôt que par une option de jeu qui n'existe pas.
    * ② LE NOM DU LIEU AUSSI. Fouler un lieu le rend CONNU, et `poi-layer` lève alors son nom en
@@ -12957,6 +12957,25 @@ const SCENARIOS = {
    * ⑤ LA CARTE N'A PAS TOUS LES LIEUX (cf. `lieux` : « ABSENT de cette carte »). Chaque prise
    *    déclare plusieurs candidats et on prend le premier présent ; ce qui manque est ANNONCÉ,
    *    jamais silencieusement sauté — sinon on croit avoir six images et on en a quatre.
+   *    ET LA CARTE CANONIQUE EST PLUS PAUVRE QU'ON NE CROIT (relevé du 2026-08-20) : elle ne
+   *    porte QUE DEUX ZONES, `pres_bas` et `cendriere`. Ni alpages, ni glacier, ni karst —
+   *    donc aucun Tarn, aucune Cascade, aucun névé. La montagne du catalogue de POI existe
+   *    dans le code et pas dans CE monde : une prise qui la vise revient bredouille.
+   * ⑥ CE QUI BOUGE SE FIGE — LES DEUX HORLOGES (2026-08-20, avec les prises de scène). Le
+   *    scénario `reveil` l'a payé : « le Cendreux avait MARCHÉ de quatre tuiles » entre deux
+   *    images, parce qu'endormir la boucle de RENDU laisse tourner la SIM. Un déclenchement
+   *    peut durer quatre-vingt-dix secondes sous SwiftShader — à 20 Hz, c'est mille huit
+   *    cents ticks. `pause` PUIS `loop.sleep()`, et on ne relâche le coup qu'après l'image.
+   * ⑦ UN FRONT MÉTÉO DÉRIVE — ON L'ARME, PUIS ON DÉCLENCHE, SANS RIEN ATTENDRE ENTRE LES
+   *    DEUX. Une bande traverse la carte en `TRAVERSEE_TICKS` (24 min de jeu) : MESURÉ,
+   *    1,15 tuile/s. Le premier jet armait l'orage sur le joueur (intensité relevée : 1,00),
+   *    puis attendait un éclair jusqu'à quatre-vingt-dix secondes — cent tuiles de dérive,
+   *    soit une bande de 70 tuiles ENTIÈREMENT sortie du cadre. La photo est revenue avec
+   *    une prairie ensoleillée et un rideau de pluie collé au bord gauche.
+   *    Et l'éclair lui-même a été ABANDONNÉ, chiffres à l'appui : trois frappes la minute,
+   *    tirées n'importe où dans une bande de 70 tuiles sur toute la hauteur de la carte —
+   *    une chance sur vingt qu'une frappe tombe dans le cadre. Ce qui fait l'image d'orage
+   *    ici, c'est le rideau et le ciel, pas le trait.
    */
   async vitrine(page) {
     if (!dev) {
@@ -12984,6 +13003,29 @@ const SCENARIOS = {
           if (o.type !== 'Text') continue
           o.visible = false
           o.setVisible = () => o
+        }
+      }
+      // ET LES BANDEAUX, QUI NE SONT PLUS DANS PHASER (audit UX 2026-08-20, P0.2). L'alerte
+      // et le conseil étaient deux objets Text de la scène UI — la boucle ci-dessus les
+      // attrapait. Passés en DOM pour se peindre AU-DESSUS des panneaux, ils sortent de sa
+      // portée : sans cette ligne, « Un voisin, tout près… » reviendrait gâcher une prise,
+      // exactement comme la fois qui a fait écrire le commentaire du dessus.
+      const bnd = document.querySelector('.bnd')
+      if (bnd) bnd.style.display = 'none'
+      // ET L'ANNEAU DE SURVOL (demande d'Alexis, 2026-08-20 : « je ne veux pas voir de HUD dans
+      // les images »). Ce n'en est pas au sens DOM — c'est un contour peint SUR LE CANVAS
+      // autour de ce que vise le curseur (`interactTarget`, huit copies dans `contourPool`).
+      // Mais c'est bien une AFFORDANCE, au même titre que le nom d'un lieu ou la cime qui
+      // s'efface : quelque chose que le joueur veut et que la photo ne veut pas. Or l'atelier
+      // pose la souris au centre du cadre, donc sur l'avatar — chaque prise repartait avec une
+      // pastille dorée à ses pieds. Même remède que pour les Text : on éteint ET on confisque
+      // `setVisible`, sinon la frame suivante les rallume.
+      const v = sc.view
+      if (v) {
+        v.interactTarget = null
+        for (const c of v.contourPool ?? []) {
+          c.visible = false
+          c.setVisible = () => c
         }
       }
     })
@@ -13555,20 +13597,151 @@ const SCENARIOS = {
       await page.waitForTimeout(1400)
       await heure(p.heure)
       await museler() // APRÈS le TP : fouler le lieu vient de le rendre connu, donc nommé
-      await canopeePleine(page) // et la canopée reste pleine : c'est une photo, pas une partie
+      // LE CADRAGE SE DIT EN TUILES, jamais en zoom (règle R10 : `zoomForFraming`). Le jeu
+      // en montre 20 de haut ; un plan large en montre plus, et le zoom s'en DÉRIVE — écrire
+      // « 1,5 » à la place aurait fait dépendre la planche de la hauteur de la fenêtre.
+      //
+      // ON ÉLARGIT, ON NE RESSERRE JAMAIS. À 13 tuiles, la prise `cendriere-nuit` est revenue
+      // barrée d'un ANNEAU BLANC en plein cadre : quelque chose se peint sur un rayon en
+      // PIXELS et ne suit pas le zoom. Le journal portait déjà l'avertissement (scénario
+      // `village` : « un setZoom plus serré fait planter le renderer ») — voici sa version
+      // visible. Au-delà de 20, en revanche, rien ne casse : le brouillard de guerre ne se
+      // rend pas dans le monde (il ne sert que l'écran de carte), donc élargir ne découvre
+      // aucun voile.
+      await page.evaluate((tuiles) => {
+        const cam = window.__BRAISES__.scene.cameras.main
+        cam.setZoom(cam.height / (tuiles * 16))
+      }, p.tuiles ?? 20)
+      // LA CANOPÉE RESTE PLEINE — sauf pour ce qui vit SOUS elle. `crownAlpha` est une aide de
+      // jeu (voir où l'on marche) et un défaut sur une photo de paysage ; mais sur un VILLAGE
+      // bâti dans les bois, la garder pleine photographie des cimes et cache le sujet
+      // (constaté sur la première `village-bourg` : un bourg entier invisible sous les arbres).
+      // `couvert: false` rend alors la main au jeu — et c'est très exactement ce qu'un joueur
+      // voit quand il y entre.
+      // Posé DANS LES DEUX SENS : l'interrupteur est collant, et une prise à découvert qui
+      // se contenterait de « ne pas l'armer » hériterait de la canopée pleine de la veille.
+      if (p.couvert !== false) await canopeePleine(page)
+      else await page.evaluate(() => window.__BRAISES__.scene.view?.setCanopeePleine?.(false))
       // La souris au centre : le décalage caméra « Foxhole » (framing R11) suit le curseur, et
-      // une souris oubliée dans un coin décadre toute la série.
+      // une souris oubliée dans un coin décadre toute la série. Une prise qui VISE (la horde,
+      // la chasse) la déplace exprès juste après — c'est elle qui oriente le coup ET le cadre.
       await page.mouse.move(640, 360)
       await page.waitForTimeout(900) // les fondus de lumière et la brume s'installent
+
+      /* ── CE QUI SE PASSE JUSTE AVANT LE DÉCLENCHEMENT ─────────────────────────────────
+       * Le ciel, l'arme, le coup armé, et l'endormissement des deux horloges. Tout ce qui
+       * suit est spécifique aux SCÈNES — un paysage traverse ce bloc sans rien exécuter. */
+      if (p.orage || p.neige) frontPose = await poserFront(p.orage ? 'orage' : 'neige', 1, cible.x, cible.y) || frontPose
+      let viseurPx = null
+      if (cible.viser) {
+        // OÙ EST LA CIBLE À L'ÉCRAN — dérivé de la caméra, jamais un décalage en pixels écrit
+        // à la main : le zoom décide, pas nous (patron du scénario `foudre`).
+        viseurPx = await page.evaluate(({ x, y }) => {
+          const cam = window.__BRAISES__.scene.cameras.main
+          const T = 16
+          return { x: (x * T - cam.worldView.x) * cam.zoom, y: (y * T - cam.worldView.y) * cam.zoom }
+        }, cible.viser)
+      }
+      if (p.arme) {
+        // LA FLÈCHE AVANT L'ARC : `debug_grant` met l'objet EN MAIN, donc l'ordre décide de ce
+        // qu'on tient. Un arc sans flèche ne se bande pas.
+        if (p.arme === 'bow') for (let i = 0; i < 6; i++) await agirV({ type: 'debug_grant', item: 'arrow' }, 120)
+        await agirV({ type: 'debug_grant', item: p.arme }, 700)
+      }
+      if (viseurPx) {
+        const vx = Math.max(40, Math.min(1240, Math.round(viseurPx.x)))
+        const vy = Math.max(40, Math.min(680, Math.round(viseurPx.y)))
+        await page.mouse.move(vx, vy)
+        await page.waitForTimeout(600)
+      }
+      if (p.charger) {
+        // LE COUP MAINTENU, pas un clic : ce qui se peint au sol est le télégraphe du VRAI
+        // coup (`pendingStrike`, spec combat) — la zone qui partirait maintenant. À maturité,
+        // la hache montre son tour complet et l'arc sa ligne de tir.
+        await page.mouse.down()
+        await page.waitForTimeout(1600)
+      }
+      // ═══ LE RECADRAGE DE DERNIÈRE SECONDE — POUR CE QUI MARCHE ═══
+      //
+      // Entre la lecture des positions (dans la branche de visée) et le déclenchement, il
+      // s'écoule le TP, l'heure, le muselage, la canopée, l'arme : une dizaine de secondes.
+      // À 1,3 tuile/s, seize goules ont parcouru treize tuiles — et la photo est revenue
+      // VIDE, un joueur seul dans un pré. On les relit donc juste avant de figer.
+      //
+      // Et on vise le PAQUET LE PLUS DENSE, pas le barycentre : seize goules étalées sur la
+      // longueur d'un champ ont leur barycentre dans un trou. On prend la goule qui a le plus
+      // de voisines à huit tuiles, et c'est le centre de CE groupe qu'on cadre.
+      if (p.horde) {
+        const g = await bestioles(['cendreux'])
+        if (g.length === 0) console.error(`      !! les goules ont quitté le rayon avant le déclenchement`)
+        else {
+          let chef = g[0], mieux = -1
+          for (const a of g) {
+            const n = g.filter((b) => (b.x - a.x) ** 2 + (b.y - a.y) ** 2 <= 64).length
+            if (n > mieux) { mieux = n; chef = a }
+          }
+          const paquet = g.filter((b) => (b.x - chef.x) ** 2 + (b.y - chef.y) ** 2 <= 64)
+          const mx = paquet.reduce((a, b) => a + b.x, 0) / paquet.length
+          const my = paquet.reduce((a, b) => a + b.y, 0) / paquet.length
+          console.log(`      recadrage : ${g.length} goules en vue, paquet de ${paquet.length} autour de (${Math.round(mx)}, ${Math.round(my)})`)
+          // SIX TUILES SOUS LE PAQUET : elles occupent le haut du cadre, on leur fait face.
+          await agirV({ type: 'debug_teleport', x: mx, y: my + 6 }, 900)
+          const px = await page.evaluate(({ x, y }) => {
+            const cam = window.__BRAISES__.scene.cameras.main
+            return { x: (x * 16 - cam.worldView.x) * cam.zoom, y: (y * 16 - cam.worldView.y) * cam.zoom }
+          }, { x: mx, y: my })
+          await page.mouse.move(Math.max(40, Math.min(1240, Math.round(px.x))), Math.max(40, Math.min(680, Math.round(px.y))))
+          await page.waitForTimeout(500)
+        }
+      }
+      if (p.horde) {
+        // CE QUE LA PHOTO EMPORTE DE COMBAT, DIT AVANT LE DÉCLENCHEMENT — parce que ça se
+        // VOIT et qu'on ne peut pas l'éteindre. Se poser à six tuiles du paquet met le
+        // photographe dans l'`aggroRange` (5) des plus proches : elles lâchent la descente de
+        // gradient et se retournent sur lui (`cendreux.ts` : `if (!target && hordeStep(…))`).
+        // Elles ne s'entre-tuent JAMAIS — `nearestPrey` écarte tout id de monstre (`monsters.ts`)
+        // — mais leurs coups PEIGNENT : le télégraphe s'affiche pour TOUTE entité qui arme
+        // (`WorldScene`, boucle des `windups` : crème `BLADE` si c'est moi, rouge `THREAT`
+        // sinon), et un coup qui PART claque sa zone en BLANC PUR (`slash`, 0xffffff) pour
+        // tout le monde. Ne pas charger n'éteint que le MIEN — d'où les cônes blancs revenus
+        // sur la première photo du berceau, qui n'étaient ni un bug ni un duel de goules.
+        const combat = await page.evaluate(() => {
+          const s = window.__BRAISES__.scene
+          const goules = (s.view?.monsters ?? []).filter((m) => m.type === 'cendreux')
+          return {
+            armes: (s.windups ?? []).length,
+            surMoi: goules.filter((m) => m.targetId === s.playerId).length,
+            total: goules.length,
+          }
+        })
+        console.log(`      combat dans le cadre : ${combat.armes} coup(s) armé(s),`
+          + ` ${combat.surMoi}/${combat.total} goules retournées sur le photographe`)
+      }
+      if (p.figer) await figerTout()
       const vue = await page.evaluate(() => ({ h: window.__BRAISES__.scene.lastTime?.hourOfCycle ?? -1 }))
       // TIMEOUT LARGE (2026-07-29). Le défaut par défaut est de 30 s, et il est TOMBÉ deux fois
       // sur cette machine — sur deux scènes différentes, donc ce n'est pas la scène : c'est
       // SwiftShader (aucun GPU ici) qui met parfois plus de trente secondes à rendre une frame
       // dense pour la relecture. Une série de neuf prises qui meurt à la deuxième coûte huit
       // minutes ; quatre-vingt-dix secondes d'attente ne coûtent rien quand tout va bien.
-      await page.screenshot({ path: `${OUT}/vitrine-${p.nom}.jpg`, type: 'jpeg', quality: 82, timeout: 90000 })
-      console.log(`   ✓ ${p.nom.padEnd(11)} ${String(cible.kind).padEnd(15)} « ${cible.name} » — visée ${p.heure} h, PRISE À ${vue.h.toFixed(1)} h — ${p.quoi}`)
+      //
+      // ET ON ATTRAPE LA CHUTE. Le flake SwiftShader est une propriété de cette machine, pas
+      // du code : quand il tombe, il ne doit emporter QUE sa prise. Une planche de quinze vues
+      // où la deuxième mort tue les treize suivantes, c'est vingt minutes rejouées pour rien —
+      // et c'est exactement ce qui est arrivé, deux fois, avant cette garde.
+      try {
+        await page.screenshot({ path: `${OUT}/vitrine-${p.nom}.jpg`, type: 'jpeg', quality: 82, timeout: 180000 })
+      } catch (e) {
+        console.error(`   ✗ ${p.nom.padEnd(18)} le déclenchement a expiré (${e.name}) — prise PERDUE, la planche continue`)
+        if (p.charger) { await degeler().catch(() => {}); await page.mouse.up().catch(() => {}) }
+        continue
+      }
+      console.log(`   ✓ ${p.nom.padEnd(18)} ${String(cible.kind).padEnd(12)} (${Math.round(cible.x)}, ${Math.round(cible.y)})`
+        + ` « ${cible.name} » — visée ${p.heure} h, PRISE À ${vue.h.toFixed(1)} h — ${p.quoi}`)
       prises++
+      // ON RELÂCHE LE COUP APRÈS L'IMAGE, jamais avant : lâcher le clic FAIT PARTIR le coup,
+      // et le coup parti efface son propre télégraphe.
+      if (p.charger) { await degeler(); await page.mouse.up(); await page.waitForTimeout(400) }
     }
     console.log(`\n${prises}/${planche.length} prises → ${OUT}/vitrine-*.jpg`)
 
