@@ -189,9 +189,9 @@ export class CarreVillage {
   }
 
   update(e: EtatCarre): void {
-    // Pas de marteau, ou pas de village : il n'y a pas de domaine à montrer. Le monde
-    // reste au clair — la lecture est juste, « aucun Feu ne tient ce sol ».
-    if (!e.marteau || e.village === undefined) {
+    // Pas de village : il n'y a pas de domaine à montrer. Le monde reste au clair — la
+    // lecture est juste, « aucun Feu ne tient ce sol ».
+    if (e.village === undefined) {
       this.tapis.setVisible(false)
       this.trait.setVisible(false)
       this.dehors.setVisible(false)
@@ -201,7 +201,34 @@ export class CarreVillage {
     }
     const v = e.village
     const b = bornesDuCarre(v)
+
+    /**
+     * LE LIEU AVANT LE SEUIL (décision d'Alexis, 2026-08-20, question ⑦).
+     *
+     * La question était double : entrer dans un bâtiment doit-il être un MOMENT, et le
+     * village doit-il se lire comme un LIEU de loin ? Les deux faces d'une même chose — ce
+     * qu'on voit venir, et ce qui donne envie de rentrer. Mesuré : franchir le mur de la
+     * bâtisse qui contient son propre Feu change **661 pixels, soit 0,065 % du cadre** ; et
+     * le damier du sol autour a une amplitude de 87 points de luminance — un signal bien plus
+     * fort que l'unique bâtisse (0,63 % du cadre). Le village ne se lisait pas comme un lieu :
+     * il se lisait comme un peu de bâti posé sur un damier.
+     *
+     * L'arbitrage a été « le lieu avant le seuil » : plutôt que de mettre en scène le
+     * franchissement, on rend le DOMAINE lisible en permanence. La couche existait déjà,
+     * aboutie — il ne manquait que la condition d'affichage.
+     *
+     * SEUL LE TRAIT S'OUVRE. Le TAPIS reste une affordance de pose (il change avec la pièce
+     * armée : permanent, il mentirait sur ce qu'on est en train de faire). Le DEHORS reste
+     * armé lui aussi — assombrir tout le monde hors du village en MULTIPLY, à toute heure,
+     * ne rendrait pas le lieu plus lisible : ça éteindrait le reste de la vallée.
+     */
     this.peindreTrait(v, b)
+    if (!e.marteau) {
+      this.dehors.setVisible(false)
+      this.tapis.setVisible(false)
+      this.sigTapis = -1
+      return
+    }
     this.peindreDehors(b, e.camera)
     this.peindreTapis(e, v, b)
   }

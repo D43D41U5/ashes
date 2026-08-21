@@ -32,7 +32,39 @@ const SUN_NORTH = 1600 // décalage vers le haut de l'écran (nord) : la source 
 const GOLDEN = 0xffb060 // soleil rasant, chaud
 const WHITE = 0xfff2e6 // plein midi
 const MOON_COLOR = 0xaec2e6 // clair de lune : bleu pâle et froid
-const MOON_INTENSITY = 0.32 // BEAUCOUP plus faible que le soleil (~1.2) — un voile froid, pas un projecteur
+const SUN_INTENSITY = 1.2 // le plein midi
+const MOON_INTENSITY = 0.32 // un voile froid, pas un projecteur
+/**
+ * LA LUNE NE SE LÈVE QU'UNE FOIS LE SOLEIL COUCHÉ — et cette borne a manqué longtemps.
+ *
+ * Le commentaire d'origine disait la lune « BEAUCOUP plus faible que le soleil (~1.2) ». Il
+ * comparait `MOON_INTENSITY` au COEFFICIENT du soleil, pas à sa VALEUR : le soleil vaut
+ * `day × 1.2` et décroît vers zéro, la lune valait `(1 − day) × 0.32` et CROISSAIT. Les deux
+ * se croisaient donc fatalement — à `daylight = 0,2105`, c'est-à-dire de 19 h 56 à 6 h 22.
+ *
+ * Ce que ça faisait au joueur, mesuré sur les captures : à 20 h, sa propre silhouette tombait
+ * SOUS son sol (contraste avatar/sol 1,20:1, contre 2,60:1 à midi et 1,54:1 à minuit), et la
+ * polarité s'inversait — l'avatar passait de plus clair que le sol à plus sombre. À l'heure
+ * exacte où le jeu dit « la nuit approche, rentre au feu », on se perdait soi-même dans le
+ * décor. La cause : deux chaînes d'éclairage qui n'étaient pas à la même heure, et deux
+ * teintes opposées (ambre rasant contre bleu lunaire) qui s'annulaient en gris neutre.
+ *
+ * On donne donc à la lune la fenêtre de nuit que le voile du sol a déjà : elle reste ÉTEINTE
+ * tant qu'il fait encore jour, puis monte à pleine force quand le jour est parti.
+ * (Audit UX 2026-08-20, P1 / L8.)
+ */
+const MOON_DAWN = 0.15 // au-dessus de ce `daylight`, la lune est éteinte
+
+/**
+ * Les deux intensités du ciel à un facteur de jour donné — PUR, donc prouvé par un test.
+ * Extrait de la classe exprès : c'est un rapport entre deux nombres, et un rapport se
+ * vérifie sur tout son domaine, pas à trois heures choisies.
+ */
+export function intensitesDuCiel(day: number): { soleil: number; lune: number } {
+  const d = Math.max(0, Math.min(1, day))
+  const nuit = Math.max(0, (MOON_DAWN - d) / MOON_DAWN) // 0 en plein jour, 1 à minuit
+  return { soleil: d * SUN_INTENSITY, lune: nuit * MOON_INTENSITY }
+}
 const AMBIENT_DAY = 0xb6ad9c // ambiante multiplicative de jour (gris chaud)
 const AMBIENT_NIGHT = 0x33415f // ambiante de nuit BLEUTÉE (relevée) : les arbres ne tombent plus au noir
 const FEU_MAX = 24 // borne dure de lumières de Feu (le manager plafonne à maxLights=40)
@@ -97,14 +129,14 @@ export class DynamicLighting {
     const dir = sunDirection(hour) // x est+ (aube) → ouest (couchant) : le balayage droite→gauche
     this.sun.x = cx + dir.x * SUN_FAR
     this.sun.y = cy - SUN_NORTH // EN HAUT : la source reste au nord de la vue (haut de l'écran)
-    this.sun.intensity = day * 1.2
+    this.sun.intensity = intensitesDuCiel(day).soleil
     setLightColor(this.sun, lerpColor(GOLDEN, WHITE, day))
 
     // LA LUNE — un voile FROID venu d'EN HAUT, bien plus faible que le soleil, qui ne vit que la
     // nuit (∝ 1-day). Elle donne aux houppiers un léger relief bleuté au lieu d'un aplat noir.
     this.moon.x = cx
     this.moon.y = cy - SUN_NORTH
-    this.moon.intensity = (1 - day) * MOON_INTENSITY
+    this.moon.intensity = intensitesDuCiel(day).lune
 
     // LES FEUX — un point light chaud par structure `fire` (réconcilié par id).
     const seen = new Set<number>()

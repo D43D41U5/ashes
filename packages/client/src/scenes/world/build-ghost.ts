@@ -16,7 +16,7 @@
  * invariant §3). Un fantôme vert n'est PAS une promesse — c'est « rien ici ne
  * l'interdit *de ce que le client peut voir* ».
  */
-import { COMPONENT_TYPES, doorPairs, EDGE_N, edgeBarrierAt, floorAt, fullTileAt, piece, recognizeFunctions, roofAt, type RecognizedFunction, type Structure } from '@ashes/sim'
+import { COMPONENT_TYPES, doorPairs, EDGE_N, edgeBarrierAt, floorAt, fullTileAt, piece, recognizeFunctions, roofAt, WALL_MATERIAL_ORDER, type RecognizedFunction, type Structure } from '@ashes/sim'
 import { tileFeetAnchor } from '../../render/framing'
 import { TILE_PX } from '../../render/framing'
 import { EDGE_ORIGIN_Y, MUR_HT } from '../../render/bati-art'
@@ -35,9 +35,45 @@ import { FONT } from '../ui/typography'
  * est ENCRE + 2 ACCENTS (braise, alerte) et n'a pas de vert. Le vert de la pose est un
  * code de FANTÔME, pas une couleur d'interface.
  */
+/** Le nom que le joueur lit — la table du menu du marteau dit la même chose. */
+const MATERIAU_LABEL: Record<string, string> = { wood: 'bois', stone: 'pierre', metal: 'métal' }
+
+/**
+ * LE PALIER QU'UNE AMÉLIORATION DONNERA — ou `undefined` si le mur est déjà au maximum.
+ *
+ * Miroir EXACT de la sim (`upgrade_structure` : « palier de matériau suivant », R8) : même
+ * table, même pas de un, même défaut à `wood` quand le matériau n'est pas écrit. Il est ici
+ * pour que le fantôme dise la vérité en DEUX endroits à la fois — la couleur (améliorable
+ * n'est pas « occupé ») et l'étiquette (ce qu'on obtiendra, qui n'est PAS l'onglet armé).
+ * Extrait de la classe pour être prouvé sur tout son domaine, y compris ses bords.
+ */
+export function prochainPalier(material: string | undefined): string | undefined {
+  const i = WALL_MATERIAL_ORDER.indexOf((material ?? 'wood') as (typeof WALL_MATERIAL_ORDER)[number])
+  if (i < 0) return undefined // un matériau inconnu : on ne promet rien
+  return WALL_MATERIAL_ORDER[i + 1]
+}
+
 export const OK_TINT = 0x9adf7a
 export const BAD_TINT = 0xd9614f
-const GHOST_ALPHA = 0.55
+/**
+ * DEUX OPACITÉS, PARCE QUE LA COULEUR SEULE NE SUFFIT PAS.
+ *
+ * Le fantôme disait oui/non par la TEINTE seule — un vert et un rouge. Mesuré par simulation
+ * Viénot–Brettel–Mollon puis ΔE2000 : l'écart tombe de **60,7 en vision normale à 17,0 en
+ * deutéranopie (−72 %)**, et à 30,4 en protanopie. Les deux teintes deviennent `#cece7d` et
+ * `#929248` : deux olives. C'était le seul point du jeu où le joueur reçoit un refus SANS
+ * second canal — et aucun des 235 constats de l'audit précédent n'avait regardé la couleur
+ * sous cet angle. (Audit UX 2026-08-20, D10-11.)
+ *
+ * On ajoute donc un canal que le daltonisme n'atteint pas : l'OPACITÉ. Le refus s'efface, la
+ * pose possible s'affirme — « ce n'est pas vraiment là » se lit sans nommer une couleur. Le
+ * garde (`build-ghost.test`) mesure l'écart APRÈS simulation, pour qu'il ne puisse pas
+ * redevenir une affaire de teinte.
+ */
+export const GHOST_ALPHA_OK = 0.68
+export const GHOST_ALPHA_BAD = 0.26
+/** L'opacité de départ (avant qu'on sache si la pose passe) : celle du refus, la plus sobre. */
+const GHOST_ALPHA = GHOST_ALPHA_BAD
 
 /**
  * LE FANTÔME NE SE TRIE PAS DANS LE MONDE — il se pose PAR-DESSUS (R23/R25).
@@ -109,8 +145,24 @@ export class BuildGhost {
     // (relevé à la revue du calage des toits, 2026-08-10). Trois lectures de couche, toutes
     // importées de /sim — jamais recopiées.
     const couche = piece(placing).occupe
+    /**
+     * UNE ARÊTE DÉJÀ MURÉE N'EST PAS « OCCUPÉE » — ELLE EST AMÉLIORABLE (audit UX, D5-R1).
+     *
+     * Le fantôme rougissait dès qu'une barrière existait sur l'arête visée. Mais le résolveur
+     * de clic, lui, fait de cette même barrière un `upgrade_structure` — une action LÉGALE, et
+     * qui COÛTE. Le joueur voyait donc rouge, cliquait, et son inventaire se vidait : le
+     * fantôme annonçait l'impossible et le clic faisait le contraire. C'est exactement le
+     * défaut du carré de village (« le fantôme restait VERT là où la sim refusait »), pris à
+     * l'envers — et il est pire dans ce sens-là, parce qu'il fait PAYER une surprise.
+     *
+     * Sauf au dernier palier : là, la sim refuse pour de bon (« palier maximal »), et le rouge
+     * redevient la vérité.
+     */
+    const barriere = surArete ? edgeBarrierAt(structures, tx, ty, edge) : undefined
+    const monte = barriere !== undefined ? prochainPalier(barriere.material) : undefined
+    const ameliorable = monte !== undefined
     const occupied = surArete
-      ? edgeBarrierAt(structures, tx, ty, edge) !== undefined
+      ? barriere !== undefined && !ameliorable
       : couche === 'toit'
         ? roofAt(structures, tx, ty) !== undefined
         : couche === 'sol'
@@ -138,12 +190,30 @@ export class BuildGhost {
       .setPosition(a.px, a.py - lift - leve)
       .setDepth(GHOST_DEPTH)
       .setTint(inRange && !occupied ? OK_TINT : BAD_TINT)
+      // Le SECOND canal, celui qui survit au daltonisme : le refus est plus effacé.
+      .setAlpha(inRange && !occupied ? GHOST_ALPHA_OK : GHOST_ALPHA_BAD)
       .setVisible(true)
 
     // R22 — la PRÉDICTION d'émergence : ce que ce composant ferait naître ou monter.
     const pred = COMPONENT_SET.has(placing) && !occupied ? predictFunction(structures, placing, tx, ty) : null
+    /**
+     * ET CE QU'UNE AMÉLIORATION DONNERA VRAIMENT (audit UX, D5-R1, seconde moitié).
+     *
+     * Le menu du marteau a des onglets de matériau, et le joueur en déduit qu'il CHOISIT la
+     * cible. La sim, elle, monte d'UN palier — c'est sa spec (R8, « palier de matériau
+     * SUIVANT : bois→pierre→métal »), et c'est une progression, pas un bug. Onglet MÉTAL sur
+     * un mur de bois : on obtient de la PIERRE, et rien ne le disait.
+     *
+     * On le dit donc là où le joueur regarde déjà — au-dessus du fantôme, dans le canal qui
+     * annonce déjà ce qu'une pose fera naître. On ne touche pas à la règle : on cesse de
+     * laisser croire autre chose.
+     */
     if (pred) {
       this.predict.setText(`→ ${FUNCTION_LABEL[pred.functionId] ?? pred.functionId} N${pred.tier}`)
+        .setPosition(a.px, a.py - lift - TILE_PX)
+        .setVisible(true)
+    } else if (monte !== undefined) {
+      this.predict.setText(`→ ${MATERIAU_LABEL[monte] ?? monte}`)
         .setPosition(a.px, a.py - lift - TILE_PX)
         .setVisible(true)
     } else {
