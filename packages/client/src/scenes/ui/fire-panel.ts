@@ -18,6 +18,8 @@ import { BALANCE, COOK_SLOT, stackSize, type Inventory, type ItemId, type Player
 import type Phaser from 'phaser'
 import type { FireView } from '../../hud-state'
 import { itemIconKey } from '../../render/item-art'
+import { keymapEffectif } from '../world/keymap-perso'
+import { libelleTouches } from '../world/touches'
 import { createInventoryGrid } from './inventory-grid'
 
 type FireZone = 'fuel' | 'cookIn' | 'cookOut'
@@ -217,8 +219,12 @@ export function createFirePanel(
 
   btn.addEventListener('click', () => {
     if (!view?.action) return
-    if (view.action.kind === 'found') hooks.queue({ type: 'found_village', structureId: view.structureId })
-    else hooks.queue({ type: 'upgrade_fire' })
+    if (view.action.kind === 'found') {
+      // ON N'ENVOIE PAS CE QUI SERA REFUSÉ. Le bouton reste VISIBLE et grisé — il enseigne la
+      // règle — mais il ne part plus se faire rejeter. (Audit UX 2026-08-20, D3-2.)
+      if (view.action.empeche !== null) return
+      hooks.queue({ type: 'found_village', structureId: view.structureId })
+    } else hooks.queue({ type: 'upgrade_fire' })
   })
 
   const paint = (c: Cell, item: ItemId | null, count: number, fill: number, fillColor: string): void => {
@@ -267,8 +273,14 @@ export function createFirePanel(
 
       if (view.action) {
         btn.style.display = ''
-        btn.textContent = view.action.label
-        btn.classList.toggle('fpn-btn-off', view.action.kind === 'upgrade' && !view.action.affordable)
+        // La règle se LIT sur le bouton, avant le clic : « Trop proche d'un autre Feu (il en
+        // faut 32 tuiles) » plutôt qu'un refus après coup. Même patron que le coût du palier.
+        const empeche = view.action.kind === 'found' ? view.action.empeche : null
+        btn.textContent = empeche ?? view.action.label
+        btn.classList.toggle(
+          'fpn-btn-off',
+          empeche !== null || (view.action.kind === 'upgrade' && !view.action.affordable),
+        )
       } else {
         btn.style.display = 'none'
       }
@@ -311,7 +323,7 @@ function markup(): string {
     .fpn-btn:hover{background:#31281a;}
     .fpn-btn-off{border-top-color:#4a453a;color:#8b8474;}
   </style>
-  <div class="fpn-close">E — FERMER</div>
+  <div class="fpn-close">${libelleTouches(keymapEffectif().forage)} — FERMER</div>
   <div class="fpn-card">
     <div class="fpn-h"><span class="fpn-title">FEU DE CAMP</span><span class="fpn-state"></span></div>
     <div class="fpn-flow">

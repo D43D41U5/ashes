@@ -120,6 +120,31 @@ export function foundableFireAt(
   return null
 }
 
+/**
+ * POURQUOI CE FEU NE PEUT PAS DEVENIR UN FOYER — ou `null` s'il le peut.
+ *
+ * Le client PROMETTAIT sans savoir. La fenêtre « Fonder un Foyer ici » s'affichait dès qu'on
+ * avait un feu libre sous la main, alors que la sim refuse à moins de **32 tuiles** (Chebyshev)
+ * d'un autre Feu — `FIRE_MIN_DISTANCE`, c'est-à-dire deux fois le rayon maximal, pour que deux
+ * carrés de village ne se chevauchent jamais (fondation R1). Le joueur cliquait, la sim
+ * refusait, et rien n'avait annoncé la règle. (Audit UX 2026-08-20, D3-2.)
+ *
+ * On MIROITE la règle plutôt que de la deviner : même distance, même métrique, même source.
+ * La sim revalide de toute façon (invariant §3) — ici on ne fait qu'éviter de promettre.
+ *
+ * ⚠ CE MIROIR EST PARTIEL, ET C'EST DIT : la sim refuse AUSSI si un POI-spécifique tombe dans
+ * le carré (`poiSpecificInSquare`), ce que le client ne sait pas calculer sans la carte des
+ * zones. Ce refus-là reste annoncé après coup, par le bandeau — qui, lui, se voit maintenant.
+ */
+export function empechementDeFonder(
+  villages: readonly { fireTx: number; fireTy: number }[],
+  feu: { tx: number; ty: number },
+): string | null {
+  const min = BALANCE.FIRE_MIN_DISTANCE
+  const proche = villages.some((v) => Math.max(Math.abs(v.fireTx - feu.tx), Math.abs(v.fireTy - feu.ty)) < min)
+  return proche ? `Trop proche d’un autre Feu (il en faut ${min} tuiles)` : null
+}
+
 export function publishFoundableFire(
   registry: Registry,
   player: { x: number; y: number },
@@ -289,7 +314,10 @@ export function publishOpenFire(
   // Le bouton contextuel (S19), même logique de disponibilité que les fenêtres flottantes retirées.
   let action: FireView['action'] = null
   if (foundableFireAt(player, structures, villages, playerId) === of.structureId) {
-    action = { kind: 'found', label: 'Fonder un Foyer ici' }
+    // On MONTRE le bouton même empêché — et on dit pourquoi. Le patron est celui d'`upgrade`
+    // juste en dessous : « grise le bouton et fait APPRENDRE le coût, on le voit avant de
+    // pouvoir payer ». Le faire disparaître serait un refus muet de plus.
+    action = { kind: 'found', label: 'Fonder un Foyer ici', empeche: empechementDeFonder(villages, s) }
   } else {
     const up = upgradableFireAt(player, villages, playerId)
     if (up && s.villageId === up.villageId) {
@@ -404,16 +432,67 @@ export function publishChronicle(
   setHud(registry, 'chronicle', chronicleFromEvents(eventLog, calendarScale, names))
 }
 
-/** Message d'erreur éphémère (action rejetée, hôte perdu, protocole…). */
+/**
+ * L'ALERTE — refus, danger, fait pressant. **UNE FILE**, comme les récoltes.
+ *
+ * Elle écrivait une VALEUR, et huit émetteurs se la partageaient : deux faits dans la même
+ * fenêtre de 2,5 s, et le second effaçait le premier avant lecture. Le départ de l'Arche
+ * pouvait disparaître derrière un refus de pose. (Audit UX 2026-08-20, P0.2.)
+ *
+ * Le loquet `error` reste écrit — pour les huit sondes du banc qui lisent la DERNIÈRE raison
+ * de refus. Une file drainée ne peut pas les servir ; voir `hud-state`, qui le documente.
+ */
 export function publishError(registry: Registry, reason: string, at: number): void {
-  setHud(registry, 'error', { reason, at })
+  const file = getHud(registry, 'alertes') ?? []
+  file.push(reason)
+  setHud(registry, 'alertes', file)
+  setHud(registry, 'error', { reason, at }) // le loquet de diagnostic, pas l'affichage
 }
+
+/** Côté UIScene : récupère et vide la file des alertes. */
+export function drainAlertes(registry: Registry): string[] {
+  const file = getHud(registry, 'alertes') ?? []
+  if (file.length > 0) setHud(registry, 'alertes', [])
+  return file
+}
+
+/** Côté UIScene : récupère et vide la file des conseils. */
+export function drainConseils(registry: Registry): string[] {
+  const file = getHud(registry, 'conseils') ?? []
+  if (file.length > 0) setHud(registry, 'conseils', [])
+  return file
+}
+
+/**
+ * COMBIEN DE TEMPS UN CONSEIL OCCUPE LE CANAL.
+ *
+ * ⚠ CES DEUX NOMBRES NE PILOTENT PLUS L'ÉMETTEUR. Depuis que le canal est une FILE
+ * (`conseils`), plus rien ne se perd : `WorldScene` n'a plus à retenir sa langue le temps
+ * qu'un conseil finisse, et sa garde de cadence a été retirée. Ils vivent encore ici parce
+ * que le bandeau les lit pour son fondu — et parce qu'un test de l'onboarding s'en sert pour
+ * rejouer une vraie chronologie.
+ *
+ *
+ * `UIScene` s'en sert pour PEINDRE (pleine encre pendant `HINT_HOLD_MS`, puis fondu sur
+ * `HINT_FADE_MS`) ; `WorldScene` s'en sert pour ne PAS écraser un conseil encore lisible.
+ * Les deux nombres vivaient côté affichage seulement, si bien que l'émetteur ignorait la
+ * durée de ce qu'il écrasait : à la reprise d'une vallée, cinq conseils partaient en cinq
+ * frames, seul le dernier tenait l'écran, et les quatre autres étaient marqués « montrés »
+ * pour toujours. (Audit UX 2026-08-20, D5-1.)
+ */
+export const HINT_HOLD_MS = 6000
+export const HINT_FADE_MS = 3000
+/** Le canal est LIBRE quand le conseil précédent a fini de s'effacer. */
+export const HINT_CHANNEL_MS = HINT_HOLD_MS + HINT_FADE_MS
 
 /** LE CONSEIL (audit UI/UX P2-7) : le canal d'apprentissage, séparé de l'alerte rouge.
  *  On y enseigne un verbe (récolter, parer, donner, nourrir le Feu) sans crier au refus.
  *  Encre neutre, tenue longue côté UIScene — le patron `publishError` mais un autre ton. */
 export function publishHint(registry: Registry, text: string, at: number): void {
-  setHud(registry, 'hint', { text, at })
+  const file = getHud(registry, 'conseils') ?? []
+  file.push(text)
+  setHud(registry, 'conseils', file)
+  setHud(registry, 'hint', { text, at }) // loquet de diagnostic, même raison que `error`
 }
 
 /** LE JOUEUR EST TOMBÉ (audit UI/UX P1) : un one-shot horodaté que UIScene lit pour

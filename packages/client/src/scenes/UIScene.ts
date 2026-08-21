@@ -7,7 +7,7 @@
 import { formatChronicleLine, zoneAt, type VillageTask, type WorldMap } from '@ashes/sim'
 import Phaser from 'phaser'
 import { getHud, setHud } from '../hud-state'
-import { drainCrafts, drainLevelUps, drainPickups, queueAction } from './world/hud-bridge'
+import { drainAlertes, drainConseils, drainCrafts, drainLevelUps, drainPickups, queueAction } from './world/hud-bridge'
 import { TILE_PX } from '../render/framing'
 import { createHudCore, type HudCore } from './ui/hud-core'
 import { createFatalPanel, type FatalPanel } from './ui/fatal'
@@ -16,7 +16,8 @@ import { createBuildMenu, type BuildMenu } from './ui/build-menu'
 import { createCraftQueueView, type CraftQueueView } from './ui/craft-queue'
 import { createFirePanel, type FirePanel } from './ui/fire-panel'
 import { createRefugeePrompt, type RefugeePrompt } from './ui/refugee-prompt'
-import { createDeathVeil, DEATH_VEIL_MS, type DeathVeil } from './ui/death-veil'
+import { createBandeaux, type Bandeaux } from './ui/bandeaux'
+import { createDeathVeil, DEATH_VEIL_FILET_MS, type DeathVeil } from './ui/death-veil'
 import { createSeasonVeil, type SeasonVeil } from './ui/season-veil'
 import { createPauseMenu, type PauseMenu } from './ui/pause-menu'
 import { mountHud, type HudDom } from './ui/hud-dom'
@@ -77,10 +78,8 @@ const MAP_CLICK_SLOP_PX = 5
 
 export class UIScene extends Phaser.Scene {
   private alarmOverlay!: Phaser.GameObjects.Rectangle
-  private errorText!: Phaser.GameObjects.Text
-  /** LE CONSEIL (audit UI/UX P2-7) : le canal d'apprentissage, encre neutre, posé en
-   *  haut — distinct de la bulle rouge d'erreur, en bas. On APPREND un verbe ici. */
-  private hintText!: Phaser.GameObjects.Text
+  /** LES DEUX BANDEAUX, en DOM et en FILE, au-dessus des panneaux (P0.2). */
+  private bandeaux!: Bandeaux
   /** LE TRAQUEUR DE DÉPOUILLE (mort-suite 2) : la flèche de bord vers le sac tombé + son
    *  compte à rebours, rendus dans le HUD NON zoomé (calcul dans WorldScene). */
   private corpseArrow!: Phaser.GameObjects.Image
@@ -202,6 +201,7 @@ export class UIScene extends Phaser.Scene {
       this.hudRoot.destroy()
       this.vignette?.destroy() // elle vit à la racine (hors planche) : à retirer à la main
       this.deathVeil?.destroy() // il vit à la racine (hors planche) : à retirer à la main
+      this.bandeaux?.destroy() // idem — il monte sur `document.body`, pas sur la scène
       this.seasonVeil?.destroy() // idem : monté sur document.body
       this.pauseMenu?.destroy() // idem
     })
@@ -243,6 +243,7 @@ export class UIScene extends Phaser.Scene {
     // Le voile de mort (P1) : monté à la racine (vrai plein écran, hors planche
     // scalée), il ne fait que se lever quand le joueur tombe. WorldScene pose
     // `deathMoment` (one-shot horodaté).
+    this.bandeaux = createBandeaux()
     this.deathVeil = createDeathVeil()
     // La stèle de fin de saison (finition GATE 1) : SŒUR du voile de mort, terminale.
     // WorldScene pose `seasonVerdicts` au jour 61 (sa non-nullité = fin de saison) ; on la lève une fois.
@@ -275,22 +276,11 @@ export class UIScene extends Phaser.Scene {
       .container(this.scale.width / 2, this.scale.height / 2, [panelBg, panelTitle, this.journalText])
       .setVisible(false)
 
-    // Les erreurs de JEU (« trop tôt », « hors de portée ») : une bulle de 2,5 s, sous
-    // l'écran de chargement — pendant l'attente, rien ne peut d'ailleurs en produire
-    // (l'input est coupé, les snapshots ne tournent pas). Les erreurs qui TUENT la
-    // partie, elles, ne passent pas par ici : voir l'écran de rupture, juste en dessous.
-    this.errorText = this.add
-      .text(this.scale.width / 2, this.scale.height - 110, '', { ...style, color: '#ff7a6b' })
-      .setOrigin(0.5, 0)
-      .setVisible(false) // un texte vide « visible » reste un objet du HUD à l'écran
-
-    // LE CONSEIL (audit UI/UX P2-7) : posé EN HAUT, encre chaude neutre — l'alerte rouge
-    // vit en bas, le refus crie ; le conseil, lui, enseigne. Deux places, deux tons : on
-    // ne confond plus « tu as raté » avec « voilà comment on joue ».
-    this.hintText = this.add
-      .text(this.scale.width / 2, 72, '', { ...style, color: '#e8c66a' })
-      .setOrigin(0.5, 0)
-      .setVisible(false)
+    // L'ALERTE ET LE CONSEIL NE SONT PLUS ICI. Ils étaient deux objets Phaser posés sur le
+    // canvas — l'un en bas (le refus crie), l'autre en haut (le conseil enseigne). Deux
+    // places, deux tons : cette grammaire-là est bonne, et le module DOM la garde. Ce qui
+    // ne l'était pas : peints sur le canvas, ils passaient SOUS les écrans DOM opaques d'où
+    // partent justement les gestes qui se font refuser. Voir `ui/bandeaux` (P0.2).
 
     // LA FLÈCHE DE DÉPOUILLE (mort-suite 2) : posée par `renderCorpseHint` en coords écran.
     this.corpseArrow = this.add.image(0, 0, 'fx-arrow').setOrigin(0.5, 0.5).setScale(1.7).setVisible(false)
@@ -634,34 +624,20 @@ export class UIScene extends Phaser.Scene {
     this.loading?.fadeOut(this.time.now)
   }
 
-  /** L'erreur de jeu : une bulle qui s'efface d'elle-même en 2,5 s. */
-  private renderError(): void {
-    const error = getHud(this.registry, 'error')
-    if (error && this.time.now - error.at < 2500) {
-      this.errorText
-        .setText(error.reason)
-        .setAlpha(1 - (this.time.now - error.at) / 2500)
-        .setVisible(true)
-    } else {
-      this.errorText.setText('').setVisible(false)
-    }
-  }
-
-  /** LE CONSEIL : posé plus longtemps que l'erreur (on LIT une règle, on ne la subit pas),
-   *  et il tient plein cadre 6 s avant de s'effacer sur 3 s — le temps d'agir dessus. */
-  private renderHint(): void {
-    const hint = getHud(this.registry, 'hint')
-    const HOLD = 6000
-    const FADE = 3000
-    const age = hint ? this.time.now - hint.at : Infinity
-    if (hint && age < HOLD + FADE) {
-      this.hintText
-        .setText(hint.text)
-        .setAlpha(age < HOLD ? 1 : 1 - (age - HOLD) / FADE)
-        .setVisible(true)
-    } else {
-      this.hintText.setText('').setVisible(false)
-    }
+  /**
+   * LES DEUX BANDEAUX — l'alerte et le conseil (audit UX 2026-08-20, P0.2, défaut cardinal).
+   *
+   * Ils étaient deux `Phaser.GameObjects.Text` lisant chacun UNE CASE du registre. Deux
+   * défauts en un : la case s'écrasait (huit émetteurs se la partageaient, le second message
+   * effaçait le premier avant lecture), et le texte, peint sur le CANVAS, passait SOUS les
+   * écrans DOM opaques — `.hch` (sac/artisanat) et `.fpn` (le modal du Feu) — c'est-à-dire
+   * sous les écrans d'où partent justement les gestes qui se font refuser.
+   *
+   * Le module DOM (`ui/bandeaux`) prend les deux files, en montre un à la fois jusqu'au bout,
+   * et se peint au-dessus des panneaux. Ici, il ne reste que le DRAIN.
+   */
+  private renderBandeaux(): void {
+    this.bandeaux.update(this.time.now, drainAlertes(this.registry), drainConseils(this.registry))
   }
 
   /** LA FLÈCHE DE DÉPOUILLE (mort-suite 2) : pointe vers le sac tombé quand il est HORS
@@ -691,8 +667,7 @@ export class UIScene extends Phaser.Scene {
       this.hudRoot.setVisible(false)
     }
 
-    this.renderError()
-    this.renderHint()
+    this.renderBandeaux()
     this.renderCorpseHint()
 
     const time = getHud(this.registry, 'time')
@@ -794,10 +769,16 @@ export class UIScene extends Phaser.Scene {
     if (death && death.at !== this.lastDeathAt) {
       this.lastDeathAt = death.at
       this.deathVeil.show(death.cause, death.byEntityId, death.killerType, this.deaths === 0, death.hadLoot)
+      setHud(this.registry, 'deathVeilOpen', true) // WorldScene y accroche le retour de la main
       this.deaths += 1
-      // Le voile retombe après le maintien, via un timer PHASER (boucle de jeu, pausable).
+      // ON SE RELÈVE, ON N'EST PAS REMIS EN JEU (décision d'Alexis, question ⑥). Le voile
+      // attend le GESTE ; ce timer n'est plus qu'un FILET, dix fois plus long — un écran
+      // modal dont la seule sortie est un bouton devient un piège si ce bouton se tait.
       this.deathHideTimer?.remove()
-      this.deathHideTimer = this.time.delayedCall(DEATH_VEIL_MS, () => this.deathVeil.hide())
+      this.deathHideTimer = this.time.delayedCall(DEATH_VEIL_FILET_MS, () => {
+        this.deathVeil.hide()
+        setHud(this.registry, 'deathVeilOpen', false)
+      })
     }
     // La file, elle, se voit TOUJOURS : une file bouchée (sac plein) ou en pause
     // (station quittée) doit se remarquer sans aller ouvrir un menu (spec F15).

@@ -16,7 +16,17 @@
  * — bois en main + clic sur le Feu → `feed_fire`), et se dit quand le Feu FAIBLIT.
  */
 
-export type OnboardingHintId = 'basics' | 'make-fire' | 'fire-purpose' | 'feed-fire' | 'give-neighbor' | 'weapon'
+export type OnboardingHintId = 'basics' | 'make-fire' | 'couper-bois' | 'fire-purpose' | 'feed-fire' | 'give-neighbor' | 'weapon'
+
+/** Les libellés de touches que l'appelant a dérivés de `keymapEffectif()`. */
+export interface OnboardingTouches {
+  /** Cueillir / interagir — `forage`. */
+  cueillir: string
+  /** Ouvrir le sac et l'artisanat — `toggleInventory`. */
+  sac: string
+  /** Parer de face — `block`. */
+  parade: string
+}
 
 /** L'état de jeu pertinent pour l'onboarding — un instantané lu par le caller. */
 export interface OnboardingState {
@@ -28,6 +38,40 @@ export interface OnboardingState {
   fireLow: boolean
   /** Une arme est-elle EN MAIN (case active) ? Déclenche la règle du combat, au bon instant. */
   hasWeapon: boolean
+  /**
+   * CETTE ARME EST-ELLE UNE ARME DE TRAIT ? Le conseil de combat enseigne le clic maintenu —
+   * or, arc en main, le clic gauche est INERTE (`aim.ts` le refuse exprès) et le vrai geste
+   * est sur l'autre bouton. Le conseil se déclenchait quand même : `hasWeapon` vaut vrai pour
+   * un arc. Un joueur forgeait son arc, s'entendait dire « MAINTENEZ le clic », maintenait sur
+   * un loup, et rien ne partait — et le conseil, marqué montré, ne repassait jamais.
+   *
+   * On se TAIT plutôt que de mentir : le conseil n'est ni montré ni consommé, et il dira vrai
+   * le jour où une arme de mêlée arrive en main. (Ce qu'il FAUDRAIT dire à un porteur d'arc
+   * est une question de design, posée à Alexis — audit UX 2026-08-20, D5-3 et D5-5.)
+   */
+  weaponRanged: boolean
+  /**
+   * LES TOUCHES, TELLES QUE CE JOUEUR-CI LES A RÉGLÉES. Elles arrivent d'en haut plutôt que
+   * d'être lues ici : ce module se veut PUR (zéro Phaser, zéro stockage) pour rester prouvé
+   * par des tests. Elles étaient écrites en dur — « F », « TAB », « ESPACE » — alors que les
+   * trois se rebindent, si bien qu'après un remappage le tutoriel donnait des touches mortes
+   * pendant que le menu pause, lui, disait vrai. (Audit UX 2026-08-20, D5-4 / P0.5.)
+   */
+  touches: OnboardingTouches
+  /**
+   * LE JOUEUR A-T-IL DU BOIS ? La condition du septième conseil (décision d'Alexis, question ④).
+   *
+   * Le contour de survol enseigne « ce qui s'allume, je peux le toucher » — buissons, piles,
+   * Feu s'allument, l'ARBRE non. Le choix est DÉCIDÉ et documenté (l'abattage n'est pas un clic
+   * simple, il arme une jauge), mais sa compensation — l'assombrissement du fût visé — vaut
+   * 8,5 % de Weber, cinq fois moins que son propre état d'échec. Le joueur en déduit,
+   * rationnellement, que les arbres ne se touchent pas. C'est le premier mur de la première
+   * Veillée, et il est LOGIQUE, pas mécanique.
+   *
+   * On ne touche donc pas au contour (ce serait rouvrir un arbitrage tranché, et passer à côté
+   * du résolveur unique) : on ENSEIGNE le geste, au moment où il manque.
+   */
+  hasWood: boolean
   /** Un ÉTRANGER (PNJ hors de mon village) est-il assez proche pour qu'on puisse le NOURRIR ? */
   neighborNear: boolean
 }
@@ -42,9 +86,14 @@ export const BASICS_DELAY_MS = 2000
 /** Le rappel du feu ne presse qu'après un moment sans en avoir fait — pas dès le spawn. */
 export const MAKE_FIRE_DELAY_MS = 12000
 
-const HINT_TEXT: Record<OnboardingHintId, string> = {
-  basics: 'F : cueillir baies & fibre. TAB : votre sac et l’artisanat.',
+function hintText(id: OnboardingHintId, t: OnboardingTouches): string {
+  const TEXTES: Record<OnboardingHintId, string> = {
+  basics: `${t.cueillir} : cueillir baies & fibre. ${t.sac} : votre sac et l’artisanat.`,
   'make-fire': 'Ramassez du bois : il vous faut un FEU avant la nuit.',
+  // LE SEPTIÈME CONSEIL (décision d'Alexis, question ④) : le seul verbe qui donne le bois et
+  // la pierre n'était nommé nulle part au moment où il sert. L'arbre ne s'allume pas au survol
+  // — c'est voulu — donc on le DIT, et on dit aussi que le geste se TIENT (il arme une jauge).
+  'couper-bois': 'Les arbres ne s’allument pas au survol : MAINTENEZ le clic sur un tronc — une jauge s’arme, relâchez dans le vert.',
   // La règle du jeu, dite une fois, à l'instant où le Feu naît : le cru ne nourrit plus un homme.
   'fire-purpose': 'Le feu cuit, réchauffe, et tient les loups à distance.',
   // L'UPKEEP (V1-11), enseigné quand le Feu FAIBLIT : sans ce geste, le foyer meurt de faim
@@ -55,7 +104,9 @@ const HINT_TEXT: Record<OnboardingHintId, string> = {
   'give-neighbor': 'Un voisin, tout près. Tenez de la nourriture et cliquez-le : DONNER en fait un allié.',
   // La règle du combat, dite À L'INSTANT où une arme arrive en main — jamais dans un mur
   // de texte au démarrage qu'on ferme sans lire. Le coup chargé resterait sinon un secret.
-  weapon: 'MAINTENEZ le clic : un coup lourd s’arme. ESPACE : parez de face.',
+  weapon: `MAINTENEZ le clic : un coup lourd s’arme. ${t.parade} : parez de face.`,
+  }
+  return TEXTES[id]
 }
 
 /**
@@ -67,10 +118,11 @@ const HINT_TEXT: Record<OnboardingHintId, string> = {
  * Un conseil déjà dans `shown` ne revient jamais.
  */
 export function nextOnboardingHint(state: OnboardingState, shown: ReadonlySet<OnboardingHintId>): OnboardingHint | null {
-  const hint = (id: OnboardingHintId): OnboardingHint => ({ id, text: HINT_TEXT[id] })
+  const hint = (id: OnboardingHintId): OnboardingHint => ({ id, text: hintText(id, state.touches) })
 
-  // 1. LE COMBAT — mortel et fugace : dès qu'une arme est en main, on dit la parade.
-  if (state.hasWeapon && !shown.has('weapon')) return hint('weapon')
+  // 1. LE COMBAT — mortel et fugace : dès qu'une arme DE MÊLÉE est en main, on dit la parade.
+  //    Un ARC ne passe pas : ce conseil enseigne le clic maintenu, qui ne fait rien avec lui.
+  if (state.hasWeapon && !state.weaponRanged && !shown.has('weapon')) return hint('weapon')
   // 2. LE FEU VIENT DE NAÎTRE — on enseigne sa valeur à l'instant où il existe.
   if (state.hasFire && !shown.has('fire-purpose')) return hint('fire-purpose')
   // 2bis. LE FEU FAIBLIT — on enseigne à le nourrir pile quand ça presse (upkeep V1-11).
@@ -79,6 +131,10 @@ export function nextOnboardingHint(state: OnboardingState, shown: ReadonlySet<On
   if (state.neighborNear && !shown.has('give-neighbor')) return hint('give-neighbor')
   // 4. RAPPEL DU FEU — seulement si l'on n'en a toujours pas, après un délai.
   if (!state.hasFire && state.msAlive >= MAKE_FIRE_DELAY_MS && !shown.has('make-fire')) return hint('make-fire')
+  // 4bis. ON A DIT « RAMASSEZ DU BOIS », ET IL N'EN A TOUJOURS PAS. Le conseil vient APRÈS le
+  //   rappel du feu, jamais avant : tant que le joueur n'a pas buté, on ne lui explique rien.
+  //   Et il s'éteint dès qu'il a du bois — la preuve qu'il a trouvé tout seul.
+  if (!state.hasFire && !state.hasWood && shown.has('make-fire') && !shown.has('couper-bois')) return hint('couper-bois')
   // 5. LES BASES — le tout premier conseil, après un souffle.
   if (state.msAlive >= BASICS_DELAY_MS && !shown.has('basics')) return hint('basics')
   return null

@@ -80,7 +80,10 @@ export interface FireView {
   cookIn: ({ item: import('@ashes/sim').ItemId; count: number; progress: number; ready: boolean } | null)[]
   cookOut: ({ item: import('@ashes/sim').ItemId; count: number } | null)[]
   /** Le bouton contextuel : fonder un Foyer ici, ou monter le palier du Foyer — ou rien (spec S19). */
-  action: { kind: 'found'; label: string } | { kind: 'upgrade'; label: string; affordable: boolean } | null
+  action:
+    | { kind: 'found'; label: string; /** La raison qui l'interdit, ou `null`. Voir `empechementDeFonder`. */ empeche: string | null }
+    | { kind: 'upgrade'; label: string; affordable: boolean }
+    | null
 }
 
 /** Le verdict d'un village à la fin de la saison (spec saison R4, événement `season_ended`). */
@@ -204,6 +207,16 @@ export interface HudState {
    *  null (combat) ; `byEntityId` + `killerType` (le monstre du snapshot, ou null)
    *  résolvent la ligne exacte. `null` = pas de mort en attente. */
   deathMoment: { cause: 'cold' | 'hunger' | 'lightning' | null; byEntityId: number; killerType: string | null; hadLoot: boolean; at: number } | null
+  /**
+   * LE VOILE DE MORT EST-IL ENCORE LEVÉ ? (décision d'Alexis, 2026-08-20, question ⑥)
+   *
+   * Depuis que le voile attend un GESTE — « SE RELEVER » — et non plus un minuteur, la main
+   * du joueur doit attendre la même chose. Elle lui était rendue à `DEATH_VEIL_MS`, pile
+   * quand le voile se retirait : les deux étaient le même instant. Si l'un devient un geste
+   * et pas l'autre, le joueur se remet à marcher DERRIÈRE un voile opaque qui couvre tout.
+   * UIScene le pose (elle possède le voile), WorldScene le lit.
+   */
+  deathVeilOpen: boolean
   /** LE TRAQUEUR DE DÉPOUILLE (mort-suite 2) : le repère d'écran vers le sac tombé — position
    *  (px écran, HUD non zoomé), angle de la flèche, `onScreen` (la dépouille est visible →
    *  cacher la flèche), et le compte à rebours avant décantation. `null` = rien à suivre. */
@@ -300,8 +313,27 @@ export interface HudState {
   /** La chronique de la saison — entrées structurées `{ jour, texte, poids }`
    *  (le rendu à 3 poids s'y appuie ; voir chronicle.ts côté /sim). */
   chronicle: ChronicleEntry[]
-  /** Dernier message d'erreur à afficher (action rejetée, avertissement…). Il s'efface
-   *  tout seul au bout de quelques secondes : c'est du bruit de partie. */
+  /**
+   * LES DEUX FILES DES BANDEAUX (audit UX 2026-08-20, P0.2 — défaut cardinal).
+   *
+   * `alertes` (le refus, le danger) et `conseils` (l'apprentissage) sont des FILES, plus des
+   * cases uniques. Le patron est celui de `publishPickup`, et son commentaire disait déjà
+   * pourquoi : « une FILE, pas une valeur — aucune ne doit être écrasée ». Le canal d'alerte
+   * ne l'avait jamais eu : HUIT émetteurs se partageaient une case de 2,5 s, et le second
+   * message effaçait le premier — y compris le départ de l'Arche derrière un refus de pose.
+   */
+  alertes: string[]
+  conseils: string[]
+  /**
+   * LA DERNIÈRE ALERTE, EN MIROIR — pour le DIAGNOSTIC, jamais pour l'affichage.
+   *
+   * Elle n'est plus la source du bandeau (c'est `alertes` qui l'est) mais elle reste écrite,
+   * et c'est délibéré : HUIT sondes du banc lisent `registry.get('error').reason` pour savoir
+   * pourquoi la sim vient de refuser — dont six dans le scénario `construction`. Une file
+   * DRAINÉE ne peut pas les servir : à l'instant où elles regardent, le bandeau l'a déjà
+   * consommée. Un loquet de diagnostic à côté d'un transport, ce n'est pas deux vérités —
+   * c'est une trace, et elle est nommée comme telle.
+   */
   error: { reason: string; at: number }
   /** LE CONSEIL (audit UI/UX P2-7) : le canal d'apprentissage, distinct de l'alerte
    *  rouge. Encre neutre, posé en haut, tenue longue — on APPREND un verbe, on n'est pas
@@ -362,7 +394,8 @@ export const CLES_HUD: Record<keyof HudState, true> = {
   craftQueue: true, stationsInRange: true, seen: true, hunger: true, temperature: true, skills: true,
   hp: true, stamina: true, wounds: true, selected: true, buildMaterial: true, buildEdge: true, demolir: true,
   marteau: true,
-  foundableFire: true, refugeesNearby: true, upgradableFire: true, deathMoment: true, corpseHint: true,
+  foundableFire: true, refugeesNearby: true, upgradableFire: true, deathMoment: true, deathVeilOpen: true, corpseHint: true,
+  alertes: true, conseils: true,
   characterMenuOpen: true, characterTab: true, uiTyping: true, chatTyping: true, chatLog: true,
   chatDraft: true, openContainer: true, openContainerView: true, openFire: true, openFireView: true,
   pickups: true, crafts: true, levelUps: true, fogVersion: true, fog: true,

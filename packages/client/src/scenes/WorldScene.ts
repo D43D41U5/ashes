@@ -72,6 +72,7 @@ import Phaser from 'phaser'
 import { createColyseusHost, createWorkerHost, type HostConnection } from '../host-connection'
 import { VEILLEE_SEED } from '../worker/mondes'
 import { keymapEffectif } from './world/keymap-perso'
+import { libelleTouches } from './world/touches'
 import { mainsLibres } from './world/mains-libres'
 import { noteMulti } from '../derniere-partie'
 import { SERVERS } from '../servers'
@@ -196,7 +197,7 @@ import { demolishTargetAt } from './world/aim'
 import { INTERP_DELAY_MULTI_MS, SnapshotView, type InterpolatedSprite } from './world/snapshot-view'
 import { silhouetteDepuisSprite } from './world/visee-corps'
 import { suivreAngle } from './world/visee-lissee'
-import { DEATH_FADE_MS, DEATH_VEIL_MS } from './ui/death-veil'
+import { DEATH_FADE_MS, DEATH_VEIL_FILET_MS } from './ui/death-veil'
 import { nextOnboardingHint, type OnboardingHintId } from './ui/onboarding'
 import { cendreTelegraphForDay } from './world/cendre-telegraph'
 import { corpseArrow, corpseSecondsLeft } from './world/corpse-arrow'
@@ -385,6 +386,16 @@ export class WorldScene extends Phaser.Scene {
   /** Couvert de canopée lissé autour de l'avatar — piloté vers la valeur échantillonnée. */
   /** Le monde n'existe qu'après `ready` (carte, spawn, calendrier reçus de l'hôte). */
   private worldReady = false
+  /**
+   * L'INSTANT où le monde est devenu jouable — l'horloge de l'ONBOARDING, et rien d'autre.
+   *
+   * `onboarding.ts` documente son contrat : « millisecondes écoulées depuis que le monde est
+   * prêt ». On lui passait `this.time.now`, l'horloge de la boucle Phaser, qui tourne pendant
+   * TOUTE la génération. Celle-ci dure ~16 s, pour des seuils de 2 s et 12 s : les deux
+   * conseils d'ouverture étaient donc MÛRS à l'instant zéro du joueur, et le banc a capté
+   * « Ramassez du bois… » peint DERRIÈRE l'écran de chargement. (Audit UX 2026-08-20, P0.6.)
+   */
+  private worldReadyAt = 0
   /** Ce que ce joueur a ARPENTÉ (spec R19). Vit côté client : aucune règle n'en dépend. */
   private fog?: Brouillard
   /** Les étapes de montage du monde qui restent à jouer — une par frame (voir `onReady`).
@@ -599,6 +610,16 @@ export class WorldScene extends Phaser.Scene {
   /** Les oiseaux de l'aube (da-feeling R16) — sa sonde `chirps` sert au smoke (A7). */
   readonly aube = new ChantsDeLAube()
   private eventLog: SimEvent[] = []
+  /**
+   * LE JOURNAL DES FAITS retenus par la chronique (`CHRONICLE_EVENT_TYPES`), tel quel —
+   * surface de LECTURE du smoke test (`window.__BRAISES__.scene.eventJournal`), au même
+   * titre que `lastEntities`. Le smoke lit l'état, il ne le fabrique pas : c'est ce qui lui
+   * permet d'apprendre qu'une horde s'est levée ET OÙ (`horde_spawned` porte son berceau)
+   * sans avoir à l'attendre au feu du village. Borné par `EVENT_LOG_CAP`, comme la chronique.
+   */
+  get eventJournal(): readonly SimEvent[] {
+    return this.eventLog
+  }
   /** Persistance P1-6 : une reprise a réamorcé `eventLog` depuis le disque — il faut
    *  REPUBLIER la chronique une fois, au premier snapshot (là où les NOMS de village
    *  arrivent). Sans ce forçage, aucun événement neuf ne la déclencherait et le récit
@@ -1015,6 +1036,7 @@ export class WorldScene extends Phaser.Scene {
         // la mettre à l'échelle et pour nommer la zone/POI sous le curseur.
         setHud(this.registry, 'mapData', this.map)
         this.worldReady = true
+        this.worldReadyAt = this.time.now // l'horloge de l'onboarding part D'ICI, pas du boot
         // Le monde est debout (carte bakée, couches montées, avatar au spawn) : UIScene
         // peut lever son écran de chargement et découvrir le HUD. On le dit EN DERNIER —
         // le drapeau ne doit pas devancer ce qu'il annonce.
@@ -2227,12 +2249,31 @@ export class WorldScene extends Phaser.Scene {
    * qui débitait « fais un feu » à qui en avait déjà un.
    */
   private checkHints(): void {
+    // LA GARDE DE CADENCE A DISPARU, ET C'EST UN PROGRÈS. On retenait la publication tant
+    // qu'un conseil était à l'écran, parce que le canal était une CASE UNIQUE : publier par
+    // dessus l'écrasait sans que personne l'ait lu, et comme on le marque « montré » à la
+    // publication, il ne revenait jamais. Depuis que `conseils` est une FILE (P0.2), rien ne
+    // se perd — le bandeau les sort un par un, dans l'ordre. On peut publier librement.
+    const effectif = keymapEffectif()
     const hint = nextOnboardingHint(
       {
-        msAlive: this.time.now,
+        // Depuis que le MONDE est prêt — pas depuis le boot : la génération consommait les
+        // deux délais derrière le voile de chargement (P0.6).
+        msAlive: this.time.now - this.worldReadyAt,
         hasFire: this.myVillageId !== null,
         fireLow: this.fireLow,
         hasWeapon: this.myWeapon !== 'unarmed',
+        weaponRanged: isRangedWeapon(this.myWeapon),
+        // Les touches TELLES QUE CE JOUEUR LES A RÉGLÉES : le conseil ne peut plus donner
+        // une touche morte après un remappage (P0.5).
+        touches: {
+          cueillir: libelleTouches(effectif.forage),
+          sac: libelleTouches(effectif.toggleInventory),
+          parade: libelleTouches(effectif.block),
+        },
+        // Du bois au sac ? Le septième conseil s'éteint dès qu'il en a — la preuve qu'il a
+        // trouvé le geste tout seul (décision ④).
+        hasWood: (getHud(this.registry, 'inv') ?? []).some((c) => c?.item === 'wood'),
         neighborNear: this.neighborNear,
       },
       this.shownHints,
@@ -2555,7 +2596,15 @@ export class WorldScene extends Phaser.Scene {
       this.recenterCamera()
       this.cameras.main.startFollow(this.playerSprite, true, 0.16, 0.16)
     }
-    if (age >= DEATH_VEIL_MS) {
+    // LA MAIN REVIENT AVEC LE VOILE, PAS AVANT (décision d'Alexis, 2026-08-20, question ⑥).
+    //
+    // Elle était rendue à `DEATH_VEIL_MS` — exactement l'instant où le voile se retirait : les
+    // deux n'étaient qu'un seul événement. Depuis que le voile attend le geste « SE RELEVER »,
+    // les deux doivent le rester, sinon on se remet à marcher DERRIÈRE un voile opaque qui
+    // couvre tout l'écran. On lit donc l'état RÉEL du voile, avec le même filet que lui : un
+    // écran modal qui ne rendrait jamais la main serait pire que le rythme qu'on corrige.
+    const voileLeve = getHud(this.registry, 'deathVeilOpen') === true
+    if (!voileLeve || age >= DEATH_VEIL_FILET_MS) {
       // Fin du voile : le monde réapparaît au Feu, jouable — on rend la main.
       this.dying = false
       this.input.enabled = true

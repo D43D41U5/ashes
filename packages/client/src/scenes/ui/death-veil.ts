@@ -54,6 +54,8 @@ export interface DeathVeil {
   show(cause: DeathCause, byEntityId: number, killerType: string | null, firstDeath: boolean, hadLoot: boolean): void
   /** Laisse retomber le voile (fondu de sortie). Idempotent. */
   hide(): void
+  /** Branche le geste de sortie. Le voile ne se retire plus tout seul (décision ⑥). */
+  onRelever(cb: () => void): void
   destroy(): void
 }
 
@@ -61,7 +63,19 @@ export interface DeathVeil {
 // La DURÉE VISIBLE (entrée + maintien) est comptée par UIScene sur l'horloge Phaser,
 // comme le fait le bandeau d'erreur — window.setTimeout n'est PAS fiable ici (il vit
 // hors du rAF que Phaser met en pause) et le voile restait ou disparaissait à contretemps.
-export const DEATH_VEIL_MS = 3200
+/**
+ * LE FILET, PAS L'HORLOGE (décision d'Alexis, 2026-08-20, question ⑥).
+ *
+ * Le voile se retirait à 3 200 ms — la valeur EXACTE de `SAVE_MS`, la notification
+ * d'autosauvegarde. Le moment le plus grave de la partie pesait donc autant qu'un « partie
+ * sauvegardée », et il s'en allait sans qu'on ait rien fait : on ne CHOISISSAIT pas de
+ * repartir, on était remis en jeu. C'est le geste qui referme désormais.
+ *
+ * Ce délai-ci ne rythme plus rien : il empêche seulement l'écran de devenir un piège si le
+ * bouton se taisait. Trente secondes — largement au-delà de toute lecture, assez court pour
+ * qu'on ne reste pas coincé.
+ */
+export const DEATH_VEIL_FILET_MS = 30000
 /** Durée du fondu CSS (entrée ET sortie de l'opacité/translation). Exporté : WorldScene
  *  s'en sert pour SNAPPER la caméra au respawn pile quand le voile est OPAQUE (le saut
  *  reste caché), pas avant (on verrait le monde traverser). */
@@ -98,6 +112,20 @@ export function createDeathVeil(): DeathVeil {
     .dv-corpse{font-size:15px;color:#c0a074;line-height:1.7;max-width:520px;margin:0 auto;}
     .dv-learn{font-size:13px;color:#8a8172;margin-top:12px;letter-spacing:.5px;}
     .dv-skills{font-size:13px;color:#6f8a70;margin-top:18px;letter-spacing:.5px;}
+    /* ON SE RELÈVE, ON N'EST PAS REMIS EN JEU (décision d'Alexis, 2026-08-20, question ⑥).
+       Le voile se retirait sur un minuteur de 3 200 ms — EXACTEMENT la durée de la notification
+       d'autosauvegarde. Le moment le plus grave de la partie pesait autant qu'un « partie
+       sauvegardée », et il s'en allait sans qu'on ait rien fait. La distinction que le jeu fait
+       déjà (la stèle de saison est TERMINALE, le voile de mort est temporisé) est juste ; c'est
+       le dosage qui ne l'était pas.
+       Le couple de la stèle, en un seul bouton — et le POINTEUR SE RALLUME dessus : le voile est
+       pointer-events:none, exactement comme la planche du HUD où trois boutons de réfugiés
+       n'ont jamais pu recevoir un clic. On ne refait pas ce défaut-là. */
+    .dv-btn{margin-top:30px;background:transparent;border:2px solid #6b5a3a;color:#9a8f78;
+      font-family:${GAME_FONT};font-size:14px;font-weight:700;letter-spacing:3px;padding:11px 26px;
+      cursor:pointer;pointer-events:auto;transition:color .14s ease,border-color .14s ease,background .14s ease;}
+    .dv-btn:hover{color:#e8e0c8;border-color:#8a7a52;background:rgba(40,34,26,.4);}
+    .dv-btn:focus-visible{outline:2px solid #c98b3a;outline-offset:3px;}
   </style>
   <div class="dv-glow"></div>
   <div class="dv-card">
@@ -107,9 +135,11 @@ export function createDeathVeil(): DeathVeil {
     <div class="dv-corpse">Votre dépouille repose là où vous êtes tombé, avec tout ce que vous portiez.</div>
     <div class="dv-learn">Retournez-y la reprendre — ou laissez-la au monde.</div>
     <div class="dv-skills">Vos mains, elles, n'ont rien oublié.</div>
+    <button class="dv-btn" type="button">SE RELEVER</button>
   </div>`
   document.body.appendChild(root)
   const causeEl = root.querySelector<HTMLElement>('.dv-cause')!
+  const btnEl = root.querySelector<HTMLButtonElement>('.dv-btn')!
   const learnEl = root.querySelector<HTMLElement>('.dv-learn')!
   const corpseEl = root.querySelector<HTMLElement>('.dv-corpse')!
   const CORPSE_WITH_LOOT = 'Votre dépouille repose là où vous êtes tombé, avec tout ce que vous portiez.'
@@ -137,6 +167,13 @@ export function createDeathVeil(): DeathVeil {
       corpseEl.textContent = hadLoot ? CORPSE_WITH_LOOT : CORPSE_EMPTY
       // « Retournez-y » n'a de sens qu'à la première mort AVEC un sac à récupérer.
       learnEl.style.display = firstDeath && hadLoot ? '' : 'none'
+      // Le geste prend la main : on le met au FOCUS pour que ENTRÉE et ESPACE le déclenchent
+      // sans souris — un écran modal sans sortie clavier est un piège (question ⑩).
+      btnEl.focus()
+    },
+    /** Le geste du joueur : « SE RELEVER ». C'est LUI qui referme, plus un minuteur. */
+    onRelever(cb) {
+      btnEl.addEventListener('click', cb)
     },
     hide() {
       // On retire dv-on : l'opacité fond vers 0 (transition CSS ${FADE_MS}ms), puis

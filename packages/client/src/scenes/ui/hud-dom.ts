@@ -77,6 +77,10 @@ function styleTag(): HTMLStyleElement {
  * neige), il se détoure d'un liseré sombre sur les 4 côtés (+ une ombre portée douce
  * pour les titres). Reproduit le `text-shadow` multi-passes de la maquette 2A.
  */
-export const INK_OUTLINE = 'text-shadow:-1px 0 0 #14141a,1px 0 0 #14141a,0 -1px 0 #14141a,0 1px 0 #14141a;'
+/** Le liseré SEUL, sans la propriété — pour qui doit l'AJOUTER à d'autres ombres au lieu de
+ *  les remplacer. C'est ce qui manquait au bandeau de palier : sa lueur ambre écrasait le
+ *  liseré hérité, et la plus grosse récompense du HUD était la seule ligne sans contour. */
+export const INK_OUTLINE_LIST = '-1px 0 0 #14141a,1px 0 0 #14141a,0 -1px 0 #14141a,0 1px 0 #14141a'
+export const INK_OUTLINE = `text-shadow:${INK_OUTLINE_LIST};`
 export const INK_OUTLINE_STRONG =
   'text-shadow:-1.5px 0 0 #14141a,1.5px 0 0 #14141a,0 -1.5px 0 #14141a,0 1.5px 0 #14141a,0 2px 2px rgba(0,0,0,.7);'

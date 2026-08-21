@@ -37,7 +37,7 @@ import {
 import type Phaser from 'phaser'
 import { ITEM_LABELS, itemIconKey } from '../../render/item-art'
 import { vitalIconKey, type VitalId } from '../../render/vital-art'
-import { INK_OUTLINE, INK_OUTLINE_STRONG } from './hud-dom'
+import { INK_OUTLINE, INK_OUTLINE_STRONG, INK_OUTLINE_LIST } from './hud-dom'
 import { HEX, VITAL_HEX } from './palette'
 import { SKILL_LABELS } from './skill-labels'
 
@@ -50,6 +50,25 @@ const CARRY_COLOR: Record<CarryTier, string> = {
   medium: HEX.ember,
   heavy: HEX.emberDeep,
   overloaded: HEX.alert,
+}
+
+/**
+ * CE QUE LA CHARGE COÛTE, ÉCRIT (décision d'Alexis, 2026-08-20, question ⑤).
+ *
+ * Le palier s'affichait seul — « LÉGER », « LOURD » — et la sanction se découvrait en la
+ * SUBISSANT : un jour on ne sprinte plus, et on ne sait pas pourquoi. Car dès LOURD le sprint
+ * n'est pas ralenti, il est **REFUSÉ** (`sim.ts`, « on ne sprinte plus dès le palier LOURD :
+ * refusé, pas ralenti »). La seule phrase du dépôt qui le disait — « lourd (pas de sprint) » —
+ * vivait dans `inventory-panel.ts`, du CODE MORT que personne ne monte.
+ *
+ * Quatre mots rendent la décision jouable : ASHES est un jeu de choix, pas de surprise. On
+ * n'écrit la conséquence que là où il y en a une — sous le seuil, le silence est juste.
+ */
+const CARRY_CONSEQUENCE: Record<CarryTier, string> = {
+  light: '',
+  medium: '',
+  heavy: ' — plus de sprint',
+  overloaded: ' — plus de sprint',
 }
 
 /** Les 4 vitales en médaillon (le poids, lui, passe en ligne secondaire — maquette 2A). */
@@ -121,6 +140,7 @@ export function createHudCore(
   const boardEl = $('.hc-board')
   const saveEl = $('.hc-save')
   const toastsEl = $('.hc-toasts')
+  const centreEl = $('.hc-centre')
   const woundsEl = $('.hc-wounds')
   const weightEl = $('.hc-weight')
   const skillsEl = $('.hc-skills')
@@ -225,11 +245,26 @@ export function createHudCore(
       toasts.push({ total: 0, at: performanceNow(), el })
     },
 
+    /**
+     * LE PALIER DE MÉTIER SE JOUE AU CENTRE (décision d'Alexis, 2026-08-20, question ⑪).
+     *
+     * L'arbitrage était : « la récompense doit-elle rejoindre le geste, ou rester un journal
+     * de coin ? » — et la réponse est LES DEUX, selon ce qu'on récompense. La RESSOURCE garde
+     * sa retenue : le compte de la ceinture est déjà le meilleur retour du jeu — précis,
+     * persistant, dans le champ de vision. Mais le PALIER, que le code désigne lui-même comme
+     * l'une des deux boucles les plus gratifiantes, se posait à 645-670 px du joueur en
+     * glyphes de 6,7 à 10 px : on montait de niveau dans le coin de l'œil.
+     *
+     * Il passe donc au centre, au-dessus de l'avatar — là où le regard est déjà. Et il
+     * RETROUVE son liseré d'encre : c'était la seule ligne du HUD à l'avoir perdu, parce que
+     * sa déclaration de `text-shadow` remplaçait celle héritée de `.hc-toast` au lieu de s'y
+     * ajouter — la plus grosse récompense de l'écran était la moins lisible.
+     */
     pushLevelUp(skill, level) {
       const el = document.createElement('div')
       el.className = 'hc-toast hc-levelup'
       el.innerHTML = `<span class="hc-lvl-skill">${SKILL_LABELS[skill]}</span><span class="hc-lvl-num">NIVEAU ${level}</span>`
-      toastsEl.prepend(el)
+      centreEl.prepend(el)
       toasts.push({ total: 0, at: performanceNow(), el })
     },
 
@@ -288,7 +323,7 @@ export function createHudCore(
       // Ligne secondaire : poids (couleur par palier), blessures (libellé, rouge), métiers.
       const carry = carryWeight(s.inv)
       const tier = carryTier(carry / CARRY.CAPACITY)
-      weightEl.textContent = `▲ ${carry.toFixed(carry % 1 ? 1 : 0)} / ${CARRY.CAPACITY}`
+      weightEl.textContent = `▲ ${carry.toFixed(carry % 1 ? 1 : 0)} / ${CARRY.CAPACITY}${CARRY_CONSEQUENCE[tier]}`
       weightEl.style.color = CARRY_COLOR[tier]
       const wounds = [
         s.wounds.leg ? 'jambe blessée' : null,
@@ -356,12 +391,46 @@ export function createHudCore(
 
 let lastNow = 0
 
+/**
+ * LE SOL DU HUD, EN DEUX NOMBRES (décision d'Alexis, 2026-08-20, question ③).
+ *
+ * Exportés parce qu'ils sont GARDÉS : `hud-plaque.test` recalcule le contraste composite du
+ * texte du HUD sur cette plaque, posée sur les pires fonds mesurés au banc. Écrits en dur dans
+ * la chaîne CSS, ils auraient pu se diluer au premier réglage « pour faire moins lourd », et la
+ * garde serait passée au vert sans plus rien garder.
+ */
+export const PLAQUE_ENCRE = '10,8,6'
+/** 0,80 : choisi PAR LE CALCUL, pas à l'œil — voir le test, qui rejoue la table des seuils. */
+export const PLAQUE_ALPHA = 0.8
+
 function markup(): string {
   return `
   <style>
     .hc{--hud-alpha:.85;}
+
+    /* ═══ LE SOL DU HUD (décision d'Alexis, 2026-08-20, question ③) ═══
+       Six classes de texte, ZÉRO déclaration de background : elles étaient posées à nu sur un
+       monde qui change de couleur et d'heure sous elles. Mesuré au banc : le monde passe de
+       L=0,308 à midi à 0,032 à minuit (×0,104) pendant que les médaillons opaques ne bougent
+       pas (×0,821). Résultat, contre le sol de midi : encre atténuée 1,43:1, bandeau du jour
+       2,24:1 (échec AA sur le texte le PLUS important du HUD), alarme de surcharge 1,64:1 —
+       le texte le moins lisible du cadre était celui qui crie.
+       Et la preuve n'est pas un calcul : DEUX lecteurs experts sur huit, outils de pixels en
+       main, ont transcrit « 0 / 40 » là où ce fichier interpole CARRY.CAPACITY = 60.
+
+       LA PLAQUE, PAS LA TEINTE — c'est l'arbitrage. Les teintes du HUD sont déjà calculées et
+       passent sur les trois fonds officiels de la palette ; c'est le QUATRIÈME fond, le monde
+       éclairé, que la charte n'a jamais modélisé. On lui en donne un.
+
+       UN VOILE QUI S'ÉTEINT, pas une dalle : ancré au coin, il se fond avant d'atteindre le
+       monde. Une plaque à bord franc ferait deux rectangles noirs dans les angles d'un jeu qui
+       n'en a aucun. Transparent au clic (pointer-events:none) — un sol n'attrape rien ; les
+       médaillons, eux, rallument le pointeur sur eux-mêmes via .hc-med. */
     /* haut-gauche : jour, lieu, village, tableau */
     .hc-tl{position:absolute;top:24px;left:26px;}
+    .hc-tl::before{content:'';position:absolute;pointer-events:none;z-index:-1;
+      inset:-18px -46px -22px -30px;
+      background:radial-gradient(ellipse at 18% 22%,rgba(${PLAQUE_ENCRE},${PLAQUE_ALPHA}),rgba(${PLAQUE_ENCRE},${(PLAQUE_ALPHA * 0.65).toFixed(2)}) 52%,rgba(${PLAQUE_ENCRE},0) 80%);}
     .hc-day{font-size:15px;font-weight:700;color:#ffffff;letter-spacing:1px;${INK_OUTLINE_STRONG}}
     .hc-zone{font-size:12px;color:#9a8f78;letter-spacing:2px;margin-top:3px;${INK_OUTLINE}}
     .hc-village{font-size:12px;color:#c8b88a;letter-spacing:1px;margin-top:6px;${INK_OUTLINE}}
@@ -378,6 +447,11 @@ function markup(): string {
     .hc-save.hc-save-ko{color:#e05a4a;}
     /* haut-droite : toasts */
     .hc-toasts{position:absolute;top:24px;right:26px;display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
+    /* LE CENTRE — réservé à ce qui MÉRITE le regard. Posé au-dessus de l'avatar (qui vit au
+       milieu du cadre), jamais dessus : on ne cache pas le personnage au moment où il progresse.
+       Transparent au clic, comme tout le HUD. */
+    .hc-centre{position:absolute;left:50%;top:38%;transform:translate(-50%,-50%);display:flex;
+      flex-direction:column;align-items:center;gap:6px;pointer-events:none;}
     .hc-toast{font-size:14px;color:#e8e0c8;letter-spacing:1px;${INK_OUTLINE_STRONG}transition:opacity .3s ease;}
     .hc-toast .hc-tval{color:#c98b3a;}
     /* FABRIQUÉ — un bandeau, pas une ligne : chip ambre plein + filet, plus lourd qu'un « +2 bois ». */
@@ -386,10 +460,14 @@ function markup(): string {
     .hc-craft .hc-craft-tag{font-size:10px;letter-spacing:2px;font-weight:700;color:#14100c;background:#c98b3a;padding:2px 6px;}
     .hc-craft .hc-craft-item{font-size:14px;color:#f2ead0;letter-spacing:1px;}
     /* NIVEAU — le plus gros des trois : deux lignes, or vif, et une lueur qui s'éteint (hors réduction). */
-    .hc-toast.hc-levelup{display:flex;flex-direction:column;align-items:flex-end;gap:1px;padding:7px 12px 7px 10px;
-      background:linear-gradient(90deg,rgba(232,198,106,.05),rgba(232,198,106,.16));border-right:3px solid #e8c66a;}
-    .hc-levelup .hc-lvl-skill{font-size:15px;font-weight:700;letter-spacing:2px;color:#f4ecd2;text-shadow:0 0 10px rgba(232,198,106,.45),0 1px 0 #14141a;}
-    .hc-levelup .hc-lvl-num{font-size:11px;letter-spacing:3px;color:#e8c66a;}
+    .hc-toast.hc-levelup{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 22px;
+      background:linear-gradient(180deg,rgba(232,198,106,.05),rgba(232,198,106,.18));
+      border-top:2px solid #e8c66a;border-bottom:2px solid #e8c66a;}
+    /* Le liseré d'encre REVIENT (il était perdu : cette règle remplaçait celle de .hc-toast au
+       lieu de s'y ajouter), et la lueur ambre s'y ajoute au lieu de s'y substituer. */
+    .hc-levelup .hc-lvl-skill{font-size:19px;font-weight:700;letter-spacing:3px;color:#f4ecd2;
+      text-shadow:0 0 12px rgba(232,198,106,.5),${INK_OUTLINE_LIST};}
+    .hc-levelup .hc-lvl-num{font-size:12px;letter-spacing:4px;color:#e8c66a;${INK_OUTLINE}}
     @media (prefers-reduced-motion: no-preference){
       .hc-toast.hc-levelup{animation:hc-lvl-pulse 1s ease-out;}
       @keyframes hc-lvl-pulse{from{box-shadow:0 0 22px rgba(232,198,106,.55);}to{box-shadow:0 0 0 rgba(232,198,106,0);}}
@@ -407,7 +485,12 @@ function markup(): string {
     .hc-vicon{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:30px;height:30px;image-rendering:pixelated;filter:brightness(0);}
     .hc-tip{position:absolute;bottom:78px;left:50%;transform:translateX(-50%);background:#14100c;border:2px solid #14141a;padding:4px 8px;font-size:11px;color:#e8e0c8;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .1s ease;}
     .hc-med:hover .hc-tip{opacity:1;}
-    .hc-2nd{display:flex;gap:16px;align-items:center;margin-top:10px;flex-wrap:wrap;max-width:900px;}
+    .hc-2nd{position:relative;display:flex;gap:16px;align-items:center;margin-top:10px;flex-wrap:wrap;max-width:900px;}
+    /* La ligne secondaire porte le poids, les plaies et les métiers — dont l'alarme de
+       surcharge, mesurée à 1,52:1 sur l'herbe. Même sol, ancré en bas à gauche. */
+    .hc-2nd::before{content:'';position:absolute;pointer-events:none;z-index:-1;
+      inset:-12px -46px -14px -22px;
+      background:radial-gradient(ellipse at 14% 50%,rgba(${PLAQUE_ENCRE},${PLAQUE_ALPHA}),rgba(${PLAQUE_ENCRE},${(PLAQUE_ALPHA * 0.62).toFixed(2)}) 54%,rgba(${PLAQUE_ENCRE},0) 82%);}
     .hc-weight{font-size:12px;letter-spacing:1px;${INK_OUTLINE}}
     .hc-wounds{font-size:12px;color:#e05a4a;letter-spacing:1px;${INK_OUTLINE}}
     .hc-skills{font-size:12px;color:#9a8f78;letter-spacing:1px;${INK_OUTLINE}}
@@ -429,6 +512,7 @@ function markup(): string {
     <div class="hc-save"></div>
   </div>
   <div class="hc-toasts"></div>
+  <div class="hc-centre"></div>
   <div class="hc-bl">
     <div class="hc-vitals"></div>
     <div class="hc-2nd">
