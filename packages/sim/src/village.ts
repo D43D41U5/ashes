@@ -186,10 +186,11 @@ export type TaskKind =
 
 /**
  * UN ORDRE DE CONSTRUCTION (spec `village-pnj-evolution.md` R3-R4) — la charge d'une
- * tâche `build`. Trois gestes, chacun rejoué par le PIPELINE JOUEUR (pnj R1) :
- *   · `pose`    → `build` au marteau (mur/porte/sol, arête ou tuile) ;
- *   · `place`   → l'objet-composant, assemblé au Feu puis posé (`place_component`) ;
- *   · `upgrade` → `upgrade_structure` au marteau (bois → pierre).
+ * tâche `build`. Quatre gestes, chacun rejoué par le PIPELINE JOUEUR (pnj R1) :
+ *   · `defriche` → `harvest` sur le nœud qui encombre le site (hache/main, R9) ;
+ *   · `pose`     → `build` au marteau (mur/porte/sol/toit, arête ou tuile) ;
+ *   · `place`    → l'objet-composant, assemblé au Feu puis posé (`place_component`) ;
+ *   · `upgrade`  → `upgrade_structure` au marteau (bois → pierre).
  * JSON-plat : il voyage dans la tâche, le snapshot et la sauvegarde.
  */
 export type BuildOrder =
@@ -197,6 +198,23 @@ export type BuildOrder =
    *  porte charretière — et se pose à la cadence de défense (`BUILD_PACE_TICKS_ENCEINTE`),
    *  pas à l'arc de saison du hameau. Sans le drapeau sur les vantaux, l'anneau se fermait
    *  vite et sa porte traînait à la cadence lente : une brèche fixe de 2 tuiles (revue). */
+  /**
+   * DÉFRICHER LE SITE (décision d'Alexis, 2026-08-20) — « les PNJ coupent tout arbre, buisson,
+   * fleur… à l'intérieur de l'enceinte des maisons ».
+   *
+   * IL FALLAIT UN GESTE, pas une exception à la pose. Les murs d'un logis sont des ARÊTES, et
+   * une arête est explicitement dispensée de `poseLibre` (« elle court sur le trait, elle ne
+   * prend pas le buisson », voir `applyBuild`) : un logis pouvait donc se refermer autour d'un
+   * arbre VIVANT, et rien dans le plan ne demandait de l'abattre. Constaté sur une capture
+   * d'accueil avant de l'être en jeu.
+   *
+   * Le remède ne touche NI la règle des arêtes (elle est juste : un mur mince ne mange pas la
+   * tuile voisine) NI `addStructure` (qui ne doit pas décider d'abattre). C'est le PLAN qui
+   * demande le défrichement, et un villageois qui l'exécute — à la hache, en rapportant le
+   * bois. « Récolter = défricher » (R5) : le nœud reste dans `state.nodes` à stock 0, ce que
+   * `poseLibre` lit comme libre et le client comme une souche.
+   */
+  | { action: 'defriche'; tx: number; ty: number }
   | { action: 'pose'; structure: BarrierType; tx: number; ty: number; edges?: number; material?: WallMaterial; enceinte?: true }
   | { action: 'place'; component: ComponentType; tx: number; ty: number }
   | { action: 'upgrade'; structureId: number }

@@ -31,6 +31,7 @@ import {
 } from './balance'
 import { isBlockedAt, moveAvatar, type MoveWorld } from './collision'
 import { engageRange, startAttack, weaponProfile } from './combat'
+import { poseLibre } from './defriche'
 import { applyEconomyAction, toolRank, type ResourceNode } from './economy'
 import { sertExigence } from './pieces'
 import { emitEvent } from './events'
@@ -644,6 +645,11 @@ function ensurePickaxe(state: SimState, village: Village, npc: Npc, entity: Enti
 
 /** La pièce de cet ordre est-elle déjà dans le monde ? (le verdict d'accompli) */
 function orderDone(state: SimState, order: BuildOrder): boolean {
+  // DÉFRICHÉ = `poseLibre`, jamais « le nœud a disparu ». Un nœud récolté RESTE dans
+  // `state.nodes` à stock 0 (voir `defriche.ts` : le retirer ferait dessiner un arbre fantôme
+  // au client, qui ne reçoit les nœuds qu'une fois). Le verdict doit donc lire le MÊME
+  // prédicat que la pose — sinon la corvée se croirait éternellement inachevée.
+  if (order.action === 'defriche') return poseLibre(state.villages, state.nodes, order.tx, order.ty)
   if (order.action === 'pose') {
     if (order.structure === 'floor') return floorAt(state.structures, order.tx, order.ty) !== undefined
     if (order.edges !== undefined) return edgeBarrierAt(state.structures, order.tx, order.ty, order.edges) !== undefined
@@ -682,7 +688,12 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
     // manquait). Grain perdu assumé aussi : un échec PROPRE AU PNJ (sac plein au
     // retrait du marteau) retire la tâche pareil — borné à une fenêtre, strictement
     // mieux que le livelock ; un CraftProgress qui porte sa cause serait le fin mot.
-    if (order.action !== 'place') {
+    // ON N'ABAT PAS UN ARBRE AU MARTEAU. `defriche` passait par cette branche — donc le
+    // villageois exigeait un marteau pour aller couper du bois, et lâchait la corvée quand le
+    // village n'avait pas la pierre pour le forger. Résultat mesuré : l'arbre restait debout
+    // indéfiniment. Sa hache, il l'équipe au moment de frapper (`equipBestTool`), comme le
+    // bûcheron ordinaire.
+    if (order.action !== 'place' && order.action !== 'defriche') {
       const r = ensureHammer(state, village, npc, entity)
       if (r === 'failed') return dropTask(village, npc, true)
       if (r !== 'ready') return
@@ -693,8 +704,8 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
       if (r === 'failed') return dropTask(village, npc, true)
       if (r !== 'ready') return
     }
-    // 3. LE COÛT de la pose/montée, retiré du grenier.
-    if (order.action !== 'place') {
+    // 3. LE COÛT de la pose/montée, retiré du grenier. (`defriche` ne coûte rien — il RAPPORTE.)
+    if (order.action !== 'place' && order.action !== 'defriche') {
       const cost = orderCost(order)
       for (const item of Object.keys(cost) as ItemId[]) {
         const need = (cost[item] ?? 0) - countOf(entity.inventory, item)
@@ -724,7 +735,16 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
   const target = order.action === 'upgrade' ? state.structures.find((s) => s.id === order.structureId) : undefined
   const tx = order.action === 'upgrade' ? target!.tx : order.tx // orderDone garantit la cible
   const ty = order.action === 'upgrade' ? target!.ty : order.ty
-  if (near(entity, tx, ty, BALANCE.BUILD_RANGE - 0.5)) {
+  // ═══ ON N'ABAT PAS UN ARBRE À CINQ TUILES ═══
+  //
+  // `BUILD_RANGE` vaut 6 et `INTERACT_RANGE` 1,5 : un bâtisseur pose une pièce de loin, un
+  // bûcheron doit toucher son arbre. Le défrichement empruntait la portée du BÂTISSEUR, donc
+  // le villageois s'arrêtait à 5,5 tuiles et envoyait un `harvest` que l'économie refusait —
+  // à chaque tick, indéfiniment. MESURÉ : l'arbre restait à 10 de stock après une fenêtre de
+  // chantier entière (8 400 ticks), la corvée dûment servie et réclamée. Le geste décide de
+  // la portée, jamais la corvée qui le porte.
+  const portee = order.action === 'defriche' ? RANGE : BALANCE.BUILD_RANGE - 0.5
+  if (near(entity, tx, ty, portee)) {
     // Un composant BLOQUE et refuse « pas sous ses pieds » : on s'écarte d'un pas.
     if (order.action === 'place' && Math.floor(entity.x) === tx && Math.floor(entity.y) === ty) {
       const sx = (village.fireTx + 0.5 > entity.x ? 1 : -1) as -1 | 1
@@ -734,7 +754,9 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
       entity.y = moved.y
       return
     }
-    equipItem(entity, order.action === 'place' ? order.component : 'hammer')
+    // Le marteau ne sert qu'à POSER et à MONTER : le défrichement équipe sa hache plus bas
+    // (`equipBestTool`), et lui coller un marteau en main l'aurait fait cogner avec.
+    if (order.action !== 'defriche') equipItem(entity, order.action === 'place' ? order.component : 'hammer')
     if (order.action === 'pose') {
       applyVillageAction(state, entity.id, {
         type: 'build',
@@ -746,6 +768,34 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
       })
     } else if (order.action === 'place') {
       applyVillageAction(state, entity.id, { type: 'place_component', tx: order.tx, ty: order.ty })
+    } else if (order.action === 'defriche') {
+      // LE MÊME GESTE QUE LE BÛCHERON, pas un raccourci : on équipe le meilleur outil pour ce
+      // nœud puis on frappe par le pipeline d'économie (`harvest`), comme `executeGather`. Le
+      // bois tombe donc dans le sac du villageois et repart au grenier par le circuit normal —
+      // défricher sa cour APPROVISIONNE le village au lieu de faire disparaître un arbre.
+      //
+      // ═══ ON RESTE JUSQU'À CE QUE L'ARBRE TOMBE — un bûcheron ne part pas après UN coup ═══
+      //
+      // Premier jet : un coup, puis `dropTask`, et le tableau repostait l'ordre à la fenêtre
+      // suivante. MESURÉ sur le vrai worldgen (`construireMondeDuBanc`), c'était FATAL : un
+      // arbre porte 10 de stock, une fenêtre de chantier dure 8 400 ticks, et le pire village
+      // du banc a 51 arbres (550 de stock) dans sa cour — **80 cycles de défrichement pour une
+      // saison qui en compte 6**. Le village n'aurait jamais posé un seul sol. Même en se
+      // limitant aux logis (231 de stock), c'était 34 cycles : ce n'était donc pas la PORTÉE
+      // qui était en cause, c'était l'exécution.
+      //
+      // On garde donc la corvée tant que le nœud n'est pas vidé — exactement ce que fait
+      // `executeGather`, qui reste sur son nœud jusqu'à sa charge. Une fenêtre par ARBRE au
+      // lieu d'une par coup : 7,4 cycles pour le pire village, 0,6 et 1,2 pour les deux
+      // autres. Le `dropTask` final n'a pas lieu : on rend la main sans lâcher la tâche.
+      const node = state.nodes.find((n) => n.tx === order.tx && n.ty === order.ty && n.stock > 0)
+      if (node) {
+        if (canAct(state, entity)) {
+          equipBestTool(entity, NODE_DEFS[node.type].tool)
+          applyEconomyAction(state, entity.id, { type: 'harvest', nodeId: node.id })
+        }
+        return // ON GARDE LA CORVÉE : l'arbre n'est pas tombé.
+      }
     } else {
       applyVillageAction(state, entity.id, { type: 'upgrade_structure', structureId: order.structureId })
     }
@@ -753,7 +803,31 @@ function executeBuild(state: SimState, village: Village, npc: Npc, entity: Entit
     // retenté à 20 Hz serait un livelock sec, et le tableau SAIT reposer.
     return dropTask(village, npc, true)
   }
-  if (npc.path.length === 0 && !setPathTo(state, npc, entity, tx, ty)) return dropTask(village, npc, true)
+  // ═══ ON NE MARCHE PAS SUR L'ARBRE QU'ON VIENT ABATTRE ═══
+  //
+  // Un nœud vivant BLOQUE sa tuile (`collision.ts` teste `stock > 0`). Viser cette tuile fait
+  // échouer la recherche de chemin, et un chemin qui échoue LÂCHE la corvée — TRACÉ : le
+  // villageois entrait bien dans `executeBuild`, franchissait la phase de fourniture, puis
+  // rendait son ordre au premier pas. L'arbre restait debout pour toujours, corvée servie et
+  // réclamée. On vise donc la VOISINE la plus proche de nous qui soit libre : de là, la portée
+  // d'interaction porte jusqu'au tronc. (Poser et monter n'ont jamais eu ce problème : on bâtit
+  // sur une tuile qu'on peut occuper.)
+  let cx = tx
+  let cy = ty
+  if (order.action === 'defriche') {
+    let best = Infinity
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = tx + dx
+      const ny = ty + dy
+      if (nx < 0 || ny < 0 || nx >= state.map.width || ny >= state.map.height) continue
+      if (isBlockedAt(moveWorldFor(state, npc.villageId), nx, ny)) continue
+      const d = distSq(entity.x, entity.y, nx + 0.5, ny + 0.5)
+      if (d < best) { best = d; cx = nx; cy = ny }
+    }
+    // Aucune voisine libre : l'arbre est enclavé, la corvée n'a rien à faire là.
+    if (best === Infinity) return dropTask(village, npc, true)
+  }
+  if (npc.path.length === 0 && !setPathTo(state, npc, entity, cx, cy)) return dropTask(village, npc, true)
   followPath(state, npc, entity)
 }
 

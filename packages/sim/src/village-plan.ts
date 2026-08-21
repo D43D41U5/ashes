@@ -20,13 +20,13 @@
  */
 import { COMPONENTS, STRUCTURE_COSTS, VILLAGE_GROWTH, WALL_TIERS, type ComponentType } from './balance'
 import { edgeBarrierAt, fullTileAt, terrainConstructible } from './construction'
-import { poseLibre } from './defriche'
+import { noeudDefriche, poseLibre } from './defriche'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { countOf, type Inventory, type ItemBag, type StructureType } from './items'
 import { terrainAt } from './map'
 import { piece } from './pieces'
 import type { SimState } from './sim'
-import { floorAt, type BuildOrder, type Structure, type Village } from './village'
+import { floorAt, roofAt, type BuildOrder, type Structure, type Village } from './village'
 
 /** Le palier de bâti effectif (absent sur les parties sauvées d'avant = 1). */
 export function buildTierOf(village: Village): number {
@@ -182,6 +182,10 @@ function contourEdges(
 
 /** Le coût d'un ordre de construction — ce que le grenier doit porter. */
 export function orderCost(order: BuildOrder): ItemBag {
+  // DÉFRICHER NE COÛTE RIEN — ça rapporte. Le grenier n'a donc jamais à « couvrir » un
+  // défrichement : le tableau ne peut pas le juger inabordable et bloquer le chantier
+  // derrière lui, ce qui serait exactement le livelock que la doctrine du coût interdit.
+  if (order.action === 'defriche') return {}
   if (order.action === 'pose') {
     if (order.structure === 'wall' || order.structure === 'door') {
       return WALL_TIERS[order.material ?? 'wood'][order.structure].cost
@@ -224,6 +228,22 @@ export function desiredOrders(state: SimState, village: Village): BuildOrder[] {
     if (floorAt(state.structures, tx, ty)) return
     orders.push({ action: 'pose', structure: 'floor', tx, ty })
   }
+  /**
+   * LE TOIT (décision d'Alexis, 2026-08-20 : « les PNJ mettent un toit et un sol à leurs
+   * maisons »). Il MANQUAIT, purement et simplement : le plan commandait le sol, les murs
+   * d'arête et la porte, et jamais la couverture — les villages PNJ bâtissaient des logis à
+   * ciel ouvert, ce qui s'est vu sur une photo d'accueil avant de se voir en jeu.
+   *
+   * Aucun type à ajouter : `roof` est déjà une pièce posée au marteau, donc déjà un
+   * `BarrierType` par dérivation du registre (`pieces.ts`). C'est exactement ce que le
+   * catalogue promet — « ajouter une pièce = compléter le registre, pas toucher quinze
+   * fichiers » —, et ici on ne fait même pas ça : on demande une pièce qui existait.
+   */
+  const wantRoof = (tx: number, ty: number): void => {
+    if (!poseFeasible(tx, ty, 'roof')) return
+    if (roofAt(state.structures, tx, ty)) return
+    orders.push({ action: 'pose', structure: 'roof', tx, ty })
+  }
 
   // ── L'ENCEINTE D'ABORD (spec R15, décision d'Alexis 2026-08-17 « fais tout ») : la
   //    PALISSADE dérivée du disque, percée de la porte charretière (décision 2026-08-01 :
@@ -246,6 +266,40 @@ export function desiredOrders(state: SimState, village: Village): BuildOrder[] {
     if (gate(ex, ey)) wantEdge(fx + ex, fy + ey, bit, 'door', true)
   }
 
+  // ══ ON DÉFRICHE TOUTE LA COUR (décision d'Alexis, 2026-08-20) ══
+  //
+  // « Les PNJ coupent tout arbre, buisson, fleur, etc. à l'intérieur de l'enceinte. » Pas
+  // seulement l'emprise des logis : TOUT ce que la palissade enferme. C'est cohérent avec la
+  // doctrine du défrichement (« rien ne repousse dans l'emprise d'un village », 2026-08-06),
+  // et ça dégage la ligne de vue de la milice — un anneau fermé dont on ne voit pas le pied
+  // ne défend rien.
+  //
+  // APRÈS L'ANNEAU, AVANT LES LOGIS. On s'abrite d'abord (R15) ; puis on nettoie le sol sur
+  // lequel on va vivre ; puis on bâtit. Et comme les logis tiennent tous dans le carré de
+  // l'enceinte, cette passe couvre AUSSI leur intérieur : un logis ne peut plus se refermer
+  // sur un arbre vivant, sans qu'il ait fallu une règle par bâtiment.
+  //
+  // ═══ ON ITÈRE LES NŒUDS, PAS LES TUILES — et ce n'est pas un détail de style ═══
+  //
+  // `poseLibre` balaie TOUT `state.nodes` à chaque appel, et une carte de production en porte
+  // ~140 000. Poser la question tuile par tuile sur le carré de l'enceinte (17 × 17 = 289)
+  // ferait 40 MILLIONS d'accès par rafraîchissement de tableau, toutes les 100 ticks et pour
+  // chaque village. On retourne donc la boucle : UNE passe sur les nœuds, un test de bornes
+  // par nœud. C'est 289 fois moins cher — et même moins cher que la version « par logis »
+  // qui l'a précédée (48 tuiles), qui payait déjà ce prix-là sans qu'on le remarque.
+  //
+  // TRIÉ par (ty, tx) : le chantier avance du nord au sud plutôt qu'au gré de l'ordre du
+  // tableau des nœuds, et l'ordre des ordres reste stable d'un run à l'autre.
+  const aDefricher: { tx: number; ty: number }[] = []
+  for (const n of state.nodes) {
+    if (Math.max(Math.abs(n.tx - fx), Math.abs(n.ty - fy)) > r) continue
+    if (!onMap(n.tx, n.ty)) continue
+    if (noeudDefriche(state.villages, n)) continue // déjà une souche : rien à couper
+    aDefricher.push({ tx: n.tx, ty: n.ty })
+  }
+  aDefricher.sort((a, b) => a.ty - b.ty || a.tx - b.tx)
+  for (const { tx, ty } of aDefricher) orders.push({ action: 'defriche', tx, ty })
+
   // ── Les logis : autour de chaque paillasse posée (le lit devient une chambre). ──
   const hutRegion = (dx: number, dy: number): boolean => dx >= 0 && dx < HUT_W && dy >= 0 && dy < HUT_W
   const hutEdges = contourEdges(hutRegion, -1, HUT_W)
@@ -263,6 +317,11 @@ export function desiredOrders(state: SimState, village: Village): BuildOrder[] {
       const isDoor = spot[0] + ex === px && spot[1] + ey === py && bit === pbit
       wantEdge(x0 + ex, y0 + ey, bit, isDoor ? 'door' : 'wall')
     }
+    // LE TOIT EN DERNIER, comme sur un vrai chantier : on ne couvre pas des murs qui ne sont
+    // pas debout. L'ordre de la liste EST l'ordre du chantier (le tableau sert le premier
+    // ordre encore ouvert), donc cette place n'est pas cosmétique — elle empêche un village
+    // à moitié bâti de se retrouver avec une toiture posée sur trois murs.
+    for (let dy = 0; dy < HUT_W; dy++) for (let dx = 0; dx < HUT_W; dx++) wantRoof(x0 + dx, y0 + dy)
   }
 
   if (tier < 3) return orders

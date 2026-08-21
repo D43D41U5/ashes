@@ -7,15 +7,15 @@
  * une fonction du tick, le saut est légal et ne tire rien.
  */
 import { describe, expect, it } from 'vitest'
-import { TERRAIN_GRASS } from './balance'
+import { TERRAIN_GRASS, VILLAGE_GROWTH } from './balance'
 import { drainEvents, type SimEvent } from './events'
 import { addItems, countOf } from './items'
 import { createEmptyMap } from './map'
 import type { ResourceNode } from './economy'
 import { createSim, spawnEntity, step, type SimState } from './sim'
 import { DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
-import { addStructure, createVillage } from './village'
-import { desiredOrders, granaries, granaryStocks } from './village-plan'
+import { addStructure, createVillage, type BuildOrder } from './village'
+import { bedAnchor, desiredOrders, granaries, granaryStocks, HUT_SPOTS, HUT_W } from './village-plan'
 import { refreshBoard } from './village-board'
 import { STRUCTURE_TYPES, piece } from './pieces'
 import { foundNpcVillage } from './worldgen'
@@ -289,5 +289,218 @@ describe('le grenier est une FONCTION, pas un type (P0.3)', () => {
     // Avant le correctif : ZÉRO tâche postée, y compris `feed_fire` — « la tâche
     // communautaire zéro, sans elle le village tombe ».
     expect(v.tasks.length).toBeGreaterThan(0)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// LE LOGIS EST UNE MAISON, PAS UN ENCLOS (décision d'Alexis, 2026-08-20)
+//
+// « Les PNJ mettent un toit et un sol à leurs maisons et coupent tout arbre, buisson, fleur
+// etc. à l'intérieur de l'enceinte des maisons. Ça semble cohérent et ça doit le rester. »
+//
+// Les deux moitiés de la règle manquaient, et pour deux raisons DIFFÉRENTES — c'est pourquoi
+// il y a deux gardes et non une :
+//   · LE TOIT n'était simplement pas commandé. Le plan voulait le sol, les murs d'arête et la
+//     porte, jamais la couverture : les villages PNJ bâtissaient à ciel ouvert.
+//   · L'ARBRE, lui, était commandé AUTOUR. Les murs d'un logis sont des ARÊTES, et une arête
+//     est dispensée de `poseLibre` par une règle juste (« elle court sur le trait, elle ne
+//     prend pas le buisson ») : un logis pouvait donc se refermer sur un arbre vivant.
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+describe('le logis est couvert et défriché (décision 2026-08-20)', () => {
+  /** Les tuiles d'un logis, dérivées de la MÊME géométrie que le plan — jamais recopiées. */
+  const tuilesDuLogis = (fx: number, fy: number, spot: readonly [number, number]): [number, number][] => {
+    const out: [number, number][] = []
+    for (let dy = 0; dy < HUT_W; dy++) for (let dx = 0; dx < HUT_W; dx++) out.push([fx + spot[0] + dx, fy + spot[1] + dy])
+    return out
+  }
+
+  it('chaque tuile de chaque logis veut un TOIT, autant que de sols', () => {
+    const sim = npcVillageSim(3)
+    village(sim).buildTier = 2
+    const orders = desiredOrders(sim, village(sim))
+    const toits = orders.filter((o) => o.action === 'pose' && o.structure === 'roof') as Extract<BuildOrder, { action: 'pose' }>[]
+    const sols = orders.filter((o) => o.action === 'pose' && o.structure === 'floor')
+    // AUTANT QUE DE SOLS, et pas un compte écrit en dur : le jour où un logis change de
+    // taille, la garde suit au lieu de rougir. Et > 0, sinon deux zéros seraient « égaux ».
+    expect(sols.length).toBeGreaterThan(0)
+    expect(toits).toHaveLength(sols.length)
+    // EXHAUSTIF : on balaie la géométrie réelle des logis, on ne pioche pas une tuile.
+    const v = village(sim)
+    const couvert = new Set(toits.map((o) => `${o.tx},${o.ty}`))
+    for (const spot of HUT_SPOTS) {
+      const [ax, ay] = bedAnchor(v.fireTx, v.fireTy, spot)
+      if (!sim.structures.some((s) => s.type === 'paillasse' && s.tx === ax && s.ty === ay)) continue
+      for (const [tx, ty] of tuilesDuLogis(v.fireTx, v.fireTy, spot)) {
+        expect(couvert.has(`${tx},${ty}`), `la tuile (${tx}, ${ty}) du logis reste à ciel ouvert`).toBe(true)
+      }
+    }
+  })
+
+  it('LE TOIT VIENT APRÈS LES MURS — on ne couvre pas trois murs debout', () => {
+    const sim = npcVillageSim(1)
+    village(sim).buildTier = 2
+    const orders = desiredOrders(sim, village(sim))
+    const dernierMur = orders.map((o) => o.action === 'pose' && (o.structure === 'wall' || o.structure === 'door')).lastIndexOf(true)
+    const premierToit = orders.findIndex((o) => o.action === 'pose' && o.structure === 'roof')
+    expect(dernierMur).toBeGreaterThanOrEqual(0)
+    expect(premierToit).toBeGreaterThan(dernierMur)
+  })
+
+  it('TOUTE LA COUR se défriche — et l\'ordre passe AVANT le sol et les murs', () => {
+    const sim = npcVillageSim(1)
+    const v = village(sim)
+    v.buildTier = 2
+    // LE LOGIS RÉELLEMENT PLANIFIÉ : celui dont la paillasse est posée. Sans ce filtre, on
+    // planterait l'arbre dans un logis que le plan ne réclame pas encore, et la garde
+    // passerait au vert sans rien prouver.
+    const spot = HUT_SPOTS.find((sp) => {
+      const [ax, ay] = bedAnchor(v.fireTx, v.fireTy, sp)
+      return sim.structures.some((s) => s.type === 'paillasse' && s.tx === ax && s.ty === ay)
+    })!
+    const tuiles = tuilesDuLogis(v.fireTx, v.fireTy, spot)
+    // ON PROUVE LA PRÉMISSE : sans arbre planté dans l'enceinte, le plan ne demande AUCUN
+    // défrichement. (La carte du banc porte quatre nœuds, tous hors du carré de l'enceinte.)
+    expect(desiredOrders(sim, v).filter((o) => o.action === 'defriche')).toHaveLength(0)
+    // EXHAUSTIF : un arbre vivant sur CHAQUE tuile du logis, pas sur une tuile choisie.
+    let id = 1000
+    for (const [tx, ty] of tuiles) {
+      sim.nodes.push({ id: (id += 1), type: 'tree', tx, ty, stock: 5, regrowAt: 0 })
+    }
+    const orders = desiredOrders(sim, v)
+    const defriches = orders.filter((o) => o.action === 'defriche') as Extract<BuildOrder, { action: 'defriche' }>[]
+    expect(defriches).toHaveLength(tuiles.length)
+    for (const [tx, ty] of tuiles) {
+      expect(defriches.some((o) => o.tx === tx && o.ty === ty), `(${tx}, ${ty}) n'est pas défrichée`).toBe(true)
+    }
+    // L'ORDRE DE LA LISTE EST L'ORDRE DU CHANTIER : le tableau sert le premier ordre encore
+    // ouvert, donc défricher DOIT précéder le sol et les murs de ce logis — sinon on referme
+    // la pièce sur l'arbre et il n'y a plus qu'à rouvrir.
+    const dernierDefriche = orders.map((o) => o.action === 'defriche').lastIndexOf(true)
+    const premierSolDuLogis = orders.findIndex((o) => o.action === 'pose' && o.structure === 'floor')
+    expect(premierSolDuLogis).toBeGreaterThan(dernierDefriche)
+  })
+
+  it('une SOUCHE ne se défriche pas deux fois (stock 0 = libre)', () => {
+    const sim = npcVillageSim(1)
+    const v = village(sim)
+    v.buildTier = 2
+    const spot = HUT_SPOTS.find((sp) => {
+      const [ax, ay] = bedAnchor(v.fireTx, v.fireTy, sp)
+      return sim.structures.some((s) => s.type === 'paillasse' && s.tx === ax && s.ty === ay)
+    })!
+    const [tx, ty] = tuilesDuLogis(v.fireTx, v.fireTy, spot)[0]!
+    sim.nodes.push({ id: 999, type: 'tree', tx, ty, stock: 5, regrowAt: 0 })
+    expect(desiredOrders(sim, v).filter((o) => o.action === 'defriche')).toHaveLength(1)
+    // Récolté jusqu'au bout : le nœud RESTE (le client ne reçoit les nœuds qu'une fois, un
+    // retrait lui laisserait un arbre fantôme) mais il ne compte plus — `poseLibre` le dit.
+    sim.nodes.find((n) => n.id === 999)!.stock = 0
+    expect(desiredOrders(sim, v).filter((o) => o.action === 'defriche')).toHaveLength(0)
+  })
+})
+
+describe('la cour entière se défriche (décision 2026-08-20)', () => {
+  it('un arbre n\'importe où DANS l\'enceinte se fait abattre — et pas un pas dehors', () => {
+    const sim = npcVillageSim(1)
+    const v = village(sim)
+    v.buildTier = 2
+    const r = VILLAGE_GROWTH.ENCEINTE_RADIUS
+    // EXHAUSTIF SUR LA FRONTIÈRE : un arbre sur chaque tuile du carré de l'enceinte, et un
+    // anneau d'arbres JUSTE DEHORS. La garde ne se contente pas de vérifier qu'on coupe :
+    // elle vérifie aussi qu'on s'arrête — un défrichement qui déborde raserait la forêt.
+    let id = 5000
+    const dedans: string[] = []
+    const dehors: string[] = []
+    for (let dy = -r - 1; dy <= r + 1; dy++) {
+      for (let dx = -r - 1; dx <= r + 1; dx++) {
+        const tx = v.fireTx + dx
+        const ty = v.fireTy + dy
+        if (tx < 0 || ty < 0 || tx >= sim.map.width || ty >= sim.map.height) continue
+        sim.nodes.push({ id: (id += 1), type: 'tree', tx, ty, stock: 5, regrowAt: 0 })
+        ;(Math.max(Math.abs(dx), Math.abs(dy)) <= r ? dedans : dehors).push(`${tx},${ty}`)
+      }
+    }
+    expect(dedans.length).toBeGreaterThan(100) // la garde a bien de quoi mesurer
+    expect(dehors.length).toBeGreaterThan(0)
+    const coupes = new Set(
+      (desiredOrders(sim, v).filter((o) => o.action === 'defriche') as Extract<BuildOrder, { action: 'defriche' }>[])
+        .map((o) => `${o.tx},${o.ty}`),
+    )
+    for (const cle of dedans) expect(coupes.has(cle), `(${cle}) est dans l'enceinte et reste debout`).toBe(true)
+    for (const cle of dehors) expect(coupes.has(cle), `(${cle}) est DEHORS et se fait couper`).toBe(false)
+  })
+
+  it('la cour se dégage AVANT qu\'on bâtisse, et APRÈS l\'anneau (on s\'abrite d\'abord)', () => {
+    const sim = npcVillageSim(1)
+    const v = village(sim)
+    v.buildTier = 2
+    sim.nodes.push({ id: 6001, type: 'tree', tx: v.fireTx + 2, ty: v.fireTy + 2, stock: 5, regrowAt: 0 })
+    const orders = desiredOrders(sim, v)
+    const premierDefriche = orders.findIndex((o) => o.action === 'defriche')
+    const dernierePalissade = orders.map((o) => o.action === 'pose' && o.structure === 'palissade').lastIndexOf(true)
+    const premierSol = orders.findIndex((o) => o.action === 'pose' && o.structure === 'floor')
+    expect(premierDefriche).toBeGreaterThan(dernierePalissade) // l'abri d'abord (R15)
+    expect(premierDefriche).toBeLessThan(premierSol) // le sol net avant de le couvrir
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// LE DÉBIT DU CHANTIER — la garde qui manquait, et qui aurait dû rougir
+//
+// Les gardes ci-dessus vérifient la COMPOSITION des ordres : lesquels, dans quel ordre. Aucune
+// ne regarde le DÉBIT — et c'est par là qu'est passé un défaut qui rendait les villages
+// intestables. Le défrichement lâchait sa corvée après UN coup de hache ; un arbre porte 10 de
+// stock et une fenêtre de chantier dure 8 400 ticks. MESURÉ sur le vrai worldgen
+// (`construireMondeDuBanc`, graine 11), le pire des trois villages a 51 arbres (550 de stock)
+// dans sa cour : **80 cycles de défrichement pour une saison qui en compte 6.** Il n'aurait
+// jamais posé un sol. Un bûcheron ne part pas après un coup — il reste jusqu'à ce que l'arbre
+// tombe, comme `executeGather` reste sur son nœud.
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+describe('le défrichement TIENT SON DÉBIT (2026-08-20)', () => {
+  it('un arbre de la cour tombe en UNE corvée, pas en dix', () => {
+    const sim = npcVillageSim(3)
+    const v = village(sim)
+    v.buildTier = 2
+    addItems(granary(sim).inventory!, { wood: 200, berries: 60 }) // le chantier ne doit pas caler faute de stock
+    // UN SEUL arbre, planté dans la cour, loin des paillasses : ce qu'on chronomètre est le
+    // défrichement, pas un logis qui se bâtit autour.
+    const tx = v.fireTx + 5
+    const ty = v.fireTy + 5
+    sim.nodes.push({ id: 7777, type: 'tree', tx, ty, stock: 10, regrowAt: 0 })
+    const arbre = () => sim.nodes.find((n) => n.id === 7777)!
+    expect(arbre().stock, 'la prémisse : il est debout, plein').toBe(10)
+
+    // L'ANNEAU D'ABORD — POSÉ, PAS ATTENDU. La cour ne se défriche qu'après la palissade
+    // (R15 : on s'abrite avant tout), et l'anneau fait 66 rondins à la cadence de défense :
+    // le chronométrer aussi mesurerait le chantier entier, pas le défrichement. On le pose
+    // donc par le PLAN LUI-MÊME — jamais une géométrie recopiée, qui divergerait le jour où
+    // l'enceinte change de forme.
+    for (const o of desiredOrders(sim, v)) {
+      if (o.action === 'pose' && o.enceinte === true) {
+        addStructure(sim, o.structure, o.tx, o.ty, v.id, 0, undefined, o.material, o.edges)
+      }
+    }
+    expect(desiredOrders(sim, v).some((o) => o.action === 'pose' && o.enceinte === true)).toBe(false)
+    expect(desiredOrders(sim, v)[0], "le défrichement est en tête de chantier").toMatchObject({ action: 'defriche' })
+
+    // ON POSE LA CORVÉE À LA MAIN, comme le fait déjà « le tableau porte UNE tâche build » :
+    // la fenêtre de cadence n'ouvre qu'un tick sur 8 400, et l'attendre ferait mesurer
+    // l'ALIGNEMENT de la cadence au lieu du geste. Ce qu'on chronomètre ici est le
+    // défrichement lui-même, une fois la corvée servie.
+    refreshBoard(sim, village(sim))
+    const corvee = village(sim).tasks.find((t) => t.kind === 'build')
+    expect(corvee?.build, 'le tableau n’a pas servi le défrichement').toMatchObject({ action: 'defriche', tx, ty })
+
+    // UNE SEULE FENÊTRE de marge. Avec l'ancien modèle (un coup de hache puis on lâche la
+    // corvée, et le tableau reposte à la fenêtre SUIVANTE), il en aurait fallu DIX — une par
+    // point de stock. Ce plafond sépare donc exactement les deux comportements.
+    const plafond = VILLAGE_GROWTH.BUILD_PACE_TICKS
+    let tombe = -1
+    for (let t = 0; t < plafond && tombe < 0; t++) {
+      step(sim, [])
+      if (arbre().stock === 0) tombe = t
+    }
+    expect(tombe, `l'arbre tient encore debout après ${plafond} ticks (une fenêtre entière)`).toBeGreaterThan(0)
   })
 })

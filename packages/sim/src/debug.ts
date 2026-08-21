@@ -202,7 +202,17 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
       const orders = desiredOrders(state, village)
       if (orders.length === 0) break
       for (const order of orders) {
-        if (order.action === 'pose') {
+        if (order.action === 'defriche') {
+          // LE TAMPON DOIT ATTEINDRE LE MÊME ÉTAT QUE LE CHANTIER, sinon il ment — et c'est
+          // très exactement par ce mensonge qu'un logis tamponné s'est retrouvé bâti AUTOUR
+          // d'un arbre vivant sur une photo d'accueil. On vide le nœud (stock 0), ce que
+          // `poseLibre` lit comme libre et le client comme une souche : le même état que si
+          // un villageois l'avait abattu. Ce qu'on court-circuite reste la main-d'œuvre et le
+          // temps, jamais le RÉSULTAT.
+          for (const n of state.nodes) {
+            if (n.tx === order.tx && n.ty === order.ty) n.stock = 0
+          }
+        } else if (order.action === 'pose') {
           addStructure(state, order.structure, order.tx, order.ty, village.id, 0, undefined, order.material, order.edges)
         } else if (order.action === 'place') {
           addStructure(state, order.component, order.tx, order.ty, village.id, 0)
