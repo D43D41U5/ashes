@@ -1,6 +1,6 @@
 # La saison sans fin — le plan en cinq tranches
 
-*Source : `docs/specs/saison-sans-fin.md` (décidé 2026-07-31), les décisions d'Alexis du 2026-08-21 (**l'arc oscille** — « le jeu devient de plus en plus dur mais on peut survivre à plusieurs hivers » ; **la pression vient de l'environnement** — le cortège de cendre, livré), et la refonte **pression-croissante des Cendreux** (spec du 2026-08-21, 19 décisions, livrée — elle change la liste des lois, voir §1). Statut : **plan actée, tranche 1 prête à partir**. Jalon : le pivot systémique d'avant GATE 1 (question O7 de la spec — tranché de fait par « continue »).*
+*Source : `docs/specs/saison-sans-fin.md` (décidé 2026-07-31), les décisions d'Alexis du 2026-08-21 (**l'arc oscille** — « le jeu devient de plus en plus dur mais on peut survivre à plusieurs hivers » ; **la pression vient de l'environnement** — le cortège de cendre, livré), et la refonte **pression-croissante des Cendreux** (spec du 2026-08-21, 19 décisions, livrée — elle change la liste des lois, voir §1). Statut : **T1 et T2 livrées (2026-08-21) ; T3 prête — une assomption à confirmer**. Jalon : le pivot systémique d'avant GATE 1 (question O7 de la spec — tranché de fait par « continue »).*
 
 ---
 
@@ -33,7 +33,7 @@
 
 Chaque table devient une **fonction totale** `loi(act)` dans son bloc de réglage — valeur d'acte III en **plafond provisoire** au-delà de 3 (« la pente par tour arrive en T2 ; cette fonction est le POINT UNIQUE où elle s'écrira »). `Act` s'élargit à `number`. **A3 par le compilateur, pas par grep** : les tables privées, l'indexation `[act - 1]` devient une erreur de compilation partout. `METEO.TYPES` et `CONVERGE_TILES` gagnent un accès total en restant des tables (une mixture et une portée assumée ne sont pas des pentes). Garde neuve : balayage A2 (10 lois × 200 actes — monotone, plafond **atteint et tenu**, jamais `undefined`/`NaN`), et l'égalité **aux littéraux** sur les actes 1-3 (jamais à la table qu'on teste — une garde écrite avec sa constante ne garde rien). **Sortie : bit-exact sur l'arc nominal — replay, events et les 4 suites verts sans amendement.**
 
-### T2 — Le calendrier des tours *(3 décisions d'Alexis à prendre AVANT)*
+### T2 — Le calendrier des tours *(LIVRÉE — 84 jours, quatre actes de 21, décision d'Alexis ; pentes à zéro en attendant O3)*
 
 `actForDay` non borné et monotone (A1) ; l'**année** = 4 actes (l'option oscillante du scénariste) ; chaque loi devient `min(plafond, socle(k) + AMPLITUDE[(acte−1) mod 4])` avec `k` = numéro de tour et `socle(k+1) = socle(k) + PAS` — additions bornées, R1bis. **A2 se réénonce sur `k`** (une loi cyclique n'est pas monotone en acte — c'est la concession assumée de l'option). A5 (10×60 jours, la sim tourne, l'acte croît). Décisions à poser une à une : **la longueur de l'année en jours** (la vitesse R6 s'en dérive), **les noms des actes ≥ 4** (le baptême des tours — bible §5), **les PAS et plafonds** des lois (O3 — calibrage banc, mais l'ordre de grandeur se décide).
 

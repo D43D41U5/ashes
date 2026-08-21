@@ -56,7 +56,7 @@ describe('le front de cendre', () => {
   it('R27 — l\'ACTE I est un répit : le front ne bouge pas', () => {
     // Le joueur a le temps de bâtir, de s'attacher, et de croire que ça durera. C'est ce qui rend
     // la suite cruelle — et c'est le calendrier du GDD, à la lettre.
-    const finActeI = BALANCE.ACT_BOUNDARIES[0]!
+    const finActeI = BALANCE.ACT_DAYS
     for (let jour = 1; jour <= finActeI; jour++) {
       expect(frontAu(jour), `le front bouge au jour ${jour} (acte I)`).toBe(0)
     }
@@ -64,7 +64,7 @@ describe('le front de cendre', () => {
   })
 
   it('R27 — le front ACCÉLÈRE : la moitié du temps n\'a mangé qu\'un quart du chemin', () => {
-    const debut = BALANCE.ACT_BOUNDARIES[0]!
+    const debut = BALANCE.ACT_DAYS
     const milieu = debut + Math.round((BALANCE.SEASON_DAYS - debut) / 2)
     const aMiChemin = frontAu(milieu) / MAX
     // Une progression linéaire donnerait 0,5. Une menace qu'on s'habitue à voir bouger n'en est

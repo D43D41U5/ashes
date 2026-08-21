@@ -26,7 +26,7 @@ import { spawnMonster } from './monsters'
 import { computeFlowField, findPath } from './pathfinding'
 import { createSim, snapshot, spawnEntity, step, type SimState } from './sim'
 import { ambientTemperature, baselineTemperature, climatFlore, climatMaximal } from './temperature'
-import { actForDay, calendarScaleForSeasonCycles, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE } from './time'
+import { actForDay, calendarScaleForSeasonCycles, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE, seasonDayAtTick } from './time'
 import { addStructure } from './village'
 
 /** 1 jour de saison = 1 cycle : le tick porte l'acte ET l'heure. */
@@ -764,7 +764,16 @@ describe('A10 — la neige tient après le front, puis fond (G7)', () => {
     chaud.tick = front.endTick + ecart
     // On force les températures par l'ACTE : `frontDuCycle` ne dépend que du cycle, pas de
     // `calendarScale`… si : on change donc la seule chose qui compte, le jour de saison vu.
-    froid.calendarScale = SCALE * 8 // le même tick tombe bien plus tard dans la saison → acte III
+    //
+    // ON VISE L'ACTE, PAS UN MULTIPLICATEUR : « × 8 » tombait jadis « bien plus tard dans la
+    // saison », donc en acte III pour toujours. Depuis que l'année tourne (saison-sans-fin T2 —
+    // 84 jours, quatre actes), × 8 dépasse le jour 84 et atterrit AU PRINTEMPS DE L'AN 2, où il
+    // fait doux : le montage mesurait un monde qui n'existe plus. On cherche donc le plus petit
+    // facteur qui pose le même tick dans la Cendre (acte III) — et on l'AFFIRME.
+    let facteur = 2
+    while (actForDay(seasonDayAtTick(froid.tick, SCALE * facteur)) !== 3) facteur += 1
+    froid.calendarScale = SCALE * facteur
+    expect(actForDay(seasonDayAtTick(froid.tick, froid.calendarScale))).toBe(3)
     expect(baselineTemperature(froid, 4, 5)).toBeLessThan(baselineTemperature(chaud, 4, 5))
     expect(neigeAuSol(froid, 4, 5)).toBeGreaterThanOrEqual(neigeAuSol(chaud, 4, 5))
   })

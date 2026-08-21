@@ -13,12 +13,13 @@
  * une entrée structurée `{ jour, texte, poids }` — le jour est SÉPARÉ du texte
  * (gouttière de dates de la maquette), et le mapping type→poids vit ici, pur.
  */
-import { WORLD_EVENTS } from './balance'
+import { WORLD_EVENTS, phaseOf, tourOf } from './balance'
 import type { SimEvent } from './events'
 import { POI_CHARGES } from './poi-discovery'
 import { TICKS_PER_SEASON_DAY } from './time'
 
 const ACT_NAMES = ['l’Éclosion', 'le Grand Froid', 'la Cendre'] as const
+const ROMAIN = ['I', 'II', 'III', 'IV'] as const
 
 /** Les trois registres de la chronique (voir en-tête). */
 export type ChronicleWeight = 'battement' | 'recit' | 'intime'
@@ -106,11 +107,16 @@ export function chronicleFromEvents(
         push(`${e.name} est tombé : son Feu s'est éteint, il n'en reste que des cendres.`, 'battement')
         break
       case 'act_started':
-        // TOTAL, jamais indexé à l'aveugle : sous la saison sans fin l'acte est un entier non
-        // borné, et `ACT_NAMES[3]` est `undefined` — le nom du quatrième et des suivants est
-        // une décision OUVERTE (bible §5, les noms des tours). En attendant le baptême, le
-        // repli est neutre et vrai.
-        if (e.act > 1) push(`${ACT_NAMES[e.act - 1] ?? `l’acte ${e.act}`} a commencé.`, 'battement')
+        // L'ARC OSCILLE (T2) : les saisons REVIENNENT, et avec leur nom — l'Éclosion de l'an 2
+        // est une Éclosion. On nomme donc la PHASE, pas le numéro global ; le quatrième acte
+        // (le cœur de l'hiver) attend son baptême — décision ouverte, bible §5 — et se dit
+        // « l'acte IV » en attendant. À partir du deuxième tour, l'an se dit : c'est la seule
+        // information que le joueur n'a pas sous les yeux.
+        if (e.act > 1) {
+          const nom = ACT_NAMES[phaseOf(e.act) - 1] ?? `l’acte ${ROMAIN[phaseOf(e.act) - 1] ?? phaseOf(e.act)}`
+          const tour = tourOf(e.act)
+          push(tour > 1 ? `L’an ${tour} — ${nom} a commencé.` : `${nom} a commencé.`, 'battement')
+        }
         break
       case 'village_archetype_changed':
         if (e.archetype === 'foyer') push(`${name(e.villageId)} a viré au bleu : un Foyer.`, 'recit')

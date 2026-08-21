@@ -23,6 +23,8 @@ describe('temps (A1 — fonction pure du tick)', () => {
       isNight: false,
       seasonDay: 1,
       act: 1,
+      tour: 1, // l'an 1 (saison-sans-fin T2)
+      phase: 1, // le printemps
     })
   })
 
@@ -73,10 +75,15 @@ describe('temps (A1 — fonction pure du tick)', () => {
   })
 
   it('les actes changent aux jours 22 et 43 (bornes GDD §2)', () => {
-    expect(actForDay(BALANCE.ACT_BOUNDARIES[0])).toBe(1)
-    expect(actForDay(BALANCE.ACT_BOUNDARIES[0] + 1)).toBe(2)
-    expect(actForDay(BALANCE.ACT_BOUNDARIES[1])).toBe(2)
-    expect(actForDay(BALANCE.ACT_BOUNDARIES[1] + 1)).toBe(3)
+    // Les bornes des trois premiers actes sont INCHANGÉES par T2 (21 / 42 / 63) — épinglées
+    // en littéraux, pas à la constante qu'on teste.
+    expect(actForDay(21)).toBe(1)
+    expect(actForDay(22)).toBe(2)
+    expect(actForDay(42)).toBe(2)
+    expect(actForDay(43)).toBe(3)
+    expect(actForDay(63)).toBe(3)
+    expect(actForDay(64)).toBe(4) // la tranche neuve : le cœur de l'hiver
+    expect(actForDay(85)).toBe(5) // l'an 2 commence — et c'est un printemps
     expect(actForDay(BALANCE.SEASON_DAYS)).toBe(3)
   })
 })

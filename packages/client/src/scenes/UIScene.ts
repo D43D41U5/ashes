@@ -703,7 +703,11 @@ export class UIScene extends Phaser.Scene {
     const feuLabel =
       archetype === 'foyer' ? 'Foyer' : archetype === 'meute' ? 'Meute' : villageWarmth > 10 ? 'tiède' : villageWarmth < -10 ? 'sombre' : 'neutre'
     // Les libellés de la maquette 2A — composés ici, peints par hud-core (DOM).
-    const dayLine = `JOUR ${time.seasonDay} — ACTE ${'I'.repeat(time.act)} — ${hour}H${time.isNight ? ' · NUIT' : ''}`
+    // L'ACTE se dit en PHASE (I..IV) et l'AN à partir du deuxième (saison-sans-fin T2) —
+    // « ACTE IIIIIII » n'est pas un chiffre romain, c'est un compteur qui déborde.
+    const acteRomain = ['I', 'II', 'III', 'IV'][time.phase - 1] ?? String(time.phase)
+    const an = time.tour > 1 ? `AN ${time.tour} · ` : ''
+    const dayLine = `JOUR ${time.seasonDay} — ${an}ACTE ${acteRomain} — ${hour}H${time.isNight ? ' · NUIT' : ''}`
     const villageLine =
       members > 0 ? `VILLAGE : ${members} MEMBRE${members > 1 ? 'S' : ''} — FEU : ${feuLabel.toUpperCase()}` : ''
     const boardLine = board ? `TABLEAU : ${board}` : ''

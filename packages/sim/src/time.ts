@@ -7,7 +7,7 @@
  * - Le CALENDRIER (jour de saison, actes) : accéléré par `calendarScale`
  *   (1 en multi ; grand en Veillée et en test pour jouer une saison vite).
  */
-import { BALANCE } from './balance'
+import { BALANCE, phaseOf, tourOf } from './balance'
 import { emitEvent } from './events'
 import type { SimState } from './sim'
 
@@ -37,17 +37,38 @@ export interface GameTime {
   /** Jour de saison, à partir de 1. Peut dépasser SEASON_DAYS (la Cendre finale). */
   seasonDay: number
   act: Act
+  /** L'année, à partir de 1 — le TOUR des lois (T2). */
+  tour: number
+  /** La saison dans l'année, 1..ACTS_PER_YEAR — la PHASE des lois (T2). */
+  phase: number
 }
 
 export function seasonDayAtTick(tick: number, calendarScale: number): number {
   return Math.floor((tick * calendarScale) / TICKS_PER_SEASON_DAY) + 1
 }
 
+/**
+ * L'ACTE D'UN JOUR — NON BORNÉ (saison-sans-fin A1, T2). Un acte tous les `ACT_DAYS` jours, à
+ * vie : l'an 1 a ses actes 1-4 (jours 1-84), l'an 2 ses actes 5-8, et ainsi de suite. Monotone
+ * non décroissant par construction ; un jour < 1 est l'acte 1.
+ */
 export function actForDay(day: number): Act {
-  if (day <= BALANCE.ACT_BOUNDARIES[0]) return 1
-  if (day <= BALANCE.ACT_BOUNDARIES[1]) return 2
-  return 3
+  const d = day < 1 ? 1 : Math.floor(day)
+  return Math.floor((d - 1) / BALANCE.ACT_DAYS) + 1
 }
+
+/** L'année du jour, à partir de 1 (le TOUR `k` des lois). */
+export function tourForDay(day: number): number {
+  return tourOf(actForDay(day))
+}
+
+/** La saison dans l'année, 1..ACTS_PER_YEAR (la PHASE des lois). */
+export function phaseForDay(day: number): number {
+  return phaseOf(actForDay(day))
+}
+
+/** La longueur d'une année en jours de jeu — dérivée, jamais écrite. */
+export const YEAR_DAYS = BALANCE.ACT_DAYS * BALANCE.ACTS_PER_YEAR
 
 /**
  * LA RAMPE DE SAISON — une pression qui monte JOUR APRÈS JOUR, pas par actes (décisions
@@ -116,6 +137,8 @@ export function gameTimeAt(state: SimState, tick: number): GameTime {
     isNight: cycleTick >= DAY_TICKS_PER_CYCLE,
     seasonDay,
     act: actForDay(seasonDay),
+    tour: tourForDay(seasonDay),
+    phase: phaseForDay(seasonDay),
   }
 }
 

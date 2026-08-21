@@ -163,9 +163,16 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     ])
   })
 
-  it('l’acte est TOTAL : au-delà des trois noms, un repli neutre — jamais undefined', () => {
+  it('l’acte est TOTAL et les saisons REVIENNENT : l’acte 7 est la Cendre de l’an 2, le 4e attend son nom', () => {
+    // L'arc oscille (T2) : on nomme la PHASE, pas le numéro global, et l'an se dit dès le
+    // deuxième tour. Le quatrième acte — le cœur de l'hiver — n'a pas encore de nom (décision
+    // ouverte, bible §5) : il se dit « l'acte IV » en attendant, jamais undefined.
     const entries = chronicleFromEvents([at(70, { type: 'act_started', act: 7 })], SCALE, NAMES)
-    expect(entries).toEqual([{ day: 70, text: 'l’acte 7 a commencé.', weight: 'battement' }])
+    expect(entries).toEqual([{ day: 70, text: 'L’an 2 — la Cendre a commencé.', weight: 'battement' }])
+    const quatre = chronicleFromEvents([at(64, { type: 'act_started', act: 4 })], SCALE, NAMES)
+    expect(quatre[0]!.text).toBe('l’acte IV a commencé.')
+    const printemps2 = chronicleFromEvents([at(85, { type: 'act_started', act: 5 })], SCALE, NAMES)
+    expect(printemps2[0]!.text).toBe('L’an 2 — l’Éclosion a commencé.')
     // Et les trois noms existants restent les leurs.
     const grand = chronicleFromEvents([at(22, { type: 'act_started', act: 2 })], SCALE, NAMES)
     expect(grand[0]!.text).toBe('le Grand Froid a commencé.')

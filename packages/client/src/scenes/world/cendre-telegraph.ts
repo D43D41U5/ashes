@@ -14,7 +14,7 @@
 import { BALANCE } from '@ashes/sim'
 
 /** Le premier jour de l'acte III — le jour où la Cendre déferle (borne GDD §2). */
-const CENDRE_DAY = BALANCE.ACT_BOUNDARIES[1] + 1
+const CENDRE_DAY = 2 * BALANCE.ACT_DAYS + 1 // le premier jour de l'acte III de l'an 1 — inchangé (43) ; sa récurrence annuelle est un sujet de T3
 
 /** La ligne de télégraphe pour un jour de saison donné, ou `null` s'il n'y a rien à dire. */
 export function cendreTelegraphForDay(day: number): string | null {

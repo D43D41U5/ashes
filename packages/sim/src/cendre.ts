@@ -222,7 +222,7 @@ export function computeCendreField(
  */
 export function avanceeDuFront(jourDeSaison: number, avanceeMax: number): number {
   // La fin de l'acte I : c'est là que la cendre s'ébranle.
-  const debut = BALANCE.ACT_BOUNDARIES[CENDRE.ACTE_DEPART - 2] ?? 21
+  const debut = (CENDRE.ACTE_DEPART - 1) * BALANCE.ACT_DAYS // la fin de l'acte I — inchangé (21), dérivé de la cadence (T2)
   if (jourDeSaison <= debut) return 0
   const t = (jourDeSaison - debut) / (BALANCE.SEASON_DAYS - debut)
   const borne = t < 0 ? 0 : t > 1 ? 1 : t

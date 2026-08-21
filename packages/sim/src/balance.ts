@@ -63,23 +63,67 @@ export type { ComponentType, FunctionId }
  * R1bis : `min`/`max`/`floor` seulement — pas une transcendante, rien qui diverge entre moteurs.
  */
 export type ActTable<T> = ((act: number) => T) & { readonly paliers: readonly T[] }
-export type ActLaw = ActTable<number> & { readonly plafond: number }
+export type ActLaw = ActTable<number> & { readonly plafond: number; readonly pas: number }
 
-/** Une TABLE d'acte rendue totale : le premier palier avant 1, le dernier tenu au-delà. Pour ce
- *  qui n'est pas une pente — une mixture météo, une portée assumée — et qui doit pourtant
- *  répondre à tout acte. */
+/**
+ * ═══ L'ANNÉE (T2 — décision d'Alexis 2026-08-21 : « 84 jours, quatre actes de 21 ») ═══
+ *
+ * L'ARC OSCILLE : il n'y a pas de dernier acte, il y a un hiver qui revient. L'acte est un
+ * entier non borné ; l'année en compte quatre. Le TOUR `k` est le numéro de l'année, la PHASE
+ * la saison dans l'année (1..4). Les trois premiers actes de l'an 1 gardent EXACTEMENT leurs
+ * bornes d'avant (21/42/63) — les soixante jours calibrés ne bougent pas d'un tick ; le
+ * quatrième est une tranche NEUVE (jours 64-84), le cœur de l'hiver ; puis le printemps revient.
+ */
+export const ACTS_PER_YEAR = 4
+
+/** Le numéro de l'année, à partir de 1. Total : un acte < 1 est l'an 1. */
+export function tourOf(act: number): number {
+  const a = act < 1 ? 1 : Math.floor(act)
+  return Math.floor((a - 1) / ACTS_PER_YEAR) + 1
+}
+
+/** La saison dans l'année, 1..ACTS_PER_YEAR. Total, même clamp. */
+export function phaseOf(act: number): number {
+  const a = act < 1 ? 1 : Math.floor(act)
+  return ((a - 1) % ACTS_PER_YEAR) + 1
+}
+
+/**
+ * Une TABLE d'acte rendue totale ET cyclique : indexée par la PHASE, le dernier palier tenu
+ * jusqu'à la fin de l'année (trois paliers sur quatre phases : l'hiver profond garde la valeur
+ * de la Cendre), puis l'année recommence. Pour ce qui n'est pas une pente — une mixture météo,
+ * une portée assumée — et qui doit pourtant répondre à tout acte : au printemps de l'an 2, la
+ * météo de printemps revient.
+ */
 export function actTable<T>(paliers: readonly T[]): ActTable<T> {
   const n = paliers.length
   const f = (act: number): T => {
-    const i = act < 1 ? 0 : act > n ? n - 1 : Math.floor(act) - 1
-    return paliers[i]!
+    const p = phaseOf(act)
+    return paliers[p > n ? n - 1 : p - 1]!
   }
   return Object.assign(f, { paliers })
 }
 
-/** Une LOI d'acte : une table totale qui déclare son plafond — la valeur tenue à l'infini. */
-export function actLaw(paliers: readonly number[]): ActLaw {
-  return Object.assign(actTable(paliers), { plafond: paliers[paliers.length - 1]! })
+/**
+ * Une LOI d'acte — la formule de l'arc oscillant (spec saison-sans-fin, O1 répondue) :
+ *
+ *     loi(acte) = min(plafond, paliers[phase] + pas × (tour − 1))
+ *
+ * `pas` est la montée PAR AN — le socle se relève à chaque tour, la forme de l'année reste.
+ * `plafond` borne la montée (R1 : chaque loi déclare sa pente et son plafond). Avec `pas = 0`
+ * — l'état de T2, tant que les pentes ne sont pas décidées — l'an 2 rejoue l'an 1 au bit près.
+ * R1bis : `+ × min`, rien qui diverge entre moteurs.
+ */
+export function actLaw(paliers: readonly number[], pas = 0, plafond?: number): ActLaw {
+  const base = actTable(paliers)
+  let max = paliers[0]!
+  for (const v of paliers) if (v > max) max = v
+  const top = plafond ?? max
+  const f = (act: number): number => {
+    const v = base(act) + pas * (tourOf(act) - 1)
+    return v > top ? top : v
+  }
+  return Object.assign(f, { paliers, plafond: top, pas })
 }
 
 /** Fréquence de la simulation, en ticks par seconde (GDD §11 : 10-15 Hz ;
@@ -274,8 +318,14 @@ export const BALANCE = {
    * jour. Avec DAWN=6 et DAY_FRACTION=0.625 : jour 6h→21h, nuit 21h→6h. */
   CYCLE_DAWN_HOUR: 6,
 
-  /** Derniers jours des actes I et II (GDD §2 : semaines 1-3, 4-6, 7-8+). */
-  ACT_BOUNDARIES: [21, 42],
+  /**
+   * LA CADENCE DES ACTES (saison-sans-fin T2, décision d'Alexis 2026-08-21 : « l'année fait
+   * 84 jours, quatre actes de 21 »). Remplace `ACT_BOUNDARIES` [21, 42] — qui n'était qu'une
+   * cadence écrite en dur pour trois actes, et plafonnait le calendrier à vie. Les bornes des
+   * trois premiers actes sont INCHANGÉES (21 / 42 / 63) ; le quatrième est neuf (64-84).
+   */
+  ACT_DAYS: 21,
+  ACTS_PER_YEAR,
 
   /**
    * LA HITBOX D'UN AVATAR : **12 × 6 px**, soit 0,75 × 0,375 tuile (décision d'Alexis,
@@ -3678,7 +3728,7 @@ export const GEL = {
    * du Grand Froid**, sur une semaine, tuile par tuile (un décalage par `hash2` : les arbres
    * ne tombent pas tous le même matin).
    */
-  JOUR_DEFEUILLAISON: BALANCE.ACT_BOUNDARIES[0],
+  JOUR_DEFEUILLAISON: BALANCE.ACT_DAYS, // la fin de l'acte I — inchangé (21), dérivé de la cadence
   DEFEUILLAISON_JOURS: 7,
   /** On glisse un peu plus vite que sur l'herbe (le `speedFactor` d'une eau gelée,
    *  quelle que soit sa profondeur). Il remplace 0,5 sur le gué et 0 (infranchissable)
