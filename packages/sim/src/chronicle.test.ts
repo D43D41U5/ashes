@@ -132,6 +132,24 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     expect(est[0]!.text).toBe("On a atteint la Tour de guet effondrée I. Elle regardait l'est.")
   })
 
+  it('la stèle SE CITE — le seul « nous » du jeu, entre guillemets', () => {
+    const entries = chronicleFromEvents(
+      [at(12, { type: 'poi_first_visit', poiId: 20, kind: 'stele', name: 'la Stèle II', byEntityId: 7, stele: { lignes: ['Ici les chemins se répondaient.', 'Nous guettions le sud.'] } })],
+      SCALE,
+      NAMES,
+    )
+    expect(entries).toEqual([{ day: 12, text: 'On a lu la Stèle II. « Ici les chemins se répondaient. Nous guettions le sud. »', weight: 'recit' }])
+  })
+
+  it('la rumeur du réfugié se raconte — le prix est dit, jamais un conseil', () => {
+    const entries = chronicleFromEvents(
+      [at(17, { type: 'refugee_rumeur', groupId: 3, byEntityId: 7, poiId: 4, kind: 'ferme_ruinee', name: 'la Ferme brûlée I' })],
+      SCALE,
+      NAMES,
+    )
+    expect(entries).toEqual([{ day: 17, text: 'Pour un repas, des réfugiés ont dit où trouver la Ferme brûlée I.', weight: 'recit' }])
+  })
+
   it('un intact SANS fondation se tait — l\u2019arrière-pays intact est un décor, pas une ligne', () => {
     const entries = chronicleFromEvents(
       [at(3, { type: 'poi_first_visit', poiId: 12, kind: 'bivouac', name: 'le Vieux bivouac I', byEntityId: 7, faits: [{ ere: 3, type: 'sort', cause: 'intact', saillant: true }] })],

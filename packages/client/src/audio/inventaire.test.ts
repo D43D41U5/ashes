@@ -27,7 +27,9 @@ describe('l’inventaire des 73 faits', () => {
     // les trois faits du blizzard (météo R9) ; 76 → 77 : `crop_frozen` (flore-froid F5) ;
     // 77 → 80 le 2026-08-21 : la pression croissante des Cendreux (`cendreux_cri`,
     // `presage_horde`, `charnier_brule` — spec 2026-08-21).
-    expect(somme).toBe(80)
+    // 80 → 81 le 2026-08-21 : `refugee_rumeur` (annales.md R12) — MUET décidé : il tombe sur
+    // le même geste que `refugees_fed`, qui parle déjà. Le renseignement se LIT.
+    expect(somme).toBe(81)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -39,7 +41,7 @@ describe('l’inventaire des 73 faits', () => {
     expect(muets).toEqual([])
   })
 
-  it('l’état publié est bien l’état ACTUEL : 44 voix, 33 silences décidés', () => {
+  it('l’état publié est bien l’état ACTUEL : 44 voix, 34 silences décidés', () => {
     // Un compte, pas un jugement. `sound.test.ts` vérifie séparément que ces 38 sonnent
     // VRAIMENT (et que les 26 se taisent vraiment) — ici on garde seulement la proportion.
     // 34 → 35 le 2026-07-29 : `node_depleted` sort du silence (l'arbre qui tombe craque).
@@ -79,7 +81,9 @@ describe('l’inventaire des 73 faits', () => {
     // télégraphiage, §9bis — patron de `brume_annonce`) ; `charnier_brule` SONNE (la
     // confirmation du geste — le principe de `reveil_etouffe`).
     expect(SONORES.length).toBe(47)
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(33)
+    // 33 → 34 le 2026-08-21 : `refugee_rumeur` naît MUET (annales.md R12) — le geste de
+    // nourrir parle déjà, le renseignement se lit dans la chronique.
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(34)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

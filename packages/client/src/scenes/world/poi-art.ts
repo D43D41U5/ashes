@@ -83,6 +83,7 @@ const ART: Record<string, { fp: number; w: number; h: number; crown?: number }> 
   // ── Les repères d'horizon de la Racine (spec t0-exploration §1) : ils PERCENT la canopée. ──
   tour_guet: { fp: 3, w: 46, h: 88, crown: 46 }, // la ruine qui guettait le sud — le Belvédère de la plaine
   pierre_levee: { fp: 2, w: 26, h: 64, crown: 24 }, // un menhir seul : la chaîne des pierres
+  stele: { fp: 1, w: 22, h: 44 }, //                la pierre GRAVÉE du pays d'avant — basse, on la lit, on ne la voit pas venir
   // ── Les ruines basses du pays d'avant (R19). ──
   ferme_ruinee: { fp: 12, w: 16, h: 16 }, // des murs bas, UN pignon debout
   charrette: { fp: 2, w: 42, h: 34 }, //               une épave au bord de la sente — basse, pas de crown
@@ -548,6 +549,26 @@ export function makePoiTextures(scene: Phaser.Scene): void {
     // La mousse au pied : le temps a passé.
     g.fillStyle(LEAF.dark).fillEllipse(c - 5, b - 6, 10, 4)
     g.fillStyle(LEAF.mid).fillEllipse(c + 6, b - 5, 7, 3)
+  })
+
+  tex('stele', (w, b) => {
+    ground(w, b, 0.6)
+    const c = w / 2
+    // Une pierre DRESSÉE ET ÉQUARRIE : plus basse et plus droite que le menhir — on l'a
+    // taillée pour écrire, pas pour se voir de loin. Silhouette blocky (DA cubique).
+    g.fillStyle(STONE.mid).fillRect(c - 6, b - 36, 12, 32)
+    g.fillStyle(STONE.lit).fillRect(c - 6, b - 34, 3, 28) //  arête éclairée NO
+    g.fillStyle(STONE.deep).fillRect(c + 3, b - 30, 3, 26) // flanc SE
+    g.fillStyle(STONE.dark).fillRect(c - 7, b - 38, 14, 3) // le chapeau, équarri — des mains, pas un moule
+    // L'ÉCRITURE : des lignes gravées, illisibles à cette taille — et c'est le point : on voit
+    // QUE ça parle, pas ce que ça dit. (Le texte vit dans la chronique, pas dans les pixels.)
+    g.fillStyle(VOID).fillRect(c - 3, b - 31, 6, 1)
+    g.fillStyle(VOID).fillRect(c - 3, b - 27, 5, 1)
+    g.fillStyle(VOID).fillRect(c - 3, b - 23, 6, 1)
+    g.fillStyle(VOID).fillRect(c - 3, b - 19, 4, 1)
+    // La mousse au pied : le temps a passé dessus.
+    g.fillStyle(LEAF.dark).fillEllipse(c - 3, b - 3, 8, 3)
+    g.fillStyle(LEAF.mid).fillEllipse(c + 5, b - 2, 5, 2)
   })
 
   // ═══ LES RUINES BASSES DU PAYS D'AVANT (spec t0-exploration R19) ═══

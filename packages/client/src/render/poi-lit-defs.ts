@@ -714,6 +714,28 @@ export const POI_LIT_DEFS_DATA: readonly PoiLitDef[] = [
     ],
   },
   {
+    // LA STÈLE : la pierre gravée, basse et équarrie — même géométrie que sa texture jour
+    // (poi-art), en blocs. Les gravures sont des DÉTAILS sombres : elles se lisent la nuit
+    // aussi, c'est une pierre qui parle.
+    slug: 'stele',
+    w: 22,
+    h: 44,
+    blocks: [
+      { rect: [4, 8, 14, 32], tone: STONE_A },
+      { rect: [3, 5, 16, 4], tone: STONE_B },
+    ],
+    accents: [
+      { rect: [4, 10, 3, 26], color: QUARTZ },
+      { rect: [5, 38, 8, 3], color: MOSS },
+    ],
+    details: [
+      { rect: [8, 13, 6, 1], color: GRAIN_D },
+      { rect: [8, 17, 5, 1], color: GRAIN_D },
+      { rect: [8, 21, 6, 1], color: GRAIN_D },
+      { rect: [8, 25, 4, 1], color: GRAIN_D },
+    ],
+  },
+  {
     slug: 'pierre_levee',
     w: 26,
     h: 64,

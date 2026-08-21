@@ -62,6 +62,7 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   gift_given: { voix: 'voix', famille: 'social', quoi: 'on DONNE à un voisin (le verbe chaud du Foyer)' },
   refugees_arrived: { voix: 'voix', famille: 'social', quoi: 'un groupe de réfugiés se pose près de chez vous' },
   refugees_fed: { voix: 'voix', famille: 'social', quoi: 'on nourrit les réfugiés' },
+  refugee_rumeur: { voix: 'muet', famille: 'social', quoi: 'les réfugiés nourris disent où trouver un lieu — muet : le geste de nourrir parle déjà, le renseignement se lit dans la chronique' },
   refugees_recruited: { voix: 'voix', famille: 'social', quoi: 'on accueille les réfugiés au village' },
   refugees_robbed: { voix: 'voix', famille: 'social', quoi: 'on DÉPOUILLE les réfugiés (le verbe froid)' },
   refugees_left: { voix: 'muet', famille: 'social', quoi: 'les réfugiés repartent — on n’a rien fait' },

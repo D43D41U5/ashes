@@ -15,6 +15,7 @@ import { distSq } from './geometry'
 import { type CarveField, carveDistanceToMain, walkableComponents } from './connectivity'
 import { nomSelonSort, sortDuLieu } from './sort-des-lieux'
 import { directionCendriere, directionOpposee } from './cendre'
+import { saillant } from './annales'
 import { BUILT_KINDS } from './poi-batis'
 
 // ids terrain (balance.ts) — repris localement pour lisibilité de la table.
@@ -323,6 +324,13 @@ export const POI_TYPES: PoiType[] = [
   // chaîne d'indices qui mène au Cercle, le patron Vegvisir de Valheim. reserve 2 : la chaîne
   // exige au moins deux maillons, sinon c'est un caillou qui pointe vers rien.
   { slug: 'pierre_levee', zones: ['pres_bas'], name: 'la Pierre levée', family: 'reward', biomes: [GRASS, FLOWER, HEATH], weight: 3, cap: 3, reserve: 2, footprint: 2 },
+  /**
+   * LA STÈLE — le lecteur de pierre du pays d'avant (spec `annales.md` R8-R11). HORS-SEMIS,
+   * comme le charnier : elle ne joue pas la loterie, elle se pose SUR les faits saillants de
+   * l'ère 2 (`placeSteles` — croisées et gués, au bord du chemin, jamais dessus). Basse, sans
+   * couronne : un lecteur, pas un repère d'horizon.
+   */
+  { slug: 'stele', name: 'la Stèle', family: 'reward', horsSemis: true, weight: 0, cap: 7, footprint: 1, biomes: [GRASS, FLOWER, HEATH, FOREST, PINE] },
   // ═══ LES RUINES BASSES DU PAYS D'AVANT (spec t0-exploration R19) ═══
   // Des abris au sens des shelters existants, AUCUN butin (lieux.md A9). Avec la Tour, le pré
   // raconte : on vivait ici, on guettait le sud, on est partis.
@@ -1046,6 +1054,56 @@ function walkableTilesFor(map: WorldMap, z: Pick<Zone, 'x' | 'y' | 'w' | 'h'>): 
     }
   }
   return ring
+}
+
+/** L'écart minimal entre deux stèles, en tuiles — des stèles partout ne parlent nulle part. */
+const STELE_ECART = 90
+/** La couronne de pose autour du fait : la stèle est AU BORD du carrefour, pas dessus. */
+const STELE_POSE_RAYON = 5
+
+/**
+ * LES STÈLES (spec `annales.md` R8) — posées SUR les faits saillants de l'ère 2, AU BORD.
+ *
+ * Après `placePois` et `placeCharniers` : les lieux ont leurs empreintes, `tropPres` (dans
+ * `isEligible`) les respecte donc, et les annales de l'ère 2 (croisées, gués) sont écrites
+ * depuis la passe 4.5. La couronne s'explore en ordre déterministe (rayon croissant, dy puis
+ * dx) et s'arrête à la PREMIÈRE tuile de plain-pied éligible — le biome de la table exclut la
+ * route par construction (t0 R18 : rien ne s'adosse à une sente).
+ *
+ * Aucun tirage : l'ordre des candidats est l'ordre d'émission des annales, qui est celui des
+ * passes — le monde hors zones/annales reste au bit près celui d'avant.
+ */
+export function placeSteles(map: WorldMap, champ?: CarveField): void {
+  const t = POI_TYPES.find((p) => p.slug === 'stele')
+  if (!t) return
+  const field = champ ?? carveDistanceToMain(map, walkableComponents(map), POI_PLACEMENT.MAX_CARVE_TILES)
+  const used = new Map<string, number>()
+  const posees: { x: number; y: number }[] = []
+  const ecart2 = STELE_ECART * STELE_ECART
+
+  for (const f of map.annales ?? []) {
+    if (posees.length >= t.cap) break
+    if (f.type !== 'croisee' && f.type !== 'gue') continue
+    if (!saillant(map, f)) continue // le rare se dit — une stèle par carrefour qui compte
+    if (posees.some((q) => (q.x - f.x) * (q.x - f.x) + (q.y - f.y) * (q.y - f.y) < ecart2)) continue
+
+    couronne: for (let r = 1; r <= STELE_POSE_RAYON; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue
+          const tx = f.x + dx
+          const ty = f.y + dy
+          if (tx < 0 || ty < 0 || tx >= map.width || ty >= map.height) continue
+          // De plain-pied sur le monde (patron charnier) : une stèle n'a pas de porte.
+          if (field.dist[ty * map.width + tx] !== 0) continue
+          if (!isEligible(map, field, t, tx, ty, used)) continue
+          placeOne(map, field, t, tx, ty, used)
+          posees.push({ x: f.x, y: f.y })
+          break couronne
+        }
+      }
+    }
+  }
 }
 
 /**

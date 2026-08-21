@@ -56,6 +56,7 @@ export const CHRONICLE_EVENT_TYPES: ReadonlySet<SimEvent['type']> = new Set([
   'filon_decouvert',
   'blizzard_annonce',
   'refugees_arrived',
+  'refugee_rumeur',
   'refugees_recruited',
   'gift_given',
   'entity_died',
@@ -170,6 +171,10 @@ export function chronicleFromEvents(
           'battement',
         )
         break
+      case 'refugee_rumeur':
+        // Le prix est dit (un repas), le reste est un constat — jamais un conseil.
+        push(`Pour un repas, des réfugiés ont dit où trouver ${e.name}.`, 'recit')
+        break
       case 'poi_first_visit':
         // Le bus porte TOUTES les premières visites : c'est le FORMATEUR qui choisit,
         // jamais la logique qui filtre. Deux familles y trouvent leur ligne :
@@ -181,7 +186,12 @@ export function chronicleFromEvents(
         //   « X a été atteint » : la forme active est INSENSIBLE À L'ACCORD par
         //   construction — « la Ferme brûlée a été atteint » est la faute exacte de
         //   « le seuil de le Karst », on ne la réintroduit pas.
-        if (POI_CHARGES[e.kind]?.devise === 'recit') {
+        if (e.stele !== undefined) {
+          // LA STÈLE SE CITE — le seul « nous » du jeu, entre guillemets : ce n'est pas le
+          // chroniqueur qui parle, c'est la pierre. Une brisée se cite pareil : son fragment
+          // EST son texte.
+          push(`On a lu ${e.name}. « ${e.stele.lignes.join(' ')} »`, 'recit')
+        } else if (POI_CHARGES[e.kind]?.devise === 'recit') {
           push(`${e.name} a été atteint pour la première fois.`, 'recit')
         } else {
           // Précédence R7 (spec `annales.md`) : intact > fondation > guet — AU PLUS UNE

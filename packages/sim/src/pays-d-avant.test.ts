@@ -13,7 +13,7 @@ import {
   TERRAIN_BURNT_FOREST, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_HEATH, TERRAIN_LARCH,
   TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_ROAD,
 } from './balance'
-import { ANNALES, saillant, verbalise } from './annales'
+import { ANNALES, saillant, texteDeStele, verbalise } from './annales'
 
 const CARTE = generateZonedTerrain(7)
 const { map, graphe, zone } = CARTE
@@ -326,5 +326,38 @@ describe('les garde-fous des lecteurs (annales.md A3-A6)', () => {
     expect(ANNALES.PART_MUETTE).toBeGreaterThan(0)
     expect(ANNALES.PART_MUETTE).toBeLessThan(1)
     expect(ANNALES.SAILLANCE_MAX).toBeGreaterThanOrEqual(1)
+  })
+})
+
+
+describe('les stèles (annales.md R8, A7-A8bis) — sur la vraie carte', () => {
+  const steles = map.zones.filter((z) => z.kind === 'stele')
+  const annales = map.annales ?? []
+
+  it('il y en a, et chacune est au bord d\u2019un fait d\u2019ère 2 SAILLANT — jamais sur la route', () => {
+    expect(steles.length, 'aucune stèle posée : le pays d\u2019avant reste muet').toBeGreaterThanOrEqual(1)
+    for (const z of steles) {
+      const cx = Math.floor(z.x + z.w / 2)
+      const cy = Math.floor(z.y + z.h / 2)
+      expect(map.terrain[cy * W + cx], `${z.name} posée SUR la route`).not.toBe(TERRAIN_ROAD)
+      const pres = annales.some((f) =>
+        (f.type === 'croisee' || f.type === 'gue') && saillant(map, f) &&
+        (f.x - cx) * (f.x - cx) + (f.y - cy) * (f.y - cy) <= ANNALES.STELE_FAIT_RAYON * ANNALES.STELE_FAIT_RAYON)
+      expect(pres, `${z.name} orpheline de son fait`).toBe(true)
+    }
+  })
+
+  it('texteDeStele est défini pour CHAQUE stèle posée, et aucun texte ne prononce un sort', () => {
+    for (const z of steles) {
+      const t = texteDeStele(map, Math.floor(z.x + z.w / 2), Math.floor(z.y + z.h / 2))
+      expect(t, `${z.name} : pierre muette`).toBeDefined()
+      for (const ligne of t!.lignes) {
+        // R9bis balayé : les mots du sort n'existent dans aucune ligne de stèle.
+        expect(ligne).not.toMatch(/brûl|pill|intact/i)
+      }
+      // Une brisée porte UN fragment ; une saine, une ou deux lignes pleines.
+      if (t!.brisee) expect(t!.lignes).toHaveLength(1)
+      else expect(t!.lignes.length).toBeGreaterThanOrEqual(1)
+    }
   })
 })

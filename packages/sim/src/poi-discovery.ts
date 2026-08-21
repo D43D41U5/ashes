@@ -13,7 +13,7 @@
  * racontera).
  */
 import { POI } from './balance'
-import { faitsDuLieu, saillant } from './annales'
+import { faitsDuLieu, saillant, texteDeStele } from './annales'
 import { emitEvent } from './events'
 import { poiCenter, poisAt } from './map'
 import { POI_TYPES, type PoiType } from './poi'
@@ -25,6 +25,8 @@ export type PoiCharge =
   | { devise: 'savoir'; reveal: 'radius'; radiusTiles: number; family?: PoiType['family'] }
   /** Révèle LE lieu inconnu le plus proche (éventuellement parmi certains `kind`). */
   | { devise: 'savoir'; reveal: 'nearest'; kinds?: readonly string[] }
+  /** LA STÈLE (annales.md R11) : révèle LE lieu que son texte désigne — l'écrivain unique. */
+  | { devise: 'savoir'; reveal: 'stele' }
   /** Effet continu de terrain — chaleur, abri, repos. N'émet aucun événement. */
   | { devise: 'repit' }
   /** Première visite → une ligne dans la chronique. */
@@ -46,6 +48,9 @@ export const POI_CHARGES: Record<string, PoiCharge> = {
   // LES PIERRES SE RÉPONDENT : un menhir révèle la pierre (ou le Cercle) inconnue la plus
   // proche — une chaîne d'indices, le patron Vegvisir. Jamais la carte d'un coup.
   pierre_levee: { devise: 'savoir', reveal: 'nearest', kinds: POI.PIERRES_KINDS },
+  // La stèle révèle CE QUE SON TEXTE DÉSIGNE, rien d'autre (annales.md R11) — et une stèle
+  // brisée ne désigne rien : la lacune a un coût (R10).
+  stele: { devise: 'savoir', reveal: 'stele' },
 
   // ── Le répit : trois lieux qui refont les trajets ──
   source_chaude: { devise: 'repit' },
@@ -83,6 +88,15 @@ function know(state: SimState, entityId: number, knownPois: number[], poiId: num
   return true
 }
 
+/**
+ * RÉVÉLER UN LIEU À UN JOUEUR — la façade de `know` pour les révélateurs EXTERNES (la rumeur
+ * du réfugié, annales.md R12). Même garde d'idempotence, même événement `poi_discovered` :
+ * une révélation est une révélation, d'où qu'elle vienne.
+ */
+export function revelerPoi(state: SimState, entityId: number, knownPois: number[], poiId: number): boolean {
+  return know(state, entityId, knownPois, poiId)
+}
+
 /** Distance AU CARRÉ entre deux centres de zones. Jamais de sqrt : invariant #2. */
 function dist2(a: { x: number; y: number }, b: { x: number; y: number }): number {
   const dx = a.x - b.x
@@ -116,6 +130,16 @@ function applyKnowledge(state: SimState, entityId: number, knownPois: number[], 
       if (charge.family !== undefined && poiFamily(zone.kind!) !== charge.family) continue
       if (dist2(origin, poiCenter(zone)) > r2) continue
       know(state, entityId, knownPois, poiId)
+    }
+    return
+  }
+
+  if (charge.reveal === 'stele') {
+    // Le texte et la révélation sortent de la MÊME fonction pure : ils ne peuvent pas
+    // diverger. `lieuVise` est absent sur une stèle brisée ou muette — alors rien.
+    const texte = texteDeStele(state.map, Math.floor(origin.x), Math.floor(origin.y))
+    if (texte?.lieuVise !== undefined && isCandidate(state, knownPois, sourceId, texte.lieuVise)) {
+      know(state, entityId, knownPois, texte.lieuVise)
     }
     return
   }
@@ -212,6 +236,10 @@ export function advancePois(state: SimState): void {
           ere: f.ere, type: f.type, ...(f.cause !== undefined ? { cause: f.cause } : {}),
           saillant: saillant(state.map, f),
         }))
+        // LA STÈLE SE CITE (annales.md R11) : l'événement porte ses lignes — la chronique est
+        // formatée loin de la carte, la sim témoigne de l'inscription comme elle témoigne du nom.
+        const centre = poiCenter(zone)
+        const stele = zone.kind === 'stele' ? texteDeStele(state.map, Math.floor(centre.x), Math.floor(centre.y)) : undefined
         emitEvent(state, {
           type: 'poi_first_visit',
           tick: state.tick,
@@ -220,6 +248,7 @@ export function advancePois(state: SimState): void {
           name: zone.name,
           byEntityId: entity.id,
           ...(faits.length > 0 ? { faits } : {}),
+          ...(stele !== undefined ? { stele: { lignes: stele.lignes } } : {}),
         })
       }
     }

@@ -57,6 +57,48 @@ describe('les réfugiés (V2-25)', () => {
     expect(me.warmth).toBeGreaterThan(warmthBefore) // Foyer
   })
 
+  it('LA RUMEUR (annales.md R12) : nourrir révèle le lieu porteur d\u2019annales le plus proche DU GROUPE', () => {
+    const sim = roadSim()
+    // Deux lieux humains : la Ferme est PLUS PROCHE du groupe (route en y=20) que la Charrette.
+    sim.map.zones.push(
+      { name: 'la Ferme brûlée I', x: 12, y: 30, w: 2, h: 2, kind: 'ferme_ruinee' }, // 0 — proche
+      { name: 'la Charrette II', x: 80, y: 80, w: 2, h: 2, kind: 'charrette' }, //      1 — loin
+      { name: 'le Tarn I', x: 14, y: 24, w: 2, h: 2, kind: 'tarn' }, //                 2 — plus proche MAIS sans annales
+    )
+    sim.map.annales = [
+      { ere: 1, type: 'fondation', x: 13, y: 31, lieu: 'ferme_ruinee', cause: 'eau' },
+      { ere: 1, type: 'fondation', x: 81, y: 81, lieu: 'charrette', cause: 'route' },
+    ]
+    const g = spawnAGroup(sim)
+    const id = spawnEntity(sim, g.tx + 0.5, g.ty + 0.5)
+    grantItems(sim, id, REFUGEES.FEED_COST)
+    drainEvents(sim)
+    applyVillageAction(sim, id, { type: 'feed_refugees', groupId: g.id })
+
+    const me = sim.entities.find((e) => e.id === id)!
+    expect(me.knownPois, 'la Ferme, mémoire de leur route').toContain(0)
+    expect(me.knownPois, 'le Tarn est plus proche mais la rumeur parle des GENS').not.toContain(2)
+    const events = drainEvents(sim)
+    const rumeur = events.find((e) => e.type === 'refugee_rumeur')
+    expect(rumeur).toMatchObject({ poiId: 0, kind: 'ferme_ruinee', name: 'la Ferme brûlée I', byEntityId: id })
+    expect(events.some((e) => e.type === 'poi_discovered')).toBe(true)
+  })
+
+  it('la rumeur se tait quand le nourricier sait déjà tout — nourrir reste un acte, pas un farm de carte', () => {
+    const sim = roadSim()
+    sim.map.zones.push({ name: 'la Ferme brûlée I', x: 12, y: 30, w: 2, h: 2, kind: 'ferme_ruinee' })
+    sim.map.annales = [{ ere: 1, type: 'fondation', x: 13, y: 31, lieu: 'ferme_ruinee', cause: 'eau' }]
+    const g = spawnAGroup(sim)
+    const id = spawnEntity(sim, g.tx + 0.5, g.ty + 0.5)
+    const me = sim.entities.find((e) => e.id === id)!
+    me.knownPois.push(0) // il connaît déjà la Ferme
+    grantItems(sim, id, REFUGEES.FEED_COST)
+    drainEvents(sim)
+    applyVillageAction(sim, id, { type: 'feed_refugees', groupId: g.id })
+    expect(drainEvents(sim).some((e) => e.type === 'refugee_rumeur')).toBe(false)
+    expect(me.knownPois).toEqual([0]) // rien de neuf, rien de perdu
+  })
+
   it('DÉPOUILLER : on prend leur bien, et ça refroidit (Meute)', () => {
     const sim = roadSim()
     const g = spawnAGroup(sim)

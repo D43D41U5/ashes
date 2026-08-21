@@ -51,7 +51,7 @@ import {
 import { isWater, MARCHABLE, type WorldMap, type Zone as ZoneRect } from './map'
 import { calibreLeFront, computeCendreField } from './cendre'
 import { distSq } from './geometry'
-import { placeCharniers, placePois } from './poi'
+import { placeCharniers, placePois, placeSteles } from './poi'
 import { densiteDeBase } from './morts'
 import { fbm2, hash2 } from './noise'
 import { deriverProfondeur } from './profondeur'
@@ -770,6 +770,9 @@ export function generateZonedTerrain(
   // `poi.ts` ne connaît toujours pas `morts.ts` — il reçoit un accesseur, exactement comme pour
   // les zones. (spec `cendreux.md` R20 ; décision d'Alexis du 2026-07-31.)
   placeCharniers(map, seed, (tx, ty) => densiteDeBase(map, tx, ty), zoneDe, champDeCreusement)
+  // LES STÈLES (annales.md R8) : en DERNIER — elles se posent au bord des faits de l'ère 2 en
+  // respectant les empreintes de tous les lieux déjà placés.
+  placeSteles(map, champDeCreusement)
 
   return carte
 }

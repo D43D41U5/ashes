@@ -40,6 +40,12 @@ export const ANNALES = {
    * visiteur : la ligne de chronique dit ce que le marcheur voit de ses yeux (R5②).
    */
   PART_MUETTE: 0.25,
+  /** Le fait d'ère 2 « sous » une stèle se cherche dans ce rayon — la pose est AU BORD du
+   *  fait (t0 R18 : rien ne s'adosse à une sente), jamais dessus. */
+  STELE_FAIT_RAYON: 8,
+  /** La portée de la ligne 2 : de quoi la stèle a le droit de parler. L'ordre de grandeur est
+   *  l'écran et demi — une stèle parle du PAYS autour d'elle, pas de l'autre bout du monde. */
+  STELE_PORTEE: 120,
 } as const
 
 const SEL_LACUNE = 0x4c414355 // 'LACU'
@@ -92,4 +98,129 @@ export function saillant(map: WorldMap, fait: FaitDeGeneration): boolean {
  */
 export function verbalise(fait: FaitDeGeneration): boolean {
   return hash2(fait.x, fait.y, SEL_LACUNE) >= ANNALES.PART_MUETTE
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// LE TEXTE DES STÈLES (spec `annales.md` R9-R10) — la seule première personne du jeu.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+export interface TexteDeStele {
+  /** Une ou deux lignes lapidaires — UNE seule (le fragment) si la stèle est brisée. */
+  lignes: string[]
+  brisee: boolean
+  /** Le poiId du lieu que la ligne 2 désigne — absent si brisée, ou sans ligne 2. C'est LUI
+   *  que la charge révèle (R11) : le texte et la révélation ne peuvent pas diverger. */
+  lieuVise?: number
+}
+
+/** La ligne 1 — le fait SOUS la stèle, à l'imparfait (bible T1 : l'imparfait appartient au
+ *  pays d'avant). */
+const PHRASE_SOUS: Record<string, { pleine: string; fragment: string }> = {
+  croisee: { pleine: 'Ici les chemins se répondaient.', fragment: '… les chemins …' },
+  gue: { pleine: "Ici l'eau se laissait passer.", fragment: "… l'eau …" },
+}
+
+/** « Regarder » une direction : le sud, l'est — l'article suit la voyelle, en DONNÉE (T5 :
+ *  jamais une formule sensible à l'accord). */
+const REGARD: Record<string, string> = { nord: 'le nord', sud: 'le sud', est: "l'est", ouest: "l'ouest" }
+/** « Aller » vers une direction : au sud, à l'est. */
+const ALLER: Record<string, string> = { nord: 'au nord', sud: 'au sud', est: "à l'est", ouest: "à l'ouest" }
+
+/**
+ * LA LIGNE 2 — le fait d'un LIEU, dans la voix de son auteur : le « nous », le présent et
+ * l'impératif admis (bible T2 — une inscription s'adresse au passant, ce n'est pas le
+ * narrateur qui parle au joueur).
+ *
+ * CE QUI N'Y ENTRE JAMAIS (R9bis) : le `sort` — une stèle a été gravée par des VIVANTS, elle
+ * ne peut pas savoir ce que la Cendre a fait de ce qu'elle désigne ; et l'`essart`, dont la
+ * phrase est locative (« ici le bois a cédé » n'a de sens qu'au lieu même).
+ */
+function phraseLoin(f: FaitDeGeneration): { pleine: string; fragment: string } | undefined {
+  switch (f.type) {
+    case 'fondation':
+      if (f.cause === 'eau') return { pleine: "Plus loin vivaient ceux de l'eau.", fragment: "… l'eau …" }
+      if (f.cause === 'route') return { pleine: 'Plus loin vivaient ceux de la route.', fragment: '… la route …' }
+      return undefined
+    case 'guet': {
+      const d = REGARD[f.cause ?? '']
+      return d === undefined ? undefined : { pleine: `Nous guettions ${d}.`, fragment: `… ${d} …` }
+    }
+    case 'fuite': {
+      // Le présent : la stèle de l'exode fige l'instant où on l'a gravée.
+      const d = ALLER[f.cause ?? '']
+      return d === undefined ? undefined : { pleine: `Nous partons ${d}.`, fragment: `… ${d} …` }
+    }
+    case 'taille':
+      if (f.cause !== 'fer' && f.cause !== 'charbon') return undefined
+      return { pleine: `Le ${f.cause} affleure. Taillez.`, fragment: '… taillez …' }
+    case 'fosse':
+      return { pleine: 'Plus loin dorment les nôtres.', fragment: '… les nôtres …' }
+    case 'gravure':
+      return { pleine: 'Les pierres parlaient avant nous.', fragment: '… avant nous …' }
+    default:
+      return undefined
+  }
+}
+
+/**
+ * LE TEXTE D'UNE STÈLE au point donné — fonction PURE, partagée sim/client (l'écrivain
+ * unique : la chronique et le rendu ne peuvent pas se contredire).
+ *
+ * `undefined` si aucun fait d'ère 2 ne vit sous la stèle : ce n'est pas un emplacement de
+ * stèle, et l'appelant doit le savoir plutôt que d'afficher une pierre muette par accident.
+ */
+export function texteDeStele(map: WorldMap, sx: number, sy: number): TexteDeStele | undefined {
+  const annales = map.annales ?? []
+
+  // Le fait SOUS la stèle : le plus proche croisee/gue dans STELE_FAIT_RAYON, strict (le
+  // premier gagne à égalité — l'ordre des annales est celui de la génération, déterministe).
+  const rSous2 = ANNALES.STELE_FAIT_RAYON * ANNALES.STELE_FAIT_RAYON
+  let sous: FaitDeGeneration | undefined
+  let sousD = rSous2 + 1
+  for (const f of annales) {
+    if (f.type !== 'croisee' && f.type !== 'gue') continue
+    const d2 = (f.x - sx) * (f.x - sx) + (f.y - sy) * (f.y - sy)
+    if (d2 <= rSous2 && d2 < sousD) { sousD = d2; sous = f }
+  }
+  if (sous === undefined) return undefined
+
+  // La ligne 2 : le fait de LIEU saillant le plus proche à portée.
+  const rLoin2 = ANNALES.STELE_PORTEE * ANNALES.STELE_PORTEE
+  let loin: FaitDeGeneration | undefined
+  let loinPhrase: { pleine: string; fragment: string } | undefined
+  let loinD = rLoin2 + 1
+  for (const f of annales) {
+    if (f.lieu === undefined) continue
+    const phrase = phraseLoin(f)
+    if (phrase === undefined) continue
+    const d2 = (f.x - sx) * (f.x - sx) + (f.y - sy) * (f.y - sy)
+    if (d2 > rLoin2 || d2 >= loinD) continue
+    if (!saillant(map, f)) continue // en dernier : c'est le test O(annales)
+    loinD = d2
+    loin = f
+    loinPhrase = phrase
+  }
+
+  // LA STÈLE BRISÉE (R10) : un fragment, tiré de la ligne la plus parlante — et rien d'autre.
+  if (!verbalise(sous)) {
+    return { lignes: [(loinPhrase ?? PHRASE_SOUS[sous.type]!).fragment], brisee: true }
+  }
+
+  const lignes = [PHRASE_SOUS[sous.type]!.pleine]
+  let lieuVise: number | undefined
+  if (loin !== undefined && loinPhrase !== undefined) {
+    lignes.push(loinPhrase.pleine)
+    // Le lieu désigné : la zone dont le centre et le kind sont EXACTEMENT ceux du fait — la
+    // même clef que `faitsDuLieu`, à l'envers.
+    for (let poiId = 0; poiId < map.zones.length; poiId += 1) {
+      const z = map.zones[poiId]!
+      if (z.kind !== loin.lieu) continue
+      if (Math.floor(z.x + z.w / 2) === loin.x && Math.floor(z.y + z.h / 2) === loin.y) {
+        lieuVise = poiId
+        break
+      }
+    }
+  }
+  return { lignes, brisee: false, ...(lieuVise !== undefined ? { lieuVise } : {}) }
 }

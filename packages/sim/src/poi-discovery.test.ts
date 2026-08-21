@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { verbalise } from './annales'
 import { createEmptyMap, poisAt, poiCenter } from './map'
 import { POI, TERRAIN_GRASS } from './balance'
 import { chronicleFromEvents, formatChronicleLine } from './chronicle'
@@ -46,15 +47,17 @@ describe('poiCenter', () => {
 })
 
 describe('POI_CHARGES', () => {
-  it('charge les quinze lieux chargés, et EUX SEULS', () => {
+  it('charge les seize lieux chargés, et EUX SEULS', () => {
     // `chene` (le Grand Chêne) a rejoint la liste le 2026-07-24 : la Racine était la seule zone
     // du jeu sans repère perçant la canopée, donc sans horizon et sans direction à suivre.
     // `tour_guet`, `pierre_levee` et `cercle_pierres` l'ont rejointe le 2026-07-25 (spec
     // t0-exploration §1) : le langage du Chêne, généralisé — des repères qui percent la
     // canopée, une chaîne de menhirs qui mène au Cercle, et le Cercle qui se raconte.
+    // `stele` les rejoint le 2026-08-21 (annales.md R11) : le lecteur de pierre — elle révèle
+    // LE lieu que son texte désigne, par la même fonction pure qui compose le texte.
     const charged = Object.keys(POI_CHARGES).sort()
     expect(charged).toEqual(
-      ['arbre', 'arche', 'belvedere', 'cairn', 'cascade', 'cercle_pierres', 'chene', 'erratique', 'grotte', 'petroglyphes', 'pierre_levee', 'sanctuaire', 'source_chaude', 'tarn', 'tour_guet'].sort(),
+      ['arbre', 'arche', 'belvedere', 'cairn', 'cascade', 'cercle_pierres', 'chene', 'erratique', 'grotte', 'petroglyphes', 'pierre_levee', 'sanctuaire', 'source_chaude', 'stele', 'tarn', 'tour_guet'].sort(),
     )
   })
 
@@ -64,13 +67,14 @@ describe('POI_CHARGES', () => {
     }
   })
 
-  it('répartit les quinze en 7 savoir / 3 répit / 5 récit', () => {
+  it('répartit les seize en 8 savoir / 3 répit / 5 récit', () => {
     // Le SAVOIR passe de 4 à 5 avec le Chêne (2026-07-24), puis à 7 avec la Tour de guet
     // (radius — le Belvédère de la plaine) et la Pierre levée (nearest parmi les pierres — la
     // chaîne de menhirs, patron Vegvisir). Le RÉCIT gagne le Cercle de pierres : la destination
     // de la chaîne entre dans la chronique. C'est délibéré, et c'est la spec t0-exploration §1.
+    // Le SAVOIR passe à 8 avec la stèle (2026-08-21) — reveal 'stele' : le lieu du texte.
     const count = (d: string) => Object.values(POI_CHARGES).filter((c) => c.devise === d).length
-    expect(count('savoir')).toBe(7)
+    expect(count('savoir')).toBe(8)
     expect(count('repit')).toBe(3)
     expect(count('recit')).toBe(5)
   })
@@ -393,6 +397,45 @@ describe('le récit — la première fois seulement', () => {
     expect('faits' in visite!).toBe(false)
   })
 
+  it("la STÈLE révèle LE lieu que son texte désigne — et cite ses lignes (annales.md R11)", () => {
+    // La stèle est posée sur une croisée VERBALISÉE (cherchée par balayage — la lacune est un
+    // hash, on ne la suppose pas) ; la Tour guettée est loin, hors de vue.
+    let sx = 20
+    while (!verbalise({ ere: 2, type: 'croisee', x: sx, y: 20 })) sx += 1
+    const { state, playerId } = simWith([
+      { name: 'la Stèle I', x: sx, y: 20, w: 1, h: 1, kind: 'stele' }, //   0
+      { name: 'la Tour de guet effondrée I', x: sx + 60, y: 19, w: 3, h: 3, kind: 'tour_guet' }, // 1
+    ])
+    state.map.annales = [
+      { ere: 2, type: 'croisee', x: sx, y: 20 },
+      { ere: 1, type: 'guet', x: sx + 61, y: 20, lieu: 'tour_guet', cause: 'sud' },
+    ]
+    walkTo(state, playerId, sx + 0.5, 20.5)
+    const p = state.entities.find((e) => e.id === playerId)!
+    expect(p.knownPois, 'la Tour désignée par le texte doit être révélée').toContain(1)
+    const [visite] = state.events.filter((e) => e.type === 'poi_first_visit')
+    expect(visite).toMatchObject({ kind: 'stele', stele: { lignes: ['Ici les chemins se répondaient.', 'Nous guettions le sud.'] } })
+  })
+
+  it('une stèle BRISÉE ne révèle rien — la lacune a un coût (annales.md R10)', () => {
+    let sx = 20
+    while (verbalise({ ere: 2, type: 'croisee', x: sx, y: 20 })) sx += 1
+    const { state, playerId } = simWith([
+      { name: 'la Stèle I', x: sx, y: 20, w: 1, h: 1, kind: 'stele' },
+      { name: 'la Tour de guet effondrée I', x: sx + 60, y: 19, w: 3, h: 3, kind: 'tour_guet' },
+    ])
+    state.map.annales = [
+      { ere: 2, type: 'croisee', x: sx, y: 20 },
+      { ere: 1, type: 'guet', x: sx + 61, y: 20, lieu: 'tour_guet', cause: 'sud' },
+    ]
+    walkTo(state, playerId, sx + 0.5, 20.5)
+    const p = state.entities.find((e) => e.id === playerId)!
+    expect(p.knownPois, 'une brisée ne désigne rien').not.toContain(1)
+    // Mais son fragment se cite quand même — l'indice qu'on peut suivre à pied.
+    const [visite] = state.events.filter((e) => e.type === 'poi_first_visit')
+    expect(visite).toMatchObject({ stele: { lignes: ['… le sud …'] } })
+  })
+
   it('un PNJ qui traverse le Sanctuaire ne produit RIEN — ni carte, ni découverte, ni première', () => {
     // Le Sanctuaire est HORS DE VUE du joueur (resté au coin) : sinon c'est LUI
     // qui le découvrirait à vue, et le test ne dirait plus rien du PNJ.
@@ -540,8 +583,9 @@ describe('le répit — la vallée comme réseau', () => {
 describe('la règle qui protège l’émerveillement', () => {
   it('AUCUN lieu de famille reward n’ajoute d’item à l’inventaire (critère A9)', () => {
     const rewardKinds = POI_TYPES.filter((t) => t.family === 'reward').map((t) => t.slug)
-    expect(rewardKinds).toHaveLength(15) // garde-fou : si ça change, ce test doit être relu
-    // (12 → 15 le 2026-07-25 : tour_guet, pierre_levee, cercle_pierres — spec t0-exploration §1.)
+    expect(rewardKinds).toHaveLength(16) // garde-fou : si ça change, ce test doit être relu
+    // (12 → 15 le 2026-07-25 : tour_guet, pierre_levee, cercle_pierres — spec t0-exploration §1 ;
+    //  15 → 16 le 2026-08-21 : la stèle — annales.md R8, et elle paie en SAVOIR, jamais en item.)
 
     const zones = rewardKinds.map((kind, i) => ({
       name: `${kind} I`,

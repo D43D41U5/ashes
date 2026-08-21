@@ -82,7 +82,13 @@ describe('la loterie des lieux ne bouge pas', () => {
     // RE-ÉPINGLÉ 135 → 133 (La couronne §2quinquies, 2026-08-16) : les set-pieces ÉLUS (plus
     // posés) déplacent leurs bbox, l'écartement du semis suit. MESURÉ par kind (seed 2026) :
     // tanière et verger −1, tout le reste identique — aucun type ne meurt.
-    expect(lieuxDe(CARTE.map).length).toBe(133)
+    // RE-ÉPINGLÉ 133 → 136 (Les stèles, annales.md R8, 2026-08-21) : trois stèles HORS-SEMIS
+    // se posent au bord des croisées/gués saillants — un AJOUT pur, pas un rebrassage : la
+    // loterie ne bouge pas d'un tirage, les 133 lieux d'avant sont les MÊMES (gardé juste
+    // en dessous, par différence de kinds).
+    expect(lieuxDe(CARTE.map).length).toBe(136)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'stele').length).toBe(3)
+    expect(lieuxDe(CARTE.map).filter((z) => z.kind !== 'stele').length).toBe(133)
     expect(lieuxDe(CARTE.map).filter((z) => z.kind === 'repaire').length).toBe(9)
   })
 })

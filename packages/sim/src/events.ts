@@ -281,7 +281,13 @@ export type SimEvent =
    * Le passé entre dans la chronique du joueur LE JOUR OÙ IL LE DÉTERRE : la date est celle
    * de la découverte, pas celle du fait.
    */
-  | { type: 'poi_first_visit'; tick: number; poiId: number; kind: string; name: string; byEntityId: number; faits?: { ere: 0 | 1 | 2 | 3; type: string; cause?: string; saillant: boolean }[] }
+  | { type: 'poi_first_visit'; tick: number; poiId: number; kind: string; name: string; byEntityId: number; faits?: { ere: 0 | 1 | 2 | 3; type: string; cause?: string; saillant: boolean }[]; stele?: { lignes: string[] } }
+  /**
+   * LA RUMEUR DU RÉFUGIÉ (annales.md R12) : nourrir un groupe révèle au nourricier le lieu
+   * porteur d'annales inconnu le plus proche DU GROUPE — leur route, leur mémoire. Le nom est
+   * porté pour la chronique (« Pour un repas, des réfugiés ont dit où trouver X. »).
+   */
+  | { type: 'refugee_rumeur'; tick: number; groupId: number; byEntityId: number; poiId: number; kind: string; name: string }
   /**
    * LE VILLAGE PNJ MONTE DE PALIER DE BÂTI (spec `village-pnj-evolution.md` R6) :
    * campement → hameau de bois → bourg de pierre. Émis à l'aube, au surplus — jamais

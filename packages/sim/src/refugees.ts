@@ -15,7 +15,9 @@
  */
 import { REFUGEES, SLOTS, TERRAIN_ROAD } from './balance'
 import { recordAct } from './alignment'
+import { faitsDuLieu } from './annales'
 import { emitEvent } from './events'
+import { revelerPoi } from './poi-discovery'
 import { inventoryOf, pourInto, removeItems } from './items'
 import { hash2 } from './noise'
 import { spawnNpcsAround } from './npc'
@@ -156,7 +158,37 @@ export function feedRefugees(state: SimState, entity: Entity, group: RefugeeGrou
   if (!removeItems(entity.inventory, REFUGEES.FEED_COST)) return false
   recordAct(state, entity.id, REFUGEES.WARMTH_SAVE)
   emitEvent(state, { type: 'refugees_fed', tick: state.tick, groupId: group.id, byEntityId: entity.id })
+  // LA RUMEUR (annales.md R12) : ceux qui ont fui savent où l'on vivait. Le lieu porteur
+  // d'annales inconnu le plus proche DU GROUPE — leur route, leur mémoire, pas la carte du
+  // nourricier — entre dans ses `knownPois`. Déterministe : plus proche au carré, strict,
+  // départage par l'ordre des zones. ZÉRO tirage — le flux du PRNG ne bouge pas.
+  const rumeur = lieuDeRumeur(state, entity, group)
+  if (rumeur !== undefined) {
+    revelerPoi(state, entity.id, entity.knownPois, rumeur)
+    const z = state.map.zones[rumeur]!
+    emitEvent(state, {
+      type: 'refugee_rumeur', tick: state.tick, groupId: group.id, byEntityId: entity.id,
+      poiId: rumeur, kind: z.kind ?? '', name: z.name,
+    })
+  }
   return true
+}
+
+/** Le lieu de la rumeur — ou `undefined` si le groupe n'a plus rien à apprendre au nourricier. */
+function lieuDeRumeur(state: SimState, entity: Entity, group: RefugeeGroup): number | undefined {
+  let best: number | undefined
+  let bestD = Infinity
+  for (let poiId = 0; poiId < state.map.zones.length; poiId += 1) {
+    const z = state.map.zones[poiId]!
+    if (z.kind === undefined) continue
+    if (entity.knownPois.includes(poiId)) continue
+    if (faitsDuLieu(state.map, z).length === 0) continue // la rumeur parle des GENS, pas des tarns
+    const cx = z.x + z.w / 2
+    const cy = z.y + z.h / 2
+    const d2 = (cx - group.tx) * (cx - group.tx) + (cy - group.ty) * (cy - group.ty)
+    if (d2 < bestD) { bestD = d2; best = poiId }
+  }
+  return best
 }
 
 /** DÉPOUILLER — on prend leur maigre bien : prédation (Meute). Le groupe s'en va, vidé. */

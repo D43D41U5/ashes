@@ -93,7 +93,9 @@ describe('la table de routage audio (soundForEvent)', () => {
     // pourquoi sa parcelle est vide au matin. Triangle qui descend, bref et bas (une
     // rangée de parcelles gèle d'un coup).
     // 77 → 80 le 2026-08-21 : la pression croissante des Cendreux (cri, présage, brûlage).
-    expect(total).toBe(80)
+    // 80 → 81 le 2026-08-21 : `refugee_rumeur` (annales.md R12), silence DÉCIDÉ — le geste
+    // (refugees_fed) parle déjà ; deux sons sur une action seraient un doublé.
+    expect(total).toBe(81)
     // 34 → 35 le 2026-07-29 : `node_depleted` a gagné sa voix (trois, selon la matière).
     // 61 → 62 faits et 35 → 36 voix le 2026-07-30 : `door_toggled` naît (spec construction R26).
     // 62 → 63 faits et 36 → 37 voix le 2026-07-31 : `cendreux_prowl` naît (spec cendreux R11bis) —
