@@ -171,11 +171,49 @@ export function chronicleFromEvents(
         )
         break
       case 'poi_first_visit':
-        // Seuls les quatre lieux de devise `recit` entrent dans la chronique.
-        // Le bus, lui, porte toutes les premières visites : c'est le FORMATEUR
-        // qui choisit, jamais la logique qui filtre.
+        // Le bus porte TOUTES les premières visites : c'est le FORMATEUR qui choisit,
+        // jamais la logique qui filtre. Deux familles y trouvent leur ligne :
+        // — les lieux de devise `recit` (le Sanctuaire, le Cercle…), comme avant ;
+        // — les lieux HUMAINS, qui portent leurs faits d'annales (premier LECTEUR du
+        //   pays d'avant — décision 2026-08-21, tranche 1). AU PLUS UNE proposition
+        //   (règle de l'écrivain), à l'IMPARFAIT : l'imparfait appartient au pays
+        //   d'avant, le passé composé au joueur. Et « On a atteint X » plutôt que
+        //   « X a été atteint » : la forme active est INSENSIBLE À L'ACCORD par
+        //   construction — « la Ferme brûlée a été atteint » est la faute exacte de
+        //   « le seuil de le Karst », on ne la réintroduit pas.
         if (POI_CHARGES[e.kind]?.devise === 'recit') {
           push(`${e.name} a été atteint pour la première fois.`, 'recit')
+        } else {
+          // Précédence R7 (spec `annales.md`) : intact > fondation > guet — AU PLUS UNE
+          // proposition, et SEULEMENT ces trois-là. La fosse, la gravure, la porte, la
+          // croisée attendent les stèles : 80 charniers au fil de l'eau feraient 80 lignes,
+          // l'exact contraire du « rare se dit » (R4).
+          // ET SEULEMENT S'ILS SONT SAILLANTS (R4 — le rare se dit, le commun se tait) :
+          // hors des routes l'intact est partout ; sans ce filtre, MESURÉ, 40 lieux de la
+          // carte parlaient — le registre intime noyé sous son propre chuchotement.
+          const faits = (e.faits ?? []).filter((f) => f.saillant)
+          const sort = faits.find((f) => f.type === 'sort')
+          const fondation = faits.find((f) => f.type === 'fondation')
+          const guet = faits.find((f) => f.type === 'guet')
+          // ⚠ `fondation?.cause`, pas `fondation` : TOUT lieu bâti porte un fait de
+          // fondation — c'est la CAUSE (eau, route) qui dit « installé pour une raison ».
+          if (sort?.cause === 'intact' && fondation?.cause !== undefined) {
+            // L'intact chuchote : personne n'était revenu — et sa sobriété EST son poids.
+            // MAIS SEULEMENT LÀ OÙ QUELQU'UN S'ÉTAIT INSTALLÉ POUR UNE RAISON (la ferme de
+            // l'eau, la charrette de la route) : MESURÉ, l'intact est l'état NORMAL de
+            // l'arrière-pays — 22 lignes intimes sur la carte du harnais, le registre qui
+            // chuchote noyé sous son propre chuchotement. La doctrine « loin des routes =
+            // intact = riche » fait de l'intact un décor ; le décor appartient aux stèles.
+            push(`On a atteint ${e.name}. Personne n'était revenu.`, 'intime')
+          } else if (fondation?.cause !== undefined) {
+            // Le toponyme dit la FIN (brûlée, pillée) ; la chronique dit le COMMENCEMENT.
+            // Deux témoins qui ne se concertent pas — c'est voulu.
+            push(`On a atteint ${e.name}. Quelqu'un vivait là, pour ${fondation.cause === 'eau' ? "l'eau" : 'la route'}.`, 'recit')
+          } else if (guet?.cause !== undefined) {
+            // « Elle regardait le sud » — donc ils SAVAIENT. « Elle » est sûr : le fait guet
+            // n'existe que sur la Tour de guet effondrée, féminine par construction.
+            push(`On a atteint ${e.name}. Elle regardait ${guet.cause === 'est' ? "l'est" : guet.cause === 'ouest' ? "l'ouest" : `le ${guet.cause}`}.`, 'recit')
+          }
         }
         break
       case 'season_ended':

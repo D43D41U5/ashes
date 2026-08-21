@@ -5,14 +5,15 @@
  */
 import { hash2 } from './noise'
 import { poissonPoints } from './poisson'
-import { isWater, terrainAt, isBlockingTile, type WorldMap, type Zone } from './map'
+import { isWater, terrainAt, isBlockingTile, type FaitDeGeneration, type WorldMap, type Zone } from './map'
 import { spawnMonster } from './monsters'
 import type { SimState } from './sim'
 import { setTile } from './map'
-import { FAUNA, MORTS, TERRAIN_ROAD, TERRAIN_SCREE } from './balance'
+import { FAUNA, MORTS, TERRAIN_FOREST, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_ROAD, TERRAIN_SCREE } from './balance'
 import { distSq } from './geometry'
 import { type CarveField, carveDistanceToMain, walkableComponents } from './connectivity'
 import { nomSelonSort, sortDuLieu } from './sort-des-lieux'
+import { directionCendriere, directionOpposee } from './cendre'
 import { BUILT_KINDS } from './poi-batis'
 
 // ids terrain (balance.ts) — repris localement pour lisibilité de la table.
@@ -565,6 +566,27 @@ function candidatesFor(
  * champ figé est donc exact ici, et il épargne au générateur de tout recalculer
  * quatre-vingts fois.
  */
+/** Les terrains BOISÉS — l'essart n'existe que là où le dégagement a mangé du bois. */
+const BOISE: readonly number[] = [TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_LARCH]
+
+/** La portée, en tuiles, à laquelle une mine « suit la pierre » (annales `taille`). */
+const TAILLE_PORTEE = 24
+
+/** La ressource de l'affleurement le plus proche à portée — ou `undefined`. Distance au rect
+ *  (Chebyshev au bord), départage par ordre de table : déterministe, et O(affleurements) sur
+ *  une liste qui se compte en dizaines. */
+function affleurementProche(map: WorldMap, cx: number, cy: number): 'fer' | 'charbon' | undefined {
+  let best: 'fer' | 'charbon' | undefined
+  let bestD = TAILLE_PORTEE + 1
+  for (const a of map.affleurements ?? []) {
+    const dx = cx < a.x ? a.x - cx : cx > a.x + a.w - 1 ? cx - (a.x + a.w - 1) : 0
+    const dy = cy < a.y ? a.y - cy : cy > a.y + a.h - 1 ? cy - (a.y + a.h - 1) : 0
+    const d = dx > dy ? dx : dy
+    if (d < bestD) { bestD = d; best = a.ressource }
+  }
+  return best
+}
+
 function placeOne(
   map: WorldMap, field: CarveField, t: PoiType, tx: number, ty: number, used: Map<string, number>,
 ): void {
@@ -577,14 +599,65 @@ function placeOne(
   const sort = sortDuLieu(map, z.x, z.y, z.w, z.h)
   const nom = nomSelonSort(t.slug, t.name, sort)
   map.zones.push({ name: `${nom} ${roman(count)}`, ...z, kind: t.slug })
-  // LES ANNALES (S-R16) : un lieu HUMAIN écrit sa fondation (et sa raison), puis ce que la
-  // Cendre en a fait. Les lieux naturels n'ont pas d'état civil — un tarn ne se fonde pas.
-  if (t.pres !== undefined || BUILT_KINDS.includes(t.slug)) {
+  // ═══ LES ANNALES (S-R16, vocabulaire élargi : spec `annales.md` R2) ═══
+  //
+  // Chaque fait DÉRIVE de ce que cette passe sait déjà — jamais d'une simulation, jamais d'un
+  // tirage : les émissions ne touchent pas le PRNG, le monde hors annales reste au bit près
+  // celui d'avant (A3). Le livrable réel est la JUXTAPOSITION de faits vrais : `guet` + un
+  // sort `brule` = « ils ont vu venir, et sont restés » — personne n'écrit cette phrase,
+  // elle tombe du croisement.
+  {
     const cx = Math.floor(z.x + z.w / 2)
     const cy = Math.floor(z.y + z.h / 2)
     const annales = (map.annales ??= [])
-    annales.push({ ere: 1, type: 'fondation', x: cx, y: cy, lieu: t.slug, ...(t.pres ? { cause: t.pres } : {}) })
-    annales.push({ ere: 3, type: 'sort', x: cx, y: cy, lieu: t.slug, cause: sort })
+    const fait = (f: Omit<FaitDeGeneration, 'x' | 'y' | 'lieu'>): void => {
+      annales.push({ ...f, x: cx, y: cy, lieu: t.slug })
+    }
+
+    // Un lieu HUMAIN écrit sa fondation (et sa raison), puis ce que la Cendre en a fait.
+    // Les lieux naturels n'ont pas d'état civil — un tarn ne se fonde pas.
+    if (t.pres !== undefined || BUILT_KINDS.includes(t.slug)) {
+      fait({ ere: 1, type: 'fondation', ...(t.pres ? { cause: t.pres } : {}) })
+      fait({ ere: 3, type: 'sort', cause: sort })
+      // L'ESSART : le dégagement du lieu a mangé du BOIS — en pré il n'a rien mangé, donc pas
+      // de fait (et c'est ce qui le garde RARE : les fermes vivent en herbe, seuls les lieux
+      // plantés en forêt essartent — la saillance R4 aime les faits nés clairsemés).
+      if (BOISE.includes(terrainAt(map, cx, cy))) fait({ ere: 1, type: 'essart' })
+    }
+
+    // LA GRAVURE (ère 0) : une écriture plus vieille que les routes. Les pierres ne desservent
+    // rien, elles POINTENT (la chaîne `PIERRES_KINDS`) — le fait donne au lecteur le droit de
+    // le dire sans jamais dire QUI gravait (bible I2).
+    if (t.slug === 'pierre_levee' || t.slug === 'cercle_pierres' || t.slug === 'petroglyphes') {
+      fait({ ere: 0, type: 'gravure' })
+    }
+
+    // LE GUET : la Tour regarde VERS la Cendrière — « ils guettaient le sud », donc ils
+    // SAVAIENT. Absent sur une carte sans Cendrière (un banc ne guette rien, R3).
+    if (t.slug === 'tour_guet') {
+      const dir = directionCendriere(map, cx, cy)
+      if (dir !== undefined) fait({ ere: 1, type: 'guet', cause: dir })
+    }
+
+    // LA FUITE : la charrette tourne le DOS à la Cendrière — l'exode a un sens, qu'on peut
+    // suivre de charrette en charrette.
+    if (t.slug === 'charrette') {
+      const dir = directionCendriere(map, cx, cy)
+      if (dir !== undefined) fait({ ere: 3, type: 'fuite', cause: directionOpposee(dir) })
+    }
+
+    // LA FOSSE : où la vallée a enterré. La hantise nocturne penche du même côté PAR
+    // CONSTRUCTION (`morts.ts` : le semis des charniers et l'intensité de la nuit lisent le
+    // même champ) — l'inférence du joueur sera donc VRAIE, et c'est toute la valeur du fait.
+    if (t.slug === 'charnier') fait({ ere: 3, type: 'fosse' })
+
+    // LA TAILLE : la mine est où elle est parce que la roche AFFLEURE. Dérivé d'une simple
+    // portée au rect d'affleurement le plus proche — « suis la pierre » devient une règle de
+    // prospection que les morts enseignent.
+    if (t.slug === 'mine' || t.slug === 'carriere' || t.slug === 'gisement') {
+      const res = affleurementProche(map, cx, cy)
+      if (res !== undefined) fait({ ere: 1, type: 'taille', cause: res })
+    }
   }
 
   const entry = entryTile(map, field, z)

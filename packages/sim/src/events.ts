@@ -172,7 +172,24 @@ export type SimEvent =
     }
   | { type: 'structure_destroyed'; tick: number; structureId: number }
   | { type: 'alarm_raised'; tick: number; villageId: number }
-  | { type: 'horde_spawned'; tick: number; hordeId: number; size: number; targetVillageId: number }
+  /**
+   * LA HORDE SE LÈVE — et (tx, ty) dit OÙ, comme `convoy_spawned` et `brume_annonce` : la
+   * tuile du champ de flux d'où le paquet part, celle autour de laquelle ses membres sont
+   * posés. Sans elle, l'événement annonçait un fait qu'on ne pouvait pas aller VOIR : une
+   * horde naît entre `HORDE_MIN_DIST` et une nuit de marche de sa cible, donc hors du rayon
+   * d'intérêt du client — l'atelier de la vitrine devait l'attendre au feu du village, 481 s
+   * de temps réel MESURÉES pour une seule prise. C'est le point de NAISSANCE, pas la position
+   * courante : le paquet marche dès le tick suivant, et c'est le snapshot qui dit où il en est.
+   */
+  | {
+      type: 'horde_spawned'
+      tick: number
+      hordeId: number
+      size: number
+      targetVillageId: number
+      tx: number
+      ty: number
+    }
   | { type: 'horde_dispersed'; tick: number; hordeId: number }
   | { type: 'convoy_spawned'; tick: number; tx: number; ty: number }
   /**
@@ -245,7 +262,16 @@ export type SimEvent =
    */
   | { type: 'bird_flush'; tick: number; x: number; y: number }
   | { type: 'poi_discovered'; tick: number; poiId: number; kind: string; byEntityId: number }
-  | { type: 'poi_first_visit'; tick: number; poiId: number; kind: string; name: string; byEntityId: number }
+  /**
+   * LA PREMIÈRE VISITE porte les faits d'annales du lieu (S-R16, vocabulaire : spec
+   * `annales.md`), en TABLEAU et non en champs épars : le bus est STABLE — un type de fait
+   * ajouté demain n'exige aucun changement de schéma, et chaque lecteur (chronique
+   * aujourd'hui, stèles demain) choisit ce qu'il en dit. La sim TÉMOIGNE : elle recopie des
+   * faits de la carte, dérivés et sans tirage (x/y/lieu omis — c'est le lieu de l'événement).
+   * Le passé entre dans la chronique du joueur LE JOUR OÙ IL LE DÉTERRE : la date est celle
+   * de la découverte, pas celle du fait.
+   */
+  | { type: 'poi_first_visit'; tick: number; poiId: number; kind: string; name: string; byEntityId: number; faits?: { ere: 0 | 1 | 2 | 3; type: string; cause?: string; saillant: boolean }[] }
   /**
    * LE VILLAGE PNJ MONTE DE PALIER DE BÂTI (spec `village-pnj-evolution.md` R6) :
    * campement → hameau de bois → bourg de pierre. Émis à l'aube, au surplus — jamais

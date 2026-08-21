@@ -30,7 +30,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     const entries = chronicleFromEvents(
       [
         at(22, { type: 'act_started', act: 2 }),
-        at(26, { type: 'horde_spawned', hordeId: 1, size: 9, targetVillageId: 1 }),
+        at(26, { type: 'horde_spawned', hordeId: 1, size: 9, targetVillageId: 1, tx: 40, ty: 40 }),
         at(28, { type: 'gift_given', byEntityId: 7, toVillageId: 1, item: 'berries', count: 3 }),
         at(30, { type: 'entity_died', entityId: 7, byEntityId: 0, wasMonster: false }),
       ],
@@ -87,6 +87,87 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     expect(entries[0]!.text).toBe('le Sanctuaire a été atteint pour la première fois.')
   })
 
+  it('le premier LECTEUR d\u2019annales : un lieu humain raconte son commencement (décision 2026-08-21)', () => {
+    const entries = chronicleFromEvents(
+      [
+        // La fondation dit le POURQUOI — le toponyme dit déjà la fin, la chronique dit le
+        // commencement (« deux témoins qui ne se concertent pas »).
+        at(9, { type: 'poi_first_visit', poiId: 3, kind: 'ferme_ruinee', name: 'la Ferme brûlée I', byEntityId: 7, faits: [{ ere: 1, type: 'fondation', cause: 'eau', saillant: true }, { ere: 3, type: 'sort', cause: 'brule', saillant: true }] }),
+        at(11, { type: 'poi_first_visit', poiId: 4, kind: 'charrette', name: 'la Charrette II', byEntityId: 7, faits: [{ ere: 1, type: 'fondation', cause: 'route', saillant: true }, { ere: 3, type: 'sort', cause: 'pille', saillant: true }] }),
+      ],
+      SCALE,
+      NAMES,
+    )
+    expect(entries).toHaveLength(2)
+    // Forme ACTIVE (« On a atteint ») : insensible à l'accord par construction — « la Ferme
+    // brûlée a été atteint » serait la faute exacte de « le seuil de le Karst ».
+    expect(entries[0]).toEqual({ day: 9, text: "On a atteint la Ferme brûlée I. Quelqu'un vivait là, pour l'eau.", weight: 'recit' })
+    expect(entries[1]).toEqual({ day: 11, text: "On a atteint la Charrette II. Quelqu'un vivait là, pour la route.", weight: 'recit' })
+  })
+
+  it('l\u2019intact CHUCHOTE, et il gagne sur la cause : personne n\u2019était revenu (poids intime)', () => {
+    const entries = chronicleFromEvents(
+      [at(14, { type: 'poi_first_visit', poiId: 5, kind: 'ferme_ruinee', name: 'la Ferme des Prés III', byEntityId: 7, faits: [{ ere: 1, type: 'fondation', cause: 'eau', saillant: true }, { ere: 3, type: 'sort', cause: 'intact', saillant: true }] })],
+      SCALE,
+      NAMES,
+    )
+    // AU PLUS UNE proposition (règle de l'écrivain) : l'intact prime sur la cause — c'est le
+    // payoff de la doctrine « loin des routes = intact = riche », et sa sobriété EST son poids.
+    expect(entries).toEqual([{ day: 14, text: "On a atteint la Ferme des Prés III. Personne n'était revenu.", weight: 'intime' }])
+  })
+
+  it('le GUET parle quand le lieu n\u2019a ni sort ni fondation — « Elle regardait le sud. »', () => {
+    const entries = chronicleFromEvents(
+      [at(6, { type: 'poi_first_visit', poiId: 8, kind: 'tour_guet', name: 'la Tour de guet effondrée I', byEntityId: 7, faits: [{ ere: 1, type: 'guet', cause: 'sud', saillant: true }] })],
+      SCALE,
+      NAMES,
+    )
+    expect(entries).toEqual([{ day: 6, text: 'On a atteint la Tour de guet effondrée I. Elle regardait le sud.', weight: 'recit' }])
+    // Et l'article se plie à la direction : « l'est », jamais « le est ».
+    const est = chronicleFromEvents(
+      [at(7, { type: 'poi_first_visit', poiId: 9, kind: 'tour_guet', name: 'la Tour de guet effondrée I', byEntityId: 7, faits: [{ ere: 1, type: 'guet', cause: 'est', saillant: true }] })],
+      SCALE,
+      NAMES,
+    )
+    expect(est[0]!.text).toBe("On a atteint la Tour de guet effondrée I. Elle regardait l'est.")
+  })
+
+  it('un intact SANS fondation se tait — l\u2019arrière-pays intact est un décor, pas une ligne', () => {
+    const entries = chronicleFromEvents(
+      [at(3, { type: 'poi_first_visit', poiId: 12, kind: 'bivouac', name: 'le Vieux bivouac I', byEntityId: 7, faits: [{ ere: 3, type: 'sort', cause: 'intact', saillant: true }] })],
+      SCALE,
+      NAMES,
+    )
+    expect(entries).toHaveLength(0)
+  })
+
+  it('un fait NON SAILLANT se tait — le rare se dit, le commun se tait (R4)', () => {
+    const entries = chronicleFromEvents(
+      [at(4, { type: 'poi_first_visit', poiId: 11, kind: 'abri', name: "l'Abri sous roche II", byEntityId: 7, faits: [{ ere: 3, type: 'sort', cause: 'intact', saillant: false }] })],
+      SCALE,
+      NAMES,
+    )
+    expect(entries).toHaveLength(0)
+  })
+
+  it('la FOSSE reste muette en chronique — 80 charniers feraient 80 lignes (R4, le rare se dit)', () => {
+    const entries = chronicleFromEvents(
+      [at(5, { type: 'poi_first_visit', poiId: 10, kind: 'charnier', name: 'le Charnier IV', byEntityId: 7, faits: [{ ere: 3, type: 'fosse', saillant: true }] })],
+      SCALE,
+      NAMES,
+    )
+    expect(entries).toHaveLength(0)
+  })
+
+  it('un lieu SANS annales et sans devise recit reste muet — pas de spam de premières visites', () => {
+    const entries = chronicleFromEvents(
+      [at(5, { type: 'poi_first_visit', poiId: 6, kind: 'tarn', name: 'le Tarn I', byEntityId: 7 })],
+      SCALE,
+      NAMES,
+    )
+    expect(entries).toHaveLength(0)
+  })
+
   it('déplie la fin de saison : un battement puis les verdicts en récit', () => {
     const entries = chronicleFromEvents(
       [
@@ -121,7 +202,7 @@ describe('chronicleFromEvents — entrées structurées {jour, texte, poids}', (
     // `''` quand la chronique ne dit RIEN — une petite horde (acte I) n'a pas de ligne du
     // tout, et c'est le comportement voulu : la chronique n'est pas un journal d'événements.
     const texteDe = (size: number): string =>
-      chronicleFromEvents([at(30, { type: 'horde_spawned', hordeId: 1, size, targetVillageId: 1 })], SCALE, NAMES)[0]
+      chronicleFromEvents([at(30, { type: 'horde_spawned', hordeId: 1, size, targetVillageId: 1, tx: 40, ty: 40 })], SCALE, NAMES)[0]
         ?.text ?? ''
 
     for (const size of WORLD_EVENTS.HORDE_SIZE) {

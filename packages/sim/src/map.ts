@@ -26,16 +26,31 @@ export interface Zone {
  * tout ce qui vit dans `WorldMap`.
  */
 export interface FaitDeGeneration {
-  /** L'ère : 1 = l'implantation (on s'installe), 2 = les routes (on circule),
-   *  3 = la Cendre (on meurt ou l'on fuit). */
-  ere: 1 | 2 | 3
-  type: 'fondation' | 'gue' | 'sort'
+  /** L'ère : 0 = la pierre et l'eau (ce qui précède l'humain), 1 = l'implantation (on
+   *  s'installe), 2 = les routes (on circule), 3 = la Cendre (on meurt ou l'on fuit). */
+  ere: 0 | 1 | 2 | 3
+  /**
+   * LE VOCABULAIRE (spec `annales.md` R2 — chaque type DÉRIVE de ce que sa passe calcule déjà,
+   * jamais d'une simulation) : `fondation`/`sort` (le lieu bâti : pourquoi on s'y est mis, ce
+   * que la Cendre en a fait), `gue` (où la sente croise la rivière), `gravure` (une écriture
+   * plus vieille que les routes — les pierres), `essart` (le pré artificiel : le dégagement a
+   * mangé du bois), `taille` (la mine est là parce que la roche affleure), `guet` (la Tour +
+   * la direction de la Cendrière — « ils savaient »), `porte` (le pays d'avant bornait ses
+   * seuils), `croisee` (des routes se sont trouvées là — le carrefour émergé), `fosse` (où la
+   * vallée a enterré), `fuite` (la charrette orientée loin du front — l'exode a un sens).
+   */
+  type:
+    | 'fondation' | 'gue' | 'sort'
+    | 'gravure' | 'essart' | 'taille' | 'guet'
+    | 'porte' | 'croisee' | 'fosse' | 'fuite'
   x: number
   y: number
-  /** Le kind du lieu concerné (fondation, sort). */
+  /** Le kind du lieu concerné (fondation, sort, et les faits portés par un lieu). */
   lieu?: string
-  /** La cause LISIBLE : 'eau' ou 'route' (pourquoi on s'est installé là),
-   *  'brule' | 'pille' | 'intact' (ce que la Cendre en a fait). */
+  /** La cause LISIBLE : 'eau' | 'route' (fondation), 'brule' | 'pille' | 'intact' (sort),
+   *  'fer' | 'charbon' (taille), 'nord' | 'sud' | 'est' | 'ouest' (guet, fuite — des MOTS,
+   *  jamais des degrés : le pays d'avant n'a pas de boussole graduée, spec R3),
+   *  'secours' (porte de secours). */
   cause?: string
 }
 

@@ -63,12 +63,17 @@ export function tracerLesSentes(
   riviere: Riviere | null,
   setPieces: readonly { x: number; y: number; w: number; h: number }[] = [],
   socle: Socle | null = null,
-): Gue[] {
+): { gues: Gue[]; croisees: { x: number; y: number }[] } {
   const racineId = g.racine
   const r = g.zones[racineId]!.rect
-  if (!r) return []
+  if (!r) return { gues: [], croisees: [] }
   const sel = (seed ^ 0x53454e54) | 0 /* 'SENT' */
   const gues: Gue[] = []
+  // LES CROISÉES (annales, spec `annales.md` R2) : le point où une liaison REJOINT le réseau
+  // d'avant — le carrefour en Y qui ÉMERGE du raccord (on ne le dessine pas, on l'estampille).
+  // « Des routes se sont trouvées ici » : le lieu social du pays d'avant, et du vôtre — c'est
+  // là que les rencontres se fabriquent.
+  const croisees: { x: number; y: number }[] = []
 
   const marchable = (i: number): boolean => TERRAINS[terrain[i]!]?.walkable === true
 
@@ -97,7 +102,7 @@ export function tracerLesSentes(
     }
     if (px >= 0) bouches.push({ x: px, y: py })
   }
-  if (bouches.length === 0) return []
+  if (bouches.length === 0) return { gues: [], croisees: [] }
 
   // ── LE TRACÉ : bouche → réseau, en marches de Manhattan qui ESQUIVENT les lacs ──
   // (L'eau ne se pave pas : une sente TRAVERSE l'eau peu profonde — le pas ralentit, c'est le
@@ -336,7 +341,11 @@ export function tracerLesSentes(
         const d = (rx - px) * (rx - px) + (ry - py) * (ry - py)
         if (d < bestD || (d === bestD && i < best)) { bestD = d; best = i }
       }
-      if (best >= 0) peindreTroncon(px, py, best % width, (best - (best % width)) / width)
+      if (best >= 0) {
+        peindreTroncon(px, py, best % width, (best - (best % width)) / width)
+        // La tuile de réseau rejointe EST la croisée — celle que le dernier raccord vise déjà.
+        croisees.push({ x: best % width, y: (best - (best % width)) / width })
+      }
     }
     finir(debut)
   }
@@ -373,7 +382,7 @@ export function tracerLesSentes(
     }
   }
 
-  return gues
+  return { gues, croisees }
 }
 
 /**

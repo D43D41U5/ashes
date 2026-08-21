@@ -363,6 +363,36 @@ describe('le récit — la première fois seulement', () => {
     expect(state.events.filter((e) => e.type === 'poi_discovered')).toHaveLength(1) // lui, il découvre
   })
 
+  it("la première visite d'un lieu HUMAIN recopie ses faits d'annales — le premier lecteur (2026-08-21)", () => {
+    // La ferme est posée avec ses deux faits, à la clef EXACTE de `poi.ts` : le centre
+    // d'empreinte (floor(x + w/2)) + le slug. On vérifie le vrai chemin — marcher dessus —
+    // et pas le formateur (qui a ses propres gardes dans chronicle.test.ts).
+    const { state, playerId } = simWith([{ name: 'la Ferme brûlée I', x: 10, y: 10, w: 2, h: 2, kind: 'ferme_ruinee' }])
+    state.map.annales = [
+      { ere: 1, type: 'fondation', x: 11, y: 11, lieu: 'ferme_ruinee', cause: 'eau' },
+      { ere: 3, type: 'sort', x: 11, y: 11, lieu: 'ferme_ruinee', cause: 'brule' },
+      // Un fait d'un AUTRE lieu au même centre ne doit pas fuir dans l'événement.
+      { ere: 1, type: 'fondation', x: 11, y: 11, lieu: 'charrette', cause: 'route' },
+    ]
+    walkTo(state, playerId, 10.5, 10.5)
+    const [visite] = state.events.filter((e) => e.type === 'poi_first_visit')
+    expect(visite).toMatchObject({
+      kind: 'ferme_ruinee',
+      faits: [
+        { ere: 1, type: 'fondation', cause: 'eau' },
+        { ere: 3, type: 'sort', cause: 'brule' },
+      ],
+    })
+  })
+
+  it('un lieu SANS annales émet une première visite SANS faits — au bit près comme avant', () => {
+    const { state, playerId } = simWith([{ name: 'le Sanctuaire I', x: 10, y: 10, w: 2, h: 2, kind: 'sanctuaire' }])
+    walkTo(state, playerId, 10.5, 10.5)
+    const [visite] = state.events.filter((e) => e.type === 'poi_first_visit')
+    expect(visite).toBeDefined()
+    expect('faits' in visite!).toBe(false)
+  })
+
   it('un PNJ qui traverse le Sanctuaire ne produit RIEN — ni carte, ni découverte, ni première', () => {
     // Le Sanctuaire est HORS DE VUE du joueur (resté au coin) : sinon c'est LUI
     // qui le découvrirait à vue, et le test ne dirait plus rien du PNJ.

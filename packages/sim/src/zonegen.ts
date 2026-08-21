@@ -563,7 +563,7 @@ export function generateZonedTerrain(
   // ── PASSE 1.7 : LES SENTES — les routes du pays d'avant, et leurs gués (R17, R7) ──
   // Elles CONTOURNENT les set-pieces (R18 : un lieu se poste au bord du chemin) ; et la
   // garantie « au moins deux gués » vit à part, indépendante des aléas du traceur.
-  const gues = tracerLesSentes(terrain, zone, g, width, height, seed, riviere, setPieces, creux)
+  const { gues, croisees } = tracerLesSentes(terrain, zone, g, width, height, seed, riviere, setPieces, creux)
   forcerLesGues(terrain, riviere, gues, width, height)
 
   // ── PASSE 1.8 : L'ASSAINISSEMENT DU PROFOND — l'anneau de R45, CONSTATÉ ──
@@ -728,12 +728,32 @@ export function generateZonedTerrain(
   // gués sont des TOPONYMES (un nom qu'on foule, pas une pastille).
   for (const p of setPieces) {
     map.zones.push({ name: p.nom, x: p.x, y: p.y, w: p.w, h: p.h, kind: p.kind })
+    // LA GRAVURE d'un set-piece de pierres (annales, ère 0) : le Cercle n'entre jamais dans
+    // `placeOne` (il est posé ici, pas semé), son fait s'écrit donc ici — même clef de centre
+    // que `faitsDuLieu`, sans quoi le lecteur ne le retrouverait pas.
+    if (p.kind === 'cercle_pierres') {
+      ;(map.annales ??= []).push({
+        ere: 0, type: 'gravure',
+        x: Math.floor(p.x + p.w / 2), y: Math.floor(p.y + p.h / 2), lieu: p.kind,
+      })
+    }
   }
   for (const q2 of gues) {
     map.zones.push({ name: 'le Gué', x: q2.x - 3, y: q2.y - 3, w: 7, h: 7 })
     // Les annales (S-R16) : un gué est un fait de l'ère des routes — le point où le pays
     // d'avant a choisi de franchir son eau.
     ;(map.annales ??= []).push({ ere: 2, type: 'gue', x: q2.x, y: q2.y })
+  }
+  // LES CROISÉES et LES PORTES — l'ère des routes complète son état civil (spec `annales.md`
+  // R2). Des LECTURES de ce que les passes ont déjà décidé : zéro tirage, zéro tuile touchée.
+  for (const c of croisees) {
+    ;(map.annales ??= []).push({ ere: 2, type: 'croisee', x: c.x, y: c.y })
+  }
+  // Le pays d'avant BORNAIT ses portes (les bornes de seuil du client le montrent déjà —
+  // t0-exploration R4) ; le fait donne au lecteur le droit de le dire. Une porte de secours
+  // porte sa cause : le passage qu'on se méritait déjà.
+  for (const s of map.seuils ?? []) {
+    ;(map.annales ??= []).push({ ere: 2, type: 'porte', x: s.x, y: s.y, ...(s.secours ? { cause: 'secours' } : {}) })
   }
 
   // ── PASSE 5 : LES LIEUX — et ils ont désormais une ADRESSE ────────────────

@@ -13,6 +13,7 @@
  * racontera).
  */
 import { POI } from './balance'
+import { faitsDuLieu, saillant } from './annales'
 import { emitEvent } from './events'
 import { poiCenter, poisAt } from './map'
 import { POI_TYPES, type PoiType } from './poi'
@@ -200,6 +201,17 @@ export function advancePois(state: SimState): void {
       if (!state.visitedPois.includes(poiId)) {
         state.visitedPois.push(poiId)
         const zone = state.map.zones[poiId]!
+        // LES FAITS D'ANNALES DU LIEU, par la primitive partagée (`annales.ts` — la même clef
+        // que l'écrivain, jamais un rayon). Lecture pure d'une donnée statique : zéro tirage,
+        // zéro horloge — le flux d'événements gagne des champs, jamais un événement.
+        // Le verdict de SAILLANCE (annales.md R4) est porté par l'événement : le formateur
+        // est pur sur les événements et ne voit pas la carte — la sim témoigne du verdict
+        // comme du fait. C'est ce qui empêche « Personne n'était revenu » de devenir un tic :
+        // hors des routes, l'intact est PARTOUT, donc il ne se dit que là où il est seul.
+        const faits = faitsDuLieu(state.map, zone).map((f) => ({
+          ere: f.ere, type: f.type, ...(f.cause !== undefined ? { cause: f.cause } : {}),
+          saillant: saillant(state.map, f),
+        }))
         emitEvent(state, {
           type: 'poi_first_visit',
           tick: state.tick,
@@ -207,6 +219,7 @@ export function advancePois(state: SimState): void {
           kind: zone.kind ?? '',
           name: zone.name,
           byEntityId: entity.id,
+          ...(faits.length > 0 ? { faits } : {}),
         })
       }
     }

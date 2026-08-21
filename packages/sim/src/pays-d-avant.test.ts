@@ -10,8 +10,10 @@ import { generateZonedTerrain } from './zonegen'
 import { BUILT_KINDS } from './poi-batis'
 import { isWater } from './map'
 import {
-  TERRAIN_BURNT_FOREST, TERRAIN_GRASS, TERRAIN_HEATH, TERRAIN_LARCH, TERRAIN_ROAD,
+  TERRAIN_BURNT_FOREST, TERRAIN_FOREST, TERRAIN_GRASS, TERRAIN_HEATH, TERRAIN_LARCH,
+  TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_ROAD,
 } from './balance'
+import { ANNALES, saillant, verbalise } from './annales'
 
 const CARTE = generateZonedTerrain(7)
 const { map, graphe, zone } = CARTE
@@ -66,7 +68,7 @@ describe('les annales (S-R16/S-A14)', () => {
 
   it('tout fait est daté d\'une ère et positionné sur la carte', () => {
     for (const f of map.annales ?? []) {
-      expect([1, 2, 3]).toContain(f.ere)
+      expect([0, 1, 2, 3]).toContain(f.ere) // l'ère 0 : la pierre et l'eau (annales.md R1)
       expect(f.x).toBeGreaterThanOrEqual(0)
       expect(f.y).toBeGreaterThanOrEqual(0)
       expect(f.x).toBeLessThan(W)
@@ -149,5 +151,180 @@ describe('la reprise du Brûlé est ordonnée (S-R20/S-A16)', () => {
       if (t === TERRAIN_HEATH || t === TERRAIN_GRASS) recoltables++
     }
     expect(recoltables).toBeGreaterThan(200)
+  })
+})
+
+
+// ═══ LE VOCABULAIRE DES ANNALES (spec `annales.md` A1-A6) — sur la VRAIE carte ═══
+//
+// Les gardes sont BICONDITIONNELLES et balayées : « chaque lieu X porte son fait » ET « chaque
+// fait a son lieu » — jamais un compte choisi. Un fait orphelin de sa cause matérielle est un
+// mensonge du monde (bible L7), et c'est exactement ce que A2 interdit.
+describe('le vocabulaire des annales (annales.md A1-A2)', () => {
+  const annales = map.annales ?? []
+  const parType = (t: string) => annales.filter((f) => f.type === t)
+  const centre = (z: { x: number; y: number; w: number; h: number }) =>
+    [Math.floor(z.x + z.w / 2), Math.floor(z.y + z.h / 2)] as const
+  const BOISE = [TERRAIN_FOREST, TERRAIN_OLD_GROWTH, TERRAIN_PINE, TERRAIN_LARCH]
+
+  it('gravure ⟺ pierre : chaque pierre écrit, rien d\u2019autre n\u2019écrit (ère 0)', () => {
+    const pierres = map.zones.filter((z) => z.kind === 'pierre_levee' || z.kind === 'cercle_pierres' || z.kind === 'petroglyphes')
+    expect(pierres.length, 'la Racine porte des pierres (t0 §1)').toBeGreaterThanOrEqual(1)
+    const faits = parType('gravure')
+    expect(faits.length).toBe(pierres.length)
+    for (const f of faits) {
+      expect(f.ere).toBe(0)
+      const z = pierres.find((q) => { const [cx, cy] = centre(q); return f.x === cx && f.y === cy && f.lieu === q.kind })
+      expect(z, `gravure orpheline en (${f.x},${f.y})`).toBeDefined()
+    }
+  })
+
+  it('guet : la Tour regarde VERS la Cendrière — et la Cendrière est au sud-ouest de la Racine', () => {
+    const tours = map.zones.filter((z) => z.kind === 'tour_guet')
+    const faits = parType('guet')
+    expect(faits.length).toBe(tours.length) // la carte a un champ de cendre : la direction existe
+    for (const f of faits) {
+      expect(f.ere).toBe(1)
+      // La direction est un MOT (R3), et il pointe vers le brûlé : la distance de cendre
+      // Y DÉCROÎT — on revérifie contre le champ, pas contre la constante qui l'a produite.
+      expect(['nord', 'sud', 'est', 'ouest']).toContain(f.cause)
+      const pas = 24
+      const [dx, dy] = f.cause === 'est' ? [pas, 0] : f.cause === 'ouest' ? [-pas, 0] : f.cause === 'sud' ? [0, pas] : [0, -pas]
+      const lire = (x: number, y: number) => map.cendre![Math.max(0, Math.min(map.height - 1, y)) * W + Math.max(0, Math.min(W - 1, x))]!
+      expect(lire(f.x + dx, f.y + dy), `le guet ${f.cause} ne regarde pas le brûlé`).toBeLessThan(lire(f.x, f.y))
+    }
+  })
+
+  it('fuite ⟺ charrette, et elle tourne le DOS au guet', () => {
+    const charrettes = map.zones.filter((z) => z.kind === 'charrette')
+    const faits = parType('fuite')
+    expect(faits.length).toBe(charrettes.length)
+    for (const f of faits) {
+      expect(f.ere).toBe(3)
+      const pas = 24
+      const [dx, dy] = f.cause === 'est' ? [pas, 0] : f.cause === 'ouest' ? [-pas, 0] : f.cause === 'sud' ? [0, pas] : [0, -pas]
+      const lire = (x: number, y: number) => map.cendre![Math.max(0, Math.min(map.height - 1, y)) * W + Math.max(0, Math.min(W - 1, x))]!
+      // Fuir, c'est aller là où la distance de cendre CROÎT.
+      expect(lire(f.x + dx, f.y + dy), 'une fuite qui rentre dans le feu').toBeGreaterThan(lire(f.x, f.y))
+    }
+  })
+
+  it('fosse ⟺ charnier, au compte exact', () => {
+    const charniers = map.zones.filter((z) => z.kind === 'charnier')
+    expect(charniers.length).toBeGreaterThanOrEqual(1)
+    expect(parType('fosse').length).toBe(charniers.length)
+  })
+
+  it('porte ⟺ seuil, au compte exact, cause `secours` fidèle', () => {
+    const seuils = map.seuils ?? []
+    const faits = parType('porte')
+    expect(seuils.length).toBeGreaterThanOrEqual(1)
+    expect(faits.length).toBe(seuils.length)
+    for (const f of faits) {
+      const s2 = seuils.find((q) => q.x === f.x && q.y === f.y)
+      expect(s2, `porte orpheline en (${f.x},${f.y})`).toBeDefined()
+      expect(f.cause === 'secours').toBe(s2!.secours)
+    }
+  })
+
+  it('croisee : chaque croisée est SUR une route — et s\u2019il y a ≥ 3 bouches, il y en a', () => {
+    const faits = parType('croisee')
+    for (const f of faits) {
+      expect(map.terrain[f.y * W + f.x], `croisée hors route en (${f.x},${f.y})`).toBe(TERRAIN_ROAD)
+    }
+    const bouches = (map.seuils ?? []).length
+    if (bouches >= 3) expect(faits.length, '3 bouches et aucun carrefour').toBeGreaterThanOrEqual(1)
+    else expect(faits.length, 'deux bouches font une liaison directe, pas un carrefour').toBe(0)
+  })
+
+  it('essart ⟺ lieu bâti au centre BOISÉ — biconditionnel, balayé sur toutes les zones', () => {
+    const faits = parType('essart')
+    for (const z of map.zones) {
+      if (z.kind === undefined) continue
+      const humain = map.zones.length > 0 && (BUILT_KINDS.includes(z.kind) || z.kind === 'ferme_ruinee' || z.kind === 'charrette' || z.kind === 'verger')
+      const [cx, cy] = centre(z)
+      const attendu = humain && BOISE.includes(map.terrain[cy * W + cx]!)
+      const present = faits.some((f) => f.x === cx && f.y === cy && f.lieu === z.kind)
+      if (attendu) expect(present, `${z.name} : essart manquant`).toBe(true)
+    }
+    for (const f of faits) {
+      expect(BOISE.includes(map.terrain[f.y * W + f.x]!), `essart en terrain nu (${f.x},${f.y})`).toBe(true)
+    }
+  })
+
+  it('taille : jamais orpheline d\u2019un affleurement à portée', () => {
+    const faits = parType('taille')
+    for (const f of faits) {
+      expect(['fer', 'charbon']).toContain(f.cause)
+      const proche = (map.affleurements ?? []).some((a) => {
+        const dx = f.x < a.x ? a.x - f.x : f.x > a.x + a.w - 1 ? f.x - (a.x + a.w - 1) : 0
+        const dy = f.y < a.y ? a.y - f.y : f.y > a.y + a.h - 1 ? f.y - (a.y + a.h - 1) : 0
+        return Math.max(dx, dy) <= 24
+      })
+      expect(proche, `taille sans roche en (${f.x},${f.y})`).toBe(true)
+    }
+  })
+})
+
+describe('les garde-fous des lecteurs (annales.md A3-A6)', () => {
+  const annales = map.annales ?? []
+
+  it('A3 — deux générations de même seed rendent des annales IDENTIQUES, ordre compris', () => {
+    const bis = generateZonedTerrain(7)
+    expect(JSON.stringify(bis.map.annales)).toBe(JSON.stringify(annales))
+  })
+
+  it('A4 — la saillance DISCRIMINE sur la vraie carte : un type dit ici, tu là', () => {
+    const types = [...new Set(annales.map((f) => f.type))]
+    const discrimine = types.some((t) => {
+      const faits = annales.filter((f) => f.type === t)
+      return faits.some((f) => saillant(map, f)) && faits.some((f) => !saillant(map, f))
+    })
+    expect(discrimine, 'aucun type à la fois dit et tu : le seuil de saillance est mort').toBe(true)
+  })
+
+  it('A5 — la lacune est une PART (5-60 %), déterministe, et elle tait la STÈLE entière', () => {
+    expect(annales.length).toBeGreaterThanOrEqual(10)
+    const muets = annales.filter((f) => !verbalise(f)).length
+    const part = muets / annales.length
+    expect(part).toBeGreaterThan(0.05)
+    expect(part).toBeLessThan(0.6)
+    for (const f of annales) expect(verbalise(f)).toBe(verbalise(f))
+    // Deux faits du MÊME lieu se taisent ensemble : c'est la stèle qui est brisée, pas la phrase.
+    const parPos = new Map<string, boolean[]>()
+    for (const f of annales) {
+      const cle = `${f.x},${f.y}`
+      const v = parPos.get(cle) ?? []
+      v.push(verbalise(f))
+      parPos.set(cle, v)
+    }
+    for (const [cle, verdicts] of parPos) {
+      expect(new Set(verdicts).size, `verdicts mêlés au même point ${cle}`).toBe(1)
+    }
+  })
+
+  it('A6 — le potentiel de lignes de chronique reste borné (< 15 sur toute la carte)', () => {
+    // Le banc n'a pas de joueur (les premières visites n'y tombent jamais) : on borne donc le
+    // POTENTIEL — les lieux dont les faits produiraient une ligne — pas un flux mesuré.
+    let lignes = 0
+    for (const z of map.zones) {
+      if (z.kind === undefined) continue
+      const cx = Math.floor(z.x + z.w / 2)
+      const cy = Math.floor(z.y + z.h / 2)
+      const faits = annales.filter((f) => f.x === cx && f.y === cy && f.lieu === z.kind)
+      const dits = faits.filter((f) => saillant(map, f))
+      const sort = dits.find((f) => f.type === 'sort')
+      const fondation = dits.find((f) => f.type === 'fondation')
+      const guet = dits.find((f) => f.type === 'guet')
+      if ((sort?.cause === 'intact' && fondation?.cause !== undefined) || fondation?.cause !== undefined || guet?.cause !== undefined) lignes += 1
+    }
+    expect(lignes).toBeGreaterThanOrEqual(1)
+    expect(lignes).toBeLessThan(15)
+  })
+
+  it('le réglage se tient : la part muette est bien celle du bloc ANNALES', () => {
+    expect(ANNALES.PART_MUETTE).toBeGreaterThan(0)
+    expect(ANNALES.PART_MUETTE).toBeLessThan(1)
+    expect(ANNALES.SAILLANCE_MAX).toBeGreaterThanOrEqual(1)
   })
 })
