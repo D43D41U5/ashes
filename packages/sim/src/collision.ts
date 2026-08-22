@@ -17,7 +17,7 @@
  */
 import { BALANCE, NODE_DEFS, TERRAIN_DEEP_WATER, TERRAINS, TICK_DT_S } from './balance'
 import { nodeAt, treeJitter, type ResourceNode } from './economy'
-import { estGele, gelPossible, vitesseSurGlace } from './gel'
+import { estGele, gelPossible, vitesseSurGlace, vitesseSurNeige } from './gel'
 import { EDGE_E, EDGE_N, EDGE_O, EDGE_S } from './geometry'
 import { MARCHABLE, terrainAt, type WorldMap } from './map'
 import type { SimState } from './sim'
@@ -606,8 +606,11 @@ export function moveAvatar(
   const tx = Math.floor(x)
   const ty = Math.floor(y)
   const glace = world.etat !== undefined ? vitesseSurGlace(world.etat, tx, ty) : undefined
+  // LA NEIGE COMMANDE LE PAS après la glace et avant le terrain (spec `gel.md` G9) : quel que
+  // soit le sol dessous, on foule de la poudreuse (×0,95) ou on enfonce jusqu'aux genoux (×0,75).
+  const neige = glace === undefined && world.etat !== undefined ? vitesseSurNeige(world.etat, tx, ty) : undefined
   const terrain = TERRAINS[terrainAt(world.map, tx, ty)]
-  const factor = glace ?? (terrain?.walkable ? terrain.speedFactor : 1)
+  const factor = glace ?? neige ?? (terrain?.walkable ? terrain.speedFactor : 1)
   const speed = BALANCE.WALK_SPEED_TILES_PER_S * dtS * factor * speedScale
   const norm = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1
   return resolveMove(world, x, y, dx * speed * norm, dy * speed * norm)

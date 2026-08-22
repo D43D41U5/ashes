@@ -3892,6 +3892,28 @@ export const GEL = {
    *  tranches suffisent à suivre le pas jour/nuit (la seule marche du signal), et le total
    *  reste borné par `MEMOIRE_CYCLES`. */
   FONTE_TRANCHES_PAR_CYCLE: 8,
+  /**
+   * G9 — LA NEIGE A DEUX HAUTEURS (décision d'Alexis, 2026-08-22). La couverture continue
+   * de `neigeAuSol` devient, tuile par tuile, un NIVEAU : 0 nue, 1 POUDREUSE, 2 JUSQU'AUX
+   * GENOUX. Le niveau commande LE PAS — quel que soit le terrain dessous, la neige remplace
+   * son `speedFactor` (une route sous la poudreuse n'est plus une route) — et le client le
+   * peint en deux pavés emboîtés (la profonde sur la poudreuse, même frontière que le sol).
+   *
+   * LA DISTRIBUTION : une tuile passe sous la neige quand la couverture dépasse SON seuil,
+   * tiré dans [SEUIL_MIN, SEUIL_MAX] par un bruit à l'échelle de `PLAQUES_TUILES` (plus une
+   * gigue par tuile) — des plaques, pas du poivre et sel. Elle passe « aux genoux » quand la
+   * couverture dépasse ce seuil de `PROFONDE` en plus : les creux qui blanchissent les premiers
+   * sont ceux qui se comblent — la profonde est le cœur des plaques, jamais une île à part.
+   * À couverture pleine, ~45 % du manteau est profond ; sous `SEUIL_MIN`, plus rien.
+   */
+  NEIGE_SEUIL_MIN: 0.12,
+  NEIGE_SEUIL_MAX: 0.85,
+  NEIGE_PLAQUES_TUILES: 3.5,
+  NEIGE_GIGUE: 0.18,
+  NEIGE_PROFONDE: 0.5,
+  /** Le pas dans la poudreuse, et jusqu'aux genoux — remplace le terrain, ne le multiplie pas. */
+  VITESSE_POUDREUSE: 0.95,
+  VITESSE_GENOUX: 0.75,
 } as const
 
 /**

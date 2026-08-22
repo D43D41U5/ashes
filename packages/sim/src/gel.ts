@@ -94,7 +94,7 @@ import {
 } from './balance'
 import { terrainAt } from './map'
 import { frontDuCycle, frontMeteoPos, type BandeMeteo } from './meteo'
-import { hash2 } from './noise'
+import { fbm2, hash2 } from './noise'
 import type { SimState } from './sim'
 import { baselineTemperature, baselineTemperatureAt, climatFlore, climatMaximal } from './temperature'
 import { actForDay, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
@@ -210,6 +210,61 @@ export function estGele(state: SimState, tx: number, ty: number): boolean {
  */
 export function vitesseSurGlace(state: SimState, tx: number, ty: number): number | undefined {
   return estGele(state, tx, ty) ? GEL.VITESSE_GLACE : undefined
+}
+
+/**
+ * ═══ G9 — LA NEIGE A DEUX HAUTEURS (décision d'Alexis, 2026-08-22) ═══
+ *
+ * `neigeAuSol` rend une couverture CONTINUE ; le pas et le rendu ont besoin d'un NIVEAU par
+ * tuile : 0 nue, 1 poudreuse, 2 jusqu'aux genoux. Le seuil d'une tuile est POSITIONNEL (un
+ * bruit à l'échelle des plaques, `GEL.NEIGE_PLAQUES_TUILES`, plus une gigue par tuile — des
+ * hachages, jamais le PRNG d'état) : à couverture croissante, les plaques se ferment depuis
+ * leurs cœurs ; à couverture décroissante, elles s'ouvrent par les bords. La profonde est le
+ * cœur d'une plaque : là où le seuil est bas, la couverture le dépasse de `NEIGE_PROFONDE`.
+ *
+ * Une seule loi, deux lecteurs : `moveAvatar` (le pas, `vitesseSurNeige`) et le manteau
+ * peint (`render/manteau.ts`) — ce qu'on voit sous ses pieds est ce qui ralentit.
+ */
+export const NEIGE_NUE = 0
+export const NEIGE_POUDREUSE = 1
+export const NEIGE_GENOUX = 2
+export type NiveauDeNeige = 0 | 1 | 2
+
+/** Le seuil de couverture d'une tuile, dans [NEIGE_SEUIL_MIN, NEIGE_SEUIL_MAX] — positionnel. */
+export function seuilDeNeige(tx: number, ty: number): number {
+  const plaque = fbm2(tx, ty, GEL.NEIGE_PLAQUES_TUILES, 0x5e16e)
+  const gigue = (hash2(tx, ty, 0x5e17) - 0.5) * GEL.NEIGE_GIGUE
+  const u = Math.max(0, Math.min(1, plaque + gigue))
+  return GEL.NEIGE_SEUIL_MIN + u * (GEL.NEIGE_SEUIL_MAX - GEL.NEIGE_SEUIL_MIN)
+}
+
+/** Le niveau de neige d'une couverture sur cette tuile — monotone en `couverture`. */
+export function niveauPourCouverture(couverture: number, tx: number, ty: number): NiveauDeNeige {
+  if (couverture < GEL.NEIGE_SEUIL_MIN) return NEIGE_NUE // O(1) sans neige : pas de bruit à tirer
+  const seuil = seuilDeNeige(tx, ty)
+  if (couverture < seuil) return NEIGE_NUE
+  return couverture < seuil + GEL.NEIGE_PROFONDE ? NEIGE_POUDREUSE : NEIGE_GENOUX
+}
+
+/** Le niveau de neige d'une tuile MAINTENANT. L'eau (libre ou gelée) n'en porte jamais : la
+ *  glace doit se VOIR (G5), et un flocon qui tombe dans l'eau fond. */
+export function niveauDeNeige(state: SimState, tx: number, ty: number): NiveauDeNeige {
+  const terrain = terrainAt(state.map, tx, ty)
+  if (terrain === TERRAIN_SHALLOW_WATER || terrain === TERRAIN_DEEP_WATER) return NEIGE_NUE
+  return niveauPourCouverture(neigeAuSol(state, tx, ty), tx, ty)
+}
+
+/**
+ * LE FACTEUR DE VITESSE D'UNE TUILE SOUS LA NEIGE — `VITESSE_POUDREUSE`, `VITESSE_GENOUX`,
+ * ou `undefined` sans neige (l'appelant garde alors le `speedFactor` du terrain). Il REMPLACE
+ * le terrain : une route sous la neige n'est plus une route, un marais gelé sous la poudreuse
+ * n'enlise plus — c'est la neige qu'on foule.
+ */
+export function vitesseSurNeige(state: SimState, tx: number, ty: number): number | undefined {
+  const niveau = niveauDeNeige(state, tx, ty)
+  if (niveau === NEIGE_GENOUX) return GEL.VITESSE_GENOUX
+  if (niveau === NEIGE_POUDREUSE) return GEL.VITESSE_POUDREUSE
+  return undefined
 }
 
 /** Les terrains à feuilles CADUQUES (G6). `pine` et `larch` n'y sont pas : le conifère tient

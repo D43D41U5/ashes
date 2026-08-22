@@ -152,7 +152,11 @@ export {
   // LE FROID SUR LA FLORE (spec `flore-froid.md`) : le client peint la plante gelée avec le
   // MÊME prédicat que la sim lui applique — écrivain unique, comme la glace et le feuillage.
   floreGelee, floreEntierementGelee, gelMortel,
+  // G9 — la neige a deux hauteurs : le niveau d'une tuile, son seuil, son pas.
+  niveauDeNeige, niveauPourCouverture, seuilDeNeige, vitesseSurNeige,
+  NEIGE_NUE, NEIGE_POUDREUSE, NEIGE_GENOUX,
 } from './gel'
+export type { NiveauDeNeige } from './gel'
 export { METEO } from './balance'
 // LE FEU-STATION (spec feu-station) : l'état dérivable du snapshot côté client, et la donnée des slots.
 export { fireState, fireStateAt, fireActive, fireWarmthFactor, advanceFire, fuelTicksRemaining, fuelBurnProgress } from './fire'

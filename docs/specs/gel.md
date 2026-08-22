@@ -29,12 +29,13 @@ La température existe déjà **en tout point** (`baselineTemperature(state, x, 
 
 ### La neige au sol (G7)
 
-- **G7 — La neige tient après le front, puis fond.** Elle demande une MÉMOIRE, alors que la température est instantanée. Solution sans état : l'élection des fronts étant une fonction pure du cycle, `neigeAuSol(state, x, y)` rembobine les `GEL.MEMOIRE_CYCLES` derniers cycles et rend une couverture qui décroît avec le temps écoulé depuis le dernier front neigeux ayant couvert ce point — et qui fond d'autant plus vite que la température est haute. **PUREMENT VISUEL au v1** (pas de malus de vitesse : le froid ralentit déjà par `coldSpeedFactor`, et l'accumulation mécanique reste hors périmètre, cf. `meteo.md`).
+- **G7 — La neige tient après le front, puis fond.** Elle demande une MÉMOIRE, alors que la température est instantanée. Solution sans état : l'élection des fronts étant une fonction pure du cycle, `neigeAuSol(state, x, y)` rembobine les `GEL.MEMOIRE_CYCLES` derniers cycles et rend une couverture qui décroît avec le temps écoulé depuis le dernier front neigeux ayant couvert ce point — et qui fond d'autant plus vite que la température est haute. ~~PUREMENT VISUEL au v1~~ — **amendé par G9 (2026-08-22)** : la neige a deux hauteurs et commande le pas.
 
 ### Le dégel (G8)
 
 - **G8 — LE DÉGEL A DE L'HYSTÉRÉSIS, ET IL NE PIÈGE PERSONNE.** L'eau PREND sous son seuil, mais elle ne DÉGÈLE qu'au-dessus de `seuil + GEL.HYSTERESIS`. Sans cette marge, une température qui oscille autour du seuil — l'aube, le crépuscule, la lisière d'un front qui passe — ferait clignoter la glace d'un tick à l'autre. L'hystérésis se lit sur l'état PRÉCÉDENT de la tuile ; comme rien n'est stocké, on la dérive de la température d'un instant de référence proche (le tick courant contre le tick précédent de la même tuile, ou la borne du créneau) — **jamais d'un champ**. *Conséquence de jeu voulue : la carte se REFERME derrière ceux qui l'ont traversée. Une bande qui a franchi le lac dans la nuit peut se retrouver du mauvais côté au matin — le pendant exact de l'ouverture, et ce qui donne son prix à la date du gel.*
 - **G8bis — Personne ne reste emmuré.** Un acteur (avatar, PNJ, monstre) qui se trouve sur une tuile au moment où elle dégèle est REPLIÉ sur la tuile marchable la plus proche — patron du repli des traînards de la Brume. Jamais bloqué à l'intérieur d'une tuile non marchable : c'est le bug maison du feu qui emmure un acteur centré dessus. On ne fait PAS céder la glace (immersion/noyade écartées à la décision du 2026-08-19).
+- **G9 — LA NEIGE A DEUX HAUTEURS, ET ELLE COMMANDE LE PAS** (décision d'Alexis 2026-08-22 — amende la clause « purement visuel » de G7). La couverture continue de `neigeAuSol` devient, tuile par tuile, un **niveau** (`niveauDeNeige`) : 0 nue, 1 **poudreuse**, 2 **jusqu'aux genoux**. Le seuil d'une tuile est POSITIONNEL (`seuilDeNeige` : un bruit à l'échelle de `GEL.NEIGE_PLAQUES_TUILES`, plus une gigue par tuile — des hachages, jamais le PRNG d'état) : les plaques se ferment depuis leurs cœurs quand la neige monte, s'ouvrent par les bords quand elle fond ; la profonde est le **cœur** d'une plaque (la couverture y dépasse le seuil de `GEL.NEIGE_PROFONDE`). L'eau, libre ou gelée, n'en porte jamais (la glace doit se VOIR, G5). **Le pas** : `vitesseSurNeige` — poudreuse `GEL.VITESSE_POUDREUSE` (0,95), genoux `GEL.VITESSE_GENOUX` (0,75) — **remplace** le `speedFactor` du terrain, ne le multiplie pas : une route sous la neige n'est plus une route, un marais sous la poudreuse n'enlise plus. La glace prime (G2), puis la neige, puis le terrain. Une seule loi pour le pas (sim, PNJ, prédiction client) et pour ce qui se peint (`render/manteau.ts`) : ce qu'on voit sous ses pieds est ce qui ralentit.
 
 ## Critères d'acceptation
 
@@ -51,11 +52,12 @@ La température existe déjà **en tout point** (`baselineTemperature(state, x, 
 - **A12** — G8bis : un avatar debout sur une tuile d'eau profonde qui dégèle se retrouve sur une tuile MARCHABLE, jamais dans l'eau ; idem pour un PNJ et un monstre. Et il en va de même quand un front tiède efface le gel qu'un blizzard avait posé.
 - **A13** — G6 ne clignote pas : sur une saison entière jouée nuit et jour, l'état de feuillaison d'une tuile de `forest` est MONOTONE (il ne repasse jamais de dénudé à feuillu), et `pine`/`larch` ne changent jamais.
 - **A10** — G7 : après le passage d'un front de neige, la couverture au sol décroît avec le temps et disparaît ; elle est PURE (aucun état), et nulle sans météo armée.
+- **A14** — G9 (`gel-neige.test.ts`) : le seuil est borné et positionnel, le niveau MONOTONE en couverture ; à couverture pleine le manteau est fermé et 30-60 % en est profond, **par plaques** (< 5 % de tuiles profondes isolées) ; la profonde a un seuil plus bas que toute poudreuse (c'est le cœur) ; après un vrai front neigeux, l'eau ne porte jamais de neige ; `moveAvatar` avance de ×0,95 / ×0,75 sur une route ET sur l'herbe enneigées (« quel que soit le terrain ») et la route garde ×1,25 sans neige.
 
 ## Hors périmètre (et où ça revient)
 
 - La glace qui CÈDE sous le poids (immersion, noyade) — écartée à la décision : exige une mécanique d'immersion qui n'existe pas.
-- Le `cover` et la furtivité modulés par la feuillaison ; le malus de vitesse de la neige accumulée ; le gel qui bloque la pêche ou la boisson — chacun une décision d'équilibrage à part.
+- Le `cover` et la furtivité modulés par la feuillaison ; le gel qui bloque la pêche ou la boisson — chacun une décision d'équilibrage à part. *(Le malus de vitesse de la neige est ENTRÉ au périmètre le 2026-08-22 : G9.)*
 - La fonte qui laisse de la boue, les stalactites, la buée — plus tard.
 
 ## Ajouts à `balance.ts`
