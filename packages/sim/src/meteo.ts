@@ -385,6 +385,15 @@ export function aspectSousFront(
 ): MeteoAspect | null {
   if (!front) return null
   if (meteoIntensityAt(front, tick, state.map.width, state.map.height, x, y) <= 0) return null
+  return aspectAuPoint(state, front, x, y, tick)
+}
+
+/**
+ * CE QUE CE FRONT SERAIT ICI s'il couvrait ce point — la même loi, SANS le test d'empreinte.
+ * Pour le rendu : le mur qui approche se dessine avant de couvrir le joueur, et il doit déjà
+ * être de neige ou de pluie selon le froid qu'il va trouver sous lui (au point de l'œil).
+ */
+export function aspectAuPoint(state: SimState, front: Pick<MeteoFront, 'type'>, x: number, y: number, tick: number): MeteoAspect {
   if (front.type !== 'pluie' && front.type !== 'orage') return front.type
   if (!neigeA(dehorsSansMeteo(state, x, y, tick))) return front.type
   return front.type === 'pluie' ? 'neige' : 'blizzard'

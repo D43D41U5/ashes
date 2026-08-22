@@ -137,17 +137,20 @@ describe('la façade rend les mêmes verdicts que le vrai SimState', () => {
 
   it('un front météo dans l’état : le froid qu’il apporte passe bien par la façade', () => {
     const state = sim()
-    // Un front de blizzard couvre la carte : c'est le plus froid des cinq, et il doit geler
-    // ce qu'il traverse (A8). S'il ne passait PAS par la façade, la glace manquerait.
+    // Un ORAGE D'ACTE III couvre la carte (R13) et y est un blizzard (R12 : le froid qu'il
+    // trouve — plaine de jour 40 — le porte à 55 de morsure) : c'est le plus froid des ciels,
+    // et il doit geler ce qu'il traverse (A8). S'il ne passait PAS par la façade, la glace
+    // manquerait — et depuis R12 la façade porte AUSSI ce que le froid éolien lit (l'heure,
+    // le biome) : c'est exactement ce que ce test affirme.
     //
     // LA FENÊTRE EST CENTRÉE (`tick` à mi-chemin de `start`→`end`), et ce n'est pas un
     // détail : la bande AVANCE, et un front qui vient d'entrer ne couvre qu'un liseré à
     // l'ouest où l'intensité vaut 0,005. Un premier jet l'a posé ainsi et n'a rien gelé du
     // tout — c'est le témoin qui l'a dit. Centrée, la bande (240 tuiles de large) noie une
     // carte de 40 et l'intensité y sature : le froid mord partout.
-    state.tick = 29 * TICKS_PER_CYCLE + Math.floor(TICKS_PER_CYCLE * 0.25)
+    state.tick = 45 * TICKS_PER_CYCLE + Math.floor(TICKS_PER_CYCLE * 0.25)
     state.meteo = {
-      type: 'blizzard', cycle: 29, day: 30, edge: 0,
+      type: 'orage', cycle: 45, day: 46, edge: 0,
       startTick: state.tick - 10_000, endTick: state.tick + 10_000,
     }
     const facade = creerEtatGel(sourceDepuis(state))

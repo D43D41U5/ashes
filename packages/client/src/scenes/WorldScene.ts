@@ -27,6 +27,8 @@ import {
   hash2,
   isRangedWeapon,
   meteoSpeedFactorAt,
+  meteoAspectAt,
+  aspectAuPoint,
   predictFrame,
   reconcile as reconcilePrediction,
   renderPosition,
@@ -147,7 +149,7 @@ import {
   type Brouillard,
   type IdentiteMonde,
 } from '../render/fog'
-import { estUnCoinDePeche, fireStateAt, meteoIntensityAt, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF } from '@ashes/sim'
+import { estUnCoinDePeche, fireStateAt, MONSTER_DEFS, POI_CHARGES, TERRAIN_DEEP_WATER, TERRAIN_SHALLOW_WATER, CREUX, TERRAINS_BOISES_MASSIF } from '@ashes/sim'
 
 /** L'assombrissement du sol au plafond de profondeur (§2quater R42) : au cœur d'un massif,
  *  le sol perd jusqu'à 14 % de luminance — en PENTE CONTINUE, jamais par bande. */
@@ -1724,17 +1726,12 @@ export class WorldScene extends Phaser.Scene {
         // pas : la foudre ne savait pas qui la regardait.
         joueur: this.predicted,
       }) ?? 0
-      // LA GERBE S'IMPUTE SUR LE BUDGET DE PARTICULES, elle ne s'empile pas à côté : le
-      // rideau retranche de sa cible ce que les éclats occupent (au plus 48, ~7 %, 0,3 s).
-      this.meteoLayer?.update(
-        time, meteoFront, this.lastTime.tick, day, flash, this.predicted, this.cameras.main,
-        this.foudreFx?.particulesReservees ?? 0,
-      )
-
       // ── LE PAYSAGE GELÉ (spec gel.md G5/G7) ──
       // La façade porte les SEPT champs que `estGele`/`neigeAuSol` lisent, et rien d'autre ;
       // `structures` vient du snapshot COMPLET (l'abri d'une maison ne doit pas dépendre du
-      // cadrage — le raisonnement de `ContexteFoudre`, à la lettre).
+      // cadrage — le raisonnement de `ContexteFoudre`, à la lettre). Elle se bâtit AVANT le
+      // rideau météo : depuis R11 l'aspect du ciel (neige ou pluie) se lit sur le froid du
+      // monde, par cette même façade.
       const source = {
         map: this.map,
         temps: this.lastTime,
@@ -1744,14 +1741,28 @@ export class WorldScene extends Phaser.Scene {
       }
       if (this.etatGel) majEtatGel(this.etatGel, source)
       else this.etatGel = creerEtatGel(source)
+
+      // L'ASPECT DU CIEL À L'ŒIL DU JOUEUR (spec meteo.md R11) : `aspectAuPoint` — la loi de
+      // la sim, sans le test d'empreinte, pour que le mur qui APPROCHE soit déjà de neige ou
+      // de pluie selon le froid qu'il trouvera ici. Une lecture par image, pas par particule.
+      const aspect = meteoFront
+        ? aspectAuPoint(this.etatGel, meteoFront, this.predicted.x, this.predicted.y, this.lastTime.tick)
+        : null
+      // LA GERBE S'IMPUTE SUR LE BUDGET DE PARTICULES, elle ne s'empile pas à côté : le
+      // rideau retranche de sa cible ce que les éclats occupent (au plus 48, ~7 %, 0,3 s).
+      this.meteoLayer?.update(
+        time, meteoFront, aspect, this.lastTime.tick, day, flash, this.predicted, this.cameras.main,
+        this.foudreFx?.particulesReservees ?? 0,
+      )
+
       this.gelLayer?.update(this.etatGel, this.lastTime.tick, this.cameras.main)
       // LES EMPREINTES DANS LA NEIGE se recouvrent vite quand il neige ICI (au joueur) : la
-      // chute est une bande qui traverse la carte, on lit son intensité au point, pas son type.
+      // chute est une bande qui traverse la carte — on lit son ASPECT au point (`null` hors
+      // empreinte, `neige`/`blizzard` là où le froid du monde fait de la pluie des flocons).
       if (this.eauEvents) {
         const p = this.predicted
-        this.eauEvents.neigeQuiTombe = meteoFront !== null
-          && (meteoFront.type === 'neige' || meteoFront.type === 'blizzard')
-          && meteoIntensityAt(meteoFront, this.lastTime.tick, this.map.width, this.map.height, p.x, p.y) > 0
+        const ici = meteoAspectAt(this.etatGel, p.x, p.y, this.lastTime.tick)
+        this.eauEvents.neigeQuiTombe = ici === 'neige' || ici === 'blizzard'
       }
       // Les FEUILLUS SE DÉNUDENT (G6) — la vue des nœuds choisit la cime nue ou feuillue en
       // interrogeant `feuillageDenude` tuile par tuile, sur cette même façade.
@@ -1835,14 +1846,10 @@ export class WorldScene extends Phaser.Scene {
       // 20 % trop vite sous un front (jusqu'à ×0,8 sous blizzard) et l'avatar ferait de
       // l'élastique à chaque réconciliation. On lit le MÊME front, au MÊME point, par la
       // MÊME fonction pure — pas une seconde formule.
-      meteoSpeedFactorAt(
-        this.view.meteo,
-        this.lastSnapshotTick,
-        this.map.width,
-        this.map.height,
-        this.predicted.x,
-        this.predicted.y,
-      ),
+      // Depuis R12 le pas sous un orage dépend du froid du monde (heure, biome) : la loi lit
+      // la façade d'état du gel, qui porte exactement ce que la sim lirait. Avant la première
+      // façade (la toute première image), pas de front connu : facteur neutre.
+      this.etatGel ? meteoSpeedFactorAt(this.etatGel, this.lastSnapshotTick, this.predicted.x, this.predicted.y) : 1,
     )
     const speedScale = this.myWindup ? 0 : scale
     // `sneak` n'entre pas dans PredictInput : la prédiction rejoue le

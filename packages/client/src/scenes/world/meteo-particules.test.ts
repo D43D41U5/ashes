@@ -7,7 +7,7 @@
  * trois cas choisis — patron « garde exhaustive plutôt que cas choisis ».
  */
 import { describe, expect, it } from 'vitest'
-import { METEO, meteoIntensityAt, type MeteoFront } from '@ashes/sim'
+import { largeurDe, meteoIntensityAt, type MeteoAspect, type MeteoFront } from '@ashes/sim'
 import {
   BUDGET_PARTICULES,
   ChampParticules,
@@ -21,14 +21,24 @@ import {
   type Vue,
 } from './meteo-particules'
 
-const RAMPE_PLUIE = rampeDe('pluie')
+/**
+ * LE FRONT QUI PORTE CHAQUE ASPECT (spec meteo.md R11) : la neige est une pluie là où il fait
+ * froid, le blizzard un orage — et la rampe se lit sur le FRONT (`largeurDe`, R13 : l'orage
+ * s'élargit avec la saison), jamais sur l'aspect. Jour 50 = acte III : l'orage y est large
+ * comme la carte, comme l'était le blizzard d'avant.
+ */
+function frontDe(aspect: MeteoAspect): MeteoFront {
+  const type = aspect === 'neige' ? 'pluie' : aspect === 'blizzard' ? 'orage' : aspect
+  return { type, cycle: 3, day: 50, edge: 0, startTick: 0, endTick: 1000 }
+}
+const RAMPE_PLUIE = rampeDe(frontDe('pluie'))
 const BANDE: Bande = { axis: 'x', lo: 100, hi: 160 }
 const VUE: Vue = { x0: 110, y0: 40, x1: 150, y1: 64 }
 
 /** Faire tourner le champ N images à 60 Hz, comme le fait la couche. */
 function avancer(c: ChampParticules, type: 'pluie' | 'neige' | 'orage' | 'blizzard', n: number, vue = VUE, bande = BANDE): void {
   const profil = PROFILS[type]!
-  for (let i = 0; i < n; i++) c.update(1 / 60, 1000 / 60, profil, vue, bande, rampeDe(type))
+  for (let i = 0; i < n; i++) c.update(1 / 60, 1000 / 60, profil, vue, bande, rampeDe(frontDe(type)))
 }
 
 describe("l'intensité relue inline est celle de la sim", () => {
@@ -36,21 +46,29 @@ describe("l'intensité relue inline est celle de la sim", () => {
     // L'écrivain unique : la couche relit la loi sans recalculer la bande (900 fois par
     // image, ça compte), mais elle ne doit JAMAIS en diverger. On balaie l'axe entier —
     // dehors, sur les deux rampes, au cœur — plutôt que d'affirmer trois points.
-    for (const type of ['pluie', 'brouillard', 'neige', 'orage', 'blizzard'] as const) {
-      const front: MeteoFront = { type, cycle: 3, day: 12, edge: 0, startTick: 0, endTick: 1000 }
+    // Les quatre CLASSES, et l'orage deux fois : étroit en acte I (jour 12), large comme la
+    // carte en acte III (jour 50) — R13, la largeur suit le froid de la saison.
+    const fronts: MeteoFront[] = [
+      { type: 'pluie', cycle: 3, day: 12, edge: 0, startTick: 0, endTick: 1000 },
+      { type: 'brouillard', cycle: 3, day: 12, edge: 0, startTick: 0, endTick: 1000 },
+      { type: 'orage', cycle: 3, day: 12, edge: 0, startTick: 0, endTick: 1000 },
+      { type: 'orage', cycle: 3, day: 50, edge: 0, startTick: 0, endTick: 1000 },
+      { type: 'vent_de_cendre', cycle: 3, day: 50, edge: 0, startTick: 0, endTick: 1000 },
+    ]
+    for (const front of fronts) {
       const mapW = 1600
       const mapH = 1600
       const tick = 500
-      const rampe = rampeDe(type)
+      const rampe = rampeDe(front)
       // La bande au tick 500 : la même que `frontMeteoPos` — on la reconstruit par la loi
       // publique pour ne pas dépendre d'un interne.
-      const largeur = METEO.LARGEUR[type]
+      const largeur = largeurDe(front)
       const avance = (tick / 1000) * (mapW + largeur)
       const bande: Bande = { axis: 'x', lo: avance - largeur, hi: avance }
       for (let x = Math.floor(bande.lo) - 40; x <= Math.ceil(bande.hi) + 40; x += 1) {
         const attendu = meteoIntensityAt(front, tick, mapW, mapH, x, 800)
         const obtenu = intensiteDansBande(bande, rampe, x, 800)
-        expect(obtenu, `${type} en x=${x}`).toBeCloseTo(attendu, 10)
+        expect(obtenu, `${front.type} (jour ${front.day}) en x=${x}`).toBeCloseTo(attendu, 10)
       }
     }
   })
@@ -321,7 +339,7 @@ describe("l'émission suit la bande", () => {
     const bande: Bande = { axis: 'x', lo: -1e4, hi: 1e4 }
     const vue: Vue = { x0: 0, y0: 0, x1: 400, y1: 300 } // 120 000 tuiles² : 100 000 gouttes sans plafond
     const c = new ChampParticules(5)
-    for (let i = 0; i < 40; i++) c.update(1 / 60, 1000 / 60, PROFILS.blizzard!, vue, bande, rampeDe('blizzard'))
+    for (let i = 0; i < 40; i++) c.update(1 / 60, 1000 / 60, PROFILS.blizzard!, vue, bande, rampeDe(frontDe('blizzard')))
     expect(c.cible).toBe(BUDGET_PARTICULES)
     expect(c.particules.filter((p) => p.vive).length).toBeLessThanOrEqual(BUDGET_PARTICULES)
   })

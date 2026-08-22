@@ -58,7 +58,7 @@
  * l'axe pour affirmer que les deux formes ne diffèrent jamais : l'écrivain reste unique, il
  * est seulement relu moins cher.
  */
-import { METEO, meteoIntensityAt, type MeteoFront, type MeteoType } from '@ashes/sim'
+import { METEO, largeurDe, meteoIntensityAt, type MeteoAspect, type MeteoFront } from '@ashes/sim'
 
 /** Le grain de l'art pour tout ce qui tombe : 4 px monde, comme les FX de lumière. */
 export const GRAIN_PX = 4
@@ -144,7 +144,11 @@ export interface ProfilChute {
  * LES CINQ CIELS, EN CHIFFRES DE CHUTE. Le brouillard n'a pas de grain : il ne tombe rien,
  * c'est son signalement (et c'était déjà vrai du shader). Nul ici = aucune particule.
  */
-export const PROFILS: Record<MeteoType, ProfilChute | null> = {
+// DEPUIS LE 2026-08-22 (spec meteo.md R11) la clé est l'ASPECT, pas le type élu : `neige` et
+// `blizzard` ne s'élisent plus, ils se DÉRIVENT au point du froid du monde (`aspectAuPoint`).
+// Un même front de pluie est un rideau de gouttes en plaine et de flocons sur le Névé — et
+// c'est la couche qui choisit le profil, à l'œil du joueur, une fois par image.
+export const PROFILS: Record<MeteoAspect, ProfilChute | null> = {
   // ═══ LA PLUIE : FINE, NOMBREUSE, DISCRÈTE (demande d'Alexis, 2026-08-19) ═══
   //
   // Elle a d'abord été peinte en cellules de 4 px à alpha 0,5 : MESURÉ sur les pixels rendus
@@ -260,9 +264,11 @@ export function intensiteDansBande(bande: Bande, rampe: number, x: number, y: nu
   return rampe <= 0 ? 1 : Math.min(1, d / rampe)
 }
 
-/** La rampe du type, en tuiles — `RAMPE × LARGEUR`, la même que la sim et le shader. */
-export function rampeDe(type: MeteoType): number {
-  return METEO.RAMPE * METEO.LARGEUR[type]
+/** La rampe du front, en tuiles — `RAMPE × largeurDe(front)`, la même que la sim et le
+ *  shader (R13 : la largeur d'un orage suit le froid de la saison — on lit la fonction de
+ *  la sim, jamais la table). */
+export function rampeDe(front: Pick<MeteoFront, 'type' | 'day'>): number {
+  return METEO.RAMPE * largeurDe(front)
 }
 
 /** Une particule. Positions et vitesses en TUILES et tuiles/s — jamais en pixels : le pixel

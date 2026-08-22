@@ -135,7 +135,7 @@
  * brouillard, blanc pour la neige, blanc opaque pour le blizzard).
  */
 import Phaser from 'phaser'
-import { frontMeteoPos, meteoIntensityAt, type MeteoFront, type MeteoType } from '@ashes/sim'
+import { frontMeteoPos, meteoIntensityAt, type MeteoAspect, type MeteoFront } from '@ashes/sim'
 import { TILE_PX } from '../../render/framing'
 import {
   BUDGET_PARTICULES,
@@ -162,8 +162,10 @@ export const METEO_DEPTH = 1_120_000
  *  au-dessus, et toujours sous les lucioles. */
 export const METEO_GRAIN_DEPTH = METEO_DEPTH + 500
 
-/** L'ordre des types dans l'uniforme `uType` — le fragment branche dessus. */
-const TYPE_INDEX: Record<MeteoType, number> = { pluie: 0, brouillard: 1, neige: 2, orage: 3, blizzard: 4, vent_de_cendre: 5 }
+/** L'ordre des ASPECTS dans l'uniforme `uType` — le fragment branche dessus. L'aspect, pas
+ *  le type élu : depuis R11 la neige et le blizzard se dérivent au point (`aspectAuPoint`),
+ *  et c'est `WorldScene` qui le lit à l'œil du joueur et le passe ici. */
+const TYPE_INDEX: Record<MeteoAspect, number> = { pluie: 0, brouillard: 1, neige: 2, orage: 3, blizzard: 4, vent_de_cendre: 5 }
 
 const FRAGMENT = /* glsl */ `
 #pragma phaserTemplate(shaderName)
@@ -429,6 +431,9 @@ export class MeteoLayer {
   update(
     nowMs: number,
     front: MeteoFront | null,
+    /** L'ASPECT du front à l'œil du joueur (`aspectAuPoint` — pluie ou neige, orage ou
+     *  blizzard selon le froid du monde là où il regarde), `null` sans front. */
+    aspect: MeteoAspect | null,
     tick: number,
     day: number,
     flash: number,
@@ -445,7 +450,7 @@ export class MeteoLayer {
     this.lastMs = nowMs
 
     const bande = front ? frontMeteoPos(front, tick, this.mapWidth, this.mapHeight) : null
-    if (!front || !bande) {
+    if (!front || !bande || !aspect) {
       this.intensiteAuJoueur = 0
       this.bande = null
       this.shader?.setVisible(false)
@@ -457,8 +462,8 @@ export class MeteoLayer {
     this.axis = bande.axis === 'x' ? 0 : 1
     this.lo = bande.lo
     this.hi = bande.hi
-    this.rampe = rampeDe(front.type)
-    this.type = TYPE_INDEX[front.type]
+    this.rampe = rampeDe(front)
+    this.type = TYPE_INDEX[aspect]
     this.day = day
     this.flash = flash
 
@@ -477,7 +482,7 @@ export class MeteoLayer {
     this.shader?.setVisible(true)
 
     // ── LE GRAIN : de vraies particules, émises DANS LE CADRE seulement. ──
-    const profil = PROFILS[front.type]
+    const profil = PROFILS[aspect]
     if (!profil || !this.grainActif) { this.eteindreLeGrain(); return }
     const vue = camera.worldView
     const cadre = {
