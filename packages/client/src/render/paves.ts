@@ -39,6 +39,17 @@
  * de terre (opaque), l'ombre et la pénombre (noir à l'alpha du facteur), le ressac (blanc à
  * l'alpha). Le reste de l'eau y est transparent — le shader garde sa surface.
  *
+ * ═══ LE MARAIS EST UNE SURFACE (décision d'Alexis, 2026-08-22, « ok pour la reco ») ═══
+ *
+ * Marais, tourbière et prairie humide étaient tous au rang 4 : à égalité, aucun ne cède à l'autre
+ * et l'ombrage ne trace rien — une COUTURE NUE (MESURÉ : 1 048 bords marais / prairie humide sur
+ * la seed 2026, 12 % de tous les bords terre-terre de la carte). La règle de R13 s'étend : le
+ * marais est de l'eau qui a de la boue, donc une SURFACE, sans épaisseur. Il prend rang 1 — au-
+ * dessus de l'eau (0), sous tout ce qui pousse — et le reste se DÉRIVE : la prairie humide est une
+ * berge sur le marais (frange, liseré, ombre portée, ressac), et le marais glisse dans l'eau d'une
+ * frange seule. Une surface n'a ni liseré, ni arête, ni tranche, ni brin, et NE PORTE PAS D'OMBRE
+ * (pas d'épaisseur, pas d'ombre) — elle ne fait que déborder.
+ *
  * ═══ LES STRUCTURELS GARDENT LEURS COUCHES (R10) ═══
  *
  * La falaise, le mur, le vide ne sont jamais propriétaires par débordement et ne reçoivent
@@ -87,34 +98,47 @@ export const PAVE = {
  * L'ORDRE DE RECOUVREMENT — qui déborde sur qui. Plus haut = dessus. Un terrain absent vaut 0
  * (il ne recouvre rien). Les STRUCTURELS ne sont pas dans la table : `prioriteDe` leur rend −1.
  *
- * La logique : le minéral dessous (la roche affleure, tout pousse par-dessus), puis la litière
- * (le sous-bois, le plus « sol »), puis l'humide, la lande sèche, l'herbe, l'alpage, et la
- * fleuraie tout en haut (ce qui fleurit est ce qui se voit). Regardé sur la planche du
+ * La logique : les surfaces tout en bas (`SURFACES` : l'eau, puis le marais), la sente, le minéral
+ * (la roche affleure, tout pousse par-dessus), puis la litière (le sous-bois, le plus « sol »),
+ * la roselière, l'humide et la lande sèche, l'herbe, l'alpage, et la fleuraie tout en haut (ce
+ * qui fleurit est ce qui se voit). Regardé sur la planche du
  * 2026-08-22 ; se recalibre en regardant, pas en raisonnant.
  */
 export const PRIORITE_PAVE: Record<number, number> = {
-  2: 1, // road — la sente, battue, sous tout
-  5: 2, // rock
-  9: 2, // scree
-  16: 2, // boulders
-  3: 3, // forest — la litière
-  22: 3, // old_growth
-  13: 3, // pine
-  14: 3, // larch
-  21: 3, // burnt_forest
-  24: 3, // willow
-  26: 4, // juniper_heath — la lande sèche
-  8: 4, // marsh
-  18: 4, // peat_bog
-  19: 4, // reed_marsh
-  25: 4, // wet_meadow
-  1: 5, // grass
-  11: 5, // heath
-  10: 5, // snow
-  15: 5, // glacier
-  12: 6, // alpine_meadow
-  17: 7, // flower_meadow
-  20: 7, // alpine_flowers
+  // Les rangs 0 et 1 sont aux SURFACES (eau, marais) : toute terre commence à 2.
+  2: 2, // road — la sente, battue, sous toute terre (et sur le marais : une chaussée)
+  5: 3, // rock
+  9: 3, // scree
+  16: 3, // boulders
+  3: 4, // forest — la litière
+  22: 4, // old_growth
+  13: 4, // pine
+  14: 4, // larch
+  21: 4, // burnt_forest
+  24: 4, // willow
+  19: 5, // reed_marsh — les roseaux sortent du marais (A11 : marais < roselière < prairie)
+  26: 6, // juniper_heath — la lande sèche
+  25: 6, // wet_meadow
+  1: 7, // grass
+  11: 7, // heath
+  10: 7, // snow
+  15: 7, // glacier
+  12: 8, // alpine_meadow
+  17: 9, // flower_meadow
+  20: 9, // alpine_flowers
+}
+
+/**
+ * LES SURFACES — ce qui n'a pas d'épaisseur : l'eau, et le marais qui est de l'eau avec de la
+ * boue. Leur rang dit qui déborde sur qui ENTRE surfaces (la boue glisse sur l'eau) ; toute terre
+ * de `PRIORITE_PAVE` est au-dessus. Une surface déborde d'une frange seule : ni liseré, ni arête,
+ * ni tranche, ni brin, et elle ne porte aucune ombre.
+ */
+export const SURFACES: Record<number, number> = {
+  4: 0, // shallow_water
+  6: 0, // deep_water
+  8: 1, // marsh
+  18: 1, // peat_bog
 }
 
 /** Les terrains STRUCTURELS : jamais propriétaires par débordement, transparents dans le chunk. */
@@ -129,10 +153,17 @@ export function estEau(t: number): boolean {
   return t === 4 || t === 6 // shallow_water, deep_water
 }
 
-/** La priorité d'un terrain : −1 pour un structurel, 0 pour l'eau et pour un terrain sans rang
- *  (ils ne recouvrent rien), sinon la table. */
+/** Une surface : l'eau ou le marais — sans épaisseur (voir `SURFACES`). */
+export function estSurface(t: number): boolean {
+  return SURFACES[t] !== undefined
+}
+
+/** La priorité d'un terrain : −1 pour un structurel, le rang de surface pour l'eau et le marais,
+ *  0 pour un terrain sans rang (il ne recouvre rien), sinon la table. */
 export function prioriteDe(t: number): number {
   if (STRUCTURELS.has(t)) return -1
+  const surface = SURFACES[t]
+  if (surface !== undefined) return surface
   return PRIORITE_PAVE[t] ?? 0
 }
 
@@ -322,7 +353,9 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       const o = (y * S + x) * 4
       // Le pixel est-il SUR une tuile d'eau ? (sa propre tuile, pas son propriétaire)
       const surEau = estEau(terr[ly * L + ((px / P) | 0)]!)
-      const tEau = estEau(t)
+      // Le propriétaire est-il une SURFACE (eau, marais) ? Pas d'épaisseur : ni liseré, ni arête,
+      // ni tranche, ni brin — et l'ombre et le ressac ne viennent que d'un pavé à épaisseur.
+      const tSurf = estSurface(t)
       // Le pavé du DESSOUS se lit au terrain (deux tuiles de même terrain ne font pas de bord),
       // celui du DESSUS aussi.
       const iU = i - LP, iD = i + LP, iL = i - 1, iR = i + 1
@@ -331,16 +364,19 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
       const basL = ownT[iL] !== t && ownP[iL]! < pk
       const basR = ownT[iR] !== t && ownP[iR]! < pk
       let f: number
-      // L'eau n'a ni liseré ni arête ni tranche (une surface n'a pas d'épaisseur) ; elle reçoit
-      // l'ombre de la berge, puis le ressac.
-      if (!tEau && (basD || basL || basR)) f = PAVE.LISERE
-      else if (!tEau && basU) f = PAVE.ARETE_HAUTE
-      else if (!tEau && ownT[iD + LP] !== t && ownP[iD + LP]! < pk) f = PAVE.TRANCHE
-      else if ((ownT[iU] !== t && ownP[iU]! > pk) || (ownT[iU - LP] !== t && ownP[iU - LP]! > pk)) f = PAVE.OMBRE
-      else if (ownT[iU - 2 * LP] !== t && ownP[iU - 2 * LP]! > pk) f = PAVE.PENOMBRE
-      else if (tEau && !estEau(ownT[iU - 3 * LP]!) && ownP[iU - 3 * LP]! > pk) f = PAVE.RESSAC
-      else if ((ownT[iL] !== t && ownP[iL]! > pk) || (ownT[iR] !== t && ownP[iR]! > pk)) f = PAVE.OMBRE_LATERALE
-      else if (tEau) continue // l'eau nue : le shader dessine sa surface
+      // Un pavé à épaisseur au-dessus de ce pixel (à `n` lignes) : celui qui porte une ombre.
+      const domine = (j: number): boolean => ownT[j] !== t && ownP[j]! > pk && !estSurface(ownT[j]!)
+      // Une surface n'a ni liseré ni arête ni tranche ; elle reçoit l'ombre de la berge, puis le
+      // ressac — d'un pavé à épaisseur seulement : la boue qui glisse sur l'eau n'ombre rien.
+      if (!tSurf && (basD || basL || basR)) f = PAVE.LISERE
+      else if (!tSurf && basU) f = PAVE.ARETE_HAUTE
+      else if (!tSurf && ownT[iD + LP] !== t && ownP[iD + LP]! < pk) f = PAVE.TRANCHE
+      else if (domine(iU) || domine(iU - LP)) f = PAVE.OMBRE
+      else if (domine(iU - 2 * LP)) f = PAVE.PENOMBRE
+      else if (tSurf && domine(iU - 3 * LP)) f = PAVE.RESSAC
+      else if (domine(iL) || domine(iR)) f = PAVE.OMBRE_LATERALE
+      else if (estEau(t)) continue // l'eau nue : le shader dessine sa surface
+      else if (tSurf) f = 1 // le marais nu : plat, sans brin
       else {
         f = 1
         // Les brins, dans le repère de la tuile PROPRIÉTAIRE (un brin peut vivre dans la frange).
@@ -355,7 +391,7 @@ export function cuireChunk(p: CuissonChunk): ChunkCuit {
           else if (ox === bx + 1 && oy === by + 2) f = PAVE.BRIN_SOMBRE
         }
       }
-      if (tEau) {
+      if (estEau(t)) {
         // L'EAU OMBRÉE OU MOUILLÉE va au surplomb, en voile : noir à l'alpha (1 − f) pour
         // assombrir, blanc à l'alpha (f − 1) pour éclaircir — le shader dessous garde son clapot.
         if (!sur) continue

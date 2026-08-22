@@ -5,7 +5,7 @@
  * propriété affirmée à chaque fois est UNE propriété de l'image cuite — jamais un pixel choisi.
  */
 import { describe, expect, it } from 'vitest'
-import { PAVE, PAVE_PX, PRIORITE_PAVE, cuireChunk, estEau, estStructurel, frange, prioriteDe } from './paves'
+import { PAVE, PAVE_PX, PRIORITE_PAVE, SURFACES, cuireChunk, estEau, estStructurel, estSurface, frange, prioriteDe } from './paves'
 
 const N = PAVE.CHUNK
 const S = N * PAVE_PX
@@ -32,6 +32,18 @@ describe('l’ordre de recouvrement', () => {
     }
     expect(prioriteDe(99)).toBe(0)
     expect(prioriteDe(17)).toBe(PRIORITE_PAVE[17])
+    // LE MARAIS EST UNE SURFACE : au-dessus de l'eau, sous TOUTE terre — aucune égalité possible
+    // (une égalité est une couture nue : c'était le défaut marais / prairie humide).
+    for (const t of [8, 18]) {
+      expect(estSurface(t)).toBe(true)
+      expect(prioriteDe(t)).toBeGreaterThan(prioriteDe(4))
+    }
+    for (const [t, rang] of Object.entries(PRIORITE_PAVE)) {
+      expect(estSurface(Number(t))).toBe(false)
+      expect(rang, `la terre ${t} domine toute surface`).toBeGreaterThan(Math.max(...Object.values(SURFACES)))
+    }
+    expect(prioriteDe(19)).toBeGreaterThan(prioriteDe(8)) // roselière sur marais
+    expect(prioriteDe(25)).toBeGreaterThan(prioriteDe(19)) // prairie humide sur roselière (A11)
     // La fleuraie recouvre l'herbe, qui recouvre la litière, qui recouvre la roche.
     expect(prioriteDe(17)).toBeGreaterThan(prioriteDe(1))
     expect(prioriteDe(1)).toBeGreaterThan(prioriteDe(3))
@@ -127,6 +139,68 @@ describe('la cuisson d’un chunk', () => {
     for (let i = 3; i < cuit.sol.length; i += 4) if (cuit.sol[i] !== 0) marques++
     if (cuit.surplomb) for (let i = 3; i < cuit.surplomb.length; i += 4) if (cuit.surplomb[i] !== 0) marques++
     expect(marques).toBe(0)
+  })
+
+  it('LE MARAIS EST UNE SURFACE — la prairie humide y est une berge : liseré, ombre, ressac ; le marais nu est plat', () => {
+    // Haut : prairie humide. Bas : marais. Bord à y = S/2. Tout dans le SOL (le marais n'est pas
+    // de l'eau : pas de surplomb).
+    const bord = (N / 2) * PAVE_PX
+    const cuit = cuireChunk({ cx: 0, cy: 0, terrainAt: (_tx, ty) => (ty < N / 2 ? 25 : 8), couleurAt: () => 0x808080, trameDe: () => null })
+    expect(cuit.surplomb).toBeNull()
+    const img = cuit.sol
+    const lum = (y: number): number => {
+      let s = 0
+      for (let x = 0; x < S; x++) s += px(img, x, y)[0]!
+      return s / S
+    }
+    // Colonne par colonne : la frange (plat ou liseré), puis l'ombre (×0,72), la pénombre, puis
+    // le ressac (×1,22 — PLUS CLAIR que le plat) au 4e px sous le bord bas, puis le plat.
+    let ombres = 0, ressacs = 0
+    for (let x = 0; x < S; x++) {
+      let d = 0
+      while (d < PAVE.FRANGE_MAX + 1 && px(img, x, bord + d)[0]! <= 0x80 * 0.6) d++ // le liseré, s'il tombe ici
+      // Cherche dans les 8 px sous le bord : une ombre puis, plus bas, un pixel plus clair que 0x80.
+      let ombreVue = false
+      for (let y = bord; y < bord + 10; y++) {
+        const r = px(img, x, y)[0]!
+        if (r > 0 && r < 0x80 * 0.8) ombreVue = true
+        else if (ombreVue && r > 0x80 * 1.1) { ressacs++; break }
+      }
+      if (ombreVue) ombres++
+    }
+    expect(ombres).toBe(S)
+    expect(ressacs).toBe(S)
+    // Le marais nu, loin du bord : plat, SANS brin — une surface n'a pas de brin.
+    let marques = 0
+    for (let y = bord + 16; y < S; y++) for (let x = 0; x < S; x++) if (px(img, x, y)[0] !== 0x80) marques++
+    expect(marques).toBe(0)
+    // La prairie humide, elle, porte ses brins.
+    expect(lum(bord - 24)).not.toBe(0x80)
+  })
+
+  it('LE MARAIS EST UNE SURFACE — sur l’eau, il déborde d’une frange seule : ni liseré, ni ombre, ni ressac', () => {
+    // Haut : marais. Bas : eau peu profonde. Bord à y = S/2.
+    const bord = (N / 2) * PAVE_PX
+    const cuit = cuireChunk({ cx: 0, cy: 0, terrainAt: (_tx, ty) => (ty < N / 2 ? 8 : 4), couleurAt: () => 0x808080, trameDe: () => null })
+    const sur = cuit.surplomb
+    expect(sur).not.toBeNull()
+    // Dans le sol, le marais est plat partout jusqu'au bord : aucun liseré (×0,55) sur sa dernière ligne.
+    let liseres = 0
+    for (let y = 0; y < bord; y++) for (let x = 0; x < S; x++) if (px(cuit.sol, x, y)[0]! < 0x80 * 0.9) liseres++
+    expect(liseres).toBe(0)
+    // Dans le surplomb : une frange OPAQUE de 2-5 px de marais, puis RIEN — pas de voile d'ombre,
+    // pas de ressac (une surface ne porte pas d'ombre).
+    let frangeMin = 99, frangeMax = 0, voiles = 0
+    for (let x = 0; x < S; x++) {
+      let d = 0
+      while (d < 8 && px(sur!, x, bord + d)[3] === 255) d++
+      frangeMin = Math.min(frangeMin, d)
+      frangeMax = Math.max(frangeMax, d)
+      for (let y = bord + d; y < bord + d + 8; y++) if (px(sur!, x, y)[3] !== 0) voiles++
+    }
+    expect(frangeMin).toBeGreaterThanOrEqual(PAVE.FRANGE_MIN)
+    expect(frangeMax).toBeLessThanOrEqual(PAVE.FRANGE_MAX)
+    expect(voiles).toBe(0)
   })
 
   it('R9 — le pavé du dessus déborde sur le dessous d’une frange de 2 à 5 px, jamais l’inverse', () => {
