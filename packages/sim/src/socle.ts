@@ -427,7 +427,7 @@ export function batirLeSocle(
     mx0: 0, my0: 0, cols, rows, alt, altLarge, dedans, distEau, hum,
     // Seuils de végétation NEUTRES avant `composerLHumidite` : la prairie (≥ 2) et la lande
     // (< −1) sont inatteignables, le bosquet et la fleuraie comme avant.
-    seuilBassin, seuilPrairie: 2, seuilBois: 1, seuilFleuraie: 0, seuilLande: -1,
+    seuilBassin, seuilPrairie: 2, seuilBois: 1, seuilFleuraie: 0, seuilLande: -1, selGrain: 0,
     flux, recepteur, pente, zoneCell, videCell, mouille,
   }
 }

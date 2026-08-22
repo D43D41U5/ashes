@@ -119,6 +119,21 @@ export const CREUX = {
   /** Échelle de ce bruit, en tuiles. Fin : c'est du grain de lisière, pas une seconde géographie. */
   ECHELLE_BRUIT: 52,
 
+  // ══ LA LECTURE À LA TUILE — ce qui pousse est mou (spec `sol-dessine.md` R1, 2026-08-22) ═══
+  //
+  // Le champ reste au motif ; c'est sa LECTURE qui descend à la tuile : interpolation bilinéaire
+  // entre les centres des quatre cellules voisines, plus un grain fin. Sans le grain, les lignes
+  // de niveau d'une interpolation bilinéaire sont des hyperboles entre quatre points — lisses,
+  // mais avec des arêtes visibles à chaque centre de cellule. Le grain casse ces arêtes.
+  //
+  // MESURÉ avant ce chantier (seed 2026, fenêtre 600-760 × 300-420) : 1 408 bords de tache
+  // sur 1 408 tombaient sur un multiple de 8 ; un motif fait 40 % de la hauteur d'écran.
+  /** Échelle du grain fin, en tuiles. Plus petit que le motif : c'est lui qui dessine le bord. */
+  GRAIN_TUILE_ECHELLE: 9,
+  /** Amplitude du grain fin (× (fbm − 0,5)). Borné par le haut par R4 (≤ 1 % de tuiles isolées) :
+   *  trop fort, la tache devient un semis ; trop faible, l'hyperbole se voit. */
+  GRAIN_TUILE_AMPLITUDE: 0.08,
+
   // ══ LA COMPOSITION — le contrat, en parts du pays ══════════════════════════════════════
   //
   // Les Prés Bas sont un PRÉ : on s'y reconnaît à son CIEL (worldgen R7, palette `pres_bas`).
@@ -279,6 +294,8 @@ export interface Creux {
   seuilFleuraie: number
   /** Humidité en dessous de laquelle : LANDE À GENÉVRIERS (quantile `PART_LANDE`). */
   seuilLande: number
+  /** Le sel du grain fin de la lecture à la tuile (`humAt`). Posé par `composerLHumidite`. */
+  selGrain: number
 }
 
 // (`ondulation` et `grain` vivent désormais dans `socle.ts` — mêmes sels, mêmes valeurs : le
@@ -395,6 +412,7 @@ function pousser(c: Creux, file: number[], k: number, d: number): void {
 export function composerLHumidite(c: Creux, seed: number): void {
   const M = CREUX.MOTIF
   const sel = (seed ^ 0x48554d49) | 0 /* 'HUMI' */
+  c.selGrain = (seed ^ 0x47524149) | 0 /* 'GRAI' */
   for (let my = 0; my < c.rows; my++) {
     for (let mx = 0; mx < c.cols; mx++) {
       const k = my * c.cols + mx
@@ -419,6 +437,43 @@ export function composerLHumidite(c: Creux, seed: number): void {
 }
 
 /**
+ * L'HUMIDITÉ EN UNE TUILE — la lecture MOLLE d'un champ qui reste au motif (spec `sol-dessine.md` R1).
+ *
+ * Le champ `hum` vit sur la grille de 8 (BFS à l'eau, quantiles) et y reste. Ici on l'interpole
+ * BILINÉAIREMENT entre les centres des quatre cellules qui entourent la tuile, puis on ajoute un
+ * grain fin : c'est ce qui fait que ce qui POUSSE prend des formes à la tuile, quand ce qui est
+ * TAILLÉ (l'eau, la roche, les chapeaux de crête) reste en union de motifs. Les seuils ne bougent
+ * pas : l'interpolation conserve la moyenne, le grain est symétrique — la composition reste un
+ * contrat (R3).
+ *
+ * Au bord de la grille, la cellule voisine manquante est la cellule elle-même (clamp) : aucune
+ * tuile ne lit hors tableau. Pur : `+ - * /`, `floor`, `min`, `max`, `fbm2`.
+ */
+export function humAt(c: Creux, x: number, y: number): number {
+  const M = CREUX.MOTIF
+  // Coordonnée CONTINUE en cellules, origine au centre de la cellule (0,0) : la tuile au centre
+  // d'une cellule lit exactement sa valeur.
+  const fx = (x + 0.5) / M - 0.5 - c.mx0
+  const fy = (y + 0.5) / M - 0.5 - c.my0
+  let ix = Math.floor(fx)
+  let iy = Math.floor(fy)
+  const tx = fx - ix
+  const ty = fy - iy
+  const ix1 = Math.max(0, Math.min(c.cols - 1, ix + 1))
+  const iy1 = Math.max(0, Math.min(c.rows - 1, iy + 1))
+  ix = Math.max(0, Math.min(c.cols - 1, ix))
+  iy = Math.max(0, Math.min(c.rows - 1, iy))
+  const h00 = c.hum[iy * c.cols + ix]!
+  const h10 = c.hum[iy * c.cols + ix1]!
+  const h01 = c.hum[iy1 * c.cols + ix]!
+  const h11 = c.hum[iy1 * c.cols + ix1]!
+  const haut = h00 + (h10 - h00) * tx
+  const bas = h01 + (h11 - h01) * tx
+  const grain = fbm2(x, y, CREUX.GRAIN_TUILE_ECHELLE, c.selGrain) - 0.5
+  return haut + (bas - haut) * ty + grain * CREUX.GRAIN_TUILE_AMPLITUDE
+}
+
+/**
  * LE VERDICT DE VÉGÉTATION en une tuile — l'échelle à CINQ étages (spec §2ter R32) :
  * 2 prairie humide (le plus mouillé), 1 bosquet, 0 herbe, −1 fleuraie, −2 lande (le plus sec).
  *
@@ -426,9 +481,8 @@ export function composerLHumidite(c: Creux, seed: number): void {
  * tous les mots du pré les uns par rapport aux autres.
  */
 export function vegetationAt(c: Creux, x: number, y: number): -2 | -1 | 0 | 1 | 2 {
-  const k = celluleDe(c, x, y)
-  if (k < 0) return 0
-  const h = c.hum[k]!
+  if (celluleDe(c, x, y) < 0) return 0
+  const h = humAt(c, x, y)
   if (h >= c.seuilPrairie) return 2
   if (h >= c.seuilBois) return 1
   if (h < c.seuilLande) return -2
