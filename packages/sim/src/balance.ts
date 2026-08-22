@@ -997,6 +997,58 @@ export const CIRCLES = {
   WILD_STOCK: 1.6,
 } as const
 
+/**
+ * ═══ LA PÊCHE (spec `peche.md`) — lancer, attendre, ferrer ═══
+ *
+ * Le geste vit dans la sim (contrat D1 de `recolte-maitrise`) : l'ATTENTE est un compte de
+ * ticks tiré au PRNG d'état au lancer, la FENÊTRE un compte de ticks posé à la touche. Deux
+ * interdits du GDD tenus par construction : rien ne progresse pendant l'attente (pas de jauge),
+ * et chaque poisson passe par un input (le ferrage). Tout en ticks entiers — aucune fonction
+ * Math approximée.
+ */
+/** Le stock d'un coin : une sortie de pêche, pas une ferme. Hoisté pour `NODE_DEFS`. */
+const FISHING_STOCK = 6
+export const FISHING = {
+  STOCK: FISHING_STOCK,
+  /** L'attente de la touche, AVEC un ver au bout (D4) : ça mord vite. Fourchette uniforme. */
+  WAIT_BAIT_MIN_TICKS: ticksFor(3),
+  WAIT_BAIT_MAX_TICKS: ticksFor(8),
+  /** SANS appât : la ligne part quand même, la touche traîne. L'hiver (vers gélifs) pêche ici. */
+  WAIT_NOBAIT_MIN_TICKS: ticksFor(8),
+  WAIT_NOBAIT_MAX_TICKS: ticksFor(15),
+  /** La fenêtre de ferrage s'élargit de ce facteur par niveau de `hunting` (D6)… */
+  WINDOW_PER_LEVEL: 0.15,
+  /** …plafonné à ce multiple de la fenêtre de l'espèce : le brochet reste un réflexe. */
+  WINDOW_CAP: 2,
+} as const
+
+/** Une espèce : son eau, son poids de tirage, sa fenêtre de ferrage (ticks), ce qu'elle donne. */
+export interface FishSpecies {
+  id: 'gudgeon' | 'trout' | 'pike'
+  item: import('./items').ItemId
+  /** Où elle mord. `both` = rivière et lac. */
+  water: 'river' | 'lake' | 'both'
+  /** Poids ENTIER du tirage à la touche, parmi les espèces de l'eau du coin. */
+  weight: number
+  /** La fenêtre de ferrage à niveau 0, en ticks — c'est LÀ que vit la rareté (D5). */
+  windowTicks: number
+}
+
+/**
+ * LES TROIS ESPÈCES (D5) — rareté par l'EAU et par la FENÊTRE, jamais par un tirage aveugle :
+ * le novice RATE les brochets (5 ticks), l'expert les sort (D6). La touche ne dit pas ce qui
+ * mord ; le ferrage réussi révèle. L'ordre du tableau est l'ordre du tirage cumulatif : ne pas
+ * le réordonner sans savoir qu'on change les prises d'un replay.
+ */
+export const FISH_SPECIES: readonly FishSpecies[] = [
+  { id: 'gudgeon', item: 'gudgeon', water: 'both', weight: 7, windowTicks: 12 }, // 600 ms — l'en-cas
+  { id: 'trout', item: 'trout', water: 'river', weight: 3, windowTicks: 8 }, // 400 ms — la belle prise de rivière
+  // Au lac, le goujon pèse 7 contre 1 pour le brochet… en poids de TABLE ; or la truite n'y mord
+  // pas, donc le tirage ne porte que sur {goujon 7, brochet 1} — le brochet sort une fois sur huit,
+  // et encore faut-il le ferrer en 250 ms. C'est rare deux fois, comme décidé.
+  { id: 'pike', item: 'pike', water: 'lake', weight: 1, windowTicks: 5 }, // 250 ms — il se débat
+]
+
 export type NodeType =
   | 'tree'
   | 'rock'
@@ -1009,6 +1061,13 @@ export type NodeType =
    *  CORPS des feuillus (la lisière a ses baies, le cœur ses champignons). Se gratte à
    *  mains nues ; les feuilles retombent (renewable). Il donne les VERS — l'appât dédié. */
   | 'leaf_pile'
+  /** LES COINS DE PÊCHE (spec `peche.md` D1/D3) — le poisson est un NŒUD, pas une entité :
+   *  une tuile de haut-fond qui TOUCHE le profond, aux coudes de la rivière et contre le cœur
+   *  des lacs. Deux types parce que l'ESPÈCE dépend de l'eau (`FISH_SPECIES`) et qu'un nœud
+   *  porte sa nature sans relire la carte. Ne bloque pas (l'eau), ignore `TOOL_YIELD` (une
+   *  touche = UN poisson : la prise passe par `landFish`, jamais par `harvestStrike`). */
+  | 'fishing_spot_river'
+  | 'fishing_spot_lake'
   | 'iron_vein'
   | 'coal_seam'
   /** LE BLOC D'AFFLEUREMENT (t0-exploration §2sexies R48bis) — « un bloc = une tuile pleine de
@@ -1035,6 +1094,8 @@ export type NodeType =
  * autant que `basic` (×2), mais il ne doit ouvrir NI le fer NI le charbon.
  */
 export type ToolTier = 'none' | 'crude' | 'basic' | 'iron' | 'steel'
+/** Les familles d'outil de récolte : ce qu'un nœud EXIGE en main. `rod` = la canne (peche.md). */
+export type ToolFamily = 'axe' | 'pickaxe' | 'rod'
 export const TOOL_RANK: Record<ToolTier, number> = { none: 0, crude: 1, basic: 2, iron: 3, steel: 4 }
 
 export interface NodeDef {
@@ -1054,8 +1115,8 @@ export interface NodeDef {
    * `tree` et 1 pour `old_tree`, qui n'est pas décalé. */
   blockHalfSub: number
   skill: import('./items').SkillId
-  /** Famille d'outil qui multiplie le rendement. */
-  tool: 'axe' | 'pickaxe' | null
+  /** Famille d'outil qui multiplie le rendement (et, pour la canne, qui AUTORISE le geste). */
+  tool: ToolFamily | null
   /**
    * Le palier MINIMAL pour entamer le nœud (spec craft-fortune C5).
    *
@@ -1133,6 +1194,12 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
   // les bons qu'à `FORAGE_QUALITY_LEVEL` (le novice les voit sans savoir les prendre). Humide/ombre.
   champignon: { item: 'champignons', stock: 6, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', minForageLevel: BALANCE.FORAGE_QUALITY_LEVEL, renewable: true, vivant: true, gelif: true },
   leaf_pile: { item: 'worms', stock: 4, blockHalfSub: 0, skill: 'foraging', tool: null, minTool: 'none', renewable: true, vivant: true, gelif: true },
+  // LES COINS DE PÊCHE (spec `peche.md` P1). `item` est le poisson PAR DÉFAUT de l'eau — la prise
+  // réelle se tire dans `FISH_SPECIES` à la touche ; `item` sert aux lecteurs génériques (client,
+  // tableau). `minTool: 'crude'` + `tool: 'rod'` = il faut une canne EN MAIN (D4). Renouvelable :
+  // le coin se vide et rouvre (dérive sur l'eau, P6). Pas `vivant` : le gel a sa propre règle (G1).
+  fishing_spot_river: { item: 'gudgeon', stock: FISHING_STOCK, blockHalfSub: 0, skill: 'hunting', tool: 'rod', minTool: 'crude', renewable: true },
+  fishing_spot_lake: { item: 'gudgeon', stock: FISHING_STOCK, blockHalfSub: 0, skill: 'hunting', tool: 'rod', minTool: 'crude', renewable: true },
   iron_vein: { item: 'iron_ore', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
   coal_seam: { item: 'coal', stock: 8, blockHalfSub: 4, skill: 'mining', tool: 'pickaxe', minTool: 'basic' },
 
@@ -1152,11 +1219,16 @@ export const NODE_DEFS: Record<NodeType, NodeDef> = {
 
 /** Les trois paliers outillés de chaque famille. Le barème, lui, est `TOOL_YIELD`. */
 export const TOOL_TIERS: Record<
-  'axe' | 'pickaxe',
+  ToolFamily,
   { crude: import('./items').ItemId; basic: import('./items').ItemId; iron: import('./items').ItemId; steel: import('./items').ItemId }
 > = {
   axe: { crude: 'crude_axe', basic: 'axe', iron: 'iron_axe', steel: 'steel_axe' },
   pickaxe: { crude: 'crude_pickaxe', basic: 'pickaxe', iron: 'iron_pickaxe', steel: 'steel_pickaxe' },
+  // LA CANNE n'a qu'UNE marche (spec `peche.md` G7) : les trois autres pointent sur le même objet,
+  // `toolTier` teste du haut vers le bas et rend donc `steel` pour une canne de fortune — sans
+  // conséquence, le coin de pêche ignore `TOOL_YIELD` et n'exige que `crude`. Le jour d'une canne
+  // d'atelier, on remplit la marche `basic` et la fortune redevient `crude` d'elle-même.
+  rod: { crude: 'crude_rod', basic: 'crude_rod', iron: 'crude_rod', steel: 'crude_rod' },
 }
 
 /**
@@ -1180,6 +1252,7 @@ export const TOOL_DURABILITIES: Partial<Record<import('./items').ItemId, number>
   crude_axe: 20,
   crude_pickaxe: 20,
   crude_spear: 20,
+  crude_rod: 20, // vingt ferrages (peche.md D4) : une canne de fortune, pas un outil de métier
   // L'ACIER dure PLUS que le fer (défaut 100) : le palier 3 se sent aussi à l'usure.
   steel_axe: 180,
   steel_pickaxe: 180,
@@ -1201,6 +1274,15 @@ export const FOOD_VALUES: Partial<Record<import('./items').ItemId, number>> = {
   quartier: 20, // V0-5 : un gros repas cru (plus que raw_meat) — le gros gibier nourrit longtemps
   cooked_meat: 40,
   stew: 60,
+  // LES POISSONS (spec `peche.md` G8) — crus, un en-cas ; cuits, par paliers d'espèce : le goujon
+  // cuit vaut la moitié de la viande cuite, la truite la viande, le brochet le ragoût. C'est la
+  // rareté de D5 qui se mange. Ordres de grandeur, à calibrer en jouant.
+  gudgeon: 4,
+  trout: 8,
+  pike: 12,
+  cooked_gudgeon: 20,
+  cooked_trout: 40,
+  cooked_pike: 60,
 }
 
 /**
@@ -1247,6 +1329,13 @@ export const SPOIL_CYCLES: Partial<Record<import('./items').ItemId, number>> = {
   quartier: 1.5, // V0-5 : périme comme la viande crue (le dilemme du retour : poids ET péremption)
   cooked_meat: 4,
   stew: 5,
+  // Le poisson cru tourne comme la viande crue ; cuit, il tient un peu moins qu'elle (peche.md G8).
+  gudgeon: 1.5,
+  trout: 1.5,
+  pike: 1.5,
+  cooked_gudgeon: 3,
+  cooked_trout: 3,
+  cooked_pike: 3,
 }
 
 /** Les crans de fraîcheur, et ce qu'ils font à la valeur nutritive. */
@@ -1266,6 +1355,7 @@ export type RecipeId =
   | 'crude_pickaxe'
   | 'crude_spear'
   | 'crude_bow'
+  | 'crude_rod'
   | 'bow'
   | 'arrow'
   | 'stew'
@@ -1372,6 +1462,10 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   // DEUX cordes quand l'épieu n'en coûte qu'une — la corde est le goulot volontaire de la
   // couche 1 (craft-fortune C8), et c'est là que se paie l'allonge.
   crude_bow: { requiert: null, inputs: { wood: 2, rope: 2 }, output: 'crude_bow', seconds: 6 },
+  // LA CANNE DE FORTUNE (spec `peche.md` D4/G7) : une branche, une corde, sans poste. Moins
+  // qu'un arc — la ligne ne tue personne — mais elle passe par la corde comme tout ce qui se
+  // ficelle en couche 1 (C8).
+  crude_rod: { requiert: null, inputs: { wood: 1, rope: 1 }, output: 'crude_rod', seconds: 4 },
   // L'ARC LONG à l'atelier : il PAIE l'installation, au rang de la lance.
   bow: { requiert: ATELIER_N1, inputs: { wood: 4, rope: 2, fiber: 2 }, output: 'bow', seconds: 10 },
   // LA FLÈCHE RESTE COUCHE 1, ET PAR LOT DE CINQ : on en fabrique en boucle, quel que soit
@@ -3439,7 +3533,14 @@ export const COOK_SLOT: Partial<
 > = {
   // Le feu cuit la VIANDE (S10). `byproducts` déclare d'éventuels SOUS-PRODUITS (graisse, os… —
   // items à définir par Alexis) qui tombent dans les 3 slots de SORTIE avec le résultat.
-  fire: { raw_meat: { output: 'cooked_meat', ticks: ticksFor(5) } },
+  fire: {
+    raw_meat: { output: 'cooked_meat', ticks: ticksFor(5) },
+    // LES POISSONS (spec `peche.md` G8/A13) : le feu grille ce que la ligne ramène, espèce par
+    // espèce — le cuit garde son identité (la rareté de D5 se mange, elle ne se fond pas).
+    gudgeon: { output: 'cooked_gudgeon', ticks: ticksFor(4) },
+    trout: { output: 'cooked_trout', ticks: ticksFor(5) },
+    pike: { output: 'cooked_pike', ticks: ticksFor(6) },
+  },
 }
 
 /** Hordes & événements du monde (spec événements). */
@@ -4351,6 +4452,15 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   graine: 0.1, // une poignée de graines, presque rien
   stew: 0.5,
   raw_meat: 1,
+  // Les poissons (peche.md) : le goujon est une poignée, le brochet un vrai poids — léger
+  // quand même à côté d'un quartier : on rentre sa pêche sans dilemme de portage.
+  gudgeon: 0.3,
+  trout: 0.6,
+  pike: 1.2,
+  cooked_gudgeon: 0.25,
+  cooked_trout: 0.5,
+  cooked_pike: 1,
+  crude_rod: 1,
   quartier: 4.5, // V0-5 : LOURD — deux quartiers = un cerf = ~9 de charge (le portage remord)
   cooked_meat: 0.8,
   // La peau brute est BULKY : elle pèse plus que la viande d'une même bête — rentrer
@@ -4494,10 +4604,18 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   quartier: 3,
   cooked_meat: 5,
   raw_hide: 5,
+  // Les poissons s'empilent comme la viande (peche.md).
+  gudgeon: 5,
+  trout: 5,
+  pike: 5,
+  cooked_gudgeon: 5,
+  cooked_trout: 5,
+  cooked_pike: 5,
   // Outils et armes : un par case (l'usure est portée par la case).
   crude_axe: 1,
   crude_pickaxe: 1,
   crude_spear: 1,
+  crude_rod: 1,
   axe: 1,
   pickaxe: 1,
   iron_axe: 1,

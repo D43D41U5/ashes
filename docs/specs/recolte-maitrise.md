@@ -68,7 +68,7 @@ Chaque coup de récolte (`harvest`) est déjà daté du tick où la sim le trait
 
 ## Hors périmètre
 
-- **Chasse et pêche.** Leurs gestes GDD (pistage/approche/tir, ferrage) ont leurs propres systèmes (`chasse.ts`, `poisson.ts`) et leur propre spec (`chasse.md`). Cette passe ne concerne QUE les nœuds de récolte.
+- **Chasse et pêche.** Leurs gestes GDD (pistage/approche/tir, ferrage) ont leurs propres specs (`chasse.md`, `peche.md`) et leurs propres chemins (la chasse : `faune.ts` + `combat.ts` ; la pêche : `castLine`/`landFish` dans `economy.ts`, qui honore le contrat D1 de cette spec sans passer par `harvestStrike`). *(Corrigé le 2026-08-22 : la ligne citait `chasse.ts` et `poisson.ts` — ni l'un ni l'autre n'est le système nommé.)* Cette passe ne concerne QUE les nœuds de récolte.
 - **Le son.** Aucun son dans le jeu à ce jour ; le retour du coup propre est visuel (il se branchera plus tard sur le même événement, cf. `recolte.md`).
 - **Les nombres exacts** (largeurs de fenêtre, rayon du point faible par niveau, N brins, seuils de révélation). D3 fixe l'ordre de grandeur (« doux », +~50 %) ; le calibrage se fait en playtest, mesures en main, et le changement de chiffres reste une décision utilisateur.
 

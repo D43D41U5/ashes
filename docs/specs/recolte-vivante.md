@@ -61,7 +61,7 @@ Dans `harvestStrike` / `toolMultiplier`, on remplace le multiplicateur floté pa
 ## Hors périmètre
 
 - **Le stock par nœud.** On garde les valeurs actuelles au premier jet ; c'est le levier qui règle *à quelle fréquence on tourne*, et il se cale une fois le reste mesuré (pas d'aveugle).
-- **La chasse et la pêche** (`chasse.ts`, `poisson.ts`) : leurs gestes et leurs ressources ont leurs specs. Cette passe ne touche QUE les nœuds de récolte.
+- **La chasse et la pêche** : leurs gestes et leurs ressources ont leurs specs (`chasse.md` ; `peche.md` depuis le 2026-08-22 — le coin de pêche EST un nœud, mais son geste passe par `castLine`/`landFish`, jamais par `harvestStrike`). *(Corrigé le 2026-08-22 : cette ligne citait `chasse.ts`/`poisson.ts` — le premier n'existe pas, la chasse vit dans `faune.ts`/`combat.ts` ; le second est le semis de Bridson, pas l'animal.)* Cette passe ne touche QUE les nœuds de récolte.
 - **Le son** : aucun son dans le jeu à ce jour ; le retour d'épuisement/repousse est visuel.
 
 ## Critères d'acceptation (à écrire AVANT le code, invariant tests)

@@ -80,6 +80,12 @@ export const FAMILLE_DE_NOEUD: Record<NodeType, Famille> = {
   // La bêche dans la tourbe et le râteau dans la cendre lèvent une POUSSIÈRE : elle monte.
   peat_cut: 'poussiere',
   ash_heap: 'poussiere',
+
+  // LES COINS DE PÊCHE (spec peche.md) : rien ne se fracture, rien ne se détache — la prise a son
+  // propre rendu (le ferrage, `peche-fx`). Rangés en « feuille » parce que c'est la loi la plus
+  // légère ; le FX de récolte commun n'y tombe en pratique jamais (la prise n'est pas un coup).
+  fishing_spot_river: 'feuille',
+  fishing_spot_lake: 'feuille',
 }
 
 export interface Loi {

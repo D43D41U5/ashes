@@ -29,6 +29,7 @@ import {
   TERRAIN_PINE,
   TERRAIN_REED_MARSH,
   TERRAIN_SCREE,
+  TERRAIN_DEEP_WATER,
   CIRCLES,
   TERRAINS,
   TOOL_RANK,
@@ -38,6 +39,10 @@ import {
   type Recipe,
   type RecipeId,
   type ToolTier,
+  type ToolFamily,
+  FISHING,
+  FISH_SPECIES,
+  type FishSpecies,
   CENDREUX,
 } from './balance'
 import { harvestFactor } from './alignment'
@@ -45,7 +50,7 @@ import { die } from './combat'
 import { facteurSterilite, frontActuel } from './cendre'
 import { emitEvent } from './events'
 import { secouerLeSol } from './sens'
-import { floreEntierementGelee, floreGelee } from './gel'
+import { estGele, floreEntierementGelee, floreGelee } from './gel'
 import { distSq } from './geometry'
 import { heldSlot, wearHeld } from './inventory-actions'
 import {
@@ -59,6 +64,7 @@ import {
   type ItemId,
   type SkillId,
 } from './items'
+import { rngRoll } from './rng'
 import { poiClearings, terrainAt, zoneAt, type WorldMap } from './map'
 import { libelleExigence, sertExigence } from './pieces'
 import { stockDArbre } from './zone-content'
@@ -263,7 +269,7 @@ function gainXp(state: SimState, entity: Entity, skill: SkillId, base: number): 
  * les filons (rang 1 < 2). Confondre les deux, c'était offrir la mine contre
  * trois pierres.
  */
-export function toolTier(item: ItemId | null, family: 'axe' | 'pickaxe' | null): ToolTier {
+export function toolTier(item: ItemId | null, family: ToolFamily | null): ToolTier {
   if (!family || item === null) return 'none'
   const tiers = TOOL_TIERS[family]
   if (item === tiers.steel) return 'steel'
@@ -279,7 +285,7 @@ export function toolTier(item: ItemId | null, family: 'axe' | 'pickaxe' | null):
  * hache d'atelier départagent ICI — sinon un PNJ empoignerait le caillou ficelé
  * et laisserait la vraie hache au sac (spec C7).
  */
-export function toolRank(item: ItemId | null, family: 'axe' | 'pickaxe' | null): number {
+export function toolRank(item: ItemId | null, family: ToolFamily | null): number {
   return TOOL_RANK[toolTier(item, family)]
 }
 
@@ -290,7 +296,7 @@ export function toolRank(item: ItemId | null, family: 'axe' | 'pickaxe' | null):
  */
 function toolMultiplier(
   entity: Entity,
-  family: 'axe' | 'pickaxe' | null,
+  family: ToolFamily | null,
 ): { mult: number; held: boolean; tier: ToolTier } {
   const tier = toolTier(heldSlot(entity)?.item ?? null, family)
   return { mult: TOOL_YIELD[tier], held: tier !== 'none', tier }
@@ -506,7 +512,8 @@ export function forageBounty(nodeId: number, tick: number, richness: number, lev
  * (re-vérif silencieuse, G8 : le nœud a pu se vider ou s'éloigner pendant la charge).
  */
 function strikeRejection(state: SimState, actor: Entity, node: ResourceNode | undefined, range: number): string | null {
-  if (!node || node.stock <= 0) return 'rien à récolter'
+  if (!node) return 'rien à récolter'
+  if (node.stock <= 0) return estUnCoinDePeche(node.type) ? 'rien ne mord ici' : 'rien à récolter'
   if (distSq(actor.x, actor.y, node.tx + 0.5, node.ty + 0.5) > range * range) return 'trop loin'
   const def = NODE_DEFS[node.type]
   // F3 — UNE PLANTE GELÉE NE REND RIEN (spec `flore-froid.md`). Ne mord QUE sur les nœuds
@@ -522,6 +529,7 @@ function strikeRejection(state: SimState, actor: Entity, node: ResourceNode | un
   }
   const { tier } = toolMultiplier(actor, def.tool)
   if (TOOL_RANK[tier] < TOOL_RANK[def.minTool]) {
+    if (def.tool === 'rod') return 'il faut une canne en main' // peche.md D4 : le geste EST la ligne
     return tier === 'none' ? 'il faut une pioche en main' : 'il faut un outil forgé en main'
   }
   // Le GATE DE SAVOIR (verbe 3) : le patch de champignons est visible de tous, mais on ne sait
@@ -530,6 +538,216 @@ function strikeRejection(state: SimState, actor: Entity, node: ResourceNode | un
     return 'il faut mieux connaître les champignons'
   }
   return null
+}
+
+/**
+ * ═══ LA PÊCHE (spec `peche.md`) — lancer, attendre, ferrer ═══
+ *
+ * Le poisson est un NŒUD (D1) ; le geste est une LIGNE TENDUE (`Entity.fishing`, D2) : deux
+ * inputs (`harvest_charge_start` lance, `harvest_release` ferre), une attente tirée au PRNG
+ * d'état, une touche signalée, une fenêtre de quelques ticks. Rien ne progresse pendant
+ * l'attente, et chaque poisson passe par le ferrage — les deux interdits du GDD l.402.
+ */
+
+/** Le nœud est-il un coin de pêche ? Les deux types ne diffèrent que par leur EAU (D5). */
+export function estUnCoinDePeche(type: NodeType): boolean {
+  return type === 'fishing_spot_river' || type === 'fishing_spot_lake'
+}
+
+/** Les espèces qui mordent dans l'eau de ce coin, dans l'ordre de la table (tirage cumulatif). */
+export function especesDuCoin(type: NodeType): FishSpecies[] {
+  const water = type === 'fishing_spot_lake' ? 'lake' : 'river'
+  return FISH_SPECIES.filter((sp) => sp.water === 'both' || sp.water === water)
+}
+
+/**
+ * LA FENÊTRE DE FERRAGE (G3) : celle de l'espèce, élargie par `hunting` — +15 % par niveau,
+ * plafonnée à ×2. Pure, entière : `floor` d'un produit, jamais une fonction approximée. Plancher
+ * à 1 tick — une fenêtre nulle serait un poisson qu'on ne peut pas ferrer.
+ */
+export function fishingWindowTicks(species: FishSpecies, level: number): number {
+  const mult = Math.min(FISHING.WINDOW_CAP, 1 + level * FISHING.WINDOW_PER_LEVEL)
+  return Math.max(1, Math.floor(species.windowTicks * mult))
+}
+
+/** La tuile PROFONDE que ce coin touche (P2) — l'eau qu'on pêche. `null` si le coin a dérivé
+ *  loin du profond (P6) : on pêche alors « sa » tuile, et c'est elle qui compte pour le gel. */
+function profondVoisin(map: WorldMap, tx: number, ty: number): { tx: number; ty: number } | null {
+  const d = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+  ] as const
+  for (const [dx, dy] of d) {
+    const x = tx + dx
+    const y = ty + dy
+    if (x < 0 || y < 0 || x >= map.width || y >= map.height) continue
+    if (terrainAt(map, x, y) === TERRAIN_DEEP_WATER) return { tx: x, ty: y }
+  }
+  return null
+}
+
+/**
+ * LE COIN EST-IL PRIS (D7/G1) ? On juge le PROFOND que le coin touche, pas son gué : le gué
+ * gèle avant le profond (`gel.ts`, `SEUIL_GUE` < `SEUIL_PROFOND`), et l'intention de D7 est
+ * « la rivière ferme avant le lac » — un coin dont le profond est encore ouvert se pêche,
+ * même les pieds sur la glace du bord. Sans profond voisin, la tuile du coin elle-même.
+ */
+export function coinPris(state: SimState, node: ResourceNode): boolean {
+  const p = profondVoisin(state.map, node.tx, node.ty) ?? { tx: node.tx, ty: node.ty }
+  return estGele(state, p.tx, p.ty)
+}
+
+/**
+ * LE LANCER (G1). Le nœud est DÉJÀ validé (`strikeRejection` : stock, portée, canne en main).
+ * Un ver au sac part au lancer (D4 — et ne revient pas, c'est le seul coût du raté) et presse
+ * la touche. L'attente se tire sur le PRNG d'état : action-driven, donc rejouée par les inputs.
+ */
+function castLine(state: SimState, actor: Entity, node: ResourceNode, plainte: (reason: string) => void): void {
+  if (coinPris(state, node)) return plainte("l'eau est prise")
+  const bait = removeItems(actor.inventory, { worms: 1 })
+  const min = bait ? FISHING.WAIT_BAIT_MIN_TICKS : FISHING.WAIT_NOBAIT_MIN_TICKS
+  const max = bait ? FISHING.WAIT_BAIT_MAX_TICKS : FISHING.WAIT_NOBAIT_MAX_TICKS
+  const { value, next } = rngRoll(state.rngState)
+  state.rngState = next
+  const wait = min + Math.floor(value * (max - min + 1))
+  actor.fishing = { nodeId: node.id, castTick: state.tick, biteAt: state.tick + wait, bait }
+}
+
+/** LA TOUCHE (G2) : l'espèce se tire parmi celles de l'eau, la fenêtre se pose, le fait s'émet —
+ *  sans l'espèce. Le tirage cumulatif sur des poids ENTIERS est une comparaison, rien d'autre. */
+function biteLine(state: SimState, entity: Entity, node: ResourceNode): void {
+  const f = entity.fishing!
+  const especes = especesDuCoin(node.type)
+  let total = 0
+  for (const sp of especes) total += sp.weight
+  const { value, next } = rngRoll(state.rngState)
+  state.rngState = next
+  let tirage = Math.floor(value * total)
+  let choisie = especes[especes.length - 1]!
+  for (const sp of especes) {
+    if (tirage < sp.weight) {
+      choisie = sp
+      break
+    }
+    tirage -= sp.weight
+  }
+  f.species = choisie.id
+  f.windowEnd = state.tick + fishingWindowTicks(choisie, levelOf(entity, 'hunting'))
+  emitEvent(state, { type: 'fish_bite', tick: state.tick, entityId: entity.id, nodeId: node.id })
+}
+
+/**
+ * LA PRISE (G4/G6). PAS `harvestStrike` : une touche = UN poisson, quel que soit l'outil
+ * (`TOOL_YIELD` ne s'applique pas, D4). Mais tout ce qui est commun l'est vraiment : le sac borné,
+ * l'épuisement (`depleteNode`), l'usure de la canne, l'XP (`gainXp`, pénalité de dispersion
+ * comprise), la cadence, et `resource_harvested` — le flux que la chronique et le tableau lisent.
+ */
+function landFish(state: SimState, actor: Entity, actorId: number, node: ResourceNode, speciesId: FishSpecies['id']): void {
+  const species = FISH_SPECIES.find((sp) => sp.id === speciesId)!
+  if (freeRoomFor(actor.inventory, species.item) <= 0) {
+    emitEvent(state, { type: 'action_rejected', tick: state.tick, entityId: actorId, reason: 'sac plein' })
+    return
+  }
+  addItems(actor.inventory, { [species.item]: 1 })
+  node.stock -= 1
+  if (node.stock <= 0) depleteNode(state, node)
+  wearHeld(actor, Math.max(BALANCE.TOOL_WEAR_MIN, 1 - BALANCE.SKILL_WEAR_REDUCTION * levelOf(actor, 'crafting')))
+  gainXp(state, actor, 'hunting', BALANCE.XP_PER_GATHER)
+  actor.cooldownUntil = state.tick + BALANCE.GATHER_COOLDOWN_TICKS
+  emitEvent(state, { type: 'fish_caught', tick: state.tick, entityId: actorId, nodeId: node.id, species: species.id, item: species.item })
+  emitEvent(state, { type: 'resource_harvested', tick: state.tick, entityId: actorId, nodeId: node.id, item: species.item, count: 1 })
+}
+
+/**
+ * LA LIGNE, TICK APRÈS TICK (G2/G5) — appelée par `advanceEconomy`. Un pas rentre la ligne (le
+ * tick du lancer excepté : on peut cliquer en finissant un pas). La mort aussi. À `biteAt`, la
+ * touche ; passé `windowEnd` sans ferrage, le poisson file — et ça se dit (`fish_escaped`).
+ */
+function advanceFishing(state: SimState, entity: Entity): void {
+  const f = entity.fishing
+  if (f === undefined) return
+  // `step()` applique les inputs, AVANCE LE TEMPS, puis vient ici : le step du lancer lui-même
+  // arrive donc avec `tick === castTick + 1`. C'est ce step-là qu'on tolère en mouvement.
+  if (entity.hp <= 0 || (entity.moved && state.tick > f.castTick + 1)) {
+    delete entity.fishing
+    return
+  }
+  const node = state.nodes.find((n) => n.id === f.nodeId)
+  if (node === undefined) {
+    delete entity.fishing
+    return
+  }
+  if (f.windowEnd === undefined) {
+    if (state.tick >= f.biteAt) biteLine(state, entity, node)
+    return
+  }
+  if (state.tick > f.windowEnd) {
+    delete entity.fishing
+    emitEvent(state, { type: 'fish_escaped', tick: state.tick, entityId: entity.id, nodeId: node.id })
+  }
+}
+
+/**
+ * LE NŒUD SE VIDE (spec recolte-vivante D1/R1, défriche.ts, cortege-cendre R2) : repousse datée,
+ * usure des épuisements, stérilité du front, dérive — et l'événement `node_depleted`. Extrait de
+ * `harvestStrike` pour que la PRISE de pêche (`landFish`, peche.md G6) épuise un coin EXACTEMENT
+ * comme un coup épuise un buisson — un seul endroit, pas deux copies qui divergent. À appeler
+ * quand `node.stock` vient de tomber à 0.
+ */
+function depleteNode(state: SimState, node: ResourceNode): void {
+  const def = NODE_DEFS[node.type]
+  const day = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
+  // LE DÉFRICHEMENT (`defriche.ts`, décision d'Alexis 2026-08-06) : chez soi, ce qui
+  // s'extrait ne revient pas. `stock 0` + `regrowAt 0` est la MARQUE, et elle est
+  // PERSISTANTE — le client la lit pour ne pas animer une repousse qui n'arrivera jamais
+  // (`setNodes` teste déjà `regrowAt > 0`), la boucle de repousse pour passer son chemin en
+  // O(1), et la sauvegarde la porte telle quelle. On ne compte pas non plus les épuisements
+  // d'un nœud qui n'en connaîtra pas d'autre : `depletions`/`forgetAt` n'ont plus d'objet.
+  if (noeudDefrichable(state.villages, node)) {
+    node.regrowAt = 0
+    delete node.depletions
+    delete node.forgetAt
+  } else {
+    node.depletions = Math.min(BALANCE.DEPLETION_MAX, (node.depletions ?? 0) + 1)
+    node.forgetAt = state.tick + BALANCE.DEPLETION_FORGET_TICKS
+    const usure = 1 + BALANCE.DEPLETION_REGROW_PENALTY * (node.depletions - 1)
+    // LA STÉRILITÉ (spec `cortege-cendre.md` R2) — le sens du cortège qui marche LE PLUS LOIN
+    // devant le feu. Devant le front, la repousse ralentit jusqu'à ne plus rien rendre d'utile,
+    // et le sol est **encore là, encore vert, encore marchable** : le joueur voit sa perte
+    // arriver une saison à l'avance et abandonne sa TOURNÉE avant d'abandonner son TERRAIN.
+    //
+    // Elle MULTIPLIE `REGROW_ACT_FACTOR`, elle ne le remplace pas : le facteur d'acte est un
+    // levier d'équilibrage acté, le retirer serait une décision de design distincte de ce
+    // chantier. Conséquence à ne pas taire : le patron `[acte - 1]` que **A3 de
+    // `saison-sans-fin.md`** veut voir disparaître de `/sim` SURVIT ici.
+    //
+    // Le facteur est plafonné (`CENDRE.STERILE_FACTEUR_MAX`) et vaut 1 hors bande — donc hors
+    // de la bande, `regrowAt` est identique au bit près à ce qu'il était avant ce chantier.
+    const sterile = facteurSterilite(state.map, node.tx, node.ty, frontActuel(state))
+    node.regrowAt =
+      state.tick +
+      Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR(day) * usure * sterile)
+    // LA DÉRIVE (spec recolte-vivante D1/R1) : un nœud de bois/fibre meurt sur sa tuile
+    // et rouvre AILLEURS, dans le même bosquet. La pierre/le minéral reste sur place.
+    // À `stock = 0` : le client peint la souche à l'ancien coin et fait grandir la pousse
+    // au nouveau sur la durée `[tick, regrowAt]`. La pierre, elle, se reforme sur place.
+    // LE BUISSON À BAIES est VIVACE (demande d'Alexis 2026-07-19) : comme un arbre fruitier,
+    // il RESTE sur sa tuile, vidé de ses baies, et celles-ci repoussent DESSUS — pas de dérive.
+    //
+    // ET RIEN NE DÉRIVE DEPUIS L'INTÉRIEUR D'UNE EMPRISE. La fibre et les champignons y
+    // repoussent (ils sont `renewable`) — mais SUR PLACE, comme les baies. Sans cette
+    // garde, un plant de lin à une tuile du bord sortait du village à chaque cueillette et
+    // le potager spontané migrait vers l'extérieur au fil de la saison. `relocateNode`
+    // refuse déjà les tuiles d'emprise, donc au CŒUR du carré il dégradait tout seul vers
+    // « reste sur place » — le défaut ne se voyait qu'au BORD, là où une sonde sur huit
+    // tombe dehors. Le dire ici plutôt que de compter sur huit sondes qui échouent.
+    if (def.skill !== 'mining' && node.type !== 'berry_bush' && !dansEmprise(state.villages, node.tx, node.ty)) {
+      relocateNode(state, node)
+    }
+  }
+  emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id, nodeType: node.type })
 }
 
 /**
@@ -571,58 +789,7 @@ function harvestStrike(state: SimState, actor: Entity, actorId: number, node: Re
   // (`whole`). Le PNJ bûcheron émet comme le joueur : c'est l'ACTIVITÉ qui appelle, et l'éveil
   // module la portée — de jour au chaud, le village martèle sans réveiller personne.
   if (!whole && def.tool !== null) secouerLeSol(state, node.tx + 0.5, node.ty + 0.5, CENDREUX.SENS.COUP)
-  if (node.stock <= 0) {
-    const day = actForDay(seasonDayAtTick(state.tick, state.calendarScale))
-    // LE DÉFRICHEMENT (`defriche.ts`, décision d'Alexis 2026-08-06) : chez soi, ce qui
-    // s'extrait ne revient pas. `stock 0` + `regrowAt 0` est la MARQUE, et elle est
-    // PERSISTANTE — le client la lit pour ne pas animer une repousse qui n'arrivera jamais
-    // (`setNodes` teste déjà `regrowAt > 0`), la boucle de repousse pour passer son chemin en
-    // O(1), et la sauvegarde la porte telle quelle. On ne compte pas non plus les épuisements
-    // d'un nœud qui n'en connaîtra pas d'autre : `depletions`/`forgetAt` n'ont plus d'objet.
-    if (noeudDefrichable(state.villages, node)) {
-      node.regrowAt = 0
-      delete node.depletions
-      delete node.forgetAt
-    } else {
-      node.depletions = Math.min(BALANCE.DEPLETION_MAX, (node.depletions ?? 0) + 1)
-      node.forgetAt = state.tick + BALANCE.DEPLETION_FORGET_TICKS
-      const usure = 1 + BALANCE.DEPLETION_REGROW_PENALTY * (node.depletions - 1)
-      // LA STÉRILITÉ (spec `cortege-cendre.md` R2) — le sens du cortège qui marche LE PLUS LOIN
-      // devant le feu. Devant le front, la repousse ralentit jusqu'à ne plus rien rendre d'utile,
-      // et le sol est **encore là, encore vert, encore marchable** : le joueur voit sa perte
-      // arriver une saison à l'avance et abandonne sa TOURNÉE avant d'abandonner son TERRAIN.
-      //
-      // Elle MULTIPLIE `REGROW_ACT_FACTOR`, elle ne le remplace pas : le facteur d'acte est un
-      // levier d'équilibrage acté, le retirer serait une décision de design distincte de ce
-      // chantier. Conséquence à ne pas taire : le patron `[acte - 1]` que **A3 de
-      // `saison-sans-fin.md`** veut voir disparaître de `/sim` SURVIT ici.
-      //
-      // Le facteur est plafonné (`CENDRE.STERILE_FACTEUR_MAX`) et vaut 1 hors bande — donc hors
-      // de la bande, `regrowAt` est identique au bit près à ce qu'il était avant ce chantier.
-      const sterile = facteurSterilite(state.map, node.tx, node.ty, frontActuel(state))
-      node.regrowAt =
-        state.tick +
-        Math.floor(BALANCE.NODE_REGROW_TICKS * SEASON.REGROW_ACT_FACTOR(day) * usure * sterile)
-      // LA DÉRIVE (spec recolte-vivante D1/R1) : un nœud de bois/fibre meurt sur sa tuile
-      // et rouvre AILLEURS, dans le même bosquet. La pierre/le minéral reste sur place.
-      // À `stock = 0` : le client peint la souche à l'ancien coin et fait grandir la pousse
-      // au nouveau sur la durée `[tick, regrowAt]`. La pierre, elle, se reforme sur place.
-      // LE BUISSON À BAIES est VIVACE (demande d'Alexis 2026-07-19) : comme un arbre fruitier,
-      // il RESTE sur sa tuile, vidé de ses baies, et celles-ci repoussent DESSUS — pas de dérive.
-      //
-      // ET RIEN NE DÉRIVE DEPUIS L'INTÉRIEUR D'UNE EMPRISE. La fibre et les champignons y
-      // repoussent (ils sont `renewable`) — mais SUR PLACE, comme les baies. Sans cette
-      // garde, un plant de lin à une tuile du bord sortait du village à chaque cueillette et
-      // le potager spontané migrait vers l'extérieur au fil de la saison. `relocateNode`
-      // refuse déjà les tuiles d'emprise, donc au CŒUR du carré il dégradait tout seul vers
-      // « reste sur place » — le défaut ne se voyait qu'au BORD, là où une sonde sur huit
-      // tombe dehors. Le dire ici plutôt que de compter sur huit sondes qui échouent.
-      if (def.skill !== 'mining' && node.type !== 'berry_bush' && !dansEmprise(state.villages, node.tx, node.ty)) {
-        relocateNode(state, node)
-      }
-    }
-    emitEvent(state, { type: 'node_depleted', tick: state.tick, nodeId: node.id, nodeType: node.type })
-  }
+  if (node.stock <= 0) depleteNode(state, node)
   if (held) {
     let wear =
       Math.max(BALANCE.TOOL_WEAR_MIN, 1 - BALANCE.SKILL_WEAR_REDUCTION * levelOf(actor, 'crafting')) *
@@ -695,6 +862,9 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       if (!whole && state.tick < actor.cooldownUntil) return
       const bad = strikeRejection(state, actor, node, range)
       if (bad) return reject(bad)
+      // UN COIN DE PÊCHE NE SE FRAPPE PAS (peche.md G6) : le coup instantané n'y connaît ni attente
+      // ni ferrage — il passerait par `TOOL_YIELD`. PNJ ou client trafiqué : refus, pas un poisson.
+      if (estUnCoinDePeche(node!.type)) return reject('il faut lancer la ligne')
       const def = NODE_DEFS[node!.type]
       const clean =
         def.skill === 'mining' && action.aimX !== undefined && action.aimY !== undefined
@@ -712,10 +882,12 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
      */
     case 'harvest_charge_start': {
       const plainte = action.hold === true ? (): void => {} : reject
-      if (actor.harvestCharge) return // déjà en charge : le maintien ne relance pas
+      if (actor.harvestCharge || actor.fishing) return // déjà en charge / ligne tendue : le maintien ne relance pas
       const node = state.nodes.find((n) => n.id === action.nodeId)
       const bad = strikeRejection(state, actor, node, range)
       if (bad) return plainte(bad)
+      // LE LANCER (peche.md G1) : même input, autre geste — c'est le NŒUD qui dit lequel.
+      if (estUnCoinDePeche(node!.type)) return castLine(state, actor, node!, plainte)
       actor.harvestCharge = { nodeId: action.nodeId, ticks: 0 }
       return
     }
@@ -729,6 +901,20 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
      * pendant la charge → muet). Relâcher sans rien d'armé est muet aussi.
      */
     case 'harvest_release': {
+      // LE FERRAGE (peche.md G4). Avant la touche : ligne rentrée, muet (l'impatience ne coûte que
+      // l'appât déjà parti). Dans la fenêtre : la prise. Après : `advanceFishing` a déjà fait filer
+      // le poisson — on ne passe donc jamais ici avec une fenêtre close, sauf à la borne, où
+      // `windowEnd` est INCLUS (le ferrage du dernier tick compte).
+      const ligne = actor.fishing
+      if (ligne) {
+        delete actor.fishing
+        if (ligne.species === undefined || ligne.windowEnd === undefined || state.tick < ligne.biteAt) return
+        if (state.tick > ligne.windowEnd) return
+        const node = state.nodes.find((n) => n.id === ligne.nodeId)
+        if (strikeRejection(state, actor, node, range)) return
+        landFish(state, actor, actorId, node!, ligne.species)
+        return
+      }
       const charge = actor.harvestCharge
       if (!charge) return
       delete actor.harvestCharge
@@ -970,6 +1156,8 @@ export function advanceEconomy(state: SimState): void {
   // À PLEIN sans relâcher, le coup PART tout seul au baseline : tenir sans jamais
   // viser ne bloque pas, ça hache — le repli « maintien » du geste (l'ancien G6 y
   // survit, en moins bon que le vert). On re-valide avant de frapper (G8).
+  // LA LIGNE TENDUE (peche.md G2/G5) : touche et fuite se datent ici.
+  for (const entity of state.entities) advanceFishing(state, entity)
   for (const entity of state.entities) {
     const charge = entity.harvestCharge
     if (charge === undefined) continue

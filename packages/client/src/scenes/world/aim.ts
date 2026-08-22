@@ -21,7 +21,7 @@
  */
 import { COMPONENT_TYPES, EDGE_E, EDGE_N, EDGE_O, EDGE_S, FOOD_VALUES, NODE_DEFS, STRUCTURE_HP, WEAPON_DAMAGE, edgeBarrierAt, isCropMature, isPlot, isRangedWeapon, piece, toolTier, type ItemId, type StructureType, type WallMaterial } from '@ashes/sim'
 import type { Placeable } from '../../hud-state'
-import type { ComponentType, Corpse, PlayerAction, ResourceNode } from '@ashes/sim'
+import type { ComponentType, Corpse, PlayerAction, ResourceNode, ToolFamily } from '@ashes/sim'
 
 /**
  * Le contexte de POSE (spec construction R8) : le palier de matériau choisi pour
@@ -177,7 +177,7 @@ export interface AimTarget {
    * hache de fer d'abattre un arbre au lieu de frapper dans le vide, sans qu'une lance ne
    * se mette pour autant à couper du bois.
    */
-  nodeTool: 'axe' | 'pickaxe' | null
+  nodeTool: ToolFamily | null
   /** L'ENTITÉ (PNJ/joueur) visée sous le curseur, à portée du joueur — la cible d'un DON
    *  ou d'un soin (spec alignement/combat). `null` = personne sous le curseur à portée. */
   entityId: number | null
@@ -398,7 +398,7 @@ export function isWeapon(item: ItemId | null): boolean {
  * `TOOL_YIELD` et `TOOL_RANK` dérivent tous les deux. Un outil de la famille rend un palier
  * autre que `'none'` ; tout le reste (une lance, un arc, une pierre) rend `'none'`.
  */
-export function estLOutilDuNoeud(item: ItemId | null, family: 'axe' | 'pickaxe' | null): boolean {
+export function estLOutilDuNoeud(item: ItemId | null, family: ToolFamily | null): boolean {
   if (item === null || family === null) return false
   return toolTier(item, family) !== 'none'
 }

@@ -201,6 +201,15 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     // ── BÂTIR, CRAFTER, MANGER ───────────────────────────────────────────────────────────
     case 'resource_harvested':
       return onMe ? { wave: 'square', freq: 440, freqEnd: 520, dur: 0.06, gain: 0.05, lowpass: 2200 } : null
+    // LA TOUCHE (peche.md R3) : un son SEC, court, qui DESCEND — le flotteur qui plonge. C'est le
+    // télégraphe d'une fenêtre de 250 à 600 ms : il doit partir avant que l'œil ait lu l'eau.
+    // `triangle` (un fait sur une chose), pas de traîne.
+    case 'fish_bite':
+      return onMe ? { wave: 'triangle', freq: 880, freqEnd: 330, dur: 0.07, gain: 0.07, lowpass: 2600 } : null
+    // LA FUITE (peche.md R4) : un plouf MOU — plus bas, plus long, plus sourd que la touche. Il dit
+    // « trop tard » sans punir : le raté ne coûte que l'appât. Posé sans l'entendre — au banc.
+    case 'fish_escaped':
+      return onMe ? { wave: 'triangle', freq: 260, freqEnd: 140, dur: 0.18, gain: 0.05, lowpass: 900 } : null
 
     /**
      * LE NŒUD MEURT — ET IL A TROIS VOIX, PAS UNE (demande d'Alexis, 2026-07-29 :

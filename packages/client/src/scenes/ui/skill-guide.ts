@@ -19,9 +19,12 @@ import { keymapEffectif } from '../world/keymap-perso'
 import { libelleTouches } from '../world/touches'
 import {
   BALANCE,
+  FISH_SPECIES,
+  FISHING,
   TOOL_RANK,
   TOOL_YIELD,
   fellGreenWidth,
+  fishingWindowTicks,
   maxTierByLevel,
   mineTolerance,
   type SkillId,
@@ -181,9 +184,42 @@ function craftingGuide(): SkillGuide {
   }
 }
 
-/** Les quatre fiches, dans l'ordre du paperdoll. Reconstruites à l'appel (pures, bon marché). */
+/** Le premier niveau où la fenêtre de ferrage de cette espèce atteint son PLAFOND (`WINDOW_CAP`) —
+ *  sondé sur `fishingWindowTicks`, jamais recopié. `Infinity` si jamais (garde du test). */
+export function fishingCapLevel(speciesId: 'gudgeon' | 'trout' | 'pike'): number {
+  const sp = FISH_SPECIES.find((s) => s.id === speciesId)!
+  const cap = Math.floor(sp.windowTicks * FISHING.WINDOW_CAP)
+  for (let l = 0; l <= 64; l++) if (fishingWindowTicks(sp, l) >= cap) return l
+  return Infinity
+}
+
+/** Chasseur : la branche Chasse/pêche du GDD, ouverte par la PÊCHE (spec peche.md D6). Une pente
+ *  (la fenêtre de ferrage s'élargit) et un seul palier net : le brochet devient tenable au plafond. */
+function huntingGuide(): SkillGuide {
+  const ms = (ticks: number): string => `${Math.round((ticks / BALANCE.TICK_RATE_HZ) * 1000)} ms`
+  const pike = FISH_SPECIES.find((s) => s.id === 'pike')!
+  const gudgeon = FISH_SPECIES.find((s) => s.id === 'gudgeon')!
+  return {
+    id: 'hunting',
+    label: SKILL_LABELS.hunting,
+    gesture:
+      'Canne en main, clique sur un coin de pêche pour LANCER ; quand le flotteur plonge, relâche pour FERRER. Un ver au sac presse la touche.',
+    paliers: [
+      {
+        level: fishingCapLevel('pike'),
+        text: `Le BROCHET du lac se ferre à ${ms(fishingWindowTicks(pike, fishingCapLevel('pike')))} au lieu de ${ms(pike.windowTicks)} — la fenêtre est au plafond`,
+      },
+    ],
+    passifs: [
+      `Chaque niveau élargit la fenêtre de ferrage de ${pct(FISHING.WINDOW_PER_LEVEL)} (le goujon : ${ms(gudgeon.windowTicks)} au départ), jusqu'à ×${FISHING.WINDOW_CAP}`,
+    ],
+    outilNote: 'Il faut une CANNE en main (bois + corde, à la main). Une touche = un poisson, quelle que soit la canne.',
+  }
+}
+
+/** Les cinq fiches, dans l'ordre du paperdoll. Reconstruites à l'appel (pures, bon marché). */
 export function skillGuides(): SkillGuide[] {
-  return [woodcuttingGuide(), miningGuide(), foragingGuide(), craftingGuide()]
+  return [woodcuttingGuide(), miningGuide(), foragingGuide(), craftingGuide(), huntingGuide()]
 }
 
 export function skillGuideOf(id: SkillId): SkillGuide {

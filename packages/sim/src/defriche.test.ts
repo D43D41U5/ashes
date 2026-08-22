@@ -150,7 +150,9 @@ describe('D1 — la repousse ne se rouvre pas dans l’emprise', () => {
       .map(([t]) => t)
       .sort()
     // + leaf_pile le 2026-08-16 (forêts-vivantes §1) : les feuilles retombent.
-    expect(vivants).toEqual(['berry_bush', 'champignon', 'fiber_plant', 'leaf_pile'])
+    // + les deux coins de pêche le 2026-08-22 (peche.md P6) : le coin se vide et ROUVRE — sur
+    //   l'eau, chez soi ou non, on ne défriche pas un lac.
+    expect(vivants).toEqual(['berry_bush', 'champignon', 'fiber_plant', 'fishing_spot_lake', 'fishing_spot_river', 'leaf_pile'])
   })
 })
 

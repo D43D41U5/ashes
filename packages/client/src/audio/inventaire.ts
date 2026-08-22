@@ -111,6 +111,13 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
 
   // ── BÂTIR, CRAFTER, MANGER — 4 voix : poser, perdre, finir, cuire ────────────────
   resource_harvested: { voix: 'voix', famille: 'batir', quoi: 'un coup de récolte rapporte (moi seul)' },
+  // LA PÊCHE (spec peche.md R3/R4) : la TOUCHE sonne — c'est LE télégraphe, il doit se lire en un
+  // dixième de seconde, et l'oreille est plus vite que l'œil sur un flotteur ; la FUITE sonne —
+  // un plouf mou, le raté qui se voit doit s'entendre ; la PRISE est MUETTE parce qu'elle tombe
+  // sur `resource_harvested`, qui parle déjà au même tick (le patron de `refugee_rumeur`).
+  fish_bite: { voix: 'voix', famille: 'batir', quoi: 'ça mord — le flotteur plonge (moi seul)' },
+  fish_caught: { voix: 'muet', famille: 'batir', quoi: 'le poisson sort de l’eau (la récolte parle déjà)' },
+  fish_escaped: { voix: 'voix', famille: 'batir', quoi: 'le poisson file — ferré trop tard (moi seul)' },
   structure_built: { voix: 'voix', famille: 'batir', quoi: 'une pièce est posée' },
   structure_upgraded: { voix: 'muet', famille: 'batir', quoi: 'un mur passe au matériau suivant' },
   // LE PALIER DE BÂTI d'un village PNJ (spec village-pnj-evolution R6) : rare, et c'est LE

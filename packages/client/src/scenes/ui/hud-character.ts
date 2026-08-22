@@ -80,6 +80,7 @@ const SKILL_META: { id: SkillId; label: string; item: ItemId }[] = [
   { id: 'mining', label: SKILL_LABELS.mining, item: 'pickaxe' },
   { id: 'foraging', label: SKILL_LABELS.foraging, item: 'berries' },
   { id: 'crafting', label: SKILL_LABELS.crafting, item: 'hammer' },
+  { id: 'hunting', label: SKILL_LABELS.hunting, item: 'crude_rod' },
 ]
 
 /** Le paperdoll autour de l'avatar. DÉCORATIF pour l'instant : aucun système d'équipement

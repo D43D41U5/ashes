@@ -15,7 +15,7 @@
  * - Haute fréquence ≠ domaine : un déplacement n'est pas un événement (le
  *   replay log des inputs couvre ça) ; un premier sang, un don, un spawn, oui.
  */
-import type { NodeType, RecipeId } from './balance'
+import type { FishSpecies, NodeType, RecipeId } from './balance'
 import type { ItemId, SkillId, StructureType } from './items'
 import type { SimState } from './sim'
 
@@ -115,6 +115,15 @@ export type SimEvent =
   // exactement l'instrumentation après coup que CLAUDE.md interdit. Le fait de domaine porte
   // sa matière ; l'audio, la chronique et le reste n'ont plus qu'à la lire.
   | { type: 'node_depleted'; tick: number; nodeId: number; nodeType: NodeType }
+  // ── LA PÊCHE (spec `peche.md` G2/G4/G5) — trois faits de domaine, émis là où la logique les
+  // exécute. `fish_bite` NE PORTE PAS l'espèce : la touche ne dit pas ce qui mord, c'est le
+  // ferrage réussi qui révèle (D5). `fish_caught` double `resource_harvested` (le flux commun,
+  // que la chronique et le tableau lisent déjà) en y ajoutant l'ESPÈCE — « le premier brochet »
+  // se raconte sans instrumenter après coup. `fish_escaped` est le raté qui se voit : le
+  // flotteur remonte, la ligne rentre. ──
+  | { type: 'fish_bite'; tick: number; entityId: number; nodeId: number }
+  | { type: 'fish_caught'; tick: number; entityId: number; nodeId: number; species: FishSpecies['id']; item: ItemId }
+  | { type: 'fish_escaped'; tick: number; entityId: number; nodeId: number }
   // Le craft a un DÉBUT et une FIN distincts depuis la file (spec craft-file) :
   // `craft_queued` est l'intention (les intrants partent), `item_crafted` reste
   // l'objet qui SORT — et il ne s'émet qu'à la livraison réelle, jamais quand la

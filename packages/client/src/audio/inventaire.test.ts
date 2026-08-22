@@ -31,7 +31,8 @@ describe('l’inventaire des 73 faits', () => {
     // le même geste que `refugees_fed`, qui parle déjà. Le renseignement se LIT.
     // 81 → 82 le 2026-08-21 : `cendre_prend` (P5a) — muet aussi : souvent lointain, la perte
     // se lit et se voit.
-    expect(somme).toBe(82)
+    // 82 → 85 le 2026-08-22 : la pêche (`fish_bite`, `fish_caught`, `fish_escaped` — spec peche.md).
+    expect(somme).toBe(85)
   })
 
   it('chaque fait DIT ce qu’il raconte — pas son identifiant', () => {
@@ -82,11 +83,15 @@ describe('l’inventaire des 73 faits', () => {
     // n'appellerait rien) ; `presage_horde` SONNE (le préavis de la veille est LE
     // télégraphiage, §9bis — patron de `brume_annonce`) ; `charnier_brule` SONNE (la
     // confirmation du geste — le principe de `reveil_etouffe`).
-    expect(SONORES.length).toBe(47)
+    // 82 → 85 faits et 47 → 49 voix le 2026-08-22 : LA PÊCHE (spec peche.md). `fish_bite` SONNE
+    // (le télégraphe d'une fenêtre de quelques ticks — l'oreille devance l'œil), `fish_escaped`
+    // SONNE (le raté qui se voit s'entend), `fish_caught` MUET (tombe sur `resource_harvested`).
+    expect(SONORES.length).toBe(49)
     // 33 → 34 le 2026-08-21 : `refugee_rumeur` naît MUET (annales.md R12) — le geste de
     // nourrir parle déjà, le renseignement se lit dans la chronique.
     // 34 → 35 le 2026-08-21 : `cendre_prend` naît MUET (P5a) — la perte se lit et se voit.
-    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(35)
+    // 35 → 36 le 2026-08-22 : `fish_caught` naît MUET (voir ci-dessus).
+    expect(Object.keys(INVENTAIRE).length - SONORES.length).toBe(36)
   })
 
   it('PLUS AUCUNE famille n’est entièrement muette, sauf celle qui l’est par décision', () => {

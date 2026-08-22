@@ -12,4 +12,7 @@ export const SKILL_LABELS: Record<SkillId, string> = {
   mining: 'Mineur',
   foraging: 'Cueilleur',
   crafting: 'Artisan',
+  // La branche CHASSE/PÊCHE du GDD (l.687), ouverte par la pêche (spec peche.md D6) : le mot
+  // est celui de la branche, pas du geste qui l'a ouverte — la chasse s'y branchera.
+  hunting: 'Chasseur',
 }
