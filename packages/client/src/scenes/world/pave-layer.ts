@@ -9,9 +9,12 @@
  * impossible en une texture, et inutile : on ne regarde qu'un écran à la fois.
  *
  * LA CUISSON SE MESURE (R12) : `derniereCuissonMs` et `chunksVivants()` sont la surface de
- * lecture du smoke. Budget : au plus `CUISSONS_PAR_FRAME` chunks neufs par frame une fois le
- * monde posé — la première vue se cuit d'un coup (l'écran doit être plein au réveil), les
- * suivantes au fil du déplacement, une par frame, pour que la pire seconde ne bouge pas.
+ * lecture du smoke. Budget : ce qui est DANS L'ÉCRAN se cuit TOUJOURS, tout de suite — un trou
+ * à l'écran (le bake plat qui affleure en carré) est pire qu'un à-coup de quelques ms, et
+ * Alexis l'a vu le 2026-08-22 (« je vois des carrés comme des chunks quand je bouge la
+ * caméra ») quand la première écriture bornait AUSSI le visible à un chunk par frame : un
+ * saut de caméra laissait l'écran troué trente frames. Seule la COURONNE se cuit au
+ * compte-gouttes (`CUISSONS_COURONNE_PAR_FRAME`), en avance sur le déplacement.
  *
  * NEAREST, comme tout l'art : la caméra agrandit 2,25× ; un pixel cuit est un pixel à l'écran.
  * AUCUNE logique de jeu ici — rendu pur d'état reçu.
@@ -25,10 +28,17 @@ import { PAVE, PAVE_PX, cuireChunk } from '../../render/paves'
 /** Sous le bake ? Non : AU-DESSUS du bake (−1), SOUS l'eau (+0,25) et tout ce qui vit dessus. */
 const PAVE_DEPTH = GROUND_MAP_DEPTH + 0.05
 
-/** Combien de chunks neufs par frame, une fois la première vue posée. */
-const CUISSONS_PAR_FRAME = 1
-/** La couronne gardée autour de la vue, en chunks : ce qu'on ne recuit pas en revenant sur ses pas. */
+/** Combien de chunks de COURONNE (hors écran) se cuisent par frame. Le visible n'est pas borné. */
+const CUISSONS_COURONNE_PAR_FRAME = 2
+/** La couronne gardée autour de la vue, en chunks : cuite en avance, pour que le visible n'ait
+ *  en général rien à cuire quand on marche. */
 const COURONNE = 1
+/** Un chunk non vu depuis tant de frames se rend. Long : revenir sur ses pas ne doit pas recuire
+ *  (2 s à 60 fps) ; le plafond `MAX_VIVANTS` borne la mémoire quoi qu'il arrive. */
+const OUBLI_FRAMES = 120
+/** Plafond de chunks vivants (256² × 4 o = 256 Ko chacun → 24 Mo) : au-delà, les plus anciens
+ *  se rendent, même vus récemment. */
+const MAX_VIVANTS = 96
 
 interface Chunk {
   image: Phaser.GameObjects.Image
@@ -40,7 +50,6 @@ interface Chunk {
 export class PaveLayer {
   private chunks = new Map<number, Chunk>()
   private frame = 0
-  private premiereVue = true
   /** La dernière cuisson, en ms — la sonde R12. */
   derniereCuissonMs = 0
   /** Le total cuit depuis la naissance de la couche (chunks). */
@@ -96,35 +105,58 @@ export class PaveLayer {
     const cx1 = Math.min(cxMax, Math.floor((v.x + v.width) / cotePx) + COURONNE)
     const cy1 = Math.min(cyMax, Math.floor((v.y + v.height) / cotePx) + COURONNE)
 
-    // D'abord ce qui est DANS la vue, puis la couronne : si le budget ne permet qu'un chunk,
-    // c'est celui qu'on regarde.
-    let budget = this.premiereVue ? Number.POSITIVE_INFINITY : CUISSONS_PAR_FRAME
+    // Le VISIBLE d'abord, sans budget : l'écran ne doit jamais montrer un trou. La couronne
+    // ensuite, au compte-gouttes.
     const visible = (cx: number, cy: number): boolean =>
       cx * cotePx < v.x + v.width && (cx + 1) * cotePx > v.x && cy * cotePx < v.y + v.height && (cy + 1) * cotePx > v.y
-    for (const passe of [true, false]) {
+    let budgetCouronne = CUISSONS_COURONNE_PAR_FRAME
+    for (const passeVisible of [true, false]) {
       for (let cy = cy0; cy <= cy1; cy++) {
         for (let cx = cx0; cx <= cx1; cx++) {
-          if (visible(cx, cy) !== passe) continue
+          if (visible(cx, cy) !== passeVisible) continue
           const k = cy * 65536 + cx
           const c = this.chunks.get(k)
           if (c) {
             c.vu = this.frame
             continue
           }
-          if (budget <= 0) continue
-          budget--
+          if (!passeVisible) {
+            if (budgetCouronne <= 0) continue
+            budgetCouronne--
+          }
           this.cuire(cx, cy, k)
         }
       }
     }
-    this.premiereVue = false
 
-    // Ce qui n'a pas été vu depuis une poignée de frames se rend : la couronne est la seule
-    // mémoire — revenir sur ses pas recuit, et c'est mesuré comme acceptable (une cuisson par
-    // frame, jamais plus).
+    // L'oubli : ce qui n'a pas été vu depuis longtemps se rend ; et si on en garde trop (une
+    // longue marche), les plus anciens partent d'abord — jamais un chunk vu cette frame.
     for (const [k, c] of this.chunks) {
-      if (this.frame - c.vu > 30) this.rendre(k, c)
+      if (this.frame - c.vu > OUBLI_FRAMES) this.rendre(k, c)
     }
+    if (this.chunks.size > MAX_VIVANTS) {
+      const parAge = [...this.chunks.entries()].sort((a, b) => a[1].vu - b[1].vu)
+      for (const [k, c] of parAge) {
+        if (this.chunks.size <= MAX_VIVANTS || c.vu === this.frame) break
+        this.rendre(k, c)
+      }
+    }
+  }
+
+  /** Combien de chunks VISIBLES manquent à l'écran en ce moment — la sonde du smoke : doit
+   *  valoir 0 après tout rendu, saut de caméra compris. */
+  trousVisibles(camera: Phaser.Cameras.Scene2D.Camera): number {
+    const cotePx = PAVE.CHUNK * PAVE_PX
+    const v = camera.worldView
+    const cxMax = Math.ceil((this.map.width * TILE_PX) / cotePx) - 1
+    const cyMax = Math.ceil((this.map.height * TILE_PX) / cotePx) - 1
+    let trous = 0
+    for (let cy = Math.max(0, Math.floor(v.y / cotePx)); cy <= Math.min(cyMax, Math.floor((v.y + v.height) / cotePx)); cy++) {
+      for (let cx = Math.max(0, Math.floor(v.x / cotePx)); cx <= Math.min(cxMax, Math.floor((v.x + v.width) / cotePx)); cx++) {
+        if (!this.chunks.has(cy * 65536 + cx)) trous++
+      }
+    }
+    return trous
   }
 
   private cuire(cx: number, cy: number, k: number): void {

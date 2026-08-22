@@ -3595,6 +3595,24 @@ const SCENARIOS = {
     const pire = Math.max(0, ...marche.couts)
     if (pire > 16) console.error(`!! une cuisson de chunk dépasse une frame (${pire} ms)`)
 
+    // UN SAUT DE CAMÉRA NE TROUE PAS L'ÉCRAN (Alexis, 2026-08-22 : « je vois des carrés comme
+    // des chunks quand je bouge la caméra ») : après un saut d'un écran et demi et UNE frame,
+    // tout chunk visible est cuit — le visible ne se cuit pas au compte-gouttes.
+    const saut = await page.evaluate(async () => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      const p = sc.paves
+      cam.scrollX += 900
+      cam.scrollY += 500
+      await new Promise((r) => requestAnimationFrame(r))
+      const apresUne = p.trousVisibles(cam)
+      await new Promise((r) => requestAnimationFrame(r))
+      return { apresUne, apresDeux: p.trousVisibles(cam), vivants: p.chunksVivants() }
+    })
+    console.log(`saut de caméra : trous visibles après 1 frame ${saut.apresUne}, après 2 ${saut.apresDeux} · ${saut.vivants} vivants`)
+    if (saut.apresDeux > 0) console.error(`!! l'écran reste troué après un saut de caméra (${saut.apresDeux} chunks manquants)`)
+    else console.log('   ✓ aucun trou à l’écran après le saut')
+
     await page.screenshot({ path: `${OUT}/matiere-sol.png` })
   },
 
