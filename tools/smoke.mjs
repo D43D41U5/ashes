@@ -5511,64 +5511,131 @@ const SCENARIOS = {
     return { apresSortie, semee, apresFondation, rouverte, apresFresh, apresEffacement, options, apresRebind }
   },
 
+  /**
+   * LE JUS DES DEUX BOUCLES — le palier de métier (bandeau au centre) et la PILE D'ARTISANAT
+   * (bas-droite, depuis le 2026-08-22). FABRIQUÉ n'est plus un toast : c'est la TUILE de
+   * l'ordre qui passe au vert puis sort. On ne sème donc plus une file `crafts` à la main —
+   * on fait un VRAI craft (une corde, 3 fibres, 3 s, sans station) et on regarde la tuile
+   * vivre : ambre en cours, verte finie. Exige `--dev` (`debug_grant`).
+   */
   async juice(page) {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.waitForTimeout(1500) // stabilisation (harnais a déjà navigué + attendu le monde)
-    // L'horloge Phaser headless COURT (elle rattrape le temps réel par bonds) et les toasts se
-    // fondent dessus (2,6 s d'horloge) : à peine empilés, un bond les efface. Rien de tout ça
-    // n'est un bug du jeu (in-game l'horloge avance sans saut). Pour VÉRIFIER le rendu, on sème
-    // les files, on laisse UIScene drainer, et dès que les deux bandeaux sont là on FIGE la
-    // boucle Phaser dans le MÊME eval (aucune frame ne s'intercale) — ni fondu ni retrait.
+    // Le palier, semé : c'est un bandeau de hud-core, et l'horloge headless court (les toasts
+    // se fondent par bonds). On FIGE dès qu'il est là — même eval, aucune frame entre.
     let frozen = false
     for (let i = 0; i < 12 && !frozen; i++) {
       await page.evaluate(() => {
         const r = window.__BRAISES__.scene.registry
-        // Un toast de récolte d'abord — le repère par rapport auquel les deux autres doivent PESER.
         r.set('pickups', [{ item: 'wood', count: 2 }])
-        r.set('crafts', [{ item: 'axe' }])
         r.set('levelUps', [{ skill: 'woodcutting', level: 3 }])
       })
-      await page.waitForTimeout(40) // un tour de boucle UIScene suffit à drainer + empiler
+      await page.waitForTimeout(40)
       frozen = await page.evaluate(() => {
-        const n = document.querySelectorAll('.hc-toast.hc-craft, .hc-toast.hc-levelup').length
-        if (n >= 2) {
-          window.__BRAISES__.scene.game.loop.sleep() // fige l'horloge : les bandeaux ne s'effacent plus
+        if (document.querySelector('.hc-toast.hc-levelup')) {
+          window.__BRAISES__.scene.game.loop.sleep()
           return true
         }
         return false
       })
     }
     await page.screenshot({ path: `${OUT}/juice-toasts.png` })
-    const dom = await page.evaluate(() => {
-      const craft = document.querySelector('.hc-toast.hc-craft')
-      const lvl = document.querySelector('.hc-toast.hc-levelup')
-      const cs = craft && getComputedStyle(craft)
-      const ls = lvl && getComputedStyle(lvl)
-      const rect = (el) => {
-        if (!el) return null
-        const r = el.getBoundingClientRect()
-        return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
-      }
+    const lvl = await page.evaluate(() => {
+      const el = document.querySelector('.hc-toast.hc-levelup')
+      const cs = el && getComputedStyle(el)
       return {
-        vp: { w: window.innerWidth, h: window.innerHeight },
         toasts: document.querySelectorAll('.hc-toast').length,
-        craftTag: document.querySelector('.hc-craft-tag')?.textContent ?? '',
-        craftItem: document.querySelector('.hc-craft-item')?.textContent ?? '',
-        craftVisible: Boolean(cs && cs.display !== 'none' && Number(cs.opacity) > 0),
-        craftBg: cs ? cs.backgroundImage.slice(0, 24) : null,
-        craftRect: rect(craft),
         lvlSkill: document.querySelector('.hc-lvl-skill')?.textContent ?? '',
         lvlNum: document.querySelector('.hc-lvl-num')?.textContent ?? '',
-        lvlVisible: Boolean(ls && ls.display !== 'none' && Number(ls.opacity) > 0),
-        lvlRect: rect(lvl),
+        lvlVisible: Boolean(cs && cs.display !== 'none' && Number(cs.opacity) > 0),
       }
     })
-    console.log(`jus des boucles : ${JSON.stringify(dom)}`)
+    console.log(`palier : ${JSON.stringify(lvl)}`)
+    if (!(lvl.lvlSkill === 'Bûcheron' && lvl.lvlNum === 'NIVEAU 3' && lvl.lvlVisible)) {
+      console.error(`!! LE BANDEAU NIVEAU NE S'AFFICHE PAS : ${JSON.stringify(lvl)}`)
+    }
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+
+    // LA PILE : trois fibres (un `debug_grant` par tick — l'hôte n'en garde qu'un), puis l'ordre.
+    for (let i = 0; i < 3; i++) {
+      await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_grant', item: 'fiber' }))
+      await page.waitForTimeout(90)
+    }
+    // L'HISTORIQUE DES PHASES, relevé DANS la page (MutationObserver) : le sondage depuis
+    // Playwright rate une phase courte quand le rendu headless est lent — l'observateur, non.
+    await page.evaluate(() => {
+      const col = document.querySelector('.cq')
+      const hist = (window.__cqHist = [])
+      const t0 = performance.now()
+      const phaseDe = (el) => [...el.classList].find((c) => /^cq-(wait|run|paused|blocked|done|depop)$/.test(c)) ?? ''
+      const note = (el) => {
+        const ph = phaseDe(el)
+        const last = hist[hist.length - 1]
+        if (!last || last.phase !== ph) hist.push({ phase: ph, t: Math.round(performance.now() - t0), etat: el.querySelector('.cq-state')?.textContent ?? '' })
+        // LE VERT SE FIGE ICI, dans l'observateur — pas depuis Playwright : en headless le
+        // rendu bloque le fil, et la tuile finie ne vit qu'une frame d'horloge.
+        if (ph === 'cq-done') window.__BRAISES__.scene.game.loop.sleep()
+      }
+      new MutationObserver((muts) => {
+        for (const m of muts) {
+          if (m.type === 'attributes' && m.target.classList?.contains('cq-t')) note(m.target)
+          for (const n of m.addedNodes) if (n.classList?.contains('cq-t')) note(n)
+          for (const n of m.removedNodes) if (n.classList?.contains('cq-t')) hist.push({ phase: 'retirée', t: Math.round(performance.now() - t0) })
+        }
+      }).observe(col, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
+    })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'craft', recipeId: 'rope' }))
+    const lire = () => page.evaluate(() => {
+      const t = document.querySelector('.cq-t')
+      if (!t) return null
+      const r = t.getBoundingClientRect()
+      return {
+        phase: [...t.classList].find((c) => /^cq-(wait|run|paused|blocked|done|depop)$/.test(c)) ?? '',
+        nom: t.querySelector('.cq-name')?.textContent?.trim() ?? '',
+        etat: t.querySelector('.cq-state')?.textContent ?? '',
+        barre: t.querySelector('.cq-bar')?.style.width ?? '',
+        rail: getComputedStyle(t).borderLeftColor,
+        compte: document.querySelector('.cq-n')?.textContent ?? '',
+        coin: { droite: Math.round(window.innerWidth - r.right), bas: Math.round(window.innerHeight - r.bottom) },
+      }
+    })
+    let enCours = null
+    for (let i = 0; i < 30 && !enCours; i++) {
+      await page.waitForTimeout(100)
+      const t = await lire()
+      if (t && t.phase === 'cq-run' && t.barre !== '0%') enCours = t
+    }
+    await page.screenshot({ path: `${OUT}/juice-pile-en-cours.png` })
+    console.log(`pile, en cours : ${JSON.stringify(enCours)}`)
+    // La tuile FINIE : l'observateur a figé la boucle dès qu'elle est passée au vert — elle ne
+    // tient que 900 ms d'horloge, et l'horloge headless saute.
+    let fini = null
+    for (let i = 0; i < 80 && !fini; i++) {
+      await page.waitForTimeout(80)
+      fini = await page.evaluate(() => {
+        const t = document.querySelector('.cq-t.cq-done')
+        if (!t) return null
+        return {
+          etat: t.querySelector('.cq-state')?.textContent ?? '',
+          rail: getComputedStyle(t).borderLeftColor,
+          barre: t.querySelector('.cq-bar')?.style.width ?? '',
+          coche: getComputedStyle(t.querySelector('.cq-ck')).display,
+          croix: getComputedStyle(t.querySelector('.cq-x')).opacity,
+          toastCraft: document.querySelectorAll('.hc-toast.hc-craft').length,
+        }
+      })
+    }
+    await page.screenshot({ path: `${OUT}/juice-pile-finie.png` })
+    console.log(`pile, finie : ${JSON.stringify(fini)}`)
+    const hist = await page.evaluate(() => window.__cqHist)
+    console.log(`phases vues dans la page : ${hist.map((h) => `${h.phase}@${h.t}ms${h.etat ? ' « ' + h.etat + ' »' : ''}`).join(' → ')}`)
     const ok =
-      dom.craftTag === 'FABRIQUÉ' && dom.craftItem && dom.craftVisible &&
-      dom.lvlSkill === 'Bûcheron' && dom.lvlNum === 'NIVEAU 3' && dom.lvlVisible
-    if (!ok) console.error(`!! LES BANDEAUX FABRIQUÉ/NIVEAU NE S'AFFICHENT PAS : ${JSON.stringify(dom)}`)
-    return dom
+      enCours && enCours.nom.startsWith('Corde') && enCours.etat.endsWith(' s') && enCours.rail === 'rgb(201, 139, 58)' &&
+      enCours.coin.droite > 0 && enCours.coin.bas > 0 &&
+      fini && fini.etat === 'FABRIQUÉ' && fini.rail === 'rgb(138, 154, 74)' && fini.barre === '100%' &&
+      fini.coche === 'block' && fini.croix === '0' && fini.toastCraft === 0
+    if (!ok) console.error(`!! LA PILE D'ARTISANAT NE VIT PAS COMME PRÉVU : ${JSON.stringify({ enCours, fini })}`)
+    return { lvl, enCours, fini }
   },
 
   /**

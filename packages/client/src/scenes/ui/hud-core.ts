@@ -106,7 +106,6 @@ export interface HudCore {
   /** Un butin récolté vient d'entrer : on l'empile en toast (haut-droite). */
   pushToast(item: ItemId, count: number): void
   /** Une FABRICATION s'est achevée : un bandeau ambre, plus lourd qu'une récolte. */
-  pushCraft(item: ItemId): void
   /** Un MÉTIER a monté d'un cran : le plus gros retour des trois, un palier se franchit. */
   pushLevelUp(skill: SkillId, level: number): void
   setVisible(v: boolean): void
@@ -200,8 +199,8 @@ export function createHudCore(
   const SAVE_MS = 3200
   const SAVE_FADE_MS = 700
   interface Toast {
-    // Absent pour les bandeaux fabrication/niveau : eux ne fusionnent avec rien, ils
-    // ne sont donc jamais retrouvés par `find(t => t.item === item)`. Seule la récolte
+    // Absent pour le bandeau de niveau : lui ne fusionne avec rien, il
+    // n'est donc jamais retrouvé par `find(t => t.item === item)`. Seule la récolte
     // s'agrège (un « +2 bois » qui se recharge), et elle porte toujours son `item`.
     item?: ItemId
     total: number
@@ -232,18 +231,12 @@ export function createHudCore(
       toasts.push({ item, total: count, at: now, el })
     },
 
-    // FABRIQUÉ et NIVEAU sont les deux boucles les plus gratifiantes du jeu — elles doivent
-    // se LIRE plus lourdes qu'une simple récolte ambre. D'où une signature à part : un chip
-    // plein pour la fabrication, un bandeau doré à deux lignes (+ lueur non-réduite) pour le
-    // palier. Aucune fusion — chacune est un fait unique. Même cycle de vie/fondu que les
-    // toasts (l'horloge Phaser via `s.now`), donc le nettoyage les prend sans code en plus.
-    pushCraft(item) {
-      const el = document.createElement('div')
-      el.className = 'hc-toast hc-craft'
-      el.innerHTML = `<span class="hc-craft-tag">FABRIQUÉ</span><span class="hc-craft-item">${label(item)}</span>`
-      toastsEl.prepend(el)
-      toasts.push({ total: 0, at: performanceNow(), el })
-    },
+    // NIVEAU est la boucle la plus gratifiante du jeu — il doit se LIRE plus lourd qu'une
+    // simple récolte ambre : un bandeau doré à deux lignes (+ lueur non-réduite). Aucune
+    // fusion — chaque palier est un fait unique. Même cycle de vie/fondu que les toasts
+    // (l'horloge Phaser via `s.now`), donc le nettoyage le prend sans code en plus.
+    // (FABRIQUÉ, lui, vit dans la pile d'artisanat en bas à droite — `craft-queue.ts` — depuis
+    // le 2026-08-22 : la tuile de l'ordre passe au vert et sort, au lieu d'un chip ici.)
 
     /**
      * LE PALIER DE MÉTIER SE JOUE AU CENTRE (décision d'Alexis, 2026-08-20, question ⑪).
@@ -454,11 +447,6 @@ function markup(): string {
       flex-direction:column;align-items:center;gap:6px;pointer-events:none;}
     .hc-toast{font-size:14px;color:#e8e0c8;letter-spacing:1px;${INK_OUTLINE_STRONG}transition:opacity .3s ease;}
     .hc-toast .hc-tval{color:#c98b3a;}
-    /* FABRIQUÉ — un bandeau, pas une ligne : chip ambre plein + filet, plus lourd qu'un « +2 bois ». */
-    .hc-toast.hc-craft{display:flex;align-items:center;gap:8px;padding:5px 11px 5px 8px;
-      background:linear-gradient(90deg,rgba(201,139,58,.05),rgba(201,139,58,.22));border-right:3px solid #c98b3a;}
-    .hc-craft .hc-craft-tag{font-size:10px;letter-spacing:2px;font-weight:700;color:#14100c;background:#c98b3a;padding:2px 6px;}
-    .hc-craft .hc-craft-item{font-size:14px;color:#f2ead0;letter-spacing:1px;}
     /* NIVEAU — le plus gros des trois : deux lignes, or vif, et une lueur qui s'éteint (hors réduction). */
     .hc-toast.hc-levelup{display:flex;flex-direction:column;align-items:center;gap:2px;padding:10px 22px;
       background:linear-gradient(180deg,rgba(232,198,106,.05),rgba(232,198,106,.18));

@@ -229,7 +229,7 @@ export class UIScene extends Phaser.Scene {
     // TAB) — il ne paraît que le marteau EN MAIN, et se referme quand on le range.
     this.buildMenu = createBuildMenu(this.hudRoot.board)
     this.buildMenu.setVisible(false)
-    this.craftQueueView = createCraftQueueView(this.hudRoot.board, (action) => queueAction(this.registry, action))
+    this.craftQueueView = createCraftQueueView(this.hudRoot.board, this.game, (action) => queueAction(this.registry, action))
     // Cachée jusqu'au premier instant jouable : rien du HUD ne doit s'afficher
     // par-dessus l'écran de chargement (même règle que la ceinture, ci-dessus).
     this.craftQueueView.setVisible(false)
@@ -719,9 +719,10 @@ export class UIScene extends Phaser.Scene {
 
     // Le butin récolté : WorldScene POSE, on draine, hud-core empile (fusion par item).
     for (const p of drainPickups(this.registry)) this.hudCore.pushToast(p.item, p.count)
-    // FABRIQUÉ et NIVEAU : les deux boucles les plus gratifiantes, un bandeau à part chacune.
-    for (const c of drainCrafts(this.registry)) this.hudCore.pushCraft(c.item)
+    // NIVEAU : la boucle la plus gratifiante, un bandeau au centre. FABRIQUÉ, lui, ne passe plus
+    // par les toasts : c'est la tuile de la pile d'artisanat qui passe au vert et sort (plus bas).
     for (const l of drainLevelUps(this.registry)) this.hudCore.pushLevelUp(l.skill, l.level)
+    const crafted = drainCrafts(this.registry).map((c) => c.item)
 
     // L'écran PERSONNAGE (TAB) : la grille, le glisser, le loot, l'artisanat. Le
     // conteneur ouvert est déjà résolu par WorldScene (null s'il a disparu). Fermé,
@@ -787,7 +788,7 @@ export class UIScene extends Phaser.Scene {
     // La file, elle, se voit TOUJOURS : une file bouchée (sac plein) ou en pause
     // (station quittée) doit se remarquer sans aller ouvrir un menu (spec F15).
     this.craftQueueView.setVisible(true)
-    this.craftQueueView.update(getHud(this.registry, 'craftQueue') ?? [])
+    this.craftQueueView.update(getHud(this.registry, 'craftQueue') ?? [], crafted, this.time.now)
     // LA BANDE 2A d'un seul geste (jour/lieu, toasts déjà empilés, vitales, ceinture).
     this.hudCore.update({
       dayLine,
