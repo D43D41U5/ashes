@@ -120,7 +120,7 @@ export { CREUX } from './racine-relief'
 export type { WorldMap, Zone } from './map'
 export { getGameTime, seasonDayAtTick, actForDay, tourForDay, phaseForDay, YEAR_DAYS, cycleOffsetForStartHour, calendarScaleForSeasonCycles, TICKS_PER_CYCLE, DAY_TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
 export type { GameTime, Act } from './time'
-export { ambientTemperature, baselineTemperature, baselineTemperatureAt, climatFlore, climatMaximal, advanceTemperature } from './temperature'
+export { ambientTemperature, baselineTemperature, baselineTemperatureAt, climatFlore, climatMaximal, dehorsSansMeteo, advanceTemperature } from './temperature'
 // LA BRUME (spec brume.md) : le client rendra la nappe en la RECALCULANT du tick (patron front
 // de Cendre) — la géométrie pure et le bloc de calibration s'exportent, l'ordonnanceur non.
 export { brumeCentre, dansLaBrume, brumeJourEligible } from './brume'
@@ -137,8 +137,9 @@ export {
   FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt, frontMeteoPos, meteoCold, meteoFeuConso,
   meteoIntensity, meteoIntensityAt, meteoCycleEligible, meteoMouille, meteoQuiet, meteoSpeedFactor,
   meteoSpeedFactorAt, meteoTypeBrut, meteoTypeDuCycle, meteoVisionFactor, frontDuCycle, meteoColdAt,
+  largeurDe, neigeA, froidEolien, coldMaximal, meteoAspectAt, aspectSousFront, frontEstBlizzard, meteoColdSousFront,
 } from './meteo'
-export type { MeteoFront, MeteoType, BandeMeteo, FoudreImpact } from './meteo'
+export type { MeteoFront, MeteoType, MeteoAspect, BandeMeteo, FoudreImpact } from './meteo'
 
 // LE GEL (spec gel.md) — le monde change d'état avec sa température, sans qu'une tuile ne
 // bouge. Tout est DÉRIVÉ : le client lira EXACTEMENT ces fonctions pour peindre la glace

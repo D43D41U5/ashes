@@ -83,7 +83,6 @@ import {
   BRUME,
   FLORE,
   GEL,
-  METEO,
   TEMPERATURE,
   TERRAIN_DEEP_WATER,
   TERRAIN_FOREST,
@@ -93,10 +92,10 @@ import {
   TERRAINS,
 } from './balance'
 import { terrainAt } from './map'
-import { frontDuCycle, frontMeteoPos, type BandeMeteo } from './meteo'
+import { coldMaximal, frontDuCycle, frontMeteoPos, largeurDe, neigeA, type BandeMeteo } from './meteo'
 import { fbm2, hash2 } from './noise'
 import type { SimState } from './sim'
-import { baselineTemperature, baselineTemperatureAt, climatFlore, climatMaximal } from './temperature'
+import { baselineTemperature, baselineTemperatureAt, climatFlore, climatMaximal, dehorsSansMeteo } from './temperature'
 import { actForDay, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
 
 /**
@@ -109,7 +108,8 @@ import { actForDay, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from
  * majorer chaque exposition, ce qu'on fait par PRÉSENCE et non par intensité :
  *   · la nuit est globale — exacte, pas majorée ;
  *   · une Brume dans l'état vaut `COLD_MALUS` partout (elle ne mord en vrai que sous sa nappe) ;
- *   · un front vaut `COLD[type]` partout (il ne mord en vrai que dans sa bande, en rampe).
+ *   · un front vaut son PLEIN froid partout (`coldMaximal` — la ligne `ORAGE_FROID` pour un
+ *     orage, qui ne l'atteint en vrai que par grand froid, R12 ; et seulement dans sa bande).
  * On sous-estime donc toujours la température : si CETTE valeur est déjà trop chaude pour
  * geler, aucune tuile ne gèle — c'est la seule chose que le court-circuit affirme.
  */
@@ -123,7 +123,7 @@ function plancherDeLaVallee(state: SimState): number {
   let t = TEMPERATURE.BASE - TEMPERATURE.ACT_COLD(actForDay(jour))
   if (cycleTick >= DAY_TICKS_PER_CYCLE) t -= TEMPERATURE.NIGHT_COLD
   if (state.brume) t -= BRUME.COLD_MALUS
-  if (state.meteo) t -= METEO.COLD[state.meteo.type]
+  if (state.meteo) t -= coldMaximal(state.meteo.type)
   return t
 }
 
@@ -349,9 +349,10 @@ export function gelMortel(state: SimState, tx: number, ty: number): boolean {
   return climatFlore(state, tx, ty, state.tick) < FLORE.SEUIL_MORTEL
 }
 
-/** Les fronts qui DÉPOSENT de la neige. Le blizzard en est un (c'est une neige portée par
- *  le vent) ; la pluie, l'orage et le brouillard n'en déposent aucune. */
-const NEIGEUX = ['neige', 'blizzard']
+/** Les fronts qui PEUVENT déposer de la neige : ceux qui précipitent (R11). Qu'ils en
+ *  déposent ICI se décide tranche par tranche, par `neigeA` sur le froid du monde — le
+ *  brouillard et le vent de cendre ne déposent rien. */
+const PRECIPITANTS = ['pluie', 'orage']
 
 /**
  * G7 — LA COUVERTURE DE NEIGE AU SOL en (tx, ty), dans [0, 1]. PURE, SANS UN OCTET D'ÉTAT.
@@ -380,7 +381,14 @@ const NEIGEUX = ['neige', 'blizzard']
  *
  * ═══ LA FONTE PAIE LE TEMPS **ET** LA TEMPÉRATURE ═══
  *
- * Sous la bande : la couverture MONTE, de 0 à l'entrée à 1 à la sortie (il neige).
+ * Sous la bande : la couverture MONTE, de 0 à l'entrée à 1 à la sortie — **sur les seules
+ * tranches où il NEIGE ici** (R11 : `neigeA` sur le froid du monde sans le front, à l'instant
+ * de la tranche — la même loi que l'aspect dessiné). Un front de pluie d'acte I ne laisse rien
+ * en plaine et couvre le Névé ; une bande qui traverse la plaine d'acte II au crépuscule y
+ * dépose la part nocturne de son passage. Chaque tranche se juge à un instant FIXE (son
+ * milieu sur la grille, borné à la sortie), jamais au tick courant : la couverture est
+ * monotone croissante en `tick` tant que la bande couvre — elle ne peut pas redescendre
+ * parce que le soleil s'est levé au milieu de la dernière tranche.
  * Après : elle décroît linéairement sur `FONTE_CYCLES` cycles par grand froid, jusqu'à
  * `FONTE_CYCLES_CHAUD` au redoux — la même neige tient un jour sur le Névé et une heure au
  * bord de l'eau. On garde le MAXIMUM sur les cycles rembobinés : deux fronts rapprochés ne
@@ -399,13 +407,14 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
     const c = cycle - k
     if (c < 0) break
     const front = frontDuCycle(c, state.calendarScale)
-    if (!front || !NEIGEUX.includes(front.type)) continue
+    if (!front || !PRECIPITANTS.includes(front.type)) continue
 
     // L'ENTRÉE et la SORTIE de la bande sur ce point — l'inverse analytique de
-    // `frontMeteoPos`, donc la MÊME géométrie, jamais une seconde.
+    // `frontMeteoPos`, donc la MÊME géométrie, jamais une seconde (et la même largeur :
+    // `largeurDe`, R13 — l'orage s'élargit avec la saison).
     const axis = front.edge <= 1 ? 'x' : 'y'
     const span = axis === 'x' ? width : height
-    const largeur = METEO.LARGEUR[front.type]
+    const largeur = largeurDe(front)
     const brut = axis === 'x' ? tx : ty
     // Ouest (0) et nord (2) traversent vers +axe ; est (1) et sud (3) vers −axe — dans ce
     // second cas le point vu par la bande est son miroir (`frontMeteoPos` : lo = span − avance).
@@ -416,8 +425,18 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
 
     let couverture: number
     if (state.tick <= entree) continue // la bande n'est pas encore arrivée ici
+    // CE QUI EST TOMBÉ EN NEIGE, tranche par tranche, jusqu'au tick courant ou à la sortie.
+    const PAS_NEIGE = TICKS_PER_CYCLE / GEL.FONTE_TRANCHES_PAR_CYCLE
+    const finChute = Math.min(state.tick, sortie)
+    let tombe = 0
+    for (let t0 = entree; t0 < finChute; t0 += PAS_NEIGE) {
+      const t1 = Math.min(finChute, t0 + PAS_NEIGE)
+      const instant = Math.min(sortie, t0 + PAS_NEIGE / 2) // FIXE par tranche : monotone en `tick`
+      if (neigeA(dehorsSansMeteo(state, tx, ty, instant))) tombe += (t1 - t0) / (sortie - entree)
+    }
+    if (tombe <= 0) continue // il a plu ici, pas neigé : rien au sol
     if (state.tick < sortie) {
-      couverture = (state.tick - entree) / (sortie - entree) // il neige : ça monte
+      couverture = tombe // il neige : ça monte
     } else {
       // ═══ LA FONTE S'INTÈGRE, ELLE NE SE RÉAPPLIQUE PAS ═══
       //
@@ -446,7 +465,7 @@ export function neigeAuSol(state: SimState, tx: number, ty: number): number {
         fondu += (t1 - t0) / (cycles * TICKS_PER_CYCLE)
         if (fondu >= 1) break // tout est fondu : inutile de continuer à sommer
       }
-      couverture = 1 - fondu
+      couverture = tombe - fondu
     }
     if (couverture > best) best = couverture
   }

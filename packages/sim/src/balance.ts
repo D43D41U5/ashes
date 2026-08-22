@@ -3711,21 +3711,49 @@ export const METEO = {
    */
   CHANCE_PER_CYCLE: actLaw([0.5, 0.65, 0.8]), // loi totale (saison-sans-fin T1) : tient 0,8 au-delà
   /**
-   * La table des types par acte (poids sommant à 1) : la pluie domine l'acte I, la neige
-   * entre en II, le blizzard hante II-III, l'orage vit en I-II. L'ORDRE des clés est le
-   * découpage du tirage cumulatif — le changer rebat les élections (contrat de replay).
+   * La table des CLASSES par acte (poids sommant à 1). DEPUIS LE 2026-08-22 (spec R11),
+   * `neige` et `blizzard` N'EN FONT PLUS PARTIE : il neige là où il fait froid, un orage y
+   * est un blizzard — l'aspect se dérive au point (`meteoAspectAt`), il ne s'élit pas. Les
+   * masses des anciennes tables sont CONSERVÉES par classe (acte II : pluie 0,3 + neige 0,35
+   * = 0,65 de précipitation, orage 0,02 + blizzard 0,1 = 0,12 d'orage ; acte III : 0,5 et
+   * 0,31) : la « saison des neiges » tombe désormais d'`ACT_COLD`, plus d'une table.
+   * L'ORDRE des clés est le découpage du tirage cumulatif — le changer rebat les élections
+   * (contrat de replay).
    */
   // Une MIXTURE par acte, rendue TOTALE (saison-sans-fin T1) : la troisième est tenue au-delà
   // de l'acte III. Une mixture n'est pas une pente — ce que l'hiver N changera dans ces poids
   // est une décision de T2, pas une extrapolation.
   TYPES: actTable([
     { pluie: 0.5, brouillard: 0.25, orage: 0.25 },
-    { pluie: 0.3, neige: 0.35, brouillard: 0.15, blizzard: 0.1, orage: 0.02, vent_de_cendre: 0.08 },
-    { neige: 0.5, blizzard: 0.3, brouillard: 0.15, orage: 0.01, vent_de_cendre: 0.04 },
+    { pluie: 0.65, brouillard: 0.15, orage: 0.12, vent_de_cendre: 0.08 },
+    { pluie: 0.5, brouillard: 0.15, orage: 0.31, vent_de_cendre: 0.04 },
   ]),
-  /** Largeur de la bande, en tuiles. Le blizzard ≈ la carte jouée (~1 580 de large) :
-   *  « carte entière » par CALIBRAGE, pas par mécanisme (spec R1). */
-  LARGEUR: { pluie: 60, brouillard: 50, neige: 70, orage: 55, blizzard: 1600, vent_de_cendre: 420 },
+  /** Largeur de la bande, en tuiles — celle de l'ORAGE est sa largeur DOUCE (acte I) : elle
+   *  monte avec le froid de la saison jusqu'à `LARGEUR_ORAGE_FROID` (R13, `largeurDe`). */
+  LARGEUR: { pluie: 60, brouillard: 50, orage: 55, vent_de_cendre: 420 },
+  /** R13 — LA LARGEUR D'UN ORAGE SUIT LE FROID DE LA SAISON : `LARGEUR.orage` au froid
+   *  d'acte nul → cette valeur (≈ la carte jouée, ~1 580 de large) au plafond d'`ACT_COLD`,
+   *  en pente continue sur `ACT_COLD(acte) / plafond` — acte I 55, acte II ≈ 830, acte III
+   *  la carte. « Carte entière » reste un CALIBRAGE (celui de l'acte III), pas un mécanisme :
+   *  c'est ce qui garde à R9 son sens (« trop large pour être esquivé — PRÉPARER »). */
+  LARGEUR_ORAGE_FROID: 1600,
+  /**
+   * R11 — LA LIMITE DE NEIGE : il neige là où la pluie ferait geler un gué, c'est-à-dire là
+   * où `T₀ − COLD.pluie < SEUIL_NEIGE`, avec `T₀` la température du monde SANS le front. Ce
+   * seuil EST `GEL.SEUIL_GUE` (le zéro degré de la jauge) — répété ici parce que `GEL` se
+   * déclare plus bas ; la garde A12 affirme l'égalité. Une seule loi : le pavé de neige sous
+   * les pieds et le flocon à l'écran disent la même chose que le gué qui prend.
+   */
+  SEUIL_NEIGE: 45,
+  /**
+   * R12 — LE REFROIDISSEMENT ÉOLIEN : le froid d'un orage dépend du froid qu'il trouve. Le
+   * facteur `u` vaut 0 à la limite de neige (`SEUIL_NEIGE + COLD.pluie` = 55 : un orage par
+   * temps doux est une pluie violente) et 1 cette RAMPE plus bas (45 : le monde gèle déjà,
+   * l'orage est le blizzard d'avant au bit près), en pente continue. Lu sur `T₀`, jamais sur
+   * la température sous le front — aucune circularité. Plaine d'acte I la nuit = 60 : `u = 0`,
+   * un orage d'été ne mord pas, même de nuit — l'ancienne borne « 50 » de l'acte I tient.
+   */
+  FROID_EOLIEN_RAMPE: 10,
   /** La traversée complète (le bord AVANT entre → le bord ARRIÈRE sort), ~une demi-journée.
    *  STRICTEMENT sous un cycle : la fenêtre élue tient dans son cycle, donc au plus un front
    *  actif à la fois — par construction, pas par garde (voir `meteo.ts`). */
@@ -3736,31 +3764,38 @@ export const METEO = {
   // ── Les quatre accroches (R4-R7) et la foudre (R8) : consommées par les tranches
   // suivantes, posées ICI dès la tranche 1 — le contrat de constantes est complet d'un coup.
   /** R4 — le froid sous l'empreinte : une EXPOSITION de plus (patron Brume — amortie par
-   *  l'abri, planchée par le Feu et la tenue). Le blizzard est calibré létal en plaine de
-   *  jour dès l'acte II (90 − 25 − 55 = 10 < HYPOTHERMIA) ; le brouillard ne refroidit pas. */
-  COLD: { pluie: 10, brouillard: 0, neige: 25, orage: 10, blizzard: 55, vent_de_cendre: 8 },
+   *  l'abri, planchée par le Feu et la tenue). Pour l'ORAGE c'est sa valeur DOUCE : il monte
+   *  à `ORAGE_FROID.COLD` par la pente R12. Le brouillard ne refroidit pas. */
+  COLD: { pluie: 10, brouillard: 0, orage: 10, vent_de_cendre: 8 },
+  /**
+   * R12 — L'ORAGE PAR GRAND FROID : la ligne « blizzard » d'avant, atteinte par la pente du
+   * refroidissement éolien (`u = 1`) et interpolée depuis la ligne douce de l'orage entre les
+   * deux. Calibré létal en plaine de jour dès l'acte III (90 − 50 − 55 < HYPOTHERMIA) et dès
+   * la nuit d'acte II (90 − 25 − 30 = 35 → `u = 1` → 35 − 55 < 0).
+   */
+  ORAGE_FROID: { COLD: 55, FEU_CONSO: 2, SPEED: 0.8, VISION: 0.6 },
   /** R5 — multiplicateur de consommation des feux sous l'empreinte d'un front mouillé.
    *  JAMAIS d'extinction : la pression, pas la spirale de mort. */
-  FEU_CONSO: { pluie: 1.5, neige: 1.5, orage: 1.5, blizzard: 2, brouillard: 1, vent_de_cendre: 1.8 },
+  FEU_CONSO: { pluie: 1.5, orage: 1.5, brouillard: 1, vent_de_cendre: 1.8 },
   /** R5 — les types MOUILLÉS : l'eau qui tombe. Porte le refus de pose d'un feu NEUF à
    *  découvert et arme `FEU_CONSO` (`meteoMouille`/`meteoFeuConso`). Cette table COÏNCIDE
    *  aujourd'hui avec `QUIET` — et ce n'est PAS une redondance à fusionner : deux axes
    *  sémantiques distincts. QUIET dit le silence du GIBIER (comportement de faune),
    *  MOUILLE dit l'EAU qui tombe (physique du feu) ; un futur type peut mouiller sans
    *  faire taire, ou l'inverse — on calibre chaque axe sans toucher l'autre. */
-  MOUILLE: { pluie: true, brouillard: false, neige: true, orage: true, blizzard: true, vent_de_cendre: false },
+  MOUILLE: { pluie: true, brouillard: false, orage: true, vent_de_cendre: false },
   /** R6 — la faune se terre : les types qui FONT TAIRE les naissances ambiantes sous leur
    *  empreinte (prédicat pur `meteoQuiet` — un front MOBILE ne sème pas de points
    *  `faunaQuiet`, on interroge sa bande du tick). Le BROUILLARD ne fait pas taire le
    *  gibier : c'est le front tactique (visibilité, R7), pas un front mouillé — la table
    *  d'effets décidée avec Alexis lui donne « faune : néant ». */
-  QUIET: { pluie: true, brouillard: false, neige: true, orage: true, blizzard: true, vent_de_cendre: true },
+  QUIET: { pluie: true, brouillard: false, orage: true, vent_de_cendre: true },
   /** R7 — multiplicateur de vitesse sous l'empreinte (pendant le front, pas après). */
-  SPEED: { pluie: 0.95, brouillard: 1, neige: 0.9, orage: 0.95, blizzard: 0.8, vent_de_cendre: 0.9 },
+  SPEED: { pluie: 0.95, brouillard: 1, orage: 0.95, vent_de_cendre: 0.9 },
   /** R7 — multiplicateur de perception des IA, évalué au point de la CIBLE (on se cache
    *  dans la pluie, on n'aveugle pas le loup au soleil). Le brouillard en est le porteur
    *  principal : fort, sans froid — équilibrable isolément. */
-  VISION: { pluie: 0.85, brouillard: 0.5, neige: 0.8, orage: 0.85, blizzard: 0.6, vent_de_cendre: 0.55 },
+  VISION: { pluie: 0.85, brouillard: 0.5, orage: 0.85, vent_de_cendre: 0.55 },
   /** R8 — la foudre de l'orage : impacts par minute dans l'empreinte, télégraphe au point
    *  visé (le patron wind-up, en plus long), dégâts sérieux jamais létaux à PV pleins,
    *  rayon d'impact en tuiles. */
@@ -3790,10 +3825,13 @@ export const METEO = {
  *     jour       90        65        40
  *     nuit       60        35        10
  *
- * Et les fronts retranchent en plus : pluie/orage 10, neige 25, blizzard 55, Brume 55 —
- * sachant que l'acte I ne tire NI neige NI blizzard (`METEO.TYPES[0]`) et JAMAIS de Brume
- * (`BRUME.CHANCE_PER_DAY[0] = 0`). Le point le plus froid possible de l'acte I est donc
- * une nuit sous l'averse : 60 − 10 = **50**.
+ * Et les fronts retranchent en plus : pluie 10, orage 10 → 55 selon le froid qu'il trouve
+ * (R12 : `u = 0` tant que `T₀ ≥ 55`, donc un orage d'acte I ne mord jamais plus qu'une
+ * pluie, même la nuit — plaine de nuit 60), Brume 55 — sachant que l'acte I ne tire JAMAIS
+ * de Brume (`BRUME.CHANCE_PER_DAY[0] = 0`). Le point le plus froid possible de l'acte I en
+ * plaine est donc une nuit sous l'averse : 60 − 10 = **50**. (Depuis le 2026-08-22 la
+ * neige et le blizzard ne sont plus des types : « sous tout blizzard » se lit « sous un
+ * orage là où `T₀ ≤ 45` » — mêmes nombres.)
  *
  * De là, la promesse G2 (« les gués prennent dès les nuits froides d'acte II, les lacs
  * attendent l'acte III et les blizzards ») borne chaque seuil des DEUX côtés, et on prend
@@ -3830,7 +3868,7 @@ export const GEL = {
   /** L'eau PEU PROFONDE (gué, terrain 4) gèle sous ce seuil : on ne patauge plus
    *  (`speedFactor` 0,5), on glisse (`VITESSE_GLACE`). Elle était DÉJÀ praticable —
    *  le gel ne change ici que la façon d'y marcher. */
-  SEUIL_GUE: 45,
+  SEUIL_GUE: 45, // = METEO.SEUIL_NEIGE (R11) : la neige tombe là où un gué prend — garde A12
   /** L'eau PROFONDE (lac, rivière, terrain 6) gèle sous ce seuil et devient PRATICABLE :
    *  la carte change de forme, un village protégé par une boucle d'eau perd ses douves
    *  (G4 — la horde traverse aussi). « Nettement plus froid » : 25 points sous le gué. */

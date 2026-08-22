@@ -20,6 +20,20 @@
  * (`blizzard_entre`/`blizzard_passe`) — les quatre autres types n'émettent RIEN,
  * leur annonce est géométrique.
  *
+ * ═══ LA NEIGE SE DÉRIVE DU FROID (R11-R13, décision d'Alexis 2026-08-22) ═══
+ *
+ * Un front ne porte plus qu'une CLASSE — `pluie` ou `orage` (qui précipitent), `brouillard`
+ * ou `vent_de_cendre` (qui ne précipitent pas). `neige` et `blizzard` ne s'élisent plus : en
+ * chaque point et à chaque tick, **il neige là où la pluie ferait geler un gué**
+ * (`neigeA(t0)` : `T₀ − COLD.pluie < SEUIL_NEIGE`, `T₀` = le monde SANS le front), et un
+ * orage y est un blizzard (`meteoAspectAt`). Le froid d'un orage DÉPEND DU FROID QU'IL
+ * TROUVE (`froidEolien` : 10 → 55 en pente continue sur `T₀`, jamais sur la température sous
+ * le front — aucune circularité), et chaque effet de l'orage (pas, vision, feu) s'interpole
+ * vers sa ligne `ORAGE_FROID` par le même facteur. Sa LARGEUR suit le froid de la saison
+ * (`largeurDe` : 55 en acte I → la carte au plafond d'`ACT_COLD`). Le « blizzard » de R9
+ * (annonce, entrée, passage) est un orage dont l'aspect en plaine à découvert au milieu de sa
+ * fenêtre est `blizzard` (`frontEstBlizzard`) — fonction pure du cycle, écrivain unique.
+ *
  * ═══ ZÉRO TIRAGE SUR LE PRNG D'ÉTAT ═══
  *
  * Occurrence, type, bord, fenêtre : tout se dérive du CYCLE par `hash2` (patron
@@ -48,17 +62,25 @@
  * changer — et le banc d'équilibrage pourra mesurer l'économie sans le bruit météo, puis
  * avec (ses seuils de famine sont absolus). Le vrai jeu l'arme à la création du monde.
  */
-import { BALANCE, METEO } from './balance'
+import { BALANCE, METEO, TEMPERATURE } from './balance'
 import { brumeJourEligible } from './brume'
 import { CENDRE, bandeDeCendre } from './cendre'
 import { emitEvent } from './events'
 import { hash2 } from './noise'
 import type { SimState } from './sim'
-import { actForDay, DAY_TICKS_PER_CYCLE, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
+import { dehorsSansMeteo } from './temperature'
+import { actForDay, DAY_TICKS_PER_CYCLE, gameTimeAt, seasonDayAtTick, TICKS_PER_CYCLE } from './time'
 
 const METEO_SALT = 0x9b4de3c1
 
-export type MeteoType = 'pluie' | 'brouillard' | 'neige' | 'orage' | 'blizzard' | 'vent_de_cendre'
+/** LA CLASSE d'un front — ce qui s'ÉLIT (R11). `neige` et `blizzard` n'en sont plus : ce
+ *  sont des ASPECTS, dérivés au point du froid du monde (`meteoAspectAt`). */
+export type MeteoType = 'pluie' | 'brouillard' | 'orage' | 'vent_de_cendre'
+
+/** L'ASPECT d'un point sous la bande — ce que le client dessine et ce que `neigeAuSol`
+ *  accumule : la classe du front, sauf que `pluie` devient `neige` et `orage` devient
+ *  `blizzard` là où il neige (`neigeA`). */
+export type MeteoAspect = MeteoType | 'neige' | 'blizzard'
 
 /** Le front en cours — un record plat JSON, purgé à la sortie (patron `state.brume`). */
 export interface MeteoFront {
@@ -137,10 +159,12 @@ export function meteoTypeBrut(cycle: number, day: number): MeteoType {
 export function meteoTypeDuCycle(cycle: number, day: number): MeteoType | null {
   if (!meteoCycleEligible(cycle, day)) return null
   const type = meteoTypeBrut(cycle, day)
-  // R3 — Brume × blizzard : EXCLUSIFS À L'ÉLECTION. Deux dénis de zone majeurs le même
-  // jour rendraient la journée illisible ; les deux éligibilités étant des fonctions pures
-  // du jour, l'exclusion l'est aussi — le blizzard d'un jour de Brume se dégrade en neige.
-  return type === 'blizzard' && brumeJourEligible(day) ? 'neige' : type
+  // R3 — Brume × orage : EXCLUSIFS À L'ÉLECTION. Deux dénis de zone majeurs le même jour
+  // rendraient la journée illisible ; les deux éligibilités étant des fonctions pures du
+  // jour, l'exclusion l'est aussi — l'orage d'un jour de Brume se dégrade en pluie. (Depuis
+  // R11 le blizzard n'est plus élu : c'est l'orage, qui le devient par grand froid, qu'on
+  // écarte — et avec lui sa foudre, le jour où la nappe monte.)
+  return type === 'orage' && brumeJourEligible(day) ? 'pluie' : type
 }
 
 /**
@@ -188,9 +212,28 @@ export function frontDuCycle(cycle: number, calendarScale: number): MeteoFront |
  * avant parcourt `span + largeur` sur la fenêtre, si bien qu'à l'entrée la bande est encore
  * toute dehors et qu'à la fin elle est toute sortie. Fonction pure, partagée avec le client.
  */
+/**
+ * R13 — LA LARGEUR D'UN FRONT, et son SEUL lecteur (`frontMeteoPos`, `meteoIntensityAt`,
+ * la géométrie rembobinée de `neigeAuSol` : tous passent ici — garde A14). Pour la pluie,
+ * le brouillard et le vent de cendre, c'est la table. Pour l'ORAGE, la largeur SUIT LE FROID
+ * DE LA SAISON : `LARGEUR.orage` au froid d'acte nul → `LARGEUR_ORAGE_FROID` (la carte) au
+ * plafond d'`ACT_COLD`, en pente continue sur `ACT_COLD(acte du front) / plafond` — acte I
+ * 55 tuiles, acte II ≈ 830, acte III 1 600. Les systèmes s'élargissent avec l'hiver, et le
+ * « carte entière » de R9 (« trop large pour être esquivé — PRÉPARER ») reste vrai là où il
+ * compte. C'est une GÉOMÉTRIE : élue avec le front (`front.day` porte l'acte), jamais
+ * variable par point. Entier : `frontMeteoPos` la compose avec des entiers de carte, et
+ * une largeur fractionnaire ferait dériver `lo`/`hi` d'un bit entre moteurs.
+ */
+export function largeurDe(front: Pick<MeteoFront, 'type' | 'day'>): number {
+  const doux: number = METEO.LARGEUR[front.type]
+  if (front.type !== 'orage') return doux
+  const u = TEMPERATURE.ACT_COLD(actForDay(front.day)) / TEMPERATURE.ACT_COLD.plafond
+  return Math.round(doux + (METEO.LARGEUR_ORAGE_FROID - doux) * u)
+}
+
 export function frontMeteoPos(front: MeteoFront, tick: number, mapWidth: number, mapHeight: number): BandeMeteo | null {
   if (tick < front.startTick || tick >= front.endTick) return null
-  const largeur = METEO.LARGEUR[front.type]
+  const largeur = largeurDe(front)
   const axis: 'x' | 'y' = front.edge <= 1 ? 'x' : 'y'
   const span = axis === 'x' ? mapWidth : mapHeight
   const u = (tick - front.startTick) / (front.endTick - front.startTick)
@@ -223,7 +266,7 @@ export function meteoIntensityAt(
   const c = bande.axis === 'x' ? x : y
   const d = Math.min(c - bande.lo, bande.hi - c)
   if (d <= 0) return 0
-  const rampe = METEO.RAMPE * METEO.LARGEUR[front.type]
+  const rampe = METEO.RAMPE * largeurDe(front)
   return rampe <= 0 ? 1 : Math.min(1, d / rampe)
 }
 
@@ -239,14 +282,54 @@ export function meteoIntensity(state: SimState, x: number, y: number): number {
   return meteoIntensityAt(front, state.tick, state.map.width, state.map.height, x, y)
 }
 
+// ═══ R11-R12 — LE FROID QUE LE FRONT TROUVE, ET CE QU'IL EN FAIT ═══
+
+/** LA LIMITE DE NEIGE sur `T₀` : il neige là où la pluie ferait geler un gué. */
+const LIMITE_NEIGE = METEO.SEUIL_NEIGE + METEO.COLD.pluie
+
 /**
- * R4 — LE FROID DU FRONT en (x, y) : `METEO.COLD[type] × meteoIntensity` — 0 sans front et
+ * R11 — NEIGE-T-IL à cette température du monde SANS le front ? `T₀ − COLD.pluie <
+ * SEUIL_NEIGE` : la pluie qui tombe retranche son froid, et si le gué prendrait dessous,
+ * c'est de la neige. Une loi, deux lecteurs (le pavé de neige au sol, le flocon à l'écran)
+ * et le même zéro degré que `estGele` (`SEUIL_NEIGE = GEL.SEUIL_GUE`, garde A12).
+ */
+export function neigeA(t0: number): boolean {
+  return t0 < LIMITE_NEIGE
+}
+
+/**
+ * R12 — LE REFROIDISSEMENT ÉOLIEN : la part de « blizzard » d'un orage, de 0 (le monde sous
+ * lui est au-dessus de la limite de neige : une pluie violente) à 1 (il est `FROID_EOLIEN_
+ * RAMPE` plus bas : le blizzard d'avant, au bit près), en PENTE CONTINUE — jamais un seuil.
+ * Lu sur `T₀`, la température SANS le front : aucune circularité possible.
+ */
+export function froidEolien(t0: number): number {
+  const u = (LIMITE_NEIGE - t0) / METEO.FROID_EOLIEN_RAMPE
+  return u < 0 ? 0 : u > 1 ? 1 : u
+}
+
+/** `doux` par temps doux, `froid` par grand froid, la pente R12 entre les deux — pour un
+ *  orage ; les autres classes n'ont qu'une ligne. */
+function effetOrage(front: MeteoFront, doux: number, froid: number, t0: number): number {
+  if (front.type !== 'orage') return doux
+  return doux + (froid - doux) * froidEolien(t0)
+}
+
+/** LE PLEIN FROID d'une classe — le pire qu'elle puisse retrancher, pour les bornes
+ *  (`plancherDeLaVallee`) : la ligne `ORAGE_FROID` pour l'orage, la table sinon. */
+export function coldMaximal(type: MeteoType): number {
+  return type === 'orage' ? METEO.ORAGE_FROID.COLD : METEO.COLD[type]
+}
+
+/**
+ * R4 — LE FROID DU FRONT en (x, y) : `froid(classe, T₀) × meteoIntensity` — 0 sans front et
  * hors bande, le plein froid au cœur, en RAMPE continue entre les deux (le gradient de
  * `meteoIntensity` : le froid MONTE quand le front arrive — une pente, jamais un mur).
  * C'est une EXPOSITION, patron exact de `brumeCold` : `temperature.ts` l'amortit sous un
  * abri (`SHELTER_FACTOR`) et la PLANCHE au feu, à la source chaude et à la tenue — toute
  * la chaîne vitale (dérive, hypothermie, vitesse, endurance) suit par construction, zéro
- * code neuf côté vitals. Le brouillard a COLD 0 : il ne refroidit pas, au bit près.
+ * code neuf côté vitals. Le brouillard a COLD 0 : il ne refroidit pas, au bit près. Pour
+ * l'ORAGE, le froid dépend du froid qu'il trouve (R12, `froidEolien`).
  */
 export function meteoCold(state: SimState, x: number, y: number): number {
   return meteoColdAt(state, x, y, state.tick)
@@ -260,12 +343,71 @@ export function meteoCold(state: SimState, x: number, y: number): number {
  * (avant `startTick`, l'intensité est nulle — le passé d'avant l'entrée du front est donc
  * juste). Un front DÉJÀ PURGÉ, lui, est invisible : on sous-estime alors le froid d'hier,
  * jamais on ne le surestime.
+ *
+ * `t0` est la température du monde SANS le front au même point et au même tick — l'appelant
+ * de `froidDuMonde` l'a déjà en main (c'est lui qui l'écrit) ; les autres lecteurs passent
+ * par `meteoColdAt` sans le cinquième argument, qui le relit.
  */
-export function meteoColdAt(state: SimState, x: number, y: number, tick: number): number {
-  const front = state.meteo
+export function meteoColdAt(state: SimState, x: number, y: number, tick: number, t0?: number): number {
+  return meteoColdSousFront(state, state.meteo, x, y, tick, t0)
+}
+
+/** Le froid d'un front DONNÉ (courant ou rembobiné — `neigeAuSol` relit les cycles passés
+ *  par `frontDuCycle`), au point et au tick. */
+export function meteoColdSousFront(
+  state: SimState,
+  front: MeteoFront | null | undefined,
+  x: number,
+  y: number,
+  tick: number,
+  t0?: number,
+): number {
   if (!front) return 0
-  const cold: number = METEO.COLD[front.type]
-  return cold === 0 ? 0 : cold * meteoIntensityAt(front, tick, state.map.width, state.map.height, x, y)
+  const intensite = meteoIntensityAt(front, tick, state.map.width, state.map.height, x, y)
+  if (intensite <= 0) return 0
+  const cold = effetOrage(front, METEO.COLD[front.type], METEO.ORAGE_FROID.COLD, t0 ?? dehorsSansMeteo(state, x, y, tick))
+  return cold === 0 ? 0 : cold * intensite
+}
+
+/**
+ * R11 — L'ASPECT DU CIEL en (x, y) au tick : `null` hors de toute bande ; sinon la classe du
+ * front, sauf que la pluie est de la NEIGE et l'orage un BLIZZARD là où il neige (`neigeA` sur
+ * `T₀`). C'est ce que le client dessine (flocons ou gouttes, au point de la caméra) et ce que
+ * `neigeAuSol` accumule (tranche par tranche, sur le front rembobiné) — un seul écrivain.
+ * `front` explicite pour le rembobinage ; `meteoAspectAt` le lit sur l'état.
+ */
+export function aspectSousFront(
+  state: SimState,
+  front: MeteoFront | null | undefined,
+  x: number,
+  y: number,
+  tick: number,
+): MeteoAspect | null {
+  if (!front) return null
+  if (meteoIntensityAt(front, tick, state.map.width, state.map.height, x, y) <= 0) return null
+  if (front.type !== 'pluie' && front.type !== 'orage') return front.type
+  if (!neigeA(dehorsSansMeteo(state, x, y, tick))) return front.type
+  return front.type === 'pluie' ? 'neige' : 'blizzard'
+}
+
+export function meteoAspectAt(state: SimState, x: number, y: number, tick: number = state.tick): MeteoAspect | null {
+  return aspectSousFront(state, state.meteo, x, y, tick)
+}
+
+/**
+ * R9 × R13 — CE FRONT EST-IL « LE BLIZZARD » au sens de l'annonce ? Un orage dont l'aspect EN
+ * PLAINE À DÉCOUVERT (biome 0, ni Brume ni cendre — le ciel clair de la table de `GEL`), AU
+ * MILIEU DE SA FENÊTRE, est `blizzard`. Fonction pure du front et du calendrier (base, acte,
+ * heure) : l'annonce de la veille et l'entrée du lendemain lisent la MÊME — elle dit vrai par
+ * construction. Le Névé aura pire que l'annonce, jamais mieux ; et un orage d'acte II en plein
+ * jour (plaine 65 > limite 55) n'est PAS annoncé — il sera pluie en plaine, neige sur les hauts.
+ */
+export function frontEstBlizzard(state: SimState, front: Pick<MeteoFront, 'type' | 'startTick' | 'endTick'>): boolean {
+  if (front.type !== 'orage') return false
+  const milieu = Math.floor((front.startTick + front.endTick) / 2)
+  const time = gameTimeAt(state, milieu)
+  const t0 = TEMPERATURE.BASE - TEMPERATURE.ACT_COLD(time.act) - (time.isNight ? TEMPERATURE.NIGHT_COLD : 0)
+  return neigeA(t0 < 0 ? 0 : t0)
 }
 
 /**
@@ -340,9 +482,11 @@ export function meteoFeuConso(state: SimState, x: number, y: number): number {
   const front = state.meteo
   if (!front) return 1
   if (!METEO.MOUILLE[front.type]) return 1
-  const plein: number = METEO.FEU_CONSO[front.type]
+  const intensite = meteoIntensity(state, x, y)
+  if (intensite <= 0) return 1
+  const plein = effetOrage(front, METEO.FEU_CONSO[front.type], METEO.ORAGE_FROID.FEU_CONSO, dehorsSansMeteo(state, x, y, state.tick))
   if (plein === 1) return 1
-  return 1 + (plein - 1) * meteoIntensity(state, x, y)
+  return 1 + (plein - 1) * intensite
 }
 
 /**
@@ -354,7 +498,7 @@ export function meteoFeuConso(state: SimState, x: number, y: number): number {
  * `speedScaleFor`, la même chaîne que `coldSpeedFactor` (les avatars ; patron du froid).
  */
 export function meteoSpeedFactor(state: SimState, x: number, y: number): number {
-  return meteoSpeedFactorAt(state.meteo ?? null, state.tick, state.map.width, state.map.height, x, y)
+  return meteoSpeedFactorAt(state, state.tick, x, y)
 }
 
 /**
@@ -364,21 +508,19 @@ export function meteoSpeedFactor(state: SimState, x: number, y: number): number 
  * L'autorité multiplie déjà la vitesse de l'avatar par ce facteur, au point du marcheur ;
  * un client qui l'ignore prédit 5 à 20 % trop vite sous un front (jusqu'à ×0,8 sous
  * blizzard) et l'avatar fait de l'élastique à chaque réconciliation. Le remède n'est pas
- * de recopier la formule côté client — c'est de lui donner LA MÊME, appelée sur le record
- * d'élection reçu dans le snapshot. Écrivain unique, jusqu'à la prédiction.
+ * de recopier la formule côté client — c'est de lui donner LA MÊME, appelée sur la façade
+ * d'état que le client reconstitue du snapshot (`etat-gel.ts` : le front, la carte, l'heure
+ * — depuis R12 le pas sous un orage dépend du froid du monde, donc de l'heure et du biome).
+ * Écrivain unique, jusqu'à la prédiction.
  */
-export function meteoSpeedFactorAt(
-  front: MeteoFront | null | undefined,
-  tick: number,
-  mapWidth: number,
-  mapHeight: number,
-  x: number,
-  y: number,
-): number {
+export function meteoSpeedFactorAt(state: SimState, tick: number, x: number, y: number): number {
+  const front = state.meteo
   if (!front) return 1
-  const plein: number = METEO.SPEED[front.type]
+  const intensite = meteoIntensityAt(front, tick, state.map.width, state.map.height, x, y)
+  if (intensite <= 0) return 1
+  const plein = effetOrage(front, METEO.SPEED[front.type], METEO.ORAGE_FROID.SPEED, dehorsSansMeteo(state, x, y, tick))
   if (plein === 1) return 1
-  return 1 - (1 - plein) * meteoIntensityAt(front, tick, mapWidth, mapHeight, x, y)
+  return 1 - (1 - plein) * intensite
 }
 
 /**
@@ -397,9 +539,11 @@ export function meteoSpeedFactorAt(
 export function meteoVisionFactor(state: SimState, x: number, y: number): number {
   const front = state.meteo
   if (!front) return 1
-  const plein: number = METEO.VISION[front.type]
+  const intensite = meteoIntensity(state, x, y)
+  if (intensite <= 0) return 1
+  const plein = effetOrage(front, METEO.VISION[front.type], METEO.ORAGE_FROID.VISION, dehorsSansMeteo(state, x, y, state.tick))
   if (plein === 1) return 1
-  return 1 - (1 - plein) * meteoIntensity(state, x, y)
+  return 1 - (1 - plein) * intensite
 }
 
 // ═══ R8 — LA FOUDRE DE L'ORAGE : élue par créneau, télégraphiée, jamais stockée ═══
@@ -486,7 +630,7 @@ export function advanceMeteo(state: SimState): void {
     // R9 — LA SORTIE se dit pour le seul blizzard : « il est passé » est l'autre moitié
     // du contrat d'annonce (on a préparé, on peut ressortir). Un fait de HUD/rendu — la
     // chronique ne le raconte pas (patron Brume : la levée et le retrait non plus).
-    if (front.type === 'blizzard') emitEvent(state, { type: 'blizzard_passe', tick: state.tick, day: front.day })
+    if (frontEstBlizzard(state, front)) emitEvent(state, { type: 'blizzard_passe', tick: state.tick, day: front.day })
     state.meteo = null
   }
 
@@ -509,7 +653,7 @@ export function advanceMeteo(state: SimState): void {
   // et « il entre » dit le moment où le froid commence à mordre. Après l'élection : un
   // front qui entre au tick même de son élection s'émet ce tick-là.
   const actif = state.meteo
-  if (actif && actif.type === 'blizzard' && !actif.entre && state.tick >= actif.startTick) {
+  if (actif && !actif.entre && state.tick >= actif.startTick && frontEstBlizzard(state, actif)) {
     actif.entre = true
     emitEvent(state, { type: 'blizzard_entre', tick: state.tick, day: actif.day })
   }
@@ -527,6 +671,9 @@ export function advanceMeteo(state: SimState): void {
   const demain = seasonDayAtTick(aubeProchaine, state.calendarScale)
   if (state.lastMeteoAnnonceCycle === cycleProchain) return
   state.lastMeteoAnnonceCycle = cycleProchain
-  if (meteoTypeDuCycle(cycleProchain, demain) !== 'blizzard') return
+  // Depuis R11-R13 « blizzard » se lit sur le front ENTIER (classe + fenêtre + calendrier) :
+  // `frontDuCycle` est l'écrivain unique de l'élection, `frontEstBlizzard` celui du sens.
+  const elu = frontDuCycle(cycleProchain, state.calendarScale)
+  if (!elu || !frontEstBlizzard(state, elu)) return
   emitEvent(state, { type: 'blizzard_annonce', tick: state.tick, day: demain })
 }

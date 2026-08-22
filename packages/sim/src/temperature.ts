@@ -109,14 +109,42 @@ export function baselineTemperatureAt(state: SimState, x: number, y: number, tic
  * `climatFlore`, qui ne diffèrent QUE par le facteur d'abri.
  */
 function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelter: number): number {
+  const base = baseDuMonde(state, tick)
+  const exposedSansMeteo = expositionSansMeteo(state, x, y, tick)
+  // R11-R12 (`meteo.md`) : LE FRONT LIT LE FROID QU'IL TROUVE. `T₀` est le monde SANS lui, à
+  // découvert — c'est sur elle que l'orage décide de sa morsure (`froidEolien`) et que la pluie
+  // décide d'être neige (`neigeA`). Calculée ICI, une fois, et passée : pas de seconde lecture.
+  const t0 = clampTemp(base + exposedSansMeteo)
+  const meteo = meteoColdAt(state, x, y, tick, t0)
+  return clampTemp(base + shelter * (exposedSansMeteo - meteo))
+}
+
+/**
+ * LA TEMPÉRATURE DU MONDE SANS LE FRONT, À DÉCOUVERT — `T₀` de la spec météo (R11-R12) :
+ * biome, heure, acte, Brume, cendre ; ni front, ni abri, ni feu. C'est ce que la pluie et
+ * l'orage TROUVENT en arrivant : la limite de neige et le refroidissement éolien se lisent
+ * dessus, jamais sur la température sous le front (aucune circularité). Mêmes expressions,
+ * même ordre que `froidDuMonde` — au bit près.
+ */
+export function dehorsSansMeteo(state: SimState, x: number, y: number, tick: number): number {
+  return clampTemp(baseDuMonde(state, tick) + expositionSansMeteo(state, x, y, tick))
+}
+
+/** `BASE − ACT_COLD` : la part du froid qu'aucun toit ne coupe — loi totale (saison-sans-fin T1). */
+function baseDuMonde(state: SimState, tick: number): number {
+  const time = gameTimeAt(state, tick)
+  // La carte est plate : le froid ne vient plus de l'altitude, seulement du BIOME (la neige, le
+  // glacier) et de l'heure. Le froid des zones hautes est porté par leur terrain, pas par une hauteur.
+  return T.BASE - T.ACT_COLD(time.act)
+}
+
+/** L'EXPOSITION hors front — biome, nuit, Brume, cendre — SIGNÉE (le biome peut réchauffer),
+ *  celle que l'abri amortit. Le froid du front s'y ajoute dans `froidDuMonde`, après `T₀`. */
+function expositionSansMeteo(state: SimState, x: number, y: number, tick: number): number {
   const tx = Math.floor(x)
   const ty = Math.floor(y)
   const time = gameTimeAt(state, tick)
   const biome = T.BIOME_OFFSET[terrainAt(state.map, tx, ty)] ?? 0
-
-  // La carte est plate : le froid ne vient plus de l'altitude, seulement du BIOME (la neige, le
-  // glacier) et de l'heure. Le froid des zones hautes est porté par leur terrain, pas par une hauteur.
-  const base = T.BASE - T.ACT_COLD(time.act) // non coupé par un toit — loi totale (saison-sans-fin T1)
   // LA BRUME (spec brume.md R4) et LE FRONT MÉTÉO (spec meteo.md R4) sont des EXPOSITIONS
   // de plus : l'abri les amortit, et le feu comme la tenue les PLANCHENT (l'ambiant est un
   // max) — le déni de zone tombe de ces lois, pas d'une mécanique neuve. Le froid météo
@@ -140,9 +168,7 @@ function froidDuMonde(state: SimState, x: number, y: number, tick: number, shelt
   const frontFroid =
     frontAuTick(state.map, state.calendarScale, tick) + pousseeDeCendre(state, x, y, tick)
   const cendre = froidDeCendre(state.map, tx, ty, frontFroid)
-  const exposed =
-    biome - (time.isNight ? T.NIGHT_COLD : 0) - brumeColdAt(state, x, y, tick) - meteoColdAt(state, x, y, tick) - cendre // amorti par l'abri
-  return clampTemp(base + shelter * exposed)
+  return biome - (time.isNight ? T.NIGHT_COLD : 0) - brumeColdAt(state, x, y, tick) - cendre // amorti par l'abri
 }
 
 /**
