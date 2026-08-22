@@ -191,7 +191,7 @@ Quatre loups collés à **une tuile** d'un homme qui marche, quarante-six coups 
 
 ### Le gibier (R8)
 
-- **R8 — Trois étages de gibier**, comme le GDD §8bis les nomme. Le **lapin** (petit gibier) : 8 PV, très rapide, fuit tôt et loin, `raw_meat: 1` — la nourriture d'un fuyard, l'école de l'approche. Le **cerf** (gros gibier) : 45 PV, rapide, fuit très tôt, `raw_meat: 5` — le vrai repas, qui se mérite. Le **sanglier** : inchangé (30 PV, `raw_meat: 3`), mais il broute, s'alerte, fuit en bursts et charge. La viande se cuit au Feu par la recette existante.
+- **R8 — Trois étages de gibier**, comme le GDD §8bis les nomme. Le **lapin** (petit gibier) : 8 PV, très rapide, fuit tôt et loin, `raw_meat: 1` — la nourriture d'un fuyard, l'école de l'approche. Le **cerf** (gros gibier) : 45 PV, rapide, fuit très tôt, `quartier: 2` (*amendé 2026-08-22 : le code rend des quartiers lourds depuis V0-5, plus 2 os — `depecage.md`*) — le vrai repas, qui se mérite. Le **sanglier** : inchangé (30 PV, `raw_meat: 3`), mais il broute, s'alerte, fuit en bursts et charge. La viande se cuit au Feu par la recette existante.
 
 ## Critères d'acceptation
 

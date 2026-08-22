@@ -7,6 +7,7 @@
  */
 import {
   BALANCE,
+  BUTCHER,
   FOOD_VALUES,
   FUNCTIONS,
   GRENIER,
@@ -46,7 +47,7 @@ import {
   CENDREUX,
 } from './balance'
 import { harvestFactor } from './alignment'
-import { die } from './combat'
+import { die, type Corpse } from './combat'
 import { facteurSterilite, frontActuel } from './cendre'
 import { emitEvent } from './events'
 import { secouerLeSol } from './sens'
@@ -57,6 +58,7 @@ import {
   addItems,
   freeRoomFor,
   hasItems,
+  isEmpty,
   nutritionFactor,
   removeItems,
   type Inventory,
@@ -132,6 +134,12 @@ export type EconomyAction =
   // est PUREMENT ADDITIF, il ne casse rien.
   | { type: 'harvest_charge_start'; nodeId: number; hold?: boolean }
   | { type: 'harvest_release' }
+  // LE DÉPEÇAGE (spec `depecage.md` G1/G4) : le clic MAINTENU sur une carcasse, couteau en main.
+  // `butcher_start` ouvre la découpe ; avec `hold` vrai c'est le MAINTIEN (cadencé par le
+  // client, muet) qui la tient en vie ; `butcher_stop` la lâche. Les coupes, elles, se datent
+  // dans `advanceButchering` — une part toutes les `cutTicks`, tirée par la sim.
+  | { type: 'butcher_start'; corpseId: number; hold?: boolean }
+  | { type: 'butcher_stop' }
   | { type: 'craft'; recipeId: RecipeId }
   | { type: 'cancel_craft'; index: number }
   | { type: 'eat'; item: ItemId; slot?: number }
@@ -695,6 +703,114 @@ function advanceFishing(state: SimState, entity: Entity): void {
   }
 }
 
+// ═══ LE DÉPEÇAGE (spec `depecage.md`) ═══════════════════════════════════════════════════════
+
+/**
+ * POURQUOI ON NE PEUT PAS DÉPECER — `null` si on peut. Une carcasse (pas une dépouille humaine,
+ * pas un coffre renversé), à portée, qui porte encore quelque chose, et une LAME en main (D4).
+ * Exportée pour que le client en partage la lecture (le curseur dit « il faut une lame » avant
+ * d'envoyer quoi que ce soit — un refus n'est pas gratuit, spec recolte.md G7).
+ */
+export function butcherRejection(state: SimState, actor: Entity, corpse: Corpse | undefined): string | null {
+  if (corpse === undefined || corpse.carcass === undefined) return 'rien à dépecer'
+  const r = BALANCE.INTERACT_RANGE
+  if (distSq(actor.x, actor.y, corpse.x, corpse.y) > r * r) return 'trop loin'
+  if (isEmpty(corpse.inventory)) return 'rien à dépecer'
+  if (toolTier(heldSlot(actor)?.item ?? null, 'knife') === 'none') return 'il faut une lame'
+  // Il ne reste que ce que CE chasseur ne sait pas prendre (l'os du novice, D5) : on le dit à
+  // l'appui, et le maintien ne ré-arme pas une découpe qui n'aurait rien à couper.
+  const parts = partsEligibles(corpse, levelOf(actor, 'hunting'))
+  if (parts.length === 0) return "rien que de l'os"
+  // Le sac ne peut plus RIEN recevoir de ce qui reste : on le dit à l'appui, et le maintien ne
+  // ré-arme pas — sans cette garde, un doigt posé sac plein tirait une part et crachait un
+  // « sac plein » toutes les `CUT_TICKS` (relecture déterminisme, 2026-08-22).
+  if (parts.every((p) => freeRoomFor(actor.inventory, p) <= 0)) return 'sac plein'
+  return null
+}
+
+/**
+ * LA CADENCE (G3) : `CUT_TICKS` moins un gain PLAT par niveau de `hunting`, planchée. Entière,
+ * pure — le GDD veut « un gain plat mineur », pas un multiplicateur.
+ */
+export function cutTicks(actor: Entity): number {
+  return Math.max(BUTCHER.CUT_TICKS_MIN, BUTCHER.CUT_TICKS - levelOf(actor, 'hunting') * BUTCHER.SPEED_PER_LEVEL)
+}
+
+/**
+ * CE QUI PEUT SORTIR (R2) : les parts restantes du réservoir, par `ItemId` croissant (l'ordre des
+ * cases ne doit pas peser sur le tirage), l'OS retiré au chasseur sous `BONE_LEVEL` (D5). Une
+ * entrée par UNITÉ, pour que le tirage uniforme respecte les quantités : deux quartiers et une
+ * peau, c'est deux chances sur trois d'un quartier.
+ */
+export function partsEligibles(corpse: Corpse, level: number): ItemId[] {
+  const counts: Partial<Record<ItemId, number>> = {}
+  for (const slot of corpse.inventory) {
+    if (slot === null) continue
+    if (slot.item === 'bone' && level < BUTCHER.BONE_LEVEL) continue
+    counts[slot.item] = (counts[slot.item] ?? 0) + slot.count
+  }
+  const items = (Object.keys(counts) as ItemId[]).sort()
+  const parts: ItemId[] = []
+  for (const item of items) for (let k = counts[item]!; k > 0; k--) parts.push(item)
+  return parts
+}
+
+/**
+ * LA DÉCOUPE, TICK APRÈS TICK (G2) — appelée par `advanceEconomy`. Elle s'arrête, MUETTE, au pas,
+ * à la mort, à la lame rangée, au maintien non rafraîchi, à la carcasse disparue (mangée, pourrie)
+ * ou au réservoir vide. À `nextCutAt` : une part tirée au PRNG d'état (D3 — dans le chemin de
+ * l'input, donc rejouée par les inputs), au sac si elle y rentre (sinon refus dit, arrêt, la part
+ * RESTE sur la bête), le couteau s'use, l'XP tombe (D7), le fait s'émet. Vidée, la carcasse
+ * disparaît par le flux commun (`corpse_looted`).
+ */
+function advanceButchering(state: SimState, entity: Entity): void {
+  const b = entity.butchering
+  if (b === undefined) return
+  // Même tolérance que la ligne (`advanceFishing`) : le step de l'appui arrive avec `moved` du pas
+  // qu'on finissait — on ne lâche qu'à partir du suivant.
+  if (entity.hp <= 0 || (entity.moved && state.tick > b.since + 1)) {
+    delete entity.butchering
+    return
+  }
+  if (state.tick - b.heldAt > BUTCHER.HOLD_GRACE_TICKS) {
+    delete entity.butchering
+    return
+  }
+  const corpse = state.corpses.find((c) => c.id === b.corpseId)
+  if (corpse === undefined || butcherRejection(state, entity, corpse) !== null) {
+    delete entity.butchering
+    return
+  }
+  if (state.tick < b.nextCutAt) return
+  const parts = partsEligibles(corpse, levelOf(entity, 'hunting'))
+  if (parts.length === 0) {
+    // Il ne reste que ce que ce chasseur ne sait pas prendre (l'os du novice) : on s'arrête,
+    // l'os reste sur la bête.
+    delete entity.butchering
+    return
+  }
+  const { value, next } = rngRoll(state.rngState)
+  state.rngState = next
+  const part = parts[Math.min(parts.length - 1, Math.floor(value * parts.length))]!
+  if (freeRoomFor(entity.inventory, part) <= 0) {
+    emitEvent(state, { type: 'action_rejected', tick: state.tick, entityId: entity.id, reason: 'sac plein' })
+    delete entity.butchering
+    return
+  }
+  removeItems(corpse.inventory, { [part]: 1 })
+  addItems(entity.inventory, { [part]: 1 })
+  wearHeld(entity, 1)
+  gainXp(state, entity, 'hunting', BUTCHER.XP_PER_CUT)
+  emitEvent(state, { type: 'carcass_cut', tick: state.tick, entityId: entity.id, corpseId: corpse.id, item: part })
+  if (isEmpty(corpse.inventory)) {
+    state.corpses = state.corpses.filter((c) => c.id !== corpse.id)
+    emitEvent(state, { type: 'corpse_looted', tick: state.tick, corpseId: corpse.id, byEntityId: entity.id })
+    delete entity.butchering
+    return
+  }
+  b.nextCutAt = state.tick + cutTicks(entity)
+}
+
 /**
  * LE NŒUD SE VIDE (spec recolte-vivante D1/R1, défriche.ts, cortege-cendre R2) : repousse datée,
  * usure des épuisements, stérilité du front, dérive — et l'événement `node_depleted`. Extrait de
@@ -888,7 +1004,7 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
      */
     case 'harvest_charge_start': {
       const plainte = action.hold === true ? (): void => {} : reject
-      if (actor.harvestCharge || actor.fishing) return // déjà en charge / ligne tendue : le maintien ne relance pas
+      if (actor.harvestCharge || actor.fishing || actor.butchering) return // déjà en charge / ligne tendue / couteau dans la bête : le maintien ne relance pas
       const node = state.nodes.find((n) => n.id === action.nodeId)
       const bad = strikeRejection(state, actor, node, range)
       if (bad) return plainte(bad)
@@ -929,6 +1045,37 @@ export function applyEconomyAction(state: SimState, actorId: number, action: Eco
       if (strikeRejection(state, actor, node, range)) return
       const level = levelOf(actor, NODE_DEFS[node!.type].skill)
       harvestStrike(state, actor, actorId, node!, isCleanFell(charge.ticks, level))
+      return
+    }
+
+    /**
+     * LE DÉPEÇAGE S'OUVRE (spec `depecage.md` G1). Refus parlants sur l'appui, muets sur le
+     * maintien (`hold`) — comme la jauge. Le couteau est OBLIGATOIRE, viande comprise (D4).
+     * Un `hold` pendant une découpe ne fait que la rafraîchir (`heldAt`) : c'est tout son rôle.
+     */
+    case 'butcher_start': {
+      const plainte = action.hold === true ? (): void => {} : reject
+      const enCours = actor.butchering
+      if (enCours !== undefined) {
+        if (enCours.corpseId === action.corpseId) enCours.heldAt = state.tick
+        return
+      }
+      if (actor.harvestCharge || actor.fishing) return
+      const corpse = state.corpses.find((c) => c.id === action.corpseId)
+      const bad = butcherRejection(state, actor, corpse)
+      if (bad) return plainte(bad)
+      // L'APPUI tolère le pas qu'on finissait (`since` = maintenant, comme le lancer) ; le MAINTIEN
+      // qui RÉ-ARME (après un pas, une carcasse vidée…) ne tolère rien — sans quoi un joueur qui
+      // marche le doigt posé ré-armerait à chaque tick sans jamais couper, et s'arrêterait de
+      // marcher avec une découpe déjà à moitié datée.
+      const since = action.hold === true ? state.tick - 2 : state.tick
+      actor.butchering = { corpseId: action.corpseId, since, nextCutAt: state.tick + cutTicks(actor), heldAt: state.tick }
+      return
+    }
+
+    /** LE DOIGT SE LÈVE (G4) : la découpe s'arrête, muette ; ce qui est pris est pris. */
+    case 'butcher_stop': {
+      delete actor.butchering
       return
     }
 
@@ -1164,6 +1311,7 @@ export function advanceEconomy(state: SimState): void {
   // survit, en moins bon que le vert). On re-valide avant de frapper (G8).
   // LA LIGNE TENDUE (peche.md G2/G5) : touche et fuite se datent ici.
   for (const entity of state.entities) advanceFishing(state, entity)
+  for (const entity of state.entities) advanceButchering(state, entity)
   for (const entity of state.entities) {
     const charge = entity.harvestCharge
     if (charge === undefined) continue

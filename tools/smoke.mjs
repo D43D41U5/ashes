@@ -10683,6 +10683,159 @@ const SCENARIOS = {
   },
 
   /**
+   * LE DÉPEÇAGE SE VOIT-IL ? (spec `depecage.md` R1c-R3c) — la carcasse est un réservoir qu'on
+   * ouvre en restant dessus.
+   *
+   * On POSE une vraie carcasse de cerf (`debug_carcass`, coup propre : quartiers, os, peau — la
+   * chaîne réelle de `die()`), couteau de fortune en main, et on joue le geste en lisant l'état :
+   *  ① le clic de coffre est REFUSÉ (« il faut le dépecer ») — une bête ne se fouille pas ;
+   *  ② l'appui ouvre la découpe (`Entity.butchering` dans le snapshot), l'avatar se PENCHE
+   *    (la silhouette tassée) — capture de la carcasse PLEINE ;
+   *  ③ le maintien découpe à la cadence : des `carcass_cut` tombent, le sac se remplit, l'art
+   *    de la carcasse passe à ENTAMÉE — capture ;
+   *  ④ lâcher garde l'acquis ; reprendre va au bout : la viande et la peau sortent, l'OS reste
+   *    (niveau 0) — capture de la carcasse DÉPOUILLÉE.
+   * Le jugement (tirage, cadence, palier) est prouvé au tick près par `depecage.test.ts` ; ici on
+   * prouve que le client SAIT tenir le geste et le montrer.
+   *
+   * LE MAINTIEN EST PILOTÉ DANS LA PAGE, BOUCLE FIGÉE : le rAF headless tourne à ~1 Hz et chaque
+   * frame SwiftShader bloque le fil principal ~800 ms — un `setInterval` à 100 ms n'y tire qu'un
+   * coup par frame, et la sim lâche une découpe non rafraîchie depuis `HOLD_GRACE_TICKS` (1 s).
+   * On ENDORT donc la boucle Phaser pendant le maintien (le Worker, lui, ne dort pas ; les
+   * snapshots arrivent et `syncCorpses` change l'art sur message, pas sur frame), on envoie le
+   * `hold` à 100 ms comme `tickHold` à 60 fps, et on pose UNE frame à la main (`game.step`) avant
+   * chaque capture — « figer et stepper ».
+   *
+   * Exige `--dev` (TP, `debug_grant`, `debug_carcass`).
+   */
+  async depecage(page) {
+    await page.goto(URL)
+    await page.waitForFunction(() => Boolean(window.__BRAISES__?.scene?.registry?.get('worldReady')), null, { timeout: 150000 })
+    await page.evaluate(() => window.__BRAISES__.scene.sendAction({ type: 'debug_set_hour', hour: 11 }))
+    await page.waitForTimeout(400)
+    const agir = async (action, ms = 320) => {
+      await page.evaluate((a) => { window.__BRAISES__.scene.sendAction(a) }, action)
+      await page.waitForTimeout(ms)
+    }
+    const slotDe = (item) => page.evaluate((it) => (window.__BRAISES__.scene.registry.get('inv') ?? [])
+      .findIndex((s) => s?.item === it), item)
+    const moi = () => page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const me = (s.lastEntities ?? []).find((e) => e.id === s.playerId)
+      const compte = (it) => (me?.inventory ?? []).reduce((n, sl) => n + (sl?.item === it ? sl.count : 0), 0)
+      const c = (s.view?.corpses ?? []).find((k) => k.carcass)
+      const reste = c ? c.inventory.reduce((n, sl) => n + (sl ? sl.count : 0), 0) : -1
+      return {
+        butchering: me?.butchering ?? null, quartier: compte('quartier'), peau: compte('raw_hide'), os: compte('bone'), xp: me?.skills?.hunting ?? 0,
+        carcasse: c ? { id: c.id, species: c.carcass.species, reste, texture: s.view.corpseTexture?.(c.id) ?? null } : null,
+        refus: s.registry.get('error')?.reason ?? null,
+      }
+    })
+
+    /** Une frame posée à la main, boucle endormie — la capture montre l'état DU MOMENT. */
+    const poserUneFrame = () => page.evaluate(() => { const g = window.__BRAISES__.scene.game; g.step(g.loop.time + 16, 16) })
+
+    // Une clairière : on se tient là où on est, la bête naît à deux tuiles à l'est.
+    await agir({ type: 'debug_carcass', species: 'deer', clean: true }, 500)
+    await agir({ type: 'debug_grant', item: 'crude_knife' }, 160)
+    const kslot = await slotDe('crude_knife')
+    if (kslot < 0 || kslot >= 6) { console.error(`!! le couteau n'est pas à la ceinture (case ${kslot})`); return {} }
+    await agir({ type: 'set_active_slot', slot: kslot }, 300)
+    let etat = await moi()
+    if (!etat.carcasse) { console.error('!! aucune carcasse dans le snapshot après debug_carcass'); return {} }
+    console.log(`\ncarcasse de ${etat.carcasse.species} #${etat.carcasse.id} : ${etat.carcasse.reste} parts, art ${etat.carcasse.texture}`)
+    // La bête est à deux tuiles : on se rapproche à portée (1,5 t) par un TP d'une tuile.
+    const pos = await page.evaluate(() => { const s = window.__BRAISES__.scene; const me = s.lastEntities.find((e) => e.id === s.playerId); return { x: me.x, y: me.y } })
+    await agir({ type: 'debug_teleport', x: pos.x + 1, y: pos.y }, 900)
+    const scaleDebout = await page.evaluate(() => window.__BRAISES__.scene.avatarScaleY?.() ?? null)
+
+    // ① LE CLIC DE COFFRE EST REFUSÉ.
+    await agir({ type: 'loot_corpse', corpseId: etat.carcasse.id }, 400)
+    etat = await moi()
+    console.log(etat.refus === 'il faut le dépecer' && etat.quartier === 0
+      ? '   ✓ une bête ne se fouille pas : « il faut le dépecer », rien au sac'
+      : `   ✗ loot_corpse : refus ${JSON.stringify(etat.refus)}, quartiers ${etat.quartier}`)
+
+    // La bête PLEINE, avant le premier coup de lame (la capture coûte des secondes : prise
+    // après l'appui, elle montrerait déjà une coupe).
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.sleep())
+    await poserUneFrame()
+    await page.screenshot({ path: `${OUT}/depecage-pleine.png` })
+
+    // ② L'APPUI, ET LE MAINTIEN PILOTÉ DANS LA PAGE.
+    await page.evaluate((corpseId) => {
+      const s = window.__BRAISES__.scene
+      window.__DEPECAGE__ = { coupes: [], timer: null }
+      s.host.onMessage((msg) => {
+        if (msg.type !== 'snapshot') return
+        for (const e of msg.events ?? []) if (e.type === 'carcass_cut' && e.entityId === s.playerId) window.__DEPECAGE__.coupes.push(e.item)
+      })
+      s.game.loop.sleep()
+      s.sendAction({ type: 'butcher_start', corpseId })
+      window.__DEPECAGE__.timer = setInterval(() => s.sendAction({ type: 'butcher_start', corpseId, hold: true }), 100)
+    }, etat.carcasse.id)
+    await page.waitForTimeout(500)
+    etat = await moi()
+    const ouvert = Boolean(etat.butchering)
+    console.log(ouvert ? `   ✓ la découpe est ouverte (prochaine coupe au tick ${etat.butchering.nextCutAt})` : `   ✗ pas de butchering dans le snapshot (refus ${JSON.stringify(etat.refus)})`)
+    await poserUneFrame()
+    const penche = await page.evaluate(() => {
+      const s = window.__BRAISES__.scene
+      const me = s.lastEntities.find((e) => e.id === s.playerId)
+      return { scaleY: s.avatarScaleY?.() ?? null, butchering: me?.butchering !== undefined }
+    })
+    console.log(penche.scaleY !== null && scaleDebout !== null && penche.scaleY < scaleDebout - 0.01
+      ? `   ✓ l'avatar se PENCHE (scaleY ${scaleDebout.toFixed(2)} → ${penche.scaleY.toFixed(2)})`
+      : `   ✗ l'avatar ne se penche pas (scaleY ${scaleDebout} → ${penche.scaleY})`)
+
+    // ③ LE MAINTIEN DÉCOUPE : on GUETTE la première coupe (1,5 s à niveau 0) et on lit l'état
+    //    aussitôt — pas après une attente murale (une capture SwiftShader coûte des secondes, et
+    //    trois coupes seraient passées) : la bête doit être lue ENTAMÉE avant d'être dépouillée.
+    const coupes = await page.evaluate(async () => {
+      const t0 = performance.now()
+      while (window.__DEPECAGE__.coupes.length < 1 && performance.now() - t0 < 6000) await new Promise((r) => setTimeout(r, 40))
+      return [...window.__DEPECAGE__.coupes]
+    })
+    etat = await moi()
+    console.log(coupes.length >= 1 && etat.quartier + etat.peau === coupes.length
+      ? `   ✓ ${coupes.length} coupes tenues (${coupes.join(', ')}) — au sac : ${etat.quartier} quartier(s), ${etat.peau} peau ; XP chasse ${etat.xp}`
+      : `   ✗ coupes ${JSON.stringify(coupes)}, sac ${etat.quartier}/${etat.peau}, refus ${JSON.stringify(etat.refus)}`)
+    console.log(etat.carcasse && /-1$/.test(etat.carcasse.texture ?? '')
+      ? `   ✓ la carcasse est ENTAMÉE à l'écran (${etat.carcasse.texture}, ${etat.carcasse.reste} parts restantes)`
+      : `   ✗ art de carcasse : ${etat.carcasse?.texture} (${etat.carcasse?.reste} restantes)`)
+    await poserUneFrame()
+    await page.screenshot({ path: `${OUT}/depecage-entamee.png` })
+
+    // ④ LÂCHER GARDE L'ACQUIS ; REPRENDRE VA AU BOUT — l'os reste (niveau 0).
+    await page.evaluate(() => { clearInterval(window.__DEPECAGE__.timer); window.__BRAISES__.scene.sendAction({ type: 'butcher_stop' }) })
+    await page.waitForTimeout(400)
+    const lache = await moi()
+    const coupesAuLacher = await page.evaluate(() => window.__DEPECAGE__.coupes.length)
+    console.log(!lache.butchering && lache.quartier + lache.peau === coupesAuLacher
+      ? `   ✓ lâché : la découpe s’arrête, le sac garde ses ${coupesAuLacher} part(s)`
+      : `   ✗ lâché : butchering ${JSON.stringify(lache.butchering)}, sac ${lache.quartier}/${lache.peau}, ${coupesAuLacher} coupes`)
+    await page.evaluate((corpseId) => {
+      const s = window.__BRAISES__.scene
+      s.sendAction({ type: 'butcher_start', corpseId })
+      window.__DEPECAGE__.timer = setInterval(() => s.sendAction({ type: 'butcher_start', corpseId, hold: true }), 100)
+    }, etat.carcasse.id)
+    await page.waitForTimeout(5200)
+    await page.evaluate(() => clearInterval(window.__DEPECAGE__.timer))
+    const fin = await moi()
+    const total = await page.evaluate(() => window.__DEPECAGE__.coupes.length)
+    console.log(fin.quartier === 2 && fin.peau === 1 && fin.os === 0 && fin.carcasse && fin.carcasse.reste === 2 && !fin.butchering
+      ? `   ✓ au bout : 2 quartiers + 1 peau au sac, l'OS reste sur la bête (niveau 0), la découpe s'est arrêtée d'elle-même (${total} coupes)`
+      : `   ✗ fin : sac ${fin.quartier}/${fin.peau}/${fin.os}, carcasse ${JSON.stringify(fin.carcasse)}, butchering ${JSON.stringify(fin.butchering)}, ${total} coupes`)
+    console.log(fin.carcasse && /-2$/.test(fin.carcasse.texture ?? '')
+      ? `   ✓ la carcasse est DÉPOUILLÉE à l'écran (${fin.carcasse.texture})`
+      : `   ✗ art final : ${fin.carcasse?.texture}`)
+    await poserUneFrame()
+    await page.screenshot({ path: `${OUT}/depecage-depouillee.png` })
+    await page.evaluate(() => window.__BRAISES__.scene.game.loop.wake())
+    return { coupes: total, quartier: fin.quartier, peau: fin.peau, os: fin.os, reste: fin.carcasse?.reste ?? null }
+  },
+
+  /**
    * LE MINAGE À MAÎTRISE MARCHE-T-IL ? (spec recolte-maitrise, verbe 2)
    *
    * On se pose contre un rocher et on vérifie DEUX faits : (1) la LUEUR DU BON FLANC se

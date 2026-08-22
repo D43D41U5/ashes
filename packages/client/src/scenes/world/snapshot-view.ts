@@ -33,6 +33,7 @@ import {
 } from '@ashes/sim'
 import { estUnCoinDePeche, feuillageDenude, fireStateAt, floreGelee, hash2, tailleDeBloc, TERRAIN_CLIFF, terrainAt, type SimState, type WorldMap } from '@ashes/sim'
 import { cliffKey } from '../../render/cliff-art'
+import { cleCarcasse, etatCarcasse } from '../../render/carcasse-art'
 import Phaser from 'phaser'
 import { FONT } from '../ui/typography'
 import { windSway } from '../../render/wind'
@@ -257,7 +258,9 @@ const SAPLING_WIND_TAKE = 0.4
 export const CROUCH_FACTOR = 0.72
 
 function isCrouched(monster: Monster | undefined, entity: Entity): boolean {
-  if (!monster) return entity.gait === 'sneak'
+  // QUI DÉPÈCE SE PENCHE (spec `depecage.md` R2c) : la même silhouette tassée que le furtif —
+  // le maintien se VOIT sur le corps, puisqu'il n'a pas de jauge.
+  if (!monster) return entity.gait === 'sneak' || entity.butchering !== undefined
   return monster.alpha === true && (monster.stalking === true || monster.eatingUntil !== undefined)
 }
 
@@ -668,6 +671,17 @@ export class SnapshotView {
    * seul. `at` en ms client. */
   private stumps: { tx: number; ty: number; type: NodeType; at: number }[] = []
   private corpseSprites = new Map<number, Phaser.GameObjects.Image>()
+
+  /** Où le sprite d'un cadavre est posé cette frame (px monde) — pour y faire gicler une coupe. */
+  corpsePx(corpseId: number): { x: number; y: number } | null {
+    const s = this.corpseSprites.get(corpseId)
+    return s ? { x: s.x, y: s.y } : null
+  }
+
+  /** La texture qu'un cadavre porte cette frame (le smoke LIT l'état d'art de la carcasse). */
+  corpseTexture(corpseId: number): string | null {
+    return this.corpseSprites.get(corpseId)?.texture.key ?? null
+  }
   /** Les gouttes de sang (C9), poolées : la sim les plafonne, le pool suit. */
   private bloodPool: Phaser.GameObjects.Image[] = []
   /** Les terriers de lapin (C16), poolés. */
@@ -2174,15 +2188,21 @@ export class SnapshotView {
     const seen = new Set<number>()
     for (const c of corpses) {
       seen.add(c.id)
-      if (!this.corpseSprites.has(c.id)) {
-        // Ossements à plat : centrés sur la position de l'entité (pas d'ancrage
-        // pieds), mais dans la bande de tri — un buisson au sud les recouvre.
+      // LA CARCASSE (spec `depecage.md` R1c) : une bête reste la bête, couchée, et son art suit
+      // ce qui lui RESTE — pleine, entamée, dépouillée. Une dépouille humaine : les ossements.
+      const cle = c.carcass ? cleCarcasse(c.carcass.species, etatCarcasse(c)) : 'spr-corpse'
+      const existant = this.corpseSprites.get(c.id)
+      if (existant === undefined) {
+        // À plat : centrés sur la position de l'entité (pas d'ancrage pieds), mais dans
+        // la bande de tri — un buisson au sud les recouvre.
         const lift = this.warp?.lift(c.x, c.y) ?? 0
         const sprite = this.scene.add
-          .image(c.x * TILE_PX, c.y * TILE_PX - lift, 'spr-corpse')
+          .image(c.x * TILE_PX, c.y * TILE_PX - lift, cle)
           .setOrigin(0.5, 0.5)
           .setDepth(corpseDepth(c.y, TILE_PX))
         this.corpseSprites.set(c.id, sprite)
+      } else if (existant.texture.key !== cle) {
+        existant.setTexture(cle) // une coupe a porté : la carcasse change d'état
       }
     }
     for (const [id, sprite] of this.corpseSprites) {

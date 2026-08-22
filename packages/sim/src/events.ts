@@ -176,6 +176,14 @@ export type SimEvent =
   | { type: 'cendreux_prowl'; tick: number; targetEntityId: number; count: number; x: number; y: number }
   | { type: 'cendreux_cri'; tick: number; entityId: number; x: number; y: number; count: number }
   | { type: 'corpse_looted'; tick: number; corpseId: number; byEntityId: number }
+  /**
+   * UNE PART DE LA CARCASSE (spec `depecage.md` G2) : une coupe a porté — ce qui sort est tiré par
+   * la sim (D3), acquis à l'instant (D2). Le fait de récolte du dépeçage : le client y peint le
+   * coup de lame et inscrit le butin au HUD, la chronique y lit la chasse qui nourrit. Il ne
+   * double PAS `resource_harvested` — une carcasse n'est pas un nœud, et un `nodeId` inventé
+   * aurait fait tressaillir un arbre qui n'existe pas.
+   */
+  | { type: 'carcass_cut'; tick: number; entityId: number; corpseId: number; item: ItemId }
   | { type: 'structure_repaired'; tick: number; structureId: number; byEntityId: number }
   /** LE POTAGER (agriculture voie A) : semé, puis récolté quand mûr. */
   | { type: 'crop_planted'; tick: number; structureId: number; byEntityId: number }

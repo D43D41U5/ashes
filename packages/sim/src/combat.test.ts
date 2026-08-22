@@ -725,11 +725,26 @@ describe('les monstres (A6)', () => {
       entity(sim, a).stamina = 100
       strike(sim, a, 1, 0)
     }
+    // UNE BÊTE NE SE FOUILLE PAS, ELLE SE DÉPÈCE (spec `depecage.md` D1/D4) : le clic de coffre est
+    // refusé, le couteau en main ouvre le réservoir, et on TIENT jusqu'à la dernière part.
     const corpse = sim.corpses[0]!
+    expect(corpse.carcass?.species).toBe('boar')
     entity(sim, a).x = corpse.x
     entity(sim, a).y = corpse.y
+    drainEvents(sim)
     tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'loot_corpse', corpseId: corpse.id } }])
+    expect(drainEvents(sim).some((e) => e.type === 'action_rejected' && e.reason === 'il faut le dépecer')).toBe(true)
+    expect(countOf(entity(sim, a).inventory, 'raw_meat')).toBe(0)
+    grantHeld(sim, a, 'crude_knife')
+    for (let t = 0; t < 10 * BALANCE.TICK_RATE_HZ && sim.corpses.some((c) => c.id === corpse.id); t++) {
+      tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'butcher_start', corpseId: corpse.id, hold: t > 0 } }])
+    }
+    // Niveau 0 : la viande sort, l'OS reste sur la bête (D5) — la carcasse demeure, avec lui seul.
     expect(countOf(entity(sim, a).inventory, 'raw_meat')).toBe(3)
+    expect(countOf(entity(sim, a).inventory, 'bone')).toBe(0)
+    expect(countOf(sim.corpses.find((c) => c.id === corpse.id)!.inventory, 'bone')).toBe(1)
+    const lance = entity(sim, a).inventory.findIndex((s) => s?.item === 'spear')
+    tick(sim, [{ entityId: a, dx: 0, dy: 0, action: { type: 'set_active_slot', slot: lance } }])
     entity(sim, a).x = 10.5
     entity(sim, a).y = 10.5
     for (let t = 0; t < BALANCE.GATHER_COOLDOWN_TICKS; t++) tick(sim)

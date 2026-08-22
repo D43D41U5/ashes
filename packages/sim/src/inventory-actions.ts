@@ -231,6 +231,8 @@ export function applyInventoryAction(state: SimState, actorId: number, action: I
       const corpse = kind === 'corpse' ? state.corpses.find((c) => c.id === containerId) : undefined
       if (kind === 'structure' && structure === undefined) return reject('conteneur inconnu')
       if (kind === 'corpse' && corpse === undefined) return reject('conteneur inconnu')
+      // UNE BÊTE NE SE FOUILLE PAS (spec `depecage.md` R3) : son réservoir s'ouvre au couteau.
+      if (corpse?.carcass !== undefined) return reject('il faut le dépecer')
 
       const range = BALANCE.INTERACT_RANGE
       const cx = structure ? structure.tx + 0.5 : corpse!.x

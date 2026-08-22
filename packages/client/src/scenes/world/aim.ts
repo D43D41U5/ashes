@@ -166,6 +166,12 @@ export interface AimTarget {
   ty: number
   /** Le cadavre sur la tuile (il PRIME sur le nœud : on ouvre ce qu'on vient de tuer). */
   corpseId: number | null
+  /**
+   * LE CADAVRE VISÉ EST-IL UNE CARCASSE (spec `depecage.md` D1) ? Une bête ne se FOUILLE pas,
+   * elle se DÉPÈCE — couteau en main, clic MAINTENU. Faux pour une dépouille humaine (le coffre)
+   * et quand aucun cadavre n'est visé.
+   */
+  carcass: boolean
   /** Le nœud RÉCOLTABLE (stock > 0) sur la tuile. */
   nodeId: number | null
   /**
@@ -302,6 +308,7 @@ export function aimAt(
     tx,
     ty,
     corpseId: corpse?.id ?? null,
+    carcass: corpse?.carcass !== undefined,
     nodeId: node?.id ?? null,
     nodeTool: node ? NODE_DEFS[node.type].tool : null,
     entityId,
@@ -569,6 +576,12 @@ export function clickToAction(
   // hache d'atelier, et sur un filon il verrouille le rocher.
   if (hand && target.inRange && target.nodeId !== null && estLOutilDuNoeud(hand.held, target.nodeTool))
     return { type: 'harvest', nodeId: target.nodeId }
+  // LE COUTEAU SUR UNE CARCASSE DÉPÈCE (spec `depecage.md` G6) — même logique que l'outil sur son
+  // nœud : la CIBLE tranche. Le couteau n'est pas une arme (`WEAPON_DAMAGE` l'ignore), il ne
+  // retombe donc jamais sur la frappe ; et sans lui, une carcasse ne répond à rien — la sim
+  // refuserait, et un refus n'est pas gratuit (le curseur le dit avant, cf. `interactTargetAt`).
+  if (hand && target.inRange && target.corpseId !== null && target.carcass && estLOutilDuNoeud(hand.held, 'knife'))
+    return { type: 'butcher_start', corpseId: target.corpseId }
 
   // FRAPPER : une arme en main frappe TOUJOURS — on ne coupe pas du bois avec une
   // lance, et surtout on ne veut pas qu'un clic de panique parte récolter un buisson
@@ -578,7 +591,8 @@ export function clickToAction(
   // Hors portée, on n'émet rien : la sim refuserait, et un refus n'est pas
   // gratuit (c'est un SimEvent que la chronique consomme — spec recolte.md G7).
   if (target.inRange) {
-    if (target.corpseId !== null) return { type: 'loot_corpse', corpseId: target.corpseId }
+    // UNE BÊTE NE SE FOUILLE PAS (`depecage.md` R3) : sans couteau, la carcasse est muette.
+    if (target.corpseId !== null) return target.carcass ? null : { type: 'loot_corpse', corpseId: target.corpseId }
     if (target.nodeId !== null) return { type: 'harvest', nodeId: target.nodeId }
     // RÉCOLTER LE POTAGER (agriculture voie A) : une parcelle MÛRE, mains libres → on cueille
     // (comme un nœud). La sim revalide la maturité, l'appartenance, la portée.

@@ -114,8 +114,10 @@ function nearestContainer(deps: InputDeps): { kind: 'structure' | 'corpse'; id: 
   const range = BALANCE.INTERACT_RANGE
   const withinSq = range * range
 
+  // UNE BÊTE NE S'OUVRE PAS AU TAB (spec `depecage.md` R3) : son réservoir se vide au couteau.
   const corpse = deps
     .corpses()
+    .filter((c) => c.carcass === undefined)
     .map((c) => ({ id: c.id, d: (c.x - p.x) ** 2 + (c.y - p.y) ** 2 }))
     .filter((c) => c.d <= withinSq)
     .sort((a, b) => a.d - b.d)[0]
@@ -649,6 +651,23 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
   let fellNodeId = -1
   let lastFellAt = -Infinity
 
+  /**
+   * LE DÉPEÇAGE (spec `depecage.md` R3c) — sœur de l'abattage : le clic MAINTENU sur une
+   * carcasse, couteau en main, ouvre la découpe (`butcher_start`), puis la TIENT en vie par
+   * un `hold` cadencé (`CHARGE_AIM_MS`, comme la jauge) — la sim coupe à sa cadence à elle et
+   * lâche tout si le maintien cesse d'arriver. Le doigt levé ou un overlay envoient
+   * `butcher_stop` : ce qui est pris est pris.
+   */
+  let butchering = false
+  let butcherCorpseId = -1
+  let lastButcherAt = -Infinity
+
+  const releaseButcher = (): void => {
+    if (!butchering) return
+    butchering = false
+    deps.sendAction({ type: 'butcher_stop' })
+  }
+
   /** La frappe part (le nœud est re-validé côté sim — G8 : muet s'il n'y a plus rien). */
   const releaseFell = (): void => {
     if (!felling) return
@@ -778,6 +797,15 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       deps.sendAction({ type: 'harvest_charge_start', nodeId: action.nodeId })
       return
     }
+    // DÉPECER, c'est TENIR (spec `depecage.md` D2) : l'appui ouvre la découpe, le maintien la
+    // garde en vie, la sim coupe à sa cadence. Rien ne part au relâchement.
+    if (action?.type === 'butcher_start') {
+      butchering = true
+      butcherCorpseId = action.corpseId
+      lastButcherAt = scene.time.now
+      deps.sendAction(action)
+      return
+    }
     // ABATTRE, c'est CHARGER. Un clic sur un arbre n'émet pas `harvest` : il arme la
     // jauge, et le coup ne part qu'au relâchement (propre s'il tombe dans le vert). La
     // pierre et les plantes, elles, tombent dans le `if (action)` ci-dessous (instantané).
@@ -820,6 +848,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     mining = false
     releaseCharge(pointer)
     releaseFell()
+    releaseButcher()
   })
 
   /** Appelée à chaque frame par WorldScene : entretient le clic maintenu. */
@@ -901,6 +930,26 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
       }
       return
     }
+    // LE DÉPEÇAGE en cours : on lâche si le bouton se lève ou qu'un overlay s'ouvre — et si la
+    // carcasse a DISPARU du snapshot (vidée, mangée, pourrie), on cesse de tenir dans le vide.
+    // Sinon on RAFRAÎCHIT le maintien, cadencé : c'est lui qui tient la découpe en vie.
+    if (butchering && (overlayOpen() || !pointer.leftButtonDown())) {
+      releaseButcher()
+      holding = false
+      return
+    }
+    if (butchering) {
+      if (!deps.corpses().some((c) => c.id === butcherCorpseId)) {
+        butchering = false
+        holding = false
+        return
+      }
+      if (scene.time.now - lastButcherAt >= CHARGE_AIM_MS) {
+        lastButcherAt = scene.time.now
+        deps.sendAction({ type: 'butcher_start', corpseId: butcherCorpseId, hold: true })
+      }
+      return
+    }
     // LE MINAGE en cours : on lâche si le bouton se lève, l'overlay s'ouvre, ou le filon
     // est VIDÉ ; sinon on refrappe à la cadence du rechargement, le curseur MAINTENANT
     // désignant le flanc. Le nœud reste verrouillé (le curseur peut sortir de sa tuile).
@@ -961,6 +1010,7 @@ export function bindInputs(scene: Phaser.Scene, deps: InputDeps): MovementBindin
     // remis à plat en nous faisant renaître.
     aiming = false
     felling = false
+    butchering = false
     mining = false
     holding = false
   }

@@ -201,6 +201,11 @@ export function soundForEvent(event: SimEvent, onMe: boolean): SoundSpec | null 
     // ── BÂTIR, CRAFTER, MANGER ───────────────────────────────────────────────────────────
     case 'resource_harvested':
       return onMe ? { wave: 'square', freq: 440, freqEnd: 520, dur: 0.06, gain: 0.05, lowpass: 2200 } : null
+    // LA COUPE (depecage.md G2) : la sœur du coup de récolte, plus BASSE et plus MATE — une lame
+    // dans la chair, pas une hache dans le bois. Le seul retour du maintien : il doit se
+    // distinguer du « +1 bois » à l'oreille.
+    case 'carcass_cut':
+      return onMe ? { wave: 'triangle', freq: 300, freqEnd: 240, dur: 0.07, gain: 0.06, lowpass: 1600 } : null
     // LA TOUCHE (peche.md R3) : un son SEC, court, qui DESCEND — le flotteur qui plonge. C'est le
     // télégraphe d'une fenêtre de 250 à 600 ms : il doit partir avant que l'œil ait lu l'eau.
     // `triangle` (un fait sur une chose), pas de traîne.

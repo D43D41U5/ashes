@@ -88,6 +88,7 @@ export { POI,
   TOOL_YIELD,
   FISHING,
   FISH_SPECIES,
+  BUTCHER,
 } from './balance'
 export type {
   CarryTier,
@@ -180,7 +181,7 @@ export { chebyshev } from './geometry'
 // est une arme (décision d'Alexis 2026-08-20), il doit savoir si l'objet en main est l'outil de
 // la famille du nœud visé. Il ne RECOPIE pas la règle — il appelle celle-ci, qui reste « LA règle,
 // en un seul endroit » dont `TOOL_YIELD` et `TOOL_RANK` dérivent tous les deux.
-export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel, recipeState, fellGreenWidth, isCleanFell, flankOfAim, mineGoodFlank, mineTolerance, isCleanMine, forageRichness, forageBounty, maxTierByLevel, effectiveTier, toolTier, estUnCoinDePeche, especesDuCoin, fishingWindowTicks, coinPris } from './economy'
+export { applyEconomyAction, advanceEconomy, advanceCraft, advanceSpoilage, nodeAt, skillLevel, recipeState, fellGreenWidth, isCleanFell, flankOfAim, mineGoodFlank, mineTolerance, isCleanMine, forageRichness, forageBounty, maxTierByLevel, effectiveTier, toolTier, estUnCoinDePeche, especesDuCoin, fishingWindowTicks, coinPris, butcherRejection, cutTicks, partsEligibles } from './economy'
 export type { ResourceNode, EconomyAction, CraftOrder, RecipeState } from './economy'
 export { treeJitter } from './economy' // Tick-critique : collision, rendu, prédiction chaque frame
 // LE DÉFRICHEMENT (`defriche.ts`) : le client applique le MÊME prédicat que la sim — c'est

@@ -11,6 +11,7 @@ import { generateLitStructures } from '../render/lit-structures'
 import { generateBatiArt } from '../render/bati-art'
 import { generateFireProp, generateLitProps, FLOWERS, FLOWER_STEM_COLOR, PEBBLES, PEBBLE_TONES, PEBBLE_SHADOW, pebbleShadowRects, variantBase, CHAMPIGNON_RECTS, LEAF_PILE_RECTS, CHICOT_RECTS, POUSSIERE_RECTS, BLOC_RECTS } from '../render/lit-props'
 import { makeCliffTextures } from '../render/cliff-art'
+import { makeCarcasseTextures } from '../render/carcasse-art'
 import { makePoiTextures } from './world/poi-art'
 import { makeBorneTextures } from './world/borne-layer'
 import { makeGueStoneTexture } from './world/gue-stones'
@@ -44,6 +45,10 @@ export class BootScene extends Phaser.Scene {
     g.fillRect(5, 4, 2, 8)
     g.fillRect(9, 4, 2, 8)
     g.generateTexture('spr-corpse', 16, 16)
+    g.clear()
+    // LES CARCASSES (spec `depecage.md` R1c) : une bête morte reste la bête — couchée, par
+    // espèce, et son art suit ce qui lui reste (pleine, entamée, dépouillée).
+    makeCarcasseTextures(g)
     g.destroy()
 
     // LE REGARD (audit UI/UX P3-11) : un pion sombre qu'on POSE au bord de l'avatar,

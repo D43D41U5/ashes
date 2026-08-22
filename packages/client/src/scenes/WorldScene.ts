@@ -595,6 +595,10 @@ export class WorldScene extends Phaser.Scene {
    * de commandes de dessin dit qu'il se passe quelque chose, jamais QUOI.
    */
   lastEntities: Entity[] = []
+  /** La hauteur RENDUE de mon avatar, en facteur d'échelle — le smoke y lit la posture (penché = tassé). */
+  avatarScaleY(): number {
+    return this.playerSprite.scaleY
+  }
   /** Suivi des marcheurs pour les remous de l'eau (spec da-feeling R11) : dernière
    *  position vue et date du dernier pas — la force du remous s'en déduit. */
   private readonly waderTrack = new Map<
@@ -639,6 +643,8 @@ export class WorldScene extends Phaser.Scene {
   private myCharging = false
   /** MA ligne est-elle tendue (le dernier snapshot) ? Le clic suivant FERRE au lieu de lancer. */
   private myFishing = false
+  /** JE DÉPÈCE (depecage.md R2c) : la silhouette se tasse, comme le pas lent. Lu du snapshot. */
+  private myButchering = false
   /** Les WIND-UPS du dernier snapshot : qui arme un coup, vers où, avec QUELLE FORME.
    *  C'est le TÉLÉGRAPHE du GDD §7 — on doit voir venir le coup, le sien comme
    *  celui d'en face. Il vient du snapshot, jamais du clic (invariant §3). */
@@ -1816,7 +1822,7 @@ export class WorldScene extends Phaser.Scene {
     const render = renderPosition(this.prediction, world, input, speedScale)
     // La silhouette du rampeur se TASSE (spec chasse C19) — la sienne aussi :
     // le joueur doit SENTIR sa posture sans regarder une jauge.
-    this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player', sneak)
+    this.view.syncActor(this.playerSprite, render.x, render.y, 'spr-player', sneak || this.myButchering)
     // LA COURSE SE VOIT (Alexis, 2026-08-01) — la foulée soulève le sol, le souffle qui
     // manque tasse la silhouette, et le mur la fait broncher. APRÈS `syncActor` : c'est
     // lui qui vient de poser les pieds (relief du warp compris), et c'est sa hauteur
@@ -2150,6 +2156,7 @@ export class WorldScene extends Phaser.Scene {
       this.myWindup = me.windup !== undefined
       this.myCharging = me.charge !== undefined
       this.myFishing = me.fishing !== undefined
+      this.myButchering = me.butchering !== undefined
       this.myWeapon = weaponKind(me)
       this.reconcile(me, msg.lastProcessedInput)
       // UN VOISIN À PORTÉE D'UN DON : un PNJ d'un AUTRE village (ou de nul village mien),
@@ -2371,6 +2378,14 @@ export class WorldScene extends Phaser.Scene {
         this.pecheFx.caught(event.entityId, event.item, this.time.now)
       } else if (event.type === 'fish_escaped') {
         this.pecheFx.escaped(event.entityId, this.time.now)
+      } else if (event.type === 'carcass_cut') {
+        // LA COUPE (depecage.md R2c) : une part sort de la bête — le sang gicle à l'OPPOSÉ du
+        // chasseur (la règle des gerbes), pour quiconque dépèce à l'écran ; le butin, lui,
+        // n'est que le mien.
+        const ou = this.view.corpsePx(event.corpseId)
+        const qui = event.entityId === this.playerId ? this.playerSprite : (this.view.others.get(event.entityId)?.sprite ?? null)
+        if (ou && qui) this.sangFx.gicler(ou.x, ou.y, 4, this.time.now, qui.x, qui.y)
+        if (event.entityId === this.playerId) publishPickup(this.registry, event.item, 1)
       } else if (event.type === 'resource_harvested' && event.entityId === this.playerId) {
         // LE COUP A PORTÉ — et on ne le sait QUE parce que la sim le dit (G9). Rien
         // n'est affiché au clic : un « +1 bois » qui monte avant le refus de la sim

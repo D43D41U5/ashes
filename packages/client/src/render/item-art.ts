@@ -47,6 +47,8 @@ export const ITEM_LABELS: Record<ItemId, string> = {
   cooked_trout: 'Truite grillée',
   cooked_pike: 'Brochet grillé',
   crude_rod: 'Canne de fortune',
+  crude_knife: 'Couteau de fortune',
+  bone: 'Os',
   quartier: 'Quartier',
   cooked_meat: 'Viande cuite',
   raw_hide: 'Peau brute',
@@ -543,6 +545,26 @@ export const ITEM_PAINTS: Record<ItemId, ItemPaint> = {
     g.fillStyle(0x8d6b40).fillRect(2, 12, 1, 1).fillRect(6, 8, 1, 1).fillRect(10, 4, 1, 1) // la face claire
     g.fillStyle(0xcfc4a4).fillRect(13, 4, 1, 7) // la ligne, qui pend de la pointe
     g.fillStyle(0xb9b2a0).fillRect(12, 11, 2, 1).fillRect(12, 10, 1, 1) // l'hameçon
+  },
+
+  // LE COUTEAU DE FORTUNE (depecage.md D4) : un éclat de pierre grise emmanché sur un bout de
+  // bois, en diagonale comme la canne — le manche en bas à gauche, la lame vers le haut à
+  // droite, un fil clair sur le tranchant. Un outil, pas une arme : il n'a pas la garde de l'épieu.
+  crude_knife: (g) => {
+    g.fillStyle(0x6a4c2c).fillRect(2, 11, 3, 3).fillRect(4, 9, 3, 3) // le manche en bois
+    g.fillStyle(0x8d6b40).fillRect(2, 11, 1, 1).fillRect(4, 9, 1, 1) // sa face claire
+    g.fillStyle(0xcfc4a4).fillRect(6, 8, 2, 2) // la ligature
+    g.fillStyle(0x7d7f82).fillRect(7, 5, 3, 3).fillRect(9, 3, 3, 3).fillRect(11, 2, 2, 2) // l'éclat de pierre
+    g.fillStyle(0xb4b7ba).fillRect(9, 3, 1, 1).fillRect(11, 2, 1, 1) // le fil du tranchant, clair
+    g.fillStyle(0x4f5154).fillRect(8, 7, 2, 1).fillRect(10, 5, 2, 1) // le dos de la lame, dans l'ombre
+  },
+
+  // L'OS (depecage.md D5) : un long os blanc-crème, deux têtes, une ombre sur le dessous.
+  bone: (g) => {
+    g.fillStyle(0xe6ddc8).fillRect(4, 7, 8, 3) // le fût
+    g.fillStyle(0xe6ddc8).fillCircle(3, 6, 2).fillCircle(3, 10, 2).fillCircle(13, 6, 2).fillCircle(13, 10, 2) // les têtes
+    g.fillStyle(0xf4eee0).fillRect(4, 7, 8, 1) // le dessus éclairé
+    g.fillStyle(0xb8ad95).fillRect(4, 9, 8, 1) // le dessous
   },
 
   // Quartier : un GROS morceau de viande sur l'os — plus imposant que la pièce crue.

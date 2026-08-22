@@ -1008,6 +1008,8 @@ export const CIRCLES = {
  */
 /** Le stock d'un coin : une sortie de pêche, pas une ferme. Hoisté pour `NODE_DEFS`. */
 const FISHING_STOCK = 6
+/** Trente coupes par couteau de fortune (depecage.md D4) — partagé entre `TOOL_DURABILITIES` et `BUTCHER`. */
+const BUTCHER_KNIFE_CUTS = 30
 export const FISHING = {
   STOCK: FISHING_STOCK,
   /** L'attente de la touche, AVEC un ver au bout (D4) : ça mord vite. Fourchette uniforme. */
@@ -1020,6 +1022,31 @@ export const FISHING = {
   WINDOW_PER_LEVEL: 0.15,
   /** …plafonné à ce multiple de la fenêtre de l'espèce : le brochet reste un réflexe. */
   WINDOW_CAP: 2,
+} as const
+
+/**
+ * LE DÉPEÇAGE (spec `depecage.md`, sept décisions d'Alexis du 2026-08-22). Le cadavre d'une bête est
+ * un RÉSERVOIR (`Corpse.inventory`, marqué `carcass`) ; le clic MAINTENU, couteau en main, en tire
+ * une part toutes les `CUT_TICKS` — tirée au hasard parmi ce qui reste (D3), acquise à l'instant
+ * (D2). Le niveau `hunting` raccourcit la cadence (gain plat, D5) et ouvre l'OS (`BONE_LEVEL`).
+ */
+export const BUTCHER = {
+  /** Une coupe toutes les 1,5 s à niveau 0 : un cerf propre (3 parts) ≈ 5 s — C12 mord. */
+  CUT_TICKS: ticksFor(1.5),
+  /** Le plancher : l'expert découpe vite, pas en un tick. */
+  CUT_TICKS_MIN: 12,
+  /** Ce que chaque niveau de `hunting` retire à la cadence (ticks) — un gain PLAT (GDD A). */
+  SPEED_PER_LEVEL: 3,
+  /** Le maintien non rafraîchi expire après une seconde. Le client rafraîchit toutes les 100 ms
+   *  (`CHARGE_AIM_MS`) : la marge absorbe un accroc de rendu sans lâcher la découpe — sa seule
+   *  raison d'être est le client qui a DISPARU (déconnexion), pas celui qui a eu une frame lente. */
+  HOLD_GRACE_TICKS: ticksFor(1),
+  /** Le palier « dépeçage efficace » (GDD P2) : l'os entre dans le tirage. √(400/100) = 2. */
+  BONE_LEVEL: 2,
+  /** L'XP d'une coupe : celle d'un coup de récolte (D7). */
+  XP_PER_CUT: 1,
+  /** La durabilité du couteau de fortune, en coupes. */
+  KNIFE_CUTS: BUTCHER_KNIFE_CUTS,
 } as const
 
 /** Une espèce : son eau, son poids de tirage, sa fenêtre de ferrage (ticks), ce qu'elle donne. */
@@ -1095,7 +1122,7 @@ export type NodeType =
  */
 export type ToolTier = 'none' | 'crude' | 'basic' | 'iron' | 'steel'
 /** Les familles d'outil de récolte : ce qu'un nœud EXIGE en main. `rod` = la canne (peche.md). */
-export type ToolFamily = 'axe' | 'pickaxe' | 'rod'
+export type ToolFamily = 'axe' | 'pickaxe' | 'rod' | 'knife'
 export const TOOL_RANK: Record<ToolTier, number> = { none: 0, crude: 1, basic: 2, iron: 3, steel: 4 }
 
 export interface NodeDef {
@@ -1229,6 +1256,8 @@ export const TOOL_TIERS: Record<
   // conséquence, le coin de pêche ignore `TOOL_YIELD` et n'exige que `crude`. Le jour d'une canne
   // d'atelier, on remplit la marche `basic` et la fortune redevient `crude` d'elle-même.
   rod: { crude: 'crude_rod', basic: 'crude_rod', iron: 'crude_rod', steel: 'crude_rod' },
+  // LE COUTEAU, une marche aussi (spec `depecage.md` G5) : même raison, même forme.
+  knife: { crude: 'crude_knife', basic: 'crude_knife', iron: 'crude_knife', steel: 'crude_knife' },
 }
 
 /**
@@ -1253,6 +1282,7 @@ export const TOOL_DURABILITIES: Partial<Record<import('./items').ItemId, number>
   crude_pickaxe: 20,
   crude_spear: 20,
   crude_rod: 20, // vingt ferrages (peche.md D4) : une canne de fortune, pas un outil de métier
+  crude_knife: BUTCHER_KNIFE_CUTS, // trente coupes (depecage.md D4) : un couteau ≈ huit sangliers
   // L'ACIER dure PLUS que le fer (défaut 100) : le palier 3 se sent aussi à l'usure.
   steel_axe: 180,
   steel_pickaxe: 180,
@@ -1356,6 +1386,7 @@ export type RecipeId =
   | 'crude_spear'
   | 'crude_bow'
   | 'crude_rod'
+  | 'crude_knife'
   | 'bow'
   | 'arrow'
   | 'stew'
@@ -1466,6 +1497,9 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   // qu'un arc — la ligne ne tue personne — mais elle passe par la corde comme tout ce qui se
   // ficelle en couche 1 (C8).
   crude_rod: { requiert: null, inputs: { wood: 1, rope: 1 }, output: 'crude_rod', seconds: 4 },
+  // LE COUTEAU DE FORTUNE (spec `depecage.md` D4/G5) : une pierre, un bout de bois, sans poste —
+  // SANS corde : on ne ficelle pas une lame, on la cale. Le lapin du jour 1 coûte ce craft-là.
+  crude_knife: { requiert: null, inputs: { wood: 1, stone: 1 }, output: 'crude_knife', seconds: 4 },
   // L'ARC LONG à l'atelier : il PAIE l'installation, au rang de la lance.
   bow: { requiert: ATELIER_N1, inputs: { wood: 4, rope: 2, fiber: 2 }, output: 'bow', seconds: 10 },
   // LA FLÈCHE RESTE COUCHE 1, ET PAR LOT DE CINQ : on en fabrique en boucle, quel que soit
@@ -2051,7 +2085,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     hp: 30, damage: 8, speed: 3.6,
     windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0,
     thinkEveryTicks: ticksFor(1), wanderChance: 0.25, chargeChance: 0.25,
-    loot: { raw_meat: 3 },
+    loot: { raw_meat: 3, bone: 1 }, // l'os : la couche du chasseur aguerri (depecage.md D5)
     sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
     // Le sanglier tient sa forêt. Il laisse approcher — et c'est le piège.
     habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_WILLOW],
@@ -2088,7 +2122,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     hp: 45, damage: 0, speed: 4.6,
     windupTicks: ticksFor(0.4), attackCooldownTicks: ticksFor(2), aggroRange: 0,
     thinkEveryTicks: ticksFor(1.2), wanderChance: 0.2, chargeChance: 0,
-    loot: { quartier: 2 }, // V0-5 : le gros gibier rend des QUARTIERS lourds (portage)
+    loot: { quartier: 2, bone: 2 }, // V0-5 : le gros gibier rend des QUARTIERS lourds (portage) ; deux os (depecage.md)
     sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
     habitat: [TERRAIN_ALPINE_MEADOW, TERRAIN_HEATH, TERRAIN_GRASS, TERRAIN_FOREST, TERRAIN_LARCH, TERRAIN_WILLOW, TERRAIN_WET_MEADOW],
     alertRange: 14, flightRange: 9,
@@ -2111,7 +2145,7 @@ export const MONSTER_DEFS: Record<MonsterType, MonsterDef> = {
     hp: 35, damage: 14, speed: 4.8,
     windupTicks: ticksFor(0.45), attackCooldownTicks: ticksFor(1.5), aggroRange: 13,
     thinkEveryTicks: ticksFor(0.5), wanderChance: 0.2, chargeChance: 0,
-    loot: { raw_meat: 2 },
+    loot: { raw_meat: 2, bone: 1 },
     sac: 0, // elle ne porte rien : son butin est `loot`, versé au cadavre
     habitat: [TERRAIN_FOREST, TERRAIN_PINE, TERRAIN_LARCH, TERRAIN_OLD_GROWTH, TERRAIN_HEATH],
     alertRange: 0, flightRange: 0, // il ne fuit pas parce qu'on approche : il fuit parce qu'il saigne
@@ -4461,6 +4495,8 @@ export const ITEM_WEIGHT: Record<import('./items').ItemId, number> = {
   cooked_trout: 0.5,
   cooked_pike: 1,
   crude_rod: 1,
+  crude_knife: 0.5,
+  bone: 0.8, // un os pèse — deux par cerf, ça compte dans le retour de chasse
   quartier: 4.5, // V0-5 : LOURD — deux quartiers = un cerf = ~9 de charge (le portage remord)
   cooked_meat: 0.8,
   // La peau brute est BULKY : elle pèse plus que la viande d'une même bête — rentrer
@@ -4604,6 +4640,7 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   quartier: 3,
   cooked_meat: 5,
   raw_hide: 5,
+  bone: 10,
   // Les poissons s'empilent comme la viande (peche.md).
   gudgeon: 5,
   trout: 5,
@@ -4616,6 +4653,7 @@ export const STACK_SIZES: Partial<Record<import('./items').ItemId, number>> = {
   crude_pickaxe: 1,
   crude_spear: 1,
   crude_rod: 1,
+  crude_knife: 1,
   axe: 1,
   pickaxe: 1,
   iron_axe: 1,

@@ -170,6 +170,9 @@ export const INVENTAIRE: Record<SimEvent['type'], Fait> = {
   node_depleted: { voix: 'voix', famille: 'batir', quoi: 'un nœud meurt : l’arbre craque et tombe, la pierre s’éboule, le végétal froisse' },
   item_dropped: { voix: 'muet', famille: 'plomberie', quoi: 'un objet est jeté au sol' },
   corpse_looted: { voix: 'muet', famille: 'plomberie', quoi: 'une dépouille est fouillée' },
+  // LE DÉPEÇAGE (spec depecage.md G2) : la coupe qui porte SONNE, comme le coup de récolte dont
+  // elle est la sœur — c'est le seul retour du maintien (pas de jauge), l'oreille confirme le geste.
+  carcass_cut: { voix: 'voix', famille: 'batir', quoi: 'une part sort de la carcasse (moi seul)' },
   prey_escaped: { voix: 'muet', famille: 'plomberie', quoi: 'la proie regagne son terrier' },
   craft_queued: { voix: 'muet', famille: 'plomberie', quoi: 'un craft entre dans la file (l’objet a sa voix)' },
   craft_cancelled: { voix: 'muet', famille: 'plomberie', quoi: 'un craft est annulé' },

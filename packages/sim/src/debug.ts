@@ -18,6 +18,8 @@ import { WORLD_EVENTS, METEO, MORTS, NIGHT_HUNT, WALL_TIERS } from './balance'
 import { emitEvent } from './events'
 import { spawnHorde } from './worldevents'
 import { addItems, type ItemId } from './items'
+import { spawnMonster } from './monsters'
+import { die } from './combat'
 import { densiteDesMorts, siteDansLaCouronne } from './morts'
 import type { Entity, SimState } from './sim'
 import { seasonRamp, cycleOffsetForStartHour, getGameTime, seasonDayAtTick, TICKS_PER_CYCLE, TICKS_PER_SEASON_DAY } from './time'
@@ -86,6 +88,14 @@ export type DebugAction =
    * la rampe du jour, l'élection d'origine du hash du tick.
    */
   | { type: 'debug_horde' }
+  /**
+   * POSER UNE CARCASSE ICI (spec `depecage.md`). Le smoke `depecage` et le playtest doivent
+   * pouvoir regarder une découpe sans d'abord traquer un cerf. On fait NAÎTRE une vraie bête de
+   * l'espèce demandée à deux tuiles et on la fait MOURIR par `die()` — la chaîne réelle (table de
+   * loot, os, marqueur `carcass`, `monster_slain`, pression de chasse) ; ce qu'on court-circuite,
+   * c'est la traque. `clean` : la bête meurt « d'un coup propre » (elle laisse sa peau brute).
+   */
+  | { type: 'debug_carcass'; species: import('./balance').MonsterType; clean?: boolean }
   /**
    * TAMPONNER LE PALIER DE BÂTI D'UN VILLAGE PNJ (spec `village-pnj-evolution.md`).
    *
@@ -191,6 +201,13 @@ export function applyDebugAction(state: SimState, entityId: number, action: Debu
     // Le pseudo-tirage vient du TICK (patron debug_reveil) : appuyer sur une touche de dev
     // ne consomme pas un pas du PRNG — le contrat écrit plus haut est tenu à la lettre.
     spawnHorde(state, taille, undefined, (state.tick % 997) / 997)
+  } else if (action.type === 'debug_carcass') {
+    const id = spawnMonster(state, action.species, entity.x + 2, entity.y)
+    const monster = state.monsters.find((m) => m.entityId === id)
+    const bete = state.entities.find((e) => e.id === id)
+    if (!monster || !bete) return
+    if (action.clean === true) monster.slainClean = true
+    die(state, bete, entity.id)
   } else if (action.type === 'debug_village_stage') {
     const village = state.villages.find((v) => v.id === action.villageId && v.chiefId === 0)
     if (!village) return // les villages à chef humain ne se tamponnent pas

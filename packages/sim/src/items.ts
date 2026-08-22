@@ -116,6 +116,14 @@ export type ItemId =
    *  la première nuit. Obligatoire EN MAIN pour lancer : le geste EST la ligne. Une seule
    *  marche de canne pour l'instant ; elle s'use d'un cran par ferrage réussi. */
   | 'crude_rod'
+  /** LE COUTEAU DE FORTUNE (spec `depecage.md` D4) : une pierre, un bout de bois — sans poste.
+   *  Obligatoire EN MAIN pour dépecer, viande comprise : le geste EST la lame. Une seule marche
+   *  de couteau pour l'instant ; il s'use d'un cran par coupe. Un OUTIL, pas une arme. */
+  | 'crude_knife'
+  /** L'OS (spec `depecage.md` D5/D6) : la couche que seul le chasseur aguerri sait tirer d'une
+   *  carcasse (`BUTCHER.BONE_LEVEL`). Livré SANS recette (décision d'Alexis, dette actée) :
+   *  son évier viendra avec la Couture. */
+  | 'bone'
   /** LE QUARTIER (spec portage/chasse) : ce que rend le GROS gibier. Un gros morceau,
    *  LOURD — rentrer un cerf devient un vrai dilemme de charge (le portage retrouve ses
    *  dents que le doublement de CARRY lui avait ôtées). Se mange (gros repas cru) ou se cuit. */
