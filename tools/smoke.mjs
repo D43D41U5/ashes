@@ -15087,40 +15087,69 @@ const SCENARIOS = {
     if (!paire) { console.error('!! aucune paire poudreuse → profonde dans le cadre (pas assez de neige ici ?)'); return { site, sonde } }
     console.log(`  poudreuse (${paire.tx}, ${paire.ty}) → profonde 3 tuiles à l'est`)
 
-    // ③ Posé sur la poudreuse : pas de coupe, pas d'empreinte encore.
-    await agir({ type: 'debug_teleport', x: paire.tx + 0.5, y: paire.ty + 0.5 }, 1200)
-    const avant = await page.evaluate(() => {
+    // ③ Posé sur la poudreuse : la neige couvre les CHEVILLES (une petite coupe), le corps
+    //    reste à sa place (pas de descente : la neige MONTE, elle ne creuse pas — Alexis).
+    const lire = () => page.evaluate(() => {
       const sc = window.__BRAISES__.scene
-      return { crop: sc.playerSprite.isCropped, traces: sc.eauEvents?.tracesNeigeVivantes ?? -1 }
+      const sp = sc.playerSprite
+      const p = sc.registry.get('playerPos')
+      const crop = sp._crop
+      const coupePx = sp.isCropped && crop ? (sp.frame.height - crop.height) * sp.scaleY : 0
+      // La position du corps par rapport à ses pieds (px monde) : on ne compare que sa VARIATION.
+      const piedsPx = p.y * 16
+      return { coupePx, y: sp.y, piedsPx, ecart: sp.y - piedsPx, traces: sc.eauEvents?.tracesNeigeVivantes ?? -1, etat: sc.gelLayer.etatAt(Math.floor(p.x), Math.floor(p.y)) }
     })
-    console.log(`  sur la poudreuse : coupe ${avant.crop ? '✗ (coupé)' : '✓ (entier)'} · empreintes ${avant.traces}`)
-    if (avant.crop) console.error('!! le sprite est coupé sur la POUDREUSE')
+    await agir({ type: 'debug_teleport', x: paire.tx + 0.5, y: paire.ty + 0.5 }, 1200)
+    const avant = await lire()
+    console.log(`  sur la poudreuse (état ${avant.etat}) : coupe ${avant.coupePx.toFixed(1)} px ${avant.coupePx > 0 && avant.coupePx <= 3 ? '✓ (chevilles)' : '✗'}`
+      + ` · sprite.y − pieds ${avant.ecart.toFixed(1)} px · empreintes ${avant.traces}`)
+    if (!(avant.coupePx > 0 && avant.coupePx <= 3)) console.error('!! la poudreuse ne couvre pas les chevilles (coupe attendue dans ]0, 3] px)')
 
     // ④ On marche vers l'est, dans la profonde : la coupe vient, les empreintes naissent.
-    let cropVu = false
+    let coupeMax = 0
+    let ecartMax = 0
     let tracesMax = 0
     await page.keyboard.down('KeyD')
     for (let k = 0; k < 24; k++) {
       await page.waitForTimeout(500)
-      const r = await page.evaluate(() => {
-        const sc = window.__BRAISES__.scene
-        const p = sc.registry.get('playerPos')
-        return { crop: sc.playerSprite.isCropped, traces: sc.eauEvents?.tracesNeigeVivantes ?? 0, etat: sc.gelLayer.etatAt(Math.floor(p.x), Math.floor(p.y)), x: p.x }
-      })
-      if (r.crop && r.etat === 2) cropVu = true
+      const r = await lire()
+      if (r.etat === 2) coupeMax = Math.max(coupeMax, r.coupePx)
+      ecartMax = Math.max(ecartMax, Math.abs(r.ecart - avant.ecart))
       tracesMax = Math.max(tracesMax, r.traces)
-      if (r.x > paire.tx + 4.4) break
+      const p = await page.evaluate(() => window.__BRAISES__.scene.registry.get('playerPos'))
+      if (p.x > paire.tx + 4.4) break
     }
     await page.keyboard.up('KeyD')
-    await page.waitForTimeout(600)
-    const apres = await page.evaluate(() => {
-      const sc = window.__BRAISES__.scene
-      const p = sc.registry.get('playerPos')
-      return { crop: sc.playerSprite.isCropped, traces: sc.eauEvents?.tracesNeigeVivantes ?? 0, etat: sc.gelLayer.etatAt(Math.floor(p.x), Math.floor(p.y)), pos: p }
-    })
-    console.log(`  dans la profonde (état ${apres.etat} en ${apres.pos.x.toFixed(1)}, ${apres.pos.y.toFixed(1)}) :`
-      + ` coupe aux genoux ${apres.crop || cropVu ? '✓' : '✗'} · empreintes ${tracesMax} ${tracesMax >= 2 ? '✓' : '✗'}`)
-    if (!(apres.crop || cropVu)) console.error('!! aucune coupe aux genoux dans la neige profonde')
+    // LE RENDU HEADLESS TRAÎNE DERRIÈRE LA PRÉDICTION (~1 image/s) : une lecture en marche
+    // compare la coupe d'une image d'avant à la tuile d'après. On se POSE au cœur de la
+    // profonde et on relit, immobile.
+    // Et on RECHERCHE le cœur à l'instant : à midi d'acte III la fonte court (un quart de
+    // cycle au chaud), une tuile au ras du seuil repasse de profonde à poudreuse entre la
+    // recherche et la pose — vu une fois (79,66 : 2 puis 1).
+    const coeur = await page.evaluate(({ x, y }) => {
+      const gl = window.__BRAISES__.scene.gelLayer
+      let best = null
+      for (let ty = y - 8; ty <= y + 8; ty++) {
+        for (let tx = x - 14; tx <= x + 14; tx++) {
+          if (gl.etatAt(tx, ty) !== 2) continue
+          let plein = true
+          for (let dy = -1; dy <= 1 && plein; dy++) for (let dx = -1; dx <= 1; dx++) if (gl.etatAt(tx + dx, ty + dy) !== 2) plein = false
+          if (!plein) continue
+          const d = Math.abs(tx - x) + Math.abs(ty - y)
+          if (!best || d < best.d) best = { tx, ty, d }
+        }
+      }
+      return best
+    }, { x: paire.tx + 4, y: paire.ty })
+    if (coeur) await agir({ type: 'debug_teleport', x: coeur.tx + 0.5, y: coeur.ty + 0.5 }, 1500)
+    const apres = await lire()
+    if (apres.etat === 2) coupeMax = Math.max(coupeMax, apres.coupePx)
+    else console.error(`!! posé au cœur (${coeur?.tx}, ${coeur?.ty}) mais l'état lu est ${apres.etat}`)
+    console.log(`  dans la profonde : coupe max ${coupeMax.toFixed(1)} px ${coupeMax >= 5 ? '✓ (genoux)' : '✗'}`
+      + ` · le corps n'a pas bougé de ses pieds (écart max ${ecartMax.toFixed(2)} px) ${ecartMax < 0.5 ? '✓' : '✗'}`
+      + ` · empreintes ${tracesMax} ${tracesMax >= 2 ? '✓' : '✗'}`)
+    if (coupeMax < 5) console.error('!! la profonde ne couvre pas les genoux (coupe max attendue ≥ 5 px)')
+    if (ecartMax >= 0.5) console.error('!! le corps DESCEND dans la neige — elle doit monter, pas creuser')
     if (tracesMax < 2) console.error('!! moins de deux empreintes après quatre tuiles de marche')
 
     // ⑤ La flore autour : ni brin ni fleur de fouillis, aucun champignon dessiné.

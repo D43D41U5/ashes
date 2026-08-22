@@ -189,22 +189,28 @@ export class GelLayer {
   }
 
   /**
-   * L'ENFONCEMENT DANS LA NEIGE PROFONDE en un point (tuiles), dans [0, 1] — « la neige arrive
-   * à hauteur de genou » (gel.md G9). CONTINU (« feel = pente continue ») : 0 pile au bord d'une
-   * tuile profonde qui touche une tuile qui ne l'est pas, plein à `RAMPE` tuile à l'intérieur ;
-   * au cœur d'une plaque, plein partout. Lu sur la signature — quatre voisins, pas la sim.
+   * LA HAUTEUR DE NEIGE en un point (tuiles), CONTINUE, dans [0, 2] — « la neige est une couche
+   * de plus sur le sol, elle apporte une hauteur » (Alexis, 2026-08-22). 0 sur le sol nu ; sur
+   * la poudreuse, monte de 0 à 1 sur `RAMPE` tuile depuis un bord qui touche du nu ; sur la
+   * profonde, de 1 à 2 depuis un bord qui touche de la poudreuse ou du nu. Au cœur d'une plaque,
+   * la pleine hauteur de son niveau. « Feel = pente continue » : aucune marche au passage d'un
+   * bord. Lue sur la signature — quatre voisins, jamais la sim.
    */
-  immersionNeige(x: number, y: number): number {
+  hauteurNeige(x: number, y: number): number {
     const tx = Math.floor(x)
     const ty = Math.floor(y)
-    if (this.etatAt(tx, ty) !== TUILE_NEIGE_PROFONDE) return 0
+    const ici = this.etatAt(tx, ty)
+    if (ici !== TUILE_NEIGE && ici !== TUILE_NEIGE_PROFONDE) return 0
     const RAMPE = 0.35
+    // Le niveau d'un voisin : 0 nu (ou glace, structurel), 1 poudreuse, 2 profonde.
+    const niveau = (e: EtatTuile): number => (e === TUILE_NEIGE ? 1 : e === TUILE_NEIGE_PROFONDE ? 2 : 0)
+    const mien = niveau(ici)
     let d = 1
-    if (this.etatAt(tx - 1, ty) !== TUILE_NEIGE_PROFONDE) d = Math.min(d, x - tx)
-    if (this.etatAt(tx + 1, ty) !== TUILE_NEIGE_PROFONDE) d = Math.min(d, tx + 1 - x)
-    if (this.etatAt(tx, ty - 1) !== TUILE_NEIGE_PROFONDE) d = Math.min(d, y - ty)
-    if (this.etatAt(tx, ty + 1) !== TUILE_NEIGE_PROFONDE) d = Math.min(d, ty + 1 - y)
-    return Math.min(1, d / RAMPE)
+    if (niveau(this.etatAt(tx - 1, ty)) < mien) d = Math.min(d, x - tx)
+    if (niveau(this.etatAt(tx + 1, ty)) < mien) d = Math.min(d, tx + 1 - x)
+    if (niveau(this.etatAt(tx, ty - 1)) < mien) d = Math.min(d, y - ty)
+    if (niveau(this.etatAt(tx, ty + 1)) < mien) d = Math.min(d, ty + 1 - y)
+    return mien - 1 + Math.min(1, d / RAMPE)
   }
 
   /**

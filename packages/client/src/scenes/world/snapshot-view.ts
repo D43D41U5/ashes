@@ -118,6 +118,17 @@ const DORMANT_TINT = 0xb4bfcc
  *  prend pas). Elle passe à la PAILLE : un vert sous la neige lirait « herbe », or l'herbe est
  *  partie ; jaunie, elle dit « tige sèche qu'on peut encore prendre ». */
 const SEC_TINT = 0xd9cfa6
+/** LA COUPE DE NEIGE, en px MONDE, pour une hauteur continue dans [0, 2] (gel.md G9) : la
+ *  poudreuse couvre les chevilles (`NEIGE_CHEVILLES_PX` à 1), la profonde les genoux
+ *  (`NEIGE_GENOUX_PX` à 2) — constants comme l'eau : la neige a UNE hauteur, chaque corps y
+ *  trempe selon sa taille (le lapin y disparaît presque). Bornée à une part du corps. */
+const NEIGE_CHEVILLES_PX = 2
+const NEIGE_GENOUX_PX = 6
+function coupeDeNeige(hauteur: number, displayH: number): number {
+  if (hauteur <= 0.01) return 0
+  const px = hauteur <= 1 ? NEIGE_CHEVILLES_PX * hauteur : NEIGE_CHEVILLES_PX + (NEIGE_GENOUX_PX - NEIGE_CHEVILLES_PX) * (hauteur - 1)
+  return Math.min(px, displayH * 0.45)
+}
 /**
  * LE ROUGE DE LA DÉMOLITION — plus CHAUD que le rouge d'interface du fantôme refusé (#d9614f),
  * et il le faut : il se pose sur du BOIS, qui est déjà orange.
@@ -470,8 +481,8 @@ export class SnapshotView {
   /** La tuile est-elle de la GLACE (eau gelée, praticable) ? Posé par WorldScene sur la couche
    *  du gel — une lecture de signature, jamais un appel à la sim par acteur et par image. */
   glaceAt: ((tx: number, ty: number) => boolean) | null = null
-  /** L'enfoncement dans la neige profonde en un point, [0, 1] (`GelLayer.immersionNeige`). */
-  neigeProfondeAt: ((x: number, y: number) => number) | null = null
+  /** La hauteur de neige en un point, continue dans [0, 2] (`GelLayer.hauteurNeige`). */
+  hauteurNeigeAt: ((x: number, y: number) => number) | null = null
   /** La flore de la tuile est-elle gelée ? Même source (`GelLayer.floreGeleeAt`). */
   floreGeleeAt: ((tx: number, ty: number) => boolean | null) | null = null
   /** Les bascules gel/dégel des nœuds gélifs (voir `render/flore-gel.ts`). */
@@ -1020,12 +1031,13 @@ export class SnapshotView {
     // la taille de chacun raconte la profondeur. L'eau est rendue SOUS les acteurs
     // (WATER_DEPTH < 0) : la découpe RÉVÈLE la nappe, aucun raccord à faire.
     const coupeEau = immersion > 0.02 ? Math.min(7 * immersion, displayH * 0.45) : 0
-    // ═══ JUSQU'AUX GENOUX DANS LA NEIGE (gel.md G9) — la même coupe que l'eau, sans l'eau ═══
-    // Le manteau profond est rendu SOUS les acteurs : la découpe RÉVÈLE la neige. Ni gerbe, ni
-    // reflet, ni flottaison ; l'ombre de contact se fond, comme dans l'eau. Continue sur le bord
-    // de la plaque (`immersionNeige`).
-    const neige = immersion > 0.02 ? 0 : (this.neigeProfondeAt?.(x, feetY) ?? 0)
-    const coupeNeige = neige > 0.02 ? Math.min(7 * neige, displayH * 0.45) : 0
+    // ═══ LA NEIGE MONTE SUR LES PIEDS (gel.md G9) — une couche de PLUS sur le sol ═══
+    // Alexis : « elle apporte une hauteur supplémentaire… ne devrait pas faire descendre le
+    // personnage ». Donc : la même DÉCOUPE que l'eau (le manteau est rendu sous les acteurs, la
+    // découpe le révèle), mais SANS descente — le corps reste à sa place, la neige le recouvre
+    // aux chevilles (poudreuse) puis aux genoux (profonde) — et l'ombre de contact REMONTE de
+    // la même hauteur : elle se pose sur la surface de la neige, pas sous elle.
+    const coupeNeige = immersion > 0.02 ? 0 : coupeDeNeige(this.hauteurNeigeAt?.(x, feetY) ?? 0, displayH)
     // ═══ ET LE CORPS QUI SORT DE TERRE (spec `cendreux.md` R21/R22) ═══
     // Le MAX, jamais la somme : l'eau et la terre décrivent toutes deux « à partir d'où le
     // corps est caché », pas deux enfouissements à cumuler. Les additionner aurait fait
@@ -1034,8 +1046,10 @@ export class SnapshotView {
     // l'eau : l'eau a UNE profondeur (chaque bête y trempe selon sa taille), la terre les
     // recouvre TOUS entièrement — c'est ce qui doit rester vrai du lapin au cerf.
     const coupe = Math.max(coupeEau, coupeNeige, displayH * enfoui)
-    // Le corps descend de la coupe (+2 px d'enfoncement) : la ligne de flottaison est aux pieds.
-    sprite.setPosition(p.px, p.py - lift + coupe + 2 * Math.max(immersion, neige))
+    // Le corps descend de la coupe d'EAU ou de TERRE (+2 px d'enfoncement) : la ligne de
+    // flottaison est aux pieds. Jamais de la neige : elle monte, lui reste.
+    const descente = Math.max(coupeEau, displayH * enfoui)
+    sprite.setPosition(p.px, p.py - lift + descente + 2 * immersion)
     sprite.setDepth(p.depth)
     sprite.setDisplaySize(p.displayW, displayH)
     if (coupe > 0) {
@@ -1053,11 +1067,12 @@ export class SnapshotView {
     // L'EAU LA FOND (R4) : l'anneau de flottaison prend le relais comme ancrage.
     const shadow = sprite.getData('shadow') as Phaser.GameObjects.Image | undefined
     if (shadow) {
-      positionShadow(shadow, p.px, p.py, p.displayW, p.depth)
+      // SUR LA NEIGE : l'ombre remonte de la hauteur du manteau (le gap de l'art, pour une fois).
+      positionShadow(shadow, p.px, p.py, p.displayW, p.depth, coupeNeige)
       // ELLE SE FOND AUSSI SOUS TERRE. Sans `enfoui` ici, un corps encore aux trois quarts
       // enfoui projetait l'ombre de contact d'un CORPS ENTIER autour du tertre — une ombre
       // pleine sous une tête qui perce, et le trou perdait toute sa profondeur.
-      shadow.setAlpha(SHADOW_ALPHA * (1 - Math.max(immersion, neige, enfoui)))
+      shadow.setAlpha(SHADOW_ALPHA * (1 - Math.max(immersion, enfoui)))
     }
     // LE REGARD DU CENDREUX (demande d'Alexis, 2026-08-21 — spec `cendreux.md` R27) : le même
     // pion d'orientation que l'avatar (`fx-gaze`), posé au bord de la tête du côté du `facing`
@@ -2067,7 +2082,15 @@ export class SnapshotView {
         // Ce pixel est au-dessus du bas de tuile du gap de l'art (texels) × échelle du sprite (une
         // repousse à g<1 réduit le gap d'autant). Sans ça, l'arbre (art plein) et le bloc (art
         // creux) ne s'aligneraient pas — bug vu par Alexis (ombres d'arbres/fibre trop hautes).
-        const gapWorld = nodeArtGap(texture) * sprite.scaleY
+        // LA NEIGE MONTE SUR LE PIED DU NŒUD (gel.md G9) : le bas du sprite se coupe de sa
+        // hauteur (la découpe révèle le manteau), l'ombre remonte d'autant. Jamais sur un coin
+        // de pêche (il est sur l'eau, qui n'en porte pas).
+        const coupeNeige = coupeDeNeige(this.hauteurNeigeAt?.(tx + 0.5 + j.dx, ty + 1 + j.dy) ?? 0, sprite.displayHeight)
+        if (coupeNeige > 0) {
+          const frame = sprite.frame
+          sprite.setCrop(0, 0, frame.width, Math.max(1, frame.height - coupeNeige / Math.max(1e-6, sprite.scaleY)))
+        } else if (sprite.isCropped) sprite.setCrop()
+        const gapWorld = nodeArtGap(texture) * sprite.scaleY + coupeNeige
         positionShadow(nodeShadow, px, py, sprite.displayWidth, sprite.depth, gapWorld)
         // UN COIN DE PÊCHE est SUR l'eau : rien n'y projette d'ombre de contact (peche.md) — la
         // flaque sombre d'un nœud posé sur une surface qui n'en porte pas se verrait comme une tache.

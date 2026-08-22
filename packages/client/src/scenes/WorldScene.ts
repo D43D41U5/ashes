@@ -1062,8 +1062,11 @@ export class WorldScene extends Phaser.Scene {
         }
         // LES EMPREINTES DANS LA NEIGE : la semelle lit le manteau (même signature).
         if (this.eauEvents) this.eauEvents.neigeAt = (tx, ty) => estNeige(gel.etatAt(tx, ty))
-        // JUSQU'AUX GENOUX (gel.md G9) : le corps s'enfonce dans la neige profonde.
-        this.view.neigeProfondeAt = (x, y) => gel.immersionNeige(x, y)
+        // LA NEIGE MONTE SUR LES PIEDS (gel.md G9) : acteurs, nœuds et fouillis se coupent de sa
+        // hauteur, sans descendre — la découpe révèle le manteau ; l'ombre se pose sur la neige.
+        const hauteurNeige = (x: number, y: number): number => gel.hauteurNeige(x, y)
+        this.view.hauteurNeigeAt = hauteurNeige
+        if (this.clutter) this.clutter.hauteurNeigeAt = hauteurNeige
         this.cameras.main.setBounds(0, 0, worldW, worldH)
         this.prediction = createPrediction(msg.playerSpawn.x, msg.playerSpawn.y)
         this.view.syncActor(this.playerSprite, this.predicted.x, this.predicted.y, 'spr-player')

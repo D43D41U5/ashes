@@ -116,6 +116,8 @@ export class ClutterLayer {
   /** La flore de cette tuile est-elle gelée ? Posé par WorldScene sur la couche du gel
    *  (`GelLayer.floreGeleeAt` : une lecture de signature). Absent : rien ne gèle. */
   floreGeleeAt: ((tx: number, ty: number) => boolean | null) | null = null
+  /** La hauteur de neige en un point, continue dans [0, 2] (`GelLayer.hauteurNeige`). */
+  hauteurNeigeAt: ((x: number, y: number) => number) | null = null
   /** La gerbe de givre (ou de sève au dégel) — `RecolteFx.givre`, posée par WorldScene. */
   onGivre: ((x: number, y: number, hauteur: number, now: number, graine: number, degel: boolean) => void) | null = null
   /** Les bascules gel/dégel du fouillis, par tuile (voir `render/flore-gel.ts`). */
@@ -164,6 +166,10 @@ export class ClutterLayer {
               echX = pose.sx
               echY = pose.sy
             }
+            // LE RAMPANT SOUS LA PROFONDE (caillou, lichen, sphaigne) : une texture de sol, la neige
+            // la recouvre entière — on ne la dessine pas.
+            const hauteur = this.hauteurNeigeAt?.(tx + 0.5 + p.ox, ty + 1 + p.oy) ?? 0
+            if (FLAT_PROPS.has(p.kind) && hauteur >= 1.5) continue
             const slot = used++
             const sprite = this.acquire(slot)
             // LA GAMME DU BIOME (demande d'Alexis, 2026-07-29) : la touffe se teinte du sol qui la
@@ -197,6 +203,15 @@ export class ClutterLayer {
             // Les textures hautes (le chicot : 16×32) déclarent leur aspect — sans lui, le
             // carré par défaut ÉCRASERAIT l'aiguille en moellon.
             sprite.setDisplaySize(TILE_PX * p.scale * echX, TILE_PX * p.scale * (PROP_ASPECT[p.kind] ?? 1) * echY)
+            // LA NEIGE MONTE SUR LE PIED DU PROP (gel.md G9) : le bas se coupe de sa hauteur — la
+            // découpe révèle le manteau —, l'ombre remonte d'autant. Le rampant (caillou, lichen)
+            // disparaît sous la profonde : c'est une texture de sol, la neige la recouvre.
+            const coupeNeige = hauteur <= 0.01 ? 0
+              : Math.min(hauteur <= 1 ? 2 * hauteur : 2 + 4 * (hauteur - 1), sprite.displayHeight * (FLAT_PROPS.has(p.kind) ? 0.9 : 0.45))
+            if (coupeNeige > 0) {
+              const frame = sprite.frame
+              sprite.setCrop(0, 0, frame.width, Math.max(1, frame.height - coupeNeige / Math.max(1e-6, sprite.scaleY)))
+            } else if (sprite.isCropped) sprite.setCrop()
             // Un flip Phaser N'inverse PAS la composante X de la normal map (il tourne les normales,
             // pas le miroir) → un prop `_lit` miroité par flip s'éclairerait à l'ENVERS sur X. La
             // variété par miroir passe donc par une texture `_lit_m` PRÉ-RETOURNÉE (normale juste par
@@ -242,7 +257,7 @@ export class ClutterLayer {
               // Gap de la variante RENDUE : `_lit` (défaut) quand `useLit`, sinon l'art peint.
               const litGap = SHADOW_PROP_GAP_LIT[p.kind]
               const gapTexels = useLit && litGap !== undefined ? litGap : (SHADOW_PROP_GAP[p.kind] ?? 2)
-              const gapWorld = gapTexels * sprite.scaleY
+              const gapWorld = gapTexels * sprite.scaleY + coupeNeige
               // LARGEUR sur l'emprise RÉELLE de l'art (texels × échelle du sprite) pour les props DEBOUT
               // qui ne remplissent pas leur tuile — sinon `displayWidth` (tuile pleine) surdimensionne
               // la flaque d'un prop mince. Les props pleins (absents de la table) gardent `displayWidth`.
