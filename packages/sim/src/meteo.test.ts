@@ -12,8 +12,17 @@
  * télégraphe), la résolution (l'abri supprime et épargne, jamais létal à PV pleins, la
  * cause `lightning`, zéro tirage) et le repli des PNJ vers l'abri. Tranche 7 : L'ANNONCE
  * (R9) — section « R9 — l'annonce (blizzard) » : l'écrivain unique (`meteoTypeDuCycle`),
- * le triplet annonce → entre → passe de chaque front blizzard, le silence des quatre
- * autres types, la chronique (l'annonce seule y entre) et le zéro-tirage.
+ * le triplet annonce → entre → passe de chaque front blizzard, le silence des autres
+ * fronts, la chronique (l'annonce seule y entre) et le zéro-tirage.
+ *
+ * AMENDEMENT 2026-08-22 (spec R11-R13, `docs/decisions.md`) : LA NEIGE SE DÉRIVE DU FROID.
+ * `neige` et `blizzard` ne sont plus des types élus — un front porte une CLASSE (`pluie`,
+ * `orage`, `brouillard`, `vent_de_cendre`) et l'ASPECT se lit au point (`meteoAspectAt`) :
+ * il neige là où la pluie ferait geler un gué, un orage y est un blizzard. Les montages
+ * « sous blizzard » de ce fichier posent donc un ORAGE sur la plaine d'acte III de JOUR
+ * (T₀ = 40 ≤ 45 → `froidEolien` = 1 → la ligne `ORAGE_FROID`, le blizzard d'avant au bit
+ * près) ; les montages « sous neige », une PLUIE là où T₀ < 55. La section « R11-R13 » en
+ * fin de fichier porte les gardes neuves A12-A15.
  *
  * Le calendrier est couplé 1 jour = 1 cycle (`calendarScaleForSeasonCycles`) : l'aube du
  * cycle c EST le jour c+1, et on SAUTE aux bords de cycle (le tick se pose, puis `step()`
@@ -22,7 +31,9 @@
  * relevés à la sonde, pas espérés statistiquement.
  */
 import { describe, expect, it } from 'vitest'
-import { BALANCE, CENDREUX, FAUNA, METEO, MONSTER_DEFS, TEMPERATURE, TERRAIN_GRASS } from './balance'
+import {
+  BALANCE, CENDREUX, FAUNA, GEL, METEO, MONSTER_DEFS, TEMPERATURE, TERRAIN_GRASS, TERRAIN_SNOW,
+} from './balance'
 import { brumeJourEligible } from './brume'
 import { CHRONICLE_EVENT_TYPES, chronicleFromEvents } from './chronicle'
 import { drainEvents, type SimEvent } from './events'
@@ -33,14 +44,17 @@ import { createEmptyMap } from './map'
 import { advanceFoudre } from './foudre'
 import { distSq } from './geometry'
 import {
-  advanceMeteo, FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt, frontMeteoPos, meteoFeuConso,
-  meteoIntensity, meteoIntensityAt, meteoCycleEligible, meteoMouille, meteoQuiet, meteoSpeedFactor,
-  meteoSpeedFactorAt, meteoTypeBrut, meteoTypeDuCycle, meteoVisionFactor,
-  type BandeMeteo, type MeteoFront, type MeteoType,
+  advanceMeteo, aspectSousFront, coldMaximal, FOUDRE_CRENEAU_TICKS, foudreImpactAt, foudreTelegrapheAt,
+  froidEolien, frontDuCycle, frontEstBlizzard, frontMeteoPos, largeurDe, meteoAspectAt, meteoColdAt,
+  meteoFeuConso, meteoIntensity, meteoIntensityAt, meteoCycleEligible, meteoMouille, meteoQuiet,
+  meteoSpeedFactor, meteoSpeedFactorAt, meteoTypeBrut, meteoTypeDuCycle, meteoVisionFactor, neigeA,
+  type BandeMeteo, type MeteoAspect, type MeteoFront, type MeteoType,
 } from './meteo'
 import { nearestPrey, spawnMonster, type Monster } from './monsters'
 import { createSim, snapshot, spawnEntity, step, type PlayerAction, type SimState } from './sim'
-import { advanceTemperature, ambientTemperature, baselineTemperature, fireBubble, isSheltered } from './temperature'
+import {
+  advanceTemperature, ambientTemperature, baselineTemperature, dehorsSansMeteo, fireBubble, isSheltered,
+} from './temperature'
 import {
   actForDay, calendarScaleForSeasonCycles, cycleOffsetForStartHour, DAY_TICKS_PER_CYCLE, TICKS_PER_CYCLE,
 } from './time'
@@ -135,7 +149,7 @@ describe('A9 — un seul front, et jamais de blizzard un jour de Brume', () => {
     }
   })
 
-  it('R3 — un jour éligible à la Brume n’élit JAMAIS un blizzard : il se dégrade en neige', () => {
+  it('R3 — un jour éligible à la Brume n’élit JAMAIS un orage : il se dégrade en pluie (et jamais de blizzard, donc)', () => {
     const sim = simMeteo()
     let degrades = 0
     for (let d = 1; d <= 600; d++) {
@@ -144,17 +158,18 @@ describe('A9 — un seul front, et jamais de blizzard un jour de Brume', () => {
       const front = sim.meteo
       if (!front || front.day !== d) continue
       if (brumeJourEligible(d)) {
-        expect(front.type).not.toBe('blizzard')
-        if (meteoTypeBrut(d - 1, d) === 'blizzard') {
-          expect(front.type).toBe('neige')
+        expect(front.type).not.toBe('orage')
+        expect(frontEstBlizzard(sim, front)).toBe(false) // le blizzard est un orage : écarté avec lui
+        if (meteoTypeBrut(d - 1, d) === 'orage') {
+          expect(front.type).toBe('pluie')
           degrades++
         }
       } else {
         expect(front.type).toBe(meteoTypeBrut(d - 1, d)) // hors Brume, l'élu brut passe tel quel
       }
     }
-    // La règle a MORDU : le domaine balayé contient de vrais jours blizzard × Brume
-    // (76 relevés à la sonde) — sinon ce test mesurerait l'instrument, pas la règle.
+    // La règle a MORDU : le domaine balayé contient de vrais jours orage × Brume — sinon ce
+    // test mesurerait l'instrument, pas la règle.
     expect(degrades).toBeGreaterThan(0)
   })
 })
@@ -207,46 +222,61 @@ describe('A10 — l’interrupteur dédié, faux par défaut', () => {
 })
 
 /**
- * LES VARIANTES SANS ÉTAT (chantier de rendu) — `meteoIntensityAt` et `meteoSpeedFactorAt`
- * sont les portes par lesquelles LE CLIENT lit la météo : il n'a pas de `SimState`, il a un
- * record d'élection reçu dans le snapshot. Ce sont les MÊMES lois, extraites — et cette
- * garde existe pour qu'elles le RESTENT : le jour où quelqu'un calibrera la rampe d'un seul
- * côté, le ciel dessiné cesserait d'être le ciel simulé, et un rendu qui ment sur le froid
- * qu'il apporte est pire qu'un rendu absent.
+ * LES VARIANTES PARAMÉTRÉES PAR LE TICK (chantier de rendu) — `meteoIntensityAt` et
+ * `meteoSpeedFactorAt` sont les portes par lesquelles LE CLIENT lit la météo : il n'a pas
+ * de `SimState`, il a une façade reconstituée du snapshot (`etat-gel.ts`). Ce sont les
+ * MÊMES lois, extraites — et cette garde existe pour qu'elles le RESTENT : le jour où
+ * quelqu'un calibrera la rampe d'un seul côté, le ciel dessiné cesserait d'être le ciel
+ * simulé, et un rendu qui ment sur le froid qu'il apporte est pire qu'un rendu absent.
  *
- * On BALAIE (règle maison : une garde exhaustive plutôt que des cas choisis) — les cinq
- * types, toute la traversée, tout l'axe perpendiculaire, bornes comprises.
+ * Depuis R12 le pas sous un orage dépend du froid du monde (heure, biome) : la variante
+ * prend donc l'ÉTAT et le tick — et on la balaie sur un VRAI état (un monde vide), les
+ * quatre classes, les quatre bords, toute la traversée, tout l'axe perpendiculaire, sur
+ * un jour doux (acte I) et un jour froid (acte III) pour que la pente R12 soit exercée.
  */
-describe('les variantes SANS ÉTAT sont les mêmes lois, au bit près (le client lit par là)', () => {
-  const TYPES: MeteoType[] = ['pluie', 'brouillard', 'neige', 'orage', 'blizzard']
+describe('les variantes paramétrées par le tick sont les mêmes lois, au bit près (le client lit par là)', () => {
+  const TYPES: MeteoType[] = ['pluie', 'brouillard', 'orage', 'vent_de_cendre']
 
   it('meteoIntensityAt et meteoSpeedFactorAt égalent EXACTEMENT leurs jumelles à état', () => {
     const [W, H] = [140, 160]
     let compares = 0
-    for (const type of TYPES) {
-      for (const edge of [0, 1, 2, 3] as const) {
-        const front: MeteoFront = { type, cycle: 0, day: 12, edge, startTick: 500, endTick: 500 + METEO.TRAVERSEE_TICKS }
-        for (let k = 0; k <= 12; k++) {
-          const tick = front.startTick + Math.round((k / 12) * (METEO.TRAVERSEE_TICKS - 1))
-          // Un état MINIMAL : ces deux lois ne lisent que `meteo`, `tick` et les dimensions.
-          const state = { meteo: front, tick, map: { width: W, height: H } } as unknown as SimState
-          for (let c = -20; c <= Math.max(W, H) + 20; c += 7) {
-            const x = edge <= 1 ? c : 40
-            const y = edge <= 1 ? 40 : c
-            expect(meteoIntensityAt(front, tick, W, H, x, y)).toBe(meteoIntensity(state, x, y))
-            expect(meteoSpeedFactorAt(front, tick, W, H, x, y)).toBe(meteoSpeedFactor(state, x, y))
-            compares += 2
+    let pleins = 0 // des pas d'orage à la ligne ORAGE_FROID : la pente R12 a bien été montée
+    for (const day of [12, 50]) {
+      const state = createSim(5, { map: createEmptyMap(W, H, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true })
+      for (const type of TYPES) {
+        for (const edge of [0, 1, 2, 3] as const) {
+          const start = tickAubeDuJour(day) + 500
+          const front: MeteoFront = { type, cycle: day - 1, day, edge, startTick: start, endTick: start + METEO.TRAVERSEE_TICKS }
+          state.meteo = front
+          for (let k = 0; k <= 12; k++) {
+            const tick = front.startTick + Math.round((k / 12) * (METEO.TRAVERSEE_TICKS - 1))
+            state.tick = tick
+            for (let c = -20; c <= Math.max(W, H) + 20; c += 7) {
+              const x = edge <= 1 ? c : 40
+              const y = edge <= 1 ? 40 : c
+              expect(meteoIntensityAt(front, tick, W, H, x, y)).toBe(meteoIntensity(state, x, y))
+              const v = meteoSpeedFactorAt(state, tick, x, y)
+              expect(v).toBe(meteoSpeedFactor(state, x, y))
+              if (type === 'orage' && v === METEO.ORAGE_FROID.SPEED) pleins++
+              compares += 2
+            }
           }
         }
       }
     }
-    // La garde prouve sa prémisse : elle a bien comparé quelque chose, et pas zéro fois.
+    // La garde prouve sa prémisse : elle a bien comparé quelque chose, et pas zéro fois —
+    // et l'orage a bien été pris au plein froid, pas seulement par temps doux.
     expect(compares).toBeGreaterThan(10_000)
+    expect(pleins).toBeGreaterThan(0)
   })
 
-  it('sans front, les deux variantes rendent le neutre (0 et 1) — le client sans météo ne peint rien', () => {
+  it('sans front, la variante rend le neutre (1) — le client sans météo ne peint rien', () => {
+    const state = createSim(5, { map: createEmptyMap(100, 100, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true })
+    // `null` (le champ purgé) ET `undefined` (un snapshot qui ne porte pas la clé) : les deux
+    // arrivent vraiment côté client, et les deux doivent rendre le neutre.
     for (const front of [null, undefined]) {
-      expect(meteoSpeedFactorAt(front, 1000, 100, 100, 50, 50)).toBe(1)
+      ;(state as { meteo: MeteoFront | null | undefined }).meteo = front
+      expect(meteoSpeedFactorAt(state, 1000, 50, 50)).toBe(1)
     }
   })
 })
@@ -370,58 +400,105 @@ describe('la géométrie est pure — la bande se calcule du tick, elle n’est 
   })
 })
 
-describe('la distribution des types par acte (élections déterministes du jour)', () => {
+describe('la distribution des ASPECTS par acte (élections déterministes du jour, aspect dérivé du froid — R11)', () => {
+  /** L'aspect d'un front de la saison EN PLAINE DE JOUR (midi du jour du front, au cœur de
+   *  sa bande) — ce que le joueur de la plaine voit tomber. */
+  function aspectEnPlaine(sim: SimState, f: MeteoFront): MeteoAspect | null {
+    const midi = tickAubeDuJour(f.day) + Math.floor(DAY_TICKS_PER_CYCLE / 2)
+    // Au cœur : on déplace la fenêtre du front pour que sa bande couvre le point à midi — la
+    // géométrie est pure, seul le FROID (heure, acte, biome) décide de l'aspect.
+    // La bande CENTRÉE sur le point observé : son cœur y est, quelle que soit sa largeur
+    // (celle d'un orage suit la saison — R13).
+    const u = (20.5 + largeurDe(f) / 2) / (sim.map.width + largeurDe(f))
+    const start = midi - Math.round(u * METEO.TRAVERSEE_TICKS)
+    const pose: MeteoFront = { ...f, edge: 0, startTick: start, endTick: start + METEO.TRAVERSEE_TICKS }
+    expect(meteoIntensityAt(pose, midi, sim.map.width, sim.map.height, 20.5, 20.5)).toBe(1)
+    return aspectSousFront(sim, pose, 20.5, 20.5, midi)
+  }
+
   it('acte I sans neige ni blizzard et pluie en tête ; acte III aux neiges et blizzards — 3 seeds', () => {
     const compte = (fronts: MeteoFront[], acte: number, type: MeteoType): number =>
       fronts.filter((f) => actForDay(f.day) === acte && f.type === type).length
     for (const seed of [1, 7, 2026]) {
-      const fronts = frontsDeSaison(simMeteo(seed))
+      const sim = simMeteo(seed)
+      const fronts = frontsDeSaison(sim)
       const acte1 = fronts.filter((f) => actForDay(f.day) === 1)
       expect(acte1.length).toBeGreaterThan(0)
-      expect(compte(fronts, 1, 'neige') + compte(fronts, 1, 'blizzard')).toBe(0)
+      // L'acte I ne voit ni neige ni blizzard en plaine — et ne s'annonce jamais (R9).
+      for (const f of acte1) {
+        expect(['neige', 'blizzard']).not.toContain(aspectEnPlaine(sim, f))
+        expect(frontEstBlizzard(sim, f)).toBe(false)
+      }
       expect(compte(fronts, 1, 'pluie')).toBeGreaterThanOrEqual(compte(fronts, 1, 'brouillard'))
       expect(compte(fronts, 1, 'pluie')).toBeGreaterThanOrEqual(compte(fronts, 1, 'orage'))
+      // L'acte III : tout ce qui précipite tombe en neige ou en blizzard, en plaine même à midi.
       const acte3 = fronts.filter((f) => actForDay(f.day) === 3)
       expect(acte3.length).toBeGreaterThan(0)
-      expect(compte(fronts, 3, 'neige') + compte(fronts, 3, 'blizzard')).toBeGreaterThan(acte3.length / 2)
+      const precipitants = acte3.filter((f) => f.type === 'pluie' || f.type === 'orage')
+      expect(precipitants.length).toBeGreaterThan(acte3.length / 2)
+      for (const f of precipitants) expect(['neige', 'blizzard']).toContain(aspectEnPlaine(sim, f))
+    }
+  })
+
+  it('les types `neige` et `blizzard` n’existent plus dans AUCUNE mixture — l’aspect ne s’élit pas (A12)', () => {
+    for (let acte = 1; acte <= 3; acte++) {
+      expect('neige' in METEO.TYPES(acte)).toBe(false)
+      expect('blizzard' in METEO.TYPES(acte)).toBe(false)
     }
   })
 })
 
 describe('R4 — le froid des fronts (A3)', () => {
   /**
-   * Un front posé À LA MAIN au midi du jour 25 — acte II, plein JOUR, plaine `grass`
-   * (patron de la nappe statique des tests Brume). `u` est la fraction de traversée
-   * écoulée : elle place la bande où le test la veut. Le tick ne bouge pas pendant les
-   * boucles d'`advanceTemperature` : la bande non plus.
+   * Un front posé À LA MAIN au MIDI d'un jour choisi — plein JOUR, plaine `grass` (patron de
+   * la nappe statique des tests Brume). `u` est la fraction de traversée écoulée : elle place
+   * la bande où le test la veut. Le tick ne bouge pas pendant les boucles
+   * d'`advanceTemperature` : la bande non plus.
+   *
+   * Le JOUR n'est pas décoratif depuis R11-R13 : c'est lui qui porte l'acte, donc le froid du
+   * monde (`T₀`) — dont dépendent la morsure d'un orage (`froidEolien`, R12) et sa largeur
+   * (`largeurDe`, R13). Le tick ET `front.day` bougent ensemble : un front d'acte III daté
+   * d'un jour d'acte I aurait la largeur de l'un et le froid de l'autre.
    */
-  function simSousFront(type: MeteoType, u: number): { sim: SimState; bande: BandeMeteo } {
+  function simSousFront(type: MeteoType, u: number, jour = 25): { sim: SimState; bande: BandeMeteo } {
     const sim = createSim(7, { map: createEmptyMap(400, 40, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true })
-    const midi = 24 * TICKS_PER_CYCLE + Math.floor(DAY_TICKS_PER_CYCLE / 2)
+    const midi = tickAubeDuJour(jour) + Math.floor(DAY_TICKS_PER_CYCLE / 2)
     const startTick = midi - Math.round(u * METEO.TRAVERSEE_TICKS)
     sim.tick = midi
-    sim.meteo = { type, cycle: 0, day: 25, edge: 0, startTick, endTick: startTick + METEO.TRAVERSEE_TICKS }
+    sim.meteo = { type, cycle: jour - 1, day: jour, edge: 0, startTick, endTick: startTick + METEO.TRAVERSEE_TICKS }
     return { sim, bande: frontMeteoPos(sim.meteo, midi, sim.map.width, sim.map.height)! }
   }
 
-  /** Le blizzard aux 16 % de sa traversée : son CŒUR (intensité 1) couvre l'ouest de la
-   *  carte, son bord de fuite passe vers x≈320 — l'est est encore HORS bande. Les deux
-   *  régimes coexistent sur la carte, et la prémisse se PROUVE à chaque montage. */
+  /**
+   * LE BLIZZARD, DÉRIVÉ (R11-R12) — un ORAGE au midi du jour 46 (acte III) : la plaine y est
+   * à `T₀` = 90 − 50 = 40, sous la limite de neige (45), donc `froidEolien` sature à 1 et
+   * l'orage mord de `ORAGE_FROID.COLD` — le blizzard d'avant, au bit près, mais sans un type
+   * pour le nommer. Aux 16 % de sa traversée son CŒUR couvre l'ouest et son bord de fuite
+   * passe vers x≈320 : l'est est encore HORS bande. Les deux régimes coexistent sur la carte,
+   * et chaque prémisse se PROUVE au montage — l'aspect compris.
+   */
   function simSousBlizzard(): { sim: SimState; coeur: number; hors: number } {
-    const { sim, bande } = simSousFront('blizzard', 0.16)
+    const { sim, bande } = simSousFront('orage', 0.16, 46)
     const coeur = 40.5
     const hors = 380.5
     expect(meteoIntensity(sim, coeur, 20.5)).toBe(1)
     expect(meteoIntensity(sim, hors, 20.5)).toBe(0)
     expect(bande.hi).toBeLessThan(hors) // le refuge est DEVANT le front, pas dans son dos
+    // LA PRÉMISSE DE R11 : ce qui tombe ici EST un blizzard — pas un orage tiède qu'on
+    // croirait mordre. Sans cette ligne, un recalibrage de `SEUIL_NEIGE` viderait en silence
+    // les quatre gardes qui suivent.
+    expect(aspectSousFront(sim, sim.meteo, coeur, 20.5, sim.tick)).toBe('blizzard')
+    expect(froidEolien(dehorsSansMeteo(sim, coeur, 20.5, sim.tick))).toBe(1)
     return { sim, coeur, hors }
   }
 
-  it('A3 — au cœur du blizzard, la plaine de JOUR devient létale en acte II ; en sortir laisse fuir', () => {
+  it('A3 — au cœur du blizzard, la plaine de JOUR devient létale en acte III ; en sortir laisse fuir', () => {
     const { sim, coeur, hors } = simSousBlizzard()
-    // 90 − 25 − 55 = 10 < HYPOTHERMIA (l'arithmétique de la spec R4) ; à côté, la plaine reste douce.
+    // 90 − 50 − 55 < 0 → 0 < HYPOTHERMIA (l'arithmétique de la spec R4, lue par R12) ; à
+    // côté, la plaine d'acte III n'est plus DOUCE — la saison l'a refroidie à 40 — mais elle
+    // reste au-dessus de l'hypothermie : c'est ce qui fait du refuge un refuge.
     expect(baselineTemperature(sim, coeur, 20.5)).toBeLessThan(TEMPERATURE.HYPOTHERMIA)
-    expect(baselineTemperature(sim, hors, 20.5)).toBeGreaterThan(TEMPERATURE.COMFORT)
+    expect(baselineTemperature(sim, hors, 20.5)).toBeGreaterThan(TEMPERATURE.HYPOTHERMIA)
 
     const id = spawnEntity(sim, coeur, 20.5)
     const e = sim.entities.find((en) => en.id === id)!
@@ -477,8 +554,10 @@ describe('R4 — le froid des fronts (A3)', () => {
   })
 
   it('R4 gradient — traversée perpendiculaire : la température descend vers le cœur, remonte en face, jamais un mur', () => {
-    const { sim, bande } = simSousFront('neige', 0.5)
-    const rampe = METEO.RAMPE * METEO.LARGEUR.neige
+    // Une PLUIE d'acte II à midi : son froid ne dépend pas de `T₀` (seul l'orage a une pente,
+    // R12), donc la seule variable du balayage est la géométrie — ce que ce test mesure.
+    const { sim, bande } = simSousFront('pluie', 0.5)
+    const rampe = METEO.RAMPE * METEO.LARGEUR.pluie
     // La bande est ENTIÈREMENT sur la carte, cœur compris : le balayage traverse bien les
     // cinq régimes (dehors, rampe, cœur, rampe, dehors) — la prémisse de la garde exhaustive.
     expect(bande.lo).toBeGreaterThan(10)
@@ -487,7 +566,7 @@ describe('R4 — le froid des fronts (A3)', () => {
 
     const mid = (bande.lo + bande.hi) / 2
     const pas = 0.05
-    const penteMax = METEO.COLD.neige * (pas / rampe) + 1e-9
+    const penteMax = METEO.COLD.pluie * (pas / rampe) + 1e-9
     let prev = baselineTemperature(sim, 0.5, 20.5)
     const n = Math.round((sim.map.width - 1) / pas)
     for (let k = 1; k <= n; k++) {
@@ -501,7 +580,7 @@ describe('R4 — le froid des fronts (A3)', () => {
       prev = t
     }
     // Le cœur porte la pleine morsure, exactement COLD sous la plaine intacte.
-    expect(baselineTemperature(sim, mid, 20.5)).toBe(baselineTemperature(sim, 2.5, 20.5) - METEO.COLD.neige)
+    expect(baselineTemperature(sim, mid, 20.5)).toBe(baselineTemperature(sim, 2.5, 20.5) - METEO.COLD.pluie)
   })
 
   it('R4 types doux — sous brouillard, baselineTemperature est BIT-IDENTIQUE à sans front (COLD.brouillard = 0)', () => {
@@ -521,15 +600,37 @@ describe('R4 — le froid des fronts (A3)', () => {
   })
 
   it('R5 Brume, même logique — le gate d’attraction des Cendreux s’allume de JOUR au cœur du blizzard, pas à côté', () => {
-    // Le gate feu-station S5 (`cendreuxStep`) lit `baselineTemperature` : au cœur d'un
-    // blizzard le froid de base tombe sous TORPEUR.CONVERGE_SOUS, et un Cendreux pris
-    // dedans peut ramper vers un feu allumé EN PLEIN JOUR — comportement assumé, le même
-    // que sous la nappe (test R5 de brume.test.ts, calqué ici). Ce test l'ÉPINGLE : si un
-    // calibrage de COLD.blizzard le faisait disparaître (ou l'étendait hors bande), on le
-    // saurait — le froid météo MODULE le gate, il ne le casse pas.
-    const { sim, coeur, hors } = simSousBlizzard()
+    // Le gate feu-station S5 (`cendreuxStep`) lit `baselineTemperature` : sous un front le
+    // froid de base tombe sous TORPEUR.CONVERGE_SOUS, et un Cendreux pris dedans peut ramper
+    // vers un feu allumé EN PLEIN JOUR — comportement assumé, le même que sous la nappe
+    // (test R5 de brume.test.ts, calqué ici). Ce test l'ÉPINGLE : si un calibrage du froid
+    // météo le faisait disparaître (ou l'étendait hors bande), on le saurait — le froid météo
+    // MODULE le gate, il ne le casse pas.
+    //
+    // ⚠ LE BLIZZARD NE PEUT PLUS SERVIR DE TÉMOIN, et c'est une conséquence de R11 qu'il faut
+    // NOMMER : un orage n'est un blizzard que là où `T₀ ≤ SEUIL_NEIGE` (45), or 45 est DÉJÀ
+    // sous `CONVERGE_SOUS` (65) — partout où un blizzard existe, le gate est ouvert de toute
+    // façon, bande ou pas. Le contraste se montre donc sur une PLUIE d'acte II à midi : 65 au
+    // clair (le gate est fermé, tout juste), 55 au cœur (il s'ouvre). C'est le même énoncé,
+    // pris là où la géographie discrimine encore.
+    const { sim, bande } = simSousFront('pluie', 0.16)
+    const coeur = 40.5
+    const hors = 380.5
+    expect(meteoIntensity(sim, coeur, 20.5)).toBe(1)
+    expect(meteoIntensity(sim, hors, 20.5)).toBe(0)
+    expect(bande.hi).toBeLessThan(hors)
     expect(baselineTemperature(sim, coeur, 20.5)).toBeLessThan(CENDREUX.TORPEUR.CONVERGE_SOUS)
     expect(baselineTemperature(sim, hors, 20.5)).toBeGreaterThanOrEqual(CENDREUX.TORPEUR.CONVERGE_SOUS)
+  })
+
+  it('R12 — un BLIZZARD ouvre le gate des Cendreux PARTOUT, bande ou pas : la limite de neige est sous CONVERGE_SOUS', () => {
+    // Le corollaire de la note ci-dessus, affirmé plutôt que sous-entendu : la construction
+    // même de R11 (`SEUIL_NEIGE` = 45) place tout monde à blizzard sous `CONVERGE_SOUS` (65).
+    // Si quelqu'un remonte l'un ou descend l'autre, ce test tombe et la note redevient fausse.
+    expect(METEO.SEUIL_NEIGE).toBeLessThan(CENDREUX.TORPEUR.CONVERGE_SOUS)
+    const { sim, coeur, hors } = simSousBlizzard()
+    expect(baselineTemperature(sim, coeur, 20.5)).toBeLessThan(CENDREUX.TORPEUR.CONVERGE_SOUS)
+    expect(baselineTemperature(sim, hors, 20.5)).toBeLessThan(CENDREUX.TORPEUR.CONVERGE_SOUS)
   })
 })
 
@@ -649,7 +750,7 @@ describe('R6 — la faune se terre (A5)', () => {
     })
     const ambients = (): number => sim.monsters.filter((m) => m.ambient).length
     const a = spawnEntity(sim, 80.5, 80.5)
-    grantItems(sim, a, { tenue_hiver: 1 }) // le blizzard mord (T2) : la tenue PLANCHE — on mesure la faune, pas le froid
+    grantItems(sim, a, { tenue_hiver: 1 }) // le front mord (T2) : la tenue PLANCHE — on mesure la faune, pas le froid
     let plafond = 0
     for (let t = 0; t < 60 * BALANCE.TICK_RATE_HZ; t++) {
       step(sim, [])
@@ -657,14 +758,18 @@ describe('R6 — la faune se terre (A5)', () => {
     }
     expect(plafond).toBeGreaterThanOrEqual(FAUNA.GROUND_CAP) // l'anneau s'est rempli : la précondition du gate
 
-    // UN BLIZZARD — large comme la carte : l'anneau de naissance (±42) déborderait une
-    // bande de pluie (60). Fenêtre COMPRESSÉE : la géométrie est pure, TRAVERSEE_TICKS est
-    // le choix de l'ÉLECTION, pas de la géométrie. Posé pour couvrir TOUTE la carte
-    // pendant la phase sous front, et sortir vite.
+    // UN ORAGE D'ACTE III — large comme la carte (R13 : sa largeur suit le froid de la
+    // saison, 1 600 tuiles au plafond d'`ACT_COLD`) : l'anneau de naissance (±42) déborderait
+    // une bande de pluie (60). C'est le silence qu'on mesure ici, et il ne dépend QUE de la
+    // classe (`METEO.QUIET.orage`) — le jour ne sert donc qu'à la largeur. Fenêtre COMPRESSÉE :
+    // la géométrie est pure, TRAVERSEE_TICKS est le choix de l'ÉLECTION, pas de la géométrie.
     const D = 2000
-    const total = sim.map.width + METEO.LARGEUR.blizzard
+    const orage = { type: 'orage' as const, cycle: 45, day: 46, edge: 0 as const }
+    const largeur = largeurDe(orage)
+    expect(largeur).toBeGreaterThan(sim.map.width) // la prémisse : la bande peut couvrir la carte
+    const total = sim.map.width + largeur
     const startTick = sim.tick - Math.round((250 / total) * D) // avance ≈ 250 : carte couverte, marge aux deux bords
-    sim.meteo = { type: 'blizzard', cycle: 0, day: 1, edge: 0, startTick, endTick: startTick + D }
+    sim.meteo = { ...orage, startTick, endTick: startTick + D }
     expect(meteoQuiet(sim, 0.5, 0.5)).toBe(true)
     expect(meteoQuiet(sim, 159.5, 159.5)).toBe(true) // prémisse : l'empreinte couvre tout
 
@@ -706,21 +811,25 @@ describe('R5 — le Feu sous la pluie (A4)', () => {
   /** Plaine nue au midi du jour 25 (patron des sections R4/R6), SANS front — les feux se
    *  posent à sec, la pluie arrive ensuite. `worldEvents: false` : un banc de FEU mesure
    *  le feu. Le tick est à mi-cycle : aucun bord d'élection dans les fenêtres mesurées. */
-  function simCalme(): SimState {
+  /** Le monde du test, au MIDI d'un jour choisi — le jour porte l'acte, donc le froid du
+   *  monde et la largeur d'un orage (R12-R13) : il voyage avec le front qu'on posera. */
+  function simCalme(jour = 25): SimState {
     const sim = createSim(7, {
       map: createEmptyMap(400, 40, TERRAIN_GRASS), calendarScale: SCALE, meteoActive: true, worldEvents: false,
     })
-    sim.tick = 24 * TICKS_PER_CYCLE + Math.floor(DAY_TICKS_PER_CYCLE / 2)
+    sim.tick = tickAubeDuJour(jour) + Math.floor(DAY_TICKS_PER_CYCLE / 2)
     return sim
   }
 
   /** Pose un front (bord ouest, fenêtre `D`) pour que sa bande, au tick COURANT, commence
-   *  en `lo` — et le prouve (l'arrondi du startTick la décale d'un millième de tuile). */
-  function poseFront(sim: SimState, type: MeteoType, lo: number, D = D_LENT): BandeMeteo {
-    const largeur = METEO.LARGEUR[type]
+   *  en `lo` — et le prouve (l'arrondi du startTick la décale d'un millième de tuile). La
+   *  largeur passe par `largeurDe` (R13) : la recopier de la table poserait une bande d'acte I
+   *  sous un orage d'acte III, et la prémisse mentirait. */
+  function poseFront(sim: SimState, type: MeteoType, lo: number, D = D_LENT, jour = 25): BandeMeteo {
+    const largeur = largeurDe({ type, day: jour })
     const u = (lo + largeur) / (sim.map.width + largeur)
     const startTick = sim.tick - Math.round(u * D)
-    sim.meteo = { type, cycle: 0, day: 25, edge: 0, startTick, endTick: startTick + D }
+    sim.meteo = { type, cycle: jour - 1, day: jour, edge: 0, startTick, endTick: startTick + D }
     const bande = frontMeteoPos(sim.meteo, sim.tick, sim.map.width, sim.map.height)!
     expect(Math.abs(bande.lo - lo)).toBeLessThan(0.05)
     return bande
@@ -892,19 +1001,22 @@ describe('R5 — le Feu sous la pluie (A4)', () => {
   })
 
   it('A4 jamais d’extinction — un feu nourri SOUS blizzard reste chaud sur toute la traversée ; au cœur il consume ×2, il ne meurt pas', () => {
-    const sim = simCalme()
+    // ACTE III, MIDI : la plaine y est à 40, sous la limite de neige — l'orage qu'on pose EST
+    // un blizzard (R11-R12), et sa faim de bois monte à `ORAGE_FROID.FEU_CONSO` par la pente.
+    const sim = simCalme(46)
     const id = poseur(sim, 200, 20, 1)
     poseFeu(sim, id, 200, 21)
     const feu = structureAt(sim.structures, 200, 21)!
     // Blizzard COMPRESSÉ (D = 4000) posé à mi-traversée : le cœur couvre déjà le feu, la
     // fenêtre restante (~2000 ticks) se joue en entier — « toute la traversée ».
     const D = 4000
-    poseFront(sim, 'blizzard', -600, D)
+    poseFront(sim, 'orage', -600, D, 46)
+    expect(aspectSousFront(sim, sim.meteo, feu.tx + 0.5, feu.ty + 0.5, sim.tick)).toBe('blizzard')
     const finDeFenetre = sim.meteo!.endTick
     expect(meteoIntensity(sim, feu.tx, feu.ty)).toBe(1)
     drainEvents(sim)
 
-    // Phase 1, encore au CŒUR (la bande avance de 0,5 tuile/tick) : ×FEU_CONSO.blizzard exact.
+    // Phase 1, encore au CŒUR (la bande avance de 0,5 tuile/tick) : ×ORAGE_FROID.FEU_CONSO exact.
     const b0 = fuelTicksRemaining(sim.tick, feu)
     const N = 700
     for (let t = 0; t < N; t++) {
@@ -913,7 +1025,7 @@ describe('R5 — le Feu sous la pluie (A4)', () => {
       expect(fireWarmthFactor(sim, feu)).toBeGreaterThan(0)
     }
     expect(meteoIntensity(sim, feu.tx, feu.ty)).toBe(1) // le cœur couvrait toute la phase mesurée
-    expect(b0 - fuelTicksRemaining(sim.tick, feu)).toBe(N * METEO.FEU_CONSO.blizzard)
+    expect(b0 - fuelTicksRemaining(sim.tick, feu)).toBe(N * METEO.ORAGE_FROID.FEU_CONSO)
 
     // Phase 2 : le RESTE de la fenêtre — rampe de fuite comprise — jusqu'après la sortie.
     while (sim.tick < finDeFenetre) {
@@ -1016,8 +1128,10 @@ describe('R5 — le Feu sous la pluie (A4)', () => {
     feu.emberUntil = sim.tick
     expect(fireState(sim, feu)).toBe('out')
     expect(fireWarmthFactor(sim, feu)).toBe(0)
-    // L'orage arrive, plein cœur sur le feu — là où la POSE d'un feu neuf serait refusée.
-    poseFront(sim, 'orage', 95.5)
+    // L'orage arrive, plein cœur sur le feu — là où la POSE d'un feu neuf serait refusée. Sa
+    // bande est CENTRÉE sur le feu : un orage d'acte II est large de ~830 tuiles (R13), et sa
+    // rampe de 124 — poser son bord à 30 tuiles du feu ne l'aurait mis QUE dans la rampe.
+    poseFront(sim, 'orage', 125 - largeurDe({ type: 'orage', day: 25 }) / 2)
     expect(meteoMouille(sim, feu.tx, feu.ty)).toBe(true)
     expect(meteoIntensity(sim, feu.tx, feu.ty)).toBe(1)
     drainEvents(sim)
@@ -1497,10 +1611,23 @@ describe('R9 — l’annonce (blizzard)', () => {
 
   type EvtBlizzard = Extract<SimEvent, { type: 'blizzard_annonce' | 'blizzard_entre' | 'blizzard_passe' }>
 
+  /**
+   * CE FRONT EST-IL UN BLIZZARD (R13) — la fonction de la sim, jamais une seconde lecture :
+   * un ORAGE dont l'aspect en plaine à découvert, au milieu de sa fenêtre, est `blizzard`.
+   * Depuis R11 « blizzard » n'est plus un type qu'on lit sur le record, c'est un SENS qu'on
+   * lui demande — et c'est exactement ce que l'annonce interroge.
+   */
+  function estBlizzard(sim: SimState, f: Pick<MeteoFront, 'type' | 'startTick' | 'endTick'>): boolean {
+    return frontEstBlizzard(sim, f)
+  }
+
   /** Le premier jour de la saison dont l'élection (fonction pure) rend un blizzard. */
-  function jourDeBlizzard(): number {
-    for (let d = 1; d <= BALANCE.SEASON_DAYS; d++) if (meteoTypeDuCycle(d - 1, d) === 'blizzard') return d
-    throw new Error('aucun blizzard sur la saison — la table TYPES a changé, recalibrer le test')
+  function jourDeBlizzard(sim: SimState): number {
+    for (let d = 1; d <= BALANCE.SEASON_DAYS; d++) {
+      const f = frontDuCycle(d - 1, sim.calendarScale)
+      if (f && f.day === d && estBlizzard(sim, f)) return d
+    }
+    throw new Error('aucun blizzard sur la saison — la table TYPES ou le calibrage du froid a changé, recalibrer le test')
   }
 
   /**
@@ -1549,14 +1676,25 @@ describe('R9 — l’annonce (blizzard)', () => {
 
   it('l’acte I n’a pas de blizzard — la construction qui garantit à CHAQUE blizzard sa veille', () => {
     // Un blizzard au jour 1 n'aurait pas de crépuscule d'avant pour s'annoncer. Il n'en
-    // existe pas : la table de l'acte I ne porte pas le type — le triplet est TOTAL.
-    expect('blizzard' in METEO.TYPES(1)).toBe(false)
+    // existe pas — mais depuis R11 ce n'est plus la TABLE qui l'interdit (l'orage, lui, vit
+    // en acte I) : c'est LE FROID. La plaine d'acte I est à 90 le jour et 60 la nuit, toutes
+    // deux au-dessus de la limite de neige (55) — aucun orage n'y devient un blizzard. On
+    // BALAIE tout l'acte plutôt que d'affirmer une absence de clé.
+    const sim = simMeteo()
+    let orages = 0
+    for (let d = 1; d <= BALANCE.ACT_DAYS; d++) {
+      const f = frontDuCycle(d - 1, sim.calendarScale)
+      if (!f) continue
+      if (f.type === 'orage') orages++
+      expect(estBlizzard(sim, f), `jour ${d}`).toBe(false)
+    }
+    expect(orages).toBeGreaterThan(0) // la garde prouve sa prémisse : l'acte I A des orages
   })
 
   it('saison × 2 seeds : CHAQUE front blizzard a son triplet annonce → entre → passe, ordre strict — et RIEN d’autre', () => {
     for (const seed of [7, 2026]) {
       const { fronts, evts } = saisonRelevee(simMeteo(seed))
-      const blizzards = fronts.filter((f) => f.type === 'blizzard')
+      const blizzards = fronts.filter((f) => estBlizzard(simMeteo(seed), f))
       expect(blizzards.length).toBeGreaterThan(0) // sinon on mesure l'instrument, pas la règle
       expect(evts.length).toBe(3 * blizzards.length) // le silence des autres types, COMPTÉ
       for (const f of blizzards) {
@@ -1574,10 +1712,11 @@ describe('R9 — l’annonce (blizzard)', () => {
     }
   })
 
-  it('les quatre autres types n’émettent RIEN — leur annonce est géométrique, on les voit venir', () => {
+  it('tous les autres fronts n’émettent RIEN — leur annonce est géométrique, on les voit venir', () => {
     const { fronts, evts } = saisonRelevee(simMeteo())
-    expect(fronts.some((f) => f.type !== 'blizzard')).toBe(true) // le domaine balayé a bien des fronts ordinaires
-    const joursBlizzard = new Set(fronts.filter((f) => f.type === 'blizzard').map((f) => f.day))
+    const sim = simMeteo()
+    expect(fronts.some((f) => !estBlizzard(sim, f))).toBe(true) // le domaine balayé a bien des fronts ordinaires
+    const joursBlizzard = new Set(fronts.filter((f) => estBlizzard(sim, f)).map((f) => f.day))
     for (const e of evts) expect(joursBlizzard.has(e.day), `${e.type} au jour ${e.day}`).toBe(true)
   })
 
@@ -1592,15 +1731,18 @@ describe('R9 — l’annonce (blizzard)', () => {
     const { fronts, evts } = saisonRelevee(simMeteo())
     const annonces = evts.filter((e) => e.type === 'blizzard_annonce')
     expect(annonces.length).toBeGreaterThan(0)
+    const sim = simMeteo()
     for (const a of annonces) {
-      expect(fronts.find((f) => f.day === a.day)?.type, `jour ${a.day}`).toBe('blizzard')
+      const f = fronts.find((fr) => fr.day === a.day)
+      expect(f, `jour ${a.day}`).toBeTruthy()
+      expect(estBlizzard(sim, f!), `jour ${a.day}`).toBe(true)
       expect(a.tick).toBeLessThan(tickAubeDuJour(a.day)) // dite la VEILLE, avant l'aube qui élit
     }
   })
 
   it('gardée par jour (patron `lastBrumeDay`) : rejouée au même crépuscule, UNE seule annonce', () => {
     const sim = simMeteo()
-    sim.tick = tickAubeDuJour(jourDeBlizzard()) - NUIT_TICKS // le crépuscule de la veille
+    sim.tick = tickAubeDuJour(jourDeBlizzard(sim)) - NUIT_TICKS // le crépuscule de la veille
     advanceMeteo(sim)
     advanceMeteo(sim)
     expect(drainEvents(sim).filter((e) => e.type === 'blizzard_annonce')).toHaveLength(1)
@@ -1609,7 +1751,7 @@ describe('R9 — l’annonce (blizzard)', () => {
   it('R9 ne tire RIEN : `rngState` intact de l’annonce à la purge', () => {
     const sim = simMeteo()
     drainEvents(sim) // le `day_started` de l'initialisation n'est pas à R9
-    const d = jourDeBlizzard()
+    const d = jourDeBlizzard(sim)
     const avant = sim.rngState
     sim.tick = tickAubeDuJour(d) - NUIT_TICKS
     advanceMeteo(sim) // l'annonce
@@ -1628,7 +1770,7 @@ describe('R9 — l’annonce (blizzard)', () => {
     expect(CHRONICLE_EVENT_TYPES.has('blizzard_annonce')).toBe(true)
     expect(CHRONICLE_EVENT_TYPES.has('blizzard_entre')).toBe(false)
     expect(CHRONICLE_EVENT_TYPES.has('blizzard_passe')).toBe(false)
-    const d = jourDeBlizzard()
+    const d = jourDeBlizzard(simMeteo())
     const entrees = chronicleFromEvents(
       [{ type: 'blizzard_annonce', tick: tickAubeDuJour(d) - NUIT_TICKS, day: d }],
       SCALE,
