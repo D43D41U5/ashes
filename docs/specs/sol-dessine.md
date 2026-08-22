@@ -2,7 +2,7 @@
 
 *Source : décision d'Alexis (2026-08-22), devant cinq variations rendues au même cadrage : « 2 et 4 c'est le type de DA que je kiffe » — organique (2) + pavés dessinés (4). Consignée dans `docs/decisions.md` ; amende `worldgen.md` R32.*
 
-*Statut (2026-08-22) : **chantier 2 (sim) LIVRÉ** — `humAt` (`racine-relief.ts`) : lecture bilinéaire du champ au motif + grain fin (`CREUX.GRAIN_TUILE_ECHELLE` 9, `GRAIN_TUILE_AMPLITUDE` 0,08), `vegetationAt` la lit ; tests `sol-dessine.test.ts` (A1, A3, R1). MESURÉ sur les trois seeds de garde : bords de végétation sur la grille de 8 **100 % → 12,0-12,6 %** (attendu 12,5), tuiles isolées 0,04 %, composition à ±1 point (A12 inchangé vert), 1 558 tests sim verts. Chantier 4 (client, pavés) : spécifié ici, pas commencé.*
+*Statut (2026-08-22) : **chantier 2 (sim) LIVRÉ** — `humAt` (`racine-relief.ts`) : lecture bilinéaire du champ au motif + grain fin (`CREUX.GRAIN_TUILE_ECHELLE` 9, `GRAIN_TUILE_AMPLITUDE` 0,08), `vegetationAt` la lit ; tests `sol-dessine.test.ts` (A1, A3, R1). MESURÉ sur les trois seeds de garde : bords de végétation sur la grille de 8 **100 % → 12,0-12,6 %** (attendu 12,5), tuiles isolées 0,04 %, composition à ±1 point (A12 inchangé vert), 1 558 tests sim verts. **Chantier 4 (client) LIVRÉ le même jour** (« implémente ce que tu m'as montré ») — `render/paves.ts` (pur : propriétaires par priorité, frange 2-5 px, liseré, arête, tranche, ombre portée, brins ; 7 tests) + `world/pave-layer.ts` (chunks de 16 tuiles = 256 px, cuits à la demande, une couronne gardée, rendus après 30 frames hors vue). Le trait de transition d'une tuile du bake est retiré ; la passe MULTIPLY de `grain-sol` est cuite DANS les chunks. MESURÉ dans le navigateur (smoke `matiere`, SwiftShader) : 30 chunks à la première vue, **5,5-10,9 ms par chunk** au fil du déplacement (≤ 16 ms, une frame), 40 vivants en marche.*
 
 ## Objectif de design
 
@@ -35,7 +35,7 @@ La direction choisie : le sol est un **terrain dessiné** (grammaire Stardew / Z
 - **R9 — Chaque tache est un PAVÉ.** Un ordre de recouvrement par terrain (qui déborde sur qui : l'herbe sur la litière, la fleuraie sur l'herbe, la prairie humide sur l'herbe…) ; le pavé du dessus reçoit une **frange irrégulière** de 2 à 5 px qui déborde sur le terrain du dessous, un **liseré** sombre sur ses bords bas et latéraux, une **arête haute** éclairée, une **ombre portée** de 2 px sur le terrain du dessous. Autotile **procédural** (47 cas de blob résolus par le masque des 8 voisins), pas un tileset dessiné à la main.
 - **R10 — L'eau, la falaise, le bâti gardent leurs couches.** Le pavé ne déborde jamais sur un terrain structurel (eau, falaise, mur, vide) : leurs shaders et sprites restent seuls maîtres de leur bord.
 - **R11 — La lisière de zone et la modulation de zone restent** (R21 de `worldgen.md`) : elles modulent la teinte du chunk comme elles modulaient le bake.
-- **R12 — Mesuré, pas deviné** : coût de cuisson d'un chunk (ms, pire seconde au déplacement), nombre de chunks vivants, mémoire GPU — relevés par le harnais smoke avant de fixer N.
+- **R12 — Mesuré, pas deviné** : coût de cuisson d'un chunk (ms, pire seconde au déplacement), nombre de chunks vivants, mémoire GPU — relevés par le harnais smoke avant de fixer N. MESURÉ le 2026-08-22 : à N = 32, 25 ms par chunk (Node/tsx, à chaud) — trop pour une frame ; **N = 16** → 5,5-10,9 ms dans le navigateur (SwiftShader), 30-40 chunks vivants soit ~10 Mo de textures.
 
 ## Critères d'acceptation
 
@@ -45,8 +45,8 @@ La direction choisie : le sol est un **terrain dessiné** (grammaire Stardew / Z
 - **A4 (R5)** — tenu par construction, pas par un test : le filtre de la passe (`zonegen.ts`, « seul le thème du pré cède ») n'a pas bougé, et `humAt` ne touche ni `hum` ni les seuils — vérifié à la relecture (`git diff main -- packages/sim`). Un test avant/après n'aurait rien à comparer : la seule « avant » est le même code.
 - **A5 (R6)** — A11 vert.
 - **A6 (R1)** — `replay`, `sim`, `events` verts : même seed → même carte, au bit près.
-- **A7 (chantier 4, R8-R9)** — smoke : sur une capture au spawn, chaque frontière de végétation porte une frange et un liseré (profil de luminance relevé de part et d'autre) ; le sol et un prop voisin partagent la même maille de 4 px.
-- **A8 (R12)** — smoke : la pire seconde au déplacement avec cuisson de chunks ≤ la pire seconde d'aujourd'hui + 2 ms.
+- **A7 (chantier 4, R8-R9)** — `paves.test.ts` : le pavé du dessus déborde de 2 à 5 px (jamais l'inverse), bord bas sombre + ombre dessous, l'eau transparente sans frange, cuisson déterministe ; capture smoke `default` regardée (frange, liseré, ombre, brins à la maille des props).
+- **A8 (R12)** — smoke `matiere` : chaque chunk cuit au fil du déplacement ≤ 16 ms (une frame) — rougit au-delà.
 
 ## Ce que ça change pour le joueur
 
@@ -55,6 +55,7 @@ La direction choisie : le sol est un **terrain dessiné** (grammaire Stardew / Z
 
 ## Décisions ouvertes (à poser une à une, à Alexis)
 
-- L'amplitude du grain fin **à l'œil** sur la planche (R4 le borne par le haut ; le bas, c'est « assez de mollesse »).
-- Le chunk : N = 32 ou 64 tuiles — une mesure (R12), pas un goût.
-- L'ordre de recouvrement des pavés (R9) : une table de 20 terrains, à trancher en regardant.
+- L'amplitude du grain fin **à l'œil** en jeu (R4 le borne par le haut ; le bas, c'est « assez de mollesse »).
+- L'ordre de recouvrement des pavés (`PRIORITE_PAVE`, R9) : livré tel que la planche le montrait ; à recalibrer en regardant, terrain par terrain (la Cendrière n'a pas encore été regardée).
+- Les réglages des pavés (`PAVE` : liseré 0,55, ombre 0,72, frange 2-5 px) — des ordres de grandeur, à l'œil.
+- (Réglé par la mesure : N = 16.)

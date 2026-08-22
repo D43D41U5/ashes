@@ -112,6 +112,7 @@ import {
 import { ClutterLayer } from './world/clutter-layer'
 import { familleDe, moyenneFamille, profilDe } from '../render/grain-sol'
 import { GroundLayer } from './world/ground-layer'
+import { PaveLayer } from './world/pave-layer'
 import { ambianceDe, moduler } from '../render/zone-ambiance'
 import { TERRAIN_COLORS } from '../render/terrain-colors'
 import { butteAt, solDeButte } from '../render/buttes'
@@ -405,6 +406,11 @@ export class WorldScene extends Phaser.Scene {
   private worldSeed = 0
   private clutter?: ClutterLayer
   private ground!: GroundLayer
+  /** LES PAVÉS (spec sol-dessine R8) : le sol à 16 px/tuile, par chunks, au-dessus du bake. Exposé
+   *  pour le smoke (`matiere` lit `chunksVivants()` et `derniereCuissonMs`). */
+  paves!: PaveLayer
+  /** La couleur de sol de chaque tuile telle que le bake l'a cuite — la source des pavés. */
+  private solCouleurs!: Uint32Array
   private cendre!: CendreLayer
   private cliffs!: CliffLayer
   private pois!: PoiLayer
@@ -894,7 +900,7 @@ export class WorldScene extends Phaser.Scene {
       for (const couche of [
         this.nightVeil, this.water, this.combeMist, this.morningMist, this.mistBanks,
         this.fireFx, this.fireGround, this.poissons, this.feuilles, this.cendre,
-        this.meteoLayer, this.foudreFx, this.gelLayer,
+        this.meteoLayer, this.foudreFx, this.gelLayer, this.paves, this.soleilLayer,
       ]) couche?.destroy()
     })
 
@@ -980,7 +986,10 @@ export class WorldScene extends Phaser.Scene {
       bake: () => this.bakeMapTexture(),
       ground: () => {
         this.ground = new GroundLayer(this, this.map, this.warp, 'map-demo')
-        this.ground.poserMatiere(this.worldSeed)
+        // LES PAVÉS DESSINÉS (décision d'Alexis 2026-08-22, spec sol-dessine R8-R10) : le sol
+        // cuit à 16 px/tuile par chunks, grain de famille compris — la passe MULTIPLY d'hier
+        // est dedans. Le bake reste le lit de l'eau et la source de la minicarte.
+        this.paves = new PaveLayer(this, this.map, this.solCouleurs, this.worldSeed)
       },
       water: () => {
         // L'eau, par-dessus le sol : un shader qui défait le cisaillement du relief et
@@ -1403,6 +1412,7 @@ export class WorldScene extends Phaser.Scene {
     )
 
     this.ground.render(this.cameras.main)
+    this.paves.render(this.cameras.main)
     // LE VENT DE LA SIM (spec chasse C17) : le décor plie DANS SON SENS. C'est
     // la seule affordance de l'odorat — et elle doit exister, sans quoi la règle
     // « approcher sous le vent » serait une injustice invisible (C19).
@@ -2877,15 +2887,13 @@ export class WorldScene extends Phaser.Scene {
       bio[i] = BAKE_NON_BIOME.has(terr) ? 0 : 1
     }
 
-    // ── PASSE 2 : une frontière de biome = UNE couleur de transition, sur UNE seule tuile de large
-    // (demande d'Alexis, resserrée le 2026-07-20 ; l'ancien flou-boîte 3×3 étalait la limite sur une
-    // bande dégradée). On ne peint la transition que d'UN côté : la tuile ne fond que vers ses
-    // voisins d'un biome à id de terrain PLUS GRAND. Sur une frontière A|B, seul le côté au plus
-    // petit id reçoit la médiane 50/50, l'autre reste pur → un trait d'une tuile, pas deux. Le grain
-    // interne d'un même biome (litière de forêt) ne déclenche RIEN — on compare l'identité de
-    // terrain, pas la couleur, sinon toute la forêt se voilerait. Les terrains STRUCTURELS (falaise,
-    // eau, mur) gardent leur couleur pure : pas de halo gris au pied d'une paroi, et ils sont
-    // recouverts par leurs propres couches. Puis modulation de zone + grain.
+    // ── PASSE 2 : couleur pure par tuile, modulation de zone + lisière + grain. (Le trait de
+    // transition d'une tuile entre biomes — demande d'Alexis du 2026-07-20 — est RETIRÉ le
+    // 2026-08-22 : la frontière est désormais DESSINÉE par les pavés (frange, liseré, ombre —
+    // `render/paves.ts`) ; un trait fondu sous un pavé ferait un halo.) Le résultat se garde
+    // aussi par tuile dans `solCouleurs` : c'est la couleur que les pavés cuisent à 16 px.
+    const sol32 = new Uint32Array(N)
+    this.solCouleurs = sol32
     const solParZone = new Map<string | undefined, readonly [number, number, number]>()
 
     // LE CHAMP DE LISIÈRE, calculé UNE fois à la maille de la grille de zones (~10 k cellules)
@@ -2912,31 +2920,7 @@ export class WorldScene extends Phaser.Scene {
     for (let ty = 0; ty < height; ty++) {
       for (let tx = 0; tx < width; tx++) {
         const i = ty * width + tx
-        let base: number
-        if (!bio[i]) {
-          base = (br[i]! << 16) | (bg[i]! << 8) | bb[i]! // structurel : couleur pure, aucun fondu
-        } else {
-          const terr = this.map.terrain[i] ?? 0
-          let sr = 0, sg = 0, sb = 0, n = 0
-          const near = [[tx - 1, ty], [tx + 1, ty], [tx, ty - 1], [tx, ty + 1]] as const
-          for (const [x, y] of near) {
-            if (x < 0 || y < 0 || x >= width || y >= height) continue
-            const j = y * width + x
-            if (!bio[j] || (this.map.terrain[j] ?? 0) <= terr) continue // seul le côté au plus petit id peint
-            sr += br[j]!; sg += bg[j]!; sb += bb[j]!; n++
-          }
-          if (n === 0) {
-            base = (br[i]! << 16) | (bg[i]! << 8) | bb[i]! // cœur de biome / côté « haut » : couleur pure
-          } else {
-            // Frontière : lerp vers la moyenne des biomes voisins, mais le taux ONDULE autour de
-            // 50 % via un fbm2 basse fréquence (échelle ~8 tuiles, seed 1 pour ne pas corréler au
-            // grain) → le trait serpente en larges ondulations douces plutôt qu'une couture nette.
-            // ±17,5 % : intensité faible.
-            const t = 0.5 + (fbm2(tx, ty, 8, 1) - 0.5) * 0.35
-            const lerp = (a: number, b: number): number => Math.round(a + (b - a) * t)
-            base = (lerp(br[i]!, sr / n) << 16) | (lerp(bg[i]!, sg / n) << 8) | lerp(bb[i]!, sb / n)
-          }
-        }
+        const base = (br[i]! << 16) | (bg[i]! << 8) | bb[i]!
 
         const slug = zoneSlugAt(this.map, tx, ty)
         let sol = solParZone.get(slug)
@@ -3004,7 +2988,9 @@ export class WorldScene extends Phaser.Scene {
           const maxCanal = Math.max((couleur >> 16) & 0xff, (couleur >> 8) & 0xff, couleur & 0xff)
           if (maxCanal > 0) grain = Math.min(grain, 255 / maxCanal)
         }
-        g.fillStyle(shade(couleur, grain))
+        const cuite = shade(couleur, grain)
+        sol32[i] = cuite
+        g.fillStyle(cuite)
         g.fillRect(tx, ty, 1, 1) // 1 px/tuile — étiré à la taille monde par setDisplaySize
       }
     }
@@ -3030,6 +3016,7 @@ export class WorldScene extends Phaser.Scene {
           const cy = (i - cx) / width
           g.fillStyle(sol, usure)
           g.fillRect(cx, cy, 1, 1)
+          sol32[i] = lerpColor(sol32[i]!, sol, usure) // les pavés voient la même usure
         }
         debut = k + 1
       }

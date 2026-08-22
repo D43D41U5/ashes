@@ -3459,11 +3459,12 @@ const SCENARIOS = {
   /**
    * LA MATIÈRE DU SOL — les cinq familles sont-elles VRAIMENT posées (spec da-feeling §8) ?
    *
-   * Ce que seul le navigateur prouve : que l'atlas est cuit à la bonne largeur, que la passe
-   * émet des quads, et surtout que le SAUT TUILE-À-TUILE du bake est retombé — c'est-à-dire
-   * que la grille de 16 px ne se lit plus (R20). On mesure DANS LE BAKE et non à l'écran :
-   * les couches supérieures (éclairage, décor) sont identiques quoi qu'on fasse et ne
-   * feraient que masquer ce qu'on juge.
+   * Ce que seul le navigateur prouve : que les PAVÉS sont cuits et posés (depuis le
+   * 2026-08-22 le grain de famille vit DANS les chunks de `pave-layer.ts`, spec sol-dessine
+   * R8 — plus d'atlas ni de passe MULTIPLY), ce que coûte une cuisson (R12), et surtout que
+   * le SAUT TUILE-À-TUILE du bake est retombé — c'est-à-dire que la grille de 16 px ne se lit
+   * plus (R20). Le saut se mesure DANS LE BAKE et non à l'écran : les couches supérieures
+   * (éclairage, décor) sont identiques quoi qu'on fasse et ne feraient que masquer ce qu'on juge.
    *
    * Deux pièges appris à la dure, tous deux consignés dans le code ci-dessous : `getPixel`
    * prend `(x, y, clé)` — la clé en premier rend `null` en silence ; et un `evaluate` qui
@@ -3486,17 +3487,24 @@ const SCENARIOS = {
       22: 'litiere',
     }
 
-    const etat = await page.evaluate(() => {
+    // LES PAVÉS : des chunks cuits, posés, à la clé du seed (sinon une 2e Veillée hériterait
+    // du sol de la 1re) — et le coût de la dernière cuisson (R12).
+    const paves = await page.evaluate(() => {
       const sc = window.__BRAISES__.scene
-      // L'atlas porte le seed dans sa clé (sinon une 2e Veillée hérite du motif de la 1re).
-      const cles = sc.textures.getTextureKeys().filter((k) => k.startsWith('grain-sol-'))
+      const cles = sc.textures.getTextureKeys().filter((k) => k.startsWith('pave-'))
       const t = cles.length ? sc.textures.get(cles[0]).getSourceImage() : null
-      return { cles, largeur: t ? t.width : 0, hauteur: t ? t.height : 0 }
+      const p = sc.paves
+      return {
+        chunks: p ? p.chunksVivants() : -1, cuits: p ? p.cuits : -1,
+        derniereCuissonMs: p ? +p.derniereCuissonMs.toFixed(1) : -1,
+        cles: cles.length, cote: t ? t.width : 0,
+      }
     })
-    console.log(`atlas : ${JSON.stringify(etat)}`)
-    if (etat.cles.length !== 1) console.error(`!! ${etat.cles.length} atlas de matière (1 attendu)`)
-    // 5 familles × 64 cellules de côté.
-    if (etat.largeur !== 320 || etat.hauteur !== 64) console.error('!! l\'atlas n\'a pas 5 blocs de 64×64')
+    console.log(`pavés : ${JSON.stringify(paves)}`)
+    if (paves.chunks <= 0) console.error(`!! aucun chunk de pavés vivant (${paves.chunks})`)
+    if (paves.cles !== paves.chunks) console.error(`!! ${paves.cles} textures de pavés pour ${paves.chunks} chunks`)
+    if (paves.cote !== 256) console.error(`!! un chunk fait ${paves.cote} px (256 attendus : 16 tuiles × 16 px)`)
+    else console.log(`   ✓ ${paves.chunks} chunks de pavés vivants, dernière cuisson ${paves.derniereCuissonMs} ms`)
 
     // LE SAUT TUILE-À-TUILE dans le bake, famille par famille. Balayage BORNÉ (voir en-tête).
     const sauts = await page.evaluate((FAM) => {
@@ -3567,14 +3575,25 @@ const SCENARIOS = {
       console.log(`   ✓ la grille a lâché sur la neige (saut ${neige.saut})`)
     }
 
-    // La passe émet-elle vraiment des quads ? (Une famille `null` partout donnerait 0.)
-    const quads = await page.evaluate(() => {
-      const g = window.__BRAISES__.scene.ground
-      return g && g.grainQuads ? g.grainQuads() : -1
+    // LA CUISSON AU FIL DU DÉPLACEMENT (R12) : on déplace la caméra d'un écran et on relève
+    // ce que coûte CHAQUE chunk neuf — c'est le prix d'un pas dans un pays nouveau.
+    const marche = await page.evaluate(async () => {
+      const sc = window.__BRAISES__.scene
+      const cam = sc.cameras.main
+      const p = sc.paves
+      const avant = p.cuits
+      const couts = []
+      cam.stopFollow()
+      for (let i = 0; i < 40; i++) {
+        cam.scrollX += 24
+        await new Promise((r) => requestAnimationFrame(r))
+        if (p.cuits > avant + couts.length) couts.push(+p.derniereCuissonMs.toFixed(1))
+      }
+      return { neufs: p.cuits - avant, couts, vivants: p.chunksVivants() }
     })
-    console.log(quads > 0
-      ? `   ✓ la passe de matière émet ${quads} quads sur la vue courante`
-      : `!! la passe de matière n'émet RIEN (${quads})`)
+    console.log(`marche : ${marche.neufs} chunks cuits en route, coûts ${JSON.stringify(marche.couts)} ms, ${marche.vivants} vivants`)
+    const pire = Math.max(0, ...marche.couts)
+    if (pire > 16) console.error(`!! une cuisson de chunk dépasse une frame (${pire} ms)`)
 
     await page.screenshot({ path: `${OUT}/matiere-sol.png` })
   },

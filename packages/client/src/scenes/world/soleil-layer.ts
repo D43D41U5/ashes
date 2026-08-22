@@ -101,7 +101,7 @@ export class SoleilLayer {
 
   private canvas: Phaser.Textures.CanvasTexture | null = null
 
-  constructor(scene: Phaser.Scene, private readonly map: WorldMap, private readonly seed: number) {
+  constructor(private readonly scene: Phaser.Scene, private readonly map: WorldMap, private readonly seed: number) {
     // ── LE MASQUE : la densité de lumière par tuile. Il naît ÉTEINT (aucun arbre connu :
     // on ne peint pas une forêt entièrement trouée le temps d'un snapshot) — c'est
     // `majArbres`, au premier peuplement puis à chaque changement (abattage, dérive,
@@ -175,5 +175,11 @@ export class SoleilLayer {
   destroy(): void {
     this.shader?.destroy()
     this.shader = null
+    // ON REND LE MASQUE : sa clé est fixe, et la 2e Veillée la retrouvait prise (« Texture key
+    // already in use: soleil-mask », vu par le scénario smoke `retour` le 2026-08-22).
+    if (this.canvas) {
+      this.scene.textures.remove('soleil-mask')
+      this.canvas = null
+    }
   }
 }
