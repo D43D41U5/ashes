@@ -33,6 +33,11 @@ const CUISSONS_COURONNE_PAR_FRAME = 2
 /** La couronne gardée autour de la vue, en chunks : cuite en avance, pour que le visible n'ait
  *  en général rien à cuire quand on marche. */
 const COURONNE = 1
+/** LA MARGE DU VISIBLE, en px monde : `update()` lit la vue de la frame PRÉCÉDENTE (la caméra
+ *  ne suit le joueur qu'au rendu, après `update`). Ce qui est à moins d'une demi-tuile-de-chunk
+ *  du bord compte donc comme visible et se cuit tout de suite — sinon une bande d'un pixel de
+ *  bake plat peut affleurer une frame au bord qui avance. */
+const MARGE_VISIBLE_PX = (PAVE.CHUNK * PAVE_PX) / 2
 /** Un chunk non vu depuis tant de frames se rend. Long : revenir sur ses pas ne doit pas recuire
  *  (2 s à 60 fps) ; le plafond `MAX_VIVANTS` borne la mémoire quoi qu'il arrive. */
 const OUBLI_FRAMES = 120
@@ -107,8 +112,10 @@ export class PaveLayer {
 
     // Le VISIBLE d'abord, sans budget : l'écran ne doit jamais montrer un trou. La couronne
     // ensuite, au compte-gouttes.
+    const m = MARGE_VISIBLE_PX
     const visible = (cx: number, cy: number): boolean =>
-      cx * cotePx < v.x + v.width && (cx + 1) * cotePx > v.x && cy * cotePx < v.y + v.height && (cy + 1) * cotePx > v.y
+      cx * cotePx < v.x + v.width + m && (cx + 1) * cotePx > v.x - m
+      && cy * cotePx < v.y + v.height + m && (cy + 1) * cotePx > v.y - m
     let budgetCouronne = CUISSONS_COURONNE_PAR_FRAME
     for (const passeVisible of [true, false]) {
       for (let cy = cy0; cy <= cy1; cy++) {
@@ -164,6 +171,9 @@ export class PaveLayer {
     const S = PAVE.CHUNK * PAVE_PX
     const cle = `pave-${this.seed >>> 0}-${cx}-${cy}`
     const rgba = cuireChunk({ cx, cy, terrainAt: this.terrainAt, couleurAt: this.couleurAt, trameDe: this.trameDe })
+    // Une clé déjà prise (une scène rechargée à chaud sans passer par `destroy`) ne doit PAS
+    // laisser un trou permanent recuit à chaque frame : on la rend, puis on recrée.
+    if (this.scene.textures.exists(cle)) this.scene.textures.remove(cle)
     const tex = this.scene.textures.createCanvas(cle, S, S)
     if (!tex) return
     const ctx = tex.getContext()
